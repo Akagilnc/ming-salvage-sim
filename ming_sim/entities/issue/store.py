@@ -7,6 +7,8 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
+from ming_sim.entities.column_write import checked_columns
+
 
 ISSUE_COLUMNS = frozenset({
     "kind", "title", "origin_kind", "origin_ref", "origin_turn",
@@ -27,10 +29,7 @@ _ADVANCE_COLUMNS = (
 
 
 def _checked(values: Mapping[str, object]) -> list[str]:
-    unknown = set(values) - ISSUE_COLUMNS
-    if unknown:
-        raise ValueError(f"issues 列非法：{sorted(unknown)}")
-    return [column for column in sorted(values)]
+    return checked_columns(values, ISSUE_COLUMNS, what="issues")
 
 
 class IssueStore:
@@ -62,9 +61,7 @@ class IssueStore:
         return int(cursor.rowcount or 0)
 
     def append_advance(self, row: Mapping[str, object]) -> None:
-        unknown = set(row) - set(_ADVANCE_COLUMNS)
-        if unknown:
-            raise ValueError(f"issue_advances 列非法：{sorted(unknown)}")
+        checked_columns(row, set(_ADVANCE_COLUMNS), what="issue_advances")
         columns = [column for column in _ADVANCE_COLUMNS if column in row]
         if "issue_id" not in columns or "turn" not in columns or "trigger_kind" not in columns:
             raise ValueError("issue_advances needs issue_id, turn, trigger_kind")

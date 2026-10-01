@@ -28,6 +28,28 @@ PROMULGATION_BLOCKED_LAYERS = frozenset({
 DOSSIER_MODES = frozenset({"ordinary", "midzhi"})
 # #619 / ADR 0073 reported-progress origin namespace (ID-11 open append).
 DOSSIER_REPORT_ORIGIN_NS = "dossier-report:"
+
+_DOSSIER_COLUMNS = frozenset({
+    "id", "action_type", "target_kind", "target_id", "executor_kind", "executor_id",
+    "source_chat_turn_id", "pending_action_id", "directive_id", "secret_order_id",
+    "region_id", "decree_text", "payload_json", "status", "promulgation_decision",
+    "promulgation_blocked_layer", "promulgation_reason", "rescript_pending",
+    "held_turn", "legal_reason_code", "stigma_json", "extension_json",
+    "participant_roster", "office_archive_keys", "due_turn", "execution_outcome",
+    "execution_note", "closed_turn", "interruption_reason", "created_turn",
+    "created_year", "created_period", "created_at", "updated_at", "closed_at",
+    "affair_id",
+})
+_DECISION_COLUMNS = frozenset({
+    "id", "dossier_id", "turn", "decision", "blocked_layer", "rescript_action",
+    "reason", "legal_reason_code", "primary_opponents_json", "gatekeeper_id",
+    "criteria_snapshot_json", "affected_parties_json", "midzhi_unpromulgatable",
+    "created_at",
+})
+_PROGRESS_COLUMNS = frozenset({
+    "id", "dossier_id", "turn", "progress_band", "memorial_text", "is_terminal",
+    "origin", "created_at",
+})
 DOSSIER_REPORT_ORIGIN_MONTHLY = "dossier-report:monthly_errand"
 DOSSIER_REPORT_ORIGIN_VERDICT = "dossier-report:execution_verdict"
 DOSSIER_EXECUTION_OUTCOMES = frozenset({
@@ -1871,6 +1893,40 @@ class DossierStore:
             (int(dossier_id),),
         ).fetchall()
         return [dict(r) for r in rows]
+
+    def restore_row(self, row: Mapping[str, object]) -> None:
+        from ming_sim.entities.column_write import upsert_by_pk
+        upsert_by_pk(
+            self._conn, "decree_dossiers", row, pk="id",
+            allowed=_DOSSIER_COLUMNS, what="decree_dossiers",
+        )
+
+    def restore_decision(self, row: Mapping[str, object]) -> None:
+        from ming_sim.entities.column_write import upsert_by_pk
+        upsert_by_pk(
+            self._conn, "decree_dossier_decisions", row, pk="id",
+            allowed=_DECISION_COLUMNS, what="decree_dossier_decisions",
+        )
+
+    def restore_reported_progress(self, row: Mapping[str, object]) -> None:
+        from ming_sim.entities.column_write import upsert_by_pk
+        upsert_by_pk(
+            self._conn, "dossier_reported_progress", row, pk="id",
+            allowed=_PROGRESS_COLUMNS, what="dossier_reported_progress",
+        )
+
+    def delete_dossier(self, dossier_id: object) -> None:
+        self._conn.execute("DELETE FROM decree_dossiers WHERE id=?", (dossier_id,))
+
+    def delete_decision(self, decision_id: object) -> None:
+        self._conn.execute(
+            "DELETE FROM decree_dossier_decisions WHERE id=?", (decision_id,),
+        )
+
+    def delete_reported_progress(self, progress_id: object) -> None:
+        self._conn.execute(
+            "DELETE FROM dossier_reported_progress WHERE id=?", (progress_id,),
+        )
 
     def actual_progress_units(self, dossier_id: int) -> float:
         row = self._conn.execute(

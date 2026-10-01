@@ -15,7 +15,7 @@ from ming_sim.flows import (
     derive_army_mutiny_state,
 )
 ARMY = "guanning"
-PATHS = ("legacy", "substrate_hub")
+PATHS = ("substrate_hub",)
 
 
 def _configure_fiscal_path(db, fiscal_path: str):
@@ -39,21 +39,21 @@ def _setup(
     self_funded_pay: int = 0,
 ):
     _configure_fiscal_path(db, fiscal_path)
-    if fiscal_path == "substrate_hub" and (is_tusi or self_funded_pay):
-        # Exercise the substrate_hub loyalty seam without the later pay-source
-        # conservation rule, which requires exempt armies to carry no arrears.
-        db.conn.execute(
-            "UPDATE fiscal_config SET value=0 WHERE key='__army_pay_source_cutover'"
-        )
     db.conn.execute("UPDATE armies SET manpower=0")
-    # hub 走全中央饷源；总欠与分源欠同步，确保结算确实从 hub 真源重算 latch。
-    central_arrears = arrears if fiscal_path == "substrate_hub" else 0
+    # 土司/自养不进军心 tick，双累加器与总欠必须为 0。明军走全中央饷源。
+    exempt = bool(is_tusi or self_funded_pay)
+    central_share = 0 if exempt else 1
+    stored_arrears = 0 if exempt else arrears
+    central_arrears = 0 if exempt or fiscal_path != "substrate_hub" else arrears
     db.conn.execute(
         """UPDATE armies SET owner_power='ming', is_tusi=?, self_funded_pay=?,
            manpower=10000, salary_rate=1, loyalty=?, arrears=?, is_mutinied=?,
-           province_pay_share=0, central_pay_share=1,
+           province_pay_share=0, central_pay_share=?,
            province_pay_arrears=0, central_pay_arrears=? WHERE id=?""",
-        (is_tusi, self_funded_pay, loyalty, arrears, latched, central_arrears, ARMY),
+        (
+            is_tusi, self_funded_pay, loyalty, stored_arrears, latched,
+            central_share, central_arrears, ARMY,
+        ),
     )
     db.conn.commit()
 

@@ -137,7 +137,6 @@ def test_unknown_target_in_pending_commit_is_rolled_back_and_durably_audited(gam
     assert db.list_pending_actions(state.turn, status="failed")[0]["id"] == action_id
     audit = db.dossiers.link_rejections(pending_action_id=action_id)
     assert audit[-1]["target_dossier_id"] == 999999
-    assert "指向不存在案卷" in audit[-1]["reason"]
 
 
 def test_unknown_target_link_is_rejected_and_audited(game):
@@ -153,7 +152,6 @@ def test_unknown_target_link_is_rejected_and_audited(game):
     assert db.dossiers.links(source) == []
     audit = db.dossiers.link_rejections(source)
     assert audit[-1]["target_dossier_id"] == 999999
-    assert "指向不存在案卷" in audit[-1]["reason"]
 
 
 

@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, Mapping, Optional
 
+from ming_sim.entities.column_write import checked_columns, upsert_by_pk
+
 
 _LEDGER_ORDER = (
     "turn", "year", "period", "account", "delta", "balance_after", "category",
@@ -128,24 +130,12 @@ class ReignStateStore:
 
     def upsert_header(self, row: Mapping[str, object]) -> None:
         """Debug replace of the reign header. Caller commits."""
-        allowed = frozenset({
-            "id", "year", "period", "turn", "turn_phase", "ended", "ending_status",
-        })
-        unknown = set(row) - allowed
-        if unknown:
-            raise ValueError(f"game_state 列非法：{sorted(unknown)}")
-        if "id" not in row or row["id"] in (None, ""):
-            raise ValueError("缺主键 id")
-        columns = [column for column in sorted(row)]
-        assignments = ", ".join(
-            f"{column}=excluded.{column}" for column in columns if column != "id"
-        )
-        action = f"DO UPDATE SET {assignments}" if assignments else "DO NOTHING"
-        placeholders = ", ".join("?" for _ in columns)
-        self._conn.execute(
-            f"INSERT INTO game_state ({', '.join(columns)}) VALUES ({placeholders}) "
-            f"ON CONFLICT(id) {action}",
-            [row[column] for column in columns],
+        upsert_by_pk(
+            self._conn, "game_state", row, pk="id",
+            allowed=frozenset({
+                "id", "year", "period", "turn", "turn_phase", "ended", "ending_status",
+            }),
+            what="game_state",
         )
 
     def delete_header(self, row_id: object) -> int:
@@ -154,9 +144,7 @@ class ReignStateStore:
 
     def insert_ledger(self, row: Mapping[str, object]) -> None:
         """Append one economy_ledger row. Optional columns default in the table."""
-        unknown = set(row) - _LEDGER_COLUMNS
-        if unknown:
-            raise ValueError(f"economy_ledger 列非法：{sorted(unknown)}")
+        checked_columns(row, _LEDGER_COLUMNS, what="economy_ledger")
         columns = [column for column in _LEDGER_ORDER if column in row]
         if not columns:
             raise ValueError("economy_ledger insert needs fields")

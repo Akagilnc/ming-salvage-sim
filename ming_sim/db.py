@@ -932,6 +932,16 @@ class GameDB:
         self.staged_declarations = StagedDeclarationStore(self.conn)
         AffairStore.ensure_schema(self.conn)
         self.affairs = AffairStore(self.conn)
+        from ming_sim.entities.record_store import (
+            ChatMessageStore,
+            MonthOpenSnapshotStore,
+            ResolveContextStore,
+            TurnReportStore,
+        )
+        self.chat_messages = ChatMessageStore(self.conn)
+        self.turn_reports = TurnReportStore(self.conn)
+        self.resolve_contexts = ResolveContextStore(self.conn)
+        self.month_open_snapshots = MonthOpenSnapshotStore(self.conn)
         self.conn.commit()
         self.init_fiscal_config()
 
@@ -1652,22 +1662,24 @@ class GameDB:
         return [dict(row) for row in rows]
 
     def is_army_pay_source_cutover_enabled(self) -> bool:
-        row = self.conn.execute(
-            "SELECT value FROM fiscal_config WHERE key = ?",
-            (_ARMY_PAY_SOURCE_CUTOVER_KEY,),
-        ).fetchone()
-        return bool(row and int(row["value"] or 0) == 1)
+        """Pay follows the current spine. The stored bit is not a second engine."""
+        return True
 
     def fiscal_engine(self) -> str:
+        """Current engine is the hub. A missing or legacy marker is not a second engine."""
+        return "substrate_hub"
+
+    def is_substrate_hub_fiscal_engine_enabled(self) -> bool:
+        return True
+
+    def _stored_fiscal_engine_marker(self) -> int | None:
         row = self.conn.execute(
             "SELECT value FROM fiscal_config WHERE key = ?",
             (_FISCAL_ENGINE_KEY,),
         ).fetchone()
-        value = int(row["value"] or 0) if row is not None else _FISCAL_ENGINE_LEGACY
-        return "substrate_hub" if value == _FISCAL_ENGINE_SUBSTRATE_HUB else "legacy"
-
-    def is_substrate_hub_fiscal_engine_enabled(self) -> bool:
-        return self.fiscal_engine() == "substrate_hub"
+        if row is None:
+            return None
+        return int(row["value"] or 0)
 
     def _mark_army_pay_source_cutover_enabled(self) -> None:
         self.conn.execute(
@@ -1690,8 +1702,13 @@ class GameDB:
         )
 
     def _initialize_army_pay_source_spine(self, is_fresh_armies_seed: bool) -> None:
-        """Fresh-save cutover for #287 S1; existing saves stay on legacy army-pay flow."""
-        if not is_fresh_armies_seed:
+        """Adopt the current pay spine once. An already-hub save is not split again."""
+        already_hub = self._stored_fiscal_engine_marker() == _FISCAL_ENGINE_SUBSTRATE_HUB
+        if already_hub and not is_fresh_armies_seed:
+            return
+        if not is_fresh_armies_seed and not self.table_has_rows("armies"):
+            self._mark_army_pay_source_cutover_enabled()
+            self._mark_substrate_hub_fiscal_engine_enabled()
             return
         rows = self.conn.execute(
             """
@@ -1843,8 +1860,6 @@ class GameDB:
         return True
 
     def assert_army_pay_source_container_conservation(self) -> None:
-        if not self.is_army_pay_source_cutover_enabled():
-            return
         exempt_bad = self.conn.execute(
             """
             SELECT id, province_pay_share, central_pay_share,
@@ -2478,7 +2493,7 @@ class GameDB:
             )
 
     def _reconcile_army_pay_source_region_container(self, region_id: str) -> None:
-        if not region_id or not self.is_army_pay_source_cutover_enabled():
+        if not region_id:
             return
         row = self.conn.execute(
             "SELECT fiscal FROM regions WHERE id = ?", (region_id,)
@@ -3449,9 +3464,7 @@ class GameDB:
         )
         # 军饷科目取数认 budget_key；呈现名跟预算行 name（玩家/摘要同源）。
         other_expense = (
-            ("中央军饷", "太仓亏空", "宗室禄米", "百官俸禄", "工部", "赈灾备用", "建筑维护")
-            if self.is_substrate_hub_fiscal_engine_enabled()
-            else ("宗室禄米", "百官俸禄", "工部", "赈灾备用", "建筑维护")
+            "中央军饷", "太仓亏空", "宗室禄米", "百官俸禄", "工部", "赈灾备用", "建筑维护",
         )
         expense_present = [
             army_pay_label if army_pay_amt else "",
@@ -3474,8 +3487,6 @@ class GameDB:
 
     def treasury_hub_result(self, state: GameState) -> Optional[Dict[str, int]]:
         """已执行边饷 hub 三项结果；只读 ledger/container，不重算结算。"""
-        if not self.is_substrate_hub_fiscal_engine_enabled():
-            return None
         # pre_settle 已在当月 state.turn 写 ledger/覆盖容器，settling/awaiting_decision
         # 相位下 next_period 尚未推进——此刻 state.turn 本身就是刚结算完的 turn（两者语义
         # 相同，见 FRONT_HALF_DONE_PHASES 单一真源）。换月后（summoning 等其它相位）
@@ -5932,13 +5943,11 @@ class GameDB:
         Empty ``minister_name`` is allowed for non-audience bookkeeping rows but
         cannot be projected (release parks them as withheld — see N2).
         """
-        cur = self.conn.execute(
-            "INSERT INTO chat_messages (minister_name, turn, role, content, knowledge_status) "
-            "VALUES (?, ?, ?, ?, 'held')",
-            (minister_name, turn, role, content),
+        message_id = self.chat_messages.insert(
+            minister_name=minister_name, turn=turn, role=role, content=content,
         )
         self.conn.commit()
-        return int(cur.lastrowid)
+        return message_id
 
     def set_message_highlights(
         self, message_id: int, phrases: Sequence[Any],
@@ -5952,10 +5961,7 @@ class GameDB:
             if phrase:
                 clean.append(phrase)
         payload = json.dumps(clean, ensure_ascii=False)
-        self.conn.execute(
-            "UPDATE chat_messages SET highlights_json = ? WHERE id = ?",
-            (payload, int(message_id)),
-        )
+        self.chat_messages.set_highlights_json(int(message_id), payload)
         self.conn.commit()
 
     def get_message_highlights(self, message_id: int) -> List[str]:
@@ -5986,10 +5992,7 @@ class GameDB:
         if not ids:
             return
         with self.conn:
-            self.conn.executemany(
-                "DELETE FROM chat_messages WHERE id = ?",
-                [(mid,) for mid in ids],
-            )
+            self.chat_messages.delete_ids(ids)
             self.character_knowledge.delete_by_source_ids(
                 [f"chat_message:{mid}" for mid in ids], commit=False,
             )
@@ -6542,11 +6545,7 @@ class GameDB:
             )
             restored_pending_action_ids = self._restore_chat_rollback_items_in_tx(items, message_ids)
             if message_ids:
-                placeholders = ",".join("?" for _ in message_ids)
-                self.conn.execute(
-                    f"DELETE FROM chat_messages WHERE id IN ({placeholders})",
-                    message_ids,
-                )
+                self.chat_messages.delete_ids(message_ids)
                 self.character_knowledge.delete_by_source_ids(
                     [f"chat_message:{mid}" for mid in message_ids], commit=False,
                 )
@@ -6809,12 +6808,9 @@ class GameDB:
         本函数是 update_chat_turn_messages(minister_message_id=...) 的原子替代，须同做该升级。
         """
         with self.conn:  # 事务：成功提交、异常回滚（插入的回话一并撤销）；外层 atomic 内 commit 暂停
-            cur = self.conn.execute(
-                "INSERT INTO chat_messages (minister_name, turn, role, content, knowledge_status) "
-                "VALUES (?, ?, 'minister', ?, 'held')",
-                (minister_name, int(turn), content),
+            message_id = self.chat_messages.insert(
+                minister_name=minister_name, turn=int(turn), role="minister", content=content,
             )
-            message_id = int(cur.lastrowid)
             self.conn.execute(
                 """
                 UPDATE chat_turns
@@ -6923,6 +6919,27 @@ class GameDB:
         if not row:
             return
         row = {key: value for key, value in row.items() if not key.startswith("_rollback_")}
+        if table == "characters":
+            self.characters.restore_row(row)
+            return
+        if table == "character_offices":
+            self.characters.restore_office_row(row)
+            return
+        if table == "decree_dossiers":
+            self.dossiers.restore_row(row)
+            return
+        if table == "decree_dossier_decisions":
+            self.dossiers.restore_decision(row)
+            return
+        if table == "dossier_reported_progress":
+            self.dossiers.restore_reported_progress(row)
+            return
+        if table == "factions":
+            self.factions.restore_row(row)
+            return
+        if table == "textual_facts":
+            self.textual_facts.restore_row(row)
+            return
         pk = self._ROLLBACK_TABLE_PK.get(table)
         if not pk:
             raise ValueError(f"不支持回滚表：{table}")
@@ -6945,6 +6962,27 @@ class GameDB:
         )
 
     def _delete_row_in_tx(self, table: str, target_id: str) -> None:
+        if table == "characters":
+            self.characters.delete(target_id)
+            return
+        if table == "character_offices":
+            self.characters.delete_office(target_id)
+            return
+        if table == "decree_dossiers":
+            self.dossiers.delete_dossier(target_id)
+            return
+        if table == "decree_dossier_decisions":
+            self.dossiers.delete_decision(target_id)
+            return
+        if table == "dossier_reported_progress":
+            self.dossiers.delete_reported_progress(target_id)
+            return
+        if table == "factions":
+            self.factions.delete(target_id)
+            return
+        if table == "textual_facts":
+            self.textual_facts.delete(target_id)
+            return
         pk = self._ROLLBACK_TABLE_PK.get(table)
         if not pk:
             raise ValueError(f"不支持回滚表：{table}")
@@ -7149,11 +7187,7 @@ class GameDB:
                     (int(draft_id),),
                 )
             if message_ids:
-                placeholders = ",".join("?" for _ in message_ids)
-                self.conn.execute(
-                    f"DELETE FROM chat_messages WHERE id IN ({placeholders})",
-                    message_ids,
-                )
+                self.chat_messages.delete_ids(message_ids)
                 self.character_knowledge.delete_by_source_ids(
                     [f"chat_message:{mid}" for mid in message_ids], commit=False,
                 )
@@ -7229,26 +7263,13 @@ class GameDB:
             public_report = str(public_body or "")
         # #976: no text-filter strip. Public archives trust the producer path
         # (public LLMs never preload secrets; private briefs are not knowledge_items).
-        self.conn.execute(
-            """
-            INSERT INTO turn_reports (turn, year, period, report, attendant_message, title)
-            VALUES (?, ?, ?, ?, ?, ?)
-            ON CONFLICT(turn) DO UPDATE SET
-                year = excluded.year,
-                period = excluded.period,
-                report = excluded.report,
-                attendant_message = excluded.attendant_message,
-                title = CASE
-                    WHEN excluded.title = '' THEN turn_reports.title
-                    ELSE excluded.title
-                END
-            """,
-            (
-                state.turn, state.year, state.period,
-                sanitize_sqlite_text(public_report),
-                sanitize_sqlite_text(str(attendant_message or "")),
-                sanitize_sqlite_text(str(title or "")),
-            ),
+        self.turn_reports.upsert(
+            turn=state.turn,
+            year=state.year,
+            period=state.period,
+            report=sanitize_sqlite_text(public_report),
+            attendant_message=sanitize_sqlite_text(str(attendant_message or "")),
+            title=sanitize_sqlite_text(str(title or "")),
         )
         # Aggregate prose cannot authorize an audience read: removing known
         # secret substrings is not safe against a paraphrase.  Persist a
@@ -7359,12 +7380,9 @@ class GameDB:
         rows = self.character_knowledge.public_events_for_turn(turn)
         by_source: Dict[str, Dict[str, object]] = {}
         for row in rows:
-            try:
-                excluded_names = json.loads(row["excluded_names"] or "[]")
-            except (TypeError, ValueError):
-                excluded_names = []
+            excluded_names = json.loads(row["excluded_names"] or "[]")
             if not isinstance(excluded_names, list):
-                excluded_names = []
+                raise ValueError("excluded_names 不是名单")
             item = {
                 "title": row["title"], "body": row["body"],
                 "source_id": row["source_id"], "excluded_names": excluded_names,
@@ -7378,18 +7396,12 @@ class GameDB:
         character_names = {str(row["name"]) for row in characters}
         for row in source_rows:
             participants = participant_roster_names(row["participant_roster"])
-            try:
-                excluded_names = json.loads(row["excluded_names"] or "[]")
-            except (TypeError, ValueError):
-                excluded_names = []
+            excluded_names = json.loads(row["excluded_names"] or "[]")
             if not isinstance(excluded_names, list):
-                excluded_names = []
-            try:
-                excluded_targets = json.loads(row["excluded_targets"] or "{}")
-            except (TypeError, ValueError):
-                excluded_targets = {}
+                raise ValueError("excluded_names 不是名单")
+            excluded_targets = json.loads(row["excluded_targets"] or "{}")
             if not isinstance(excluded_targets, dict):
-                excluded_targets = {}
+                raise ValueError("excluded_targets 不是对象")
             target_people = {
                 str(name) for name in excluded_targets.get("people", [])
             }
@@ -10708,13 +10720,10 @@ class GameDB:
         row = self.dossiers.participant_row(int(dossier_id))
         if row is None:
             raise KeyError(f"案卷不存在：{dossier_id}")
-        try:
-            existing_raw = json.loads(row["participant_roster"] or "[]")
-        except (TypeError, ValueError):
-            existing_raw = []
-        existing = self._normalize_participant_roster(
-            existing_raw if isinstance(existing_raw, list) else []
-        )
+        existing_raw = json.loads(row["participant_roster"] or "[]")
+        if not isinstance(existing_raw, list):
+            raise ValueError("participant_roster 不是名单")
+        existing = self._normalize_participant_roster(existing_raw)
         additions = self._normalize_participant_roster(participants, strict_structured=True)
         self._validate_participant_roster_references(additions)
         by_character = {str(item["character_id"]): item for item in existing}
@@ -14520,25 +14529,16 @@ class GameDB:
 
         #1846：不再持久化 ready=1 extractor delta；恢复真源是暂存声明与落账相位。
         """
-        self.conn.execute(
-            """INSERT INTO pending_resolve_context
-               (turn, decree_text, simulator_payload_json, source, attendant_message)
-               VALUES (?, ?, ?, ?, ?)
-               ON CONFLICT(turn) DO UPDATE SET
-                   decree_text = excluded.decree_text,
-                   simulator_payload_json = excluded.simulator_payload_json,
-                   source = excluded.source,
-                   attendant_message = excluded.attendant_message""",
-            (
-                int(turn), sanitize_sqlite_text(decree_text),
-                safe_json_dumps(simulator_payload or {}, ensure_ascii=False),
-                # source 显式归一为枚举「值」字符串：Provenance 是 (str, Enum)，str(member) 在多数
-                # Python 版本落 'Provenance.player_decree' 而非 'player_decree'——重抽时
-                # Provenance(...) 不匹配 → 静默退回 system_simulation 丢源（Sourcery #175 bug_risk）。
-                # getattr(.,"value",.) 让枚举取 .value、普通字符串原样、None/空回落 system_simulation。
-                str(getattr(source, "value", source) or "system_simulation"),
-                sanitize_sqlite_text(str(attendant_message or "")),
-            ),
+        self.resolve_contexts.upsert(
+            turn=int(turn),
+            decree_text=sanitize_sqlite_text(decree_text),
+            simulator_payload_json=safe_json_dumps(simulator_payload or {}, ensure_ascii=False),
+            # source 显式归一为枚举「值」字符串：Provenance 是 (str, Enum)，str(member) 在多数
+            # Python 版本落 'Provenance.player_decree' 而非 'player_decree'——重抽时
+            # Provenance(...) 不匹配 → 静默退回 system_simulation 丢源（Sourcery #175 bug_risk）。
+            # getattr(.,"value",.) 让枚举取 .value、普通字符串原样、None/空回落 system_simulation。
+            source=str(getattr(source, "value", source) or "system_simulation"),
+            attendant_message=sanitize_sqlite_text(str(attendant_message or "")),
         )
         self.conn.commit()
 
@@ -14574,7 +14574,7 @@ class GameDB:
         }
 
     def clear_resolve_context(self, turn: int) -> None:
-        self.conn.execute("DELETE FROM pending_resolve_context WHERE turn = ?", (int(turn),))
+        self.resolve_contexts.delete(int(turn))
         self.dossiers.clear_pending_promulgation_verdicts(int(turn))
         self.conn.commit()
 
@@ -14589,21 +14589,15 @@ class GameDB:
         """
         turn = int(state.turn)
         m = state.metrics
-        cur = self.conn.execute(
-            """INSERT INTO month_open_snapshot
-               (turn, treasury, inner_treasury, public_support, imperial_prestige)
-               VALUES (?, ?, ?, ?, ?)
-               ON CONFLICT(turn) DO NOTHING""",
-            (
-                turn,
-                int(m.get("国库", 0)),
-                int(m.get("内库", 0)),
-                int(m.get("民心", 0)),
-                int(m.get("皇威", 0)),
-            ),
+        created = self.month_open_snapshots.insert_once(
+            turn=turn,
+            treasury=int(m.get("国库", 0)),
+            inner_treasury=int(m.get("内库", 0)),
+            public_support=int(m.get("民心", 0)),
+            imperial_prestige=int(m.get("皇威", 0)),
         )
         self.conn.commit()
-        return int(cur.rowcount or 0) == 1
+        return created
 
     def get_month_open_snapshot(self, turn: int) -> Optional[Dict[str, int]]:
         """读本回合月初快照四键；无则 None。仅呈现层消费。"""
@@ -14623,9 +14617,7 @@ class GameDB:
 
     def clear_month_open_snapshot(self, turn: int) -> None:
         """过期/清除本回合快照。atomic 内 commit 为 no-op，与 clear_resolve_context 同窗。"""
-        self.conn.execute(
-            "DELETE FROM month_open_snapshot WHERE turn = ?", (int(turn),)
-        )
+        self.month_open_snapshots.delete(int(turn))
         self.conn.commit()
 
     def get_authority(self, authority_id: int) -> Optional[Dict[str, object]]:
@@ -14701,10 +14693,7 @@ class GameDB:
             actors.add(executor_id)
         roster = dossier.get("participant_roster") or []
         if isinstance(roster, str):
-            try:
-                roster = json.loads(roster)
-            except (TypeError, ValueError):
-                roster = []
+            roster = json.loads(roster)
         if isinstance(roster, list):
             for entry in roster:
                 if not isinstance(entry, dict):
@@ -16394,10 +16383,10 @@ class GameDB:
                 "SELECT excluded_names FROM secret_orders WHERE id=?", (order_id,)
             ).fetchone()
             if order is not None:
-                try:
-                    return [str(name) for name in json.loads(order["excluded_names"] or "[]")]
-                except (TypeError, ValueError):
-                    return []
+                names = json.loads(order["excluded_names"] or "[]")
+                if not isinstance(names, list):
+                    raise ValueError("excluded_names 不是名单")
+                return [str(name) for name in names]
         # #1829 reopen：公开说法排除名单与正文同表，按 public_saying:<id> 回查。
         saying_id = self.character_knowledge.public_saying_id_in(source)
         if saying_id is not None:
@@ -16406,10 +16395,10 @@ class GameDB:
                 (saying_id,),
             ).fetchone()
             if saying is not None:
-                try:
-                    return [str(name) for name in json.loads(saying["excluded_names"] or "[]")]
-                except (TypeError, ValueError):
-                    return []
+                names = json.loads(saying["excluded_names"] or "[]")
+                if not isinstance(names, list):
+                    raise ValueError("excluded_names 不是名单")
+                return [str(name) for name in names]
             return []
         return self.character_knowledge.exclusions_for_source(source)
 
@@ -16423,10 +16412,9 @@ class GameDB:
                 "SELECT excluded_targets FROM secret_orders WHERE id=?",
                 (order_id,),
             ).fetchone()
-            try:
-                payload = json.loads((row["excluded_targets"] if row else "{}") or "{}")
-            except (TypeError, ValueError):
-                payload = {}
+            payload = json.loads((row["excluded_targets"] if row else "{}") or "{}")
+            if not isinstance(payload, dict):
+                raise ValueError("excluded_targets 不是对象")
             return {"people": [str(x) for x in payload.get("people", [])],
                     "offices": [str(x) for x in payload.get("offices", [])]}
         # #1829 reopen：公开说法排除目标与正文同表。
@@ -16436,10 +16424,9 @@ class GameDB:
                 "SELECT excluded_targets FROM public_sayings WHERE id=?",
                 (saying_id,),
             ).fetchone()
-            try:
-                payload = json.loads((row["excluded_targets"] if row else "{}") or "{}")
-            except (TypeError, ValueError):
-                payload = {}
+            payload = json.loads((row["excluded_targets"] if row else "{}") or "{}")
+            if not isinstance(payload, dict):
+                raise ValueError("excluded_targets 不是对象")
             return {"people": [str(x) for x in payload.get("people", [])],
                     "offices": [str(x) for x in payload.get("offices", [])]}
         payload = self.character_knowledge.exclusion_targets_for_source(source)
@@ -16640,10 +16627,7 @@ class GameDB:
         live_ids = [int(row["id"]) for row in rows]
         source_ids: List[str] = []
         for mid in live_ids:
-            self.conn.execute(
-                "UPDATE chat_messages SET knowledge_status='withheld' WHERE id=?",
-                (mid,),
-            )
+            self.chat_messages.set_knowledge_status(mid, "withheld")
             source_ids.append(f"chat_message:{mid}")
         self._delete_shared_knowledge_source_ids(source_ids, commit=False)
         if commit:
@@ -16678,10 +16662,7 @@ class GameDB:
             kind="audience", source_id=source_id, commit=False,
         )
         status = "released"
-        self.conn.execute(
-            "UPDATE chat_messages SET knowledge_status=? WHERE id=?",
-            (status, int(message_id)),
-        )
+        self.chat_messages.set_knowledge_status(int(message_id), status)
         if commit:
             self.conn.commit()
         return status
@@ -16740,10 +16721,7 @@ class GameDB:
                 # release eligible. Durable descendants and caller-explicit
                 # exclusions park permanently.
                 if mid in explicit_exclude or protection.get(mid, False):
-                    self.conn.execute(
-                        "UPDATE chat_messages SET knowledge_status='withheld' WHERE id=?",
-                        (mid,),
-                    )
+                    self.chat_messages.set_knowledge_status(mid, "withheld")
                 continue
             minister = str(row["minister_name"] or "").strip()
             content = str(row["content"] or "")
@@ -16751,10 +16729,7 @@ class GameDB:
             if not minister:
                 # N2: empty minister_name cannot be projected; park as withheld
                 # so the row does not remain stuck in held forever.
-                self.conn.execute(
-                    "UPDATE chat_messages SET knowledge_status='withheld' WHERE id=?",
-                    (mid,),
-                )
+                self.chat_messages.set_knowledge_status(mid, "withheld")
                 continue
             self._project_audience_chat_message(
                 state, message_id=mid, minister_name=minister, content=content,
@@ -17150,18 +17125,12 @@ class GameDB:
         persisted_title = title
         tags_json = json.dumps(tags, ensure_ascii=False) if tags is not None else (row["tags"] or "[]")
         deadline = max(0, min(int(deadline_months or 0), 36))
-        try:
-            prior_targets = json.loads(row["excluded_targets"] or "{}")
-        except (TypeError, ValueError):
-            prior_targets = {}
+        prior_targets = json.loads(row["excluded_targets"] or "{}")
         if not isinstance(prior_targets, dict):
-            prior_targets = {}
-        try:
-            legacy_people = json.loads(row["excluded_names"] or "[]")
-        except (TypeError, ValueError):
-            legacy_people = []
+            raise ValueError("excluded_targets 不是对象")
+        legacy_people = json.loads(row["excluded_names"] or "[]")
         if not isinstance(legacy_people, list):
-            legacy_people = []
+            raise ValueError("excluded_names 不是名单")
         people, offices = canonical_secret_order_exclusions(
             self.content, [*legacy_people, *prior_targets.get("people", [])],
             prior_targets.get("offices", []),
@@ -17197,12 +17166,9 @@ class GameDB:
             )
             dossier = self.dossiers.get_for_secret_order(int(order_id))
             if dossier is not None:
-                try:
-                    payload = json.loads(str(dossier.get("payload_json") or "{}"))
-                except (TypeError, ValueError):
-                    payload = {}
+                payload = json.loads(str(dossier.get("payload_json") or "{}"))
                 if not isinstance(payload, dict):
-                    payload = {}
+                    raise ValueError("案卷 payload_json 不是对象")
                 payload["title"] = persisted_title
                 payload["content"] = content
                 payload["tags"] = json.loads(tags_json)

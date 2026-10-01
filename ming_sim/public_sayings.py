@@ -108,22 +108,16 @@ def public_layer_events(db: Any) -> list[dict[str, object]]:
 
 
 def _json_name_list(raw: object) -> list[str]:
-    try:
-        values = json.loads(raw or "[]")
-    except (TypeError, ValueError):
-        values = []
+    values = json.loads(raw or "[]")
     if not isinstance(values, list):
-        values = []
+        raise ValueError("excluded_names 不是名单")
     return [str(name) for name in values if str(name).strip()]
 
 
 def _json_target_map(raw: object) -> dict[str, list[str]]:
-    try:
-        payload = json.loads(raw or "{}")
-    except (TypeError, ValueError):
-        payload = {}
+    payload = json.loads(raw or "{}")
     if not isinstance(payload, dict):
-        return {}
+        raise ValueError("excluded_targets 不是对象")
     result: dict[str, list[str]] = {}
     for key, values in payload.items():
         names = (

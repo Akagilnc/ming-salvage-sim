@@ -20,22 +20,43 @@ _STATUS_STAGED = "staged"
 _STATUS_DISCARDED = "discarded"
 _STATUS_SETTLED = "settled"
 
-_SCHEMA_SQL = """
+_LIVE_COLUMNS = (
+    "id",
+    "decree_ref",
+    "declaration_json",
+    "visible_refs_json",
+    "verdict_json",
+    "questions_json",
+    "forecast_text",
+    "status",
+    "created_turn",
+    "created_at",
+)
+
+_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS staged_declarations (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     decree_ref TEXT NOT NULL,
     declaration_json TEXT NOT NULL,
     visible_refs_json TEXT NOT NULL DEFAULT '{}',
+    verdict_json TEXT,
+    questions_json TEXT,
+    forecast_text TEXT,
     status TEXT NOT NULL DEFAULT 'staged'
         CHECK(status IN ('staged','discarded','settled')),
     created_turn INTEGER NOT NULL,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+"""
+
+_INDEX_SQL = """
 CREATE INDEX IF NOT EXISTS idx_staged_declarations_decree
     ON staged_declarations(decree_ref, id);
 CREATE INDEX IF NOT EXISTS idx_staged_declarations_status
     ON staged_declarations(decree_ref, status, id);
 """
+
+_SCHEMA_SQL = _TABLE_SQL + _INDEX_SQL
 
 
 class DecreeAlreadySettled(ValueError):
@@ -68,18 +89,29 @@ class StagedDeclarationStore:
 
     @staticmethod
     def ensure_schema(conn: Any) -> None:
-        conn.executescript(_SCHEMA_SQL)
-        cols = {str(row[1]) for row in conn.execute("PRAGMA table_info(staged_declarations)")}
-        if "visible_refs_json" not in cols:
-            conn.execute(
-                "ALTER TABLE staged_declarations ADD COLUMN visible_refs_json TEXT NOT NULL DEFAULT '{}'"
-            )
-        if "verdict_json" not in cols:
-            conn.execute("ALTER TABLE staged_declarations ADD COLUMN verdict_json TEXT")
-        if "questions_json" not in cols:
-            conn.execute("ALTER TABLE staged_declarations ADD COLUMN questions_json TEXT")
-        if "forecast_text" not in cols:
-            conn.execute("ALTER TABLE staged_declarations ADD COLUMN forecast_text TEXT")
+        """现役形状写在 CREATE。已有表缺列时就地重排一次：改名、按现役形状建表、拷重叠列、丢掉旧表。"""
+        exists = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='staged_declarations'"
+        ).fetchone()
+        if exists is None:
+            conn.executescript(_SCHEMA_SQL)
+            return
+        present = [
+            str(row[1]) for row in conn.execute("PRAGMA table_info(staged_declarations)")
+        ]
+        if set(_LIVE_COLUMNS) <= set(present):
+            conn.executescript(_INDEX_SQL)
+            return
+        overlap = [name for name in _LIVE_COLUMNS if name in present]
+        conn.execute("ALTER TABLE staged_declarations RENAME TO staged_declarations_prev")
+        conn.executescript(_TABLE_SQL)
+        cols = ", ".join(overlap)
+        conn.execute(
+            f"INSERT INTO staged_declarations ({cols}) "
+            f"SELECT {cols} FROM staged_declarations_prev"
+        )
+        conn.execute("DROP TABLE staged_declarations_prev")
+        conn.executescript(_INDEX_SQL)
 
     def stage(
         self, *, decree_ref: str, declaration: Mapping[str, object], turn: int,

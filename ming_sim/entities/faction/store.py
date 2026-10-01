@@ -7,6 +7,12 @@ from __future__ import annotations
 
 from typing import Any, Mapping, Sequence
 
+from ming_sim.entities.column_write import upsert_by_pk
+
+FACTION_COLUMNS = frozenset({
+    "name", "satisfaction", "leverage", "agenda", "edict_overdraw", "leverage_offset",
+})
+
 
 class FactionStore:
     """Single write port for factions."""
@@ -49,6 +55,15 @@ class FactionStore:
             "WHERE name = ?",
             (satisfaction, offset_delta, name),
         )
+
+    def restore_row(self, row: Mapping[str, object]) -> None:
+        upsert_by_pk(
+            self._conn, "factions", row,
+            pk="name", allowed=FACTION_COLUMNS, what="factions",
+        )
+
+    def delete(self, name: str) -> None:
+        self._conn.execute("DELETE FROM factions WHERE name=?", (name,))
 
     def restore_leverage(self, rows: Sequence[Mapping[str, object]]) -> None:
         self._conn.executemany(

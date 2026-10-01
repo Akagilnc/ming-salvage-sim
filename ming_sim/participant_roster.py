@@ -67,11 +67,7 @@ def resolve_dossier_owner_name(dossier: Mapping[str, object]) -> str:
     """
     roster = dossier.get("participant_roster") or []
     if isinstance(roster, str):
-        try:
-            roster = json.loads(roster)
-        except (TypeError, ValueError):
-            # json.JSONDecodeError ⊂ ValueError
-            roster = []
+        roster = json.loads(roster)
     if isinstance(roster, list):
         for entry in roster:
             if not isinstance(entry, dict):
@@ -90,12 +86,9 @@ def resolve_dossier_owner_name(dossier: Mapping[str, object]) -> str:
 
 def participant_roster_names(raw: object) -> set[str]:
     """Project persisted dict roster entries to their character names."""
-    try:
-        roster = json.loads(raw or "[]")
-    except (TypeError, ValueError):
-        return set()
+    roster = json.loads(raw or "[]")
     if not isinstance(roster, list):
-        return set()
+        raise ValueError("participant_roster 不是名单")
     return {
         str(item.get("character_id") or item.get("name"))
         for item in roster

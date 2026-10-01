@@ -7,6 +7,8 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
+from ming_sim.entities.column_write import checked_columns
+
 
 POWER_COLUMNS = frozenset({
     "id", "name", "kind", "leader", "stance", "leverage", "satisfaction",
@@ -28,10 +30,7 @@ _NAME_LOG_COLUMNS = (
 
 
 def _checked(values: Mapping[str, object], *, allowed: frozenset[str]) -> list[str]:
-    unknown = set(values) - allowed
-    if unknown:
-        raise ValueError(f"powers 列非法：{sorted(unknown)}")
-    return [column for column in sorted(values)]
+    return checked_columns(values, allowed, what="powers")
 
 
 class PowerStore:
@@ -63,9 +62,7 @@ class PowerStore:
         return int(cursor.rowcount or 0)
 
     def append_log(self, row: Mapping[str, object]) -> None:
-        unknown = set(row) - set(_LOG_COLUMNS)
-        if unknown:
-            raise ValueError(f"power_logs 列非法：{sorted(unknown)}")
+        checked_columns(row, set(_LOG_COLUMNS), what="power_logs")
         self._conn.execute(
             "INSERT INTO power_logs "
             "(turn, year, period, power_id, field, old_value, new_value, delta, "
@@ -74,9 +71,7 @@ class PowerStore:
         )
 
     def append_name_log(self, row: Mapping[str, object]) -> None:
-        unknown = set(row) - set(_NAME_LOG_COLUMNS)
-        if unknown:
-            raise ValueError(f"power_name_logs 列非法：{sorted(unknown)}")
+        checked_columns(row, set(_NAME_LOG_COLUMNS), what="power_name_logs")
         self._conn.execute(
             "INSERT INTO power_name_logs "
             "(turn, year, period, power_id, old_name, new_name, old_aliases, "

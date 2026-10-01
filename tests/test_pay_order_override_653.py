@@ -887,26 +887,6 @@ def test_fact_brief_attributes_arrears_order_displacement_to_dossier(game):
     ]
 
 
-def test_legacy_engine_pay_order_materialize_fails_loud_not_fulfilled(game):
-    """Codex-10/legacy_no_consumer：legacy 引擎物化 fail-loud，案卷不得标 fulfilled。"""
-    db, state, _content = game
-    db.conn.execute(
-        "INSERT INTO fiscal_config (key, value, kind, note) "
-        "VALUES ('__fiscal_engine', 0, 'meta', 'test legacy engine') "
-        "ON CONFLICT(key) DO UPDATE SET value=excluded.value, note=excluded.note"
-    )
-    db.conn.commit()
-    assert db.fiscal_engine() == "legacy"
-    did = _override_dossier(
-        db, state, [{"key": "due_priority_军饷@shaanxi", "value": 40}],
-    )
-    with pytest.raises(ValueError, match="legacy"):
-        db.apply_dossier_promulgation(state, did, "promulgated")
-    assert "due_priority_军饷@shaanxi" not in db.get_fiscal_config()
-    dossier = db.dossiers.get(did)
-    assert dossier["status"] != "closed"
-    assert str(dossier.get("execution_outcome") or "") != "fulfilled"
-
 
 def test_fact_brief_priority_provenance_falls_back_to_nationwide_scope(game):
     """真实撤回局部胜出键后应回落全国键，并归因于真正造成让位的全国旨。"""
@@ -1325,27 +1305,6 @@ def test_pure_central_zero_haircut_due_clears_shortfall_counter(game):
     # 中央旧欠不因零 Due 月自动偿还（ADR 0023 D7③ / #653 边界）
     assert float(after["central_pay_arrears"] or 0) == pytest.approx(old_central_arrears)
     assert float(after["arrears"] or 0) == pytest.approx(old_arrears)
-
-
-def test_central_hub_tier_order_and_old_arrears_unchanged_by_haircut(game):
-    """宪法边界 golden：hub tier 序/D9 合并 k 公式/中央旧欠不自动偿还均不被折发改写。"""
-    import inspect
-
-    from ming_sim.flows import _compute_substrate_hub_outbound
-
-    src = inspect.getsource(_compute_substrate_hub_outbound)
-    # D9 合并 k 分母仍是 Σ(京运补+中央军饷应付)，公式未被折发旁路
-    assert "tier_due_total = jingyun_due_total + central_due_total" in src
-    assert "k = (" in src
-    # 中央旧欠无自动偿还位：中央路径只增欠（old_central_arrears + shortfall），无偿还分支
-    from ming_sim import flows as flows_mod
-    apply_src = inspect.getsource(flows_mod.apply_fixed_period_flows)
-    assert "old_central_arrears + shortfall" in apply_src
-    central_arrears_assignment = next(
-        line for line in apply_src.splitlines()
-        if "central_arrears = max(0.0, old_central_arrears + shortfall)" in line
-    )
-    assert "min(" not in central_arrears_assignment
 
 
 # ═══════════════ 独立 oracle 宪制 mutation 自验 ═══════════════

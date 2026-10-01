@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from typing import Any, Mapping, Sequence
 
+from ming_sim.entities.column_write import checked_columns, upsert_by_pk
+
 
 ARMY_COLUMNS = frozenset({
     "id", "name", "station", "station_region", "theater", "commander",
@@ -30,10 +32,7 @@ _LOG_COLUMNS = (
 
 
 def _checked(values: Mapping[str, object], *, allowed: frozenset[str]) -> list[str]:
-    unknown = set(values) - allowed
-    if unknown:
-        raise ValueError(f"armies 列非法：{sorted(unknown)}")
-    return [column for column in sorted(values)]
+    return checked_columns(values, allowed, what="armies")
 
 
 class ArmyStore:
@@ -74,9 +73,7 @@ class ArmyStore:
     def append_logs(self, rows: Sequence[Mapping[str, object]]) -> None:
         payload = []
         for row in rows:
-            unknown = set(row) - set(_LOG_COLUMNS)
-            if unknown:
-                raise ValueError(f"army_logs 列非法：{sorted(unknown)}")
+            checked_columns(row, set(_LOG_COLUMNS), what="army_logs")
             payload.append(tuple(
                 "" if column == "origin_ref" and column not in row else row.get(column)
                 for column in _LOG_COLUMNS
@@ -93,19 +90,9 @@ class ArmyStore:
 
     def upsert(self, row: Mapping[str, object]) -> None:
         """Debug replace of one army. Caller commits."""
-        allowed = ARMY_COLUMNS | {"updated_at"}
-        if "id" not in row or row["id"] in (None, ""):
-            raise ValueError("缺主键 id")
-        columns = _checked(row, allowed=allowed)
-        assignments = ", ".join(
-            f"{column}=excluded.{column}" for column in columns if column != "id"
-        )
-        action = f"DO UPDATE SET {assignments}" if assignments else "DO NOTHING"
-        placeholders = ", ".join("?" for _ in columns)
-        self._conn.execute(
-            f"INSERT INTO armies ({', '.join(columns)}) VALUES ({placeholders}) "
-            f"ON CONFLICT(id) {action}",
-            [row[column] for column in columns],
+        upsert_by_pk(
+            self._conn, "armies", row,
+            pk="id", allowed=ARMY_COLUMNS | {"updated_at"}, what="armies",
         )
 
     def delete(self, army_id: str) -> int:

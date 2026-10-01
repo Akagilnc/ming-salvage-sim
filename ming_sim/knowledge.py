@@ -366,12 +366,9 @@ def _source_archive_rows(db: Any, character_name: str, upto_turn: int) -> list[D
                 or re.fullmatch(r"settlement:narrative:\d+", source_id)):
             continue
         participants = participant_roster_names(row["participant_roster"])
-        try:
-            excluded = json.loads(row["excluded_names"] or "[]")
-        except (TypeError, ValueError):
-            excluded = []
+        excluded = json.loads(row["excluded_names"] or "[]")
         if not isinstance(excluded, list):
-            excluded = []
+            raise ValueError("excluded_names 不是名单")
         # A participant-rostered source is private to its participants unless
         # an explicit exclusion says otherwise.  Empty rosters are not added
         # here: public events already have their own projection path.
@@ -803,10 +800,7 @@ def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[
     visible_issues = []
     for issue in db.list_active_issues() if hasattr(db, "list_active_issues") else []:
         source_id = f"issue:{issue['id']}"
-        try:
-            participants = participant_roster_names(issue["participant_roster"])
-        except (KeyError, IndexError, TypeError):
-            participants = set()
+        participants = participant_roster_names(issue["participant_roster"])
         # Unassigned issues are public; assigned issues are visible only when
         # this character entered the durable source projection.
         if participants:
@@ -818,11 +812,10 @@ def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[
             character_name,
         ):
             continue
-        try:
-            target_roster = json.loads(str(issue["target_roster"] or "[]"))
-        except (KeyError, TypeError, ValueError):
-            target_roster = []
-        if issue["origin_kind"] != "impeachment_surge" or not isinstance(target_roster, list):
+        target_roster = json.loads(str(issue["target_roster"] or "[]"))
+        if not isinstance(target_roster, list):
+            raise ValueError("target_roster 不是名单")
+        if issue["origin_kind"] != "impeachment_surge":
             target_roster = []
         target_roster = [str(target).strip() for target in target_roster if str(target).strip()]
         visible_issues.append({

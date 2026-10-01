@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
+from ming_sim.entities.column_write import checked_columns, upsert_by_pk
+
 
 CHARACTER_COLUMNS = frozenset({
     "name", "office", "office_type", "faction", "personal_skills",
@@ -24,12 +26,14 @@ CHARACTER_COLUMNS = frozenset({
 
 _MUTABLE_COLUMNS = CHARACTER_COLUMNS - {"name"}
 
+OFFICE_COLUMNS = frozenset({
+    "character_name", "office_title", "source", "dossier_id",
+    "appointment_tenure", "region_id", "updated_at",
+})
+
 
 def _checked(values: Mapping[str, object], *, allowed: frozenset[str]) -> list[str]:
-    unknown = set(values) - allowed
-    if unknown:
-        raise ValueError(f"characters 列非法：{sorted(unknown)}")
-    return [column for column in sorted(values)]
+    return checked_columns(values, allowed, what="characters")
 
 
 class CharacterStore:
@@ -167,18 +171,19 @@ class CharacterStore:
 
     def upsert(self, row: Mapping[str, object]) -> None:
         """Debug replace of one person. Caller commits."""
-        if "name" not in row or row["name"] in (None, ""):
-            raise ValueError("缺主键 name")
-        columns = _checked(row, allowed=CHARACTER_COLUMNS)
-        assignments = ", ".join(
-            f"{column}=excluded.{column}" for column in columns if column != "name"
+        upsert_by_pk(
+            self._conn, "characters", row,
+            pk="name", allowed=CHARACTER_COLUMNS, what="characters",
         )
-        action = f"DO UPDATE SET {assignments}" if assignments else "DO NOTHING"
-        placeholders = ", ".join("?" for _ in columns)
-        self._conn.execute(
-            f"INSERT INTO characters ({', '.join(columns)}) VALUES ({placeholders}) "
-            f"ON CONFLICT(name) {action}",
-            [row[column] for column in columns],
+
+    def restore_row(self, row: Mapping[str, object]) -> None:
+        """Undo writes the before-image through this store."""
+        self.upsert(row)
+
+    def restore_office_row(self, row: Mapping[str, object]) -> None:
+        upsert_by_pk(
+            self._conn, "character_offices", row,
+            pk="character_name", allowed=OFFICE_COLUMNS, what="character_offices",
         )
 
     def delete_by_name(self, name: str) -> int:

@@ -332,10 +332,7 @@ def resolve_host_character(db: Any, *, commitment_ref: int, dossier_id: Optional
         if isinstance(dossier, dict):
             roster = dossier.get("participant_roster") or []
             if isinstance(roster, str):
-                try:
-                    roster = json.loads(roster)
-                except (TypeError, ValueError):
-                    roster = []
+                roster = json.loads(roster)
             for item in roster or []:
                 if isinstance(item, dict) and str(item.get("tier") or "") == "主办":
                     name = str(item.get("character_id") or "").strip()
@@ -347,10 +344,9 @@ def resolve_host_character(db: Any, *, commitment_ref: int, dossier_id: Optional
             (int(commitment_ref),),
         ).fetchone()
         if row is not None:
-            try:
-                roster = json.loads(row["participant_roster"] or "[]")
-            except (TypeError, ValueError):
-                roster = []
+            roster = json.loads(row["participant_roster"] or "[]")
+            if not isinstance(roster, list):
+                raise ValueError("participant_roster 不是名单")
             for item in roster or []:
                 if isinstance(item, dict):
                     cand = str(item.get("character_id") or "").strip()

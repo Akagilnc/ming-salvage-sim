@@ -9,7 +9,7 @@ from ming_sim.db import GameDB
 from ming_sim.flows import apply_fixed_period_flows, derive_army_mutiny_state
 
 ARMY = "guanning"
-PATHS = ("legacy", "substrate_hub")
+PATHS = ("substrate_hub",)
 
 
 def _configure(db, fiscal_path: str) -> None:

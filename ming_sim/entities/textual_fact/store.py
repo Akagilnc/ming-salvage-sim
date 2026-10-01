@@ -3,10 +3,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Iterable
+from typing import Any, Iterable, Mapping
 
 from ming_sim.applier import connection_owns_transaction, sanitize_sqlite_text
+from ming_sim.entities.column_write import upsert_by_pk
 from ming_sim.models import reign_period_label
+
+TEXTUAL_FACT_COLUMNS = frozenset({
+    "id", "subject_kind", "subject_id", "year", "period", "turn",
+    "body", "origin_ref", "created_at",
+})
 
 TEXTUAL_FACT_SUBJECT_KINDS = frozenset({"character", "army", "region", "affair"})
 
@@ -48,7 +54,7 @@ class TextualFact:
 
 
 class TextualFactStore:
-    """World-record home for textual facts. INSERT only; never UPDATE."""
+    """World-record home for textual facts. Live writes append; undo restores a row."""
 
     def __init__(self, conn: Any) -> None:
         self._conn = conn
@@ -97,6 +103,16 @@ class TextualFactStore:
             body=stored,
             origin_ref=origin,
         )
+
+    def restore_row(self, row: Mapping[str, object]) -> None:
+        """Undo puts a before-image back. Ordinary append never updates."""
+        upsert_by_pk(
+            self._conn, "textual_facts", row,
+            pk="id", allowed=TEXTUAL_FACT_COLUMNS, what="textual_facts",
+        )
+
+    def delete(self, fact_id: object) -> None:
+        self._conn.execute("DELETE FROM textual_facts WHERE id=?", (fact_id,))
 
     def readable_materials(self, *, subject_kind: str, subject_id: str) -> tuple[TextualFact, ...]:
         """All textual facts on this object, oldest month first. No collapse, no expiry."""

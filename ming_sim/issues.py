@@ -2314,11 +2314,10 @@ def gather_impeachment_surge_candidates(state: GameState, db: GameDB) -> List[Di
         # #622/#1260 单源：仅有旨外 durable 的变形才构成 deformation_exposure。
         if not db.dossier_has_beyond_intent(did):
             continue
-        try:
-            roster = json.loads(str(row["participant_roster"] or "[]"))
-        except (TypeError, ValueError):
-            continue
-        if not isinstance(roster, list) or not roster:
+        roster = json.loads(str(row["participant_roster"] or "[]"))
+        if not isinstance(roster, list):
+            raise ValueError("participant_roster 不是名单")
+        if not roster:
             continue
         participant_ids = [
             str(item.get("character_id") or "").strip()
@@ -7023,14 +7022,6 @@ def _apply_surcharge_decrees(
     should_commit = bool(commit) and db.owns_transaction()
     applied: List[Dict[str, object]] = []
     rejected: List[Dict[str, object]] = []
-    if not db.is_substrate_hub_fiscal_engine_enabled():
-        for item in (items if isinstance(items, list) else []):
-            rejected.append({
-                "rejected": True, "category": "invalid_enum",
-                "reason": "surcharge_decrees 仅适用于 substrate_hub 财政档",
-                "item": item if isinstance(item, dict) else {"raw_value": item},
-            })
-        return applied, rejected
     claimed_origins: set[tuple[str, str]] = set()
     for item in (items if isinstance(items, list) else []):
         if not isinstance(item, dict):
@@ -7142,8 +7133,6 @@ def _apply_levy_driven_transfers(
     （reason=加派；累积账月效统一使用 `盘面自发`，不伪归最后一道改账旨）。基线 ≤0 或折算后
     ≤0 的省零入池——停加派/蠲免后入池止（AC5；出口回流归 S5 #652）。
     """
-    if not db.is_substrate_hub_fiscal_engine_enabled():
-        return [], []
     records: List[Dict[str, object]] = []
     rows = db.conn.execute(
         "SELECT id, fiscal, public_support FROM regions WHERE controlled_by='ming' ORDER BY id"

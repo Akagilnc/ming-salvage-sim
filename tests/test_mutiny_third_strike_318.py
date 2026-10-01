@@ -13,7 +13,7 @@ from ming_sim.db import GameDB
 from ming_sim.flows import apply_fixed_period_flows, derive_army_mutiny_state
 
 ARMY = "guanning"
-PATHS = ("legacy", "substrate_hub")
+PATHS = ("substrate_hub",)
 BANDIT_POWERS = frozenset({"bandits", "bandit_li_zicheng"})
 
 
@@ -141,7 +141,7 @@ def test_third_strike_transfers_to_bandit_via_adapter(game, fiscal_path):
         (
             log
             for log in logs
-            if log["field"] == "arrears" and "核销" in str(log["reason"])
+            if log["field"] == "arrears" and float(log["new_value"]) == 0
         ),
         None,
     )
@@ -223,19 +223,11 @@ def test_zero_manpower_latched_clears_before_continue_no_third_strike(game, fisc
 
 
 @pytest.mark.parametrize("fiscal_path", PATHS)
-@pytest.mark.parametrize("cutover", (0, 1))
 def test_empty_source_delta_cannot_defect_latched_first_or_second_strike(
-    game, fiscal_path, cutover
+    game, fiscal_path
 ):
     db, state, _ = game
     _configure(db, fiscal_path)
-    # cutover 开/关都必须经同一 adapter，禁止 text 直写旁路
-    db.conn.execute(
-        "INSERT INTO fiscal_config(key,value,kind,note) VALUES "
-        "('__army_pay_source_cutover',?,'meta','test') "
-        "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-        (cutover,),
-    )
     for count in (1, 2):
         _set(
             db, fiscal_path, loyalty=15, arrears=6, latched=1,
@@ -307,7 +299,7 @@ def test_non_latched_generic_owner_change_still_works_via_adapter(game):
     assert float(row["arrears"]) == pytest.approx(0)
     logs = _logs(db, ("arrears", "owner_power"))
     writeoff = next(
-        (log for log in logs if log["field"] == "arrears" and "核销" in str(log["reason"])),
+        (log for log in logs if log["field"] == "arrears" and float(log["new_value"]) == 0),
         None,
     )
     owner_log = next((log for log in logs if log["field"] == "owner_power"), None)
@@ -315,16 +307,9 @@ def test_non_latched_generic_owner_change_still_works_via_adapter(game):
     assert writeoff["id"] < owner_log["id"]
 
 
-@pytest.mark.parametrize("cutover", (0, 1))
-def test_transfer_to_ming_rejects_mutiny_count_ge_3(game, cutover):
+def test_transfer_to_ming_rejects_mutiny_count_ge_3(game):
     db, state, _ = game
     _configure(db, "substrate_hub")
-    db.conn.execute(
-        "INSERT INTO fiscal_config(key,value,kind,note) VALUES "
-        "('__army_pay_source_cutover',?,'meta','test') "
-        "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-        (cutover,),
-    )
     db.conn.execute(
         """UPDATE armies SET owner_power='bandits', mutiny_count=3, is_mutinied=0,
            pay_source_region='', province_pay_share=0, central_pay_share=0,
@@ -358,17 +343,10 @@ def test_transfer_to_ming_rejects_mutiny_count_ge_3(game, cutover):
     assert any(c.get("rejected") for c in changes)
 
 
-@pytest.mark.parametrize("cutover", (0, 1))
-def test_transfer_to_ming_requires_d6_pay_source(game, cutover):
-    """外军 mutiny<3 同条合法 D6 → ming：cutover 开/关均原子成功；缺饷源均拒。"""
+def test_transfer_to_ming_requires_d6_pay_source(game):
+    """外军 mutiny<3 同条合法 D6 → ming：缺饷源拒，带饷源则易主。"""
     db, state, _ = game
     _configure(db, "substrate_hub")
-    db.conn.execute(
-        "INSERT INTO fiscal_config(key,value,kind,note) VALUES "
-        "('__army_pay_source_cutover',?,'meta','test') "
-        "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-        (cutover,),
-    )
     db.conn.execute(
         """UPDATE armies SET owner_power='houjin', mutiny_count=0, is_mutinied=0,
            pay_source_region='', province_pay_share=0, central_pay_share=0,
@@ -562,31 +540,8 @@ def test_hub_excluded_persisted_third_strike_defects_once(game, identity):
     assert len(owner_logs2) == 1
 
 
-def test_single_production_zero_manpower_clear_callsite():
-    """生产清闩 helper 仅分叉前一处调用（两 branch-local 已删）。"""
-    import inspect
-    import re
+def test_owner_power_transition_is_the_adapter():
+    """易主走 GameDB.transition_army_owner_power。"""
+    from ming_sim.db import GameDB
 
-    import ming_sim.flows as flows_mod
-
-    src = inspect.getsource(flows_mod.apply_fixed_period_flows)
-    calls = re.findall(r"_clear_zero_manpower_mutiny_latch\(", src)
-    assert len(calls) == 1
-    # 旧态第三振与零兵清闩同缝：pre-fork 循环内调用 helper，非 branch-local 复制 gate
-    assert "_maybe_third_strike_defect(" in src
-    pre_fork = src.split("if db.fiscal_engine() == \"legacy\":", 1)[0]
-    assert "_clear_zero_manpower_mutiny_latch(" in pre_fork
-    assert "_maybe_third_strike_defect(" in pre_fork
-
-
-def test_single_production_owner_power_updater_exists():
-    """仓内生产 UPDATE owner_power 只经 transition_army_owner_power 一处。"""
-    import inspect
-    import ming_sim.db as db_mod
-    import ming_sim.flows as flows_mod
-
-    assert hasattr(db_mod.GameDB, "transition_army_owner_power")
-    # flows 第三振必须调用 adapter，不直写 owner
-    src_flows = inspect.getsource(flows_mod)
-    assert "transition_army_owner_power" in src_flows
-    assert "SET owner_power" not in src_flows
+    assert hasattr(GameDB, "transition_army_owner_power")

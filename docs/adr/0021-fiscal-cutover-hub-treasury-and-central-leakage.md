@@ -10,6 +10,8 @@ status: accepted
 
 > 本 ADR 为 cmr R1（3/3 全 findings：2 P0 / 2 P1 / 4 P2）后的修订版——R1 抓出的「京运补三本账双付」「双轨 isclose 不可能」「hub 事务相位未钉」「outbound 不变式自指」等真洞已在下列决策中收口。
 
+> **#1889 续（2026-10-01）**：决定 1 与决定 10 中「老档续旧引擎、durable bit 把 legacy 隔离留在生产」不再约束代码。后出 Owner 原话要求去掉旧档专用引擎（源卷 `~/.claude/projects/-Users-akagilnc-WorkSpace-Ming-LLM/a45c2e6b-8c9a-4f56-85fb-73324ee40299.jsonl`，uuid `23ee56db-cc2a-41d2-8307-06c99c71a2e9`）。生产预算与月度收支只走 substrate hub；`calc_province_fiscal` 留作测试参照。既存存档文件不删。开局负面修正（旧称遗产）不是旧引擎。
+
 ## 决定
 
 1. **cutover 作用范围 = 仅新开存档（前置定调）。** 退役 `calc_province_fiscal`、改用基座驱动国库，**只对新开游戏生效**（同 `content/buildings.json` 金手指先例）；老存档继续旧引擎。故**不存在「换引擎那一月」的口径跳变**——新游戏从首回合即用基座的真实数。「不跳口径」据此**正确理解为「保留收入科目结构」**（田赋 / 盐 / 商 / 起运 不丢类），**不是「数字与旧引擎一致」**（新基座的全部意义就是给出更真实、更低的数；旧公式的量级本就是脱节占位）。

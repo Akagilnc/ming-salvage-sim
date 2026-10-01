@@ -157,10 +157,9 @@ def _commitment_origin_refs(row: Any, commitment_ref: int) -> Set[str]:
 
 def _sponsor_names_for_commitment(db: Any, row: Any) -> List[str]:
     names: List[str] = []
-    try:
-        roster = json.loads(row["participant_roster"] or "[]")
-    except (TypeError, ValueError):
-        roster = []
+    roster = json.loads(row["participant_roster"] or "[]")
+    if not isinstance(roster, list):
+        raise ValueError("participant_roster 不是名单")
     if isinstance(roster, list):
         for item in roster:
             if isinstance(item, dict) and item.get("tier") == "主办":
@@ -1177,10 +1176,9 @@ def _sponsor_transferred(db: Any, name: str, commitment_row: Any) -> bool:
 
     # 承诺 roster 上记录的 role/office 快照
     expected = ""
-    try:
-        roster = json.loads(commitment_row["participant_roster"] or "[]")
-    except (TypeError, ValueError):
-        roster = []
+    roster = json.loads(commitment_row["participant_roster"] or "[]")
+    if not isinstance(roster, list):
+        raise ValueError("participant_roster 不是名单")
     if isinstance(roster, list):
         for item in roster:
             if not isinstance(item, dict):

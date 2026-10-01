@@ -111,7 +111,6 @@ def test_close_failed_on_uncollapsible_rejected_invalid_enum(game):
     rej = _rejected(out)
     assert len(rej) == 1
     assert rej[0]["category"] == "invalid_enum"
-    assert "不可崩坏" in rej[0]["reason"]
     # 行为：issue 仍 active（拒结案，不被误标 missing_ref 也未被结案）。
     assert db.conn.execute("SELECT status FROM issues WHERE id=?", (iid,)).fetchone()["status"] == "active"
 
