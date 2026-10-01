@@ -20754,11 +20754,20 @@ class GameDB:
         return result
 
     def knowledge_exclusions_for_source(self, source_id: str) -> List[str]:
-        """Return the durable secrecy boundary attached to a source record."""
+        """Return explicit exclusions attached to a source.
+
+        A registered source's ``source_projection`` includes an archive
+        participant deny-list snapshot; read explicit exclusions from its
+        source instead. A projection supplied without a registered source
+        has no synthesized roster boundary and retains its explicit list.
+        """
         source = str(source_id or "")
         row = self.conn.execute(
             "SELECT excluded_names FROM character_knowledge_events WHERE source_id=? "
-            "ORDER BY id LIMIT 1", (source,)
+            "AND (kind <> 'source_projection' OR NOT EXISTS "
+            "(SELECT 1 FROM character_knowledge_sources WHERE source_id=?)) "
+            "ORDER BY id LIMIT 1",
+            (source, source),
         ).fetchone()
         if row is not None:
             try:

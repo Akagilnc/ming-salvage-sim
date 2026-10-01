@@ -477,24 +477,28 @@ def test_disclosed_secret_source_keeps_its_public_projection(game):
     assert disclosed["title"] == "密查公开"
     assert disclosed["body"] == "该案已奉明发"
 
-def test_public_disclosure_drops_private_roster_but_keeps_event_exclusion(game):
+@pytest.mark.parametrize("exclusion_owner", ["event", "source", "projection"])
+def test_public_disclosure_drops_private_roster_but_keeps_event_exclusion(game, exclusion_owner):
     db, state, content = game
     people = [c for c in content.characters.values() if c.office_type not in ("后宫", "宗藩")]
     participant, allowed, excluded = people[:3]
     source_id = "restricted:public-disclosure-roster"
-    db.register_character_knowledge_source(
-        state, [{"character_id": participant.name}], "private_matter", "密查", "旧密令",
-        source_id=source_id,
-    )
-    db.conn.execute(
-        "INSERT INTO character_knowledge_events "
-        "(turn, year, period, character_name, kind, title, body, source_id, excluded_names) "
-        "VALUES (?, ?, ?, '', 'source_projection', '密查', '旧密令', ?, '[]')",
-        (state.turn, state.year, state.period, source_id),
-    )
+    if exclusion_owner == "projection":
+        db.persist_knowledge_items_for_turn(state, [{
+            "source_id": source_id, "title": "密查", "body": "旧密令",
+            "excluded_names": [excluded.name],
+        }])
+    else:
+        db.register_character_knowledge_source(
+            state, [{"character_id": participant.name}], "private_matter", "密查", "旧密令",
+            source_id=source_id,
+            excluded_names=[excluded.name] if exclusion_owner == "source" else [],
+        )
+        # Real materialization synthesizes the participant deny-list snapshot.
+        db.persist_knowledge_items_for_turn(state)
     db.record_public_knowledge_event(
         state, "奉明公开", "公开案情", source_id=source_id,
-        excluded_names=[excluded.name],
+        excluded_names=[excluded.name] if exclusion_owner == "event" else [],
     )
 
     participant_view = db.get_character_knowledge(state, participant.name)

@@ -119,9 +119,11 @@ def test_textual_fact_and_public_saying_land_and_show_in_materials(game, tmp_pat
     _run_round_with_declaration(db, state, sun, declaration, night_id=night_id)
 
     facts = db.textual_facts.readable_materials(subject_kind="character", subject_id=sun)
-    assert any(f.body == arm_injury for f in facts)
+    assert len(facts) == 1
+    assert facts[0].body == arm_injury
     sayings = list_public_sayings(db, involved_character=yuan)
-    assert any(s["body"] == death_rumour for s in sayings)
+    assert len(sayings) == 1
+    assert sayings[0]["body"] == death_rumour
 
     prepared = prepare_scene_materials(db, state, dest_root=tmp_path / "after-facts")
     listed = list_materials(prepared.root)
@@ -173,12 +175,12 @@ def test_undo_reverses_round_on_scene_writes(game):
     assert result.edge_events.rejected == []
 
     assert db.get_character_status(victim)[0] == "imprisoned"
-    assert any(
-        f.body == arm_injury
-        for f in db.textual_facts.readable_materials(
+    fact_ids = {
+        f.id for f in db.textual_facts.readable_materials(
             subject_kind="character", subject_id=partner,
         )
-    )
+    }
+    assert fact_ids
     assert list_public_sayings(db, involved_character=victim)
     assert victim not in an.present_names_at(db, night_id)
     edges_before = db.get_relation_edge_events(source=partner, target=victim)
@@ -191,9 +193,8 @@ def test_undo_reverses_round_on_scene_writes(game):
     db.undo_chat_turn(chat_id)
 
     assert db.get_character_status(victim)[0] == "active"
-    assert not any(
-        f.body == arm_injury
-        for f in db.textual_facts.readable_materials(
+    assert fact_ids.isdisjoint(
+        f.id for f in db.textual_facts.readable_materials(
             subject_kind="character", subject_id=partner,
         )
     )

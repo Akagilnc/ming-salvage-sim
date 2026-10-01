@@ -1778,7 +1778,7 @@ def test_build_secret_orders_supply_feed_uses_fact_materials_not_assembled_effec
     secret_decl = "密令名义声明：边材未动。"
     secret_forecast = "预推不可见:密令供料"
     unsettled_body = "未颁拟旨：不得冒充已落。"
-    fact_body = "文字事实正文：边材已动。\n同一条事实的第二行。"
+    fact_body = "文字事实正文：边材已动。\r\n同一条事实的第二行。  \r"
     db.conn.execute(
         "INSERT INTO staged_declarations "
         "(decree_ref, declaration_json, visible_refs_json, status, created_turn, forecast_text) "
@@ -1889,21 +1889,15 @@ def test_build_secret_orders_supply_feed_uses_fact_materials_not_assembled_effec
     )
     assert str(feed.get("board") or "").strip()
 
-    from ming_sim.materials import _safe_segment, prepare_world_materials, release_material_tree
+    from ming_sim.materials import (
+        _safe_segment, prepare_world_materials, read_material, release_material_tree,
+    )
     prepared = prepare_world_materials(db, state)
     try:
         rel = f"事实/character-{_safe_segment(minister)}.txt"
         assert rel in prepared.index_lines
-        carrier = (prepared.root / rel).read_text(encoding="utf-8")
-        kept = [
-            str(fact.body or "")
-            for fact in db.textual_facts.readable_materials(
-                subject_kind="character", subject_id=minister,
-            )
-            if str(fact.body or "").strip()
-        ]
-        expected = "\n".join(kept)
-        assert carrier == (expected if expected.endswith("\n") else expected + "\n")
+        carrier = read_material(prepared.root, rel)
+        assert carrier == fact_body + "\n"
     finally:
         release_material_tree(prepared.root)
 

@@ -70,7 +70,12 @@ def _write_text(path: Path, body: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     # #1812 P6：raw body 是材料自由正文，不得 rstrip——只补齐末尾换行，不削内容。
     text = str(body or "")
-    path.write_text(text if text.endswith("\n") else text + "\n", encoding="utf-8")
+    # newline="": 自由正文里的 CR/CRLF 原样落盘，不换成系统换行。
+    path.write_text(
+        text if text.endswith("\n") else text + "\n",
+        encoding="utf-8",
+        newline="",
+    )
 
 
 def _resolve_inside(root: Path, rel: str) -> Path:
@@ -257,7 +262,9 @@ def read_material(root: Path, path: str) -> str:
     target = _resolve_inside(root, path)
     if not target.is_file():
         raise FileNotFoundError(path)
-    return target.read_text(encoding="utf-8")
+    # newline="": 与磁盘原文一致。默认文本读会把 CR/CRLF 换成 LF。
+    with target.open(encoding="utf-8", newline="") as stream:
+        return stream.read()
 
 
 def material_tools(root: Any) -> list:

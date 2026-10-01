@@ -57,119 +57,6 @@ def _session(db, state, content, monkeypatch):
     return session
 
 
-def _assert_author_directory_keeps_each_public_record(db, state, minister, secret_did, plain_did):
-    """作者目录是 prepare_gazette_author_materials 的产出，不是事后再滤的第二份树。"""
-    from ming_sim.assets import format_money
-    from ming_sim.materials import (
-        _person_audience_experience,
-        _safe_segment,
-        _secret_order_chat_turn_ids,
-        dossier_id_in_origin,
-        is_secret_order_origin,
-        secret_order_dossier_ids,
-    )
-    from ming_sim.models import period_label
-
-    prepared = month_chain.prepare_gazette_author_materials(db, state)
-    try:
-        secret_dossiers = secret_order_dossier_ids(db)
-
-        def author_fact(fact) -> bool:
-            origin = str(fact.origin_ref or "")
-            if is_secret_order_origin(origin):
-                return False
-            dossier_id = dossier_id_in_origin(origin)
-            return dossier_id is None or dossier_id not in secret_dossiers
-
-        facts = [
-            fact for fact in db.textual_facts.readable_materials(
-                subject_kind="character", subject_id=minister,
-            )
-            if author_fact(fact)
-        ]
-        origins = {str(fact.origin_ref or "") for fact in facts}
-        assert f"dossier:{plain_did}" in origins
-        assert f"dossier:{secret_did}" not in origins
-        assert "secret_order:9" not in origins
-        month_body = "\n".join(
-            f"{fact.occurred_month}：{fact.body}" for fact in facts
-        ) or "（无）"
-        month_rel = f"人物/{_safe_segment(minister)}/按月实况.txt"
-        assert read_material(prepared.root, month_rel) == (
-            month_body if month_body.endswith("\n") else month_body + "\n"
-        )
-        flat_parts = [str(fact.body or "") for fact in facts if str(fact.body or "").strip()]
-        flat_rel = f"事实/character-{_safe_segment(minister)}.txt"
-        if flat_parts:
-            flat = "\n".join(flat_parts)
-            assert read_material(prepared.root, flat_rel) == (
-                flat if flat.endswith("\n") else flat + "\n"
-            )
-        else:
-            assert flat_rel not in list_materials(prepared.root)
-
-        def author_event(item) -> bool:
-            kind = str(item.get("kind") or "")
-            source = str(item.get("source_id") or "")
-            if kind in {"secret_order", "secret_order_brief"}:
-                return False
-            if is_secret_order_origin(source):
-                return False
-            origin = item.get("origin_ref") or source
-            dossier_id = dossier_id_in_origin(origin)
-            return dossier_id is None or dossier_id not in secret_dossiers
-
-        knowledge = db.get_character_knowledge(state, minister)
-        lines = []
-        for item in knowledge.get("events") or []:
-            if not author_event(item):
-                continue
-            title = str(item.get("title") or "")
-            body = str(item.get("body") or "")
-            if not title.strip() and not body.strip():
-                continue
-            lines.append(f"{title}：{body}" if title and body else (title or body))
-        secret_turns = _secret_order_chat_turn_ids(db)
-        audience = [
-            entry for entry in _person_audience_experience(db, minister)
-            if int(entry.get("source_chat_turn_id") or 0) not in secret_turns
-        ]
-        lines.extend(str(entry["body"]) for entry in audience if entry.get("body"))
-        experience = "\n".join(lines) or "（无）"
-        experience_rel = f"人物/{_safe_segment(minister)}/经历.txt"
-        assert read_material(prepared.root, experience_rel) == (
-            experience if experience.endswith("\n") else experience + "\n"
-        )
-
-        board = read_material(prepared.root, "盘面/全局.txt")
-        rows = db.conn.execute(
-            "SELECT year, period, account, delta, category, reason, origin_ref "
-            "FROM economy_ledger WHERE turn=?",
-            (int(state.turn),),
-        ).fetchall()
-        secret_lines = []
-        public_lines = []
-        for row in rows:
-            origin = str(row["origin_ref"] or "")
-            dossier_id = dossier_id_in_origin(origin)
-            rendered = (
-                f"{period_label(int(row['year']), int(row['period']))} "
-                f"{row['account']}{'+' if int(row['delta']) > 0 else ''}{format_money(int(row['delta']))} "
-                f"{row['category']}：{row['reason']}"
-            )
-            if is_secret_order_origin(origin) or (
-                dossier_id is not None and dossier_id in secret_dossiers
-            ):
-                secret_lines.append(rendered)
-            else:
-                public_lines.append(rendered)
-        assert secret_lines and public_lines
-        assert all(line not in board for line in secret_lines)
-        assert any(line in board for line in public_lines)
-    finally:
-        release_material_tree(prepared.root)
-
-
 def test_author_waits_until_rescript_is_done(game, monkeypatch):
     db, state, content = game
     minister = next(iter(content.characters.values())).name
@@ -372,10 +259,21 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
         (turn, json.dumps({"label": "准了", "note": "朱批可见"}, ensure_ascii=False)),
     )
     db.conn.commit()
-    _assert_author_directory_keeps_each_public_record(
-        db, state, minister, secret_did, plain_did,
-    )
     seen = {}
+    import ming_sim.agents as agents
+    real_create_author = agents.create_gazette_author_agent
+
+    def capture_author(llm_config, prepared):
+        # 这是 run_gazette_text 交给作者的那一棵目录，不是另备的一份。
+        files = {
+            path: read_material(prepared.root, path)
+            for path in list_materials(prepared.root)
+        }
+        seen["author_files"] = files
+        seen["author_blob"] = "\n".join([prepared.opening, *files.values()])
+        return real_create_author(llm_config, prepared)
+
+    monkeypatch.setattr(agents, "create_gazette_author_agent", capture_author)
 
     def world(*_a, **_k):
         return "WORLD_PUBLIC_SEGMENT"
@@ -410,6 +308,18 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
 
     assert result.advanced is True
     assert int(state.turn) == turn + 1
+    author_blob = seen["author_blob"]
+    for secret in (
+        _SECRET_FACT, _SECRET_DOSSIER_FACT, _SECRET_AUDIENCE, _SECRET_BRIEF,
+        _SECRET_DOSSIER_TEXT, _SECRET_DOSSIER_LEDGER,
+        "密令分轮应允经历1862", "待决密令经历1862", "密令账", "密令案卷账",
+    ):
+        assert secret not in author_blob
+    from ming_sim.materials import _safe_segment
+    fact_rel = f"事实/character-{_safe_segment(minister)}.txt"
+    assert seen["author_files"][fact_rel] == f"{_PUBLIC_FACT}\n{_PLAIN_DOSSIER_FACT}\n"
+    # 独立写入的普通低语仍须完整搬运，不从筛选 helper 重建经历正文。
+    assert _PRIVATE_KEEP in seen["author_files"][f"人物/{_safe_segment(minister)}/经历.txt"]
     archive = db.get_turn_report_archive(turn)
     assert archive["title"] == _TITLE
     assert archive["report"] == _REPORT

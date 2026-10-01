@@ -16,7 +16,6 @@ from __future__ import annotations
 
 from ming_sim.audience_night import get_open_night, open_night, present_names_at, summon_enter
 from ming_sim.materials import (
-    _is_gazette_public_event,
     list_materials,
     material_tools,
     prepare_character_materials,
@@ -68,23 +67,6 @@ def _layer_paths(root, prefix):
     }
 
 
-def _public_month_text(events, year, period) -> str:
-    """与 _write_public_by_month 同一写法：有标题有正文则「标题：正文」。"""
-    lines = []
-    for item in events:
-        if _is_gazette_public_event(item):
-            continue
-        if int(item.get("year") or 0) != year or int(item.get("period") or 0) != period:
-            continue
-        title = str(item.get("title") or "")
-        body = str(item.get("body") or "")
-        if not (title.strip() or body.strip()):
-            continue
-        lines.append(f"{title}：{body}" if title and body else (title or body))
-    text = "\n".join(lines)
-    return text if text.endswith("\n") else text + "\n"
-
-
 def _public_layer(root, prefix):
     """公开层按既定载体划分：按月公开说法 vs 邸报载体。"""
     shape = _layer_paths(root, prefix)
@@ -112,7 +94,7 @@ def test_scene_person_public_layer_matches_character_and_world_admission(game, t
         turn=int(state.turn) + 3, year=shared_year, period=shared_period,
         metrics=dict(state.metrics),
     )
-    shared = "赈济已奉准。"
+    shared = "  赈济已奉准。\r\n原文第二段。  \r"
     db.record_public_knowledge_event(
         shared_state, "陕西赈务", shared, source_id="judge:shaanxi",
     )
@@ -175,26 +157,24 @@ def test_scene_person_public_layer_matches_character_and_world_admission(game, t
         ), path
     tools = {tool.__name__: tool for tool in material_tools(scene.root)}
     assert set(tools["list_materials"]("").splitlines()) == set(list_materials(scene.root))
-    gazette_rel = next(
-        path for path in list_materials(scene.root)
-        if path.startswith(f"人物/{character.name}/公开说法/邸报/")
-    )
-    assert tools["read_material"](gazette_rel) == read_material(scene.root, gazette_rel)
-
     public_events = db.get_character_knowledge(state, character.name)["public_events"]
-    source_ids = [str(item.get("source_id") or "") for item in public_events]
-    assert "judge:shaanxi" in source_ids
-    assert "judge:henan" in source_ids
+    by_source = {
+        str(item.get("source_id") or ""): item for item in public_events
+    }
+    assert {"judge:shaanxi", "judge:henan"} <= set(by_source)
+    # 独立写入原文作搬运 oracle，不从读侧事件重建渲染器。
+    expected = f"陕西赈务：{shared}\n河南赈务：{shared}\n"
     month_name = f"{shared_year}年{shared_period}月.txt"
-    expected = _public_month_text(public_events, shared_year, shared_period)
-    assert "陕西赈务：赈济已奉准。" in expected.splitlines()
-    assert "河南赈务：赈济已奉准。" in expected.splitlines()
     for root, prefix in (
         (scene.root, f"人物/{character.name}/公开说法/"),
         (solo.root, "公开说法/"),
         (world.root, "公开说法/"),
     ):
-        assert read_material(root, prefix + month_name) == expected
+        rel = prefix + month_name
+        assert (root / rel).read_bytes().decode("utf-8") == expected
+        assert read_material(root, rel) == expected
+        tools = {tool.__name__: tool for tool in material_tools(root)}
+        assert tools["read_material"](rel) == expected
 
 
 def test_rebuild_adds_only_the_new_record_own_carrier(game, tmp_path):
