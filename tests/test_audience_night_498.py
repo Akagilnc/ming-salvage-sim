@@ -10,9 +10,7 @@
 from __future__ import annotations
 from tests.conftest import open_hall_turn
 
-import os
 import sqlite3
-import tempfile
 from pathlib import Path
 
 import pytest
@@ -321,100 +319,94 @@ def test_cross_night_directive_reassigned_to_second_night(game):
 # ── AC9：真实任免 + 候选转档 + 崩溃续跑 ──────────────────────────────
 
 
-def test_close_night_crash_then_reopen_db_resumes_idempotent(content):
+def test_close_night_crash_then_reopen_db_resumes_idempotent(content, tmp_path):
     """AC9：合法任免已 commit、候选转档前 crash → 关 GameDB、重开续跑收齐；
     真实任免落盘、候选真实转档、单条收夜账、幂等无重复、无半提交终态。"""
-    fd, path = tempfile.mkstemp(suffix=".db")
-    os.close(fd)
-    try:
-        db = GameDB(path, content)
-        db.seed_static_data()
-        state = db.load_state()
-        minister = _active_minister(db, content)
-        old_office = db.conn.execute(
-            "SELECT office FROM characters WHERE name=?", (minister,),
-        ).fetchone()["office"]
-        night = an.open_night(db, state)
+    path = str(tmp_path / "crash-reopen.db")
+    db = GameDB(path, content)
+    db.seed_static_data()
+    state = db.load_state()
+    minister = _active_minister(db, content)
+    old_office = db.conn.execute(
+        "SELECT office FROM characters WHERE name=?", (minister,),
+    ).fetchone()["office"]
+    night = an.open_night(db, state)
 
-        new_office = "兵部郎中"
-        pa_id = db.stage_pending_action(
-            state.turn, kind="office", action="任命",
-            minister_name=minister,
-            payload={"text": "测试任免原文",
-                "name": minister, "office": new_office, "office_type": "六部",
-                "faction": "中立", "reason": "测试任免",
-            },
-        )
-        db.mark_pending_night_approved([pa_id], night_id=night["id"])
-        dir_id = db.upsert_pending_directive(
-            state.turn, minister, payload={**_POLICY_FIELDS, "text": "着户部清查边饷", "actor": minister},
-        )
-        db.mark_pending_night_approved([dir_id], night_id=night["id"])
+    new_office = "兵部郎中"
+    pa_id = db.stage_pending_action(
+        state.turn, kind="office", action="任命",
+        minister_name=minister,
+        payload={"text": "测试任免原文",
+            "name": minister, "office": new_office, "office_type": "六部",
+            "faction": "中立", "reason": "测试任免",
+        },
+    )
+    db.mark_pending_night_approved([pa_id], night_id=night["id"])
+    dir_id = db.upsert_pending_directive(
+        state.turn, minister, payload={**_POLICY_FIELDS, "text": "着户部清查边饷", "actor": minister},
+    )
+    db.mark_pending_night_approved([dir_id], night_id=night["id"])
 
-        # crash：任免已 commit（step1）、候选转档（step2）前崩
-        with pytest.raises(AudienceNightError) as ei:
-            an.close_night(
-                db, state, night_id=night["id"], content=content,
-                crash_after_step=CLOSE_STEP_COMMIT_OFFICE,
-            )
-        assert ei.value.code == "close_crash"
-        assert db.conn.execute(
-            "SELECT office FROM characters WHERE name=?", (minister,),
-        ).fetchone()["office"] == old_office
-        assert db.list_decree_dossiers(
-            status="proposed", target_kind="character", target_id=minister
+    # crash：任免已 commit（step1）、候选转档（step2）前崩
+    with pytest.raises(AudienceNightError) as ei:
+        an.close_night(
+            db, state, night_id=night["id"], content=content,
+            crash_after_step=CLOSE_STEP_COMMIT_OFFICE,
         )
-        db.close()  # 进程崩溃：关库
+    assert ei.value.code == "close_crash"
+    assert db.conn.execute(
+        "SELECT office FROM characters WHERE name=?", (minister,),
+    ).fetchone()["office"] == old_office
+    assert db.list_decree_dossiers(
+        status="proposed", target_kind="character", target_id=minister
+    )
+    db.close()  # 进程崩溃：关库
 
-        # 重开 GameDB / state，从游标续跑（跨进程恢复）
-        db2 = GameDB(path, content)
-        state2 = db2.load_state()
-        mid = an.get_night(db2, night["id"])
-        assert mid["status"] == "closing"
-        assert int(mid["close_commit_cursor"]) == CLOSE_STEP_COMMIT_OFFICE
+    # 重开 GameDB / state，从游标续跑（跨进程恢复）
+    db2 = GameDB(path, content)
+    state2 = db2.load_state()
+    mid = an.get_night(db2, night["id"])
+    assert mid["status"] == "closing"
+    assert int(mid["close_commit_cursor"]) == CLOSE_STEP_COMMIT_OFFICE
 
-        result = an.close_night(db2, state2, night_id=night["id"], content=content)
-        assert result["closed"] is True
-        final = an.get_night(db2, night["id"])
-        assert final["status"] == "closed"
-        assert int(final["close_commit_cursor"]) == an.CLOSE_STEP_FINALIZE
-        # 任免案卷仍在（不因重开丢失）且判决前不改盘 + 候选真实转档
-        assert db2.conn.execute(
-            "SELECT office FROM characters WHERE name=?", (minister,),
-        ).fetchone()["office"] == old_office
-        assert db2.list_decree_dossiers(
-            status="proposed", target_kind="character", target_id=minister
-        )
-        assert db2.conn.execute(
-            "SELECT status FROM pending_actions WHERE id=?", (dir_id,),
-        ).fetchone()["status"] == "committed"
-        drafts = db2.conn.execute(
-            "SELECT text FROM turn_directives WHERE turn=? AND status='draft'",
-            (state2.turn,),
-        ).fetchall()
-        assert any("清查边饷" in (r["text"] or "") for r in drafts)
-        # #1838 reopen：无收夜旁白账；再收幂等看夜 status
-        again = an.close_night(db2, state2, night_id=night["id"], content=content)
-        assert again.get("already") is True
-        assert an.get_night(db2, night["id"])["status"] == "closed"
+    result = an.close_night(db2, state2, night_id=night["id"], content=content)
+    assert result["closed"] is True
+    final = an.get_night(db2, night["id"])
+    assert final["status"] == "closed"
+    assert int(final["close_commit_cursor"]) == an.CLOSE_STEP_FINALIZE
+    # 任免案卷仍在（不因重开丢失）且判决前不改盘 + 候选真实转档
+    assert db2.conn.execute(
+        "SELECT office FROM characters WHERE name=?", (minister,),
+    ).fetchone()["office"] == old_office
+    assert db2.list_decree_dossiers(
+        status="proposed", target_kind="character", target_id=minister
+    )
+    assert db2.conn.execute(
+        "SELECT status FROM pending_actions WHERE id=?", (dir_id,),
+    ).fetchone()["status"] == "committed"
+    drafts = db2.conn.execute(
+        "SELECT text FROM turn_directives WHERE turn=? AND status='draft'",
+        (state2.turn,),
+    ).fetchall()
+    assert any("清查边饷" in (r["text"] or "") for r in drafts)
+    # #1838 reopen：无收夜旁白账；再收幂等看夜 status
+    again = an.close_night(db2, state2, night_id=night["id"], content=content)
+    assert again.get("already") is True
+    assert an.get_night(db2, night["id"])["status"] == "closed"
 
-        # 真实收夜只负责成案；结算判决入口消费结构化 verdict 后才物化任免。
-        dossier = db2.list_decree_dossiers(
-            status="proposed", target_kind="character", target_id=minister
-        )[0]
-        db2.apply_dossier_verdicts(
-            state2,
-            [{"dossier_id": dossier["id"], "decision": "promulgated"}],
-            content=content,
-        )
-        assert db2.conn.execute(
-            "SELECT office FROM characters WHERE name=?", (minister,),
-        ).fetchone()["office"] == new_office
-        db2.close()
-    finally:
-        for p in (path, f"{path}_agno.db"):
-            if os.path.exists(p):
-                os.remove(p)
+    # 真实收夜只负责成案；结算判决入口消费结构化 verdict 后才物化任免。
+    dossier = db2.list_decree_dossiers(
+        status="proposed", target_kind="character", target_id=minister
+    )[0]
+    db2.apply_dossier_verdicts(
+        state2,
+        [{"dossier_id": dossier["id"], "decision": "promulgated"}],
+        content=content,
+    )
+    assert db2.conn.execute(
+        "SELECT office FROM characters WHERE name=?", (minister,),
+    ).fetchone()["office"] == new_office
+    db2.close()
 
 
 def test_close_night_only_commits_this_night_approved(game):
@@ -444,58 +436,52 @@ def test_close_night_only_commits_this_night_approved(game):
         "SELECT status FROM pending_actions WHERE id=?", (unapproved,)).fetchone()["status"] == "pending"
 
 
-def test_closing_cursor0_reopen_refuses_new_and_explicit_resume_commits(content):
+def test_closing_cursor0_reopen_refuses_new_and_explicit_resume_commits(content, tmp_path):
     """finding1：status=closing,cursor=0（office 提交前断电）→ 关库重开。
     新召对（open_night 无 content）被响亮拒绝、不隐式封夜丢任免；携 content 的显式续收
     才提交合法已应允任免并封夜。"""
-    fd, path = tempfile.mkstemp(suffix=".db")
-    os.close(fd)
-    try:
-        db = GameDB(path, content)
-        db.seed_static_data()
-        state = db.load_state()
-        minister = _active_minister(db, content)
-        old_office = db.conn.execute(
-            "SELECT office FROM characters WHERE name=?", (minister,),
-        ).fetchone()["office"]
-        night = an.open_night(db, state)
-        new_office = "兵部郎中"
-        pa_id = db.stage_pending_action(
-            state.turn, kind="office", action="任命", minister_name=minister,
-            payload={"text": "测试任免原文", "name": minister, "office": new_office, "office_type": "六部",
-                     "faction": "中立", "reason": "测试"},
-        )
-        db.mark_pending_night_approved([pa_id], night_id=night["id"])
-        # 断电前态：已 durable 写 status=closing、cursor=0，office 尚未提交
-        an._set_night_fields(db, night["id"], status=an.NIGHT_STATUS_CLOSING)
-        db.close()
+    path = str(tmp_path / "migrate-reopen.db")
+    db = GameDB(path, content)
+    db.seed_static_data()
+    state = db.load_state()
+    minister = _active_minister(db, content)
+    old_office = db.conn.execute(
+        "SELECT office FROM characters WHERE name=?", (minister,),
+    ).fetchone()["office"]
+    night = an.open_night(db, state)
+    new_office = "兵部郎中"
+    pa_id = db.stage_pending_action(
+        state.turn, kind="office", action="任命", minister_name=minister,
+        payload={"text": "测试任免原文", "name": minister, "office": new_office, "office_type": "六部",
+                 "faction": "中立", "reason": "测试"},
+    )
+    db.mark_pending_night_approved([pa_id], night_id=night["id"])
+    # 断电前态：已 durable 写 status=closing、cursor=0，office 尚未提交
+    an._set_night_fields(db, night["id"], status=an.NIGHT_STATUS_CLOSING)
+    db.close()
 
-        db2 = GameDB(path, content)
-        state2 = db2.load_state()
-        assert an.get_night(db2, night["id"])["status"] == "closing"
-        # 新召对：open_night 无 content/registry → 响亮拒绝，不隐式封夜、不丢任免
-        with pytest.raises(AudienceNightError) as ei:
-            open_hall_turn(
-                db2, state2, minister, agno_session_id="new", agno_runs_before=0)
-        assert ei.value.code == "night_closing_incomplete"
-        assert an.get_night(db2, night["id"])["status"] == "closing"
-        assert db2.conn.execute(
-            "SELECT status FROM pending_actions WHERE id=?", (pa_id,)).fetchone()["status"] == "pending"
-        # 携 content 的显式续收：合法任免成案并封夜，判决前不改盘
-        an.close_night(db2, state2, night_id=night["id"], content=content)
-        assert an.get_night(db2, night["id"])["status"] == "closed"
-        assert db2.conn.execute(
-            "SELECT office FROM characters WHERE name=?", (minister,)).fetchone()["office"] == old_office
-        assert db2.list_decree_dossiers(
-            status="proposed", target_kind="character", target_id=minister
-        )
-        assert db2.conn.execute(
-            "SELECT status FROM pending_actions WHERE id=?", (pa_id,)).fetchone()["status"] == "committed"
-        db2.close()
-    finally:
-        for p in (path, f"{path}_agno.db"):
-            if os.path.exists(p):
-                os.remove(p)
+    db2 = GameDB(path, content)
+    state2 = db2.load_state()
+    assert an.get_night(db2, night["id"])["status"] == "closing"
+    # 新召对：open_night 无 content/registry → 响亮拒绝，不隐式封夜、不丢任免
+    with pytest.raises(AudienceNightError) as ei:
+        open_hall_turn(
+            db2, state2, minister, agno_session_id="new", agno_runs_before=0)
+    assert ei.value.code == "night_closing_incomplete"
+    assert an.get_night(db2, night["id"])["status"] == "closing"
+    assert db2.conn.execute(
+        "SELECT status FROM pending_actions WHERE id=?", (pa_id,)).fetchone()["status"] == "pending"
+    # 携 content 的显式续收：合法任免成案并封夜，判决前不改盘
+    an.close_night(db2, state2, night_id=night["id"], content=content)
+    assert an.get_night(db2, night["id"])["status"] == "closed"
+    assert db2.conn.execute(
+        "SELECT office FROM characters WHERE name=?", (minister,)).fetchone()["office"] == old_office
+    assert db2.list_decree_dossiers(
+        status="proposed", target_kind="character", target_id=minister
+    )
+    assert db2.conn.execute(
+        "SELECT status FROM pending_actions WHERE id=?", (pa_id,)).fetchone()["status"] == "committed"
+    db2.close()
 
 
 # ── AC10 在飞回话 × 真实 web 入口 → tests/test_web_audience_night_498.py ──
@@ -530,66 +516,60 @@ def test_open_night_atomic_on_dead_roster_injection(game, monkeypatch):
     assert int(n_nights) == 0
 
 
-def test_old_save_migration_night_id_index_order(content):
+def test_old_save_migration_night_id_index_order(content, tmp_path):
     """旧档无 night_id 列：ensure_column 后再建索引，重开不炸。"""
-    fd, path = tempfile.mkstemp(suffix=".db")
-    os.close(fd)
-    try:
-        conn = sqlite3.connect(path)
-        conn.executescript(
-            """
-            CREATE TABLE chat_turns (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                minister_name TEXT NOT NULL,
-                turn INTEGER NOT NULL,
-                year INTEGER NOT NULL,
-                period INTEGER NOT NULL,
-                user_message_id INTEGER,
-                minister_message_id INTEGER,
-                agno_session_id TEXT NOT NULL DEFAULT '',
-                agno_runs_before INTEGER NOT NULL DEFAULT 0,
-                status TEXT NOT NULL DEFAULT 'active',
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                undone_at TEXT
-            );
-            CREATE TABLE game_state (
-                id INTEGER PRIMARY KEY CHECK (id = 1),
-                year INTEGER NOT NULL,
-                period INTEGER NOT NULL,
-                turn INTEGER NOT NULL,
-                turn_phase TEXT NOT NULL DEFAULT 'summoning'
-            );
-            INSERT INTO game_state (id, year, period, turn) VALUES (1, 1628, 1, 1);
-            """
-        )
-        conn.commit()
-        conn.close()
-        # 完整 GameDB 初始化会 ensure 列 + 建索引
-        db = GameDB(path, content)
-        cols = {r["name"] for r in db.conn.execute("PRAGMA table_info(chat_turns)").fetchall()}
-        assert "night_id" in cols
-        assert "night_seq" in cols
-        # 索引存在
-        idxs = {
-            r["name"]
-            for r in db.conn.execute("PRAGMA index_list(chat_turns)").fetchall()
-        }
-        assert "idx_chat_turns_night" in idxs
-        # 可写挂夜轮
-        state = db.load_state()
-        minister = _active_minister(db, content)
-        night = an.open_night(db, state)
-        cid = db.create_chat_turn(state, minister, "migrate", 0, night_id=night["id"])
-        row = db.conn.execute(
-            "SELECT night_id, night_seq, status FROM chat_turns WHERE id=?", (cid,),
-        ).fetchone()
-        assert int(row["night_id"]) == night["id"]
-        assert row["status"] == "generating"
-        db.close()
-    finally:
-        for p in (path, f"{path}_agno.db"):
-            if os.path.exists(p):
-                os.remove(p)
+    path = str(tmp_path / "migrate-reopen.db")
+    conn = sqlite3.connect(path)
+    conn.executescript(
+        """
+        CREATE TABLE chat_turns (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            minister_name TEXT NOT NULL,
+            turn INTEGER NOT NULL,
+            year INTEGER NOT NULL,
+            period INTEGER NOT NULL,
+            user_message_id INTEGER,
+            minister_message_id INTEGER,
+            agno_session_id TEXT NOT NULL DEFAULT '',
+            agno_runs_before INTEGER NOT NULL DEFAULT 0,
+            status TEXT NOT NULL DEFAULT 'active',
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            undone_at TEXT
+        );
+        CREATE TABLE game_state (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            year INTEGER NOT NULL,
+            period INTEGER NOT NULL,
+            turn INTEGER NOT NULL,
+            turn_phase TEXT NOT NULL DEFAULT 'summoning'
+        );
+        INSERT INTO game_state (id, year, period, turn) VALUES (1, 1628, 1, 1);
+        """
+    )
+    conn.commit()
+    conn.close()
+    # 完整 GameDB 初始化会 ensure 列 + 建索引
+    db = GameDB(path, content)
+    cols = {r["name"] for r in db.conn.execute("PRAGMA table_info(chat_turns)").fetchall()}
+    assert "night_id" in cols
+    assert "night_seq" in cols
+    # 索引存在
+    idxs = {
+        r["name"]
+        for r in db.conn.execute("PRAGMA index_list(chat_turns)").fetchall()
+    }
+    assert "idx_chat_turns_night" in idxs
+    # 可写挂夜轮
+    state = db.load_state()
+    minister = _active_minister(db, content)
+    night = an.open_night(db, state)
+    cid = db.create_chat_turn(state, minister, "migrate", 0, night_id=night["id"])
+    row = db.conn.execute(
+        "SELECT night_id, night_seq, status FROM chat_turns WHERE id=?", (cid,),
+    ).fetchone()
+    assert int(row["night_id"]) == night["id"]
+    assert row["status"] == "generating"
+    db.close()
 
 
 # 结算相位不得召对 + 等 gate 期间相位翻转（TOCTOU）被拒 → 真实 WebGame.chat_stream 验证，
