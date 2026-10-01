@@ -1566,7 +1566,7 @@ class GameDB:
         """
         from ming_sim.office_rank import _is_substantive_office
 
-        if not _is_substantive_office(office, office_type):
+        if not _is_substantive_office(office):
             return
         if office_type not in PERSON_TITLE_KINDS:
             self._ensure_office_type_parent(office_type)

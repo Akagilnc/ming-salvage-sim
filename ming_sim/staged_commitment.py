@@ -87,13 +87,27 @@ def parse_staged_year_promise(text: str, *, origin_turn: int) -> List[Dict[str, 
     return stages
 
 
-def normalize_commitment_stages(raw: object) -> List[Dict[str, object]]:
-    """Normalize structured stages payload → durable list.
+def _loads_stages_array(text: str) -> list:
+    """Present stages JSON text. Bad JSON or a non-array raises; never []."""
+    try:
+        data = json.loads(text)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"stages_json 须为 JSON 数组字符串，解析失败：{text[:80]!r}"
+        ) from exc
+    if not isinstance(data, (list, tuple)):
+        raise ValueError(
+            f"stages_json 须为 JSON 数组，得 {type(data).__name__}"
+        )
+    return list(data)
 
-    Accepts list/tuple of dicts, or a JSON array string. Non-JSON free text
-    returns [] here — production CN-year capture goes through
-    ``capture_commitment_stages`` (does not silently treat char-iterated strings
-    as stage rows; that hole is closed in ``stages_to_json``).
+
+def normalize_commitment_stages(raw: object) -> List[Dict[str, object]]:
+    """Normalize a stages payload for capture. Non-JSON free text returns [].
+
+    Production CN-year capture goes through ``capture_commitment_stages``.
+    Durable column reads go through ``load_commitment_stages``: a present
+    corrupt string raises, and this free-text ``[]`` is not that path.
     """
     if raw in (None, "", [], ()):
         return []
@@ -142,6 +156,25 @@ def normalize_commitment_stages(raw: object) -> List[Dict[str, object]]:
     return out
 
 
+def load_commitment_stages(raw: object) -> List[Dict[str, object]]:
+    """Read durable ``stages_json``. Blank stays []. A present bad string raises.
+
+    Same refusal as ``stages_to_json``: unparsable text, or JSON that is not
+    an array. ``None`` / blank / ``[]`` / ``{}`` stay empty. Free-text capture
+    keeps ``normalize_commitment_stages`` returning [].
+    """
+    if raw in (None, "", [], (), {}):
+        return []
+    if isinstance(raw, (list, tuple)):
+        return normalize_commitment_stages(list(raw))
+    if not isinstance(raw, str):
+        raise ValueError(f"stages_json 类型非法：{type(raw).__name__}")
+    text = raw.strip()
+    if not text or text in ("[]", "{}"):
+        return []
+    return normalize_commitment_stages(_loads_stages_array(text))
+
+
 def stages_to_json(stages: object) -> str:
     """Serialize stages for durable DB write.
 
@@ -155,16 +188,7 @@ def stages_to_json(stages: object) -> str:
         text = stages.strip()
         if not text or text in ("[]", "{}"):
             return "[]"
-        try:
-            data = json.loads(text)
-        except (TypeError, ValueError) as exc:
-            raise ValueError(
-                f"stages_json 须为 JSON 数组字符串，解析失败：{text[:80]!r}"
-            ) from exc
-        if not isinstance(data, (list, tuple)):
-            raise ValueError(
-                f"stages_json 须为 JSON 数组，得 {type(data).__name__}"
-            )
+        data = _loads_stages_array(text)
         if len(data) == 0:
             return "[]"
         normalized = normalize_commitment_stages(data)
@@ -269,7 +293,7 @@ def is_stage_derived_end_turn(
     end_turn: int,
 ) -> bool:
     """True when end_turn is purely max(stages.due_turn) display-compat (no independent due)."""
-    norm = normalize_commitment_stages(stages)
+    norm = load_commitment_stages(stages)
     if not norm:
         return False
     try:
@@ -286,7 +310,7 @@ def should_skip_form3_due_for_staged(
     end_turn: int,
 ) -> bool:
     """form③ due_commitments 跳过面：仅段派生 end_turn 改道；独立 end_turn 待裁不吞。"""
-    norm = normalize_commitment_stages(stages_raw)
+    norm = load_commitment_stages(stages_raw)
     if not norm:
         return False
     try:
@@ -319,7 +343,7 @@ def list_due_stages_for_scan(db: Any, turn: int) -> List[Dict[str, object]]:
     ).fetchall()
     due: List[Dict[str, object]] = []
     for row in rows:
-        stages = normalize_commitment_stages(row["stages_json"])
+        stages = load_commitment_stages(row["stages_json"])
         for stage in stages:
             if int(stage["due_turn"]) <= int(turn):
                 due.append({

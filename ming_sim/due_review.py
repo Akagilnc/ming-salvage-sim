@@ -28,7 +28,7 @@ from ming_sim.staged_commitment import (
     TODO_STATUS_CONSUMED,
     TODO_STATUS_PENDING,
     list_due_stages_for_scan,
-    normalize_commitment_stages,
+    load_commitment_stages,
 )
 
 # next_audience_todos.entry_kind 单一分派（#623+#624 合成，禁第二份谓词）：
@@ -99,7 +99,7 @@ def _issue_meta(db: Any, commitment_ref: int) -> Dict[str, object]:
         "id": int(row["id"]),
         "title": str(row["title"] or ""),
         "origin_ref": str(row["origin_ref"] or ""),
-        "stages": normalize_commitment_stages(row["stages_json"]),
+        "stages": load_commitment_stages(row["stages_json"]),
         "stage_text": str(row["stage_text"] or ""),
     }
 

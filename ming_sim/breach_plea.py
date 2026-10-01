@@ -24,7 +24,7 @@ from ming_sim.staged_commitment import (
     ENTRY_KIND_STAGED,
     TODO_STATUS_CONSUMED,
     TODO_STATUS_PENDING,
-    normalize_commitment_stages,
+    load_commitment_stages,
 )
 
 logger = logging.getLogger(__name__)
@@ -109,7 +109,7 @@ def commitment_natural_due_turn(row: Any) -> int:
     stages_raw = row["stages_json"] if "stages_json" in keys else (
         row.get("stages_json") if isinstance(row, dict) else None
     )
-    stages = normalize_commitment_stages(stages_raw)
+    stages = load_commitment_stages(stages_raw)
     if stages:
         return max(int(s["due_turn"]) for s in stages)
     try:
@@ -488,7 +488,7 @@ def assess_foundation_tier(db: Any, commitment_ref: int) -> str:
     row = _issue_row(db, int(commitment_ref))
     if row is None:
         return FOUNDATION_JUST_STARTED
-    stages = normalize_commitment_stages(
+    stages = load_commitment_stages(
         row["stages_json"] if "stages_json" in row.keys() else None
     )
     n_stages = len(stages)

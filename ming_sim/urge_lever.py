@@ -20,7 +20,7 @@ from ming_sim.staged_commitment import (
     ENTRY_KIND_RUSH_REMONSTRANCE,
     TODO_STATUS_CONSUMED,
     TODO_STATUS_PENDING,
-    normalize_commitment_stages,
+    load_commitment_stages,
     stages_to_json,
 )
 from ming_sim.token_stats import tlog
@@ -489,7 +489,7 @@ def rush_staged_commitment_stage(
     if str(row["status"] or "") != "active":
         raise ValueError(f"承诺 issue#{int(commitment_ref)} 状态 {row['status']}，不能催办")
 
-    stages = normalize_commitment_stages(row["stages_json"])
+    stages = load_commitment_stages(row["stages_json"])
     if not stages:
         raise ValueError(f"承诺 issue#{int(commitment_ref)} 无分段，不能催办")
 

@@ -153,18 +153,16 @@ def office_leverage_multiplier(office: object, already_normalized: bool = False)
     return max(office_weights, default=DEFAULT_LEVERAGE_MULTIPLIER)
 
 
-def _is_substantive_office(title: object, office_type: object = "") -> bool:
+def _is_substantive_office(title: object) -> bool:
     """备档认任命事实。品级词表只给品级，认不出不得把职名删成非实职。
 
     已知非官身份（待铨、听用候铨、生员等）不覆盖既有历史。具体职名不是那些身份时
-    就是实职，不要求词干命中，也不要求类别脱离未仕集合——类别落成待铨仍要记。
-    职名为空时不单靠类别建档，避免空白职名盖掉既有历史。
+    就是实职，不要求词干命中。职名为空时不建档，避免空白职名盖掉既有历史。
+    官职类别不参与这一判断。
     """
     text = canonical_office_title(title)
     if not text or any(label and label in text for label in _NON_OFFICES):
         return False
-    # 调用方传入已解析类别。具体职名不因类别落在未仕集合、也不因词表无词干而被否决。
-    _ = office_type
     return True
 
 
@@ -210,7 +208,7 @@ def appointment_break_rank(
                 (person,),
             ).fetchone()
             if archived is not None and _is_substantive_office(
-                archived["office_title"], archived["office_type"],
+                archived["office_title"],
             ):
                 historical = True
                 current_title = canonical_office_title(archived["office_title"])
@@ -219,7 +217,7 @@ def appointment_break_rank(
                 current_title = ""
                 current_type = ""
 
-    if not _is_substantive_office(current_title, current_type):
+    if not _is_substantive_office(current_title):
         broken = new_band <= FIRST_APPOINTMENT_HIGH_OFFICE_THRESHOLD
         return {
             "is_break_rank": broken,

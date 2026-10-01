@@ -30,7 +30,7 @@ from ming_sim.staged_commitment import (
     ENTRY_KIND_RUSH_REMONSTRANCE,
     ENTRY_KIND_STAGED,
     TODO_STATUS_PENDING,
-    normalize_commitment_stages,
+    load_commitment_stages,
     write_due_staged_commitment_todos,
 )
 from ming_sim.urge_lever import (
@@ -247,7 +247,7 @@ def test_rush_staged_commitment_advances_due_and_fills_urge_history(game):
     before_row = db.conn.execute(
         "SELECT stages_json, end_turn FROM issues WHERE id=?", (issue_id,),
     ).fetchone()
-    before = normalize_commitment_stages(before_row["stages_json"])
+    before = load_commitment_stages(before_row["stages_json"])
     old_due = int(before[0]["due_turn"])
     end_turn_before = int(before_row["end_turn"] or 0)
 
@@ -264,7 +264,7 @@ def test_rush_staged_commitment_advances_due_and_fills_urge_history(game):
     after_row = db.conn.execute(
         "SELECT stages_json, end_turn FROM issues WHERE id=?", (issue_id,),
     ).fetchone()
-    after = normalize_commitment_stages(after_row["stages_json"])
+    after = load_commitment_stages(after_row["stages_json"])
     assert int(after[0]["due_turn"]) == state.turn + 3
     # 宪法级：催办唯一写口=stages_json；issues.end_turn 逐位不变
     assert int(after_row["end_turn"] or 0) == end_turn_before
@@ -789,7 +789,7 @@ def test_commitment_rush_via_pending_actions_gate(game):
         db, state, content, stages=stages, origin_ref=f"dossier:{dossier_id}",
         title="闸门催办之诺",
     )
-    before = normalize_commitment_stages(
+    before = load_commitment_stages(
         db.conn.execute(
             "SELECT stages_json FROM issues WHERE id=?", (issue_id,),
         ).fetchone()["stages_json"]
@@ -810,7 +810,7 @@ def test_commitment_rush_via_pending_actions_gate(game):
     applied = db.commit_pending_actions(state, content=content)
     assert any(int(a["id"]) == int(pid) for a in applied)
 
-    after = normalize_commitment_stages(
+    after = load_commitment_stages(
         db.conn.execute(
             "SELECT stages_json FROM issues WHERE id=?", (issue_id,),
         ).fetchone()["stages_json"]
