@@ -509,10 +509,9 @@ def test_load_event_fail_loud_on_bad_gate_key(monkeypatch):
 
 
 def test_load_event_drops_retired_default_terminal_reason(monkeypatch):
-    """#1891：default_terminal_reason 随 shadow 自动置结局桩退役。
+    """#1891：加载器丢掉已退役的 default_terminal_reason，不把它收成事件字段。
 
-    旧档里残留该键不得再被读成程序默认结局——饷率结局只由皇帝批红置定，
-    加载器必须忽略它（不校验、不落字段），否则等于给自动结局留后门。
+    本测试只证明加载结果没有该属性、闭集标签仍在。结局由谁写入不在这里证明。
     """
     import ming_sim.content as content_mod
     raw = [{"id": "e", "title": "t", "kind": "k", "summary": "s",
