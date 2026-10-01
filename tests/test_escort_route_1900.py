@@ -4,9 +4,9 @@ Seams:
 - 转译声明 ``commissions[].grant.escort`` → ADR 0053 ``participant_roster``＋押解投影
   （押解随拨银旨；代码只 normalize 与校验，不猜机械档）
 - 转译声明 ``commissions[].secret_order`` → 密令暂存／成案核；``escort_pending_targets``
-  把同夜暗护指向本夜暂存的拨银交办；该拨银收夜成案后由 ``_resolve_covert_escort_carry``
-  承接，记在拨银案卷载荷 ``escort_sources``（真实入口里密令先成案、id 更小，关联槽的
-  新指旧装不下这个方向；故由后成案者指先成案者，仍单向、不提前成案、不放宽通用校验）
+  把同夜暗护指向本夜尚未成案的拨银交办。成案承接按实际 id 序：密令先成案时记在后成案
+  拨银的 ``escort_sources``；默认批量按 pending id 序、拨银先成案时走关联槽。单向新指旧，
+  不提前成案、不放宽通用校验，也不因目标随后 committed 丢掉已受理的指向
 - 转译声明 ``escort_links`` → ``GameDB.add_dossier_links``（关联真源，单向新指旧）
 - 转译声明 ``escort_results`` → ``GameDB.record_dossier_escort_result``（逐路实况）
 - ``_grant_escort_presence`` / ``list_monthly_grant_reconciliation_targets``
@@ -18,8 +18,7 @@ Seams:
 
 验收对照票面「怎么验」：
 - 关联真实落库（现役声明能立链）
-- 同夜暗护指向同夜暂存拨银（真实顺序：密令应允即先成案、拨银收夜才成案），
-  收夜成案后承接落定
+- 同夜暗护指向同夜暂存拨银。密令单独先提交、以及默认批量按 id 序提交，承接都落定
 - 一令护多路而结果不同 → 各读各路
 - 成功护送后结案仍按该路实际有护对账；正常结案仍核本次账
 - 关联存在但该路未实际获护 → 不作有护
@@ -796,7 +795,7 @@ def test_same_night_covert_escort_carries_onto_grant_dossier(game):
         [ordinary_pending, covert_pending, secret_action_id],
         night_id=night_id, source_chat_turn_id=chat_id,
     )
-    # 真实顺序：密令应允即落地，拨银拟旨收夜才成案。
+    # 本例是密令单独先提交：拨银仍暂存，后成案的拨银记 escort_sources。
     db.commit_pending_actions(state, action_ids=[secret_action_id])
     order = db.list_secret_orders()[0]
     assert order["title"] == raw_title
@@ -1129,28 +1128,40 @@ def test_late_covert_escort_keeps_source_night_after_next_night_opens(game):
     assert _staged_night(secret_id) == night1
     assert _staged_night(not_grant) == night2
 
-    db.commit_pending_actions(state, action_ids=[secret_id])
+    # 真实默认提交：按 pending id 序整批成案。拨银 id 更小，先成案。
+    db.commit_pending_actions(state, content=content)
     order = db.list_secret_orders()[0]
     escort = db.get_dossier_for_secret_order(int(order["id"]))
     escort_dossier = int(escort["id"])
-    assert escort["payload"].get("escort_pending_targets") == [
-        {"pending_action_id": pending_a, "relation_type": "护卫",
-         "note": "暗中加派护送该笔赈银"},
-        {"pending_action_id": pending_b, "relation_type": "护卫",
-         "note": "暗中加派护送后到的赈银"},
-    ]
 
-    dossier_a = _dossier_for_pending(db, state, pending_a)
-    dossier_b = _dossier_for_pending(db, state, pending_b)
-    for dossier_id, note in (
-        (dossier_a, "暗中加派护送该笔赈银"),
-        (dossier_b, "暗中加派护送后到的赈银"),
-    ):
-        assert db.escort_source_dossiers_of(dossier_id) == [{
-            "secret_order_dossier_id": escort_dossier,
-            "relation_type": "护卫",
-            "note": note,
-        }]
+    def _cased_grant(pending_id):
+        row = db.conn.execute(
+            "SELECT id FROM decree_dossiers "
+            "WHERE action_type='grant_allocation' AND pending_action_id=?",
+            (int(pending_id),),
+        ).fetchone()
+        assert row is not None
+        return int(row["id"])
+
+    dossier_a = _cased_grant(pending_a)
+    dossier_b = _cased_grant(pending_b)
+    assert dossier_a < escort_dossier and dossier_b < escort_dossier
+    assert db.escort_source_dossiers_of(dossier_a) == []
+    assert db.escort_source_dossiers_of(dossier_b) == []
+    assert [
+        (row["source_dossier_id"], row["target_dossier_id"], row["relation_type"], row["note"])
+        for row in db.list_dossier_links(escort_dossier)
+    ] == [
+        (escort_dossier, dossier_a, "护卫", "暗中加派护送该笔赈银"),
+        (escort_dossier, dossier_b, "护卫", "暗中加派护送后到的赈银"),
+    ]
+    pairs = [
+        {"source_dossier_id": escort_dossier, "target_dossier_id": dossier_a,
+         "relation_type": "护卫"},
+        {"source_dossier_id": escort_dossier, "target_dossier_id": dossier_b,
+         "relation_type": "护卫"},
+    ]
+    assert db.list_escort_link_pairs() == pairs
     lived = _declare(db, state, {"escort_results": [{
         "dossier_id": dossier_a,
         "escort_source_dossier_id": escort_dossier,
@@ -1158,6 +1169,15 @@ def test_late_covert_escort_keeps_source_night_after_next_night_opens(game):
         "note": "迟到暗护同到",
     }]})
     assert lived.escort_results.rejected == []
+    path = db.path
+    outcomes = db.list_dossier_escort_outcomes(dossier_a)
+    db.close()
+    reopened = GameDB(path, content=content)
+    try:
+        assert reopened.list_escort_link_pairs() == pairs
+        assert reopened.list_dossier_escort_outcomes(dossier_a) == outcomes
+    finally:
+        reopened.close()
 
 
 def test_escort_routes_reach_supply_and_world_materials(game):

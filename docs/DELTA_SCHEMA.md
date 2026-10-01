@@ -399,16 +399,19 @@ personnel_secret 模块产出；与公共 `dossier_participants` **分立**（�
 
 另行暗中加派护送走既有密令声明接缝。被护的拨银交办**同夜**下达时还只是暂存、没有案卷，
 故此项按本夜暂存清单里的 action id 指过去：每项 `{pending_action_id, relation_type∈{护卫,稽核},
-note}`。密令成案时把指向持久化到密令案卷载荷；该拨银收夜成案后由
-`GameDB._resolve_covert_escort_carry` 承接。非拨帑暂存、他夜暂存、已成案拨银、非法关系类型、空说明逐项拒收不承接。
+note}`。受理只收本夜尚未成案的拨帑暂存。非拨帑暂存、他夜暂存、受理前已成案的拨银、
+非法关系类型、空说明逐项拒收，不放宽受理域。密令成案时按身份承接已受理的 id：
+随后 committed 或已成案不再把指向丢掉。尚未成案的留在密令案卷载荷，等拨银成案再落；
+已经成案的当场承接。`GameDB._resolve_covert_escort_carry` 按实际案卷 id 序落笔。
 
-承接落点是**拨银案卷**载荷的 `escort_sources`（每项 `{secret_order_dossier_id, relation_type, note}`），
-不是 0054 关联槽：真实入口里密令应允即先成案（ADR 0038 白名单①）、拨银收夜才成案，
-暗护密令案卷 id 必然更小，关联槽的「新案卷指向旧案卷」装不下这个方向；票面同时禁
-「提前拨银成案」与「双向互写」，故由后成案的拨银案卷记这条单向回指
-（新案卷指旧案卷），通用新指旧校验不受影响。读缝 `GameDB.escort_source_dossiers_of`。
+落点保持单向新指旧，不提前拨银成案、不双向互写、不放宽通用新指旧校验。
+密令单独先提交、拨银后成案时，拨银案卷 id 更大，关联槽装不下这个方向，记在拨银案卷
+载荷 `escort_sources`（每项 `{secret_order_dossier_id, relation_type, note}`），读缝
+`GameDB.escort_source_dossiers_of`。默认批量按 pending id 序提交、拨银先成案时，密令案卷
+id 更大，走既有 `escort_links` 关联槽（新密令指旧拨银），不写 `escort_sources`。
+这不是「密令必然先成案、id 必然更小」——那只是密令单独先提交时的顺序。
 护行主体凭据由 `_escort_source_relation` 按「关联槽那条链 ∪ 承接落点那条记录」合取。
-已记录的旧拨银仍走 `escort_links` 关联槽，不进 `escort_sources`。
+受理前已成案的旧拨银仍只走 `escort_links` 声明入口，不进这条暂存承接。
 「谁护谁」的配对由**单一读口** `GameDB.list_escort_link_pairs()` 出（两处载体取并集，同一对重复时以 0054 槽为准）；权威目标目录的 `escort_link` 行与 `record_monthly_supervision_presence`
 的稽核在场都读它，不让目录、在场与校验闸各读各的。
 

@@ -12221,10 +12221,10 @@ class GameDB:
     def _escort_source_relation(self, grant_dossier_id: int, source_dossier_id: int) -> Optional[str]:
         """「这道拨帑由那道密令护着」的关系类型；无凭据返回 None。
 
-        两种合法凭据（同一事实的两种物理时序）：
-        - **旧拨银**：0054 关联槽，密令案卷指向已存在的拨银案卷。
-        - **同夜拨银**：暗护密令应允即先成案，0054 的新指旧装不下，改由后成案的
-          拨银案卷在载荷 ``escort_sources`` 里记这条单向回指。
+        凭据按实际成案顺序落在既有载体上，都是单向新指旧：
+        - 拨银先成案：0054 关联槽，后成案的密令指向已存在的拨银。
+        - 密令先成案：关联槽装不下这个方向，后成案的拨银在载荷
+          ``escort_sources`` 里记回指。
 
         关系类型一律取自既有真源，经 :meth:`list_escort_link_pairs` 单一读口，
         不接受调用方另报，也不另写一套关联槽／承接记录查询。
@@ -12300,32 +12300,22 @@ class GameDB:
         ).fetchall()
         return [self._coerce_escort_outcome_row(row) for row in rows]
 
-    def _is_staged_grant_commission(
+    def _same_night_grant_commission(
         self, pending_action_id: int, *, night_id: int, turn: int,
     ) -> bool:
-        """这条暂存是不是**本夜尚未成案**的拨帑交办（#1900 同夜暗护的合法指向）。
+        """这条暂存是不是本夜的拨帑交办（身份，不含它现在处在哪一阶段）。
 
-        单一判据＝暂存行自身：所属夜与回合、仍为 pending、还没有拨帑案卷，
-        再加上 kind/action 与既有 ``_directive_dossier_action_type`` 分类缝。
-        他夜暂存、已提交或已成案的拨银不进这条承接；已成案的旧拨银走关联槽。
+        受理时的资格见 :meth:`_is_staged_grant_commission`（还须仍 pending、尚未成案）。
+        成案承接只核这份身份：合法接受的 id 随后 committed 或已成案，指向仍在。
         """
         row = self.conn.execute(
-            "SELECT kind, action, payload_json, status, night_id, turn "
+            "SELECT kind, action, payload_json, night_id, turn "
             "FROM pending_actions WHERE id=?",
             (int(pending_action_id),),
         ).fetchone()
         if row is None:
             return False
-        if str(row["status"] or "") != "pending":
-            return False
         if int(row["night_id"] or 0) != int(night_id) or int(row["turn"] or 0) != int(turn):
-            return False
-        cased = self.conn.execute(
-            "SELECT 1 FROM decree_dossiers "
-            "WHERE action_type='grant_allocation' AND pending_action_id=? LIMIT 1",
-            (int(pending_action_id),),
-        ).fetchone()
-        if cased is not None:
             return False
         if str(row["kind"]) != "directive" or str(row["action"]) != "拟旨":
             return False
@@ -12337,15 +12327,41 @@ class GameDB:
             return False
         return self._directive_dossier_action_type(payload) == "grant_allocation"
 
+    def _is_staged_grant_commission(
+        self, pending_action_id: int, *, night_id: int, turn: int,
+    ) -> bool:
+        """受理判据：本夜尚未成案的拨帑暂存（#1900 同夜暗护的入口资格）。
+
+        他夜暂存、已提交或受理前已成案的拨银不进声明；那些已成案的旧拨银走关联槽。
+        成案承接不再调用本判据。
+        """
+        if not self._same_night_grant_commission(
+            pending_action_id, night_id=night_id, turn=turn,
+        ):
+            return False
+        row = self.conn.execute(
+            "SELECT status FROM pending_actions WHERE id=?",
+            (int(pending_action_id),),
+        ).fetchone()
+        if row is None or str(row["status"] or "") != "pending":
+            return False
+        cased = self.conn.execute(
+            "SELECT 1 FROM decree_dossiers "
+            "WHERE action_type='grant_allocation' AND pending_action_id=? LIMIT 1",
+            (int(pending_action_id),),
+        ).fetchone()
+        return cased is None
+
     def _carry_pending_covert_escort_targets(
         self, secret_order_id: int, payload: Mapping[str, object], *,
         commit: bool = False,
     ) -> None:
-        """密令成案：记下它暗护的**同夜暂存拨银交办**，等那道拨银成案时承接。
+        """密令成案：把已受理的同夜拨银指向交给承接。
 
-        #1900：暗护密令与拨银同夜一道交办下达时，拨银此刻只有暂存、没有案卷。
-        此处只把指向（暂存 action id）持久化到密令案卷载荷（撤回快照内，ADR 0038），
-        真承接由 :meth:`_resolve_covert_escort_carry` 在该拨银成案时做。
+        #1900：受理时拨银还是本夜暂存。此处只按身份留下指向（暂存 action id 落在
+        密令案卷载荷，撤回快照内，ADR 0038）。拨银若已经成案，
+        :meth:`_resolve_covert_escort_carry` 当场承接；若仍未成案，指向留到它成案。
+        不再用受理时的「仍 pending、尚未成案」把已经提交的目标丢掉。
         """
         raw = payload.get("escort_pending_targets")
         if not isinstance(raw, list) or not raw:
@@ -12372,7 +12388,7 @@ class GameDB:
                 )
             except (AttributeError, TypeError, ValueError):
                 continue
-            if not self._is_staged_grant_commission(
+            if not self._same_night_grant_commission(
                 staged_id, night_id=night_id, turn=turn,
             ):
                 continue
@@ -12391,13 +12407,13 @@ class GameDB:
         self._resolve_covert_escort_carry(commit=commit)
 
     def _resolve_covert_escort_carry(self, *, commit: bool = False) -> None:
-        """同夜暗护承接：拨银成案有 id 后，把它记成「本趟由哪道密令暗护」。
+        """同夜暗护承接：拨银案卷已在时，按实际 id 序把「谁护谁」记到新的那一侧。
 
-        方向说明（ADR 0054 单向新指旧）：真实入口里**密令先成案**——应允即落地是
-        夜内直写白名单①，而拨银拟旨只标已应允、收夜才成案，所以暗护密令案卷的 id
-        必然更小。既然「谁护谁」要由后成案者指先成案者，这一条就记在**拨银案卷**
-        载荷的 ``escort_sources`` 上：新案卷指旧案卷，单向、不双向互写，也不碰
-        0054 关联槽的通用新指旧校验（旧拨银那一路仍照旧走关联槽）。
+        方向（ADR 0054 单向新指旧）看两份案卷谁先出现，不预设密令必然先成案。
+        密令单独先提交、拨银还没成案时，后出现的拨银 id 更大，记在它的
+        ``escort_sources``（关联槽要求新指旧，装不下旧密令指向新拨银）。
+        默认批量按 pending id 序提交时，先下达的拨银先成案，后出现的密令 id
+        更大，走既有 ``add_dossier_links``。不双向互写，不放宽新指旧校验。
         """
         rows = self.conn.execute(
             "SELECT id FROM decree_dossiers "
@@ -12431,19 +12447,34 @@ class GameDB:
                     continue
                 for target in targets:
                     grant_dossier_id = int(target["id"])
-                    payload = self._dossier_payload_dict(grant_dossier_id)
-                    sources = payload.get("escort_sources")
-                    sources = list(sources) if isinstance(sources, list) else []
-                    entry = {
-                        "secret_order_dossier_id": escort_dossier_id,
-                        "relation_type": str(item.get("relation_type") or ""),
-                        "note": str(item.get("note") or ""),
-                    }
-                    if entry not in sources:
-                        sources.append(entry)
-                        self._write_dossier_payload_key(
-                            grant_dossier_id, "escort_sources", sources,
+                    relation = str(item.get("relation_type") or "")
+                    note = str(item.get("note") or "")
+                    if grant_dossier_id < escort_dossier_id:
+                        # 拨银先成案：新密令指向旧拨银，走关联槽。
+                        self.add_dossier_links(
+                            escort_dossier_id,
+                            [{
+                                "target_dossier_id": grant_dossier_id,
+                                "relation_type": relation,
+                                "note": note,
+                            }],
+                            commit=False,
                         )
+                    else:
+                        # 密令先成案：新拨银指向旧密令，记在拨银载荷。
+                        payload = self._dossier_payload_dict(grant_dossier_id)
+                        sources = payload.get("escort_sources")
+                        sources = list(sources) if isinstance(sources, list) else []
+                        entry = {
+                            "secret_order_dossier_id": escort_dossier_id,
+                            "relation_type": relation,
+                            "note": note,
+                        }
+                        if entry not in sources:
+                            sources.append(entry)
+                            self._write_dossier_payload_key(
+                                grant_dossier_id, "escort_sources", sources,
+                            )
                 carried = True
             if carried:
                 self._write_dossier_payload_key(
@@ -12454,9 +12485,9 @@ class GameDB:
     def escort_source_dossiers_of(self, dossier_id: int) -> List[Dict[str, object]]:
         """该道拨帑案卷记着的暗护护行（同夜承接落点；空＝没有密令暗护）。
 
-        与 0054 关联槽并存的第二种「谁护谁」载体，只用于**同夜**暗护：那种情形下
-        暗护密令必然先成案，0054 的新指旧方向装不下，由后成案的拨银案卷记这条
-        单向回指。已记录的旧拨银仍走关联槽，不进这里。
+        与 0054 关联槽并存的第二种「谁护谁」载体，只用于密令先成案、拨银后成案：
+        那时新指旧装不进关联槽，由后成案的拨银案卷记这条单向回指。拨银先成案时
+        走关联槽，不进这里。
         """
         payload = self._dossier_payload_dict(int(dossier_id))
         sources = payload.get("escort_sources")
@@ -12571,8 +12602,8 @@ class GameDB:
     def list_escort_link_pairs(self) -> List[Dict[str, object]]:
         """「谁护谁」的**单一配对读口**：0054 关联槽 ∪ 同夜承接记录（#1900）。
 
-        同一事实两处载体：旧拨银走 0054 关联槽；同夜暗护走 ``escort_sources`` 承接
-        记录（密令应允即先成案、关联槽装不下那个方向，见 ADR 0054 #1900 修订段）。
+        同一事实两处载体，按实际成案顺序二选一：拨银先成案走 0054 关联槽；密令先成案
+        走 ``escort_sources``（关联槽装不下旧密令指向新拨银，见 ADR 0054）。
         权威目标目录的 ``escort_link`` 行与转译的护送配对都从这里出——一处读口出配对，
         不让目录与校验闸各读各的（同一事实单一真源）。同一对重复时以 0054 槽为准。
         """
@@ -18708,10 +18739,9 @@ class GameDB:
                         int(dossier["id"]), links, commit=False,
                     )
                 if order_id is not None:
-                    # #1900 同夜暗护：密令声明时同夜拨银交办还只是暂存（无案卷）。
-                    # 把指向存进密令案卷载荷，收夜该拨银成案时由
-                    # ``_resolve_covert_escort_carry`` 承接——不提前拨银成案、
-                    # 不双向互写，方向记在拨银案卷（新案卷指旧案卷）。
+                    # #1900 同夜暗护：已受理的暂存 id 在这里按身份承接。
+                    # 拨银若已被同批先成案，承接走关联槽；若仍未成案，指向留到它成案。
+                    # 不提前成案、不双向互写；哪一侧落笔由实际案卷 id 序决定。
                     self._carry_pending_covert_escort_targets(
                         int(order_id), payload, commit=False,
                     )
