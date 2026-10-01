@@ -53,19 +53,21 @@ def _actor(db):
     ).fetchone()["name"])
 
 
-def _in_transit_grant(db, state, *, amount=ORDERED, text="拨银押解", target_id="shaanxi"):
-    state.metrics["内库"] = max(int(state.metrics.get("内库") or 0), amount + 50)
+def _in_transit_grant(db, state, *, amount=ORDERED, text="拨银押解", target_id="shaanxi",
+                      escort=None):
+    state.metrics["内库"] = max(int(state.metrics.get("内库") or 0), amount * 3 + 50)
+    payload = {
+        "account": "内库", "amount": amount, "execution_surface": "in_transit",
+    }
+    if escort is not None:
+        payload["escort"] = escort
     dossier_id = db.create_decree_dossier(
         state,
         action_type="grant_allocation",
         decree_text=text,
         target_kind="region",
         target_id=target_id,
-        payload={
-            "account": "内库",
-            "amount": amount,
-            "execution_surface": "in_transit",
-        },
+        payload=payload,
     )
     db.apply_dossier_promulgation(state, dossier_id, "promulgated")
     row = db.get_decree_dossier(dossier_id)
@@ -108,83 +110,39 @@ def _record_monthly(db, state, *, progress=None):
     db.conn.commit()
 
 
-def test_engine_arrival_band_strictly_beats_bare_when_escorted(game):
-    """同批三路：逐路有护与否由已落实况定，引擎按既有折损范围给实抵（多救七万两量级）。"""
+def test_engine_arrival_band_strictly_beats_bare_when_escorted():
+    """既有折损范围：有护界严于无护，三十两面额中位差七两。逐路落账由护送测试走真实入口。"""
     from ming_sim.db import grant_arrival_bounds
 
     bare_lo, bare_hi = grant_arrival_bounds(ORDERED, escorted=False)
     escort_lo, escort_hi = grant_arrival_bounds(ORDERED, escorted=True)
-    assert bare_hi < escort_lo  # 界不相交，护行严格更优
-    assert bare_lo == 15 and bare_hi == 18
-    assert escort_lo == 22 and escort_hi == 25
-    # 中位差 = 7（三十万量级下「多救七万两」）
-    bare_mid = (bare_lo + bare_hi) // 2
-    escort_mid = (escort_lo + escort_hi) // 2
-    assert escort_mid - bare_mid == 7
-
-    db, state, content = game
-    g_bare_a = _in_transit_grant(db, state, text="辽东补饷", target_id="liaodong")
-    g_bare_b = _in_transit_grant(db, state, text="宣大补饷", target_id="xuan_da")
-    g_escort = _in_transit_grant(db, state, text="陕西赈银", target_id="shaanxi")
-    _order_id, escort_dossier_id = _escort_order(db, state, [g_escort])
-
-    _record_monthly(db, state, progress=[{
-        "dossier_id": escort_dossier_id,
-        "progress_band": "在途",
-        "memorial_text": "护行路按月核验",
-    }])
-
-    bare_a = db.list_dossier_reconciliations(g_bare_a)[-1]
-    bare_b = db.list_dossier_reconciliations(g_bare_b)[-1]
-    escorted = db.list_dossier_reconciliations(g_escort)[-1]
-    assert bare_a["arrived_amount"] == bare_mid
-    assert bare_b["arrived_amount"] == bare_mid
-    assert escorted["arrived_amount"] == escort_mid
-    assert escorted["loss_amount"] < bare_a["loss_amount"]
-    assert escorted["escorted"] is True
-    assert bare_a["escorted"] is False
-    # 每路实抵恒在本路护行口径区间内
-    for row, flag in ((bare_a, False), (bare_b, False), (escorted, True)):
-        lo, hi = grant_arrival_bounds(ORDERED, escorted=flag)
-        assert lo <= row["arrived_amount"] <= hi
-        assert row["loss_amount"] == ORDERED - row["arrived_amount"]
+    assert bare_hi < escort_lo
+    assert (bare_lo, bare_hi) == (15, 18)
+    assert (escort_lo, escort_hi) == (22, 25)
+    assert (escort_lo + escort_hi) // 2 - (bare_lo + bare_hi) // 2 == 7
 
 
-def test_per_route_storage_restore_and_escort_split(game):
-    """机械差额逐路落被护侧；有护行另走 #566 进展，无护行不产密奏。"""
+def test_escort_progress_stays_on_the_secret_order_and_survives_restore(game):
+    """护行密奏挂密令案卷，不写到拨帑案卷上；重开后原文仍在。"""
     db, state, content = game
     bare = _in_transit_grant(db, state, text="无护行路", target_id="liaodong")
     escorted_grant = _in_transit_grant(db, state, text="有护行路", target_id="shaanxi")
     order_id, escort_dossier_id = _escort_order(db, state, [escorted_grant])
-
-    turn = state.turn
+    memorial = "护行路已核关防，实银可期"
     _record_monthly(db, state, progress=[{
         "dossier_id": escort_dossier_id,
         "progress_band": "在途核验",
-        "memorial_text": "护行路已核关防，实银可期",
+        "memorial_text": memorial,
     }])
 
-    bare_rows = db.list_dossier_reconciliations(bare)
-    escort_rows = db.list_dossier_reconciliations(escorted_grant)
-    assert len(bare_rows) == 1 and bare_rows[0]["turn"] == turn
-    assert len(escort_rows) == 1 and escort_rows[0]["turn"] == turn
-    assert bare_rows[0]["escorted"] is False
-    assert escort_rows[0]["escorted"] is True
-    assert escort_rows[0]["escort_source_dossier_id"] == escort_dossier_id
-
-    # 无护行：不对拨饷案卷写进展；有护行：进展挂密令案卷（#566 容器）
     assert db.list_dossier_progress(bare) == []
     assert db.list_dossier_progress(escorted_grant) == []
     progress = db.list_dossier_progress(escort_dossier_id)
-    assert len(progress) == 1
-    assert "护行路已核关防" in progress[0]["memorial_text"]
+    assert [row["memorial_text"] for row in progress] == [memorial]
 
-    # restore 逐路无损
     path = db.path
     db.close()
     reopened = GameDB(path, content=content)
-    assert reopened.list_dossier_reconciliations(bare) == bare_rows
-    assert reopened.list_dossier_reconciliations(escorted_grant) == escort_rows
     assert reopened.list_dossier_progress(escort_dossier_id) == progress
     stored = reopened.conn.execute(
         "SELECT dossier_progress_json FROM secret_orders WHERE id=?", (order_id,),
@@ -251,7 +209,7 @@ def test_engine_gives_band_midpoint_with_no_proposal_port(game):
 
 
 def test_failed_close_reconciles_only_when_the_silver_already_left(game):
-    """不足额、银两未出库的失败不进核账；足额出库后再失败的，仍按逐路实况核本次。"""
+    """零出库的失败不核账；已经离开账本的银，不论足额与否，都按实付和逐路实况核。"""
     from ming_sim.db import grant_arrival_bounds
 
     db, state, _content = game
@@ -280,7 +238,26 @@ def test_failed_close_reconciles_only_when_the_silver_already_left(game):
     }
 
     paid = _in_transit_grant(db, state, text="已出库后办理失败", target_id="liaodong")
-    _order_id, escort_id = _escort_order(db, state, [paid])
+    state.metrics["内库"] = 7
+    db.conn.execute("UPDATE metrics SET value=7 WHERE key='内库'")
+    partial = db.create_decree_dossier(
+        state,
+        action_type="grant_allocation",
+        decree_text="内帑只剩七两",
+        target_kind="region",
+        target_id="xuan_da",
+        payload={
+            "account": "内库", "amount": ORDERED,
+            "execution_surface": "in_transit",
+        },
+    )
+    assert [int(move["delta"]) for move in db.list_economy_moves_for_dossier(partial)] == [-7]
+    db.apply_dossier_promulgation(state, partial, "promulgated")
+    partial_closed = db.get_decree_dossier(partial)
+    assert partial_closed["status"] == "closed"
+    assert partial_closed["execution_outcome"] == "failed"
+    assert int(state.metrics["内库"]) == 0
+    _order_id, escort_id = _escort_order(db, state, [paid, partial])
     debits = [int(move["delta"]) for move in db.list_economy_moves_for_dossier(paid)]
     assert debits == [-ORDERED]
     db.record_dossier_execution(
@@ -289,6 +266,9 @@ def test_failed_close_reconciles_only_when_the_silver_already_left(game):
     closed = db.get_decree_dossier(paid)
     assert closed["status"] == "closed"
     assert closed["execution_outcome"] == "failed"
+    assert partial not in {
+        int(t["dossier_id"]) for t in db.list_monthly_grant_reconciliation_targets()
+    }
     assert paid not in {
         int(t["dossier_id"]) for t in db.list_monthly_grant_reconciliation_targets()
     }
@@ -298,12 +278,27 @@ def test_failed_close_reconciles_only_when_the_silver_already_left(game):
     }
     assert dossier_id not in scanned
     assert scanned[paid]["escorted"] is True
-    assert scanned[paid]["escort_source_dossier_id"] == escort_id
-    reports = _record_recon(db, turn)
-    assert [int(item["dossier_id"]) for item in reports] == [paid]
+    assert scanned[paid]["ordered_amount"] == ORDERED
+    assert scanned[partial]["escorted"] is True
+    assert scanned[partial]["ordered_amount"] == 7
+    assert scanned[partial]["escort_source_dossier_id"] == escort_id
+    moves_before = db.list_economy_moves_for_dossier(partial)
+    reports = {
+        int(item["dossier_id"]): item for item in _record_recon(db, turn)
+    }
+    assert set(reports) == {paid, partial}
     lo, hi = grant_arrival_bounds(ORDERED, escorted=True)
-    assert reports[0]["arrived_amount"] == (lo + hi) // 2
-    assert reports[0]["loss_amount"] == ORDERED - reports[0]["arrived_amount"]
+    assert reports[paid]["arrived_amount"] == (lo + hi) // 2
+    assert reports[paid]["loss_amount"] == ORDERED - reports[paid]["arrived_amount"]
+    partial_lo, partial_hi = grant_arrival_bounds(7, escorted=True)
+    partial_row = reports[partial]
+    assert partial_row["ordered_amount"] == 7
+    assert partial_row["arrived_amount"] == (partial_lo + partial_hi) // 2
+    assert partial_row["loss_amount"] == 7 - partial_row["arrived_amount"]
+    assert partial_row["arrived_amount"] != (lo + hi) // 2
+    assert db.get_decree_dossier(partial)["execution_outcome"] == "failed"
+    assert db.list_economy_moves_for_dossier(partial) == moves_before
+    assert int(state.metrics["内库"]) == 0
     assert db.list_dossier_reconciliations(dossier_id) == []
 
 

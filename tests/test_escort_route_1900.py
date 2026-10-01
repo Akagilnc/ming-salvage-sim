@@ -33,33 +33,9 @@ from ming_sim.applier import Provenance
 from ming_sim.db import GameDB, grant_arrival_bounds
 from ming_sim.declaration_dispatch import dispatch_declaration
 from tests.dossier_test_helpers import TYPED_COVERT_TASK, create_test_secret_order
-
-ORDERED = 30  # 与 #567 同口径：三十万两量级整数面值
-
-
-def _actor(db) -> str:
-    return str(db.conn.execute(
-        "SELECT name FROM characters WHERE status='active' ORDER BY name LIMIT 1"
-    ).fetchone()["name"])
-
-
-def _in_transit_grant(db, state, *, amount=ORDERED, text="拨银押解", target_id="shaanxi",
-                      escort=None):
-    state.metrics["内库"] = max(int(state.metrics.get("内库") or 0), amount * 3 + 50)
-    payload = {"account": "内库", "amount": amount, "execution_surface": "in_transit"}
-    if escort is not None:
-        payload["escort"] = escort
-    dossier_id = db.create_decree_dossier(
-        state,
-        action_type="grant_allocation",
-        decree_text=text,
-        target_kind="region",
-        target_id=target_id,
-        payload=payload,
-    )
-    db.apply_dossier_promulgation(state, dossier_id, "promulgated")
-    assert db.get_decree_dossier(dossier_id)["status"] == "executing"
-    return dossier_id
+from tests.test_grant_reconciliation_567 import (
+    ORDERED, _actor, _in_transit_grant, _record_recon,
+)
 
 
 def _escort_order(db, state, *, title="护行饷银"):
@@ -82,13 +58,6 @@ def _declare(db, state, declaration, *, night_id=0, chat_turn_id=0):
 def _escort_entry(db, name, *, tier="协办", role="押解护送"):
     """ADR 0053 押解参与人条目（代码不猜机械档，条目自带）。"""
     return {"character_id": name, "tier": tier, "role": role, "delegator_id": None}
-
-
-def _record_monthly(db, turn):
-    """月度对账真入口：沿途损耗归引擎，本口不接提案。"""
-    rows = db.record_monthly_grant_reconciliations(turn)
-    db.conn.commit()
-    return rows
 
 
 def test_declaration_lands_escort_link_and_forbids_reverse_direction(game):
@@ -152,7 +121,7 @@ def test_link_alone_is_not_escort(game):
     targets = db.list_monthly_grant_reconciliation_targets(state.turn)
     assert targets and targets[0]["escorted"] is False
 
-    _record_monthly(db, state.turn)
+    _record_recon(db, state.turn)
     row = db.list_dossier_reconciliations(grant)[-1]
     assert row["escorted"] is False
     assert row["loss_amount"] == ORDERED - row["arrived_amount"]
@@ -180,8 +149,9 @@ def test_per_route_actual_escort_drives_arrival_and_survives_restore(game):
     assert landed[0]["relation_type"] == "护卫"  # 类型取自链，不接受声明另报
     assert landed[0]["note"] == "该路此趟实有护送，随饷同到"
 
-    _record_monthly(db, state.turn)
-    row = db.list_dossier_reconciliations(grant)[-1]
+    _record_recon(db, state.turn)
+    recon_rows = db.list_dossier_reconciliations(grant)
+    row = recon_rows[-1]
     assert row["escorted"] is True
     assert row["escort_source_dossier_id"] == escort_dossier
     assert row["arrived_amount"] > grant_arrival_bounds(ORDERED, escorted=False)[1]
@@ -191,6 +161,7 @@ def test_per_route_actual_escort_drives_arrival_and_survives_restore(game):
     reopened = GameDB(path, content=content)
     assert reopened.list_dossier_escort_outcomes(grant) == landed
     assert reopened.list_escort_outcomes_for_source(escort_dossier) == landed
+    assert reopened.list_dossier_reconciliations(grant) == recon_rows
     stored = reopened.conn.execute(
         "SELECT status FROM secret_orders WHERE id=?", (order_id,),
     ).fetchone()
@@ -223,7 +194,7 @@ def test_one_order_many_routes_reads_each_own_outcome(game):
     assert by_route[guarded]["escorted"] is True
     assert by_route[lost]["escorted"] is False
 
-    _record_monthly(db, state.turn)
+    _record_recon(db, state.turn)
     guarded_row = db.list_dossier_reconciliations(guarded)[-1]
     lost_row = db.list_dossier_reconciliations(lost)[-1]
     assert guarded_row["escorted"] is True
@@ -253,7 +224,7 @@ def test_escorted_route_still_reconciles_after_order_closes(game):
 
     targets = db.list_monthly_grant_reconciliation_targets(state.turn)
     assert targets[0]["escorted"] is True
-    _record_monthly(db, state.turn)
+    _record_recon(db, state.turn)
     row = db.list_dossier_reconciliations(grant)[-1]
     assert row["escorted"] is True
     assert row["escort_source_dossier_id"] == escort_dossier
@@ -339,14 +310,14 @@ def test_cross_month_route_reads_own_turn_only(game):
         }],
     })
     first = state.turn
-    _record_monthly(db, first)
+    _record_recon(db, first)
     first_row = db.list_dossier_reconciliations(grant)[-1]
     assert first_row["escorted"] is True
     assert first_row["turn"] == first
 
     # 次月世界段未报该路 → 该月无实况，按无护口径（不拿上月顶账）
     state.turn = first + 1
-    _record_monthly(db, state.turn)
+    _record_recon(db, state.turn)
     second_row = db.list_dossier_reconciliations(grant)[-1]
     assert second_row["turn"] == first + 1
     assert second_row["escorted"] is False
@@ -359,7 +330,7 @@ def test_cross_month_route_reads_own_turn_only(game):
         "dossier_id": grant, "escort_source_dossier_id": escort_dossier,
         "escorted": True, "note": "第三月又有护送",
     }]})
-    _record_monthly(db, state.turn)
+    _record_recon(db, state.turn)
     third_row = db.list_dossier_reconciliations(grant)[-1]
     assert third_row["turn"] == first + 2
     assert third_row["escorted"] is True
@@ -396,7 +367,7 @@ def test_same_decree_escort_needs_no_secret_order_and_no_link(game):
         "SELECT COUNT(*) AS n FROM decree_dossiers WHERE secret_order_id IS NOT NULL",
     ).fetchone()["n"] == 0
 
-    _record_monthly(db, state.turn)
+    _record_recon(db, state.turn)
     row = db.list_dossier_reconciliations(grant)[-1]
     assert row["escorted"] is True
     assert row["escort_source_dossier_id"] == grant
@@ -426,7 +397,7 @@ def test_undeclared_escort_route_reconciles_bare(game):
     assert db.list_dossier_escort_outcomes(grant) == []
     targets = db.list_monthly_grant_reconciliation_targets(state.turn)
     assert targets[0]["escorted"] is False
-    _record_monthly(db, state.turn)
+    _record_recon(db, state.turn)
     row = db.list_dossier_reconciliations(grant)[-1]
     assert row["escorted"] is False
 
@@ -991,8 +962,18 @@ def test_escort_routes_reach_supply_and_world_materials(game):
 
     from types import SimpleNamespace
     from ming_sim.materials import (
-        character_office_archive_text, prepare_world_materials, release_material_tree,
+        character_office_archive_text, grant_route_reader_facts,
+        prepare_world_materials, release_material_tree,
     )
+
+    def _route_view(person, dossier_id):
+        dossiers = db.list_referenceable_dossiers(person, state.turn)
+        rows = [
+            item for item in grant_route_reader_facts(db, person, dossiers)
+            if int(item["dossier_id"]) == dossier_id
+        ]
+        assert len(rows) == 1
+        return rows[0]
 
     db.record_dossier_progress(grant, int(state.turn), "在途", "奏报银两仍在途")
 
@@ -1015,10 +996,17 @@ def test_escort_routes_reach_supply_and_world_materials(game):
     assert route_note in archives[executor]
     assert route_note in archives[escortee]
     assert route_note not in archives[outsider]
-    assert str(escort_dossier) in archives[executor]
-    assert str(escort_dossier) not in archives[escortee]
-    assert str(escort_dossier) not in archives[outsider]
-    assert "奏报银两仍在途" in archives[outsider]
+    executor_view = _route_view(executor, grant)
+    escortee_view = _route_view(escortee, grant)
+    outsider_view = _route_view(outsider, grant)
+    assert executor_view["source_dossier_id"] == escort_dossier
+    assert executor_view["note"] == route_note
+    assert escortee_view["route_visible"] is True
+    assert escortee_view["source_dossier_id"] is None
+    assert escortee_view["note"] == route_note
+    assert outsider_view["route_visible"] is False
+    assert outsider_view["source_dossier_id"] is None
+    assert outsider_view["memorial_text"] == "奏报银两仍在途"
 
     db.record_dossier_escort_result(
         int(state.turn), dossier_id=grant, escort_source_dossier_id=escort_dossier,
@@ -1036,8 +1024,16 @@ def test_escort_routes_reach_supply_and_world_materials(game):
     assert archives[executor] != archives_after[executor]
     assert archives[escortee] != archives_after[escortee]
     assert archives[outsider] == archives_after[outsider]
-    assert str(escort_dossier) in archives_after[executor]
-    assert str(escort_dossier) not in archives_after[escortee]
+    executor_after = _route_view(executor, grant)
+    escortee_after = _route_view(escortee, grant)
+    outsider_after = _route_view(outsider, grant)
+    assert executor_after["source_dossier_id"] == escort_dossier
+    assert executor_after["note"] == "此趟改记有护"
+    assert escortee_after["source_dossier_id"] is None
+    assert escortee_after["note"] == "此趟改记有护"
+    assert outsider_after["route_visible"] is False
+    assert outsider_after["source_dossier_id"] is None
+    assert outsider_after["memorial_text"] == "奏报银两仍在途"
     assert "此趟改记有护" in archives_after[executor]
     assert "此趟改记有护" in archives_after[escortee]
     assert "此趟改记有护" not in archives_after[outsider]

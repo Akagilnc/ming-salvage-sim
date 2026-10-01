@@ -12622,9 +12622,10 @@ class GameDB:
 
         正常结案不免除本次核账（#1900）：世界段同段提交 fulfilled 的那道拨帑，
         结案后 status 已离开 executing，若只扫 executing 就整趟漏账。带 ``turn``
-        时把本回合结案且已经按面额出库的路一并纳入——办理失败不抹掉已经离开
-        国库的那笔。成案即不足额、钱粮并未足额出库的 failed，仍不进扫描面。
-        不带 ``turn``（供料读侧）只看在途，不翻历史结案。
+        时把本回合结案且已经有银两离开账本的路一并纳入——办理失败不抹掉已经
+        离开账本的那笔。核账基数是实付：足额时与面额相同；不足额但已出库时按
+        实付，未付面额不算损耗。真正零出库的 failed 不进扫描面。不带 ``turn``
+        （供料读侧）只看在途，不翻历史结案。
 
         ``turn`` 给定时逐路只认该回合已落的实际护送；不给取各路最近一次已落实况。
         """
@@ -12672,18 +12673,21 @@ class GameDB:
             if ordered <= 0:
                 continue
             dossier_id = int(row["id"])
+            basis = ordered
             if (
                 str(row["status"] or "") == "closed"
                 and str(row["execution_outcome"] or "") == "failed"
-                and dossier_paid_amount(self, dossier_id) != ordered
             ):
-                continue
+                paid = dossier_paid_amount(self, dossier_id)
+                if paid <= 0:
+                    continue
+                basis = paid
             escorted, source_id, relation, note = self._grant_escort_presence(
                 dossier_id, turn=turn,
             )
             targets.append({
                 "dossier_id": dossier_id,
-                "ordered_amount": ordered,
+                "ordered_amount": basis,
                 "escorted": escorted,
                 "escort_source_dossier_id": source_id,
                 "relation_type": relation,

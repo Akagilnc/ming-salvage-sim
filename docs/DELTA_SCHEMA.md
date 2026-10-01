@@ -382,9 +382,10 @@ personnel_secret 模块产出；与公共 `dossier_participants` **分立**（�
 `loss = ordered - arrived`。「该路是否实有护送」只认逐路已落实况（`dossier_escort_outcomes`，
 由转译 `escort_results` 节落账），不凭案卷关联存在、不凭密令整体成败或结案。仍**不二次扣库**、
 不改原 `economy_move`、不写 0058 进展。
-扫描面带 `turn` 时含**本回合正常结案**的拨帑案卷（`status='closed' AND closed_turn=turn
-AND execution_outcome<>'failed'`）：拨帑正常结案不免除该次核账；成案即不足额（failed）
-者钱粮未出库，仍不进扫描面。不带 `turn` 的供料读侧只看在途，不翻历史结案。
+扫描面带 `turn` 时含**本回合结案**的在途拨帑（`status='closed' AND closed_turn=turn`）：
+正常结案与办理失败都不免除该次核账。核账基数是已经离开账本的实银（`dossier_paid_amount`）：
+足额时等于面额；不足额但已有出库时按实付，再沿既有折损范围与该路实况定实抵和损耗，
+未付面额不计损耗。真正零出库的 failed 不进扫描面。不带 `turn` 的供料读侧只看在途，不翻历史结案。
 
 ### `commissions[].grant.escort` — 押解随拨银旨（#1900）
 

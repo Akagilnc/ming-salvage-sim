@@ -976,11 +976,15 @@ def _reader_sees_route_actual(db: Any, name: str, dossier: dict) -> bool:
     return False
 
 
-def _escort_identity_lines(db: Any, name: str, dossiers: list) -> str:
-    """按身份供料：账本读者看逐路实况与本次核账，外人只看奏报原文。"""
+def grant_route_reader_facts(db: Any, name: str, dossiers: list) -> list[dict[str, object]]:
+    """按身份投影拨帑护行：实况、可引用的来源案卷、本次核账、或仅奏报原文。
+
+    来源案卷号是字段，不是从正文里搜数字。看不见这道密令、或被排除的人，
+    ``source_dossier_id`` 为空；外人 ``route_visible`` 为假，只留奏报原文。
+    """
     if not hasattr(db, "_grant_escort_presence"):
-        return ""
-    lines: list[str] = []
+        return []
+    facts: list[dict[str, object]] = []
     for dossier in dossiers:
         if not isinstance(dossier, dict):
             continue
@@ -989,24 +993,66 @@ def _escort_identity_lines(db: Any, name: str, dossiers: list) -> str:
         dossier_id = int(dossier["id"])
         if _reader_sees_route_actual(db, name, dossier):
             escorted, source_id, _relation, note = db._grant_escort_presence(dossier_id)
-            line = f"- [内部键 {dossier_id}] 护送实况：{'有护' if escorted else '无护'}"
-            if _reader_may_cite_escort_source(db, name, dossier_id, source_id):
-                line += f"；来源案卷 {int(source_id)}"
+            cited = (
+                int(source_id)
+                if _reader_may_cite_escort_source(db, name, dossier_id, source_id)
+                else None
+            )
             history = db.list_dossier_reconciliations(dossier_id)
-            if history:
-                latest = history[-1]
-                line += (
-                    f"；实抵 {int(latest['arrived_amount'])}"
-                    f"；损耗 {int(latest['loss_amount'])}"
-                )
-            if note:
-                line += "；" + note
-            lines.append(line)
+            latest = history[-1] if history else None
+            facts.append({
+                "dossier_id": dossier_id,
+                "route_visible": True,
+                "escorted": bool(escorted),
+                "source_dossier_id": cited,
+                "note": note,
+                "memorial_text": "",
+                "arrived_amount": (
+                    int(latest["arrived_amount"]) if latest is not None else None
+                ),
+                "loss_amount": (
+                    int(latest["loss_amount"]) if latest is not None else None
+                ),
+            })
             continue
         progress = db.list_dossier_progress(dossier_id) if hasattr(db, "list_dossier_progress") else []
         memorial = str(progress[-1].get("memorial_text") or "") if progress else ""
         if memorial:
-            lines.append(f"- [内部键 {dossier_id}] 奏报：{memorial}")
+            facts.append({
+                "dossier_id": dossier_id,
+                "route_visible": False,
+                "escorted": None,
+                "source_dossier_id": None,
+                "note": "",
+                "memorial_text": memorial,
+                "arrived_amount": None,
+                "loss_amount": None,
+            })
+    return facts
+
+
+def _escort_identity_lines(db: Any, name: str, dossiers: list) -> str:
+    """按身份供料：账本读者看逐路实况与本次核账，外人只看奏报原文。"""
+    lines: list[str] = []
+    for fact in grant_route_reader_facts(db, name, dossiers):
+        dossier_id = int(fact["dossier_id"])
+        if fact["route_visible"]:
+            line = (
+                f"- [内部键 {dossier_id}] 护送实况："
+                f"{'有护' if fact['escorted'] else '无护'}"
+            )
+            if fact["source_dossier_id"] is not None:
+                line += f"；来源案卷 {int(fact['source_dossier_id'])}"
+            if fact["arrived_amount"] is not None:
+                line += (
+                    f"；实抵 {int(fact['arrived_amount'])}"
+                    f"；损耗 {int(fact['loss_amount'])}"
+                )
+            if fact["note"]:
+                line += "；" + str(fact["note"])
+            lines.append(line)
+            continue
+        lines.append(f"- [内部键 {dossier_id}] 奏报：{fact['memorial_text']}")
     if not lines:
         return ""
     return "【拨帑护行（按身份）】\n" + "\n".join(lines)
