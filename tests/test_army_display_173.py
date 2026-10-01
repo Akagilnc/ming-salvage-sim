@@ -70,7 +70,10 @@ def test_army_public_exits_approx_arrears_and_hide_split_accounts(game):
     db.conn.commit()
     name = row["name"]
     detail, roster = db.army_detail(name), db.army_roster(filter_names=[name])
-    exits = (detail, roster)
+    report = db.army_report(limit=100)
+    # 按出口结构隔离目标军字段（report 只扫目标段，避开合计饷银）
+    seg = next(p for p in report.split("：", 1)[-1].split("；") if p.startswith(name + "："))
+    exits = (detail, seg, roster)
     joined = "\n".join(exits)
     # 欠饷裸精确小数不得进入真实出口（与 #321 raw 哨兵同形）
     assert name in detail and "12.5" not in joined
@@ -85,6 +88,45 @@ def test_army_public_exits_approx_arrears_and_hide_split_accounts(game):
     for text in exits:
         for bare in scores.values():
             assert not re.search(rf"(?<!\d){bare}(?!\d)", text)
+
+
+def test_army_arrears_presentation_rounds_half_steps_up():
+    """#305: independent expected outputs protect the half-step rounding contract."""
+    from ming_sim.db import _approx_wanliang
+
+    assert _approx_wanliang(12.5) == "欠饷约15万两"
+    assert _approx_wanliang(15) == "欠饷约15万两"
+    assert _approx_wanliang(12) == "欠饷约10万两"
+    assert _approx_wanliang(25) == "欠饷约30万两"
+    assert _approx_wanliang(30) == "欠饷约30万两"
+
+
+def test_army_payload_exposes_approx_arrears_text_not_raw(game):
+    """#321：web 只读 army_payload.arrears_text approximate；numeric arrears 键缺席；raw 12.5 不裸出。"""
+    from ming_sim.db import _player_army_situation
+
+    db, _state, _ = game
+    row = db.conn.execute(
+        "SELECT id FROM armies WHERE owner_power='ming' ORDER BY id LIMIT 1"
+    ).fetchone()
+    db.conn.execute(
+        """
+        UPDATE armies
+        SET arrears=12.5, province_pay_arrears=12.5, central_pay_arrears=0
+        WHERE id=?
+        """,
+        (row["id"],),
+    )
+    db.conn.commit()
+
+    full = db.conn.execute("SELECT * FROM armies WHERE id=?", (row["id"],)).fetchone()
+    expected = _player_army_situation(full, db._army_pay(full))["arrears_text"]
+    payload = {army["id"]: army for army in db.army_payload()}
+    assert "arrears" not in payload[row["id"]]
+    assert payload[row["id"]]["arrears_text"] == expected
+    assert "12.5" not in expected
+
+
 
 
 def test_danger_order_uses_army_needed_for_arrears_months(game):

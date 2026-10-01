@@ -533,3 +533,24 @@ def test_identity_resolves_weishi_and_vassal_aliases_no_duplicate_file(game):
         for r in db.conn.execute("SELECT name FROM characters").fetchall()
     }
     assert after_p == before_p, f"福王别名不得建重档，多出：{after_p - before_p}"
+
+
+def test_choose_minister_real_entry_excludes_weishi_includes_court(game, monkeypatch):
+    """#1317 r2：CLI choose_minister 真入口与可召谓词同口径（排未仕，留真臣）。"""
+    from ming_sim.cli import terminal as term
+
+    db, state, content = game
+    sess = _session_stub(db, content)
+    sess.state = state
+
+    # Active status must not bypass the real CLI admission gate.
+    db.conn.execute(
+        "UPDATE characters SET status='active',location='beizhili',transit_to='' "
+        "WHERE name IN (?,?)", ("史可法", "温体仁"),
+    )
+    db.conn.commit()
+
+    answers = iter(("史可法", "温体仁"))
+    monkeypatch.setattr("builtins.input", lambda *_a, **_k: next(answers))
+    chosen = term.choose_minister(sess)
+    assert chosen is content.characters["温体仁"]
