@@ -25,7 +25,7 @@ _VIEW_TO_SECTION = {
     "region_changes": "region_changes",
     "army_changes": "army_changes",
     "power_changes": "power_changes",
-    "bandit_absorptions": "power_changes",
+    "bandit_absorptions": "bandit_absorptions",
     "applied_person_changes": "applied_person_changes",
     "secret_order_updates": "secret_order_updates",
     "breach_plea_resolutions": "breach_plea_resolutions",
@@ -58,45 +58,16 @@ def section(outcome: Any, key: str) -> Optional[SectionResult]:
     return outcome.sections().get(section_name)
 
 
-def _is_absorption_applied(row: Any) -> bool:
-    """流民投贼落账行带 actual_count；同段的实力增减行没有这个键。"""
-    return isinstance(row, dict) and "actual_count" in row
-
-
-def _is_absorption_rejected(item: RejectedItem) -> bool:
-    """投贼拒收的原件带 requested_count；非法形状的原因以段名前缀起句。
-
-    自由实力正增的拒收原因里也会提到 bandit_absorptions，那是势力段的拒收，
-    不按子串归到投贼。
-    """
-    inner = item.item
-    if isinstance(inner, dict) and (
-        "requested_count" in inner or "actual_count" in inner
-    ):
-        return True
-    return str(item.reason or "").startswith("bandit_absorptions")
-
-
 def view(outcome: Any, key: str) -> List[Any]:
     """取某标签的**已落项**列表。"""
     found = section(outcome, key)
-    rows = list(found.applied) if found is not None else []
-    if key == "bandit_absorptions":
-        return [row for row in rows if _is_absorption_applied(row)]
-    if key == "power_changes":
-        return [row for row in rows if not _is_absorption_applied(row)]
-    return rows
+    return list(found.applied) if found is not None else []
 
 
-def rejected_view(outcome: Any, key: str) -> List[RejectedItem]:
+def rejected_view(outcome: Any, key: str):
     """取某标签的拒收项（canonical ``RejectedItem``）。"""
     found = section(outcome, key)
-    rows = list(found.rejected) if found is not None else []
-    if key == "bandit_absorptions":
-        return [row for row in rows if _is_absorption_rejected(row)]
-    if key == "power_changes":
-        return [row for row in rows if not _is_absorption_rejected(row)]
-    return rows
+    return list(found.rejected) if found is not None else []
 
 
 def shape_rejections(outcome: Any) -> List[RejectedItem]:

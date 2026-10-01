@@ -389,6 +389,14 @@ def _store(run, name: str, result: SectionResult) -> None:
 
 def _capture(run, name: str, result) -> None:
     """登记表一格的返回值落进运行态。局势段额外交回战果物化。"""
+    if name == "power":
+        from ming_sim.entities.power.delta_section import PowerApplyBundle
+
+        if not isinstance(result, PowerApplyBundle):
+            raise RuntimeError("势力段未返回 PowerApplyBundle")
+        _store(run, "power", result.power)
+        _store(run, "bandit_absorptions", result.bandit)
+        return
     if name == "issue":
         from ming_sim.entities.issue.delta_section import IssueApplyBundle
 
@@ -501,6 +509,7 @@ def _build_outcome(run) -> SettlementOutcome:
         region=placed("region_changes"),
         army=_stored(run, "new_armies", "army_changes"),
         power=placed("power"),
+        bandit=placed("bandit_absorptions"),
         person=_stored(run, "person_pre", "person_issue", "person_post"),
         fiscal=FiscalSectionResult(
             removes=placed("fiscal_removes"),

@@ -7,15 +7,26 @@
 
 from __future__ import annotations
 
-from ming_sim.applier import SectionResult
+from ming_sim.applier import RejectedItem, SectionResult
 
 
 def apply(run) -> SectionResult:
     """把本笔（整批或 effects 单笔）的 metric_delta 收成净增减。"""
-    from ming_sim.issues import _apply_metric_dict
+    from ming_sim.entities.metric.apply import declare_metric_pairs
 
-    totals: dict = {}
-    for key, value in run.current_ordered.get("metric_delta") or []:
-        for metric, delta in _apply_metric_dict(run.state, {key: value}, db=run.db).items():
-            totals[metric] = totals.get(metric, 0) + delta
-    return SectionResult(applied=list(totals.items()), rejected=[])
+    totals, refused = declare_metric_pairs(
+        run.state, list(run.current_ordered.get("metric_delta") or []), db=run.db,
+    )
+    source = run.ctx.source
+    return SectionResult(
+        applied=list(totals.items()),
+        rejected=[
+            RejectedItem(
+                item={"metric": key, "value": raw},
+                reason=reason,
+                category=category,
+                source=source,
+            )
+            for key, raw, reason, category in refused
+        ],
+    )

@@ -35,7 +35,6 @@ def apply_declared_person_changes(run, changes, *, phase: str):
                 run.db, run.state, [dict(person_change)],
                 content=run.ctx.content,
                 llm_config=run.ctx.llm_config,
-                external_transaction=True,
                 origin_ref=origin_ref,
                 require_origin=True,
             )

@@ -8,10 +8,19 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Dict, List
 
-from ming_sim.applier import section_from_rows
+from ming_sim.applier import SectionResult, section_from_rows
 from ming_sim.issues import POWER_FIELD_ALIASES, _effect_event_ids, _is_bandit_power_id
+
+
+@dataclass
+class PowerApplyBundle:
+    """势力与流民投贼分属两个子段：拒收归属不靠原因文案。"""
+
+    power: SectionResult
+    bandit: SectionResult
 
 
 def apply(run):
@@ -23,9 +32,10 @@ def apply(run):
             commit=False,
         )
     )
-    power_changes: List[Dict[str, object]] = [
-        *applied_absorptions, *absorption_rejections, *absorption_power_changes,
+    bandit_rows: List[Dict[str, object]] = [
+        *applied_absorptions, *absorption_rejections,
     ]
+    power_changes: List[Dict[str, object]] = list(absorption_power_changes)
 
     power_items = (
         (power_id, changes) for index, (power_id, changes) in enumerate(
@@ -85,4 +95,8 @@ def apply(run):
             origin_ref=origin_ref, require_origin=True,
         ))
 
-    return section_from_rows(power_changes, run.ctx.source, category="power_changes")
+    source = run.ctx.source
+    return PowerApplyBundle(
+        power=section_from_rows(power_changes, source, category="power_changes"),
+        bandit=section_from_rows(bandit_rows, source, category="bandit_absorptions"),
+    )

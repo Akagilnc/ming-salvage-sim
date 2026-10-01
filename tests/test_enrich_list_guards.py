@@ -7,11 +7,11 @@ issue-effect 的 economy（经 _apply_economy_list apply choke）与展示用 _f
 from __future__ import annotations
 
 import ming_sim.cli_backend as cb
+from ming_sim.entities.metric.apply import apply_metric_dict as _apply_metric_dict
 from ming_sim.flows import (
     _apply_class_dict,
     _apply_economy_list,
     _apply_faction_dict,
-    _apply_metric_dict,
 )
 
 

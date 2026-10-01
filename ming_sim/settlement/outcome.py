@@ -85,6 +85,7 @@ class SettlementOutcome:
     region: SectionResult = field(default_factory=lambda: SectionResult([], []))
     army: SectionResult = field(default_factory=lambda: SectionResult([], []))
     power: SectionResult = field(default_factory=lambda: SectionResult([], []))
+    bandit: SectionResult = field(default_factory=lambda: SectionResult([], []))
     person: SectionResult = field(default_factory=lambda: SectionResult([], []))
     fiscal: Optional[FiscalSectionResult] = None
     issue: Optional[IssueSectionResult] = None
@@ -120,6 +121,7 @@ class SettlementOutcome:
             "region_changes": self.region,
             "army_changes": self.army,
             "power_changes": self.power,
+            "bandit_absorptions": self.bandit,
             "applied_person_changes": self.person,
             "dossier_executions": self.dossier_executions,
             "dossier_participants": self.dossier_participants,

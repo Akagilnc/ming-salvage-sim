@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import List
 
-from ming_sim.applier import section_from_rows
+from ming_sim.applier import RejectedItem, SectionResult, section_from_rows
 
 
 def apply_participants(run):
@@ -48,21 +48,25 @@ def apply_executions(run):
     from ming_sim.due_review import dossiers_with_pending_due_review
     from ming_sim.issues import _parse_sqlite_id, terminal_report_facade
 
-    results: List[dict] = []
+    applied: List[object] = []
+    rejected: List[RejectedItem] = []
+    source = run.ctx.source
     due_review_owned = dossiers_with_pending_due_review(run.db, run.state)
+
+    def _refuse(item: object, reason: str, category: str = "invalid_transition") -> None:
+        rejected.append(RejectedItem(
+            item=item if isinstance(item, dict) else {"raw_value": item},
+            reason=reason,
+            category=category,
+            source=source,
+        ))
+
     for item in run.current_extracted.get("dossier_executions") or []:
         if not isinstance(item, dict):
-            results.append({
-                "rejected": True, "category": "invalid_shape", "item": item,
-            })
+            _refuse(item, "执行格须为对象", "invalid_shape")
             continue
         try:
             dossier_id = _parse_sqlite_id(item.get("dossier_id"))
-            if int(dossier_id) in due_review_owned:
-                raise ValueError("正式复核接管：extractor 不得并行写执行格终值")
-            dossier = run.db.get_decree_dossier(dossier_id)
-            if dossier is None or dossier["status"] != "executing":
-                raise ValueError("案卷不存在或不在 executing")
             outcome = str(item.get("outcome") or "").strip()
             if outcome not in {"fulfilled", "degraded", "failed", "transformed"}:
                 raise ValueError("执行结果必须为 fulfilled/degraded/failed/transformed")
@@ -70,16 +74,24 @@ def apply_executions(run):
             note = note if isinstance(note, str) else str(note or "")
             if not note.strip():
                 raise ValueError("执行说明不能为空")
-            # #565：显式 affected_parties 仅校验门闩（契约§5），不驱动机械写路。
-            raw_parties = item["affected_parties"] if "affected_parties" in item else None
-            if raw_parties is not None and outcome in GameDB._JOINT_LIABILITY_TRIGGERS:
-                run.db.validate_joint_liability_affected_parties(raw_parties, outcome)
+            has_parties = "affected_parties" in item
+            raw_parties = item["affected_parties"] if has_parties else None
         except (TypeError, ValueError, KeyError) as exc:
-            results.append({
-                "rejected": True, "category": "invalid_transition",
-                "reason": str(exc), "item": item,
-            })
+            _refuse(item, str(exc))
             continue
+        if int(dossier_id) in due_review_owned:
+            _refuse(item, "正式复核接管：extractor 不得并行写执行格终值")
+            continue
+        dossier = run.db.get_decree_dossier(dossier_id)
+        if dossier is None or dossier["status"] != "executing":
+            _refuse(item, "案卷不存在或不在 executing")
+            continue
+        if raw_parties is not None and outcome in GameDB._JOINT_LIABILITY_TRIGGERS:
+            try:
+                run.db.validate_joint_liability_affected_parties(raw_parties, outcome)
+            except ValueError as exc:
+                _refuse(item, str(exc))
+                continue
         run.db.record_dossier_execution(
             dossier_id, outcome, note, run.state.turn, close=True, commit=False,
         )
@@ -100,5 +112,5 @@ def apply_executions(run):
         run.db.apply_execution_joint_liability(
             run.state, dossier_id, outcome, reason=note, commit=False,
         )
-        results.append({"dossier_id": dossier_id, "outcome": outcome})
-    return section_from_rows(results, run.ctx.source, category="dossier_executions")
+        applied.append({"dossier_id": dossier_id, "outcome": outcome})
+    return SectionResult(applied=applied, rejected=rejected)

@@ -1604,7 +1604,7 @@ def settle_summon_origin(
     候见中 active 再奉旨离京（canonical 行止写缝）；
     续启 applier 成功后按 origin（settle_applied_arrived_summons）。
     commit 由调用方事务所有权决定（与 append_story_ledger 同形）；
-    行止接缝须传 commit=commit_person_change，避免 SAVEPOINT/外层事务中擅自提交。
+    行止接缝传 commit=False：提交归外层事务。
     """
     origin = str(origin_id or "").strip()
     matches = [item for item in list_unsettled_summons(db) if item["origin_id"] == origin]

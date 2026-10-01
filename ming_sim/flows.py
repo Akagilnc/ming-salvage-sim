@@ -541,7 +541,6 @@ def compute_budget_lines(
     return budget
 
 
-ISSUE_METRIC_KEYS = {"民心", "皇威"}
 ISSUE_METRIC_LOCK_CAPS = {
     "民心": 8, "皇威": 5,
 }
@@ -902,40 +901,6 @@ def _debit_substrate_hub_outbound(
             f"边饷hub实拨失败：应扣{debit}万两，实际写入{actual_debit}万两"
         )
     return actual_debit
-
-
-def _apply_metric_dict(
-    state: GameState, metric_delta: Dict[str, object], caps: Optional[Dict[str, int]] = None,
-    db: Optional[GameDB] = None,
-) -> Dict[str, int]:
-    # 传 db 时，民心/皇威 增量先过帝国修正 %（base>=0 ×(1+net/100)，base<0 ×(1-net/100)），再夹 cap。
-    mods = db.legacy_modifiers(state) if db is not None else {}
-    applied: Dict[str, int] = {}
-    # isinstance 守卫：issue-effect 路径（enrich/stored，未过 validate_delta_shape）的 metrics 可能
-    # 被 LLM 给成真值非 dict，`or {}` 兜不住→.items() 抛 AttributeError 崩回合（#117 同类，顶层 delta
-    # 已由 validate_delta_shape 保 dict，此守卫只对未验证的 issue-effect 调用点生效、不误伤）。
-    metric_delta = metric_delta if isinstance(metric_delta, dict) else {}
-    for key, val in metric_delta.items():
-        if key not in ISSUE_METRIC_KEYS:
-            continue
-        try:
-            d = int(val)
-        except (TypeError, ValueError):
-            continue
-        net_pct = int(mods.get(key, 0) or 0)
-        if net_pct and db is not None:
-            d = db.apply_legacy_pct(d, net_pct)
-        if caps and key in caps:
-            cap = caps[key]
-            if d > cap:
-                d = cap
-            elif d < -cap:
-                d = -cap
-        if d == 0:
-            continue
-        state.metrics[key] = int(state.metrics.get(key, 0)) + d
-        applied[key] = applied.get(key, 0) + d
-    return applied
 
 
 def _auto_pay_arrears_by_priority(

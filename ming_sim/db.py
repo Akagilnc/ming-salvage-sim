@@ -12367,7 +12367,8 @@ class GameDB:
                 proposed = amount
             else:
                 proposed = int(targets[dossier_id]["ordered_amount"]) - amount
-            note = str(item.get("note") or "").strip()
+            raw_note = item.get("note")
+            note = raw_note if isinstance(raw_note, str) else str(raw_note or "")
             supplied[dossier_id] = (proposed, note)
 
         # 无在途目标：坏提案已逐项拒收，不落假对账行。
@@ -13349,7 +13350,7 @@ class GameDB:
             PLEA_VERDICT_PERSIST,
             assess_foundation_tier,
         )
-        from ming_sim.flows import _apply_metric_dict
+        from ming_sim.entities.metric.apply import apply_metric_dict as _apply_metric_dict
 
         candidates: List[Tuple[int, str, int]] = []  # (commitment_id, source_kind, dossier_id)
 
@@ -14903,14 +14904,15 @@ class GameDB:
             except (AttributeError, ValueError):
                 target_id = 0
             relation = str(item.get("relation_type") or "") if isinstance(item, dict) else ""
-            note = str(item.get("note") or "").strip() if isinstance(item, dict) else ""
+            raw_note = item.get("note") if isinstance(item, dict) else ""
+            note = raw_note if isinstance(raw_note, str) else str(raw_note or "")
             if self.get_decree_dossier(target_id) is None:
                 rejection = (target_id, relation, note, "关联指向不存在案卷")
             elif target_id >= source_id:
                 rejection = (target_id, relation, note, "案卷关联只允许新案卷指向旧案卷")
             elif relation not in DOSSIER_LINK_TYPES:
                 rejection = (target_id, relation, note, "案卷关联类型非法")
-            elif not note:
+            elif not note.strip():
                 rejection = (target_id, relation, note, "案卷关联说明不能为空")
             if rejection is not None:
                 break
@@ -15700,7 +15702,6 @@ class GameDB:
                     content=content,
                     origin_ref=origin_ref,
                     require_origin=True,
-                    external_transaction=True,
                 )
                 accepted = [
                     r for r in results
@@ -16037,13 +16038,13 @@ class GameDB:
 
         初写仍由 record_dossier_execution 落 judge note；本接口只做增补合并。
         """
-        text = str(fragment or "").strip()
-        if not text:
+        text = str(fragment or "")
+        if not text.strip():
             raise ValueError("说明片段不能为空")
         row = self.get_decree_dossier(dossier_id)
         if row is None:
             raise KeyError(f"案卷不存在：{dossier_id}")
-        existing = str(row.get("execution_note") or "").strip()
+        existing = str(row.get("execution_note") or "")
         if text in existing.split("；"):
             merged = existing
         elif existing:
@@ -16346,7 +16347,6 @@ class GameDB:
             content=content,
             origin_ref=origin_ref,
             require_origin=True,
-            external_transaction=True,
         )
         accepted_p = [
             r for r in results
@@ -16890,7 +16890,6 @@ class GameDB:
                 content=content,
                 origin_ref=origin_ref,
                 require_origin=True,
-                external_transaction=True,
             )
             accepted = [
                 r for r in results
@@ -21828,11 +21827,11 @@ class GameDB:
         turn_row = self.conn.execute("SELECT turn FROM game_state WHERE id=1").fetchone()
         current_turn = int(turn_row["turn"]) if turn_row is not None else int(row["turn_issued"] or 0)
         stamp = f"〔{period_label(year, period)}〕[提交核议] "
-        note = (claim or "").strip()
+        note = claim if isinstance(claim, str) else str(claim or "")
         prev = self.conn.execute(
             "SELECT result FROM secret_orders WHERE id = ?", (int(order_id),)
         ).fetchone()["result"] or ""
-        lines = [ln for ln in prev.split("\n") if ln.strip()]
+        lines = prev.split("\n") if prev else []
         lines.append(f"{stamp}{note}")
         with atomic(self):
             self.conn.execute(
@@ -21873,7 +21872,8 @@ class GameDB:
         ).fetchone()
         if row is None:
             return False  # 已结案或不存在，不追加
-        lines = [ln for ln in str(row["v"] or "").split("\n") if ln.strip()]
+        stored = str(row["v"] or "")
+        lines = stored.split("\n") if stored else []
         if reject_if_same_period and any(ln.startswith(stamp) for ln in lines):
             return False  # 本回合已推过一步，拒
         lines = [ln for ln in lines if not ln.startswith(stamp)]  # 去掉当月旧行

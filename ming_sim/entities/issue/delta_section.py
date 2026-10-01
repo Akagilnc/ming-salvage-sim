@@ -267,7 +267,6 @@ def _resolve_strategic_events(run, issue_summary) -> Dict[str, SectionResult]:
                 run.db, run.state, [dict(item)],
                 content=run.ctx.content,
                 llm_config=run.ctx.llm_config,
-                external_transaction=True,
                 origin_ref=origin_ref,
                 require_origin=True,
             )

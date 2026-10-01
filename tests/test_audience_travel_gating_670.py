@@ -1146,7 +1146,6 @@ def test_waiting_active_departure_respects_strategic_preflight_savepoint(game):
             "origin_ref": "盘面自发",
         }],
         content=content,
-        external_transaction=True,
     )
     assert results and not results[0].get("rejected")
     # 预检内可见暂态写，但不得 durable commit 掉 SAVEPOINT。
@@ -1188,7 +1187,6 @@ def test_waiting_active_departure_external_rollback_reverts_transit_and_settle(g
             "origin_ref": "盘面自发",
         }],
         content=content,
-        external_transaction=True,
     )
     assert results and not results[0].get("rejected")
     assert _travel_row(db, person.name)["transit_to"] == "shaanxi"

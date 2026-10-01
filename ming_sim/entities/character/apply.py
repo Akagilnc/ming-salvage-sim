@@ -17,13 +17,11 @@ def apply_person_changes(
     llm_config: Any = None,
     source: str = "system_simulation",
     derived_from: str = "",
-    external_transaction: bool | None = None,
     origin_ref: str = "",
     require_origin: bool = False,
 ) -> List[Dict[str, object]]:
     import json
 
-    from ming_sim.applier import atomic
     from ming_sim.appointment_tenure import appointment_tenure_from
     from ming_sim.person_archive_contract import (
         PERSON_ALLEGIANCE_CHANGE_WAYS,
@@ -36,13 +34,8 @@ def apply_person_changes(
         _load_pending_gate_valid_regions,
         _parse_sqlite_id,
         _payload_owned_person_duplicate,
-        _register_runtime_rollback_snapshot,
         apply_office_appointment,
     )
-
-    if external_transaction is None:
-        external_transaction = db.conn.in_transaction
-    commit_person_change = not external_transaction
 
     def rejected(
         item: Dict[str, object],
@@ -124,7 +117,7 @@ def apply_person_changes(
             derived_from=str(result.get("derived_from") or derived_from or ""),
             normalized=normalized,
             source=source,
-            commit=commit_person_change if commit is None else commit,
+            commit=False if commit is None else commit,
             origin_ref=origin_ref,
         )
 
@@ -167,7 +160,6 @@ def apply_person_changes(
         return results
 
     applied: List[Dict[str, object]] = []
-    needs_person_change_commit = False
     person_statuses = {
         "active",
         "offstage",
@@ -226,7 +218,6 @@ def apply_person_changes(
             }
             applied.append(result)
             log_applied(result, item, commit=False)
-            needs_person_change_commit = True
             continue
 
         if action == "性情":
@@ -266,7 +257,6 @@ def apply_person_changes(
             }
             applied.append(result)
             log_applied(result, item, commit=False)
-            needs_person_change_commit = True
             continue
 
         if action in {"处置", "罢黜"}:
@@ -325,7 +315,7 @@ def apply_person_changes(
                 reason_text,
                 reason_code=reason_code if reason_code else None,
                 content=content,
-                commit=commit_person_change,
+                commit=False,
             )
             result = {
                 "name": name,
@@ -416,7 +406,7 @@ def apply_person_changes(
                                 or ""
                             ).strip(),
                             llm_config=llm_config,
-                            commit=commit_person_change,
+                            commit=False,
                         ),
                     ),
                 }
@@ -495,7 +485,7 @@ def apply_person_changes(
                         or ""
                     ).strip(),
                     llm_config=llm_config,
-                    commit=False if derive_label else commit_person_change,
+                    commit=False,
                 ),
             )
             wrapped = {"动作": effective_action, **result}
@@ -540,8 +530,6 @@ def apply_person_changes(
             for displacement_result in displaced_talent_pool_results(wrapped.get("displaced")):
                 applied.append(displacement_result)
                 log_applied(displacement_result, item, commit=False if derive_label else None)
-            if derive_label and commit_person_change:
-                db.conn.commit()
             continue
 
         if action == "易主":
@@ -660,7 +648,7 @@ def apply_person_changes(
                         "reason": str(item.get("reason") or ""),
                     }
                 ],
-                commit=commit_person_change,
+                commit=False,
             )
             if not power_results:
                 applied.append(rejected(item, "易主 未产生变更", "noop"))
@@ -676,7 +664,7 @@ def apply_person_changes(
             backlash_results = db.apply_power_deltas(
                 state,
                 backlash,
-                commit=commit_person_change,
+                commit=False,
                 origin_ref=origin_ref,
                 require_origin=True,
             ) if backlash else []
@@ -703,8 +691,6 @@ def apply_person_changes(
                     (new_title, "身名分", str(item.get("reason") or ""), state.turn, name),
                 )
                 db.set_character_transit(name, content=content, commit=False)
-                if commit_person_change:
-                    db.conn.commit()
                 wrapped = {"动作": action, "方式": way, "反噬": backlash, **result}
                 wrapped["new_title"] = new_title
                 if any(r.get("rejected") for r in backlash_results if isinstance(r, dict)):
@@ -767,11 +753,10 @@ def apply_person_changes(
                 or not is_capital_location(location)
             )
             if leave_waiting:
-                own_tx = commit_person_change
-                if own_tx:
-                    _register_runtime_rollback_snapshot(
-                        db, state, content,
-                    )
+                # 行止 + 行迹 + 召旨结清是同一笔。无外层事务时用 atomic 包住，
+                # 结清失败整笔回滚；外层已持有事务时不另起、不提交。
+                from ming_sim.applier import atomic
+                from ming_sim.issues import _register_runtime_rollback_snapshot
 
                 def _write_leave_waiting() -> None:
                     db.set_character_transit(
@@ -794,12 +779,12 @@ def apply_person_changes(
                         db, name, commit=False,
                     )
 
-                if own_tx:
+                if db.conn.in_transaction:
+                    _write_leave_waiting()
+                else:
+                    _register_runtime_rollback_snapshot(db, state, content)
                     with atomic(db):
                         _write_leave_waiting()
-                else:
-                    # 外层事务/SAVEPOINT 拥有所有权：不在本缝起 atomic。
-                    _write_leave_waiting()
             else:
                 db.set_character_transit(
                     name,
@@ -809,7 +794,7 @@ def apply_person_changes(
                     speed_factor=speed,
                     start_turn=new_transit_start_turn,
                     content=content,
-                    commit=commit_person_change,
+                    commit=False,
                 )
                 applied.append(result)
                 log_applied(result, item)
@@ -818,7 +803,5 @@ def apply_person_changes(
         applied.append(
             rejected(item, "人物变更动作写路径未接", "invalid_transition")
         )
-    if needs_person_change_commit and commit_person_change:
-        db.conn.commit()
     return applied
 
