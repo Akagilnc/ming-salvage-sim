@@ -524,39 +524,6 @@ def _snapshot_for_failure(ticket: Any) -> Dict[str, Any]:
     return {"pending_action_id": 0}
 
 
-def _forecast_failure_current(db: Any, snapshot: Optional[Dict[str, Any]]) -> bool:
-    """迟到失败只认仍有效的同一版本：未作废、未改版、尚未暂存或落账。"""
-    snap = snapshot or {}
-    if "night_id" not in snap or "version" not in snap:
-        return False
-    action_id = int(snap.get("pending_action_id") or 0)
-    if action_id <= 0 or not hasattr(db, "conn"):
-        return False
-    row = db.conn.execute(
-        "SELECT status, kind, action, night_approved, night_id, version "
-        "FROM pending_actions WHERE id=?",
-        (action_id,),
-    ).fetchone()
-    if row is None:
-        return False
-    if str(row["status"] or "") not in {"pending", "committed"}:
-        return False
-    if str(row["kind"] or "") != "directive" or str(row["action"] or "") != "拟旨":
-        return False
-    if int(row["night_approved"] or 0) != 1:
-        return False
-    if int(row["night_id"] or 0) != int(snap["night_id"]):
-        return False
-    if int(row["version"] or 0) != int(snap["version"]):
-        return False
-    ref = str(snap.get("decree_ref") or "") or pending_action_decree_ref(
-        action_id, int(row["version"] or 1),
-    )
-    if db.staged_declarations.staged_for(ref) or db.staged_declarations.is_settled(ref):
-        return False
-    return True
-
-
 def _persist_forecast_failure(
     queue: Any, ticket: Any, session: Any, snapshot: Optional[Dict[str, Any]], exc: BaseException,
 ) -> None:
@@ -576,12 +543,10 @@ def _persist_forecast_failure(
 def record_forecast_failure(
     session: Any, snapshot: Optional[Dict[str, Any]], exc: BaseException,
 ) -> int:
-    """把夜里预推未成记到来源轮。429 不记。作废、改版或已暂存的迟到失败不记。"""
+    """把夜里预推未成记到来源轮。429 不记。版本作废归 #1846，这里不另设版本门。"""
     if _is_provider_rate_limit(exc):
         return 0
     db = session.db
-    if not _forecast_failure_current(db, snapshot):
-        return 0
     ctid = _forecast_source_turn(db, snapshot)
     if ctid <= 0:
         return 0
@@ -659,29 +624,8 @@ def _unfinished_forecast_actions(db: Any, chat_turn_id: int) -> list[int]:
     return out
 
 
-def _audience_pack_facts(pack_path: str) -> tuple[str, str]:
-    """读既有夜域错误包上的真因与失败类别。包缺失时类别按代码异常。"""
-    message = ""
-    failure_class = "code_exception"
-    path = str(pack_path or "")
-    if not path:
-        return message, failure_class
-    try:
-        payload = json.loads((Path(path) / "manifest.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return message, failure_class
-    if not isinstance(payload, dict):
-        return message, failure_class
-    message = str(payload.get("message") or "")
-    detail = payload.get("detail")
-    klass = str(detail.get("failure_class") or "") if isinstance(detail, dict) else ""
-    if klass in {"model_exhausted", "code_exception"}:
-        failure_class = klass
-    return message, failure_class
-
-
-def hand_forecast_failure_to_month(db: Any, dossier: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """来源轮仍挂着未处理的非 429 预推失败时，把真因交给当前过月。不在这里清相位。"""
+def source_forecast_failure(db: Any, dossier: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """来源轮仍挂着预推失败相位时，只交核心列。不读错误包，不合成类别。"""
     pending_id = int((dossier or {}).get("pending_action_id") or 0)
     if pending_id <= 0 or not hasattr(db, "conn"):
         return None
@@ -706,38 +650,11 @@ def hand_forecast_failure_to_month(db: Any, dossier: Dict[str, Any]) -> Optional
     phase = str(turn["post_reply_recovery"] or "")
     if phase not in {FORECAST_RECOVERY_PHASE, f"recovering:{FORECAST_RECOVERY_PHASE}"}:
         return None
-    message, failure_class = _audience_pack_facts(str(turn["post_reply_error_pack_path"] or ""))
-    if not message:
-        message = FORECAST_RECOVERY_PHASE
-    if failure_class == "model_exhausted":
-        exc: BaseException = LLMUnavailable(message, stage="edict_forecast")
-    else:
-        exc = RuntimeError(message)
     return {
         "chat_turn_id": ctid,
-        "kind": failure_class,
-        "exc": exc,
+        "error_pack_path": str(turn["post_reply_error_pack_path"] or ""),
         "decree_ref": ref,
     }
-
-
-def schedule_unfinished_forecasts(session: Any, chat_turn_id: int) -> bool:
-    """把该轮仍未预成的拟旨交回现役后台调度。返回是否还有未成。
-
-    用各动作自己的夜与真实版本领票。不在调用方线程里重跑模型链。
-    """
-    db, ctid = session.db, int(chat_turn_id or 0)
-    if ctid <= 0:
-        return False
-    bind_forecast_owner(session)
-    for action_id in _unfinished_forecast_actions(db, ctid):
-        row = db.conn.execute(
-            "SELECT night_id FROM pending_actions WHERE id=?", (action_id,),
-        ).fetchone()
-        night_id = int(row["night_id"] or 0) if row is not None else 0
-        if night_id > 0:
-            schedule_pending_decree_forecast(session, action_id, night_id=night_id)
-    return bool(_unfinished_forecast_actions(db, ctid))
 
 
 def schedule_pending_decree_forecast(

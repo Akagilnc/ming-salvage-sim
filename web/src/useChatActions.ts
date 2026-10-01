@@ -350,9 +350,7 @@ export function useChatActions({
       if (selectedMinisterRef.current !== initiatingPanelName) return;
       applyHistory(data.history);
         setCanUndoLastChat(!!data.can_undo_last_chat);
-      if (phase === "decree_forecast") {
-        setChatNotice("已重新排上。");
-      } else {
+      if (phase !== "decree_forecast") {
         setReplyRetries((current) => current.filter((entry) => entry.chat_turn_id !== chatTurnId));
         setChatNotice("本轮恢复完成。");
       }

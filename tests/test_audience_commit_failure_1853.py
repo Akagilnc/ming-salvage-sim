@@ -290,8 +290,8 @@ def test_closed_secret_order_rush_fails_one_item_and_commits_the_rest(game):
     assert db.get_secret_order(closed)["status"] == "done"
 
 
-def test_night_forecast_exhaustion_resumes_from_real_consumer(game, monkeypatch, tmp_path):
-    """非 429 耗尽留下相位和错误包。重试后同一交办只暂存一次，相位清掉。"""
+def test_night_forecast_exhaustion_stays_on_source_turn(game, monkeypatch, tmp_path):
+    """非 429 耗尽在来源轮留下相位和错误包。重试不得整链重跑成已暂存。"""
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
     db, state, content = game
     night = open_night(db, state)
@@ -354,19 +354,14 @@ def test_night_forecast_exhaustion_resumes_from_real_consumer(game, monkeypatch,
     _consumer(sess).retry_interrupted_reply("殿上", ctid)
     _drain(sess)
 
-    stored = db.staged_declarations.staged_for(ref)
-    assert len(stored) == 1 and stored[0].verdict["decision"] == "promulgated"
-    assert db.conn.execute(
-        "SELECT COUNT(*) FROM decree_dossiers WHERE pending_action_id=?",
-        (pending_id,),
-    ).fetchone()[0] == 0
+    assert db.staged_declarations.staged_for(ref) == ()
     assert int(db.conn.execute(
         "SELECT id FROM pending_actions WHERE id=?", (pending_id,),
     ).fetchone()["id"]) == pending_id
     turn = db.conn.execute(
         "SELECT post_reply_recovery FROM chat_turns WHERE id=?", (ctid,),
     ).fetchone()
-    assert turn["post_reply_recovery"] == ""
+    assert turn["post_reply_recovery"] == forecast_mod.FORECAST_RECOVERY_PHASE
 
 
 def test_unhandled_forecast_failure_stops_month_without_replay(game, monkeypatch, tmp_path):
@@ -446,124 +441,11 @@ def test_unhandled_forecast_failure_stops_month_without_replay(game, monkeypatch
     ).get("month_chain", {})
     failure = chain.get("call_failure") or {}
     assert failure.get("step") == "edict_forecast"
-    assert failure.get("message") == cause
-    assert failure.get("kind") == "model_exhausted"
-    turn = db.conn.execute(
-        "SELECT post_reply_recovery FROM chat_turns WHERE id=?", (ctid,),
-    ).fetchone()
-    assert turn["post_reply_recovery"] == ""
-
-
-def test_late_forecast_failure_ignores_replaced_or_voided_decree(game, monkeypatch, tmp_path):
-    """改版已暂存、或原旨已撤回后，迟到失败不再写回原轮相位。"""
-    from ming_sim.declaration_dispatch import stage_declaration
-
-    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
-    db, state, content = game
-    night = open_night(db, state)
-    minister = _active_minister(content)
-    ctid = db.create_chat_turn(
-        state, "殿上", "s", 0, night_id=int(night["id"]), status="active",
-    )
-    uid = db.append_chat_message("殿上", int(state.turn), "user", "拟旨。")
-    mid = db.append_chat_message("殿上", int(state.turn), "minister", "臣拟旨在此。")
-    db.conn.execute(
-        "UPDATE chat_turns SET user_message_id=?, minister_message_id=? WHERE id=?",
-        (uid, mid, ctid),
-    )
-    pending_id = _approved_directive(db, state, night, ctid, minister, "着户部核辽饷。")
-    db.conn.execute(
-        "UPDATE pending_actions SET night_approved=1, night_id=?, version=2 WHERE id=?",
-        (int(night["id"]), pending_id),
-    )
-    db.conn.commit()
-    stage_declaration(
-        db, decree_ref=pending_action_decree_ref(pending_id, 2),
-        declaration={"effects": {}}, turn=int(state.turn),
-        verdict={"decision": "promulgated"},
-    )
-    sess = _sess(db, state, content, monkeypatch, lambda *_a, **_k: {})
-    forecast_mod.record_forecast_failure(
-        sess,
-        {"pending_action_id": pending_id, "version": 1, "night_id": int(night["id"])},
-        RuntimeError("迟到的旧版"),
-    )
-    phase = db.conn.execute(
-        "SELECT post_reply_recovery FROM chat_turns WHERE id=?", (ctid,),
-    ).fetchone()["post_reply_recovery"]
-    assert phase == ""
-
-    db.void_pending_actions_for_chat_turn(ctid)
-    forecast_mod.record_forecast_failure(
-        sess,
-        {"pending_action_id": pending_id, "version": 2, "night_id": int(night["id"])},
-        RuntimeError("撤回后的迟到失败"),
-    )
-    phase = db.conn.execute(
-        "SELECT post_reply_recovery FROM chat_turns WHERE id=?", (ctid,),
-    ).fetchone()["post_reply_recovery"]
-    assert phase == ""
-
-
-def test_forecast_snapshot_and_pack_failures_still_mark_phase(game, monkeypatch):
-    """快照准备失败，以及写包失败，都不能让失败相位落空。"""
-    db, state, content = game
-    night = open_night(db, state)
-    minister = _active_minister(content)
-    ctid = db.create_chat_turn(
-        state, "殿上", "s", 0, night_id=int(night["id"]), status="active",
-    )
-    uid = db.append_chat_message("殿上", int(state.turn), "user", "拟旨。")
-    mid = db.append_chat_message("殿上", int(state.turn), "minister", "臣拟旨在此。")
-    db.conn.execute(
-        "UPDATE chat_turns SET user_message_id=?, minister_message_id=? WHERE id=?",
-        (uid, mid, ctid),
-    )
-    pending_id = _approved_directive(db, state, night, ctid, minister, "着户部核辽饷。")
-    db.conn.execute(
-        "UPDATE pending_actions SET night_approved=1, night_id=? WHERE id=?",
-        (int(night["id"]), pending_id),
-    )
-    db.conn.commit()
-    sess = _sess(db, state, content, monkeypatch, lambda *a, **k: {})
-
-    def broken_snapshot(*_a, **_k):
-        raise RuntimeError("快照准备故障")
-
-    monkeypatch.setattr(forecast_mod, "_pending_snapshot", broken_snapshot)
-    assert forecast_mod.schedule_pending_decree_forecast(
-        sess, pending_id, night_id=int(night["id"]),
-    )
-    _drain(sess)
+    assert "kind" not in failure
+    assert failure.get("message") == ""
     turn = db.conn.execute(
         "SELECT post_reply_recovery, post_reply_error_pack_path FROM chat_turns WHERE id=?",
         (ctid,),
     ).fetchone()
     assert turn["post_reply_recovery"] == forecast_mod.FORECAST_RECOVERY_PHASE
-    pack = str(turn["post_reply_error_pack_path"] or "")
-    manifest = json.loads((Path(pack) / "manifest.json").read_text(encoding="utf-8"))
-    assert manifest["message"] == "快照准备故障"
-    assert manifest["detail"]["failure_class"] == "code_exception"
-
-    db.clear_post_reply_failure(ctid)
-    monkeypatch.undo()
-    monkeypatch.setattr(decree_mod, "run_agent_text", lambda *_a, **_k: (_ for _ in ()).throw(
-        RuntimeError("预推代码故障"),
-    ))
-
-    def broken_pack(**_k):
-        raise RuntimeError("写包故障")
-
-    monkeypatch.setattr(
-        "ming_sim.audience_night.write_audience_error_pack", broken_pack,
-    )
-    assert forecast_mod.schedule_pending_decree_forecast(
-        sess, pending_id, night_id=int(night["id"]),
-    )
-    _drain(sess)
-    turn = db.conn.execute(
-        "SELECT post_reply_recovery, post_reply_error_pack_path FROM chat_turns WHERE id=?",
-        (ctid,),
-    ).fetchone()
-    assert turn["post_reply_recovery"] == forecast_mod.FORECAST_RECOVERY_PHASE
-    assert str(turn["post_reply_error_pack_path"] or "") == ""
+    assert failure.get("error_pack_path") == str(turn["post_reply_error_pack_path"] or "")

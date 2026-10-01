@@ -679,11 +679,15 @@ def _abort_month_call(
     decree_text: str,
     source: Provenance,
     step: str,
-    exc: BaseException,
-    kind: str,
+    exc: Optional[BaseException] = None,
+    kind: str = "",
     decree_ref: str = "",
+    attached_pack_path: str = "",
 ) -> None:
-    """停住当前过月 run：持久化相位内 call_failure + 错误包，再 SettlementAbort。"""
+    """停住当前过月 run：持久化相位内 call_failure，再 SettlementAbort。
+
+    现场异常才写新的诊断包。没有现场异常时只附已有包路径，不另造类别。
+    """
     from ming_sim.error_pack import settlement_abort_message, write_error_pack
     from ming_sim.exceptions import SettlementAbort
 
@@ -702,22 +706,28 @@ def _abort_month_call(
         stops = int(committed.get("translate_exhaust_stops") or 0) + 1
         committed["translate_exhaust_stops"] = stops
         escape_armed = stops >= 2
-    original = str(getattr(exc, "message", None) or exc)
+    original = ""
+    if exc is not None:
+        original = str(getattr(exc, "message", None) or exc)
     pack_path = ""
     pack_exc: Optional[BaseException] = None
-    try:
-        pack_path = write_error_pack(
-            db, state, exc=exc, extracted=None, resolve_ctx=None,
-        )
-    except Exception as caught_pack:
-        # 写包失败不得顶替原故障，也不得挡住已提交相位上的失败标记。
-        pack_exc = caught_pack
+    if exc is not None:
+        try:
+            pack_path = write_error_pack(
+                db, state, exc=exc, extracted=None, resolve_ctx=None,
+            )
+        except Exception as caught_pack:
+            # 写包失败不得顶替原故障，也不得挡住已提交相位上的失败标记。
+            pack_exc = caught_pack
+    elif attached_pack_path:
+        pack_path = attached_pack_path
     failure: Dict[str, Any] = {
-        "kind": kind,
         "step": step,
         "message": original,
         "escape_armed": escape_armed,
     }
+    if kind:
+        failure["kind"] = kind
     if pack_path:
         failure["error_pack_path"] = pack_path
     if decree_ref:
@@ -733,12 +743,15 @@ def _abort_month_call(
     abort_message = (
         settlement_abort_message(pack_path) if kind == "code_exception" else original
     )
-    raise SettlementAbort(
+    abort = SettlementAbort(
         abort_message,
         turn=turn,
         stage=step,
-        error_pack_path=pack_path,
-    ) from exc
+        error_pack_path=pack_path or None,
+    )
+    if exc is not None:
+        raise abort from exc
+    raise abort
 
 
 def _guard_month_call(
@@ -780,12 +793,11 @@ def _settle_edicts(
     from ming_sim.decree import _is_stalled_deliberation
     from ming_sim.decree_forecast import (
         _is_held_for_rejudgment,
-        clear_forecast_failure,
         decree_ref_for_dossier,
-        hand_forecast_failure_to_month,
         note_forecast_staged,
         produce_forecast_product,
         snapshot_for_existing_dossier,
+        source_forecast_failure,
         stage_declaration,
     )
 
@@ -830,15 +842,15 @@ def _settle_edicts(
             staged = db.staged_declarations.staged_for(ref)
             verdict = staged[0].verdict if staged else None
             if verdict is None and session.llm_config is not None:
-                handed = hand_forecast_failure_to_month(db, dossier)
-                if handed is not None:
-                    clear_forecast_failure(db, int(handed["chat_turn_id"]))
+                # 来源相位还在：不读错误包改判，不清相位，也不整链重跑。
+                # 只续未成调用的恢复在 #1846，这里只让当前过月停在该旨。
+                pending_failure = source_forecast_failure(db, dossier)
+                if pending_failure is not None:
                     _abort_month_call(
                         db, state, chain, decree_text="", source=Provenance.player_decree,
-                        step="edict_forecast", exc=handed["exc"],
-                        kind=str(handed["kind"]), decree_ref=ref,
+                        step="edict_forecast", decree_ref=ref,
+                        attached_pack_path=str(pending_failure.get("error_pack_path") or ""),
                     )
-                    raise AssertionError("forecast handoff must stop the month")
                 snapshot = snapshot_for_existing_dossier(session, dossier)
 
                 def _produce() -> Dict[str, Any]:
