@@ -272,6 +272,57 @@ def test_escort_result_requires_real_boolean(game, bad):
     assert db.list_dossier_escort_outcomes(grant) == []
 
 
+def test_escort_link_rejects_non_grant_target_and_keeps_legal_sibling(game):
+    """错对象逐项拒收，同批拨帑照常承接；不留错误关联，也不派生稽核在场。"""
+    db, state, _content = game
+    assignment = db.create_decree_dossier(
+        state, action_type="assignment", decree_text="着核定历书。",
+        target_kind="issue", target_id="calendar",
+        participants=[{
+            "character_id": _actor(db), "tier": "主办", "role": "核定历书",
+        }],
+    )
+    db.transition_decree_dossier(assignment, "promulgated")
+    db.transition_decree_dossier(assignment, "executing")
+    grant = _in_transit_grant(db, state)
+    _order_id, escort_dossier = _escort_order(db, state)
+    assert assignment < escort_dossier and grant < escort_dossier
+
+    result = _declare(db, state, {
+        "escort_links": [
+            {"escort_source_dossier_id": escort_dossier, "target_dossier_id": assignment,
+             "relation_type": "稽核", "note": "暗中稽核历书"},
+            {"escort_source_dossier_id": escort_dossier, "target_dossier_id": grant,
+             "relation_type": "稽核", "note": "暗中稽核该笔拨帑"},
+        ],
+        "escort_results": [
+            {"dossier_id": assignment, "escort_source_dossier_id": escort_dossier,
+             "escorted": True, "note": "历书此趟有人看"},
+            {"dossier_id": grant, "escort_source_dossier_id": escort_dossier,
+             "escorted": True, "note": "该路此趟实有护送"},
+        ],
+    })
+
+    assert result.escort_links.applied == [{
+        "escort_source_dossier_id": escort_dossier,
+        "target_dossier_id": grant,
+        "relation_type": "稽核",
+    }]
+    assert [item.category for item in result.escort_links.rejected] == ["invalid_state"]
+    assert result.escort_links.rejected[0].reason
+    assert [item.category for item in result.escort_results.rejected] == ["invalid_state"]
+    assert [int(row["dossier_id"]) for row in result.escort_results.applied] == [grant]
+    assert db.list_dossier_links(assignment, direction="incoming") == []
+    assert [
+        int(row["target_dossier_id"]) for row in db.list_dossier_links(escort_dossier)
+    ] == [grant]
+    assert db.list_dossier_escort_outcomes(assignment) == []
+
+    db.record_monthly_supervision_presence(state.turn)
+    assert db.dossier_has_supervision_presence(assignment, state.turn) is False
+    assert db.dossier_has_supervision_presence(grant, state.turn) is True
+
+
 def test_non_secret_order_dossier_cannot_be_escort_source(game):
     """护行主体必须是密令案卷：拿别的事务案卷充护行人逐项拒收。"""
     db, state, _content = game

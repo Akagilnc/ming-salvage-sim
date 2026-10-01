@@ -842,6 +842,13 @@ _GRANT_ARRIVAL_ESCORT = (22, 25)
 _GRANT_ESCORT_RELATIONS = frozenset({"护卫", "稽核"})
 
 
+def is_grant_allocation_dossier(row: object) -> bool:
+    """护送对象契约：被护端只认拨帑案卷（#1900 / ADR 0054）。"""
+    if not isinstance(row, Mapping):
+        return False
+    return str(row.get("action_type") or "") == "grant_allocation"
+
+
 def grant_arrival_bounds(ordered_amount: int, *, escorted: bool) -> Tuple[int, int]:
     """返回 (arrived_lo, arrived_hi)，含端点；ordered<=0 时 (0, 0)。"""
     ordered = int(ordered_amount)
@@ -12184,7 +12191,7 @@ class GameDB:
         target = self.get_decree_dossier(did)
         if target is None:
             raise ValueError(f"被护案卷不存在：{did}")
-        if str(target["action_type"] or "") != "grant_allocation":
+        if not is_grant_allocation_dossier(target):
             raise ValueError("被护案卷不是拨帑案卷")
         raw_sid = escort_source_dossier_id
         sid = 0 if raw_sid in (None, "", 0) else strict_int(

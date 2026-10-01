@@ -1803,8 +1803,8 @@ def _dispatch_escort_links(
     关联只答「谁护谁」，不带状态位（0054 防第三真源）；本票的逐路实况另有
     ``escort_results`` 一节。逐项拒收，坏项不牵连同批合法项。
     """
-    # 护送口径闭集取自 db 侧押解常量（0054 的「接应」不构成押解护送），不另抄一份。
-    from ming_sim.db import _GRANT_ESCORT_RELATIONS
+    # 护送口径闭集与「被护端须为拨帑案卷」都取自 db 侧既有判据，不另抄一份。
+    from ming_sim.db import _GRANT_ESCORT_RELATIONS, is_grant_allocation_dossier
 
     items, rejected = _section_items(raw, label="护送关联声明", source=source)
     applied: List[Any] = []
@@ -1815,6 +1815,13 @@ def _dispatch_escort_links(
             _reject(
                 rejected, item,
                 "护送关联须含已存在的护行密令案卷与被护拨帑案卷 id", "hallucinated_id", source,
+            )
+            continue
+        # 对象域在进通用关联写口之前收口。错对象不落链，也就不会派生稽核在场。
+        if not is_grant_allocation_dossier(db.get_decree_dossier(target_id)):
+            _reject(
+                rejected, item,
+                "护送关联的被护端须为已记录的拨帑案卷", "invalid_state", source,
             )
             continue
         relation = str(item.get("relation_type") or "").strip()
