@@ -952,13 +952,14 @@ def _monthly_ongoing_effects_has_work(raw: object) -> bool:
     # A persisted metric that int() cannot read is still monthly work.
     # Calling it "no work" skips the consumer's loud int() and lets the
     # month commit around a corrupt world consequence. Absence, zero,
-    # bool, and float stay on the shared nonzero check below.
+    # and bool stay on the shared nonzero check below. Non-finite
+    # numbers fail int() here and take that same consumer path.
     metrics = effect.get("metrics")
     if isinstance(metrics, dict):
         for key, value in metrics.items():
             if key not in ISSUE_METRIC_KEYS:
                 continue
-            if value in (None, "") or isinstance(value, (bool, float)):
+            if value in (None, "") or isinstance(value, bool):
                 continue
             try:
                 int(value)  # type: ignore[arg-type]
