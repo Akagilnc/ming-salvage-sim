@@ -919,7 +919,6 @@ def _auto_pay_arrears_by_priority(
     返回实际花出去的总额（万两）。"""
     if budget <= 0:
         return 0
-    pay_source_cutover = db.is_army_pay_source_cutover_enabled()
     allowed_ids = (
         {str(army_id).strip() for army_id in allowed_army_ids if str(army_id).strip()}
         if allowed_army_ids is not None
@@ -945,9 +944,7 @@ def _auto_pay_arrears_by_priority(
             break
         army_id = str(row["id"])
         name = str(row["name"])
-        payable_arrears = _payable_army_arrears_cap(
-            float(row["arrears"] or 0), pay_source_cutover
-        )
+        payable_arrears = _payable_army_arrears_cap(float(row["arrears"] or 0))
         if payable_arrears <= 0:
             continue
         pay_cap = min(payable_arrears, remaining)
@@ -959,9 +956,9 @@ def _auto_pay_arrears_by_priority(
         )
         spent += spent_now
         remaining -= spent_now
-        if spent_now and pay_source_cutover:
+        if spent_now:
             touched_regions.add(str(row["pay_source_region"] or ""))
-    if spent and pay_source_cutover:
+    if spent:
         for region_id in sorted(touched_regions):
             db._reconcile_army_pay_source_region_container(region_id)
         db._reconcile_central_army_pay_arrears_container()
@@ -970,7 +967,7 @@ def _auto_pay_arrears_by_priority(
     return spent
 
 
-def _payable_army_arrears_cap(current_arrears: float, pay_source_cutover: bool) -> int:
+def _payable_army_arrears_cap(current_arrears: float) -> int:
     """Integer ledger cap: never spend more whole 万两 than the current debt."""
     if current_arrears <= 1e-9:
         return 0
@@ -1011,19 +1008,16 @@ def _pay_single_army_arrears(
     current_arrears = float(row["arrears"] or 0)
     if amount <= 0 or current_arrears <= 0:
         return 0
-    pay_source_cutover = db.is_army_pay_source_cutover_enabled()
     actual_pay = min(
         int(amount),
-        _payable_army_arrears_cap(current_arrears, pay_source_cutover),
+        _payable_army_arrears_cap(current_arrears),
     )
     if actual_pay <= 0:
         return 0
-    province_old = central_old = total_old = 0.0
-    if pay_source_cutover:
-        province_old, central_old = _normalized_cutover_pay_arrears(row, current_arrears)
-        total_old = province_old + central_old
-        if total_old <= 1e-9:
-            return 0
+    province_old, central_old = _normalized_cutover_pay_arrears(row, current_arrears)
+    total_old = province_old + central_old
+    if total_old <= 1e-9:
+        return 0
     actual = db.record_issue_economy_move(
         state, account, -actual_pay, category, reason,
         purpose="补饷", target_kind="army", target_id=str(row["id"]),
@@ -1032,22 +1026,16 @@ def _pay_single_army_arrears(
     if not actual:
         return 0
     paid = abs(float(actual))
-    if pay_source_cutover:
-        province_pay = min(province_old, paid * province_old / total_old)
-        central_pay = min(central_old, paid * central_old / total_old)
-        province_new = max(0.0, province_old - province_pay)
-        central_new = max(0.0, central_old - central_pay)
-        new_arrears = province_new + central_new
-        db.armies.update(str(row["id"]), {
-            "province_pay_arrears": province_new,
-            "central_pay_arrears": central_new,
-            "arrears": new_arrears,
-        }, touch=False)
-    else:
-        new_arrears = max(0.0, current_arrears + float(actual))
-        db.armies.update(str(row["id"]), {
-            "arrears": new_arrears,
-        }, touch=False)
+    province_pay = min(province_old, paid * province_old / total_old)
+    central_pay = min(central_old, paid * central_old / total_old)
+    province_new = max(0.0, province_old - province_pay)
+    central_new = max(0.0, central_old - central_pay)
+    new_arrears = province_new + central_new
+    db.armies.update(str(row["id"]), {
+        "province_pay_arrears": province_new,
+        "central_pay_arrears": central_new,
+        "arrears": new_arrears,
+    }, touch=False)
     db.armies.append_log({
         "turn": state.turn,
         "year": state.year,
@@ -1220,10 +1208,7 @@ def _apply_economy_list(
             if origin_error:
                 applied.append({"account": account, **origin_error, "item": move})
                 continue
-            pay_source_cutover = db.is_army_pay_source_cutover_enabled()
-            payable_arrears = _payable_army_arrears_cap(
-                float(row["arrears"] or 0), pay_source_cutover
-            )
+            payable_arrears = _payable_army_arrears_cap(float(row["arrears"] or 0))
             if payable_arrears <= 0:
                 current_arrears = float(row["arrears"] or 0)
                 if current_arrears > 0:
@@ -1249,9 +1234,8 @@ def _apply_economy_list(
                 beyond_intent=beyond_raw,
             )
             if spent:
-                if pay_source_cutover:
-                    db._reconcile_army_pay_source_region_container(str(row["pay_source_region"] or ""))
-                    db._reconcile_central_army_pay_arrears_container()
+                db._reconcile_army_pay_source_region_container(str(row["pay_source_region"] or ""))
+                db._reconcile_central_army_pay_arrears_container()
                 if commit:
                     db.conn.commit()
                 from ming_sim.covert_levy import canonical_fiscal_result
@@ -1383,208 +1367,206 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
     # ── substrate hub 顶层拨付：京运补 + 中央军饷优先占用月初国库 ──
     # substrate_hub 下旧「户部直扣国库发饷」全局路径退役；省份额由 province substrate，
     # 中央份额由 hub/outbound 后续路径承载，避免同一军饷从旧全局路双付。
-    pay_source_cutover = db.is_army_pay_source_cutover_enabled()
-    if db.is_substrate_hub_fiscal_engine_enabled():
-        db._current_month_central_pay_shortfalls = {}
-        db._current_month_central_pay_dues = {}
-        db._current_month_pay_opening_arrears = {}
-        army_rows_raw = db.conn.execute(
-            """
-            SELECT id, name, manpower, salary_rate, owner_power, arrears, morale, loyalty,
-                   pay_source_region, province_pay_share, central_pay_share,
-                   province_pay_arrears, central_pay_arrears, is_tusi, self_funded_pay
-            FROM armies
-            WHERE owner_power = 'ming' AND is_tusi = 0 AND self_funded_pay = 0
-              AND central_pay_share > 0
-            """
-        ).fetchall()
-        try:
-            for row in army_rows_raw:
-                db._validate_pay_source_values(
-                    str(row["id"]), str(row["owner_power"]), str(row["pay_source_region"]),
-                    float(row["province_pay_share"] or 0), float(row["central_pay_share"] or 0),
-                    bool(row["is_tusi"]), bool(row["self_funded_pay"]),
-                    float(row["province_pay_arrears"] or 0), float(row["central_pay_arrears"] or 0),
-                )
-        except ValueError as exc:
-            raise _SubstrateHubFixedFlowAbort(
-                f"substrate_hub 军饷饷源校验失败：{exc}"
-            ) from exc
-        army_map = {str(r["id"]): r for r in army_rows_raw}
-        ordered = [army_map[k] for k in ARMY_SALARY_PRIORITY if k in army_map]
-        ordered += [r for r in army_rows_raw if str(r["id"]) not in ARMY_SALARY_PRIORITY]
-        central_due_by_army, central_haircut_exempt_by_army = _central_dues_with_haircut(
-            db, state, ordered,
-        )
-        try:
-            hub_outbound = _compute_substrate_hub_outbound(
-                db,
-                max(0.0, float(state.metrics.get("国库", 0) or 0)),
-                central_due_by_army,
+    db._current_month_central_pay_shortfalls = {}
+    db._current_month_central_pay_dues = {}
+    db._current_month_pay_opening_arrears = {}
+    army_rows_raw = db.conn.execute(
+        """
+        SELECT id, name, manpower, salary_rate, owner_power, arrears, morale, loyalty,
+               pay_source_region, province_pay_share, central_pay_share,
+               province_pay_arrears, central_pay_arrears, is_tusi, self_funded_pay
+        FROM armies
+        WHERE owner_power = 'ming' AND is_tusi = 0 AND self_funded_pay = 0
+          AND central_pay_share > 0
+        """
+    ).fetchall()
+    try:
+        for row in army_rows_raw:
+            db._validate_pay_source_values(
+                str(row["id"]), str(row["owner_power"]), str(row["pay_source_region"]),
+                float(row["province_pay_share"] or 0), float(row["central_pay_share"] or 0),
+                bool(row["is_tusi"]), bool(row["self_funded_pay"]),
+                float(row["province_pay_arrears"] or 0), float(row["central_pay_arrears"] or 0),
             )
-        except ValueError as exc:
-            raise _SubstrateHubFixedFlowAbort(
-                f"substrate_hub 京运补/中央军饷 hub 分配失败：{exc}"
-            ) from exc
-        _add_fiscal_container(
-            db, "C_京运克扣", hub_outbound.central_transport_human_loss,
-            "京运转运人为克扣（可追赃）",
+    except ValueError as exc:
+        raise _SubstrateHubFixedFlowAbort(
+            f"substrate_hub 军饷饷源校验失败：{exc}"
+        ) from exc
+    army_map = {str(r["id"]): r for r in army_rows_raw}
+    ordered = [army_map[k] for k in ARMY_SALARY_PRIORITY if k in army_map]
+    ordered += [r for r in army_rows_raw if str(r["id"]) not in ARMY_SALARY_PRIORITY]
+    central_due_by_army, central_haircut_exempt_by_army = _central_dues_with_haircut(
+        db, state, ordered,
+    )
+    try:
+        hub_outbound = _compute_substrate_hub_outbound(
+            db,
+            max(0.0, float(state.metrics.get("国库", 0) or 0)),
+            central_due_by_army,
         )
-        _add_fiscal_container(
-            db, "C_京运运损", hub_outbound.central_transport_sink_loss,
-            "京运转运自然运损（sink）",
-        )
-        _set_fiscal_container(
-            db, "hub_京运损耗", hub_outbound.central_transport_loss,
-            "本月京运转运损耗",
-        )
-        _set_fiscal_container(
-            db, "hub_京运实拨", hub_outbound.jingyun_paid_total,
-            "本月京运补实拨",
-        )
-        _set_fiscal_container(
-            db, "hub_中央军饷实拨", hub_outbound.central_paid_total,
-            "本月中央军饷实拨",
-        )
-        try:
-            hub_debit = _debit_substrate_hub_outbound(db, state, hub_outbound)
-        except RuntimeError as exc:
-            raise _SubstrateHubFixedFlowAbort(
-                f"substrate_hub 京运补/中央军饷 hub 扣账失败：{exc}"
-            ) from exc
-        if hub_debit > 0:
-            flows.append({
-                "dir": "expense",
-                "account": "国库",
-                "category": "边饷hub",
-                "needed": hub_outbound.jingyun_due_total + hub_outbound.central_due_total,
-                "paid": hub_debit,
-                "jingyun_paid": hub_outbound.jingyun_paid_total,
-                "central_paid": hub_outbound.central_paid_total,
-                "transport_loss": hub_outbound.central_transport_loss,
-                "k": hub_outbound.k,
-            })
-        if hub_outbound.central_due_total > 0:
-            flows.append({
-                "dir": "hub_outbound",
-                "account": "中央hub",
-                "category": "中央军饷",
-                "needed": hub_outbound.central_due_total,
-                "paid": hub_outbound.central_paid_total,
-                "shortfall": max(0.0, hub_outbound.central_due_total - hub_outbound.central_paid_total),
-                "jingyun_due": hub_outbound.jingyun_due_total,
-                "k": hub_outbound.k,
-                "transport_loss": hub_outbound.central_transport_loss,
-            })
-        for row in ordered:
-            army_id = str(row["id"])
-            name = str(row["name"])
-            # #653：折发后中央份额应得额（无折＝原值）；morale 公式不变，只吃折后 Due。
-            needed = max(0.0, central_due_by_army.get(army_id, 0.0))
-            if needed <= 0:
-                # #651×#653：合法折发可使有效 Due floor=0。纯中央军不进省 applier，
-                # 本缝是其连续缺口计数唯一 owner——零有效 Due 月亦按「本月缺口=0」归零。
-                # 不入 shortfall/due 月桥、不改 central_pay_arrears、不跑 morale/流水。
-                if float(row["province_pay_share"] or 0) <= 0:
-                    db.armies.update(army_id, {
-                        "consecutive_pay_shortfall_months": 0,
-                    }, touch=False)
-                continue
-            pay_current = min(needed, hub_outbound.central_paid_by_army.get(army_id, 0.0))
-            shortfall = max(0.0, needed - pay_current)
-            old_arrears = float(row["arrears"] or 0)
-            old_morale = int(row["morale"])
-
-            old_central_arrears = float(row["central_pay_arrears"] or 0)
-            province_arrears = float(row["province_pay_arrears"] or 0)
-            central_arrears = max(0.0, old_central_arrears + shortfall)
-            new_arrears = max(0.0, province_arrears + central_arrears)
-            db._current_month_central_pay_shortfalls[army_id] = shortfall
-            db._current_month_central_pay_dues[army_id] = needed
-            db._current_month_pay_opening_arrears[army_id] = old_arrears
-
-            province_pay_share = float(row["province_pay_share"] or 0)
-            if province_pay_share > 0:
-                morale_delta = 0
-            else:
-                # Pure-central armies never enter the province substrate applier,
-                # so this is their existing monthly settlement owner seam.
-                row_months = db.conn.execute(
-                    "SELECT consecutive_pay_shortfall_months FROM armies WHERE id=?", (army_id,)
-                ).fetchone()
-                months = int(row_months["consecutive_pay_shortfall_months"] or 0) if row_months else 0
-                new_months = months + 1 if shortfall > 1e-9 else 0
+    except ValueError as exc:
+        raise _SubstrateHubFixedFlowAbort(
+            f"substrate_hub 京运补/中央军饷 hub 分配失败：{exc}"
+        ) from exc
+    _add_fiscal_container(
+        db, "C_京运克扣", hub_outbound.central_transport_human_loss,
+        "京运转运人为克扣（可追赃）",
+    )
+    _add_fiscal_container(
+        db, "C_京运运损", hub_outbound.central_transport_sink_loss,
+        "京运转运自然运损（sink）",
+    )
+    _set_fiscal_container(
+        db, "hub_京运损耗", hub_outbound.central_transport_loss,
+        "本月京运转运损耗",
+    )
+    _set_fiscal_container(
+        db, "hub_京运实拨", hub_outbound.jingyun_paid_total,
+        "本月京运补实拨",
+    )
+    _set_fiscal_container(
+        db, "hub_中央军饷实拨", hub_outbound.central_paid_total,
+        "本月中央军饷实拨",
+    )
+    try:
+        hub_debit = _debit_substrate_hub_outbound(db, state, hub_outbound)
+    except RuntimeError as exc:
+        raise _SubstrateHubFixedFlowAbort(
+            f"substrate_hub 京运补/中央军饷 hub 扣账失败：{exc}"
+        ) from exc
+    if hub_debit > 0:
+        flows.append({
+            "dir": "expense",
+            "account": "国库",
+            "category": "边饷hub",
+            "needed": hub_outbound.jingyun_due_total + hub_outbound.central_due_total,
+            "paid": hub_debit,
+            "jingyun_paid": hub_outbound.jingyun_paid_total,
+            "central_paid": hub_outbound.central_paid_total,
+            "transport_loss": hub_outbound.central_transport_loss,
+            "k": hub_outbound.k,
+        })
+    if hub_outbound.central_due_total > 0:
+        flows.append({
+            "dir": "hub_outbound",
+            "account": "中央hub",
+            "category": "中央军饷",
+            "needed": hub_outbound.central_due_total,
+            "paid": hub_outbound.central_paid_total,
+            "shortfall": max(0.0, hub_outbound.central_due_total - hub_outbound.central_paid_total),
+            "jingyun_due": hub_outbound.jingyun_due_total,
+            "k": hub_outbound.k,
+            "transport_loss": hub_outbound.central_transport_loss,
+        })
+    for row in ordered:
+        army_id = str(row["id"])
+        name = str(row["name"])
+        # #653：折发后中央份额应得额（无折＝原值）；morale 公式不变，只吃折后 Due。
+        needed = max(0.0, central_due_by_army.get(army_id, 0.0))
+        if needed <= 0:
+            # #651×#653：合法折发可使有效 Due floor=0。纯中央军不进省 applier，
+            # 本缝是其连续缺口计数唯一 owner——零有效 Due 月亦按「本月缺口=0」归零。
+            # 不入 shortfall/due 月桥、不改 central_pay_arrears、不跑 morale/流水。
+            if float(row["province_pay_share"] or 0) <= 0:
                 db.armies.update(army_id, {
-                    "consecutive_pay_shortfall_months": new_months,
+                    "consecutive_pay_shortfall_months": 0,
                 }, touch=False)
-                # #653：折发后中央份额应得额（无折＝原值）；morale 公式不变，只吃折后 Due。
-                morale_delta = army_pay_morale_delta(needed, shortfall, old_arrears)
-            new_morale = max(0, min(100, old_morale + morale_delta))
+            continue
+        pay_current = min(needed, hub_outbound.central_paid_by_army.get(army_id, 0.0))
+        shortfall = max(0.0, needed - pay_current)
+        old_arrears = float(row["arrears"] or 0)
+        old_morale = int(row["morale"])
 
+        old_central_arrears = float(row["central_pay_arrears"] or 0)
+        province_arrears = float(row["province_pay_arrears"] or 0)
+        central_arrears = max(0.0, old_central_arrears + shortfall)
+        new_arrears = max(0.0, province_arrears + central_arrears)
+        db._current_month_central_pay_shortfalls[army_id] = shortfall
+        db._current_month_central_pay_dues[army_id] = needed
+        db._current_month_pay_opening_arrears[army_id] = old_arrears
+
+        province_pay_share = float(row["province_pay_share"] or 0)
+        if province_pay_share > 0:
+            morale_delta = 0
+        else:
+            # Pure-central armies never enter the province substrate applier,
+            # so this is their existing monthly settlement owner seam.
+            row_months = db.conn.execute(
+                "SELECT consecutive_pay_shortfall_months FROM armies WHERE id=?", (army_id,)
+            ).fetchone()
+            months = int(row_months["consecutive_pay_shortfall_months"] or 0) if row_months else 0
+            new_months = months + 1 if shortfall > 1e-9 else 0
             db.armies.update(army_id, {
-                "central_pay_arrears": central_arrears,
-                "arrears": new_arrears,
-                "morale": new_morale,
-            })
-            if shortfall > 0:
-                reason_tag = (
-                    f"{TURN_UNIT}中央军饷欠发"
-                    f"{format_wanliang_amount(shortfall)}万两"
-                )
-            else:
-                reason_tag = f"{TURN_UNIT}中央军饷足额"
-            db.armies.append_logs([
-                {
-                    "turn": state.turn,
-                    "year": state.year,
-                    "period": state.period,
-                    "army_id": army_id,
-                    "field": "arrears",
-                    "old_value": str(old_arrears),
-                    "new_value": str(new_arrears),
-                    "delta": new_arrears - old_arrears,
-                    "reason": reason_tag,
-                    "actor": '户部',
-                },
-                {
-                    "turn": state.turn,
-                    "year": state.year,
-                    "period": state.period,
-                    "army_id": army_id,
-                    "field": "morale",
-                    "old_value": str(old_morale),
-                    "new_value": str(new_morale),
-                    "delta": new_morale - old_morale,
-                    "reason": reason_tag,
-                    "actor": '户部',
-                },
-            ])
+                "consecutive_pay_shortfall_months": new_months,
+            }, touch=False)
+            # #653：折发后中央份额应得额（无折＝原值）；morale 公式不变，只吃折后 Due。
+            morale_delta = army_pay_morale_delta(needed, shortfall, old_arrears)
+        new_morale = max(0, min(100, old_morale + morale_delta))
 
-            flows.append({
-                "dir": "arrears", "account": "中央军饷欠账", "category": "中央军饷",
-                "army": name, "needed": needed, "paid": pay_current,
-                "shortfall": shortfall,
-                "arrears_delta": new_arrears - old_arrears,
-                "morale_delta": new_morale - old_morale,
-                **({"due_haircut": central_haircut_exempt_by_army[army_id]}
-                   if army_id in central_haircut_exempt_by_army else {}),
-            })
-        db._reconcile_central_army_pay_arrears_container()
+        db.armies.update(army_id, {
+            "central_pay_arrears": central_arrears,
+            "arrears": new_arrears,
+            "morale": new_morale,
+        })
+        if shortfall > 0:
+            reason_tag = (
+                f"{TURN_UNIT}中央军饷欠发"
+                f"{format_wanliang_amount(shortfall)}万两"
+            )
+        else:
+            reason_tag = f"{TURN_UNIT}中央军饷足额"
+        db.armies.append_logs([
+            {
+                "turn": state.turn,
+                "year": state.year,
+                "period": state.period,
+                "army_id": army_id,
+                "field": "arrears",
+                "old_value": str(old_arrears),
+                "new_value": str(new_arrears),
+                "delta": new_arrears - old_arrears,
+                "reason": reason_tag,
+                "actor": '户部',
+            },
+            {
+                "turn": state.turn,
+                "year": state.year,
+                "period": state.period,
+                "army_id": army_id,
+                "field": "morale",
+                "old_value": str(old_morale),
+                "new_value": str(new_morale),
+                "delta": new_morale - old_morale,
+                "reason": reason_tag,
+                "actor": '户部',
+            },
+        ])
+
+        flows.append({
+            "dir": "arrears", "account": "中央军饷欠账", "category": "中央军饷",
+            "army": name, "needed": needed, "paid": pay_current,
+            "shortfall": shortfall,
+            "arrears_delta": new_arrears - old_arrears,
+            "morale_delta": new_morale - old_morale,
+            **({"due_haircut": central_haircut_exempt_by_army[army_id]}
+               if army_id in central_haircut_exempt_by_army else {}),
+        })
+    db._reconcile_central_army_pay_arrears_container()
 
     # ── 固定收支落账（税/皇庄/宗室/官俸/织造…全走唯一定额源 compute_budget_lines）──
     # 军饷与建筑另有逐项落账逻辑（arrears/condition），故下面跳过这两类，仅落其余定额项。
-    def _apply_budget_lines(*, skip_substrate_hub_lines: bool = False) -> None:
+    def _apply_budget_lines() -> None:
         budget = compute_budget_lines(
-            db, state, project_substrate_hub=not skip_substrate_hub_lines
+            db, state, project_substrate_hub=False
         )
-        # 军饷跳过认 budget_key，不咬显示名——改 name 不得导致定额路径双扣。
+        # 军饷与 hub 实拨不走定额路径，避免与上方 hub 落账双扣。
         skip_names = {"建筑产出", "建筑维护"}
 
         def _skip_budget_item(it: dict) -> bool:
             return (
                 it.get("budget_key") == "army_pay"
                 or it["name"] in skip_names
-                or (skip_substrate_hub_lines and it.get("internal") == "substrate_hub")
+                or it.get("internal") == "substrate_hub"
             )
 
         for account in ("国库", "内库"):
@@ -1600,7 +1582,7 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
                     origin_ref=str(it.get("origin_ref") or ""),
                 )
 
-    _apply_budget_lines(skip_substrate_hub_lines=db.is_substrate_hub_fiscal_engine_enabled())
+    _apply_budget_lines()
 
     # ── #318 分叉前全军归一（legacy/hub 前一次；不挂资格子集）──
     # 1) 零兵先清闩（防误转流寇） 2) 旧存档第三振正兵力在 advance 可解闩前转出
@@ -1670,204 +1652,198 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
         remittance_total = _advance_province_fiscal_substrate(
             db,
             state,
-            hub_outbound.jingyun_paid_by_region
-            if db.is_substrate_hub_fiscal_engine_enabled()
-            else None,
+            hub_outbound.jingyun_paid_by_region,
         )
-        if db.is_substrate_hub_fiscal_engine_enabled():
-            try:
-                salt_income, commerce_income = _substrate_hub_salt_commerce_income_split(db)
-                raw_remittance_amount = _round_nonnegative_amount(remittance_total)
-                raw_salt_amount = _round_nonnegative_amount(salt_income)
-                raw_commerce_amount = _round_nonnegative_amount(commerce_income)
-                remittance_amount = _income_amount_after_legacy_modifier(
-                    db, state, "国库", raw_remittance_amount
-                )
-                salt_amount = _income_amount_after_legacy_modifier(
-                    db, state, "国库", raw_salt_amount
-                )
-                commerce_amount = _income_amount_after_legacy_modifier(
-                    db, state, "国库", raw_commerce_amount
-                )
-                inbound_gross = remittance_amount + salt_amount + commerce_amount
-                taicang_human_loss, taicang_sink_loss = _central_loss_split(
-                    db,
-                    inbound_gross,
-                    _CENTRAL_TAICANG_HUMAN_LOSS_RATE,
-                    _CENTRAL_TAICANG_SINK_LOSS_RATE,
-                )
-            except ValueError as exc:
-                raise _SubstrateHubFixedFlowAbort(
-                    f"substrate_hub 太仓入库 hub 分配失败：{exc}"
-                ) from exc
-            central_loss = taicang_human_loss + taicang_sink_loss
-            _add_fiscal_container(db, "C_太仓挪用", taicang_human_loss, "中央太仓人为亏空（可追赃）")
-            _add_fiscal_container(db, "C_太仓纯亏空", taicang_sink_loss, "中央太仓自然亏空（sink）")
-            _set_fiscal_container(db, "hub_省级起运到京", remittance_amount, "Σ本月明控省起运到京")
-            _set_fiscal_container(db, "hub_盐税解京", salt_amount, "明控省盐税中央旁路")
-            _set_fiscal_container(db, "hub_商税解京", commerce_amount, "明控省商税中央旁路")
-            _set_fiscal_container(db, "hub_太仓亏空", central_loss, "本月中央太仓亏空与挪用")
+        try:
+            salt_income, commerce_income = _substrate_hub_salt_commerce_income_split(db)
+            raw_remittance_amount = _round_nonnegative_amount(remittance_total)
+            raw_salt_amount = _round_nonnegative_amount(salt_income)
+            raw_commerce_amount = _round_nonnegative_amount(commerce_income)
+            remittance_amount = _income_amount_after_legacy_modifier(
+                db, state, "国库", raw_remittance_amount
+            )
+            salt_amount = _income_amount_after_legacy_modifier(
+                db, state, "国库", raw_salt_amount
+            )
+            commerce_amount = _income_amount_after_legacy_modifier(
+                db, state, "国库", raw_commerce_amount
+            )
+            inbound_gross = remittance_amount + salt_amount + commerce_amount
+            taicang_human_loss, taicang_sink_loss = _central_loss_split(
+                db,
+                inbound_gross,
+                _CENTRAL_TAICANG_HUMAN_LOSS_RATE,
+                _CENTRAL_TAICANG_SINK_LOSS_RATE,
+            )
+        except ValueError as exc:
+            raise _SubstrateHubFixedFlowAbort(
+                f"substrate_hub 太仓入库 hub 分配失败：{exc}"
+            ) from exc
+        central_loss = taicang_human_loss + taicang_sink_loss
+        _add_fiscal_container(db, "C_太仓挪用", taicang_human_loss, "中央太仓人为亏空（可追赃）")
+        _add_fiscal_container(db, "C_太仓纯亏空", taicang_sink_loss, "中央太仓自然亏空（sink）")
+        _set_fiscal_container(db, "hub_省级起运到京", remittance_amount, "Σ本月明控省起运到京")
+        _set_fiscal_container(db, "hub_盐税解京", salt_amount, "明控省盐税中央旁路")
+        _set_fiscal_container(db, "hub_商税解京", commerce_amount, "明控省商税中央旁路")
+        _set_fiscal_container(db, "hub_太仓亏空", central_loss, "本月中央太仓亏空与挪用")
 
-            for category, raw_amount, amount, reason in (
-                ("起运", raw_remittance_amount, remittance_amount, f"{TURN_UNIT}省级起运入京"),
-                ("盐税", raw_salt_amount, salt_amount, f"{TURN_UNIT}盐税中央旁路"),
-                ("商税", raw_commerce_amount, commerce_amount, f"{TURN_UNIT}商税中央旁路"),
-            ):
-                if amount <= 0:
-                    continue
-                actual = db.record_issue_economy_move(
-                    state,
-                    "国库",
-                    raw_amount,
-                    category,
-                    reason,
-                )
-                if actual != amount:
-                    raise _SubstrateHubFixedFlowAbort(
-                        f"{category}入库实记不符：预计{amount}万两，实际{actual}万两"
-                    )
-                flows.append({
-                    "dir": "income",
-                    "account": "国库",
-                    "amount": actual,
-                    "category": category,
-                    "central_loss": central_loss,
-                })
-            if central_loss > 0:
-                actual_loss = db.record_issue_economy_move(
-                    state,
-                    "国库",
-                    -int(central_loss),
-                    "太仓亏空",
-                    f"{TURN_UNIT}中央太仓亏空与挪用",
-                )
-                flows.append({
-                    "dir": "expense",
-                    "account": "国库",
-                    "amount": abs(actual_loss),
-                    "category": "太仓亏空",
-                    "human_loss": taicang_human_loss,
-                    "sink_loss": taicang_sink_loss,
-                })
-            # ── #314 军心月度 tick（substrate_hub 统一，省级+中央结算后）──────────
-            if db.is_substrate_hub_fiscal_engine_enabled():
-                loyalty_rows = db.conn.execute(
-                    """
-                    SELECT id, name, manpower, salary_rate, owner_power,
-                           arrears, province_pay_arrears, central_pay_arrears,
-                           loyalty, is_tusi, self_funded_pay, is_mutinied,
-                           mutiny_count, mutiny_probation, full_pay_streak, redemption_count
-                    FROM armies
-                    WHERE owner_power = 'ming' AND is_tusi = 0 AND self_funded_pay = 0
-                    """
-                ).fetchall()
-                for lr in loyalty_rows:
-                    full_needed_loyalty = army_needed(lr)
-                    if full_needed_loyalty <= 0:
-                        continue
-                    army_id_loyalty = str(lr["id"])
-                    old_loyalty_val = int(lr["loyalty"])
-                    old_mutiny_count_val = int(lr["mutiny_count"])
-                    old_mutiny_probation_val = int(lr["mutiny_probation"])
-                    old_is_mutinied_val = int(lr["is_mutinied"])
-                    new_arrears_loyalty = float(lr["arrears"] or 0)
-                    # 防御：若 arrears 列滞后，以两源合计为准
-                    try:
-                        prov = float(lr["province_pay_arrears"] or 0)
-                        cent = float(lr["central_pay_arrears"] or 0)
-                        combined = prov + cent
-                        if abs(combined - new_arrears_loyalty) > 1e-6:
-                            new_arrears_loyalty = max(0.0, combined)
-                    except Exception:
-                        pass
-                    loyalty_delta_unified = army_loyalty_tick_delta(new_arrears_loyalty, full_needed_loyalty)
-                    new_loyalty_val = max(0, min(100, old_loyalty_val + loyalty_delta_unified))
-                    (
-                        new_loyalty_val,
-                        new_is_mutinied_val,
-                        new_mutiny_count_val,
-                        new_mutiny_probation_val,
-                        new_full_pay_streak_val,
-                        new_redemption_count_val,
-                    ) = _advance_mutiny(
-                        loyalty=new_loyalty_val, arrears=new_arrears_loyalty,
-                        needed=full_needed_loyalty, current=old_is_mutinied_val,
-                        count=int(lr["mutiny_count"]),
-                        probation=int(lr["mutiny_probation"]),
-                        full_pay_streak=int(lr["full_pay_streak"]),
-                        redemption_count=int(lr["redemption_count"]),
-                    )
-                    if new_loyalty_val == old_loyalty_val and loyalty_delta_unified == 0:
-                        # 仍需写日志以保持审计完整性？与 legacy/hub 旧有行为对齐：始终写 loyalty 行
-                        pass
-                    db.armies.update(army_id_loyalty, {
-                        "loyalty": new_loyalty_val,
-                        "is_mutinied": new_is_mutinied_val,
-                        "mutiny_count": new_mutiny_count_val,
-                        "mutiny_probation": new_mutiny_probation_val,
-                        "full_pay_streak": new_full_pay_streak_val,
-                        "redemption_count": new_redemption_count_val,
-                    })
-                    loyalty_reason_unified = _army_loyalty_reason(new_arrears_loyalty, full_needed_loyalty)
-                    db.armies.append_logs([
-                        {
-                            "turn": state.turn,
-                            "year": state.year,
-                            "period": state.period,
-                            "army_id": army_id_loyalty,
-                            "field": "loyalty",
-                            "old_value": str(old_loyalty_val),
-                            "new_value": str(new_loyalty_val),
-                            "delta": new_loyalty_val - old_loyalty_val,
-                            "reason": loyalty_reason_unified,
-                            "actor": '户部',
-                        },
-                        {
-                            "turn": state.turn,
-                            "year": state.year,
-                            "period": state.period,
-                            "army_id": army_id_loyalty,
-                            "field": "mutiny_count",
-                            "old_value": str(old_mutiny_count_val),
-                            "new_value": str(new_mutiny_count_val),
-                            "delta": new_mutiny_count_val - old_mutiny_count_val,
-                            "reason": loyalty_reason_unified,
-                            "actor": '户部',
-                        },
-                        {
-                            "turn": state.turn,
-                            "year": state.year,
-                            "period": state.period,
-                            "army_id": army_id_loyalty,
-                            "field": "mutiny_probation",
-                            "old_value": str(old_mutiny_probation_val),
-                            "new_value": str(new_mutiny_probation_val),
-                            "delta": new_mutiny_probation_val - old_mutiny_probation_val,
-                            "reason": loyalty_reason_unified,
-                            "actor": '户部',
-                        },
-                    ])
-                    _maybe_third_strike_defect(
-                        db, state, army_id=army_id_loyalty,
-                        new_latched=new_is_mutinied_val,
-                        new_mutiny_count=new_mutiny_count_val,
-                    )
-        if pay_source_cutover:
-            db._reconcile_central_army_pay_arrears_container()
-            try:
-                db.assert_army_pay_source_container_conservation()
-            except ValueError as exc:
+        for category, raw_amount, amount, reason in (
+            ("起运", raw_remittance_amount, remittance_amount, f"{TURN_UNIT}省级起运入京"),
+            ("盐税", raw_salt_amount, salt_amount, f"{TURN_UNIT}盐税中央旁路"),
+            ("商税", raw_commerce_amount, commerce_amount, f"{TURN_UNIT}商税中央旁路"),
+        ):
+            if amount <= 0:
+                continue
+            actual = db.record_issue_economy_move(
+                state,
+                "国库",
+                raw_amount,
+                category,
+                reason,
+            )
+            if actual != amount:
                 raise _SubstrateHubFixedFlowAbort(
-                    f"substrate_hub 军饷饷源守恒失败：{exc}"
-                ) from exc
+                    f"{category}入库实记不符：预计{amount}万两，实际{actual}万两"
+                )
+            flows.append({
+                "dir": "income",
+                "account": "国库",
+                "amount": actual,
+                "category": category,
+                "central_loss": central_loss,
+            })
+        if central_loss > 0:
+            actual_loss = db.record_issue_economy_move(
+                state,
+                "国库",
+                -int(central_loss),
+                "太仓亏空",
+                f"{TURN_UNIT}中央太仓亏空与挪用",
+            )
+            flows.append({
+                "dir": "expense",
+                "account": "国库",
+                "amount": abs(actual_loss),
+                "category": "太仓亏空",
+                "human_loss": taicang_human_loss,
+                "sink_loss": taicang_sink_loss,
+            })
+        # ── #314 军心月度 tick（substrate_hub 统一，省级+中央结算后）──────────
+        loyalty_rows = db.conn.execute(
+            """
+            SELECT id, name, manpower, salary_rate, owner_power,
+                   arrears, province_pay_arrears, central_pay_arrears,
+                   loyalty, is_tusi, self_funded_pay, is_mutinied,
+                   mutiny_count, mutiny_probation, full_pay_streak, redemption_count
+            FROM armies
+            WHERE owner_power = 'ming' AND is_tusi = 0 AND self_funded_pay = 0
+            """
+        ).fetchall()
+        for lr in loyalty_rows:
+            full_needed_loyalty = army_needed(lr)
+            if full_needed_loyalty <= 0:
+                continue
+            army_id_loyalty = str(lr["id"])
+            old_loyalty_val = int(lr["loyalty"])
+            old_mutiny_count_val = int(lr["mutiny_count"])
+            old_mutiny_probation_val = int(lr["mutiny_probation"])
+            old_is_mutinied_val = int(lr["is_mutinied"])
+            new_arrears_loyalty = float(lr["arrears"] or 0)
+            # 防御：若 arrears 列滞后，以两源合计为准
+            try:
+                prov = float(lr["province_pay_arrears"] or 0)
+                cent = float(lr["central_pay_arrears"] or 0)
+                combined = prov + cent
+                if abs(combined - new_arrears_loyalty) > 1e-6:
+                    new_arrears_loyalty = max(0.0, combined)
+            except Exception:
+                pass
+            loyalty_delta_unified = army_loyalty_tick_delta(new_arrears_loyalty, full_needed_loyalty)
+            new_loyalty_val = max(0, min(100, old_loyalty_val + loyalty_delta_unified))
+            (
+                new_loyalty_val,
+                new_is_mutinied_val,
+                new_mutiny_count_val,
+                new_mutiny_probation_val,
+                new_full_pay_streak_val,
+                new_redemption_count_val,
+            ) = _advance_mutiny(
+                loyalty=new_loyalty_val, arrears=new_arrears_loyalty,
+                needed=full_needed_loyalty, current=old_is_mutinied_val,
+                count=int(lr["mutiny_count"]),
+                probation=int(lr["mutiny_probation"]),
+                full_pay_streak=int(lr["full_pay_streak"]),
+                redemption_count=int(lr["redemption_count"]),
+            )
+            if new_loyalty_val == old_loyalty_val and loyalty_delta_unified == 0:
+                # 仍需写日志以保持审计完整性？与 legacy/hub 旧有行为对齐：始终写 loyalty 行
+                pass
+            db.armies.update(army_id_loyalty, {
+                "loyalty": new_loyalty_val,
+                "is_mutinied": new_is_mutinied_val,
+                "mutiny_count": new_mutiny_count_val,
+                "mutiny_probation": new_mutiny_probation_val,
+                "full_pay_streak": new_full_pay_streak_val,
+                "redemption_count": new_redemption_count_val,
+            })
+            loyalty_reason_unified = _army_loyalty_reason(new_arrears_loyalty, full_needed_loyalty)
+            db.armies.append_logs([
+                {
+                    "turn": state.turn,
+                    "year": state.year,
+                    "period": state.period,
+                    "army_id": army_id_loyalty,
+                    "field": "loyalty",
+                    "old_value": str(old_loyalty_val),
+                    "new_value": str(new_loyalty_val),
+                    "delta": new_loyalty_val - old_loyalty_val,
+                    "reason": loyalty_reason_unified,
+                    "actor": '户部',
+                },
+                {
+                    "turn": state.turn,
+                    "year": state.year,
+                    "period": state.period,
+                    "army_id": army_id_loyalty,
+                    "field": "mutiny_count",
+                    "old_value": str(old_mutiny_count_val),
+                    "new_value": str(new_mutiny_count_val),
+                    "delta": new_mutiny_count_val - old_mutiny_count_val,
+                    "reason": loyalty_reason_unified,
+                    "actor": '户部',
+                },
+                {
+                    "turn": state.turn,
+                    "year": state.year,
+                    "period": state.period,
+                    "army_id": army_id_loyalty,
+                    "field": "mutiny_probation",
+                    "old_value": str(old_mutiny_probation_val),
+                    "new_value": str(new_mutiny_probation_val),
+                    "delta": new_mutiny_probation_val - old_mutiny_probation_val,
+                    "reason": loyalty_reason_unified,
+                    "actor": '户部',
+                },
+            ])
+            _maybe_third_strike_defect(
+                db, state, army_id=army_id_loyalty,
+                new_latched=new_is_mutinied_val,
+                new_mutiny_count=new_mutiny_count_val,
+            )
+        db._reconcile_central_army_pay_arrears_container()
+        try:
+            db.assert_army_pay_source_container_conservation()
+        except ValueError as exc:
+            raise _SubstrateHubFixedFlowAbort(
+                f"substrate_hub 军饷饷源守恒失败：{exc}"
+            ) from exc
     finally:
-        if pay_source_cutover:
-            for attr in (
-                "_current_month_central_pay_shortfalls",
-                "_current_month_pay_opening_arrears",
-            ):
-                if hasattr(db, attr):
-                    delattr(db, attr)
+        for attr in (
+            "_current_month_central_pay_shortfalls",
+            "_current_month_pay_opening_arrears",
+        ):
+            if hasattr(db, attr):
+                delattr(db, attr)
     return flows
 
 
