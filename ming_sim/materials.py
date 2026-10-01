@@ -1369,12 +1369,9 @@ def candidate_supply(
     两条门只给资格与结构化事实；选不选、发不发难仍由同一次月末世界段里的
     模型决定（ADR 0014 / 0091 / P6）。
     """
-    from ming_sim.issues import (
-        gather_candidate_events,
-        gather_impeachment_surge_candidates,
-    )
+    from ming_sim.issues import gather_impeachment_surge_candidates
 
-    events = [_candidate_event_fact(ev) for ev in gather_candidate_events(state, db)]
+    events = _world_candidate_events(db, state)
     excluded = set(exclude_dossier_ids or ())
     surge = [
         dict(item)
@@ -1576,9 +1573,8 @@ def _world_fiscal_levy_petitions(db: Any, state: Any) -> list:
     return items
 
 
-def _write_candidate_event_files(tmp: Path, db: Any, state: Any) -> list[str]:
+def _write_candidate_event_files(tmp: Path, candidates: list) -> list[str]:
     index: list[str] = []
-    candidates = _world_candidate_events(db, state)
     index_rel = f"{_CANDIDATE_DIR}/INDEX.txt"
     # 索引与文件名同一真源：写盘用 _safe_segment，索引也必须用它拼，否则目录里
     # 每一条索引都指向不存在的文件（按原始 id 拼时两者不一致）。
@@ -1664,6 +1660,7 @@ def _write_world_tree(
     secret_turn_ids: set[int] | None = None,
 ) -> list[str]:
     from ming_sim.knowledge import build_character_knowledge
+    from ming_sim.issues import _event_terminal_records
 
     index: list[str] = []
     textual_facts = getattr(db, "textual_facts", None)
@@ -1680,6 +1677,11 @@ def _write_world_tree(
     # 供同一次月末世界段里的模型自读挑选；不在此代选、不代发难。
     _write_text(tmp / _CANDIDATE_REL, json.dumps(candidates, ensure_ascii=False))
     index.append(_CANDIDATE_REL)
+
+    # 已落终态独立供阅，不回填候选、不从奏报或暂存声明推导。
+    terminal_rel = f"{_BOARD_DIR}/事件终态.txt"
+    _write_text(tmp / terminal_rel, json.dumps(_event_terminal_records(db), ensure_ascii=False))
+    index.append(terminal_rel)
 
     _write_text(tmp / _COURT_ROSTER_REL, _world_roster_text(db, state))
     index.append(_COURT_ROSTER_REL)
@@ -1729,7 +1731,7 @@ def _write_world_tree(
         _write_text(tmp / rel, body)
         index.append(rel)
 
-    index.extend(_write_candidate_event_files(tmp, db, state))
+    index.extend(_write_candidate_event_files(tmp, candidates["events"]))
     index.extend(_write_fiscal_levy_petition_files(tmp, db, state))
     index.extend(_write_world_textual_fact_files(tmp, db, include_fact=include_fact))
     index.extend(_write_public_by_month(tmp, public_events))
@@ -2284,6 +2286,10 @@ def prepare_world_materials(
     """过月推演者材料目录：盘面全量 + 开着的事务清单进开场最小集；人物经历、
     公开说法、历月邸报按需自读（#1834）。写入（拒收/实况回目录、下月材料）不
     在本函数职责内——本函数只组装可读材料，不提供任何写入口。
+
+    `盘面/事件终态.txt` 是已落事件记录的 JSON 对象，按 event_id 索引，值含
+    terminal_state / terminal_reason；无记录为 {}，有终态的事件不回填候选。
+    人物候选的逐件材料与结构化候选文件共用本次准备的同一份资格快照。
 
     `public_feed=True` 只给公共供料方（公共邸报作者）：受显式排除的公开说法
     不进其目录（#1829 C1）。世界段、逐旨预推、整月密报是全量推演者，按

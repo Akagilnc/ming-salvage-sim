@@ -105,6 +105,20 @@ def test_ineligible_and_terminal_events_stay_out_of_supply(game, tmp_path, conte
         ids = {item["id"] for item in _read_candidates(prepared)["events"]}
         assert later.id not in ids
         assert avoided.id not in ids
+        terminals = json.loads(read_material(prepared.root, "盘面/事件终态.txt"))
+        assert terminals[avoided.id] == {
+            "terminal_state": "avoided", "terminal_reason": "探针：前提已被化解",
+        }
+        assert later.id not in terminals
+
+        # 落定新的终态后重新备目录；旧调用快照不变，无候选仍可读取终态。
+        db.mark_event_obsolete(state, later.id, reason="前提永久消失")
+        refreshed = prepare_world_materials(db, state, dest_root=tmp_path / "m2")
+        updated = json.loads(read_material(refreshed.root, "盘面/事件终态.txt"))
+        assert updated[later.id] == {
+            "terminal_state": "obsolete", "terminal_reason": "前提永久消失",
+        }
+        assert json.loads(read_material(prepared.root, "盘面/事件终态.txt")) == terminals
     finally:
         _drop_event(content, later)
         _drop_event(content, avoided)

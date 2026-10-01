@@ -288,12 +288,12 @@ def test_world_materials_carry_eligible_person_event_candidates(game, tmp_path):
     assert eligible, "fixture 需当期有合资格人物事件"
     assert "huangtaiji_chengdi" in eligible
     assert len(candidate_paths) == len(eligible)
-    from ming_sim.materials import _world_candidate_events
-
     labels = list(content.event_by_id["jisi_lubian"].terminal_reason_labels)
     roster = {
         item["id"]: list(item["terminal_reason_labels"])
-        for item in _world_candidate_events(db, state)
+        for item in json.loads(read_material(
+            prepared.root, "盘面/候选事件与弹劾潮.txt",
+        ))["events"]
     }
     assert labels and roster.get("jisi_lubian") == labels
     assert "jisi_lubian" in eligible
