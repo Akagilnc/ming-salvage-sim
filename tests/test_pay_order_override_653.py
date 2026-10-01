@@ -245,7 +245,6 @@ def test_golden1_pay_order_reversal_breakdown_tsv():
     res = settle_tick(st, p2, [])
     tsv = "\n".join(f"{k}\t{res.breakdown['实付分账'][k]}" for k in p2["due_order"])
     assert tsv.splitlines()[0] == "官俸\t3.0"       # 官俸足付
-    assert tsv.splitlines()[0].startswith("官俸\t3.0")
     last_cell = float(tsv.splitlines()[-1].split("\t")[1])
     assert last_cell == pytest.approx(1.93)          # 边饷居末只捡残池
     assert res.breakdown["NewDebt"]["军饷欠"] == pytest.approx(16.07)

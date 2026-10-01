@@ -264,7 +264,6 @@ describe("LLMConfigTab — channel-gated field rendering", () => {
     );
     const runnerValues = Array.from(runnerSelect?.options || []).map((option) => option.value);
     expect(runnerValues).toEqual(["agy", "codex", "claude", "cursor", "kimi", "grok"]);
-    expect(runnerValues).toContain("grok");
     cleanup();
   });
 

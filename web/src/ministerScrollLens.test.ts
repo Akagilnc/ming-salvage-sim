@@ -83,7 +83,6 @@ describe("filterScrollForSelectedMinister (#1511 lens)", () => {
 
     const wang = filterScrollForSelectedMinister(scroll, "王绍徽");
     expect(wang.map((m) => m.content)).toEqual(["王问", "王答", "王递话"]);
-    expect(wang.some((m) => m.content.startsWith("洪"))).toBe(false);
 
     const orphan = filterScrollForSelectedMinister(scroll, "许誉卿");
     expect(orphan).toEqual([]);

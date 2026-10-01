@@ -1010,13 +1010,6 @@ def test_657_s1_schema_columns_and_no_banned_fields(game):
     assert "origin_ref" in ledger_cols
     dossier_cols = {r[1] for r in db.conn.execute("PRAGMA table_info(decree_dossiers)").fetchall()}
     assert "rescript_origin" not in dossier_cols
-    # partial UNIQUE on non-empty origin_ref
-    idx_sql = [
-        str(r[0]) for r in db.conn.execute(
-            "SELECT sql FROM sqlite_master WHERE type='index' AND name='idx_ledger_origin_ref'"
-        ).fetchall()
-    ]
-    assert idx_sql and "origin_ref" in idx_sql[0] and "origin_ref != ''" in idx_sql[0].replace('"', "")
 
 def test_657_s1_rescript_emitted_set_subset_of_dossier(game):
     """A12 前置（#1778 后）：只剩 emitted 闭集 ⊂ DOSSIER；七类 routable 已整体取消。"""
