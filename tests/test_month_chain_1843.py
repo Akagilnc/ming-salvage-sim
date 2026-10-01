@@ -363,11 +363,10 @@ def test_world_segment_persists_declaration_ending_with_commit(game, monkeypatch
         session, chain, source=Provenance.system_simulation,
     )
 
-    expected = {"status": "emperor_suicide", "summary": "崇祯帝自尽殉国，煤山一缢，大明社稷俱亡。"}
-    assert outcome == expected
-    assert chain["declaration_outcome"] == expected
+    assert outcome["status"] == "emperor_suicide"
+    assert chain["declaration_outcome"] == outcome
     payload = db.get_resolve_context(int(state.turn))["simulator_payload"]
-    assert payload["month_chain"]["declaration_outcome"] == expected
+    assert payload["month_chain"]["declaration_outcome"] == outcome
 
 
 def test_player_entry_recovers_ending_after_interrupted_segment(game, monkeypatch):

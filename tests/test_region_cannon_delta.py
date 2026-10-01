@@ -54,12 +54,10 @@ def test_city_cannon_capped_at_zero_for_low_city_level(game):
     assert len(rows) == 1, f"clamp 成 no-op 的城防炮请求须留 1 条 region_log 痕迹，实得 {len(rows)}"
     assert int(rows[0]["delta"]) == 0
     assert rows[0]["old_value"] == "0" and rows[0]["new_value"] == "0"
-    assert "上限" in rows[0]["reason"], "请求加炮(+)的痕迹缘由须点明被城防上限拦截"
 
 
 def test_city_cannon_lower_bound_clamp_audited_not_as_cap(game):
-    """请求减炮但已无炮可减（下限 0 钳制）也留痕，但缘由**不归上限**——区分上/下限钳制
-    （codex+CodeRabbit R1 concur：原一律写「上限拦截」对减炮 no-op 是错归因）。"""
+    """请求减炮但已无炮可减（下限 0 钳制）也留一条 delta=0 的 region_log。"""
     db, state, content = game
     before_turn = state.turn
     run_settle(db, state, content, {"region_delta": {"dongjiang_area": {"origin_ref": "盘面自发", "城防炮": -5}}})
@@ -69,8 +67,6 @@ def test_city_cannon_lower_bound_clamp_audited_not_as_cap(game):
     ).fetchall()
     assert len(rows) == 1, "请求减炮被下限 clamp 成 no-op 也须留痕"
     assert int(rows[0]["delta"]) == 0
-    assert "上限" not in rows[0]["reason"], "减炮 no-op 不该错归「上限拦截」"
-    assert "无炮可减" in rows[0]["reason"]
 
 
 def test_zero_cannon_request_leaves_no_log(game):

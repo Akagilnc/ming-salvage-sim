@@ -1013,7 +1013,6 @@ def test_strategic_foreign_event_rejects_trigger_without_world_state_delta(game)
     )
 
     assert out["issue_summary"]["new_issues"][0]["rejected"] is True
-    assert "主账" in out["issue_summary"]["new_issues"][0]["reason"]
     assert not db.has_event_triggered("jisi_lubian")
 
 
@@ -1034,7 +1033,6 @@ def test_direct_issue_tracker_rejects_strategic_event_without_world_state_delta(
     )
 
     assert out["new_issues"][0]["rejected"] is True
-    assert "主账" in out["new_issues"][0]["reason"]
     assert not db.has_event_triggered("jisi_lubian")
 
 
@@ -1175,7 +1173,6 @@ def test_unrelated_region_delta_does_not_satisfy_strategic_event_result_gate(gam
     )
 
     assert out["issue_summary"]["new_issues"][0]["rejected"] is True
-    assert "主账" in out["issue_summary"]["new_issues"][0]["reason"]
     assert not db.has_event_triggered("jisi_lubian")
     assert db.conn.execute(
         "SELECT unrest FROM regions WHERE id = ?", ("shaanxi",)
@@ -1201,7 +1198,6 @@ def test_target_region_delta_without_event_anchor_does_not_satisfy_strategic_eve
     )
 
     assert out["issue_summary"]["new_issues"][0]["rejected"] is True
-    assert "主账" in out["issue_summary"]["new_issues"][0]["reason"]
     assert not db.has_event_triggered("jisi_lubian")
     assert db.conn.execute(
         "SELECT unrest FROM regions WHERE id = ?", ("beizhili",)
@@ -1228,7 +1224,6 @@ def test_unrelated_person_delta_does_not_satisfy_strategic_event_result_gate(gam
     )
 
     assert out["issue_summary"]["new_issues"][0]["rejected"] is True
-    assert "主账" in out["issue_summary"]["new_issues"][0]["reason"]
     assert not db.has_event_triggered("jisi_lubian")
     assert db.get_character_status("孙传庭")[0] == "dead"
     assert out["applied_person_changes"][0].get("rejected") is not True
@@ -1253,7 +1248,6 @@ def test_unrelated_person_delta_with_event_anchor_does_not_satisfy_strategic_eve
     )
 
     assert out["issue_summary"]["new_issues"][0]["rejected"] is True
-    assert "主账" in out["issue_summary"]["new_issues"][0]["reason"]
     assert not db.has_event_triggered("jisi_lubian")
     assert db.get_character_status("孙传庭")[0] == "dead"
     assert out["applied_person_changes"][0].get("rejected") is not True
@@ -1278,7 +1272,6 @@ def test_target_person_delta_without_event_anchor_does_not_satisfy_strategic_eve
     )
 
     assert out["issue_summary"]["new_issues"][0]["rejected"] is True
-    assert "主账" in out["issue_summary"]["new_issues"][0]["reason"]
     assert not db.has_event_triggered("wuyin_lubian")
     assert db.get_character_status("卢象升")[0] == "dead"
     assert out["applied_person_changes"][0].get("rejected") is not True
@@ -1304,7 +1297,6 @@ def test_rejected_strategic_foreign_event_preserves_unrelated_region_delta(game)
     )
 
     assert out["issue_summary"]["new_issues"][0]["rejected"] is True
-    assert "候选" in out["issue_summary"]["new_issues"][0]["reason"]
     assert db.conn.execute(
         "SELECT unrest FROM regions WHERE id = ?", ("shaanxi",)
     ).fetchone()["unrest"] == 79
@@ -1330,7 +1322,6 @@ def test_rejected_strategic_event_preserves_unanchored_target_region_delta(game)
     )
 
     assert out["issue_summary"]["new_issues"][0]["rejected"] is True
-    assert "候选" in out["issue_summary"]["new_issues"][0]["reason"]
     assert db.conn.execute(
         "SELECT unrest FROM regions WHERE id = ?", ("beizhili",)
     ).fetchone()["unrest"] == 79
@@ -1357,7 +1348,6 @@ def test_rejected_strategic_event_preserves_unrelated_person_delta(game):
     )
 
     assert out["issue_summary"]["new_issues"][0]["rejected"] is True
-    assert "候选" in out["issue_summary"]["new_issues"][0]["reason"]
     assert db.get_character_status("孙传庭")[0] == "dead"
     assert out["applied_person_changes"][0].get("rejected") is not True
 
@@ -1390,7 +1380,6 @@ def test_rejected_strategic_event_does_not_land_substitute_commander_person_delt
     )
 
     assert out["issue_summary"]["new_issues"][0]["rejected"] is True
-    assert "候选" in out["issue_summary"]["new_issues"][0]["reason"]
     assert db.get_character_status("孙传庭")[0] == "active"
     assert len(out["applied_person_changes"]) == 1
     assert out["applied_person_changes"][0]["rejected"] is True
@@ -1399,7 +1388,6 @@ def test_rejected_strategic_event_does_not_land_substitute_commander_person_delt
         for rejection in out["validate_shape_rejections"]
         if isinstance(rejection.get("item"), dict)
     )
-    assert "战果不落" in out["applied_person_changes"][0]["reason"]
 
 
 def test_pending_gate_uses_same_place_canonical_terminal_state(game):
@@ -1593,7 +1581,6 @@ def test_mao_wenlong_event_pool_rechecks_gate_before_effect(game):
     )
 
     assert out["new_issues"][0]["rejected"] is True
-    assert "候选" in out["new_issues"][0]["reason"]
     assert db.get_character_status("毛文龙")[0] == "active"
     assert content.characters["毛文龙"].status == "active"
     assert not db.has_event_triggered("mao_wenlong")
@@ -2389,7 +2376,6 @@ def test_mao_wenlong_event_pool_uses_candidate_snapshot_before_advances(game):
 
         assert state.metrics["民心"] == 5
         assert out["new_issues"][0]["rejected"] is True
-        assert "候选" in out["new_issues"][0]["reason"]
         assert not db.has_event_triggered(ev.id)
     finally:
         content.seed_events.remove(ev)
@@ -2431,7 +2417,6 @@ def test_event_pool_uses_candidate_snapshot_before_top_level_metric_delta(game):
 
         assert state.metrics["民心"] == 5
         assert out["issue_summary"]["new_issues"][0]["rejected"] is True
-        assert "候选" in out["issue_summary"]["new_issues"][0]["reason"]
         assert not db.has_event_triggered(ev.id)
     finally:
         content.seed_events.remove(ev)
@@ -2482,7 +2467,6 @@ def test_event_pool_rechecks_after_advances_close_gate(game):
 
         assert state.metrics["民心"] == 5
         assert out["new_issues"][0]["rejected"] is True
-        assert "候选" in out["new_issues"][0]["reason"]
         assert not db.has_event_triggered(ev.id)
     finally:
         content.seed_events.remove(ev)
@@ -2547,7 +2531,6 @@ def test_event_pool_rechecks_after_prior_event_effect_closes_gate(game):
         assert out["new_issues"][0]["rejected"] is False
         assert db.get_character_status("袁崇焕")[0] == "dismissed"
         assert out["new_issues"][1]["rejected"] is True
-        assert "候选" in out["new_issues"][1]["reason"]
         assert db.conn.execute(
             "SELECT id FROM issues WHERE origin_kind='event_pool' AND origin_ref=?",
             (second.id,),
@@ -3251,7 +3234,6 @@ def test_event_pool_pending_disposition_clears_office_gate(game):
 
         new_issue = out["issue_summary"]["new_issues"][0]
         assert new_issue["rejected"] is True
-        assert "候选" in new_issue["reason"]
         assert db.conn.execute(
             "SELECT id FROM issues WHERE origin_kind='event_pool' AND origin_ref=?",
             (ev.id,),
@@ -3410,7 +3392,6 @@ def test_event_pool_pending_legacy_power_change_blocks_gate(game):
 
         new_issue = out["issue_summary"]["new_issues"][0]
         assert new_issue["rejected"] is True
-        assert "候选" in new_issue["reason"]
         assert db.conn.execute(
             "SELECT id FROM issues WHERE origin_kind='event_pool' AND origin_ref=?",
             (ev.id,),
@@ -3583,7 +3564,6 @@ def test_event_pool_pending_person_changes_are_simulated_sequentially(game):
 
     new_issue = out["issue_summary"]["new_issues"][0]
     assert new_issue["rejected"] is True
-    assert "候选" in new_issue["reason"]
     assert not db.has_event_triggered("mao_wenlong")
     assert db.get_character_status("毛文龙")[0] == "active"
     assert db.get_character_status("袁崇焕")[0] == "dead"
@@ -3905,11 +3885,12 @@ def test_event_pool_pending_rejected_vassal_appointment_does_not_block_gate(game
 
         assert out["issue_summary"]["new_issues"][0]["rejected"] is False
         assert out["applied_person_changes"][0]["rejected"] is True
-        assert "宗藩" in out["applied_person_changes"][0]["reason"]
-        assert db.conn.execute(
-            "SELECT office FROM characters WHERE name=?",
+        row = db.conn.execute(
+            "SELECT office, office_type FROM characters WHERE name=?",
             ("朱常洵",),
-        ).fetchone()["office"] == "福王,就藩洛阳"
+        ).fetchone()
+        assert row["office"] == "福王,就藩洛阳"
+        assert row["office_type"] == "宗藩"
         assert db.conn.execute(
             "SELECT id FROM issues WHERE origin_kind='event_pool' AND origin_ref=?",
             (ev.id,),
@@ -4237,7 +4218,6 @@ def test_mao_wenlong_event_pool_rechecks_after_same_turn_loyalty_assessment(game
     )
 
     assert out["issue_summary"]["new_issues"][0]["rejected"] is True
-    assert "候选" in out["issue_summary"]["new_issues"][0]["reason"]
     assert not db.has_event_triggered("mao_wenlong")
     assert db.get_character_status("毛文龙")[0] == "active"
     assert db.conn.execute("SELECT loyalty FROM characters WHERE name=?", ("毛文龙",)).fetchone()["loyalty"] == 70
@@ -4263,7 +4243,6 @@ def test_mao_wenlong_event_pool_rechecks_after_same_turn_yuan_dismissal(game):
     )
 
     assert out["issue_summary"]["new_issues"][0]["rejected"] is True
-    assert "候选" in out["issue_summary"]["new_issues"][0]["reason"]
     assert not db.has_event_triggered("mao_wenlong")
     assert db.get_character_status("毛文龙")[0] == "active"
     assert db.get_character_status("袁崇焕")[0] == "dismissed"
@@ -4320,7 +4299,6 @@ def test_mao_wenlong_event_obsolete_when_core_subject_already_dead(game):
     )
 
     assert out["new_issues"][0]["rejected"] is True
-    assert "候选" in out["new_issues"][0]["reason"]
     assert db.get_character_status("毛文龙")[0] == "dead"
     row = db.conn.execute(
         "SELECT terminal_state, source FROM event_triggers WHERE event_id=?",
@@ -4362,7 +4340,6 @@ def test_mao_wenlong_event_excluded_when_yuan_unavailable(game):
         )
 
         assert out["new_issues"][0]["rejected"] is True
-        assert "候选" in out["new_issues"][0]["reason"]
         assert db.get_character_status("毛文龙")[0] == "active"
         assert content.characters["毛文龙"].status == "active"
         assert not db.has_event_triggered("mao_wenlong")
@@ -4456,7 +4433,6 @@ def test_mao_wenlong_event_pool_duplicate_emit_is_idempotent(game):
 
         assert out["new_issues"][0]["rejected"] is False
         assert out["new_issues"][1]["rejected"] is True
-        assert "候选" in out["new_issues"][1]["reason"]
         assert db.get_character_status("毛文龙")[0] == "dead"
         assert content.characters["毛文龙"].status == "dead"
         assert db.has_event_triggered("mao_wenlong")

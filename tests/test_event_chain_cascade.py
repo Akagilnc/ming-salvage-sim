@@ -93,7 +93,9 @@ def test_numeric_triggered_gt_zero_dependency_invalidates_when_upstream_expires(
         terminalized = issues.apply_event_cascading_invalidations(state, db)
 
         assert any(item["id"] == downstream.id and item["terminal_state"] == "obsolete" for item in terminalized)
-        assert _terminal_state(db, downstream.id) == ("obsolete", "上游事件 __chain_upstream_numeric_gt0_expired__ 已入非触发终态：expired")
+        state_name, reason = _terminal_state(db, downstream.id)
+        assert state_name == "obsolete"
+        assert "__chain_upstream_numeric_gt0_expired__" in reason
 
 
 def test_numeric_triggered_lt_one_dependency_invalidates_when_upstream_triggers(game):
@@ -109,7 +111,9 @@ def test_numeric_triggered_lt_one_dependency_invalidates_when_upstream_triggers(
         terminalized = issues.apply_event_cascading_invalidations(state, db)
 
         assert any(item["id"] == downstream.id and item["terminal_state"] == "obsolete" for item in terminalized)
-        assert _terminal_state(db, downstream.id) == ("obsolete", "上游事件 __chain_upstream_numeric_lt1_triggered__ 已触发")
+        state_name, reason = _terminal_state(db, downstream.id)
+        assert state_name == "obsolete"
+        assert "__chain_upstream_numeric_lt1_triggered__" in reason
 
 
 def test_positive_outcome_dependency_waits_for_frozen_outcome_label(game):
@@ -145,7 +149,9 @@ def test_terminal_state_expired_dependency_invalidates_when_upstream_obsolete(ga
         terminalized = issues.apply_event_cascading_invalidations(state, db)
 
         assert any(item["id"] == downstream.id and item["terminal_state"] == "obsolete" for item in terminalized)
-        assert _terminal_state(db, downstream.id) == ("obsolete", "上游事件 __chain_upstream_obsolete_for_expired__ 终态不满足门：obsolete")
+        state_name, reason = _terminal_state(db, downstream.id)
+        assert state_name == "obsolete"
+        assert "__chain_upstream_obsolete_for_expired__" in reason
 
 
 def test_terminal_state_in_expired_or_obsolete_invalidates_when_upstream_triggered(game):
@@ -161,7 +167,9 @@ def test_terminal_state_in_expired_or_obsolete_invalidates_when_upstream_trigger
         terminalized = issues.apply_event_cascading_invalidations(state, db)
 
         assert any(item["id"] == downstream.id and item["terminal_state"] == "obsolete" for item in terminalized)
-        assert _terminal_state(db, downstream.id) == ("obsolete", "上游事件 __chain_upstream_triggered_for_nontriggered__ 终态不满足门：triggered")
+        state_name, reason = _terminal_state(db, downstream.id)
+        assert state_name == "obsolete"
+        assert "__chain_upstream_triggered_for_nontriggered__" in reason
 
 
 def test_terminal_state_including_triggered_preserves_expired_alternative(game):
@@ -198,10 +206,9 @@ def test_conjunctive_positive_terminal_state_predicates_are_intersected(game):
         terminalized = issues.apply_event_cascading_invalidations(state, db)
 
         assert any(item["id"] == downstream.id and item["terminal_state"] == "obsolete" for item in terminalized)
-        assert _terminal_state(db, downstream.id) == (
-            "obsolete",
-            "上游事件 __chain_upstream_intersection_expired__ 已入非触发终态：expired",
-        )
+        state_name, reason = _terminal_state(db, downstream.id)
+        assert state_name == "obsolete"
+        assert "__chain_upstream_intersection_expired__" in reason
 
 
 def test_contradictory_positive_terminal_state_gate_fails_loud(game):
@@ -215,8 +222,10 @@ def test_contradictory_positive_terminal_state_gate_fails_loud(game):
     with _TempEvents(content, upstream, downstream):
         db.mark_event_expired(state, upstream.id)
 
-        with pytest.raises(SettlementAbort, match="正向终态门互相矛盾"):
+        with pytest.raises(SettlementAbort) as exc_info:
             issues.apply_event_cascading_invalidations(state, db)
+        assert exc_info.value.stage == "event_chain_config"
+        assert "__chain_upstream_contradictory__" in str(exc_info.value)
 
 
 def test_cascade_rolls_back_owned_transaction_on_later_write_failure(game, monkeypatch):
@@ -288,7 +297,10 @@ def test_negative_dependency_invalidates_when_upstream_fired_forbidden_outcome(g
         terminalized = issues.apply_event_cascading_invalidations(state, db)
 
         assert any(item["id"] == downstream.id and item["terminal_state"] == "obsolete" for item in terminalized)
-        assert _terminal_state(db, downstream.id) == ("obsolete", "上游事件 __chain_upstream_bad_outcome__ 已发禁用结局：坏结局")
+        state_name, reason = _terminal_state(db, downstream.id)
+        assert state_name == "obsolete"
+        assert "__chain_upstream_bad_outcome__" in reason
+        assert "坏结局" in reason
 
 
 def test_negative_dependency_is_satisfied_by_upstream_avoidance_not_invalidated(game):
@@ -356,5 +368,8 @@ def test_event_dependency_cycle_fails_loud(game):
     a = _hist_event("__chain_cycle_a__", {"event.__chain_cycle_b__.terminal_state": "==triggered"})
     b = _hist_event("__chain_cycle_b__", {"event.__chain_cycle_a__.terminal_state": "==triggered"})
     with _TempEvents(content, a, b):
-        with pytest.raises(SettlementAbort, match="事件链依赖存在环"):
+        with pytest.raises(SettlementAbort) as exc_info:
             issues.apply_event_cascading_invalidations(state, db)
+        assert exc_info.value.stage == "event_chain_config"
+        assert "__chain_cycle_a__" in str(exc_info.value)
+        assert "__chain_cycle_b__" in str(exc_info.value)

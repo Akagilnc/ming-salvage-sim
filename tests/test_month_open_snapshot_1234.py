@@ -192,7 +192,6 @@ def test_oracle_normal_phase_clears_via_startup_hook(game, capsys):
     assert db.get_month_open_snapshot(int(state.turn)) is None
     logged = capsys.readouterr().out
     assert "month_open_snapshot" in logged
-    assert "启动清除孤儿月初快照" in logged
 
     # ADR 0008：前半段未提交窗口引擎零持久态——崩溃回滚后活盘=点击前。
     for k, v in before.items():

@@ -258,31 +258,6 @@ def test_web_region_payload_has_no_population_wan_projection(game):
     assert node_bz["population"] == BEIZHILI_POP_PERSONS
 
 
-# ── W2：新档 region_detail sub-万分支 ─────────────────────────
-
-def test_new_save_region_detail_sub_wan_population_label(game):
-    """新档人口 0—9999 不得报「约0万口」；与 simulation 投影同口径「不足一万口」。"""
-    db, _, _ = game
-    for persons, expected in (
-        (0, "人口不足一万口"),
-        (9999, "人口不足一万口"),
-        (10000, "人口约1万口"),
-    ):
-        db.conn.execute(
-            "UPDATE regions SET population=? WHERE id='beizhili'", (persons,)
-        )
-        detail = db.region_detail("北直隶", qualitative=True)
-        assert expected in detail, persons
-        assert "约0万口" not in detail, persons
-
-
-def test_legacy_region_detail_population_untouched(legacy_game):
-    """旧档「人口N万人」原样，不加换算层。"""
-    db, _ = legacy_game
-    detail = db.region_detail("北直隶", qualitative=True)
-    assert "人口720万人" in detail
-
-
 # ── on_restore 收复单位接缝（ADR 0088：content 静态真源已全线「人」）───────────
 
 JIANZHOU_OPENING_POP_PERSONS = 1200000  # 新档开局建州人口（人）

@@ -1997,8 +1997,10 @@ def test_create_secret_order_rejects_vassal_prince(read_game):
     import pytest
     db, state, content = read_game
     name = _materialize_active_prince(db, state, content)
-    with pytest.raises(ValueError, match="宗室"):
+    before = db.conn.execute("SELECT COUNT(*) FROM secret_orders").fetchone()[0]
+    with pytest.raises(ValueError):
         create_test_secret_order(db, state, name, "密查", "着尔暗中查访", [])
+    assert db.conn.execute("SELECT COUNT(*) FROM secret_orders").fetchone()[0] == before
 
 
 def test_create_secret_order_rejects_vassal_prince_by_alias(read_game):
@@ -2015,8 +2017,10 @@ def test_create_secret_order_rejects_vassal_prince_by_alias(read_game):
         pytest.skip("基底盘面无带别名的宗藩")
     db.add_character(state, content.characters[prince], source="测试")
     alias = next(a for a in content.characters[prince].aliases if a != prince)
-    with pytest.raises(ValueError, match="宗室"):
+    before = db.conn.execute("SELECT COUNT(*) FROM secret_orders").fetchone()[0]
+    with pytest.raises(ValueError):
         create_test_secret_order(db, state, alias, "密查", "着尔暗中查访", [])
+    assert db.conn.execute("SELECT COUNT(*) FROM secret_orders").fetchone()[0] == before
 
 
 def test_create_secret_order_persists_canonical_name(game):
@@ -2050,8 +2054,10 @@ def test_create_secret_order_rejects_foreign_power(game):
                   and (db.conn.execute("SELECT power_id FROM characters WHERE name=?", (n,)).fetchone()["power_id"] or "ming") != "ming"), None)
     if enemy is None:
         pytest.skip("基底盘面无外藩人物")
-    with pytest.raises(ValueError, match="不属大明朝廷"):
+    before = db.conn.execute("SELECT COUNT(*) FROM secret_orders").fetchone()[0]
+    with pytest.raises(ValueError):
         create_test_secret_order(db, state, enemy, "密查", "着尔暗中查访", [])
+    assert db.conn.execute("SELECT COUNT(*) FROM secret_orders").fetchone()[0] == before
 
 
 def test_create_secret_order_rejects_foreign_power_by_alias(game):
@@ -2068,8 +2074,10 @@ def test_create_secret_order_rejects_foreign_power_by_alias(game):
     if enemy is None:
         pytest.skip("基底盘面无带别名的外藩")
     alias = next(a for a in content.characters[enemy].aliases if a != enemy)
-    with pytest.raises(ValueError, match="不属大明朝廷"):
+    before = db.conn.execute("SELECT COUNT(*) FROM secret_orders").fetchone()[0]
+    with pytest.raises(ValueError):
         create_test_secret_order(db, state, alias, "密查", "着尔暗中查访", [])
+    assert db.conn.execute("SELECT COUNT(*) FROM secret_orders").fetchone()[0] == before
 
 
 def test_create_secret_order_allows_returned_defector(game):

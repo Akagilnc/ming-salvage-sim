@@ -503,7 +503,12 @@ def test_latched_cutover_rejects_invalid_pay_source_share(game):
         if c.get("rejected") and c.get("category") == "invalid_enum"
     ]
     assert rejected, f"畸形 share 应 invalid_enum 拒收：{changes}"
-    assert any("饷源比例和必须为 1" in str(c.get("reason") or "") for c in rejected)
+    assert any(
+        c.get("field") == "pay_source"
+        and isinstance(c.get("item"), dict)
+        and (c["item"].get("changes") or {}).get("province_pay_share") == 0.3
+        for c in rejected
+    ), rejected
     assert _snapshot(db, PAY_SOURCE_DENY_FIELDS) == before
 
 
@@ -524,7 +529,12 @@ def test_latched_cutover_rejects_unknown_pay_source_region(game):
         if c.get("rejected") and c.get("category") == "invalid_enum"
     ]
     assert rejected, f"不存在 region 应 invalid_enum 拒收：{changes}"
-    assert any("未入库" in str(c.get("reason") or "") for c in rejected)
+    assert any(
+        c.get("field") == "pay_source"
+        and isinstance(c.get("item"), dict)
+        and (c["item"].get("changes") or {}).get("pay_source_region") == "no_such_region_319"
+        for c in rejected
+    ), rejected
     assert _snapshot(db, PAY_SOURCE_DENY_FIELDS) == before
 
 

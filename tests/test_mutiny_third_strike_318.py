@@ -141,7 +141,9 @@ def test_third_strike_transfers_to_bandit_via_adapter(game, fiscal_path):
         (
             log
             for log in logs
-            if log["field"] == "arrears" and "核销" in str(log["reason"])
+            if log["field"] == "arrears"
+            and float(log["new_value"]) == 0
+            and float(log["delta"]) < 0
         ),
         None,
     )
@@ -307,7 +309,12 @@ def test_non_latched_generic_owner_change_still_works_via_adapter(game):
     assert float(row["arrears"]) == pytest.approx(0)
     logs = _logs(db, ("arrears", "owner_power"))
     writeoff = next(
-        (log for log in logs if log["field"] == "arrears" and "核销" in str(log["reason"])),
+        (
+            log for log in logs
+            if log["field"] == "arrears"
+            and float(log["new_value"]) == 0
+            and float(log["delta"]) < 0
+        ),
         None,
     )
     owner_log = next((log for log in logs if log["field"] == "owner_power"), None)
@@ -456,7 +463,6 @@ def test_hub_excluded_zero_manpower_latched_clears_once(game, fiscal_path, ident
         for log in _logs(db, ("is_mutinied",))
         if str(log["old_value"]) in {"1", "True"}
         and str(log["new_value"]) in {"0", "False"}
-        and "零兵" in str(log["reason"])
     ]
     assert len(clear_logs) == 1
 

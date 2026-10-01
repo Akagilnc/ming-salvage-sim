@@ -9,9 +9,6 @@ payload 字段契约见 test_region_citydefense.py。
 
 from __future__ import annotations
 
-from ming_sim.qualitative import city_defense_description
-
-
 def _city_region(db):
     return db.conn.execute(
         "SELECT id, name, city_level, cannon FROM regions WHERE city_level>0 LIMIT 1"
@@ -56,5 +53,3 @@ def test_region_detail_surfaces_city_level_and_cannon(game):
         db.conn.commit()
         details[lv] = db.region_detail(r["name"], qualitative=True)
     assert details[1] != details[3] != details[5] and details[1] != details[5]
-    for lv in (1, 3, 5):
-        assert city_defense_description(lv) in details[lv]

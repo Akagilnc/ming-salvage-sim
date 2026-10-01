@@ -283,13 +283,17 @@ def test_commitment_ongoing_malformed_entity_payloads_are_rejected_without_crash
 
     assert _faction_satisfaction(db, "军队") == 52
     rows = db.conn.execute(
-        "SELECT category, reason FROM rejection_reports WHERE reason LIKE '%须为对象%' "
-        "ORDER BY id"
+        "SELECT category, item_json FROM rejection_reports WHERE category=? ORDER BY id",
+        ("invalid_shape",),
     ).fetchall()
-    assert [row["category"] for row in rows] == ["invalid_shape", "invalid_shape", "invalid_shape"]
-    assert any("region_delta.beizhili" in row["reason"] for row in rows)
-    assert any("army_delta.guanning" in row["reason"] for row in rows)
-    assert any("power_updates.houjin" in row["reason"] for row in rows)
+    found = set()
+    for row in rows:
+        item = json.loads(row["item_json"])
+        if isinstance(item, dict):
+            found.add((item.get("field"), item.get("id")))
+    assert ("region_delta", "beizhili") in found
+    assert ("army_delta", "guanning") in found
+    assert ("power_updates", "houjin") in found
 
 
 def test_commitment_stop_gate_resolve_respects_outer_transaction_rollback(game):

@@ -116,48 +116,48 @@ def test_close_failed_on_uncollapsible_rejected_invalid_enum(game):
 
 
 def test_close_rejection_reaches_rejection_reports(game):
-    """端到端 plumbing：close 段拒收经 _collect_inline_rejections 真落 rejection_reports 表
-    （桥接下探 issue_summary.closes，cmr Claude r1）。"""
-    db, state, _ = game
-    from ming_sim.applier import Provenance, RejectionCollector
-    from ming_sim.decree import _collect_inline_rejections
+    """未知 issue 结案拒收经声明入口落 rejection_reports，category 与原 issue_id 可回读。"""
+    import json
 
-    applied = {"issue_summary": {"closes": [{
-        "rejected": True, "category": "missing_ref",
-        "reason": "close 测试拒收", "item": {"issue_id": 999999, "reason": "resolved"},
-    }]}}
-    collector = RejectionCollector()
-    _collect_inline_rejections(collector, applied, 7, Provenance.unknown)
-    collector.flush_to_db(db)
+    db, state, content = game
+    turn = state.turn
+    from tests.section_rejection_helpers import run_declaration
 
-    row = db.conn.execute(
-        "SELECT section, category, reason FROM rejection_reports "
-        "WHERE turn=7 AND section LIKE '%closes%'"
-    ).fetchone()
-    assert row is not None, "close 段拒收未落 rejection_reports"
-    assert row["category"] == "missing_ref"
+    run_declaration(db, state, content, {
+        "close_issues": [{"issue_id": 999999, "reason": "resolved"}],
+    })
+    rows = db.conn.execute(
+        "SELECT category, item_json FROM rejection_reports WHERE turn=? AND category=?",
+        (turn, "missing_ref"),
+    ).fetchall()
+    items = [json.loads(row["item_json"]) for row in rows]
+    assert any(
+        isinstance(item, dict) and item.get("issue_id") == 999999 for item in items
+    ), items
 
 
 def test_scalar_item_rejection_preserves_original_in_reports(game):
-    """非 dict 坏项（item 为标量/null）的 item_json 须存原始坏项本身（ADR 决定 5），
-    不是整个 rejected wrapper——桥接按 'item' 键存在性解包、覆盖标量原件（cmr r5 codex）。"""
+    """非 dict 坏项经声明入口落账后，标量/null 原件仍可从 item_json 回读。"""
     import json
-    from ming_sim.applier import Provenance, RejectionCollector
-    from ming_sim.decree import _collect_inline_rejections
 
-    applied = {"issue_summary": {"closes": [
-        {"rejected": True, "category": "invalid_enum", "reason": "条目非对象", "item": 42},
-        {"rejected": True, "category": "invalid_enum", "reason": "条目非对象", "item": None},
-    ]}}
-    collector = RejectionCollector()
-    _collect_inline_rejections(collector, applied, 8, Provenance.unknown)
-    collector.flush_to_db(db := game[0])
+    db, state, content = game
+    turn = state.turn
+    from tests.section_rejection_helpers import run_declaration
 
+    run_declaration(db, state, content, {"close_issues": [42, None]})
     rows = db.conn.execute(
-        "SELECT item_json FROM rejection_reports WHERE turn=8 AND section LIKE '%closes%' ORDER BY id"
+        "SELECT item_json FROM rejection_reports WHERE turn=? ORDER BY id",
+        (turn,),
     ).fetchall()
-    items = [json.loads(r["item_json"]) for r in rows]
-    assert 42 in items and None in items, items  # 原始标量原件保真，非嵌套 wrapper
+
+    def original(raw):
+        item = json.loads(raw)
+        if isinstance(item, dict) and "raw_value" in item and "rejected" not in item:
+            return item["raw_value"]
+        return item
+
+    originals = [original(row["item_json"]) for row in rows]
+    assert 42 in originals and None in originals, originals
 
 
 def test_close_issue_code_exception_propagates(read_game, monkeypatch):

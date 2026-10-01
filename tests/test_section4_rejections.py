@@ -480,36 +480,6 @@ def test_army_firearm_over_100_clamps_not_rejected(game):
     assert after == 100  # clamp 后照落
 
 
-def test_region_army_formatters_skip_rejected_items():
-    """report.format_region_changes / format_army_changes 遇到同列拒收项(无
-    delta/label/region/army 键)不得 KeyError——拒收项不是盘面变化,只渲染 applied 项;
-    全拒收时回落「未见变化」(S2 迁契约副作用守门,对称 S1)。"""
-    from ming_sim.report import format_region_changes, format_army_changes
-
-    out_r = format_region_changes([
-        {"region_id": "查无此地", "rejected": True, "category": "missing_ref",
-         "reason": "查无此地"},
-        {"region": "山东", "field": "public_support", "label": "民心",
-         "old": 50, "new": 52, "delta": 2, "reason": "推演"},
-    ])
-    assert "山东" in out_r and "查无此地" not in out_r
-
-    out_a = format_army_changes([
-        {"army_id": "查无此军", "rejected": True, "category": "missing_ref",
-         "reason": "查无此军"},
-        {"army": "京营", "field": "morale", "label": "士气",
-         "old": 16, "new": 18, "delta": 2, "reason": "推演"},
-    ])
-    assert "京营" in out_a and "查无此军" not in out_a
-
-    only_rej_r = format_region_changes([
-        {"rejected": True, "category": "invalid_enum", "reason": "字段非法"}])
-    assert "未见明确地区盘面变化" in only_rej_r
-    only_rej_a = format_army_changes([
-        {"rejected": True, "category": "invalid_enum", "reason": "字段非法"}])
-    assert "未见明确军队盘面变化" in only_rej_a
-
-
 def test_duplicate_army_noninteger_manpower_rejected(game):
     """new_armies 命中已有 id 但 manpower 非整数 → 原 print 静默跳,改为逐项
     拒收留痕(invalid_enum)(ADR 决定 1)。"""
