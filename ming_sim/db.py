@@ -467,10 +467,19 @@ def _is_commitment_stop_condition(resolve_condition: object) -> bool:
     return bool(_COMMITMENT_STOP_CONDITION_RE.fullmatch(str(resolve_condition or "").strip()))
 
 def _has_stop_condition(stop_condition: object) -> bool:
-    parsed = load_stored_json(stop_condition, label="stop_condition", blank={})
-    if not isinstance(parsed, (dict, list)):
-        raise ValueError("stop_condition 须为对象或数组")
-    return bool(parsed)
+    """Only structured gates count; writable condition strings are opaque text."""
+    if isinstance(stop_condition, (dict, list)):
+        return bool(stop_condition)
+    raw = str(stop_condition or "").strip()
+    if not raw:
+        return False
+    try:
+        parsed = json.loads(raw)
+    except (TypeError, ValueError):
+        # insert_issue also accepts symbolic/free-text conditions. This predicate
+        # distinguishes those from structured gates; it is not a JSON reader.
+        return False
+    return isinstance(parsed, (dict, list)) and bool(parsed)
 
 def _optional_positive_dossier_id(raw: object, *, field: str) -> Optional[int]:
     """#658：typed dossier id 单权威——真正缺省→None；一旦出现只接正整数。

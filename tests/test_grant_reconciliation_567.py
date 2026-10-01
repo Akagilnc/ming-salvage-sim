@@ -238,7 +238,6 @@ def test_close_merges_recon_note_without_second_treasury_debit(game):
     assert result["dossier_executions"] == [{"dossier_id": gid, "outcome": "fulfilled"}]
     closed = db.dossiers.get(gid)
     assert closed["status"] == "closed"
-    note = closed["execution_note"]
     # 仍无二次扣库
     assert int(state.metrics["内库"]) == after_grant_inner
     assert db.list_economy_moves_for_dossier(gid) == moves_before

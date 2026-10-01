@@ -246,7 +246,6 @@ def test_due_review_scene_tops_live_open_night_even_with_body(game):
     opening = _scene_opening_text(state, [], "", [], facts)
     assert "当前待裁场面" in opening
     assert facts, "待裁场面须原样进入开场最小集"
-    joined = "\n".join(facts)
 
 
 # ── P1 有案卷桥 / 无案卷分支 ──────────────────────────────────────────
@@ -591,7 +590,7 @@ def test_input_closed_set_degrades_when_sources_missing(game):
     assert inp["supervision_history"] == []  # 本夹具未挂稽核链
     assert inp["progress_reports"] == []
     assert inp.get("transformation_tendency_facts", {}).get("exposure_count", 0) == 0
-    scene = project_due_review_scene(db, todo, review_input=inp)
+    project_due_review_scene(db, todo, review_input=inp)
 
 
 def test_formal_review_blocks_extractor_second_terminal(game):

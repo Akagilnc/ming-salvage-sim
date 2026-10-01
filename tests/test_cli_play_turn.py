@@ -381,8 +381,7 @@ def test_terminal_minister_chat_reply_persist_failure_keeps_user_message(monkeyp
 
 
 @pytest.mark.parametrize("action", ["skip", "issue"])
-def test_play_turn_reports_default_approval_secret_order_failure(monkeypatch, capsys, action):
-    """#415: 退朝默认提交密令失败时，CLI 也必须给出失败 id。"""
+def test_play_turn_secret_order_failure_keeps_transition_order(monkeypatch, capsys, action):
 
     class Db:
         def __init__(self):
@@ -435,7 +434,6 @@ def test_play_turn_reports_default_approval_secret_order_failure(monkeypatch, ca
 
     term.play_turn(session)
 
-    out = capsys.readouterr().out
     if action == "skip":
         assert session.calls == ["begin", "advance"]
     else:
@@ -495,8 +493,7 @@ def test_play_turn_skip_settlement_abort_stays_in_player_loop(monkeypatch, capsy
     assert session.calls == ["begin", "advance", "advance"]
 
 
-def test_play_turn_reports_secret_order_failure_when_settlement_aborts(monkeypatch, capsys):
-    """pre_settle 已标 failed 后若后续结算中止，CLI 仍须显示失败 id。"""
+def test_play_turn_secret_order_abort_keeps_transition_order(monkeypatch, capsys):
 
     class Db:
         def __init__(self):
@@ -542,7 +539,6 @@ def test_play_turn_reports_secret_order_failure_when_settlement_aborts(monkeypat
 
     term.play_turn(session)
 
-    out = capsys.readouterr().out
     assert session.calls == ["begin", "resolve", "advance"]
 
 

@@ -182,7 +182,7 @@ def test_this_turn_rejection_opens_triad_on_same_desk(game, monkeypatch):
 def test_answering_triad_applies_and_releases_rescript_gate(game, monkeypatch, decision, status):
     db, state, content = game
     minister = next(iter(content.characters.values())).name
-    pending_id = _stage_rejected_edict(db, state, minister)
+    _stage_rejected_edict(db, state, minister)
     _forbid_extractor(monkeypatch)
     monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
     monkeypatch.setattr(
@@ -214,7 +214,6 @@ def test_answering_triad_applies_and_releases_rescript_gate(game, monkeypatch, d
     again = session.resolve_turn(allow_empty_decree=True)
     assert again.awaiting is False
     assert again.stage == "gazette"
-    del pending_id
 
 
 def test_answering_world_question_resumes_suffix_then_gazette(game, monkeypatch):

@@ -86,7 +86,7 @@ class StagedDeclarationStore:
         self, *, decree_ref: str, declaration: Mapping[str, object], turn: int,
         visible_refs: Mapping[str, object] | None = None,
         verdict: Mapping[str, object] | None = None,
-        questions: list | None = None,
+        questions: list[dict] | None = None,
         forecast_text: str | None = None,
     ) -> int:
         ref = str(decree_ref or "").strip()
@@ -94,6 +94,8 @@ class StagedDeclarationStore:
             raise ValueError("decree_ref 不能为空")
         if not isinstance(declaration, Mapping):
             raise ValueError("声明须为对象")
+        if questions is not None:
+            questions = _load_questions(questions)
         def write() -> int:
             if self._is_closed(ref):
                 raise DecreeAlreadySettled(

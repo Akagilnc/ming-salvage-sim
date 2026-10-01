@@ -215,8 +215,6 @@ def test_web_entry_captures_before_await_close(web_game, monkeypatch):
     # 真失败后展示态退出
     assert game.db.month_open_snapshots.get(turn) is None
     assert game.state_payload()["turn"]["settlement_display"] is False
-    detail = resp.json()["detail"]
-    text = detail if isinstance(detail, str) else json.dumps(detail, ensure_ascii=False)
 
 
 # ── 3. 真失败另形：pending 抽取仍失败 → 人话 + 展示态退出 ──────────────
@@ -236,7 +234,7 @@ def test_true_failure_pending_translation_exits_display(web_game, monkeypatch, t
         raise LLMUnavailable(CLI_RUNNER_PLAYER_MESSAGE, code="llm_error")
 
     stub_audience_translate(monkeypatch, _boom_translate)
-    before = _click_before(game.state)
+    _click_before(game.state)
     turn = int(game.state.turn)
     nid, ctid = _open_night_with_unextracted_reply(game, minister)
 
@@ -293,7 +291,7 @@ def test_true_failure_issue_exits_display(web_game, monkeypatch, tmp_path):
         raise LLMUnavailable(CLI_RUNNER_PLAYER_MESSAGE, code="llm_error")
 
     stub_audience_translate(monkeypatch, _boom_translate)
-    before = _click_before(game.state)
+    _click_before(game.state)
     turn = int(game.state.turn)
     _open_night_with_unextracted_reply(game, minister)
     game.db.add_directive(
@@ -451,8 +449,6 @@ def test_advance_http_reject_after_accept_exits_display(web_game, monkeypatch):
 
     resp = asyncio.run(go())
     assert resp.status_code == 409, resp.text
-    detail = resp.json()["detail"]
-    text = detail if isinstance(detail, str) else json.dumps(detail, ensure_ascii=False)
     # 点即入曾发生
     assert saw.get("snap") == before
     # 拒收后不得留孤儿核账展示态
@@ -489,8 +485,6 @@ def test_concurrent_advance_noncreator_must_not_clear_owner_snapshot(web_game, m
 
         resp_b = asyncio.run(go_b())
         assert resp_b.status_code == 409, resp_b.text
-        detail = resp_b.json()["detail"]
-        text = detail if isinstance(detail, str) else json.dumps(detail, ensure_ascii=False)
         # B 幂等 no-op 后 409：non-blocking exit 撞锁 skip，不得代清 A 的快照
         assert game.db.month_open_snapshots.get(turn) == before
         assert game.state_payload()["turn"]["settlement_display"] is True

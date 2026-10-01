@@ -379,7 +379,6 @@ def test_worker_cleanup_double_failure_emits_original_error_end_and_logs(caplog)
     assert err.get("message") == primary, err
 
     # 日志机械断言：abandon + fail 两次 cleanup 均 logger.exception 留痕
-    joined = "\n".join(r.getMessage() for r in caplog.records)
     # traceback 须在 exception 记录里（logger.exception → exc_info）
     assert any(r.exc_info for r in caplog.records), caplog.records
     _assert_write_path_free(runtime)
@@ -437,7 +436,7 @@ def test_worker_postprocess_exception_emits_error_end():
     assert types[-1] == "end", events
     err_idx = types.index("error")
     assert types[err_idx + 1] == "end", types
-    err = next(e for e in events if e.get("type") == "error")
+    next((e for e in events if e.get('type') == 'error'))
     _assert_write_path_free(runtime)
 
 
@@ -871,7 +870,6 @@ def test_chat_stream_typed_429_preserved(monkeypatch, game):
     response = _post_chat_stream(monkeypatch, web_game, minister)
     events = _parse_sse(response.text)
     detail = events[-1][1]
-    max_a = default_transport_policy().max_attempts
     assert detail.get("status_code") == 429
     assert detail.get("code") == "llm_run_error"
     assert detail.get("provider_message") == reason

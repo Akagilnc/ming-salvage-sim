@@ -671,7 +671,6 @@ def test_generate_rejects_military_order_empty_assignee(monkeypatch, tmp_path):
 # ---------------------------------------------------------------------------
 
 def test_validate_items_binds_only_board_issue_ids():
-    board = [{"issue_id": 5}, {"issue_id": 7}]
     data = {"items": [
         {"issue_id": 5, "title": "甲", "context": "c", "options": _two_opts("a", "h1", "b", "h2")},
         {"issue_id": 999, "title": "幻觉回显", "context": "c", "options": _two_opts("a", "h1", "b", "h2")},

@@ -76,11 +76,10 @@ def test_capture_unknown_person_still_409(game, monkeypatch):
         return (json.dumps(response, ensure_ascii=False), 1)
 
     monkeypatch.setattr(cli_backend, "_run_backend_for_config", backend)
-    with pytest.raises(ValueError) as ei:
+    with pytest.raises(ValueError):
         cli_backend.capture_manual_directive_payload(
             text, None, db=db, content=content,
         )
-    msg = str(ei.value)
 
 
 @pytest.mark.parametrize("name", ["大臣", "群臣", "边将", "朝鲜边军", "陛下", "皇帝"])
@@ -128,7 +127,6 @@ def test_night_archive_involved_people_drops_non_persons(game):
     assert "王承恩" in people
     assert "杨嗣昌" in people
     # 标题不得出现「此时」
-    pass
 
 
 def test_default_time_of_day_is_shichen_not_cishi():

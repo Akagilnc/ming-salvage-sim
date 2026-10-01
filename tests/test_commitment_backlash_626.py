@@ -765,11 +765,7 @@ def test_ac5_hook_idempotent_no_gate_table_expansion(game):
     )
     did, holder = _executing_policy_dossier(db, state, token="idemp")
     bar = _seed_halfway(db, state, did=did)
-    cid = _insert_commitment(
-        db, state, title="幂等之诺", origin_ref=f"dossier:{did}",
-        bar_value=bar,
-        participants=[{"character_id": holder, "tier": "主办", "role": "承办"}],
-    )
+    _insert_commitment(db, state, title='幂等之诺', origin_ref=f'dossier:{did}', bar_value=bar, participants=[{'character_id': holder, 'tier': '主办', 'role': '承办'}])
     db.record_dossier_execution(
         did, "failed", "期限已过，诸事不济", int(state.turn),
         close=True, commit=True,

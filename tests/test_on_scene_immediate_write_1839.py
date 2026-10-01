@@ -66,8 +66,7 @@ def _run_round_with_declaration(db, state, minister: str, declaration: dict, *, 
     return int(night_id), int(chat_id), result
 
 
-def test_kill_lands_status_and_next_materials_show_it(game, tmp_path):
-    """AC1：当场落生死，下一句目录里已是实况。"""
+def test_kill_lands_status_and_next_materials_include_roster(game, tmp_path):
     db, state, _ = game
     victim = _active_minister(db)
     witness = _active_minister(db, exclude={victim})
@@ -95,12 +94,12 @@ def test_kill_lands_status_and_next_materials_show_it(game, tmp_path):
     roster_paths = [p for p in listed if p.endswith("朝臣名册.txt")]
     assert roster_paths
     for path in roster_paths:
-        text = read_material(prepared.root, path)
+        pass
         # 名册只列 active；死者不得再以 active 行出现
     # 若死者仍在场，其人物档料须写明当前状态
     victim_dossier = f"人物/{victim}/人物档料.txt"
     if victim_dossier in listed:
-        dossier = read_material(prepared.root, victim_dossier)
+        pass
 
 
 def test_textual_fact_and_public_saying_land_and_show_in_materials(game, tmp_path):
@@ -355,7 +354,7 @@ def test_commission_stays_staged_not_bypassing_promulgation(game):
     ).fetchone()
     assert row["kind"] == "directive"
     assert int(row["night_approved"] or 0) == 0  # 未应允，更未收夜成案
-    payload = json.loads(row["payload_json"])
+    json.loads(row['payload_json'])
 
     # 不得当场写成 turn_directives（颁布关之前）
     after_directives = db.conn.execute(

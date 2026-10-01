@@ -55,4 +55,3 @@ def test_sqlite_text_sanitization_covers_issue_rows_and_advances(game):
     assert all("中文" in adv_row[col] and "\\ud800" in adv_row[col] for col in adv_row.keys() if isinstance(adv_row[col], str))
 
     db.close_issue(state, issue_id, reason="failed", narrative=bad_text)
-    close_row = db.conn.execute("SELECT narrative FROM issue_advances WHERE issue_id=? ORDER BY id DESC", (issue_id,)).fetchone()

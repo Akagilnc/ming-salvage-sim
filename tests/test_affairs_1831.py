@@ -201,10 +201,7 @@ def test_strategic_event_unauthorized_person_origin_reaches_final_projection(gam
     issues_mod.bind_content(content)
     state.year = 1638
     state.period = 9
-    authorized = db.affairs.open(
-        name=NINGYUAN, origin=ORIGIN,
-        year=state.year, period=state.period, turn=state.turn,
-    )
+    db.affairs.open(name=NINGYUAN, origin=ORIGIN, year=state.year, period=state.period, turn=state.turn)
     db.conn.execute(
         "UPDATE regions SET military_pressure = ? WHERE id = ?", (20, "beizhili"),
     )

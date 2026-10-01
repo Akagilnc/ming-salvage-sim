@@ -155,7 +155,7 @@ def test_judge_face_reads_edges_invisible_to_role_view(ledger):
     jia_pairs = {(d["source"], d["target"]) for d in project_relation_ledger(db, viewer="王绍徽")}
     assert ("钱谦益", "温体仁") not in jia_pairs
     # 有账与无账行为可辨：判官读面含酿制产物原文。
-    wei_yang = next(d for d in judge_face if (d["source"], d["target"]) == (EMPEROR_NODE, "杨嗣昌"))
+    next((d for d in judge_face if (d['source'], d['target']) == (EMPEROR_NODE, '杨嗣昌')))
 
 
 def test_omniscient_is_superset_same_core(ledger):
@@ -201,7 +201,6 @@ def test_td7_local_marker_negative_assertion(ledger):
     )
     db.conn.commit()
     projection = project_relation_ledger(db, viewer="王绍徽")
-    rendered = json.dumps(projection, ensure_ascii=False)
     # 事件类目词本身也不作字段值出现（白名单恒等已保证，这里按票面再咬一口）。
     for dto in projection:
         assert "event_kind" not in dto

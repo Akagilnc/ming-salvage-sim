@@ -131,13 +131,6 @@ def test_883_audience_chat_path_does_not_leave_secret_in_shared_sources(game):
     brief = db.conn.execute(
         "SELECT body, minister_name FROM secret_order_briefs WHERE order_id=?", (oid,)
     ).fetchone()
-    other_view = db.get_character_knowledge(state, other.name)
-    other_text = " ".join(
-        item.get("body", "")
-        for item in [*other_view["events"], *other_view["public_events"]]
-    )
-    assignee_view = db.get_character_knowledge(state, assignee.name)
-    assignee_text = " ".join(item.get("body", "") for item in assignee_view["events"])
 
     assert brief is not None
     assert brief["minister_name"] == assignee.name
@@ -176,13 +169,6 @@ def test_883_audience_chat_paraphrase_does_not_leave_origin_in_shared_sources(ga
     brief = db.conn.execute(
         "SELECT body, minister_name FROM secret_order_briefs WHERE order_id=?", (oid,)
     ).fetchone()
-    other_view = db.get_character_knowledge(state, other.name)
-    other_text = " ".join(
-        item.get("body", "")
-        for item in [*other_view["events"], *other_view["public_events"]]
-    )
-    assignee_view = db.get_character_knowledge(state, assignee.name)
-    assignee_text = " ".join(item.get("body", "") for item in assignee_view["events"])
 
     assert brief is not None
     assert brief["minister_name"] == assignee.name
@@ -257,15 +243,6 @@ def test_883_public_audience_same_turn_survives_secret_classification(game):
     oid = create_test_secret_order(db, state, assignee.name, "密查国丈", extracted, [])
     assert oid > 0
 
-    assignee_view = db.get_character_knowledge(state, assignee.name)
-    assignee_text = " ".join(
-        item.get("body", "") for item in assignee_view["events"] + assignee_view.get("public_events", [])
-    )
-    other_view = db.get_character_knowledge(state, other.name)
-    other_text = " ".join(
-        item.get("body", "")
-        for item in [*other_view["events"], *other_view.get("public_events", [])]
-    )
 
     # 同一大臣另有密令不改变一条公开召对的消息级 provenance。
     assert db.conn.execute(
@@ -330,11 +307,6 @@ def test_883_cross_turn_chat_origin_withheld_on_late_secret_create(game):
         "SELECT knowledge_status FROM chat_messages WHERE id=?", (mid,)
     ).fetchone()["knowledge_status"] == "withheld"
 
-    other_view = db.get_character_knowledge(state, other.name)
-    other_text = " ".join(
-        item.get("body", "")
-        for item in [*other_view["events"], *other_view.get("public_events", [])]
-    )
 
 
 def test_883_zero_overlap_semantic_rewrite_withholds_prior_audience_origin(game):
@@ -392,16 +364,6 @@ def test_883_thematic_public_audience_survives_secret_create(game):
         "SELECT COUNT(*) AS n FROM character_knowledge_events WHERE body LIKE ?",
         (f"%{public_line}%",),
     ).fetchone()["n"]
-    assignee_view = db.get_character_knowledge(state, assignee.name)
-    assignee_text = " ".join(
-        item.get("body", "")
-        for item in assignee_view["events"] + assignee_view.get("public_events", [])
-    )
-    other_view = db.get_character_knowledge(state, other.name)
-    other_text = " ".join(
-        item.get("body", "")
-        for item in [*other_view["events"], *other_view.get("public_events", [])]
-    )
 
     assert after_events >= 1
 
@@ -434,10 +396,6 @@ def test_976_pure_public_minister_reply_released_after_settle(game, monkeypatch)
         "SELECT knowledge_status FROM chat_messages WHERE id=?", (mid,)
     ).fetchone()["knowledge_status"]
     assert status == "released"
-    row = db.conn.execute(
-        "SELECT body FROM character_knowledge_sources WHERE source_id=?",
-        (f"chat_message:{mid}",),
-    ).fetchone()
 
 
 def test_976_secret_chat_turn_withholds_both_sides_but_public_turn_survives(game):
@@ -481,21 +439,6 @@ def test_976_secret_chat_turn_withholds_both_sides_but_public_turn_survives(game
     }
     assert statuses[mid_origin] == statuses[mid_ack] == "withheld"
     assert statuses[mid_public_q] == statuses[mid_public_reply] == "released"
-    brief = db.conn.execute(
-        "SELECT body FROM secret_order_briefs WHERE order_id=?", (oid,)
-    ).fetchone()
-    other_view = db.get_character_knowledge(state, other.name)
-    other_text = " ".join(
-        item.get("body", "")
-        for item in [*other_view["events"], *other_view.get("public_events", [])]
-    )
-    shared_text = " ".join(
-        row["body"] or ""
-        for row in db.conn.execute(
-            "SELECT body FROM character_knowledge_sources WHERE source_id IN (?,?)",
-            (f"chat_message:{mid_public_q}", f"chat_message:{mid_public_reply}"),
-        ).fetchall()
-    )
 
 
 def test_976_withhold_does_not_yank_old_released_public_user(game):
@@ -614,10 +557,6 @@ def test_976_held_user_chat_released_when_never_classified_as_secret(game):
     assert db.conn.execute(
         "SELECT knowledge_status FROM chat_messages WHERE id=?", (mid,)
     ).fetchone()["knowledge_status"] == "released"
-    row = db.conn.execute(
-        "SELECT body FROM character_knowledge_sources WHERE source_id=?",
-        (f"chat_message:{mid}",),
-    ).fetchone()
 
 
 def test_883_only_explicit_leak_conclusion_promotes_secret_order_to_public(game):
@@ -721,15 +660,7 @@ def test_976_cross_person_speaker_user_origin_withheld_not_shared(game):
         (f"chat_message:{mid}",),
     ).fetchone()[0] == 0
 
-    other = next(
-        m for m in _active_ministers(db, content)
-        if m.name not in (speaker.name, assignee.name)
-    )
-    other_view = db.get_character_knowledge(state, other.name)
-    other_text = " ".join(
-        item.get("body", "")
-        for item in [*other_view["events"], *other_view.get("public_events", [])]
-    )
+    next((m for m in _active_ministers(db, content) if m.name not in (speaker.name, assignee.name)))
 
 
 def test_976_same_window_pure_public_user_survives_secret_classification(game):
@@ -770,18 +701,8 @@ def test_976_same_window_pure_public_user_survives_secret_classification(game):
     assert pub_status in ("private", "released")
     assert pub_status != "withheld"
 
-    assignee_view = db.get_character_knowledge(state, assignee.name)
-    assignee_text = " ".join(
-        item.get("body", "")
-        for item in assignee_view["events"] + assignee_view.get("public_events", [])
-    )
 
     # Secret oral line never shared; other ministers must not see it.
-    other_view = db.get_character_knowledge(state, other.name)
-    other_text = " ".join(
-        item.get("body", "")
-        for item in [*other_view["events"], *other_view.get("public_events", [])]
-    )
 
 
 def test_976_stage_confirm_pin_provenance_not_max_held_user(game):
@@ -849,15 +770,7 @@ def test_976_stage_confirm_pin_provenance_not_max_held_user(game):
         (f"chat_message:{mid_sec}",),
     ).fetchone()[0] == 0
 
-    other = next(
-        m for m in _active_ministers(db, content)
-        if m.name not in (speaker.name, assignee.name)
-    )
-    other_view = db.get_character_knowledge(state, other.name)
-    other_text = " ".join(
-        item.get("body", "")
-        for item in [*other_view["events"], *other_view.get("public_events", [])]
-    )
+    next((m for m in _active_ministers(db, content) if m.name not in (speaker.name, assignee.name)))
 
 
 def _assert_oral_decree_withheld_not_shared(db, state, *, mid_sec, secret_q, speakers, content):
@@ -870,15 +783,7 @@ def _assert_oral_decree_withheld_not_shared(db, state, *, mid_sec, secret_q, spe
         "SELECT COUNT(*) FROM character_knowledge_sources WHERE source_id=?",
         (f"chat_message:{mid_sec}",),
     ).fetchone()[0] == 0
-    other = next(
-        m for m in _active_ministers(db, content)
-        if m.name not in speakers
-    )
-    other_view = db.get_character_knowledge(state, other.name)
-    other_text = " ".join(
-        item.get("body", "")
-        for item in [*other_view["events"], *other_view.get("public_events", [])]
-    )
+    next((m for m in _active_ministers(db, content) if m.name not in speakers))
 
 
 def test_976_non_create_stage_commit_update_withholds_oral_pin(game):
@@ -1107,12 +1012,6 @@ def test_976_non_create_pure_public_not_auto_pinned_as_secret_origin(game):
         assert pub_status in ("held", "private", "released"), action
         # 不得进 withheld 终态后从知识面消失：held 等 settle 放行亦可；
         # private/released 则接令者/参与者当即可记。
-        if pub_status in ("private", "released"):
-            view = db.get_character_knowledge(state, minister)
-            text = " ".join(
-                item.get("body", "")
-                for item in view["events"] + view.get("public_events", [])
-            )
 
 
 # ── #976 红队四轴 + 消息级 provenance 根治（正负配对，真实接缝）──────────────

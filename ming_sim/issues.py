@@ -46,6 +46,7 @@ from ming_sim.db import (
     GameDB,
     _LEVERAGE_FACTIONS,
     _approx_wanliang,
+    _has_stop_condition,
     compute_loyalty_soft_adjust,
     fold_loyalty_alias_delta,
     infer_office_type_from_office,
@@ -520,9 +521,9 @@ def _legacy_commitment_stop_gate(resolve_condition: object) -> Dict[str, str]:
 def _commitment_stop_gate(row: sqlite3.Row) -> Dict[str, str]:
     keys = row.keys() if hasattr(row, "keys") else []
     raw = row["stop_condition"] if "stop_condition" in keys else ""
-    if str(raw or "").strip():
-        gate = load_stored_object(raw, label="stop_condition")
-        if gate:
+    if _has_stop_condition(raw):
+        gate = json.loads(raw) if isinstance(raw, str) else raw
+        if isinstance(gate, dict):
             return gate
     return _legacy_commitment_stop_gate(row["resolve_condition"] if "resolve_condition" in keys else "")
 

@@ -123,7 +123,7 @@ def stages_to_json(stages: object) -> str:
             raise ValueError(
                 "stages_json 无有效段（每段须 due_turn>0 与 criterion_text）"
             )
-        return json.dumps(normalized, ensure_ascii=False, separators=(",", ":"))
+        return json.dumps(load_commitment_stages(normalized), ensure_ascii=False, separators=(",", ":"))
     if isinstance(stages, (list, tuple)):
         if not stages:
             return "[]"
@@ -133,7 +133,7 @@ def stages_to_json(stages: object) -> str:
             raise ValueError(
                 "stages_json 无有效段（每段须 due_turn>0 与 criterion_text）"
             )
-        return json.dumps(normalized, ensure_ascii=False, separators=(",", ":"))
+        return json.dumps(load_commitment_stages(normalized), ensure_ascii=False, separators=(",", ":"))
     raise ValueError(f"stages_json 类型非法：{type(stages).__name__}")
 
 

@@ -33,8 +33,7 @@ class _ClosingNightDB:
         raise AssertionError("assert_night_accepts_player_input must not hit SQL here")
 
 
-def test_closing_player_message_is_diegetic_without_bare_night_id(monkeypatch):
-    """#1301：玩家面文案不得拼接裸 night_id；结构化 detail 仍带 night_id。"""
+def test_closing_night_error_preserves_structured_detail(monkeypatch):
     night = {
         "id": 42,
         "status": an.NIGHT_STATUS_CLOSING,
@@ -46,15 +45,13 @@ def test_closing_player_message_is_diegetic_without_bare_night_id(monkeypatch):
     with pytest.raises(an.AudienceNightError) as ei:
         an.assert_night_accepts_player_input(object(), what="召对")
 
-    msg = str(ei.value)
     assert ei.value.code == "night_closing"
     assert ei.value.detail == {"night_id": 42, "what": "召对"}
 
 
 # ── #1306 FRONT_HALF_DONE 分相位文案 ────────────────────────────────────────
 
-def test_serialized_web_write_awaiting_decision_says_waiting_for_rescript():
-    """#1306：awaiting_decision 报「等待批红」，不得报「月末结算进行中」。"""
+def test_serialized_web_write_rejects_awaiting_decision():
     game = SimpleNamespace(
         state=SimpleNamespace(turn_phase=TurnPhase.AWAITING_DECISION.value),
         _write_gate=ClassifiedWriteGate(),
@@ -63,7 +60,6 @@ def test_serialized_web_write_awaiting_decision_says_waiting_for_rescript():
         with web_app._serialized_web_write(game):
             pass
     assert ei.value.status_code == 409
-    detail = str(ei.value.detail)
 
 
 def test_serialized_web_write_settling_keeps_settlement_in_progress_copy():
@@ -79,8 +75,7 @@ def test_serialized_web_write_settling_keeps_settlement_in_progress_copy():
     assert "月末结算进行中" in str(ei.value.detail)
 
 
-def test_serialized_web_write_phase_messages_cover_front_half_done():
-    """#1306 全 FRONT_HALF_DONE 相位均 409，且文案按相位分叉。"""
+def test_serialized_web_write_rejects_front_half_done_phases():
     for phase in FRONT_HALF_DONE_PHASES:
         game = SimpleNamespace(
             state=SimpleNamespace(turn_phase=phase),
@@ -90,7 +85,6 @@ def test_serialized_web_write_phase_messages_cover_front_half_done():
             with web_app._serialized_web_write(game):
                 pass
         assert ei.value.status_code == 409
-        detail = str(ei.value.detail)
         if phase == TurnPhase.AWAITING_DECISION.value:
             pass
         else:
@@ -203,7 +197,6 @@ def test_resolve_decisions_stream_phase_precheck_before_lock(monkeypatch):
     assert events, "expected at least one SSE event"
     event, payload = events[-1]
     assert event == "error"
-    message = payload["message"] if isinstance(payload, dict) else str(payload)
     assert game.session._submit_called is False
     assert game.actions == []
 

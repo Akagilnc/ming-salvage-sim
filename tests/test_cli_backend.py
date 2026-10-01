@@ -100,10 +100,7 @@ def test_secret_content_assembly_is_emperor_plus_extractor_only():
 
     task = "密查关宁欠饷"
     extracted = f"{task}，三月内回奏，方法：密访核册"
-    body = cb.assemble_secret_order_content(
-        emperor_intent=task,
-        extractor_content=extracted,
-    )
+    cb.assemble_secret_order_content(emperor_intent=task, extractor_content=extracted)
     # 御旨未覆盖时兜底并入御旨，仍不接受第三路 reply
     partial = "臣已领旨办理。"
     merged = cb.assemble_secret_order_content(

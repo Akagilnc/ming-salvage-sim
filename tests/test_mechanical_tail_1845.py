@@ -545,7 +545,6 @@ def test_mechanical_tail_missing_llm_config_surfaces_retry(game, monkeypatch):
     turn, tail = failure
     assert turn == closed_turn
     assert tail["status"] == "failed"
-    err = str(tail.get("error") or "")
     assert tail.get("error_pack_path")
 
     monkeypatch.setattr(

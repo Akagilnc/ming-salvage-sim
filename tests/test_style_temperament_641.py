@@ -305,7 +305,6 @@ def test_character_context_with_db_reads_own_style_and_viewer_ledger(game):
 
     assert NEW_STYLE in minister_dossier(person)
 
-    own_dto = expected_own[0]
 
 
 

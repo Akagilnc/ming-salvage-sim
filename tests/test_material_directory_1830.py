@@ -87,7 +87,6 @@ def test_prepare_writes_typed_tree_and_index(game, tmp_path):
             assert read_material(prepared.root, stripped)
         else:
             assert any(stripped.startswith(rel + " ") for rel in listed)
-    roster = read_material(prepared.root, "人物/朝臣名册.txt")
     status, _reason = db.get_character_status(character.name)
 
 
@@ -138,11 +137,6 @@ def test_material_tree_contains_only_structurally_related_world_details(game, tm
     region_paths = [path for path in names if path.startswith("地区/")]
     army_paths = [path for path in names if path.startswith("军队/")]
     assert len(region_paths) == 1 and len(army_paths) == 1
-    region_text = read_material(prepared.root, region_paths[0])
-    army_text = read_material(prepared.root, army_paths[0])
-    region_name = db.conn.execute(
-        "SELECT name FROM regions WHERE id=?", ("shaanxi",),
-    ).fetchone()["name"]
 
 
 def _agent_with_materials(root: Path, *, with_cli_cwd: bool):
@@ -278,7 +272,6 @@ def test_character_materials_exclude_legacy_raw_turn_report_and_keep_public_gaze
     names = list_materials(prepared.root)
     gazette_paths = [p for p in names if p.startswith("公开说法/邸报/")]
     assert len(gazette_paths) == 7
-    blob = "\n".join(read_material(prepared.root, p) for p in names if p != "INDEX.txt")
     assert not any(p.startswith("邸报/") and not p.startswith("公开说法/") for p in names)
     for month in range(1, 8):
         assert any(f"1627年{month}月.txt" in p for p in gazette_paths)
@@ -286,7 +279,7 @@ def test_character_materials_exclude_legacy_raw_turn_report_and_keep_public_gaze
     assert rel.startswith("公开说法/邸报/")
 
 
-def test_secret_order_materials_keep_full_content_and_fail_loud_on_db_error(
+def test_secret_order_material_read_failure_propagates(
     game, tmp_path, monkeypatch,
 ):
     db, state, content = game
@@ -299,8 +292,7 @@ def test_secret_order_materials_keep_full_content_and_fail_loud_on_db_error(
     prepared = prepare_character_materials(
         db, state, character, dest_root=tmp_path / "secret-ok",
     )
-    secret_path = next(p for p in list_materials(prepared.root) if p.startswith("密令/"))
-    secret_text = read_material(prepared.root, secret_path)
+    next((p for p in list_materials(prepared.root) if p.startswith('密令/')))
 
     def boom(_name):
         raise RuntimeError("secret-order-db-boom")

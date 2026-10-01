@@ -485,7 +485,7 @@ async def _start_hanging_chat(game, client, minister, monkeypatch):
 # ── ④ TOCTOU：等 gate 期间相位翻到亲裁 → 持锁内权威复查经真实 /chat/stream SSE 拒 ──
 def test_asgi_phase_flip_while_waiting_gate_rejected(web_game, monkeypatch):
     game = web_game
-    minister = _active_minister(game)
+    _active_minister(game)
     # 装好 fake LLM：删掉持锁内复查时，失败只会因非法开夜/建轮（而非缺 API key 401）。
     _agent = _FakeAgent()
     stub_scene_agent(monkeypatch, _agent)

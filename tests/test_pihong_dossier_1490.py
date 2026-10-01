@@ -2538,7 +2538,7 @@ def test_658_endorsement_provenance_xor(game):
     minister = _summonable_name(db, content)
     did = db.create_decree_dossier(state, action_type='policy', decree_text='试', target_kind='policy', target_id='t')
     chat = db.create_chat_turn(state, minister, '658-xor', 0)
-    eid = db.dossiers.add_endorsement(did, form='会签', endorser_id=minister, source_chat_turn_id=chat)
+    db.dossiers.add_endorsement(did, form='会签', endorser_id=minister, source_chat_turn_id=chat)
     row = db.dossiers.endorsements(did)[0]
     assert row['source_chat_turn_id'] == chat and row['decision_key'] == ''
     eid2 = db.dossiers.add_endorsement(did, form='当面站台', endorser_id=minister, decision_key='rescript_draft:1:0')

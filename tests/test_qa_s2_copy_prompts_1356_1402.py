@@ -17,12 +17,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_gazette_header_uses_report_own_month_not_current_turn(game):
-    """#1356：报头年月 ≡ 报文自身月；跨年十二月→正月。
-
-    #1356 删除方案后开局不再 seed 九月固定邸报；报头同源仍钉真实 turn_reports 行。
-    不得用当前 turn.reign_period_label 混充上月报头。真渲染见 vitest ReportModal。
-    """
+def test_previous_report_metadata_preserves_report_month(game):
     from ming_sim.models import reign_period_label
 
     db, state, _content = game
@@ -31,7 +26,6 @@ def test_gazette_header_uses_report_own_month_not_current_turn(game):
     assert state.turn == 1
     assert (state.year, state.period) == (1627, 10)
     assert reign_period_label(state.year, state.period) == "天启七年十月"
-    opening_body = db.previous_turn_summary(state)
 
     # 落一条真实「九月」报文 → 报头必须九月（与报文自身月同源）
     db.conn.execute(
@@ -56,8 +50,7 @@ def test_gazette_header_uses_report_own_month_not_current_turn(game):
     assert offenders == []
 
 
-def test_gazette_header_cross_year_december_report_under_january_state(game):
-    """#1356 F4：十二月报文 + 正月状态 → 报头十二月（跨年边界）。"""
+def test_previous_report_metadata_preserves_cross_year_month(game):
     from ming_sim.models import reign_period_label
 
     db, state, _content = game
@@ -71,7 +64,6 @@ def test_gazette_header_cross_year_december_report_under_january_state(game):
     header = db.previous_turn_reign_period_label(state)
     assert header == "天启七年十二月"
     assert header != current
-    body = db.previous_turn_summary(state)
 
 
 def test_state_payload_projects_previous_reign_period_label(game):

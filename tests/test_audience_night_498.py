@@ -272,9 +272,6 @@ def test_write_decree_leaves_unacted_pending_unchanged(tmp_path, content, monkey
     try:
         db, state = sess.db, sess.state
         minister = _active_minister(db, content)
-        old_office = db.conn.execute(
-            "SELECT office FROM characters WHERE name=?", (minister,),
-        ).fetchone()["office"]
         pid = db.upsert_pending_directive(
             state.turn, minister, payload={**_POLICY_FIELDS, "text": "着户部核边饷", "actor": minister})
         # 无 draft：拟诏响亮拒绝、不为 preview 造持久态
@@ -311,8 +308,6 @@ def test_cross_night_directive_reassigned_to_second_night(game):
     assert db.mark_pending_night_approved([d_id], night_id=n2["id"]) == 1
     an.close_night(db, state, night_id=n2["id"], content=content)
     assert db.conn.execute("SELECT status FROM pending_actions WHERE id=?", (d_id,)).fetchone()["status"] == "committed"
-    drafts = db.conn.execute(
-        "SELECT text FROM turn_directives WHERE turn=? AND status='draft'", (state.turn,)).fetchall()
 
 
 # ── AC9：真实任免 + 候选转档 + 崩溃续跑 ──────────────────────────────
@@ -385,10 +380,6 @@ def test_close_night_crash_then_reopen_db_resumes_idempotent(content):
         assert db2.conn.execute(
             "SELECT status FROM pending_actions WHERE id=?", (dir_id,),
         ).fetchone()["status"] == "committed"
-        drafts = db2.conn.execute(
-            "SELECT text FROM turn_directives WHERE turn=? AND status='draft'",
-            (state2.turn,),
-        ).fetchall()
         # #1838 reopen：无收夜旁白账；再收幂等看夜 status
         again = an.close_night(db2, state2, night_id=night["id"], content=content)
         assert again.get("already") is True

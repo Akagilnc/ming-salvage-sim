@@ -130,7 +130,6 @@ def test_terminal_outcomes_charge_lead_and_downgraded_delegator(
         assert "徐光启" in targets
     assert not {"黄道周", "王承恩"} & targets
 
-    note = db.dossiers.get(dossier_id)["execution_note"]
 
 
 def test_adapter_replay_is_idempotent_on_joint_liability_rows(game):
@@ -183,7 +182,7 @@ def test_engine_auto_failed_materialize_writes_zero_joint_liability(game):
     assert db.get_relation_edge_events(event_kind="连坐") == []
 
 
-def test_dead_liable_party_skips_satisfaction_but_enters_note(game):
+def test_dead_liable_party_skips_satisfaction_and_credit_edge(game):
     db, state, content = game
     dossier_id = _executing_dossier(db, state)
     db.conn.execute("UPDATE characters SET status='dead' WHERE name='倪元璐'")
@@ -205,7 +204,6 @@ def test_dead_liable_party_skips_satisfaction_but_enters_note(game):
     }
     assert "倪元璐" not in edges
     assert "徐光启" in edges
-    note = db.dossiers.get(dossier_id)["execution_note"]
 
 
 def test_explicit_affected_parties_must_pass_full_key_validation(game):
@@ -293,7 +291,6 @@ def test_assistant_row_delegator_gets_secondary_assistant_zero_mechanical(game):
     assert edges == {"倪元璐", "徐光启"}
     assert "黄道周" not in edges
 
-    note = db.dossiers.get(dossier_id)["execution_note"]
 
 
 def test_dual_role_lead_and_delegator_primary_wins(game):
@@ -333,7 +330,6 @@ def test_dual_role_lead_and_delegator_primary_wins(game):
     }
     assert edges == {"倪元璐", "徐光启"}
 
-    note = db.dossiers.get(dossier_id)["execution_note"]
 
 
 def test_liability_query_excludes_knowers_but_keeps_delegator_fk(game):

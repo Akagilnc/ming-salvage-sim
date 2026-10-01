@@ -236,8 +236,7 @@ def test_adr0053_unknown_person_still_rejected_at_capture(game, monkeypatch):
         roster=[{"character_id": "不存在之人甲", "tier": "主办"}],
     )
 
-    with pytest.raises(ValueError) as ei:
+    with pytest.raises(ValueError):
         cli_backend.capture_manual_directive_payload(
             text, None, db=db, content=content,
         )
-    msg = str(ei.value)

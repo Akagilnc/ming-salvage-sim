@@ -592,7 +592,4 @@ def test_issue_639_seed_owner_audit_corrections(fresh_session):
 
     projection = project_relation_ledger(sess.db, viewer=None)
     assert len(projection) == 21
-    wei_cui = next(
-        row for row in projection
-        if row["source"] == "魏忠贤" and row["target"] == "崔呈秀"
-    )
+    next((row for row in projection if row['source'] == '魏忠贤' and row['target'] == '崔呈秀'))

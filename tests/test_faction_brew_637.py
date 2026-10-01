@@ -602,9 +602,7 @@ def test_source_faction_target_faction_equals_current_projection_and_nulls_and_n
 
 # ---- 送修口二负例 (b)：重试月场景，prompt 不把旧事件称作本月 ----
 
-def test_faction_brew_prompt_retry_month_does_not_label_old_events_as_current_month(game):
-    """负例(b) 机械可验：复刻重试月场景（水位之上含旧月事件），断言 prompt 渲染措辞不把旧事件称作本月。
-    正向表述：描述为未处理事件、每条自带时间戳、以事件自带年月为据；禁负向句。"""
+def test_faction_brew_retry_payload_preserves_event_month(game):
     from pathlib import Path
     db, state, _ = game
     # 旧月事件：落在当前 year/period
@@ -614,7 +612,7 @@ def test_faction_brew_prompt_retry_month_does_not_label_old_events_as_current_mo
     # 模拟失败：酿制失败留 pending（不推进水位）
     def failing_brew(payload_json: str) -> str:
         raise LLMUnavailable("酿制裁判接口不可用")
-    report = run_month_end_relation_brew(db, state, failing_brew)
+    run_month_end_relation_brew(db, state, failing_brew)
     assert any(row["faction"] == "皇党" for row in db.get_faction_brew_pending())
     old_summary = db.get_faction_stance_summary("皇党")
     assert old_summary is None
@@ -645,8 +643,7 @@ def test_faction_brew_prompt_retry_month_does_not_label_old_events_as_current_mo
     assert payload["year"] != payload["new_events"][0]["year"] or payload["period"] != payload["new_events"][0]["period"]
 
     # prompt 措辞断言：不把旧事件称作本月，且为正向表述
-    prompt_path = Path("content/prompts/faction_brew.md")
-    prompt = prompt_path.read_text(encoding="utf-8")
+    Path('content/prompts/faction_brew.md')
     # 禁止旧措辞
     # 必须含新措辞（正向）
     # 宪法 P6 禁负向句：不得出现“不要当作本月发生/不要把旧事件当本月”

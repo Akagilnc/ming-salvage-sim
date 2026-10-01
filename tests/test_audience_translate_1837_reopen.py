@@ -368,8 +368,6 @@ def test_inquiry_declaration_preserves_assignment_in_attendant_materials(game, m
         from pathlib import Path
         carrier = f"人物/{attendant.name}/经历.txt"
         assert carrier in prepared.index_lines
-        experience = (Path(prepared.root) / carrier).read_text(encoding="utf-8")
-        pass
     finally:
         release_material_tree(prepared.root)
 

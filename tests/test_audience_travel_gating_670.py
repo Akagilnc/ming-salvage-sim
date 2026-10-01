@@ -150,8 +150,6 @@ def test_cli_initial_selection_records_remote_summon_without_returning_minister(
     assert [(row["person_name"], row["origin_id"]) for row in an.list_unsettled_summons(db)] == [
         ("洪承畴", f"cli:initial:{state.turn}:洪承畴"),
     ]
-    # 成功记召不喷固定承旨句；资格失败仍可经 reason 打印。
-    joined = "\n".join(notices)
 
 
 def test_cli_initial_selection_rejects_unknown_unregistered_person(game, monkeypatch):
@@ -178,7 +176,6 @@ def test_cli_initial_selection_rejects_unknown_unregistered_person(game, monkeyp
     assert db.conn.execute(
         "SELECT COUNT(*) AS n FROM characters WHERE name=?", (unknown,),
     ).fetchone()["n"] == 0
-    joined = "\n".join(notices)
 
 
 def test_in_transit_summon_origin_is_idempotent_and_restorable(game):
@@ -468,13 +465,6 @@ def test_arrived_summon_continuation_survives_failed_apply_across_months(game, m
     assert _arrive_at_destination(game, person.name) == [
         {"name": person.name, "location": "henan"}
     ]
-    arrived_fact = {
-        "person_name": person.name,
-        "original_destination": "henan",
-        "origin_id": origin,
-        "source_entry_id": entry_id,
-        "required_fact": "抵原地后续赴京",
-    }
     assert _travel_row(db, person.name)["location"] == "henan"
     assert _travel_row(db, person.name)["transit_to"] == ""
 
@@ -701,8 +691,7 @@ def test_cli_midflow_summon_consumes_admission_without_entering(game, monkeypatc
     outcome = terminal._handle_court_command(sess, "传洪承畴来", current)
 
     assert outcome == "handled"
-    # 成功记召不喷固定承旨句，仍 handled 不入殿。
-    joined = "\n".join(notices)
+    # 记召后仍 handled，不入殿。
     assert [row["origin_id"] for row in an.list_unsettled_summons(db)] == [
         f"cli:midflow:{state.turn}:洪承畴",
     ]
@@ -733,7 +722,6 @@ def test_cli_midflow_summon_rejects_unknown_unregistered_person(game, monkeypatc
     assert db.conn.execute(
         "SELECT COUNT(*) AS n FROM characters WHERE name=?", (unknown,),
     ).fetchone()["n"] == 0
-    joined = "\n".join(notices)
     assert "summon" not in outcome
 
 
@@ -752,8 +740,6 @@ def test_summon_recorder_default_body_is_empty_and_tags_carry_facts(game):
     assert by_id[transit_id]["body"] == ""
     assert an.TAG_SUMMON_UNSETTLED in by_id[fresh_id]["tags"]
     assert an.TAG_IN_TRANSIT in by_id[transit_id]["tags"]
-    scroll = an.read_night_scroll(db, night_id)
-    scene_text = "\n".join(str(row.get("body") or "") for row in scroll)
 
 
 def test_consume_open_night_and_recorder_share_one_transaction(game, monkeypatch):

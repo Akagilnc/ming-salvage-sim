@@ -102,13 +102,7 @@ def test_disclosure_promotes_monthly_report_to_public_event_only_after_disclosur
         "order_id": order_id, "sim_note": "该案已经明发廷议", "disclosed": True,
     }]}, content=content)
     public = db._character_knowledge_events("")
-    disclosure = next(
-        item for item in public
-        if str(item.get("source_id") or "").startswith(
-            f"secret_order_disclosure:{order_id}:"
-        )
-    )
-    pass
+    next((item for item in public if str(item.get('source_id') or '').startswith(f'secret_order_disclosure:{order_id}:')))
 
 
 def test_titles_do_not_classify_and_all_active_secret_orders_are_candidates(game):
@@ -300,7 +294,7 @@ def test_real_no_edict_entries_roll_back_every_external_state_after_fiscal_write
     def fail_after_real_flows(flow_db, flow_state):
         ledger_before = _rows(flow_db, "economy_ledger")
         metrics_before = dict(flow_state.metrics)
-        result = original_flows(flow_db, flow_state)
+        original_flows(flow_db, flow_state)
         observed["fiscal_written"] = _rows(flow_db, "economy_ledger") != ledger_before
         observed["metrics_written"] = dict(flow_state.metrics) != metrics_before
         assert observed == {"fiscal_written": True, "metrics_written": True}

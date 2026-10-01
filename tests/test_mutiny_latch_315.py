@@ -31,7 +31,6 @@ def _setup(
     # 土司/自养不进军心 tick，双累加器与总欠必须为 0。明军走全中央饷源。
     exempt = bool(is_tusi or self_funded_pay)
     central_share = 0 if exempt else 1
-    stored_arrears = 0 if exempt else arrears
     central_arrears = 0 if exempt else arrears
     db.conn.execute(
         "UPDATE armies SET owner_power='ming', is_tusi=?, self_funded_pay=?,\n           manpower=10000, salary_rate=1, loyalty=?, is_mutinied=?,\n           province_pay_share=0, central_pay_share=?,\n           province_pay_arrears=0, central_pay_arrears=? WHERE id=?",
