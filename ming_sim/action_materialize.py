@@ -678,7 +678,11 @@ def canonicalize_xiexang_army_target(db: Any, raw_target: object) -> str:
 class DecreeMaterializationValidationError(ValueError):
     """Typed rejection raised before a decree candidate can be recorded."""
 
-    def __init__(self, message: str, *, failed_fields: tuple[str, ...] = ()) -> None:
+    def __init__(
+        self, message: str, *, failed_fields: tuple[str, ...] = (),
+        category: str = "invalid_shape",
+    ) -> None:
+        self.category = category
         self.failed_fields = failed_fields
         super().__init__(message)
 

@@ -14867,10 +14867,11 @@ class GameDB:
         commit: bool = True,
     ) -> None:
         """把确认后的新→旧案卷关联整批落账；任一坏引用则整批拒收并留痕。"""
+        from ming_sim.action_materialize import DecreeMaterializationValidationError
         source_id = strict_int(source_dossier_id, accept_numeric_strings=False)
         source = self.get_decree_dossier(source_id)
         if source is None:
-            raise ValueError("关联来源指向不存在案卷")
+            raise DecreeMaterializationValidationError("关联来源指向不存在案卷", category="hallucinated_id")
         normalized: List[Tuple[int, str, str]] = []
         rejection: Optional[Tuple[int, str, str, str]] = None
         for item in links:
@@ -14886,12 +14887,16 @@ class GameDB:
             note = str(item.get("note") or "") if isinstance(item, dict) else ""
             if self.get_decree_dossier(target_id) is None:
                 rejection = (target_id, relation, note, "关联指向不存在案卷")
+                category = "hallucinated_id"
             elif target_id >= source_id:
                 rejection = (target_id, relation, note, "案卷关联只允许新案卷指向旧案卷")
+                category = "invalid_state"
             elif relation not in DOSSIER_LINK_TYPES:
                 rejection = (target_id, relation, note, "案卷关联类型非法")
+                category = "invalid_enum"
             elif not note.strip():
                 rejection = (target_id, relation, note, "案卷关联说明不能为空")
+                category = "invalid_shape"
             if rejection is not None:
                 break
             normalized.append((target_id, relation, note))
@@ -14901,7 +14906,7 @@ class GameDB:
                 source_id, target_id, relation, note, reason,
             )
             self._commit_dossier_write(commit)
-            exc = ValueError(reason)
+            exc = DecreeMaterializationValidationError(reason, category=category)
             # commit_pending_actions rolls its business savepoint back.  Carry the
             # rejected item across that boundary so its outer failure path can
             # persist the audit without retaining the incomplete secret order.
@@ -17994,6 +17999,8 @@ class GameDB:
         "draft" for decree-checkpoint default approval, "pending" for chat-approved
         candidates that must still pass the later准/驳 interface.
         返回已落库动作摘要。"""
+        from ming_sim.action_materialize import DecreeMaterializationValidationError
+
         if kind_filter is not None and kind_filter_exclude is not None:
             raise ValueError("kind_filter and kind_filter_exclude are mutually exclusive")
         if directive_status not in ("draft", "pending"):
@@ -18086,9 +18093,11 @@ class GameDB:
                 except Exception as exc:
                     self.conn.execute(f"ROLLBACK TO {savepoint}")
                     restore_office_memory()
-                    # 0150-D2 / #1745：typed 归属缺口不得吞成 pending failed。
-                    from ming_sim.applier import RejectionCollectorRequired
-                    if isinstance(exc, RejectionCollectorRequired):
+                    # Only explicit domain rejections are terminal. SQLite errors,
+                    # unclassified ValueError and code bugs stop the original chain.
+                    if not isinstance(exc, (
+                        DecreeMaterializationValidationError, OfficeAppointmentRejection,
+                    )):
                         raise
                     rejection = getattr(exc, "dossier_link_rejection", None)
                     if rejection is not None:
@@ -18097,11 +18106,7 @@ class GameDB:
                         )
                     tlog(f"[pending_actions] 落库失败 id={pa['id']} {pa['kind']}/{pa['action']}：{exc}")
                     if rejection_collector is not None:
-                        rejection_collector.note_commit_exception(int(pa["id"]), exc)
-                    # 真实 SQLite 故障停原链：不标 failed，外层事务回滚后原行动仍 pending。
-                    # 领域拒收（ValueError 等）仍终态 failed，不冒充可重试故障。
-                    if isinstance(exc, sqlite3.Error):
-                        raise
+                        rejection_collector.note_commit_rejection(int(pa["id"]), exc)
                     ok = False
                     self.conn.execute(
                         "UPDATE pending_actions SET status='failed' WHERE id=?", (int(pa["id"]),))
@@ -18169,6 +18174,7 @@ class GameDB:
             or int(getattr(self.conn, "_atomic_depth", 0) or 0) > 0
         )
         cm = atomic(self) if owns_transaction else contextlib.nullcontext()
+        from ming_sim.action_materialize import DecreeMaterializationValidationError
         result = None
         try:
             with cm:
@@ -18197,18 +18203,16 @@ class GameDB:
                     # directive 特路与通用分支同款：领域拒收回滚后标 failed。
                     # 真实 SQLite 故障不标 failed，交外层原链停住。
                     self.conn.execute(f"ROLLBACK TO {savepoint}")
-                    # 0150-D2 / #1745：typed 归属缺口不得吞成 pending failed。
-                    from ming_sim.applier import RejectionCollectorRequired
-                    if isinstance(exc, RejectionCollectorRequired):
+                    if not isinstance(exc, (
+                        DecreeMaterializationValidationError, OfficeAppointmentRejection,
+                    )):
                         raise
                     tlog(
                         f"[pending_actions] 落库失败 id={pa['id']} "
                         f"{pa['kind']}/{pa['action']}：{exc}"
                     )
                     if rejection_collector is not None:
-                        rejection_collector.note_commit_exception(int(pa["id"]), exc)
-                    if isinstance(exc, sqlite3.Error):
-                        raise
+                        rejection_collector.note_commit_rejection(int(pa["id"]), exc)
                     self.conn.execute(
                         "UPDATE pending_actions SET status='failed' WHERE id=?",
                         (int(pa["id"]),),
@@ -18259,10 +18263,14 @@ class GameDB:
                     build_covert_task_contract,
                     covert_task_from_payload,
                 )
+                from ming_sim.action_materialize import DecreeMaterializationValidationError
                 raw_task = covert_task_from_payload(payload) or payload.get("covert_task")
-                if not raw_task:
-                    raise CovertContractError("密令确认缺少差务类型")
-                frozen_task = build_covert_task_contract(covert_task=raw_task)
+                try:
+                    frozen_task = build_covert_task_contract(covert_task=raw_task)
+                    if not frozen_task:
+                        raise CovertContractError("密令确认缺少差务类型")
+                except CovertContractError as exc:
+                    raise DecreeMaterializationValidationError(str(exc)) from exc
                 order_id = self.create_secret_order(
                     state, assignee, title, content_text, tags, deadline_months=deadline,
                     excluded_names=excluded, excluded_offices=excluded_offices,
@@ -18275,7 +18283,7 @@ class GameDB:
                 if order_id is not None and payload.get("dossier_links") is not None:
                     links = payload.get("dossier_links")
                     if not isinstance(links, list):
-                        raise ValueError("密令案卷关联必须为列表")
+                        raise DecreeMaterializationValidationError("密令案卷关联必须为列表")
                     dossier = self.get_dossier_for_secret_order(int(order_id))
                     if dossier is None:
                         raise ValueError("密令成案后未找到案卷")
@@ -21454,6 +21462,7 @@ class GameDB:
         # 先经 _find_existing_minister 把别名（如「福王」）解到规范 key，再校资格、并以规范名落库——
         # 否则别名绕过资格闸（codex+CodeRabbit R2 concur），且按别名存会让后续按规范名查不到此令
         # （CodeRabbit R3 Major）。lazy import 避 db↔session 循环。
+        from ming_sim.action_materialize import DecreeMaterializationValidationError
         if self.content is not None:
             from ming_sim.session import _find_existing_minister
             minister_name = _find_existing_minister(self.content, minister_name, self) or minister_name
@@ -21468,9 +21477,13 @@ class GameDB:
                 None,
             )
             if _ch is not None and is_vassal_prince(_ch):
-                raise ValueError(f"{_ch.name}为就藩宗室，非朝廷命官，不可受密令。")
+                raise DecreeMaterializationValidationError(
+                    f"{_ch.name}为就藩宗室，非朝廷命官，不可受密令。", category="invalid_state",
+                )
             if _ch is not None and self.resolve_power_id(_ch) != "ming":
-                raise ValueError(f"{_ch.name}不属大明朝廷，不可受密令。")
+                raise DecreeMaterializationValidationError(
+                    f"{_ch.name}不属大明朝廷，不可受密令。", category="invalid_state",
+                )
         provenance_message_ids = self._coerce_positive_message_ids([
             *([] if origin_chat_message_id is None else [origin_chat_message_id]),
             *(origin_chat_message_ids or []),
@@ -21499,7 +21512,10 @@ class GameDB:
             "SELECT COUNT(*) FROM secret_orders WHERE status='active'"
         ).fetchone()[0]
         if active_count >= 20:
-            raise ValueError(f"进行中密令已达上限（20条），请先结案部分密令再下新令。当前：{active_count} 条。")
+            raise DecreeMaterializationValidationError(
+                f"进行中密令已达上限（20条），请先结案部分密令再下新令。当前：{active_count} 条。",
+                category="invalid_state",
+            )
         raw_excluded_names, excluded_offices = canonical_secret_order_exclusions(
             self.content, excluded_names or [], excluded_offices or [], f"{title}\n{content}",
         )
@@ -22025,14 +22041,17 @@ class GameDB:
         reason: str = "",
     ) -> Dict[str, object]:
         """缩短 active 密令期限。deadline_months<=0 表示本月到期对账。"""
+        from ming_sim.action_materialize import DecreeMaterializationValidationError
         row = self.conn.execute(
             "SELECT id, title, status, due_turn FROM secret_orders WHERE id = ?",
             (int(order_id),),
         ).fetchone()
         if row is None:
-            raise ValueError("密令不存在")
+            raise DecreeMaterializationValidationError("密令不存在", category="hallucinated_id")
         if row["status"] != "active":
-            raise ValueError(f"当前状态 {row['status']}，不能催办")
+            raise DecreeMaterializationValidationError(
+                f"当前状态 {row['status']}，不能催办", category="invalid_state",
+            )
         try:
             months = max(0, min(int(deadline_months or 0), 36))
         except (TypeError, ValueError):

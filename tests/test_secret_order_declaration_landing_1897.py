@@ -562,13 +562,14 @@ def test_late_translation_staged_secret_order_still_lands_under_its_source_night
     assert db.get_secret_order(order_id)["status"] == "active"
 
 
-def test_failed_landing_keeps_the_original_pending_action_retryable(game, monkeypatch):
+@pytest.mark.parametrize("fault", ["sqlite", "missing_dossier"])
+def test_failed_landing_keeps_the_original_pending_action_retryable(game, monkeypatch, fault):
     """成案失败不把源轮标 done。原暂存仍 pending，补跑只完成这一次成案。"""
     db, state, content = game
     minister = _minister(db)
     staged = _emit(
         db, state, content, monkeypatch,
-        _secret_order_declaration(assignee=minister), minister=minister,
+        _secret_order_declaration(assignee=minister, dossier_links=[]), minister=minister,
     )
     assert staged.commissions.rejected == []
     staged_id = int(_staged_secret_order_rows(db, state.turn)[0]["id"])
@@ -581,7 +582,14 @@ def test_failed_landing_keeps_the_original_pending_action_retryable(game, monkey
             return sqlite3.SQLITE_DENY
         return sqlite3.SQLITE_OK
 
-    db.conn.set_authorizer(deny_order_insert)
+    if fault == "sqlite":
+        db.conn.set_authorizer(deny_order_insert)
+    else:
+        # A real DB invariant failure, not a mocked commit or a domain rejection.
+        db.conn.execute(
+            "CREATE TEMP TRIGGER lose_dossier AFTER INSERT ON decree_dossiers "
+            "BEGIN UPDATE decree_dossiers SET secret_order_id=NULL WHERE id=NEW.id; END"
+        )
 
     from tests.conftest import persist_and_schedule_scene, stub_audience_translate
     from tests.test_audience_translation_1838 import _scene_session
@@ -600,7 +608,7 @@ def test_failed_landing_keeps_the_original_pending_action_retryable(game, monkey
     reply = sess.scene_chat("应允查办。", chat_turn_id=ctid, minister_name=minister)
     fut = persist_and_schedule_scene(sess, db, reply, speaker=minister)
     assert fut is not None
-    with pytest.raises(sqlite3.DatabaseError):
+    with pytest.raises(sqlite3.DatabaseError if fault == "sqlite" else ValueError):
         fut.result(timeout=10)
     assert db.get_story_extract_status(ctid) != "done"
     assert db.list_secret_orders() == []
@@ -616,6 +624,8 @@ def test_failed_landing_keeps_the_original_pending_action_retryable(game, monkey
     assert manifest.get("kind") == "translation"
     assert int((manifest.get("detail") or {}).get("chat_turn_id") or 0) == ctid
     db.conn.set_authorizer(None)
+    if fault == "missing_dossier":
+        db.conn.execute("DROP TRIGGER lose_dossier")
 
     reopened = GameDB(db.path, content)
     try:
@@ -691,24 +701,81 @@ def test_approved_rush_reports_success_and_is_not_repeated(game, monkeypatch):
     assert again.promises.applied == [], again.promises.applied
 
 
-@pytest.mark.parametrize("bad_links", [7, [7]], ids=["whole_field", "element"])
-def test_bad_dossier_links_reject_only_their_own_item(game, monkeypatch, bad_links):
-    """关联字段坏类型只拒本项，同批合法密令照落。"""
+@pytest.mark.parametrize("bad_case", [
+    "whole_field", "element", "missing", "forward", "relation", "note", "foreign", "vassal", "capacity",
+])
+def test_bad_dossier_links_reject_only_their_own_item(game, monkeypatch, bad_case):
+    """声明及应允的领域拒收逐项留痕，合法同行照常成案。"""
     db, state, content = game
     minister = _minister(db)
+    bad = {"assignee": minister}
+    if bad_case in {"whole_field", "element"}:
+        bad["dossier_links"] = 7 if bad_case == "whole_field" else [7]
+    elif bad_case in {"foreign", "vassal"}:
+        from ming_sim.models import is_vassal_prince
+        bad["assignee"] = next(
+            c.name for c in content.characters.values()
+            if (db.resolve_power_id(c) != "ming" if bad_case == "foreign"
+                else is_vassal_prince(c))
+        )
+    elif bad_case == "capacity":
+        for _ in range(19):
+            db.create_secret_order(state, minister, "密查", "查办", [], covert_task=_covert_task())
+    else:
+        target = 999999
+        if bad_case in {"relation", "note"}:
+            opened = _emit(db, state, content, monkeypatch,
+                           _secret_order_declaration(assignee=minister), minister=minister)
+            approved = _approve(db, state, content, monkeypatch,
+                                _staged_secret_order_rows(db, state.turn)[-1]["id"], minister=minister)
+            target = db.get_dossier_for_secret_order(
+                approved.promises.applied[0]["secret_order_id"],
+            )["id"]
+        elif bad_case == "forward":
+            # The first new dossier would refer to itself.
+            target = db.conn.execute("SELECT COALESCE(MAX(id),0)+1 FROM decree_dossiers").fetchone()[0]
+        bad["dossier_links"] = [{
+            "target_dossier_id": target,
+            "relation_type": "非法" if bad_case == "relation" else "稽核",
+            "note": " " if bad_case == "note" else "查账",
+        }]
+    before = len(db.list_secret_orders())
     result = _emit(
         db, state, content, monkeypatch,
         {"commissions": [
             {"text": "此事要密办，卿去查来。",
-             "secret_order": _secret(assignee=minister, dossier_links=bad_links)},
+             "secret_order": _secret(**bad)},
             {"text": "此事要密办，卿去查来。",
              "secret_order": _secret(assignee=minister)},
         ]},
         minister=minister,
     )
-    assert len(result.commissions.rejected) == 1
-    assert _rejection_rows(db, state.turn)[0]["category"] == "invalid_shape"
-    assert len(_staged_secret_order_rows(db, state.turn)) == 1
+    if bad_case in {"whole_field", "element"}:
+        assert len(result.commissions.rejected) == 1
+        assert _rejection_rows(db, state.turn)[0]["category"] == "invalid_shape"
+        assert len(_staged_secret_order_rows(db, state.turn)) == 1
+        return
+    ids = [int(r["id"]) for r in _staged_secret_order_rows(db, state.turn)
+           if r["status"] == "pending"]
+    assert len(ids) == 2
+    approved = _emit(db, state, content, monkeypatch, {
+        "promises": [{"action_id": aid, "decision": "应允"}
+                     for aid in (ids[::-1] if bad_case == "capacity" else ids)],
+    }, minister=minister)
+    assert len(approved.promises.rejected) == 1
+    assert approved.promises.rejected[0].category == {
+        "missing": "hallucinated_id", "relation": "invalid_enum", "note": "invalid_shape",
+    }.get(bad_case, "invalid_state")
+    assert len(approved.promises.applied) == 1
+    assert len(db.list_secret_orders()) == before + 1
+    statuses = [db.conn.execute("SELECT status FROM pending_actions WHERE id=?", (aid,)).fetchone()[0]
+                for aid in ids]
+    assert statuses == ["failed", "committed"]
+    assert len(_rejection_rows(db, state.turn, "promises")) == 1
+    if "dossier_links" in bad:
+        assert len(db.list_dossier_link_rejections(pending_action_id=ids[0])) == 1
+    ctid = db.conn.execute("SELECT MAX(id) FROM chat_turns").fetchone()[0]
+    assert db.get_story_extract_status(ctid) == "done"
 
 
 def test_late_translated_rush_lands_under_its_source_night(game, monkeypatch):

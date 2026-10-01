@@ -28,9 +28,8 @@ C1b（分段 / 在场 / 边事件）仍在其票内接线。C3 过月段转译�
 =引用的实体真不存在；``invalid_enum``=枚举值不在闭集；``invalid_shape``=
 字段缺失/类型/空值等形状问题；``invalid_state``=实体存在但当前状态不容许该
 动作（如已殁者不可入殿、姓名已在册不可再入册）；``missing_ref``=引用的上下文
-本身缺失（如不属本夜暂存清单的动作 id、不存在的夜、已结算的 decree_ref）；
-``commit_failed``=真实落库失败（DB 拒绝 / 异常），既非形状问题也非实体状态
-问题，须按此归类，不得冒称 ``invalid_state``。
+本身缺失（如不属本夜暂存清单的动作 id、不存在的夜、已结算的 decree_ref）。
+真实落库故障直接上抛，不进入领域拒收结果。
 
 「各自所属事务」（existing-only `affair_declaration`）已接入 commissions /
 textual_facts / public_sayings / presence / scene_facts（原生 `origin_ref`
@@ -141,27 +140,6 @@ class DeclarationDispatchResult:
     inquiries: SectionResult
     rushes: SectionResult
     travel_tones: SectionResult
-
-    def commit_failure_reason(self) -> str:
-        """真实落库失败的原因。空字符串表示本份声明没有这类拒收。"""
-        for name in _SECTION_FIELDS:
-            section = getattr(self, name, None)
-            for item in getattr(section, "rejected", None) or []:
-                if getattr(item, "category", "") == "commit_failed":
-                    return str(getattr(item, "reason", "") or "commit_failed")
-        return ""
-
-    def commit_failure_cause(self) -> Optional[BaseException]:
-        """落库失败的原异常。没有则返回 None。"""
-        for name in _SECTION_FIELDS:
-            section = getattr(self, name, None)
-            for item in getattr(section, "rejected", None) or []:
-                if getattr(item, "category", "") != "commit_failed":
-                    continue
-                cause = getattr(item, "cause", None)
-                if isinstance(cause, BaseException):
-                    return cause
-        return None
 
     def merge(self, other: "DeclarationDispatchResult") -> "DeclarationDispatchResult":
         """按 section 逐个 merge，供 :func:`settle_staged_declarations_in_decree_order`
@@ -770,11 +748,11 @@ def _declared_prose(value: object) -> Optional[str]:
 
 def _reject(
     rejected: List[RejectedItem], item: object, reason: str, category: str,
-    source: Provenance, *, cause: Optional[BaseException] = None,
+    source: Provenance,
 ) -> None:
     rejected.append(RejectedItem(
         item=dict(item) if isinstance(item, Mapping) else {"raw_value": item},
-        reason=reason, category=category, source=source, cause=cause,
+        reason=reason, category=category, source=source,
     ))
 
 
@@ -2380,28 +2358,14 @@ def _dispatch_promises(
                     None,
                 )
                 if entry is None:
-                    cause = _rc.commit_exception(int(action_id))
-                    if cause is None:
-                        # 返回 False：目标已关闭等合法状态拒收，commit 已标 failed。
-                        # 不是可重试的数据库故障，不放回 pending。
-                        _reject(
-                            rejected, item,
-                            "密令目标状态不容许，该暂存已失败",
-                            "invalid_state", source,
-                        )
-                        continue
-                    # 真实异常已被提交缝记下：放回 pending，同一 action_id 可再应允。
-                    # SQLite 故障在提交缝直接上抛，不会走到这里。
-                    db.conn.execute(
-                        "UPDATE pending_actions SET status='pending' WHERE id=?",
-                        (int(action_id),),
-                    )
-                    reason = "密令未能落库，原暂存已保留可重试"
-                    detail = str(cause)
-                    if detail:
-                        reason = f"{reason}：{detail}"
+                    rejection = _rc.commit_rejection(int(action_id))
+                    # False and explicit domain rejection are terminal failed.
+                    # Real faults propagate from commit and keep the original pending row.
                     _reject(
-                        rejected, item, reason, "commit_failed", source, cause=cause,
+                        rejected, item,
+                        str(rejection) if rejection is not None
+                        else "密令目标状态不容许，该暂存已失败",
+                        rejection.category if rejection is not None else "invalid_state", source,
                     )
                     continue
                 if str(entry.get("action") or "") == "新建":
