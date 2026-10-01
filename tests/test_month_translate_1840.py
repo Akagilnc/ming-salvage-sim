@@ -955,4 +955,23 @@ def test_month_translation_receives_person_candidate_identity(game):
     jisi = next(item for item in _world_candidate_events(db, state) if item["id"] == "jisi_lubian")
     labels = list(content.event_by_id["jisi_lubian"].terminal_reason_labels)
     assert labels and jisi["terminal_reason_labels"] == labels
-    assert json.dumps(labels, ensure_ascii=False) in seen[0].target_grounding
+    decoder = json.JSONDecoder()
+    text = seen[0].target_grounding
+    matched = []
+    cursor = 0
+    while cursor < len(text):
+        start = text.find("[", cursor)
+        if start < 0:
+            break
+        try:
+            value, end = decoder.raw_decode(text, start)
+        except json.JSONDecodeError:
+            cursor = start + 1
+            continue
+        if isinstance(value, list):
+            matched.extend(
+                item for item in value
+                if isinstance(item, dict) and item.get("id") == "jisi_lubian"
+            )
+        cursor = end
+    assert [item.get("terminal_reason_labels") for item in matched] == [labels]
