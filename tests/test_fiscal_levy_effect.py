@@ -223,10 +223,10 @@ def test_liao_levy_rise_applies_on_no_edict_advance_after_emperor_verdict(game, 
 def test_fiscal_levy_rescript_golden_all_seeded_provinces(
     game, year, expected_event_ids, expect_jiao_in_force, expect_lian_in_force
 ):
-    """#1891：各省饷率目标 = 皇帝亲裁的结局读数（不再是引擎自动置的史实默认）。
+    """#1891：各省饷率目标读已落事件账的结局。
 
-    开征／升率批「准」、剿饷议停批「已停」；每个事件的裁断都在 pre_settle 前
-    由批红页落进事件账。
+    开征／升率终局为已准，剿饷议停终局为已停。终局由请饷声明写口在
+    pre_settle 前写入，本测试读其后的各省实征。
     """
     db, state, content = game
     issues.bind_content(content)

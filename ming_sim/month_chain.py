@@ -28,6 +28,16 @@ _DECREE_QUESTION_PREFIX = "decree-question:"
 _LEVY_PETITION_PREFIX = "levy-petition:"
 # 与 <<DECISION>> 同一类机标：切前缀与交接读取共用这一条，不另写切分。
 _LEVY_BLOCK_RE = re.compile(r"<<LEVY>>\s*(\{.*?\})\s*<<END>>", re.DOTALL)
+# 世界段生产指令与用户消息里的交接契约共用这一句，避免一边只认 DECISION。
+LEVY_HANDOFF_RULE = (
+    "levy_petitions 的数组顺序就是本月交接顺序。"
+    "上疏时按这个顺序逐件写 <<LEVY>>{title, context, options}<<END>>，"
+    "块内不写事件 id；写了也不作关联。"
+    "块数必须与名单等长。不再上疏的一件写 {\"present\": false}。"
+    "presentation_due 为 true 的必须写成请旨，不能写 present false。"
+    "presentation_due 为 false 的由你决定是否再上疏；一件都不上时整段不写 LEVY 块。"
+    "普通请旨仍用 <<DECISION>>，不能代替 LEVY 块，也不承担请饷事件身份。"
+)
 
 
 def _session_owner(db: Any, state: Any, llm_config: Any, agno_db: Any, content: Any):
@@ -94,15 +104,7 @@ def _world_segment_message(db: Any, state: Any, cheat_directive: str) -> str:
     return json.dumps({
         "instruction": message,
         "levy_petitions": petitions,
-        "levy_petitions_contract": (
-            "levy_petitions 的数组顺序就是本月交接顺序。"
-            "上疏时按这个顺序逐件写 <<LEVY>>{title, context, options}<<END>>，"
-            "块内不写事件 id；写了也不作关联。"
-            "块数必须与名单等长。不再上疏的一件写 {\"present\": false}。"
-            "presentation_due 为 true 的必须写成请旨，不能写 present false。"
-            "presentation_due 为 false 的由你决定是否再上疏；一件都不上时整段不写 LEVY 块。"
-            "普通请旨仍用 <<DECISION>>，不能代替 LEVY 块，也不承担请饷事件身份。"
-        ),
+        "levy_petitions_contract": LEVY_HANDOFF_RULE,
     }, ensure_ascii=False)
 
 
@@ -514,7 +516,7 @@ def continue_world_after_answers(
 def _continue_world_after_answers(
     session: Any, chain: Dict[str, Any], *, answers: List[Dict[str, object]], source: Provenance,
 ) -> Optional[Dict[str, object]]:
-    from ming_sim.month_translate import dispatch_month_segment
+    from ming_sim.month_translate import _answered_levy_verdicts, dispatch_month_segment
 
     db, state = session.db, session.state
     turn = int(state.turn)
@@ -522,10 +524,16 @@ def _continue_world_after_answers(
         chain["world_questions"] = []
         _save_chain(db, turn, chain, source=source)
         return chain.get("declaration_outcome")
-    if session.llm_config is None:
-        from ming_sim.exceptions import LLMUnavailable
-        raise LLMUnavailable("世界段续推缺少模型配置", stage="world-segment-continue")
-    text = _run_world_continuation_text(session, chain, answers)
+    if not chain.get("world_continuation_ready"):
+        if session.llm_config is None:
+            from ming_sim.exceptions import LLMUnavailable
+            raise LLMUnavailable("世界段续推缺少模型配置", stage="world-segment-continue")
+        produced = _run_world_continuation_text(session, chain, answers)
+        chain["world_continuation_text"] = str(produced or "")
+        chain["world_continuation_ready"] = True
+        # 续推全文先落链，转译失败重入只补转译，不重跑这段已完成的模型调用。
+        _save_chain(db, turn, chain, source=source)
+    text = str(chain.get("world_continuation_text") or "")
     outcome = None
 
     def mark_continued(result: Any = None) -> None:
@@ -539,16 +547,17 @@ def _continue_world_after_answers(
         chain["world_continued"] = True
         _save_chain(db, turn, chain, source=source)
 
-    if str(text or "").strip():
-        # 续推若再吐 DECISION / LEVY 机标，只落问前缀文，勿把机标喂进转译。
-        prefix, _extra = _split_at_question(str(text))
-        if prefix.strip():
-            result = dispatch_month_segment(
-                db, state, segment=prefix, llm_config=session.llm_config, source=source,
-                alongside=mark_continued,
-            )
-            return _ending_from_dispatch_result(result) or outcome
-    # 空续推：无落账后果，仍须原子记下已续，避免重入再烧。
+    # 续推若再吐 DECISION / LEVY 机标，只落问前缀文，勿把机标喂进转译。
+    # 已存原批语仍走这一次转译；前缀为空不能把原批语挡在入口外。
+    prefix, _extra = _split_at_question(text)
+    if prefix.strip() or _answered_levy_verdicts(db, turn):
+        result = dispatch_month_segment(
+            db, state, segment=prefix if prefix.strip() else "",
+            llm_config=session.llm_config, source=source,
+            alongside=mark_continued,
+        )
+        return _ending_from_dispatch_result(result) or outcome
+    # 无前缀、也无本段原批语：无落账后果，仍须原子记下已续，避免重入再烧。
     with atomic(db):
         mark_continued(None)
     return outcome
@@ -589,15 +598,30 @@ def _continue_decree_after_answers(
     from ming_sim.month_translate import dispatch_month_segment
 
     db, state = session.db, session.state
+    turn = int(state.turn)
+    if chain is None:
+        chain = _load_chain(db, turn)
     if not db.staged_declarations.questions_for(decree_ref):
         return
-    if session.llm_config is None:
-        raise LLMUnavailable("旨意续推缺少模型配置", stage="decree-forecast-continue")
-    dossier = _dossier_for_decree_ref(db, decree_ref)
-    if dossier is None:
-        return
-    text = _run_decree_continuation_text(session, dossier, answers)
-    prefix, _extra = _split_at_question(str(text or ""))
+    saved = chain.get("decree_continuations")
+    if not isinstance(saved, dict) or decree_ref not in saved:
+        if session.llm_config is None:
+            raise LLMUnavailable("旨意续推缺少模型配置", stage="decree-forecast-continue")
+        dossier = _dossier_for_decree_ref(db, decree_ref)
+        if dossier is None:
+            return
+        produced = _run_decree_continuation_text(session, dossier, answers)
+        saved = dict(saved) if isinstance(saved, dict) else {}
+        saved[decree_ref] = str(produced or "")
+        chain["decree_continuations"] = saved
+        # 续推全文先落链，转译失败重入只补转译／清问，不重跑这段已完成的模型调用。
+        _save_chain(db, turn, chain, source=source)
+    else:
+        dossier = _dossier_for_decree_ref(db, decree_ref)
+        if dossier is None:
+            return
+    text = str(saved.get(decree_ref) or "")
+    prefix, _extra = _split_at_question(text)
     if not prefix.strip():
         # LLM 已成功且无问后文：空后果终态，方可清问。
         db.staged_declarations.clear_questions(decree_ref)

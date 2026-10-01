@@ -206,6 +206,7 @@ def test_emperor_approves_levy_petition_through_real_month_chain(game, monkeypat
     seen = _install_model_boundary(
         monkeypatch,
         world_text=world_text,
+        continue_text="",
         declaration={"effects": [{
             "event_id": "liao_levy_rise_1631",
             "事件结局": {"liao_levy_rise_1631": "已准"},
@@ -382,7 +383,7 @@ def test_held_levy_petition_advances_month_without_terminal_state(game, monkeypa
 
 @pytest.mark.parametrize("raw_label", ["胡乱", {}])
 def test_outcome_label_outside_closed_set_is_rejected_not_written(game, monkeypatch, raw_label):
-    """闭集外标签与显式空声明都走既有续推失败：登记步骤与错误包，不写终局、不推进。"""
+    """闭集外标签或显式空声明，即使同组后项是合法标签，也走既有续推失败且不写终局。"""
     from ming_sim.exceptions import SettlementAbort
 
     db, state, content = game
@@ -391,10 +392,16 @@ def test_outcome_label_outside_closed_set_is_rejected_not_written(game, monkeypa
     closed_turn = int(state.turn)
     _install_model_boundary(
         monkeypatch, world_text="本月边情，户部请加辽饷。" + _levy_block(),
-        declaration={"effects": [{
-            "event_id": "liao_levy_rise_1631",
-            "事件结局": {"liao_levy_rise_1631": raw_label},
-        }]},
+        declaration={"effects": [
+            {
+                "event_id": "liao_levy_rise_1631",
+                "事件结局": {"liao_levy_rise_1631": raw_label},
+            },
+            {
+                "event_id": "liao_levy_rise_1631",
+                "事件结局": {"liao_levy_rise_1631": "已准"},
+            },
+        ]},
     )
     session = _make_session(db, state, content)
 

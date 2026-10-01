@@ -4597,7 +4597,11 @@ def _preflight_declared_event_groups(
                 continue
             outcome: Dict[str, object] = {}
             for item in group:
-                outcome.update(item.get("事件结局") or {})
+                piece = item.get("事件结局") or {}
+                if isinstance(piece, dict):
+                    # 闭集先看每一笔实际声明。归并后再验会让后项盖掉闭集外的值。
+                    _fiscal_levy_declared_outcome_label_or_error(db, state, event, piece)
+                outcome.update(piece)
             label, error = _fiscal_levy_declared_outcome_label_or_error(
                 db, state, event, outcome,
             )
@@ -4619,8 +4623,19 @@ def _preflight_declared_event_groups(
             _reject(pending, f"战略事件缺 event_pool 声明：{event_id}")
             continue
         outcome = {}
+        closed_error = ""
         for item in group:
-            outcome.update(item.get("事件结局") or {})
+            piece = item.get("事件结局") or {}
+            if isinstance(piece, dict) and event_id in piece:
+                _label, closed_error = _strategic_event_outcome_label_or_error(
+                    event_id, {"事件结局": {event_id: piece[event_id]}}, content,
+                )
+                if closed_error:
+                    break
+            outcome.update(piece)
+        if closed_error:
+            _reject(pending, closed_error)
+            continue
         label, error = _strategic_event_outcome_label_or_error(event_id, {"事件结局": outcome}, content)
         if error:
             _reject(pending, error)

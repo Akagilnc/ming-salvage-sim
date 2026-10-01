@@ -525,7 +525,7 @@ def test_missing_model_keeps_decree_question_until_retry(game, monkeypatch):
     except SettlementAbort as exc:
         raised = exc
     assert raised is not None and raised.stage == "decree_continue"
-    assert "旨意续推缺少模型配置" in str(raised)
+    assert raised.error_pack_path
     failure = month_chain.month_chain_call_failure(db, int(state.turn))
     assert failure is not None and failure["step"] == "decree_continue"
     assert failure["kind"] == "model_exhausted"
@@ -569,7 +569,7 @@ def test_missing_model_does_not_mark_world_continued(game, monkeypatch):
     except SettlementAbort as exc:
         raised = exc
     assert raised is not None and raised.stage == "world_continue"
-    assert "世界段续推缺少模型配置" in str(raised)
+    assert raised.error_pack_path
     failure = month_chain.month_chain_call_failure(db, closed_turn)
     assert failure is not None and failure["step"] == "world_continue"
     assert failure["kind"] == "model_exhausted"
