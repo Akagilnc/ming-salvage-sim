@@ -205,7 +205,7 @@ def test_unconsumed_todo_rolls_across_settles_and_restore(game):
 # ── P4 场面顶出 + 原诺语境 ────────────────────────────────────────────
 
 
-def test_due_review_scene_tops_next_audience_with_origin_context(game):
+def test_due_review_scene_has_no_internal_payload(game):
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
     db.conn.commit()
@@ -224,7 +224,7 @@ def test_due_review_scene_tops_next_audience_with_origin_context(game):
     assert "payload_json" not in scene
 
 
-def test_due_review_scene_tops_live_open_night_even_with_body(game):
+def test_due_review_scene_enters_open_night_fact_inputs(game):
     """#1838 reopen：待裁场面进场景开场最小集，不再写开夜旁白账。"""
     from ming_sim.materials import _scene_pending_audience_facts
 
@@ -770,7 +770,7 @@ def test_fulfilled_with_prior_durable_effect_zero_double_post(game):
     assert after_moves == before_moves
 
 
-def test_p6_gap_visible_cause_not_auto(game):
+def test_due_review_scene_binds_reported_dossier(game):
     """0118 最小玩家面：果可见、因不自动。"""
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
