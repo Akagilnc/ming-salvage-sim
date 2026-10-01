@@ -87,16 +87,10 @@ def produce_memorials(session, chain: dict, *, source) -> None:
     else:
         items, revisions, originals = [], [], {}
     with atomic(db):
-        for item in revisions:
-            row = originals[item["decision_key"]]
-            db.conn.execute(
-                "UPDATE pending_decisions SET title=?, context=?, options_json=?, choice_json='', "
-                "status='pending', revision_round=revision_round+1, prior_options_json=options_json, "
-                "actor_name=?, actor_office=?, actor_faction=? WHERE turn=? AND idx=? AND kind='rescript_draft'",
-                (item["title"], item["context"], json.dumps(item["options"], ensure_ascii=False),
-                 item["actor_name"], item["actor_office"], item["actor_faction"], row["turn"], row["idx"]),
-            )
-        db.append_rescript_drafts(int(state.turn), items)
+        db.append_rescript_drafts(int(state.turn), items, revisions=[
+            {**item, "turn": originals[item["decision_key"]]["turn"],
+             "idx": originals[item["decision_key"]]["idx"]} for item in revisions
+        ])
         chain["rescript_drafted"] = True
         _save_chain(db, int(state.turn), chain, source=source)
 
@@ -108,6 +102,7 @@ def consume_memorial_answers(session, chain: dict, *, source) -> None:
 
     db, state = session.db, session.state
     consumed = chain.setdefault("rescript_consumed", [])
+    products = chain.setdefault("rescript_answer_products", {})
     for row in sorted(db.list_rescript_drafts(), key=lambda r: (r["answered_turn"], r["answer_order"])):
         key = f"rescript_draft:{row['turn']}:{row['idx']}"
         if row["status"] != "decided" or row["answered_turn"] != int(state.turn) or key in consumed:
@@ -115,7 +110,9 @@ def consume_memorial_answers(session, chain: dict, *, source) -> None:
         answer = {"memorial": row, "decision_key": key, "choice": row["choice"]}
         officers = triage_officers(db)
         # A returned original remains answerable even if both offices became vacant.
-        data = parse_agent_json(run_rescript_text(session, officers=officers, backlog=[], answer=answer), "rescript-answer")
+        data = products.get(key)
+        if data is None:
+            data = parse_agent_json(run_rescript_text(session, officers=officers, backlog=[], answer=answer), "rescript-answer")
         disposition = data.get("disposition")
         text = data.get("text")
         if disposition not in {"settled", "revise"} or not isinstance(text, str):
@@ -127,6 +124,9 @@ def consume_memorial_answers(session, chain: dict, *, source) -> None:
                        or not all(isinstance(decree["payload"].get(k), str) for k in ("dossier_action_type", "target_kind", "target_id"))
                        or text.strip()):
             raise LLMContractError("另旨·中旨须交旨文与载荷，不先写办理效果")
+        if key not in products:
+            products[key] = data
+            _save_chain(db, int(state.turn), chain, source=source)
 
         def consume(result=None):
             if midzhi:
@@ -136,6 +136,7 @@ def consume_memorial_answers(session, chain: dict, *, source) -> None:
                     state, action_type=payload["dossier_action_type"],
                     decree_text=decree["text"], target_kind=payload["target_kind"],
                     target_id=payload["target_id"], payload=payload, status="proposed",
+                    due_turn=int(payload.get("due_turn") or 0),
                     participants=payload.get("participant_roster"), commit=False,
                 )
                 for did in ids:
@@ -153,9 +154,10 @@ def consume_memorial_answers(session, chain: dict, *, source) -> None:
                 chain["declaration_outcome"] = outcome
             _collect_disclosures_from_result(chain, result)
             consumed.append(key)
+            products.pop(key)
             _save_chain(db, int(state.turn), chain, source=source)
 
-        if disposition == "settled" and text.strip() and not midzhi:
+        if text.strip() and not midzhi:
             dispatch_month_segment(db, state, segment=text, llm_config=session.llm_config,
                                    source=source, alongside=consume)
         else:

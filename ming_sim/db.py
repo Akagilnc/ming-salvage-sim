@@ -2385,6 +2385,7 @@ class GameDB:
             "pending_decisions", "prior_options_json", "TEXT NOT NULL DEFAULT '[]'")
         self.ensure_column("pending_decisions", "answered_turn", "INTEGER NOT NULL DEFAULT 0")
         self.ensure_column("pending_decisions", "answer_order", "INTEGER NOT NULL DEFAULT 0")
+        self.ensure_column("pending_decisions", "presentation_order", "INTEGER NOT NULL DEFAULT 0")
         self._backfill_event_triggers_from_event_pool_issues()
         # 步骤7：回合阶段（旧库迁移，schema 升级非 fallback）
         self.ensure_column("game_state", "turn_phase", "TEXT NOT NULL DEFAULT 'summoning'")
@@ -10929,19 +10930,32 @@ class GameDB:
         )
         self.conn.commit()
 
-    def append_rescript_drafts(self, turn: int, drafts: List[Dict[str, object]]) -> None:
-        """追加本月票拟，不覆盖原案；与月链相位同事务。"""
-        self._insert_rescript_draft_rows(int(turn), drafts)
-
-    def _insert_rescript_draft_rows(
-        self, turn: int, drafts: List[Dict[str, object]],
+    def append_rescript_drafts(
+        self, turn: int, drafts: List[Dict[str, object]], *,
+        revisions: Sequence[Dict[str, object]] = (),
     ) -> None:
+        """收存模型顺序；修订保留原身份，与月链相位同事务。"""
+        order = int(self.conn.execute(
+            "SELECT COALESCE(MAX(presentation_order), 0) FROM pending_decisions",
+        ).fetchone()[0])
+        for item in revisions:
+            order += 1
+            self.conn.execute(
+                "UPDATE pending_decisions SET title=?, context=?, options_json=?, choice_json='', "
+                "status='pending', revision_round=revision_round+1, prior_options_json=options_json, "
+                "actor_name=?, actor_office=?, actor_faction=?, presentation_order=? "
+                "WHERE turn=? AND idx=? AND kind='rescript_draft'",
+                (item["title"], item["context"], json.dumps(item["options"], ensure_ascii=False),
+                 item["actor_name"], item["actor_office"], item["actor_faction"], order,
+                 item["turn"], item["idx"]),
+            )
         row = self.conn.execute(
             "SELECT COALESCE(MAX(idx) + 1, 0) FROM pending_decisions WHERE turn = ?",
             (int(turn),),
         ).fetchone()
         idx = int(row[0] or 0)
         for d in drafts:
+            order += 1
             actor_name = str(d.get("actor_name") or "")
             actor_office = str(d.get("actor_office") or "")
             actor_faction = str(d.get("actor_faction") or "")
@@ -10951,15 +10965,15 @@ class GameDB:
             self.conn.execute(
                 """INSERT INTO pending_decisions
                    (turn, idx, event_id, title, context, options_json, choice_json,
-                    status, kind, actor_name, actor_office, actor_faction)
-                   VALUES (?, ?, ?, ?, ?, ?, '', 'pending', 'rescript_draft', ?, ?, ?)""",
+                    status, kind, actor_name, actor_office, actor_faction, presentation_order)
+                   VALUES (?, ?, ?, ?, ?, ?, '', 'pending', 'rescript_draft', ?, ?, ?, ?)""",
                 (
                     int(turn), idx,
                     event_id,
                     str(d.get("title") or ""),
                     str(d.get("context") or ""),
                     json.dumps(d.get("options") or [], ensure_ascii=False),
-                    actor_name, actor_office, actor_faction,
+                    actor_name, actor_office, actor_faction, order,
                 ),
             )
             idx += 1
@@ -10967,14 +10981,14 @@ class GameDB:
     def list_rescript_drafts(self, *, status: str | None = None) -> List[Dict[str, object]]:
         rows = self.conn.execute(
             "SELECT * FROM pending_decisions WHERE kind='rescript_draft' "
-            "AND (? IS NULL OR status=?) ORDER BY turn,idx", (status, status),
+            "AND (? IS NULL OR status=?) ORDER BY presentation_order,turn,idx", (status, status),
         ).fetchall()
         return [self._project_rescript_desk_row(row) for row in rows]
 
     def list_rescript_desk(self, turn: int) -> List[Dict[str, object]]:
         """#657 批红案头唯一合并读出口。
 
-        序：全部 pending 急务（跨月）ORDER BY turn, idx → 本月 pending decision ORDER BY idx。
+        序：全部 pending 急务（跨月）按模型呈递顺序 → 本月 pending decision 按 idx。
         投影含 decision_key="{kind}:{source_turn}:{idx}"、options、choice、revision_round、
         status、actor；**不**持久窗 id/集合摘要/窗版本。
         list_rescript_drafts / list_pending_decisions 调用面保留；本方法是批红合并出口。
@@ -10991,7 +11005,7 @@ class GameDB:
                   )
             ORDER BY
               CASE kind WHEN 'rescript_draft' THEN 0 ELSE 1 END,
-              turn, idx
+              presentation_order, turn, idx
             """,
             (turn,),
         ).fetchall()

@@ -142,11 +142,15 @@ def test_658_endorsement_provenance_xor(game):
     with pytest.raises(ValueError, match='provenance'):
         db.add_dossier_endorsement(did, form='会签', endorser_id=minister)
 
-def test_658_imperial_push_uses_rescript_original_and_key(game, monkeypatch):
+@pytest.mark.parametrize("historical", [False, True])
+def test_658_imperial_push_uses_rescript_original_and_key(game, monkeypatch, historical):
     from tests.month_chain_helpers import make_light_session, canned_full_settlement
     db, state, content = game
     stalled, _ = _658_plant_stalled_deliberation(db, state, content)
     did = int(stalled["id"])
+    if historical:
+        db.conn.execute("UPDATE decree_dossiers SET created_turn=? WHERE id=?", (state.turn - 1, did))
+        db.conn.commit()
     canned_full_settlement(monkeypatch)
     monkeypatch.setattr("ming_sim.decree_forecast.produce_forecast_product", lambda *a, **k: {
         "verdict": {"decision": "promulgated"}, "declaration": {"effects": {}},
@@ -159,6 +163,8 @@ def test_658_imperial_push_uses_rescript_original_and_key(game, monkeypatch):
     choice = {"decision_key": row["decision_key"], "action": "imperial_push", "note": "  朕独担  "}
     session.submit_hitl_choices([choice], write_gate=session._write_gate)
     pushed = db.get_decree_dossier(did)
+    assert pushed["promulgation_decision"] == "promulgated"
+    assert pushed["status"] != "proposed"
     assert pushed["payload"]["deliberation_state"] == "backed"
     assert pushed["payload"]["imperial_push_note"] == choice["note"]
     assert len(db.list_decree_dossiers()) == 1
@@ -184,7 +190,8 @@ def test_midzhi_rescript_model_uses_original_key_and_existing_gate(game, monkeyp
         captured.append(answer)
         return json.dumps({"disposition": "settled", "text": "", "decree": {
             "text": "御笔旨文", "payload": {"dossier_action_type": "policy", "target_kind": "issue",
-                "target_id": "urgent", "locality_scope": "none", "participant_roster": copy.deepcopy(_ROSTER)},
+                "target_id": "urgent", "due_turn": int(state.turn) + 2,
+                "locality_scope": "none", "participant_roster": copy.deepcopy(_ROSTER)},
         }})
 
     monkeypatch.setattr("ming_sim.rescript_draft.run_rescript_text", rescript)
@@ -206,6 +213,7 @@ def test_midzhi_rescript_model_uses_original_key_and_existing_gate(game, monkeyp
     assert gate == [int(dossier["id"])]
     assert dossier["payload"]["decision_key"] == original["decision_key"]
     assert dossier["payload"]["mode"] == "midzhi"
+    assert dossier["due_turn"] == int(state.turn) + 2
     assert captured[0]["choice"] == choice
     assert db.list_dossier_endorsements(int(dossier["id"]))[0]["decision_key"] == original["decision_key"]
     session.resolve_turn(allow_empty_decree=True)

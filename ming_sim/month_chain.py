@@ -365,8 +365,8 @@ def continue_world_after_answers(
 ) -> Optional[Dict[str, object]]:
     """批红答复后从问处续推世界段一次；问前已落不动，整段不重推。
 
-    消费事实（清问 + world_continued）与落账同事务：LLM 先跑，失败零消费可重试；
-    成功则随 dispatch_month_segment 的 alongside 原子落旗（ADR 0157 恢复幂等）。
+    完整续推文先存当前月链；转译失败恢复不重推。
+    消费事实（清问 + world_continued）与落账同事务（ADR 0157 恢复幂等）。
     """
     from ming_sim.month_translate import dispatch_month_segment
 
@@ -379,7 +379,10 @@ def continue_world_after_answers(
     if session.llm_config is None:
         from ming_sim.exceptions import LLMUnavailable
         raise LLMUnavailable("世界段续推缺少模型配置", stage="world-segment-continue")
-    text = _run_world_continuation_text(session, chain, answers)
+    if "world_continuation_text" not in chain:
+        chain["world_continuation_text"] = _run_world_continuation_text(session, chain, answers)
+        _save_chain(db, turn, chain, source=source)
+    text = chain["world_continuation_text"]
     outcome = None
 
     def mark_continued(result: Any = None) -> None:
@@ -391,6 +394,7 @@ def continue_world_after_answers(
         _collect_disclosures_from_result(chain, result)
         chain["world_questions"] = []
         chain["world_continued"] = True
+        chain.pop("world_continuation_text", None)
         _save_chain(db, turn, chain, source=source)
 
     if str(text or "").strip():
@@ -417,8 +421,8 @@ def continue_decree_after_answers(
 
     同一 decree_ref 问前声明可能已 settled，续推声明直接分派，不另造平行暂存身份。
     幂等：questions 已清则视为已续，同回合重入零新增效果。
-    消费事实（清问）与落账同事务——先跑续推 LLM，失败保留 questions 可重试；
-    有声明则 clear_questions 走既有段分派的 alongside（ADR 0157）。
+    完整续推文先存当前月链；转译失败恢复不重推。
+    消费事实（清问）随既有段分派 alongside 与落账同事务（ADR 0157）。
     """
     from ming_sim.exceptions import LLMUnavailable
     from ming_sim.month_translate import dispatch_month_segment
@@ -431,21 +435,30 @@ def continue_decree_after_answers(
     dossier = _dossier_for_decree_ref(db, decree_ref)
     if dossier is None:
         return
-    text = _run_decree_continuation_text(session, dossier, answers)
+    if chain is None:
+        chain = _load_chain(db, int(state.turn))
+    products = chain.setdefault("decree_continuation_texts", {})
+    if decree_ref not in products:
+        products[decree_ref] = _run_decree_continuation_text(session, dossier, answers)
+        _save_chain(db, int(state.turn), chain, source=source)
+    text = products[decree_ref]
     prefix, _extra = _split_at_question(str(text or ""))
     if not prefix.strip():
         # LLM 已成功且无问后文：空后果终态，方可清问。
-        db.staged_declarations.clear_questions(decree_ref)
+        with atomic(db):
+            db.staged_declarations.clear_questions(decree_ref)
+            products.pop(decree_ref)
+            _save_chain(db, int(state.turn), chain, source=source)
         return
     payload = dossier.get("payload") if isinstance(dossier.get("payload"), dict) else {}
 
     def consume(result: Any) -> None:
         candidate = _ending_from_dispatch_result(result)
-        if candidate is not None and chain is not None:
+        if candidate is not None:
             chain["declaration_outcome"] = candidate
         _collect_disclosures_from_result(chain, result)
-        if chain is not None:
-            _save_chain(db, int(state.turn), chain, source=source)
+        products.pop(decree_ref)
+        _save_chain(db, int(state.turn), chain, source=source)
         db.staged_declarations.clear_questions(decree_ref)
 
     dispatch_month_segment(
@@ -530,11 +543,14 @@ def run_player_month_chain(
         abort_from(exc)
     # #1845：下次过月前 join／重开续接上月机械尾。尾异常不改写成月链 call_failure。
     ensure_mechanical_tails(_session_owner(db, state, llm_config, agno_db, content))
-    _consume_rescript_answers(
-        SimpleNamespace(db=db, state=state, llm_config=llm_config, agno_db=agno_db, content=content),
-        chain, source=source,
-    )
     try:
+        _guard_month_call(
+            db, state, chain, decree_text=decree_text, source=source, step="rescript-answer",
+            operation=lambda: _consume_rescript_answers(
+                SimpleNamespace(db=db, state=state, llm_config=llm_config, agno_db=agno_db, content=content),
+                chain, source=source,
+            ),
+        )
         return _run_loaded_month_chain(
             state, db, agno_db, llm_config, chain,
             decree_text=decree_text, content=content,
@@ -808,7 +824,9 @@ def _settle_edicts(
     if "recommendation_prevalidated_ids" not in chain:
         appointments = [row for row in db.list_decree_dossiers(status="proposed")
                         if row.get("action_type") == "appointment"
-                        and int(row.get("created_turn") or 0) == int(state.turn)]
+                        and not _is_stalled_deliberation(row)
+                        and (not row.get("promulgation_decision")
+                             or _is_held_for_rejudgment(row, int(state.turn)))]
         if len(appointments) > 1:
             invalid = db._invalid_office_recommendation_snapshots(state, appointments)
             prevalidated = {int(row["id"]) for row in appointments} - invalid
@@ -819,18 +837,17 @@ def _settle_edicts(
         if _is_stalled_deliberation(dossier):
             continue
         status = str(dossier.get("status") or "")
-        created = int(dossier.get("created_turn") or 0)
         held = _is_held_for_rejudgment(dossier, int(state.turn))
         ref = decree_ref_for_dossier(db, dossier)
         promulgated = str(dossier.get("promulgation_decision") or "") in {
             "promulgated", "force_promulgated",
         } or status == "promulgated"
-        this_month = created == int(state.turn) or held
+        pending_judgment = status == "proposed" and (not dossier.get("promulgation_decision") or held)
         pending_settle = (
             promulgated and not db.staged_declarations.is_settled(ref)
             and bool(db.staged_declarations.staged_for(ref))
         )
-        if not (this_month and status == "proposed") and not pending_settle:
+        if not pending_judgment and not pending_settle:
             continue
         if (
             status == "proposed"
@@ -1704,10 +1721,7 @@ def _consume_rescript_answers(
     db, state = session.db, session.state
     turn = int(state.turn)
     from ming_sim.rescript_draft import consume_memorial_answers
-    _guard_month_call(
-        db, state, chain, decree_text="", source=source, step="rescript-answer",
-        operation=lambda: consume_memorial_answers(session, chain, source=source),
-    )
+    consume_memorial_answers(session, chain, source=source)
     rows = db.list_pending_decisions(turn)
     decided = [r for r in rows if str(r.get("status") or "") == "decided"]
     if not decided:

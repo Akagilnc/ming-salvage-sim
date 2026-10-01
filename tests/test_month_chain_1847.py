@@ -15,7 +15,7 @@ import pytest
 import ming_sim.month_chain as month_chain
 import ming_sim.month_translate as month_translate
 from ming_sim.declaration_dispatch import pending_action_decree_ref
-from ming_sim.exceptions import LLMUnavailable
+from ming_sim.exceptions import LLMUnavailable, SettlementAbort
 from ming_sim.models import TurnPhase
 from tests.month_chain_helpers import make_light_session
 from tests.test_month_chain_1843 import _forbid_extractor, _stage_edict
@@ -245,9 +245,15 @@ def test_answering_world_question_resumes_suffix_then_gazette(game, monkeypatch,
             '"target_id":"guanning","purpose":"补饷","cadence":"一次性"',
         ),
     )
-    monkeypatch.setattr(
-        month_translate, "translate_month_segment", lambda *a, **k: {"effects": {}},
-    )
+    translation_failed = []
+
+    def translate(*a, **k):
+        if continuation_calls and not translation_failed:
+            translation_failed.append(True)
+            raise LLMUnavailable("转译用尽", stage="world_translate")
+        return {"effects": {}}
+
+    monkeypatch.setattr(month_translate, "translate_month_segment", translate)
 
     def fake_continuation(session, chain, answers):
         continuation_calls.append(list(answers))
@@ -261,15 +267,21 @@ def test_answering_world_question_resumes_suffix_then_gazette(game, monkeypatch,
     desk_row = session.pending_decisions()[0]
     choice = desk_row["options"][0]
 
-    session.submit_hitl_choices(
-        [{
-            "decision_key": desk_row["decision_key"],
-            "label": choice["label"],
-            "hint": choice.get("hint") or "",
-            "note": "  照办\n原批  ",
-        }],
-        write_gate=session._write_gate,
-    )
+    with pytest.raises(SettlementAbort):
+        session.submit_hitl_choices(
+            [{
+                "decision_key": desk_row["decision_key"],
+                "label": choice["label"],
+                "hint": choice.get("hint") or "",
+                "note": "  照办\n原批  ",
+            }],
+            write_gate=session._write_gate,
+        )
+    assert month_chain.month_chain_call_failure(db, closed_turn)
+    assert db.load_state(content).turn_phase == TurnPhase.SETTLING.value
+    session = make_light_session(db, db.load_state(content), content)
+    session.llm_config = object()
+    session.resolve_turn(allow_empty_decree=True)
 
     assert continuation_calls and continuation_calls[0][0]["label"] == choice["label"]
     assert continuation_calls[0][0]["note"] == "  照办\n原批  "
@@ -359,7 +371,8 @@ def test_decree_question_continuation_idempotent_on_same_turn_reentry(game, monk
     )
 
 
-def test_decree_continuation_survives_llm_exhaustion_then_retries(game, monkeypatch):
+@pytest.mark.parametrize("fail_at", ["continuation", "translation", "unexpected"])
+def test_decree_continuation_survives_llm_exhaustion_then_retries(game, monkeypatch, fail_at):
     """ADR 0157：续推 LLM 耗尽后 questions 须保留；恢复口重试须再续推落账。"""
     db, state, content = game
     minister = next(iter(content.characters.values())).name
@@ -389,9 +402,11 @@ def test_decree_continuation_survives_llm_exhaustion_then_retries(game, monkeypa
 
     def flaky_decree_text(session, dossier, answers):
         llm_calls.append(1)
-        if fail_once["armed"]:
+        if fail_at != "translation" and fail_once["armed"]:
             fail_once["armed"] = False
-            raise RuntimeError("模型调用耗尽")
+            if fail_at == "unexpected":
+                raise RuntimeError("未识别模型接缝异常")
+            raise LLMUnavailable("模型调用耗尽", stage="decree-forecast-continue")
         return "加赈落实，仓廪出十万。"
 
     real_dispatch = month_translate.dispatch_declaration
@@ -400,16 +415,18 @@ def test_decree_continuation_survives_llm_exhaustion_then_retries(game, monkeypa
         dispatch_count.append(1)
         return real_dispatch(db_, state_, declaration, **kwargs)
 
+    def translate(*a, **k):
+        if llm_calls and fail_at == "translation" and fail_once["armed"]:
+            fail_once["armed"] = False
+            raise LLMUnavailable("转译用尽", stage="decree_translate")
+        return {"effects": {"economy_moves": [{
+            "origin_ref": f"affair:{affair.id}", "account": "国库", "delta": -10,
+            "category": "加赈", "reason": "批红后续推",
+        }]}}
+
     _forbid_extractor(monkeypatch)
     monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
     monkeypatch.setattr(month_chain, "_run_decree_continuation_text", flaky_decree_text)
-    monkeypatch.setattr(
-        month_translate, "translate_month_segment",
-        lambda *a, **k: {"effects": {"economy_moves": [{
-            "origin_ref": f"affair:{affair.id}", "account": "国库", "delta": -10,
-            "category": "加赈", "reason": "批红后续推",
-        }]}},
-    )
     monkeypatch.setattr(month_translate, "dispatch_declaration", spy_dispatch)
 
     session = make_light_session(db, state, content)
@@ -422,22 +439,25 @@ def test_decree_continuation_survives_llm_exhaustion_then_retries(game, monkeypa
         "label": choice["label"],
         "hint": choice.get("hint") or "",
     }]
+    monkeypatch.setattr(month_translate, "translate_month_segment", translate)
 
-    try:
+    with pytest.raises(SettlementAbort):
         session.submit_hitl_choices(payload, write_gate=session._write_gate)
-        raised = None
-    except RuntimeError as exc:
-        raised = exc
-    assert raised is not None and "模型调用耗尽" in str(raised)
+    assert month_chain.month_chain_call_failure(db, int(state.turn))["kind"] == (
+        "code_exception" if fail_at == "unexpected" else "model_exhausted"
+    )
+    assert db.load_state(content).turn_phase == TurnPhase.SETTLING.value
     assert db.staged_declarations.questions_for(ref), (
         "续推失败后 questions 已清，恢复将无法再续推"
     )
     assert len(llm_calls) == 1
     assert len(dispatch_count) == 0
 
-    # 真实恢复口：携原 decision_key 重交 → already_applied → phase2 续跑月链。
-    session.submit_hitl_choices(payload, write_gate=session._write_gate)
-    assert len(llm_calls) == 2
+    # 重开从统一核账恢复口续原月链，不重交原批。
+    session = make_light_session(db, db.load_state(content), content)
+    session.llm_config = object()
+    session.resolve_turn(allow_empty_decree=True)
+    assert len(llm_calls) == (1 if fail_at == "translation" else 2)
     assert len(dispatch_count) == 1, (
         "旨意问后后果永久丢失：重试未再续推（questions 已清，闸跳过）"
     )
@@ -527,11 +547,11 @@ def test_missing_model_keeps_decree_question_until_retry(game, monkeypatch):
     try:
         session.submit_hitl_choices(payload, write_gate=session._write_gate)
         raised = None
-    except LLMUnavailable as exc:
+    except SettlementAbort as exc:
         raised = exc
     assert raised is not None
     assert db.staged_declarations.questions_for(ref)
-    assert session.state.turn_phase == TurnPhase.AWAITING_DECISION.value
+    assert session.state.turn_phase == TurnPhase.SETTLING.value
 
     calls = []
 
@@ -541,7 +561,7 @@ def test_missing_model_keeps_decree_question_until_retry(game, monkeypatch):
 
     monkeypatch.setattr(month_chain, "_run_decree_continuation_text", continuation)
     session.llm_config = object()
-    session.submit_hitl_choices(payload, write_gate=session._write_gate)
+    session.resolve_turn(allow_empty_decree=True)
     assert calls
     assert not db.staged_declarations.questions_for(ref)
     assert session.state.turn_phase == TurnPhase.SETTLING.value
@@ -567,20 +587,20 @@ def test_missing_model_does_not_mark_world_continued(game, monkeypatch):
     try:
         session.submit_hitl_choices(payload, write_gate=session._write_gate)
         raised = None
-    except LLMUnavailable as exc:
+    except SettlementAbort as exc:
         raised = exc
     assert raised is not None
     chain = month_chain._load_chain(db, closed_turn)
     assert chain.get("world_continued") is not True
     assert chain.get("world_questions")
-    assert session.state.turn_phase == TurnPhase.AWAITING_DECISION.value
+    assert session.state.turn_phase == TurnPhase.SETTLING.value
 
     monkeypatch.setattr(
         month_chain, "_run_world_continuation_text",
         lambda *a, **k: "准调关宁，关宁增戍。",
     )
     session.llm_config = object()
-    session.submit_hitl_choices(payload, write_gate=session._write_gate)
+    session.resolve_turn(allow_empty_decree=True)
     chain = month_chain._load_chain(db, closed_turn)
     assert chain.get("world_continued") is True
     assert chain.get("world_questions") in (None, [], ())
@@ -637,10 +657,18 @@ def test_model_memorial_revision_is_next_month_same_identity(game, monkeypatch, 
     _forbid_extractor(monkeypatch)
     monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
     affair = db.affairs.open(name="急务", origin="奏折", year=state.year, period=state.period, turn=state.turn)
-    monkeypatch.setattr(month_translate, "translate_month_segment", lambda *a, **k: {"effects": {"economy_moves": [{
-        "origin_ref": f"affair:{affair.id}", "account": "国库", "delta": -2,
-        "category": "急务办理", "reason": "办理",
-    }]}})
+    translation_failures = []
+
+    def translate(*a, **k):
+        if not translation_failures:
+            translation_failures.append(True)
+            raise LLMUnavailable("转译用尽", stage="rescript-answer")
+        return {"effects": {"economy_moves": [{
+            "origin_ref": f"affair:{affair.id}", "account": "国库", "delta": -2,
+            "category": "急务办理", "reason": "办理",
+        }]}}
+
+    monkeypatch.setattr(month_translate, "translate_month_segment", translate)
     calls, answers = [], []
     failures = {"triage": True, "answer": True}
     raw_note = "  发回\n查清后再呈  "
@@ -653,7 +681,7 @@ def test_model_memorial_revision_is_next_month_same_identity(game, monkeypatch, 
                 raise LLMUnavailable("批后模型用尽", stage="rescript-answer")
             answers.append(answer)
             return json.dumps({"disposition": "revise" if answer["choice"].get("note") == raw_note else "settled",
-                               "text": "问后办理" if len(answers) == 1 else "", "decree": None})
+                               "text": "问后办理" if len(answers) == 1 or answer["choice"].get("note") == raw_note else "", "decree": None})
         if failures["triage"]:
             failures["triage"] = False
             raise LLMUnavailable("票拟模型用尽", stage="rescript-draft")
@@ -663,7 +691,7 @@ def test_model_memorial_revision_is_next_month_same_identity(game, monkeypatch, 
             "items": [{"title": str(i), "context": "  原奏\n拟旨  ", "options": options}
                       for i in range(6)] if int(session.state.turn) == turn else [],
             "revisions": [{"decision_key": row["decision_key"], "title": "改票", "context": "修订奏折",
-                           "options": options} for row in backlog],
+                           "options": options} for row in reversed(backlog)],
         })
 
     def external_model(prepared, prompt, **kwargs):
@@ -698,10 +726,12 @@ def test_model_memorial_revision_is_next_month_same_identity(game, monkeypatch, 
     assert all(len(row["options"]) == 7 for row in desk)
     assert len(drafting.triage_officers(db)) == 2
     assert {row["actor_name"] for row in desk} == {drafting.triage_officers(db)[0]["name"]}
-    original = desk[0]
+    originals = desk[:2]
+    original = originals[0]
     batch = [{"decision_key": row["decision_key"], "label": row["options"][0]["label"]}
              for row in reversed(desk)]
-    batch[-1]["note"] = raw_note
+    for item in batch[-2:]:
+        item["note"] = raw_note
     with pytest.raises(SettlementAbort) as stopped:
         session.submit_hitl_choices(batch, write_gate=session._write_gate)
     assert stopped.value.stage == "rescript-answer"
@@ -709,8 +739,13 @@ def test_model_memorial_revision_is_next_month_same_identity(game, monkeypatch, 
     session = make_light_session(db, db.load_state(content), content)
     session.llm_config = object()
     state = session.state
+    with pytest.raises(SettlementAbort):
+        session.resolve_turn(allow_empty_decree=True)
+    session = make_light_session(db, db.load_state(content), content)
+    session.llm_config = object()
+    state = session.state
     session.resolve_turn(allow_empty_decree=True)
-    assert [r[0] for r in db.conn.execute("SELECT delta FROM economy_ledger WHERE category='急务办理'")] == [-2]
+    assert [r[0] for r in db.conn.execute("SELECT delta FROM economy_ledger WHERE category='急务办理'")] == [-2, -2, -2]
     assert [row["decision_key"] for row in answers] == [item["decision_key"] for item in batch]
     assert answers[-1]["choice"]["note"] == raw_note
     assert answers[-1]["memorial"]["context"] == "  原奏\n拟旨  "
@@ -737,15 +772,14 @@ def test_model_memorial_revision_is_next_month_same_identity(game, monkeypatch, 
         db.conn.commit()
     assert session.resolve_turn(allow_empty_decree=True).awaiting
     revised = session.pending_decisions()
-    assert len(revised) == 1
-    assert revised[0]["decision_key"] == original["decision_key"]
+    assert [row["decision_key"] for row in revised] == [row["decision_key"] for row in reversed(originals)]
     assert revised[0]["revision_round"] == 1
     assert calls[-1][0]["choice"]["note"] == raw_note
     # Durable answer idempotency and revision identity survive reopening the session.
     reopened = make_light_session(db, db.load_state(content), content)
     reopened.llm_config = object()
-    assert reopened.pending_decisions()[0]["decision_key"] == original["decision_key"]
-    reopened.submit_hitl_choices(_hitl_payload(revised[0]), write_gate=reopened._write_gate)
+    assert [row["decision_key"] for row in reopened.pending_decisions()] == [row["decision_key"] for row in revised]
+    reopened.submit_hitl_choices([_hitl_payload(row)[0] for row in revised], write_gate=reopened._write_gate)
     assert not reopened.deferred_rescripts()
     assert not reopened.pending_decisions()
     assert len(db.list_rescript_drafts()) == 6
