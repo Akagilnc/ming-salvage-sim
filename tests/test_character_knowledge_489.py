@@ -499,7 +499,7 @@ def test_public_disclosure_drops_private_roster_but_keeps_event_exclusion(game):
 def test_long_knowledge_bodies_survive_storage_without_brief_card_cap(game):
     db, state, content = game
     reader = next(iter(content.characters.values()))
-    body = "甲" * 450 + "完整结尾"
+    body = "甲" * 454
     db.register_character_knowledge_source(
         state, [{"character_id": reader.name}], "audience", "长奏报", body,
         source_id="test:long-source",
@@ -507,7 +507,7 @@ def test_long_knowledge_bodies_survive_storage_without_brief_card_cap(game):
     row = db.conn.execute(
         "SELECT body FROM character_knowledge_sources WHERE source_id='test:long-source'"
     ).fetchone()
-    assert row["body"].endswith("完整结尾")
+    assert row["body"] == body
 
 def test_secret_amendment_preserves_legacy_blacklist_and_public_disclosure(game):
     db, state, _content = game
@@ -980,6 +980,7 @@ def test_turn_report_counterpart_never_uses_aggregate_when_sources_exist(game):
         for item in db.get_character_knowledge(state, reader.name)[bucket]
     }
     assert "test:report-source-bound-public" in visible_ids
+    assert unscoped_marker not in db.get_turn_report(state.turn)
 
 def test_shared_archive_storage_never_writes_restricted_aggregate(game):
     db, state, content = game
@@ -994,6 +995,7 @@ def test_shared_archive_storage_never_writes_restricted_aggregate(game):
 
     db.save_turn_report(state, f"{public}；{secret}", knowledge_items=db.knowledge_items_for_turn(state.turn))
 
+    assert secret not in db.get_turn_report(state.turn)
     outsider = next(name for name in content.characters if name != participant)
     outsider_ids = {
         item.get("source_id")
