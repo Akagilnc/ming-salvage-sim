@@ -1,6 +1,8 @@
 import json
 from pathlib import Path
 
+import pytest
+
 import ming_sim.issues as I
 from ming_sim.db import _has_stop_condition
 
@@ -182,8 +184,9 @@ def test_decree_commitment_does_not_dedup_same_name_income_fiscal_create(game, m
     ).fetchone()[0] >= 1
 
 
-def test_decree_commitment_same_account_alias_miss_keeps_distinct_fiscal_item(game, monkeypatch):
-    """Unmatched expense remains distinct and its supplied name is observable."""
+@pytest.mark.parametrize("account", ["国库", "内库"])
+def test_decree_commitment_same_account_alias_miss_keeps_distinct_fiscal_item(game, monkeypatch, account):
+    """Unmatched expense lands; only same-account alias misses are observable."""
     db, state, content = game
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
     logs = []
@@ -215,9 +218,9 @@ def test_decree_commitment_same_account_alias_miss_keeps_distinct_fiscal_item(ga
             ],
             "fiscal_creates": [
                 {
-                    # 同账户(国库)、但科目名与承诺(西学经费)对不上 = 异名漏匹
+                    # Different accounts are not alias misses of this commitment.
                     "key": "xuguangqi_gongfei_base",
-                    "account": "国库",
+                    "account": account,
                     "direction": "expense",
                     "init_value": 50,
                     "display": "徐光启三务公费",
@@ -236,7 +239,7 @@ def test_decree_commitment_same_account_alias_miss_keeps_distinct_fiscal_item(ga
         "SELECT COUNT(*) FROM fiscal_config WHERE key IN "
         "('xuguangqi_gongfei_base', 'xuguangqi_gongfei_rate')"
     ).fetchone()[0] >= 1
-    assert any(fiscal_result["display"] in entry for entry in logs)
+    assert any(fiscal_result["display"] in entry for entry in logs) == (account == "国库")
 
 
 def test_decree_commitment_unrelated_account_keeps_fiscal_item(game, monkeypatch):

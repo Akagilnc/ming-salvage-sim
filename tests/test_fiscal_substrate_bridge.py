@@ -1466,6 +1466,33 @@ def test_fixed_flows_substrate_hub_books_split_treasury_income_and_central_losse
     )
 
 
+def test_turn_army_summary_keeps_real_morale_changes_when_log_cap_fills(fresh_db):
+    """A capped report must still carry the army identity for a real change."""
+    state = fresh_db.load_state()
+    earlier_armies = [row["id"] for row in fresh_db.conn.execute(
+        "SELECT id FROM armies WHERE id != 'fujian_navy' ORDER BY id LIMIT 10"
+    ).fetchall()]
+    assert len(earlier_armies) == 10
+    for army_id in earlier_armies:
+        fresh_db.conn.execute(
+            """INSERT INTO army_logs
+            (turn, year, period, army_id, field, old_value, new_value, delta, reason, actor)
+            VALUES (?, ?, ?, ?, 'morale', '80', '80', 0, '中央军饷足额', '户部')""",
+            (state.turn, state.year, state.period, army_id),
+        )
+    fresh_db.conn.execute(
+        """INSERT INTO army_logs
+        (turn, year, period, army_id, field, old_value, new_value, delta, reason, actor)
+        VALUES (?, ?, ?, 'fujian_navy', 'morale', '80', '72', -8, '本月省源军饷分账', '户部')""",
+        (state.turn, state.year, state.period),
+    )
+    fresh_db.conn.commit()
+    army_name = fresh_db.conn.execute(
+        "SELECT name FROM armies WHERE id='fujian_navy'"
+    ).fetchone()["name"]
+    assert army_name in fresh_db.turn_army_summary(state.turn, limit=len(earlier_armies))
+
+
 def test_budget_projection_passes_copied_settle_snapshots_to_fiscal_tick(fresh_game, monkeypatch):
     import ming_sim.fiscal_tick as fiscal_tick_mod
     import ming_sim.flows as flows_mod
@@ -4431,6 +4458,23 @@ def test_substrate_malformed_settle_shape_is_logged_not_prefiltered(fresh_game, 
     assert isinstance(flow_rows, list) and flow_rows, "坏 settle 形状不该掀翻固定财政"
     assert _read_settle(db)["p"] == [], "坏 settle 形状不该被 tick 改写"
     assert msgs
+
+
+@pytest.mark.parametrize("bad", ["[]", "{bad"])
+def test_substrate_malformed_fiscal_container_is_logged_not_prefiltered(fresh_game, monkeypatch, bad):
+    """The shadow monthly reader must observe, not silently skip, corrupt fiscal."""
+    import ming_sim.flows as flows_mod
+
+    db, state = fresh_game
+    _disable_army_pay_source_cutover(db)
+    db.conn.execute("UPDATE regions SET controlled_by='houjin' WHERE id!='shaanxi'")
+    db.conn.execute("UPDATE regions SET fiscal=? WHERE id='shaanxi'", (bad,))
+    db.conn.commit()
+    logs = []
+    monkeypatch.setattr(flows_mod, "tlog", logs.append)
+    flows_mod._advance_province_fiscal_substrate(db, state)
+    assert db.conn.execute("SELECT fiscal FROM regions WHERE id='shaanxi'").fetchone()[0] == bad
+    assert logs
 
 
 def test_cutover_pay_source_errors_abort_fixed_flows(fresh_game, monkeypatch, tmp_path):

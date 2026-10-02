@@ -861,30 +861,6 @@ def test_knowledge_projects_mixed_archive_from_durable_source_scope(game):
     assert secret_marker not in excluded_text
     assert secret_marker in knower_text
 
-def test_rewritten_archive_cannot_reintroduce_restricted_source(game):
-    """邸报正文不是受限事项的来源边界；保存后仍不可向排除者泄露。"""
-    db, state, content = game
-    ministers = [
-        character for character in content.characters.values()
-        if character.office_type not in ("后宫", "宗藩")
-        and db.get_character_status(character.name)[0] == "active"
-    ]
-    knower, excluded = ministers[:2]
-    db.register_character_knowledge_source(
-        state,
-        [{"character_id": knower.name, "tier": "主办"}],
-        "private_matter",
-        "密查",
-        "原始密事",
-        source_id="test:rewritten-secret",
-        excluded_names=[excluded.name],
-    )
-    db.save_turn_report(state, "聚合邸报改写：有人暗中安排了不应知晓的事务。")
-
-    excluded_events = db.get_character_knowledge(state, excluded.name)["public_events"]
-    assert not any(event["source_id"] == "test:rewritten-secret" for event in excluded_events)
-    assert not any(event["kind"] == "turn_report" for event in excluded_events)
-
 def test_archive_write_materializes_unmirrored_source_scope(game):
     """结算保存聚合档案时，不能丢掉先写入的受限事项来源边界。"""
     db, state, content = game

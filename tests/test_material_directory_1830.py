@@ -122,7 +122,9 @@ def test_material_tree_contains_only_structurally_related_world_details(game, tm
     region_paths = [path for path in names if path.startswith("地区/")]
     army_paths = [path for path in names if path.startswith("军队/")]
     assert len(region_paths) == 1 and len(army_paths) == 1
-
+    region_name = db.conn.execute("SELECT name FROM regions WHERE id='shaanxi'").fetchone()[0]
+    assert region_name in read_material(prepared.root, region_paths[0])
+    assert army["name"] in read_material(prepared.root, army_paths[0])
 
 
 def _agent_with_materials(root: Path, *, with_cli_cwd: bool):

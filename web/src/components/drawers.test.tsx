@@ -139,7 +139,7 @@ afterEach(() => {
 describe("ArmyDrawer presentation", () => {
   // #321 P7：军情三键 ABI 仍可入 props，DOM 不得直显固定串；保留兵力/月饷世界事实
   it("keeps world facts and never renders situation three-key strings", () => {
-    const host = renderArmyDrawer({
+    const army: Army = {
       id: "denglai",
       name: "登莱兵与水师",
       station: "山东 / 登莱",
@@ -158,9 +158,11 @@ describe("ArmyDrawer presentation", () => {
       mutiny_tier: "优秀",
       status: "可支援辽东和海运",
       owner_power: "ming",
-    });
-
-    expect(host.textContent).toContain("登莱兵与水师");
+    };
+    const host = renderArmyDrawer(army);
+    expect(host.querySelector("table")!.textContent).toContain(String(army.manpower));
+    expect(host.querySelector("table")!.textContent).toContain(String(army.army_needed));
+    expect(host.textContent).toContain(army.name);
     expect(host.textContent).not.toContain("欠饷约60万两，数月军饷");
     expect(host.textContent).not.toContain("士气：尚稳");
     expect(host.textContent).not.toContain("优秀");

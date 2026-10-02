@@ -41,6 +41,18 @@ def test_apply_economy_list_valid_still_works(game):
     assert out[0].get("account") == "国库"
 
 
+def test_inertia_ongoing_non_dict_no_crash(game):
+    """Persisted non-object effects must not crash monthly situation drift (#117)."""
+    from ming_sim.situation_drift import apply_situation_monthly_drift
+
+    db, state, _content = game
+    iid = db.insert_issue(state, kind="situation", title="畸形ongoing测试", bar_value=50, inertia=1)
+    for bad in ('"oops"', "5", "true", "[1,2]"):
+        db.conn.execute("UPDATE issues SET ongoing_effects=? WHERE id=?", (bad, iid))
+        db.conn.commit()
+        apply_situation_monthly_drift(db, state)
+
+
 def test_loads_effect_dict_coerces_non_dict():
     """loads_effect_dict：effect_on_resolve/fail/ongoing_effects 列读取单一守门——合法 dict 原样，
     真值非 dict / 解析失败 / 空 → {}（#117 R3：集中所有 effect-列读取于此，止 coverage-drift）。"""

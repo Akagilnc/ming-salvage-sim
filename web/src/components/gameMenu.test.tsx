@@ -86,6 +86,35 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+it("in-game menu actions never request a new game", async () => {
+  const calls: Array<{ url: string; method: string }> = [];
+  global.fetch = vi.fn(async (url, init) => {
+    calls.push({ url: String(url), method: init?.method ?? "GET" });
+    return { ok: true, json: async () => ({ ...BASE_LLM_RESPONSE, saves: [] }) } as Response;
+  });
+  vi.useFakeTimers();
+  const { cleanup } = render(<GameMenuModal onClose={() => {}} onAfterLoad={() => {}} onExitToMenu={() => {}} />);
+  try {
+    await act(async () => {});
+    const navigation = document.querySelector("nav, [role=navigation]");
+    expect(navigation).not.toBeNull();
+    const tabs = Array.from(navigation!.querySelectorAll<HTMLButtonElement>("button"));
+    expect(tabs.some((tab) => !tab.disabled)).toBe(true);
+    for (const tab of tabs) {
+      await act(async () => { tab.click(); });
+      const actions = Array.from(document.querySelectorAll("button"))
+        .filter((button) => !navigation!.contains(button));
+      for (const action of actions) {
+        if (!action.disabled) await act(async () => { action.click(); });
+      }
+    }
+    expect(calls.some((call) => call.url === "/api/menu/new_game" && call.method === "POST")).toBe(false);
+  } finally {
+    cleanup();
+    vi.useRealTimers();
+  }
+});
+
 describe("LLMConfigTab — channel-gated field rendering", () => {
   beforeEach(() => {
     mockFetch({
@@ -94,66 +123,31 @@ describe("LLMConfigTab — channel-gated field rendering", () => {
     });
   });
 
-  it("shows API fields and hides CLI fields when channel=api (initial render)", async () => {
-    const { cleanup } = render(<LLMConfigTab />);
-    // flush fetch + state updates
-    await act(async () => {});
-
-    // #1794：头表属 API 区——有请求头名输入即露表（不锁标题措辞）
-    expect(document.querySelectorAll('input[aria-label="请求头名"]').length).toBe(1);
-    cleanup();
-  });
-
-  it("shows CLI fields and hides API fields when channel is switched to cli", async () => {
-    const { cleanup } = render(<LLMConfigTab />);
-    await act(async () => {});
-
-    // switch channel select to "cli"
-    const selects = document.querySelectorAll("select");
-    const channelSelect = Array.from(selects).find((s) =>
-      s.querySelector('option[value="cli"]')
-    );
-    expect(channelSelect).toBeTruthy();
-    act(() => {
-      channelSelect!.value = "cli";
-      channelSelect!.dispatchEvent(new Event("change", { bubbles: true }));
+  it.each([
+    ["api", []], ["api", ["cli"]], ["api", ["cli", "api"]], ["cli", []],
+  ] as const)("renders channel control values from %s through %j", async (initial, path) => {
+    mockFetch({
+      ...BASE_LLM_RESPONSE, channel: initial, default_headers: { "X-Session": "abc" },
+      persisted: { ...BASE_LLM_RESPONSE.persisted, channel: initial },
     });
-
-    expect(document.querySelectorAll('input[aria-label="请求头名"]').length).toBe(0);
-    cleanup();
-  });
-
-  it("restores API fields when channel is switched back to api", async () => {
     const { cleanup } = render(<LLMConfigTab />);
     await act(async () => {});
-
-    const selects = document.querySelectorAll("select");
-    const channelSelect = Array.from(selects).find((s) =>
-      s.querySelector('option[value="cli"]')
-    );
-
-    // switch to cli
-    act(() => {
-      channelSelect!.value = "cli";
-      channelSelect!.dispatchEvent(new Event("change", { bubbles: true }));
-    });
-
-    // switch back to api
-    act(() => {
-      channelSelect!.value = "api";
-      channelSelect!.dispatchEvent(new Event("change", { bubbles: true }));
-    });
-
-    expect(document.querySelectorAll('input[aria-label="请求头名"]').length).toBe(1);
-    cleanup();
-  });
-
-  it("loads channel=cli from server and shows CLI fields", async () => {
-    mockFetch({ ...BASE_LLM_RESPONSE, channel: "cli", persisted: { ...BASE_LLM_RESPONSE.persisted, channel: "cli" } });
-    const { cleanup } = render(<LLMConfigTab />);
-    await act(async () => {});
-
-    expect(document.querySelectorAll('input[aria-label="请求头名"]').length).toBe(0);
+    for (const next of path) {
+      const channel = Array.from(document.querySelectorAll("select"))
+        .find((select) => select.querySelector('option[value="cli"]'))!;
+      act(() => {
+        channel.value = next;
+        channel.dispatchEvent(new Event("change", { bubbles: true }));
+      });
+    }
+    const api = (path.at(-1) ?? initial) === "api";
+    const inputs = Array.from(document.querySelectorAll("input"));
+    expect(inputs.some((input) => input.value === BASE_LLM_RESPONSE.base_url)).toBe(api);
+    expect(inputs.some((input) => input.value === String(BASE_LLM_RESPONSE.cli_timeout_seconds))).toBe(!api);
+    const runner = Array.from(document.querySelectorAll("select"))
+      .find((select) => select.querySelector('option[value="codex"]'));
+    expect(runner?.value).toBe(api ? undefined : BASE_LLM_RESPONSE.cli_runner);
+    expect(document.querySelectorAll('input[aria-label="请求头名"]').length).toBe(api ? 1 : 0);
     cleanup();
   });
 

@@ -79,6 +79,12 @@ describe("NodeIntel #648 population (P7: LLM 长文，无 UI 模板)", () => {
   });
 });
 
+it("preserves the supplied per-turn tax", () => {
+  const region = makeRegion({ tax_per_turn: 1 });
+  const host = renderNodeIntel(makeNode(region));
+  expect(host.textContent).toContain(String(region.tax_per_turn));
+});
+
 describe("NodeIntel #1401 theater naming", () => {
   it("shows region.name when theater carries region (liaodong pin)", () => {
     // name/label 必须可区分：若误先渲染 label，本断言应红（#1448）
@@ -130,10 +136,11 @@ describe("NodeIntel #1352 garrison layout / army-list口径", () => {
     node.label = "山海关";
     const host = renderNodeIntel(node);
 
-    const table = host.querySelector(".intel-table");
+    const table = host.querySelector(".intel-table--garrison");
     expect(table).not.toBeNull();
+    expect(table!.textContent).toContain(String(node.armies[0].manpower));
+    expect(table!.textContent).toContain(String(node.armies[0].army_needed));
     // #321 P7：驻军表存在；不直显士气/军心/欠饷
-    expect(host.querySelector(".intel-table--garrison")).not.toBeNull();
     expect(host.textContent).not.toContain("不满"); // makeArmy 默认 mutiny_tier 不得直显
     expect(host.textContent).not.toContain("士气：不振");
     expect(host.textContent).not.toContain("欠饷不足十万两，约两月军饷");

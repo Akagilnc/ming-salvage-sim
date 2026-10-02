@@ -187,6 +187,7 @@ describe("#1236 GameHud face gates eat settlement_display", () => {
     const regionBtn = Array.from(host.querySelectorAll("button")).find((b) => b.getAttribute("aria-label") === "省份列表")!;
     act(() => { regionBtn.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
     expect(attempts).toEqual([expect.any(String)]);
+    expect(attempts[0]).not.toBe("");
   });
 
   it("#1323 awaiting_decision：递话/角标文案为有本待批；锁面机制仍关", () => {
@@ -217,6 +218,7 @@ describe("#1236 GameHud face gates eat settlement_display", () => {
     expect(regionBtn.getAttribute("aria-disabled")).toBe("true");
     act(() => { regionBtn.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
     expect(attempts).toEqual([expect.any(String)]);
+    expect(attempts[0]).not.toBe("");
   });
 });
 
