@@ -84,6 +84,15 @@
 - F13/F14 表重新从当前树生成；修正 CSV 写出的 CRLF 引起的 diff whitespace 报告，统一 LF。此前 untracked 表未被 diff --check 覆盖，不将先前的绿色当该格式问题不存在的证据。
 - compileall、diff --check 通过；`/tmp/1835-audit-static55.txt` 只有既有 unused imports，无 undefined name，未冒称类型检查。候选 F6=699，其余候选数不变，仍不是逐成员完成数。
 
+## F10：密令隔离用例整文件迁约
+
+- `tests/test_secret_order_isolation_883.py` 的正文哨兵、拼接文本查漏、body LIKE 和四字窗锁迁到消息/order/source 身份、knowledge_status、耐久行及级联回滚。删除两条正文汇总 helper，将原无调用的 view_text 改为唯一 source-id 投影 helper；没有新增用例或平行测试。
+- 保留对输入原文精确拷贝的断言：简报、公开召对正文、案卷更新正文、公开月报均和送入真实写口的原字符串相等，不约束生成措辞。披露/跨回合幂等以 order 身份和同一 source_id 为证，不以 sim_note 哨兵证明。
+- `F10-isolation-members.tsv` 按原文件逐函数列出迁移/保留依据，只清算该文件，不替代全仓 F10 剩余成员。
+- 复扫该文件没有正文 substring/LIKE、拼接查漏、四字窗、工具输出措辞或生成物模板锁。`/tmp/1835-audit-focused56.txt`、`focused57.txt` 均 36 passed；最新 `focused58.txt` 包含该文件、character_knowledge、public_sayings，96 passed，6.30s。七旗禁宿主；diff --check 通过；pyflakes 仅既有 unused issues import。
+- 测试改动契约是结构化源身份隔离与消息级出处、持久及回滚，不是正文相似度。最小成本是复用原 36 个执行案和现成 SQL/knowledge 入口，删除 192 行旧呈现检查、加入 78 行身份与精确源拷贝检查，没有新增证明用例。
+- 最新宽候选 F10=9669（源身份断言也会被宽扫描列入），其余数量不变；候选数上升/下降均不是违规或结清的机械判据。
+
 ## 尚未结清
 
 仍须将宽枚举逐成员完成语义处置，特别是 F10 剩余自由文本/保密哨兵及 helper 呈现测试、F5 下游传递与识别变换的边界、F6 剩余持久与批写接缝，并刷新完整成员处置表与最新触及面验证。本记录不把聚焦绿色冒作整类结清，不声明这些工作缺 owner 决定，也不以执行窗口作合法 blocker。
