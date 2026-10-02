@@ -393,8 +393,11 @@ def test_execution_note_merge_interface_and_restore(game):
     before = db.get_decree_dossier(dossier_id)["execution_note"]
     assert "初注走样" in before
 
-    merged = db.merge_execution_note(dossier_id, "对账差额：应拨十两实拨三两")
+    fragment = "对账差额：应拨十两实拨三两"
+    merged = db.merge_execution_note(dossier_id, fragment)
     row = db.get_decree_dossier(dossier_id)
+    assert before in row["execution_note"]
+    assert fragment in row["execution_note"]
     assert merged == row["execution_note"]
     assert row["execution_outcome"] == "degraded"
 

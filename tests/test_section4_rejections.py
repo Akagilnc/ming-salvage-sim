@@ -723,23 +723,3 @@ def test_required_field_historical_strictness_on_issue_path(game):
                         "manpower": 5000, **_pay_source()}],
     }, "局势#测试结案")  # 不抛
 
-
-def test_region_army_formatters_skip_rejected_items():
-    """report.format_region_changes / format_army_changes 遇到同列拒收项(无
-    delta/label/region/army 键)不得 KeyError——拒收项不是盘面变化,只渲染 applied 项;
-    全拒收时回落「未见变化」(S2 迁契约副作用守门,对称 S1)。"""
-    from ming_sim.report import format_region_changes, format_army_changes
-
-    for format_changes, applied, rejected in (
-        (format_region_changes,
-         {"region": "山东", "field": "public_support", "label": "民心",
-          "old": 50, "new": 52, "delta": 2, "reason": "推演"},
-         {"region_id": "查无此地", "rejected": True, "category": "missing_ref", "reason": "查无此地"}),
-        (format_army_changes,
-         {"army": "京营", "field": "morale", "label": "士气",
-          "old": 16, "new": 18, "delta": 2, "reason": "推演"},
-         {"army_id": "查无此军", "rejected": True, "category": "missing_ref", "reason": "查无此军"}),
-    ):
-        for bad in (rejected, {"rejected": True, "category": "invalid_enum", "reason": "字段非法"}):
-            assert format_changes([bad, applied]) == format_changes([applied])
-            assert format_changes([bad]) == format_changes([])

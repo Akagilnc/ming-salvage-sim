@@ -391,7 +391,10 @@ def test_lying_label_rebuilt_from_server_option(web_game, monkeypatch):
         _db.clear_pending_decisions(int(_state.turn))
         return '邸报：批红已落。'
     monkeypatch.setattr(session_mod, 'resolve_decisions_phase2', _phase2)
-    lying = {'decision_key': db.list_rescript_desk(int(state.turn))[0]['decision_key'], 'label': '收回', 'hint': '收回此道准旨', 'note': '准。先济关宁边饷。', 'dossier_id': dossier_id, 'dossier_decision': 'force_promulgated'}
+    row = db.list_rescript_desk(int(state.turn))[0]
+    server_option = next(option for option in row['options']
+                         if option.get('dossier_decision') == 'force_promulgated')
+    lying = {'decision_key': row['decision_key'], 'label': '收回', 'hint': '收回此道准旨', 'note': '准。先济关宁边饷。', 'dossier_id': dossier_id, 'dossier_decision': 'force_promulgated'}
     r = asyncio.run(_post_resolve([lying]))
     assert r.status_code == 200, r.text
     assert 'event: done' in r.text, r.text
@@ -400,7 +403,10 @@ def test_lying_label_rebuilt_from_server_option(web_game, monkeypatch):
     choice = phase2_calls[0][0]['choice'] or {}
     assert choice.get('dossier_id') == dossier_id
     assert choice.get('dossier_decision') == 'force_promulgated'
-    assert choice.get('note') == '准。先济关宁边饷。'
+    assert {field: choice.get(field) for field in ('label', 'hint')} == {
+        field: server_option.get(field) for field in ('label', 'hint')
+    }
+    assert choice.get('note') == lying['note']
 
 def test_parse_rescript_capability_pair_rejects_non_positive_and_unknown():
     """#1494 共享校验器：正整数 id + 支持动作枚举；其余一律 None。"""

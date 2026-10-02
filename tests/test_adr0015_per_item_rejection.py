@@ -17,14 +17,16 @@ def test_utf8_safe_serialization_preserves_chinese_and_escapes_lone_surrogate(ga
 
     db, state, _ = game
     collector = RejectionCollector()
+    title = "中文\ud800"
+    expected_text = title.encode("utf-8", "backslashreplace").decode("utf-8")
     collector.record(
         "new_issues",
-        RejectedItem({"title": "中文\ud800"}, "坏", "invalid_enum", Provenance.player_decree),
+        RejectedItem({"title": title}, "坏", "invalid_enum", Provenance.player_decree),
         state.turn,
     )
     collector.flush_to_db(db)
     row = db.conn.execute("SELECT item_json FROM rejection_reports").fetchone()
-    assert "\\ud800" in row["item_json"]
+    assert json.loads(row["item_json"]) == {"title": expected_text}
 
 
 
@@ -34,6 +36,7 @@ def test_utf8_safe_serialization_preserves_chinese_and_escapes_lone_surrogate(ga
 def test_sqlite_text_sanitization_covers_issue_rows_and_advances(game):
     db, state, _ = game
     bad_text = "中文\ud800"
+    expected_text = bad_text.encode("utf-8", "backslashreplace").decode("utf-8")
 
     issue_id = db.insert_issue(
         state,
@@ -53,12 +56,18 @@ def test_sqlite_text_sanitization_covers_issue_rows_and_advances(game):
         fail_condition=bad_text,
     )
     issue_row = db.conn.execute("SELECT title, tags, ongoing_effects, effect_on_fail FROM issues WHERE id=?", (issue_id,)).fetchone()
-    assert "\\ud800" in issue_row["title"]
-    assert "\\ud800" in issue_row["tags"]
+    assert issue_row["title"] == expected_text
+    assert json.loads(issue_row["tags"]) == [expected_text]
+    assert json.loads(issue_row["ongoing_effects"]) == {"note": expected_text}
+    assert json.loads(issue_row["effect_on_fail"]) == {"metrics": {"民心": -1}, "note": expected_text}
 
     db.advance_issue(state, issue_id, trigger_kind=bad_text, trigger_ref=bad_text, stage_text=bad_text, narrative=bad_text, metric_delta={"note": bad_text})
     adv_row = db.conn.execute("SELECT trigger_kind, trigger_ref, to_stage_text, narrative, metric_delta FROM issue_advances WHERE issue_id=? ORDER BY id DESC", (issue_id,)).fetchone()
+    assert {key: adv_row[key] for key in ("trigger_kind", "trigger_ref", "to_stage_text", "narrative")} == {
+        key: expected_text for key in ("trigger_kind", "trigger_ref", "to_stage_text", "narrative")
+    }
+    assert json.loads(adv_row["metric_delta"]) == {"note": expected_text}
 
     db.close_issue(state, issue_id, reason="failed", narrative=bad_text)
     close_row = db.conn.execute("SELECT narrative FROM issue_advances WHERE issue_id=? ORDER BY id DESC", (issue_id,)).fetchone()
-    assert "中文" in close_row["narrative"] and "\\ud800" in close_row["narrative"]
+    assert close_row["narrative"] == expected_text

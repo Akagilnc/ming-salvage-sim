@@ -420,6 +420,7 @@ def test_region_loader_expands_shared_settle_meta_defaults(monkeypatch):
 
     # before-image：须在 loader 可能共享/改写同一可变对象之前捕获 expected override
     expected_province_note = region["fiscal"]["settle"]["_meta"]["notes"]["漕粮"]
+    default_notes = fake_regions["settle_meta_defaults"]["ming_province"]["notes"].copy()
     loaded = content_mod.load_region_content()["test_province"].fiscal["settle"]
 
     assert "_meta_defaults" not in loaded
@@ -428,7 +429,8 @@ def test_region_loader_expands_shared_settle_meta_defaults(monkeypatch):
     assert loaded["_meta"]["levies"]["not_seeded"] == ["剿饷", "练饷"]
     assert loaded["_meta"]["postures"] == ["江南财赋核心"]
     # 省份专属 notes 键保留并覆盖默认；与输入 before-image 同值，不另钉自由说明正文。
-    assert loaded["_meta"]["notes"]["漕粮"] == expected_province_note
+    assert loaded["_meta"]["notes"] == {**default_notes, "漕粮": expected_province_note}
+    assert fake_regions["settle_meta_defaults"]["ming_province"]["notes"] == default_notes
 
 
 def test_army_pay_source_spine_seed_splits_arrears_and_reconciles_tusi(fresh_db):

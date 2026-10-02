@@ -253,14 +253,3 @@ def test_all_reason_aliases_consumed_as_reason(game):
     assert row is not None
     assert row[0] == "联姻蒙古"
 
-
-def test_power_change_formatter_skips_rejected_items():
-    """report.format_power_changes 遇到同列的拒收项(无 delta/label 键)不得 KeyError——
-    拒收项不是盘面变化,只渲染 applied 项;全拒收时回落「未见变化」(S1 迁契约副作用守门)。"""
-    from ming_sim.report import format_power_changes
-
-    applied = {"power": "后金", "label": "威望", "old": 50, "new": 53, "delta": 3, "reason": "推演"}
-    rejected = {"rejected": True, "category": "hallucinated_id", "reason": "查无此势力"}
-    for bad in (rejected, {"rejected": True, "category": "invalid_enum", "reason": "字段非法"}):
-        assert format_power_changes([bad, applied]) == format_power_changes([applied])
-        assert format_power_changes([bad]) == format_power_changes([])

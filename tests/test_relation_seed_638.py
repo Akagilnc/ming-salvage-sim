@@ -159,7 +159,10 @@ def test_seeded_pair_flows_into_month_end_brew_selection(fresh_session):
     new_events = collect_new_edge_events(
         db=sess.db, source="魏忠贤", target="杨涟", watermark=0,
     )
-    contexts = [e["context"] for e in new_events]
+    by_id = {event["id"]: event for event in new_events}
+    assert {event["id"]: by_id.get(event["id"]) for event in pair_events} == {
+        event["id"]: event for event in pair_events
+    }
 
 
 def test_pregame_turn_scale_matches_load_state_mapping():
