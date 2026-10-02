@@ -1,18 +1,15 @@
 === D1 class definition ===
-搬迁后被替代旧实现 / 重复真源。
-范围 = 票面 production changed union（judge 18 文件）+ D3 真源 ming_sim/staged_commitment.py。
+搬迁后被替代旧实现 / 重复真源写口。
+范围 = 全仓机械枚举同类符号与写口（不限 judge 原 18 文件）；D2/D3 同根成员共表。
 
-=== D1 enum commands ===
-git diff --name-only 0ca77fecc402b67829da5310fdf0cf76d624249d 874b85adf4eb15985ff88430511338360add5536 -- \
-  ming_sim/action_materialize.py ming_sim/applier.py ming_sim/audience_night.py \
-  ming_sim/audience_translate.py ming_sim/audience_translation.py ming_sim/breach_plea.py \
-  ming_sim/covert_progress.py ming_sim/db.py ming_sim/declaration_dispatch.py \
-  ming_sim/decree_vocabulary.py ming_sim/due_review.py ming_sim/issues.py \
-  ming_sim/materials.py ming_sim/month_chain.py ming_sim/session.py ming_sim/supervision.py \
-  web/src/components/secretOrders.tsx web/src/types.ts
-rg -n "capture_commitment_stages|parse_staged_year_promise|_STAGE_YEAR_RE|_cn_years_to_int|_CN_YEAR_DIGITS|narrative_text\s*=|close_text if execution_note|stages_to_json|normalize_commitment_stages" -g "*.{py,md,ts,tsx}"
+=== shared enum commands (whole repo) ===
+rg -n "capture_commitment_stages|parse_staged_year_promise|_STAGE_YEAR_RE|_cn_years_to_int|_CN_YEAR_DIGITS|narrative_text\s*=|close_text if execution_note|stages_to_json|normalize_commitment_stages|player_facing_secret_order_close_text|settle_due_secret_orders\(|close_secret_order\(" -g "*.{py,md,ts,tsx}"
+rg -n "三年X五年Y|回落正文|scripted 年诺|正文年诺" -g "*.{py,md}"
+rg -n "close_text if execution_note|execution_note is None" -g "*.py"
+rg -n "capture_commitment_stages\(|parse_staged_year_promise|_STAGE_YEAR_RE|_cn_years_to_int|_CN_YEAR_DIGITS" 
+git diff --name-only 0ca77fecc402b67829da5310fdf0cf76d624249d HEAD -- 'ming_sim/**' 'web/src/**'
 
-=== D1 production changed union (18 files) ===
+=== production changed-union (auto; context only, not enum scope limit) ===
 ming_sim/action_materialize.py
 ming_sim/applier.py
 ming_sim/audience_night.py
@@ -28,61 +25,46 @@ ming_sim/issues.py
 ming_sim/materials.py
 ming_sim/month_chain.py
 ming_sim/session.py
+ming_sim/staged_commitment.py
 ming_sim/supervision.py
 web/src/components/secretOrders.tsx
 web/src/types.ts
-+ ming_sim/staged_commitment.py  (D3 home; 计入票面生产 19，不计入 judge 原 18)
+(+ ming_sim/urge_lever.py 本轮 diff 未改，但是同根 normalize/stages_to_json 消费者，列入成员表)
 
-=== D1 members（搬迁后被替代 / 重复真源）逐项核销 ===
-| 成员 | 处置 | 依据 |
-|---|---|---|
-| parse_staged_year_promise / _STAGE_YEAR_RE / _cn_years_to_int / _CN_YEAR_DIGITS | **删除** | 散文年诺解析整段退役 |
-| capture_commitment_stages 旧签名 narrative_text/origin_turn + 正文回落 | **清退** | 现为 stages_to_json 薄包装，只吃显式结构 |
-| capture_commitment_stages 薄包装本身 | **保留** | 单一写口；试删会复制空值分支进 issues×2，18 文件口径回涨（+72→+83），故不凑删 |
-| action_materialize 坏 stages→try/except 回落正文年诺 | **清退** | 改 normalize_commitment_stages；缺省/空/坏→[] |
-| db._apply_assignment_verdict_effect 重复 capture+narrative | **清退** | 只透传显式 stages；捕获单口在 issues |
-| issues.py 两处 capture（校验+落库） | **保留** | 结构化响亮校验／落段；已去 narrative_text |
-| close_text if execution_note is None（db.close_secret_order） | **清退** | 缺省写 ""，不回填奏报 |
-| settle_due_secret_orders 未传 execution_note | **清退** | 传 verdict["note"] |
-| player_facing_secret_order_close_text | **保留** | 只写密令 result 奏报轨 |
-| db 人物离场结案 execution_note=reason | **保留** | 双轨已分写 |
-| normalize_commitment_stages / stages_to_json / 到期扫描读口 | **保留** | 显式结构化载体 ADR0074 |
-| docs/DELTA_SCHEMA.md scripted 年诺条款 | **同步撤销** | 只认显式 stages |
-| #620 P4／AC2 捕获条款 | **同步撤销** | gh issue 620 已改 |
+=== members（D1/D2/D3 同根；全仓命中）逐项核销 ===
+| 成员 | 类 | 处置 | 依据 |
+|---|---|---|---|
+| parse_staged_year_promise / _STAGE_YEAR_RE / _cn_years_to_int / _CN_YEAR_DIGITS | D1/D3 | **删除** | 生产 ming_sim rg 空；散文年诺整段退役 |
+| capture_commitment_stages 旧签名 narrative_text/origin_turn + 正文回落 | D1/D3 | **清退** | 现为只吃显式结构的薄包装 |
+| capture_commitment_stages 薄包装本身 | D1/D3 | **保留** | 单一写口：集中空值短路（None/""/[]/()/{}→[]）+ stages_to_json/normalize；否则 issues 两处各自复制空值分支与规范化调用（复杂度上升，非行数口径） |
+| action_materialize 坏 stages→try/except 回落正文年诺 | D1/D3 | **清退** | 改 normalize_commitment_stages；缺省/空/坏→[] |
+| db._apply_assignment_verdict_effect 重复 capture+narrative | D1/D3 | **清退** | 只透传显式 stages；捕获单口在 issues |
+| issues.py 两处 capture（校验+落库） | D1/D3 | **保留** | 结构化响亮校验／落段；已去 narrative_text |
+| close_text if execution_note is None（db.close_secret_order） | D1/D2 | **清退** | 缺省写 ""，不回填奏报 |
+| settle_due_secret_orders 未传 execution_note | D1/D2 | **清退** | 传 verdict["note"] 整体 |
+| player_facing_secret_order_close_text | D2 | **保留** | 只写密令 result 奏报轨 |
+| db 人物离场结案 close_secret_order(..., execution_note=reason) | D2 | **保留** | 双轨已分写；非奏报兜底 |
+| month_chain → settle_due_secret_orders | D2 | **保留** | 月结真实入口调度 |
+| normalize_commitment_stages / stages_to_json / 到期扫描读口 | D1/D3 | **保留** | 显式结构化载体 ADR0074 |
+| urge_lever.py normalize + stages_to_json | D1/D3 | **保留** | 同根读改写口（催办）；非散文捕获；本轮未改 |
+| breach_plea / due_review / declaration_dispatch / audience_translate normalize 读口 | D1/D3 | **保留** | 结构化读消费者 |
+| db.insert_issue → stages_to_json | D1/D3 | **保留** | 持久化串面单一规范化 |
+| docs/DELTA_SCHEMA.md scripted 年诺条款 | D3 | **同步撤销** | L301 新约：只认显式 stages |
+| #620 P4／AC2 捕获条款 | D3 | **同步撤销** | gh issue 620 已改 |
+| tests 中「三年火器」origin_context 字面 / close_secret_order 调用 | — | **保留** | 测试/fixture；非生产散文 parser；非旧兜底护栏 |
+| evidence/* 枚举自述命中 | — | **n/a** | 本回执 |
 
-=== retired symbols AFTER (must be empty) ===
+=== retired symbols AFTER (must be empty in ming_sim/) ===
 (none — rg parse_staged_year_promise|_STAGE_YEAR_RE|_cn_years_to_int|_CN_YEAR_DIGITS|close_text if execution_note|narrative_text\s*= 于 ming_sim/)
 
-=== kept structured write/read consumers ===
+=== kept structured write/read consumers (production) ===
 ming_sim/staged_commitment.py: capture_commitment_stages / normalize_commitment_stages / stages_to_json
 ming_sim/action_materialize.py: normalize_commitment_stages
 ming_sim/issues.py: capture_commitment_stages ×2
-ming_sim/db.py: stages_to_json (insert_issue)
+ming_sim/db.py: stages_to_json (insert_issue); close_secret_order 缺省 ""
+ming_sim/covert_progress.py: settle_due_secret_orders → execution_note=verdict["note"]; player_facing_secret_order_close_text
+ming_sim/month_chain.py: settle_due_secret_orders 调度
 ming_sim/declaration_dispatch.py|due_review.py|breach_plea.py|urge_lever.py|audience_translate.py: normalize 读口
 
-=== D2 enum command ===
-rg -n "close_text if execution_note|execution_note is None|player_facing_secret_order_close_text|close_secret_order\(" -g "*.py"
-
-=== D2 members ===
-| 成员 | 处置 |
-|---|---|
-| db.close_secret_order: close_text if execution_note is None | **清退** → "" if execution_note is None |
-| covert_progress.settle_due_secret_orders 未传 execution_note | **清退** → execution_note=verdict["note"] |
-| db 人物离场结案 close_secret_order(..., execution_note=reason) | **保留** |
-| player_facing_secret_order_close_text | **保留**（只写 result） |
-| tests/docs 锁旧兜底 | **无**（ADR0073 仍要求双轨分写，非旧兼容） |
-
-=== D3 enum command ===
-rg -n "parse_staged_year_promise|_STAGE_YEAR_RE|_cn_years_to_int|_CN_YEAR_DIGITS|narrative_text=|三年X五年Y|回落正文" -g "*.{py,md}"
-
-=== D3 members ===
-| 成员 | 处置 |
-|---|---|
-| parse_staged_year_promise 等四符号 | **删除**（生产 rg 空） |
-| capture narrative/正文回落 | **清退** |
-| action_materialize 坏结构回落正文 | **清退** |
-| db 交办缝重复捕获 | **清退** |
-| DELTA_SCHEMA scripted 年诺 | **同步撤销**（L301 新约） |
-| #620 P4／AC2 | **同步撤销** |
-| tests 中「三年火器」origin_context 字面 | **保留**（结构化 stages 另供；非散文 parser） |
-| normalize/stages_to_json/到期扫描 | **保留** |
+=== 漏成员 ===
+全仓扫后无新增未处置生产漏成员；本轮不改生产代码。

@@ -1,38 +1,53 @@
 # D2/D3 real-entry mutation observation (旧红新绿)
 
 ## Setup
-- TMP=/tmp/fixer1897-d123-obs2.PXL4Gg
-- OLD: git archive 874b85adf4eb15985ff88430511338360add5536 → /tmp/fixer1897-d123-obs2.PXL4Gg/old_wt
-  (pytest cwd=OLD so ming_sim resolves to archived tree; not PYTHONPATH overlay)
-- NEW: worktree /Users/akagilnc/WorkSpace/Ming_LLM-1897-w5（散文捕获已退役；capture 薄包装保留为单一写口）
+- TMP=/tmp/fixer1897-d123-obs3.NAt6qt
+- probe=/tmp/fixer1897-d123-obs3.NAt6qt/test_observe_contract.py（系统临时；不落仓）
+- OLD: git archive 874b85adf4eb15985ff88430511338360add5536 → $TMP/old_wt
+  （pytest cwd=OLD 使 ming_sim 解析到归档树；非 PYTHONPATH 覆盖）
+- NEW: worktree /Users/akagilnc/WorkSpace/Ming_LLM-1897-w5
 - prefix: MING_SIM_{AGY,CODEX,CLAUDE,CURSOR,KIMI,GROK,PI}_BIN=/usr/bin/false
 - D3 entry: _emit commissions/assignment → pending_actions.payload_json stages/due_turn
-- D2 entry: secret_order approve + month settle → decree_dossiers.execution_note vs secret_orders.result
-- Same structured contract on both trees; free text not locked; no in-repo proof test
-- NEW duration ~0.74s; OLD duration ~0.81s
+- D2 entry: secret_order approve + settle_due_secret_orders → decree_dossiers.execution_note
+- 不锁自由文本；无仓内证明性测试
 
 ## Structured contract (desired behavior)
 1. D3: prose body + stages in {None, [], bad-object} → due_turns == []
 2. D3: explicit stages due_turn=3 → due_turns == [3]
-3. D2: settle with boastful memorial + actual_units=0 → execution_note must NOT contain memorial fragment; status=failed
+3. D2: settle actual_units=0 + 有奏报 → status=failed；
+   decree_dossiers.execution_note == settle 返回的 verdict note 整体值（运行时原样相等，
+   从真实 settle/decide 获值；不 mock note、不子串/正则、不锁奏报或 note 字面）；
+   并对 GameDB.close_secret_order 真实调用动态记录 execution_note 实参，
+   要求 write_arg == 同一整体 verdict note（证写口参数来源，非只查源码）
 
-## NEW results (GREEN) — rc=0, 6 passed
+## Probe core ops（核对用）
+- D3: assignment.text=「三年火器见眉目，五年新历成。」；stages 分别为 None / [] / {bad:1} / [{due_turn:3,…}]；
+  读 pending_actions.payload_json["stages"] → due_turns
+- D2:
+  1) monkeypatch 包装 GameDB.close_secret_order，append {execution_note_arg, result_arg, status_arg}
+  2) _emit+_approve 建密令；record_dossier_progress 写奏报轨；due_turn=当月
+  3) out = settle_due_secret_orders(...)（真实 evaluate/settle，不 mock decide）
+  4) verdict_note = out[].note；db_note = decree_dossiers.execution_note
+  5) assert status==failed and actual_units==0.0
+  6) assert db_note == verdict_note and write_arg == verdict_note
+
+## NEW results (GREEN) — rc=0, 5 passed；pytest 1.04s；wall real 1.66s
 NEW_PROV file=/Users/akagilnc/WorkSpace/Ming_LLM-1897-w5/ming_sim/staged_commitment.py parse=False close_fallback=False
 NEW_D3_CASE input=None due_turns=[]
 NEW_D3_CASE input=[] due_turns=[]
 NEW_D3_CASE input={'bad': 1} due_turns=[]
 NEW_D3_EXPLICIT due_turns=[3]
-NEW_D2 status=failed actual=0.0 note='machine_settle gap Σ=0/3;表报有之、不翻实账 (secret_order:1)' result='  臣已查明全部，无一遗漏。\n'
-→ 奏报仍在 result；执行格为 machine note；缺省/空/坏对象不从正文产期限
+NEW_D2 status='failed' actual=0.0 verdict_note='machine_settle gap Σ=0/3;表报有之、不翻实账 (secret_order:1)' db_execution_note='machine_settle gap Σ=0/3;表报有之、不翻实账 (secret_order:1)' write_arg_execution_note='machine_settle gap Σ=0/3;表报有之、不翻实账 (secret_order:1)' write_arg_is_none=False result='  臣已查明全部，无一遗漏。\n' db_eq_verdict=True write_arg_eq_verdict=True
+→ 奏报仍在 result；执行格=settle verdict note 整体；写口实参同源；缺省/空/坏对象不从正文产期限
 
-## OLD results (RED) — rc=1, 4 failed, 2 passed
-OLD_PROV file=/tmp/fixer1897-d123-obs2.PXL4Gg/old_wt/ming_sim/staged_commitment.py parse=True close_fallback=True
+## OLD results (RED) — rc=1, 4 failed, 1 passed；pytest 2.30s；wall real 2.99s
+OLD_PROV file=/private/tmp/fixer1897-d123-obs3.NAt6qt/old_wt/ming_sim/staged_commitment.py parse=True close_fallback=True
 OLD_D3_CASE input=None due_turns=[37, 61]   # FAIL contract
 OLD_D3_CASE input=[] due_turns=[37, 61]     # FAIL contract
 OLD_D3_CASE input={'bad': 1} due_turns=[37, 61]  # FAIL contract
 OLD_D3_EXPLICIT due_turns=[3]               # pass
-OLD_D2 status=failed actual=0.0 note='  臣已查明全部，无一遗漏。\n' result='  臣已查明全部，无一遗漏。\n'  # FAIL contract
-→ 旧逻辑：散文捕获写 due_turn；奏报回填 execution_note
+OLD_D2 status='failed' actual=0.0 verdict_note='machine_settle gap Σ=0/3;表报有之、不翻实账 (secret_order:1)' db_execution_note='  臣已查明全部，无一遗漏。\n' write_arg_execution_note=None write_arg_is_none=True result='  臣已查明全部，无一遗漏。\n' db_eq_verdict=False write_arg_eq_verdict=False  # FAIL：DB≠verdict note；写口未传 execution_note
+→ 旧逻辑：散文捕获写 due_turn；close 缺省回填奏报；写口实参为 None
 
 ## VERDICT
 OLD_RED_NEW_GREEN
@@ -43,13 +58,15 @@ NEW:
   env MING_SIM_AGY_BIN=/usr/bin/false MING_SIM_CODEX_BIN=/usr/bin/false MING_SIM_CLAUDE_BIN=/usr/bin/false \
       MING_SIM_CURSOR_BIN=/usr/bin/false MING_SIM_KIMI_BIN=/usr/bin/false MING_SIM_GROK_BIN=/usr/bin/false \
       MING_SIM_PI_BIN=/usr/bin/false OBS_MODE=NEW \
-  /Users/akagilnc/WorkSpace/Ming_LLM/.venv/bin/python -m pytest -p tests.conftest -p no:cacheprovider /tmp/fixer1897-d123-obs2.PXL4Gg/test_observe_contract.py -q -s --tb=line
+  /Users/akagilnc/WorkSpace/Ming_LLM/.venv/bin/python -m pytest -p tests.conftest -p no:cacheprovider \
+      /tmp/fixer1897-d123-obs3.NAt6qt/test_observe_contract.py -q -s --tb=line
 
 OLD:
   # recreate archive if cleaned:
   #   mkdir -p $OLD && git -C /Users/akagilnc/WorkSpace/Ming_LLM-1897-w5 archive 874b85adf | tar -x -C $OLD
-  cd /tmp/fixer1897-d123-obs2.PXL4Gg/old_wt && \
+  cd /tmp/fixer1897-d123-obs3.NAt6qt/old_wt && \
   env MING_SIM_AGY_BIN=/usr/bin/false MING_SIM_CODEX_BIN=/usr/bin/false MING_SIM_CLAUDE_BIN=/usr/bin/false \
       MING_SIM_CURSOR_BIN=/usr/bin/false MING_SIM_KIMI_BIN=/usr/bin/false MING_SIM_GROK_BIN=/usr/bin/false \
       MING_SIM_PI_BIN=/usr/bin/false OBS_MODE=OLD \
-  /Users/akagilnc/WorkSpace/Ming_LLM/.venv/bin/python -m pytest -p tests.conftest -p no:cacheprovider /tmp/fixer1897-d123-obs2.PXL4Gg/test_observe_contract.py -q -s --tb=line
+  /Users/akagilnc/WorkSpace/Ming_LLM/.venv/bin/python -m pytest -p tests.conftest -p no:cacheprovider \
+      /tmp/fixer1897-d123-obs3.NAt6qt/test_observe_contract.py -q -s --tb=line

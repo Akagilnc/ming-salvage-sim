@@ -1,14 +1,34 @@
+# focused pytest (judge same list)
+# command:
+env MING_SIM_AGY_BIN=/usr/bin/false MING_SIM_CODEX_BIN=/usr/bin/false MING_SIM_CLAUDE_BIN=/usr/bin/false MING_SIM_CURSOR_BIN=/usr/bin/false MING_SIM_KIMI_BIN=/usr/bin/false MING_SIM_GROK_BIN=/usr/bin/false MING_SIM_PI_BIN=/usr/bin/false /Users/akagilnc/WorkSpace/Ming_LLM/.venv/bin/python -m pytest tests/test_secret_order_declaration_landing_1897.py tests/test_audience_translate_1837_reopen.py tests/test_secret_order_monthly_progress_566.py tests/test_secret_order_payoff_1504.py tests/test_execution_pressure_654.py tests/test_decree_dossiers_571.py tests/test_deformation_dual_rail_622.py tests/test_dossier_reported_progress_619.py tests/test_due_review_621.py tests/test_secret_order_section_rejections.py tests/test_world_materials_1834.py -q -p no:cacheprovider --tb=short
+
+# output:
 ........................................................................ [ 20%]
 ...........................................................F............ [ 41%]
 ........................................................................ [ 62%]
 ........................................................................ [ 83%]
 .......................................................                  [100%]
 =================================== FAILURES ===================================
+___________ test_path1_conversational_draft_bad_roster_marks_failed ____________
+tests/test_execution_pressure_654.py:644: in test_path1_conversational_draft_bad_roster_marks_failed
+    result = db._commit_conversational_draft(
+ming_sim/db.py:18180: in _commit_conversational_draft
+    ok = self._apply_pending_action(
+ming_sim/db.py:18422: in _apply_pending_action
+    dossier_ids = self._ensure_directive_dossier(
+ming_sim/db.py:19224: in _ensure_directive_dossier
+    return self.create_decree_dossiers(
+ming_sim/db.py:13886: in create_decree_dossiers
+    self._validate_participant_roster_references(roster)
+ming_sim/db.py:20721: in _validate_participant_roster_references
+    raise _roster_ref_error("参与人物", character_id)
 E   ValueError: 参与人物不存在：查无此人。请填写朝堂名册中已有的大臣姓名。
 ----------------------------- Captured stdout call -----------------------------
-[13:26:47.714] [pending_actions] 落库异常 id=1 directive/拟旨：参与人物不存在：查无此人。请填写朝堂名册中已有的大臣姓名。
-/Users/akagilnc/WorkSpace/Ming_LLM-1897-w5/ming_sim/db.py:20721: ValueError: 参与人物不存在：查无此人。请填写朝堂名册中已有的大臣姓名。
+[13:33:40.591] [pending_actions] 落库异常 id=1 directive/拟旨：参与人物不存在：查无此人。请填写朝堂名册中已有的大臣姓名。
 =========================== short test summary info ============================
 FAILED tests/test_execution_pressure_654.py::test_path1_conversational_draft_bad_roster_marks_failed
-1 failed, 342 passed in 7.59s
-focused_rc= duration=8s
+1 failed, 342 passed in 8.13s
+real 8.61
+user 5.97
+sys 2.10
+focused_rc=1
