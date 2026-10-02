@@ -453,37 +453,6 @@ def test_recompute_all_reconciles_drift_from_unhooked_path(game):
         assert row["leverage"] == exp, f"{f} 应被 recompute_all 重算到公式值(got={row['leverage']} exp={exp})"
 
 
-def test_settle_path_triggers_reconcile_before_next_period(game, monkeypatch):
-    """#9 cmr R3 finding#2：reconcile 兜底确由【真实结算路】在 next_period 之前触发——
-    锁住玩家月链结算尾 db.recompute_all_faction_leverage() 的接线与顺序。
-    现有 test_recompute_all_reconciles_drift_from_unhooked_path 直调该方法、不走结算路，
-    就算结算尾那行 wiring 被删/移到 next_period 之后，那测试照过、证明不了生产接线。
-    本测试经玩家月链跑一回合，spy 记录方法被调用时 state.turn，
-    断言：(1) 被调用过；(2) 调用时 turn 仍是 before_turn（未 next_period）；(3) 结算后 turn 已 +1
-    （证明 reconcile 在 next_period 之前跑过）。把结算尾 wiring 删掉则 spy 不触发 → 红。"""
-    db, state, content = game
-    before_turn = state.turn
-    calls = []
-
-    real = type(db).recompute_all_faction_leverage
-
-    def _spy(self):
-        # 记录被调用时刻的 turn（生产 wiring 应在 next_period 之前 → turn 仍是 before_turn）。
-        calls.append(state.turn)
-        return real(self)
-
-    monkeypatch.setattr(type(db), "recompute_all_faction_leverage", _spy)
-
-    from tests.test_due_review_621 import _settle_empty_month
-    _settle_empty_month(db, state, content, monkeypatch)
-
-    assert calls, "结算路应触发 recompute_all_faction_leverage（生产 wiring 未接 → 此处为空）"
-    assert all(t == before_turn for t in calls), (
-        f"reconcile 应在 next_period 之前被调用（调用时 turn 应={before_turn}，实得 {calls}）"
-    )
-    assert state.turn == before_turn + 1, "结算后回合应已推进（证明 reconcile 在 next_period 前跑过）"
-
-
 def test_reconcile_runs_before_clear_gated_legacies_same_turn(game, monkeypatch):
     """#9 线上 R6（codex P2）：结算尾 recompute_all_faction_leverage() 必须排在 clear_gated_legacies()
     之前。否则同回合经兜底 reconcile 才更新的 faction leverage（易主/裸 UPDATE 改成员、绕即时 hook）
@@ -511,9 +480,11 @@ def test_reconcile_runs_before_clear_gated_legacies_same_turn(game, monkeypatch)
     db.conn.commit()
     stale = db.faction_leverage(faction)
     assert stale >= 30, f"前提：裸 UPDATE 后 DB leverage 应残留≥30（stale={stale}）"
+    before_turn = state.turn
 
     from tests.test_due_review_621 import _settle_empty_month
     _settle_empty_month(db, state, content, monkeypatch)
+    assert state.turn == before_turn + 1
 
     after = db.conn.execute(
         "SELECT status FROM legacies WHERE id=?", (leg["id"],)

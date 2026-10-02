@@ -1493,51 +1493,19 @@ def test_turn_army_summary_keeps_real_morale_changes_when_log_cap_fills(fresh_db
     assert army_name in fresh_db.turn_army_summary(state.turn, limit=len(earlier_armies))
 
 
-def test_budget_projection_passes_copied_settle_snapshots_to_fiscal_tick(fresh_game, monkeypatch):
-    import ming_sim.fiscal_tick as fiscal_tick_mod
-    import ming_sim.flows as flows_mod
+def test_budget_projection_preserves_persisted_fiscal_snapshots(fresh_game):
+    from ming_sim.flows import compute_budget_lines
 
     db, state = fresh_game
-    original_json_loads = flows_mod.json.loads
-    original_settle_tick = fiscal_tick_mod.settle_tick
-    original_st_objects = []
-    original_p_objects = []
-    seen_tick_args = []
-
-    def tracking_json_loads(raw):
-        parsed = original_json_loads(raw)
-        settle = parsed.get("settle") if isinstance(parsed, dict) else None
-        if isinstance(settle, dict):
-            st = settle.get("st")
-            p = settle.get("p")
-            if isinstance(st, dict):
-                original_st_objects.append(st)
-            if isinstance(p, dict):
-                original_p_objects.append(p)
-        return parsed
-
-    def spy_settle_tick(st, p, actions):
-        # 委派 spy：真调用真返回；只记录 identity，证明 projection 传入的是拷贝。
-        seen_tick_args.append((st, p))
-        return original_settle_tick(st, p, actions)
-
-    monkeypatch.setattr(flows_mod.json, "loads", tracking_json_loads)
-    monkeypatch.setattr(fiscal_tick_mod, "settle_tick", spy_settle_tick)
-
-    budget = flows_mod.compute_budget_lines(db, state)
-
-    assert seen_tick_args, "substrate hub budget projection should call settle_tick"
+    before = [dict(row) for row in db.conn.execute(
+        "SELECT id, fiscal FROM regions ORDER BY id"
+    )]
+    budget = compute_budget_lines(db, state)
     assert isinstance(budget, dict) and "国库" in budget
-    assert all(
-        tick_st is not original_st
-        for tick_st, _ in seen_tick_args
-        for original_st in original_st_objects
-    )
-    assert all(
-        tick_p is not original_p
-        for _, tick_p in seen_tick_args
-        for original_p in original_p_objects
-    )
+    assert compute_budget_lines(db, state) == budget
+    assert [dict(row) for row in db.conn.execute(
+        "SELECT id, fiscal FROM regions ORDER BY id"
+    )] == before
 
 
 def test_budget_lines_read_persisted_substrate_hub_income_source(fresh_game):

@@ -1,10 +1,10 @@
 import React, { act } from "react";
 import { readFileSync } from "node:fs";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, describe, expect, it, vi, type MockInstance } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { App } from "./main";
-import * as moneyFormat from "./format";
+import { formatMoney } from "./format";
 import { measureElectronLayout } from "./testSupport/electronLayout";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -2274,15 +2274,14 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
   afterEach(() => vi.restoreAllMocks());
 
   const expectArmyPayTransmission = (
-    money: MockInstance<typeof moneyFormat.formatMoney>, drawer: Element | null,
+    drawer: Element | null,
     expected: number[], absent: number[] = [],
   ) => {
     expect(drawer).not.toBeNull();
     for (const value of expected) {
-      expect(money.mock.calls.some(([amount], i) => amount === value
-        && drawer!.textContent!.includes(money.mock.results[i].value))).toBe(true);
+      expect(drawer!.textContent).toContain(formatMoney(value));
     }
-    for (const value of absent) expect(money).not.toHaveBeenCalledWith(value);
+    for (const value of absent) expect(drawer!.textContent).not.toContain(formatMoney(value));
   };
   it("只读组逐面可达且吃月初叠影；关闭组不可达且半程面不泄漏", async () => {
     // phase=settling：续跑小条不挡 HUD；settlement_display 叠影照常
@@ -2335,13 +2334,12 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     expect(document.body.textContent).toContain(SNAP_LEGACY);
     await closeOpenOverlay(host);
 
-    // Observe actual monetary inputs and their rendered outputs, not labels or units.
-    const money = vi.spyOn(moneyFormat, "formatMoney");
+    // Check visible monetary results without requiring a particular formatter call.
     // economy：户部抽屉可开，余额=月初
     await click(byAria(host, "经济面板"));
     await tick();
     const economyOpen = host.querySelector(".right-drawer-economy.open");
-    expectArmyPayTransmission(money, economyOpen, [SNAP_ARMY_PAY_DUE],
+    expectArmyPayTransmission(economyOpen, [SNAP_ARMY_PAY_DUE],
       [SNAP_ARMY_PAY_DISBURSED, SNAP_ARMY_PAY_ARRIVED, SNAP_ARMY_PAY_LOSS]);
     await closeOpenOverlay(host);
     expect(host.querySelector(".right-drawer-economy.open")).toBeNull();
@@ -2502,11 +2500,10 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     await act(async () => {
       await vi.waitFor(() => expect(host.querySelector('[data-testid="settle-resume"]')).not.toBeNull());
     });
-    const money = vi.spyOn(moneyFormat, "formatMoney");
     await click(byAria(host, "经济面板"));
     await tick();
     const economyOpen = host.querySelector(".right-drawer-economy.open");
-    expectArmyPayTransmission(money, economyOpen, [SNAP_ARMY_PAY_DUE],
+    expectArmyPayTransmission(economyOpen, [SNAP_ARMY_PAY_DUE],
       [SNAP_ARMY_PAY_DISBURSED, SNAP_ARMY_PAY_ARRIVED, SNAP_ARMY_PAY_LOSS]);
   });
 
@@ -2597,11 +2594,10 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     expect(host.textContent).toContain(SNAP_CLOSED);
     // #1366：next_period 完成、月初快照过期后，同一 settled turn 的三项结果才可见
     // （settlementBaseState 默认 budget.settled_army_pay 非 null）。
-    const money = vi.spyOn(moneyFormat, "formatMoney");
     await click(byAria(host, "经济面板"));
     await tick();
     const economyOpen = host.querySelector(".right-drawer-economy.open");
-    expectArmyPayTransmission(money, economyOpen,
+    expectArmyPayTransmission(economyOpen,
       [SNAP_ARMY_PAY_DUE, SNAP_ARMY_PAY_DISBURSED, SNAP_ARMY_PAY_ARRIVED, SNAP_ARMY_PAY_LOSS]);
     await closeOpenOverlay(host);
     // 关闭组命令可再开

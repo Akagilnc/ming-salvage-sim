@@ -651,7 +651,7 @@ def test_multi_origin_fresh_independent_retract_and_single_departure(game, monke
     db.fail_chat_turn(int(turn_b))
     assert an.list_unsettled_summons(db) == []
 
-    # 两轮都存活时收夜只产生一次行止（一次 apply）。
+    # 两轮都存活时收夜得到同一个持久行止。
     entry_a2 = an.record_summon_fresh(
         db, night_id, person.name, origin_id=origin_a,
     )
@@ -659,19 +659,16 @@ def test_multi_origin_fresh_independent_retract_and_single_departure(game, monke
         db, night_id, person.name, origin_id=origin_b,
     )
     assert entry_a2 != entry_b2
-    from ming_sim import issues
-    real_apply = issues.apply_person_changes_only
-    apply_calls = 0
-
-    def count_apply(*args, **kwargs):
-        nonlocal apply_calls
-        apply_calls += 1
-        return real_apply(*args, **kwargs)
-
-    monkeypatch.setattr(issues, "apply_person_changes_only", count_apply)
+    departures_before = db.conn.execute(
+        "SELECT COUNT(*) FROM person_logs WHERE person_name=? AND action='行止'",
+        (person.name,),
+    ).fetchone()[0]
     result = an.close_night(db, state, night_id=night_id, content=content)
     assert result["closed"] is True
-    assert apply_calls == 1
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM person_logs WHERE person_name=? AND action='行止'",
+        (person.name,),
+    ).fetchone()[0] == departures_before + 1
     after = db.conn.execute(
         "SELECT location, transit_to FROM characters WHERE name=?", (person.name,)
     ).fetchone()
