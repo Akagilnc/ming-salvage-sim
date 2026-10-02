@@ -5,7 +5,6 @@
 
 from __future__ import annotations
 
-import json
 from types import SimpleNamespace
 
 import pytest
@@ -175,6 +174,16 @@ def test_dump_llm_messages_records_reasoning_usage_finish_reason(monkeypatch, tm
     """
     import ming_sim.agents as agents_mod
 
+    # Observe real serialization and transmission without interpreting diagnostic prose.
+    serialized = []
+    dumps = agents_mod.json.dumps
+
+    def record_serialization(value, *args, **kwargs):
+        encoded = dumps(value, *args, **kwargs)
+        serialized.append((value, encoded))
+        return encoded
+
+    monkeypatch.setattr(agents_mod.json, "dumps", record_serialization)
     dump_path = tmp_path / "llm_dump_test.log"
     monkeypatch.setattr(agents_mod, "_DUMP_LLM", True)
     monkeypatch.setattr(agents_mod, "_DUMP_PATH", str(dump_path))
@@ -207,11 +216,10 @@ def test_dump_llm_messages_records_reasoning_usage_finish_reason(monkeypatch, tm
     )
     text = dump_path.read_text(encoding="utf-8")
     # reasoning：字段正文（不锁 dump 字数/标签模板）
-    assert "思考过程甲" in text
-    assert "中转 reasoning 正文" in text
-    # Decode the embedded JSON value, not dump labels, spacing or key order.
-    usage, _ = json.JSONDecoder().raw_decode(text[text.index("{"):])
-    assert usage == vars(metrics)
+    assert msg.content in text
+    assert msg.reasoning_content in text
+    assert msg.reasoning in text
+    assert any(value == vars(metrics) and encoded in text for value, encoded in serialized)
 
     # 有值演练：只种 RunOutput.model_provider_data 字面键（bounce 明示允许）
     dump_path.write_text("", encoding="utf-8")
