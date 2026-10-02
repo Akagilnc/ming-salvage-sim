@@ -187,5 +187,4 @@ rg -n 'PERSON_EFFECT_KEYS|ongoing_effects|cancel_cost|effect_on_resolve|effect_o
 
 可核输出摘录：旧边界中四个效果字段的 `person_changes` 均为 `int 5`、`character` 均为 `int -8`，而规范键为 `str`；报 `AssertionError: ('open', [('ongoing_effects', 'person_changes', 5), ('ongoing_effects', 'character', -8), ...])`。恢复后每个字段/键组合均观察为 `str`，开放、关闭、重新打开数据库恢复三态各报 `PASS ... all 4 payload fields x all 3 engine person keys projected; actual directory read`。
 
-聚焦结果：`161 passed, 1 skipped in 6.79s`（保留基底盘面缺人物时的既有条件 skip）；四个变动 Python 文件 AST 解析通过，`git diff --check` 无输出。不跑全量、不冒称 typecheck，无测试改动/新增测试。复扫后上述三键和四字段无漏项；F9 本次施工无剩余。两个自建临时文件 `/tmp/1834-person-effects-probe.py`、`/tmp/1834-person-effect-readers.txt` 交卷前清理。
-
+聚焦结果：`161 passed, 1 skipped in 6.79s`（保留基底盘面缺人物时的既有条件 skip）；四个变动 Python 文件 AST 解析通过。回执追加后 `git diff --check` 曾报末尾空行，以独立 forward commit 整理；最终复验无输出。不跑全量、不冒称 typecheck，无测试改动/新增测试。复扫后上述三键和四字段无漏项；F9 本次施工无剩余。两个自建临时文件 `/tmp/1834-person-effects-probe.py`、`/tmp/1834-person-effect-readers.txt` 交卷前清理。
