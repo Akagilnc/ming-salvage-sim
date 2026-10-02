@@ -157,5 +157,5 @@ tests/test_new_issues_section_rejections.py::test_new_issue_whitespace_resolve_c
 ## commitSha / 剩余跨票
 
 - **修理 commitSha**：`00e2d9a44828cd369e9624e8c263f85ebd5934bf`
-- **报告注记 commitSha / HEAD**：`b72cf7ecb155a5bad8d6e073b6e561ace98ae121`
+- **HEAD（含本证据注记）**：以 `git rev-parse HEAD` 为准（注记链 `b72cf7ecb` → 后续 clarify）
 - **剩余跨票**：N8→#1873；X1→#1826；X2→#1873/#1826；前端文书页与功能接缝不在本修理范围
