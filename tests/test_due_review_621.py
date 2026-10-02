@@ -224,31 +224,6 @@ def test_due_review_scene_tops_next_audience_with_origin_context(game):
     assert "payload_json" not in scene
 
 
-def test_due_review_scene_tops_live_open_night_even_with_body(game):
-    """#1838 reopen：待裁场面进场景开场最小集，不再写开夜旁白账。"""
-    from ming_sim.materials import _scene_opening_text, _scene_pending_audience_facts
-
-    db, state, content = game
-    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
-    db.conn.commit()
-    stages = [{
-        "stage_idx": 0,
-        "due_turn": state.turn,
-        "criterion_text": "火器见眉目",
-        "origin_context": "三年火器见眉目",
-    }]
-    _insert_staged_commitment(db, state, content, stages=stages)
-    write_due_staged_commitment_todos(db, state)
-
-    open_night(db, state, time_of_day="戌时", location="乾清宫")
-    facts = _scene_pending_audience_facts(db, state)
-    opening = _scene_opening_text(state, [], "", [], facts)
-    assert "当前待裁场面" in opening
-    assert facts, "待裁场面须原样进入开场最小集"
-    joined = "\n".join(facts)
-    assert "三年火器见眉目" in joined or "火器见眉目" in joined
-
-
 # ── P1 有案卷桥 / 无案卷分支 ──────────────────────────────────────────
 
 

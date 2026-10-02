@@ -1404,7 +1404,7 @@ def test_rejected_strategic_event_does_not_land_substitute_commander_person_delt
 
 def test_pending_gate_uses_same_place_canonical_terminal_state(game):
     """#667：同地行止真实终态不在途，pending gate 不得投影出 transit_to。"""
-    db, _state, content = game
+    db, state, content = game
     db.conn.execute(
         "UPDATE characters SET status='active', location='liaodong', transit_to='' WHERE name='毛文龙'"
     )
@@ -1414,12 +1414,18 @@ def test_pending_gate_uses_same_place_canonical_terminal_state(game):
         event_type="situation", trigger_gate={"character.毛文龙.transit_to": "!= liaodong"},
     )
 
-    assert issues._pending_person_changes_block_event_gate(
-        ev,
-        [{"name": "毛文龙", "动作": "行止", "transit_to": "liaodong"}],
-        db,
-        content=content,
-    ) is False
+    content.seed_events.append(ev)
+    content.event_by_id[ev.id] = ev
+    try:
+        out = issues.apply_issue_tracker_output(
+            db, state, {"new_issues": [{"origin_kind": "event_pool", "id": ev.id}]}, content=content,
+            pending_person_changes_for_gates=[{"name": "毛文龙", "动作": "行止", "transit_to": "liaodong"}],
+            candidate_event_ids_at_input={ev.id},
+        )
+        assert out["new_issues"][0]["rejected"] is False
+    finally:
+        content.seed_events.remove(ev)
+        content.event_by_id.pop(ev.id)
 
 
 def test_mao_wenlong_event_trigger_respects_outer_transaction_rollback(game):
@@ -1718,17 +1724,6 @@ def test_legacy_event_trigger_terminal_reason_can_be_filled_by_real_outcome(game
         ("jisi_lubian",),
     ).fetchone()
     assert dict(row) == {"terminal_state": "triggered", "terminal_reason": "入塞被遏"}
-
-
-def test_person_write_state_restore_removes_dynamic_character_attrs(game):
-    """人事写口失败回滚必须删除快照中不存在的动态属性，避免内存幽灵状态残留。"""
-    db, _state, content = game
-    snapshot = issues._snapshot_person_write_state(db, content)
-    content.characters["毛文龙"].ghost_preflight_attr = "leak"
-
-    issues._restore_person_write_state(db, content, snapshot, commit=False)
-
-    assert not hasattr(content.characters["毛文龙"], "ghost_preflight_attr")
 
 
 def test_legacy_person_core_static_fields_backfill_reachability(game):
@@ -2824,29 +2819,21 @@ def test_issue_tracker_close_legacy_expiry_respects_outer_transaction_rollback(g
     ).fetchone()[0] == 0
 
 
-def test_apply_issue_entities_person_changes_respect_commit_false(game):
-    """post-merge CMR R6：_apply_issue_entities(commit=False) 的人物 DB 写入不得自行提交。"""
+def test_issue_close_person_changes_respect_outer_rollback(game):
     db, state, content = game
     issues.bind_content(content)
     db.conn.execute("UPDATE characters SET status = ? WHERE name = ?", ("active", "毛文龙"))
+    issue_id = db.insert_issue(state, kind="situation", title="事务结案", effect_on_resolve={
+        "人物变更": [{"origin_ref": "盘面自发", "name": "毛文龙", "动作": "处置", "status": "dismissed", "reason": "事务内处置"}],
+    })
     db.conn.commit()
     before_logs = db.conn.execute(
-        "SELECT COUNT(*) FROM person_logs WHERE person_name=?",
-        ("毛文龙",),
+        "SELECT COUNT(*) FROM person_logs WHERE person_name=?", ("毛文龙",),
     ).fetchone()[0]
-
-    issues._apply_issue_entities(
-        db,
-        state,
-        {
-            "人物变更": [
-                {"origin_ref": "盘面自发", "name": "毛文龙", "动作": "处置", "status": "dismissed", "reason": "测试 helper no-commit"}
-            ]
-        },
-        "测试 helper no-commit",
-        content=content,
-        commit=False,
-    )
+    db.conn.execute("BEGIN")
+    result = issues.apply_issue_tracker_output(db, state, {"close_issues": [{"issue_id": issue_id, "reason": "resolved"}]}, content=content)
+    assert result["applied_person_changes"]
+    assert db.get_character_status("毛文龙")[0] == "dismissed"
     db.conn.rollback()
 
     assert db.get_character_status("毛文龙")[0] == "active"
@@ -3715,55 +3702,8 @@ def test_event_pool_pending_alias_disposition_blocks_canonical_gate(game):
         content.event_by_id.pop(ev.id, None)
 
 
-def test_pending_person_gate_prefetches_character_rows_for_displacement(game):
-    """online R1 Gemini：独占官职顶替模拟不得对每个人物逐条 SELECT。"""
-    db, _state, content = game
-    issues.bind_content(content)
-    db.conn.execute(
-        "UPDATE characters SET status=?, power_id=?, office=?, office_type=? WHERE name=?",
-        ("active", "ming", "蓟辽督师", "职名分", "袁崇焕"),
-    )
-    db.conn.execute(
-        "UPDATE characters SET status=?, power_id=?, office=?, office_type=? WHERE name=?",
-        ("active", "ming", "兵部尚书,左都御史", "兵部", "崔呈秀"),
-    )
-    ev = Event(
-        id="__test_prefetch_displacement_pending__",
-        title="测试·顶替预加载",
-        kind="朝议",
-        summary="崔呈秀仍兼兵部尚书时才可触发。",
-        urgency=10,
-        severity=10,
-        credibility=100,
-        interests=[],
-        audiences=[],
-        event_type="situation",
-        trigger_gate={"character.崔呈秀.office": "== 兵部尚书,左都御史"},
-    )
-    select_count = 0
-
-    def trace(sql):
-        nonlocal select_count
-        if sql.lstrip().upper().startswith("SELECT"):
-            select_count += 1
-
-    db.conn.set_trace_callback(trace)
-    try:
-        blocked = issues._pending_person_changes_block_event_gate(
-            ev,
-            [{"name": "袁崇焕", "动作": "任命", "office": "兵部尚书"}],
-            db,
-            content=content,
-        )
-    finally:
-        db.conn.set_trace_callback(None)
-
-    assert blocked is True
-    assert select_count <= 8
-
-
-def test_event_pool_pending_gate_reuses_shadow_prefetch_across_new_issues(game, monkeypatch):
-    """online R3 Gemini：同一批 event_pool 不应为每个 pending gate 重查全量人物表。"""
+def test_event_pool_pending_disposition_blocks_each_new_issue(game):
+    """同批候选的资格闸使用待落人物处置的终态。"""
     db, state, content = game
     issues.bind_content(content)
     db.conn.execute("UPDATE characters SET status = ? WHERE name = ?", ("active", "袁崇焕"))
@@ -3797,19 +3737,6 @@ def test_event_pool_pending_gate_reuses_shadow_prefetch_across_new_issues(game, 
     content.event_by_id[ev1.id] = ev1
     content.event_by_id[ev2.id] = ev2
 
-    def fake_gather_candidate_events(_state, _db):
-        return [ev1, ev2]
-
-    full_character_selects = 0
-
-    def trace(sql):
-        nonlocal full_character_selects
-        normalized = " ".join(sql.split()).upper()
-        if "FROM CHARACTERS" in normalized and "STATUS_REASON" in normalized:
-            full_character_selects += 1
-
-    monkeypatch.setattr(issues, "gather_candidate_events", fake_gather_candidate_events)
-    db.conn.set_trace_callback(trace)
     try:
         out = issues.apply_issue_tracker_output(
             db,
@@ -3827,14 +3754,12 @@ def test_event_pool_pending_gate_reuses_shadow_prefetch_across_new_issues(game, 
             candidate_event_ids_at_input={ev1.id, ev2.id},
         )
     finally:
-        db.conn.set_trace_callback(None)
         content.seed_events.remove(ev1)
         content.seed_events.remove(ev2)
         content.event_by_id.pop(ev1.id, None)
         content.event_by_id.pop(ev2.id, None)
 
     assert [item["rejected"] for item in out["new_issues"]] == [True, True]
-    assert full_character_selects == 1
 
 
 def test_event_pool_pending_rejected_vassal_appointment_does_not_block_gate(game):

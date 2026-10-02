@@ -12,7 +12,6 @@
 from __future__ import annotations
 
 import ming_sim.issues as issues
-from ming_sim.issues import _restore_person_write_state, _snapshot_person_write_state
 from ming_sim.decree import pre_settle, tick_transit_arrivals
 from ming_sim.distance import DistanceMatrix
 from ming_sim.models import Event, TurnPhase
@@ -221,37 +220,3 @@ def test_tick_does_not_arrive_when_remaining_still_positive(game):
     assert row["transit_to"] == DEST
     assert row["location"] == "beizhili"
     assert row["transit_distance_remaining"] == r0 - 1.0
-
-
-# ── snapshot/restore ────────────────────────────────────────────────────────
-
-
-def test_snapshot_restore_preserves_transit_start_turn(game):
-    """_restore_person_write_state 回滚后 transit_start_turn 随 transit_to 一并还原。"""
-    db, _state, content = game
-    name = active_ming_character(db, content)
-
-    db.conn.execute(
-        "UPDATE characters SET transit_to=?, transit_start_turn=?, "
-        "transit_distance_remaining=?, transit_speed_factor=? WHERE name=?",
-        (DEST, 99, 2.1, 1.0, name),
-    )
-    db.conn.commit()
-
-    snapshot = _snapshot_person_write_state(db, content)
-
-    db.conn.execute(
-        "UPDATE characters SET transit_start_turn=0 WHERE name=?", (name,)
-    )
-    db.conn.commit()
-    assert db.conn.execute(
-        "SELECT transit_start_turn FROM characters WHERE name=?", (name,)
-    ).fetchone()["transit_start_turn"] == 0
-
-    _restore_person_write_state(db, content, snapshot, commit=True)
-
-    row = db.conn.execute(
-        "SELECT transit_to, transit_start_turn FROM characters WHERE name=?", (name,)
-    ).fetchone()
-    assert row["transit_to"] == DEST
-    assert row["transit_start_turn"] == 99

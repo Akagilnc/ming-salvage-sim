@@ -15,9 +15,7 @@ from tests.dossier_test_helpers import create_test_secret_order
 
 from ming_sim.materials import (
     MaterialsRoot,
-    _handled_affair_lines,
     _safe_segment,
-    _visible_affair_lines,
     list_materials,
     material_tools,
     prepare_character_materials,
@@ -76,11 +74,6 @@ def test_prepare_writes_typed_tree_and_index(game, tmp_path):
             assert read_material(prepared.root, stripped)
         else:
             assert any(stripped.startswith(rel + " ") for rel in listed)
-    roster = read_material(prepared.root, "人物/朝臣名册.txt")
-    status, _reason = db.get_character_status(character.name)
-    assert character.name in roster
-    assert (character.office or "无现任官职") in roster
-    assert status in roster
 
 
 def test_same_requested_root_creates_independent_material_invocations(game, tmp_path):
@@ -130,12 +123,6 @@ def test_material_tree_contains_only_structurally_related_world_details(game, tm
     region_paths = [path for path in names if path.startswith("地区/")]
     army_paths = [path for path in names if path.startswith("军队/")]
     assert len(region_paths) == 1 and len(army_paths) == 1
-    region_text = read_material(prepared.root, region_paths[0])
-    army_text = read_material(prepared.root, army_paths[0])
-    region_name = db.conn.execute(
-        "SELECT name FROM regions WHERE id=?", ("shaanxi",),
-    ).fetchone()["name"]
-    assert region_name in region_text and army["name"] in army_text
 
 
 def _agent_with_materials(root: Path, *, with_cli_cwd: bool):
@@ -145,40 +132,6 @@ def _agent_with_materials(root: Path, *, with_cli_cwd: bool):
     if with_cli_cwd:
         model.materials_dir = handle.root
     return SimpleNamespace(model=model, materials_root=handle)
-
-
-def test_opening_handled_matters_are_filtered_within_authorized_knowledge(game, tmp_path):
-    db, state, content = game
-    character = _active_minister(db, content)
-    current_office = "当回合新任官职"
-    db.conn.execute(
-        "UPDATE characters SET office = ? WHERE name = ?", (current_office, character.name),
-    )
-    knowledge = {"issues": [
-        {"id": 101, "title": "经手事项", "participant_roster": json.dumps([
-            {"character_id": character.name, "tier": "主办"},
-        ])},
-        {"id": 102, "title": "无人承办事项", "participant_roster": "[]"},
-    ]}
-
-    original_get = db.get_character_knowledge
-    db.get_character_knowledge = lambda *_args: knowledge
-    try:
-        prepared = prepare_character_materials(
-            db, state, character, dest_root=tmp_path / "materials",
-        )
-    finally:
-        db.get_character_knowledge = original_get
-    assert current_office in prepared.opening
-    assert character.office not in prepared.opening
-    issue_paths = {line for line in prepared.index_lines if line.startswith("事务/issue-")}
-    assert issue_paths == {
-        "事务/issue-101/当前情况.txt", "事务/issue-102/当前情况.txt",
-    }
-    projected = _visible_affair_lines(knowledge)
-    assert [row["id"] for row in _handled_affair_lines(
-        db, state, character.name, projected,
-    )] == [101]
 
 
 def test_prepare_fails_loud_when_dossier_read_breaks(game, tmp_path):

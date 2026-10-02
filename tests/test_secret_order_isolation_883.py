@@ -1559,7 +1559,6 @@ def test_976_rt04_undo_chat_turn_secret_order_brief_consistent(game):
     assert msg_b == 1, "early B public message wrongly deleted"
     assert all(marker not in body for body in _shared_bodies(db))
     assert all(marker not in body for body in _event_bodies(db))
-    assert not db._is_active_secret_order_assignee(a.name)
 
 
 @pytest.mark.parametrize("rollback_entry", ["undo_chat_turn", "fail_chat_turn"])

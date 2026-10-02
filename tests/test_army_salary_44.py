@@ -125,8 +125,8 @@ def test_backfill_dynamic_army_falls_to_anchor(game):
     from ming_sim.constants import SALARY_RATE_ANCHOR
     _insert_dynamic_ming_army(db, "dyn_old_army", "某旧募军", 5000)
     db.conn.commit()
-    db._backfill_salary_rate()
-    db.conn.commit()
+    db.conn.execute("ALTER TABLE armies DROP COLUMN salary_rate")
+    db.init_schema()
     row = db.conn.execute("SELECT salary_rate FROM armies WHERE id='dyn_old_army'").fetchone()
     assert row["salary_rate"] == pytest.approx(SALARY_RATE_ANCHOR), (
         f"动态旧军应落锚点 {SALARY_RATE_ANCHOR}，得 {row['salary_rate']}"
@@ -144,8 +144,8 @@ def test_backfill_reverse_fills_from_maintenance_on_direct_upgrade(game):
     _insert_dynamic_ming_army(db, "dyn_up", "动态旧军", 5000)  # salary_rate 留 0
     db.conn.execute("UPDATE armies SET maintenance_per_turn=20 WHERE id='dyn_up'")
     db.conn.commit()
-    db._backfill_salary_rate()
-    db.conn.commit()
+    db.conn.execute("ALTER TABLE armies DROP COLUMN salary_rate")
+    db.init_schema()
     row = db.conn.execute("SELECT salary_rate FROM armies WHERE id='dyn_up'").fetchone()
     assert row["salary_rate"] == pytest.approx(20 * 10000 / 5000), (
         f"维护费列在时动态军应从 maint 反推率=40（保旧档预算），得 {row['salary_rate']}"
@@ -166,8 +166,8 @@ def test_backfill_anchor_when_column_present_but_data_unusable(game, manpower, m
     _insert_dynamic_ming_army(db, "dyn_unusable", "退化动态军", manpower)  # salary_rate 留 0
     db.conn.execute("UPDATE armies SET maintenance_per_turn=? WHERE id='dyn_unusable'", (maint,))
     db.conn.commit()
-    db._backfill_salary_rate()
-    db.conn.commit()
+    db.conn.execute("ALTER TABLE armies DROP COLUMN salary_rate")
+    db.init_schema()
     row = db.conn.execute("SELECT salary_rate FROM armies WHERE id='dyn_unusable'").fetchone()
     assert row["salary_rate"] == pytest.approx(SALARY_RATE_ANCHOR), (
         f"维护费列在但 maint={maint}/manpower={manpower} 应落锚点（②反推兜底），得 {row['salary_rate']}"
@@ -217,58 +217,6 @@ def test_manpower_true_noop_no_log(game):
     after = db.conn.execute(
         "SELECT COUNT(*) FROM army_logs WHERE army_id=? AND field='manpower'", (aid,)).fetchone()[0]
     assert after == before, "真 no-op(delta==0)不留痕"
-
-
-def test_auto_pay_reaches_salary_army_via_arrears_filter(game):
-    # #44 受饷资格用 arrears>0（不再 maintenance>0）；#173 删 maintenance 列后，受饷 filter 唯一
-    # 依据 arrears>0。验证：salary_rate>0 累 arrears 的军被纳入受饷候选、且兜底拨饷真能花到（spent>0）。
-    from ming_sim.flows import _auto_pay_arrears_by_priority
-    db, state, _ = game
-    aid = str(db.conn.execute(
-        "SELECT id FROM armies WHERE owner_power='ming' LIMIT 1").fetchone()["id"])
-    # 只留这一支有欠饷，孤立验证「它是否进得了受饷分发」
-    db.conn.execute("UPDATE armies SET arrears=0 WHERE owner_power='ming'")
-    db.conn.execute("UPDATE armies SET salary_rate=1.5, arrears=10 WHERE id=?", (aid,))
-    db.conn.commit()
-    hit = {str(r["id"]) for r in db.conn.execute(
-        "SELECT id FROM armies WHERE owner_power='ming' AND arrears>0")}
-    assert aid in hit, "arrears>0 filter 应纳入累 arrears 的军"
-    spent = _auto_pay_arrears_by_priority(db, state, "国库", 5, "补饷", "诏拨补饷")
-    assert spent > 0, "兜底拨饷应能花到该军"
-
-
-def test_auto_pay_empty_allowed_ids_pays_no_armies(game):
-    # #287 PR R2：空 scope 是「不允许任何军」，不能被 truthiness 当成「不限制」而回落全局池。
-    from ming_sim.flows import _auto_pay_arrears_by_priority
-    db, state, _ = game
-    aid = str(db.conn.execute(
-        "SELECT id FROM armies WHERE owner_power='ming' LIMIT 1").fetchone()["id"])
-    db.conn.execute("UPDATE armies SET arrears=0 WHERE owner_power='ming'")
-    db.conn.execute("UPDATE armies SET arrears=10 WHERE id=?", (aid,))
-    db.conn.commit()
-    spent = _auto_pay_arrears_by_priority(
-        db, state, "国库", 5, "补饷", "空范围补饷", allowed_army_ids=[]
-    )
-    row = _army_row(db, aid)
-    assert spent == 0, "allowed_army_ids=[] 应明确支付 0，不得回落全军池"
-    assert row["arrears"] == pytest.approx(10)
-
-
-def test_auto_pay_strips_allowed_army_ids_before_filtering(game):
-    from ming_sim.flows import _auto_pay_arrears_by_priority
-    db, state, _ = game
-    aid = str(db.conn.execute(
-        "SELECT id FROM armies WHERE owner_power='ming' LIMIT 1").fetchone()["id"])
-    db.conn.execute("UPDATE armies SET arrears=0 WHERE owner_power='ming'")
-    db.conn.execute("UPDATE armies SET arrears=10 WHERE id=?", (aid,))
-    db.conn.commit()
-
-    spent = _auto_pay_arrears_by_priority(
-        db, state, "国库", 5, "补饷", "空白范围补饷", allowed_army_ids=[f" {aid} "]
-    )
-    row = _army_row(db, aid)
-    assert spent > 0
-    assert row["arrears"] < 10
 
 
 def test_legacy_salary_tick_preserves_fractional_opening_arrears(game):

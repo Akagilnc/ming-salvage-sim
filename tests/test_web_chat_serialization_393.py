@@ -285,7 +285,6 @@ def test_chat_stream_sse_waits_for_sync_generator_in_executor(monkeypatch):
             events.append("stream")
             yield {"type": "done", "payload": {"ok": True}}
 
-    monkeypatch.setattr(web_app, "_require_active_minister", lambda minister_name: None)
     monkeypatch.setattr(web_app, "get_game", lambda: _BlockingGame())
 
     async def drive_first_event():

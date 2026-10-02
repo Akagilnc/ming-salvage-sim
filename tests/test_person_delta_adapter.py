@@ -281,7 +281,7 @@ def test_apply_score_extraction_loyalty_assessment_does_not_commit_inside_batch(
     ).fetchone()["loyalty"]
 
     db.conn.execute("BEGIN")
-    issues._apply_person_changes(
+    issues.apply_person_changes_only(
         db,
         state,
         [
@@ -319,7 +319,7 @@ def test_apply_person_changes_disposition_does_not_commit_inside_batch(game):
 
     try:
         db.conn.execute("BEGIN")
-        issues._apply_person_changes(
+        issues.apply_person_changes_only(
             db,
             state,
             [
@@ -2006,13 +2006,16 @@ def test_create_secret_order_allows_returned_defector(game):
     assert oid > 0  # DB 已归明 → 不被资格闸拒
 
 
-def test_pending_dismiss_rejects_vassal_prince(read_game):
-    """pending 罢免落库（_commit_office_action 罢免路）拒宗藩——宗室非朝臣，不可作朝臣罢免（cmr R6）。"""
-    db, state, content = read_game
+def test_pending_dismiss_rejects_vassal_prince(game):
+    db, state, content = game
     name = _materialize_active_prince(db, state, content)
-    ok = db._commit_office_action(state, {"action": "罢免"}, {"name": name}, content)
-    assert ok == set()
-    assert db.get_character_status(name)[0] == "active"  # 未被罢、状态不变
+    dossier_id = db.create_decree_dossier(
+        state, action_type="dismiss_assignment", decree_text="宗藩罢免", target_kind="character", target_id=name,
+        payload={"name": name, "_office_action": "罢免"},
+    )
+    with pytest.raises(ValueError):
+        db.apply_dossier_promulgation(state, dossier_id, "promulgated", content=content)
+    assert db.get_character_status(name)[0] == "active"
 
 
 def test_person_log_normalized_not_truncated(game):
@@ -2543,7 +2546,6 @@ def test_legacy_office_pollution_migrated_on_load(game):
 def test_displaced_holder_transit_to_cleared(game):
     """5b r7（codex-b R1）：顶替全腾缺时，被挤下来的旧任若正在赴任途中，transit_to 须清——
     否则人才池里「听用候铨」的他还挂着去老职位的路线（三面同步 stale）。"""
-    from ming_sim.issues import _displace_duplicate_offices
     db, state, content = game
     names = [
         r["name"] for r in db.conn.execute(
@@ -2552,17 +2554,19 @@ def test_displaced_holder_transit_to_cleared(game):
         ).fetchall()
     ]
     old, new_holder = names[0], names[1]
-    db.conn.execute(
-        "UPDATE characters SET office='蓟辽总督', office_type='督抚', transit_to='liaodong' WHERE name=?",
-        (old,),
-    )
+    db.set_character_office(old, "蓟辽总督", "地方", region_id="liaodong")
+    db.conn.execute("UPDATE characters SET transit_to='liaodong' WHERE name=?", (old,))
     db.conn.commit()
     if old in content.characters:
         content.characters[old].office = "蓟辽总督"
-        content.characters[old].office_type = "督抚"
+        content.characters[old].office_type = "地方"
+        content.characters[old].office_region = "liaodong"
         content.characters[old].transit_to = "liaodong"
 
-    _displace_duplicate_offices(db, content, new_holder, "蓟辽总督")
+    result = issues.apply_office_appointment(
+        db, state, content, new_holder, "蓟辽总督", new_office_type="地方", region_id="liaodong",
+    )
+    assert not result.get("rejected")
 
     row = db.conn.execute(
         "SELECT office, transit_to FROM characters WHERE name=?", (old,)
@@ -2675,11 +2679,11 @@ def test_reload_syncs_reason_code_status_reason_to_content(game):
     """ADR 决定6 三面同步：回滚统一重载须把 DB 的 reason_code/status_reason 刷回
     content.characters，否则内存对象缺 ADR 0009 新字段、三面不一致（读内存即拿空/报错）。"""
     db, state, content = game
-    from ming_sim.session import _sync_offices_from_db_impl
+    from ming_sim.decree import reload_state_from_db
     name = active_ming_character(db, content)
     db.set_character_status(state, name, "dismissed", "忤逆案削籍", reason_code="获罪削籍")
 
-    _sync_offices_from_db_impl(content, db)
+    reload_state_from_db(db, state, content=content)
 
     ch = content.characters[name]
     assert getattr(ch, "reason_code", None) == "获罪削籍", "重载未同步 reason_code"

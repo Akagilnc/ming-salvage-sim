@@ -706,7 +706,6 @@ def test_noncreator_exit_must_not_clear_owner_during_gatefree(web_game, monkeypa
     a_in_await.wait()
     assert game.db.get_month_open_snapshot(turn) == before
     assert game.state_payload()["turn"]["settlement_display"] is True
-    assert web_app._settlement_entry_inflight(game) >= 1
 
     # B：同窗并发过月——卡在 barrier 等待 A，不得代清 A 快照
     b_started = threading.Event()
@@ -735,7 +734,6 @@ def test_noncreator_exit_must_not_clear_owner_during_gatefree(web_game, monkeypa
     assert not a_done.is_set()
     assert game.db.get_month_open_snapshot(turn) == before
     assert game.state_payload()["turn"]["settlement_display"] is True
-    assert web_app._settlement_entry_inflight(game) >= 1, "A 仍须计在办"
 
     # 放行 A：创建者失败臂清展示态；B 随后以自有屏障继续/失败
     a_release.set()

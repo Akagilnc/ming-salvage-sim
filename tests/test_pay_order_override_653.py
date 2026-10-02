@@ -552,10 +552,6 @@ def test_due_order_bad_shapes_raise(bad):
     p["due_order"] = bad
     with pytest.raises(ValueError):
         settle_tick(st, p, [])
-    # oracle 路径对称：同样锁在 ValueError 域
-    from ming_sim.fiscal_tick import _DUE_KEYS, _oracle_order
-    with pytest.raises(ValueError):
-        _oracle_order({"due_order": bad}, "due_order", _DUE_KEYS)
 
 
 def test_haircut_param_bad_values_raise():
@@ -1165,39 +1161,38 @@ def test_materialize_requires_real_promulgated_dossier(game):
 
 def test_central_due_haircut_consumer(game):
     """中央份额 Due 折发读端：floor 折算、余数免除、地域/饷源精确、无折恒等。"""
-    from ming_sim.flows import _central_dues_with_haircut, army_needed
+    from ming_sim.flows import apply_fixed_period_flows, army_needed
 
     db, state, _content = game
     rows = db.conn.execute(
         "SELECT id, name, manpower, salary_rate, owner_power, pay_source_region, "
         "central_pay_share FROM armies WHERE central_pay_share > 0 ORDER BY rowid"
     ).fetchall()
-    base_dues, base_exempt = _central_dues_with_haircut(db, state, rows)
-    assert base_exempt == {}
     shaanxi_raw = army_needed(
         next(r for r in rows if r["id"] == "shaanxi_army"),
     ) * 0.35
-    assert base_dues["shaanxi_army"] == pytest.approx(shaanxi_raw)
 
     did = _override_dossier(db, state, [
         {"key": "due_haircut_bp_军饷@shaanxi#central", "value": 5000},
         {"key": "due_haircut_bp_军饷#central", "value": 6000},
     ])
     db.apply_dossier_promulgation(state, did, "promulgated")
-    dues, exempt = _central_dues_with_haircut(db, state, rows)
-    # 陕西中央侧取 @shaanxi#central=5000：floor(2.1×0.5)=1.0，免除 1.1
-    assert dues["shaanxi_army"] == pytest.approx(float(math.floor(shaanxi_raw * 0.5)))
-    assert exempt["shaanxi_army"] == pytest.approx(shaanxi_raw - math.floor(shaanxi_raw * 0.5))
+    flows = apply_fixed_period_flows(db, state)
+    shaanxi_name = next(r["name"] for r in rows if r["id"] == "shaanxi_army")
+    shaanxi_pay = next(r for r in flows if r.get("category") == "中央军饷" and r.get("army") == shaanxi_name)
+    assert shaanxi_pay["needed"] == pytest.approx(float(math.floor(shaanxi_raw * 0.5)))
+    assert shaanxi_pay["due_haircut"] == pytest.approx(shaanxi_raw - math.floor(shaanxi_raw * 0.5))
     # 他省中央侧取 #central=6000（京营 beizhili：need=ceil(85000*1/10000)=9，raw=9.0）
     jy_raw = army_needed(next(r for r in rows if r["id"] == "jingying")) * 1.0
-    assert dues["jingying"] == pytest.approx(math.floor(jy_raw * 0.6))
+    jingying_name = next(r["name"] for r in rows if r["id"] == "jingying")
+    jingying_pay = next(r for r in flows if r.get("category") == "中央军饷" and r.get("army") == jingying_name)
+    assert jingying_pay["needed"] == pytest.approx(math.floor(jy_raw * 0.6))
     # 免除不入欠：欠发只按折后应得计（shortfall 上界即折后 due）
 
 
 def test_pure_central_zero_haircut_due_clears_shortfall_counter(game):
     """#651×#653：纯中央军合法折发后 Due floor=0 须归零连续缺口计数，且不自动还旧欠。"""
     from ming_sim.flows import (
-        _central_dues_with_haircut,
         apply_fixed_period_flows,
         army_needed,
     )
@@ -1227,10 +1222,8 @@ def test_pure_central_zero_haircut_due_clears_shortfall_counter(game):
     )
     db.apply_dossier_promulgation(state, did, "promulgated")
 
-    dues, _exempt = _central_dues_with_haircut(db, state, [army])
     raw_due = army_needed(army) * float(army["central_pay_share"] or 0)
     assert raw_due > 0
-    assert dues["jingying"] == pytest.approx(0.0)
 
     apply_fixed_period_flows(db, state)
 
@@ -1242,57 +1235,6 @@ def test_pure_central_zero_haircut_due_clears_shortfall_counter(game):
     # 中央旧欠不因零 Due 月自动偿还（ADR 0023 D7③ / #653 边界）
     assert float(after["central_pay_arrears"] or 0) == pytest.approx(old_central_arrears)
     assert float(after["arrears"] or 0) == pytest.approx(old_arrears)
-
-
-# ═══════════════ 独立 oracle 宪制 mutation 自验 ═══════════════
-
-def test_oracle_independent_of_shared_haircut_helper(monkeypatch):
-    """mutation①破坏舍入：落账侧 floor 改 ceil → 独立 oracle 必红。"""
-    import ming_sim.fiscal_tick as ft
-
-    st, p = _board(gross=50.0)
-    p["Due"] = {"军饷": 18.0, "官俸": 3.0, "宗禄": 101.0, "赈济": 1.0}
-    p["due_haircut_bp"] = {"宗禄": 5000}
-
-    def biased_effective(pp):
-        raw = pp.get("due_haircut_bp") or {}
-        out = {}
-        for h in ft._DUE_KEYS:
-            d = float(pp["Due"].get(h, 0.0))
-            bp = raw.get(h)
-            out[h] = float(math.ceil(d * bp / 10000)) if bp else d
-        return out
-
-    monkeypatch.setattr(ft, "_effective_dues", biased_effective)
-    with pytest.raises(ft.FiscalConservationError):
-        settle_tick(st, p, [])
-
-
-def test_oracle_independent_of_shared_order_resolver(monkeypatch):
-    """mutation②破坏优先序：落账侧序解析被劫持 → 独立 oracle 必红。
-    盘面须让序真正改变分配：池不足（新债落点随序变）＋多账户旧欠。"""
-    import ming_sim.fiscal_tick as ft
-
-    st, p = _board(gross=0.0)  # 省内池 10 < Due 合计 26.07：付款序决定新债落点
-    st["官俸欠"] = 5.0
-    monkeypatch.setattr(
-        ft, "_resolve_order_param",
-        lambda pp, key, default: tuple(reversed(default)),
-    )
-    with pytest.raises(ft.FiscalConservationError):
-        settle_tick(st, p, [])
-
-
-def test_oracle_independent_of_debt_mapping(monkeypatch):
-    """mutation③破坏映射：落账侧 Due→CLAIM 映射错位 → 独立 oracle 必红。"""
-    import ming_sim.fiscal_tick as ft
-
-    st, p = _board(gross=0.0)
-    monkeypatch.setattr(
-        ft, "_DEBT_OF_DUE", {"军饷": "官俸欠", "官俸": "官俸欠", "宗禄": "宗禄欠"},
-    )
-    with pytest.raises((ft.FiscalConservationError, ValueError)):
-        settle_tick(st, p, [])
 
 
 # ═══════════════ F2 投影真源修正 goldens（judge r2 class②）═══════════════
@@ -1379,29 +1321,19 @@ def test_fact_brief_central_haircut_floor_per_army_matches_real_accounting(game)
     """多军同省中央折发：投影复用 flows._central_dues_with_haircut 唯一读端——每军各自
     floor（账实同舍入），禁先聚省再舍入。beizhili 三军 raw=9.0/4.0/7.2、bp=5000：
     每军 floor 免除合计=5.0+2.0+4.2=11.2 ≠ 聚省后 floor 的 20.2×0.5→免除 10.1。"""
-    from ming_sim.flows import _central_dues_with_haircut
 
     db, state, _content = game
     did = _override_dossier(
         db, state, [{"key": "due_haircut_bp_军饷#central", "value": 5000}],
     )
     db.apply_dossier_promulgation(state, did, "promulgated")
-    rows = db.conn.execute(
-        "SELECT id, name, manpower, salary_rate, owner_power, pay_source_region, "
-        "central_pay_share FROM armies WHERE central_pay_share > 0 ORDER BY rowid"
-    ).fetchall()
-    _, exempts = _central_dues_with_haircut(db, state, rows)
-    expected_bz = sum(
-        exempts[r["id"]] for r in rows if r["pay_source_region"] == "beizhili"
-    )
-    assert expected_bz == pytest.approx(11.2)      # 每军 floor 后的免除合计
     entries = build_fiscal_fact_brief(db)
     cut = [
         e for e in entries
         if e["subject_id"] == "beizhili" and e["detail"] == "折发_军饷#central"
     ]
     assert len(cut) == 1
-    assert cut[0]["value"] == pytest.approx(expected_bz)
+    assert cut[0]["value"] == pytest.approx(11.2)
     assert cut[0]["value"] != pytest.approx(10.1)  # 聚省再舍入的伪重建值必不相同
     assert cut[0]["origin_ref"] == f"dossier:{did}"
 

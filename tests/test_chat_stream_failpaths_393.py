@@ -600,7 +600,6 @@ def _transport_web_game(game, agent, monkeypatch):
 
 
 def _post_chat_stream(monkeypatch, web_game, minister: str, message: str = "边饷如何？"):
-    monkeypatch.setattr(web_app, "_require_active_minister", lambda _n: None)
     monkeypatch.setattr(web_app, "get_game", lambda: web_game)
     return TestClient(web_app.app).post(
         "/api/audience/chat/stream", json={"message": message},

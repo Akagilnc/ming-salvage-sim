@@ -1,0 +1,16 @@
+{
+  "baseline": "f21ce4d05",
+  "headBeforeCommit": "24c222763785f939f3d51981d7fd61cdc372cb7b",
+  "enumeratedTrackedSourceFiles": 385,
+  "filesWithTestDeclarations": 248,
+  "beforeDeclarations": 3368,
+  "afterDeclarations": 2908,
+  "dispositions": {
+    "retained": 2396,
+    "modified": 479,
+    "removed": 493,
+    "added": 33
+  },
+  "changedFiles": 154,
+  "changedDeclarations": 1005
+}
