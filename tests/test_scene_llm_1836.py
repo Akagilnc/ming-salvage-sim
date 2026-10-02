@@ -81,6 +81,36 @@ def test_scene_chat_one_call_returns_multi_person_script(game, monkeypatch):
 
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
+def test_scene_chat_preserves_player_message_whitespace(game, monkeypatch):
+    """#1847 N6：玩家问话运输不得 strip 首尾空白（判空可读 strip）。"""
+    db, state, content = game
+    open_night(db, state, location="乾清宫", time_of_day="夜")
+    calls: list[str] = []
+
+    class FakeAgent:
+        tools = []
+
+        def run(self, message):
+            calls.append(message)
+            return SimpleNamespace(content="臣谨奏。", tools=[])
+
+    monkeypatch.setattr("ming_sim.session.create_scene_agent", lambda *a, **k: FakeAgent())
+    sess = _sess(db, state, content, llm_config=SimpleNamespace(channel=""))
+    emperor = "  边饷如何？  \n"
+    result = sess.scene_chat(emperor)
+    assert calls == [emperor]
+    assert result.answer == "臣谨奏。"
+
+
+def test_close_night_confirm_cue_preserves_answer_whitespace():
+    """#1847 N6：含糊收夜确认 cue 拼接不得剥大臣回话空白。"""
+    padded = "  臣请陛下明示。  "
+    out = GameSession._ensure_close_night_confirm_cue(padded)
+    assert out.startswith(padded)
+    assert "陛下是要退朝么？" in out
+
+
+@pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_xuan_lands_enter_then_present_on_next_prepare(game, monkeypatch, tmp_path):
     """AC2：「宣 X」后入殿账落下，下一次场景材料准备他在场。"""
     db, state, content = game
@@ -154,6 +184,34 @@ def test_cli_selection_uses_scene_turn_as_admission_origin(game, monkeypatch):
         "SELECT content FROM chat_messages WHERE id=?", (first["minister_message_id"],)
     ).fetchone()["content"]
     assert reply in readings[1]
+
+
+@pytest.mark.usefixtures("_offline_scene_beat_generator")
+def test_cli_minister_chat_preserves_question_whitespace(game, monkeypatch):
+    """#1847 N6：CLI 朕问运输保留首尾空白；判空可读 strip。"""
+    from ming_sim.cli.terminal import minister_chat
+
+    db, state, content = game
+    character = content.characters["王绍徽"]
+    sess = _sess(db, state, content, llm_config=SimpleNamespace(channel=""))
+    sess.schedule_pending_scene_translation = lambda result: None
+    calls: list[str] = []
+
+    class FakeAgent:
+        tools = []
+
+        def run(self, message):
+            calls.append(message)
+            return SimpleNamespace(content="臣在。", tools=[])
+
+    monkeypatch.setattr(
+        "ming_sim.session.create_scene_agent", lambda *_a, **_k: FakeAgent(),
+    )
+    padded = "  边饷如何？  "
+    answers = iter([padded, "done"])
+    monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
+    assert minister_chat(sess, character, selected=False) == "dismiss"
+    assert calls == [padded]
 
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")

@@ -1,0 +1,10 @@
+disposition	reason	lang	file	line	kind	detail	ctx	note
+FIX_DONE	玩家问话运输去strip	py	ming_sim/session.py	1161	strip_call		GameSession/scene_chat	message_text 原样；strip仅判空
+FIX_DONE	含糊收夜cue去strip	py	ming_sim/session.py	1016	strip_call		_ensure_close_night_confirm_cue	answer 原样；strip仅判空
+FIX_DONE	CLI朕问去strip	py	ming_sim/cli/terminal.py	397	strip_call		minister_chat	input原样；strip仅判空
+FIX_DONE	CLI新增指令去strip	py	ming_sim/cli/terminal.py	611	strip_call		review_loop	input原样；strip仅判空
+FIX_DONE	CLI改指令去strip	py	ming_sim/cli/terminal.py	634	strip_call		review_loop	input原样；strip仅判空
+FIX_DONE_PRIOR	条件运输去strip/[:300]	py	ming_sim/issues.py	359	strip_call		_issue_condition_text	00e2d9a44
+FIX_DONE_PRIOR	供料条件原样	py	ming_sim/materials.py	623	strip_call		_visible_affair_lines	00e2d9a44
+FIX_DONE_PRIOR	N7 stderr兜底删除	py	ming_sim/cli_backend.py	856	stderr_body		_iter_cli_runner_text	00e2d9a44
+FIX_DONE	N9 derive闭包删除	py	ming_sim/decree_vocabulary.py	85	derive_draft_capability		<deleted>	本轮

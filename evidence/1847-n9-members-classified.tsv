@@ -1,0 +1,13 @@
+disposition	reason	symbol	defs	prod_callers	test_refs
+GONE	定义与引用均已删除	PARTICIPANT_ROSTER_KEY	NONE	NONE	NONE
+GONE	定义与引用均已删除	RESCRIPT_CAPABILITY_DECISIONS	NONE	NONE	NONE
+KEEP_production	仍有生产调用	RESCRIPT_EMITTED_DOSSIER_ACTION_TYPES	ming_sim/decree_vocabulary.py:29	ming_sim/decree_vocabulary.py:34	NONE
+GONE	定义与引用均已删除	_DRAFT_CAPABILITY_JSON_KEYS	NONE	NONE	NONE
+GONE	定义与引用均已删除	_DRAFT_CAPABILITY_KEYS	NONE	NONE	NONE
+KEEP_production	仍有生产调用	_rescript_decisions	ming_sim/decree.py:658	ming_sim/month_chain.py:1568	tests/test_p4_guard_new_surfaces_547.py:177
+GONE	定义与引用均已删除	bind_decisions_to_candidate_events	NONE	NONE	NONE
+GONE	定义与引用均已删除	decision_has_rescript_capability	NONE	NONE	NONE
+GONE	定义与引用均已删除	derive_draft_capability	NONE	NONE	NONE
+GONE	定义与引用均已删除	parse_rescript_capability_pair	NONE	NONE	NONE
+GONE	定义与引用均已删除	prepare_rescript_prewrite	NONE	NONE	NONE
+KEEP_production	仍有生产调用	run_rescript_text	ming_sim/rescript_draft.py:20	ming_sim/rescript_draft.py:77;ming_sim/rescript_draft.py:115	tests/test_month_chain_1847.py:654

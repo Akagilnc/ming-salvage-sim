@@ -2,10 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
-from typing import Any, Mapping
-
 DOSSIER_ACTION_TYPES = frozenset({
     "policy", "appointment", "acting_appointment",
     "assignment", "military_order",
@@ -36,77 +32,6 @@ RESCRIPT_EMITTED_DOSSIER_ACTION_TYPES = frozenset({
     "punishment", "authorization", "pacification",
 })
 assert RESCRIPT_EMITTED_DOSSIER_ACTION_TYPES <= DOSSIER_ACTION_TYPES
-
-# C.4 capability 派生闭集（全键 · 仅此表）。缺键按协议默认（""/0）参与派生。
-_DRAFT_CAPABILITY_KEYS: tuple[tuple[str, Any], ...] = (
-    ("action_type", ""),
-    ("label", ""),
-    ("hint", ""),
-    ("assignee_name", ""),
-    ("name", ""),
-    ("target_kind", ""),
-    ("target_id", ""),
-    ("transaction_category", ""),
-    ("locality_scope", ""),
-    ("region_id", ""),
-    ("title", ""),
-    ("commitment_kind", ""),
-    ("stop_condition", ""),
-    ("end_turn", 0),
-    ("deadline_months", 0),
-    ("station", ""),
-    ("due_turn", 0),
-    ("office", ""),
-    ("grant_action", ""),
-    ("account", ""),
-    ("purpose", ""),
-    ("amount", 0),
-    ("cadence", ""),
-    ("execution_surface", ""),
-    ("appoint_action", ""),
-    ("appointment_tenure", ""),
-    ("punish_action", ""),
-    ("privilege", ""),
-    ("summon_target", ""),
-)
-
-# #1778 决定 3：参与名单（ADR 0053 三档、主办可多人）是票拟的结构化载荷键——
-# 由拟票大臣写进 option，随落桌呈皇帝，成案时钉进案卷。形状真源＝
-# GameDB._normalize_participant_roster；此处只登记键名与 capability 派生方式。
-PARTICIPANT_ROSTER_KEY = "participant_roster"
-
-# C.4 capability 结构化键（非 str/int）：按 canonical JSON 参与派生，
-# 换人/换档同样变键（与上表同一闭集，禁另开第二份 capability 真源）。
-_DRAFT_CAPABILITY_JSON_KEYS: tuple[tuple[str, Any], ...] = (
-    (PARTICIPANT_ROSTER_KEY, []),
-)
-
-
-def derive_draft_capability(fields: Mapping[str, Any] | None) -> str:
-    """#657 C.4：闭集键 canonical JSON + sha256 截断。同字段⇒同键；任一有效差变键。"""
-    src = fields or {}
-    canonical: dict[str, Any] = {}
-    for key, default in _DRAFT_CAPABILITY_JSON_KEYS:
-        raw = src.get(key, default)
-        canonical[key] = json.dumps(
-            default if raw is None else raw,
-            ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str,
-        )
-    for key, default in _DRAFT_CAPABILITY_KEYS:
-        raw = src.get(key, default)
-        if isinstance(default, int):
-            if isinstance(raw, bool) or raw is None or raw == "":
-                canonical[key] = 0
-            else:
-                try:
-                    canonical[key] = int(raw)
-                except (TypeError, ValueError):
-                    canonical[key] = 0
-        else:
-            canonical[key] = "" if raw is None else str(raw)
-    blob = json.dumps(canonical, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-    return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:32]
-
 
 # Ming #654 / owner A：旨意 target_kind 唯一八值真源（含结构目标 dossier）。
 # durable normalization / producer / locality oracle 共引；禁第二份枚举。
