@@ -11,7 +11,7 @@
 复扫命令：
 
 ```sh
-rg -n '_apply_issue_entities\(|_apply_economy_list\(|_apply_person_changes\(|_backfill_army_salary_rate\(|_restore_runtime_snapshot\(' tests
+rg -n '_apply_issue_entities\(|_apply_economy_list\(|_apply_person_changes\(|_backfill_salary_rate\(|_restore_runtime_snapshot\(' tests
 ```
 
 退出 1，无匹配。空输出保存于 `helper-rescan.log`；不据此把其他 helper 或其他错误形状排除在类外。
@@ -44,7 +44,7 @@ rg -n '_apply_issue_entities\(|_apply_economy_list\(|_apply_person_changes\(|_ba
 MING_SIM_AGY_BIN=/usr/bin/false MING_SIM_CODEX_BIN=/usr/bin/false MING_SIM_CLAUDE_BIN=/usr/bin/false MING_SIM_CURSOR_BIN=/usr/bin/false MING_SIM_KIMI_BIN=/usr/bin/false MING_SIM_GROK_BIN=/usr/bin/false MING_SIM_PI_BIN=/usr/bin/false python3 -m pytest $(git diff --name-only -- 'tests/*.py') -q --tb=short -p no:cacheprovider
 ```
 
-25 个变化测试文件：**994 passed in 28.11s**，见 `final-focused.log`；不是全量。`git diff --check` 通过。
+25 个变化测试文件：**994 passed in 28.11s**，见 `final-focused.log`；不是全量。代码及 Markdown/JSON 的 `git diff --check` 通过；后附的原始 pytest 失败日志包含 traceback 空白行尾空格，原样保存，未把日志原件的 whitespace 告警冒称为源代码检查失败或隐藏。
 
 失败留痕：第一次误用本机不存在的 python 命令，退出 127；改用现有 python3。两次入口迁移验证分别为 745 passed/1 failed（13.68s）与 348 passed/1 failed（20.36s），见相应日志。唯一失败暴露地方任命 fixture 缺任所及未建立 character_offices 关系，补真实席位后该文件 101 passed in 2.53s，最终全部变化面绿；没有放松顶替与清 transit 的断言。本机无 Ruff 可执行文件及 python ruff 模块，未申报 lint 通过。pytest 已完成变化面导入与执行验证，无独立 Python typecheck 通过声明。
 
