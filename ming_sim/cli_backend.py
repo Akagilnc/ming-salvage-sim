@@ -308,7 +308,6 @@ _TRACE_DISABLED = os.environ.get("MING_SIM_TRACE", "1").strip() in ("0", "false"
 _TRACE_PATH = os.environ.get(
     "MING_SIM_TRACE_PATH", f"scripts/runs/cli_trace_{os.getpid()}.jsonl"
 )
-_TRACE_FIELD_CAP = int(os.environ.get("MING_SIM_TRACE_CAP", "40000"))  # 单字段字符上限
 _seq = 0
 _trace_announced = False
 # #83 月末 extractor 并发：CliChat.invoke 被多线程并发调（codex 后端）。_seq 自增是非原子读改写
@@ -327,37 +326,12 @@ def _log(msg: str) -> None:
         print(f"[cli_backend] {msg}", flush=True)
 
 
-def _infer_tag(prompt: str) -> str:
-    """从 prompt（含 system 段）猜是哪个 agent 在调用，方便复盘。
-
-    兼容无显式 tag 的调用日志；按专属标识推断，避免邸报正文的词污染分类。
-    """
-    p = prompt
-    if "扮演被皇帝召见" in p or "大臣扮演" in p:
-        return "minister"
-    if "module_allowed_fields" in p or "score_extractor" in p or "本月结算抽取" in p:
-        return "extractor"
-    if "simulator_payload" in p:
-        return "simulator"
-    if "诏书" in p and "拟" in p:
-        return "decree"
-    if "只输出合法 JSON" in p or "整理" in p:
-        return "sanitizer"
-    return "other"
-
-
 def _trace(record: Dict[str, Any]) -> None:
     if _TRACE_DISABLED:
         return
     global _trace_announced
     try:
         os.makedirs(os.path.dirname(_TRACE_PATH) or ".", exist_ok=True)
-        # 大字段截断，防失控；保留首尾各一半。
-        cap = _TRACE_FIELD_CAP
-        for k in ("prompt", "response"):
-            v = record.get(k)
-            if isinstance(v, str) and len(v) > cap:
-                record[k] = v[: cap // 2] + f"\n...[截断 {len(v) - cap} 字]...\n" + v[-cap // 2:]
         line = json.dumps(record, ensure_ascii=False) + "\n"
         with _TRACE_LOCK:  # 串行化写盘，防并发大行交错损坏 trace（#83）
             with open(_TRACE_PATH, "a", encoding="utf-8") as f:
@@ -1057,7 +1031,7 @@ def _run_backend_for_config(
     直接编程路径（职官分类/各 extractor/国策补全/连通性 verify）的唯一咽喉：
     每次调用 try/finally 写一条 trace，谁调都记，不靠各调用方自觉手写。
     （agno 游戏路径走 CliChat.invoke 自有 trace，与此咽喉不重叠。）
-    tag 空时退回 _infer_tag(prompt)。
+    tag 空时仅记录已知 CLI surface，不根据 prompt 正文猜调用者。
 
     #1465 切片③：本入口是结算/拟旨等非 Agent CLI extractor 的**次数入口**——
     在此包一次 run_with_transport，operation 调单次子进程；runner 内禁私有重试。"""
@@ -1092,7 +1066,7 @@ def _run_backend_for_config(
     finally:
         _trace({
             "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "seq": -1, "tag": tag or _infer_tag(prompt),
+            "seq": -1, "tag": tag or "cli_backend",
             "backend": _backend_label(llm_config), "model_id": model_id,
             "dur_s": round(time.monotonic() - t0, 1), "attempts": attempts,
             "wants_json": False,
@@ -2716,7 +2690,9 @@ def extract_draft_intent(
     correction_feedback（#1274 V-1）：校验失败回喂的纠错指令；非空时 LLM 挂死响亮上抛。"""
     roster_facts = _draft_intent_character_roster_facts(content)
     army_facts = _draft_intent_army_grounding_facts(content)
-    correction_block = str(correction_feedback or "").strip()
+    correction_block = str(correction_feedback or "")
+    if not correction_block.strip():
+        correction_block = ""
     if correction_block and not correction_block.endswith("\n"):
         correction_block += "\n"
     stalled_push_facts = _stalled_deliberation_push_facts(db)
@@ -3165,7 +3141,9 @@ def extract_draft_intent(
             mechanical["locality_scope"] = explicit_scope
     if mode is not None:
         mechanical["mode"] = mode
-    merged = str(obj.get("合并草案") or "").strip()
+    merged = str(obj.get("合并草案") or "")
+    if not merged.strip():
+        merged = ""
     # #654 H 已在上方对 _action=="无" 短路；此处仅保留 #653 pay_order 验形。
     if dossier_action == "pay_order_override" and (
         not isinstance(mechanical["entries"], list) or not mechanical["entries"]
@@ -4266,7 +4244,7 @@ class CliChat(OpenAIChat):
         with _TRACE_LOCK:  # 原子自增，防并发丢增量/seq 重复（#83）
             _seq += 1
             seq = _seq
-        tag = _infer_tag(prompt)
+        tag = "cli_backend"
         t0 = time.monotonic()
         error = None
         text = ""

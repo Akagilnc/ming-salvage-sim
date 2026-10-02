@@ -1,0 +1,42 @@
+class	path	owner	member	former_limit	disposition	basis
+F5	ming_sim/action_materialize.py	pacification	target_id	80	removed	shared shape preserves source; obsolete crop metadata removed
+F5	ming_sim/action_materialize.py	assignment	title	80	removed	shared shape preserves source; obsolete crop metadata removed
+F5	ming_sim/action_materialize.py	assignment	target_id	80	removed	shared shape preserves source; obsolete crop metadata removed
+F5	ming_sim/action_materialize.py	assignment	stop_condition	500	removed	shared shape preserves source; obsolete crop metadata removed
+F5	ming_sim/action_materialize.py	assignment	ongoing_effects	1000	removed	shared shape preserves source; obsolete crop metadata removed
+F5	ming_sim/action_materialize.py	assignment	stages	2000	removed	shared shape preserves source; obsolete crop metadata removed
+F5	ming_sim/action_materialize.py	assignment	target_candidate	40	removed	shared shape preserves source; obsolete crop metadata removed
+F5	ming_sim/action_materialize.py	grant_allocation	name	20	removed	shared shape preserves source; obsolete crop metadata removed
+F5	ming_sim/action_materialize.py	grant_allocation	target_id	80	removed	shared shape preserves source; obsolete crop metadata removed
+F5	ming_sim/action_materialize.py	grant_allocation	target_candidate	40	removed	shared shape preserves source; obsolete crop metadata removed
+F5	ming_sim/action_materialize.py	authorization	target_id	80	removed	shared shape preserves source; obsolete crop metadata removed
+F5	ming_sim/action_materialize.py	authorization	target_candidate	40	removed	shared shape preserves source; obsolete crop metadata removed
+F5	ming_sim/action_materialize.py	punishment	name	20	removed	shared shape preserves source; obsolete crop metadata removed
+F5	ming_sim/action_materialize.py	punishment	target_id	80	removed	shared shape preserves source; obsolete crop metadata removed
+F5	ming_sim/action_materialize.py	military_order	target_id	80	removed	shared shape preserves source; obsolete crop metadata removed
+F5	ming_sim/action_materialize.py	military_order	name	20	removed	shared shape preserves source; obsolete crop metadata removed
+F5	ming_sim/action_materialize.py	military_order	station	80	removed	shared shape preserves source; obsolete crop metadata removed
+F5	ming_sim/action_materialize.py	military_order	station_region	40	removed	shared shape preserves source; obsolete crop metadata removed
+F5	ming_sim/action_materialize.py	military_order	office	40	removed	shared shape preserves source; obsolete crop metadata removed
+F5	ming_sim/action_materialize.py	military_order	region_id	40	removed	shared shape preserves source; obsolete crop metadata removed
+F5	ming_sim/action_materialize.py	military_order	target_candidate	40	removed	shared shape preserves source; obsolete crop metadata removed
+F5	ming_sim/action_materialize.py	revoke_authority	name	20	removed	shared shape preserves source; obsolete crop metadata removed
+F5	ming_sim/action_materialize.py	revoke_authority	target_candidate	40	removed	shared shape preserves source; obsolete crop metadata removed
+F5	ming_sim/action_materialize.py	revoke_decree	target_id	80	removed	shared shape preserves source; obsolete crop metadata removed
+F5	ming_sim/action_materialize.py	revoke_decree	name	20	removed	shared shape preserves source; obsolete crop metadata removed
+F5	ming_sim/action_materialize.py	revoke_decree	target_candidate	40	removed	shared shape preserves source; obsolete crop metadata removed
+F5	ming_sim/action_materialize.py	referral	title	80	removed	shared shape preserves source; obsolete crop metadata removed
+F5	ming_sim/action_materialize.py	referral	target_id	80	removed	shared shape preserves source; obsolete crop metadata removed
+F5	ming_sim/action_materialize.py	referral	responsible_bodies	500	removed	shared shape preserves source; obsolete crop metadata removed
+F5	ming_sim/action_materialize.py	referral	target_candidate	40	removed	shared shape preserves source; obsolete crop metadata removed
+F5	ming_sim/action_materialize.py	appointment	name	20	removed	shared shape preserves source; obsolete crop metadata removed
+F5	ming_sim/action_materialize.py	appointment	office	40	removed	shared shape preserves source; obsolete crop metadata removed
+F5	ming_sim/action_materialize.py	appointment	region_id	40	removed	shared shape preserves source; obsolete crop metadata removed
+F5	ming_sim/action_materialize.py	appointment	target_candidate	40	removed	shared shape preserves source; obsolete crop metadata removed
+F5	ming_sim/cli_backend.py	_trace	prompt,response	40000	removed	whole trace fields without prefix/suffix cuts
+F5	ming_sim/cli_backend.py	extract_draft_intent	correction_feedback		migrated	strip only detects empty input; preserve actual feedback
+F5	ming_sim/cli_backend.py	extract_draft_intent	合并草案		migrated	strip only detects empty input; preserve actual merged text
+F6	ming_sim/cli_backend.py	_infer_tag	prompt		removed	no guess of caller from prompt; explicit tag or known CLI surface
+F10	tests/test_cli_backend.py	test_run_backend_infers_trace_tag_from_prompt	7 parameter cases		deleted	obsolete prose-dependent classification behavior
+F10	tests/test_faction_denunciation_627.py	test_no_intensity_quota_template_symbols	source AST symbols		deleted	structure green card; acceptance behavior remains
+F10	tests/test_faction_denunciation_627.py	test_fork_predicate_pure_and_single_source_expression	source spelling and function name		migrated	delete source assertions; preserve predicate behavior

@@ -112,6 +112,16 @@
 - 枚举纠正：F6 数据扫描脚本只读 `/tmp/1835-live-F6.json`，单独重跑并不是当前树复扫。本轮先运行 `/tmp/1835-enumerate.py` 再扫描，结果见 `/tmp/1835-inventory-66.txt`：F1=377、F5=2165、F6=684、F10=9674、F11=24、F13=227、F14=29；宽数据捕获候选247。此为改动中途候选，不是结清数。
 - 七旗禁宿主的 `/tmp/1835-audit-focused68.txt`：14个触及文件，382 passed、1 warning、8.56s；compileall（三个生产文件）及 git diff --check 通过。未运行全量，此非最终待合并状态。
 
+## 续修：动作运输、CLI trace 与结构绿卡
+
+- F5 复扫切片发现共享动作 shape 对所有非枚举字符串 strip，并按 FieldSpec.max_len 裁切（包括 JSON 运输字段）。删除共同裁切/删空白实现及全部34个废弃裁切登记，不新增替代规范化。枚举/整数既有契约保留。逐登记处置在 `F5-catalog-trace-members.tsv`，此表是切片，不另立较窄类边界。
+- F5 CLI trace 删除 prompt/response 首尾40000字裁切及废弃 TRACE_CAP 读项；原始日志字段完整写盘。纠错反馈、合并旨稿只 strip 判空，其余原样传递。
+- 真实 CLI 入口观察（仅外部 CLI 返回值边界提供冻结输入）`/tmp/1835-cli-original-run.py`：旧40000裁切分支 returned_original=true 但 prompt_preserved/response_preserved=false；新逻辑三者true，见 `/tmp/1835-cli-original-{old,new}.txt`。
+- 真实 extract_draft_intent 观察 `/tmp/1835-draft-original-run.py`：旧 merged.strip 原文不相等，恢复后相等；`/tmp/1835-draft-original-{old,new}.txt`。`/tmp/1835-grant-original-run.py`：恢复旧 target_id 80字符切片，合法结构化 region_id 与被截 target_id 不一致而抛 StructuredDecreeCombinationError；删除后 returned/target_preserved=true，见 `/tmp/1835-grant-original-old-target-cut.txt` 与 new.txt。恢复的是已确认旧切片，不冒称完整旧实现或 pytest 红测；全部临时变异已恢复。
+- F6/F10：删除根据 prompt 措辞猜 trace 调用者的 _infer_tag；显式调用 tag 仍原样记录，缺席只记已知 cli_backend surface。删除7个旧推断参数案，没有换形新造。保留唯一真实 trace 案，对正确输入 prompt 作完整相等断言，不再哨兵子串比较。
+- F10 删除 faction_denunciation 的源码文字/函数符号绿卡，保留真实承接案与纯判据行为；无平行替代测试。该处源码扫描机制、ast/Path 依赖一并删除。
+- 七旗下 focused70=173 passed/2.38s（中途）；focused72 引用已经不存在的 hitl 文件，0 tests，非验证成功；纠正后的 `/tmp/1835-audit-focused73.txt` 六文件185 passed、1 warning、5.49s。三个生产文件 compileall、diff --check 通过；pyflakes 仅既有unused imports，无undefined name，见 `/tmp/1835-audit-static73.txt`。
+
 ## 尚未结清
 
 仍须将宽枚举逐成员完成语义处置，特别是 F10 剩余自由文本/保密哨兵及 helper 呈现测试、F5 下游传递与识别变换的边界、F6 剩余持久与批写接缝，并刷新完整成员处置表与最新触及面验证。本记录不把聚焦绿色冒作整类结清，不声明这些工作缺 owner 决定，也不以执行窗口作合法 blocker。
