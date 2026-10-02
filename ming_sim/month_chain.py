@@ -54,8 +54,9 @@ def run_world_segment_text(
 
     prepared = prepare_world_materials(db, state)
     message = "推演本月世界段。"
+    # #1847 N6：判空可读 strip；cheat 原文运输不得赋 strip 结果。
     if str(cheat_directive or "").strip():
-        message = str(cheat_directive).strip() + "\n" + message
+        message = str(cheat_directive) + "\n" + message
     try:
         agent = create_world_segment_agent(llm_config, prepared)
         return run_agent_text(
@@ -539,8 +540,9 @@ def run_player_month_chain(
         )
 
     try:
+        # #1847 N6：判空可读 strip；chain 持久化 cheat 用原文。
         if str(cheat_directive or "").strip() and not chain.get("cheat_directive"):
-            chain["cheat_directive"] = str(cheat_directive).strip()
+            chain["cheat_directive"] = str(cheat_directive)
             _save_chain(db, turn, chain, decree_text=decree_text, source=source)
         _consume_call_failure_for_retry(db, chain, turn, decree_text, source)
     except Exception as exc:

@@ -1,203 +1,166 @@
-disposition	reason	file	line	kind	snip
-KEEP_engine_io	引擎IO面（正文只取stdout/json事件）	web_app.py	28	stdout_mention	# 源码模式 `uvicorn web_app:app` 在 nohup/重定向（>> web_server.log）下 Python stdout 块缓冲，
-KEEP_engine_io	引擎IO面（正文只取stdout/json事件）	web_app.py	32	stdout_mention	    if sys.stdout is not None:
-KEEP_engine_io	引擎IO面（正文只取stdout/json事件）	web_app.py	33	stdout_mention	        sys.stdout.reconfigure(line_buffering=True)  # type: ignore[attr-defined]
-KEEP_mention	提及	web_app.py	34	stderr_mention	    if sys.stderr is not None:
-KEEP_drain_or_diag	抽干pipe/失败诊断/launcher	web_app.py	35	stderr_mention	        sys.stderr.reconfigure(line_buffering=True)  # type: ignore[attr-defined]
-KEEP_contract	空输出失败契约	web_app.py	73	empty_output_contract	    empty_output_failure,
-KEEP_mention	提及	launcher.py	22	stderr_mention	# Windows windowed (--noconsole) 下 sys.stdout/stderr = None。uvicorn 的
-KEEP_engine_io	引擎IO面（正文只取stdout/json事件）	launcher.py	22	stdout_mention	# Windows windowed (--noconsole) 下 sys.stdout/stderr = None。uvicorn 的
-KEEP_engine_io	引擎IO面（正文只取stdout/json事件）	launcher.py	23	stdout_mention	# DefaultFormatter.__init__ 调 sys.stdout.isatty() 判颜色 → AttributeError 崩。
-KEEP_engine_io	引擎IO面（正文只取stdout/json事件）	launcher.py	39	stdout_mention	if sys.stdout is None:
-KEEP_engine_io	引擎IO面（正文只取stdout/json事件）	launcher.py	40	stdout_mention	    sys.stdout = _NullStream()  # type: ignore[assignment]
-KEEP_mention	提及	launcher.py	41	stderr_mention	if sys.stderr is None:
-KEEP_drain_or_diag	抽干pipe/失败诊断/launcher	launcher.py	42	stderr_mention	    sys.stderr = _NullStream()  # type: ignore[assignment]
-KEEP_engine_io	引擎IO面（正文只取stdout/json事件）	launcher.py	46	stdout_mention	    sys.stdout.reconfigure(line_buffering=True)  # type: ignore[attr-defined]
-KEEP_drain_or_diag	抽干pipe/失败诊断/launcher	launcher.py	47	stderr_mention	    sys.stderr.reconfigure(line_buffering=True)  # type: ignore[attr-defined]
-KEEP_engine_io	引擎IO面（正文只取stdout/json事件）	launcher.py	53	stdout_mention	"    """"""同时写 stdout + ~/.ming_sim/launcher.log，方便 .app 双击模式 debug。"""""""
-KEEP_engine_io	引擎IO面（正文只取stdout/json事件）	ming_sim/fiscal_tick.py	341	stdout_mention	"    r[""三饷火耗""] = 三饷火耗  # 分量显式入 r（下游直接消费，不解析 stdout）"
-KEEP_contract	空输出失败契约	ming_sim/session.py	1294	empty_output_contract	                empty_output_failure, run_with_transport,
-KEEP_contract	空输出失败契约	ming_sim/session.py	1303	empty_output_contract	                        empty_output_failure(), attempts=1, exhausted=False,
-KEEP_contract	空输出失败契约	ming_sim/session.py	1351	empty_output_contract	            empty_output_failure,
-KEEP_contract	空输出失败契约	ming_sim/session.py	1392	empty_output_contract	                    empty_output_failure(), attempts=1, exhausted=False,
-KEEP_contract	空输出失败契约	ming_sim/agents.py	28	empty_output_contract	    empty_output_failure,
-KEEP_engine_io	引擎IO面（正文只取stdout/json事件）	ming_sim/agents.py	248	stdout_mention	    CLI（CliChat）：切片③已同门——runner 增量读 stdout 出中途 ModelResponse，
-KEEP_contract	空输出失败契约	ming_sim/agents.py	295	empty_output_contract	                    empty_output_failure(),
-KEEP_contract	空输出失败契约	ming_sim/agents.py	306	empty_output_contract	                    empty_output_failure(),
-KEEP_engine_io	引擎IO面（正文只取stdout/json事件）	ming_sim/agents.py	376	stdout_mention	"    """"""流式跑 agent，按事件实时打到 stdout（带毫秒时间戳），最终返回拼合后的纯文本。"
-KEEP_engine_io	引擎IO面（正文只取stdout/json事件）	ming_sim/cli_backend.py	210	subprocess	# 登录 shell 探测走「import 时捕获的原始 run」，不受测试 monkeypatch cb.subprocess.run
-KEEP_engine_io	引擎IO面（正文只取stdout/json事件）	ming_sim/cli_backend.py	212	subprocess	_RAW_RUN = subprocess.run
-KEEP_engine_io	引擎IO面（正文只取stdout/json事件）	ming_sim/cli_backend.py	235	stdout_mention	"        m = re.search(r""<<<CMRPATH>>>(.*?)<<<ENDPATH>>>"", proc.stdout or """", re.S)"
-KEEP_engine_io	引擎IO面（正文只取stdout/json事件）	ming_sim/cli_backend.py	371	subprocess	        subprocess.run(
-KEEP_drain_or_diag	抽干pipe/失败诊断/launcher	ming_sim/cli_backend.py	373	stderr_mention	            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5,
-KEEP_engine_io	引擎IO面（正文只取stdout/json事件）	ming_sim/cli_backend.py	373	stdout_mention	            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5,
-KEEP_mention	提及	ming_sim/cli_backend.py	388	stderr_mention	# agy headless auth 是已知 race（见 wiki）：stdout/stderr 出现这些串即瞬断，可重试。
-KEEP_engine_io	引擎IO面（正文只取stdout/json事件）	ming_sim/cli_backend.py	388	stdout_mention	# agy headless auth 是已知 race（见 wiki）：stdout/stderr 出现这些串即瞬断，可重试。
-KEEP_mention	提及	ming_sim/cli_backend.py	394	stderr_mention	"    """"""子进程收尾事实（退出码 / stderr 诊断 / stdin 写错），由增量读循环回填。"""""""
-KEEP_mention	提及	ming_sim/cli_backend.py	397	stderr_mention	"    stderr: str = """""
-KEEP_engine_io	引擎IO面（正文只取stdout/json事件）	ming_sim/cli_backend.py	435	stdout_mention	"    """"""CLI 子进程增量读单真源：一次子进程 = 一次 attempt，按到达顺序 yield stdout 行。"
-KEEP_mention	提及	ming_sim/cli_backend.py	441	stderr_mention	    - stderr 并发抽干：否则 codex 等把 stderr 写满 OS pipe 会反压死 stdout。
-KEEP_engine_io	引擎IO面（正文只取stdout/json事件）	ming_sim/cli_backend.py	441	stdout_mention	    - stderr 并发抽干：否则 codex 等把 stderr 写满 OS pipe 会反压死 stdout。
-KEEP_mention	提及	ming_sim/cli_backend.py	441	stdout_plus_stderr	    - stderr 并发抽干：否则 codex 等把 stderr 写满 OS pipe 会反压死 stdout。
-KEEP_engine_io	引擎IO面（正文只取stdout/json事件）	ming_sim/cli_backend.py	442	stdout_mention	    - stdin 另起线程喂：大 prompt 超 pipe 缓冲时不与读 stdout 互锁。
-KEEP_engine_io	引擎IO面（正文只取stdout/json事件）	ming_sim/cli_backend.py	454	subprocess	    proc = subprocess.Popen(
-KEEP_engine_io	引擎IO面（正文只取stdout/json事件）	ming_sim/cli_backend.py	457	stdout_mention	        stdout=subprocess.PIPE,
-KEEP_drain_or_diag	抽干pipe/失败诊断/launcher	ming_sim/cli_backend.py	458	stderr_mention	        stderr=subprocess.PIPE,
-KEEP_drain_or_diag	抽干pipe/失败诊断/launcher	ming_sim/cli_backend.py	463	stderr_mention	    stderr_parts: List[str] = []
-KEEP_contract	空输出失败契约	ming_sim/cli_backend.py	500	stdout_mention	            # 报确定性失败；绝不静默，否则空 stdout 被洗成 llm_empty_output 重试
-KEEP_contract	空输出失败契约	ming_sim/cli_backend.py	500	empty_output_contract	            # 报确定性失败；绝不静默，否则空 stdout 被洗成 llm_empty_output 重试
-KEEP_mention	提及	ming_sim/cli_backend.py	506	stderr_mention	"    for stream, kind in ((proc.stdout, ""out""), (proc.stderr, ""err"")):"
-KEEP_engine_io	引擎IO面（正文只取stdout/json事件）	ming_sim/cli_backend.py	506	stdout_mention	"    for stream, kind in ((proc.stdout, ""out""), (proc.stderr, ""err"")):"
-KEEP_drain_or_diag	抽干pipe/失败诊断/launcher	ming_sim/cli_backend.py	538	stderr_mention	                        stderr_parts.append(tail)
-KEEP_engine_io	引擎IO面（正文只取stdout/json事件）	ming_sim/cli_backend.py	545	stdout_mention	            # 任意新字节即活动（票面「CLI stdout 新字节」）；不要求凑成一行。
-KEEP_drain_or_diag	抽干pipe/失败诊断/launcher	ming_sim/cli_backend.py	549	stderr_mention	                stderr_parts.append(text)
-KEEP_drain_or_diag	抽干pipe/失败诊断/launcher	ming_sim/cli_backend.py	568	stderr_mention	"        result.stderr = """".join(stderr_parts)"
-KEEP_engine_io	引擎IO面（正文只取stdout/json事件）	ming_sim/cli_backend.py	613	final_text	def _codex_final_text(obj: object) -> str:
-KEEP_engine_io	引擎IO面（正文只取stdout/json事件）	ming_sim/cli_backend.py	666	stdout_mention	      （沙箱 cwd 非 git）+ `--ephemeral`（并发不撞共享 session）；干净回话在 stdout。
-KEEP_engine_io	引擎IO面（正文只取stdout/json事件）	ming_sim/cli_backend.py	668	stdout_mention	    - cursor / kimi / grok / pi：prompt 走参数（无 stdin 约定），干净答案在 stdout。
-KEEP_engine_io	引擎IO面（正文只取stdout/json事件）	ming_sim/cli_backend.py	777	stdout_mention	    出去。故纯文本 runner（agy/claude/pi）**不逐行外抛 stdout**——那会把
-KEEP_contract	空输出失败契约	ming_sim/cli_backend.py	786	empty_output_contract	    - 空输出 → llm_empty_output（可重试）
-KEEP_mention	提及	ming_sim/cli_backend.py	789	stderr_mention	      stderr 散文抠状态）
-KEEP_contract	空输出失败契约	ming_sim/cli_backend.py	794	empty_output_contract	    from ming_sim.llm_transport import empty_output_failure, transport_failure_unavailable
-KEEP_engine_io	引擎IO面（正文只取stdout/json事件）	ming_sim/cli_backend.py	814	final_text	"        final_text = """""
-KEEP_engine_io	引擎IO面（正文只取stdout/json事件）	ming_sim/cli_backend.py	835	final_text	                maybe_final = _codex_final_text(obj)
-KEEP_engine_io	引擎IO面（正文只取stdout/json事件）	ming_sim/cli_backend.py	837	final_text	                    final_text = maybe_final
-KEEP_drain_or_diag	抽干pipe/失败诊断/launcher	ming_sim/cli_backend.py	842	stderr_mention	"        stderr = outcome.stderr or """""
-KEEP_engine_io	引擎IO面（正文只取stdout/json事件）	ming_sim/cli_backend.py	843	stdout_mention	"        stdout_text = """".join(pieces)"
-KEEP_engine_io	引擎IO面（正文只取stdout/json事件）	ming_sim/cli_backend.py	845	stdout_mention	        # 有无 stdout 字都不得当产出（ADR 0005 / r1 类3：一次不重试）。
-KEEP_failure_diag	失败诊断	ming_sim/cli_backend.py	850	stderr_mention	"        if runner == ""agy"" and any(m in (stdout_text + stderr) for m in _AGY_AUTH_MARKERS):"
-KEEP_failure_diag	失败诊断	ming_sim/cli_backend.py	850	stdout_mention	"        if runner == ""agy"" and any(m in (stdout_text + stderr) for m in _AGY_AUTH_MARKERS):"
-KEEP_failure_diag	失败诊断	ming_sim/cli_backend.py	850	stdout_plus_stderr	"        if runner == ""agy"" and any(m in (stdout_text + stderr) for m in _AGY_AUTH_MARKERS):"
-KEEP_failure_diag	失败诊断	ming_sim/cli_backend.py	854	stderr_mention	"                provider_message=f""agy auth race：{(stdout_text + stderr)[:200]}"","
-KEEP_failure_diag	失败诊断	ming_sim/cli_backend.py	854	stdout_mention	"                provider_message=f""agy auth race：{(stdout_text + stderr)[:200]}"","
-KEEP_failure_diag	失败诊断	ming_sim/cli_backend.py	854	stdout_plus_stderr	"                provider_message=f""agy auth race：{(stdout_text + stderr)[:200]}"","
-KEEP_mention	提及	ming_sim/cli_backend.py	856	stderr_mention	        # Codex / CLI：干净正文只在 stdout；stderr 是日志，不得冒充正文
-KEEP_engine_io	引擎IO面（正文只取stdout/json事件）	ming_sim/cli_backend.py	856	stdout_mention	        # Codex / CLI：干净正文只在 stdout；stderr 是日志，不得冒充正文
-KEEP_mention	提及	ming_sim/cli_backend.py	857	stderr_mention	        # （Python subprocess 分流；Codex non-interactive：progress→stderr，final→stdout）。
-KEEP_engine_io	引擎IO面（正文只取stdout/json事件）	ming_sim/cli_backend.py	857	stdout_mention	        # （Python subprocess 分流；Codex non-interactive：progress→stderr，final→stdout）。
-KEEP_mention	提及	ming_sim/cli_backend.py	857	stdout_plus_stderr	        # （Python subprocess 分流；Codex non-interactive：progress→stderr，final→stdout）。
-KEEP_engine_io	引擎IO面（正文只取stdout/json事件）	ming_sim/cli_backend.py	858	stdout_mention	        text = stdout_text if stdout_text.strip() else final_text
-KEEP_engine_io	引擎IO面（正文只取stdout/json事件）	ming_sim/cli_backend.py	858	final_text	        text = stdout_text if stdout_text.strip() else final_text
-KEEP_drain_or_diag	抽干pipe/失败诊断/launcher	ming_sim/cli_backend.py	861	stderr_mention	"            raise RuntimeError(f""{runner} 调用失败（退出码 {returncode}）：{stderr[:200]}"")"
-KEEP_contract	空输出失败契约	ming_sim/cli_backend.py	864	empty_output_contract	                empty_output_failure(), attempts=1, exhausted=False,
-KEEP_engine_io	引擎IO面（正文只取stdout/json事件）	ming_sim/cli_backend.py	869	final_text	        elif not pieces and final_text.strip():
-KEEP_engine_io	引擎IO面（正文只取stdout/json事件）	ming_sim/cli_backend.py	870	final_text	            yield final_text
-KEEP_mention	提及	ming_sim/cli_backend.py	912	stderr_mention	"    """"""调 codex exec - 一次；干净最终回话在 stdout（不合并 stderr 日志）。"""""""
-KEEP_engine_io	引擎IO面（正文只取stdout/json事件）	ming_sim/cli_backend.py	912	stdout_mention	"    """"""调 codex exec - 一次；干净最终回话在 stdout（不合并 stderr 日志）。"""""""
-KEEP_engine_io	引擎IO面（正文只取stdout/json事件）	ming_sim/cli_backend.py	927	stdout_mention	"    """"""调 claude -p 一次；干净回话在 stdout，thinking 预算经 env 显式设置。"""""""
-KEEP_contract	空输出失败契约	ming_sim/llm_transport.py	276	empty_output_contract	    （llm_unavailable_from_error / run_error_event_failure / empty_output_failure 委派或同构）。
-KEEP_contract	空输出失败契约	ming_sim/llm_transport.py	329	empty_output_contract	"            ""llm_empty_output"","
-KEEP_contract	空输出失败契约	ming_sim/llm_transport.py	393	empty_output_contract	def empty_output_failure() -> ClassifiedFailure:
-KEEP_contract	空输出失败契约	ming_sim/llm_transport.py	397	empty_output_contract	"        code=""llm_empty_output"","
-KEEP_test	测试夹具/契约	tests/cli_process_doubles.py	3	stdout_mention	生产读法 = `Popen` + 增量读 stdout（新字节刷新活动时刻，不设总墙钟）。
-KEEP_test	测试夹具/契约	tests/cli_process_doubles.py	4	stderr_mention	本替身按脚本吐 stdout/stderr **字节块**（不必带换行）与退出码，可挂受控钩子
-KEEP_test	测试夹具/契约	tests/cli_process_doubles.py	4	stdout_mention	本替身按脚本吐 stdout/stderr **字节块**（不必带换行）与退出码，可挂受控钩子
-KEEP_test	测试夹具/契约	tests/cli_process_doubles.py	30	stdout_mention	# 脚本项：str/bytes = 一块 stdout（可无换行）；callable = 钩子（返回块则交付，None 跳过）；
-KEEP_test	测试夹具/契约	tests/cli_process_doubles.py	133	subprocess	"    """"""`subprocess.Popen` 替身：只实现生产读取契约用到的面。"""""""
-KEEP_test	测试夹具/契约	tests/cli_process_doubles.py	139	stdout_mention	        stdout_script: Sequence[ScriptItem] = (),
-KEEP_test	测试夹具/契约	tests/cli_process_doubles.py	140	stderr_mention	        stderr_script: Sequence[ScriptItem] = (),
-KEEP_test	测试夹具/契约	tests/cli_process_doubles.py	150	stdout_mention	        self.stdout = _ScriptedStream(stdout_script, self.killed)
-KEEP_test	测试夹具/契约	tests/cli_process_doubles.py	151	stderr_mention	        self.stderr = _ScriptedStream(stderr_script, self.killed)
-KEEP_test	测试夹具/契约	tests/cli_process_doubles.py	158	stderr_mention	        if self.stdout.exhausted and self.stderr.exhausted:
-KEEP_test	测试夹具/契约	tests/cli_process_doubles.py	158	stdout_mention	        if self.stdout.exhausted and self.stderr.exhausted:
-KEEP_test	测试夹具/契约	tests/cli_process_doubles.py	197	stdout_mention	"                stdout_script=spec.get(""stdout"", ()),"
-KEEP_test	测试夹具/契约	tests/cli_process_doubles.py	198	stderr_mention	"                stderr_script=spec.get(""stderr"", ()),"
-KEEP_test	测试夹具/契约	tests/test_llm_channel_config.py	432	stdout_mention	"        return FakeCliProcess(cmd, stdout_script=(""臣领旨。\n"",), returncode=0,"
-KEEP_test	测试夹具/契约	tests/test_minister_chat_timeout.py	72	stdout_mention	"        {""stdout"": (SilentUntilKilled(),), ""returncode"": 0},"
-KEEP_test	测试夹具/契约	tests/test_minister_chat_timeout.py	75	subprocess	    scripted_popen = cb.subprocess.Popen
-KEEP_test	测试夹具/契约	tests/test_web_chat_serialization_393.py	315	subprocess	    根因：async api_audience_chat 在事件循环上直调全同步 get_game().chat()（→ subprocess.run），
-KEEP_test	测试夹具/契约	tests/test_run_agent_text_transport_1465.py	36	final_text	def test_run_agent_text_final_text_from_terminal_not_chunk_join(monkeypatch):
-KEEP_test	测试夹具/契约	tests/test_player_army_projection_321.py	312	stdout_mention	    with contextlib.redirect_stdout(buf):
-KEEP_test	测试夹具/契约	tests/test_cli_runner_error_typed_1299.py	23	stderr_mention	# QA 实锤横幅形态（cli_backend.py:424/590 原文 + stderr 含版本/workdir/model/sandbox）
-KEEP_test	测试夹具/契约	tests/test_cli_runner_error_typed_1299.py	26	codex_banner	"    ""OpenAI Codex v0.50.0\n"""
-KEEP_test	测试夹具/契约	tests/test_new_game_dependency_mismatch_1721.py	63	subprocess	    proc = subprocess.run(
-KEEP_test	测试夹具/契约	tests/test_new_game_dependency_mismatch_1721.py	70	stderr_mention	    assert proc.returncode == 0, proc.stderr
-KEEP_test	测试夹具/契约	tests/test_new_game_dependency_mismatch_1721.py	71	stdout_mention	    payload = json.loads(proc.stdout.strip().splitlines()[-1])
-KEEP_test	测试夹具/契约	tests/test_new_game_dependency_mismatch_1721.py	104	subprocess	    proc = subprocess.run(
-KEEP_test	测试夹具/契约	tests/test_new_game_dependency_mismatch_1721.py	111	stderr_mention	    assert proc.returncode == 0, proc.stderr
-KEEP_test	测试夹具/契约	tests/test_new_game_dependency_mismatch_1721.py	112	stdout_mention	    payload = json.loads(proc.stdout.strip().splitlines()[-1])
-KEEP_test	测试夹具/契约	tests/test_cli_transport_1465.py	139	stdout_mention	"        {""stdout"": (), ""returncode"": 0},"
-KEEP_test	测试夹具/契约	tests/test_cli_transport_1465.py	140	stdout_mention	"        {""stdout"": (), ""returncode"": 0},"
-KEEP_test	测试夹具/契约	tests/test_cli_transport_1465.py	141	stdout_mention	"        {""stdout"": (_OK_REPLY,), ""returncode"": 0},"
-KEEP_test	测试夹具/契约	tests/test_cli_transport_1465.py	173	stdout_mention	"        {""stdout"": (""Authentication required\n"",), ""returncode"": 0},"
-KEEP_test	测试夹具/契约	tests/test_cli_transport_1465.py	206	stdout_mention	"        {""stdout"": (_OK_REPLY,), ""returncode"": 0},"
-KEEP_test	测试夹具/契约	tests/test_cli_transport_1465.py	221	stderr_mention	"        {""stdout"": (), ""stderr"": (""error: unknown model\n"",), ""returncode"": 1},"
-KEEP_test	测试夹具/契约	tests/test_cli_transport_1465.py	221	stdout_mention	"        {""stdout"": (), ""stderr"": (""error: unknown model\n"",), ""returncode"": 1},"
-KEEP_test	测试夹具/契约	tests/test_cli_transport_1465.py	237	stdout_mention	"    ""stdout"","
-KEEP_test	测试夹具/契约	tests/test_cli_transport_1465.py	239	stdout_mention	"    ids=[""empty_stdout"", ""nonempty_stdout""],"
-KEEP_test	测试夹具/契约	tests/test_cli_transport_1465.py	242	stdout_mention	    monkeypatch, tmp_path, game, stdout,
-KEEP_negative_gate	现役负向闸	tests/test_cli_transport_1465.py	247	stdout_mention	    llm_empty_output，白烧三次子进程还给玩家一个假瞬断。有 stdout 字同样终止。
-KEEP_negative_gate	现役负向闸	tests/test_cli_transport_1465.py	247	empty_output_contract	    llm_empty_output，白烧三次子进程还给玩家一个假瞬断。有 stdout 字同样终止。
-KEEP_test	测试夹具/契约	tests/test_cli_transport_1465.py	251	stdout_mention	"        ""stdout"": stdout, ""returncode"": 0,"
-KEEP_test	测试夹具/契约	tests/test_cli_transport_1465.py	286	stdout_mention	"        ""stdout"": tuple(chunks),"
-KEEP_test	测试夹具/契约	tests/test_cli_transport_1465.py	337	stdout_mention	"        {""stdout"": (SilentUntilKilled(on_tick=_advance_while_silent),), ""returncode"": 0},"
-KEEP_test	测试夹具/契约	tests/test_cli_transport_1465.py	338	stdout_mention	"        {""stdout"": no_nl_chunks, ""returncode"": 0},"
-KEEP_test	测试夹具/契约	tests/test_cli_backend.py	252	stderr_mention	"    def __init__(self, stdout=""STDOUT_BODY"", stderr="""", returncode=0):"
-KEEP_test	测试夹具/契约	tests/test_cli_backend.py	252	stdout_mention	"    def __init__(self, stdout=""STDOUT_BODY"", stderr="""", returncode=0):"
-KEEP_test	测试夹具/契约	tests/test_cli_backend.py	253	stderr_mention	        self.stdout, self.stderr, self.returncode = stdout, stderr, returncode
-KEEP_test	测试夹具/契约	tests/test_cli_backend.py	253	stdout_mention	        self.stdout, self.stderr, self.returncode = stdout, stderr, returncode
-KEEP_test	测试夹具/契约	tests/test_cli_backend.py	253	stdout_plus_stderr	        self.stdout, self.stderr, self.returncode = stdout, stderr, returncode
-KEEP_test	测试夹具/契约	tests/test_cli_backend.py	269	stdout_mention	            stdout_script=((spec.stdout,) if spec.stdout else ()),
-KEEP_test	测试夹具/契约	tests/test_cli_backend.py	270	stderr_mention	            stderr_script=((spec.stderr,) if spec.stderr else ()),
-KEEP_test	测试夹具/契约	tests/test_cli_backend.py	281	stdout_mention	def test_run_claude_stdout_only(monkeypatch):
-KEEP_test	测试夹具/契约	tests/test_cli_backend.py	283	stderr_mention	"    captured = _capture_run(monkeypatch, _P(stdout=body, stderr=""LOG_NOISE""))"
-KEEP_test	测试夹具/契约	tests/test_cli_backend.py	283	stdout_mention	"    captured = _capture_run(monkeypatch, _P(stdout=body, stderr=""LOG_NOISE""))"
-KEEP_test	测试夹具/契约	tests/test_cli_backend.py	295	stdout_mention	"    captured = _capture_run(monkeypatch, _P(stdout=""ok""))"
-KEEP_test	测试夹具/契约	tests/test_cli_backend.py	317	stdout_mention	"    captured = _capture_run(monkeypatch, _P(stdout=""ok""))"
-KEEP_test	测试夹具/契约	tests/test_cli_backend.py	332	stdout_mention	"    captured = _capture_run(monkeypatch, _P(stdout=""ok""))"
-KEEP_test	测试夹具/契约	tests/test_cli_backend.py	341	stdout_mention	def test_run_codex_flags_and_stdout(monkeypatch):
-KEEP_test	测试夹具/契约	tests/test_cli_backend.py	344	stderr_mention	"    captured = _capture_run(monkeypatch, _P(stdout=body, stderr=""OpenAI Codex v0\nlogs""))"
-KEEP_test	测试夹具/契约	tests/test_cli_backend.py	344	stdout_mention	"    captured = _capture_run(monkeypatch, _P(stdout=body, stderr=""OpenAI Codex v0\nlogs""))"
-KEEP_test	测试夹具/契约	tests/test_cli_backend.py	344	codex_banner	"    captured = _capture_run(monkeypatch, _P(stdout=body, stderr=""OpenAI Codex v0\nlogs""))"
-KEEP_test	测试夹具/契约	tests/test_cli_backend.py	358	stdout_mention	"        ""stdout"": ("
-KEEP_test	测试夹具/契约	tests/test_cli_backend.py	470	final_text	def test_codex_final_text_handles_item_completed_shape():
-KEEP_test	测试夹具/契约	tests/test_cli_backend.py	471	final_text	    assert cb._codex_final_text(
-KEEP_test	测试夹具/契约	tests/test_cli_backend.py	474	final_text	    assert cb._codex_final_text(
-KEEP_test	测试夹具/契约	tests/test_cli_backend.py	477	final_text	"    assert cb._codex_final_text({""type"": ""agent_message"", ""message"": ""TOP""}) == ""TOP"""
-KEEP_test	测试夹具/契约	tests/test_cli_backend.py	491	stdout_mention	"    captured = _capture_run(monkeypatch, _P(stdout=""STDOUT_BODY""))"
-KEEP_negative_gate	现役负向闸	tests/test_cli_backend.py	516	stderr_mention	def test_run_codex_stderr_banner_does_not_become_body(monkeypatch):
-KEEP_test	测试夹具/契约	tests/test_cli_backend.py	517	stderr_mention	"    """"""stdout 空时 stderr 日志／banner 不得冒充正文；走既有空输出失败契约。"""""""
-KEEP_test	测试夹具/契约	tests/test_cli_backend.py	517	stdout_mention	"    """"""stdout 空时 stderr 日志／banner 不得冒充正文；走既有空输出失败契约。"""""""
-KEEP_test	测试夹具/契约	tests/test_cli_backend.py	523	stderr_mention	"        _P(stdout="""", stderr=""diag\nOpenAI Codex v0.125.0\nlogs"", returncode=0),"
-KEEP_test	测试夹具/契约	tests/test_cli_backend.py	523	stdout_mention	"        _P(stdout="""", stderr=""diag\nOpenAI Codex v0.125.0\nlogs"", returncode=0),"
-KEEP_test	测试夹具/契约	tests/test_cli_backend.py	523	codex_banner	"        _P(stdout="""", stderr=""diag\nOpenAI Codex v0.125.0\nlogs"", returncode=0),"
-KEEP_negative_gate	现役负向闸	tests/test_cli_backend.py	527	empty_output_contract	"    assert ei.value.code == ""llm_empty_output"""
-KEEP_test	测试夹具/契约	tests/test_cli_backend.py	625	stdout_mention	        stdout = (
-KEEP_test	测试夹具/契约	tests/test_cli_backend.py	629	stderr_mention	"        stderr = """""
-KEEP_test	测试夹具/契约	tests/test_cli_backend.py	640	stdout_mention	"        stdout = ""<<<CMRPATH>>>/usr/bin<<<ENDPATH>>>\n"""
-KEEP_test	测试夹具/契约	tests/test_cli_backend.py	641	stderr_mention	"        stderr = """""
-KEEP_test	测试夹具/契约	tests/test_cli_backend.py	653	stdout_mention	"        stdout = ""<<<CMRPATH>>>/a/bin:/b/bin<<<ENDPATH>>>"""
-KEEP_test	测试夹具/契约	tests/test_cli_backend.py	654	stderr_mention	"        stderr = """""
-KEEP_test	测试夹具/契约	tests/test_cli_backend.py	690	stdout_mention	"    captured = _capture_run(monkeypatch, _P(stdout=""STDOUT_BODY""))"
-KEEP_test	测试夹具/契约	tests/test_cli_backend.py	836	stdout_mention	"    """"""agy 子进程替身：script 为逐次调用的 (stdout, returncode)。"""""""
-KEEP_test	测试夹具/契约	tests/test_cli_backend.py	850	stdout_mention	            stdout_script=((text,) if text else ()),
-KEEP_test	测试夹具/契约	tests/test_cli_backend.py	892	stderr_mention	"    def __init__(self, stdout="""", stderr="""", returncode=0):"
-KEEP_test	测试夹具/契约	tests/test_cli_backend.py	892	stdout_mention	"    def __init__(self, stdout="""", stderr="""", returncode=0):"
-KEEP_test	测试夹具/契约	tests/test_cli_backend.py	893	stderr_mention	        self.stdout, self.stderr, self.returncode = stdout, stderr, returncode
-KEEP_test	测试夹具/契约	tests/test_cli_backend.py	893	stdout_mention	        self.stdout, self.stderr, self.returncode = stdout, stderr, returncode
-KEEP_test	测试夹具/契约	tests/test_cli_backend.py	893	stdout_plus_stderr	        self.stdout, self.stderr, self.returncode = stdout, stderr, returncode
-KEEP_test	测试夹具/契约	tests/test_cli_backend.py	899	stderr_mention	"        (""_run_codex"", lambda: _RcProc(stderr=""error: auth failed"", returncode=1)),"
-KEEP_test	测试夹具/契约	tests/test_cli_backend.py	900	stderr_mention	"        (""_run_claude"", lambda: _RcProc(stderr=""auth required"", returncode=1)),"
-KEEP_test	测试夹具/契约	tests/test_cli_backend.py	915	stderr_mention	"    _capture_run(monkeypatch, _P(stdout="""", stderr="""", returncode=0))"
-KEEP_test	测试夹具/契约	tests/test_cli_backend.py	915	stdout_mention	"    _capture_run(monkeypatch, _P(stdout="""", stderr="""", returncode=0))"
-KEEP_negative_gate	现役负向闸	tests/test_cli_backend.py	918	empty_output_contract	"    assert ei.value.code == ""llm_empty_output"""
-KEEP_test	测试夹具/契约	tests/test_cli_backend.py	1038	stdout_mention	"    captured = _capture_run(monkeypatch, _P(stdout=""ok""))"
-KEEP_test	测试夹具/契约	tests/test_cli_backend.py	1074	stdout_mention	def test_run_cursor_flags_and_stdout(monkeypatch):
-KEEP_test	测试夹具/契约	tests/test_cli_backend.py	1076	stderr_mention	"    captured = _capture_run(monkeypatch, _P(stdout=body, stderr=""noise""))"
-KEEP_test	测试夹具/契约	tests/test_cli_backend.py	1076	stdout_mention	"    captured = _capture_run(monkeypatch, _P(stdout=body, stderr=""noise""))"
-KEEP_test	测试夹具/契约	tests/test_cli_backend.py	1088	stdout_mention	def test_run_kimi_prompt_flag_no_yolo_stdout_only(monkeypatch):
-KEEP_test	测试夹具/契约	tests/test_cli_backend.py	1090	stderr_mention	"    captured = _capture_run(monkeypatch, _P(stdout=body, stderr=""kimi version 0.36.1\nTo resume...""))"
-KEEP_test	测试夹具/契约	tests/test_cli_backend.py	1090	stdout_mention	"    captured = _capture_run(monkeypatch, _P(stdout=body, stderr=""kimi version 0.36.1\nTo resume...""))"
-KEEP_test	测试夹具/契约	tests/test_cli_backend.py	1097	stderr_mention	    # stderr noise must not pollute answer
-KEEP_test	测试夹具/契约	tests/test_cli_backend.py	1103	stderr_mention	"    captured = _capture_run(monkeypatch, _P(stdout=body, stderr=""""))"
-KEEP_test	测试夹具/契约	tests/test_cli_backend.py	1103	stdout_mention	"    captured = _capture_run(monkeypatch, _P(stdout=body, stderr=""""))"
-KEEP_test	测试夹具/契约	tests/test_cli_backend.py	1114	stdout_mention	def test_run_pi_flags_thinking_and_stdout(monkeypatch):
-KEEP_test	测试夹具/契约	tests/test_cli_backend.py	1115	stdout_mention	"    """"""#1274-qa-y1：pi -p 非交互；stdout 取文；reasoning → --thinking；model 透传。"""""""
-KEEP_test	测试夹具/契约	tests/test_cli_backend.py	1117	stderr_mention	"    captured = _capture_run(monkeypatch, _P(stdout=body, stderr=""pi log noise""))"
-KEEP_test	测试夹具/契约	tests/test_cli_backend.py	1117	stdout_mention	"    captured = _capture_run(monkeypatch, _P(stdout=body, stderr=""pi log noise""))"
-KEEP_test	测试夹具/契约	tests/test_cli_backend.py	1201	stderr_mention	"    _capture_run(monkeypatch, _RcProc(stderr=""auth failed"", returncode=1))"
-KEEP_test	测试夹具/契约	tests/test_start_sh_deps_1721.py	83	subprocess	    return subprocess.run(
-KEEP_test	测试夹具/契约	tests/test_start_sh_deps_1721.py	99	stderr_mention	    assert proc.returncode == 0, proc.stderr
-KEEP_test	测试夹具/契约	tests/test_start_sh_deps_1721.py	114	stderr_mention	    assert proc.returncode == 0, proc.stderr
-KEEP_test	测试夹具/契约	tests/test_start_sh_deps_1721.py	128	stderr_mention	    assert proc.returncode == 0, proc.stderr
-KEEP_test	测试夹具/契约	tests/test_start_sh_deps_1721.py	154	stderr_mention	"    assert proc.stderr.strip() != """""
+disposition	reason	file	line	snip
+KEEP_engine_io	stderr 读取面（非正文）	launcher.py	22	# Windows windowed (--noconsole) 下 sys.stdout/stderr = None。uvicorn 的
+KEEP_mention	提及 stdout/stderr 字面	launcher.py	23	# DefaultFormatter.__init__ 调 sys.stdout.isatty() 判颜色 → AttributeError 崩。
+KEEP_mention	提及 stdout/stderr 字面	launcher.py	39	if sys.stdout is None:
+KEEP_mention	提及 stdout/stderr 字面	launcher.py	40	    sys.stdout = _NullStream()  # type: ignore[assignment]
+KEEP_engine_io	stderr 读取面（非正文）	launcher.py	41	if sys.stderr is None:
+KEEP_engine_io	stderr 读取面（非正文）	launcher.py	42	    sys.stderr = _NullStream()  # type: ignore[assignment]
+KEEP_mention	提及 stdout/stderr 字面	launcher.py	46	    sys.stdout.reconfigure(line_buffering=True)  # type: ignore[attr-defined]
+KEEP_engine_io	stderr 读取面（非正文）	launcher.py	47	    sys.stderr.reconfigure(line_buffering=True)  # type: ignore[attr-defined]
+KEEP_mention	提及 stdout/stderr 字面	launcher.py	53	"    """"""同时写 stdout + ~/.ming_sim/launcher.log，方便 .app 双击模式 debug。"""""""
+KEEP_failure_diag	空输出失败合同	ming_sim/agents.py	28	    empty_output_failure,
+KEEP_mention	提及 stdout/stderr 字面	ming_sim/agents.py	248	    CLI（CliChat）：切片③已同门——runner 增量读 stdout 出中途 ModelResponse，
+KEEP_failure_diag	空输出失败合同	ming_sim/agents.py	295	                    empty_output_failure(),
+KEEP_failure_diag	空输出失败合同	ming_sim/agents.py	306	                    empty_output_failure(),
+KEEP_mention	提及 stdout/stderr 字面	ming_sim/agents.py	376	"    """"""流式跑 agent，按事件实时打到 stdout（带毫秒时间戳），最终返回拼合后的纯文本。"
+KEEP_engine_io	引擎 stdout 正文路径	ming_sim/cli_backend.py	210	# 登录 shell 探测走「import 时捕获的原始 run」，不受测试 monkeypatch cb.subprocess.run
+KEEP_engine_io	引擎 stdout 正文路径	ming_sim/cli_backend.py	212	_RAW_RUN = subprocess.run
+KEEP_mention	提及 stdout/stderr 字面	ming_sim/cli_backend.py	235	"        m = re.search(r""<<<CMRPATH>>>(.*?)<<<ENDPATH>>>"", proc.stdout or """", re.S)"
+KEEP_engine_io	引擎 stdout 正文路径	ming_sim/cli_backend.py	371	        subprocess.run(
+KEEP_engine_io	引擎 stdout 正文路径	ming_sim/cli_backend.py	373	            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5,
+KEEP_engine_io	stderr 读取面（非正文）	ming_sim/cli_backend.py	388	# agy headless auth 是已知 race（见 wiki）：stdout/stderr 出现这些串即瞬断，可重试。
+KEEP_engine_io	stderr 读取面（非正文）	ming_sim/cli_backend.py	394	"    """"""子进程收尾事实（退出码 / stderr 诊断 / stdin 写错），由增量读循环回填。"""""""
+KEEP_engine_io	stderr 读取面（非正文）	ming_sim/cli_backend.py	397	"    stderr: str = """""
+KEEP_mention	提及 stdout/stderr 字面	ming_sim/cli_backend.py	435	"    """"""CLI 子进程增量读单真源：一次子进程 = 一次 attempt，按到达顺序 yield stdout 行。"
+KEEP_engine_io	stderr 读取面（非正文）	ming_sim/cli_backend.py	441	    - stderr 并发抽干：否则 codex 等把 stderr 写满 OS pipe 会反压死 stdout。
+KEEP_mention	提及 stdout/stderr 字面	ming_sim/cli_backend.py	442	    - stdin 另起线程喂：大 prompt 超 pipe 缓冲时不与读 stdout 互锁。
+KEEP_engine_io	引擎 stdout 正文路径	ming_sim/cli_backend.py	454	    proc = subprocess.Popen(
+KEEP_engine_io	引擎 stdout 正文路径	ming_sim/cli_backend.py	457	        stdout=subprocess.PIPE,
+KEEP_engine_io	引擎 stdout 正文路径	ming_sim/cli_backend.py	458	        stderr=subprocess.PIPE,
+KEEP_engine_io	stderr 读取面（非正文）	ming_sim/cli_backend.py	463	    stderr_parts: List[str] = []
+KEEP_failure_diag	空输出失败合同	ming_sim/cli_backend.py	500	            # 报确定性失败；绝不静默，否则空 stdout 被洗成 llm_empty_output 重试
+KEEP_engine_io	stderr 读取面（非正文）	ming_sim/cli_backend.py	506	"    for stream, kind in ((proc.stdout, ""out""), (proc.stderr, ""err"")):"
+KEEP_engine_io	stderr 读取面（非正文）	ming_sim/cli_backend.py	538	                        stderr_parts.append(tail)
+KEEP_mention	提及 stdout/stderr 字面	ming_sim/cli_backend.py	545	            # 任意新字节即活动（票面「CLI stdout 新字节」）；不要求凑成一行。
+KEEP_engine_io	stderr 读取面（非正文）	ming_sim/cli_backend.py	549	                stderr_parts.append(text)
+KEEP_engine_io	stderr 读取面（非正文）	ming_sim/cli_backend.py	568	"        result.stderr = """".join(stderr_parts)"
+KEEP_engine_io	引擎 stdout 正文路径	ming_sim/cli_backend.py	613	def _codex_final_text(obj: object) -> str:
+KEEP_mention	提及 stdout/stderr 字面	ming_sim/cli_backend.py	666	      （沙箱 cwd 非 git）+ `--ephemeral`（并发不撞共享 session）；干净回话在 stdout。
+KEEP_mention	提及 stdout/stderr 字面	ming_sim/cli_backend.py	668	    - cursor / kimi / grok / pi：prompt 走参数（无 stdin 约定），干净答案在 stdout。
+KEEP_mention	提及 stdout/stderr 字面	ming_sim/cli_backend.py	777	    出去。故纯文本 runner（agy/claude/pi）**不逐行外抛 stdout**——那会把
+KEEP_failure_diag	空输出失败合同	ming_sim/cli_backend.py	786	    - 空输出 → llm_empty_output（可重试）
+KEEP_engine_io	stderr 读取面（非正文）	ming_sim/cli_backend.py	789	      stderr 散文抠状态）
+KEEP_failure_diag	空输出失败合同	ming_sim/cli_backend.py	794	    from ming_sim.llm_transport import empty_output_failure, transport_failure_unavailable
+KEEP_engine_io	引擎 stdout 正文路径	ming_sim/cli_backend.py	814	"        final_text = """""
+KEEP_engine_io	引擎 stdout 正文路径	ming_sim/cli_backend.py	835	                maybe_final = _codex_final_text(obj)
+KEEP_engine_io	引擎 stdout 正文路径	ming_sim/cli_backend.py	837	                    final_text = maybe_final
+KEEP_engine_io	stderr 读取面（非正文）	ming_sim/cli_backend.py	842	"        stderr = outcome.stderr or """""
+KEEP_engine_io	引擎 stdout 正文路径	ming_sim/cli_backend.py	843	"        stdout_text = """".join(pieces)"
+KEEP_mention	提及 stdout/stderr 字面	ming_sim/cli_backend.py	845	        # 有无 stdout 字都不得当产出（ADR 0005 / r1 类3：一次不重试）。
+KEEP_engine_io	引擎 stdout 正文路径	ming_sim/cli_backend.py	850	"        if runner == ""agy"" and any(m in (stdout_text + stderr) for m in _AGY_AUTH_MARKERS):"
+KEEP_engine_io	引擎 stdout 正文路径	ming_sim/cli_backend.py	854	"                provider_message=f""agy auth race：{(stdout_text + stderr)[:200]}"","
+KEEP_engine_io	stderr 读取面（非正文）	ming_sim/cli_backend.py	856	        # Codex / CLI：干净正文只在 stdout；stderr 是日志，不得冒充正文
+KEEP_engine_io	引擎 stdout 正文路径	ming_sim/cli_backend.py	857	        # （Python subprocess 分流；Codex non-interactive：progress→stderr，final→stdout）。
+KEEP_engine_io	引擎 stdout 正文路径	ming_sim/cli_backend.py	858	        text = stdout_text if stdout_text.strip() else final_text
+KEEP_drain_or_diag	stderr 诊断/排空	ming_sim/cli_backend.py	861	"            raise RuntimeError(f""{runner} 调用失败（退出码 {returncode}）：{stderr[:200]}"")"
+KEEP_failure_diag	空输出失败合同	ming_sim/cli_backend.py	864	                empty_output_failure(), attempts=1, exhausted=False,
+KEEP_engine_io	引擎 stdout 正文路径	ming_sim/cli_backend.py	869	        elif not pieces and final_text.strip():
+KEEP_engine_io	引擎 stdout 正文路径	ming_sim/cli_backend.py	870	            yield final_text
+KEEP_engine_io	stderr 读取面（非正文）	ming_sim/cli_backend.py	912	"    """"""调 codex exec - 一次；干净最终回话在 stdout（不合并 stderr 日志）。"""""""
+KEEP_mention	提及 stdout/stderr 字面	ming_sim/cli_backend.py	927	"    """"""调 claude -p 一次；干净回话在 stdout，thinking 预算经 env 显式设置。"""""""
+KEEP_mention	提及 stdout/stderr 字面	ming_sim/fiscal_tick.py	341	"    r[""三饷火耗""] = 三饷火耗  # 分量显式入 r（下游直接消费，不解析 stdout）"
+KEEP_failure_diag	空输出失败合同	ming_sim/llm_transport.py	276	    （llm_unavailable_from_error / run_error_event_failure / empty_output_failure 委派或同构）。
+KEEP_failure_diag	空输出失败合同	ming_sim/llm_transport.py	329	"            ""llm_empty_output"","
+KEEP_failure_diag	空输出失败合同	ming_sim/llm_transport.py	393	def empty_output_failure() -> ClassifiedFailure:
+KEEP_failure_diag	空输出失败合同	ming_sim/llm_transport.py	397	"        code=""llm_empty_output"","
+KEEP_failure_diag	空输出失败合同	ming_sim/session.py	1294	                empty_output_failure, run_with_transport,
+KEEP_failure_diag	空输出失败合同	ming_sim/session.py	1303	                        empty_output_failure(), attempts=1, exhausted=False,
+KEEP_failure_diag	空输出失败合同	ming_sim/session.py	1351	            empty_output_failure,
+KEEP_failure_diag	空输出失败合同	ming_sim/session.py	1392	                    empty_output_failure(), attempts=1, exhausted=False,
+KEEP_test	测试提及引擎IO	tests/cli_process_doubles.py	3	生产读法 = `Popen` + 增量读 stdout（新字节刷新活动时刻，不设总墙钟）。
+KEEP_test	测试提及引擎IO	tests/cli_process_doubles.py	4	本替身按脚本吐 stdout/stderr **字节块**（不必带换行）与退出码，可挂受控钩子
+KEEP_test	测试提及引擎IO	tests/cli_process_doubles.py	30	# 脚本项：str/bytes = 一块 stdout（可无换行）；callable = 钩子（返回块则交付，None 跳过）；
+KEEP_test	测试提及引擎IO	tests/cli_process_doubles.py	133	"    """"""`subprocess.Popen` 替身：只实现生产读取契约用到的面。"""""""
+KEEP_test	测试提及引擎IO	tests/cli_process_doubles.py	139	        stdout_script: Sequence[ScriptItem] = (),
+KEEP_test	测试提及引擎IO	tests/cli_process_doubles.py	140	        stderr_script: Sequence[ScriptItem] = (),
+KEEP_test	测试提及引擎IO	tests/cli_process_doubles.py	150	        self.stdout = _ScriptedStream(stdout_script, self.killed)
+KEEP_test	测试提及引擎IO	tests/cli_process_doubles.py	151	        self.stderr = _ScriptedStream(stderr_script, self.killed)
+KEEP_test	测试提及引擎IO	tests/cli_process_doubles.py	158	        if self.stdout.exhausted and self.stderr.exhausted:
+KEEP_test	测试提及引擎IO	tests/cli_process_doubles.py	197	"                stdout_script=spec.get(""stdout"", ()),"
+KEEP_test	测试提及引擎IO	tests/cli_process_doubles.py	198	"                stderr_script=spec.get(""stderr"", ()),"
+KEEP_test	测试提及引擎IO	tests/test_cli_backend.py	252	"    def __init__(self, stdout=""STDOUT_BODY"", stderr="""", returncode=0):"
+KEEP_test	测试提及引擎IO	tests/test_cli_backend.py	253	        self.stdout, self.stderr, self.returncode = stdout, stderr, returncode
+KEEP_test	测试提及引擎IO	tests/test_cli_backend.py	269	            stdout_script=((spec.stdout,) if spec.stdout else ()),
+KEEP_test	测试提及引擎IO	tests/test_cli_backend.py	270	            stderr_script=((spec.stderr,) if spec.stderr else ()),
+KEEP_test	测试提及引擎IO	tests/test_cli_backend.py	281	def test_run_claude_stdout_only(monkeypatch):
+KEEP_test	测试提及引擎IO	tests/test_cli_backend.py	283	"    captured = _capture_run(monkeypatch, _P(stdout=body, stderr=""LOG_NOISE""))"
+KEEP_test	测试提及引擎IO	tests/test_cli_backend.py	295	"    captured = _capture_run(monkeypatch, _P(stdout=""ok""))"
+KEEP_test	测试提及引擎IO	tests/test_cli_backend.py	317	"    captured = _capture_run(monkeypatch, _P(stdout=""ok""))"
+KEEP_test	测试提及引擎IO	tests/test_cli_backend.py	332	"    captured = _capture_run(monkeypatch, _P(stdout=""ok""))"
+KEEP_test	测试提及引擎IO	tests/test_cli_backend.py	341	def test_run_codex_flags_and_stdout(monkeypatch):
+KEEP_negative_gate	Codex banner 字面	tests/test_cli_backend.py	344	"    captured = _capture_run(monkeypatch, _P(stdout=body, stderr=""OpenAI Codex v0\nlogs""))"
+KEEP_test	测试提及引擎IO	tests/test_cli_backend.py	358	"        ""stdout"": ("
+KEEP_test	测试提及引擎IO	tests/test_cli_backend.py	470	def test_codex_final_text_handles_item_completed_shape():
+KEEP_test	测试提及引擎IO	tests/test_cli_backend.py	471	    assert cb._codex_final_text(
+KEEP_test	测试提及引擎IO	tests/test_cli_backend.py	474	    assert cb._codex_final_text(
+KEEP_test	测试提及引擎IO	tests/test_cli_backend.py	477	"    assert cb._codex_final_text({""type"": ""agent_message"", ""message"": ""TOP""}) == ""TOP"""
+KEEP_test	测试提及引擎IO	tests/test_cli_backend.py	491	"    captured = _capture_run(monkeypatch, _P(stdout=""STDOUT_BODY""))"
+KEEP_negative_gate	N7 负向闸：stderr banner 不得充正文	tests/test_cli_backend.py	516	def test_run_codex_stderr_banner_does_not_become_body(monkeypatch):
+KEEP_test	测试提及引擎IO	tests/test_cli_backend.py	517	"    """"""stdout 空时 stderr 日志／banner 不得冒充正文；走既有空输出失败契约。"""""""
+KEEP_negative_gate	Codex banner 字面	tests/test_cli_backend.py	523	"        _P(stdout="""", stderr=""diag\nOpenAI Codex v0.125.0\nlogs"", returncode=0),"
+KEEP_negative_gate	结构化负向闸/空输出失败测试	tests/test_cli_backend.py	527	"    assert ei.value.code == ""llm_empty_output"""
+KEEP_test	测试提及引擎IO	tests/test_cli_backend.py	625	        stdout = (
+KEEP_test	测试提及引擎IO	tests/test_cli_backend.py	629	"        stderr = """""
+KEEP_test	测试提及引擎IO	tests/test_cli_backend.py	640	"        stdout = ""<<<CMRPATH>>>/usr/bin<<<ENDPATH>>>\n"""
+KEEP_test	测试提及引擎IO	tests/test_cli_backend.py	641	"        stderr = """""
+KEEP_test	测试提及引擎IO	tests/test_cli_backend.py	653	"        stdout = ""<<<CMRPATH>>>/a/bin:/b/bin<<<ENDPATH>>>"""
+KEEP_test	测试提及引擎IO	tests/test_cli_backend.py	654	"        stderr = """""
+KEEP_test	测试提及引擎IO	tests/test_cli_backend.py	690	"    captured = _capture_run(monkeypatch, _P(stdout=""STDOUT_BODY""))"
+KEEP_test	测试提及引擎IO	tests/test_cli_backend.py	836	"    """"""agy 子进程替身：script 为逐次调用的 (stdout, returncode)。"""""""
+KEEP_test	测试提及引擎IO	tests/test_cli_backend.py	850	            stdout_script=((text,) if text else ()),
+KEEP_test	测试提及引擎IO	tests/test_cli_backend.py	892	"    def __init__(self, stdout="""", stderr="""", returncode=0):"
+KEEP_test	测试提及引擎IO	tests/test_cli_backend.py	893	        self.stdout, self.stderr, self.returncode = stdout, stderr, returncode
+KEEP_test	测试提及引擎IO	tests/test_cli_backend.py	899	"        (""_run_codex"", lambda: _RcProc(stderr=""error: auth failed"", returncode=1)),"
+KEEP_test	测试提及引擎IO	tests/test_cli_backend.py	900	"        (""_run_claude"", lambda: _RcProc(stderr=""auth required"", returncode=1)),"
+KEEP_test	测试提及引擎IO	tests/test_cli_backend.py	915	"    _capture_run(monkeypatch, _P(stdout="""", stderr="""", returncode=0))"
+KEEP_negative_gate	结构化负向闸/空输出失败测试	tests/test_cli_backend.py	918	"    assert ei.value.code == ""llm_empty_output"""
+KEEP_test	测试提及引擎IO	tests/test_cli_backend.py	1038	"    captured = _capture_run(monkeypatch, _P(stdout=""ok""))"
+KEEP_test	测试提及引擎IO	tests/test_cli_backend.py	1074	def test_run_cursor_flags_and_stdout(monkeypatch):
+KEEP_test	测试提及引擎IO	tests/test_cli_backend.py	1076	"    captured = _capture_run(monkeypatch, _P(stdout=body, stderr=""noise""))"
+KEEP_test	测试提及引擎IO	tests/test_cli_backend.py	1088	def test_run_kimi_prompt_flag_no_yolo_stdout_only(monkeypatch):
+KEEP_test	测试提及引擎IO	tests/test_cli_backend.py	1090	"    captured = _capture_run(monkeypatch, _P(stdout=body, stderr=""kimi version 0.36.1\nTo resume...""))"
+KEEP_test	测试提及引擎IO	tests/test_cli_backend.py	1097	    # stderr noise must not pollute answer
+KEEP_test	测试提及引擎IO	tests/test_cli_backend.py	1103	"    captured = _capture_run(monkeypatch, _P(stdout=body, stderr=""""))"
+KEEP_test	测试提及引擎IO	tests/test_cli_backend.py	1114	def test_run_pi_flags_thinking_and_stdout(monkeypatch):
+KEEP_test	测试提及引擎IO	tests/test_cli_backend.py	1115	"    """"""#1274-qa-y1：pi -p 非交互；stdout 取文；reasoning → --thinking；model 透传。"""""""
+KEEP_test	测试提及引擎IO	tests/test_cli_backend.py	1117	"    captured = _capture_run(monkeypatch, _P(stdout=body, stderr=""pi log noise""))"
+KEEP_test	测试提及引擎IO	tests/test_cli_backend.py	1201	"    _capture_run(monkeypatch, _RcProc(stderr=""auth failed"", returncode=1))"
+KEEP_test	测试提及引擎IO	tests/test_cli_runner_error_typed_1299.py	23	# QA 实锤横幅形态（cli_backend.py:424/590 原文 + stderr 含版本/workdir/model/sandbox）
+KEEP_negative_gate	Codex banner 字面	tests/test_cli_runner_error_typed_1299.py	26	"    ""OpenAI Codex v0.50.0\n"""
+KEEP_test	测试提及引擎IO	tests/test_cli_transport_1465.py	139	"        {""stdout"": (), ""returncode"": 0},"
+KEEP_test	测试提及引擎IO	tests/test_cli_transport_1465.py	140	"        {""stdout"": (), ""returncode"": 0},"
+KEEP_test	测试提及引擎IO	tests/test_cli_transport_1465.py	141	"        {""stdout"": (_OK_REPLY,), ""returncode"": 0},"
+KEEP_test	测试提及引擎IO	tests/test_cli_transport_1465.py	173	"        {""stdout"": (""Authentication required\n"",), ""returncode"": 0},"
+KEEP_test	测试提及引擎IO	tests/test_cli_transport_1465.py	206	"        {""stdout"": (_OK_REPLY,), ""returncode"": 0},"
+KEEP_test	测试提及引擎IO	tests/test_cli_transport_1465.py	221	"        {""stdout"": (), ""stderr"": (""error: unknown model\n"",), ""returncode"": 1},"
+KEEP_test	测试提及引擎IO	tests/test_cli_transport_1465.py	237	"    ""stdout"","
+KEEP_test	测试提及引擎IO	tests/test_cli_transport_1465.py	239	"    ids=[""empty_stdout"", ""nonempty_stdout""],"
+KEEP_test	测试提及引擎IO	tests/test_cli_transport_1465.py	242	    monkeypatch, tmp_path, game, stdout,
+KEEP_negative_gate	结构化负向闸/空输出失败测试	tests/test_cli_transport_1465.py	247	    llm_empty_output，白烧三次子进程还给玩家一个假瞬断。有 stdout 字同样终止。
+KEEP_test	测试提及引擎IO	tests/test_cli_transport_1465.py	251	"        ""stdout"": stdout, ""returncode"": 0,"
+KEEP_test	测试提及引擎IO	tests/test_cli_transport_1465.py	286	"        ""stdout"": tuple(chunks),"
+KEEP_test	测试提及引擎IO	tests/test_cli_transport_1465.py	337	"        {""stdout"": (SilentUntilKilled(on_tick=_advance_while_silent),), ""returncode"": 0},"
+KEEP_test	测试提及引擎IO	tests/test_cli_transport_1465.py	338	"        {""stdout"": no_nl_chunks, ""returncode"": 0},"
+KEEP_test	测试提及引擎IO	tests/test_llm_channel_config.py	432	"        return FakeCliProcess(cmd, stdout_script=(""臣领旨。\n"",), returncode=0,"
+KEEP_test	测试提及引擎IO	tests/test_minister_chat_timeout.py	72	"        {""stdout"": (SilentUntilKilled(),), ""returncode"": 0},"
+KEEP_test	测试提及引擎IO	tests/test_minister_chat_timeout.py	75	    scripted_popen = cb.subprocess.Popen
+KEEP_test	测试提及引擎IO	tests/test_new_game_dependency_mismatch_1721.py	63	    proc = subprocess.run(
+KEEP_test	测试提及引擎IO	tests/test_new_game_dependency_mismatch_1721.py	70	    assert proc.returncode == 0, proc.stderr
+KEEP_test	测试提及引擎IO	tests/test_new_game_dependency_mismatch_1721.py	71	    payload = json.loads(proc.stdout.strip().splitlines()[-1])
+KEEP_test	测试提及引擎IO	tests/test_new_game_dependency_mismatch_1721.py	104	    proc = subprocess.run(
+KEEP_test	测试提及引擎IO	tests/test_new_game_dependency_mismatch_1721.py	111	    assert proc.returncode == 0, proc.stderr
+KEEP_test	测试提及引擎IO	tests/test_new_game_dependency_mismatch_1721.py	112	    payload = json.loads(proc.stdout.strip().splitlines()[-1])
+KEEP_test	测试提及引擎IO	tests/test_player_army_projection_321.py	312	    with contextlib.redirect_stdout(buf):
+KEEP_test	测试提及引擎IO	tests/test_run_agent_text_transport_1465.py	36	def test_run_agent_text_final_text_from_terminal_not_chunk_join(monkeypatch):
+KEEP_test	测试提及引擎IO	tests/test_start_sh_deps_1721.py	83	    return subprocess.run(
+KEEP_test	测试提及引擎IO	tests/test_start_sh_deps_1721.py	99	    assert proc.returncode == 0, proc.stderr
+KEEP_test	测试提及引擎IO	tests/test_start_sh_deps_1721.py	114	    assert proc.returncode == 0, proc.stderr
+KEEP_test	测试提及引擎IO	tests/test_start_sh_deps_1721.py	128	    assert proc.returncode == 0, proc.stderr
+KEEP_test	测试提及引擎IO	tests/test_start_sh_deps_1721.py	154	"    assert proc.stderr.strip() != """""
+KEEP_test	测试提及引擎IO	tests/test_web_chat_serialization_393.py	315	    根因：async api_audience_chat 在事件循环上直调全同步 get_game().chat()（→ subprocess.run），
+KEEP_mention	提及 stdout/stderr 字面	web_app.py	28	# 源码模式 `uvicorn web_app:app` 在 nohup/重定向（>> web_server.log）下 Python stdout 块缓冲，
+KEEP_mention	提及 stdout/stderr 字面	web_app.py	32	    if sys.stdout is not None:
+KEEP_mention	提及 stdout/stderr 字面	web_app.py	33	        sys.stdout.reconfigure(line_buffering=True)  # type: ignore[attr-defined]
+KEEP_engine_io	stderr 读取面（非正文）	web_app.py	34	    if sys.stderr is not None:
+KEEP_engine_io	stderr 读取面（非正文）	web_app.py	35	        sys.stderr.reconfigure(line_buffering=True)  # type: ignore[attr-defined]
+KEEP_failure_diag	空输出失败合同	web_app.py	73	    empty_output_failure,

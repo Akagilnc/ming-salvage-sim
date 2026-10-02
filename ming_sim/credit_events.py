@@ -93,10 +93,13 @@ def _credit_origin(scope: str, scope_id: int, *parts: str) -> str:
 
 
 def _narrative_context(*parts: object) -> str:
-    """承接 extraction 真叙事字段；首个非空即用。禁固定句式模板。"""
+    """承接 extraction 真叙事字段；首个非空即用。禁固定句式模板。
+
+    #1847 N6：判空可读 strip；返回运输用原文，不得赋 strip 结果。
+    """
     for part in parts:
-        text = str(part or "").strip()
-        if text:
+        text = str(part or "")
+        if text.strip():
             return text
     return ""
 

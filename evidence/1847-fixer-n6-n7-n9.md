@@ -1,8 +1,8 @@
-# #1847 修内司报告：N6 / N7 / N9（席内错分复核）
+# #1847 修内司报告：N6 / N7 / N9（证据质量收尾）
 
 - 工作树：`/Users/akagilnc/WorkSpace/Ming_LLM-1847-w5`
 - 分支：`ak-roles/1847-fixer-n6-n7-n9`
-- 本轮：席内复核错分（`useChatActions` trim→运输 = N6）→ 同形重核 KEEP_* → 修净适用成员 → 删违规证明测试 → 补可执行扫描
+- 本轮：证据 TSV 记录换行改 LF；扫描脚本 `csv.writer(..., lineterminator='\n')`；全仓重扫 HEAD；全部 `NEEDS_HUMAN` 人工核归类；适用运输删改 FIX 修净；过期删改实例标 `FIX_DONE`
 - **不宣称**全局功能闭环或已 merge
 
 ## 官方文档（动手前）
@@ -17,11 +17,11 @@
 
 1. **N6**：适用自由文本运输接缝上的 strip/lstrip/rstrip/trim、切片截断、replace/regex/split/join/filter/非空后 fallback 等删改。范围含 LLM 产出、玩家输入、角色材料、数据库运输、UI 展示。不含机械身份、枚举、形式语言、**仅判空**（strip 结果只用于条件，不可赋给后续运输值）。
 2. **N7**：全部引擎 stdout/stderr 读取及空输出成功路线；禁止 stderr/banner 充正文或把空输出洗成成功。
-3. **N9**：本票删除生产入口后的私有闭包与专属测试（调用图扫描）。保留生产共享与现役 0055 负向闸。
+3. **N9**：本票删除生产入口后的私有闭包与专属测试（**调用图**扫描）。保留生产共享与现役 0055 负向闸。**最终类别不以符号名称启发为界**。
 
 跨票不施工：**N8**（#1873）、**X1/X2**（#1826/#1873）。
 
-## 可重跑完整枚举命令（可执行，无伪代码）
+## 可重跑完整枚举命令（可执行；写出一律 LF）
 
 ```bash
 ROOT=/Users/akagilnc/WorkSpace/Ming_LLM-1847-w5
@@ -29,7 +29,7 @@ cd "$ROOT"
 mkdir -p /tmp/ming1847-fixer-scan
 PY=/Users/akagilnc/WorkSpace/Ming_LLM/.venv/bin/python   # 或本机 python3
 
-# ---------- 1) 宽 rg 候选（不限字段名）----------
+# ---------- 1) 宽 rg 候选（不限字段名；全仓 py/ts/tsx，无名称白名单）----------
 rg -n --no-heading \
   '(\.strip\(|\.lstrip\(|\.rstrip\(|\.trim\(|\[:\s*[0-9]+\]|\.replace\(|re\.(sub|split|findall|search|match|fullmatch)|\.split\(|\.join\(|\.filter\()' \
   -g'*.py' -g'*.ts' -g'*.tsx' -g'*.js' \
@@ -38,6 +38,7 @@ rg -n --no-heading \
 
 # ---------- 2) N6 AST+TS 全量候选 → evidence/1847-n6-candidates-raw.tsv ----------
 # 完整表分类不以自动 KEEP 为判断证据：新候选标 NEEDS_HUMAN；已有行保留人工 disposition。
+# 写出：csv.DictWriter(..., lineterminator='\n')——只改记录换行，不改 snip 自由文本。
 "$PY" <<'PY'
 from __future__ import annotations
 import ast, csv, pathlib, re
@@ -85,9 +86,12 @@ class Coll(ast.NodeVisitor):
 raw = []
 paths = list(ROOT.glob("ming_sim/**/*.py")) + [ROOT / "web_app.py", ROOT / "launcher.py"]
 paths += list((ROOT / "web" / "src").rglob("*.ts")) + list((ROOT / "web" / "src").rglob("*.tsx"))
+paths += list(ROOT.glob("*.py"))
 for path in sorted(set(paths)):
     if not path.is_file() or (set(path.parts) & SKIP):
         continue
+    if "tests" in path.parts or ".test." in path.name:
+        continue  # N6 生产成员表不含测试文件
     rel = str(path.relative_to(ROOT))
     if path.suffix == ".py":
         try:
@@ -116,14 +120,16 @@ for r in raw:
         continue
     seen.add(k); uniq.append(r)
 with OUT.open("w", encoding="utf-8", newline="") as f:
-    w = csv.DictWriter(f, fieldnames=["lang", "file", "line", "kind", "detail", "ctx", "snip"], delimiter="\t")
+    w = csv.DictWriter(
+        f, fieldnames=["lang", "file", "line", "kind", "detail", "ctx", "snip"],
+        delimiter="\t", lineterminator="\n",
+    )
     w.writeheader(); w.writerows(uniq)
 print("raw_rows", len(uniq), "->", OUT)
 PY
 
-# ---------- 2b) 运输赋值形审计（判空定义：strip 结果不可赋给运输）----------
+# ---------- 2b) 运输赋值形审计（判空定义：strip 结果不可赋给运输；无名称白名单）----------
 "$PY" <<'PY' | tee /tmp/ming1847-fixer-scan/n6-assign-transport.txt
-# 输出「Name = *.strip()/trim() 且后续非纯 if-判空仍 Load」的生产位点，供人工核。
 import ast, pathlib, re
 ROOT = pathlib.Path(".").resolve()
 STRIP = {"strip", "lstrip", "rstrip"}
@@ -152,20 +158,17 @@ class V(ast.NodeVisitor):
                 if uses:
                     self.findings.append((stmt.lineno, name, self.lines[stmt.lineno-1].strip()[:100], uses[:4]))
 
-print("=== PY strip-assign transport suspects ===")
+print("=== PY strip-assign transport suspects (no name whitelist) ===")
 for path in sorted(ROOT.glob("ming_sim/**/*.py")) + [ROOT/"web_app.py"]:
     src = path.read_text(encoding="utf-8"); lines = src.splitlines()
     try: v = V(lines); v.visit(ast.parse(src))
     except SyntaxError: continue
     rel = str(path.relative_to(ROOT))
     for ln, name, snip, uses in v.findings:
-        # 仅打印自由文本形名字，避免身份字段淹没
-        if not re.search(r"(text|message|answer|report|draft|prose|condition|purpose|question|cheat|directive|spoken|status_text|reason)", name, re.I):
-            continue
         print(f"{rel}:{ln} {name} | {snip}")
         for uln, ul in uses: print(f"  use@{uln}: {ul}")
 
-print("=== TS trim-assign transport suspects ===")
+print("=== TS trim-assign transport suspects (no name whitelist) ===")
 for path in list((ROOT/"web/src").rglob("*.ts")) + list((ROOT/"web/src").rglob("*.tsx")):
     if ".test." in path.name: continue
     rel = str(path.relative_to(ROOT)); lines = path.read_text(encoding="utf-8").splitlines()
@@ -190,123 +193,127 @@ rg -n 'stderr|stdout|communicate|subprocess\.(run|Popen)|OpenAI Codex v|llm_empt
   | tee /tmp/ming1847-fixer-scan/n7-rg.txt | wc -l
 rg -n 'OpenAI Codex v' ming_sim || true   # 期望：无
 
-# ---------- 4) N9：退役闭包调用图（可执行，非三符号伪定义）----------
+# ---------- 4) N9：退役闭包调用图（最终类别=调用图证据，非符号名启发）----------
 "$PY" <<'PY'
 import ast, pathlib, re, csv
 ROOT = pathlib.Path(".").resolve()
-seeds = [
+# 固定种子 = 本票已知退役生产入口；另列现役已知入口作 KEEP 对照。
+# 禁止用 rescript/capability 等名称正则作为最终类别界限。
+SEEDS = [
     "prepare_rescript_prewrite", "bind_decisions_to_candidate_events",
     "parse_rescript_capability_pair", "decision_has_rescript_capability",
     "RESCRIPT_CAPABILITY_DECISIONS", "derive_draft_capability",
     "_DRAFT_CAPABILITY_KEYS", "_DRAFT_CAPABILITY_JSON_KEYS", "PARTICIPANT_ROSTER_KEY",
 ]
-KW = re.compile(r"(rescript|pihong|capability|prewrite|candidate_event|draft_capability)", re.I)
-defs = {}
-for path in list(ROOT.glob("ming_sim/**/*.py")) + [ROOT / "web_app.py"]:
+LIVE = ["run_rescript_text", "run_player_month_chain", "resolve_directives"]
+names = SEEDS + LIVE
+defs = {n: [] for n in names}
+call_index = {n: [] for n in names}
+test_index = {n: [] for n in names}
+files = list(ROOT.glob("ming_sim/**/*.py")) + [ROOT/"web_app.py"] + list(ROOT.glob("tests/**/*.py"))
+for path in files:
     src = path.read_text(encoding="utf-8")
     try: tree = ast.parse(src)
     except SyntaxError: continue
-    rel = str(path.relative_to(ROOT))
+    rel = str(path.relative_to(ROOT)); is_test = rel.startswith("tests/")
     for n in ast.walk(tree):
-        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            if KW.search(n.name) or n.name in seeds:
-                defs.setdefault(n.name, []).append(f"{rel}:{n.lineno}")
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and n.name in names:
+            defs[n.name].append(f"{rel}:{n.lineno}")
         if isinstance(n, ast.Assign):
             for t in n.targets:
-                if isinstance(t, ast.Name) and (KW.search(t.id) or t.id in seeds):
-                    defs.setdefault(t.id, []).append(f"{rel}:{n.lineno}")
-names = sorted(set(seeds) | set(defs))
-call_index = {n: [] for n in names}
-test_index = {n: [] for n in names}
-for path in list(ROOT.glob("ming_sim/**/*.py")) + [ROOT/"web_app.py"] + list(ROOT.glob("tests/**/*.py")):
-    rel = str(path.relative_to(ROOT)); text = path.read_text(encoding="utf-8"); is_test = rel.startswith("tests/")
+                if isinstance(t, ast.Name) and t.id in names:
+                    defs[t.id].append(f"{rel}:{n.lineno}")
     for name in names:
-        for m in re.finditer(rf"\b{re.escape(name)}\b", text):
-            ln = text.count("\n", 0, m.start()) + 1
-            line = text.splitlines()[ln - 1]
+        for m in re.finditer(rf"\b{re.escape(name)}\b", src):
+            ln = src.count("\n", 0, m.start()) + 1
+            line = src.splitlines()[ln - 1]
             if re.search(rf"^\s*(def|async def|class)\s+{re.escape(name)}\b", line): continue
             if re.search(rf"^\s*{re.escape(name)}\s*=", line): continue
             (test_index if is_test else call_index)[name].append(f"{rel}:{ln}")
 out = ROOT / "evidence" / "1847-n9-members-classified.tsv"
 with out.open("w", encoding="utf-8", newline="") as f:
-    w = csv.writer(f, delimiter="\t")
+    w = csv.writer(f, delimiter="\t", lineterminator="\n")
     w.writerow(["disposition", "reason", "symbol", "defs", "prod_callers", "test_refs"])
     for name in names:
         d, c, t = defs.get(name, []), call_index[name], test_index[name]
         if not d and not c:
-            disp, reason = "GONE", "定义与引用均已删除"
+            disp, reason = "GONE", "定义与生产引用均已删除（调用图）"
         else:
-            disp, reason = "KEEP_production", "仍有生产定义或调用"
+            disp, reason = "KEEP_production", "仍有生产定义或调用（调用图；非名称启发）"
         w.writerow([disp, reason, name, ";".join(d) or "NONE", ";".join(c[:12]) or "NONE", ";".join(t[:12]) or "NONE"])
         print(f"{disp:16} {name}")
 print("->", out)
 PY
 ```
 
-### 冻结文件
+### 冻结文件（本轮实测）
 
 | 文件 | 行数（含表头） | 内容 |
 |---|---:|---|
-| `evidence/1847-n6-candidates-raw.tsv` | 2204 | 全仓 AST/TS 原始候选（本轮可执行扫描重写） |
-| `evidence/1847-n6-members-classified.tsv` | 2217 | 生产侧分类；**人工 disposition**；新候选 `NEEDS_HUMAN`（不以自动 KEEP 作判断） |
-| `evidence/1847-n7-members-classified.tsv` | 203 | 引擎/测试 stdout·stderr 成员表（可执行 rg 复扫，无 banner） |
-| `evidence/1847-n9-members-classified.tsv` | 33 | 调用图种子+KW 符号完整表（可执行脚本重写） |
-| `evidence/1847-fix-done.tsv` | 18 | 已修短清单 |
+| `evidence/1847-n6-candidates-raw.tsv` | 2149 | 全仓 AST/TS 原始候选（LF；生产侧，不含 `*.test.*`） |
+| `evidence/1847-n6-members-classified.tsv` | 2152 | 生产侧分类；**人工 disposition**；`NEEDS_HUMAN=0` |
+| `evidence/1847-n7-members-classified.tsv` | 166 | 引擎/测试 stdout·stderr 成员表（LF；生产无 Codex banner） |
+| `evidence/1847-n9-members-classified.tsv` | 13 | 调用图种子+现役入口（LF；**非名称启发定界**） |
+| `evidence/1847-fix-done.tsv` | 21 | 已修短清单（含本轮 3 处） |
 
-**完整成员表以 TSV 为准。** `NEEDS_HUMAN` = 扫描新增、尚未人工定性；**不得**把自动 KEEP 当证据。本轮人工重核重点 = 全部 `KEEP_empty_check` / `KEEP_ui_*` / `KEEP_match_or_normalize` / `KEEP_identity_or_formal` 中「strip/trim 赋给运输值」同形。
+**完整成员表以 TSV 为准。** 本轮重扫后全部原 `NEEDS_HUMAN` 已逐条人工核；**不得**用「未完成 FIX=0」掩盖未核项——当前实测：`NEEDS_HUMAN=0`，未完成 `FIX=` 前缀=0，`FIX_DONE`（成员表）=8。
 
 ## N6 本轮处置
 
-### 错分样本（席内）→ 已修
+### 适用运输删改候选（实测列出）→ 已修净
 
-| 位置 | 原错分 | 处置 |
+| 位置 | 原状 | 处置 |
 |---|---|---|
-| `web/src/useChatActions.ts` `sendChat` | `KEEP_ui_empty_or_layout` | **FIX**：`if (!text.trim())` 判空；`message = text` 原文 → `runAudienceTurn` |
-| `web_app.py` `chat_stream` | `KEEP_match_or_normalize` | **FIX**：`text = str(message or "")`；strip 仅判空 |
-| `web/src/useEdictActions.ts` `saveDirective` | `KEEP_ui_empty_or_layout` | **FIX**：trim 仅判空；PATCH 用原文 |
-| `web_app.py` `api_update_directive` | 空检查旁仍 `text.strip()` 入 capture/update | **FIX**：capture/update 用原文 |
-| `web/src/components/cheatConsole.tsx` | `KEEP_ui_empty_or_layout` | **FIX**：`onCommit(draft)` 原文 |
-| `web/src/useSettlementFlow.ts` cheat | `KEEP_ui_empty_or_layout` | **FIX**：`cheat` body 原文；`trim` 仅判空清空 |
-| `ming_sim/cli/terminal.py` 中断提示 | （展示层剥空白） | **FIX**：question 原文展示 |
-| `ming_sim/materials.py` `status_text` | `KEEP_empty_check`（实为赋值运输） | **FIX**：strip 仅判空/比 `active`；档料行用原文 |
+| `ming_sim/month_chain.py` `run_world_segment_text` | `message = cheat.strip() + …` | **FIX**：判空可读 strip；拼入世界段用原文 |
+| `ming_sim/month_chain.py` `run_player_month_chain` | `chain["cheat_directive"]=cheat.strip()` | **FIX**：持久化原文；strip 仅判空 |
+| `ming_sim/credit_events.py` `_narrative_context` | `text=….strip(); return text` | **FIX**：strip 仅判空；`return` 原文 |
 
-### 人工核后 KEEP（非 FIX）
+### 过期删改实例（表内不得再 KEEP）
+
+| 旧表位 | 现况 | 处置 |
+|---|---|---|
+| `web_app.py` 旧 L5527/5538 `text.strip()` 入 capture/update | HEAD 现 L5529/L5540 用原文 `text` | **FIX_DONE**（引用 `1847-fix-done.tsv`） |
+| 既有 UI/web/CLI/materials 修净行 | 见 fix-done | **FIX_DONE** |
+
+### 人工核后 KEEP（重点复核，非字段名启发）
 
 | 位置 | 结论 |
 |---|---|
-| `action_clusters.py` `s[:spec.max_len]` | **KEEP_identity_or_formal**：max_len 字段全集 = name/office/region_id/station*/target_*/responsible_bodies（机械），非自由叙事散文 |
+| `action_clusters.py` `s[:spec.max_len]` | **KEEP_identity_or_formal**：catalog 实测 max_len 字段 = `target_id` / `target_candidate` / `name` / `station*` / `office` / `region_id` / `responsible_bodies`（机械身份/机关串）；**不是**自由叙事散文。不凭模块名判形式语言。 |
 | `declaration_dispatch` `purpose.strip` | **KEEP_identity_or_formal**：ECONOMY_PURPOSES 枚举链 |
-| `cli_backend._grounding_source_text` | **KEEP_match_or_normalize**：接地匹配源，非召对原文账本运输 |
-| UI 条件判空（history/report/gazette/situation/chatModal button） | **KEEP_empty_check**：trim 只在条件；展示/运输用原值 |
+| `cli_backend._grounding_source_text` | **KEEP_match_or_normalize**：接地匹配输入面（ADR 0142）；玩家召对原文运输在 scene/chat 路径另线保留 |
+| `audience_night.recognize_*` strip | **KEEP_command**：封闭口令集匹配 |
+| UI 条件判空（history/report/gazette/situation/chatModal） | **KEEP_empty_check**：trim 只在条件；展示/运输用原值 |
+| `web_app` L2773 / L5522 `if not text.strip()` | **KEEP_empty_check**：仅判空（运输已原文） |
 | `edictModal` source/actor trim | **KEEP_identity_or_formal**：结构化标签 |
 | `settleStream` error trim | **KEEP_diag** |
 | `format.splitReportItems` | **KEEP_dead_or_unused**：无生产调用方 |
 | 菜单 baseUrl/model trim | **KEEP_ui_config_or_empty** / 身份配置 |
+| 诊断 `raw[:N]` / `tlog(title[:N])` / 列表限额切片 | **KEEP_diag** / **KEEP_structural**（本轮原 NEEDS_HUMAN 已核） |
 
-### 复扫
+### 复扫计数（HEAD 实测）
 
-- `disposition` 以 `FIX`（未完成）开头 = **0**
-- `FIX_DONE` 见 `evidence/1847-fix-done.tsv` + classified 表
+- `NEEDS_HUMAN` = **0**（逐条人工核后）
+- 未完成 `disposition=FIX` = **0**
+- `FIX_DONE`（成员表）= **8**；`1847-fix-done.tsv` = **17 FIX_DONE + 3 FIX_DONE_PRIOR**
+- 证据 TSV：`file` 报无 CRLF（本轮改 LF）
 
 ## N7 / N9
 
-- N7：生产无 `OpenAI Codex v` banner；正文路径仍 stdout/`final_text`；`test_run_codex_stderr_banner_does_not_become_body` 现役。上轮非法成功测试改结构化负向闸 **保留**。
-- N9：种子+KW 调用图脚本可重跑；`derive_draft_capability` 等仍 GONE；现役 `run_rescript_text` / desk 等 KEEP_production。未补 N8。
+- N7：生产 `ming_sim` 无 `OpenAI Codex v` banner；正文路径仍 stdout/`final_text`；负向闸测试保留。成员表 165 行（LF）。
+- N9：固定退役种子 9 个全部 **GONE**（调用图 defs=0 且 prod_callers=0）；现役 `run_rescript_text` / `run_player_month_chain` / `resolve_directives` **KEEP_production**。最终类别仅依调用图，**未**用符号名 KW 作界限。未补 N8。
 
-## 测试改动（最小必要成本）
+## 测试改动
 
 | 项 | 处置 |
 |---|---|
-| `tests/test_scene_llm_1836.py` 上轮新增三则（58 行） | **已删**（`preserves_player_message_whitespace` / `preserves_answer_whitespace` / `preserves_question_whitespace`）；含自由文本 assert 锁字，违反「不得造修复证明测试」 |
-| 文件行数 | 299 → **241**（与加入前一致） |
-| N7 结构化负向闸 | **保留**（`test_run_codex_stderr_banner_does_not_become_body` 等） |
-| 本轮新增测试 | **0** |
-
-证明：临时变异真实入口可观察输入结构 + 既有聚焦测试（见下）。
+| 本轮新增证明测试 | **0** |
+| 上轮已删三则自由文本锁字测试 | 保持删除 |
+| N7 结构化负向闸 | **保留** |
 
 ## 聚焦测试
 
-前缀：七个 `MING_SIM_*_BIN=/usr/bin/false` + `MING_SIM_TRACE_PATH` / `--basetemp` → `/tmp/ming1847-fixer.*`  
+前缀：七个 `MING_SIM_*_BIN=/usr/bin/false` + `MING_SIM_TRACE_PATH` / `--basetemp` → `/tmp/ming1847-fixer.*`
 解释器：`/Users/akagilnc/WorkSpace/Ming_LLM/.venv/bin/python`
 
 ```bash
@@ -333,27 +340,20 @@ mkdir -p /tmp/ming1847-fixer-basetemp /tmp/ming1847-fixer-trace
   -q --basetemp=/tmp/ming1847-fixer-basetemp
 ```
 
-结果：**208 passed in 14.63s**（`real 15.70`；相对上轮 211 − 已删三则 = 208）。
+结果：**208 passed in 13.71s**。
 
-`web`：`npx tsc -p . --noEmit` → exit 0（`real 2.69`）。
+`web`：`npx tsc -p . --noEmit` → exit 0。
 
-未跑全量；未做真实模型；未 stash/amend/push/PR/配置改动。
+`git diff --check`（工作树）：无报错。提交后对 `6d042ddd9..HEAD` 复检应无证据 TSV CRLF trailing whitespace。
 
-## 变异证据（临时，不入仓）
-
-| 类 | 操作 | 结果 |
-|---|---|---|
-| N6 | 临时 `session.scene_chat`：`message_text=….strip()`；`/tmp` 外真实入口探针观测 FakeAgent 入参 | **红** `assert ['边饷如何？'] == ['  边饷如何？  \n']` 1 failed / 0.96s → 恢复后 **绿** 1 passed / 0.66s（探针已删，未入仓） |
-| N6 | 临时 `web_app.chat_stream`：`text=message.strip()` | 源码层可观察运输绑定剥空白 → 已恢复 |
-| N7 | 既有负向闸 | `test_run_codex_stderr_banner_does_not_become_body` 1 passed |
-| N9 | `from ming_sim.decree_vocabulary import derive_draft_capability` | ImportError |
+未跑全量；未做真实模型；未 stash/amend/push/PR/配置改动；未补 N8。
 
 ## 质量合法性自查（自查二连 done）
 
-- 同类根因：按「判空≠运输赋值」重核 KEEP_empty/ui/match/identity；UI+web_app 同形修净；max_len/purpose/status 逐字段人工定性
+- 同类根因：无名称白名单运输赋值审计；`KEEP_match_or_normalize` / `KEEP_identity_or_formal`（含 max_len）按字段语义核，不凭模块/字段名；证据 CRLF→LF；脚本 `lineterminator='\n'`
 - 引入 bug：未恢复六动作、未补 N8/X1/X2、未造证明测试、未全量
-- 删简优先：只删违规三则测试；无新机制
-- 自建物仅 `evidence/` 与 `/tmp/ming1847-fixer.*`；扫描脚本嵌本报告，无持久 runtime 模块
+- 删简优先：只修适用运输 strip；无新机制
+- 自建物仅 `evidence/` 与 `/tmp/ming1847-fixer.*`
 
 ## commitSha / 剩余跨票
 

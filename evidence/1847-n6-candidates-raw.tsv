@@ -626,29 +626,29 @@ py	ming_sim/credit_events.py	67	split_call	split	scapegoat_actor_kind_from_origi
 py	ming_sim/credit_events.py	78	strip_call	strip	_parse_dossier_ref	"    m = _DOSSIER_REF_RE.match(str(ref or """").strip())"
 py	ming_sim/credit_events.py	83	strip_call	strip	_parse_issue_ref	"    m = _ISSUE_REF_RE.match(str(ref or """").strip())"
 py	ming_sim/credit_events.py	89	join_call	join	_credit_origin	"    tail = "":"".join(str(p) for p in parts if str(p))"
-py	ming_sim/credit_events.py	98	strip_call	strip	_narrative_context	"        text = str(part or """").strip()"
-py	ming_sim/credit_events.py	113	strip_call	strip	_existing_edge_id	"    base = str(origin or """").strip()"
-py	ming_sim/credit_events.py	116	split_call	split	_existing_edge_id	"    bare = base.split(""|"", 1)[0]"
-py	ming_sim/credit_events.py	139	strip_call	strip	write_credit_event	"    person = str(person or """").strip()"
-py	ming_sim/credit_events.py	140	strip_call	strip	write_credit_event	"    kind = str(event_kind or """").strip()"
-py	ming_sim/credit_events.py	142	strip_call	strip	write_credit_event	"    origin = str(origin or """").strip()"
-py	ming_sim/credit_events.py	185	strip_call	strip	_sponsor_names	"        name = str(p.get(""character_id"") or """").strip()"
-py	ming_sim/credit_events.py	242	strip_call	strip	record_fulfillment_credit	"    if str(dossier.get(""execution_outcome"") or """").strip() != ""fulfilled"":"
-py	ming_sim/credit_events.py	290	strip_call	strip	_pawn_car_pairs	"        tier = str(entry.get(""tier"") or """").strip()"
-py	ming_sim/credit_events.py	293	strip_call	strip	_pawn_car_pairs	"        pawn = str(entry.get(""character_id"") or """").strip()"
-py	ming_sim/credit_events.py	294	strip_call	strip	_pawn_car_pairs	"        car = str(entry.get(""delegator_id"") or """").strip()"
-py	ming_sim/credit_events.py	306	strip_call	strip	_is_exposed_transformed	"    return str(dossier.get(""execution_outcome"") or """").strip() == ""transformed"""
-py	ming_sim/credit_events.py	341	strip_call	strip	_is_punitive_change	"    action = str(item.get(""动作"") or item.get(""action"") or """").strip()"
-py	ming_sim/credit_events.py	346	strip_call	strip	_is_punitive_change	"    status = str(item.get(""status"") or """").strip()"
-py	ming_sim/credit_events.py	354	strip_call	strip	_is_cover_change	"    action = str(item.get(""动作"") or item.get(""action"") or """").strip()"
-py	ming_sim/credit_events.py	358	strip_call	strip	_is_cover_change	"        status = str(item.get(""status"") or """").strip()"
-py	ming_sim/credit_events.py	372	strip_call	strip	_group_person_sets	"        name = str(it.get(""name"") or it.get(""character_id"") or """").strip()"
-py	ming_sim/credit_events.py	481	strip_call	strip	resolve_disposition_credit_from_extraction	"            and str(p.get(""character_id"") or """").strip()"
-py	ming_sim/credit_events.py	486	strip_call	strip	resolve_disposition_credit_from_extraction	"            if str(p.get(""character_id"") or """").strip()"
-py	ming_sim/credit_events.py	543	strip_call	strip	_issue_refs_strict	"    tid = str(item.get(""target_id"") or """").strip()"
-py	ming_sim/credit_events.py	546	split_call	split	_issue_refs_strict	"            out.add(int(tid.split("":"", 1)[1]))"
-py	ming_sim/credit_events.py	609	strip_call	strip	_host_person_for_commitment	"    return str(host.get(""name"") or """").strip()"
-py	ming_sim/credit_events.py	739	strip_call	strip	resolve_fulfillment_credit_from_extraction	"        if str(it.get(""outcome"") or """").strip() != ""fulfilled"":"
+py	ming_sim/credit_events.py	102	strip_call	strip	_narrative_context	        if text.strip():
+py	ming_sim/credit_events.py	116	strip_call	strip	_existing_edge_id	"    base = str(origin or """").strip()"
+py	ming_sim/credit_events.py	119	split_call	split	_existing_edge_id	"    bare = base.split(""|"", 1)[0]"
+py	ming_sim/credit_events.py	142	strip_call	strip	write_credit_event	"    person = str(person or """").strip()"
+py	ming_sim/credit_events.py	143	strip_call	strip	write_credit_event	"    kind = str(event_kind or """").strip()"
+py	ming_sim/credit_events.py	145	strip_call	strip	write_credit_event	"    origin = str(origin or """").strip()"
+py	ming_sim/credit_events.py	188	strip_call	strip	_sponsor_names	"        name = str(p.get(""character_id"") or """").strip()"
+py	ming_sim/credit_events.py	245	strip_call	strip	record_fulfillment_credit	"    if str(dossier.get(""execution_outcome"") or """").strip() != ""fulfilled"":"
+py	ming_sim/credit_events.py	293	strip_call	strip	_pawn_car_pairs	"        tier = str(entry.get(""tier"") or """").strip()"
+py	ming_sim/credit_events.py	296	strip_call	strip	_pawn_car_pairs	"        pawn = str(entry.get(""character_id"") or """").strip()"
+py	ming_sim/credit_events.py	297	strip_call	strip	_pawn_car_pairs	"        car = str(entry.get(""delegator_id"") or """").strip()"
+py	ming_sim/credit_events.py	309	strip_call	strip	_is_exposed_transformed	"    return str(dossier.get(""execution_outcome"") or """").strip() == ""transformed"""
+py	ming_sim/credit_events.py	344	strip_call	strip	_is_punitive_change	"    action = str(item.get(""动作"") or item.get(""action"") or """").strip()"
+py	ming_sim/credit_events.py	349	strip_call	strip	_is_punitive_change	"    status = str(item.get(""status"") or """").strip()"
+py	ming_sim/credit_events.py	357	strip_call	strip	_is_cover_change	"    action = str(item.get(""动作"") or item.get(""action"") or """").strip()"
+py	ming_sim/credit_events.py	361	strip_call	strip	_is_cover_change	"        status = str(item.get(""status"") or """").strip()"
+py	ming_sim/credit_events.py	375	strip_call	strip	_group_person_sets	"        name = str(it.get(""name"") or it.get(""character_id"") or """").strip()"
+py	ming_sim/credit_events.py	484	strip_call	strip	resolve_disposition_credit_from_extraction	"            and str(p.get(""character_id"") or """").strip()"
+py	ming_sim/credit_events.py	489	strip_call	strip	resolve_disposition_credit_from_extraction	"            if str(p.get(""character_id"") or """").strip()"
+py	ming_sim/credit_events.py	546	strip_call	strip	_issue_refs_strict	"    tid = str(item.get(""target_id"") or """").strip()"
+py	ming_sim/credit_events.py	549	split_call	split	_issue_refs_strict	"            out.add(int(tid.split("":"", 1)[1]))"
+py	ming_sim/credit_events.py	612	strip_call	strip	_host_person_for_commitment	"    return str(host.get(""name"") or """").strip()"
+py	ming_sim/credit_events.py	742	strip_call	strip	resolve_fulfillment_credit_from_extraction	"        if str(it.get(""outcome"") or """").strip() != ""fulfilled"":"
 py	ming_sim/db.py	159	strip_call	strip	fold_loyalty_alias_delta	"        if ARMY_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip()) != ""loyalty"":"
 py	ming_sim/db.py	201	strip_call	strip	_seed_guilt_storage_value	"        severity = str(value.get(""severity"") or ""无"").strip()"
 py	ming_sim/db.py	237	strip_call	strip	_snapshot_secret_order_people	        name = str(raw_name).strip()
@@ -1725,31 +1725,29 @@ py	ming_sim/models.py	170	strip_call	strip	_new_armies_effect_has_work	        m
 py	ming_sim/models.py	182	strip_call	strip	_person_effect_has_work	"        name = str(item.get(""name"") or item.get(""人物"") or """").strip()"
 py	ming_sim/models.py	183	strip_call	strip	_person_effect_has_work	"        action = str(item.get(""动作"") or item.get(""action"") or """").strip()"
 py	ming_sim/models.py	197	strip_call	strip	_person_effect_has_work	            if isinstance(style, str) and style.strip():
-py	ming_sim/month_chain.py	57	strip_call	strip	run_world_segment_text	"    if str(cheat_directive or """").strip():"
-py	ming_sim/month_chain.py	58	strip_call	strip	run_world_segment_text	"        message = str(cheat_directive).strip() + ""\n"" + message"
-py	ming_sim/month_chain.py	134	split_call	split	_decree_ref_is_secret	"    raw = str(decree_ref)[len(prefix):].split("":"", 1)[0]"
-py	ming_sim/month_chain.py	184	strip_call	strip	_month_fact_materials	            if isinstance(forecast, str) and forecast.strip():
-py	ming_sim/month_chain.py	349	strip_call	strip	include_event	    if not isinstance(title, str) or not title.strip():
-py	ming_sim/month_chain.py	351	strip_call	strip	include_event	    if not isinstance(report, str) or not report.strip():
-py	ming_sim/month_chain.py	406	strip_call	strip	mark_continued	    if prefix.strip():
-py	ming_sim/month_chain.py	464	strip_call	strip	consume	    if not prefix.strip():
-py	ming_sim/month_chain.py	542	strip_call	strip	abort_from	"        if str(cheat_directive or """").strip() and not chain.get(""cheat_directive""):"
-py	ming_sim/month_chain.py	543	strip_call	strip	abort_from	"            chain[""cheat_directive""] = str(cheat_directive).strip()"
-py	ming_sim/month_chain.py	619	strip_call	strip	persist_declaration_outcome	"    if archive is None or not str(archive.get(""report"") or """").strip():"
-py	ming_sim/month_chain.py	635	strip_call	strip	_write_gazette	"        if archive is None or not str(archive.get(""report"") or """").strip():"
-py	ming_sim/month_chain.py	1033	strip_call	strip	adopt_committed	    if prefix.strip():
-py	ming_sim/month_chain.py	1097	strip_call	strip	_identity_materials	"    who = str(name or """").strip()"
-py	ming_sim/month_chain.py	1203	strip_call	strip	_feed_identity_names	"            who = str((order.get(side) or {}).get(""name"") or """").strip()"
-py	ming_sim/month_chain.py	1535	strip_call	strip	_dossier_rejection_is_this_turn	"    if str(row[""rescript_action""] or """").strip():"
-py	ming_sim/month_chain.py	1615	strip_call	strip	world_question_event_bindings	"        if str(value or """").strip()"
-py	ming_sim/month_chain.py	1639	strip_call	strip	_pin_world_question_event_bindings	"        event_id = str(ev.id or """").strip()"
-py	ming_sim/month_chain.py	1646	strip_call	strip	_pin_world_question_event_bindings	"        echoed = str(question.get(""event_id"") or """").strip()"
-py	ming_sim/month_chain.py	1647	strip_call	strip	_pin_world_question_event_bindings	"        origin_ref = str(question.get(""origin_ref"") or """").strip()"
-py	ming_sim/month_chain.py	1663	strip_call	strip	_question_as_decision	        if not label.strip():
-py	ming_sim/month_chain.py	1807	split_call	split	_apply_decided_triad	"    raw_id = event_id.split("":"", 1)[1] if "":"" in event_id else """""
-py	ming_sim/month_chain.py	1814	strip_call	strip	_apply_decided_triad	    decision = str(
-py	ming_sim/month_chain.py	1858	split_call	split	_dossier_for_decree_ref	"        raw = decree_ref.split("":"", 1)[1]"
-py	ming_sim/month_chain.py	1956	slice_trunc_expr	[:expr]	_split_at_question	    return text[:first_start], questions
+py	ming_sim/month_chain.py	58	strip_call	strip	run_world_segment_text	"    if str(cheat_directive or """").strip():"
+py	ming_sim/month_chain.py	135	split_call	split	_decree_ref_is_secret	"    raw = str(decree_ref)[len(prefix):].split("":"", 1)[0]"
+py	ming_sim/month_chain.py	185	strip_call	strip	_month_fact_materials	            if isinstance(forecast, str) and forecast.strip():
+py	ming_sim/month_chain.py	350	strip_call	strip	include_event	    if not isinstance(title, str) or not title.strip():
+py	ming_sim/month_chain.py	352	strip_call	strip	include_event	    if not isinstance(report, str) or not report.strip():
+py	ming_sim/month_chain.py	407	strip_call	strip	mark_continued	    if prefix.strip():
+py	ming_sim/month_chain.py	465	strip_call	strip	consume	    if not prefix.strip():
+py	ming_sim/month_chain.py	544	strip_call	strip	abort_from	"        if str(cheat_directive or """").strip() and not chain.get(""cheat_directive""):"
+py	ming_sim/month_chain.py	621	strip_call	strip	persist_declaration_outcome	"    if archive is None or not str(archive.get(""report"") or """").strip():"
+py	ming_sim/month_chain.py	637	strip_call	strip	_write_gazette	"        if archive is None or not str(archive.get(""report"") or """").strip():"
+py	ming_sim/month_chain.py	1035	strip_call	strip	adopt_committed	    if prefix.strip():
+py	ming_sim/month_chain.py	1099	strip_call	strip	_identity_materials	"    who = str(name or """").strip()"
+py	ming_sim/month_chain.py	1205	strip_call	strip	_feed_identity_names	"            who = str((order.get(side) or {}).get(""name"") or """").strip()"
+py	ming_sim/month_chain.py	1537	strip_call	strip	_dossier_rejection_is_this_turn	"    if str(row[""rescript_action""] or """").strip():"
+py	ming_sim/month_chain.py	1617	strip_call	strip	world_question_event_bindings	"        if str(value or """").strip()"
+py	ming_sim/month_chain.py	1641	strip_call	strip	_pin_world_question_event_bindings	"        event_id = str(ev.id or """").strip()"
+py	ming_sim/month_chain.py	1648	strip_call	strip	_pin_world_question_event_bindings	"        echoed = str(question.get(""event_id"") or """").strip()"
+py	ming_sim/month_chain.py	1649	strip_call	strip	_pin_world_question_event_bindings	"        origin_ref = str(question.get(""origin_ref"") or """").strip()"
+py	ming_sim/month_chain.py	1665	strip_call	strip	_question_as_decision	        if not label.strip():
+py	ming_sim/month_chain.py	1809	split_call	split	_apply_decided_triad	"    raw_id = event_id.split("":"", 1)[1] if "":"" in event_id else """""
+py	ming_sim/month_chain.py	1816	strip_call	strip	_apply_decided_triad	    decision = str(
+py	ming_sim/month_chain.py	1860	split_call	split	_dossier_for_decree_ref	"        raw = decree_ref.split("":"", 1)[1]"
+py	ming_sim/month_chain.py	1958	slice_trunc_expr	[:expr]	_split_at_question	    return text[:first_start], questions
 py	ming_sim/month_translate.py	80	join_call	join	_effect_ref_grounding	"    return ""【本段效果可回指的记录 ID】\n"" + ""\n"".join("
 py	ming_sim/office_rank.py	31	strip_call	strip	concurrent_office_titles	"    text = str(office or """").strip()"
 py	ming_sim/office_rank.py	34	strip_call	strip	concurrent_office_titles	"    text = re.sub(r""^(?:前|原任|原)"", """", text).strip()"
@@ -1930,24 +1928,13 @@ py	ming_sim/urge_lever.py	365	strip_call	strip	project_urge_audience_scene	"    
 py	ming_sim/value_matrix.py	51	strip_call	strip	normalize_axis	"    text = str(raw or """").strip()"
 py	ming_sim/value_matrix.py	90	strip_call	strip	faction_axis_stance	"    fac = str(faction or """").strip()"
 py	ming_sim/value_matrix.py	106	strip_call	strip	axis_collision_stances	"    target = str(target_faction or """").strip()"
+py	spike_settle_tick.py	230	join_call	join	xfer_internal	"    print(f""[末态] cash={{ {', '.join(f'{k}:{v:.2f}' for k,v in cash.items())} }}"")"
+py	spike_settle_tick.py	231	join_call	join	xfer_internal	"    print(f""       claim={{ {', '.join(f'{k}:{v:.2f}' for k,v in claim.items())} }} 官民田={官民田:.0f}"")"
 ts	web/src/api.ts	57	split_call			  const lines = raw.split(/\r?\n/);
 ts	web/src/api.ts	62	trim_call			      event = line.slice(6).trim();
 ts	web/src/api.ts	68	join_call			"  return { event, data: dataLines.join(""\n"") };"
 ts	web/src/api.ts	124	split_call			"    const messages = buffer.split(""\n\n"");"
 ts	web/src/api.ts	155	filter_call			"          highlights: raw.map((item: unknown) => String(item || """")).filter(Boolean),"
-tsx	web/src/appDurableWiring.test.tsx	61	trim_call			"  host.querySelector('[data-testid=""settlement-gazette-panel""] pre.memorial-text')?.textContent?.trim() ?? """";"
-tsx	web/src/appDurableWiring.test.tsx	70	trim_call			"    return (label?.textContent || """").trim() === name;"
-tsx	web/src/appDurableWiring.test.tsx	166	join_call			"        ].join("""");"
-tsx	web/src/appDurableWiring.test.tsx	403	filter_call			"      await vi.waitFor(() => expect(paths.filter((path) => path.endsWith(""/chat/stream"")).length).toBeGreaterThanOrEqual(2));"
-tsx	web/src/appDurableWiring.test.tsx	587	trim_call			"    expect(host.querySelector('[data-testid=""translation-retry-8""][role=""alert""]')?.textContent?.trim()).toBeTruthy();"
-tsx	web/src/appDurableWiring.test.tsx	594	trim_call			"    expect(host.querySelector('[data-testid=""reply-retry-7""][role=""alert""]')?.textContent?.trim()).toBeTruthy();"
-tsx	web/src/appDurableWiring.test.tsx	603	filter_call			"    const retryCalls = vi.mocked(fetch).mock.calls.filter(([, init]) => init?.method === ""POST"")"
-tsx	web/src/appDurableWiring.test.tsx	1432	filter_call			    const streamPosts = () => fetchMock.mock.calls.filter(([url, init]) => {
-tsx	web/src/appDurableWiring.test.tsx	3083	filter_call			"    const deleteReqs = () => requests.filter((r) => r === ""DELETE /api/directives/10"");"
-tsx	web/src/appDurableWiring.test.tsx	3190	trim_call			"      (b) => (b.textContent || """").trim() === ""继续"","
-tsx	web/src/appDurableWiring.test.tsx	3492	filter_call			"    const settlePostsBefore = paths.filter((p) => p.startsWith(""POST /api/decree/"")).length;"
-tsx	web/src/appDurableWiring.test.tsx	3502	filter_call			"    expect(paths.filter((p) => p.startsWith(""POST /api/decree/"")).length).toBe(settlePostsBefore);"
-ts	web/src/buildResources.test.ts	68	filter_call			"    const cssFiles = listFiles(distDir).filter((f) => f.endsWith("".css""));"
 tsx	web/src/components/audienceArchiveModal.tsx	31	filter_call			"      const list = ((data.turns || []) as HistoryTurnItem[]).filter((item) => item.kind === ""night"");"
 tsx	web/src/components/audienceArchiveModal.tsx	106	join_call			"          <b>{night.title}</b><small>涉及人物：{night.involved_people?.join(""、"") || ""无载""}</small>"
 tsx	web/src/components/chatModal.tsx	211	filter_call			  const portraitCharacters = [...nightCharacters, ...ministers.filter((person) => !nightCharacters.some((item) => item.name === person.name))];
@@ -1960,18 +1947,11 @@ tsx	web/src/components/closedIssues.tsx	6	filter_call			"  const resolved = item
 tsx	web/src/components/closedIssues.tsx	7	filter_call			"  const failed = items.filter((i) => i.status === ""failed"");"
 tsx	web/src/components/closedIssues.tsx	8	filter_call			"  const dropped = items.filter((i) => i.status === ""dropped"");"
 tsx	web/src/components/closedIssues.tsx	31	trim_call			                {barText?.trim() ? <span>{barText}</span> : null}
-tsx	web/src/components/decisionModal.test.tsx	371	filter_call			"    const shared = cssRulesMatching(""decision-option"").filter((rule) =>"
-tsx	web/src/components/decisionModal.test.tsx	383	filter_call			"    const bareFocusRules = cssRulesMatching(""decision-option"").filter((rule) =>"
 tsx	web/src/components/decisionModal.tsx	81	trim_call			"        ? !!(pick.summon_target || """").trim()"
 tsx	web/src/components/decisionModal.tsx	87	trim_call			"      : !!(pick.label || (pick.note || """").trim());"
 tsx	web/src/components/decisionModal.tsx	208	join_call			"    ].join("","");"
 tsx	web/src/components/decisionModal.tsx	410	trim_call			"                ? (pick.action === ""summon"" && !(pick.summon_target || """").trim()"
 tsx	web/src/components/defaultHeadersField.tsx	38	filter_call			  const removeRow = (id: string) => onChange(rows.filter((row) => row.id !== id));
-tsx	web/src/components/drawers.test.tsx	461	filter_call			    const posts = fetchMock.mock.calls.filter(
-tsx	web/src/components/drawers.test.tsx	549	filter_call			    const postsBefore = fetchMock.mock.calls.filter(
-tsx	web/src/components/drawers.test.tsx	570	filter_call			    const postsMid = fetchMock.mock.calls.filter(
-tsx	web/src/components/drawers.test.tsx	600	filter_call			    const posts = fetchMock.mock.calls.filter(
-tsx	web/src/components/drawers.test.tsx	725	filter_call			    const posts = fetchMock.mock.calls.filter(
 tsx	web/src/components/drawers.tsx	63	trim_call			"    const parts = (office || """").split("","").map((s) => s.trim());"
 tsx	web/src/components/drawers.tsx	63	split_call			"    const parts = (office || """").split("","").map((s) => s.trim());"
 tsx	web/src/components/drawers.tsx	155	join_call			"  const listKey = list.map((m) => m.name).join(""|"");"
@@ -1993,7 +1973,6 @@ tsx	web/src/components/edictModal.tsx	15	trim_call			"  return (source || """").
 tsx	web/src/components/edictModal.tsx	44	join_call			"  return parts.join("" "");"
 tsx	web/src/components/edictModal.tsx	57	join_call			"    ""aria-describedby"": described.join("" ""),"
 tsx	web/src/components/gameHud.tsx	22	filter_call			    : (state.memorials || []).filter((m) => m.unread).length;
-tsx	web/src/components/gameMenu.test.tsx	802	trim_call			"      (b.textContent || """").trim() === ""加载"" || (b.textContent || """").includes(""加载"")"
 tsx	web/src/components/gameMenu.tsx	96	trim_call			    if (!name.trim()) {
 tsx	web/src/components/gameMenu.tsx	106	trim_call			        body: JSON.stringify({ name: name.trim() }),
 tsx	web/src/components/gameMenu.tsx	108	trim_call			      setMsg(`已保存为 ${name.trim()}.db`);
@@ -2021,13 +2000,6 @@ tsx	web/src/components/map.tsx	694	split_call			"                      {group.na
 tsx	web/src/components/map.tsx	707	split_call			"                      {region.name.split("" / "")[0]}"
 tsx	web/src/components/map.tsx	713	filter_call			"            {nodes.filter((node) => node.kind === ""theater"").map((node) => {"
 tsx	web/src/components/map.tsx	741	split_call			"                  <span>{node.region?.name.split("" / "")[0] || node.label}</span>"
-tsx	web/src/components/menuPage.test.tsx	125	trim_call			"      button.textContent?.trim() === ""继续"""
-tsx	web/src/components/menuPage.test.tsx	146	filter_call			    const errorPayloads = setError.mock.calls.map((c) => c[0]).filter((m) => m);
-tsx	web/src/components/menuPage.test.tsx	174	trim_call			"      button.textContent?.trim() === ""继续"""
-tsx	web/src/components/menuPage.test.tsx	225	trim_call			"      button.textContent?.trim() === ""继续"""
-tsx	web/src/components/menuPage.test.tsx	264	trim_call			"      button.textContent?.trim() === ""继续"""
-tsx	web/src/components/menuPage.test.tsx	998	trim_call			"      b.textContent?.trim() === ""开始新游戏"""
-tsx	web/src/components/menuPage.test.tsx	1018	trim_call			"      (b.textContent || """").trim() === ""继续"""
 tsx	web/src/components/menuPage.tsx	228	trim_call			"    const v = (value || """").trim().toLowerCase();"
 tsx	web/src/components/menuPage.tsx	251	trim_call			  const normalizedBaseUrl = baseUrl.trim();
 tsx	web/src/components/menuPage.tsx	252	trim_call			  const normalizedModel = model.trim();
@@ -2053,23 +2025,12 @@ ts	web/src/components/ministerFilters.ts	26	filter_call			"  if (group === ""在
 ts	web/src/components/ministerFilters.ts	27	filter_call			"  if (group === ""收藏"") return courtMinisters.filter((minister) => minister.favorite);"
 ts	web/src/components/ministerFilters.ts	32	filter_call			"  const mingConsorts = consorts.filter((c) => (c.power_id || ""ming"") === ""ming"");"
 ts	web/src/components/ministerFilters.ts	33	filter_call			"  if (group === ""收藏"") return mingConsorts.filter((c) => c.favorite);"
-tsx	web/src/components/modals.test.tsx	475	trim_call			"    expect(buttons.some((button) => (button.textContent || """").trim() === ""退朝"")).toBe(false);"
-tsx	web/src/components/modals.test.tsx	1122	filter_call			"        : ({ night_id: 23, protagonist: """", roster: [], translation_pending: false, messages: nightScroll.filter((message) => message.chat_turn_id === 11) }),"
-tsx	web/src/components/modals.test.tsx	1161	join_call			"    const neutral = [{ role: ""scene"", speaker: """", content: parts.join(""""), beat: ""dialogue"", chat_turn_id: turnId }, trailing];"
-tsx	web/src/components/modals.test.tsx	1187	join_call			"    const originalStory = Array.from(turn?.querySelectorAll(""p"") ?? [], (node) => node.textContent).join("""");"
-tsx	web/src/components/modals.test.tsx	1207	join_call			"    expect(Array.from(turn?.querySelectorAll("".turn-segment p"") ?? [], (node) => node.textContent).join("""")).toBe(originalStory);"
-tsx	web/src/components/modals.test.tsx	1219	join_call			"    expect(Array.from(turn?.querySelectorAll("".turn-segment p"") ?? [], (node) => node.textContent).join("""")).toBe(originalStory);"
-tsx	web/src/components/modals.test.tsx	1296	filter_call			"      .filter((node) => node.textContent?.includes(""辽饷何解？""));"
-tsx	web/src/components/modals.test.tsx	1829	join_call			"    ).join(""\n\n"");"
 tsx	web/src/components/reportModal.tsx	32	trim_call			        {rawAttendant.trim() ? (
 tsx	web/src/components/secretOrders.tsx	28	filter_call			"    { key: ""active"",         label: `进行中 (${orders.filter(o => o.status === ""active"").length})` },"
 tsx	web/src/components/secretOrders.tsx	29	filter_call			"    { key: ""closed"",         label: `已结案 (${orders.filter(o => o.status === ""closed"").length})` },"
 tsx	web/src/components/secretOrders.tsx	32	filter_call			"  const visible = tab === ""all"" ? orders : orders.filter(o => o.status === tab);"
 tsx	web/src/components/secretOrders.tsx	123	join_call			"    [""标签"", order.tags?.length ? order.tags.join(""、"") : ""无""],"
-tsx	web/src/components/settlementFaces.test.tsx	392	trim_call			"    const navLabels = Array.from(host.querySelectorAll(""button.hud2-nav"")).map((b) => b.textContent?.trim());"
 tsx	web/src/components/settlementGazettePanel.tsx	41	trim_call			        {rawAttendant.trim() ? (
-tsx	web/src/components/situation.test.tsx	160	trim_call			"    expect(ends.every((el) => (el.textContent || """").trim() === """")).toBe(true);"
-tsx	web/src/components/situation.test.tsx	173	filter_call			      unread_memorial_count: (memorials || []).filter((m) => m.unread).length,
 tsx	web/src/components/situation.tsx	8	filter_call			"  const active = issues.filter((i) => i.kind === ""situation"" || i.kind === ""initiative"");"
 tsx	web/src/components/situation.tsx	16	filter_call			    longTerm: active.filter(isLongTerm).sort(bySeq),
 tsx	web/src/components/situation.tsx	17	filter_call			    nearTerm: active.filter((i) => !isLongTerm(i)).sort(bySeq),
@@ -2090,9 +2051,6 @@ ts	web/src/highlights.ts	26	filter_call			  const phrases = [...matchedPhrases].
 tsx	web/src/main.tsx	418	filter_call			    const keys = (state.memorials || []).filter((m) => m.unread).map((m) => m.key);
 tsx	web/src/main.tsx	634	filter_call			"        secretOrderActiveCount={secretOrders.filter((o) => o.status === ""active"").length}"
 ts	web/src/mapPaths.ts	386	filter_call			      .filter((path): path is ProvincePath => Boolean(path)),
-ts	web/src/ministerScrollLens.test.ts	49	join_call			"    expect(lens.map((m) => m.content).join("""")).not.toContain(""密令"");"
-ts	web/src/ministerScrollLens.test.ts	50	join_call			"    expect(lens.map((m) => m.content).join("""")).not.toContain(""臣领旨"");"
-ts	web/src/ministerScrollLens.test.ts	51	join_call			"    expect(lens.map((m) => m.content).join("""")).not.toContain(""神色凝重"");"
 ts	web/src/reasoningSupport.ts	14	trim_call			  const base = baseUrl.trim();
 ts	web/src/reasoningSupport.ts	15	trim_call			  const advancedBase = advancedBaseUrl.trim();
 ts	web/src/reasoningSupport.ts	16	trim_call			  const primaryModel = model.trim();
@@ -2103,17 +2061,6 @@ ts	web/src/settleStream.ts	58	trim_call			        ? raw.trim()
 ts	web/src/settleStream.ts	60	trim_call			"          ? String(raw.message || raw.detail || """").trim()"
 ts	web/src/settleStream.ts	75	split_call			"    const blocks = buffer.split(""\n\n"");"
 ts	web/src/settleStream.ts	83	split_call			"    const early = consumeSettleBlocks(buffer.split(""\n\n""), callbacks);"
-tsx	web/src/staleGuard.test.tsx	229	join_call			"      <div data-testid=""failures"">{failures.join(""|"")}</div>"
-tsx	web/src/staleGuard.test.tsx	365	join_call			"      <div data-testid=""failures"">{failures.join(""|"")}</div>"
-tsx	web/src/staleGuard.test.tsx	366	join_call			"      <div data-testid=""decisions"">{decisions.map((d) => d.title).join(""|"")}</div>"
-ts	web/src/styles.test.ts	6	filter_call			"  .filter((f) => f.endsWith("".css""))"
-ts	web/src/styles.test.ts	8	join_call			"  .join(""\n"");"
-ts	web/src/styles.test.ts	51	replace_call			"    expect(layer.replace(/\/\*[^*]*\*\//g, """")).not.toMatch(/bottom:\s*max\(\s*148px\s*,\s*22vh\s*\)/);"
-ts	web/src/styles.test.ts	63	join_call			"    const block = styles.match(/\.gazette-document\s*\{[^}]*\}/g)?.join(""\n"") || """";"
-ts	web/src/styles.test.ts	85	trim_call			"    const bg = dismiss.match(/background:\s*([^;}]+)/)?.[1]?.trim() || """";"
-ts	web/src/styles.test.ts	114	filter_call			      .filter((b) => /grid-template-rows/.test(b));
-ts	web/src/styles.test.ts	124	filter_call			      .filter((b) => /grid-template-rows/.test(b));
-ts	web/src/styles.test.ts	134	filter_call			      .filter((b) => /grid-template-rows/.test(b));
 ts	web/src/useChatActions.ts	150	trim_call			    if (!text.trim()) {
 ts	web/src/useChatActions.ts	347	filter_call			      setReplyRetries((current) => current.filter((retry) => retry.chat_turn_id !== chatTurnId));
 ts	web/src/useEdictActions.ts	36	filter_call			      ...prev.filter((row) => row.directiveId !== item.directiveId),
@@ -2121,8 +2068,6 @@ ts	web/src/useEdictActions.ts	42	filter_call			    setLocalDirectives((prev) => 
 ts	web/src/useEdictActions.ts	56	filter_call			    setLocalDirectives((prev) => prev.filter((item) => item.directiveId !== directive.id));
 ts	web/src/useEdictActions.ts	68	trim_call			    if (!editingDirectiveText.trim()) return;
 ts	web/src/useEscClose.ts	12	join_call			"  const opensKey = layers.map((layer) => (layer.open ? ""1"" : ""0"")).join("""");"
-tsx	web/src/useSettlementFlow.test.tsx	70	join_call			"  ].join(""\n"");"
-tsx	web/src/useSettlementFlow.test.tsx	495	join_call			"  ].join(""\n"");"
 ts	web/src/useSettlementFlow.ts	300	trim_call			    const report = fromPayload.trim() ? fromPayload : fromState;
 ts	web/src/useSettlementFlow.ts	307	trim_call			"    if (report.trim() || String(attendantMessage || """").trim()) {"
 ts	web/src/useSettlementFlow.ts	340	trim_call			      if (cheatPayload.trim()) {
