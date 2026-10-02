@@ -57,7 +57,7 @@ PY
 | 成员 | F9 / F11 / F12 处置或保留依据 |
 | --- | --- |
 | `person_logs`，直挂事务与关联案卷两条路径 | `normalized` 明确 JSON 解码；六轴 `loyalty / ability / integrity / courage / identity / intrigue` 的增量供方向，旧新值复用 canonical 档位词；自由 reason、summary、性情等原样。 |
-| `issues` | 全部九个明确 JSON 列解码：`tags / participants / participant_roster / target_roster / ongoing_effects / cancel_cost / effect_on_resolve / effect_on_fail / stages_json`。四种效果载荷中的 `人物变更` 共用同一六轴投影。内部数值 `stop_condition` 执行格不再转储；人读 resolve/fail condition 与阶段、结案经历保留。 |
+| `issues` | 全部九个明确 JSON 列解码：`tags / participants / participant_roster / target_roster / ongoing_effects / cancel_cost / effect_on_resolve / effect_on_fail / stages_json`。四种效果载荷中的 `人物变更 / person_changes / character` 共用同一六轴投影（上轮漏后两键，见下节补修）。内部数值 `stop_condition` 执行格不再转储；人读 resolve/fail condition 与阶段、结案经历保留。 |
 | `characters` | 此历史读口只供事务成员姓名；属性继续走现有朝臣定性名册、人物经历，不恢复整行副本。schema 的 aliases 不进入此读口。 |
 | `relation_edge_events` | 读取真实 `origin`；排除密令案卷引用、密令来源前缀及密令源轮。普通边事件保留，全知目录不排除。 |
 | `army_logs / building_logs / power_logs / region_logs / population_transfer_ledger / investigation_spoiled_facts` | schema 无 JSON 存储列；非人物六轴的物理世界数值保留。全部行仍经过共同来源排除，而非只筛边事件。 |
@@ -134,4 +134,58 @@ MING_SIM_PI_BIN=/usr/bin/false PYTHONDONTWRITEBYTECODE=1
 
 测试改动成本：净删除三个证明性测试及专用快照断言；只调整一行真实 fixture 构造参数，没有新增测试函数、正文解析或非空守门。剩余测试向结构化路径、生产转译请求、写口结果负责，不将渲染失效冒称通过供料验收。本轮渲染内容验收只以真实取阅观察呈证。
 
-未结项：本轮四类无施工未结项；后续庭审/合并、邻票生产接线仍归各自车道。本轮临时探针及下载文件均自建于系统临时目录，交卷前清理；未动宿主、席位表、stash 或他人工作。
+上轮“F9 无施工未结项”的声明经复核撤回：效果载荷键枚举不全。F11–F13 维持原处置；F9 补修如下。后续庭审/合并、邻票生产接线仍归各自车道。临时探针及下载文件均自建于系统临时目录，交卷前清理；未动宿主、席位表、stash 或他人工作。
+
+## 复核补修：F9 人物效果载荷键同类漏项
+
+事实成立。上轮只从规范键出发，未从引擎全部读口枚举；所以“四种效果载荷共用投影”并不等于“全部人物载荷形状已投影”。本次仅补该类，不重做 F11–F13。
+
+### 全类枚举与成员
+
+```sh
+rg -n 'effect.get\(|effect\[' ming_sim/issues.py
+rg -n 'person_changes|\.get\("character"|\["character"\]' ming_sim --glob '*.py'
+rg -n 'effect_dict_has_work|_person_effect_has_work|_character_effect_has_work' ming_sim/models.py
+rg -n 'normalize_person_changes|_copy_present|character_status_changes|character_power_changes|office_changes|appointments' ming_sim/person_delta_adapter.py
+rg -n 'PERSON_EFFECT_KEYS|ongoing_effects|cancel_cost|effect_on_resolve|effect_on_fail' ming_sim/materials.py ming_sim/issues.py ming_sim/models.py ming_sim/person_delta_adapter.py
+```
+
+枚举源是 `issues._monthly_person_rating_changes`、其拒收/非月度工作判定、`_apply_issue_entities`、`models.effect_dict_has_work` 和人物 adapter 的全部 legacy 形状；不是从判词点名的两个字符串反推。
+
+| 人物效果形状 | 引擎承载语义 | 本次处置/保留依据 |
+| --- | --- | --- |
+| `人物变更` | 规范人物动作，评定读 `loyalty` 增量 | 共用 `_person_history_fields`，保留字段结构 |
+| `person_changes` | 月度评定别名，同规范动作正规化 | 同上，不残留裸数值 |
+| `character` | 旧形状列表；name/人物、loyalty、reason/原因转评定 | 同上；不要求材料自行增添动作或正规化自由散文 |
+| `character_status_changes` | 处置状态；adapter 白名单为 status/reason_code/reason/origin_ref | 不承载合法六轴数值变更；保留既有状态历史，不增防御 |
+| `character_power_changes` | 易主，new_power/reason/origin_ref | 不承载六轴；保留实际归属变化 |
+| `office_changes / appointments` | 任命/官职与任所；adapter 明确字段白名单 | 非这类属性增量；保留既有任命材料 |
+| `action / 动作`、`name / 人物`、`reason / 原因` | 条目内部别名，不是第四个效果载荷键 | 原样保留；六轴字段共用投影 |
+
+完整需要投影的笛卡尔成员表：
+
+| 持久效果字段 | 人物载荷键（全部共用六轴投影） |
+| --- | --- |
+| `ongoing_effects` | `人物变更 / person_changes / character` |
+| `cancel_cost` | `人物变更 / person_changes / character` |
+| `effect_on_resolve` | `人物变更 / person_changes / character` |
+| `effect_on_fail` | `人物变更 / person_changes / character` |
+
+最小修法：将引擎已经接受的三键抽为 adapter 的 `PERSON_EFFECT_KEYS`；真实月度读口、验证/工作判定、models 工作判定和材料投影共同消费它，删除重复的键集合与单键投影边界。`character` 的既有专门正规化与拒收语义不改；不新增解析器、防御或测试专用出口。
+
+### 真跑、变异与聚焦自验
+
+所有运行均使用上节完整七变量前缀和 `PYTHONDONTWRITEBYTECODE=1`；探针另设 `PYTHONPATH="$PWD"`。自建临时探针通过真实 `insert_issue_with_affair_declaration` 写入四个字段，每个字段均存三个人物键，分别落正增量 `5` 与负增量 `-8`。从 `prepare_world_materials` 进入并实际 list/read 目录；仅在原渲染函数旁观察结构输入，不解析生成正文。
+
+```sh
+# 修前真实入口已报红；补修后再独立进程装回上轮单键边界
+../Ming_LLM/.venv/bin/python /tmp/1834-person-effects-probe.py --old
+# 不带旗，恢复生产逻辑，同一真实写入/目录入口三态复验
+../Ming_LLM/.venv/bin/python /tmp/1834-person-effects-probe.py
+../Ming_LLM/.venv/bin/python -m pytest tests/test_world_materials_1834.py tests/test_decree_commitment_schema_136.py tests/test_player_payload_1022.py tests/test_web_issue_condition_display.py tests/test_person_delta_adapter.py -q -p no:cacheprovider
+```
+
+可核输出摘录：旧边界中四个效果字段的 `person_changes` 均为 `int 5`、`character` 均为 `int -8`，而规范键为 `str`；报 `AssertionError: ('open', [('ongoing_effects', 'person_changes', 5), ('ongoing_effects', 'character', -8), ...])`。恢复后每个字段/键组合均观察为 `str`，开放、关闭、重新打开数据库恢复三态各报 `PASS ... all 4 payload fields x all 3 engine person keys projected; actual directory read`。
+
+聚焦结果：`161 passed, 1 skipped in 6.79s`（保留基底盘面缺人物时的既有条件 skip）；四个变动 Python 文件 AST 解析通过，`git diff --check` 无输出。不跑全量、不冒称 typecheck，无测试改动/新增测试。复扫后上述三键和四字段无漏项；F9 本次施工无剩余。两个自建临时文件 `/tmp/1834-person-effects-probe.py`、`/tmp/1834-person-effect-readers.txt` 交卷前清理。
+

@@ -71,7 +71,7 @@ from ming_sim.person_archive_contract import (
     normalize_reason_code,
     resolve_person_transition,
 )
-from ming_sim.person_delta_adapter import normalize_person_changes
+from ming_sim.person_delta_adapter import PERSON_EFFECT_KEYS, normalize_person_changes
 from ming_sim.token_stats import tlog
 
 _content: Optional[GameContent] = None
@@ -902,7 +902,9 @@ def _commitment_carrier_same_account_unmatched(
 
 def _monthly_person_rating_changes(effect: Dict[str, object]) -> List[Dict[str, object]]:
     raw_changes: List[Dict[str, object]] = []
-    for key in ("人物变更", "person_changes"):
+    for key in PERSON_EFFECT_KEYS:
+        if key == "character":  # legacy carrier has its own item normalization below
+            continue
         raw = effect.get(key)
         if isinstance(raw, list):
             raw_changes.extend(item for item in raw if isinstance(item, dict))
@@ -934,7 +936,9 @@ def _monthly_person_rating_changes(effect: Dict[str, object]) -> List[Dict[str, 
 
 
 def _invalid_monthly_person_rating_reason(effect: Dict[str, object]) -> str:
-    for key in ("人物变更", "person_changes"):
+    for key in PERSON_EFFECT_KEYS:
+        if key == "character":
+            continue
         raw = effect.get(key)
         if not isinstance(raw, list):
             continue
@@ -987,7 +991,9 @@ def _unsupported_monthly_ongoing_fields(effect: Dict[str, object]) -> List[str]:
     ):
         if effect_dict_has_work({key: effect.get(key)}):
             unsupported.append(key)
-    for key in ("人物变更", "person_changes"):
+    for key in PERSON_EFFECT_KEYS:
+        if key == "character":
+            continue
         if _person_change_has_unsupported_monthly_work(effect.get(key)):
             unsupported.append(f"{key}(月度仅支持评定)")
     return unsupported

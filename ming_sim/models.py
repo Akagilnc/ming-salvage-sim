@@ -278,6 +278,8 @@ def _legacy_effect_has_work(raw: object) -> bool:
 
 def effect_dict_has_work(raw: object) -> bool:
     """Return whether an effect/ongoing payload has semantic work, not just a non-empty shell."""
+    from ming_sim.person_delta_adapter import PERSON_EFFECT_KEYS
+
     effect = loads_effect_dict(raw)
     if not effect:
         return False
@@ -308,9 +310,11 @@ def effect_dict_has_work(raw: object) -> bool:
         ),
         _building_effect_has_work(effect.get("buildings")),
         _new_armies_effect_has_work(effect.get("new_armies")),
-        _person_effect_has_work(effect.get("人物变更")),
-        _person_effect_has_work(effect.get("person_changes")),
-        _character_effect_has_work(effect.get("character")),
+        *(
+            _character_effect_has_work(effect.get(key)) if key == "character"
+            else _person_effect_has_work(effect.get(key))
+            for key in PERSON_EFFECT_KEYS
+        ),
         _character_status_effect_has_work(effect.get("character_status_changes")),
         _character_power_effect_has_work(effect.get("character_power_changes")),
         _power_renames_effect_has_work(effect.get("power_renames")),

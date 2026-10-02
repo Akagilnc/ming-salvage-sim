@@ -1690,6 +1690,8 @@ def _world_effect_materials(
     exclude_origin_prefix: str,
 ) -> dict[str, Any]:
     """Landed history crosses the same input/source boundary as the world board."""
+    from ming_sim.person_delta_adapter import PERSON_EFFECT_KEYS
+
     history = db.list_world_effect_history(origin)
     for table, rows in history.items():
         allowed = []
@@ -1703,10 +1705,9 @@ def _world_effect_materials(
             elif table == "issues":
                 for field in ("ongoing_effects", "cancel_cost", "effect_on_resolve", "effect_on_fail"):
                     effects = row[field]
-                    if "人物变更" in effects:
-                        effects["人物变更"] = [
-                            _person_history_fields(item) for item in effects["人物变更"]
-                        ]
+                    for key in PERSON_EFFECT_KEYS:
+                        if key in effects:
+                            effects[key] = [_person_history_fields(item) for item in effects[key]]
             allowed.append(row)
         history[table] = allowed
     return history
