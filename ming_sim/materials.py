@@ -1651,6 +1651,7 @@ def _write_world_tree(
     include_fact: Any = None,
     include_event: Any = None,
     secret_turn_ids: set[int] | None = None,
+    exclude_dossier_ids: set[int] | None = None,
 ) -> list[str]:
     from ming_sim.knowledge import build_character_knowledge
 
@@ -1723,6 +1724,37 @@ def _write_world_tree(
         rel = f"{_AFFAIR_DIR}/{seg}/当前情况.txt"
         _write_text(tmp / rel, body)
         index.append(rel)
+
+    # All linked dossiers remain available, regardless of dossier/affair status.
+    # Use the unified reported seam (general + secret) and the existing actual
+    # rail (progress + economy/fiscal effects); neither rail certifies the other.
+    affair_keys = {key for key, _title, _text, _opening in affair_lines}
+    for dossier in db.list_decree_dossiers():
+        dossier_id = int(dossier["id"])
+        key = f"affair-{int(dossier.get('affair_id') or 0)}"
+        if key not in affair_keys or dossier_id in (exclude_dossier_ids or set()):
+            continue
+        dossier_dir = f"{_AFFAIR_DIR}/{_safe_segment(key)}/案卷/{dossier_id}"
+        materials = {
+            "案卷": {
+                "案卷": {
+                    field: value for field, value in dossier.items()
+                    if not field.endswith("_json") and field != "office_archive_keys"
+                },
+                "判决历史": db.list_decree_dossier_decisions(dossier_id),
+                "背书": db.list_dossier_endorsements(dossier_id),
+                "关联": db.list_dossier_links(dossier_id),
+            },
+            "奏报": db.list_dossier_progress(dossier_id),
+            "实况": {
+                "实况轨": db.list_dossier_actual_rail(dossier_id),
+                "对账": db.list_dossier_reconciliations(dossier_id),
+            },
+        }
+        for layer, facts in materials.items():
+            rel = f"{dossier_dir}/{layer}.txt"
+            _write_text(tmp / rel, _material_facts_text(facts))
+            index.append(rel)
 
     index.extend(_write_candidate_event_files(tmp, candidates["events"]))
     index.extend(_write_fiscal_levy_petition_files(tmp, db, state))
@@ -2329,6 +2361,7 @@ def prepare_world_materials(
             tmp, db, state, public_events, affair_lines, board_text,
             roster_text, world_facts, include_fact, include_event,
             _secret_order_chat_turn_ids(db) if exclude_secret_order_audience else None,
+            secret_dossiers,
         ),
     )
 

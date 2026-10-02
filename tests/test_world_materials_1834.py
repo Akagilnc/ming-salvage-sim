@@ -133,6 +133,19 @@ def test_prepare_rebuilds_from_world_record_after_restore(game, tmp_path):
         name="宣府欠饷", origin="宣府镇奏报欠饷",
         year=state.year, period=state.period, turn=state.turn,
     )
+    dossier_id = db.create_decree_dossier(
+        state, action_type="assignment", decree_text="护送军饷",
+        target_kind="issue", target_id="pay", executor_kind="character",
+        executor_id="毕自严",
+        payload={"assignee_id": "毕自严", "affair_declaration": {
+            "attach": "existing", "affair_id": affair.id,
+        }},
+    )
+    db.record_dossier_progress(dossier_id, state.turn, "推进", "军饷已领讫")
+    db.record_dossier_actual_progress(
+        dossier_id, state.turn, units=2, fidelity_state="partial",
+        floor_state="partial", note="余饷未交付",
+    )
     db.affairs.declare_closed(affair.id, turn=state.turn)
     path = str(db.path)
     db.close()
@@ -143,7 +156,13 @@ def test_prepare_rebuilds_from_world_record_after_restore(game, tmp_path):
         state2 = restored.load_state()
         prepared = prepare_world_materials(restored, state2, dest_root=tmp_path / "m2")
         names = list_materials(prepared.root)
-        assert any(p.startswith(f"事务/affair-{affair.id}-") for p in names)
+        affair_path = next(
+            p for p in names
+            if p.startswith(f"事务/affair-{affair.id}-") and p.endswith("/当前情况.txt")
+        )
+        dossier_dir = f"{affair_path.rsplit('/', 1)[0]}/案卷/{dossier_id}"
+        for layer in ("奏报", "实况", "案卷"):
+            read_material(prepared.root, f"{dossier_dir}/{layer}.txt")
     finally:
         restored.close()
 
