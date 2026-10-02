@@ -16770,16 +16770,10 @@ class GameDB:
         ongoing = payload.get("ongoing_effects")
         if isinstance(ongoing, dict) and ongoing:
             ni["ongoing_effects"] = ongoing
-        # #620 扩展面：分段里程碑（#520 本体字段语义不动）
-        from ming_sim.staged_commitment import capture_commitment_stages
-        stages_norm = capture_commitment_stages(
-            payload.get("stages") or payload.get("stages_json"),
-            # #1565：叙事只取已归一正文（text/decree_text），不把题名当任务叙事。
-            narrative_text=stage_text,
-            origin_turn=int(getattr(state, "turn", 0) or 0),
-        )
-        if stages_norm:
-            ni["stages"] = stages_norm
+        # #620 扩展面：分段由 apply_score_extraction / issues 单口捕获；此处只透传显式字段
+        stages_src = payload.get("stages") or payload.get("stages_json")
+        if stages_src not in (None, "", [], (), {}):
+            ni["stages"] = stages_src
             if not commitment_kind:
                 ni["commitment_kind"] = "until_stop"
         # ongoing_effects / end_turn 选择规则与缺 marker 拒收交既有校验。
@@ -21829,10 +21823,11 @@ class GameDB:
                     self.transition_decree_dossier(
                         int(dossier["id"]), "executing", commit=False,
                     )
+                # #1897 / ADR0073：执行格只吃实况 note；奏报正文(result)不得回填。
                 self.record_dossier_execution(
                     int(dossier["id"]),
                     "fulfilled" if str(status) == "done" else "failed",
-                    close_text if execution_note is None else execution_note,
+                    "" if execution_note is None else str(execution_note),
                     int(turn_closed), close=True, commit=False,
                 )
 

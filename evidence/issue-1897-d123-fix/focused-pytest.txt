@@ -1,0 +1,28 @@
+........................................................................ [ 20%]
+...........................................................F............ [ 41%]
+........................................................................ [ 62%]
+........................................................................ [ 83%]
+.......................................................                  [100%]
+=================================== FAILURES ===================================
+___________ test_path1_conversational_draft_bad_roster_marks_failed ____________
+tests/test_execution_pressure_654.py:644: in test_path1_conversational_draft_bad_roster_marks_failed
+    result = db._commit_conversational_draft(
+ming_sim/db.py:18180: in _commit_conversational_draft
+    ok = self._apply_pending_action(
+ming_sim/db.py:18422: in _apply_pending_action
+    dossier_ids = self._ensure_directive_dossier(
+ming_sim/db.py:19224: in _ensure_directive_dossier
+    return self.create_decree_dossiers(
+ming_sim/db.py:13886: in create_decree_dossiers
+    self._validate_participant_roster_references(roster)
+ming_sim/db.py:20721: in _validate_participant_roster_references
+    raise _roster_ref_error("参与人物", character_id)
+E   ValueError: 参与人物不存在：查无此人。请填写朝堂名册中已有的大臣姓名。
+----------------------------- Captured stdout call -----------------------------
+[13:17:34.044] [pending_actions] 落库异常 id=1 directive/拟旨：参与人物不存在：查无此人。请填写朝堂名册中已有的大臣姓名。
+=========================== short test summary info ============================
+FAILED tests/test_execution_pressure_654.py::test_path1_conversational_draft_bad_roster_marks_failed
+1 failed, 342 passed in 7.71s
+real 8.14
+user 5.70
+sys 1.92

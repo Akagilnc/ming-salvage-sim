@@ -1250,6 +1250,7 @@ def settle_due_secret_orders(
             str(verdict["status"]),
             player_text,
             int(state.turn),
+            execution_note=str(verdict.get("note") or ""),
             commit=False,
         )
         results.append({

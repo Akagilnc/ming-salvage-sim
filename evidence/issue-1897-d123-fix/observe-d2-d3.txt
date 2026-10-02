@@ -1,0 +1,8 @@
+D3 prose→ValueError OK: stages_json 须为 JSON 数组字符串，解析失败：'三年火器见眉目，五年新历成，七八年农政见效。'
+D3 explicit stages OK: [{'stage_idx': 0, 'due_turn': 3, 'criterion_text': '首段', 'origin_context': '首段'}]
+D2 close_secret_order fallback removed OK
+D2 settle passes verdict note OK
+D2 rails diverge OK: player=  note= machine_settle gap Σ=0/1;表报有之、不翻实账 (secret_order:1)
+ALL OBSERVATIONS PASSED
+
+no tests ran in 0.02s

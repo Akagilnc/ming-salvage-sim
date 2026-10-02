@@ -288,7 +288,7 @@ canonical 段形＝list，每项落一道加派旨：逐省累积账当回合落
 "stages": [
   {
     "stage_idx": 0,
-    "due_turn": 37,                 // 绝对回合；捕获侧亦可以 scripted「三年X五年Y」换算 origin_turn+N*12
+    "due_turn": 37,                 // 绝对回合；须由显式结构化 stages 给出
     "criterion_text": "火器见眉目",
     "origin_context": "三年火器见眉目"  // 原诺语境，持久可查（Story 5 回声底）
   }
@@ -298,7 +298,7 @@ canonical 段形＝list，每项落一道加派旨：逐省累积账当回合落
 - **段到期扫描独立**（与 form③ 共享「active 承诺 + 到期」谓词语义，不共用其 SQL 结果集）；**待裁载体改道** `next_audience_todos`——段派生的展示 `end_turn` **不**进 form③ `due_commitments` 待核议通道；**独立** `end_turn`（≠ max 段 due）仍可走 form③。结算**不**置 `TurnPhase.AWAITING_DECISION` / `<<DECISION>>` 停轮（0074/0076）
 - 去重键：`(commitment_ref, stage_idx, entry_kind)`，不得只按 issue_id 抹段
 - 段间自动续，无需玩家 ACK；消费/复命场面归 #621，本片只 own 写端
-- 捕获：召对/邸报「三年X五年Y」经生产 `capture_commitment_stages`（scripted 年诺解析）落段；禁 live-LLM 作唯一验收
+- 捕获（#1897 重定）：只认已有显式结构化 `stages`；代码不从散文／「三年X五年Y」正文换算期限；缺省、空段或坏结构都不回落正文猜段（旧 #620 P4／捕获 AC 已撤销）
 
 **`next_audience_todos` 最小字段（P2）**：
 | 字段 | 约束 |

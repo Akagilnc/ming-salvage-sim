@@ -13,7 +13,6 @@
 from __future__ import annotations
 
 import json
-import re
 from typing import Any, Dict, List
 
 ENTRY_KIND_STAGED = "staged_commitment"
@@ -24,74 +23,12 @@ TODO_STATUS_PENDING = "pending"
 TODO_STATUS_CONSUMED = "consumed"
 # rolled 写口仍由 mark_next_audience_todo_status 接受（P3 契约）；常量待 #623 超额滚存启用再导出。
 
-_CN_YEAR_DIGITS = {
-    "零": 0, "〇": 0,
-    "一": 1, "二": 2, "两": 2, "三": 3, "四": 4,
-    "五": 5, "六": 6, "七": 7, "八": 8, "九": 9,
-    "十": 10,
-}
-
-# 「三年火器见眉目」「五年新历成」「七八年农政见效」
-_STAGE_YEAR_RE = re.compile(
-    r"(?P<years>[一二三四五六七八九十两〇零]+)年"
-    r"(?P<body>[^，。；;、\n]*?)"
-    r"(?=(?:[一二三四五六七八九十两〇零]+年)|[，。；;、\n]|$)"
-)
-
-
-def _cn_years_to_int(token: str) -> int:
-    raw = str(token or "").strip()
-    if not raw:
-        raise ValueError("年数为空")
-    if raw == "十":
-        return 10
-    if raw.startswith("十") and len(raw) == 2 and raw[1] in _CN_YEAR_DIGITS:
-        return 10 + _CN_YEAR_DIGITS[raw[1]]
-    if raw.endswith("十") and len(raw) == 2 and raw[0] in _CN_YEAR_DIGITS:
-        return _CN_YEAR_DIGITS[raw[0]] * 10
-    # 「七八」取首数（约数年取下界）
-    if all(ch in _CN_YEAR_DIGITS for ch in raw):
-        if len(raw) == 1:
-            return _CN_YEAR_DIGITS[raw]
-        if "十" not in raw:
-            return _CN_YEAR_DIGITS[raw[0]]
-    raise ValueError(f"无法解析年数：{raw!r}")
-
-
-def parse_staged_year_promise(text: str, *, origin_turn: int) -> List[Dict[str, object]]:
-    """从「三年X五年Y」文案抽出分段（scripted 捕获；禁 live-LLM 作唯一验收）。"""
-    src = str(text or "").strip()
-    if not src:
-        return []
-    stages: List[Dict[str, object]] = []
-    for match in _STAGE_YEAR_RE.finditer(src):
-        years_tok = match.group("years")
-        body = str(match.group("body") or "").strip(" ，。；;、")
-        if not body:
-            continue
-        try:
-            years = _cn_years_to_int(years_tok)
-        except ValueError:
-            continue
-        if years <= 0:
-            continue
-        origin_context = f"{years_tok}年{body}"
-        stages.append({
-            "stage_idx": len(stages),
-            "due_turn": int(origin_turn) + years * 12,
-            "criterion_text": body,
-            "origin_context": origin_context,
-        })
-    return stages
-
 
 def normalize_commitment_stages(raw: object) -> List[Dict[str, object]]:
     """Normalize structured stages payload → durable list.
 
     Accepts list/tuple of dicts, or a JSON array string. Non-JSON free text
-    returns [] here — production CN-year capture goes through
-    ``capture_commitment_stages`` (does not silently treat char-iterated strings
-    as stage rows; that hole is closed in ``stages_to_json``).
+    returns [] here — prose year-promise parsing is retired (#1897 / ADR0142).
     """
     if raw in (None, "", [], ()):
         return []
@@ -184,74 +121,14 @@ def stages_to_json(stages: object) -> str:
     raise ValueError(f"stages_json 类型非法：{type(stages).__name__}")
 
 
-# sentinel：显式 stages 字符串 json.loads 失败（与成功解析到的 None 区分）
-_CAPTURE_JSON_MISS = object()
+def capture_commitment_stages(raw: object = None) -> List[Dict[str, object]]:
+    """只吃显式结构化 stages；校验真源 = stages_to_json（#1897 / ADR0142）。
 
-
-def capture_commitment_stages(
-    raw: object = None,
-    *,
-    narrative_text: str = "",
-    origin_turn: int,
-) -> List[Dict[str, object]]:
-    """生产捕获：结构化 stages / JSON 字符串 / 「三年X五年Y」文案 → 绝对 due 段表。
-
-    召对 materializer 与邸报/score new_issues 共用此入口，避免 CN year 解析只停在测试。
-    - 显式 stages 字段：JSON 数组优先；否则对字段文本跑 scripted 年诺解析
-    - 显式 stages 字符串若 JSON-ish 坏形 → ValueError（与 stages_to_json 同响亮口径，禁静默 []）
-    - 无显式 stages：对 narrative（召对正文 / stage_text）解析；≥2 段才自动落
-      （对齐 AC2「三年X五年Y」，避免单次「三年后复试」误收成分段）
+    散文年诺解析已退役。缺省／空 → []；坏结构响亮 ValueError，不回落正文。
     """
-    if raw not in (None, "", [], (), {}):
-        if isinstance(raw, str):
-            text = raw.strip()
-            if text and text not in ("[]", "{}"):
-                try:
-                    data = json.loads(text)
-                except (TypeError, ValueError):
-                    data = _CAPTURE_JSON_MISS
-                if data is not _CAPTURE_JSON_MISS:
-                    # JSON 已解析：坏形响亮拒绝（同 stages_to_json），勿静默 []
-                    if not isinstance(data, (list, tuple)):
-                        raise ValueError(
-                            f"stages 须为 JSON 数组，得 {type(data).__name__}"
-                        )
-                    if len(data) == 0:
-                        return []
-                    structured = normalize_commitment_stages(data)
-                    if not structured:
-                        raise ValueError(
-                            "stages 无有效段（每段须 due_turn>0 与 criterion_text）"
-                        )
-                    return structured
-                # 非 JSON：scripted 年诺；JSON-ish 起首坏串响亮拒绝
-                parsed = parse_staged_year_promise(text, origin_turn=int(origin_turn))
-                if parsed:
-                    return parsed
-                if text[:1] in "[{":
-                    raise ValueError(
-                        f"stages 须为 JSON 数组字符串，解析失败：{text[:80]!r}"
-                    )
-        else:
-            # 非 str 正式面（list/dict）：与 str 支同响亮口径，勿静默 []
-            # 空 list/tuple 已由入口 raw not in (…, [], ()) 排除，此处无空支
-            if not isinstance(raw, (list, tuple)):
-                raise ValueError(
-                    f"stages 须为 JSON 数组，得 {type(raw).__name__}"
-                )
-            structured = normalize_commitment_stages(raw)
-            if not structured:
-                raise ValueError(
-                    "stages 无有效段（每段须 due_turn>0 与 criterion_text）"
-                )
-            return structured
-    narrative = str(narrative_text or "").strip()
-    if narrative:
-        parsed = parse_staged_year_promise(narrative, origin_turn=int(origin_turn))
-        # 叙事回落仅收多段（三年X五年Y）；单段不抢 form③ 单值 end_turn 语义
-        if len(parsed) >= 2:
-            return parsed
-    return []
+    if raw in (None, "", [], (), {}):
+        return []
+    return normalize_commitment_stages(stages_to_json(raw))
 
 
 def stages_source_from_issue_item(ni: Dict[str, object]) -> object:

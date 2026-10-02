@@ -1286,22 +1286,11 @@ def stage_assignment_candidate(
     has_ongoing = isinstance(parsed_ongoing, dict) and bool(parsed_ongoing)
     if kind_raw == "until_stop":
         staged["commitment_kind"] = "until_stop"
-    # #620 AC2：生产捕获——结构化 stages / JSON 串 / 正文「三年X五年Y」→ 绝对 due 段表
-    # 分层：召对入口对分类器坏形 stages 容错（回落正文年诺）；库层 capture/stages_to_json 仍响亮 ValueError
-    from ming_sim.staged_commitment import capture_commitment_stages
-    stages_raw = stages if stages not in (None, "") else None
-    try:
-        stages_norm = capture_commitment_stages(
-            stages_raw,
-            narrative_text=body,
-            origin_turn=int(turn),
-        )
-    except ValueError:
-        stages_norm = capture_commitment_stages(
-            None,
-            narrative_text=body,
-            origin_turn=int(turn),
-        )
+    # #1897：暂存只认显式结构化 stages；散文/坏串经 normalize → []，不回落正文
+    from ming_sim.staged_commitment import normalize_commitment_stages
+    stages_norm = normalize_commitment_stages(
+        stages if stages not in (None, "") else None,
+    )
     if kind_raw == "until_stop" or has_stop or absolute_end > 0 or has_ongoing or stages_norm:
         if has_stop:
             staged["stop_condition"] = parsed_stop

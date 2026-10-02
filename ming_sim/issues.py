@@ -5103,8 +5103,6 @@ def apply_issue_tracker_output(
                 )
                 stages_for_commitment = capture_commitment_stages(
                     stages_source_from_issue_item(ni),
-                    narrative_text=str(ni.get("stage_text") or ni.get("title") or ""),
-                    origin_turn=int(state.turn),
                 )
                 has_stages = bool(stages_for_commitment)
                 if not ongoing_has_work and end_turn_for_commitment <= 0 and not has_stages:
@@ -5274,11 +5272,7 @@ def apply_issue_tracker_output(
             stages_source_from_issue_item,
         )
         stages_norm = (
-            capture_commitment_stages(
-                stages_source_from_issue_item(ni),
-                narrative_text=str(ni.get("stage_text") or ni.get("title") or ""),
-                origin_turn=int(state.turn),
-            )
+            capture_commitment_stages(stages_source_from_issue_item(ni))
             if is_commitment
             else []
         )
