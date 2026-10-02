@@ -405,7 +405,9 @@ def run_error_event_failure(
     content: object = None, status_code: object = None,
 ) -> ClassifiedFailure:
     """RunErrorEvent → 分类唯一构造。无 typed status 时不洗成瞬断（#1452）。"""
-    pmsg = str(content or "").strip() or "stream error"
+    pmsg = str(content or "")
+    if not pmsg.strip():
+        pmsg = "stream error"
     status_i = _coerce_status(status_code)
     if status_i is None:
         return ClassifiedFailure(

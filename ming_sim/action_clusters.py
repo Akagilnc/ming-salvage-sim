@@ -157,11 +157,6 @@ def project_cluster_fields(kind: str, obj: Mapping[str, Any]) -> Dict[str, Any]:
     }
 
 
-def cluster_effect(kind: str) -> str:
-    c = cluster_by_kind(kind)
-    return c.effect if c else EFFECT_NOOP
-
-
 class ActionCandidateShapeError(ValueError):
     pass
 
@@ -223,17 +218,6 @@ def validate_action_candidate_shape(obj: Any) -> Tuple[bool, str]:
         if normalized not in spec.allowed:
             return False, f"{spec.name} out of enum: {raw!r}"
     return True, ""
-
-
-def effective_field_allowed(
-    spec: FieldSpec, candidate: Mapping[str, Any],
-) -> Optional[FrozenSet[str]]:
-    """Project the enum values allowed for this candidate from one field row."""
-    if spec.allowed_when is not None:
-        controller, controller_value, allowed = spec.allowed_when
-        if str(candidate.get(controller) or "").strip() == controller_value:
-            return allowed
-    return spec.allowed
 
 
 def field_population_allowed(
@@ -303,4 +287,3 @@ def assert_action_candidate_shape(obj: Any) -> Dict[str, Any]:
             if key in obj and obj.get(key) not in (None, ""):
                 out[key if key != "承办人" else "assignee"] = obj.get(key)
     return out
-

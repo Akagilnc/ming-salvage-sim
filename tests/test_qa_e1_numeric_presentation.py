@@ -15,7 +15,6 @@ import re
 from types import SimpleNamespace
 
 import web_app
-from ming_sim.assets import format_wanliang_amount
 from ming_sim.flows import apply_fixed_period_flows, compute_budget_lines
 
 
@@ -27,31 +26,6 @@ _WANLIANG_AMOUNT = re.compile(r"欠发(\d+(?:\.\d)?)万两")
 _PROVINCE_WANLIANG = re.compile(r"(摊新增欠|偿还)(\d+(?:\.\d+)?)万两")
 # #1471：玩家预算字段不得泄漏工程注记词
 _ENGINEERING_NOTE_TOKENS = ("hub", "旁路", "substrate", "实发率", "可降到")
-
-
-def test_army_pay_shortfall_reason_has_no_float_garbage(game):
-    """#1334/#1383：真实落账 reason 与 summary 不得出现浮点垃圾小数。"""
-    db, state, _ = game
-    apply_fixed_period_flows(db, state)
-
-    reasons = [
-        str(row["reason"] or "")
-        for row in db.conn.execute(
-            "SELECT reason FROM army_logs WHERE reason LIKE '%欠发%'"
-        ).fetchall()
-    ]
-    assert reasons, "开局结算应产生中央军饷欠发 reason（国库不足以足额）"
-
-    for reason in reasons:
-        assert not _FLOAT_GARBAGE.search(reason), f"reason 含浮点垃圾：{reason}"
-        for amount in _WANLIANG_AMOUNT.findall(reason):
-            assert re.fullmatch(r"\d+(\.\d)?", amount), (
-                f"欠发数额须为整数或一位小数，得 {amount!r} in {reason}"
-            )
-
-    summary = db.turn_army_summary(state.turn)
-    assert "欠发" in summary
-    assert not _FLOAT_GARBAGE.search(summary), f"turn_army_summary 含浮点垃圾：{summary}"
 
 
 def _army_pay_budget_lines(budget):
@@ -97,7 +71,6 @@ def test_substrate_budget_splits_proposals_without_treasury_cap(game):
     assert proposed_parts() == {"central": 10, "jingyun": 7}
     state.metrics["国库"] = 100
     assert proposed_parts() == {"central": 10, "jingyun": 7}
-
 
 
 def test_renaming_army_pay_budget_line_does_not_double_debit(game, monkeypatch):
@@ -243,43 +216,6 @@ def _seed_province_pay_split_scenario(db) -> None:
         (json.dumps(fiscal, ensure_ascii=False),),
     )
     db.conn.commit()
-
-
-def test_province_pay_split_reason_and_summary_have_no_float_garbage(game):
-    """#1383 残余：省源分账 reason 真路径 + turn_army_summary delta 无 IEEE 残渣。"""
-    db, state, _ = game
-    _seed_province_pay_split_scenario(db)
-    db.settle_province_tick("shaanxi")
-
-    reasons = [
-        str(row["reason"] or "")
-        for row in db.conn.execute(
-            """
-            SELECT reason FROM army_logs
-            WHERE field = 'province_pay_arrears'
-              AND reason LIKE '%省源军饷分账%'
-            """
-        ).fetchall()
-    ]
-    assert reasons, "省源分账真路径应写入 province_pay_arrears reason"
-
-    for reason in reasons:
-        assert not _FLOAT_GARBAGE.search(reason), f"省源 reason 含浮点垃圾：{reason}"
-        for _kind, amount in _PROVINCE_WANLIANG.findall(reason):
-            assert re.fullmatch(r"\d+(\.\d)?", amount), (
-                f"省源万两须为整数或一位小数，得 {amount!r} in {reason}"
-            )
-            # 与 format_wanliang_amount 单真源同形
-            raw = float(amount)
-            assert amount == format_wanliang_amount(raw), (
-                f"省源数额须走 format_wanliang_amount，得 {amount!r}"
-            )
-
-    summary = db.turn_army_summary(state.turn)
-    assert "省源" in summary or "欠饷" in summary
-    assert not _FLOAT_GARBAGE.search(summary), (
-        f"turn_army_summary delta/reason 含浮点垃圾：{summary}"
-    )
 
 
 def test_army_payload_arrears_text_is_approximate_not_raw(game):

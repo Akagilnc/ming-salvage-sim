@@ -315,7 +315,7 @@ def extract_agent_text(run_output: object) -> str:
             raise transport_failure_unavailable(
                 remembered, attempts=1, exhausted=False,
             )
-        pmsg = text.strip() or "run status=ERROR"
+        pmsg = text if text.strip() else "run status=ERROR"
         raise transport_failure_unavailable(
             ClassifiedFailure(
                 retryable=False,

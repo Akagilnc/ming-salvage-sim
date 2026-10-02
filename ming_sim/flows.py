@@ -51,16 +51,6 @@ def raise_fixed_period_flow_abort_if_needed(
     ) from exc
 
 
-def _province_transport_ratio(fiscal: dict, unrest: int) -> float:
-    """解运比（保留函数签名，返回1.0；实际损耗已并入 _province_efficiency）。"""
-    return 1.0
-
-
-def _province_collection_rate(gentry_resistance: int, unrest: int) -> float:
-    """实收率（保留函数签名，返回1.0；实际损耗已并入 _province_efficiency）。"""
-    return 1.0
-
-
 def _province_efficiency(fiscal: dict, gentry_resistance: int, unrest: int) -> float:
     """综合到账率：士绅阻力 + 腐败度 + 民变三因子决定税银实际到账比例。
     上限 1.0（现代化/彻底改革后可接近满额），下限 0.05（完全失控）。
@@ -280,14 +270,6 @@ def _project_substrate_hub_remittance(db: GameDB) -> float:
         result = settle_tick(copy.deepcopy(settle["st"]), copy.deepcopy(settle["p"]), [])
         remittance_total += float((result.breakdown or {}).get("起运到京", 0.0) or 0.0)
     return remittance_total
-
-
-def _fiscal_container_value(db: GameDB, key: str) -> float:
-    row = db.conn.execute(
-        "SELECT value FROM fiscal_containers WHERE key = ?",
-        (key,),
-    ).fetchone()
-    return float(row["value"] or 0.0) if row is not None else 0.0
 
 
 def _fiscal_container_values_when_complete(
@@ -1127,7 +1109,7 @@ def _apply_economy_list(
     allow_pay_arrears_pool=True 仅供承诺结算内部使用，表示该承诺的 arrears
     stop gate 已经给出范围，可在 pay_arrears_pool_army_ids 内按优先级池偿还。
     """
-    from ming_sim.constants import ECONOMY_PURPOSES, ECONOMY_TARGET_KINDS, TURN_UNIT as _TU
+    from ming_sim.constants import ECONOMY_PURPOSES, ECONOMY_TARGET_KINDS
     applied: List[Dict[str, object]] = []
     # isinstance 守卫：issue-effect 的 economy（来自 enrich，未经 schema 清洗）可能被 LLM 给成真值
     # 非 list（true/数字/字符串），`economy or []` 兜不住→`for move in 它`抛 TypeError 崩结算（#117

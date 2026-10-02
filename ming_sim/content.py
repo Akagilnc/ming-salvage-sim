@@ -329,7 +329,7 @@ def load_event_content(filename: str = "events.json") -> List[Event]:
                 precondition=str(item.get("precondition") or ""),
                 event_type=event_type,
                 trigger_class=trigger_class,
-                category=str(item.get("category") or "").strip(),
+                category=str(item.get("category") or ""),
                 person_core_subjects=(
                     string_list(item["person_core_subjects"], f"{filename}[{idx}].person_core_subjects")
                     if "person_core_subjects" in item else []
@@ -595,21 +595,6 @@ def load_opening_legacies() -> List[OpeningLegacy]:
     if not out:
         raise SystemExit("opening_legacies.json 必须至少定义一条开局负面修正。")
     return out
-
-
-def dict_of_string_lists(value: object, path: str) -> Dict[str, List[str]]:
-    data = require_dict(value, path)
-    return {str(key): string_list(item, f"{path}.{key}") for key, item in data.items()}
-
-
-def dict_of_strings(value: object, path: str) -> Dict[str, str]:
-    data = require_dict(value, path)
-    output: Dict[str, str] = {}
-    for key, item in data.items():
-        if not isinstance(item, str):
-            raise SystemExit(f"设定字段应为字符串：{path}.{key}")
-        output[str(key)] = item
-    return output
 
 
 def load_office_definitions() -> Dict[str, Dict[str, object]]:

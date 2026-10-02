@@ -10,7 +10,7 @@ import json
 
 import pytest
 
-from ming_sim.applier import ApplyContext, Provenance, RejectedItem, RejectionCollector, SectionResult
+from ming_sim.applier import Provenance, RejectedItem, RejectionCollector, SectionResult
 
 
 def test_provenance_enum_values():
@@ -101,16 +101,6 @@ def clean_rejections(game):
     db, state, content = game
     db.conn.execute("DROP TABLE IF EXISTS rejection_reports")
     return game
-
-
-def test_apply_context_holds_all_fields(read_game):
-    """ApplyContext 持 db/state/content + source。"""
-    db, state, content = read_game
-    ctx = ApplyContext(db=db, state=state, content=content, source=Provenance.player_decree)
-    assert ctx.db is db
-    assert ctx.state is state
-    assert ctx.content is content
-    assert ctx.source is Provenance.player_decree
 
 
 # ---------------------------------------------------------------------------

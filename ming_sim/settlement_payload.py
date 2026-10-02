@@ -22,19 +22,18 @@ RESCRIPT_CAPABILITY_DECISIONS = frozenset({
 # 逐旨／世界段预推的请旨机标；不解析邸报正文。
 # 只匹配显式机标本体；邻接 whitespace 属原文，不得一并消费（P6 / #671 / ADR 0142）
 _DECISION_RE = re.compile(r"<<DECISION>>\s*(\{.*?\})\s*<<END>>", re.DOTALL)
-MAX_DECISIONS_PER_TURN = 5
 
 
 def bind_decision_options(options: object) -> Dict[str, Dict[str, object]]:
-    """Bind normalized labels to stored options, rejecting ambiguous decisions."""
+    """Bind verbatim labels to stored options, rejecting ambiguous decisions."""
     bound: Dict[str, Dict[str, object]] = {}
     if not isinstance(options, list):
         raise ValueError("decision options 须为 list")
     for option in options:
         if not isinstance(option, dict):
             continue
-        label = str(option.get("label") or "").strip()
-        if not label or label in bound:
+        label = str(option.get("label") or "")
+        if not label.strip() or label in bound:
             raise ValueError(f"decision option label 为空或重复：{label!r}")
         bound[label] = option
     return bound
@@ -43,13 +42,11 @@ def bind_decision_options(options: object) -> Dict[str, Dict[str, object]]:
 def parse_decision_blocks(text: str) -> List[Dict[str, object]]:
     """读取世界段请旨机标中的决策列表，不改写原文。
 
-    每块须含 title/context/options（2-3 项，每项 label + 可选 hint）。
-    解析失败的块忽略，最多取 MAX_DECISIONS_PER_TURN 条。
+    每块须含 title/context/options（每项 label + 可选 hint）。
+    解析失败的块忽略；已形成的请旨与拟批原样保留。
     """
     decisions: List[Dict[str, object]] = []
     for m in _DECISION_RE.finditer(text or ""):
-        if len(decisions) >= MAX_DECISIONS_PER_TURN:
-            break
         try:
             obj = json.loads(m.group(1))
         except Exception:
@@ -80,7 +77,7 @@ def parse_decision_blocks(text: str) -> List[Dict[str, object]]:
         decision = {
             "title": title,
             "context": str(obj.get("context") or ""),
-            "options": options[:3],
+            "options": options,
         }
         explicit_event_id = str(obj.get("event_id") or "").strip()
         origin_ref = str(obj.get("origin_ref") or "").strip()
@@ -139,78 +136,6 @@ def decision_has_rescript_capability(decision: object) -> bool:
         if parse_rescript_capability_pair(opt) is not None:
             return True
     return False
-
-
-def bind_decisions_to_candidate_events(
-    decisions: List[Dict[str, object]],
-    simulator_payload: object,
-) -> List[Dict[str, object]]:
-    """Bind decision event_id to the AUTHORITATIVE candidate snapshot (#389).
-
-    The candidate snapshot — not the simulator's free-text echo — is the source of
-    truth (#389 裁决：用权威候选快照确定性绑定，不依赖 simulator 回显 event_id）:
-    - A simulator-echoed event_id is trusted ONLY if it actually belongs to this
-      turn's candidate snapshot (the normal correct-echo path → 行为不变).
-    - A missing id, OR an echoed id that is NOT in the snapshot (omitted→misfilled /
-      hallucinated), binds on a unique exact title match inside
-      simulator_payload.candidate_events. We do not let an off-snapshot id win over
-      the snapshot just because the LLM wrote it.
-    - Non-event HITL decisions keep no event_id (nothing to bind). An echoed
-      off-snapshot id with no unique title match is UNBOUND (event_id removed) — the
-      snapshot gives no basis to trust it, and leaving it would let submit_decisions
-      write a non-candidate id into the event ledger as 'triggered' (see the inline
-      comment on the `elif explicit` branch below). A genuinely absent id with no
-      title match simply stays unbound.
-    """
-    if not decisions:
-        return []
-    if not isinstance(simulator_payload, dict):
-        return [dict(d) for d in decisions]
-    raw_candidates = simulator_payload.get("candidate_events")
-    if not isinstance(raw_candidates, list):
-        return [dict(d) for d in decisions]
-
-    candidate_ids: set[str] = set()
-    title_to_ids: Dict[str, List[str]] = {}
-    for item in raw_candidates:
-        if not isinstance(item, dict):
-            continue
-        event_id = str(item.get("id") or "").strip()
-        title = str(item.get("title") or "")
-        if not event_id:
-            continue
-        candidate_ids.add(event_id)
-        if title:
-            title_to_ids.setdefault(title, []).append(event_id)
-
-    bound: List[Dict[str, object]] = []
-    for decision in decisions:
-        out = dict(decision)
-        explicit = str(out.get("event_id") or "").strip()
-        if explicit and explicit in candidate_ids:
-            bound.append(out)  # 回显 id 确属本回合候选 → 采信（正常路径行为不变）
-            continue
-        # #1490/#1492 A：仅当 options 带齐 dossier_id+dossier_decision 时保留
-        # dossier: 前缀（真批红待裁）。裸 origin_ref 回填 / LLM 幻觉行照旧解绑，
-        # 否则 due-commitment 同形会空对空过先验 → phase2 批红卡死。
-        if explicit.startswith("dossier:") and decision_has_rescript_capability(out):
-            bound.append(out)
-            continue
-        # 缺 id，或回显 id 不在权威候选快照里：以快照唯一标题为准（重）绑，不被 LLM 回显牵着走。
-        title = str(out.get("title") or "")
-        ids = title_to_ids.get(title) or []
-        unique_ids = {event_id for event_id in ids if event_id}
-        if len(unique_ids) == 1:
-            out["event_id"] = next(iter(unique_ids))
-        elif explicit:
-            # off-snapshot 回显 id 且无唯一标题可绑 → 解绑，不保留这个非候选 id（codex
-            # correctness）：留着它会被 submit_decisions 当 'triggered' 写进事件账，若它其实是
-            # 一个真实的未来事件 id，就被永久标成已触发、再也进不了候选池（gather_candidate_events
-            # 跳过 spawned）。解绑后该选择仍在
-            # pending_decisions.choice_json，不污染终态账。正常含【候选内】id 的路径不受影响。
-            out.pop("event_id", None)
-        bound.append(out)
-    return bound
 
 
 def list_due_commitments(db: GameDB, state: GameState) -> List[Dict[str, object]]:

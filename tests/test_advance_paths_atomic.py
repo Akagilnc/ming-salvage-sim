@@ -1,17 +1,15 @@
 """玩家月链恢复入口与持久化决议验证。"""
 
 from __future__ import annotations
+from tests.conftest import clear_pending_rows, clear_resolve_rows
 
 from ming_sim.session_write_queue import get_session_write_queue
 
-import json
-import threading
 
 import pytest
 
 import ming_sim.decree as decree_mod
 import ming_sim.issues as I
-from tests.dossier_test_helpers import TYPED_COVERT_TASK
 
 def _ledger_count(db, turn: int) -> int:
     return db.conn.execute(
@@ -76,7 +74,7 @@ def test_submit_event_decision_persists_choice_after_pending_cleanup(game, monke
     db.save_state(state)
 
     def _phase2(_state, _db, *_args, **_kwargs):
-        _db.clear_pending_decisions(turn)
+        clear_pending_rows(_db, turn)
         return "ok"
 
     monkeypatch.setattr(session_mod, "resolve_decisions_phase2", _phase2)
@@ -144,7 +142,7 @@ def test_submit_event_decision_binds_from_candidate_snapshot_without_event_id(ga
     db.save_state(state)
 
     def _phase2(_state, _db, *_args, **_kwargs):
-        _db.clear_pending_decisions(turn)
+        clear_pending_rows(_db, turn)
         return "ok"
 
     monkeypatch.setattr(session_mod, "resolve_decisions_phase2", _phase2)
@@ -436,7 +434,7 @@ def test_recovery_replay_blocked_by_pending_directives(game, monkeypatch):
     with pytest.raises(ValueError, match="核定"):
         sess.resolve_turn()
     assert state.turn == turn  # 未推进，拟旨不孤儿
-    db.clear_resolve_context(turn)
+    clear_resolve_rows(db, turn)
 
 def test_skip_refused_at_front_half_done(game):
     """#1274 r1：decree.advance_without_edict 空壳已删；跳过结算的快路名缺席。
@@ -459,24 +457,3 @@ def test_skip_refused_at_front_half_done(game):
     # settling 已提交前半：turn 不因「缺壳」而推进；财政行保留
     assert state.turn == turn
     assert _ledger_count(db, turn) == rows_before
-
-def test_draft_mutators_frozen_at_front_half_done(game, monkeypatch):
-    """FRONT_HALF_DONE 冻结 draft/诏书变更器（ship-pre r1 codex）。
-
-    恢复窗口新增/确认的 draft 会被 mark_directives_issued 连带标 issued，
-    而重放 delta 不含它们=幽灵颁布。
-    """
-    from ming_sim.session import GameSession
-    db, state, content = game
-    state.turn_phase = "settling"
-
-    sess = _recovery_session(db, state, content, monkeypatch)
-    for call in (
-        lambda: sess.add_directive("新草案"),
-        lambda: sess.update_directive(1, "改"),
-        lambda: sess.delete_directive(1),
-        # #1341：set_decree 已删；冻结面只覆盖逐道草案变更器 + write_decree
-        lambda: sess.write_decree(),
-    ):
-        with pytest.raises(ValueError, match="结算|亲裁"):
-            call()

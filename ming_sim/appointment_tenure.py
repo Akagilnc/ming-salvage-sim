@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Mapping, Sequence
+from typing import Mapping
 
 from ming_sim.authority_privileges import AUTHORITY_PRIVILEGES
 
@@ -47,23 +47,3 @@ def normalize_appointment_tenure(value: object) -> str:
     if text in APPOINTMENT_TENURES:
         return text
     return DEFAULT_APPOINTMENT_TENURE
-
-
-def command_power_rank(tenure: object) -> int:
-    """号令力档位：真除=3 … 加衔=0。"""
-    return int(COMMAND_POWER_RANK[normalize_appointment_tenure(tenure)])
-
-
-def execution_distortion_weight(
-    tenure: object,
-    held_authorities: Sequence[Mapping[str, object]] | None = None,
-) -> int:
-    """执行格打折走样权重：任别定基线（号令力逆序），在持授权按 privilege 减免，下限 0。"""
-    base = _MAX_COMMAND_POWER_RANK - command_power_rank(tenure)
-    relief = 0
-    for item in held_authorities or ():
-        if not isinstance(item, dict):
-            continue
-        privilege = str(item.get("privilege") or "").strip()
-        relief = max(relief, int(AUTHORITY_COMMAND_RELIEF.get(privilege, 0)))
-    return max(0, base - relief)

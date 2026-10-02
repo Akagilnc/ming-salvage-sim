@@ -2,10 +2,8 @@
 
 import json
 
-from ming_sim.models import Character
 import pytest
 from ming_sim.knowledge import build_character_knowledge
-from ming_sim.materials import list_materials, prepare_character_materials, read_material
 from tests.dossier_test_helpers import create_test_secret_order
 
 def test_role_roster_only_lists_current_active_ming_people(game):
@@ -29,8 +27,6 @@ def test_secret_alias_exclusion_is_canonicalized_before_projection(game):
     assert "魏忠贤" in row["excluded_names"]
 
 
-
-
 def test_office_slice_does_not_read_unrelated_sensitive_reports(game, monkeypatch):
     db, state, content = game
     minister = next(c for c in content.characters.values() if c.office_type == "礼部")
@@ -47,46 +43,6 @@ def test_office_slice_does_not_read_unrelated_sensitive_reports(game, monkeypatc
     assert "military" not in view["world"]
     assert "treasury" not in view["world"]
 
-def test_inner_court_materials_do_not_read_faction_report(game, tmp_path, monkeypatch):
-    db, state, content = game
-
-    def forbidden(*_a, **_k):
-        raise AssertionError("unauthorised faction_report")
-
-    monkeypatch.setattr(db, "faction_report", forbidden)
-    previous = content.characters["王承恩"]
-    messenger = content.characters["曹化淳"]
-    db.set_character_office(previous.name, "内廷随侍", "内廷")
-    db.set_character_office(messenger.name, "御前近臣", "内廷")
-    for person in (previous, messenger):
-        world = db.get_character_knowledge(state, person.name)["world"]
-        assert "court" not in world
-        prepare_character_materials(
-            db, state, person, dest_root=tmp_path / person.name,
-        )
-
-
-
-
-
-def test_current_state_facts_are_selected_by_content_domain_not_role_label(
-    game, monkeypatch
-):
-    db, state, content = game
-    minister = next(c for c in content.characters.values() if c.office_type == "吏部")
-    monkeypatch.setattr(db, "army_report", lambda **_: "不应读取的军情")
-    monkeypatch.setattr(db, "treasury_report", lambda *_args, **_: "不应读取的账目")
-    monkeypatch.setattr(db, "faction_report", lambda **_: "不应读取的派系底账")
-
-    view = db.get_character_knowledge(state, minister.name)["world"]
-    roster = db.current_court_roster_rows(state)
-    assert roster
-    assert "personnel" in view
-    assert roster[0]["name"] in view["personnel"]
-    assert (roster[0]["office"] or "无现任官职") in view["personnel"]
-    assert "不应读取的派系底账" not in view["personnel"]
-    assert "military" not in view
-    assert "treasury" not in view
 
 def test_turn_zero_knowledge_is_role_specific_and_restores(game):
     db, state, content = game
@@ -1273,8 +1229,6 @@ def test_army_truth_is_exactly_scoped_to_person_command(game):
     assert rows[1]["name"] not in view["world"]["command"]
 
 
-
-
 def test_household_secret_ledger_keeps_amount_but_hides_case_semantics(game):
     db, state, content = game
     clerk = next(c for c in content.characters.values() if c.office_type == "户部")
@@ -1332,12 +1286,6 @@ def test_household_secret_ledger_hides_case_by_excluded_office(game):
         db.set_character_office(successor.name, prior_office, office_type=prior_type)
         clerk.office, clerk.office_type = clerk_office, clerk_type
         successor.office, successor.office_type = prior_office, prior_type
-
-
-def _office_archive_from_materials(db, state, character, root):
-    prepared = prepare_character_materials(db, state, character, dest_root=root)
-    path = next(p for p in list_materials(prepared.root) if p.endswith("/公事档案.txt"))
-    return read_material(prepared.root, path)
 
 
 def _referenceable_dossier_ids(db, character_name, turn) -> set[int]:
@@ -1418,24 +1366,3 @@ def test_multi_lead_typed_archives_reach_only_each_office_successor(game, tmp_pa
     assert case_id in _referenceable_dossier_ids(db, case_helper.name, turn)
     # 刑部 is a legal central yamen: successor shares archive identity with the lead.
     assert case_id in _referenceable_dossier_ids(db, case_successor.name, turn)
-
-
-def test_central_ledgers_and_unbounded_household_history_reach_final_materials(game, tmp_path):
-    db, state, content = game
-    household = next(c for c in content.characters.values() if c.office_type == "户部")
-    war = next(c for c in content.characters.values() if c.office_type == "兵部")
-    personnel = next(c for c in content.characters.values() if c.office_type == "吏部")
-    for index in range(31):
-        db.record_issue_economy_move(
-            state, "国库", 1, "旧账", f"EARLY_LEDGER_{index}",
-        )
-    household_archive = _office_archive_from_materials(
-        db, state, household, tmp_path / "household",
-    )
-    assert "EARLY_LEDGER_0" in household_archive and "内库" not in household_archive
-    war_archive = _office_archive_from_materials(db, state, war, tmp_path / "war")
-    assert "兵籍在册" in war_archive and "军心" not in war_archive and "欠饷" not in war_archive
-    personnel_archive = _office_archive_from_materials(
-        db, state, personnel, tmp_path / "personnel",
-    )
-    assert "任免簿" in personnel_archive

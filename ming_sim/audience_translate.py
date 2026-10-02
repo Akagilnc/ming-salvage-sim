@@ -19,7 +19,6 @@ import json
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence
 
 from ming_sim.decree_vocabulary import TARGET_KINDS
-from ming_sim.applier import Provenance
 
 TranslateFn = Callable[[str, Any], Mapping[str, object]]
 
@@ -380,8 +379,8 @@ def build_audience_translate_prompt(
     """
     said_block = "\n".join(str(s) for s in night_said if str(s).strip()) or "（无）"
     pending_block = "；".join(str(s) for s in pending_summaries if str(s).strip()) or "（无）"
-    grounding = str(target_grounding or "").strip()
-    grounding_block = f"{grounding}\n" if grounding else ""
+    grounding = str(target_grounding or "")
+    grounding_block = f"{grounding}\n" if grounding.strip() else ""
     return (
         "你是召对转译器。读本轮皇帝原话、回话、本场已说的话与本夜暂存清单，"
         "一次声明本轮全部记录。只输出一个 JSON 对象，无代码围栏、无多余字。\n"
@@ -519,76 +518,3 @@ def translate_audience_turn(
     except Exception as exc:
         raise AudienceTranslateError(str(exc) or exc.__class__.__name__) from exc
     return normalize_audience_declaration(raw)
-
-
-def apply_audience_turn_translation(
-    db: Any,
-    state: Any,
-    declaration: Mapping[str, object],
-    *,
-    night_id: int,
-    chat_turn_id: int = 0,
-    minister_name: str = "",
-    source: Provenance = Provenance.system_simulation,
-) -> DeclarationDispatchResult:
-    """把转译声明交给场中承接落账核（C0 分派 + 源轮/水位）。
-
-    ``chat_turn_id`` 是当场实况源轮；落账核经统一分派器自记撤回前像。
-    """
-    from ming_sim.audience_translation import apply_audience_round_translation
-
-    return apply_audience_round_translation(
-        db,
-        state,
-        declaration,
-        night_id=int(night_id or 0),
-        chat_turn_id=int(chat_turn_id or 0),
-        minister_name=minister_name,
-        source=source,
-    )
-
-
-def run_audience_turn_translation(
-    db: Any,
-    state: Any,
-    *,
-    emperor_message: str,
-    reply: str,
-    night_id: int,
-    chat_turn_id: int = 0,
-    minister_name: str = "",
-    llm_config: Any = None,
-    translate_fn: Optional[TranslateFn] = None,
-    source: Provenance = Provenance.system_simulation,
-) -> DeclarationDispatchResult:
-    """组装本轮上下文 → 转译 → 落账。scene_chat 同步路径与后台 worker 共用。
-
-    转译调用失败抛 :class:`AudienceTranslateError`，不进入落账核
-    （失败≠成功空声明）。
-
-    ``chat_turn_id`` 原样下传（不另造平行快照）；过月/无源轮传 0。
-    """
-    ctid = int(chat_turn_id or 0)
-    night_said = build_night_said_so_far(
-        db, int(night_id or 0), until_chat_turn_id=ctid,
-    )
-    pending = build_pending_summaries(db, int(state.turn), night_id=int(night_id or 0))
-    target_grounding = build_translation_target_grounding(db, state)
-    declaration = translate_audience_turn(
-        emperor_message=emperor_message,
-        reply=reply,
-        night_said=night_said,
-        pending_summaries=pending,
-        target_grounding=target_grounding,
-        llm_config=llm_config,
-        translate_fn=translate_fn,
-    )
-    return apply_audience_turn_translation(
-        db,
-        state,
-        declaration,
-        night_id=int(night_id or 0),
-        chat_turn_id=ctid,
-        minister_name=minister_name,
-        source=source,
-    )

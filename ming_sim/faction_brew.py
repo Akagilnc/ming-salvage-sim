@@ -183,10 +183,10 @@ def parse_faction_stance_output(raw: str, stage: str = "派系态势酿制") -> 
         parsed = json.loads(raw)
     except json.JSONDecodeError as error:
         raise LLMContractError(
-            f"{stage} 输出不是唯一、完整、合法的 JSON object：{error}\n原始输出：{raw[:800]}"
+            f"{stage} 输出不是唯一、完整、合法的 JSON object：{error}\n原始输出：{raw}"
         ) from error
     if not isinstance(parsed, dict):
-        raise LLMContractError(f"{stage} 酿制输出顶层不是 object\n原始输出：{raw[:800]}")
+        raise LLMContractError(f"{stage} 酿制输出顶层不是 object\n原始输出：{raw}")
     stance = parsed.get(STANCE_KEY)
     if not isinstance(stance, str):
         raise ValueError(f"{stage}: {STANCE_KEY} 缺失或不是字符串")

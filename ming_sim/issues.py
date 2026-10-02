@@ -19,8 +19,7 @@ from ming_sim.authority_privileges import AUTHORITY_PRIVILEGE_SET
 from ming_sim.constants import (
     TURN_UNIT, REGION_SCORE_FIELDS, REGION_QUANTITY_FIELDS, REGION_TEXT_FIELDS,
     ARMY_SCORE_FIELDS, ARMY_QUANTITY_FIELDS, ARMY_TEXT_FIELDS, FISCAL_SCORE_FIELDS,
-    BUILDING_SCORE_FIELDS, BUILDING_QUANTITY_FIELDS, BUILDING_TEXT_FIELDS,
-    POWER_SCORE_FIELDS, POWER_TEXT_FIELDS, CHARACTER_TEXT_FIELDS,
+    BUILDING_SCORE_FIELDS, BUILDING_QUANTITY_FIELDS, POWER_SCORE_FIELDS, POWER_TEXT_FIELDS, CHARACTER_TEXT_FIELDS,
     REGION_FIELD_ALIASES, ARMY_FIELD_ALIASES, POWER_FIELD_ALIASES, GATE_TABLES,
     LEVY_DISPLACEMENT_RATE,
     BANDIT_ABSORPTION_FIELDS,
@@ -3690,7 +3689,9 @@ def _spawn_legacy_from_effect(
     legacy = effect.get("legacy")
     if not isinstance(legacy, dict):
         return None
-    name = str(legacy.get("name") or "").strip() or f"{issue_title}遗留"
+    name = str(legacy.get("name") or "")
+    if not name.strip():
+        name = f"{issue_title}遗留"
     dur_key = str(legacy.get("duration") or "2年").strip()
     duration = _LEGACY_DURATION_MONTHS.get(dur_key)
     if duration is None:
@@ -4463,7 +4464,7 @@ def _strategic_event_result_preflight_error(
                     if err:
                         return err
                 if field == "controlled_by":
-                    controller = str(value).strip()[:160] if value is not None else ""
+                    controller = str(value) if value is not None else ""
                     if (
                         value is None
                         or not controller
@@ -5036,11 +5037,11 @@ def _initiative_resolve_pairing_warnings(
         )
         if needs_army and not has_army:
             warns.append(
-                f"军事国策「{str(title)[:16]}」结案无 new_armies 配对（练军/募营疑未建军籍，#46）"
+                f"军事国策「{title}」结案无 new_armies 配对（练军/募营疑未建军籍，#46）"
             )
         if needs_office and not has_office:
             warns.append(
-                f"军事国策「{str(title)[:16]}」结案无人物变更配对（调将疑未落主将调任，#46）"
+                f"军事国策「{title}」结案无人物变更配对（调将疑未落主将调任，#46）"
             )
 
     if any(p in blob for p in _FISCAL_RECURRING_PHRASES):
@@ -5048,7 +5049,7 @@ def _initiative_resolve_pairing_warnings(
         # 故告警文案不声称查了它——若另经 fiscal_creates 立账可忽略本提示（CMR claude）。
         if not _has_economy_entry(effect) and not _has_economy_entry(ongoing_effects):
             warns.append(
-                f"经制国策「{str(title)[:16]}」结案无月度 economy 配对"
+                f"经制国策「{title}」结案无月度 economy 配对"
                 "（疑月经费/俸饷未立常设月支；若已另经 fiscal_creates 立账可忽略，#45）"
             )
     return warns
@@ -5666,7 +5667,7 @@ def apply_issue_tracker_output(
                     resolve_eff = enr.get("effect_on_resolve") or resolve_eff
                     ongoing_eff = enr.get("ongoing_effects") or ongoing_eff
                     fail_eff = enr.get("effect_on_fail") or fail_eff
-                    print(f"[issue/enrich] 国策「{title[:16]}」补效果 resolve={bool(resolve_eff)} ongoing={bool(ongoing_eff)}")
+                    print(f"[issue/enrich] 国策「{title}」补效果 resolve={bool(resolve_eff)} ongoing={bool(ongoing_eff)}")
                 except Exception as exc:
                     print(f"[issue/enrich] 补全失败，沿用空效果：{exc}")
                 # floor 在 try 外：即便 enrich 抛错或没补上，CLI 后端国策也绝不入空壳（codexB）。
@@ -6486,11 +6487,6 @@ def sanitize_delta_shape(extracted: dict) -> tuple[dict, list[tuple[str, dict, s
                     section_clean.append(item)
             cleaned[key] = section_clean
     return cleaned, rejections
-
-
-def validate_delta_shape(extracted: dict) -> None:
-    """Validate unsplittable delta shape; split-capable bad items are ADR0015 rejections."""
-    sanitize_delta_shape(extracted)
 
 
 @contextmanager
@@ -9928,7 +9924,7 @@ def _apply_score_extraction_body(
                 record_secret_order_disclosure(
                     db, state, real_id, sim_note, commit=commit_now,
                 )
-            print(f"[secret_order] 推演副作用 id={real_id} note={sim_note[:60]!r}")
+            print(f"[secret_order] 推演副作用 id={real_id} note={sim_note!r}")
             applied_secret_orders.append({
                 "order_id": real_id, "sim_note": sim_note, "disclosed": disclosed,
             })

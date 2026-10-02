@@ -11,14 +11,12 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import re
 import shutil
-import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, List, Mapping, Optional, Sequence
+from typing import Any, List, Mapping, Optional, Sequence
 
 _UNSAFE = re.compile(r'[\\/:*?"<>|\x00-\x1f]')
 _INDEX_NAME = "INDEX.txt"
@@ -149,45 +147,6 @@ def _resolve_inside(root: Path, rel: str) -> Path:
     return candidate
 
 
-def _materials_invocation_dir(db: Any, state: Any) -> Path:
-    from ming_sim.audience_night import get_open_night
-
-
-    db_path = Path(str(getattr(db, "path", "") or ".")).resolve()
-    night = get_open_night(db)
-    key = f"night-{int(night['id'])}" if night else f"turn-{int(state.turn)}"
-    return (
-        _materials_campaign_dir(db) / key / uuid.uuid4().hex
-    )
-
-
-class MaterialsRoot:
-    """Mutable live materials root shared by API tools and optional CLI cwd.
-
-    Independent of whether the concrete model declares ``materials_dir``.
-    """
-
-    __slots__ = ("_root",)
-
-    def __init__(self, root: Optional[Path | str] = "") -> None:
-        self._root = str(root or "")
-
-    @property
-    def root(self) -> str:
-        return self._root
-
-    def set(self, root: Optional[Path | str]) -> str:
-        previous = self._root
-        self._root = str(root or "")
-        return previous
-
-    def clear(self) -> str:
-        return self.set("")
-
-    def __call__(self) -> str:
-        return self._root
-
-
 def _empty_uuid_invocation_parent(path: Path) -> Optional[Path]:
     parent = path.parent
     name = parent.name
@@ -229,34 +188,6 @@ def release_material_tree(root: Optional[Path | str]) -> None:
         raise primary
 
 
-def release_previous_material_tree(
-    old_root: Optional[Path | str],
-    new_root: Optional[Path | str],
-) -> None:
-    """After a live root handoff: best-effort release of the previous tree.
-
-    The new root is already installed. Cleanup failure is logged with the real
-    exception and must not revoke the new root or interrupt the caller
-    (audience handoff). close/teardown paths call :func:`release_material_tree`
-    directly and re-raise after other resources are released.
-    """
-    import logging
-
-    if old_root is None:
-        return
-    old = str(old_root or "").strip()
-    new = str(new_root or "").strip()
-    if not old or old == new:
-        return
-    try:
-        release_material_tree(old)
-    except BaseException:
-        logging.getLogger(__name__).exception(
-            "previous materials tree cleanup failed; live root retained: %s",
-            new or "(none)",
-        )
-
-
 def _publish_material_tree(
     dest_root: Optional[Path],
     default_root: Path,
@@ -293,12 +224,6 @@ def _publish_material_tree(
     return dest, index
 
 
-def character_materials_root(db: Any, state: Any, character: Any) -> Path:
-    return _materials_invocation_dir(db, state) / _safe_segment(
-        getattr(character, "name", "")
-    )
-
-
 def list_materials(root: Path, path: str = "") -> List[str]:
     base = _resolve_inside(root, path)
     root_r = Path(root).resolve()
@@ -332,7 +257,7 @@ def material_tools(root: Any) -> list:
         value = root() if callable(root) else root
         text = str(value or "").strip()
         if not text:
-            # Empty/cleared MaterialsRoot must not resolve Path("") → CWD.
+            # Empty/cleared root must not resolve Path("") → CWD.
             raise ValueError("材料目录未就绪")
         return Path(text)
 
@@ -363,24 +288,6 @@ def material_tools(root: Any) -> list:
     list_materials_tool.__name__ = "list_materials"
     read_material_tool.__name__ = "read_material"
     return [list_materials_tool, read_material_tool]
-
-
-def _present_names(db: Any, character: Any) -> List[str]:
-    from ming_sim.audience_night import get_open_night, present_names_at
-
-    name = str(getattr(character, "name", "") or "")
-    night = get_open_night(db)
-    if night is None:
-        return [name] if name else []
-    names = sorted(present_names_at(db, int(night["id"])))
-    return names or ([name] if name else [])
-
-
-def _spoken_this_scene(db: Any, character: Any) -> str:
-    from ming_sim.audience_night import audience_scene_recap
-
-    # #1812 P6：本场对话记录是自由正文，不得 strip；判空留给调用方按需处理。
-    return str(audience_scene_recap(db, getattr(character, "name", "")) or "")
 
 
 def _issue_linked_affair_id(db: Any, issue_id: object) -> int:
@@ -607,28 +514,6 @@ def _character_affair_lines(
     return lines
 
 
-def _visible_affair_lines(knowledge: dict) -> list[dict[str, object]]:
-    """Material matters are exactly the already-authorized knowledge projection."""
-    lines: list[dict[str, object]] = []
-    for issue in knowledge.get("issues") or []:
-        issue_id = int(issue.get("id") or 0)
-        title = str(issue.get("title") or "")
-        if issue_id <= 0 or not title:
-            continue
-        lines.append({
-            "id": issue_id,
-            "affair_id": int(issue.get("affair_id") or 0),
-            "title": title,
-            "situation": str(issue.get("stage_text") or "") or "见目录。",
-            "resolve_condition": str(issue.get("resolve_condition") or ""),
-            "fail_condition": str(issue.get("fail_condition") or ""),
-            "source_id": str(issue.get("source_id") or f"issue:{issue_id}"),
-            "audience_names": tuple(issue.get("audience_names") or ()),
-            "participant_roster": issue.get("participant_roster") or "[]",
-        })
-    return lines
-
-
 def _opening_affair_lines(
     db: Any,
     character_name: str,
@@ -687,18 +572,6 @@ def _opening_affair_lines(
     return handled
 
 
-def _handled_affair_lines(
-    db: Any, state: Any, character_name: str, issue_materials: Sequence[dict[str, object]],
-) -> list[dict[str, object]]:
-    """Filter canonical visible issue materials to matters this character handles."""
-    from ming_sim.participant_roster import participant_roster_names
-
-    return [
-        item for item in issue_materials
-        if character_name in participant_roster_names(item.get("participant_roster"))
-    ]
-
-
 def _carryover_drafts(db: Any, state: Any) -> list[dict]:
     if not hasattr(db, "list_directives"):
         return []
@@ -710,175 +583,6 @@ def _carryover_drafts(db: Any, state: Any) -> list[dict]:
             or db.get_dossier_for_directive(int(row["id"])) is None
         )
     ]
-
-
-def minimal_opening_context(
-    character: Any,
-    state: Any,
-    present: Sequence[str],
-    affairs: Sequence[dict[str, object]],
-    spoken: str,
-) -> str:
-    """Canonical minimal opening: identity/office, present, date, affairs, spoken."""
-    name = str(getattr(character, "name", "") or "")
-    office = str(getattr(character, "office", "") or "")
-    parts = [
-        f"身份：{name}，{office}",
-        f"在场：{'、'.join(present) if present else name}",
-        f"日期：{int(state.year)}年{int(state.period)}月",
-    ]
-    if affairs:
-        parts.append("正经手事务：")
-        parts.extend(
-            f"- #{item['id']} {item['title']}：{item['situation']}"
-            for item in affairs
-        )
-    else:
-        parts.append("正经手事务：（无）")
-    parts.append("本场已说的话：")
-    # #1812 P6：spoken 是自由正文，判空只用局部 stripped 副本，写出用原文。
-    parts.append(spoken if spoken.strip() else "（尚无）")
-    parts.append("材料在当前目录。根目录 INDEX 一行一项。其余想读自己读。")
-    return "\n".join(parts)
-
-
-def _write_secret_order_file(tmp: Path, db: Any, state: Any, character: Any) -> str | None:
-    """Directory copy of the minister's active secret-order reminder.
-
-    Logic lives here after #1833 retired the registry brief builder. Full task
-    text is kept for on-demand read — no replacement length cap (#1833 AC).
-    DB/read failures raise; they are not washed into an empty-business result.
-    """
-    name = str(getattr(character, "name", "") or "")
-    orders = db.get_active_secret_orders_for_minister(name) if name else []
-    if orders:
-        lines = [
-            "【你身上还在办的密令】",
-            "在册密令：",
-        ]
-        for o in orders:
-            advanced = db._has_secret_order_period_line(
-                int(o["id"]), "result", state.year, state.period,
-            )
-            tag = "✅ 本月已推进" if advanced else "⚠️ 本月尚未推进"
-            due_turn = int(o.get("due_turn") or 0)
-            due_text = (
-                f"；御限剩 {max(0, due_turn - int(state.turn))} 月" if due_turn else ""
-            )
-            lines.append(f"  - #{o['id']}「{o['title']}」 {tag}{due_text}")
-            content = str(o.get("content") or "")
-            if content:
-                lines.append(content)
-        brief = "\n".join(lines)
-    else:
-        brief = ""
-    rel = f"{_SECRET_DIR}/进行中.txt"
-    _write_text(tmp / rel, brief or "（无进行中密令）")
-    return rel
-
-
-def _write_recommendation_file(tmp: Path, db: Any, state: Any, character: Any) -> str | None:
-    from ming_sim.recommendations import build_recommendation_brief
-
-    brief = build_recommendation_brief(db, state, str(getattr(character, "name", "") or ""))
-    rel = f"{_RECOMMEND_DIR}/可荐人切片.txt"
-    _write_text(tmp / rel, brief or "【可荐人切片】本大臣眼下没有可据以具名荐人的人选。")
-    return rel
-
-
-def _write_textual_fact_files(
-    tmp: Path, db: Any, character: Any, knowledge: dict,
-    issue_materials: Sequence[dict[str, object]],
-) -> list[str]:
-    store = getattr(db, "textual_facts", None)
-    readable = getattr(store, "readable_materials", None)
-    if not callable(readable):
-        return []
-    subjects: list[tuple[str, str, str]] = []
-    name = str(getattr(character, "name", "") or "")
-    if name:
-        subjects.append(("character", name, name))
-    region_ids = set((knowledge.get("scope") or {}).get("region_ids") or ())
-    if region_ids and hasattr(db, "region_rows"):
-        for row in db.region_rows():
-            if str(row["id"] or "") not in region_ids:
-                continue
-            rid = str(row["id"] or "")
-            rname = str(row["name"] or rid)
-            if rid:
-                subjects.append(("region", rid, rname))
-    army_ids = set((knowledge.get("scope") or {}).get("army_ids") or ())
-    if army_ids and hasattr(db, "army_rows"):
-        for row in db.army_rows():
-            if str(row["id"] or "") not in army_ids:
-                continue
-            aid = str(row["id"] or "")
-            aname = str(row["name"] or aid)
-            if aid:
-                subjects.append(("army", aid, aname))
-    for item in issue_materials:
-        affair_id = int(item.get("affair_id") or 0)
-        if affair_id > 0:
-            subjects.append(("affair", str(affair_id), str(item.get("title") or affair_id)))
-    index: list[str] = []
-    seen: set[tuple[str, str]] = set()
-    for kind, subject_id, label in subjects:
-        key = (kind, subject_id)
-        if key in seen:
-            continue
-        seen.add(key)
-        facts = readable(subject_kind=kind, subject_id=subject_id)
-        if not facts:
-            continue
-        body = "\n".join(str(fact.body or "") for fact in facts if str(fact.body or "").strip())
-        if not body:
-            continue
-        rel = f"{_FACT_DIR}/{kind}-{_safe_segment(label)}.txt"
-        _write_text(tmp / rel, body)
-        index.append(rel)
-    return index
-
-
-def _write_region_detail_files(tmp: Path, db: Any, knowledge: dict) -> list[str]:
-    region_ids = set((knowledge.get("scope") or {}).get("region_ids") or ())
-    if not region_ids or not hasattr(db, "region_rows"):
-        return []
-    index: list[str] = []
-    for row in db.region_rows():
-        if str(row["id"] or "") not in region_ids:
-            continue
-        name = str(row["name"] or row["id"] or "")
-        if not name:
-            continue
-        detail = db.region_detail(name, qualitative=True)
-        rel = f"{_REGION_DIR}/{_safe_segment(name)}/详情.txt"
-        _write_text(tmp / rel, detail)
-        index.append(rel)
-    return index
-
-
-def _write_army_detail_files(tmp: Path, db: Any, knowledge: dict) -> list[str]:
-    army_ids = set((knowledge.get("scope") or {}).get("army_ids") or ())
-    if not army_ids or not hasattr(db, "army_rows"):
-        return []
-    index: list[str] = []
-    for row in db.army_rows():
-        if str(row["id"] or "") not in army_ids:
-            continue
-        name = str(row["name"] or "")
-        army_id = str(row["id"] or "")
-        key = name or army_id
-        if not key:
-            continue
-        # army_detail leaks raw firearm numbers; qualitative roster is the P4-safe renderer.
-        detail = db.army_roster(
-            filter_names=[name or army_id, army_id],
-            qualitative_equipment=True,
-        )
-        rel = f"{_ARMY_DIR}/{_safe_segment(key)}/详情.txt"
-        _write_text(tmp / rel, detail or str(row["status"] or ""))
-        index.append(rel)
-    return index
 
 
 _LEDGER_KEYS = (
@@ -926,74 +630,6 @@ def _court_roster_text(db: Any, state: Any, character: Any, knowledge: dict) -> 
         f"{row['name']}：{row['office'] or '无现任官职'}，{row['status']}"
         for row in rows
     )
-
-
-def _write_tree(
-    tmp: Path, db: Any, state: Any, character: Any, knowledge: dict,
-    issue_materials: Sequence[dict[str, object]],
-) -> list[str]:
-    from ming_sim.knowledge import render_character_knowledge
-
-    name = str(getattr(character, "name", "") or "")
-    index: list[str] = []
-
-    _write_text(tmp / _COURT_ROSTER_REL, _court_roster_text(db, state, character, knowledge))
-    index.append(_COURT_ROSTER_REL)
-
-    person_dir = tmp / _PERSON_DIR / _safe_segment(name)
-    _write_text(person_dir / "经历.txt", _experience_text(knowledge, _person_audience_experience(db, name)))
-    index.append(f"{_PERSON_DIR}/{_safe_segment(name)}/经历.txt")
-
-    _write_text(
-        person_dir / "公事档案.txt",
-        character_office_archive_text(db, state, character, knowledge),
-    )
-    index.append(f"{_PERSON_DIR}/{_safe_segment(name)}/公事档案.txt")
-
-
-    # Keep a full processed projection in the directory for on-demand read;
-    # this is mediation output, not a raw world-library dump.
-    rendered = render_character_knowledge(
-        knowledge, name, db=db, state=state,
-    )
-    if rendered:
-        _write_text(person_dir / "见闻.txt", rendered)
-        index.append(f"{_PERSON_DIR}/{_safe_segment(name)}/见闻.txt")
-
-    for item in issue_materials:
-        segment = f"issue-{int(item['id'])}"
-        affair_dir = tmp / _AFFAIR_DIR / segment
-        details = [
-            f"事项ID：{item['id']}",
-            f"事务ID：{item['affair_id']}" if item["affair_id"] else "",
-            f"标题：{item['title']}",
-            f"当前情况：{item['situation']}",
-            f"办结条件：{item['resolve_condition']}" if item["resolve_condition"] else "",
-            f"失败条件：{item['fail_condition']}" if item["fail_condition"] else "",
-        ]
-        _write_text(affair_dir / "当前情况.txt", "\n".join(x for x in details if x))
-        index.append(f"{_AFFAIR_DIR}/{segment}/当前情况.txt")
-
-    public_events = knowledge.get("public_events") or []
-    index.extend(_write_public_by_month(tmp, public_events))
-    index.extend(_write_gazette_index(
-        tmp,
-        _with_archived_gazette_titles(_character_gazette_rows(public_events), db),
-        prefix=_CHARACTER_GAZETTE_DIR,
-    ))
-
-    secret_rel = _write_secret_order_file(tmp, db, state, character)
-    if secret_rel:
-        index.append(secret_rel)
-    recommend_rel = _write_recommendation_file(tmp, db, state, character)
-    if recommend_rel:
-        index.append(recommend_rel)
-    index.extend(_write_textual_fact_files(tmp, db, character, knowledge, issue_materials))
-    index.extend(_write_region_detail_files(tmp, db, knowledge))
-    index.extend(_write_army_detail_files(tmp, db, knowledge))
-
-    _write_text(tmp / _INDEX_NAME, "\n".join(index) if index else "")
-    return index
 
 
 def _experience_text(knowledge: dict, audible_entries: Sequence[dict] = ()) -> str:
@@ -1084,76 +720,6 @@ def _write_public_by_month(tmp: Path, public_events: list) -> list[str]:
         _write_text(tmp / _PUBLIC_DIR / fname, "\n".join(lines))
         index.append(f"{_PUBLIC_DIR}/{fname}")
     return index
-
-
-def prepare_character_materials(
-    db: Any,
-    state: Any,
-    character: Any,
-    *,
-    dest_root: Optional[Path] = None,
-) -> PreparedMaterials:
-    from ming_sim.knowledge import build_character_knowledge, project_issue_materials
-
-    name = str(getattr(character, "name", "") or "")
-    knowledge = {}
-    if hasattr(db, "get_character_knowledge"):
-        knowledge = db.get_character_knowledge(state, name)
-    else:
-        knowledge = build_character_knowledge(db, state, name)
-    issue_materials = _visible_affair_lines({
-        "issues": project_issue_materials(db, name, knowledge),
-    })
-
-    dest, index = _publish_material_tree(
-        dest_root,
-        character_materials_root(db, state, character),
-        lambda tmp: _write_tree(tmp, db, state, character, knowledge, issue_materials),
-    )
-
-    affairs = _handled_affair_lines(db, state, name, issue_materials)
-    for row in _carryover_drafts(db, state):
-        title = f"尚未入档旨稿#{int(row['id'])}"
-        body = str(row.get("text") or "")
-        affairs.append({
-            "id": f"draft-{int(row['id'])}", "title": title,
-            "situation": f"{body}（尚未入档）" if body else "尚未入档",
-        })
-    from types import SimpleNamespace
-    from ming_sim.knowledge import current_character_office
-
-    office, office_type = current_character_office(db, character, name)
-    current_character = SimpleNamespace(name=name, office=office, office_type=office_type)
-    opening = minimal_opening_context(
-        current_character, state, _present_names(db, character), affairs,
-        _spoken_this_scene(db, character),
-    )
-    return PreparedMaterials(root=dest, opening=opening, index_lines=tuple(index))
-
-
-def _character_gazette_rows(public_events: Sequence[dict]) -> list[dict[str, object]]:
-    """Person gazette rows come only from that person's typed public projection.
-
-    Raw ``turn_reports`` aggregates are not an authorization boundary (#883 / #1832).
-    """
-    rows: list[dict[str, object]] = []
-    for item in public_events or []:
-        source_id = str(item.get("source_id") or "")
-        if not (
-            source_id.startswith("projection:turn_report:")
-            or (source_id.startswith("turn_report:") and source_id.endswith(":public"))
-        ):
-            continue
-        body = str(item.get("body") or "")
-        if not body.strip():
-            continue
-        rows.append({
-            "year": int(item.get("year") or 0),
-            "period": int(item.get("period") or 0),
-            "turn": int(item.get("turn") or 0),
-            "body": body,
-        })
-    return rows
 
 
 def _with_archived_gazette_titles(

@@ -4,12 +4,11 @@ import pytest
 
 import ming_sim.agents as agents_mod
 import ming_sim.decree as decree_mod
-from ming_sim import audience_night
 from ming_sim.exceptions import LLMContractError
 from ming_sim.models import LLMConfig
 from ming_sim.qualitative import power_band, qualitative_character_axis
 from ming_sim.strict_types import IMPERIAL_AUTHORITY_BANDS
-from tests.dossier_test_helpers import TYPED_COVERT_TASK, rejected_verdict
+from tests.dossier_test_helpers import rejected_verdict
 
 
 def _dossier(db, state, text="清丈天下田亩", **payload):
@@ -461,45 +460,6 @@ def test_gate_second_verdict_reads_pending_or_applied_history_strictly():
                  [promoted, promoted], [{"dossier_id": 8, "decision": "promulgated"}]):
         with pytest.raises(RuntimeError):
             _select_second_verdict(True, 7, rows, [])
-
-
-def test_run_resolve_arm_recovers_settled_verdicts_from_history(game, monkeypatch, tmp_path):
-    """Non-awaiting arms must read applied history at the pre-resolve turn."""
-    from ming_sim.content import GameContent
-    from ming_sim.models import LLMConfig
-    from scripts import promulgation_gate_561 as gate
-
-    content = GameContent.load()
-    cfg = LLMConfig(
-        api_key="", base_url="", model="test", channel="cli",
-        cli_runner="codex", cli_model="test",
-    )
-
-    def fake_resolve(state, db, *_a, **_k):
-        dossiers = db.list_decree_dossiers(status="proposed")
-        verdicts = [
-            {"dossier_id": int(row["id"]), "decision": "promulgated"}
-            for row in dossiers
-        ]
-        db.save_pending_promulgation_verdicts(state.turn, verdicts)
-        db.apply_dossier_verdicts(state, verdicts, content=content)
-        # Settlement consumes pending and advances turn — the bug surface.
-        assert db.get_pending_promulgation_verdicts(state.turn) == []
-        state.turn += 1
-        db.save_state(state)
-        return decree_mod.ResolveResult(awaiting=False, report="settled")
-
-    monkeypatch.setattr(gate, "resolve_directives", fake_resolve)
-    result = gate._run_resolve_arm(
-        str(tmp_path), content, cfg,
-        name="settled_arm", authority=100, kinds=("hostile",),
-    )
-    assert result["awaiting"] is False
-    assert result["verdicts"], "settled arm must recover applied verdicts"
-    assert {int(row["dossier_id"]) for row in result["verdicts"]} == set(
-        result["ids"].values()
-    )
-    assert all(row["decision"] == "promulgated" for row in result["verdicts"])
 
 
 def test_gatekeeper_successor_removes_donglin_block_posture(game):

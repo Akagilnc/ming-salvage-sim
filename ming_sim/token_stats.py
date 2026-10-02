@@ -86,42 +86,6 @@ def _record_usage(model_id: str, usage: object, caller_tag: str = "?") -> None:
     )
 
 
-def record_stream_metrics(model_id: str, metrics: object, caller_tag: str = "?") -> None:
-    """记录 agno 流式 RunOutput.metrics（RunMetrics）的 token 用量。
-
-    流式调用 openai response 是 stream 对象，无 .usage，monkeypatch 抓不到——
-    故 run_agent_stream_text 在终结事件显式调本函数补记。RunMetrics 字段名与
-    OpenAI usage 不同：input_tokens/output_tokens/cache_read_tokens/...
-    """
-    if metrics is None:
-        return
-    prompt = int(getattr(metrics, "input_tokens", 0) or 0)
-    completion = int(getattr(metrics, "output_tokens", 0) or 0)
-    total = int(getattr(metrics, "total_tokens", prompt + completion) or 0)
-    cached = int(getattr(metrics, "cache_read_tokens", 0) or 0)
-    cache_creation = int(getattr(metrics, "cache_write_tokens", 0) or 0)
-    reasoning = int(getattr(metrics, "reasoning_tokens", 0) or 0)
-    if total == 0 and prompt == 0 and completion == 0:
-        return
-    bucket = TOKEN_STATS.setdefault(
-        model_id,
-        {"calls": 0, "prompt": 0, "completion": 0, "cached": 0, "reasoning": 0, "total": 0},
-    )
-    bucket["calls"] += 1
-    bucket["prompt"] += prompt
-    bucket["completion"] += completion
-    bucket["cached"] += cached
-    bucket["cache_creation"] = bucket.get("cache_creation", 0) + cache_creation
-    bucket["reasoning"] += reasoning
-    bucket["total"] += total
-    cc_part = f" cache_creation={cache_creation}" if cache_creation else ""
-    print(
-        f"[TOKEN] caller={caller_tag} model={model_id} prompt={prompt} cached={cached}{cc_part} "
-        f"completion={completion} reasoning={reasoning} total={total}",
-        flush=True,
-    )
-
-
 def _get_client_base_url(self_client_holder: object) -> str:
     """从 openai Completions self 拿 client.base_url。"""
     try:

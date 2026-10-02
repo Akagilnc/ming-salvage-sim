@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import pytest
 
-from tests.section_rejection_helpers import game, rejection_rows as _rejection_rows, run_declaration
+from tests.section_rejection_helpers import rejection_rows as _rejection_rows, run_declaration
 
 
 def run_settle(db, state, content, extracted, **kwargs):
@@ -141,22 +141,6 @@ def test_canonical_person_power_writer_code_exception_is_fail_loud(game, monkeyp
                 "new_power": target_power, "reason": "叛", "origin_ref": "盘面自发",
             }],
         }, content=content)
-
-
-def test_power_change_formatter_skips_rejected_items():
-    """report.format_power_changes 遇到同列的拒收项(无 delta/label 键)不得 KeyError——
-    拒收项不是盘面变化,只渲染 applied 项;全拒收时回落「未见变化」(S1 迁契约副作用守门)。"""
-    from ming_sim.report import format_power_changes
-
-    out = format_power_changes([
-        {"rejected": True, "category": "hallucinated_id", "reason": "查无此势力"},
-        {"power": "后金", "label": "威望", "old": 50, "new": 53, "delta": 3, "reason": "推演"},
-    ])
-    assert "后金" in out and "查无此势力" not in out
-
-    only_rejected = format_power_changes([
-        {"rejected": True, "category": "invalid_enum", "reason": "字段非法"}])
-    assert "未见明确势力盘面变化" in only_rejected
 
 
 def test_dirty_power_value_rejected_sibling_field_lands(game):

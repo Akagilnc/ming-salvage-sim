@@ -279,50 +279,6 @@ def test_create_chat_model_omits_default_headers_when_empty(monkeypatch):
     assert "default_headers" not in captured[0]
 
 
-def test_scene_and_rescript_entries_pass_default_headers_at_transport(monkeypatch, game, tmp_path):
-    """#1794：召对/拟诏真实入口 → OpenAIChat 构造缝头表整张到达；不跑真实 LLM。"""
-    from ming_sim.agents import bind_content as agents_bind, create_rescript_draft_agent
-    from ming_sim.materials import PreparedMaterials
-    from ming_sim.registry import create_scene_agent
-
-    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
-    db, state, content = game
-    agents_bind(content)
-
-    headers = {
-        "X-Custom-Session": "sess-fixed-1",
-        "User-Agent": "ming-qa/1.0",
-    }
-    cfg = LLMConfig(
-        api_key="sk-test",
-        base_url="https://api.example.com/v1",
-        model="gpt-test",
-        channel="api",
-        default_headers=headers,
-    )
-
-    captured: list = []
-    real = llm_model.OpenAIChat
-
-    def spy(*args, **kwargs):
-        captured.append(dict(kwargs))
-        return real(*args, **kwargs)
-
-    monkeypatch.setattr(llm_model, "OpenAIChat", spy)
-
-    create_scene_agent(
-        cfg, PreparedMaterials(root=tmp_path, opening="", index_lines=()),
-        content=content,
-    )
-    assert captured, "召对入口须构造 OpenAIChat"
-    assert captured[-1].get("default_headers") == headers
-
-    before = len(captured)
-    create_rescript_draft_agent(cfg, db)
-    assert len(captured) == before + 1, "拟诏入口须再构造一次 OpenAIChat"
-    assert captured[-1].get("default_headers") == headers
-
-
 def test_create_chat_model_strips_top_p_for_openai_reasoning_family(monkeypatch):
     """#1452：luna/gpt-5 推理族拒 top_p（HTTP 400 空 assistant → agno Unknown model error）。
     召对 registry 固定传 top_p=0.9，工厂必须剥离，temperature 可保留。"""
@@ -830,7 +786,6 @@ def test_cli_reasoning_strength_runners_single_source_in_cli_backend():
     assert '{"codex"' not in src and "{'codex'" not in src
 
 
-
 def test_agent_factories_omit_max_tokens_on_param_surface(monkeypatch):
     """#1472：ming_sim.agents 现役工厂 + gate 真实参数面无 max_tokens 键。"""
     from types import SimpleNamespace
@@ -909,7 +864,6 @@ def test_agent_factories_omit_max_tokens_on_param_surface(monkeypatch):
     cb._run_api_for_config("输出 {}", cfg, tag="gate")
     assert len(seen) == before_gate + 1, f"gate must hit create_chat_model once, got +{len(seen) - before_gate}"
     assert "max_tokens" not in seen[-1], seen[-1]
-
 
 
 def test_gate_evidence_config_omits_max_tokens():

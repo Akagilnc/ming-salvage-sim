@@ -1,7 +1,7 @@
 """结算落库统一拒收契约与事务边界（ADR 0008 S0 骨架）。
 
 契约住此模块；各 section 适配器将原地迁入（PR2）。
-公开类型：Provenance / RejectedItem / SectionResult / ApplyContext / RejectionCollector。
+公开类型：Provenance / RejectedItem / SectionResult / RejectionCollector。
 """
 
 from __future__ import annotations
@@ -269,18 +269,6 @@ class SectionResult:
 # 决定 1：适配器入参上下文
 # ---------------------------------------------------------------------------
 
-@dataclass
-class ApplyContext:
-    """适配器入参，持结算所需的全部外部依赖。
-
-    source 由调用方在调用前传入。
-    """
-
-    db: Any          # GameDB（不在 applier 层导入 GameDB 避免循环）
-    state: Any       # GameState
-    content: Any     # GameContent
-    source: Provenance
-
 
 # ---------------------------------------------------------------------------
 # 决定 5：拒收收集器
@@ -383,13 +371,6 @@ class RejectionCollector:
         """丢弃缓冲与待镜像快照（回滚路径：DB 行已随事务回滚，内存同步清场）。"""
         self._buffer.clear()
         self._flushed.clear()
-
-    def has_player_visible_rejection(self) -> bool:
-        """本回合是否有 player_decree / hitl_decision 来源的拒收——决定玩家面邸报是否给一句
-        in-world 提示（ADR 0008 决定 5：仅这两来源对玩家可见，系统推演来源安静）。
-        检 _buffer + _flushed：报告组装在事务内、commit/mirror 前，拒收已 record 可能已 flush 未 mirror。"""
-        _visible = {Provenance.player_decree.value, Provenance.hitl_decision.value}
-        return any(row["source"] in _visible for row in (*self._buffer, *self._flushed))
 
 
 def register_runtime_outcome_callbacks(

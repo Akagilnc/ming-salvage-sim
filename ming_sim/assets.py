@@ -24,7 +24,7 @@ def load_text_asset(relative_path: str) -> str:
     path = os.path.join(CONTENT_DIR, relative_path)
     try:
         with open(path, "r", encoding="utf-8") as file:
-            text = file.read().strip()
+            text = file.read()
     except OSError as error:
         raise SystemExit(f"设定文件缺失或不可读：{path} ({error})") from error
     return (

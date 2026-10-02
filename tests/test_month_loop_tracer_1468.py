@@ -21,7 +21,6 @@ from types import SimpleNamespace
 import pytest
 from fastapi.testclient import TestClient
 
-import ming_sim.agents as agents_mod
 import ming_sim.cli_backend as cli_backend
 import ming_sim.decree as decree_mod
 import ming_sim.session as session_mod
@@ -44,14 +43,11 @@ class _BoomExtractor:
         raise RuntimeError("抽取持续失败·#1468 负向钉")
 
 
-
 class _CannedMinisterAgent:
     """非流式 session.chat 读 agent.run().content（非 generator）。"""
 
     def run(self, *_a, **_k):
         return SimpleNamespace(content="臣已知悉，边饷当速清。", tools=[])
-
-
 
 
 def _stub_outer_llm_seams(monkeypatch) -> None:
@@ -198,7 +194,6 @@ def _pending_payload(client: TestClient) -> dict:
     body = resp.json()
     retries = list(body.get("translation_retries") or [])
     return {"pending": retries, "count": len(retries)}
-
 
 
 def _parse_sse(text: str) -> list[dict]:
@@ -381,8 +376,6 @@ def _play_one_month(
 # ── 主 tracer：两整月（起点十一月 → 真跨年） ────────────────────────────
 
 
-
-
 # ── #1353 fold-in：带欠账一次过月成功 + 死透失败单源 ─────────────────────
 
 
@@ -397,8 +390,6 @@ def _plant_extraction_debt(game, minister: str, *, sess_tag: str) -> int:
     assert int(len(game.db.list_unextracted_replies(night_id=nid)) or 0) >= 1
 
     return int(ctid)
-
-
 
 
 def test_issue_extraction_llm_dead_single_source_not_cta(tracer_client, monkeypatch):
@@ -492,28 +483,3 @@ def _setup_open_night_participant(tracer_client, *, kind: str):
         game.db.conn.commit()
 
     return client, game, participant, night_id
-
-
-def _assert_court_break_closed(game, body: dict, night_id: int, *, remote: str) -> None:
-    """外部可见契约：court_break、夜关闭、参与者无殿上 presence/entrance 账。"""
-    assert body.get("court_action") == "court_break", body
-    assert not body.get("admission"), body
-    _wait_pending_writes(game)
-    assert an.get_open_night(game.db) is None
-    night_row = game.db.conn.execute(
-        "SELECT status FROM audience_nights WHERE id=?", (night_id,),
-    ).fetchone()
-    assert night_row is not None
-    assert str(night_row["status"]) == an.NIGHT_STATUS_CLOSED, dict(night_row)
-    # #1716 durable 物理账：场外/临时收夜不得写入该人 entrance/presence。
-    assert remote not in an.persons_present_tonight(game.db, night_id), remote
-    assert remote not in an.persons_entered_tonight(game.db, night_id), remote
-    for entry in an.list_ledger(game.db, night_id):
-        names = entry.get("person_names") or []
-        if remote not in names:
-            continue
-        tags = entry.get("tags") or []
-        assert an.TAG_ENTER not in tags, entry
-        assert str(entry.get("presence_effect") or "") not in {
-            an.PRESENCE_ENTER, "enter",
-        }, entry

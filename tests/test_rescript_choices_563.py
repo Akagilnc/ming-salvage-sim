@@ -1,9 +1,9 @@
+from tests.conftest import seed_rescript_rows
 import json
 
 import pytest
 
 import ming_sim.cli_backend as cli_backend
-import ming_sim.decree as decree_mod
 from tests.dossier_test_helpers import rejected_verdict
 
 
@@ -219,7 +219,7 @@ def test_657_canonical_choice_stable_key_order():
     assert a["action"] == "follow_draft"
 
 
-@pytest.mark.parametrize("labels", [["", "乙"], ["甲", " 甲 "]])
+@pytest.mark.parametrize("labels", [["", "乙"], ["甲", "甲"]])
 def test_decision_parser_rejects_empty_or_ambiguous_labels(labels):
     from ming_sim.settlement_payload import parse_decision_blocks
 
@@ -247,7 +247,7 @@ def test_657_capability_revalidate_on_follow(game):
         "transaction_category": "督赈",
     })
     assert opt["draft_capability"] == derive_draft_capability(opt)
-    db.save_rescript_drafts(int(state.turn), [{
+    seed_rescript_rows(db, int(state.turn), [{
         "title": "急", "context": "c",
         "options": [opt, {"label": "备", "hint": "b",
                            "draft_capability": derive_draft_capability({"label": "备"})}],

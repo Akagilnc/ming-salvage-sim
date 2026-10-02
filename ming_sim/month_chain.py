@@ -19,7 +19,7 @@ from typing import Any, Dict, List, Mapping, Optional
 from ming_sim.applier import Provenance, atomic
 
 _CHAIN_KEY = "month_chain"
-_TRANSLATE_ESCAPE_STEPS = frozenset({"world_translate"})
+_TRANSLATE_ESCAPE_STEPS = frozenset({"world_translate", "world_continue", "decree_continue"})
 _WORLD_QUESTION_PREFIX = "world-question:"
 _DECREE_QUESTION_PREFIX = "decree-question:"
 # #1891：请饷／议停请旨的案头身份前缀。真实事件身份在交接时绑定（真实 id 藏在前缀后），
@@ -527,7 +527,7 @@ def continue_world_after_answers(
     消费事实（清问 + world_continued）与落账同事务：LLM 先跑，失败零消费可重试；
     成功则随 dispatch_month_segment 的 alongside 原子落旗（ADR 0157 恢复幂等）。
     续推自身的失败走既有月链诊断（call_failure + 错误包），步骤名 world_continue：
-    不占用 world_bind / world_translate 的逃生口，已提交的世界段与批语留在原处。
+    完整续推文转译耗尽复用逃生口，只丢未提交续推文，已提交世界段与批语留在原处。
     尚未落在 world_continue 上的 SettlementAbort 收进这一步，不退回内层阶段。
     """
     db, state = session.db, session.state
@@ -570,6 +570,7 @@ def _continue_world_after_answers(
             chain["declaration_outcome"] = candidate
             outcome = candidate
         _collect_disclosures_from_result(chain, result)
+        chain.pop("translate_exhaust_stops", None)
         chain["world_questions"] = questions
         chain["world_continued"] = not questions
         chain["world_text"] = str(chain.get("world_text") or "") + "\n" + text
@@ -668,6 +669,7 @@ def _continue_decree_after_answers(
         _collect_disclosures_from_result(chain, result)
         if questions:
             saved.pop(decree_ref, None)
+        chain.pop("translate_exhaust_stops", None)
         db.staged_declarations.replace_questions(decree_ref, questions, forecast_text=text)
         _save_chain(db, int(state.turn), chain, source=source)
 
@@ -920,6 +922,11 @@ def _discard_segment_for_escape(
         chain.pop("world_questions", None)
         # 逃生口重掷的是世界段本身，交接名单随之一并作废，下次重新取定。
         chain.pop("levy_petitions", None)
+    elif step == "world_continue":
+        chain.pop("world_continuation_text", None)
+        chain.pop("world_continuation_ready", None)
+    elif step == "decree_continue":
+        chain.get("decree_continuations", {}).pop(failure.get("decree_ref"), None)
 
 
 def _abort_month_call(
@@ -949,7 +956,12 @@ def _abort_month_call(
         reload_state_from_db(db, state, content=getattr(db, "content", None))
     committed = _load_chain(db, turn)
     escape_armed = False
-    if kind == "model_exhausted" and step in _TRANSLATE_ESCAPE_STEPS:
+    complete_segment = (
+        step == "world_translate"
+        or (step == "world_continue" and committed.get("world_continuation_ready"))
+        or (step == "decree_continue" and decree_ref in committed.get("decree_continuations", {}))
+    )
+    if kind == "model_exhausted" and step in _TRANSLATE_ESCAPE_STEPS and complete_segment:
         stops = int(committed.get("translate_exhaust_stops") or 0) + 1
         committed["translate_exhaust_stops"] = stops
         escape_armed = stops >= 2
@@ -2157,7 +2169,7 @@ def _split_at_question(text: str) -> tuple[str, List[dict]]:
     questions 只收 DECISION。LEVY 身份仍由全文交接读取。坏 JSON、非对象载荷
     在绑定处失败，并且从送去转译的前缀里切开，不把机标当世界事实送进去。
     """
-    from ming_sim.decree import _DECISION_RE, parse_decision_blocks
+    from ming_sim.settlement_payload import _DECISION_RE, parse_decision_blocks
 
     questions: List[dict] = []
     spans: List[tuple[int, int, bool]] = []

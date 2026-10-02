@@ -44,9 +44,8 @@ from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
 from ming_sim.applier import atomic
-from ming_sim.constants import ROOT_DIR
 from ming_sim.paths import bundled_path, user_data_path, user_data_dir
-from ming_sim.exceptions import DependencyMismatch, ExitGame, LLMUnavailable, SettlementAbort
+from ming_sim.exceptions import DependencyMismatch, LLMUnavailable, SettlementAbort
 from ming_sim.llm_config import (
     CLI_DEFAULT_TIMEOUT_SECONDS,
     VALID_CHANNELS,
@@ -56,7 +55,6 @@ from ming_sim.llm_config import (
     cli_supports_reasoning_strength,
     REASONING_STRENGTH_CHOICES,
     real_api_key_or_empty,
-    load_llm_config,
     load_runtime_llm,
     normalize_openai_base_url,
     normalize_thinking_level,
@@ -65,24 +63,11 @@ from ming_sim.llm_config import (
     save_runtime_llm,
     _slot_header_table,
 )
-from ming_sim.agents import _dump_llm_messages
-from ming_sim.llm_model import extract_agent_text, verify_llm_available
-from ming_sim.llm_transport import (
-    bind_transport_sdk_budget,
-    audience_transport_policy,
-    empty_output_failure,
-    is_stream_activity_event,
-    map_run_error_event,
-    run_transport_stream,
-    transport_attempts_public,
-    transport_failure_unavailable,
-)
-from ming_sim.llm_contract import fail_if_llm_error
+from ming_sim.llm_model import verify_llm_available
 from ming_sim.issues import _format_issue_ongoing, commitment_display_text, commitment_progress_payload, commitment_timed_bar_value
 from ming_sim.session import GameSession
 from ming_sim.session import (
     AUTO_SAVE_PREFIX,
-    AudienceAdmission,
     _is_summonable_court_minister,
     _pending_action_failure_payload,
 )
@@ -99,7 +84,6 @@ from ming_sim.session_write_queue import (
     get_session_write_queue,
 )
 from ming_sim.token_stats import tlog
-from ming_sim.context import match_minister_from_text
 from ming_sim.flows import compute_budget_lines
 from ming_sim.exceptions import LLMContractError  # noqa: F401  (保留：供错误处理)
 from ming_sim.models import (
@@ -731,8 +715,6 @@ def in_talent_pool(character: Character, db, current_year: int, current_period: 
     if debut_year > current_year or (debut_year == current_year and debut_month > current_period):
         return False
     return _character_power_id(character, db) == "ming"
-
-
 
 
 class WebGame:
@@ -2547,7 +2529,6 @@ class WebGame:
         return payload
 
 
-
     def _trail_highlight_judge_after_reply(
         self,
         minister_reply: str,
@@ -2698,7 +2679,6 @@ class WebGame:
             "audience-startup-extraction-catchup",
             ticket_key=("startup",),
         )
-
 
 
     def pending_translation_retries(
@@ -3079,7 +3059,6 @@ class WebGame:
             # #1353 r11：只以 end 收束——失败路径先 error 再 end，禁 error 单终态截断。
             if item.get("type") == "end":
                 break
-
 
 
 def sse_event(event: str, data: Dict[str, Any]) -> str:
@@ -5306,7 +5285,7 @@ def _require_active_minister(minister_name: str) -> None:
     # （不拒 office_type=后宫，嫔妃 chat 复用本端点）。
     ok, reason = get_game().session.can_summon(character)
     if not ok:
-        raise HTTPException(status_code=409, detail=(reason or "").strip())
+        raise HTTPException(status_code=409, detail=reason or "")
 
 
 @app.get("/api/audience/scroll")
@@ -5371,7 +5350,6 @@ async def api_audience_chat_history() -> Dict[str, Any]:
             night_id=int(open_night["id"]) if open_night else None,
         ),
     }
-
 
 
 @app.post("/api/audience/chat")

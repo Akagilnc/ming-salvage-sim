@@ -55,11 +55,8 @@ def main() -> None:
         probe_id="secret-order-followup",
     )
     report = sess.resolve_turn(decree=DECREE)
-    # 只打密旨动向章 + 状态，邸报全文太长
-    print("\n========== 密旨动向章（截取） ==========\n")
-    for para in report.split("\n"):
-        if "密旨" in para or "曹化淳" in para or "化淳" in para or "底册" in para or "近臣" in para:
-            print(para.strip())
+    print("\n========== 邸报 ==========\n")
+    print(report)
     print("\n========== 密令状态 ==========\n")
     for o in sess.db.list_secret_orders():
         print(f"#{o['id']} status={o['status']} title={o['title']!r}")

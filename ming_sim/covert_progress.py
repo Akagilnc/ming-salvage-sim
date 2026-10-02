@@ -180,7 +180,7 @@ def covert_task_from_payload(payload: object) -> Optional[Dict[str, object]]:
         source = nested
     else:
         source = payload
-    kind = str(source.get("kind") or payload.get("kind") or "").strip()
+    kind = str(source.get("kind") or payload.get("kind") or "")
     axes = source.get("axes")
     if axes is None:
         axes = payload.get("axes")
@@ -238,17 +238,17 @@ def covert_task_from_payload(payload: object) -> Optional[Dict[str, object]]:
         or source.get("investigation_target")
         or payload.get("investigation_target")
         or ""
-    ).strip()
+    )
     investigation_fact = str(
         delivery.get("investigation_fact")
         or source.get("investigation_fact")
         or payload.get("investigation_fact")
         or ""
     )
-    if not kind and not unit and target is None and not normalize_axes(axes) and not investigation_target:
+    if not kind.strip() and not unit and target is None and not normalize_axes(axes) and not investigation_target.strip():
         return None
     out: Dict[str, object] = {}
-    if kind:
+    if kind.strip():
         out["kind"] = kind
     if axes is not None:
         out["axes"] = axes
@@ -381,15 +381,15 @@ def build_covert_task_contract(
             investigation_target = extracted.get("investigation_target")
         if investigation_fact is None:
             investigation_fact = extracted.get("investigation_fact")
-    resolved_kind = str(kind or "").strip()
-    if not resolved_kind:
+    resolved_kind = str(kind or "")
+    if not resolved_kind.strip():
         raise CovertContractError("密令确认缺少差务类型")
     axis_list = normalize_axes(axes)
     if not axis_list:
         raise CovertContractError("密令确认缺少价值轴")
     direction_i = normalize_direction(direction, default=1)
-    inv_target = str(investigation_target or "").strip()
-    if inv_target:
+    inv_target = str(investigation_target or "")
+    if inv_target.strip():
         try:
             qty = float(delivery_target_units)
         except (TypeError, ValueError):
@@ -438,8 +438,8 @@ def build_covert_task_contract(
                     raise CovertContractError("密令确认补饷必须指定 target_kind=army 与有效 target_id")
                 delivery["target_kind"] = kind_text
                 delivery["target_id"] = id_text
-    category_text = str(category or "").strip()
-    if category_text:
+    category_text = str(category or "")
+    if category_text.strip():
         delivery["category"] = category_text
     account_text = str(account or "").strip()
     if account_text:
@@ -498,8 +498,8 @@ def coerce_covert_task_contract(raw: object) -> Optional[Dict[str, object]]:
         return None
     inv_target = str(
         raw.get("investigation_target") or delivery.get("investigation_target") or ""
-    ).strip()
-    if inv_target:
+    )
+    if inv_target.strip():
         try:
             qty = float(delivery.get("target_units"))
         except (TypeError, ValueError):
@@ -510,7 +510,7 @@ def coerce_covert_task_contract(raw: object) -> Optional[Dict[str, object]]:
             return None
         if list(delivery.get("canonical_fields") or []):
             return None
-        if str(delivery.get("investigation_target") or "").strip() != inv_target:
+        if str(delivery.get("investigation_target") or "") != inv_target:
             return None
         return copy.deepcopy(dict(raw))
     try:
@@ -576,15 +576,6 @@ def contract_target_units(contract: Mapping[str, object]) -> float:
     return target
 
 
-def contract_axes_direction(
-    contract: Mapping[str, object],
-) -> tuple[list[str], int]:
-    axes = normalize_axes(contract.get("axes"))
-    if not axes:
-        raise CovertContractError("typed contract 缺少价值轴")
-    return axes, normalize_direction(contract.get("direction"), default=1)
-
-
 def decide_secret_order_settlement(review_input: Mapping[str, object]) -> Dict[str, object]:
     actual = float(review_input.get("actual_units") or 0.0)
     target = float(review_input.get("target_units") or 0.0)
@@ -641,65 +632,6 @@ def minister_eligible_for_monthly_covert(db: Any, minister_name: str) -> bool:
     return row is not None
 
 
-def _current_game_turn(db: Any, turn: object = None) -> int:
-    if turn is not None:
-        return int(turn)
-    row = db.conn.execute("SELECT turn FROM game_state WHERE id=1").fetchone()
-    if row is not None:
-        return int(row["turn"])
-    return 0
-
-
-def build_secret_covert_effect_briefs(
-    db: Any,
-    orders: Sequence[Mapping[str, object]] | None = None,
-    *,
-    turn: object = None,
-) -> List[Dict[str, object]]:
-    """internal 档房私密输入：typed 合同 + origin，不含密令正文（#883）。"""
-    rows = list(orders or [])
-    if not rows:
-        rows = list(db.list_secret_orders(status="active"))
-    current_turn = _current_game_turn(db, turn)
-    out: List[Dict[str, object]] = []
-    for order in rows:
-        if not isinstance(order, Mapping):
-            continue
-        if str(order.get("status") or "active") != "active":
-            continue
-        if _is_issuance_turn(order, current_turn):
-            continue
-        oid = int(order.get("id") or 0)
-        if oid <= 0:
-            continue
-        dossier = db.get_dossier_for_secret_order(oid)
-        if dossier is None:
-            continue
-        contract = require_covert_task_contract(dossier)
-        delivery = contract.get("delivery") if isinstance(contract.get("delivery"), Mapping) else {}
-        unit = str(delivery.get("unit") or "")
-        fields = canonical_fields_for_delivery(unit=unit)
-        owner = "internal"
-        if fields == ["人物变更"]:
-            owner = "personnel_secret"
-        prior_units = float(db.sum_dossier_actual_progress_units(int(dossier["id"])))
-        target_units = contract_target_units(contract)
-        remaining_units = max(0.0, target_units - prior_units)
-        out.append({
-            "origin_ref": f"dossier:{int(dossier['id'])}",
-            "order_id": oid,
-            "kind": str(contract.get("kind") or ""),
-            "axes": list(contract.get("axes") or []),
-            "direction": int(contract.get("direction") or 1),
-            "delivery": copy.deepcopy(dict(delivery)),
-            "effect_owner": owner,
-            "canonical_fields": fields,
-            "prior_actual_units": prior_units,
-            "remaining_units": remaining_units,
-        })
-    return out
-
-
 def canonical_fields_for_delivery(*, unit: object = None) -> List[str]:
     """差务可数单位 → 既有 extractor 字段/applier，不发明第三轨。"""
     return list(_FIELD_FOR_UNIT.get(str(unit or "").strip(), []))
@@ -724,8 +656,8 @@ def _delivery_matches_economy(item: Mapping[str, object], delivery: Mapping[str,
                 return False
             if str(item.get("target_id") or "").strip() != str(delivery.get("target_id") or "").strip():
                 return False
-    category = str(delivery.get("category") or "").strip()
-    if str(item.get("category") or "").strip() != category:
+    category = str(delivery.get("category") or "")
+    if str(item.get("category") or "") != category:
         return False
     account = str(delivery.get("account") or "").strip()
     if str(item.get("account") or "").strip() != account:
@@ -1537,7 +1469,7 @@ def _investigation_target_of(contract: Mapping[str, object]) -> str:
     delivery = contract.get("delivery") if isinstance(contract.get("delivery"), Mapping) else {}
     return str(
         contract.get("investigation_target") or delivery.get("investigation_target") or ""
-    ).strip()
+    )
 
 
 def _investigation_fact_of(contract: Mapping[str, object]) -> str:
@@ -1903,8 +1835,8 @@ def _apply_investigation_selection(
         (did, int(turn)),
     ).fetchone()
     declaration = _investigation_declaration(sel)
-    invalid = str(declaration.get("invalid") or "").strip()
-    if invalid:
+    invalid = str(declaration.get("invalid") or "")
+    if invalid.strip():
         return {
             "order_id": oid,
             "dossier_id": did,
@@ -2091,20 +2023,3 @@ def settle_due_secret_orders(
     if commit and int(getattr(db.conn, "_atomic_depth", 0) or 0) == 0:
         db.conn.commit()
     return results
-
-
-def parse_covert_exec_selections(extracted: Mapping[str, object] | None) -> List[Dict[str, object]]:
-    if not extracted:
-        return []
-    raw = (
-        extracted.get("covert_exec_selections")
-        or extracted.get("密令执行态")
-        or []
-    )
-    if not isinstance(raw, list):
-        return []
-    out: List[Dict[str, object]] = []
-    for item in raw:
-        if isinstance(item, dict):
-            out.append(item)
-    return out

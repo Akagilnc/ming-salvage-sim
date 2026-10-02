@@ -17,9 +17,8 @@ from ming_sim.constants import (
     TURN_UNIT,
 )
 from ming_sim.assets import wrap
-from ming_sim.context import match_minister_from_text
 from ming_sim.exceptions import ExitGame, LLMContractError, LLMUnavailable, SettlementAbort
-from ming_sim.models import API_DEFAULT_TIMEOUT_SECONDS, Character, GameState
+from ming_sim.models import API_DEFAULT_TIMEOUT_SECONDS, Character
 from ming_sim.session import (
     GameSession,
     TurnPhase,
@@ -153,49 +152,6 @@ def choose_minister(session: GameSession) -> Optional[Character]:
         return candidate
 
 
-def _fail_cli_chat_turn_scene(
-    session: GameSession,
-    chat_turn_id: int,
-    *,
-    before_snapshot=None,
-    scaffold_owned: bool = False,
-    entry_id: int = 0,
-) -> None:
-    """CLI chat-turn scene 失败清理——与 minister_chat 中断同族（abandon + fail/回滚）。
-
-    cleanup 自身失败由调用方链到原 scene 异常（不得 `except: pass` 吞掉）。
-    """
-    if scaffold_owned:
-        if before_snapshot is not None and hasattr(
-            session.db, "record_chat_turn_rollback_diffs",
-        ):
-            session.db.record_chat_turn_rollback_diffs(
-                int(chat_turn_id),
-                before_snapshot,
-                session.db.capture_chat_rollback_snapshot(),
-            )
-        # Delete scaffold exit placeholder in the same cleanup path before fail.
-        # fail_chat_turn also drops origin-bound rows; explicit entry_id covers
-        # doubles whose fail path is thinner than production GameDB.
-        if entry_id and hasattr(session.db, "conn") and getattr(session.db, "conn", None):
-            session.db.conn.execute(
-                "DELETE FROM story_ledger_entries WHERE id = ?",
-                (int(entry_id),),
-            )
-            session.db.conn.commit()
-        restored_ids = session.db.fail_chat_turn(int(chat_turn_id))
-        from ming_sim.decree_forecast import schedule_restored_decree_forecasts
-        schedule_restored_decree_forecasts(session, restored_ids)
-        return
-    if entry_id:
-        # Prior Q&A turn must stay intact; only drop the failed exit placeholder.
-        session.db.conn.execute(
-            "DELETE FROM story_ledger_entries WHERE id = ?",
-            (int(entry_id),),
-        )
-        session.db.conn.commit()
-
-
 def _record_audience_exit(session: GameSession, name: str) -> None:
     """CLI「退下」控制口令：落空正文告退账（#1838 reopen：无旁白调用）。"""
     if not hasattr(session.db, "conn"):
@@ -282,7 +238,6 @@ def _print_interrupted_reply_retry_hint(session: GameSession, minister_name: str
         f"{f'（「{question}」）' if question else ''}。"
         "输入「重试回话」重新生成回话（系统层恢复，不重复记问话）。\n"
     )
-
 
 
 def _retry_interrupted_reply_cli(session: GameSession, minister_name: str) -> Optional[str]:

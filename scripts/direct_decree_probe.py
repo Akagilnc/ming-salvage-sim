@@ -113,9 +113,9 @@ def main() -> int:
         try:
             session.db.conn.execute(sql)
             session.db.conn.commit()
-            print(f"[sql] OK: {sql[:120]}")
+            print(f"[sql] OK: {sql}")
         except Exception as e:
-            print(f"[sql] FAIL: {sql[:120]} → {e}", file=sys.stderr)
+            print(f"[sql] FAIL: {sql} → {e}", file=sys.stderr)
             return 2
 
     for sequence, text in enumerate(args.directive, start=1):
@@ -123,7 +123,7 @@ def main() -> int:
             session, text, notes="direct-probe",
             probe_id="direct-decree", sequence=sequence,
         )
-        print(f"[directive] id={view.id} text={text[:60]}")
+        print(f"[directive] id={view.id} text={text}")
 
     session.enter_review()
 
@@ -131,7 +131,7 @@ def main() -> int:
     report = session.resolve_turn(decree=args.decree, cheat_directive=args.cheat)
     print(f"[resolve] 完成。Report 字符数={len(report)}")
     print("---- REPORT 头 300 ----")
-    print(report[:300])
+    print(report)
     print("----")
 
     session.end_turn()

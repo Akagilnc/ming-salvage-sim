@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import concurrent.futures
 import json
-import re
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
@@ -467,11 +466,11 @@ def validate_all(
             )
 
             event_id = str(row.get("event_id") or "")
-            label = str(req.get("label") or "").strip()
-            note = str(req.get("note") or "").strip()
+            label = str(req.get("label") or "")
+            note = str(req.get("note") or "")
             if (
-                not label
-                and note
+                not label.strip()
+                and note.strip()
                 and (
                     event_id.startswith(_DECREE_QUESTION_PREFIX)
                     or event_id.startswith(_WORLD_QUESTION_PREFIX)
@@ -764,7 +763,7 @@ def map_rescript_option_or_choice(
             raise ValueError("military_order 缺 assignee_name")
         payload["assignee_id"] = assignee_name
         payload["name"] = assignee_name
-        station = str(src.get("station") or "").strip()
+        station = str(src.get("station") or "")
         if station:
             payload["station"] = station
         else:

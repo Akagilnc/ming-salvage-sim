@@ -19,7 +19,7 @@ import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Optional
+from typing import List
 
 import pexpect
 
@@ -220,12 +220,10 @@ def parse_emperor_output(raw: str) -> tuple[str, str]:
         text = fence.group(1)
     obj_match = re.search(r"\{.*\}", text, re.DOTALL)
     if not obj_match:
-        raise ValueError(f"崇祯 agent 输出无法解析为 JSON: {raw[:200]}")
+        raise ValueError(f"崇祯 agent 输出无法解析为 JSON: {raw}")
     obj = json.loads(obj_match.group(0))
-    reasoning = str(obj.get("reasoning", "")).strip()
-    input_text = str(obj.get("input", "")).strip()
-    if "\n" in input_text:
-        input_text = input_text.splitlines()[0]
+    reasoning = str(obj.get("reasoning", ""))
+    input_text = str(obj.get("input", ""))
     return reasoning, input_text
 
 
@@ -355,7 +353,7 @@ def run(
                     f"{MAX_CHAT_ROUNDS_PER_TURN} 轮｜已入档草案 {drafts_this_turn} 条。"
                     f"这是大臣拟好的诏书草案，准其入档（回车/可/准）即 +1 条草案。"
                 )
-                reasoning, action = ask_emperor(emperor, cli_chunk, prompt_hint.strip(), progress)
+                reasoning, action = ask_emperor(emperor, cli_chunk, prompt_hint, progress)
                 log(f"[崇祯] reasoning: {reasoning}")
                 log(f"[崇祯] input: {action!r}")
                 child.sendline(action)
@@ -377,7 +375,7 @@ def run(
                 child.sendline("")
                 continue
 
-            log(f"\n--- step {step} | prompt: {prompt_hint.strip()[:40]} ---")
+            log(f"\n--- step {step} | prompt: {prompt_hint} ---")
 
             # 卡死检测：只盯「无效输入被拒」类界面（正常多轮对话的『朕问：』『诏书草案>』『确认入档』不算卡）。
             # 真卡死特征：CLI 反复回「请输入有效编号或姓名」，皇帝怎么输都不被接受。
@@ -412,7 +410,7 @@ def run(
             # 里判不准，故此处只看轮数到点就退；草案有无交给后面『诏书草案>』兜底处理。
             at_quit_prompt = ("召见谁" in prompt_hint) or ("朕问" in prompt_hint)
             if at_quit_prompt and chat_rounds_this_turn >= MAX_CHAT_ROUNDS_PER_TURN:
-                log(f"[压测] 本月已问 {chat_rounds_this_turn} 轮，强制退朝颁诏（界面：{prompt_hint.strip()[:8]}）")
+                log(f"[压测] 本月已问 {chat_rounds_this_turn} 轮，强制退朝颁诏（界面：{prompt_hint}）")
                 child.sendline("quit")
                 continue
 
@@ -463,21 +461,15 @@ def run(
                 f"轮数将尽而草案仍为 0 时，务必让当前大臣拟旨入档，勿空过本月。"
             )
             try:
-                reasoning, action = ask_emperor(emperor, cli_chunk, prompt_hint.strip(), progress)
+                reasoning, action = ask_emperor(emperor, cli_chunk, prompt_hint, progress)
             except Exception as exc:
                 log(f"[崇祯 agent 出错: {exc}]")
                 child.sendline("exit")
                 break
 
-            # 超长单行输入(尤其『指令内容：』界面 agent 整篇诏书)会卡死 CLI/pexpect → 截断。
-            # 诏书细节由 LLM 拟诏/结算补全，这里只需一句能立项的指令文本。
-            if len(action) > 200:
-                log(f"[输入截断 step {step}：{len(action)} 字 → 200 字，防 CLI 卡]")
-                action = action[:200]
-
             log(f"[崇祯] reasoning: {reasoning}")
             log(f"[崇祯] input: {action!r}")
-            state.history.append({"step": step, "prompt": prompt_hint.strip(), "reasoning": reasoning, "input": action})
+            state.history.append({"step": step, "prompt": prompt_hint, "reasoning": reasoning, "input": action})
 
             # CLI 可能在上一步已自行退出（如连续无效输入后），写已关闭的 pty 会 OSError Errno 5
             if not child.isalive():

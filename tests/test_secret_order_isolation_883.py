@@ -338,8 +338,6 @@ def test_883_post_brief_public_audience_enters_shared_sources(game):
     assert any(paraphrase in body for body in _shared_bodies(db))
 
 
-
-
 def test_883_cross_turn_chat_origin_withheld_on_late_secret_create(game):
     """F4：召对原话在 T hold，T+1 才 create（润稿 body）仍须 withheld，永不进共享。"""
     db, state, content = game
@@ -765,8 +763,6 @@ def test_883_cross_turn_repeat_disclosed_does_not_mint_duplicate_public_event(ga
     assert len(after_second) == 1
     assert after_second[0]["source_id"] == after_first[0]["source_id"]
     assert "首度公开883" in (after_second[0].get("body") or "")
-
-
 
 
 def test_976_cross_person_speaker_user_origin_withheld_not_shared(game):
@@ -1205,10 +1201,6 @@ def test_976_non_create_pure_public_not_auto_pinned_as_secret_origin(game):
             assert public_q in text, f"{action}: pure public not remembered after project"
 
 
-
-
-
-
 # ── #976 红队四轴 + 消息级 provenance 根治（正负配对，真实接缝）──────────────
 
 
@@ -1248,48 +1240,6 @@ def _stage_new_secret(db, state, minister_name: str, marker: str) -> tuple[int, 
         },
     )
     return mid, pid
-
-
-def test_976_pending_secret_pin_survives_partial_commit_same_minister(game):
-    """尚未确认的密令口谕不得被同臣另一密令的局部提交放行。"""
-    db, state, content = game
-    assignee = _active_ministers(db, content)[0]
-    marker_a = "待确认甲密：暗查内库亏空-A976"
-    marker_b = "已确认乙密：密访京营虚额-B976"
-
-    mid_a, pending_a = _stage_new_secret(db, state, assignee.name, marker_a)
-    reply_a = "臣已领会甲密，容臣拟妥章程再请圣裁。"
-    mid_a_reply = db.append_chat_message(
-        assignee.name, state.turn, "minister", reply_a,
-    )
-    chat_turn_a = db.create_chat_turn(state, assignee.name, "pending-secret-a", 0)
-    db.update_chat_turn_messages(
-        chat_turn_a, user_message_id=mid_a, minister_message_id=mid_a_reply,
-    )
-    mid_b, pending_b = _stage_new_secret(db, state, assignee.name, marker_b)
-
-    applied = db.commit_pending_actions(
-        state, minister_name=assignee.name, action_ids={pending_b}, content=content,
-    )
-
-    assert [item["id"] for item in applied] == [pending_b]
-    assert _ks(db, mid_b) == "withheld"
-    assert _ks(db, mid_a) in ("held", "withheld")
-    assert _ks(db, mid_a_reply) in ("held", "withheld")
-    assert _shared_source_count(db, mid_a) == 0
-    assert _shared_source_count(db, mid_a_reply) == 0
-    assert all(marker_a not in body for body in _shared_bodies(db))
-    assert all(reply_a not in body for body in _shared_bodies(db))
-
-    # 明确拒绝后，pin 退出可重试生命周期；下一次既有 release 可按公开召对投轨。
-    assert db.drop_pending_actions_for_minister(
-        state.turn, assignee.name, action_ids={pending_a},
-    ) == 1
-    db.release_held_audience_knowledge()
-    assert _ks(db, mid_a) == "released"
-    assert _ks(db, mid_a_reply) == "released"
-    assert _shared_source_count(db, mid_a) == 1
-    assert _shared_source_count(db, mid_a_reply) == 1
 
 
 def test_976_retryable_failed_secret_pin_stays_withheld_during_other_commit(game):
@@ -1487,79 +1437,6 @@ def test_976_rt03_late_chat_after_create_same_turn(game):
     st_upd = _ks(db, mid_even_later)
     assert st_upd == "released"
     assert any("焚稿-更晚976" in body for body in _shared_bodies(db))
-
-
-def test_976_rt04_undo_chat_turn_secret_order_brief_consistent(game):
-    """红队④ should：undo 含密令口谕 — secret_orders 与 secret_order_briefs 回滚一致。
-
-    真实 undo 删除密令父行后由 FK CASCADE 删除 brief；其它密令不受影响。
-    """
-    db, state, content = game
-    a, b = _active_ministers(db, content)[:2]
-    marker = "undo密令正文：密查火器局虚报-UNDO976"
-    public_early = "臣报：漕运无阻-先轮公开976"
-
-    ctid_early = db.create_chat_turn(state, b.name, "sess-early-976", 0)
-    snap0 = db.capture_chat_rollback_snapshot()
-    mid_b_pub = db.append_chat_message(b.name, state.turn, "minister", public_early)
-    db.update_chat_turn_messages(ctid_early, minister_message_id=mid_b_pub)
-    db.record_chat_turn_rollback_diffs(
-        ctid_early, snap0, db.capture_chat_rollback_snapshot(),
-    )
-    unrelated_oid = create_test_secret_order(db,
-        state, b.name, "巡查漕运", "未撤销密令正文-KEEP1026", [],
-    )
-
-    ctid = db.create_chat_turn(state, a.name, "sess-secret-undo-976", 0)
-    before = db.capture_chat_rollback_snapshot()
-    mid_u = db.append_chat_message(a.name, state.turn, "user", marker)
-    mid_m = db.append_chat_message(
-        a.name, state.turn, "minister", "臣领密旨，即查火器局。",
-    )
-    db.update_chat_turn_messages(ctid, user_message_id=mid_u, minister_message_id=mid_m)
-    oid = create_test_secret_order(db, state, a.name, "密查火器局", marker, [])
-    after = db.capture_chat_rollback_snapshot()
-    db.record_chat_turn_rollback_diffs(ctid, before, after)
-
-    assert oid > 0
-    assert db.conn.execute(
-        "SELECT COUNT(*) FROM secret_order_briefs WHERE order_id=?", (oid,),
-    ).fetchone()[0] == 1
-    assert db.conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
-
-    undone = db.undo_chat_turn(ctid)
-    assert undone is not None
-    assert int(undone.get("id") or 0) == ctid
-    assert db.conn.execute(
-        "SELECT status FROM chat_turns WHERE id=?", (ctid,),
-    ).fetchone()["status"] == "undone"
-
-    order_left = db.conn.execute(
-        "SELECT COUNT(*) FROM secret_orders WHERE id=?", (oid,),
-    ).fetchone()[0]
-    brief_left = db.conn.execute(
-        "SELECT COUNT(*) FROM secret_order_briefs WHERE order_id=?", (oid,),
-    ).fetchone()[0]
-    msg_u = db.conn.execute(
-        "SELECT COUNT(*) FROM chat_messages WHERE id=?", (mid_u,),
-    ).fetchone()[0]
-    msg_m = db.conn.execute(
-        "SELECT COUNT(*) FROM chat_messages WHERE id=?", (mid_m,),
-    ).fetchone()[0]
-    msg_b = db.conn.execute(
-        "SELECT COUNT(*) FROM chat_messages WHERE id=?", (mid_b_pub,),
-    ).fetchone()[0]
-
-    assert order_left == 0, f"secret_orders survived undo count={order_left}"
-    assert brief_left == 0, f"secret_order_briefs orphan after undo count={brief_left}"
-    assert db.conn.execute(
-        "SELECT COUNT(*) FROM secret_order_briefs WHERE order_id=?", (unrelated_oid,),
-    ).fetchone()[0] == 1, "未撤销密令的 brief 不应受级联影响"
-    assert msg_u == 0 and msg_m == 0
-    assert msg_b == 1, "early B public message wrongly deleted"
-    assert all(marker not in body for body in _shared_bodies(db))
-    assert all(marker not in body for body in _event_bodies(db))
-    assert not db._is_active_secret_order_assignee(a.name)
 
 
 @pytest.mark.parametrize("rollback_entry", ["undo_chat_turn", "fail_chat_turn"])

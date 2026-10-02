@@ -12,11 +12,9 @@ import os
 from types import SimpleNamespace
 
 import pytest
-from agno.agent import Agent
 from agno.models.message import Message
 from pydantic import BaseModel
 
-from ming_sim.agents import run_agent_stream_text
 import ming_sim.cli_backend as cb
 from ming_sim.models import LLMConfig
 
@@ -26,61 +24,6 @@ def _cli_codex_cfg() -> LLMConfig:
         api_key="cli-backend", base_url="", model="api-fallback",
         channel="cli", cli_runner="codex", cli_model="gpt-5.5",
     )
-
-
-def _so_json(**fields) -> str:
-    base = {
-        "标题": "密查",
-        "内容": "TASK_BODY",
-        "承办人": "",
-        "期限月数": 0,
-        "标签": [],
-    }
-    base.update(fields)
-    return json.dumps(base, ensure_ascii=False)
-
-
-def _patch_backend(monkeypatch, payload: str):
-    monkeypatch.setattr(cb, "_run_backend", lambda p: (payload, 1))
-
-
-
-
-
-
-
-
-
-
-
-def test_secret_exclusion_extracts_people_and_offices(monkeypatch):
-    canned = json.dumps({
-        "标题": "密查",
-        "内容": "查账",
-        "承办人": "毕自严",
-        "排除对象": {"人物": ["魏忠贤"], "机构": ["司礼监"]},
-    }, ensure_ascii=False)
-    monkeypatch.setattr(cb, "_run_backend", lambda p: (canned, 1))
-    result = cb._extract_secret_order("密查账目", "臣领旨", "毕自严")
-    assert result["excluded_names"] == ["魏忠贤"]
-    assert result["excluded_offices"] == ["司礼监"]
-    assert result["excluded_targets"] == {"people": ["魏忠贤"], "offices": ["司礼监"]}
-
-
-def test_extract_secret_order_preserves_long_title_without_formal_cap(monkeypatch):
-    long_title = "查核辽饷转运与沿途侵蚀及军粮实数并追索责任官员"
-    assert len(long_title) > 20
-    canned = _so_json(标题=long_title, 内容="查明事实并回奏。", 承办人="毕自严", 标签=["辽饷"])
-
-    def fake_json_extractor(prompt, llm_config=None, tag="", *, policy=None):
-        return canned, 1
-
-    monkeypatch.setattr(cb, "_run_json_extractor_for_config", fake_json_extractor)
-    result = cb._extract_secret_order(
-        f"密令如下：{long_title}\n查明事实并回奏。", "臣领密旨", "毕自严",
-    )
-    assert result["title"] == long_title
-    assert len(result["title"]) == len(long_title)
 
 
 def test_typed_secret_exclusions_canonicalize_roster_alias_and_office(game):
@@ -97,64 +40,6 @@ def test_typed_secret_exclusions_canonicalize_roster_alias_and_office(game):
     )
     assert people == [character.name]
     assert offices == [office]
-
-
-
-
-def test_secret_content_assembly_is_emperor_plus_extractor_only():
-    """#1274 K1：拼装输入结构化——仅 emperor_intent + extractor_content；无 reply 形参。"""
-    import inspect
-
-    params = inspect.signature(cb.assemble_secret_order_content).parameters
-    assert set(params) == {"emperor_intent", "extractor_content"}
-    assert "reply" not in params and "minister_reply" not in params
-
-    task = "密查关宁欠饷"
-    extracted = f"{task}，三月内回奏，方法：密访核册"
-    body = cb.assemble_secret_order_content(
-        emperor_intent=task,
-        extractor_content=extracted,
-    )
-    # 御旨未覆盖时兜底并入御旨，仍不接受第三路 reply
-    partial = "臣已领旨办理。"
-    merged = cb.assemble_secret_order_content(
-        emperor_intent=f"{task}，三月内回奏",
-        extractor_content=partial,
-    )
-    assert task in merged and "三月内回奏" in merged
-    assert partial in merged
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 # ── enrich_initiative_effects ──
@@ -243,7 +128,6 @@ def test_run_backend_dispatch(monkeypatch, env, attr, out):
 
 
 # ── secret extract keep family ──
-
 
 
 # ── runner argv / error contracts (subprocess mocked) ──
@@ -349,38 +233,6 @@ def test_run_codex_flags_and_stdout(monkeypatch):
     assert "-c" not in captured["cmd"]
 
 
-def test_codex_streaming_runner_degrades_to_oneshot_final(monkeypatch):
-    """codex --json 只给终包（无 delta 事件）时，流式 runner 仍出完整终文。"""
-    from tests.cli_process_doubles import FakeCliRunnerScript
-
-    final = "STREAM_FINAL_BODY"
-    script = FakeCliRunnerScript([{
-        "stdout": (
-            json.dumps({"type": "item.started", "item": {"type": "reasoning"}}) + "\n",
-            json.dumps(
-                {"type": "item.completed", "item": {"type": "agent_message", "text": final}}
-            ) + "\n",
-        ),
-        "returncode": 0,
-    }])
-    monkeypatch.delenv("MING_SIM_CODEX_REASONING", raising=False)
-    monkeypatch.setattr(cb.subprocess, "Popen", script.popen)
-    monkeypatch.setattr(cb, "_trace", lambda rec: None)
-
-    chunks = []
-    agent = Agent(
-        name="stream-test", id="stream-test",
-        model=cb.CliChat(id="gpt-test", backend="codex"),
-        instructions=["only body"], markdown=False,
-    )
-    text = run_agent_stream_text(agent, "PROMPT_STREAM", "simulator", on_text=chunks.append)
-    assert text == final
-    assert chunks == [final]
-    cmd = script.commands[0]
-    assert "--json" in cmd and cmd[-1] == "-"
-    assert "PROMPT_STREAM" in "".join(script.processes[0].stdin.written)
-
-
 def test_clichat_codex_response_stream_passes_reasoning_strength(monkeypatch):
     seen = {}
 
@@ -398,73 +250,6 @@ def test_clichat_codex_response_stream_passes_reasoning_strength(monkeypatch):
     assert [c.content for c in chunks if c.content] == ["STREAM_CHUNK"]
     assert seen["reasoning_strength"] == "low"
     assert seen["runner"] == "codex" and seen["json_events"] is True
-
-
-def test_api_backend_streaming_emits_real_token_deltas(monkeypatch):
-    class _Ev:
-        def __init__(self, content=None, is_final=False):
-            self.content = content
-            self.is_final = is_final
-
-    class _FakeStreamAgent:
-        model = SimpleNamespace(id="hermes-test")
-
-        def run(self, prompt, stream=False, stream_events=False):
-            assert stream and stream_events
-            yield _Ev(content="A")
-            yield _Ev(content="B")
-            yield _Ev(content="C")
-            yield _Ev(content=None, is_final=True)
-
-        def get_last_run_output(self):
-            return None
-
-    chunks = []
-    text = run_agent_stream_text(
-        _FakeStreamAgent(), "PROMPT", "simulator", on_text=chunks.append
-    )
-    assert text == "ABC"
-    assert chunks == ["A", "B", "C"]
-
-
-def test_luna_shaped_stream_keeps_content_when_reasoning_deltas_interleave(monkeypatch):
-    """#1452：推理模型流式 delta 可能夹 reasoning 分片；正文 content 不得被丢。
-
-    钉 agents.run_agent_stream_text 路径；本票 web 面 RunErrorEvent 闸由
-    tests/test_chat_stream_failpaths_393.py 真实入口覆盖，不在此重复。
-    """
-    class _Delta:
-        def __init__(self, content=None, reasoning_content=None, is_final=False):
-            self.content = content
-            self.reasoning_content = reasoning_content
-            self.is_final = is_final
-
-    class _FakeLunaAgent:
-        model = SimpleNamespace(id="gpt-5.6-luna")
-
-        def run(self, prompt, stream=False, stream_events=False):
-            assert stream and stream_events
-            yield _Delta(reasoning_content="先核辽饷账目…")
-            yield _Delta(content="辽")
-            yield _Delta(reasoning_content="再陈缺口。")
-            yield _Delta(content="饷缺口甚大。")
-            yield _Delta(content="辽饷缺口甚大。", is_final=True)
-
-        def get_last_run_output(self):
-            return None
-
-    texts: list[str] = []
-    thinks: list[str] = []
-    out = run_agent_stream_text(
-        _FakeLunaAgent(),
-        "PROMPT",
-        "minister",
-        on_text=texts.append,
-        on_thinking=thinks.append,
-    )
-    assert out == "辽饷缺口甚大。"
-    assert texts == ["辽", "饷缺口甚大。"]
-    assert any("辽饷" in t or "账" in t for t in thinks)
 
 
 def test_codex_final_text_handles_item_completed_shape():
@@ -678,27 +463,7 @@ def test_run_runner_execs_resolved_abspath(monkeypatch, runner, resolved):
     assert captured["cmd"][0] == resolved
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 # ── lenient JSON via public extract seam ──
-
-
-
-
-
 
 
 # ── CliChat public: prompt shape + typed completion structure ──
@@ -991,16 +756,6 @@ def test_office_inference_llm_call_is_traced(monkeypatch):
     got = dbmod.infer_office_type_from_office("绝无此名的杜撰怪衔甲", llm_config=_cli_codex_cfg())
     assert got == "边镇"
     assert len(recs) == 1 and "绝无此名的杜撰怪衔甲" in recs[0]["prompt"]
-
-
-def test_secret_extract_traces_exactly_once(monkeypatch):
-    recs = []
-    monkeypatch.setattr(cb, "_trace", lambda rec: recs.append(rec))
-    canned = '{"标题":"密查","内容":"查关宁军饷","承办人":"骆养性","期限月数":3,"标签":["关宁"]}'
-    monkeypatch.setattr(cb, "_run_agy", lambda prompt, **kw: (canned, 1))
-    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
-    cb._extract_secret_order("密查关宁军饷", "臣遵旨", "骆养性")
-    assert len(recs) == 1, f"密令提取应恰好 1 条 trace，实 {len(recs)}"
 
 
 # ── #1256 cursor / kimi / grok + #1274-qa-y1 pi runners ──

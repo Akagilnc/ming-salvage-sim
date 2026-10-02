@@ -25,12 +25,11 @@ from __future__ import annotations
 import argparse
 import json
 import logging
-import os
 import sys
 import tempfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, Optional, Sequence, Tuple
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -236,8 +235,8 @@ def _first_month_gazette_via_production_settle(
     """
     db = session.db
     closed_turn = int(session.state.turn)
-    existing = str(db.get_turn_report(closed_turn) or "").strip()
-    if existing:
+    existing = str(db.get_turn_report(closed_turn) or "")
+    if existing.strip():
         return existing
 
     try:
@@ -528,7 +527,6 @@ def main() -> int:
     content = GameContent.load()
     bind_content(content)
     bind_issue_content(content)
-    bind_agent_content(content)
     cfg = _config(args)
     trace_path = require_fresh_cli_trace(cfg)
 

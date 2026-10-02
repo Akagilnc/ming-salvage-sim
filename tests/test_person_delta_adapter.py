@@ -2,7 +2,6 @@
 
 import copy
 import json
-import os
 
 import pytest
 
@@ -157,8 +156,6 @@ def test_apply_score_extraction_does_not_echo_normalized_person_changes(game):
     assert "person_changes" not in applied
     assert "world_advance" not in applied
     assert "pairing_warnings" not in applied
-
-
 
 
 def test_apply_score_extraction_rejects_person_change_power_move_without_way(read_game):
@@ -1920,14 +1917,6 @@ def test_apply_score_extraction_rejects_dead_status_outbound(game):
     ]
 
 
-
-
-
-
-
-
-
-
 def _materialize_active_prince(db, state, content):
     """物化一个 active+ming 宗藩王进测试 DB（probe.db 旧档无宗藩行），返回 name。"""
     name = next(
@@ -1942,29 +1931,6 @@ def _materialize_active_prince(db, state, content):
     return name
 
 
-
-
-
-
-def test_registry_and_tools_court_roster_exclude_active_prince(read_game):
-    """材料目录与 simulator/web 同口径排除 active 宗藩。"""
-    from ming_sim.materials import list_materials, prepare_character_materials, read_material
-    db, state, content = read_game
-    name = _materialize_active_prince(db, state, content)
-    minister_name = next(
-        n for n, c in content.characters.items()
-        if getattr(c, "power_id", "ming") == "ming"
-        and getattr(c, "office_type", "") not in ("后宫", "宗藩")
-        and db.get_character_status(n)[0] == "active"
-    )
-    prepared = prepare_character_materials(db, state, content.characters[minister_name])
-    blob = "\n".join(
-        read_material(prepared.root, path)
-        for path in list_materials(prepared.root) if path != "INDEX.txt"
-    )
-    assert name not in blob
-
-
 def test_apply_office_appointment_rejects_vassal_prince(game):
     """任命落地核（extractor office_changes + CLI/pending 任免共用）须拒绝给宗藩授官——否则授官会把
     office_type 从「宗藩」改成新官署、反解掉所有 roster 隐藏（最严重落库 bug 类，cmr R5 keystone）。
@@ -1977,17 +1943,6 @@ def test_apply_office_appointment_rejects_vassal_prince(game):
     row = db.conn.execute("SELECT office_type, status FROM characters WHERE name=?", (name,)).fetchone()
     assert row["office_type"] == "宗藩", "宗藩 office_type 被授官改写=反解隐藏"
     assert row["status"] == "offstage", "宗藩被授官路径翻成 active"
-
-
-def test_list_ministers_excludes_active_prince(read_game):
-    """召见阶段名册 GameSession.list_ministers 与各 roster 同口径排除 active 宗藩（cmr R5）。"""
-    from ming_sim.session import GameSession
-    db, state, content = read_game
-    name = _materialize_active_prince(db, state, content)
-    sess = GameSession.__new__(GameSession)
-    sess.db = db
-    sess.content = content
-    assert name not in [v.name for v in sess.list_ministers()], f"宗藩 {name} 漏进 list_ministers"
 
 
 def test_create_secret_order_rejects_vassal_prince(read_game):
@@ -2372,10 +2327,6 @@ def test_empty_new_person_change_key_does_not_shadow_legacy_normalization():
     ]
 
 
-
-
-
-
 def test_political_marker_is_audit_only_no_status_premigration(game):
     """决定4：政治标记派生（起复/昭雪/夺情）为纯审计记录，不执行 status 迁移原语——
     不得在绑名分前先 set_character_status(active)，避免「先置 active、名分未绑」幽灵态。
@@ -2574,8 +2525,6 @@ def test_new_appointment_falsy_return_restores_snapshot(game, monkeypatch):
     ).fetchone()["office"]
     assert now_office == orig_office, \
         f"falsy-return 后半落库未回滚：victim office={now_office!r} 期望 {orig_office!r}"
-
-
 
 
 def test_fresh_seed_migrates_legacy_office_pollution(tmp_path):

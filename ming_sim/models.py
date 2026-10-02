@@ -1,14 +1,11 @@
-"""数据类：游戏实体与状态容器。L0 叶子模块。
-
-CourtContext 的 state/db 注解用字符串前向引用，避免 import db.py。
-"""
+"""数据类：游戏实体与状态容器。L0 叶子模块。"""
 
 from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Dict, List, Optional
+from typing import Dict, List
 
 from ming_sim.constants import (
     ARMY_FIELD_ALIASES,
@@ -333,13 +330,6 @@ class TurnPhase(str, Enum):
 # 「前半段已提交」相位集：pre_settle 守门/粘滞/skip 跳过判定的单一真源（cmr S4 r3 集中化）。
 # AWAITING 只可能在 pre_settle 事务提交后出现（HITL 暂停在 resolve 中段），语义同 settling。
 FRONT_HALF_DONE_PHASES = (TurnPhase.SETTLING.value, TurnPhase.AWAITING_DECISION.value)
-
-
-@dataclass
-class ChatResult:
-    action: str
-    next_minister: str = ""
-    refresh_ministers: List[str] = field(default_factory=list)
 
 
 # LLM 后端默认值 / 通道集合的单一真源——放 L0 叶子 models，llm_config 与 cli_backend 都从此处
@@ -679,13 +669,6 @@ class GameState:
         if self.period > 12:
             self.period = 1
             self.year += 1
-
-
-@dataclass
-class CourtContext:
-    state: "GameState"
-    db: "object"  # GameDB；用 object 注解避免 import db.py 造成环
-    previous_summary: str = ""
 
 
 def period_label(year: int, month: int) -> str:

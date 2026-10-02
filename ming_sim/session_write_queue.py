@@ -107,9 +107,6 @@ class ClassifiedWriteGate:
         with self._cv:
             return self._held
 
-    def holder_kind(self) -> Optional[str]:
-        with self._cv:
-            return self._kind
 
     def is_held_by_translation(self) -> bool:
         with self._cv:
@@ -259,9 +256,6 @@ class SessionWriteQueue:
         with self._cond:
             self._sealed = False
 
-    def is_sealed(self) -> bool:
-        with self._cond:
-            return bool(self._sealed)
 
     def has_open_barrier(self) -> bool:
         """True while a month-advance/close barrier ticket is still open."""
@@ -333,9 +327,6 @@ class SessionWriteQueue:
             self._by_key.setdefault(key, set()).add(ticket.seq)
             return ticket
 
-    def vacate(self, ticket: Optional[WriteTicket]) -> None:
-        """Empty release on fail/cancel — same as complete (order advances)."""
-        self.complete(ticket)
 
     def cancel(self, ticket: Optional[WriteTicket]) -> None:
         """Mark cancelled and vacate. In-flight legs must check ticket.cancelled."""
@@ -516,16 +507,6 @@ class SessionWriteQueue:
         """
         with self.ticketed_gate(ticket):
             return fn()
-
-    def run_exclusive(self, fn: Callable[[], T]) -> T:
-        """Claim + write-turn + write_gate + complete — one-shot exclusive write."""
-        ticket = self.claim()
-        if ticket is None:
-            raise RuntimeError("write queue sealed")
-        try:
-            return self.run(ticket, fn)
-        finally:
-            self.complete(ticket)
 
 
 # Lazy-install path is fixture/partial-wiring only (GameSession/WebGame eager).
