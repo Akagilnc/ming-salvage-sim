@@ -6,7 +6,7 @@
 rg -n "capture_commitment_stages|parse_staged_year_promise|_STAGE_YEAR_RE|_cn_years_to_int|_CN_YEAR_DIGITS|narrative_text\s*=|close_text if execution_note|stages_to_json|normalize_commitment_stages|player_facing_secret_order_close_text|settle_due_secret_orders\(|close_secret_order\(" -g "*.{py,md,ts,tsx}"
 rg -n "三年X五年Y|回落正文|scripted 年诺|正文年诺" -g "*.{py,md}"
 rg -n "close_text if execution_note|execution_note is None" -g "*.py"
-rg -n "capture_commitment_stages\(|parse_staged_year_promise|_STAGE_YEAR_RE|_cn_years_to_int|_CN_YEAR_DIGITS" 
+rg -n "capture_commitment_stages\(|parse_staged_year_promise|_STAGE_YEAR_RE|_cn_years_to_int|_CN_YEAR_DIGITS"
 git diff --name-only 0ca77fecc402b67829da5310fdf0cf76d624249d HEAD -- 'ming_sim/**' 'web/src/**'
 
 === production changed-union (auto; context only, not enum scope limit) ===
