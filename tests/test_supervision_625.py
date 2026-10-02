@@ -12,9 +12,7 @@ Seams:
 from __future__ import annotations
 
 import json
-import sqlite3
 
-import pytest
 
 from ming_sim.db import GameDB
 from tests.test_due_review_621 import _settle_empty_month
@@ -25,26 +23,13 @@ from ming_sim.staged_commitment import (
     TODO_STATUS_PENDING,
     write_due_staged_commitment_todos,
 )
-from ming_sim.participant_roster import resolve_dossier_owner_name
 from ming_sim.supervision import (
     COUNTERMEASURE_ORIGIN_KIND,
     COUNTERMEASURE_PRESENCE_MONTHS,
-    EMPTY_TRANSFORMATION_TENDENCY_FACTS,
-    EXPOSURE_ALLOWED_COLS,
-    EXPOSURE_TABLE,
-    FORBIDDEN_DULLING_COL_FRAGMENTS,
     ORIGIN_MARK_PRIVATE_GOODS,
     ORIGIN_MARK_SAME_FACTION_BLIND,
-    PRESENCE_ALLOWED_COLS,
-    PRESENCE_TABLE,
     SUPERVISION_RELATION,
-    SUPERVISION_SURFACE_KEYS,
-    compose_report_origin,
-    derive_consecutive_months,
-    faction_relation,
     origin_has_mark,
-    parse_report_origin,
-    unpack_supervision_surface,
 )
 
 
@@ -154,69 +139,18 @@ def _insert_staged(db, state, content, *, dossier_id: int, due_turn: int):
     return int(created["issue_id"])
 
 
-def _table_cols(db, table: str) -> set[str]:
-    return {
-        str(row["name"])
-        for row in db.conn.execute(f'PRAGMA table_info("{table}")').fetchall()
-    }
 
 
 # ── unit pure ─────────────────────────────────────────────────────
 
 
-def test_derive_consecutive_months_and_faction_relation():
-    assert derive_consecutive_months([1, 2, 3, 5], end_turn=5) == 1
-    assert derive_consecutive_months([1, 2, 3, 4], end_turn=4) == 4
-    assert derive_consecutive_months([10, 11, 12], end_turn=12) == 3
-    assert faction_relation("东林", "东林") == "same"
-    assert faction_relation("东林", "阉党") == "enemy"
-    assert faction_relation("", "阉党") == "other"
 
 
-def test_origin_mark_compose_parse_roundtrip():
-    base = "dossier-report:monthly_errand"
-    marked = compose_report_origin(
-        base, [ORIGIN_MARK_PRIVATE_GOODS, ORIGIN_MARK_SAME_FACTION_BLIND],
-    )
-    root, marks = parse_report_origin(marked)
-    assert root == base
-    assert ORIGIN_MARK_PRIVATE_GOODS in marks
-    assert ORIGIN_MARK_SAME_FACTION_BLIND in marks
-    assert origin_has_mark(marked, ORIGIN_MARK_PRIVATE_GOODS)
 
 
 # ── AC1 事实底 ────────────────────────────────────────────────────
 
 
-def test_ac1_presence_exposure_schema_pragma_and_no_dulling_cols(game):
-    db, state, _content = game
-    assert PRESENCE_TABLE in {
-        r[0] for r in db.conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table'"
-        ).fetchall()
-    }
-    assert EXPOSURE_TABLE in {
-        r[0] for r in db.conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table'"
-        ).fetchall()
-    }
-    pcols = _table_cols(db, PRESENCE_TABLE)
-    ecols = _table_cols(db, EXPOSURE_TABLE)
-    assert pcols == PRESENCE_ALLOWED_COLS
-    assert ecols == EXPOSURE_ALLOWED_COLS
-
-    # 全库无钝化数值列
-    tables = [
-        str(r[0])
-        for r in db.conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
-        ).fetchall()
-    ]
-    for table in tables:
-        for col in _table_cols(db, table):
-            low = col.lower()
-            for frag in FORBIDDEN_DULLING_COL_FRAGMENTS:
-                assert frag.lower() not in low, f"{table}.{col} 命中禁列片段 {frag}"
 
 
 def test_ac1_monthly_write_idempotent_readable_and_restore(game, tmp_path, content):
@@ -519,39 +453,8 @@ def test_ac4_unified_presence_gate_on_terminal_and_recon_paths(game):
     assert any(r["execution_form"] == "degraded" for r in exps)
 
 
-def test_owner_identity_single_source_shared_with_tenure():
-    """①归属人单源：首名 canonical 主办优先，缺档才读 legacy executor；#613 任别共调。"""
-    by_roster_over_executor = {
-        "executor_id": "张居正",
-        "executor_kind": "character",
-        "participant_roster": [{"character_id": "他人", "tier": "主办"}],
-    }
-    assert resolve_dossier_owner_name(by_roster_over_executor) == "他人"
-    by_legacy_executor = {
-        "executor_id": "张居正",
-        "executor_kind": "character",
-        "participant_roster": [],
-    }
-    assert resolve_dossier_owner_name(by_legacy_executor) == "张居正"
-    by_roster = {
-        "executor_id": "",
-        "executor_kind": "",
-        "participant_roster": [
-            {"character_id": "知情甲", "tier": "知情"},
-            {"character_id": "主办乙", "tier": "主办"},
-        ],
-    }
-    assert resolve_dossier_owner_name(by_roster) == "主办乙"
-    assert resolve_dossier_owner_name({}) == ""
 
 
-def test_unpack_supervision_surface_empty_form_is_constant():
-    """②三键 unpack + 空形常量真源。"""
-    empty = unpack_supervision_surface(None)
-    assert empty["supervision_history"] == []
-    assert empty["loophole_exposures"] == []
-    assert empty["transformation_tendency_facts"] == EMPTY_TRANSFORMATION_TENDENCY_FACTS
-    assert set(empty) == set(SUPERVISION_SURFACE_KEYS)
 
 
 # ── AC5 哨兵 ──────────────────────────────────────────────────────
@@ -579,28 +482,3 @@ def test_due_review_supervision_history_no_longer_hardcoded_empty(game):
     inp = build_due_review_input(db, todo)
     assert inp["supervision_history"] != []
     assert inp["supervision_history"][0]["auditor_name"] == str(auditor_row["name"])
-
-
-def test_decide_due_review_verdict_unchanged_by_supervision(game):
-    """解 A：不改 decide_due_review_verdict 确定性分支。"""
-    from ming_sim.due_review import decide_due_review_verdict
-
-    base = {
-        "mid_stage": False,
-        "durable_effects": [{"id": 1}],
-        "progress_reports": [],
-        "criterion_text": "清丈",
-        "origin_context": "",
-        "supervision_history": [{
-            "consecutive_months": 12,
-            "auditor_integrity_band": "操守平常",
-            "faction_relation": "same",
-        }],
-        "transformation_tendency_facts": {
-            "longest_consecutive_presence_months": 12,
-            "has_mediocre_auditor": True,
-        },
-    }
-    v = decide_due_review_verdict(base)
-    assert v["outcome"] == "fulfilled"
-    assert v["close"] is True

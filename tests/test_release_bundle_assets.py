@@ -7,7 +7,6 @@
 from pathlib import Path
 import sqlite3
 
-import pytest
 
 from ming_sim import paths
 from ming_sim.db import GameDB

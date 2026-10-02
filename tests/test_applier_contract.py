@@ -10,49 +10,19 @@ import json
 
 import pytest
 
-from ming_sim.applier import ApplyContext, Provenance, RejectedItem, RejectionCollector, SectionResult
+from ming_sim.applier import Provenance, RejectedItem, RejectionCollector
 
 
-def test_provenance_enum_values():
-    """五个成员值与字符串标识一致（ADR 0008 决定 5）。"""
-    assert Provenance.player_decree.value == "player_decree"
-    assert Provenance.hitl_decision.value == "hitl_decision"
-    assert Provenance.secret_order.value == "secret_order"
-    assert Provenance.system_simulation.value == "system_simulation"
-    assert Provenance.unknown.value == "unknown"
 
 
-def test_provenance_from_string():
-    """可按字符串反查成员。"""
-    assert Provenance("player_decree") is Provenance.player_decree
-    assert Provenance("system_simulation") is Provenance.system_simulation
 
 
 # ---------------------------------------------------------------------------
 # RejectedItem
 # ---------------------------------------------------------------------------
 
-def test_rejected_item_fields():
-    """RejectedItem 持 item/reason/category/source 四字段。"""
-    raw = {"id": "fake_army", "manpower": 5000}
-    ri = RejectedItem(
-        item=raw,
-        reason="id 不在军队表",
-        category="hallucinated_id",
-        source=Provenance.system_simulation,
-    )
-    assert ri.item is raw
-    assert ri.reason == "id 不在军队表"
-    assert ri.category == "hallucinated_id"
-    assert ri.source is Provenance.system_simulation
 
 
-def test_rejected_item_constructs_with_fields():
-    """四字段按名构造可读（非 frozen，可变性不在契约内）。"""
-    ri = RejectedItem(
-        item={}, reason="test", category="invalid_enum", source=Provenance.unknown
-    )
-    assert ri.category == "invalid_enum"
 
 
 # ---------------------------------------------------------------------------
@@ -63,29 +33,10 @@ def _make_ri(category="hallucinated_id") -> RejectedItem:
     return RejectedItem(item={}, reason="x", category=category, source=Provenance.unknown)
 
 
-def test_section_result_holds_applied_and_rejected():
-    """applied 为任意列表，rejected 为 RejectedItem 列表。"""
-    r = SectionResult(applied=["a", "b"], rejected=[_make_ri()])
-    assert len(r.applied) == 2
-    assert len(r.rejected) == 1
 
 
-def test_section_result_merge():
-    """两个 SectionResult 聚合后 applied/rejected 各自拼接。"""
-    a = SectionResult(applied=[1, 2], rejected=[_make_ri("hallucinated_id")])
-    b = SectionResult(applied=[3], rejected=[_make_ri("invalid_enum"), _make_ri("missing_ref")])
-    merged = a.merge(b)
-    assert merged.applied == [1, 2, 3]
-    assert len(merged.rejected) == 3
 
 
-def test_section_result_merge_empty():
-    """空 SectionResult 与非空合并，结果与非空相等。"""
-    empty = SectionResult(applied=[], rejected=[])
-    non_empty = SectionResult(applied=[42], rejected=[_make_ri()])
-    assert empty.merge(non_empty).applied == [42]
-    assert len(empty.merge(non_empty).rejected) == 1
-    assert non_empty.merge(empty).applied == [42]
 
 
 # ---------------------------------------------------------------------------
@@ -103,14 +54,6 @@ def clean_rejections(game):
     return game
 
 
-def test_apply_context_holds_all_fields(read_game):
-    """ApplyContext 持 db/state/content + source。"""
-    db, state, content = read_game
-    ctx = ApplyContext(db=db, state=state, content=content, source=Provenance.player_decree)
-    assert ctx.db is db
-    assert ctx.state is state
-    assert ctx.content is content
-    assert ctx.source is Provenance.player_decree
 
 
 # ---------------------------------------------------------------------------

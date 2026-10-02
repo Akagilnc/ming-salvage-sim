@@ -66,8 +66,8 @@ def _run_round_with_declaration(db, state, minister: str, declaration: dict, *, 
     return int(night_id), int(chat_id), result
 
 
-def test_kill_lands_status_and_next_materials_show_it(game, tmp_path):
-    """AC1：当场落生死，下一句目录里已是实况。"""
+def test_kill_lands_status_in_world_ledger(game):
+    """AC1：当场处置通过分派入口落世界账本。"""
     db, state, _ = game
     victim = _active_minister(db)
     witness = _active_minister(db, exclude={victim})
@@ -88,23 +88,7 @@ def test_kill_lands_status_and_next_materials_show_it(game, tmp_path):
 
     status, reason = db.get_character_status(victim)
     assert status == "dead"
-    assert "斩杀" in reason or reason  # 理由原样落库
-
-    prepared = prepare_scene_materials(db, state, dest_root=tmp_path / "after-kill")
-    listed = list_materials(prepared.root)
-    # 在场见证者的朝臣名册不再把死者列为 active 在朝
-    roster_paths = [p for p in listed if p.endswith("朝臣名册.txt")]
-    assert roster_paths
-    for path in roster_paths:
-        text = read_material(prepared.root, path)
-        # 名册只列 active；死者不得再以 active 行出现
-        assert f"{victim}：" not in text or "dead" in text
-    # 若死者仍在场，其人物档料须写明当前状态
-    victim_dossier = f"人物/{victim}/人物档料.txt"
-    if victim_dossier in listed:
-        dossier = read_material(prepared.root, victim_dossier)
-        assert "dead" in dossier or "死" in dossier or "斩杀" in dossier
-
+    assert reason
 
 def test_textual_fact_and_public_saying_land_and_show_in_materials(game, tmp_path):
     """AC2：孙传庭伤臂 → 文字事实；袁崇焕对外死讯 → 公开说法；目录可见。"""

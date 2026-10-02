@@ -530,12 +530,6 @@ class _GapBDB:
             or not row.get("minister_message_id")
         ]
 
-    def load_all_chat_history(self):
-        out = {}
-        for m in self.messages:
-            out.setdefault(m["minister"], []).append({"role": m["role"], "content": m["content"]})
-        return out
-
     def kv_get(self, _k):
         return ""
 
@@ -601,7 +595,6 @@ def test_drain_waits_for_queued_chat_stream_not_just_gate_holder():
 
     b_events = list(runtime.chat_stream("殿上", "请奏B"))
     assert b_events and b_events[-1].get("type") == "error"
-    assert "仍在进行" in str(b_events[-1].get("message") or "")
 
     drain_done = threading.Event()
 

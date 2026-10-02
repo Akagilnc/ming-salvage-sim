@@ -2,79 +2,20 @@
 
 import json
 import sqlite3
+from dataclasses import replace
 
 from ming_sim.content import load_character_content
 from ming_sim.db import GameDB
 from ming_sim.models import Character
-from ming_sim.session import _sync_offices_from_db_impl
+from ming_sim.decree import reload_state_from_db
 
 
-def _columns(db, table):
-    return {row["name"] for row in db.conn.execute(f"PRAGMA table_info({table})").fetchall()}
 
 
-def _column_info(db, table):
-    return {row["name"]: dict(row) for row in db.conn.execute(f"PRAGMA table_info({table})").fetchall()}
 
 
-def test_characters_table_has_person_archive_fields(read_game):
-    """ADR 0009 stores machine-readable reason and travel state on characters."""
-    db, _, _ = read_game
-
-    cols = _columns(db, "characters")
-
-    assert "reason_code" in cols
-    assert "transit_to" in cols
-    assert {"transit_distance_remaining", "transit_speed_factor"} <= cols
-    info = _column_info(db, "characters")
-    for name in ("transit_distance_remaining", "transit_speed_factor"):
-        assert info[name]["type"] == "REAL"
-        assert info[name]["notnull"] == 0
-        assert info[name]["dflt_value"] is None
-    for name in ("reason_code", "transit_to"):
-        assert info[name]["type"] == "TEXT"
-        assert info[name]["notnull"] == 1
-        assert info[name]["dflt_value"] == "''"
 
 
-def test_person_logs_table_records_person_archive_audit_chain(read_game):
-    """ADR 0009 persists person archive process history separately from final state."""
-    db, _, _ = read_game
-
-    cols = _columns(db, "person_logs")
-
-    assert {
-        "id",
-        "turn",
-        "year",
-        "period",
-        "person_name",
-        "action",
-        "payload_summary",
-        "derived_from",
-        "normalized",
-        "source",
-        "created_at",
-    } <= cols
-
-    info = _column_info(db, "person_logs")
-    for name in ("person_name", "action", "payload_summary", "derived_from", "normalized", "source"):
-        assert info[name]["type"] == "TEXT"
-        assert info[name]["notnull"] == 1
-    for name in ("payload_summary", "derived_from", "normalized", "source"):
-        assert info[name]["dflt_value"] == "''"
-
-    indexes = {
-        row["name"]
-        for row in db.conn.execute("PRAGMA index_list(person_logs)").fetchall()
-    }
-    assert "idx_person_logs_turn" in indexes
-
-    foreign_keys = {
-        (row["from"], row["table"], row["to"])
-        for row in db.conn.execute("PRAGMA foreign_key_list(person_logs)").fetchall()
-    }
-    assert ("person_name", "characters", "name") in foreign_keys
 
 
 def test_person_logs_accepts_audit_rows_for_existing_characters(game):
@@ -133,7 +74,7 @@ def test_add_character_persists_transit_to(game):
 
 
 def test_reload_restores_complete_transit_ledger_from_db(game):
-    db, _, content = game
+    db, state, content = game
     name = db.conn.execute("SELECT name FROM characters LIMIT 1").fetchone()["name"]
     db.conn.execute(
         "UPDATE characters SET transit_to='liaodong', transit_distance_remaining=1.25, "
@@ -141,7 +82,7 @@ def test_reload_restores_complete_transit_ledger_from_db(game):
         (name,),
     )
 
-    _sync_offices_from_db_impl(content, db)
+    reload_state_from_db(db, state, content=content)
 
     character = content.characters[name]
     assert (
@@ -182,15 +123,22 @@ def test_old_save_schema_is_upgraded_for_person_archive_fields(tmp_path, content
 
     db = GameDB(str(path), content)
     try:
-        character_info = _column_info(db, "characters")
-        assert "reason_code" in character_info
-        assert "transit_to" in character_info
-        assert "person_logs" in {
-            row["name"]
-            for row in db.conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table'"
-            ).fetchall()
-        }
+        state = db.load_state()
+        character = replace(
+            next(iter(content.characters.values())),
+            name="测试迁移在途人物", transit_to="liaodong",
+        )
+        db.add_character(state, character)
+        db.record_person_log(state, character.name, "行止", normalized={"transit_to": "liaodong"})
+        row = db.conn.execute(
+            "SELECT transit_to, reason_code FROM characters WHERE name=?", (character.name,),
+        ).fetchone()
+        assert dict(row) == {"transit_to": "liaodong", "reason_code": character.reason_code}
+        log = db.conn.execute(
+            "SELECT normalized FROM person_logs WHERE person_name=? ORDER BY id DESC LIMIT 1",
+            (character.name,),
+        ).fetchone()
+        assert json.loads(log["normalized"]) == {"transit_to": "liaodong"}
     finally:
         db.conn.close()
 

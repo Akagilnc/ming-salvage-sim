@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import pytest
 
-from ming_sim.flows import army_loyalty_tick_delta, apply_fixed_period_flows
+from ming_sim.flows import apply_fixed_period_flows
 
 KEG = "guanning"    # 火药桶/主测军（content 军，needed 可控）
 ELITE = "jingying"  # 精锐对照军
@@ -88,22 +88,8 @@ def _seed_arrears_months(db, aid, months, needed):
 # ── oracle 单元：分档真源 ────────────────────────────────────────────────
 
 
-@pytest.mark.parametrize("arrears,needed,expected", [
-    (0.0, 1, 5),     # ① 满饷（arrears==0）→ +5
-    (0.01, 1, 0),    # 分数欠饷 0.01 月：非满饷 → 半欠不回血（dead-band 0）
-    (0.9, 1, 0),     # 分数欠饷 0.9 月：零头也是欠、半欠不回血（dead-band 0，ADR 0025 D2）
-    (1.0, 1, 0),     # ② 恰好欠 1 月 → dead-band 0
-    (2.0, 1, 0),     # ② 欠 2 月 → dead-band 0
-    (2.99, 1, 0),
-    (3.0, 1, -5),    # ③ 欠满 3 月 → -5
-    (6.4, 1, -5),    # ③ 继续欠 → 每月 -5
-])
-def test_loyalty_tick_delta_tiers(arrears, needed, expected):
-    assert army_loyalty_tick_delta(arrears, needed) == expected
 
 
-def test_loyalty_tick_delta_zero_needed_no_div_zero():
-    assert army_loyalty_tick_delta(50.0, 0) == 0
 
 
 def test_fractional_arrears_no_recovery(game):

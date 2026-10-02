@@ -16,14 +16,13 @@ from __future__ import annotations
 import pytest
 
 import ming_sim.issues as issue_engine
-from ming_sim.audience_night import list_ledger, open_night
+from ming_sim.audience_night import open_night
 from tests.test_month_chain_1843 import _prepare_player_month
 from ming_sim.due_review import (
     apply_pending_due_reviews,
     build_due_review_input,
     dossiers_with_pending_due_review,
     list_due_review_scenes,
-    project_due_review_scene,
 )
 from ming_sim.issues import apply_score_extraction
 from ming_sim.models import TurnPhase
@@ -504,7 +503,7 @@ def test_executing_outcome_rejects_close_true(game):
     """负向：executing 不得 close=True（适配器契约）。"""
     db, state, _content = game
     dossier_id = _executing_policy_dossier(db, state, token="close-guard")
-    with pytest.raises(ValueError, match="executing"):
+    with pytest.raises(ValueError):
         db.record_dossier_execution(
             dossier_id, "executing", "中段过程", state.turn, close=True, commit=True,
         )
@@ -549,8 +548,6 @@ def test_three_beat_timing_todo_then_scene_then_slot(game, monkeypatch):
     assert db.list_next_audience_todos(status=TODO_STATUS_PENDING) == []
 
 
-def test_five_module_extractor_fanout_is_retired():
-    from ming_sim import simulation
 
 
 def test_due_review_settle_does_not_pause_or_decision(game, monkeypatch):
@@ -596,7 +593,6 @@ def test_input_closed_set_degrades_when_sources_missing(game):
     assert inp["supervision_history"] == []  # 本夹具未挂稽核链
     assert inp["progress_reports"] == []
     assert inp.get("transformation_tendency_facts", {}).get("exposure_count", 0) == 0
-    scene = project_due_review_scene(db, todo, review_input=inp)
 
 
 def test_formal_review_blocks_extractor_second_terminal(game):

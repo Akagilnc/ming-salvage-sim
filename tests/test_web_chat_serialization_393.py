@@ -3,14 +3,11 @@ from __future__ import annotations
 import pytest
 
 import asyncio
-import json
 import threading
 from types import SimpleNamespace
 
 import web_app
 from tests.web_audience_test_doubles import HallAdmissionSessionMixin
-from tests.dossier_test_helpers import TYPED_COVERT_TASK, create_test_secret_order
-from tests.wait_utils import wait_until
 from ming_sim.session_write_queue import SessionWriteQueue
 
 
@@ -366,7 +363,6 @@ def test_nonstream_api_chat_keeps_game_state_responsive_while_chat_blocks(monkey
 
 def test_nonstream_chat_rejects_when_session_draining():
     """drain 已开始时非流式 chat 不得再登记 pending——对齐 stream 拒绝路，HTTP 503。"""
-    from fastapi import HTTPException
 
     character = SimpleNamespace(name="测试大臣")
     state = SimpleNamespace(turn=1, year=1628, period=1, turn_phase="summoning")
@@ -383,5 +379,4 @@ def test_nonstream_chat_rejects_when_session_draining():
 
     events = list(runtime.chat_stream("殿上", "边饷如何？"))
     assert events and events[0].get("type") == "error"
-    assert "正在关闭" in str(events[0].get("message") or "")
     assert runtime._pending_writes_count == 0

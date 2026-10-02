@@ -14,35 +14,6 @@ import web_app
 from ming_sim.models import LLMConfig
 
 
-def test_runtime_cli_slot_builds_cli_llm_config_without_backend_env(monkeypatch):
-    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
-    runtime = {
-        "channel": "cli",
-        "api": {"base_url": "", "model": "", "api_key": ""},
-        "cli": {"runner": "codex", "model": "gpt-5.5", "timeout_seconds": "240", "reasoning_strength": "low"},
-    }
-
-    cfg = web_app._llm_config_from_runtime(
-        runtime,
-        base_url="https://api.example.com/v1",
-        model="gpt-api",
-        api_key="",
-        timeout_seconds=180,
-        thinking_level="",
-        advanced_model="",
-        advanced_base_url="",
-        advanced_api_key="",
-        advanced_thinking_level="",
-    )
-
-    assert cfg.channel == "cli"
-    assert cfg.cli_runner == "codex"
-    assert cfg.cli_model == "gpt-5.5"
-    assert cfg.cli_timeout_seconds == 240
-    assert cfg.reasoning_strength == "low"
-    assert cfg.api_key == ""  # CLI 通道 LLMConfig.api_key 永空（占位符只在构造 CliChat 时注入）
-
-
 def test_advanced_llm_verification_preserves_api_channel_over_backend_env(monkeypatch):
     monkeypatch.setenv("MING_SIM_LLM_BACKEND", "agy")
     seen = []
@@ -79,53 +50,6 @@ def test_advanced_llm_verification_preserves_reasoning_strength(monkeypatch):
     assert by_model["gpt-main"].reasoning_strength == "high"
     assert by_model["gpt-advanced"].reasoning_strength == "high"
     assert by_model["gpt-advanced"].thinking_level == ""
-
-
-def test_runtime_api_reasoning_strength_builds_llm_config(monkeypatch):
-    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
-    runtime = {
-        "channel": "api",
-        "reasoning_strength": "high",
-        "api": {"base_url": "https://api.example.com/v1", "model": "gpt-5", "api_key": "sk-test"},
-        "cli": {"runner": "", "model": "", "timeout_seconds": ""},
-    }
-
-    cfg = web_app._llm_config_from_runtime(
-        runtime,
-        base_url="https://api.example.com/v1",
-        model="gpt-5",
-        api_key="sk-test",
-        timeout_seconds=180,
-        thinking_level="",
-        advanced_model="",
-        advanced_base_url="",
-        advanced_api_key="",
-        advanced_thinking_level="",
-    )
-
-    assert cfg.channel == "api"
-    assert cfg.reasoning_strength == "high"
-
-
-def test_runtime_env_legacy_advanced_thinking_builds_reasoning_strength(monkeypatch):
-    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
-
-    cfg = web_app._llm_config_from_runtime(
-        {},
-        base_url="https://api.example.com/v1",
-        model="gpt-main",
-        api_key="sk-test",
-        timeout_seconds=180,
-        thinking_level="",
-        advanced_model="gpt-5.5",
-        advanced_base_url="",
-        advanced_api_key="",
-        advanced_thinking_level="high",
-    )
-
-    assert cfg.channel == "api"
-    assert cfg.advanced_thinking_level == ""
-    assert cfg.reasoning_strength == "high"
 
 
 def test_build_llm_config_switches_to_api_on_real_key_over_backend_env(monkeypatch):
@@ -1292,23 +1216,13 @@ def test_build_llm_config_does_not_reuse_placeholder_as_api_key(monkeypatch):
     assert cfg.channel == "cli"
 
 
-def test_llm_config_from_runtime_api_channel_drops_placeholder_key(monkeypatch):
-    # ship-pre CMR Group A'（Claude R1）：无 env runner 时空 channel 推成 api，
-    # 但占位符不当真 key（清空让下游报「未配 API key」，而非拿假 key 探 OpenAI）。
+def test_game_start_rejects_placeholder_api_key(monkeypatch, tmp_path):
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    monkeypatch.setenv("OPENAI_API_KEY", "cli-backend")
+    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {"channel": ""})
+    path = tmp_path / "placeholder.db"
 
-    cfg = web_app._llm_config_from_runtime(
-        {"channel": ""},
-        base_url="https://api.example.com/v1",
-        model="gpt-api",
-        api_key="cli-backend",
-        timeout_seconds=180,
-        thinking_level="",
-        advanced_model="",
-        advanced_base_url="",
-        advanced_api_key="",
-        advanced_thinking_level="",
-    )
+    with pytest.raises(web_app.LLMUnavailable):
+        web_app.WebGame(db_path=str(path))
 
-    assert cfg.channel == "api"
-    assert cfg.api_key == ""
+    assert not path.exists()

@@ -13,7 +13,6 @@ from pathlib import Path
 
 import pytest
 
-import ming_sim.decree as decree_mod
 from ming_sim.session import GameSession
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -156,5 +155,5 @@ def test_state_payload_t0_previous_summary_empty(game):
 
     payload = web_app.WebGame.state_payload(runtime)
     assert payload.get("previous_summary") == ""
-    assert payload["turn"]["reign_period_label"] == "天启七年十月"
+    assert (payload["turn"]["year"], payload["turn"]["period"]) == (1627, 10)
     assert payload.get("previous_reign_period_label") in ("", None)

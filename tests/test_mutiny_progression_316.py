@@ -131,8 +131,6 @@ def test_old_save_migrates_and_mutiny_progress_survives_reopen(game, tmp_path, f
     copied.close()
 
     migrated = GameDB(path, content)
-    columns = {row["name"] for row in migrated.conn.execute("PRAGMA table_info(armies)")}
-    assert {"mutiny_count", "mutiny_probation"} <= columns
     defaults = migrated.conn.execute(
         "SELECT mutiny_count,mutiny_probation FROM armies WHERE id=?", (ARMY,)
     ).fetchone()

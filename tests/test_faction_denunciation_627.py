@@ -12,14 +12,10 @@ Seams:
 
 from __future__ import annotations
 
-import json
 
-import pytest
 
 from ming_sim.db import GameDB
 from ming_sim.supervision import (
-    DENUNCIATION_ORIGIN_BASE,
-    DENUNCIATION_TABLE,
     ORIGIN_MARK_DENUNCIATION_FALSE,
     ORIGIN_MARK_DENUNCIATION_TRUE,
     faction_relation,

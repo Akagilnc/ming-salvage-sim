@@ -74,7 +74,7 @@ def test_legacy_issue_status_change_uses_person_transition_matrix(game):
     db.set_character_status(state, name, "dead", "前置死亡")
     content.characters[name].status = "dead"
 
-    with pytest.raises(ValueError, match="dead 无 status 出边"):
+    with pytest.raises(ValueError):
         I._apply_issue_entities(
             db,
             state,
@@ -251,7 +251,7 @@ def test_issue_unified_person_change_shadows_legacy_person_effects(game):
 def test_resolve_rejects_bad_unified_person_change_effect(read_game):
     db, state, content = read_game
 
-    with pytest.raises(ValueError, match="人物变更 非法"):
+    with pytest.raises(ValueError):
         I._apply_issue_entities(
             db,
             state,
@@ -265,7 +265,7 @@ def test_resolve_rejects_bad_unified_person_change_effect(read_game):
 def test_issue_person_change_effect_rejects_malformed_shape(read_game, bad_effect):
     db, state, content = read_game
 
-    with pytest.raises(ValueError, match="人物变更"):
+    with pytest.raises(ValueError):
         I._apply_issue_entities(db, state, bad_effect, "局势#测试结案", content=content)
 
 
@@ -327,11 +327,14 @@ def test_apply_score_extraction_accepts_flat_faction_scalar(game):
     _apply_faction_dict 主动消费）。validate 不得把它当二级非 dict 误拒；class 扁平 item
     则由段适配器按 #564 契约逐项 invalid_enum 拒收，不升级成整批 shape 中止。"""
     db, state, _ = game
-    # 不抛 = validate 未错杀合法 faction；非法 class item 由 adapter 逐项拒收。
-    I.apply_score_extraction(db, state, {
+    applied = I.apply_score_extraction(db, state, {
         "faction_delta": {"阉党": -10},
-        "class_delta": {"农民": 0},   # 非法扁平 class item：adapter 逐项 invalid_enum 拒收
+        "class_delta": {"农民": 0},
     })
+    assert applied["faction_delta"] == {"阉党": -10}
+    assert applied["class_delta"] == {}
+    assert len(applied["class_delta_rejections"]) == 1
+    assert applied["class_delta_rejections"][0]["category"] == "invalid_enum"
 
 
 def test_apply_score_extraction_rejects_nondict_power_second_level_per_entity(game):
@@ -352,8 +355,10 @@ def test_apply_score_extraction_tolerates_null_field(read_game):
     """Gemini R1:LLM 输出某字段为 null 时,validate 不得比 apply 更严——None 当缺省 no-op,
     不抛 ValueError(apply 本就 `.get(key) or {}` 容忍)。"""
     db, state, _ = read_game
-    # region_delta=None(null)+ army_delta=None,均应被当空 no-op 放行,不抛。
-    I.apply_score_extraction(db, state, {"region_delta": None, "army_delta": None})
+    applied = I.apply_score_extraction(db, state, {"region_delta": None, "army_delta": None})
+    assert applied["region_changes"] == []
+    assert applied["army_changes"] == []
+    assert applied["validate_shape_rejections"] == []
 
 
 def test_apply_score_extraction_rejects_unknown_top_level_key(game):
@@ -363,9 +368,9 @@ def test_apply_score_extraction_rejects_unknown_top_level_key(game):
     applied = I.apply_score_extraction(
         db, state, {"region_delta_typo": {"shanxi": {"unrest": 5}}, "metric_delta": {"民心": 1}},
     )
-    shape = [r for r in applied["validate_shape_rejections"]
-             if "region_delta_typo" in str(r.get("reason"))]
-    assert shape and shape[0]["rejected"] is True
+    shape = applied["validate_shape_rejections"]
+    assert len(shape) == 1
+    assert shape[0]["rejected"] is True
     assert shape[0]["item"] == {"raw_value": {"shanxi": {"unrest": 5}}}
     assert applied["metric_delta"].get("民心") == 1  # 其余 section 不受累
 

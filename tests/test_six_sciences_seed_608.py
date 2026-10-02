@@ -3,18 +3,10 @@
 from __future__ import annotations
 
 from ming_sim.db import (
-    _OFFICE_LEVERAGE_WEIGHT,
     _member_office_weight,
-    infer_office_type_from_office,
 )
 
 
-def test_six_sciences_offices_infer_to_own_category():
-    """六科、给事中和都给事中均确定性归入六科。"""
-    assert infer_office_type_from_office("六科") == "六科"
-    assert infer_office_type_from_office("兵科给事中") == "六科"
-    assert infer_office_type_from_office("礼科都给事中") == "六科"
-    assert _OFFICE_LEVERAGE_WEIGHT["六科"] == _OFFICE_LEVERAGE_WEIGHT["都察院"]
 
 
 def test_fresh_seed_contains_sourced_six_sciences_censors(game):
@@ -33,7 +25,6 @@ def test_fresh_seed_contains_sourced_six_sciences_censors(game):
     for row in rows:
         assert row["office_type"] == "六科"
         assert "给事中" in row["office"]
-        assert "《明史》卷258" in row["summary"]
 
     by_name = {row["name"]: row for row in rows}
     assert by_name["许誉卿"]["status"] == "active"

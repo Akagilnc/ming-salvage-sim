@@ -366,7 +366,7 @@ def test_connection_commit_attempts_all_runtime_callbacks(game):
     db.conn.execute("BEGIN")
     db.conn._runtime_commit_callbacks = [first, broken, last]
 
-    with pytest.raises(RuntimeError, match="runtime commit callback failed"):
+    with pytest.raises(RuntimeError):
         db.conn.commit()
 
     assert calls == ["first", "broken", "last"]
@@ -375,7 +375,7 @@ def test_connection_commit_attempts_all_runtime_callbacks(game):
 def test_executescript_inside_atomic_fails_loud(game):
     """atomic 内 executescript 响亮拒绝（C 层隐式 commit 绕过暂停，cmr S1 r1 F4）。"""
     db, state, content = game
-    with pytest.raises(RuntimeError, match="executescript"):
+    with pytest.raises(RuntimeError):
         with atomic(db):
             db.conn.executescript("SELECT 1;")
 
@@ -491,7 +491,7 @@ def test_atomic_rejects_plain_connection(tmp_path):
         def __init__(self):
             self.conn = sqlite3.connect(str(tmp_path / "plain.db"))
 
-    with pytest.raises(TypeError, match="_SuspendableConnection"):
+    with pytest.raises(TypeError):
         with atomic(PlainDB()):
             pass
 

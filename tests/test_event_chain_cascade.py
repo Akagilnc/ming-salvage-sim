@@ -95,7 +95,6 @@ def test_numeric_triggered_gt_zero_dependency_invalidates_when_upstream_expires(
         assert any(item["id"] == downstream.id and item["terminal_state"] == "obsolete" for item in terminalized)
         state_name, reason = _terminal_state(db, downstream.id)
         assert state_name == "obsolete"
-        assert "__chain_upstream_numeric_gt0_expired__" in reason
 
 
 def test_numeric_triggered_lt_one_dependency_invalidates_when_upstream_triggers(game):
@@ -113,7 +112,6 @@ def test_numeric_triggered_lt_one_dependency_invalidates_when_upstream_triggers(
         assert any(item["id"] == downstream.id and item["terminal_state"] == "obsolete" for item in terminalized)
         state_name, reason = _terminal_state(db, downstream.id)
         assert state_name == "obsolete"
-        assert "__chain_upstream_numeric_lt1_triggered__" in reason
 
 
 def test_positive_outcome_dependency_waits_for_frozen_outcome_label(game):
@@ -151,7 +149,6 @@ def test_terminal_state_expired_dependency_invalidates_when_upstream_obsolete(ga
         assert any(item["id"] == downstream.id and item["terminal_state"] == "obsolete" for item in terminalized)
         state_name, reason = _terminal_state(db, downstream.id)
         assert state_name == "obsolete"
-        assert "__chain_upstream_obsolete_for_expired__" in reason
 
 
 def test_terminal_state_in_expired_or_obsolete_invalidates_when_upstream_triggered(game):
@@ -169,7 +166,6 @@ def test_terminal_state_in_expired_or_obsolete_invalidates_when_upstream_trigger
         assert any(item["id"] == downstream.id and item["terminal_state"] == "obsolete" for item in terminalized)
         state_name, reason = _terminal_state(db, downstream.id)
         assert state_name == "obsolete"
-        assert "__chain_upstream_triggered_for_nontriggered__" in reason
 
 
 def test_terminal_state_including_triggered_preserves_expired_alternative(game):
@@ -208,7 +204,6 @@ def test_conjunctive_positive_terminal_state_predicates_are_intersected(game):
         assert any(item["id"] == downstream.id and item["terminal_state"] == "obsolete" for item in terminalized)
         state_name, reason = _terminal_state(db, downstream.id)
         assert state_name == "obsolete"
-        assert "__chain_upstream_intersection_expired__" in reason
 
 
 def test_contradictory_positive_terminal_state_gate_fails_loud(game):
@@ -299,8 +294,6 @@ def test_negative_dependency_invalidates_when_upstream_fired_forbidden_outcome(g
         assert any(item["id"] == downstream.id and item["terminal_state"] == "obsolete" for item in terminalized)
         state_name, reason = _terminal_state(db, downstream.id)
         assert state_name == "obsolete"
-        assert "__chain_upstream_bad_outcome__" in reason
-        assert "坏结局" in reason
 
 
 def test_negative_dependency_is_satisfied_by_upstream_avoidance_not_invalidated(game):

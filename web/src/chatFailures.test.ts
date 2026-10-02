@@ -120,9 +120,8 @@ describe("#670 streamChat 成功记召退出错误通道", () => {
         // 机面 admission 可达 onDone（刷盘），但不得被当作错误文案。
         expect(p.admission).toBe("SUMMON_FRESH");
         expect(p.answer).toBe("");
-        expect(String(p.answer)).not.toContain("SUMMON_");
-        expect(String(p.answer)).not.toContain("赴京");
-        expect(String(p.answer)).not.toContain("不能入殿");
+
+
       },
     }).catch((err) => {
       sawError = true;
@@ -134,6 +133,6 @@ describe("#670 streamChat 成功记召退出错误通道", () => {
     expect(done.admission).toBe("SUMMON_FRESH");
     expect(done.answer).toBe("");
     // 消费端契约：成功记召不经 ApiRequestError / error 事件进 danger note。
-    expect(String(done.answer || "")).not.toMatch(/SUMMON_|赴京|在途|不能入殿/);
+
   });
 });

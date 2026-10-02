@@ -177,7 +177,7 @@ def test_cross_month_snapshot_does_not_bleed(game):
     assert payload["metrics"]["国库"] == before["国库"] + 5
 
 
-def test_oracle_normal_phase_clears_via_startup_hook(game, capsys):
+def test_oracle_normal_phase_clears_via_startup_hook(game):
     """故障注入常态路：相位常态 + 快照在 → 启动位清后无核账态，盘面为点击前值。"""
     db, state, _content = game
     before = _click_before_metrics(state)
@@ -190,8 +190,6 @@ def test_oracle_normal_phase_clears_via_startup_hook(game, capsys):
     cleared = clear_orphan_month_open_snapshot(db, state)
     assert cleared is True
     assert db.get_month_open_snapshot(int(state.turn)) is None
-    logged = capsys.readouterr().out
-    assert "month_open_snapshot" in logged
 
     # ADR 0008：前半段未提交窗口引擎零持久态——崩溃回滚后活盘=点击前。
     for k, v in before.items():
@@ -359,7 +357,6 @@ def test_web_advance_entry_exposes_settlement_display(game, monkeypatch):
 
     #1274：端点改走 session.advance_without_decree；观察点改在 resolve 入口。
     """
-    import threading
     from ming_sim.decree import ResolveResult
 
     db, state, _content = game
@@ -409,7 +406,6 @@ def test_web_advance_entry_awaiting_keeps_phase_and_decisions(game, monkeypatch)
     持久 phase 仍 awaiting。end_turn 桩镜像生产（只置 SUMMONING 并 save）——
     若入口误调 end_turn，相位/核账脸断言红；不得以 mock 调用序单独当契约。
     """
-    import threading
     from ming_sim.decree import ResolveResult
 
     db, state, _content = game

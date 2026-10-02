@@ -22,8 +22,6 @@ from tests.month_chain_helpers import make_light_session
 
 
 def _forbid_extractor(monkeypatch):
-    import ming_sim.decree as decree_mod
-    import ming_sim.simulation as simulation
 
     monkeypatch.setattr(
         "ming_sim.session.write_decree_with_agno", lambda *_a, **_k: "诏",

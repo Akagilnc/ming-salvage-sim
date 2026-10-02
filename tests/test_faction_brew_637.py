@@ -19,7 +19,6 @@ import threading
 
 import pytest
 
-from ming_sim.db import GameDB
 from ming_sim.exceptions import LLMUnavailable
 from ming_sim.faction_brew import (
     STANCE_KEY,
@@ -460,7 +459,6 @@ def test_authority_revoke_edge_reaches_holder_faction_with_emperor_target(game):
         source=holder, target=EMPEROR_NODE, event_kind="结怨",
     )
     assert len(edges) == 1
-    assert "便宜行事" in edges[0]["context"] and domain in edges[0]["context"]
 
     targets = select_faction_brew_targets(
         db, year=int(state.year), period=int(state.period),
@@ -612,7 +610,7 @@ def test_faction_brew_retry_preserves_event_dates(game):
     # 模拟失败：酿制失败留 pending（不推进水位）
     def failing_brew(payload_json: str) -> str:
         raise LLMUnavailable("酿制裁判接口不可用")
-    report = run_month_end_relation_brew(db, state, failing_brew)
+    run_month_end_relation_brew(db, state, failing_brew)
     assert any(row["faction"] == "皇党" for row in db.get_faction_brew_pending())
     old_summary = db.get_faction_stance_summary("皇党")
     assert old_summary is None

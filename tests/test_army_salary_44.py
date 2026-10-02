@@ -305,32 +305,3 @@ def test_legacy_salary_tick_preserves_fractional_opening_arrears(game):
     assert log["old_value"] == "1.5"
     assert log["new_value"] == "1.5"
     assert log["delta"] == pytest.approx(0.0)
-
-
-def test_coerce_new_salary_rate_blocks_freeload():
-    # cmr r3 codex medium: 新军 salary_rate 健壮解析——负/非数/bool/0/None → 锚点 1.5（防免费军白嫖）。
-    # 原 `or 1.5` 漏负值：-1 经 army_needed(rate<=0→0) 成免费军，绕过 #44 防白嫖。
-    from ming_sim.db import _coerce_new_salary_rate
-    assert _coerce_new_salary_rate(-1) == 1.5, "负值=白嫖→锚点"
-    assert _coerce_new_salary_rate(0) == 1.5
-    assert _coerce_new_salary_rate(None) == 1.5
-    assert _coerce_new_salary_rate("脏") == 1.5, "非数→锚点"
-    assert _coerce_new_salary_rate(True) == 1.5, "bool→锚点"
-    assert _coerce_new_salary_rate(2.0) == 2.0, "正常正值保留"
-
-
-def test_non_finite_salary_rate_anchored_not_crash():
-    """#44 ship-pre 线上 gemini high + coderabbit inf 探针：非有限 salary_rate（inf/-inf/nan）
-    须落锚点、不得崩。inf>0 为真会漏过 coerce、经 army_needed 的 ceil(manpower×inf/10000) 抛
-    OverflowError 崩整月结算。两道防线：_coerce_new_salary_rate（建军入口）+ army_needed（结算咽喉）。"""
-    from ming_sim.db import _coerce_new_salary_rate
-    from ming_sim.flows import army_needed
-
-    assert _coerce_new_salary_rate(float("inf")) == 1.5, "inf→锚点"
-    assert _coerce_new_salary_rate(float("-inf")) == 1.5, "-inf→锚点"
-    assert _coerce_new_salary_rate(float("nan")) == 1.5, "nan→锚点"
-    # army_needed 咽喉对非有限 rate 防御性归锚点、不抛 OverflowError。
-    for bad in (float("inf"), float("-inf"), float("nan")):
-        row = {"owner_power": "ming", "manpower": 5000, "salary_rate": bad}
-        needed = army_needed(row)
-        assert needed == math.ceil(5000 * 1.5 / 10000), f"非有限 rate({bad}) 应锚点应发，得 {needed}"

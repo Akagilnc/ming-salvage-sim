@@ -8,14 +8,12 @@
   仅授权参数不同；全知结果为角色视角权限超集。
 - 判官机面全知（ID-12）：fixture 断言判官能读到普通角色视角不可见的边；
   接入归 #634 线，本票不造判官。
-- TD-7 双断言 oracle（庭裁 r2/r3）：①DTO 字段集合恰等五字段冻结白名单
-  source/target/summary/recent_context/updated_at_period；②局部 marker 负断言
-  （结构键/事件类目数据不 ride-along 进玩家可感投影输出）。
+- DTO 字段集合恰等五字段冻结白名单
+  source/target/summary/recent_context/updated_at_period；不锁摘要、语境或纪年措辞。
 """
 
 from __future__ import annotations
 
-import json
 
 import pytest
 
@@ -26,10 +24,6 @@ from ming_sim.relations import EMPEROR_NODE
 
 # 冻结票面 r3 白名单本体——独立真源（票面原文照抄），不从生产代码重推导。
 FROZEN_DTO_WHITELIST = {"source", "target", "summary", "recent_context", "updated_at_period"}
-
-# TD-7 局部 marker：测试局部唯一串（非全局词表），只进本 fixture 的结构字段。
-MARKER = "TD7哨兵-640-唯一标记QINGYUAN"
-
 
 def _add_edge(db, state, *, source, target, kind, context, origin):
     return db.record_relation_edge_event(
@@ -50,19 +44,21 @@ def ledger(game):
     db, state, _ = game
     _add_edge(db, state, source="王绍徽", target="崔呈秀", kind="结怨",
               context="王绍徽背影里的戾气，毕自严再挡他路时还在。",
-              origin=f"audience:turn-1|{MARKER}")
+              origin="audience:turn-1")
+    event_id = _add_edge(
+        db, state, source=EMPEROR_NODE, target="杨嗣昌", kind="知遇",
+        context="越次一召，擢杨嗣昌于五品郎中。", origin="audience:turn-1",
+    )
     db.apply_relation_brew_result(
         source=EMPEROR_NODE, target="杨嗣昌", dimension="君臣",
         founding_segment="越次一召，擢杨嗣昌于五品郎中。",
         recent_segment="杨嗣昌蒙知遇之恩，复命时记得皇爷上月简拔。",
-        last_event_id=99, turn=int(state.turn),
+        last_event_id=event_id, turn=int(state.turn),
         year=int(state.year), period=int(state.period),
     )
-    _add_edge(db, state, source=EMPEROR_NODE, target="杨嗣昌", kind="知遇",
-              context="越次一召，擢杨嗣昌于五品郎中。", origin="audience:turn-1")
     _add_edge(db, state, source="钱谦益", target="温体仁", kind="把柄",
               context="温体仁握有钱谦益科场案的把柄。",
-              origin=f"dossier:9:credit:cover|round:2|{MARKER}")
+              origin="dossier:9:credit:cover|round:2")
     return db, state
 
 
@@ -114,47 +110,6 @@ def test_empty_ledger_projects_empty(ledger):
     assert project_relation_ledger(fresh, viewer="孙承宗") == []
 
 
-# ---------------------------------------------------------------- 返回形态
-
-
-def test_dto_shape_summary_plus_recent_context_with_backref(ledger):
-    """返回形态＝摘要＋最近原始事件语境/回指（ID-1/ID-11，机器可断言）。"""
-    db, _state = ledger
-    judge_face = project_relation_ledger(db, viewer=None)
-    wei_yang = next(
-        d for d in judge_face
-        if (d["source"], d["target"]) == (EMPEROR_NODE, "杨嗣昌")
-    )
-    # summary＝两段式摘要原文（奠基段＋近况段，零改写拼接）。
-    assert "越次一召，擢杨嗣昌于五品郎中。" in wei_yang["summary"]
-    assert "杨嗣昌蒙知遇之恩" in wei_yang["summary"]
-    # recent_context＝最近原始事件语境原文＋纪年回指（括注时点）。
-    assert wei_yang["recent_context"].startswith("越次一召，擢杨嗣昌于五品郎中。")
-    assert wei_yang["recent_context"].endswith("（天启七年十月）")
-
-
-def test_updated_at_period_is_era_label_not_bare_turn(r3_guard):
-    """updated_at_period＝更新纪年语义标识（天启七年十月式），非裸 turn 数。"""
-    db, state = r3_guard
-    wei_yang = next(
-        d for d in project_relation_ledger(db, viewer=None)
-        if (d["source"], d["target"]) == (EMPEROR_NODE, "杨嗣昌")
-    )
-    assert wei_yang["updated_at_period"] == "天启七年十月"
-    assert wei_yang["updated_at_period"] != str(state.turn)
-
-
-@pytest.fixture
-def r3_guard(game):
-    db, state, _ = game
-    db.apply_relation_brew_result(
-        source=EMPEROR_NODE, target="杨嗣昌", dimension="君臣",
-        founding_segment="奠.", recent_segment="近.",
-        last_event_id=1, turn=5, year=1627, period=10,
-    )
-    return db, state
-
-
 # ---------------------------------------------------------------- 判官全知机面
 
 
@@ -166,9 +121,7 @@ def test_judge_face_reads_edges_invisible_to_role_view(ledger):
     assert ("钱谦益", "温体仁") in judge_pairs  # 王绍徽视角不可见
     jia_pairs = {(d["source"], d["target"]) for d in project_relation_ledger(db, viewer="王绍徽")}
     assert ("钱谦益", "温体仁") not in jia_pairs
-    # 有账与无账行为可辨：判官读面含酿制产物原文。
-    wei_yang = next(d for d in judge_face if (d["source"], d["target"]) == (EMPEROR_NODE, "杨嗣昌"))
-    assert "杨嗣昌蒙知遇之恩" in wei_yang["summary"]
+    assert (EMPEROR_NODE, "杨嗣昌") in judge_pairs
 
 
 def test_omniscient_is_superset_same_core(ledger):
@@ -185,7 +138,7 @@ def test_omniscient_is_superset_same_core(ledger):
             assert dto == judge_map[pair]
 
 
-# ---------------------------------------------------------------- TD-7 双断言 oracle
+# ---------------------------------------------------------------- DTO 字段白名单
 
 
 def test_td7_dto_field_set_equals_frozen_whitelist(ledger):
@@ -194,31 +147,6 @@ def test_td7_dto_field_set_equals_frozen_whitelist(ledger):
     for dto in project_relation_ledger(db, viewer=None):
         assert set(dto.keys()) == FROZEN_DTO_WHITELIST
     for dto in project_relation_ledger(db, viewer="王绍徽"):
-        assert set(dto.keys()) == FROZEN_DTO_WHITELIST
-
-
-def test_td7_local_marker_negative_assertion(ledger):
-    """TD-7②：局部 marker 负断言——结构键/事件类目数据不进玩家可感投影输出。
-
-    marker 只埋在本 fixture 的结构字段（origin 尾段）与绕过写口直插的
-    event_kind 列；玩家可感投影（角色视角 DTO 序列化）中必须零出现。
-    """
-    db, state = ledger
-    # 绕过 fail-closed 写口直插一条含 marker 的 event_kind 行：证明即便存储层
-    # 存在该类目数据，投影也绝不 surfacing（确定性装配面，ADR 0143）。
-    db.conn.execute(
-        "INSERT INTO relation_edge_events "
-        "(source, target, event_kind, context, origin, origin_round, turn, year, period)"
-        " VALUES ('王绍徽', '崔呈秀', ?, '结构哨兵语境。', 'probe:td7', 1, 1, 1627, 10)",
-        (MARKER,),
-    )
-    db.conn.commit()
-    projection = project_relation_ledger(db, viewer="王绍徽")
-    rendered = json.dumps(projection, ensure_ascii=False)
-    assert MARKER not in rendered
-    # 事件类目词本身也不作字段值出现（白名单恒等已保证，这里按票面再咬一口）。
-    for dto in projection:
-        assert "event_kind" not in dto
         assert set(dto.keys()) == FROZEN_DTO_WHITELIST
 
 

@@ -16,14 +16,10 @@ import json
 
 from ming_sim.issues import apply_score_extraction
 from ming_sim.relations import (
-    MINISTER_EDGE_KINDS,
     resolve_relation_edge_events_from_extraction,
     settlement_edge_origin,
 )
 import pytest
-from ming_sim.simulation import (
-    EMPTY_EXTRACTION,
-)
 
 
 def _edge_rows(db, **kw):

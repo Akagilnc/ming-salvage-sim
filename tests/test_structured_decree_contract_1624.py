@@ -9,7 +9,6 @@ import pytest
 from ming_sim.cli_backend import capture_manual_directive_payload as _real_capture
 from ming_sim.structured_decree import (
     StructuredDecreeCombinationError,
-    assemble_structured_decree,
 )
 from tests.test_month_loop_tracer_1468 import (  # noqa: F401
     _post_issue_stream,
@@ -126,7 +125,7 @@ def _army_none_legal_item() -> dict:
     return item
 
 
-def test_shared_validate_rejects_region_id_and_category_holes():
+def test_shared_validate_rejects_region_id_and_category_holes(game, monkeypatch):
     """共同 assemble/validate 最低可证层：钉原洞 typed 拒绝。
 
     class1 原洞 = 非 region + national 夹带 region_id（旧闸只拒 scope==none）；
@@ -134,8 +133,24 @@ def test_shared_validate_rejects_region_id_and_category_holes():
     action_alias_conflict = action_type 与 dossier_action_type 双非空且不同。
     #1778：动作×national 白名单已取消，national 只受 8×3 矩阵约束。
     """
+    from ming_sim import cli_backend as cb
+
+    db, state, content = game
+
+    def create(payload):
+        data = {
+            **payload, "拟旨意图": "拟旨", "动作类型": payload["action_type"],
+            "目标类型": payload["target_kind"], "目标ID": payload["target_id"],
+            "地区ID": payload.get("region_id", ""), "事务类别": payload.get("transaction_category", ""),
+            "施行范围": payload.get("locality_scope", "none"), "颁布方式": "普通",
+            "承办人": payload.get("assignee", ""), "参与人": [dict(item) for item in _OWNER_ROSTER],
+            "期限月数": 3,
+        }
+        monkeypatch.setattr(cb, "_run_backend_for_config", lambda *a, **k: (json.dumps(data), 1))
+        return cb.extract_draft_intent_with_roster_heal("拟旨", "准入样本", db=db, content=content)
+
     with pytest.raises(StructuredDecreeCombinationError):
-        assemble_structured_decree({
+        create({
             "action_type": "policy",
             "target_kind": "policy",
             "target_id": "x",
@@ -143,7 +158,7 @@ def test_shared_validate_rejects_region_id_and_category_holes():
             "region_id": "shaanxi",
         })
     with pytest.raises(StructuredDecreeCombinationError):
-        assemble_structured_decree({
+        create({
             "action_type": "military_order",
             "target_kind": "army",
             "target_id": "xuanfu",
@@ -152,16 +167,16 @@ def test_shared_validate_rejects_region_id_and_category_holes():
             "transaction_category": "INVALID",
         })
     with pytest.raises(StructuredDecreeCombinationError):
-        assemble_structured_decree({
+        create({
             "action_type": "punishment",
             "target_kind": "character",
-            "target_id": "某官",
+            "target_id": "毕自严",
             "locality_scope": "none",
             "transaction_category": "INVALID",
         })
     # 双非空动作身份冲突：默认 validate 入口 typed 拒绝，failed_fields 含两键
     with pytest.raises(StructuredDecreeCombinationError) as ei:
-        assemble_structured_decree({
+        create({
             "action_type": "assignment",
             "dossier_action_type": "policy",
             "target_kind": "policy",
@@ -173,7 +188,7 @@ def test_shared_validate_rejects_region_id_and_category_holes():
         {"action_type", "dossier_action_type"}
     )
     # 同值或一侧空：维持现状（不因 alias 比较误伤）
-    same = assemble_structured_decree({
+    same = create({
         "action_type": "policy",
         "dossier_action_type": "policy",
         "target_kind": "policy",
@@ -181,15 +196,13 @@ def test_shared_validate_rejects_region_id_and_category_holes():
         "locality_scope": "none",
     })
     assert same["action_type"] == "policy"
-    assert same["dossier_action_type"] == "policy"
-    only_action = assemble_structured_decree({
+    only_action = create({
         "action_type": "policy",
         "target_kind": "policy",
         "target_id": "x",
         "locality_scope": "none",
     })
     assert only_action["action_type"] == "policy"
-    assert only_action["dossier_action_type"] == "policy"
 
 
 def test_month_end_entry_owner_and_matrix_reject(monkeypatch, tmp_path):
@@ -331,7 +344,7 @@ def test_rescript_follow_draft_nails_drafted_roster(game):
     _assert_drafted_roster_nailed(db, created)
 
 
-def test_manual_owner_example_seal_advances(tracer_client, monkeypatch):
+def test_manual_owner_example_seal_advances(tracer_client, monkeypatch):  # noqa: F811 — imported pytest fixture
     """真实 Web 手工拟诏：Owner 例 → 盖玺；持久化 canonical + 大臣所拟名单。"""
     import ming_sim.cli_backend as cli_backend
     import web_app
@@ -389,7 +402,7 @@ def _executing_counts(db, *, owner_name: str, region_id: str):
 
 
 def test_http_manual_directive_lands_beyond_fifteen_initiatives_1790(
-    tracer_client, monkeypatch,
+    tracer_client, monkeypatch,  # noqa: F811 — imported pytest fixture
 ):
     """#1790 验收：≥15 件 initiative 在办时票拟再下一旨 → 第 16 成案、executing 差务、
     turn+1 不中止；该主办/属地在办案卷数 +1。
@@ -466,67 +479,41 @@ def test_http_manual_directive_lands_beyond_fifteen_initiatives_1790(
     assert province_after == province_before + 1, (province_before, province_after)
 
 
-def test_normalize_rescript_layer_a_option_contract():
-    """normalize_rescript_layer_a_option：外部可观察成败与归一结果。
-
-    不锁私有常量、对象身份或 shape 精确布局；prompt/Agent 装配亦不在此锁。
-    """
-    from ming_sim.rescript_draft import normalize_rescript_layer_a_option
-
-    # 缺 appoint_action 须失败
-    with pytest.raises(ValueError, match="appoint_action"):
-        normalize_rescript_layer_a_option({
-            "label": "授官", "hint": "h", "action_type": "appointment",
-            "target_kind": "character", "target_id": "某官",
-            "locality_scope": "none", "region_id": "",
-            "assignee_name": "", "transaction_category": "",
-            "office": "兵部尚书",
-        })
-    with pytest.raises(ValueError, match="assignee_name"):
-        normalize_rescript_layer_a_option({
-            "label": "调驻", "hint": "h", "action_type": "military_order",
-            "target_kind": "army", "target_id": "xuanfu",
-            "locality_scope": "none", "region_id": "",
-            "assignee_name": "", "transaction_category": "",
-            "station": "京师",
-        })
-    # 军令 dual：驻地|正期限须具其一；双缺与 0/"0" 不得过层 A
-    mil_base = {
-        "label": "出战", "hint": "h", "action_type": "military_order",
-        "target_kind": "army", "target_id": "xuanfu",
-        "locality_scope": "none", "region_id": "",
-        "assignee_name": "祖大寿", "transaction_category": "",
+@pytest.mark.parametrize("case, accepted", [
+    ("appointment_missing_action", False), ("appointment", True),
+    ("military_missing_assignee", False), ("military_missing_time_or_station", False),
+    ("military_zero_deadline", False), ("military_station", True), ("military_deadline", True),
+])
+def test_generate_option_admission_contract(monkeypatch, tmp_path, case, accepted):
+    import ming_sim.rescript_draft as rescript_mod
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    option = {
+        "label": "准入样本", "hint": "拟", "locality_scope": "none", "region_id": "",
+        "transaction_category": "", "participant_roster": [dict(item) for item in _OWNER_ROSTER],
     }
-    with pytest.raises(ValueError, match="station|due_turn|deadline_months"):
-        normalize_rescript_layer_a_option(dict(mil_base))
-    with pytest.raises(ValueError, match="station|due_turn|deadline_months"):
-        normalize_rescript_layer_a_option({
-            **mil_base, "station": "", "due_turn": 0, "deadline_months": "0",
-        })
-    only_station = normalize_rescript_layer_a_option({**mil_base, "station": "京师"})
-    assert only_station.get("station") == "京师"
-    only_deadline = normalize_rescript_layer_a_option({
-        **mil_base, "deadline_months": 3,
-    })
-    assert int(only_deadline.get("deadline_months") or 0) == 3
-
-    # authorization require_any 保持通用非空串语义（禁被军令正值判定误伤）
-    auth_zero = normalize_rescript_layer_a_option({
-        "label": "授权", "hint": "h", "action_type": "authorization",
-        "target_kind": "character", "target_id": "某官",
-        "locality_scope": "none", "region_id": "",
-        "assignee_name": "", "transaction_category": "",
-        "name": "0",
-    })
-    assert auth_zero.get("name") == "0"
-    auth_assignee_zero = normalize_rescript_layer_a_option({
-        "label": "授权", "hint": "h", "action_type": "authorization",
-        "target_kind": "character", "target_id": "某官",
-        "locality_scope": "none", "region_id": "",
-        "assignee_name": "0", "transaction_category": "",
-        "name": "",
-    })
-    assert auth_assignee_zero.get("assignee_name") == "0"
+    if case.startswith("appointment"):
+        option.update(action_type="appointment", target_kind="character", target_id="毕自严",
+                      assignee_name="", office="兵部尚书", appoint_action="任命")
+        if case == "appointment_missing_action":
+            option.pop("appoint_action")
+    else:
+        option.update(action_type="military_order", target_kind="army", target_id="xuanfu",
+                      assignee_name="祖大寿", station="京师")
+        if case == "military_missing_assignee":
+            option["assignee_name"] = ""
+        elif case == "military_missing_time_or_station":
+            option.pop("station")
+        elif case == "military_zero_deadline":
+            option.update(station="", deadline_months=0)
+        elif case == "military_deadline":
+            option.pop("station")
+            option["deadline_months"] = 3
+    data = {"items": [{"title": "准入", "context": "议事", "options": [option, dict(_OWNER_OPTION)]}]}
+    monkeypatch.setattr(rescript_mod, "run_agent_text", lambda *a, **k: json.dumps(data))
+    drafts = rescript_mod.generate_rescript_draft(object(), _month_end_ctx(), 1)
+    assert drafts is not None
+    assert len(drafts[0]["options"]) == 1 + int(accepted)
+    assert drafts[0]["options"][-1]["label"] == _OWNER_OPTION["label"]
 
 
 def test_combo_correction_preserves_first_draw_roster(game, monkeypatch):
@@ -611,19 +598,6 @@ def test_combo_correction_preserves_first_draw_roster(game, monkeypatch):
     # 单条路径 draft_text=大臣回话；纠错轮正文漂移不得改写会话正文真源
     assert result.get("draft_text") == "臣遵拟。"
     assert n["c"] == 2
-    # DB-backed 共同闸：身份束归正后可解析（禁 region+户部 漏网）
-    assemble_structured_decree(
-        {
-            "action_type": result.get("dossier_action_type"),
-            "target_kind": result.get("target_kind"),
-            "target_id": result.get("target_id"),
-            "region_id": result.get("region_id"),
-            "locality_scope": result.get("locality_scope"),
-            "transaction_category": result.get("transaction_category"),
-        },
-        conn=db.conn,
-        regions_content=content.regions,
-    )
 
 
 @pytest.mark.parametrize("mode", ["freeze_roster", "heal_first_only_reject"])

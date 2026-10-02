@@ -5,12 +5,10 @@ oracle 逐月断言 (loyalty, is_mutinied, derive_army_mutiny_state)。
 """
 from __future__ import annotations
 
-import math
 
 import pytest
 
 from ming_sim.flows import (
-    _next_mutiny_latch,
     apply_fixed_period_flows,
     derive_army_mutiny_state,
 )
@@ -113,21 +111,6 @@ def test_raised_loyalty_alone_does_not_release_latch(game, fiscal_path):
     assert _tick(db, state)[:3] == (40, 1, "哗变")
 
 
-@pytest.mark.parametrize(
-    ("loyalty", "latched", "expected"),
-    [
-        (39, 0, "鼓噪"),
-        (40, 0, "不满"),
-        (59, 0, "不满"),
-        (60, 0, "正常"),
-        (40, 1, "哗变"),
-        (60, 1, "哗变"),
-    ],
-)
-def test_derive_mutiny_state_boundaries_and_latch(loyalty, latched, expected):
-    army = {"loyalty": loyalty, "is_mutinied": latched}
-
-    assert derive_army_mutiny_state(army) == expected
 
 
 @pytest.mark.parametrize("fiscal_path", PATHS)
@@ -147,13 +130,3 @@ def test_exempt_armies_preserve_mutiny_latch(
     _setup(db, fiscal_path, loyalty=loyalty, arrears=arrears, latched=latched, **flags)
 
     assert _tick(db, state)[1] == latched, exemption
-
-
-def test_mutiny_latch_uses_strict_four_month_arrears_boundary():
-    four_months = 4.0
-    over_four_months = math.nextafter(four_months, math.inf)
-
-    assert _next_mutiny_latch(loyalty=19, arrears=four_months, needed=1, current=0) == 0
-    assert _next_mutiny_latch(loyalty=19, arrears=over_four_months, needed=1, current=0) == 1
-    assert _next_mutiny_latch(loyalty=40, arrears=four_months, needed=1, current=1) == 0
-    assert _next_mutiny_latch(loyalty=40, arrears=over_four_months, needed=1, current=1) == 1

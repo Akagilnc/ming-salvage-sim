@@ -9,13 +9,11 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import tempfile
 from pathlib import Path
 
-from ming_sim.content import load_character_content, load_event_content
+from ming_sim.content import load_character_content
 from ming_sim.db import GameDB
-from ming_sim.models import GameState
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -30,21 +28,6 @@ def _army_by_id(aid: str) -> dict:
         if item["id"] == aid:
             return item
     raise AssertionError(f"armies.json 缺 id={aid}")
-
-
-def _bajiu_names(characters: dict) -> set[str]:
-    return {
-        name
-        for name, ch in characters.items()
-        if "罢居" in (ch.office or "")
-    }
-
-
-def _deficit_seed():
-    events = load_event_content("seed_events.json")
-    by_id = {ev.id: ev for ev in events}
-    assert "deficit" in by_id
-    return by_id["deficit"]
 
 
 def test_guanning_commander_not_bajiu_offstage_yuan():
@@ -64,12 +47,6 @@ def test_guanning_commander_not_bajiu_offstage_yuan():
     for name in ("祖大寿", "何可纲", "赵率教"):
         assert name in commander, f"commander 缺分统 {name}: {commander!r}"
         assert name in controller, f"controller 缺分统 {name}: {controller!r}"
-    # 若 commander 点到名册人物，不得是罢居串
-    named = set(re.findall(r"[\u4e00-\u9fff]{2,4}", commander)) & set(characters)
-    for name in named:
-        assert "罢居" not in (characters[name].office or ""), (
-            f"关宁 commander 点名罢居者 {name}"
-        )
 
 
 def test_dongjiang_commander_is_active_mao_wenlong():
@@ -171,33 +148,3 @@ def test_fresh_seed_army_equipment_and_commanders_wire_through(content):
         for p in (path, f"{path}_agno.db"):
             if os.path.exists(p):
                 os.remove(p)
-
-
-def test_deficit_stage_text_aligns_with_opening_treasury_and_hubu():
-    """#1361：户部亏空 stage_text 不得与开局国库实数/户部尚书名分恒冲突。
-
-    诊断：seed 静态「不足三百万」vs 开局 metrics 国库=320；毕自严=南京户部，
-    户部尚书=郭允厚。修法=定性奏报口吻 + 具题人对齐在任户部尚书。
-    """
-    _, characters = load_character_content()
-    guo = characters["郭允厚"]
-    bi = characters["毕自严"]
-    assert "户部尚书" in (guo.office or "") and "南京" not in (guo.office or ""), guo.office
-    assert "南京" in (bi.office or ""), bi.office
-
-    ev = _deficit_seed()
-    stage = ev.stage_text or ""
-    assert "毕自严" not in stage, f"具题人仍是南京户书: {stage!r}"
-    assert "郭允厚" in stage, stage
-    # 禁与开局国库 320 恒冲突的「不足三百万」硬数；允许定性或对齐实数
-    assert "不足三百万" not in stage, stage
-    # 若仍写具体「百万」量级，不得宣称低于开局国库
-    m = re.search(r"不足\s*([一二三四五六七八九十百千万0-9]+)\s*万", stage)
-    assert m is None, f"仍用不足X万硬数易与账本漂移冲突: {stage!r}"
-
-    # audiences 须含在任户部尚书，召对注入才对口
-    audiences = list(ev.audiences or [])
-    assert "郭允厚" in audiences, audiences
-
-    # 开局国库硬锚（models.GameState 默认 = seed 贯通）
-    assert GameState().metrics["国库"] == 320

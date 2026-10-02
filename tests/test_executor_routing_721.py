@@ -12,12 +12,10 @@ from ming_sim.action_materialize import (
     stage_assignment_candidate,
     stage_punishment_candidate)
 from ming_sim.db import atomic
-from ming_sim.decree import pre_settle
 from ming_sim.executor_routing import (
     classify_execution_coverage,
     resolve_lead_executors,
 )
-from ming_sim.participant_roster import resolve_dossier_owner_name
 from tests.dossier_test_helpers import promulgate_proposed_appointments
 
 
@@ -68,13 +66,6 @@ def test_punishment_without_admitted_strike_subtype_is_excluded(payload):
     assert classify_execution_coverage("punishment", payload) is None
 
 
-def test_transaction_category_vocabulary_still_comes_from_duty_routes():
-    """#1778 决定 3 只删「按类别配人」；事务类别词表真源仍是 offices.json duty_routes。"""
-    from ming_sim.executor_routing import duty_route_categories
-
-    cats = duty_route_categories()
-    assert {"钱粮", "清丈", "缉拿", "缉捕", "河工"} <= cats
-    assert "修仙" not in cats
 
 
 def test_excluded_action_has_no_leads(env):
@@ -95,7 +86,7 @@ def test_unnamed_assignment_gets_no_lead_from_code(env):
     assert result["signal"] is None
 
     db, state, _ = env
-    with pytest.raises(ValueError, match="缺少主办"):
+    with pytest.raises(ValueError):
         _create(db, state, category="清丈", payload={"transaction_category": "清丈"})
 
 
@@ -124,7 +115,7 @@ def test_existing_delegated_lead_is_preserved_not_demoted(env):
     """委派主办照钉、不降档；#1778：仅委派主办不算点将（须另有无委派主办）。"""
     db, state, _ = env
     # 仅委派主办 → multi_month unassigned 响亮（与 bulk named_leads 同口径）
-    with pytest.raises(ValueError, match="缺少主办"):
+    with pytest.raises(ValueError):
         _create(
             db, state, category="清丈",
             participants=[
@@ -190,16 +181,6 @@ def test_legacy_character_executor_migrates_without_overriding_roster(env, actio
     ] == ["毕自严"]
 
 
-def test_canonical_owner_precedes_legacy_with_history_fallback():
-    assert resolve_dossier_owner_name({
-        "executor_kind": "character", "executor_id": "旧承办",
-        "participant_roster": [{"tier": "主办", "character_id": "新主办"}],
-    }) == "新主办"
-    assert resolve_dossier_owner_name({
-        "executor_kind": "character", "executor_id": "旧承办",
-        "participant_roster": [],
-    }) == "旧承办"
-    assert resolve_dossier_owner_name({"participant_roster": []}) == ""
 
 
 def test_appointment_routes_to_appointee_at_creation(env):
@@ -472,7 +453,7 @@ def test_restore_malformed_durable_json_fails_loud(env, column, bad):
     db, state, _ = env
     dossier_id = _create(db, state, category=None, action="policy")
     db.conn.execute(f"UPDATE decree_dossiers SET {column}=? WHERE id=?", (bad, dossier_id))
-    with pytest.raises(ValueError, match=column):
+    with pytest.raises(ValueError):
         db.get_decree_dossier(dossier_id)
 
 

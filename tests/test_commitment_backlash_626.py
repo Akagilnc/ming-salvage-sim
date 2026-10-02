@@ -12,11 +12,7 @@ Seams:
 
 from __future__ import annotations
 
-import inspect
-import json
-from pathlib import Path
 
-import ming_sim.commitment_backlash as backlash_mod
 from ming_sim.breach_plea import (
     BREACH_KIND_POLICY_REVERSAL,
     FOUNDATION_HALFWAY,
@@ -42,7 +38,6 @@ from ming_sim.commitment_backlash import (
     backlash_origin_ref,
     classify_backlash_source,
 )
-from ming_sim.constants import GATE_TABLES
 from ming_sim.db import GameDB
 from ming_sim.decree import pre_settle
 from ming_sim.issues import (
@@ -172,7 +167,6 @@ def test_ac1_breach_verdict_triggers_commitment_backlash(game):
     todo = next(t for t in _pending_pleas(db) if int(t["id"]) == todo_id)
     result = finalize_persist(db, state, todo, commit=True)
     assert result["outcome"] == "failed"
-    assert "事废" in str(result.get("note") or "")
     # 当回合硬门不扫（一拍差）
     assert db.trigger_commitment_backlashes(state, commit=True) == []
     assert _backlash_issues(db) == []
@@ -762,7 +756,7 @@ def test_ac5_hook_idempotent_no_gate_table_expansion(game):
 
     did, holder = _executing_policy_dossier(db, state, token="idemp")
     bar = _seed_halfway(db, state, did=did)
-    cid = _insert_commitment(
+    _insert_commitment(
         db, state, title="幂等之诺", origin_ref=f"dossier:{did}",
         bar_value=bar,
         participants=[{"character_id": holder, "tier": "主办", "role": "承办"}],

@@ -14,7 +14,6 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-import pytest
 
 import web_app
 from ming_sim.knowledge import build_character_knowledge
@@ -175,15 +174,6 @@ def test_army_payload_omits_static_status_exposes_arrears_text(read_game):
     assert seed_status not in " ".join(str(v) for v in guanning.values())
 
 
-def test_army_report_keeps_row_status(read_game):
-    """共享读者真源：army_report 仍含 row.status 原样。"""
-    db, _state, _ = read_game
-    seed_status = _guanning_db_status(db)
-    report = db.army_report(limit=20)
-    assert seed_status in report, "army_report 须保留 DB status 原句"
-    _assert_text_keeps_statuses(
-        report, _danger_top_statuses(db, 20), "army_report(limit=20)"
-    )
 
 
 def test_shared_consumers_still_surface_status(read_game):

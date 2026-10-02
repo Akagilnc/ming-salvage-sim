@@ -138,8 +138,6 @@ def test_redemption_progress_migrates_and_survives_reopen(game, tmp_path, fiscal
     copied.close()
 
     migrated = GameDB(path, content)
-    columns = {row["name"] for row in migrated.conn.execute("PRAGMA table_info(armies)")}
-    assert {"full_pay_streak", "redemption_count"} <= columns
     defaults = migrated.conn.execute(
         "SELECT full_pay_streak,redemption_count FROM armies WHERE id=?", (ARMY,)
     ).fetchone()

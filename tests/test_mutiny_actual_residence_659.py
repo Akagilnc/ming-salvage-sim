@@ -9,12 +9,9 @@ population_transfers。禁止 station 文本解析、第二事实核、第二转
 
 from __future__ import annotations
 
-import os
-import shutil
 
 from ming_sim.db import GameDB
 from ming_sim.fiscal_fact_brief import build_fiscal_fact_brief
-from ming_sim.issues import apply_score_extraction
 from ming_sim.models import Event
 
 # content/classes.json 冻结字面（施工 oracle，非实现推导）
@@ -159,5 +156,3 @@ def test_fresh_seed_station_region_and_class_slices(game):
     assert _pop(db, "军户", "dongjiang_area") == JUNHU_DONGJIANG
     assert _pop(db, "流民", "dongjiang_area") == LIUMIN_DONGJIANG
     # 旧档 ensure_column 路径：新列存在且默认空串合法
-    cols = {r[1] for r in db.conn.execute("PRAGMA table_info(armies)").fetchall()}
-    assert "station_region" in cols

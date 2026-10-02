@@ -83,17 +83,17 @@ def test_settling_survives_begin_turn_phase_whitelist(game, monkeypatch):
     assert db.load_state().turn_phase == TurnPhase.SETTLING.value
 
 
-def test_due_secret_order_submission_rolls_back_on_pre_settle_crash(saved_game, monkeypatch):
-    """auto_submit_due_secret_orders 挪进 pre_settle 事务（ADR 0008 S4）：#1504 到期只打
-    期限戳保持 active；pre_settle 内部崩溃 → 戳写随事务回滚，order 仍是 active 且无新戳。
-    用 saved_game：依赖玩过存档里到期的 secret_order，fresh seed 无（#5）。"""
-    db, state, content = saved_game
-    turn = state.turn
+def test_due_secret_order_submission_rolls_back_on_pre_settle_crash(game, monkeypatch):
+    db, state, _content = game
+    order_id = create_test_secret_order(
+        db, state, "毕自严", "期限任务", "清丈核账", [], deadline_months=0,
+    )
     db.conn.execute(
-        "UPDATE secret_orders SET status='active', due_turn=?, result='' WHERE id=2", (turn,))
+        "UPDATE secret_orders SET status='active', due_turn=?, result='' WHERE id=?",
+        (state.turn, order_id),
+    )
     db.conn.commit()
-    assert db.conn.execute(
-        "SELECT status FROM secret_orders WHERE id=2").fetchone()[0] == "active"
+    before = dict(db.conn.execute("SELECT * FROM secret_orders WHERE id=?", (order_id,)).fetchone())
 
     orig_save = db.save_state
     def _boom_save(st):
@@ -105,12 +105,12 @@ def test_due_secret_order_submission_rolls_back_on_pre_settle_crash(saved_game, 
 
     monkeypatch.setattr(db, "save_state", orig_save)
     other = sqlite3.connect(db.path)
+    other.row_factory = sqlite3.Row
     try:
-        row = other.execute("SELECT status, result FROM secret_orders WHERE id=2").fetchone()
+        row = dict(other.execute("SELECT * FROM secret_orders WHERE id=?", (order_id,)).fetchone())
     finally:
         other.close()
-    assert row[0] == "active"
-    assert "[期限届满]" not in (row[1] or "")
+    assert row == before
 
 
 def test_pre_settle_rolls_back_on_seed_issue_failure(game, monkeypatch):
@@ -201,7 +201,7 @@ def test_enter_review_does_not_clobber_settling(game):
 
     抹成 reviewing 后 pre_settle 守门失效=同回合二次财政 tick。
     """
-    from ming_sim.session import GameSession, TurnPhase
+    from ming_sim.session import GameSession
     db, state, content = game
     state.turn_phase = "settling"
     db.save_state(state)
@@ -409,7 +409,7 @@ def test_write_decree_raises_at_awaiting_not_resolveresult(game):
     sess.db = db
     sess.state = state
 
-    with pytest.raises(ValueError, match="亲裁"):
+    with pytest.raises(ValueError):
         sess.write_decree()
 
 

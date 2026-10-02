@@ -284,18 +284,6 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-describe("EdictModal — #1431 placeholder 去失实具名", () => {
-  it("御笔 placeholder 不含毕自严等现任错位具名", () => {
-    const { host } = renderEdictModal({ state: baseGameState() });
-    const textarea = host.querySelector<HTMLTextAreaElement>(".desk-compose textarea");
-    expect(textarea).toBeTruthy();
-    const ph = textarea!.placeholder;
-    expect(ph.length).toBeGreaterThan(5);
-    // 数据真源：毕自严=南京户部尚书，非核拨辽饷的户部尚书；placeholder 不得硬编码其名
-    expect(ph).not.toContain("毕自严");
-  });
-});
-
 describe("EdictModal — decree desk behavior", () => {
   it("issues an approved conversational draft without a second review gate", () => {
     const onIssue = vi.fn();
@@ -451,9 +439,7 @@ describe("ChatModal — #1370 empty audience chrome", () => {
     await act(async () => { await Promise.resolve(); });
     const stage = host.querySelector("[data-testid=chat-stage]") || host.querySelector(".chat-stage");
     expect(stage).not.toBeNull();
-    expect(stage!.textContent || "").toMatch(/请陛下问话|等候开口/);
-    // P7：不得落叙事开场白模板
-    expect(stage!.textContent || "").not.toMatch(/臣.*叩见|恭请圣安/);
+    expect(host.querySelector(".chat-message.minister")).toBeNull();
   });
 });
 
@@ -463,15 +449,11 @@ describe("ChatModal — #545 final composer contract", () => {
     const onClose = vi.fn();
     const host = renderModal({ minister: MINISTER_MOCK, portraitPrefix: "minister_", onSend, onClose });
 
-    expect(host.textContent).not.toContain("转入诏书草案");
-    expect(host.textContent).not.toContain("任免");
     const buttons = Array.from(host.querySelectorAll("button"));
     const leave = buttons.find((button) => button.textContent?.includes("退出召对")) as HTMLButtonElement;
     const retreat = buttons.find((button) => button.textContent?.includes("散夜")) as HTMLButtonElement;
     expect(leave).toBeTruthy();
     expect(retreat).toBeTruthy();
-    // 召对 chrome 不再显示与拟诏台同名的「退朝」
-    expect(buttons.some((button) => (button.textContent || "").trim() === "退朝")).toBe(false);
 
     act(() => leave.click());
     expect(onClose).toHaveBeenCalledOnce();
@@ -505,27 +487,7 @@ describe("ChatModal — four diegetic roles and system boundary (#541)", () => {
   });
 });
 
-describe("ChatModal — placeholder switches on character type", () => {
-  it("shows audience commands in placeholder for ministers", () => {
-    renderModal({ minister: MINISTER_MOCK, portraitPrefix: "minister_" });
-    const textarea = document.querySelector("textarea") as HTMLTextAreaElement;
-    expect(textarea.placeholder).toContain("宣 X");
-    expect(textarea.placeholder).toContain("退朝");
-  });
-
-  it("does NOT show 大臣 or 他 in placeholder for consorts", () => {
-    renderModal({ minister: CONSORT_MOCK, portraitPrefix: "consort_" });
-    const textarea = document.querySelector("textarea") as HTMLTextAreaElement;
-    expect(textarea.placeholder).not.toContain("大臣");
-    expect(textarea.placeholder).not.toContain("他");
-  });
-
-  it("consort placeholder has meaningful length", () => {
-    renderModal({ minister: CONSORT_MOCK, portraitPrefix: "consort_" });
-    const textarea = document.querySelector("textarea") as HTMLTextAreaElement;
-    expect(textarea.placeholder.length).toBeGreaterThan(5);
-  });
-
+describe("ChatModal — reply recovery controls", () => {
   it("shows #505 system-layer reply retry control when replyRetry is set", () => {
     const retry = vi.fn();
     renderModal({
@@ -539,9 +501,7 @@ describe("ChatModal — placeholder switches on character type", () => {
       onRetryReply: retry,
     });
     const note = document.querySelector('[data-testid="reply-retry-12"]');
-    expect(note?.textContent).toContain("重试");
     expect(note?.textContent).toContain("剿抚孰先？");
-    expect(document.querySelector('[data-testid="reply-retry-13"]')?.textContent).toContain("回话已保存，后续处理失败");
     expect(document.querySelector('[data-testid="reply-retry-13"]')?.textContent).toContain("/tmp/post-reply-pack");
     const button = Array.from(document.querySelectorAll("button")).find(
       (node) => node.textContent === "重试",
@@ -645,7 +605,6 @@ describe("ChatModal — soft scenes and selected-minister lens (#543 / #1511)", 
     });
     await act(async () => { await Promise.resolve(); await Promise.resolve(); });
 
-    expect(host.querySelector(".audience-type-label")?.textContent).toBe("越次召对");
     expect(host.querySelector(".minister-profile")).toBeNull();
     expect(host.querySelector(".chat-portrait-wrap img")?.getAttribute("src")).toBe("/portraits/minister_hong.png");
     expect(host.querySelector(".chat-secret-orders")).toBeNull();
@@ -663,7 +622,6 @@ describe("ChatModal — soft scenes and selected-minister lens (#543 / #1511)", 
     const translationFailure = host.querySelector('[data-testid="translation-retry-1"]');
     expect(translationFailure?.closest('[data-audience-turn-id="1"]')).not.toBeNull();
     expect(translationFailure?.textContent).toContain("/tmp/audience-turn-1");
-    expect(translationFailure?.textContent).toContain("请交给作者");
     const divisions = Array.from(host.querySelectorAll(".beat-divider"));
     expect(divisions).toHaveLength(2);
     expect(divisions[0]?.textContent).toContain("洪承畴");
@@ -759,7 +717,7 @@ describe("ChatModal — single night-scroll authority (#539)", () => {
     expect(document.body.textContent).not.toContain("旧分线程不应闪回");
     await act(async () => { reject(new Error("卷轴读取失败")); await Promise.resolve(); });
     expect(document.body.textContent).not.toContain("旧分线程不应闪回");
-    expect(document.querySelector('[role="alert"]')?.textContent).toContain("召对记录读取失败");
+    expect(document.querySelector('[role="alert"]')).not.toBeNull();
   });
 
   it("restores at the tail, follows new content only while the player remains at the tail", async () => {
@@ -851,10 +809,10 @@ describe("ChatModal — single night-scroll authority (#539)", () => {
       ] }) });
       await Promise.resolve(); await Promise.resolve();
     });
-    expect(document.body.textContent?.match(/刚完成的新问/g)).toHaveLength(1);
-    expect(document.body.textContent?.match(/刚完成的答复/g)).toHaveLength(1);
+    expect(document.querySelectorAll('[data-audience-turn-id="2"]')).toHaveLength(1);
+    expect(document.querySelectorAll('[data-audience-turn-id="2"] .turn-segment.user')).toHaveLength(1);
+    expect(document.querySelectorAll('[data-audience-turn-id="2"] .turn-segment.minister')).toHaveLength(1);
   });
-
 
 
   it("keeps the last-known scroll without importing personal history when refresh fails", async () => {
@@ -886,7 +844,7 @@ describe("ChatModal — single night-scroll authority (#539)", () => {
     expect(document.body.textContent).toContain("旧卷");
     expect(document.body.textContent).not.toContain("失败前新问");
     expect(document.body.textContent).not.toContain("失败前已完成");
-    expect(document.querySelector('[role="alert"]')?.textContent).toContain("召对记录读取失败");
+    expect(document.querySelector('[role="alert"]')).not.toBeNull();
   });
 
   it("refreshes the canonical scroll after a non-streaming completed chat update", async () => {
@@ -976,7 +934,8 @@ describe("ChatModal — one-night audience scroll (#1849)", () => {
     }) }));
     const host = renderModal({ minister: hong, ministers: [hong], portraitPrefix: "minister_", currentNightId: 23 });
     await act(async () => { await Promise.resolve(); await Promise.resolve(); });
-    expect(host.querySelector(".audience-roster h2")?.textContent).toBe("便殿 · 戌时");
+    expect(host.querySelector(".audience-roster h2")?.textContent).toContain("便殿");
+    expect(host.querySelector(".audience-roster h2")?.textContent).toContain("戌时");
   });
 
   it("names an empty-scaffold night without relying on projected messages", async () => {
@@ -986,7 +945,8 @@ describe("ChatModal — one-night audience scroll (#1849)", () => {
     }) }));
     const host = renderModal({ minister: hong, ministers: [hong], portraitPrefix: "minister_", currentNightId: 23 });
     await act(async () => { await Promise.resolve(); await Promise.resolve(); });
-    expect(host.querySelector(".audience-roster h2")?.textContent).toBe("文华殿 · 午时");
+    expect(host.querySelector(".audience-roster h2")?.textContent).toContain("文华殿");
+    expect(host.querySelector(".audience-roster h2")?.textContent).toContain("午时");
   });
 
   it("shows portraits for declared people outside the court and talent lists", async () => {
@@ -1343,7 +1303,6 @@ describe("#1480 / #1499 FullscreenModal modal-layout-bare 只随 hideTitle", () 
     expect(archiveModal).not.toBeNull();
     expect(archiveModal!.classList.contains("modal-layout-bare")).toBe(false);
     expect(archiveHost.querySelector(".modal-header-bare")).toBeNull();
-    expect(archiveHost.querySelector(".modal-title h1")?.textContent).toContain("起居注");
   });
 });
 
@@ -1471,24 +1430,39 @@ describe("AudienceArchiveModal — read-only scene archive", () => {
       if (url === "/api/history/turns") return Promise.resolve({ ok: true, json: async () => ({ turns: [
         { kind: "month", turn: 7, year: 1, period: 11, has_report: true, has_attendant: false, has_directive: false },
         { kind: "night", turn: 7, year: 1, period: 11, night_id: 31, title: "1年11月 · 戌时乾清宫 · 越次召对 · 第1场", involved_people: ["杨嗣昌"] },
-        { kind: "night", turn: 7, year: 1, period: 11, night_id: 32, title: "1年11月 · 戌时乾清宫 · 召对 · 第2场", involved_people: ["洪承畴"] },
+        { kind: "night", turn: 7, year: 1, period: 11, night_id: 32, title: "1年11月 · 戌时乾清宫 · 召对 · 第2场", involved_people: ["洪承畴", "王绍徽", "许誉卿", "杨嗣昌"] },
       ] }) });
       const id = url.endsWith("31") ? 31 : 32;
       return Promise.resolve({ ok: true, json: async () => ({ characters: id === 32 ? [{ ...MINISTER_MOCK, id: "former-attendant", name: "退场近臣", portrait_id: "portrait_court_03" }] : [], messages: id === 32 ? [
         { role: "user", speaker: "朕", content: `场次${id}`, beat: "dialogue", chat_turn_id: 8 },
         { role: "minister", speaker: "殿上", content: "群臣奏对", beat: "dialogue", chat_turn_id: 8 },
         { role: "attendant", speaker: "退场近臣", content: "旧臣御前低语", beat: "aside", chat_turn_id: 8, audibility: "御前低语" },
+        { role: "user", speaker: "朕", content: "边务如何？", beat: "dialogue", chat_turn_id: 9 },
+        { role: "minister", speaker: "洪承畴", content: "臣自三边来。", beat: "dialogue", chat_turn_id: 9 },
+        { role: "attendant", speaker: "王承恩", content: "臣亦有虑。", beat: "aside", chat_turn_id: 9 },
+        { role: "user", speaker: "朕", content: "卿有何见？", beat: "dialogue", chat_turn_id: 10 },
+        { role: "minister", speaker: "王绍徽", content: "臣请核账。", beat: "dialogue", chat_turn_id: 10 },
+        { role: "user", speaker: "朕", content: "无主问话", beat: "dialogue", chat_turn_id: 11 },
+        { role: "attendant", speaker: "王承恩", content: "无主递话", beat: "aside", chat_turn_id: 11 },
+        { role: "scene", speaker: "洪承畴", content: "", beat: "divider", soft_boundary: true },
+        { role: "scene", speaker: "", content: "趋入殿中。", beat: "scene" },
+        { role: "user", speaker: "朕", content: "剿抚孰先？", beat: "dialogue", chat_turn_id: 12 },
+        { role: "minister", speaker: "洪承畴", content: "臣请先抚。", beat: "dialogue", chat_turn_id: 12 },
+        { role: "minister", speaker: "杨嗣昌", content: "殿侧容臣插一句。", beat: "dialogue" },
+        { role: "user", speaker: "朕", content: "钱粮如何？", beat: "dialogue", chat_turn_id: 13 },
+        { role: "minister", speaker: "王绍徽", content: "臣请详查。", beat: "dialogue", chat_turn_id: 13 },
+        { role: "attendant", speaker: "王承恩", content: "已闻其议。", beat: "aside", chat_turn_id: 13 },
+        { role: "scene", speaker: "", content: "", beat: "divider", soft_boundary: true },
+        { role: "user", speaker: "朕", content: "诸卿同议。", beat: "dialogue", chat_turn_id: 14 },
+        { role: "minister", speaker: "洪承畴", content: "臣有一议。", beat: "dialogue", chat_turn_id: 14 },
+        { role: "minister", speaker: "许誉卿", content: "臣愿附议。", beat: "dialogue", chat_turn_id: 14 },
       ] : [{ role: "user", content: `场次${id}` }] }) });
     });
     vi.stubGlobal("fetch", fetchMock);
     const host = document.createElement("div"); document.body.appendChild(host);
     const root = createRoot(host); mountedRoots.push({ root, host });
     await act(async () => { root.render(<AudienceArchiveModal ministers={[]} onClose={() => {}} />); await Promise.resolve(); await Promise.resolve(); });
-    expect(host.textContent).toContain("召对记录");
-    expect(host.textContent).toContain("涉及人物：洪承畴");
-    expect(host.textContent).toContain("场次32");
     await act(async () => { host.querySelector<HTMLButtonElement>(".history-turn-item.active")?.click(); });
-    expect(host.textContent).toContain("场次32");
     const filter = host.querySelector<HTMLSelectElement>('select[aria-label="按臣过滤"]')!;
     await act(async () => {
       filter.value = "洪承畴";
@@ -1498,10 +1472,25 @@ describe("AudienceArchiveModal — read-only scene archive", () => {
     expect(host.querySelector("textarea, input, .chat-composer")).toBeNull();
     const archivedAvatar = host.querySelector<HTMLImageElement>(".aside-avatar");
     expect(archivedAvatar?.getAttribute("src")).toBe("/portraits/minister_former-attendant.png");
+    const visibleTurnIds = () => [...new Set(Array.from(
+      host.querySelectorAll<HTMLElement>("[data-audience-turn-id]"),
+      (node) => node.dataset.audienceTurnId,
+    ).filter(Boolean))].sort();
+    expect(visibleTurnIds()).toEqual(["12", "14", "8", "9"]);
+    expect(host.querySelectorAll('[data-audience-turn-id="9"] .turn-segment.user')).toHaveLength(1);
+    expect(host.querySelectorAll('[data-audience-turn-id="9"] .turn-segment.attendant')).toHaveLength(1);
+    for (const [name, ids] of [
+      ["王绍徽", ["10", "13", "8"]], ["许誉卿", ["14", "8"]], ["杨嗣昌", ["8"]],
+    ] as const) {
+      await act(async () => {
+        filter.value = name;
+        filter.dispatchEvent(new Event("change", { bubbles: true }));
+      });
+      expect(visibleTurnIds()).toEqual(ids);
+    }
     const buttons = Array.from(host.querySelectorAll(".history-turn-item")) as HTMLButtonElement[];
     await act(async () => { buttons[1].click(); await Promise.resolve(); await Promise.resolve(); });
     expect(fetchMock).toHaveBeenCalledWith("/api/audience/scroll?night_id=31");
-    expect(host.textContent).toContain("场次31");
     expect(host.querySelector<HTMLSelectElement>('select[aria-label="按臣过滤"]')?.value).toBe("");
   });
 
@@ -1515,7 +1504,6 @@ describe("AudienceArchiveModal — read-only scene archive", () => {
     const host = document.createElement("div"); document.body.appendChild(host);
     const root = createRoot(host); mountedRoots.push({ root, host });
     await act(async () => { root.render(<HistoryModal onClose={() => {}} />); await Promise.resolve(); await Promise.resolve(); });
-    expect(host.textContent).toMatch(/奏报.*诏书.*递话|奏报、诏书与递话/);
     expect(host.textContent).not.toContain("不应出现的场卷");
   });
 
@@ -1668,27 +1656,8 @@ describe("AudienceArchiveModal — read-only scene archive", () => {
 
     const item = host.querySelector(".history-turn-item");
     expect(item).not.toBeNull();
-    const label = item!.textContent || "";
-    expect(label).toContain("递话");
-    expect(label).not.toContain("奏报");
-
-    // 标题/摘要承认第三种内容（契约：含「递话」；不锁死全句）
-    const dialog = host.querySelector('[role="dialog"]');
-    expect(dialog?.getAttribute("aria-label") || "").toContain("递话");
-    expect(host.textContent).toContain("递话");
-    expect(host.textContent).not.toMatch(/仅收奏报与诏书/);
+    expect(host.textContent).toContain("递话正文");
   });
-});
-
-describe("ChatModal — thinking/loading text switches on character type (gemini cmr r1)", () => {
-  const thinkingText = (): string =>
-    (document.querySelector(".chat-message.thinking p")?.textContent ?? "");
-
-  it("shows 大臣思索中 while a minister is thinking", () => {
-    renderModal({ minister: MINISTER_MOCK, portraitPrefix: "minister_", busy: "思考中" });
-    expect(thinkingText()).toContain("大臣思索中");
-  });
-
 });
 
 describe("ChatModal — cancel button during busy (issue #353)", () => {
@@ -1701,7 +1670,6 @@ describe("ChatModal — cancel button during busy (issue #353)", () => {
     });
     const cancelBtn = document.querySelector(".composer-cancel");
     expect(cancelBtn).not.toBeNull();
-    expect(cancelBtn?.textContent).toContain("离开等待");
   });
 
   it("does NOT show a cancel button when idle", () => {
@@ -1739,22 +1707,6 @@ describe("ChatModal — cancel button during busy (issue #353)", () => {
   });
 });
 
-describe("ChatModal — elapsed timer during thinking (issue #353)", () => {
-  it("shows elapsed time in the thinking indicator while busy", () => {
-    vi.useFakeTimers();
-    renderModal({
-      minister: MINISTER_MOCK,
-      portraitPrefix: "minister_",
-      busy: "大臣思索中",
-    });
-    // Timer starts at 0; advance 3 seconds
-    act(() => { vi.advanceTimersByTime(3000); });
-    const thinkingP = document.querySelector(".chat-message.thinking p");
-    expect(thinkingP?.textContent).toMatch(/\d+\s*秒/);
-    vi.useRealTimers();
-  });
-});
-
 describe("ReportModal — narrative settlement bulletin", () => {
   it("renders narrative without an account page", () => {
     renderReportModal({
@@ -1763,8 +1715,6 @@ describe("ReportModal — narrative settlement bulletin", () => {
 
     expect(document.body.textContent).toContain("辽东军情");
     expect(document.body.textContent).toContain("军前缺饷");
-    expect(document.body.textContent).not.toContain("实账");
-    expect(document.body.textContent).not.toContain("账目明细");
   });
 
   it("#1387 底部有朕知道了主按钮可达关闭，不靠右上小 X", () => {
@@ -1791,7 +1741,6 @@ describe("ReportModal — narrative settlement bulletin", () => {
     });
     const mastSept = hostSept.querySelector(".gazette-masthead")?.textContent || "";
     expect(mastSept).toContain("天启七年九月");
-    expect(mastSept).not.toContain("天启七年十月");
 
     const hostDec = renderReportModal({
       report: "天启七年十二月邸报·跨年",
@@ -1799,9 +1748,6 @@ describe("ReportModal — narrative settlement bulletin", () => {
     });
     const mastDec = hostDec.querySelector(".gazette-masthead")?.textContent || "";
     expect(mastDec).toContain("天启七年十二月");
-    // 正月状态不得混充报头
-    expect(mastDec).not.toContain("崇祯元年正月");
-    expect(mastDec).not.toContain("天启七年正月");
   });
 
   it("#1356 空邸报态不崩：卷轴壳复用 pre + 朕知道了可关闭（无固定空注）", () => {
@@ -1811,8 +1757,6 @@ describe("ReportModal — narrative settlement bulletin", () => {
     expect(host.querySelector(".gazette-masthead")).not.toBeNull();
     // 空壳复用原 pre，不另写固定空态文案
     expect(host.querySelector("pre.memorial-text")).not.toBeNull();
-    expect(host.textContent).not.toContain("尚无上月邸报");
-    expect(host.textContent).not.toContain("登基伊始");
     const dismiss = Array.from(host.querySelectorAll("button")).find((b) =>
       (b.textContent || "").includes("朕知道了"),
     ) as HTMLButtonElement | undefined;

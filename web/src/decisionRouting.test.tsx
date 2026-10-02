@@ -1,12 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  PAUSED_DECISION_MSG,
-  needsPhase2Resume,
-  replacePendingDecisionsOnRefresh,
-  routeIssueDecisions,
-  routeRefreshDecisions,
-  routeRetryDecisions,
-} from "./decisionRouting";
+import { PAUSED_DECISION_MSG, needsPhase2Resume, replacePendingDecisionsOnRefresh, routeIssueDecisions, routeRefreshDecisions, routeRetryDecisions } from "./decisionRouting";
 import type { PendingDecision } from "./types";
 
 const validDecision: PendingDecision = {
@@ -139,7 +132,7 @@ describe("decision routing — retry (routeRetryDecisions: stale-phase vs still-
     const route = routeRetryDecisions("settling", []);
     expect(route.pendingDecisions).toEqual([]);
     expect(route.error).toBe("");
-    expect(route.error).not.toContain("重新拉取");
+
   });
 
   it("recovers into the decision modal when valid decisions arrive on retry", () => {

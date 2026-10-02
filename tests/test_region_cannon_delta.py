@@ -7,16 +7,11 @@ city_level×8 clamp，但零调用方；region_delta 带「城防炮」会被当
 
 from __future__ import annotations
 
-import pytest
 
 from tests.section_rejection_helpers import run_declaration as run_settle
-from ming_sim.constants import REGION_FIELD_LABELS
 from ming_sim.issues import apply_score_extraction
 
 
-def test_cannon_has_chinese_display_label():
-    """城防炮在 REGION_FIELD_LABELS 有中文名 → turn 日志显示「城防炮」而非回退英文 cannon。"""
-    assert REGION_FIELD_LABELS.get("cannon") == "城防炮"
 
 
 def test_city_cannon_delta_lands_clamped(game):

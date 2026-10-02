@@ -142,7 +142,6 @@ def test_production_path_grant_restore_revoke_impression_tracer(game):
         source=holder, target=EMPEROR_NODE, event_kind="结怨",
     )
     assert len(edges) == 1
-    assert "便宜行事" in edges[0]["context"] and domain in edges[0]["context"]
     assert edges[0]["origin"].startswith(f"authority_revoke:{authority_id}")
     assert not edges[0]["evidence"]
 

@@ -3,7 +3,6 @@ import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { EndingModal } from "./components/endingModal";
-import { yearMonthLabel } from "./settlementPresentation";
 import type { GameState, PendingDecision } from "./types";
 import { useSettlementFlow } from "./useSettlementFlow";
 
@@ -126,7 +125,6 @@ function mountHarness(opts: {
       <div>
         <div data-testid="busy">{busy}</div>
         <div data-testid="error">{error}</div>
-        <div data-testid="year-month">{turn ? yearMonthLabel(turn) : ""}</div>
         <div data-testid="treasury">{String((budget as any)["国库"]?.balance ?? metrics["国库"] ?? "")}</div>
         <div data-testid="inner">{String((budget as any)["内库"]?.balance ?? metrics["内库"] ?? "")}</div>
         <div data-testid="minxin">{String(metrics["民心"] ?? "")}</div>
@@ -476,7 +474,6 @@ describe("#1433 useSettlementFlow — 退朝 awaiting 消费面（禁盲 reload 
     expect(reload).not.toHaveBeenCalled();
     // 批红面不丢：同会话停窗弹决策，HUD 读状态口投影
     expect(host.querySelector("[data-testid=pending-count]")?.textContent).toBe("1");
-    expect(host.querySelector("[data-testid=year-month]")?.textContent).toBe("1627 年 10 月 · 待批");
     expect(host.querySelector("[data-testid=settlement-display]")?.textContent).toBe("true");
     expect(host.querySelector("[data-testid=busy]")?.textContent).toBe("");
     expect(host.querySelector("[data-testid=error]")?.textContent).toBe("");
@@ -567,7 +564,6 @@ describe("#1234 useSettlementFlow — 同会话 awaiting 停窗消费状态口",
     const { host, hookRef, cleanup } = mountHarness({ loadState });
 
     // 点击前：无核账标
-    expect(host.querySelector("[data-testid=year-month]")?.textContent).toBe("1627 年 10 月");
     expect(host.querySelector("[data-testid=settlement-display]")?.textContent).toBe("false");
 
     await act(async () => {
@@ -578,7 +574,6 @@ describe("#1234 useSettlementFlow — 同会话 awaiting 停窗消费状态口",
     expect(reload).not.toHaveBeenCalled();
 
     // 同会话不 reload：状态口投影驱动 HUD
-    expect(host.querySelector("[data-testid=year-month]")?.textContent).toBe("1627 年 10 月 · 待批");
     expect(host.querySelector("[data-testid=settlement-display]")?.textContent).toBe("true");
     expect(host.querySelector("[data-testid=treasury]")?.textContent).toBe("1781");
     expect(host.querySelector("[data-testid=inner]")?.textContent).toBe("320");

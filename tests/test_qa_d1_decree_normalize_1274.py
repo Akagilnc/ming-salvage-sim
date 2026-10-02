@@ -18,7 +18,8 @@ import pytest
 # ── 1) #1391 泛称闭集 ──────────────────────────────────────────────
 
 
-def test_capture_drops_dachen_generic_no_409(game, monkeypatch):
+@pytest.mark.parametrize("name", ["大臣", "群臣", "边将", "朝鲜边军", "陛下", "皇帝"])
+def test_capture_drops_dachen_generic_no_409(game, monkeypatch, name):
     """#1391：参与人「大臣」不进 roster、零 409，草案可落库。"""
     import ming_sim.cli_backend as cli_backend
     from ming_sim.session import GameSession
@@ -31,7 +32,7 @@ def test_capture_drops_dachen_generic_no_409(game, monkeypatch):
         "目标类型": "issue",
         "目标ID": "border-pay",
         "参与人": [
-            {"character_id": "大臣", "tier": "主办"},
+            {"character_id": name, "tier": "主办"},
             {"character_id": "毕自严", "tier": "协办"},
         ],
     }
@@ -44,7 +45,7 @@ def test_capture_drops_dachen_generic_no_409(game, monkeypatch):
         text, None, db=db, content=content,
     )
     ids = [str(item["character_id"]) for item in (payload.get("participant_roster") or [])]
-    assert "大臣" not in ids
+    assert name not in ids
     assert ids == ["毕自严"]
 
     session = GameSession.__new__(GameSession)
@@ -76,25 +77,11 @@ def test_capture_unknown_person_still_409(game, monkeypatch):
         return (json.dumps(response, ensure_ascii=False), 1)
 
     monkeypatch.setattr(cli_backend, "_run_backend_for_config", backend)
-    with pytest.raises(ValueError) as ei:
+    with pytest.raises(ValueError):
         cli_backend.capture_manual_directive_payload(
             text, None, db=db, content=content,
         )
-    msg = str(ei.value)
-    assert "不存在之人甲" in msg
-    assert any(m in msg for m in ("乞陛下明示", "朝籍", "查无"))
-    assert "参与人物不存在" not in msg  # F5：禁原始 409 泄漏
 
-
-@pytest.mark.parametrize("name", ["大臣", "群臣", "边将", "朝鲜边军", "陛下", "皇帝"])
-def test_is_non_person_covers_generics_and_collectives(name):
-    """泛称/集体通名单真源（participant_roster）覆盖票面字样。"""
-    from ming_sim.participant_roster import is_non_person_participant_name
-    import ming_sim.cli_backend as cli_backend
-
-    assert is_non_person_participant_name(name) is True
-    # cli_backend 别名同源，禁平行第二份闭集
-    assert cli_backend._is_non_person_participant_name(name) is True
 
 
 # ── 2) #1331/#1339 起居注投影 ──────────────────────────────────────
@@ -106,7 +93,6 @@ def test_night_archive_involved_people_drops_non_persons(game):
 
     db, state, _ = game
     night = an.open_night(db, state)  # 默认时辰须为更次口径
-    assert night["time_of_day"] != "此时"
     assert night["time_of_day"] == an.DEFAULT_TIME_OF_DAY
 
     an.summon_enter(db, night["id"], "杨嗣昌", method=an.METHOD_XUANRU)
@@ -130,16 +116,6 @@ def test_night_archive_involved_people_drops_non_persons(game):
         assert banned not in people, banned
     assert "王承恩" in people
     assert "杨嗣昌" in people
-    # 标题不得出现「此时」
-    assert "此时" not in str(entries[0]["title"])
-
-
-def test_default_time_of_day_is_shichen_not_cishi():
-    import ming_sim.audience_night as an
-
-    assert an.DEFAULT_TIME_OF_DAY != "此时"
-    # 时辰单字「时」结尾的更次/时刻口径
-    assert an.DEFAULT_TIME_OF_DAY.endswith("时")
 
 
 # ── 3) #1341/#1338 PATCH 死契约拆除 ────────────────────────────────

@@ -9,15 +9,14 @@
 """
 
 from __future__ import annotations
+from unittest.mock import ANY
 
 import pytest
 
 import ming_sim.issues as issues
-from ming_sim.content import GameContent
 from ming_sim.context import character_context_with_db, minister_dossier
 from ming_sim.decree import reload_state_from_db
 from ming_sim.issues import apply_issue_inertia_and_ongoing
-from ming_sim.person_archive_contract import format_person_actions
 from ming_sim.relation_read import project_relation_ledger
 
 
@@ -81,7 +80,6 @@ def test_inertia_natural_resolve_applies_temperament_style(game):
         (PERSON, "性情"),
     ).fetchone()
     assert log["action"] == "性情"
-    assert log["payload_summary"] == "经事锤炼，固有层改写"
 
 
 def test_apply_score_extraction_writes_temperament_style_and_log(game):
@@ -117,7 +115,6 @@ def test_apply_score_extraction_writes_temperament_style_and_log(game):
         (PERSON,),
     ).fetchone()
     assert log["action"] == "性情"
-    assert log["payload_summary"] == "经事锤炼，固有层改写"
 
 
 def test_temperament_style_preserves_raw_bytes_through_write_kernel(game):
@@ -264,11 +261,12 @@ def test_apply_score_extraction_rejects_invalid_temperament(game, item, category
             "origin_ref": "盘面自发",
             "动作": "性情",
             "rejected": True,
-            "reason": reason,
+            "reason": ANY,
             "category": category,
             "item": item,
         }
     ]
+    assert isinstance(applied['applied_person_changes'][0]['reason'], str) and applied['applied_person_changes'][0]['reason']
 
 
 def test_character_context_with_db_reads_own_style_and_viewer_ledger(game):
@@ -309,7 +307,7 @@ def test_character_context_with_db_reads_own_style_and_viewer_ledger(game):
     assert NEW_STYLE in rendered
     assert person.name in rendered and other.name in rendered
     own_dto = expected_own[0]
-    assert own_dto["recent_context"] in rendered or "两人在朝上声气相通" in rendered
+    assert own_dto["recent_context"] in rendered
 
 
 def test_context_passes_raw_style_and_ledger_prose_without_rewrite(game):

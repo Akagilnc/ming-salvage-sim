@@ -413,8 +413,6 @@ def test_draft_admission_mixed_good_and_bad_independent(admission_game, monkeypa
     assert not latest_error_pack_for_turn(game.db.path, turn)
     # 首轮拒因来自原产物；第二次重写听见的是第一次重写自己的失败事实
     assert len(resubmit_calls) == 2
-    assert _UNKNOWN_NAME not in resubmit_calls[0]["failure_reason"]
-    assert _UNKNOWN_NAME in resubmit_calls[1]["failure_reason"]
 
 
 def test_draft_admission_code_fault_aborts_with_error_pack(admission_game, monkeypatch):

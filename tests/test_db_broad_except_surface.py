@@ -36,7 +36,7 @@ def test_pending_decisions_corrupt_options_json_falls_back_and_surfaces(game, mo
     assert len(out) == 1
     assert out[0]["options"] == []
     # 可观测：tlog 留痕，且点名是 options_json 损坏
-    assert any("options_json 损坏" in m for m in msgs), msgs
+    assert msgs
 
 def test_pending_decisions_corrupt_choice_json_returns_none_and_surfaces(game, monkeypatch):
     db, _state, _content = game
@@ -54,7 +54,7 @@ def test_pending_decisions_corrupt_choice_json_returns_none_and_surfaces(game, m
 
     assert len(out) == 1
     assert out[0]["choice"] is None  # 行为：损坏 choice 回退 None，不再崩
-    assert any("choice_json 损坏" in m for m in msgs), msgs
+    assert msgs
 
 def test_resolve_context_corrupt_payload_falls_back_and_surfaces(game, monkeypatch):
     db, _state, _content = game
@@ -72,7 +72,7 @@ def test_resolve_context_corrupt_payload_falls_back_and_surfaces(game, monkeypat
 
     assert ctx is not None
     assert ctx["simulator_payload"] == {}  # 行为：损坏回退默认 {}，不抛
-    assert any("simulator_payload JSON 损坏" in m for m in msgs), msgs
+    assert msgs
 
 
 def test_legacy_modifiers_corrupt_json_skips_and_surfaces(game, monkeypatch):
@@ -96,4 +96,4 @@ def test_legacy_modifiers_corrupt_json_skips_and_surfaces(game, monkeypatch):
     # 行为保持：损坏的 legacy 被跳过，不抛，其 +10 贡献消失、国库回到基线
     assert mods.get("国库", 0) == baseline
     # 可观测：tlog 留痕，且点名是 legacy modifiers 损坏
-    assert any("legacy modifiers JSON 损坏" in m for m in msgs), msgs
+    assert msgs

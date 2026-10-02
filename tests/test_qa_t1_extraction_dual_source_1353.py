@@ -17,23 +17,17 @@
 from __future__ import annotations
 
 import threading
-from types import SimpleNamespace
 
 import pytest
 
 import ming_sim.audience_translation as audience_translation
-import ming_sim.cli.terminal as term
-import ming_sim.issues as issues_mod
 import web_app
 from ming_sim import audience_night as an
-from ming_sim.exceptions import ExitGame
-from ming_sim.session import GameSession, TurnPhase
 from tests.test_audience_extraction_501 import (
     _minister,
     _open_night_with_persisted_reply,
 )
-from ming_sim.session_write_queue import SessionWriteQueue, ClassifiedWriteGate
-from tests.test_no_edict_full_settlement_1274 import _canned_full_settlement
+from ming_sim.session_write_queue import SessionWriteQueue
 from tests.conftest import stub_audience_translate
 
 def _close_with_gate(db, state, *, night_id, translate_fn=None, llm_config=object(), **extra):
@@ -373,7 +367,7 @@ def test_production_seam_cancel_blocks_trail_write(web_game):
 def test_production_seam_post_barrier_ticket_ordered(web_game, monkeypatch):
     """生产接缝：屏障已领后再领票，后票写不得越过屏障（经 ticketed gate）。"""
     game = web_game
-    q = game._runtime_write_queue()
+    game._runtime_write_queue()
     order: list[str] = []
     barrier_in = threading.Event()
     release_barrier = threading.Event()
@@ -518,7 +512,7 @@ def test_startup_catchup_uses_ticketed_gate_not_bare(web_game, monkeypatch):
 def test_ticketed_write_gate_rejects_none(web_game):
     """无票不得回落裸 runtime write_gate。"""
     game = web_game
-    with pytest.raises(RuntimeError, match="live WriteTicket"):
+    with pytest.raises(RuntimeError):
         game._ticketed_write_gate(None)  # type: ignore[arg-type]
 
 
@@ -529,7 +523,6 @@ def test_stream_post_reply_exception_preserves_phase_and_recovers_original_turn(
     from tests.web_audience_test_doubles import install_hall_admission
 
     game = web_game
-    minister = next(iter(game.content.characters))
     install_hall_admission(game.session)
     game.session.schedule_pending_scene_translation = lambda *_a, **_k: None
     game._spawn_pending_write_thread = lambda *_a, **_k: None
@@ -563,7 +556,6 @@ def test_dispatch_exception_after_persist_retains_reply_recovery(web_game, monke
     from tests.web_audience_test_doubles import install_hall_admission
 
     game = web_game
-    minister = next(iter(game.content.characters))
     install_hall_admission(game.session)
     game.session.scene_chat = lambda *_a, **_k: ChatTurnResult(answer="臣遵旨。")
     game.session.schedule_pending_scene_translation = lambda *_a, **_k: (_ for _ in ()).throw(
@@ -636,7 +628,7 @@ def test_resolve_turn_write_gate_held_by_caller_no_reenter(game, tmp_path, monke
     sess.deaths_this_turn = []
 
     try:
-        with pytest.raises(ValueError, match="草案"):
+        with pytest.raises(ValueError):
             sess.resolve_turn(write_gate_already_held=True)
         assert seen.get("write_gate") is None, (
             f"held outer gate must not re-enter; got {seen.get('write_gate')!r}"

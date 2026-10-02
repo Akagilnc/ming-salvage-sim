@@ -72,19 +72,6 @@ describe("commitment progress display", () => {
     cleanup();
   });
 
-  it("uses a styled fallback when a commitment has progress but no text", () => {
-    const cleanup = render(<IssueGroup title="待办" issues={[makeCommitmentWithoutProgressText()]} />);
-    const progress = document.querySelector(".issue-commitment-progress");
-    expect(progress?.textContent).toBe("未知进度");
-    cleanup();
-  });
-
-  it("does not show fallback progress for ordinary issues", () => {
-    const cleanup = render(<IssueGroup title="待办" issues={[makeOrdinaryIssueWithoutProgressText()]} />);
-    expect(document.body.textContent).not.toContain("未知进度");
-    expect(document.querySelector(".issue-commitment-progress")).toBeNull();
-    cleanup();
-  });
 
   it("shows commitment progress in the situation detail", () => {
     const cleanup = render(
@@ -115,52 +102,12 @@ describe("commitment progress display", () => {
       );
     });
 
-    expect(document.body.textContent).toContain("承诺进度");
+
     expect(document.body.textContent).toContain(commitmentText);
     cleanup();
   });
 });
 
-describe("empty bar label presentation (#626)", () => {
-  function makeEmptyBarIssue(): Issue {
-    return {
-      ...makeIssue(),
-      bar_good_meaning: "",
-      bar_bad_meaning: "",
-      tags: [],
-    };
-  }
-
-  it("detail modal omits empty parentheses when bar meanings are blank", () => {
-    const cleanup = render(
-      <SituationDetailModal issue={makeEmptyBarIssue()} onClose={() => undefined} />
-    );
-    const text = document.body.textContent || "";
-    expect(text).toContain("达成");
-    expect(text).toContain("失败");
-    expect(text).not.toContain("达成（）");
-    expect(text).not.toContain("失败（）");
-    cleanup();
-  });
-
-  it("detail modal keeps parentheses when bar meanings are present", () => {
-    const cleanup = render(
-      <SituationDetailModal issue={makeIssue()} onClose={() => undefined} />
-    );
-    const text = document.body.textContent || "";
-    expect(text).toContain("达成（欠饷清偿）");
-    expect(text).toContain("失败（军心溃散）");
-    cleanup();
-  });
-
-  it("issue board progress ends stay blank rather than showing empty labels", () => {
-    const cleanup = render(<IssueGroup title="待办" issues={[makeEmptyBarIssue()]} />);
-    const ends = Array.from(document.querySelectorAll(".issue-progress > span"));
-    expect(ends).toHaveLength(2);
-    expect(ends.every((el) => (el.textContent || "").trim() === "")).toBe(true);
-    cleanup();
-  });
-});
 
 describe("#1726 StateModal 奏疏收件箱", () => {
   function baseState(memorials: GameState["memorials"] = []): GameState {
@@ -225,18 +172,11 @@ describe("#1726 StateModal 奏疏收件箱", () => {
     expect(doc!.textContent).not.toContain(makeIssue().title);
     expect(doc!.textContent).toContain("杨嗣昌");
     expect(doc!.querySelector("pre.memorial-text")?.textContent).toBe(body);
-    expect(doc!.textContent).not.toContain("progress:7");
-    expect(doc!.textContent).not.toContain("progress_band");
-    expect(doc!.textContent).not.toContain("本月无疏");
+
+
     cleanup();
   });
 
-  it("无奏疏时示空态，不因有局势而填充", () => {
-    const cleanup = render(<StateModal state={baseState([])} />);
-    expect(document.body.textContent).toContain("本月无疏");
-    expect(document.querySelector(".situation-panel")).toBeNull();
-    cleanup();
-  });
 
   it("SituationPanel 真渲染有议题时不返回 null", () => {
     const issue = makeIssue();

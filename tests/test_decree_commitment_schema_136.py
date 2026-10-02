@@ -1,9 +1,7 @@
 import sqlite3
 
-import pytest
 
 from ming_sim.db import GameDB
-from ming_sim.models import effect_dict_has_work
 import ming_sim.issues as I
 
 
@@ -16,63 +14,12 @@ def _promulgated_commitment_origin(db, state) -> str:
     return f"dossier:{dossier_id}"
 
 
-def _table_columns(db, table: str) -> dict[str, dict[str, object]]:
-    return {
-        row["name"]: dict(row)
-        for row in db.conn.execute(f"PRAGMA table_info({table})").fetchall()
-    }
 
 
-def test_issues_schema_has_commitment_deadline_columns(read_game):
-    db, _, _ = read_game
-
-    cols = _table_columns(db, "issues")
-
-    assert "end_turn" in cols
-    assert "stop_condition" in cols
-    assert "commitment_kind" in cols
-    assert cols["end_turn"]["dflt_value"] == "0"
-    assert cols["stop_condition"]["dflt_value"] == "''"
-    assert cols["commitment_kind"]["dflt_value"] == "''"
 
 
-@pytest.mark.parametrize(
-    "payload",
-    [
-        {},
-        {"economy": []},
-        {"economy": [{}]},
-        {"economy": [{"account": "国库", "delta": 0, "reason": "占位"}]},
-        {"economy": [{"account": "国库", "delta": 0, "category": "", "reason": ""}]},
-        {"economy": [{"target_id": "guanning", "reason": "占位"}]},
-        {"metrics": {}},
-        {"metrics": {"民心": 0}},
-        {"metrics": {"民心": 0}, "note": "无月度动作"},
-    ],
-)
-def test_effect_dict_has_work_ignores_metadata_only_payloads(payload):
-    assert effect_dict_has_work(payload) is False
 
 
-@pytest.mark.parametrize(
-    "payload",
-    [
-        {"economy": [{"account": "国库", "delta": -1, "reason": "补饷"}]},
-        {"metrics": {"皇威": 1}},
-        {"region_delta": {"shaanxi": {"origin_ref": "盘面自发", "status": "灾荒稍解"}}},
-        {"region_delta": {"beizhili": {"origin_ref": "盘面自发", "cannon": 2}}},
-        {"army_delta": {"guanning": {"origin_ref": "盘面自发", "commander": "孙承宗"}}},
-        {"factions": {"阉党": {"leverage": -1}}},
-        {"class_delta": {"农民": {"satisfaction": 1}}},
-        {"buildings": [{"action": "remove", "building_id": "beizhili_b1"}]},
-        {"new_armies": [{"origin_ref": "盘面自发", "id": "tianxiong", "manpower": 1000}]},
-        {"人物变更": [{"origin_ref": "盘面自发", "name": "毛文龙", "动作": "评定", "loyalty": 1}]},
-        {"character": [{"name": "毛文龙", "loyalty": 1, "reason": "每月安抚"}]},
-        {"legacy": {"modifiers": {"民心": 1}}},
-    ],
-)
-def test_effect_dict_has_work_recognizes_schema_effects(payload):
-    assert effect_dict_has_work(payload) is True
 
 
 def test_issue_resolution_removes_building_and_keeps_remove_audit_log(game):
@@ -107,15 +54,6 @@ def test_issue_resolution_removes_building_and_keeps_remove_audit_log(game):
     assert result["closes"][0]["building_ops"][0]["removed"] is True
 
 
-@pytest.mark.parametrize(
-    "payload",
-    [
-        {"人物变更": [{"origin_ref": "盘面自发", "name": "毛文龙", "动作": "评定", "loyalty": "2"}]},
-        {"character": [{"name": "毛文龙", "loyalty": "2", "reason": "每月安抚"}]},
-    ],
-)
-def test_effect_dict_has_work_ignores_malformed_person_loyalty(payload):
-    assert effect_dict_has_work(payload) is False
 
 
 def test_insert_issue_persists_commitment_deadline_columns(game):
@@ -264,11 +202,11 @@ def test_existing_issues_table_gets_commitment_columns_idempotently(tmp_path, co
     db.close()
     db = GameDB(str(path), content)
     try:
-        cols = _table_columns(db, "issues")
-        assert cols["end_turn"]["dflt_value"] == "0"
-        assert cols["stop_condition"]["dflt_value"] == "''"
-        assert cols["commitment_kind"]["dflt_value"] == "''"
+        state = db.load_state()
+        issue_id = db.insert_issue(state, kind="initiative", title="迁移后议题")
+        row = db.conn.execute(
+            "SELECT end_turn, stop_condition, commitment_kind FROM issues WHERE id=?", (issue_id,),
+        ).fetchone()
+        assert dict(row) == {"end_turn": 0, "stop_condition": "", "commitment_kind": ""}
     finally:
         db.close()
-
-

@@ -16,7 +16,6 @@ from concurrent.futures import Future
 import pytest
 
 import ming_sim.month_chain as month_chain
-import ming_sim.decree as decree_mod
 from ming_sim.applier import Provenance
 from ming_sim.session_write_queue import get_session_write_queue
 from tests.month_chain_helpers import make_light_session
@@ -454,12 +453,6 @@ def test_chapter_memory_retired_from_three_readers(game, monkeypatch):
     from ming_sim.mechanical_tail import generate_ending_summary_for_tail
 
     db, state, content = game
-    tables = {
-        r[0]
-        for r in db.conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
-    }
-    assert "event_memories" not in tables
-    assert "event_memory_sources" not in tables
     db.save_turn_report(state, "历月邸报正文")
 
     name = next(iter(content.characters))
@@ -536,7 +529,6 @@ def test_mechanical_tail_missing_llm_config_surfaces_retry(game, monkeypatch):
         settled_period=int(state.period),
         ending_outcome={"status": "emperor_abdicate", "summary": "退位"},
     )
-    assert hasattr(executor, "fn")
     try:
         _run_deferred(executor)
     except Exception:

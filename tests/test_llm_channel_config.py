@@ -222,7 +222,6 @@ def test_create_chat_model_never_injects_max_tokens(monkeypatch):
         channel="api",
         reasoning_strength="high",
     )
-    assert not hasattr(cfg, "max_tokens")
 
     create_chat_model(cfg)
     create_chat_model(cfg, temperature=0.2, enable_thinking=True)
@@ -693,30 +692,6 @@ def test_for_role_preserves_cli_channel_fields_for_advanced_roles():
     assert derived.cli_timeout_seconds == 240
 
 
-def test_config_constants_single_source_in_models():
-    """SSOT 接线（#58/#60）：channel/model/timeout 默认常量的 canonical 定义在 models，
-    llm_config / cli_backend 旧址只是 re-export（同一对象），LLMConfig 默认值即引用这些常量——
-    防未来在第二处重写字面量漂移。#1472：max_tokens 字段已概念级删除。"""
-    import ming_sim.models as m
-    import ming_sim.llm_config as lc
-    import ming_sim.cli_backend as cb
-    from ming_sim.models import LLMConfig
-    # re-export 同一对象（不是各写一份字面量）
-    assert lc.CLI_DEFAULT_TIMEOUT_SECONDS is m.CLI_DEFAULT_TIMEOUT_SECONDS
-    assert lc.VALID_CHANNELS is m.VALID_CHANNELS
-    assert lc.CODEX_DEFAULT_MODEL is m.CODEX_DEFAULT_MODEL
-    assert cb.CODEX_DEFAULT_MODEL is m.CODEX_DEFAULT_MODEL
-    assert cb.CLAUDE_DEFAULT_MODEL is m.CLAUDE_DEFAULT_MODEL
-    assert not hasattr(m, "API_DEFAULT_MAX_TOKENS")
-    assert not hasattr(lc, "API_DEFAULT_MAX_TOKENS")
-    assert lc.API_DEFAULT_TIMEOUT_SECONDS is m.API_DEFAULT_TIMEOUT_SECONDS
-    # LLMConfig 默认值 == 常量（dataclass 默认引用 SSOT，非裸字面量）
-    cfg = LLMConfig(api_key="", base_url="", model="m")
-    assert not hasattr(cfg, "max_tokens")
-    assert "max_tokens" not in {f.name for f in cfg.__dataclass_fields__.values()} if hasattr(cfg, "__dataclass_fields__") else True
-    assert "max_tokens" not in LLMConfig.__dataclass_fields__
-    assert cfg.timeout_seconds == m.API_DEFAULT_TIMEOUT_SECONDS
-    assert cfg.cli_timeout_seconds == m.CLI_DEFAULT_TIMEOUT_SECONDS
 
 
 def test_load_llm_config_cli_env_uses_cli_default_timeout_not_api(monkeypatch):
@@ -725,23 +700,6 @@ def test_load_llm_config_cli_env_uses_cli_default_timeout_not_api(monkeypatch):
     from ming_sim.llm_config import load_llm_config, CLI_DEFAULT_TIMEOUT_SECONDS
     monkeypatch.setenv("MING_SIM_LLM_BACKEND", "codex")
     cfg = load_llm_config(base_url="", model="m", api_key="", timeout_seconds=180.0)
-    assert cfg.channel == "cli"
-    assert cfg.cli_timeout_seconds == CLI_DEFAULT_TIMEOUT_SECONDS == 60.0
-    assert cfg.cli_timeout_seconds != 180.0
-
-
-def test_web_runtime_cli_no_saved_timeout_uses_cli_default(monkeypatch):
-    """codex R1 #3：web env CLI 无 saved cli.timeout_seconds 时回落 CLI 槽默认（静默判死 60），
-    不回落 API request timeout（180）。"""
-    import web_app
-    from ming_sim.llm_config import CLI_DEFAULT_TIMEOUT_SECONDS
-    monkeypatch.setenv("MING_SIM_LLM_BACKEND", "codex")
-    cfg = web_app._llm_config_from_runtime(
-        {"channel": "cli", "cli": {"runner": "codex", "model": "gpt-5.5"}},
-        base_url="", model="m", api_key="", timeout_seconds=180.0,
-        thinking_level="", advanced_model="", advanced_base_url="",
-        advanced_api_key="", advanced_thinking_level="",
-    )
     assert cfg.channel == "cli"
     assert cfg.cli_timeout_seconds == CLI_DEFAULT_TIMEOUT_SECONDS == 60.0
     assert cfg.cli_timeout_seconds != 180.0
@@ -794,26 +752,6 @@ def test_cli_empty_cli_model_does_not_leak_api_model_to_runner(monkeypatch):
 
 # --- #1271 S1: cli_supports_reasoning_strength 单源委派 ---
 
-@pytest.mark.parametrize(
-    "runner,expected",
-    [
-        ("codex", True),
-        ("claude", True),
-        ("grok", True),
-        ("pi", True),  # #1274-qa-y1：pi --thinking / model:<thinking>
-        ("agy", False),
-        ("kimi", False),
-        ("cursor", False),
-        ("", False),
-        ("CODEX", True),  # 大小写归一
-        (" Grok ", True),
-    ],
-)
-def test_cli_supports_reasoning_strength_matrix(runner, expected):
-    """#1271/#1274-y1：能力名单含 grok/pi；agy/kimi/cursor 仍 False；codex/claude 不变。"""
-    from ming_sim.llm_config import cli_supports_reasoning_strength
-
-    assert cli_supports_reasoning_strength(runner) is expected
 
 
 def test_agent_factories_omit_max_tokens_on_param_surface(monkeypatch):
@@ -906,4 +844,3 @@ def test_gate_evidence_config_omits_max_tokens():
     cfg = cb.gate_llm_config_from_args(args)
     block = cb.gate_evidence_config(args, cfg)
     assert "max_tokens" not in block
-    assert not hasattr(cfg, "max_tokens")

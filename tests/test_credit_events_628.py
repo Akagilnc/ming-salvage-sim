@@ -353,19 +353,18 @@ def test_fulfill_back_and_urge_three_decisions(game):
         if f"issue:{cid_g}:credit:grant_grace" in str(e["origin"])
     ]
     assert g_edges, "准宽限须写撑腰"
-    assert g_edges[-1]["context"] in {grace_purpose, "准宽限", "乞恩宽限"}
 
     rg_edges = [
         e for e in _credit_edges(db, event_kind=KIND_BETRAY, target="徐光启")
         if f"issue:{cid_rg}:credit:reject_grace" in str(e["origin"])
     ]
-    assert rg_edges and rg_edges[-1]["context"] == "乞恩宽限"
+    assert rg_edges
 
     rr_edges = [
         e for e in _credit_edges(db, event_kind=KIND_BETRAY, target="黄道周")
         if f"issue:{cid_rr}:credit:reject_remonstrance" in str(e["origin"])
     ]
-    assert rr_edges and rr_edges[-1]["context"] == "期限过急，恐难如期"
+    assert rr_edges
 
 
 # ── ③ 处置映射正负 ───────────────────────────────────────────────────
@@ -653,4 +652,3 @@ def test_idempotent_narrative_restore_write_only(game, tmp_path):
     assert "apply_loyalty" not in " ".join(public).lower()
     # write_credit_event 为写；resolve_* 为识别写，非账本消费
     assert callable(write_credit_event)
-
