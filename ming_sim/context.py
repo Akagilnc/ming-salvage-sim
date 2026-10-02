@@ -163,19 +163,12 @@ def state_context(state: GameState) -> str:
 
 
 def parse_json_dict(raw: str) -> Dict[str, int]:
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError as error:
-        raise LLMContractError(f"数据库中的数值变化 JSON 已损坏：{raw}") from error
+    from ming_sim.strict_types import strict_int
+
+    data = json.loads(raw)
     if not isinstance(data, dict):
-        raise LLMContractError(f"数据库中的数值变化不是 object：{raw}")
-    parsed: Dict[str, int] = {}
-    for key, value in data.items():
-        try:
-            parsed[str(key)] = int(value)
-        except (TypeError, ValueError) as error:
-            raise LLMContractError(f"数据库中的数值变化字段不是整数：{key}={value}") from error
-    return parsed
+        raise ValueError(f"数据库中的数值变化不是 object：{raw}")
+    return {key: strict_int(value, accept_numeric_strings=False) for key, value in data.items()}
 
 
 def format_metric_delta(delta: Dict[str, int]) -> str:

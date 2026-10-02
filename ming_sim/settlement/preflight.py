@@ -53,7 +53,7 @@ from ming_sim.decree_vocabulary import (
     format_public_progress_disclosure,
     terminal_report_facade,
 )
-from ming_sim.exceptions import OfficeAppointmentRejection, SettlementAbort
+from ming_sim.exceptions import DeclarationDataError, OfficeAppointmentRejection, SettlementAbort
 from ming_sim.entities.metric.apply import (
     ISSUE_METRIC_KEYS,
     apply_metric_dict as _apply_metric_dict,
@@ -131,7 +131,7 @@ def normalize_travel_tone(value: object) -> str:
     """Validate the canonical typed travel tone; never infer or downgrade it."""
     tone = "常行" if value is None else str(value).strip()
     if tone not in TRAVEL_SPEED_BY_TONE:
-        raise ValueError("行程语气不在闭合枚举")
+        raise DeclarationDataError("行程语气不在闭合枚举")
     return tone
 
 
@@ -152,7 +152,7 @@ def _admit_transit_departure(
         return None, ("transit_to 地区不存在", "missing_ref")
     try:
         tone = normalize_travel_tone(item.get("行程语气"))
-    except ValueError:
+    except DeclarationDataError:
         return None, ("行程语气不在闭合枚举", "invalid_enum")
     previous_destination = str(row.get("transit_to") or "")
     if previous_destination and previous_destination != transit_to:

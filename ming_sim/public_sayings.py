@@ -120,29 +120,21 @@ def public_layer_events(db: Any, *, for_public_feed: bool = False) -> list[dict[
 
 
 def _json_name_list(raw: object) -> list[str]:
-    try:
-        values = json.loads(raw or "[]")
-    except (TypeError, ValueError):
-        values = []
-    if not isinstance(values, list):
-        values = []
+    values = json.loads(raw or "[]")
+    if not isinstance(values, list) or any(not isinstance(name, str) for name in values):
+        raise ValueError("持久说法人物名单须为字符串列表")
     return [str(name) for name in values if str(name).strip()]
 
 
 def _json_target_map(raw: object) -> dict[str, list[str]]:
-    try:
-        payload = json.loads(raw or "{}")
-    except (TypeError, ValueError):
-        payload = {}
+    payload = json.loads(raw or "{}")
     if not isinstance(payload, dict):
-        return {}
+        raise ValueError("持久说法排除目标须为对象")
     result: dict[str, list[str]] = {}
     for key, values in payload.items():
-        names = (
-            [str(name) for name in values if str(name).strip()]
-            if isinstance(values, list)
-            else []
-        )
+        if not isinstance(values, list) or any(not isinstance(name, str) for name in values):
+            raise ValueError("持久说法排除目标成员须为字符串列表")
+        names = [name for name in values if name.strip()]
         if names:
             result[str(key)] = names
     return result

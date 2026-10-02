@@ -254,12 +254,10 @@ def _json_list(value: Any) -> List[Any]:
     if isinstance(value, list):
         return value
     if isinstance(value, str):
-        try:
-            parsed = json.loads(value or "[]")
-        except (TypeError, ValueError):
-            return []
-        return parsed if isinstance(parsed, list) else []
-    return []
+        parsed = json.loads(value or "[]")
+        if isinstance(parsed, list):
+            return parsed
+    raise ValueError("持久起居条目名单须为列表")
 
 
 def _row_dict(row: Any) -> Dict[str, Any]:
@@ -2362,15 +2360,7 @@ def rescript_summon_origin_consumed(
     if entry is None:
         return False
     tags_raw = entry.get("tags")
-    if isinstance(tags_raw, str):
-        try:
-            tags_list = json.loads(tags_raw or "[]")
-        except Exception:
-            tags_list = []
-    elif isinstance(tags_raw, (list, tuple)):
-        tags_list = list(tags_raw)
-    else:
-        tags_list = []
+    tags_list = _json_list(tags_raw)
     tags = [str(t) for t in tags_list]
     return TAG_ENTER in tags
 

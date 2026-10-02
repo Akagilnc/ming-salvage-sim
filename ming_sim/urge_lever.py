@@ -332,11 +332,10 @@ def resolve_host_character(db: Any, *, commitment_ref: int, dossier_id: Optional
         if isinstance(dossier, dict):
             roster = dossier.get("participant_roster") or []
             if isinstance(roster, str):
-                try:
-                    roster = json.loads(roster)
-                except (TypeError, ValueError):
-                    roster = []
-            for item in roster or []:
+                roster = json.loads(roster)
+            if not isinstance(roster, list):
+                raise ValueError("持久案卷参与人须为列表")
+            for item in roster:
                 if isinstance(item, dict) and str(item.get("tier") or "") == "主办":
                     name = str(item.get("character_id") or "").strip()
                     if name:
@@ -347,21 +346,19 @@ def resolve_host_character(db: Any, *, commitment_ref: int, dossier_id: Optional
             (int(commitment_ref),),
         ).fetchone()
         if row is not None:
-            try:
-                roster = json.loads(row["participant_roster"] or "[]")
-            except (TypeError, ValueError):
-                roster = []
-            for item in roster or []:
+            roster = json.loads(row["participant_roster"] or "[]")
+            if not isinstance(roster, list):
+                raise ValueError("持久局势参与人须为列表")
+            for item in roster:
                 if isinstance(item, dict):
                     cand = str(item.get("character_id") or "").strip()
                     if cand:
                         name = cand
                         break
             if not name:
-                try:
-                    parts = json.loads(row["participants"] or "[]")
-                except (TypeError, ValueError):
-                    parts = []
+                parts = json.loads(row["participants"] or "[]")
+                if not isinstance(parts, list):
+                    raise ValueError("持久局势人物名单须为列表")
                 if parts:
                     name = str(parts[0]).strip()
     integrity, courage = 50, 50

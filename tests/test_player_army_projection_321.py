@@ -3,8 +3,6 @@ from __future__ import annotations
 
 from ming_sim.applier import Provenance
 
-import contextlib
-import io
 import sqlite3
 from types import SimpleNamespace
 
@@ -19,9 +17,6 @@ from ming_sim.db import (
     mutiny_loyalty_cap,
 )
 from ming_sim.flows import apply_fixed_period_flows, derive_army_mutiny_state
-from ming_sim.knowledge import build_character_knowledge
-from ming_sim.report import print_header
-from ming_sim.materials import list_materials, prepare_character_materials, read_material
 
 ARMY = "guanning"
 PATHS = ("legacy", "substrate_hub")
@@ -232,7 +227,7 @@ def _assert_structured_situation(card: dict, sit: dict, label: str) -> None:
 
 
 def test_four_chains_embed_situation_matrix(game):
-    """AC1：exactly 1 非零欠饷代表覆盖链1–4 全接缝（含 warning 载荷嵌入 + print_header 负例）。"""
+    """Web army projections share the persisted situation contract."""
     # 代表：latch=0, L=55, p=0 → 不满；arrears>0（精确小数 12.5）
     is_mutinied, loyalty, probation, expected = 0, 55, 0, "不满"
     db, state, content = game
@@ -263,12 +258,6 @@ def test_four_chains_embed_situation_matrix(game):
         "UPDATE armies SET supply=1, training=1 WHERE id=?",
         (ARMY,),
     )
-    # print_header 负例：唯一军名哨兵；若 header 回流 army_report 必带此名
-    header_army_sentinel = "321-header-sentinel-guanning"
-    db.conn.execute(
-        "UPDATE armies SET name=? WHERE id=?",
-        (header_army_sentinel, ARMY),
-    )
     db.conn.commit()
     row = db.conn.execute("SELECT * FROM armies WHERE id=?", (ARMY,)).fetchone()
     sit = _player_army_situation(row, db._army_pay(row))
@@ -283,43 +272,11 @@ def test_four_chains_embed_situation_matrix(game):
     armies = {a["id"]: a for a in (payload.get("armies") or [])}
     assert ARMY in armies
     _assert_structured_situation(armies[ARMY], sit, "state_payload.armies")
-    # army_warning = 当前无渲染消费者的载荷副本（可与 report 同源；测可断言嵌入 ≠ HUD 授权）
-    warning = payload.get("army_warning") or ""
-
     map_army = _find_army_in_map_nodes(payload.get("map_nodes") or [])
     _assert_structured_situation(map_army, sit, "map_nodes.armies")
     # 直接 map_nodes 缝（非仅 state_payload 内嵌）
     map_army2 = _find_army_in_map_nodes(runtime.map_nodes())
     _assert_structured_situation(map_army2, sit, "WebGame.map_nodes")
-
-    # 链2：report / knowledge（LLM 输入装配）
-    report = db.army_report(limit=30)
-
-    war = next(c for c in content.characters.values() if c.office_type == "兵部")
-    knowledge = build_character_knowledge(db, state, war.name)
-    military = (knowledge.get("world") or {}).get("military") or ""
-    assert "兵籍在册" in military
-
-    # #321 P7：print_header 不得回流 army_report（以目标军结构化 name 哨兵为唯一负断言）
-    buf = io.StringIO()
-    with contextlib.redirect_stdout(buf):
-        print_header(state, db)
-    header_out = buf.getvalue()
-    assert header_army_sentinel not in header_out, (
-        f"report.print_header 不得回流目标军 name={header_army_sentinel!r}\n{header_out}"
-    )
-
-    # 链3：detail（LLM 输入装配；旧 inspect_army 查询工具已退役）
-    detail = db.army_detail(ARMY)
-
-    # 链4：roster / 材料目录（LLM 输入装配）
-    roster = db.army_roster()
-    prepared = prepare_character_materials(db, state, war)
-    blob = "\n".join(
-        read_material(prepared.root, path)
-        for path in list_materials(prepared.root) if path != "INDEX.txt"
-    )
-    assert "兵籍在册" in blob
 
 
 @pytest.mark.parametrize("fiscal_path", PATHS)

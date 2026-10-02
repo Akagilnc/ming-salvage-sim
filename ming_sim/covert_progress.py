@@ -493,11 +493,9 @@ def read_covert_task_contract(dossier: Mapping[str, object] | None) -> Optional[
     if not isinstance(payload, Mapping):
         raw_json = dossier.get("payload_json")
         if isinstance(raw_json, str) and raw_json.strip():
-            try:
-                loaded = json.loads(raw_json)
-            except (TypeError, ValueError):
-                loaded = None
-            payload = loaded if isinstance(loaded, Mapping) else None
+            payload = json.loads(raw_json)
+            if not isinstance(payload, Mapping):
+                raise ValueError("持久密令案卷载荷须为对象")
         else:
             payload = None
     if not isinstance(payload, Mapping):
@@ -701,11 +699,10 @@ def _dossier_payload_map(db: Any, dossier_id: int) -> Dict[str, object]:
     ).fetchone()
     if row is None:
         return {}
-    try:
-        payload = json.loads(str(row["payload_json"] or "{}"))
-    except (TypeError, ValueError):
-        return {}
-    return dict(payload) if isinstance(payload, Mapping) else {}
+    payload = json.loads(str(row["payload_json"] or "{}"))
+    if not isinstance(payload, dict):
+        raise ValueError("持久案卷载荷须为对象")
+    return payload
 
 
 def live_investigation_fact_keys(db: Any, target: str) -> List[str]:
@@ -760,12 +757,7 @@ def globally_used_fact_keys(db: Any, *, except_dossier_id: int = 0) -> set[str]:
     for row in rows:
         if skip and int(row["id"] or 0) == skip:
             continue
-        try:
-            payload = json.loads(str(row["payload_json"] or "{}"))
-        except (TypeError, ValueError):
-            continue
-        if not isinstance(payload, Mapping):
-            continue
+        payload = db.parse_engine_payload_json(row["payload_json"], surface="covert fact lanes")
         for lane in _lanes_from_payload(payload):
             if lane.get("used"):
                 used.add(str(lane["fact_key"]))
@@ -820,12 +812,7 @@ def read_substantiated_legal_reason_code(
         return ""
     rows = db.conn.execute("SELECT id, payload_json FROM decree_dossiers").fetchall()
     for row in rows:
-        try:
-            payload = json.loads(str(row["payload_json"] or "{}"))
-        except (TypeError, ValueError):
-            continue
-        if not isinstance(payload, Mapping):
-            continue
+        payload = db.parse_engine_payload_json(row["payload_json"], surface="substantiated covert facts")
         contract = payload.get(CONTRACT_KEY) if isinstance(payload.get(CONTRACT_KEY), Mapping) else {}
         if _investigation_target_of(contract) != name:
             continue

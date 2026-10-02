@@ -33,6 +33,8 @@ def _issue_audience_names(db: Any, issue: Any) -> set[str] | None:
     propagate unchanged.  Content fallback applies only when the events query
     succeeds with no row.
     """
+    if "origin_kind" not in issue.keys():
+        return None  # Non-event projections need not select event origin fields.
     origin_kind = str(issue["origin_kind"] or "")
     origin_ref = str(issue["origin_ref"] or "").strip()
     if origin_kind != "event_pool":
@@ -654,17 +656,6 @@ def build_character_knowledge(
             character_name,
         )
     ]
-    projected_turns = set()
-    for row in public_events:
-        source_id = str(row.get("source_id") or "")
-        if source_id.startswith("turn_report:") and source_id.endswith(":public"):
-            turn = source_id.removeprefix("turn_report:").removesuffix(":public")
-        elif source_id.startswith("projection:turn_report:"):
-            turn = source_id.removeprefix("projection:turn_report:")
-        else:
-            continue
-        if turn.isdigit():
-            projected_turns.add(int(turn))
     visible_public = [
         {
             key: (_prose(value) if key == "body" else value)
@@ -678,60 +669,16 @@ def build_character_knowledge(
         # representation allowed into the audience view.
         if not str(row.get("source_id") or "").startswith("turn_report:")
         and not re.fullmatch(r"settlement:narrative:\d+", str(row.get("source_id") or ""))
-        # When a source-preserving archive projection exists for this turn,
-        # expose it once through that archive rather than beside its source row.
-        and (
-            int(row.get("turn") or 0) not in projected_turns
-            or bool(row.get("excluded_names"))
-            or str(row.get("source_id") or "").startswith("projection:")
-            or str(row.get("source_id") or "").startswith("opening:")
-            or str(row.get("source_id") or "").startswith("directive:")
-        )
         if knowledge_row_visible_to(
             db,
             {**row, "office_type": office_type, "office": office_name},
             character_name,
         )
     ]
-    projection_bodies_by_turn: dict[int, list[str]] = {}
-    for row in visible_public:
-        if str(row.get("source_id") or "").startswith("projection:"):
-            projection_bodies_by_turn.setdefault(int(row.get("turn") or 0), []).append(
-                str(row.get("body") or "")
-            )
-    visible_public = [
-        row for row in visible_public
-        if str(row.get("source_id") or "").startswith("projection:")
-        or not any(
-            str(row.get("body") or "")
-            and str(row.get("body") or "") in aggregate
-            for aggregate in projection_bodies_by_turn.get(int(row.get("turn") or 0), [])
-        )
-    ]
-    # Collapse only exact same-turn archive/source duplicates.  Never compare
-    # substrings and never deduplicate across turns: those are independent
-    # historical facts even when their prose happens to overlap.
-    archive_bodies = {
-        (int(row.get("turn") or 0), str(row.get("body") or ""))
-        for row in visible_public
-        if str(row.get("source_id") or "").startswith("projection:")
-    }
-    visible_public = [
-        row for row in visible_public
-        if str(row.get("source_id") or "").startswith("projection:")
-        or (int(row.get("turn") or 0), str(row.get("body") or "")) not in archive_bodies
-    ]
-    deduped_public = []
-    seen_exact: set[tuple[int, str]] = set()
-    for row in visible_public:
-        identity = (int(row.get("turn") or 0), str(row.get("body") or ""))
-        if identity[1] and identity in seen_exact:
-            continue
-        seen_exact.add(identity)
-        deduped_public.append(row)
-    # Independently persisted public sayings never enter the archive
-    # aggregation/dedup rules above.  Append the authoritative public-layer
-    # projection after those rules, then join its layer prose.
+    # Distinct durable sources remain distinct, even when their prose matches
+    # or overlaps an archive. Text is not a source identity.
+    source_public = visible_public
+    # Independently persisted public sayings retain their authoritative layer.
     public_saying_events = [
         {
             key: (_prose(value) if key == "body" else value)
@@ -744,10 +691,10 @@ def build_character_knowledge(
             character_name,
         )
     ]
-    visible_public = [*deduped_public, *public_saying_events]
+    visible_public = [*source_public, *public_saying_events]
     public_bodies = [
         _prose(item.get("body") or item.get("title") or "")
-        for item in deduped_public
+        for item in source_public
         if (item.get("body") or item.get("title"))
         and not str(item.get("source_id") or "").startswith("opening:")
     ]

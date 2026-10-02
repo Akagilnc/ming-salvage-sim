@@ -11,7 +11,6 @@ from ming_sim.exceptions import DeclarationDataError
 import json
 import logging
 import re
-import sqlite3
 import threading
 import time
 import uuid
@@ -390,13 +389,10 @@ def _appointment_intent_is_current_office_noop(
     if conn is None or not clean_name or not desired:
         return False
     canonical = _canonical_minister_key(content, clean_name, db)
-    try:
-        row = conn.execute(
-            "SELECT status, office FROM characters WHERE name = ?",
-            (canonical,),
-        ).fetchone()
-    except sqlite3.Error:
-        return False
+    row = conn.execute(
+        "SELECT status, office FROM characters WHERE name = ?",
+        (canonical,),
+    ).fetchone()
     if row is None or str(row["status"] or "") != "active":
         return False
     current = normalize_office(str(row["office"] or ""))
@@ -417,12 +413,9 @@ def _target_active_officeholder(db: Any, name: str, content: Any = None) -> bool
     if conn is None or not clean:
         return False
     key = _canonical_minister_key(content, clean, db)
-    try:
-        row = conn.execute(
-            "SELECT status, office FROM characters WHERE name = ?", (key,)
-        ).fetchone()
-    except sqlite3.Error:
-        return False
+    row = conn.execute(
+        "SELECT status, office FROM characters WHERE name = ?", (key,)
+    ).fetchone()
     if row is None:
         return False
     return str(row["status"] or "") == "active" and bool(str(row["office"] or "").strip())
@@ -584,24 +577,15 @@ def _sync_offices_from_db_impl(content: GameContent, db: "GameDB", llm_config: O
         )
         import json as _json
 
-        try:
-            aliases = _json.loads(row["aliases"] or "[]")
-        except (TypeError, ValueError):
-            aliases = []
-        if not isinstance(aliases, list):
-            aliases = []
-        try:
-            personal_skills = _json.loads(row["personal_skills"] or "[]")
-        except (TypeError, ValueError):
-            personal_skills = []
-        if not isinstance(personal_skills, list):
-            personal_skills = []
-        try:
-            seed_guilt = _json.loads(row["seed_guilt"] or "{}")
-        except (TypeError, ValueError):
-            seed_guilt = {}
+        aliases = _json.loads(row["aliases"] or "[]")
+        personal_skills = _json.loads(row["personal_skills"] or "[]")
+        seed_guilt = _json.loads(row["seed_guilt"] or "{}")
+        if not isinstance(aliases, list) or any(not isinstance(value, str) for value in aliases):
+            raise ValueError("持久人物别名须为字符串列表")
+        if not isinstance(personal_skills, list) or any(not isinstance(value, str) for value in personal_skills):
+            raise ValueError("持久人物特技须为字符串列表")
         if not isinstance(seed_guilt, dict):
-            seed_guilt = {}
+            raise ValueError("持久人物罪情须为对象")
         characters[name] = Character(
             name=name,
             office=row["office"],

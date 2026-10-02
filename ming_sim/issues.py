@@ -669,25 +669,6 @@ def _fiscal_levy_base_transport(
     return max(0.0, seed_transport - liao_seed)
 
 
-def _load_region_fiscal_for_fiscal_levy(region_id: str, raw_fiscal: object) -> Optional[dict]:
-    if isinstance(raw_fiscal, dict):
-        return raw_fiscal
-    if raw_fiscal is None or raw_fiscal == "":
-        raw_fiscal = "{}"
-    elif not isinstance(raw_fiscal, (str, bytes, bytearray)):
-        tlog(f"[fiscal-levy] {region_id} fiscal 非字典，本{TURN_UNIT}饷率通道出列")
-        return None
-    try:
-        fiscal = json.loads(raw_fiscal)
-    except (TypeError, ValueError) as exc:
-        tlog(f"[fiscal-levy] {region_id} fiscal 解析失败，本{TURN_UNIT}饷率通道出列：{type(exc).__name__}: {exc}")
-        return None
-    if not isinstance(fiscal, dict):
-        tlog(f"[fiscal-levy] {region_id} fiscal 非字典，本{TURN_UNIT}饷率通道出列")
-        return None
-    return fiscal
-
-
 def _fiscal_levy_event_by_id(event_id: str) -> Optional[Event]:
     return _ctx().event_by_id.get(event_id)
 
@@ -728,7 +709,6 @@ def _fiscal_levy_land_denominator(
     meta: Dict[str, object],
     parsed_total_land: float,
     *,
-    denominator_complete: bool,
     region_id: str,
 ) -> float:
     if _SETTLE_META_LAND_DENOMINATOR_KEY in meta:
@@ -736,9 +716,7 @@ def _fiscal_levy_land_denominator(
             meta[_SETTLE_META_LAND_DENOMINATOR_KEY],
             ctx=f"{region_id}.settle._meta.{_SETTLE_META_LAND_DENOMINATOR_KEY}",
         )
-    if denominator_complete:
-        return parsed_total_land
-    return 0.0
+    return parsed_total_land
 
 
 def _fiscal_levy_share_seed(
@@ -802,37 +780,28 @@ def _apply_fiscal_levy_targets(
     jiao_in_force = _jiao_levy_in_force(terminal_records, state)
     lian_levy_approved = _fiscal_levy_event_approved(terminal_records, _LIAN_LEVY_START_EVENT_ID)
     region_entries: List[Dict[str, object]] = []
-    denominator_complete = True
     for row in db.conn.execute("SELECT id, fiscal FROM regions ORDER BY id").fetchall():
         region_id = str(row["id"])
-        fiscal = _load_region_fiscal_for_fiscal_levy(region_id, row["fiscal"])
-        if fiscal is None:
-            denominator_complete = False
+        fiscal = db.parse_engine_payload_json(row["fiscal"], surface=f"{region_id} fiscal levy")
+        if "settle" not in fiscal:
             continue
-        try:
-            if "settle" not in fiscal:
-                continue
-            settle = fiscal.get("settle")
-            if not isinstance(settle, dict):
-                raise ValueError(f"{region_id}.settle 非字典")
-            p = settle.get("p")
-            st = settle.get("st")
-            if not isinstance(p, dict):
-                raise ValueError(f"{region_id}.settle.p 非字典")
-            if not isinstance(st, dict):
-                raise ValueError(f"{region_id}.settle.st 非字典")
-            meta_raw = settle.get("_meta") or {}
-            if not isinstance(meta_raw, dict):
-                raise ValueError(f"{region_id}.settle._meta 非字典")
-            meta = dict(meta_raw)
-            liao_seed = _fiscal_levy_liao_seed(meta, p, region_id)
-            land = _as_float(st.get("官民田"), ctx=f"{region_id}.settle.st.官民田")
-            base_transport = _fiscal_levy_base_transport(meta, p, liao_seed, region_id)
-            _validate_fiscal_levy_share_meta(meta, region_id)
-        except ValueError as exc:
-            denominator_complete = False
-            tlog(f"[fiscal-levy] {region_id} settle 解析失败，本{TURN_UNIT}饷率通道出列：{type(exc).__name__}: {exc}")
-            continue
+        settle = fiscal.get("settle")
+        if not isinstance(settle, dict):
+            raise ValueError(f"{region_id}.settle 非字典")
+        p = settle.get("p")
+        st = settle.get("st")
+        if not isinstance(p, dict):
+            raise ValueError(f"{region_id}.settle.p 非字典")
+        if not isinstance(st, dict):
+            raise ValueError(f"{region_id}.settle.st 非字典")
+        meta_raw = settle.get("_meta") or {}
+        if not isinstance(meta_raw, dict):
+            raise ValueError(f"{region_id}.settle._meta 非字典")
+        meta = dict(meta_raw)
+        liao_seed = _fiscal_levy_liao_seed(meta, p, region_id)
+        land = _as_float(st.get("官民田"), ctx=f"{region_id}.settle.st.官民田")
+        base_transport = _fiscal_levy_base_transport(meta, p, liao_seed, region_id)
+        _validate_fiscal_levy_share_meta(meta, region_id)
         region_entries.append({
             "region_id": region_id,
             "fiscal": fiscal,
@@ -858,7 +827,6 @@ def _apply_fiscal_levy_targets(
         land_denominator = _fiscal_levy_land_denominator(
             meta,
             total_land,
-            denominator_complete=denominator_complete,
             region_id=region_id,
         )
         has_jiao_seed = _SETTLE_META_JIAO_SEED_KEY in meta
@@ -1610,11 +1578,10 @@ def gather_impeachment_surge_candidates(state: GameState, db: GameDB) -> List[Di
         # #622/#1260 单源：仅有旨外 durable 的变形才构成 deformation_exposure。
         if not db.dossier_has_beyond_intent(did):
             continue
-        try:
-            roster = json.loads(str(row["participant_roster"] or "[]"))
-        except (TypeError, ValueError):
-            continue
-        if not isinstance(roster, list) or not roster:
+        roster = json.loads(str(row["participant_roster"] or "[]"))
+        if not isinstance(roster, list) or any(not isinstance(item, dict) for item in roster):
+            raise ValueError("持久案卷参与人须为对象列表")
+        if not roster:
             continue
         participant_ids = [
             str(item.get("character_id") or "").strip()
@@ -2674,10 +2641,7 @@ def clear_gated_legacies(db: GameDB, state: GameState) -> List[str]:
     ).fetchall()
     cleared: List[str] = []
     for row in rows:
-        try:
-            gate = json.loads(str(row["clear_gate"] or "{}"))
-        except (ValueError, TypeError):
-            gate = {}
+        gate = db.parse_engine_payload_json(row["clear_gate"], surface="legacy clear gate")
         if not gate:
             continue
         if _gate_passed(gate, state.metrics, db):

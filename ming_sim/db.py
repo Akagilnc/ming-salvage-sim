@@ -477,11 +477,10 @@ def _has_stop_condition(stop_condition: object) -> bool:
     raw = str(stop_condition or "").strip()
     if not raw:
         return False
-    try:
-        parsed = json.loads(raw)
-    except (TypeError, ValueError):
-        return False
-    return isinstance(parsed, (dict, list)) and bool(parsed)
+    parsed = json.loads(raw)
+    if not isinstance(parsed, (dict, list)):
+        raise ValueError("持久停止条件须为对象或列表")
+    return bool(parsed)
 
 
 def _optional_positive_dossier_id(raw: object, *, field: str) -> Optional[int]:
@@ -491,9 +490,12 @@ def _optional_positive_dossier_id(raw: object, *, field: str) -> Optional[int]:
     """
     if raw in (None, ""):
         return None
-    value = strict_int(raw, accept_numeric_strings=False)
+    try:
+        value = strict_int(raw, accept_numeric_strings=False)
+    except (TypeError, ValueError) as exc:
+        raise DeclarationDataError(f"{field} 非法 shape：{raw!r}") from exc
     if value <= 0:
-        raise ValueError(f"{field} 非法 shape：{raw!r}")
+        raise DeclarationDataError(f"{field} 非法 shape：{raw!r}")
     return value
 
 
@@ -711,18 +713,14 @@ _OFFICE_TYPE_LLM_CACHE: Dict[str, str] = {}
 
 
 def _offices_table() -> Dict[str, object]:
-    """加载 content/offices.json（明代职官→office_type 参考表），缓存。失败返回空表。"""
+    """加载 content/offices.json（明代职官→office_type 参考表），缓存。"""
     global _OFFICES_TABLE
     if _OFFICES_TABLE is None:
-        try:
-            from ming_sim.assets import load_json_asset
-            data = load_json_asset("offices.json")
-            _OFFICES_TABLE = data if isinstance(data, dict) else {}
-        except Exception as exc:
-            # 注：文件缺失 / JSON 损坏会在 load_json_asset 直接 SystemExit fail-loud（核心内容
-            # 不该静默回空表），不经此分支；这里只兜 import / 意外错误（gemini-code-assist cmr）。
-            tlog(f"[content] offices.json 意外加载失败，回空表：{exc}")  # #14 surface
-            _OFFICES_TABLE = {}
+        from ming_sim.assets import load_json_asset
+        data = load_json_asset("offices.json")
+        if not isinstance(data, dict):
+            raise ValueError("offices.json 须为对象")
+        _OFFICES_TABLE = data
     return _OFFICES_TABLE
 
 

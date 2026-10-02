@@ -149,8 +149,6 @@ def _month_fact_materials(
     include_secret_sources=False：邸报作者，滤密令来源。
     include_secret_sources=True：整月密报 run，可读密令来源。
     """
-    import json
-
     from ming_sim.materials import is_secret_order_origin, secret_order_dossier_ids
 
     turn = int(state.turn)
@@ -165,14 +163,8 @@ def _month_fact_materials(
         ).fetchall()
         for row in rows:
             decree_ref = str(row["decree_ref"] or "")
-            try:
-                declaration = json.loads(row["declaration_json"] or "{}")
-            except json.JSONDecodeError:
-                declaration = {}
-            try:
-                visible = json.loads(row["visible_refs_json"] or "{}")
-            except json.JSONDecodeError:
-                visible = {}
+            declaration = db.parse_engine_payload_json(row["declaration_json"], surface="staged declaration")
+            visible = db.parse_engine_payload_json(row["visible_refs_json"], surface="staged visible refs")
             if not include_secret_sources and (
                 _decree_ref_is_secret(db, decree_ref)
                 or _secret_sourced(declaration)
@@ -216,10 +208,7 @@ def _month_fact_materials(
             ):
                 if not include_secret_sources and str(row["source"] or "") == "secret_order":
                     continue
-                try:
-                    item = json.loads(row["item_json"] or "{}")
-                except json.JSONDecodeError:
-                    item = {}
+                item = db.parse_engine_payload_json(row["item_json"], surface="rejection item")
                 if not include_secret_sources and (
                     _secret_sourced(item) or _item_is_secret_dossier(item, secret_dossiers)
                 ):

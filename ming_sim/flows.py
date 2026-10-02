@@ -32,17 +32,19 @@ _CENTRAL_JINGYUN_HUMAN_LOSS_RATE = "central_jingyun_human_loss_rate"
 _CENTRAL_JINGYUN_SINK_LOSS_RATE = "central_jingyun_sink_loss_rate"
 
 
-class _SubstrateHubFixedFlowAbort(RuntimeError):
-    """Marker for substrate hub bad-state/conservation failures in fixed fiscal."""
+class _FixedFiscalAbort(RuntimeError):
+    """Identifies the failing fixed-fiscal operation, not its underlying cause."""
 
 
 def raise_fixed_period_flow_abort_if_needed(
-    db: GameDB, state: GameState, exc: BaseException
+    db: GameDB, state: GameState, exc: BaseException, *, in_fixed_fiscal: bool = False,
 ) -> None:
-    """Convert fixed-flow marker aborts after any surrounding transaction has rolled back."""
-    if not isinstance(exc, _SubstrateHubFixedFlowAbort):
+    """Record fixed-fiscal failures after rollback, preserving their original cause."""
+    if not in_fixed_fiscal and not isinstance(exc, _FixedFiscalAbort):
         return
     if getattr(db.conn, "_commit_suspended", False):
+        if in_fixed_fiscal and not isinstance(exc, _FixedFiscalAbort):
+            raise _FixedFiscalAbort(str(exc)) from exc
         return
     pack_path = write_error_pack(db, state, exc=exc, extracted=None, resolve_ctx=None)
     raise SettlementAbort(
@@ -230,7 +232,7 @@ def _as_settle_param_nonnegative_float(label: str, value: object) -> float:
     return amount
 
 
-def _substrate_hub_salt_commerce_income_split(db: GameDB, *, strict: bool = True) -> Tuple[float, float]:
+def _substrate_hub_salt_commerce_income_split(db: GameDB) -> Tuple[float, float]:
     """Salt and commerce taxes stay as central side-channel income under cutover."""
     salt_total = 0.0
     commerce_total = 0.0
@@ -238,16 +240,7 @@ def _substrate_hub_salt_commerce_income_split(db: GameDB, *, strict: bool = True
         "SELECT id, fiscal FROM regions WHERE controlled_by = 'ming'"
     ).fetchall()
     for row in rows:
-        try:
-            fiscal = json.loads(str(row["fiscal"] or "{}"))
-        except (TypeError, ValueError) as exc:
-            if not strict:
-                continue
-            raise ValueError(f"region {row['id']} fiscal JSON 非法，无法汇总盐商旁路") from exc
-        if not isinstance(fiscal, dict):
-            if not strict:
-                continue
-            raise ValueError(f"region {row['id']} fiscal 非字典，无法汇总盐商旁路")
+        fiscal = db.parse_engine_payload_json(row["fiscal"], surface="salt commerce fiscal")
         salt_total += _as_finite_nonnegative_float(
             f"region {row['id']} fiscal.salt_tax", fiscal.get("salt_tax", 0)
         )
@@ -755,11 +748,8 @@ def _substrate_hub_jingyun_due_by_region(db: GameDB) -> Dict[str, float]:
         "SELECT id, fiscal FROM regions WHERE controlled_by = 'ming'"
     ).fetchall()
     for row in rows:
-        try:
-            fiscal = json.loads(str(row["fiscal"] or "{}"))
-        except (TypeError, ValueError):
-            continue
-        settle = fiscal.get("settle") if isinstance(fiscal, dict) else None
+        fiscal = db.parse_engine_payload_json(row["fiscal"], surface="jingyun fiscal")
+        settle = fiscal.get("settle")
         p = settle.get("p") if isinstance(settle, dict) else None
         if not isinstance(p, dict):
             continue
@@ -1111,7 +1101,7 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
         try:
             with atomic(db):
                 return apply_fixed_period_flows(db, state)
-        except _SubstrateHubFixedFlowAbort as exc:
+        except _FixedFiscalAbort as exc:
             state.metrics.clear()
             state.metrics.update(metrics_before)
             raise_fixed_period_flow_abort_if_needed(db, state, exc)
@@ -1168,7 +1158,7 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
                     float(row["province_pay_arrears"] or 0), float(row["central_pay_arrears"] or 0),
                 )
         except ValueError as exc:
-            raise _SubstrateHubFixedFlowAbort(
+            raise _FixedFiscalAbort(
                 f"substrate_hub 军饷饷源校验失败：{exc}"
             ) from exc
         army_map = {str(r["id"]): r for r in army_rows_raw}
@@ -1184,7 +1174,7 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
                 central_due_by_army,
             )
         except ValueError as exc:
-            raise _SubstrateHubFixedFlowAbort(
+            raise _FixedFiscalAbort(
                 f"substrate_hub 京运补/中央军饷 hub 分配失败：{exc}"
             ) from exc
         _add_fiscal_container(
@@ -1210,7 +1200,7 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
         try:
             hub_debit = _debit_substrate_hub_outbound(db, state, hub_outbound)
         except RuntimeError as exc:
-            raise _SubstrateHubFixedFlowAbort(
+            raise _FixedFiscalAbort(
                 f"substrate_hub 京运补/中央军饷 hub 扣账失败：{exc}"
             ) from exc
         if hub_debit > 0:
@@ -1574,7 +1564,7 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
                     _CENTRAL_TAICANG_SINK_LOSS_RATE,
                 )
             except ValueError as exc:
-                raise _SubstrateHubFixedFlowAbort(
+                raise _FixedFiscalAbort(
                     f"substrate_hub 太仓入库 hub 分配失败：{exc}"
                 ) from exc
             central_loss = taicang_human_loss + taicang_sink_loss
@@ -1600,7 +1590,7 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
                     reason,
                 )
                 if actual != amount:
-                    raise _SubstrateHubFixedFlowAbort(
+                    raise _FixedFiscalAbort(
                         f"{category}入库实记不符：预计{amount}万两，实际{actual}万两"
                     )
                 flows.append({
@@ -1712,7 +1702,7 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
             try:
                 db.assert_army_pay_source_container_conservation()
             except ValueError as exc:
-                raise _SubstrateHubFixedFlowAbort(
+                raise _FixedFiscalAbort(
                     f"substrate_hub 军饷饷源守恒失败：{exc}"
                 ) from exc
     finally:
@@ -1767,7 +1757,7 @@ def _advance_province_fiscal_substrate(
                     f"[fiscal-substrate] {outcome.region_id} 本{TURN_UNIT}结算中止："
                     f"{type(exc).__name__}: {exc}"
                 )
-                raise _SubstrateHubFixedFlowAbort(
+                raise _FixedFiscalAbort(
                     f"{outcome.region_id} 省级财政基座结算失败：{type(exc).__name__}: {exc}"
                 ) from exc
             tlog(

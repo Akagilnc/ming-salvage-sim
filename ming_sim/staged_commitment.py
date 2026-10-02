@@ -100,26 +100,17 @@ def normalize_commitment_stages(raw: object) -> List[Dict[str, object]]:
         text = raw.strip()
         if not text or text in ("[]", "{}"):
             return []
-        try:
-            data = json.loads(text)
-        except (TypeError, ValueError):
-            return []
+        data = json.loads(text)
     if not isinstance(data, (list, tuple)):
-        return []
+        raise ValueError("承诺分段须为列表")
     out: List[Dict[str, object]] = []
     for idx, item in enumerate(data):
         if not isinstance(item, dict):
-            continue
-        try:
-            due_turn = int(item.get("due_turn") or 0)
-        except (TypeError, ValueError):
-            continue
+            raise ValueError("承诺分段项须为对象")
+        due_turn = int(item.get("due_turn") or 0)
         if due_turn <= 0:
-            continue
-        try:
-            stage_idx = int(item.get("stage_idx", idx))
-        except (TypeError, ValueError):
-            stage_idx = idx
+            raise ValueError("承诺分段期限须为正整数")
+        stage_idx = int(item.get("stage_idx", idx))
         criterion = str(item.get("criterion_text") or item.get("criterion") or "")
         origin_context = str(item.get("origin_context") or item.get("origin") or "")
         if not criterion.strip() and origin_context.strip():
@@ -338,7 +329,6 @@ def list_due_grant_report_dossiers_for_scan(
     commitment_ref=0；stage_idx=dossier_id 作 UNIQUE 去重键；
     payload 携带 dossier_id/origin_ref 供 due_review 桥接。
     """
-    import json as _json
 
     rows = db.conn.execute(
         """
@@ -356,12 +346,7 @@ def list_due_grant_report_dossiers_for_scan(
     for row in rows:
         if str(row["execution_outcome"] or "").strip():
             continue
-        try:
-            payload = _json.loads(str(row["payload_json"] or "{}"))
-        except (TypeError, ValueError):
-            payload = {}
-        if not isinstance(payload, dict):
-            payload = {}
+        payload = db.parse_engine_payload_json(row["payload_json"], surface="due grant report")
         # due_turn 单源：有未来 due 且仍 executing 即到期候选（不另滤 cadence/grant_action）
         did = int(row["id"])
         due_turn = int(row["due_turn"] or 0)

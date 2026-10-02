@@ -97,33 +97,22 @@ def decode_plea_meta(origin_context: object) -> Dict[str, object]:
     if not text.startswith(_META_PREFIX):
         return {}
     raw = text[len(_META_PREFIX):]
-    try:
-        data = json.loads(raw)
-    except (TypeError, ValueError):
-        return {}
+    data = json.loads(raw)
     if not isinstance(data, dict):
-        return {}
+        raise ValueError("持久哭谏元数据须为对象")
     return data
 
 
 def commitment_natural_due_turn(row: Any) -> int:
     """承诺自身 due：段表 max due，否则 end_turn；0=无到期上限。"""
-    try:
-        keys = row.keys()  # sqlite3.Row
-    except Exception:
-        keys = list(row.keys()) if isinstance(row, dict) else []
+    keys = row.keys()
     stages_raw = row["stages_json"] if "stages_json" in keys else (
         row.get("stages_json") if isinstance(row, dict) else None
     )
     stages = normalize_commitment_stages(stages_raw)
     if stages:
         return max(int(s["due_turn"]) for s in stages)
-    try:
-        end_turn = int(row["end_turn"] if "end_turn" in keys else (
-            row.get("end_turn") if isinstance(row, dict) else 0
-        ) or 0)
-    except (TypeError, ValueError):
-        end_turn = 0
+    end_turn = int(row["end_turn"] or 0) if "end_turn" in keys else 0
     return end_turn if end_turn > 0 else 0
 
 
@@ -158,20 +147,16 @@ def _commitment_origin_refs(row: Any, commitment_ref: int) -> Set[str]:
 
 def _sponsor_names_for_commitment(db: Any, row: Any) -> List[str]:
     names: List[str] = []
-    try:
-        roster = json.loads(row["participant_roster"] or "[]")
-    except (TypeError, ValueError):
-        roster = []
+    roster = json.loads(row["participant_roster"] or "[]")
+    if not isinstance(roster, list):
+        raise ValueError("持久承诺参与人须为列表")
     if isinstance(roster, list):
         for item in roster:
             if isinstance(item, dict) and item.get("tier") == "主办":
                 cid = str(item.get("character_id") or "").strip()
                 if cid:
                     names.append(cid)
-    try:
-        origin_ref = row["origin_ref"] if "origin_ref" in row.keys() else ""
-    except Exception:
-        origin_ref = ""
+    origin_ref = row["origin_ref"] if "origin_ref" in row.keys() else ""
     did = parse_dossier_id(origin_ref)
     if did is not None:
         dossier = db.get_decree_dossier(int(did))
@@ -202,16 +187,11 @@ def _dedicated_accounts(row: Any) -> List[str]:
             seen.add(acc)
             accounts.append(acc)
 
-    try:
-        keys = row.keys()
-    except Exception:
-        keys = []
-
+    keys = row.keys()
     tags_raw = row["tags"] if "tags" in keys else "[]"
-    try:
-        tags = json.loads(tags_raw or "[]")
-    except (TypeError, ValueError):
-        tags = []
+    tags = json.loads(tags_raw or "[]")
+    if not isinstance(tags, list):
+        raise ValueError("持久承诺标签须为列表")
     if isinstance(tags, list):
         for tag in tags:
             t = str(tag or "").strip()
@@ -1171,10 +1151,9 @@ def _sponsor_transferred(db: Any, name: str, commitment_row: Any) -> bool:
 
     # 承诺 roster 上记录的 role/office 快照
     expected = ""
-    try:
-        roster = json.loads(commitment_row["participant_roster"] or "[]")
-    except (TypeError, ValueError):
-        roster = []
+    roster = json.loads(commitment_row["participant_roster"] or "[]")
+    if not isinstance(roster, list):
+        raise ValueError("持久承诺参与人须为列表")
     if isinstance(roster, list):
         for item in roster:
             if not isinstance(item, dict):
@@ -1199,10 +1178,7 @@ def _sponsor_transferred(db: Any, name: str, commitment_row: Any) -> bool:
                 (int(did),),
             ).fetchone()
             if drow is not None and str(drow["executor_id"] or "") == name:
-                try:
-                    payload = json.loads(drow["payload_json"] or "{}")
-                except (TypeError, ValueError):
-                    payload = {}
+                payload = db.parse_engine_payload_json(drow["payload_json"], surface="sponsor office snapshot")
                 if isinstance(payload, dict):
                     expected = str(
                         payload.get("executor_office")

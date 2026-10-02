@@ -214,11 +214,10 @@ def _dossier_payload_dict(row: Mapping[str, object] | Dict[str, object]) -> Dict
     payload = row.get("payload")
     if isinstance(payload, dict):
         return payload
-    try:
-        parsed = json.loads(str(row.get("payload_json") or "{}"))
-    except (TypeError, ValueError, json.JSONDecodeError):
-        return {}
-    return parsed if isinstance(parsed, dict) else {}
+    parsed = json.loads(str(row.get("payload_json") or "{}"))
+    if not isinstance(parsed, dict):
+        raise ValueError("持久案卷载荷须为对象")
+    return parsed
 
 
 def _is_stalled_deliberation(dossier: Mapping[str, object] | Dict[str, object]) -> bool:
@@ -1152,6 +1151,7 @@ def pre_settle(
     # state.metrics（flows.py:192）、尾部 turn_phase 已被赋 settling，脏 settling 会被下次 pre_settle
     # 守门跳过=该月财政永久丢（cmr S4 r1 F4）。嵌套时跳过 reload，由最外层拥有者处理。见 atomic_and_reload。
     collector = RejectionCollector()
+    in_fixed_fiscal = False
     try:
         with atomic_and_reload(
             db, state, content=content,
@@ -1171,6 +1171,7 @@ def pre_settle(
             )
             if committed:
                 tlog(f"[pending_actions] 颁诏批量落库 {len(committed)} 条：{[(c['kind'], c['action']) for c in committed]}")
+            in_fixed_fiscal = True
             fiscal_levies = apply_historical_fiscal_rates(state, db, commit=False)
             if fiscal_levies:
                 tlog(
@@ -1180,6 +1181,7 @@ def pre_settle(
             tlog("结算 1/4 固定月度财政 tick")
             # 落账副作用；明细不再进 simulator payload（欠饷哗变走前置事件/issue）
             apply_fixed_period_flows(db, state)
+            in_fixed_fiscal = False
             # 0095/#668 在途倒数 tick：remaining -= 1.0*factor，≤0 引擎抵达。
             # 必须先于 apply_event_terminal_states / auto_trigger_seed_issues：门控读 location 前
             # 在途者须先完成本月抵达（decree 既有顺序约束）。
@@ -1231,7 +1233,7 @@ def pre_settle(
             db.save_state(state)
             collector.flush_to_db(db)
     except BaseException as exc:
-        raise_fixed_period_flow_abort_if_needed(db, state, exc)
+        raise_fixed_period_flow_abort_if_needed(db, state, exc, in_fixed_fiscal=in_fixed_fiscal)
         raise
     mirror_rejections_after_commit(db, collector, rejections_jsonl_path)
     return auto_triggered

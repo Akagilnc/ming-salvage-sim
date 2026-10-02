@@ -74,12 +74,9 @@ def build_pending_summaries(db: Any, turn: int, *, night_id: int = 0) -> List[st
     rows = db.conn.execute(sql, tuple(params)).fetchall()
     out: List[str] = []
     for row in rows:
-        try:
-            payload = json.loads(str(row["payload_json"] or "{}"))
-        except (TypeError, ValueError):
-            payload = {}
+        payload = json.loads(str(row["payload_json"] or "{}"))
         if not isinstance(payload, dict):
-            payload = {}
+            raise ValueError("持久待办载荷须为对象")
         text = str(payload.get("text") or row["action"] or "")
         brief = text if text.strip() else str(row["kind"] or "")
         approved = "已应允" if int(row["night_approved"] or 0) else "待应允"

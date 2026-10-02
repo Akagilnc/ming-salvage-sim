@@ -1561,12 +1561,9 @@ def _scene_present_rows(db: Any, state: Any) -> list[tuple[str, str]]:
 
 
 def _json_list_field(raw: object) -> list[str]:
-    try:
-        value = json.loads(raw or "[]")
-    except (TypeError, ValueError):
-        return []
-    if not isinstance(value, list):
-        return []
+    value = json.loads(raw or "[]")
+    if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
+        raise ValueError("持久人物名单须为字符串列表")
     return [str(item) for item in value if str(item).strip()]
 
 

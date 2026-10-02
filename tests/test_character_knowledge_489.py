@@ -175,10 +175,9 @@ def test_turn_report_keeps_source_specific_secret_exclusion_boundary(game):
 
     view = db.get_character_knowledge(state, minister.name)
 
-    assert marker in view["world"]["public"]
-    assert any(marker in item.get("body", "") for item in view["public_events"])
-    assert not any("SECRET_SOURCE_MARKER_490" in item.get("body", "")
-                   for item in view["public_events"])
+    public_sources = {item["source_id"] for item in view["public_events"]}
+    assert "test:490:public" in public_sources
+    assert f"secret_order:{order}" not in public_sources
 
 def test_turn_report_projects_public_and_secret_items_per_character(game):
     db, state, content = game
@@ -198,8 +197,9 @@ def test_turn_report_projects_public_and_secret_items_per_character(game):
 
     view = db.get_character_knowledge(state, minister.name)
 
-    assert public_marker in view["world"]["public"]
-    assert secret_marker not in view["world"]["public"]
+    public_sources = {item["source_id"] for item in view["public_events"]}
+    assert "public:mixed-report" in public_sources
+    assert "restricted:mixed-report" not in public_sources
 
 def test_participation_survives_restore(game):
     db, state, content = game
@@ -234,7 +234,9 @@ def test_undo_chat_turn_removes_chat_derived_knowledge_from_context(game):
     db.record_chat_turn_rollback_diffs(chat_turn_id, before, after)
     db.update_chat_turn_messages(chat_turn_id, user_message_id=message_id)
 
-    assert any(marker in item["body"] for item in db.get_character_knowledge(state, minister.name)["events"])
+    assert f"chat_message:{message_id}" in {
+        item["source_id"] for item in db.get_character_knowledge(state, minister.name)["events"]
+    }
 
     db.undo_chat_turn(chat_turn_id)
 
@@ -245,7 +247,9 @@ def test_undo_chat_turn_removes_chat_derived_knowledge_from_context(game):
     assert db.conn.execute(
         "SELECT COUNT(*) FROM character_knowledge_sources WHERE source_id=?", (source_id,)
     ).fetchone()[0] == 0
-    assert not any(marker in item["body"] for item in db.get_character_knowledge(state, minister.name)["events"])
+    assert source_id not in {
+        item["source_id"] for item in db.get_character_knowledge(state, minister.name)["events"]
+    }
 
 
 def test_delete_chat_messages_removes_chat_derived_knowledge_from_context(game):
@@ -264,7 +268,9 @@ def test_delete_chat_messages_removes_chat_derived_knowledge_from_context(game):
     assert db.conn.execute(
         "SELECT COUNT(*) FROM character_knowledge_sources WHERE source_id=?", (source_id,)
     ).fetchone()[0] == 0
-    assert not any(marker in item["body"] for item in db.get_character_knowledge(state, minister.name)["events"])
+    assert source_id not in {
+        item["source_id"] for item in db.get_character_knowledge(state, minister.name)["events"]
+    }
 
 def test_public_directive_remains_visible_on_a_later_turn(game):
     db, state, content = game

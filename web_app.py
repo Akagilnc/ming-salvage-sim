@@ -1603,14 +1603,8 @@ class WebGame:
             if leg.clear_narrative
         }
         for row in self.db.list_active_legacies(self.state):
-            try:
-                eff = json.loads(str(row["modifiers"] or "{}"))
-            except Exception:
-                eff = {}
-            try:
-                clear_gate = json.loads(str(row["clear_gate"] or "{}"))
-            except Exception:
-                clear_gate = {}
+            eff = self.db.parse_engine_payload_json(row["modifiers"], surface="legacy modifiers")
+            clear_gate = self.db.parse_engine_payload_json(row["clear_gate"], surface="legacy clear gate")
             remaining_months = self.db.legacy_remaining_months(row, self.state)
             clear_condition = opening_clear_text.get(str(row["legacy_key"] or ""), "")
             if not clear_condition and clear_gate:

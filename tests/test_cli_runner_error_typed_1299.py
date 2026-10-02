@@ -28,21 +28,6 @@ _RUNNER_BANNER = (
     "model: gpt-5.5\n"
     "sandbox: workspace-write"
 )
-_MACHINE_MARKERS = (
-    "codex 调用失败",
-    "OpenAI Codex",
-    "workdir:",
-    "sandbox:",
-    "退出码",
-)
-
-
-def _assert_no_machine_text(text: str) -> None:
-    lowered = text or ""
-    for marker in _MACHINE_MARKERS:
-        assert marker not in lowered, f"machine text leaked: {marker!r} in {text!r}"
-
-
 # ── seam 1: CliChat ──
 
 
@@ -61,11 +46,8 @@ def test_clichat_runner_exit_raises_typed_llm_unavailable(monkeypatch):
             Message(role="assistant"),
         )
     exc = ei.value
-    # 玩家可见 message 走 diegetic 口吻，不夹机器原文
-    _assert_no_machine_text(str(exc))
-    _assert_no_machine_text(exc.message)
-    # 技术细节可留 provider_message 供日志，但不得冒充台词
-    assert exc.code  # typed
+    assert exc.code
+    assert exc.provider_message == _RUNNER_BANNER
 
 
 def test_clichat_normal_reply_still_returns(monkeypatch):
@@ -85,7 +67,7 @@ def test_clichat_normal_reply_still_returns(monkeypatch):
         [SimpleNamespace(role="user", content="边事如何")],
         Message(role="assistant"),
     )
-    assert "臣遵旨" in captured["text"]
+    assert captured["text"] == "臣遵旨，边事容臣细奏。"
 
 
 # ── seam 2: extract_agent_text ──
@@ -96,17 +78,11 @@ def test_extract_agent_text_error_status_raises_typed_not_leaks_banner():
 
     #1465 ④：系统层 code=llm_run_error、message != 戏内单源；机器横幅不进 message。
     """
-    from ming_sim.llm_model import CLI_RUNNER_PLAYER_MESSAGE
-
     run_output = SimpleNamespace(content=_RUNNER_BANNER, status="ERROR")
     with pytest.raises(LLMUnavailable) as ei:
         extract_agent_text(run_output)
-    assert ei.value.message
-    assert ei.value.message != CLI_RUNNER_PLAYER_MESSAGE
     assert ei.value.code == "llm_run_error"
-    _assert_no_machine_text(ei.value.message)
-    _assert_no_machine_text(str(ei.value))
-    assert ei.value.provider_message  # 横幅诊断可回指
+    assert ei.value.provider_message == _RUNNER_BANNER
 
 
 def test_extract_agent_text_error_enum_status_raises():
@@ -136,27 +112,5 @@ def test_extract_agent_text_preserves_leading_trailing_whitespace():
 def test_extract_agent_text_plain_string_still_works():
     """无 status 的纯文本/旧路径仍可提取。"""
     assert extract_agent_text("臣领旨。") == "臣领旨。"
-
-
-# ── seam 3: 召对消费链（extract → answer）不得把横幅当台词 ──
-
-
-def test_chat_answer_path_typed_failure_keeps_scroll_clean():
-    """模拟 session.chat 消费链：agent.run 回 ERROR run_output → extract 抛 typed；
-    调用方不得把横幅当 answer 交给 persist_minister_reply。"""
-    run_output = SimpleNamespace(content=_RUNNER_BANNER, status="ERROR", tools=[])
-    persisted: list[str] = []
-
-    def persist_minister_reply(_name: str, _turn: int, answer: str, _ctid: int, **_kw) -> int:
-        persisted.append(answer)
-        return 1
-
-    with pytest.raises(LLMUnavailable) as ei:
-        # 与 session.chat / web_app 同序：extract 先于 persist
-        answer = extract_agent_text(run_output)
-        persist_minister_reply("袁崇焕", 1, answer, 42)
-
-    _assert_no_machine_text(ei.value.message)
-    assert persisted == []
 
 

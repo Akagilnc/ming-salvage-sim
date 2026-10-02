@@ -1269,7 +1269,7 @@ def _dispatch_commissions(
             )
             try:
                 build_covert_task_contract(covert_task=secret.get("covert_task"))
-            except (CovertContractError, TypeError, ValueError) as exc:
+            except CovertContractError as exc:
                 _reject(rejected, item, str(exc), "invalid_shape", source)
                 continue
             # ADR 0028 决定 2：捕获字段含排除名单（黑名单）／知情圈。声明未给即
@@ -1448,7 +1448,7 @@ def _dispatch_commissions(
         from ming_sim.db import imperial_push_target_dossier_id
         try:
             push_id = imperial_push_target_dossier_id(item)
-        except ValueError as exc:
+        except DeclarationDataError as exc:
             _reject(rejected, item, str(exc), "invalid_shape", source)
             continue
         if push_id is not None:
@@ -1493,7 +1493,7 @@ def _dispatch_commissions(
             continue
         try:
             raw_affair = declaration_from_payload(item, allowed=ATTACH_BIRTH)
-        except (TypeError, ValueError) as exc:
+        except DeclarationDataError as exc:
             _reject(rejected, item, str(exc), "invalid_shape", source)
             continue
         if appointment_fields:
@@ -2015,7 +2015,7 @@ def _dispatch_travel_tones(
             continue
         try:
             tone = normalize_travel_tone(item.get("tone") or item.get("行程语气"))
-        except ValueError as exc:
+        except DeclarationDataError as exc:
             _reject(rejected, item, str(exc), "invalid_enum", source)
             continue
         try:

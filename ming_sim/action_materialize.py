@@ -179,7 +179,7 @@ def _apply_existing_appointment_hit(
         if annotate:
             mode_mark = resolve_directive_mode(
                 extracted=extracted_mode,
-                existing=_office_payload(row).get("mode"),
+                existing=_pending_action_payload(row).get("mode"),
             )
             pending_id = _annotate_office_pending_path(
                 session.db,
@@ -251,9 +251,7 @@ def stage_pacification_candidate(
     for row in pending_rows:
         if row.get("kind") != "directive":
             continue
-        payload = json.loads(str(row.get("payload_json") or "{}"))
-        if not isinstance(payload, dict):
-            raise ValueError("持久行动载荷须为对象")
+        payload = _pending_action_payload(row)
         if str(payload.get("dossier_action_type") or "").strip() != "pacification":
             continue
         if str(payload.get("target_id") or "").strip() != target:
@@ -397,9 +395,7 @@ def stage_punishment_candidate(
     for row in pending_rows:
         if row.get("kind") != "directive":
             continue
-        payload = json.loads(str(row.get("payload_json") or "{}"))
-        if not isinstance(payload, dict):
-            raise ValueError("持久行动载荷须为对象")
+        payload = _pending_action_payload(row)
         if str(payload.get("dossier_action_type") or "").strip() != "punishment":
             continue
         if str(payload.get("target_id") or "").strip() != target:
@@ -842,12 +838,7 @@ def stage_grant_allocation_candidate(
                 continue
             if int(row["id"]) != want_id:
                 continue
-            try:
-                payload = json.loads(str(row.get("payload_json") or "{}"))
-            except (TypeError, ValueError):
-                break
-            if not isinstance(payload, dict):
-                break
+            payload = _pending_action_payload(row)
             if str(payload.get("dossier_action_type") or "").strip() != "grant_allocation":
                 break
             existing_id = want_id
@@ -1076,12 +1067,11 @@ def _list_pending_office_rows(
     return out
 
 
-def _office_payload(row: Dict[str, Any]) -> Dict[str, Any]:
-    try:
-        payload = json.loads(str(row.get("payload_json") or "{}"))
-    except (TypeError, ValueError):
-        return {}
-    return payload if isinstance(payload, dict) else {}
+def _pending_action_payload(row: Dict[str, Any]) -> Dict[str, Any]:
+    payload = json.loads(str(row.get("payload_json") or "{}"))
+    if not isinstance(payload, dict):
+        raise ValueError("持久行动候选载荷须为对象")
+    return payload
 
 
 def _match_office_row_by_name_office(
@@ -1108,7 +1098,7 @@ def _match_office_row_by_name_office(
     key = _canonical_minister_key(content, want_name, db) if want_name else ""
     hits: List[Dict[str, Any]] = []
     for row in rows:
-        payload = _office_payload(row)
+        payload = _pending_action_payload(row)
         staged_name = str(payload.get("name") or "").strip()
         if not staged_name:
             continue
@@ -1152,7 +1142,7 @@ def _annotate_office_pending_path(
     if not mode_mark and not tenure_mark and not seat:
         return 0
     pending_id = int(row["id"])
-    payload = dict(_office_payload(row))
+    payload = dict(_pending_action_payload(row))
     changed = False
     if mode_mark in {"midzhi", "ordinary"} and payload.get("mode") != mode_mark:
         payload["mode"] = mode_mark
@@ -1503,12 +1493,7 @@ def stage_assignment_candidate(
                 continue
             if int(row["id"]) != want_id:
                 continue
-            try:
-                payload = json.loads(str(row.get("payload_json") or "{}"))
-            except (TypeError, ValueError):
-                break
-            if not isinstance(payload, dict):
-                break
+            payload = _pending_action_payload(row)
             if str(payload.get("dossier_action_type") or "").strip() != "assignment":
                 break
             existing_id = want_id
@@ -1637,12 +1622,7 @@ def stage_authorization_candidate(
         for row in pending_rows:
             if int(row["id"]) != want_id:
                 continue
-            try:
-                payload = json.loads(str(row.get("payload_json") or "{}"))
-            except (TypeError, ValueError):
-                break
-            if not isinstance(payload, dict):
-                break
+            payload = _pending_action_payload(row)
             if str(payload.get("dossier_action_type") or "").strip() != "authorization":
                 break
             existing_id = want_id
@@ -1746,12 +1726,7 @@ def stage_referral_candidate(
                 continue
             if int(row["id"]) != want_id:
                 continue
-            try:
-                payload = json.loads(str(row.get("payload_json") or "{}"))
-            except (TypeError, ValueError):
-                break
-            if not isinstance(payload, dict):
-                break
+            payload = _pending_action_payload(row)
             if str(payload.get("dossier_action_type") or "").strip() != "referral":
                 break
             existing_id = want_id
@@ -1833,12 +1808,7 @@ def stage_revoke_authority_candidate(
         for row in pending_rows:
             if int(row["id"]) != want_id:
                 continue
-            try:
-                payload = json.loads(str(row.get("payload_json") or "{}"))
-            except (TypeError, ValueError):
-                break
-            if not isinstance(payload, dict):
-                break
+            payload = _pending_action_payload(row)
             if str(payload.get("dossier_action_type") or "").strip() != "revoke_authority":
                 break
             existing_id = want_id
@@ -1909,12 +1879,7 @@ def stage_revoke_decree_candidate(
         for row in pending_rows:
             if int(row["id"]) != want_id:
                 continue
-            try:
-                payload = json.loads(str(row.get("payload_json") or "{}"))
-            except (TypeError, ValueError):
-                break
-            if not isinstance(payload, dict):
-                break
+            payload = _pending_action_payload(row)
             if str(payload.get("dossier_action_type") or "").strip() != "revoke_decree":
                 break
             existing_id = want_id
