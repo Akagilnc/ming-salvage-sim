@@ -276,7 +276,7 @@ def _print_interrupted_reply_retry_hint(session: GameSession, minister_name: str
     if not retries:
         return
     last = retries[-1]
-    question = str(last.get("question") or "").strip()
+    question = str(last.get("question") or "")
     print(
         "【回话中断】上回问话未得回话"
         f"{f'（「{question}」）' if question else ''}。"
@@ -394,7 +394,7 @@ def minister_chat(session: GameSession, character: Character, *, selected: bool 
     )
     while True:
         # A selection is its own scene turn; the first question remains the player's text.
-        question = f"宣{character.name}" if pending_xuan else input("朕问：").strip()
+        question = f"宣{character.name}" if pending_xuan else input("朕问：")
         pending_xuan = False
         if not question:
             print("可继续问话；若要让其退下，请输入 done。")
@@ -608,8 +608,8 @@ def review_directives(session: GameSession) -> str:
         # 审阅循环，不崩出进程（ship-pre r2，与 write_decree 既有 try 同款）。
         try:
             if lowered == "add" or raw == "新增":
-                text = input("指令内容：").strip()
-                if text:
+                text = input("指令内容：")
+                if text.strip():
                     from ming_sim.cli_backend import capture_manual_directive_payload
                     dv = session.add_directive(
                         text,
@@ -631,8 +631,8 @@ def review_directives(session: GameSession) -> str:
                     if not any(d.id == target_id for d in drafts):
                         print("没有这条草案。")
                         continue
-                    new_text = input("新的指令内容：").strip()
-                    if new_text:
+                    new_text = input("新的指令内容：")
+                    if new_text.strip():
                         from ming_sim.cli_backend import capture_manual_directive_payload
                         row = next(
                             r for r in session.db.list_directives(

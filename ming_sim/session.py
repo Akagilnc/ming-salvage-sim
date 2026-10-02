@@ -559,7 +559,8 @@ def _sync_offices_from_db_impl(content: GameContent, db: "GameDB", llm_config: O
     rows = db.conn.execute(
         """
         SELECT c.name, c.office, c.office_type, c.faction, c.aliases, c.personal_skills,
-               c.loyalty, c.ability, c.integrity, c.courage, c.style, c.identity, c.seed_guilt,
+               c.loyalty, c.ability, c.integrity, c.courage, c.style, c.identity, c.intrigue,
+               c.seed_guilt,
                c.birth_year, c.historical_death_year, c.historical_death_month,
                c.debut_year, c.debut_month, c.status, c.status_reason, c.reason_code,
                c.portrait_id, c.power_id, c.location, c.transit_to,
@@ -630,6 +631,7 @@ def _sync_offices_from_db_impl(content: GameContent, db: "GameDB", llm_config: O
             portrait_id=row["portrait_id"],
             summary=row["summary"],
             identity=int(row["identity"]),
+            intrigue=int(row["intrigue"]),
             seed_guilt={str(key): str(value) for key, value in seed_guilt.items()},
             # 任所 thrives only on character_offices; restore into Character for
             # runtime projection (materials scope / travel gate / seat identity).
@@ -705,7 +707,6 @@ class GameSession:
             tlog(f"[载入] 4/4 开局修正 {time.monotonic() - _t:.1f}s")
             self.deaths_this_turn: List[Dict[str, str]] = []
             self.debuts_this_turn: List[Dict[str, str]] = []
-            self.power_renames_this_turn: List[Dict[str, object]] = []
             self.previous_summary = ""
             self.last_decree = ""
             # P1-1：last_decree 所覆盖的 draft 指纹（write_decree 时记，颁诏时校验是否已陈旧）。
@@ -763,7 +764,6 @@ class GameSession:
         self.state = self.db.load_state()
         self.deaths_this_turn = self.db.apply_historical_deaths(self.state)
         self.debuts_this_turn = self.db.apply_historical_debuts(self.state)
-        self.power_renames_this_turn = self.db.apply_historical_power_renames(self.state)
         _sync_offices_from_db_impl(self.content, self.db, self.llm_config)
         self.previous_summary = self.db.previous_turn_summary(self.state) or ""
         tlog(f"[接档] begin_turn 读档+历史 tick+人物同步+奏报 {time.monotonic() - _t:.1f}s")
@@ -1010,17 +1010,6 @@ class GameSession:
         return normalize_audience_command_verdict(recognize_audience_command(message))
 
 
-    @staticmethod
-    def _ensure_close_night_confirm_cue(answer: str) -> str:
-        """含糊收夜：大臣戏内确认（不出戏），不直接收夜。"""
-        text = (answer or "").strip()
-        ask = "陛下是要退朝么？"
-        if ask in text:
-            return text or ask
-        if not text:
-            return ask
-        return text + "\n" + ask
-
     def close_night_after_chat_if_needed(
         self,
         court_action: str,
@@ -1158,8 +1147,8 @@ class GameSession:
         )
         from ming_sim.llm_model import extract_agent_text
 
-        message_text = str(message or "").strip()
-        if not message_text:
+        message_text = str(message or "")
+        if not message_text.strip():
             raise ValueError("问话不能为空。")
         from ming_sim.decree_forecast import bind_forecast_owner
         bind_forecast_owner(self)
@@ -1176,16 +1165,11 @@ class GameSession:
         # 收夜 / 留侍口令。先兑现既有确定性效果，再把无需转译的源轮标 done：
         # - 退朝：chat_turn_id==0 当场收夜；非 0 只标 court_break 由 epilogue 收
         # - 留侍：复用 stay_attend_in_audience 权威写缝（锚=minister_name 或夜主角）
-        # - 含糊收夜：回确认 cue，不收夜
+        # - 含糊收夜：沿既有场景生成回话，不直接收夜
         audience_command_verdict = self._recognize_audience_command_verdict(message_text)
         result = ChatTurnResult(answer="")
-        if audience_command_verdict and audience_command_verdict != CMD_NONE:
+        if audience_command_verdict not in {"", CMD_NONE, CMD_AMBIGUOUS_CLOSE}:
             ctid = int(chat_turn_id or 0)
-            if audience_command_verdict == CMD_AMBIGUOUS_CLOSE:
-                if ctid > 0:
-                    self._mark_control_turn_translation_done(ctid)
-                result.answer = GameSession._ensure_close_night_confirm_cue("")
-                return result
             if audience_command_verdict == CMD_STAY_ATTEND:
                 from ming_sim.audience_night import (
                     get_night_protagonist,
@@ -1865,7 +1849,7 @@ class GameSession:
             ctx = self.db.get_resolve_context(self.state.turn)
             if ctx is not None:
                 recovered_source = _provenance_from_stored(ctx.get("source"))
-                stored = str(ctx.get("decree_text") or "").strip()
+                stored = str(ctx.get("decree_text") or "")
                 if stored:
                     self.last_decree = stored
                     decree = stored
@@ -2184,8 +2168,8 @@ class GameSession:
             obj = _parse_rescript_json_strict(str(raw or ""))
             if not isinstance(obj, dict):
                 raise ValueError("deliberate LLM 意愿须为 object")
-            title = str(obj.get("title") or "").strip()
-            body = str(obj.get("body") or "").strip()
+            title = str(obj.get("title") or "")
+            body = str(obj.get("body") or "")
             stance = str(obj.get("stance") or "").strip()
             if not (title and body and stance):
                 raise ValueError("deliberate LLM 意愿缺 title/body/stance")
@@ -2309,16 +2293,10 @@ class GameSession:
             if ctx0 is not None:
                 self.last_decree = str(ctx0.get("decree_text") or "")
 
-        before_turn = int(self.state.turn)
         report = resolve_decisions_phase2(
             self.state, self.db, self.agno_db, self.llm_config,
             content=self.content,
             cheat_directive=cheat_directive,
-        )
-        self.state.turn_phase = (
-            TurnPhase.ISSUED.value
-            if int(self.state.turn) != before_turn or self.state.ended
-            else TurnPhase.SETTLING.value
         )
         self.db.save_state(self.state)
         return report
@@ -2459,16 +2437,10 @@ class GameSession:
             ctx0 = self.db.get_resolve_context(self.state.turn)
             if ctx0 is not None:
                 self.last_decree = str(ctx0.get("decree_text") or "")
-        before_turn = int(self.state.turn)
         report = resolve_decisions_phase2(
             self.state, self.db, self.agno_db, self.llm_config,
             content=self.content,
             cheat_directive=cheat_directive,
-        )
-        self.state.turn_phase = (
-            TurnPhase.ISSUED.value
-            if int(self.state.turn) != before_turn or self.state.ended
-            else TurnPhase.SETTLING.value
         )
         self.db.save_state(self.state)
         return report

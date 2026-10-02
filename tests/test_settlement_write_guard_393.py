@@ -129,10 +129,9 @@ def _invoke(coro):
     return asyncio.run(coro)
 
 
-@pytest.mark.parametrize("operation", ("create", "update"))
-def test_directive_capture_runs_outside_write_gate(
-    monkeypatch, operation,
-):
+# #1849 / ADR 0152：独立手拟新增口退役后，drafts 唯一仍会跑拟旨抽取的 Web 写端点是
+# PATCH /api/directives/{id}（改稿）；create 用例随入口一并删除。
+def test_directive_capture_runs_outside_write_gate(monkeypatch):
     import ming_sim.cli_backend as cli_backend
 
     game = _FakeGame(TurnPhase.SUMMONING.value)
@@ -151,10 +150,6 @@ def test_directive_capture_runs_outside_write_gate(
         return payload
 
     game.session.llm_config = SimpleNamespace()
-    game.session.add_directive = lambda text, notes, dossier_payload: (
-        calls.append(("create", text, dossier_payload))
-        or SimpleNamespace(id=8, text=text, status="draft")
-    )
     game.session.update_directive = (
         lambda directive_id, text, dossier_payload:
         calls.append(("update", directive_id, text, dossier_payload))
@@ -162,22 +157,15 @@ def test_directive_capture_runs_outside_write_gate(
     monkeypatch.setattr(cli_backend, "capture_manual_directive_payload", capture)
     monkeypatch.setattr(web_app, "get_game", lambda: game)
 
-    if operation == "create":
-        _invoke(web_app.api_create_directive(web_app.DirectiveRequest(text="清丈田亩")))
-        assert calls == [("create", "清丈田亩", payload)]
-    else:
-        _invoke(web_app.api_update_directive(
-            7, web_app.DirectivePatch(text="重定清丈田亩"),
-        ))
-        assert calls == [("update", 7, "重定清丈田亩", payload)]
-        assert captured_context[0]["existing_mode"] == "midzhi"
+    _invoke(web_app.api_update_directive(
+        7, web_app.DirectivePatch(text="重定清丈田亩"),
+    ))
+    assert calls == [("update", 7, "重定清丈田亩", payload)]
+    assert captured_context[0]["existing_mode"] == "midzhi"
     assert game.db.writes == ["unrelated-write"]
 
 
-@pytest.mark.parametrize("operation", ("create", "update"))
-def test_directive_capture_result_is_rejected_after_turn_changes(
-    monkeypatch, operation,
-):
+def test_directive_capture_result_is_rejected_after_turn_changes(monkeypatch):
     import ming_sim.cli_backend as cli_backend
 
     game = _FakeGame(TurnPhase.SUMMONING.value)
@@ -192,20 +180,14 @@ def test_directive_capture_result_is_rejected_after_turn_changes(
         return payload
 
     game.session.llm_config = SimpleNamespace()
-    game.session.add_directive = lambda *a, **k: calls.append(("create", a, k))
     game.session.update_directive = lambda *a, **k: calls.append(("update", a, k))
     monkeypatch.setattr(cli_backend, "capture_manual_directive_payload", capture)
     monkeypatch.setattr(web_app, "get_game", lambda: game)
 
-    call = (
-        web_app.api_create_directive(web_app.DirectiveRequest(text="清丈田亩"))
-        if operation == "create"
-        else web_app.api_update_directive(
-            7, web_app.DirectivePatch(text="重定清丈田亩"),
-        )
-    )
     with pytest.raises(HTTPException) as exc:
-        _invoke(call)
+        _invoke(web_app.api_update_directive(
+            7, web_app.DirectivePatch(text="重定清丈田亩"),
+        ))
 
     assert exc.value.status_code == 409
     assert calls == []
@@ -222,7 +204,7 @@ def _endpoint_cases():
         ("portrait_delete", lambda: web_app.api_delete_portrait("某大臣")),
         # 会话层写端点（cmr Gate2 Finding1 残面：也须走 _write_gate，否则 _refuse_if_settling
         # 的相位检查守不住 pre_settle 窗口）。守门先于 session 调用触发，故 fake session 无需实现这些方法。
-        ("create_directive", lambda: web_app.api_create_directive(web_app.DirectiveRequest(text="清丈田亩"))),
+        # #1849：create_directive（独立手拟新增口）已随 ADR 0152 决定 1 退役。
         ("update_directive", lambda: web_app.api_update_directive(7, web_app.DirectivePatch(text="改稿"))),
         ("delete_directive", lambda: web_app.api_delete_directive(7)),
         # #1341：PATCH /api/decree 已删（零调用方）；不再列入写门面。

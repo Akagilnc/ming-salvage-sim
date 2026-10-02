@@ -2,27 +2,30 @@
 
 Seams:
 - trigger_commitment_backlashes（#625 形制硬门）
-- pre_settle 邸报前既有挂点（与 trigger_supervision_countermeasures 同格）
+- pre_settle 邸报前既有挂点（#1895 退役前与孤直反制硬门同格）
 - assess_foundation_tier 触发侧重算（零新列）
 - find_any_issue_by_origin 幂等
 - issue_advances.trigger_ref 溯源源承诺
-- 与 #623 _apply_halfway_national_setback 去重（无双份 metrics 直击）
+- 本片只落具名 metrics 一锤子 + 无 ongoing 月扣镜像（#1894 后 #623 不再代模型
+  生成全国余波，故此处无第二笔要与之去重）
 - extractor commitment_backlash_facts 仅 module==issues 门控
 """
 
 from __future__ import annotations
 
-import inspect
 import json
 from pathlib import Path
 
 import ming_sim.commitment_backlash as backlash_mod
+
+# #1894：#623 的代码生成余波（半途而废局势）已删；该 seed 事件 id 在此仅作
+# 「不得再出现」的负向断言锚，不再由 breach_plea 导出。
+HALFWAY_SETBACK_EVENT_ID = "breach_halfway_setback"
 from ming_sim.breach_plea import (
     BREACH_KIND_POLICY_REVERSAL,
     FOUNDATION_HALFWAY,
     FOUNDATION_JUST_STARTED,
     FOUNDATION_ROOTED,
-    HALFWAY_SETBACK_EVENT_ID,
     PLEA_VERDICT_EXPIRED,
     PLEA_VERDICT_KEY,
     PLEA_VERDICT_PERSIST,
@@ -42,7 +45,6 @@ from ming_sim.commitment_backlash import (
     backlash_origin_ref,
     classify_backlash_source,
 )
-from ming_sim.constants import GATE_TABLES
 from ming_sim.db import GameDB
 from ming_sim.decree import pre_settle
 from ming_sim.issues import (
@@ -171,8 +173,9 @@ def test_ac1_breach_verdict_triggers_commitment_backlash(game):
     )
     todo = next(t for t in _pending_pleas(db) if int(t["id"]) == todo_id)
     result = finalize_persist(db, state, todo, commit=True)
-    assert result["outcome"] == "failed"
-    assert "事废" in str(result.get("note") or "")
+    # #1894：代码不判执行格终值（那是执行格判官的判决），只落 0056 与停 tick
+    assert result["breach_0056"] is True
+    assert result["target_dossier_id"] == did
     # 当回合硬门不扫（一拍差）
     assert db.trigger_commitment_backlashes(state, commit=True) == []
     assert _backlash_issues(db) == []
@@ -330,11 +333,16 @@ def test_ac1_transformed_without_beyond_intent_does_not_trigger(game):
     assert _backlash_issues(db) == []
 
 
-# ── AC2：办到一半撤 + 与 #623 无双扣 ──────────────────────────────
+# ── AC2：办到一半撤 + 与 0056 无双扣 ──────────────────────────────
 
 
-def test_ac2_halfway_persist_one_national_plus_one_commitment_no_double_metrics(game):
-    """坚持撤 halfway：一次全国余波（#623）+ 一次承诺所系一锤子（#626）；穿 settle 无续扣。"""
+def test_ac2_halfway_persist_one_commitment_metrics_no_double_count(game):
+    """坚持撤 halfway：0056 那一笔 + 一次承诺所系一锤子（#626）；穿 settle 无续扣。
+
+    #1894：#623 原先那条代码生成的全国余波（民心-3/皇威-2 + 半途而废局势）已随
+    「代码不替执行人物判事并造后果」删除；此刻起同一次松手在代码侧只余 0056
+    名声轨与 #626 承诺所系一锤子，两者不叠加、且都不带月扣镜像。
+    """
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
     db.conn.commit()
@@ -358,22 +366,16 @@ def test_ac2_halfway_persist_one_national_plus_one_commitment_no_double_metrics(
     huangwei_0 = int(state.metrics.get("皇威", 0) or 0)
 
     result = finalize_persist(db, state, todo, commit=True)
-    assert result.get("setback")
-    assert str(result["setback"].get("event_id") or "") == HALFWAY_SETBACK_EVENT_ID
-    # #623 全国余波 metrics 账恰一套（与 0056 皇威成本分立，不把 -5 算进本断言）
-    assert dict(result["setback"].get("metrics_delta") or {}) == {"民心": -3, "皇威": -2}
+    assert result["breach_0056"] is True
+    # 代码不生成任何剧情后果：民心零变动，皇威只被 0056 扣一次
     minxin_1 = int(state.metrics.get("民心", 0) or 0)
     huangwei_1 = int(state.metrics.get("皇威", 0) or 0)
-    assert minxin_1 == max(0, minxin_0 - 3)
-    # 皇威至少含 setback -2；0056 可另扣，但不得出现双份 setback（-4）
-    assert huangwei_1 <= max(0, huangwei_0 - 2)
-    assert huangwei_1 != max(0, huangwei_0 - 4)
-    # 全国余波 issue 恰一条
-    setback_count = db.conn.execute(
-        "SELECT COUNT(*) AS c FROM issues WHERE origin_kind='event_pool' AND origin_ref=?",
-        (HALFWAY_SETBACK_EVENT_ID,),
-    ).fetchone()["c"]
-    assert int(setback_count) == 1
+    assert minxin_1 == minxin_0
+    assert huangwei_1 < huangwei_0
+    assert not any(
+        str(row["origin_ref"] or "") == HALFWAY_SETBACK_EVENT_ID
+        for row in db.conn.execute("SELECT origin_ref FROM issues").fetchall()
+    )
 
     # 次回合承诺所系一锤子
     state.turn = int(state.turn) + 1
@@ -383,14 +385,11 @@ def test_ac2_halfway_persist_one_national_plus_one_commitment_no_double_metrics(
     assert hits[0]["trigger_ref"] == f"issue:{cid}"
     assert dict(hits[0].get("metrics_delta") or {}) == dict(BACKLASH_NAMED_METRICS)
 
-    # #626 具名 metrics 恰一次（与 #623 -3/-2 套件分立，禁同套双扣）
+    # #626 具名 metrics 恰一次，不与 0056 混算
     minxin_2 = int(state.metrics.get("民心", 0) or 0)
     huangwei_2 = int(state.metrics.get("皇威", 0) or 0)
     assert minxin_2 == minxin_1 + int(BACKLASH_NAMED_METRICS["民心"])
     assert huangwei_2 == huangwei_1 + int(BACKLASH_NAMED_METRICS["皇威"])
-    # 无双份 #623 直击（不会再叠 -3/-2）
-    assert minxin_2 == minxin_0 - 3 + int(BACKLASH_NAMED_METRICS["民心"])
-    assert minxin_2 != minxin_0 - 6
 
     bl_issue = db.conn.execute(
         "SELECT id, ongoing_effects FROM issues WHERE id=?",
@@ -399,15 +398,9 @@ def test_ac2_halfway_persist_one_national_plus_one_commitment_no_double_metrics(
     assert bl_issue is not None
     ongoing = loads_effect_dict(bl_issue["ongoing_effects"])
     assert not (ongoing.get("metrics") or {}), ongoing  # 无镜像月扣
-
-    # 全国余波仍一条；承诺所系一条（settle 隔离前先锁计数）
-    assert int(db.conn.execute(
-        "SELECT COUNT(*) AS c FROM issues WHERE origin_kind='event_pool' AND origin_ref=?",
-        (HALFWAY_SETBACK_EVENT_ID,),
-    ).fetchone()["c"]) == 1
     assert len(_backlash_issues(db)) == 1
 
-    # 穿完整 settle：隔离他源 ongoing（#623 setback 自带月扣民心-1），只留本片
+    # 穿完整 settle：隔离他源 ongoing，只留本片
     # 断言本 issue 触发回合净变恰一次 BACKLASH_NAMED_METRICS，次月无续扣（I1）。
     db.conn.execute(
         "UPDATE issues SET status='dropped' WHERE status='active' AND origin_kind!=?",
@@ -755,25 +748,10 @@ def test_ac4_backlash_survives_restore_both_states(game, tmp_path, content):
 
 
 def test_ac5_hook_idempotent_no_gate_table_expansion(game):
-    """硬门挂邸报前既有挂点；幂等；调用侧无第二扫描；GATE_TABLES 不动。"""
+    """承诺反噬经 pre_settle 真实入口只立一次。"""
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
     db.conn.commit()
-
-    # 挂点：pre_settle 源码恰一处调用
-    src = inspect.getsource(pre_settle)
-    assert "trigger_commitment_backlashes" in src
-    assert src.count("trigger_commitment_backlashes") == 1
-    assert "trigger_supervision_countermeasures" in src  # 同格既有挂点
-
-    # 不扩 GATE_TABLES
-    assert GATE_TABLES == (
-        "region", "army", "building", "power", "class", "faction", "character", "event",
-    )
-    # 硬门实现不引用 trigger_gate 求值
-    gate_src = inspect.getsource(GameDB.trigger_commitment_backlashes)
-    assert "evaluate_trigger_gate" not in gate_src
-    assert "GATE_TABLES" not in gate_src
 
     did, holder = _executing_policy_dossier(db, state, token="idemp")
     bar = _seed_halfway(db, state, did=did)
@@ -787,19 +765,14 @@ def test_ac5_hook_idempotent_no_gate_table_expansion(game):
         close=True, commit=True,
     )
     state.turn = int(state.turn) + 1
-    first = db.trigger_commitment_backlashes(state, commit=True)
-    assert len(first) == 1
-    second = db.trigger_commitment_backlashes(state, commit=True)
-    assert second == []
-    assert len(_backlash_issues(db)) == 1
-
-    # pre_settle 路径也只产一条（相位可跑）
     _set_phase_runnable(state, db)
-    # 已幂等，pre_settle 再跑不应新立
     auto = pre_settle(state, db, content=content)
     bl = [a for a in (auto or []) if a.get("source") == "commitment_backlash"]
-    assert bl == []
+    assert len(bl) == 1
     assert len(_backlash_issues(db)) == 1
 
-
-# ── AC6：呈现哨兵 ─────────────────────────────────────────────────
+    _set_phase_runnable(state, db)
+    again = pre_settle(state, db, content=content)
+    bl2 = [a for a in (again or []) if a.get("source") == "commitment_backlash"]
+    assert bl2 == []
+    assert len(_backlash_issues(db)) == 1

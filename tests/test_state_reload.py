@@ -151,7 +151,6 @@ def test_rollback_purges_content_character_ghost(game, monkeypatch):
     任免 commit 先挂 content 再写 DB；回滚删行留幽灵 → 重试走「在册」路因无行被拒，
     合法 pending 任免标 failed = 决策丢失。
     """
-    import ming_sim.decree as decree_mod
     from ming_sim.decree import pre_settle
     db, state, content = game
     new_name = "赵无忌"
@@ -162,7 +161,7 @@ def test_rollback_purges_content_character_ghost(game, monkeypatch):
     # commit_pending_actions 之后的步骤抛错 → 回滚
     def _boom(*a, **k):
         raise RuntimeError("post-commit step crash")
-    monkeypatch.setattr(decree_mod, "auto_trigger_seed_issues", _boom)
+    monkeypatch.setattr(db, "auto_submit_due_secret_orders", _boom)
 
     with pytest.raises(RuntimeError, match="post-commit step crash"):
         pre_settle(state, db, content=content)
@@ -205,7 +204,7 @@ def test_reload_skipped_inside_nested_atomic(game, monkeypatch):
 
     def _boom(*a, **k):
         raise RuntimeError("inner crash")
-    monkeypatch.setattr(decree_mod, "auto_trigger_seed_issues", _boom)
+    monkeypatch.setattr(db, "auto_submit_due_secret_orders", _boom)
 
     with pytest.raises(RuntimeError, match="回滚"):  # 外层 rollback-only 响亮
         with atomic(db):
@@ -239,7 +238,6 @@ def test_rollback_restores_existing_character_attributes(game, monkeypatch):
     罢免 commit 改了 content 里现有 Character 的 status/office；回滚还原 DB 行，
     幽灵清理管不到「名字仍在」的脏属性 → content 与 DB 分叉持续整个 session。
     """
-    import ming_sim.decree as decree_mod
     from ming_sim.decree import pre_settle
     from tests.legacy_staging_helpers import _active_minister_name
     db, state, content = game
@@ -255,7 +253,7 @@ def test_rollback_restores_existing_character_attributes(game, monkeypatch):
 
     def _boom(*a, **k):
         raise RuntimeError("post-commit step crash")
-    monkeypatch.setattr(decree_mod, "auto_trigger_seed_issues", _boom)
+    monkeypatch.setattr(db, "auto_submit_due_secret_orders", _boom)
 
     with pytest.raises(RuntimeError, match="post-commit step crash"):
         pre_settle(state, db, content=content)

@@ -10,13 +10,11 @@
 """
 
 from __future__ import annotations
-import threading
-
-import asyncio
 import json
-import types
 
 import pytest
+
+from tests.directive_seed_helpers import seed_manual_draft
 
 
 def _mock_draft_intent(monkeypatch, *, text: str, roster):
@@ -47,8 +45,12 @@ def _mock_draft_intent(monkeypatch, *, text: str, roster):
     monkeypatch.setattr(cli_backend, "_run_backend_for_config", backend)
 
 
-def _web_create(game_tuple, monkeypatch, text: str):
-    import web_app
+def _seed_draft(game_tuple, text: str) -> int:
+    """#1849：独立手拟新增 Web 口（POST /api/directives）已退役。
+
+    落草案改走现行 capture 核 + session.add_directive（CLI 审阅路同款；与召对拟旨
+    共用同一条 turn_directives 写入），故归一不变式仍验在真实落桌上。
+    """
     from ming_sim.session import GameSession
 
     db, state, content = game_tuple
@@ -57,18 +59,7 @@ def _web_create(game_tuple, monkeypatch, text: str):
     session.state = state
     session.llm_config = None
     session.content = content
-    web_game = types.SimpleNamespace(
-        _write_gate=threading.Lock(),
-        db=db, state=state, content=content, session=session,
-        directive_rows=lambda: db.list_directives(
-            state, statuses=("pending", "draft"),
-        ),
-        directive_payload=lambda row: dict(row),
-    )
-    monkeypatch.setattr(web_app, "get_game", lambda: web_game)
-    return asyncio.run(web_app.api_create_directive(
-        web_app.DirectiveRequest(text=text),
-    ))
+    return seed_manual_draft(session, text)
 
 
 def _capture_ids(game, monkeypatch, *, text: str, roster):
@@ -126,8 +117,8 @@ def test_capture_manual_directive_drops_ministry_name_as_participant(game, monke
         assert "户部" not in ids
 
 
-def test_web_create_directive_accepts_ministry_subject_without_409(game, monkeypatch):
-    """Web POST /api/directives：着户部… 不得 409「参与人物不存在：户部」。"""
+def test_seeded_draft_accepts_ministry_subject_without_409(game, monkeypatch):
+    """落草案入口：着户部… 不得 409「参与人物不存在：户部」。"""
     db, _state, _content = game
     text = "着户部核清太仓实存，边饷优先"
     _mock_draft_intent(
@@ -135,11 +126,10 @@ def test_web_create_directive_accepts_ministry_subject_without_409(game, monkeyp
         roster=[{"character_id": "户部", "tier": "主办"}],
     )
 
-    result = _web_create(game, monkeypatch, text)
-    assert result["directive"]["id"] > 0
-    assert result["directive"]["text"] == text
+    assert _seed_draft(game, text) > 0
+    rows = db.list_directives(game[1])
+    assert any(str(row["text"]) == text for row in rows)
     # ADR 0053 缝仍在：未知真名仍应拒——此处仅断言部院名不撞墙。
-    assert db.list_directives(game[1])
 
 
 def test_capture_manual_directive_keeps_real_person_participant(game, monkeypatch):

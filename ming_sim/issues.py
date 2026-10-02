@@ -11,9 +11,9 @@ import math
 import re
 import sqlite3
 from contextlib import contextmanager
-from typing import Any, Dict, List, Literal, Mapping, Optional, Tuple
+from typing import Any, Dict, List, Literal, Mapping, Optional, Sequence, Tuple
 
-from ming_sim.applier import atomic
+from ming_sim.applier import atomic, connection_owns_transaction
 from ming_sim.appointment_tenure import appointment_tenure_from
 from ming_sim.authority_privileges import AUTHORITY_PRIVILEGE_SET
 from ming_sim.constants import (
@@ -360,10 +360,10 @@ def _issue_condition_text(raw: object) -> str:
     if raw is None:
         return ""
     if isinstance(raw, str):
-        return raw.strip()
+        return raw
     if isinstance(raw, (dict, list)):
         return json.dumps(raw, ensure_ascii=False, separators=(",", ":"))
-    return str(raw).strip()
+    return str(raw)
 
 
 def _normalize_commitment_kind(raw: object) -> str:
@@ -851,7 +851,7 @@ def _commitment_fiscal_create_duplicate_reason(
     db: GameDB,
 ) -> str:
     account = str(create.get("account") or "").strip()
-    display = str(create.get("display") or "").strip() or (db._stem_of(str(create.get("key") or "")) or str(create.get("key") or ""))
+    display = str(create.get("display") or "") or (db._stem_of(str(create.get("key") or "")) or str(create.get("key") or ""))
     create_tokens = _recurring_funding_label_tokens(
         display,
         create.get("key"),
@@ -1267,26 +1267,10 @@ def _event_terminal_records(db: GameDB) -> Dict[str, Dict[str, str]]:
     return records
 
 
-def _event_pending_choice_records(db: GameDB) -> Dict[str, Dict[str, str]]:
-    records: Dict[str, Dict[str, str]] = {}
-    for r in db.conn.execute(
-        """
-        SELECT event_id, terminal_state, terminal_reason, source
-        FROM event_triggers
-        WHERE COALESCE(terminal_state, '') = ''
-          AND COALESCE(terminal_reason, '') != ''
-        """
-    ).fetchall():
-        if r["event_id"]:
-            records[str(r["event_id"])] = {
-                "terminal_state": "",
-                "terminal_reason": str(r["terminal_reason"] or ""),
-                "source": str(r["source"] or ""),
-            }
-    return records
-
-
 FISCAL_LEVY_EVENT_CATEGORY = "fiscal_levy"
+# #1891：请旨答复经 #1847 批红页落账时的唯一写口来源标记。旧 "fiscal_levy_shadow"
+# 自动置结局桩退役——饷率结局只由皇帝批红产生。
+FISCAL_LEVY_RESCRIPT_SOURCE = "fiscal_levy_rescript"
 _LIAO_LEVY_RISE_EVENT_ID = "liao_levy_rise_1631"
 _LIAN_LEVY_START_EVENT_ID = "lian_levy_start_1639"
 _LIAO_LEVY_RISE_FACTOR = 4.0 / 3.0
@@ -1329,21 +1313,14 @@ def _normalize_event_terminal_reason(ev: Event, raw: object) -> str:
     return ""
 
 
-def _fiscal_levy_default_terminal_reason(ev: Event, state: GameState) -> str:
+def _fiscal_levy_require_labels(ev: Event, state: GameState) -> None:
+    """#1891：结局标签集是请旨闭集的前提；缺则配置错，响亮失败不兜底。"""
     if not getattr(ev, "terminal_reason_labels", None):
         raise SettlementAbort(
             f"饷率事件 {ev.id} 缺 terminal_reason_labels 白名单",
             turn=state.turn,
             stage="fiscal_levy_config",
         )
-    label = _normalize_event_terminal_reason(ev, getattr(ev, "default_terminal_reason", ""))
-    if not label:
-        raise SettlementAbort(
-            f"饷率事件 {ev.id} default_terminal_reason 不可归一",
-            turn=state.turn,
-            stage="fiscal_levy_config",
-        )
-    return label
 
 
 def _fiscal_levy_normalized_terminal_reason_or_abort(
@@ -1519,6 +1496,71 @@ def _load_region_fiscal_for_fiscal_levy(region_id: str, raw_fiscal: object) -> O
 
 def _fiscal_levy_event_by_id(event_id: str) -> Optional[Event]:
     return _ctx().event_by_id.get(event_id)
+
+
+def apply_petition_event_outcome(
+    state: GameState,
+    db: GameDB,
+    event_id: str,
+    raw_label: object,
+    *,
+    commit: bool = True,
+) -> Dict[str, object]:
+    """亲裁语义落账的**单一写口**：把转译出的结局标签置成事件终态（#1892 / ADR 0153:5）。
+
+    契约：
+
+    - **事件须在可呈窗口内**：三饷只有到点才上疏（issues._event_window_open），窗口外
+      的事项没有可供皇帝亲裁的既成事实，此时置定结局等于替皇帝凭空批一疏。窗口外
+      响亮拒绝，不静默放过。
+    - 标签只在事件自身声明的封闭集 ``terminal_reason_labels`` 内归一；归一不了就
+      :class:`SettlementAbort` 响亮失败（ADR 0014：绝不兜底写未支撑值），不猜、不兜。
+    - **留中不写终态**：raw_label 为空即「本疏已答而事件未终」，调用方不得以任何形式
+      把它塞进终局标签集——留中不是结局标签。
+    - 已落其它终态（expired/avoided/obsolete）的事件不被翻成 triggered；终态不可逆。
+
+    写口只此一处：批红链路不直接写 ``terminal_reason``，原始选项标签不得旁路代批。
+    """
+    eid = str(event_id or "").strip()
+    event = _fiscal_levy_event_by_id(eid) if eid else None
+    if event is None:
+        raise SettlementAbort(
+            f"亲裁结局事件不存在：{eid}", turn=int(state.turn), stage="fiscal_levy_config",
+        )
+    if not _event_window_open(event, state):
+        raise SettlementAbort(
+            f"亲裁结局事件不在可呈窗口内：{eid}", turn=int(state.turn), stage="fiscal_levy_config",
+        )
+    raw = str(raw_label or "").strip()
+    if not raw:
+        # 留中：本疏已答，事件未终。不写终态，也不另开一条留中账。
+        # 已呈原文与原批语在 record_event_petition_answer 的 choice_json 里。
+        return {"id": eid, "settled": False, "terminal_state": "", "terminal_reason": ""}
+    existing = db.event_terminal_state(eid)
+    if existing == "triggered":
+        # 一事件一裁断（ADR 0115:3 first-wins）：结局已落定即不可翻。
+        return {
+            "id": eid, "settled": False, "terminal_state": "triggered",
+            "terminal_reason": _event_terminal_records(db).get(eid, {}).get("terminal_reason", ""),
+        }
+    if existing:
+        return {
+            "id": eid, "settled": False, "terminal_state": existing,
+            "terminal_reason": _event_terminal_records(db).get(eid, {}).get("terminal_reason", ""),
+        }
+    label = _fiscal_levy_normalized_terminal_reason_or_abort(event, raw, state)
+    # 所有权必须在写入前看。sqlite 对 DML 隐式 BEGIN，写完后再看 in_transaction
+    # 永远为真，默认 commit=True 的独立调用就会报成功却不落盘。
+    owns_transaction = commit and connection_owns_transaction(db.conn)
+    db.mark_event_triggered(
+        state, eid, source=FISCAL_LEVY_RESCRIPT_SOURCE, terminal_reason=label, commit=False,
+    )
+    apply_event_cascading_invalidations(state, db, commit=False)
+    if owns_transaction:
+        db.conn.commit()
+    return {
+        "id": eid, "settled": True, "terminal_state": "triggered", "terminal_reason": label,
+    }
 
 
 def _fiscal_levy_event_approved(
@@ -1975,11 +2017,12 @@ def apply_historical_fiscal_rates(
     *,
     commit: bool = True,
 ) -> List[Dict[str, object]]:
-    """饷率 effect 通道：同 tick 前置结局 stub + settle.p set-to-target。
+    """饷率 effect 通道：读已置终局，重算 settle.p 目标。
 
-    #259 shadow 阶段只处理 category=fiscal_levy 的历史事件；结局值必须经事件自身
-    terminal_reason_labels 白名单归一。随后按事件账重算在征饷集并持久化省级
-    settle.p，保证后续 settle_tick 当月读到目标值且重复运行不叠加。
+    只处理 category=fiscal_levy。终局必须已经由请饷声明写口落进事件账；
+    滞留的 choice 标签不在这里升成终局。结局值经事件自身 terminal_reason_labels
+    白名单归一。随后按事件账重算在征饷集并持久化省级 settle.p，保证后续
+    settle_tick 当月读到目标值且重复运行不叠加。
     """
     c = _ctx()
     should_commit = commit and not db.conn.in_transaction
@@ -1987,18 +2030,6 @@ def apply_historical_fiscal_rates(
 
     def run_fiscal_levy_pass() -> None:
         terminal_records = _event_terminal_records(db)
-        pending_choice_records = _event_pending_choice_records(db)
-        answered_ids = {
-            str(row["event_id"])
-            for row in db.conn.execute(
-                """
-                SELECT event_id FROM event_triggers
-                WHERE COALESCE(terminal_state, '') = ''
-                  AND TRIM(COALESCE(choice_json, '')) NOT IN ('', '{}')
-                """
-            )
-            if row["event_id"]
-        }
         for ev in c.events:
             if getattr(ev, "category", "") != FISCAL_LEVY_EVENT_CATEGORY:
                 continue
@@ -2009,72 +2040,14 @@ def apply_historical_fiscal_rates(
                     state,
                     db,
                 )
-            elif ev.id in pending_choice_records:
-                if _event_window_expired(ev, state):
-                    pass
-                elif not _event_window_open(ev, state):
-                    continue
-                elif not _gate_passed(ev.trigger_gate, state.metrics, db):
-                    continue
-                else:
-                    record = pending_choice_records[ev.id]
-                    label = _fiscal_levy_normalized_terminal_reason_or_abort(
-                        ev,
-                        record.get("terminal_reason"),
-                        state,
-                    )
-                    db.mark_event_triggered(
-                        state,
-                        ev.id,
-                        source=record.get("source") or "fiscal_levy_shadow",
-                        terminal_reason=label,
-                        commit=False,
-                    )
-                    terminal_records[ev.id] = {
-                        "terminal_state": "triggered",
-                        "terminal_reason": label,
-                    }
-                    applied.append({
-                        "id": ev.id,
-                        "title": ev.title,
-                        "terminal_state": "triggered",
-                        "terminal_reason": label,
-                    })
-            if ev.id not in terminal_records:
-                if _event_window_expired(ev, state):
-                    db.mark_event_expired(state, ev.id, commit=False)
-                    terminal_records[ev.id] = {
-                        "terminal_state": "expired",
-                        "terminal_reason": "过最晚触发时点仍未达成触发门",
-                    }
-                    applied.append({"id": ev.id, "title": ev.title, "terminal_state": "expired"})
-                    continue
-                if not _event_window_open(ev, state):
-                    continue
-                if not _gate_passed(ev.trigger_gate, state.metrics, db):
-                    continue
-                # 已有亲裁答复（含留中）就不是没人裁。默认结局只填无人答复的窗口；
-                # 无 choice 的历史自动桩仍在，退役归 #1891。
-                if ev.id in answered_ids:
-                    continue
-                label = _fiscal_levy_default_terminal_reason(ev, state)
-                db.mark_event_triggered(
-                    state,
-                    ev.id,
-                    source="fiscal_levy_shadow",
-                    terminal_reason=label,
-                    commit=False,
-                )
+            elif _event_window_expired(ev, state):
+                # 窗口已关仍无御批：过期是本通道的记账，不是结局。
+                db.mark_event_expired(state, ev.id, commit=False)
                 terminal_records[ev.id] = {
-                    "terminal_state": "triggered",
-                    "terminal_reason": label,
+                    "terminal_state": "expired",
+                    "terminal_reason": "过最晚触发时点仍未达成触发门",
                 }
-                applied.append({
-                    "id": ev.id,
-                    "title": ev.title,
-                    "terminal_state": "triggered",
-                    "terminal_reason": label,
-                })
+                applied.append({"id": ev.id, "title": ev.title, "terminal_state": "expired"})
         _apply_fiscal_levy_targets(db, state, terminal_records)
 
     if should_commit:
@@ -2083,6 +2056,80 @@ def apply_historical_fiscal_rates(
     else:
         run_fiscal_levy_pass()
     return applied
+
+
+def list_fiscal_levy_petitions_due(
+    state: GameState, db: GameDB,
+) -> List[Dict[str, object]]:
+    """#1891：本月可呈的请饷／议停事件（纯读，不写账）。
+
+    交付对象是 #1843 既有月末世界段 run：过月模型读这份名单与当月军费材料，自行
+    决定成不成陈情、要不要上疏。引擎只供事实，不代答（P6）。
+
+    资格只在这里判一次：窗口开、门过、未过期、未终态。已呈待批（批红页上仍有该事件
+    请旨行）不再重触发为首次事件。
+
+    ``presentation_due`` 是**权限事实**而非措辞：首次到点、尚未呈过的应呈请
+    （True）；已呈过、被留中的由大臣自决是否再上疏（False）。原事件、原疏与亲笔
+    批语随 ``prior_petition`` 带回，供后续世界段读同一持久事实（#1891 读端闭环），
+    代码不代它再顶一次旧疏。名单顺序就是交接键：世界段按这个顺序写请旨块，
+    不回显事件 id（ADR 0115）。
+    """
+    awaiting = _fiscal_levy_petitions_awaiting_verdict(db)
+    answered = _fiscal_levy_answered_petitions(db)
+    due: List[Dict[str, object]] = []
+    for ev in gather_fiscal_levy_petitions(state, db):
+        if ev.id in awaiting:
+            continue
+        _fiscal_levy_require_labels(ev, state)
+        held = ev.id in answered
+        due.append({
+            "event_id": ev.id,
+            "title": ev.title,
+            "summary": ev.summary,
+            "audiences": list(getattr(ev, "audiences", []) or []),
+            "terminal_reason_labels": list(getattr(ev, "terminal_reason_labels", []) or []),
+            "re_presentation": held,
+            "presentation_due": not held,
+            **({"prior_petition": answered[ev.id]} if held else {}),
+        })
+    return due
+
+
+def _fiscal_levy_petitions_awaiting_verdict(db: GameDB) -> set[str]:
+    """已呈上批红页、尚未裁定的饷率事件：其请旨行仍是 pending。
+
+    请旨身份前缀真源 = month_chain；此处局部导入以免与月链成模块环。
+    已答（decided，含留中）的行本回合留在盘面上作答复留痕，不算「待裁」——
+    否则留中后该事件永不再回名单，大臣就再没有上疏的机会。
+    """
+    from ming_sim.month_chain import _LEVY_PETITION_PREFIX
+
+    awaiting: set[str] = set()
+    for row in db.conn.execute(
+        "SELECT event_id FROM pending_decisions WHERE kind='decision' AND status='pending'"
+    ).fetchall():
+        event_id = str(row["event_id"] or "").strip()
+        if event_id.startswith(_LEVY_PETITION_PREFIX):
+            awaiting.add(event_id[len(_LEVY_PETITION_PREFIX):])
+    return awaiting
+
+
+def _fiscal_levy_answered_petitions(db: GameDB) -> Dict[str, Dict[str, object]]:
+    """已呈未裁的旧疏与批语；只供世界材料，不授予当次裁断资格。
+
+    与材料目录共读 record_event_petition_answer 的持久记录；本回合授权另读已答行。
+    """
+    metadata = {"event_id", "turn", "year", "period", "terminal_state", "terminal_reason", "petition"}
+    return {
+        str(row["event_id"]): {
+            "title": str(row["petition"].get("title") or ""),
+            "context": str(row["petition"].get("context") or ""),
+            "rescript": {key: value for key, value in row.items() if key not in metadata},
+        }
+        for row in db.list_event_petition_records()
+        if not row["terminal_state"]
+    }
 
 
 _EVENT_GATE_KEY_RE = re.compile(r"^event\.([^.]+)\.(triggered|terminal_state|terminal_reason)$")
@@ -2756,8 +2803,8 @@ def gather_impeachment_surge_candidates(state: GameState, db: GameDB) -> List[Di
                 "responsible_person_ids": responsible_ids,
                 "responsible_faction_ids": responsible_factions,
                 "dossier_id": did,
-                "decree_text": str(row["decree_text"] or "").strip(),
-                "execution_note": str(row["execution_note"] or "").strip(),
+                "decree_text": str(row["decree_text"] or ""),
+                "execution_note": str(row["execution_note"] or ""),
                 "execution_outcome": str(row["execution_outcome"] or "").strip(),
                 "beyond_intent": True,
                 "reported_bands": list(fork_state.get("reported_bands") or []),
@@ -2769,7 +2816,12 @@ def gather_impeachment_surge_candidates(state: GameState, db: GameDB) -> List[Di
 
 def gather_candidate_events(state: GameState, db: GameDB) -> List[Event]:
     """程序筛选：历史锚定事件按 trigger 时间到点、seed 情势按 trigger_gate 达标，
-    都排除已触发过的。返回的候选清单交推演 agent 因果判定是否真触发。"""
+    都排除已触发过的。返回的候选清单交推演 agent 因果判定是否真触发。
+
+    #1892/#1893 分工：进本清单 = 交模型在月末世界段里挑的人物事件。三饷
+    （``fiscal_levy``）是皇帝亲裁的加派决策，由批红时的圣旨／``record_event_decision_choice``
+    落 ``事件结局``，其加不加不是模型能代批的事，故永不入人物候选（ADR 0020）。
+    """
     c = _ctx()
     spawned = _spawned_event_refs(db)
     candidates: List[Event] = []
@@ -2777,9 +2829,13 @@ def gather_candidate_events(state: GameState, db: GameDB) -> List[Event]:
     for ev in c.events:
         if ev.id in spawned or ev.trigger_year <= 0:
             continue
+        if _is_fiscal_levy_event(ev):
+            continue
         if _event_window_expired(ev, state):
             continue
         if ev.auto_trigger:
+            continue
+        if getattr(ev, "category", "") == FISCAL_LEVY_EVENT_CATEGORY:
             continue
         dead_subjects = _dead_person_core_subjects(ev, db)
         if dead_subjects:
@@ -2798,6 +2854,8 @@ def gather_candidate_events(state: GameState, db: GameDB) -> List[Event]:
     for ev in c.seed_events:
         if ev.id in spawned:
             continue
+        if _is_fiscal_levy_event(ev):
+            continue
         if _event_window_expired(ev, state):
             continue
         # auto_trigger 事件只能由程序硬触发，绝不进 LLM 候选池
@@ -2808,6 +2866,31 @@ def gather_candidate_events(state: GameState, db: GameDB) -> List[Event]:
         if _gate_passed(ev.trigger_gate, state.metrics, db):
             candidates.append(ev)
     return candidates
+
+
+def gather_fiscal_levy_petitions(state: GameState, db: GameDB) -> List[Event]:
+    """#1892 J5：三饷（category=fiscal_levy）到点请旨的候选——交既有世界段成陈情。
+
+    亲裁权在皇帝，故这些事件**不进** gather_candidate_events（那里是交模型代选
+    「是否发生」的人物事件池）。本函数只判「该不该呈皇帝」，判门与人物候选同一
+    真源（窗口/前提门/已落终态）；不写终态、不代批。奏疏由世界段呈上，亲裁准驳
+    当回合经 apply_petition_event_outcome 置定结局。留中不写终态，事项仍在本候选里。
+    征收由下一月 pre_settle 的饷率通道按已落终态重算。
+    """
+    c = _ctx()
+    spawned = _spawned_event_refs(db)
+    petitions: List[Event] = []
+    for ev in c.events:
+        if getattr(ev, "category", "") != FISCAL_LEVY_EVENT_CATEGORY:
+            continue
+        if ev.id in spawned or ev.trigger_year <= 0:
+            continue
+        if _event_window_expired(ev, state) or not _event_window_open(ev, state):
+            continue
+        if not _gate_passed(ev.trigger_gate, state.metrics, db):
+            continue
+        petitions.append(ev)
+    return petitions
 
 
 def apply_event_terminal_states(
@@ -2825,6 +2908,8 @@ def apply_event_terminal_states(
     def run_terminal_state_pass() -> None:
         for ev in c.events:
             if ev.id in terminal_refs or ev.trigger_year <= 0:
+                continue
+            if _is_fiscal_levy_event(ev):
                 continue
             if _event_window_expired(ev, state):
                 db.mark_event_expired(state, ev.id, commit=False)
@@ -2850,6 +2935,8 @@ def apply_event_terminal_states(
         for ev in c.seed_events:
             if ev.id in terminal_refs:
                 continue
+            if _is_fiscal_levy_event(ev):
+                continue
             if _event_window_expired(ev, state):
                 db.mark_event_expired(state, ev.id, commit=False)
                 terminal_refs.add(ev.id)
@@ -2870,13 +2957,13 @@ def auto_trigger_seed_issues(state: GameState, db: GameDB) -> List[Dict[str, obj
     立 issue，绕过 LLM 因果判定（不进候选池等 extractor 决定）。event_to_issue 自带去重，
     已触发过返回 None 自动跳过。返回本回合硬触发的清单（供日志/邸报告知）。
 
-    放在结算链 simulator 之前调用，使硬立的 issue 当回合即进盘面、被邸报叙述。"""
+    唯一月链消费点在逐旨落账之后、世界段之前，硬立的 issue 当回合即进盘面。"""
     with atomic(db):
         return _auto_trigger_seed_issues_in_atomic(state, db)
 
 
 def _auto_trigger_seed_issues_in_atomic(state: GameState, db: GameDB) -> List[Dict[str, object]]:
-    """auto_trigger_seed_issues 的事务体；由外层函数或 pre_settle 嵌套事务统一提交/回滚。"""
+    """auto_trigger_seed_issues 的事务体；嵌套在月链事务内时由外层统一提交/回滚。"""
     c = _ctx()
     terminal_states = _event_terminal_states(db)
     triggered: List[Dict[str, object]] = []
@@ -2884,8 +2971,12 @@ def _auto_trigger_seed_issues_in_atomic(state: GameState, db: GameDB) -> List[Di
         historical_event = any(ev is item for item in c.events)
         if not ev.auto_trigger:
             continue
+        if _is_fiscal_levy_event(ev):
+            continue
         terminal_state = terminal_states.get(ev.id)
-        if terminal_state and (historical_event or terminal_state == "expired"):
+        # #1892：任何已落终态（已发/避过/过期/作废）都不再重发——结案后复发等于
+        # 同一世界事件被发两次，违「读已落终态不再重发」。
+        if terminal_state:
             continue
         if _event_window_expired(ev, state):
             db.mark_event_expired(state, ev.id, commit=False)
@@ -2916,6 +3007,8 @@ def _auto_trigger_seed_issues_in_atomic(state: GameState, db: GameDB) -> List[Di
         issue_id = event_to_issue(db, state, ev, commit=False)
         created_issue = issue_id is not None
         if historical_event and issue_id is None:
+            # 同源软 issue 已在（存档迁移残留）而事件终态未落：event_to_issue 早退未消费
+            # 核心事实，此处补落一次并记终态（#1892 终态与实况同落、只落一次）。
             row = (
                 db.find_active_issue_by_origin("event_pool", ev.id)
                 if ev.trigger_gate
@@ -2924,7 +3017,6 @@ def _auto_trigger_seed_issues_in_atomic(state: GameState, db: GameDB) -> List[Di
             if row is None:
                 raise RuntimeError(f"历史事件 {ev.id} 未建局势且无法找到同源 issue")
             issue_id = int(row["id"])
-        if historical_event:
             if ev.effect_on_trigger:
                 _apply_issue_entities(
                     db,
@@ -2933,7 +3025,7 @@ def _auto_trigger_seed_issues_in_atomic(state: GameState, db: GameDB) -> List[Di
                     f"事件#{ev.id}触发",
                     content=c,
                 )
-            db.mark_event_triggered(state, ev.id)
+            db.mark_event_triggered(state, ev.id, commit=False)
         if issue_id is not None:
             triggered.append({"id": ev.id, "title": ev.title, "issue_id": issue_id})
             action = "硬立项" if created_issue else "补记"
@@ -3011,10 +3103,14 @@ def show_active_issues(db: GameDB) -> None:
 def event_to_issue(db: GameDB, state: GameState, ev: Event, *, commit: bool = True) -> Optional[int]:
     """把一个预设 event（EVENTS / SEED_EVENTS）落成一条 situation issue。供推演判定触发后调用。
 
+    饷率事件不立局势、不记触发。结局只经御批写口。
+
     去重分两类：
     - 无 trigger_gate（开局局势）：查任意状态同源 issue，立过则永不重立。
     - 有 trigger_gate（条件触发危机）：只查 active 同源 issue，结案/撤销后 gate 再达标可重新触发。
     """
+    if _is_fiscal_levy_event(ev):
+        return None
     if ev.trigger_gate:
         if db.find_active_issue_by_origin("event_pool", ev.id) is not None:
             return None
@@ -3088,7 +3184,7 @@ def event_to_issue(db: GameDB, state: GameState, ev: Event, *, commit: bool = Tr
         bar_good_meaning=ev.bar_good_meaning or "已平",
         bar_bad_meaning=ev.bar_bad_meaning or "失控",
         inertia=inertia,
-        stage_text=ev.stage_text or ev.summary[:80],
+        stage_text=ev.stage_text or ev.summary,
         severity=int(ev.severity),
         region_hint=ev.region_hint,
         faction_hint=",".join(ev.interests[:2]),
@@ -3101,6 +3197,16 @@ def event_to_issue(db: GameDB, state: GameState, ev: Event, *, commit: bool = Tr
         fail_condition=ev.fail_condition,
         commit=False,
     )
+    # #1892：核心物理事实（改国号等）随终态一次落库，不另设日期旁路——事件未触发
+    # 即无核心事实，触发时只此一处消费 effect_on_trigger。
+    if ev.effect_on_trigger:
+        _apply_issue_entities(
+            db,
+            state,
+            _content_population_effect_for_save(db, ev.effect_on_trigger),
+            f"事件#{ev.id}触发",
+            content=_ctx(),
+        )
     db.mark_event_triggered(state, ev.id, source="event_pool", commit=False)
     apply_event_cascading_invalidations(state, db, commit=False)
     if commit:
@@ -3407,7 +3513,7 @@ def _pending_person_changes_block_event_gate(
             if transition.startswith("reject:"):
                 continue
             overlay(name, "status", status)
-            overlay(name, "status_reason", reason_text[:200])
+            overlay(name, "status_reason", reason_text)
             overlay(name, "reason_code", reason_code if reason_code else "")
             overlay(name, "office", "")
             overlay(name, "transit_to", "")
@@ -3448,7 +3554,7 @@ def _pending_person_changes_block_event_gate(
                 continue
             overlay(name, "power_id", new_power)
             overlay(name, "status", "active")
-            overlay(name, "status_reason", str(item.get("reason") or "")[:200])
+            overlay(name, "status_reason", str(item.get("reason") or ""))
             overlay(name, "reason_code", "")
             overlay(name, "office", new_title)
             overlay(name, "office_type", "身名分")
@@ -3478,7 +3584,7 @@ def _pending_person_changes_block_event_gate(
             if cur_status == "active":
                 overlay(name, "status_reason", "")
             else:
-                overlay(name, "status_reason", str(item.get("reason") or "")[:200] or "诏书任命")
+                overlay(name, "status_reason", str(item.get("reason") or "") or "诏书任命")
             overlay(name, "reason_code", "")
             overlay(name, "office", normalized_office)
             # 显式名分透传（#1059 codex 同族）：事件闸预览的 overlay 须与真实 apply 一致，
@@ -3727,7 +3833,7 @@ def _spawn_legacy_from_effect(
         state,
         name=name,
         modifiers=modifiers,
-        narrative_hint=str(legacy.get("narrative_hint") or "")[:200],
+        narrative_hint=str(legacy.get("narrative_hint") or ""),
         duration_months=duration,
         source_issue_id=issue_id,
         commit=commit,
@@ -3982,9 +4088,6 @@ _STRATEGIC_FOREIGN_NODE_OUTCOME_TARGETS: Dict[str, Dict[str, frozenset[str]]] = 
         "powers": frozenset({"bandit_li_zicheng"}),
     },
 }
-_STRATEGIC_EVENT_OUTCOME_LABELS: Dict[str, frozenset[str]] = {
-    "jisi_lubian": frozenset({"挡于边墙", "入塞被遏", "长驱直入"}),
-}
 _STRATEGIC_EVENT_OUTCOME_LABEL_ALIASES: Dict[str, Dict[str, str]] = {
     "jisi_lubian": {
         "挡于边墙外": "挡于边墙",
@@ -4003,6 +4106,70 @@ def _is_strategic_foreign_node_event(ev: Event) -> bool:
         getattr(ev, "event_type", "situation") != "situation"
         and getattr(ev, "trigger_class", "") == "strategic_foreign"
     )
+
+
+def strategic_event_outcome_labels(event_id: str) -> frozenset[str]:
+    """某战略事件在既有写口接受的闭合结局标签；空集 = 该事件不收 事件结局。
+
+    供料侧（materials 候选事实）与落库侧共用这一份，读侧不另立标签表（#1893）。
+    """
+    ev = _ctx().event_by_id.get(event_id)
+    if ev is None or not _is_strategic_foreign_node_event(ev):
+        return frozenset()
+    return _closed_outcome_labels(_ctx(), event_id)
+
+
+def _is_fiscal_levy_event(ev: object) -> bool:
+    """category=fiscal_levy。结局不走候选池、硬触发或通用终态通道。"""
+    return getattr(ev, "category", "") == FISCAL_LEVY_EVENT_CATEGORY
+
+
+def _is_fiscal_levy_petition_event(ev: Event) -> bool:
+    """#1891：交 #1847 请旨、结局由御批经转译置定的三饷请饷／议停事件。
+
+    与战略事件同一结局声明通道（事件结局 + 事件账唯一写口），只是资格门不同：
+    战略事件走 event_pool 候选与 trigger_gate；请饷／议停走本月交接的 petition-due
+    名单，且此刻必须「已呈待裁或已答未裁」——没呈过的没有御批可译。
+    """
+    return (
+        _is_fiscal_levy_event(ev)
+        and bool(getattr(ev, "terminal_reason_labels", None))
+    )
+
+
+def _fiscal_levy_answered_rows(db: GameDB, turn: int) -> List[Dict[str, object]]:
+    """本段已答的请饷／议停行：真实事件 id 与已落原批语。资格的唯一读口。
+
+    资格＝该回合批红页上已答（decided，含留中）且带请饷前缀的行。呈过而未答、
+    或上一段的旧留中行，不在此列。前缀真源 = month_chain；此处局部导入以免成环。
+    """
+    from ming_sim.month_chain import _LEVY_PETITION_PREFIX
+
+    rows: List[Dict[str, object]] = []
+    for row in db.conn.execute(
+        "SELECT event_id, choice_json FROM pending_decisions "
+        "WHERE turn = ? AND kind='decision' AND status='decided'",
+        (int(turn),),
+    ).fetchall():
+        event_id = str(row["event_id"] or "")
+        if not event_id.startswith(_LEVY_PETITION_PREFIX):
+            continue
+        choice = GameDB.parse_engine_payload_json(
+            row["choice_json"], surface="pending_decisions.choice_json",
+        )
+        rows.append({
+            "event_id": event_id[len(_LEVY_PETITION_PREFIX):],
+            "rescript": choice,
+        })
+    return rows
+
+
+def _fiscal_levy_answered_event_ids(db: GameDB, turn: int) -> set[str]:
+    """本段已答复的请饷／议停事件真实 id——结局声明的唯一资格门。
+
+    行来自 ``_fiscal_levy_answered_rows``。转译供料名单由同一行派生。
+    """
+    return {str(row["event_id"]) for row in _fiscal_levy_answered_rows(db, turn)}
 
 
 def _validate_strategic_foreign_node_outcome_targets(content: GameContent) -> None:
@@ -4160,15 +4327,47 @@ def _event_outcome_label(raw_outcomes: object, event_id: str) -> str:
     return str(raw or "").strip()
 
 
-def _normalize_event_outcome_label(event_id: str, label: str) -> str:
-    allowed = _STRATEGIC_EVENT_OUTCOME_LABELS.get(event_id, frozenset())
+def _closed_outcome_labels(content: Optional[GameContent], event_id: str) -> frozenset[str]:
+    """封闭结局集只认事件自身声明；写口与供料共用这一份，不另存枚举。"""
+    ev = content.event_by_id.get(str(event_id or "").strip()) if content is not None else None
+    raw = getattr(ev, "terminal_reason_labels", None) or []
+    return frozenset(str(label).strip() for label in raw if str(label).strip())
+
+
+def _merge_first_event_outcome(
+    current: Dict[str, object], incoming: object, event_id: str,
+) -> list[dict[str, object]]:
+    """信封只写入自己的 event_id。
+
+    空归属、或键不属于本信封的非空结局，不写，并作为未归属声明交调用方拒收。
+    同键首笔胜，后写不覆盖，也不算拒收；显式非法首笔留给闭集校验，不由后笔洗白。
+    """
+    unowned: list[dict[str, object]] = []
+    if not isinstance(incoming, dict):
+        return unowned
+    eid = str(event_id or "").strip()
+    for key, value in incoming.items():
+        key_s = str(key).strip()
+        if not eid or key_s != eid:
+            if _event_outcome_label({key_s: value}, key_s):
+                unowned.append({key_s: value})
+            continue
+        if not isinstance(current, dict) or eid in current:
+            continue
+        current[eid] = value
+    return unowned
+
+
+def _normalize_event_outcome_label(event_id: str, label: str, content: GameContent) -> str:
+    allowed = _closed_outcome_labels(content, event_id)
     compact = re.sub(r"\s+", "", str(label or ""))
     if not compact:
         return ""
     for canonical in allowed:
         if compact == re.sub(r"\s+", "", canonical):
             return canonical
-    return _STRATEGIC_EVENT_OUTCOME_LABEL_ALIASES.get(event_id, {}).get(compact, "")
+    alias = _STRATEGIC_EVENT_OUTCOME_LABEL_ALIASES.get(event_id, {}).get(compact, "")
+    return alias if alias in allowed else ""
 
 
 def _strategic_event_outcome_label_or_error(
@@ -4176,14 +4375,14 @@ def _strategic_event_outcome_label_or_error(
     extracted: Dict[str, object],
     content: GameContent,
 ) -> tuple[str, str]:
-    allowed = _STRATEGIC_EVENT_OUTCOME_LABELS.get(event_id, frozenset())
+    allowed = _closed_outcome_labels(content, event_id)
     if not allowed:
         return "", ""
     label = _event_outcome_label(extracted.get("事件结局") or {}, event_id)
     event_title = content.event_by_id[event_id].title if event_id in content.event_by_id else event_id
     if not label:
         return "", f"战略/外敌事件「{event_title}」缺事件结局标签"
-    normalized = _normalize_event_outcome_label(event_id, label)
+    normalized = _normalize_event_outcome_label(event_id, label, content)
     if not normalized:
         raise ValueError(
             f"战略/外敌事件「{event_title}」事件结局标签无法归一：{label}；"
@@ -4672,20 +4871,48 @@ def _strategic_event_result_preflight_error(
     return ""
 
 
+def _declared_levy_outcome_attribution_error(item: dict, event_id: str) -> str:
+    """#1891：结局声明的归属必须与被预检授权的归属是同一个事件。
+
+    预检授权目标与结局映射的目标须一致，不能「按 A 的授权写 B 的结局」，
+    也不能借同批有效身份写入无归属项。声明了饷率结局的效果项，归属
+    必须就是那个事件，且不能无归属。此门不新增资格，只把授权目标与落账目标收成
+    同一件事（ADR 0115 一事件一裁断）。
+    """
+    outcomes = item.get("事件结局")
+    if not isinstance(outcomes, dict):
+        return ""
+    targets = sorted(
+        str(key) for key in outcomes
+        if _is_fiscal_levy_petition_event(_fiscal_levy_event_by_id(str(key)) or Event(id="", title=""))
+    )
+    if not targets:
+        return ""
+    if not event_id:
+        return f"请饷结局声明无事件归属，无授权可对：{'、'.join(targets)}"
+    stray = [target for target in targets if target != event_id]
+    if stray:
+        return f"请饷结局声明与归属事件不符：{'、'.join(stray)}（归属 {event_id}）"
+    return ""
+
+
 def preflight_declared_event_effects(
     db: GameDB, state: GameState, items: list[tuple[str, dict]],
     open_affair_ids: set[int] | None = None,
-) -> dict[str, str]:
+) -> dict[int, str]:
     """C3: decide an event-owned effect envelope before any of its fields write.
 
     Same judgment runs once here; the apply path does not re-gate after writes.
     ``open_affair_ids`` is the same frozen visible set apply will arm, so origin
     checks here and at write share one authority.
+
+    返回 ``{效果项序号: 理由}``。按序号而非按归属 event_id 归键：真正被写的是每项
+    自己声明的字段，无归属项与错归属项都参与判定，按 event_id 归键会把它们漏掉
+    （#1891）。
     """
-    groups: dict[str, list[dict]] = {}
-    for event_id, item in items:
-        if event_id:
-            groups.setdefault(event_id, []).append(item)
+    groups: dict[str, list[int]] = {}
+    for index, (event_id, _item) in enumerate(items):
+        groups.setdefault(str(event_id or "").strip(), []).append(index)
     if not groups:
         return {}
     previous_authorized = getattr(db, "_batch_authorized_open_affair_ids", None)
@@ -4695,28 +4922,81 @@ def preflight_declared_event_effects(
         db._batch_authorized_open_affair_ids = frozen_affairs
         db._batch_frozen_open_affair_ids = frozen_affairs
     try:
-        return _preflight_declared_event_groups(db, state, groups)
+        return _preflight_declared_event_groups(db, state, groups, items)
     finally:
         if open_affair_ids is not None:
             db._batch_authorized_open_affair_ids = previous_authorized
             db._batch_frozen_open_affair_ids = previous_frozen
 
 
+def petition_outcome_is_admissible(
+    state: GameState, db: GameDB, event_id: str, content: Optional[GameContent],
+) -> bool:
+    """该事件是否可由本回合的亲裁答复置定结局（#1892 亲裁语义落账）。
+
+    资格只认本回合绑定原事件的已答请饷行，且终态仍空。
+    历史留中答复是世界材料，不是当次亲裁授权。
+    """
+    eid = str(event_id or "").strip()
+    if not eid:
+        return False
+    resolved = content if content is not None else _ctx()
+    event = resolved.event_by_id.get(eid) if resolved is not None else None
+    if event is None or getattr(event, "category", "") != FISCAL_LEVY_EVENT_CATEGORY:
+        return False
+    if db.event_terminal_state(eid):
+        return False
+    return eid in _fiscal_levy_answered_event_ids(db, int(state.turn))
+
+
 def _preflight_declared_event_groups(
-    db: GameDB, state: GameState, groups: dict[str, list[dict]],
-) -> dict[str, str]:
+    db: GameDB, state: GameState, groups: dict[str, list[int]],
+    items: list[tuple[str, dict]],
+) -> dict[int, str]:
     content = db.content
     candidates = {event.id for event in gather_candidate_events(state, db)}
-    rejected: dict[str, str] = {}
+    rejected: dict[int, str] = {}
     pseudo_event = Event(id="season", title="月末整体推演", kind="月末", summary="",
                          urgency=0, severity=0, credibility=100, interests=[], audiences=[])
-    for event_id, group in groups.items():
+
+    def _reject(indexes: list[int], reason: str) -> None:
+        for index in indexes:
+            rejected[index] = reason
+
+    for event_id, indexes in groups.items():
+        # 归属一致性先判，且逐项判：它与顶层归属是否合法无关。
+        for index in indexes:
+            error = _declared_levy_outcome_attribution_error(items[index][1], event_id)
+            if error:
+                rejected[index] = error
+        pending = [index for index in indexes if index not in rejected]
+        if not pending or not event_id:
+            # 无归属的效果项不经事件通道；除归属一致性外照旧放行。
+            continue
+        group = [items[index][1] for index in pending]
         event = content.event_by_id.get(event_id)
-        if event is None or not _is_strategic_foreign_node_event(event):
-            rejected[event_id] = f"效果归属的战略事件不存在：{event_id}"
+        if event is None:
+            _reject(pending, f"效果归属的事件不存在：{event_id}")
+            continue
+        if _is_fiscal_levy_petition_event(event):
+            if not petition_outcome_is_admissible(state, db, event_id, content):
+                _reject(pending, f"饷率事件本回合无可用亲裁答复：{event_id}")
+                continue
+            outcome: Dict[str, object] = {}
+            for item in group:
+                _merge_first_event_outcome(outcome, item.get("事件结局") or {}, event_id)
+            if event_id in outcome:
+                # 只校验实际待成立的首笔；非法首笔不能由后笔洗白。
+                raw_label = _event_outcome_label(outcome, event_id)
+                _fiscal_levy_normalized_terminal_reason_or_abort(
+                    event, raw_label or outcome[event_id], state,
+                )
+            continue
+        if not _is_strategic_foreign_node_event(event):
+            _reject(pending, f"效果归属的战略事件不存在：{event_id}")
             continue
         if event_id not in candidates or db.event_terminal_state(event_id) or event.auto_trigger:
-            rejected[event_id] = f"战略事件当前不能触发：{event_id}"
+            _reject(pending, f"战略事件当前不能触发：{event_id}")
             continue
         if not any(
             isinstance(issue, dict)
@@ -4724,14 +5004,14 @@ def _preflight_declared_event_groups(
             and str(issue.get("id") or issue.get("origin_ref") or "").strip() == event_id
             for item in group for issue in (item.get("new_issues") or [])
         ):
-            rejected[event_id] = f"战略事件缺 event_pool 声明：{event_id}"
+            _reject(pending, f"战略事件缺 event_pool 声明：{event_id}")
             continue
         outcome = {}
         for item in group:
-            outcome.update(item.get("事件结局") or {})
+            _merge_first_event_outcome(outcome, item.get("事件结局") or {}, event_id)
         label, error = _strategic_event_outcome_label_or_error(event_id, {"事件结局": outcome}, content)
         if error:
-            rejected[event_id] = error
+            _reject(pending, error)
             continue
         region_items = [(key, value) for item in group for key, value in (item.get("region_delta") or {}).items()]
         army_items = [(key, value) for item in group for key, value in (item.get("army_delta") or {}).items()]
@@ -4741,10 +5021,10 @@ def _preflight_declared_event_groups(
         )
         new_armies = [army for item in group for army in (item.get("new_armies") or [])]
         if _pending_person_changes_block_event_gate(event, people, db, content=content):
-            rejected[event_id] = f"战略事件被同项人物变更阻断：{event_id}"
+            _reject(pending, f"战略事件被同项人物变更阻断：{event_id}")
             continue
         if not (region_items or army_items or power_items or people or new_armies):
-            rejected[event_id] = f"战略事件缺世界状态主账结果：{event_id}"
+            _reject(pending, f"战略事件缺世界状态主账结果：{event_id}")
             continue
         error = _strategic_event_result_preflight_error(
             db, state, event_id, event.title, label, dict(region_items), dict(army_items),
@@ -4753,7 +5033,7 @@ def _preflight_declared_event_groups(
             ordered_power_items=power_items,
         )
         if error:
-            rejected[event_id] = error
+            _reject(pending, error)
     return rejected
 
 
@@ -5004,8 +5284,8 @@ def apply_issue_tracker_output(
                 "item": adv,
             })
             continue
-        stage_text = str(adv.get("stage_text") or "")[:120]
-        narrative = str(adv.get("narrative") or "")[:400]
+        stage_text = str(adv.get("stage_text") or "")
+        narrative = str(adv.get("narrative") or "")
         # 先验 issue 存在且 active（与 db.advance_issue 的 None 条件 row is None / status!=active 一致）：
         # 未找到/已非 active → missing_ref 逐项拒收留痕（陈旧/幻觉引用，同 close_issues None 归类，#63），
         # 不裸 continue 静默丢。**必须先验、再应用 metric**：原序先 _apply_metric_dict（就地 mutate
@@ -5192,6 +5472,14 @@ def apply_issue_tracker_output(
                 print(f"[INFO] new_issue 已拒：event {event_id} 标了 auto_trigger，只能程序硬触发。")
                 applied_new.append({"id": ev.id, "title": ev.title, "rejected": True, "reason": "auto_trigger 事件仅程序可触发"})
                 continue
+            if _is_fiscal_levy_event(ev):
+                # 候选快照里残留的饷率 id 也不许在此记触发。结局只经御批写口。
+                print(f"[INFO] new_issue 已拒：event {event_id} 是饷率事件，结局只经御批。")
+                applied_new.append({
+                    "id": ev.id, "title": ev.title, "rejected": True,
+                    "reason": "饷率事件结局只经御批写口",
+                })
+                continue
             if db.event_terminal_state(ev.id) == "expired":
                 print(f"[INFO] new_issue 已拒：event {event_id} 已过期终态，不再从 event_pool 立项。")
                 applied_new.append({"id": ev.id, "title": ev.title, "rejected": True, "reason": "事件已过期终态"})
@@ -5301,6 +5589,24 @@ def apply_issue_tracker_output(
                 applied_new.append({"id": ev.id, "title": ev.title, "rejected": False, "reason": f"event_type={ev.event_type} 已记为触发"})
                 continue
             issue_id = event_to_issue(db, state, ev, commit=not external_transaction)
+            if issue_id is not None and ev.effect_on_trigger:
+                # #1893：模型选中即触发——事件自带的核心后果（如 huangtaiji_chengdi 的
+                # 改国号）随这一次写口落定，不另按日期旁路补。situation 类事件的
+                # effect_on_trigger 历来只在 auto_trigger 硬触发路应用（见
+                # _auto_trigger_seed_issues_in_atomic），模型选中路原缺这一步，属改
+                # 触发方式后漏接的既有核心后果。
+                entity_rejections.extend(
+                    _apply_issue_entities(
+                        db,
+                        state,
+                        _content_population_effect_for_save(db, ev.effect_on_trigger),
+                        f"事件#{ev.id}触发",
+                        content=runtime_content,
+                        llm_config=llm_config,
+                        applied_person_changes=issue_person_changes,
+                        commit=commit_now,
+                    )
+                )
             if issue_id is None:
                 # event_to_issue 移除 broad except 后，返回 None 只剩一种语义：同源 issue 已存在的
                 # 幂等去重跳过（在其 insert try 之外 early-return）；insert 的真代码/DB 异常现已上抛、
@@ -5414,14 +5720,15 @@ def apply_issue_tracker_output(
                         + ", ".join(unsupported_ongoing_fields)
                     )
                 from ming_sim.staged_commitment import (
-                    capture_commitment_stages,
                     stages_source_from_issue_item,
+                    stages_to_json,
                 )
-                stages_for_commitment = capture_commitment_stages(
+                # 分段承诺只认显式结构化 stages：走库层严格串行面，非 JSON 散文串
+                # 响亮 ValueError（由本段既有 except 收成 durable 拒收）。引擎不再
+                # 从 stage_text/title 的散文里正则抠年份（ADR 0142 / 御批 2026-09-30）。
+                stages_for_commitment = json.loads(stages_to_json(
                     stages_source_from_issue_item(ni),
-                    narrative_text=str(ni.get("stage_text") or ni.get("title") or ""),
-                    origin_turn=int(state.turn),
-                )
+                ))
                 has_stages = bool(stages_for_commitment)
                 if not ongoing_has_work and end_turn_for_commitment <= 0 and not has_stages:
                     raise ValueError("ongoing_effects、end_turn 或 stages 至少一项必填")
@@ -5586,15 +5893,11 @@ def apply_issue_tracker_output(
                 })
                 continue
         from ming_sim.staged_commitment import (
-            capture_commitment_stages,
             stages_source_from_issue_item,
+            stages_to_json,
         )
         stages_norm = (
-            capture_commitment_stages(
-                stages_source_from_issue_item(ni),
-                narrative_text=str(ni.get("stage_text") or ni.get("title") or ""),
-                origin_turn=int(state.turn),
-            )
+            json.loads(stages_to_json(stages_source_from_issue_item(ni)))
             if is_commitment
             else []
         )
@@ -5602,14 +5905,14 @@ def apply_issue_tracker_output(
         # issue+affair 成对写由 GameDB 拥有（ADR 0150-D3）；本段不自包事务生命周期。
         _issue_fields = dict(
             kind=kind,
-            title=title[:60] or "无名事项",
+            title=title or "无名事项",
             origin_kind="decree",
             origin_ref=origin_ref,
             bar_value=bar_value,
             bar_good_meaning=str(ni.get("bar_good_meaning") or "已成"),
             bar_bad_meaning=str(ni.get("bar_bad_meaning") or "废止"),
             inertia=inertia,
-            stage_text=str(ni.get("stage_text") or "")[:120],
+            stage_text=str(ni.get("stage_text") or ""),
             severity=severity,
             region_hint=str(ni.get("region_hint") or ""),
             faction_hint=str(ni.get("faction_hint") or ""),
@@ -5623,8 +5926,8 @@ def apply_issue_tracker_output(
             cancel_cost=cancel_cost,
             effect_on_resolve=resolve_eff,
             effect_on_fail=fail_eff,
-            resolve_condition=resolve_condition[:300],
-            fail_condition=str(ni.get("fail_condition") or "")[:300],
+            resolve_condition=resolve_condition,
+            fail_condition=str(ni.get("fail_condition") or ""),
             end_turn=end_turn,
             stop_condition=stop_condition,
             commitment_kind=commitment_kind,
@@ -5683,7 +5986,7 @@ def apply_issue_tracker_output(
                 "item": cl,
             })
             continue
-        narrative = str(cl.get("narrative") or "")[:400]
+        narrative = str(cl.get("narrative") or "")
         chk = db.conn.execute(
             "SELECT * FROM issues WHERE id=?", (issue_id,)
         ).fetchone()
@@ -5842,7 +6145,7 @@ def apply_issue_tracker_output(
                 trigger_kind="decree",
                 delta_bar=0,
                 stage_text=row["stage_text"],
-                narrative=str(cn.get("narrative") or "陛下欲罢，然此事非诏可消。")[:400],
+                narrative=str(cn.get("narrative") or "陛下欲罢，然此事非诏可消。"),
                 metric_delta={"皇威": -2},
                 commit=not external_transaction,
             )
@@ -5887,7 +6190,7 @@ def apply_issue_tracker_output(
                 db, state,
                 commitment_ref=issue_id,
                 breach_kind=BREACH_KIND_POLICY_REVERSAL,
-                reason=str(cn.get("narrative") or "撤回成命")[:400],
+                reason=str(cn.get("narrative") or "撤回成命"),
                 target_dossier_id=int(parse_dossier_id(origin_ref_c) or 0),
             )
             applied_cancels.append({
@@ -5918,7 +6221,7 @@ def apply_issue_tracker_output(
         if deterministic_breach:
             db.breach_decree_dossier(
                 state, int(linked_dossier["id"]),
-                reason=str(cn.get("narrative") or "撤回成命")[:400], commit=False,
+                reason=str(cn.get("narrative") or "撤回成命"), commit=False,
             )
         cost = {} if deterministic_breach else (cn.get("applied_cost") or {})
         if isinstance(cost, dict):
@@ -5931,7 +6234,7 @@ def apply_issue_tracker_output(
             entity_rejections.extend(_apply_faction_dict(db, cost.get("factions") or {}, commit=commit_now).rejections)  # 派系拒收不蒸发（#14/#63 cmr r2）
         db.cancel_issue(
             state, issue_id,
-            narrative=str(cn.get("narrative") or "")[:400],
+            narrative=str(cn.get("narrative") or ""),
             applied_cost=cost if isinstance(cost, dict) else {},
             commit=not external_transaction,
         )
@@ -6401,14 +6704,14 @@ def apply_office_appointment(
                     state,
                     name,
                     "active",
-                    reason[:200] or "诏书任命",
+                    reason or "诏书任命",
                     content=content,
                     commit=commit,
                 )
             with _appointment_tenure_scope(db, appointment_tenure):
                 db.set_character_office(
                     name, new_office, new_office_type,
-                    source=reason[:60] or "诏书调任", llm_config=llm_config,
+                    source=reason or "诏书调任", llm_config=llm_config,
                     commit=commit,
                     region_id=seat,
                 )
@@ -7375,7 +7678,7 @@ def _apply_dossier_participant_items(
             added = db.append_decree_dossier_participants(dossier_id, [{
                 "character_id": character_id,
                 "tier": tier,
-                "role": str(item.get("role") or "").strip(),
+                "role": str(item.get("role") or ""),
                 "delegator_id": delegator_id,
             }], state=state, commit=False)
             if not added:
@@ -7384,7 +7687,7 @@ def _apply_dossier_participant_items(
                 if not any(
                     row.get("character_id") == character_id
                     and row.get("tier") == tier
-                    and row.get("role") == str(item.get("role") or "").strip()
+                    and row.get("role") == str(item.get("role") or "")
                     and row.get("delegator_id") == delegator_id
                     for row in existing.get("participant_roster", [])
                 ):
@@ -7523,7 +7826,7 @@ def _apply_surcharge_decrees(
         if claim in claimed_origins:
             _reject("invalid_enum", "surcharge_decrees 同批同一旨意与省份只能成功一次")
             continue
-        reason = str(item.get("reason") or "").strip()
+        reason = str(item.get("reason") or "")
         if len(reason) > 120:
             _reject("invalid_enum", f"surcharge_decrees reason 超 120 字：{reason!r}")
             continue
@@ -8136,6 +8439,7 @@ def apply_score_extraction(
         Dict[str, list[tuple[str, object]]],
         dict[str, list[str]],
     ]]] = None,
+    declared_effect_event_ids: Optional[Sequence[str]] = None,
     defer_disclosure: bool = False,
 ) -> Dict[str, object]:
     """落地结算声明到 state 与 db。
@@ -8197,6 +8501,7 @@ def apply_score_extraction(
             ordered_deltas=ordered_deltas,
             ordered_effect_event_ids=ordered_effect_event_ids,
             effect_sequence=effect_sequence,
+            declared_effect_event_ids=declared_effect_event_ids,
             defer_disclosure=defer_disclosure,
         )
     finally:
@@ -8307,6 +8612,7 @@ def _apply_score_extraction_body(
         Dict[str, list[tuple[str, object]]],
         dict[str, list[str]],
     ]]] = None,
+    declared_effect_event_ids: Optional[Sequence[str]] = None,
     defer_disclosure: bool = False,
 ) -> Dict[str, object]:
     """Bound apply body; batch affair authority is armed by caller."""
@@ -8460,8 +8766,8 @@ def _apply_score_extraction_body(
                 raise ValueError(
                     "执行结果必须为 fulfilled/degraded/failed/transformed"
                 )
-            note = str(item.get("note") or "").strip()
-            if not note:
+            note = str(item.get("note") or "")
+            if not note.strip():
                 raise ValueError("执行说明不能为空")
             # #565：显式 affected_parties 仅校验门闩（契约§5），不驱动机械写路。
             raw_parties = (
@@ -8587,6 +8893,26 @@ def _apply_score_extraction_body(
         _strategic_event_outcome_label_or_error(event_id, extracted, runtime_content)
     strategic_event_delta_ids = set(strategic_event_result_delta_event_ids)
     strategic_event_referenced_ids = strategic_event_pool_ids | strategic_event_delta_ids
+    # #1892：本批声明显式声明归属（event_id）到三饷事项的效果信封——亲裁结局的写口
+    # 候选。集合只由「声明显式 event_id + 该事件确属 fiscal_levy」构成，不含任何
+    # 代码推断的事件。来源是 ordered_effect_event_ids（按字段登记的归属）并上
+    # declared_effect_event_ids（已被接受的效果信封自带的 event_id）——后者必要，
+    # 因为归一器只在信封含列表/字典字段时登记归属，仅声明「事件结局」时前者为空。
+    # 两者同出一份权威声明，不是第二来源。预检已拒收的信封不在这份名单里。
+    petition_declared_ids = {
+        event_id
+        for declared in (ordered_effect_event_ids or {}).values()
+        for event_id in declared
+        if event_id
+    }
+    petition_declared_ids.update(
+        event_id for event_id in (declared_effect_event_ids or ()) if event_id
+    )
+    petition_effect_ids = {
+        event_id for event_id in petition_declared_ids
+        if getattr(runtime_content.event_by_id.get(event_id), "category", "")
+        == FISCAL_LEVY_EVENT_CATEGORY
+    }
 
     def _split_pre_issue_person_changes(changes: List[Dict[str, object]]) -> tuple[List[Dict[str, object]], List[Dict[str, object]]]:
         pre_issue: List[Dict[str, object]] = []
@@ -9184,6 +9510,15 @@ def _apply_score_extraction_body(
         ev = runtime_content.event_by_id.get(event_id)
         _reject_suppressed_strategic_results(event_id, ev.title if ev is not None else event_id)
 
+    # #1891/#1892：三饷亲裁语义落账——批红经 #1815 单一语义写口置定事件结局，原始选项标签
+    # 不再旁路代批（ADR 0153:5）。留中／未给标签则不写终态：本疏已答而事件未终。
+    for event_id in sorted(petition_effect_ids):
+        raw_label = _event_outcome_label(extracted.get("事件结局") or {}, event_id)
+        if not raw_label:
+            continue
+        apply_petition_event_outcome(state, db, event_id, raw_label, commit=commit_now)
+
+
     for new_issue in (issue_summary.get("new_issues") or []):
         if not (
             isinstance(new_issue, dict)
@@ -9194,9 +9529,26 @@ def _apply_score_extraction_body(
         event_id = str(new_issue.get("id") or "").strip()
         if event_id not in strategic_event_pool_ids:
             continue
+        deferred_event = runtime_content.event_by_id.get(event_id)
+        if deferred_event is not None and _is_fiscal_levy_event(deferred_event):
+            new_issue["rejected"] = True
+            new_issue["reason"] = "饷率事件结局只经御批写口"
+            continue
+        outcome_payload: Dict[str, object] = extracted
+        if effect_sequence is not None:
+            for step_extracted, _ordered, _ids in effect_sequence:
+                step_outcomes = step_extracted.get("事件结局")
+                if (
+                    isinstance(step_outcomes, dict)
+                    and _event_outcome_label(step_outcomes, event_id)
+                ):
+                    outcome_payload = {
+                        "事件结局": {event_id: step_outcomes[event_id]},
+                    }
+                    break
         outcome_label, outcome_error = _strategic_event_outcome_label_or_error(
             event_id,
-            extracted,
+            outcome_payload,
             runtime_content,
         )
         if outcome_error:
@@ -9402,7 +9754,7 @@ def _apply_score_extraction_body(
             init_value = init_raw
         # display 缺省=归一 stem（与落库同源——raw key 去 _base 会把「关税_rate」
         # 显示成「关税_rate」,cmr S3 r11;DELTA_SCHEMA 契约「缺省=key 去后缀」）。
-        display = str(create.get("display") or "").strip() or (db._stem_of(key) or key)
+        display = str(create.get("display") or "") or (db._stem_of(key) or key)
         origin_ref = str(create.get("origin_ref") or "").strip()
         origin_error = db.effect_origin_rejection(origin_ref)
         if origin_error:
@@ -9435,7 +9787,7 @@ def _apply_score_extraction_body(
             )
             if residual_account:
                 residual_display = (
-                    str(create.get("display") or "").strip()
+                    str(create.get("display") or "")
                     or (db._stem_of(key) or key) or "无名月支"
                 )
                 tlog(
@@ -9444,7 +9796,7 @@ def _apply_score_extraction_body(
                 )
         new_key = db.create_fiscal_item(
             key, account, direction, display, init_value,
-            note=str(create.get("reason") or "")[:120],
+            note=str(create.get("reason") or ""),
             origin_ref=origin_ref,
             turn=state.turn,
             beyond_intent=create.get("beyond_intent"),
@@ -9638,9 +9990,9 @@ def _apply_score_extraction_body(
         if not isinstance(item, dict):
             continue
         raw_id = item.get("order_id")
-        sim_note = str(item.get("sim_note") or item.get("result") or "").strip()
+        sim_note = str(item.get("sim_note") or item.get("result") or "")
         disclosed = item.get("disclosed") is True
-        if raw_id is None or not sim_note:
+        if raw_id is None or not sim_note.strip():
             applied_secret_orders.append({"order_id": raw_id, "rejected": True,
                                           "category": "invalid_enum",
                                           "reason": "order_id 或 sim_note 缺失"})
@@ -9826,14 +10178,33 @@ def _apply_score_extraction_body(
     return report
 
 
-def _resolve_victory(db: GameDB, state: GameState, extracted: Dict[str, object]) -> Dict[str, object]:
-    """结局判定：叙事型（崇祯退位/自尽，extractor 抽 emperor_fate）优先于数值型（京畿失守）。
-    20 年到期（timeout）在 decree 结局收口判，不在此。"""
-    fate = extracted.get("emperor_fate")
-    if fate in ("abdicate", "suicide"):
-        if fate == "abdicate":
-            return {"status": "emperor_abdicate", "summary": "崇祯帝退位逊国，大明皇统中绝。"}
+def _declared_emperor_ending(fate: object) -> Optional[Dict[str, object]]:
+    """模型声明的皇帝终态走既有终局链。退位／自尽保留原状态号与定调。
+
+    其它非空声明（被废、暴毙，以及声明里的其它终态）同样终局，不再被旧的两值枚举丢掉。
+    不定调新句子：总评仍由结局 agent 据邸报来写。
+    """
+    if not isinstance(fate, str):
+        return None
+    token = fate.strip()
+    if not token or token.lower() in {"null", "none"}:
+        return None
+    if token == "abdicate":
+        return {"status": "emperor_abdicate", "summary": "崇祯帝退位逊国，大明皇统中绝。"}
+    if token == "suicide":
         return {"status": "emperor_suicide", "summary": "崇祯帝自尽殉国，煤山一缢，大明社稷俱亡。"}
+    if token.isascii() and token.replace("_", "").isalnum() and not token[0].isdigit():
+        status = token if token.startswith("emperor_") else f"emperor_{token}"
+        return {"status": status, "summary": ""}
+    return {"status": token, "summary": ""}
+
+
+def _resolve_victory(db: GameDB, state: GameState, extracted: Dict[str, object]) -> Dict[str, object]:
+    """结局判定：模型声明的皇帝终态优先于数值型（京畿失守）。
+    20 年到期（timeout）在 decree 结局收口判，不在此。"""
+    declared = _declared_emperor_ending(extracted.get("emperor_fate"))
+    if declared is not None:
+        return declared
     return victory_status(db, state)
 
 

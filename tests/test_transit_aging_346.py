@@ -196,6 +196,15 @@ def test_pre_settle_ticks_arrival_before_terminal_states(game):
         assert row["location"] == "liaodong" and row["transit_to"] == "", (
             "倒数 tick 应已引擎抵达"
         )
+        assert not db.has_event_terminal_state("__test_transit_gate__", "avoided")
+        from types import SimpleNamespace
+
+        from ming_sim.applier import Provenance
+        import ming_sim.month_chain as month_chain
+        month_chain._consume_event_gates_after_edicts(
+            SimpleNamespace(db=db, state=state), {},
+            decree_text="", source=Provenance.system_simulation,
+        )
         assert not db.has_event_terminal_state("__test_transit_gate__", "avoided"), (
             "在途赴门控地者抵达月事件不应在 tick 前被误判 avoided"
         )

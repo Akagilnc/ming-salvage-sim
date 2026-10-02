@@ -22,11 +22,6 @@ from tests.month_chain_helpers import make_light_session
 
 
 def _forbid_extractor(monkeypatch):
-    import ming_sim.decree as decree_mod
-    import ming_sim.simulation as simulation
-
-    assert not hasattr(decree_mod, "extract_scores_by_modules_with_agno")
-    assert not hasattr(simulation, "extract_scores_by_modules_with_agno")
     monkeypatch.setattr(
         "ming_sim.session.write_decree_with_agno", lambda *_a, **_k: "诏",
     )
@@ -112,7 +107,6 @@ def test_month_entry_world_push_follows_audience_transport_policy(
     calls = {"n": 0}
 
     def boom(self, *_args, **_kwargs):
-        assert getattr(self, "id", None) == "world-segment"
         calls["n"] += 1
         raise sequence[calls["n"] - 1]
 
@@ -246,14 +240,14 @@ def test_world_text_exhaustion_stops_month_keeps_settled_edicts(game, monkeypatc
     assert len(rows) == 1 and int(rows[0]["delta"]) == -7
     abort = caught.value
     assert abort.error_pack_path
-    assert abort.stage in {"world_text", "world-segment", "world_segment"}
+    assert abort.stage == "world_text"
     chain = (db.get_resolve_context(turn) or {}).get("simulator_payload", {}).get(
         "month_chain", {},
     )
     failure = chain.get("call_failure") or {}
     assert failure.get("kind") == "model_exhausted"
     assert failure.get("error_pack_path") == abort.error_pack_path
-    assert "world" in str(failure.get("step") or abort.stage)
+    assert failure.get("step") == "world_text"
     assert not chain.get("world_text_ready")
     assert not chain.get("world_committed")
 

@@ -853,7 +853,7 @@ def test_generate_rescript_draft_program_error_propagates(game, monkeypatch):
 # F1.3/F2.5 崩溃恢复：不重跑票拟步（持久层读回）＋restore 往返无损
 # ---------------------------------------------------------------------------
 
-def test_restore_roundtrip_at_awaiting_pause_has_no_draft_rows(game):
+def test_restore_roundtrip_at_awaiting_pause_has_no_draft_rows(game, tmp_path):
     """F2.5 restore 断言（AWAITING 暂停态存档点）：phase1 暂停时尚无票拟行，restore 后同形。"""
     db, state, content = game
     turn = state.turn
@@ -862,23 +862,16 @@ def test_restore_roundtrip_at_awaiting_pause_has_no_draft_rows(game):
             {"label": "a", "hint": ""}, {"label": "b", "hint": ""}]},
     ])
 
-    import tempfile, os
-    fd, path = tempfile.mkstemp(suffix=".db")
-    os.close(fd)
+    path = str(tmp_path / "restore.db")
+    db.backup_to(path)
+    restored = GameDB(path, content)
     try:
-        db.backup_to(path)
-        restored = GameDB(path, content)
-        try:
-            assert restored.list_rescript_drafts() == []
-            rows = restored.list_pending_decisions(turn)
-            assert [r["title"] for r in rows] == ["抉择"]
-            assert all(r["kind"] == "decision" for r in rows)
-        finally:
-            restored.close()
+        assert restored.list_rescript_drafts() == []
+        rows = restored.list_pending_decisions(turn)
+        assert [r["title"] for r in rows] == ["抉择"]
+        assert all(r["kind"] == "decision" for r in rows)
     finally:
-        os.remove(path)
-        if os.path.exists(f"{path}_agno.db"):
-            os.remove(f"{path}_agno.db")
+        restored.close()
 
 # ---------------------------------------------------------------------------
 # 票拟与本月上下文同存（#1846 已删 ready 降级）

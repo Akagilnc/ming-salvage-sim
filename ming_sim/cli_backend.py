@@ -853,10 +853,7 @@ def _iter_cli_runner_text(
                 code="llm_connection_error",
                 provider_message=f"agy auth race：{(stdout_text + stderr)[:200]}",
             )
-        text = stdout_text.strip() or final_text.strip()
-        if runner == "codex" and not json_events and not text:
-            # 兜底：stdout 空时干净段可能落在合并流 "OpenAI Codex v" 之前。
-            text = (stdout_text + stderr).split("OpenAI Codex v")[0].strip()
+        text = stdout_text if stdout_text.strip() else final_text
         # 非零退出不洗成瞬断：无 typed status 的失败当确定性失败（#1780 / ADR 0142）。
         if returncode != 0:
             raise RuntimeError(f"{runner} 调用失败（退出码 {returncode}）：{stderr[:200]}")
@@ -868,7 +865,7 @@ def _iter_cli_runner_text(
         if not json_events:
             yield text
         elif not pieces and final_text.strip():
-            yield final_text.strip()
+            yield final_text
     finally:
         if kimi_agent_path:
             try:
@@ -895,7 +892,7 @@ def _run_cli_runner(
             materials_dir=materials_dir,
         )
     )
-    return text.strip(), 1
+    return text, 1
 
 
 def _run_agy(prompt: str, *, materials_dir: Optional[str] = None) -> Tuple[str, int]:
@@ -1834,8 +1831,8 @@ def build_participant_correction_feedback(
         f"请改正为名册中陛下所指之人的正确规范名（须仍是同一人）；"
         f"不得擅自除去或另换他人。\n"
     )
-    facts = str(roster_facts or "").strip()
-    if facts:
+    facts = str(roster_facts or "")
+    if facts.strip():
         block += facts if facts.endswith("\n") else facts + "\n"
     return block
 
@@ -1949,11 +1946,11 @@ def compose_decree_validation_recovery(
         f"需要皇帝重新说明：{feature}。以本职口吻回禀，明确此旨尚未记录，并请皇帝"
         "补充或改说所需信息后重拟。"
     )
-    emperor = str(emperor_words or "").strip()
-    if emperor:
+    emperor = str(emperor_words or "")
+    if emperor.strip():
         prompt += f"\n【皇帝原话】{emperor}"
-    prior = str(prior_output or "").strip()
-    if prior:
+    prior = str(prior_output or "")
+    if prior.strip():
         prompt += f"\n【原产出】{prior}"
     return _compose_inworld_fact_report(
         prompt, llm_config=llm_config, tag="decree_validation_recovery",
@@ -2023,11 +2020,11 @@ def compose_secret_order_landing_recovery(
         f"以本职揣摩圣意：能从皇帝原话与既有交代补全的，陈述你理解的密令要点请皇帝确认；"
         f"揣摩不出的，以本职口吻当场请示皇帝所需。"
     )
-    emperor = str(emperor_words or "").strip()
-    if emperor:
+    emperor = str(emperor_words or "")
+    if emperor.strip():
         prompt += f"\n【皇帝原话】{emperor}"
-    prior = str(prior_output or "").strip()
-    if prior:
+    prior = str(prior_output or "")
+    if prior.strip():
         prompt += f"\n【原抽取产出】{prior}"
     return _compose_inworld_fact_report(
         prompt, llm_config=llm_config, tag="secret_order_landing_recovery",
@@ -2657,10 +2654,10 @@ def _stalled_deliberation_push_facts(db: Any) -> str:
     """#658：自由下旨可强推的 stalled 廷议＋active issue 投影（候选相关切片）。"""
     if db is None:
         return ""
-    try:
-        rows = db.list_decree_dossiers(status="proposed")
-    except Exception:
-        return ""
+    # #1849：供料库读失败是代码/IO 错，一律响亮上抛（ADR 0005）。此前静默洗成
+    # 空事实块，抽取遂在缺御笔强推事实下照常出产、写入口再覆盖原草稿——
+    # 失败被消解成合法产物（失败诚实宪法）。
+    rows = db.list_decree_dossiers(status="proposed")
     lines: List[str] = []
     for row in rows or []:
         try:
@@ -2686,15 +2683,17 @@ def _stalled_deliberation_push_facts(db: Any) -> str:
                 or payload.get("target_id")
                 or issue["title"]
                 or ""
-            ).strip()
+            )
             body = str(
                 payload.get("text") or row.get("decree_text") or ""
-            ).strip()
+            )
             # #658：完整 title/body 供唯一辨认；禁 40 字截断导致同前缀误绑定
             lines.append(
                 f"  案卷ID={did} issue#{int(issue['id'])} 题={title} 正文={body}"
             )
-        except (TypeError, ValueError, KeyError, json.JSONDecodeError):
+        except (TypeError, ValueError, KeyError, json.JSONDecodeError) as exc:
+            # #1849：坏项隔离留痕（ADR 0005：只拒该项、不带走整批，但必须记原因）。
+            _log(f"强推案卷事实跳过坏行（dossier={row.get('id')!r}）：{exc}")
             continue
     if not lines:
         return ""
@@ -2720,7 +2719,8 @@ def extract_draft_intent(
     harvest_participants: bool = False,
 ) -> Dict[str, Any]:
     """LLM 判皇帝本轮是否在口头请大臣拟旨（非显式前缀），返回拟旨意图 + 草案文本 + 目标候选。
-    失败/无 → {"draft_action": "无", "draft_text": "", "target_candidate": ""}。
+    模型答无/非拟旨 → {"draft_action": "无", "draft_text": "", "target_candidate": ""}；
+    抽取调用本身失败（LLM 终失败、代码错）一律上抛，不得降级成「无」（#1849 失败诚实）。
     has_pending_draft=True：本回合已有草案暂存，皇帝「补充/修改当前草稿」也归拟旨。
     existing_draft_text 非空时（补充模式）：LLM 输出合并草案，payload 存合并后全文；
     不能用大臣确认回话（「好的，加上…」）覆盖原草案。
@@ -2737,7 +2737,7 @@ def extract_draft_intent(
     correction_feedback（#1274 V-1）：校验失败回喂的纠错指令；非空时 LLM 挂死响亮上抛。"""
     roster_facts = _draft_intent_character_roster_facts(content)
     army_facts = _draft_intent_army_grounding_facts(content)
-    correction_block = str(correction_feedback or "").strip()
+    correction_block = str(correction_feedback or "")
     if correction_block and not correction_block.endswith("\n"):
         correction_block += "\n"
     stalled_push_facts = _stalled_deliberation_push_facts(db)
@@ -2799,16 +2799,14 @@ def extract_draft_intent(
             + "【皇帝】" + (player_message or "（无）") + "\n"
             + "【大臣完整回话】" + (minister_reply or "（无）") + "\n"
         )
-        raw = ""
-        try:
-            raw, _ = _run_backend_for_config(prompt, llm_config, tag="draft_intent")
-        except Exception as exc:
-            # 纠错重试路上 LLM 挂死响亮上抛（owner：该报）；首抽仍吞掉以免挡对话。
-            if correction_block:
-                raise
-            _log(f"多旨稿抽取失败：{exc}")
-        obj = _loads_lenient(raw) or {}
-        values = obj.get("成品旨稿") if isinstance(obj, dict) else None
+        # #1849：抽取调用失败一律上抛。失败不得降级成「无拟旨意图」——
+        # 那会让写入口把失败洗成 special_decree 冒充成功产物（失败诚实宪法）。
+        raw, _ = _run_backend_for_config(prompt, llm_config, tag="draft_intent")
+        # #1849：解析失败也是抽取失败，不是「无意图」（与单条路同一根因）。
+        obj = _loads_lenient(raw)
+        if not isinstance(obj, dict):
+            raise ValueError("多旨稿抽取产物不可解析为 JSON 对象")
+        values = obj.get("成品旨稿")
         drafts = []
         draft_combo_flags: List[bool] = []
         seen_texts = set()
@@ -2833,7 +2831,7 @@ def extract_draft_intent(
             if not isinstance(value, dict):
                 invalid_batch = True
                 break
-            text = str(value.get("正文") or "").strip()
+            text = str(value.get("正文") or "")
             action = str(value.get("动作类型") or "").strip()
             if action == "grant_allocation":
                 projected = _normalize_grant_transport(value)
@@ -2974,7 +2972,7 @@ def extract_draft_intent(
     # 直接用大臣回话（可能是「好的，加上…」等确认语）会覆盖原草案——须由 LLM 合并。
     _existing_draft_text = (
         "" if existing_draft_text is None else str(existing_draft_text)
-    ).strip()
+    )
     _supplement_mode = (has_pending_draft or bool(_candidates)) and (
         bool(_existing_draft_text) or bool(_candidates))
     intent_schema_line = (
@@ -3024,7 +3022,7 @@ def extract_draft_intent(
     )
     candidates_context = (
         "【现有候选】\n" + "\n".join(
-            f"  [{int(c['id'])}] {str(c.get('summary') or c.get('text') or '')[:40]}"
+            f"  [{int(c['id'])}] {str(c.get('summary') or c.get('text') or '')}"
             for c in _candidates
         ) + "\n"
         if _candidates else ""
@@ -3055,18 +3053,21 @@ def extract_draft_intent(
         + "【皇帝】" + (player_message or "（无）") + "\n"
         + "【大臣回话】" + (minister_reply or "（无）") + "\n"
     )
-    raw = ""
-    try:
-        raw, _ = _run_backend_for_config(prompt, llm_config, tag="draft_intent")
-    except Exception as exc:
-        if correction_block:
-            raise
-        _log(f"拟旨意图抽取失败：{exc}")
-    obj = _loads_lenient(raw) or {}
+    # #1849：同多旨稿路径——抽取调用失败一律上抛。首抽也不例外：
+    # 吞掉后这里只当「无拟旨意图」，下游 project 会把失败洗成 special_decree
+    # 冒充成功产物（失败诚实宪法）。无意图只在模型真的这样回答时成立。
+    raw, _ = _run_backend_for_config(prompt, llm_config, tag="draft_intent")
+    # #1849：解析失败/缺意图键/非法意图值都是抽取产物不可用，不是「无意图」；
+    # 一律响亮拒收（同 _coerce_draft_target_kind / 动作类型非法的既有契约），
+    # 禁再消解成合法无意图让写入口覆盖原草稿。
+    obj = _loads_lenient(raw)
     if not isinstance(obj, dict):
-        obj = {}
-    _raw = str(obj.get("拟旨意图") or "无").strip()
-    _action = _raw if _raw in {"无", "拟旨"} else "无"
+        raise ValueError("拟旨抽取产物不可解析为 JSON 对象")
+    if "拟旨意图" not in obj:
+        raise ValueError("拟旨抽取产物缺「拟旨意图」")
+    _action = str(obj.get("拟旨意图") or "").strip()
+    if _action not in {"无", "拟旨"}:
+        raise ValueError(f"拟旨意图非法：{_action!r}")
     # #654 H：无意图立即短路，不跑 acting/动作类型/target_kind 校验。
     # #1778：召对交办后置点将仍收承办人/名单（harvest_participants），不另造抽取器。
     if _action == "无":
@@ -3112,17 +3113,15 @@ def extract_draft_intent(
         assert push_dossier_id is not None
         push_out: Dict[str, Any] = {
             "draft_action": "拟旨",
-            "draft_text": (minister_reply or player_message or "").strip(),
+            "draft_text": minister_reply or player_message or "",
             "target_candidate": "",
             "target_dossier_id": push_dossier_id,
         }
         push_mode = _directive_mode(obj.get("颁布方式"))
         if push_mode is not None:
             push_out["mode"] = push_mode
-        try:
-            push_declaration = _affair_declaration_from_draft_obj(obj)
-        except (TypeError, ValueError):
-            push_declaration = {}
+        # #1849：非法事务声明是脏产物，不得静默弃声明后照样出成功强推。
+        push_declaration = _affair_declaration_from_draft_obj(obj)
         if push_declaration:
             push_out["affair_declaration"] = _stamp_split_birth_key(
                 push_declaration["affair_declaration"]
@@ -3186,22 +3185,22 @@ def extract_draft_intent(
             mechanical["locality_scope"] = explicit_scope
     if mode is not None:
         mechanical["mode"] = mode
-    merged = str(obj.get("合并草案") or "").strip()
+    merged = str(obj.get("合并草案") or "")
     # #654 H 已在上方对 _action=="无" 短路；此处仅保留 #653 pay_order 验形。
+    # #1849：entries 非法是脏产物，响亮拒收；不得洗成「无意图」让写入口
+    # 以 special_decree 覆盖原草稿（失败诚实宪法）。
     if dossier_action == "pay_order_override" and (
         not isinstance(mechanical["entries"], list) or not mechanical["entries"]
     ):
-        return {"draft_action": "无", "draft_text": "", "target_candidate": ""}
+        raise ValueError("pay_order_override 须有非空 entries 清单")
     if not _candidates:
         # 无候选：沿用单条语义——补充模式合并、否则大臣回话即草案。
         if _supplement_mode:
             draft_text = merged if merged else _existing_draft_text
         else:
-            draft_text = (minister_reply or "").strip()
-        try:
-            single_declaration = _affair_declaration_from_draft_obj(obj)
-        except (TypeError, ValueError):
-            return {"draft_action": "无", "draft_text": "", "target_candidate": ""}
+            draft_text = minister_reply or ""
+        # #1849：非法事务声明响亮拒收（禁静默弃声明后照样出成功草案）。
+        single_declaration = _affair_declaration_from_draft_obj(obj)
         if single_declaration:
             single_declaration = {
                 "affair_declaration": _stamp_split_birth_key(
@@ -3237,15 +3236,13 @@ def extract_draft_intent(
         # 多道并存、改/补目标不明：不落草案，交 session 走结构化含糊追问（对齐 AC5）。
         return {"draft_action": _action, "draft_text": "", "target_candidate": "含糊"}
     if target == "新":
-        draft_text = merged if merged else (minister_reply or "").strip()
+        draft_text = merged if merged else (minister_reply or "")
     else:
         existing = str(_by_id[int(target)].get("text") or "")
         # 补某道：优先合并全文；LLM 未合并时保留原文（避免用确认语覆盖），原文亦空则退回话。
-        draft_text = merged if merged else (existing if existing else (minister_reply or "").strip())
-    try:
-        cand_declaration = _affair_declaration_from_draft_obj(obj)
-    except (TypeError, ValueError):
-        return {"draft_action": "无", "draft_text": "", "target_candidate": ""}
+        draft_text = merged if merged else (existing if existing else (minister_reply or ""))
+    # #1849：非法事务声明响亮拒收（禁洗成「无意图」）。
+    cand_declaration = _affair_declaration_from_draft_obj(obj)
     if cand_declaration:
         cand_declaration = {
             "affair_declaration": _stamp_split_birth_key(
@@ -3310,13 +3307,15 @@ def capture_manual_directive_payload(
 ) -> Dict[str, object]:
     """Web/CLI 手工下旨共用既有草稿抽取 seam；在写入边界归一人物引用。
 
-    #1327 / #1274 V-1：空载零 LLM 直落 special_decree。
+    #1327 / #1274 V-1：空载零 LLM 直落 special_decree（无正文）。
     #1465 切片③：外层 30s 总罩已删——长抽取不再被墙钟截断成 special_decree
     fallback（宪法 #9）；次数/空转由 transport 在 runner 侧收口。
     真不在册耗尽 → 通政司戏内回禀 ValueError（不落草案、不除名）；
     回禀产文失败 → typed LLMUnavailable（禁固定戏内模板当台词）。
+    #1849：抽取调用失败不再降级 special_decree 冒充成功拟旨，一律响亮上抛。
+    special_decree 另有一合法来路：模型真答「无拟旨意图」（产物空，非失败）。
     """
-    directive_text = str(text or "").strip()
+    directive_text = str(text or "")
     fallback_mode = resolve_directive_mode(existing=existing_mode)
     # 空载短路：无正文可抽 → 直落草案结构，零 LLM 调用（P5：禁为省写把可短路 LLM 串回）。
     if not directive_text:
@@ -3344,14 +3343,13 @@ def capture_manual_directive_payload(
             llm_config=llm_config,
         )
         raise ValueError(report) from exc
-    except ValueError:
-        # 其它业务 ValueError 原样上抛；禁吞成 special_decree。
-        raise
-    except Exception as exc:
-        # 纠错路上 LLM 终失败（transport 已尽次数）→ special_decree 原文照落
-        # （零改参与人）。此处只接 transport 已判终的失败，不再自设墙钟。
-        _log(f"手工拟诏 capture 降级 special_decree：{exc}")
-        return _manual_special_decree_payload(fallback_mode)
+
+    # 其余失败一律响亮上抛：LLM 终失败已由 transport 翻成 typed LLMUnavailable
+    # （Web → 结构化 400，禁裸 500），业务 ValueError 原样上抛（CLI 留在审阅循环）。
+    # #1849：此处曾用 `except Exception` 把任何失败——含 AttributeError 等代码错误
+    # ——降级成 special_decree 冒充成功拟旨（Web 更新草稿后 200 返回）；真实抽取核
+    # 内部（extract_draft_intent 首抽）也曾吞错续行，同样洗成 special_decree。
+    # 两处皆已删；失败诚实宪法禁此。
 
     # heal 已 normalize+validate；投影与 #1769 补交共用同一 helper（禁双路径漂移）。
     return project_draft_extract_to_directive_payload(
@@ -3374,8 +3372,8 @@ def build_draft_admission_resubmit_feedback(
     结构契约/科目词表已由 extract_draft_intent 主 prompt 注入，不在 correction 再写一份。
     """
     payload_json = json.dumps(dict(bad_payload or {}), ensure_ascii=False, sort_keys=True)
-    reason = str(failure_reason or "").strip() or "（未给出具体拒因）"
-    text = str(decree_text or "").strip()
+    reason = str(failure_reason or "") or "（未给出具体拒因）"
+    text = str(decree_text or "")
     parts = [
         "【成案校验失败，请按失败事实与原产物整份重交结构化字段（勿改旨文正文）】\n",
         f"失败事实：{reason}\n",
@@ -3443,10 +3441,10 @@ def project_draft_extract_to_directive_payload(
         classify_directive_structured_kind,
         imperial_push_target_dossier_id,
     )
-    try:
-        pre_kind = classify_directive_structured_kind(payload)
-    except ValueError:
-        pre_kind = "ordinary"
+    # #1849：互斥违规（push 与 triad 并存）此前先被 except 洗成 "ordinary" 再走
+    # 组装，报出的可能已是别的字段错；禁临时改判，直接响亮上抛（同一 classify
+    # 在下方组装后还会再判一次，掩盖只会让真因被别的字段错顶替）。
+    pre_kind = classify_directive_structured_kind(payload)
     if pre_kind not in {"push", "empty"} and payload.get("target_kind") not in (None, ""):
         regions_content = getattr(content, "regions", None) if content is not None else None
         conn = getattr(db, "conn", None) if db is not None else None
@@ -3490,8 +3488,8 @@ def resubmit_draft_admission_payload(
     （原抽 + 重写 2 = 总计 3）。与 extract 内 heal_retries（组合/名册）独立——
     内部 heal 不冒充成案补交次数。不在引擎侧改写 LLM 输出（0142）。
     """
-    text = str(decree_text or "").strip()
-    if not text:
+    text = str(decree_text or "")
+    if not text.strip():
         raise ValueError("补交缺旨文正文")
     feedback = build_draft_admission_resubmit_feedback(
         failure_reason=failure_reason,
@@ -3537,15 +3535,6 @@ def resubmit_draft_admission_payload(
 
 
 
-
-
-def _matched_prefix(message: str, prefixes) -> Optional[str]:
-    """消息命中某前缀则返回前缀后的正文（玩家那句意图），否则 None。"""
-    pm = (message or "").strip()
-    for pre in prefixes:
-        if pm.startswith(pre):
-            return pm[len(pre):].strip()
-    return None
 
 
 def _scan_outside_strings(text: str, handle) -> str:
@@ -3741,8 +3730,8 @@ def assemble_secret_order_content(
     走 payload 结构化键，不经本函数自由文本拼装。三路（抽取/暂存合并/更新·哨兵）
     同口径。
     """
-    emperor = (emperor_intent or "").strip()
-    extracted = (extractor_content or "").strip()
+    emperor = emperor_intent or ""
+    extracted = extractor_content or ""
     if extracted and _content_reflects_emperor_intent(extracted, emperor):
         return extracted
     return _merge_secret_content(emperor, extracted)
@@ -3819,137 +3808,9 @@ def _choose_assignee(
     return default_assignee
 
 
-def _split_audience_context(context: str) -> Tuple[str, str]:
-    """把召对上下文快照剥成 (皇帝任务文本, "")：去掉「皇帝：/大臣：」角色标签、
-    「【本轮确认】…」只保留期限/约束等实质补充。皇帝行=任务正文（作御旨守门输入+兜底种子）。
-
-    #1274 K1 / ADR 0142：大臣行不再并入 content 拼装——实质补充须由 extractor「内容」字段
-    承载；第二返回值恒为空串，保留元组形以免调用点分叉。
-    """
-    entries: List[Tuple[str, str]] = []  # ("e"=皇帝任务行,)
-    for raw in (context or "").splitlines():
-        line = raw.strip()
-        if not line:
-            continue
-        if line.startswith("【本轮确认】"):
-            material = _secret_confirmation_material(line.removeprefix("【本轮确认】"))
-            if material:
-                entries.append(("e", material))
-            continue
-        if line.startswith("皇帝："):
-            task = line[len("皇帝："):].strip()
-            if task:
-                entries.append(("e", task))
-        # 大臣行：不入 content 拼装（extractor 读完整上下文自行抽「内容」）
-    # 只取最近的任务跨度：排除同回合更早的无关问答，但保留连续多条相关皇帝任务行。
-    # 旧实现从最后一条皇帝行起，能排除「京营操练如何？」这类无关问答，却会丢掉
-    # 「先命洪承畴赈灾、再令东厂护银」这种前几轮连续补充的同一密令任务。
-    boundary = -1
-    for i, (kind, text) in enumerate(entries):
-        if kind == "e" and not _secret_context_task_like(text):
-            boundary = i
-    emperor_indices = [i for i, (kind, _text) in enumerate(entries) if i > boundary and kind == "e"]
-    if not emperor_indices:
-        emperor_indices = [i for i, (kind, _text) in enumerate(entries) if kind == "e"]
-    start = emperor_indices[-1] if emperor_indices else None
-    selected_emperor = entries[start][1] if start is not None else ""
-    if start is not None:
-        for i in reversed(emperor_indices[:-1]):
-            prior_text = entries[i][1]
-            if not _secret_context_tasks_related(prior_text, selected_emperor):
-                break
-            start = i
-            selected_emperor = prior_text + "\n" + selected_emperor
-    span = entries[start:] if start is not None else entries
-    emperor_lines = [text for kind, text in span if kind == "e"]
-    return "\n".join(emperor_lines), ""
-
-
-def _secret_context_task_like(text: str) -> bool:
-    compact = re.sub(r"\s+", "", text or "")
-    if not compact:
-        return False
-    if _secret_context_constraint_like(compact):
-        return True
-    if re.search(r"[?？]$", compact):
-        return False
-    return bool(re.search(r"(命|令|着|遣|派|督办|查|暗查|密查|护|封存|截留|赈|再令|另令|须|务必|回奏|月内|日内)", compact))
-
-
-def _secret_context_tasks_related(prior: str, later: str) -> bool:
-    later_compact = re.sub(r"\s+", "", later or "")
-    if _secret_context_constraint_like(later_compact):
-        return True
-    if re.search(r"^(再|另|又|并|仍|复)(令|命|着|遣|派)", later_compact):
-        return bool(_secret_context_topic_chars(prior) & _secret_context_topic_chars(later))
-    if re.search(r"(月内|日内|回奏|结案|期限)", later_compact) and not re.search(
-        r"(命|令|着|遣|派|督办|暗查|密查|查|护|封存|截留|赈)", later_compact
-    ):
-        return True
-    return False
-
-
-def _secret_context_constraint_like(text: str) -> bool:
-    compact = re.sub(r"\s+", "", text or "")
-    return bool(re.search(r"(机密|保密|不可泄露|不得泄露|不得外泄|不可外泄|勿泄|秘而不宣|勿使.*知晓|不得.*知晓)", compact))
-
-
-def _secret_context_topic_chars(text: str) -> set:
-    compact = re.sub(r"[^\u4e00-\u9fff]", "", text or "")
-    compact = re.sub(r"^(再|另|又|并|仍|复)?(令|命|着|遣|派)", "", compact)
-    compact = re.sub(
-        r"^[\u4e00-\u9fff]{2,4}(?=(督办|暗查|密查|查|护|封存|截留|加操|操练|密访|补|拨))",
-        "",
-        compact,
-    )
-    compact = re.sub(
-        r"(此事|机密|保密|不可|不得|泄露|外泄|勿泄|秘而不宣|知晓|再|另|又|并|仍|复|令|命|着|遣|派|督办|暗查|密查|查|护|封存|截留|须|务必|回奏|月内|日内|臣|领命|遵旨|谨记|加操|操练)",
-        "",
-        compact,
-    )
-    return set(compact)
-
-
-def _secret_confirmation_material(text: str) -> str:
-    material = (text or "").strip()
-    if not material:
-        return ""
-    atoms = (
-        "准卿所奏", "按你意思", "照你意思", "就这么办", "便如此", "准奏", "照准",
-        "照办", "就按", "就照", "依卿", "依你", "便依", "同意", "卿所奏",
-        "你意思", "所奏", "如此", "这么办", "就办", "可", "准", "好", "是",
-        "善", "行", "办", "吧", "奏",
-    )
-    changed = True
-    while changed:
-        changed = False
-        material = re.sub(r"^[\s，,。.!！?？；;：:、]+", "", material)
-        for atom in atoms:
-            if material.startswith(atom):
-                material = material[len(atom):]
-                changed = True
-                break
-    material = re.sub(r"^[\s，,。.!！?？；;：:、]+", "", material).strip()
-    return material
-
-
 def _merge_secret_content(*parts: str) -> str:
-    """把皇帝显式旨意 / LLM 内容 / 大臣回话合并成一道密令正文，去重保序。
-
-    #397 Step6：兜底合并须同时保住御旨与大臣补充（承办人/要点），任一非空都并入；
-    完全相同的段（去空白后）只留一份，避免 LLM 内容与回话雷同时整段重复。"""
-    merged: List[str] = []
-    seen: set = set()
-    for p in parts:
-        chunk = (p or "").strip()
-        if not chunk:
-            continue
-        key = re.sub(r"\s+", "", chunk)
-        if key in seen:
-            continue
-        seen.add(key)
-        merged.append(chunk)
-    return "\n".join(merged)
+    """拼接原串；空白判断不改正文，不按去空白的文本去重。"""
+    return "\n".join(p for p in parts if p and p.strip())
 
 
 def _secret_metadata_from_command(text: str) -> Tuple[List[str], int]:
@@ -3989,7 +3850,7 @@ def _normalize_dossier_link_proposals(
             continue
         target = link["target_dossier_id"]
         relation = str(link.get("relation_type") or "").strip()
-        note = str(link.get("note") or "").strip()
+        note = str(link.get("note") or "")
         if target in candidate_ids and relation in DOSSIER_LINK_TYPES and note:
             proposals[(target, relation)] = {
                 "target_dossier_id": target, "relation_type": relation, "note": note}
@@ -4009,7 +3870,7 @@ def confirm_dossier_links(
     A failed/ambiguous verdict authorises nothing.
     """
     candidates = {
-        int(row["id"]): str(row.get("secret_title") or row.get("decree_text") or "").strip()
+        int(row["id"]): str(row.get("secret_title") or row.get("decree_text") or "")
         for row in (dossier_candidates or [])
         if isinstance(row, dict) and type(row.get("id")) is int
     }
@@ -4083,6 +3944,8 @@ def _extract_secret_order(
         "  \"交付目标\": 到期须交付的正数目标（调查为须坐实的事实条数）,\n"
         "  \"效果符号\": 1,\n"
         "  \"调查对象\": \"查人填人物规范名；北极星专题查核填相关人员范围（如 辽饷转运及押运相关人员）；非调查留空\",\n"
+        "  \"调查事实\": \"本道密令所指的那条罪证标识——已有线索/举发/证词明确指向哪一条就填哪一条的标识"
+        "（与既有在查案卷同目标时可复用其罪证标识）；没指明具体哪一条就留空，引擎不会替你挑一条\",\n"
         "  \"钱粮用途\": \"支出 purpose（补饷/其它）；收入留空\", \"钱粮类别\": \"category\", \"钱粮账户\": \"account\",\n"
         "  \"钱粮标靶种类\": \"补饷时填 army，其余留空\", \"钱粮标靶编号\": \"补饷时填军队 id，其余留空\",\n"
         "  \"人物动作\": \"人物变更动作，非人物留空\",\n"
@@ -4141,23 +4004,16 @@ def _extract_secret_order(
         obj = {}
     else:
         obj = parsed
-    _content_llm = str(obj.get("内容") or "").strip()
+    _content_llm = str(obj.get("内容") or "")
     _assignee_llm = str(obj.get("承办人") or "").strip()
-    # 上下文合成路径（force_default_assignee，#354 短确认从对话取正文）：player_command 是带
-    # 「皇帝：/大臣：」标签的对话快照——剥角色标签得纯御旨任务，作装配输入。
-    # #1274 K1 / ADR 0142：content = 御旨 + extractor「内容」；reply 永不入拼装。
-    # 大臣实质补充必须出现在 extractor schema「内容」字段（上 prompt 已钉契约）。
-    if force_default_assignee:
-        _emperor_fallback, _ = _split_audience_context(player_command)
-    else:
-        _emperor_fallback = player_command
+    # 对话快照和抽取字段均保留原串，不由代码筛选或剥除任务片段。
     content = assemble_secret_order_content(
-        emperor_intent=_emperor_fallback,
+        emperor_intent=player_command,
         extractor_content=_content_llm,
     )
     # #1565/0142：题名只认抽取器结构化「标题」；禁从 content/player_command 散文截取。
     # 缺标题由下游 land_or_recover 统一 recovery 可见可恢复，不在此合成。
-    title = str(obj.get("标题") or "").strip()
+    title = str(obj.get("标题") or "")
     # 承办人：皇帝祈使点名 > 结构化「承办人」字段 > 默认（ADR 0142：禁 minister_reply/
     # extractor 散文反推）。
     assignee = default_assignee if force_default_assignee else _choose_assignee(
@@ -4240,6 +4096,7 @@ def _extract_secret_order(
             field=obj.get("地区字段"),
             region_target=obj.get("地区目标值"),
             investigation_target=obj.get("调查对象"),
+            investigation_fact=obj.get("调查事实"),
             effect_sign=obj.get("效果符号"),
         )
     except CovertContractError as exc:
@@ -4367,7 +4224,7 @@ def _cli_recommendation_call(text: str, tools: object) -> tuple[str, list[ChatCo
         type="function",
         function=ToolFunction(name=offered["name"], arguments=json.dumps(payload, ensure_ascii=False)),
     )
-    return text[:match.start()].rstrip(), [call]
+    return text[:match.start()], [call]
 
 
 def _fake_completion(

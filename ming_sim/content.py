@@ -79,6 +79,11 @@ def load_character_content() -> Tuple[Dict[str, Faction], Dict[str, Character]]:
         identity = int_field(character_fields, "identity", path)
         if not 0 <= identity <= 100:
             raise SystemExit(f"设定字段超出范围：{path}.identity（应为 0–100）")
+        # ADR 0108 阴谋能力：静态 seed 能力轴，与 identity 同为 int 0–100 承重列。
+        character_fields.setdefault("intrigue", 50)
+        intrigue = int_field(character_fields, "intrigue", path)
+        if not 0 <= intrigue <= 100:
+            raise SystemExit(f"设定字段超出范围：{path}.intrigue（应为 0–100）")
         seed_guilt_raw = item.get("seed_guilt")
         if seed_guilt_raw is None:
             seed_guilt_raw = {}
@@ -98,7 +103,7 @@ def load_character_content() -> Tuple[Dict[str, Faction], Dict[str, Character]]:
         if not crime_raw.strip() and seed_guilt_fields["severity"] != "无":
             raise SystemExit(f"设定字段应为非空字符串：{seed_guilt_context}.crime")
         seed_guilt = {
-            "crime": crime_raw.strip(),
+            "crime": crime_raw,
             "severity": str_field(seed_guilt_fields, "severity", seed_guilt_context),
         }
         if seed_guilt["severity"] not in {"无", "轻", "中", "重"}:
@@ -123,7 +128,7 @@ def load_character_content() -> Tuple[Dict[str, Faction], Dict[str, Character]]:
             courage=int_field(item, "courage", f"characters.json.characters[{idx}]"),
             style=str_field(item, "style", f"characters.json.characters[{idx}]"),
             power_id=str_field(item, "power_id", f"characters.json.characters[{idx}]"),
-            location=str(item.get("location") or "").strip(),
+            location=str(item.get("location") or ""),
             office_region=str(item.get("office_region") or "").strip(),
             transit_to=str(item.get("transit_to") or "").strip(),
             birth_year=int(item.get("birth_year") or 0),
@@ -132,11 +137,12 @@ def load_character_content() -> Tuple[Dict[str, Faction], Dict[str, Character]]:
             debut_year=int(item.get("debut_year") or 0),
             debut_month=int(item.get("debut_month") or 0),
             status=str(item.get("status") or "active"),
-            status_reason=str(item.get("status_reason") or "").strip(),
+            status_reason=str(item.get("status_reason") or ""),
             reason_code=str(item.get("reason_code") or "").strip(),
             summary=str(item.get("summary") or ""),
             portrait_id=str(item.get("portrait_id") or ""),
             identity=identity,
+            intrigue=intrigue,
             seed_guilt=seed_guilt,
         )
 
@@ -281,12 +287,6 @@ def load_event_content(filename: str = "events.json") -> List[Event]:
             string_list(item["terminal_reason_labels"], f"{filename}[{idx}].terminal_reason_labels")
             if "terminal_reason_labels" in item else []
         )
-        default_terminal_reason = str(item.get("default_terminal_reason") or "").strip()
-        if default_terminal_reason and default_terminal_reason not in terminal_reason_labels:
-            raise SystemExit(
-                f"{filename}[{idx}] default_terminal_reason={default_terminal_reason!r} "
-                "不在 terminal_reason_labels 白名单内。"
-            )
         gate_raw = item.get("trigger_gate") or {}
         if not isinstance(gate_raw, dict):
             raise SystemExit(f"{filename}[{idx}] trigger_gate 必须是对象（key→比较式）。")
@@ -337,7 +337,6 @@ def load_event_content(filename: str = "events.json") -> List[Event]:
                 trigger_gate=trigger_gate,
                 auto_trigger=bool(item.get("auto_trigger") or False),
                 terminal_reason_labels=terminal_reason_labels,
-                default_terminal_reason=default_terminal_reason,
                 bar_value=int(item.get("bar_value") or 0),
                 bar_good_meaning=str(item.get("bar_good_meaning") or ""),
                 bar_bad_meaning=str(item.get("bar_bad_meaning") or ""),
@@ -567,7 +566,7 @@ def load_powers() -> Dict[str, Power]:
             supply=int_field(entry, "supply", "powers.json::powers[item].supply"),
             agenda=str_field(entry, "agenda", "powers.json::powers[item].agenda"),
             status=str_field(entry, "status", "powers.json::powers[item].status"),
-            last_action=str(entry.get("last_action") or "尚无新动").strip() or "尚无新动",
+            last_action=str(entry.get("last_action") or "尚无新动"),
             aliases="，".join(string_list(entry.get("aliases", []), "powers.json::powers[item].aliases")),
         )
     return powers
@@ -591,7 +590,7 @@ def load_opening_legacies() -> List[OpeningLegacy]:
             modifiers=modifiers,
             narrative_hint=str_field(entry, "narrative_hint", path),
             clear_gate={str(k): str(v) for k, v in clear_gate.items()},
-            clear_narrative=str(entry.get("clear_narrative") or "").strip(),
+            clear_narrative=str(entry.get("clear_narrative") or ""),
         ))
     if not out:
         raise SystemExit("opening_legacies.json 必须至少定义一条开局负面修正。")

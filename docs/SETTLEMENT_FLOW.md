@@ -2,8 +2,8 @@
 
 玩家颁诏与退朝共用 `GameSession.resolve_turn → decree.resolve_directives → month_chain.run_player_month_chain`。分段过月的决定见 [ADR 0157](adr/0157-v2-month-waits-for-exhausted-model-call-recovery.md)，步骤及恢复契约以 #1843／#1846／#1847 现行票面为准。
 
-1. 收夜、单写者屏障后，`prepare_resolve_front_half` 提交 `pre_settle` 与本月诏书的 resolve context。`pre_settle` 包含固定财政流水、事件终态、硬立局势与密令到期戳；恢复时不重复执行已提交的前半段。
-2. 月链按旨序消费夜里暂存声明；效果经 `declaration_dispatch → issues.apply_score_extraction` 落账，拒收留痕。逐段已落结果供召旨赴京结清及暗渠揭破待办；检举入库后再扫描待办。随后世界段推演、转译和提交。未完成请旨停在批红，答复后续跑而非重落问前效果。
+1. 收夜、单写者屏障后，`prepare_resolve_front_half` 提交 `pre_settle` 与本月诏书的 resolve context。`pre_settle` 仍做暂存动作、固定财政流水（含饷率前置）、在途抵达、稽核反制、承诺反噬与密令到期戳。世界事件的终态与硬触发不在这里。恢复时不重复执行已提交的前半段。
+2. 月链按旨序消费夜里暂存声明；效果经 `declaration_dispatch → issues.apply_score_extraction` 落账，拒收留痕。逐段已落结果供召旨赴京结清及暗渠揭破待办；检举入库后再扫描待办。逐旨落账之后、世界段之前，`_consume_event_gates_after_edicts` 消费一次世界判门（`apply_event_terminal_states` 与 `auto_trigger_seed_issues`），读当月实账。同月恢复若已有 `event_gates_after_edicts_done`，则不再消费；此前已经落定的终态不在这里撤销。随后世界段推演、转译和提交。未完成请旨停在批红，答复后续跑而非重落问前效果。
 3. 全部逐旨和世界段（含问后）落定后执行整月密报供料；密奏先于披露、执行态先于到期结案。月末漂移按持久态再扫描一次揭破待办，包括无效果月。邸报归档后才判结局和推进月份；无旨月也走同一链，不作快跳。
 4. 机械尾关系／派系酿制和结局总评经 `SessionWriteQueue` 在 closed turn 后台执行；未完态持久化，下次过月前屏障等待。史册诏书由 resolve context 读取，非已退役的旧回合抽取表。
 

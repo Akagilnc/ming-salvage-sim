@@ -439,7 +439,7 @@ def restore_pay_order_override(
             " (removed_turn, key, value, kind, origin_ref, reason, beyond_intent)"
             " VALUES (?, ?, ?, 'override', ?, ?, 0)",
             (int(turn), key, old, origin,
-             (reason or "撤销 override 旨，形状退出格律")[:240]),
+             reason or "撤销 override 旨，形状退出格律"),
         )
         db.conn.execute("DELETE FROM fiscal_config WHERE key = ?", (key,))
         db.record_fiscal_config_change(
@@ -488,6 +488,23 @@ def revoke_pay_order_decree(
         db, turn=turn, entries=entries, origin_ref=origin_ref,
         reason=reason or "撤销 override 旨，恢复祖制默认序/系数", commit=commit,
     )
+
+
+def dossier_override_still_in_force(db: Any, dossier_id: int) -> bool:
+    """该偿还序案卷是否仍有**在位** override 键（#1894 撤令准入的物理判据）。
+
+    案卷已 closed 不等于其 override 已退出格律：键仍在 fiscal_config 且未过
+    ``until_turn`` 时，祖制默认序/系数仍被压住，旨的实效仍在。判据只读既有
+    账本（键 + 期限伴随键），不反演前旨值、不新增机制。
+    """
+    turn = db._current_settle_turn()
+    origin = f"dossier:{int(dossier_id)}"
+    rows = db.conn.execute(
+        "SELECT key,value FROM fiscal_config WHERE origin_ref=? AND kind='override'",
+        (origin,),
+    ).fetchall()
+    config = {str(row["key"]): int(row["value"]) for row in rows}
+    return any(_is_override_key(key) and _live(config, key, turn) for key in config)
 
 
 def _default_of(key: str) -> int:

@@ -1,6 +1,6 @@
 """S4 — pre_settle 自成事务 + settling 完成相位 + begin_turn 白名单（ADR 0008 决定 3 第二条）。
 
-pre_settle（暂存动作 commit + 固定财政 + auto_trigger + auto_submit_due_secret_orders）
+pre_settle（暂存动作 commit + 固定财政 + auto_submit_due_secret_orders）
 整体包成自己的单事务：完成时同事务内落中间相位 settling；崩在内部=全回滚=相位未变=
 重进时干净重跑前半段。settling 加进 begin_turn 保活白名单，重载不被重置回 summoning。
 
@@ -115,7 +115,6 @@ def test_due_secret_order_submission_rolls_back_on_pre_settle_crash(saved_game, 
 
 def test_pre_settle_rolls_back_on_seed_issue_failure(game, monkeypatch):
     """pre_settle 内部崩溃时财政回滚，结算相位不推进。"""
-    import ming_sim.decree as dm
     db, state, content = game
     turn = state.turn
     before_phase = state.turn_phase
@@ -123,7 +122,7 @@ def test_pre_settle_rolls_back_on_seed_issue_failure(game, monkeypatch):
 
     def _boom(*a, **k):
         raise RuntimeError("pre_settle boom")
-    monkeypatch.setattr(dm, "auto_trigger_seed_issues", _boom)
+    monkeypatch.setattr(db, "auto_submit_due_secret_orders", _boom)
 
     with pytest.raises(RuntimeError, match="pre_settle boom"):
         pre_settle(state, db)
@@ -140,19 +139,19 @@ def test_pre_settle_rolls_back_on_seed_issue_failure(game, monkeypatch):
 
 
 def test_crash_inside_pre_settle_no_missing_fiscal(game, monkeypatch):
-    """pre_settle 内部注入异常（auto_trigger 抛）→ 异常透传、economy_ledger 无半行、
+    """pre_settle 内部注入异常（财政落账之后的到期密令抛）→ 异常透传、economy_ledger 无半行、
     phase 仍是入口态（非 settling）——整体回滚干净（ADR 0008 验收测试②）。"""
     db, state, content = game
     turn = state.turn
     before_phase = state.turn_phase
     before_ledger = _ledger_count(db, turn)
 
-    # auto_trigger_seed_issues 在固定财政落账之后调；让它抛，验前面已落的财政被回滚。
+    # auto_submit_due_secret_orders 在固定财政落账之后调；让它抛，验前面已落的财政被回滚。
     def _boom(*a, **k):
-        raise RuntimeError("auto_trigger boom")
-    monkeypatch.setattr(decree_mod, "auto_trigger_seed_issues", _boom)
+        raise RuntimeError("auto_submit boom")
+    monkeypatch.setattr(db, "auto_submit_due_secret_orders", _boom)
 
-    with pytest.raises(RuntimeError, match="auto_trigger boom"):
+    with pytest.raises(RuntimeError, match="auto_submit boom"):
         pre_settle(state, db)
 
     # 财政落账随回滚消失（用新连接读盘，验真回滚到磁盘态）

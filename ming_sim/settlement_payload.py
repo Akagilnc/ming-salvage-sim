@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import json
 import re
-from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
+from typing import (
+    TYPE_CHECKING, Dict, List, Optional, Tuple,
+)
 
-from ming_sim.action_clusters import season_option_fields, validate_season_option
 from ming_sim.models import effect_dict_has_work
 
 if TYPE_CHECKING:
@@ -55,7 +56,7 @@ def parse_decision_blocks(text: str) -> List[Dict[str, object]]:
             continue
         if not isinstance(obj, dict):
             continue
-        title = str(obj.get("title") or "").strip()
+        title = str(obj.get("title") or "")
         raw_opts = obj.get("options")
         if not title or not isinstance(raw_opts, list):
             continue
@@ -63,30 +64,13 @@ def parse_decision_blocks(text: str) -> List[Dict[str, object]]:
         for o in raw_opts:
             if not isinstance(o, dict):
                 continue
-            label = str(o.get("label") or "").strip()
-            if not label:
+            label = str(o.get("label") or "")
+            if not label.strip():
                 continue
-            try:
-                action_type = validate_season_option(o)
-            except ValueError:
-                options = []
-                break
-            option: Dict[str, object] = {
+            options.append({
                 "label": label,
-                "hint": str(o.get("hint") or "").strip(),
-            }
-            # Deterministic financial options carry their executable payload;
-            # label/hint remain presentation only.
-            for key in season_option_fields(action_type):
-                if key in o:
-                    option[key] = action_type if key == "action_type" else o[key]
-            # 事件结局与留中是既有结构化字段（ADR 0020 terminal_reason、
-            # 批红 dossier_decision=hold）。呈现 label 不承担转译。
-            if o.get("terminal_reason") not in (None, ""):
-                option["terminal_reason"] = str(o.get("terminal_reason"))
-            if o.get("dossier_decision") not in (None, ""):
-                option["dossier_decision"] = str(o.get("dossier_decision"))
-            options.append(option)
+                "hint": str(o.get("hint") or ""),
+            })
         try:
             bind_decision_options(options)
         except ValueError:
@@ -95,12 +79,18 @@ def parse_decision_blocks(text: str) -> List[Dict[str, object]]:
             continue
         decision = {
             "title": title,
-            "context": str(obj.get("context") or "").strip(),
+            "context": str(obj.get("context") or ""),
             "options": options[:3],
         }
-        event_id = str(obj.get("event_id") or obj.get("origin_ref") or "").strip()
+        explicit_event_id = str(obj.get("event_id") or "").strip()
+        origin_ref = str(obj.get("origin_ref") or "").strip()
+        event_id = explicit_event_id or origin_ref
         if event_id:
             decision["event_id"] = event_id
+        # 只在 id 来自 origin_ref 时留下该键。世界请旨钉定就地排除它；
+        # 显式 event_id 的块与原先一样只有 event_id。
+        if origin_ref and not explicit_event_id:
+            decision["origin_ref"] = origin_ref
         decisions.append(decision)
     return decisions
 
@@ -186,7 +176,7 @@ def bind_decisions_to_candidate_events(
         if not isinstance(item, dict):
             continue
         event_id = str(item.get("id") or "").strip()
-        title = str(item.get("title") or "").strip()
+        title = str(item.get("title") or "")
         if not event_id:
             continue
         candidate_ids.add(event_id)
@@ -207,7 +197,7 @@ def bind_decisions_to_candidate_events(
             bound.append(out)
             continue
         # 缺 id，或回显 id 不在权威候选快照里：以快照唯一标题为准（重）绑，不被 LLM 回显牵着走。
-        title = str(out.get("title") or "").strip()
+        title = str(out.get("title") or "")
         ids = title_to_ids.get(title) or []
         unique_ids = {event_id for event_id in ids if event_id}
         if len(unique_ids) == 1:
@@ -251,7 +241,7 @@ def list_due_commitments(db: GameDB, state: GameState) -> List[Dict[str, object]
             "entry_kind": "due_commitment",
             "issue_id": int(row["id"]),
             "title": str(row["title"] or ""),
-            "content": str(row["stage_text"] or row["title"] or "")[:120],
+            "content": str(row["stage_text"] or row["title"] or ""),
             "origin_ref": str(row["origin_ref"] or ""),
             "turn_issued": int(row["origin_turn"] or 0),
             "due_turn": int(row["end_turn"] or 0),
