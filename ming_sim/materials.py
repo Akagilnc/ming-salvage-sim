@@ -1738,6 +1738,10 @@ def _write_world_tree(
         key = f"affair-{int(dossier.get('affair_id') or 0)}"
         if key not in affair_materials or dossier_id in (exclude_dossier_ids or set()):
             continue
+        secret_order = (
+            db.get_secret_order(int(dossier["secret_order_id"]))
+            if dossier.get("secret_order_id") else None
+        )
         materials = {
             "案卷": {
                 "案卷": {
@@ -1748,7 +1752,17 @@ def _write_world_tree(
                 "背书": db.list_dossier_endorsements(dossier_id),
                 "关联": db.list_dossier_links(dossier_id),
             },
-            "奏报": db.list_dossier_progress(dossier_id),
+            "奏报": {
+                "月度进度": db.list_dossier_progress(dossier_id),
+                "检举": [
+                    {field: row[field] for field in (
+                        "id", "turn", "accuser_name", "accuser_faction",
+                        "subject_name", "subject_faction", "target_dossier_id", "memorial_text",
+                    )}
+                    for row in db.list_faction_denunciations(target_dossier_id=dossier_id)
+                ],
+                "密令陈词": secret_order["result"] if secret_order else "",
+            },
             "实况": {
                 "已落效果": db.list_world_effect_history(f"dossier:{dossier_id}"),
                 "对账": db.list_dossier_reconciliations(dossier_id),

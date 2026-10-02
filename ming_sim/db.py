@@ -20748,8 +20748,11 @@ class GameDB:
             for table, order in (
                 ("issues", "id"), ("characters", "name"), ("relation_edge_events", "id"),
             ):
+                # Person details already have their P4-safe roster/experience files.
+                # Keep only the affair membership, not an unprojected character dump.
+                columns = "name" if table == "characters" else "*"
                 history[table] = [dict(row) for row in self.conn.execute(
-                    f"SELECT * FROM {table} WHERE affair_id=? ORDER BY {order}", (target,),
+                    f"SELECT {columns} FROM {table} WHERE affair_id=? ORDER BY {order}", (target,),
                 ).fetchall() if dict(row).get("origin_ref") not in excluded_origins]
         return history
 
