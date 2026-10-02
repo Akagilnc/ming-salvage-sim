@@ -24,8 +24,9 @@ export function CheatConsole({
   }, [history]);
 
   const submit = () => {
-    const text = draft.trim();
-    if (!text) return;
+    // #1847 N6：判空可读 trim；强制结算原文运输不得剥空白。
+    if (!draft.trim()) return;
+    const text = draft;
     onCommit(text);
     setHistory((h) => [...h, `> ${text}`, "  已挂载强制结算项，下次颁诏随结算生效（一次性）。"]);
     setDraft("");

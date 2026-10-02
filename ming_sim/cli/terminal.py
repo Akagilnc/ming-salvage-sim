@@ -276,10 +276,11 @@ def _print_interrupted_reply_retry_hint(session: GameSession, minister_name: str
     if not retries:
         return
     last = retries[-1]
-    question = str(last.get("question") or "").strip()
+    # #1847 N6：判空可读 strip；提示展示玩家问话原文。
+    question = str(last.get("question") or "")
     print(
         "【回话中断】上回问话未得回话"
-        f"{f'（「{question}」）' if question else ''}。"
+        f"{f'（「{question}」）' if question.strip() else ''}。"
         "输入「重试回话」重新生成回话（系统层恢复，不重复记问话）。\n"
     )
 

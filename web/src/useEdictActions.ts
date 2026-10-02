@@ -64,8 +64,9 @@ export function useEdictActions({
   };
 
   const saveDirective = async (directive: Directive) => {
+    // #1847 N6：判空可读 trim；旨意正文运输用原文。
     if (!editingDirectiveText.trim()) return;
-    const text = editingDirectiveText.trim();
+    const text = editingDirectiveText;
     const ownership = ownershipRef.current;
     const localKey = `save-${directive.id}-${++localSeq.current}`;
     beginCardRequest({

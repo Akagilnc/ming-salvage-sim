@@ -2105,9 +2105,10 @@ def _write_one_present_person(
     dossier_body = character_context_with_db(character, db, turn=int(state.turn))
     if hasattr(db, "get_character_status"):
         status, reason = db.get_character_status(name)
-        status_text = str(status or "").strip()
+        # #1847 N6：status 为机械枚举键；strip 仅用于判空/比 active，档料行用原文。
+        status_text = str(status or "")
         reason_text = str(reason or "")
-        if status_text and status_text != "active":
+        if status_text.strip() and status_text.strip() != "active":
             line = f"当前状态：{status_text}"
             if reason_text.strip():
                 line = f"{line}（{reason_text}）"

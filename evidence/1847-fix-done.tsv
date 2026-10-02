@@ -4,7 +4,15 @@ FIX_DONE	含糊收夜cue去strip	py	ming_sim/session.py	1016	strip_call		_ensure
 FIX_DONE	CLI朕问去strip	py	ming_sim/cli/terminal.py	397	strip_call		minister_chat	input原样；strip仅判空
 FIX_DONE	CLI新增指令去strip	py	ming_sim/cli/terminal.py	611	strip_call		review_loop	input原样；strip仅判空
 FIX_DONE	CLI改指令去strip	py	ming_sim/cli/terminal.py	634	strip_call		review_loop	input原样；strip仅判空
+FIX_DONE	CLI中断提示问话原文	py	ming_sim/cli/terminal.py	280	strip_call		_print_interrupted_reply_retry_hint	question原文；strip仅判空
+FIX_DONE	人物状态档料原文	py	ming_sim/materials.py	2109	strip_call		_write_one_present_person	status原文；strip仅判空/比active
+FIX_DONE	web召对运输去strip	py	web_app.py	2772	strip_call		WebGame/chat_stream	message原文；strip仅判空
+FIX_DONE	web旨意PATCH原文	py	web_app.py	5522	strip_call		api_update_directive	判空可读strip；capture/update原文
+FIX_DONE	UI召对trim去运输	ts	web/src/useChatActions.ts	150	trim_call		sendChat	判空可读trim；message=text原文
+FIX_DONE	UI旨意trim去运输	ts	web/src/useEdictActions.ts	68	trim_call		saveDirective	判空可读trim；text原文PATCH
+FIX_DONE	cheatConsole原文	tsx	web/src/components/cheatConsole.tsx	28	trim_call		submit	判空可读trim；onCommit(draft)原文
+FIX_DONE	颁诏cheat原文	ts	web/src/useSettlementFlow.ts	330	trim_call		issueDecree	cheat原文入body；trim仅判空清空
 FIX_DONE_PRIOR	条件运输去strip/[:300]	py	ming_sim/issues.py	359	strip_call		_issue_condition_text	00e2d9a44
 FIX_DONE_PRIOR	供料条件原样	py	ming_sim/materials.py	623	strip_call		_visible_affair_lines	00e2d9a44
 FIX_DONE_PRIOR	N7 stderr兜底删除	py	ming_sim/cli_backend.py	856	stderr_body		_iter_cli_runner_text	00e2d9a44
-FIX_DONE	N9 derive闭包删除	py	ming_sim/decree_vocabulary.py	85	derive_draft_capability		<deleted>	本轮
+FIX_DONE	N9 derive闭包删除	py	ming_sim/decree_vocabulary.py	85	derive_draft_capability		<deleted>	先验

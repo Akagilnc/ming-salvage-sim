@@ -50,17 +50,14 @@ KEEP_empty_check	仅判空	py	ming_sim/cli_backend.py	1988	strip_call	strip	secr
 KEEP_empty_check	仅判空	py	ming_sim/cli_backend.py	4673	strip_call	strip	require_fresh_cli_trace	"    if not trace_setting or os.environ.get(""MING_SIM_TRACE"", ""1"").strip().lower() in {"
 KEEP_empty_check	仅判空	py	ming_sim/content.py	103	strip_call	strip	load_character_content	"        if not crime_raw.strip() and seed_guilt_fields[""severity""] != ""无"":"
 KEEP_empty_check	仅判空	py	ming_sim/content.py	204	strip_call	strip	gate_key_form_error	    if not field.strip() or not id_segment.strip():
-KEEP_empty_check	仅判空	py	ming_sim/content.py	204	strip_call	strip	gate_key_form_error	    if not field.strip() or not id_segment.strip():
 KEEP_empty_check	仅判空	py	ming_sim/content.py	213	strip_call	strip	gate_key_form_error	"            if not member.split(""@"", 1)[0].strip():"
 KEEP_empty_check	仅判空	py	ming_sim/content.py	213	split_call	split	gate_key_form_error	"            if not member.split(""@"", 1)[0].strip():"
-KEEP_empty_check	仅判空	py	ming_sim/content.py	234	strip_call	strip	gate_text_key_form_error	    if not parts[1].strip() or not parts[2].strip():
 KEEP_empty_check	仅判空	py	ming_sim/content.py	234	strip_call	strip	gate_text_key_form_error	    if not parts[1].strip() or not parts[2].strip():
 KEEP_empty_check	仅判空	py	ming_sim/content.py	392	strip_call	strip	_normalize_settle_meta_defaults	    if not isinstance(default_name, str) or not default_name.strip():
 KEEP_empty_check	仅判空	py	ming_sim/covert_progress.py	495	strip_call	strip	coerce_covert_task_contract	"    if not str(raw.get(""kind"") or """").strip() or not normalize_axes(raw.get(""axes"")):"
 KEEP_empty_check	仅判空	py	ming_sim/db.py	681	strip_call	strip	_member_office_weight	    if not office_n.strip():
 KEEP_empty_check	仅判空	py	ming_sim/db.py	5719	strip_call	strip	GameDB/_canonicalize_character_location	        if not text.strip():
 KEEP_empty_check	仅判空	py	ming_sim/db.py	5741	strip_call	strip	GameDB/_migrate_character_location_aliases	            if not raw.strip():
-KEEP_empty_check	仅判空	py	ming_sim/db.py	11389	strip_call	strip	GameDB/_normalize_directive_dossier_payload	            if not separator or not kind.strip() or not target.strip():
 KEEP_empty_check	仅判空	py	ming_sim/db.py	11389	strip_call	strip	GameDB/_normalize_directive_dossier_payload	            if not separator or not kind.strip() or not target.strip():
 KEEP_empty_check	仅判空	py	ming_sim/db.py	11741	strip_call	strip	GameDB/_normalize_dossier_report_origin	        if not raw.startswith(prefix) or not raw[len(prefix):].strip():
 KEEP_empty_check	仅判空	py	ming_sim/db.py	11876	strip_call	strip	GameDB/record_dossier_progress	        if not band or not text.strip():
@@ -98,7 +95,6 @@ KEEP_empty_check	仅判空	py	ming_sim/issues.py	6536	strip_call	strip	_apply_pe
 KEEP_empty_check	仅判空	py	ming_sim/issues.py	6689	strip_call	strip	_apply_person_changes	            if not new_office.strip():
 KEEP_empty_check	仅判空	py	ming_sim/llm_contract.py	19	strip_call	strip	require_non_empty_text	    if not isinstance(value, str) or not value.strip():
 KEEP_empty_check	仅判空	py	ming_sim/materials.py	444	strip_call	strip	_own_affair_lines/_collect_linked	        if not (title.strip() or body.strip()):
-KEEP_empty_check	仅判空	py	ming_sim/materials.py	444	strip_call	strip	_own_affair_lines/_collect_linked	        if not (title.strip() or body.strip()):
 KEEP_empty_check	仅判空	py	ming_sim/materials.py	513	strip_call	strip	_own_affair_lines	"            opening_text = raw_latest if raw_latest.strip() else ""见目录。"""
 KEEP_empty_check	仅判空	py	ming_sim/materials.py	559	strip_call	strip	_character_affair_lines	        if not title.strip() or dir_key in seen:
 KEEP_empty_check	仅判空	py	ming_sim/materials.py	563	strip_call	strip	_character_affair_lines	"        situation = raw_situation if raw_situation.strip() else ""见目录。"""
@@ -109,14 +105,12 @@ KEEP_empty_check	仅判空	py	ming_sim/materials.py	740	strip_call	strip	minimal
 KEEP_empty_check	仅判空	py	ming_sim/materials.py	971	strip_call	strip	_write_tree	"            f""办结条件：{item['resolve_condition']}"" if str(item[""resolve_condition""]).strip() else """","
 KEEP_empty_check	仅判空	py	ming_sim/materials.py	972	strip_call	strip	_write_tree	"            f""失败条件：{item['fail_condition']}"" if str(item[""fail_condition""]).strip() else """","
 KEEP_empty_check	仅判空	py	ming_sim/materials.py	1078	strip_call	strip	_write_public_by_month	        if not (title.strip() or body.strip()):
-KEEP_empty_check	仅判空	py	ming_sim/materials.py	1078	strip_call	strip	_write_public_by_month	        if not (title.strip() or body.strip()):
 KEEP_empty_check	仅判空	py	ming_sim/materials.py	1148	strip_call	strip	_character_gazette_rows	        if not body.strip():
 KEEP_empty_check	仅判空	py	ming_sim/materials.py	1181	strip_call	strip	_gazette_index_line	"    if not str(title or """").strip():"
 KEEP_empty_check	仅判空	py	ming_sim/materials.py	1205	strip_call	strip	_write_gazette_index	        if not body.strip():
 KEEP_empty_check	仅判空	py	ming_sim/materials.py	2007	strip_call	strip	_scene_spoken_text	            if not body.strip():
 KEEP_empty_check	仅判空	py	ming_sim/materials.py	2065	strip_call	strip	_scene_opening_text	"    parts.append(spoken if spoken.strip() else ""（尚无）"")"
-KEEP_empty_check	供料判空；运输值原样	py	ming_sim/materials.py	2108	strip_call	strip	_write_one_present_person	"        status_text = str(status or """").strip()"
-KEEP_empty_check	仅判空	py	ming_sim/materials.py	2171	strip_call	strip	_write_one_present_person	        if not (title.strip() or body.strip()):
+FIX_DONE	status_text strip 曾写入档料；现 strip 仅判空/比 active，行用原文	py	ming_sim/materials.py	2109	strip_call	strip	_write_one_present_person	"        status_text = str(status or """")"
 KEEP_empty_check	仅判空	py	ming_sim/materials.py	2171	strip_call	strip	_write_one_present_person	        if not (title.strip() or body.strip()):
 KEEP_empty_check	仅判空	py	ming_sim/month_chain.py	349	strip_call	strip	run_gazette_text	    if not isinstance(title, str) or not title.strip():
 KEEP_empty_check	仅判空	py	ming_sim/month_chain.py	351	strip_call	strip	run_gazette_text	    if not isinstance(report, str) or not report.strip():
@@ -129,27 +123,24 @@ KEEP_empty_check	仅判空	py	ming_sim/relation_seed.py	56	strip_call	strip	_non
 KEEP_empty_check	仅判空	py	ming_sim/relations.py	61	strip_call	strip	settlement_edge_origin	    if not origin_ref.strip():
 KEEP_empty_check	仅判空	py	ming_sim/relations.py	259	strip_call	strip	_capture_one_interaction	    if not raw_context.strip():
 KEEP_empty_check	仅判空	py	ming_sim/rescript_actions.py	53	strip_call	strip	persist_answers	"            if not (choice.get(""label"", """").strip() or choice.get(""note"", """").strip()):"
-KEEP_empty_check	仅判空	py	ming_sim/rescript_actions.py	53	strip_call	strip	persist_answers	"            if not (choice.get(""label"", """").strip() or choice.get(""note"", """").strip()):"
 KEEP_empty_check	仅判空	py	ming_sim/session.py	974	strip_call	strip	GameSession/consume_audience_admission	"        if not str(origin_id or """").strip():"
 KEEP_empty_check	判空可读 strip；运输值已原样	py	ming_sim/session.py	1020	strip_call	strip	GameSession/_ensure_close_night_confirm_cue	        if not text.strip():
 KEEP_empty_check	判空可读 strip；运输值已原样	py	ming_sim/session.py	1162	strip_call	strip	GameSession/scene_chat	        if not message_text.strip():
 KEEP_empty_check	仅判空	py	ming_sim/settlement_payload.py	44	strip_call	strip	bind_decision_options	        if not label.strip() or any(key.strip() == label.strip() for key in bound):
-KEEP_empty_check	仅判空	py	ming_sim/settlement_payload.py	44	strip_call	strip	bind_decision_options	        if not label.strip() or any(key.strip() == label.strip() for key in bound):
-KEEP_empty_check	仅判空	py	ming_sim/settlement_payload.py	44	strip_call	strip	bind_decision_options	        if not label.strip() or any(key.strip() == label.strip() for key in bound):
 KEEP_empty_check	仅判空	py	ming_sim/structured_decree.py	166	strip_call	strip	transport_keys_to_canonical	"    if not _as_str(out.get(""action_type"")).strip():"
 KEEP_empty_check	仅判空	py	ming_sim/structured_decree.py	363	strip_call	strip	assemble_structured_decree	"        if not _as_str(out.get(""dossier_action_type"")).strip():"
 KEEP_empty_check	仅判空	py	ming_sim/urge_lever.py	328	strip_call	strip	rush_staged_commitment_stage	"    why = reason if str(reason or """").strip() else ""奉旨加急"""
-KEEP_empty_check	UI/布尔判空	tsx	web/src/components/chatModal.tsx	471	trim_call			"            <button className={`primary-action ${!input.trim() ? ""is-empty"" : """"}`} onClick={handleSend} disabled={!!busy}>"
+KEEP_empty_check	按钮样式判空，不改 input 运输	tsx	web/src/components/chatModal.tsx	471	trim_call			"            <button className={`primary-action ${!input.trim() ? ""is-empty"" : """"}`} onClick={handleSend} disabled={!!busy}>"
 KEEP_empty_check	UI/布尔判空	tsx	web/src/components/decisionModal.tsx	81	trim_call			"        ? !!(pick.summon_target || """").trim()"
 KEEP_empty_check	UI/布尔判空	tsx	web/src/components/decisionModal.tsx	87	trim_call			"      : !!(pick.label || (pick.note || """").trim());"
 KEEP_empty_check	UI/布尔判空	tsx	web/src/components/decisionModal.tsx	410	trim_call			"                ? (pick.action === ""summon"" && !(pick.summon_target || """").trim()"
-KEEP_empty_check	UI/布尔判空	tsx	web/src/components/historyModal.tsx	164	trim_call			"      {String(detail?.report || """").trim() ? ("
-KEEP_empty_check	UI/布尔判空	tsx	web/src/components/historyModal.tsx	172	trim_call			"      {String(detail?.attendant_message || """").trim() ? ("
+KEEP_empty_check	条件判空；pre 展示 report 原值	tsx	web/src/components/historyModal.tsx	164	trim_call			"      {String(detail?.report || """").trim() ? ("
+KEEP_empty_check	条件判空；pre 展示 attendant 原值	tsx	web/src/components/historyModal.tsx	172	trim_call			"      {String(detail?.attendant_message || """").trim() ? ("
 KEEP_empty_check	UI/布尔判空	tsx	web/src/components/menuPage.tsx	434	trim_call			"          <button className=""primary"" onClick={onSave} disabled={busy || (channel === ""cli"" ? !cliRunner.trim() : (!baseUrl.trim() || !model.trim() || (!apiKey.trim() && !initial?."
 KEEP_empty_check	UI/布尔判空	ts	web/src/components/ministerFilters.ts	21	trim_call			"        && !!(m.office || """").trim()"
-KEEP_empty_check	UI/布尔判空	tsx	web/src/components/reportModal.tsx	32	trim_call			        {rawAttendant.trim() ? (
-KEEP_empty_check	UI/布尔判空	tsx	web/src/components/settlementGazettePanel.tsx	41	trim_call			        {rawAttendant.trim() ? (
-KEEP_empty_check	仅判空	py	web_app.py	5520	strip_call	strip	api_update_directive	            if not text.strip():
+KEEP_empty_check	条件判空；pre 展示原值	tsx	web/src/components/reportModal.tsx	32	trim_call			        {rawAttendant.trim() ? (
+KEEP_empty_check	条件判空；pre 展示原值	tsx	web/src/components/settlementGazettePanel.tsx	41	trim_call			        {rawAttendant.trim() ? (
+KEEP_empty_check	指令更新：strip 仅判空；capture/update 已改原文运输	py	web_app.py	5522	strip_call	strip	api_update_directive	            if not text.strip():
 KEEP_formal	形式语言条件匹配	py	ming_sim/issues.py	383	strip_call	strip	_validate_commitment_stop_condition	        key = key.strip()
 KEEP_formal	形式语言条件匹配	py	ming_sim/issues.py	388	strip_call	strip	_validate_commitment_stop_condition	        cond_text = cond.strip()
 KEEP_formal	形式语言条件匹配	py	ming_sim/issues.py	389	re_match		_validate_commitment_stop_condition	"        sm = re.match(r""^(==|!=|in=)\s*(.+)$"", cond_text)"
@@ -281,7 +272,6 @@ KEEP_identity_or_formal	机械身份/枚举（字段启发式）	py	ming_sim/cov
 KEEP_identity_or_formal	机械身份/枚举/形式语言	py	ming_sim/covert_progress.py	436	strip_call	strip	build_covert_task_contract	"                id_text = str(target_id or """").strip()"
 KEEP_identity_or_formal	机械身份/枚举（字段启发式）	py	ming_sim/covert_progress.py	444	strip_call	strip	build_covert_task_contract	"    account_text = str(account or """").strip()"
 KEEP_identity_or_formal	机械身份/枚举/形式语言	py	ming_sim/covert_progress.py	725	strip_call	strip	_delivery_matches_economy	"            if str(item.get(""target_id"") or """").strip() != str(delivery.get(""target_id"") or """").strip():"
-KEEP_identity_or_formal	机械身份/枚举/形式语言	py	ming_sim/covert_progress.py	725	strip_call	strip	_delivery_matches_economy	"            if str(item.get(""target_id"") or """").strip() != str(delivery.get(""target_id"") or """").strip():"
 KEEP_identity_or_formal	机械身份/枚举（字段启发式）	py	ming_sim/covert_progress.py	730	strip_call	strip	_delivery_matches_economy	"    account = str(delivery.get(""account"") or """").strip()"
 KEEP_identity_or_formal	机械身份/枚举（字段启发式）	py	ming_sim/covert_progress.py	731	strip_call	strip	_delivery_matches_economy	"    if str(item.get(""account"") or """").strip() != account:"
 KEEP_identity_or_formal	机械身份/枚举（字段启发式）	py	ming_sim/covert_progress.py	824	strip_call	strip	_lanes_from_payload	"            key = str(item.get(""fact_key"") or """").strip()"
@@ -336,7 +326,6 @@ KEEP_identity_or_formal	机械身份/枚举/形式语言	py	ming_sim/db.py	11304
 KEEP_identity_or_formal	机械身份/枚举/形式语言	py	ming_sim/db.py	11306	strip_call	strip	GameDB/_normalize_directive_dossier_payload	"            grant_action = str(normalized.get(""grant_action"") or """").strip()"
 KEEP_identity_or_formal	机械身份/枚举/形式语言	py	ming_sim/db.py	11383	strip_call	strip	GameDB/_normalize_directive_dossier_payload	"                t_id = str(normalized.get(""target_id"") or """").strip()"
 KEEP_identity_or_formal	机械身份/枚举（字段启发式）	py	ming_sim/db.py	11391	strip_call	strip	GameDB/_normalize_directive_dossier_payload	"            normalized[""scope""] = f""{kind.strip()}:{target.strip()}"""
-KEEP_identity_or_formal	机械身份/枚举（字段启发式）	py	ming_sim/db.py	11391	strip_call	strip	GameDB/_normalize_directive_dossier_payload	"            normalized[""scope""] = f""{kind.strip()}:{target.strip()}"""
 KEEP_identity_or_formal	机械身份/枚举（字段启发式）	py	ming_sim/db.py	11392	strip_call	strip	GameDB/_normalize_directive_dossier_payload	"            normalized[""target_kind""] = kind.strip()"
 KEEP_identity_or_formal	机械身份/枚举/形式语言	py	ming_sim/db.py	11393	strip_call	strip	GameDB/_normalize_directive_dossier_payload	"            normalized[""target_id""] = target.strip()"
 KEEP_identity_or_formal	机械身份/枚举/形式语言	py	ming_sim/db.py	11440	strip_call	strip	GameDB/_normalize_directive_dossier_payload	"            raw_target = str(normalized.get(""target_id"") or """").strip()"
@@ -375,7 +364,6 @@ KEEP_identity_or_formal	机械身份/枚举（字段启发式）	py	ming_sim/db.
 KEEP_identity_or_formal	机械身份/枚举/形式语言	py	ming_sim/db.py	14043	strip_call	strip	GameDB/_create_decree_dossier_row	"                ""character_id"": str(executor_id).strip(), ""tier"": ""主办"", ""role"": """","
 KEEP_identity_or_formal	机械身份/枚举/形式语言	py	ming_sim/db.py	14068	strip_call	strip	GameDB/_create_decree_dossier_row	"            str(item.get(""character_id"") or """").strip()"
 KEEP_identity_or_formal	机械身份/枚举/形式语言	py	ming_sim/db.py	14209	strip_call	strip	GameDB/_validate_dossier_endorsement	        dkey = decision_key.strip()
-KEEP_identity_or_formal	机械身份/枚举（字段启发式）	py	ming_sim/db.py	14210	strip_call	strip	GameDB/_validate_dossier_endorsement	        kind, person = form.strip(), endorser_id.strip()
 KEEP_identity_or_formal	机械身份/枚举（字段启发式）	py	ming_sim/db.py	14210	strip_call	strip	GameDB/_validate_dossier_endorsement	        kind, person = form.strip(), endorser_id.strip()
 KEEP_identity_or_formal	机械身份/枚举/形式语言	py	ming_sim/db.py	14295	strip_call	strip	GameDB/find_deliberation_dossier_by_decision_key	"        key = str(decision_key or """").strip()"
 KEEP_identity_or_formal	机械身份/枚举/形式语言	py	ming_sim/db.py	14524	strip_call	strip	GameDB/_require_local_office_region	"        kind = str(office_type or """").strip()"
@@ -451,7 +439,6 @@ KEEP_identity_or_formal	机械身份/枚举/形式语言	py	ming_sim/entities/af
 KEEP_identity_or_formal	机械身份/枚举/形式语言	py	ming_sim/entities/affair/store.py	496	strip_call	strip	parse_affair_declaration	"        key = str(raw.get(""birth_key"") or """").strip()"
 KEEP_identity_or_formal	机械身份/枚举/形式语言	py	ming_sim/entities/affair/store.py	535	strip_call	strip	parse_origin_ref	"    text = str(origin_ref or """").strip()"
 KEEP_identity_or_formal	机械身份/枚举/形式语言	py	ming_sim/entities/textual_fact/store.py	80	strip_call	strip	TextualFactStore/append	"        origin = sanitize_sqlite_text(str(origin_ref or """").strip())"
-KEEP_identity_or_formal	机械身份/枚举/形式语言	py	ming_sim/entities/textual_fact/store.py	119	strip_call	strip	TextualFactStore/pointing_at	        refs = [str(ref).strip() for ref in origin_refs if str(ref).strip()]
 KEEP_identity_or_formal	机械身份/枚举/形式语言	py	ming_sim/entities/textual_fact/store.py	119	strip_call	strip	TextualFactStore/pointing_at	        refs = [str(ref).strip() for ref in origin_refs if str(ref).strip()]
 KEEP_identity_or_formal	机械身份/枚举（字段启发式）	py	ming_sim/entities/textual_fact/store.py	129	strip_call	strip	TextualFactStore/pointing_at	"            kind = str(subject_kind or """").strip()"
 KEEP_identity_or_formal	机械身份/枚举（字段启发式）	py	ming_sim/entities/textual_fact/store.py	154	strip_call	strip	_parse_subject	"    kind = str(subject_kind or """").strip()"
@@ -597,10 +584,6 @@ KEEP_identity_or_formal	人名/职官机械匹配	py	ming_sim/office_rank.py	31	
 KEEP_identity_or_formal	人名/职官机械匹配	py	ming_sim/office_rank.py	34	strip_call	strip	concurrent_office_titles	"    text = re.sub(r""^(?:前|原任|原)"", """", text).strip()"
 KEEP_identity_or_formal	人名/职官机械匹配	py	ming_sim/office_rank.py	34	re_sub		concurrent_office_titles	"    text = re.sub(r""^(?:前|原任|原)"", """", text).strip()"
 KEEP_identity_or_formal	人名/职官机械匹配	py	ming_sim/office_rank.py	35	replace_call	replace	concurrent_office_titles	"    text = (text.replace(""兼掌"", "","").replace(""兼署"", "","").replace(""兼"", "","")"
-KEEP_identity_or_formal	人名/职官机械匹配	py	ming_sim/office_rank.py	35	replace_call	replace	concurrent_office_titles	"    text = (text.replace(""兼掌"", "","").replace(""兼署"", "","").replace(""兼"", "","")"
-KEEP_identity_or_formal	人名/职官机械匹配	py	ming_sim/office_rank.py	35	replace_call	replace	concurrent_office_titles	"    text = (text.replace(""兼掌"", "","").replace(""兼署"", "","").replace(""兼"", "","")"
-KEEP_identity_or_formal	人名/职官机械匹配	py	ming_sim/office_rank.py	35	replace_call	replace	concurrent_office_titles	"    text = (text.replace(""兼掌"", "","").replace(""兼署"", "","").replace(""兼"", "","")"
-KEEP_identity_or_formal	人名/职官机械匹配	py	ming_sim/office_rank.py	35	replace_call	replace	concurrent_office_titles	"    text = (text.replace(""兼掌"", "","").replace(""兼署"", "","").replace(""兼"", "","")"
 KEEP_identity_or_formal	人名/职官机械匹配	py	ming_sim/office_rank.py	38	split_call	split	concurrent_office_titles	"    for segment in text.split("",""):"
 KEEP_identity_or_formal	人名/职官机械匹配	py	ming_sim/office_rank.py	39	strip_call	strip	concurrent_office_titles	        part = segment.strip()
 KEEP_identity_or_formal	人名/职官机械匹配	py	ming_sim/office_rank.py	47	strip_call	strip	concurrent_office_titles	            clean = part[:pollution_at].strip()
@@ -635,7 +618,6 @@ KEEP_identity_or_formal	机械身份/枚举/形式语言	py	ming_sim/session.py	
 KEEP_identity_or_formal	机械身份/枚举/形式语言	py	ming_sim/settlement_payload.py	103	strip_call	strip	parse_decision_blocks	"        explicit_event_id = str(obj.get(""event_id"") or """").strip()"
 KEEP_identity_or_formal	机械身份/枚举/形式语言	py	ming_sim/settlement_payload.py	104	strip_call	strip	parse_decision_blocks	"        origin_ref = str(obj.get(""origin_ref"") or """").strip()"
 KEEP_identity_or_formal	机械身份/枚举（字段启发式）	py	ming_sim/simulation.py	216	strip_call	strip	_canonical_item_fields	        ITEM_FIELD_ALIASES.get(str(key).strip(), str(key).strip()): _canonical_item_fields(val)
-KEEP_identity_or_formal	机械身份/枚举（字段启发式）	py	ming_sim/simulation.py	216	strip_call	strip	_canonical_item_fields	        ITEM_FIELD_ALIASES.get(str(key).strip(), str(key).strip()): _canonical_item_fields(val)
 KEEP_identity_or_formal	机械身份/枚举（字段启发式）	py	ming_sim/strict_types.py	104	strip_call	strip	validate_rejection_verdict	"            and bool(item[""key""].strip())"
 KEEP_identity_or_formal	机械身份/枚举（字段启发式）	py	ming_sim/structured_decree.py	89	strip_call	strip	expand_combo_failed_fields	"        key = str(raw or """").strip()"
 KEEP_identity_or_formal	机械身份/枚举（字段启发式）	py	ming_sim/structured_decree.py	168	strip_call	strip	transport_keys_to_canonical	            if _as_str(out.get(key)).strip():
@@ -660,7 +642,6 @@ KEEP_identity_or_formal	机械身份/枚举/形式语言	tsx	web/src/components/
 KEEP_identity_or_formal	机械身份/枚举（字段启发式）	tsx	web/src/components/menuPage.tsx	481	slice_trunc			"                  <span>{c.kind === ""manual"" ? ""手动存档"" : `战局 ${c.campaign_id.slice(0, 6)}`}</span>"
 KEEP_identity_or_formal	机械身份/枚举/形式语言	py	web_app.py	227	re_fullmatch		_humanize_condition	    character_condition = re.fullmatch(
 KEEP_identity_or_formal	机械身份/枚举/形式语言	py	web_app.py	233	re_fullmatch		_humanize_condition	"        if field == ""loyalty"" and re.fullmatch(r""\d+"", value):"
-KEEP_identity_or_formal	机械身份/枚举/形式语言	py	web_app.py	311	strip_call	strip	_humanize_legacy_gate	        value = _LEGACY_GATE_VALUE_LABELS.get(value.strip(), value.strip())
 KEEP_identity_or_formal	机械身份/枚举/形式语言	py	web_app.py	311	strip_call	strip	_humanize_legacy_gate	        value = _LEGACY_GATE_VALUE_LABELS.get(value.strip(), value.strip())
 KEEP_identity_or_formal	机械身份/枚举/形式语言	py	web_app.py	394	strip_call	strip	_advanced_llm_config_for_verify	"        base_url=(config.advanced_base_url or """").strip() or config.base_url,"
 KEEP_identity_or_formal	机械身份/枚举（字段启发式）	py	web_app.py	395	strip_call	strip	_advanced_llm_config_for_verify	"        model=(config.advanced_model or """").strip(),"
@@ -698,9 +679,7 @@ KEEP_match	封闭前缀/接地匹配扫描，不写回叙事正文	py	ming_sim/c
 KEEP_match	封闭前缀/接地匹配扫描，不写回叙事正文	py	ming_sim/cli_backend.py	4093	join_call	join	_extract_secret_order	"        ""【可引用旧案卷】\n"" + ""\n"".join("
 KEEP_match	封闭前缀/接地匹配扫描，不写回叙事正文	py	ming_sim/cli_backend.py	4144	strip_call	strip	_extract_secret_order	"    _assignee_llm = str(obj.get(""承办人"") or """").strip()"
 KEEP_match	封闭前缀/接地匹配扫描，不写回叙事正文	py	ming_sim/cli_backend.py	4172	strip_call	strip	_extract_secret_order	    tags = [str(t).strip() for t in tags if str(t).strip()] if isinstance(tags, list) else []
-KEEP_match	封闭前缀/接地匹配扫描，不写回叙事正文	py	ming_sim/cli_backend.py	4172	strip_call	strip	_extract_secret_order	    tags = [str(t).strip() for t in tags if str(t).strip()] if isinstance(tags, list) else []
 KEEP_match	封闭前缀/接地匹配扫描，不写回叙事正文	py	ming_sim/cli_backend.py	4214	strip_call	strip	_extract_secret_order	"    kind = str(obj.get(""差务"") or obj.get(""kind"") or """").strip()"
-KEEP_match	封闭前缀/接地匹配扫描，不写回叙事正文	py	ming_sim/cli_backend.py	4216	strip_call	strip	_extract_secret_order	    axes = [str(a).strip() for a in axes if str(a).strip()] if isinstance(axes, list) else []
 KEEP_match	封闭前缀/接地匹配扫描，不写回叙事正文	py	ming_sim/cli_backend.py	4216	strip_call	strip	_extract_secret_order	    axes = [str(a).strip() for a in axes if str(a).strip()] if isinstance(axes, list) else []
 KEEP_match	封闭前缀/接地匹配扫描，不写回叙事正文	py	ming_sim/cli_backend.py	4217	strip_call	strip	_extract_secret_order	"    unit = str(obj.get(""交付单位"") or """").strip()"
 KEEP_match	封闭前缀/接地匹配扫描，不写回叙事正文	py	ming_sim/cli_backend.py	4288	strip_call	strip	_secret_prefix_needs_recent_context	"    text = (secret_intent or """").strip()"
@@ -724,7 +703,6 @@ KEEP_other	非突变主类或结构性	py	ming_sim/cli_backend.py	235	re_search	
 KEEP_other	非突变主类或结构性	py	ming_sim/cli_backend.py	3872	re_search		_secret_context_task_like	"    if re.search(r""[?？]$"", compact):"
 KEEP_other	非突变主类或结构性	py	ming_sim/cli_backend.py	3874	re_search		_secret_context_task_like	"    return bool(re.search(r""(命|令|着|遣|派|督办|查|暗查|密查|护|封存|截留|赈|再令|另令|须|务必|回奏|月内|日内)"", compact))"
 KEEP_other	非突变主类或结构性	py	ming_sim/cli_backend.py	3881	re_search		_secret_context_tasks_related	"    if re.search(r""^(再|另|又|并|仍|复)(令|命|着|遣|派)"", later_compact):"
-KEEP_other	非突变主类或结构性	py	ming_sim/cli_backend.py	3883	re_search		_secret_context_tasks_related	"    if re.search(r""(月内|日内|回奏|结案|期限)"", later_compact) and not re.search("
 KEEP_other	非突变主类或结构性	py	ming_sim/cli_backend.py	3883	re_search		_secret_context_tasks_related	"    if re.search(r""(月内|日内|回奏|结案|期限)"", later_compact) and not re.search("
 KEEP_other	非突变主类或结构性	py	ming_sim/cli_backend.py	3892	re_search		_secret_context_constraint_like	"    return bool(re.search(r""(机密|保密|不可泄露|不得泄露|不得外泄|不可外泄|勿泄|秘而不宣|勿使.*知晓|不得.*知晓)"", compact))"
 KEEP_other	非突变主类或结构性	py	ming_sim/cli_backend.py	3959	re_match		_secret_metadata_from_command	"        m_tags = re.match(r""^(?:标签|tag|tags)\s*[：:]\s*(.+)$"", line, flags=re.IGNORECASE)"
@@ -790,7 +768,7 @@ KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账�
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/action_clusters.py	330	strip_call	strip	effective_field_allowed	"        if str(candidate.get(controller) or """").strip() == controller_value:"
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/action_clusters.py	348	strip_call	strip	field_population_allowed	"    return str(candidate.get(controller) or """").strip() in allowed"
 KEEP_empty_check	仅判空	py	ming_sim/action_clusters.py	359	strip_call	strip	assert_action_candidate_shape/_enum	        v = str(value if value is not None else default).strip()
-KEEP_identity_or_formal	分类器字段形状/长度契约（非叙事原文运输）	py	ming_sim/action_clusters.py	388	slice_trunc_expr	[:expr]	assert_action_candidate_shape	                s = s[: spec.max_len]
+KEEP_identity_or_formal	max_len 仅 name/office/ids/station/responsible_bodies 机械字段；非自由叙事散文	py	ming_sim/action_clusters.py	388	slice_trunc_expr	[:expr]	assert_action_candidate_shape	                s = s[: spec.max_len]
 KEEP_empty_check	仅判空	py	ming_sim/action_materialize.py	43	strip_call	strip	minister_speaker_role	"            found = roster.get(str(minister_name or """").strip())"
 KEEP_empty_check	仅判空	py	ming_sim/action_materialize.py	53	strip_call	strip	minister_speaker_role	"        return ""\n"".join(p for p in parts if str(p or """").strip())"
 KEEP_identity_or_formal	人名/职官/枚举/载荷键机械规范化	py	ming_sim/action_materialize.py	54	strip_call	strip	minister_speaker_role	"    office = str(getattr(ch, ""office"", """") or """").strip() if ch is not None else """""
@@ -811,11 +789,9 @@ KEEP_identity_or_formal	人名/职官/枚举/载荷键机械规范化	py	ming_si
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/action_materialize.py	951	strip_call	strip	_parse_json_field	"    text = str(raw or """").strip()"
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/action_materialize.py	1031	strip_call	strip	parse_responsible_bodies	        text = value.strip()
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/action_materialize.py	1034	strip_call	strip	parse_responsible_bodies	        parts = [p.strip() for p in re_split_bodies(text) if p.strip()]
-KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/action_materialize.py	1034	strip_call	strip	parse_responsible_bodies	        parts = [p.strip() for p in re_split_bodies(text) if p.strip()]
 KEEP_identity_or_formal	人名/职官/枚举/载荷键机械规范化	py	ming_sim/action_materialize.py	1044	strip_call	strip	parse_responsible_bodies	"        name = str(item or """").strip()"
 KEEP_empty_check	仅判空	py	ming_sim/action_materialize.py	1055	strip_call	strip	character_person_names	"        str(row[""name""]).strip()"
 KEEP_empty_check	仅判空	py	ming_sim/action_materialize.py	1057	strip_call	strip	character_person_names	"        if str(row[""name""] or """").strip()"
-KEEP_identity_or_formal	人名/职官/枚举/载荷键机械规范化	py	ming_sim/action_materialize.py	1068	strip_call	strip	assert_responsible_bodies_org_only	"    persons = {str(n).strip() for n in known_person_names if str(n or """").strip()}"
 KEEP_identity_or_formal	人名/职官/枚举/载荷键机械规范化	py	ming_sim/action_materialize.py	1068	strip_call	strip	assert_responsible_bodies_org_only	"    persons = {str(n).strip() for n in known_person_names if str(n or """").strip()}"
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/action_materialize.py	1069	strip_call	strip	assert_responsible_bodies_org_only	"    minister = str(current_minister or """").strip()"
 KEEP_identity_or_formal	人名/职官/枚举/载荷键机械规范化	py	ming_sim/action_materialize.py	1075	strip_call	strip	assert_responsible_bodies_org_only	"        name = str(body or """").strip()"
@@ -867,7 +843,6 @@ KEEP_empty_check	仅判空	py	ming_sim/appointment_tenure.py	67	strip_call	strip
 KEEP_other	datetime.replace 非文本	py	ming_sim/audience_night.py	243	replace_call	replace	_now_iso	    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 KEEP_identity_or_formal	人名/职官/枚举/载荷键机械规范化	py	ming_sim/audience_night.py	494	strip_call	strip	night_archive_metadata	"            name = str(raw_name or """").strip()"
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/audience_night.py	761	strip_call	strip	assert_persons_not_dead	"        n = str(name or """").strip()"
-KEEP_identity_or_formal	人名/职官/枚举/载荷键机械规范化	py	ming_sim/audience_night.py	846	strip_call	strip	append_ledger_entry	    persons = [str(n).strip() for n in (person_names or []) if str(n).strip()]
 KEEP_identity_or_formal	人名/职官/枚举/载荷键机械规范化	py	ming_sim/audience_night.py	846	strip_call	strip	append_ledger_entry	    persons = [str(n).strip() for n in (person_names or []) if str(n).strip()]
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/audience_night.py	919	strip_call	strip	open_night	"    time_of_day = str(time_of_day or """").strip() or DEFAULT_TIME_OF_DAY"
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/audience_night.py	920	strip_call	strip	open_night	"    location = str(location or """").strip() or DEFAULT_LOCATION"
@@ -921,7 +896,7 @@ KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账�
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/centrifuge_ledger.py	99	strip_call	strip	_optional_text	    text = str(value).strip()
 KEEP_empty_check	仅判空	py	ming_sim/cli/terminal.py	110	strip_call	strip	choose_minister	"        raw = input(""召见谁？输入编号或姓名，quit 退朝审阅诏书，exit 退出游戏："").strip()"
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/cli/terminal.py	212	strip_call	strip	_handle_court_command	    raw = text.strip()
-KEEP_empty_check	仅判空	py	ming_sim/cli/terminal.py	279	strip_call	strip	_print_interrupted_reply_retry_hint	"    question = str(last.get(""question"") or """").strip()"
+FIX_DONE	中断提示 question.strip 曾展示；现原文，strip 仅判空	py	ming_sim/cli/terminal.py	280	strip_call	strip	_print_interrupted_reply_retry_hint	"    question = str(last.get(""question"") or """")"
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/cli/terminal.py	578	strip_call	strip	review_directives	"        raw = input(""诏书草案> "").strip()"
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/cli/terminal.py	612	strip_call	strip	review_directives	                if text.strip():
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/cli/terminal.py	628	lstrip_call	lstrip	review_directives	"            if len(parts) == 2 and parts[1].lstrip(""#"").isdigit():"
@@ -937,11 +912,10 @@ KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账�
 KEEP_empty_check	仅判空	py	ming_sim/cli_backend.py	1280	strip_call	strip	_directive_mode	"    }.get(str(value or """").strip())"
 KEEP_empty_check	仅判空	py	ming_sim/cli_backend.py	1316	strip_call	strip	_draft_intent_character_roster_facts	            str(a).strip()
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/cli_backend.py	1318	strip_call	strip	_draft_intent_character_roster_facts	            if str(a).strip() and str(a).strip() != name
-KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/cli_backend.py	1318	strip_call	strip	_draft_intent_character_roster_facts	            if str(a).strip() and str(a).strip() != name
 KEEP_empty_check	仅判空	py	ming_sim/cli_backend.py	1353	strip_call	strip	_draft_intent_army_grounding_facts	"        name = str(getattr(army, ""name"", None) or army_id).strip()"
 KEEP_identity_or_formal	人名/职官/枚举/载荷键机械规范化	py	ming_sim/cli_backend.py	1386	strip_call	strip	_normalize_unknown_participant_names	"        name = str(raw or """").strip()"
 KEEP_identity_or_formal	人名/职官/枚举/载荷键机械规范化	py	ming_sim/cli_backend.py	1429	strip_call	strip	_invalid_participant_names_from_error	"        name = str(match.group(1) or """").strip()"
-KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/cli_backend.py	1476	strip_call	strip	_grounding_source_text	"    text = str(player_message or """").strip()"
+KEEP_match_or_normalize	接地匹配源拼装；非召对/邸报原文账本运输	py	ming_sim/cli_backend.py	1476	strip_call	strip	_grounding_source_text	"    text = str(player_message or """").strip()"
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/cli_backend.py	1480	strip_call	strip	_grounding_source_text	"        ref = str(raw or """").strip()"
 KEEP_identity_or_formal	人名/职官/枚举/载荷键机械规范化	py	ming_sim/cli_backend.py	1489	strip_call	strip	_roster_identity_forms	"    name = str(canon or """").strip()"
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/cli_backend.py	1497	strip_call	strip	_roster_identity_forms	"        alias = str(raw or """").strip()"
@@ -955,10 +929,8 @@ KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账�
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/cli_backend.py	1896	strip_call	strip	compose_unknown_participant_inworld_report	"        role = str(speaker_role or """").strip()"
 KEEP_identity_or_formal	人名/职官/枚举/载荷键机械规范化	py	ming_sim/cli_backend.py	1898	strip_call	strip	compose_unknown_participant_inworld_report	"            name = str(speaker_name or """").strip()"
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/cli_backend.py	1939	strip_call	strip	compose_decree_validation_recovery	    failed = {str(item).strip() for item in (failed_fields or []) if str(item).strip()}
-KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/cli_backend.py	1939	strip_call	strip	compose_decree_validation_recovery	    failed = {str(item).strip() for item in (failed_fields or []) if str(item).strip()}
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/cli_backend.py	1942	strip_call	strip	compose_decree_validation_recovery	"    role = str(speaker_role or """").strip()"
 KEEP_identity_or_formal	人名/职官/枚举/载荷键机械规范化	py	ming_sim/cli_backend.py	1944	strip_call	strip	compose_decree_validation_recovery	"        name = str(speaker_name or """").strip()"
-KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/cli_backend.py	1973	strip_call	strip	_secret_landing_gap_feature	    gaps = [str(g).strip() for g in (landing_gaps or []) if str(g).strip()]
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/cli_backend.py	1973	strip_call	strip	_secret_landing_gap_feature	    gaps = [str(g).strip() for g in (landing_gaps or []) if str(g).strip()]
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/cli_backend.py	2013	strip_call	strip	compose_secret_order_landing_recovery	"    err = str(contract_error or """").strip()"
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/cli_backend.py	2015	strip_call	strip	compose_secret_order_landing_recovery	"    role = str(speaker_role or """").strip()"
@@ -1062,7 +1034,6 @@ KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账�
 KEEP_empty_check	仅判空	py	ming_sim/covert_progress.py	719	strip_call	strip	_delivery_matches_economy	"        purpose = str(delivery.get(""purpose"") or """").strip()"
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/covert_progress.py	720	strip_call	strip	_delivery_matches_economy	"        if str(item.get(""purpose"") or """").strip() != purpose:"
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/covert_progress.py	723	strip_call	strip	_delivery_matches_economy	"            if str(item.get(""target_kind"") or """").strip() != str(delivery.get(""target_kind"") or """").strip():"
-KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/covert_progress.py	723	strip_call	strip	_delivery_matches_economy	"            if str(item.get(""target_kind"") or """").strip() != str(delivery.get(""target_kind"") or """").strip():"
 KEEP_empty_check	仅判空	py	ming_sim/covert_progress.py	727	strip_call	strip	_delivery_matches_economy	"    category = str(delivery.get(""category"") or """").strip()"
 KEEP_identity_or_formal	人名/职官/枚举/载荷键机械规范化	py	ming_sim/covert_progress.py	728	strip_call	strip	_delivery_matches_economy	"    if str(item.get(""category"") or """").strip() != category:"
 KEEP_identity_or_formal	人名/职官/枚举/载荷键机械规范化	py	ming_sim/covert_progress.py	769	strip_call	strip	live_investigation_fact_keys	"    name = str(target or """").strip()"
@@ -1109,29 +1080,22 @@ KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账�
 KEEP_empty_check	仅判空	py	ming_sim/credit_events.py	609	strip_call	strip	_host_person_for_commitment	"    return str(host.get(""name"") or """").strip()"
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/credit_events.py	739	strip_call	strip	resolve_fulfillment_credit_from_extraction	"        if str(it.get(""outcome"") or """").strip() != ""fulfilled"":"
 KEEP_empty_check	仅判空	py	ming_sim/db.py	159	strip_call	strip	fold_loyalty_alias_delta	"        if ARMY_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip()) != ""loyalty"":"
-KEEP_empty_check	仅判空	py	ming_sim/db.py	159	strip_call	strip	fold_loyalty_alias_delta	"        if ARMY_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip()) != ""loyalty"":"
 KEEP_empty_check	仅判空	py	ming_sim/db.py	201	strip_call	strip	_seed_guilt_storage_value	"        severity = str(value.get(""severity"") or ""无"").strip()"
 KEEP_identity_or_formal	人名/职官/枚举/载荷键机械规范化	py	ming_sim/db.py	237	strip_call	strip	_snapshot_secret_order_people	        name = str(raw_name).strip()
 KEEP_empty_check	仅判空	py	ming_sim/db.py	270	strip_call	strip	_canonical_secret_exclusion_target	"    target = re.sub(r""(?:诸官|官员|诸司|诸人|上下|众人)$"", """", target).strip()"
 KEEP_empty_check	仅判空	py	ming_sim/db.py	270	re_sub		_canonical_secret_exclusion_target	"    target = re.sub(r""(?:诸官|官员|诸司|诸人|上下|众人)$"", """", target).strip()"
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/db.py	618	strip_call	strip	_coerce_bool_flag	"    return str(raw).strip().lower() in {""1"", ""true"", ""yes"", ""y"", ""是"", ""土司"", ""自养"", ""自养军饷""}"
 KEEP_empty_check	仅判空	py	ming_sim/db.py	684	strip_call	strip	_member_office_weight	"    for part in (p.strip() for p in office_n.split("","") if p.strip()):"
-KEEP_empty_check	仅判空	py	ming_sim/db.py	684	strip_call	strip	_member_office_weight	"    for part in (p.strip() for p in office_n.split("","") if p.strip()):"
 KEEP_identity_or_formal	人名/职官/枚举/载荷键机械规范化	py	ming_sim/db.py	698	strip_call	strip	normalize_office	"    s = (office or """").strip()"
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/db.py	701	replace_call	replace	normalize_office	"    s = s.replace(""兼掌"", "","").replace(""兼署"", "","").replace(""兼"", "","")"
-KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/db.py	701	replace_call	replace	normalize_office	"    s = s.replace(""兼掌"", "","").replace(""兼署"", "","").replace(""兼"", "","")"
-KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/db.py	701	replace_call	replace	normalize_office	"    s = s.replace(""兼掌"", "","").replace(""兼署"", "","").replace(""兼"", "","")"
-KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/db.py	702	replace_call	replace	normalize_office	"    s = s.replace(""，"", "","").replace(""、"", "","")"
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/db.py	702	replace_call	replace	normalize_office	"    s = s.replace(""，"", "","").replace(""、"", "","")"
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/db.py	705	strip_call	strip	normalize_office	"    for p in (x.strip() for x in s.split("","")):"
-KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/db.py	768	strip_call	strip	_office_type_via_llm	"        cand = (raw or """").strip().splitlines()[0].strip() if raw else """""
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/db.py	768	strip_call	strip	_office_type_via_llm	"        cand = (raw or """").strip().splitlines()[0].strip() if raw else """""
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/db.py	831	strip_call	strip	resolve_office_type_preserving_title	"    declared = (declared or """").strip()"
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/db.py	984	replace_call	replace	GameDB/init_schema	"            """""""
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/db.py	2772	strip_call	strip	GameDB/_migrate_legacy_office_pollution	"            loc = m.group(1).strip() if m else """""
 KEEP_identity_or_formal	人名/职官/枚举/载荷键机械规范化	py	ming_sim/db.py	2809	rstrip_call	rstrip	GameDB/_migrate_legacy_office_pollution	"            cleaned = office.replace(""（在途）"", """").replace(""(在途)"", """").strip().rstrip("",，"")"
 KEEP_identity_or_formal	人名/职官/枚举/载荷键机械规范化	py	ming_sim/db.py	2809	strip_call	strip	GameDB/_migrate_legacy_office_pollution	"            cleaned = office.replace(""（在途）"", """").replace(""(在途)"", """").strip().rstrip("",，"")"
-KEEP_identity_or_formal	人名/职官/枚举/载荷键机械规范化	py	ming_sim/db.py	2809	replace_call	replace	GameDB/_migrate_legacy_office_pollution	"            cleaned = office.replace(""（在途）"", """").replace(""(在途)"", """").strip().rstrip("",，"")"
 KEEP_identity_or_formal	人名/职官/枚举/载荷键机械规范化	py	ming_sim/db.py	2809	replace_call	replace	GameDB/_migrate_legacy_office_pollution	"            cleaned = office.replace(""（在途）"", """").replace(""(在途)"", """").strip().rstrip("",，"")"
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/db.py	3018	strip_call	strip	GameDB/set_fiscal_config_batch	"        normalized = {str(k or """").strip(): int(v) for k, v in values.items()}"
 KEEP_identity_or_formal	人名/职官/枚举/载荷键机械规范化	py	ming_sim/db.py	3692	strip_call	strip	GameDB/_record_character_office	"        seat = str(region_id or """").strip()"
@@ -1141,48 +1105,35 @@ KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账�
 KEEP_empty_check	仅判空	py	ming_sim/db.py	4643	strip_call	strip	GameDB/transition_army_owner_power	"                pay_source_region_val = str(row[""pay_source_region""] or """").strip()"
 KEEP_empty_check	仅判空	py	ming_sim/db.py	4645	strip_call	strip	GameDB/transition_army_owner_power	"                pay_source_region_val = str(pay_source_region or """").strip()"
 KEEP_empty_check	仅判空	py	ming_sim/db.py	4823	strip_call	strip	GameDB/_apply_army_pay_source_delta	            ARMY_FIELD_ALIASES.get(str(k).strip(), str(k).strip()): v
-KEEP_empty_check	仅判空	py	ming_sim/db.py	4823	strip_call	strip	GameDB/_apply_army_pay_source_delta	            ARMY_FIELD_ALIASES.get(str(k).strip(), str(k).strip()): v
 KEEP_empty_check	仅判空	py	ming_sim/db.py	4833	strip_call	strip	GameDB/_apply_army_pay_source_delta	"            proposed_owner = str(normalized.get(""owner_power"") or """").strip()"
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/db.py	4834	strip_call	strip	GameDB/_apply_army_pay_source_delta	"            if proposed_owner != str(row[""owner_power""] or """").strip():"
 KEEP_empty_check	仅判空	py	ming_sim/db.py	4856	strip_call	strip	GameDB/_apply_army_pay_source_delta	"        owner_power = str(row[""owner_power""] or """").strip()"
 KEEP_empty_check	仅判空	py	ming_sim/db.py	4857	strip_call	strip	GameDB/_apply_army_pay_source_delta	"        pay_source_region = str(normalized.get(""pay_source_region"", row[""pay_source_region""]) or """").strip()"
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/db.py	5702	slice_trunc	[:2]	GameDB/seed_opening_crises	"                    faction_hint="","".join(ev.interests[:2]),"
 KEEP_empty_check	仅判空	py	ming_sim/db.py	6037	strip_call	strip	GameDB/_rank_rules_562_legacy_weight_sum/legacy_multiplier	"            for part in (p.strip() for p in normalize_office(office).split("","") if p.strip()):"
-KEEP_empty_check	仅判空	py	ming_sim/db.py	6037	strip_call	strip	GameDB/_rank_rules_562_legacy_weight_sum/legacy_multiplier	"            for part in (p.strip() for p in normalize_office(office).split("","") if p.strip()):"
-KEEP_empty_check	仅判空	py	ming_sim/db.py	6056	strip_call	strip	GameDB/_rank_rules_562_legacy_weight_sum	"            for part in (p.strip() for p in office_n.split("","") if p.strip()):"
 KEEP_empty_check	仅判空	py	ming_sim/db.py	6056	strip_call	strip	GameDB/_rank_rules_562_legacy_weight_sum	"            for part in (p.strip() for p in office_n.split("","") if p.strip()):"
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/db.py	6123	slice_trunc	[:120]	GameDB/record_person_log	"                str(derived_from or """")[:120],"
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/db.py	6125	slice_trunc	[:80]	GameDB/record_person_log	"                str(source or """")[:80],"
-KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/db.py	6144	strip_call	strip	GameDB/current_court_roster_rows	        wanted = [str(name).strip() for name in (names or []) if str(name).strip()]
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/db.py	6144	strip_call	strip	GameDB/current_court_roster_rows	        wanted = [str(name).strip() for name in (names or []) if str(name).strip()]
 KEEP_empty_check	仅判空	py	ming_sim/db.py	6184	strip_call	strip	GameDB/apply_character_power_changes	"            name = str(raw.get(""name"") or raw.get(""姓名"") or """").strip()"
 KEEP_empty_check	仅判空	py	ming_sim/db.py	6185	strip_call	strip	GameDB/apply_character_power_changes	"            new_power = str(raw.get(""new_power"") or raw.get(""新势力"") or """").strip()"
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/db.py	6378	replace_call	replace	GameDB/next_pool_portrait_id	"                used.add(int(r[""portrait_id""].replace(prefix, """")))"
 KEEP_empty_check	仅判空	py	ming_sim/db.py	6847	strip_call	strip	GameDB/adjust_classes	                (name.strip(), region_id.strip()),
-KEEP_empty_check	仅判空	py	ming_sim/db.py	6847	strip_call	strip	GameDB/adjust_classes	                (name.strip(), region_id.strip()),
 KEEP_empty_check	仅判空	py	ming_sim/db.py	6863	strip_call	strip	GameDB/adjust_classes	                (sat, lev, name.strip(), region_id.strip()),
-KEEP_empty_check	仅判空	py	ming_sim/db.py	6863	strip_call	strip	GameDB/adjust_classes	                (sat, lev, name.strip(), region_id.strip()),
-KEEP_empty_check	仅判空	py	ming_sim/db.py	7031	strip_call	strip	GameDB/apply_power_deltas	                    mapped = POWER_FIELD_ALIASES.get(str(k).strip(), str(k).strip())
 KEEP_empty_check	仅判空	py	ming_sim/db.py	7031	strip_call	strip	GameDB/apply_power_deltas	                    mapped = POWER_FIELD_ALIASES.get(str(k).strip(), str(k).strip())
 KEEP_identity_or_formal	人名/职官/枚举/载荷键机械规范化	py	ming_sim/db.py	7032	strip_call	strip	GameDB/apply_power_deltas	"                    if mapped == _canon and str(v or """").strip():"
-KEEP_empty_check	仅判空	py	ming_sim/db.py	7039	strip_call	strip	GameDB/apply_power_deltas	                field = POWER_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())
 KEEP_empty_check	仅判空	py	ming_sim/db.py	7039	strip_call	strip	GameDB/apply_power_deltas	                field = POWER_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/db.py	7136	strip_call	strip	GameDB/apply_power_rename	"        power_id = str(power_id or """").strip()"
 KEEP_identity_or_formal	人名/职官/枚举/载荷键机械规范化	py	ming_sim/db.py	7137	strip_call	strip	GameDB/apply_power_rename	"        new_name = str(new_name or """").strip()"
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/db.py	7146	strip_call	strip	GameDB/apply_power_rename	"        merged_aliases = [x.strip() for x in (aliases or old_aliases).replace(""，"", "","").split("","") if x.strip()]"
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/db.py	7146	replace_call	replace	GameDB/apply_power_rename	"        merged_aliases = [x.strip() for x in (aliases or old_aliases).replace(""，"", "","").split("","") if x.strip()]"
-KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/db.py	7146	strip_call	strip	GameDB/apply_power_rename	"        merged_aliases = [x.strip() for x in (aliases or old_aliases).replace(""，"", "","").split("","") if x.strip()]"
-KEEP_empty_check	仅判空	py	ming_sim/db.py	7374	strip_call	strip	GameDB/apply_region_deltas	                field = REGION_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())
 KEEP_empty_check	仅判空	py	ming_sim/db.py	7374	strip_call	strip	GameDB/apply_region_deltas	                field = REGION_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/db.py	7752	slice_trunc_name	[:limit]	GameDB/army_rows	        return rows[:limit] if limit is not None else rows
-KEEP_empty_check	仅判空	py	ming_sim/db.py	7981	strip_call	strip	GameDB/apply_army_deltas	                    ARMY_FIELD_ALIASES.get(str(k).strip(), str(k).strip()): v
 KEEP_empty_check	仅判空	py	ming_sim/db.py	7981	strip_call	strip	GameDB/apply_army_deltas	                    ARMY_FIELD_ALIASES.get(str(k).strip(), str(k).strip()): v
 KEEP_empty_check	仅判空	py	ming_sim/db.py	7985	strip_call	strip	GameDB/apply_army_deltas	"                    proposed_owner = str(normalized.get(""owner_power"") or """").strip()"
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/db.py	7986	strip_call	strip	GameDB/apply_army_deltas	"                    if proposed_owner != str(row[""owner_power""] or """").strip():"
 KEEP_empty_check	仅判空	py	ming_sim/db.py	8014	strip_call	strip	GameDB/apply_army_deltas	                field = ARMY_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())
-KEEP_empty_check	仅判空	py	ming_sim/db.py	8014	strip_call	strip	GameDB/apply_army_deltas	                field = ARMY_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/db.py	8032	strip_call	strip	GameDB/apply_army_deltas	"                        str(value or """").strip(),"
-KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/db.py	8402	strip_call	strip	GameDB/create_armies_from_extraction	            item = {_AA.get(str(k).strip(), str(k).strip()): v for k, v in raw.items()}
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/db.py	8402	strip_call	strip	GameDB/create_armies_from_extraction	            item = {_AA.get(str(k).strip(), str(k).strip()): v for k, v in raw.items()}
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/db.py	8413	strip_call	strip	GameDB/create_armies_from_extraction	"            owner = str(item.get(""owner_power"") or ""ming"").strip() or ""ming"""
 KEEP_empty_check	仅判空	py	ming_sim/db.py	8423	strip_call	strip	GameDB/create_armies_from_extraction	"            name = str(item.get(""name"") or aid).strip()"
@@ -1219,7 +1170,6 @@ KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账�
 KEEP_empty_check	仅判空	py	ming_sim/db.py	12093	strip_call	strip	GameDB/_grant_escort_presence	"            relation = str(link.get(""relation_type"") or """").strip()"
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/db.py	12502	strip_call	strip	GameDB/record_loophole_exposure	"        form = str(execution_form or """").strip()"
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/db.py	12749	strip_call	strip	GameDB/_memorial_read_keys	"        return {str(item) for item in data if str(item or """").strip()}"
-KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/db.py	12753	strip_call	strip	GameDB/mark_memorials_read	"        incoming = {str(k).strip() for k in keys if str(k or """").strip()}"
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/db.py	12753	strip_call	strip	GameDB/mark_memorials_read	"        incoming = {str(k).strip() for k in keys if str(k or """").strip()}"
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/db.py	12780	strip_call	strip	GameDB/list_player_memorials	"                owner_cache[did] = str(name or """").strip() or self.MEMORIAL_AUTHOR_FALLBACK"
 KEEP_empty_check	仅判空	py	ming_sim/db.py	12797	strip_call	strip	GameDB/list_player_memorials	"                ""author_name"": str(row.get(""accuser_name"") or """").strip()"
@@ -1291,10 +1241,7 @@ KEEP_empty_check	仅判空	py	ming_sim/db.py	17784	strip_call	strip	GameDB/_prep
 KEEP_empty_check	仅判空	py	ming_sim/db.py	17895	strip_call	strip	GameDB/commit_pending_actions	"                    office_memory_key = str(payload.get(""name"") or """").strip()"
 KEEP_empty_check	仅判空	py	ming_sim/db.py	18068	strip_call	strip	GameDB/_apply_pending_action	"                assignee = str(payload.get(""assignee"") or pa[""minister_name""] or """").strip()"
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/db.py	18072	strip_call	strip	GameDB/_apply_pending_action	                tags = [str(t).strip() for t in tags_raw if str(t).strip()] if isinstance(tags_raw, list) else []
-KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/db.py	18072	strip_call	strip	GameDB/_apply_pending_action	                tags = [str(t).strip() for t in tags_raw if str(t).strip()] if isinstance(tags_raw, list) else []
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/db.py	18075	strip_call	strip	GameDB/_apply_pending_action	                excluded = [str(t).strip() for t in excluded if str(t).strip()] if isinstance(excluded, list) else []
-KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/db.py	18075	strip_call	strip	GameDB/_apply_pending_action	                excluded = [str(t).strip() for t in excluded if str(t).strip()] if isinstance(excluded, list) else []
-KEEP_identity_or_formal	人名/职官/枚举/载荷键机械规范化	py	ming_sim/db.py	18077	strip_call	strip	GameDB/_apply_pending_action	                excluded_offices = [str(t).strip() for t in excluded_offices if str(t).strip()] if isinstance(excluded_offices, list) else []
 KEEP_identity_or_formal	人名/职官/枚举/载荷键机械规范化	py	ming_sim/db.py	18077	strip_call	strip	GameDB/_apply_pending_action	                excluded_offices = [str(t).strip() for t in excluded_offices if str(t).strip()] if isinstance(excluded_offices, list) else []
 KEEP_empty_check	仅判空	py	ming_sim/db.py	18279	strip_call	strip	GameDB/_appointment_slice_from_combined_payload	"        name = str(payload.get(""name"") or """").strip()"
 KEEP_empty_check	仅判空	py	ming_sim/db.py	18282	strip_call	strip	GameDB/_appointment_slice_from_combined_payload	"        office = str(payload.get(""office"") or """").strip()"
@@ -1304,7 +1251,6 @@ KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账�
 KEEP_empty_check	仅判空	py	ming_sim/db.py	18420	strip_call	strip	GameDB/_recommendation_snapshot_ready	"        name = str(payload.get(""name"") or """").strip()"
 KEEP_empty_check	仅判空	py	ming_sim/db.py	18473	strip_call	strip	GameDB/_commit_office_action	"        name = str(payload.get(""name"") or """").strip()"
 KEEP_identity_or_formal	人名/职官/枚举/载荷键机械规范化	py	ming_sim/db.py	18524	strip_call	strip	GameDB/_commit_office_action	            seat = str(
-KEEP_identity_or_formal	人名/职官/枚举/载荷键机械规范化	py	ming_sim/db.py	18927	strip_call	strip	GameDB/find_authority_by_origin	                int(dossier_id), str(holder_id).strip(), str(privilege).strip(),
 KEEP_identity_or_formal	人名/职官/枚举/载荷键机械规范化	py	ming_sim/db.py	18927	strip_call	strip	GameDB/find_authority_by_origin	                int(dossier_id), str(holder_id).strip(), str(privilege).strip(),
 KEEP_identity_or_formal	人名/职官/枚举/载荷键机械规范化	py	ming_sim/db.py	18928	strip_call	strip	GameDB/find_authority_by_origin	                str(scope).strip(),
 KEEP_identity_or_formal	人名/职官/枚举/载荷键机械规范化	py	ming_sim/db.py	18941	strip_call	strip	GameDB/find_active_authority	"        holder_id = str(holder_id or """").strip()"
@@ -1334,19 +1280,13 @@ KEEP_empty_check	仅判空	py	ming_sim/db.py	21036	strip_call	strip	GameDB/_dele
 KEEP_identity_or_formal	人名/职官/枚举/载荷键机械规范化	py	ming_sim/db.py	21202	strip_call	strip	GameDB/_project_audience_chat_message	"        minister = str(minister_name or """").strip()"
 KEEP_identity_or_formal	人名/职官/枚举/载荷键机械规范化	py	ming_sim/db.py	21238	strip_call	strip	GameDB/release_held_audience_knowledge	"        name_filter = str(minister_name or """").strip()"
 KEEP_empty_check	仅判空	py	ming_sim/db.py	21240	strip_call	strip	GameDB/release_held_audience_knowledge	"            str(n).strip() for n in (minister_names or ()) if str(n or """").strip()"
-KEEP_empty_check	仅判空	py	ming_sim/db.py	21240	strip_call	strip	GameDB/release_held_audience_knowledge	"            str(n).strip() for n in (minister_names or ()) if str(n or """").strip()"
 KEEP_empty_check	仅判空	py	ming_sim/db.py	21279	strip_call	strip	GameDB/release_held_audience_knowledge	"            minister = str(row[""minister_name""] or """").strip()"
 KEEP_empty_check	仅判空	py	ming_sim/db.py	21332	strip_call	strip	GameDB/register_character_knowledge_source	             safe_json_dumps(list(dict.fromkeys(str(x).strip() for x in (excluded_names or []) if str(x).strip())), ensure_ascii=False),
-KEEP_empty_check	仅判空	py	ming_sim/db.py	21332	strip_call	strip	GameDB/register_character_knowledge_source	             safe_json_dumps(list(dict.fromkeys(str(x).strip() for x in (excluded_names or []) if str(x).strip())), ensure_ascii=False),
-KEEP_empty_check	仅判空	py	ming_sim/db.py	21333	strip_call	strip	GameDB/register_character_knowledge_source	             safe_json_dumps({k: list(dict.fromkeys(str(x).strip() for x in values if str(x).strip())) for k, values in (excluded_targets or {}).items()}, ensure_ascii=False)),
 KEEP_empty_check	仅判空	py	ming_sim/db.py	21333	strip_call	strip	GameDB/register_character_knowledge_source	             safe_json_dumps({k: list(dict.fromkeys(str(x).strip() for x in values if str(x).strip())) for k, values in (excluded_targets or {}).items()}, ensure_ascii=False)),
 KEEP_identity_or_formal	人名/职官/枚举/载荷键机械规范化	py	ming_sim/db.py	21383	strip_call	strip	GameDB/upsert_secret_order_brief	"        assignee = str(minister_name or """").strip()"
 KEEP_empty_check	仅判空	py	ming_sim/db.py	21384	strip_call	strip	GameDB/upsert_secret_order_brief	"        origin = str(origin_minister_name or """").strip()"
 KEEP_empty_check	仅判空	py	ming_sim/db.py	21405	strip_call	strip	GameDB/record_character_participation	            list(dict.fromkeys(str(p).strip() for p in (excluded_names or []) if str(p).strip())),
-KEEP_empty_check	仅判空	py	ming_sim/db.py	21405	strip_call	strip	GameDB/record_character_participation	            list(dict.fromkeys(str(p).strip() for p in (excluded_names or []) if str(p).strip())),
 KEEP_empty_check	仅判空	py	ming_sim/db.py	21408	strip_call	strip	GameDB/record_character_participation	        for name in dict.fromkeys(str(p).strip() for p in participants if str(p).strip()):
-KEEP_empty_check	仅判空	py	ming_sim/db.py	21408	strip_call	strip	GameDB/record_character_participation	        for name in dict.fromkeys(str(p).strip() for p in participants if str(p).strip()):
-KEEP_empty_check	仅判空	py	ming_sim/db.py	21430	strip_call	strip	GameDB/record_public_knowledge_event	            [*inherited, *(str(name).strip() for name in (excluded_names or []) if str(name).strip())]
 KEEP_empty_check	仅判空	py	ming_sim/db.py	21430	strip_call	strip	GameDB/record_public_knowledge_event	            [*inherited, *(str(name).strip() for name in (excluded_names or []) if str(name).strip())]
 KEEP_identity_or_formal	人名/职官/枚举/载荷键机械规范化	py	ming_sim/db.py	21494	strip_call	strip	GameDB/create_secret_order	"            _raw = (minister_name or """").strip()"
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/db.py	21866	strip_call	strip	GameDB/close_secret_order/close_in_current_transaction	                if has_progress_chain and close_text.strip():
@@ -1360,7 +1300,7 @@ KEEP_identity_or_formal	人名/职官/枚举/载荷键机械规范化	py	ming_si
 KEEP_empty_check	仅判空	py	ming_sim/declaration_dispatch.py	982	strip_call	strip	_commission_grant_payload	"    target_kind = str(grant.get(""target_kind"") or """").strip()"
 KEEP_identity_or_formal	人名/职官/枚举/载荷键机械规范化	py	ming_sim/declaration_dispatch.py	992	strip_call	strip	_commission_grant_payload	"    cadence = str(grant.get(""cadence"") or """").strip() or ""一次性"""
 KEEP_identity_or_formal	人名/职官/枚举/载荷键机械规范化	py	ming_sim/declaration_dispatch.py	997	strip_call	strip	_commission_grant_payload	"    surface = str(grant.get(""execution_surface"") or ""in_transit"").strip() or ""in_transit"""
-KEEP_empty_check	仅判空	py	ming_sim/declaration_dispatch.py	1016	strip_call	strip	_commission_grant_payload	"    purpose = str(grant.get(""purpose"") or """").strip()"
+KEEP_identity_or_formal	purpose 入 ECONOMY_PURPOSES 枚举链，非自由叙事运输	py	ming_sim/declaration_dispatch.py	1016	strip_call	strip	_commission_grant_payload	"    purpose = str(grant.get(""purpose"") or """").strip()"
 KEEP_identity_or_formal	人名/职官/枚举/载荷键机械规范化	py	ming_sim/declaration_dispatch.py	1031	strip_call	strip	_attach_commission_staging_fields	    lead = str(
 KEEP_identity_or_formal	人名/职官/枚举/载荷键机械规范化	py	ming_sim/declaration_dispatch.py	1119	strip_call	strip	_dispatch_commissions	"            actor = str(minister_name or """").strip()"
 KEEP_identity_or_formal	人名/职官/枚举/载荷键机械规范化	py	ming_sim/declaration_dispatch.py	1174	strip_call	strip	_dispatch_commissions	"            actor = str(minister_name or """").strip() or _commission_fallback_actor(db)"
@@ -1437,7 +1377,6 @@ KEEP_empty_check	仅判空	py	ming_sim/fiscal_fact_brief.py	433	strip_call	strip
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/fiscal_fact_brief.py	576	slice_trunc_expr	[:expr]	build_fiscal_fact_brief	"            ""affected_class"": FACT_CLASS_MAP[claim[:-1]],"
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/flows.py	514	slice_trunc_expr	[:expr]	compute_budget_lines	"        rate_key = base_key[:-5] + ""_rate""  # 去 _base 换 _rate"
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/flows.py	963	strip_call	strip	_auto_pay_arrears_by_priority	        {str(army_id).strip() for army_id in allowed_army_ids if str(army_id).strip()}
-KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/flows.py	963	strip_call	strip	_auto_pay_arrears_by_priority	        {str(army_id).strip() for army_id in allowed_army_ids if str(army_id).strip()}
 KEEP_empty_check	仅判空	py	ming_sim/flows.py	1178	strip_call	strip	_apply_economy_list	"        raw_purpose = str(move.get(""purpose"") or """").strip()"
 KEEP_empty_check	仅判空	py	ming_sim/flows.py	1179	strip_call	strip	_apply_economy_list	"        raw_target_kind = str(move.get(""target_kind"") or """").strip()"
 KEEP_empty_check	仅判空	py	ming_sim/flows.py	1204	strip_call	strip	_apply_economy_list	                    if str(army_id).strip()
@@ -1474,11 +1413,9 @@ KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账�
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/issues.py	1886	strip_call	strip	_event_chain_impossible_reason	        cond = str(raw_cond).strip()
 KEEP_empty_check	仅判空	py	ming_sim/issues.py	1907	strip_call	strip	_event_chain_impossible_reason	        op, value = text.group(1), text.group(2).strip()
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/issues.py	1908	strip_call	strip	_event_chain_impossible_reason	"        values = {part.strip() for part in value.split(""|"") if part.strip()}"
-KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/issues.py	1908	strip_call	strip	_event_chain_impossible_reason	"        values = {part.strip() for part in value.split(""|"") if part.strip()}"
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/issues.py	2254	strip_call	strip	_gate_passed	        cond = str(cond).strip()  # 非字符串条件值(JSON 漏引号写成 60/True)先 str 强转，不 .strip() 崩（PR#107 gemini）
 KEEP_empty_check	仅判空	py	ming_sim/issues.py	2257	strip_call	strip	_gate_passed	"        if sm and (sm.group(1) == ""in="" or not re.match(r""^-?\d+$"", sm.group(2).strip())):"
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/issues.py	2258	strip_call	strip	_gate_passed	            sop, sval = sm.group(1), sm.group(2).strip()
-KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/issues.py	2274	strip_call	strip	_gate_passed	"            if sop == ""in="" and cur not in {part.strip() for part in sval.split(""|"") if part.strip()}:"
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/issues.py	2274	strip_call	strip	_gate_passed	"            if sop == ""in="" and cur not in {part.strip() for part in sval.split(""|"") if part.strip()}:"
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/issues.py	2423	strip_call	strip	gather_impeachment_surge_candidates	"                ""execution_outcome"": str(row[""execution_outcome""] or """").strip(),"
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/issues.py	2793	slice_trunc	[:2]	event_to_issue	"        faction_hint="","".join(ev.interests[:2]),"
@@ -1486,7 +1423,6 @@ KEEP_empty_check	仅判空	py	ming_sim/issues.py	2912	strip_call	strip	normalize
 KEEP_empty_check	仅判空	py	ming_sim/issues.py	2926	strip_call	strip	_admit_transit_departure	"    transit_to = str(item.get(""transit_to"") or """").strip()"
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/issues.py	3001	strip_call	strip	_pending_person_changes_block_event_gate/overlay	"        value_text = str(value or """").strip()"
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/issues.py	3010	strip_call	strip	_pending_person_changes_block_event_gate/overlay_power_delta	"        pid = str(power_id or """").strip()"
-KEEP_empty_check	仅判空	py	ming_sim/issues.py	3017	strip_call	strip	_pending_person_changes_block_event_gate/overlay_power_delta	            field = POWER_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())
 KEEP_empty_check	仅判空	py	ming_sim/issues.py	3017	strip_call	strip	_pending_person_changes_block_event_gate/overlay_power_delta	            field = POWER_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/issues.py	3042	slice_trunc_expr	[:expr]	_pending_person_changes_block_event_gate/pending_power_gate_value	            parts = parts[:-1]
 KEEP_identity_or_formal	人名/职官/枚举/载荷键机械规范化	py	ming_sim/issues.py	3065	strip_call	strip	_pending_person_changes_block_event_gate/current_title_kind	"        current_office = row_value(row, ""office"").strip()"
@@ -1498,31 +1434,23 @@ KEEP_empty_check	仅判空	py	ming_sim/issues.py	3141	strip_call	strip	_pending_
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/issues.py	3146	strip_call	strip	_pending_person_changes_block_event_gate	"            if row_value(row, ""power_id"", ""ming"").strip() == new_power:"
 KEEP_empty_check	仅判空	py	ming_sim/issues.py	3168	strip_call	strip	_pending_person_changes_block_event_gate	"            new_office = str(item.get(""office"") or item.get(""new_office"") or """").strip()"
 KEEP_identity_or_formal	人名/职官/枚举/载荷键机械规范化	py	ming_sim/issues.py	3218	strip_call	strip	_pending_person_changes_block_event_gate	"                    current_parts = [p.strip() for p in row_value(other_row, ""office"").split("","") if p.strip()]"
-KEEP_identity_or_formal	人名/职官/枚举/载荷键机械规范化	py	ming_sim/issues.py	3218	strip_call	strip	_pending_person_changes_block_event_gate	"                    current_parts = [p.strip() for p in row_value(other_row, ""office"").split("","") if p.strip()]"
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/issues.py	3319	strip_call	strip	_normalize_cancellable	"    val = str(raw or """").strip().lower()"
 KEEP_empty_check	仅判空	py	ming_sim/issues.py	3396	strip_call	strip	_spawn_legacy_from_effect	"    dur_key = str(legacy.get(""duration"") or ""2年"").strip()"
-KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/issues.py	3421	strip_call	strip	_spawn_legacy_from_effect	                    field = aliases.get(str(raw_field).strip(), str(raw_field).strip())
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/issues.py	3421	strip_call	strip	_spawn_legacy_from_effect	                    field = aliases.get(str(raw_field).strip(), str(raw_field).strip())
 KEEP_empty_check	仅判空	py	ming_sim/issues.py	3552	strip_call	strip	_apply_issue_entities	"            power_id = str(item.get(""power_id"") or """").strip()"
 KEEP_empty_check	仅判空	py	ming_sim/issues.py	3553	strip_call	strip	_apply_issue_entities	"            new_name = str(item.get(""new_name"") or """").strip()"
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/issues.py	3788	strip_call	strip	_person_change_name	    return str(
 KEEP_empty_check	仅判空	py	ming_sim/issues.py	3877	strip_call	strip	_event_outcome_label	"    return str(raw or """").strip()"
 KEEP_empty_check	仅判空	py	ming_sim/issues.py	3884	strip_call	strip	_closed_outcome_labels	    return frozenset(str(label).strip() for label in raw if str(label).strip())
-KEEP_empty_check	仅判空	py	ming_sim/issues.py	3884	strip_call	strip	_closed_outcome_labels	    return frozenset(str(label).strip() for label in raw if str(label).strip())
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/issues.py	3914	re_sub		_normalize_event_outcome_label	"    compact = re.sub(r""\s+"", """", str(label or """"))"
 KEEP_identity_or_formal	人名/职官/枚举/载荷键机械规范化	py	ming_sim/issues.py	3918	re_sub		_normalize_event_outcome_label	"        if compact == re.sub(r""\s+"", """", canonical):"
 KEEP_empty_check	仅判空	py	ming_sim/issues.py	3991	strip_call	strip	_strategic_event_result_preflight_error/_region_noop_error	        field = REGION_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())
-KEEP_empty_check	仅判空	py	ming_sim/issues.py	3991	strip_call	strip	_strategic_event_result_preflight_error/_region_noop_error	        field = REGION_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())
 KEEP_empty_check	仅判空	py	ming_sim/issues.py	4032	strip_call	strip	_strategic_event_result_preflight_error/_army_noop_error	        field = ARMY_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())
-KEEP_empty_check	仅判空	py	ming_sim/issues.py	4032	strip_call	strip	_strategic_event_result_preflight_error/_army_noop_error	        field = ARMY_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())
-KEEP_empty_check	仅判空	py	ming_sim/issues.py	4081	strip_call	strip	_strategic_event_result_preflight_error/_jisi_outcome_profile_error	                field = REGION_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())
 KEEP_empty_check	仅判空	py	ming_sim/issues.py	4081	strip_call	strip	_strategic_event_result_preflight_error/_jisi_outcome_profile_error	                field = REGION_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/issues.py	4084	strip_call	strip	_strategic_event_result_preflight_error/_jisi_outcome_profile_error	                new_controller = str(value).strip()
 KEEP_empty_check	仅判空	py	ming_sim/issues.py	4106	strip_call	strip	_strategic_event_result_preflight_error	                field = REGION_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())
-KEEP_empty_check	仅判空	py	ming_sim/issues.py	4106	strip_call	strip	_strategic_event_result_preflight_error	                field = REGION_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/issues.py	4116	slice_trunc	[:160]	_strategic_event_result_preflight_error	"                    controller = str(value).strip()[:160] if value is not None else """""
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/issues.py	4116	strip_call	strip	_strategic_event_result_preflight_error	"                    controller = str(value).strip()[:160] if value is not None else """""
-KEEP_empty_check	仅判空	py	ming_sim/issues.py	4164	strip_call	strip	_strategic_event_result_preflight_error	                field = ARMY_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())
 KEEP_empty_check	仅判空	py	ming_sim/issues.py	4164	strip_call	strip	_strategic_event_result_preflight_error	                field = ARMY_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())
 KEEP_empty_check	仅判空	py	ming_sim/issues.py	4474	strip_call	strip	petition_outcome_is_admissible	"        and not str(row.get(""terminal_state"") or """").strip()"
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/issues.py	4651	slice_trunc	[:16]	_initiative_resolve_pairing_warnings	"                f""军事国策「{str(title)[:16]}」结案无 new_armies 配对（练军/募营疑未建军籍，#46）"""
@@ -1533,7 +1461,6 @@ KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账�
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/issues.py	5488	strip_call	strip	apply_issue_tracker_output	"        reason = str(cl.get(""reason"") or """").strip().lower()"
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/issues.py	5672	strip_call	strip	apply_issue_tracker_output	"        if str(row[""commitment_kind""] or """").strip():"
 KEEP_identity_or_formal	人名/职官/枚举/载荷键机械规范化	py	ming_sim/issues.py	5795	strip_call	strip	_displace_duplicate_offices	"    new_seat = str(region_id or """").strip()"
-KEEP_identity_or_formal	人名/职官/枚举/载荷键机械规范化	py	ming_sim/issues.py	5803	strip_call	strip	_displace_duplicate_offices	"        holder_parts = [p.strip() for p in str(row[""office""]).split("","") if p.strip()]"
 KEEP_identity_or_formal	人名/职官/枚举/载荷键机械规范化	py	ming_sim/issues.py	5803	strip_call	strip	_displace_duplicate_offices	"        holder_parts = [p.strip() for p in str(row[""office""]).split("","") if p.strip()]"
 KEEP_identity_or_formal	人名/职官/枚举/载荷键机械规范化	py	ming_sim/issues.py	5833	strip_call	strip	_displace_duplicate_offices	"        retained_seat = """" if fully_displaced else str("
 KEEP_empty_check	仅判空	py	ming_sim/issues.py	5850	strip_call	strip	_displace_duplicate_offices	"        archived_seat = str(db.character_office_region(row[""name""]) or """").strip()"
@@ -1569,8 +1496,6 @@ KEEP_empty_check	仅判空	py	ming_sim/issues.py	7665	strip_call	strip	_apply_re
 KEEP_empty_check	仅判空	py	ming_sim/issues.py	7671	strip_call	strip	_apply_recovery_driven_transfers	"        outcome = str(row[""execution_outcome""] or """").strip()"
 KEEP_empty_check	仅判空	py	ming_sim/issues.py	7674	strip_call	strip	_apply_recovery_driven_transfers	"        cadence = str(payload.get(""cadence"") or """").strip()"
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/issues.py	7901	replace_call	replace	record_secret_order_disclosure	        disclosure_prefix
-KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/issues.py	7901	replace_call	replace	record_secret_order_disclosure	        disclosure_prefix
-KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/issues.py	7901	replace_call	replace	record_secret_order_disclosure	        disclosure_prefix
 KEEP_empty_check	仅判空	py	ming_sim/issues.py	8155	strip_call	strip	_apply_score_extraction_body/_stamp_batch_new_declaration	"        identity = str(parsed.get(""identity"") or """").strip()"
 KEEP_empty_check	仅判空	py	ming_sim/issues.py	8271	strip_call	strip	_apply_score_extraction_body	"            outcome = str(item.get(""outcome"") or """").strip()"
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/issues.py	8428	strip_call	strip	_apply_score_extraction_body/_split_pre_issue_person_changes	"            if str(item.get(""动作"") or """").strip() == ""评定"":"
@@ -1586,7 +1511,6 @@ KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账�
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/issues.py	8562	strip_call	strip	_apply_score_extraction_body/_apply_person_changes_itemwise	"                    ""动作"": str(person_change.get(""动作"") or """").strip(),"
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/issues.py	8742	strip_call	strip	_apply_score_extraction_body	"        if isinstance(item, dict) and str(item.get(""reason"") or """").strip() == ""回流"":"
 KEEP_empty_check	仅判空	py	ming_sim/issues.py	8846	strip_call	strip	_apply_score_extraction_body	                mapped = POWER_FIELD_ALIASES.get(str(k).strip(), str(k).strip())
-KEEP_empty_check	仅判空	py	ming_sim/issues.py	8846	strip_call	strip	_apply_score_extraction_body	                mapped = POWER_FIELD_ALIASES.get(str(k).strip(), str(k).strip())
 KEEP_empty_check	仅判空	py	ming_sim/issues.py	8922	strip_call	strip	_apply_score_extraction_body	"            and str(item.get(""commitment_kind"") or """").strip()"
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/issues.py	9086	strip_call	strip	_apply_score_extraction_body	"                    ""name"": str(item.get(""name"") or """").strip(),"
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/issues.py	9087	strip_call	strip	_apply_score_extraction_body	"                    ""动作"": str(item.get(""动作"") or """").strip(),"
@@ -1596,7 +1520,6 @@ KEEP_empty_check	仅判空	py	ming_sim/issues.py	9484	strip_call	strip	_apply_sc
 KEEP_empty_check	仅判空	py	ming_sim/issues.py	9722	strip_call	strip	apply_issue_inertia_and_ongoing	"        commitment_kind = str(row[""commitment_kind""] if ""commitment_kind"" in row.keys() else """").strip()"
 KEEP_empty_check	仅判空	py	ming_sim/knowledge.py	76	strip_call	strip	_issue_audience_names	        stripped = name.strip()
 KEEP_empty_check	仅判空	py	ming_sim/knowledge.py	482	strip_call	strip	_world	"        str(rid) for rid in (projected.get(""region_ids"") or ()) if str(rid or """").strip()"
-KEEP_identity_or_formal	人名/职官/枚举/载荷键机械规范化	py	ming_sim/knowledge.py	822	strip_call	strip	build_character_knowledge	        target_roster = [str(target).strip() for target in target_roster if str(target).strip()]
 KEEP_identity_or_formal	人名/职官/枚举/载荷键机械规范化	py	ming_sim/knowledge.py	822	strip_call	strip	build_character_knowledge	        target_roster = [str(target).strip() for target in target_roster if str(target).strip()]
 KEEP_empty_check	仅判空	py	ming_sim/llm_config.py	98	strip_call	strip	_slot_number	    if value is None or (isinstance(value, str) and not value.strip()):
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/llm_config.py	170	strip_call	strip	_normalize_runtime_llm	"    channel = str(data.get(""channel"") or """").strip().lower()"
@@ -1651,11 +1574,8 @@ KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账�
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/materials.py	2112	strip_call	strip	_write_one_present_person	            if reason_text.strip():
 KEEP_empty_check	仅判空	py	ming_sim/models.py	62	strip_call	strip	_nonempty_text	    return isinstance(raw, str) and bool(raw.strip())
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/models.py	127	strip_call	strip	_entity_delta_has_work	            field = aliases.get(str(raw_field).strip(), str(raw_field).strip())
-KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/models.py	127	strip_call	strip	_entity_delta_has_work	            field = aliases.get(str(raw_field).strip(), str(raw_field).strip())
 KEEP_empty_check	仅判空	py	ming_sim/models.py	145	strip_call	strip	_building_effect_has_work	"            category = str(op.get(""category"") or """").strip()"
 KEEP_empty_check	仅判空	py	ming_sim/models.py	156	strip_call	strip	_building_effect_has_work	            field = BUILDING_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())
-KEEP_empty_check	仅判空	py	ming_sim/models.py	156	strip_call	strip	_building_effect_has_work	            field = BUILDING_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())
-KEEP_empty_check	仅判空	py	ming_sim/models.py	170	strip_call	strip	_new_armies_effect_has_work	        mapped = {ARMY_FIELD_ALIASES.get(str(k).strip(), str(k).strip()): v for k, v in item.items()}
 KEEP_empty_check	仅判空	py	ming_sim/models.py	170	strip_call	strip	_new_armies_effect_has_work	        mapped = {ARMY_FIELD_ALIASES.get(str(k).strip(), str(k).strip()): v for k, v in item.items()}
 KEEP_empty_check	仅判空	py	ming_sim/models.py	182	strip_call	strip	_person_effect_has_work	"        name = str(item.get(""name"") or item.get(""人物"") or """").strip()"
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/models.py	197	strip_call	strip	_person_effect_has_work	            if isinstance(style, str) and style.strip():
@@ -1686,7 +1606,6 @@ KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账�
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/person_archive_contract.py	103	strip_call	strip	normalize_title_kind	"    raw = str(value or """").strip()"
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/public_sayings.py	25	strip_call	strip	public_layer_prose	    if body.strip():
 KEEP_empty_check	仅判空	py	ming_sim/public_sayings.py	31	strip_call	strip	_character_names	    return list(dict.fromkeys(str(name).strip() for name in (names or ()) if str(name).strip()))
-KEEP_empty_check	仅判空	py	ming_sim/public_sayings.py	31	strip_call	strip	_character_names	    return list(dict.fromkeys(str(name).strip() for name in (names or ()) if str(name).strip()))
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/public_sayings.py	128	strip_call	strip	_json_name_list	    return [str(name) for name in values if str(name).strip()]
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/public_sayings.py	141	strip_call	strip	_json_target_map	            [str(name) for name in values if str(name).strip()]
 KEEP_identity_or_formal	人名/职官/枚举/载荷键机械规范化	py	ming_sim/public_sayings.py	178	strip_call	strip	list_public_sayings	        name = str(involved_character).strip()
@@ -1707,7 +1626,6 @@ KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账�
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/session.py	101	slice_trunc_name	[:keep]	prune_auto_saves	    keep_turn_nums = set(sorted(buckets.keys(), reverse=True)[:keep])
 KEEP_identity_or_formal	人名/职官/枚举/载荷键机械规范化	py	ming_sim/session.py	291	strip_call	strip	register_unlisted_person_record	"    name = str(name or """").strip()"
 KEEP_identity_or_formal	人名/职官/枚举/载荷键机械规范化	py	ming_sim/session.py	292	strip_call	strip	register_unlisted_person_record	"    office = str(office or """").strip()"
-KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/session.py	296	strip_call	strip	register_unlisted_person_record	    alias_list = [str(a).strip() for a in (aliases or ()) if str(a).strip()]
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/session.py	296	strip_call	strip	register_unlisted_person_record	    alias_list = [str(a).strip() for a in (aliases or ()) if str(a).strip()]
 KEEP_identity_or_formal	人名/职官/枚举/载荷键机械规范化	py	ming_sim/session.py	305	strip_call	strip	register_unlisted_person_record	"    seat = str(region_id or """").strip()"
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/session.py	343	strip_call	strip	register_unlisted_person_record	"            source=str(source_label or """").strip(),"
@@ -1753,8 +1671,6 @@ KEEP_empty_check	仅判空	py	ming_sim/supervision.py	119	strip_call	strip	is_re
 KEEP_empty_check	仅判空	py	ming_sim/supervision.py	121	strip_call	strip	is_reported_actual_fork	"    outcome = str(execution_outcome or """").strip()"
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/supervision.py	185	strip_call	strip	declared_report_action_origin	"    text = str(raw or """").strip()"
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/supervision.py	192	strip_call	strip	declared_report_action_origin	    parts = [part.strip() for part in text.split(ORIGIN_MARK_SEP) if part.strip()]
-KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/supervision.py	192	strip_call	strip	declared_report_action_origin	    parts = [part.strip() for part in text.split(ORIGIN_MARK_SEP) if part.strip()]
-KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/supervision.py	199	strip_call	strip	compose_report_origin	"    cleaned = [str(m).strip() for m in marks if str(m or """").strip()]"
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/supervision.py	199	strip_call	strip	compose_report_origin	"    cleaned = [str(m).strip() for m in marks if str(m or """").strip()]"
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/supervision.py	208	strip_call	strip	compose_report_origin	"    root = str(base or """").strip()"
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	ming_sim/supervision.py	216	strip_call	strip	parse_report_origin	"    raw = str(origin or """").strip()"
@@ -1778,7 +1694,7 @@ KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账�
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	web_app.py	1154	strip_call	strip	WebGame/build_llm_config	            new_adv_key = advanced_api_key.strip()
 KEEP_empty_check	仅判空	py	web_app.py	1385	strip_call	strip	WebGame/directive_payload	"                str(row[""authority""] or """").strip()"
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	web_app.py	2572	strip_call	strip	WebGame/_trail_highlight_judge_after_reply	        if mid <= 0 or not reply.strip():
-KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	web_app.py	2771	strip_call	strip	WebGame/chat_stream	        text = message.strip()
+FIX_DONE	chat_stream message.strip 曾运输；现 L2772 原文，L2773 strip 仅判空	py	web_app.py	2772	strip_call	strip	WebGame/chat_stream	"        text = str(message or """")"
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	web_app.py	3137	strip_call	strip	_retryable_audience_close_http	            text = str(cur).strip()
 KEEP_empty_check	仅判空	py	web_app.py	3514	strip_call	strip	_read_active_db_path	            return f.read().strip()
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	web_app.py	4266	strip_call	strip	_save_visible_for_campaign	"    campaign_id = (campaign_id or """").strip()"
@@ -1791,7 +1707,6 @@ KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账�
 KEEP_empty_check	仅判空	py	web_app.py	4996	strip_call	strip	api_menu_save_llm	"    advanced_model = (request.advanced_model or """").strip()"
 KEEP_empty_check	仅判空	py	web_app.py	4999	strip_call	strip	api_menu_save_llm	"    advanced_api_key = (request.advanced_api_key or """").strip()"
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	web_app.py	5010	strip_call	strip	api_menu_save_llm	                api_key = str(candidate).strip()
-KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	web_app.py	5113	strip_call	strip	api_memorials_read	"    clean = [str(k).strip() for k in keys if str(k or """").strip()]"
 KEEP_match_or_normalize	匹配/规范化局部；非LLM/玩家/条件原文账本运输	py	web_app.py	5113	strip_call	strip	api_memorials_read	"    clean = [str(k).strip() for k in keys if str(k or """").strip()]"
 KEEP_empty_check	仅判空	py	web_app.py	5238	strip_call	strip	api_history_turn	"        not str(report or """").strip()"
 KEEP_empty_check	仅判空	py	web_app.py	5239	strip_call	strip	api_history_turn	"        and not str(attendant_message or """").strip()"
@@ -2191,7 +2106,6 @@ KEEP_template_or_fingerprint	静态资产/历史指纹（#1356 strip 入库契�
 KEEP_template_or_fingerprint	静态资产/历史指纹（#1356 strip 入库契约）	py	ming_sim/assets.py	24	join_call	join	load_text_asset	    path = os.path.join(CONTENT_DIR, relative_path)
 KEEP_template_or_fingerprint	静态资产/历史指纹（#1356 strip 入库契约）	py	ming_sim/assets.py	27	strip_call	strip	load_text_asset	            text = file.read().strip()
 KEEP_template_or_fingerprint	静态资产/历史指纹（#1356 strip 入库契约）	py	ming_sim/assets.py	31	replace_call	replace	load_text_asset	"        text.replace(""{{TURN_UNIT}}"", TURN_UNIT)"
-KEEP_template_or_fingerprint	静态资产/历史指纹（#1356 strip 入库契约）	py	ming_sim/assets.py	31	replace_call	replace	load_text_asset	"        text.replace(""{{TURN_UNIT}}"", TURN_UNIT)"
 KEEP_template_or_fingerprint	静态资产/历史指纹（#1356 strip 入库契约）	py	ming_sim/assets.py	37	join_call	join	load_json_asset	    path = os.path.join(CONTENT_DIR, relative_path)
 KEEP_template_or_fingerprint	静态资产/历史指纹（#1356 strip 入库契约）	py	ming_sim/assets.py	48	re_search		strip_json_fence	"    match = re.search(r""```(?:json)?\s*(.*?)```"", text, re.S)"
 KEEP_template_or_fingerprint	静态资产/历史指纹（#1356 strip 入库契约）	py	ming_sim/assets.py	50	strip_call	strip	strip_json_fence	        return match.group(1).strip()
@@ -2218,12 +2132,12 @@ KEEP_ui_config_or_empty	UI配置/按钮文案/判空	tsx	web/src/components/menu
 KEEP_ui_config_or_empty	UI配置/按钮文案/判空	ts	web/src/reasoningSupport.ts	14	trim_call			  const base = baseUrl.trim();
 KEEP_ui_config_or_empty	UI配置/按钮文案/判空	ts	web/src/reasoningSupport.ts	16	trim_call			  const primaryModel = model.trim();
 KEEP_ui_empty_or_layout	UI判空或布局，非LLM原文篡改	ts	web/src/api.ts	62	trim_call			      event = line.slice(6).trim();
-KEEP_ui_empty_or_layout	UI判空或布局，非LLM原文篡改	tsx	web/src/components/cheatConsole.tsx	27	trim_call			    const text = draft.trim();
-KEEP_ui_empty_or_layout	UI判空或布局，非LLM原文篡改	tsx	web/src/components/closedIssues.tsx	31	trim_call			                {barText?.trim() ? <span>{barText}</span> : null}
+FIX_DONE	draft.trim 判空；原文 onCommit（本轮已修）	tsx	web/src/components/cheatConsole.tsx	28	trim_call			    if (!draft.trim()) return;
+KEEP_empty_check	条件判空；span 展示原值	tsx	web/src/components/closedIssues.tsx	31	trim_call			                {barText?.trim() ? <span>{barText}</span> : null}
 KEEP_ui_empty_or_layout	UI判空或布局，非LLM原文篡改	tsx	web/src/components/drawers.tsx	63	trim_call			"    const parts = (office || """").split("","").map((s) => s.trim());"
-KEEP_ui_empty_or_layout	UI判空或布局，非LLM原文篡改	tsx	web/src/components/edictModal.tsx	7	trim_call			"  const src = (source || """").trim();"
-KEEP_ui_empty_or_layout	UI判空或布局，非LLM原文篡改	tsx	web/src/components/edictModal.tsx	8	trim_call			"  const who = (actor || """").trim();"
-KEEP_ui_empty_or_layout	UI判空或布局，非LLM原文篡改	tsx	web/src/components/edictModal.tsx	15	trim_call			"  return (source || """").trim() === ""大臣拟旨"";"
+KEEP_identity_or_formal	source 结构化枚举标签	tsx	web/src/components/edictModal.tsx	7	trim_call			"  const src = (source || """").trim();"
+KEEP_identity_or_formal	actor 人名身份标签	tsx	web/src/components/edictModal.tsx	8	trim_call			"  const who = (actor || """").trim();"
+KEEP_identity_or_formal	source==大臣拟旨 枚举匹配	tsx	web/src/components/edictModal.tsx	15	trim_call			"  return (source || """").trim() === ""大臣拟旨"";"
 KEEP_ui_empty_or_layout	UI判空或布局，非LLM原文篡改	tsx	web/src/components/gameMenu.tsx	382	trim_call			"    const v = (value || """").trim().toLowerCase();"
 KEEP_ui_empty_or_layout	UI判空或布局，非LLM原文篡改	tsx	web/src/components/gameMenu.tsx	401	trim_call			  const normalizedAdvancedBaseUrl = advancedBaseUrl.trim();
 KEEP_ui_empty_or_layout	UI判空或布局，非LLM原文篡改	tsx	web/src/components/gameMenu.tsx	402	trim_call			  const normalizedAdvancedModel = advancedModel.trim();
@@ -2232,22 +2146,72 @@ KEEP_ui_empty_or_layout	UI判空或布局，非LLM原文篡改	tsx	web/src/compo
 KEEP_ui_empty_or_layout	UI判空或布局，非LLM原文篡改	tsx	web/src/components/menuPage.tsx	253	trim_call			  const normalizedAdvancedBaseUrl = advancedBaseUrl.trim();
 KEEP_ui_empty_or_layout	UI判空或布局，非LLM原文篡改	tsx	web/src/components/menuPage.tsx	254	trim_call			  const normalizedAdvancedModel = advancedModel.trim();
 KEEP_ui_empty_or_layout	UI判空或布局，非LLM原文篡改	tsx	web/src/components/menuPage.tsx	300	trim_call			          advanced_api_key: advancedApiKey.trim(),
-KEEP_ui_empty_or_layout	UI判空或布局，非LLM原文篡改	tsx	web/src/components/situation.tsx	23	trim_call			  if (text?.trim()) return text;
-KEEP_ui_empty_or_layout	UI判空或布局，非LLM原文篡改	tsx	web/src/components/situation.tsx	29	trim_call			  return meaning?.trim() ? `${kind}（${meaning}）` : kind;
+KEEP_empty_check	条件判空；return text 原值	tsx	web/src/components/situation.tsx	23	trim_call			  if (text?.trim()) return text;
+KEEP_empty_check	条件判空；模板嵌入 meaning 原值	tsx	web/src/components/situation.tsx	29	trim_call			  return meaning?.trim() ? `${kind}（${meaning}）` : kind;
 KEEP_ui_empty_or_layout	UI判空或布局，非LLM原文篡改	ts	web/src/format.ts	45	trim_call			"  if (typeof value === ""string"" && /^-?\d+$/.test(value.trim())) return Number(value);"
-KEEP_ui_empty_or_layout	UI判空或布局，非LLM原文篡改	ts	web/src/format.ts	125	trim_call			"  const cleaned = text.replace(prefix, """").trim();"
-KEEP_ui_empty_or_layout	UI判空或布局，非LLM原文篡改	ts	web/src/format.ts	125	replace_call			"  const cleaned = text.replace(prefix, """").trim();"
+KEEP_dead_or_unused	splitReportItems 无生产调用方	ts	web/src/format.ts	125	trim_call			"  const cleaned = text.replace(prefix, """").trim();"
+KEEP_dead_or_unused	splitReportItems 无生产调用方	ts	web/src/format.ts	125	replace_call			"  const cleaned = text.replace(prefix, """").trim();"
 KEEP_ui_empty_or_layout	UI判空或布局，非LLM原文篡改	ts	web/src/format.ts	127	replace_call			"  const itemsPart = totalMatch ? cleaned.slice(0, totalMatch.index).replace(/。$/, """") : cleaned.replace(/。$/, """");"
 KEEP_ui_empty_or_layout	UI判空或布局，非LLM原文篡改	ts	web/src/format.ts	129	trim_call			"    items: itemsPart.split(""；"").map((item) => item.replace(/^。+|。+$/g, """").trim()).filter(Boolean),"
 KEEP_ui_empty_or_layout	UI判空或布局，非LLM原文篡改	ts	web/src/format.ts	129	replace_call			"    items: itemsPart.split(""；"").map((item) => item.replace(/^。+|。+$/g, """").trim()).filter(Boolean),"
 KEEP_ui_empty_or_layout	UI判空或布局，非LLM原文篡改	ts	web/src/reasoningSupport.ts	15	trim_call			  const advancedBase = advancedBaseUrl.trim();
 KEEP_ui_empty_or_layout	UI判空或布局，非LLM原文篡改	ts	web/src/reasoningSupport.ts	17	trim_call			  const advanced = advancedModel.trim();
 KEEP_ui_empty_or_layout	UI判空或布局，非LLM原文篡改	ts	web/src/settleStream.ts	22	trim_call			"      if (line.startsWith(""event: "")) evName = line.slice(7).trim();"
-KEEP_ui_empty_or_layout	UI判空或布局，非LLM原文篡改	ts	web/src/settleStream.ts	58	trim_call			        ? raw.trim()
-KEEP_ui_empty_or_layout	UI判空或布局，非LLM原文篡改	ts	web/src/settleStream.ts	60	trim_call			"          ? String(raw.message || raw.detail || """").trim()"
-KEEP_ui_empty_or_layout	UI判空或布局，非LLM原文篡改	ts	web/src/useChatActions.ts	149	trim_call			    const message = text.trim();
-KEEP_ui_empty_or_layout	UI判空或布局，非LLM原文篡改	ts	web/src/useEdictActions.ts	67	trim_call			    if (!editingDirectiveText.trim()) return;
-KEEP_ui_empty_or_layout	UI判空或布局，非LLM原文篡改	ts	web/src/useEdictActions.ts	68	trim_call			    const text = editingDirectiveText.trim();
-KEEP_ui_empty_or_layout	UI判空或布局，非LLM原文篡改	ts	web/src/useSettlementFlow.ts	300	trim_call			    const report = fromPayload.trim() ? fromPayload : fromState;
-KEEP_ui_empty_or_layout	UI判空或布局，非LLM原文篡改	ts	web/src/useSettlementFlow.ts	307	trim_call			"    if (report.trim() || String(attendantMessage || """").trim()) {"
-KEEP_ui_empty_or_layout	UI判空或布局，非LLM原文篡改	ts	web/src/useSettlementFlow.ts	329	trim_call			      const cheatPayload = cheatDirective.trim();
+KEEP_diag	HTTP 错误 detail 诊断串	ts	web/src/settleStream.ts	58	trim_call			        ? raw.trim()
+KEEP_diag	HTTP 错误 message 诊断串	ts	web/src/settleStream.ts	60	trim_call			"          ? String(raw.message || raw.detail || """").trim()"
+FIX_DONE	玩家问话 trim 曾赋运输；现判空可读 trim（L150），原文 message=text 运输	ts	web/src/useChatActions.ts	150	trim_call			    if (!text.trim()) {
+FIX_DONE	旨意正文 trim 曾赋 PATCH；现 L68 仅判空，L69 text=editingDirectiveText 原文运输	ts	web/src/useEdictActions.ts	68	trim_call			    if (!editingDirectiveText.trim()) return;
+KEEP_empty_check	邸报选源：trim 仅条件，运输 fromPayload/fromState 原值	ts	web/src/useSettlementFlow.ts	300	trim_call			    const report = fromPayload.trim() ? fromPayload : fromState;
+KEEP_empty_check	gazette 判空；setGazetteReading 用原 report/attendant	ts	web/src/useSettlementFlow.ts	307	trim_call			"    if (report.trim() || String(attendantMessage || """").trim()) {"
+FIX_DONE	cheatDirective.trim 曾入 body；现 L330 原文，L340 trim 仅判空清空	ts	web/src/useSettlementFlow.ts	330	trim_call			      const cheatPayload = cheatDirective;
+NEEDS_HUMAN	本轮可执行扫描新增候选；不以自动 KEEP 为判断证据	py	ming_sim/agents.py	417	slice_trunc_expr	[:expr]	run_agent_stream_text	"            tres = str(getattr(tool_res, ""result"", """") or """")[:200] if tool_res else """""
+NEEDS_HUMAN	本轮可执行扫描新增候选；不以自动 KEEP 为判断证据	py	ming_sim/agents.py	431	slice_trunc_expr	[:expr]	run_agent_stream_text	                    chunk = merged[:remaining]
+NEEDS_HUMAN	本轮可执行扫描新增候选；不以自动 KEEP 为判断证据	py	ming_sim/agents.py	470	slice_trunc_expr	[:expr]	run_agent_stream_text	            chunk = merged[:remaining]
+NEEDS_HUMAN	本轮可执行扫描新增候选；不以自动 KEEP 为判断证据	py	ming_sim/agents.py	556	slice_trunc_expr	[:expr]	parse_agent_json	"                        f""{stage} 输出不是合法 JSON：{error}\n原始输出：{raw[:800]}"","
+NEEDS_HUMAN	本轮可执行扫描新增候选；不以自动 KEEP 为判断证据	py	ming_sim/agents.py	561	slice_trunc_expr	[:expr]	parse_agent_json	"                    f""{stage} 输出不是合法 JSON\n原始输出：{raw[:800]}"","
+NEEDS_HUMAN	本轮可执行扫描新增候选；不以自动 KEEP 为判断证据	py	ming_sim/breach_plea.py	1183	slice_trunc_expr	[:expr]	_scan_remove_sponsor	"        who = ""、"".join(hit[:3])"
+NEEDS_HUMAN	本轮可执行扫描新增候选；不以自动 KEEP 为判断证据	py	ming_sim/cli/terminal.py	629	strip_call	lstrip	review_directives	"            if len(parts) == 2 and parts[1].lstrip(""#"").isdigit():"
+NEEDS_HUMAN	本轮可执行扫描新增候选；不以自动 KEEP 为判断证据	py	ming_sim/cli_backend.py	854	slice_trunc_expr	[:expr]	_iter_cli_runner_text	"                provider_message=f""agy auth race：{(stdout_text + stderr)[:200]}"","
+NEEDS_HUMAN	本轮可执行扫描新增候选；不以自动 KEEP 为判断证据	py	ming_sim/cli_backend.py	861	slice_trunc_expr	[:expr]	_iter_cli_runner_text	"            raise RuntimeError(f""{runner} 调用失败（退出码 {returncode}）：{stderr[:200]}"")"
+NEEDS_HUMAN	本轮可执行扫描新增候选；不以自动 KEEP 为判断证据	py	ming_sim/cli_backend.py	1550	slice_trunc_expr	[:expr]	_person_grounded_in_source	            prefix = form[:n]
+NEEDS_HUMAN	本轮可执行扫描新增候选；不以自动 KEEP 为判断证据	py	ming_sim/cli_backend.py	4336	slice_trunc_expr	[:expr]	_cli_stream_safe_prefix	        return text[:marker_at], text[marker_at:]
+NEEDS_HUMAN	本轮可执行扫描新增候选；不以自动 KEEP 为判断证据	py	ming_sim/context.py	173	slice_trunc_expr	[:expr]	parse_json_dict	"        raise LLMContractError(f""数据库中的数值变化 JSON 已损坏：{raw[:200]}"") from error"
+NEEDS_HUMAN	本轮可执行扫描新增候选；不以自动 KEEP 为判断证据	py	ming_sim/db.py	5702	slice_trunc_expr	[:expr]	seed_opening_crises	"                    faction_hint="","".join(ev.interests[:2]),"
+NEEDS_HUMAN	本轮可执行扫描新增候选；不以自动 KEEP 为判断证据	py	ming_sim/db.py	5829	slice_trunc_expr	[:expr]	set_character_status	"        reason_code_value = str(reason_code or """")[:40]"
+NEEDS_HUMAN	本轮可执行扫描新增候选；不以自动 KEEP 为判断证据	py	ming_sim/db.py	6123	slice_trunc_expr	[:expr]	record_person_log	"                str(derived_from or """")[:120],"
+NEEDS_HUMAN	本轮可执行扫描新增候选；不以自动 KEEP 为判断证据	py	ming_sim/db.py	7752	slice_trunc_expr	[:expr]	_danger_key	        return rows[:limit] if limit is not None else rows
+NEEDS_HUMAN	本轮可执行扫描新增候选；不以自动 KEEP 为判断证据	py	ming_sim/db.py	9923	slice_trunc_expr	[:expr]	_truncate_agno_runs_in_tx	        kept = merged[:keep]
+NEEDS_HUMAN	本轮可执行扫描新增候选；不以自动 KEEP 为判断证据	py	ming_sim/db.py	19718	slice_trunc_expr	[:expr]	_coerce_todo_payload_json	"                    f""next_audience_todos.payload_json 须为 JSON 对象：{text[:80]!r}"""
+NEEDS_HUMAN	本轮可执行扫描新增候选；不以自动 KEEP 为判断证据	py	ming_sim/db.py	19749	slice_trunc_expr	[:expr]	parse_engine_payload_json	"            tlog(f""[{surface}] 腐坏 JSON，拒绝静默等同空底：{text[:80]!r}"")"
+NEEDS_HUMAN	本轮可执行扫描新增候选；不以自动 KEEP 为判断证据	py	ming_sim/db.py	20220	slice_trunc_expr	[:expr]	insert_legacy	                str(legacy_key)[:60],
+NEEDS_HUMAN	本轮可执行扫描新增候选；不以自动 KEEP 为判断证据	py	ming_sim/db.py	20593	slice_trunc_expr	[:expr]	record_investigation_spoiled_fact	"                eff, str(origin_ref or """")[:120],"
+NEEDS_HUMAN	本轮可执行扫描新增候选；不以自动 KEEP 为判断证据	py	ming_sim/db.py	21656	slice_trunc_expr	[:expr]	create_secret_order	"        tlog(f""[secret_order] create id={order_id} minister={minister_name} title={title[:20]}"")"
+NEEDS_HUMAN	本轮可执行扫描新增候选；不以自动 KEEP 为判断证据	py	ming_sim/db.py	21779	slice_trunc_expr	[:expr]	update_secret_order_by_id	"        tlog(f""[secret_order] update id={order_id} title={title[:20]}"")"
+NEEDS_HUMAN	本轮可执行扫描新增候选；不以自动 KEEP 为判断证据	py	ming_sim/db.py	21976	slice_trunc_expr	[:expr]	submit_secret_order_for_review	"        tlog(f""[secret_order] submit_for_review id={order_id} due_now claim={note[:60]!r}"")"
+NEEDS_HUMAN	本轮可执行扫描新增候选；不以自动 KEEP 为判断证据	py	ming_sim/db.py	22043	slice_trunc_expr	[:expr]	update_secret_order_progress	"        tlog(f""[secret_order] progress id={order_id} ok={ok} note={progress_note[:40]!r}"")"
+NEEDS_HUMAN	本轮可执行扫描新增候选；不以自动 KEEP 为判断证据	py	ming_sim/db.py	22067	slice_trunc_expr	[:expr]	update_secret_order_sim_note	"        tlog(f""[secret_order] sim_note id={order_id} note={sim_note[:40]!r}"")"
+NEEDS_HUMAN	本轮可执行扫描新增候选；不以自动 KEEP 为判断证据	py	ming_sim/declaration_dispatch.py	2595	slice_trunc_expr	[:expr]	_dispatch_scene_facts	"        speaker_names = person_names[:1] if scroll_role in {""minister"", ""attendant""} else ("
+NEEDS_HUMAN	本轮可执行扫描新增候选；不以自动 KEEP 为判断证据	py	ming_sim/faction_brew.py	186	slice_trunc_expr	[:expr]	parse_faction_stance_output	"            f""{stage} 输出不是唯一、完整、合法的 JSON object：{error}\n原始输出：{raw[:800]}"""
+NEEDS_HUMAN	本轮可执行扫描新增候选；不以自动 KEEP 为判断证据	py	ming_sim/issues.py	2685	slice_trunc_expr	[:expr]	show_active_issues	"    situations = [i for i in issues if i[""kind""] == ""situation""][:12]"
+NEEDS_HUMAN	本轮可执行扫描新增候选；不以自动 KEEP 为判断证据	py	ming_sim/issues.py	2793	slice_trunc_expr	[:expr]	event_to_issue	"        faction_hint="","".join(ev.interests[:2]),"
+NEEDS_HUMAN	本轮可执行扫描新增候选；不以自动 KEEP 为判断证据	py	ming_sim/issues.py	4116	slice_trunc_expr	[:expr]	_jisi_outcome_profile_error	"                    controller = str(value).strip()[:160] if value is not None else """""
+NEEDS_HUMAN	本轮可执行扫描新增候选；不以自动 KEEP 为判断证据	py	ming_sim/issues.py	4651	slice_trunc_expr	[:expr]	_initiative_resolve_pairing_warnings	"                f""军事国策「{str(title)[:16]}」结案无 new_armies 配对（练军/募营疑未建军籍，#46）"""
+NEEDS_HUMAN	本轮可执行扫描新增候选；不以自动 KEEP 为判断证据	py	ming_sim/issues.py	4655	slice_trunc_expr	[:expr]	_initiative_resolve_pairing_warnings	"                f""军事国策「{str(title)[:16]}」结案无人物变更配对（调将疑未落主将调任，#46）"""
+NEEDS_HUMAN	本轮可执行扫描新增候选；不以自动 KEEP 为判断证据	py	ming_sim/issues.py	4663	slice_trunc_expr	[:expr]	_initiative_resolve_pairing_warnings	"                f""经制国策「{str(title)[:16]}」结案无月度 economy 配对"""
+NEEDS_HUMAN	本轮可执行扫描新增候选；不以自动 KEEP 为判断证据	py	ming_sim/issues.py	5274	slice_trunc_expr	[:expr]	_eff_dict	"                    print(f""[issue/enrich] 国策「{title[:16]}」补效果 resolve={bool(resolve_eff)} ongoing={bool(ongoing_eff)}"")"
+NEEDS_HUMAN	本轮可执行扫描新增候选；不以自动 KEEP 为判断证据	py	ming_sim/issues.py	9519	slice_trunc_expr	[:expr]	_norm_int_leaf	"            print(f""[secret_order] 推演副作用 id={real_id} note={sim_note[:60]!r}"")"
+NEEDS_HUMAN	本轮可执行扫描新增候选；不以自动 KEEP 为判断证据	py	ming_sim/llm_config.py	208	strip_call	rstrip	normalize_openai_base_url	"    base = base_url.rstrip(""/"")"
+NEEDS_HUMAN	本轮可执行扫描新增候选；不以自动 KEEP 为判断证据	py	ming_sim/llm_contract.py	13	slice_trunc_expr	[:expr]	abort_llm_contract	"        detail += f""\n原始输出：{raw[:800]}"""
+NEEDS_HUMAN	本轮可执行扫描新增候选；不以自动 KEEP 为判断证据	py	ming_sim/materials.py	114	slice_trunc_expr	[:expr]	_safe_segment	"    digest = hashlib.sha256(text.encode(""utf-8"", errors=""surrogatepass"")).hexdigest()[:12]"
+NEEDS_HUMAN	本轮可执行扫描新增候选；不以自动 KEEP 为判断证据	py	ming_sim/materials.py	676	slice_trunc_expr	[:expr]	_opening_affair_lines	        handled.append(visible[dir_key][:2])
+NEEDS_HUMAN	本轮可执行扫描新增候选；不以自动 KEEP 为判断证据	py	ming_sim/month_chain.py	1956	slice_trunc_expr	[:expr]	_split_at_question	    return text[:first_start], questions
+NEEDS_HUMAN	本轮可执行扫描新增候选；不以自动 KEEP 为判断证据	py	ming_sim/office_rank.py	47	slice_trunc_expr	[:expr]	concurrent_office_titles	            clean = part[:pollution_at].strip()
+NEEDS_HUMAN	本轮可执行扫描新增候选；不以自动 KEEP 为判断证据	py	ming_sim/pay_order.py	377	slice_trunc_expr	[:expr]	materialize_pay_order_decree	"                 ""永久旨覆写清旧期限（#653 F1.4 stale until）""[:240]),"
+NEEDS_HUMAN	本轮可执行扫描新增候选；不以自动 KEEP 为判断证据	py	ming_sim/pay_order.py	461	slice_trunc_expr	[:expr]	restore_pay_order_override	"                 ""撤销 override 旨，清除期限伴随键""[:240]),"
+NEEDS_HUMAN	本轮可执行扫描新增候选；不以自动 KEEP 为判断证据	py	ming_sim/relation_brew.py	182	slice_trunc_expr	[:expr]	parse_brew_output	"            f""{stage} 输出不是唯一、完整、合法的 JSON object：{error}\n原始输出：{raw[:800]}"""
+NEEDS_HUMAN	本轮可执行扫描新增候选；不以自动 KEEP 为判断证据	py	ming_sim/session.py	101	slice_trunc_expr	[:expr]	prune_auto_saves	    keep_turn_nums = set(sorted(buckets.keys(), reverse=True)[:keep])
+NEEDS_HUMAN	本轮可执行扫描新增候选；不以自动 KEEP 为判断证据	py	ming_sim/session.py	2100	slice_trunc_expr	[:expr]	auto_save	                campaign_id = uuid.uuid4().hex[:12]
+NEEDS_HUMAN	本轮可执行扫描新增候选；不以自动 KEEP 为判断证据	py	ming_sim/settlement_payload.py	101	slice_trunc_expr	[:expr]	parse_decision_blocks	"            ""options"": options[:3],"
+NEEDS_HUMAN	本轮可执行扫描新增候选；不以自动 KEEP 为判断证据	py	ming_sim/staged_commitment.py	101	slice_trunc_expr	[:expr]	stages_to_json	"                f""stages_json 须为 JSON 数组字符串，解析失败：{text[:80]!r}"""
+KEEP_empty_check	cheatPayload.trim 仅判空清空挂载	ts	web/src/useSettlementFlow.ts	340	trim_call			      if (cheatPayload.trim()) {
+KEEP_empty_check	chat_stream：strip 仅判空；运输 text 已原样	py	web_app.py	2773	strip_call		WebGame/chat_stream	        if not text.strip():
