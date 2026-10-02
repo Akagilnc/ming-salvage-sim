@@ -311,7 +311,7 @@ def test_scene_and_rescript_entries_pass_default_headers_at_transport(monkeypatc
     monkeypatch.setattr(llm_model, "OpenAIChat", spy)
 
     create_scene_agent(
-        cfg, PreparedMaterials(root=tmp_path, opening="", index_lines=()),
+        cfg, PreparedMaterials(root=tmp_path, opening=""),
         content=content,
     )
     assert captured, "召对入口须构造 OpenAIChat"

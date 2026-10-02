@@ -20712,7 +20712,7 @@ class GameDB:
         return self.list_economy_moves_for_origin(origin) + self.list_fiscal_effects_for_origin(origin)
 
     def list_world_effect_history(
-        self, origin: str, *, exclude_dossier_ids: set[int] | None = None,
+        self, origin: str,
     ) -> Dict[str, object]:
         """Read landed effects for a world affair file; never include staged verdicts.
 
@@ -20735,6 +20735,8 @@ class GameDB:
             history[table] = [dict(row) for row in self.conn.execute(
                 f"SELECT * FROM {table} WHERE origin_ref=? ORDER BY id", (origin,),
             ).fetchall()]
+        for row in history["person_logs"]:
+            row["normalized"] = json.loads(row["normalized"] or "{}")
         if kind == "dossier":
             for table in (
                 "office_change_records", "authority_records",
@@ -20744,7 +20746,6 @@ class GameDB:
                     f"SELECT * FROM {table} WHERE dossier_id=? ORDER BY id", (target,),
                 ).fetchall()]
         elif kind == "affair":
-            excluded_origins = {f"dossier:{did}" for did in (exclude_dossier_ids or ())}
             for table, order in (
                 ("issues", "id"), ("characters", "name"), ("relation_edge_events", "id"),
             ):
@@ -20753,7 +20754,19 @@ class GameDB:
                 columns = "name" if table == "characters" else "*"
                 history[table] = [dict(row) for row in self.conn.execute(
                     f"SELECT {columns} FROM {table} WHERE affair_id=? ORDER BY {order}", (target,),
-                ).fetchall() if dict(row).get("origin_ref") not in excluded_origins]
+                ).fetchall()]
+            for row in history["issues"]:
+                for field, empty in (
+                    ("tags", "[]"), ("participants", "[]"),
+                    ("participant_roster", "[]"), ("target_roster", "[]"),
+                    ("ongoing_effects", "{}"), ("cancel_cost", "{}"),
+                    ("effect_on_resolve", "{}"), ("effect_on_fail", "{}"),
+                    ("stages_json", "[]"),
+                ):
+                    row[field] = json.loads(row[field] or empty)
+                # The numeric stop gate is an execution detail, not a second
+                # explanation of the issue's human resolve/fail conditions.
+                row.pop("stop_condition", None)
         return history
 
     def record_dossier_actual_progress(

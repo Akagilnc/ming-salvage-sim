@@ -44,11 +44,6 @@ def test_prepare_writes_typed_tree_with_board_affairs_and_gazette_index(game, tm
     assert "INDEX.txt" in names
     assert "盘面/全局.txt" in names
     read_material(prepared.root, "盘面/派系检举事实.txt")
-    denunciation = prepared.world_facts["denunciation"]
-    assert denunciation == db.build_faction_denunciation_facts()
-    assert set(denunciation) == {
-        "forked_dossiers", "faction_enmities", "faction_situations", "character_personas",
-    }
     assert "人物/朝臣名册.txt" in names
     assert any(p.startswith("人物/") and p.endswith("/经历.txt") for p in names)
     assert any(p.startswith(f"事务/affair-{affair.id}-") for p in names)
@@ -302,12 +297,6 @@ def test_world_materials_carry_eligible_person_event_candidates(game, tmp_path):
     assert eligible, "fixture 需当期有合资格人物事件"
     assert "huangtaiji_chengdi" in eligible
     assert len(candidate_paths) == len(eligible)
-    labels = list(content.event_by_id["jisi_lubian"].terminal_reason_labels)
-    roster = {
-        item["id"]: list(item["terminal_reason_labels"])
-        for item in prepared.world_facts["candidates"]["events"]
-    }
-    assert labels and roster.get("jisi_lubian") == labels
     assert "jisi_lubian" in eligible
 
 

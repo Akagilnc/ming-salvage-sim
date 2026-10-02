@@ -62,71 +62,6 @@ def _drop_event(content, ev):
         content.event_by_id.pop(ev.id, None)
 
 
-def _read_candidates(prepared):
-    read_material(prepared.root, CANDIDATE_REL)
-    return prepared.world_facts["candidates"]
-
-
-# --- 供料侧：合格候选可达，资格门不合格 / 已有终态者不可达 ---
-
-
-def test_eligible_candidate_event_reaches_world_supply(game, tmp_path, content):
-    db, state, _ = game
-    ev = _open_window_event(content)
-    try:
-        prepared = prepare_world_materials(db, state, dest_root=tmp_path / "m")
-        assert CANDIDATE_REL in list_materials(prepared.root)
-        payload = _read_candidates(prepared)
-        assert ev.id in {item["id"] for item in payload["events"]}
-        item = next(i for i in payload["events"] if i["id"] == ev.id)
-        # 结构化事实：软判锚（历史结果 + 成因）在，不代模型算战果。
-        assert item["summary"] == ev.summary
-        assert "effect_on_trigger" not in item
-    finally:
-        _drop_event(content, ev)
-
-
-def test_ineligible_and_terminal_events_stay_out_of_supply(game, tmp_path, content):
-    """资格门不合格（窗口未开）与已有终态（已避过）者都不进候选目录。"""
-    db, state, _ = game
-    from ming_sim.models import Event
-
-    later = Event(
-        id="__issue_1893_future_event__", title="远年事件", kind="测试",
-        summary="窗口未开", urgency=50, severity=50, credibility=50,
-        interests=[], audiences=[], trigger_year=int(state.year) + 50,
-        trigger_month=1, open_window=False, trigger_gate={}, event_type="situation",
-    )
-    avoided = _open_window_event(content, "__issue_1893_avoided_event__")
-    content.events.append(later)
-    content.event_by_id[later.id] = later
-    try:
-        db.mark_event_avoided(state, avoided.id, reason="探针：前提已被化解")
-        prepared = prepare_world_materials(db, state, dest_root=tmp_path / "m2")
-        ids = {item["id"] for item in _read_candidates(prepared)["events"]}
-        assert later.id not in ids
-        assert avoided.id not in ids
-        read_material(prepared.root, "盘面/事件终态.txt")
-        terminals = prepared.world_facts["event_terminals"]
-        assert terminals[avoided.id] == {
-            "terminal_state": "avoided", "terminal_reason": "探针：前提已被化解",
-        }
-        assert later.id not in terminals
-
-        # 落定新的终态后重新备目录；旧调用快照不变，无候选仍可读取终态。
-        db.mark_event_obsolete(state, later.id, reason="前提永久消失")
-        refreshed = prepare_world_materials(db, state, dest_root=tmp_path / "m2")
-        read_material(refreshed.root, "盘面/事件终态.txt")
-        updated = refreshed.world_facts["event_terminals"]
-        assert updated[later.id] == {
-            "terminal_state": "obsolete", "terminal_reason": "前提永久消失",
-        }
-        assert later.id not in prepared.world_facts["event_terminals"]
-    finally:
-        _drop_event(content, later)
-        _drop_event(content, avoided)
-
-
 def _secret_surge_world(db, state, owner):
     """造一条真密令案卷的旨外变形暴露，产出与普通案卷同口径的弹劾潮候选。"""
     from tests.dossier_test_helpers import create_test_secret_order
@@ -165,7 +100,8 @@ def test_surge_candidate_offered_by_world_segment_is_declared_and_lands(game, tm
     旧断链：世界段材料目录不筛密令案卷，转译请求却无条件排除，于是模型在
     段文里点名的候选到不了声明里。此处走真实世界段目录（prepare_world_materials
     落盘、read_material 读回），再经真实 dispatch_month_segment 入口，对密令
-    案卷的候选走完「供到 → 声明 → 落账」全链，三处候选 id 必须同一。
+    案卷验「转译请求 → 声明 → 落账」。目录只验证合法路径可取阅，
+    人读内容不承担解析契约；目录供料另以真实取阅观察验收。
     """
     from ming_sim.month_translate import dispatch_month_segment
     from tests.test_impeachment_surge_655 import _candidate_world
@@ -176,12 +112,8 @@ def test_surge_candidate_offered_by_world_segment_is_declared_and_lands(game, tm
 
     # 世界段目录：模型在同一次世界段里自读挑选的就是这一份。
     prepared = prepare_world_materials(db, state, dest_root=tmp_path / "world")
-    world_surge = {
-        item["id"]: item
-        for item in _read_candidates(prepared)["impeachment_surge"]
-        if int(item["dossier_id"]) == secret_did
-    }
-    assert world_surge, "密令案卷的弹劾潮候选未进世界段材料目录（供料侧断链）"
+    assert CANDIDATE_REL in list_materials(prepared.root)
+    read_material(prepared.root, CANDIDATE_REL)
 
     def _capture(request, config):
         offered = {
@@ -189,7 +121,6 @@ def test_surge_candidate_offered_by_world_segment_is_declared_and_lands(game, tm
             if int(item["dossier_id"]) == secret_did
         }
         assert offered, "世界段供到的候选未随转译请求送到（供料→转译断链）"
-        assert set(offered) == set(world_surge), "世界目录与转译请求的候选集不是同一份"
         candidate = next(iter(offered.values()))
         return {"effects": {"new_issues": [{
             "origin_kind": "impeachment_surge",

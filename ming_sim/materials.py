@@ -45,8 +45,6 @@ _CANDIDATE_REL = f"{_BOARD_DIR}/候选事件与弹劾潮.txt"
 class PreparedMaterials:
     root: Path
     opening: str
-    index_lines: tuple[str, ...]
-    world_facts: Mapping[str, Any] | None = None
 
 
 def identity_material_rel(name: object) -> str:
@@ -257,13 +255,13 @@ def _publish_material_tree(
     dest_root: Optional[Path],
     default_root: Path,
     write_tree,
-) -> tuple[Path, list[str]]:
+) -> Path:
     dest = Path(dest_root) / uuid.uuid4().hex if dest_root is not None else Path(default_root)
     dest.parent.mkdir(parents=True, exist_ok=True)
     tmp = dest.parent / f"{dest.name}.{uuid.uuid4().hex}.tmp"
     tmp.mkdir(parents=True)
     try:
-        index = write_tree(tmp)
+        write_tree(tmp)
         if dest.exists():
             shutil.rmtree(dest)
         tmp.rename(dest)
@@ -286,7 +284,7 @@ def _publish_material_tree(
         if cleanup_err is not None:
             raise original from cleanup_err
         raise original
-    return dest, index
+    return dest
 
 
 def character_materials_root(db: Any, state: Any, character: Any) -> Path:
@@ -1127,7 +1125,7 @@ def prepare_character_materials(
     name = str(getattr(character, "name", "") or "")
     knowledge, issue_materials = _character_material_projection(db, state, character)
 
-    dest, index = _publish_material_tree(
+    dest = _publish_material_tree(
         dest_root,
         character_materials_root(db, state, character),
         lambda tmp: _write_tree(tmp, db, state, character, knowledge, issue_materials),
@@ -1150,7 +1148,7 @@ def prepare_character_materials(
         current_character, state, _present_names(db, character), affairs,
         _spoken_this_scene(db, character),
     )
-    return PreparedMaterials(root=dest, opening=opening, index_lines=tuple(index))
+    return PreparedMaterials(root=dest, opening=opening)
 
 
 def _character_gazette_rows(public_events: Sequence[dict]) -> list[dict[str, object]]:
@@ -1551,7 +1549,6 @@ def _material_facts_text(value: Any, indent: str = "") -> str:
     """Human material field lists, not a round-trippable object export.
 
     Stored prose is copied intact; indentation describes only the field hierarchy.
-    Internal consumers use the prepare snapshot, never parse this presentation.
     """
     if isinstance(value, Mapping):
         return "\n".join(
@@ -1639,6 +1636,82 @@ def _write_fiscal_levy_petition_files(tmp: Path, db: Any, state: Any) -> list[st
     return index
 
 
+def _person_history_fields(value: Mapping[str, Any]) -> dict[str, Any]:
+    """Project person change directions and recorded endpoints, never generated prose."""
+    from ming_sim.qualitative import (
+        CHARACTER_QUALITATIVE_BANDS, identity_band, intrigue_band,
+        qualitative_character_axis,
+    )
+
+    result = dict(value)
+    axes = (*CHARACTER_QUALITATIVE_BANDS, "identity", "intrigue")
+    for axis in axes:
+        # A requested delta is not an absolute score. Preserve its direction;
+        # only recorded endpoints can be rendered through the score bands.
+        if axis in result:
+            delta = result[axis]
+            result[axis] = "上升" if delta > 0 else "下降" if delta < 0 else "不变"
+        for prefix in ("old_", "new_"):
+            key = prefix + axis
+            if key in result:
+                result[key] = (
+                    identity_band(result[key]) if axis == "identity"
+                    else intrigue_band(result[key]) if axis == "intrigue"
+                    else qualitative_character_axis(axis, result[key])
+                )
+    return result
+
+
+def _world_history_row_visible(
+    row: Mapping[str, Any], exclude_dossier_ids: set[int], secret_turn_ids: set[int],
+    exclude_origin_prefix: str,
+) -> bool:
+    """Use durable origin pins for every history rail, including attached records."""
+    from ming_sim.relations import SUMMON_EDGE_ORIGIN_PREFIX
+
+    if int(row.get("source_chat_turn_id") or 0) in secret_turn_ids:
+        return False
+    if any(row.get(field) in exclude_dossier_ids for field in (
+        "source_dossier_id", "audit_dossier_id", "escort_source_dossier_id",
+    )):
+        return False
+    return not any(
+        dossier_id_in_origin(source) in exclude_dossier_ids
+        or (exclude_origin_prefix and str(source or "").startswith(exclude_origin_prefix))
+        or any(str(source or "").startswith(f"{prefix}|chat_turn:{cid}|")
+               for cid in secret_turn_ids
+               for prefix in (SUMMON_EDGE_ORIGIN_PREFIX, "转译声明"))
+        for source in (row.get("origin_ref"), row.get("origin"), row.get("source_id"))
+    )
+
+
+def _world_effect_materials(
+    db: Any, origin: str, exclude_dossier_ids: set[int], secret_turn_ids: set[int],
+    exclude_origin_prefix: str,
+) -> dict[str, Any]:
+    """Landed history crosses the same input/source boundary as the world board."""
+    history = db.list_world_effect_history(origin)
+    for table, rows in history.items():
+        allowed = []
+        for row in rows:
+            if not _world_history_row_visible(
+                row, exclude_dossier_ids, secret_turn_ids, exclude_origin_prefix,
+            ):
+                continue
+            if table == "person_logs":
+                row["normalized"] = _person_history_fields(row["normalized"])
+            elif table == "issues":
+                for field in ("ongoing_effects", "cancel_cost", "effect_on_resolve", "effect_on_fail"):
+                    effects = row[field]
+                    if "人物变更" in effects:
+                        effects["人物变更"] = [
+                            _person_history_fields(item) for item in effects["人物变更"]
+                        ]
+            allowed.append(row)
+        history[table] = allowed
+    return history
+
+
 def _write_world_tree(
     tmp: Path,
     db: Any,
@@ -1652,8 +1725,14 @@ def _write_world_tree(
     include_event: Any = None,
     secret_turn_ids: set[int] | None = None,
     exclude_dossier_ids: set[int] | None = None,
+    exclude_origin_prefix: str = "",
 ) -> list[str]:
     from ming_sim.knowledge import build_character_knowledge
+
+    def visible_history(rows):
+        return [row for row in rows if _world_history_row_visible(
+            row, exclude_dossier_ids or set(), secret_turn_ids or set(), exclude_origin_prefix,
+        )]
 
     index: list[str] = []
     candidates = world_facts["candidates"]
@@ -1726,8 +1805,9 @@ def _write_world_tree(
     }
     for affair in db.affairs.list_all():
         affair_materials[f"affair-{affair.id}"].append(_material_facts_text({
-            "直挂事务实况": db.list_world_effect_history(
-                db.affairs.origin_ref(affair.id), exclude_dossier_ids=exclude_dossier_ids,
+            "直挂事务实况": _world_effect_materials(
+                db, db.affairs.origin_ref(affair.id), exclude_dossier_ids or set(),
+                secret_turn_ids or set(), exclude_origin_prefix,
             ),
         }))
     # All linked dossiers remain available, regardless of dossier/affair status.
@@ -1748,24 +1828,27 @@ def _write_world_tree(
                     field: value for field, value in dossier.items()
                     if not field.endswith("_json") and field != "office_archive_keys"
                 },
-                "判决历史": db.list_decree_dossier_decisions(dossier_id),
-                "背书": db.list_dossier_endorsements(dossier_id),
-                "关联": db.list_dossier_links(dossier_id),
+                "判决历史": visible_history(db.list_decree_dossier_decisions(dossier_id)),
+                "背书": visible_history(db.list_dossier_endorsements(dossier_id)),
+                "关联": visible_history(db.list_dossier_links(dossier_id)),
             },
             "奏报": {
-                "月度进度": db.list_dossier_progress(dossier_id),
+                "月度进度": visible_history(db.list_dossier_progress(dossier_id)),
                 "检举": [
                     {field: row[field] for field in (
                         "id", "turn", "accuser_name", "accuser_faction",
                         "subject_name", "subject_faction", "target_dossier_id", "memorial_text",
                     )}
-                    for row in db.list_faction_denunciations(target_dossier_id=dossier_id)
+                    for row in visible_history(db.list_faction_denunciations(target_dossier_id=dossier_id))
                 ],
                 "密令陈词": secret_order["result"] if secret_order else "",
             },
             "实况": {
-                "已落效果": db.list_world_effect_history(f"dossier:{dossier_id}"),
-                "对账": db.list_dossier_reconciliations(dossier_id),
+                "已落效果": _world_effect_materials(
+                    db, f"dossier:{dossier_id}", exclude_dossier_ids or set(),
+                    secret_turn_ids or set(), exclude_origin_prefix,
+                ),
+                "对账": visible_history(db.list_dossier_reconciliations(dossier_id)),
             },
         }
         affair_materials[key].append(_material_facts_text({f"案卷 {dossier_id}": materials}))
@@ -2302,7 +2385,7 @@ def prepare_scene_materials(
             (name, _opening_affair_lines(db, name, matter_lines)),
         )
 
-    dest, index = _publish_material_tree(
+    dest = _publish_material_tree(
         dest_root,
         scene_materials_root(db, state),
         lambda tmp: _write_scene_tree(tmp, db, state, present_rows, person_payloads, night_id),
@@ -2311,7 +2394,7 @@ def prepare_scene_materials(
     opening = _scene_opening_text(
         state, present_rows, spoken, handling_by_person, pending_facts,
     )
-    return PreparedMaterials(root=dest, opening=opening, index_lines=tuple(index))
+    return PreparedMaterials(root=dest, opening=opening)
 
 
 def prepare_world_materials(
@@ -2330,9 +2413,7 @@ def prepare_world_materials(
     公开说法、历月邸报按需自读（#1834）。写入（拒收/实况回目录、下月材料）不
     在本函数职责内——本函数只组装可读材料，不提供任何写入口。
 
-    目录事实文件为人读字段清单，不承担解析契约。内部结构化读口
-    `PreparedMaterials.world_facts` 留存本次候选、检举事实及终态快照；
-    终态按 event_id 索引，值含 terminal_state / terminal_reason，空记录为 {}。
+    目录事实文件为人读字段清单，不承担解析契约。
     有终态的事件不回填候选；逐件候选材料共用同一份资格快照。
 
     `public_feed=True` 只给公共供料方（公共邸报作者）：受显式排除的公开说法
@@ -2373,14 +2454,14 @@ def prepare_world_materials(
         "event_terminals": _event_terminal_records(db),
     }
 
-    dest, index = _publish_material_tree(
+    dest = _publish_material_tree(
         dest_root,
         world_materials_root(db, state),
         lambda tmp: _write_world_tree(
             tmp, db, state, public_events, affair_lines, board_text,
             roster_text, world_facts, include_fact, include_event,
             _secret_order_chat_turn_ids(db) if exclude_secret_order_audience else None,
-            secret_dossiers,
+            secret_dossiers, ledger_origin_prefix_excluded,
         ),
     )
 
@@ -2389,6 +2470,4 @@ def prepare_world_materials(
         events=len(candidates["events"]),
         surges=len(candidates["impeachment_surge"]),
     )
-    return PreparedMaterials(
-        root=dest, opening=opening, index_lines=tuple(index), world_facts=world_facts,
-    )
+    return PreparedMaterials(root=dest, opening=opening)
