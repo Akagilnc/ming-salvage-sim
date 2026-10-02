@@ -463,10 +463,7 @@ def build_fiscal_fact_brief(db: Any) -> List[Dict[str, Any]]:
         (turn,),
     ).fetchall()
     for row in repaid_log_rows:
-        try:
-            delta = float(str(row["new_value"])) - float(str(row["old_value"]))
-        except (TypeError, ValueError):
-            continue
+        delta = float(row["new_value"]) - float(row["old_value"])
         if delta >= 0:
             continue  # 只取偿还方向；增欠已由②的双累加器现值承载，不重复计
         army_id = str(row["army_id"])
@@ -556,10 +553,7 @@ def build_fiscal_fact_brief(db: Any) -> List[Dict[str, Any]]:
         (turn,),
     ).fetchall()
     for row in flow_rows:
-        try:
-            delta = float(row["delta"] or 0)
-        except (TypeError, ValueError):
-            continue
+        delta = float(row["delta"] or 0)
         if not math.isfinite(delta) or abs(delta) <= 1e-9:
             continue
         field = str(row["field"])

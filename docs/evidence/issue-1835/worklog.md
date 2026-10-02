@@ -101,6 +101,17 @@
 - 真实共享入口观察 `/tmp/1835-agent-json-run.py`：恢复旧控制字符删除/先剥围栏转换，`/tmp/1835-agent-json-old.txt` 显示非法原文被接受为 body=甲乙，合法包含围栏的原文被拒；恢复后 `/tmp/1835-agent-json-new.txt` 得 contract_failure + raw_preserved=true + JSONDecodeError，以及 valid_original_decoded + body_preserved=true。此为结构化观察，没有伪称 pytest 报红，没有新增仓内测试。
 - `/tmp/1835-audit-focused59.txt` 覆盖 pihong_dossier、relation_brew、rescript_draft、audience_translate、month_chain、CLI，303 passed，26.64s，七旗禁宿主。仍须全仓成员复核，不能拿此绿色作为 F5 结清。
 
+## 续修：票拟、材料与财政事实读取
+
+- F6：票拟校验/补交/耗尽只收 LLMContractError 与 DeclarationDataError。明确声明校验改用既有数据异常，MissingFields 两类继承该异常；删除层 A 将普通 ValueError 重包装为数据错误的分支。locality、roster、grant shape 与 stop_condition 依赖仅捕获已知数据类型；普通 ValueError/KeyError 不补交、不降级。
+- 复用现有 `test_generate_rescript_draft_program_error_propagates`，增加 ValueError/KeyError 输入维度，不新增平行测试。装回三个旧宽捕获，`/tmp/1835-rescript-fault-mutation.txt`：ValueError 案失败，1 failed、2 passed、1.69s；恢复后的 focused68 包含三个绿色案。
+- F5：票拟严格解析只识别恰好覆盖全响应的代码围栏；不再搜索并误剥合法 JSON 字符串内部围栏。复用标准库 re.fullmatch/json.loads，无新解析机制。真实 generate_rescript_draft 入口（仅 LLM 边界返回冻结合法输入）`/tmp/1835-rescript-original-run.py`：旧逻辑 `/tmp/1835-rescript-original-old.txt` returned=false；新逻辑 `/tmp/1835-rescript-original-new2.txt` returned=true、context_preserved=true。最初观察缺 region_targets 导致另一个合法接地拒收，该次不能作为保真证明；已纠正调用输入后重跑。
+- F6：材料的 issue/affair 读取、持久人物投影删除跳过/空名单/伪零值 catch；仅缺省 None 保留既有标量缺省。财政事实的 army_logs/region_logs 不再跳过坏持久数字。`/tmp/1835-fiscal-log-run.py` 从真实 DB 到 build_fiscal_fact_brief：旧逻辑 returned_facts=19，新逻辑 propagated_fault/ValueError（`/tmp/1835-fiscal-log-{old,new}.txt`）。
+- F6：材料工具仅将明确路径/未就绪数据错误与缺文件转工具错误；坏编码与普通程序 ValueError 穿透。`/tmp/1835-material-read-run.py` 真实 read 工具入口：旧逻辑 returned_tool_text，新逻辑 propagated_fault/UnicodeDecodeError（`/tmp/1835-material-read-{old,new}.txt`）。全部临时变异已恢复，无新增仓内证明性测试。
+- F10：character_knowledge 复用既有案例，将正文哨兵、相似文本和名单 JSON 序列化外观断言迁为 source_id、knowledge_status、结构化名单/roster、数据库身份与原文完整拷贝；不应读取的领域依赖直接抛异常。共享档案案避开开局公共事件污染后检查原文完整相等。
+- 枚举纠正：F6 数据扫描脚本只读 `/tmp/1835-live-F6.json`，单独重跑并不是当前树复扫。本轮先运行 `/tmp/1835-enumerate.py` 再扫描，结果见 `/tmp/1835-inventory-66.txt`：F1=377、F5=2165、F6=684、F10=9674、F11=24、F13=227、F14=29；宽数据捕获候选247。此为改动中途候选，不是结清数。
+- 七旗禁宿主的 `/tmp/1835-audit-focused68.txt`：14个触及文件，382 passed、1 warning、8.56s；compileall（三个生产文件）及 git diff --check 通过。未运行全量，此非最终待合并状态。
+
 ## 尚未结清
 
 仍须将宽枚举逐成员完成语义处置，特别是 F10 剩余自由文本/保密哨兵及 helper 呈现测试、F5 下游传递与识别变换的边界、F6 剩余持久与批写接缝，并刷新完整成员处置表与最新触及面验证。本记录不把聚焦绿色冒作整类结清，不声明这些工作缺 owner 决定，也不以执行窗口作合法 blocker。

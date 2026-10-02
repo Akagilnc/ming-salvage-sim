@@ -20,6 +20,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, List, Optional, Sequence
 
+from ming_sim.exceptions import DeclarationDataError
+
 _UNSAFE = re.compile(r'[\\/:*?"<>|\x00-\x1f]')
 _INDEX_NAME = "INDEX.txt"
 _PERSON_DIR = "人物"
@@ -79,12 +81,12 @@ def _resolve_inside(root: Path, rel: str) -> Path:
     if not raw or raw in {".", "./"}:
         return root_r
     if Path(raw).is_absolute() or raw.startswith("~"):
-        raise ValueError("材料路径越出目录")
+        raise DeclarationDataError("材料路径越出目录")
     candidate = (root_r / raw).resolve()
     try:
         candidate.relative_to(root_r)
     except ValueError as exc:
-        raise ValueError("材料路径越出目录") from exc
+        raise DeclarationDataError("材料路径越出目录") from exc
     return candidate
 
 
@@ -272,18 +274,18 @@ def material_tools(root: Any) -> list:
         text = str(value or "").strip()
         if not text:
             # Empty/cleared MaterialsRoot must not resolve Path("") → CWD.
-            raise ValueError("材料目录未就绪")
+            raise DeclarationDataError("材料目录未就绪")
         return Path(text)
 
     def project_error(operation: str, call: Any, *args: object) -> str:
         try:
             return call(*args)
-        except (ValueError, FileNotFoundError) as exc:
+        except (DeclarationDataError, FileNotFoundError) as exc:
             return f"无法{operation}：{exc}"
 
     def list_materials_tool(path: str = "") -> str:
         """列出当前材料目录中可读的文件（相对路径，一行一项）。"""
-        # current_root() must run inside project_error so empty-root ValueError
+        # current_root() must run inside project_error so empty-root data error
         # projects as structured text (never Path("") → CWD).
         return project_error(
             "读取",
@@ -327,10 +329,7 @@ def _issue_linked_affair_id(db: Any, issue_id: object) -> int:
     store = getattr(db, "affairs", None)
     if store is None or not hasattr(store, "affair_id_for_issue"):
         return 0
-    try:
-        return int(store.affair_id_for_issue(int(issue_id)))
-    except (KeyError, TypeError, ValueError):
-        return 0
+    return int(store.affair_id_for_issue(int(issue_id)))
 
 
 def _own_affair_lines(
@@ -386,10 +385,7 @@ def _own_affair_lines(
         linked_material.setdefault(linked_affair_id, []).append(text)
 
     for issue in knowledge.get("issues") or []:
-        try:
-            issue_id = int(issue.get("id"))
-        except (TypeError, ValueError):
-            continue
+        issue_id = int(issue["id"])
         _collect_linked(
             issue_id, str(issue.get("title") or ""),
             str(issue.get("stage_text") or ""),
@@ -416,17 +412,11 @@ def _own_affair_lines(
 
     handling_ids: set[int] = set()
     for issue in (db.list_active_issues() if hasattr(db, "list_active_issues") else []):
-        try:
-            issue_id = int(issue["id"])
-        except (KeyError, IndexError, TypeError, ValueError):
-            continue
+        issue_id = int(issue["id"])
         linked_affair_id = _issue_linked_affair_id(db, issue_id)
         if not linked_affair_id:
             continue
-        try:
-            roster = participant_roster_names(issue["participant_roster"])
-        except (KeyError, IndexError, TypeError):
-            roster = set()
+        roster = participant_roster_names(issue["participant_roster"])
         if character_name in roster or character_name in _issue_audience_names(db, issue):
             handling_ids.add(linked_affair_id)
 
@@ -434,10 +424,7 @@ def _own_affair_lines(
     textual_facts = getattr(db, "textual_facts", None)
     lines: list[tuple[str, str, str, str, bool]] = []
     for affair_id in candidate_ids:
-        try:
-            affair = store.get(affair_id)
-        except KeyError:
-            continue
+        affair = store.get(affair_id)
         facts = (
             store.current_situation(textual_facts, affair_id)
             if textual_facts is not None else ()
@@ -486,10 +473,7 @@ def _character_affair_lines(
     lines: list[tuple[str, str, str, str, bool]] = []
     seen: set[str] = set()
     for issue in knowledge.get("issues") or []:
-        try:
-            issue_id = int(issue.get("id"))
-        except (TypeError, ValueError):
-            continue
+        issue_id = int(issue["id"])
         if _issue_linked_affair_id(db, issue_id):
             continue
         # #1812 P6：title/stage_text 是自由正文，判空只用局部 stripped 副本。
@@ -596,19 +580,13 @@ def _opening_affair_lines(
     seen: set[str] = set()
     active = db.list_active_issues() if hasattr(db, "list_active_issues") else []
     for issue in active:
-        try:
-            issue_id = int(issue["id"])
-        except (KeyError, IndexError, TypeError, ValueError):
-            continue
+        issue_id = int(issue["id"])
         if _issue_linked_affair_id(db, issue_id):
             continue  # represented via its affair's own entry, if any.
         dir_key = f"issue-{issue_id}"
         if dir_key not in visible or dir_key in seen:
             continue
-        try:
-            roster = participant_roster_names(issue["participant_roster"])
-        except (KeyError, IndexError, TypeError):
-            roster = set()
+        roster = participant_roster_names(issue["participant_roster"])
         if character_name not in roster and character_name not in _issue_audience_names(db, issue):
             continue
         seen.add(dir_key)
@@ -1572,16 +1550,11 @@ def _character_projection_from_db_row(row: Any) -> Any:
     from ming_sim.models import Character
 
     def _int(key: str, default: int = 0) -> int:
-        try:
-            return int(row[key])
-        except (KeyError, TypeError, ValueError):
-            return default
+        value = row[key]
+        return default if value is None else int(value)
 
     def _str(key: str, default: str = "") -> str:
-        try:
-            value = row[key]
-        except (KeyError, IndexError, TypeError):
-            return default
+        value = row[key]
         return default if value is None else str(value)
 
     return Character(

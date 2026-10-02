@@ -41,7 +41,7 @@ from ming_sim.decree_vocabulary import (
     derive_draft_capability,
 )
 from ming_sim.error_pack import error_packs_root
-from ming_sim.exceptions import LLMContractError, LLMUnavailable
+from ming_sim.exceptions import DeclarationDataError, LLMContractError, LLMUnavailable
 from ming_sim.participant_roster import PARTICIPANT_LEAD_TIER, PARTICIPANT_TIERS
 from ming_sim.structured_decree import StructuredDecreeCombinationError
 from ming_sim.token_stats import tlog
@@ -103,7 +103,7 @@ def _note_failed(
         _merge_field_failure(facts, key, current=cur, expected=exp)
 
 
-class RescriptOptionMissingFieldsError(ValueError):
+class RescriptOptionMissingFieldsError(DeclarationDataError):
     """可定位到单 option 的契约失败（#1746 补交分支）。
 
     缺字段、错值、组合矛盾、未知键、非 object 等凡可定位到 option 的失败
@@ -166,7 +166,7 @@ class RescriptOptionMissingFailure:
     exhaust: str = _EXHAUST_DROP_OPTION
 
 
-class RescriptOptionMissingFieldsBatch(ValueError):
+class RescriptOptionMissingFieldsBatch(DeclarationDataError):
     """一批可定位契约失败（validate isolate 模式一次收齐，供同一 heal 回路补交/剔除）。"""
 
     def __init__(self, failures: Sequence[RescriptOptionMissingFailure]) -> None:
@@ -691,7 +691,7 @@ def normalize_stop_condition(raw: object) -> str:
         if not raw.strip():
             return ""
         return raw
-    raise ValueError(
+    raise DeclarationDataError(
         f"stop_condition 须为 str（C.6），拒 {type(raw).__name__}"
     )
 
@@ -703,7 +703,7 @@ def _normalize_layer_a_participant_roster(value: object) -> List[Dict[str, objec
     `_validate_participant_roster_references` 响亮把关（决定 3：只核人存在）。
     """
     if not isinstance(value, list):
-        raise ValueError("participant_roster 须为 list")
+        raise DeclarationDataError("participant_roster 须为 list")
     return GameDB._normalize_participant_roster(value, strict_structured=True)
 
 
@@ -841,7 +841,7 @@ def normalize_rescript_layer_a_option(
         )
         try:
             out["locality_scope"] = normalize_locality_scope(out["locality_scope"])
-        except (TypeError, ValueError):
+        except DeclarationDataError:
             _fail(
                 "locality_scope",
                 current=out.get("locality_scope"),
@@ -875,7 +875,7 @@ def normalize_rescript_layer_a_option(
     if roster_raw is not None:
         try:
             roster = _normalize_layer_a_participant_roster(roster_raw)
-        except ValueError:
+        except DeclarationDataError:
             _fail(PARTICIPANT_ROSTER_KEY, current=roster_raw, expected=roster_expected)
         else:
             has_lead = any(
@@ -930,7 +930,7 @@ def normalize_rescript_layer_a_option(
     if "stop_condition" in raw and raw["stop_condition"] is not None:
         try:
             out["stop_condition"] = normalize_stop_condition(raw["stop_condition"])
-        except ValueError:
+        except DeclarationDataError:
             _fail(
                 "stop_condition",
                 current=raw.get("stop_condition"),
@@ -1029,7 +1029,7 @@ def normalize_rescript_layer_a_option(
                         raw.get("account") if "account" in raw else None
                     ),
                 )
-            except ValueError as exc:
+            except DeclarationDataError as exc:
                 field = str(getattr(exc, "field", "") or "").strip()
                 if not field:
                     raise
@@ -1134,7 +1134,7 @@ def _assert_utf8(s: str, field: str) -> None:
     try:
         s.encode("utf-8")
     except UnicodeEncodeError as exc:  # noqa: BLE001
-        raise ValueError(
+        raise DeclarationDataError(
             f"票拟字段含 SQLite 不可编码字符（整批 shape 错，F2.5）：{field} {exc}"
         ) from exc
 
@@ -1142,17 +1142,8 @@ def _assert_utf8(s: str, field: str) -> None:
 def _parse_rescript_json_strict(raw: str) -> Dict[str, Any]:
     # r4 P1：围栏外 prose 必须走整批 shape 降级——容忍恰好覆盖全响应的单层围栏，
     # 围栏外任何非空白字符 → LLMContractError 整批降级；不得改 strip_json_fence 全局语义。
-    match = re.search(r"```(?:json)?\s*(.*?)```", raw, re.S)
-    if match:
-        before = raw[: match.start()]
-        after = raw[match.end() :]
-        if before.strip() or after.strip():
-            raise LLMContractError(
-                f"急务票拟生成 输出含围栏外文字（整批 shape 错，F2.5）：围栏外含 prose，按票面应走整批降级\n原始输出：{raw}"
-            )
-        text = match.group(1).strip()
-    else:
-        text = raw.strip()
+    match = re.fullmatch(r"\s*```(?:json)?\s*(.*?)```\s*", raw, re.S)
+    text = match.group(1) if match else raw
     try:
         data = json.loads(text)
     except json.JSONDecodeError as exc:
@@ -1424,7 +1415,7 @@ def validate_rescript_draft_items(
                     ],
                 )
             ])
-        raise ValueError("票拟生成输出顶层非法：须为 {\"items\":[...]}")
+        raise DeclarationDataError("票拟生成输出顶层非法：须为 {\"items\":[...]}")
 
     unknown_top = sorted(set(data) - _TOP_ALLOWED_KEYS)
     if unknown_top:
@@ -1445,7 +1436,7 @@ def validate_rescript_draft_items(
                 )
             )
         else:
-            raise ValueError(
+            raise DeclarationDataError(
                 f"票拟顶层含未知字段（整批 shape 错，F2.5/F3.3）：{unknown_top}"
             )
 
@@ -1477,10 +1468,10 @@ def validate_rescript_draft_items(
                     )
                 )
                 return None
-            raise ValueError(msg)
+            raise DeclarationDataError(msg)
         try:
             _assert_utf8(value, field)
-        except ValueError:
+        except DeclarationDataError:
             if isolate_option_missing:
                 missing_failures.append(
                     _item_failure(
@@ -1519,7 +1510,7 @@ def validate_rescript_draft_items(
                     )
                 )
                 continue
-            raise ValueError("票拟条目非 object（整批失败，F2.5）")
+            raise DeclarationDataError("票拟条目非 object（整批失败，F2.5）")
         unknown = sorted(set(raw) - _ITEM_ALLOWED_KEYS)
         if unknown:
             if isolate_option_missing:
@@ -1540,7 +1531,7 @@ def validate_rescript_draft_items(
                     )
                 )
                 continue
-            raise ValueError(
+            raise DeclarationDataError(
                 f"票拟条目含未知字段（整批 shape 错，F2.5/F3.3 零删改不静默省略）：{unknown}"
             )
         title_val = _required_text_or_fail(
@@ -1582,12 +1573,7 @@ def validate_rescript_draft_items(
                         raw_option=opt if isinstance(opt, dict) else exc.raw_option,
                     ))
                     continue
-                raise ValueError(
-                    f"票拟 option 层 A shape 失败（整批失败，F2.2/F2.5）：{title!r} {exc}"
-                ) from exc
-            except ValueError as exc:
-                # 非 option 可归属的程序/契约异常：整批降级（保留边界）
-                raise ValueError(
+                raise DeclarationDataError(
                     f"票拟 option 层 A shape 失败（整批失败，F2.2/F2.5）：{title!r} {exc}"
                 ) from exc
             # 成功归一后接地检查；失败进同一补交。
@@ -1625,7 +1611,7 @@ def validate_rescript_draft_items(
                         raw_option=opt if isinstance(opt, dict) else ground_exc.raw_option,
                     ))
                     continue
-                raise ValueError(
+                raise DeclarationDataError(
                     f"票拟 option 接地失败（整批失败，F2.5）：{title!r} {ground_exc}"
                 ) from ground_exc
             options.append(normalized_opt)
@@ -1669,7 +1655,7 @@ def _assert_army_targets_grounded(
                 army_target_ids=army_target_ids,
             )
             if ground_exc is not None:
-                raise ValueError(str(ground_exc))
+                raise DeclarationDataError(str(ground_exc))
 
 
 def _board_issue_ids(active_issues: object) -> set[int]:
@@ -1924,14 +1910,14 @@ def _merge_healed_missing_options(
 
     if baseline is None or has_unformed:
         # 无底稿/未成形：补交必须显式给 items；不得把旁路 JSON 空壳洗成「本月无急务」
-        raise ValueError(
+        raise DeclarationDataError(
             '票拟补交未成形：须返回 {"items":[...]}'
         )
 
     result = copy.deepcopy(baseline)
     if "items" not in result or not isinstance(result.get("items"), list):
         # 底稿无 items 却非 unformed 路径：保持失败，等耗尽/下轮；不偷换补交 items
-        raise ValueError(
+        raise DeclarationDataError(
             '票拟补交顶层无 items list：须返回 heals 或待耗尽处置'
         )
 
@@ -2262,7 +2248,7 @@ def generate_rescript_draft(
             if tag == "rescript-draft-heal" and pending_missing is not None:
                 healed_data = _parse_rescript_json_strict(raw)
                 if not isinstance(healed_data, dict):
-                    raise ValueError(
+                    raise DeclarationDataError(
                         '票拟补交产出顶层非法：须为 {"heals":[...]} 或 {"items":[...]}'
                     )
                 merged = _merge_healed_missing_options(
@@ -2277,7 +2263,7 @@ def generate_rescript_draft(
                 drafts = _validate(data, isolate_option_missing=True)
         except RescriptOptionMissingFieldsBatch as exc:
             pending_missing = list(exc.failures)
-        except (LLMContractError, ValueError) as exc:
+        except (LLMContractError, DeclarationDataError) as exc:
             # 解析/契约失败进入同一 heal 回路（#1801：首抽未成形也重试，不立即整批死）。
             # 已在补交轮：把响应契约失败并入既有事实。
             if pending_missing is not None:
@@ -2349,10 +2335,10 @@ def generate_rescript_draft(
                 return None
             try:
                 drafts = _validate(dropped2, isolate_option_missing=False)
-            except (LLMContractError, ValueError, RescriptOptionMissingFieldsBatch) as drop_exc:
+            except (LLMContractError, DeclarationDataError) as drop_exc:
                 _degrade(drop_exc)
                 return None
-        except (LLMContractError, ValueError) as drop_exc:
+        except (LLMContractError, DeclarationDataError) as drop_exc:
             _degrade(drop_exc)
             return None
         tlog(

@@ -816,13 +816,13 @@ def test_generate_rescript_draft_degrades_loudly_without_raising(game, monkeypat
     # 标准 JSON 转义保真：结构化 reason，不锁原文呈现
     assert json.loads(note.read_text(encoding="utf-8"))["reason"] == str(failure)
 
-def test_generate_rescript_draft_program_error_propagates(game, monkeypatch):
-    """r2 裁决 B3 / ADR 0005：程序错不得以「非承重支路」为由吞成降级。
-    validator 抛 RuntimeError（代码故障）必须响亮上抛——票拟业务降级 ≠ 代码故障降级。"""
+@pytest.mark.parametrize("fault_type", [RuntimeError, ValueError, KeyError])
+def test_generate_rescript_draft_program_error_propagates(game, monkeypatch, fault_type):
+    """ADR 0005: dependency code faults retain attribution, not data healing."""
     db, state, _content = game
 
     def _buggy_validate(data, ids, **_kwargs):
-        raise RuntimeError("programmer bug sentinel")
+        raise fault_type("programmer bug")
 
     monkeypatch.setattr(
         rescript_mod, "run_agent_text",
@@ -832,7 +832,7 @@ def test_generate_rescript_draft_program_error_propagates(game, monkeypatch):
     payload = {
         "active_issues": [], "gazette": "邸报", "triage_actor": {}, "turn": {},
     }
-    with pytest.raises(RuntimeError):
+    with pytest.raises(fault_type):
         generate_rescript_draft(object(), payload, state.turn)
 
 # ---------------------------------------------------------------------------
