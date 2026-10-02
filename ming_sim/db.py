@@ -69,7 +69,7 @@ from ming_sim.relations import (
     validate_edge_kind,
 )
 from ming_sim.strict_types import (
-    strict_int, validate_affected_parties, validate_rejection_verdict,
+    _parse_sqlite_id, strict_int, validate_affected_parties, validate_rejection_verdict,
     validate_verdict_affected_parties,
 )
 from ming_sim.token_stats import tlog
@@ -617,10 +617,13 @@ def _coerce_pay_source_float(raw: object, *, default: float = 0.0) -> float:
     if raw in (None, ""):
         return default
     if isinstance(raw, bool):
-        raise ValueError("布尔值不是合法比例")
-    value = float(raw)
+        raise DeclarationDataError("布尔值不是合法比例")
+    try:
+        value = float(raw)
+    except (TypeError, ValueError) as exc:
+        raise DeclarationDataError(str(exc)) from exc
     if not math.isfinite(value):
-        raise ValueError("非有限数")
+        raise DeclarationDataError("非有限数")
     return value
 
 
@@ -4412,37 +4415,38 @@ class GameDB:
             ("central_pay_arrears", central_arrears),
         ):
             if not math.isfinite(float(value)) or float(value) < 0:
-                raise ValueError(f"army {army_id} {label} 非法：{value!r}")
+                raise DeclarationDataError(f"army {army_id} {label} 非法：{value!r}")
         exempt = owner_power != "ming" or is_tusi or self_funded
         if exempt:
             if abs(province_share) > 1e-9 or abs(central_share) > 1e-9:
-                raise ValueError(f"army {army_id} 自养/非明军饷源比例必须为 0")
+                raise DeclarationDataError(f"army {army_id} 自养/非明军饷源比例必须为 0")
             if abs(province_arrears) > 1e-9 or abs(central_arrears) > 1e-9:
-                raise ValueError(f"army {army_id} 自养/非明军双累加器必须为 0")
+                raise DeclarationDataError(f"army {army_id} 自养/非明军双累加器必须为 0")
             return
         if not pay_source_region:
-            raise ValueError(f"army {army_id} 明军须有 pay_source_region")
+            raise DeclarationDataError(f"army {army_id} 明军须有 pay_source_region")
         if abs((province_share + central_share) - 1.0) > 1e-9:
-            raise ValueError(f"army {army_id} 饷源比例和必须为 1")
+            raise DeclarationDataError(f"army {army_id} 饷源比例和必须为 1")
 
     def _require_valid_pay_source_region(self, army_id: str, pay_source_region: str) -> None:
         row = self.conn.execute(
             "SELECT controlled_by, fiscal FROM regions WHERE id = ?", (pay_source_region,)
         ).fetchone()
         if row is None:
-            raise ValueError(f"army {army_id} pay_source_region 未入库：{pay_source_region}")
+            raise DeclarationDataError(f"army {army_id} pay_source_region 未入库：{pay_source_region}")
         if str(row["controlled_by"] or "") != "ming":
-            raise ValueError(f"army {army_id} pay_source_region 非明控省：{pay_source_region}")
-        try:
-            fiscal = json.loads(str(row["fiscal"] or "{}"))
-        except (TypeError, ValueError) as exc:
-            raise ValueError(
-                f"army {army_id} pay_source_region 财政基座 JSON 非法：{pay_source_region}"
-            ) from exc
-        settle = fiscal.get("settle") if isinstance(fiscal, dict) else None
+            raise DeclarationDataError(f"army {army_id} pay_source_region 非明控省：{pay_source_region}")
+        fiscal = self.parse_engine_payload_json(row["fiscal"], surface="regions.fiscal")
+        settle = fiscal.get("settle")
+        if settle is not None and not isinstance(settle, dict):
+            raise ValueError("持久地区财政 settle 须为对象")
+        if isinstance(settle, dict):
+            for key in ("st", "p"):
+                if settle.get(key) is not None and not isinstance(settle[key], dict):
+                    raise ValueError(f"持久地区财政 settle.{key} 须为对象")
         if not isinstance(settle, dict) or not isinstance(settle.get("st"), dict) \
                 or not isinstance(settle.get("p"), dict):
-            raise ValueError(f"army {army_id} pay_source_region 无 settle st/p 基座：{pay_source_region}")
+            raise DeclarationDataError(f"army {army_id} pay_source_region 无 settle st/p 基座：{pay_source_region}")
 
     def transition_army_owner_power(
         self,
@@ -4503,17 +4507,30 @@ class GameDB:
             return changes, rejections
 
         old_source = str(row["pay_source_region"] or "")
+        old_values = {
+            "owner_power": old_owner,
+            "pay_source_region": old_source,
+            "province_pay_share": float(row["province_pay_share"] or 0),
+            "central_pay_share": float(row["central_pay_share"] or 0),
+            "is_tusi": int(row["is_tusi"] or 0),
+            "self_funded_pay": int(row["self_funded_pay"] or 0),
+            "province_pay_arrears": float(row["province_pay_arrears"] or 0),
+            "central_pay_arrears": float(row["central_pay_arrears"] or 0),
+            "arrears": float(row["arrears"] or 0),
+            "is_mutinied": int(row["is_mutinied"] or 0),
+            "mutiny_probation": int(row["mutiny_probation"] or 0),
+        }
         try:
             if pay_source_region is _SENTINEL:
                 pay_source_region_val = str(row["pay_source_region"] or "").strip()
             else:
                 pay_source_region_val = str(pay_source_region or "").strip()
             if province_pay_share is _SENTINEL:
-                province_share = _coerce_pay_source_float(row["province_pay_share"])
+                province_share = old_values["province_pay_share"]
             else:
                 province_share = _coerce_pay_source_float(province_pay_share)
             if central_pay_share is _SENTINEL:
-                central_share = _coerce_pay_source_float(row["central_pay_share"])
+                central_share = old_values["central_pay_share"]
             else:
                 central_share = _coerce_pay_source_float(central_pay_share)
             if is_tusi is _SENTINEL:
@@ -4525,9 +4542,9 @@ class GameDB:
             else:
                 self_funded_val = _coerce_bool_flag(self_funded_pay)
 
-            province_arrears = float(row["province_pay_arrears"] or 0)
-            central_arrears = float(row["central_pay_arrears"] or 0)
-            total_arrears = float(row["arrears"] or 0)
+            province_arrears = old_values["province_pay_arrears"]
+            central_arrears = old_values["central_pay_arrears"]
+            total_arrears = old_values["arrears"]
             if self.is_army_pay_source_cutover_enabled():
                 total_arrears = max(total_arrears, province_arrears + central_arrears)
 
@@ -4543,7 +4560,7 @@ class GameDB:
             )
             if pay_source_region_val:
                 self._require_valid_pay_source_region(army_id, pay_source_region_val)
-        except (TypeError, ValueError) as exc:
+        except DeclarationDataError as exc:
             rejections.append(RejectedItem(item=item, reason=f"army_delta 饷源字段非法：{exc}", category="invalid_enum", source=source))
             return changes, rejections
 
@@ -4552,19 +4569,6 @@ class GameDB:
             rejections.append(RejectedItem(item=item, reason=origin_error["reason"], category=origin_error["category"], source=source))
             return changes, rejections
 
-        old_values = {
-            "owner_power": old_owner,
-            "pay_source_region": old_source,
-            "province_pay_share": float(row["province_pay_share"] or 0),
-            "central_pay_share": float(row["central_pay_share"] or 0),
-            "is_tusi": int(row["is_tusi"] or 0),
-            "self_funded_pay": int(row["self_funded_pay"] or 0),
-            "province_pay_arrears": float(row["province_pay_arrears"] or 0),
-            "central_pay_arrears": float(row["central_pay_arrears"] or 0),
-            "arrears": float(row["arrears"] or 0),
-            "is_mutinied": int(row["is_mutinied"] or 0),
-            "mutiny_probation": int(row["mutiny_probation"] or 0),
-        }
         new_values = {
             "owner_power": owner_power,
             "pay_source_region": pay_source_region_val,
@@ -4716,12 +4720,24 @@ class GameDB:
         old_source = str(row["pay_source_region"] or "")
         owner_power = str(row["owner_power"] or "").strip()
         pay_source_region = str(normalized.get("pay_source_region", row["pay_source_region"]) or "").strip()
+        old_values = {
+            "pay_source_region": row["pay_source_region"],
+            "province_pay_share": float(row["province_pay_share"] or 0),
+            "central_pay_share": float(row["central_pay_share"] or 0),
+            "is_tusi": int(row["is_tusi"] or 0),
+            "self_funded_pay": int(row["self_funded_pay"] or 0),
+            "province_pay_arrears": float(row["province_pay_arrears"] or 0),
+            "central_pay_arrears": float(row["central_pay_arrears"] or 0),
+            "arrears": float(row["arrears"] or 0),
+        }
         try:
-            province_share = _coerce_pay_source_float(
-                normalized.get("province_pay_share", row["province_pay_share"])
+            province_share = (
+                _coerce_pay_source_float(normalized["province_pay_share"])
+                if "province_pay_share" in normalized else old_values["province_pay_share"]
             )
-            central_share = _coerce_pay_source_float(
-                normalized.get("central_pay_share", row["central_pay_share"])
+            central_share = (
+                _coerce_pay_source_float(normalized["central_pay_share"])
+                if "central_pay_share" in normalized else old_values["central_pay_share"]
             )
             is_tusi = (
                 _coerce_bool_flag(normalized["is_tusi"])
@@ -4731,8 +4747,8 @@ class GameDB:
                 _coerce_bool_flag(normalized["self_funded_pay"])
                 if "self_funded_pay" in normalized else bool(row["self_funded_pay"])
             )
-            province_arrears = float(row["province_pay_arrears"] or 0)
-            central_arrears = float(row["central_pay_arrears"] or 0)
+            province_arrears = old_values["province_pay_arrears"]
+            central_arrears = old_values["central_pay_arrears"]
             exempt = owner_power != "ming" or is_tusi or self_funded
             exempt_by_ming_flag = (
                 owner_power == "ming"
@@ -4741,7 +4757,7 @@ class GameDB:
                 and (is_tusi or self_funded)
             )
             if exempt_by_ming_flag and (province_arrears + central_arrears) > 1e-9:
-                raise ValueError(
+                raise DeclarationDataError(
                     "明军有欠饷时不得仅以自养/土司改隶清空饷源；须先走补饷或显式核销"
                 )
             if exempt:
@@ -4754,7 +4770,7 @@ class GameDB:
             )
             if pay_source_region:
                 self._require_valid_pay_source_region(army_id, pay_source_region)
-        except (TypeError, ValueError) as exc:
+        except DeclarationDataError as exc:
             rejections.append(RejectedItem(item={"army_id": army_id, "changes": raw_changes}, reason=f"army_delta 饷源字段非法：{exc}", category="invalid_enum", source=source))
             return
 
@@ -4762,16 +4778,6 @@ class GameDB:
         if bool(row["is_mutinied"]):
             return
 
-        old_values = {
-            "pay_source_region": row["pay_source_region"],
-            "province_pay_share": float(row["province_pay_share"] or 0),
-            "central_pay_share": float(row["central_pay_share"] or 0),
-            "is_tusi": int(row["is_tusi"] or 0),
-            "self_funded_pay": int(row["self_funded_pay"] or 0),
-            "province_pay_arrears": float(row["province_pay_arrears"] or 0),
-            "central_pay_arrears": float(row["central_pay_arrears"] or 0),
-            "arrears": float(row["arrears"] or 0),
-        }
         new_values = {
             "pay_source_region": pay_source_region,
             "province_pay_share": province_share,
@@ -6813,30 +6819,30 @@ class GameDB:
         unauthorized_batch = False
         if value.startswith("dossier:"):
             try:
-                dossier_id = int(value.split(":", 1)[1])
-                valid = dossier_id > 0 and self.get_decree_dossier(dossier_id) is not None \
-                    and self.dossier_authorizes_effects(dossier_id)
-            except (OverflowError, TypeError, ValueError):
-                valid = False
+                dossier_id = _parse_sqlite_id(value.split(":", 1)[1])
+            except (TypeError, ValueError):
+                dossier_id = 0
+            valid = dossier_id > 0 and self.get_decree_dossier(dossier_id) is not None \
+                and self.dossier_authorizes_effects(dossier_id)
         elif value.startswith("affair:"):
-            try:
-                from ming_sim.entities.affair.store import (
-                    UnauthorizedAffairOriginRef,
-                    parse_origin_ref,
-                )
-                kind, affair_id = parse_origin_ref(value)
-                if kind == "affair" and affair_id is not None:
-                    self.affairs.get(int(affair_id))
+            from ming_sim.entities.affair.store import parse_origin_ref
+            kind, affair_id = parse_origin_ref(value)
+            if kind == "affair" and affair_id is not None:
+                try:
+                    affair_id = _parse_sqlite_id(affair_id)
+                except (TypeError, ValueError):
+                    affair_id = None
+            if kind == "affair" and affair_id is not None:
+                try:
+                    self.affairs.get(affair_id)
+                except DeclarationReferenceError:
+                    valid = False
+                else:
                     authorized = getattr(self, "_batch_authorized_open_affair_ids", None)
                     if authorized is not None and affair_id not in authorized:
-                        valid = False
                         unauthorized_batch = True
                     else:
                         valid = True
-                else:
-                    valid = False
-            except (KeyError, OverflowError, TypeError, ValueError):
-                valid = False
         if valid:
             return None
         if unauthorized_batch:
@@ -8308,7 +8314,7 @@ class GameDB:
                     )
                     if pay_source_region:
                         self._require_valid_pay_source_region(aid, pay_source_region)
-                except (TypeError, ValueError) as exc:
+                except DeclarationDataError as exc:
                     rejections.append(RejectedItem(item=raw, reason=f"new_armies '{aid}' 饷源字段非法：{exc}", category="invalid_enum", source=source))
                     continue
             origin_error = self.effect_origin_rejection(origin_ref) if require_origin else None
@@ -16327,7 +16333,7 @@ class GameDB:
                     or ""
                 ),
             )
-        except ValueError as exc:
+        except DeclarationDataError as exc:
             self.transition_decree_dossier(dossier_id, "executing", commit=False)
             self.record_dossier_execution(
                 dossier_id, "failed", str(exc) or "responsible_bodies 禁个人名",
@@ -18266,7 +18272,7 @@ class GameDB:
             office_type = str(payload.get("office_type") or "").strip()
             try:
                 appointment_tenure = appointment_tenure_from(payload)
-            except ValueError:
+            except DeclarationDataError:
                 return set()
             recommendation = payload.get("recommendation")
             staged_candidate = recommendation.get("candidate") if isinstance(recommendation, dict) else None

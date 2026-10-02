@@ -74,6 +74,16 @@
 - 测试最小成本：复用原有事件幂等与催办契约用例，增加耐久结构字段和原文精确拷贝断言；财政用例保留失败路径及整库/内存回滚。无新增通用件，无 F12 契约施工。
 - 最新枚举：F5=2174、F6=698、F10=9628、F13=227、F14=29。F13/F14 表只清算所列生产点/调用成员，不把它们冒称 F5/F6/F10 全仓逐成员结清。
 
+## 持久读缝续扫：来源授权与军队饷源
+
+- `effect_origin_rejection` 把 SQL 主键解析与持久读分开，复用 `strict_types._parse_sqlite_id`；缺事务只接既有 DeclarationReferenceError，案卷/事务读取的普通 ValueError、KeyError 和代码故障不再变成 invalid_origin_ref。
+- 饷源的已知输入转换及业务校验使用既有 DeclarationDataError。两条更新路径将旧值读取前移、复用旧值快照，普通持久标量损坏不进入输入拒收 catch。地区财政复用既有严格 JSON 读取，坏 JSON/坏在场容器穿透；缺财政基座仍是已知不可用饷源。新军、改隶、饷源更新三条边界均只接已知数据异常。
+- responsible_bodies 的个人名校验、appointment_tenure 的枚举校验标明已知数据异常，两个调用边界不再吞普通代码 ValueError。
+- 聚焦 `/tmp/1835-audit-focused53.txt`：9 个来源/任别触及文件加 declaration 入口，314 passed，7.50s；`/tmp/1835-audit-focused54.txt`：23 个饷源触及文件加 declaration 入口，750 passed、1 skipped，23.42s。七旗均禁宿主，未跑全量。
+- 真实入口观察 `/tmp/1835-pay-corruption-run.py`：只写自建临时 DB，将实际饷源地区财政列置为坏 JSON，合法 army_delta 进入 settle_delta。修复后 `/tmp/1835-pay-corruption-new.txt` 得 propagated_fault / ValueError / JSONDecodeError 原因链；装回旧泛型 catch，`/tmp/1835-pay-corruption-old.txt` 得 returned_outcome / invalid_enum，确证旧逻辑洗白。已恢复新逻辑。此为结构化观察，不冒称 pytest 报红；没有新增仓内证明测试。
+- F13/F14 表重新从当前树生成；修正 CSV 写出的 CRLF 引起的 diff whitespace 报告，统一 LF。此前 untracked 表未被 diff --check 覆盖，不将先前的绿色当该格式问题不存在的证据。
+- compileall、diff --check 通过；`/tmp/1835-audit-static55.txt` 只有既有 unused imports，无 undefined name，未冒称类型检查。候选 F6=699，其余候选数不变，仍不是逐成员完成数。
+
 ## 尚未结清
 
 仍须将宽枚举逐成员完成语义处置，特别是 F10 剩余自由文本/保密哨兵及 helper 呈现测试、F5 下游传递与识别变换的边界、F6 剩余持久与批写接缝，并刷新完整成员处置表与最新触及面验证。本记录不把聚焦绿色冒作整类结清，不声明这些工作缺 owner 决定，也不以执行窗口作合法 blocker。

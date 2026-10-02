@@ -1041,7 +1041,7 @@ def assert_responsible_bodies_org_only(
     for body in bodies:
         name = str(body or "").strip()
         if name and name in persons:
-            raise ValueError(f"responsible_bodies 禁个人名：{name}")
+            raise DeclarationDataError(f"responsible_bodies 禁个人名：{name}")
 
 
 
