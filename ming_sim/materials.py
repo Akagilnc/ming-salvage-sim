@@ -1648,12 +1648,12 @@ def _person_history_fields(value: Mapping[str, Any]) -> dict[str, Any]:
     for axis in axes:
         # A requested delta is not an absolute score. Preserve its direction;
         # only recorded endpoints can be rendered through the score bands.
-        if axis in result:
+        if axis in result and type(result[axis]) in (int, float):
             delta = result[axis]
             result[axis] = "上升" if delta > 0 else "下降" if delta < 0 else "不变"
         for prefix in ("old_", "new_"):
             key = prefix + axis
-            if key in result:
+            if key in result and type(result[key]) in (int, float):
                 result[key] = (
                     identity_band(result[key]) if axis == "identity"
                     else intrigue_band(result[key]) if axis == "intrigue"

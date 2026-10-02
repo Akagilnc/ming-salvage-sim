@@ -227,3 +227,30 @@ rg -n 'def loads_effect_dict|def _eff_dict' ming_sim/models.py ming_sim/issues.p
 恢复后可核输出：`PASS decoder all nine JSON columns preserve decoded container/scalar shapes`；开放、关闭、重开数据库恢复三态均 `PASS ... 4 fields x 3 carriers; null/dict/scalar/mixed-list retained; valid person delta projected; directory read`。探针实际 list/read 发布目录，仅在原渲染函数旁观察结构化输入，未解析或约束正文。混合列表中的合法 dict 条目变为方向字段，其他原条目保持，人物日志非 dict JSON 也保持。
 
 聚焦 `46 passed in 3.96s`；变动 Python AST 解析与最终 diff check 另行核验。不跑全量、不冒称 typecheck，无测试改动或新增测试。本类施工无未结项；自建 `/tmp/1834-history-shapes-probe.py` 交卷前清理，合并仍归调用者。
+
+## 标量容忍补修（同类最后一环）
+
+复核成立。此前“非整数人物值已被写入口拒收”的依据不覆盖 `cancel_cost / effect_on_resolve / effect_on_fail`，仅 ongoing 校验可以引用；因此上一节把条目内标量排除在容忍范围之外的结论撤回。三键、容器容忍和 F11–F13 的既有处置维持。
+
+本次在共同原因 `_person_history_fields` 仅改两个投影条件：delta 和 old_/new_ 端点只对 JSON 数值类型 `int / float` 投影；`bool` 不是数值，字符串（包括 `"+5"`）、null、list、dict 均保留原值与类型。没有字符串转换、新归一化器、catch 或旁路，合法数值继续复用现有方向词与 canonical 档位。
+
+完整成员为 `loyalty / ability / integrity / courage / identity / intrigue` × `原字段 / old_ / new_`，经四效果字段 × 三个人物载荷键及 `person_logs.normalized` 共用该边界。扫描命令：
+
+```sh
+rg -n '_person_history_fields\(|delta >|old_|new_|type\(result\[' ming_sim/materials.py
+rg -n '_invalid_monthly_person_rating_reason|def _eff_dict' ming_sim/issues.py
+```
+
+真跑仍用前文七变量完整前缀、`PYTHONDONTWRITEBYTECODE=1` 和探针 `PYTHONPATH="$PWD"`：
+
+```sh
+../Ming_LLM/.venv/bin/python /tmp/1834-history-scalars-probe.py --old
+../Ming_LLM/.venv/bin/python /tmp/1834-history-scalars-probe.py
+../Ming_LLM/.venv/bin/python -m pytest tests/test_world_materials_1834.py tests/test_material_directory_1830.py tests/test_decree_commitment_schema_136.py -q -p no:cacheprovider
+```
+
+探针通过真实 issue 写口在三个非 ongoing 效果字段里保存三键列表；每个条目覆盖全部六轴及三种前缀，值依次为 `"+5" / null / true / false / [] / {"a":1} / 5 / -2 / 0 / 2.5`。`--old` 直接取 `git show 3004e6cac:ming_sim/materials.py` 的旧 `_person_history_fields` 原定义装回，真实 `prepare_world_materials → _write_world_tree → _world_effect_materials` 在效果条目上报 `TypeError: '>' not supported between instances of 'str' and 'int'`（原投影第 1653 行），不是仅调用孤立 helper。
+
+恢复后先验三个非 ongoing 字段的真实发布目录；再在自建临时 DB 注入历史 ongoing 脏存，并通过真实人物日志写口追加同样条目，关闭与重开恢复时验全部四字段及日志。非数值原类型/原值保持，数值变为定性字段，实际 list/read 目录，不解析正文；三态均报 `PASS ... all six axes x delta/old/new; nonnumbers intact, numbers projected; directory read`。
+
+聚焦结果 `46 passed in 6.00s`。两处调用复扫均共用已修的六轴 delta/端点边界。无测试改动，不跑全量、不冒称 typecheck；变动 Python AST 与最终 diff check 另验。该标量范围无施工未结项；自建 `/tmp/1834-history-scalars-probe.py` 交卷前清理，合并仍归调用者。
