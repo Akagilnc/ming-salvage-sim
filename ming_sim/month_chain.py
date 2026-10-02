@@ -1910,17 +1910,6 @@ def _question_as_decision(question: Dict[str, object], *, event_id: str) -> Dict
         "context": str(question.get("context") or ""),
         "options": cleaned,
     }
-    # #1899：请旨机标自带的 `event_id`（`parse_decision_blocks` 从 `<<DECISION>>`
-    # 块读出，即 #1891 交来的**事件绑定**）此前在此被丢掉：请旨一律改写成
-    # `world-question:` / `decree-question:` 案头身份，绑定就此消失，下游
-    # `apply_rescript_batch` 又按该前缀跳过 `record_event_decision_choice`——
-    # 皇帝真批了「准」，事件账仍无 choice、目录仍罢，下月三饷应征 0（judge 188bf9）。
-    # 案头身份与事件绑定是两件事：前者管「这行归谁续推」，后者管「这道批语落哪
-    # 个事件账」。此处把绑定**另存**（不改案头身份，续推路由照旧），由批红写口
-    # 消费。绑定只认机标里显式带的那一个，不从疏文猜配（票面 / ADR 0142）。
-    bound = str(question.get("event_id") or "").strip()
-    if bound:
-        decision["bound_event_id"] = bound
     return decision
 
 

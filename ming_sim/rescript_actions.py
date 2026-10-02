@@ -1325,28 +1325,6 @@ def _cas_decided(db: Any, item: ValidatedItem) -> None:
         raise ValueError(f"行级 CAS 失败（非 pending）：{item.decision_key}")
 
 
-def _rescript_event_choice(item: ValidatedItem) -> Dict[str, object]:
-    """亲裁落事件账的载荷：呈现留在 label，结局只取服务端选项上的结构化字段。
-
-    玩家点选的 label 只负责命中选项。准驳来自选项上的 terminal_reason；
-    留中来自既有 dossier_decision=hold。两者都没有时，原样交回呈现，
-    由事件写口对白名单事件响亮拒绝，不在这里把呈现词猜成结局。
-    """
-    choice = dict(item.choice) if isinstance(item.choice, dict) else {}
-    execution = item.execution_option if isinstance(item.execution_option, dict) else {}
-    structured = execution.get("terminal_reason")
-    held = str(execution.get("dossier_decision") or "") == "hold"
-    if held and structured not in (None, ""):
-        raise ValueError(f"批红选项不能同时留中又带结局：{item.decision_key}")
-    if held:
-        choice["dossier_decision"] = "hold"
-        choice.pop("terminal_reason", None)
-        return choice
-    if structured not in (None, ""):
-        choice["terminal_reason"] = structured
-    return choice
-
-
 def apply_rescript_batch(
     db: Any,
     state: Any,
@@ -1405,7 +1383,7 @@ def apply_rescript_batch(
                     result.applied_keys.append(item.decision_key)
                     continue
                 # 请旨身份不是 events 表事件；与 dossier: 同属案头身份前缀，不得进 event_triggers。
-                ledger_choice = _rescript_event_choice(item)
+                # 三饷只走上述 levy-petition 交接；普通请旨不反推事件身份。
                 if (
                     event_id
                     and not event_id.startswith("dossier:")
@@ -1413,20 +1391,7 @@ def apply_rescript_batch(
                     and not event_id.startswith(_DECREE_QUESTION_PREFIX)
                 ):
                     db.record_event_decision_choice(
-                        state, event_id, ledger_choice, commit=False,
-                    )
-                # #1899：请旨机标带来的**事件绑定**（#1891 交接）。案头身份按前缀被
-                # 排除在事件账之外，但绑定指向的是一个真事件——这道批语须落进它的
-                # 事件账，其机械后果（升率「准」= 重新开征）才会在下月 tick 被消费。
-                # 此前绑定在 `_question_as_decision` 物化时就丢了，皇帝真批「准」，
-                # 事件账仍空、目录仍罢，下月三饷应征 0（judge 188bf9）。
-                # 绑定只取机标显式带来的那一个，不从疏文猜配（ADR 0142）；案头身份
-                # 仍管续推路由，两者分列（见 pending_decisions.bound_event_id）。
-                # 落账用服务端选项的结构化结局，不用呈现 label 当转译。
-                bound_event_id = str(item.row.get("bound_event_id") or "").strip()
-                if bound_event_id:
-                    db.record_event_decision_choice(
-                        state, bound_event_id, ledger_choice, commit=False,
+                        state, event_id, item.choice, commit=False,
                     )
                 result.applied_keys.append(item.decision_key)
                 continue

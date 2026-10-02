@@ -2386,11 +2386,6 @@ class GameDB:
             "pending_decisions", "revision_round", "INTEGER NOT NULL DEFAULT 0")
         self.ensure_column(
             "pending_decisions", "prior_options_json", "TEXT NOT NULL DEFAULT '[]'")
-        # #1899：请旨机标带来的**事件绑定**（#1891 交接）与案头身份分列：案头身份
-        # （world-question: / decree-question:）管续推路由，事件绑定管这道批红落哪个
-        # 事件账。两者混在一列会让绑定在物化时丢失、或反过来污染续推路由。
-        self.ensure_column(
-            "pending_decisions", "bound_event_id", "TEXT NOT NULL DEFAULT ''")
         self._backfill_event_triggers_from_event_pool_issues()
         # 步骤7：回合阶段（旧库迁移，schema 升级非 fallback）
         self.ensure_column("game_state", "turn_phase", "TEXT NOT NULL DEFAULT 'summoning'")
@@ -11059,13 +11054,12 @@ class GameDB:
         for d in decisions:
             self.conn.execute(
                 """INSERT INTO pending_decisions
-                   (turn, idx, event_id, bound_event_id, title, context, rejection_reason,
+                   (turn, idx, event_id, title, context, rejection_reason,
                     opposition, options_json, choice_json, status, kind)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '', 'pending', 'decision')""",
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, '', 'pending', 'decision')""",
                 (
                     turn, next_idx,
                     str(d.get("event_id") or ""),
-                    str(d.get("bound_event_id") or ""),
                     str(d.get("title") or ""),
                     str(d.get("context") or ""),
                     str(d.get("rejection_reason") or ""),
@@ -11092,7 +11086,7 @@ class GameDB:
         #657：补 revision_round / prior_options_json 投影。
         """
         rows = self.conn.execute(
-            "SELECT idx, event_id, bound_event_id, title, context, rejection_reason, "
+            "SELECT idx, event_id, title, context, rejection_reason, "
             "opposition, options_json, choice_json, status, kind, actor_name, actor_office, "
             "actor_faction, turn, revision_round, prior_options_json "
             "FROM pending_decisions WHERE turn = ? AND kind = 'decision' ORDER BY idx",
@@ -11125,7 +11119,6 @@ class GameDB:
                 "source_turn": source_turn,
                 "turn": source_turn,
                 "event_id": r["event_id"],
-                "bound_event_id": r["bound_event_id"],
                 "title": r["title"],
                 "context": r["context"],
                 "rejection_reason": r["rejection_reason"],
@@ -11264,7 +11257,7 @@ class GameDB:
         turn = int(turn)
         rows = self.conn.execute(
             """
-            SELECT turn, idx, event_id, bound_event_id, title, context, rejection_reason,
+            SELECT turn, idx, event_id, title, context, rejection_reason,
                    opposition, options_json, choice_json, status, kind,
                    actor_name, actor_office, actor_faction,
                    revision_round, prior_options_json
@@ -11312,7 +11305,6 @@ class GameDB:
             "turn": source_turn,
             "idx": idx,
             "event_id": r["event_id"],
-            "bound_event_id": r["bound_event_id"] if "bound_event_id" in r.keys() else "",
             "title": r["title"],
             "context": r["context"],
             "rejection_reason": r["rejection_reason"] if "rejection_reason" in r.keys() else "",
@@ -11349,7 +11341,7 @@ class GameDB:
                 continue
             r = self.conn.execute(
                 """
-                SELECT turn, idx, event_id, bound_event_id, title, context, rejection_reason,
+                SELECT turn, idx, event_id, title, context, rejection_reason,
                        opposition, options_json, choice_json, status, kind,
                        actor_name, actor_office, actor_faction,
                        revision_round, prior_options_json
@@ -20005,53 +19997,15 @@ class GameDB:
         if not eid:
             return
         self._ensure_event_parent(eid)
-        choice_dict = choice if isinstance(choice, dict) else {}
-        payload = json.dumps(choice_dict, ensure_ascii=False)
-        raw_label = str(choice_dict.get("label") or "")
-        label = raw_label[:200]
-        # 结局取结构化 terminal_reason；缺该字段时，直接写口仍接受本就是白名单
-        # 标签的 label（案头标准选项、测试直写）。留中是 dossier_decision=hold，
-        # 不写准驳。白名单事件对不上就响亮拒绝，不把呈现词静默当成无效果。
-        # 已有非空终态一律保留（ADR 0115 first-wins）。
-        event = self.content.event_by_id.get(eid)
-        allowed = list(getattr(event, "terminal_reason_labels", []) or []) if event is not None else []
-        held = str(choice_dict.get("dossier_decision") or "") == "hold"
-        structured = choice_dict.get("terminal_reason")
-        has_structured = structured not in (None, "")
-        if held and has_structured:
-            raise ValueError(f"事件 {eid} 的批语不能同时留中又带结局")
-        if allowed and not held:
-            from ming_sim.issues import _normalize_event_terminal_reason
-            raw_outcome = structured if has_structured else raw_label
-            stored_reason = _normalize_event_terminal_reason(event, raw_outcome)
-            if not stored_reason:
-                raise ValueError(
-                    f"事件 {eid} 的批语没有可归一的结局：{raw_outcome!r}"
-                )
-            replace_pending = True
-        elif held:
-            stored_reason = ""
-            replace_pending = False
-        else:
-            stored_reason = label
-            replace_pending = True
-        replace_flag = 1 if replace_pending else 0
-        hold_flag = 1 if held else 0
-        prior = self.conn.execute(
-            "SELECT terminal_state, terminal_reason FROM event_triggers WHERE event_id = ?",
-            (eid,),
-        ).fetchone()
-        prior_state = str(prior["terminal_state"] or "") if prior is not None else ""
-        prior_reason = str(prior["terminal_reason"] or "") if prior is not None else ""
+        payload = json.dumps(choice if isinstance(choice, dict) else {}, ensure_ascii=False)
+        label = str((choice or {}).get("label") or "") if isinstance(choice, dict) else ""
         self.conn.execute(
             """
             INSERT INTO event_triggers
                 (event_id, turn, year, period, source, terminal_state, terminal_reason, choice_json)
             VALUES (?, ?, ?, ?, ?, '', ?, ?)
             ON CONFLICT(event_id) DO UPDATE SET
-                -- 终态账不可逆：HITL 选择只暂存 choice_json；新行不抢先写 triggered。
-                -- 冲突时保留已有 terminal_state。source 只有空终态或已 triggered 才更新。
-                -- 留中清掉尚未终局的准驳暂存，已终局的原因不动。
+                -- 普通事件选择暂存；终态不可逆。三饷亲裁不走本写口。
                 source = CASE
                     WHEN COALESCE(event_triggers.terminal_state, '') IN ('', 'triggered')
                     THEN excluded.source
@@ -20060,33 +20014,15 @@ class GameDB:
                 terminal_state = event_triggers.terminal_state,
                 terminal_reason = CASE
                     WHEN COALESCE(event_triggers.terminal_state, '') = ''
-                         AND ? = 1
                     THEN excluded.terminal_reason
-                    WHEN COALESCE(event_triggers.terminal_state, '') = ''
-                         AND ? = 1
-                    THEN ''
-                    WHEN COALESCE(event_triggers.terminal_state, '') = ''
-                    THEN event_triggers.terminal_reason
                     WHEN COALESCE(event_triggers.terminal_reason, '') = ''
-                         AND ? = 1
                     THEN excluded.terminal_reason
                     ELSE event_triggers.terminal_reason
                 END,
                 choice_json = excluded.choice_json
             """,
-            (
-                eid, state.turn, state.year, state.period, source, stored_reason, payload,
-                replace_flag, hold_flag, replace_flag,
-            ),
+            (eid, state.turn, state.year, state.period, source, label, payload),
         )
-        # 财政只跟随本写口新收下的结局。判据是写前的终态与原因，不用写后读回
-        # 相等：已终局的同标签重交读回去仍相等，但并没有接受新裁断。
-        reason_landed = bool(stored_reason) and prior_reason != stored_reason and (
-            prior_state == "" or prior_reason == ""
-        )
-        if reason_landed:
-            from ming_sim.issues import _fiscal_levy_apply_emperor_ruling
-            _fiscal_levy_apply_emperor_ruling(self, state, eid, stored_reason)
         if commit:
             self.conn.commit()
 

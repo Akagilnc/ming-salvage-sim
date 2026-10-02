@@ -215,49 +215,97 @@ def test_emperor_approves_levy_petition_through_real_month_chain(game, monkeypat
     assert _settle_p(db)["p"]["三饷应征"] == before
 
 
-def test_approved_rate_updates_next_month_settle_levy_and_transport(game, monkeypatch):
-    """批准后事件终局为已准；下月过月后 settle 的三饷应征与起运定额改按新额。"""
+@pytest.mark.parametrize("abolition", [None, "remove_before", "zero_before", "remove_after", "zero_after"])
+def test_approved_rate_updates_next_month_settle_levy_and_transport(game, monkeypatch, abolition):
+    """最后有效旨意经月链消费；重开不重算本月，旧终局重交不复征。"""
+    from ming_sim.declaration_dispatch import dispatch_declaration
+
     db, state, content = game
     _prepare(db, state, content, monkeypatch)
     before = _settle_p(db)["p"]["三饷应征"]
     target = before * 4.0 / 3.0
-    _install_model_boundary(
-        monkeypatch,
-        world_text="本月边情，户部请加辽饷。" + _levy_block(),
-        declaration={"effects": [{
-            "event_id": "liao_levy_rise_1631",
-            "事件结局": {"liao_levy_rise_1631": "已准"},
-        }]},
-    )
-    session = _make_session(db, state, content)
 
+    def abolish(zeroing=False):
+        field = "fiscal_changes" if zeroing else "fiscal_removes"
+        item = {"key": "辽饷_rate", "origin_ref": "盘面自发", "reason": "罢征"}
+        if zeroing:
+            item["delta"] = -100
+        dispatch_declaration(db, state, {"effects": [{field: [item]}]})
+
+    if abolition and abolition.endswith("before"):
+        abolish(abolition.startswith("zero"))
+    _install_model_boundary(monkeypatch, world_text="本月边情，户部请加辽饷。" + _levy_block())
+    session = _make_session(db, state, content)
     session.resolve_turn(allow_empty_decree=True)
     row = session.pending_decisions()[0]
+    effects = [{
+        "event_id": "liao_levy_rise_1631",
+        "事件结局": {"liao_levy_rise_1631": "已准"},
+    }]
+    if abolition and abolition.endswith("after"):
+        field = "fiscal_changes" if abolition.startswith("zero") else "fiscal_removes"
+        item = {"key": "辽饷_rate", "origin_ref": "盘面自发", "reason": "准后罢征"}
+        if field == "fiscal_changes":
+            item["delta"] = -100
+        effects.append({field: [item]})
+        target = 0
+    _install_model_boundary(monkeypatch, world_text="", declaration={"effects": effects})
+    # 已算本月财政，不因答复重算。
+    closed_turn = int(state.turn)
+    def remittance(turn):
+        return [tuple(row) for row in db.conn.execute(
+            "SELECT delta FROM economy_ledger WHERE account='国库' "
+            "AND category='起运' AND turn=? ORDER BY id", (turn,),
+        )]
+    paid = remittance(closed_turn)
+    assert paid
     session.submit_hitl_choices(
         [{"decision_key": row["decision_key"], "action": "decision", "label": "准行加派"}],
         write_gate=session._write_gate,
     )
     assert _ledger_field(db, "terminal_reason") == "已准"
+    assert _settle_p(db)["p"]["三饷应征"] == (0 if abolition and abolition.endswith("before") else before)
+    assert remittance(closed_turn) == paid
+    path = db.path
+    session.close()
+    db = GameDB(path, content)
+    state = db.load_state()
+    session = _make_session(db, state, content)
+    try:
+        assert remittance(closed_turn) == paid
+        _install_model_boundary(monkeypatch, world_text="本月无大事。")
+        second = session.resolve_turn(allow_empty_decree=True)
+        assert second.advanced is True, (second.stage, second.awaiting)
+        after = _settle_p(db)
+        assert after["p"]["三饷应征"] == pytest.approx(target)
+        assert after["p"]["起运定额"] == pytest.approx(after["_meta"]["正赋起运基线"] + target)
+        assert remittance(closed_turn) == paid
+        assert sum(value[0] for value in remittance(int(state.turn) - 1)) > 0
+        # 同标签及相反标签重交都不是新决定；下月不得重放复征。
+        if target:
+            abolish()
+        for label in ("已准", "已驳"):
+            result = issues.apply_petition_event_outcome(state, db, "liao_levy_rise_1631", label)
+            assert result["settled"] is False
+            assert result["terminal_reason"] == "已准"
+        session.resolve_turn(allow_empty_decree=True)
+        assert _settle_p(db)["p"]["三饷应征"] == 0
+    finally:
+        session.close()
 
-    # 下月过月后，settle 的三饷应征与起运定额改按新额。
-    _install_model_boundary(monkeypatch, world_text="本月无大事。")
-    second = session.resolve_turn(allow_empty_decree=True)
-    assert second.advanced is True, (second.stage, second.awaiting)
 
-    after = _settle_p(db)
-    assert math.isclose(after["p"]["三饷应征"], target, rel_tol=1e-9, abs_tol=1e-9)
-    assert math.isclose(
-        after["p"]["起运定额"],
-        after["_meta"]["正赋起运基线"] + target,
-        rel_tol=1e-9, abs_tol=1e-9,
-    )
-
-
-def test_emperor_rejects_levy_petition_keeps_nine_li(game, monkeypatch):
+@pytest.mark.parametrize("abolished", [False, True])
+def test_emperor_rejects_levy_petition_keeps_nine_li(game, monkeypatch, abolished):
     """驳征不加派：辽饷仍九厘，终局一次落「已驳」。"""
     db, state, content = game
     _prepare(db, state, content, monkeypatch)
     before = _settle_p(db)["p"]["三饷应征"]
+    if abolished:
+        from ming_sim.declaration_dispatch import dispatch_declaration
+        dispatch_declaration(db, state, {"effects": [{"fiscal_removes": [{
+            "key": "辽饷_rate", "origin_ref": "盘面自发", "reason": "罢征",
+        }]}]})
+        before = 0
     seen = _install_model_boundary(
         monkeypatch,
         world_text="本月边情，户部请加辽饷。" + _levy_block(),
@@ -283,12 +331,19 @@ def test_emperor_rejects_levy_petition_keeps_nine_li(game, monkeypatch):
     assert _settle_p(db)["p"]["三饷应征"] == before
 
 
-def test_held_levy_petition_advances_month_without_terminal_state(game, monkeypatch):
+@pytest.mark.parametrize("abolished", [False, True])
+def test_held_levy_petition_advances_month_without_terminal_state(game, monkeypatch, abolished):
     """留中：本次奏疏已答、事件未裁定、征收不变；本月仍能续推推进。"""
     db, state, content = game
     _prepare(db, state, content, monkeypatch)
     before = _settle_p(db)["p"]["三饷应征"]
     closed_turn = int(state.turn)
+    if abolished:
+        from ming_sim.declaration_dispatch import dispatch_declaration
+        dispatch_declaration(db, state, {"effects": [{"fiscal_removes": [{
+            "key": "辽饷_rate", "origin_ref": "盘面自发", "reason": "罢征",
+        }]}]})
+        before = 0
     # 留中＝转译不声明该事件结局（代码不据批语文字补结局）。
     seen = _install_model_boundary(
         monkeypatch, world_text="本月边情，户部请加辽饷。" + _levy_block(),
@@ -312,6 +367,11 @@ def test_held_levy_petition_advances_month_without_terminal_state(game, monkeypa
     # 留中不改征收。
     assert _settle_p(db)["p"]["三饷应征"] == before
     assert int(state.turn) > closed_turn
+    _install_model_boundary(monkeypatch, world_text="本月无大事。")
+    second = session.resolve_turn(allow_empty_decree=True)
+    assert second.advanced is True
+    assert _ledger_field(db, "terminal_state") == ""
+    assert _settle_p(db)["p"]["三饷应征"] == before
 
 
 @pytest.mark.parametrize("raw_label", ["胡乱", {}])

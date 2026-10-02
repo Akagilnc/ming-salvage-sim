@@ -1245,15 +1245,7 @@ def _event_terminal_states(db: GameDB) -> Dict[str, str]:
 
 
 def _event_terminal_records(db: GameDB) -> Dict[str, Dict[str, str]]:
-    """事件账的终态读出。
-
-    #1899：此前此处还带出 `choice_json` 与 `turn`——前者用来在消费端回猜「这道结局
-    是否皇帝亲裁」，后者用来比「这道『准』是否仍是最后一道批语」。两者都是把
-    「皇帝亲批的复征」从批红时刻**推迟到消费时刻**才做的补丁：亲裁之别如今由结构
-    保证（复征只挂在 `record_event_decision_choice` 这个批红写口上，自动基线桩
-    到不了），先后之别由写入顺序保证（罢与复都在各自批语落下的当场改目录）。故
-    两字段连同其比较一并删除，不再在消费端重建批语时序。
-    """
+    """只读事件终态；财政不由历史批语重建或重放征收决定。"""
     records: Dict[str, Dict[str, str]] = {}
     for r in db.conn.execute(
         "SELECT event_id, terminal_state, terminal_reason FROM event_triggers"
@@ -1424,12 +1416,8 @@ def _fiscal_levy_catalog_in_force(db: GameDB, keys: tuple) -> bool:
     `create_fiscal_item` 重立 / 调回正值），目录现值即是最后一道批语的结果，「以最后
     一次批语为准」由**写口的后写覆盖先写**天然保证，不需任何时序重建或 tie-break。
 
-    「当场」二字是 F2 的真正闭合处：升率的「准」经 `record_event_decision_choice`
-    这个批红写口**在批红那一刻**就经同一组重立写口复征（见
-    `_fiscal_levy_apply_emperor_ruling`），不再推迟到消费那一刻再补——推迟之后唯一
-    可用的先后信号只剩 `turn`（月份），同月两种真实先后被压成一个数，代码只能自造
-    固定优先规则，而两种顺序里必有一种被判反（owner 裁定 2026-10-01「相反批语按最后
-    一条算」：同月先准后罢应停征、先罢后准应复征）。
+    准征只在 `apply_petition_event_outcome` 接受新裁断时复征；原批语保存不是裁断。
+    次月消费只读目录，不重放旧事件终局。
 
     判据是**整组齐全且全正**，不是「任一键为正」：dynamic 赋饷的实收 ∝ base×rate，
     罢走「调零」写口只把 rate 归零而 base 留着 seed 值——此时实收恒为 0，罢**成立**，
@@ -1555,6 +1543,12 @@ def apply_petition_event_outcome(
     db.mark_event_triggered(
         state, eid, source=FISCAL_LEVY_RESCRIPT_SOURCE, terminal_reason=label, commit=False,
     )
+    # 只消费本次接受的新裁断；已终局重交在上方返回，不重放财政效果。
+    if eid == _LIAO_LEVY_RISE_EVENT_ID and label == "已准":
+        _fiscal_levy_reinstate_abolished(
+            db, state, _FISCAL_LEVY_LIAO_KEYS,
+            origin_ref=f"event:{eid}", reason="升率获准，重新开征辽饷",
+        )
     apply_event_cascading_invalidations(state, db, commit=False)
     if owns_transaction:
         db.conn.commit()
@@ -1737,105 +1731,12 @@ def _fiscal_levy_reinstate_abolished(
         str(seeded.get("direction") or ""),
         str(seeded.get("display") or stem),
         int(seeded.get("value") or 0),
-        note=reason[:120],
+        note=reason,
         origin_ref=origin_ref,
         turn=int(state.turn),
         commit=False,
     )
     return created is not None
-
-
-def _fiscal_levy_withdraw_emperor_ruling(
-    db: GameDB,
-    state: GameState,
-    event_id: str,
-) -> bool:
-    """撤回本事件**仍拥有**的复征。当前行的 origin_ref 已改记后出决定时不动。
-
-    未终态上先准后驳：目录里仍挂着本事件 origin 的那一笔要逆回去。后出的独立
-    重立改了活行归属之后，历史账上的 origin 命中不再代表当前贡献。
-    调零复征写回该笔 change 的 old_value；整组仍都属本事件的重立才删行。
-    没有可撤的活贡献时目录不动——驳回不凭空罢征。
-    """
-    origin_ref = f"event:{event_id}"
-    owned = {
-        str(row["key"]): int(row["value"] or 0)
-        for row in db.conn.execute(
-            "SELECT key, value FROM fiscal_config WHERE origin_ref = ?",
-            (origin_ref,),
-        )
-    }
-    if not owned:
-        return False
-    reverted = False
-    reversed_keys: set[str] = set()
-    for row in db.conn.execute(
-        "SELECT key, old_value FROM fiscal_config_changes "
-        "WHERE origin_ref = ? AND new_value > 0 AND old_value <= 0 ORDER BY id",
-        (origin_ref,),
-    ):
-        key = str(row["key"])
-        if key not in owned or owned[key] <= 0:
-            continue
-        _write_fiscal_config_change(
-            db, turn=int(state.turn), key=key,
-            old_value=owned[key], new_value=int(row["old_value"] or 0),
-            origin_ref=origin_ref, reason="升率批语被更晚的批语取代，撤回复征",
-        )
-        reversed_keys.add(key)
-        reverted = True
-    stems_done: set[str] = set()
-    for row in db.conn.execute(
-        "SELECT DISTINCT key FROM fiscal_config_creations WHERE origin_ref = ?",
-        (origin_ref,),
-    ):
-        key = str(row["key"])
-        if key in reversed_keys or key not in owned:
-            continue
-        stem = db._stem_of(key)
-        if not stem or stem in stems_done:
-            continue
-        stems_done.add(stem)
-        live = db.conn.execute(
-            "SELECT origin_ref FROM fiscal_config WHERE key IN (?, ?)",
-            (f"{stem}_base", f"{stem}_rate"),
-        ).fetchall()
-        if not live or any(str(item["origin_ref"] or "") != origin_ref for item in live):
-            continue
-        if db.remove_fiscal_item(
-            key, commit=False, origin_ref=origin_ref,
-            reason="升率批语被更晚的批语取代，撤回复征", turn=int(state.turn),
-        ) is not None:
-            reverted = True
-    return reverted
-
-
-def _fiscal_levy_apply_emperor_ruling(
-    db: GameDB,
-    state: GameState,
-    event_id: str,
-    label: str,
-) -> bool:
-    """把写口已经收下的辽饷升率结局落到目录。
-
-    调用方只在本写口新收下合法标签时进来。「已准」复征已罢的辽饷；「已驳」只撤
-    本事件仍拥有的复征。留中不进这里，也不改目录。
-    """
-    if str(event_id or "").strip() != _LIAO_LEVY_RISE_EVENT_ID:
-        return False
-    ev = _fiscal_levy_event_by_id(_LIAO_LEVY_RISE_EVENT_ID)
-    if ev is None:
-        return False
-    accepted = _normalize_event_terminal_reason(ev, label)
-    if accepted == "已准":
-        return _fiscal_levy_reinstate_abolished(
-            db, state, _FISCAL_LEVY_LIAO_KEYS,
-            origin_ref=f"event:{_LIAO_LEVY_RISE_EVENT_ID}",
-            reason="升率获准，重新开征辽饷",
-        )
-    if accepted == "已驳":
-        return _fiscal_levy_withdraw_emperor_ruling(db, state, _LIAO_LEVY_RISE_EVENT_ID)
-    return False
 
 
 def _apply_fiscal_levy_targets(
@@ -1854,7 +1755,7 @@ def _apply_fiscal_levy_targets(
     #   · 目录在征 → 按在征率征（升率已准则用新率，owner d5405bb6）；
     #   · 目录已罢 → 不征，且目录残值（base 仍 43）不再能否决这道罢。
     # 「准」遇已罢的辽饷 = 皇帝重新开征，那道复征在**批红落账当场**经真写口写入
-    # （见 `_fiscal_levy_apply_emperor_ruling`），消费端不重放：旧准不会被更后出的
+    # （见 `apply_petition_event_outcome`），消费端不重放：旧准不会被更后出的
     # 罢顶掉，同一道准也不会在重入时凭空复征。
     liao_in_force = _fiscal_levy_catalog_in_force(db, _FISCAL_LEVY_LIAO_KEYS)
     tian_abolished = not _fiscal_levy_tian_in_force(db)
@@ -2819,7 +2720,7 @@ def gather_candidate_events(state: GameState, db: GameDB) -> List[Event]:
     都排除已触发过的。返回的候选清单交推演 agent 因果判定是否真触发。
 
     #1892/#1893 分工：进本清单 = 交模型在月末世界段里挑的人物事件。三饷
-    （``fiscal_levy``）是皇帝亲裁的加派决策，由批红时的圣旨／``record_event_decision_choice``
+    （``fiscal_levy``）是皇帝亲裁的加派决策，由答后转译／``apply_petition_event_outcome``
     落 ``事件结局``，其加不加不是模型能代批的事，故永不入人物候选（ADR 0020）。
     """
     c = _ctx()
