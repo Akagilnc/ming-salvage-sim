@@ -1,3 +1,5 @@
+
+from tests.conftest import wait_for_background_jobs
 import json
 
 from ming_sim.covert_levy import (
@@ -91,6 +93,7 @@ def test_empty_effect_month_rechecks_persisted_exposure(game, monkeypatch):
     )
     session = _prepare_player_month(db, state, content, monkeypatch)
     session.resolve_turn(allow_empty_decree=True)
+    wait_for_background_jobs(db)
     todos = db.list_next_audience_todos(status="pending")
     assert any(t["entry_kind"] == ENTRY_KIND for t in todos)
 

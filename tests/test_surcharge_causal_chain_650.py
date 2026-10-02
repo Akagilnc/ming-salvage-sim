@@ -11,6 +11,8 @@ apply_historical_fiscal_rates（饷率 effect 通道）。
 
 from __future__ import annotations
 
+from tests.conftest import wait_for_background_jobs
+
 import json
 import math
 
@@ -70,8 +72,10 @@ def _settle_month(state, db, delta, *, before_turn, content, monkeypatch, narrat
         translate=lambda *_a, **_k: {"effects": delta},
     )
     session.resolve_turn(allow_empty_decree=True)
+    wait_for_background_jobs(db)
     db.save_turn_report(state, narrative, public_body=narrative)
     session.resolve_turn(allow_empty_decree=True)
+    wait_for_background_jobs(db)
 
 
 def _expected_inflow_persons(base_wan: float, support: int) -> int:
@@ -266,9 +270,11 @@ def test_player_month_recovery_consumes_old_levy_once(game, monkeypatch):
     monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
     session = _recovery_session(db, state, content, monkeypatch)
     result = session.resolve_turn()
+    wait_for_background_jobs(db)
     assert result.stage == "gazette"
     assert _pop(db, "流民", "shaanxi") == before + want
     session.resolve_turn()
+    wait_for_background_jobs(db)
     assert _pop(db, "流民", "shaanxi") == before + want
     assert int(state.turn) == turn
 

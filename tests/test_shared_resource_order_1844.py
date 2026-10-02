@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from tests.conftest import wait_for_background_jobs
+
 import json
 import sqlite3
 
@@ -44,7 +46,9 @@ def _stage_player_edict(db, state, minister, affair_id, effects, text):
 
 def _resolve_player_month(db, state, content, monkeypatch):
     session = _prepare_player_month(db, state, content, monkeypatch)
-    return session.resolve_turn(allow_empty_decree=True)
+    result = session.resolve_turn(allow_empty_decree=True)
+    wait_for_background_jobs(db)
+    return result
 
 
 def _quiesce_treasury_tick(db):

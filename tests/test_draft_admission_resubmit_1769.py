@@ -211,6 +211,9 @@ def _assert_error_pack_from(game, turn: int, marker: str) -> None:
 
 def _finish_month_after_gazette(game, turn: int) -> None:
     """ADR 0157：写成邸报后主链才推进。作者替身已写成时不再推进第二次。"""
+    from tests.conftest import wait_for_background_jobs
+
+    wait_for_background_jobs(game.db)
     if int(game.state.turn) > int(turn):
         assert int(game.state.turn) == int(turn) + 1
         return
@@ -223,6 +226,7 @@ def _finish_month_after_gazette(game, turn: int) -> None:
     result = run_player_month_chain(
         game.state, game.db, game.session.agno_db, game.session.llm_config,
     )
+    wait_for_background_jobs(game.db)
     assert result.advanced is True
     assert int(game.state.turn) == int(turn) + 1
 

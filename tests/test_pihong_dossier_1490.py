@@ -11,6 +11,8 @@ A. bind 对无能力字段的 dossier: 前缀解绑；due-commitment 同形不�
 D. 命中 allowed 后从服务端 option 重建 label/hint/能力字段，客户端只留 note。
 """
 from __future__ import annotations
+
+from tests.conftest import wait_for_background_jobs
 import asyncio
 import copy
 import json
@@ -272,7 +274,10 @@ def _client() -> httpx.AsyncClient:
 
 async def _post_resolve(choices: list[dict]) -> httpx.Response:
     async with _client() as client:
-        return await client.post('/api/decree/resolve_decisions/stream', json={'choices': choices})
+        response = await client.post('/api/decree/resolve_decisions/stream', json={'choices': choices})
+    # The HTTP barrier has released; fixture reads/writes must follow accepted tail work.
+    assert web_app.web_game._runtime_write_queue().wait_idle()
+    return response
 
 async def _get_state() -> dict:
     async with _client() as client:
@@ -2557,6 +2562,7 @@ def test_658_free_decree_capture_target_dossier_real_entry(game, monkeypatch):
     monkeypatch.setattr(decree_mod, 'llm_promulgation_verdicts', _reject_reviewed)
     monkeypatch.setattr(session_mod, 'write_decree_with_agno', lambda *a, **k: f'诏曰强推案卷{did}')
     resolve_result = session.resolve_turn()
+    wait_for_background_jobs(db)
     assert len(db.list_decree_dossiers()) == before
     pushed = db.get_decree_dossier(did)
     assert pushed is not None
@@ -2683,12 +2689,14 @@ def test_658_routing_rejected_draft_retries_across_real_turn_boundaries(
     bad = int(db.add_directive(state, None, '缺账拨帑', 'player-decree-test', dossier_payload={'dossier_action_type': 'grant_allocation', 'target_kind': 'issue', 'target_id': 'route-缺账', 'amount': 100}))
     good = int(db.add_directive(state, None, '清丈', 'player-decree-test', dossier_payload={'dossier_action_type': 'assignment', 'target_kind': 'issue', 'target_id': 'route-清丈', 'transaction_category': '清丈', 'participant_roster': _roster(_ROSTER_LEAD)}))
     first = session.resolve_turn()
+    wait_for_background_jobs(db)
     assert first.awaiting is False
     assert int(state.turn) == original_turn
     db.conn.execute('INSERT INTO turn_reports (turn, year, period, report) VALUES (?, ?, ?, ?)', (original_turn, original_year, original_period, '邸报已成'))
     db.conn.commit()
     from ming_sim.month_chain import run_player_month_chain
     advanced = run_player_month_chain(state, db, session.agno_db, session.llm_config)
+    wait_for_background_jobs(db)
     assert advanced.advanced is True
     assert int(state.turn) == original_turn + 1
     statuses = dict(db.conn.execute('SELECT id,status FROM turn_directives WHERE id IN (?,?)', (bad, good)).fetchall())
@@ -2713,10 +2721,12 @@ def test_658_routing_rejected_draft_retries_across_real_turn_boundaries(
     # #1902：会话层 update_directive 随拟诏台手写改稿入口退役而删，落库改走引擎面。
     session.db.update_directive_text(bad, '补账重拟', dossier_payload={'dossier_action_type': 'grant_allocation', 'target_kind': 'issue', 'target_id': 'route-缺账-retry', 'amount': 100, 'account': '国库'})
     second = session.resolve_turn()
+    wait_for_background_jobs(db)
     assert second.awaiting is False
     assert int(state.turn) == original_turn + 1
     db.save_turn_report(state, '邸报已成')
     advanced = run_player_month_chain(state, db, session.agno_db, session.llm_config)
+    wait_for_background_jobs(db)
     assert advanced.advanced is True
     assert int(state.turn) == original_turn + 2
     statuses = dict(db.conn.execute('SELECT id,status FROM turn_directives WHERE id IN (?,?)', (bad, good)).fetchall())

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from tests.conftest import wait_for_background_jobs
+
 import shutil
 import threading
 
@@ -179,6 +181,7 @@ def test_public_saying_excluded_name_does_not_see_it_others_do(game, monkeypatch
     )
     session._write_gate = threading.Lock()
     advanced = session.resolve_turn(allow_empty_decree=True)
+    wait_for_background_jobs(db)
     assert advanced.advanced is True
     assert int(state.turn) == before_turn + 1
 

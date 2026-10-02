@@ -10,6 +10,8 @@
 
 from __future__ import annotations
 
+from tests.conftest import wait_for_background_jobs
+
 import pytest
 
 from ming_sim import issues
@@ -65,8 +67,10 @@ def test_883_two_turn_probe_secret_never_enters_shared_archives(game, monkeypatc
         secret_orders_supply=lambda *a, **k: {"dossier_progress_reports": reports},
     )
     player.resolve_turn(allow_empty_decree=True)
+    wait_for_background_jobs(db)
     db.save_turn_report(state, "邸报", public_body="邸报")
     player.resolve_turn(allow_empty_decree=True)
+    wait_for_background_jobs(db)
 
     brief = db.conn.execute(
         "SELECT body, minister_name FROM secret_order_briefs WHERE order_id=?", (oid,)

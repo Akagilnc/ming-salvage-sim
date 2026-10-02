@@ -229,6 +229,7 @@ def test_http_audience_one_matter_grant_with_deadline_1783(
 
         # 验收 3：作者替身写成邸报后进入期限月，漂移写下到期复核，下一月才消费。
         from ming_sim.month_chain import run_player_month_chain
+        from tests.conftest import wait_for_background_jobs
         from ming_sim.due_review import list_due_review_scenes
         from ming_sim.staged_commitment import TODO_STATUS_PENDING
 
@@ -237,6 +238,7 @@ def test_http_audience_one_matter_grant_with_deadline_1783(
             game.state, game.db, game.session.agno_db, game.session.llm_config,
             content=game.content,
         )
+        wait_for_background_jobs(game.db)
         assert advanced.advanced is True
         assert int(game.state.turn) == closed + 1
         assert game.db.list_next_audience_todos(status=TODO_STATUS_PENDING)
@@ -253,6 +255,7 @@ def test_http_audience_one_matter_grant_with_deadline_1783(
             game.state, game.db, game.session.agno_db, game.session.llm_config,
             content=game.content,
         )
+        wait_for_background_jobs(game.db)
         assert consumed.advanced is True
         after_due = game.db.get_decree_dossier(dossier_id)
         assert after_due is not None

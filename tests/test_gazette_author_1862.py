@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from tests.conftest import wait_for_background_jobs
+
 import json
 
 import pytest
@@ -80,6 +82,7 @@ def test_author_waits_until_rescript_is_done(game, monkeypatch):
     )
     session = _session(db, state, content, monkeypatch)
     held = session.resolve_turn(allow_empty_decree=True)
+    wait_for_background_jobs(db)
     assert held.stage == "rescript"
     assert held.advanced is False
     assert calls == []
@@ -320,6 +323,7 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
         release_material_tree(before.root)
     session = _session(db, state, content, monkeypatch)
     result = session.resolve_turn(allow_empty_decree=True)
+    wait_for_background_jobs(db)
 
     assert result.advanced is True
     assert int(state.turn) == turn + 1
@@ -455,6 +459,7 @@ def test_gazette_failure_retries_report_only(game, monkeypatch):
     assert failure["step"] == "gazette"
 
     result = session.resolve_turn(allow_empty_decree=True)
+    wait_for_background_jobs(db)
     assert result.advanced is True
     assert gazette_calls["n"] == 2
     assert world_calls == [1]

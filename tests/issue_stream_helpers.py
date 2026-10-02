@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
+from tests.conftest import wait_for_background_jobs
 from tests.sse_helpers import parse_sse_events as _parse_sse
 
 
@@ -64,7 +65,11 @@ def post_issue_stream(client, *, expected_turn: Optional[int] = None, step: str 
         body["expected_turn"] = int(expected_turn)
     resp = client.post("/api/decree/issue/stream", json=body)
     assert resp.status_code == 200, f"{step} → {resp.status_code}: {resp.text}"
-    return _terminal_payload(_parse_sse(resp.text), step=step)
+    payload = _terminal_payload(_parse_sse(resp.text), step=step)
+    from web_app import get_game
+
+    wait_for_background_jobs(get_game().db)
+    return payload
 
 
 async def apost_issue_stream(client, *, expected_turn: Optional[int] = None,
@@ -75,7 +80,11 @@ async def apost_issue_stream(client, *, expected_turn: Optional[int] = None,
         body["expected_turn"] = int(expected_turn)
     resp = await client.post("/api/decree/issue/stream", json=body)
     assert resp.status_code == 200, f"{step} → {resp.status_code}: {resp.text}"
-    return _terminal_payload(_parse_sse(resp.text), step=step)
+    payload = _terminal_payload(_parse_sse(resp.text), step=step)
+    from web_app import get_game
+
+    wait_for_background_jobs(get_game().db)
+    return payload
 
 
 async def consume_issue_stream_response(response, *, step: str = "issue/stream"):
@@ -86,7 +95,11 @@ async def consume_issue_stream_response(response, *, step: str = "issue/stream")
     async for chunk in response.body_iterator:
         text = chunk.decode() if isinstance(chunk, (bytes, bytearray)) else str(chunk)
         events.extend(_parse_sse(text))
-    return _terminal_payload(events, step=step)
+    payload = _terminal_payload(events, step=step)
+    from web_app import get_game
+
+    wait_for_background_jobs(get_game().db)
+    return payload
 
 
 def issue_stream(expected_turn: int | None = None, *, cheat: str = ""):

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from tests.conftest import wait_for_background_jobs
+
 from ming_sim.session_write_queue import get_session_write_queue
 
 import json
@@ -97,6 +99,7 @@ def test_submit_event_decision_persists_choice_after_pending_cleanup(game, monke
         }],
         write_gate=get_session_write_queue(sess).write_gate,
     )
+    wait_for_background_jobs(db)
 
     assert db.list_pending_decisions(turn) == []
     row = db.conn.execute(
@@ -164,6 +167,7 @@ def test_submit_event_decision_binds_from_candidate_snapshot_without_event_id(ga
         [{"decision_key": d_key, "label": "留", "hint": "暂稳东江", "note": "姑留观后效"}],
         write_gate=get_session_write_queue(sess).write_gate,
     )
+    wait_for_background_jobs(db)
 
     assert db.list_pending_decisions(turn) == []
     row = db.conn.execute(
@@ -240,6 +244,7 @@ def test_submit_decisions_does_not_overwrite_already_decided_rows(game, monkeypa
 
     # ① 空载荷续跑不得清空
     assert sess.submit_hitl_choices([], write_gate=get_session_write_queue(sess).write_gate) == "ok"
+    wait_for_background_jobs(db)
     assert db.list_pending_decisions(turn)[0]["choice"] == original
 
     # 复位 awaiting 再试异载荷（模拟 phase2 再次失败后的续跑）
@@ -293,6 +298,7 @@ def test_submit_dossier_rescript_does_not_create_event_trigger(game, monkeypatch
     assert sess.submit_hitl_choices(
         [{**option, "decision_key": d_key}], write_gate=get_session_write_queue(sess).write_gate,
     ) == "ok"
+    wait_for_background_jobs(db)
     assert db.conn.execute(
         "SELECT 1 FROM event_triggers WHERE event_id=?",
         (f"dossier:{dossier_id}",),

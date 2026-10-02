@@ -6,6 +6,8 @@ LLM 外缝可打；续推函数本身保持真实实现。
 
 from __future__ import annotations
 
+from tests.conftest import wait_for_background_jobs
+
 import json
 import sqlite3
 import threading
@@ -76,6 +78,7 @@ def test_world_question_opens_rescript_desk_and_awaits(game, monkeypatch):
     session = make_light_session(db, state, content)
 
     result = session.resolve_turn(allow_empty_decree=True)
+    wait_for_background_jobs(db)
 
     assert result.awaiting is True
     assert result.stage == "rescript"
@@ -103,6 +106,7 @@ def test_world_segment_multiple_questions_share_one_desk(game, monkeypatch):
     session = make_light_session(db, state, content)
 
     result = session.resolve_turn(allow_empty_decree=True)
+    wait_for_background_jobs(db)
 
     assert result.awaiting is True
     titles = {row["title"] for row in session.pending_decisions()}
@@ -138,6 +142,7 @@ def test_prior_month_answered_rescript_does_not_block_or_reappear(game, monkeypa
     )
     session = make_light_session(db, state, content)
     result = session.resolve_turn(allow_empty_decree=True)
+    wait_for_background_jobs(db)
 
     assert result.awaiting is False
     assert result.stage == "gazette"
@@ -157,6 +162,7 @@ def test_this_turn_rejection_opens_triad_on_same_desk(game, monkeypatch):
     session = make_light_session(db, state, content)
 
     result = session.resolve_turn(allow_empty_decree=True)
+    wait_for_background_jobs(db)
 
     assert result.awaiting is True
     assert result.stage == "rescript"
@@ -190,6 +196,7 @@ def test_answering_triad_applies_and_releases_rescript_gate(game, monkeypatch, d
     )
     session = make_light_session(db, state, content)
     session.resolve_turn(allow_empty_decree=True)
+    wait_for_background_jobs(db)
     desk_row = session.pending_decisions()[0]
     selected = next(
         opt for opt in desk_row["options"] if opt.get("dossier_decision") == decision
@@ -205,6 +212,7 @@ def test_answering_triad_applies_and_releases_rescript_gate(game, monkeypatch, d
         }],
         write_gate=session._write_gate,
     )
+    wait_for_background_jobs(db)
 
     dossier = db.get_decree_dossier(int(selected["dossier_id"]))
     assert dossier["status"] == status
@@ -212,6 +220,7 @@ def test_answering_triad_applies_and_releases_rescript_gate(game, monkeypatch, d
     assert session.state.turn_phase == TurnPhase.SETTLING.value
     # 零待批后主链停在邸报交接，不得仍卡批红。
     again = session.resolve_turn(allow_empty_decree=True)
+    wait_for_background_jobs(db)
     assert again.awaiting is False
     assert again.stage == "gazette"
     del pending_id
@@ -251,6 +260,7 @@ def test_answering_world_question_resumes_suffix_then_gazette(game, monkeypatch)
     session = make_light_session(db, state, content)
     session.llm_config = object()
     session.resolve_turn(allow_empty_decree=True)
+    wait_for_background_jobs(db)
     desk_row = session.pending_decisions()[0]
     choice = desk_row["options"][0]
 
@@ -262,6 +272,7 @@ def test_answering_world_question_resumes_suffix_then_gazette(game, monkeypatch)
         }],
         write_gate=session._write_gate,
     )
+    wait_for_background_jobs(db)
 
     assert continuation_calls and continuation_calls[0][0]["label"] == choice["label"]
     assert any("关宁增戍" in seg for seg in dispatched_segments)
@@ -271,6 +282,7 @@ def test_answering_world_question_resumes_suffix_then_gazette(game, monkeypatch)
     assert chain.get("world_continued") is True
 
     again = session.resolve_turn(allow_empty_decree=True)
+    wait_for_background_jobs(db)
     assert again.stage == "gazette"
     assert again.awaiting is False
     # 同回合重入不得再烧续推。
@@ -327,6 +339,7 @@ def test_decree_question_continuation_idempotent_on_same_turn_reentry(game, monk
     session = make_light_session(db, state, content)
     session.llm_config = object()
     session.resolve_turn(allow_empty_decree=True)
+    wait_for_background_jobs(db)
     desk_row = session.pending_decisions()[0]
     choice = desk_row["options"][0]
 
@@ -338,11 +351,13 @@ def test_decree_question_continuation_idempotent_on_same_turn_reentry(game, monk
         }],
         write_gate=session._write_gate,
     )
+    wait_for_background_jobs(db)
     assert len(dispatch_count) == 1
     assert not db.staged_declarations.questions_for(ref)
 
     # 邸报交接重入 / SETTLING 恢复：已落不动。
     again = session.resolve_turn(allow_empty_decree=True)
+    wait_for_background_jobs(db)
     assert again.awaiting is False
     assert again.stage == "gazette"
     assert len(dispatch_count) == 1, (
@@ -406,6 +421,7 @@ def test_decree_continuation_survives_llm_exhaustion_then_retries(game, monkeypa
     session = make_light_session(db, state, content)
     session.llm_config = object()
     session.resolve_turn(allow_empty_decree=True)
+    wait_for_background_jobs(db)
     desk_row = session.pending_decisions()[0]
     choice = desk_row["options"][0]
     payload = [{
@@ -416,6 +432,7 @@ def test_decree_continuation_survives_llm_exhaustion_then_retries(game, monkeypa
 
     try:
         session.submit_hitl_choices(payload, write_gate=session._write_gate)
+        wait_for_background_jobs(db)
         raised = None
     except RuntimeError as exc:
         raised = exc
@@ -428,6 +445,7 @@ def test_decree_continuation_survives_llm_exhaustion_then_retries(game, monkeypa
 
     # 真实恢复口：携原 decision_key 重交 → already_applied → phase2 续跑月链。
     session.submit_hitl_choices(payload, write_gate=session._write_gate)
+    wait_for_background_jobs(db)
     assert len(llm_calls) == 2
     assert len(dispatch_count) == 1, (
         "旨意问后后果永久丢失：重试未再续推（questions 已清，闸跳过）"
@@ -466,6 +484,7 @@ def test_decree_question_and_world_question_share_one_desk(game, monkeypatch):
     session = make_light_session(db, state, content)
 
     result = session.resolve_turn(allow_empty_decree=True)
+    wait_for_background_jobs(db)
 
     assert result.awaiting is True
     titles = {row["title"] for row in session.pending_decisions()}
@@ -512,11 +531,13 @@ def test_missing_model_keeps_decree_question_until_retry(game, monkeypatch):
     session = make_light_session(db, state, content)
     session.llm_config = None
     session.resolve_turn(allow_empty_decree=True)
+    wait_for_background_jobs(db)
     desk_row = session.pending_decisions()[0]
     payload = _hitl_payload(desk_row)
 
     try:
         session.submit_hitl_choices(payload, write_gate=session._write_gate)
+        wait_for_background_jobs(db)
         raised = None
     except LLMUnavailable as exc:
         raised = exc
@@ -533,6 +554,7 @@ def test_missing_model_keeps_decree_question_until_retry(game, monkeypatch):
     monkeypatch.setattr(month_chain, "_run_decree_continuation_text", continuation)
     session.llm_config = object()
     session.submit_hitl_choices(payload, write_gate=session._write_gate)
+    wait_for_background_jobs(db)
     assert calls
     assert not db.staged_declarations.questions_for(ref)
     assert session.state.turn_phase == TurnPhase.SETTLING.value
@@ -552,11 +574,13 @@ def test_missing_model_does_not_mark_world_continued(game, monkeypatch):
     session = make_light_session(db, state, content)
     session.llm_config = None
     session.resolve_turn(allow_empty_decree=True)
+    wait_for_background_jobs(db)
     desk_row = session.pending_decisions()[0]
     payload = _hitl_payload(desk_row)
 
     try:
         session.submit_hitl_choices(payload, write_gate=session._write_gate)
+        wait_for_background_jobs(db)
         raised = None
     except LLMUnavailable as exc:
         raised = exc
@@ -572,6 +596,7 @@ def test_missing_model_does_not_mark_world_continued(game, monkeypatch):
     )
     session.llm_config = object()
     session.submit_hitl_choices(payload, write_gate=session._write_gate)
+    wait_for_background_jobs(db)
     chain = month_chain._load_chain(db, closed_turn)
     assert chain.get("world_continued") is True
     assert chain.get("world_questions") in (None, [], ())
@@ -606,6 +631,7 @@ def test_cross_month_pending_draft_opens_rescript_desk(game, monkeypatch):
     session = make_light_session(db, state, content)
 
     result = session.resolve_turn(allow_empty_decree=True)
+    wait_for_background_jobs(db)
 
     assert result.awaiting is True
     assert result.stage == "rescript"
@@ -677,6 +703,7 @@ def test_decree_continuation_keeps_forecast_and_lands_affair_effect(game, monkey
     session = make_light_session(db, state, content)
     session.llm_config = object()
     session.resolve_turn(allow_empty_decree=True)
+    wait_for_background_jobs(db)
     before = db.conn.execute(
         "SELECT COUNT(*) FROM economy_ledger WHERE category='问后加赈'",
     ).fetchone()[0]
@@ -690,6 +717,7 @@ def test_decree_continuation_keeps_forecast_and_lands_affair_effect(game, monkey
     session.submit_hitl_choices(
         _hitl_payload(desk_row), write_gate=session._write_gate,
     )
+    wait_for_background_jobs(db)
 
     message = str(captured.get("message") or "")
     assert question_context in message
@@ -722,6 +750,7 @@ def test_decree_continuation_keeps_forecast_and_lands_affair_effect(game, monkey
     )
 
     session.resolve_turn(allow_empty_decree=True)
+    wait_for_background_jobs(db)
     assert db.conn.execute(
         "SELECT COUNT(*) FROM economy_ledger WHERE category='问后加赈'",
     ).fetchone()[0] == before + 1
@@ -767,6 +796,7 @@ def test_decree_forecast_keeps_every_question_and_translates_prefix_once(
     session.llm_config = object()
 
     result = session.resolve_turn(allow_empty_decree=True)
+    wait_for_background_jobs(db)
 
     assert result.awaiting is True
     assert [row["title"] for row in result.decisions] == ["问一", "问二"]
@@ -818,6 +848,7 @@ def test_question_note_only_is_kept_and_other_decisions_still_require_label(
     session = make_light_session(db, state, content)
     session.llm_config = object()
     session.resolve_turn(allow_empty_decree=True)
+    wait_for_background_jobs(db)
     desk_row = session.pending_decisions()[0]
     bad = [{
         "decision_key": desk_row["decision_key"],
@@ -826,6 +857,7 @@ def test_question_note_only_is_kept_and_other_decisions_still_require_label(
     }]
     try:
         session.submit_hitl_choices(bad, write_gate=session._write_gate)
+        wait_for_background_jobs(db)
         rejected = None
     except ValueError as exc:
         rejected = exc
@@ -840,6 +872,7 @@ def test_question_note_only_is_kept_and_other_decisions_still_require_label(
         }],
         write_gate=session._write_gate,
     )
+    wait_for_background_jobs(db)
     assert answers and answers[0][0]["note"] == "着户部另议"
     assert answers[0][0]["label"] == ""
     assert not db.staged_declarations.questions_for(ref)
@@ -861,6 +894,7 @@ def test_question_note_only_is_kept_and_other_decisions_still_require_label(
             [{"decision_key": ordinary["decision_key"], "note": "只写批语"}],
             write_gate=session._write_gate,
         )
+        wait_for_background_jobs(db)
         ordinary_rejected = None
     except ValueError as exc:
         ordinary_rejected = exc
@@ -952,6 +986,7 @@ def test_fatal_midzhi_rejection_hides_force_option(game, monkeypatch):
     session = make_light_session(db, state, content)
 
     session.resolve_turn(allow_empty_decree=True)
+    wait_for_background_jobs(db)
 
     triad = next(
         row for row in session.pending_decisions() if str(row["event_id"]).startswith("dossier:")
@@ -988,6 +1023,7 @@ def test_midzhi_promulgation_records_authority_cost_once(game, monkeypatch):
     session = make_light_session(db, state, content)
 
     session.resolve_turn(allow_empty_decree=True)
+    wait_for_background_jobs(db)
 
     dossier_id = db.conn.execute(
         "SELECT id FROM decree_dossiers WHERE pending_action_id=?", (pending_id,),
@@ -1071,10 +1107,13 @@ def test_decree_continuation_ending_ends_the_month(game, monkeypatch):
         api_key="sk-test", base_url="https://example.invalid", model="test",
     )
     session.resolve_turn(allow_empty_decree=True)
+    wait_for_background_jobs(db)
     question = session.pending_decisions()[0]
     session.submit_hitl_choices([_choice(question)], write_gate=session._write_gate)
+    wait_for_background_jobs(db)
 
     again = session.resolve_turn(allow_empty_decree=True)
+    wait_for_background_jobs(db)
 
     assert again.advanced is True
     assert state.ended is True
@@ -1111,6 +1150,7 @@ def test_drift_sees_effects_landed_after_answers(game, monkeypatch):
     session = make_light_session(db, state, content)
     session.llm_config = object()
     paused = session.resolve_turn(allow_empty_decree=True)
+    wait_for_background_jobs(db)
     assert paused.awaiting is True
     assert db.conn.execute(
         "SELECT COUNT(*) FROM issue_advances WHERE issue_id=? AND trigger_kind='inertia'",
@@ -1119,8 +1159,10 @@ def test_drift_sees_effects_landed_after_answers(game, monkeypatch):
     session.submit_hitl_choices(
         [_choice(session.pending_decisions()[0])], write_gate=session._write_gate,
     )
+    wait_for_background_jobs(db)
 
     session.resolve_turn(allow_empty_decree=True)
+    wait_for_background_jobs(db)
 
     assert db.conn.execute(
         "SELECT status FROM issues WHERE id=?", (issue_id,),
@@ -1145,6 +1187,7 @@ def test_step_4a_no_eligible_objects_skips_run_and_completes(game, monkeypatch):
     session = make_light_session(db, state, content)
 
     result = session.resolve_turn(allow_empty_decree=True)
+    wait_for_background_jobs(db)
 
     assert result.stage == "gazette"
     chain = month_chain._load_chain(db, int(state.turn))
@@ -1220,6 +1263,7 @@ def test_step_4a_rescript_continuation_feeds_supply_run_input(game, monkeypatch)
 
     # Step 1: Pauses at rescript question
     paused = session.resolve_turn(allow_empty_decree=True)
+    wait_for_background_jobs(db)
     assert paused.awaiting is True
     assert captured_feed == {}
 
@@ -1227,7 +1271,9 @@ def test_step_4a_rescript_continuation_feeds_supply_run_input(game, monkeypatch)
     session.submit_hitl_choices(
         [_choice(session.pending_decisions()[0])], write_gate=session._write_gate,
     )
+    wait_for_background_jobs(db)
     result = session.resolve_turn(allow_empty_decree=True)
+    wait_for_background_jobs(db)
     assert result.stage == "gazette"
 
     # Verify Step 4a saw continuation facts (landed ledger), not code-assembled effects
@@ -1301,6 +1347,7 @@ def test_step_4a_deferred_disclosure_sees_fresh_0058_progress(game, monkeypatch)
     session = make_light_session(db, state, content)
 
     result = session.resolve_turn(allow_empty_decree=True)
+    wait_for_background_jobs(db)
     assert result.stage == "gazette"
 
     # Disclosure event exists after 0058；只验结构化落库与事件存在，不盯生成正文
@@ -1382,6 +1429,7 @@ def test_step_4a_incomplete_0058_report_fails_loud_and_retry_restarts(game, monk
 
     # Retry: discards invalid product, re-calls supply run
     result = session.resolve_turn(allow_empty_decree=True)
+    wait_for_background_jobs(db)
     assert result.stage == "gazette"
     assert call_count == 2
     assert len(db.list_dossier_progress(dossier_1)) == 1
@@ -1453,6 +1501,7 @@ def test_step_4a_crash_recovery_resumes_without_re_running_supply(game, monkeypa
 
     # Resume turn: supply run must NOT be called again
     result = session.resolve_turn(allow_empty_decree=True)
+    wait_for_background_jobs(db)
     assert result.stage == "gazette"
     assert call_count == 1  # Not re-run!
     # Reports not duplicated
@@ -1497,6 +1546,7 @@ def test_step_4a_missing_covert_fidelity_records_inline_rejection(game, monkeypa
     session = make_light_session(db, state, content)
 
     result = session.resolve_turn(allow_empty_decree=True)
+    wait_for_background_jobs(db)
     assert result.stage == "gazette"
 
     # Inline rejection：断言机读 category，不读人读 prose（ADR 0142 / 0073）
@@ -1678,6 +1728,7 @@ def test_step_4a_non_validation_failure_keeps_product_on_retry(game, monkeypatch
     assert call_count == 1
 
     result = session.resolve_turn(allow_empty_decree=True)
+    wait_for_background_jobs(db)
     assert result.stage == "gazette"
     assert call_count == 1  # 保留产物，不重跑 supply
     assert len(db.list_dossier_progress(dossier_id)) == 1
@@ -1740,6 +1791,7 @@ def test_step_4a_settles_due_secret_order(game, monkeypatch):
     session = make_light_session(db, state, content)
 
     result = session.resolve_turn(allow_empty_decree=True)
+    wait_for_background_jobs(db)
     assert result.stage == "gazette"
 
     # Secret order should be settled to 'done' (delivered 2.0 / target 2.0)
@@ -1971,11 +2023,14 @@ def test_step_4a_rescript_path_feeds_landed_not_assembled_effects(game, monkeypa
     session.llm_config = object()
 
     paused = session.resolve_turn(allow_empty_decree=True)
+    wait_for_background_jobs(db)
     assert paused.awaiting is True
     session.submit_hitl_choices(
         [_choice(session.pending_decisions()[0])], write_gate=session._write_gate,
     )
+    wait_for_background_jobs(db)
     result = session.resolve_turn(allow_empty_decree=True)
+    wait_for_background_jobs(db)
     assert result.stage == "gazette"
 
     assert "origin_effects" not in captured_feed

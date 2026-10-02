@@ -7,6 +7,8 @@ turn 恰好推进 1；批外真实陈旧快照仍拒。
 
 from __future__ import annotations
 
+from tests.conftest import wait_for_background_jobs
+
 import pytest
 
 from tests.test_month_chain_1843 import _prepare_player_month
@@ -97,8 +99,10 @@ def test_same_batch_consecutive_appointments_keep_prebatch_recommendation_snapsh
     session = _prepare_player_month(db, state, content, monkeypatch)
     session.llm_config = object()  # enable the month-chain's exhausted forecast branch
     session.resolve_turn(allow_empty_decree=True)
+    wait_for_background_jobs(db)
     db.save_turn_report(state, "邸报", knowledge_items=[], attendant_message="")
     session.resolve_turn(allow_empty_decree=True)
+    wait_for_background_jobs(db)
 
     assert state.turn == before_turn + 1
 

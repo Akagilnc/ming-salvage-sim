@@ -7,6 +7,8 @@ Seams:
 
 from __future__ import annotations
 
+from tests.conftest import wait_for_background_jobs
+
 import json
 from types import SimpleNamespace
 
@@ -102,7 +104,9 @@ def _scene_declaration(db, state, content, monkeypatch, words, declaration, *, m
     reply = sess.scene_chat(words, chat_turn_id=ctid, minister_name=minister_name)
     future = persist_and_schedule_scene(sess, db, reply, speaker=minister_name)
     assert future is not None
-    return future.result()
+    result = future.result()
+    assert sess._write_queue.wait_idle()
+    return result
 
 
 def _close_offline(db, state, content, night_id):
@@ -135,10 +139,12 @@ def _player_month(db, state, content, monkeypatch, dossier_id, *, effects=None):
     session._write_gate = threading.Lock()
     before = int(state.turn)
     result = session.resolve_turn(allow_empty_decree=True)
+    wait_for_background_jobs(db)
     assert result.stage == "gazette"
     # The same player entry resumes after the (offline) gazette is archived.
     db.save_turn_report(state, "月报", title="月报", public_body="月报")
     result = session.resolve_turn(allow_empty_decree=True)
+    wait_for_background_jobs(db)
     assert result.advanced and int(state.turn) > before
 
 

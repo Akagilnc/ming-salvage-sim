@@ -11,14 +11,17 @@ Seams:
 from __future__ import annotations
 
 import threading
-from concurrent.futures import Future
-
 import pytest
 
 import ming_sim.month_chain as month_chain
 from ming_sim.applier import Provenance
 from ming_sim.session_write_queue import get_session_write_queue
 from tests.month_chain_helpers import make_light_session
+from tests.conftest import (
+    DeferredExecutor as _DeferredExecutor,
+    InlineExecutor,
+    run_deferred as _run_deferred,
+)
 
 
 def _forbid_extractor(monkeypatch):
@@ -36,24 +39,10 @@ def _archive_and_stub_world(db, state, monkeypatch):
     )
 
 
-class _DeferredExecutor:
-    """已有接缝：提交只记账，由测试在调用线程上执行。"""
-
-    def submit(self, fn):
-        self.fn = fn
-        self.future = Future()
-        return self.future
-
-
 def _install_deferred(monkeypatch):
     executor = _DeferredExecutor()
     monkeypatch.setattr("ming_sim.audience_translation._executor", executor)
     return executor
-
-
-def _run_deferred(executor):
-    executor.fn()
-    executor.future.set_result(None)
 
 
 def test_advance_schedules_mechanical_tail_after_front_month_advance(game, monkeypatch):
@@ -244,15 +233,6 @@ def test_web_barrier_resumes_pending_tail_before_join(game, monkeypatch):
     queue = get_session_write_queue(session)
     order = []
 
-    class InlineExecutor:
-        def submit(self, fn):
-            future = Future()
-            try:
-                future.set_result(fn())
-            except Exception as exc:
-                future.set_exception(exc)
-            return future
-
     monkeypatch.setattr(audience_translation, "_executor", InlineExecutor())
     monkeypatch.setattr(
         "ming_sim.mechanical_tail._run_relation_brew",
@@ -292,15 +272,6 @@ def test_non_exhausted_tail_failure_stays_pending_and_retries(game, monkeypatch)
     session.llm_config = object()
     session.agno_db = object()
     calls = []
-
-    class InlineExecutor:
-        def submit(self, fn):
-            future = Future()
-            try:
-                future.set_result(fn())
-            except Exception as exc:
-                future.set_exception(exc)
-            return future
 
     monkeypatch.setattr(audience_translation, "_executor", InlineExecutor())
 

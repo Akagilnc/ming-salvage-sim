@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from tests.conftest import wait_for_background_jobs
+
 import json
 import threading
 
@@ -121,6 +123,7 @@ def test_player_month_entry_settles_prepushed_edicts_then_world_once(game, monke
 
     threading.Thread(target=finish_prior).start()
     result = session.resolve_turn(allow_empty_decree=True)
+    wait_for_background_jobs(db)
     assert joined.get("done") is True
 
     assert world_calls and world_calls[0]["edicts"][:2] == ["宁远补饷", "陕西赈灾"]
@@ -142,6 +145,7 @@ def test_player_month_entry_settles_prepushed_edicts_then_world_once(game, monke
     }
 
     session.resolve_turn(allow_empty_decree=True)
+    wait_for_background_jobs(db)
     assert len(world_calls) == 1
     assert len(translate_calls) == 1
     assert [str(row["category"]) for row in db.conn.execute(
@@ -209,6 +213,7 @@ def test_unforecast_edict_is_caught_up_once_and_crash_does_not_double_charge(gam
         "SELECT COUNT(*) FROM economy_ledger WHERE category='宁远补饷'",
     ).fetchone()[0]
     session.resolve_turn(allow_empty_decree=True)
+    wait_for_background_jobs(db)
     assert produced == [second_ref]
     assert db.staged_declarations.is_settled(second_ref)
     assert db.conn.execute(
@@ -245,6 +250,7 @@ def test_questions_hold_rescript_and_gazette_is_required_before_advance(game, mo
         month_chain, "_run_decree_continuation_text", lambda *a, **k: "",
     )
     held = session.resolve_turn(allow_empty_decree=True)
+    wait_for_background_jobs(db)
     assert held.stage == "rescript"
     assert held.awaiting is True
     assert held.advanced is False
@@ -263,6 +269,7 @@ def test_questions_hold_rescript_and_gazette_is_required_before_advance(game, mo
     db.conn.commit()
     # 仍停在待裁；幂等回读案头，不二跑世界段。
     held_again = session.resolve_turn(allow_empty_decree=True)
+    wait_for_background_jobs(db)
     assert held_again.awaiting is True
     assert any(row["title"] == "是否加赈" for row in held_again.decisions)
     assert int(state.turn) == closed_turn
@@ -278,9 +285,11 @@ def test_questions_hold_rescript_and_gazette_is_required_before_advance(game, mo
         }],
         write_gate=session._write_gate,
     )
+    wait_for_background_jobs(db)
     assert not db.staged_declarations.questions_for(ref)
     assert session.state.turn_phase == TurnPhase.SETTLING.value
     waiting_gazette = session.resolve_turn(allow_empty_decree=True)
+    wait_for_background_jobs(db)
     assert waiting_gazette.stage == "gazette"
     assert int(state.turn) == closed_turn
     assert _pop(db, "流民", "shaanxi") == pool_before
@@ -291,6 +300,7 @@ def test_questions_hold_rescript_and_gazette_is_required_before_advance(game, mo
     )
     db.conn.commit()
     advanced = session.resolve_turn(allow_empty_decree=True)
+    wait_for_background_jobs(db)
     assert advanced.advanced is True
     assert int(state.turn) == closed_turn + 1
     from ming_sim.constants import RECOVERY_PERSONS_PER_WAN
@@ -313,6 +323,7 @@ def test_player_recovery_uses_resolve_context_decree_not_ready_delta(game, monke
     monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
     session = make_light_session(db, state, content)
     result = session.resolve_turn(allow_empty_decree=True)
+    wait_for_background_jobs(db)
 
     assert result.stage == "gazette"
     assert int(state.turn) == turn
@@ -411,6 +422,7 @@ def test_player_entry_recovers_ending_after_interrupted_segment(game, monkeypatc
     assert caught.value.error_pack_path
 
     waiting = session.resolve_turn(allow_empty_decree=True)
+    wait_for_background_jobs(db)
     assert waiting.stage == "gazette"
     payload = db.get_resolve_context(turn)["simulator_payload"]
     assert payload["month_chain"]["declaration_outcome"]["status"] == "emperor_abdicate"
@@ -422,6 +434,7 @@ def test_player_entry_recovers_ending_after_interrupted_segment(game, monkeypatc
     )
     db.conn.commit()
     advanced = session.resolve_turn(allow_empty_decree=True)
+    wait_for_background_jobs(db)
 
     assert advanced.advanced is True
     assert state.ended is True
@@ -640,6 +653,7 @@ def test_missing_world_model_stops_before_world_commit(game, monkeypatch):
     assert caught.value.stage == "world_text"
     monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
     assert session.resolve_turn(allow_empty_decree=True).stage == "gazette"
+    wait_for_background_jobs(db)
     assert int(state.turn) == turn
 
 
@@ -680,6 +694,7 @@ def test_month_drift_settles_due_secret_and_records_inertia_rejection(game, monk
     )
     session = make_light_session(db, state, content)
     assert session.resolve_turn(allow_empty_decree=True).stage == "gazette"
+    wait_for_background_jobs(db)
     assert db.get_secret_order(order_id)["status"] == "failed"
     rows = db.conn.execute(
         "SELECT section FROM rejection_reports WHERE turn=? AND section='issue_inertia.entity_rejections'",
@@ -687,6 +702,7 @@ def test_month_drift_settles_due_secret_and_records_inertia_rejection(game, monk
     ).fetchall()
     assert len(rows) == 1
     session.resolve_turn(allow_empty_decree=True)
+    wait_for_background_jobs(db)
     assert db.get_secret_order(order_id)["status"] == "failed"
     assert len(db.conn.execute(
         "SELECT id FROM rejection_reports WHERE turn=? AND section='issue_inertia.entity_rejections'",
@@ -824,6 +840,7 @@ def test_month_chain_lands_specialized_facts_before_due_and_gazette(game, monkey
         },
     )
     result = session.resolve_turn(allow_empty_decree=True)
+    wait_for_background_jobs(db)
 
     assert result.stage == "gazette"
     assert db.get_secret_order(order_id)["status"] == "done"

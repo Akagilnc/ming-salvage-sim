@@ -68,6 +68,7 @@ def _scene_turn(sess, db, state, message: str, *, night_id: int | None = None):
     fut = persist_and_schedule_scene(sess, db, result)
     if fut is not None:
         fut.result(timeout=30)
+    assert get_session_write_queue(sess).wait_idle()
     return result, ctid
 
 

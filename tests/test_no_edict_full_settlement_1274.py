@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from tests.conftest import wait_for_background_jobs
+
 import threading
 
 import pytest
@@ -48,6 +50,7 @@ def test_no_edict_advance_runs_full_settlement_chain(game, monkeypatch):
     )
 
     result = _session(db, state, content).advance_without_decree()
+    wait_for_background_jobs(db)
 
     assert result is not None
     assert result.awaiting is False
@@ -105,6 +108,7 @@ def test_no_edict_zero_decisions_completes_without_stuck(game, monkeypatch):
         narrative="本月无重大抉择，朝局按惯性推移。",
     )
     result = _session(db, state, content).advance_without_decree()
+    wait_for_background_jobs(db)
     assert result is not None
     assert result.awaiting is False
     assert result.advanced is False
@@ -139,6 +143,7 @@ def test_with_edict_resolve_turn_still_full_settlement(game, monkeypatch):
     )
 
     result = _session(db, state, content).resolve_turn()
+    wait_for_background_jobs(db)
     assert result.awaiting is False
     assert result.advanced is False
     assert len(sim_calls) == 1

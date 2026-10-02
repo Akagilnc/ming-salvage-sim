@@ -1,3 +1,5 @@
+
+from tests.conftest import wait_for_background_jobs
 import asyncio
 import json
 import types
@@ -1197,6 +1199,7 @@ def test_cli_no_edict_route_rejudges_held_proposed_dossier(game):
     session.resolve_turn = lambda **_k: called.append("resolve")
 
     session.advance_without_decree()
+    wait_for_background_jobs(db)
 
     assert called == ["resolve"]
 
@@ -1450,8 +1453,10 @@ def test_probe_directive_shared_entry_creates_and_settles_structured_dossier(gam
     )
     player = _prepare_player_month(db, state, content, monkeypatch)
     player.resolve_turn(allow_empty_decree=True)
+    wait_for_background_jobs(db)
     db.save_turn_report(state, "邸报", public_body="邸报")
     player.resolve_turn(allow_empty_decree=True)
+    wait_for_background_jobs(db)
 
     assert state.turn == 2
     assert db.get_decree_dossier(dossier["id"])["status"] == "executing"

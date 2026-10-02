@@ -7,6 +7,8 @@ resolve_turn 停住与续跑；state_payload.settlement_recovery 投影。
 
 from __future__ import annotations
 
+from tests.conftest import wait_for_background_jobs
+
 from types import SimpleNamespace
 
 import pytest
@@ -202,6 +204,7 @@ def test_forecast_exhaustion_does_not_overwrite_prior_ending(game, monkeypatch, 
 
     db.save_turn_report(state, "邸报已成")
     result = session.resolve_turn(allow_empty_decree=True)
+    wait_for_background_jobs(db)
     assert result.advanced is True
     assert state.ended is True
     assert state.ending_status == "emperor_abdicate"
@@ -314,6 +317,7 @@ def test_world_translate_exhaustion_keeps_text_resume_retries_translate_only(
     db.save_turn_report(state, "邸报已成")
     # Web's advance_without_edict endpoint uses this exact session entry after reopening.
     result = session.advance_without_decree()
+    wait_for_background_jobs(db)
     assert result.advanced is True
     assert world_calls == [1]
     assert translate_calls == ["fail", "ok"]
@@ -387,6 +391,7 @@ def test_escape_hatch_discards_world_segment_only_on_second_player_retry(
     # 第二次玩家重试：丢段重推
     db.save_turn_report(state, "邸报已成")
     result = session.resolve_turn(allow_empty_decree=True)
+    wait_for_background_jobs(db)
     assert result.advanced is True
     assert world_calls["n"] == 2
     assert translate_calls["n"] == 3
@@ -582,6 +587,7 @@ def test_world_commit_failure_after_alongside_retries_uncommitted_segment(
     assert translate_calls["n"] == 1
 
     session.resolve_turn(allow_empty_decree=True)
+    wait_for_background_jobs(db)
     assert db.staged_declarations.is_settled(ref)
     assert len(_ningyuan_ledger_rows(db)) == 1
     assert int(_ningyuan_ledger_rows(db)[0]["delta"]) == -4
@@ -650,6 +656,7 @@ def test_edict_settle_code_exception_stops_at_month_entry_and_retries_once(
     assert failure.get("error_pack_path") == caught.value.error_pack_path
 
     session.resolve_turn(allow_empty_decree=True)
+    wait_for_background_jobs(db)
     assert db.staged_declarations.is_settled(ref)
     rows = _ningyuan_ledger_rows(db)
     assert len(rows) == 1 and int(rows[0]["delta"]) == -6
@@ -711,6 +718,7 @@ def test_error_pack_failure_keeps_original_fault_and_retry_phase(
     assert not failure.get("error_pack_path")
 
     session.resolve_turn(allow_empty_decree=True)
+    wait_for_background_jobs(db)
     assert db.staged_declarations.is_settled(ref)
     rows = _ningyuan_ledger_rows(db)
     assert len(rows) == 1 and int(rows[0]["delta"]) == -6

@@ -13,6 +13,8 @@ TurnPhase.X.value——pin 的是**落盘字符串值本身**，有意 enum 无�
 
 from __future__ import annotations
 
+from tests.conftest import wait_for_background_jobs
+
 import sqlite3
 
 import pytest
@@ -314,6 +316,7 @@ def test_advance_without_decree_at_awaiting_returns_decision(game):
     sess._scene_registry = sess._beat_generator = None
     sess.auto_save = lambda *a, **k: None
     result = sess.advance_without_decree()
+    wait_for_background_jobs(db)
     assert result is not None and result.awaiting is True
 
     rows_after = db.conn.execute(
@@ -347,6 +350,7 @@ def test_resolve_turn_idempotent_at_awaiting(game, monkeypatch):
     sess.state = state
 
     res = sess.resolve_turn()
+    wait_for_background_jobs(db)
     assert res.awaiting is True
     assert res.decisions
     db.clear_resolve_context(state.turn)

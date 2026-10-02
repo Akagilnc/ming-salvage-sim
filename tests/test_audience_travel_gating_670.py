@@ -1,6 +1,8 @@
 """#670 召对 travel-gating 的公开 admission 与 fresh seed 契约。"""
 
 from __future__ import annotations
+
+from tests.conftest import run_deferred, wait_for_background_jobs
 from tests.conftest import open_hall_turn
 
 import asyncio
@@ -253,7 +255,7 @@ def test_fresh_summon_origin_is_idempotent_and_projects_kind(game):
     }]
 
 
-def test_multi_origin_same_person_dedupes_consumer_projections_not_ledger(game, monkeypatch):
+def test_multi_origin_same_person_dedupes_consumer_projections_not_ledger(game, monkeypatch, deferred_background_jobs):
     """#670：同人多 origin ledger 独立保留；arrived/waiting 消费端每人一份。"""
     db, state, content = game
     sess = _session(game)
@@ -319,8 +321,12 @@ def test_multi_origin_same_person_dedupes_consumer_projections_not_ledger(game, 
         }]}},
     )
     session.resolve_turn(allow_empty_decree=True)
+    run_deferred(deferred_background_jobs)
+    wait_for_background_jobs(db)
     db.save_turn_report(state, "邸报", public_body="邸报")
     session.resolve_turn(allow_empty_decree=True)
+    run_deferred(deferred_background_jobs)
+    wait_for_background_jobs(db)
     assert an.list_unsettled_summons(db) == []
     assert an.list_arrived_unsettled_summons(db) == []
     assert an.list_waiting_audience_summons(db) == []
@@ -832,7 +838,7 @@ def test_legacy_capital_aliases_admit_in_capital_and_migrate_on_reopen(game):
 
 
 
-def test_continuation_arrival_settles_origin_without_waiting(game, monkeypatch):
+def test_continuation_arrival_settles_origin_without_waiting(game, monkeypatch, deferred_background_jobs):
     """#670：抵非京 arrived → 续程 beizhili 成功即结清 origin，不再形成该 origin 候见。
 
     fresh→抵京→候见→宣入 独立路径由 test_fresh_departure_arrival_and_capital_consume_lifecycle
@@ -868,8 +874,12 @@ def test_continuation_arrival_settles_origin_without_waiting(game, monkeypatch):
         }]}},
     )
     session.resolve_turn(allow_empty_decree=True)
+    run_deferred(deferred_background_jobs)
+    wait_for_background_jobs(db)
     db.save_turn_report(state, "邸报", public_body="邸报")
     session.resolve_turn(allow_empty_decree=True)
+    run_deferred(deferred_background_jobs)
+    wait_for_background_jobs(db)
     assert _travel_row(db, person.name)["transit_to"] == "beizhili"
     assert an.list_unsettled_summons(db) == []
     assert an.list_arrived_unsettled_summons(db) == []

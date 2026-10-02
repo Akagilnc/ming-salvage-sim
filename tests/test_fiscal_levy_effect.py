@@ -1,3 +1,5 @@
+
+from tests.conftest import wait_for_background_jobs
 import json
 import math
 
@@ -148,6 +150,7 @@ def test_liao_levy_rise_triggers_on_no_edict_advance_before_fiscal_tick(game, mo
     sess._scene_registry = sess._beat_generator = None
     sess.auto_save = lambda *a, **k: None
     sess.advance_without_decree()
+    wait_for_background_jobs(db)
 
     row = db.conn.execute(
         "SELECT terminal_state, terminal_reason, source FROM event_triggers WHERE event_id=?",
