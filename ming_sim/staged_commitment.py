@@ -122,9 +122,10 @@ def stages_to_json(stages: object) -> str:
 
 
 def capture_commitment_stages(raw: object = None) -> List[Dict[str, object]]:
-    """只吃显式结构化 stages；校验真源 = stages_to_json（#1897 / ADR0142）。
+    """单一写口：只吃显式结构化 stages（#1897 / ADR0142）。
 
-    散文年诺解析已退役。缺省／空 → []；坏结构响亮 ValueError，不回落正文。
+    真源校验走 ``stages_to_json``；缺省／空 → []；坏结构响亮 ValueError。
+    保留此薄包装以免 issues 两处复制空值分支（18 文件口径净增）。
     """
     if raw in (None, "", [], (), {}):
         return []

@@ -1,16 +1,28 @@
+algorithm: git show|read_text → splitlines() (judge同口径)
 judge-base 0ca77fecc402b67829da5310fdf0cf76d624249d
-pre-construction HEAD 874b85adf4eb15985ff88430511338360add5536
+pre-construction 874b85adf4eb15985ff88430511338360add5536
 
-=== judge 18-file production scope (excl. staged_commitment) ===
-base=52847 preHEAD=52940 now=52919 vs_base=+72 vs_pre=-21
+repro:
+  python3 -c '... FILES_18 list; lines=len(open(p).read().splitlines()) ...'
 
-=== ticket production incl. staged_commitment (D3 home) ===
-base=53267 preHEAD=53360 now=53216 vs_base=-51 vs_pre=-144
-
-per-file deltas vs preHEAD:
-  ming_sim/staged_commitment.py: pre=420 now=297 delta=-123
+=== judge 18-file production changed union ===
+files=18
+base=52847 preHEAD=52940 now=52919
+vs_base=+72 vs_pre=-21
+per-file now vs preHEAD (nonzero):
   ming_sim/action_materialize.py: pre=1612 now=1601 delta=-11
+  ming_sim/covert_progress.py: pre=1285 now=1286 delta=+1
   ming_sim/db.py: pre=22692 now=22687 delta=-5
   ming_sim/issues.py: pre=9857 now=9851 delta=-6
+
+=== ticket production incl. staged_commitment (19) ===
+files=19
+base=53267 preHEAD=53360 now=53217
+vs_base=-50 vs_pre=-143
+per-file now vs preHEAD (nonzero):
+  ming_sim/action_materialize.py: pre=1612 now=1601 delta=-11
   ming_sim/covert_progress.py: pre=1285 now=1286 delta=+1
-  docs/DELTA_SCHEMA.md: pre=479 now=479 delta=+0
+  ming_sim/db.py: pre=22692 now=22687 delta=-5
+  ming_sim/issues.py: pre=9857 now=9851 delta=-6
+  ming_sim/staged_commitment.py: pre=420 now=298 delta=-122
+
