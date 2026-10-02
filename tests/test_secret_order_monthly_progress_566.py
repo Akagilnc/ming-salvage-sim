@@ -1,6 +1,7 @@
 """#566: production settlement owns the durable monthly progress rail."""
 
 import threading
+from pathlib import Path
 
 import pytest
 from tests.dossier_test_helpers import create_test_secret_order
@@ -330,20 +331,18 @@ def test_real_no_edict_entries_roll_back_every_external_state_after_fiscal_write
     else:
         invoke = session.advance_without_decree
 
-    # cli：session 层 RuntimeError 原样穿透。
-    # web：#1433 可读错误包契约——Exception → 500 + {"message": str(e)}（回滚语义不变）。
+    # 固定财政故障回滚后落错误包；Web 保留结构化失败状态。
     if entry == "web":
         with pytest.raises(web_app.HTTPException) as exc_info:
             invoke()
-        assert exc_info.value.status_code == 500
-        detail = exc_info.value.detail
-        if isinstance(detail, dict):
-            assert "post-fiscal failure 566" in str(detail.get("message") or detail)
-        else:
-            assert "post-fiscal failure 566" in str(detail)
+        assert exc_info.value.status_code == 409
+        assert exc_info.value.detail["turn"] == state.turn
     else:
-        with pytest.raises(RuntimeError):
+        from ming_sim.exceptions import SettlementAbort
+        with pytest.raises(SettlementAbort) as exc_info:
             invoke()
+        assert exc_info.value.stage == "fixed_fiscal"
+        assert Path(exc_info.value.error_pack_path).is_dir()
 
     assert observed == {"fiscal_written": True, "metrics_written": True}
     after = _rollback_snapshot(db, state, pending_ids)

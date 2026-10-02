@@ -2067,12 +2067,16 @@ def test_huabei_plague_auto_triggers_with_deterministic_core_effect(game):
     assert after["unrest"] == before["unrest"] + 6
 
 
-def test_historical_auto_trigger_core_effect_is_applied_once(game):
-    """#192：确定性核心事实重进不应二次扣数，event_triggers 是硬幂等门。"""
+def test_historical_auto_trigger_core_effect_is_applied_once(game, monkeypatch):
+    """确定性核心事实与坏后果拒收均遵循事件的硬幂等门。"""
     db, state, content = game
     issues.bind_content(content)
     state.year = 1633
     state.period = 7
+    event = next(ev for ev in content.events if ev.id == "huabei_plague")
+    monkeypatch.setattr(event, "effect_on_trigger", {
+        **event.effect_on_trigger, "metrics": {"not_a_metric": 1},
+    })
 
     first = issues.auto_trigger_seed_issues(state, db)
     after_first = db.conn.execute(
@@ -2092,6 +2096,15 @@ def test_historical_auto_trigger_core_effect_is_applied_once(game):
         "SELECT COUNT(*) FROM event_triggers WHERE event_id=?",
         ("huabei_plague",),
     ).fetchone()[0] == 1
+    reports = db.conn.execute(
+        "SELECT item_json, category, turn FROM rejection_reports WHERE section='event_trigger'"
+    ).fetchall()
+    assert len(reports) == 1
+    assert json.loads(reports[0]["item_json"]) == {
+        "event_id": event.id, "effect": {"field": "not_a_metric", "raw_value": 1},
+    }
+    assert reports[0]["category"] == "invalid_enum"
+    assert reports[0]["turn"] == state.turn
 
 
 def test_auto_trigger_historical_events_use_preloaded_terminal_refs(game, monkeypatch):

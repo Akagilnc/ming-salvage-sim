@@ -2599,12 +2599,6 @@ class WebGame:
                     self.db.set_message_highlights(mid, phrases)
             except TicketCancelled:
                 return []
-            except sqlite3.Error as exc:
-                logger.warning(
-                    "highlight judge persist failed message_id=%s: %s",
-                    mid, exc, exc_info=True,
-                )
-                return []
             return phrases
         finally:
             # 仅自领票由本腿收口；spawn 交接票由 spawner 归还。
@@ -5545,7 +5539,7 @@ async def api_update_directive(directive_id: int, request: DirectivePatch) -> Di
         from ming_sim.cli_backend import capture_manual_directive_payload
         dossier_payload = await asyncio.to_thread(
             capture_manual_directive_payload,
-            text.strip(),
+            text,
             game.session.llm_config,
             existing_mode=existing_mode,
             **({"db": game.db, "content": game.content}
@@ -5556,7 +5550,7 @@ async def api_update_directive(directive_id: int, request: DirectivePatch) -> Di
             if int(game.state.turn) != capture_turn:
                 raise DeclarationDataError("旨意抽取期间回合已推进，请在当前回合重新提交。")
             game.session.update_directive(
-                directive_id, text.strip(), dossier_payload=dossier_payload,
+                directive_id, text, dossier_payload=dossier_payload,
             )
             return {
                 "directives": [

@@ -13,7 +13,8 @@ import re
 import sqlite3
 from typing import Any, Dict, List, Optional, Tuple
 
-from ming_sim.applier import atomic
+from ming_sim.applier import RejectionCollector, atomic, mirror_rejections_after_commit
+from ming_sim.error_pack import rejections_jsonl_path
 from ming_sim.constants import (
     _SETTLE_META_JIAPIAI_KEY, TURN_UNIT, REGION_SCORE_FIELDS, REGION_QUANTITY_FIELDS, REGION_TEXT_FIELDS,
     ARMY_SCORE_FIELDS, ARMY_QUANTITY_FIELDS, ARMY_TEXT_FIELDS, BUILDING_SCORE_FIELDS,
@@ -1506,15 +1507,7 @@ def _gate_passed(gate: Dict[str, str], metrics: Dict[str, int], db: GameDB) -> b
         sm = re.match(r"^(==|!=|in=)\s*(.+)$", cond)
         if sm and (sm.group(1) == "in=" or not re.match(r"^-?\d+$", sm.group(2).strip())):
             sop, sval = sm.group(1), sm.group(2).strip()
-            try:
-                cur = _eval_gate_key_str(key, db)
-            except sqlite3.OperationalError as exc:
-                # typo'd 字段名 → SELECT 绑 SQLite 抛「no such column」；fail-loud 成清晰 content
-                # 错误（#12 Q3：trigger_gate 字段错属静态 content schema 错）。其它 DB 错（锁/无表等）
-                # 不误标字段，原样上抛（online sourcery）。
-                if "no such column" in str(exc).lower():
-                    raise ValueError(f"trigger_gate key「{key}」字段无效（DB 无此列）：{exc}") from exc
-                raise
+            cur = _eval_gate_key_str(key, db)
             if cur is None:
                 return False
             if sop == "==" and cur != sval:
@@ -1528,12 +1521,7 @@ def _gate_passed(gate: Dict[str, str], metrics: Dict[str, int], db: GameDB) -> b
         if not m:
             return False
         op, num = m.group(1), int(m.group(2))
-        try:
-            val = _eval_gate_key(key, metrics, db)
-        except sqlite3.OperationalError as exc:
-            if "no such column" in str(exc).lower():
-                raise ValueError(f"trigger_gate key「{key}」字段无效（DB 无此列）：{exc}") from exc
-            raise  # 其它 DB 错不误标字段（online sourcery）
+        val = _eval_gate_key(key, metrics, db)
         if val is None:
             return False
         if op == ">=" and not val >= num:
@@ -1782,11 +1770,17 @@ def auto_trigger_seed_issues(state: GameState, db: GameDB) -> List[Dict[str, obj
     已触发过返回 None 自动跳过。返回本回合硬触发的清单（供日志/邸报告知）。
 
     放在结算链 simulator 之前调用，使硬立的 issue 当回合即进盘面、被邸报叙述。"""
+    collector = RejectionCollector()
     with atomic(db):
-        return _auto_trigger_seed_issues_in_atomic(state, db)
+        triggered = _auto_trigger_seed_issues_in_atomic(state, db, collector)
+        collector.flush_to_db(db)
+    mirror_rejections_after_commit(db, collector, rejections_jsonl_path)
+    return triggered
 
 
-def _auto_trigger_seed_issues_in_atomic(state: GameState, db: GameDB) -> List[Dict[str, object]]:
+def _auto_trigger_seed_issues_in_atomic(
+    state: GameState, db: GameDB, collector: RejectionCollector,
+) -> List[Dict[str, object]]:
     """auto_trigger_seed_issues 的事务体；由外层函数或 pre_settle 嵌套事务统一提交/回滚。"""
     c = _ctx()
     terminal_states = _event_terminal_states(db)
@@ -1810,17 +1804,24 @@ def _auto_trigger_seed_issues_in_atomic(state: GameState, db: GameDB) -> List[Di
             continue
         if not _gate_passed(ev.trigger_gate, state.metrics, db):
             continue
+        apply_trigger_effect = historical_event or (
+            ev.event_type != "situation" and not db.has_event_triggered(ev.id)
+        )
+        if apply_trigger_effect and ev.effect_on_trigger:
+            rejected = issue_effects._apply_issue_entities(
+                db,
+                state,
+                _content_population_effect_for_save(db, ev.effect_on_trigger),
+                f"事件#{ev.id}触发",
+                content=c,
+                source=Provenance.system_simulation,
+            )
+            for rejection in rejected:
+                rejection.item = {"event_id": ev.id, "effect": rejection.item}
+                collector.record("event_trigger", rejection, int(state.turn))
         if ev.event_type != "situation":
             # 非 situation（node/ending）不转 issue，仅记触发避免重复
-            if not db.has_event_triggered(ev.id):
-                if ev.effect_on_trigger:
-                    issue_effects._apply_issue_entities(
-                        db,
-                        state,
-                        _content_population_effect_for_save(db, ev.effect_on_trigger),
-                        f"事件#{ev.id}触发",
-                        content=c,
-                    source=Provenance.system_simulation)
+            if apply_trigger_effect:
                 db.mark_event_triggered(state, ev.id)
                 triggered.append({"id": ev.id, "title": ev.title, "kind": ev.event_type})
             continue
@@ -1836,14 +1837,6 @@ def _auto_trigger_seed_issues_in_atomic(state: GameState, db: GameDB) -> List[Di
                 raise RuntimeError(f"历史事件 {ev.id} 未建局势且无法找到同源 issue")
             issue_id = int(row["id"])
         if historical_event:
-            if ev.effect_on_trigger:
-                issue_effects._apply_issue_entities(
-                    db,
-                    state,
-                    _content_population_effect_for_save(db, ev.effect_on_trigger),
-                    f"事件#{ev.id}触发",
-                    content=c,
-                source=Provenance.system_simulation)
             db.mark_event_triggered(state, ev.id)
         if issue_id is not None:
             triggered.append({"id": ev.id, "title": ev.title, "issue_id": issue_id})

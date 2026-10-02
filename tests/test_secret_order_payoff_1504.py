@@ -130,7 +130,8 @@ def test_seed_guilt_structured_clean_vs_debt():
     assert not seed_guilt_counts_as_debt(None)
     assert not seed_guilt_counts_as_debt({"crime": "无", "severity": "无"})
     assert not seed_guilt_counts_as_debt('{"crime": "无", "severity": "无"}')
-    assert seed_guilt_counts_as_debt("血债")
+    with pytest.raises(json.JSONDecodeError):
+        seed_guilt_counts_as_debt("血债")
     assert seed_guilt_counts_as_debt({"crime": "交结近侍", "severity": "中"})
 
 
@@ -362,7 +363,7 @@ def test_monthly_actual_then_delivered_done(game):
 def test_gap_after_months_failed(game):
     db, state, _ = game
     name = _minister(db)
-    _set_axes(db, name, loyalty=15, identity=85, seed_guilt="旧案")
+    _set_axes(db, name, loyalty=15, identity=85, seed_guilt=json.dumps({"crime": "旧案", "severity": "中"}))
     oid = _issue(db, state, name, "必败密查", "无人真办", months=2, target=2)
     # 两月由推演者选反噬 → 0 实进度（跳过发令月）
     for _ in range(2):
@@ -545,7 +546,7 @@ def test_monthly_actual_progress_preserves_selected_fidelity_in_sqlite(game):
     db, state, _ = game
     name = _minister(db)
     # The old loyalty-derived floor must not rewrite the selected execution state.
-    _set_axes(db, name, loyalty=20, identity=80, seed_guilt="x")
+    _set_axes(db, name, loyalty=20, identity=80, seed_guilt=json.dumps({"crime": "x", "severity": "中"}))
     oid = _issue(db, state, name, "执行态由推演者决定", "本月执行态由推演者决定", months=2, target=2)
     state.turn += 1
     db.save_state(state)
@@ -633,8 +634,12 @@ def test_rush_preserves_frozen_contract(game):
         db, state, name, "无期缉获", "拿人",
         months=0, target=3, kind="缉获人犯", unit="人犯",
     )
+    original = "\n  原密奏\n\n\t\n"
+    db.conn.execute("UPDATE secret_orders SET result=? WHERE id=?", (original, oid))
+    db.conn.commit()
     db.rush_secret_order(oid, state, deadline_months=0, reason="即核")
     live = db.get_secret_order(oid)
+    assert live["result"][:len(original)] == original
     assert int(live["due_turn"]) == int(state.turn)
     contract = read_covert_task_contract(db.get_dossier_for_secret_order(oid))
     assert contract["delivery"]["target_units"] == 3.0
@@ -719,7 +724,7 @@ def test_investigation_lane_progress_emits_reason_before_used(game):
         (name,),
     ).fetchone()["name"]
     _set_axes(db, name, loyalty=90, identity=30)
-    db.conn.execute("UPDATE characters SET seed_guilt=? WHERE name=?", ("侵冒", target))
+    db.conn.execute("UPDATE characters SET seed_guilt=? WHERE name=?", (json.dumps({"crime": "侵冒", "severity": "中"}), target))
     db.conn.commit()
     oid = _issue(
         db, state, name, "查核辽饷侵冒", "查核辽饷侵冒",
@@ -782,8 +787,8 @@ def test_closed_case_blocks_same_fact_on_later_case_and_due(game):
         (name, target),
     ).fetchone()["name"]
     _set_axes(db, name, loyalty=90, identity=30)
-    db.conn.execute("UPDATE characters SET seed_guilt=? WHERE name=?", ("侵冒", target))
-    db.conn.execute("UPDATE characters SET seed_guilt=? WHERE name=?", ("侵冒", other))
+    db.conn.execute("UPDATE characters SET seed_guilt=? WHERE name=?", (json.dumps({"crime": "侵冒", "severity": "中"}), target))
+    db.conn.execute("UPDATE characters SET seed_guilt=? WHERE name=?", (json.dumps({"crime": "侵冒", "severity": "中"}), other))
     db.conn.commit()
     oid = _issue(
         db, state, name, "查核辽饷侵冒", "查核辽饷侵冒",

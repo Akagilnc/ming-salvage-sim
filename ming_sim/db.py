@@ -15726,9 +15726,7 @@ class GameDB:
         if row is None:
             raise KeyError(f"案卷不存在：{dossier_id}")
         existing = str(row.get("execution_note") or "")
-        if text in existing.split("；"):
-            merged = existing
-        elif existing:
+        if existing:
             merged = f"{existing}；{text}"
         else:
             merged = text
@@ -21581,7 +21579,7 @@ class GameDB:
         stamp = f"〔{period_label(state.year, state.period)}〕"
         why = reason if str(reason or "").strip() else "奉旨加急"
         prev = row["result"] or ""
-        lines = [ln for ln in prev.split("\n") if ln.strip()]
+        lines = [prev] if prev else []
         with atomic(self):
             if months <= 0:
                 lines.append(f"{stamp}[奉旨即核] {why}；本月到期按实进度对账。")

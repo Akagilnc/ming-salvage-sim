@@ -110,12 +110,9 @@ def seed_guilt_counts_as_debt(seed_guilt: object) -> bool:
         text = str(seed_guilt).strip()
         if not text:
             return False
-        try:
-            parsed = json.loads(text)
-        except (TypeError, ValueError):
-            return True
+        parsed = json.loads(text)
         if not isinstance(parsed, Mapping):
-            return True
+            raise ValueError("密令初始罪状须为对象")
         guilt = parsed
     crime = str(guilt.get("crime") or "无").strip() or "无"
     severity = str(guilt.get("severity") or "无").strip() or "无"

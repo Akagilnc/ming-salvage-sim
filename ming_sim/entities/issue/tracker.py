@@ -16,7 +16,7 @@ from typing import Any, Dict, List, Optional
 from ming_sim.applier import Provenance, RejectedItem
 from ming_sim.settlement.outcome import IssueSectionResult
 from ming_sim.db import GameDB
-from ming_sim.entities.metric.apply import apply_metric_dict as _apply_metric_dict
+from ming_sim.entities.metric.apply import declare_metric_pairs
 from ming_sim.flows import _strict_int
 from ming_sim.models import GameState, effect_dict_has_work, loads_effect_dict
 
@@ -118,8 +118,21 @@ def apply_issue_tracker_output(
             continue
         # 确认 active 后才应用 metric（单线程内 _apply_metric_dict 不改 issue 表 status，故下方
         # advance_issue 必非 None——pre-check 与其内部判定同条件）。
-        metric_delta_raw = adv.get("metric_delta") or {}
-        applied_metrics = _apply_metric_dict(state, metric_delta_raw if isinstance(metric_delta_raw, dict) else {}, db=db)
+        metric_delta_raw = adv.get("metric_delta")
+        if metric_delta_raw is None:
+            metric_delta_raw = {}
+        if isinstance(metric_delta_raw, dict):
+            applied_metrics, refused_metrics = declare_metric_pairs(state, list(metric_delta_raw.items()), db=db)
+            entity_rejections.extend(RejectedItem(
+                item={"issue_id": issue_id, "field": key, "raw_value": value},
+                reason=why, category=category, source=source,
+            ) for key, value, why, category in refused_metrics)
+        else:
+            applied_metrics = {}
+            entity_rejections.append(RejectedItem(
+                item={"issue_id": issue_id, "field": "metric_delta", "raw_value": metric_delta_raw},
+                reason="局势推进指标须为对象", category="invalid_shape", source=source,
+            ))
         new_row = db.advance_issue(
             state, issue_id,
             trigger_kind="decree",
@@ -781,6 +794,11 @@ def apply_issue_tracker_output(
         if isinstance(cl_effect, dict):
             # 浅合并：metrics/economy/factions/buildings/legacy 等顶层段，现给覆盖预设
             effect = {**effect, **cl_effect}
+        elif cl_effect is not None:
+            entity_rejections.append(RejectedItem(
+                item={"issue_id": issue_id, "field": "effect_on_resolve" if reason == "resolved" else "effect_on_fail", "raw_value": cl_effect},
+                reason="局势结案后果须为对象", category="invalid_shape", source=source,
+            ))
         if reason == "resolved":
             issue_effects._emit_pairing_warnings(new_row, effect, pairing_warnings)
         parent_origin_ref = issues._canonical_issue_origin(db, new_row)

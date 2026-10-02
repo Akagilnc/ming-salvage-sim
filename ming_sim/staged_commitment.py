@@ -60,14 +60,14 @@ def _cn_years_to_int(token: str) -> int:
 
 def parse_staged_year_promise(text: str, *, origin_turn: int) -> List[Dict[str, object]]:
     """从「三年X五年Y」文案抽出分段（scripted 捕获；禁 live-LLM 作唯一验收）。"""
-    src = str(text or "").strip()
-    if not src:
+    src = str(text or "")
+    if not src.strip():
         return []
     stages: List[Dict[str, object]] = []
     for match in _STAGE_YEAR_RE.finditer(src):
         years_tok = match.group("years")
-        body = str(match.group("body") or "").strip(" ，。；;、")
-        if not body:
+        body = str(match.group("body") or "")
+        if not body.strip(" ，。；;、"):
             continue
         try:
             years = _cn_years_to_int(years_tok)
@@ -75,7 +75,7 @@ def parse_staged_year_promise(text: str, *, origin_turn: int) -> List[Dict[str, 
             continue
         if years <= 0:
             continue
-        origin_context = f"{years_tok}年{body}"
+        origin_context = src
         stages.append({
             "stage_idx": len(stages),
             "due_turn": int(origin_turn) + years * 12,
@@ -193,8 +193,8 @@ def capture_commitment_stages(
     """
     if raw not in (None, "", [], (), {}):
         if isinstance(raw, str):
-            text = raw.strip()
-            if text and text not in ("[]", "{}"):
+            text = raw
+            if text.strip() and text.strip() not in ("[]", "{}"):
                 try:
                     data = json.loads(text)
                 except (TypeError, ValueError):
@@ -217,7 +217,7 @@ def capture_commitment_stages(
                 parsed = parse_staged_year_promise(text, origin_turn=int(origin_turn))
                 if parsed:
                     return parsed
-                if text[:1] in "[{":
+                if text.lstrip()[:1] in "[{":
                     raise ValueError(
                         f"stages 须为 JSON 数组字符串，解析失败：{text!r}"
                     )
@@ -234,8 +234,8 @@ def capture_commitment_stages(
                     "stages 无有效段（每段须 due_turn>0 与 criterion_text）"
                 )
             return structured
-    narrative = str(narrative_text or "").strip()
-    if narrative:
+    narrative = str(narrative_text or "")
+    if narrative.strip():
         parsed = parse_staged_year_promise(narrative, origin_turn=int(origin_turn))
         # 叙事回落仅收多段（三年X五年Y）；单段不抢 form③ 单值 end_turn 语义
         if len(parsed) >= 2:

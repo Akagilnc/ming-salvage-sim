@@ -61,6 +61,19 @@
 - 全仓候选枚举继续使用 `python /tmp/1835-enumerate.py` 和七份 `/tmp/1835-live-F*.json`；最终候选数 F1=377、F5=2184、F6=703、F10=9624、F11=24、F13=224、F14=29。候选列表依旧不能当作已逐成员裁定。未运行全量。
 - `python -m compileall -q ming_sim tests web_app.py`、`git diff --check` 通过；本轮变化文件 pyflakes 无 undefined name（`PYTHONPATH=/tmp/1835-static-tools python -m pyflakes $(git diff HEAD --name-only --diff-filter=ACMR -- '*.py')`）。仓内未找到 mypy/pyright 配置，未把 compileall 冒作类型检查。
 
+## 本轮成员审计与续修
+
+- F13：提交 `F13-members.tsv`，覆盖当前生产 Python 的 227 个构造点及两个 `.item` 赋值；逐点列出对象构造、入口规范化或父循环 dict 先验。`transition_army_owner_power` 的三个显式调用均传对象、默认值也是对象，撤销了本轮一度加入的多余 scalar 护栏；没有集中修形层。
+- F14：`F14-members.tsv` 列出 29 个候选及四个范围外真实调用/耐久 owner。新增修复 advance 的坏 metric 容器、未知指标和值拒收，以及 close 的坏终结效果容器。复扫发现硬触发事件忽略效果核拒收：合并重复效果调用，事件身份与原效果对象由既有 RejectionCollector 入账，flush 在事务内，镜像等真正外层提交。
+- F5：催办追加结果不再过滤原文空行；执行说明增补不再按正文相同丢弃独立片段；分段承诺保留原 criterion 子字段空白，origin_context 保存完整原文；Web 手改指令向抽取器和写口传原文。删除全仓无调用的 CLI 推荐标记/流缓冲/模拟工具适配旧物，没有替代机制。
+- F6：坏持久罪谱不再冒充真实血债，JSON 错误穿透、非对象响亮失败；SQLite 缺列异常不按异常措辞改标；highlight 写库失败不转空成功，TicketCancelled 的既有取消契约保留。
+- F10：原有财政失败用例迁到 fixed_fiscal 的 SettlementAbort/错误包以及 Web 409+turn 契约，删除人类错误措辞锁，完整回滚断言保留。罪谱测试不再把坏字符串当合法底账，正向 fixture 改为既定 crime/severity JSON。复用两个原有真实入口用例，分别证明硬触发拒收耐久且不重复、催办不损失原文；没有新平行测试。
+- 实验未洗白：`focused43` 暴露旧罪谱夹具；`focused46/47/48` 暴露旧财政异常/HTTP 契约及一处新测试缺 import，已修复。将整个预推原文送入当前段转译的实验在 `focused50` 红，因改变发生段范围已撤回；没有放松其测试。该正式分段边界仍须列入 F5 剩余审计。
+- 最新聚焦命令：`python -m pytest -q -x tests/test_event_trigger_gate.py tests/test_secret_order_payoff_1504.py tests/test_secret_order_monthly_progress_566.py tests/test_execution_joint_liability_565.py tests/test_grant_reconciliation_567.py tests/test_issue_entities.py tests/test_advances_section_rejections.py tests/test_close_issues_section_rejections.py tests/test_declaration_dispatch_1835.py tests/test_highlight_judge_544.py tests/test_chat_stream_failpaths_393.py tests/test_settlement_fixed_point_1835.py tests/test_month_chain_1847.py tests/test_month_chain_1843.py tests/test_month_call_recovery_1846.py tests/test_cli_backend.py tests/test_urge_lever_624.py tests/test_breach_plea_623.py tests/test_due_review_621.py tests/test_audience_translate_1837_reopen.py tests/test_credit_events_628.py`。七个 BIN 均为 `/usr/bin/false`，`/tmp/1835-audit-focused52.txt`：640 passed，14.50s。未跑全量。
+- 变异真跑：恢复忽略硬触发拒收的旧行为，真实 auto_trigger 入口报红，耐久行 0 而非 1，0.89s（`/tmp/1835-event-rejection-mutation.txt`）；恢复旧空行过滤，真实 rush_secret_order 入口原文拷贝断言报红，0.74s（`/tmp/1835-rush-original-mutation.txt`）。恢复后上述 640 用例绿。
+- 测试最小成本：复用原有事件幂等与催办契约用例，增加耐久结构字段和原文精确拷贝断言；财政用例保留失败路径及整库/内存回滚。无新增通用件，无 F12 契约施工。
+- 最新枚举：F5=2174、F6=698、F10=9628、F13=227、F14=29。F13/F14 表只清算所列生产点/调用成员，不把它们冒称 F5/F6/F10 全仓逐成员结清。
+
 ## 尚未结清
 
 仍须将宽枚举逐成员完成语义处置，特别是 F10 剩余自由文本/保密哨兵及 helper 呈现测试、F5 下游传递与识别变换的边界、F6 剩余持久与批写接缝，并刷新完整成员处置表与最新触及面验证。本记录不把聚焦绿色冒作整类结清，不声明这些工作缺 owner 决定，也不以执行窗口作合法 blocker。
