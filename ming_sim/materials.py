@@ -1718,12 +1718,18 @@ def _write_world_tree(
         ))
         index.append(rel)
 
-    # One file per affair: origin, dated facts and linked dossier history.
+    # One file per affair: origin, dated facts and all landed effect history.
     # Keep reported and actual rails distinct inside that file.
     affair_materials = {
         key: [f"{title}\n{text}" if title else text]
         for key, title, text, _opening in affair_lines
     }
+    for affair in db.affairs.list_all():
+        affair_materials[f"affair-{affair.id}"].append(_material_facts_text({
+            "直挂事务实况": db.list_world_effect_history(
+                db.affairs.origin_ref(affair.id), exclude_dossier_ids=exclude_dossier_ids,
+            ),
+        }))
     # All linked dossiers remain available, regardless of dossier/affair status.
     # Use the unified reported seam (general + secret) and the existing actual
     # rail (progress + economy/fiscal effects); neither rail certifies the other.
@@ -1744,7 +1750,7 @@ def _write_world_tree(
             },
             "奏报": db.list_dossier_progress(dossier_id),
             "实况": {
-                "实况轨": db.list_dossier_actual_rail(dossier_id),
+                "已落效果": db.list_world_effect_history(f"dossier:{dossier_id}"),
                 "对账": db.list_dossier_reconciliations(dossier_id),
             },
         }

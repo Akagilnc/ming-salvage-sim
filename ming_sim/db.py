@@ -20679,7 +20679,9 @@ class GameDB:
         )
 
     def list_fiscal_effects_for_dossier(self, dossier_id: int) -> List[Dict[str, object]]:
-        origin = f"dossier:{int(dossier_id)}"
+        return self.list_fiscal_effects_for_origin(f"dossier:{int(dossier_id)}")
+
+    def list_fiscal_effects_for_origin(self, origin: str) -> List[Dict[str, object]]:
         rows: List[Dict[str, object]] = []
         for effect_kind, table, order in (
             ("create", "fiscal_config_creations", "id"),
@@ -20703,9 +20705,53 @@ class GameDB:
 
         只供事实，不参与裁决形状。四读端改调此处，禁再各写一份合并。
         """
-        return list(self.list_economy_moves_for_dossier(int(dossier_id))) + list(
-            self.list_fiscal_effects_for_dossier(int(dossier_id))
-        )
+        return self.list_durable_effects_for_origin(f"dossier:{int(dossier_id)}")
+
+    def list_durable_effects_for_origin(self, origin: str) -> List[Dict[str, object]]:
+        """Economy/fiscal merge shared by dossier and direct affair origins."""
+        return self.list_economy_moves_for_origin(origin) + self.list_fiscal_effects_for_origin(origin)
+
+    def list_world_effect_history(
+        self, origin: str, *, exclude_dossier_ids: set[int] | None = None,
+    ) -> Dict[str, object]:
+        """Read landed effects for a world affair file; never include staged verdicts.
+
+        Dossier callers retain the existing actual rail. Other persistent effect
+        logs are read here, not folded into adjudicators' economy/fiscal contract.
+        """
+        from ming_sim.entities.affair.store import parse_origin_ref
+
+        kind, target = parse_origin_ref(origin)
+        history: Dict[str, object] = {
+            "实况轨": (
+                self.list_dossier_actual_rail(target) if kind == "dossier"
+                else self.list_durable_effects_for_origin(origin)
+            ),
+        }
+        for table in (
+            "army_logs", "building_logs", "person_logs", "power_logs",
+            "region_logs", "population_transfer_ledger", "investigation_spoiled_facts",
+        ):
+            history[table] = [dict(row) for row in self.conn.execute(
+                f"SELECT * FROM {table} WHERE origin_ref=? ORDER BY id", (origin,),
+            ).fetchall()]
+        if kind == "dossier":
+            for table in (
+                "office_change_records", "authority_records",
+                "decree_cost_events", "dossier_loophole_exposures", "dossier_supervision_presence",
+            ):
+                history[table] = [dict(row) for row in self.conn.execute(
+                    f"SELECT * FROM {table} WHERE dossier_id=? ORDER BY id", (target,),
+                ).fetchall()]
+        elif kind == "affair":
+            excluded_origins = {f"dossier:{did}" for did in (exclude_dossier_ids or ())}
+            for table, order in (
+                ("issues", "id"), ("characters", "name"), ("relation_edge_events", "id"),
+            ):
+                history[table] = [dict(row) for row in self.conn.execute(
+                    f"SELECT * FROM {table} WHERE affair_id=? ORDER BY {order}", (target,),
+                ).fetchall() if dict(row).get("origin_ref") not in excluded_origins]
+        return history
 
     def record_dossier_actual_progress(
         self,
@@ -20866,10 +20912,13 @@ class GameDB:
         )
 
     def list_economy_moves_for_dossier(self, dossier_id: int) -> List[Dict[str, object]]:
+        return self.list_economy_moves_for_origin(f"dossier:{int(dossier_id)}")
+
+    def list_economy_moves_for_origin(self, origin: str) -> List[Dict[str, object]]:
         rows: List[Dict[str, object]] = []
         for row in self.conn.execute(
             "SELECT * FROM economy_ledger WHERE origin_ref=? ORDER BY id",
-            (f"dossier:{int(dossier_id)}",),
+            (origin,),
         ).fetchall():
             item = dict(row)
             # Normalize beyond_intent to bool for adjudicator consumers (#622).
