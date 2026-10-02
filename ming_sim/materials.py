@@ -1700,14 +1700,20 @@ def _world_effect_materials(
                 row, exclude_dossier_ids, secret_turn_ids, exclude_origin_prefix,
             ):
                 continue
-            if table == "person_logs":
+            if table == "person_logs" and isinstance(row["normalized"], dict):
                 row["normalized"] = _person_history_fields(row["normalized"])
             elif table == "issues":
                 for field in ("ongoing_effects", "cancel_cost", "effect_on_resolve", "effect_on_fail"):
                     effects = row[field]
+                    if not isinstance(effects, dict):
+                        continue
                     for key in PERSON_EFFECT_KEYS:
-                        if key in effects:
-                            effects[key] = [_person_history_fields(item) for item in effects[key]]
+                        items = effects.get(key)
+                        if isinstance(items, list):
+                            effects[key] = [
+                                _person_history_fields(item) if isinstance(item, dict) else item
+                                for item in items
+                            ]
             allowed.append(row)
         history[table] = allowed
     return history

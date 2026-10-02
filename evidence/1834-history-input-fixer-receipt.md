@@ -188,3 +188,42 @@ rg -n 'PERSON_EFFECT_KEYS|ongoing_effects|cancel_cost|effect_on_resolve|effect_o
 可核输出摘录：旧边界中四个效果字段的 `person_changes` 均为 `int 5`、`character` 均为 `int -8`，而规范键为 `str`；报 `AssertionError: ('open', [('ongoing_effects', 'person_changes', 5), ('ongoing_effects', 'character', -8), ...])`。恢复后每个字段/键组合均观察为 `str`，开放、关闭、重新打开数据库恢复三态各报 `PASS ... all 4 payload fields x all 3 engine person keys projected; actual directory read`。
 
 聚焦结果：`161 passed, 1 skipped in 6.79s`（保留基底盘面缺人物时的既有条件 skip）；四个变动 Python 文件 AST 解析通过。回执追加后 `git diff --check` 曾报末尾空行，以独立 forward commit 整理；最终复验无输出。不跑全量、不冒称 typecheck，无测试改动/新增测试。复扫后上述三键和四字段无漏项；F9 本次施工无剩余。两个自建临时文件 `/tmp/1834-person-effects-probe.py`、`/tmp/1834-person-effect-readers.txt` 交卷前清理。
+
+## 形状容忍补修：新增历史投影对脏存效果形状直接崩溃
+
+事实成立。上一局三键投影成立，但无条件遍历载荷并把条目传入 `dict()`，丢失真实引擎的 list/dict 容忍契约。本次恢复该契约，不新增机制或归一化器，不把未知异常吞成空结果。
+
+### 扫描、成员与处置
+
+```sh
+rg -n '_person_history_fields\(|row\["normalized"\]|effects\[key\]|json.loads\(row\[field\]|def _material_facts_text' ming_sim/materials.py ming_sim/db.py
+rg -n 'isinstance\(.*list|isinstance\(.*dict' ming_sim/issues.py
+rg -n 'def loads_effect_dict|def _eff_dict' ming_sim/models.py ming_sim/issues.py
+```
+
+全仓投影调用只有两处，共同边界都修：
+
+| 成员 | 容忍契约与处置 |
+| --- | --- |
+| 四效果字段 × `人物变更 / person_changes / character` | 效果顶层仅 dict 才读键；人物载荷仅 list 才遍历，且仅 dict 条目才投影。null、dict/数值/字符串载荷、非 dict 列表条目原样留存；合法人物条目仍投影方向。 |
+| `person_logs.normalized` | 解码结果仅 dict 才进入六轴投影；JSON null/list/数值/字符串原样留存。`record_person_log` 确实允许字符串形态 JSON，故不是只修点名的效果数组。 |
+| issues 九个 JSON 字段（上表全部字段） | db 解码没有强制容器转换；实测各列解出 null/list/数值/字符串/dict 均原样。五个非效果列不进入人物投影，既有通用字段渲染已按 Mapping/list/tuple/scalar 分流，保留。 |
+| 无效 JSON 语法、人物数值写入契约 | 非本次被认可的容器容忍；不新增 try/catch、空值兜底或数值防御。 |
+
+修法仅修改 `_world_effect_materials` 的调用条件与列表逐项选择；不改解码器、不改引擎、三键权威集合、来源排除或生产导出。复扫两处 `_person_history_fields` 调用均只接收 dict，效果遍历均只接收 list，顶层成员查询仅在 dict 内；没有同类残留。
+
+### 变异真跑与自验
+
+使用前文完整七变量前缀、`PYTHONDONTWRITEBYTECODE=1`，探针再加 `PYTHONPATH="$PWD"`。临时探针用真实 issue 写口保存三键的 null、dict、数值、字符串、非 dict 列表、混合列表，四字段全部覆盖；另以 SQL 写入合法 JSON 的历史错误顶层形状（null/list/标量），明确模拟脏存，不冒称当前顶层写口接受这些输入。九列解码独立逐列核验后恢复原存储；人物日志通过真实 `record_person_log` 写口追加。所有记录仅在自建临时 DB 中。
+
+```sh
+../Ming_LLM/.venv/bin/python /tmp/1834-history-shapes-probe.py --old
+../Ming_LLM/.venv/bin/python /tmp/1834-history-shapes-probe.py
+../Ming_LLM/.venv/bin/python -m pytest tests/test_world_materials_1834.py tests/test_material_directory_1830.py tests/test_decree_commitment_schema_136.py -q -p no:cacheprovider
+```
+
+`--old` 直接从 `git show 1c0a3c0ba:ming_sim/materials.py` 取旧 `_world_effect_materials` 的原定义，独立进程装回，不自撰旧行为。相同真实写入与目录入口遇 `character:null` 报红：`prepare_world_materials → _publish_material_tree → _write_world_tree → <previous-committed-history-method>:1710`，`TypeError: 'NoneType' object is not iterable`。
+
+恢复后可核输出：`PASS decoder all nine JSON columns preserve decoded container/scalar shapes`；开放、关闭、重开数据库恢复三态均 `PASS ... 4 fields x 3 carriers; null/dict/scalar/mixed-list retained; valid person delta projected; directory read`。探针实际 list/read 发布目录，仅在原渲染函数旁观察结构化输入，未解析或约束正文。混合列表中的合法 dict 条目变为方向字段，其他原条目保持，人物日志非 dict JSON 也保持。
+
+聚焦 `46 passed in 3.96s`；变动 Python AST 解析与最终 diff check 另行核验。不跑全量、不冒称 typecheck，无测试改动或新增测试。本类施工无未结项；自建 `/tmp/1834-history-shapes-probe.py` 交卷前清理，合并仍归调用者。
