@@ -1718,23 +1718,20 @@ def _write_world_tree(
         ))
         index.append(rel)
 
-    for dir_key, title, directory_text, _opening_text in affair_lines:
-        seg = _safe_segment(dir_key)
-        body = f"{title}\n{directory_text}" if title else directory_text
-        rel = f"{_AFFAIR_DIR}/{seg}/当前情况.txt"
-        _write_text(tmp / rel, body)
-        index.append(rel)
-
+    # One file per affair: origin, dated facts and linked dossier history.
+    # Keep reported and actual rails distinct inside that file.
+    affair_materials = {
+        key: [f"{title}\n{text}" if title else text]
+        for key, title, text, _opening in affair_lines
+    }
     # All linked dossiers remain available, regardless of dossier/affair status.
     # Use the unified reported seam (general + secret) and the existing actual
     # rail (progress + economy/fiscal effects); neither rail certifies the other.
-    affair_keys = {key for key, _title, _text, _opening in affair_lines}
     for dossier in db.list_decree_dossiers():
         dossier_id = int(dossier["id"])
         key = f"affair-{int(dossier.get('affair_id') or 0)}"
-        if key not in affair_keys or dossier_id in (exclude_dossier_ids or set()):
+        if key not in affair_materials or dossier_id in (exclude_dossier_ids or set()):
             continue
-        dossier_dir = f"{_AFFAIR_DIR}/{_safe_segment(key)}/案卷/{dossier_id}"
         materials = {
             "案卷": {
                 "案卷": {
@@ -1751,10 +1748,12 @@ def _write_world_tree(
                 "对账": db.list_dossier_reconciliations(dossier_id),
             },
         }
-        for layer, facts in materials.items():
-            rel = f"{dossier_dir}/{layer}.txt"
-            _write_text(tmp / rel, _material_facts_text(facts))
-            index.append(rel)
+        affair_materials[key].append(_material_facts_text({f"案卷 {dossier_id}": materials}))
+
+    for key, parts in affair_materials.items():
+        rel = f"{_AFFAIR_DIR}/{_safe_segment(key)}/当前情况.txt"
+        _write_text(tmp / rel, "\n\n".join(parts))
+        index.append(rel)
 
     index.extend(_write_candidate_event_files(tmp, candidates["events"]))
     index.extend(_write_fiscal_levy_petition_files(tmp, db, state))

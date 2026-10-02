@@ -156,13 +156,9 @@ def test_prepare_rebuilds_from_world_record_after_restore(game, tmp_path):
         state2 = restored.load_state()
         prepared = prepare_world_materials(restored, state2, dest_root=tmp_path / "m2")
         names = list_materials(prepared.root)
-        affair_path = next(
-            p for p in names
-            if p.startswith(f"事务/affair-{affair.id}-") and p.endswith("/当前情况.txt")
-        )
-        dossier_dir = f"{affair_path.rsplit('/', 1)[0]}/案卷/{dossier_id}"
-        for layer in ("奏报", "实况", "案卷"):
-            read_material(prepared.root, f"{dossier_dir}/{layer}.txt")
+        affair_paths = [p for p in names if p.startswith(f"事务/affair-{affair.id}-")]
+        assert len(affair_paths) == 1
+        read_material(prepared.root, affair_paths[0])
     finally:
         restored.close()
 
