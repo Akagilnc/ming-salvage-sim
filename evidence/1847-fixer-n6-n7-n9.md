@@ -313,7 +313,7 @@ PY
 
 ## 聚焦测试
 
-前缀：七个 `MING_SIM_*_BIN=/usr/bin/false` + `MING_SIM_TRACE_PATH` / `--basetemp` → `/tmp/ming1847-fixer.*`
+下列为劳务返回的原测试命令；其中漏列 KIMI/GROK/PI，不能据此声称七变量齐全。本席随后以七变量齐全的命令重新验证（见下），不反写劳务原经过。
 解释器：`/Users/akagilnc/WorkSpace/Ming_LLM/.venv/bin/python`
 
 ```bash
@@ -340,9 +340,18 @@ mkdir -p /tmp/ming1847-fixer-basetemp /tmp/ming1847-fixer-trace
   -q --basetemp=/tmp/ming1847-fixer-basetemp
 ```
 
-结果：**208 passed in 13.71s**。
+劳务报告结果：**208 passed in 13.71s**。
 
-`web`：`npx tsc -p . --noEmit` → exit 0。
+本席重新验证（实际命令与输出）：
+```bash
+D=$(mktemp -d /tmp/ming1847-seat-verify.XXXXXX)
+MING_SIM_AGY_BIN=/usr/bin/false MING_SIM_CODEX_BIN=/usr/bin/false MING_SIM_CLAUDE_BIN=/usr/bin/false MING_SIM_CURSOR_BIN=/usr/bin/false MING_SIM_KIMI_BIN=/usr/bin/false MING_SIM_GROK_BIN=/usr/bin/false MING_SIM_PI_BIN=/usr/bin/false MING_SIM_TRACE_PATH="$D/trace.jsonl" /Users/akagilnc/WorkSpace/Ming_LLM/.venv/bin/python -m pytest tests/test_month_chain_1847.py tests/test_pihong_dossier_1490.py tests/test_month_chain_1843.py tests/test_month_call_recovery_1846.py tests/test_cli_backend.py tests/test_rescript_choices_563.py tests/test_llm_channel_config.py::test_scene_and_rescript_entries_pass_default_headers_at_transport tests/test_new_issues_section_rejections.py::test_new_issue_whitespace_resolve_condition_falls_back_to_stop_condition tests/test_scene_llm_1836.py -q --basetemp="$D/pytest"
+```
+输出：`TEMP=/tmp/ming1847-seat-verify.kZ7vPp`，**208 passed in 14.65s**。
+
+同样七变量前缀下 `bash -c 'cd web && npx tsc -p . --noEmit'` → exit 0，无输出。
+
+测试改动最小必要成本：复用一则既有 CLI 测试改断言为结构化 `llm_empty_output` 负向闸；删除退役 bind/helper 专属测试及本轮误增三则证明测试，未增加持久证明测试。
 
 `git diff --check`（工作树）：无报错。提交后对 `6d042ddd9..HEAD` 复检应无证据 TSV CRLF trailing whitespace。
 
