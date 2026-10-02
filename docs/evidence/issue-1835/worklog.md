@@ -93,6 +93,14 @@
 - 测试改动契约是结构化源身份隔离与消息级出处、持久及回滚，不是正文相似度。最小成本是复用原 36 个执行案和现成 SQL/knowledge 入口，删除 192 行旧呈现检查、加入 78 行身份与精确源拷贝检查，没有新增证明用例。
 - 最新宽候选 F10=9669（源身份断言也会被宽扫描列入），其余数量不变；候选数上升/下降均不是违规或结清的机械判据。
 
+## F5：共享 JSON 读边界复扫
+
+- 宽扫描进一步发现 `agents.parse_agent_json` 删除字符串内控制字符，以及在有效 JSON 的字符串内误剥代码围栏。原始 JSON 先按语法直接解码；非法控制字符报 LLMContractError 并保留完整 raw_value，不再删字节后冒作成功。
+- 删除手写平衡括号扫描及两个 control-char 清洗分支，复用标准库 JSONDecoder.raw_decode 维持既有首对象提取契约。没有加新的通用件或并行解析器。
+- 仓内搜索 raw_decode/JSONDecoder 没有既有实现；标准库官方文档 `https://docs.python.org/3/library/json.html#json.JSONDecoder.raw_decode` 实际 HTTP 200；生态 Agno utils/string.py 的 parse_response_dict_str 会合并多个对象，和现有首对象契约不同，未借它改变产品规则。
+- 真实共享入口观察 `/tmp/1835-agent-json-run.py`：恢复旧控制字符删除/先剥围栏转换，`/tmp/1835-agent-json-old.txt` 显示非法原文被接受为 body=甲乙，合法包含围栏的原文被拒；恢复后 `/tmp/1835-agent-json-new.txt` 得 contract_failure + raw_preserved=true + JSONDecodeError，以及 valid_original_decoded + body_preserved=true。此为结构化观察，没有伪称 pytest 报红，没有新增仓内测试。
+- `/tmp/1835-audit-focused59.txt` 覆盖 pihong_dossier、relation_brew、rescript_draft、audience_translate、month_chain、CLI，303 passed，26.64s，七旗禁宿主。仍须全仓成员复核，不能拿此绿色作为 F5 结清。
+
 ## 尚未结清
 
 仍须将宽枚举逐成员完成语义处置，特别是 F10 剩余自由文本/保密哨兵及 helper 呈现测试、F5 下游传递与识别变换的边界、F6 剩余持久与批写接缝，并刷新完整成员处置表与最新触及面验证。本记录不把聚焦绿色冒作整类结清，不声明这些工作缺 owner 决定，也不以执行窗口作合法 blocker。
