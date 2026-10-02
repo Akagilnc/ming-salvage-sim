@@ -513,15 +513,18 @@ def test_run_codex_maps_reasoning_strength_to_native_effort(monkeypatch):
     assert 'model_reasoning_effort="medium"' not in joined
 
 
-def test_run_codex_stdout_empty_fallback(monkeypatch):
+def test_run_codex_stderr_banner_does_not_become_body(monkeypatch):
+    """stdout 空时 stderr 日志／banner 不得冒充正文；走既有空输出失败契约。"""
+    from ming_sim.exceptions import LLMUnavailable
+
     monkeypatch.delenv("MING_SIM_CODEX_REASONING", raising=False)
-    body = "  STDOUT_BODY\n "
     _capture_run(
         monkeypatch,
-        _P(stdout="", stderr=body + "OpenAI Codex v0.125.0\nlogs"),
+        _P(stdout="", stderr="diag\nOpenAI Codex v0.125.0\nlogs", returncode=0),
     )
-    out, n = cb._run_codex("p")
-    assert out == body
+    with pytest.raises(LLMUnavailable) as ei:
+        cb._run_codex("p")
+    assert ei.value.code == "llm_empty_output"
 
 
 def test_run_claude_maps_reasoning_strength_to_thinking_tokens(monkeypatch):

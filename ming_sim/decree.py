@@ -82,7 +82,6 @@ TIMEOUT_TURN = 240
 from ming_sim.settlement_payload import (  # noqa: E402
     _DECISION_RE,
     bind_decision_options,
-    bind_decisions_to_candidate_events,
     parse_decision_blocks,
 )
 

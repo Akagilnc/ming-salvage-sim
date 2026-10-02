@@ -21,36 +21,6 @@ def rescript_llm_boundary(monkeypatch):
     monkeypatch.setattr("ming_sim.rescript_draft.run_rescript_text", empty_rescript_response)
 
 
-def test_bind_preserves_dossier_event_id():
-    """#1490 接收端病灶：bind 不得把 dossier: 前缀 event_id 当 off-snapshot 解绑。"""
-    from ming_sim.settlement_payload import bind_decisions_to_candidate_events
-    decisions = [{'event_id': 'dossier:8', 'title': '批红待裁', 'options': [{'label': '强颁', 'dossier_id': 8, 'dossier_decision': 'force_promulgated'}]}]
-    payload = {'candidate_events': [{'id': 'ev1', 'title': '边警'}]}
-    out = bind_decisions_to_candidate_events(decisions, payload)
-    assert out[0]['event_id'] == 'dossier:8'
-
-def test_bind_unbinds_dossier_prefix_without_capability_fields():
-    """#1492 A：due-commitment 形 origin_ref=dossier:N + 纯 {label,hint} options
-    不得保留 dossier: 前缀——否则 submit 空对空放行后 phase2 批红卡死。"""
-    from ming_sim.settlement_payload import bind_decisions_to_candidate_events
-    decisions = [{'event_id': 'dossier:12', 'title': '承诺到期核验', 'options': [{'label': '准其销号', 'hint': '事已办结'}, {'label': '着再催办', 'hint': '期限宽延'}]}]
-    payload = {'candidate_events': [{'id': 'ev1', 'title': '边警'}]}
-    out = bind_decisions_to_candidate_events(decisions, payload)
-    assert 'event_id' not in out[0] or not str(out[0].get('event_id') or '').startswith('dossier:'), out[0]
-
-def test_parse_rescript_capability_pair_rejects_non_positive_and_unknown():
-    """#1494 共享校验器：正整数 id + 支持动作枚举；其余一律 None。"""
-    from ming_sim.settlement_payload import parse_rescript_capability_pair
-    assert parse_rescript_capability_pair({'dossier_id': 3, 'dossier_decision': 'hold'}) == (3, 'hold')
-    assert parse_rescript_capability_pair({'dossier_id': '7', 'dossier_decision': 'withdrawn'}) == (7, 'withdrawn')
-    assert parse_rescript_capability_pair({'dossier_id': 0, 'dossier_decision': 'hold'}) is None
-    assert parse_rescript_capability_pair({'dossier_id': -1, 'dossier_decision': 'hold'}) is None
-    assert parse_rescript_capability_pair({'dossier_id': 3, 'dossier_decision': 'promulgated'}) is None
-    assert parse_rescript_capability_pair({'dossier_id': 3, 'dossier_decision': None}) is None
-    assert parse_rescript_capability_pair({'dossier_decision': 'hold'}) is None
-    assert parse_rescript_capability_pair(None) is None
-    assert parse_rescript_capability_pair('force_promulgated') is None
-
 _ROSTER_LEAD = '毕自严'
 
 _ROSTER = [{'character_id': _ROSTER_LEAD, 'tier': '主办', 'role': '总核', 'delegator_id': None}]

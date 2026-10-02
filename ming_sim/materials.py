@@ -620,8 +620,8 @@ def _visible_affair_lines(knowledge: dict) -> list[dict[str, object]]:
             "affair_id": int(issue.get("affair_id") or 0),
             "title": title,
             "situation": str(issue.get("stage_text") or "") or "见目录。",
-            "resolve_condition": str(issue.get("resolve_condition") or "").strip(),
-            "fail_condition": str(issue.get("fail_condition") or "").strip(),
+            "resolve_condition": str(issue.get("resolve_condition") or ""),
+            "fail_condition": str(issue.get("fail_condition") or ""),
             "source_id": str(issue.get("source_id") or f"issue:{issue_id}"),
             "audience_names": tuple(issue.get("audience_names") or ()),
             "participant_roster": issue.get("participant_roster") or "[]",
@@ -968,8 +968,8 @@ def _write_tree(
             f"事务ID：{item['affair_id']}" if item["affair_id"] else "",
             f"标题：{item['title']}",
             f"当前情况：{item['situation']}",
-            f"办结条件：{item['resolve_condition']}" if item["resolve_condition"] else "",
-            f"失败条件：{item['fail_condition']}" if item["fail_condition"] else "",
+            f"办结条件：{item['resolve_condition']}" if str(item["resolve_condition"]).strip() else "",
+            f"失败条件：{item['fail_condition']}" if str(item["fail_condition"]).strip() else "",
         ]
         _write_text(affair_dir / "当前情况.txt", "\n".join(x for x in details if x))
         index.append(f"{_AFFAIR_DIR}/{segment}/当前情况.txt")

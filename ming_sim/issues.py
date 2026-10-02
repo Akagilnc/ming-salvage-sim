@@ -357,13 +357,14 @@ def _payload_owned_person_duplicate(
 
 
 def _issue_condition_text(raw: object) -> str:
+    """Transport issue condition text without mutating free-text whitespace."""
     if raw is None:
         return ""
     if isinstance(raw, str):
-        return raw.strip()
+        return raw
     if isinstance(raw, (dict, list)):
         return json.dumps(raw, ensure_ascii=False, separators=(",", ":"))
-    return str(raw).strip()
+    return str(raw)
 
 
 def _normalize_commitment_kind(raw: object) -> str:
@@ -5165,7 +5166,8 @@ def apply_issue_tracker_output(
         except (TypeError, ValueError, OverflowError):
             end_turn_marker_shape = False
         legacy_resolve_text = _issue_condition_text(ni.get("resolve_condition"))
-        if not legacy_resolve_text and isinstance(stop_condition_raw, str):
+        # 判空可读 strip；不把空白判空写回运输值（N6 / P6）。
+        if not legacy_resolve_text.strip() and isinstance(stop_condition_raw, str):
             legacy_resolve_text = stop_condition
         legacy_resolve_commitment_shape = (
             commitment_condition_role(legacy_resolve_text).get("condition_role")
@@ -5318,7 +5320,8 @@ def apply_issue_tracker_output(
             })
             continue
         resolve_condition = _issue_condition_text(ni.get("resolve_condition"))
-        if not resolve_condition and isinstance(ni.get("stop_condition"), str):
+        # 判空可读 strip；非空原文（含首尾空白）原样落库。
+        if not resolve_condition.strip() and isinstance(ni.get("stop_condition"), str):
             resolve_condition = stop_condition
         # A structured roster is an item-level contract.  In particular a
         # mapping is not an iterable roster: iterating it would persist its
@@ -5430,8 +5433,8 @@ def apply_issue_tracker_output(
             cancel_cost=cancel_cost,
             effect_on_resolve=resolve_eff,
             effect_on_fail=fail_eff,
-            resolve_condition=resolve_condition[:300],
-            fail_condition=str(ni.get("fail_condition") or "")[:300],
+            resolve_condition=resolve_condition,
+            fail_condition=_issue_condition_text(ni.get("fail_condition")),
             end_turn=end_turn,
             stop_condition=stop_condition,
             commitment_kind=commitment_kind,

@@ -853,10 +853,9 @@ def _iter_cli_runner_text(
                 code="llm_connection_error",
                 provider_message=f"agy auth race：{(stdout_text + stderr)[:200]}",
             )
+        # Codex / CLI：干净正文只在 stdout；stderr 是日志，不得冒充正文
+        # （Python subprocess 分流；Codex non-interactive：progress→stderr，final→stdout）。
         text = stdout_text if stdout_text.strip() else final_text
-        if runner == "codex" and not json_events and not text:
-            # 兜底：stdout 空时干净段可能落在合并流 "OpenAI Codex v" 之前。
-            text = (stdout_text + stderr).split("OpenAI Codex v")[0]
         # 非零退出不洗成瞬断：无 typed status 的失败当确定性失败（#1780 / ADR 0142）。
         if returncode != 0:
             raise RuntimeError(f"{runner} 调用失败（退出码 {returncode}）：{stderr[:200]}")
