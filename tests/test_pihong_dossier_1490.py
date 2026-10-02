@@ -11,6 +11,8 @@ A. bind 对无能力字段的 dossier: 前缀解绑；due-commitment 同形不�
 D. 命中 allowed 后从服务端 option 重建 label/hint/能力字段，客户端只留 note。
 """
 from __future__ import annotations
+
+from ming_sim.decree import ResolveResult
 from tests.conftest import clear_pending_rows, seed_rescript_rows
 import asyncio
 import json
@@ -302,8 +304,8 @@ def test_missing_dossier_fields_stay_pending_then_full_retry_decides(web_game, m
         rows = list(_db.list_pending_decisions(int(_state.turn)))
         phase2_calls.append(rows)
         clear_pending_rows(_db, int(_state.turn))
-        return '邸报：批红已落。'
-    monkeypatch.setattr(session_mod, 'resolve_decisions_phase2', _phase2)
+        return ResolveResult(report='邸报：批红已落。', awaiting=False, advanced=False)
+    monkeypatch.setattr("ming_sim.month_chain.run_player_month_chain", _phase2)
     d_key = db.list_rescript_desk(int(state.turn))[0]['decision_key']
     incomplete = {'decision_key': d_key, 'label': '强颁', 'hint': '', 'note': '准。先济关宁边饷。'}
     r1 = asyncio.run(_post_resolve([incomplete]))
@@ -349,8 +351,8 @@ def test_due_commitment_shaped_submit_does_not_poison_or_deadlock(web_game, monk
         rows = list(_db.list_pending_decisions(int(_state.turn)))
         phase2_calls.append(rows)
         clear_pending_rows(_db, int(_state.turn))
-        return '邸报：承诺已核。'
-    monkeypatch.setattr(session_mod, 'resolve_decisions_phase2', _phase2)
+        return ResolveResult(report='邸报：承诺已核。', awaiting=False, advanced=False)
+    monkeypatch.setattr("ming_sim.month_chain.run_player_month_chain", _phase2)
     choice = {'decision_key': db.list_rescript_desk(int(state.turn))[0]['decision_key'], 'label': '准其销号', 'hint': '事已办结', 'note': '准销。'}
     r = asyncio.run(_post_resolve([choice]))
     assert r.status_code == 200, r.text
@@ -375,8 +377,8 @@ def test_lying_label_rebuilt_from_server_option(web_game, monkeypatch):
         rows = list(_db.list_pending_decisions(int(_state.turn)))
         phase2_calls.append(rows)
         clear_pending_rows(_db, int(_state.turn))
-        return '邸报：批红已落。'
-    monkeypatch.setattr(session_mod, 'resolve_decisions_phase2', _phase2)
+        return ResolveResult(report='邸报：批红已落。', awaiting=False, advanced=False)
+    monkeypatch.setattr("ming_sim.month_chain.run_player_month_chain", _phase2)
     lying = {'decision_key': db.list_rescript_desk(int(state.turn))[0]['decision_key'], 'label': '收回', 'hint': '收回此道准旨', 'note': '准。先济关宁边饷。', 'dossier_id': dossier_id, 'dossier_decision': 'force_promulgated'}
     r = asyncio.run(_post_resolve([lying]))
     assert r.status_code == 200, r.text
@@ -421,8 +423,8 @@ def test_mixed_legal_illegal_options_illegal_choice_stays_pending(web_game, monk
         rows = list(_db.list_pending_decisions(int(_state.turn)))
         phase2_calls.append(rows)
         clear_pending_rows(_db, int(_state.turn))
-        return '邸报：不应到此。'
-    monkeypatch.setattr(session_mod, 'resolve_decisions_phase2', _phase2)
+        return ResolveResult(report='邸报：不应到此。', awaiting=False, advanced=False)
+    monkeypatch.setattr("ming_sim.month_chain.run_player_month_chain", _phase2)
     illegal = {'decision_key': db.list_rescript_desk(int(state.turn))[0]['decision_key'], 'label': '伪收回', 'hint': '残对负 id', 'dossier_id': -9, 'dossier_decision': 'withdrawn'}
     r1 = asyncio.run(_post_resolve([illegal]))
     assert r1.status_code == 200, r1.text
@@ -471,8 +473,8 @@ def test_ordinary_event_with_hallucinated_capability_submits(web_game, monkeypat
         rows = list(_db.list_pending_decisions(int(_state.turn)))
         phase2_calls.append(rows)
         clear_pending_rows(_db, int(_state.turn))
-        return '邸报：边警已核。'
-    monkeypatch.setattr(session_mod, 'resolve_decisions_phase2', _phase2)
+        return ResolveResult(report='邸报：边警已核。', awaiting=False, advanced=False)
+    monkeypatch.setattr("ming_sim.month_chain.run_player_month_chain", _phase2)
     choice = {'decision_key': db.list_rescript_desk(int(state.turn))[0]['decision_key'], 'label': '准其销号', 'hint': '事已办结', 'note': '准销。'}
     r = asyncio.run(_post_resolve([choice]))
     assert r.status_code == 200, r.text
@@ -1286,8 +1288,8 @@ def test_1589_empty_desk_rejects_nonempty_keyless_choices(web_game, monkeypatch)
 
     def _phase2(_state, _db, *_a, **_k):
         phase2_calls.append(1)
-        return '邸报'
-    monkeypatch.setattr(session_mod, 'resolve_decisions_phase2', _phase2)
+        return ResolveResult(report='邸报', awaiting=False, advanced=False)
+    monkeypatch.setattr("ming_sim.month_chain.run_player_month_chain", _phase2)
     r1 = asyncio.run(_post_resolve([{'label': '留', 'note': '无键'}]))
     assert r1.status_code == 200, r1.text
     assert 'event: error' in r1.text, r1.text
@@ -1468,8 +1470,8 @@ def test_1620_http_follow_draft_grant_uses_stored_amount(web_game, monkeypatch):
     assert int(stored.get('amount') or 0) == 500, 'option 持久化须含 amount'
 
     def _phase2(_state, _db, *_a, **_k):
-        return '邸报：赏已落。'
-    monkeypatch.setattr(session_mod, 'resolve_decisions_phase2', _phase2)
+        return ResolveResult(report='邸报：赏已落。', awaiting=False, advanced=False)
+    monkeypatch.setattr("ming_sim.month_chain.run_player_month_chain", _phase2)
     db.save_resolve_context(int(state.turn), '诏', {'candidate_events': [], 'transit_semantics': []})
     state.turn_phase = TurnPhase.AWAITING_DECISION.value
     db.save_state(state)
@@ -1984,8 +1986,8 @@ def test_1625_inflight_phase2_does_not_advertise_resume(web_game, monkeypatch):
     def _phase2(*_a, **_k):
         entered.set()
         release.wait()
-        return '邸报'
-    monkeypatch.setattr(session_mod, 'resolve_decisions_phase2', _phase2)
+        return ResolveResult(report='邸报', awaiting=False, advanced=False)
+    monkeypatch.setattr("ming_sim.month_chain.run_player_month_chain", _phase2)
     result = {}
 
     def _run():

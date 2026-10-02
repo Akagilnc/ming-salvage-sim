@@ -33,7 +33,7 @@ from ming_sim.decree_vocabulary import (
     DOSSIER_ACTION_TYPES, DIRECTIVE_ACTION_TYPES, dossier_action_policy,
 )
 from ming_sim.matching import match_region_id_from_text
-from ming_sim.exceptions import LLMContractError, OfficeAppointmentRejection
+from ming_sim.exceptions import OfficeAppointmentRejection
 from ming_sim.intelligence import OFFICE_SLOTS
 from ming_sim.models import (
     FRONT_HALF_DONE_PHASES, Character, Event, GameState, is_vassal_prince,
@@ -15809,27 +15809,6 @@ class GameDB:
                 )
         return True
 
-
-    def get_pending_promulgation_verdicts(
-        self, turn: int,
-    ) -> List[Dict[str, object]]:
-        rows = self.conn.execute(
-            "SELECT verdict_json FROM pending_promulgation_verdicts WHERE turn=? ORDER BY dossier_id",
-            (int(turn),),
-        ).fetchall()
-        result = []
-        for row in rows:
-            raw_value = row["verdict_json"]
-            try:
-                value = json.loads(raw_value)
-                if not isinstance(value, dict):
-                    raise ValueError("待应用颁布判决须为对象")
-            except ValueError as exc:
-                raise LLMContractError(
-                    f"待应用颁布判决读取失败：{exc}", raw_value=raw_value,
-                ) from exc
-            result.append(value)
-        return result
 
     def _apply_military_order_station_effect(
         self, state, *, army_id: str, station: str, actor: str, reason: str,

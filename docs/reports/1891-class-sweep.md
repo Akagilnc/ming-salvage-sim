@@ -1,6 +1,6 @@
 # #1891 三类整类修复回执附件
 
-基线：`8ad1ee740`（#1891/#1899 组合现场，不是家族底座）。#1899 财政消费写口不改。
+基线：`8ad1ee740`（#1891/#1899 组合现场，不是家族底座）。#1899 财政消费写口不改。本附件记录首轮 b1900c284；其枚举范围和 #1625 归因被退回，修正及本轮增量成员表见 [复审修理回执](1891-review-repair.md)。
 
 ## 枚举方法
 
@@ -15,7 +15,7 @@ rg -n 'world_translate|world_continue|decree_continue|translate_exhaust_stops|co
 
 退役枚举另用 Python `ast.parse` / `ast.walk` 遍历所有 tracked Python，覆盖顶层函数、类、类方法和嵌套闭包：收集现役源码的 Name(load)、Attribute、ImportFrom 和显式字符串标识符引用，反查供给/消费者，删空闭包后再迭代依赖。单次出现只是候选，另外复核声明的实际 SDK/协议消费者。跨文件 import/re-export 单独复核，真实消费者直连已有权威模块，不恢复兼容别名。成员表使用限定名，删除父闭包时子声明随之删除，不重复记账。
 
-最终全部 tracked Python 的 `from ming_sim.* import X` 真源绑定缺项为 `[]`。全作用域无显式引用候选只剩下面 9 个保留项；其余已清，无遗漏候选：
+首轮全部 tracked Python 的 `from ming_sim.* import X` 真源绑定缺项为 `[]`，但声明候选扫描错误地只覆盖 ming_sim，漏了 web_app 等现役源码；「全作用域只剩九项」结论撤回。以下九项只是 ming_sim 子集的协议保留项，最终全仓结果见复审修理回执：
 
 | 保留成员 | 实际消费者 |
 | --- | --- |
@@ -211,7 +211,7 @@ PY=/Users/akagilnc/WorkSpace/Ming_LLM/.venv/bin/python
 - 最终核心聚焦 `test_month_call_recovery_1846.py test_month_chain_1847.py test_levy_petition_month_chain_1891.py test_cli_backend.py`：163 passed（35.51s）。
 - 最终字段/消费端聚焦 `test_rescript_draft_656.py test_rescript_option_field_heal_1746.py test_structured_decree_contract_1624.py test_secret_order_update.py test_pihong_dossier_1490.py test_applier_contract.py test_rescript_choices_563.py -k 'not test_1625_inflight_phase2_does_not_advertise_resume'`：130 passed，1 deselected（17.34s）。
 - 最后退役 credit-edge 旧读面后，聚焦 `test_recommendation_edges_635.py test_relation_read_640.py test_credit_events_628.py`：24 passed（1.32s）。一次聚焦命令误写了不存在的 `test_relations_speak.py`，0 案运行，不计通过；已纠正为上述真实文件。
-- #1625 已知基线失败另独立实跑：1 failed（最终复验 0.84s），终态 `resume_phase2=True` 而测试要求 False。测试保留，未放松/删除；#1899 随附回执已在组合之前的基线快照复现。该真实并发/phase2 mock 案不是本票三类成员，不把它洗白为全绿。
+- 首轮 #1625 单跑 1 failed（0.84s），终态 `resume_phase2=True`。将其当成组合之外基线项的归因错误，撤回：2f74dc641 将相位派生搬进 resolve_decisions_phase2，旧替身绕过新契约。复审已统一将成功替身移至下层月链，保留真实 phase2 相位派生及原断言；#1625 恢复绿，见复审回执的红绿变异记录。
 - Web `tsc -p web/tsconfig.json --noEmit`：exit 0；Vitest `src/settleStream.test.ts src/components/modals.test.tsx --environment jsdom`：70 passed（875ms）。只在本树建临时 node_modules 链接指向既有依赖，结束已删。
 - touched Python AST/syntax、Ruff `--target-version py313 --select F401,F821`、仓内 from-import 真源绑定复扫：通过。未配置 Python 静态类型工具，不把 lint 冒称 Python typecheck。
 - touched 测试 collect-only：1390 tests collected（2.25s）；不是全量 suite。

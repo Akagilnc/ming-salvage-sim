@@ -1220,11 +1220,6 @@ class WebGame:
         self.session.begin_turn()
         return new_config
 
-    def apply_llm_config(self, *args, **kwargs) -> LLMConfig:
-        """同步:build → verify → commit。异步端点 api_set_llm_config 改为分步以 offload verify。"""
-        new_config = self.build_llm_config(*args, **kwargs)
-        _verify_llm_configs_or_raise(new_config)
-        return self.commit_llm_config(new_config)
 
     # ── 便捷属性 ──────────────────────────────────────────────────────────
     @property
@@ -1284,10 +1279,6 @@ class WebGame:
         """释放领票（成功/失败/空放行同形）。"""
         self._runtime_write_queue().complete(ticket)
 
-    @property
-    def _pending_writes_count(self) -> int:
-        """兼容只读：队列在途票据数（旧 counter 名，事实来源=队列）。"""
-        return int(self._runtime_write_queue().inflight_count())
 
     def refresh_turn(self) -> None:
         self.session.begin_turn()
@@ -2203,22 +2194,6 @@ class WebGame:
         if getattr(self.state, "turn_phase", None) in FRONT_HALF_DONE_PHASES:
             raise HTTPException(status_code=409, detail="月末结算/亲裁进行中，暂不能召对。")
 
-
-    def _open_night_court_break(self, message: str) -> bool:
-        """#1716：已开夜的收夜口令不得被场外记召短路。
-
-        场外 SUMMON_* 早退会吞掉「退朝/散夜」，夜停 open、chat 无落、拟诏台真空。
-        封闭集 COURT_BREAK 且本夜已开 → 放行既有 command verdict / close_night 缝。
-        """
-        from ming_sim.audience_night import (
-            CMD_CLOSE_NIGHT,
-            get_open_night,
-            recognize_audience_command,
-        )
-
-        if recognize_audience_command(message) != CMD_CLOSE_NIGHT:
-            return False
-        return get_open_night(self.db) is not None
 
     def interrupted_reply_retries(self, minister_name: str) -> List[Dict[str, Any]]:
         """#505：某大臣重开后待重试的中断回话轮（问话已落、回话未落）——恢复提示取数。
@@ -5274,18 +5249,6 @@ _STATUS_LABEL_WEB = {
     "active": "在事", "offstage": "尚未登场", "dead": "已殁", "dismissed": "已罢黜",
     "imprisoned": "下狱", "exiled": "流放", "retired": "致仕",
 }
-
-
-def _require_active_minister(minister_name: str) -> None:
-    if minister_name not in get_game().content.characters:
-        raise HTTPException(status_code=404, detail=f"未找到人物：{minister_name}")
-    character = get_game().content.characters[minister_name]
-    # #1402：召见闸文案单一真源 = session.can_summon（含宗藩/非大明/非 active）。
-    # 旧副本多一个「已」字，offstage 产「已尚未登场」；后宫仍由 can_summon 放行
-    # （不拒 office_type=后宫，嫔妃 chat 复用本端点）。
-    ok, reason = get_game().session.can_summon(character)
-    if not ok:
-        raise HTTPException(status_code=409, detail=reason or "")
 
 
 @app.get("/api/audience/scroll")

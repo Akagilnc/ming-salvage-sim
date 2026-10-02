@@ -1,6 +1,8 @@
 """玩家月链恢复入口与持久化决议验证。"""
 
 from __future__ import annotations
+
+from ming_sim.decree import ResolveResult
 from tests.conftest import clear_pending_rows, clear_resolve_rows
 
 from ming_sim.session_write_queue import get_session_write_queue
@@ -55,12 +57,12 @@ def _recovery_session(db, state, content, monkeypatch):
 def test_submit_event_decision_persists_choice_after_pending_cleanup(game, monkeypatch):
     """#345：事件亲裁选择不能只活在 pending_decisions；phase2 清理后仍须可从事件账恢复。"""
     import json
-    import ming_sim.session as session_mod
     from ming_sim.session import GameSession
 
     db, state, content = game
     turn = state.turn
     event_id = "mao_wenlong"
+    db.save_resolve_context(turn, "测试诏书", {"candidate_events": []})
     db.save_pending_decisions(turn, [{
         "event_id": event_id,
         "title": "毛文龙裁断",
@@ -75,9 +77,9 @@ def test_submit_event_decision_persists_choice_after_pending_cleanup(game, monke
 
     def _phase2(_state, _db, *_args, **_kwargs):
         clear_pending_rows(_db, turn)
-        return "ok"
+        return ResolveResult(report='ok', awaiting=False, advanced=False)
 
-    monkeypatch.setattr(session_mod, "resolve_decisions_phase2", _phase2)
+    monkeypatch.setattr("ming_sim.month_chain.run_player_month_chain", _phase2)
     sess = GameSession.__new__(GameSession)
     sess.db = db
     sess.state = state
@@ -116,69 +118,6 @@ def test_submit_event_decision_persists_choice_after_pending_cleanup(game, monke
         "submit_hitl_choices 只能暂存亲裁 choice，不能在 phase2 前抢先把候选事件记成终态"
     )
 
-def test_submit_event_decision_binds_from_candidate_snapshot_without_event_id(game, monkeypatch):
-    """#389：simulator 漏写 event_id 时，事件亲裁仍从权威候选快照确定性绑定并持久化。"""
-    import json
-    import ming_sim.session as session_mod
-    from ming_sim.session import GameSession
-
-    db, state, content = game
-    turn = state.turn
-    event_id = "mao_wenlong"
-    db.save_resolve_context(
-        turn,
-        "测试诏书",
-        {"candidate_events": [{"id": event_id, "title": "毛文龙裁断"}]},
-    )
-    db.save_pending_decisions(turn, [{
-        "title": "毛文龙裁断",
-        "context": "东江事急，须御前亲裁。",
-        "options": [
-            {"label": "斩", "hint": "严肃军纪"},
-            {"label": "留", "hint": "暂稳东江"},
-        ],
-    }])
-    state.turn_phase = "awaiting_decision"
-    db.save_state(state)
-
-    def _phase2(_state, _db, *_args, **_kwargs):
-        clear_pending_rows(_db, turn)
-        return "ok"
-
-    monkeypatch.setattr(session_mod, "resolve_decisions_phase2", _phase2)
-    sess = GameSession.__new__(GameSession)
-    sess.db = db
-    sess.state = state
-    sess.last_decree = "测试诏书"
-    sess.agno_db = None
-    sess.llm_config = None
-    sess.content = content
-    sess.registry = None
-
-    # #1589：绑定发生在 desk 读出口（prepare_rescript_prewrite），键仍取绑定前
-    # 的 decision:{turn}:0 投影——event_id 是否已绑定不改变 decision_key 形状。
-    d_key = db.list_rescript_desk(turn)[0]["decision_key"]
-    sess.submit_hitl_choices(
-        [{"decision_key": d_key, "label": "留", "hint": "暂稳东江", "note": "姑留观后效"}],
-        write_gate=get_session_write_queue(sess).write_gate,
-    )
-
-    assert db.list_pending_decisions(turn) == []
-    row = db.conn.execute(
-        "SELECT terminal_state, source, choice_json FROM event_triggers WHERE event_id=?",
-        (event_id,),
-    ).fetchone()
-    assert row is not None
-    assert row["terminal_state"] == ""
-    assert row["source"] == "hitl_decision"
-    assert json.loads(row["choice_json"]) == {
-        "decision_key": d_key,
-        "action": "decision",
-        "label": "留",
-        "hint": "暂稳东江",
-        "note": "姑留观后效",
-    }
-
 
 def test_submit_decisions_does_not_overwrite_already_decided_rows(game, monkeypatch):
     """#1418 r2 / #1589：phase2 失败后续跑——已 decided 行不得被空/异载荷覆写。
@@ -190,7 +129,6 @@ def test_submit_decisions_does_not_overwrite_already_decided_rows(game, monkeypa
     account 上原 choice 因整批拒直接原样未动（比忽略更强的不变式）。
     """
     import json
-    import ming_sim.session as session_mod
     from ming_sim.session import GameSession
 
     db, state, content = game
@@ -223,9 +161,9 @@ def test_submit_decisions_does_not_overwrite_already_decided_rows(game, monkeypa
         assert rows[0]["choice"] == original, "phase2 读到的须是原 choice"
         seen.append(dict(rows[0]["choice"] or {}))
         # 不清 pending——便于第二刀再读；真实 phase2 成功后会 clear
-        return "ok"
+        return ResolveResult(report='ok', awaiting=False, advanced=False)
 
-    monkeypatch.setattr(session_mod, "resolve_decisions_phase2", _phase2)
+    monkeypatch.setattr("ming_sim.month_chain.run_player_month_chain", _phase2)
 
     sess = GameSession.__new__(GameSession)
     sess.db = db
