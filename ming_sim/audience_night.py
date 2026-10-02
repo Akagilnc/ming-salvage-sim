@@ -2254,7 +2254,7 @@ def audience_scene_recap(
         nid = int(open_n["id"])
     bodies: List[str] = []
     for entry in audible_entries_for(db, int(nid), name):
-        body = str(entry.get("body") or "").strip()
+        body = str(entry.get("body") or "")
         if body:
             bodies.append(body)
     if not bodies:

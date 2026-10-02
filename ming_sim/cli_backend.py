@@ -853,10 +853,10 @@ def _iter_cli_runner_text(
                 code="llm_connection_error",
                 provider_message=f"agy auth race：{(stdout_text + stderr)[:200]}",
             )
-        text = stdout_text.strip() or final_text.strip()
+        text = stdout_text if stdout_text.strip() else final_text
         if runner == "codex" and not json_events and not text:
             # 兜底：stdout 空时干净段可能落在合并流 "OpenAI Codex v" 之前。
-            text = (stdout_text + stderr).split("OpenAI Codex v")[0].strip()
+            text = (stdout_text + stderr).split("OpenAI Codex v")[0]
         # 非零退出不洗成瞬断：无 typed status 的失败当确定性失败（#1780 / ADR 0142）。
         if returncode != 0:
             raise RuntimeError(f"{runner} 调用失败（退出码 {returncode}）：{stderr[:200]}")
@@ -868,7 +868,7 @@ def _iter_cli_runner_text(
         if not json_events:
             yield text
         elif not pieces and final_text.strip():
-            yield final_text.strip()
+            yield final_text
     finally:
         if kimi_agent_path:
             try:
@@ -895,7 +895,7 @@ def _run_cli_runner(
             materials_dir=materials_dir,
         )
     )
-    return text.strip(), 1
+    return text, 1
 
 
 def _run_agy(prompt: str, *, materials_dir: Optional[str] = None) -> Tuple[str, int]:
@@ -2686,10 +2686,10 @@ def _stalled_deliberation_push_facts(db: Any) -> str:
                 or payload.get("target_id")
                 or issue["title"]
                 or ""
-            ).strip()
+            )
             body = str(
                 payload.get("text") or row.get("decree_text") or ""
-            ).strip()
+            )
             # #658：完整 title/body 供唯一辨认；禁 40 字截断导致同前缀误绑定
             lines.append(
                 f"  案卷ID={did} issue#{int(issue['id'])} 题={title} 正文={body}"
@@ -2834,7 +2834,7 @@ def extract_draft_intent(
             if not isinstance(value, dict):
                 invalid_batch = True
                 break
-            text = str(value.get("正文") or "").strip()
+            text = str(value.get("正文") or "")
             action = str(value.get("动作类型") or "").strip()
             if action == "grant_allocation":
                 projected = _normalize_grant_transport(value)
@@ -2973,9 +2973,7 @@ def extract_draft_intent(
     )
     # 补充模式（has_pending_draft + existing_draft_text）：注入现有草案，要求 LLM 输出合并草案。
     # 直接用大臣回话（可能是「好的，加上…」等确认语）会覆盖原草案——须由 LLM 合并。
-    _existing_draft_text = (
-        "" if existing_draft_text is None else str(existing_draft_text)
-    ).strip()
+    _existing_draft_text = "" if existing_draft_text is None else str(existing_draft_text)
     _supplement_mode = (has_pending_draft or bool(_candidates)) and (
         bool(_existing_draft_text) or bool(_candidates))
     intent_schema_line = (
@@ -3025,7 +3023,7 @@ def extract_draft_intent(
     )
     candidates_context = (
         "【现有候选】\n" + "\n".join(
-            f"  [{int(c['id'])}] {str(c.get('summary') or c.get('text') or '')[:40]}"
+            f"  [{int(c['id'])}] {str(c.get('summary') or c.get('text') or '')}"
             for c in _candidates
         ) + "\n"
         if _candidates else ""
@@ -3116,7 +3114,7 @@ def extract_draft_intent(
         assert push_dossier_id is not None
         push_out: Dict[str, Any] = {
             "draft_action": "拟旨",
-            "draft_text": (minister_reply or player_message or "").strip(),
+            "draft_text": minister_reply or player_message or "",
             "target_candidate": "",
             "target_dossier_id": push_dossier_id,
         }
@@ -3201,7 +3199,7 @@ def extract_draft_intent(
         if _supplement_mode:
             draft_text = merged if merged else _existing_draft_text
         else:
-            draft_text = (minister_reply or "").strip()
+            draft_text = minister_reply or ""
         # #1849：非法事务声明响亮拒收（禁静默弃声明后照样出成功草案）。
         single_declaration = _affair_declaration_from_draft_obj(obj)
         if single_declaration:
@@ -3239,11 +3237,11 @@ def extract_draft_intent(
         # 多道并存、改/补目标不明：不落草案，交 session 走结构化含糊追问（对齐 AC5）。
         return {"draft_action": _action, "draft_text": "", "target_candidate": "含糊"}
     if target == "新":
-        draft_text = merged if merged else (minister_reply or "").strip()
+        draft_text = merged if merged else (minister_reply or "")
     else:
         existing = str(_by_id[int(target)].get("text") or "")
         # 补某道：优先合并全文；LLM 未合并时保留原文（避免用确认语覆盖），原文亦空则退回话。
-        draft_text = merged if merged else (existing if existing else (minister_reply or "").strip())
+        draft_text = merged if merged else (existing if existing else (minister_reply or ""))
     # #1849：非法事务声明响亮拒收（禁洗成「无意图」）。
     cand_declaration = _affair_declaration_from_draft_obj(obj)
     if cand_declaration:
@@ -3318,7 +3316,7 @@ def capture_manual_directive_payload(
     #1849：抽取调用失败不再降级 special_decree 冒充成功拟旨，一律响亮上抛。
     special_decree 另有一合法来路：模型真答「无拟旨意图」（产物空，非失败）。
     """
-    directive_text = str(text or "").strip()
+    directive_text = str(text or "")
     fallback_mode = resolve_directive_mode(existing=existing_mode)
     # 空载短路：无正文可抽 → 直落草案结构，零 LLM 调用（P5：禁为省写把可短路 LLM 串回）。
     if not directive_text:
@@ -3375,8 +3373,8 @@ def build_draft_admission_resubmit_feedback(
     结构契约/科目词表已由 extract_draft_intent 主 prompt 注入，不在 correction 再写一份。
     """
     payload_json = json.dumps(dict(bad_payload or {}), ensure_ascii=False, sort_keys=True)
-    reason = str(failure_reason or "").strip() or "（未给出具体拒因）"
-    text = str(decree_text or "").strip()
+    reason = str(failure_reason or "") or "（未给出具体拒因）"
+    text = str(decree_text or "")
     parts = [
         "【成案校验失败，请按失败事实与原产物整份重交结构化字段（勿改旨文正文）】\n",
         f"失败事实：{reason}\n",
@@ -3491,7 +3489,7 @@ def resubmit_draft_admission_payload(
     （原抽 + 重写 2 = 总计 3）。与 extract 内 heal_retries（组合/名册）独立——
     内部 heal 不冒充成案补交次数。不在引擎侧改写 LLM 输出（0142）。
     """
-    text = str(decree_text or "").strip()
+    text = str(decree_text or "")
     if not text:
         raise ValueError("补交缺旨文正文")
     feedback = build_draft_admission_resubmit_feedback(
@@ -3743,7 +3741,7 @@ def assemble_secret_order_content(
     同口径。
     """
     emperor = (emperor_intent or "").strip()
-    extracted = (extractor_content or "").strip()
+    extracted = extractor_content or ""
     if extracted and _content_reflects_emperor_intent(extracted, emperor):
         return extracted
     return _merge_secret_content(emperor, extracted)
@@ -3942,13 +3940,12 @@ def _merge_secret_content(*parts: str) -> str:
     merged: List[str] = []
     seen: set = set()
     for p in parts:
-        chunk = (p or "").strip()
+        chunk = p or ""
         if not chunk:
             continue
-        key = re.sub(r"\s+", "", chunk)
-        if key in seen:
+        if chunk in seen:
             continue
-        seen.add(key)
+        seen.add(chunk)
         merged.append(chunk)
     return "\n".join(merged)
 
@@ -3990,7 +3987,7 @@ def _normalize_dossier_link_proposals(
             continue
         target = link["target_dossier_id"]
         relation = str(link.get("relation_type") or "").strip()
-        note = str(link.get("note") or "").strip()
+        note = str(link.get("note") or "")
         if target in candidate_ids and relation in DOSSIER_LINK_TYPES and note:
             proposals[(target, relation)] = {
                 "target_dossier_id": target, "relation_type": relation, "note": note}
@@ -4010,7 +4007,7 @@ def confirm_dossier_links(
     A failed/ambiguous verdict authorises nothing.
     """
     candidates = {
-        int(row["id"]): str(row.get("secret_title") or row.get("decree_text") or "").strip()
+        int(row["id"]): str(row.get("secret_title") or row.get("decree_text") or "")
         for row in (dossier_candidates or [])
         if isinstance(row, dict) and type(row.get("id")) is int
     }
@@ -4144,7 +4141,7 @@ def _extract_secret_order(
         obj = {}
     else:
         obj = parsed
-    _content_llm = str(obj.get("内容") or "").strip()
+    _content_llm = str(obj.get("内容") or "")
     _assignee_llm = str(obj.get("承办人") or "").strip()
     # 上下文合成路径（force_default_assignee，#354 短确认从对话取正文）：player_command 是带
     # 「皇帝：/大臣：」标签的对话快照——剥角色标签得纯御旨任务，作装配输入。
@@ -4160,7 +4157,7 @@ def _extract_secret_order(
     )
     # #1565/0142：题名只认抽取器结构化「标题」；禁从 content/player_command 散文截取。
     # 缺标题由下游 land_or_recover 统一 recovery 可见可恢复，不在此合成。
-    title = str(obj.get("标题") or "").strip()
+    title = str(obj.get("标题") or "")
     # 承办人：皇帝祈使点名 > 结构化「承办人」字段 > 默认（ADR 0142：禁 minister_reply/
     # extractor 散文反推）。
     assignee = default_assignee if force_default_assignee else _choose_assignee(
@@ -4371,7 +4368,7 @@ def _cli_recommendation_call(text: str, tools: object) -> tuple[str, list[ChatCo
         type="function",
         function=ToolFunction(name=offered["name"], arguments=json.dumps(payload, ensure_ascii=False)),
     )
-    return text[:match.start()].rstrip(), [call]
+    return text[:match.start()], [call]
 
 
 def _fake_completion(

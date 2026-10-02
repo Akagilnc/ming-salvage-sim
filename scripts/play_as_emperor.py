@@ -222,8 +222,8 @@ def parse_emperor_output(raw: str) -> tuple[str, str]:
     if not obj_match:
         raise ValueError(f"崇祯 agent 输出无法解析为 JSON: {raw[:200]}")
     obj = json.loads(obj_match.group(0))
-    reasoning = str(obj.get("reasoning", "")).strip()
-    input_text = str(obj.get("input", "")).strip()
+    reasoning = str(obj.get("reasoning", ""))
+    input_text = str(obj.get("input", ""))
     if "\n" in input_text:
         input_text = input_text.splitlines()[0]
     return reasoning, input_text

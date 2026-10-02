@@ -544,7 +544,7 @@ def _issue_audience_case_events(
         if source_id in known:
             continue
         try:
-            stage = _prose(issue["stage_text"]).strip()
+            stage = _prose(issue["stage_text"])
         except (KeyError, IndexError, TypeError):
             stage = ""
         if not stage or character_name not in _issue_audience_names(db, issue):

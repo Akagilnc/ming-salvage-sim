@@ -26,6 +26,19 @@ _DECISION_RE = re.compile(r"<<DECISION>>\s*(\{.*?\})\s*<<END>>", re.DOTALL)
 MAX_DECISIONS_PER_TURN = 5
 
 
+def decision_prompt_contract() -> str:
+    """Explicit question transport shared by decree and world producers."""
+    return (
+        '需要皇帝裁决时，在问处输出 <<DECISION>>'
+        '{"title":"请旨标题","context":"请旨全文","options":'
+        '[{"label":"拟批","hint":"拟办说明"},{"label":"另一拟批","hint":"说明"}]}'
+        '<<END>>，随后停笔；问后内容不属于本段。'
+        f'每段至多 {MAX_DECISIONS_PER_TURN} 个请旨，每问 2–3 项；'
+        'title/context/label/hint 是原文字符串。'
+        '关联事件可显式交 event_id，无事件的来源可交 origin_ref。'
+    )
+
+
 def bind_decision_options(options: object) -> Dict[str, Dict[str, object]]:
     """Bind normalized labels to stored options, rejecting ambiguous decisions."""
     bound: Dict[str, Dict[str, object]] = {}
@@ -34,8 +47,8 @@ def bind_decision_options(options: object) -> Dict[str, Dict[str, object]]:
     for option in options:
         if not isinstance(option, dict):
             continue
-        label = str(option.get("label") or "").strip()
-        if not label or label in bound:
+        label = str(option.get("label") or "")
+        if not label.strip() or any(key.strip() == label.strip() for key in bound):
             raise ValueError(f"decision option label 为空或重复：{label!r}")
         bound[label] = option
     return bound
@@ -57,7 +70,7 @@ def parse_decision_blocks(text: str) -> List[Dict[str, object]]:
             continue
         if not isinstance(obj, dict):
             continue
-        title = str(obj.get("title") or "").strip()
+        title = str(obj.get("title") or "")
         raw_opts = obj.get("options")
         if not title or not isinstance(raw_opts, list):
             continue
@@ -65,7 +78,7 @@ def parse_decision_blocks(text: str) -> List[Dict[str, object]]:
         for o in raw_opts:
             if not isinstance(o, dict):
                 continue
-            label = str(o.get("label") or "").strip()
+            label = str(o.get("label") or "")
             if not label:
                 continue
             try:
@@ -75,7 +88,7 @@ def parse_decision_blocks(text: str) -> List[Dict[str, object]]:
                 break
             option: Dict[str, object] = {
                 "label": label,
-                "hint": str(o.get("hint") or "").strip(),
+                "hint": str(o.get("hint") or ""),
             }
             # Deterministic financial options carry their executable payload;
             # label/hint remain presentation only.
@@ -91,7 +104,7 @@ def parse_decision_blocks(text: str) -> List[Dict[str, object]]:
             continue
         decision = {
             "title": title,
-            "context": str(obj.get("context") or "").strip(),
+            "context": str(obj.get("context") or ""),
             "options": options[:3],
         }
         explicit_event_id = str(obj.get("event_id") or "").strip()
@@ -188,7 +201,7 @@ def bind_decisions_to_candidate_events(
         if not isinstance(item, dict):
             continue
         event_id = str(item.get("id") or "").strip()
-        title = str(item.get("title") or "").strip()
+        title = str(item.get("title") or "")
         if not event_id:
             continue
         candidate_ids.add(event_id)
@@ -209,7 +222,7 @@ def bind_decisions_to_candidate_events(
             bound.append(out)
             continue
         # 缺 id，或回显 id 不在权威候选快照里：以快照唯一标题为准（重）绑，不被 LLM 回显牵着走。
-        title = str(out.get("title") or "").strip()
+        title = str(out.get("title") or "")
         ids = title_to_ids.get(title) or []
         unique_ids = {event_id for event_id in ids if event_id}
         if len(unique_ids) == 1:
@@ -253,7 +266,7 @@ def list_due_commitments(db: GameDB, state: GameState) -> List[Dict[str, object]
             "entry_kind": "due_commitment",
             "issue_id": int(row["id"]),
             "title": str(row["title"] or ""),
-            "content": str(row["stage_text"] or row["title"] or "")[:120],
+            "content": str(row["stage_text"] or row["title"] or ""),
             "origin_ref": str(row["origin_ref"] or ""),
             "turn_issued": int(row["origin_turn"] or 0),
             "due_turn": int(row["end_turn"] or 0),

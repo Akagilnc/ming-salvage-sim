@@ -55,7 +55,7 @@ def run_highlight_judge(
     timeout_s: float = DEFAULT_HIGHLIGHT_JUDGE_TIMEOUT_S,
 ) -> List[str]:
     """同通道短调用；超时/坏输出/判官失败 → []（一层带日志边界，零副作用）。"""
-    reply = str(minister_reply or "").strip()
+    reply = str(minister_reply or "")
     if not reply:
         return []
     try:

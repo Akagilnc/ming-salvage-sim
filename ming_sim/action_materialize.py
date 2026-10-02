@@ -235,7 +235,7 @@ def stage_pacification_candidate(
     target = str(target_id or "").strip()
     if not target:
         return 0
-    body = str(text or "").strip()
+    body = str(text or "")
     if not body:
         return 0
 
@@ -392,7 +392,7 @@ def stage_punishment_candidate(
         action not in punish_actions_effective() and disposition != "压下"
     ):
         return 0
-    body = str(text or "").strip()
+    body = str(text or "")
     if not body:
         return 0
 
@@ -802,7 +802,7 @@ def stage_grant_allocation_candidate(
     action = str(grant_action or "").strip()
     target = str(target_id or "").strip()
     kind = str(target_kind or "").strip()
-    body = str(text or "").strip()
+    body = str(text or "")
     if action not in (GRANT_ACTIONS - {"无"}):
         return 0
     # #1503：协饷完整写入前置由同一权威缝收集；此处不补值。
@@ -924,7 +924,7 @@ def stage_grant_allocation_candidate(
         if not str(staged.get("title") or "").strip():
             label = purpose or action
             if label:
-                staged["title"] = str(label).strip()
+                staged["title"] = str(label)
     # #1783+#1778：承办人/名单来自分类器或后置抽取，挂本案；不把当前大臣填成主办。
     lead = str(assignee or "").strip()
     if lead:
@@ -1504,13 +1504,13 @@ def stage_assignment_candidate(
     """
     from ming_sim.cli_backend import resolve_directive_mode
 
-    body = str(text or "").strip()
+    body = str(text or "")
     if not body:
         raise DecreeMaterializationValidationError(
             "交办旨意缺少正文", failed_fields=("text",),
         )
     # 题名只认结构化锚；不得从正文/皇帝散文截取
-    matter_title = str(title or "").strip() or str(target_id or "").strip()
+    matter_title = str(title or "") or str(target_id or "").strip()
     if not matter_title:
         raise DecreeMaterializationValidationError(
             "交办旨意缺少结构化题名（title 或 target_id）",
@@ -1636,7 +1636,7 @@ def stage_authorization_candidate(
 
     if str(target_candidate or "").strip() == "含糊":
         return 0
-    body = str(text or "").strip()
+    body = str(text or "")
     if not body:
         return 0
     holder = str(minister_name or "").strip()
@@ -1725,12 +1725,12 @@ def stage_referral_candidate(
     """
     from ming_sim.cli_backend import resolve_directive_mode
 
-    body = str(text or "").strip()
+    body = str(text or "")
     if not body:
         raise DecreeMaterializationValidationError(
             "下议旨意缺少正文", failed_fields=("text",),
         )
-    matter_title = str(title or "").strip() or str(target_id or "").strip()
+    matter_title = str(title or "") or str(target_id or "").strip()
     if not matter_title:
         raise DecreeMaterializationValidationError(
             "下议旨意缺少结构化题名（title 或 target_id）",
@@ -1834,7 +1834,7 @@ def stage_revoke_authority_candidate(
 
     if str(target_candidate or "").strip() == "含糊":
         return 0
-    body = str(text or "").strip()
+    body = str(text or "")
     if not body:
         return 0
     rec = _resolve_unique_active_authority(
@@ -1916,7 +1916,7 @@ def stage_revoke_decree_candidate(
 
     if str(target_candidate or "").strip() == "含糊":
         return 0
-    body = str(text or "").strip()
+    body = str(text or "")
     if not body:
         return 0
     resolved = _parse_revoke_decree_target(
@@ -2010,7 +2010,7 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
         ActionCluster(
             "交办·责成", "assignment", EFFECT_MATERIALIZE, priority=56,
             fields=(
-                FieldSpec("title", "标题", None, "", max_len=80),
+                FieldSpec("title", "标题", None, ""),
                 FieldSpec(
                     "transaction_category", "事务类别",
                     duty_route_categories(), "",
@@ -2022,12 +2022,12 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
                     "commitment_kind", "承诺类型",
                     frozenset({"无", "until_stop"}), "无",
                 ),
-                FieldSpec("stop_condition", "停止条件", None, "", max_len=500),
+                FieldSpec("stop_condition", "停止条件", None, ""),
                 # 相对月数（共享 secret 的期限月数）由 stage 换算绝对 end_turn
                 FieldSpec("end_turn", "截止回合", None, 0, as_int=True),
-                FieldSpec("ongoing_effects", "持续效果", None, "", max_len=1000),
+                FieldSpec("ongoing_effects", "持续效果", None, ""),
                 # #620 扩展面：分段里程碑（不改 #520 本体字段语义）
-                FieldSpec("stages", "分段里程碑", None, "", max_len=2000),
+                FieldSpec("stages", "分段里程碑", None, ""),
                 FieldSpec(
                     "mode", "颁布方式",
                     frozenset({"ordinary", "midzhi"}), "",
@@ -2213,7 +2213,7 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
         ActionCluster(
             "下议", "referral", EFFECT_MATERIALIZE, priority=63,
             fields=(
-                FieldSpec("title", "标题", None, "", max_len=80),
+                FieldSpec("title", "标题", None, ""),
                 # 事项锚；与 grant/assignment 共享 target_id
                 FieldSpec("target_id", "目标", None, "", max_len=80),
                 # 议期月数 1–36；stage 换算绝对 end_turn=turn+N

@@ -383,7 +383,7 @@ def assert_action_candidate_shape(obj: Any) -> Dict[str, Any]:
             else:
                 # Canonical generated body is transport, not user-entered metadata:
                 # preserve the extractor's bytes (including edge whitespace).
-                s = str(raw or "") if name == "new_content" else str(raw or "").strip()
+                s = str(raw or "")
             if spec.max_len is not None:
                 s = s[: spec.max_len]
             out[name] = s

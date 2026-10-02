@@ -124,19 +124,21 @@ def consume_memorial_answers(session, chain: dict, *, source) -> None:
                        or not all(isinstance(decree["payload"].get(k), str) for k in ("dossier_action_type", "target_kind", "target_id"))
                        or text.strip()):
             raise LLMContractError("另旨·中旨须交旨文与载荷，不先写办理效果")
-        if key not in products:
+        payload = None
+        if midzhi:
+            payload = db._normalize_directive_dossier_payload(
+                {**decree["payload"], "mode": "midzhi", "decision_key": key,
+                 "text": decree["text"]},
+                content=session.content, current_turn=int(state.turn),
+            )
+            action_type = db._directive_dossier_action_type(payload)
+            executor_kind, executor_id = db._directive_executor(action_type, payload)
+        if not midzhi and key not in products:
             products[key] = data
             _save_chain(db, int(state.turn), chain, source=source)
 
         def consume(result=None):
             if midzhi:
-                payload = db._normalize_directive_dossier_payload(
-                    {**decree["payload"], "mode": "midzhi", "decision_key": key,
-                     "text": decree["text"]},
-                    content=session.content, current_turn=int(state.turn),
-                )
-                action_type = db._directive_dossier_action_type(payload)
-                executor_kind, executor_id = db._directive_executor(action_type, payload)
                 ids = db.create_decree_dossiers(
                     state, action_type=action_type,
                     decree_text=decree["text"], target_kind=payload["target_kind"],

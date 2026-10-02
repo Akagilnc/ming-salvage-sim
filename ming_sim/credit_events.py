@@ -138,7 +138,7 @@ def write_credit_event(
     """四字段薄记录写口：方向由 CREDIT_DIRECTION 决定，落 record_relation_edge_event。"""
     person = str(person or "").strip()
     kind = str(event_kind or "").strip()
-    context = str(context or "").strip()
+    context = str(context or "")
     origin = str(origin or "").strip()
     if not person:
         raise ValueError("信用事件缺少当事人")

@@ -589,7 +589,7 @@ def decide_secret_order_settlement(review_input: Mapping[str, object]) -> Dict[s
     actual = float(review_input.get("actual_units") or 0.0)
     target = float(review_input.get("target_units") or 0.0)
     has_reports = bool(review_input.get("has_reports"))
-    origin = str(review_input.get("origin_context") or "").strip()
+    origin = str(review_input.get("origin_context") or "")
 
     delivered = target > 0.0 and actual + 1e-9 >= target
     if delivered:

@@ -674,6 +674,7 @@ def create_highlight_judge_agent(llm_config: LLMConfig) -> Agent:
 
 def create_decree_forecast_agent(llm_config: LLMConfig, prepared: Any) -> Agent:
     """逐旨预推：与世界段同一材料目录读法，本旨事实由调用消息携带。"""
+    from ming_sim.settlement_payload import decision_prompt_contract
     from ming_sim.materials import material_tools
 
     cfg = _llm_for_role(llm_config, "simulator")
@@ -686,7 +687,7 @@ def create_decree_forecast_agent(llm_config: LLMConfig, prepared: Any) -> Agent:
         _ctx().game_world_prompt,
         "只推演本次输入中这一道旨在当前盘面上的可能后果。",
         "这是夜里预推，不推演月度世界事件，也不生成月末邸报。",
-        "若推演需要皇帝裁决，请在问处给出标准 DECISION 结构并停在问处；问后内容不属于本段。",
+        decision_prompt_contract(),
         "开场只有最小集。其余材料在当前目录，按需自读。",
         str(getattr(prepared, "opening", "") or ""),
     ]
@@ -709,6 +710,7 @@ def create_world_segment_agent(llm_config: LLMConfig, prepared: Any) -> Agent:
     与召对同一读法（ADR 0155）：API 用列目录／读文件工具，CLI 把材料目录
     设为 cwd。不另造读取机制。
     """
+    from ming_sim.settlement_payload import decision_prompt_contract
     from ming_sim.materials import material_tools
 
     cfg = _llm_for_role(llm_config, "simulator")
@@ -722,7 +724,7 @@ def create_world_segment_agent(llm_config: LLMConfig, prepared: Any) -> Agent:
         "你推演本月旨意之外的世界事件，并承接开场列出的在途办理案卷。"
         "已经落账的旨不要重算，也不要写月末邸报。",
         "本段只写推演结果。",
-        "若需要皇帝裁决，请在问处给出标准 DECISION 结构并停在问处；问后内容不属于本段。",
+        decision_prompt_contract(),
         "开场只有最小集。其余材料在当前目录，按需自读。",
         # #1893：候选事实在世界目录里（盘面/候选事件与弹劾潮.txt），本段自读、
         # 自行判定本月哪些真发生、哪个派系是否发难；不选的照实不写。
@@ -779,6 +781,9 @@ def create_gazette_author_agent(llm_config: LLMConfig, prepared: Any) -> Agent:
 def create_rescript_draft_agent(llm_config: LLMConfig, prepared: Any) -> Agent:
     """One perspective-fed run for memorials, revisions or raw rescript continuation."""
     from ming_sim.materials import material_tools
+    from ming_sim.structured_decree import structured_decree_prompt_contract
+    from ming_sim.action_clusters import cluster_fields_prompt, cluster_by_kind
+    from ming_sim.decree_vocabulary import DOSSIER_ACTION_TYPES
     cfg = _llm_for_role(llm_config, "simulator")
     model = create_chat_model(cfg, temperature=0.4, top_p=0.9,
                               enable_thinking=True, force_json_output=True)
@@ -786,7 +791,18 @@ def create_rescript_draft_agent(llm_config: LLMConfig, prepared: Any) -> Agent:
         model.materials_dir = str(prepared.root)
     return Agent(
         name="急务票拟官", id="rescript-drafter", model=model,
-        instructions=[_ctx().game_world_prompt, _ctx().rescript_draft_prompt],
+        instructions=[
+            _ctx().game_world_prompt, _ctx().rescript_draft_prompt,
+            structured_decree_prompt_contract(),
+            "中旨 payload 以 dossier_action_type 承接共同契约中的 action_type，使用库级动作名；\n"
+            "库级动作全集：" + "、".join(sorted(DOSSIER_ACTION_TYPES)) + "。\n"
+            "以下为有现役动作字段契约的附加约束；字段使用英键，约束见对应中文字段契约：\n"
+            + "\n".join(
+                f"{kind}: " + "、".join(f"{field.name}={field.zh}" for field in cluster_by_kind(kind).fields)
+                + f"\n{cluster_fields_prompt(kind)}"
+                for kind in sorted(DOSSIER_ACTION_TYPES) if cluster_by_kind(kind) is not None
+            ),
+        ],
         tools=material_tools(prepared.root), add_history_to_context=False, markdown=False,
     )
 

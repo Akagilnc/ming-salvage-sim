@@ -858,7 +858,7 @@ def _settle_edicts(
             and (not dossier.get("promulgation_decision") or held)
             and not db.staged_declarations.is_settled(ref)
         ):
-            staged = db.staged_declarations.staged_for(ref)
+            staged = db.staged_declarations.staged_for(ref, turn=int(state.turn))
             verdict = staged[0].verdict if staged else None
             if verdict is None and session.llm_config is not None:
                 snapshot = snapshot_for_existing_dossier(session, dossier)

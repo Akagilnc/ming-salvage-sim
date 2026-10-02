@@ -515,12 +515,13 @@ def test_run_codex_maps_reasoning_strength_to_native_effort(monkeypatch):
 
 def test_run_codex_stdout_empty_fallback(monkeypatch):
     monkeypatch.delenv("MING_SIM_CODEX_REASONING", raising=False)
+    body = "  STDOUT_BODY\n "
     _capture_run(
         monkeypatch,
-        _P(stdout="", stderr="STDOUT_BODY\nOpenAI Codex v0.125.0\nlogs"),
+        _P(stdout="", stderr=body + "OpenAI Codex v0.125.0\nlogs"),
     )
     out, n = cb._run_codex("p")
-    assert out == "STDOUT_BODY"
+    assert out == body
 
 
 def test_run_claude_maps_reasoning_strength_to_thinking_tokens(monkeypatch):

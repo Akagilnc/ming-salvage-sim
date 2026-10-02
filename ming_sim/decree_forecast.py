@@ -358,7 +358,9 @@ def _forecast(
 ) -> None:
     # 同一 decree_ref（记录号+版本，或留中案卷 id）已有暂存则不再跑模型链。
     try:
-        if session.db.staged_declarations.staged_for(str(snapshot["decree_ref"])):
+        if session.db.staged_declarations.staged_for(
+            str(snapshot["decree_ref"]), turn=int(snapshot["turn"]),
+        ):
             return
         product = produce_forecast_product(session, snapshot)
         verdict = product["verdict"]
@@ -386,7 +388,9 @@ def _forecast(
                 current = session.db.get_decree_dossier(snapshot["dossier_id"])
                 if current is None or not _is_held_for_rejudgment(current, int(session.state.turn)):
                     return
-            if session.db.staged_declarations.staged_for(str(snapshot["decree_ref"])):
+            if session.db.staged_declarations.staged_for(
+                str(snapshot["decree_ref"]), turn=int(snapshot["turn"]),
+            ):
                 return
             stage_declaration(
                 session.db,

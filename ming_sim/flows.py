@@ -1158,8 +1158,8 @@ def _apply_economy_list(
                             "reason": f"economy_moves delta 非整数：{raw_delta!r}",
                             "item": move})
             continue
-        category = str(move.get("category") or move.get("reason") or "事项")[:40]
-        reason = str(move.get("reason") or "")[:80]
+        category = str(move.get("category") or move.get("reason") or "事项")
+        reason = str(move.get("reason") or "")
         move_origin_ref = str(move.get("origin_ref") or "").strip()
         effective_origin_ref = str(origin_ref or move_origin_ref).strip()
         # #622：旨外标记与 origin_ref 同载体同寿命；路由前统一读取，三分支共用（不得在补饷分叉丢键）。

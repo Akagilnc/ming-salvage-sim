@@ -94,8 +94,8 @@ class AffairStore:
         turn: int,
         birth_key: str = "",
     ) -> Affair:
-        title = str(name or "").strip()
-        cause = str(origin or "").strip()
+        title = str(name or "")
+        cause = str(origin or "")
         if not title:
             raise ValueError("事务名字不能为空")
         if not cause:
@@ -489,8 +489,8 @@ def parse_affair_declaration(
             raise ValueError("顶层事务声明只接受了结")
         raise ValueError("事务声明 attach 不在本阶段")
     if attach == _ATTACH_NEW:
-        name = str(raw.get("name") or "").strip()
-        origin = str(raw.get("origin") or "").strip()
+        name = str(raw.get("name") or "")
+        origin = str(raw.get("origin") or "")
         if not name or not origin:
             raise ValueError("新事务声明须有名字与起因")
         key = str(raw.get("birth_key") or "").strip()

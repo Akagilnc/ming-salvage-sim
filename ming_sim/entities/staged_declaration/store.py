@@ -157,13 +157,15 @@ class StagedDeclarationStore:
                 return write()
         return write()
 
-    def staged_for(self, decree_ref: str) -> tuple[StagedDeclaration, ...]:
+    def staged_for(self, decree_ref: str, *, turn: int | None = None) -> tuple[StagedDeclaration, ...]:
+        """Declarations retain decree identity; reusable verdicts are turn-scoped."""
         ref = str(decree_ref or "").strip()
         rows = self._conn.execute(
             "SELECT id, decree_ref, declaration_json, visible_refs_json, status, created_turn, "
             "verdict_json, questions_json, forecast_text "
-            "FROM staged_declarations WHERE decree_ref=? AND status='staged' ORDER BY id",
-            (ref,),
+            "FROM staged_declarations WHERE decree_ref=? AND status='staged' "
+            "AND (? IS NULL OR created_turn=?) ORDER BY id",
+            (ref, turn, turn),
         ).fetchall()
         return tuple(_row_to_staged(row) for row in rows)
 
@@ -216,9 +218,8 @@ class StagedDeclarationStore:
             (ref,),
         ).fetchall()
         parts = [
-            str(row["forecast_text"]).strip()
+            str(row["forecast_text"])
             for row in rows
-            if str(row["forecast_text"] or "").strip()
         ]
         return "\n".join(parts)
 
