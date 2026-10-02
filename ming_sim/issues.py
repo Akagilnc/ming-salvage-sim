@@ -1482,30 +1482,25 @@ def _apply_fiscal_levy_targets(
         if fiscal is None:
             denominator_complete = False
             continue
-        try:
-            if "settle" not in fiscal:
-                continue
-            settle = fiscal.get("settle")
-            if not isinstance(settle, dict):
-                raise ValueError(f"{region_id}.settle 非字典")
-            p = settle.get("p")
-            st = settle.get("st")
-            if not isinstance(p, dict):
-                raise ValueError(f"{region_id}.settle.p 非字典")
-            if not isinstance(st, dict):
-                raise ValueError(f"{region_id}.settle.st 非字典")
-            meta_raw = settle.get("_meta") or {}
-            if not isinstance(meta_raw, dict):
-                raise ValueError(f"{region_id}.settle._meta 非字典")
-            meta = dict(meta_raw)
-            liao_seed = _fiscal_levy_liao_seed(meta, p, region_id)
-            land = _as_float(st.get("官民田"), ctx=f"{region_id}.settle.st.官民田")
-            base_transport = _fiscal_levy_base_transport(meta, p, liao_seed, region_id)
-            _validate_fiscal_levy_share_meta(meta, region_id)
-        except ValueError as exc:
-            denominator_complete = False
-            tlog(f"[fiscal-levy] {region_id} settle 解析失败，本{TURN_UNIT}饷率通道出列：{type(exc).__name__}: {exc}")
+        if "settle" not in fiscal:
             continue
+        settle = fiscal.get("settle")
+        if not isinstance(settle, dict):
+            raise ValueError(f"{region_id}.settle 非字典")
+        p = settle.get("p")
+        st = settle.get("st")
+        if not isinstance(p, dict):
+            raise ValueError(f"{region_id}.settle.p 非字典")
+        if not isinstance(st, dict):
+            raise ValueError(f"{region_id}.settle.st 非字典")
+        meta_raw = settle.get("_meta", {})
+        if not isinstance(meta_raw, dict):
+            raise ValueError(f"{region_id}.settle._meta 非字典")
+        meta = dict(meta_raw)
+        liao_seed = _fiscal_levy_liao_seed(meta, p, region_id)
+        land = _as_float(st.get("官民田"), ctx=f"{region_id}.settle.st.官民田")
+        base_transport = _fiscal_levy_base_transport(meta, p, liao_seed, region_id)
+        _validate_fiscal_levy_share_meta(meta, region_id)
         region_entries.append({
             "region_id": region_id,
             "fiscal": fiscal,
@@ -2679,7 +2674,7 @@ def event_to_issue(db: GameDB, state: GameState, ev: Event, *, commit: bool = Tr
         bar_good_meaning=ev.bar_good_meaning or "已平",
         bar_bad_meaning=ev.bar_bad_meaning or "失控",
         inertia=inertia,
-        stage_text=ev.stage_text or ev.summary[:80],
+        stage_text=ev.stage_text or ev.summary,
         severity=int(ev.severity),
         region_hint=ev.region_hint,
         faction_hint=",".join(ev.interests[:2]),
@@ -2995,7 +2990,7 @@ def _pending_person_changes_block_event_gate(
             if transition.startswith("reject:"):
                 continue
             overlay(name, "status", status)
-            overlay(name, "status_reason", reason_text[:200])
+            overlay(name, "status_reason", reason_text)
             overlay(name, "reason_code", reason_code if reason_code else "")
             overlay(name, "office", "")
             overlay(name, "transit_to", "")
@@ -3036,7 +3031,7 @@ def _pending_person_changes_block_event_gate(
                 continue
             overlay(name, "power_id", new_power)
             overlay(name, "status", "active")
-            overlay(name, "status_reason", str(item.get("reason") or "")[:200])
+            overlay(name, "status_reason", str(item.get("reason") or ""))
             overlay(name, "reason_code", "")
             overlay(name, "office", new_title)
             overlay(name, "office_type", "身名分")
@@ -3066,7 +3061,7 @@ def _pending_person_changes_block_event_gate(
             if cur_status == "active":
                 overlay(name, "status_reason", "")
             else:
-                overlay(name, "status_reason", str(item.get("reason") or "")[:200] or "诏书任命")
+                overlay(name, "status_reason", str(item.get("reason") or "") or "诏书任命")
             overlay(name, "reason_code", "")
             overlay(name, "office", normalized_office)
             # 显式名分透传（#1059 codex 同族）：事件闸预览的 overlay 须与真实 apply 一致，
@@ -3315,7 +3310,7 @@ def _spawn_legacy_from_effect(
         state,
         name=name,
         modifiers=modifiers,
-        narrative_hint=str(legacy.get("narrative_hint") or "")[:200],
+        narrative_hint=str(legacy.get("narrative_hint") or ""),
         duration_months=duration,
         source_issue_id=issue_id,
         commit=commit,
@@ -3919,7 +3914,7 @@ def _strategic_event_result_preflight_error(
                     if err:
                         return err
                 if field == "controlled_by":
-                    controller = str(value).strip()[:160] if value is not None else ""
+                    controller = str(value).strip() if value is not None else ""
                     if (
                         value is None
                         or not controller
@@ -4541,8 +4536,8 @@ def apply_issue_tracker_output(
                 "item": adv,
             })
             continue
-        stage_text = str(adv.get("stage_text") or "")[:120]
-        narrative = str(adv.get("narrative") or "")[:400]
+        stage_text = str(adv.get("stage_text") or "")
+        narrative = str(adv.get("narrative") or "")
         # 先验 issue 存在且 active（与 db.advance_issue 的 None 条件 row is None / status!=active 一致）：
         # 未找到/已非 active → missing_ref 逐项拒收留痕（陈旧/幻觉引用，同 close_issues None 归类，#63），
         # 不裸 continue 静默丢。**必须先验、再应用 metric**：原序先 _apply_metric_dict（就地 mutate
@@ -5135,14 +5130,14 @@ def apply_issue_tracker_output(
         # issue+affair 成对写由 GameDB 拥有（ADR 0150-D3）；本段不自包事务生命周期。
         _issue_fields = dict(
             kind=kind,
-            title=title[:60] or "无名事项",
+            title=title or "无名事项",
             origin_kind="decree",
             origin_ref=origin_ref,
             bar_value=bar_value,
             bar_good_meaning=str(ni.get("bar_good_meaning") or "已成"),
             bar_bad_meaning=str(ni.get("bar_bad_meaning") or "废止"),
             inertia=inertia,
-            stage_text=str(ni.get("stage_text") or "")[:120],
+            stage_text=str(ni.get("stage_text") or ""),
             severity=severity,
             region_hint=str(ni.get("region_hint") or ""),
             faction_hint=str(ni.get("faction_hint") or ""),
@@ -5156,8 +5151,8 @@ def apply_issue_tracker_output(
             cancel_cost=cancel_cost,
             effect_on_resolve=resolve_eff,
             effect_on_fail=fail_eff,
-            resolve_condition=resolve_condition[:300],
-            fail_condition=str(ni.get("fail_condition") or "")[:300],
+            resolve_condition=resolve_condition,
+            fail_condition=str(ni.get("fail_condition") or ""),
             end_turn=end_turn,
             stop_condition=stop_condition,
             commitment_kind=commitment_kind,
@@ -5216,7 +5211,7 @@ def apply_issue_tracker_output(
                 "item": cl,
             })
             continue
-        narrative = str(cl.get("narrative") or "")[:400]
+        narrative = str(cl.get("narrative") or "")
         chk = IssueStore(db.conn).read_ack_due_commitment_issue((issue_id,))
         if reason == "acknowledged":
             from ming_sim.staged_commitment import is_stage_derived_end_turn
@@ -5373,7 +5368,7 @@ def apply_issue_tracker_output(
                 trigger_kind="decree",
                 delta_bar=0,
                 stage_text=row["stage_text"],
-                narrative=str(cn.get("narrative") or "陛下欲罢，然此事非诏可消。")[:400],
+                narrative=str(cn.get("narrative") or "陛下欲罢，然此事非诏可消。"),
                 metric_delta={"皇威": -2},
                 commit=not external_transaction,
             )
@@ -5418,7 +5413,7 @@ def apply_issue_tracker_output(
                 db, state,
                 commitment_ref=issue_id,
                 breach_kind=BREACH_KIND_POLICY_REVERSAL,
-                reason=str(cn.get("narrative") or "撤回成命")[:400],
+                reason=str(cn.get("narrative") or "撤回成命"),
                 target_dossier_id=int(parse_dossier_id(origin_ref_c) or 0),
             )
             applied_cancels.append({
@@ -5449,7 +5444,7 @@ def apply_issue_tracker_output(
         if deterministic_breach:
             db.breach_decree_dossier(
                 state, int(linked_dossier["id"]),
-                reason=str(cn.get("narrative") or "撤回成命")[:400], commit=False,
+                reason=str(cn.get("narrative") or "撤回成命"), commit=False,
             )
         cost = {} if deterministic_breach else (cn.get("applied_cost") or {})
         if isinstance(cost, dict):
@@ -5462,7 +5457,7 @@ def apply_issue_tracker_output(
             entity_rejections.extend(_apply_faction_dict(db, cost.get("factions") or {}, commit=commit_now).rejections)  # 派系拒收不蒸发（#14/#63 cmr r2）
         db.cancel_issue(
             state, issue_id,
-            narrative=str(cn.get("narrative") or "")[:400],
+            narrative=str(cn.get("narrative") or ""),
             applied_cost=cost if isinstance(cost, dict) else {},
             commit=not external_transaction,
         )
@@ -5879,14 +5874,14 @@ def apply_office_appointment(
                     state,
                     name,
                     "active",
-                    reason[:200] or "诏书任命",
+                    reason or "诏书任命",
                     content=content,
                     commit=commit,
                 )
             with _appointment_tenure_scope(db, appointment_tenure):
                 db.set_character_office(
                     name, new_office, new_office_type,
-                    source=reason[:60] or "诏书调任", llm_config=llm_config,
+                    source=reason or "诏书调任", llm_config=llm_config,
                     commit=commit,
                     region_id=seat,
                 )
@@ -6969,7 +6964,7 @@ def _apply_surcharge_decrees(
         if claim in claimed_origins:
             _reject("invalid_enum", "surcharge_decrees 同批同一旨意与省份只能成功一次")
             continue
-        reason = str(item.get("reason") or "").strip()
+        reason = str(item.get("reason") or "")
         if len(reason) > 120:
             _reject("invalid_enum", f"surcharge_decrees reason 超 120 字：{reason!r}")
             continue
@@ -7827,8 +7822,8 @@ def _apply_score_extraction_body(
                 raise ValueError(
                     "执行结果必须为 fulfilled/degraded/failed/transformed"
                 )
-            note = str(item.get("note") or "").strip()
-            if not note:
+            note = str(item.get("note") or "")
+            if not note.strip():
                 raise ValueError("执行说明不能为空")
             # #565：显式 affected_parties 仅校验门闩（契约§5），不驱动机械写路。
             raw_parties = (
@@ -8808,7 +8803,7 @@ def _apply_score_extraction_body(
                 )
         new_key = db.create_fiscal_item(
             key, account, direction, display, init_value,
-            note=str(create.get("reason") or "")[:120],
+            note=str(create.get("reason") or ""),
             origin_ref=origin_ref,
             turn=state.turn,
             beyond_intent=create.get("beyond_intent"),
@@ -8999,7 +8994,7 @@ def _apply_score_extraction_body(
         if not isinstance(item, dict):
             continue
         raw_id = item.get("order_id")
-        sim_note = str(item.get("sim_note") or item.get("result") or "").strip()
+        sim_note = str(item.get("sim_note") or item.get("result") or "")
         disclosed = item.get("disclosed") is True
         if raw_id is None or not sim_note:
             applied_secret_orders.append({"order_id": raw_id, "rejected": True,

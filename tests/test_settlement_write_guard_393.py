@@ -295,7 +295,7 @@ def test_serialized_web_write_cm_contract():
         g2._write_gate.release()
     # 体内抛异常也释放锁（finally）
     g3 = _FakeGame(TurnPhase.SUMMONING.value)
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError, match='boom'):
         with web_app._serialized_web_write(g3):
             raise RuntimeError("boom")
     assert not g3._write_gate.locked(), "异常路径也须释放锁"

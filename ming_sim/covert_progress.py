@@ -550,7 +550,7 @@ def decide_secret_order_settlement(review_input: Mapping[str, object]) -> Dict[s
     return {
         "status": status,
         "outcome": outcome,
-        "note": note[:200],
+        "note": note,
         "close": True,
         "is_terminal": True,
         "actual_units": actual,
@@ -583,7 +583,7 @@ def minister_eligible_for_monthly_covert(db: Any, minister_name: str) -> bool:
 def _current_game_turn(db: Any, turn: object = None) -> int:
     if turn is not None:
         return int(turn)
-    row = ReignStateStore(db.conn).read_record_dossier_decision()
+    row = ReignStateStore(db.conn).read_current_settle_turn()
     if row is not None:
         return int(row["turn"])
     return 0
@@ -1046,7 +1046,7 @@ def apply_monthly_covert_actual_progress(
             units = monthly_actual_units(
                 fidelity=fidelity, originated_quantity=originated,
             )
-        note = str(sel.get("note") or sel.get("备注") or "").strip()
+        note = str(sel.get("note") or sel.get("备注") or "")
         if not note:
             note = (
                 f"月度实进度：执行态{fidelity}（{units:g}）"

@@ -47,7 +47,7 @@ def test_atomic_rolls_back_on_error(game):
     db.conn.execute("DELETE FROM kv_store WHERE key='s1_probe'")
     db.conn.commit()
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError, match='boom'):
         with atomic(db):
             db.conn.execute("INSERT INTO kv_store(key,value) VALUES('s1_probe','a')")
             db.conn.commit()  # 暂停期：no-op
@@ -83,7 +83,7 @@ def test_atomic_suspends_internal_method_commit(game):
     db.conn.execute("DELETE FROM kv_store WHERE key='s1_method'")
     db.conn.commit()
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError, match='boom'):
         with atomic(db):
             db.kv_set("s1_method", "via_method")  # 内部有 self.conn.commit()
             raise RuntimeError("boom")
@@ -98,7 +98,7 @@ def test_nested_atomic_inner_commit_held_outer_rolls_back(game):
         db.conn.execute("DELETE FROM kv_store WHERE key=?", (k,))
     db.conn.commit()
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError, match='boom'):
         with atomic(db):
             db.conn.execute("INSERT INTO kv_store(key,value) VALUES('s1_outer','o')")
             with atomic(db):
@@ -237,7 +237,7 @@ def test_nested_atomic_inner_error_rolls_back_at_outer(game):
         db.conn.execute("DELETE FROM kv_store WHERE key=?", (k,))
     db.conn.commit()
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError, match='inner boom'):
         with atomic(db):
             db.conn.execute("INSERT INTO kv_store(key,value) VALUES('s1_ie_outer','o')")
             with atomic(db):
@@ -269,7 +269,7 @@ def test_connection_context_inside_atomic_rolls_back(game):
     db.conn.execute("DELETE FROM kv_store WHERE key='s1_ctx'")
     db.conn.commit()
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError, match='boom after conn-context'):
         with atomic(db):
             with db.conn:
                 db.conn.execute("INSERT INTO kv_store(key,value) VALUES('s1_ctx','x')")
@@ -342,10 +342,11 @@ def test_connection_rollback_attempts_all_runtime_callbacks(game):
     db.conn.execute("BEGIN")
     db.conn._runtime_rollback_callbacks = [first, broken, last]
 
-    # 区分度是紧随其后的 calls 顺序断言（三个 callback 全部被尝试），不是报错措辞（#1889）。
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError) as caught:
         db.conn.rollback()
 
+    assert isinstance(caught.value.__cause__, RuntimeError)
+    assert str(caught.value.__cause__) == "callback boom"
     assert calls == ["last", "broken", "first"]
 
 
@@ -367,9 +368,11 @@ def test_connection_commit_attempts_all_runtime_callbacks(game):
     db.conn.execute("BEGIN")
     db.conn._runtime_commit_callbacks = [first, broken, last]
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError) as caught:
         db.conn.commit()
 
+    assert isinstance(caught.value.__cause__, RuntimeError)
+    assert str(caught.value.__cause__) == "callback boom"
     assert calls == ["first", "broken", "last"]
 
 
@@ -427,7 +430,7 @@ def test_ddl_first_inside_atomic_rolls_back(game):
     ri = RejectedItem(item={}, reason="r", category="invalid_enum", source=Provenance.unknown)
     rc.record("army_delta", ri, turn=1)
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError, match='boom'):
         with atomic(db):
             rc.flush_to_db(db)  # 第一条语句 = CREATE TABLE
             raise RuntimeError("boom")
@@ -451,7 +454,7 @@ def test_commit_failure_in_conn_context_rolls_back(game, monkeypatch):
         raise sqlite3.OperationalError("simulated commit failure")
     monkeypatch.setattr(_SuspendableConnection, "commit", failing_commit)
 
-    with pytest.raises(sqlite3.OperationalError):
+    with pytest.raises(sqlite3.OperationalError, match='simulated commit failure'):
         with db.conn:
             db.conn.execute("INSERT INTO kv_store(key,value) VALUES('s1r2_cf','x')")
 
@@ -476,7 +479,7 @@ def test_commit_failure_at_atomic_exit_rolls_back(game, monkeypatch):
         return real_commit(self)
     monkeypatch.setattr(_SuspendableConnection, "commit", failing_commit)
 
-    with pytest.raises(sqlite3.OperationalError):
+    with pytest.raises(sqlite3.OperationalError, match='simulated commit failure'):
         with atomic(db):
             db.conn.execute("INSERT INTO kv_store(key,value) VALUES('s1r2_acf','x')")
 
@@ -545,7 +548,7 @@ def test_ddl_after_explicit_midatomic_rollback_does_not_escape(game):
     ri = RejectedItem(item={}, reason="r", category="invalid_enum", source=Provenance.unknown)
     rc.record("army_delta", ri, turn=1)
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError, match='boom'):
         with atomic(db):
             db.conn.execute("INSERT INTO kv_store(key,value) VALUES('s1r3_x','x')")
             db.conn.rollback()  # 中途显式回滚（暂停期允许）
@@ -568,7 +571,7 @@ def test_begin_failure_at_entry_restores_flags(game, monkeypatch):
         return real_execute(self, sql, *args, **kwargs)
     monkeypatch.setattr(_SuspendableConnection, "execute", failing_execute)
 
-    with pytest.raises(sqlite3.OperationalError):
+    with pytest.raises(sqlite3.OperationalError, match='simulated BEGIN failure'):
         with atomic(db):
             pass  # 不应到达
 

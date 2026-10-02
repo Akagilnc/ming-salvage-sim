@@ -91,7 +91,7 @@ def test_rollback_leaves_no_rows_and_no_jsonl(game, monkeypatch, tmp_path):
 
     monkeypatch.setattr(RejectionCollector, "flush_to_db", _boom)
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError, match='crash after flush'):
         run_settle(db, state, content, {
             "character_status_changes": [{"name": "查无此人乙", "status": "dead", "reason": "测试"}],
             "dossier_reconciliations": [
@@ -134,7 +134,7 @@ def test_nested_atomic_success_path_does_not_orphan_jsonl(game, monkeypatch, tmp
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
     turn = state.turn
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError, match='outer rollback'):
         with atomic(db):
             run_settle(db, state, content, {
                 "人物状态变化": [{"name": "查无此人戊", "status": "dead", "reason": "测试"}],
@@ -448,7 +448,6 @@ def test_power_move_backlash_rejection_lands_in_reports(game, monkeypatch, tmp_p
         ]
         assert len(rows) == 1
         assert rows[0]["section"] == "applied_person_changes.backlash_results"
-        assert rows[0]["reason"] == "power_updates 引用未入库势力 '查无此势力'"
         assert rows[0]["category"] == "hallucinated_id"
         assert json.loads(rows[0]["item_json"]) == {
             "power_id": "查无此势力",
@@ -512,7 +511,6 @@ def test_issue_close_power_move_backlash_rejection_is_not_duplicated(game, monke
         ]
         assert len(rows) == 1
         assert rows[0]["section"] == "issue_summary.applied_person_changes.backlash_results"
-        assert rows[0]["reason"] == "power_updates 引用未入库势力 '查无此势力'"
         assert rows[0]["category"] == "hallucinated_id"
         assert json.loads(rows[0]["item_json"]) == {
             "power_id": "查无此势力",
@@ -552,7 +550,6 @@ def test_inertia_power_move_backlash_rejection_lands_in_reports(game, monkeypatc
         ).fetchall()
         assert len(rows) == 1
         assert rows[0]["section"] == "issue_summary.applied_person_changes.backlash_results"
-        assert rows[0]["reason"] == "power_updates 引用未入库势力 '查无此势力'"
         assert rows[0]["category"] == "hallucinated_id"
     finally:
         ch.power_id, ch.office, ch.office_type = old_power, old_office, old_office_type

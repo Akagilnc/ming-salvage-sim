@@ -459,7 +459,7 @@ def test_secret_order_and_dossier_roll_back_as_one_unit(game, monkeypatch):
         raise RuntimeError("dossier write failed")
 
     monkeypatch.setattr(db, "create_decree_dossier", fail_dossier)
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError, match='dossier write failed'):
         _create_secret_order(db, state, minister, "密查", "查账", [])
     assert db.conn.execute("SELECT COUNT(*) FROM secret_orders").fetchone()[0] == 0
 
@@ -1387,7 +1387,7 @@ def test_secret_order_close_failure_rolls_back_only_its_two_axes(game, monkeypat
 
     monkeypatch.setattr(db, "record_dossier_execution", fail_execution)
     with atomic(db):
-        with pytest.raises(RuntimeError):
+        with pytest.raises(RuntimeError, match='dossier close failed'):
             db.close_secret_order(
                 order_id, "done", "账目核清", state.turn, commit=False,
             )
@@ -1409,7 +1409,7 @@ def test_secret_order_progress_rolls_back_both_axes_in_outer_atomic(game):
     order_id = _create_secret_order(db,
         state, _active_minister(db), "密查仓储", "核清仓储", [],
     )
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError, match='rollback'):
         with atomic(db):
             db.update_secret_order_sim_note(
                 order_id, "已惊动仓场", state.year, state.period,

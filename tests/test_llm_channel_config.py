@@ -517,7 +517,7 @@ def test_verify_llm_available_cli_channel_failure_raises(monkeypatch):
         cli_timeout_seconds=240,
     )
 
-    with pytest.raises(LLMUnavailable):
+    with pytest.raises(LLMUnavailable, match="codex missing"):
         verify_llm_available(cfg)
 
 
@@ -547,7 +547,7 @@ def test_verify_llm_available_legacy_env_only_failure_raises(monkeypatch):
 
     monkeypatch.setattr(cli_backend, "_run_backend_for_config", boom)
     cfg = LLMConfig(api_key="cli-backend", base_url="", model="api-fallback", channel="")
-    with pytest.raises(LLMUnavailable):
+    with pytest.raises(LLMUnavailable, match="agy missing"):
         verify_llm_available(cfg)
 
 

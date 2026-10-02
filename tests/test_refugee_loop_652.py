@@ -135,7 +135,7 @@ def test_outer_atomic_rolls_back_surcharge_and_absorption(game):
         target_kind="region", target_id="shaanxi",
     )
     db.record_dossier_decision(dossier_id, "promulgated")
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError, match='rollback'):
         with atomic(db):
             apply_score_extraction(db, state, {
                 "surcharge_decrees": [{

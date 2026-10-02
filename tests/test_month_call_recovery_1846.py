@@ -189,8 +189,9 @@ def test_forecast_exhaustion_does_not_overwrite_prior_ending(game, monkeypatch, 
     session = make_light_session(db, state, content)
     session.llm_config = SimpleNamespace(model="m", advanced_model="m")
 
-    with pytest.raises(SettlementAbort):
+    with pytest.raises(SettlementAbort) as caught:
         session.resolve_turn(allow_empty_decree=True)
+    assert "catch-up exhausted" in str(caught.value.__cause__)
 
     chain = (db.resolve_contexts.get(turn) or {}).get("simulator_payload", {}).get(
         "month_chain", {},
@@ -241,6 +242,7 @@ def test_world_text_exhaustion_stops_month_keeps_settled_edicts(game, monkeypatc
     assert len(rows) == 1 and int(rows[0]["delta"]) == -7
     abort = caught.value
     assert abort.error_pack_path
+    assert "world push exhausted" in str(abort.__cause__)
     assert abort.stage in {"world_text", "world-segment", "world_segment"}
     chain = (db.resolve_contexts.get(turn) or {}).get("simulator_payload", {}).get(
         "month_chain", {},
@@ -287,8 +289,9 @@ def test_world_translate_exhaustion_keeps_text_resume_retries_translate_only(
     session = make_light_session(db, state, content)
     session.llm_config = SimpleNamespace(model="m", advanced_model="m")
 
-    with pytest.raises(SettlementAbort):
+    with pytest.raises(SettlementAbort) as caught:
         session.resolve_turn(allow_empty_decree=True)
+    assert "translate exhausted" in str(caught.value.__cause__)
 
     chain = (db.resolve_contexts.get(turn) or {}).get("simulator_payload", {}).get(
         "month_chain", {},
@@ -364,8 +367,9 @@ def test_escape_hatch_discards_world_segment_only_on_second_player_retry(
     session = make_light_session(db, state, content)
     session.llm_config = SimpleNamespace(model="m", advanced_model="m")
 
-    with pytest.raises(SettlementAbort):
+    with pytest.raises(SettlementAbort) as caught:
         session.resolve_turn(allow_empty_decree=True)
+    assert "t1" in str(caught.value.__cause__)
     chain = (db.resolve_contexts.get(turn) or {}).get("simulator_payload", {}).get(
         "month_chain", {},
     )
@@ -374,8 +378,9 @@ def test_escape_hatch_discards_world_segment_only_on_second_player_retry(
     assert len(_ningyuan_ledger_rows(db)) == 1
 
     # 第一次玩家重试：仍只续转译，不丢段；再次用尽后武装逃生口
-    with pytest.raises(SettlementAbort):
+    with pytest.raises(SettlementAbort) as caught:
         session.resolve_turn(allow_empty_decree=True)
+    assert "t2" in str(caught.value.__cause__)
     chain = (db.resolve_contexts.get(turn) or {}).get("simulator_payload", {}).get(
         "month_chain", {},
     )
@@ -424,8 +429,9 @@ def test_settlement_recovery_projects_month_call_failure(
     session = web_game.session
     session.llm_config = SimpleNamespace(model="m", advanced_model="m")
 
-    with pytest.raises(SettlementAbort):
+    with pytest.raises(SettlementAbort) as caught:
         session.resolve_turn(allow_empty_decree=True)
+    assert "核账期可见原文" in str(caught.value.__cause__)
 
     assert state.turn_phase == TurnPhase.SETTLING.value
     recovery = web_game.state_payload().get("settlement_recovery")
@@ -444,8 +450,9 @@ def test_settlement_recovery_projects_month_call_failure(
         raise OSError("error pack unwritable")
 
     monkeypatch.setattr(error_pack, "write_error_pack", unwritable)
-    with pytest.raises(SettlementAbort):
+    with pytest.raises(SettlementAbort) as caught:
         session.resolve_turn(allow_empty_decree=True)
+    assert str(caught.value.__cause__) == "error pack unwritable"
 
     recovery_again = web_game.state_payload().get("settlement_recovery")
     assert isinstance(recovery_again, dict)
@@ -491,6 +498,7 @@ def test_code_exception_during_world_commit_keeps_phase_and_settled_edicts(
         session.resolve_turn(allow_empty_decree=True)
 
     assert caught.value.error_pack_path
+    assert str(caught.value.__cause__) == "injected commit bug"
     assert state.turn_phase == TurnPhase.SETTLING.value
     assert int(state.turn) == turn
     assert db.staged_declarations.is_settled(ref)
@@ -563,6 +571,7 @@ def test_world_commit_failure_after_alongside_retries_uncommitted_segment(
         session.resolve_turn(allow_empty_decree=True)
 
     assert failed["done"] is True
+    assert str(caught.value.__cause__) == "world commit failed"
     assert caught.value.stage == "world_commit"
     assert db.staged_declarations.is_settled(ref)
     assert len(_ningyuan_ledger_rows(db)) == 1
@@ -702,6 +711,7 @@ def test_error_pack_failure_keeps_original_fault_and_retry_phase(
     assert caught.value.error_pack_path is None
     assert caught.value.message == "edict settle crashed"
     assert isinstance(caught.value.__cause__, OSError)
+    assert str(caught.value.__cause__) == "error pack unwritable"
     assert not db.staged_declarations.is_settled(ref)
     assert _ningyuan_ledger_rows(db) == []
     failure = _month_chain_of(db, turn).get("call_failure") or {}

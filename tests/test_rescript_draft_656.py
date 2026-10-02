@@ -828,7 +828,7 @@ def test_generate_rescript_draft_program_error_propagates(game, monkeypatch):
     payload = {
         "active_issues": [], "gazette": "邸报", "triage_actor": {}, "turn": {},
     }
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError, match='programmer bug sentinel'):
         generate_rescript_draft(object(), payload, state.turn)
 
 # ---------------------------------------------------------------------------

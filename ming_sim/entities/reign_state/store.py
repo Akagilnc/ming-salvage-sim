@@ -239,9 +239,6 @@ class ReignStateStore:
     def read_treasury_ledger(self, params: Any = ()) -> Any:
         return self._conn.execute("\n            SELECT turn, year, period, delta, balance_after, category, reason, actor\n            FROM economy_ledger\n            WHERE account = ? AND category <> '期初'\n            ORDER BY id DESC\n            LIMIT ?\n            ", params).fetchall()
 
-    def read_record_dossier_decision(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT turn FROM game_state WHERE id=1', params).fetchone()
-
     def read_list_active_legacies(self, params: Any = ()) -> Any:
         return self._conn.execute("SELECT * FROM legacies WHERE status='active' ORDER BY id", params).fetchall()
 
@@ -271,9 +268,6 @@ class ReignStateStore:
 
     def read_had_prior_funding(self, params: Any = ()) -> Any:
         return self._conn.execute('SELECT COUNT(*) AS c FROM economy_ledger WHERE origin_ref=? AND delta<0 AND turn<=?', params).fetchone()
-
-    def read_pay_order_grounding_facts(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT turn, year, period FROM game_state WHERE id=1', params).fetchone()
 
     def read_month_ledger(self, params: Any = ()) -> Any:
         return self._conn.execute('SELECT account, delta, category, reason, origin_ref FROM economy_ledger WHERE turn=? ORDER BY id', params)

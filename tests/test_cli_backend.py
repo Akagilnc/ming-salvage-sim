@@ -908,7 +908,7 @@ def test_run_backend_for_config_traces_on_backend_error(monkeypatch):
         raise RuntimeError("codex 挂了")
 
     monkeypatch.setattr(cb, "_run_codex", boom)
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError, match='codex 挂了'):
         cb._run_backend_for_config("任意提示", _cli_codex_cfg(), tag="probe")
     assert len(recs) == 1
 

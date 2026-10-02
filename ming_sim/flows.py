@@ -923,8 +923,8 @@ def _apply_economy_list(
                             "reason": f"economy_moves delta 非整数：{raw_delta!r}",
                             "item": move})
             continue
-        category = str(move.get("category") or move.get("reason") or "事项")[:40]
-        reason = str(move.get("reason") or "")[:80]
+        category = str(move.get("category") or move.get("reason") or "事项")
+        reason = str(move.get("reason") or "")
         move_origin_ref = str(move.get("origin_ref") or "").strip()
         effective_origin_ref = str(origin_ref or move_origin_ref).strip()
         # #622：旨外标记与 origin_ref 同载体同寿命；路由前统一读取，三分支共用（不得在补饷分叉丢键）。
@@ -1296,7 +1296,7 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
         else:
             # Pure-central armies never enter the province substrate applier,
             # so this is their existing monthly settlement owner seam.
-            row_months = ArmyStore(db.conn).read_apply_fixed_period_flows_consecutive_pay_shortfall_months((army_id,))
+            row_months = ArmyStore(db.conn).read_apply_region_army_pay_tick((army_id,))
             months = int(row_months["consecutive_pay_shortfall_months"] or 0) if row_months else 0
             new_months = months + 1 if shortfall > 1e-9 else 0
             db.armies.update(army_id, {
@@ -1537,15 +1537,6 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
             old_mutiny_probation_val = int(lr["mutiny_probation"])
             old_is_mutinied_val = int(lr["is_mutinied"])
             new_arrears_loyalty = float(lr["arrears"] or 0)
-            # 防御：若 arrears 列滞后，以两源合计为准
-            try:
-                prov = float(lr["province_pay_arrears"] or 0)
-                cent = float(lr["central_pay_arrears"] or 0)
-                combined = prov + cent
-                if abs(combined - new_arrears_loyalty) > 1e-6:
-                    new_arrears_loyalty = max(0.0, combined)
-            except Exception:
-                pass
             loyalty_delta_unified = army_loyalty_tick_delta(new_arrears_loyalty, full_needed_loyalty)
             new_loyalty_val = max(0, min(100, old_loyalty_val + loyalty_delta_unified))
             (
@@ -1911,7 +1902,7 @@ def _apply_population_transfers(
             db.classes.add_population(name=src_cls, region_id=src_region, delta=-amount)
             db.classes.add_population(name=dst_cls, region_id=dst_region, delta=amount)
             db.classes.append_transfer(
-                turn=int(ReignStateStore(db.conn).read_record_dossier_decision()[0]),
+                turn=int(ReignStateStore(db.conn).read_current_settle_turn()[0]),
                 source=source,
                 target=target,
                 amount=amount,

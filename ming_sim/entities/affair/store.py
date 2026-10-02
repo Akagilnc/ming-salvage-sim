@@ -99,11 +99,11 @@ class AffairStore:
         turn: int,
         birth_key: str = "",
     ) -> Affair:
-        title = str(name or "").strip()
-        cause = str(origin or "").strip()
-        if not title:
+        title = str(name or "")
+        cause = str(origin or "")
+        if not title.strip():
             raise ValueError("事务名字不能为空")
-        if not cause:
+        if not cause.strip():
             raise ValueError("事务起因不能为空")
         key = str(birth_key or "").strip()
         owns = connection_owns_transaction(self._conn)
@@ -171,12 +171,9 @@ class AffairStore:
             return affair_id
         key = str(parsed.get("birth_key") or "").strip()
         if key:
-            existing = self._conn.execute(
-                "SELECT id FROM affairs WHERE birth_key=?",
-                (key,),
-            ).fetchone()
-            if existing is not None:
-                return int(existing["id"])
+            existing_id = self.peek_declared_id(declaration, allowed=allowed)
+            if existing_id is not None:
+                return existing_id
         return self.open(
             name=str(parsed["name"]),
             origin=str(parsed["origin"]),
@@ -486,9 +483,9 @@ def parse_affair_declaration(
             raise ValueError("顶层事务声明只接受了结")
         raise ValueError("事务声明 attach 不在本阶段")
     if attach == _ATTACH_NEW:
-        name = str(raw.get("name") or "").strip()
-        origin = str(raw.get("origin") or "").strip()
-        if not name or not origin:
+        name = str(raw.get("name") or "")
+        origin = str(raw.get("origin") or "")
+        if not name.strip() or not origin.strip():
             raise ValueError("新事务声明须有名字与起因")
         key = str(raw.get("birth_key") or "").strip()
         identity = str(raw.get("identity") or "").strip()

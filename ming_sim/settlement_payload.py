@@ -90,7 +90,7 @@ def parse_decision_blocks(text: str) -> List[Dict[str, object]]:
             continue
         decision = {
             "title": title,
-            "context": str(obj.get("context") or "").strip(),
+            "context": str(obj.get("context") or ""),
             "options": options[:3],
         }
         event_id = str(obj.get("event_id") or obj.get("origin_ref") or "").strip()
@@ -236,7 +236,7 @@ def list_due_commitments(db: GameDB, state: GameState) -> List[Dict[str, object]
             "entry_kind": "due_commitment",
             "issue_id": int(row["id"]),
             "title": str(row["title"] or ""),
-            "content": str(row["stage_text"] or row["title"] or "")[:120],
+            "content": str(row["stage_text"] or row["title"] or ""),
             "origin_ref": str(row["origin_ref"] or ""),
             "turn_issued": int(row["origin_turn"] or 0),
             "due_turn": int(row["end_turn"] or 0),

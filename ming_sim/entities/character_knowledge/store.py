@@ -321,6 +321,36 @@ class CharacterKnowledgeStore:
 
     # ── read port ────────────────────────────────────────────────
 
+    def participant_record_rows(self):
+        """Discover durable roster-bearing records without exposing dossier secrets."""
+        tables = self._conn.execute(
+            "SELECT name FROM sqlite_master WHERE type IN ('table', 'view') "
+            "AND name NOT LIKE 'sqlite_%' ORDER BY name"
+        ).fetchall()
+        for row in tables:
+            table = str(row['name'])
+            if table in {'character_knowledge_sources', 'decree_dossiers'}:
+                continue
+            quoted = '"' + table.replace('"', '""') + '"'
+            columns = {str(c['name']) for c in self._conn.execute(f'PRAGMA table_info({quoted})').fetchall()}
+            if 'participant_roster' not in columns:
+                continue
+            id_expr = 'id' if 'id' in columns else 'rowid'
+            prefix = table[:-1] if table.endswith('s') else table
+            source = 'source_id' if 'source_id' in columns else f"'{prefix}:' || {id_expr}"
+            turn = next((c for c in ('turn', 'origin_turn', 'created_turn') if c in columns), '0')
+            year = next((c for c in ('year', 'created_year') if c in columns), '0')
+            period = next((c for c in ('period', 'created_period') if c in columns), '0')
+            kind = 'kind' if 'kind' in columns else "'assignment'"
+            title = 'title' if 'title' in columns else "''"
+            body = next((c for c in ('body', 'stage_text', 'content', 'decree_text') if c in columns), "''")
+            yield from self._conn.execute(
+                f"SELECT {turn} AS turn, {year} AS year, {period} AS period, "
+                f"{kind} AS kind, {title} AS title, {body} AS body, "
+                f"{source} AS source_id, participant_roster "
+                f"FROM {quoted} WHERE participant_roster <> '[]' ORDER BY turn, {id_expr}"
+            ).fetchall()
+
     def events_for(
         self, character_name: str, *, include_exclusions: bool = False,
     ) -> List[Dict[str, object]]:

@@ -23,7 +23,6 @@ class FieldSpec:
     zh: str
     allowed: Optional[FrozenSet[str]] = None
     default: Any = ""
-    max_len: Optional[int] = None
     as_int: bool = False
     int_lo: int = 0  # symmetric lower bound; >0 marks positive integer
     int_hi: int = 10**9
@@ -381,11 +380,9 @@ def assert_action_candidate_shape(obj: Any) -> Dict[str, Any]:
             if isinstance(raw, (dict, list, tuple)):
                 s = json.dumps(raw, ensure_ascii=False, separators=(",", ":"))
             else:
-                # Canonical generated body is transport, not user-entered metadata:
-                # preserve the extractor's bytes (including edge whitespace).
-                s = str(raw or "") if name == "new_content" else str(raw or "").strip()
-            if spec.max_len is not None:
-                s = s[: spec.max_len]
+                s = str(raw or "")
+                if name in {"name", "target_id", "target_candidate", "region_id", "station_region", "responsible_bodies"}:
+                    s = s.strip()
             out[name] = s
     if "draft_text" in obj:
         out["draft_text"] = obj.get("draft_text")

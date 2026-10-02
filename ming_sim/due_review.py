@@ -167,7 +167,7 @@ def build_due_review_input(db: Any, todo: Dict[str, object]) -> Dict[str, object
     # 案卷 due 直挂：title/criterion 已在 todo；无 issue 段表 → 末段
     if commitment_ref <= 0 and not meta.get("title"):
         meta = dict(meta)
-        meta["title"] = str(todo.get("criterion_text") or "")[:40]
+        meta["title"] = str(todo.get("criterion_text") or "")
     stages = meta["stages"]
     origin_ref = _todo_origin_ref(todo, str(meta.get("origin_ref") or ""))
     branch = resolve_due_review_branch(db, origin_ref)
@@ -256,7 +256,7 @@ def project_due_review_scene(
 ) -> Dict[str, object]:
     """复命场面投影（ID-13 用词，P4 定性、无数字面板）。"""
     inp = review_input if review_input is not None else build_due_review_input(db, todo)
-    origin = str(inp.get("origin_context") or todo.get("origin_context") or "").strip()
+    origin = str(inp.get("origin_context") or todo.get("origin_context") or "")
     mid = bool(inp.get("mid_stage"))
     entry_kind = str(todo.get("entry_kind") or ENTRY_KIND_STAGED)
     scene_kind = "covert_levy_exposure" if audience_todo_lane(entry_kind) == _AUDIENCE_LANE_COVERT_LEVY else "due_review"
@@ -408,8 +408,8 @@ def decide_due_review_verdict(review_input: Dict[str, object]) -> Dict[str, obje
     mid = bool(review_input.get("mid_stage"))
     effects = list(review_input.get("durable_effects") or [])
     reports = list(review_input.get("progress_reports") or [])
-    criterion = str(review_input.get("criterion_text") or "").strip() or "所约之事"
-    origin = str(review_input.get("origin_context") or "").strip()
+    criterion = str(review_input.get("criterion_text") or "") or "所约之事"
+    origin = str(review_input.get("origin_context") or "")
     distortion = dict(review_input.get("distortion_tendency") or {})
 
     if mid:
@@ -418,7 +418,7 @@ def decide_due_review_verdict(review_input: Dict[str, object]) -> Dict[str, obje
             note = f"中段复核（{origin}）：{criterion}仍在办理"
         return {
             "outcome": "executing",
-            "note": note[:200],
+            "note": note,
             "close": False,
             "is_terminal": False,
             "mid_stage": True,
@@ -443,7 +443,7 @@ def decide_due_review_verdict(review_input: Dict[str, object]) -> Dict[str, obje
         note = f"{note}（原诺：{origin}）"
     verdict = {
         "outcome": outcome,
-        "note": note[:200],
+        "note": note,
         "close": True,
         "is_terminal": True,
         "mid_stage": False,

@@ -195,26 +195,12 @@ def accrue_detection_wariness(
 def rebuild_centrifuge_cache(db: Any) -> None:
     """唯一维护例外：同一 atomic 内先清派生 cache/overdraw，再仅由 log 回填。绝不改 log。"""
     with atomic(db):
-        conn = db.conn
-        conn.execute("DELETE FROM faction_axis_debt")
+        store = FactionStore(db.conn)
+        store.clear_axis_debt()
         db.factions.reset_edict_overdraw()
         # blood_debt from direct
-        blood_rows = conn.execute(
-            """
-            SELECT faction, axis, COALESCE(SUM(amount), 0) AS total
-            FROM centrifuge_log
-            WHERE kind = 'direct'
-            GROUP BY faction, axis
-            """
-        ).fetchall()
-        wary_rows = conn.execute(
-            """
-            SELECT faction, axis, COALESCE(SUM(amount), 0) AS total
-            FROM centrifuge_log
-            WHERE kind = 'kinship'
-            GROUP BY faction, axis
-            """
-        ).fetchall()
+        blood_rows = store.centrifuge_axis_totals('direct')
+        wary_rows = store.centrifuge_axis_totals('kinship')
         totals: Dict[Tuple[str, str], Dict[str, int]] = {}
         for row in blood_rows:
             key = (str(row["faction"]), str(row["axis"]))
@@ -226,21 +212,8 @@ def rebuild_centrifuge_cache(db: Any) -> None:
             totals[key]["wariness"] = int(row["total"])
         for (faction, axis), vals in totals.items():
             if vals["blood_debt"] > 0 or vals["wariness"] > 0:
-                conn.execute(
-                    """
-                    INSERT INTO faction_axis_debt(faction, axis, blood_debt, wariness)
-                    VALUES (?, ?, ?, ?)
-                    """,
-                    (faction, axis, vals["blood_debt"], vals["wariness"]),
-                )
-        od_rows = conn.execute(
-            """
-            SELECT faction, COALESCE(SUM(amount), 0) AS total
-            FROM centrifuge_log
-            WHERE kind = 'overdraw'
-            GROUP BY faction
-            """
-        ).fetchall()
+                store.insert_axis_debt((faction, axis, vals["blood_debt"], vals["wariness"]))
+        od_rows = store.centrifuge_overdraw_totals()
         for row in od_rows:
             total = int(row["total"])
             if total > 0:
@@ -272,16 +245,7 @@ def _resolve_target_faction_identity(
 
 def _load_namespace(conn: Any, idem_base: str) -> Dict[str, Any]:
     keys = [f"{idem_base}|{k}" for k in sorted(LEGAL_KINDS)]
-    placeholders = ",".join("?" for _ in keys)
-    rows = conn.execute(
-        f"""
-        SELECT turn, faction, axis, kind, base, legitimacy_pct, amount,
-               source_name, reason_code, source, idem_key
-        FROM centrifuge_log
-        WHERE idem_key IN ({placeholders})
-        """,
-        keys,
-    ).fetchall()
+    rows = FactionStore(conn).centrifuge_namespace(keys)
     by_kind: Dict[str, Any] = {}
     for row in rows:
         kind = str(row["kind"])
@@ -427,13 +391,7 @@ def _accrue_centrifuge(
         # durable 空且 planned 非空：直写三账（唯一写缝）
         for kind, payload in planned.items():
             idem_key = f"{idem_base}|{kind}"
-            conn.execute(
-                """
-                INSERT INTO centrifuge_log(
-                    turn, faction, axis, kind, base, legitimacy_pct, amount,
-                    source_name, reason_code, source, idem_key
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
+            FactionStore(conn).append_centrifuge_log(
                 (
                     payload["turn"],
                     faction,
@@ -449,24 +407,8 @@ def _accrue_centrifuge(
                 ),
             )
             if kind == "direct":
-                conn.execute(
-                    """
-                    INSERT INTO faction_axis_debt(faction, axis, blood_debt, wariness)
-                    VALUES (?, ?, ?, 0)
-                    ON CONFLICT(faction, axis) DO UPDATE SET
-                        blood_debt = blood_debt + excluded.blood_debt
-                    """,
-                    (faction, payload["axis"], int(payload["amount"])),
-                )
+                FactionStore(conn).add_axis_debt(faction, payload['axis'], blood=int(payload['amount']))
             elif kind == "kinship":
-                conn.execute(
-                    """
-                    INSERT INTO faction_axis_debt(faction, axis, blood_debt, wariness)
-                    VALUES (?, ?, 0, ?)
-                    ON CONFLICT(faction, axis) DO UPDATE SET
-                        wariness = wariness + excluded.wariness
-                    """,
-                    (faction, payload["axis"], int(payload["amount"])),
-                )
+                FactionStore(conn).add_axis_debt(faction, payload['axis'], wary=int(payload['amount']))
             elif kind == "overdraw":
                 db.factions.add_edict_overdraw(faction, int(payload["amount"]))

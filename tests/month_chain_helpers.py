@@ -2,10 +2,23 @@
 
 from __future__ import annotations
 
+from concurrent.futures import Future
 from typing import Optional
 
 import ming_sim.decree as decree_mod
 from ming_sim.session import GameSession
+
+
+class InlineExecutor:
+    """Run canned deterministic work to completion, with the executor's Future contract."""
+
+    def submit(self, fn):
+        future = Future()
+        try:
+            future.set_result(fn())
+        except BaseException as exc:
+            future.set_exception(exc)
+        return future
 
 
 def make_light_session(db, state, content):
@@ -44,6 +57,7 @@ def canned_full_settlement(
 ) -> list:
     """Replace only external LLM seams; keep production settlement spine."""
     simulator_calls = simulator_calls if simulator_calls is not None else []
+    monkeypatch.setattr("ming_sim.audience_translation._executor", InlineExecutor())
 
     # #658：真实 ensure 成案后颁布判官亦为外部 LLM 缝——canned 默认全顺颁。
     def _promulgate(dossiers, *_a, **_k):

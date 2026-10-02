@@ -238,7 +238,7 @@ def test_terminal_minister_chat_removes_user_message_when_session_chat_fails(mon
     monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
     session = Session()
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError, match='LLM down'):
         term.minister_chat(session, SimpleNamespace(name="魏忠贤"))
 
     assert session.db.messages == [
@@ -321,7 +321,7 @@ def test_terminal_minister_chat_preserves_chat_error_when_rollback_fails(monkeyp
     answers = iter(["命洪承畴督办陕西赈灾，东厂暗助护赈银。"])
     monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError, match='LLM down'):
         term.minister_chat(Session(), SimpleNamespace(name="魏忠贤"))
 
 
@@ -367,7 +367,7 @@ def test_terminal_minister_chat_reply_persist_failure_keeps_user_message(monkeyp
     monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
     session = Session()
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError, match='reply persist failed'):
         term.minister_chat(session, SimpleNamespace(name="魏忠贤"))
 
     assert session.db.deleted is False

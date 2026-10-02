@@ -2139,7 +2139,7 @@ def _pay_order_grounding_facts(content: Any, db: Any = None) -> str:
             lines.append(f"{name}=@{rid}")
     timing = ""
     if db is not None:
-        state = ReignStateStore(db.conn).read_pay_order_grounding_facts()
+        state = ReignStateStore(db.conn).read_record_claim_flow_logs()
         if state is not None:
             timing = (
                 f"当前结算时点：turn={int(state['turn'])}，"
@@ -2169,7 +2169,7 @@ def _pay_order_grounding_facts(content: Any, db: Any = None) -> str:
 
 def _ground_relative_pay_order_deadlines(result: Dict[str, Any], db: Any) -> Dict[str, Any]:
     """在既有抽取适配缝把结构化相对月数落成 active-through 绝对 turn。"""
-    row = ReignStateStore(db.conn).read_record_dossier_decision()
+    row = ReignStateStore(db.conn).read_current_settle_turn()
     if row is None:
         return result
     current_turn = int(row["turn"])
@@ -3014,7 +3014,7 @@ def extract_draft_intent(
     )
     candidates_context = (
         "【现有候选】\n" + "\n".join(
-            f"  [{int(c['id'])}] {str(c.get('summary') or c.get('text') or '')[:40]}"
+            f"  [{int(c['id'])}] {str(c.get('summary') or c.get('text') or '')}"
             for c in _candidates
         ) + "\n"
         if _candidates else ""
@@ -3102,7 +3102,7 @@ def extract_draft_intent(
         assert push_dossier_id is not None
         push_out: Dict[str, Any] = {
             "draft_action": "拟旨",
-            "draft_text": (minister_reply or player_message or "").strip(),
+            "draft_text": minister_reply or player_message or "",
             "target_candidate": "",
             "target_dossier_id": push_dossier_id,
         }
@@ -3187,7 +3187,7 @@ def extract_draft_intent(
         if _supplement_mode:
             draft_text = merged if merged else _existing_draft_text
         else:
-            draft_text = (minister_reply or "").strip()
+            draft_text = minister_reply or ""
         try:
             single_declaration = _affair_declaration_from_draft_obj(obj)
         except (TypeError, ValueError):
@@ -3227,11 +3227,11 @@ def extract_draft_intent(
         # 多道并存、改/补目标不明：不落草案，交 session 走结构化含糊追问（对齐 AC5）。
         return {"draft_action": _action, "draft_text": "", "target_candidate": "含糊"}
     if target == "新":
-        draft_text = merged if merged else (minister_reply or "").strip()
+        draft_text = merged if merged else (minister_reply or "")
     else:
         existing = str(_by_id[int(target)].get("text") or "")
         # 补某道：优先合并全文；LLM 未合并时保留原文（避免用确认语覆盖），原文亦空则退回话。
-        draft_text = merged if merged else (existing if existing else (minister_reply or "").strip())
+        draft_text = merged if merged else (existing if existing else (minister_reply or ""))
     try:
         cand_declaration = _affair_declaration_from_draft_obj(obj)
     except (TypeError, ValueError):
@@ -3305,7 +3305,7 @@ def capture_manual_directive_payload(
     真不在册耗尽 → 通政司戏内回禀 ValueError（不落草案、不除名）；
     回禀产文失败 → typed LLMUnavailable（禁固定戏内模板当台词）。
     """
-    directive_text = str(text or "").strip()
+    directive_text = str(text or "")
     fallback_mode = resolve_directive_mode(existing=existing_mode)
     # 空载短路：无正文可抽 → 直落草案结构，零 LLM 调用（P5：禁为省写把可短路 LLM 串回）。
     if not directive_text:

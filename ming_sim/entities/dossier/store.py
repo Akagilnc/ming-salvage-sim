@@ -16,6 +16,7 @@ from ming_sim.constants import DOSSIER_LINK_TYPES
 from ming_sim.decree_vocabulary import dossier_action_policy
 from ming_sim.strict_types import strict_int
 from ming_sim.participant_roster import load_participant_roster
+from ming_sim.entities.character.store import CharacterStore
 
 DOSSIER_STATUSES = frozenset({"proposed", "promulgated", "executing", "closed"})
 DOSSIER_TRANSITIONS = {
@@ -560,15 +561,88 @@ class DossierStore:
 
     # ── payload / participants / links ────────────────────────────
 
+    def insert_audience_todo(self, params: Any) -> Any:
+        return self._conn.execute(
+            "INSERT OR IGNORE INTO next_audience_todos "
+            "(commitment_ref, stage_idx, due_turn, criterion_text, origin_context, "
+            "status, entry_kind, created_turn, payload_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", params,
+        )
+
+    def audience_todos(
+        self, *, status: str | None = None, commitment_ref: int | None = None,
+    ) -> Any:
+        clauses: list[str] = []
+        params: list[object] = []
+        if status is not None:
+            clauses.append("status=?")
+            params.append(str(status))
+        if commitment_ref is not None:
+            clauses.append("commitment_ref=?")
+            params.append(int(commitment_ref))
+        where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+        return self._conn.execute(
+            "SELECT id, commitment_ref, stage_idx, due_turn, criterion_text, origin_context, "
+            "status, entry_kind, created_turn, payload_json FROM next_audience_todos "
+            f"{where} ORDER BY due_turn, commitment_ref, stage_idx, id", tuple(params),
+        ).fetchall()
+
+    def audience_todo(self, todo_id: int) -> Any:
+        return self._conn.execute(
+            "SELECT id, status, payload_json FROM next_audience_todos WHERE id=?", (todo_id,),
+        ).fetchone()
+
+    def set_audience_todo_status(self, todo_id: int, status: str, payload: str | None = None) -> Any:
+        assignments = "status=?"
+        params: list[Any] = [status]
+        if payload is not None:
+            assignments += ", payload_json=?"
+            params.append(payload)
+        return self._conn.execute(
+            f"UPDATE next_audience_todos SET {assignments} WHERE id=? AND status='pending'",
+            [*params, todo_id],
+        )
+
+    def set_audience_todo_origin(self, todo_id: int, origin: str) -> None:
+        self._conn.execute(
+            "UPDATE next_audience_todos SET origin_context=? WHERE id=?", (origin, todo_id),
+        )
+
+    def count_audience_todos(self, params: Any) -> Any:
+        return self._conn.execute(
+            "SELECT COUNT(*) AS c FROM next_audience_todos "
+            "WHERE commitment_ref=? AND entry_kind=? AND status=?", params,
+        ).fetchone()
+
+    def urge_history(self, action: str, kind: str, target_id: int) -> Any:
+        return self._conn.execute(
+            "SELECT id, turn, kind, action, target_id, payload_json, status FROM pending_actions "
+            "WHERE status='committed' AND action=? AND kind=? AND target_id=? ORDER BY turn, id",
+            (action, kind, target_id),
+        ).fetchall()
+
+    def append_commitment_urge(self, params: Any) -> None:
+        self._conn.execute(
+            "INSERT INTO pending_actions (turn, kind, action, target_id, minister_name, payload_json, status) "
+            "VALUES (?, ?, ?, ?, '', ?, 'committed')", params,
+        )
+
+    def exists(self, dossier_id: int) -> bool:
+        return self._conn.execute(
+            "SELECT 1 FROM decree_dossiers WHERE id=?", (int(dossier_id),),
+        ).fetchone() is not None
+
+    def source_chat_turn_exists(self, chat_turn_id: int) -> bool:
+        return self._conn.execute(
+            "SELECT 1 FROM chat_turns WHERE id=?", (int(chat_turn_id),),
+        ).fetchone() is not None
+
     def update_payload(
         self, dossier_id: int, payload: Mapping[str, object], *, commit: bool = True,
     ) -> None:
         """Replace payload_json for an existing dossier (deliberation_state 等 typed 字段)."""
         owns = self._owns()
         did = int(dossier_id)
-        if self._conn.execute(
-            "SELECT 1 FROM decree_dossiers WHERE id=?", (did,)
-        ).fetchone() is None:
+        if not self.exists(did):
             raise KeyError(f"案卷不存在：{did}")
         if not isinstance(payload, Mapping):
             raise ValueError("案卷 payload 须为对象")
@@ -599,7 +673,7 @@ class DossierStore:
             except (AttributeError, ValueError):
                 target_id = 0
             relation = str(item.get("relation_type") or "") if isinstance(item, dict) else ""
-            note = str(item.get("note") or "").strip() if isinstance(item, dict) else ""
+            note = str(item.get("note") or "") if isinstance(item, dict) else ""
             if self.get(target_id) is None:
                 rejection = (target_id, relation, note, "关联指向不存在案卷")
             elif target_id >= source_id:
@@ -949,14 +1023,10 @@ class DossierStore:
         has_key = bool(dkey)
         if has_turn == has_key:
             raise ValueError("背书 provenance 须恰为 source_chat_turn_id 或 decision_key 之一")
-        if self._conn.execute(
-            "SELECT 1 FROM decree_dossiers WHERE id=?", (did,)
-        ).fetchone() is None:
+        if not self.exists(did):
             raise ValueError("背书所指案卷不存在")
         if has_turn:
-            if self._conn.execute(
-                "SELECT 1 FROM chat_turns WHERE id=?", (cid,)
-            ).fetchone() is None:
+            if not self.source_chat_turn_exists(cid):
                 raise ValueError("背书来源对话轮不存在")
         if kind not in {"会签", "当面站台", "御笔手敕"}:
             raise ValueError("背书形式非法")
@@ -966,9 +1036,7 @@ class DossierStore:
         else:
             if is_imperial or not person:
                 raise ValueError("会签/当面站台必须具名背书人")
-            if self._conn.execute(
-                "SELECT 1 FROM characters WHERE name=?", (person,)
-            ).fetchone() is None:
+            if CharacterStore(self._conn).read_assert_characters_exist((person,)) is None:
                 raise ValueError("背书人物不存在")
         return did, cid, dkey, kind, person, is_imperial
 
@@ -1844,7 +1912,7 @@ class DossierStore:
                 float(units),
                 str(fidelity_state),
                 str(floor_state),
-                str(note or "")[:240],
+                str(note or ""),
                 origin,
             ),
         )
@@ -1859,7 +1927,7 @@ class DossierStore:
             "units": float(units),
             "fidelity_state": str(fidelity_state),
             "floor_state": str(floor_state),
-            "note": str(note or "")[:240],
+            "note": str(note or ""),
             "origin_ref": origin,
         }
 

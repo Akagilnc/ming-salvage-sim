@@ -135,7 +135,7 @@ def load_character_content() -> Tuple[Dict[str, Faction], Dict[str, Character]]:
             debut_year=int(item.get("debut_year") or 0),
             debut_month=int(item.get("debut_month") or 0),
             status=str(item.get("status") or "active"),
-            status_reason=str(item.get("status_reason") or "").strip(),
+            status_reason=str(item.get("status_reason") or ""),
             reason_code=str(item.get("reason_code") or "").strip(),
             historical_office=str(item.get("historical_office") or "").strip(),
             summary=str(item.get("summary") or ""),
@@ -285,7 +285,7 @@ def load_event_content(filename: str = "events.json") -> List[Event]:
             string_list(item["terminal_reason_labels"], f"{filename}[{idx}].terminal_reason_labels")
             if "terminal_reason_labels" in item else []
         )
-        default_terminal_reason = str(item.get("default_terminal_reason") or "").strip()
+        default_terminal_reason = str(item.get("default_terminal_reason") or "")
         if default_terminal_reason and default_terminal_reason not in terminal_reason_labels:
             raise SystemExit(
                 f"{filename}[{idx}] default_terminal_reason={default_terminal_reason!r} "
@@ -571,7 +571,7 @@ def load_powers() -> Dict[str, Power]:
             supply=int_field(entry, "supply", "powers.json::powers[item].supply"),
             agenda=str_field(entry, "agenda", "powers.json::powers[item].agenda"),
             status=str_field(entry, "status", "powers.json::powers[item].status"),
-            last_action=str(entry.get("last_action") or "尚无新动").strip() or "尚无新动",
+            last_action=str(entry.get("last_action") or "尚无新动"),
             aliases="，".join(string_list(entry.get("aliases", []), "powers.json::powers[item].aliases")),
         )
     return powers
@@ -595,7 +595,7 @@ def load_opening_legacies() -> List[OpeningLegacy]:
             modifiers=modifiers,
             narrative_hint=str_field(entry, "narrative_hint", path),
             clear_gate={str(k): str(v) for k, v in clear_gate.items()},
-            clear_narrative=str(entry.get("clear_narrative") or "").strip(),
+            clear_narrative=str(entry.get("clear_narrative") or ""),
         ))
     if not out:
         raise SystemExit("opening_legacies.json 必须至少定义一条开局负面修正。")

@@ -1373,8 +1373,8 @@ def _question_as_decision(question: Dict[str, object], *, event_id: str) -> Dict
         })
     return {
         "event_id": event_id,
-        "title": str(question.get("title") or "").strip() or "请旨",
-        "context": str(question.get("context") or "").strip(),
+        "title": str(question.get("title") or "") or "请旨",
+        "context": str(question.get("context") or ""),
         "options": cleaned,
     }
 
@@ -1398,8 +1398,8 @@ def _consume_rescript_answers(
         return {
             "label": str(choice.get("label") or "").strip(),
             "hint": str(choice.get("hint") or "").strip(),
-            "note": str(choice.get("note") or "").strip(),
-            "context": str(row.get("context") or "").strip(),
+            "note": str(choice.get("note") or ""),
+            "context": str(row.get("context") or ""),
             "event_id": str(row.get("event_id") or ""),
             "title": str(row.get("title") or ""),
         }

@@ -1019,6 +1019,7 @@ def test_midzhi_verdict_and_metadata_roll_back_together(game, monkeypatch):
     with pytest.raises(SettlementAbort) as caught:
         session.resolve_turn(allow_empty_decree=True)
     assert isinstance(caught.value.__cause__, RuntimeError)
+    assert str(caught.value.__cause__) == "判决落标中断"
     with sqlite3.connect(db.path) as reopened:
         assert reopened.execute(
             "SELECT status FROM decree_dossiers WHERE pending_action_id=?",
@@ -1437,8 +1438,9 @@ def test_step_4a_crash_recovery_resumes_without_re_running_supply(game, monkeypa
     session = make_light_session(db, state, content)
 
     # First pass: lands Phase 1 (reports), but crashes on Phase 3
-    with pytest.raises(SettlementAbort):
+    with pytest.raises(SettlementAbort) as caught:
         session.resolve_turn(allow_empty_decree=True)
+    assert str(caught.value.__cause__) == "模拟执行态落账中断"
 
     assert call_count == 1
     # Phase 1 already committed: 0058 report exists
@@ -1609,7 +1611,7 @@ def test_settle_edicts_persists_pending_disclosures_in_same_transaction(game, mo
         return real_save(db_, turn_, chain_, **kwargs)
 
     monkeypatch.setattr(month_chain, "_save_chain", boom_save)
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError, match='injected chain save failure'):
         _settle_edicts(sess, chain=chain)
     assert not db.staged_declarations.is_settled(ref_2)
 
@@ -1663,6 +1665,7 @@ def test_step_4a_non_validation_failure_keeps_product_on_retry(game, monkeypatch
     with pytest.raises(SettlementAbort) as caught:
         session.resolve_turn(allow_empty_decree=True)
     assert caught.value.stage == "secret_orders_supply"
+    assert str(caught.value.__cause__) == "injected supervision presence failure"
     chain = month_chain._load_chain(db, turn)
     assert chain.get("secret_orders_supply_invalid") is not True
     assert chain.get("secret_orders_supply_product") is not None
@@ -2042,7 +2045,7 @@ def test_pending_disclosures_share_commit_boundary_with_effects(game, monkeypatc
         raise RuntimeError("injected disclosure save failure")
 
     monkeypatch.setattr(month_chain, "_save_chain", boom_save)
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError, match='injected disclosure save failure'):
         _settle_edicts(sess, chain=chain)
 
     assert not db.staged_declarations.is_settled(ref)

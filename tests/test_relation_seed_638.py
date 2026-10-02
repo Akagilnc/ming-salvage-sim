@@ -283,7 +283,7 @@ def test_seed_founding_write_does_not_swallow_execute_error_with_bad_rollback():
         def owns_transaction():
             return True
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError, match='injected write failure'):
         GameDB.apply_seed_founding_segment(
             FakeDB(), source="甲", target="乙", dimension="大臣", founding_segment="旧事"
         )

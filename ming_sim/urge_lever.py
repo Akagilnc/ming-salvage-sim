@@ -242,16 +242,9 @@ def collect_urge_history(
     """催办史：committed pending_actions(action=催办)。缺源=[]。"""
     out: List[Dict[str, object]] = []
     # 承诺/案卷层
-    rows = db.conn.execute(
-        """
-        SELECT id, turn, kind, action, target_id, payload_json, status
-        FROM pending_actions
-        WHERE status='committed' AND action=?
-          AND kind=? AND target_id=?
-        ORDER BY turn, id
-        """,
-        (URGE_PENDING_ACTION, URGE_PENDING_KIND_COMMITMENT, int(commitment_ref)),
-    ).fetchall()
+    rows = db.dossiers.urge_history(
+        URGE_PENDING_ACTION, URGE_PENDING_KIND_COMMITMENT, int(commitment_ref),
+    )
     for row in rows:
         payload = _parse_payload(row["payload_json"])
         out.append({
@@ -278,16 +271,7 @@ def collect_urge_history(
             except (TypeError, ValueError):
                 so_id = 0
         if so_id > 0:
-            so_rows = db.conn.execute(
-                """
-                SELECT id, turn, kind, action, target_id, payload_json, status
-                FROM pending_actions
-                WHERE status='committed' AND action=?
-                  AND kind='secret_order' AND target_id=?
-                ORDER BY turn, id
-                """,
-                (URGE_PENDING_ACTION, int(so_id)),
-            ).fetchall()
+            so_rows = db.dossiers.urge_history(URGE_PENDING_ACTION, 'secret_order', int(so_id))
             for row in so_rows:
                 payload = _parse_payload(row["payload_json"])
                 out.append({
@@ -393,21 +377,21 @@ def apply_distortion_to_verdict(
     if outcome == "fulfilled":
         if band == "必歪":
             out["outcome"] = "transformed"
-            out["note"] = (note + "；催办失真，事已变形")[:200]
+            out["note"] = note + "；催办失真，事已变形"
         elif band in {"易歪", "微歪"}:
             out["outcome"] = "degraded"
-            out["note"] = (note + "；催紧之下，实绩打折")[:200]
+            out["note"] = note + "；催紧之下，实绩打折"
     elif outcome == "degraded":
         if band == "必歪":
             out["outcome"] = "failed" if not has_effects else "transformed"
-            out["note"] = (note + "；催之愈急，愈见走样")[:200]
+            out["note"] = note + "；催之愈急，愈见走样"
         elif band == "易歪" and not has_effects:
             out["outcome"] = "failed"
-            out["note"] = (note + "；表报难掩亏空")[:200]
+            out["note"] = note + "；表报难掩亏空"
     elif outcome == "failed":
         # 已是最重终值；附注失真
         if band in {"易歪", "必歪"}:
-            out["note"] = (note + "；催办之下终无实绩")[:200]
+            out["note"] = note + "；催办之下终无实绩"
     return out
 
 
@@ -432,12 +416,7 @@ def _record_commitment_urge(
         "tightness": tightness,
         "reason": str(reason or ""),
     }
-    db.conn.execute(
-        """
-        INSERT INTO pending_actions
-            (turn, kind, action, target_id, minister_name, payload_json, status)
-        VALUES (?, ?, ?, ?, '', ?, 'committed')
-        """,
+    db.dossiers.append_commitment_urge(
         (
             int(getattr(state, "turn", 0) or 0),
             URGE_PENDING_KIND_COMMITMENT,

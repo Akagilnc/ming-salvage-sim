@@ -512,5 +512,5 @@ def test_wait_pending_writes_fail_loud_on_false_and_exception(monkeypatch):
         raise RuntimeError("queue boom")
 
     monkeypatch.setattr(boom, "wait_idle", _raise)
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError, match='queue boom'):
         wait_pending_writes(SimpleNamespace(_write_queue=boom), timeout_s=0.05)

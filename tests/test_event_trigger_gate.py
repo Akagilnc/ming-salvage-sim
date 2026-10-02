@@ -2026,7 +2026,7 @@ def test_historical_situation_auto_trigger_rolls_back_soft_issue_when_core_effec
 
     monkeypatch.setattr(issues, "_apply_issue_entities", boom)
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError, match='boom after issue insert'):
         issues.auto_trigger_seed_issues(state, db)
 
     assert db.conn.execute(
@@ -3443,7 +3443,7 @@ def test_apply_score_extraction_appointment_rolls_back_with_outer_transaction(ga
     content.characters["韩爌"].office = "内阁首辅"
     content.characters["韩爌"].office_type = "内阁"
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError, match='rollback appointment probe'):
         with atomic(db):
             issues.apply_score_extraction(
                 db,

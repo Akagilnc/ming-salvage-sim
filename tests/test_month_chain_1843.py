@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import threading
 
 import pytest
 
@@ -13,7 +12,7 @@ import ming_sim.month_chain as month_chain
 import ming_sim.month_translate as month_translate
 from ming_sim.declaration_dispatch import pending_action_decree_ref
 from ming_sim.session_write_queue import get_session_write_queue
-from tests.month_chain_helpers import make_light_session
+from tests.month_chain_helpers import InlineExecutor, make_light_session
 from tests.dossier_test_helpers import create_test_secret_order
 
 
@@ -56,7 +55,8 @@ def _categories(db):
 
 
 def _prepare_player_month(db, state, content, monkeypatch, *, world=None, translate=None, secret_orders_supply=None):
-    """换掉世界段与转译的模型缝，返回尚未过月的 session。不含在飞屏障。"""
+    """Canned month projection: complete background work before the next projection read."""
+    monkeypatch.setattr('ming_sim.audience_translation._executor', InlineExecutor())
     _forbid_extractor(monkeypatch)
     monkeypatch.setattr(
         month_chain, "run_world_segment_text",
@@ -119,7 +119,7 @@ def test_player_month_entry_settles_prepushed_edicts_then_world_once(game, monke
         joined["done"] = True
         queue.complete(ticket)
 
-    threading.Thread(target=finish_prior).start()
+    finish_prior()
     result = session.resolve_turn(allow_empty_decree=True)
     assert joined.get("done") is True
 
@@ -487,7 +487,7 @@ def test_failed_declaration_commit_reloads_memory_from_db(game):
         assert state.metrics["国库"] == before_metrics["国库"] - 25
         raise RuntimeError("chain persistence failed")
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError, match='chain persistence failed'):
         settle_staged_declarations_in_decree_order(
             db, state, [decree_ref], source=Provenance.player_decree,
             alongside=fail_after_effects,
@@ -566,7 +566,7 @@ def test_held_dossier_settlement_failure_retry_and_reentry_isolation(game, monke
 
     monkeypatch.setattr(dd, "settle_staged_declarations_in_decree_order", fail_first)
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError, match='transient settlement crash'):
         _settle_edicts(sess, chain=chain)
 
     assert not db.staged_declarations.is_settled(held_ref)
@@ -617,7 +617,7 @@ def test_advance_reloads_memory_after_transaction_rollback(game, monkeypatch):
     monkeypatch.setattr(
         decree_mod, "_carry_pending_clarification_actions", fail_after_advance,
     )
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError, match='injected tail failure'):
         month_chain._advance_after_gazette(
             db, state, {}, turn, "", month_chain.Provenance.system_simulation,
             content=content,

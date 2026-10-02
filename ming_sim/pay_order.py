@@ -273,7 +273,7 @@ def prepare_pay_order_entries(
                 raise PayOrderKeyError(f"override 键 {key!r} 期限 until_turn 须为正整数：{until_raw!r}")
             until = int(until_raw)
         if parsed.region:
-            row = RegionStore(db.conn).read_add_building((parsed.region,))
+            row = RegionStore(db.conn).read_assert_commission_grant_target_exists((parsed.region,))
             if row is None:
                 # r4：不新增 alias、不造虚拟 region——幻影 region_id fail-loud 拒写整道旨
                 raise PayOrderKeyError(f"override 键 {key!r}：region_id {parsed.region!r} 不存在（禁 alias/虚拟 region）")
@@ -408,7 +408,7 @@ def restore_pay_order_override(
         old = int(row["value"])
         db.fiscal_config.remove_items(
             (key,), turn=int(turn), origin=origin,
-            reason=(reason or "撤销 override 旨，形状退出格律")[:240], beyond=0,
+            reason=reason or "撤销 override 旨，形状退出格律", beyond=0,
         )
         db.record_fiscal_config_change(
             turn=int(turn), key=key, old_value=old, new_value=_default_of(key),

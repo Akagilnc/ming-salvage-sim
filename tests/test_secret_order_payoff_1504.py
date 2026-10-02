@@ -587,15 +587,17 @@ def test_monthly_actual_progress_preserves_selected_fidelity_in_sqlite(game):
     oid = _issue(db, state, name, "执行态由推演者决定", "本月执行态由推演者决定", months=2, target=2)
     state.turn += 1
     db.save_state(state)
+    note = " 前文\n" + "完整备注" * 80 + "\n 后文 "
     out = apply_monthly_covert_actual_progress(
         db, state,
-        selections=[{"order_id": oid, "fidelity": "忠实"}],
+        selections=[{"order_id": oid, "fidelity": "忠实", "note": note}],
         commit=True,
     )
     row = next(r for r in out if r["order_id"] == oid)
     assert row["fidelity"] == "忠实"
     persisted = db.dossiers.actual_progress(row["dossier_id"])
     assert persisted[-1]["fidelity_state"] == "忠实"
+    assert persisted[-1]["note"] == note
 
 
 def test_monthly_actual_does_not_invent_generic_world_package(game):

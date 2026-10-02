@@ -341,9 +341,6 @@ class CharacterStore:
     def read_require_local_office_region(self, params: Any = ()) -> Any:
         return self._conn.execute('SELECT office_title, region_id FROM character_offices WHERE character_name=?', params).fetchone()
 
-    def read_materialize_office_appointment_dossier(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT status,power_id FROM characters WHERE name=?', params).fetchone()
-
     def read_set_character_office(self, params: Any = ()) -> Any:
         return self._conn.execute("SELECT office_type FROM characters WHERE name=? AND power_id='ming'", params).fetchone()
 
@@ -356,14 +353,8 @@ class CharacterStore:
     def read_list_office_effects_for_dossier(self, params: Any = ()) -> Any:
         return self._conn.execute('SELECT * FROM office_change_records WHERE dossier_id=? ORDER BY id', params).fetchall()
 
-    def read_apply_dossier_promulgation(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT power_id FROM characters WHERE name = ?', params).fetchone()
-
     def read_build_translation_target_grounding(self, params: Any = ()) -> Any:
         return self._conn.execute("SELECT name, office FROM characters WHERE status='active' ORDER BY name", params).fetchall()
-
-    def read_sponsor_dismissed(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT status FROM characters WHERE name=?', params).fetchone()
 
     def read_sponsor_transferred(self, params: Any = ()) -> Any:
         return self._conn.execute('SELECT status, office FROM characters WHERE name=?', params).fetchone()
@@ -470,11 +461,16 @@ class CharacterStore:
     def write_record_recommendation(self, params: Any = ()) -> Any:
         return self._conn.execute("INSERT INTO recommendation_events\n           (turn,year,period,recommender,candidate,candidate_kind,target_office,basis,reason,status)\n           VALUES (?,?,?,?,?,?,?,?,?,'adopted')", params)
 
+    def recommendation_events(self, turn: int, recommender: str | None = None) -> Any:
+        sql = 'SELECT * FROM recommendation_events WHERE turn <= ?'
+        params = [turn]
+        if recommender:
+            sql += ' AND recommender=?'
+            params.append(recommender)
+        return self._conn.execute(sql + ' ORDER BY turn, id', params).fetchall()
+
     def read_list_recommendation_candidates(self, params: Any = ()) -> Any:
         return self._conn.execute("SELECT name, office, office_type, faction, status, reason_code, status_reason FROM characters WHERE name != ? AND power_id='ming' AND faction != '流寇' AND office_type NOT IN ('后宫','宗藩','未仕') AND status IN ('active','offstage','retired','dismissed') AND NOT (debut_year > 0 AND (debut_year > ? OR (debut_year = ? AND debut_month > ?))) ORDER BY name", params).fetchall()
-
-    def read_appointment_intent_is_current_office_noop(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT status, office FROM characters WHERE name = ?', params).fetchone()
 
     def read_resolve_target_faction_identity(self, params: Any = ()) -> Any:
         return self._conn.execute('SELECT faction, identity FROM characters WHERE name = ?', params).fetchall()

@@ -380,7 +380,7 @@ def test_region_deltas_code_exception_aborts_settlement(game, monkeypatch):
         raise AttributeError("code bug in apply_region_deltas")
     monkeypatch.setattr(type(db), "apply_region_deltas", _boom)
 
-    with pytest.raises(AttributeError):
+    with pytest.raises(AttributeError, match='code bug in apply_region_deltas'):
         run_settle(db, state, content, {
             "region_delta": {good: {"public_support": 2}},
         }, narrative="x", decree_text="y")
@@ -395,7 +395,7 @@ def test_army_deltas_code_exception_aborts_settlement(game, monkeypatch):
         raise KeyError("code bug in apply_army_deltas")
     monkeypatch.setattr(type(db), "apply_army_deltas", _boom)
 
-    with pytest.raises(KeyError):
+    with pytest.raises(KeyError, match='code bug in apply_army_deltas'):
         run_settle(db, state, content, {
             "army_delta": {good: {"morale": 2}},
         }, narrative="x", decree_text="y")
@@ -410,7 +410,7 @@ def test_create_armies_code_exception_aborts_settlement(game, monkeypatch):
         raise AttributeError("code bug in create_armies_from_extraction")
     monkeypatch.setattr(type(db), "create_armies_from_extraction", _boom)
 
-    with pytest.raises(AttributeError):
+    with pytest.raises(AttributeError, match='code bug in create_armies_from_extraction'):
         run_settle(db, state, content, {
             "new_armies": [{"id": "x_corps", "owner_power": good_owner,
                             "manpower": 1000, "maintenance_per_turn": 1}],

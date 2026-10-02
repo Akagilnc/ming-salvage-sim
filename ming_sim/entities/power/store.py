@@ -104,9 +104,6 @@ class PowerStore:
     def read_strategic_event_result_preflight_error(self, params: Any = ()) -> Any:
         return self._conn.execute('SELECT 1 FROM powers WHERE id = ? LIMIT 1', params).fetchone()
 
-    def read_transition_army_owner_power(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT 1 FROM powers WHERE id = ?', params).fetchone()
-
     def read_apply_power_rename(self, params: Any = ()) -> Any:
         return self._conn.execute('SELECT * FROM powers WHERE id = ?', params).fetchone()
 

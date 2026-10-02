@@ -317,7 +317,7 @@ def test_undo_reversal_is_atomic_on_midway_crash(game, monkeypatch):
         raise RuntimeError("注入：撤回中途崩溃")
     monkeypatch.setattr(db, "_truncate_agno_runs_in_tx", _boom)
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError, match='注入：撤回中途崩溃'):
         db.undo_chat_turn(chat_id)
 
     # 全有或全无：崩溃 → 原样未撤（账/密令/轮状态一律不变，无半撤回脏档）
@@ -516,7 +516,7 @@ def test_attach_origin_bind_atomic_no_orphan_enter_on_midway_crash(game):
 
     db.create_chat_turn = _boom
     try:
-        with pytest.raises(RuntimeError):
+        with pytest.raises(RuntimeError, match='inject crash: enter 已落、origin 未绑'):
             open_hall_turn(db, state, m)
     finally:
         db.create_chat_turn = orig_create

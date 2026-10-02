@@ -61,7 +61,7 @@ from ming_sim.decree import (
 )
 from ming_sim.issues import bind_content as _bind_issues
 from ming_sim.issues import sync_opening_legacies
-from ming_sim.audience_night import is_inner_court_attendant
+from ming_sim.audience_night import is_inner_court_attendant, _ledger_by_origin_ref
 from ming_sim.llm_model import create_agno_db, extract_agent_text
 from ming_sim.models import Character, CourtContext, GameState, LLMConfig, is_vassal_prince, is_weishi
 from ming_sim.paths import user_data_path
@@ -390,7 +390,7 @@ def _appointment_intent_is_current_office_noop(
         return False
     canonical = _canonical_minister_key(content, clean_name, db)
     try:
-        row = CharacterStore(conn).read_appointment_intent_is_current_office_noop((canonical,))
+        row = CharacterStore(conn).read_sponsor_transferred((canonical,))
     except sqlite3.Error:
         return False
     if row is None or str(row["status"] or "") != "active":
@@ -414,7 +414,7 @@ def _target_active_officeholder(db: Any, name: str, content: Any = None) -> bool
         return False
     key = _canonical_minister_key(content, clean, db)
     try:
-        row = CharacterStore(conn).read_appointment_intent_is_current_office_noop((key,))
+        row = CharacterStore(conn).read_sponsor_transferred((key,))
     except sqlite3.Error:
         return False
     if row is None:
@@ -2132,8 +2132,8 @@ class GameSession:
             obj = _parse_rescript_json_strict(str(raw or ""))
             if not isinstance(obj, dict):
                 raise ValueError("deliberate LLM 意愿须为 object")
-            title = str(obj.get("title") or "").strip()
-            body = str(obj.get("body") or "").strip()
+            title = str(obj.get("title") or "")
+            body = str(obj.get("body") or "")
             stance = str(obj.get("stance") or "").strip()
             if not (title and body and stance):
                 raise ValueError("deliberate LLM 意愿缺 title/body/stance")
@@ -2231,11 +2231,7 @@ class GameSession:
                 origin = str(item.get("origin_ref") or "")
                 if origin:
                     seen_origins.add(origin)
-                row = self.db.conn.execute(
-                    "SELECT tags FROM story_ledger_entries WHERE origin_ref = ?",
-                    (origin,),
-                ).fetchone()
-                entry = {"tags": str(row["tags"] or "[]")} if row is not None else None
+                entry = _ledger_by_origin_ref(self.db, origin)
                 if not rescript_summon_origin_consumed(entry):
                     unconsumed.append(
                         f"{item.get('decision_key')}:{item.get('target') or ''}:{origin}"
@@ -2318,11 +2314,7 @@ class GameSession:
             idx = int(draft.get("idx") or 0)
             rev = int(draft.get("revision_round") or 0)
             origin = rescript_summon_origin_ref(source_turn, idx, rev)
-            row = self.db.conn.execute(
-                "SELECT tags FROM story_ledger_entries WHERE origin_ref = ?",
-                (origin,),
-            ).fetchone()
-            entry = {"tags": str(row["tags"] or "[]")} if row is not None else None
+            entry = _ledger_by_origin_ref(self.db, origin)
             if rescript_summon_origin_consumed(entry):
                 continue
             recovered = dict(choice)

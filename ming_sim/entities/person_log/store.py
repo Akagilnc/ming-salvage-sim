@@ -43,10 +43,6 @@ def ensure_schema(conn: Any) -> None:
     conn.executescript(_SCHEMA_SQL)
 
 
-def _clip(value: object, limit: int) -> str:
-    return str(value or "")[:limit]
-
-
 _EDGE_COLUMNS = frozenset({
     "id", "source", "target", "event_kind", "context", "origin", "origin_round", "turn",
     "year", "period", "evidence", "affair_id", "created_at",
@@ -107,12 +103,12 @@ class PersonLogStore:
             (
                 int(turn), int(year), int(period),
                 name, act,
-                _clip(payload_summary, 200),
-                _clip(derived_from, 120),
+                str(payload_summary or ""),
+                str(derived_from or ""),
                 # Full value: normalized is structured audit JSON, and any
                 # truncation would cut it into something unparseable.
                 normalized_text,
-                _clip(source, 80),
+                str(source or ""),
                 str(origin_ref or ""),
             ),
         )
@@ -181,9 +177,6 @@ class PersonLogStore:
 
     def read_import_relationship_seed(self, params: Any = ()) -> Any:
         return self._conn.execute('SELECT COUNT(*) AS c FROM relation_edge_events', params).fetchone()
-
-    def read_existing_edge_id(self, params: Any = ()) -> Any:
-        return self._conn.execute('\n        SELECT id FROM relation_edge_events\n        WHERE source=? AND target=? AND event_kind=?\n          AND (origin=? OR origin LIKE ?)\n        ORDER BY id LIMIT 1\n        ', params).fetchone()
 
     def write_apply_seed_founding_segment(self, params: Any = ()) -> Any:
         return self._conn.execute("\n            INSERT INTO relation_summaries\n                (source, target, dimension, founding_segment, recent_segment,\n                 last_event_id, last_brewed_turn, last_brewed_year, last_brewed_period)\n            VALUES (?, ?, ?, ?, '', 0, 0, 0, 0)\n            ON CONFLICT(source, target) DO UPDATE SET\n                dimension = excluded.dimension,\n                founding_segment = excluded.founding_segment,\n                updated_at = CURRENT_TIMESTAMP\n            ", params)

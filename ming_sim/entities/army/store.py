@@ -127,9 +127,6 @@ class ArmyStore:
     def read_assert_army_pay_source_container_conservation_id_pay_source_region(self, params: Any = ()) -> Any:
         return self._conn.execute("\n            SELECT id, pay_source_region\n            FROM armies\n            WHERE owner_power = 'ming' AND is_tusi = 0 AND self_funded_pay = 0\n              AND (\n                ABS(COALESCE(province_pay_share, 0)) > 1e-9 OR\n                ABS(COALESCE(province_pay_arrears, 0)) > 1e-9\n              )\n            ORDER BY id\n            ", params).fetchall()
 
-    def read_assert_army_pay_source_container_conservation_id_arrears_province_pay_arrears_central_pay_arrears(self, params: Any = ()) -> Any:
-        return self._conn.execute("\n            SELECT id, arrears, province_pay_arrears, central_pay_arrears\n            FROM armies\n            WHERE owner_power = 'ming' AND is_tusi = 0 AND self_funded_pay = 0\n              AND ABS(\n                COALESCE(arrears, 0)\n                - (COALESCE(province_pay_arrears, 0) + COALESCE(central_pay_arrears, 0))\n              ) > 1e-6\n            ORDER BY id\n            LIMIT 1\n            ", params).fetchone()
-
     def read_assert_army_pay_source_container_conservation_COALESCE_SUM_province_pay_arrears_0_AS_province_total_COALESCE_SU(self, params: Any = ()) -> Any:
         return self._conn.execute("\n            SELECT\n              COALESCE(SUM(province_pay_arrears), 0) AS province_total,\n              COALESCE(SUM(central_pay_arrears), 0) AS central_total,\n              COALESCE(SUM(arrears), 0) AS army_total\n            FROM armies\n            WHERE owner_power = 'ming' AND is_tusi = 0 AND self_funded_pay = 0\n            ", params).fetchone()
 
@@ -160,6 +157,14 @@ class ArmyStore:
     def read_reconcile_region_army_pay_container(self, params: Any = ()) -> Any:
         return self._conn.execute("\n            SELECT COALESCE(SUM(province_pay_arrears), 0) AS total\n            FROM armies\n            WHERE pay_source_region = ? AND owner_power = 'ming'\n              AND is_tusi = 0 AND self_funded_pay = 0\n            ", params).fetchone()
 
+    def ordered_rows(self, *, limit: int | None = None) -> Any:
+        sql = "SELECT * FROM armies ORDER BY theater, name"
+        params = ()
+        if limit is not None:
+            sql += " LIMIT ?"
+            params = (limit,)
+        return self._conn.execute(sql, params).fetchall()
+
     def read_army_rows(self, params: Any = ()) -> Any:
         return self._conn.execute('SELECT * FROM armies', params).fetchall()
 
@@ -184,9 +189,6 @@ class ArmyStore:
     def read_build_fiscal_fact_brief_id_army_id_old_value_new_value(self, params: Any = ()) -> Any:
         return self._conn.execute("SELECT id, army_id, old_value, new_value FROM army_logs WHERE turn = ? AND field = 'province_pay_arrears' ORDER BY id", params).fetchall()
 
-    def read_map_rescript_option_or_choice(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT id FROM armies WHERE id=?', params).fetchone()
-
     def read_compute_budget_lines(self, params: Any = ()) -> Any:
         return self._conn.execute("\n        SELECT id, manpower, salary_rate, owner_power, central_pay_share,\n               pay_source_region\n        FROM armies\n        WHERE owner_power = 'ming' AND is_tusi = 0 AND self_funded_pay = 0\n          AND central_pay_share > 0\n        ", params).fetchall()
 
@@ -201,9 +203,6 @@ class ArmyStore:
 
     def read_apply_fixed_period_flows_id_name_manpower_salary_rate_owner_power_arrears_province_pay_arr(self, params: Any = ()) -> Any:
         return self._conn.execute("\n            SELECT id, name, manpower, salary_rate, owner_power,\n                   arrears, province_pay_arrears, central_pay_arrears,\n                   loyalty, is_tusi, self_funded_pay, is_mutinied,\n                   mutiny_count, mutiny_probation, full_pay_streak, redemption_count\n            FROM armies\n            WHERE owner_power = 'ming' AND is_tusi = 0 AND self_funded_pay = 0\n            ", params).fetchall()
-
-    def read_apply_fixed_period_flows_consecutive_pay_shortfall_months(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT consecutive_pay_shortfall_months FROM armies WHERE id=?', params).fetchone()
 
     def read_army_register(self, params: Any = ()) -> Any:
         return self._conn.execute("SELECT name,manpower FROM armies WHERE owner_power='ming' ORDER BY name", params).fetchall()

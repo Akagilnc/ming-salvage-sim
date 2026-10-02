@@ -389,6 +389,7 @@ def test_region_loader_expands_shared_settle_meta_defaults(monkeypatch):
     monkeypatch.setattr(content_mod, "load_json_asset", lambda name: fake_regions)
 
     # before-image：须在 loader 可能共享/改写同一可变对象之前捕获 expected override
+    expected_default_note = fake_regions["settle_meta_defaults"]["ming_province"]["notes"]["起运定额"]
     expected_province_note = region["fiscal"]["settle"]["_meta"]["notes"]["漕粮"]
     loaded = content_mod.load_region_content()["test_province"].fiscal["settle"]
 
@@ -397,7 +398,7 @@ def test_region_loader_expands_shared_settle_meta_defaults(monkeypatch):
     assert loaded["_meta"]["levies"]["seeded"] == ["辽饷"]
     assert loaded["_meta"]["levies"]["not_seeded"] == ["剿饷", "练饷"]
     assert loaded["_meta"]["postures"] == ["江南财赋核心"]
-    assert loaded["_meta"]["notes"]["起运定额"].startswith("#259")
+    assert loaded["_meta"]["notes"]["起运定额"] == expected_default_note
     # 省份专属 notes 键保留并覆盖默认；与输入 before-image 同值，不另钉自由说明正文。
     assert loaded["_meta"]["notes"]["漕粮"] == expected_province_note
 
@@ -1816,7 +1817,7 @@ def test_fixed_flows_substrate_hub_failure_rolls_back_cutover_writes(fresh_game,
 
     monkeypatch.setattr(flows_mod, "_advance_province_fiscal_substrate", fail_after_hub)
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError, match='boom after hub'):
         flows_mod.apply_fixed_period_flows(db, state)
 
     ledger = db.conn.execute(
@@ -4251,7 +4252,7 @@ def test_advance_province_fiscal_substrate_rolls_back_inside_outer_atomic(fresh_
     db, state = fresh_game
     before = _read_settle(db, "shaanxi")["st"]
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError, match='rollback probe'):
         with atomic(db):
             flows_mod._advance_province_fiscal_substrate(db, state)
             in_transaction = _read_settle(db, "shaanxi")["st"]

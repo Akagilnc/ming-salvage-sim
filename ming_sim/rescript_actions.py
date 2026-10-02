@@ -768,7 +768,7 @@ def map_rescript_option_or_choice(
         if target_kind != "army":
             raise ValueError("military_order.target_kind 必须为 army")
         if db is not None:
-            row = ArmyStore(db.conn).read_map_rescript_option_or_choice((target_id,))
+            row = ArmyStore(db.conn).read_apply_military_order_station_effect((target_id,))
             if row is None:
                 raise ValueError(f"military_order 假军：{target_id!r}")
         if not assignee_name:

@@ -140,7 +140,7 @@ def test_second_leg_failure_rolls_back_everything(game, monkeypatch):
     monkeypatch.setattr(db, "record_relation_edge_event", flaky_second_leg)
     action_id = _stage_recommendation(db, state, recommender.name, row, "巡盐御史", "破格之才")
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError, match='第二腿写入失败'):
         _commit_and_promulgate(db, state, content, action_id)
 
     # 全回滚零残留：不落任命、不落荐人事件、零边。

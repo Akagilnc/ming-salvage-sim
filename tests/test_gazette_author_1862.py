@@ -431,8 +431,9 @@ def test_gazette_failure_retries_report_only(game, monkeypatch):
     monkeypatch.setattr(month_chain, "run_world_segment_text", world)
     monkeypatch.setattr(month_chain, "run_gazette_text", gazette)
     session = _session(db, state, content, monkeypatch)
-    with pytest.raises(SettlementAbort):
+    with pytest.raises(SettlementAbort) as caught:
         session.resolve_turn(allow_empty_decree=True)
+    assert "邸报写失败" in str(caught.value.__cause__)
     charged = db.conn.execute(
         "SELECT COUNT(*) FROM economy_ledger WHERE category='宁远补饷'",
     ).fetchone()[0]

@@ -252,6 +252,58 @@ class IssueStore:
     def write_mark_event_expired_owned(self, params: Any) -> Any:
         return self._conn.execute(f"\n            INSERT INTO event_triggers\n                (event_id, turn, year, period, source, terminal_state, terminal_reason)\n            VALUES (?, ?, ?, ?, 'window_expired', 'expired', '过最晚触发时点仍未达成触发门')\n            ON CONFLICT(event_id) DO UPDATE SET\n                {self._event_terminal_upgrade_assignments()}\n            ", params)
 
+    def insert_directive(self, params: Any) -> Any:
+        return self._conn.execute(
+            "INSERT INTO turn_directives "
+            "(turn, year, period, event_id, actor, text, source, status, notes, dossier_payload_json) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", params,
+        )
+
+    def directive(self, directive_id: int) -> Any:
+        return self._conn.execute(
+            "SELECT id, text, status, turn, dossier_payload_json FROM turn_directives WHERE id=?",
+            (directive_id,),
+        ).fetchone()
+
+    def set_directive_status(self, directive_id: int, status: str, *, expected: str | None = None) -> Any:
+        sql = "UPDATE turn_directives SET status=?, updated_at=CURRENT_TIMESTAMP WHERE id=?"
+        params = [status, directive_id]
+        if expected is not None:
+            sql += " AND status=?"
+            params.append(expected)
+        return self._conn.execute(sql, params)
+
+    def count_pending_directives(self, turn: int) -> Any:
+        return self._conn.execute(
+            "SELECT COUNT(*) AS n FROM turn_directives WHERE turn=? AND status='pending'", (turn,),
+        ).fetchone()
+
+    def update_directive_text(self, params: Any) -> Any:
+        return self._conn.execute(
+            "UPDATE turn_directives SET text=?, dossier_payload_json=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+            params,
+        )
+
+    def mark_directives_issued(self, ids: Any) -> None:
+        placeholders = ','.join('?' for _ in ids)
+        self._conn.execute(
+            f"UPDATE turn_directives SET status='issued', updated_at=CURRENT_TIMESTAMP "
+            f"WHERE id IN ({placeholders}) AND status='draft'", ids,
+        )
+
+    def delete_draft_directive(self, directive_id: int) -> None:
+        self._conn.execute("DELETE FROM turn_directives WHERE id=? AND status='draft'", (directive_id,))
+
+    def directives_by_ids(self, ids: Any) -> Any:
+        placeholders = ','.join('?' for _ in ids)
+        return self._conn.execute(
+            "SELECT td.id AS directive_id, td.turn, td.year, td.period, td.actor, td.text, td.status "
+            f"FROM turn_directives td WHERE td.id IN ({placeholders}) ORDER BY td.id", ids,
+        ).fetchall()
+
+    def directive_archive_months(self) -> Any:
+        return self._conn.execute("SELECT turn, year, period FROM turn_directives WHERE status='issued'").fetchall()
+
     def read_list_directives_by_turn_owned(self, params: Any) -> Any:
         return self._conn.execute("\n            SELECT d.id, d.turn, d.year, d.period, d.event_id, d.actor,\n                   d.text, d.source, d.status, d.notes,\n                   d.created_at, d.updated_at,\n                   e.title AS event_title\n            FROM turn_directives d\n            LEFT JOIN events e ON e.id = d.event_id\n            WHERE d.turn = ? AND d.status = 'issued'\n            ORDER BY d.id\n            ", params)
 

@@ -18,7 +18,7 @@ import pytest
 import ming_sim.month_chain as month_chain
 from ming_sim.applier import Provenance
 from ming_sim.session_write_queue import get_session_write_queue
-from tests.month_chain_helpers import make_light_session
+from tests.month_chain_helpers import InlineExecutor, make_light_session
 
 
 def _forbid_extractor(monkeypatch):
@@ -171,7 +171,7 @@ def test_exhausted_mechanical_tail_fails_and_blocks_next_month(game, monkeypatch
         assert session.resolve_turn(allow_empty_decree=True).advanced is True
     finally:
         if hasattr(executor, "fn"):
-            with pytest.raises(LLMUnavailable):
+            with pytest.raises(LLMUnavailable, match="酿制耗尽"):
                 _run_deferred(executor)
     assert get_session_write_queue(session).wait_idle(timeout_s=5)
     status = month_chain._load_chain(db, closed_turn)["mechanical_tail"]["status"]
@@ -209,7 +209,7 @@ def test_real_brew_failure_reaches_tail_failure_and_retry(game, monkeypatch):
         assert session.resolve_turn(allow_empty_decree=True).advanced is True
     finally:
         if hasattr(executor, "fn"):
-            with pytest.raises(LLMUnavailable):
+            with pytest.raises(LLMUnavailable, match="酿制耗尽"):
                 _run_deferred(executor)
     failure = WebGame.mechanical_tail_failure(SimpleNamespace(db=db, state=state))
     assert failure["error"] == "酿制耗尽"
@@ -243,15 +243,6 @@ def test_web_barrier_resumes_pending_tail_before_join(game, monkeypatch):
     session.agno_db = object()
     queue = get_session_write_queue(session)
     order = []
-
-    class InlineExecutor:
-        def submit(self, fn):
-            future = Future()
-            try:
-                future.set_result(fn())
-            except Exception as exc:
-                future.set_exception(exc)
-            return future
 
     monkeypatch.setattr(audience_translation, "_executor", InlineExecutor())
     monkeypatch.setattr(
@@ -292,15 +283,6 @@ def test_non_exhausted_tail_failure_stays_pending_and_retries(game, monkeypatch)
     session.llm_config = object()
     session.agno_db = object()
     calls = []
-
-    class InlineExecutor:
-        def submit(self, fn):
-            future = Future()
-            try:
-                future.set_result(fn())
-            except Exception as exc:
-                future.set_exception(exc)
-            return future
 
     monkeypatch.setattr(audience_translation, "_executor", InlineExecutor())
 

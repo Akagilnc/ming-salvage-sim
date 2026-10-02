@@ -85,7 +85,7 @@ def test_power_deltas_code_exception_aborts_settlement(game, monkeypatch):
         raise AttributeError("code bug in apply_power_deltas")
     monkeypatch.setattr(type(db), "apply_power_deltas", _boom)
 
-    with pytest.raises(AttributeError):
+    with pytest.raises(AttributeError, match='code bug in apply_power_deltas'):
         run_settle(db, state, content, {
             "power_updates": {good: {"leverage": 3}},
         }, narrative="x", decree_text="y")
@@ -133,7 +133,7 @@ def test_canonical_person_power_writer_code_exception_is_fail_loud(game, monkeyp
         raise KeyError("canonical person power writer bug")
 
     monkeypatch.setattr(type(db), "apply_character_power_changes", _boom)
-    with pytest.raises(KeyError):
+    with pytest.raises(KeyError, match='canonical person power writer bug'):
         import ming_sim.issues as issues
         issues.apply_score_extraction(db, state, {
             "人物变更": [{

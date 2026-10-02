@@ -298,7 +298,7 @@ def test_secret_order_material_read_failure_propagates(
         raise RuntimeError("secret-order-db-boom")
 
     monkeypatch.setattr(db, "get_active_secret_orders_for_minister", boom)
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError, match='secret-order-db-boom'):
         prepare_character_materials(
             db, state, character, dest_root=tmp_path / "secret-fail",
         )

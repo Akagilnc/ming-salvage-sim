@@ -712,20 +712,7 @@ def audit_night_direct_writes(db: Any, night_id: int) -> set[str]:
 
 
 def _allocate_seq(db: Any, night_id: int) -> int:
-    if hasattr(db, "allocate_night_seq"):
-        return int(db.allocate_night_seq(int(night_id)))
-    row = db.conn.execute(
-        "SELECT next_event_seq FROM audience_nights WHERE id = ?",
-        (int(night_id),),
-    ).fetchone()
-    if row is None:
-        raise AudienceNightError(f"夜不存在：{night_id}", code="night_not_found")
-    nxt = int(row["next_event_seq"] or 0) + 1
-    db.conn.execute(
-        "UPDATE audience_nights SET next_event_seq = ? WHERE id = ?",
-        (nxt, int(night_id)),
-    )
-    return nxt
+    return int(db.allocate_night_seq(int(night_id)))
 
 
 def _character_status(db: Any, name: str) -> str:
@@ -1532,13 +1519,17 @@ def settle_applied_arrived_summons(
     return settled
 
 
+def ledger_tags(db: Any, entry_id: int) -> Any:
+    return db.conn.execute(
+        "SELECT tags FROM story_ledger_entries WHERE id=?", (int(entry_id),),
+    ).fetchone()
+
+
 def _mark_summon_entries_in_transit(db: Any, items: Sequence[Dict[str, Any]]) -> None:
     """启程成功后把未结 fresh 账标为在途；保留 TAG_SUMMON_UNSETTLED 与 origin。"""
     for item in items:
         entry_id = int(item["entry_id"])
-        row = db.conn.execute(
-            "SELECT tags FROM story_ledger_entries WHERE id=?", (entry_id,)
-        ).fetchone()
+        row = ledger_tags(db, entry_id)
         if row is None:
             continue
         tags = load_stored_list(row["tags"], label='tags')
@@ -1569,9 +1560,7 @@ def settle_summon_origin(
     if not matches:
         return False
     for item in matches:
-        row = db.conn.execute(
-            "SELECT tags FROM story_ledger_entries WHERE id=?", (item["entry_id"],)
-        ).fetchone()
+        row = ledger_tags(db, item["entry_id"])
         tags = load_stored_list(row["tags"], label='tags')
         tags = [tag for tag in tags if tag != TAG_SUMMON_UNSETTLED]
         tags.append(TAG_SUMMON_SETTLED)
@@ -1588,7 +1577,7 @@ def retire_unsettled_summons_for_inactive(db: Any) -> List[str]:
     """人物已非 active 时确定性结清其全部未结传召（ADR 0096 / ADR 0009）。"""
     settled: List[str] = []
     for item in list(list_unsettled_summons(db)):
-        row = CharacterStore(db.conn).read_sponsor_dismissed((item["person_name"],))
+        row = CharacterStore(db.conn).read_dead_person_core_subjects((item["person_name"],))
         status = str(row["status"] or "active").strip() or "active" if row is not None else "active"
         if status == "active":
             continue
@@ -1691,10 +1680,7 @@ def update_summon_travel_tone(
     if target is None:
         raise KeyError(f"本夜无此人未结传召：{name}")
     entry_id = int(target["entry_id"])
-    row = db.conn.execute(
-        "SELECT tags FROM story_ledger_entries WHERE id=?",
-        (entry_id,),
-    ).fetchone()
+    row = ledger_tags(db, entry_id)
     if row is None:
         raise KeyError(f"传召账不存在：{entry_id}")
     tags = [str(t) for t in load_stored_list(row["tags"], label='tags')]

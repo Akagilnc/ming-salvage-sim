@@ -455,7 +455,7 @@ def test_long_knowledge_bodies_survive_storage_without_brief_card_cap(game):
     row = db.conn.execute(
         "SELECT body FROM character_knowledge_sources WHERE source_id='test:long-source'"
     ).fetchone()
-    assert row["body"].endswith("完整结尾")
+    assert row["body"] == body
 
 def test_secret_amendment_preserves_legacy_blacklist_and_public_disclosure(game):
     db, state, _content = game

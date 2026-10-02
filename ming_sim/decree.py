@@ -46,7 +46,11 @@ from ming_sim.exceptions import (
     SettlementAbort,
 )
 from ming_sim.faction_brew import VIEW_FACTION_STANCE
-from ming_sim.flows import apply_fixed_period_flows, raise_fixed_period_flow_abort_if_needed
+from ming_sim.flows import (
+    _SubstrateHubFixedFlowAbort,
+    apply_fixed_period_flows,
+    raise_fixed_period_flow_abort_if_needed,
+)
 from ming_sim.issues import (
     apply_event_terminal_states,
     apply_historical_fiscal_rates,
@@ -655,7 +659,7 @@ def _rescript_decisions(
             "event_id": f"dossier:{dossier_id}",
             "title": "批红待裁",
             "context": str(dossier.get("decree_text") or ""),
-            "rejection_reason": str(verdict.get("reason") or "").strip(),
+            "rejection_reason": str(verdict.get("reason") or ""),
             "opposition": opposition,
             # hint（非 note）：前端 isPendingDecision / DecisionOption 认 hint；
             # dossier_id/dossier_decision 是批红能力字段，点选必须原样回传（#1490）。
@@ -763,7 +767,7 @@ def write_decree_with_agno(
         raise llm_unavailable_from_error(error, "拟诏") from error
     if not text.strip():
         raise LLMContractError("拟诏输出为空。")
-    return text.strip()
+    return text
 
 
 def _requires_full_settlement(state: GameState, db: GameDB) -> bool:
@@ -1156,7 +1160,11 @@ def pre_settle(
             )
             if committed:
                 tlog(f"[pending_actions] 颁诏批量落库 {len(committed)} 条：{[(c['kind'], c['action']) for c in committed]}")
-            fiscal_levies = apply_historical_fiscal_rates(state, db, commit=False)
+            try:
+                fiscal_levies = apply_historical_fiscal_rates(state, db, commit=False)
+            except ValueError as exc:
+                # 持久财政损坏仍走既有入口的回滚后 fixed_fiscal 错误包契约。
+                raise _SubstrateHubFixedFlowAbort(str(exc)) from exc
             if fiscal_levies:
                 tlog(
                     f"[fiscal-levy] 本回合饷率事件前置落账 {len(fiscal_levies)} 条："

@@ -261,7 +261,7 @@ def test_new_issue_affair_attach_failure_leaves_no_partial_product(game, monkeyp
         raise RuntimeError("attach boom")
 
     monkeypatch.setattr(db.affairs, "attach_from_declaration", boom)
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError, match='attach boom'):
         apply_issue_tracker_output(
             db, state,
             {"new_issues": [{

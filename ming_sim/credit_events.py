@@ -116,7 +116,7 @@ def _existing_edge_id(
     if not base:
         return None
     bare = base.split("|", 1)[0]
-    row = PersonLogStore(db.conn).read_existing_edge_id((source, target, event_kind, base, f"{bare}|%"))
+    row = PersonLogStore(db.conn).read_existing_leg_id((source, target, event_kind, base, f"{bare}|%"))
     return int(row["id"]) if row is not None else None
 
 
@@ -132,13 +132,13 @@ def write_credit_event(
     """四字段薄记录写口：方向由 CREDIT_DIRECTION 决定，落 record_relation_edge_event。"""
     person = str(person or "").strip()
     kind = str(event_kind or "").strip()
-    context = str(context or "").strip()
+    context = str(context or "")
     origin = str(origin or "").strip()
     if not person:
         raise ValueError("信用事件缺少当事人")
     if kind not in _WRITE_KINDS:
         raise ValueError(f"非本片信用事件类目: {kind!r}")
-    if not context:
+    if not context.strip():
         raise ValueError("信用事件语境不能为空")
     if not origin:
         raise ValueError("信用事件 origin 不能为空")
