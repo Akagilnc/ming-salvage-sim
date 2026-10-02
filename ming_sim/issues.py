@@ -1390,10 +1390,7 @@ def _eval_gate_key(key: str, metrics: Dict[str, int], db: GameDB) -> Optional[fl
     """
     if "." not in key:
         if key in metrics:
-            try:
-                return int(metrics[key])
-            except (TypeError, ValueError):
-                return None
+            return int(metrics[key])
         return None
     parts = key.split(".")
     table = parts[0]
@@ -1451,17 +1448,11 @@ def _eval_gate_key(key: str, metrics: Dict[str, int], db: GameDB) -> Optional[fl
             ).fetchone()
         if row is None:
             return None
-        try:
-            values.append(float(row[0]))
-        except ValueError as exc:
-            # 非数值字符串 = 数值 cond 配了文本字段（如 region.x.controlled_by >=1）→ 数值转换不动。
-            # fail-loud 成清晰 content 错误（#159；Q3：trigger_gate 字段类型错属静态 content schema 错，
-            # 不静默回 None 当条件不满足）。NULL/None 走 TypeError 分支视同不达标（合法数据，非内容错）。
-            raise ValueError(
-                f"trigger_gate key「{key}」字段非数值（数值比较不可比文本字段）：{row[0]!r}"
-            ) from exc
-        except TypeError:
+        # NULL is the documented absent gate value; other conversion failures
+        # belong to the stored value, not to a fabricated content error.
+        if row[0] is None:
             return None
+        values.append(float(row[0]))
     if not values:
         return None
     if len(values) == 1:

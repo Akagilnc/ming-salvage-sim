@@ -122,6 +122,13 @@
 - F10 删除 faction_denunciation 的源码文字/函数符号绿卡，保留真实承接案与纯判据行为；无平行替代测试。该处源码扫描机制、ast/Path 依赖一并删除。
 - 七旗下 focused70=173 passed/2.38s（中途）；focused72 引用已经不存在的 hitl 文件，0 tests，非验证成功；纠正后的 `/tmp/1835-audit-focused73.txt` 六文件185 passed、1 warning、5.49s。三个生产文件 compileall、diff --check 通过；pyflakes 仅既有unused imports，无undefined name，见 `/tmp/1835-audit-static73.txt`。
 
+## 续修：军牌与门值故障
+
+- F6 移除军牌/详情共用的 `_approx_wanliang`、`_approx_pay_months`、`_qualitative_army_stat`、`_player_army_situation` 中坏标量转换为零值/空描述的 catch，坏持久值不能伪造成无欠饷、装备残破或一般军心。新军 salary_rate 的缺省仍保留：那是已经文档化的新军声明输入兜底，不是读取坏持久值。
+- `/tmp/1835-army-projection-run.py` 从真实临时 DB、合法军队ID进入 army_detail：SQL 写入坏 equipment；旧分支 returned_projection，新分支 propagated_fault/ValueError，见 `/tmp/1835-army-projection-{old,new}.txt`。四个旧 catch 已恢复后再移除，没有新增仓内证明性测试。
+- F6 留内求值器 `_eval_gate_key` 不把坏 metrics 标量转不达标，不将坏持久数字归为静态 content 错；NULL 保留已文档化的缺席门值行为，其余转换错误穿透。没有迁移该求值器，没有改求值规则，也没有触碰 F12。
+- 七旗聚焦 `/tmp/1835-audit-focused75.txt`=42 passed、1 skipped、3.76s；`/tmp/1835-audit-focused76.txt` 五文件246 passed、3.39s。仍是触及面证明，非整类结清。
+
 ## 尚未结清
 
 仍须将宽枚举逐成员完成语义处置，特别是 F10 剩余自由文本/保密哨兵及 helper 呈现测试、F5 下游传递与识别变换的边界、F6 剩余持久与批写接缝，并刷新完整成员处置表与最新触及面验证。本记录不把聚焦绿色冒作整类结清，不声明这些工作缺 owner 决定，也不以执行窗口作合法 blocker。

@@ -363,10 +363,7 @@ _ARMY_PAY_SOURCE_SEED: Dict[str, Tuple[str, float, float, bool]] = {
 
 def _approx_wanliang(amount: object) -> str:
     """奏报口吻的万两近似数；军饷欠是真钱，但玩家不看 DB 精确账格。"""
-    try:
-        value = float(amount or 0)
-    except (TypeError, ValueError):
-        value = 0.0
+    value = float(amount or 0)
     if value <= 0:
         return "无欠饷"
     if value < 10:
@@ -384,11 +381,8 @@ def _round_half_up_to_step(value: float, step: int) -> int:
 
 
 def _approx_pay_months(arrears: object, monthly_pay: object) -> str:
-    try:
-        arr = float(arrears or 0)
-        pay = float(monthly_pay or 0)
-    except (TypeError, ValueError):
-        return ""
+    arr = float(arrears or 0)
+    pay = float(monthly_pay or 0)
     if arr <= 0 or pay <= 0:
         return ""
     months = arr / pay
@@ -416,10 +410,7 @@ _ARMY_QUALITATIVE_WORDS: Dict[str, Tuple[str, str, str, str, str]] = {
 
 
 def _qualitative_army_stat(field: str, value: object) -> str:
-    try:
-        n = int(value or 0)
-    except (TypeError, ValueError):
-        n = 0
+    n = int(value or 0)
     words = _ARMY_QUALITATIVE_WORDS.get(field, ("极低", "偏低", "中等", "尚可", "优良"))
     if n >= 80:
         word = words[4]
@@ -448,10 +439,7 @@ def _player_army_situation(row, monthly_pay: object) -> Dict[str, str]:
 
     derived = derive_army_mutiny_state(row)
     if derived == "正常":
-        try:
-            loyalty = int(row["loyalty"] or 0)
-        except (TypeError, ValueError):
-            loyalty = 0
+        loyalty = int(row["loyalty"] or 0)
         if loyalty >= 80:
             mutiny_tier = "死忠"
         elif loyalty >= 70:
