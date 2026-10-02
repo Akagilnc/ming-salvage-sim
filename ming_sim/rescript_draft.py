@@ -133,7 +133,7 @@ def consume_memorial_answers(session, chain: dict, *, source) -> None:
             )
             action_type = db._directive_dossier_action_type(payload)
             executor_kind, executor_id = db._directive_executor(action_type, payload)
-        if not midzhi and key not in products:
+        if key not in products:
             products[key] = data
             _save_chain(db, int(state.turn), chain, source=source)
 

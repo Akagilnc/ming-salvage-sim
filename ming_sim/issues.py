@@ -2786,7 +2786,7 @@ def event_to_issue(db: GameDB, state: GameState, ev: Event, *, commit: bool = Tr
         bar_good_meaning=ev.bar_good_meaning or "已平",
         bar_bad_meaning=ev.bar_bad_meaning or "失控",
         inertia=inertia,
-        stage_text=ev.stage_text or ev.summary[:80],
+        stage_text=ev.stage_text or ev.summary,
         severity=int(ev.severity),
         region_hint=ev.region_hint,
         faction_hint=",".join(ev.interests[:2]),
@@ -7182,7 +7182,7 @@ def _apply_dossier_participant_items(
             added = db.append_decree_dossier_participants(dossier_id, [{
                 "character_id": character_id,
                 "tier": tier,
-                "role": str(item.get("role") or "").strip(),
+                "role": str(item.get("role") or ""),
                 "delegator_id": delegator_id,
             }], state=state, commit=False)
             if not added:
@@ -7191,7 +7191,7 @@ def _apply_dossier_participant_items(
                 if not any(
                     row.get("character_id") == character_id
                     and row.get("tier") == tier
-                    and row.get("role") == str(item.get("role") or "").strip()
+                    and row.get("role") == str(item.get("role") or "")
                     and row.get("delegator_id") == delegator_id
                     for row in existing.get("participant_roster", [])
                 ):

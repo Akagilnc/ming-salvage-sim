@@ -407,7 +407,7 @@ def decide_due_review_verdict(review_input: Dict[str, object]) -> Dict[str, obje
             note = f"中段复核（{origin}）：{criterion}仍在办理"
         return {
             "outcome": "executing",
-            "note": note[:200],
+            "note": note,
             "close": False,
             "is_terminal": False,
             "mid_stage": True,
@@ -431,7 +431,7 @@ def decide_due_review_verdict(review_input: Dict[str, object]) -> Dict[str, obje
         note = f"{note}（原诺：{origin}）"
     return {
         "outcome": outcome,
-        "note": note[:200],
+        "note": note,
         "close": True,
         "is_terminal": True,
         "mid_stage": False,

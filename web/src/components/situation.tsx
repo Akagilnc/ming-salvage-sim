@@ -19,19 +19,14 @@ export function groupIssues(issues: Issue[]) {
 }
 
 function commitmentProgressText(issue: Issue) {
-  const text = issue.commitment_progress_text?.trim();
-  if (text) return text;
+  const text = issue.commitment_progress_text;
+  if (text?.trim()) return text;
   return issue.commitment_progress ? "未知进度" : "";
 }
 
-/** 空串不渲染括号端标（#626：硬门可留空 bar，web 不画『达成（）』/空进度端）。 */
-function barLabel(text: string | undefined | null): string {
-  return (text || "").trim();
-}
-
+/** Blank labels do not render parentheses; nonblank prose is transported unchanged. */
 function outcomeHead(kind: "达成" | "失败", meaning: string | undefined | null): string {
-  const label = barLabel(meaning);
-  return label ? `${kind}（${label}）` : kind;
+  return meaning?.trim() ? `${kind}（${meaning}）` : kind;
 }
 
 export function SituationPanel({ issues, closedIssues, hasLegacies }: {
@@ -210,11 +205,11 @@ export function IssueGroup({ title, issues }: { title: string; issues: Issue[] }
                 <span>{issue.phase} · {issue.bar_value}</span>
               </div>
               <div className="issue-progress" aria-label={`${issue.title}进度 ${issue.bar_value}`}>
-                <span>{barLabel(issue.bar_bad_meaning)}</span>
+                <span>{issue.bar_bad_meaning}</span>
                 <div>
                   <i style={{ width: `${Math.max(0, Math.min(100, issue.bar_value))}%` }} />
                 </div>
-                <span>{barLabel(issue.bar_good_meaning)}</span>
+                <span>{issue.bar_good_meaning}</span>
               </div>
               {progressText ? <p className="issue-commitment-progress">{progressText}</p> : null}
               <p>{issue.stage_text}</p>

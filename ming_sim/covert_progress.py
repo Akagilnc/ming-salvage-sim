@@ -607,7 +607,7 @@ def decide_secret_order_settlement(review_input: Mapping[str, object]) -> Dict[s
     return {
         "status": status,
         "outcome": outcome,
-        "note": note[:200],
+        "note": note,
         "close": True,
         "is_terminal": True,
         "actual_units": actual,
@@ -1529,7 +1529,7 @@ def apply_investigation_spoliation(
     if commit and int(getattr(db.conn, "_atomic_depth", 0) or 0) == 0:
         db.conn.commit()
     return {"target": name, "fact_key": key, "applied": True, "effect": str(effect),
-            "knowledge_source": str(knowledge_source or "").strip(),
+            "knowledge_source": str(knowledge_source or ""),
             "row_id": row.get("id")}
 
 
@@ -1750,7 +1750,7 @@ def _investigation_declaration(
                 "fact_key": str(spoil.get("fact_key") or fact or "").strip(),
                 "knowledge_source": str(
                     spoil.get("knowledge_source", spoil.get("知情来源")) or ""
-                ).strip(),
+                ),
             }
     suppress = item.get("suppression", item.get("压案"))
     if isinstance(suppress, Mapping):

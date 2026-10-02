@@ -197,7 +197,7 @@ def _seed_guilt_storage_value(value: object) -> str:
     if isinstance(value, Mapping):
         if not value:
             return ""
-        crime = str(value.get("crime") or "").strip()
+        crime = str(value.get("crime") or "")
         severity = str(value.get("severity") or "无").strip()
         return safe_json_dumps({"crime": crime, "severity": severity}, ensure_ascii=False)
     return str(value or "")
@@ -874,9 +874,8 @@ _SECRET_ORDER_BODY_COLUMNS = ("result", "sim_note")
 
 
 def _secret_order_kept_body(text: object) -> str:
-    """空白正文记空串；已有字句原样保留，含内部空行。"""
-    raw = str(text or "")
-    return raw if raw.strip() else ""
+    """Preserve the supplied body, including whitespace-only text."""
+    return str(text or "")
 
 
 def _secret_order_record_body(record: Mapping[str, object]) -> str:
@@ -5697,7 +5696,7 @@ class GameDB:
                     bar_good_meaning=ev.bar_good_meaning or "已平",
                     bar_bad_meaning=ev.bar_bad_meaning or "失控",
                     inertia=inertia,
-                    stage_text=ev.stage_text or ev.summary[:80],
+                    stage_text=ev.stage_text or ev.summary,
                     severity=int(ev.severity),
                     region_hint=ev.region_hint,
                     faction_hint=",".join(ev.interests[:2]),
@@ -5852,7 +5851,7 @@ class GameDB:
             self.recompute_faction_leverage(str(prev["faction"] or ""))
         if status in _OUSTED_STATES:
             self.interrupt_dossiers_for_character(
-                state, name, f"人物终态：{status}；{reason}".rstrip("；"),
+                state, name, f"人物终态：{status}；{reason}" if reason else f"人物终态：{status}",
                 commit=False,
             )
         if commit:
@@ -9120,9 +9119,8 @@ class GameDB:
         for item in list(phrases or []):
             if not isinstance(item, str):
                 continue
-            phrase = item.strip()
-            if phrase:
-                clean.append(phrase)
+            if item.strip():
+                clean.append(item)
         payload = json.dumps(clean, ensure_ascii=False)
         self.conn.execute(
             "UPDATE chat_messages SET highlights_json = ? WHERE id = ?",
@@ -9150,7 +9148,7 @@ class GameDB:
         out: List[str] = []
         for item in data:
             if isinstance(item, str) and item.strip():
-                out.append(item.strip())
+                out.append(item)
         return out
 
     def delete_chat_messages(self, message_ids: Iterable[int]) -> None:
@@ -15956,7 +15954,7 @@ class GameDB:
             return False
         primary_intensity = self._EXECUTION_OUTCOME_INTENSITY[outcome]
         secondary_intensity = self._INTENSITY_DOWNGRADE[primary_intensity]
-        reason_text = str(reason or "执行连坐").strip() or "执行连坐"
+        reason_text = str(reason or "执行连坐")
         identity = self._JOINT_LIABILITY_COST_IDENTITY
         origin = f"dossier:{int(dossier_id)}:{identity}"
 
@@ -18478,7 +18476,7 @@ class GameDB:
         office = str(payload.get("office") or "")
         if pa["action"] == "任命":
             # 朝臣任命/升迁/调任 → person-only adapter（不经 full settlement recovery）。
-            reason = str(payload.get("reason") or "奉旨任免").strip() or "奉旨任免"
+            reason = str(payload.get("reason") or "奉旨任免")
             office_type = str(payload.get("office_type") or "").strip()
             try:
                 appointment_tenure = appointment_tenure_from(payload)
@@ -20692,7 +20690,7 @@ class GameDB:
                     raise ValueError("参与人物 tier 必须显式提供")
                 tier = str(tier_value or ("" if strict_structured else "知情")).strip()
                 raw_role = str(value.get("role") or value.get("职分") or "")
-                role = raw_role if raw_role.strip() else ""
+                role = raw_role
                 delegator = str(value.get("delegator_id") or value.get("delegator") or "").strip()
             else:
                 if strict_structured:

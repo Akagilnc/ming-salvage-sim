@@ -109,7 +109,7 @@ MonthTranslateFn = Callable[[MonthTranslationInput, Any], Mapping[str, object]]
 
 def build_month_segment_translate_prompt(request: MonthTranslationInput) -> str:
     """一段一份 C0 声明；不套召对轮次语义，也不按 section 拆多次调用。"""
-    grounding = str(request.target_grounding or "").strip()
+    grounding = str(request.target_grounding or "")
     grounding_block = f"{grounding}\n" if grounding else ""
     candidates = request.candidates
     return (

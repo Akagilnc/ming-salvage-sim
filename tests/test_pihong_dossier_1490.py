@@ -177,7 +177,8 @@ def test_658_imperial_push_uses_rescript_original_and_key(game, monkeypatch, his
     session.resolve_turn(allow_empty_decree=True)
     assert len(db.list_dossier_endorsements(did)) == 1
 
-def test_midzhi_rescript_model_uses_original_key_and_existing_gate(game, monkeypatch):
+@pytest.mark.parametrize("failure", ["consume", "scope", "account"])
+def test_midzhi_rescript_model_uses_original_key_and_existing_gate(game, monkeypatch, failure):
     from tests.month_chain_helpers import make_light_session, canned_full_settlement
     db, state, content = game
     canned_full_settlement(monkeypatch)
@@ -188,10 +189,17 @@ def test_midzhi_rescript_model_uses_original_key_and_existing_gate(game, monkeyp
             return json.dumps({"actor_name": officers[-1]["name"], "revisions": [],
                                "items": [{"title": "急务", "context": "原奏与拟旨", "options": []}]})
         captured.append(answer)
+        payload = {"dossier_action_type": "policy", "target_kind": "issue",
+                   "target_id": "urgent", "due_turn": int(state.turn) + 2,
+                   "locality_scope": "none", "participant_roster": copy.deepcopy(_ROSTER)}
+        if len(captured) == 1 and failure == "scope":
+            payload.update(dossier_action_type="authorization", scope="region:",
+                           holder_id=officers[-1]["name"])
+        elif len(captured) == 1 and failure == "account":
+            payload.update(dossier_action_type="grant_allocation", grant_action="赏赉",
+                           amount=1, account="unknown")
         return json.dumps({"disposition": "settled", "text": "", "decree": {
-            "text": "御笔旨文", "payload": {"dossier_action_type": "policy", "target_kind": "issue",
-                "target_id": "urgent", "due_turn": int(state.turn) + 2,
-                "locality_scope": "none", "participant_roster": copy.deepcopy(_ROSTER)},
+            "text": "御笔旨文", "payload": payload,
         }})
 
     monkeypatch.setattr("ming_sim.rescript_draft.run_rescript_text", rescript)
@@ -206,7 +214,28 @@ def test_midzhi_rescript_model_uses_original_key_and_existing_gate(game, monkeyp
     assert session.resolve_turn(allow_empty_decree=True).awaiting
     original = session.pending_decisions()[0]
     choice = {"decision_key": original["decision_key"], "action": "midzhi", "note": "  朕亲拟\n旨意  "}
-    session.submit_hitl_choices([choice], write_gate=session._write_gate)
+    real_endorse = db.add_dossier_endorsement
+    def interrupted_endorse(*args, **kwargs):
+        real_endorse(*args, **kwargs)
+        raise RuntimeError("injected consumption failure")
+    if failure == "consume":
+        monkeypatch.setattr(db, "add_dossier_endorsement", interrupted_endorse)
+    from ming_sim.exceptions import SettlementAbort
+    from ming_sim.month_chain import _load_chain
+    with pytest.raises(SettlementAbort):
+        session.submit_hitl_choices([choice], write_gate=session._write_gate)
+    saved = _load_chain(db, int(state.turn))
+    assert bool(saved["rescript_answer_products"]) == (failure == "consume")
+    assert not saved["rescript_consumed"]
+    assert not db.list_decree_dossiers()
+    monkeypatch.setattr(db, "add_dossier_endorsement", real_endorse)
+    session = make_light_session(db, db.load_state(content), content)
+    session.llm_config = object()
+    session.resolve_turn(allow_empty_decree=True)
+    assert len(captured) == (1 if failure == "consume" else 2)
+    saved = _load_chain(db, int(state.turn))
+    assert saved["rescript_consumed"] == [original["decision_key"]]
+    assert not saved["rescript_answer_products"]
     dossiers = db.list_decree_dossiers()
     assert len(dossiers) == 1
     dossier = dossiers[0]

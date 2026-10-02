@@ -1834,7 +1834,7 @@ def build_participant_correction_feedback(
         f"请改正为名册中陛下所指之人的正确规范名（须仍是同一人）；"
         f"不得擅自除去或另换他人。\n"
     )
-    facts = str(roster_facts or "").strip()
+    facts = str(roster_facts or "")
     if facts:
         block += facts if facts.endswith("\n") else facts + "\n"
     return block
@@ -1949,10 +1949,10 @@ def compose_decree_validation_recovery(
         f"需要皇帝重新说明：{feature}。以本职口吻回禀，明确此旨尚未记录，并请皇帝"
         "补充或改说所需信息后重拟。"
     )
-    emperor = str(emperor_words or "").strip()
+    emperor = str(emperor_words or "")
     if emperor:
         prompt += f"\n【皇帝原话】{emperor}"
-    prior = str(prior_output or "").strip()
+    prior = str(prior_output or "")
     if prior:
         prompt += f"\n【原产出】{prior}"
     return _compose_inworld_fact_report(
@@ -2023,10 +2023,10 @@ def compose_secret_order_landing_recovery(
         f"以本职揣摩圣意：能从皇帝原话与既有交代补全的，陈述你理解的密令要点请皇帝确认；"
         f"揣摩不出的，以本职口吻当场请示皇帝所需。"
     )
-    emperor = str(emperor_words or "").strip()
+    emperor = str(emperor_words or "")
     if emperor:
         prompt += f"\n【皇帝原话】{emperor}"
-    prior = str(prior_output or "").strip()
+    prior = str(prior_output or "")
     if prior:
         prompt += f"\n【原抽取产出】{prior}"
     return _compose_inworld_fact_report(
@@ -2740,7 +2740,7 @@ def extract_draft_intent(
     correction_feedback（#1274 V-1）：校验失败回喂的纠错指令；非空时 LLM 挂死响亮上抛。"""
     roster_facts = _draft_intent_character_roster_facts(content)
     army_facts = _draft_intent_army_grounding_facts(content)
-    correction_block = str(correction_feedback or "").strip()
+    correction_block = str(correction_feedback or "")
     if correction_block and not correction_block.endswith("\n"):
         correction_block += "\n"
     stalled_push_facts = _stalled_deliberation_push_facts(db)
@@ -3186,7 +3186,7 @@ def extract_draft_intent(
             mechanical["locality_scope"] = explicit_scope
     if mode is not None:
         mechanical["mode"] = mode
-    merged = str(obj.get("合并草案") or "").strip()
+    merged = str(obj.get("合并草案") or "")
     # #654 H 已在上方对 _action=="无" 短路；此处仅保留 #653 pay_order 验形。
     # #1849：entries 非法是脏产物，响亮拒收；不得洗成「无意图」让写入口
     # 以 special_decree 覆盖原草稿（失败诚实宪法）。
@@ -3740,7 +3740,7 @@ def assemble_secret_order_content(
     走 payload 结构化键，不经本函数自由文本拼装。三路（抽取/暂存合并/更新·哨兵）
     同口径。
     """
-    emperor = (emperor_intent or "").strip()
+    emperor = emperor_intent or ""
     extracted = extractor_content or ""
     if extracted and _content_reflects_emperor_intent(extracted, emperor):
         return extracted
