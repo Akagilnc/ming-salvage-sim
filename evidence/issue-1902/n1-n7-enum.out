@@ -1,0 +1,41 @@
+{
+  "n1_members": [
+    "ming_sim/cli_backend.py:3008:resubmit_generic"
+  ],
+  "n2_members": [
+    "web_app.py:389:LLMConfig(",
+    "web_app.py:4228:llm_config_from_runtime(",
+    "ming_sim/cli_backend.py:4149:LLMConfig(",
+    "ming_sim/cli_backend.py:4135:LLMConfig(",
+    "ming_sim/cli/terminal.py:922:llm_config_from_runtime(",
+    "ming_sim/cli/terminal.py:925:llm_config_from_runtime("
+  ],
+  "n3_members": [
+    "ming_sim/cli/terminal.py:226:取数走会话层 ``pending_audience_reply_retries``（#1902 F2）：建轮归「殿上」，",
+    "ming_sim/cli/terminal.py:229:retries = session.pending_audience_reply_retries()",
+    "ming_sim/cli/terminal.py:253:retries = session.pending_audience_reply_retries()",
+    "ming_sim/session.py:1142:读取侧 ``list_hall_chat_turns`` 只按「殿上」取本夜轮，写成大臣名会让",
+    "ming_sim/session.py:1244:而问话/回话挂被召大臣名。此前 CLI 拿大臣名去查 ``get_interrupted_reply_retries``",
+    "ming_sim/session.py:1257:int(row[\"id\"]) for row in self.db.list_hall_chat_turns(int(night[\"id\"]))",
+    "ming_sim/session.py:1262:row for row in self.db.get_interrupted_reply_retries(SCENE_CHAT_SPEAKER)",
+    "web_app.py:1853:turns = self.db.list_hall_chat_turns(int(night[\"id\"]))",
+    "web_app.py:1925:turns = self.db.list_hall_chat_turns(int(night[\"id\"]))",
+    "web_app.py:2104:return self.db.get_interrupted_reply_retries(minister_name)",
+    "web_app.py:2110:interrupted = self.session.pending_audience_reply_retries()",
+    "web_app.py:2114:ids = {int(row[\"id\"]) for row in self.db.list_hall_chat_turns(int(night[\"id\"]))}"
+  ],
+  "n4_getattr_left": [],
+  "n5_members": [
+    "ming_sim/cli_backend.py:2588:# 旧关键字（draft_count/has_pending_draft/…）若仍传入则忽略——模式已删，不另造拒收。"
+  ],
+  "n6_remaining_bad_flags": {
+    "tests/test_decree_dossiers_571.py": {},
+    "tests/test_error_pack.py": {},
+    "tests/test_chat_stream_failpaths_393.py": {},
+    "tests/test_due_review_621.py": {},
+    "tests/test_llm_channel_config.py": {},
+    "web/src/useSettlementFlow.test.tsx": {},
+    "web/src/components/modals.test.tsx": {}
+  },
+  "n7_diff_vs_base_empty": true
+}

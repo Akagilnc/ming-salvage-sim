@@ -253,7 +253,9 @@ def test_due_review_scene_tops_live_open_night_even_with_body(game, tmp_path):
     prepared = prepare_scene_materials(db, state, dest_root=tmp_path / "due-review-scene")
     try:
         opening = prepared.opening
-        assert origin_context in opening or criterion_text in opening
+        # #1902 N6 / ADR0155：待裁场面结构化事实须原样供给，禁二选一假绿。
+        assert origin_context in opening
+        assert criterion_text in opening
     finally:
         release_material_tree(prepared.root)
 

@@ -2611,13 +2611,18 @@ def test_658_typed_target_and_backing_reject_bad_shapes(game, monkeypatch):
     projected = db.list_endorsed_dossier_candidates(state.turn)
     assert [c['endorser_id'] for c in projected if c['dossier_id'] == did] == list(reversed(endorsers))
 
-    def backend_multi(prompt, *_a, **_k):
-        return (json.dumps({'成品旨稿': [{'正文': '御笔强推', '目标案卷ID': bind_did, '颁布方式': '中旨直发'}, {'正文': '清核河工', '动作类型': 'policy', '目标类型': 'issue', '目标ID': 'river-works', '颁布方式': '普通', '施行范围': '无'}], '事务声明': push_declaration}, ensure_ascii=False), 1)
-    monkeypatch.setattr(cli_backend, '_run_backend_for_config', backend_multi)
-    multi = cli_backend.extract_draft_intent('分拟两旨', '臣已拟成', draft_count=2, db=db)
-    assert multi['drafts'][0]['target_dossier_id'] == bind_did
-    assert multi['drafts'][1]['target_id'] == 'river-works'
-    push_payload = cli_backend.project_draft_extract_to_directive_payload(multi['drafts'][0], decree_text='御笔强推', db=db, content=content)
+    # #1902 N5：多旨批抽已退役；御笔强推事务绑定改走现役单旨抽取。
+    def backend_push(prompt, *_a, **_k):
+        return (json.dumps({
+            '拟旨意图': '拟旨', '目标案卷ID': bind_did, '颁布方式': '中旨直发',
+            '事务声明': push_declaration,
+        }, ensure_ascii=False), 1)
+    monkeypatch.setattr(cli_backend, '_run_backend_for_config', backend_push)
+    push_extract = cli_backend.extract_draft_intent('着即强推', '臣已拟成', db=db)
+    assert push_extract['target_dossier_id'] == bind_did
+    push_payload = cli_backend.project_draft_extract_to_directive_payload(
+        push_extract, decree_text='御笔强推', db=db, content=content,
+    )
     assert push_payload.get('affair_declaration')
     push_dir = int(db.add_directive(state, None, '御笔强推', 'test-658-push-bind', dossier_payload=push_payload))
     db.ensure_dossiers_for_draft_directives(state)

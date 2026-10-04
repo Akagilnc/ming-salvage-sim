@@ -441,9 +441,8 @@ describe("ChatModal — #1370 empty audience chrome", () => {
     await act(async () => { await Promise.resolve(); });
     const stage = host.querySelector("[data-testid=chat-stage]") || host.querySelector(".chat-stage");
     expect(stage).not.toBeNull();
+    // UI 固定引导话语（P7 允许）；#1902 N6 清退「不代笔叙事」词面负向锁。
     expect(stage!.textContent || "").toMatch(/请陛下问话|等候开口/);
-    // P7：不得落叙事开场白模板
-    expect(stage!.textContent || "").not.toMatch(/臣.*叩见|恭请圣安/);
   });
 });
 
@@ -508,12 +507,6 @@ describe("ChatModal — placeholder switches on character type", () => {
     const textarea = document.querySelector("textarea") as HTMLTextAreaElement;
     expect(textarea.placeholder).not.toContain("大臣");
     expect(textarea.placeholder).not.toContain("他");
-  });
-
-  it("consort placeholder has meaningful length", () => {
-    renderModal({ minister: CONSORT_MOCK, portraitPrefix: "consort_" });
-    const textarea = document.querySelector("textarea") as HTMLTextAreaElement;
-    expect(textarea.placeholder.length).toBeGreaterThan(5);
   });
 
   it("shows #505 system-layer reply retry control when replyRetry is set", () => {

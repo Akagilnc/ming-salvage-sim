@@ -255,6 +255,17 @@ class _RetrySession:
         from ming_sim.session import GameSession
         return GameSession.schedule_pending_scene_translation(self, result)
 
+    def schedule_close_night_after_chat_if_needed(self, court_action, *, write_gate=None):
+        # #1902 N4：生产入口直调收夜调度；轻壳默认同形 no-op。
+        return None
+
+    def close_night_after_chat_if_needed(self, court_action, *, write_gate=None, barrier_ticket=None):
+        return None
+
+    def pending_audience_reply_retries(self):
+        # #1902 N3：殿上中断集合共核；非殿上轻壳返回空。
+        return []
+
 def _retry_runtime(db, state, minister, *, session=None):
     """Web retry 入口唯一装配壳。session 默认轻量 _RetrySession；可注入生产 chat session。"""
     rt = object.__new__(web_app.WebGame)

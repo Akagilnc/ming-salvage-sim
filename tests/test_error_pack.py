@@ -147,7 +147,13 @@ def test_web_issue_endpoint_returns_structured_abort(monkeypatch):
     with pytest.raises(IssueStreamError) as ei:
         asyncio.run(_run())
 
+    # #1902 N6：SSE 中止载荷须保留 stage / error_pack_path / turn（禁只查非 500）。
     assert ei.value.status_code != 500
+    payload = ei.value.payload
+    assert isinstance(payload, dict), payload
+    assert payload.get("stage") == "extract"
+    assert payload.get("error_pack_path") == "/tmp/x"
+    assert payload.get("turn") == 3
 
 def test_next_attempt_skips_malformed_and_foreign_entries(game, monkeypatch, tmp_path):
     """attempt 推导跳过畸形后缀/他 turn/非目录项，取本 turn 数字后缀 max+1

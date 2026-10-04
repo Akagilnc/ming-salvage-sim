@@ -1022,10 +1022,14 @@ class WebGame:
         default_headers: Optional[Dict[str, str]] = None,
     ) -> LLMConfig:
         """从 in-game 输入派生新 LLMConfig（纯函数,不 verify/不落盘/不改 session）。
+
+        编辑优先级（相对当前 session / 已存 api 槽）留在本入口；共同生效规则只走
+        ``llm_config_from_runtime``（#1902 N2），不在 Web 再维护第二份组装。
         通道感知（#51）：显式 channel 优先;否则填了真实 API key=切 api;都没有=保留当前通道
-        （CLI 局开 in-game 设置不再被强制降级到 api + 空 key 误报）。"""
+        （CLI 局开 in-game 设置不再被强制降级到 api + 空 key 误报）。
+        """
         cur = self.session.llm_config
-        # 通道解析（#51）
+        # 通道解析（#51）——编辑优先级，不是生效规则副本。
         explicit = (channel or "").strip().lower() if channel is not None else ""
         if explicit in VALID_CHANNELS:
             new_channel = explicit
@@ -1033,37 +1037,32 @@ class WebGame:
             new_channel = "api"   # 用户填了真实 API key = 显式切到 API
         else:
             new_channel = (cur.channel or "api")   # 没填 = 保留当前通道,不强制降级
-        # CLI 槽位：未传则保留当前
         new_cli_runner = (cli_runner if cli_runner is not None else cur.cli_runner)
         new_cli_model = (cli_model if cli_model is not None else cur.cli_model)
         new_cli_timeout = (
             cli_timeout_seconds if cli_timeout_seconds and cli_timeout_seconds > 0
             else cur.cli_timeout_seconds
         )
-        base = normalize_openai_base_url(base_url.strip() or cur.base_url)
+        new_base = (base_url.strip() or cur.base_url)
         new_model = model.strip() or cur.model
-        # CLI 通道不要 API key（占位符在 create_chat_model 构造 CliChat 时注入）；
-        # API 通道：请求 key 与已存 key 回落都过占位符过滤。
         if new_channel == "cli":
             new_key = ""
         else:
             new_key = real_api_key_or_empty(api_key) or real_api_key_or_empty(cur.api_key)
             if not new_key:
-                # 从 cli 切回 api：cur.api_key 在 cli 模式已归一为空,但真实 key 仍存在
-                # runtime_llm.json 的 api 槽——回收它,免得切回 api 还要重输 key(Gemini R1)。
+                # 从 cli 切回 api：回收 runtime api 槽真实 key（Gemini R1）。
                 saved = load_runtime_llm()
                 saved_api = saved.get("api") if isinstance(saved.get("api"), dict) else {}
                 new_key = real_api_key_or_empty(saved_api.get("api_key"))
         new_timeout = timeout_seconds if timeout_seconds > 0 else cur.timeout_seconds
-        if thinking_level is None:
-            new_thinking_level = cur.thinking_level
-        else:
-            new_thinking_level = normalize_thinking_level(thinking_level)
-        if reasoning_strength is None:
-            new_reasoning_strength = cur.reasoning_strength
-        else:
-            new_reasoning_strength = normalize_reasoning_strength(reasoning_strength)
-        # advanced_* = None 表示不动；传空串表示显式清空。
+        new_thinking_level = (
+            cur.thinking_level if thinking_level is None
+            else normalize_thinking_level(thinking_level)
+        )
+        new_reasoning_strength = (
+            cur.reasoning_strength if reasoning_strength is None
+            else normalize_reasoning_strength(reasoning_strength)
+        )
         if advanced_model is None:
             new_advanced = cur.advanced_model
         else:
@@ -1071,35 +1070,52 @@ class WebGame:
         if advanced_base_url is None:
             new_adv_base = cur.advanced_base_url
         else:
-            adv_base_in = advanced_base_url.strip()
-            new_adv_base = normalize_openai_base_url(adv_base_in) if adv_base_in else ""
+            new_adv_base = advanced_base_url.strip()
         if advanced_api_key is None:
             new_adv_key = cur.advanced_api_key
         else:
             new_adv_key = advanced_api_key.strip()
-        new_adv_thinking_level = ""
-        # #1794：显式传入（含空表）覆写；省略则保留当前头。
         if default_headers is None:
             new_default_headers = dict(cur.default_headers or {})
         else:
             new_default_headers = _slot_header_table(default_headers)
-        return LLMConfig(
-            api_key=new_key,
-            base_url=base,
-            model=new_model,
+        # #1902 N2：编辑优先级已收成 runtime 形，生效规则只认共核投影。
+        runtime = {
+            "channel": new_channel,
+            "base_url": new_base,
+            "model": new_model,
+            "api_key": new_key,
+            "timeout_seconds": new_timeout,
+            "thinking_level": new_thinking_level,
+            "reasoning_strength": new_reasoning_strength,
+            "advanced_model": new_advanced,
+            "advanced_base_url": new_adv_base,
+            "advanced_api_key": new_adv_key,
+            "advanced_thinking_level": "",
+            "default_headers": new_default_headers,
+            "cli": {
+                "runner": new_cli_runner,
+                "model": new_cli_model,
+                "timeout_seconds": new_cli_timeout,
+                "reasoning_strength": new_reasoning_strength,
+            },
+        }
+        cfg = _llm_config_from_runtime(
+            runtime,
+            base_url="",
+            model="",
+            api_key="",
             timeout_seconds=new_timeout,
             thinking_level=new_thinking_level,
-            advanced_model=new_advanced,
-            advanced_base_url=new_adv_base,
-            advanced_api_key=new_adv_key,
-            advanced_thinking_level=new_adv_thinking_level,
-            reasoning_strength=new_reasoning_strength,
-            channel=new_channel,
-            cli_runner=new_cli_runner,
-            cli_model=new_cli_model,
-            cli_timeout_seconds=new_cli_timeout,
-            default_headers=new_default_headers,
+            advanced_model="",
+            advanced_base_url="",
+            advanced_api_key="",
+            advanced_thinking_level="",
         )
+        # 编辑显式空思考档不得被共核 env 回落改写（编辑优先级边界）。
+        if thinking_level is not None and not new_thinking_level:
+            cfg.thinking_level = ""
+        return cfg
 
     def commit_llm_config(self, new_config: LLMConfig) -> LLMConfig:
         """落盘 + 切 session + 重建 registry（快;verify 由调用方先做,可 offload）。"""
@@ -2090,16 +2106,21 @@ class WebGame:
     def reply_retries(self, minister_name: str) -> List[Dict[str, Any]]:
         from ming_sim.audience_night import SCENE_CHAT_SPEAKER, get_open_night
         if minister_name == SCENE_CHAT_SPEAKER:
+            # #1902 N3：中断回话身份/筛选走会话共核；本入口只叠 Web 的 post_reply 适配。
+            interrupted = self.session.pending_audience_reply_retries()
             night = get_open_night(self.db)
-            if night:
-                turns = self.db.list_hall_chat_turns(int(night["id"]))
-                speakers = dict.fromkeys(str(row["minister_name"]) for row in turns)
-                ids = {int(row["id"]) for row in turns}
-                return sorted([retry for speaker in speakers
-                               for retry in (self.interrupted_reply_retries(speaker)
-                                             + self.db.get_post_reply_retries(speaker))
-                               if int(retry["chat_turn_id"]) in ids],
-                              key=lambda item: int(item["chat_turn_id"]))
+            if night is None:
+                return sorted(interrupted, key=lambda item: int(item["chat_turn_id"]))
+            ids = {int(row["id"]) for row in self.db.list_hall_chat_turns(int(night["id"]))}
+            post_reply = [
+                retry for retry in self.db.get_post_reply_retries(SCENE_CHAT_SPEAKER)
+                if int(retry["chat_turn_id"]) in ids
+            ]
+            return sorted(
+                [*interrupted, *post_reply],
+                key=lambda item: int(item["chat_turn_id"]),
+            )
+        # 非殿上请求：保留按大臣名取中断 + post_reply 的 Web 适配。
         interrupted = self.interrupted_reply_retries(minister_name)
         post_reply = self.db.get_post_reply_retries(minister_name)
         return sorted([*interrupted, *post_reply], key=lambda item: int(item["chat_turn_id"]))
@@ -2293,21 +2314,11 @@ class WebGame:
                 self._complete_pending_write(pending_ticket)
                 pending_ticket = None
             # #526/#1842：回话已落库后收夜。非流式前台先返回；队列随后 FIFO 转译 join→封夜。
+            # #1902 N4：GameSession 恒有收夜调度；删缺方法降级替身。
             court_action = getattr(result, "court_action", "") or ""
-            schedule = getattr(
-                self.session, "schedule_close_night_after_chat_if_needed", None,
+            self.session.schedule_close_night_after_chat_if_needed(
+                court_action, write_gate=self._runtime_write_gate(),
             )
-            if schedule is not None:
-                schedule(court_action, write_gate=self._runtime_write_gate())
-            else:
-                close_after = getattr(
-                    self.session, "close_night_after_chat_if_needed", None,
-                )
-                if close_after is not None:
-                    close_after(
-                        court_action,
-                        write_gate=self._runtime_write_gate(),
-                    )
             return payload
         finally:
             self._complete_pending_write(pending_ticket)
@@ -2825,15 +2836,12 @@ class WebGame:
                     # #526/#1353：尾随票已清后收夜。整轮票已 complete 时 ticketed gate 会
                     # TicketCancelled——收夜短写改走裸 runtime write_gate（腿已终态，无越屏障窗）。
                     # #1727：预领屏障票交给 close 复用（barrier），禁再领第二张。
-                    close_after = getattr(self.session, "close_night_after_chat_if_needed", None)
-                    if close_after is not None:
-                        # barrier_ticket 由 close.barrier / 早退 complete；
-                        # worker finally 再幂等 complete 一次兜底。
-                        close_after(
-                            court_action,
-                            write_gate=bare_write_gate,
-                            barrier_ticket=close_barrier_ticket,
-                        )
+                    # #1902 N4：GameSession 恒有 close_night_after_chat_if_needed；删 getattr 降级。
+                    self.session.close_night_after_chat_if_needed(
+                        court_action,
+                        write_gate=bare_write_gate,
+                        barrier_ticket=close_barrier_ticket,
+                    )
 
                     ev_queue.put({"type": "end"})
                 except Exception as error:  # noqa: BLE001
@@ -4752,16 +4760,28 @@ async def _menu_save_cli_llm(request: LlmSetupRequest) -> Dict[str, Any]:
     timeout_seconds = request.timeout_seconds if request.timeout_seconds > 0 else API_DEFAULT_TIMEOUT_SECONDS
     if not cli_runner:
         raise HTTPException(status_code=400, detail="cli_runner 不能为空。")
-    config = LLMConfig(
-        api_key="",  # CLI 通道不要 API key；占位符在 create_chat_model 构造 CliChat 时注入
+    # #1902 N2：表单值收成 runtime 后，生效配置只走共核投影（不在菜单自造 LLMConfig）。
+    config = _llm_config_from_runtime(
+        {
+            "channel": "cli",
+            "timeout_seconds": timeout_seconds,
+            "reasoning_strength": reasoning_strength,
+            "cli": {
+                "runner": cli_runner,
+                "model": cli_model,
+                "timeout_seconds": cli_timeout,
+                "reasoning_strength": reasoning_strength,
+            },
+        },
         base_url="",
         model=cli_model,
+        api_key="",
         timeout_seconds=timeout_seconds,
-        reasoning_strength=reasoning_strength,
-        channel="cli",
-        cli_runner=cli_runner,
-        cli_model=cli_model,
-        cli_timeout_seconds=cli_timeout,
+        thinking_level="",
+        advanced_model="",
+        advanced_base_url="",
+        advanced_api_key="",
+        advanced_thinking_level="",
     )
     try:
         # CLI/API smoke 是阻塞子进程/网络调用(只要还在出字就一直跑,静默超 cli_timeout_seconds
@@ -4844,19 +4864,31 @@ async def api_menu_save_llm(request: LlmSetupRequest) -> Dict[str, Any]:
     else:
         default_headers = _slot_header_table(existing.get("default_headers"))
     normalized_base_url = normalize_openai_base_url(base_url)
-    config = LLMConfig(
-        api_key=api_key,
-        base_url=normalized_base_url,
-        model=model,
+    # #1902 N2：菜单保存的生效配置只走共核投影；此处只收表单/已存回落值。
+    config = _llm_config_from_runtime(
+        {
+            "channel": "api",
+            "base_url": normalized_base_url,
+            "model": model,
+            "api_key": api_key,
+            "timeout_seconds": timeout_seconds,
+            "thinking_level": thinking_level,
+            "advanced_model": advanced_model,
+            "advanced_base_url": advanced_base_url,
+            "advanced_api_key": advanced_api_key,
+            "advanced_thinking_level": advanced_thinking_level,
+            "reasoning_strength": reasoning_strength,
+            "default_headers": default_headers,
+        },
+        base_url="",
+        model="",
+        api_key="",
         timeout_seconds=timeout_seconds,
         thinking_level=thinking_level,
-        advanced_model=advanced_model,
-        advanced_base_url=advanced_base_url,
-        advanced_api_key=advanced_api_key,
-        advanced_thinking_level=advanced_thinking_level,
-        reasoning_strength=reasoning_strength,
-        channel="api",
-        default_headers=default_headers,
+        advanced_model="",
+        advanced_base_url="",
+        advanced_api_key="",
+        advanced_thinking_level="",
     )
     try:
         # CLI/API smoke 是阻塞子进程/网络调用(只要还在出字就一直跑,静默超 cli_timeout_seconds
