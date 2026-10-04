@@ -135,15 +135,12 @@ def _travel_tone_from_tags(tags: Sequence[Any]) -> str:
     return max(tones or ["常行"], key=TRAVEL_SPEED_BY_TONE.__getitem__)
 _SUMMON_ORIGIN_PREFIX = "传召源#"
 # #526 / #471 S10：留侍叙事账标签——非进/出，不驱动在场（口径回灌 #500）
-TAG_STAY_ATTEND = "留侍"
 
 # #526 结构化口令判词（引擎只认判词，不重解析散文；非 ACTION_CLUSTERS）
 CMD_CLOSE_NIGHT = "close_night"
-CMD_AMBIGUOUS_CLOSE = "ambiguous_close"
-CMD_STAY_ATTEND = "stay_attend"
 CMD_NONE = "none"
 _CMD_VERDICTS = frozenset({
-    CMD_CLOSE_NIGHT, CMD_AMBIGUOUS_CLOSE, CMD_STAY_ATTEND, CMD_NONE,
+    CMD_CLOSE_NIGHT, CMD_NONE,
 })
 
 METHOD_XUANRU = "宣入"
@@ -1860,38 +1857,6 @@ def dismiss_from_audience(
     )
 
 
-def stay_attend_in_audience(
-    db: Any,
-    person_name: str,
-    *,
-    night_id: Optional[int] = None,
-    origin_chat_turn_id: int = 0,
-) -> Optional[int]:
-    """「留下听着」口令：确定性落留侍叙事账，在场态不变（#526 / #500 口径）。
-
-    不在场者 = 幂等 no-op（不落账、返 None）；名不填 → 响亮 empty_person。
-    标签 TAG_STAY_ATTEND 不进 _presence_delta——不得制造进出事件。
-    """
-    name = str(person_name or "").strip()
-    if not name:
-        raise AudienceNightError("留侍人名不能为空", code="empty_person")
-    nid = night_id
-    if nid is None:
-        open_n = get_open_night(db)
-        if open_n is None:
-            return None
-        nid = int(open_n["id"])
-    if name not in present_names_at(db, int(nid)):
-        return None
-    return append_ledger_entry(
-        db, int(nid),
-        person_names=[name],
-        audibility=AUDIBILITY_PUBLIC,
-        body="",
-        tags=[TAG_STAY_ATTEND],
-        check_dead=False,
-        origin_chat_turn_id=origin_chat_turn_id,
-    )
 
 
 def normalize_audience_command_verdict(raw: Any) -> str:
@@ -1902,28 +1867,22 @@ def normalize_audience_command_verdict(raw: Any) -> str:
 
 
 def recognize_audience_command(message: str) -> str:
-    """收夜/留侍口令结构化判词（#526）。
+    """收夜控制命令结构化判词（#526）。
 
-    确定性封闭集（COURT_BREAK / AMBIGUOUS_CLOSE / STAY_ATTEND）；引擎不重解析散文。
+    确定性封闭集（COURT_BREAK）；引擎不重解析散文。
     不进 ACTION_CLUSTERS；非第二 parser（无自由散文正则启发）。
     无耗时软判——同步直调即可；坏 shape 由 normalize 归一，不在此宽吞异常。
     """
     from ming_sim.constants import (
-        AMBIGUOUS_CLOSE_COMMANDS,
         COURT_BREAK_COMMANDS,
-        STAY_ATTEND_COMMANDS,
     )
 
     text = str(message or "").strip()
     if not text:
         return CMD_NONE
     lowered = text.lower()
-    if text in STAY_ATTEND_COMMANDS or lowered in STAY_ATTEND_COMMANDS:
-        return CMD_STAY_ATTEND
     if lowered in COURT_BREAK_COMMANDS or text in COURT_BREAK_COMMANDS:
         return CMD_CLOSE_NIGHT
-    if text in AMBIGUOUS_CLOSE_COMMANDS or lowered in AMBIGUOUS_CLOSE_COMMANDS:
-        return CMD_AMBIGUOUS_CLOSE
     return CMD_NONE
 
 
@@ -1946,7 +1905,7 @@ def recognize_xuan_command(message: str) -> Optional[str]:
     text = str(message or "").strip()
     if not text:
         return None
-    # 收夜/留侍口令优先，避免「退下」等被宣召形状误吞。
+    # 收夜控制命令优先，避免「退下」等被宣召形状误吞。
     if recognize_audience_command(text) != CMD_NONE:
         return None
     m = _XUAN_COMMAND_RE.match(text)
