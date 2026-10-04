@@ -146,7 +146,8 @@ MING_SIM_PI_BIN=/usr/bin/false \
 
 ## 提交
 
-- commit: `e49928cb62df359f2df78fc2f9a2f0712758ed2b`
+- code fix commit: `e49928cb62df359f2df78fc2f9a2f0712758ed2b`
+- branch tip (report SHA note): see `git rev-parse HEAD` on `ak-roles/1847-fixer-w6-n11-n12`
 - files: `ming_sim/db.py`, `ming_sim/fiscal_tick.py`, `evidence/1847-w6-verdict.json`, `evidence/1847-w6-report.md`
 
 ## 自查二连 done
