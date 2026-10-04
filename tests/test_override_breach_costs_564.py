@@ -328,11 +328,6 @@ def test_legacy_persisted_reaction_severity_migrates_narrowly_and_idempotently(g
         "INSERT INTO decree_dossier_decisions(dossier_id,turn,decision,affected_parties_json) VALUES (?,?,?,?)",
         (dossier_id, state.turn, "rejected", json.dumps(legacy, ensure_ascii=False)),
     ).lastrowid
-    pending = {"dossier_id": dossier_id, "decision": "rejected", "affected_parties": legacy}
-    db.conn.execute(
-        "INSERT INTO pending_promulgation_verdicts(turn,dossier_id,verdict_json) VALUES (?,?,?)",
-        (state.turn, dossier_id, json.dumps(pending, ensure_ascii=False)),
-    )
     try:
         json.loads(malformed_payload)
     except ValueError as exc:
@@ -346,19 +341,16 @@ def test_legacy_persisted_reaction_severity_migrates_narrowly_and_idempotently(g
     reopened.close()
     reopened = GameDB(path, content)
     try:
-        raw = reopened.conn.execute(
-            "SELECT verdict_json FROM pending_promulgation_verdicts WHERE turn=? ORDER BY dossier_id",
-            (state.turn,),
-        ).fetchone()[0]
-        saved = json.loads(raw)["affected_parties"]
-        assert saved[0] == {"kind": "faction", "key": "东林", "note": "留存", "direction": "negative", "intensity": "strong"}
-        assert (saved[1]["direction"], saved[1]["intensity"]) == ("negative", "weak")
-        assert saved[2]["severity"] == "高兴"
         legal = json.loads(reopened.conn.execute(
             "SELECT affected_parties_json FROM decree_dossier_decisions WHERE id=?",
             (legal_id,),
         ).fetchone()[0])
-        assert legal[0] == saved[0]
+        assert legal[0] == {
+            "kind": "faction", "key": "东林", "note": "留存",
+            "direction": "negative", "intensity": "strong",
+        }
+        assert (legal[1]["direction"], legal[1]["intensity"]) == ("negative", "weak")
+        assert legal[2]["severity"] == "高兴"
         leftover = reopened.conn.execute(
             "SELECT affected_parties_json FROM decree_dossier_decisions WHERE id=?",
             (malformed_id,),

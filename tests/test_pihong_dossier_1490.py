@@ -12,7 +12,6 @@ D. 命中 allowed 后从服务端 option 重建 label/hint/能力字段，客户
 """
 from __future__ import annotations
 import asyncio
-import copy
 import json
 import threading
 import httpx
@@ -1144,85 +1143,6 @@ def test_657_abi_mapper_matrix_a1_a12(game):
     assert batch2.items[0].already_applied
     ra.apply_rescript_batch(db, state, batch2, ra.PrewriteResults(), content=content)
     assert len(db.list_decree_dossiers()) == mid
-
-def test_1682_late_grants_follow_policy_without_consuming_verdict_batch(game, monkeypatch):
-    """Late HITL grants auto-promulgate only canonical review-exempt dossiers."""
-    from ming_sim import rescript_actions as ra
-    db, state, content = game
-    options = [{'label': '发内帑', 'hint': 'h', 'action_type': 'grant_allocation', 'grant_action': '协饷', 'account': '内库', 'amount': 7, 'purpose': '补饷', 'cadence': '一次性', 'execution_surface': 'immediate', 'target_kind': 'army', 'target_id': 'guanning'}, {'label': '国库赏赉', 'hint': 'h', 'action_type': 'grant_allocation', 'grant_action': '协饷', 'account': '国库', 'amount': 11, 'purpose': '补饷', 'cadence': '一次性', 'target_kind': 'army', 'target_id': 'guanning'}]
-    db.save_pending_decisions(state.turn, [{'event_id': '', 'title': '内帑', 'context': 'c', 'options': [options[0]]}, {'event_id': '', 'title': '国库', 'context': 'c', 'options': [options[1]]}])
-    desk = db.list_rescript_desk(int(state.turn))
-    choices = [{'decision_key': row['decision_key'], 'label': row['options'][0]['label']} for row in desk]
-    unrelated_id = db.create_decree_dossier(state, action_type='policy', decree_text='待判旧案', target_kind='issue', target_id='unrelated-1682')
-    pending = {'dossier_id': unrelated_id, 'decision': 'promulgated'}
-    db.conn.execute(
-        'DELETE FROM pending_promulgation_verdicts WHERE turn=?', (int(state.turn),)
-    )
-    db.conn.execute(
-        'INSERT INTO pending_promulgation_verdicts(turn,dossier_id,verdict_json) VALUES (?,?,?)',
-        (int(state.turn), int(pending['dossier_id']), json.dumps(pending, ensure_ascii=False)),
-    )
-    db.conn.commit()
-    batch = ra.validate_all(desk, choices)
-    ra.apply_rescript_batch(db, state, batch, ra.PrewriteResults(), content=content)
-    grants = [row for row in db.list_decree_dossiers() if row['action_type'] == 'grant_allocation' and _dossier_payload(row).get('decision_key') in {choice['decision_key'] for choice in choices}]
-    assert len(grants) == 2
-    by_account = {_dossier_payload(row)['account']: row for row in grants}
-    inner = by_account['内库']
-    assert inner['status'] == 'closed'
-    assert inner['promulgation_decision'] == 'promulgated'
-    assert len(db.list_economy_moves_for_dossier(int(inner['id']))) == 1
-    reviewed = by_account['国库']
-    assert reviewed['status'] == 'proposed'
-    assert reviewed['promulgation_decision'] == ''
-    assert db.list_economy_moves_for_dossier(int(reviewed['id'])) == []
-    got = [json.loads(r[0]) for r in db.conn.execute(
-        'SELECT verdict_json FROM pending_promulgation_verdicts WHERE turn=? ORDER BY dossier_id',
-        (int(state.turn),),
-    ).fetchall()]
-    assert got == [pending]
-    db.save_pending_decisions(state.turn, [{'event_id': '', 'title': '先拨内帑', 'context': 'c', 'options': [options[0]]}, {'event_id': '', 'title': '后拨内帑失读', 'context': 'c', 'options': [options[0]]}])
-    failed_rows = [row for row in db.list_rescript_desk(int(state.turn)) if row['title'] in {'先拨内帑', '后拨内帑失读'}]
-    failed_choices = [{'decision_key': row['decision_key'], 'label': row['options'][0]['label']} for row in failed_rows]
-    failed_batch = ra.validate_all(failed_rows, failed_choices)
-    dossiers_before = db.list_decree_dossiers()
-    decisions_before = db.list_pending_decisions(int(state.turn))
-    accounts_before = db.conn.execute('SELECT account, metric_key, balance, note FROM economy_accounts ORDER BY account').fetchall()
-    ledger_before = db.conn.execute('SELECT * FROM economy_ledger ORDER BY id').fetchall()
-    verdicts_before = [json.loads(r[0]) for r in db.conn.execute(
-        'SELECT verdict_json FROM pending_promulgation_verdicts WHERE turn=? ORDER BY dossier_id',
-        (int(state.turn),),
-    ).fetchall()]
-    metrics_before = copy.deepcopy(state.metrics)
-    original_get = db.get_decree_dossier
-    existing_ids = {int(row['id']) for row in dossiers_before}
-    created_ids = []
-    missed_ids = []
-
-    def _miss_second_new_dossier(dossier_id):
-        dossier_id = int(dossier_id)
-        if dossier_id not in existing_ids and dossier_id not in created_ids:
-            created_ids.append(dossier_id)
-        if len(created_ids) >= 2 and dossier_id == created_ids[1]:
-            missed_ids.append(dossier_id)
-            return None
-        return original_get(dossier_id)
-    monkeypatch.setattr(db, 'get_decree_dossier', _miss_second_new_dossier)
-    with pytest.raises(ValueError):
-        ra.apply_rescript_batch(db, state, failed_batch, ra.PrewriteResults(), content=content)
-    assert len(created_ids) == 2
-    assert missed_ids == [created_ids[1]]
-    assert db.list_decree_dossiers() == dossiers_before
-    assert db.list_pending_decisions(int(state.turn)) == decisions_before
-    assert db.conn.execute('SELECT account, metric_key, balance, note FROM economy_accounts ORDER BY account').fetchall() == accounts_before
-    assert db.conn.execute('SELECT * FROM economy_ledger ORDER BY id').fetchall() == ledger_before
-    got_after = [json.loads(r[0]) for r in db.conn.execute(
-        'SELECT verdict_json FROM pending_promulgation_verdicts WHERE turn=? ORDER BY dossier_id',
-        (int(state.turn),),
-    ).fetchall()]
-    assert got_after == verdicts_before
-    assert state.metrics == metrics_before
-    assert db.load_state().metrics == metrics_before
 
 def test_657_mixed_batch_follow_plus_decision_and_no_context_copy(web_game, monkeypatch):
     """C1.1：急务 follow + decision 打回；真 HTTP；③后 extracted 空杀进程；

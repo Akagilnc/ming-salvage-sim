@@ -4,8 +4,8 @@
 分支：`ak-roles/issue-1843-w5-r5-f2`（自 `ak-roles/issue-1843-w5` @ `77c00eadc`）
 底座：`claude/1812-w4` 是 HEAD 祖先
 派单（全文）：`/Users/akagilnc/.ak-roles/books/Ming_LLM/unbound/runs/01a10837-1305-7258-8ea9-a0150c437f00@fixer/fix-packet.md`
-最新判词原文（R8 完整 JSON）：`.../1843/runs/01a10837-1305-7258-8ea9-a0150c437f00@fixer/session/session.jsonl` L46；派单附件旧庭：`attachments/00-1843-judge-77c00eadc.json`
-施工基线（R1–R7 误用下界，R8 取消）：~~`ae4a2a3e6`~~ → **无历史下界**；判词原文 session 用户消息 JSON（R8）
+最新判词原文（R9 完整 JSON）：`/Users/akagilnc/.ak-roles/books/Ming_LLM/1843/runs/01a10837-1305-7258-8ea9-a0150c437f00@fixer/session/session.jsonl` L64（status=continue / F2-r9-1）；派单附件旧庭：`attachments/00-1843-judge-77c00eadc.json`
+施工基线：R8 已取消历史下界；R9 在同一类定义上追「已退役入口的下一层独占存储／迁移／裸 SQL 续命测试」
 
 ## 轮次
 
@@ -19,9 +19,102 @@
 | R6 | `7a96584ab` | 闭包补删常量／`_current_game_turn`；**谓词仍错：固定样本种子＋整文件 live 白名单** → `6a232bee5` |
 | R7 | `6a232bee5` | **纠正范围**：`ae4a2a3e6..HEAD` 机械枚举全部已删／变更消费者；按删除前函数体追支持；现役按真实入口核实 |
 | R8 | `dd7d530f9` | **取消历史下界**：HEAD 零生产消费者全量 → `git log -S` 不限下界；退役基线前旧腿残留 + 死导入；自验纠正 deselect／计数／闸脚本 Attribute |
+| R9 | `548bcb57` | **下一层存储**：已退役写口独占死表／EXISTS／旧档迁移／裸 SQL 续命测试；纠正 R8「测试改 SQL 布景」续命 |
 
 
-## R8（本轮；取消 ae4a2a3e6 下界）
+
+
+## R9（本轮；已退役入口的下一层存储／迁移）
+
+判词原文路径（完整 JSON，禁止摘要替代）：
+`/Users/akagilnc/.ak-roles/books/Ming_LLM/1843/runs/01a10837-1305-7258-8ea9-a0150c437f00@fixer/session/session.jsonl` 第 64 条 user message（落盘 `/tmp/1843-r9-judge.json`）。
+未结一类：`F2-r9-1` 已退役颁布判词写口留下的死表、读分支、旧档迁移及裸 SQL 续命测试。
+
+### 纠正 R8 不实结论（保留失败史）
+
+- R8 成员表对 `save_pending_promulgation_verdicts` 写「删；测试改 SQL 布景或删专用测」——其中「改 SQL 布景」把死表用裸 INSERT／SELECT 续命，**违反**本类「测试独占应退役、禁止改写为裸 SQL 续命」。R9 改为**删除**专属测／专属断言臂，不续命。
+- R8 退役了 save/get 方法，但未向下追 `pending_promulgation_verdicts` 的 DDL、`list_decree_dossiers_for_simulation` EXISTS 分支、`_migrate_legacy_reaction_severity` 旧档行、`apply_dossier_verdicts` 消费 DELETE。属同一 F2 类漏追下一层。
+
+### 枚举命令
+
+见 `evidence/1843-f2-r9-enum-commands.txt`。机械结果：
+- 退役入口（R8 的 12 + 更早 F2 样本）函数体 SQL 表 → `/tmp/1843-f2-r9/method-sql.json`
+- 表生产写入者 → `/tmp/1843-f2-r9/table-writers.json`
+- `ming_sim/db.py` 全部 CREATE TABLE（77）：**仅** `pending_promulgation_verdicts` 为 CREATE>0 且生产 INSERT==0
+
+### 成员表（每入口→底层表／分支／迁移；逐名）
+
+全文：`evidence/1843-f2-r9-member-table.tsv`。
+
+| 入口／支持 | 底层 | 处置 | 依据 |
+|---|---|---|---|
+| `save/get_pending_promulgation_verdicts` | 表 `pending_promulgation_verdicts` | **删** DDL | 生产 INSERT=0；表恒空 |
+| 同上 | `list_decree_dossiers_for_simulation` EXISTS 分支 | **删** | 无写入者→恒假死读 |
+| 同上 | `_migrate_legacy_reaction_severity` 对该表 | **删** | 旧档专用；保留 `decree_dossier_decisions` 迁移 |
+| 同上 | `apply_dossier_verdicts` DELETE 消费 | **删** | 无批次可消费 |
+| 同上 | `test_1682_…without_consuming_verdict_batch` | **整测删除** | 裸 SQL 续命＋保护已不存在状态 |
+| 同上 | `test_legacy_persisted_reaction_severity…` pending 臂 | **删臂** | 保留 decisions 迁移断言 |
+| `clear_resolve_context` | 曾 DELETE 该死表＋`pending_resolve_context` | 死表随上删；**保留** resolve_context | `save_resolve_context` 仍 INSERT |
+| `army_detail` | `armies` | **保留** | 现役 army 写口 |
+| `building_detail` | `buildings` | **保留** | 现役 building 写口 |
+| `list_*_promulgated_directives` | `turn_directives`／`story_ledger_entries`／`audience_nights` | **保留** | 明发／夜账现役写口 |
+| `discard_pending_directives` | `pending_actions` | **保留** | `db`／`urge_lever` INSERT |
+| `record_monthly_supervision_facts` | presence／loophole 表 | **保留** | 现役 `record_monthly_supervision_presence` 等 |
+| `list_arrived_unsettled_summons` | `characters` | **保留** | 人物现役写口 |
+| `validate_delta_shape`／`SUPERVISION_SURFACE_KEYS` | 无独占存储 | N/A | 无下一层表 |
+| 更早 F2（format_*／turn_*_summary／faction_report／phase2 票拟等） | 所触表均有现役写入者或无 DDL | **保留存储** | 见成员表 RETAIN_LIVE_WRITER |
+
+### 死导入（本轮 diff 新变未用）
+
+- `tests/test_pihong_dossier_1490.py`：`import copy`（随删 `test_1682`）
+- 既有未用（`POWER_SCORE_FIELDS`／`POWER_TEXT_FIELDS` 等）不借本轮清扫。证据：`evidence/1843-f2-r9-unused-imports.txt`
+
+### 原类复扫（R9）
+
+- 26 个已退役符号 AST Load／Attribute：`SUMMARY gone=26 bad=0`（`evidence/1843-f2-r9-per-name-absence.txt`）
+- `pending_promulgation_verdicts`：全部 `*.py` 零引用
+- 未新增扫描机制／护栏／兼容层／证明性测试；未复活旧入口
+
+### 聚焦测试（R9；禁止 --deselect 交绿）
+
+```bash
+cd /Users/akagilnc/WorkSpace/Ming_LLM-1843-w5
+MING_SIM_AGY_BIN=/usr/bin/false \
+MING_SIM_CODEX_BIN=/usr/bin/false \
+MING_SIM_CLAUDE_BIN=/usr/bin/false \
+MING_SIM_CURSOR_BIN=/usr/bin/false \
+MING_SIM_KIMI_BIN=/usr/bin/false \
+MING_SIM_GROK_BIN=/usr/bin/false \
+MING_SIM_PI_BIN=/usr/bin/false \
+/Users/akagilnc/WorkSpace/Ming_LLM/.venv/bin/python -m pytest \
+  tests/test_pihong_dossier_1490.py \
+  tests/test_override_breach_costs_564.py \
+  tests/test_promulgation_seam_560.py \
+  tests/test_promulgation_judge_561.py \
+  tests/test_audience_travel_gating_670.py \
+  tests/test_supervision_625.py \
+  tests/test_pre_settle_transaction.py \
+  tests/test_advance_paths_atomic.py \
+  tests/test_month_chain_1843.py \
+  tests/test_grant_reconciliation_567.py \
+  -q -p no:cacheprovider --durations=8
+```
+
+实测（**无** `--deselect`；`evidence/1843-f2-r9-pytest.log`）：
+`1 failed, 235 passed, 1 skipped` —
+`tests/test_advance_paths_atomic.py::test_submit_event_decision_binds_from_candidate_snapshot_without_event_id`
+（`assert row is not None`）。判词已认可为既有红、无需再证明原树；不放松断言、不 mock、**不声称全绿**。
+collect 相对 R8 触及面少 `test_1682_…`（整测删除，非 deselect）。
+
+### 自查二连（R9）
+
+- 同类型：对全部已退役入口追独占存储；仅死表一层有缺口并修净。
+- 引入 bug：未删 `decree_dossier_decisions`／`pending_resolve_context` 等现役写口。
+- 合法性：无护栏／兼容层／扫描机制／证明性测试；未 amend／stash／push／PR。
+
+---
+
+## R8（上轮；取消 ae4a2a3e6 下界；失败史保留）
 
 判词原文路径（完整 JSON，禁止摘要替代）：
 `/Users/akagilnc/.ak-roles/books/Ming_LLM/1843/runs/01a10837-1305-7258-8ea9-a0150c437f00@fixer/session/session.jsonl` 第 46 条 user message（落盘 `/tmp/1843-r8-judge.json`）。

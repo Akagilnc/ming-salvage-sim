@@ -1,0 +1,40 @@
+entry	round	table_or_support	disposition	live_writer_evidence	notes
+SUPERVISION_SURFACE_KEYS	R8	(no SQL table)	N/A_NO_STORAGE		method body had no exclusive storage
+army_detail	R8	armies	RETAIN_LIVE_WRITER	ming_sim/db.py:3967:INSERT INTO armies; ming_sim/db.py:8459:INSERT INTO armies; ming_sim/db.py:8470:raise ValueError(f"new_armies INSERT 失败 '{aid}'：{exc}") from exc	shared production storage
+building_detail	R8	buildings	RETAIN_LIVE_WRITER	ming_sim/db.py:4010:INSERT INTO buildings; ming_sim/db.py:8532:INSERT INTO buildings	shared production storage
+clear_resolve_context	R8	pending_promulgation_verdicts	DELETE_DEAD_EXCLUSIVE	prod INSERT=0; only DDL/EXISTS/migrate/DELETE + test bare SQL	retire DDL+EXISTS+migrate+apply DELETE+bare-SQL tests
+clear_resolve_context	R8	pending_resolve_context	RETAIN_LIVE_WRITER	ming_sim/db.py:18483:"""INSERT INTO pending_resolve_context	shared production storage
+discard_pending_directives	R8	pending_actions	RETAIN_LIVE_WRITER	ming_sim/db.py:16894:"""INSERT INTO pending_actions; ming_sim/urge_lever.py:235:INSERT INTO pending_actions	shared production storage
+get_pending_promulgation_verdicts	R8	pending_promulgation_verdicts	DELETE_DEAD_EXCLUSIVE	prod INSERT=0; only DDL/EXISTS/migrate/DELETE + test bare SQL	retire DDL+EXISTS+migrate+apply DELETE+bare-SQL tests
+list_arrived_unsettled_summons	R8	characters	RETAIN_LIVE_WRITER	ming_sim/db.py:3833:INSERT INTO characters; ming_sim/db.py:4036:# 路径已处理）。此刻 characters + regions 均已 INSERT，location region_id 校验可用。; ming_sim/db.py:4039:# #9：派系势力 offset 校准。此刻 factions + characters 均已 INSERT、office 污染已洗。	shared production storage
+list_night_promulgated_directives	R8	turn_directives	RETAIN_LIVE_WRITER	ming_sim/db.py:17928:INSERT INTO turn_directives; ming_sim/db.py:18714:INSERT INTO turn_directives	shared production storage
+list_promulgated_directives	R8	audience_nights	RETAIN_LIVE_WRITER	ming_sim/audience_night.py:930:INSERT INTO audience_nights	shared production storage
+list_promulgated_directives	R8	story_ledger_entries	RETAIN_LIVE_WRITER	ming_sim/audience_night.py:868:INSERT INTO story_ledger_entries	shared production storage
+list_promulgated_directives	R8	turn_directives	RETAIN_LIVE_WRITER	ming_sim/db.py:17928:INSERT INTO turn_directives; ming_sim/db.py:18714:INSERT INTO turn_directives	shared production storage
+record_monthly_supervision_facts	R8	(no SQL table)	N/A_NO_STORAGE		method body had no exclusive storage
+save_pending_promulgation_verdicts	R8	pending_promulgation_verdicts	DELETE_DEAD_EXCLUSIVE	prod INSERT=0; only DDL/EXISTS/migrate/DELETE + test bare SQL	retire DDL+EXISTS+migrate+apply DELETE+bare-SQL tests
+validate_delta_shape	R8	(no SQL table)	N/A_NO_STORAGE		method body had no exclusive storage
+build_secret_covert_effect_briefs	EARLIER	(no SQL table)	N/A_NO_STORAGE		method body had no exclusive storage
+command_power_rank	EARLIER	(no SQL table)	N/A_NO_STORAGE		method body had no exclusive storage
+create_rescript_draft_agent	EARLIER	(no SQL table)	N/A_NO_STORAGE		method body had no exclusive storage
+execution_distortion_weight	EARLIER	(no SQL table)	N/A_NO_STORAGE		method body had no exclusive storage
+faction_report	EARLIER	factions	RETAIN_LIVE_WRITER	ming_sim/db.py:2706:# fresh 新档此时 factions 表空（行在 seed_static_data 才 INSERT）→ 这里跳过，仍走 seed 末尾的; ming_sim/db.py:3889:INSERT INTO factions (name, satisfaction, leverage, agenda); ming_sim/db.py:4039:# #9：派系势力 offset 校准。此刻 factions + characters 均已 INSERT、office 污染已洗。	shared production storage
+format_army_changes	EARLIER	(no SQL table)	N/A_NO_STORAGE		method body had no exclusive storage
+format_power_changes	EARLIER	(no SQL table)	N/A_NO_STORAGE		method body had no exclusive storage
+format_region_changes	EARLIER	(no SQL table)	N/A_NO_STORAGE		method body had no exclusive storage
+generate_rescript_draft	EARLIER	(no SQL table)	N/A_NO_STORAGE		method body had no exclusive storage
+has_player_visible_rejection	EARLIER	(no SQL table)	N/A_NO_STORAGE		method body had no exclusive storage
+select_triage_actor	EARLIER	characters	RETAIN_LIVE_WRITER	ming_sim/db.py:3833:INSERT INTO characters; ming_sim/db.py:4036:# 路径已处理）。此刻 characters + regions 均已 INSERT，location region_id 校验可用。; ming_sim/db.py:4039:# #9：派系势力 offset 校准。此刻 factions + characters 均已 INSERT、office 污染已洗。	shared production storage
+turn_army_summary	EARLIER	armies	RETAIN_LIVE_WRITER	ming_sim/db.py:3967:INSERT INTO armies; ming_sim/db.py:8459:INSERT INTO armies; ming_sim/db.py:8470:raise ValueError(f"new_armies INSERT 失败 '{aid}'：{exc}") from exc	shared production storage
+turn_army_summary	EARLIER	army_logs	RETAIN_LIVE_WRITER	ming_sim/db.py:4151:INSERT INTO army_logs; ming_sim/db.py:4741:INSERT INTO army_logs; ming_sim/db.py:4785:INSERT INTO army_logs	shared production storage
+turn_region_summary	EARLIER	region_logs	RETAIN_LIVE_WRITER	ming_sim/db.py:3310:"INSERT INTO region_logs (turn, year, period, region_id, field, "; ming_sim/db.py:7318:INSERT INTO region_logs; ming_sim/db.py:7335:INSERT INTO region_logs	shared production storage
+turn_region_summary	EARLIER	regions	RETAIN_LIVE_WRITER	regions core seed/live	shared production storage
+validate_rescript_draft_items	EARLIER	(no SQL table)	N/A_NO_STORAGE		method body had no exclusive storage
+pending_promulgation_verdicts	R9	CREATE TABLE DDL	DELETE	m_sim/db.py:1828 removed	dead exclusive
+pending_promulgation_verdicts	R9	EXISTS read branch in list_decree_dossiers_for_simulation	DELETE	always false w/o writers	dead exclusive
+pending_promulgation_verdicts	R9	_migrate_legacy_reaction_severity row	DELETE	old-save only	keep decree_dossier_decisions migrate
+pending_promulgation_verdicts	R9	apply_dossier_verdicts DELETE consumption	DELETE	no batch to consume	dead exclusive
+pending_promulgation_verdicts	R9	test_1682 bare SQL + non-consume asserts	DELETE	tests/test_pihong_dossier_1490.py	no bare-SQL rewrite
+pending_promulgation_verdicts	R9	test_legacy_persisted_reaction_severity pending arm	DELETE	tests/test_override_breach_costs_564.py	keep decisions arm
+decree_dossier_decisions	R9	live decision ledger	RETAIN	m_sim/db.py INSERT via apply/list paths	judge: do not delete
+pending_resolve_context	R9	live resolve context	RETAIN	save_resolve_context INSERT	judge: do not delete

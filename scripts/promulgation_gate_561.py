@@ -284,11 +284,7 @@ def _arm_pool_size(_cfg: LLMConfig, job_count: int) -> int:
 def _judgments_at_turn(
     db: GameDB, turn: int, dossier_ids: dict[str, int] | list[int] | tuple[int, ...],
 ) -> list[dict]:
-    """Turn-scoped judgments from decree_dossier_decisions (live owner).
-
-    ``pending_promulgation_verdicts`` save/get retired with the old settlement
-    leg; gate reads must not call the deleted DB methods.
-    """
+    """Turn-scoped judgments from decree_dossier_decisions (live owner)."""
     if isinstance(dossier_ids, dict):
         id_list = sorted(int(v) for v in dossier_ids.values())
     else:

@@ -1,0 +1,29 @@
+# R9 F2 enumeration — next-layer storage/migration chase for retired entries
+# Worktree: /Users/akagilnc/WorkSpace/Ming_LLM-1843-w5
+# HEAD before R9: 548bcb57bb822b1aabc81a1014bbd720ecd9d810
+# Judgment (full JSON): session/session.jsonl L64 status=continue / F2-r9-1
+#   /Users/akagilnc/.ak-roles/books/Ming_LLM/1843/runs/01a10837-1305-7258-8ea9-a0150c437f00@fixer/session/session.jsonl
+# Saved copy: /tmp/1843-r9-judge.json
+
+# 1) Seed = R8 RETIRE_F2 (12) ∪ earlier F2 retires (R5–R7 samples)
+#    Extract pre-delete method bodies at dd7d530f (R8) and 77c00eadc (R5):
+#    SQL tables via AST source segment + FROM/INTO/UPDATE/DELETE regex
+#    Artifact: /tmp/1843-f2-r9/method-sql.json → summarized in evidence/1843-f2-r9-member-table.tsv
+
+# 2) For each referenced table: production INSERT writers among
+#    ming_sim/** + scripts/** + web_app.py + main.py + launcher.py
+#    Dead exclusive = CREATE TABLE exists AND zero INSERT INTO in production
+#    Artifact: /tmp/1843-f2-r9/table-writers.json
+
+# 3) Full CREATE TABLE census in ming_sim/db.py (77 tables):
+#    Only pending_promulgation_verdicts has CREATE>0 and production INSERT==0
+#    (false positive 'IF' from regex ignored)
+
+# 4) Dispose:
+#    DELETE_DEAD_EXCLUSIVE → drop DDL, dead SELECT/EXISTS branches, migration rows,
+#      consumption DELETE, and bare-SQL tests that feed the dead table
+#    RETAIN_LIVE_WRITER → keep storage; document producer evidence
+#    Do NOT rewrite dead tests as bare SQL; do NOT revive retired entry methods
+
+# 5) Post-delete: AST absence of all 26 retired symbols; zero py refs to
+#    pending_promulgation_verdicts; unused-import delta only (copy in pihong_1490)

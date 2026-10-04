@@ -1825,13 +1825,6 @@ class GameDB:
             );
             CREATE INDEX IF NOT EXISTS idx_decree_cost_events_dossier
                 ON decree_cost_events(dossier_id, id);
-            CREATE TABLE IF NOT EXISTS pending_promulgation_verdicts (
-                turn INTEGER NOT NULL,
-                dossier_id INTEGER NOT NULL,
-                verdict_json TEXT NOT NULL,
-                PRIMARY KEY(turn, dossier_id),
-                FOREIGN KEY(dossier_id) REFERENCES decree_dossiers(id) ON DELETE CASCADE
-            );
 
             -- ADR 0071：持有型/持续型特权的 durable 授权档。
             CREATE TABLE IF NOT EXISTS authority_records (
@@ -14776,11 +14769,7 @@ class GameDB:
         return decisions
 
     def list_decree_dossiers_for_simulation(self, turn: int) -> List[Dict[str, object]]:
-        """本月新生/重判案卷及所有未结案执行中案卷。
-
-        #658：旧案本回合刚获 pending 颁布 verdict（如 stalled→backed 后顺颁）
-        亦入同一清单，不另建第二可见集。
-        """
+        """本月新生/重判案卷及所有未结案执行中案卷。"""
         rows = self.conn.execute(
             """
             SELECT d.*,
@@ -14801,13 +14790,6 @@ class GameDB:
                        AND d.held_turn > 0
                        AND ? > d.held_turn
                     )
-                    OR (
-                           d.promulgation_decision=''
-                       AND EXISTS (
-                               SELECT 1 FROM pending_promulgation_verdicts pv
-                               WHERE pv.turn=? AND pv.dossier_id=d.id
-                           )
-                    )
                 )
             ) OR (
                     d.status='executing'
@@ -14827,7 +14809,7 @@ class GameDB:
             """,
             (
                 int(turn), int(turn), int(turn),
-                int(turn), int(turn), int(turn),
+                int(turn), int(turn),
                 int(turn), int(turn), int(turn),
             ),
         ).fetchall()
@@ -15517,33 +15499,24 @@ class GameDB:
 
     def _migrate_legacy_reaction_severity(self) -> None:
         """Idempotently repair persisted verdict reaction fields, never live payloads."""
-        for table, id_col, json_col in (
-            ("pending_promulgation_verdicts", "rowid", "verdict_json"),
-            ("decree_dossier_decisions", "id", "affected_parties_json"),
-        ):
-            for row in self.conn.execute(
-                f"SELECT {id_col} AS migration_id,{json_col} AS payload FROM {table}"
-            ).fetchall():
-                try:
-                    value = json.loads(str(row["payload"] or ""))
-                except ValueError as exc:
-                    logging.getLogger(__name__).warning(
-                        "跳过 %s 表迁移行 %s：%s",
-                        table, row["migration_id"], exc,
-                    )
-                    continue
-                if table == "pending_promulgation_verdicts" and isinstance(value, dict):
-                    affected, changed = self._migrate_reaction_value(value.get("affected_parties"))
-                    if changed:
-                        value = dict(value)
-                        value["affected_parties"] = affected
-                else:
-                    value, changed = self._migrate_reaction_value(value)
-                if changed:
-                    self.conn.execute(
-                        f"UPDATE {table} SET {json_col}=? WHERE {id_col}=?",
-                        (safe_json_dumps(value, ensure_ascii=False), row["migration_id"]),
-                    )
+        for row in self.conn.execute(
+            "SELECT id AS migration_id, affected_parties_json AS payload "
+            "FROM decree_dossier_decisions"
+        ).fetchall():
+            try:
+                value = json.loads(str(row["payload"] or ""))
+            except ValueError as exc:
+                logging.getLogger(__name__).warning(
+                    "跳过 decree_dossier_decisions 表迁移行 %s：%s",
+                    row["migration_id"], exc,
+                )
+                continue
+            value, changed = self._migrate_reaction_value(value)
+            if changed:
+                self.conn.execute(
+                    "UPDATE decree_dossier_decisions SET affected_parties_json=? WHERE id=?",
+                    (safe_json_dumps(value, ensure_ascii=False), row["migration_id"]),
+                )
         self.conn.commit()
 
     def _record_decree_cost(
@@ -16816,11 +16789,6 @@ class GameDB:
                             self, state, int(night_id),
                             content=content,
                         )
-                # Consumption belongs to the same atomic unit as effect application;
-                # an outer settlement rollback restores both effects and this batch.
-                self.conn.execute(
-                    "DELETE FROM pending_promulgation_verdicts WHERE turn=?", (int(state.turn),)
-                )
         finally:
             self.conn._recommendation_snapshots_prevalidated = previous_reco_prevalidated
             if previous_summon_nights is None:

@@ -1,0 +1,10 @@
+# R9 unused-import delta (only this-change newly unused)
+# Before (548bcb57) vs after R9 edits
+
+NEWLY_UNUSED_DELETED:
+  tests/test_pihong_dossier_1490.py: import copy
+    reason: only used by deleted test_1682_late_grants_follow_policy_without_consuming_verdict_batch
+
+PREEXISTING_UNUSED_NOT_TOUCHED:
+  ming_sim/db.py: POWER_SCORE_FIELDS, POWER_TEXT_FIELDS (already unused at 548bcb57)
+  scripts/promulgation_gate_561.py: os (preexisting; not introduced by R9)
