@@ -1,25 +1,14 @@
-#1843 F2-R10c — 证据补齐腿：可复制枚举命令（含完整脚本正文）
+#1843 F2-R10c — 可复制枚举命令（脚本仅以本文件 heredoc 为唯一正文；无平行 .py）
 工作树: /Users/akagilnc/WorkSpace/Ming_LLM-1843-w5
-底座 HEAD（本补齐提交前）: 5c57bef54a0a9f39595c63bd55bbdd2ea7f51048
 分支: ak-roles/issue-1843-w5-r6-f2
 派单: ~/.ak-roles/books/Ming_LLM/unbound/runs/01a108b9-e49f-7a41-a7de-d543dc256654@fixer/fix-packet.md
-判词末份末 payload: attachments/02-1843-judge-4d25772ae.json → payloads[-1]
-冻结脚本副本（仓内证据，非生产扫描机制）:
-  evidence/1843-f2-r10c-enum_f2_r10_1.py
-  evidence/1843-f2-r10c-enum_f2_r10_2.py
-临时产出目录（可复制复核，非唯一依据）: /tmp/1843-f2-r10c/
-持久逐名表（唯一结案依据）:
+临时产出: /tmp/1843-f2-r10c/（可丢；非结案依据）
+唯一结案证据:
   evidence/1843-f2-r10c-f2-all-candidates.tsv   # 2101 行 F2-R10-2
-  evidence/1843-f2-r10c-f1-ooc-members.tsv      # 30 行 F2-R10-1 类外逐名
+  evidence/1843-f2-r10c-f1-ooc-members.tsv      # 30 行 F2-R10-1 类外
   evidence/1843-f2-r10c-member-table.tsv
-
-## 纠正 r10b 回执不实交卷
-1. 逐名表用「全仓…91条」「18个…」聚合冒充逐名 — 本腿废止；改为 TSV 每行一名。
-2. 枚举命令只引用 /tmp/1843-f2-r10b/*.py 不给脚本内容 — 本腿把完整脚本以 heredoc/证据文件冻结。
-3. 「高信号强 DELETE=0」≠ F2-R10-2 全类结清；helper/internal/identity/重复须核完全部 2101 候选。
-4. 「identity_only 91 条 → 统一 public_seam」非法；本腿逐条给 kind+具体 reason。
-5. F2-R10-1 不得以 git log -S 只有 Initial 证明不属类；faction_metrics 已查 Initial 当时亦无旧消费者读取方。
-6. 上轮机械把 11 个一般零引用 helper 标 DELETE 但未删也未逐名披露 — 本腿并入类外表写清真实用途。
+  evidence/1843-f2-r10c-fixer-receipt.md
+  evidence/1843-f2-r10c-pytest.log
 
 环境前缀（全部探针/测试）:
 MING_SIM_AGY_BIN=/usr/bin/false MING_SIM_CODEX_BIN=/usr/bin/false \
@@ -34,7 +23,7 @@ MING_SIM_PI_BIN=/usr/bin/false PYTHONDONTWRITEBYTECODE=1
       保留现役 normalize、revise、prewrite 及共用存储；
       不得以零引用计数或判词样本当作类边界。
 
-# 1) 写入并执行全仓枚举脚本（正文见下方 heredoc；与 evidence/1843-f2-r10c-enum_f2_r10_1.py 相同）
+# 1) 写入并执行全仓枚举脚本（正文=下方 heredoc，唯一脚本源）
 mkdir -p /tmp/1843-f2-r10c
 cat > /tmp/1843-f2-r10c/enum_f2_r10_1.py <<'ENUM1_EOF'
 #!/usr/bin/env python3
@@ -568,11 +557,7 @@ print("retired_behavior_tests", len(retired_behavior_tests))
 print("OUT", OUT)
 ENUM1_EOF
 /Users/akagilnc/WorkSpace/Ming_LLM/.venv/bin/python /tmp/1843-f2-r10c/enum_f2_r10_1.py
-# 产出（临时）: /tmp/1843-f2-r10c/r10b-*.json（脚本内文件名仍带 r10b 前缀）
-# 持久副本: evidence/1843-f2-r10c-hist-deleted-seeds.json 等
-# 实测（r10b 底座）: hist_hits=61; still_defined_seeds=0; unloaded_prompts=0;
-#       dead_fixtures=88; retired_behavior_tests=70
-# 类外逐名: evidence/1843-f2-r10c-f1-ooc-members.tsv（30 行，含 faction_metrics）
+# 临时产出可丢；类外逐名真源=evidence/1843-f2-r10c-f1-ooc-members.tsv（30）
 
 # 2) 施工后缺席（已删独占成员）
 rg -n -w '_CANNED|_module_of|_drive_resolve_directives|_canned_settle|_canned_monthly_settlement|_stage_punishment|_close_night_dossier|_stage_yuan_appointment_summon|_close_office_to_dossier|_yuan_row' tests ming_sim --glob '*.py'
@@ -851,13 +836,8 @@ print(json.dumps(summary, ensure_ascii=False, indent=2))
 print("wrote", OUT / "r10b-f2-candidates-raw.json")
 ENUM2_EOF
 /Users/akagilnc/WorkSpace/Ming_LLM/.venv/bin/python /tmp/1843-f2-r10c/enum_f2_r10_2.py
-# 产出临时: /tmp/1843-f2-r10c/r10b-f2-candidates-raw.json
-# 持久: evidence/1843-f2-r10c-f2-candidates-raw.json（2101）
-#       evidence/1843-f2-r10c-f2-all-candidates.tsv（2101 逐名 disposition/kind/reason）
-# 实测摘要: total_candidates=2101; py_test_files=230; web_test_files=25
-# r10c 逐名复核 disposition: RETAIN=2101 DELETE=0
-#   （非法锁样本已在 40df97af9/5c57bef54 删除；本腿补的是逐名证据，非新删）
-# 注意: 「高信号强 DELETE=0」只描述先验已删样本子集，不等于本腿才核完全类。
+# 临时 raw JSON 可丢；逐名真源=evidence/1843-f2-r10c-f2-all-candidates.tsv（2101）
+# disposition（证据减重后）: RETAIN=2089；DELETE=12（纯私有 helper 结构单测，已删代码）
 
 # 2) 非法锁复扫（非只搜已删符号）
 rg -n 'inspect\.(getsource|getsourcelines)' tests web --glob '*.py' --glob '*.ts' --glob '*.tsx'

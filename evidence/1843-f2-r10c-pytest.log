@@ -1,17 +1,15 @@
-..............................s......................................... [ 20%]
-........................................................................ [ 41%]
-........................................................................ [ 61%]
-........................................................................ [ 82%]
-...............................................................          [100%]
+........................................................................ [ 40%]
+........................................................................ [ 81%]
+................................                                         [100%]
 ============================= slowest 10 durations =============================
-0.29s setup    tests/test_fiscal_substrate_bridge.py::test_liaodong_pay_source_rows_add_to_standalone_military_funnel
-0.17s setup    tests/test_fiscal_substrate_bridge.py::test_cutover_structural_sink_rate_zero_uses_settlement_abort_error_pack
-0.14s setup    tests/test_fiscal_substrate_bridge.py::test_fixed_flows_substrate_hub_failure_rolls_back_cutover_writes
-0.13s setup    tests/test_fiscal_substrate_bridge.py::test_zhongyuan_jingshi_settle_province_tick_golden[beizhili-expect0]
-0.12s setup    tests/test_fiscal_substrate_bridge.py::test_economy_pay_arrears_rejects_missing_or_unknown_target_without_repaying_other_armies[move0]
-0.11s setup    tests/test_relation_capture_633.py::test_settlement_interaction_lands_directed_edge_with_origin_round
-0.11s setup    tests/test_fiscal_substrate_bridge.py::test_south_southwest_seeds_have_valid_historical_settle_substrate[yunnan]
-0.11s setup    tests/test_fiscal_substrate_bridge.py::test_south_southwest_seeds_have_valid_historical_settle_substrate[guizhou]
-0.11s setup    tests/test_fiscal_substrate_bridge.py::test_south_southwest_settle_tick_golden_and_bridge_persist[guangdong]
-0.11s setup    tests/test_fiscal_substrate_bridge.py::test_liaodong_primary_source_due_survives_fresh_db_pay_source_reconcile
-350 passed, 1 skipped in 17.31s
+0.28s setup    tests/test_army_salary_44.py::test_army_needed_derives_from_manpower_rate[guanning-15]
+0.10s setup    tests/test_army_salary_44.py::test_army_needed_zero_manpower_zero_pay
+0.01s setup    tests/test_execution_pressure_654.py::test_special_decree_without_national_is_single_empty
+0.01s setup    tests/test_execution_pressure_654.py::test_locality_matrix_8x3_and_unknown[policy-single-fail]
+0.01s setup    tests/test_execution_pressure_654.py::test_locality_matrix_8x3_and_unknown[issue-national-empty]
+0.01s call     tests/test_execution_pressure_654.py::test_location_canonical_seed_and_write_seam
+0.01s setup    tests/test_execution_pressure_654.py::test_path1_conversational_draft_bad_roster_marks_failed
+0.01s setup    tests/test_execution_pressure_654.py::test_locality_matrix_8x3_and_unknown[account-none-empty]
+0.01s setup    tests/test_execution_pressure_654.py::test_locality_matrix_8x3_and_unknown[office-national-fail]
+0.01s setup    tests/test_execution_pressure_654.py::test_validate_all_unknown_roster_name_zero_rows_before_insert
+176 passed in 1.74s
