@@ -50,6 +50,11 @@ class CharacterStore:
         sql = {"characters": "SELECT * FROM characters", "character_offices": "SELECT * FROM character_offices"}[table]
         return self._conn.execute(sql).fetchall()
 
+    def has_any(self, table: str) -> bool:
+        if table not in ("characters", "character_offices", "office_slots"):
+            raise ValueError(table)
+        return self._conn.execute(f"SELECT 1 FROM {table} LIMIT 1").fetchone() is not None
+
     def current_court_rows(self, year: int, period: int, names: Iterable[str] | None = None) -> Any:
         wanted = [str(name).strip() for name in (names or []) if str(name).strip()]
         clauses = [

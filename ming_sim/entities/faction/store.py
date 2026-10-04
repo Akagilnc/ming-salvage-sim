@@ -20,6 +20,9 @@ class FactionStore:
     def snapshot_rows(self) -> Any:
         return self._conn.execute("SELECT * FROM factions").fetchall()
 
+    def has_any(self) -> bool:
+        return self._conn.execute("SELECT 1 FROM factions LIMIT 1").fetchone() is not None
+
     def field_row(self, field: str, name: str) -> Any:
         """Read a schema field already validated by the gate/subject consumer."""
         return self._conn.execute(f"SELECT {field} FROM factions WHERE name=?", (name,)).fetchone()

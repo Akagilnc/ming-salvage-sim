@@ -43,6 +43,9 @@ class BuildingStore:
         ).fetchone()
         return int(row[0])
 
+    def has_any(self) -> bool:
+        return self._conn.execute("SELECT 1 FROM buildings LIMIT 1").fetchone() is not None
+
     def exists(self, building_id: str) -> bool:
         return self._conn.execute(
             "SELECT 1 FROM buildings WHERE id = ?", (building_id,),

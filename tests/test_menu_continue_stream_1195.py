@@ -195,7 +195,6 @@ def test_stale_continue_worker_does_not_publish_after_new_game(monkeypatch, tmp_
     monkeypatch.setattr(web_app, "web_game", None)
     monkeypatch.delenv("MING_SIM_DB", raising=False)
     monkeypatch.setattr(web_app, "user_data_path", lambda *parts: str(tmp_path.joinpath(*parts)))
-    monkeypatch.setattr(web_app.steam_events, "with_events", lambda payload, events: payload)
 
     def run_continue() -> None:
         response = TestClient(web_app.app).post("/api/menu/continue")

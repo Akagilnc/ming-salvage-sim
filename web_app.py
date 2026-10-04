@@ -111,7 +111,6 @@ from ming_sim.models import (
     loads_effect_dict,
     reign_period_label,
 )
-from ming_sim import steam_events
 
 logger = logging.getLogger(__name__)
 
@@ -3099,7 +3098,6 @@ def _settlement_player_payload(
     report: str = "",
     decisions: Optional[List[Dict[str, Any]]] = None,
     pending_action_failures: Optional[List[Dict[str, Any]]] = None,
-    steam_events: Optional[List[Dict[str, Any]]] = None,
     advanced: Optional[bool] = None,
 ) -> Dict[str, Any]:
     """One player-facing seam for every settlement SSE terminal event."""
@@ -3111,8 +3109,6 @@ def _settlement_player_payload(
         payload["decisions"] = decisions
     if pending_action_failures is not None:
         payload["pending_action_failures"] = pending_action_failures
-    if steam_events is not None:
-        payload["steam_events"] = steam_events
     if advanced is not None:
         payload["advanced"] = advanced
     return payload
@@ -4561,10 +4557,7 @@ async def api_menu_new_game() -> Dict[str, Any]:
 
                 # 响应用发布前快照；payload 未知代码错必须响亮失败（ADR 0005），
                 # 不得宽捕获后返回 ok=True 洗白成功。finally 仍 release_opening。
-                return steam_events.with_events(
-                    {"state": state_snapshot},
-                    [steam_events.add_stat(steam_events.STAT_RUNS_STARTED)],
-                )
+                return {"state": state_snapshot}
             except Exception:
                 if not published:
                     _discard_unpublished_candidate(
@@ -5646,13 +5639,7 @@ def api_advance_without_edict(
                 }
                 if awaiting:
                     return payload
-                return steam_events.with_events(
-                    payload,
-                    _settlement_steam_events(
-                        game, decree=decree or "", was_ended=was_ended,
-                        advanced=advanced,
-                    ),
-                )
+                return payload
             except HTTPException:
                 raise
             except Exception as body_exc:
@@ -5727,27 +5714,6 @@ def _reject_stale_month_token(game, expected_turn: Optional[int], *, token_label
         )
 
 
-def _settlement_steam_events(
-    game, *,
-    decree: str = "",
-    was_ended: bool = False,
-    advanced: bool = False,
-) -> List[Dict[str, Any]]:
-    """过月 steam 计数。月份未推进（邸报未写成）不计过月。
-    #1769：仅确有成案旨时发 STAT_DECREES_ISSUED。"""
-    if not advanced:
-        return []
-    events: List[Dict[str, Any]] = [
-        steam_events.add_stat(steam_events.STAT_TURNS_PLAYED),
-        steam_events.set_stat(
-            steam_events.STAT_MAX_TURN_REACHED, int(game.state.turn),
-        ),
-    ]
-    if (decree or "").strip():
-        events.insert(0, steam_events.add_stat(steam_events.STAT_DECREES_ISSUED))
-    if not was_ended and game.state.ended:
-        events.append(steam_events.add_stat(steam_events.STAT_ENDINGS_REACHED))
-    return events
 
 
 @app.post("/api/decree/issue")
@@ -5793,16 +5759,12 @@ def api_issue_decree(body: IssueDecreeRequest = IssueDecreeRequest()) -> Dict[st
                 if advanced:
                     game.session.end_turn()
                     game.refresh_turn()
-                events = _settlement_steam_events(
-                    game, decree=decree or "", was_ended=was_ended,
-                    advanced=advanced,
-                )
-                return steam_events.with_events(_settlement_player_payload(
+                return _settlement_player_payload(
                     decree=decree,
                     report=report,
                     pending_action_failures=failure_snapshot,
                     advanced=advanced,
-                ), events)
+                )
             except HTTPException:
                 raise
             except Exception as body_exc:
@@ -5895,14 +5857,9 @@ async def api_issue_decree_stream(body: IssueDecreeRequest = IssueDecreeRequest(
                         if advanced:
                             game.session.end_turn()
                             game.refresh_turn()
-                        events = _settlement_steam_events(
-                            game, decree=decree or "", was_ended=was_ended,
-                            advanced=advanced,
-                        )
                         terminal = ("__done__", _settlement_player_payload(
                             decree=decree,
                             report=report,
-                            steam_events=events,
                             pending_action_failures=failure_snapshot,
                             advanced=advanced,
                         ))
@@ -6024,14 +5981,9 @@ async def api_resolve_decisions_stream(body: ResolveDecisionsRequest) -> Streami
                         if advanced:
                             game.session.end_turn()
                             game.refresh_turn()
-                    events = _settlement_steam_events(
-                        game, decree=decree or "", was_ended=was_ended,
-                        advanced=advanced,
-                    )
                     terminal = ("__done__", _settlement_player_payload(
                         decree=decree,
                         report=report,
-                        steam_events=events,
                         pending_action_failures=failure_snapshot,
                         advanced=advanced,
                     ))
@@ -6119,10 +6071,7 @@ async def api_create_save(request: SaveCreateRequest) -> Dict[str, Any]:
         info = game.save_to(request.name)
         # #1749：list_saves 读 campaign_id（DB）；响应列表在 gate 内快照。
         saves = game.list_saves()
-    return steam_events.with_events(
-        {"save": info, "saves": saves},
-        [steam_events.add_stat(steam_events.STAT_SAVES_CREATED)],
-    )
+    return {"save": info, "saves": saves}
 
 
 @app.delete("/api/saves/{name}")
@@ -6366,164 +6315,5 @@ async def api_get_portrait(name: str):
     return FileResponse(path)
 
 
-# ── 调试台：直接读写核心表 ─────────────────────────────────────
-@app.get("/api/admin/tables")
-async def api_admin_tables() -> Dict[str, Any]:
-    return {"tables": list(get_game().db.ADMIN_TABLES.keys())}
-
-
-@app.get("/api/admin/table/{table}")
-async def api_admin_table(table: str) -> Dict[str, Any]:
-    db = get_game().db
-    try:
-        return {
-            "table": table,
-            "pk": db.admin_check_table(table),
-            "columns": db.admin_columns(table),
-            "rows": db.admin_rows(table),
-        }
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-
-@app.post("/api/admin/table/{table}/upsert")
-async def api_admin_upsert(table: str, payload: Dict[str, Any]) -> Dict[str, Any]:
-    game = get_game()
-    try:
-        with _serialized_web_write(game):
-            row = game.db.admin_upsert(table, payload)
-            # 内存 state 同步留在门内：否则提前释放锁后留下 DB 已改、内存未改的撕裂窗口被
-            # 结算/召对（读 game.state）观察到（cmr Gate2 Finding2）。
-            st = game.state
-            if table == "metrics" and row.get("key") in st.metrics:
-                st.metrics[row["key"]] = int(row["value"])
-            elif table == "game_state":
-                st.year, st.period, st.turn = int(row["year"]), int(row["period"]), int(row["turn"])
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    return {"row": row}
-
-
-@app.post("/api/admin/table/{table}/delete")
-async def api_admin_delete(table: str, payload: Dict[str, Any]) -> Dict[str, Any]:
-    game = get_game()
-    pk_value = payload.get("pk_value")
-    if pk_value in (None, ""):
-        raise HTTPException(status_code=400, detail="缺 pk_value")
-    try:
-        with _serialized_web_write(game):
-            return {"deleted": game.db.admin_delete(table, pk_value)}
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-
-@app.get("/admin")
-async def admin_page():
-    return HTMLResponse(_ADMIN_HTML)
-
-
 if os.path.isdir(WEB_DIST):
     app.mount("/", StaticFiles(directory=WEB_DIST, html=True), name="web")
-
-
-_ADMIN_HTML = """<!doctype html>
-<html lang="zh"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>调试台 · 核心表增删改查</title>
-<style>
-  :root{--bg:#1b1712;--panel:#26211a;--line:#3a3228;--txt:#e8dcc6;--accent:#c8a35a;--danger:#b5503f;}
-  *{box-sizing:border-box}
-  body{margin:0;background:var(--bg);color:var(--txt);font:14px/1.5 -apple-system,"PingFang SC",monospace}
-  header{padding:12px 16px;border-bottom:1px solid var(--line);display:flex;gap:8px;align-items:center;flex-wrap:wrap}
-  header h1{font-size:16px;margin:0 12px 0 0;color:var(--accent)}
-  .tab{padding:5px 12px;border:1px solid var(--line);background:var(--panel);color:var(--txt);border-radius:4px;cursor:pointer}
-  .tab.active{background:var(--accent);color:#1b1712;font-weight:600}
-  #bar{padding:8px 16px;border-bottom:1px solid var(--line);display:flex;gap:8px;align-items:center}
-  button.act{padding:5px 12px;border:1px solid var(--accent);background:transparent;color:var(--accent);border-radius:4px;cursor:pointer}
-  button.act:hover{background:var(--accent);color:#1b1712}
-  #wrap{overflow:auto;height:calc(100vh - 110px)}
-  table{border-collapse:collapse;width:100%;font-size:13px}
-  th,td{border:1px solid var(--line);padding:4px 6px;text-align:left;white-space:nowrap}
-  th{position:sticky;top:0;background:var(--panel);color:var(--accent);z-index:1}
-  th.pk{color:#e8c87a}
-  td input{width:100%;min-width:90px;background:#15110c;border:1px solid var(--line);color:var(--txt);padding:3px 5px;border-radius:3px;font:13px monospace}
-  td input:focus{border-color:var(--accent);outline:none}
-  tr.dirty td{background:#2e2718}
-  td.ops{white-space:nowrap}
-  .sm{padding:3px 8px;font-size:12px;border-radius:3px;cursor:pointer;border:1px solid var(--line);background:var(--panel);color:var(--txt)}
-  .sm.save{border-color:var(--accent);color:var(--accent)}
-  .sm.del{border-color:var(--danger);color:var(--danger)}
-  #msg{margin-left:auto;color:#9c8c6a;font-size:12px}
-  .hint{color:#6f6552;font-size:12px}
-</style></head><body>
-<header><h1>调试台 · 直改核心表</h1><span id="tabs"></span></header>
-<div id="bar">
-  <button class="act" id="addBtn">+ 新增行</button>
-  <button class="act" id="reload">↻ 重载</button>
-  <span class="hint">改格变黄→点行尾「存」。新增行须填主键才能存。删除不可撤销。</span>
-  <span id="msg"></span>
-</div>
-<div id="wrap"><table id="grid"></table></div>
-<script>
-let cur=null, cols=[], pk=null, rows=[];
-const $=s=>document.querySelector(s), msg=t=>{$("#msg").textContent=t;};
-async function jget(u){const r=await fetch(u);if(!r.ok)throw new Error((await r.json()).detail||r.status);return r.json();}
-async function jpost(u,b){const r=await fetch(u,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(b)});if(!r.ok)throw new Error((await r.json()).detail||r.status);return r.json();}
-async function init(){
-  const tabs=(await jget("/api/admin/tables")).tables;
-  $("#tabs").innerHTML=tabs.map(t=>`<span class="tab" data-t="${t}">${t}</span>`).join("");
-  document.querySelectorAll(".tab").forEach(e=>e.onclick=()=>load(e.dataset.t));
-  load(tabs[0]);
-}
-async function load(t){
-  cur=t; msg("加载…");
-  document.querySelectorAll(".tab").forEach(e=>e.classList.toggle("active",e.dataset.t===t));
-  const d=await jget("/api/admin/table/"+t);
-  cols=d.columns; pk=d.pk; rows=d.rows; render(); msg(rows.length+" 行");
-}
-function render(){
-  const g=$("#grid");
-  const head="<tr>"+cols.map(c=>`<th class="${c.pk?'pk':''}">${c.name}${c.pk?' 🔑':''}<br><span class="hint">${c.type}</span></th>`).join("")+"<th>操作</th></tr>";
-  g.innerHTML=head+rows.map((r,i)=>rowHtml(r,i)).join("");
-  g.querySelectorAll("input").forEach(inp=>inp.oninput=()=>inp.closest("tr").classList.add("dirty"));
-  g.querySelectorAll(".save").forEach(b=>b.onclick=()=>saveRow(+b.dataset.i));
-  g.querySelectorAll(".del").forEach(b=>b.onclick=()=>delRow(+b.dataset.i));
-}
-function rowHtml(r,i){
-  const tds=cols.map(c=>{
-    const v=r[c.name]==null?"":r[c.name];
-    return `<td><input data-c="${c.name}" value="${String(v).replace(/"/g,'&quot;')}"></td>`;
-  }).join("");
-  return `<tr data-i="${i}">${tds}<td class="ops"><button class="sm save" data-i="${i}">存</button> <button class="sm del" data-i="${i}">删</button></td></tr>`;
-}
-function readRow(i){
-  const tr=document.querySelector(`tr[data-i="${i}"]`), o={};
-  tr.querySelectorAll("input").forEach(inp=>{
-    const c=cols.find(x=>x.name===inp.dataset.c); let v=inp.value;
-    if(v===""){o[inp.dataset.c]=null;return;}
-    if(c && /INT/i.test(c.type)) v=parseInt(v,10);
-    o[inp.dataset.c]=v;
-  });
-  return o;
-}
-async function saveRow(i){
-  try{
-    const body=readRow(i);
-    if(body[pk]==null||body[pk]===""){msg("⚠ 主键 "+pk+" 不能空");return;}
-    const d=await jpost(`/api/admin/table/${cur}/upsert`,body);
-    rows[i]=d.row; render(); msg("✓ 已存 "+body[pk]);
-  }catch(e){msg("✗ "+e.message);}
-}
-async function delRow(i){
-  const key=rows[i][pk];
-  if(key!=null&&key!==""&&!confirm(`删除 ${cur} 行：${pk}=${key} ？不可撤销`))return;
-  try{
-    if(key==null||key===""){rows.splice(i,1);render();msg("已移除未存行");return;}
-    const d=await jpost(`/api/admin/table/${cur}/delete`,{pk_value:key});
-    rows.splice(i,1); render(); msg("✓ 删 "+d.deleted+" 行");
-  }catch(e){msg("✗ "+e.message);}
-}
-$("#addBtn").onclick=()=>{const o={};cols.forEach(c=>o[c.name]=null);rows.unshift(o);render();msg("新增空行，填主键后点存");};
-$("#reload").onclick=()=>load(cur);
-init().catch(e=>msg("初始化失败:"+e.message));
-</script></body></html>"""

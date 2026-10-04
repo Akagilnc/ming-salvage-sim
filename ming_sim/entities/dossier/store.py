@@ -53,6 +53,11 @@ _PROGRESS_COLUMNS = frozenset({
     "id", "dossier_id", "turn", "progress_band", "memorial_text", "is_terminal",
     "origin", "created_at",
 })
+_PENDING_ACTION_COLUMNS = frozenset({
+    "id", "turn", "kind", "action", "target_id", "minister_name", "payload_json",
+    "status", "committed_directive_id", "night_id", "night_approved", "version",
+    "created_at",
+})
 DOSSIER_REPORT_ORIGIN_MONTHLY = "dossier-report:monthly_errand"
 DOSSIER_REPORT_ORIGIN_VERDICT = "dossier-report:execution_verdict"
 DOSSIER_EXECUTION_OUTCOMES = frozenset({
@@ -1795,6 +1800,7 @@ class DossierStore:
             "decree_dossiers": "SELECT * FROM decree_dossiers",
             "decree_dossier_decisions": "SELECT * FROM decree_dossier_decisions",
             "dossier_reported_progress": "SELECT * FROM dossier_reported_progress",
+            "pending_actions": "SELECT * FROM pending_actions",
         }[table]
         return self._conn.execute(sql).fetchall()
 
@@ -1959,6 +1965,13 @@ class DossierStore:
             allowed=_PROGRESS_COLUMNS, what="dossier_reported_progress",
         )
 
+    def restore_pending_action(self, row: Mapping[str, object]) -> None:
+        from ming_sim.entities.column_write import upsert_by_pk
+        upsert_by_pk(
+            self._conn, "pending_actions", row, pk="id",
+            allowed=_PENDING_ACTION_COLUMNS, what="pending_actions",
+        )
+
     def delete_dossier(self, dossier_id: object) -> None:
         self._conn.execute("DELETE FROM decree_dossiers WHERE id=?", (dossier_id,))
 
@@ -1971,6 +1984,9 @@ class DossierStore:
         self._conn.execute(
             "DELETE FROM dossier_reported_progress WHERE id=?", (progress_id,),
         )
+
+    def delete_pending_action(self, action_id: object) -> None:
+        self._conn.execute("DELETE FROM pending_actions WHERE id=?", (action_id,))
 
     def actual_progress_units(self, dossier_id: int) -> float:
         row = self._conn.execute(

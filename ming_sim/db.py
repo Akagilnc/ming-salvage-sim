@@ -53,7 +53,6 @@ from ming_sim.entities.dossier import (
     DOSSIER_REPORT_ORIGIN_MONTHLY,
     DOSSIER_REPORT_ORIGIN_NS,
     DOSSIER_REPORT_ORIGIN_VERDICT,
-    DOSSIER_SCHEMA_SQL,
     DOSSIER_STATUSES,
     PROMULGATION_BLOCKED_LAYERS,
     DossierStore,
@@ -1453,10 +1452,6 @@ class GameDB:
         new_value = max(0, min(cap, int(row["cannon"]) + int(delta)))
         self.regions.update(region_id, {"cannon": new_value})
         return new_value
-
-    def table_has_rows(self, table: str) -> bool:
-        row = self.conn.execute(f"SELECT 1 FROM {table} LIMIT 1").fetchone()
-        return row is not None
 
     def _ensure_office_type_parents(self) -> None:
         """Materialize every declared/referenced office type before FK-checked writes."""
@@ -5529,8 +5524,13 @@ class GameDB:
             rows = self.character_knowledge.snapshot_rows(table)
         elif table in ("characters", "character_offices"):
             rows = self.characters.snapshot_rows(table)
-        elif table in ("decree_dossiers", "decree_dossier_decisions", "dossier_reported_progress"):
+        elif table in (
+            "decree_dossiers", "decree_dossier_decisions",
+            "dossier_reported_progress", "pending_actions",
+        ):
             rows = self.dossiers.snapshot_rows(table)
+        elif table == "turn_directives":
+            rows = self.issues.snapshot_directive_rows()
         elif table == "factions":
             rows = self.factions.snapshot_rows()
         elif table == "textual_facts":
@@ -5538,7 +5538,7 @@ class GameDB:
         elif table == "relation_edge_events":
             rows = self.person_logs.edge_snapshot_rows()
         else:
-            rows = self.conn.execute(f"SELECT * FROM {table}").fetchall()
+            raise ValueError(f"不支持回滚表：{table}")
         snapshot = {str(row[pk]): self._row_dict(row) for row in rows}
         if table == "secret_orders":
             brief_pins = {
@@ -6329,9 +6329,6 @@ class GameDB:
         if table == "relation_edge_events":
             self.person_logs.restore_edge(row)
             return
-        if table == "armies":
-            self.armies.upsert({key: value for key, value in row.items() if key != "arrears"})
-            return
         if table == "characters":
             self.characters.restore_row(row)
             return
@@ -6347,32 +6344,19 @@ class GameDB:
         if table == "dossier_reported_progress":
             self.dossiers.restore_reported_progress(row)
             return
+        if table == "pending_actions":
+            self.dossiers.restore_pending_action(row)
+            return
+        if table == "turn_directives":
+            self.issues.restore_directive_row(row)
+            return
         if table == "factions":
             self.factions.restore_row(row)
             return
         if table == "textual_facts":
             self.textual_facts.restore_row(row)
             return
-        pk = self._ROLLBACK_TABLE_PK.get(table)
-        if not pk:
-            raise ValueError(f"不支持回滚表：{table}")
-        if self.conn.execute(
-            f"SELECT 1 FROM {table} WHERE {pk} = ?", (row[pk],)
-        ).fetchone() is not None:
-            columns = [column for column in row if column != pk]
-            assignments = ",".join(f"{column}=?" for column in columns)
-            self.conn.execute(
-                f"UPDATE {table} SET {assignments} WHERE {pk}=?",
-                [row[column] for column in columns] + [row[pk]],
-            )
-            return
-        columns = list(row.keys())
-        placeholders = ",".join("?" for _ in columns)
-        column_sql = ",".join(columns)
-        self.conn.execute(
-            f"INSERT INTO {table} ({column_sql}) VALUES ({placeholders})",
-            [row[column] for column in columns],
-        )
+        raise ValueError(f"不支持回滚表：{table}")
 
     def _delete_row_in_tx(self, table: str, target_id: str) -> None:
         if table in ("secret_orders", "public_sayings"):
@@ -6396,16 +6380,19 @@ class GameDB:
         if table == "dossier_reported_progress":
             self.dossiers.delete_reported_progress(target_id)
             return
+        if table == "pending_actions":
+            self.dossiers.delete_pending_action(target_id)
+            return
+        if table == "turn_directives":
+            self.issues.delete_directive_row(target_id)
+            return
         if table == "factions":
             self.factions.delete(target_id)
             return
         if table == "textual_facts":
             self.textual_facts.delete(target_id)
             return
-        pk = self._ROLLBACK_TABLE_PK.get(table)
-        if not pk:
-            raise ValueError(f"不支持回滚表：{table}")
-        self.conn.execute(f"DELETE FROM {table} WHERE {pk} = ?", (target_id,))
+        raise ValueError(f"不支持回滚表：{table}")
 
     def _restore_secret_order_brief_projection_in_tx(
         self, order_id: int, origin_chat_message_ids: Iterable[int],
@@ -16041,106 +16028,6 @@ class GameDB:
                 f"ids={[x['id'] for x in submitted]} (status unchanged)"
             )
         return submitted
-
-    # ── 调试用通用 CRUD（仅限白名单核心表）──────────────────────
-    # 表名 → 主键列。只暴露核心几张，防误删元数据/日志表。
-    ADMIN_TABLES: Dict[str, str] = {
-        "game_state": "id",        # 局势
-        "metrics": "key",          # 国家修正（国库/内库/民心/皇威）
-        "regions": "id",           # 地区
-        "armies": "id",            # 军队
-        "characters": "name",      # 人物
-        "buildings": "id",         # 建筑
-    }
-
-    def admin_check_table(self, table: str) -> str:
-        pk = self.ADMIN_TABLES.get(table)
-        if pk is None:
-            raise ValueError(f"表 {table!r} 不在调试白名单")
-        return pk
-
-    def admin_columns(self, table: str) -> List[Dict[str, object]]:
-        """PRAGMA 取列定义：name/type/notnull/pk/default。"""
-        self.admin_check_table(table)
-        cur = self.conn.execute(f"PRAGMA table_info({table})")
-        return [
-            {
-                "name": r["name"],
-                "type": r["type"],
-                "notnull": bool(r["notnull"]),
-                "pk": bool(r["pk"]),
-                "default": r["dflt_value"],
-            }
-            for r in cur.fetchall()
-        ]
-
-    def admin_rows(self, table: str) -> List[Dict[str, object]]:
-        pk = self.admin_check_table(table)
-        readers = {
-            "game_state": self.reign.header_rows,
-            "metrics": self.reign.metric_rows,
-            "regions": self.regions.rows,
-            "armies": self.armies.read_army_rows,
-            "characters": lambda: self.characters.snapshot_rows("characters"),
-            "buildings": self.buildings.read_buildings_report_,
-        }
-        return [dict(row) for row in sorted(readers[table](), key=lambda row: row[pk])]
-
-    def _admin_valid_cols(self, table: str) -> set:
-        return {c["name"] for c in self.admin_columns(table)}
-
-    def admin_upsert(self, table: str, values: Dict[str, object]) -> Dict[str, object]:
-        """按主键原位 upsert，返回落库后的行。只接受表内有的列。"""
-        pk = self.admin_check_table(table)
-        valid = self._admin_valid_cols(table)
-        data = {k: v for k, v in values.items() if k in valid}
-        if pk not in data or data[pk] in (None, ""):
-            raise ValueError(f"缺主键 {pk}")
-        if table == "game_state":
-            self.reign.upsert_header(data)
-            read_row = self.reign.header_row
-        elif table == "metrics":
-            self.reign.upsert_metric(str(data["key"]), int(data["value"]))
-            read_row = self.reign.metric_row
-        elif table == "regions":
-            self.regions.upsert(data)
-            read_row = self.regions.row
-        elif table == "armies":
-            self.armies.upsert(data)
-            read_row = self.armies.row
-        elif table == "characters":
-            self.characters.upsert(data)
-            read_row = self.characters.row
-        elif table == "buildings":
-            self.buildings.upsert(data)
-            read_row = self.buildings.get
-        else:
-            raise ValueError(f"表 {table!r} 不在调试白名单")
-        # #1889：economy_accounts 已降级为 metrics 的派生视图，无需（也不能）再同步；
-        # 改 metrics 即改真源。
-        self.conn.commit()
-        row = read_row(data[pk])
-        return dict(row) if row else {}
-
-    def admin_delete(self, table: str, pk_value: object) -> int:
-        """按主键删行，返回受影响行数。"""
-        pk = self.admin_check_table(table)
-        if table == "game_state":
-            deleted = self.reign.delete_header(pk_value)
-        elif table == "metrics":
-            deleted = self.reign.delete_metric(str(pk_value))
-        elif table == "regions":
-            deleted = self.regions.delete(str(pk_value))
-        elif table == "armies":
-            deleted = self.armies.delete(str(pk_value))
-        elif table == "characters":
-            deleted = self.characters.delete_by_name(str(pk_value))
-        elif table == "buildings":
-            deleted = self.buildings.delete(str(pk_value))
-        else:
-            raise ValueError(f"表 {table!r} 不在调试白名单")
-        self.conn.commit()
-        return deleted
 
     def record_relation_edge_event(
         self,

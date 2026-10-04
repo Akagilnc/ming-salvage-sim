@@ -590,7 +590,7 @@ def test_exhaust_zero_dossier_system_simulation_no_steam_decree(
 
     monkeypatch.setattr(session_mod, "resolve_directives", spy_resolve)
 
-    body = _post_issue_stream(
+    _post_issue_stream(
         client, expected_turn=turn, step="1769 zero-exhaust system_simulation",
     )
     assert _turn_of(_get_state(client)) == turn + 1
@@ -604,16 +604,6 @@ def test_exhaust_zero_dossier_system_simulation_no_steam_decree(
     assert call["directives_len"] == 0
     assert not (call["decree_text"] or "").strip()
     assert (game.session.last_decree or "") != stale
-
-    steam = body.get("steam_events") or []
-    assert not any(
-        isinstance(e, dict) and e.get("name") == "STAT_DECREES_ISSUED"
-        for e in steam
-    ), f"零成案不得计已颁: {steam!r}"
-    assert any(
-        isinstance(e, dict) and e.get("name") == "STAT_TURNS_PLAYED"
-        for e in steam
-    ), f"邸报写成后应计过月: {steam!r}"
 
 
 def test_pending_preview_turn_key_no_keyerror_on_issue(
@@ -681,7 +671,7 @@ def test_pending_preview_turn_key_no_keyerror_on_issue(
 def test_advance_without_edict_vacuum_steam_no_decree_issued(
     admission_game, monkeypatch,
 ):
-    """类B：POST 真空退朝成功 → 有 TURNS_PLAYED/MAX_TURN，无 DECREES_ISSUED。"""
+    """类B：POST 真空退朝成功 → 月份推进。"""
     game = admission_game
     turn = int(game.state.turn)
     assert not (game.session.last_decree or "").strip()
@@ -694,13 +684,4 @@ def test_advance_without_edict_vacuum_steam_no_decree_issued(
     body = resp.json()
     assert body.get("awaiting_decision") is False
     assert _turn_of(_get_state(client)) == turn + 1
-
-    steam = body.get("steam_events") or []
-    names = [
-        e.get("name") for e in steam if isinstance(e, dict)
-    ]
-    assert "STAT_TURNS_PLAYED" in names, f"邸报写成后应计过月: {steam!r}"
-    assert "STAT_MAX_TURN_REACHED" in names, f"邸报写成后应计最大月: {steam!r}"
-    assert "STAT_DECREES_ISSUED" not in names, (
-        f"真空退朝不得计已颁: {steam!r}"
-    )
+    assert "steam_events" not in body

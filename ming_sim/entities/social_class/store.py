@@ -21,6 +21,9 @@ class ClassStore:
     def __init__(self, conn: Any) -> None:
         self._conn = conn
 
+    def has_any(self) -> bool:
+        return self._conn.execute("SELECT 1 FROM classes LIMIT 1").fetchone() is not None
+
     def insert(
         self,
         *,

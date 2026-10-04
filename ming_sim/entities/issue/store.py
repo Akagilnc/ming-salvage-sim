@@ -21,6 +21,11 @@ ISSUE_COLUMNS = frozenset({
     "resolution_summary", "last_advance_turn", "closed_turn", "affair_id",
 })
 
+TURN_DIRECTIVE_COLUMNS = frozenset({
+    "id", "turn", "year", "period", "event_id", "actor", "text", "source",
+    "status", "notes", "dossier_payload_json", "created_at", "updated_at",
+})
+
 _ADVANCE_COLUMNS = (
     "issue_id", "turn", "trigger_kind", "trigger_ref", "delta_bar",
     "from_value", "to_value", "from_stage_text", "to_stage_text",
@@ -258,6 +263,19 @@ class IssueStore:
             "(turn, year, period, event_id, actor, text, source, status, notes, dossier_payload_json) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", params,
         )
+
+    def snapshot_directive_rows(self) -> Any:
+        return self._conn.execute("SELECT * FROM turn_directives").fetchall()
+
+    def restore_directive_row(self, row: Mapping[str, object]) -> None:
+        from ming_sim.entities.column_write import upsert_by_pk
+        upsert_by_pk(
+            self._conn, "turn_directives", row, pk="id",
+            allowed=TURN_DIRECTIVE_COLUMNS, what="turn_directives",
+        )
+
+    def delete_directive_row(self, directive_id: object) -> None:
+        self._conn.execute("DELETE FROM turn_directives WHERE id=?", (directive_id,))
 
     def directive(self, directive_id: int) -> Any:
         return self._conn.execute(

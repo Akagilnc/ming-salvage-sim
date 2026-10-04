@@ -11,7 +11,6 @@ module owns the *sequence*, not a parallel set of writers.
 """
 
 from __future__ import annotations
-from ming_sim.entities.character.store import CharacterStore
 
 import json
 from typing import Any
@@ -22,6 +21,11 @@ from ming_sim.db import (
     infer_office_type_from_office,
     normalize_office,
 )
+from ming_sim.entities.army.store import ArmyStore
+from ming_sim.entities.building.store import BuildingStore
+from ming_sim.entities.character.store import CharacterStore
+from ming_sim.entities.faction.store import FactionStore
+from ming_sim.entities.social_class.store import ClassStore
 from ming_sim.intelligence import OFFICE_SLOTS
 
 
@@ -32,11 +36,12 @@ def seed_opening_world(db: Any) -> None:
     any save that already has content.
     """
     db._ensure_office_type_parents()
+    characters = CharacterStore(db.conn)
 
-    if not db.table_has_rows("office_slots"):
-        CharacterStore(db.conn).write_seed_opening_world([(*slot, index) for index, slot in enumerate(OFFICE_SLOTS)])
+    if not characters.has_any("office_slots"):
+        characters.write_seed_opening_world([(*slot, index) for index, slot in enumerate(OFFICE_SLOTS)])
 
-    if not db.table_has_rows("characters"):
+    if not characters.has_any("characters"):
         for character in db.content.characters.values():
             office = normalize_office(character.office)
             # 静态名册接档：content 已写好 office_type，表查不中也不逐人现拉 codex
@@ -73,8 +78,8 @@ def seed_opening_world(db: Any) -> None:
                 "transit_to": character.transit_to,
                 "summary": character.summary,
             })
-    if not db.table_has_rows("character_offices"):
-        for row in CharacterStore(db.conn).read_knowledge_items_for_turn():
+    if not characters.has_any("character_offices"):
+        for row in characters.read_knowledge_items_for_turn():
             # 同 add_character/set_character_office 走 person-title 守卫接缝：名分不写脏行。
             # Jurisdiction only from explicit content office_region — never location.
             ch = (
@@ -96,7 +101,7 @@ def seed_opening_world(db: Any) -> None:
                 "开局 seed", region_id=seat,
             )
 
-    is_fresh_factions_seed = not db.table_has_rows("factions")
+    is_fresh_factions_seed = not FactionStore(db.conn).has_any()
     if is_fresh_factions_seed:
         for faction in db.content.factions.values():
             db.factions.insert(
@@ -105,7 +110,7 @@ def seed_opening_world(db: Any) -> None:
                 leverage=faction.leverage,
                 agenda=faction.agenda,
             )
-    if not db.table_has_rows("classes"):
+    if not ClassStore(db.conn).has_any():
         # 人口一律「人」。classes 首次 seed 落持久标；已有行不重 seed。
         db._mark_population_unit_persons()
         for cls in db.content.classes.values():
@@ -158,7 +163,7 @@ def seed_opening_world(db: Any) -> None:
             "controlled_by": region.controlled_by,
             "fiscal": json.dumps(region.fiscal, ensure_ascii=False),
         })
-    is_fresh_armies_seed = not db.table_has_rows("armies")
+    is_fresh_armies_seed = not ArmyStore(db.conn).has_any()
     if is_fresh_armies_seed:
         for army in db.content.armies.values():
             db.armies.insert({
@@ -190,7 +195,7 @@ def seed_opening_world(db: Any) -> None:
                 "status": army.status,
                 "owner_power": army.owner_power,
             })
-    if not db.table_has_rows("buildings"):
+    if not BuildingStore(db.conn).has_any():
         for building in db.content.buildings.values():
             db.buildings.insert({
                 "id": building.id,

@@ -106,6 +106,9 @@ class ArmyStore:
         cursor = self._conn.execute("DELETE FROM armies WHERE id=?", (army_id,))
         return int(cursor.rowcount or 0)
 
+    def has_any(self) -> bool:
+        return self._conn.execute("SELECT 1 FROM armies LIMIT 1").fetchone() is not None
+
     def read_assert_commission_grant_target_exists(self, params: Any = ()) -> Any:
         return self._conn.execute('SELECT 1 FROM armies WHERE id=?', params).fetchone()
 
