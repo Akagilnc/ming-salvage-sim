@@ -1,115 +1,122 @@
-# #1900 修内司回执：末判 J18/J6 整类处置
+# #1900 修内司回执：末判 J18/J6 整类全仓扫与处置
 
 - 工作树：`/Users/akagilnc/WorkSpace/Ming_LLM-1900-w5`
-- 分支：`ak-roles/1900-j18-j6-final-class-repair`（自 `bb448254c` 新开）
-- 判词真源：`~/.ak-roles/books/Ming_LLM/unbound/runs/01a108b9-3e6e-7ba3-b4af-52e9a2b219d2@fixer/attachments/02-1900-judge-bb448254c.json` 末份 `continue` payload
+- 分支：`ak-roles/1900-j18-j6-final-class-repair`（自 `bb448254c`）
+- 判词真源：`~/.ak-roles/books/Ming_LLM/unbound/runs/01a108b9-3e6e-7ba3-b4af-52e9a2b219d2@fixer/attachments/02-1900-judge-bb448254c.json` **末份** `continue` payload
 - 票面：`gh issue view 1900` / `1812`（updatedAt 2026-10-04 / 2026-10-02）
-- 官方现成解法：SQLite JOIN <https://www.sqlite.org/lang_select.html>；pytest monkeypatch 仅作临时边界、不替被测行为作 oracle（pytest docs）
-- 禁令遵守：无 stash / amend / rewrite / push / PR；未改 Soul/宪法/外部配置；自建物仅本工作树 `evidence/1900-final-class-repair/` 与系统临时探针（已清）
+- 官方现成解法：SQLite JOIN <https://www.sqlite.org/lang_select.html>；pytest monkeypatch 仅作临时边界（pytest docs）
+- 禁令：无 stash / amend / rewrite / push / PR；未改 Soul/宪法/外部配置；自建物仅本目录与系统临时探针
+
+**本轮纠正**：上一份回执以点名文件/点名符号收窄枚举，不能宣称整类结清。本轮按完整类形状做 AST+rg 全仓候选，成员表见独立文件；违法的 `night_said` 正文锁与实现函数 oracle 已改回独立常量/结构化落账。
 
 ---
 
-## 1. 未结类别（末判原文边界）
+## 1. 未结类别（末判施工边界，谓词不收窄）
 
-| 类 | 级别 | 类定义（施工边界） |
+| 类 | 级别 | 类定义 |
 |---|---|---|
-| **J18** | P2 | 退役残留专用资格、护行供料、死 helper 及失效说明；删除手工连接层，复用现役关联槽和数据库原生连接。不恢复专用账本/双载体/聚合口/旧软判实抵，不另造替代机制/未知状态/护栏。 |
-| **J6** | P2 | 处置被测路径 stub、内部调用/标记 oracle、非契约文字锁、固定输出伪证及方向化数值断言；复用既有真实入口恢复独立外部契约；保留必要负向；不造平行夹具或生产钩子；合并回带同审同修。不得转记 #1873。 |
+| **J18** | P2 | 退役残留专用资格、护行供料、死 helper、失效说明；删手工连接层，复用关联槽+原生 JOIN。不恢复专用账本/双载体/聚合口/旧软判实抵，不另造替代机制。 |
+| **J6** | P2 | 被测路径 stub、调用/标记 oracle、非契约文字锁、固定输出伪证、方向化数值断言、重复退役证明；复用真实入口与独立外部契约；不造平行夹具/生产钩子。 |
 
-点名仅为样本，谓词不收窄。
+点名与 `10e64fbef…HEAD` 182 文件仅为索引，不排除全仓同类。
 
 ---
 
-## 2. J18 机械枚举
+## 2. J18 全仓枚举（完整类形状）
 
-### 2.1 枚举命令
+### 2.1 命令
 
 ```bash
-rg -n --glob '!evidence/**' --glob '!.baseline/**' \
-  'is_grant_allocation_dossier|_write_dossier_payload_key|_GRANT_ESCORT_RELATIONS|护送实况|_reader_may_cite_escort|_escort_identity_lines|grant_route_reader_facts|软判提案|status_ids = \{' \
-  ming_sim tests docs --glob '*.py' --glob '*.md'
+# AST：ming_sim/**/*.py + web_app.py 上凡 def/assign 体命中
+# escort|护送|护行|暗护|押解|grant_arrival|reconciliation|双载体|专用…|payload_declares|…
+# 产出：j18-full-members.md / j18-full-members.json（AST 全仓）
 
-rg -n --glob 'ming_sim/**/*.py' \
-  'JOIN.*decree_dossier|FROM decree_dossier_links|status_ids|by_id.*decree_dossiers'
+rg -n --glob '!evidence/**' --glob '!.baseline/**' \
+  'escort_pending_targets|escort_sources|dossier_escort_outcomes|_resolve_covert|_grant_escort_presence|clamp_grant_arrival|_escort_identity|_reader_may_cite|grant_route_reader|is_grant_allocation_dossier|_write_dossier_payload_key|_GRANT_ESCORT_RELATIONS|护送实况|list_open_grant_reconciliations|软判提案|软判读账' \
+  ming_sim web_app.py tests docs --glob '*.py' --glob '*.md'
 ```
 
-施工前命中（生产残留成员，不含已署退役说明文档）：
+完整成员表（复扫后）：[`j18-full-members.md`](j18-full-members.md) / [`j18-full-members.json`](j18-full-members.json)
 
-| 成员 | 位置 | 处置 | 保留/删除依据 |
-|---|---|---|---|
-| `_GRANT_ESCORT_RELATIONS` | `ming_sim/db.py:842` | **删** | 仅定义、零引用的死常量 |
-| `is_grant_allocation_dossier` | `ming_sim/db.py:845` | **删** | 仅定义、零引用的死 helper |
-| `_dossier_payload_dict`（GameDB） | `ming_sim/db.py:12311` | **删** | 仅被死 writer 使用 |
-| `_write_dossier_payload_key` | `ming_sim/db.py:12321` | **删** | 死 writer；专用承接已退役 |
-| 软判提案失效说明 | `ming_sim/db.py:838` | **改** | 引擎已取中位，删「软判提案落在界内」措辞 |
-| `is_secret_order_dossier` 旧护行说明 | `ming_sim/db.py:14673` | **改** | 去掉已撤销「护送实况来源端」专用表述 |
-| 手工 `pairs/status_ids/by_id/link_rows` | `ming_sim/db.py:12562–12599` | **改** | 改为 `decree_dossier_links JOIN decree_dossiers` 原生连接 |
-| `_escort_identity_lines` 调用 | `ming_sim/materials.py:908` | **删** | 专用护行供料入口 |
-| `_covert_participant_names` … `_escort_identity_lines` 链 | `ming_sim/materials.py:914–1115` | **删** | 专用资格 + 假「护送实况：无护」供料整链 |
-| `continuing_dossier_facts` 恒假 escorted 字段 | `ming_sim/materials.py:2048–2051` | **删字段** | 开场文本未消费；恒假 = 假实况形状残留 |
-| ADR0054 / DELTA_SCHEMA 已署退役段 | docs | **保留** | 现行退役说明，非复活机制 |
-| `grant_arrival_bounds` / 核账 escorted=False 中位 | `db.py` 核账路径 | **保留** | 既有引擎核算；功能接续缺口归 #1873，不另造实护机制 |
+### 2.2 处置摘要（不得只报「点名 0 命中」）
 
-复扫命令（施工后）：同上谓词；生产 `ming_sim/**/*.py` 对专用供料/死 helper/手工 status_ids 连接 **0 命中**。
+| 处置 | 计数 | 说明 |
+|---|---:|---|
+| KEEP_LIVE_ENGINE | 16 | `grant_arrival_bounds` / `payload_declares_escort` / `dossier_declares_escort` / `_attach_commission_escort` / 核账 targets·record·list·merge 等——现役押解随拨银与无护核账（#1900/#1812；有护接续 #1873） |
+| KEEP_LIVE_OR_INCIDENTAL | 27 | 声明入口、参与人投影、预推「自带押解」标记、schema 形字段等；非专用双载体/账本 |
+| KEEP_RETIREMENT_NOTE | 1 | 生产内退役注释（非复活处方） |
+| DELETE_DEAD | 0（复扫） | 本轮已删 `list_open_grant_reconciliations`（零引用 + 失效「软判读账打折」说明） |
 
-### 2.2 探针（七 BIN 前缀）
+撤销机制符号（`escort_pending_targets` / `escort_sources` / `dossier_escort_outcomes` / `_resolve_covert*` / `_grant_escort_presence` / `clamp_grant_arrival*` / `_escort_identity*` / `护送实况` 假供料 / 死 helper 等）在 **ming_sim + web_app + tests** 复扫：**0 存活实现命中**（文档/历史 evidence 中的退役说明与旧盘点保留，不作现行处方）。
 
-声明含押解、核账为空后：
+手工 `status_ids/by_id` 连接：监督在场路径已为 `decree_dossier_links JOIN decree_dossiers`（`db.py` record_monthly_supervision_presence）。
+
+**不宣称「整类字面 0 候选」**——现役引擎契约仍在成员表中，逐项有外部依据；缺陷残留 DELETE 项为 0。
+
+### 2.3 假「无护」供料探针（七 BIN）
 
 ```
 INPUT_DECLARED_ESCORT=True
 RAW_RECONCILIATIONS 0
 ARCHIVE_HAS_无护 False
 ARCHIVE_HAS_护送实况 False
-MATERIAL_HITS []
 PROBE_NO_FALSE_无护 True
 ```
 
-不再输出「护送实况：无护」。
+日志：`j18-feed-probe.log`
 
 ---
 
-## 3. J6 机械枚举
+## 3. J6 全仓枚举（完整类形状，含 web）
 
-### 3.1 枚举命令
+### 3.1 命令
 
 ```bash
-rg -n 'auto_close|power_band|routed:|_has_meta_flag|OperationalError|seen\.get|assert actual < |assert after < before' \
-  tests/test_qa_t1_extraction_dual_source_1353.py \
-  tests/test_audience_restore_505.py \
-  tests/test_audience_translate_1837.py \
-  tests/test_empire_modifier_income_only_341.py \
-  tests/test_refugee_loop_652.py \
-  tests/test_promulgation_judge_561.py \
-  tests/test_faction_leverage_9.py
+# AST：tests/**/*.py 每个 test_* 扫 monkeypatch.setattr / call_oracle / marker /
+# direction compare / OperationalError|中文 in / translate_fn=lambda / helper 命名
+# + web **/*.{ts,tsx} vi.spyOn|toHaveBeenCalled|mockImplementation
 
-rg -n --glob 'tests/*.py' \
-  'routed:|track_auto_close|seen\.get\(\"write_gate\"\)|_has_meta_flag\(\"__leverage|\"OperationalError\" in|assert actual < 100 and actual|lambda value: f.routed'
+# 另 rg 全 tests：
+rg -n --glob 'tests/**/*.py' 'apply_legacy_pct\(|grant_arrival_bounds\(|_has_meta_flag\(|routed:|track_auto_close|seen\.get\("write_gate"\)|assert any\(.*第一问|assert all\(.*后轮问'
+rg -n --glob 'web/**/*.{ts,tsx}' 'vi\.spyOn|toHaveBeenCalled|mockImplementation'
 ```
 
-### 3.2 成员表与处置
+候选与处置：[`j6-full-members.md`](j6-full-members.md) / [`j6-full-disposition.json`](j6-full-disposition.json) / [`j6-web-members.json`](j6-web-members.json)
 
-| 成员 | 缺陷类 | 处置 | 必要价值 |
-|---|---|---|---|
-| `test_resolve_turn_write_gate_held_by_caller_no_reenter` auto_close spy | 被测路径 stub / 调用 oracle | **删 spy**；保留 held 闸 + 公开 `ValueError`（至少一条草案） | 负向：外层持闸不得自锁；spy 调用数为 0 无辨别力（末判 9b276f） |
-| `test_start_chat_turn_second_turn_reads_agno_v3_runs` OperationalError 文案 | 非契约文字锁 | **删**；保留 `accepted` + `agno_runs_before` 结构化落账 | 结构化案已足够（末判） |
-| `test_translation_entry_preserves_unknown_rejection_and_source_cutoff` 固定转译 | 固定输出伪证 | **改**：独立断言 `night_said` 截止；translate_fn 随 prompt 泄漏后轮 | ADR 0155 源轮截止；变异忽略截止 → 红 |
-| `test_income_still_modified_by_legacy` 方向断言 | 弱化数值 | **恢复** `actual == apply_legacy_pct(100, net_pct)`（88） | #341 收入公式契约 |
-| `test_monthly_recovery_follows_each_month_actual_payment` `after < before` | 弱化数值 | **恢复** `paid × RECOVERY_PERSONS_PER_WAN` 精确人数 | 0087 实抵/实付回流 |
-| `test_in_transit_relief_stays_executing_before_gazette` 方向断言 | 弱化数值 | **恢复** 无护中位实抵 + `arrived × 2000` 精确人数（44000） | 0087 实抵回流；错转 1 → 红 |
-| `test_promulgation_context_routes_faction_leverage_through_power_band` | 调用 mock oracle | **整删** | 已有 `…_as_qualitative_band` 真实入口 + `power_band(5)` |
-| `test_calibrated_save_without_marker_not_re_anchored` `_has_meta_flag` | 私有标记 oracle | **删标记断言**；保留 offset 外部值 | 外部行为= offset 不重锚 |
-| `test_old_integer_offset_migrated_to_float` `_has_meta_flag` | 私有标记 oracle | **删标记断言**；保留 offset=75.5 / leverage | 同上 |
-| `test_six_sciences_censor_exit_recomputes_its_faction_leverage` | （正向保留） | **保留** | 真实退场+权势；停用回算红（4047a1） |
-| `test_startup_catchup_uses_ticketed_gate_not_bare` | 闸对象行为探针 | **保留** | 断言票据缝 `acquire` 契约本身，非内部调用路线伪证 |
+AST 规模（本轮）：Python 焦点候选约 618；Web mock 行约 145。
 
-复扫：上表缺陷谓词在 `tests/` **0 命中**。
+### 3.2 语义处置原则（非「筛已知字串归零」）
+
+| 桶 | 处置 | 外部依据 / 反例 |
+|---|---|---|
+| LLM/IO/会话边界 stub | **KEEP_BOUNDARY_STUB** | 共享硬规允许边界替身；反例＝stub 掉被测生产路径（如 power_band / recompute / auto_close spy）——本轮该类已无存活 |
+| 票据闸 acquire | **KEEP_GATE_CONTRACT** | `test_startup_catchup_uses_ticketed_gate_not_bare` 断言契约本身 |
+| 月/召对 translate 边界 | **KEEP_MONTH_TRANSLATE_BOUNDARY** | 替身在模型边界；截止案已改为结构化落账辨别 |
+| 派系 leverage 方向比较 | **KEEP_QUALITATIVE_DIRECTION** | 定性联动，非金额/人数契约 |
+| 序关系/生命周期方向 | **KEEP_ORDERING_OR_QUAL** | 如 idx 先后、mid>before |
+| OperationalError raises | **KEEP**（读后） | `pytest.raises(OperationalError)` 测异常传播，非诊断 message 子串锁 |
+| 中文 `in` 断言 | **KEEP**（读后抽样） | 多为结构化字段/种子 meta/人物名；末判点名的 OperationalError 文案锁已不在断言体 |
+| Web vi.fn/spyOn | **KEEP_UI_BOUNDARY** | 组件渲染边界；非本票被测业务路径 stub 类 |
+| helper 命名碰撞 | **KEEP_NAME_COLLISION** | 如 `test_oracle_independent_of_shared_haircut_helper` 测独立 oracle 抗变异，非 helper 专测 |
+| 章节记忆/路由退役 | **KEEP** | 断言表不存在/路由不在 OpenAPI——外部可见表面，非 hasattr 死 API 伪证 |
+
+### 3.3 本轮对先前违法改动的纠正
+
+| 项 | 问题 | 改法 |
+|---|---|---|
+| `test_translation_entry_…_source_cutoff` | 直接锁 `night_said` 正文（第一问/后轮问） | 删正文锁；ADR0155 用 `until_chat_turn_id` + 泄漏→结构化 `scene_facts` 落账标记 |
+| `test_income_still_modified_by_legacy` | `db.apply_legacy_pct` 作期望 | 独立常量：`net_pct == -12` → 实入 `88` |
+| `test_in_transit_relief_…` | `grant_arrival_bounds` 作期望 | 北极星独立常量：面额 40 → 无护中位 `22` × `RECOVERY_PERSONS_PER_WAN` |
+| `test_month_chain_lands_specialized_facts_…` | 同上实现函数 oracle | 面额 100 → 中位 `55` |
+| `test_fixed_flows_substrate_hub_books_…` / skip display | `apply_legacy_pct` oracle | `-12%` 下 `12→11,3→3,4→4`；`7→6` |
+
+复扫：`apply_legacy_pct(` / `grant_arrival_bounds(` / `_has_meta_flag` / `routed:` / night_said 正文锁 在 tests **0 命中**。
+
+末判点名伪证（auto_close spy / power_band routed / 私有标记断言）维持已删；正向六科退场案保留。
 
 ---
 
-## 4. 聚焦测试（七 BIN=/usr/bin/false）
-
-前缀：
+## 4. 聚焦验证（七 BIN=/usr/bin/false；不全量）
 
 ```
 MING_SIM_AGY_BIN=/usr/bin/false MING_SIM_CODEX_BIN=/usr/bin/false \
@@ -120,38 +127,36 @@ MING_SIM_PI_BIN=/usr/bin/false
 
 | 集 | 结果 | 墙钟 |
 |---|---|---|
-| 点名节点 11 项 | 21 passed | real 3.68s |
-| 触及文件 11 个 | 226 passed | real 12.02s |
-| `tests/test_supervision_625.py` | 7 passed | real 1.80s |
+| 点名/触及节点（含 escort、income、refugee、month_chain、substrate 两案、六科、promulgation…） | **58 passed** | real 5.09s |
+| 触及文件套件 12 文件 | **186 passed** | real 10.65s |
 
-不全量。不为证明新造测试。
+日志：`focused-named.log` / `focused-files.log`。不为证明新造测试。
 
 ---
 
 ## 5. 进程内变异（旧逻辑红 → 恢复绿）
 
-| 变异 | 结果 | 恢复 |
+| 变异 | 变异结果 | 恢复 |
 |---|---|---|
-| `apply_legacy_pct` 收入 +1 | 1 failed（期望 88 得 89） | 生产函数已恢复 |
-| 回流后人口错 1 | 1 failed（106001 ≠ 150000−44000） | 1 passed |
-| `recompute_faction_leverage` 停用 | 1 failed（50 ≠ 48） | 1 passed |
-| `build_night_said_so_far` 忽略截止 | 1 failed（后轮进入 night_said） | 1 passed |
+| `GameDB.apply_legacy_pct` +1 | 1 failed（89≠88） | 1 passed；staticmethod descriptor 已恢复；`apply_legacy_pct(100,-12)==88` |
+| `grant_arrival_bounds` 中位 +1 | 1 failed（23≠22） | 1 passed |
+| `recompute_faction_leverage` noop | 1 failed（50≠48） | 1 passed |
+| `build_night_said_so_far` 忽略截止 | 1 failed（落账含「后轮泄漏」） | 1 passed |
+
+日志：`mutations.log`。
 
 ---
 
-## 6. 自查（合法性 / 复杂度）
+## 6. 自查
 
-- 净删约 277 行（9 files, +71/−348）；无新机制、账本、护栏、未知护送状态。
-- 连接层改用 SQLite 原生 JOIN，未平行造读口。
-- 测试只改既有节点；删 mock/文字锁/伪证；精确数值来自现行公式与实抵口径。
-- 功能接续（有护核账等）不在本片补齐，不转记测试质量债为 #1873。
+- J18：删死读口；假「护送实况：无护」供料不复现；不恢复专用账本/双载体；核账仍无护口径（#1873）。
+- J6：去掉 night_said 正文锁与实现函数 oracle；精确期望来自开局 legacy / 北极星比例 / 公开常量；无平行夹具、无生产测试钩子。
 - 合法阻断：无。
+- **剩余**：成员表中 KEEP_* 项——均为现役外部契约或边界替身，附依据；缺陷类 DELETE/FIX 残留 0。不以「候选总数归零」冒称结清。
 
 ---
 
-## 7. Commit
+## 7. Commits（本轮起）
 
-- SHA：`39c7c9309a27b8a46e1f98ec95982613c899ae7d`
-- 短哈希：`39c7c9309`
-- 标题：`ak-roles: fix(#1900): retire J18 escort-feed residue and restore J6 contract discrimination`
-- `git diff --stat bb448254c HEAD`：10 files, +225/−348（含本回执）
+- 先前：`39c7c9309` 窄枚举施工（已由本轮纠正 oracle/枚举义务）
+- 本轮 SHA：（提交后回填）

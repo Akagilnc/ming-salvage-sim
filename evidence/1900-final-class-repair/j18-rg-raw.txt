@@ -1,0 +1,138 @@
+web_app.py:1461:        station_by_id = {
+docs/474-family-dod-570.md:44:| 护行→拨饷三链双向可达 | `tests/test_dossier_links_559.py` |
+docs/474-family-dod-570.md:131:| 护行三月进展+密奏 | `tests/test_secret_order_monthly_progress_566.py` |
+docs/474-family-dod-570.md:141:| 有护行折损优于无护行〔闸〕 | `tests/test_grant_reconciliation_567.py`（及闸级证据若有） |
+ming_sim/cli_backend.py:2968:    _by_id = {int(c["id"]): c for c in _candidates}
+docs/fiscal-substrate-review-r4-agy.md:17:    *   **分歧**：但动作 `zhuanyuan_yajie`（专员押解）却拥有 `duration_months` 生命周期。如果解运是瞬间完成的，押解动作的“持续月数”在引擎中如何作用？
+ming_sim/supervision.py:25:# 监督关系：本票只记「稽核」在场（护卫属 #567 押解口径，不入钝化事实底）
+docs/fiscal-substrate-review-r3-codex.md:28:   另外临时效果、持续支出、一次性支出要进 schema，否则 `专员押解`、`养廉银`、`赈灾` 三类会被写成三种不同生命周期。
+docs/HISTORICAL_CASE_LIBRARY.md:58:| **车厢峡诈降**（崇祯七年） | 李自成等被陈奇瑜困于峡中，乞降；陈受降并派安抚官护送出峡，贼众一出险地即尽杀安抚官复叛，陈被逮 | 受降审查缺位：对手把「投降」当战术指令用；受降方却按制度流程走，时间差全归对手 | 受降事件的真伪判定留给 LLM 软判，但「降而复叛」的概率应随对方处境改善而暴涨 |
+ming_sim/content.py:727:            event_by_id={ev.id: ev for ev in (*events, *seed_events)},
+docs/design/game-v2-architecture.md:220:2026-09-09，Q7 比较同一件事的结果由推演 LLM 一次交给中间层，或让它分别调用人事、财政、军事并自行关联。助手推荐第一种，以任命洪承畴、拨银三十万、派兵护送为例：中间层内部分派已有核算与记账能力，不要求推演模型掌握模块划分和调用顺序；助手当时附带的「不增加辅助 LLM 翻译」说法被 owner 随后质疑，不能随统一入口一起当作授权。
+docs/design/game-v2-architecture.md:321:| 补军饷 | `ming_sim/db.py`：`_apply_army_pay_grant_effect`；`ming_sim/flows.py`：`_apply_economy_list` | 当前扣库并销欠，不等于已经经过赈灾的押解实抵链 |
+docs/design/game-v2-architecture.md:322:| 赈灾拨款 | `ming_sim/db.py`：`grant_arrival_bounds`、`record_monthly_grant_reconciliations` | 已有面额、护送及实际抵达的计算，不借重构重写同一机制（0054 的 `clamp_grant_arrival_amount` 软判口已于 #1900 退役：沿途损耗归引擎） |
+docs/design/game-v2-architecture.md:329:因此先复用能支撑玩法的核算。尚未批准让宁远补饷改走赈灾押解、修改比例或建设逐站运输模拟；不能把调查者提出的可能接法当成新任务。
+ming_sim/decree.py:657:    by_id = {int(row["id"]): row for row in dossiers}
+docs/DELTA_SCHEMA.md:384:引擎给出：`arrived = (grant_arrival_bounds(ordered, escorted=…) 的中位)`，
+docs/DELTA_SCHEMA.md:385:`loss = ordered - arrived`。#1900 已撤销的专用逐路实况账本 / 双载体承接 / 聚合读口 /
+docs/DELTA_SCHEMA.md:386:`escort_results`·`escort_links` 分节与入口专用资格校验已退役；本切片核账按无护口径，
+docs/DELTA_SCHEMA.md:393:### `commissions[].grant.escort` — 押解随拨银旨（#1900）
+docs/DELTA_SCHEMA.md:395:平常押解人记在**同一道拨银交办**里，不另立密令、不另挂本案卷关联槽
+docs/DELTA_SCHEMA.md:396:（#1900 修订；逐字批准见 ADR 0054，不把方案摘要当成御批原文）。`escort.escortees` 每项照 ADR 0053 参与人形状
+docs/DELTA_SCHEMA.md:398:后落进本案卷 `participant_roster` 单一真源；`escort.note` 为原文，零删改（ADR 0142）。
+docs/DELTA_SCHEMA.md:399:没给 `escort` 即无押解，代码不猜；已声明却不是 ADR 0053 条目形状 → 逐项拒收，不静默丢弃。
+docs/DELTA_SCHEMA.md:401:### ~~`commissions[].secret_order.escort_pending_targets` / `escort_sources` / `escort_links` / `escort_results` / `dossier_escort_outcomes`~~ — 已退役（#1900 J18）
+docs/DELTA_SCHEMA.md:403:旧处方新造的暗护双载体承接、专用实况账本、配对聚合读口、入口专用资格校验及分节声明已随
+docs/DELTA_SCHEMA.md:404:ADR 0054／0058 已署修订与 #1812 删简验收一并退役；不另造替代机制。另行暗护玩法本身未宣布取消，
+docs/evidence/issue-1571/test-disposition.md:168:| 29 | test_grant_reconciliation_567.py（8/7） | **机械改径** | 护送对账（:84/:129/:153） |
+docs/evidence/issue-1571/test-disposition.md:369:| P13（decree_vocabulary.py:236-243/:254-280） | 固定终值奏报 band/memorial | **方案重定（五审）：四审「待终奏机读标记 + 新建必覆条目」改为纯派生**——判词实读确认四审仍留一处发明：②「落待终奏机读标记」需新写字段/状态，违反最小新建；且月报链已有可派生谓词，不必落标记。**派生方案**：终奏缺口候选 = decree_dossiers 行 **status='closed'** ∧ closed_turn>0 ∧ **execution_outcome ∈ {degraded, transformed}**（status/closed_turn/execution_outcome 列 schema db.py:1513/:1515 实读）∧ 无 is_terminal 奏报行（dossier_progress 行判定，同表现有查询模式），纯读面派生、零新写。**结案判据修正（八审）**：「closed_turn>0」单独不等于已结案——`record_dossier_execution`（db.py:15580-15614）对任何 outcome≠'executing' 都写 closed_turn=turn（:15610），是否结案由独立参数 close 决定（仅 close=True 才调 close_decree_dossier，:15614-15615）；closed_turn>0 且 status='executing' 是合法行（既有布景 tests/test_covert_levy_651.py:149-154：outcome='transformed'、close=False，随后继续读 fork）→ 谓词必含 status='closed'。**谓词收窄（六审）**：原稿「execution_outcome 非空」会把 fulfilled/failed 结案也纳入月度终奏——越界；被删 terminal_report_facade 原本只在 degraded/transformed 分支被调（notary 实读确认：全仓仅 issues.py:8204-8214 / due_review.py:537-547 两调用点，:8204/:537 均以 `outcome in {"degraded","transformed"}` 守门），扩张违反 spec Out of Scope「案卷新语义/新行为不在本票」→ 收窄为仅 degraded/transformed。**明文边界：fulfilled/failed 结案不因本票新增终奏；若要给它们加终奏须另获产品授权，不得夹带。****真链实读**（替换四审错误引用）：候选读面 = db.py:12751-12779 `list_monthly_dossier_progress_nudges`（现仅密令长差 JOIN secret_orders + tags∩{护行，稽核}，扩 union 一类终奏缺口条目谓词=上述派生条件，普通+密令同谓词、**不设 secret_order_id 排除**）；**候选域补齐（七审）**：原稿「secret_order_id IS NULL」会把已结案 degraded/transformed **密令**案卷挤出候选——原 terminal_report_facade 两调用点（issues.py:8204-8214 / due_review.py:537-547）只按 outcome 守门、无密令排除；既有密令长差月报支路（db.py:12753-12766）又只收 status∈{promulgated,executing} + secret_order active + deadline_span≥2 + tags∩{护行，稽核}，已结案密令案卷两边都进不去 → 误删原行为域，故移除密令排除（ADR 0073 依据：所有带执行判定面的案卷均可挂奏报轨，不以密令/普通划分资格）。**不重叠论证（八审重写）**：终奏缺口支路要求 status='closed'，长差密令支路要求 status∈{promulgated,executing}——status 值域互斥（结案≠在办），两支路真正不重叠、不重复成奏；写口/admission = db.py:12781-12824（:12792-12811 fail-loud 守门，缺必覆条目即 raise）；extractor 注入点 = simulation.py:1342-1346（personnel_secret 档房 `slim["monthly_dossier_reports"]`，:1344-1345 authorized secret rail）；settle 触发点 = decree.py:2720-2722（结算段调 extractor 链）。**落点**：① 删 terminal_report_facade 固定文案（band 映射 :236-243、固定 memorial :240-243/:266-267、「办结」fallback）——此点同四审不变；② 两同步写调用点（issues.py:8204-8214、due_review.py:537-547）改为只落执行格终值，**不落任何机读标记**（删四审②后半）；③ 候选装配扩 union（上引读面），终奏缺口条目（普通+密令同谓词）与密令长差同槽进月报 prompt，输入面只喂承办人视角结构化事实（dossier_id/criterion/末次非终值陈词引用/月度进展带；**变形案不喂判官真值与执行格 outcome**——0073 奏报轨假象/变形两轨分叉由输入面事实筛选承载），LLM 产终奏 band+memorial，经既有写口落 is_terminal=True 行（turn 落结案 turn=closed_turn，保 0073 时序契约）；④ transformed 复用末次陈词逻辑（:269-279）改为输入面事实引用（喂回 extractor 作假象载体），不再由代码直接落库；⑤ 失败语义：extractor 缺终奏必覆条目 → admission fail-loud（:12792-12811 同款）→ settle abort 整体回滚 → `resolve_settling_recovery`（decree.py:1580）重试，不落固定兜底。附带点：due_review.py:548-553 中段奏报「在办」固定词 + 机读 note 入 memorial_text 属同链同处置（随本方案一并改由 LLM 链成文或删）。**测试处方（五审）**：走真实 settle/extractor 主干——degraded/transformed 结案 settle 后断 typed `is_terminal=True` 奏报行存在、turn=结案 turn、origin/routing 正确（不读不比较 memorial 文本）；**候选谓词正反例（六审加普通正例/反例、七审加密令正例）**：degraded/transformed 普通案卷结案且缺终奏 → 断其入候选槽（正例）；degraded/transformed **密令**案卷结案且缺终奏 → 断其入候选槽（密令正例，守原行为域不误删）；fulfilled/failed 结案（普通与密令同）→ 断其**不入候选、不新增终奏**（反例，守 spec Out of Scope 边界）；degraded/transformed + close=False + status='executing' 的普通与密令案卷 → 断**不进入终奏缺口候选**（八审反例；满足长差条件的密令只进既有长差支路一次，不重复）；extractor 缺必覆条目时断 settle fail-loud 回滚、resolve_context 可重试（不允许「成功但无终奏」）；桩 extractor 测试只查允许/禁止结构化键（有 dossier_id/criterion/末次陈词引用，无判官真值/执行格 outcome 键），不锁措辞 |
+docs/setting-outline.md:616:玩家仍可选择殉国、护送太子、保存档案、转移工匠、命令地方继续抗清或承认新政权以保民。
+docs/evidence/issue-1571/boundary-inventory.md:39:| 3 | `decree_dossier_reconciliations` | db.py:1553-1570 | 进 | 护送对账子模块表（0058） |
+docs/evidence/issue-1571/boundary-inventory.md:136:- 13 个 → supervision 子模块（6 公开 #22-24/#26-28 + 7 私有实现件；`trigger_supervision_countermeasures` 拆分移段适配器组，其纯读半析出 supervision 公开第 7 入口 `list_supervision_countermeasure_candidates`（#25）——析出新入口不占 124 方法额度）；6 个 → reconciliation 子模块（4 公开 #29-32 + 2 私有：`list_monthly_grant_reconciliation_targets`、`_grant_escort_presence`）；
+docs/evidence/issue-1571/boundary-inventory.md:167:| `_grant_escort_presence` | db.py:12826-12834 | 子模块 reconciliation |  |
+docs/evidence/issue-1571/pr-slices.md:4:- 本文回应大理寺一审打回项：「优先按 schema、护送对账、监督检举、进展双轨、核心状态机等可独立 seam 做纵切 PR」；二审（run 01a04322）判 continue 后按「未证不可再拆就要拆」再拆三片、并统一与 boundary-inventory 的归属矛盾。**结论先行：采纳纵切，不走单 PR**；16 片均可独立合并，每片合并后目标分支不存在壳/双实现（论证模板与各片逐项论证见 §2）。单 PR 案因此无需再证——其不可拆性主张已被 §2 的逐片可合性反证推翻。
+docs/evidence/issue-1571/pr-slices.md:5:- 方法分组口径与 boundary-inventory（另票证据）同源（成案/查询读面/进展双轨/护送对账/监视检举/连坐毁约/状态机/verdict 物化），且**方法归属一律以 boundary-inventory 为真源**（毁约/连坐拆分形状以 breach-liability-split §2 为真源），本文片内容跟随修正；但本文**所有数字均为本 HEAD 用 AST+grep 自行核实**，不依赖该文件存在。测试总数口径另票核定，本文引用处写「见 test-disposition」。
+docs/evidence/issue-1571/pr-slices.md:55:- 叶方法提前说明：`merge_execution_note`（callee 仅 `_commit_dossier_write`+`get_decree_dossier`）与 `dossier_authorizes_effects`（零 callee）被连坐毁约/护送对账/执行格三方共用，提前进 kernel 是为消除组级环（§4.1），不提前则 PR-11/PR-10 必须排在 PR-14 后，纵切序退化成单链尾大头。
+docs/evidence/issue-1571/pr-slices.md:124:### PR-10【护送对账子模块】
+docs/evidence/issue-1571/pr-slices.md:126:- 内容：`_grant_escort_presence`（9）、`list_monthly_grant_reconciliation_targets`（42）、`list_dossier_reconciliations`（29）、`list_open_grant_reconciliations`（22）、`record_monthly_grant_reconciliations`（95）、`merge_grant_reconciliation_into_execution_note`（13）。公开面 4 个（`list_monthly_grant_reconciliation_targets`、`_grant_escort_presence` 子模块私有——前者零生产外部调用、仅包内 `list_open_grant_reconciliations`/`record_monthly_grant_reconciliations` 用，boundary §2.1 私有清单），公开入口见 boundary §2.1 #29-32。
+docs/evidence/issue-1571/pr-slices.md:129:- 依赖：PR-2（`merge_execution_note` 叶与颁赏纯件 `_grant_allocation_is_monthly/honorific` 均已进 kernel）、PR-5（`list_dossier_links`——`_grant_escort_presence` 用）。
+docs/evidence/issue-1571/pr-slices.md:189:            ├────────→ PR-10 护送对账（另依 PR-5）
+docs/evidence/issue-1571/pr-slices.md:217:| PR-10 护送对账 | ~210 | 5 | 7（2） | PR-2、PR-5 |
+docs/evidence/issue-1571/pr-slices.md:233:| `merge_execution_note`（叶）、`dossier_authorizes_effects`（叶） | 护送对账、连坐毁约 ← → 执行格（PR-14） | 组级环；不断则 PR-10/PR-11 排到 PR-14 后，尾部臃肿 | 两叶提前入 PR-2 kernel（callee 全在 kernel 内，有资格） |
+docs/evidence/issue-1571/pr-slices.md:236:| 颁赏纯件 4 个（`_grant_allocation_is_monthly/honorific`、`_normalize_army_pay_grant_payload`、`_is_army_pay_grant_payload`） | kernel 读面 + 成案 + directive 准入 + 护送对账四方 | 纯 payload 函数（零 conn/state，实读核）；归段会造包→段反向调用 | 全部入 PR-2 kernel（store 私有，boundary §2.2 已据实读改归）；物化 3 件（`_create_grant_fiscal_item`/`_apply_army_pay_grant_effect`/`_apply_grant_honorific_effect`）仍段适配器，成案内 immediate 物化析出段侧（PR-3） |
+ming_sim/audience_translate.py:235:    # 在途拨帑与自带押解标记（普通押解随拨银旨）；专用护送目录/实况行已退役。
+ming_sim/audience_translate.py:240:        declared = db.dossier_declares_escort(int(row["id"]))
+ming_sim/audience_translate.py:243:            + ("\t自带押解" if declared else "")
+ming_sim/audience_translate.py:295:        '        "escort": {"escortees": [{"character_id": "押解人名", '
+ming_sim/audience_translate.py:297:        '"delegator_id": "委派人名或空"}], "note": "押解护送缘由原句"}\n'
+ming_sim/audience_translate.py:436:        "- **本场新交办的拨银自带押解**（「着某人押解护送」）→ 不另立密令，"
+ming_sim/audience_translate.py:437:        "在该 commissions 项的 grant.escort.escortees 按 ADR 0053 参与人条目写押解人"
+ming_sim/decree_forecast.py:19:from ming_sim.db import payload_declares_escort
+ming_sim/decree_forecast.py:158:        # 猜号只留在判官候选的整数 id 上（批红契约要正整数），不进护送目录。
+ming_sim/decree_forecast.py:160:        if catalog_token and payload_declares_escort(payload):
+ming_sim/decree_forecast.py:161:            grounding = _append_this_decree_escort_grounding(
+ming_sim/decree_forecast.py:287:def _append_this_decree_escort_grounding(
+ming_sim/decree_forecast.py:292:    #1900 J18：已撤销的暗护双载体 escort_link 目录行不再写入；仅保留本旨自带押解标记。
+ming_sim/decree_forecast.py:297:    declared = payload_declares_escort(payload)
+ming_sim/decree_forecast.py:300:        + ("\t自带押解" if declared else "")
+docs/evidence/issue-1901-j11-members.md:145:| P137 `192603c52..c8215188f` | `tests/test_faction_leverage_9.py::test_calibrate_offset_flag_consumed_once` | 删除私有 flag 赋值/形状消费钉；真实旧档校准、clamp 重载保真保护行为；出处 `tests/test_faction_leverage_9.py::test_legacy_save_calibrates_offset_on_open; test_offset_not_re_anchored_on_reload_after_clamp` | ming_sim.db.GameDB._calibrate_faction_offsets |
+ming_sim/db.py:837:# #567 / ADR 0054：押解实抵区间（北极星 30 两面值 → 无护 15-18 / 有护 22-25）。
+ming_sim/db.py:844:def grant_arrival_bounds(ordered_amount: int, *, escorted: bool) -> Tuple[int, int]:
+ming_sim/db.py:849:    lo_n, hi_n = _GRANT_ARRIVAL_ESCORT if escorted else _GRANT_ARRIVAL_BARE
+ming_sim/db.py:859:def payload_declares_escort(payload: object) -> bool:
+ming_sim/db.py:860:    """拨银载荷是否自带押解安排。未成案与已成案共用这一判据，只是取数位置不同。"""
+ming_sim/db.py:863:    escort = payload.get("escort")
+ming_sim/db.py:864:    if not isinstance(escort, dict):
+ming_sim/db.py:866:    escortees = escort.get("escortees")
+ming_sim/db.py:867:    return isinstance(escortees, list) and any(
+ming_sim/db.py:868:        str(name or "").strip() for name in escortees
+ming_sim/db.py:1649:                escorted INTEGER NOT NULL DEFAULT 0 CHECK(escorted IN (0,1)),
+ming_sim/db.py:1650:                escort_source_dossier_id INTEGER,
+ming_sim/db.py:12279:    def dossier_declares_escort(self, dossier_id: int) -> bool:
+ming_sim/db.py:12280:        """该道拨银旨自身是否声明了押解护送（#1900 押解默认随拨银旨）。
+ming_sim/db.py:12282:        押解人、随行护卫写在**同一道拨银交办**里即成安排，不另立密令、不另挂
+ming_sim/db.py:12283:        关联——这是 owner 2026-09-30 裁定的常态口径。案卷载荷里的 ``escort`` 是
+ming_sim/db.py:12284:        参与人名单 ``participant_roster`` 的押解投影（ADR 0053 单一真源），此处只
+ming_sim/db.py:12285:        判「有没有押解安排」，不重解名单。
+ming_sim/db.py:12297:        return payload_declares_escort(payload)
+ming_sim/db.py:12299:    # #1900 J18：已撤销的专用暗护双载体 / 实况账本 / 聚合读口 / 专用资格校验已退役。
+ming_sim/db.py:12300:    # 普通押解仍走 grant.escort→participant_roster；关联槽仍走 decree_dossier_links。
+ming_sim/db.py:12315:        专用逐路实况账本已退役；``escorted`` 字段保留形状但本切片恒为无护。
+ming_sim/db.py:12374:                "escorted": False,
+ming_sim/db.py:12375:                "escort_source_dossier_id": None,
+ming_sim/db.py:12377:                "escort_note": "",
+ming_sim/db.py:12402:                "escorted": bool(row["escorted"]),
+ming_sim/db.py:12403:                "escort_source_dossier_id": (
+ming_sim/db.py:12404:                    int(row["escort_source_dossier_id"])
+ming_sim/db.py:12405:                    if row["escort_source_dossier_id"] is not None else None
+ming_sim/db.py:12427:                    "escorted": bool(target["escorted"]),
+ming_sim/db.py:12428:                    "escort_source_dossier_id": target["escort_source_dossier_id"],
+ming_sim/db.py:12439:        """月度节拍：逐路由引擎按既有押解折损范围定实抵与损耗 → 落被护侧对账记录。
+ming_sim/db.py:12442:        本方法不再接任何提案——实抵取该路护行口径区间的中位；专用逐路实况账本
+ming_sim/db.py:12458:            escorted = bool(target["escorted"])
+ming_sim/db.py:12467:            lo, hi = grant_arrival_bounds(ordered, escorted=escorted)
+ming_sim/db.py:12471:            source_id = target["escort_source_dossier_id"]
+ming_sim/db.py:12477:                     escorted, escort_source_dossier_id, relation_type, note)
+ming_sim/db.py:12483:                    escorted=excluded.escorted,
+ming_sim/db.py:12484:                    escort_source_dossier_id=excluded.escort_source_dossier_id,
+ming_sim/db.py:12490:                    1 if escorted else 0,
+ming_sim/db.py:13480:            f"押解对账：应解{int(latest['ordered_amount'])}两，"
+ming_sim/db.py:17794:        night_turn_by_id = {
+ming_sim/db.py:17811:        by_id = {
+docs/adr/0053-participants-roster-three-tiers-dispatcher-chain.md:7:案卷参与人=可追加名单，每条 **(人物 id, 机械档∈{主办,协办,知情}, 职分文字, 委派人 id·可空)**（「人物 id/委派人 id」=人物主键引用——现库 characters 以 name 为主键，字段类型循库实际主键、S2 落定，cmr R9 防 INTEGER 误设）。**主办可多人**（北极星实证：倪元璐＋黄道周合力试点清丈畿辅）；协办含跨衙门接应（杨嗣昌「户部接应钱粮、账目盯着」）与大臣自遣之人；知情只喂见闻派生（参与即知，#485/#489），不进追责链。**委派人**=连坐与责任上溯的机械依据（徐光启「门生听调」所点学生、毕自严遣门生张缙彦持密令押解——所遣之人办砸，全权者背锅；走样判定据此区分主办自砸与所遣人砸）。名单可追加：皇帝未点名而大臣自行拉人的，月末推演出场时由 extractor 追加、委派人填该大臣（P1 当回合更新）。「门生听调」类**授权本身**不长在案卷上——走 #513 interim（grant_skill）/#460 授权槽既有口径。树不做：师徒/门生故吏/座主同年网归人物关系层（#479/#89），案卷只记本案角色，引擎判定时拿人物 id 去关系层查（防双真源、防快照腐化）；机械三档管账、职分文字管戏（「监军」「参赞机务」，LLM 读、引擎不解析）。#474 body 的经手/知情人名单字段义务由本结构承接；密令排除名单真源仍归 #489（native blocked-by 已建），不在通用名单重建。
+docs/adr/0051-decree-ledger-is-night-commit-record-no-second-split.md:5:收夜落库的每条准旨记录（政令/任免/交办/拨款/密令等，密令为应允即落地的既有例外）即「**案卷**」——唯一可寻址的 action 一等实体，带状态机（**准旨→已颁→执行中→结案**——「打回」不在主链：它是颁布格值＋批红待抉择的旁路组合态，cmr R8 统一表示法；迁移规则：结案直达仅限**效果落地即终局、无执行判定面**的案卷（如内库直发恩赏）；凡带执行判定面者——**任免（就任/称病/辞不拜）、在途拨款（押解对账，S12）、军令状/护行/工程**——已颁→执行中，执行格填值后结案（任免辞不拜的官位后果=后续 office_changes 记录走推演-extractor 既有链，物化不回滚；各动词类型执行判定面之有无随 S5 对照表逐聚类落定——cmr R11 补任免归类，防「结构化载荷=一次性」误读关死执行格）；案卷记录诞生于**成案点**＝收夜提交**或**结束回合默认同意〔0049 成案路——默认同意者同样建案卷、同批入判，cmr R8 补两路〕，即准旨；「已应允」属 pending_actions 暂存域的前置概念态，**不入案卷枚举**，0038 夜内直写白名单不动，cmr R3 校正死状态；密令案卷应允即落地、始态即已颁）与时间戳（含军令状期限）、**中旨标记字段**（含缘由，append-only 标记/判决流水——schema 归本条，写入归 0055/0056 批红与判官路径，0052 的 STIGMA 存放引用即此，cmr R5 补 ADR 级定义）；**不存在月末第二次切分层**，旨意的粒度=召对内拆分（#519 一句多旨，归 #471）后皇帝逐条应允的粒度。#150 由「新建 decree_text→action[] 转换层」收敛为「给收夜记录补齐案卷字段」的契约（判决两格 0052／参与人 0053／关联与回指 0054）——其 body 前提写于暂存管线（0028/0038/#502）之前，按本条改写。月末推演改吃案卷列表而非合并文本 blob（decree.py 现状），定向改造细节归 PRD（0057）。案卷粒度即撤回成命（0041）、否决网（#473）、到期复核（#476）的作用单位——皇帝指得着「朕收回派李若琏那道旨」。不给对话档发言立案卷（0037 不预建）；案卷不是 delta 之上的平行第二真源——它是 delta 各效果记录的溯源锚（0054 回指）。三条边界条款（cmr R1 补）：①**物化载荷（cmr R3 细化适用面）**——**结构化载荷类**案卷（任免/定额拨帑/授权等 payload 可机械导出**且经外廷受判**者——**密令不在此列**：应允即物化的 0038 白名单例外、豁免判决 gating，案卷仅单向引用其行，cmr R8 除内矛盾）继承暂存候选的机械载荷（0006 暂存表 payload_json 既有形态），判决后（顺颁/批红强颁/留中跨月后强颁）效果自案卷载荷物化、同源可重放，打回零效果不需要任何回填；**叙事性政令**（新政/工程/改革，无结构化 payload）效果经推演-extractor 链涌现，已颁出才进推演正文（顺颁当月、批红强颁次月 T+1——0055 cmr R12）、打回受硬约束零效果（0055 分工线）。载荷是物化**输入**，非 0054 所禁的效果清单副本（那是落库**输出**的复制）。②**留中态**——批红留中=回「准旨（待判）」态、下月重入判决（0055）；**留中保持同一案卷 id（非新建记录），重判即同案再判**；「打回」即批红 DECISION 块期间的持有态，三选是迁出转移而非新增枚举（强颁→已颁、收回→结案、留中→准旨待判——cmr R3 钉同一性与持有态语义）；**DB status 列枚举恰四值｛准旨/已颁/执行中/结案｝**（中文为概念名——实际存储常量命名循仓库既有英文惯例、S1 落定；「（待判）」为准旨态的注解、非枚举后缀，cmr R9）——「打回」不入 status 列，其表达=颁布格值「打回」＋案卷停留在批红待抉择（组合态），迁移测试断言组合态而非裸枚举（cmr R7 钉 schema 表示）；颁布格存最新判决，历次判决进 append-only 判决流水（0057 判官读的强颁标记流水同源）。③**密令双轴划界**——密令案卷以**单向外键**指向 secret_orders 行（案卷.secret_order_id，新指旧、secret_orders 老表零改列；反查由案卷侧查询发起——cmr R3 改判「互指」措辞，遵 0054 引用纪律）：核议生命周期（active→pending_review→done/failed 结案——实码枚举，cmr R2 校准）真源仍在 secret_orders 既有链（0011-5 D5-7 隔离原则），判决格/参与人/关联/月度进展归案卷；结案时执行格与 result 由同一 extractor 步同写（单写入方）；**非月末的异常终态迁移**（承办人死亡/被罢/密令提前取消等致 secret_orders 直接转 done/failed 的入口）经同一结案函数**同步案卷结案＋执行格中断说明**（复用单写入方，防两轴撕裂留幽灵在途案卷——cmr R4）；两轴不重叠、restore 不漂移。
+ming_sim/declaration_dispatch.py:1017:    _attach_commission_escort(db, grant, payload)
+ming_sim/declaration_dispatch.py:1021:def _attach_commission_escort(
+ming_sim/declaration_dispatch.py:1024:    """#1900：押解随拨银旨——护送安排写在**同一道拨银交办**里即成。
+ming_sim/declaration_dispatch.py:1026:    owner 2026-09-30 裁定：平常「拨银三十万去宁远，着某某押解护送」，押解人
+ming_sim/declaration_dispatch.py:1027:    就记在这道拨银旨里，不另立密令、不另挂关联。押解人不另走一份名单：声明按
+ming_sim/declaration_dispatch.py:1030:    ``participant_roster`` 单一真源。合法缺省＝没给 ``escort``；已声明却不是
+ming_sim/declaration_dispatch.py:1033:    escort = grant.get("escort")
+ming_sim/declaration_dispatch.py:1034:    if escort is None:          # 合法缺省＝没安排押解
+ming_sim/declaration_dispatch.py:1036:    if not isinstance(escort, Mapping):
+ming_sim/declaration_dispatch.py:1038:            "押解声明 escort 须为 ADR 0053 参与人条目对象", failed_fields=("escort",),
+ming_sim/declaration_dispatch.py:1040:    entries = escort.get("escortees")
+ming_sim/declaration_dispatch.py:1043:            "押解声明 escort.escortees 须为 ADR 0053 参与人条目列表",
+ming_sim/declaration_dispatch.py:1044:            failed_fields=("escort",),
+ming_sim/declaration_dispatch.py:1046:    note = escort.get("note")
+ming_sim/declaration_dispatch.py:1049:            "押解声明 escort.note 须为原文", failed_fields=("escort",),
+ming_sim/declaration_dispatch.py:1059:            f"押解参与人名单非法：{exc}", failed_fields=("escort",),
+ming_sim/declaration_dispatch.py:1063:            "押解声明 escort.escortees 须含 ADR 0053 参与人条目",
+ming_sim/declaration_dispatch.py:1064:            failed_fields=("escort",),
+ming_sim/declaration_dispatch.py:1072:    # 单一真源：参与人名单只存 participant_roster；escort 记录是它的押解投影。
+ming_sim/declaration_dispatch.py:1080:        "escortees": [str(entry["character_id"]) for entry in roster],
+ming_sim/declaration_dispatch.py:1084:    payload["escort"] = record
+ming_sim/declaration_dispatch.py:1110:        # 押解名单已先写入 participant_roster。此处再给一份名单时合并，
+ming_sim/declaration_dispatch.py:1111:        # 不整表替换——否则押解人的职责与机械档从真源消失，只剩投影。
+ming_sim/declaration_dispatch.py:1347:            # 另行暗护沿既有密令声明入口；专用暂存资格校验与双载体承接已退役。
+docs/adr/0021-fiscal-cutover-hub-treasury-and-central-leakage.md:36:6b. **漏损可压低、手段开放（贯通四段、合 ADR 0007 上行软判）。** 每段漏损「人为分量」率**可被开放手段压低**——#261 只把率建成可调（留 hook、保证「可压低」），**绝不规定手段**（派锦衣卫护送 / 清丈 / 追赃 / 换官 / 监军… = #260 + LLM 软判 + 玩家自寻）；「自然分量」（漂没 / 运损 / eff 损耗）为**结构地板、不可清零**（survival 压力存活）。四段链：省在途漂没 → 中央太仓亏空 → 中央京运转运损耗 → 省到军前中饱。
+docs/adr/0054-ledger-cross-links-and-effect-backrefs.md:1:# 0054: 案卷关联与效果单向回指；普通押解随拨银旨
+docs/adr/0054-ledger-cross-links-and-effect-backrefs.md:9:普通押解属于同一道拨银交办，押解人物复用案卷参与人（[0053](0053-participants-roster-three-tiers-dispatcher-chain.md)），不另立密令或关联；另行暗中加派护送才用密令，所护对象可为当夜已记录的拨银交办。关联说明安排，不等于实际护成；沿途损耗与实抵按 [0153](0153-v2-world-record-and-two-way-mediation.md) 的数值归属由引擎核算，不恢复 LLM 软判实抵口。
+docs/adr/0054-ledger-cross-links-and-effect-backrefs.md:11:#1900 的重构验收只引用 [#1812「重构验收（2026-10-02 陛下重定）」](https://github.com/Akagilnc/ming-salvage-sim/issues/1812)。此前本 ADR 指定的 `escort_pending_targets` / `escort_sources` 双载体承接、配对聚合读口、入口专用资格校验及 `dossier_escort_outcomes` 专用账本处方撤销，不作为继续扩展或保全本切片新增机制的依据；配套记录、核算、供料、重开及撤回路径随本切片删简，不另定替代机制。职责搬迁、旧路退役由 [#1900](https://github.com/Akagilnc/ming-salvage-sim/issues/1900) 承接，功能如何接续留家族收尾，发现的缺口记 #1873；不是以新处方补齐全部功能，也不是宣布取消暗护或沿途损耗的玩法。
+docs/adr/0054-ledger-cross-links-and-effect-backrefs.md:17:- assistant `c323731c-6746-427d-a483-f54aa44fc198` 第 11 项「押解钱粮的路上损耗」建议「保留，搬到新架构里」；owner `b5286d3e-dfb1-4d78-89bb-0bcc702ca23b` 答复中说「别的都按你建议」。这是搬迁沿途损耗的依据，不是新账本授权。
+docs/adr/0054-ledger-cross-links-and-effect-backrefs.md:18:- owner `b229e663-c223-41cf-bf66-2f7fea7723d6` 问「护送为什么一定是密令？」；assistant `c8d29698-4c00-4c39-a83c-71084d18ebea` 答「押解默认算在拨银旨里，密令只管暗中护送」，并说明暗护挂当夜记下的拨银；owner `f6c00308-93f0-40ba-b9ec-33b6cc1d0c19` 答「对的。不要乱加关联」。原话未指定上述专用承接与账本实现。
+docs/adr/0153-v2-world-record-and-two-way-mediation.md:9:核算反馈与数值归属（2026-09-09，决策票 [#1820](https://github.com/Akagilnc/ming-salvage-sim/issues/1820) owner 逐题拍）：推演者交代一件事后，中间层转译、核算、记账，把实况事实（数额、经手、原因）回给**同一场**推演，推演者据实续演，续演里的新后果再走同一入口，交代几次由推演者定、不固定次数；无法承接的项（查无此人、库无此账）同样当事实回给推演者自行处置，代码不另加邸报提示句（[0008](0008-settlement-applier-contract-and-transaction-boundary.md) 决定 5 的机器提示与 [0015](0015-delta-apply-failure-per-item-rejection.md) 决定 3 的邸报提示由此被替代，拒收留痕不变）。数值归属：「能确定的，归引擎，不能确定的，归 llm」——判断（胜负、成色、查抄彻底否、人物选不选私吞）归 LLM，判断既定后能从账本存量与既定核算得出的数归引擎（库出、火耗、押解折损、到饷、兵额，以及抄没所得、缴获、斩获、伤亡），推演者交代里的数一律是名义；引擎没有依据可算的数才由 LLM 说、引擎 clamp 记账。沿途损耗归引擎核算，人物作为剧情动作的自选量（私吞几万、奏报几万、送几万）归 LLM，引擎只 clamp 不超所在账、奏报数不入核算（[0073](0073-two-books-reported-vs-actual-rails.md)）。未选：交代即结束、实况下月才见；固定两段续演；推演者说多少记多少；人物自选量按忠诚 / 贪腐算（现 `covert_progress` 地板形状，与 P6 反向，清理归 #1815）。逐笔落账与 0008 后半段原子边界、多事争一库的扣款顺序归 #1822；接口形状归 #1815；引擎新核算的公式接入时立票。
+docs/adr/0058-secret-order-monthly-progress-records.md:5:#1900 后出修订稿（2026-10-02）已署——给事中 `01a107bc-4cbd-717a-86b8-40d8dc328fa6`、符宝郎 `01a107cb-0111-7757-87d5-78c1adb9513b`：本票押解／暗护重构中，下文「补护行子结构」「逐月逐路建被护案卷侧对账记录」不再是切片补齐功能或新增载体的施工要求；本票处置以 [0054 后出修订](0054-ledger-cross-links-and-effect-backrefs.md) 与 #1812 现行重构验收为准。实况与奏报不混、读取同一份已有记录的原则不变；功能接续不在本切片重新设计。Accepted 不等于已实现。
+docs/adr/0097-judge-distance-input-and-convoy-defer.md:1:# 0097: 判官距离项填实与承办人在途态——银饷押解在途 defer
+docs/adr/0097-judge-distance-input-and-convoy-defer.md:3:Status: Accepted（PR #676 merged 2026-07-07；2026-07-07 #475 设计闸 grill Q7 用户拍：承办人在途态进、押解 defer）
+docs/adr/0097-judge-distance-input-and-convoy-defer.md:5:0092 带宽轴第⑤预留项的填法：接口层查 0094 矩阵（**承办人所在地×差务地**——承办人所在地取 characters.location，空则该项不参与，与差务 region_id 可空同款退化），折成**语义档**（远近＋预估耗时量级）进判官输入清单，不喂裸数（0095 同禁）；语义档与 0095 接口层语义量**同源同措辞**（「远近＋全程约 T 月量级」的折档），不另立枚举、不产「预计还需 X 月」。接口层另加一行**承办人在途/已到差**态——零 schema、不碰 #556 案卷状态机与月度节拍：判官软判「人在路上、差没开张」，到差后进展照 #556 既有机制走；**承办人在途期间距离项不参与**（0009 的 location 是「最后已知地」，在途中查它×差务地会每月照报全程静态距离、放大拖磨误判——行程进度由在途语义量行〔已在途 M 月/全程约 T 月〕承载，抵差后 location 更新、距离项自然归零）（派李若琏赴陕的「人」已被 0095 通用覆盖，本条只管让判官看得见）。**银饷/物资押解在途 defer**：给银子加在途＝改到账时点＝踩省级财政基座结算 tick（「起运当 tick 到京」是 22 轮评审收敛的现行契约）、动太仓/边饷 hub 时序与分源欠饷账，爆炸半径大；而押解的戏剧面（折损/对账/被劫）已有 #556 对账折损＋0092 阻力轴软判承载，缺的只是「晚几个月到」一格——defer 到 #93＋财政线 backlog，注明 0094/0095 底座可复用（车队＝慢速档）。

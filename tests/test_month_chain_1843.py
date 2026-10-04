@@ -708,10 +708,12 @@ def test_month_chain_lands_specialized_facts_before_due_and_gazette(game, monkey
         for item in db.list_dossier_progress(dossier_id)
     )
     recon = db.list_dossier_reconciliations(grant_id)[-1]
-    from ming_sim.db import grant_arrival_bounds
-    lo, hi = grant_arrival_bounds(int(recon["ordered_amount"]), escorted=False)
-    assert recon["arrived_amount"] == (lo + hi) // 2
-    assert recon["loss_amount"] == int(recon["ordered_amount"]) - recon["arrived_amount"]
+    # 北极星 30 两无护 15–18 → 面额 100 中位 55；独立常量，不调实现函数。
+    ordered = int(recon["ordered_amount"])
+    assert ordered == 100
+    expected_arrived = 55
+    assert recon["arrived_amount"] == expected_arrived
+    assert recon["loss_amount"] == ordered - expected_arrived
     assert recon["turn"] == int(state.turn)
     denunciations = db.list_faction_denunciations(
         turn=int(state.turn), target_dossier_id=dossier_id,

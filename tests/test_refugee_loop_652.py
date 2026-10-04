@@ -577,18 +577,17 @@ def test_in_transit_relief_stays_executing_before_gazette(game, monkeypatch):
         assert str(other["execution_outcome"] or "") == ""
         still = {int(row["id"]) for row in continuing_dossier_facts(loaded, loaded_state.turn)}
         assert henan_id in still and shaanxi_id not in still
-        # 回流基线＝**实抵**（652/0087）：引擎无护中位 × RECOVERY_PERSONS_PER_WAN。
+        # 回流基线＝**实抵**（652/0087）。北极星 30 两无护 15–18 → 面额 40 中位 22；
+        # 期望用独立常量，不调 grant_arrival_bounds 实现函数作 oracle。
         from ming_sim.constants import RECOVERY_PERSONS_PER_WAN
-        from ming_sim.db import grant_arrival_bounds
+        expected_arrived = 22
+        expected_transfer = expected_arrived * RECOVERY_PERSONS_PER_WAN
         recon = loaded.list_dossier_reconciliations(shaanxi_id)
         assert [int(r["turn"]) for r in recon] == [closed_turn]
         arrived = int(recon[-1]["arrived_amount"])
-        lo, hi = grant_arrival_bounds(amount, escorted=False)
-        expected_arrived = (lo + hi) // 2
         assert arrived == expected_arrived, (
-            f"无护中位实抵应为 {expected_arrived}（[{lo},{hi}]），得 {arrived}"
+            f"无护中位实抵应为 {expected_arrived}（面额 {amount}），得 {arrived}"
         )
-        expected_transfer = int(round(arrived * RECOVERY_PERSONS_PER_WAN * 1.0))
         assert _pop(loaded, "流民", "shaanxi") == displaced_before - expected_transfer
         assert _pop(loaded, "农民", "shaanxi") == farmer_before + expected_transfer
     finally:

@@ -1,0 +1,442 @@
+[
+  {
+    "file": "ming_sim/declaration_dispatch.py",
+    "line": 369,
+    "name": "_persist_specialized_extraction",
+    "kind": "def",
+    "head": "def _persist_specialized_extraction( |     db: Any, |     state: Any, |     extraction: Mapping[str, object], |     *, |     collector: RejectionCollector, |     turn: int, |     source: Provenance, |     defer_month",
+    "refs": 1,
+    "disposition": "KEEP_LIVE_OR_INCIDENTAL",
+    "basis": "现役声明/参与人/预推；非专用双载体账本"
+  },
+  {
+    "file": "ming_sim/declaration_dispatch.py",
+    "line": 931,
+    "name": "_commission_grant_payload",
+    "kind": "def",
+    "head": "def _commission_grant_payload( |     db: Any, *, text: object, grant: Mapping[str, object], | ) -> Dict[str, Any]: |     \"\"\"交办上的拨帑载荷；协饷走 #1503 单轨，其余走 grant_allocation shape。\"\"\" |     from ming_sim.action_mate",
+    "refs": 1,
+    "disposition": "KEEP_LIVE_ENGINE",
+    "basis": "现役押解随拨银/无护核账（#1900/#1812；功能接续#1873）"
+  },
+  {
+    "file": "ming_sim/declaration_dispatch.py",
+    "line": 1021,
+    "name": "_attach_commission_escort",
+    "kind": "def",
+    "head": "def _attach_commission_escort( |     db: Any, grant: Mapping[str, object], payload: Dict[str, Any], | ) -> None: |     \"\"\"#1900：押解随拨银旨——护送安排写在**同一道拨银交办**里即成。 |  |     owner 2026-09-30 裁定：平常「拨银三十万去宁远，着某某押解护送」，押解",
+    "refs": 1,
+    "disposition": "KEEP_LIVE_ENGINE",
+    "basis": "现役押解随拨银/无护核账（#1900/#1812；功能接续#1873）"
+  },
+  {
+    "file": "ming_sim/declaration_dispatch.py",
+    "line": 1087,
+    "name": "_attach_commission_staging_fields",
+    "kind": "def",
+    "head": "def _attach_commission_staging_fields( |     payload: Dict[str, Any], item: Mapping[str, object], *, turn: int, | ) -> None: |     \"\"\"透传既有 staging 字段：assignee / participant_roster / due_turn。 |  |     字段可在交办顶层，",
+    "refs": 1,
+    "disposition": "KEEP_LIVE_ENGINE",
+    "basis": "现役押解随拨银/无护核账（#1900/#1812；功能接续#1873）"
+  },
+  {
+    "file": "ming_sim/declaration_dispatch.py",
+    "line": 1174,
+    "name": "_dispatch_commissions",
+    "kind": "def",
+    "head": "def _dispatch_commissions( |     db: Any, state: Any, raw: object, *, minister_name: str, source: Provenance, |     source_chat_turn_id: int = 0, |     night_id: int = 0, | ) -> SectionResult: |     \"\"\"交办声明 → 既",
+    "refs": 1,
+    "disposition": "KEEP_LIVE_ENGINE",
+    "basis": "现役押解随拨银/无护核账（#1900/#1812；功能接续#1873）"
+  },
+  {
+    "file": "ming_sim/declaration_dispatch.py",
+    "line": 1033,
+    "name": "escort",
+    "kind": "assign",
+    "head": "    escort = grant.get(\"escort\")",
+    "refs": null,
+    "disposition": "KEEP_LIVE_OR_INCIDENTAL",
+    "basis": "现役声明/参与人/预推；非专用双载体账本"
+  },
+  {
+    "file": "ming_sim/declaration_dispatch.py",
+    "line": 1040,
+    "name": "entries",
+    "kind": "assign",
+    "head": "    entries = escort.get(\"escortees\")",
+    "refs": null,
+    "disposition": "KEEP_LIVE_OR_INCIDENTAL",
+    "basis": "现役声明/参与人/预推；非专用双载体账本"
+  },
+  {
+    "file": "ming_sim/declaration_dispatch.py",
+    "line": 1046,
+    "name": "note",
+    "kind": "assign",
+    "head": "    note = escort.get(\"note\")",
+    "refs": null,
+    "disposition": "KEEP_LIVE_OR_INCIDENTAL",
+    "basis": "现役声明/参与人/预推；非专用双载体账本"
+  },
+  {
+    "file": "ming_sim/declaration_dispatch.py",
+    "line": 1084,
+    "name": "<a>",
+    "kind": "assign",
+    "head": "    payload[\"escort\"] = record",
+    "refs": null,
+    "disposition": "KEEP_LIVE_OR_INCIDENTAL",
+    "basis": "现役声明/参与人/预推；非专用双载体账本"
+  },
+  {
+    "file": "ming_sim/issues.py",
+    "line": 7595,
+    "name": "_apply_score_extraction_body",
+    "kind": "def",
+    "head": "def _apply_score_extraction_body( |     db: GameDB, |     state: GameState, |     extracted: Dict[str, object], |     *, |     content, |     llm_config: Any, |     candidate_event_ids_at_input: Optional[set[str]],",
+    "refs": 1,
+    "disposition": "KEEP_LIVE_OR_INCIDENTAL",
+    "basis": "现役声明/参与人/预推；非专用双载体账本"
+  },
+  {
+    "file": "ming_sim/db.py",
+    "line": 839,
+    "name": "_GRANT_ARRIVAL_SCALE",
+    "kind": "assign",
+    "head": "_GRANT_ARRIVAL_SCALE = 30",
+    "refs": null,
+    "disposition": "KEEP_LIVE_ENGINE",
+    "basis": "现役押解随拨银/无护核账（#1900/#1812；功能接续#1873）"
+  },
+  {
+    "file": "ming_sim/db.py",
+    "line": 840,
+    "name": "_GRANT_ARRIVAL_BARE",
+    "kind": "assign",
+    "head": "_GRANT_ARRIVAL_BARE = (15, 18)",
+    "refs": null,
+    "disposition": "KEEP_LIVE_ENGINE",
+    "basis": "现役押解随拨银/无护核账（#1900/#1812；功能接续#1873）"
+  },
+  {
+    "file": "ming_sim/db.py",
+    "line": 841,
+    "name": "_GRANT_ARRIVAL_ESCORT",
+    "kind": "assign",
+    "head": "_GRANT_ARRIVAL_ESCORT = (22, 25)",
+    "refs": null,
+    "disposition": "KEEP_LIVE_ENGINE",
+    "basis": "现役押解随拨银/无护核账（#1900/#1812；功能接续#1873）"
+  },
+  {
+    "file": "ming_sim/db.py",
+    "line": 844,
+    "name": "grant_arrival_bounds",
+    "kind": "def",
+    "head": "def grant_arrival_bounds(ordered_amount: int, *, escorted: bool) -> Tuple[int, int]: |     \"\"\"返回 (arrived_lo, arrived_hi)，含端点；ordered<=0 时 (0, 0)。\"\"\" |     ordered = int(ordered_amount) |     if ordered <= ",
+    "refs": 1,
+    "disposition": "KEEP_LIVE_ENGINE",
+    "basis": "现役押解随拨银/无护核账（#1900/#1812；功能接续#1873）"
+  },
+  {
+    "file": "ming_sim/db.py",
+    "line": 859,
+    "name": "payload_declares_escort",
+    "kind": "def",
+    "head": "def payload_declares_escort(payload: object) -> bool: |     \"\"\"拨银载荷是否自带押解安排。未成案与已成案共用这一判据，只是取数位置不同。\"\"\" |     if not isinstance(payload, dict): |         return False |     escort = payload.get(\"escort\") |     i",
+    "refs": 4,
+    "disposition": "KEEP_LIVE_ENGINE",
+    "basis": "现役押解随拨银/无护核账（#1900/#1812；功能接续#1873）"
+  },
+  {
+    "file": "ming_sim/db.py",
+    "line": 849,
+    "name": "<a>",
+    "kind": "assign",
+    "head": "    lo_n, hi_n = _GRANT_ARRIVAL_ESCORT if escorted else _GRANT_ARRIVAL_BARE",
+    "refs": null,
+    "disposition": "KEEP_LIVE_OR_INCIDENTAL",
+    "basis": "现役声明/参与人/预推；非专用双载体账本"
+  },
+  {
+    "file": "ming_sim/db.py",
+    "line": 850,
+    "name": "lo",
+    "kind": "assign",
+    "head": "    lo = (ordered * lo_n) // _GRANT_ARRIVAL_SCALE",
+    "refs": null,
+    "disposition": "KEEP_LIVE_OR_INCIDENTAL",
+    "basis": "现役声明/参与人/预推；非专用双载体账本"
+  },
+  {
+    "file": "ming_sim/db.py",
+    "line": 851,
+    "name": "hi",
+    "kind": "assign",
+    "head": "    hi = (ordered * hi_n) // _GRANT_ARRIVAL_SCALE",
+    "refs": null,
+    "disposition": "KEEP_LIVE_OR_INCIDENTAL",
+    "basis": "现役声明/参与人/预推；非专用双载体账本"
+  },
+  {
+    "file": "ming_sim/db.py",
+    "line": 863,
+    "name": "escort",
+    "kind": "assign",
+    "head": "    escort = payload.get(\"escort\")",
+    "refs": null,
+    "disposition": "KEEP_LIVE_OR_INCIDENTAL",
+    "basis": "现役声明/参与人/预推；非专用双载体账本"
+  },
+  {
+    "file": "ming_sim/db.py",
+    "line": 866,
+    "name": "escortees",
+    "kind": "assign",
+    "head": "    escortees = escort.get(\"escortees\")",
+    "refs": null,
+    "disposition": "KEEP_LIVE_OR_INCIDENTAL",
+    "basis": "现役声明/参与人/预推；非专用双载体账本"
+  },
+  {
+    "file": "ming_sim/db.py",
+    "line": 982,
+    "name": "init_schema",
+    "kind": "def",
+    "head": "    def init_schema(self) -> None: |         self.conn.executescript( |             \"\"\" |             CREATE TABLE IF NOT EXISTS game_state ( |                 id INTEGER PRIMARY KEY CHECK (id = 1), |          ",
+    "refs": 16,
+    "disposition": "KEEP_LIVE_OR_INCIDENTAL",
+    "basis": "现役声明/参与人/预推；非专用双载体账本"
+  },
+  {
+    "file": "ming_sim/db.py",
+    "line": 12279,
+    "name": "dossier_declares_escort",
+    "kind": "def",
+    "head": "    def dossier_declares_escort(self, dossier_id: int) -> bool: |         \"\"\"该道拨银旨自身是否声明了押解护送（#1900 押解默认随拨银旨）。 |  |         押解人、随行护卫写在**同一道拨银交办**里即成安排，不另立密令、不另挂 |         关联——这是 owner 2026-09-30 裁定的常态口径。案卷载荷里",
+    "refs": 1,
+    "disposition": "KEEP_LIVE_ENGINE",
+    "basis": "现役押解随拨银/无护核账（#1900/#1812；功能接续#1873）"
+  },
+  {
+    "file": "ming_sim/db.py",
+    "line": 12303,
+    "name": "list_monthly_grant_reconciliation_targets",
+    "kind": "def",
+    "head": "    def list_monthly_grant_reconciliation_targets( |         self, turn: Optional[int] = None, |     ) -> List[Dict[str, object]]: |         \"\"\"扫描面：在途的拨帑案卷 ＋ **本回合已经出库**的结案拨帑。 |  |         正常结案不免除本次核账（#1900）：世界",
+    "refs": 1,
+    "disposition": "KEEP_LIVE_ENGINE",
+    "basis": "现役押解随拨银/无护核账（#1900/#1812；功能接续#1873）"
+  },
+  {
+    "file": "ming_sim/db.py",
+    "line": 12383,
+    "name": "list_dossier_reconciliations",
+    "kind": "def",
+    "head": "    def list_dossier_reconciliations( |         self, dossier_id: int, |     ) -> List[Dict[str, object]]: |         \"\"\"被护案卷侧对账真源读缝（逐路×回合，restore 同源）。\"\"\" |         rows = self.conn.execute( |             \"\"\" |   ",
+    "refs": 4,
+    "disposition": "KEEP_LIVE_ENGINE",
+    "basis": "现役押解随拨银/无护核账（#1900/#1812；功能接续#1873）"
+  },
+  {
+    "file": "ming_sim/db.py",
+    "line": 12413,
+    "name": "record_monthly_grant_reconciliations",
+    "kind": "def",
+    "head": "    def record_monthly_grant_reconciliations( |         self, turn: int, *, commit: bool = False, |     ) -> List[Dict[str, object]]: |         \"\"\"月度节拍：逐路由引擎按既有押解折损范围定实抵与损耗 → 落被护侧对账记录。 |  |         #1900：沿途损耗归引",
+    "refs": 3,
+    "disposition": "KEEP_LIVE_ENGINE",
+    "basis": "现役押解随拨银/无护核账（#1900/#1812；功能接续#1873）"
+  },
+  {
+    "file": "ming_sim/db.py",
+    "line": 12560,
+    "name": "record_monthly_loophole_exposures_from_reconciliations",
+    "kind": "def",
+    "head": "    def record_monthly_loophole_exposures_from_reconciliations( |         self, turn: int, *, commit: bool = False, |     ) -> Dict[str, object]: |         \"\"\"对账后暴露派生：本回合 loss>0 且该案卷当月稽核在场 → 暴露行。 |  |         s",
+    "refs": 2,
+    "disposition": "KEEP_LIVE_OR_INCIDENTAL",
+    "basis": "现役声明/参与人/预推；非专用双载体账本"
+  },
+  {
+    "file": "ming_sim/db.py",
+    "line": 13448,
+    "name": "merge_grant_reconciliation_into_execution_note",
+    "kind": "def",
+    "head": "    def merge_grant_reconciliation_into_execution_note( |         self, dossier_id: int, *, commit: bool = True, |     ) -> Optional[str]: |         \"\"\"S10 结案消费对账真源：经 merge_execution_note 单一写口增补说明。\"\"\" |      ",
+    "refs": 1,
+    "disposition": "KEEP_LIVE_ENGINE",
+    "basis": "现役押解随拨银/无护核账（#1900/#1812；功能接续#1873）"
+  },
+  {
+    "file": "ming_sim/db.py",
+    "line": 13452,
+    "name": "history",
+    "kind": "assign",
+    "head": "        history = self.list_dossier_reconciliations(int(dossier_id))",
+    "refs": null,
+    "disposition": "KEEP_LIVE_OR_INCIDENTAL",
+    "basis": "现役声明/参与人/预推；非专用双载体账本"
+  },
+  {
+    "file": "ming_sim/db.py",
+    "line": 12435,
+    "name": "escorted",
+    "kind": "assign",
+    "head": "            escorted = bool(target[\"escorted\"])",
+    "refs": null,
+    "disposition": "KEEP_LIVE_OR_INCIDENTAL",
+    "basis": "现役声明/参与人/预推；非专用双载体账本"
+  },
+  {
+    "file": "ming_sim/db.py",
+    "line": 12444,
+    "name": "<a>",
+    "kind": "assign",
+    "head": "            lo, hi = grant_arrival_bounds(ordered, escorted=escorted)",
+    "refs": null,
+    "disposition": "KEEP_LIVE_OR_INCIDENTAL",
+    "basis": "现役声明/参与人/预推；非专用双载体账本"
+  },
+  {
+    "file": "ming_sim/db.py",
+    "line": 12448,
+    "name": "source_id",
+    "kind": "assign",
+    "head": "            source_id = target[\"escort_source_dossier_id\"]",
+    "refs": null,
+    "disposition": "KEEP_LIVE_OR_INCIDENTAL",
+    "basis": "现役声明/参与人/预推；非专用双载体账本"
+  },
+  {
+    "file": "ming_sim/db.py",
+    "line": 12472,
+    "name": "history",
+    "kind": "assign",
+    "head": "            history = self.list_dossier_reconciliations(int(dossier_id))",
+    "refs": null,
+    "disposition": "KEEP_LIVE_OR_INCIDENTAL",
+    "basis": "现役声明/参与人/预推；非专用双载体账本"
+  },
+  {
+    "file": "ming_sim/audience_translate.py",
+    "line": 199,
+    "name": "build_translation_target_grounding",
+    "kind": "def",
+    "head": "def build_translation_target_grounding(db: Any, state: Any = None) -> str: |     \"\"\"权威目标目录：dispatcher 可校验的目标与当前场面投影。 |  |     只读 DB 真源；查询失败按 ADR 0005 上抛，不得静默退化为空目录。 |     不猜、不从正文匹配改写模型输出。 |     \"\"\" |     if not h",
+    "refs": 7,
+    "disposition": "KEEP_LIVE_ENGINE",
+    "basis": "现役押解随拨银/无护核账（#1900/#1812；功能接续#1873）"
+  },
+  {
+    "file": "ming_sim/audience_translate.py",
+    "line": 266,
+    "name": "build_c0_declaration_shape",
+    "kind": "def",
+    "head": "def build_c0_declaration_shape() -> str: |     \"\"\"C0 唯一输出形状，召对与过月转译共用。\"\"\" |     # 效果 delta 的形状真源是 simulation.EMPTY_EXTRACTION；声明层不另维护字段表。 |     from ming_sim.simulation import EMPTY_EXTRACTION |  |     # target",
+    "refs": 3,
+    "disposition": "KEEP_LIVE_OR_INCIDENTAL",
+    "basis": "现役声明/参与人/预推；非专用双载体账本"
+  },
+  {
+    "file": "ming_sim/audience_translate.py",
+    "line": 381,
+    "name": "build_audience_translate_prompt",
+    "kind": "def",
+    "head": "def build_audience_translate_prompt( |     *, |     emperor_message: str, |     reply: str, |     night_said: Sequence[str], |     pending_summaries: Sequence[str], |     target_grounding: str = \"\", | ) -> str: |    ",
+    "refs": 1,
+    "disposition": "KEEP_LIVE_OR_INCIDENTAL",
+    "basis": "现役声明/参与人/预推；非专用双载体账本"
+  },
+  {
+    "file": "ming_sim/audience_translate.py",
+    "line": 240,
+    "name": "declared",
+    "kind": "assign",
+    "head": "        declared = db.dossier_declares_escort(int(row[\"id\"]))",
+    "refs": null,
+    "disposition": "KEEP_LIVE_OR_INCIDENTAL",
+    "basis": "现役声明/参与人/预推；非专用双载体账本"
+  },
+  {
+    "file": "ming_sim/decree_forecast.py",
+    "line": 125,
+    "name": "forecast_snapshot",
+    "kind": "def",
+    "head": "def forecast_snapshot( |     session: Any, |     candidate: Dict[str, Any], |     *, |     decree_ref: str, |     decree_text: Optional[str] = None, | ) -> Dict[str, Any]: |     \"\"\"预推唯一快照：引用、判官上下文、材料目录、本旨事实与可见效果引用。",
+    "refs": 5,
+    "disposition": "KEEP_LIVE_ENGINE",
+    "basis": "现役押解随拨银/无护核账（#1900/#1812；功能接续#1873）"
+  },
+  {
+    "file": "ming_sim/decree_forecast.py",
+    "line": 287,
+    "name": "_append_this_decree_escort_grounding",
+    "kind": "def",
+    "head": "def _append_this_decree_escort_grounding( |     grounding: str, candidate: Dict[str, Any], token: str, | ) -> str: |     \"\"\"本旨尚未成案，全局目录没有它的行。目录身份是暂存 decree_ref，不是猜号。 |  |     #1900 J18：已撤销的暗护双载体 escort_link 目录行",
+    "refs": 1,
+    "disposition": "KEEP_RETIREMENT_NOTE",
+    "basis": "退役说明非复活"
+  },
+  {
+    "file": "ming_sim/decree_forecast.py",
+    "line": 297,
+    "name": "declared",
+    "kind": "assign",
+    "head": "    declared = payload_declares_escort(payload)",
+    "refs": null,
+    "disposition": "KEEP_LIVE_OR_INCIDENTAL",
+    "basis": "现役声明/参与人/预推；非专用双载体账本"
+  },
+  {
+    "file": "ming_sim/decree_forecast.py",
+    "line": 161,
+    "name": "grounding",
+    "kind": "assign",
+    "head": "            grounding = _append_this_decree_escort_grounding(",
+    "refs": null,
+    "disposition": "KEEP_LIVE_OR_INCIDENTAL",
+    "basis": "现役声明/参与人/预推；非专用双载体账本"
+  },
+  {
+    "file": "ming_sim/displaced_population.py",
+    "line": 122,
+    "name": "_recovery_effective_silver_wan",
+    "kind": "def",
+    "head": "def _recovery_effective_silver_wan(db: GameDB, dossier_id: int, turn: int) -> int: |     \"\"\"回流成本面唯一读缝：只认实付证据。 |  |     本回合对账实抵优先；否则累加该案已落 economy_moves 负向出账。 |     **不**回退 payload.amount（ordered 非实付，零 ledger ",
+    "refs": 1,
+    "disposition": "KEEP_LIVE_OR_INCIDENTAL",
+    "basis": "现役声明/参与人/预推；非专用双载体账本"
+  },
+  {
+    "file": "ming_sim/displaced_population.py",
+    "line": 146,
+    "name": "apply_recovery_driven_transfers",
+    "kind": "def",
+    "head": "def apply_recovery_driven_transfers( |     db: GameDB, |     state: GameState, |     *, |     commit: bool = True, | ) -> Tuple[List[Dict[str, object]], List[Dict[str, object]]]: |     \"\"\"#652/0087：赈济/招抚屯田回流单核（确定",
+    "refs": 2,
+    "disposition": "KEEP_LIVE_OR_INCIDENTAL",
+    "basis": "现役声明/参与人/预推；非专用双载体账本"
+  },
+  {
+    "file": "ming_sim/displaced_population.py",
+    "line": 128,
+    "name": "history",
+    "kind": "assign",
+    "head": "    history = db.list_dossier_reconciliations(int(dossier_id))",
+    "refs": null,
+    "disposition": "KEEP_LIVE_OR_INCIDENTAL",
+    "basis": "现役声明/参与人/预推；非专用双载体账本"
+  },
+  {
+    "file": "ming_sim/month_chain.py",
+    "line": 1412,
+    "name": "_run_month_drift",
+    "kind": "def",
+    "head": "def _run_month_drift( |     db: Any, state: Any, chain: Dict[str, Any], turn: int, decree_text: str, source: Provenance, | ) -> None: |     if chain.get(\"inertia_done\") or not chain.get(\"world_committed\"): | ",
+    "refs": 1,
+    "disposition": "KEEP_LIVE_OR_INCIDENTAL",
+    "basis": "现役声明/参与人/预推；非专用双载体账本"
+  }
+]

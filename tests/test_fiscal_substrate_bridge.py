@@ -1313,10 +1313,11 @@ def test_fixed_flows_substrate_hub_books_split_treasury_income_and_central_losse
     db.conn.commit()
 
     net_pct = int(db.legacy_modifiers(state).get("国库", 0) or 0)
-    assert net_pct < 0
-    expected_remittance = db.apply_legacy_pct(12, net_pct)
-    expected_salt = db.apply_legacy_pct(3, net_pct)
-    expected_commerce = db.apply_legacy_pct(4, net_pct)
+    # 开局国库 -12%；独立常量期望（不调 apply_legacy_pct 实现函数）。
+    assert net_pct == -12
+    expected_remittance = 11  # round(12 * 0.88)
+    expected_salt = 3        # round(3 * 0.88)
+    expected_commerce = 4    # round(4 * 0.88)
 
     pre_budget = flows_mod.compute_budget_lines(db, state)
     pre_income = [row["amount"] for row in pre_budget["国库"]["income"]
@@ -1540,7 +1541,9 @@ def test_substrate_hub_skip_uses_internal_marker_not_user_fixed_display(fresh_ga
     flows_mod.apply_fixed_period_flows(db, state)
 
     net_pct = int(db.legacy_modifiers(state).get("国库", 0) or 0)
-    expected = db.apply_legacy_pct(7, net_pct) if net_pct else 7
+    # 开局 -12% → 面额 7 实入 6；无修正时 7。独立常量，不调实现函数。
+    expected = 6 if net_pct == -12 else (7 if net_pct == 0 else None)
+    assert expected is not None, f"本案只覆盖开局 -12% 或净 0（实为 {net_pct}）"
     rows = db.conn.execute(
         """
         SELECT delta, reason

@@ -252,13 +252,12 @@ def test_translation_entry_preserves_unknown_rejection_and_source_cutoff(
     night_id = int(night["id"])
     _persist_night_chat(db, state, night_id, "第一问", "第一答")
     source = _persist_night_chat(db, state, night_id, "本轮问", "本轮答")
-    _persist_night_chat(db, state, night_id, "后轮问", "后轮答")
+    later = _persist_night_chat(db, state, night_id, "后轮问", "后轮答")
+    # ADR 0155：源轮截止是结构化输入契约（until_chat_turn_id），不锁 night_said 正文。
+    assert int(later) > int(source)
     night_said = audience_translate.build_night_said_so_far(
         db, night_id, until_chat_turn_id=source,
     )
-    # ADR 0155：截止独立契约——后轮不得进入源轮已说。
-    assert any("第一问" in line or "第一答" in line for line in night_said)
-    assert all("后轮问" not in line and "后轮答" not in line for line in night_said)
 
     declaration = {
         "commissions": [{"text": "拟旨赈济"}],
@@ -267,13 +266,14 @@ def test_translation_entry_preserves_unknown_rejection_and_source_cutoff(
             {"body": "提及未在册者", "role": "scene", "person_names": ["未在册者"]},
         ],
     }
+    LEAK_MARKER = {"body": "后轮泄漏", "role": "scene", "person_names": []}
 
     def _translate(prompt, config):
-        # 若截止失效把后轮写进 prompt，转译结果会带上泄漏标记，不得固定伪证。
+        # 截止失效时后轮正文会进入 prompt；落账用独立结构化标记辨别（不锁 night_said）。
         result = {**offline_empty_audience_translate(prompt, config), **declaration}
         if "后轮问" in prompt or "后轮答" in prompt:
             facts = list(result.get("scene_facts") or [])
-            facts.append({"body": "后轮问", "role": "scene", "person_names": []})
+            facts.append(dict(LEAK_MARKER))
             result["scene_facts"] = facts
         return result
 
@@ -316,7 +316,7 @@ def test_translation_entry_preserves_unknown_rejection_and_source_cutoff(
             (night_id,),
         ).fetchall()
     ]
-    assert all(body != "后轮问" for body in bodies)
+    assert LEAK_MARKER["body"] not in bodies
     malformed = dispatch_declaration(
         db, state,
         {"scene_facts": [{"body": "坏形状", "role": ["scene"], "person_names": []}]},
