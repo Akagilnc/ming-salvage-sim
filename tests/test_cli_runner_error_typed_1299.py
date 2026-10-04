@@ -1,10 +1,8 @@
 """#1299/#1310：CLI runner 失败横幅不得进 content 当大臣台词。
 
-三缝：
+真实入口：
 1. CliChat.invoke — runner 自身失败 → typed LLMUnavailable（非 RuntimeError 原文上抛）
-2. extract_agent_text — agno 把异常 str 塞进 run_output.content+status=ERROR 时，
-   翻成 LLMUnavailable，永不得把机器横幅当叙事返回
-3. 召对消费链 — extract 抛 typed 后不得把横幅当 answer 落库/上卷轴
+2. extract_agent_text — ERROR 状态转成 typed failure，正常原文保真
 
 负向：正常回话 content 照常提取。
 """

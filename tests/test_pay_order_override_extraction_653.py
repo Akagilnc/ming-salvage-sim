@@ -7,11 +7,9 @@ import ming_sim.cli_backend as cli_backend
 
 def test_single_pay_order_capture_grounds_relative_deadline_at_current_turn(game, monkeypatch):
     db, _state, content = game
-    prompts = []
     db.conn.execute("UPDATE game_state SET turn=7 WHERE id=1")
 
-    def fake(prompt, *_args, **_kwargs):
-        prompts.append(prompt)
+    def fake(_prompt, *_args, **_kwargs):
         return json.dumps({
             "拟旨意图": "拟旨",
             "动作类型": "pay_order_override",
@@ -66,6 +64,7 @@ def test_relative_deadline_cannot_stage_llm_computed_expired_turn(game, monkeypa
 
 
 def test_single_pay_order_capture_rejects_missing_entries(monkeypatch):
+    """#1849：非法 entries 响亮拒收，禁洗成「无拟旨意图」再被写入口当成功产物。"""
     monkeypatch.setattr(
         cli_backend, "_run_backend_for_config",
         lambda *_args, **_kwargs: (json.dumps({
@@ -73,8 +72,8 @@ def test_single_pay_order_capture_rejects_missing_entries(monkeypatch):
             "目标类型": "account", "目标ID": "pay_order", "颁布方式": "普通",
         }, ensure_ascii=False), {}),
     )
-    result = cli_backend.extract_draft_intent("拟旨改饷序", "臣已拟妥")
-    assert result["draft_action"] == "无"
+    with pytest.raises(ValueError):
+        cli_backend.extract_draft_intent("拟旨改饷序", "臣已拟妥")
 
 
 def test_multi_pay_order_capture_preserves_reverse_non_tied_priorities(monkeypatch):

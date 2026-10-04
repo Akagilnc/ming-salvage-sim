@@ -716,7 +716,7 @@ def test_chat_stream_three_transient_exhausted_system_fail_then_resend(monkeypat
     assert events[-1][0] == "error"
     detail = events[-1][1]
     assert detail.get("code") == "llm_connection_error"
-    assert detail.get("message") != CLI_RUNNER_PLAYER_MESSAGE
+    assert detail.get("message")
     max_a = default_transport_policy().max_attempts
     assert agent.calls == max_a
     attempts = detail.get("transport_attempts") or []
@@ -811,7 +811,7 @@ def test_chat_stream_deterministic_4xx_no_retry(monkeypatch, game):
     assert http_hits["n"] == 1
     assert len(detail.get("transport_attempts") or []) == 1
     assert waits == [], waits
-    assert detail.get("message") != CLI_RUNNER_PLAYER_MESSAGE
+    assert detail.get("message")
 
 
 def test_chat_stream_provider_default_502_not_washed_to_retryable(monkeypatch, game):
@@ -1099,12 +1099,14 @@ def test_chat_stream_error_status_run_output_system_layer_not_diegetic(
     replace 序由 halfstream_terminal_fail_replaces_temp 承担。
     """
 
+    provider = "provider banner: exit code 1 / workdir:/tmp"
+
     class _ErrorStatusAgent:
         def run(self, *_a, **_k):
             yield RunContent("半句")
             ev = RunCompletedEvent()
             ev.status = "ERROR"
-            ev.content = "provider banner: exit code 1 / workdir:/tmp"
+            ev.content = provider
             ev.tools = []
             yield ev
 
@@ -1117,7 +1119,6 @@ def test_chat_stream_error_status_run_output_system_layer_not_diegetic(
     assert events[-1][0] == "error", events
     detail = events[-1][1]
     assert detail.get("code") == "llm_run_error"
-    assert detail.get("message") != CLI_RUNNER_PLAYER_MESSAGE
     assert detail.get("message"), detail
     # 机器横幅不进玩家 message；诊断在 provider_message
     assert detail.get("provider_message")

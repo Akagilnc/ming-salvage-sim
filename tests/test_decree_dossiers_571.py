@@ -285,9 +285,9 @@ def test_pending_directive_only_enters_settlement_after_final_approval(game):
         directive_status="pending",
     )
     rejected_directive_id = int(db.conn.execute(
-        "SELECT committed_directive_id FROM pending_actions WHERE id=?",
+        "SELECT id FROM turn_directives WHERE source_pending_action_id=? ORDER BY id DESC LIMIT 1",
         (rejected_candidate_id,),
-    ).fetchone()["committed_directive_id"])
+    ).fetchone()["id"])
 
     assert db.get_dossier_for_directive(rejected_directive_id) is None
     assert db.list_decree_dossiers_for_simulation(state.turn) == []
@@ -310,9 +310,9 @@ def test_pending_directive_only_enters_settlement_after_final_approval(game):
         directive_status="pending",
     )
     approved_directive_id = int(db.conn.execute(
-        "SELECT committed_directive_id FROM pending_actions WHERE id=?",
+        "SELECT id FROM turn_directives WHERE source_pending_action_id=? ORDER BY id DESC LIMIT 1",
         (approved_candidate_id,),
-    ).fetchone()["committed_directive_id"])
+    ).fetchone()["id"])
     # #1769：confirm 只翻 pending→draft；成案走 ensure 批缝
     db.confirm_directive(approved_directive_id, state)
     assert str(db.get_directive(approved_directive_id)["status"]) == "draft"
@@ -597,9 +597,9 @@ def test_directive_assignee_projects_to_executor_only_for_executable_types(
         directive_status="pending" if entry == "confirm" else "draft",
     )
     directive_id = int(db.conn.execute(
-        "SELECT committed_directive_id FROM pending_actions WHERE id=?",
+        "SELECT id FROM turn_directives WHERE source_pending_action_id=? ORDER BY id DESC LIMIT 1",
         (candidate_id,),
-    ).fetchone()["committed_directive_id"])
+    ).fetchone()["id"])
     if entry == "confirm":
         # #1769：confirm 只翻 draft；executor 投影落 ensure 批缝
         db.confirm_directive(directive_id, state)

@@ -13,7 +13,12 @@ import re
 import sqlite3
 from typing import Any, Dict, List, Optional, Tuple
 
-from ming_sim.applier import RejectionCollector, atomic, mirror_rejections_after_commit
+from ming_sim.applier import (
+    RejectionCollector,
+    atomic,
+    connection_owns_transaction,
+    mirror_rejections_after_commit,
+)
 from ming_sim.error_pack import rejections_jsonl_path
 from ming_sim.constants import (
     _SETTLE_META_JIAPIAI_KEY, TURN_UNIT, REGION_SCORE_FIELDS, REGION_QUANTITY_FIELDS, REGION_TEXT_FIELDS,
@@ -47,6 +52,16 @@ from ming_sim.settlement.preflight import _validate_strategic_foreign_node_outco
 
 import ming_sim.entities.issue.commitment_display as commitment_display
 import ming_sim.entities.issue.effects as issue_effects
+
+# #1835：实体后果写口迁至 entities.issue.effects；旧名仍从此处 re-export，
+# 供 W4 situation_drift / 既有测试直调 issues._apply_issue_entities 等符号。
+_ISSUE_PSEUDO_EVENT = issue_effects._ISSUE_PSEUDO_EVENT
+_apply_issue_buildings = issue_effects._apply_issue_buildings
+_apply_issue_entities = issue_effects._apply_issue_entities
+_invalid_monthly_mapping_shape = issue_effects._invalid_monthly_mapping_shape
+_monthly_economy_items = issue_effects._monthly_economy_items
+_monthly_mapping_effect = issue_effects._monthly_mapping_effect
+_spawn_legacy_from_effect = issue_effects._spawn_legacy_from_effect
 
 _content: Optional[GameContent] = None
 
@@ -707,6 +722,7 @@ def _fiscal_levy_land_denominator(
     meta: Dict[str, object],
     parsed_total_land: float,
     *,
+    denominator_complete: bool = True,
     region_id: str,
 ) -> float:
     if _SETTLE_META_LAND_DENOMINATOR_KEY in meta:
@@ -714,7 +730,28 @@ def _fiscal_levy_land_denominator(
             meta[_SETTLE_META_LAND_DENOMINATOR_KEY],
             ctx=f"{region_id}.settle._meta.{_SETTLE_META_LAND_DENOMINATOR_KEY}",
         )
-    return parsed_total_land
+    if denominator_complete:
+        return parsed_total_land
+    return 0.0
+
+
+def _load_region_fiscal_for_fiscal_levy(region_id: str, raw_fiscal: object) -> Optional[dict]:
+    if isinstance(raw_fiscal, dict):
+        return raw_fiscal
+    if raw_fiscal is None or raw_fiscal == "":
+        raw_fiscal = "{}"
+    elif not isinstance(raw_fiscal, (str, bytes, bytearray)):
+        tlog(f"[fiscal-levy] {region_id} fiscal 非字典，本{TURN_UNIT}饷率通道出列")
+        return None
+    try:
+        fiscal = json.loads(raw_fiscal)
+    except (TypeError, ValueError) as exc:
+        tlog(f"[fiscal-levy] {region_id} fiscal 解析失败，本{TURN_UNIT}饷率通道出列：{type(exc).__name__}: {exc}")
+        return None
+    if not isinstance(fiscal, dict):
+        tlog(f"[fiscal-levy] {region_id} fiscal 非字典，本{TURN_UNIT}饷率通道出列")
+        return None
+    return fiscal
 
 
 def _fiscal_levy_share_seed(
@@ -778,28 +815,37 @@ def _apply_fiscal_levy_targets(
     jiao_in_force = _jiao_levy_in_force(terminal_records, state)
     lian_levy_approved = _fiscal_levy_event_approved(terminal_records, _LIAN_LEVY_START_EVENT_ID)
     region_entries: List[Dict[str, object]] = []
+    denominator_complete = True
     for row in db.conn.execute("SELECT id, fiscal FROM regions ORDER BY id").fetchall():
         region_id = str(row["id"])
-        fiscal = db.parse_engine_payload_json(row["fiscal"], surface=f"{region_id} fiscal levy")
-        if "settle" not in fiscal:
+        fiscal = _load_region_fiscal_for_fiscal_levy(region_id, row["fiscal"])
+        if fiscal is None:
+            denominator_complete = False
             continue
-        settle = fiscal.get("settle")
-        if not isinstance(settle, dict):
-            raise ValueError(f"{region_id}.settle 非字典")
-        p = settle.get("p")
-        st = settle.get("st")
-        if not isinstance(p, dict):
-            raise ValueError(f"{region_id}.settle.p 非字典")
-        if not isinstance(st, dict):
-            raise ValueError(f"{region_id}.settle.st 非字典")
-        meta_raw = settle.get("_meta") or {}
-        if not isinstance(meta_raw, dict):
-            raise ValueError(f"{region_id}.settle._meta 非字典")
-        meta = dict(meta_raw)
-        liao_seed = _fiscal_levy_liao_seed(meta, p, region_id)
-        land = _as_float(st.get("官民田"), ctx=f"{region_id}.settle.st.官民田")
-        base_transport = _fiscal_levy_base_transport(meta, p, liao_seed, region_id)
-        _validate_fiscal_levy_share_meta(meta, region_id)
+        try:
+            if "settle" not in fiscal:
+                continue
+            settle = fiscal.get("settle")
+            if not isinstance(settle, dict):
+                raise ValueError(f"{region_id}.settle 非字典")
+            p = settle.get("p")
+            st = settle.get("st")
+            if not isinstance(p, dict):
+                raise ValueError(f"{region_id}.settle.p 非字典")
+            if not isinstance(st, dict):
+                raise ValueError(f"{region_id}.settle.st 非字典")
+            meta_raw = settle.get("_meta") or {}
+            if not isinstance(meta_raw, dict):
+                raise ValueError(f"{region_id}.settle._meta 非字典")
+            meta = dict(meta_raw)
+            liao_seed = _fiscal_levy_liao_seed(meta, p, region_id)
+            land = _as_float(st.get("官民田"), ctx=f"{region_id}.settle.st.官民田")
+            base_transport = _fiscal_levy_base_transport(meta, p, liao_seed, region_id)
+            _validate_fiscal_levy_share_meta(meta, region_id)
+        except ValueError as exc:
+            denominator_complete = False
+            tlog(f"[fiscal-levy] {region_id} settle 解析失败，本{TURN_UNIT}饷率通道出列：{type(exc).__name__}: {exc}")
+            continue
         region_entries.append({
             "region_id": region_id,
             "fiscal": fiscal,
@@ -825,6 +871,7 @@ def _apply_fiscal_levy_targets(
         land_denominator = _fiscal_levy_land_denominator(
             meta,
             total_land,
+            denominator_complete=denominator_complete,
             region_id=region_id,
         )
         has_jiao_seed = _SETTLE_META_JIAO_SEED_KEY in meta
@@ -1270,6 +1317,140 @@ def _event_window_open(ev: Event, state: GameState) -> bool:
     return True
 
 
+def apply_petition_event_outcome(
+    state: GameState,
+    db: GameDB,
+    event_id: str,
+    raw_label: object,
+    *,
+    commit: bool = True,
+) -> Dict[str, object]:
+    """亲裁语义落账的**单一写口**：把转译出的结局标签置成事件终态（#1892 / ADR 0153:5）。
+
+    契约：
+
+    - **事件须在可呈窗口内**：三饷只有到点才上疏（issues._event_window_open），窗口外
+      的事项没有可供皇帝亲裁的既成事实，此时置定结局等于替皇帝凭空批一疏。窗口外
+      响亮拒绝，不静默放过。
+    - 标签只在事件自身声明的封闭集 ``terminal_reason_labels`` 内归一；归一不了就
+      :class:`SettlementAbort` 响亮失败（ADR 0014：绝不兜底写未支撑值），不猜、不兜。
+    - **留中不写终态**：raw_label 为空即「本疏已答而事件未终」，调用方不得以任何形式
+      把它塞进终局标签集——留中不是结局标签。
+    - 已落其它终态（expired/avoided/obsolete）的事件不被翻成 triggered；终态不可逆。
+
+    写口只此一处：批红链路不直接写 ``terminal_reason``，原始选项标签不得旁路代批。
+    """
+    eid = str(event_id or "").strip()
+    event = _fiscal_levy_event_by_id(eid) if eid else None
+    if event is None:
+        raise SettlementAbort(
+            f"亲裁结局事件不存在：{eid}", turn=int(state.turn), stage="fiscal_levy_config",
+        )
+    if not _event_window_open(event, state):
+        raise SettlementAbort(
+            f"亲裁结局事件不在可呈窗口内：{eid}", turn=int(state.turn), stage="fiscal_levy_config",
+        )
+    raw = str(raw_label or "").strip()
+    if not raw:
+        # 留中：本疏已答，事件未终。不写终态，也不另开一条留中账。
+        # 已呈原文与原批语在 record_event_petition_answer 的 choice_json 里。
+        return {"id": eid, "settled": False, "terminal_state": "", "terminal_reason": ""}
+    existing = db.event_terminal_state(eid)
+    if existing == "triggered":
+        # 一事件一裁断（ADR 0115:3 first-wins）：结局已落定即不可翻。
+        return {
+            "id": eid, "settled": False, "terminal_state": "triggered",
+            "terminal_reason": _event_terminal_records(db).get(eid, {}).get("terminal_reason", ""),
+        }
+    if existing:
+        return {
+            "id": eid, "settled": False, "terminal_state": existing,
+            "terminal_reason": _event_terminal_records(db).get(eid, {}).get("terminal_reason", ""),
+        }
+    label = _fiscal_levy_normalized_terminal_reason_or_abort(event, raw, state)
+    # 所有权必须在写入前看。sqlite 对 DML 隐式 BEGIN，写完后再看 in_transaction
+    # 永远为真，默认 commit=True 的独立调用就会报成功却不落盘。
+    owns_transaction = commit and connection_owns_transaction(db.conn)
+    db.mark_event_triggered(
+        state, eid, source="petition_verdict", terminal_reason=label, commit=False,
+    )
+    apply_event_cascading_invalidations(state, db, commit=False)
+    if owns_transaction:
+        db.conn.commit()
+    return {
+        "id": eid, "settled": True, "terminal_state": "triggered", "terminal_reason": label,
+    }
+
+
+def gather_fiscal_levy_petitions(state: GameState, db: GameDB) -> List[Event]:
+    """#1892 J5：三饷（category=fiscal_levy）到点请旨的候选——交既有世界段成陈情。
+
+    亲裁权在皇帝，故这些事件**不进** gather_candidate_events（那里是交模型代选
+    「是否发生」的人物事件池）。本函数只判「该不该呈皇帝」，判门与人物候选同一
+    真源（窗口/前提门/已落终态）；不写终态、不代批。奏疏由世界段呈上，亲裁准驳
+    当回合经 apply_petition_event_outcome 置定结局。留中不写终态，事项仍在本候选里。
+    征收由下一月 pre_settle 的饷率通道按已落终态重算。
+    """
+    c = _ctx()
+    spawned = _spawned_event_refs(db)
+    petitions: List[Event] = []
+    for ev in c.events:
+        if getattr(ev, "category", "") != FISCAL_LEVY_EVENT_CATEGORY:
+            continue
+        if ev.id in spawned or ev.trigger_year <= 0:
+            continue
+        if _event_window_expired(ev, state) or not _event_window_open(ev, state):
+            continue
+        if not _gate_passed(ev.trigger_gate, state.metrics, db):
+            continue
+        petitions.append(ev)
+    return petitions
+
+
+def petition_outcome_is_admissible(
+    state: GameState, db: GameDB, event_id: str, content: Optional[GameContent],
+) -> bool:
+    """该事件是否可由本回合的亲裁答复置定结局（#1892 亲裁语义落账）。
+
+    资格只认事件账里已有的请旨答复（:meth:`list_event_petition_records`），且终态仍空。
+    到期在请旨候选里只说明可以上疏，不是皇帝已经批过。没呈过的事件不接受亲裁结局。
+    """
+    eid = str(event_id or "").strip()
+    if not eid:
+        return False
+    resolved = content if content is not None else _ctx()
+    event = resolved.event_by_id.get(eid) if resolved is not None else None
+    if event is None or getattr(event, "category", "") != FISCAL_LEVY_EVENT_CATEGORY:
+        return False
+    if db.event_terminal_state(eid):
+        return False
+    return any(
+        str(row.get("event_id") or "") == eid
+        and not str(row.get("terminal_state") or "").strip()
+        for row in db.list_event_petition_records()
+    )
+
+
+def _closed_outcome_labels(content: Optional[GameContent], event_id: str) -> frozenset[str]:
+    """封闭结局集只认事件自身声明；写口与供料共用这一份，不另存枚举。"""
+    ev = content.event_by_id.get(str(event_id or "").strip()) if content is not None else None
+    raw = getattr(ev, "terminal_reason_labels", None) or []
+    return frozenset(str(label).strip() for label in raw if str(label).strip())
+
+
+def strategic_event_outcome_labels(event_id: str) -> frozenset[str]:
+    """某战略事件在既有写口接受的闭合结局标签；空集 = 该事件不收 事件结局。
+
+    供料侧（materials 候选事实）与落库侧共用这一份，读侧不另立标签表（#1893）。
+    """
+    from ming_sim.settlement.preflight import _is_strategic_foreign_node_event
+
+    ev = _ctx().event_by_id.get(event_id)
+    if ev is None or not _is_strategic_foreign_node_event(ev):
+        return frozenset()
+    return _closed_outcome_labels(_ctx(), event_id)
+
+
 def _event_window_expired(ev: Event, state: GameState) -> bool:
     """Return True once the current date is past an event's explicit latest point."""
     if ev.open_window:
@@ -1656,13 +1837,20 @@ def gather_impeachment_surge_candidates(state: GameState, db: GameDB) -> List[Di
 
 def gather_candidate_events(state: GameState, db: GameDB) -> List[Event]:
     """程序筛选：历史锚定事件按 trigger 时间到点、seed 情势按 trigger_gate 达标，
-    都排除已触发过的。返回的候选清单交推演 agent 因果判定是否真触发。"""
+    都排除已触发过的。返回的候选清单交推演 agent 因果判定是否真触发。
+
+    #1892/#1893 分工：进本清单 = 交模型在月末世界段里挑的人物事件。三饷
+    （``fiscal_levy``）是皇帝亲裁的加派决策，由批红时的圣旨／``record_event_decision_choice``
+    落 ``事件结局``，其加不加不是模型能代批的事，故永不入人物候选（ADR 0020）。
+    """
     c = _ctx()
     spawned = _spawned_event_refs(db)
     candidates: List[Event] = []
     # 历史锚定 EVENTS：到点（含错过补出）即进候选
     for ev in c.events:
         if ev.id in spawned or ev.trigger_year <= 0:
+            continue
+        if getattr(ev, "category", "") == FISCAL_LEVY_EVENT_CATEGORY:
             continue
         if _event_window_expired(ev, state):
             continue

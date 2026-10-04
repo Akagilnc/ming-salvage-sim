@@ -7,18 +7,40 @@
     "urgency": 80,
     "severity": 78,
     "credibility": 86,
-    "interests": ["辽东", "东江镇", "毛文龙旧部", "皮岛"],
-    "audiences": ["袁崇焕", "孙承宗", "王承恩"],
+    "interests": [
+      "辽东",
+      "东江镇",
+      "毛文龙旧部",
+      "皮岛"
+    ],
+    "audiences": [
+      "袁崇焕",
+      "孙承宗",
+      "王承恩"
+    ],
     "resolve_condition": "东江旧部得安抚或妥善整编（孔耿尚等就饷归镇、不致离散），皮岛协防未失，朝廷对斩帅一事定调止争",
     "fail_condition": "东江旧部失饷离心、孔耿等部哗走或渐生叛意，皮岛废弛，为日后吴桥兵变与降金埋祸",
     "trigger_year": 1629,
     "trigger_month": 6,
     "open_window": true,
-    "person_core_subjects": ["毛文龙"],
-    "trigger_gate": {"character.毛文龙.loyalty": "<65", "character.毛文龙.status": "==active", "character.毛文龙.location": "==dongjiang_area", "character.袁崇焕.status": "==active", "army.guanning.commander": "==袁崇焕"},
+    "person_core_subjects": [
+      "毛文龙"
+    ],
+    "trigger_gate": {
+      "character.毛文龙.loyalty": "<65",
+      "character.毛文龙.status": "==active",
+      "character.毛文龙.location": "==dongjiang_area",
+      "character.袁崇焕.status": "==active",
+      "army.guanning.commander": "==袁崇焕"
+    },
     "effect_on_trigger": {
       "人物变更": [
-        {"name": "毛文龙", "动作": "处置", "status": "dead", "reason": "袁崇焕双岛斩帅"}
+        {
+          "name": "毛文龙",
+          "动作": "处置",
+          "status": "dead",
+          "reason": "袁崇焕双岛斩帅"
+        }
       ]
     },
     "precondition": "历史既定：崇祯二年六月袁崇焕擅斩毛文龙；当前硬门判毛文龙未被安抚且仍在任、袁崇焕仍处 active 位，调离/限权等细门归后续逐事件门补齐",
@@ -32,8 +54,17 @@
     "urgency": 95,
     "severity": 95,
     "credibility": 90,
-    "interests": ["后金", "蓟镇", "京营", "勤王军"],
-    "audiences": ["袁崇焕", "孙承宗", "卢象升"],
+    "interests": [
+      "后金",
+      "蓟镇",
+      "京营",
+      "勤王军"
+    ],
+    "audiences": [
+      "袁崇焕",
+      "孙承宗",
+      "卢象升"
+    ],
     "resolve_condition": "勤王军合力击退后金于德胜门、左安门一带，蓟镇缺口补防，京师解严",
     "fail_condition": "京畿州县大量被劫，永定门破或勤王主帅下狱，朝局崩坏",
     "trigger_year": 1629,
@@ -42,6 +73,11 @@
     "trigger_class": "strategic_foreign",
     "trigger_gate": {},
     "event_type": "node",
+    "terminal_reason_labels": [
+      "挡于边墙",
+      "入塞被遏",
+      "长驱直入"
+    ],
     "precondition": "历史既定：崇祯二年十一月皇太极绕道蒙古叩喜峰口、龙井关——此乃后金主动来犯，是否发起不由明廷，玩家无法取消其入塞，只能决定结果。后金避宁锦坚城、择蓟镇边墙之弱处而入，故结果主要由蓟镇一线虚实决定，看盘面：蓟镇(jizhen) arrears/training/equipment/morale、宣大(xuan_da) 同字段、关宁军(guanning) 是否欠饷哗变且能否分兵入卫、京营(jingying) 战力、beizhili.military_pressure。结果按蓟镇宣大此前整备程度分三档：①【挡于边墙】蓟镇宣大欠饷已补、操练城防像样（arrears 低、training/equipment 中上、morale 不低），则建虏顿于喜峰口一线、攻关不下，劫掠数州后粮尽自退，京师至多戒严不破关；②【入塞被遏】只补强部分、或补强不久根基浅，则虏骑破口入塞、掠京畿数县，但勤王军（关宁入卫）合力可将其逐出、未抵京师城下；③【长驱直入】蓟镇空虚、关宁欠饷哗变无力入卫，则破龙井关、陷遵化、兵临德胜门，京畿大掠。蓟镇是关键变量，宁锦再强若蓟镇空虚仍挡不住绕袭；反之蓟镇宣大扎实补强即可显著减轻祸患，不必面面俱到。"
   },
   {
@@ -52,15 +88,33 @@
     "urgency": 90,
     "severity": 88,
     "credibility": 88,
-    "interests": ["皇党", "东林", "军队", "辽东"],
-    "audiences": ["孙承宗", "韩爌", "王承恩"],
+    "interests": [
+      "皇党",
+      "东林",
+      "军队",
+      "辽东"
+    ],
+    "audiences": [
+      "孙承宗",
+      "韩爌",
+      "王承恩"
+    ],
     "resolve_condition": "袁案速审而留全尸，关宁军另立可信主帅（祖大寿可压制），辽东未崩",
     "fail_condition": "凌迟袁崇焕致祖大寿叛走或关宁军整编瓦解，宁锦防线无人能守",
     "trigger_year": 1629,
     "trigger_month": 12,
     "open_window": true,
-    "person_core_subjects": ["袁崇焕"],
-    "trigger_gate": {"character.袁崇焕.status": "==active", "army.guanning.commander": "==袁崇焕", "character.毛文龙.status": "==dead", "character.毛文龙.status_reason": "==袁崇焕双岛斩帅", "event.jisi_lubian.terminal_state": "==triggered", "event.jisi_lubian.terminal_reason": "in=入塞被遏|长驱直入"},
+    "person_core_subjects": [
+      "袁崇焕"
+    ],
+    "trigger_gate": {
+      "character.袁崇焕.status": "==active",
+      "army.guanning.commander": "==袁崇焕",
+      "character.毛文龙.status": "==dead",
+      "character.毛文龙.status_reason": "==袁崇焕双岛斩帅",
+      "event.jisi_lubian.terminal_state": "==triggered",
+      "event.jisi_lubian.terminal_reason": "in=入塞被遏|长驱直入"
+    },
     "precondition": "己巳之变后必发；若 jisi_lubian 未触发、结局仅挡于边墙，或玩家提前罢袁崇焕则跳过",
     "event_type": "node"
   },
@@ -73,18 +127,31 @@
     "urgency": 86,
     "severity": 84,
     "credibility": 92,
-    "interests": ["户部", "关宁军", "登莱", "士绅", "农民"],
-    "audiences": ["毕自严", "孙承宗", "韩爌"],
+    "interests": [
+      "户部",
+      "关宁军",
+      "登莱",
+      "士绅",
+      "农民"
+    ],
+    "audiences": [
+      "毕自严",
+      "孙承宗",
+      "韩爌"
+    ],
     "resolve_condition": "皇帝准加辽饷或另开可靠财源，边镇当年饷源不致断裂",
     "fail_condition": "辽饷加派被驳且无替代财源，关宁、登莱缺饷加剧，边镇军心动摇",
     "trigger_year": 1631,
     "trigger_month": 1,
     "open_window": true,
     "trigger_gate": {},
-    "terminal_reason_labels": ["已准", "已驳"],
-    "default_terminal_reason": "已准",
+    "terminal_reason_labels": [
+      "已准",
+      "已驳"
+    ],
     "event_type": "node",
-    "precondition": "历史既定：崇祯四年正月，辽饷由九厘旧额升至一分二厘；#259 shadow 阶段用史实默认「已准」，#260 落地后改由圣旨置结局。"
+    "precondition": "历史既定：崇祯四年正月，辽饷由九厘旧额升至一分二厘。加不加由皇帝亲裁（#1891 呈批、#1893/#1892 不交世界段模型代批），引擎不自动置结局。",
+    "default_terminal_reason": "已准"
   },
   {
     "id": "kong_youde",
@@ -94,15 +161,33 @@
     "urgency": 92,
     "severity": 90,
     "credibility": 85,
-    "interests": ["登莱", "山东", "毛文龙旧部", "火器"],
-    "audiences": ["袁崇焕", "孙承宗", "卢象升"],
+    "interests": [
+      "登莱",
+      "山东",
+      "毛文龙旧部",
+      "火器"
+    ],
+    "audiences": [
+      "袁崇焕",
+      "孙承宗",
+      "卢象升"
+    ],
     "resolve_condition": "孔耿就抚或被剿，登莱失陷之火器与水师未流入后金",
     "fail_condition": "孔耿率部渡海降金，携西洋火炮与匠师投皇太极，明火器优势彻底丧失",
     "trigger_year": 1631,
     "trigger_month": 8,
     "open_window": true,
-    "person_core_subjects": ["孔有德"],
-    "trigger_gate": {"character.孔有德.status": "==active", "character.孔有德.power_id": "==ming", "character.孔有德.location": "==dongjiang_area", "character.毛文龙.status": "==dead", "army.dongjiang.loyalty": "<=42", "army.denglai.arrears": ">=6"},
+    "person_core_subjects": [
+      "孔有德"
+    ],
+    "trigger_gate": {
+      "character.孔有德.status": "==active",
+      "character.孔有德.power_id": "==ming",
+      "character.孔有德.location": "==dongjiang_area",
+      "character.毛文龙.status": "==dead",
+      "army.dongjiang.loyalty": "<=42",
+      "army.denglai.arrears": ">=6"
+    },
     "precondition": "若毛文龙已被斩 + 登莱欠饷严重，必触发；玩家可提前安抚或裁汰旧部"
   },
   {
@@ -113,15 +198,29 @@
     "urgency": 88,
     "severity": 85,
     "credibility": 90,
-    "interests": ["辽东", "祖大寿", "后金", "粮饷"],
-    "audiences": ["袁崇焕", "孙承宗", "毕自严"],
+    "interests": [
+      "辽东",
+      "祖大寿",
+      "后金",
+      "粮饷"
+    ],
+    "audiences": [
+      "袁崇焕",
+      "孙承宗",
+      "毕自严"
+    ],
     "resolve_condition": "援军及时解围或祖大寿率部突围归明，城堡未陷",
     "fail_condition": "祖大寿全军降金且不归，关宁精锐尽失",
     "trigger_year": 1631,
     "trigger_month": 8,
     "open_window": true,
     "trigger_class": "strategic_foreign",
-    "trigger_gate": {"region.liaodong.controlled_by": "==ming", "army.guanning.supply": "<=45", "army.guanning.arrears": ">=40", "power.houjin.military_strength": ">=70"},
+    "trigger_gate": {
+      "region.liaodong.controlled_by": "==ming",
+      "army.guanning.supply": "<=45",
+      "army.guanning.arrears": ">=40",
+      "power.houjin.military_strength": ">=70"
+    },
     "event_type": "node",
     "precondition": "辽东请饷未补足 + 关宁筑城仓促时触发"
   },
@@ -133,15 +232,30 @@
     "urgency": 78,
     "severity": 82,
     "credibility": 88,
-    "interests": ["蒙古", "后金", "蓟镇", "宣大", "宣府"],
-    "audiences": ["孙承宗", "卢象升", "王承恩"],
+    "interests": [
+      "蒙古",
+      "后金",
+      "蓟镇",
+      "宣大",
+      "宣府"
+    ],
+    "audiences": [
+      "孙承宗",
+      "卢象升",
+      "王承恩"
+    ],
     "resolve_condition": "明廷及时招抚林丹汗残部或收容察哈尔余众于宣大边外为藩屏；蓟宣大北面边墙加固、巡逻常制",
     "fail_condition": "察哈尔尽附后金，蓟宣大边墙形同虚设，皇太极每隔数年破口入塞抢掠京畿",
     "trigger_year": 1632,
     "trigger_month": 4,
     "open_window": true,
     "trigger_class": "strategic_foreign",
-    "trigger_gate": {"region.mongol_chahar.controlled_by": "==mongol", "army.mongol_chahar_host.loyalty": "<=45", "power.mongol.military_strength": "<=55", "power.houjin.military_strength": ">=70"},
+    "trigger_gate": {
+      "region.mongol_chahar.controlled_by": "==mongol",
+      "army.mongol_chahar_host.loyalty": "<=45",
+      "power.mongol.military_strength": "<=55",
+      "power.houjin.military_strength": ">=70"
+    },
     "precondition": "历史既定：崇祯五年皇太极征察哈尔，林丹汗西走青海；蒙古右翼倒向后金；若己巳之变后明未补强蓟镇/宣大边墙，则后果更烈",
     "event_type": "node"
   },
@@ -153,15 +267,25 @@
     "urgency": 85,
     "severity": 92,
     "credibility": 92,
-    "interests": ["后金", "蒙古", "朝鲜", "朝廷大义", "天下士心"],
-    "audiences": ["卢象升", "杨嗣昌", "孙承宗", "韩爌"],
+    "interests": [
+      "后金",
+      "蒙古",
+      "朝鲜",
+      "朝廷大义",
+      "天下士心"
+    ],
+    "audiences": [
+      "卢象升",
+      "杨嗣昌",
+      "孙承宗",
+      "韩爌"
+    ],
     "resolve_condition": "明廷明文不承认伪号、继续以「东虏」「建酋」称之；联蒙抗清或经略朝鲜以分清势；意识形态以诏书/邸报对内驳斥",
     "fail_condition": "朝鲜被迫向清称臣（丙子之役），蒙古诸部尽奉清正朔，士林开始私议「天命已移」，中原与江南观望者增",
     "trigger_year": 1636,
     "trigger_month": 4,
     "open_window": true,
     "trigger_gate": {},
-    "auto_trigger": true,
     "effect_on_trigger": {
       "power_renames": [
         {
@@ -174,7 +298,7 @@
         }
       ]
     },
-    "precondition": "触发门：无条件/近天定。理由：皇太极称帝改国号是后金内部核心事实，不由明廷取消；明廷承不承认伪号、联蒙或保朝鲜的外交与意识形态响应仍走软判。",
+    "precondition": "触发门：无条件/近天定。理由：皇太极称帝改国号是后金内部核心事实，不由明廷取消；明廷承不承认伪号、联蒙或保朝鲜的外交与意识形态响应仍走软判。#1893：本事件不再 auto_trigger，改由同一次月末世界段的模型从候选清单挑选后落账。",
     "event_type": "situation"
   },
   {
@@ -185,15 +309,33 @@
     "urgency": 92,
     "severity": 90,
     "credibility": 90,
-    "interests": ["蓟镇", "宣大", "畿南", "山东", "卢象升", "高起潜", "杨嗣昌"],
-    "audiences": ["卢象升", "杨嗣昌", "孙承宗", "曹化淳"],
+    "interests": [
+      "蓟镇",
+      "宣大",
+      "畿南",
+      "山东",
+      "卢象升",
+      "高起潜",
+      "杨嗣昌"
+    ],
+    "audiences": [
+      "卢象升",
+      "杨嗣昌",
+      "孙承宗",
+      "曹化淳"
+    ],
     "resolve_condition": "督师席位获得监军与关宁勤王实援，粮饷不断，在通州/真定一线与清军胜负相当；守将是否保全、畿南州县失陷几何由本局软判落账",
     "fail_condition": "督师席位孤军无援或调度失序，畿南山东数十城陷，清军大掠满载而归；守将殉国、突围或失陷由本局软判落人物账",
     "trigger_year": 1638,
     "trigger_month": 9,
     "open_window": true,
     "trigger_class": "strategic_foreign",
-    "trigger_gate": {"army.jizhen.arrears": ">=10", "army.xuan_da.morale": "<=55", "power.mongol.military_strength": "<=55", "power.houjin.military_strength": ">=75"},
+    "trigger_gate": {
+      "army.jizhen.arrears": ">=10",
+      "army.xuan_da.morale": "<=55",
+      "power.mongol.military_strength": "<=55",
+      "power.houjin.military_strength": ">=75"
+    },
     "precondition": "历史既定：崇祯十一年九月清军第四次入塞，史实中卢象升十二月战死巨鹿；本事件是清军入塞的战略/外敌战事，卢象升生死由软判结局决定，不是触发前提。若林丹汗西迁后蓟镇边墙未补、督师与监军不和则后果更烈",
     "event_type": "node"
   },
@@ -206,18 +348,31 @@
     "urgency": 88,
     "severity": 86,
     "credibility": 92,
-    "interests": ["户部", "剿寇诸军", "农民", "士绅", "流寇"],
-    "audiences": ["杨嗣昌", "毕自严", "洪承畴"],
+    "interests": [
+      "户部",
+      "剿寇诸军",
+      "农民",
+      "士绅",
+      "流寇"
+    ],
+    "audiences": [
+      "杨嗣昌",
+      "毕自严",
+      "洪承畴"
+    ],
     "resolve_condition": "皇帝准开剿饷或另筹足额剿寇军费，十面张网军需不断",
     "fail_condition": "剿饷被驳且无替代财源，剿寇诸军缺饷，流寇围剿难以为继",
     "trigger_year": 1637,
     "trigger_month": 1,
     "open_window": true,
     "trigger_gate": {},
-    "terminal_reason_labels": ["已准", "已驳"],
-    "default_terminal_reason": "已准",
+    "terminal_reason_labels": [
+      "已准",
+      "已驳"
+    ],
     "event_type": "node",
-    "precondition": "历史既定：崇祯十年剿饷开征；#259 shadow 阶段用史实默认「已准」，#260 落地后改由圣旨置结局。"
+    "precondition": "历史既定：崇祯十年剿饷开征。开不开由皇帝亲裁（#1891 呈批、#1892 不交世界段模型代批），引擎不自动置结局。",
+    "default_terminal_reason": "已准"
   },
   {
     "id": "lian_levy_start_1639",
@@ -228,18 +383,31 @@
     "urgency": 88,
     "severity": 88,
     "credibility": 92,
-    "interests": ["户部", "兵部", "边军", "士绅", "农民"],
-    "audiences": ["杨嗣昌", "毕自严", "卢象升"],
+    "interests": [
+      "户部",
+      "兵部",
+      "边军",
+      "士绅",
+      "农民"
+    ],
+    "audiences": [
+      "杨嗣昌",
+      "毕自严",
+      "卢象升"
+    ],
     "resolve_condition": "皇帝准开练饷或另有可靠财源与练兵实账，边军练兵不致成为空名",
     "fail_condition": "练饷被驳且无替代财源，练兵无资；若准而征解失控，则民间加派更重、流寇滋蔓",
     "trigger_year": 1639,
     "trigger_month": 1,
     "open_window": true,
     "trigger_gate": {},
-    "terminal_reason_labels": ["已准", "已驳"],
-    "default_terminal_reason": "已准",
+    "terminal_reason_labels": [
+      "已准",
+      "已驳"
+    ],
     "event_type": "node",
-    "precondition": "历史既定：崇祯十二年练饷开征；#259 shadow 阶段用史实默认「已准」，#260 落地后改由圣旨置结局。练饷无议停事件，在征谓词只读本事件结局。"
+    "precondition": "历史既定：崇祯十二年练饷开征。开不开由皇帝亲裁（#1891 呈批、#1892 不交世界段模型代批），引擎不自动置结局。练饷无议停事件，在征谓词只读本事件结局。",
+    "default_terminal_reason": "已准"
   },
   {
     "id": "jiao_levy_stop_1640",
@@ -250,18 +418,33 @@
     "urgency": 82,
     "severity": 84,
     "credibility": 90,
-    "interests": ["户部", "农民", "士绅", "剿寇诸军", "流寇"],
-    "audiences": ["毕自严", "杨嗣昌", "洪承畴"],
+    "interests": [
+      "户部",
+      "农民",
+      "士绅",
+      "剿寇诸军",
+      "流寇"
+    ],
+    "audiences": [
+      "毕自严",
+      "杨嗣昌",
+      "洪承畴"
+    ],
     "resolve_condition": "皇帝准停剿饷或另定减负补饷之策，民力稍纾而剿寇军费有续源",
     "fail_condition": "剿饷继续征派且无减负措施，民怨与逃户加重",
     "trigger_year": 1640,
     "trigger_month": 1,
     "open_window": true,
-    "trigger_gate": {"event.jiao_levy_start_1637.terminal_reason": "==已准"},
-    "terminal_reason_labels": ["已停", "仍征"],
-    "default_terminal_reason": "已停",
+    "trigger_gate": {
+      "event.jiao_levy_start_1637.terminal_reason": "==已准"
+    },
+    "terminal_reason_labels": [
+      "已停",
+      "仍征"
+    ],
     "event_type": "node",
-    "precondition": "历史既定：崇祯十三年议停剿饷；仅在剿饷开征已准后出现，是否仍征由事件结局承载，不在 trigger_gate 自指。"
+    "precondition": "历史既定：崇祯十三年议停剿饷；仅在剿饷开征已准后出现，停不停由皇帝亲裁（#1891 呈批），不在 trigger_gate 自指。",
+    "default_terminal_reason": "已停"
   },
   {
     "id": "zhangxianzhong_zaifan",
@@ -271,15 +454,33 @@
     "urgency": 85,
     "severity": 85,
     "credibility": 88,
-    "interests": ["流寇", "湖广", "四川", "熊文灿", "杨嗣昌"],
-    "audiences": ["杨嗣昌", "洪承畴", "韩爌"],
+    "interests": [
+      "流寇",
+      "湖广",
+      "四川",
+      "熊文灿",
+      "杨嗣昌"
+    ],
+    "audiences": [
+      "杨嗣昌",
+      "洪承畴",
+      "韩爌"
+    ],
     "resolve_condition": "张献忠受抚后被解除武装或就地分散安插、勿留其据点积粮养寇；熊文灿能控驭其部",
     "fail_condition": "张献忠率部再起合罗汝才入川，杨嗣昌督师入川追剿无功，湖广四川糜烂为流寇腹地",
     "trigger_year": 1639,
     "trigger_month": 5,
     "open_window": true,
-    "person_core_subjects": ["张献忠"],
-    "trigger_gate": {"character.张献忠.status": "==active", "character.张献忠.power_id": "==ming", "character.张献忠.loyalty": "<=50", "character.张献忠.location": "==huguang", "region.huguang.unrest": ">=45"},
+    "person_core_subjects": [
+      "张献忠"
+    ],
+    "trigger_gate": {
+      "character.张献忠.status": "==active",
+      "character.张献忠.power_id": "==ming",
+      "character.张献忠.loyalty": "<=50",
+      "character.张献忠.location": "==huguang",
+      "region.huguang.unrest": ">=45"
+    },
     "precondition": "历史既定：崇祯十二年五月张献忠于谷城再反；若熊文灿招抚未实削兵权、未拆其据点，则必反",
     "event_type": "node"
   },
@@ -291,8 +492,17 @@
     "urgency": 78,
     "severity": 80,
     "credibility": 82,
-    "interests": ["百姓", "地方官", "太医院", "边军"],
-    "audiences": ["徐光启", "韩爌", "毕自严"],
+    "interests": [
+      "百姓",
+      "地方官",
+      "太医院",
+      "边军"
+    ],
+    "audiences": [
+      "徐光启",
+      "韩爌",
+      "毕自严"
+    ],
     "resolve_condition": "疫区封路隔离、太医院发药局施药、免疫区当年赋税并拨赈银安置病户与孤老，疫势半年内不向京畿、边镇蔓延",
     "fail_condition": "疫情失控蔓延陕豫致逃户暴增、流寇借疫坐大；或边军营中染疫减员，宣大蓟镇兵备空虚",
     "trigger_year": 1633,
@@ -320,15 +530,32 @@
     "urgency": 85,
     "severity": 82,
     "credibility": 80,
-    "interests": ["河南", "陕西", "流寇", "百姓"],
-    "audiences": ["洪承畴", "杨嗣昌", "韩爌"],
+    "interests": [
+      "河南",
+      "陕西",
+      "流寇",
+      "百姓"
+    ],
+    "audiences": [
+      "洪承畴",
+      "杨嗣昌",
+      "韩爌"
+    ],
     "resolve_condition": "李张主力被剿或就抚（如车厢峡受降），主力进入河南被压回陕西",
     "fail_condition": "李自成攻陷洛阳、福王被烹，河南成流寇腹地",
     "trigger_year": 1634,
     "trigger_month": 1,
     "open_window": true,
-    "person_core_subjects": ["李自成"],
-    "trigger_gate": {"character.李自成.status": "==active", "character.李自成.power_id": "==bandit_li_zicheng", "character.李自成.location": "==shaanxi", "region.shaanxi.unrest": ">=70", "power.bandit_li_zicheng.military_strength": ">=35"},
+    "person_core_subjects": [
+      "李自成"
+    ],
+    "trigger_gate": {
+      "character.李自成.status": "==active",
+      "character.李自成.power_id": "==bandit_li_zicheng",
+      "character.李自成.location": "==shaanxi",
+      "region.shaanxi.unrest": ">=70",
+      "power.bandit_li_zicheng.military_strength": ">=35"
+    },
     "precondition": "陕西逃户/民变持续未解时触发"
   },
   {
@@ -339,15 +566,29 @@
     "urgency": 95,
     "severity": 95,
     "credibility": 92,
-    "interests": ["辽东", "后金", "洪承畴", "国本"],
-    "audiences": ["洪承畴", "孙承宗", "杨嗣昌"],
+    "interests": [
+      "辽东",
+      "后金",
+      "洪承畴",
+      "国本"
+    ],
+    "audiences": [
+      "洪承畴",
+      "孙承宗",
+      "杨嗣昌"
+    ],
     "resolve_condition": "援锦主帅稳扎稳打或撤兵保存实力，关宁主力未一战尽失；主帅生死去向由本局软判落人物账",
     "fail_condition": "明军主力被歼，援锦主帅被俘、阵亡或突围由本局软判落人物账，山海关外尽失",
     "trigger_year": 1641,
     "trigger_month": 8,
     "open_window": true,
     "trigger_class": "strategic_foreign",
-    "trigger_gate": {"region.liaodong.controlled_by": "==ming", "army.guanning.supply": "<=45", "army.guanning.morale": "<=55", "power.houjin.military_strength": ">=70"},
+    "trigger_gate": {
+      "region.liaodong.controlled_by": "==ming",
+      "army.guanning.supply": "<=45",
+      "army.guanning.morale": "<=55",
+      "power.houjin.military_strength": ">=70"
+    },
     "event_type": "node",
     "precondition": "国库/边防长期未补 + 玩家急于进取时触发"
   },
@@ -359,15 +600,27 @@
     "urgency": 92,
     "severity": 90,
     "credibility": 90,
-    "interests": ["藩王", "百姓", "流寇", "河南"],
-    "audiences": ["杨嗣昌", "洪承畴"],
+    "interests": [
+      "藩王",
+      "百姓",
+      "流寇",
+      "河南"
+    ],
+    "audiences": [
+      "杨嗣昌",
+      "洪承畴"
+    ],
     "resolve_condition": "福王散财犒军 + 援军及时入洛阳，城未陷",
     "fail_condition": "洛阳陷、福王被烹，李自成势如破竹，河南腹地丧失",
     "trigger_year": 1641,
     "trigger_month": 1,
     "open_window": true,
     "trigger_class": "strategic_foreign",
-    "trigger_gate": {"region.henan.controlled_by": "==ming", "region.henan.unrest": ">=60", "power.bandit_li_zicheng.military_strength": ">=45"},
+    "trigger_gate": {
+      "region.henan.controlled_by": "==ming",
+      "region.henan.unrest": ">=60",
+      "power.bandit_li_zicheng.military_strength": ">=45"
+    },
     "precondition": "李自成入河南未压制 + 藩禄改革未推时触发",
     "event_type": "node"
   },
@@ -379,15 +632,28 @@
     "urgency": 90,
     "severity": 90,
     "credibility": 88,
-    "interests": ["河南", "黄河", "流寇", "藩王"],
-    "audiences": ["杨嗣昌", "洪承畴"],
+    "interests": [
+      "河南",
+      "黄河",
+      "流寇",
+      "藩王"
+    ],
+    "audiences": [
+      "杨嗣昌",
+      "洪承畴"
+    ],
     "resolve_condition": "开封三围皆解 + 援军切断李自成补给线",
     "fail_condition": "开封陷于水或战，河南完全沦陷，黄河南北流寇合势",
     "trigger_year": 1642,
     "trigger_month": 9,
     "open_window": true,
     "trigger_class": "strategic_foreign",
-    "trigger_gate": {"event.luoyang_fallen.terminal_state": "==triggered", "region.henan.controlled_by": "==ming", "region.henan.military_pressure": ">=70", "power.bandit_li_zicheng.military_strength": ">=55"},
+    "trigger_gate": {
+      "event.luoyang_fallen.terminal_state": "==triggered",
+      "region.henan.controlled_by": "==ming",
+      "region.henan.military_pressure": ">=70",
+      "power.bandit_li_zicheng.military_strength": ">=55"
+    },
     "event_type": "node",
     "precondition": "洛阳陷后必发"
   },
@@ -399,8 +665,17 @@
     "urgency": 90,
     "severity": 92,
     "credibility": 90,
-    "interests": ["京师", "京营", "百姓", "太医院"],
-    "audiences": ["曹化淳", "卢象升", "杨嗣昌"],
+    "interests": [
+      "京师",
+      "京营",
+      "百姓",
+      "太医院"
+    ],
+    "audiences": [
+      "曹化淳",
+      "卢象升",
+      "杨嗣昌"
+    ],
     "resolve_condition": "京师分坊隔离收殓、太医院与民间医者合力施药、内库拨银赈疫并补京营缺额操练，京营可战之兵回补至守城所需",
     "fail_condition": "京营因疫不能成军、城防形同虚设；疫死激起民怨与逃亡，京师人心先溃于敌至",
     "trigger_year": 1643,
@@ -428,15 +703,30 @@
     "urgency": 100,
     "severity": 100,
     "credibility": 95,
-    "interests": ["京师", "皇室", "京营", "勤王"],
-    "audiences": ["卢象升", "杨嗣昌", "曹化淳"],
+    "interests": [
+      "京师",
+      "皇室",
+      "京营",
+      "勤王"
+    ],
+    "audiences": [
+      "卢象升",
+      "杨嗣昌",
+      "曹化淳"
+    ],
     "resolve_condition": "勤王军先于大顺军入京 + 居庸关守住或南迁朝廷成功 + 京营未全溃",
     "fail_condition": "北京城破，崇祯帝殉国",
     "trigger_year": 1644,
     "trigger_month": 3,
     "open_window": true,
     "trigger_class": "strategic_foreign",
-    "trigger_gate": {"region.beizhili.controlled_by": "==ming", "region.beizhili.military_pressure": ">=85", "army.jingying.morale": "<=40", "army.jingying.loyalty": "<=45", "power.bandit_li_zicheng.military_strength": ">=65"},
+    "trigger_gate": {
+      "region.beizhili.controlled_by": "==ming",
+      "region.beizhili.military_pressure": ">=85",
+      "army.jingying.morale": "<=40",
+      "army.jingying.loyalty": "<=45",
+      "power.bandit_li_zicheng.military_strength": ">=65"
+    },
     "precondition": "李自成入河南/陕西未压制 + 京营 + 边镇崩坏；明朝主线终点",
     "event_type": "ending"
   }

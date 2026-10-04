@@ -29,6 +29,9 @@ from ming_sim.models import TurnPhase
 from ming_sim.month_open_snapshot import MONTH_OPEN_KEYS
 from tests.conftest import stub_audience_translate
 
+_IN_FLIGHT_DETAIL = "收夜中止：本夜仍有未完成回话（在飞/挂起），chat_turn_ids=[9]。夜保持开启，可原地重试。"
+_GATE_BUSY_DETAIL = "月末结算或上一步写入进行中，请稍候再操作。"
+
 
 # ── 轻量 canned 边界（与 #498 web tracer 同形，仅中和 LLM）────────────────
 
@@ -195,7 +198,7 @@ def test_web_entry_captures_before_await_close(web_game, monkeypatch):
         assert an.get_open_night(game.db) is not None
         captured_at["state"] = response.json()
         raise AudienceNightError(
-            "收夜中止：本夜仍有未完成回话（在飞/挂起），chat_turn_ids=[9]。夜保持开启，可原地重试。",
+            _IN_FLIGHT_DETAIL,
             code="in_flight_chat",
         )
 
@@ -436,7 +439,7 @@ def test_advance_http_reject_after_accept_exits_display(web_game, monkeypatch):
         saw["snap"] = g.db.get_month_open_snapshot(int(g.state.turn))
         raise HTTPException(
             status_code=409,
-            detail="月末结算或上一步写入进行中，请稍候再操作。",
+            detail=_GATE_BUSY_DETAIL,
         )
         yield  # pragma: no cover — raise 后不可达；保 CM 形
 
@@ -489,7 +492,7 @@ def test_concurrent_advance_noncreator_must_not_clear_owner_snapshot(web_game, m
         resp_b = asyncio.run(go_b())
         assert resp_b.status_code == 409, resp_b.text
         detail = resp_b.json()["detail"]
-        text = detail if isinstance(detail, str) else json.dumps(detail, ensure_ascii=False)
+        assert detail
         # B 幂等 no-op 后 409：non-blocking exit 撞锁 skip，不得代清 A 的快照
         assert game.db.get_month_open_snapshot(turn) == before
         assert game.state_payload()["turn"]["settlement_display"] is True

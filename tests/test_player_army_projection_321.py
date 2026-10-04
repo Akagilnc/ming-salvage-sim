@@ -16,7 +16,8 @@ from ming_sim.db import (
     _qualitative_army_stat,
     mutiny_loyalty_cap,
 )
-from ming_sim.flows import apply_fixed_period_flows, derive_army_mutiny_state
+from ming_sim.army_pay import derive_army_mutiny_state
+from ming_sim.flows import apply_fixed_period_flows
 
 ARMY = "guanning"
 PATHS = ("legacy", "substrate_hub")

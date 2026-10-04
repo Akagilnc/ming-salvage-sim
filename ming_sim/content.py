@@ -79,6 +79,11 @@ def load_character_content() -> Tuple[Dict[str, Faction], Dict[str, Character]]:
         identity = int_field(character_fields, "identity", path)
         if not 0 <= identity <= 100:
             raise SystemExit(f"设定字段超出范围：{path}.identity（应为 0–100）")
+        # ADR 0108 阴谋能力：静态 seed 能力轴，与 identity 同为 int 0–100 承重列。
+        character_fields.setdefault("intrigue", 50)
+        intrigue = int_field(character_fields, "intrigue", path)
+        if not 0 <= intrigue <= 100:
+            raise SystemExit(f"设定字段超出范围：{path}.intrigue（应为 0–100）")
         seed_guilt_raw = item.get("seed_guilt")
         if seed_guilt_raw is None:
             seed_guilt_raw = {}
@@ -132,11 +137,12 @@ def load_character_content() -> Tuple[Dict[str, Faction], Dict[str, Character]]:
             debut_year=int(item.get("debut_year") or 0),
             debut_month=int(item.get("debut_month") or 0),
             status=str(item.get("status") or "active"),
-            status_reason=str(item.get("status_reason") or ""),
+            status_reason=str(item.get("status_reason") or "").strip(),
             reason_code=str(item.get("reason_code") or "").strip(),
             summary=str(item.get("summary") or ""),
             portrait_id=str(item.get("portrait_id") or ""),
             identity=identity,
+            intrigue=intrigue,
             seed_guilt=seed_guilt,
         )
 
@@ -591,7 +597,7 @@ def load_opening_legacies() -> List[OpeningLegacy]:
             modifiers=modifiers,
             narrative_hint=str_field(entry, "narrative_hint", path),
             clear_gate={str(k): str(v) for k, v in clear_gate.items()},
-            clear_narrative=str(entry.get("clear_narrative") or ""),
+            clear_narrative=str(entry.get("clear_narrative") or "").strip(),
         ))
     if not out:
         raise SystemExit("opening_legacies.json 必须至少定义一条开局负面修正。")

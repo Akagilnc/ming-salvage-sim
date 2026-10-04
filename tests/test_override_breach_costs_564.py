@@ -198,7 +198,7 @@ def test_breach_excludes_stale_minister_faction_from_costs(game):
     )
 
 
-def test_breach_skips_dead_but_records_living_offstage_relations(game, caplog):
+def test_breach_skips_dead_but_records_living_offstage_relations(game):
     db, state, _ = game
     roster = [
         {"character_id": "徐光启", "tier": "主办", "role": "总理"},
@@ -334,6 +334,11 @@ def test_legacy_persisted_reaction_severity_migrates_narrowly_and_idempotently(g
         "INSERT INTO pending_promulgation_verdicts(turn,dossier_id,verdict_json) VALUES (?,?,?)",
         (state.turn, dossier_id, json.dumps(pending, ensure_ascii=False)),
     )
+    try:
+        json.loads(malformed_payload)
+    except ValueError as exc:
+        expected_exc = type(exc)
+
     db.conn.commit()
     path = db.path
     db.close()
@@ -356,10 +361,12 @@ def test_legacy_persisted_reaction_severity_migrates_narrowly_and_idempotently(g
             (malformed_id,),
         ).fetchone()[0]
         assert leftover == malformed_payload
-        warning = next(record for record in caplog.records
-                       if record.args and record.args[:2] == ("decree_dossier_decisions", malformed_id))
-        assert isinstance(warning.args[2], json.JSONDecodeError)
-        assert warning.args[2].doc == malformed_payload
+        assert any(
+            isinstance(record.args, tuple)
+            and record.args[:2] == ("decree_dossier_decisions", malformed_id)
+            and isinstance(record.args[2], expected_exc)
+            for record in caplog.records
+        )
     finally:
         reopened.close()
 

@@ -78,6 +78,17 @@ def _issue_audience_names(db: Any, issue: Any) -> set[str] | None:
     return names
 
 
+def _reader_in_issue_audience(db: Any, issue: Any, character_name: str) -> bool:
+    """Whether the optional audience supplement names this reader.
+
+    ``None`` means the supplement does not apply. That is not a grant.
+    An empty supplement does not name anyone. Malformed audience payloads
+    still raise from ``_issue_audience_names``.
+    """
+    audiences = _issue_audience_names(db, issue)
+    return bool(audiences) and character_name in audiences
+
+
 def _exclusion_lists_from_row(row: Any) -> tuple[set[str], set[str], set[str]]:
     """Parse excluded_names and excluded_targets.people/offices from one row."""
     raw_names = row["excluded_names"] if "excluded_names" in row.keys() else None
@@ -225,44 +236,6 @@ def project_issue_materials(
         projected[issue_id] = row
 
     return list(projected.values())
-
-
-def render_character_knowledge(
-    knowledge: Dict[str, object],
-    character_name: str,
-    *,
-    db: Any = None,
-    state: Any = None,
-) -> str:
-    """Render one character's projected knowledge for an audience prompt.
-
-    The projection has already enforced access control; this function only
-    de-duplicates and orders durable knowledge rows without a feed cap.
-    Issue case material is projected separately by ``project_issue_materials``
-    for the directory.
-    """
-    lines = [f"【{character_name}此刻所知的天下（仅此人物见闻）】"]
-    for key, value in (knowledge.get("world") or {}).items():
-        if value:
-            lines.append(f"{key}：{value}")
-    event_items = [*(knowledge.get("public_events") or []), *(knowledge.get("events") or [])]
-    by_source = {}
-    for item in event_items:
-        source_id = str(item.get("source_id") or "")
-        key = (source_id, item.get("title") or "", item.get("body") or "") if source_id else (
-            int(item.get("turn") or 0), item.get("title") or "", item.get("body") or ""
-        )
-        by_source[key] = item
-    items = sorted(
-        by_source.values(),
-        key=lambda item: (int(item.get("turn") or 0), str(item.get("source_id") or "")),
-    )
-    for item in items:
-        title = str(item.get("title") or "旧闻")
-        body = str(item.get("body") or "")
-        if body:
-            lines.append(f"- {title}：{body}")
-    return "\n".join(lines) if len(lines) > 1 else ""
 
 
 def project_court_roster_rows(
@@ -515,7 +488,7 @@ def _issue_audience_case_events(
         if source_id in known:
             continue
         stage = _prose(issue["stage_text"])
-        if not stage or character_name not in _issue_audience_names(db, issue):
+        if not stage or not _reader_in_issue_audience(db, issue, character_name):
             continue
         if not knowledge_row_visible_to(
             db,
@@ -675,10 +648,30 @@ def build_character_knowledge(
             character_name,
         )
     ]
-    # Distinct durable sources remain distinct, even when their prose matches
-    # or overlaps an archive. Text is not a source identity.
-    source_public = visible_public
-    # Independently persisted public sayings retain their authoritative layer.
+    # Identity is the durable source_id.  Same prose, overlapping prose, or the
+    # same turn does not make two sources one record.  An empty source_id has
+    # no identity to collapse.  A repeated non-empty source_id is one record.
+    # An explicit public event is the authoritative payload for that source
+    # (the same priority knowledge_items_for_turn already uses on the write
+    # side): it replaces an earlier projection, and a later non-public row
+    # must not replace it.
+    deduped_public = []
+    index_by_source: dict[str, int] = {}
+    for row in visible_public:
+        source_id = str(row.get("source_id") or "")
+        if not source_id:
+            deduped_public.append(row)
+            continue
+        slot = index_by_source.get(source_id)
+        if slot is None:
+            index_by_source[source_id] = len(deduped_public)
+            deduped_public.append(row)
+            continue
+        if str(row.get("kind") or "") == "public":
+            deduped_public[slot] = row
+    # Independently persisted public sayings never enter the archive
+    # aggregation/dedup rules above.  Append the authoritative public-layer
+    # projection after those rules, then join its layer prose.
     public_saying_events = [
         {
             key: (_prose(value) if key == "body" else value)
@@ -691,10 +684,10 @@ def build_character_knowledge(
             character_name,
         )
     ]
-    visible_public = [*source_public, *public_saying_events]
+    visible_public = [*deduped_public, *public_saying_events]
     public_bodies = [
         _prose(item.get("body") or item.get("title") or "")
-        for item in source_public
+        for item in deduped_public
         if (item.get("body") or item.get("title"))
         and not str(item.get("source_id") or "").startswith("opening:")
     ]

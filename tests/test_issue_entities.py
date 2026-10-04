@@ -394,7 +394,11 @@ def test_apply_score_extraction_tolerates_null_field(read_game):
     不抛 ValueError(apply 本就 `.get(key) or {}` 容忍)。"""
     db, state, _ = read_game
     # region_delta=None(null)+ army_delta=None,均应被当空 no-op 放行,不抛。
+    before_regions = [tuple(row) for row in db.conn.execute("SELECT * FROM regions ORDER BY id")]
+    before_armies = [tuple(row) for row in db.conn.execute("SELECT * FROM armies ORDER BY id")]
     settle_delta(state, db, {'region_delta': None, 'army_delta': None}, SettlementContext())
+    assert [tuple(row) for row in db.conn.execute("SELECT * FROM regions ORDER BY id")] == before_regions
+    assert [tuple(row) for row in db.conn.execute("SELECT * FROM armies ORDER BY id")] == before_armies
 
 
 def test_apply_score_extraction_rejects_unknown_top_level_key(game):

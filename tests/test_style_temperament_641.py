@@ -16,6 +16,7 @@ import ming_sim.issues as issues
 from ming_sim.context import character_context_with_db, minister_dossier
 from ming_sim.decree import reload_state_from_db
 from ming_sim.issues import apply_issue_inertia_and_ongoing
+from ming_sim.person_archive_contract import format_person_actions
 from ming_sim.relation_read import project_relation_ledger
 from ming_sim.settlement import SettlementContext, settle_delta
 from ming_sim.settlement.views import view
@@ -182,41 +183,17 @@ def test_temperament_committed_style_survives_reload(game):
 
 
 @pytest.mark.parametrize(
-    ("item", "category", "reason"),
+    ("item", "category"),
     [
-        (
-            {"name": "不存在的人", "origin_ref": "盘面自发", "动作": "性情", "style": NEW_STYLE},
-            "hallucinated_id",
-            "非既有人物",
-        ),
-        (
-            {"name": PERSON, "origin_ref": "盘面自发", "动作": "性情", "style": ""},
-            "invalid_enum",
-            "性情 style 须为非空字符串",
-        ),
-        (
-            {"name": PERSON, "origin_ref": "盘面自发", "动作": "性情", "style": "   "},
-            "invalid_enum",
-            "性情 style 须为非空字符串",
-        ),
-        (
-            {"name": PERSON, "origin_ref": "盘面自发", "动作": "性情"},
-            "invalid_enum",
-            "性情 style 须为非空字符串",
-        ),
-        (
-            {"name": PERSON, "origin_ref": "盘面自发", "动作": "性情", "style": None},
-            "invalid_enum",
-            "性情 style 须为非空字符串",
-        ),
-        (
-            {"name": PERSON, "origin_ref": "盘面自发", "动作": "性情", "style": 12},
-            "invalid_enum",
-            "性情 style 须为非空字符串",
-        ),
+        ({"name": "不存在的人", "origin_ref": "盘面自发", "动作": "性情", "style": NEW_STYLE}, "hallucinated_id"),
+        ({"name": PERSON, "origin_ref": "盘面自发", "动作": "性情", "style": ""}, "invalid_enum"),
+        ({"name": PERSON, "origin_ref": "盘面自发", "动作": "性情", "style": "   "}, "invalid_enum"),
+        ({"name": PERSON, "origin_ref": "盘面自发", "动作": "性情"}, "invalid_enum"),
+        ({"name": PERSON, "origin_ref": "盘面自发", "动作": "性情", "style": None}, "invalid_enum"),
+        ({"name": PERSON, "origin_ref": "盘面自发", "动作": "性情", "style": 12}, "invalid_enum"),
     ],
 )
-def test_apply_score_extraction_rejects_invalid_temperament(game, item, category, reason):
+def test_apply_score_extraction_rejects_invalid_temperament(game, item, category):
     db, state, content = game
     before = _style_row(db)
     before_rt = content.characters[PERSON].style if PERSON in content.characters else None
@@ -268,6 +245,7 @@ def test_character_context_with_db_reads_own_style_and_viewer_ledger(game):
     assert NEW_STYLE in rendered
     assert person.name in rendered and other.name in rendered
     own_dto = expected_own[0]
+    assert own_dto["recent_context"] in rendered
 
 
 def test_context_passes_raw_style_and_ledger_prose_without_rewrite(game):

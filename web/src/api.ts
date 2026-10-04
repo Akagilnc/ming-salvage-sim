@@ -1,6 +1,5 @@
 import React from "react";
 import { audienceStreamPath } from "./audienceScene";
-import { forwardSteamEvents } from "./steamEvents";
 import type { ApiErrorDetail, ChatResponse } from "./types";
 
 export class ApiRequestError extends Error {
@@ -51,7 +50,6 @@ export const api = async <T,>(path: string, options?: RequestInit): Promise<T> =
     throw new ApiRequestError(normalized, response.statusText);
   }
   const payload = await response.json();
-  void forwardSteamEvents(payload);
   return payload;
 };
 

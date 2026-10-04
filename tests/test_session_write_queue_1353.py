@@ -472,10 +472,29 @@ def test_write_turn_still_blocks_on_open_barrier():
     assert order == ["barrier", "late"], order
 
 
+def test_no_elapsed_timeout_api_on_barrier():
+    """The public queue API rejects the retired timeout option."""
+    q = SessionWriteQueue()
+    ticket = q.claim()
+    try:
+        with pytest.raises(TypeError):
+            q.barrier(lambda: None, timeout_s=0)
+        with pytest.raises(TypeError):
+            q.wait_prior(ticket, timeout_s=0)
+        with pytest.raises(TypeError):
+            q.run(ticket, lambda: None, timeout_s=0)
+        with pytest.raises(TypeError):
+            q.ticketed_gate(ticket, timeout_s=0)
+    finally:
+        q.complete(ticket)
 
 
 def test_get_session_write_queue_wiring_fail_loud_no_broad_swallow():
-    """#1353 r7 / ADR 0005：接线赋值禁宽吞；WebGame/session 必共享同一 queue/gate。"""
+    """#1353 r7 / ADR 0005：WebGame/session 必共享同一 queue/gate（接线实测）。
+
+    宽吞禁律由 #1353 r7 的真实异常注入用例承担（见本文件 queue 抛错用例），
+    此处不再正则截函数体盯源码形状。
+    """
     from ming_sim.session_write_queue import get_session_write_queue
 
     class _Sess:

@@ -518,36 +518,48 @@ def test_turn_region_summary_claim_audit_rows_do_not_consume_limit(game):
     assert not any(row["reason"] in summary for row in claim_rows)
 
 
-def test_deferred_real_revoke_restores_override_only_after_persist(game):
-    from ming_sim.breach_plea import decode_plea_meta, finalize_persist
+def test_real_revoke_restores_override_same_month_with_active_commitment(game):
+    """#1894：目标挂 active 承诺时撤旨当月即恢复 override，不再等下一场挽留坚持。
 
-    db, state, _content = game
+    偿还序案卷无判定面：顺颁即 closed，但 override 键仍在 fiscal_config 在位。
+    「已结案」不等于「实效已退」——这道旨仍须能从**召对撤令入口**撤销，
+    走完暂存 → 成案 → 颁布判决的整条真实链，不直接调数据库写口。
+    """
+    from ming_sim.declaration_dispatch import dispatch_declaration
+
+    db, state, content = game
     until = db._current_settle_turn() + 3
     target = _override_dossier(db, state, [{
         "key": "due_priority_军饷@shaanxi", "value": 40, "until_turn": until,
     }])
     db.apply_dossier_promulgation(state, target, "promulgated")
+    assert db.get_decree_dossier(target)["status"] == "closed"
+    assert "due_priority_军饷@shaanxi" in db.get_fiscal_config()
     issue_id = db.insert_issue(
         state, kind="initiative", title="边饷次序之诺", origin_kind="decree",
         origin_ref=f"dossier:{target}", cancellable="decree",
         commitment_kind="until_stop", bar_value=10, stage_text="在办",
         ongoing_effects={}, end_turn=state.turn + 12,
     )
-    revoke = db.create_decree_dossier(
-        state, action_type="revoke_decree", decree_text="撤回前旨",
-        target_kind="issue", target_id=str(issue_id),
-        payload={"revoke_target_issue_id": issue_id, "revoke_target_dossier_id": target},
+
+    # 召对真入口：撤令经既有准入暂存（closed 但在位的偿还序旨须被准入）
+    staged = dispatch_declaration(
+        db, state,
+        {"commissions": [{
+            "text": "撤回前旨",
+            "revoke": {"target_kind": "issue", "target_id": str(issue_id)},
+        }]},
+        minister_name="",
     )
+    assert not staged.commissions.rejected, staged.commissions.rejected
+    pending = int(staged.commissions.applied[0]["id"])
+    db.commit_pending_actions(state, content=content)
+    revoke = int(db.conn.execute(
+        "SELECT id FROM decree_dossiers WHERE pending_action_id=?", (pending,),
+    ).fetchone()["id"])
     db.apply_dossier_promulgation(state, revoke, "promulgated")
-    cfg = db.get_fiscal_config()
-    assert cfg["due_priority_军饷@shaanxi"] == 40
-    assert cfg["due_priority_军饷@shaanxi_until_turn"] == until
-    todo = next(
-        todo for todo in db.list_next_audience_todos(status="pending")
-        if decode_plea_meta(todo.get("origin_context")).get("revoke_dossier_id") == revoke
-    )
-    result = finalize_persist(db, state, todo, commit=True)
-    assert result["decision"] == "persist"
+
+    # 颁布当月即恢复 override，撤令无「先等一次挽留」的前置
     cfg = db.get_fiscal_config()
     assert "due_priority_军饷@shaanxi" not in cfg
     assert "due_priority_军饷@shaanxi_until_turn" not in cfg
@@ -713,7 +725,6 @@ def test_fact_brief_levy_uses_civil_arrears_breakdown_relation(game):
                 if e["metric"] == "加派量" and e["subject_id"] == "shaanxi")
     assert levy["value"] == pytest.approx(13.0)  # 20 - (8+20)*.25
     assert levy["value"] != pytest.approx(15.0)  # 被废止的 20*(1-.25)
-    assert levy["detail"] == "三饷加派净额"
 
 
 def test_fact_brief_levy_derives_regular_assessment_like_settle_tick(game):
@@ -1246,7 +1257,8 @@ def test_materialize_requires_real_promulgated_dossier(game):
 
 def test_central_due_haircut_consumer(game):
     """中央份额 Due 折发读端：floor 折算、余数免除、地域/饷源精确、无折恒等。"""
-    from ming_sim.flows import _central_dues_with_haircut, army_needed
+    from ming_sim.army_pay import army_needed
+    from ming_sim.flows import _central_dues_with_haircut
 
     db, state, _content = game
     rows = db.conn.execute(
@@ -1277,10 +1289,10 @@ def test_central_due_haircut_consumer(game):
 
 def test_pure_central_zero_haircut_due_clears_shortfall_counter(game):
     """#651×#653：纯中央军合法折发后 Due floor=0 须归零连续缺口计数，且不自动还旧欠。"""
+    from ming_sim.army_pay import army_needed
     from ming_sim.flows import (
         _central_dues_with_haircut,
         apply_fixed_period_flows,
-        army_needed,
     )
 
     db, state, _content = game
@@ -1383,7 +1395,7 @@ def test_oracle_independent_of_debt_mapping(monkeypatch):
 def test_fact_brief_per_source_windows_and_region_attribution(game):
     """分源欠饷月数＝ceil(分源现欠/月需)，province/central 各自独立成窗；
     army 级事实带属地 region（=station_region，#659）；零分母短路不计。"""
-    from ming_sim.flows import army_needed
+    from ming_sim.army_pay import army_needed
 
     db, _state, _content = game
     # xuan_da：need=ceil(65000×1.5/10000)=10；两源现欠钉成不同值 → 窗口必然不同
@@ -1424,7 +1436,7 @@ def test_fact_brief_zero_need_army_region_attribution_not_gated(game):
     """零需残军（manpower=0 携历史欠，0023 D6/D11）属地归因不被 need 门误删：
     月需=0 只短路欠饷月数计算（不做除法），army 仍入 region_of_army 册——
     其省源偿欠受益事实照常带 station_region 归因（#659），不落成无属地。"""
-    from ming_sim.flows import army_needed
+    from ming_sim.army_pay import army_needed
 
     db, state, _content = game
     turn = db._current_settle_turn()

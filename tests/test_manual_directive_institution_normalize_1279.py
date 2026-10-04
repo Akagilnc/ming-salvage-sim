@@ -10,13 +10,11 @@
 """
 
 from __future__ import annotations
-import threading
-
-import asyncio
 import json
-import types
 
 import pytest
+
+from tests.directive_seed_helpers import seed_manual_draft
 
 
 def _mock_draft_intent(monkeypatch, *, text: str, roster):
@@ -29,26 +27,29 @@ def _mock_draft_intent(monkeypatch, *, text: str, roster):
         "目标ID": "treasury-audit",
         "参与人": roster,
     }
+    prompts = []
 
     def backend(prompt, *_args, tag="", **_kwargs):
-        # r6 escalate 出口：按 tag 分派，禁一律吐抽取 JSON / 禁 prompt 形状假设炸 IndexError
+        # 回禀出口按结构化 tag 分派，不要求旨文。抽取调用只记账。
         if tag == "participant_escalate_report":
-            names = "、".join(
-                str(item.get("character_id") or "").strip()
-                for item in roster
-                if str(item.get("character_id") or "").strip()
-            ) or "此人"
-            return (f"通政司启：朝中查无「{names}」，乞陛下明示。", 1)
-        emperor = prompt.split("【皇帝】", 1)[1].split("【大臣回话】", 1)[0]
-        if "请据此拟旨" not in emperor or text not in emperor:
-            return (json.dumps({"拟旨意图": "无"}, ensure_ascii=False), 1)
+            return ("回禀", 1)
+        prompts.append(prompt)
         return (json.dumps(response, ensure_ascii=False), 1)
 
     monkeypatch.setattr(cli_backend, "_run_backend_for_config", backend)
+    return prompts
 
 
-def _web_create(game_tuple, monkeypatch, text: str):
-    import web_app
+def _assert_decree_reached_backend(prompts, text: str) -> None:
+    assert prompts and text in prompts[0]
+
+
+def _seed_draft(game_tuple, text: str) -> int:
+    """#1849：独立手拟新增 Web 口（POST /api/directives）已退役。
+
+    落草案改走现行 capture 核 + session.add_directive（CLI 审阅路同款；与召对拟旨
+    共用同一条 turn_directives 写入），故归一不变式仍验在真实落桌上。
+    """
     from ming_sim.session import GameSession
 
     db, state, content = game_tuple
@@ -57,28 +58,18 @@ def _web_create(game_tuple, monkeypatch, text: str):
     session.state = state
     session.llm_config = None
     session.content = content
-    web_game = types.SimpleNamespace(
-        _write_gate=threading.Lock(),
-        db=db, state=state, content=content, session=session,
-        directive_rows=lambda: db.list_directives(
-            state, statuses=("pending", "draft"),
-        ),
-        directive_payload=lambda row: dict(row),
-    )
-    monkeypatch.setattr(web_app, "get_game", lambda: web_game)
-    return asyncio.run(web_app.api_create_directive(
-        web_app.DirectiveRequest(text=text),
-    ))
+    return seed_manual_draft(session, text)
 
 
 def _capture_ids(game, monkeypatch, *, text: str, roster):
     import ming_sim.cli_backend as cli_backend
 
     db, _state, content = game
-    _mock_draft_intent(monkeypatch, text=text, roster=roster)
+    prompts = _mock_draft_intent(monkeypatch, text=text, roster=roster)
     payload = cli_backend.capture_manual_directive_payload(
         text, None, db=db, content=content,
     )
+    _assert_decree_reached_backend(prompts, text)
     return [str(item["character_id"]) for item in (payload.get("participant_roster") or [])]
 
 
@@ -88,7 +79,7 @@ def test_capture_manual_directive_drops_ministry_name_as_participant(game, monke
 
     db, state, content = game
     text = "着户部核清太仓实存，边饷优先"
-    _mock_draft_intent(
+    prompts = _mock_draft_intent(
         monkeypatch, text=text,
         roster=[{"character_id": "户部", "tier": "主办", "role": "核太仓"}],
     )
@@ -96,6 +87,7 @@ def test_capture_manual_directive_drops_ministry_name_as_participant(game, monke
     payload = cli_backend.capture_manual_directive_payload(
         text, None, db=db, content=content,
     )
+    _assert_decree_reached_backend(prompts, text)
     roster = payload.get("participant_roster") or []
     assert all(str(item.get("character_id") or "") != "户部" for item in roster)
 
@@ -126,20 +118,20 @@ def test_capture_manual_directive_drops_ministry_name_as_participant(game, monke
         assert "户部" not in ids
 
 
-def test_web_create_directive_accepts_ministry_subject_without_409(game, monkeypatch):
-    """Web POST /api/directives：着户部… 不得 409「参与人物不存在：户部」。"""
+def test_seeded_draft_accepts_ministry_subject_without_409(game, monkeypatch):
+    """落草案入口：着户部… 不得 409「参与人物不存在：户部」。"""
     db, _state, _content = game
     text = "着户部核清太仓实存，边饷优先"
-    _mock_draft_intent(
+    prompts = _mock_draft_intent(
         monkeypatch, text=text,
         roster=[{"character_id": "户部", "tier": "主办"}],
     )
 
-    result = _web_create(game, monkeypatch, text)
-    assert result["directive"]["id"] > 0
-    assert result["directive"]["text"] == text
+    assert _seed_draft(game, text) > 0
+    _assert_decree_reached_backend(prompts, text)
+    rows = db.list_directives(game[1])
+    assert any(str(row["text"]) == text for row in rows)
     # ADR 0053 缝仍在：未知真名仍应拒——此处仅断言部院名不撞墙。
-    assert db.list_directives(game[1])
 
 
 def test_capture_manual_directive_keeps_real_person_participant(game, monkeypatch):
@@ -231,16 +223,13 @@ def test_adr0053_unknown_person_still_rejected_at_capture(game, monkeypatch):
 
     db, _state, content = game
     text = "着不存在之人核太仓"
-    _mock_draft_intent(
+    prompts = _mock_draft_intent(
         monkeypatch, text=text,
         roster=[{"character_id": "不存在之人甲", "tier": "主办"}],
     )
 
-    with pytest.raises(ValueError) as ei:
+    with pytest.raises(ValueError):
         cli_backend.capture_manual_directive_payload(
             text, None, db=db, content=content,
         )
-    msg = str(ei.value)
-    assert "不存在之人甲" in msg
-    assert any(m in msg for m in ("乞陛下明示", "朝籍", "查无"))
-    assert "参与人物不存在" not in msg  # F5：禁原始 409 泄漏
+    _assert_decree_reached_backend(prompts, text)

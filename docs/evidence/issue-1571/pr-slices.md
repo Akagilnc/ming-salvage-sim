@@ -4,6 +4,7 @@
 - 本文回应大理寺一审打回项：「优先按 schema、护送对账、监督检举、进展双轨、核心状态机等可独立 seam 做纵切 PR」；二审（run 01a04322）判 continue 后按「未证不可再拆就要拆」再拆三片、并统一与 boundary-inventory 的归属矛盾。**结论先行：采纳纵切，不走单 PR**；16 片均可独立合并，每片合并后目标分支不存在壳/双实现（论证模板与各片逐项论证见 §2）。单 PR 案因此无需再证——其不可拆性主张已被 §2 的逐片可合性反证推翻。
 - 方法分组口径与 boundary-inventory（另票证据）同源（成案/查询读面/进展双轨/护送对账/监视检举/连坐毁约/状态机/verdict 物化），且**方法归属一律以 boundary-inventory 为真源**（毁约/连坐拆分形状以 breach-liability-split §2 为真源），本文片内容跟随修正；但本文**所有数字均为本 HEAD 用 AST+grep 自行核实**，不依赖该文件存在。测试总数口径另票核定，本文引用处写「见 test-disposition」。
 - 施工前置：排在 #1572 PR-1（实体目录地基）与 PR-4（verdict 效果物化上浮）之后（ADR 0151 决定 1）。
+- **#1895 追注（2026-09-30）**：本文为 `e88cc29c` 基线的**历史证据快照**，其中 `trigger_supervision_countermeasures` 的拆分/编排提案**已随 #1895 整体退役、不再施工**——代码不再按 integrity 档判定人物是否反制、也不再 hash 指定反制形态；人物反制归 #1861／#1843 run 依可及事实自选（见 `docs/adr/0077-supervision-dulling-person-conditioned.md` 后出修订段，commit `1e5b14f40`）。本文其余行号、拆分形状与归属账原样保留为该 HEAD 的历史依据，不因本次退役而改写。
 - 复审修订（owner 裁定，decision key `issue1571-source-revision-owner-ruling-A`）：PR-1 拆为 PR-1a（schema DDL 就位）+ PR-1b（迁移组自治）；PR-6 拆为 PR-6a（actual 轨）+ PR-6b（reported 轨 + 监视 origin 读面）；全片测试政策删 blanket「断言零变化」改为「不弱化行为断言，删除/改写冻结 HEAD 中违法的盯文与盯源码测试」。片数 14 → 16，其余片号不变。
 
 ## 1. 规模总账（本 HEAD 实测）

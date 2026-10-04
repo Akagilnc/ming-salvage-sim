@@ -13,7 +13,6 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
-import hashlib
 import httpx
 import json
 import sqlite3
@@ -225,8 +224,8 @@ def test_failed_month_degrades_to_pending_and_rebrews_next_month(game):
     relation_calls = [c for c in calls if "view" not in c]
     assert relation_calls and relation_calls[0]["has_pending_failure"] is True
     payload = relation_calls[0]
-    new_hits = [e for e in payload["new_events"] if e["context"] == failed_context]
-    prior_hits = [e for e in payload["prior_events"] if e["context"] == failed_context]
+    new_hits = [e for e in payload["new_events"] if e["origin"] == "audience:turn-1"]
+    prior_hits = [e for e in payload["prior_events"] if e["origin"] == "audience:turn-1"]
     assert len(new_hits) + len(prior_hits) == 1
     assert len(new_hits) == 1 and prior_hits == []
     assert db.get_relation_brew_pending() == []
@@ -270,11 +269,14 @@ def test_prepare_attaches_prior_events_only_via_history_seam(game, monkeypatch):
     source, target = EMPEROR_NODE, "杨嗣昌"
     prior_context = "越次一召原句。"
     # 严格早于开局年月（1627/10）的奠基原句，水位推进后才能进 prior_events。
-    db.record_relation_edge_event(
+    prior_id = db.record_relation_edge_event(
         source=source, target=target, event_kind="知遇",
         context=prior_context, origin="seed:founding:yueci",
         turn=0, year=1626, period=6,
     )
+    prior_origin = db.conn.execute(
+        "SELECT origin FROM relation_edge_events WHERE id=?", (prior_id,),
+    ).fetchone()["origin"]
     _add_edge(db, state, source=source, target=target, kind="知遇",
               context="首月知遇。", origin="audience:month-1")
     brew_fn = _brew_fn_factory([])
@@ -286,8 +288,11 @@ def test_prepare_attaches_prior_events_only_via_history_seam(game, monkeypatch):
     state.turn += 1
     state.period += 1
     new_context = "次月新知遇。"
-    _add_edge(db, state, source=source, target=target, kind="知遇",
-              context=new_context, origin="audience:month-2")
+    new_id = _add_edge(db, state, source=source, target=target, kind="知遇",
+                       context=new_context, origin="audience:month-2")
+    new_origin = db.conn.execute(
+        "SELECT origin FROM relation_edge_events WHERE id=?", (new_id,),
+    ).fetchone()["origin"]
 
     import ming_sim.relation_brew as brew_mod
     import ming_sim.relation_read as read_mod
@@ -309,27 +314,23 @@ def test_prepare_attaches_prior_events_only_via_history_seam(game, monkeypatch):
     relation_calls = [c for c in calls if "view" not in c]
     assert relation_calls
     payload = relation_calls[0]
-    new_contexts = [e["context"] for e in payload["new_events"]]
-    prior_contexts = [e["context"] for e in payload["prior_events"]]
-    assert new_context in new_contexts
-    assert prior_context not in new_contexts
-    assert prior_context in prior_contexts
-    assert new_context not in prior_contexts
-    assert set(new_contexts).isdisjoint(prior_contexts)
+    new_origins = {e["origin"] for e in payload["new_events"]}
+    prior_origins = {e["origin"] for e in payload["prior_events"]}
+    assert new_origin in new_origins
+    assert prior_origin not in new_origins
+    assert prior_origin in prior_origins
+    assert new_origin not in prior_origins
+    assert new_origins.isdisjoint(prior_origins)
     assert (source, target, int(state.year), int(state.period)) in seen
 
 
 # --------------------------- 庭裁 r3/r4 F2 超长 fixture：32,700 字节零删改
 
 def test_brew_persistence_chain_preserves_32700_byte_fixture_byte_identical(game):
-    # r4 冻结公式：B（UTF-8 75 字节）× 436 ＝ 32,700 字节，sha256 冻结。
+    # Keep the long injected input; compare its before-image directly, not a
+    # parallel checksum/length oracle for the same preservation contract.
     block = "崇祯边事关系账超长验收样文-Chongzhen-relation-brew-0123456789-".encode("utf-8")
-    assert len(block) == 75
     fixture = block * 436
-    assert len(fixture) == 32700
-    assert hashlib.sha256(fixture).hexdigest() == (
-        "8241a513648a4a99d6690f0a2cc942ee9523702301e6db12a9333c458c032240"
-    )
     fixture_text = fixture.decode("utf-8")
 
     db, state, _ = game
@@ -347,11 +348,7 @@ def test_brew_persistence_chain_preserves_32700_byte_fixture_byte_identical(game
     assert len(report["brewed"]) == 1
 
     stored = db.get_relation_summary(EMPEROR_NODE, "杨嗣昌")["recent_segment"]
-    stored_bytes = stored.encode("utf-8")
-    assert len(stored_bytes) == 32700
-    assert hashlib.sha256(stored_bytes).hexdigest() == (
-        "8241a513648a4a99d6690f0a2cc942ee9523702301e6db12a9333c458c032240"
-    )
+    assert stored.encode("utf-8") == fixture
 
 
 # --------------------------------------------- P5：批内条目并行不串行

@@ -104,7 +104,8 @@ def test_same_issue_row_inertia_and_ongoing_reuse_parent_canonical_origin(game):
         },
     )
 
-    issue_engine.apply_issue_inertia_and_ongoing(db, state)
+    from ming_sim.issues import apply_issue_inertia_and_ongoing
+    apply_issue_inertia_and_ongoing(db, state)
 
     row = db.conn.execute("SELECT bar_value, status FROM issues WHERE id=?", (issue_id,)).fetchone()
     assert (row["bar_value"], row["status"]) == (51, "active")
@@ -256,13 +257,14 @@ def test_zero_manpower_origin_gate_matches_actual_arrears_writeoff(game):
     db, state, content = game
     row = db.conn.execute("SELECT id FROM armies WHERE owner_power='ming' LIMIT 1").fetchone()
     army_id = row["id"]
+    # 现役 cutover：分源欠饷种子（省 3 + 中央 2），不关 cutover 去测旧 scalar no-op。
     db.conn.execute(
         "UPDATE armies SET manpower=0, arrears=5, province_pay_arrears=3, central_pay_arrears=2 WHERE id=?",
         (army_id,),
     )
     db.conn.execute(
         "INSERT OR REPLACE INTO fiscal_config (key,value,kind,note) VALUES "
-        "('__army_pay_source_cutover',0,'meta','test legacy no-op')"
+        "('__army_pay_source_cutover',1,'meta','active hub cutover')"
     )
 
     legacy_noop = settle_delta(state, db, {'army_delta': {army_id: {'manpower': 0}}}, SettlementContext(content=content))

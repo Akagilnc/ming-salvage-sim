@@ -3,10 +3,16 @@
 from ming_sim.applier import Provenance
 
 import json
+import sqlite3
 
 import pytest
 from ming_sim.knowledge import build_character_knowledge
-from ming_sim.materials import list_materials, prepare_character_materials, read_material
+from ming_sim.materials import (
+    list_materials,
+    prepare_character_materials,
+    read_material,
+    release_material_tree,
+)
 from tests.dossier_test_helpers import create_test_secret_order
 
 def test_role_roster_only_lists_current_active_ming_people(game):
@@ -82,8 +88,7 @@ def test_current_state_facts_are_selected_by_content_domain_not_role_label(
         monkeypatch.setattr(db, name, forbidden)
 
     view = db.get_character_knowledge(state, minister.name)["world"]
-    roster = db.current_court_roster_rows(state)
-    assert roster
+    assert db.current_court_roster_rows(state)
     assert "personnel" in view
     assert view["personnel"]
     assert "military" not in view
@@ -176,6 +181,7 @@ def test_turn_report_keeps_source_specific_secret_exclusion_boundary(game):
     )
 
     view = db.get_character_knowledge(state, minister.name)
+    public_ids = {item.get("source_id") for item in view["public_events"]}
 
     public_sources = {item["source_id"] for item in view["public_events"]}
     assert "test:490:public" in public_sources
@@ -198,6 +204,7 @@ def test_turn_report_projects_public_and_secret_items_per_character(game):
     db.save_turn_report(state, f"公开事项：{public_marker}\n密事项：{secret_marker}")
 
     view = db.get_character_knowledge(state, minister.name)
+    public_ids = {item.get("source_id") for item in view["public_events"]}
 
     public_sources = {item["source_id"] for item in view["public_events"]}
     assert "public:mixed-report" in public_sources
@@ -209,6 +216,11 @@ def test_participation_survives_restore(game):
     db.record_character_participation(
         state, [minister.name], "audience", "召对议饷", "议定辽饷缓急"
     )
+    stored = db.conn.execute(
+        "SELECT source_id FROM character_knowledge_events "
+        "WHERE character_name=? ORDER BY id DESC LIMIT 1",
+        (minister.name,),
+    ).fetchone()
     before = db.get_character_knowledge(state, minister.name)
 
     db.conn.commit()
@@ -216,7 +228,7 @@ def test_participation_survives_restore(game):
     after = db.get_character_knowledge(restored, minister.name)
 
     assert before["events"] == after["events"]
-    assert after["events"][0]["title"] == "召对议饷"
+    assert any(item["source_id"] == stored["source_id"] for item in after["events"])
 
 def test_undo_chat_turn_removes_chat_derived_knowledge_from_context(game):
     """撤回本轮后，已删除聊天消息的见闻源不可继续投影到人物上下文。
@@ -454,20 +466,38 @@ def test_disclosed_secret_source_keeps_its_public_projection(game):
     assert disclosed["title"] == "密查公开"
     assert disclosed["body"] == "该案已奉明发"
 
-def test_public_disclosure_drops_private_roster_but_keeps_event_exclusion(game):
+@pytest.mark.parametrize("exclusion_owner", ["event", "source", "projection"])
+def test_public_disclosure_drops_private_roster_but_keeps_event_exclusion(game, exclusion_owner):
     db, state, content = game
     people = [c for c in content.characters.values() if c.office_type not in ("后宫", "宗藩")]
     participant, allowed, excluded = people[:3]
     source_id = "restricted:public-disclosure-roster"
-    db.register_character_knowledge_source(
-        state, [{"character_id": participant.name}], "private_matter", "密查", "旧密令",
-        source_id=source_id,
-    )
+    if exclusion_owner == "projection":
+        db.persist_knowledge_items_for_turn(state, [{
+            "source_id": source_id, "title": "密查", "body": "旧密令",
+            "excluded_names": [excluded.name],
+        }])
+    else:
+        db.register_character_knowledge_source(
+            state, [{"character_id": participant.name}], "private_matter", "密查", "旧密令",
+            source_id=source_id,
+            excluded_names=[excluded.name] if exclusion_owner == "source" else [],
+        )
+        # Real materialization synthesizes the participant deny-list snapshot.
+        db.persist_knowledge_items_for_turn(state)
     db.record_public_knowledge_event(
         state, "奉明公开", "公开案情", source_id=source_id,
-        excluded_names=[excluded.name],
+        excluded_names=[excluded.name] if exclusion_owner == "event" else [],
     )
 
+    participant_view = db.get_character_knowledge(state, participant.name)
+    kept = next(
+        item for item in participant_view["public_events"]
+        if item.get("source_id") == source_id
+    )
+    assert kept["kind"] == "public"
+    assert kept["title"] == "奉明公开"
+    assert kept["body"] == "公开案情"
     allowed_view = db.get_character_knowledge(state, allowed.name)
     excluded_view = db.get_character_knowledge(state, excluded.name)
     assert source_id in {item["source_id"] for item in allowed_view["public_events"]}
@@ -476,7 +506,7 @@ def test_public_disclosure_drops_private_roster_but_keeps_event_exclusion(game):
 def test_long_knowledge_bodies_survive_storage_without_brief_card_cap(game):
     db, state, content = game
     reader = next(iter(content.characters.values()))
-    body = "甲" * 450 + "完整结尾"
+    body = "甲" * 454
     db.register_character_knowledge_source(
         state, [{"character_id": reader.name}], "audience", "长奏报", body,
         source_id="test:long-source",
@@ -790,7 +820,7 @@ def test_knowledge_exclusion_reads_current_office_without_nameerror(
 
     assert (knowledge["events"] != []) is expected_visible
     if expected_visible:
-        assert knowledge["events"][0]["body"] == "不可忽略的密令"
+        assert knowledge["events"][0]["source_id"] == "test:office-exclusion"
     else:
         assert knowledge["events"] == []
 
@@ -893,13 +923,14 @@ def test_archive_write_materializes_unmirrored_source_scope(game):
     assert excluded.name in json.loads(rows[0]["excluded_names"])
 
 def test_turn_report_counterpart_never_uses_aggregate_when_sources_exist(game):
-    """已有来源边界时，邸报聚合正文不能自行成为公开来源。"""
+    """归档写入混入无来源改写后，已登记的公开来源仍以 source_id 留在读者可见结果里。"""
     db, state, content = game
     reader = next(
         character for character in content.characters.values()
         if character.office_type not in ("后宫", "宗藩")
         and db.get_character_status(character.name)[0] == "active"
     )
+    state.turn += 1  # Isolate this source boundary from the seeded opening sources.
     public_marker = "已立来源的邸报公开事项"
     unscoped_marker = "无来源的邸报改写"
     db.record_public_knowledge_event(
@@ -1244,13 +1275,43 @@ def test_army_truth_is_exactly_scoped_to_person_command(game):
     db.conn.execute("UPDATE armies SET commander=? WHERE id=?", (general.name, rows[0]["id"]))
     db.conn.commit()
     view = db.get_character_knowledge(state, general.name)
+    # 契约落结构化面：辖域 army_ids 恰是本人统领的那一支。正文 `command` 由
+    # db.army_roster(filter_names=scope) 现算，在它里面找军队名只是同源比较，
+    # 只能证接线，且人读正文不是记录身份（大理寺 aa62c7def）。
     assert view["scope"]["army_ids"] == (rows[0]["id"],)
     assert rows[1]["id"] not in view["scope"]["army_ids"]
 
 
 
 
-def test_household_secret_ledger_keeps_amount_but_hides_case_semantics(game):
+@pytest.fixture
+def household_ledger_reads(game):
+    """Observe real SQLite field consumption without replacing rows or rendering."""
+    db, _, _ = game
+    reads = set()
+    original_factory = db.conn.row_factory
+
+    class LedgerRow(sqlite3.Row):
+        def __getitem__(self, key):
+            reads.add((super().__getitem__("delta"), key))
+            return super().__getitem__(key)
+
+    def factory(cursor, values):
+        fields = {column[0] for column in cursor.description}
+        if {"delta", "balance_after", "excluded_targets"} <= fields:
+            return LedgerRow(cursor, values)
+        return original_factory(cursor, values)
+
+    db.conn.row_factory = factory
+    try:
+        yield reads
+    finally:
+        db.conn.row_factory = original_factory
+
+
+def test_household_secret_ledger_keeps_amount_but_hides_case_semantics(
+    game, tmp_path, household_ledger_reads,
+):
     db, state, content = game
     clerk = next(c for c in content.characters.values() if c.office_type == "户部")
     order_id = create_test_secret_order(
@@ -1262,13 +1323,32 @@ def test_household_secret_ledger_keeps_amount_but_hides_case_semantics(game):
         state, "国库", -1, "秘密分类", "秘密流水原因",
         origin_ref=f"dossier:{dossier['id']}",
     )
-    ledger = db.get_character_knowledge(state, clerk.name)["world"]["treasury"]
-    assert "-1" in ledger and "密支" in ledger
-    assert "秘密分类" not in ledger and "秘密流水原因" not in ledger
+    world = db.get_character_knowledge(state, clerk.name)["world"]
+    assert world.get("treasury")
+    assert {(-1, "delta"), (-1, "balance_after")} <= household_ledger_reads
+    assert {(-1, "reason"), (-1, "category")}.isdisjoint(household_ledger_reads)
+    row = db.conn.execute(
+        "SELECT excluded_names FROM secret_orders WHERE id=?", (order_id,),
+    ).fetchone()
+    assert clerk.name in json.loads(row["excluded_names"])
+    prepared = prepare_character_materials(
+        db, state, clerk, dest_root=tmp_path / "clerk",
+    )
+    try:
+        archive_rel = next(
+            p for p in list_materials(prepared.root) if p.endswith("/公事档案.txt")
+        )
+        assert read_material(prepared.root, archive_rel)
+        assert {(-1, "reason"), (-1, "category")}.isdisjoint(household_ledger_reads)
+        assert int(dossier["id"]) not in _referenceable_dossier_ids(
+            db, clerk.name, int(state.turn),
+        )
+    finally:
+        release_material_tree(prepared.root)
 
 
-def test_household_secret_ledger_hides_case_by_excluded_office(game):
-    """#1812：户部流水按 excluded_targets.offices 现职/继任排挤，数额仍可见。"""
+def test_household_secret_ledger_hides_case_by_excluded_office(game, household_ledger_reads):
+    """#1812: current-office exclusion prevents real ledger case-field consumption."""
     db, state, content = game
     clerk = next(c for c in content.characters.values() if c.office_type == "户部")
     successor = next(
@@ -1284,10 +1364,25 @@ def test_household_secret_ledger_hides_case_by_excluded_office(game):
         state, "国库", -2, "职署秘密分类", "职署秘密流水",
         origin_ref=f"dossier:{dossier['id']}",
     )
-    # 现职户部：数额可见、案情隐藏
-    hidden = db.get_character_knowledge(state, clerk.name)["world"]["treasury"]
-    assert "-2" in hidden and "密支" in hidden
-    assert "职署秘密分类" not in hidden and "职署秘密流水" not in hidden
+    order_row = db.conn.execute(
+        "SELECT excluded_targets FROM secret_orders WHERE id=?", (order_id,),
+    ).fetchone()
+    assert json.loads(order_row["excluded_targets"]) == {
+        "people": [], "offices": [clerk.office_type],
+    }
+    assert db.get_character_knowledge(state, clerk.name)["world"].get("treasury")
+    assert {(-2, "delta"), (-2, "balance_after")} <= household_ledger_reads
+    assert {(-2, "reason"), (-2, "category")}.isdisjoint(household_ledger_reads)
+    assert int(dossier["id"]) not in _referenceable_dossier_ids(
+        db, clerk.name, int(state.turn),
+    )
+    outsider = next(
+        c for c in content.characters.values()
+        if c.office_type != "户部"
+        and db.get_character_status(c.name)[0] == "active"
+    )
+    outsider_ledger = db.get_character_knowledge(state, outsider.name)["world"]
+    assert "treasury" not in outsider_ledger
 
     # 继任入户部：仍按当前 office_type 排挤（不靠签发时人名快照）
     clerk_office, clerk_type = clerk.office, clerk.office_type
@@ -1297,11 +1392,15 @@ def test_household_secret_ledger_hides_case_by_excluded_office(game):
     clerk.office, clerk.office_type = "闲住", "未仕"
     successor.office, successor.office_type = clerk_office, "户部"
     try:
-        successor_view = db.get_character_knowledge(
+        household_ledger_reads.clear()
+        assert db.get_character_knowledge(
             state, successor.name,
-        )["world"]["treasury"]
-        assert "-2" in successor_view and "密支" in successor_view
-        assert "职署秘密流水" not in successor_view
+        )["world"].get("treasury")
+        assert {(-2, "delta"), (-2, "balance_after")} <= household_ledger_reads
+        assert {(-2, "reason"), (-2, "category")}.isdisjoint(household_ledger_reads)
+        assert int(dossier["id"]) not in _referenceable_dossier_ids(
+            db, successor.name, int(state.turn),
+        )
     finally:
         db.set_character_office(clerk.name, clerk_office, office_type=clerk_type)
         db.set_character_office(successor.name, prior_office, office_type=prior_type)
@@ -1309,10 +1408,10 @@ def test_household_secret_ledger_hides_case_by_excluded_office(game):
         successor.office, successor.office_type = prior_office, prior_type
 
 
-def _office_archive_from_materials(db, state, character, root):
+def _office_archive_path_from_materials(db, state, character, root):
     prepared = prepare_character_materials(db, state, character, dest_root=root)
-    path = next(p for p in list_materials(prepared.root) if p.endswith("/公事档案.txt"))
-    return read_material(prepared.root, path)
+    paths = list_materials(prepared.root)
+    return next(p for p in paths if p.endswith("/公事档案.txt"))
 
 
 def _referenceable_dossier_ids(db, character_name, turn) -> set[int]:
@@ -1395,22 +1494,34 @@ def test_multi_lead_typed_archives_reach_only_each_office_successor(game, tmp_pa
     assert case_id in _referenceable_dossier_ids(db, case_successor.name, turn)
 
 
-def test_central_ledgers_and_unbounded_household_history_reach_final_materials(game, tmp_path):
+def test_central_ledgers_reach_each_office_archive_carrier_without_crossing(game, tmp_path):
+    """户部／兵部／吏部各自只带自己那把账键，且都落在本人 公事档案.txt 载体上。
+
+    契约只落结构化面（大理寺 01a0f1f4 裁定）：载体路径存在 + 本人
+    `get_character_knowledge` 的 world 账键恰是自己那把。删去的两类断言不得
+    换形复造：
+    - 不重调生产渲染器逐字比档案正文（与被调函数同进同出，只证接线）；
+    - 不用 reason／人名在档案正文里做子串推断来证「逐条完整」或「不串门」
+      （旧账1 被旧账10 顶替仍绿；兵名／人名会与别段偶然撞字）。
+    """
     db, state, content = game
-    household = next(c for c in content.characters.values() if c.office_type == "户部")
-    war = next(c for c in content.characters.values() if c.office_type == "兵部")
-    personnel = next(c for c in content.characters.values() if c.office_type == "吏部")
-    for index in range(31):
-        db.record_issue_economy_move(
-            state, "国库", 1, "旧账", f"EARLY_LEDGER_{index}",
+
+    from ming_sim.materials import _LEDGER_KEYS
+
+    holders = {
+        office_type: next(
+            c for c in content.characters.values() if c.office_type == office_type
         )
-    household_archive = _office_archive_from_materials(
-        db, state, household, tmp_path / "household",
-    )
-    assert "EARLY_LEDGER_0" in household_archive and "内库" not in household_archive
-    war_archive = _office_archive_from_materials(db, state, war, tmp_path / "war")
-    assert "兵籍在册" in war_archive and "军心" not in war_archive and "欠饷" not in war_archive
-    personnel_archive = _office_archive_from_materials(
-        db, state, personnel, tmp_path / "personnel",
-    )
-    assert "任免簿" in personnel_archive
+        for office_type in ("户部", "兵部", "吏部")
+    }
+    office_ledger_key = {"户部": "treasury", "兵部": "military", "吏部": "personnel"}
+    for office_type, character in holders.items():
+        # 载体面：本衙门职官的材料目录里有本人公事档案。
+        assert _office_archive_path_from_materials(
+            db, state, character, tmp_path / office_type,
+        ).endswith("/公事档案.txt")
+        # 准入面：本人 world 只带自己那把账键（跨衙门不串门，结构化字段）。
+        knowledge = db.get_character_knowledge(state, character.name)
+        assert [
+            key for key in (knowledge.get("world") or {}) if key in _LEDGER_KEYS
+        ] == [office_ledger_key[office_type]]

@@ -600,11 +600,14 @@ def test_verify_llm_available_api_empty_content_passes(monkeypatch):
             pass
 
         def run(self, prompt: str) -> EmptyOutput:
+            calls.append(prompt)
             return EmptyOutput()
 
+    calls = []
     monkeypatch.setattr(llm_model, "Agent", FakeAgent)
-    # 走真实 extract_agent_text：空 content 不得误杀
+    # 走真实 extract_agent_text：空 content 不得误杀，且确实发起验证调用。
     verify_llm_available(_api_cfg())
+    assert len(calls) == 1
 
 
 def test_verify_llm_available_api_empty_content_none_passes(monkeypatch):
@@ -620,10 +623,13 @@ def test_verify_llm_available_api_empty_content_none_passes(monkeypatch):
             pass
 
         def run(self, prompt: str) -> NoneContent:
+            calls.append(prompt)
             return NoneContent()
 
+    calls = []
     monkeypatch.setattr(llm_model, "Agent", FakeAgent)
     verify_llm_available(_api_cfg())
+    assert len(calls) == 1
 
 
 def test_verify_llm_available_api_empty_content_error_status_raises(monkeypatch):
@@ -789,6 +795,11 @@ def test_cli_supports_reasoning_strength_matrix(runner, expected):
     assert cli_supports_reasoning_strength(runner) is expected
 
 
+def test_cli_reasoning_strength_runners_single_source_in_cli_backend():
+    """#1271：能力名单单源在 cli_backend（与 effort/thinking 表同缝）。"""
+    from ming_sim.cli_backend import CLI_REASONING_STRENGTH_RUNNERS
+
+    assert CLI_REASONING_STRENGTH_RUNNERS == frozenset({"codex", "claude", "grok", "pi"})
 
 
 

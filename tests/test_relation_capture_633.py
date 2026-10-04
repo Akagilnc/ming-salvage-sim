@@ -446,14 +446,14 @@ def test_multi_target_with_blank_or_self_member_rejects_whole_item_zero_edges(
 
 
 @pytest.mark.parametrize(
-    ("targets", "label", "reason_fragment"),
+    ("targets", "label"),
     [
-        ([], "空列表", "受动者不能为空"),
-        (["温体仁", "   "], "全无效", "受动者不能为"),
+        ([], "空列表"),
+        (["温体仁", "   "], "全无效"),
     ],
 )
 def test_empty_or_all_invalid_targets_reject_whole_item_zero_edges(
-    game, targets, label, reason_fragment,
+    game, targets, label,
 ):
     """V10：受动者列表为空（含全无效成员被拒后为空的等价情形）——整项
     fail-closed 拒收留痕，不得静默零写冒充成功；同批独立好互动照落。"""

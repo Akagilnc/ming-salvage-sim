@@ -648,14 +648,17 @@ def apply_persist_revoke_tail(
     target_dossier_id: int,
     reason: str,
     apply_0056: bool,
+    close_target: bool = True,
     commitment_ref: int = 0,
     authority_source_dossier_id: int = 0,
     revoke_dossier_id: int = 0,
 ) -> Dict[str, object]:
-    """坚持后落地 = 立即 revoke 路径效果 − 票面明文推迟项。
+    """撤旨落地唯一收尾：0056 毁约代价 + 捆带授权收回 + 同源承诺停 tick。
 
-    立即路径：0056 + 捆带授权收回 + 同源停 tick。
-    推迟项（当回合已做/不做）：顺颁即 breach+close 的当回合无损——此处补齐结账。
+    两个调用方（#1894）都传 ``close_target=False``：0056 只落名声账，案卷
+    结案留给执行格判官本月的 ``dossier_executions`` 判决——撤令与坚持撤都
+    不抢在模型声明前关案。``revoke_dossier_id`` 非零时另恢复该撤令案卷
+    带来的 pay_order override（见 pay_order.restore_pay_order_override）。
 
     返回 guofu_from_0056：本调用 0056 实际写出的辜负边人名
     （供 0079 撤人边去重；跨承诺/跨案卷同人边不在此集合）。
@@ -677,6 +680,7 @@ def apply_persist_revoke_tail(
         breach_applied = bool(
             db.breach_decree_dossier(
                 state, did, reason=reason, commit=False,
+                close_target=close_target,
             )
         )
         if breach_applied:

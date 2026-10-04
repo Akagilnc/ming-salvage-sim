@@ -109,7 +109,6 @@ def test_new_game_returns_before_delayed_close_drains(monkeypatch, tmp_path):
 
     fake_new_game = SimpleNamespace(state_payload=lambda: {"turn": 1})
     monkeypatch.setattr(web_app, "WebGame", lambda fresh, **_kw: fake_new_game)
-    monkeypatch.setattr(web_app.steam_events, "with_events", lambda payload, events: payload)
 
     gate.acquire()
 
@@ -723,7 +722,6 @@ def test_new_game_switches_db_path_when_web_game_is_none(monkeypatch, tmp_path):
 
     fake_new_game = SimpleNamespace(state_payload=lambda: {"turn": 1})
     monkeypatch.setattr(web_app, "WebGame", lambda fresh, **_kw: fake_new_game)
-    monkeypatch.setattr(web_app.steam_events, "with_events", lambda payload, events: payload)
 
     result = asyncio.run(web_app.api_menu_new_game())
 
@@ -759,7 +757,6 @@ def test_new_game_switches_db_path_when_web_game_none_and_no_env(monkeypatch, tm
 
     fake_new_game = SimpleNamespace(state_payload=lambda: {"turn": 1})
     monkeypatch.setattr(web_app, "WebGame", lambda fresh, **_kw: fake_new_game)
-    monkeypatch.setattr(web_app.steam_events, "with_events", lambda payload, events: payload)
 
     result = asyncio.run(web_app.api_menu_new_game())
 

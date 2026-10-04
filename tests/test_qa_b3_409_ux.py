@@ -1,6 +1,6 @@
 """#1274 QA A-新3：409/超时 UX 族（#1301/#1306/#1312/#1319(a)/#1322）。
 
-刀口只锁玩家面文案、相位分文、authority 投影与 resolve 锁前预检；
+刀口锁状态码、结构化 detail、相位分叉与 resolve 锁前预检；
 ADR 0036/0006 机制零动。
 """
 from __future__ import annotations
@@ -47,20 +47,21 @@ def test_closing_player_message_is_diegetic_without_bare_night_id(monkeypatch):
         an.assert_night_accepts_player_input(object(), what="召对")
 
     msg = str(ei.value)
-    assert "收夜中" in msg
-    assert "召对" in msg
-    assert "42" not in msg
-    assert ":42" not in msg.replace(" ", "")
+    assert msg
     assert ei.value.code == "night_closing"
     assert ei.value.detail == {"night_id": 42, "what": "召对"}
+
+    with pytest.raises(an.AudienceNightError) as other:
+        an.assert_night_accepts_player_input(object(), what="阅折")
+    assert other.value.code == "night_closing"
+    assert other.value.detail == {"night_id": 42, "what": "阅折"}
 
 
 # ── #1306 FRONT_HALF_DONE 分相位文案 ────────────────────────────────────────
 
-def test_serialized_web_write_awaiting_decision_says_waiting_for_rescript():
-    """#1306：awaiting_decision 报「等待批红」，不得报「月末结算进行中」。"""
+def _front_half_detail(phase: str) -> str:
     game = SimpleNamespace(
-        state=SimpleNamespace(turn_phase=TurnPhase.AWAITING_DECISION.value),
+        state=SimpleNamespace(turn_phase=phase),
         _write_gate=ClassifiedWriteGate(),
     )
     with pytest.raises(HTTPException) as ei:
@@ -83,7 +84,10 @@ def test_serialized_web_write_settling_keeps_settlement_in_progress_copy():
 
 
 def test_serialized_web_write_phase_messages_cover_front_half_done():
-    """#1306 全 FRONT_HALF_DONE 相位均 409，且文案按相位分叉。"""
+    """#1306 全 FRONT_HALF_DONE 相位均 409，详情只按 awaiting / 其余两支分叉。"""
+    awaiting = _front_half_detail(TurnPhase.AWAITING_DECISION.value)
+    other = _front_half_detail(TurnPhase.SETTLING.value)
+    assert awaiting != other
     for phase in FRONT_HALF_DONE_PHASES:
         game = SimpleNamespace(
             state=SimpleNamespace(turn_phase=phase),

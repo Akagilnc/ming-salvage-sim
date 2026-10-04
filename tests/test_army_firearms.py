@@ -11,7 +11,6 @@ from __future__ import annotations
 
 from ming_sim.applier import Provenance
 
-import re
 
 from ming_sim.constants import ARMY_SCORE_FIELDS
 
@@ -28,6 +27,12 @@ def _cols(db, table):
     return {r["name"] for r in db.conn.execute(f"PRAGMA table_info({table})").fetchall()}
 
 
+
+
+
+def test_score_fields_include_firearm_and_cannon():
+    assert "firearm_equipment" in ARMY_SCORE_FIELDS
+    assert "cannon_equipment" in ARMY_SCORE_FIELDS
 
 
 def test_armies_table_has_firearm_columns(read_game):
@@ -119,7 +124,7 @@ def test_create_army_cannon_count_clamped(game):
 
 
 
-def test_fresh_seed_wires_firearm_not_all_zero(content):
+def test_fresh_seed_wires_firearm_not_all_zero(content, tmp_path):
     """新档 seed 必须贯通火器（非全 0）。"""
     import os
     import tempfile
