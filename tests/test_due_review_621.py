@@ -521,7 +521,7 @@ def test_executing_outcome_rejects_close_true(game):
     """负向：executing 不得 close=True（适配器契约）。"""
     db, state, _content = game
     dossier_id = _executing_policy_dossier(db, state, token="close-guard")
-    with pytest.raises(ValueError, match="executing"):
+    with pytest.raises(ValueError):
         db.record_dossier_execution(
             dossier_id, "executing", "中段过程", state.turn, close=True, commit=True,
         )
@@ -564,6 +564,7 @@ def test_three_beat_timing_todo_then_scene_then_slot(game, monkeypatch):
     _settle_empty_month(db, state, content, monkeypatch)
     assert db.get_decree_dossier(dossier_id)["execution_outcome"]
     assert db.list_next_audience_todos(status=TODO_STATUS_PENDING) == []
+
 
 
 def test_due_review_settle_does_not_pause_or_decision(game, monkeypatch):

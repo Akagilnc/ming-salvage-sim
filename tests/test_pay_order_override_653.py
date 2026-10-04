@@ -795,7 +795,8 @@ def test_materialize_requires_real_promulgated_dossier(game):
 
 def test_central_due_haircut_consumer(game):
     """中央份额 Due 折发读端：floor 折算、余数免除、地域/饷源精确、无折恒等。"""
-    from ming_sim.flows import _central_dues_with_haircut, army_needed
+    from ming_sim.army_pay import army_needed
+    from ming_sim.flows import _central_dues_with_haircut
 
     db, state, _content = game
     rows = db.conn.execute(
@@ -883,8 +884,9 @@ def test_central_hub_tier_order_and_old_arrears_unchanged_by_haircut(game):
     assert "tier_due_total = jingyun_due_total + central_due_total" in src
     assert "k = (" in src
     # 中央旧欠无自动偿还位：中央路径只增欠（old_central_arrears + shortfall），无偿还分支
-    from ming_sim import flows as flows_mod
-    apply_src = inspect.getsource(flows_mod.apply_fixed_period_flows)
+    # #1901：军饷路径已迁 army_pay；查现役属主，不复活 flows 内旧副本。
+    import ming_sim.army_pay as army_pay_mod
+    apply_src = inspect.getsource(army_pay_mod)
     assert "old_central_arrears + shortfall" in apply_src
     central_arrears_assignment = next(
         line for line in apply_src.splitlines()
@@ -1057,3 +1059,4 @@ def test_claim_flow_logs_persisted_in_settle_bridge_and_restore_e2e(game):
         assert {(r["field"], float(r["delta"])) for r in rows2} == expect_flows
     finally:
         db2.close()
+

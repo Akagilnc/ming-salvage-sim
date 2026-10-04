@@ -47,8 +47,6 @@ def _sess(db, state, content, monkeypatch, *, llm_config=None, translate_fn=None
     sess.llm_config = llm_config or SimpleNamespace(channel="api")
     sess.temporary_characters = {}
     sess.agno_db = None
-    sess._beat_generator = None
-    sess._scene_registry = None
     sess._write_queue = SessionWriteQueue()
     sess._write_gate = sess._write_queue.write_gate
     # 转译在后台线程跑：登记队列归 game 夹具排空，断言失败也不越过关库边界。

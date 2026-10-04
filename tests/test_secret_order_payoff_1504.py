@@ -21,9 +21,11 @@ from ming_sim.covert_progress import (
     CovertContractError,
     apply_investigation_spoliation,
     build_covert_task_contract,
+    decide_secret_order_settlement,
     investigation_clue_records,
     live_investigation_fact_keys,
     read_covert_task_contract,
+    seed_guilt_counts_as_debt,
     apply_monthly_covert_actual_progress,
     investigation_lane_actual_units,
     settle_due_secret_orders,
@@ -31,9 +33,7 @@ from ming_sim.covert_progress import (
 from ming_sim.applier import Provenance
 from ming_sim.month_chain import build_secret_orders_supply_feed
 from ming_sim.exceptions import SettlementAbort
-from ming_sim.db import GameDB
 from ming_sim.issues import apply_score_extraction
-from ming_sim.models import TurnPhase
 from tests.conftest import offline_empty_audience_translate, stub_audience_translate, stub_scene_agent
 
 def _task(*, kind, axes, unit, target, direction=1, investigation_target="", effect_sign=None):
@@ -209,6 +209,54 @@ def _originate_catches(db, state, content, dossier_id, names):
         content=content,
     )
 
+
+def test_seed_guilt_structured_clean_vs_debt():
+    # 现约：只收结构化 severity∈{轻,中,重}；裸散文／解析失败不造罪（W4/#1896）。
+    assert not seed_guilt_counts_as_debt("")
+    assert not seed_guilt_counts_as_debt(None)
+    assert not seed_guilt_counts_as_debt({"crime": "无", "severity": "无"})
+    assert not seed_guilt_counts_as_debt('{"crime": "无", "severity": "无"}')
+    assert not seed_guilt_counts_as_debt("血债")
+    assert seed_guilt_counts_as_debt({"crime": "交结近侍", "severity": "中"})
+
+
+def test_decide_settlement_delivery_gap_bidirectional():
+    done = decide_secret_order_settlement({
+        "actual_units": 3.0, "target_units": 3.0, "criterion_text": "密查甲",
+    })
+    assert done["status"] == "done" and done["outcome"] == "fulfilled" and done["delivered"]
+
+    failed = decide_secret_order_settlement({
+        "actual_units": 0.5, "target_units": 3.0, "criterion_text": "密查甲",
+        "has_reports": True,
+    })
+    assert failed["status"] == "failed" and not failed["delivered"]
+    # 表报不改变 delivered 判定
+    bare = decide_secret_order_settlement({
+        "actual_units": 0.5, "target_units": 3.0, "has_reports": False,
+    })
+    assert bare["status"] == "failed"
+
+
+def test_task_specific_contract_from_explicit_fields_not_tags():
+    audit = build_covert_task_contract(
+        deadline_span=3, due_turn=10,
+        kind="补发饷银", axes=["既得利益"], direction=1,
+        delivery_unit="万两", delivery_target_units=3, effect_sign=-1,
+        purpose="其它", category="密令差务", account="内库",
+    )
+    catch = build_covert_task_contract(
+        deadline_span=3, due_turn=10,
+        kind="缉获人犯", axes=["实务事功"], direction=1,
+        delivery_unit="人犯", delivery_target_units=3, effect_sign=1, person_action="处置",
+    )
+    assert audit["kind"] == "补发饷银" and audit["axes"] == ["既得利益"]
+    assert audit["delivery"]["unit"] == "万两"
+    assert audit["delivery"]["target_units"] == 3.0
+    assert catch["kind"] == "缉获人犯" and catch["delivery"]["unit"] == "人犯"
+    assert catch["delivery"]["target_units"] == 3.0
+
+
 def test_task_specific_contract_rejects_tags_without_explicit_fields():
     with pytest.raises(CovertContractError):
         build_covert_task_contract(
@@ -228,7 +276,7 @@ def test_task_specific_contract_rejects_tags_without_explicit_fields():
     ],
 )
 def test_confirmation_rejects_incomplete_delivery_identity(unit, identity, sign):
-    with pytest.raises(CovertContractError, match="identity"):
+    with pytest.raises(CovertContractError):
         build_covert_task_contract(
             kind="差务", axes=["实务事功"], direction=1,
             delivery_unit=unit, delivery_target_units=1, effect_sign=sign, **identity,

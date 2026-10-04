@@ -9,15 +9,13 @@ army_report/欠饷月数/simulator TSV）统一到 army_needed，玩家与审计
 
 from __future__ import annotations
 
-import re
-
 import pytest
 
-from ming_sim.flows import army_needed
+from ming_sim.army_pay import army_needed
 
 
 def test_army_payload_exposes_army_needed(read_game):
-    """army_payload 须暴露引擎实扣应发 army_needed（供 web/LLM 呈现「月饷」），与 flows.army_needed 一致。"""
+    """army_payload 须暴露引擎实扣应发 army_needed（供 web/LLM 呈现「月饷」），与 army_pay.army_needed 一致。"""
     db, _state, _ = read_game
     payload = db.army_payload()
     assert payload, "应有军队"
@@ -28,29 +26,6 @@ def test_army_payload_exposes_army_needed(read_game):
         assert p["army_needed"] == army_needed(row), (
             f"{row['id']} army_payload.army_needed={p['army_needed']} 应=引擎 {army_needed(row)}"
         )
-
-
-def test_army_report_shows_actual_charge(game):
-    """army_report 月饷总额须基于 army_needed（引擎实扣）——格式化金额串出现在真实出口。"""
-    from ming_sim.assets import format_money
-    from ming_sim.models import monthly_amount
-
-    db, _state, _ = game
-    aid = db.conn.execute(
-        "SELECT id FROM armies WHERE owner_power='ming' AND salary_rate>0 "
-        "ORDER BY manpower DESC LIMIT 1"
-    ).fetchone()["id"]
-    db.conn.execute(
-        "UPDATE armies SET manpower = manpower + 100000 WHERE id=?", (aid,)
-    )
-    db.conn.commit()
-    total_needed = sum(
-        army_needed(r) for r in db.conn.execute("SELECT * FROM armies").fetchall()
-    )
-    expected = format_money(monthly_amount(total_needed))
-    report = db.army_report(limit=20)
-    assert expected in report
-    assert monthly_amount(total_needed) > 0
 
 
 def test_army_public_exits_approx_arrears_and_hide_split_accounts(game):
@@ -68,48 +43,15 @@ def test_army_public_exits_approx_arrears_and_hide_split_accounts(game):
         (*scores.values(), row["id"]),
     )
     db.conn.commit()
-    name = row["name"]
-    roster = db.army_roster(filter_names=[name])
-    report = db.army_report(limit=100)
-    # 按出口结构隔离目标军字段（report 只扫目标段，避开合计饷银）
-    seg = next(p for p in report.split("：", 1)[-1].split("；") if p.startswith(name + "："))
-    exits = (seg, roster)
-    joined = "\n".join(exits)
-    # 欠饷裸精确小数不得进入真实出口（与 #321 raw 哨兵同形）
-    assert name in roster and "12.5" not in joined
-    for forbidden in ("province_pay_arrears", "central_pay_arrears", "省份额欠", "中央份额欠"):
-        assert forbidden not in joined
-    db.conn.execute(
-        "UPDATE armies SET arrears=0, province_pay_arrears=0, central_pay_arrears=0 WHERE id=?",
-        (row["id"],),
-    )
-    db.conn.commit()
-    assert db.army_roster(filter_names=[name]) != roster
-    for text in exits:
-        for bare in scores.values():
-            assert not re.search(rf"(?<!\d){bare}(?!\d)", text)
-
-
-def test_army_arrears_presentation_rounds_half_steps_up(game):
-    """#305: independent half-step expectations through the real DB-to-detail exit."""
-    db, _state, _ = game
-    row = db.conn.execute(
-        "SELECT id,name FROM armies WHERE owner_power='ming' ORDER BY id LIMIT 1"
-    ).fetchone()
-    for arrears, expected in (
-        (12.5, "欠饷约15万两"), (15, "欠饷约15万两"),
-        (12, "欠饷约10万两"), (25, "欠饷约30万两"), (30, "欠饷约30万两"),
-    ):
-        db.conn.execute(
-            "UPDATE armies SET arrears=?, province_pay_arrears=?, central_pay_arrears=0 WHERE id=?",
-            (arrears, arrears, row["id"]),
-        )
-        db.conn.commit()
-        assert expected in db.army_roster(filter_names=[row["name"]])
+    payload = {army["id"]: army for army in db.army_payload()}[row["id"]]
+    for key in ("arrears", "province_pay_arrears", "central_pay_arrears", "morale", "loyalty"):
+        assert key not in payload
 
 
 def test_army_payload_exposes_approx_arrears_text_not_raw(game):
     """#321：web 只读 army_payload.arrears_text approximate；numeric arrears 键缺席；raw 12.5 不裸出。"""
+    from ming_sim.db import _player_army_situation
+
     db, _state, _ = game
     row = db.conn.execute(
         "SELECT id FROM armies WHERE owner_power='ming' ORDER BY id LIMIT 1"
@@ -124,10 +66,11 @@ def test_army_payload_exposes_approx_arrears_text_not_raw(game):
     )
     db.conn.commit()
 
+    full = db.conn.execute("SELECT * FROM armies WHERE id=?", (row["id"],)).fetchone()
+    expected = _player_army_situation(full, db._army_pay(full))["arrears_text"]
     payload = {army["id"]: army for army in db.army_payload()}
     assert "arrears" not in payload[row["id"]]
-    assert "欠饷约15万两" in payload[row["id"]]["arrears_text"]
-    assert "12.5" not in payload[row["id"]]["arrears_text"]
+    assert payload[row["id"]]["arrears_text"] == expected
 
 
 

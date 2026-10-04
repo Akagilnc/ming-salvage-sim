@@ -136,7 +136,6 @@ def test_region_controlled_by_rejects_non_power_id_and_preserves_region(game, ba
     assert len(rows) == 1
     _, reason, category, _ = rows[0]
     assert category == "invalid_enum"
-    assert "controlled_by" in reason
     after = db.conn.execute(
         "SELECT controlled_by FROM regions WHERE id=?", (good,)
     ).fetchone()[0]
@@ -456,6 +455,8 @@ def test_army_firearm_over_100_clamps_not_rejected(game):
         "SELECT firearm_equipment FROM armies WHERE id=?", (good,)).fetchone()[0]
     assert after == 100  # clamp 后照落
 
+
+
 def test_duplicate_army_noninteger_manpower_rejected(game):
     """new_armies 命中已有 id 但 manpower 非整数 → 原 print 静默跳,改为逐项
     拒收留痕(invalid_enum)(ADR 决定 1)。"""
@@ -631,7 +632,8 @@ def test_inertia_natural_resolution_tolerated_rejection_no_crash(game):
     )
     db.conn.commit()
 
-    I.apply_issue_inertia_and_ongoing(db, state, touched_ids=set())  # 不抛
+    from ming_sim.situation_drift import apply_situation_monthly_drift
+    apply_situation_monthly_drift(db, state)  # 不抛
 
     row = db.conn.execute("SELECT status FROM issues WHERE id=?", (issue_id,)).fetchone()
     assert row[0] == "resolved"

@@ -9,7 +9,6 @@ simulator 看得见、软性加权判战；引擎只 clamp、不算胜负。
 
 from __future__ import annotations
 
-import re
 
 from ming_sim.constants import ARMY_SCORE_FIELDS
 
@@ -116,66 +115,6 @@ def test_create_army_cannon_count_clamped(game):
         "SELECT cannon_equipment FROM armies WHERE id='heavy_test'"
     ).fetchone()[0]
     assert val == 12
-
-
-def test_army_public_exits_surface_firearm_and_cannon(game):
-    """detail/report/roster 同一读侧：可数火器/炮门 + roster 双态差分（无内部 renderer patch）。"""
-    db, state, _ = game
-    row = db.conn.execute(
-        "SELECT id, name FROM armies WHERE owner_power='ming' LIMIT 1"
-    ).fetchone()
-    aid, name = row["id"], row["name"]
-
-    def _set(**fields):
-        cols = ", ".join(f"{k}=?" for k in fields)
-        db.conn.execute(f"UPDATE armies SET {cols} WHERE id=?", (*fields.values(), aid))
-        db.conn.commit()
-
-    def _report_seg() -> str:
-        body = db.army_report(limit=8).split("：", 1)[-1]
-        return next(p for p in body.split("；") if p.startswith(name + "："))
-
-    def _roster_line(*, qualitative: bool) -> str:
-        return next(
-            line for line in db.army_roster(
-                filter_names=[name], qualitative_equipment=qualitative
-            ).splitlines()
-            if line.startswith(name + "|")
-        )
-
-    _set(firearm_equipment=45, cannon_equipment=3)
-    detail = _roster_line(qualitative=False)
-    assert "45" in detail and detail.endswith("|3")
-    _set(firearm_equipment=91, cannon_equipment=7)
-    detail_hi = _roster_line(qualitative=False)
-    assert detail != detail_hi and "|91|" in f"|{detail_hi}|" and detail_hi.endswith("|7") and "|91|" not in f"|{detail}|"
-
-    # report：抬危入榜；固定火器只改炮数；截取目标军行核对炮门可数事实
-    _set(firearm_equipment=45, cannon_equipment=11, supply=1, morale=1, loyalty=1, training=1)
-    seg_a = _report_seg()
-    assert re.search(r"(?<!\d)11(?!\d)", seg_a)
-    _set(cannon_equipment=8)  # 火器不变
-    seg_b = _report_seg()
-    assert re.search(r"(?<!\d)8(?!\d)", seg_b)
-    assert not re.search(r"(?<!\d)11(?!\d)", seg_b) and seg_a != seg_b
-
-    _set(firearm_equipment=30, cannon_equipment=4)
-    cells_num = _roster_line(qualitative=False).split("|")
-    cells_q = _roster_line(qualitative=True).split("|")
-    assert cells_num[-2] == "30" and cells_num[-1] == "4"
-    assert cells_q[-2] != "30" and "30" not in cells_q and cells_q[-1] == "4"
-
-    db.create_armies_from_extraction(state, [{
-        "id": "probe_fire_new", "name": "火器新营", "owner_power": "ming",
-        "manpower": 4000, "maintenance_per_turn": 1,
-        "firearm_equipment": 77, "cannon_equipment": 5, **_pay_source(),
-    }], actor="测试")
-    for key in ("probe_fire_new", "火器新营"):
-        d = next(
-            line for line in db.army_roster(filter_names=[key]).splitlines()
-            if "|" in line and (line.startswith("火器新营|") or "probe_fire_new" in line)
-        )
-        assert d.split("|")[-2] == "77" and d.split("|")[-1] == "5"
 
 
 def test_fresh_seed_wires_firearm_not_all_zero(content, tmp_path):

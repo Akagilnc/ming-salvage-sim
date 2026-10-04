@@ -11,6 +11,7 @@ import json
 import os
 import re
 import time
+from dataclasses import asdict, is_dataclass
 from typing import Any, Dict, List, Optional, Sequence
 
 from agno.agent import Agent
@@ -57,34 +58,34 @@ def _ctx() -> GameContent:
 
 
 # 调试开关：MING_SIM_DUMP_LLM=1 时把每次 agno 调用真实送进 LLM 的 system/user/assistant
-# 全文落盘到 scripts/runs/llm_dump_<pid>.log。从 RunOutput.messages 取（=实际 payload，非重建）。
+# 以 JSONL（一行一对象）落盘到 scripts/runs/llm_dump_<pid>.jsonl。从 RunOutput.messages 取。
 _DUMP_LLM = os.environ.get("MING_SIM_DUMP_LLM", "").strip() in ("1", "true", "yes")
-_DUMP_PATH = f"scripts/runs/llm_dump_{os.getpid()}.log"
+_DUMP_PATH = f"scripts/runs/llm_dump_{os.getpid()}.jsonl"
 
 
-def _dump_value(value: Any) -> str:
-    """观测落盘：字符串原样，其余 json/repr，不造字段白名单。"""
-    if value is None:
-        return ""
-    if isinstance(value, str):
-        return value
-    if isinstance(value, dict):
-        return json.dumps(value, ensure_ascii=False, default=str)
-    raw = getattr(value, "__dict__", None)
-    if isinstance(raw, dict) and raw:
-        return json.dumps(raw, ensure_ascii=False, default=str)
-    try:
-        return json.dumps(value, ensure_ascii=False, default=str)
-    except TypeError:
-        return repr(value)
+def _json_default(obj: Any) -> Any:
+    """json.dumps default：复用对象自带结构出口（agno to_dict / pydantic model_dump /
+    dataclass asdict / __dict__），不再预递归清洗或 default=str 探测。"""
+    to_dict = getattr(obj, "to_dict", None)
+    if callable(to_dict):
+        return to_dict()
+    model_dump = getattr(obj, "model_dump", None)
+    if callable(model_dump):
+        return model_dump()
+    if is_dataclass(obj) and not isinstance(obj, type):
+        return asdict(obj)
+    raw = getattr(obj, "__dict__", None)
+    if isinstance(raw, dict):
+        return raw
+    return str(obj)
 
 
 def _dump_llm_messages(output: Any, tag: str, agent: Optional[Agent] = None) -> None:
-    """把这次 run 的完整 messages（含 system prompt）追加写盘。仅 _DUMP_LLM 开时生效。
+    """把这次 run 的诊断事实以唯一 JSONL 记录追加写盘。仅 _DUMP_LLM 开时生效。
 
     非流式：output 即 RunOutput，带 .messages。
     流式：终结事件 RunCompletedEvent 无 .messages，改从 agent.get_last_run_output() 取。
-    #1797：加记 reasoning 类字段（长度+正文）、usage/metrics、finish_reason（原样；缺则记缺）。
+    #1797：messages（含 reasoning 类字段）、usage/metrics、finish_reason（原样；缺则 null）。
     """
     if not _DUMP_LLM:
         return
@@ -100,36 +101,28 @@ def _dump_llm_messages(output: Any, tag: str, agent: Optional[Agent] = None) -> 
             msgs = None
     if not msgs:
         return
-    lines = [f"\n{'='*80}\n[DUMP] tag={tag}  共 {len(msgs)} 条 message\n{'='*80}"]
     # 票面/phase0 已列真名：官方 reasoning_content；vLLM/Nous reasoning + reasoning_details
     reasoning_field_names = ("reasoning_content", "reasoning", "reasoning_details")
-    for i, m in enumerate(msgs):
-        role = getattr(m, "role", "?")
-        content = getattr(m, "content", "")
-        if content is None:
-            content = ""
-        lines.append(f"\n----- #{i} role={role} ({len(str(content))} 字) -----\n{content}")
+    message_records: list[dict[str, Any]] = []
+    for m in msgs:
+        item: dict[str, Any] = {
+            "role": getattr(m, "role", "?"),
+            "content": "" if getattr(m, "content", None) is None else getattr(m, "content"),
+        }
         for fname in reasoning_field_names:
             rval = getattr(m, fname, None)
             if rval is None or rval == "" or rval == []:
                 continue
-            rtext = _dump_value(rval)
-            lines.append(f"\n  [{fname}] ({len(rtext)} 字)\n{rtext}")
-        # 工具调用也带上
+            item[fname] = rval
         tcalls = getattr(m, "tool_calls", None)
         if tcalls:
-            lines.append(f"\n  [tool_calls] {tcalls}")
-    run_reasoning = getattr(run_src, "reasoning_content", None)
-    if run_reasoning:
-        rtext = _dump_value(run_reasoning)
-        lines.append(f"\n[run.reasoning_content] ({len(rtext)} 字)\n{rtext}")
+            item["tool_calls"] = tcalls
+        message_records.append(item)
     run_metrics = getattr(run_src, "metrics", None)
     if run_metrics is None:
         run_metrics = getattr(run_src, "usage", None)
-    if run_metrics is not None:
-        lines.append(f"\n[usage/metrics] {_dump_value(run_metrics)}")
     # finish_reason：只认字面键，只走 dump 入口实有容器（RunOutput.model_provider_data /
-    # Message.provider_data）。agno 不把 Choice.finish_reason 写入这两处时据实记缺。
+    # Message.provider_data）。agno 不把 Choice.finish_reason 写入这两处时据实为 null。
     finish_reason = None
     mpd = getattr(run_src, "model_provider_data", None)
     if isinstance(mpd, dict):
@@ -143,13 +136,18 @@ def _dump_llm_messages(output: Any, tag: str, agent: Optional[Agent] = None) -> 
                 if fr is not None and fr != "":
                     finish_reason = fr
                     break
-    if finish_reason is None or finish_reason == "":
-        lines.append("\n[finish_reason] (缺)")
-    else:
-        lines.append(f"\n[finish_reason] {_dump_value(finish_reason)}")
+    if finish_reason == "":
+        finish_reason = None
+    record = {
+        "tag": tag,
+        "messages": message_records,
+        "run_reasoning_content": getattr(run_src, "reasoning_content", None),
+        "usage": run_metrics,
+        "finish_reason": finish_reason,
+    }
     try:
         with open(_DUMP_PATH, "a", encoding="utf-8") as f:
-            f.write("\n".join(lines) + "\n")
+            f.write(json.dumps(record, ensure_ascii=False, default=_json_default) + "\n")
         tlog(f"[{tag}] LLM messages 已 dump → {_DUMP_PATH}")
     except OSError as e:
         tlog(f"[{tag}] dump 写盘失败：{e}")

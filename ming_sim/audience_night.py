@@ -2424,25 +2424,6 @@ def prepare_rescript_summon_scaffold(
         }
 
 
-def find_prior_speaker_still_present(db: Any, night_id: int, exclude_name: str = "") -> Optional[str]:
-    """Find the previous chat turn's minister who is still present (A in the handoff).
-
-    Returns A's name when A is present and A != exclude_name (the new entrant B).
-    Returns None when there is no prior speaker or A has already left.
-    """
-    turns = list_chat_turns_for_night(db, int(night_id))
-    prior = ""
-    for turn in reversed(turns):
-        name = str(turn.get("minister_name") or "").strip()
-        if not name or name == exclude_name:
-            continue
-        prior = name
-        break
-    if not prior or prior not in present_names_at(db, int(night_id)):
-        return None
-    return prior
-
-
 def mark_actions_night_approved(
     db: Any, action_ids: Sequence[int], *, night_id: Optional[int] = None,
 ) -> int:
