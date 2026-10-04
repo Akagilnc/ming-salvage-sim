@@ -1,11 +1,7 @@
-crime {"crime": "\n  侵吞边饷。  \n", "severity": "重"}
-note machine_settle gap Σ=0/1 (
-  暗查国丈。  
-)
-stages_ws [{'stage_idx': 0, 'due_turn': 5, 'criterion_text': '核边饷。', 'origin_context': '核边饷。'}]
-stages_keep [{'stage_idx': 0, 'due_turn': 5, 'criterion_text': '核边饷。', 'origin_context': '\n  原诺。  \n'}]
-split '  核边饷。  '
-decision [{'title': '  核边饷。  ', 'context': '\n  情。  \n', 'options': [{'label': '  准。  ', 'hint': '  提示。  '}, {'label': '驳', 'hint': 'x'}]}]
-due 到期复核：核边饷。届期无实绩（原诺：
-  原诺。  
-）
+crime='{"crime": "\\n  侵吞边饷。  \\n", "severity": "重"}'
+note='machine_settle gap Σ=0/1 (\n  暗查国丈。  \n)'
+stages_ws=[{'stage_idx': 0, 'due_turn': 5, 'criterion_text': '核边饷。', 'origin_context': '核边饷。'}]
+stages_keep=[{'stage_idx': 0, 'due_turn': 5, 'criterion_text': '核边饷。', 'origin_context': '\n  原诺。  \n'}]
+split='  核边饷。  '
+decision=[{'title': '  核边饷。  ', 'context': '\n  情。  \n', 'options': [{'label': '  准。  ', 'hint': '  提示。  '}, {'label': '驳', 'hint': 'x'}]}]
+due='到期复核：核边饷。届期无实绩（原诺：\n  原诺。  \n）'

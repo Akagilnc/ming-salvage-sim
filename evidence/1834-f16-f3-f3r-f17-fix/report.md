@@ -4,7 +4,7 @@
 **分支**：`ak-roles/1834-f16-f3-f3r-f17-ee3b5da31`
 **基线**：`ee3b5da312c5832720d89aee707fe4c7669c5eb0`
 **父 HEAD（开工）**：`37af3a31af0421404f7150a476f9276393336acc`
-**本轮 commit**：`(stamp after commit)`
+**本轮 commit**：`f1635db3aaba0ce5ca35eaab36c1a827b0be0228`
 **判词**：`evidence/1834-f16-f3-f3r-f17-fix/continued-ruling.json`
 **法源**：`~/.ak-roles/books/Ming_LLM/1834/runs/01a108e1-9340-777b-887c-0a7243cf3984@fixer/fix-packet.md` + `attachments/02-1834-judge-ee3b5da31.json`；CLAUDE.md P6/P7；ADR 0142；#1901 删除提交 405fe5075 / b7cdcd639 / 192603c52。
 
