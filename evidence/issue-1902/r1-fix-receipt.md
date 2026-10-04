@@ -5,7 +5,7 @@
 - 本轮底座 HEAD（开工）：`043efc2ac`
 - 本轮代码提交：`d450631d1fb9d84ddc80a6b3000ebd694f212057`
 - 回执盖章 HEAD（初版）：`8b6e640529fd637b0d5c31c2e703e17a59408370`
-- **本轮回执纠正提交**：待本轮 docs commit 盖章（禁 amend）
+- **本轮回执纠正提交**：`8836dff2c05ce3d04a8a956a57df7bb8aa29eac1`
 - 判词真源（完整原文，非摘要）：宿主 continue payload
   `AK_ROLE_RUN_DIR/.../session/session.jsonl` L41（`status=continue` finding R1）
   + 原法源/boundary：`fix-packet.md` + 附件 `03-1902-judge-ccbdf378a.json` 末 payload N5
@@ -424,7 +424,7 @@ env \
 ## 交卷（回执纠正轮）
 
 - 状态：`STATUS=receipt-corrected`（仅回执/证据；生产代码仍为 `d450631d1`）
-- query SHA：本纠正 commit（`git rev-parse HEAD`；禁 amend；见本文件「本轮回执纠正提交」盖章行）
+- query SHA：`8836dff2c05ce3d04a8a956a57df7bb8aa29eac1`（内容纠正 commit；本 stamp 另笔，禁 amend）
 - 实际枚举命令所在行（`evidence/issue-1902/r1-fix-receipt.md`）：
   - A 机械扫：L64–L105
   - B AST heredoc：L109–L242
