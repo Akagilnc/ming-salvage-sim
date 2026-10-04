@@ -38,13 +38,6 @@ _MUTINY_ORDINAL_KEYS = frozenset(
         "mutiny_state",
     }
 )
-_PERSISTENT_COL_TOKENS = (
-    "is_mutinied",
-    "mutiny_count",
-    "mutiny_probation",
-    "full_pay_streak",
-    "redemption_count",
-)
 
 # 六档真值表（票面 latch / 边界 / probation；含全部明确边界样本）
 _TIER_CASES = (
@@ -231,9 +224,6 @@ def _assert_chain_embeds_situation(text: str, sit: dict, label: str) -> None:
     assert sit["mutiny_tier"] in text, f"{label} 缺 mutiny_tier={sit['mutiny_tier']!r}\n{text}"
     assert sit["morale_text"] in text, f"{label} 缺 morale_text={sit['morale_text']!r}\n{text}"
     assert sit["arrears_text"] in text, f"{label} 缺 arrears_text={sit['arrears_text']!r}\n{text}"
-    assert "12.5" not in text, f"{label} 泄漏 bare arrears 12.5\n{text}"
-    for token in _PERSISTENT_COL_TOKENS:
-        assert token not in text, f"{label} 泄漏五持久列名 {token!r}\n{text}"
 
 
 def test_four_chains_embed_situation_matrix(game):

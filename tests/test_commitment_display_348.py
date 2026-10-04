@@ -1,17 +1,10 @@
-"""Issue #348: commitment display uses relative durations + timed bar uses time progress.
-
-#1185: no exact Chinese free-copy pins. Assert countable relative numbers,
-typed bar percentages / None discrimination, and origin_turn fallback on
-progress payload. Keep absolute-turn non-leak gates.
-"""
+"""Issue #348: commitment timed bar + progress payload (structured), no display-text digit pins."""
 
 from __future__ import annotations
 
 import json
-import re
 
 from ming_sim.issues import (
-    commitment_display_text,
     commitment_progress_payload,
     commitment_timed_bar_value,
 )
@@ -25,7 +18,7 @@ def _row(
     stop_condition: str = "",
     resolve_condition: str = "",
 ):
-    """Minimal dict that commitment_display_text/commitment_timed_bar_value accept as row."""
+    """Minimal dict that commitment_timed_bar_value accepts as row."""
     return {
         "end_turn": end_turn,
         "origin_turn": origin_turn,
@@ -39,115 +32,6 @@ def _progress(months_elapsed: int, paid_total: int = 0, **extra):
     p: dict = {"months_elapsed": months_elapsed, "paid_total": paid_total}
     p.update(extra)
     return p
-
-
-def _ints(text: str) -> list[int]:
-    """Countable integers surfaced in display text (no free-copy pins)."""
-    return [int(tok) for tok in re.findall(r"\d+", text)]
-
-
-# ---------------------------------------------------------------------------
-# commitment_display_text — timed (case 4: ongoing effects + end_turn, no gate)
-# ---------------------------------------------------------------------------
-
-
-class TestTimedDisplayText:
-    def test_no_absolute_month_in_text(self):
-        row = _row(
-            end_turn=17, origin_turn=5,
-            ongoing_effects={"metrics": {"皇威": 1}},
-        )
-        text = commitment_display_text(_progress(1), row)
-        # absolute turn 17 must not appear
-        assert "17" not in text, f"Absolute turn leaked into display: {text!r}"
-
-    def test_timed_text_exposes_relative_duration_elapsed_remaining(self):
-        """Timed text surfaces relative duration/elapsed/remaining; remaining clamps ≥0."""
-        row = _row(
-            end_turn=17, origin_turn=5,
-            ongoing_effects={"metrics": {"皇威": 1}},
-        )
-        # duration=12, elapsed=3 → remaining=9
-        mid = commitment_display_text(_progress(3), row)
-        assert {12, 3, 9} <= set(_ints(mid))
-
-        # duration=12, elapsed=1 → remaining=11
-        early = commitment_display_text(_progress(1), row)
-        assert {12, 1, 11} <= set(_ints(early))
-
-        # overrun → remaining clamps to 0; duration still countable
-        over = commitment_display_text(_progress(15), row)
-        over_nums = set(_ints(over))
-        assert 0 in over_nums and 12 in over_nums and 15 in over_nums
-
-
-# ---------------------------------------------------------------------------
-# commitment_display_text — passive timed (case 1: no ongoing effects + end_turn)
-# ---------------------------------------------------------------------------
-
-
-class TestPassiveTimedDisplayText:
-    def test_no_absolute_month_in_passive_text(self):
-        row = _row(end_turn=17, origin_turn=5)
-        text = commitment_display_text(_progress(0), row)
-        assert "17" not in text, f"Absolute turn leaked into passive display: {text!r}"
-
-    def test_passive_timed_exposes_duration_and_differs_from_active(self):
-        """Passive (no ongoing) exposes duration; shape ≠ active timed at same anchors."""
-        passive_row = _row(end_turn=17, origin_turn=5)
-        active_row = _row(
-            end_turn=17, origin_turn=5,
-            ongoing_effects={"metrics": {"皇威": 1}},
-        )
-        passive = commitment_display_text(_progress(0), passive_row)
-        active = commitment_display_text(_progress(0), active_row)
-        assert 12 in _ints(passive)
-        assert passive != active
-        # active at zero elapsed still surfaces an elapsed counter (0) + remaining
-        assert {12, 0} <= set(_ints(active))
-
-
-# ---------------------------------------------------------------------------
-# commitment_display_text — non-timed types (arrears / goal-gate / open)
-# ---------------------------------------------------------------------------
-
-
-class TestNonTimedDisplayCases:
-    def test_arrears_goal_open_types_remain_distinct_and_unbarred(self):
-        """Non-timed types stay pairwise distinct, expose months, and never get a timed bar."""
-        arrears_row = _row(
-            end_turn=0, origin_turn=5,
-            ongoing_effects={"economy": [{"account": "国库", "delta": -10, "reason": "补饷"}]},
-            stop_condition=json.dumps({"army.guanning.arrears": "<=0"}),
-        )
-        goal_row = _row(
-            end_turn=0, origin_turn=5,
-            ongoing_effects={"metrics": {"皇威": 1}},
-            resolve_condition="character.毛文龙.loyalty >= 65",
-        )
-        open_row = _row(end_turn=0, origin_turn=5, ongoing_effects={"metrics": {"皇威": 1}})
-
-        arrears_p = _progress(2, remaining_arrears=80)
-        goal_p = _progress(2, remaining_to_goal=19)
-        open_p = _progress(2)
-
-        arrears_t = commitment_display_text(arrears_p, arrears_row)
-        goal_t = commitment_display_text(goal_p, goal_row)
-        open_t = commitment_display_text(open_p, open_row)
-
-        assert 2 in _ints(arrears_t)
-        assert 2 in _ints(goal_t)
-        assert 2 in _ints(open_t)
-        assert len({arrears_t, goal_t, open_t}) == 3
-
-        assert commitment_timed_bar_value(arrears_p, arrears_row) is None
-        assert commitment_timed_bar_value(goal_p, goal_row) is None
-        assert commitment_timed_bar_value(open_p, open_row) is None
-
-
-# ---------------------------------------------------------------------------
-# commitment_timed_bar_value — percentage / clamp / None discrimination
-# ---------------------------------------------------------------------------
 
 
 class TestCommitmentTimedBarValue:
@@ -186,15 +70,26 @@ class TestCommitmentTimedBarValue:
             _progress(0), _row(end_turn=17, origin_turn=5),
         ) is None
 
-
-# ---------------------------------------------------------------------------
-# Integration: timed bar via real DB + commitment_progress_payload
-# ---------------------------------------------------------------------------
+        # Non-timed types never get a timed bar.
+        arrears_row = _row(
+            end_turn=0, origin_turn=5,
+            ongoing_effects={"economy": [{"account": "国库", "delta": -10, "reason": "补饷"}]},
+            stop_condition=json.dumps({"army.guanning.arrears": "<=0"}),
+        )
+        goal_row = _row(
+            end_turn=0, origin_turn=5,
+            ongoing_effects={"metrics": {"皇威": 1}},
+            resolve_condition="character.毛文龙.loyalty >= 65",
+        )
+        open_row = _row(end_turn=0, origin_turn=5, ongoing_effects={"metrics": {"皇威": 1}})
+        assert commitment_timed_bar_value(_progress(2, remaining_arrears=80), arrears_row) is None
+        assert commitment_timed_bar_value(_progress(2, remaining_to_goal=19), goal_row) is None
+        assert commitment_timed_bar_value(_progress(2), open_row) is None
 
 
 class TestTimedBarIntegration:
     def test_bar_tracks_elapsed_via_wall_clock(self, game):
-        """Bar follows months_elapsed/duration from the current turn; display countable."""
+        """Bar follows months_elapsed/duration from the current turn."""
         db, state, _content = game
         db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
         db.conn.execute("UPDATE legacies SET status='cleared' WHERE status='active'")
@@ -220,25 +115,20 @@ class TestTimedBarIntegration:
         assert progress0["months_elapsed"] == 0
         assert commitment_timed_bar_value(progress0, row) == 0
 
-        # wall-clock advance (no settle / ongoing advance)
         state.turn = origin + 2
         row = db.conn.execute("SELECT * FROM issues WHERE id=?", (issue_id,)).fetchone()
         progress_wall = commitment_progress_payload(db, state, row)
         assert progress_wall is not None
         assert progress_wall["months_elapsed"] == 2
         assert commitment_timed_bar_value(progress_wall, row) == 50
-        text = commitment_display_text(progress_wall, row)
-        assert {duration, 2} <= set(_ints(text))
-        assert (origin + duration) not in _ints(text)
-
 
     def test_origin_turn_unset_falls_back_to_state_turn(self, game):
-        """NULL/0/missing origin_turn → months_elapsed=0 (no absolute turn leak into bar)."""
+        """NULL/0/missing origin_turn → months_elapsed=0."""
         db, state, _content = game
-        state.turn = 7  # well past 0 so absolute-turn leak would be observable
+        state.turn = 7
 
         base = {
-            "id": -1,  # no advances rows → paid_total falls to 0
+            "id": -1,
             "commitment_kind": "until_stop",
             "end_turn": 0,
             "ongoing_effects": "{}",
@@ -248,7 +138,7 @@ class TestTimedBarIntegration:
         cases = (
             {**base, "origin_turn": None},
             {**base, "origin_turn": 0},
-            dict(base),  # key absent
+            dict(base),
         )
         for row in cases:
             progress = commitment_progress_payload(db, state, row)

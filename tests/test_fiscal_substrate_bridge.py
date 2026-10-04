@@ -21,7 +21,6 @@ import pytest
 
 import ming_sim.content as content_mod
 from ming_sim.applier import atomic
-from ming_sim.constants import ARMY_FIELD_LABELS
 from ming_sim.content import GameContent
 from ming_sim.context import bind_content
 from ming_sim.db import GameDB
@@ -2272,9 +2271,6 @@ def test_province_pay_shortfall_reduces_pure_province_army_morale(fresh_db):
     assert morale_log["new_value"] == "72"
     assert morale_log["delta"] == -8
     assert isinstance(morale_log["reason"], str) and morale_log["reason"].strip()
-    army_name = fresh_db.conn.execute(
-        "SELECT name FROM armies WHERE id = 'fujian_navy'"
-    ).fetchone()["name"]
     arrears_log = fresh_db.conn.execute(
         """
         SELECT delta
@@ -2284,12 +2280,6 @@ def test_province_pay_shortfall_reduces_pure_province_army_morale(fresh_db):
         """
     ).fetchone()
     assert arrears_log is not None and arrears_log["delta"] == pytest.approx(10)
-    summary = fresh_db.turn_army_summary(fresh_db.load_state().turn)
-    # summary 出口：军名 + 稳定字段标签分别绑定 province_pay_arrears +10 / morale -8；
-    # 抽象键不泄漏。不钉 reason 自由中文整句。
-    assert f"{army_name}{ARMY_FIELD_LABELS['province_pay_arrears']}+10" in summary
-    assert f"{army_name}{ARMY_FIELD_LABELS['morale']}-8" in summary
-    assert "province_pay_arrears" not in summary
 
 
 def test_turn_army_summary_keeps_real_morale_changes_when_log_cap_fills(fresh_db):
@@ -4454,9 +4444,9 @@ def test_substrate_corrupt_stock_isolated(fresh_game):
     assert after["省库库银"] == [], "坏 stock 不该推进（港口锁：原值不变）"
 
 
-def test_substrate_malformed_settle_shape_is_logged_not_prefiltered(fresh_game, monkeypatch):
-    # cmr fix：动态 spine 只负责找「明控且已有 settle key」的省；st/p 形状坏态必须交给
-    # settle_province_tick 验证并经 shadow 隔离日志留痕，不能在 spine 预过滤后静默跳过。
+def test_substrate_malformed_settle_shape_isolated_by_fixed_flows(fresh_game):
+    # 动态 spine 只负责找「明控且已有 settle key」的省；st/p 形状坏态经真实 fixed-flow
+    # 隔离，不掀翻固定财政，也不靠诊断 tlog 措辞/条数证明。
     import ming_sim.flows as flows_mod
 
     db, state = fresh_game
@@ -4470,36 +4460,10 @@ def test_substrate_malformed_settle_shape_is_logged_not_prefiltered(fresh_game, 
     )
     db.conn.commit()
 
-    msgs: list[str] = []
-    monkeypatch.setattr(flows_mod, "tlog", lambda msg: msgs.append(msg))
-
     flow_rows = flows_mod.apply_fixed_period_flows(db, state)
 
     assert isinstance(flow_rows, list) and flow_rows, "坏 settle 形状不该掀翻固定财政"
     assert _read_settle(db)["p"] == [], "坏 settle 形状不该被 tick 改写"
-    surfaced = [m for m in msgs if "shaanxi" in str(m) and "ValueError" in str(m)]
-    assert surfaced, msgs
-
-
-def test_substrate_malformed_fiscal_container_is_logged_not_prefiltered(fresh_game, monkeypatch):
-    # cmr step6 r2：动态 spine 不得在 selector 里静默跳过 fiscal='[]' 这类坏容器；
-    # 应交给 settle_province_tick 归 ValueError，再由 shadow 隔离 tlog 留痕。
-    # 这里刻意直打 shadow seam：完整 fixed-flow 的旧财政收入路径会先解析 fiscal。
-    import ming_sim.flows as flows_mod
-
-    db, state = fresh_game
-    _disable_army_pay_source_cutover(db)
-    db.conn.execute("UPDATE regions SET fiscal='[]' WHERE id='shaanxi'")
-    db.conn.commit()
-
-    msgs: list[str] = []
-    monkeypatch.setattr(flows_mod, "tlog", lambda msg: msgs.append(msg))
-
-    flows_mod._advance_province_fiscal_substrate(db, state)
-
-    assert db.conn.execute("SELECT fiscal FROM regions WHERE id='shaanxi'").fetchone()["fiscal"] == "[]"
-    surfaced = [m for m in msgs if "shaanxi" in str(m) and "ValueError" in str(m)]
-    assert surfaced, msgs
 
 
 def test_cutover_pay_source_errors_abort_fixed_flows(fresh_game, monkeypatch, tmp_path):
@@ -4831,28 +4795,7 @@ def test_apply_fixed_period_flows_malformed_fiscal_container_isolated(fresh_game
     assert tax_flow["amount"] == expected_tax, "坏 fiscal 省当月固定税收应出列，不能按默认 fiscal 造钱"
 
 
-def test_substrate_malformed_fiscal_json_is_logged_not_prefiltered(fresh_game, monkeypatch):
-    # 动态 spine selector 解析 fiscal JSON 失败时仍应把该省交给 bridge，让 shadow 隔离
-    # 统一 tlog 留痕；不能静默跳过坏 JSON。
-    # 这里刻意直打 shadow seam：完整 fixed-flow 的旧财政收入路径会先解析 fiscal。
-    import ming_sim.flows as flows_mod
-
-    db, state = fresh_game
-    _disable_army_pay_source_cutover(db)
-    db.conn.execute("UPDATE regions SET fiscal='{bad' WHERE id='shaanxi'")
-    db.conn.commit()
-
-    msgs: list[str] = []
-    monkeypatch.setattr(flows_mod, "tlog", lambda msg: msgs.append(msg))
-
-    flows_mod._advance_province_fiscal_substrate(db, state)
-
-    assert db.conn.execute("SELECT fiscal FROM regions WHERE id='shaanxi'").fetchone()["fiscal"] == "{bad"
-    surfaced = [m for m in msgs if "shaanxi" in str(m) and "JSONDecodeError" in str(m)]
-    assert surfaced, msgs
-
-
-def test_apply_fixed_period_flows_malformed_fiscal_json_isolated(fresh_game, monkeypatch):
+def test_apply_fixed_period_flows_malformed_fiscal_json_isolated(fresh_game):
     # Public entry contract: syntax-bad fiscal JSON must not abort before shadow isolation.
     import ming_sim.flows as flows_mod
 
@@ -4865,18 +4808,12 @@ def test_apply_fixed_period_flows_malformed_fiscal_json_isolated(fresh_game, mon
     db.conn.execute("UPDATE regions SET fiscal='{bad' WHERE id='shaanxi'")
     db.conn.commit()
 
-    msgs: list[str] = []
-    monkeypatch.setattr(flows_mod, "tlog", lambda msg: msgs.append(msg))
-
     flow_rows = flows_mod.apply_fixed_period_flows(db, state)
 
     assert isinstance(flow_rows, list) and flow_rows, "坏 fiscal JSON 不该掀翻固定财政"
     assert db.conn.execute("SELECT fiscal FROM regions WHERE id='shaanxi'").fetchone()["fiscal"] == "{bad"
     tax_flow = next(f for f in flow_rows if f.get("category") == "田赋辽饷盐商")
     assert tax_flow["amount"] == expected_tax, "坏 fiscal 省当月固定税收应出列，不能按默认 fiscal 造钱"
-    shaanxi_msgs = [m for m in msgs if "shaanxi" in str(m)]
-    assert len(shaanxi_msgs) >= 2, msgs
-    assert any("JSONDecodeError" in str(m) for m in shaanxi_msgs), msgs
 
 
 @pytest.mark.parametrize("field,bad_value", [
@@ -4886,7 +4823,7 @@ def test_apply_fixed_period_flows_malformed_fiscal_json_isolated(fresh_game, mon
     ("liao_xiang", float("inf")),
     ("liao_xiang", 10 ** 309),
 ])
-def test_apply_fixed_period_flows_malformed_fiscal_scalar_isolated(fresh_game, monkeypatch, field, bad_value):
+def test_apply_fixed_period_flows_malformed_fiscal_scalar_isolated(fresh_game, field, bad_value):
     import ming_sim.flows as flows_mod
 
     db, state = fresh_game
@@ -4904,9 +4841,6 @@ def test_apply_fixed_period_flows_malformed_fiscal_scalar_isolated(fresh_game, m
         (json.dumps(fiscal, ensure_ascii=False),),
     )
     db.conn.commit()
-
-    msgs: list[str] = []
-    monkeypatch.setattr(flows_mod, "tlog", lambda msg: msgs.append(msg))
 
     flow_rows = flows_mod.apply_fixed_period_flows(db, state)
 

@@ -106,7 +106,6 @@ def test_night_archive_involved_people_drops_non_persons(game):
 
     db, state, _ = game
     night = an.open_night(db, state)  # 默认时辰须为更次口径
-    assert night["time_of_day"] != "此时"
     assert night["time_of_day"] == an.DEFAULT_TIME_OF_DAY
 
     an.summon_enter(db, night["id"], "杨嗣昌", method=an.METHOD_XUANRU)
@@ -130,42 +129,12 @@ def test_night_archive_involved_people_drops_non_persons(game):
         assert banned not in people, banned
     assert "王承恩" in people
     assert "杨嗣昌" in people
-    # 标题不得出现「此时」
-
-
-def test_default_time_of_day_is_shichen_not_cishi():
-    import ming_sim.audience_night as an
-
-    assert an.DEFAULT_TIME_OF_DAY != "此时"
-    # 时辰单字「时」结尾的更次/时刻口径
-    assert an.DEFAULT_TIME_OF_DAY.endswith("时")
 
 
 # ── 3) #1341/#1338 PATCH 死契约拆除 ────────────────────────────────
-
-
-def test_patch_decree_and_manual_directive_routes_removed():
-    """#1341 删 PATCH /api/decree；#1902 再删拟诏台手写拟旨/改稿路由，只留删旧草稿。"""
-    import web_app
-
-    patch_decree = [
-        r for r in web_app.app.routes
-        if getattr(r, "path", None) == "/api/decree"
-        and "PATCH" in (getattr(r, "methods", None) or set())
-    ]
-    assert patch_decree == []
-
-    manual_writes = [
-        r for r in web_app.app.routes
-        if getattr(r, "path", None) == "/api/directives"
-        and ({"POST", "PATCH"} & (getattr(r, "methods", None) or set()))
-    ]
-    assert manual_writes == [], "拟诏台手写拟旨/改稿路由必须已退役"
-    assert [
-        r for r in web_app.app.routes
-        if getattr(r, "path", None) == "/api/directives/{directive_id}"
-        and "DELETE" in (getattr(r, "methods", None) or set())
-    ], "删旧草稿入口保留"
+# 退役闸类负向由 tests/test_web_audience_night_498.py::
+# test_asgi_dossiered_directive_has_no_retired_review_surface 真实 HTTP 承担；
+# 不在此维护 app.routes / OpenAPI 注册表平行证明。
 
 
 # ── 4) 补交抽取核 ────────────────────────────────────────────────

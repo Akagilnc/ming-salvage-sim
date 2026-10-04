@@ -1129,31 +1129,6 @@ def test_manual_directive_capture_rejects_missing_empty_or_invalid_tier_without_
     assert db.list_directives(state) == []
     assert db.list_decree_dossiers() == []
 
-def test_final_decree_edit_path_removed_no_bypass(game):
-    """PATCH /api/decree 不在路由表；既有草案正文不被旁路改写。"""
-    import web_app
-
-    db, state, _content = game
-    directive_id = db.add_directive(
-        state, None, "拨十两赈济", "手动新增",
-        dossier_payload={
-            "dossier_action_type": "grant_allocation",
-            "target_kind": "issue", "target_id": "relief",
-            "amount": 10, "account": "国库",
-            "execution_surface": "immediate",
-        },
-    )
-
-    paths = {getattr(r, "path", None) for r in web_app.app.routes}
-    assert "/api/decree" not in paths or not any(
-        getattr(r, "path", None) == "/api/decree"
-        and "PATCH" in (getattr(r, "methods", None) or set())
-        for r in web_app.app.routes
-    )
-    # 草案正文未被旁路改写
-    assert db.get_dossier_for_directive(directive_id) is None
-    assert db.list_directives(state)[0]["text"] == "拨十两赈济"
-
 def test_cli_dossiered_directive_is_not_listed_editable_or_deletable(
     game, monkeypatch,
 ):

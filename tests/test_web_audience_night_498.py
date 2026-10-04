@@ -521,16 +521,6 @@ def test_asgi_dossiered_directive_has_no_retired_review_surface(web_game):
     )
     game.db.ensure_dossiers_for_draft_directives(game.state)
 
-    registered_paths = {route.path for route in web_app.app.routes}
-    assert "/api/decree/write" not in registered_paths
-    # #1902：拟诏台手写入口整条退役——拟旨/改稿路由不再注册，删旧草稿保留。
-    assert not any(
-        getattr(r, "path", None) == "/api/directives"
-        and ("POST" in (getattr(r, "methods", None) or set())
-             or "PATCH" in (getattr(r, "methods", None) or set()))
-        for r in web_app.app.routes
-    )
-
     async def scenario():
         async with _client() as client:
             return (
@@ -701,17 +691,17 @@ def test_legacy_pending_only_advances_to_durable_dossier_without_review_api(web_
         },
     )
 
-    registered_paths = {route.path for route in web_app.app.routes}
-    assert "/api/directives/{directive_id}/confirm" not in registered_paths
-    assert "/api/directives/{directive_id}/reject" not in registered_paths
-
     async def scenario():
         async with _client() as client:
             state = (await client.get("/api/game/state")).json()
+            confirm = await client.post(f"/api/directives/{directive_id}/confirm")
+            reject = await client.post(f"/api/directives/{directive_id}/reject")
             advance = await client.post("/api/decree/advance_without_edict")
-            return state, advance
+            return state, confirm, reject, advance
 
-    state_payload, response = asyncio.run(scenario())
+    state_payload, confirm, reject, response = asyncio.run(scenario())
+    assert confirm.status_code in (404, 405)
+    assert reject.status_code in (404, 405)
     assert dossiered_id not in {row["id"] for row in state_payload["directives"]}
     # #1855：夜未收时真 HTTP 状态口投影 audience（非手造轻壳）
     assert state_payload["reopen_landing"] == "audience"

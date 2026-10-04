@@ -94,7 +94,7 @@ def test_army_report_shows_actual_charge(game):
 
 
 def test_army_public_exits_approx_arrears_and_hide_split_accounts(game):
-    """#305/D10：分账机器字段不进出口，欠饷事实仍接通 detail。"""
+    """#305/D10：分账机器字段不进军牌 ABI；欠饷以结构化 arrears_text 表达。"""
     db, _state, _ = game
     row = db.conn.execute(
         "SELECT id,name FROM armies WHERE owner_power='ming' ORDER BY id LIMIT 1"
@@ -104,18 +104,17 @@ def test_army_public_exits_approx_arrears_and_hide_split_accounts(game):
         (row["id"],),
     )
     db.conn.commit()
-    name = row["name"]
-    detail, roster = db.army_detail(name), db.army_roster(filter_names=[name])
-    report = db.army_report(limit=100)
-    for text in (detail, report, roster):
-        for field in ("province_pay_arrears", "central_pay_arrears"):
-            assert field not in text
+    card = next(c for c in db.army_payload() if c["id"] == row["id"])
+    assert "province_pay_arrears" not in card
+    assert "central_pay_arrears" not in card
+    assert isinstance(card["arrears_text"], str) and card["arrears_text"]
     db.conn.execute(
         "UPDATE armies SET arrears=0, province_pay_arrears=0, central_pay_arrears=0 WHERE id=?",
         (row["id"],),
     )
     db.conn.commit()
-    assert db.army_detail(name) != detail
+    cleared = next(c for c in db.army_payload() if c["id"] == row["id"])
+    assert cleared["arrears_text"] != card["arrears_text"]
 
 
 
