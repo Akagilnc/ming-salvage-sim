@@ -7180,31 +7180,6 @@ class GameDB:
             "reason": reason,
         }
 
-    def turn_power_summary(self, turn: int, limit: int = 10) -> str:
-        rows = self.conn.execute(
-            """
-            SELECT pl.*, p.name AS power_name
-            FROM power_logs pl
-            JOIN powers p ON p.id = pl.power_id
-            WHERE pl.turn = ?
-            ORDER BY pl.id
-            LIMIT ?
-            """,
-            (turn, limit),
-        ).fetchall()
-        if not rows:
-            return f"本{TURN_UNIT}势力无明确变化。"
-        parts = []
-        for row in rows:
-            label = POWER_FIELD_LABELS.get(str(row["field"]), str(row["field"]))
-            delta = row["delta"]
-            if delta is None:
-                parts.append(f"{row['power_name']}{label}改为{row['new_value']}（{row['reason']}）")
-            else:
-                sign = "+" if int(delta) > 0 else ""
-                parts.append(f"{row['power_name']}{label}{sign}{int(delta)}（{row['reason']}）")
-        return "；".join(parts) + "。"
-
     def region_rows(self, limit: int | None = None, danger_order: bool = False) -> List[sqlite3.Row]:
         order = (
             "(unrest + military_pressure + gentry_resistance + (100 - public_support)) DESC, name"
@@ -9002,57 +8977,6 @@ class GameDB:
         if commit:
             self.conn.commit()
         return rejected
-
-    def turn_economy_summary(self, turn: int) -> str:
-        rows = self.conn.execute(
-            """
-            SELECT account,
-                   SUM(CASE WHEN delta > 0 THEN delta ELSE 0 END) AS income,
-                   SUM(CASE WHEN delta < 0 THEN -delta ELSE 0 END) AS expense,
-                   SUM(delta) AS net
-            FROM economy_ledger
-            WHERE turn = ? AND category <> '期初'
-            GROUP BY account
-            ORDER BY account DESC
-            """,
-            (turn,),
-        ).fetchall()
-        if not rows:
-            return f"本{TURN_UNIT}无新增收支。"
-        parts = []
-        for row in rows:
-            income = int(row["income"] or 0)
-            expense = int(row["expense"] or 0)
-            net = int(row["net"] or 0)
-            parts.append(
-                f"{row['account']}收入{format_money(income)}、支出{format_money(expense)}、净变{format_money_delta(net)}"
-            )
-        return "；".join(parts) + "。"
-
-    def treasury_ledger(self, account: str, turns: int = 6) -> str:
-        """查国库或内库最近 N 回合流水明细。"""
-        rows = self.conn.execute(
-            """
-            SELECT turn, year, period, delta, balance_after, category, reason, actor
-            FROM economy_ledger
-            WHERE account = ? AND category <> '期初'
-            ORDER BY id DESC
-            LIMIT ?
-            """,
-            (account, turns * 20),
-        ).fetchall()
-        if not rows:
-            return f"{account}无流水记录。"
-        lines = [f"【{account}近{turns}回合流水（最新在前）】"]
-        for r in rows:
-            sign = "+" if int(r["delta"]) > 0 else ""
-            lines.append(
-                f"{r['year']}年{r['period']}月（turn{r['turn']}）"
-                f" {sign}{format_money_delta(int(r['delta']))} → 余{format_money(int(r['balance_after']))} "
-                f"[{r['category']}] {r['reason']}"
-                + (f"（{r['actor']}）" if r["actor"] else "")
-            )
-        return "\n".join(lines)
 
     def previous_turn_summary(self, state: GameState) -> str:
         previous_turn = state.turn - 1
@@ -11053,14 +10977,6 @@ class GameDB:
             "DELETE FROM pending_decisions WHERE turn = ? AND kind = 'rescript_draft'",
             (int(turn),),
         )
-        self._insert_rescript_draft_rows(int(turn), drafts)
-
-    def append_rescript_drafts(self, turn: int, drafts: List[Dict[str, object]]) -> None:
-        """#657：HITL phase2 续跑追加本回合新票拟，不 DELETE 既有急务行。
-
-        保留 return_revise/decided/跨月 backlog；只在 max(idx)+1 后续插。
-        只写 conn 不 commit——与 save_resolve_context 同事务。
-        """
         self._insert_rescript_draft_rows(int(turn), drafts)
 
     def _insert_rescript_draft_rows(
@@ -20574,12 +20490,6 @@ class GameDB:
         if commit:
             self.conn.commit()
         return self.conn.execute("SELECT * FROM issues WHERE id=?", (issue_id,)).fetchone()
-
-    def list_recent_issue_advances(self, issue_id: int, limit: int = 3) -> List[sqlite3.Row]:
-        return self.conn.execute(
-            "SELECT * FROM issue_advances WHERE issue_id=? ORDER BY id DESC LIMIT ?",
-            (issue_id, limit),
-        ).fetchall()
 
     @staticmethod
     def coerce_beyond_intent_flag(value: object) -> int:

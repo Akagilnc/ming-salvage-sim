@@ -3,6 +3,151 @@
 工作树：`/Users/akagilnc/WorkSpace/Ming_LLM-1843-w5`
 分支：`ak-roles/issue-1843-w5`
 底座：`claude/1812-w4` 是 HEAD 祖先（`git merge-base --is-ancestor claude/1812-w4 HEAD` → yes）
+派单：`~/.ak-roles/books/Ming_LLM/1843/runs/01a107fa-7c79-7613-87d5-0cf4e634cafd@fixer/fix-packet.md`
+判词附件：`.../attachments/00-1856-judge-324c29f16.json`（F2 成立、未结；本票承接整类）
+重交原文：`evidence/1843-returned-finding.json`（用户封驳：枚举未穷尽；本轮按其 requiredAction 执行）
+
+## 轮次
+
+| 轮次 | HEAD（施工前） | 说明 |
+|---|---|---|
+| R1 | `ae4a2a3e6c60afd8a09f03252e692632d8c6bee6` | 合规合并／读端／候选绑定／财政投影清退 → `b85cb3f16`；回执 stamp → `d3a3688f2` |
+| R2 | `d3a3688f222a6f0b2c9d276b5d7f054a4e52e63e` | 纠正「旧文本流／季提示／军队投影」假阴性；沿错误形状全类 AST 核销 → `44f87c4c5`；stamp → `641201cde` |
+| R3 | `9d4152542c226bc890dd5d231fdacc947d4381c2` | 封驳后：禁止名字 regex 预筛；全 ming_sim 定义 ≤1 引用穷尽枚举 + 历史交叉 + 递归固定点 |
+
+## Advisor 前置判断（R3；不冒充庭审）
+
+- 授权：派单 F2 全类；重交 requiredAction 要求完整「全仓引用数≤1」枚举（含 tests，排除 docs/raw），逐成员追历史消费者；属 F2 删（含专用测试）；不属列例外。
+- R1/R2 失败经过（必须保留）：
+  - R1：固定符号列表／轻量枚举 → 漏掉大量零引用旧支持；曾误判「旧文本流无成员可删」。
+  - R2：虽改线性 AST，但仍用名字 regex 预筛选候选（run_agent_stream|season_.* 等），只覆盖已发现错误形状 → 再次假阴性；historical_anchor_for_month 等全仓零引用未进成员表。
+- R3 手段：禁止名字 regex 预筛。对全部 ming_sim/**/*.py 的 FunctionDef/AsyncFunctionDef/ClassDef 做定义索引；在全部受管 *.py（git ls-files，排除 docs/raw/）上统计 Name + Attribute + Import 别名引用；消费者为空者入成员表；再 git log -S 逐个核。删除后复扫至固定点（本轮级联：format_metric_delta／first_character）。
+- F1 三符号（_cli_prompt／_cli_stream_safe_prefix／_cli_recommendation_call）与 F3 三符号（find_prior_speaker_still_present／_fail_cli_chat_turn_scene／current_audience_scene）不施工。
+- 用户点名核对：compose_decree_validation_recovery／compose_secret_order_landing_recovery → 历史消费者为 #1871 分类器落地链（F1 邻接，例外）；night_dossiers_ready → #1842 收夜背书批（F3／召对邻接，例外）。
+- 保留：现役共用权限、名单、材料目录、业务写口；不增机制、不复活旧链、不造证明性测试、不改治理/Soul。
+
+## 完整枚举命令（R3 实际执行）
+
+见本文件「R3 枚举脚本」小节；施工前 managed_py=352，ORPHAN=76（计 Import 后）；施工后 ORPHAN≈60 全入例外。
+
+### R3 枚举脚本
+
+```bash
+cd /Users/akagilnc/WorkSpace/Ming_LLM-1843-w5
+git rev-parse HEAD
+# managed_py via: git ls-files '*.py' | grep -v '^docs/raw/' | wc -l  → 352
+
+python3 <<'PY'
+import ast, subprocess
+from pathlib import Path
+from collections import defaultdict
+files = [f for f in subprocess.check_output(['git','ls-files','*.py'], text=True).splitlines()
+         if not f.startswith('docs/raw/')]
+defs, refs = defaultdict(list), defaultdict(list)
+for rel in files:
+    src = Path(rel).read_text(encoding='utf-8', errors='ignore')
+    try:
+        tree = ast.parse(src)
+    except SyntaxError:
+        continue
+    for node in ast.walk(tree):
+        if rel.startswith('ming_sim/') and isinstance(
+            node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+        ):
+            defs[node.name].append(f'{rel}:{node.lineno}')
+for rel in files:
+    src = Path(rel).read_text(encoding='utf-8', errors='ignore')
+    try:
+        tree = ast.parse(src)
+    except SyntaxError:
+        continue
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name):
+            refs[node.id].append(f'{rel}:{node.lineno}')
+        elif isinstance(node, ast.Attribute):
+            refs[node.attr].append(f'{rel}:{node.lineno}')
+        elif isinstance(node, ast.alias):
+            n = node.asname or node.name.split('.')[-1]
+            refs[n].append(f'{rel}:{getattr(node, "lineno", 0) or 0}')
+print('managed_py', len(files))
+print('ming_sim_def_names', len(defs))
+orphans = []
+for name, dlocs in sorted(defs.items()):
+    consumers = [r for r in refs.get(name, []) if r not in set(dlocs)]
+    if not consumers:
+        orphans.append(name)
+        print(name, dlocs)
+print('ORPHAN', len(orphans))
+PY
+
+# 历史交叉（每个 ORPHAN）：
+# git log -S'<symbol>' --oneline -- ming_sim tests | head
+```
+
+对 ming_sim 全部定义做 defs 索引；对 git ls-files *.py（排除 docs/raw）统计 Name/Attribute/Import alias；consumers 为空即 ORPHAN；再对每个 ORPHAN 执行 git log -S。
+
+## 成员表（R3 处置：F2 删除）
+
+| 文件/符号 | 历史消费者／退役提交 | 归类 | 处置及理由 |
+|---|---|---|---|
+| context.historical_anchor_for_month | 53c83c3eb／5047271cf 撤 simulator 盘面 historical_anchor | F2 | 删 |
+| context.state_context | 34e5c181b 撤 board query tools | F2 | 删 |
+| context.event_context / first_character_name / first_character / parse_json_dict | 自首发 de0d7ad41 起无仓内消费者；旧事件回合 LLM 上下文 | F2 | 删（finding 点名） |
+| context.format_metric_delta | 仅被已删 period-report 链消费；固定点级联 | F2 级联 | 删 |
+| report.build_period_report / status_delta / status_delta_from_delta / metric_delta | 旧月末总结奏章；无现役／测试消费者 | F2 | 删 |
+| covert_progress.parse_covert_exec_selections | 242837870 #1843 删旧结算核 | F2 | 删 |
+| covert_progress.contract_axes_direction | d4362928d 撤 simulation／covert fidelity | F2 | 删 |
+| value_matrix.mean_aligned_stance | 同上 | F2 | 删 |
+| qualitative.disaster_severity_band + DISASTER_SEVERITY_BANDS | 9d854eec3 #1861 simulator board | F2 | 删 |
+| db.append_rescript_drafts | ff63db72b #1846 ready=1 重放追加 | F2 | 删（保留 save_rescript_drafts） |
+| db.turn_economy_summary / turn_power_summary | 242837870 旧 previous_turn_summary 盘面 | F2 | 删 |
+| db.treasury_ledger | 34e5c181b board query tools | F2 | 删 |
+| db.list_recent_issue_advances | 53c83c3eb simulator issue 盘面 | F2 | 删 |
+
+## 成员表（R3 例外：不施工）
+
+| 符号 | 历史 tip | 归类 | 保留理由 |
+|---|---|---|---|
+| _cli_prompt／_cli_stream_safe_prefix／_cli_recommendation_call | dd8c0f072 | F1 | 已判归属；不施工 |
+| find_prior_speaker_still_present／_fail_cli_chat_turn_scene／current_audience_scene | #1838／旁白／单场 | F3 | 已判归属；不施工 |
+| compose_decree_validation_recovery／compose_secret_order_landing_recovery | e2fc6369d／82be2f178 #1871 | F1 邻接 | 确认归类；非 F2 |
+| night_dossiers_ready | 4508956e5 #1842 | F3／召对邻接 | 确认归类；非 F2 |
+| minister_speaker_role／cluster_effect／_target_active_officeholder／stage_referral_candidate／stage_revoke_authority_candidate | #1871 | F1 邻接 | 非本票 F2 |
+| _matched_prefix／_secret_prefix_needs_recent_context | CLI dispatcher 退役 | F1 邻接 | 非本票 F2 |
+| _province_collection_rate／_province_transport_ratio | 7b4e5f734 选妃 stub | 例外 | 非结算／simulator |
+| _fiscal_container_value | fiscal hub | 例外 | 财政基座 helper |
+| faction_report | setattr 字符串钉权限 | 例外 | 知识权限边界仍钉 |
+| building_detail／record_economy_moves／多数 db.list_*／affair pointers／materials 协议 | 各异 | 例外 | 无证 F2 或业务候存 |
+| ainvoke／ainvoke_stream／__enter__／__exit__／__call__／__post_init__／MaterialsRoot／holder_kind | 协议 | 例外 | 动态调用 |
+| ChatResult／require_*／dict_of_strings*／qualitative_character_attribute 等 | 无旧结算证据 | 例外 | 无引用≠自动 F2 |
+| run_audience_turn_translation 等 | #1842 | 例外 | 召对邻接 |
+
+## 原类复扫（R3 固定点）
+
+F2 删除符号 defs/refs=NONE；级联 format_metric_delta／first_character 亦清；剩余 ORPHAN≈60 全入例外。
+
+## 聚焦测试（R3）
+
+七个 MING_SIM_*_BIN=/usr/bin/false 前缀；触及面 pytest（value_matrix／secret_order／covert／month_chain／report 消费者／rescript／section／knowledge／pay_order）。
+
+实测：422 passed, 1 skipped in 11.71s（real 12.83）。未跑全量。
+
+## 自查质量／合法性（advisor，非审官）
+
+同类型清退旧结算／simulator／board／ready-delta；未动现役写口；仅 F2；F1/F3 只归类；未 amend/stash/push/PR；不冒称 #1856 总核收敛。
+
+## 剩余范围
+
+F1／F3／分类器／收夜邻接零引用仍非本票；#1856 总核与全量 CI 留最终待合并。
+
+---
+
+## 附录：R1／R2 历史回执全文（保留失败经过与当时成员表）
+
+
+工作树：`/Users/akagilnc/WorkSpace/Ming_LLM-1843-w5`
+分支：`ak-roles/issue-1843-w5`
+底座：`claude/1812-w4` 是 HEAD 祖先（`git merge-base --is-ancestor claude/1812-w4 HEAD` → yes）
 派单：`~/.ak-roles/books/Ming_LLM/unbound/runs/01a107fa-7c79-7613-87d5-0cf4e634cafd@fixer/fix-packet.md`
 判词附件：`.../attachments/00-1856-judge-324c29f16.json`（F2 成立、未结；本票承接整类）
 
