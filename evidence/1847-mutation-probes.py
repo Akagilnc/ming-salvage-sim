@@ -225,8 +225,8 @@ src_iss = (ROOT / "ming_sim/issues.py").read_text(encoding="utf-8")
 ok("N10_NO_EXCLUSIVE_OFFICE_SUFFIX_VOCAB", "_EXCLUSIVE_OFFICE_SUFFIXES" not in src_iss, "")
 ok("N10_NO_EXCLUSIVE_OFFICE_HELPER", "_is_exclusive_office" not in src_iss, "")
 ok(
-    "N10_DISPLACE_NO_FREE_TEXT_ADMIT",
-    "return []" in src_iss.split("def _displace_duplicate_offices")[1].split("\ndef ")[0],
+    "N10_DISPLACE_HELPER_DELETED",
+    "def _displace_duplicate_offices" not in src_iss,
     "",
 )
 src_mf = (ROOT / "web/src/components/ministerFilters.ts").read_text(encoding="utf-8")

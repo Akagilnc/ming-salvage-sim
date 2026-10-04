@@ -1328,7 +1328,8 @@ def test_derived_release_restores_when_post_office_helper_raises(game, monkeypat
         db.set_character_status(state, name, "imprisoned", "旧案在押")
         content.characters[name].status = "imprisoned"
         before_logs = db.conn.execute("SELECT COUNT(*) FROM person_logs").fetchone()[0]
-        monkeypatch.setattr(issues, "_displace_duplicate_offices", fail_after_office_write)
+        # #1847: exclusive displace deleted; inject post-office failure on seat read.
+        monkeypatch.setattr(db, "character_office_region", fail_after_office_write)
 
         applied = issues.apply_score_extraction(
             db,
@@ -2533,36 +2534,6 @@ def test_new_appointment_falsy_return_restores_snapshot(game, monkeypatch):
     ).fetchone()["office"]
     assert now_office == orig_office, \
         f"falsy-return 后半落库未回滚：victim office={now_office!r} 期望 {orig_office!r}"
-
-
-def test_displaced_holder_transit_to_cleared(game):
-    """#1847: free-text exclusive displacement deleted; seam is a no-op."""
-    from ming_sim.issues import _displace_duplicate_offices
-    db, state, content = game
-    names = [
-        r["name"] for r in db.conn.execute(
-            "SELECT name FROM characters WHERE status='active' AND power_id='ming' "
-            "AND office_type!='后宫' ORDER BY rowid LIMIT 2"
-        ).fetchall()
-    ]
-    old, new_holder = names[0], names[1]
-    db.conn.execute(
-        "UPDATE characters SET office='蓟辽总督', office_type='督抚', transit_to='liaodong' WHERE name=?",
-        (old,),
-    )
-    db.conn.commit()
-    if old in content.characters:
-        content.characters[old].office = "蓟辽总督"
-        content.characters[old].office_type = "督抚"
-        content.characters[old].transit_to = "liaodong"
-
-    assert _displace_duplicate_offices(db, content, new_holder, "蓟辽总督") == []
-
-    row = db.conn.execute(
-        "SELECT office, transit_to FROM characters WHERE name=?", (old,)
-    ).fetchone()
-    assert row["office"] == "蓟辽总督"
-    assert (row["transit_to"] or "") == "liaodong"
 
 
 def test_historical_death_tick_sets_reason_code(game):

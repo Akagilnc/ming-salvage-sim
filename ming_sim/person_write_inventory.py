@@ -62,12 +62,6 @@ PERSON_WRITE_POINT_INVENTORY = (
         "reason": "运行时建人应收口到人物单入口。",
     },
     {
-        "location": "ming_sim/issues.py:_displace_duplicate_offices",
-        "owner": "legacy_person_path",
-        "disposition": "migrate_to_person_applier",
-        "reason": "顶替腾缺是任命派生事件，需收口。",
-    },
-    {
         "location": "ming_sim/issues.py:apply_office_appointment",
         "owner": "legacy_person_path",
         "disposition": "migrate_to_person_applier",

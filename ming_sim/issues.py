@@ -5713,24 +5713,7 @@ def apply_issue_tracker_output(
     }
 
 
-# #1847: exclusivity must not be inferred from free-text office suffixes.
-# Without an exact-registry seat model, displacement is deleted — callers keep the
-# seam name but receive an empty result (no fake Always-False helper left behind).
-
-
-def _displace_duplicate_offices(
-    db: GameDB,
-    content: Optional[GameContent],
-    new_holder: str,
-    new_office: str,
-    *,
-    region_id: str = "",
-    commit: bool = True,
-) -> List[str]:
-    """No-op: seat exclusivity is not derived from title wording (#1847 / ADR 0142)."""
-    del db, content, new_holder, new_office, region_id, commit
-    return []
-
+# #1847: free-text exclusive displacement deleted (no noop helper left).
 
 def _snapshot_person_write_state(db: GameDB, content: Optional[GameContent]):
     character_rows = [
@@ -6089,9 +6072,6 @@ def apply_office_appointment(
                     db.conn.commit()
             # Prefer post-write authority; never fall back to caller raw region.
             seat = db.character_office_region(name) or seat
-            displaced_parts = _displace_duplicate_offices(
-                db, content, name, new_office, region_id=seat, commit=commit,
-            )
             ch = content.characters[name]
             ch.office = new_office
             ch.office_type = new_office_type
@@ -6102,7 +6082,6 @@ def apply_office_appointment(
         return {
             "name": name, "old_status": cur_status, "old_office": old_office, "new_office": new_office,
             "kind": "transfer", "reason": reason,
-            **({"displaced": displaced_parts} if displaced_parts else {}),
         }
     # ── 新任：建新档 ──
     # 不变式（#1317 r2 重立）：经身份归一后若 name 仍不在 content.characters，才建档。
@@ -6152,16 +6131,9 @@ def apply_office_appointment(
                 commit=commit,
             )
         if appointed:
-            # 新任也按 office+任所 去重(与 transfer 分支对称):新人占独占实职,从他人剔同名分项,
-            # 免占缺旧任者留旧官成双缺官(CMR R4：去 replaces 后新任分支漏了顶替)。
-            # displaced 统一取 _displace_duplicate_offices 的 List[str](apply_appointment 的单名
-            # displaced 在去 replaces 后恒空,留着会让本字段时而 str 时而 list,故弃)(线上 gemini)。
+            # #1847: free-text exclusive displace deleted; no dual-seat peel after appoint.
             seat = db.character_office_region(appointed) or seat
-            displaced_parts = _displace_duplicate_offices(
-                db, content, appointed, new_office, region_id=seat, commit=commit,
-            )
-            return {"name": appointed, "new_office": new_office, "kind": "appoint", "reason": reason,
-                    **({"displaced": displaced_parts} if displaced_parts else {})}
+            return {"name": appointed, "new_office": new_office, "kind": "appoint", "reason": reason}
     except Exception as exc:
         _restore_person_write_state(db, content, snapshot, commit=commit)
         return _office_appointment_failure(

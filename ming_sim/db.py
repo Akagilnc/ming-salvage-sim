@@ -5796,7 +5796,7 @@ class GameDB:
         """#9 cmr R2：全量重算所有白名单朝堂派系 leverage（集中化兜底层）。
 
         两层设计：
-          (1) 即时 hook（set_character_status / set_character_office / _displace_duplicate_offices /
+          (1) 即时 hook（set_character_status / set_character_office /
               add_character）——单个成员状态/官职/易主变动时就地重算其所属派系，保回合内即时联动。
           (2) 本方法（reconcile 兜底）——在月末结算尾（delta 全部
               落库且 inertia 推进之后、next_period 之前）扫一遍全部白名单派系，重算成公式末值。

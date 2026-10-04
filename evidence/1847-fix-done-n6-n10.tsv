@@ -3,8 +3,8 @@ ming_sim/db.py	_canonical_secret_exclusion_target	delete_vocab_keep_registry	suf
 ming_sim/db.py	_migrate_legacy_office_pollution	delete	legacy office free-text→status/transit migration removed (#1812)
 ming_sim/office_rank.py	appointment_break_rank	delete_free_text_gate	history via status/reason enum only
 ming_sim/office_rank.py	concurrent_office_titles	delete_prefix_suffix_vocab	formal concurrent separators only
-ming_sim/issues.py	_is_exclusive_office	delete_helper_and_simplify	Always-False helper removed; _displace_duplicate_offices returns []; shadow displace loop deleted
-ming_sim/issues.py	_displace_duplicate_offices	collapse_noop	no free-text exclusive admit; callers keep seam, get []
+ming_sim/issues.py	_is_exclusive_office	delete_helper_and_simplify	Always-False helper removed; shadow displace loop deleted
+ming_sim/issues.py	_displace_duplicate_offices	delete_helper_and_callers	noop return[] seam deleted; apply_office_appointment no longer calls; invalidating tests removed/rewired
 web/src/components/ministerFilters.ts	filterMinisters	delete_title_regex	office_type+status enum sort/filter
 ming_sim/rescript_draft.py	triage_officers	exact_roster_titles	exact shipped characters.office 内阁首辅/司礼监掌印太监; no LIKE stem vocab
 ming_sim/decree.py	gatekeepers	exact_roster_or_type	LIKE '%首辅%'/掌印/给事中 deleted; office IN titles OR office_type='六科'

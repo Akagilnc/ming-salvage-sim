@@ -86,8 +86,8 @@ def judge_n6(row) -> tuple[str, str]:
     # Deleted sites / known FIX_DONE this round
     if any(x in snip for x in ("_is_exclusive_office", "_EXCLUSIVE_OFFICE_SUFFIXES", "_SECRET_OFFICE_TITLE_SUFFIX", "诸官|官员")):
         return "FIX_DONE", "free-text office/exclusive rewrite deleted"
-    if fn == "_displace_duplicate_offices" and "return []" in window:
-        return "FIX_DONE", "exclusive displace seam collapsed to no-op; no free-text admit"
+    if fn == "_displace_duplicate_offices":
+        return "FIX_DONE", "exclusive displace helper deleted; no noop seam left"
     if fn in {"_canonical_secret_exclusion_target", "canonical_secret_order_exclusions"} and kind == "strip_call":
         return "KEEP_empty_check", f"{fn}: strip only for exact registry key lookup; value not rewritten"
     if fn == "concurrent_office_titles" and kind in {"replace_call", "split_call", "join_call", "strip_call"}:
@@ -173,7 +173,7 @@ def judge_n10(row) -> tuple[str, str]:
     ) or ("startswith((" in snip and "前" in snip and "原" in snip):
         return "FIX_DONE", "office free-wording admission/status path deleted; registry/enum/form only"
     if fn == "_displace_duplicate_offices":
-        return "FIX_DONE", "exclusive-office free-text admit deleted; seam returns []"
+        return "FIX_DONE", "exclusive-office free-text admit deleted; helper removed"
     if fn == "_sponsor_transferred" and ("len(expected)" in snip or "expected in current_office" in snip or 'item.get("role")' in snip):
         return "FIX_DONE", "breach length/substring/role free-text transfer classify deleted"
     if fn == "_sponsor_transferred" and ("expected != current_office" in snip or "expected != current_office" in window):

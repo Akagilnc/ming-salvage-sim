@@ -458,10 +458,8 @@ def classify_n10(row):
         if kind in {"re_sub_n10", "re_sub"} and ("前" in snip or "原" in snip):
             return "FIX_DONE", "office prefix vocabulary peel deleted"
         return "KEEP_identity_or_formal", "offices.json stem/registry match or formal concurrent split"
-    if ctx == "_is_exclusive_office" or "_EXCLUSIVE_OFFICE_SUFFIXES" in snip or (
-        ctx == "_displace_duplicate_offices" and ("_is_exclusive_office" in snip or "return []" in snip)
-    ):
-        return "FIX_DONE", "exclusive-office suffix vocab + Always-False helper deleted; displace seam is no-op"
+    if ctx == "_is_exclusive_office" or "_EXCLUSIVE_OFFICE_SUFFIXES" in snip or ctx == "_displace_duplicate_offices":
+        return "FIX_DONE", "exclusive-office suffix vocab + Always-False helper + noop displace deleted"
     if ctx == "_sponsor_transferred" and (
         "len(expected)" in snip or "expected in current_office" in snip or 'item.get("role")' in snip
     ):
@@ -611,8 +609,8 @@ def main():
          "前/原/罢居/革职 vocabulary peel deleted",
          "N10: office tokenizer keeps formal concurrent split only"),
         (n10_cls, "exclusive_office_suffix_deleted", "_displace_duplicate_offices",
-         "exclusive office suffix helper deleted; displace returns []",
-         "N10: exclusivity not admitted from free-text title suffixes; dead Always-False helper removed"),
+         "exclusive office suffix helper + noop displace deleted",
+         "N10: exclusivity not admitted from free-text title suffixes; dead helper/seam removed"),
         (n10_cls, "minister_filter_title_regex_deleted", "filterMinisters",
          "office title regex sort/admission deleted",
          "N10: minister filter uses office_type/status enum only"),

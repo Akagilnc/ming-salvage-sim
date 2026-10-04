@@ -135,9 +135,8 @@ def test_failed_dossier_reappointment_rolls_back_audit_and_sequence(game, monkey
     def fail_after_office_write(*_args, **_kwargs):
         raise RuntimeError("simulated post-office-write failure")
 
-    monkeypatch.setattr(
-        issue_engine, "_displace_duplicate_offices", fail_after_office_write
-    )
+    # #1847: exclusive displace deleted; inject post-office failure on seat read.
+    monkeypatch.setattr(db, "character_office_region", fail_after_office_write)
     try:
         db.apply_dossier_promulgation(
             state, dossier_id, "promulgated", content=content,
