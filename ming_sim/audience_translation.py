@@ -37,32 +37,34 @@ _night_tail: Dict[Tuple[int, int], Future] = {}  # (queue identity, night_id)
 _turn_future: Dict[Tuple[int, int], Future] = {}  # cancellation scheduling only
 
 
+def _translation_write_gate(gate: Any) -> Any:
+    """转译写闸类型闸（单真源）：裸 ClassifiedWriteGate 或票据写缝 TicketedWriteGate。
+
+    两者同族契约（acquire_translation / is_held_by_translation /
+    wait_while_held_by_translation），故票据缝可直接承接转译持闸，
+    重开补跑不必绕开票据生命周期（#1898 / ADR 0036）。
+    """
+    from ming_sim.session_write_queue import ClassifiedWriteGate, TicketedWriteGate
+
+    if not isinstance(gate, (ClassifiedWriteGate, TicketedWriteGate)):
+        raise TypeError("转译写闸须为 ClassifiedWriteGate 或 TicketedWriteGate")
+    return gate
+
+
 def translation_holding_write_gate(gate: Any) -> bool:
     """该 gate 是否正被转译短持（与所有权同临界可读；不 join、不 cancel）。"""
-    from ming_sim.session_write_queue import ClassifiedWriteGate
-
-    if not isinstance(gate, ClassifiedWriteGate):
-        raise TypeError("转译写闸须为 ClassifiedWriteGate")
-    return gate.is_held_by_translation()
+    return _translation_write_gate(gate).is_held_by_translation()
 
 
 def wait_translation_write_gate_released(gate: Any) -> None:
     """等到该 gate 不再被转译持有（不抢闸、不加超时；结算/他写不抬此等待）。"""
-    from ming_sim.session_write_queue import ClassifiedWriteGate
-
-    if not isinstance(gate, ClassifiedWriteGate):
-        raise TypeError("转译写闸须为 ClassifiedWriteGate")
-    gate.wait_while_held_by_translation()
+    _translation_write_gate(gate).wait_while_held_by_translation()
 
 
 @contextlib.contextmanager
 def _translation_write_cm(gate: Any) -> Iterator[None]:
     """转译侧短持会话 write_gate；holder kind 与取得所有权同临界（#1842）。"""
-    from ming_sim.session_write_queue import ClassifiedWriteGate
-
-    if not isinstance(gate, ClassifiedWriteGate):
-        raise TypeError("转译写闸须为 ClassifiedWriteGate")
-    gate.acquire_translation()
+    _translation_write_gate(gate).acquire_translation()
     try:
         yield
     finally:

@@ -3,6 +3,7 @@
 - 分支 `kimi/issue-1571`，HEAD `e88cc29c`（2026-08-27 逐行实读）。
 - 判词（大理寺一审打回项）：「拆清毁约/连坐……breach/apply_joint_liability 不得同时被列作 store 深入口又被判为段消费。现码 breach_decree_dossier/apply_execution_joint_liability 同时写案卷、cost events、state.metrics、派系满意度和关系边……自相矛盾。」
 - 设计原则（grill Q2/Q11，不重开）：store 纯 DB、不收 state/content；0056 判定数据（触发集、cost_events 流水）归 store；state.metrics/派系满意度/关系边等效果消费留段适配器/编排层。
+- **#1895 追注（2026-09-30）**：本文为 `e88cc29c` 基线的**历史证据快照**，其中 `trigger_supervision_countermeasures` 的拆分/编排提案**已随 #1895 整体退役、不再施工**——代码不再按 integrity 档判定人物是否反制、也不再 hash 指定反制形态；人物反制归 #1861／#1843 run 依可及事实自选（见 `docs/adr/0077-supervision-dulling-person-conditioned.md` 后出修订段，commit `1e5b14f40`）。本文其余行号、拆分形状与归属账原样保留为该 HEAD 的历史依据，不因本次退役而改写。
 - 表归属基线（ADR 0151 决定 2 的 12 表 + `faction_denunciations`（dossier_id 锚定卫星表，随检举子模块）= **13 表**，与 boundary-inventory §1 同口径）：`decree_dossiers`、links、reconciliations、endorsements、link_rejections、`decree_dossier_decisions`、reported_progress、supervision_presence、loophole_exposures、actual_progress、`faction_denunciations`、`decree_cost_events`、`pending_promulgation_verdicts`。下表「出界」= 所写表不在这 13 张内。
 
 ## 0. 常量群（ming_sim/db.py:16004-16015）

@@ -19,6 +19,7 @@ from ming_sim.breach_plea import (
     ENTRY_KIND_BREACH_PLEA,
     project_breach_plea_scene,
 )
+from ming_sim.decree_vocabulary import terminal_report_facade
 from ming_sim.staged_commitment import (
     ENTRY_KIND_GRACE_PLEA,
     ENTRY_KIND_RUSH_REMONSTRANCE,
@@ -153,10 +154,8 @@ def build_due_review_input(db: Any, todo: Dict[str, object]) -> Dict[str, object
     """P5 输入闭集：todo 字段 + stages + list_dossier_progress + 实况；催办/监督缺源=空列表。"""
     from ming_sim.urge_lever import (
         collect_urge_history,
-        derive_distortion_tendency,
         derive_opportunity_band,
         resolve_host_character,
-        summarize_urge_pressure,
     )
 
     commitment_ref = int(todo["commitment_ref"])
@@ -167,7 +166,7 @@ def build_due_review_input(db: Any, todo: Dict[str, object]) -> Dict[str, object
     # 案卷 due 直挂：title/criterion 已在 todo；无 issue 段表 → 末段
     if commitment_ref <= 0 and not meta.get("title"):
         meta = dict(meta)
-        meta["title"] = str(todo.get("criterion_text") or "")
+        meta["title"] = str(todo.get("criterion_text") or "")  # #1897: no truncate
     stages = meta["stages"]
     origin_ref = _todo_origin_ref(todo, str(meta.get("origin_ref") or ""))
     branch = resolve_due_review_branch(db, origin_ref)
@@ -203,20 +202,12 @@ def build_due_review_input(db: Any, todo: Dict[str, object]) -> Dict[str, object
         commitment_ref=commitment_ref,
         dossier_id=branch["dossier_id"],
     )
-    pressure = summarize_urge_pressure(urge_history)
     host = resolve_host_character(
         db,
         commitment_ref=commitment_ref,
         dossier_id=branch["dossier_id"],
     )
     opportunity_band = derive_opportunity_band(durable_effects)
-    distortion_tendency = derive_distortion_tendency(
-        integrity=host["integrity"],
-        urge_count=int(pressure["urge_count"]),
-        urge_tightness=int(pressure["urge_tightness"]),
-        supervision_history=supervision_history,
-        opportunity_band=opportunity_band,
-    )
     army_pay_fact = None
     if branch["dossier_id"] is not None:
         from ming_sim.covert_levy import army_pay_fact_for_dossier
@@ -244,7 +235,6 @@ def build_due_review_input(db: Any, todo: Dict[str, object]) -> Dict[str, object
         "transformation_tendency_facts": transformation_tendency_facts,
         "host": host,
         "opportunity_band": opportunity_band,
-        "distortion_tendency": distortion_tendency,
     }
 
 
@@ -256,7 +246,7 @@ def project_due_review_scene(
 ) -> Dict[str, object]:
     """复命场面投影（ID-13 用词，P4 定性、无数字面板）。"""
     inp = review_input if review_input is not None else build_due_review_input(db, todo)
-    origin = str(inp.get("origin_context") or todo.get("origin_context") or "")
+    origin = str(inp.get("origin_context") or todo.get("origin_context") or "")  # #1897: verbatim
     mid = bool(inp.get("mid_stage"))
     entry_kind = str(todo.get("entry_kind") or ENTRY_KIND_STAGED)
     scene_kind = "covert_levy_exposure" if audience_todo_lane(entry_kind) == _AUDIENCE_LANE_COVERT_LEVY else "due_review"
@@ -318,15 +308,6 @@ def list_due_review_scenes(
             scenes.append(project_breach_plea_scene(db, todo))
         # urge / unknown：不投影为 due-review 场面
     return scenes
-
-
-def current_audience_scene(db: Any, state: Any = None) -> Dict[str, object] | None:
-    """Return the one due-review scene currently presented to the sovereign."""
-    return next((
-        scene for scene in list_due_review_scenes(db, state)
-        if scene.get("kind") == "covert_levy_exposure"
-        or scene.get("shortfall_reopened") is True
-    ), None)
 
 
 def _add_owned_dossier(
@@ -397,21 +378,20 @@ def durable_effects_beyond_intent(effects: object) -> bool:
 
 
 def decide_due_review_verdict(review_input: Dict[str, object]) -> Dict[str, object]:
-    """确定性裁决（不新增 LLM 步）。中段过程态 vs 末段四终值；#624 失真档可观察调制。
+    """确定性裁决（不新增 LLM 步）。中段过程态 vs 末段四终值。
 
-    #622：消费效果行旨外标记——有旨外恶果/受益 → transformed；
-    有实况无旨外 → fulfilled；无实况有表报 → degraded；皆无 → failed。
-    禁另立第二裁决函数。
+    #1895：终值只由实况账判——有旨外恶果/受益 → transformed；有实况无旨外 →
+    fulfilled；无实况有表报 → degraded；皆无 → failed。代码不再由承办人
+    integrity／催办压力派生「失真档」并把判词只往更重方向改写；人物办不办、
+    办得多重归模型按其可及事实自己选（#1816 人物场景／月末 run）。
+    #622 旨外标记口径不变；0118 对账不翻因。禁另立第二裁决函数。
     """
-    from ming_sim.urge_lever import apply_distortion_to_verdict
-
     mid = bool(review_input.get("mid_stage"))
     effects = list(review_input.get("durable_effects") or [])
     reports = list(review_input.get("progress_reports") or [])
     # #1897：criterion/origin 自由正文原样嵌入判词，禁 strip（空白原文不得换成缺省）。
     criterion = str(review_input.get("criterion_text") or "") or "所约之事"
     origin = str(review_input.get("origin_context") or "")
-    distortion = dict(review_input.get("distortion_tendency") or {})
 
     if mid:
         note = f"中段复核：{criterion}仍在办理"
@@ -423,7 +403,6 @@ def decide_due_review_verdict(review_input: Dict[str, object]) -> Dict[str, obje
             "close": False,
             "is_terminal": False,
             "mid_stage": True,
-            "distortion_band": str(distortion.get("band") or "不歪"),
         }
 
     # 末段终裁：机械读旨外标记（0072 分界；0118 对账不翻因）
@@ -442,20 +421,13 @@ def decide_due_review_verdict(review_input: Dict[str, object]) -> Dict[str, obje
         note = f"到期复核：{criterion}届期无实绩"
     if origin:
         note = f"{note}（原诺：{origin}）"
-    verdict = {
+    return {
         "outcome": outcome,
         "note": note,
         "close": True,
         "is_terminal": True,
         "mid_stage": False,
-        "distortion_band": str(distortion.get("band") or "不歪"),
     }
-    return apply_distortion_to_verdict(
-        verdict,
-        distortion,
-        has_effects=bool(effects),
-        has_reports=bool(reports),
-    )
 
 
 def _apply_dossier_verdict(
@@ -515,6 +487,7 @@ def _apply_dossier_verdict(
         "noop": False,
         "credit_events": credit_rows,
     }
+
 
 
 def apply_due_review_for_todo(

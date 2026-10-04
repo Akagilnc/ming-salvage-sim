@@ -211,6 +211,17 @@ DOSSIER_OUTCOME_CN = {
     "transformed": "变形",
 }
 
+# 奏报轨终值旁路：定性 band 与承办人假象，不回填判官真值。
+_TERMINAL_REPORT_FACADE_BAND = {
+    "transformed": "已竣",
+    "degraded": "将结",
+}
+_TERMINAL_REPORT_FACADE_MEMORIAL = {
+    "transformed": "所委各节均已依限办结，并无违误。",
+    "degraded": "所委已有成数，余事容再陈。",
+}
+
+
 def format_public_progress_disclosure(progress_rows: object) -> str:
     """公开披露面：progress_band + memorial_text 的 join 渲染（#622 AC6 面2 单源）。"""
     return "\n".join(
@@ -218,6 +229,34 @@ def format_public_progress_disclosure(progress_rows: object) -> str:
         for item in (progress_rows or [])
     )
 
+
+def terminal_report_facade(
+    outcome: object,
+    *,
+    prior_reports: object = None,
+) -> tuple[str, str]:
+    """终值奏报行的（progress_band, memorial_text）假象面。
+
+    变形案必须载承办人假象（奏报说兑现），不得回填判官真值；
+    progress_band 一律定性中文。
+    """
+    key = str(outcome or "").strip()
+    band = _TERMINAL_REPORT_FACADE_BAND.get(key, "办结")
+    memorial = _TERMINAL_REPORT_FACADE_MEMORIAL.get(
+        key, "所委诸事已有回奏。",
+    )
+    # 变形：优先复用末次非终值月报陈词作假象载体（仍须成功口径）。
+    if key == "transformed" and prior_reports:
+        for item in reversed(list(prior_reports)):
+            if not isinstance(item, dict):
+                continue
+            if item.get("is_terminal"):
+                continue
+            text = str(item.get("memorial_text") or "")
+            if text.strip():
+                memorial = text
+                break
+    return band, memorial
 
 def qualitative_dossier_status(value: object) -> str:
     key = str(value or "").strip()
@@ -309,17 +348,15 @@ def render_referenceable_dossier_brief(candidates) -> str:
     for row in candidates:
         if not isinstance(row, dict):
             continue
-        title_raw = str(
+        title = str(
             row.get("secret_title") or row.get("decree_text") or row.get("action_type") or ""
-        )
-        title = title_raw if title_raw.strip() else ""
+        ).strip()
         status_cn = qualitative_dossier_status(row.get("status"))
         decision_cn = qualitative_promulgation_slot(row)
         outcome_cn = qualitative_dossier_outcome(
             row.get("execution_outcome"), status=row.get("status"),
         )
-        note_raw = str(row.get("execution_note") or "")
-        note = note_raw if note_raw.strip() else ""
+        note = str(row.get("execution_note") or "").strip()
         markers = qualitative_midzhi_markers(row)
         facts = []
         if status_cn:

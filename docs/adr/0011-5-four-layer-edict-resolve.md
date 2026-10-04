@@ -2,6 +2,18 @@
 
 Status: Accepted（承母 ADR `0011-edict-resistance-and-centrifuge-ledger.md` 决定4（两阶段五结局 + 四层票拟全幕后）+ 决定5（中旨 / 密令代价曲线），由 design-dig `dig-8` fold 而成。**评审收敛**——本地 ship-pre cmr R1–R8 4/4 concur（2026-06-15）+ 线上 PR #123 R1–R3 评审收敛；PR #123 已 merge（`847dc3da5`，2026-06-15）转 Accepted。实现属编码活、spawn 隔壁。）
 
+## 后出设计修订（#1895，待票庭重审）
+
+法源同母 ADR 0011 修订段（assistant `694be3db-1790-4ac2-9858-2a36c9ba1b74`「代码替人算心思的，一律废掉，世界因果照留」；owner `6049ebf8-df48-420e-bcaa-f65d10a7759d`「可以」）。票面已由事中收敛并获署；本段待票庭重审后才取代旧文，不冒充已生效法或已施工。
+
+**相抵部分**：D5-1／D5-4／D5-11 中「resolve 算出的阻力即人物心意的硬约束、软判只准更重」这一族读法作废。`resolve_directive` 不再是人物心思的代理：它若仍算世界侧硬事实（议题敏感度、已定机械后果、当回合可落的实况），那些是**世界账**；而「这位大臣肯不肯办、办得多重」由模型自己判，不再被代码算出的阻力底线抬高或压低，也不再由旧 0011-5 把关人约束软判。**保留**：D5-11 的 P4 呈现禁令（`blocked_layer`／`per_layer_resistance`／ceiling 等系统词与数值永不裸呈现）、机械后果当回合全量落库（P1）、打回须在邸报里如实复盘「卡在哪层」、dry_run 物理只读护栏、中旨污名与案卷事实。实际核算不废。
+
+把关及人物选择 run、声明写入与恢复唯一执行契约引用 [#1895](https://github.com/Akagilnc/ming-salvage-sim/issues/1895)及 #1846 第5条，不在本 ADR 重立步骤。P4 唯一机制引用 [0143](0143-p4-input-side-qualitative-projection-only.md)，下文 D5-11 的输入侧投影保留，对生成散文查系统词、数值、改述或概念泄漏的守门义务与测试废除；dry_run 不预测人物安全与胜负。
+
+## 历史设计（相抵条款由本次及 0143 后出修订取代）
+
+---
+
 承 GitHub #112 tracker。本 ADR 是**圣旨颁布阻力网的心脏** + **排最后**：`resolve_directive` 是全部 substrate（血债 0011-2 / 矩阵 0011-3 / ceiling+seed 0011-4 / identity）的汇流口，把「圣旨未必颁得出、颁了未必有效、actor 各有算盘」做成一次幕后纯函数。**硬序铁律：substrate 先落、本 ADR 后做**（零 substrate 则 resolve 读空值退化纸面、破局无料可读，别先搭四层框架）。
 
 ## 为什么排最后 + 为什么是纯函数

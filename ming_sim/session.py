@@ -559,7 +559,8 @@ def _sync_offices_from_db_impl(content: GameContent, db: "GameDB", llm_config: O
     rows = db.conn.execute(
         """
         SELECT c.name, c.office, c.office_type, c.faction, c.aliases, c.personal_skills,
-               c.loyalty, c.ability, c.integrity, c.courage, c.style, c.identity, c.seed_guilt,
+               c.loyalty, c.ability, c.integrity, c.courage, c.style, c.identity, c.intrigue,
+               c.seed_guilt,
                c.birth_year, c.historical_death_year, c.historical_death_month,
                c.debut_year, c.debut_month, c.status, c.status_reason, c.reason_code,
                c.portrait_id, c.power_id, c.location, c.transit_to,
@@ -630,6 +631,7 @@ def _sync_offices_from_db_impl(content: GameContent, db: "GameDB", llm_config: O
             portrait_id=row["portrait_id"],
             summary=row["summary"],
             identity=int(row["identity"]),
+            intrigue=int(row["intrigue"]),
             seed_guilt={str(key): str(value) for key, value in seed_guilt.items()},
             # 任所 thrives only on character_offices; restore into Character for
             # runtime projection (materials scope / travel gate / seat identity).
@@ -705,7 +707,6 @@ class GameSession:
             tlog(f"[载入] 4/4 开局修正 {time.monotonic() - _t:.1f}s")
             self.deaths_this_turn: List[Dict[str, str]] = []
             self.debuts_this_turn: List[Dict[str, str]] = []
-            self.power_renames_this_turn: List[Dict[str, object]] = []
             self.previous_summary = ""
             self.last_decree = ""
             # P1-1：last_decree 所覆盖的 draft 指纹（write_decree 时记，颁诏时校验是否已陈旧）。
@@ -763,7 +764,6 @@ class GameSession:
         self.state = self.db.load_state()
         self.deaths_this_turn = self.db.apply_historical_deaths(self.state)
         self.debuts_this_turn = self.db.apply_historical_debuts(self.state)
-        self.power_renames_this_turn = self.db.apply_historical_power_renames(self.state)
         _sync_offices_from_db_impl(self.content, self.db, self.llm_config)
         self.previous_summary = self.db.previous_turn_summary(self.state) or ""
         tlog(f"[接档] begin_turn 读档+历史 tick+人物同步+奏报 {time.monotonic() - _t:.1f}s")

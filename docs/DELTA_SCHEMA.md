@@ -52,7 +52,7 @@
   "secret_order_updates":       [],  // 密令副作用
   "covert_exec_selections":     [],  // #1504 密令带内选态
   "dossier_progress_reports":   [],  // 长差密令逐月密奏（#566 / ADR 0058）
-  "emperor_fate":               null, // "abdicate" | "suicide" | null
+  "emperor_fate":               null, // null 不终局；abdicate/suicide 保留原状态号；其它非空声明（被废、暴毙等）同样终局
 
   // ── relations 模块（#633 / ADR 0082 结算口）──
   "relation_edge_events": [],  // 大臣互动边事件；每项 {施动者, 受动者(单名或名单), 类目, 语境, 来源引用}
@@ -228,11 +228,14 @@ canonical 段形＝list，每项落一道加派旨：逐省累积账当回合落
 | `origin_kind` | 可选 |
 
 ### `new_issues` — 新立 issue ⚠️ **最容易踩的字段**
-**两种来源（必选其一）**：
+**三种来源（必选其一）**：
 1. `origin_kind: "decree"` — 玩家诏书强推的新政/工程/改革
 2. `origin_kind: "event_pool"` + `id: "<候选事件 id>"` — 触发预设候选事件
+3. `origin_kind: "impeachment_surge"` + `candidate_id: "<弹劾潮候选 id>"` — 派系发难（ADR 0091）
 
 **其它来源一律拒**（这是我第一次踩的坑：`origin_kind=''` 直接被丢）。
+
+`origin_kind="impeachment_surge"` 另需 `faction_hint`（须等于该候选的 `faction_id`）、非空 `target_roster`（人物身份列表，且是 `eligible_target_ids` 的子集）、`title` 与 `stage_text`。候选本身由既有硬门（旨外 durable 变形暴露 × 派系 leverage）从 DB 现算，只收本次输入快照里存在的；同一候选同一次调用内只消费一次。发难与否由派系角色在同一次月末世界段自行决定——不发难就不写这一项，代码不代发难（#1893 / ADR 0091）。
 
 `origin_kind="event_pool"` 只收当前候选池中的未终态事件。若事件已因超过显式最晚时点进入 `expired` 终态，立项会明确拒收为“事件已过期终态”，不可用后续 delta 让它晚弹或重入。
 
@@ -288,7 +291,7 @@ canonical 段形＝list，每项落一道加派旨：逐省累积账当回合落
 "stages": [
   {
     "stage_idx": 0,
-    "due_turn": 37,                 // 绝对回合；须由显式结构化 stages 给出
+    "due_turn": 37,                 // 绝对回合；须由显式结构化 stages 给出；期限只由模型按本字段交代，引擎不从散文换算
     "criterion_text": "火器见眉目",
     "origin_context": "三年火器见眉目"  // 原诺语境，持久可查（Story 5 回声底）
   }
@@ -298,7 +301,7 @@ canonical 段形＝list，每项落一道加派旨：逐省累积账当回合落
 - **段到期扫描独立**（与 form③ 共享「active 承诺 + 到期」谓词语义，不共用其 SQL 结果集）；**待裁载体改道** `next_audience_todos`——段派生的展示 `end_turn` **不**进 form③ `due_commitments` 待核议通道；**独立** `end_turn`（≠ max 段 due）仍可走 form③。结算**不**置 `TurnPhase.AWAITING_DECISION` / `<<DECISION>>` 停轮（0074/0076）
 - 去重键：`(commitment_ref, stage_idx, entry_kind)`，不得只按 issue_id 抹段
 - 段间自动续，无需玩家 ACK；消费/复命场面归 #621，本片只 own 写端
-- 捕获（#1897 重定）：只认已有显式结构化 `stages`；代码不从散文／「三年X五年Y」正文换算期限；缺省、空段或坏结构都不回落正文猜段（旧 #620 P4／捕获 AC 已撤销）
+- 捕获（#1897 重定／#1890 同向）：只认已有显式结构化 `stages`（JSON 数组串或已结构化列表）；代码不从散文／「三年X五年Y」正文换算期限；缺省、空段不回落正文猜段；非 JSON 字符串按坏形响亮拒绝（ADR 0142；owner 2026-09-30「肯定不能让代码去扣」；旧 #620 P4／捕获 AC 已撤销）。召对交办、邸报／`new_issues`（`issues.py`、`db.py` 世界段落账）三条接缝同走库层 `stages_to_json` 严格串行面；期限只由模型按结构化字段交代
 
 **`next_audience_todos` 最小字段（P2）**：
 | 字段 | 约束 |
@@ -388,6 +391,7 @@ personnel_secret 模块产出；与公共 `dossier_participants` **分立**（�
 ### `dossier_progress_reports` — 长差密令逐月密奏（#566 / ADR 0058）
 personnel_secret 模块产出；settle 内经 `record_monthly_dossier_progress` 消费。
 - 每项必须带 `dossier_id`、`progress_band`、`memorial_text`；三者皆非空。
+- 可选 `origin`：承办人在该条密奏里自己声明的行动。`same_faction_blind` 为睁眼闭眼，`private_goods` 为带私货；两项都声明时用 `+` 连接。未作此选择则省略。同派或敌派不补写行动；未知记号不落成行动。落库后从该条密奏的 origin 续读。
 - 合资格集 = `decree_dossiers.status` 为 `promulgated` / `executing` 且所关联 `secret_orders.status='active'` 的案卷（读缝 `monthly_dossier_reports` / `list_monthly_dossier_progress_nudges`；#1504：不限 tag、不限期限月数）。
 - **必须完整覆盖**合资格集：不得漏项、不得重复、不得指向未知案卷；无合资格却收到提案亦拒。
 - 非法/不全 → fail-loud 整月中止，不走逐项拒收留痕（与 #1745 后的 `dossier_reconciliations` 分轨）。
@@ -442,9 +446,35 @@ personnel_secret 模块产出；settle 内经 `record_monthly_dossier_progress` 
 - updates：`order_id` int + `sim_note`（本月推进实况）+ 可选 `impact` + 可选布尔 `disclosed`（中文键 `泄漏结论`；可省略）。`disclosed`/`泄漏结论`：密令情节已**实际公开**才为 true（被目击、闹至公堂、承办人被拿获、目标公开反击、明发上谕、科道公开参劾等）；为 true 时触发 `secret_order_disclosure:` 公开知识事件（简报升公共面的唯一闸）。风声/警觉/暴露风险仍为不填或 false。
 - 结案真源是 `settle_due_secret_orders`，不接受 extractor 结案字段。
 
+#### 查案密令的选择合同（#1896，唯一真源 = `ming_sim/covert_progress.py`）
+
+带 `investigation_target` 的密令不走 `fidelity`，改由步骤 4a（`covert_exec_selections`）按人物当月真实办事声明：
+
+| 字段 | 形状 | 语义与约束 |
+| --- | --- | --- |
+| `effort` | 0..1 的**有限**数字（中文键 `投入`） | **必填**：本月投入强度。引擎按承办人真实处境（能力／**是否身在目标当地**／0092 owner 未结差务带宽）折算本月实投并累计；累计实投 ≥ 该条罪证难度即记已掌握。**缺字段、非数字、或非有限值（`NaN`/`inf`）＝无效声明**：该段实况整体回滚、月链置 `secret_orders_supply_invalid` 并中止本月 run，重试按 #1846 弃产物重来（见下）。合法零投入只有显式 `effort: 0`；越界值按 0..1 夹取（写 1.2 是"下了死力"，不是无效）。无单月硬顶、无最低在查月数 floor（ADR 0098 后出修订已退役）。 |
+| `fact_key` | str（中文键 `所查事实`） | 本月实际下手的罪证键，取自供料 `investigation_facts`。本月无从下手则省略——引擎**不替人物挑**一条（CLAUDE.md P6）。 |
+| `method` | str（中文键 `查法`） | 本月查法，原样落账为案卷事实。 |
+| `tip_off` | `{source}`（中文键 `通风报信`） | 真实通风报信声明：确有人经关系网把话递到被查者手里。被查者知情的**唯一**来源；关系边存在 ≠ 话递到了。开案本身不算知情。 |
+| `spoliation` | `{effect, fact_key, knowledge_source?}` | 被查者知情后的毁证选择；`effect` ∈ `harder`/`gone`。未知情不承接。`knowledge_source` 可省：知情按**案卷已落的真实传话记录**跨月承接（见下），无须每月重复声明。 |
+| `suppression` | `{form}`（中文键 `压案`） | 被查者知情后的压案声明（行贿说项之类），落账为事实。**未知情不落账**（引擎不替一个不知情的人记下他"压了案"），并在 `rejected_reactions` 留痕。 |
+| `note` | str | 密奏正文（可谎）。奏报不入实况轨：谎奏不造罪、不抹证。 |
+
+- **知情的跨月承接**：知情是持续事实——真递到过一次的话，此后各月照样成立。核的是**同一人**：此人既出现在本案 `investigation_tips` 里，又与目标有关系边。别人递过话，不能把未递话的关系人算成来源。毁证与压案**共用**这一判定（`_resolve_investigation_knowledge`）。
+- **到差（硬闸，非折扣）**：承办人须**身在目标所在地**才投得进力（已准设计原句「办案人得身在当地」）。在途（`transit_to` 非空，ADR 0097）或身在别处 → 本月 `capacity = 0`、人物实投为零，来源线索也不消费、不标 `credited`（到场后仍可一次性消费）。所在地缺失时该轴退化不参与。行程距离**不**作难度乘子。零能力走同一能力公式，不另立禁零闸。
+- **逐证难度的因子**：事实分档（seed_guilt 罪谱 vs 已落库 evidence 把柄边）、罪情轻重、结构化 `evidence` 边（把柄，按对手去重）、**目标遮掩＝`characters.intrigue`（ADR 0108 阴谋能力）**、办案人能力。**不**按 `event_kind` 九类自由类目计庇护（ADR 0098:15 自由类目不驱动机械分支），**不**拿 `characters.identity`（党籍认同）当遮掩。目标不在 `characters` 行里（题名式查案对象）时遮掩轴退化不参与。
+- 查案密令的合同另可带 `investigation_fact`（中文键 `调查事实`，由密令抽取提示词正向产出）：该来源线索所指的罪证键。**带指针的开案来源与汇案来源同一条接线**——首次开案即把该来源记入 `investigation_clues`（一次性助一次实投，权重 `_CLUE_ASSIST_EFFORT` 为引擎侧首版常数，同逐证难度常数随 playtest 调）；合同未带该键则不记。
+- **无指针的真实来源线索走 ADR 0098:11 的确定性兜底路由**（该路由是既有已准规则，不因「人物行动不代选」而废止；⚠️ 只作用于真实存在的来源——检举／证词／苦主等确实带着案情而来的消息，**「开案」与重复的无指针汇案都不是来源，没有 `investigation_fact` 就不造线索**，否则等于凭空白送实投）：先归 `seed_guilt` lane；目标无该 lane 而案内有其他活跃 lane 时按 `fact_key` 稳定序（边事件 id 升序）取首条（记 `routed_fact_key`）；**全案无 lane 才确定性丢弃**（记 `dropped_no_lane`），不造罪。指向不存在／已被别案查获的罪确定性丢弃（记 `dropped_fact_key`）。
+- ⚠️ 上一条与「人物本月下手」是**两件事**：本月 `fact_key` 省略＝人物没下手处 → 零投入、代码不代选（J4）；`routed_fact_key` 路由的是**来源线索该助哪条既有实证**，只在既有 lane 内移动、从无造真相。断言「投入为零」时须扣掉已落的来源加成——两者是分别记账的两笔钱。
+- 上述声明统一落在同一案卷 `payload_json`：`fact_lanes`（投入/难度/已掌握，无 `used`/`reason_code`——掌握证据≠依法清算）、`investigation_tips`、`investigation_clues`、`investigation_acts`。唯一写口是 `update_decree_dossier_payload`，无第二轨。行动／传话／线索记录**不截尾**（ADR 0155:8 撤除硬历史上限，完整历史实况供料）。
+- **身份材料按目录读取**：4a 供料里办案人与被查者各自只带 `materials_path`（`人物/<人>/此刻所知.txt`）与身份职位，**不带正文**；正文由 `write_identity_materials` 写进 4a 自己备的材料树供自主取阅（ADR 0155:8 读取形态／#1814 身份隔离）。实情：4a 用的是 `prepare_world_materials` 的默认根（与世界段同一路径），**不外泄靠生命周期不靠路径**——4a 调完即整树释放，邸报作者用前重新 prepare。⚠️ 本函数不得在别的调用仍持有一棵未释放的树时被调进去：身份投影含本人私务（含其在办密报正文），并进别人正在读的树等于把密报抬进其读取范围。同场不等于人物全知。
+- 到期结案读 `investigation_lane_actual_units`（真实掌握条数），不看奏报自称成功。
+
 ### `emperor_fate`
 - 顶层标量，不是 list/dict
-- 三选一：`"abdicate"` / `"suicide"` / `null`
+- `null`（或未声明）不终局
+- `"abdicate"` / `"suicide"` 仍落到 `emperor_abdicate` / `emperor_suicide`
+- 其它非空声明同样进入既有终局链：ASCII 标识落到 `emperor_<声明>`，其余（如 `被废`、`暴毙`）以声明本身为终态。不另设宫变硬门，也不为这些终态预写定调句
 
 ### `relation_edge_events` — 大臣互动边事件（#633 / ADR 0082 结算口）
 - 每项：`{"施动者": str, "受动者": str 或 [str], "类目": 九类之一, "语境": str, "来源引用": "dossier:<id>\|盘面自发"}`
@@ -459,7 +489,7 @@ personnel_secret 模块产出；settle 内经 `record_monthly_dossier_progress` 
 
 | 字段 | 我犯过的错 | 真相 |
 |---|---|---|
-| `new_issues[].origin_kind` | 不填 | **必填** `decree` 或 `event_pool` |
+| `new_issues[].origin_kind` | 不填 | **必填** `decree` / `event_pool` / `impeachment_surge` |
 | `new_issues[].kind` | 写 `reform` | 白名单 `situation` / `initiative`；改革/试点都用 `initiative` |
 | `new_issues[].title` | — | ≤60 字 |
 | `close_issues[].reason` | 填了 `result` 没填 `reason` | close_issues 要 **`reason`** 字段（不是 result），空则整条被跳过。注：若同时用 `issue_advances` 把 bar 推满（≥100），issue 会**自动 resolved**，不依赖 close_issues |

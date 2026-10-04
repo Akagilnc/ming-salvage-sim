@@ -331,16 +331,15 @@ def _play_one_month(
     # 顺序 tracer 只验证真实入口和结构化月推进结果。
     _wait_pending_writes(game)
 
-    directive = client.post(
-        "/api/directives",
-        json={"text": f"着户部清核辽饷（{month_label}）。", "notes": ""},
+    # #1849：独立手拟新增 Web 口已退役；经现行 capture 核 + session 落草案
+    # （与召对拟旨同一条 turn_directives 写入）。本 tracer 被测的是月推进。
+    from tests.directive_seed_helpers import seed_manual_draft
+
+    draft_id = seed_manual_draft(
+        game.session, f"着户部清核辽饷（{month_label}）。",
     )
-    _assert_not_bare_500(directive, step=f"{month_label} 拟旨")
-    assert directive.status_code == 200, (
-        f"{month_label} 拟旨 → {directive.status_code}: {directive.text}"
-    )
-    dirs = (directive.json() or {}).get("directives") or []
-    assert dirs, f"{month_label}: directive list empty after POST"
+    assert draft_id > 0, f"{month_label}: seed_manual_draft returned {draft_id}"
+    assert game.db.list_directives(game.state), f"{month_label}: directive list empty after seed"
 
     _wait_pending_writes(game)
 

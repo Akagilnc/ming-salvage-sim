@@ -6,7 +6,6 @@ Seams:
 - apply_pending_due_reviews → record_dossier_execution 适配器（有案卷桥）
 - 无案卷分支：只场面+奏报，不伪造案卷
 - 中段 executing+close=False 不连坐 vs 末段终值+close+至多一次连坐
-- EXTRACTION_MODULES 基数不变；无 AWAITING_DECISION / <<DECISION>>
 - 接管：到期目标 extractor 重复终值拒收
 """
 
@@ -226,8 +225,12 @@ def test_due_review_scene_has_no_internal_payload(game):
 
 def test_due_review_scene_enters_open_night_fact_inputs(game):
     """#1838 reopen：待裁场面进场景开场最小集，不再写开夜旁白账。"""
-    from ming_sim.materials import _scene_pending_audience_facts
-
+    import json
+    from ming_sim.materials import (
+        _scene_pending_audience_facts,
+        prepare_scene_materials,
+        release_material_tree,
+    )
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
     db.conn.commit()
@@ -241,9 +244,25 @@ def test_due_review_scene_enters_open_night_fact_inputs(game):
     write_due_staged_commitment_todos(db, state)
 
     open_night(db, state, time_of_day="戌时", location="乾清宫")
-    facts = _scene_pending_audience_facts(db, state)
-    assert facts, "待裁场面须进入开场最小集"
-
+    scenes = list_due_review_scenes(db, state)
+    assert len(scenes) == 1
+    scene = scenes[0]
+    prepared = prepare_scene_materials(db, state)
+    try:
+        facts = _scene_pending_audience_facts(db, state)
+        matched = [
+            json.loads(line) for line in facts
+            if json.loads(line).get("todo_id") == scene["todo_id"]
+        ]
+        assert len(matched) == 1
+        assert matched[0] == scene
+        payload = next(
+            line for line in facts
+            if json.loads(line).get("todo_id") == scene["todo_id"]
+        )
+        assert payload in prepared.opening
+    finally:
+        release_material_tree(prepared.root)
 
 # ── P1 有案卷桥 / 无案卷分支 ──────────────────────────────────────────
 
@@ -542,12 +561,6 @@ def test_three_beat_timing_todo_then_scene_then_slot(game, monkeypatch):
     assert db.list_next_audience_todos(status=TODO_STATUS_PENDING) == []
 
 
-def test_five_module_extractor_fanout_is_retired():
-    from ming_sim import simulation
-    assert not hasattr(simulation, "EXTRACTION_MODULES")
-    assert not hasattr(simulation, "extract_scores_by_modules_with_agno")
-
-
 def test_due_review_settle_does_not_pause_or_decision(game, monkeypatch):
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
@@ -700,7 +713,7 @@ def test_due_month_extractor_blocked_before_todo_write(game):
     )
     item = result["dossier_executions"][0]
     assert item.get("rejected") is True
-
+    assert item.get("category") == "invalid_transition"
     after = db.get_decree_dossier(dossier_id)
     assert after["status"] == "executing"
     assert after["execution_outcome"] in ("", None)

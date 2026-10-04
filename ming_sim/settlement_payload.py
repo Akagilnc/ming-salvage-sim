@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import json
 import re
-from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
+from typing import (
+    TYPE_CHECKING, Dict, List, Optional, Tuple,
+)
 
 from ming_sim.action_clusters import season_option_fields, validate_season_option
 from ming_sim.models import effect_dict_has_work
@@ -94,9 +96,15 @@ def parse_decision_blocks(text: str) -> List[Dict[str, object]]:
             "context": str(obj.get("context") or ""),
             "options": options[:3],
         }
-        event_id = str(obj.get("event_id") or obj.get("origin_ref") or "").strip()
+        explicit_event_id = str(obj.get("event_id") or "").strip()
+        origin_ref = str(obj.get("origin_ref") or "").strip()
+        event_id = explicit_event_id or origin_ref
         if event_id:
             decision["event_id"] = event_id
+        # 只在 id 来自 origin_ref 时留下该键。世界请旨钉定就地排除它；
+        # 显式 event_id 的块与原先一样只有 event_id。
+        if origin_ref and not explicit_event_id:
+            decision["origin_ref"] = origin_ref
         decisions.append(decision)
     return decisions
 

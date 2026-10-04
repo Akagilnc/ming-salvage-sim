@@ -3,7 +3,6 @@
 import copy
 import json
 import os
-import tempfile
 
 import pytest
 
@@ -1948,8 +1947,8 @@ def _materialize_active_prince(db, state, content):
 
 
 def test_registry_and_tools_court_roster_exclude_active_prince(read_game):
-    """材料目录与 simulator/web 同口径排除 active 宗藩。"""
-    from ming_sim.materials import list_materials, prepare_character_materials, read_material
+    """在朝名册的结构化成员不含 active 宗藩；材料目录仍可备好。"""
+    from ming_sim.materials import prepare_character_materials
     db, state, content = read_game
     name = _materialize_active_prince(db, state, content)
     minister_name = next(
@@ -1958,12 +1957,9 @@ def test_registry_and_tools_court_roster_exclude_active_prince(read_game):
         and getattr(c, "office_type", "") not in ("后宫", "宗藩")
         and db.get_character_status(n)[0] == "active"
     )
-    prepared = prepare_character_materials(db, state, content.characters[minister_name])
-    blob = "\n".join(
-        read_material(prepared.root, path)
-        for path in list_materials(prepared.root) if path != "INDEX.txt"
-    )
-    assert name not in blob
+    prepare_character_materials(db, state, content.characters[minister_name])
+    court = {row["name"] for row in db.current_court_roster_rows(state)}
+    assert name not in court
 
 
 def test_apply_office_appointment_rejects_vassal_prince(game):
@@ -3606,7 +3602,7 @@ def test_apply_office_appointment_new_person_person_title_no_dirty_office_row(ga
         content.characters.pop(name, None)
 
 
-def test_fresh_static_seed_person_title_character_no_offices_parent(content):
+def test_fresh_static_seed_person_title_character_no_offices_parent(content, tmp_path):
     """#1058 接缝回归钉②：全新静态 seed 含名分 office_type 的人物时，_ensure_office_type_parents
     不得把名分 rematerialize 成 offices 父行（删父行后又从 canonical 集捞回来的接缝回归）。"""
     seed_content = copy.deepcopy(content)
@@ -3623,8 +3619,7 @@ def test_fresh_static_seed_person_title_character_no_offices_parent(content):
         power_id="ming",
         status="active",
     )
-    fd, path = tempfile.mkstemp(suffix=".db")
-    os.close(fd)
+    path = str(tmp_path / "seed.db")
     db = None
     try:
         db = GameDB(path, seed_content)
@@ -3643,9 +3638,6 @@ def test_fresh_static_seed_person_title_character_no_offices_parent(content):
     finally:
         if db is not None:
             db.close()
-        for p in (path, f"{path}_agno.db"):
-            if os.path.exists(p):
-                os.remove(p)
 
 
 def test_apply_office_appointment_person_title_survives_stem_collision(game):

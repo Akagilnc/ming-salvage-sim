@@ -171,6 +171,32 @@ def build_night_said_so_far(
     return lines
 
 
+def _person_candidate_grounding(db: Any, state: Any) -> str:
+    """把人物候选的权威身份和 event_pool 声明契约交给既有转译调用。"""
+    if state is None:
+        return ""
+    from ming_sim.materials import _world_candidate_events
+
+    roster = [
+        {
+            "id": item["id"],
+            "title": item["title"],
+            "terminal_reason_labels": list(item.get("terminal_reason_labels") or []),
+        }
+        for item in _world_candidate_events(db, state)
+    ]
+    if not roster:
+        return ""
+    return (
+        "【合资格人物事件候选】\n"
+        "身份只认下列 id。段文写明其中一件由人物选择发生时，effects 声明 "
+        "new_issues，origin_kind 为 event_pool，id 为该候选 id。"
+        "该候选列出封闭结局标签时，同一信封顶层 event_id 写该 id，"
+        "事件结局只用其中一枚标签。未发生的候选不声明。\n"
+        + json.dumps(roster, ensure_ascii=False)
+    )
+
+
 def build_translation_target_grounding(db: Any, state: Any = None) -> str:
     """权威目标目录：dispatcher 可校验的目标与当前场面投影。
 
@@ -215,14 +241,20 @@ def build_translation_target_grounding(db: Any, state: Any = None) -> str:
         for scene in list_due_review_scenes(db, state):
             if scene.get("kind") == "covert_levy_exposure" and not scene.get("decision"):
                 lines.append("scene\t" + json.dumps(scene, ensure_ascii=False, sort_keys=True))
-    if not lines:
+    candidate_block = _person_candidate_grounding(db, state)
+    if not lines and not candidate_block:
         return ""
-    body = "\n".join(lines)
-    return (
-        "【权威目标目录】\n"
-        "grant.target_id / appointment.region_id / rushes.target_id / 禁摊派案卷 id 必须取对应目录中的精确 id，禁止编造。\n"
-        f"{body}\n"
-    )
+    parts: List[str] = []
+    if lines:
+        body = "\n".join(lines)
+        parts.append(
+            "【权威目标目录】\n"
+            "grant.target_id / appointment.region_id / rushes.target_id / 禁摊派案卷 id 必须取对应目录中的精确 id，禁止编造。\n"
+            f"{body}"
+        )
+    if candidate_block:
+        parts.append(candidate_block)
+    return "\n".join(parts) + "\n"
 
 
 def build_c0_declaration_shape() -> str:
@@ -268,6 +300,9 @@ def build_c0_declaration_shape() -> str:
         '"transaction_category": "事务类别（有则填）", "amount": "罚俸金额（罚俸时填）", '
         '"backing_dossier_id": "所援案卷 id（有则填）"},\n'
         '      "pacification": {"target_id": "自新内乱首领的具名 id", "mode": "ordinary|midzhi"},\n'
+        '      "revoke": {"target_kind": "dossier|issue（不填按 dossier）", '
+        '"target_id": "所撤那道已发旨的案卷 id 或 issue id", '
+        '"target_candidate": "续办所指候选 id（撤令一般留空）"},\n'
         '      "secret_order": {"title": "密令标题", "content": "密令正文（原样，不删改）", '
         '"assignee": "承办人名（名册人名，不得填场景）", "tags": [], "deadline_months": 0, '
         '"excluded_names": [], "excluded_offices": [], '
@@ -383,9 +418,15 @@ def build_audience_translate_prompt(
         "无该源轮不得猜造。\n"
         "- 具名秘密差事的新建走 commission.secret_order；必须含 title、content（原样）、"
         "名册里的承办人 assignee 与上面写明的 covert_task 冻结任务契约；"
-        "契约字段不全或承办人只说到场景（无具名人）时不要勉强成条。\n"
+        "契约字段不全或承办人只说到场景（无具名人）时不要勉强成条。"
+        "covert_task 的字段随差务类型而异，按该类契约给全（含交付单位与对应身份字段）。"
+        "查案类另可在 covert_task 里给 investigation_fact：本道密令的来源明确指向"
+        "哪一条罪证就填那一条的标识，没指明就留空——留空不是错，引擎不会替来源挑一条。\n"
         "往期密令具名进展走 commission.secret_order_progress；不凭空记进展。\n"
         "现役密令提交核议走 commission.secret_order_review（order_id 与 claim 原样）。\n"
+        "- 皇帝明确撤回一道**已发出**的旨（撤回成命）走 commission.revoke，"
+        "target_id 取那道旨的案卷 id；「撤回本场刚才的话」「撤回上一轮召对」"
+        "不是撤令，不填 revoke（由既有撤回机制处理）。\n"
         "- 皇帝对已暂存交办说「准」「照办」等应允语义 → promises 里 decision=应允；"
         "「不准」「作罢」→ 拒绝；修改已有新建密令 → 修改并给完整 typed new_content，"
         "不从原话截断猜正文。皇帝本轮未表态 → promises 为空（默认不应允）。\n"

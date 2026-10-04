@@ -28,7 +28,12 @@ def normalize_commitment_stages(raw: object) -> List[Dict[str, object]]:
     """Normalize structured stages payload → durable list.
 
     Accepts list/tuple of dicts, or a JSON array string. Non-JSON free text
-    returns [] here — prose year-promise parsing is retired (#1897 / ADR0142).
+    returns [] here (读侧宽容面)；写侧由 ``stages_to_json`` 响亮拒绝。
+
+    分段承诺是机械事实（到期判账），只认显式结构化字段。引擎不得从 LLM 自由
+    散文正则反推语义（ADR 0142 / #1897 / #1890；owner 2026-09-30「肯定不能让
+    代码去扣」）。原 ``parse_staged_year_promise`` 中文数词年诺捕获已删。
+    自由正文原样入载体，禁 strip／截断规范化（#1897）。
     """
     if raw in (None, "", [], ()):
         return []
@@ -121,16 +126,6 @@ def stages_to_json(stages: object) -> str:
         return json.dumps(normalized, ensure_ascii=False, separators=(",", ":"))
     raise ValueError(f"stages_json 类型非法：{type(stages).__name__}")
 
-
-def capture_commitment_stages(raw: object = None) -> List[Dict[str, object]]:
-    """单一写口：只吃显式结构化 stages（#1897 / ADR0142）。
-
-    真源校验走 ``stages_to_json``；缺省／空 → []；坏结构响亮 ValueError。
-    保留此薄包装以免 issues 两处复制空值分支（18 文件口径净增）。
-    """
-    if raw in (None, "", [], (), {}):
-        return []
-    return normalize_commitment_stages(stages_to_json(raw))
 
 
 def stages_source_from_issue_item(ni: Dict[str, object]) -> object:

@@ -1390,6 +1390,50 @@ def _dispatch_commissions(
                 _reject(rejected, item, "责成交办未通过现有准入", "invalid_state", source)
             continue
 
+        revoke = item.get("revoke")
+        if revoke is not None:
+            if not isinstance(revoke, Mapping) or any(
+                item.get(key) for key in
+                ("grant", "appointment", "punishment", "pacification", "assignment",
+                 "secret_order", "secret_order_progress", "secret_order_update",
+                 "strategy_selection")
+            ):
+                _reject(rejected, item, "撤令交办载荷须为独立对象", "invalid_shape", source)
+                continue
+            body = _declared_prose(item.get("text"))
+            if body is None:
+                _reject(rejected, item, "撤令交办缺正文", "invalid_shape", source)
+                continue
+            from ming_sim.action_materialize import stage_revoke_decree_candidate
+            actor = str(minister_name or "").strip() or _commission_fallback_actor(db)
+            # 与其它交办载荷同缝：原旨与撤令沿同一事务关联（ADR 0154）。
+            payload: Dict[str, Any] = {}
+            if not _attach_commission_affair(
+                db, item, payload, rejected=rejected, source=source,
+            ):
+                continue
+            row_id = stage_revoke_decree_candidate(
+                db, int(state.turn), actor,
+                text=body,
+                target_id=revoke.get("target_id", ""),
+                target_kind=revoke.get("target_kind", ""),
+                target_candidate=revoke.get("target_candidate"),
+                extracted_mode=revoke.get("mode", item.get("mode")),
+                affair_declaration=payload.get("affair_declaration"),
+                night_id=staged_night,
+                source_chat_turn_id=source_chat_turn_id,
+            )
+            if row_id:
+                applied.append({"id": row_id, "kind": "directive"})
+            else:
+                # 目标不是可撤的承诺/旨意（含「撤回最近一轮召对」等非撤令）→
+                # 既有准入零变化，逐项拒收留痕（ADR 0008）。
+                _reject(
+                    rejected, item, "撤令目标不是可撤的已颁承诺/旨意",
+                    "invalid_state", source,
+                )
+            continue
+
         punishment = item.get("punishment")
         if punishment is not None:
             if not isinstance(punishment, Mapping) or item.get("grant") or item.get("appointment"):
