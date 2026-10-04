@@ -1,0 +1,14 @@
+path	reason
+docs/raw/06_harness_scripts/ab_issues.py	archive_prefix:docs/raw/
+docs/raw/06_harness_scripts/agg.py	archive_prefix:docs/raw/
+docs/raw/06_harness_scripts/bench.py	archive_prefix:docs/raw/
+docs/raw/06_harness_scripts/bench2.py	archive_prefix:docs/raw/
+docs/raw/06_harness_scripts/bench3.py	archive_prefix:docs/raw/
+docs/raw/06_harness_scripts/bench_claude.py	archive_prefix:docs/raw/
+evidence/1847-fn-contract-audit.py	archive_prefix:evidence/
+evidence/1847-fn-shards-r2/_audit_shard2.py	archive_prefix:evidence/
+evidence/1847-mutation-probes.py	archive_prefix:evidence/
+evidence/1847-review-needs-human.py	archive_prefix:evidence/
+evidence/1847-scan-n6-n10.py	archive_prefix:evidence/
+node_modules/**	third_party_untracked_not_in_git_ls_files
+spike_settle_tick.py	KEEP as explicit spike oracle mirror (see N12); scanned not silently dropped

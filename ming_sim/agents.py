@@ -37,7 +37,6 @@ from ming_sim.models import GameState, LLMConfig
 from ming_sim.token_stats import record_stream_metrics, tlog
 
 _content: Optional[GameContent] = None
-_THINKING_STREAM_CHAR_LIMIT = max(0, int(os.environ.get("MING_SIM_THINKING_STREAM_LIMIT", "600") or "0"))
 _MINIMAX_SHORT_THINKING_PROMPT = (
     "【MiniMax 推演思考约束】\n"
     "若启用 thinking/reasoning，请极短思考：只列必要因果链，不复述题目、盘面、系统规则或历史常识；"
@@ -399,7 +398,6 @@ def run_agent_stream_text(
     reasoning_buf: List[str] = []
     reasoning_chars_since_flush = 0
     reasoning_last_print = time.monotonic()
-    reasoning_streamed_chars = 0
     tool_calls = 0
     for event in stream:
         ev_type = type(event).__name__
@@ -414,9 +412,10 @@ def run_agent_stream_text(
             continue
         if ev_type == "ToolCallCompletedEvent":
             tool_res = getattr(event, "tool", None)
-            tres = str(getattr(tool_res, "result", "") or "")[:200] if tool_res else ""
+            tres = str(getattr(tool_res, "result", "") or "") if tool_res else ""
             if tres:
-                tlog(f"[{tag}/工具结果] {tres!r}")
+                # Operator log preview only (dest=tlog); not model/emperor transport.
+                tlog(f"[{tag}/工具结果] {tres[:200]!r}")
             continue
         rdelta = getattr(event, "reasoning_content", None)
         if isinstance(rdelta, str) and rdelta:
@@ -425,15 +424,10 @@ def run_agent_stream_text(
             now = time.monotonic()
             if reasoning_chars_since_flush >= 120 or (now - reasoning_last_print) >= 1.5:
                 merged = "".join(reasoning_buf)
+                # tlog preview only; on_thinking gets full free text (N6: no stream truncate).
                 tlog(f"[{tag}/思考] {merged.replace(chr(10), ' ⏎ ')[-200:]}")
-                if on_thinking and reasoning_streamed_chars < _THINKING_STREAM_CHAR_LIMIT:
-                    remaining = _THINKING_STREAM_CHAR_LIMIT - reasoning_streamed_chars
-                    chunk = merged[:remaining]
-                    if chunk:
-                        on_thinking(chunk)
-                        reasoning_streamed_chars += len(chunk)
-                    if reasoning_streamed_chars >= _THINKING_STREAM_CHAR_LIMIT:
-                        on_thinking("\n〔思考已截断，继续推演中〕\n")
+                if on_thinking:
+                    on_thinking(merged)
                 reasoning_buf.clear()
                 reasoning_chars_since_flush = 0
                 reasoning_last_print = now
@@ -465,14 +459,8 @@ def run_agent_stream_text(
     if reasoning_buf:
         merged = "".join(reasoning_buf)
         tlog(f"[{tag}/思考] {merged.replace(chr(10), ' ⏎ ')[-200:]}")
-        if on_thinking and reasoning_streamed_chars < _THINKING_STREAM_CHAR_LIMIT:
-            remaining = _THINKING_STREAM_CHAR_LIMIT - reasoning_streamed_chars
-            chunk = merged[:remaining]
-            if chunk:
-                on_thinking(chunk)
-                reasoning_streamed_chars += len(chunk)
-            if reasoning_streamed_chars >= _THINKING_STREAM_CHAR_LIMIT:
-                on_thinking("\n〔思考已截断，继续推演中〕\n")
+        if on_thinking:
+            on_thinking(merged)
     if chunk_buf:
         merged = "".join(chunk_buf).replace("\n", " ⏎ ")
         tlog(f"[{tag}] …{merged[-160:]}")

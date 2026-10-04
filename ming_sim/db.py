@@ -46,7 +46,7 @@ from ming_sim.participant_roster import (
     participant_roster_names,
     project_execution_liability_parties,
 )
-from ming_sim.person_archive_contract import PERSON_TITLE_KINDS
+from ming_sim.person_archive_contract import PERSON_STATUSES, PERSON_TITLE_KINDS
 from ming_sim.qualitative import (
     building_output_effect,
     building_qualitative_fields,
@@ -710,7 +710,7 @@ def normalize_office(office: str) -> str:
 
 
 COURT_OFFICE_TYPES = {"内阁", "吏部", "户部", "礼部", "兵部", "刑部", "工部"}
-MINISTRY_OFFICE_TYPES = {"吏部", "户部", "礼部", "兵部", "刑部", "工部"}
+MINISTRY_OFFICE_TYPES = COURT_OFFICE_TYPES - {"内阁"}
 
 
 _OFFICES_TABLE: Optional[Dict[str, object]] = None
@@ -5722,8 +5722,7 @@ class GameDB:
         """改人物状态：active/offstage/dismissed/imprisoned/exiled/retired/dead。
         人物状态以 characters 表为准。
         #9：状态变更后全重算所属朝堂派系 leverage（在朝成员官职权重和 + offset；党魁倒台势力跟跌）。"""
-        valid = {"active", "offstage", "dismissed", "imprisoned", "exiled", "retired", "dead"}
-        if status not in valid:
+        if status not in PERSON_STATUSES:
             raise ValueError(f"character status 非法：{status}")
         # #9：UPDATE 前读旧派系（退场清 office 后仍按当前在朝成员现算，与旧职无关）。
         prev = self.conn.execute(

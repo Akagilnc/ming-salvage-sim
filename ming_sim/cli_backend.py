@@ -346,12 +346,26 @@ def _trace(record: Dict[str, Any]) -> None:
 
 
 def _warm_keychain() -> None:
-    """暖 macOS keychain 路径，缓解 agy headless auth 的 1s race（见 wiki）。"""
+    """暖 macOS keychain 路径，缓解 agy headless auth 的 1s race（见 wiki）。
+
+    不用 subprocess.run(timeout=…)：CPython 在 TimeoutExpired 时会 process.kill()
+    （POSIX=SIGKILL，共享硬规 #9 / #1847 N13）。软停即可；暖链失败可忽略。
+    """
+    proc = None
     try:
-        subprocess.run(
+        proc = subprocess.Popen(
             ["security", "find-generic-password", "-s", "Antigravity Safe Storage"],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
         )
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.terminate()
+            try:
+                proc.wait(timeout=1)
+            except subprocess.TimeoutExpired:
+                pass  # no SIGKILL escalation
     except Exception:
         pass
 
@@ -411,7 +425,7 @@ def _iter_cli_process_lines(
     """CLI 子进程增量读单真源：一次子进程 = 一次 attempt，按到达顺序 yield stdout 行。
 
     - 新字节即活动，刷新活动时刻；静默 ≥ idle 预算 → TransportIdleTimeout（可重试）
-      并 kill 该子进程（空转判据走 llm_transport.check_idle_budget，禁平行实现）。
+      并 SIGTERM 收尾该子进程（空转判据走 llm_transport.check_idle_budget，禁平行实现；禁 SIGKILL）。
     - idle 只认 transport 策略（`_cli_idle_seconds`）= 设置页那一格的静默判死阈值。
     - **不设 attempt 总墙钟（宪法 #9）**：只要还有新字节，跨 300s 也不杀。
     - stderr 并发抽干：否则 codex 等把 stderr 写满 OS pipe 会反压死 stdout。

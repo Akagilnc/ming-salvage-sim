@@ -121,6 +121,7 @@ UPLOAD_PORTRAIT_DIR = user_data_path("uploads", "portraits")
 CUSTOM_PORTRAIT_PREFIX = "custom:"
 ALLOWED_PORTRAIT_TYPES = {"image/png", "image/jpeg", "image/webp"}
 MAX_PORTRAIT_BYTES = 8 * 1024 * 1024  # 8MB 上限
+_DEFAULT_FAVORITES = frozenset({"王承恩", "曹化淳", "李若琏", "魏忠贤", "田尔耕"})
 
 # Formal character-condition value labels (used inside _humanize_condition_value only).
 # Free resolve/fail_condition prose is transported unchanged; no catch-all replace.
@@ -827,7 +828,6 @@ class WebGame:
             }
             for name, msgs in self.db.load_all_chat_history().items():
                 self.chat_history.setdefault(name, []).extend(msgs)
-            _DEFAULT_FAVORITES = {"王承恩", "曹化淳", "李若琏", "魏忠贤", "田尔耕"}
             _fav_raw = self.db.kv_get("favorites")
             self.favorites: set = set(json.loads(_fav_raw)) if _fav_raw else set(_DEFAULT_FAVORITES)
             if not _fav_raw:
@@ -1050,9 +1050,8 @@ class WebGame:
             chat_history = {name: [] for name in candidate.content.characters}
             for name, msgs in candidate.db.load_all_chat_history().items():
                 chat_history.setdefault(name, []).extend(msgs)
-            default_favorites = {"王承恩", "曹化淳", "李若琏", "魏忠贤", "田尔耕"}
             fav_raw = candidate.db.kv_get("favorites")
-            favorites = set(json.loads(fav_raw)) if fav_raw else set(default_favorites)
+            favorites = set(json.loads(fav_raw)) if fav_raw else set(_DEFAULT_FAVORITES)
             if not fav_raw:
                 candidate.db.kv_set("favorites", json.dumps(sorted(favorites)))
             if hasattr(candidate.db, "conn"):

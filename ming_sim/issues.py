@@ -22,6 +22,7 @@ from ming_sim.constants import (
     BUILDING_SCORE_FIELDS, BUILDING_QUANTITY_FIELDS, BUILDING_TEXT_FIELDS,
     POWER_SCORE_FIELDS, POWER_TEXT_FIELDS, CHARACTER_TEXT_FIELDS,
     REGION_FIELD_ALIASES, ARMY_FIELD_ALIASES, POWER_FIELD_ALIASES, GATE_TABLES,
+    GATE_METRIC_KEYS,
     LEVY_DISPLACEMENT_RATE,
     BANDIT_ABSORPTION_FIELDS,
     BANDIT_ABSORPTION_PERSONS_PER_STRENGTH,
@@ -513,15 +514,8 @@ def commitment_condition_role(resolve_condition: object, commitment_kind: object
     return {}
 
 
-def _legacy_commitment_stop_gate(resolve_condition: object) -> Dict[str, str]:
-    text = str(resolve_condition or "").strip()
-    match = re.fullmatch(r"(character\.[^.]+\.loyalty)\s*((?:>=|>)\s*\d+)", text)
-    if not match:
-        return {}
-    return {match.group(1): match.group(2).replace(" ", "")}
-
-
 def _commitment_stop_gate(row: sqlite3.Row) -> Dict[str, str]:
+    """Only structured stop_condition JSON. Retired resolve_condition prose→gate compat deleted (#1847 N11)."""
     keys = row.keys() if hasattr(row, "keys") else []
     raw = row["stop_condition"] if "stop_condition" in keys else ""
     if raw:
@@ -531,7 +525,7 @@ def _commitment_stop_gate(row: sqlite3.Row) -> Dict[str, str]:
             gate = {}
         if isinstance(gate, dict) and gate:
             return gate
-    return _legacy_commitment_stop_gate(row["resolve_condition"] if "resolve_condition" in keys else "")
+    return {}
 
 
 def _commitment_remaining_from_gate(
@@ -3292,7 +3286,6 @@ def _compute_inertia(ni: Dict[str, object]) -> int:
 
 # 离散时长档：LLM 只能给这几档（防乱填）；映射到月。
 _LEGACY_DURATION_MONTHS = {"1年": 12, "2年": 24, "永久": -1}
-_LEGACY_ACCOUNT_KEYS = ("国库", "内库", "民心", "皇威")  # 全局可被 % 修正的四项
 _LEGACY_PCT_CAP = 5  # 单条帝国修正对某维度的百分比上限，防幅度过大
 
 # 月固定收支项的合法账户 / 方向白名单（fiscal_creates 枚举守门，集中一处；
@@ -3344,7 +3337,7 @@ def _spawn_legacy_from_effect(
     raw_eff = legacy.get("modifiers") or {}
     modifiers: Dict[str, object] = {}
     if isinstance(raw_eff, dict):
-        for k in _LEGACY_ACCOUNT_KEYS:
+        for k in GATE_METRIC_KEYS:  # single source (#14); was duplicate _LEGACY_ACCOUNT_KEYS
             pct = _clamp_pct(raw_eff.get(k))
             if pct is not None:
                 modifiers[k] = pct
@@ -6146,15 +6139,7 @@ def _apply_person_changes(
 
     applied: List[Dict[str, object]] = []
     needs_person_change_commit = False
-    person_statuses = {
-        "active",
-        "offstage",
-        "dismissed",
-        "imprisoned",
-        "exiled",
-        "retired",
-        "dead",
-    }
+    person_statuses = set(PERSON_STATUSES)
     disposition_statuses = person_statuses - {"active"}
     for item in changes:
         name = str(item.get("name") or "").strip()

@@ -1,0 +1,13 @@
+path	line	symbol	disposition	note	class
+ming_sim/db.py	—	__leverage_offsets_rank_rules_562 marker write	DELETED	prior round; no production consumer	retired migration marker
+tests/test_office_rank_562.py	—	marker-only reload test	DELETED	prior round dedicated retired test	专属测试
+ming_sim/cli_backend.py	—	_infer_tag stub	DELETED	prior round empty shell after keyword infer deleted	空壳
+tests/test_cli_backend.py	—	infers_trace_tag_from_prompt	DELETED	prior round dedicated retired test	专属测试
+ming_sim/issues.py	—	pairing_warnings empty return key	DELETED	prior round unused compat shape	兼容形状
+tests/test_initiative_resolve_pairing.py	—	pairing_warnings empty assert file	DELETED	prior round	专属测试
+ming_sim/issues.py	516	_legacy_commitment_stop_gate	DELETED	this round; resolve_condition prose→gate compat	退役兼容
+tests/test_decree_commitment_settlement_229.py	175	test_legacy_character_resolve_condition_...	DELETED	this round dedicated legacy test	专属测试
+ming_sim/person_archive_contract.py	59	PERSON_LEGACY_ALLEGIANCE_CHANGE_WAYS	DELETED	this round unused legacy constant	无用返回/常量形状
+tests/test_person_delta_adapter.py	159	pairing_warnings not in applied	KEEP	negative live contract assert	现役负向契约
+ming_sim/db.py	—	__leverage_offsets_calibrated / float_v2	KEEP	serves live calibration/precision migration	现役迁移
+rescript/0055 gates	—	decision_key / negative gates	KEEP	boundary forbid delete	0055现役闸

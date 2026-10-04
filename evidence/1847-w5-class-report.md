@@ -1,162 +1,149 @@
-# #1847 w5 修内司 class report（劳务自验，非审官结论）
+# #1847 w5 修内司 class report（全仓按类定义枚举续修，劳务自验）
 
 - worktree: `/Users/akagilnc/WorkSpace/Ming_LLM-1847-w5`
-- base HEAD: `cb43ec63ad2dfee9a9326b41367beb69891ef675`
+- prior fixer HEAD: `45e1220de9a1246334a414099eb973ff961812ff`（点名白名单谓词过窄）
 - branch: `ak-roles/1847-fixer-n6-n11-n12-n13`
-- 末份判词真源: `02-1847-judge-cb43ec63a.json` payloads **最末份**（N6/N11/N12/N13）
-- 既存未跟踪 `node_modules/` 未动；未 push / 未开 PR / 未 amend / 未 stash
-- 官方查阅: [pexpect send/sendline](https://pexpect.readthedocs.io/en/latest/api/pexpect.html#pexpect.spawn.send)（不截输入；canonical 限制属终端模式，非应用层 200 字裁）；[pexpect.terminate(force)](https://pexpect.readthedocs.io/en/latest/api/pexpect.html#pexpect.spawn.terminate)（force=True → SIGKILL）；[subprocess.Popen.kill](https://docs.python.org/3/library/subprocess.html)（POSIX = SIGKILL）
+- 末份判词: `02-1847-judge-cb43ec63a.json` payloads **最末份**（N6/N11/N12/N13）
+- 既存 `?? node_modules/` 未动；未 push / 未开 PR / 未 amend / 未 stash
+- 自建临时目录: `/tmp/1847-w5-rescan/`、`/tmp/1847-w5-rescan2/`（仅本轮扫描/验证）
 
-## 末份未结类定义全文（不得收窄）
+## 上轮收窄问题（本轮纠正）
 
-### N6：活链路原文裁剪仍未结清
-- disposition: 成立，继续修理
-- law: CLAUDE.md 引擎及呈现层对 LLM 自由文本零删改；全局原话传递宪法
-- boundary: Web 条件原文运输已修好，但不代表全类结清。该脚本驱动活模型链路，不适用冻结卷宗统计例外；形式解析、固定菜单识别与自由正文裁剪须分判。
-- 样本反例: `scripts/play_as_emperor.py` 将有效单行 input 截成 200 字后 send；先前误列 KEEP_structural
+上轮开工谓词把类定义收成点名白名单：
+- N6 仅 `action/200`
+- N11 仅点名符号
+- N12 仅点名 tag/列表
+- N13 仅 `proc.kill` / `force=True`
 
-### N11：退役机制的状态、兼容形状及专属测试仍被维护
-- disposition: 成立，须按类别删简
-- law: #1812 被取代旧代码/兼容路径/专属测试删除；全局 #12/#13
-- boundary: 不是因测试红封驳，也不要求恢复关键词猜测。现役行为契约及 0055 负向闸不得借清理误删。
-- 样本: rank reanchor 标记维护、marker-only 测试、按 prompt 推断 tag 的专属测试、空 `pairing_warnings` 兼容形状及专属测试
+本轮按判词类定义全文重开机械枚举（实例≠白名单）。
 
-### N12：删简后的多余替代接口与重复定义
-- disposition: 成立，简化处理
-- law: #1812 不新增机制；全局 #12 删简优先、#14 单一真源
-- boundary: 删除无用替代接口、收敛重复定义即可；不另造 SDK 参数适配、标签运输层或新枚举机制。保留已合法化的结构字段读取。
-- 样本: `ming_sim_caller_tag` 无调用方；ministerFilters / drawers 重复朝廷顺序
+## 类定义（不得再收窄）
 
-### N13：活探针保留可达 SIGKILL 终止路径
-- disposition: 成立，移除违法终止机制
-- law: 共享硬规 #9 严禁 SIGKILL
-- boundary: 裁的是当前可达机制，不声称本轮发生了真实 SIGKILL；不得换成另一套强杀或硬时限护栏。
-- 样本: `terminate(force=True)` → SIGHUP/SIGCONT/SIGINT/SIGKILL
+| 类 | disposition | 全文边界 |
+|---|---|---|
+| N6 | 成立，继续修理 | 活链路自由正文切片/strip/replace/split/regex 等潜在加工；活探针链与模型间供料；日志与形式契约须实证来源→去向，不得笼统「思考流即豁免」 |
+| N11 | 成立，按类删简 | 退役机制状态 / 兼容形状 / 空壳 / 专属测试；结合底座→当前删除定义及引用检查 |
+| N12 | 成立，简化 | 无调用者替代接口 + 重复常量/枚举/规则定义；不另造适配/新枚举机制；保留合法结构字段读取 |
+| N13 | 成立，移除违法终止 | 凡可达 SIGKILL 或强杀硬时限入口：kill/terminate(force)/close(force)/os.kill/killpg/subprocess timeout 等；尤其 pexpect 默认 close(force=True) 与 subprocess.run(timeout) |
 
----
-
-## 全仓机械枚举命令（开工谓词）
+## 覆盖与豁免（显式，非静默）
 
 ```bash
-# N6 — 活链路自由正文裁剪（运输前切片 / 输入截断）
-rg -n --glob '!node_modules/**' --glob '!docs/**' --glob '!evidence/**' \
-  -e 'action\s*=\s*action\[:|if len\(action\) > 200|输入截断|\[:200\].*send|len\([^)]+\)\s*>\s*200' \
-  --type py scripts ming_sim web_app.py
-
-# 辅助：sendline / 自由输入入口（区分菜单固定串 vs 自由正文）
-rg -n --glob '!node_modules/**' --glob '!docs/**' --glob '!evidence/**' \
-  -e 'sendline\(|\.send\(' scripts ming_sim web_app.py
-
-# N11 — 退役状态 / 兼容形状 / 专属测试
-rg -n --glob '!node_modules/**' --glob '!docs/**' --glob '!evidence/**' \
-  -e '__leverage_offsets_rank_rules_562|pairing_warnings|infers_trace_tag|legacy_stem_reanchor|_infer_tag' \
-  --type py
-
-# N12 — 多余替代接口 / 重复定义
-rg -n --glob '!node_modules/**' --glob '!docs/**' --glob '!evidence/**' \
-  -e 'ming_sim_caller_tag|_guess_caller_tag' --type py
-rg -n --glob 'web/src/**/*.{ts,tsx}' -e 'COURT_OFFICE_TYPE_ORDER|\["内阁".*"吏部"'
-
-# N13 — 可达 SIGKILL
-rg -n --glob '!node_modules/**' --glob '!docs/**' --glob '!evidence/**' \
-  -e 'terminate\(force=True\)|proc\.kill\(|SIGKILL|signal\.SIGKILL' --type py
+git ls-files | wc -l                    # 1317
+git ls-files | rg -i '\.(py|ts|tsx|js|jsx|mjs|cjs)$' | wc -l   # 431
 ```
 
----
+显式归档/第三方豁免（见 `evidence/1847-w5-exempt-files.tsv`）：
+- `docs/raw/`、`docs/archive/`、`evidence/`（历史冻结卷宗/探针产物）
+- `node_modules/`（未跟踪第三方；未扫、未改）
+- `spike_settle_tick.py`：**已扫入 N12**，处置=KEEP_spike_oracle（一次性 oracle 镜像，非静默排除）
 
-## 成员表与去留
+生产扫描面：`ming_sim/`、`scripts/`、`web/src/`、`web_app.py`、`main.py`、`launcher.py`、`tests/`（测试参与 N11 专属测试判定）。
+
+## 可核枚举命令（本轮开工谓词）
+
+```bash
+# 文件宇宙
+git ls-files | rg -i '\.(py|ts|tsx|js|jsx|mjs|cjs)$' \
+  | tee /tmp/1847-w5-rescan/prod-script-files.txt
+
+# N6 — 全潜在正文加工（切片 + 变异调用 + 关键词）；临时 AST 见 /tmp/1847-w5-rescan/scan_n6_n13.py
+rg -n --glob '!node_modules/**' --glob '!docs/raw/**' --glob '!docs/archive/**' --glob '!evidence/**' \
+  -e '\[\s*:\s*\d+\s*\]' --type-add 'web:*.{ts,tsx,js,jsx}' -t py -t web \
+  ming_sim scripts web_app.py web/src main.py launcher.py tests
+rg -n --glob '!node_modules/**' --glob '!docs/raw/**' --glob '!docs/archive/**' --glob '!evidence/**' \
+  -e '\.(strip|replace|split|sub)\s*\(|re\.(sub|split|findall|search|match|compile)\s*\(|humanize|截断|truncate|max_len|FIELD_CAP' \
+  -t py ming_sim scripts web_app.py
+
+# N11 — 退役标记/兼容键/空壳/legacy 名 + 底座删除符号残留引用
+rg -n --glob '!node_modules/**' --glob '!docs/raw/**' --glob '!docs/archive/**' --glob '!evidence/**' \
+  -e '__leverage_offsets_|pairing_warnings|_infer_tag|_guess_caller|legacy|退役|marker.?only|compat|deprecated' \
+  -t py ming_sim scripts web_app.py tests
+git diff 2f20f18bd..HEAD -U0 -- '*.py' '*.ts' '*.tsx' | rg '^-((async )?def|class|export )'
+
+# N12 — 重复字面量列表/集合 + 无调用替代名气味
+# 临时脚本 /tmp/1847-w5-rescan/scan_refine.py → n12_duplicate_consts.tsv / n12_smell_names.tsv
+rg -n 'COURT_OFFICE|MINISTRY_OFFICE|GATE_METRIC|_LEGACY_ACCOUNT|DUE_SUBJECTS|_DUE_KEYS|_DEFAULT_FAVORITES' \
+  ming_sim web_app.py web/src
+
+# N13 — 强杀/硬时限入口（含 subprocess timeout / pexpect close / signals）
+rg -n --glob '!node_modules/**' --glob '!docs/raw/**' --glob '!docs/archive/**' --glob '!evidence/**' \
+  -e '\.kill\s*\(|os\.kill|killpg|SIGKILL|terminate\s*\(|\.close\s*\(\s*force|subprocess\.(run|call|check_output)\s*\(|timeout\s*=' \
+  -t py ming_sim scripts web_app.py launcher.py tests
+# 辅证：CPython subprocess.run 在 TimeoutExpired 路径调用 process.kill()（POSIX=SIGKILL）
+```
+
+原始扫描产物（临时，非永久机制）：
+- `/tmp/1847-w5-rescan/n6_candidates_raw.tsv`（4168）
+- `/tmp/1847-w5-rescan/n6_focus.tsv`（2092）
+- `/tmp/1847-w5-rescan/n13_focus.tsv`（302）
+- `/tmp/1847-w5-rescan/n11_focus.tsv` / `n12_duplicate_consts.tsv`
+
+入库分类成员表（可核）：
+- `evidence/1847-w5-n6-members.tsv`（2092 行数据）
+- `evidence/1847-w5-n11-members.tsv`
+- `evidence/1847-w5-n12-members.tsv`
+- `evidence/1847-w5-n13-members.tsv`
+- `evidence/1847-w5-exempt-files.tsv`
+
+## 枚举数量摘要
+
+| 类 | 原始/聚焦候选 | 本轮+上轮删简要点 | 复扫残留违法入口 |
+|---|---|---|---|
+| N6 | raw 4168 / focus 2092 | 删 play `action[:200]`；删 agents `_THINKING_STREAM_CHAR_LIMIT`/`思考已截断` | 复扫无 action 裁、无思考截断常量；余多为形式/日志/诊断 KEEP |
+| N11 | focus 1635（含大量 legacy 词噪音） | 删 rank marker/pairing/_infer_tag 及专属测；本轮再删 `_legacy_commitment_stop_gate`+专属测+`PERSON_LEGACY_ALLEGIANCE_CHANGE_WAYS` | `pairing_warnings not in applied` 负向契约保留 |
+| N12 | dup groups 9 + smell 99 | 删 caller_tag；收敛 COURT/favorites/GATE/PERSON_STATUSES/DUE | spike oracle 显式 KEEP；power 写白名单子集 KEEP |
+| N13 | focus 302 | 删 force=True、proc.kill；本轮改 `_warm_keychain` 去 `subprocess.run(timeout)` | 复扫无 force=True/proc.kill/run(timeout)；剩 SIGTERM/资源 close/软 wait |
+
+## 本轮实质修正（相对 45e1220de）
 
 ### N6
-
-| 候选 | 来源→契约→去向 | 处置 | 依据 |
-|---|---|---|---|
-| `scripts/play_as_emperor.py` `action[:200]` 后 `sendline` | 模型自由正文 → PTY 皇帝输入 | **删** | 末份样本；活链路自由正文裁剪；官方 send 不截 |
-| `scripts/play_as_emperor.py` `raw[:200]` in ValueError | 解析失败诊断预览 | KEEP | 非运输正文；错误消息展示 |
-| 同文件 `prompt_hint[:40]/[:8]` log | 日志预览 | KEEP | 非运输；日志 |
-| `cli_backend` `_TRACE_FIELD_CAP` 截断 prompt/response | 本地 trace 落盘 | KEEP | 非游戏呈现/活输入运输；debug 盘 |
-| `cli_backend` stderr/异常 `[:200]` | 异常消息 | KEEP | 非自由正文运输 |
-| `context.py` JSON 坏值 `[:200]` | 契约错误消息 | KEEP | 非运输 |
-| `agents.py` tool_res `[:200]` / 思考截断提示 | 内部遥测/思考流 | KEEP | 非皇帝输入/条件原文运输；形式流控 |
-| `action_clusters` `FieldSpec.max_len` | 结构化字段长度 | KEEP | 形式/结构契约（boundary 分判） |
-| Web 条件原文 humanize | 已修好 | KEEP | boundary：已修好保留；本轮非未结点 |
-| 形式菜单 `quit`/`back`/`exit` 识别 | 固定菜单 | KEEP | boundary：固定菜单识别分判 |
+- `ming_sim/agents.py`：删除思考流字符上限与「思考已截断」注入；`on_thinking` 原样收全文。`tlog` 仍可预览尾部（dest=操作者日志，已分判）。
 
 ### N11
-
-| 候选 | 来源→契约→去向 | 处置 | 依据 |
-|---|---|---|---|
-| `db.py` init 块写 `__leverage_offsets_rank_rules_562` | 退役 reanchor → 空标记维护 | **删** | 末份样本；无生产消费者 |
-| `db.py` `_calibrate_faction_offsets` 末行同标记 | 同上 | **删** | 同根 |
-| `tests/.../test_rank_rule_legacy_stem_reanchor_marker_only_on_reload` | 只断言私有标记 | **删** | 专属退役测试 |
-| `cli_backend._infer_tag` 恒 `other` 残 stub | 已删关键词推断后的空壳 | **删**（调用改 `other`） | 退役推断接口残余 |
-| `tests/.../test_run_backend_infers_trace_tag_from_prompt` | 仍要求 prompt→tag | **删** | 专属退役测试；不恢复猜测 |
-| `issues.pairing_warnings: []` 返回键 | 空兼容形状，无运行时读者 | **删** | 末份样本 |
-| `tests/test_initiative_resolve_pairing.py` | 只断言空列表 | **删文件** | 专属兼容测试 |
-| `tests/test_person_delta_adapter.py` `pairing_warnings not in applied` | 负向：applied 契约不含该键 | KEEP | 现役行为契约负向 |
-| 0055 / rescript 负向闸与现役决策解析 | 现役 | KEEP | boundary 明令不得误删 |
-| `__leverage_offsets_calibrated` / `__leverage_offsets_float_v2` | 仍服务现役校准/精度迁移 | KEEP | 非退役空标记 |
+- `ming_sim/issues.py`：删除 `_legacy_commitment_stop_gate`（旧档 `resolve_condition` 散文→gate 兼容）；`_commitment_stop_gate` 只读结构化 `stop_condition`。
+- 删除专属测 `test_legacy_character_resolve_condition_commitment_settles_when_threshold_reached`。
+- 删除无引用 `PERSON_LEGACY_ALLEGIANCE_CHANGE_WAYS`。
+- 清理 `test_new_issues_section_rejections.py` 对已删 pairing helper 的注释残留。
 
 ### N12
-
-| 候选 | 来源→契约→去向 | 处置 | 依据 |
-|---|---|---|---|
-| `token_stats._guess_caller_tag` + `ming_sim_caller_tag` | 无调用方提供的替代标签接口 | **删**；日志固定 `?` | 末份样本；不造 SDK pop 适配 |
-| `ministerFilters` 六部 Set 与 COURT 列表重复 | 同枚举两份 | **收敛**：MINISTRY 由 COURT 导出 | #14 |
-| `drawers.tsx` 内联朝廷 office 列表 | 与 ministerFilters 重复 | **改引用** `COURT_OFFICE_TYPE_ORDER` | 末份样本 |
-| 合法结构字段读取（office_type 等） | 结构契约 | KEEP | boundary |
-| SDK Completions.create 签名 | 原生 | KEEP | 不另造参数适配层 |
+- `_LEGACY_ACCOUNT_KEYS` → `GATE_METRIC_KEYS`
+- `MINISTRY_OFFICE_TYPES = COURT_OFFICE_TYPES - {"内阁"}`
+- person status 集合 → `PERSON_STATUSES`
+- `fiscal_tick._DUE/_ARREARS` → `pay_order.DUE_SUBJECTS/ARREARS_SUBJECTS`
+- `web_app._DEFAULT_FAVORITES` 单源
 
 ### N13
+- `_warm_keychain`：去掉 `subprocess.run(..., timeout=5)`（stdlib TimeoutExpired→`process.kill()`=SIGKILL）；改为 `Popen` + `terminate` 软停，超时不 kill。
+- 注释修正：idle 收尾写明 SIGTERM，禁 SIGKILL。
+- `play_as_emperor` 仍 `terminate(force=False)`，且不调用 `child.close()`（pexpect `close` 默认 `force=True` 的结构风险已避开）。
 
-| 候选 | 来源→契约→去向 | 处置 | 依据 |
-|---|---|---|---|
-| `play_as_emperor.py` `terminate(force=True)` | 活探针收尾 → SIGKILL | **改** `force=False` | 末份样本；官方 force→SIGKILL |
-| `cli_backend._terminate_cli_process` `proc.kill()` | CLI 子进程收尾 → SIGKILL | **删** kill 升级；仅 terminate | 同根可达 SIGKILL；#9 |
-| 注释中的「禁 SIGKILL」说明 | 文档 | KEEP | 非机制 |
-| `web_app` `SIGTERM` 自进程 | 非 SIGKILL | KEEP | 信号不是 SIGKILL |
-| `tests/cli_process_doubles.terminate` | 测试双 | KEEP | 无 SIGKILL |
+## 复扫结果（修正后）
 
----
+```text
+N6 THINKING_STREAM / 思考已截断 → NONE
+N6 action[:200] play → NONE
+N11 rank/pairing/_infer/_legacy_commitment/PERSON_LEGACY → 仅负向 assert pairing_warnings not in applied
+N13 force=True / proc.kill / subprocess.run(timeout) 生产 → NONE（仅文档提及 SIGKILL）
+web_app os.kill(..., SIGTERM) 自进程 → KEEP_sigterm_self
+```
 
-## 真实入口确定性变异（临时 `/tmp/1847-w5-probe/`，非永久测试）
+## 结构探针（非「真实入口变异」、非 BIN 伪 shell 作证）
 
-环境前缀七变量均 `/usr/bin/false`。命令：
+命令前缀七变量仅用于随后 pytest，不作为本探针证据。
 
 ```bash
-MING_SIM_*_BIN=/usr/bin/false \
-  /Users/akagilnc/WorkSpace/Ming_LLM/.venv/bin/python /tmp/1847-w5-probe/mutate_verify.py
+# AST：_warm_keychain 无 run/kill，有 Popen/terminate
+# stdlib：subprocess.run 源码含 process.kill()（说明旧 timeout 路径为何违法）
+# 局限：未向 OS 实发 SIGKILL；未跑活模型 PTY；签名/AST ≠ 真实入口变异
 ```
 
-输出摘要：
+输出：`ALL_STRUCTURAL_OK`；明示 `LIMITATION: structural only`。
 
-```
-=== N6 ===
-LONG_len 269
-OLD 269 200 200 False
-CUR 269 269 True True
-N6_MUTATION_OK
-=== N13 ===
-OLD [SIGHUP, SIGCONT, SIGINT, SIGKILL] True True
-CUR [SIGHUP, SIGCONT, SIGINT] False False
-N13_MUTATION_OK
-=== N11 ===
-marker_present_on_fresh_open False
-marker_after_old_stamp True
-marker_after_reopen_current False
-pairing_warnings_in_return False
-trace_tag_without_explicit other ok
-N11_MUTATION_OK
-=== N12 ===
-sdk_has_kw False
-N12_MUTATION_OK
-ALL_MUTATIONS_OK
-```
-
-含义：
-- N6：旧 `[:200]` 运输丢「不得动内库」；删裁后 PTY 收满 269 字。
-- N13：`force=True` 序列含 SIGKILL；现行 `force=False` 不含；生产无 `proc.kill()`。
-- N11：新档不写退役标记；装回旧 stamp 后为 True；清标记再开现行 GameDB 仍为 False；`pairing_warnings` 键消失；无显式 tag 时 trace=`other`（不按 prompt 猜）。
-- N12：SDK 无 `ming_sim_caller_tag`；生产不再读该 kw；朝廷顺序单源导出。
+旧逻辑→现行：
+- N13：旧 `subprocess.run(timeout)` 结构上可走 stdlib kill；现行 AST 无 kill。
+- N6：旧思考上限会截断 `on_thinking`；现行全文传递。
+- N11：装回 legacy stop gate 会使专属旧测再绿；现行该测已删、行为改为无 stop_condition 则无门。**局限**：旧档仅有 `resolve_condition` 散文、无 `stop_condition` JSON 的承诺案，不再自动按忠诚阈值结案（#1812 无历史包袱；现役路径用结构化 stop_condition，见保留测 `test_character_loyalty_commitment_ongoing_...`）。
 
 ## 聚焦测试
 
@@ -170,12 +157,15 @@ MING_SIM_PI_BIN=/usr/bin/false \
   tests/test_month_chain_1843.py tests/test_month_call_recovery_1846.py \
   tests/test_cli_backend.py tests/test_rescript_choices_563.py \
   tests/test_llm_channel_config.py::test_scene_and_rescript_entries_pass_default_headers_at_transport \
-  tests/test_new_issues_section_rejections.py::test_new_issue_whitespace_resolve_condition_falls_back_to_stop_condition \
+  tests/test_new_issues_section_rejections.py \
   tests/test_scene_llm_1836.py tests/test_office_rank_562.py \
-  -q --basetemp=/tmp/1847-w5-pytest/pytest
+  tests/test_person_delta_adapter.py \
+  tests/test_decree_commitment_settlement_229.py \
+  tests/test_fiscal_substrate_bridge.py \
+  -q --basetemp=/tmp/1847-w5-rescan2/pytest
 ```
 
-输出：`218 passed in 15.94s`
+输出：`568 passed in 39.78s`
 
 ```bash
 cd web && 同七变量前缀 npx tsc -p . --noEmit
@@ -185,12 +175,10 @@ cd web && 同七变量前缀 npx tsc -p . --noEmit
 
 未跑全量；未跑活模型网络。
 
-## 净变更
-
-`10 files changed, 18 insertions(+), 143 deletions(-)`（提交前 `git diff --stat`）
-
 ## 未结范围（劳务自述）
 
-- 本轮只处理末份未结 N6/N11/N12/N13；N10 及更早结清类未重开。
-- X3 `_ledger_by_origin_ref` 静态残留、#1826/#1873 功能缺口不在本票阻断范围，未施工。
+- N6 `KEEP_review_bucket`（~287）与大量 `KEEP_form_parse_or_empty`：已按来源→去向分桶，未发现新的活链路自由正文→皇帝/模型供料裁剪；若后续审官对某桶提出实证反例，再按同类删简。
+- N8/X1–X3、`_ledger_by_origin_ref` 静态残留、#1826/#1873 功能缺口：非本票阻断，未施工。
+- N10 及更早结清类未重开。
+- 跨语言（py COURT set vs ts COURT_OFFICE_TYPE_ORDER）未强行单文件真源（避免新运输层）；各自仓内已收敛。
 - 此乃修内司自验，非大理寺/御史台结论。

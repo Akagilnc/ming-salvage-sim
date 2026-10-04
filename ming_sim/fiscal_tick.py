@@ -24,12 +24,14 @@ import math
 from dataclasses import dataclass
 from typing import Any, Dict, List
 
+from ming_sim.pay_order import ARREARS_SUBJECTS, DUE_SUBJECTS
+
 EPS = 1e-6
 CASH_KEYS = ["省库库银", "C_地方截留", "C_中饱", "C_漂没", "C_eff损耗"]
 CLAIM_KEYS = ["民欠旧赋", "军饷欠", "官俸欠", "宗禄欠"]
 KNOWN_ACTIONS = {"补饷", "清丈", "挪借火耗", "追赃", "清欠", "蠲免", "营建"}
-_DUE_KEYS = ("军饷", "官俸", "宗禄", "赈济")
-_ARREARS_KEYS = ("军饷欠", "官俸欠", "宗禄欠")
+_DUE_KEYS = DUE_SUBJECTS  # #14 single source with pay_order
+_ARREARS_KEYS = ARREARS_SUBJECTS
 _DEBT_OF_DUE = {"军饷": "军饷欠", "官俸": "官俸欠", "宗禄": "宗禄欠"}
 
 
