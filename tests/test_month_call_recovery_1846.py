@@ -292,6 +292,8 @@ def test_world_translate_exhaustion_keeps_text_resume_retries_translate_only(
     chain = (db.get_resolve_context(turn) or {}).get("simulator_payload", {}).get(
         "month_chain", {},
     )
+    # world() mock return "世界段已成文。" → month_chain.world_text 原样暂存
+    assert chain.get("world_text") == "世界段已成文。"
     assert chain.get("world_text_ready") is True
     assert not chain.get("world_committed")
     assert db.staged_declarations.is_settled(ref)

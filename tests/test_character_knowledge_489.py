@@ -8,7 +8,6 @@ from ming_sim.knowledge import build_character_knowledge
 from ming_sim.materials import (
     list_materials,
     prepare_character_materials,
-    read_material,
     release_material_tree,
 )
 from tests.dossier_test_helpers import create_test_secret_order
@@ -1405,10 +1404,9 @@ def test_household_secret_ledger_keeps_amount_but_hides_case_semantics(
         db, state, clerk, dest_root=tmp_path / "clerk",
     )
     try:
-        archive_rel = next(
-            p for p in list_materials(prepared.root) if p.endswith("/公事档案.txt")
-        )
-        read_material(prepared.root, archive_rel)
+        # 公事档案路径在册即可；正文子串/非空烟测已按 #1830 结构化契约退役。
+        # 本测契约＝户部底账字段面（amount 可读、reason/category 不可读）+ 案卷不可引用。
+        assert any(p.endswith("/公事档案.txt") for p in list_materials(prepared.root))
         assert {(-1, "reason"), (-1, "category")}.isdisjoint(household_ledger_reads)
         assert int(dossier["id"]) not in _referenceable_dossier_ids(
             db, clerk.name, int(state.turn),

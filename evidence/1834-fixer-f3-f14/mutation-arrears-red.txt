@@ -1,0 +1,10 @@
+==== MUTATION empty_approx_arrears (expect FAIL army_display) ====
+F                                                                        [100%]
+=================================== FAILURES ===================================
+E   AssertionError: assert '欠饷约15万两' in ''
+/Users/akagilnc/WorkSpace/Ming_LLM-1834-w5/tests/test_army_display_173.py:129: AssertionError: assert '欠饷约15万两' in ''
+=========================== short test summary info ============================
+FAILED tests/test_army_display_173.py::test_army_payload_exposes_approx_arrears_text_not_raw
+1 failed in 0.66s
+PYTHONPATH="$SCRATCH${PYTHONPATH:+:$PYTHONPATH}" $PY -m pytest -q -p  -p      1.01s user 0.12s system 98% cpu 1.142 total
+mut_arrears_exit:

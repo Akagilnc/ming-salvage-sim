@@ -17,7 +17,7 @@ from pathlib import Path
 
 from ming_sim.db import GameDB
 from ming_sim.materials import (
-    list_materials, prepare_world_materials, read_material,
+    list_materials, prepare_world_materials,
     world_materials_root,
 )
 
@@ -43,14 +43,14 @@ def test_prepare_writes_typed_tree_with_board_affairs_and_gazette_index(game, tm
     names = list_materials(prepared.root)
     assert "INDEX.txt" in names
     assert "盘面/全局.txt" in names
-    read_material(prepared.root, "盘面/派系检举事实.txt")
+    assert "盘面/派系检举事实.txt" in names
     assert "人物/朝臣名册.txt" in names
     assert any(p.startswith("人物/") and p.endswith("/经历.txt") for p in names)
     assert any(p.startswith(f"事务/affair-{affair.id}-") for p in names)
     assert any(p.startswith("邸报/") for p in names)
 
-    for rel in names:
-        read_material(prepared.root, rel)
+    # 无独立固定字节种子内容契约（旧 INDEX/邸报标题/检举 JSON 正文锁已按
+    # 大理寺 01a08e3a 退役）。路径在册 + 无裸副本即契约；不留裸 read 空壳。
 
     # 无裸副本：不得直接倒出世界库/JSON。
     assert not any(n.lower().endswith((".db", ".sqlite", ".sqlite3", ".json")) for n in names)
@@ -152,8 +152,8 @@ def test_prepare_rebuilds_from_world_record_after_restore(game, tmp_path):
         prepared = prepare_world_materials(restored, state2, dest_root=tmp_path / "m2")
         names = list_materials(prepared.root)
         affair_paths = [p for p in names if p.startswith(f"事务/affair-{affair.id}-")]
+        # restore 后事务载体路径唯一在册；旧正文锁（进度/关闭史）已退役。
         assert len(affair_paths) == 1
-        read_material(prepared.root, affair_paths[0])
     finally:
         restored.close()
 
@@ -164,8 +164,8 @@ def test_world_materials_isolate_invocations_and_databases(game, tmp_path, monke
     first = prepare_world_materials(db, state, dest_root=requested)
     second = prepare_world_materials(db, state, dest_root=requested)
     assert first.root != second.root
-    read_material(first.root, "INDEX.txt")
-    read_material(second.root, "INDEX.txt")
+    assert (first.root / "INDEX.txt").is_file()
+    assert (second.root / "INDEX.txt").is_file()
 
     # 第二档库与夹具库同父目录（材料树按 db stem 隔层正是为同父多档互不互踩），
     # 但资源归属归本用例：在该父目录里用 mkstemp 原子占一个唯一名（不是拼一个
@@ -288,11 +288,8 @@ def test_world_materials_carry_eligible_person_event_candidates(game, tmp_path):
         if p.startswith("候选事件/") and p.endswith(".txt") and not p.endswith("/INDEX.txt")
     ]
     assert candidate_paths
-    # 人读索引可读；实际取阅路径只从列目录取得，不解析索引排版。
-    read_material(prepared.root, "候选事件/INDEX.txt")
-    for rel in candidate_paths:
-        read_material(prepared.root, rel)
-    # 候选集合＝权威快照逐条可达；快照为空则本例无意义，故先钉非空。
+    assert "候选事件/INDEX.txt" in list_materials(prepared.root)
+    # 候选集合＝权威快照路径集合一致；旧「皇太极称帝」等正文锁已退役，不留裸 read。
     eligible = {ev.id for ev in issues.gather_candidate_events(state, db)}
     assert eligible, "fixture 需当期有合资格人物事件"
     assert "huangtaiji_chengdi" in eligible
@@ -317,16 +314,16 @@ def test_world_materials_carry_due_fiscal_levy_petitions(game, tmp_path):
     assert "liao_levy_rise_1631" in due
 
     prepared = prepare_world_materials(db, state, dest_root=tmp_path / "levy")
-    read_material(prepared.root, "请旨事项/INDEX.txt")
+    names = list_materials(prepared.root)
+    assert "请旨事项/INDEX.txt" in names
     paths = [
-        p for p in list_materials(prepared.root)
+        p for p in names
         if p.startswith("请旨事项/") and p.endswith(".txt") and not p.endswith("/INDEX.txt")
     ]
     assert paths
     from ming_sim.materials import _safe_segment
+    # 路径集合＝权威请旨快照；正文措辞不承担契约（01a08e3a）。
     assert set(paths) == {f"请旨事项/{_safe_segment(event_id)}.txt" for event_id in due}
-    for rel in paths:
-        read_material(prepared.root, rel)
 
     # 已落终态者不再呈请；亲裁一次后同一事件不再顶回批红。
     db.mark_event_triggered(state, "liao_levy_rise_1631", terminal_reason="已准")

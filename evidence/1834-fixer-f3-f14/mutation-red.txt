@@ -1,46 +1,47 @@
+==== MUTATION empty_read_material (expect FAIL) ====
 FFFFF                                                                    [100%]
 =================================== FAILURES ===================================
 E   AssertionError: assert '左臂中箭，血透重甲，犹力战不退' in ''
-     +  where '' = read_material(PosixPath('/private/var/folders/nb/ml2z6k013psg7rdtt0t6g91m0000gn/T/pytest-of-akagilnc/pytest-1454/test_textual_fact_and_public_s0/after-facts/9a46d54510cb4c598e183e0e08a95879'), '人物/乔允升/按月实况.txt')
-     +    where PosixPath('/private/var/folders/nb/ml2z6k013psg7rdtt0t6g91m0000gn/T/pytest-of-akagilnc/pytest-1454/test_textual_fact_and_public_s0/after-facts/9a46d54510cb4c598e183e0e08a95879') = PreparedMaterials(root=PosixPath('/private/var/folders/nb/ml2z6k013psg7rdtt0t6g91m0000gn/T/pytest-of-akagilnc/pytest-1...为继。\n本场已说的话：\n朕：卿以为如何？\n殿上：臣遵旨。\n当前待裁场面：\n（无）\n在场诸人各自材料在 人物/<名>/ 下（人物档料、经历、公事档案、朝臣名册、事务、公开说法）。根目录 INDEX 一行一项。其余想读自己读。').root
+     +  where '' = read_material(PosixPath('/private/tmp/1834-f3-mutbt-0xUO/test_textual_fact_and_public_s0/after-facts/b3529261fbdc4dc5b54e88df277bb598'), '人物/乔允升/按月实况.txt')
+     +    where PosixPath('/private/tmp/1834-f3-mutbt-0xUO/test_textual_fact_and_public_s0/after-facts/b3529261fbdc4dc5b54e88df277bb598') = PreparedMaterials(root=PosixPath('/private/tmp/1834-f3-mutbt-0xUO/test_textual_fact_and_public_s0/after-facts/b3529261...为继。\n本场已说的话：\n朕：卿以为如何？\n殿上：臣遵旨。\n当前待裁场面：\n（无）\n在场诸人各自材料在 人物/<名>/ 下（人物档料、经历、公事档案、朝臣名册、事务、公开说法）。根目录 INDEX 一行一项。其余想读自己读。').root
 /Users/akagilnc/WorkSpace/Ming_LLM-1834-w5/tests/test_on_scene_immediate_write_1839.py:131: AssertionError: assert '左臂中箭，血透重甲，犹力战不退' in ''
 E   AssertionError: assert 'PUBLIC_FACT_1862' in ''
 ----------------------------- Captured stdout call -----------------------------
-[04:11:48.047] [secret_order] create id=1 minister=韩爌 title=密题不入邸报
-[04:11:48.052] [secret_order] update id=1 title=密报题
-[04:11:48.052] [secret_order] progress id=1 ok=True note='奉旨更新密令要旨：SECRET_BRIEF_BODY_1862'
-[04:11:48.075] [pending_actions] 颁诏批量落库 1 条：[('directive', '拟旨')]
-[04:11:48.076] 结算 1/4 固定月度财政 tick
-[04:11:48.088] [fiscal-substrate] beizhili 推进：实征5.4/起运5.4/火耗入截留0.9；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠2（hub，待入国库）
-[04:11:48.088] [fiscal-substrate] dongjiang_area 推进：实征0.0/起运0.0/火耗入截留0.0；末态欠账 军饷欠34/官俸欠0/宗禄欠0/民欠0（hub，待入国库）
-[04:11:48.088] [fiscal-substrate] fujian 推进：实征2.2/起运1.8/火耗入截留0.4；末态欠账 军饷欠7/官俸欠1/宗禄欠0/民欠1（hub，待入国库）
-[04:11:48.088] [fiscal-substrate] guangdong 推进：实征2.9/起运2.8/火耗入截留0.5；末态欠账 军饷欠6/官俸欠1/宗禄欠0/民欠1（hub，待入国库）
-[04:11:48.088] [fiscal-substrate] guangxi 推进：实征0.7/起运0.7/火耗入截留0.1；末态欠账 军饷欠0/官俸欠0/宗禄欠1/民欠1（hub，待入国库）
-[04:11:48.088] [fiscal-substrate] guizhou 推进：实征0.1/起运0.0/火耗入截留0.0；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠0（hub，待入国库）
-[04:11:48.088] [fiscal-substrate] henan 推进：实征12.9/起运12.9/火耗入截留2.3；末态欠账 军饷欠0/官俸欠0/宗禄欠16/民欠9（hub，待入国库）
-[04:11:48.088] [fiscal-substrate] huguang 推进：实征39.5/起运18.5/火耗入截留5.5；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠11（hub，待入国库）
-[04:11:48.088] [fiscal-substrate] jiangxi 推进：实征18.8/起运7.7/火耗入截留2.8；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠6（hub，待入国库）
-[04:11:48.088] [fiscal-substrate] liaodong 推进：实征0.0/起运0.0/火耗入截留0.0；末态欠账 军饷欠83/官俸欠0/宗禄欠0/民欠0（hub，待入国库）
-[04:11:48.088] [fiscal-substrate] nanzhili 推进：实征29.5/起运14.7/火耗入截留4.1；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠6（hub，待入国库）
-[04:11:48.088] [fiscal-substrate] shaanxi 推进：实征4.0/起运2.2/火耗入截留0.7；末态欠账 军饷欠16/官俸欠1/宗禄欠4/民欠3（hub，待入国库）
-[04:11:48.088] [fiscal-substrate] shandong 推进：实征14.1/起运8.2/火耗入截留2.3；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠8（hub，待入国库）
-[04:11:48.088] [fiscal-substrate] shanxi 推进：实征13.3/起运9.7/火耗入截留2.3；末态欠账 军饷欠16/官俸欠0/宗禄欠8/民欠7（hub，待入国库）
-[04:11:48.088] [fiscal-substrate] sichuan 推进：实征2.0/起运1.9/火耗入截留0.3；末态欠账 军饷欠0/官俸欠1/宗禄欠1/民欠1（hub，待入国库）
-[04:11:48.088] [fiscal-substrate] yunnan 推进：实征0.2/起运0.1/火耗入截留0.0；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠0（hub，待入国库）
-[04:11:48.088] [fiscal-substrate] zhejiang 推进：实征21.2/起运7.0/火耗入截留2.8；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠5（hub，待入国库）
-[04:11:48.089] [transit-tick] 本月抵达 1 人：['仁祖']
-[04:11:48.445] [secret-orders-supply] 使用模型 gazette-test
-[04:11:48.926] [gazette] 使用模型 gazette-test
+[04:20:51.712] [secret_order] create id=1 minister=韩爌 title=密题不入邸报
+[04:20:51.715] [secret_order] update id=1 title=密报题
+[04:20:51.715] [secret_order] progress id=1 ok=True note='奉旨更新密令要旨：SECRET_BRIEF_BODY_1862'
+[04:20:51.736] [pending_actions] 颁诏批量落库 1 条：[('directive', '拟旨')]
+[04:20:51.737] 结算 1/4 固定月度财政 tick
+[04:20:51.747] [fiscal-substrate] beizhili 推进：实征5.4/起运5.4/火耗入截留0.9；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠2（hub，待入国库）
+[04:20:51.747] [fiscal-substrate] dongjiang_area 推进：实征0.0/起运0.0/火耗入截留0.0；末态欠账 军饷欠34/官俸欠0/宗禄欠0/民欠0（hub，待入国库）
+[04:20:51.747] [fiscal-substrate] fujian 推进：实征2.2/起运1.8/火耗入截留0.4；末态欠账 军饷欠7/官俸欠1/宗禄欠0/民欠1（hub，待入国库）
+[04:20:51.747] [fiscal-substrate] guangdong 推进：实征2.9/起运2.8/火耗入截留0.5；末态欠账 军饷欠6/官俸欠1/宗禄欠0/民欠1（hub，待入国库）
+[04:20:51.747] [fiscal-substrate] guangxi 推进：实征0.7/起运0.7/火耗入截留0.1；末态欠账 军饷欠0/官俸欠0/宗禄欠1/民欠1（hub，待入国库）
+[04:20:51.747] [fiscal-substrate] guizhou 推进：实征0.1/起运0.0/火耗入截留0.0；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠0（hub，待入国库）
+[04:20:51.747] [fiscal-substrate] henan 推进：实征12.9/起运12.9/火耗入截留2.3；末态欠账 军饷欠0/官俸欠0/宗禄欠16/民欠9（hub，待入国库）
+[04:20:51.747] [fiscal-substrate] huguang 推进：实征39.5/起运18.5/火耗入截留5.5；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠11（hub，待入国库）
+[04:20:51.747] [fiscal-substrate] jiangxi 推进：实征18.8/起运7.7/火耗入截留2.8；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠6（hub，待入国库）
+[04:20:51.747] [fiscal-substrate] liaodong 推进：实征0.0/起运0.0/火耗入截留0.0；末态欠账 军饷欠83/官俸欠0/宗禄欠0/民欠0（hub，待入国库）
+[04:20:51.747] [fiscal-substrate] nanzhili 推进：实征29.5/起运14.7/火耗入截留4.1；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠6（hub，待入国库）
+[04:20:51.747] [fiscal-substrate] shaanxi 推进：实征4.0/起运2.2/火耗入截留0.7；末态欠账 军饷欠16/官俸欠1/宗禄欠4/民欠3（hub，待入国库）
+[04:20:51.747] [fiscal-substrate] shandong 推进：实征14.1/起运8.2/火耗入截留2.3；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠8（hub，待入国库）
+[04:20:51.747] [fiscal-substrate] shanxi 推进：实征13.3/起运9.7/火耗入截留2.3；末态欠账 军饷欠16/官俸欠0/宗禄欠8/民欠7（hub，待入国库）
+[04:20:51.747] [fiscal-substrate] sichuan 推进：实征2.0/起运1.9/火耗入截留0.3；末态欠账 军饷欠0/官俸欠1/宗禄欠1/民欠1（hub，待入国库）
+[04:20:51.747] [fiscal-substrate] yunnan 推进：实征0.2/起运0.1/火耗入截留0.0；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠0（hub，待入国库）
+[04:20:51.747] [fiscal-substrate] zhejiang 推进：实征21.2/起运7.0/火耗入截留2.8；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠5（hub，待入国库）
+[04:20:51.748] [transit-tick] 本月抵达 1 人：['仁祖']
+[04:20:52.080] [secret-orders-supply] 使用模型 gazette-test
+[04:20:52.601] [gazette] 使用模型 gazette-test
 /Users/akagilnc/WorkSpace/Ming_LLM-1834-w5/tests/test_gazette_author_1862.py:375: AssertionError: assert 'PUBLIC_FACT_1862' in ''
 E   AssertionError: assert '陕西赈务' in ''
 /Users/akagilnc/WorkSpace/Ming_LLM-1834-w5/tests/test_public_projection_consistency_1830.py:171: AssertionError: assert '陕西赈务' in ''
 E   AssertionError: assert '文字事实正文：边材已动。\r\n同一条事实的第二行。  \r' in ''
 ----------------------------- Captured stdout call -----------------------------
-[04:11:49.349] [secret_order] create id=1 minister=张瑞图 title=供料事实探针
+[04:20:53.070] [secret_order] create id=1 minister=张瑞图 title=供料事实探针
 /Users/akagilnc/WorkSpace/Ming_LLM-1834-w5/tests/test_month_chain_1847.py:2076: AssertionError: assert '文字事实正文：边材已动。\r\n同一条事实的第二行。  \r' in ''
 E   AssertionError: assert '去查那件未见于词表的事，原话留档。' in ''
-     +  where '' = <function _empty at 0x105e0cae0>(PosixPath('/private/var/folders/nb/ml2z6k013psg7rdtt0t6g91m0000gn/T/pytest-of-akagilnc/pytest-1454/test_inquiry_declaration_prese0/game/materials/game-6ca5cab77e70/night-2/scene'), '人物/韩爌/经历.txt')
-     +    where PosixPath('/private/var/folders/nb/ml2z6k013psg7rdtt0t6g91m0000gn/T/pytest-of-akagilnc/pytest-1454/test_inquiry_declaration_prese0/game/materials/game-6ca5cab77e70/night-2/scene') = PreparedMaterials(root=PosixPath('/private/var/folders/nb/ml2z6k013psg7rdtt0t6g91m0000gn/T/pytest-of-akagilnc/pytest-1...盗匪渐混。王嘉胤、王二之徒已起。\n本场已说的话：\n（尚无）\n当前待裁场面：\n（无）\n在场诸人各自材料在 人物/<名>/ 下（人物档料、经历、公事档案、朝臣名册、事务、公开说法）。根目录 INDEX 一行一项。其余想读自己读。').root
+     +  where '' = <function pytest_configure.<locals>.<lambda> at 0x10aec71a0>(PosixPath('/private/tmp/1834-f3-mutbt-0xUO/test_inquiry_declaration_prese0/game/materials/game-6ca5cab77e70/night-2/scene'), '人物/韩爌/经历.txt')
+     +    where PosixPath('/private/tmp/1834-f3-mutbt-0xUO/test_inquiry_declaration_prese0/game/materials/game-6ca5cab77e70/night-2/scene') = PreparedMaterials(root=PosixPath('/private/tmp/1834-f3-mutbt-0xUO/test_inquiry_declaration_prese0/game/materials/game-...盗匪渐混。王嘉胤、王二之徒已起。\n本场已说的话：\n（尚无）\n当前待裁场面：\n（无）\n在场诸人各自材料在 人物/<名>/ 下（人物档料、经历、公事档案、朝臣名册、事务、公开说法）。根目录 INDEX 一行一项。其余想读自己读。').root
 /Users/akagilnc/WorkSpace/Ming_LLM-1834-w5/tests/test_audience_translate_1837_reopen.py:369: AssertionError: assert '去查那件未见于词表的事，原话留档。' in ''
 =========================== short test summary info ============================
 FAILED tests/test_on_scene_immediate_write_1839.py::test_textual_fact_and_public_saying_land_and_show_in_materials
@@ -48,7 +49,6 @@ FAILED tests/test_gazette_author_1862.py::test_author_archives_own_title_and_sam
 FAILED tests/test_public_projection_consistency_1830.py::test_scene_person_public_layer_matches_character_and_world_admission
 FAILED tests/test_month_chain_1847.py::test_build_secret_orders_supply_feed_uses_fact_materials_not_assembled_effects
 FAILED tests/test_audience_translate_1837_reopen.py::test_inquiry_declaration_preserves_assignment_in_attendant_materials
-5 failed in 2.78s
-real 3.31
-user 2.53
-sys 0.72
+5 failed in 2.63s
+PYTHONPATH="$SCRATCH${PYTHONPATH:+:$PYTHONPATH}" $PY -m pytest -q -p  -p      2.51s user 0.66s system 98% cpu 3.203 total
+mut_red_exit:

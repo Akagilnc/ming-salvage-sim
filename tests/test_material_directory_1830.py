@@ -51,12 +51,10 @@ def test_prepare_writes_typed_tree_and_index(game, tmp_path):
     assert any(p.startswith("密令/") for p in names)
     assert any(p.startswith("荐人/") for p in names)
     assert any(p.startswith("事实/") for p in names)
-    for rel in names:
-        read_material(prepared.root, rel)
     # 路径由列目录取得；人读 INDEX 不承担路径解析契约。
     # 大理寺 01a0f1f4 裁定：不重调生产渲染器逐字比正文（与被调函数同进同出，
     # 只证接线），也不扫描名册正文推断成员身份（人读正文不是结构化记录身份，
-    # 一次合法换行即假红）。
+    # 一次合法换行即假红）。不保留「列目录后裸 read」空壳。
 
 
 def test_same_requested_root_creates_independent_material_invocations(game, tmp_path):
@@ -67,9 +65,11 @@ def test_same_requested_root_creates_independent_material_invocations(game, tmp_
     first = prepare_character_materials(db, state, character, dest_root=requested)
     second = prepare_character_materials(db, state, character, dest_root=requested)
 
+    # 契约＝同请求根下两次 prepare 得独立树；不靠 INDEX 裸读证明隔离。
     assert first.root != second.root
-    read_material(first.root, "INDEX.txt")
-    read_material(second.root, "INDEX.txt")
+    assert first.root.exists() and second.root.exists()
+    assert (first.root / "INDEX.txt").is_file()
+    assert (second.root / "INDEX.txt").is_file()
 
 
 def test_material_tree_contains_only_structurally_related_world_details(game, tmp_path):
@@ -252,7 +252,7 @@ def test_character_materials_exclude_legacy_raw_turn_report_and_keep_public_gaze
         f"公开说法/邸报/1627年{month}月.txt" for month in range(1, 8)
     ]
     assert not any(p.startswith("邸报/") for p in names)
-    read_material(prepared.root, "INDEX.txt")
+    assert "INDEX.txt" in names
 
 
 def test_secret_order_materials_keep_full_content_and_fail_loud_on_db_error(

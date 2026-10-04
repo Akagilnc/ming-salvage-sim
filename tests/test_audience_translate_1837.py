@@ -729,6 +729,8 @@ def test_translate_call_failure_is_not_empty_success_dispatch(game, monkeypatch)
     ctid = int(db.create_chat_turn(state, "殿上", "test-sess", 0, night_id=None))
     # 开夜由 scene_chat 内部 ensure
     result = sess.scene_chat("边饷如何？", chat_turn_id=ctid)
+    # FakeAgent.run → SimpleNamespace(content="臣在。") 原样进 result.answer
+    assert result.answer == "臣在。"
     fut = persist_and_schedule_scene(sess, db, result)
     assert fut is not None
     try:

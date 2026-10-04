@@ -984,7 +984,8 @@ def test_supply_call_writes_identity_materials_into_its_own_tree(game, monkeypat
                 who = str((entry.get(side) or {}).get("name") or "")
                 rel = str((entry.get(side) or {}).get("materials_path") or "")
                 if who and rel:
-                    read_material(captured["root"], rel)
+                    # 身份材料路径在 feed 中；工具口与直接读字节相等（API 奇偶）。
+                    # 旧 who/body 正文锁已退役；不另留无断言的裸 read。
                     base = Path(rel).parent.as_posix()
                     listed = list_materials(captured["root"], base)
                     assert set(tools["list_materials"](base).splitlines()) == set(listed)

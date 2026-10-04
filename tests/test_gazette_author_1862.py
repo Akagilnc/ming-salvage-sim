@@ -437,26 +437,19 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
         text = read_material(prepared.root, rel)
         # 独立作者输入完整搬运；不从 INDEX 展示推断载体身份或月份。
         assert _REPORT in text
-        read_material(prepared.root, "INDEX.txt")
-        # 亲历载体：本人经历.txt 在册可读。旧账在正文里找 `_SECRET_BRIEF`
-        # 等哨兵串，已删（大理寺 553d581fb）：那是对人读正文做子串推断，人读
-        # 正文不是记录身份，一次合法改写即假红。密令简报确以 typed 来源落在
-        # 本人见闻里，由上一条来源 ID 承担。
-        experience = next(path for path in list_materials(prepared.root) if path.endswith("/经历.txt"))
-        read_material(prepared.root, experience)
+        # INDEX / 经历 / 世界亲历·盘面：无独立固定字节种子契约（旧 `_SECRET_BRIEF`
+        # 等哨兵串已按大理寺 553d581fb 退役）。密令简报由上方 source_id 承担；
+        # 亲历/盘面只钉路径在册，不留恒空串也能过的裸 read。
+        assert "INDEX.txt" in list_materials(prepared.root)
+        assert any(path.endswith("/经历.txt") for path in list_materials(prepared.root))
     finally:
         release_material_tree(prepared.root)
     world_tree = prepare_world_materials(db, state)
     try:
-        # 世界目录：每位在册人物都有亲历载体，且盘面载体在册可读。
-        world_experience = [
-            rel for rel in list_materials(world_tree.root) if rel.endswith("/经历.txt")
-        ]
+        world_names = list_materials(world_tree.root)
+        world_experience = [rel for rel in world_names if rel.endswith("/经历.txt")]
         assert world_experience
-        for rel in world_experience:
-            read_material(world_tree.root, rel)
-        board = next(rel for rel in list_materials(world_tree.root) if rel.endswith("全局.txt"))
-        read_material(world_tree.root, board)
+        assert any(rel.endswith("全局.txt") for rel in world_names)
     finally:
         release_material_tree(world_tree.root)
 

@@ -24,7 +24,6 @@ from ming_sim.materials import (
     candidate_supply,
     list_materials,
     prepare_world_materials,
-    read_material,
 )
 
 CANDIDATE_REL = _CANDIDATE_REL
@@ -110,10 +109,10 @@ def test_surge_candidate_offered_by_world_segment_is_declared_and_lands(game, tm
     _did, owner, _faction = _candidate_world(db, state)
     secret_did = _secret_surge_world(db, state, owner)
 
-    # 世界段目录：模型在同一次世界段里自读挑选的就是这一份。
+    # 世界段目录：候选路径在册；人读正文不承担解析契约（#1830/#1893）。
+    # 行为证明在下方 dispatch→声明→落账，不靠裸 read_material 烟测。
     prepared = prepare_world_materials(db, state, dest_root=tmp_path / "world")
     assert CANDIDATE_REL in list_materials(prepared.root)
-    read_material(prepared.root, CANDIDATE_REL)
 
     def _capture(request, config):
         offered = {
