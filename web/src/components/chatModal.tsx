@@ -35,7 +35,6 @@ export function ChatModal({
   input,
   busy,
   error,
-  replyRetries = [],
   translationRetries = [],
   retryReadFailure = null,
   onInput,
@@ -71,8 +70,7 @@ export function ChatModal({
   input: string;
   busy: string;
   error: string;
-  /** #505：系统层回话重试（崩溃后问话保留）。 */
-  replyRetries?: Pick<ReplyRetry, "chat_turn_id" | "question" | "error_pack_path" | "recovery_phase">[];
+  /** 回话重试只读夜卷投影（#1853 J2）；勿再经 props 另传一份。 */
   translationRetries?: TranslationRetry[];
   retryReadFailure?: RetryReadFailure | null;
   onInput: (value: string) => void;
@@ -110,8 +108,7 @@ export function ChatModal({
       characters: Minister[];
       translationPending: boolean;
       translationRetries: TranslationRetry[];
-      replyRetries?: ReplyRetry[];
-      forecastInflight: boolean;
+      replyRetries: ReplyRetry[];
       refreshError: boolean;
     } | { kind: "error" }
   >({ kind: "loading" });
@@ -149,7 +146,6 @@ export function ChatModal({
       translation_pending: boolean;
       translation_retries?: TranslationRetry[];
       reply_retries?: ReplyRetry[];
-      forecast_inflight?: boolean;
     }>("/api/audience/scroll")
       .then((data) => {
         if (!alive) return;
@@ -192,13 +188,10 @@ export function ChatModal({
           characters: data.characters || [],
           translationPending: data.translation_pending,
           translationRetries: data.translation_retries || [],
-          ...(Object.prototype.hasOwnProperty.call(data, "reply_retries")
-            ? { replyRetries: data.reply_retries || [] }
-            : {}),
-          forecastInflight: !!data.forecast_inflight,
+          replyRetries: data.reply_retries || [],
           refreshError: false,
         } : { kind: "none" });
-        keepPolling = !!data.translation_pending || !!data.forecast_inflight;
+        keepPolling = !!data.translation_pending;
         if (keepPolling) retryTimer = window.setTimeout(refresh, 1500);
       })
       .catch(() => {
@@ -329,7 +322,7 @@ export function ChatModal({
       }
     }
     readingAnchorRef.current = null;
-  }, [minister.name, chat, scrollState, pendingUserMessage, streamingMinisterMessage, chatNotice, busy, error, replyRetries, translationRetries]);
+  }, [minister.name, chat, scrollState, pendingUserMessage, streamingMinisterMessage, chatNotice, busy, error, translationRetries]);
 
   const handleScroll = () => {
     const node = chatLogRef.current;
@@ -339,9 +332,9 @@ export function ChatModal({
     }
   };
 
-  const liveReplyRetries = effectiveScrollState.kind === "night" && effectiveScrollState.replyRetries
+  const liveReplyRetries = effectiveScrollState.kind === "night"
     ? effectiveScrollState.replyRetries
-    : replyRetries;
+    : [];
   const turnNotices = new Map<number, React.ReactNode>();
   for (const retry of liveReplyRetries) {
     if (!onRetryReply) continue;

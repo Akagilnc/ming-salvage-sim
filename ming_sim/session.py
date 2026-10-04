@@ -553,6 +553,55 @@ def _pending_action_failure_payload(pa: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _is_terminal_business_refusal_action(db: Any, action_id: object) -> bool:
+    """终态业务拒收：已有拒收审计，不得再当系统未成故障传输（#1853 J5）。"""
+    try:
+        aid = int(action_id or 0)
+    except (TypeError, ValueError):
+        return False
+    if aid <= 0 or db is None or not hasattr(db, "conn"):
+        return False
+    try:
+        if db.conn.execute(
+            "SELECT 1 FROM decree_dossier_link_rejections "
+            "WHERE pending_action_id=? LIMIT 1",
+            (aid,),
+        ).fetchone():
+            return True
+    except sqlite3.OperationalError:
+        pass
+    try:
+        rows = db.conn.execute(
+            "SELECT item_json FROM rejection_reports WHERE section=?",
+            ("pending_actions",),
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return False
+    for row in rows:
+        try:
+            item = json.loads(row["item_json"] or "{}")
+        except (TypeError, ValueError):
+            continue
+        if isinstance(item, dict) and int(item.get("pending_action_id") or 0) == aid:
+            return True
+    return False
+
+
+def _system_secret_order_failure_payloads(
+    db: Any, turn: int, before_ids: set[int],
+) -> List[Dict[str, Any]]:
+    """真实未成落库故障传输：排除终态业务拒收。"""
+    if db is None or not hasattr(db, "list_pending_actions"):
+        return []
+    return [
+        _pending_action_failure_payload(action)
+        for action in db.list_pending_actions(int(turn), status="failed")
+        if action.get("kind") == "secret_order"
+        and int(action.get("id") or 0) not in before_ids
+        and not _is_terminal_business_refusal_action(db, action.get("id"))
+    ]
+
+
 def _sync_offices_from_db_impl(content: GameContent, db: "GameDB", llm_config: Optional[LLMConfig] = None) -> None:
     """启动/读档时以 DB characters 表重建内存人物表。
     DB 是持久化真相；不要在这里修写 DB。"""

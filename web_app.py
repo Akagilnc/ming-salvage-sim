@@ -84,7 +84,8 @@ from ming_sim.session import (
     AUTO_SAVE_PREFIX,
     AudienceAdmission,
     _is_summonable_court_minister,
-    _pending_action_failure_payload,
+    _is_terminal_business_refusal_action,
+    _system_secret_order_failure_payloads,
 )
 from ming_sim.highlight_judge import (
     DEFAULT_HIGHLIGHT_JUDGE_TIMEOUT_S,
@@ -1871,7 +1872,9 @@ class WebGame:
                 if a["kind"] == "secret_order"),
             "pending_non_directive_action_count": len(visible_non_directive_pending),
             "failed_secret_order_count": sum(
-                1 for _a in self.db.list_failed_secret_order_actions()),
+                1 for action in self.db.list_failed_secret_order_actions()
+                if not _is_terminal_business_refusal_action(self.db, action["id"])
+            ),
             "pending_decisions": pending_decisions,
             # #657：phase1 已落 decided、desk 只查 pending 为空时，投影 typed 续跑信号。
             # 不把 decided 塞回 pending 列表；前端空 POST 既有 resolve_decisions/stream。
@@ -5129,7 +5132,7 @@ def project_secret_orders_for_player(
 async def api_secret_orders(status: str = "") -> Dict[str, Any]:
     """列出密令的玩家投影。status 为空返回全部，否则按投影后的状态过滤。
 
-    failed_secret_order_count 是落库失败的待办计数，不是结案成败。
+    failed_secret_order_count 是真实未成落库故障待办计数，不含终态业务拒收。
     """
     game = get_game()
     orders = project_secret_orders_for_player(
@@ -5153,13 +5156,7 @@ def _new_secret_order_failure_payloads_for_turn(
     game: WebGame, turn: int, before_ids: set[int],
 ) -> List[Dict[str, Any]]:
     db = getattr(game, "db", None)
-    if db is None or not hasattr(db, "list_pending_actions"):
-        return []
-    return [
-        _pending_action_failure_payload(action)
-        for action in db.list_pending_actions(int(turn), status="failed")
-        if action.get("kind") == "secret_order" and int(action.get("id") or 0) not in before_ids
-    ]
+    return _system_secret_order_failure_payloads(db, turn, before_ids)
 
 
 def _capture_settlement_failure_snapshot(
@@ -5318,12 +5315,6 @@ def _reply_retries_for_night(db: Any, night_id: int) -> List[Dict[str, Any]]:
     return sorted(rows, key=lambda item: int(item["chat_turn_id"]))
 
 
-def _forecast_work_inflight(game: Any) -> bool:
-    from ming_sim.session_write_queue import get_session_write_queue
-
-    return get_session_write_queue(game).has_open_key_prefix("decree_forecast")
-
-
 @app.get("/api/audience/scroll")
 def api_audience_scroll(night_id: int = 0) -> Dict[str, Any]:
     """Shared live/read-only projection of one persisted audience scroll."""
@@ -5334,7 +5325,7 @@ def api_audience_scroll(night_id: int = 0) -> Dict[str, Any]:
         return {
             "night_id": 0, "status": "", "messages": [], "protagonist": "",
             "roster": [], "translation_pending": False, "translation_retries": [],
-            "pending_translation_turn_ids": [], "reply_retries": [], "forecast_inflight": False,
+            "pending_translation_turn_ids": [], "reply_retries": [],
         }
     roster = presence_roster(game.db, int(night["id"]))
     protagonist = str(night.get("protagonist_name") or "")
@@ -5360,7 +5351,6 @@ def api_audience_scroll(night_id: int = 0) -> Dict[str, Any]:
         "pending_translation_turn_ids": [int(row["chat_turn_id"]) for row in pending_replies],
         "translation_retries": game.pending_translation_retries(night_id=int(night["id"])),
         "reply_retries": _reply_retries_for_night(game.db, int(night["id"])),
-        "forecast_inflight": _forecast_work_inflight(game),
     }
 
 

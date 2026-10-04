@@ -314,12 +314,11 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
       if (path.endsWith("/api/game/state")) return jsonResp(makeState(1, [], [minister]));
       if (path.endsWith("/api/audience/scroll")) return jsonResp({ night_id: 23, messages: historyReads
         ? [{ role: "user", speaker: "朕", content: "边务如何", chat_turn_id: 8 }]
-        : [] });
+        : [], reply_retries: historyReads > 2 ? [{ chat_turn_id: 8, minister_name: "殿上", turn: 1, question: "边务如何" }] : [] });
       if (path.endsWith("/chat/stream")) return sseResp("accepted", { campaign_id: "c", night_id: 23, chat_turn_id: 8 });
       if (decodeURIComponent(path).endsWith("/api/audience/chat")) {
         historyReads += 1;
         return jsonResp({ campaign_id: "c", night_id: 23, minister, history: [], suggestions: [], can_undo_last_chat: false,
-          reply_retries: historyReads > 2 ? [{ chat_turn_id: 8, minister_name: "殿上", turn: 1, question: "边务如何" }] : [],
           generating_turn_ids: historyReads === 2 ? [8] : [] });
       }
       return jsonResp({});
@@ -510,6 +509,10 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
       if (u.pathname.endsWith("/api/audience/scroll")) return jsonResp({
         night_id: 1,
         translation_retries: translationDone ? [] : [{ chat_turn_id: 8, retryable: true }],
+        reply_retries: retryDone ? [{ chat_turn_id: 9, minister_name: "殿上", turn: 1, question: "续问赈济" }] : [
+          { chat_turn_id: 7, minister_name: "殿上", turn: 1, question: "拟旨赈济" },
+          { chat_turn_id: 9, minister_name: "殿上", turn: 1, question: "续问赈济" },
+        ],
         messages: [
           { role: "user", speaker: "朕", content: "拟旨赈济", chat_turn_id: 7, beat: "dialogue", highlights: [], container: {} },
           { role: "scene", speaker: "郭允厚", content: "臣请核实。", chat_turn_id: 8, beat: "dialogue", highlights: [], container: {} },
@@ -534,10 +537,6 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
         return jsonResp({
           minister, history: [], suggestions: [], campaign_id: "c1", night_id: 1,
           can_undo_last_chat: retryDone,
-          reply_retries: retryDone ? [{ chat_turn_id: 9, minister_name: "殿上", turn: 1, question: "续问赈济" }] : [
-            { chat_turn_id: 7, minister_name: "殿上", turn: 1, question: "拟旨赈济" },
-            { chat_turn_id: 9, minister_name: "殿上", turn: 1, question: "续问赈济" },
-          ],
           translation_retries: translationDone ? [] : [{ chat_turn_id: 8, retryable: true }],
         });
       }
@@ -660,12 +659,13 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
       if (path.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
       if (path.endsWith("/api/saves")) return jsonResp({ saves: [] });
       if (path.endsWith("/api/game/state")) return jsonResp(makeState(1, [], [minister]));
-      if (path.endsWith("/api/audience/scroll") && [3, 5].includes(historyReads)) {
+      if (path.endsWith("/api/audience/scroll") && [3, 5].includes(historyReads) && !replied) {
         scrollFailures += 1;
         return new Response(JSON.stringify({ detail: "scroll unavailable" }), { status: 500 });
       }
       if (path.endsWith("/api/audience/scroll")) return jsonResp({
         night_id: 1, translation_retries: translated ? [] : [{ chat_turn_id: 8, retryable: true }],
+        reply_retries: replied ? [] : [{ chat_turn_id: 7, question: "拟旨赈济" }],
         messages: [
           { role: "user", speaker: "朕", content: "拟旨赈济", chat_turn_id: 7, beat: "dialogue", highlights: [], container: {} },
           { role: "scene", speaker: "郭允厚", content: "臣请核实。", chat_turn_id: 8, beat: "dialogue", highlights: [], container: {} },
@@ -675,7 +675,6 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
         historyReads += 1;
         if ([2, 3, 5].includes(historyReads)) return new Response(JSON.stringify({ detail: "history unavailable" }), { status: 500 });
         return jsonResp({ minister, history: [], suggestions: [], campaign_id: "c1", night_id: 1,
-          reply_retries: replied ? [] : [{ chat_turn_id: 7, question: "拟旨赈济" }],
           translation_retries: translated ? [] : [{ chat_turn_id: 8, retryable: true }] });
       }
       if (path.endsWith("/api/audience/translation/retry") && init?.method === "POST") {

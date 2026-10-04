@@ -72,7 +72,6 @@ export function useChatActions({
   currentNightId: number;
 }) {
   const [chatNotice, setChatNotice] = React.useState("");
-  const [replyRetries, setReplyRetries] = React.useState<ReplyRetry[]>([]);
   const [translationRetries, setTranslationRetries] = React.useState<TranslationRetry[]>([]);
   const [retryReadFailure, setRetryReadFailure] = React.useState<RetryReadFailure | null>(null);
   const [canUndoLastChat, setCanUndoLastChat] = React.useState(false);
@@ -101,8 +100,7 @@ export function useChatActions({
     const allKnown = rosterRef.current;
     setTemporaryActiveMinister(allKnown.some((m) => m.name === data.minister.name) ? null : data.minister);
     setCanUndoLastChat(!!data.can_undo_last_chat);
-    // #505：崩溃遗留的中断轮 → 系统层重试入口。
-    setReplyRetries(data.reply_retries ?? []);
+    // #505 / #1853 J2：回话重试只以夜卷投影为准，历史接口不再维护平行副本。
     setTranslationRetries(data.translation_retries ?? []);
     setRetryReadFailure(null);
     return data;
@@ -207,6 +205,8 @@ export function useChatActions({
           const awaitTerminal = async () => {
             try {
               const data = await loadMinisterChat(initiatingPanelName);
+              // #1853 J2：回话失败投影只活在夜卷；恢复轮询后刷新夜卷权威。
+              invalidateAudienceScroll();
               if (run === recoveryRun.current && data?.generating_turn_ids?.includes(failedTurn.chat_turn_id)) {
                 recoveryTimer.current = window.setTimeout(awaitTerminal, 1500);
               }
@@ -309,7 +309,6 @@ export function useChatActions({
         // #499：撤回后剩余轮的读心递话仍随 turn-identified 投影归位。
         applyHistory(data.history);
             setCanUndoLastChat(!!data.can_undo_last_chat);
-        if (data.reply_retries) setReplyRetries(data.reply_retries);
         setChatNotice("已撤回最近一轮召对。");
       }
     } catch (err) {
@@ -325,10 +324,9 @@ export function useChatActions({
     recoveryPhase?: ReplyRetry["recovery_phase"],
   ) => {
     // #505：系统层重试——复用已持久问话，不造重复句。
-    // 夜卷是活权威：有轮号就发既有重试，不要求 hook 里另有一份历史副本。
+    // #1853 J2：夜卷是回话失败唯一投影；recovery_phase 由夜卷钮传入。
     if (busy || !Number.isInteger(chatTurnId) || chatTurnId <= 0) return;
-    const retry = replyRetries.find((entry) => entry.chat_turn_id === chatTurnId);
-    const phase = recoveryPhase ?? retry?.recovery_phase;
+    const phase = recoveryPhase;
     const initiatingPanelName = selectedMinisterRef.current;
     setBusy(phase ? "恢复本轮后续处理" : "重新生成回话");
     setError("");
@@ -350,7 +348,6 @@ export function useChatActions({
       if (selectedMinisterRef.current !== initiatingPanelName) return;
       applyHistory(data.history);
         setCanUndoLastChat(!!data.can_undo_last_chat);
-      setReplyRetries((current) => current.filter((entry) => entry.chat_turn_id !== chatTurnId));
       setChatNotice("本轮恢复完成。");
       invalidateAudienceScroll();
     } catch (postError) {
@@ -414,7 +411,6 @@ export function useChatActions({
 
   return {
     chatNotice,
-    replyRetries,
     translationRetries,
     retryReadFailure,
     canUndoLastChat,

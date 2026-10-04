@@ -24,7 +24,7 @@ from ming_sim.session import (
     GameSession,
     TurnPhase,
     _is_summonable_court_minister,
-    _pending_action_failure_payload,
+    _system_secret_order_failure_payloads,
 )
 
 logger = logging.getLogger(__name__)
@@ -58,17 +58,7 @@ def _new_secret_order_failure_payloads(
     session: GameSession, turn: int, before_ids: set[int],
 ) -> List[dict]:
     db = getattr(session, "db", None)
-    if db is None or not hasattr(db, "list_pending_actions"):
-        return []
-    failures: List[dict] = []
-    for action in db.list_pending_actions(int(turn), status="failed"):
-        if action.get("kind") != "secret_order":
-            continue
-        action_id = int(action.get("id") or 0)
-        if action_id in before_ids:
-            continue
-        failures.append(_pending_action_failure_payload(action))
-    return failures
+    return _system_secret_order_failure_payloads(db, turn, before_ids)
 
 
 def _print_pending_action_failures(failures: List[dict]) -> None:

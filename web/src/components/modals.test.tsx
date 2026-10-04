@@ -68,7 +68,6 @@ function renderModal(props: {
   busy?: string;
   streamingMinisterMessage?: string;
   onCancel?: () => void;
-  replyRetries?: React.ComponentProps<typeof ChatModal>["replyRetries"];
   onRetryReply?: (
     ministerName: string,
     chatTurnId: number,
@@ -144,7 +143,6 @@ function renderModal(props: {
         composerHint=""
         input={input}
         error=""
-        replyRetries={props.replyRetries}
         onInput={(value) => setInput(value)}
         onSend={props.onSend ?? (() => {})}
         onRetryReply={props.onRetryReply}
@@ -531,18 +529,30 @@ describe("ChatModal — placeholder switches on character type", () => {
     expect(textarea.placeholder.length).toBeGreaterThan(5);
   });
 
-  it("shows #505 system-layer reply retry control when replyRetry is set", () => {
+  it("shows #505 system-layer reply retry control when replyRetry is set", async () => {
     const retry = vi.fn();
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        night_id: 23,
+        protagonist: "",
+        roster: [],
+        translation_pending: false,
+        messages: [{ role: "user", speaker: "朕", content: "剿抚孰先？", chat_turn_id: 12 }],
+        reply_retries: [
+          { chat_turn_id: 12, question: "剿抚孰先？" },
+          { chat_turn_id: 13, question: "退朝", recovery_phase: "court_break", error_pack_path: "/tmp/post-reply-pack" },
+        ],
+      }),
+    }));
     renderModal({
       minister: MINISTER_MOCK,
       portraitPrefix: "minister_",
+      currentNightId: 23,
       chat: [{ role: "user", content: "剿抚孰先？" }],
-      replyRetries: [
-        { chat_turn_id: 12, question: "剿抚孰先？" },
-        { chat_turn_id: 13, question: "退朝", recovery_phase: "court_break", error_pack_path: "/tmp/post-reply-pack" },
-      ],
       onRetryReply: retry,
     });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
     const note = document.querySelector('[data-testid="reply-retry-12"]');
     expect(note?.textContent).toContain("重试");
     expect(note?.textContent).toContain("剿抚孰先？");
@@ -627,7 +637,7 @@ describe("ChatModal — soft scenes and selected-minister lens (#543 / #1511)", 
     const retryReply = vi.fn();
     const yang = { ...MINISTER_MOCK, id: "yang", name: "杨嗣昌", summary: "兵部旧臣", favorite: false };
     const hong = { ...MINISTER_MOCK, id: "hong", name: "洪承畴", office: "三边总督", summary: "边臣", favorite: true };
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ night_id: 23, protagonist: "洪承畴", roster: [{ name: "洪承畴", present: true }], container: { time_of_day: "戌时", location: "乾清宫", audience_type: "越次召对" }, translation_retries: [{ chat_turn_id: 1, night_id: 23, minister_name: "洪承畴", kind: "translation_pending", retryable: true, error_pack_path: "/tmp/audience-turn-1" }], messages: [
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ night_id: 23, protagonist: "洪承畴", roster: [{ name: "洪承畴", present: true }], container: { time_of_day: "戌时", location: "乾清宫", audience_type: "越次召对" }, translation_retries: [{ chat_turn_id: 1, night_id: 23, minister_name: "洪承畴", kind: "translation_pending", retryable: true, error_pack_path: "/tmp/audience-turn-1" }], reply_retries: [{ chat_turn_id: 12, question: "辽饷何解？" }], messages: [
       { role: "scene", speaker: "洪承畴", content: "", beat: "divider", soft_boundary: true, container: { audience_type: "越次召对" } },
       { role: "scene", speaker: "洪承畴", content: "洪承畴趋入殿中。", beat: "entrance", container: { audience_type: "越次召对" } },
       { role: "minister", speaker: "洪承畴", content: "臣自三边来。", beat: "dialogue", container: { audience_type: "越次召对" }, chat_turn_id: 1 },
@@ -645,7 +655,6 @@ describe("ChatModal — soft scenes and selected-minister lens (#543 / #1511)", 
       onSend: send,
       onUndo: undo,
       canUndoLastChat: true,
-      replyRetries: [{ chat_turn_id: 12, question: "辽饷何解？" }],
       onRetryReply: retryReply,
       onRetryTranslation: vi.fn(),
     });
@@ -1282,13 +1291,12 @@ describe("ChatModal — one-night audience scroll (#1849)", () => {
       // The same night keeps every participant in chronological order.
       ...nightScroll,
     ];
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ night_id: 23, protagonist: "", roster: [], translation_pending: false, messages: halfTurnScroll }) }));
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ night_id: 23, protagonist: "", roster: [], translation_pending: false, reply_retries: [{ chat_turn_id: 12, question: "辽饷何解？" }], messages: halfTurnScroll }) }));
     renderModal({
       minister: xu,
       ministers: [hong, xu],
       portraitPrefix: "minister_",
       currentNightId: 23,
-      replyRetries: [{ chat_turn_id: 12, question: "辽饷何解？" }],
       pendingUserMessage: "辽饷何解？",
       pendingIdentity: { campaign_id: "test-campaign", night_id: 23, chat_turn_id: 12 },
     });

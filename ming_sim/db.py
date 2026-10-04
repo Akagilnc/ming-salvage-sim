@@ -17592,6 +17592,40 @@ class GameDB:
 
         return isinstance(exc, (PendingActionRefusal, OfficeAppointmentRejection))
 
+    def _dispose_pending_action_apply_exception(
+        self, pa: Dict[str, object], exc: BaseException, *, rejection_collector=None,
+    ) -> bool:
+        """暂存提交异常的共同分流政策（#1853 J4）。
+
+        调用方已 ROLLBACK TO savepoint（及必要的输入/内存恢复）。
+        返回 True = 业务拒收已终态该项，调用方继续其余项；
+        RejectionCollectorRequired 与真异常一律上抛。
+        """
+        from ming_sim.applier import RejectionCollectorRequired
+
+        if isinstance(exc, RejectionCollectorRequired):
+            raise
+        rejection = getattr(exc, "dossier_link_rejection", None)
+        if rejection is not None:
+            # 业务拒收（模型指向不存在案卷）：durable 审计 + 终态 failed，
+            # 不是代码故障，不上抛。
+            self._record_dossier_link_rejection(
+                *rejection, pending_action_id=int(pa["id"]),
+            )
+            self.conn.execute(
+                "UPDATE pending_actions SET status='failed' WHERE id=?", (int(pa["id"]),))
+            tlog(f"[pending_actions] 业务拒收 id={pa['id']} {pa['kind']}/{pa['action']}：{exc}")
+            return True
+        if self._is_typed_business_refusal(exc):
+            self._record_typed_business_refusal(pa, exc, rejection_collector)
+            self.conn.execute(
+                "UPDATE pending_actions SET status='failed' WHERE id=?", (int(pa["id"]),))
+            tlog(f"[pending_actions] 业务拒收 id={pa['id']} {pa['kind']}/{pa['action']}：{exc}")
+            return True
+        # #1853：真异常留 pending，停止本批。收夜与颁诏由既有失败行接手。
+        tlog(f"[pending_actions] 落库失败上抛 id={pa['id']} {pa['kind']}/{pa['action']}：{exc}")
+        raise
+
     def _record_typed_business_refusal(
         self, pa: Dict[str, object], exc: BaseException, rejection_collector,
     ) -> None:
@@ -17600,11 +17634,11 @@ class GameDB:
         from ming_sim.applier import Provenance, RejectedItem
 
         raw_item = getattr(exc, "item", None)
-        item = dict(raw_item) if isinstance(raw_item, dict) else {
-            "pending_action_id": int(pa["id"]),
-            "kind": str(pa.get("kind") or ""),
-            "action": str(pa.get("action") or ""),
-        }
+        item = dict(raw_item) if isinstance(raw_item, dict) else {}
+        # #1853 J5：审计必须带 pending_action_id，系统失败传输据此排除终态拒收。
+        item.setdefault("pending_action_id", int(pa["id"]))
+        item.setdefault("kind", str(pa.get("kind") or ""))
+        item.setdefault("action", str(pa.get("action") or ""))
         rejection_collector.record(
             "pending_actions",
             RejectedItem(
@@ -18140,31 +18174,10 @@ class GameDB:
                 except Exception as exc:
                     self.conn.execute(f"ROLLBACK TO {savepoint}")
                     restore_office_memory()
-                    # 0150-D2 / #1745：typed 归属缺口不得吞成 pending failed。
-                    from ming_sim.applier import RejectionCollectorRequired
-                    if isinstance(exc, RejectionCollectorRequired):
-                        raise
-                    rejection = getattr(exc, "dossier_link_rejection", None)
-                    if rejection is not None:
-                        # 业务拒收（模型指向不存在案卷）：durable 审计 + 终态 failed，
-                        # 不是代码故障，不上抛。
-                        self._record_dossier_link_rejection(
-                            *rejection, pending_action_id=int(pa["id"]),
-                        )
-                        self.conn.execute(
-                            "UPDATE pending_actions SET status='failed' WHERE id=?", (int(pa["id"]),))
-                        tlog(f"[pending_actions] 业务拒收 id={pa['id']} {pa['kind']}/{pa['action']}：{exc}")
+                    if self._dispose_pending_action_apply_exception(
+                        pa, exc, rejection_collector=rejection_collector,
+                    ):
                         ok = False
-                    elif self._is_typed_business_refusal(exc):
-                        self._record_typed_business_refusal(pa, exc, rejection_collector)
-                        self.conn.execute(
-                            "UPDATE pending_actions SET status='failed' WHERE id=?", (int(pa["id"]),))
-                        tlog(f"[pending_actions] 业务拒收 id={pa['id']} {pa['kind']}/{pa['action']}：{exc}")
-                        ok = False
-                    else:
-                        # #1853：真异常留 pending，停止本批。收夜与颁诏由既有失败行接手。
-                        tlog(f"[pending_actions] 落库失败上抛 id={pa['id']} {pa['kind']}/{pa['action']}：{exc}")
-                        raise
                 finally:
                     self.conn.execute(f"RELEASE {savepoint}")
                 if rejection_collector is not None:
@@ -18255,34 +18268,10 @@ class GameDB:
                         )
                 except Exception as exc:
                     self.conn.execute(f"ROLLBACK TO {savepoint}")
-                    from ming_sim.applier import RejectionCollectorRequired
-                    if isinstance(exc, RejectionCollectorRequired):
-                        raise
-                    rejection = getattr(exc, "dossier_link_rejection", None)
-                    if rejection is not None:
-                        self._record_dossier_link_rejection(
-                            *rejection, pending_action_id=int(pa["id"]),
-                        )
-                        self.conn.execute(
-                            "UPDATE pending_actions SET status='failed' WHERE id=?",
-                            (int(pa["id"]),),
-                        )
-                        tlog(f"[pending_actions] 业务拒收 id={pa['id']} {pa['kind']}/{pa['action']}：{exc}")
+                    if self._dispose_pending_action_apply_exception(
+                        pa, exc, rejection_collector=rejection_collector,
+                    ):
                         result = None
-                    elif self._is_typed_business_refusal(exc):
-                        self._record_typed_business_refusal(pa, exc, rejection_collector)
-                        self.conn.execute(
-                            "UPDATE pending_actions SET status='failed' WHERE id=?",
-                            (int(pa["id"]),),
-                        )
-                        tlog(f"[pending_actions] 业务拒收 id={pa['id']} {pa['kind']}/{pa['action']}：{exc}")
-                        result = None
-                    else:
-                        tlog(
-                            f"[pending_actions] 落库失败上抛 id={pa['id']} "
-                            f"{pa['kind']}/{pa['action']}：{exc}"
-                        )
-                        raise
                 finally:
                     self.conn.execute(f"RELEASE {savepoint}")
                 if rejection_collector is not None:
