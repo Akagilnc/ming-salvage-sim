@@ -506,23 +506,14 @@ def assess_foundation_tier(db: Any, commitment_ref: int) -> str:
     stages_passed = _stages_passed_from_records(db, int(commitment_ref), n_stages)
     spent_amount, _fiscal_count = _spent_amount_and_fiscal_count(db, row)
 
-    band = ""
-    did = parse_dossier_id(row["origin_ref"] if "origin_ref" in row.keys() else "")
-    if did is not None:
-        progress = db.list_dossier_progress(int(did))
-        if progress:
-            band = str(progress[-1].get("progress_band") or "")
-
-    rooted_bands = {"告成", "已成", "生根", "完工", "就绪"}
-    mid_bands = {"在办", "过半", "在途", "推进"}
-
-    if band in rooted_bands or bar >= _BAR_ROOTED:
+    # #1847: do not admit foundation tier from free progress_band wording synonyms.
+    # Structural signals only: bar thresholds, stages passed, spent amount.
+    if bar >= _BAR_ROOTED:
         return FOUNDATION_ROOTED
     if n_stages >= 2 and stages_passed >= n_stages:
         return FOUNDATION_ROOTED
     if (
-        band in mid_bands
-        or (_BAR_MID_LOW <= bar < _BAR_ROOTED)
+        (_BAR_MID_LOW <= bar < _BAR_ROOTED)
         or (n_stages >= 2 and 0 < stages_passed < n_stages)
         or (spent_amount >= _SPENT_AMOUNT_HALFWAY and bar >= _BAR_MID_LOW)
     ):

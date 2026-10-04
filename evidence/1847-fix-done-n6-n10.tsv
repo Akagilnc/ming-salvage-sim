@@ -15,3 +15,6 @@ evidence/1847-review-needs-human.py	window_reread	conservative	NEEDS_HUMAN re-ju
 ming_sim/token_stats.py	_guess_caller_tag	delete_prompt_keyword_classify	system prompt wording→caller tag deleted; explicit ming_sim_caller_tag or ?
 ming_sim/db.py	_snapshot_secret_order_people	delete_office_substring_admit	substring office admit deleted; exact office_type/office + formal concurrent parts only
 ming_sim/session.py	_ensure_close_night_confirm_cue	delete_answer_rewrite	LLM answer append/rewrite deleted; fixed UI cue helper only
+ming_sim/breach_plea.py	assess_foundation_tier	delete_band_synonym_admit	progress_band free synonym sets deleted; bar/stages/spent structural only
+ming_sim/cli_backend.py	_extract_imperative_assignee	delete_prose_extract	imperative regex + char-class institution guess deleted; structured 承办人 + non-person registry only
+ming_sim/cli_backend.py	_is_institution_like_name	delete_char_class	character-class institution wording deleted

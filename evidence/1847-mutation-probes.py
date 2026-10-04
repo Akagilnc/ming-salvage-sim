@@ -240,6 +240,19 @@ ok(
     "",
 )
 ok(
+    "N10_NO_FOUNDATION_BAND_SYNONYMS",
+    "rooted_bands" not in (ROOT / "ming_sim/breach_plea.py").read_text(encoding="utf-8")
+    and "告成" not in (ROOT / "ming_sim/breach_plea.py").read_text(encoding="utf-8").split("def assess_foundation_tier")[1].split("\ndef ")[0],
+    "",
+)
+ok(
+    "N10_NO_IMPERATIVE_ASSIGNEE_EXTRACT",
+    "_extract_imperative_assignee" not in (ROOT / "ming_sim/cli_backend.py").read_text(encoding="utf-8")
+    and "_ASSIGNEE_IMPERATIVE_RE" not in (ROOT / "ming_sim/cli_backend.py").read_text(encoding="utf-8")
+    and "_is_institution_like_name" not in (ROOT / "ming_sim/cli_backend.py").read_text(encoding="utf-8"),
+    "",
+)
+ok(
     "N6_NO_AMBIGUOUS_CLOSE_ANSWER_REWRITE",
     "_ensure_close_night_confirm_cue" not in (ROOT / "ming_sim/session.py").read_text(encoding="utf-8")
     and "_ambiguous_close_confirm_cue" in (ROOT / "ming_sim/session.py").read_text(encoding="utf-8"),
