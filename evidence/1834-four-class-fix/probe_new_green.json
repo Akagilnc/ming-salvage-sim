@@ -1,9 +1,6 @@
 {
   "F15": {
     "secret_dossier_in_exclude_set": true,
-    "affair_derived_from_dossiers": {
-  "F15": {
-    "secret_dossier_in_exclude_set": true,
     "affair_derived_from_dossiers": true,
     "parallel_secret_order_affair_ids_fn": false,
     "opening_has_name": false,

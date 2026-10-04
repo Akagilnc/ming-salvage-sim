@@ -3,11 +3,6 @@
     "opening_has_name": true,
     "file_hit_n": 1,
     "clean": false
- {
-  "F15_old_red": {
-    "opening_has_name": true,
-    "file_hit_n": 1,
-    "clean": false
   },
   "F16_staged_old_red": {
     "criterion_len": 200,
