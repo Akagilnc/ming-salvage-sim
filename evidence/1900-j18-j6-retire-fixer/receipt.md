@@ -1,9 +1,9 @@
 # #1900 修内司施工回执（J18 + J6）
 
-工作树：`/Users/akagilnc/WorkSpace/Ming_LLM-1900-w5`  
-分支：`ak-roles/1900-j18-retire-revoked-mechanisms`  
-底座 HEAD（施工前）：`27cf62a320277e1167b1448070a1d9ebfb678143`  
-ADR 设计记录提交：`a10edb6db5a3fa1af8010f0d26d0a85133e56b3b`  
+工作树：`/Users/akagilnc/WorkSpace/Ming_LLM-1900-w5`
+分支：`ak-roles/1900-j18-retire-revoked-mechanisms`
+底座 HEAD（施工前）：`27cf62a320277e1167b1448070a1d9ebfb678143`
+ADR 设计记录提交：`a10edb6db5a3fa1af8010f0d26d0a85133e56b3b`
 既存 `?? .baseline/` 未动；无 stash / amend / rewrite / push / PR。
 
 未结类别以末份判词 `01-1900-judge-27cf62a32.json` 的 continue payload 为准：J18（P1）、J6（P2）。
@@ -61,7 +61,7 @@ ADR 设计记录提交：`a10edb6db5a3fa1af8010f0d26d0a85133e56b3b`
 
 ### 复扫
 
-生产+测试对专用符号复扫：空（`J18_PRODUCTION_TESTS_CLEAN`）。  
+生产+测试对专用符号复扫：空（`J18_PRODUCTION_TESTS_CLEAN`）。
 `docs/DELTA_SCHEMA.md` 仅保留「已退役」标题提及（失效说明）。见 `j18-rescan.txt`。
 
 ### 例外
@@ -139,7 +139,7 @@ python3 -m pytest \
   -q --tb=line -p no:cacheprovider
 ```
 
-结果：`119 passed in 5.08s`（`focused-after-fix.log`，real ~5.37s）。  
+结果：`119 passed in 5.08s`（`focused-after-fix.log`，real ~5.37s）。
 J6 权重迁移后再跑相关 4 文件：`76 passed in 3.89s`（`j6-after-weight-migrate.log`）。
 
 未跑全量。
@@ -148,7 +148,7 @@ J6 权重迁移后再跑相关 4 文件：`76 passed in 3.89s`（`j6-after-weigh
 
 ## 4. 净增减（相对 ADR 提交 `a10edb6db`）
 
-施工 diff（未含 ADR 设计记录）：约 **+154 / −2271**（`git diff --stat`）。  
+施工 diff（未含 ADR 设计记录）：约 **+154 / −2271**（`git diff --stat`）。
 生产 `ming_sim` 明显删简（`db.py` −532、`declaration_dispatch.py` −318 等）。
 
 ---
