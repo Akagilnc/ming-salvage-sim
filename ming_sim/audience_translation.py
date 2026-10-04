@@ -276,8 +276,10 @@ def run_turn_translation_job(
 
     # 死轮 / 未落定回话 / 已 done：闸内短读后早退（禁持非重入锁再嵌套写）。
     # ADR 0155 / 0036：转译真源 = 已持久化回话；generating 或无 minister_message_id 拒绝。
+    # #1853 J8：必备 get_story_extract_status / conn 查询直调；禁缺接口把已 done
+    # 洗成 already_done=False 后静默整轮重译（不只空[]）。
     already_done = False
-    if ctid > 0 and hasattr(db, "conn"):
+    if ctid > 0:
         with _gate_cm():
             row = db.conn.execute(
                 "SELECT status, minister_message_id FROM chat_turns WHERE id=?",
@@ -296,10 +298,8 @@ def run_turn_translation_job(
                 raise AudienceTranslateError(
                     f"源轮回话未落定：chat_turn_id={ctid} status={status}"
                 )
-            already_done = (
-                hasattr(db, "get_story_extract_status")
-                and db.get_story_extract_status(ctid) == "done"
-            )
+            already_done = db.get_story_extract_status(ctid) == "done"
+            # 写生命周期：缺 mark 口则跳过置 pending，不属查询空投影护栏。
             if not already_done and hasattr(db, "mark_story_extraction_pending"):
                 db.mark_story_extraction_pending(ctid)
         if already_done:
@@ -353,7 +353,8 @@ def run_turn_translation_job(
             raise AudienceTranslateError("说话人分段未逐字覆盖源轮回话")
         with _gate_cm():
             # 落账临界区复查源轮仍存活（ADR 0038：后台写入前须校验目标轮仍存活）。
-            if ctid > 0 and hasattr(db, "conn"):
+            # #1853 J8：必备 conn 查询直调；禁缺接口跳过复查后继续落账。
+            if ctid > 0:
                 live = db.conn.execute(
                     "SELECT status FROM chat_turns WHERE id=?", (ctid,),
                 ).fetchone()
@@ -369,6 +370,7 @@ def run_turn_translation_job(
             )
     except Exception as exc:
         _mark_translation_pending(db, ctid, write_gate)
+        # 写生命周期：缺 set_chat_turn_error_pack 则跳过落错误包，随后仍上抛。
         if ctid > 0 and hasattr(db, "set_chat_turn_error_pack"):
             from ming_sim.exceptions import LLMUnavailable
             if not isinstance(exc, LLMUnavailable):

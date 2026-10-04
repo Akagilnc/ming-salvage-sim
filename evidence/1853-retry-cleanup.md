@@ -4,19 +4,21 @@
 - 分支：`ak-roles/issue-1853-retry-cleanup`
 - 起始 HEAD（J2-T/J8 首轮）：`2e392c22469b3dea6f5e69d21d1abe49adac8714`
 - 首轮交卷：`f88af780d0f5e402a9c06a50f5dd88d98488ba5e`（J2-T + 仅三 reply getter 的窄 J8）
-- **本轮交卷 commit：`3c4aca7045eaea539bbaee6ae672a853f9d4f73c`（J8 扩类：全仓重试/转译重试查询护栏）**
+- 扩类交卷：`3c4aca7045eaea539bbaee6ae672a853f9d4f73c`（J8 查询空护栏扩类；表 B 误并查询）
+- **本轮交卷 commit：（见文末；纠正表 B + `already_done` 查询直调）**
 - 派单：`01a108c7-fcb1-77bc-a311-40f04c296e26@fixer`
-- 判词冻结：`07-1853-judge-2e392c224.json` payloads **末份**；复扫纠正：J8 不得收窄为三个 reply getter
+- 判词冻结：`07-1853-judge-2e392c224.json` payloads **末份**
+- **用户裁定（本轮）**：J2 放行；J8 未扫净。授权=重试/转译重试**查询**接缝内，必备接口被当可选、缺失仍正常继续全部直调（不只空 `[]`）一律直调；无新增机制/检查/适配/失败账本；不扩一般聊天/结算/关闭生命周期或 SDK/结果字段。
 - **未合入目标分支；不 push / 不开 PR；不 amend / 不 stash**
 
 ## 自查二连（本轮）
 
-- 同类型：授权重试/转译重试**查询**接缝内，必备 DB 接口缺失→正常空结果的兼容一律直调；相邻 startup 预检同类一并清。
-- 引入 bug：未扩到写生命周期 / 模型传输能力护栏；未追绿 appDurableWiring 已知红灯；不宣称「几个符号=全类扫净」。
+- 同类型：转译作业内 `get_story_extract_status` 查询假可选→静默重译已直调；同块落账前 `conn` 复查直调；写口 `mark_*` / `set_chat_turn_error_pack` 保留并写可核依据。
+- 引入 bug：未改一般聊天 undo / 回话失败落账 / 结算 getattr；未新增证明性测试；未追 appDurableWiring 已知红灯。
 
 ---
 
-## 类一：J2-T（首轮已结，本轮未重开）
+## 类一：J2-T（用户裁定放行，本轮不重开）
 
 首轮沿生产者→历史传输→类型→状态→prop→回退清退；夜卷/归档/`retryReadFailure`/重试 POST 保留。施工证据为 `f88af780d`。
 
@@ -43,13 +45,13 @@ rg -Hn -I 'translation_retries|translationRetries|setTranslationRetries|Translat
 
 ---
 
-## 类二：J8 必备 DB 查询空结果护栏（本轮扩类）
+## 类二：J8 必备 DB 查询护栏（含「缺失仍继续全部直调」）
 
-### 票面/判词定义（整类，**禁止**收窄到三个 getter）
+### 票面/判词 + 用户本轮释宽
 
-「必备DB查询接口被当成可选能力，缺失时正常返回空投影」——**授权重试查询接缝**内（回话重试 **与** 转译重试/待补投影/补跑预检），将必备接口缺失解释为正常空结果/`[]`/空原话/伪推状态的兼容路径一律删简为直调。
+「必备DB查询接口被当成可选能力，缺失时正常返回空投影」——授权重试查询接缝（回话重试 **与** 转译重试/待补投影/补跑预检/转译作业早退查询）。
 
-**首轮错误**：枚举收窄为 `list_hall_chat_turns` / `get_interrupted_reply_retries` / `get_post_reply_retries` 三符号；并错误保留 CLI `db is None` 为「合法」。本轮纠正。
+用户本轮明确：不只空 `[]`；**缺失后仍正常继续全部直调**（例：缺 `get_story_extract_status` → `already_done=False` → 静默整轮重译）同属清退。
 
 ### 必备性（GameDB / GameSession）
 
@@ -58,106 +60,84 @@ rg -Hn -I 'translation_retries|translationRetries|setTranslationRetries|Translat
 | `conn` | `GameDB` 连接 | `session.py`：成功构造后 `self.db = GameDB(...)` |
 | `list_unextracted_replies` | `db.py:10062` | 同上 |
 | `get_story_extract_status` | `db.py:10039` | 同上 |
-| `get_interrupted_reply_retries` / `get_post_reply_retries` / `list_hall_chat_turns` | `db.py` | 同上；首轮已直调 |
+| `get_interrupted_reply_retries` / `get_post_reply_retries` / `list_hall_chat_turns` | `db.py` | 同上 |
 | `WebGame.db` | `web_app.py` property → `session.db` | 恒为上述实例 |
 
-### 机械枚举命令（先全选 guard，再人工分类）
+### 机械枚举命令（不以拼写收窄；db / self.db / session.db / game.db）
 
 ```bash
-# 全仓全部属性兼容与缺DB分支，不以已知 getter 名称限制候选：
 rg -Hn -I '(hasattr\(|getattr\(|\bdb is None\b)' . \
-  --glob '!evidence/**' --glob '!package-lock.json'
-# 辅助索引，非类别边界：
-rg -Hn -I '(hasattr|getattr).*?(retr|translat|hall_chat)|((retr|translat).*?(hasattr|getattr))' . \
-  --glob '!evidence/**' --glob '!package-lock.json'
-# 沿夜卷/CLI回话和转译重试入口反查依赖，再按下表分属类/保留。
+  --glob '!evidence/**' --glob '!package-lock.json' --glob '!web/node_modules/**' --glob '!archive/**'
+# 辅助：
+rg -Hn -I 'hasattr\([^)]*get_story_extract_status' . \
+  --glob '!evidence/**' --glob '!**/.git/**'   # 须 ZERO
 ```
 
-### 全员表：属类 → 删；不属类 → 保留依据
+### 全员表：属类 → 删；不属类 → 保留依据（可核）
 
 | # | 成员 | 路径 | 分类 | 处置 / 保留依据 |
 |---|---|---|---|---|
-| 1 | `pending_translation_retries` 缺 `conn`→`[]` | `web_app.py` | **属类**（转译重试查询） | **删 → 直调** `list_pending_translations` |
-| 2 | `list_pending_translations` 缺 `list_unextracted_replies`→`[]` | `audience_translation.py` | **属类** | **删 → 直调** |
-| 3 | `_load_emperor_message_for_turn` 缺 `conn`→`""` | `audience_translation.py` | **属类**（补跑/重试读原话） | **删 hasattr**；保留 `ctid<=0→""` |
-| 4 | CLI `_print_interrupted_reply_retry_hint` `getattr(session,'db',None)`→正常返回 | `terminal.py` | **属类** | **删 → `session.db` 直调**（纠正首轮错误保留 dbNone） |
-| 5 | CLI `_retry_interrupted_reply_cli` 同上 | `terminal.py` | **属类** | **删 → `session.db` 直调** |
-| 6 | `WebGame.reply_retries` `hasattr(conn)` 夜查询降级 | `web_app.py` | **属类** | **删**；殿上路径直调 `get_open_night` |
-| 7 | `retry_pending_translation` 缺 `get_story_extract_status` 伪推 pending/done | `web_app.py` | **属类** | **删 → 直调** |
-| 8 | `_spawn_startup_extraction_catch_up` 缺 `conn`/`list_unextracted_replies`→当无待补 | `web_app.py` | **属类（相邻 startup 同类）** | **删**；与转译待补预检同因 |
-| A | `mark_turn_translation_done` / `_mark_translation_pending` hasattr | `audience_translation.py` | 不属 | **写生命周期**，非查询空投影 |
-| B | `run_turn_translation_job` 内 hasattr(conn/status/mark) | `audience_translation.py` | 不属 | **作业写路径**能力分支 |
-| C | CLI retry 内 `persist_minister_reply`/`capture_*`/`restore_*` hasattr | `terminal.py` | 不属 | **重试写生命周期**，非查询护栏 |
-| D | `_record_audience_exit` hasattr(conn) | `terminal.py` | 不属 | 告退写账，非重试查询 |
-| E | `chat_projection` / `_start_chat_turn` / `can_undo_*` 等 hasattr(conn) | `web_app.py` | 不属 | 轻壳双路径 / 聊天生生命周期，非重试查询→空投影 |
-| F | `api_audience_chat_history` hasattr(conn)→open_night None | `web_app.py` | 不属 | 一般夜态查询，非重试/转译重试入口 |
-| G | 启动 `reconcile_interrupted_*` hasattr(conn) | `web_app.py` | 不属 | **写口对账**，非空结果查询护栏 |
-| H | settlement / hot-replace `getattr(game\|session,'db',None)` | `web_app.py` | 不属 | 结算/替换生命周期，非授权重试查询 |
-| I | `session.close` `getattr(self,'db',None)` | `session.py` | 不属 | 关闭清理 |
-| J | 首轮已删的三 reply getter hasattr→`[]` | `_reply_retries_for_night` 等 | 属类（已结） | 保持直调，本轮不回潮 |
+| 1 | `pending_translation_retries` 缺 `conn`→`[]` | `web_app.py` | **属类** | **已删 → 直调**（`3c4aca704`） |
+| 2 | `list_pending_translations` 缺 `list_unextracted_replies`→`[]` | `audience_translation.py` | **属类** | **已删 → 直调** |
+| 3 | `_load_emperor_message_for_turn` 缺 `conn`→`""` | `audience_translation.py` | **属类** | **已删 → 直调** |
+| 4–5 | CLI retry hint/入口 `getattr(session,'db',None)` | `terminal.py` | **属类** | **已删 → `session.db` 直调** |
+| 6 | `WebGame.reply_retries` `hasattr(conn)` 夜查询降级 | `web_app.py` | **属类** | **已删** |
+| 7 | `retry_pending_translation` 缺 status 伪推 | `web_app.py` | **属类** | **已删 → 直调** |
+| 8 | `_spawn_startup_extraction_catch_up` 缺接口当无待补 | `web_app.py` | **属类（相邻）** | **已删** |
+| 9 | `run_turn_translation_job` **`already_done = hasattr(get_story_extract_status) and …`** | `audience_translation.py` | **属类（查询；缺则静默重译）** | **本轮删 → `db.get_story_extract_status(ctid)=='done'` 直调**；同块早退 `conn` 查询直调 |
+| 10 | 同 job 落账前 `hasattr(conn)` 跳过存活复查后继续落账 | `audience_translation.py` ~356 | **属类（查询；缺则继续落账）** | **本轮删 → `db.conn` 直调** |
+| J | 首轮三 reply getter hasattr→`[]` | `_reply_retries_for_night` 等 | 属类（已结） | 保持直调 |
+| A | `mark_turn_translation_done` `hasattr(conn)`→return | `audience_translation.py:150` | 不属 | **写**：`UPDATE chat_turns SET extract_status='done'`（水位）；缺 conn 跳过写，不投影空重试、不触发重译 |
+| B1 | `_mark_translation_pending` / job 内 `hasattr(mark_story_extraction_pending)` :211/:303 | `audience_translation.py` | 不属 | **写**：`GameDB.mark_story_extraction_pending`=`UPDATE … extract_status='pending'`（`db.py:10053`）；缺口跳过置 pending，随后仍走失败上抛/继续；非查询空投影 |
+| B2 | job 失败支 `hasattr(set_chat_turn_error_pack)` :372 | `audience_translation.py` | 不属 | **写**：`GameDB.set_chat_turn_error_pack`=`UPDATE … error_pack_path`（`db.py:10046`）；缺口跳过落包，**仍 `raise`**；非查询早退/空列表 |
+| C | CLI retry 内 `persist_minister_reply`/`capture_*`/`restore_*` hasattr | `terminal.py` | 不属 | **重试写生命周期**（落回话/回滚/恢复），非查询护栏 |
+| D | `_record_audience_exit` hasattr(conn) | `terminal.py` | 不属 | 告退写账 |
+| E | `chat_projection` / `_start_chat_turn` / `can_undo_*` 等 hasattr(conn) | `web_app.py` | 不属 | 轻壳双路径 / 一般聊天生命周期；非重试查询→空投影或静默重译 |
+| E2 | `_record_persisted_reply_failure` ~1978 `hasattr(conn)`→`False`（用户点名；非 `_chat_turn_extraction_done`） | `web_app.py` | 不属 | **回话后失败落账写路径**：缺 conn 直接 `return False`（未落 pending/error_pack/post_reply）；不返回重试 `[]`、不跳过已 done 查询；属一般聊天失败善后 |
+| E3 | `undo_last_chat` ~2042 `hasattr(conn)` 殿上分流 | `web_app.py` | 不属 | **一般撤回路由**：缺 conn 跳过 SCENE 夜序解析，落入大臣撤回主链；非转译/回话重试查询接缝 |
+| F | `api_audience_chat_history` hasattr(conn)→open_night None | `web_app.py` | 不属 | 一般夜态查询 |
+| G | 启动 `reconcile_interrupted_*` hasattr(conn) | `web_app.py` | 不属 | **写口对账** |
+| H | settlement / hot-replace `getattr(game\|session,'db',None)` | `web_app.py` | 不属 | 结算/替换生命周期（授权不扩） |
+| I | `session.close` `getattr(self,'db',None)` | `session.py` | 不属 | 关闭清理（授权不扩） |
 
-### 复扫（本轮施工后，属类查询护栏）
+**表 B 纠错**：上轮把整个 `run_turn_translation_job` 内 `hasattr(conn/status/mark)` 并成「作业写路径 / 不属」——**错误**。查询子句（`get_story_extract_status` → `already_done`、落账前 `conn` 复查）属类须直调；仅 `mark_story_extraction_pending` / `set_chat_turn_error_pack` 为写生命周期保留（上表 B1/B2）。
+
+### 复扫（本轮后）
 
 ```bash
-rg -n -I \
-  -e 'if not hasattr\(db, "list_unextracted_replies"\)' \
-  -e 'getattr\(session,\s*["'\'']db["'\'']\s*,\s*None\)' \
-  -e 'hasattr\(self\.db, "get_story_extract_status"\)' \
-  -e 'pending_translation_retries' -A6 \
-  web_app.py ming_sim/cli/terminal.py ming_sim/audience_translation.py
-# CLI getattr(session,'db',None) → ZERO
-# list_unextracted / get_story_extract_status 查询空护栏 → ZERO
-# pending_translation_retries 不再先判 conn→[]
+rg -Hn 'hasattr\([^)]*get_story_extract_status' ming_sim/audience_translation.py web_app.py ming_sim/cli/terminal.py
+# → ZERO
+rg -n 'already_done = ' -A2 ming_sim/audience_translation.py
+# → already_done = db.get_story_extract_status(ctid) == "done"
 ```
 
-**不宣称**机械枚举里剩余的 hasattr(conn)「全类扫净」——上表 E–H 等按行为保留。
+### 根因（本轮残项）
 
-### 根因
+`hasattr(db, "get_story_extract_status") and … == "done"` 在缺接口时令 `already_done=False`，转译作业**静默整轮重译**——同授权「缺失仍继续全部直调」，不只空列表。
 
-无授权失败诚实兼容：生产 `GameDB`/`GameSession.db` 恒备查询接口，却用 `hasattr`/`getattr(...,None)` 把缺失洗成「没有重试项 / 无原话 / 伪状态 / 启动无待补」。
+### 变异证据（真实作业入口，既有夹具；临时目录已清理）
 
-### 变异证据（真实入口，非只 helper）
-
-入口：`WebGame(fresh=False)` + `TestClient` GET `/api/audience/scroll`；`WebGame.pending_translation_retries` / `reply_retries` / `retry_pending_translation`；`catch_up_pending_translations`；CLI `_print_interrupted_reply_retry_hint` / `_retry_interrupted_reply_cli`。
-
-诊断命令指针：本工作树 Shell 脚本 stdout（七变量 + `MING_SIM_DB`/`MING_SIM_USER_DATA_DIR` 自建临时目录，已清理）。关键结果：
+入口：`run_turn_translation_job`（`catch_up` / `retry_pending_translation` / schedule 共用作业）；夹具 `_minister`（`tests/test_audience_extraction_501.py`）+ `WebGame(fresh=True)`；七变量前缀；工作树外 `/tmp/j1853-j8-done.*`。
 
 ```json
 {
-  "real_scroll_reply_retry_ids": [1],
-  "real_scroll_translation_retry_ids": [2],
-  "real_pending_ids": [2],
-  "J8_pending_old_hide_conn_empty": true,
-  "J8_pending_new_raises": true,
-  "J8_list_pending_old_empty": true,
-  "J8_list_pending_new_raises": true,
-  "J8_load_emperor_old_empty": true,
-  "J8_load_emperor_new_raises": true,
-  "J8_catchup_entry_new_raises": true,
-  "J8_cli_hint_old_none_normal": true,
-  "J8_cli_hint_new_raises": true,
-  "J8_cli_retry_old_none_normal": true,
-  "J8_cli_retry_new_raises": true,
-  "J8_reply_retries_old_degraded_ids": [-1],
-  "J8_reply_retries_new_raises": true,
-  "J8_retry_status_old_fake": true,
-  "J8_retry_status_new_raises": true,
-  "J8_startup_old_skip": true,
-  "J8_startup_new_raises": true,
-  "J8_http_scroll_status": "AttributeError",
-  "J8_http_scroll_empty_translation_retries": false
+  "J8_already_done_old_hasattr_false": true,
+  "J8_already_done_new_raises": true,
+  "J8_already_done_new_exc": "AttributeError:get_story_extract_status",
+  "J8_already_done_translate_calls": 0,
+  "J8_no_silent_retranslate": true,
+  "J8_done_early_exit_translate_calls": 0,
+  "J8_done_early_exit_ok": true
 }
 ```
 
-含义：旧护栏在缺接口时正常空/降级/伪推；新直调在同变异下 AttributeError；HTTP scroll 隐藏 `list_unextracted_replies` 不再 200+空 `translation_retries`。
+含义：旧 hasattr 在缺口时 `already_done` 恒假（将进入重译）；新直调同变异 AttributeError 且 `translate_fn` 调用次数 0；真 DB 已 done 早退亦 0 次转译。
 
 ---
 
 ## 聚焦验证
 
-前缀七变量；不跑全量；不追已知红灯。
-
-### Python
+前缀七变量；不跑全量；不追已知红灯；无新增证明性测试。
 
 ```bash
 export MING_SIM_AGY_BIN=/usr/bin/false MING_SIM_CODEX_BIN=/usr/bin/false \
@@ -171,30 +151,19 @@ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$PWD" \
   tests/test_cli_play_turn.py tests/test_person_delta_adapter.py \
   tests/test_urge_lever_624.py tests/test_web_audience_night_498.py \
   tests/test_month_loop_tracer_1468.py tests/test_qa_t1_extraction_dual_source_1353.py \
+  tests/test_audience_extraction_501.py tests/test_audience_translation_once_1898.py \
+  tests/test_audience_translate_1837.py \
   -q -p no:cacheprovider --basetemp=<自建>
 ```
 
-输出：`212 passed, 1 skipped, 1 warning in 10.62s`。
-
-角色复核再次运行（同七变量前缀）：
-```bash
-PYTHONDONTWRITEBYTECODE=1 /Users/akagilnc/WorkSpace/Ming_LLM/.venv/bin/python -m pytest \
-  tests/test_audience_scroll_539.py tests/test_cli_play_turn.py -q -p no:cacheprovider
-```
-实测：`41 passed, 1 warning in 1.45s`。首轮 Web 聚焦为 `1 failed | 132 passed`，唯一失败为既存 #1873 连续读失败案，未放松；`tsc --noEmit -p tsconfig.json` 退出 0。本轮后端扩类不改 Web。
-
-机械辅助索引剩余项：`llm_transport.max_retries` 为SDK能力；`session`/`conftest.pending_audience_translation` 为结果字段；CLI `restore_interrupted_after_failed_retry` 为写恢复；测试 executor.fn 为测试设施。均非必备 DB 查询缺失→空投影。
-
-### 夹具
-
-- CLI `_CliChatDbStub.get_interrupted_reply_retries`（首轮已补真实契约）本轮仍够用；**未**削弱失败断言；**未**新增证明性测试。
-- 本轮无新增 mock 被测行为。
+输出：`232 passed, 1 skipped, 1 warning in 10.89s`。
 
 ### 未结项
 
 - appDurableWiring `#1853 重试后的记录连续读失败` 红灯仍归 #1873，本切片不追绿。
 - 核心恢复接线等功能项维持家族收尾。
+- J2 用户已放行；J8 查询类本轮补齐 `already_done`/落账复查后，写生命周期 hasattr 按上表保留。
 
 ## commit
 
-`3c4aca7045eaea539bbaee6ae672a853f9d4f73c` — `ak-roles: fix(#1853): expand J8 retry-query empty-guard cleanup beyond reply getters`
+见 `git rev-parse HEAD`（本轮独立 `ak-roles:` commit；不 amend）。
