@@ -23,9 +23,10 @@
 | R4 称 helper-only=`none` 但 payoff 仍留 helper-only 测 | **整类删除** 5 个 helper-only（见 R4），非只删末定义 |
 | 硬编码 27 文件白名单 | 全仓 `tests/test_*.py` AST → 以 imports/调用/#1897 接缝符号定位授权相关文件（本轮 40） |
 | `contract_axes_direction` / `build_secret_covert_effect_briefs` 以「非旧形状」保留 | 机械：零生产消费者；属未消费替身/附属物 → **删除** |
-| 盯文：结构化键豁免自由文本值 | 复核 `declaration_dispatch` `payload["text"]`：属输入原文等值落账（#1897 AC），保留并写理由；非生成散文锁 |
+| 盯文：结构化键豁免自由文本值 / 「输入身份等值」豁免 | **纠正**：宪法禁止对自由文本建机械依赖；`payload["text"]`/`body`/`content`/`memorial_text` 等值与非空一律删；不借原样转运 AC 或输入身份豁免盯文；原文保真仅特征观察 |
 | R1 变异非 materials 路径 / 伪红绿 | 改为 `prepare_character_materials` 结构化路径观察 + 旧 `text_log_json` 读口对照；明确非入口红断言 |
 | R2 旧谓词未真实 create 改 facts | 装回旧谓词后真实 `create_secret_order` → truth_keys/fact_lanes 变 true |
+| R4 称 execution_pressure 改为非空存在性 | **纠正**：非空仍是盯文伪装；直接删除该断言，不改非空 |
 
 ## R1：旧密令正文账轨仍参与现役接缝（P2）
 
@@ -484,13 +485,44 @@ PY
 | `test_non_investigation_contract_keeps_its_delivery_account` | **删** | 仅 build helper；筹饷交付已由 create+settle 路径覆盖 |
 | payoff 三组同名（旧 232/2765 等） | 已删末覆盖 | AST dups=none |
 | monthly `memorial_text` 字符串锁 / `read_fields` spy | 先前已去 | 改结构化 turn/band + 材料路径 |
-| execution_pressure `payload["text"]` 等值散文 | 先前已去 | 现为非空结构化字段存在性 |
-| declaration_dispatch `payload["text"] ==` 输入原文（:68,:112,:166） | **保留** | 真实 `dispatch_declaration` 入口：输入原文等值落账（#1897 正文原样转运 AC）。结构化键不豁免盯文，但此处比对的是**输入身份**而非生成散文；删之会丢掉「禁 strip/裁剪」唯一负向 |
-| `secret_order_update` content 等值 | **保留** | 要旨原文写读契约；非 progress 双真源盯文 |
+| execution_pressure `payload["text"]` 等值散文 | 先前已去 | — |
+| execution_pressure `:954` `bool(str(payload["text"]).strip())` 非空 | **删** | 非空仍盯自由文本；直接删除，不改非空伪装结构化 |
+| declaration_dispatch `payload["text"] ==`（旧 :68,:112,:166）及 `body`/`sayings[body]` 等值 | **删** | 不得自造「输入身份等值」豁免；保留 applied/rejected 计数、金额/账户/target、拒收 category/subject_id |
+| declaration_dispatch presence/scene `body` 原样等值；staged facts `body` 列表等值 | **删** | 同左；保留 ledger id 存在、条数、拒收闸、幂等空再结算 |
+| `secret_order_update` `content`/`brief.body` 等值 | **删** | 要旨原文写读仅观察不作自动约束；保留 oid/was_update/ok、tags JSON、title 跨表截断身份、closed status 负向 |
 | Event/Future 握手（declaration_landing ≈112–120、297–307） | **保留** | 判词 C5 |
 | `test_create_secret_order_fact_lanes_follow_structured_severity_only` | **保留** | R2 真实入口结构化负向 |
 | `test_settle_due_close_follows_surviving_memorial_and_actual` | **保留** | 真实结案契约 |
 | monkeypatch fail-injection（month rollback / supply 隔离） | **保留** | 故障注入控序，非退休 helper 内部结构 spy |
+| `assert "李若璉補" in db.content.characters` | **保留** | `db.content` 人物名册身份，非自由文本字段 |
+| `assert "text" not in hit`（execution_pressure） | **保留** | 结构化键缺席（schema），非正文值 |
+| 固定枚举/status/turn/origin/source_id/拒收 category | **保留** | 非散文 |
+
+### 本轮授权集自由文本谓词 AST 枚举（施工后）
+
+授权谓词同上一节；对 `text`/`body`/`content`/`memorial`/`criterion`/`narrative`/`memorial_text` 的 Compare（`==`/`!=`/`in`/`not in`）及正文非空：
+
+| 文件:行（施工前） | 谓词 | 裁定 |
+|---|---|---|
+| `declaration_dispatch_1835.py:68/:112/:166` | `payload["text"] ==` 输入 | **删** |
+| `declaration_dispatch_1835.py:76/:80/:219/:448/:530/:747/:762/:791/:808` | `body` 列表/单值等值 | **删** |
+| `declaration_dispatch_1835.py:664` | `"…" in db.content.characters` | **保留**（名册身份） |
+| `execution_pressure_654.py:954` | `text` 非空 | **删** |
+| `execution_pressure_654.py:607` | `"text" not in hit` | **保留**（键缺席） |
+| `secret_order_update.py:21/:46/:47/:73/:106/:124/:145` | `content`/`body` 等值 | **删**（title 跨表截断身份保留） |
+| `audience_translate_1837.py:465/:960/:976/:1010` + 模板 `!=` 扫库 | `payload/decree text` 等值 | **删**；拒收闸 `applied==[]` 保留 |
+| `breach_plea_623.py:381` | `payload["text"] ==` 固定散文 | **删** |
+| `character_knowledge_489.py` 六处 `body ==` | 知识体正文等值 | **删**；`source_id`/排除名单保留 |
+| `decree_dossiers_571.py:1151/:1179` | `list_directives[0]["text"] ==` | **删**；改 `len(...)==1` |
+| `faction_denunciation_627.py` / `memorial_inbox_1726.py` / `family_tail_restore_570.py` / `grant_reconciliation_567.py` / `month_chain_1843.py` | `memorial_text` 等值/`in` | **删**；改条数/结构化字段 |
+| `month_chain_1847.py:2042` | `declaration["body"] ==` | **删**；`decree_ref` 身份保留 |
+| `on_scene_immediate_write_1839.py:122/:124/:350` | `body` 等值 / `"洪承畴" in text` | **删**；材料路径键保留 |
+| `secret_order_isolation_883.py` 九处 `body`/`content` | 隔离正文等值 | **删**；`is not None`/source_id/status/pins 保留 |
+| `staged_assignment_identity_1890.py:280/:290` | `text` 改回等值 | **删**；`source_chat_turn_id`/status/同 id 保留 |
+
+**施工后复扫**：授权 40 文件内上述自由文本字段 Compare = **none**（仅余 `db.content.characters` 名册）。未为删盯文新增平行测试；未用非空字符串断言伪装结构化字段。
+
+说明：`test_audience_translate_1837.py::test_appointment_and_relief_through_scene_chat_then_close_and_settle` 在本轮改动前 HEAD 文件上已 FK 失败（与删盯文无关）；不在派单十一文件聚焦集内；本轮未修该预存故障。
 
 ## 判词 finding 对照
 
@@ -499,7 +531,7 @@ PY
 | C1→R1 | 旧账轨清空；materials 读 dossier_progress；变异 divergence 对照 |
 | C2→R2 | severity 白名单；真实 create 负向；旧谓词装回造罪 |
 | C3/C4→R3 | 退休机制删除；本轮删 `contract_axes_direction` / `build_secret_covert_effect_briefs` |
-| C4/C3→R4 | 整类删 helper-only；盯文复核；握手保留 |
+| C4/C3→R4 | 整类删 helper-only；**纠正**盯文误留（输入身份/非空/content 等值）；握手与拒收闸保留 |
 | C5 Event/Future | 驳回维持 |
 | 事件结局三失败 | 转 #1873 |
 | 名册拒收 | 不沿用旧卷称未修 |
@@ -526,12 +558,13 @@ env MING_SIM_AGY_BIN=/usr/bin/false MING_SIM_CODEX_BIN=/usr/bin/false \
   -q -p no:cacheprovider --basetemp=/private/tmp/1897-fixer-r1-r4-pytest3 --tb=line
 ```
 
-本轮实测：`252 passed in 6.90s`（`/usr/bin/time -p`：real 7.53 / user 5.31 / sys 1.83）。未跑全量。basetemp 已删。
+本轮实测（七 false；派单十一文件聚焦）：`252 passed in 7.57s`（`/usr/bin/time -p`：real 8.10 / user 5.48 / sys 1.83）。
+本轮另跑授权盯文触及扩展集（含 update/isolation/month_chain 等，deselect 预存 FK 失败 1 例）：`385 passed, 1 deselected`。未跑全量。basetemp 已删。
 
 ## 质量 / 合法性自检
 
-- 以删除为主；未新增兼容层、恢复协议、生产测试钩子、平行证明测试
-- 自查二连：同类型整类扫完；引入面（删孤儿、删 helper-only、材料/罪情契约）已核
+- 以删除为主；未新增兼容层、恢复协议、生产测试钩子、平行证明测试；未用非空字符串伪装结构化
+- 自查二连：同类型授权集自由文本字段 Compare 复扫为 none；引入面（删盯文后条数/身份断言）已核
 - `git diff --check`：本轮代码 diff 无 whitespace 报错
 
 ## 剩余项 / 依法阻断

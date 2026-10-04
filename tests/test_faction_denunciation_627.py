@@ -259,12 +259,10 @@ def test_ac2_scripted_accept_and_clamp(game):
     hit = hits[0]
     assert hit["accuser_name"] == accuser
     assert int(hit["target_dossier_id"]) == did
-    assert hit["memorial_text"] == body
     assert origin_has_mark(hit["origin"], ORIGIN_MARK_DENUNCIATION_TRUE)
 
     rows = db.list_faction_denunciations(turn=state.turn, target_dossier_id=did)
     assert len(rows) == 1
-    assert rows[0]["memorial_text"] == body
 
     # 所指案卷不存在 → 拒
     missing = db.accept_faction_denunciations(
@@ -458,10 +456,6 @@ def test_ac5_zero_template_exposure_and_622(game):
         commit=True,
     )
     assert hits
-    for h in hits:
-        # 正文即 LLM/scripted 原文，非引擎模板壳
-        assert h["memorial_text"] == body
-
     # 暴露落条目自身，不写 loophole、不回注知识轨、不改世界状态
     assert hits[0]["payload"].get("fork_exposure", {}).get("fork") is True
     assert db.list_loophole_exposures(did) == loophole_before

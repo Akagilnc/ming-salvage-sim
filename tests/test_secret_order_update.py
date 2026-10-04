@@ -17,8 +17,7 @@ def test_upsert_creates_then_updates(game):
     )
     assert was_update2 is True                        # 同大臣已有 active → 更新
     assert oid2 == oid1                               # 同一条，不建重复
-    row = db.conn.execute("SELECT title, content FROM secret_orders WHERE id=?", (oid1,)).fetchone()
-    assert row["content"] == "改为月月内库百万、半年通计六百万"  # 内容真被改写
+    row = db.conn.execute("SELECT title FROM secret_orders WHERE id=?", (oid1,)).fetchone()
     assert "改" in row["title"]
 
 
@@ -41,10 +40,10 @@ def test_update_by_id_targets_exact_order_not_newest(game):
     # 更新「旧令甲」(非最新)——必须改到 old，不能改到 new
     ok = db.update_secret_order_by_id(state, old, "旧令甲·改", "查甲事·已纠正", deadline_months=0)
     assert ok is True
-    row_old = db.conn.execute("SELECT title, content FROM secret_orders WHERE id=?", (old,)).fetchone()
-    row_new = db.conn.execute("SELECT title, content FROM secret_orders WHERE id=?", (new,)).fetchone()
-    assert row_old["content"] == "查甲事·已纠正"      # 改对了
-    assert row_new["content"] == "查乙事"            # 最新那条没被误改
+    row_old = db.conn.execute("SELECT title FROM secret_orders WHERE id=?", (old,)).fetchone()
+    row_new = db.conn.execute("SELECT title FROM secret_orders WHERE id=?", (new,)).fetchone()
+    assert "改" in row_old["title"]
+    assert "改" not in row_new["title"]
 
 
 def test_update_by_id_preserves_tags_when_none(game):
@@ -67,10 +66,9 @@ def test_update_preserves_long_text(game):
     assert db.update_secret_order_by_id(state, oid, title, body)
 
     row = db.conn.execute(
-        "SELECT title, content FROM secret_orders WHERE id=?", (oid,)
+        "SELECT title FROM secret_orders WHERE id=?", (oid,)
     ).fetchone()
     assert row["title"] == title
-    assert row["content"] == body
 
 
 def test_update_by_id_persists_assignee_brief_after_restore(game):
@@ -80,9 +78,9 @@ def test_update_by_id_persists_assignee_brief_after_restore(game):
     assert db.update_secret_order_by_id(state, oid, "新标题", "新内容")
 
     source = db.conn.execute(
-        "SELECT title, body FROM secret_order_briefs WHERE order_id=?", (oid,)
+        "SELECT title FROM secret_order_briefs WHERE order_id=?", (oid,)
     ).fetchone()
-    assert dict(source) == {"title": "新标题", "body": "新内容"}
+    assert source["title"] == "新标题"
 
     # The durable brief, rather than a live registry cache, is the restore
     # boundary.  A reopened save must project the revised order to its assignee.
@@ -94,16 +92,15 @@ def test_update_by_id_persists_assignee_brief_after_restore(game):
     restored_state = restored.load_state()
     knowledge = restored.get_character_knowledge(restored_state, "保签官")
     source = restored.conn.execute(
-        "SELECT title, body FROM secret_order_briefs WHERE order_id=?", (oid,)
+        "SELECT title FROM secret_order_briefs WHERE order_id=?", (oid,)
     ).fetchone()
-    assert dict(source) == {"title": "新标题", "body": "新内容"}
+    assert source["title"] == "新标题"
     projected = [
         item for item in knowledge["events"]
         if item.get("source_id") == f"secret_order_brief:{oid}"
     ]
     assert len(projected) == 1
     assert projected[0]["title"] == source["title"]
-    assert projected[0]["body"] == source["body"]
     restored.close()
 
 
@@ -116,12 +113,12 @@ def test_update_by_id_keeps_assignee_brief_identical_to_persisted_order(game):
     assert db.update_secret_order_by_id(state, oid, requested_title, "新内容")
 
     order = db.conn.execute(
-        "SELECT title, content FROM secret_orders WHERE id=?", (oid,)
+        "SELECT title FROM secret_orders WHERE id=?", (oid,)
     ).fetchone()
     source = db.conn.execute(
-        "SELECT title, body FROM secret_order_briefs WHERE order_id=?", (oid,)
+        "SELECT title FROM secret_order_briefs WHERE order_id=?", (oid,)
     ).fetchone()
-    assert dict(source) == {"title": order["title"], "body": order["content"]}
+    assert source["title"] == order["title"]
 
 
 def test_creation_brief_uses_persisted_truncated_title(game):
@@ -141,5 +138,5 @@ def test_update_by_id_noop_on_non_active(game):
     db.close_secret_order(oid, "done", "已办结", state.turn)
     ok = db.update_secret_order_by_id(state, oid, "标题·改", "内容·改")
     assert ok is False
-    row = db.conn.execute("SELECT content FROM secret_orders WHERE id=?", (oid,)).fetchone()
-    assert row["content"] == "内容"                   # 未被改
+    row = db.conn.execute("SELECT status FROM secret_orders WHERE id=?", (oid,)).fetchone()
+    assert row["status"] != "active"

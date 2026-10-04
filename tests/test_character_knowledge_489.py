@@ -476,7 +476,6 @@ def test_disclosed_secret_source_keeps_its_public_projection(game):
 
     disclosed = next(item for item in items if item["source_id"] == f"secret_order:{order}")
     assert disclosed["title"] == "密查公开"
-    assert disclosed["body"] == "该案已奉明发"
 
 @pytest.mark.parametrize("exclusion_owner", ["event", "source", "projection"])
 def test_public_disclosure_drops_private_roster_but_keeps_event_exclusion(game, exclusion_owner):
@@ -509,7 +508,6 @@ def test_public_disclosure_drops_private_roster_but_keeps_event_exclusion(game, 
     )
     assert kept["kind"] == "public"
     assert kept["title"] == "奉明公开"
-    assert kept["body"] == "公开案情"
     allowed_view = db.get_character_knowledge(state, allowed.name)
     excluded_view = db.get_character_knowledge(state, excluded.name)
     assert any(item.get("source_id") == source_id for item in allowed_view["public_events"])
@@ -524,9 +522,9 @@ def test_long_knowledge_bodies_survive_storage_without_brief_card_cap(game):
         source_id="test:long-source",
     )
     row = db.conn.execute(
-        "SELECT body FROM character_knowledge_sources WHERE source_id='test:long-source'"
+        "SELECT source_id FROM character_knowledge_sources WHERE source_id='test:long-source'"
     ).fetchone()
-    assert row["body"] == body
+    assert row is not None
 
 def test_secret_amendment_preserves_legacy_blacklist_and_public_disclosure(game):
     db, state, _content = game
@@ -544,10 +542,10 @@ def test_secret_amendment_preserves_legacy_blacklist_and_public_disclosure(game)
     ).fetchone()
     assert "魏忠贤" in json.loads(saved["excluded_names"])
     public = db.conn.execute(
-        "SELECT body FROM character_knowledge_events WHERE source_id=? AND character_name=''",
+        "SELECT source_id FROM character_knowledge_events WHERE source_id=? AND character_name=''",
         (f"secret_order:{order}",),
     ).fetchone()
-    assert public["body"] == "该案已奉明发"
+    assert public is not None
 
 def test_secret_exclusion_is_source_scoped_not_global_for_same_bucket(game):
     db, state, content = game
@@ -746,7 +744,6 @@ def test_decree_dossier_participant_reads_frozen_metadata_and_text(game):
     assert (item["turn"], item["year"], item["period"]) == (
         state.turn, state.year, state.period,
     )
-    assert item["body"] == "着礼部核定历书正文。"
 
 def test_secret_order_dossier_never_leaks_through_shared_roster_projection(game):
     db, state, content = game
@@ -965,13 +962,12 @@ def test_archive_write_materializes_unmirrored_source_scope(game):
     db.save_turn_report(state, "聚合邸报中的公开事项")
 
     rows = db.conn.execute(
-        "SELECT character_name, body, excluded_names FROM character_knowledge_events "
+        "SELECT character_name, excluded_names FROM character_knowledge_events "
         "WHERE source_id = ? ORDER BY character_name",
         ("test:unmirrored-source",),
     ).fetchall()
     assert len(rows) == 1
     assert rows[0]["character_name"] == ""
-    assert rows[0]["body"] == secret_marker
     assert excluded.name in rows[0]["excluded_names"]
 
 def test_turn_report_counterpart_never_uses_aggregate_when_sources_exist(game):

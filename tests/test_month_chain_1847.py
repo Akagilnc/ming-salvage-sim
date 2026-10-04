@@ -2039,7 +2039,6 @@ def test_build_secret_orders_supply_feed_uses_fact_materials_not_assembled_effec
     assert secret_forecast in (feed.get("forecasts") or [])
     nominal = next(row for row in feed["nominal"]
                    if row["decree_ref"] == f"secret_order:{order_id}")
-    assert nominal["declaration"]["body"] == secret_decl
     # 未 settled 的拟旨不得进入名义。身份是 decree_ref，不是正文是否撞车。
     assert all(
         row.get("decree_ref") != "pending-action:1847-unpromulgated:1"
