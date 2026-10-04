@@ -5157,9 +5157,9 @@ def apply_issue_tracker_output(
                         raise ValueError("participant_roster 每项须为对象或人名")
                     if not str(participant.get("character_id") or participant.get("name") or "").strip():
                         raise ValueError("participant_roster 每项须有 character_id")
-                    tier = str(participant.get("tier") or participant.get("档") or "").strip()
-                    if not tier:
-                        raise ValueError("participant_roster 每项须有 tier/档")
+                    # 缺省「知情」为既有可选字段契约；封闭枚举校验保留（不作一律删除）.
+                    # #1847：不把缺字段升格为必填拒收护栏。
+                    tier = str(participant.get("tier") or participant.get("档") or "知情").strip()
                     if tier not in {"主办", "协办", "知情"}:
                         raise ValueError(f"participant_roster tier 非法：{tier}")
             except ValueError as exc:

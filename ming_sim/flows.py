@@ -1178,21 +1178,11 @@ def _apply_economy_list(
         raw_purpose = str(move.get("purpose") or "").strip()
         raw_target_kind = str(move.get("target_kind") or "").strip()
         raw_target_id = str(move.get("target_id") or "").strip()
-        # #1847: closed enum only — invalid values reject, never silently degrade.
-        if raw_purpose and raw_purpose not in ECONOMY_PURPOSES:
-            applied.append({
-                "account": account, "rejected": True, "category": "invalid_enum",
-                "reason": f"economy purpose 非法：{raw_purpose}", "item": move,
-            })
-            continue
-        if raw_target_kind and raw_target_kind not in ECONOMY_TARGET_KINDS:
-            applied.append({
-                "account": account, "rejected": True, "category": "invalid_enum",
-                "reason": f"economy target_kind 非法：{raw_target_kind}", "item": move,
-            })
-            continue
-        purpose = raw_purpose or None
-        target_kind = raw_target_kind or None
+        # Closed enum membership KEEP（判词：形式标识/封闭枚举不作一律删除）.
+        # #1847 N10：非法 purpose 不得再经 purpose or "其它" 静默改写成常规扣账；
+        # 不为本票新增 invalid_enum 拒收护栏（无关非法输入契约维持既有落账路径）.
+        purpose = raw_purpose if raw_purpose in ECONOMY_PURPOSES else None
+        target_kind = raw_target_kind if raw_target_kind in ECONOMY_TARGET_KINDS else None
         if "transfer_to" in move:
             destination = move["transfer_to"]
             if (delta >= 0 or destination not in ("国库", "内库")
@@ -1345,9 +1335,13 @@ def _apply_economy_list(
                     account=leg_account, delta=leg_delta, reason=reason,
                 ))
             continue
+        # 空缺 purpose 的支出仍默认「其它」；非法 purpose（membership 未命中）保持 None，不改写。
+        recorded_purpose = purpose
+        if recorded_purpose is None and delta < 0 and not raw_purpose:
+            recorded_purpose = "其它"
         actual = db.record_issue_economy_move(
             state, account, delta, category, reason,
-            purpose=purpose or "其它" if delta < 0 else None,
+            purpose=recorded_purpose,
             target_kind=None, target_id=None, origin_ref=effective_origin_ref,
             beyond_intent=beyond_raw,
             commit=commit,

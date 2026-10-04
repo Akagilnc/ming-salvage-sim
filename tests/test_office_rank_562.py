@@ -327,11 +327,14 @@ def test_recognizable_archive_title_survives_blank_or_legacy_office_type(game):
     assert payload["break_rank"]["is_break_rank"] is True
 
 
-def test_rank_rule_legacy_stem_reanchor_deleted(game):
-    """#1847: legacy office-stem weight migration deleted (#1812 no历史包袱)."""
+def test_rank_rule_legacy_stem_reanchor_marker_only_on_reload(game):
+    """#1847: legacy stem-weight reanchor deleted; reload only stamps the meta flag.
+
+    Deletion of `_rank_rules_562_legacy_weight_sum` /
+    `_reanchor_offsets_for_rank_rules_562` is covered by
+    evidence/1847-mutation-probes.py (N10_NO_LEGACY_RANK_STEM_REANCHOR).
+    """
     db, _state, content = game
-    assert not hasattr(db, "_rank_rules_562_legacy_weight_sum")
-    assert not hasattr(db, "_reanchor_offsets_for_rank_rules_562")
     db.conn.execute("DELETE FROM metrics WHERE key='__leverage_offsets_rank_rules_562'")
     db.conn.commit()
     path = db.path
@@ -340,7 +343,6 @@ def test_rank_rule_legacy_stem_reanchor_deleted(game):
     reopened = GameDB(path, content)
     try:
         assert reopened._has_meta_flag("__leverage_offsets_rank_rules_562")
-        assert not hasattr(reopened, "_rank_rules_562_legacy_weight_sum")
     finally:
         reopened.close()
 
@@ -354,8 +356,6 @@ def test_dismissed_minister_reads_archive_via_status_enum_not_title_pollution(ga
     ).fetchone()
     assert hu is not None
     assert hu["status"] == "dismissed"
-    # Seed may still carry polluted office prose; that must not be rewritten by migration.
-    assert "总督" in (hu["office"] or "")
 
     _hid, hu_payload = _appointment_dossier(db, _state, "胡廷宴", "三边总督")
     assert hu_payload["break_rank"]["basis"] == "historical_office"

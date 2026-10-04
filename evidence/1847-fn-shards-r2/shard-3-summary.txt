@@ -9,8 +9,8 @@ disposition counts:
   NEEDS_HUMAN: 0
 
 FIX (6):
-  - ming_sim/flows.py:_apply_economy_list L1182 (in_compare) — delete purpose=...else None degrade; reject invalid purpose item
-  - ming_sim/flows.py:_apply_economy_list L1183 (in_compare) — delete target_kind=...else None degrade; reject invalid target_kind
+  - ming_sim/flows.py:_apply_economy_list L1182 (in_compare) — stop illegal purpose→「其它」rewrite; KEEP membership; no new reject
+  - ming_sim/flows.py:_apply_economy_list L1183 (in_compare) — KEEP target_kind membership→None optional drop; no new reject
   - ming_sim/cli_backend.py:extract_draft_intent L3223 (join_call) — delete digits="".join(...) coercion path; require explicit closed candidate id/新/含糊
   - ming_sim/issues.py:apply_issue_tracker_output L5203 (strip_call) — delete or "知情" default; reject missing tier before closed-set check
   - ming_sim/db.py:legacy_multiplier L5954 (in_compare) — delete legacy_tiers any(stem in part) block; require offices.json rank rules only

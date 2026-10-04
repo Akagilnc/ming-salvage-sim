@@ -1,6 +1,8 @@
 """#1847: free title/tag phrase pairing-warning admit deleted.
 
 Callers still return `pairing_warnings: []` for a stable result shape.
+Deletion of phrase helpers is covered by evidence/1847-mutation-probes.py
+(N10_NO_PAIRING_PHRASE_ADMIT / N10_NO_PAIRING_DEAD_HELPERS), not pytest hasattr.
 """
 from ming_sim import issues
 
@@ -19,14 +21,3 @@ def test_pairing_warnings_key_stays_empty_on_resolve(game):
         content=content,
     )
     assert out.get("pairing_warnings") == []
-
-
-def test_pairing_warning_helpers_deleted():
-    assert not hasattr(issues, "_initiative_resolve_pairing_warnings")
-    assert not hasattr(issues, "_emit_pairing_warnings")
-    assert not hasattr(issues, "_MILITARY_RAISE_PHRASES")
-    assert not hasattr(issues, "_FISCAL_RECURRING_PHRASES")
-    assert not hasattr(issues, "_nonempty_list")
-    assert not hasattr(issues, "_nonempty_dict")
-    assert not hasattr(issues, "_has_economy_entry")
-    assert not hasattr(issues, "_STRATEGIC_EVENT_OUTCOME_LABEL_ALIASES")
