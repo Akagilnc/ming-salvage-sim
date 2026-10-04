@@ -68,7 +68,7 @@ def _stable_json(obj: object) -> str:
 
 
 def project_preferred_hitl_choice(decision: Mapping[str, object]) -> Dict[str, object]:
-    """CLI/probe 首选项投影唯一真源。
+    """验收探针的首选项投影唯一真源。
 
     - 急务 ``rescript_draft``：首 option → ``follow_draft`` + ``draft_capability``
     - 普通 decision：首 option 原样（补 decision_key）

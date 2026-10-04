@@ -16,7 +16,8 @@ from ming_sim.db import (
 from ming_sim.army_pay import derive_army_mutiny_state
 from ming_sim.flows import apply_fixed_period_flows
 from ming_sim.knowledge import build_character_knowledge
-from ming_sim.materials import list_materials, prepare_character_materials, read_material
+from ming_sim.materials import list_materials, read_material
+from tests.material_helpers import prepare_identity_materials
 from tests.test_army_card_status_1501 import _assert_ming_register
 
 ARMY = "guanning"
@@ -297,7 +298,7 @@ def test_four_chains_embed_situation_matrix(game):
     # 链4：roster（LLM 输入装配）
     roster = db.army_roster()
     _assert_chain_embeds_situation(roster, sit, "army_roster")
-    prepared = prepare_character_materials(db, state, war)
+    prepared = prepare_identity_materials(db, state, war)
     blob = "\n".join(
         read_material(prepared.root, path)
         for path in list_materials(prepared.root) if path != "INDEX.txt"

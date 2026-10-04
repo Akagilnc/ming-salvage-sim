@@ -280,7 +280,6 @@ def test_source_faction_target_faction_equals_current_projection_and_nulls_and_n
 def test_faction_brew_prompt_retry_month_does_not_label_old_events_as_current_month(game):
     """负例(b) 机械可验：复刻重试月场景（水位之上含旧月事件），断言 prompt 渲染措辞不把旧事件称作本月。
     正向表述：描述为未处理事件、每条自带时间戳、以事件自带年月为据；禁负向句。"""
-    from pathlib import Path
     db, state, _ = game
     # 旧月事件：落在当前 year/period
     old_year, old_period = int(state.year), int(state.period)

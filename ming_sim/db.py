@@ -12207,10 +12207,8 @@ class GameDB:
 
         在场与派系关系是事实。月报 origin 不从这里派生人物行动。
         """
-        from ming_sim.supervision import (
-            SUPERVISION_RELATION,
-            resolve_dossier_owner_name,
-        )
+        from ming_sim.participant_roster import resolve_dossier_owner_name
+        from ming_sim.supervision import SUPERVISION_RELATION
 
         turn_i = int(turn)
         presence_written = 0
@@ -12413,13 +12411,13 @@ class GameDB:
         self, dossier_id: int, *, as_of_turn: Optional[int] = None,
     ) -> List[Dict[str, object]]:
         """读端：在场行 + 连号派生 + 稽核人任期/派系/操守定性（不落钝化分）。"""
+        from ming_sim.participant_roster import resolve_dossier_owner_name
         from ming_sim.supervision import (
             character_faction_integrity,
             character_tenure,
             derive_consecutive_months,
             faction_relation,
             integrity_band,
-            resolve_dossier_owner_name,
         )
 
         presence = self.list_supervision_presence(

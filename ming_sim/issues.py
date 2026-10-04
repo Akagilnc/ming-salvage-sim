@@ -53,7 +53,6 @@ from ming_sim.displaced_population import (
 )
 from ming_sim.flows import (
     ISSUE_METRIC_KEYS,
-    ISSUE_METRIC_LOCK_CAPS,
     _apply_class_dict,
     _apply_economy_list,
     _apply_faction_dict,

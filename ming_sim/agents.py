@@ -11,7 +11,7 @@ import json
 import os
 import time
 from dataclasses import asdict, is_dataclass
-from typing import Any, Callable, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence
 
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb

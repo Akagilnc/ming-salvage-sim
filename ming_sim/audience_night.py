@@ -178,9 +178,7 @@ DEFAULT_IN_FLIGHT_POLL_S = 0.05
 _CLOSE_COMMIT_KINDS_OFFICE = frozenset({"office"})
 _CLOSE_COMMIT_KINDS_DIRECTIVE = frozenset({"directive"})
 
-# ── 夜内真实盘面直写白名单（ADR 0038 防坑不变式；#506 AC3；#1839 第四类）────────
-# 撤回逆转干净的结构性前提：夜内对真实盘面的直写**只有**本表可枚举项，其余结构化
-# 后果一律走 ADR 0006 待确认暂存、收夜才提交。每项映射其直写落地的真实盘面表；新增任何
+
 class AudienceNightError(Exception):
     """召对夜域响亮失败（死账 / 在飞 / 坏输入 / 提交失败）。"""
 
