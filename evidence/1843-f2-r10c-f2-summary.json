@@ -4,20 +4,21 @@
     "RETAIN": 2101
   },
   "kinds": {
-    "test_local_or_shared_harness": 1778,
+    "test_local_or_shared_harness": 1851,
     "durable_artifact_contract": 45,
     "sut_private_with_review_note": 58,
-    "object_identity_public_seam": 65,
-    "false_positive_identity_flag": 14,
-    "reload_preserve_identity_seam": 12,
+    "false_positive_identity_flag": 13,
     "optional_attr_presence": 21,
+    "object_identity_public_seam": 2,
     "external_contract": 1,
     "public_seam_mock": 4,
+    "reload_preserve_identity_seam": 3,
     "test_fixture_file_read": 4,
     "structured_hud_negative": 1,
     "ui_http_mock_seam": 74,
     "ui_diegetic_copy": 23,
     "web_fixture_or_snapshot": 1
   },
-  "delete_count": 0
+  "delete_count": 0,
+  "note": "high-signal DELETE=0 is NOT full-class closure; closure = these 2101 per-name rows"
 }
