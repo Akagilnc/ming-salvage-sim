@@ -27,4 +27,3 @@ AssertionError: the given combination of arguments (undefined and string) is inv
       Tests  1 failed | 17 passed (18)
    Start at  03:01:15
    Duration  2.70s (transform 110ms, setup 0ms, import 208ms, tests 58ms, environment 2.30s)
-
