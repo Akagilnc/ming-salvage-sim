@@ -48,7 +48,7 @@ LEN_THEN_EQ_CAND	tests/test_character_knowledge_489.py:1201,1263	test_structured
 LEN_THEN_EQ_CAND	tests/test_character_knowledge_489.py:1201,1264	test_structured_person_scope_replaces_role_wide_world_reports	len(regions) >= 2 -> db.get_character_knowledge(state, bare.name)["scope"]["region_ids"] == ("jiangxi
 LEN_THEN_EQ_CAND	tests/test_character_knowledge_489.py:1201,1272	test_structured_person_scope_replaces_role_wide_world_reports	len(regions) >= 2 -> db._office_archive_key(
         keke_lead["office"], keke_lead["office_type"],
- 
+
 LEN_THEN_EQ_CAND	tests/test_character_knowledge_489.py:1201,1131	test_structured_person_scope_replaces_role_wide_world_reports	len(regions) >= 2 -> content.characters[name].office_region == region
 LEN_THEN_EQ_CAND	tests/test_character_knowledge_489.py:1201,1132	test_structured_person_scope_replaces_role_wide_world_reports	len(regions) >= 2 -> db.character_office_region(name) == region
 LEN_THEN_EQ_CAND	tests/test_character_knowledge_489.py:1201,1134	test_structured_person_scope_replaces_role_wide_world_reports	len(regions) >= 2 -> view["scope"]["region_ids"] == (region,)
