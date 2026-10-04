@@ -185,10 +185,8 @@ def _confirm_pending_directive(session: GameSession, draft, minister_name: str) 
 
 def _print_interrupted_reply_retry_hint(session: GameSession, minister_name: str) -> None:
     """#505：CLI 系统层恢复提示——崩溃后问话保留，可输入「重试回话」重新生成。"""
-    db = getattr(session, "db", None)
-    if db is None:
-        return
-    retries = db.get_interrupted_reply_retries(minister_name) or []
+    # #1853 J8：必备 session.db 重试查询直调；禁 getattr(..., None) 当正常无提示。
+    retries = session.db.get_interrupted_reply_retries(minister_name) or []
     if not retries:
         return
     last = retries[-1]
@@ -207,10 +205,9 @@ def _retry_interrupted_reply_cli(session: GameSession, minister_name: str) -> Op
     成功且 court_action 为 court_break 时返回 typed 'court_break'，供 minister_chat
     退出对话进入 play_turn 审阅；收夜失败仍返回 None，留在原对话。
     """
-    db = getattr(session, "db", None)
-    if db is None:
-        print("当前会话不支持回话重试。\n")
-        return
+    # #1853 J8：必备 session.db 重试查询直调；禁 getattr(..., None) 当正常无重试。
+    # 写生命周期（persist/rollback 等）hasattr 不属本类查询护栏，保留。
+    db = session.db
     retries = db.get_interrupted_reply_retries(minister_name) or []
     if not retries:
         print(f"{minister_name}没有待重试的中断回话。\n")

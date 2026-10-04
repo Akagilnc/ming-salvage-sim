@@ -2230,7 +2230,8 @@ class WebGame:
 
     def reply_retries(self, minister_name: str) -> List[Dict[str, Any]]:
         from ming_sim.audience_night import SCENE_CHAT_SPEAKER, get_open_night
-        if minister_name == SCENE_CHAT_SPEAKER and hasattr(self.db, "conn"):
+        # #1853 J8：夜查询走必备 GameDB.conn；禁 hasattr(conn) 降级成非夜投影空集。
+        if minister_name == SCENE_CHAT_SPEAKER:
             night = get_open_night(self.db)
             if night:
                 return self.reply_retries_for_night(int(night["id"]))
@@ -2646,11 +2647,8 @@ class WebGame:
         `_pending_writes_count` 钉竞态（全量 xdist 下 residual ticket）。有待补才
         claim+spawn；key=("startup",) 与 turn/pending 区分。
         #1353 r10：预检 list_unextracted 短持 runtime gate（共享 conn 禁裸读）。
+        # #1853 J8：启动预检与转译重试查询同属必备接口直调；禁缺接口当「无待补」。
         """
-        if not hasattr(self.db, "conn"):
-            return
-        if not hasattr(self.db, "list_unextracted_replies"):
-            return
         with self._runtime_write_gate():
             pending = self.db.list_unextracted_replies() or []
         if not pending:
@@ -2668,8 +2666,7 @@ class WebGame:
         self, *, night_id: Optional[int] = None, chat_turn_id: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
         """#1842：转译待补的结构化系统提示态（源轮可查 + 可重试），不做页面。"""
-        if not hasattr(self.db, "conn"):
-            return []
+        # #1853 J8：必备 GameDB 查询直调；禁缺 conn 洗成空重试投影。
         from ming_sim.audience_translation import list_pending_translations
 
         return list_pending_translations(
@@ -2710,11 +2707,8 @@ class WebGame:
         still = list_pending_translations(
             self.db, chat_turn_id=ctid, write_queue=self._runtime_write_queue(),
         )
-        status = (
-            self.db.get_story_extract_status(ctid)
-            if hasattr(self.db, "get_story_extract_status")
-            else ("pending" if still else "done")
-        )
+        # #1853 J8：必备 get_story_extract_status 直调；禁缺接口伪推 pending/done。
+        status = self.db.get_story_extract_status(ctid)
         return {
             "chat_turn_id": ctid,
             "extract_status": status,
