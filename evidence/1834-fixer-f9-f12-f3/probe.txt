@@ -1,3 +1,4 @@
+==== probe current ====
 PASS OPEN_WORLD dossier=1 affair=1 files=279
 PASS OPEN_PUBLIC dossier=1 affair=1 files=279
 PASS CLOSED_WORLD dossier=1 affair=1 files=279
@@ -5,7 +6,15 @@ PASS CLOSED_PUBLIC dossier=1 affair=1 files=279
 PASS RESTORE_WORLD dossier=1 affair=1 files=279
 PASS RESTORE_PUBLIC dossier=1 affair=1 files=279
 ALL_GREEN
-OLD_LOGIC_RED AssertionError: machine input keys ['execution_signal', 'payload', 'stigma'] entered material feed at $.案卷 1.案卷.案卷
-OLD_EXIT:2
-F12_OLD_LOGIC_RED AssertionError: list_world_effect_history(dossier:1) dumps ['person_logs']
-OLD_F12_EXIT:2
+==== F9 ====
+tests/test_world_materials_1834.py:284:    prepared = prepare_world_materials(db, state, dest_root=dest)
+tests/test_world_materials_1834.py:319:    prepared = prepare_world_materials(db, state, dest_root=tmp_path / "levy")
+STRUCT dossier.items_dump=PRESENT
+STRUCT _DOSSIER_MATERIAL_SKIP_has_payload_stigma_signal=YES
+==== F9 HIT_COUNT=70 ====
+==== F12 ====
+tests/test_world_materials_1834.py:284:    prepared = prepare_world_materials(db, state, dest_root=dest)
+tests/test_world_materials_1834.py:319:    prepared = prepare_world_materials(db, state, dest_root=tmp_path / "levy")
+STRUCT list_world_effect_history_audit_dump_loop=ABSENT
+STRUCT keeps=实况轨,issues,characters,relation_edge_events
+==== F12 HIT_COUNT=142 ====

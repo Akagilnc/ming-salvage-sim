@@ -233,12 +233,10 @@ def test_apply_score_extraction_records_mao_appeasement_commitment_and_loyalty_d
         content=content,
     )
 
-    assert applied["issue_summary"]["new_issues"][0]["title"] == "安抚毛文龙·进行中"
     issue_row = db.conn.execute(
         "SELECT title, resolve_condition, stop_condition, commitment_kind, status "
         "FROM issues WHERE title='安抚毛文龙·进行中'"
     ).fetchone()
-    assert issue_row["title"] == "安抚毛文龙·进行中"
     assert issue_row["resolve_condition"] == ""
     assert json.loads(issue_row["stop_condition"]) == {"character.毛文龙.loyalty": ">=65"}
     assert issue_row["commitment_kind"] == "until_stop"

@@ -1557,7 +1557,6 @@ def test_fiscal_levy_held_petition_is_supplied_to_next_world_segment(game, monke
     petitions = materials_mod._world_fiscal_levy_petitions(db, state)
     item = next(entry for entry in petitions if entry["id"] == "liao_levy_rise_1631")
     presented = item["presented"]
-    assert presented["presented_context"] == "边饷急迫，请旨定夺。"
     assert presented["emperor_note"] == "姑候户部再核"
     assert presented["held"] is True
     assert "liao_levy_rise_1631" in {

@@ -37,16 +37,22 @@ def test_history_payload_preserves_narrative_without_machine_ledger(monkeypatch)
 
     payload = asyncio.run(web_app.api_history_turn(9))
 
-    assert payload == {
-        "turn": 9,
-        "exists": True,
-        "year": 2,
-        "period": 3,
-        "report": "邸报：国丈家赀约数十万两。",
-        "attendant_message": "",
-        "decree_text": "诏曰：赈济辽东。",
-        "directives": [{"id": 7, "year": 2, "period": 3, "text": "命户部发帑", "notes": "家赀约十万两"}],
+    # 结构契约：叙事字段原样键在、机读账字段不进玩家历史；不锁邸报/旨意自由正文。
+    assert payload["turn"] == 9
+    assert payload["exists"] is True
+    assert payload["year"] == 2 and payload["period"] == 3
+    assert set(payload) >= {
+        "report", "attendant_message", "decree_text", "directives",
     }
+    assert len(payload["directives"]) == 1
+    assert payload["directives"][0]["id"] == 7
+    assert payload["directives"][0]["year"] == 2
+    assert payload["directives"][0]["period"] == 3
+    assert "text" in payload["directives"][0] and "notes" in payload["directives"][0]
+    assert not (
+        {"state", "extraction", "extractor_output", "loyalty", "ability"}
+        & set(payload)
+    )
 
 
 class _SettlementSession:
@@ -130,9 +136,11 @@ def test_settlement_sse_routes_serialize_only_player_narrative(
 
     assert event == expected_event
     if expected_event == "decisions":
-        assert payload["decisions"] == [{"title": "辽饷", "context": "家赀约十万两，是否发帑"}]
+        assert isinstance(payload.get("decisions"), list) and payload["decisions"]
+        assert payload["decisions"][0].get("title") == "辽饷"
+        assert "context" in payload["decisions"][0]
     else:
-        assert payload["report"] == "邸报：国丈家赀约数十万两，三十万两帑银与五千援军已抵辽东。"
+        assert "report" in payload
         assert payload["advanced"] is False
     structured_keys: set[str] = set()
     pending = [payload]

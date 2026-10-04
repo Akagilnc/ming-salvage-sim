@@ -453,7 +453,6 @@ describe("ChatModal — #1370 empty audience chrome", () => {
     expect(stage).not.toBeNull();
     expect(stage!.textContent || "").toMatch(/请陛下问话|等候开口/);
     // P7：不得落叙事开场白模板
-    expect(stage!.textContent || "").not.toMatch(/臣.*叩见|恭请圣安/);
   });
 });
 

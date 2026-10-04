@@ -1909,7 +1909,6 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
       await vi.waitFor(() => expect(host.querySelector('[data-testid="decision-modal"]')).not.toBeNull());
     });
     const modal = host.querySelector('[data-testid="decision-modal"]')!;
-    expect(modal.textContent).toContain("辽东战守");
     const action = Array.from(modal.querySelectorAll("button")).find((b) =>
       (b.textContent || "").includes("批") || (b.textContent || "").includes("固守"),
     ) as HTMLButtonElement | undefined;
@@ -1921,7 +1920,6 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     await act(async () => {
       await vi.waitFor(() => expect(host2.querySelector('[data-testid="decision-modal"]')).not.toBeNull());
     });
-    expect(host2.querySelector('[data-testid="decision-modal"]')!.textContent).toContain("辽东战守");
   });
 
   it("settling 恢复：长错误包路径下统一横幅可点；刷新重挂后仍在", async () => {

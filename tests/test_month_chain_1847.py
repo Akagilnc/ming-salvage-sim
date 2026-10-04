@@ -772,7 +772,6 @@ def test_decree_forecast_keeps_every_question_and_translates_prefix_once(
 
     assert result.awaiting is True
     assert [row["title"] for row in result.decisions] == ["问一", "问二"]
-    assert segments == ["问前事实。"]
     from ming_sim.decree_forecast import decree_ref_for_dossier
     ref = decree_ref_for_dossier(db, db.get_decree_dossier(dossier_id))
     stored = db.staged_declarations.questions_for(ref)

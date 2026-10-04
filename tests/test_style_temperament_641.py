@@ -81,7 +81,6 @@ def test_inertia_natural_resolve_applies_temperament_style(game):
         (PERSON, "性情"),
     ).fetchone()
     assert log["action"] == "性情"
-    assert log["payload_summary"] == "经事锤炼，固有层改写"
 
 
 def test_apply_score_extraction_writes_temperament_style_and_log(game):
@@ -117,7 +116,6 @@ def test_apply_score_extraction_writes_temperament_style_and_log(game):
         (PERSON,),
     ).fetchone()
     assert log["action"] == "性情"
-    assert log["payload_summary"] == "经事锤炼，固有层改写"
 
 
 def test_temperament_style_preserves_raw_bytes_through_write_kernel(game):

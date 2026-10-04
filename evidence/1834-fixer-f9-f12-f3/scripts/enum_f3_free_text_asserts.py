@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """F3 full-repo enum: free-text mechanical dependencies in tests (Python + Web).
 
-Wide scan → classify with classify_f3_disposition.py. Tags each hit; does not delete.
+Wide scan only — does not dispose. Disposition is the frozen hand-reviewed
+table `f3_disposition.jsonl` (one candidate per line).
 
 Covers: assert in/==/truthy/len; list/tuple prose equality; vitest
 toContain/toHaveTextContent/toMatch/toBe/toEqual positives and .not. negatives.

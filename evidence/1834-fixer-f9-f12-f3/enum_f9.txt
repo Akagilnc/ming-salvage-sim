@@ -43,7 +43,7 @@ ming_sim/rescript_actions.py:1388:                        payload = dossier["pay
 tests/test_candidate_supply_1893.py:26:    prepare_world_materials,
 tests/test_candidate_supply_1893.py:101:    段文里点名的候选到不了声明里。此处走真实世界段目录（prepare_world_materials
 tests/test_candidate_supply_1893.py:114:    prepared = prepare_world_materials(db, state, dest_root=tmp_path / "world")
-tests/test_fiscal_levy_effect.py:1567:    prepared = materials_mod.prepare_world_materials(db, state)
+tests/test_fiscal_levy_effect.py:1566:    prepared = materials_mod.prepare_world_materials(db, state)
 tests/test_gazette_author_1862.py:17:    prepare_world_materials,
 tests/test_gazette_author_1862.py:446:    world_tree = prepare_world_materials(db, state)
 tests/test_mechanical_tail_1845.py:452:    from ming_sim.materials import prepare_world_materials, list_materials, release_material_tree
@@ -52,8 +52,8 @@ tests/test_month_chain_1843.py:95:        from ming_sim.materials import prepare
 tests/test_month_chain_1843.py:96:        prepared = prepare_world_materials(db_, state_)
 tests/test_month_chain_1843.py:710:    real_prepare = materials_mod.prepare_world_materials
 tests/test_month_chain_1843.py:717:    monkeypatch.setattr(materials_mod, "prepare_world_materials", prepare)
-tests/test_month_chain_1847.py:2069:        _safe_segment, list_materials, prepare_world_materials, read_material, release_material_tree,
-tests/test_month_chain_1847.py:2071:    prepared = prepare_world_materials(db, state)
+tests/test_month_chain_1847.py:2065:        _safe_segment, list_materials, prepare_world_materials, read_material, release_material_tree,
+tests/test_month_chain_1847.py:2067:    prepared = prepare_world_materials(db, state)
 tests/test_public_projection_consistency_1830.py:22:    prepare_world_materials,
 tests/test_public_projection_consistency_1830.py:106:    world = prepare_world_materials(db, state, dest_root=tmp_path / "world")
 tests/test_public_projection_consistency_1830.py:113:    # 推演者的历月邸报是顶层 邸报/ 载体（_write_world_tree），不在公开说法子树内。

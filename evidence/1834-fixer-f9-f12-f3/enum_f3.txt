@@ -68,7 +68,6 @@ tests/test_audience_translation_1838.py:268:assert_eq_prose:db.conn.execute('SEL
 tests/test_audience_translation_1838.py:278:assert_eq_prose:get_night_protagonist(db, nid) == '王承恩'
 tests/test_audience_translation_1838.py:282:assert_eq_prose:get_night_protagonist(db, nid) == '王绍徽'
 tests/test_audience_translation_1838.py:303:assert_eq_prose:get_night_protagonist(db, nid) == '王承恩'
-tests/test_audience_translation_1838.py:346:assert_eq_prose:edge_row['context'] == '当殿为赈灾站台'
 tests/test_audience_travel_gating_670.py:101:assert_in_prose:'已故' in decision.reason
 tests/test_audience_travel_gating_670.py:442:assert_eq_prose:str(exc) == 'injected canonical applier failure'
 tests/test_audience_travel_gating_670.py:525:assert_in_prose:'injected continuation applier failure' in str(excinfo.value.__cause__)
@@ -113,12 +112,12 @@ tests/test_cli_backend.py:65:assert_list_eq_prose:result['excluded_names'] == [.
 tests/test_cli_backend.py:66:assert_list_eq_prose:result['excluded_offices'] == [... '司礼监' ...]
 tests/test_cli_backend.py:465:assert_eq_prose:out == '辽饷缺口甚大。'
 tests/test_cli_backend.py:466:assert_list_eq_prose:texts == [... '饷缺口甚大。' ...]
-tests/test_cli_backend.py:656:assert_in_prose:'printenv PATH' in joined
-tests/test_cli_backend.py:749:assert_in_prose:'【执行约束·必读】' in p
-tests/test_cli_backend.py:769:assert_in_prose:'【输出格式硬约束】' in seen[0]
-tests/test_cli_backend.py:775:assert_in_prose:'【输出格式硬约束】' in seen[1]
-tests/test_cli_backend.py:779:assert_in_prose:'【执行约束·必读】' in seen[2]
-tests/test_cli_backend.py:1002:assert_eq_prose:got == '边镇'
+tests/test_cli_backend.py:655:assert_in_prose:'printenv PATH' in joined
+tests/test_cli_backend.py:748:assert_in_prose:'【执行约束·必读】' in p
+tests/test_cli_backend.py:768:assert_in_prose:'【输出格式硬约束】' in seen[0]
+tests/test_cli_backend.py:774:assert_in_prose:'【输出格式硬约束】' in seen[1]
+tests/test_cli_backend.py:778:assert_in_prose:'【执行约束·必读】' in seen[2]
+tests/test_cli_backend.py:1001:assert_eq_prose:got == '边镇'
 tests/test_cli_play_turn.py:392:assert_in_prose:'【密令落库失败 #0】' in out
 tests/test_cli_play_turn.py:451:assert_in_prose:'【密令落库失败 #42】' in out
 tests/test_cli_play_turn.py:560:assert_in_prose:'结算中止' in out
@@ -175,12 +174,10 @@ tests/test_decree_dossiers_571.py:1480:assert_eq_prose:dossier['target_id'] == '
 tests/test_decree_dossiers_571.py:1863:assert_in_prose:'"category": "invalid_origin_ref"' in json.dumps(result, ensure_ascii=False)
 tests/test_decree_dossiers_571.py:1926:assert_eq_prose:payload['account'] == '国库'
 tests/test_decree_dossiers_571.py:1927:assert_eq_prose:dossier['decree_text'] == '改稿拨帑赈济'
-tests/test_deepseek_thinking_disable_1797.py:209:assert_in_prose:'思考过程甲' in text
-tests/test_deepseek_thinking_disable_1797.py:210:assert_in_prose:'中转 reasoning 正文' in text
-tests/test_deepseek_thinking_disable_1797.py:212:assert_in_prose:'"reasoning_tokens": 42' in text
-tests/test_deepseek_thinking_disable_1797.py:213:assert_in_prose:'[finish_reason] (缺)' in text
-tests/test_deepseek_thinking_disable_1797.py:226:assert_in_prose:'[finish_reason] stop' in dump_path.read_text(encoding='utf-8')
-tests/test_deepseek_thinking_disable_1797.py:249:assert_in_prose:'[finish_reason] length' in dump_path.read_text(encoding='utf-8')
+tests/test_deepseek_thinking_disable_1797.py:210:assert_in_prose:'"reasoning_tokens": 42' in text
+tests/test_deepseek_thinking_disable_1797.py:211:assert_in_prose:'[finish_reason] (缺)' in text
+tests/test_deepseek_thinking_disable_1797.py:224:assert_in_prose:'[finish_reason] stop' in dump_path.read_text(encoding='utf-8')
+tests/test_deepseek_thinking_disable_1797.py:247:assert_in_prose:'[finish_reason] length' in dump_path.read_text(encoding='utf-8')
 tests/test_deformation_dual_rail_622.py:256:assert_eq_prose:hit['relation_type'] == '稽核'
 tests/test_deformation_dual_rail_622.py:259:assert_in_prose:'已竣' in hit['reported_bands']
 tests/test_deformation_dual_rail_622.py:324:assert_eq_prose:row['purpose'] == '补饷'
@@ -193,7 +190,6 @@ tests/test_draft_admission_resubmit_1769.py:295:assert_eq_prose:projected.get('g
 tests/test_draft_admission_resubmit_1769.py:297:assert_eq_prose:projected.get('account') == '国库'
 tests/test_draft_admission_resubmit_1769.py:305:assert_eq_prose:dossier['executor_id'] == '郭允厚'
 tests/test_draft_admission_resubmit_1769.py:361:structured_field_eq_prose:feed_item.get('admission_status') == '上月未入档'
-tests/test_due_review_621.py:816:assert_eq_prose:scene['criterion_text'] == '火器见眉目'
 tests/test_effect_origin_558.py:92:assert_eq_prose:close['building_ops'][0]['name'] == '父案卷工坊'
 tests/test_effect_origin_558.py:149:assert_eq_prose:result['fiscal_removes'][0]['key'] == '待裁月费_base'
 tests/test_enrich_list_guards.py:41:assert_eq_prose:out[0].get('account') == '国库'
@@ -331,11 +327,10 @@ tests/test_fiscal_levy_effect.py:732:structured_field_eq_prose:repeat['terminal_
 tests/test_fiscal_levy_effect.py:939:structured_field_eq_prose:db.conn.execute('SELECT terminal_reason FROM event_triggers WHERE event_id=?', ('jiao_levy_start_1637',)).fetchone()['terminal_reason'] == '已准'
 tests/test_fiscal_levy_effect.py:959:structured_field_eq_prose:db.conn.execute('SELECT terminal_reason FROM event_triggers WHERE event_id=?', ('jiao_levy_stop_1640',)).fetchone()['terminal_reason'] == '已停'
 tests/test_fiscal_levy_effect.py:1460:structured_field_eq_prose:row['title'] == '河南赈灾'
-tests/test_fiscal_levy_effect.py:1560:structured_field_eq_prose:presented['presented_context'] == '边饷急迫，请旨定夺。'
-tests/test_fiscal_levy_effect.py:1561:structured_field_eq_prose:presented['emperor_note'] == '姑候户部再核'
-tests/test_fiscal_levy_effect.py:1574:assert_truthy_paths:petition_paths
-tests/test_fiscal_levy_effect.py:1722:structured_field_eq_prose:settled['terminal_reason'] == '已准'
-tests/test_fiscal_levy_effect.py:1731:assert_list_eq_prose:tuple(row) == [... '已准' ...]
+tests/test_fiscal_levy_effect.py:1560:structured_field_eq_prose:presented['emperor_note'] == '姑候户部再核'
+tests/test_fiscal_levy_effect.py:1573:assert_truthy_paths:petition_paths
+tests/test_fiscal_levy_effect.py:1721:structured_field_eq_prose:settled['terminal_reason'] == '已准'
+tests/test_fiscal_levy_effect.py:1730:assert_list_eq_prose:tuple(row) == [... '已准' ...]
 tests/test_fiscal_substrate_bridge.py:115:assert_eq_prose:henan_source['source'] == '《万历会计录》卷三十二「宗藩禄粮」'
 tests/test_fiscal_substrate_bridge.py:426:assert_list_eq_prose:loaded['_meta']['provisional'] == [... '宗禄' ...]
 tests/test_fiscal_substrate_bridge.py:426:assert_list_eq_prose:loaded['_meta']['provisional'] == [... '起运定额' ...]
@@ -390,8 +385,6 @@ tests/test_fiscal_substrate_bridge.py:5283:assert_in_prose:'隐田' in meta.get(
 tests/test_gazette_author_1862.py:375:path_member_named:fact_rel in seen['author_files']
 tests/test_gazette_author_1862.py:377:path_member_named:experience_rel in seen['author_files']
 tests/test_grant_reconciliation_567.py:242:assert_in_prose:'赈银押解到达' in note
-tests/test_grant_reconciliation_567.py:243:assert_in_prose:'应解30两' in note
-tests/test_grant_reconciliation_567.py:244:assert_in_prose:'实抵16两' in note
 tests/test_highlight_judge_544.py:38:assert_list_eq_prose:parse_highlight_judge_output('```json\n{"highlights": ["**辽饷**", "户部亏空", "  "]}\n```') == [... '**辽饷**' ...]
 tests/test_highlight_judge_544.py:38:assert_list_eq_prose:parse_highlight_judge_output('```json\n{"highlights": ["**辽饷**", "户部亏空", "  "]}\n```') == [... '户部亏空' ...]
 tests/test_highlight_judge_544.py:79:assert_list_eq_prose:run_highlight_judge(minister_reply='臣陈**辽饷**与军心。', llm_config=object(), agent=_Ok(), timeout_s=1.0) == [... '辽饷' ...]
@@ -440,18 +433,16 @@ tests/test_month_chain_1843.py:205:assert_in_prose:'过月中断' in str(exc_inf
 tests/test_month_chain_1843.py:321:assert_eq_prose:session.last_decree == '崩溃前原诏'
 tests/test_month_chain_1843.py:409:assert_in_prose:'interrupted after decree settlement' in str(caught.value.__cause__)
 tests/test_month_chain_1843.py:833:assert_eq_prose:db.conn.execute('SELECT fidelity_state FROM dossier_actual_progress WHERE dossier_id=? AND turn=?', (dossier_id, int(state.turn))).fetchone()['fidelity_state'] == '忠实'
-tests/test_month_chain_1843.py:842:assert_eq_prose:recon['note'] == '实抵已到'
 tests/test_month_chain_1847.py:92:structured_field_eq_prose:desk[0]['title'] == '是否增援宁远'
 tests/test_month_chain_1847.py:621:assert_list_eq_prose:titles == [... '旧急务甲' ...]
 tests/test_month_chain_1847.py:700:assert_in_prose:'预推不可见:陕西赈灾' in message
 tests/test_month_chain_1847.py:774:assert_list_eq_prose:[row['title'] for row in result.decisions] == [... '问一' ...]
 tests/test_month_chain_1847.py:774:assert_list_eq_prose:[row['title'] for row in result.decisions] == [... '问二' ...]
-tests/test_month_chain_1847.py:775:assert_list_eq_prose:segments == [... '问前事实。' ...]
-tests/test_month_chain_1847.py:779:assert_list_eq_prose:[item['title'] for item in stored] == [... '问一' ...]
-tests/test_month_chain_1847.py:779:assert_list_eq_prose:[item['title'] for item in stored] == [... '问二' ...]
-tests/test_month_chain_1847.py:1120:structured_field_eq_prose:state.ending_status == '被废'
-tests/test_month_chain_1847.py:1121:structured_field_eq_prose:outcome['status'] == '被废'
-tests/test_month_chain_1847.py:2071:path_member_named:rel in list_materials(prepared.root)
+tests/test_month_chain_1847.py:778:assert_list_eq_prose:[item['title'] for item in stored] == [... '问一' ...]
+tests/test_month_chain_1847.py:778:assert_list_eq_prose:[item['title'] for item in stored] == [... '问二' ...]
+tests/test_month_chain_1847.py:1119:structured_field_eq_prose:state.ending_status == '被废'
+tests/test_month_chain_1847.py:1120:structured_field_eq_prose:outcome['status'] == '被废'
+tests/test_month_chain_1847.py:2070:path_member_named:rel in list_materials(prepared.root)
 tests/test_month_open_snapshot_1234.py:130:structured_field_eq_prose:payload['pending_decisions'][0]['title'] == '饷银'
 tests/test_month_open_snapshot_1234.py:195:assert_in_prose:'启动清除孤儿月初快照' in logged
 tests/test_month_translate_1840.py:91:assert_eq_prose:rejected['account'] == '国库'
@@ -586,60 +577,58 @@ tests/test_person_delta_adapter.py:107:assert_eq_prose:normalized[-1]['legacy_sp
 tests/test_person_delta_adapter.py:147:assert_list_eq_prose:[item['name'] for item in normalized] == [... '孔有德' ...]
 tests/test_person_delta_adapter.py:147:assert_list_eq_prose:[item['name'] for item in normalized] == [... '孙传庭' ...]
 tests/test_person_delta_adapter.py:152:assert_eq_prose:normalized[-1]['legacy_spillover'] == 'appointments（朝臣 spillover）'
-tests/test_person_delta_adapter.py:236:structured_field_eq_prose:applied['issue_summary']['new_issues'][0]['title'] == '安抚毛文龙·进行中'
-tests/test_person_delta_adapter.py:241:structured_field_eq_prose:issue_row['title'] == '安抚毛文龙·进行中'
-tests/test_person_delta_adapter.py:589:structured_field_eq_prose:row['status_reason'] == '已先行罢黜'
-tests/test_person_delta_adapter.py:708:assert_eq_prose:row['office'] == '测试巡抚'
-tests/test_person_delta_adapter.py:710:assert_eq_prose:content.characters[name].office == '测试巡抚'
-tests/test_person_delta_adapter.py:711:assert_eq_prose:applied['applied_person_changes'][0]['动作'] == '调任'
-tests/test_person_delta_adapter.py:712:assert_eq_prose:applied['applied_person_changes'][0]['new_office'] == '测试巡抚'
-tests/test_person_delta_adapter.py:777:assert_eq_prose:row['reason_code'] == '陷虏'
-tests/test_person_delta_adapter.py:809:assert_eq_prose:row['reason_code'] == '陷虏'
-tests/test_person_delta_adapter.py:852:assert_eq_prose:row['office'] == '陕西总督'
-tests/test_person_delta_adapter.py:866:assert_eq_prose:applied['applied_person_changes'][0]['动作'] == '处置'
-tests/test_person_delta_adapter.py:868:assert_eq_prose:applied['applied_person_changes'][0]['derived_from'] == '放归'
-tests/test_person_delta_adapter.py:869:assert_eq_prose:applied['applied_person_changes'][1]['动作'] == '任命'
-tests/test_person_delta_adapter.py:870:assert_eq_prose:applied['applied_person_changes'][1]['derived_from'] == '放归'
-tests/test_person_delta_adapter.py:985:assert_eq_prose:content.characters[old_holder].office == '听用候铨'
-tests/test_person_delta_adapter.py:986:assert_eq_prose:content.characters[old_holder].office_type == '身名分'
-tests/test_person_delta_adapter.py:1200:structured_field_eq_prose:row['status_reason'] == '契约允许的说明'
-tests/test_person_delta_adapter.py:1609:assert_eq_prose:row['reason_code'] == '陷虏'
-tests/test_person_delta_adapter.py:1620:assert_eq_prose:applied['applied_person_changes'][0]['reason_code'] == '陷虏'
-tests/test_person_delta_adapter.py:1634:assert_truthy_body:content.characters[name].office
-tests/test_person_delta_adapter.py:1659:assert_eq_prose:content.characters[name].office == '降臣'
-tests/test_person_delta_adapter.py:1660:assert_eq_prose:content.characters[name].office_type == '身名分'
-tests/test_person_delta_adapter.py:1661:structured_field_eq_prose:applied['applied_person_changes'][0]['new_title'] == '降臣'
-tests/test_person_delta_adapter.py:1700:assert_eq_prose:row['office'] == '陕西总督'
-tests/test_person_delta_adapter.py:1701:assert_eq_prose:applied['applied_person_changes'][0]['动作'] == '任命'
-tests/test_person_delta_adapter.py:1743:assert_eq_prose:row['office_type'] == '身名分'
-tests/test_person_delta_adapter.py:1787:assert_eq_prose:db.conn.execute('SELECT office_type FROM characters WHERE name=?', (name,)).fetchone()['office_type'] == '身名分'
-tests/test_person_delta_adapter.py:1808:assert_eq_prose:row['office_type'] == '身名分'
-tests/test_person_delta_adapter.py:1975:assert_eq_prose:row['office_type'] == '宗藩'
-tests/test_person_delta_adapter.py:2266:structured_field_eq_prose:row['status_reason'] == '自请归里'
-tests/test_person_delta_adapter.py:2367:assert_list_eq_prose:[item['name'] for item in normalize_person_changes(merged)] == [... '孔有德' ...]
-tests/test_person_delta_adapter.py:2415:assert_eq_prose:row['office'] == '都察院左都御史'
-tests/test_person_delta_adapter.py:2482:structured_field_eq_prose:ch.status_reason == '旧削籍缘由'
-tests/test_person_delta_adapter.py:2483:assert_eq_prose:ch.reason_code == '获罪削籍'
-tests/test_person_delta_adapter.py:2597:assert_eq_prose:row['reason_code'] == '获罪削籍'
-tests/test_person_delta_adapter.py:2619:assert_eq_prose:qqy['reason_code'] == '获罪削籍'
-tests/test_person_delta_adapter.py:2676:assert_eq_prose:row['office'] == '听用候铨'
-tests/test_person_delta_adapter.py:2702:assert_eq_prose:row['reason_code'] == '历史卒'
-tests/test_person_delta_adapter.py:2747:assert_eq_prose:row['reason_code'] == '登场'
-tests/test_person_delta_adapter.py:2791:assert_eq_prose:getattr(ch, 'reason_code', None) == '获罪削籍'
-tests/test_person_delta_adapter.py:2792:structured_field_eq_prose:getattr(ch, 'status_reason', None) == '忤逆案削籍'
-tests/test_person_delta_adapter.py:2813:assert_eq_prose:ch.reason_code == '获罪削籍'
-tests/test_person_delta_adapter.py:2814:structured_field_eq_prose:ch.status_reason == '忤逆案削籍'
-tests/test_person_delta_adapter.py:2885:structured_field_eq_prose:row['status_reason'] == '剃发降清'
-tests/test_person_delta_adapter.py:2919:assert_eq_prose:row['office'] == '蓟辽督师'
-tests/test_person_delta_adapter.py:2944:assert_eq_prose:row['office'] == '东阁大学士'
-tests/test_person_delta_adapter.py:2968:assert_eq_prose:row['office'] == '礼部尚书,东阁大学士'
-tests/test_person_delta_adapter.py:3027:assert_eq_prose:row['reason_code'] == '出宫'
-tests/test_person_delta_adapter.py:3061:assert_in_prose:'游击' in row['office'] or ''
-tests/test_person_delta_adapter.py:3253:assert_eq_prose:zhang_row['office'] == '游击将军'
-tests/test_person_delta_adapter.py:3563:assert_eq_prose:row['office'] == '知县'
-tests/test_person_delta_adapter.py:3593:assert_eq_prose:row['office_type'] == '身名分'
-tests/test_person_delta_adapter.py:3666:assert_eq_prose:content.characters[newcomer].office_type == '身名分'
-tests/test_person_delta_adapter.py:3694:assert_eq_prose:content.characters[incumbent].office_type == '身名分'
+tests/test_person_delta_adapter.py:587:structured_field_eq_prose:row['status_reason'] == '已先行罢黜'
+tests/test_person_delta_adapter.py:706:assert_eq_prose:row['office'] == '测试巡抚'
+tests/test_person_delta_adapter.py:708:assert_eq_prose:content.characters[name].office == '测试巡抚'
+tests/test_person_delta_adapter.py:709:assert_eq_prose:applied['applied_person_changes'][0]['动作'] == '调任'
+tests/test_person_delta_adapter.py:710:assert_eq_prose:applied['applied_person_changes'][0]['new_office'] == '测试巡抚'
+tests/test_person_delta_adapter.py:775:assert_eq_prose:row['reason_code'] == '陷虏'
+tests/test_person_delta_adapter.py:807:assert_eq_prose:row['reason_code'] == '陷虏'
+tests/test_person_delta_adapter.py:850:assert_eq_prose:row['office'] == '陕西总督'
+tests/test_person_delta_adapter.py:864:assert_eq_prose:applied['applied_person_changes'][0]['动作'] == '处置'
+tests/test_person_delta_adapter.py:866:assert_eq_prose:applied['applied_person_changes'][0]['derived_from'] == '放归'
+tests/test_person_delta_adapter.py:867:assert_eq_prose:applied['applied_person_changes'][1]['动作'] == '任命'
+tests/test_person_delta_adapter.py:868:assert_eq_prose:applied['applied_person_changes'][1]['derived_from'] == '放归'
+tests/test_person_delta_adapter.py:983:assert_eq_prose:content.characters[old_holder].office == '听用候铨'
+tests/test_person_delta_adapter.py:984:assert_eq_prose:content.characters[old_holder].office_type == '身名分'
+tests/test_person_delta_adapter.py:1198:structured_field_eq_prose:row['status_reason'] == '契约允许的说明'
+tests/test_person_delta_adapter.py:1607:assert_eq_prose:row['reason_code'] == '陷虏'
+tests/test_person_delta_adapter.py:1618:assert_eq_prose:applied['applied_person_changes'][0]['reason_code'] == '陷虏'
+tests/test_person_delta_adapter.py:1632:assert_truthy_body:content.characters[name].office
+tests/test_person_delta_adapter.py:1657:assert_eq_prose:content.characters[name].office == '降臣'
+tests/test_person_delta_adapter.py:1658:assert_eq_prose:content.characters[name].office_type == '身名分'
+tests/test_person_delta_adapter.py:1659:structured_field_eq_prose:applied['applied_person_changes'][0]['new_title'] == '降臣'
+tests/test_person_delta_adapter.py:1698:assert_eq_prose:row['office'] == '陕西总督'
+tests/test_person_delta_adapter.py:1699:assert_eq_prose:applied['applied_person_changes'][0]['动作'] == '任命'
+tests/test_person_delta_adapter.py:1741:assert_eq_prose:row['office_type'] == '身名分'
+tests/test_person_delta_adapter.py:1785:assert_eq_prose:db.conn.execute('SELECT office_type FROM characters WHERE name=?', (name,)).fetchone()['office_type'] == '身名分'
+tests/test_person_delta_adapter.py:1806:assert_eq_prose:row['office_type'] == '身名分'
+tests/test_person_delta_adapter.py:1973:assert_eq_prose:row['office_type'] == '宗藩'
+tests/test_person_delta_adapter.py:2264:structured_field_eq_prose:row['status_reason'] == '自请归里'
+tests/test_person_delta_adapter.py:2365:assert_list_eq_prose:[item['name'] for item in normalize_person_changes(merged)] == [... '孔有德' ...]
+tests/test_person_delta_adapter.py:2413:assert_eq_prose:row['office'] == '都察院左都御史'
+tests/test_person_delta_adapter.py:2480:structured_field_eq_prose:ch.status_reason == '旧削籍缘由'
+tests/test_person_delta_adapter.py:2481:assert_eq_prose:ch.reason_code == '获罪削籍'
+tests/test_person_delta_adapter.py:2595:assert_eq_prose:row['reason_code'] == '获罪削籍'
+tests/test_person_delta_adapter.py:2617:assert_eq_prose:qqy['reason_code'] == '获罪削籍'
+tests/test_person_delta_adapter.py:2674:assert_eq_prose:row['office'] == '听用候铨'
+tests/test_person_delta_adapter.py:2700:assert_eq_prose:row['reason_code'] == '历史卒'
+tests/test_person_delta_adapter.py:2745:assert_eq_prose:row['reason_code'] == '登场'
+tests/test_person_delta_adapter.py:2789:assert_eq_prose:getattr(ch, 'reason_code', None) == '获罪削籍'
+tests/test_person_delta_adapter.py:2790:structured_field_eq_prose:getattr(ch, 'status_reason', None) == '忤逆案削籍'
+tests/test_person_delta_adapter.py:2811:assert_eq_prose:ch.reason_code == '获罪削籍'
+tests/test_person_delta_adapter.py:2812:structured_field_eq_prose:ch.status_reason == '忤逆案削籍'
+tests/test_person_delta_adapter.py:2883:structured_field_eq_prose:row['status_reason'] == '剃发降清'
+tests/test_person_delta_adapter.py:2917:assert_eq_prose:row['office'] == '蓟辽督师'
+tests/test_person_delta_adapter.py:2942:assert_eq_prose:row['office'] == '东阁大学士'
+tests/test_person_delta_adapter.py:2966:assert_eq_prose:row['office'] == '礼部尚书,东阁大学士'
+tests/test_person_delta_adapter.py:3025:assert_eq_prose:row['reason_code'] == '出宫'
+tests/test_person_delta_adapter.py:3059:assert_in_prose:'游击' in row['office'] or ''
+tests/test_person_delta_adapter.py:3251:assert_eq_prose:zhang_row['office'] == '游击将军'
+tests/test_person_delta_adapter.py:3561:assert_eq_prose:row['office'] == '知县'
+tests/test_person_delta_adapter.py:3591:assert_eq_prose:row['office_type'] == '身名分'
+tests/test_person_delta_adapter.py:3664:assert_eq_prose:content.characters[newcomer].office_type == '身名分'
+tests/test_person_delta_adapter.py:3692:assert_eq_prose:content.characters[incumbent].office_type == '身名分'
 tests/test_person_transit_write_667.py:168:assert_eq_prose:appointed == '新任测试官'
 tests/test_pihong_dossier_1490.py:311:assert_in_prose:'event: error' in r1.text
 tests/test_pihong_dossier_1490.py:380:assert_eq_prose:stored_choice.get('label') == '准其销号'
@@ -672,18 +661,15 @@ tests/test_pihong_dossier_1490.py:1854:assert_eq_prose:str(payload.get('transact
 tests/test_pihong_dossier_1490.py:2138:assert_eq_prose:revised['transaction_category'] == '督赈'
 tests/test_pihong_dossier_1490.py:2462:assert_eq_prose:ends[0]['form'] == '当面站台'
 tests/test_pihong_dossier_1490.py:2803:assert_eq_prose:staged.get('text') == '着清核河工原文'
-tests/test_pihong_dossier_1490.py:2922:assert_list_eq_prose:[str(o['label']) for o in by_title['太仓亏空']['options']] == [... '责户部清理钱粮亏短' ...]
-tests/test_pihong_dossier_1490.py:2922:assert_list_eq_prose:[str(o['label']) for o in by_title['太仓亏空']['options']] == [... '发内帑周转军国急用' ...]
-tests/test_pihong_dossier_1490.py:3004:assert_eq_prose:expected['require_tier'] == '主办'
-tests/test_pihong_dossier_1490.py:3005:assert_in_prose:'主办' in expected['tiers']
-tests/test_pihong_dossier_1490.py:3009:assert_list_eq_prose:[str(o['label']) for o in drafts[0]['options']] == [... '发内帑周转军国急用' ...]
+tests/test_pihong_dossier_1490.py:3000:assert_eq_prose:expected['require_tier'] == '主办'
+tests/test_pihong_dossier_1490.py:3001:assert_in_prose:'主办' in expected['tiers']
 tests/test_player_army_projection_321.py:368:assert_eq_prose:derive_army_mutiny_state(row) == '哗变'
 tests/test_player_army_projection_321.py:371:assert_eq_prose:sit_before['mutiny_tier'] == '哗变'
 tests/test_player_army_projection_321.py:373:assert_eq_prose:card_before['mutiny_tier'] == '哗变'
 tests/test_player_army_projection_321.py:391:assert_eq_prose:derive_army_mutiny_state(after) == '不满'
 tests/test_player_army_projection_321.py:393:assert_eq_prose:sit_after['mutiny_tier'] == '不满'
 tests/test_player_army_projection_321.py:394:assert_eq_prose:_payload_by_id(reopened)[ARMY]['mutiny_tier'] == '不满'
-tests/test_player_payload_1022.py:135:structured_field_eq_prose:payload['report'] == '邸报：国丈家赀约数十万两，三十万两帑银与五千援军已抵辽东。'
+tests/test_player_payload_1022.py:140:structured_field_eq_prose:payload['decisions'][0].get('title') == '辽饷'
 tests/test_population_transfers_649.py:80:assert_eq_prose:rec['source'] == '农民@shaanxi'
 tests/test_population_transfers_649.py:81:assert_eq_prose:rec['target'] == '流民@shaanxi'
 tests/test_population_transfers_649.py:83:assert_eq_prose:rec['reason'] == '加派'
@@ -727,7 +713,6 @@ tests/test_qa_b3_409_ux.py:85:assert_in_prose:'月末结算进行中' in str(ei.
 tests/test_qa_b3_409_ux.py:101:assert_in_prose:'等待批红' in detail
 tests/test_qa_b3_409_ux.py:103:assert_in_prose:'月末结算进行中' in detail
 tests/test_qa_b3_409_ux.py:127:assert_eq_prose:payload['notes'] == '家赀约十万两'
-tests/test_qa_b3_409_ux.py:245:structured_field_eq_prose:payload['report'] == '邸报：已裁。'
 tests/test_qa_c2_phase_settlement_mask_1374.py:204:assert_in_prose:'event: error' in serialized
 tests/test_qa_c2_phase_settlement_mask_1374.py:246:assert_in_prose:'event: error' in serialized
 tests/test_qa_c2_phase_settlement_mask_1374.py:247:assert_in_prose:'stream clear boom' in serialized
@@ -753,10 +738,9 @@ tests/test_qa_s2_copy_prompts_1356_1402.py:79:assert_eq_prose:header == '天启�
 tests/test_qa_s2_copy_prompts_1356_1402.py:82:assert_in_prose:'十二月' in body
 tests/test_qa_s2_copy_prompts_1356_1402.py:100:assert_eq_prose:db.previous_turn_reign_period_label(state) == '天启七年九月'
 tests/test_qa_s2_copy_prompts_1356_1402.py:125:assert_eq_prose:payload['previous_reign_period_label'] == '天启七年九月'
-tests/test_qa_s2_copy_prompts_1356_1402.py:126:assert_in_prose:'真结算九月报文' in payload['previous_summary']
-tests/test_qa_s2_copy_prompts_1356_1402.py:128:assert_eq_prose:payload['turn']['reign_period_label'] == '天启七年十月'
-tests/test_qa_s2_copy_prompts_1356_1402.py:160:assert_in_prose:'尚未登场' in reason
-tests/test_qa_s2_copy_prompts_1356_1402.py:175:assert_in_prose:'尚未登场' in detail
+tests/test_qa_s2_copy_prompts_1356_1402.py:127:assert_eq_prose:payload['turn']['reign_period_label'] == '天启七年十月'
+tests/test_qa_s2_copy_prompts_1356_1402.py:159:assert_in_prose:'尚未登场' in reason
+tests/test_qa_s2_copy_prompts_1356_1402.py:174:assert_in_prose:'尚未登场' in detail
 tests/test_qa_t1_extraction_dual_source_1353.py:587:assert_list_eq_prose:calls == [... '退朝' ...]
 tests/test_recommendation_edges_635.py:64:assert_eq_prose:char_row['office'] == '巡盐御史'
 tests/test_recommendation_edges_635.py:76:assert_eq_prose:grace['event_kind'] == '恩义'
@@ -787,26 +771,21 @@ tests/test_rejection_wiring.py:451:assert_eq_prose:rows[0]['reason'] == "power_u
 tests/test_rejection_wiring.py:515:assert_eq_prose:rows[0]['reason'] == "power_updates 引用未入库势力 '查无此势力'"
 tests/test_rejection_wiring.py:555:assert_eq_prose:rows[0]['reason'] == "power_updates 引用未入库势力 '查无此势力'"
 tests/test_relation_brew_636.py:107:assert_eq_prose:first['dimension'] == '君臣'
-tests/test_relation_brew_636.py:108:assert_eq_prose:first['founding_segment'] == '越次一召，擢杨嗣昌于五品郎中。'
-tests/test_relation_brew_636.py:121:assert_eq_prose:second['recent_segment'] == '杨嗣昌所托办结，恩遇正浓。'
-tests/test_relation_brew_636.py:185:assert_eq_prose:payload['new_events'][0]['event_kind'] == '辜负'
-tests/test_relation_brew_636.py:186:assert_eq_prose:payload['recent_segment'] == '钱谦益蒙知遇。'
-tests/test_relation_brew_636.py:234:assert_eq_prose:summary['recent_segment'] == '温周结怨，朝堂侧目。'
-tests/test_relation_brew_636.py:235:assert_eq_prose:summary['dimension'] == '大臣'
-tests/test_relation_brew_636.py:415:assert_eq_prose:merge_founding_segment('', ['甲句。', '乙句。']) == '甲句。\n乙句。'
-tests/test_relation_brew_636.py:416:assert_eq_prose:merge_founding_segment('甲句。', ['甲句。', '丙句。']) == '甲句。\n丙句。'
-tests/test_relation_brew_636.py:417:assert_eq_prose:merge_founding_segment('甲句。', []) == '甲句。'
-tests/test_relation_brew_636.py:419:assert_eq_prose:merge_founding_segment('甲句。', ['']) == '甲句。'
-tests/test_relation_brew_636.py:420:assert_eq_prose:merge_founding_segment('甲句。', ['  ']) == '甲句。\n  '
-tests/test_relation_brew_636.py:429:assert_eq_prose:merge_founding_segment('', ['  句前空格。  ']) == '  句前空格。  '
-tests/test_relation_brew_636.py:430:assert_eq_prose:merge_founding_segment('甲句。', [' 甲句。 ']) == '甲句。\n 甲句。 '
-tests/test_relation_brew_636.py:432:assert_eq_prose:merge_founding_segment('甲句。', ['甲句。', '甲句。', '甲句 ']) == '甲句。\n甲句 '
-tests/test_relation_brew_636.py:455:assert_eq_prose:merge_founding_segment('甲\n中\n乙', ['甲\n乙']) == '甲\n中\n乙\n甲\n乙'
-tests/test_relation_brew_636.py:457:assert_eq_prose:merge_founding_segment('甲句。', ['甲句。\n甲句二。']) == '甲句。\n甲句。\n甲句二。'
-tests/test_relation_brew_636.py:583:assert_eq_prose:relation_dimension(EMPEROR_NODE, '杨嗣昌') == '君臣'
-tests/test_relation_brew_636.py:584:assert_eq_prose:relation_dimension('杨嗣昌', EMPEROR_NODE) == '君臣'
-tests/test_relation_brew_636.py:585:assert_eq_prose:relation_dimension('毕自严', '王绍徽') == '大臣'
-tests/test_relation_brew_636.py:602:assert_eq_prose:first['recent_segment'] == '原文一'
+tests/test_relation_brew_636.py:183:assert_eq_prose:payload['new_events'][0]['event_kind'] == '辜负'
+tests/test_relation_brew_636.py:231:assert_eq_prose:summary['dimension'] == '大臣'
+tests/test_relation_brew_636.py:411:assert_eq_prose:merge_founding_segment('', ['甲句。', '乙句。']) == '甲句。\n乙句。'
+tests/test_relation_brew_636.py:412:assert_eq_prose:merge_founding_segment('甲句。', ['甲句。', '丙句。']) == '甲句。\n丙句。'
+tests/test_relation_brew_636.py:413:assert_eq_prose:merge_founding_segment('甲句。', []) == '甲句。'
+tests/test_relation_brew_636.py:415:assert_eq_prose:merge_founding_segment('甲句。', ['']) == '甲句。'
+tests/test_relation_brew_636.py:416:assert_eq_prose:merge_founding_segment('甲句。', ['  ']) == '甲句。\n  '
+tests/test_relation_brew_636.py:425:assert_eq_prose:merge_founding_segment('', ['  句前空格。  ']) == '  句前空格。  '
+tests/test_relation_brew_636.py:426:assert_eq_prose:merge_founding_segment('甲句。', [' 甲句。 ']) == '甲句。\n 甲句。 '
+tests/test_relation_brew_636.py:428:assert_eq_prose:merge_founding_segment('甲句。', ['甲句。', '甲句。', '甲句 ']) == '甲句。\n甲句 '
+tests/test_relation_brew_636.py:451:assert_eq_prose:merge_founding_segment('甲\n中\n乙', ['甲\n乙']) == '甲\n中\n乙\n甲\n乙'
+tests/test_relation_brew_636.py:453:assert_eq_prose:merge_founding_segment('甲句。', ['甲句。\n甲句二。']) == '甲句。\n甲句。\n甲句二。'
+tests/test_relation_brew_636.py:579:assert_eq_prose:relation_dimension(EMPEROR_NODE, '杨嗣昌') == '君臣'
+tests/test_relation_brew_636.py:580:assert_eq_prose:relation_dimension('杨嗣昌', EMPEROR_NODE) == '君臣'
+tests/test_relation_brew_636.py:581:assert_eq_prose:relation_dimension('毕自严', '王绍徽') == '大臣'
 tests/test_relation_capture_633.py:64:assert_list_eq_prose:(row['source'], row['target'], row['event_kind']) == [... '毕自严' ...]
 tests/test_relation_capture_633.py:64:assert_list_eq_prose:(row['source'], row['target'], row['event_kind']) == [... '王绍徽' ...]
 tests/test_relation_capture_633.py:64:assert_list_eq_prose:(row['source'], row['target'], row['event_kind']) == [... '使绊' ...]
@@ -826,49 +805,45 @@ tests/test_relation_capture_633.py:727:assert_list_eq_prose:(row['source'], row[
 tests/test_relation_capture_633.py:727:assert_list_eq_prose:(row['source'], row['target'], row['event_kind']) == [... '协作' ...]
 tests/test_relation_capture_633.py:786:assert_in_prose:'王绍徽' in res[0]['reason']
 tests/test_relation_read_640.py:141:assert_eq_prose:wei_yang['updated_at_period'] == '天启七年十月'
-tests/test_relation_read_640.py:266:assert_list_eq_prose:[row['context'] for row in prior] == [... '杨嗣昌与倪元璐初有细缝。' ...]
-tests/test_relation_read_640.py:266:assert_list_eq_prose:[row['context'] for row in prior] == [... '清丈议上，杨嗣昌挡了倪元璐的硬路。' ...]
-tests/test_relation_read_640.py:266:assert_list_eq_prose:[row['context'] for row in prior] == [... '二人当面言和，暂释前隙。' ...]
 tests/test_relation_seed_638.py:132:assert_eq_prose:dto['updated_at_period'] == '天启六年二月'
-tests/test_relation_seed_638.py:345:assert_eq_prose:dto['recent_context'] == '后事。（天启六年二月）'
-tests/test_relation_seed_638.py:346:assert_eq_prose:dto['updated_at_period'] == '天启六年二月'
-tests/test_relation_seed_638.py:360:assert_eq_prose:dto['updated_at_period'] == '公历1620年正月'
-tests/test_relation_seed_638.py:480:assert_eq_prose:row['dimension'] == '君臣'
-tests/test_relation_seed_638.py:500:assert_eq_prose:cover['event_kind'] == '把柄'
-tests/test_relation_seed_638.py:505:assert_in_prose:'乞为养子' in cui['context']
-tests/test_relation_seed_638.py:511:assert_list_eq_prose:(yan['source'], yan['target']) == [... '阎鸣泰' ...]
-tests/test_relation_seed_638.py:511:assert_list_eq_prose:(yan['source'], yan['target']) == [... '魏忠贤' ...]
-tests/test_relation_seed_638.py:526:assert_list_eq_prose:(li['source'], li['target'], li['event_kind']) == [... '魏忠贤' ...]
-tests/test_relation_seed_638.py:526:assert_list_eq_prose:(li['source'], li['target'], li['event_kind']) == [... '李从心' ...]
-tests/test_relation_seed_638.py:526:assert_list_eq_prose:(li['source'], li['target'], li['event_kind']) == [... '荐引' ...]
-tests/test_relation_seed_638.py:534:assert_list_eq_prose:(oath['source'], oath['target'], oath['event_kind']) == [... '魏忠贤' ...]
-tests/test_relation_seed_638.py:534:assert_list_eq_prose:(oath['source'], oath['target'], oath['event_kind']) == [... '崔呈秀' ...]
-tests/test_relation_seed_638.py:534:assert_list_eq_prose:(oath['source'], oath['target'], oath['event_kind']) == [... '恩义' ...]
-tests/test_relation_seed_638.py:537:assert_in_prose:'盟誓' in oath['context']
-tests/test_relation_seed_638.py:543:assert_list_eq_prose:(block['source'], block['target'], block['event_kind']) == [... '田尔耕' ...]
-tests/test_relation_seed_638.py:543:assert_list_eq_prose:(block['source'], block['target'], block['event_kind']) == [... '李若琏' ...]
-tests/test_relation_seed_638.py:543:assert_list_eq_prose:(block['source'], block['target'], block['event_kind']) == [... '使绊' ...]
-tests/test_relation_seed_638.py:546:assert_in_prose:'升迁' in block['context']
-tests/test_relation_seed_638.py:550:assert_list_eq_prose:(grudge['source'], grudge['target'], grudge['event_kind']) == [... '毛羽健' ...]
-tests/test_relation_seed_638.py:550:assert_list_eq_prose:(grudge['source'], grudge['target'], grudge['event_kind']) == [... '田尔耕' ...]
-tests/test_relation_seed_638.py:550:assert_list_eq_prose:(grudge['source'], grudge['target'], grudge['event_kind']) == [... '结怨' ...]
-tests/test_relation_seed_638.py:558:assert_list_eq_prose:(shi['source'], shi['target'], shi['event_kind']) == [... '施凤来' ...]
-tests/test_relation_seed_638.py:558:assert_list_eq_prose:(shi['source'], shi['target'], shi['event_kind']) == [... '魏忠贤' ...]
-tests/test_relation_seed_638.py:558:assert_list_eq_prose:(shi['source'], shi['target'], shi['event_kind']) == [... '站台' ...]
-tests/test_relation_seed_638.py:560:assert_in_prose:'七月' in shi['context']
-tests/test_relation_seed_638.py:562:assert_list_eq_prose:(zhang['source'], zhang['target'], zhang['event_kind']) == [... '张瑞图' ...]
-tests/test_relation_seed_638.py:562:assert_list_eq_prose:(zhang['source'], zhang['target'], zhang['event_kind']) == [... '魏忠贤' ...]
-tests/test_relation_seed_638.py:562:assert_list_eq_prose:(zhang['source'], zhang['target'], zhang['event_kind']) == [... '站台' ...]
-tests/test_relation_seed_638.py:571:assert_list_eq_prose:(guo['source'], guo['target'], guo['event_kind']) == [... '魏忠贤' ...]
-tests/test_relation_seed_638.py:571:assert_list_eq_prose:(guo['source'], guo['target'], guo['event_kind']) == [... '郭允厚' ...]
-tests/test_relation_seed_638.py:571:assert_list_eq_prose:(guo['source'], guo['target'], guo['event_kind']) == [... '荐引' ...]
-tests/test_relation_seed_638.py:576:assert_list_eq_prose:(wang['source'], wang['target'], wang['event_kind']) == [... '王体乾' ...]
-tests/test_relation_seed_638.py:576:assert_list_eq_prose:(wang['source'], wang['target'], wang['event_kind']) == [... '魏忠贤' ...]
-tests/test_relation_seed_638.py:576:assert_list_eq_prose:(wang['source'], wang['target'], wang['event_kind']) == [... '站台' ...]
-tests/test_relation_seed_638.py:587:assert_list_eq_prose:(lai['source'], lai['target']) == [... '来宗道' ...]
-tests/test_relation_seed_638.py:587:assert_list_eq_prose:(lai['source'], lai['target']) == [... '魏忠贤' ...]
-tests/test_relation_seed_638.py:593:assert_eq_prose:row['source'] == '皇帝'
-tests/test_relation_seed_638.py:611:assert_in_prose:'盟誓' in wei_cui['recent_context']
+tests/test_relation_seed_638.py:345:assert_eq_prose:dto['updated_at_period'] == '天启六年二月'
+tests/test_relation_seed_638.py:359:assert_eq_prose:dto['updated_at_period'] == '公历1620年正月'
+tests/test_relation_seed_638.py:479:assert_eq_prose:row['dimension'] == '君臣'
+tests/test_relation_seed_638.py:499:assert_eq_prose:cover['event_kind'] == '把柄'
+tests/test_relation_seed_638.py:504:assert_in_prose:'乞为养子' in cui['context']
+tests/test_relation_seed_638.py:510:assert_list_eq_prose:(yan['source'], yan['target']) == [... '阎鸣泰' ...]
+tests/test_relation_seed_638.py:510:assert_list_eq_prose:(yan['source'], yan['target']) == [... '魏忠贤' ...]
+tests/test_relation_seed_638.py:525:assert_list_eq_prose:(li['source'], li['target'], li['event_kind']) == [... '魏忠贤' ...]
+tests/test_relation_seed_638.py:525:assert_list_eq_prose:(li['source'], li['target'], li['event_kind']) == [... '李从心' ...]
+tests/test_relation_seed_638.py:525:assert_list_eq_prose:(li['source'], li['target'], li['event_kind']) == [... '荐引' ...]
+tests/test_relation_seed_638.py:533:assert_list_eq_prose:(oath['source'], oath['target'], oath['event_kind']) == [... '魏忠贤' ...]
+tests/test_relation_seed_638.py:533:assert_list_eq_prose:(oath['source'], oath['target'], oath['event_kind']) == [... '崔呈秀' ...]
+tests/test_relation_seed_638.py:533:assert_list_eq_prose:(oath['source'], oath['target'], oath['event_kind']) == [... '恩义' ...]
+tests/test_relation_seed_638.py:536:assert_in_prose:'盟誓' in oath['context']
+tests/test_relation_seed_638.py:542:assert_list_eq_prose:(block['source'], block['target'], block['event_kind']) == [... '田尔耕' ...]
+tests/test_relation_seed_638.py:542:assert_list_eq_prose:(block['source'], block['target'], block['event_kind']) == [... '李若琏' ...]
+tests/test_relation_seed_638.py:542:assert_list_eq_prose:(block['source'], block['target'], block['event_kind']) == [... '使绊' ...]
+tests/test_relation_seed_638.py:545:assert_in_prose:'升迁' in block['context']
+tests/test_relation_seed_638.py:549:assert_list_eq_prose:(grudge['source'], grudge['target'], grudge['event_kind']) == [... '毛羽健' ...]
+tests/test_relation_seed_638.py:549:assert_list_eq_prose:(grudge['source'], grudge['target'], grudge['event_kind']) == [... '田尔耕' ...]
+tests/test_relation_seed_638.py:549:assert_list_eq_prose:(grudge['source'], grudge['target'], grudge['event_kind']) == [... '结怨' ...]
+tests/test_relation_seed_638.py:557:assert_list_eq_prose:(shi['source'], shi['target'], shi['event_kind']) == [... '施凤来' ...]
+tests/test_relation_seed_638.py:557:assert_list_eq_prose:(shi['source'], shi['target'], shi['event_kind']) == [... '魏忠贤' ...]
+tests/test_relation_seed_638.py:557:assert_list_eq_prose:(shi['source'], shi['target'], shi['event_kind']) == [... '站台' ...]
+tests/test_relation_seed_638.py:559:assert_in_prose:'七月' in shi['context']
+tests/test_relation_seed_638.py:561:assert_list_eq_prose:(zhang['source'], zhang['target'], zhang['event_kind']) == [... '张瑞图' ...]
+tests/test_relation_seed_638.py:561:assert_list_eq_prose:(zhang['source'], zhang['target'], zhang['event_kind']) == [... '魏忠贤' ...]
+tests/test_relation_seed_638.py:561:assert_list_eq_prose:(zhang['source'], zhang['target'], zhang['event_kind']) == [... '站台' ...]
+tests/test_relation_seed_638.py:570:assert_list_eq_prose:(guo['source'], guo['target'], guo['event_kind']) == [... '魏忠贤' ...]
+tests/test_relation_seed_638.py:570:assert_list_eq_prose:(guo['source'], guo['target'], guo['event_kind']) == [... '郭允厚' ...]
+tests/test_relation_seed_638.py:570:assert_list_eq_prose:(guo['source'], guo['target'], guo['event_kind']) == [... '荐引' ...]
+tests/test_relation_seed_638.py:575:assert_list_eq_prose:(wang['source'], wang['target'], wang['event_kind']) == [... '王体乾' ...]
+tests/test_relation_seed_638.py:575:assert_list_eq_prose:(wang['source'], wang['target'], wang['event_kind']) == [... '魏忠贤' ...]
+tests/test_relation_seed_638.py:575:assert_list_eq_prose:(wang['source'], wang['target'], wang['event_kind']) == [... '站台' ...]
+tests/test_relation_seed_638.py:586:assert_list_eq_prose:(lai['source'], lai['target']) == [... '来宗道' ...]
+tests/test_relation_seed_638.py:586:assert_list_eq_prose:(lai['source'], lai['target']) == [... '魏忠贤' ...]
+tests/test_relation_seed_638.py:592:assert_eq_prose:row['source'] == '皇帝'
+tests/test_relation_seed_638.py:610:assert_in_prose:'盟誓' in wei_cui['recent_context']
 tests/test_relation_store_632.py:32:assert_list_eq_prose:[row['source'] for row in db.get_relation_edge_events(source='毕自严', target='王绍徽')] == [... '毕自严' ...]
 tests/test_relation_store_632.py:33:assert_eq_prose:db.get_relation_edge_events(source='王绍徽', target='毕自严')[0]['target'] == '毕自严'
 tests/test_relation_store_632.py:125:assert_list_eq_prose:[edge['event_kind'] for edge in edges] == [... '兑现所托' ...]
@@ -923,7 +898,6 @@ tests/test_rescript_heal_isolation_1801.py:212:assert_list_eq_prose:[d['title'] 
 tests/test_rescript_heal_isolation_1801.py:212:assert_list_eq_prose:[d['title'] for d in drafts] == [... '辽饷' ...]
 tests/test_rescript_option_field_heal_1746.py:328:assert_eq_prose:grant.get('purpose') == '补饷'
 tests/test_rescript_option_field_heal_1746.py:820:assert_eq_prose:fixed.get('purpose') == '补饷'
-tests/test_scene_llm_1836.py:145:assert_list_eq_prose:calls == [... '边饷如何？' ...]
 tests/test_secret_order_isolation_883.py:678:assert_eq_prose:after_first[0].get('body') == '首度公开883'
 tests/test_secret_order_isolation_883.py:696:assert_eq_prose:after_second[0].get('body') == '首度公开883'
 tests/test_secret_order_monthly_progress_566.py:363:assert_in_prose:'post-fiscal failure 566' in str(detail.get('message') or detail)
@@ -989,18 +963,15 @@ tests/test_structured_decree_contract_1624.py:504:assert_eq_prose:only_station.g
 tests/test_structured_decree_contract_1624.py:607:assert_eq_prose:result.get('transaction_category') == '督赈'
 tests/test_structured_decree_contract_1624.py:766:assert_eq_prose:drafts[0].get('transaction_category') == '督赈'
 tests/test_style_temperament_641.py:83:assert_eq_prose:log['action'] == '性情'
-tests/test_style_temperament_641.py:84:assert_eq_prose:log['payload_summary'] == '经事锤炼，固有层改写'
-tests/test_style_temperament_641.py:119:assert_eq_prose:log['action'] == '性情'
-tests/test_style_temperament_641.py:120:assert_eq_prose:log['payload_summary'] == '经事锤炼，固有层改写'
-tests/test_style_temperament_641.py:155:assert_eq_prose:log['action'] == '性情'
+tests/test_style_temperament_641.py:118:assert_eq_prose:log['action'] == '性情'
+tests/test_style_temperament_641.py:153:assert_eq_prose:log['action'] == '性情'
 tests/test_surcharge_causal_chain_650.py:90:assert_in_prose:'dossier:<正整数>' in surcharge_section
 tests/test_surcharge_causal_chain_650.py:91:assert_in_prose:'效果资格' in surcharge_section
 tests/test_surcharge_causal_chain_650.py:92:assert_in_prose:'不得使用 `盘面自发`' in surcharge_section
 tests/test_textual_facts_1828.py:38:assert_list_eq_prose:[fact.occurred_month for fact in materials] == [... '天启七年十月' ...]
 tests/test_textual_facts_1828.py:38:assert_list_eq_prose:[fact.occurred_month for fact in materials] == [... '天启七年十一月' ...]
-tests/test_textual_facts_1828.py:71:assert_list_eq_prose:[f.body for f in db.textual_facts.readable_materials(subject_kind='region', subject_id=region_id)] == [... '城中疫气未散' ...]
-tests/test_textual_facts_1828.py:154:assert_list_eq_prose:[fact.occurred_month for fact in materials] == [... '天启七年十月' ...]
-tests/test_textual_facts_1828.py:154:assert_list_eq_prose:[fact.occurred_month for fact in materials] == [... '天启七年十一月' ...]
+tests/test_textual_facts_1828.py:151:assert_list_eq_prose:[fact.occurred_month for fact in materials] == [... '天启七年十月' ...]
+tests/test_textual_facts_1828.py:151:assert_list_eq_prose:[fact.occurred_month for fact in materials] == [... '天启七年十一月' ...]
 tests/test_urge_lever_624.py:640:assert_eq_prose:hist[-1]['reason'] == '闸门催'
 tests/test_web_audience_night_498.py:552:assert_eq_prose:match['source'] == '手动新增'
 tests/test_web_audience_night_498.py:553:assert_in_prose:'着户部核边饷' in str(match['text'])
@@ -1097,129 +1068,127 @@ web/src/appDurableWiring.test.tsx:1742:vitest_neg:expect(host.textContent).not.t
 web/src/appDurableWiring.test.tsx:1808:vitest_neg:expect(host.textContent).not.toContain(MIDCOURSE_ISSUE);
 web/src/appDurableWiring.test.tsx:1899:vitest_pos:expect(advancePosts).toBe(2);
 web/src/appDurableWiring.test.tsx:1900:vitest_pos:expect(issuePosts).toBe(0);
-web/src/appDurableWiring.test.tsx:1912:vitest_pos_prose_gazetteish:expect(modal.textContent).toContain("辽东战守");
-web/src/appDurableWiring.test.tsx:1917:vitest_pos:expect(action!.disabled).toBe(false);
-web/src/appDurableWiring.test.tsx:1924:vitest_pos_prose_gazetteish:expect(host2.querySelector('[data-testid="decision-modal"]')!.textContent).toContain("辽东战守");
-web/src/appDurableWiring.test.tsx:1937:vitest_pos:expect(panel.textContent).toContain(errorPackPath);
-web/src/appDurableWiring.test.tsx:1940:vitest_pos:expect(retry!.disabled).toBe(false);
-web/src/appDurableWiring.test.tsx:1947:vitest_pos:expect((host2.querySelector('[data-testid="settle-resume"] button') as HTMLButtonElement).disabled).toBe(false);
-web/src/appDurableWiring.test.tsx:2018:vitest_pos:expect(confirm()!.disabled).toBe(false);
-web/src/appDurableWiring.test.tsx:2024:vitest_pos:expect(resolveBodies.length).toBe(1);
-web/src/appDurableWiring.test.tsx:2033:vitest_pos:expect(alerts.length).toBe(1);
-web/src/appDurableWiring.test.tsx:2036:vitest_pos:).toBe(alerts[0]);
-web/src/appDurableWiring.test.tsx:2040:vitest_pos:expect(retry.disabled).toBe(false);
-web/src/appDurableWiring.test.tsx:2042:vitest_pos:expect(alerts[0].textContent).toContain("stream-fail");
-web/src/appDurableWiring.test.tsx:2048:vitest_pos:expect(confirm()!.disabled).toBe(false);
-web/src/appDurableWiring.test.tsx:2052:vitest_pos:await vi.waitFor(() => expect(resolveBodies.length).toBe(2));
-web/src/appDurableWiring.test.tsx:2055:vitest_pos:expect(resolveBodies[0]).toEqual(resolveBodies[1]);
-web/src/appDurableWiring.test.tsx:2057:vitest_pos:expect(Array.isArray(body0.choices)).toBe(true);
-web/src/appDurableWiring.test.tsx:2058:vitest_pos:expect(body0.choices!.length).toBe(2);
-web/src/appDurableWiring.test.tsx:2062:vitest_pos:expect(host.querySelectorAll('[role="alert"]').length).toBe(1);
-web/src/appDurableWiring.test.tsx:2116:vitest_pos:expect(hudAlert!.textContent).toContain(FAIL_MSG);
-web/src/appDurableWiring.test.tsx:2169:vitest_pos:expect(modalAlert!.textContent).toContain(FAIL_MSG);
-web/src/appDurableWiring.test.tsx:2172:vitest_pos:expect(host.querySelectorAll('[role="alert"]').length).toBe(1);
-web/src/appDurableWiring.test.tsx:2273:vitest_pos:expect(confirm()!.disabled).toBe(false);
-web/src/appDurableWiring.test.tsx:2277:vitest_pos:expect(resolveCount).toBe(1);
-web/src/appDurableWiring.test.tsx:2278:vitest_pos:expect(confirm()!.disabled).toBe(true);
-web/src/appDurableWiring.test.tsx:2279:vitest_pos:expect(optionButtons().every((b) => b.disabled)).toBe(true);
-web/src/appDurableWiring.test.tsx:2285:vitest_pos:expect(resolveCount).toBe(1);
-web/src/appDurableWiring.test.tsx:2291:vitest_pos:expect(resolveCount).toBe(1);
-web/src/appDurableWiring.test.tsx:2336:vitest_pos:expect(resume!.disabled).toBe(false);
-web/src/appDurableWiring.test.tsx:2356:vitest_pos:expect(resume.disabled).toBe(false);
-web/src/appDurableWiring.test.tsx:2413:vitest_pos_prose_gazetteish:expect(host.textContent).toContain("· 核账");
-web/src/appDurableWiring.test.tsx:2414:vitest_pos_prose_gazetteish:expect(host.textContent).toContain(`${SNAP_TREASURY}万两`);
-web/src/appDurableWiring.test.tsx:2415:vitest_pos_prose_gazetteish:expect(host.textContent).toContain(`${SNAP_INNER}万两`);
-web/src/appDurableWiring.test.tsx:2416:vitest_pos:expect(host.textContent).toContain(String(SNAP_MINXIN));
-web/src/appDurableWiring.test.tsx:2417:vitest_pos:expect(host.textContent).toContain(String(SNAP_HUANGWEI));
-web/src/appDurableWiring.test.tsx:2421:vitest_neg:expect(host.textContent).not.toContain(MIDCOURSE_ISSUE);
-web/src/appDurableWiring.test.tsx:2424:vitest_pos:expect(byAria(host, "省份列表")?.getAttribute("aria-disabled")).toBe("true");
-web/src/appDurableWiring.test.tsx:2425:vitest_pos:expect(byAria(host, "军队列表")?.getAttribute("aria-disabled")).toBe("true");
-web/src/appDurableWiring.test.tsx:2447:vitest_pos:expect(document.body.textContent).toContain(SNAP_LEGACY);
-web/src/appDurableWiring.test.tsx:2455:vitest_pos_prose_gazetteish:expect(economyOpen!.textContent).toContain(`${SNAP_TREASURY}万两`);
-web/src/appDurableWiring.test.tsx:2458:vitest_pos_prose_gazetteish:expect(economyOpen!.textContent).toContain(`${SNAP_ARMY_PAY_DUE}万两`);
-web/src/appDurableWiring.test.tsx:2459:vitest_neg:expect(economyOpen!.textContent).not.toContain(`${SNAP_ARMY_PAY_DISBURSED}万两`);
-web/src/appDurableWiring.test.tsx:2460:vitest_neg:expect(economyOpen!.textContent).not.toContain(`${SNAP_ARMY_PAY_ARRIVED}万两`);
-web/src/appDurableWiring.test.tsx:2461:vitest_neg:expect(economyOpen!.textContent).not.toContain(`${SNAP_ARMY_PAY_LOSS}万两`);
-web/src/appDurableWiring.test.tsx:2462:vitest_neg:expect(economyOpen!.textContent).not.toContain(`第 ${SNAP_ARMY_PAY_SETTLED_TURN} 月`);
-web/src/appDurableWiring.test.tsx:2471:vitest_pos:expect(buildingOpen!.textContent).toContain(SNAP_BUILDING);
-web/src/appDurableWiring.test.tsx:2481:vitest_pos:expect(host.querySelector(".court-drawer.open")!.textContent).toContain(SNAP_MINISTER);
-web/src/appDurableWiring.test.tsx:2489:vitest_pos:expect(apptOpen!.textContent).toContain(SNAP_MINISTER);
-web/src/appDurableWiring.test.tsx:2491:vitest_pos:expect(apptRow?.tagName).toBe("DIV");
-web/src/appDurableWiring.test.tsx:2499:vitest_pos:expect(haremOpen!.textContent).toContain(SNAP_CONSORT);
-web/src/appDurableWiring.test.tsx:2505:vitest_neg:expect(haremCard!.tagName.toLowerCase()).not.toBe("button");
-web/src/appDurableWiring.test.tsx:2515:vitest_neg:expect(memorialsDialog.textContent).not.toContain(MIDCOURSE_ISSUE);
-web/src/appDurableWiring.test.tsx:2518:vitest_pos_prose_gazetteish:expect(memorialsDialog.textContent).toContain("本月无疏");
-web/src/appDurableWiring.test.tsx:2519:vitest_neg:expect(memorialsDialog.textContent).not.toContain(SETTLEMENT_CLOSED_REASON);
-web/src/appDurableWiring.test.tsx:2520:vitest_neg:expect(memorialsDialog.textContent).not.toContain(SNAP_MEMORIAL);
-web/src/appDurableWiring.test.tsx:2529:vitest_pos:expect(host.querySelector('[role="dialog"][aria-label="史册：历代奏报、诏书与递话"]')!.textContent).toMatch(/1627\s*年\s*9\s*月/);
-web/src/appDurableWiring.test.tsx:2566:vitest_pos:expect(loadRequests).toEqual([]);
-web/src/appDurableWiring.test.tsx:2574:vitest_pos:expect(loadRequests).toEqual([{ path: "/api/saves/auto_begin/load", method: "POST" }]);
-web/src/appDurableWiring.test.tsx:2575:vitest_pos:expect(loadButton.disabled).toBe(true);
-web/src/appDurableWiring.test.tsx:2587:vitest_pos:expect(loadButton.disabled).toBe(false);
-web/src/appDurableWiring.test.tsx:2597:vitest_pos:expect(loadRequests[1]).toEqual({ path: "/api/saves/auto_begin/load", method: "POST" });
-web/src/appDurableWiring.test.tsx:2602:vitest_neg:expect(host.textContent).not.toContain(MIDCOURSE_ISSUE);
-web/src/appDurableWiring.test.tsx:2625:vitest_pos_prose_gazetteish:expect(economyOpen!.textContent).toContain(`${SNAP_ARMY_PAY_DUE}万两`);
-web/src/appDurableWiring.test.tsx:2626:vitest_neg:expect(economyOpen!.textContent).not.toContain(`${SNAP_ARMY_PAY_DISBURSED}万两`);
-web/src/appDurableWiring.test.tsx:2627:vitest_neg:expect(economyOpen!.textContent).not.toContain(`${SNAP_ARMY_PAY_ARRIVED}万两`);
-web/src/appDurableWiring.test.tsx:2628:vitest_neg:expect(economyOpen!.textContent).not.toContain(`${SNAP_ARMY_PAY_LOSS}万两`);
-web/src/appDurableWiring.test.tsx:2658:vitest_pos:expect(host.querySelector("pre.memorial-text")!.textContent).toBe(SNAP_GAZETTE);
-web/src/appDurableWiring.test.tsx:2660:vitest_neg:expect(masthead).not.toContain("天启七年十月");
-web/src/appDurableWiring.test.tsx:2666:vitest_neg:expect(host.textContent).not.toContain(MIDCOURSE_ISSUE);
-web/src/appDurableWiring.test.tsx:2705:vitest_neg:expect(host.textContent).not.toContain("· 核账");
-web/src/appDurableWiring.test.tsx:2706:vitest_pos:expect(byAria(host, "省份列表")?.getAttribute("aria-disabled")).toBe("false");
-web/src/appDurableWiring.test.tsx:2707:vitest_pos:expect(byAria(host, "军队列表")?.getAttribute("aria-disabled")).toBe("false");
-web/src/appDurableWiring.test.tsx:2717:vitest_pos_prose_gazetteish:expect(economyOpen!.textContent).toContain(`${SNAP_ARMY_PAY_DUE}万两`);
-web/src/appDurableWiring.test.tsx:2718:vitest_pos_prose_gazetteish:expect(economyOpen!.textContent).toContain(`${SNAP_ARMY_PAY_DISBURSED}万两`);
-web/src/appDurableWiring.test.tsx:2719:vitest_pos_prose_gazetteish:expect(economyOpen!.textContent).toContain(`${SNAP_ARMY_PAY_ARRIVED}万两`);
-web/src/appDurableWiring.test.tsx:2720:vitest_pos_prose_gazetteish:expect(economyOpen!.textContent).toContain(`${SNAP_ARMY_PAY_LOSS}万两`);
-web/src/appDurableWiring.test.tsx:2721:vitest_pos_prose_gazetteish:expect(economyOpen!.textContent).toContain(`第 ${SNAP_ARMY_PAY_SETTLED_TURN} 月`);
-web/src/appDurableWiring.test.tsx:2784:vitest_neg:expect(memorialsDialog.textContent).not.toContain(MIDCOURSE_ISSUE);
-web/src/appDurableWiring.test.tsx:2785:vitest_pos_prose_gazetteish:expect(memorialsDialog.textContent).toContain("杨嗣昌");
-web/src/appDurableWiring.test.tsx:2786:vitest_pos:expect(memorialsDialog.querySelector("pre.memorial-text")?.textContent).toBe(MEMORIAL_BODY);
-web/src/appDurableWiring.test.tsx:2787:vitest_neg:expect(memorialsDialog.textContent).not.toContain(SETTLEMENT_CLOSED_REASON);
-web/src/appDurableWiring.test.tsx:2788:vitest_neg:expect(memorialsDialog.textContent).not.toContain("progress:11");
-web/src/appDurableWiring.test.tsx:2793:vitest_pos:).toBe(true);
-web/src/appDurableWiring.test.tsx:2821:vitest_pos:).toBe(false);
-web/src/appDurableWiring.test.tsx:2857:vitest_eq_prose:expect(cmdByCaption(host, "奏疏")?.getAttribute("aria-label")).toBe("奏疏：1 件待览");
-web/src/appDurableWiring.test.tsx:2867:vitest_pos:).toBe(true);
-web/src/appDurableWiring.test.tsx:2878:vitest_eq_prose:expect(cmdByCaption(host, "奏疏")?.getAttribute("aria-label")).toBe("奏疏：1 件待览");
-web/src/appDurableWiring.test.tsx:2982:vitest_pos:expect(card?.getAttribute("data-directive-phase")).toBe("inflight");
-web/src/appDurableWiring.test.tsx:2983:vitest_pos:expect(card?.getAttribute("data-request-op")).toBe("save");
-web/src/appDurableWiring.test.tsx:2984:vitest_pos:expect(card?.getAttribute("aria-busy")).toBe("true");
-web/src/appDurableWiring.test.tsx:2989:vitest_pos:expect(savePatches).toBe(1);
-web/src/appDurableWiring.test.tsx:3005:vitest_pos:expect(card?.getAttribute("data-directive-phase")).toBe("failed");
-web/src/appDurableWiring.test.tsx:3006:vitest_neg:expect(card?.getAttribute("aria-invalid")).not.toBe("true");
-web/src/appDurableWiring.test.tsx:3007:vitest_pos:expect(card?.querySelector('[data-role="local-error"][role="alert"]')?.textContent).toBe("save-fail-token");
-web/src/appDurableWiring.test.tsx:3013:vitest_eq_prose:expect(editAfterSaveFail?.value).toBe("改稿边饷");
-web/src/appDurableWiring.test.tsx:3072:vitest_pos:expect(card?.getAttribute("data-directive-phase")).toBe("inflight");
-web/src/appDurableWiring.test.tsx:3073:vitest_pos:expect(card?.getAttribute("data-request-op")).toBe("delete");
-web/src/appDurableWiring.test.tsx:3074:vitest_pos:expect(card?.getAttribute("aria-busy")).toBe("true");
-web/src/appDurableWiring.test.tsx:3083:vitest_pos:expect(cancelEdit!.disabled).toBe(false);
-web/src/appDurableWiring.test.tsx:3088:vitest_pos:expect(requests).toEqual(beforeCancel);
-web/src/appDurableWiring.test.tsx:3096:vitest_pos:expect(nineTools.every((b) => b.disabled)).toBe(true);
-web/src/appDurableWiring.test.tsx:3300:vitest_pos:expect(host.querySelector('[data-directive-phase="cased"]')?.getAttribute("data-directive-id")).toBe("42");
-web/src/appDurableWiring.test.tsx:3343:vitest_pos:expect(footer?.disabled).toBe(false);
-web/src/appDurableWiring.test.tsx:3372:vitest_pos:expect(card?.getAttribute("data-directive-id")).toBe("42");
-web/src/appDurableWiring.test.tsx:3373:vitest_eq_prose:expect(card?.getAttribute("data-source")).toBe("大臣拟旨");
-web/src/appDurableWiring.test.tsx:3374:vitest_eq_prose:expect(card?.getAttribute("data-actor")).toBe("毕自严");
-web/src/appDurableWiring.test.tsx:3380:vitest_pos:expect(issuedZone!.contains(card!)).toBe(true);
-web/src/appDurableWiring.test.tsx:3381:vitest_pos:expect(draftZone!.contains(card!)).toBe(false);
-web/src/appDurableWiring.test.tsx:3384:vitest_pos:expect(draftZone!.contains(draftCard!)).toBe(true);
-web/src/appDurableWiring.test.tsx:3385:vitest_pos:expect(issuedZone!.contains(draftCard!)).toBe(false);
-web/src/appDurableWiring.test.tsx:3389:vitest_neg:expect(card?.getAttribute("aria-busy")).not.toBe("true");
-web/src/appDurableWiring.test.tsx:3390:vitest_neg:expect(card?.getAttribute("aria-invalid")).not.toBe("true");
-web/src/appDurableWiring.test.tsx:3392:vitest_pos_prose_gazetteish:expect(card?.textContent || "").toContain("着户部核边饷");
-web/src/appDurableWiring.test.tsx:3432:vitest_pos:expect(footer?.disabled).toBe(false);
-web/src/appDurableWiring.test.tsx:3435:vitest_pos:await vi.waitFor(() => expect(paths.some((path) => path === "POST /api/decree/issue/stream")).toBe(true));
-web/src/appDurableWiring.test.tsx:3437:vitest_pos:expect(paths.some((path) => path === "POST /api/decree/advance_without_edict")).toBe(false);
-web/src/appDurableWiring.test.tsx:3484:vitest_pos:expect(footer?.disabled).toBe(false);
-web/src/appDurableWiring.test.tsx:3496:vitest_pos:expect(paths.filter((p) => p.startsWith("POST /api/decree/")).length).toBe(settlePostsBefore);
-web/src/appDurableWiring.test.tsx:3507:vitest_pos:await vi.waitFor(() => expect(paths.some((p) => p === "POST /api/decree/advance_without_edict")).toBe(true));
-web/src/appDurableWiring.test.tsx:3509:vitest_pos:expect(paths.some((p) => p === "POST /api/decree/issue/stream")).toBe(false);
-web/src/appDurableWiring.test.tsx:3543:vitest_pos:expect(footer?.disabled).toBe(true);
-web/src/appDurableWiring.test.tsx:3545:vitest_pos:expect(paths.some((p) => p.startsWith("POST /api/decree/"))).toBe(false);
-web/src/appDurableWiring.test.tsx:3620:vitest_pos:expect(calls.some((c) => c.startsWith("POST ") && c.includes("secret_order"))).toBe(false);
-web/src/appDurableWiring.test.tsx:3621:vitest_pos:expect(calls.some((c) => c.startsWith("POST ") && c.includes("/chat"))).toBe(false);
+web/src/appDurableWiring.test.tsx:1916:vitest_pos:expect(action!.disabled).toBe(false);
+web/src/appDurableWiring.test.tsx:1935:vitest_pos:expect(panel.textContent).toContain(errorPackPath);
+web/src/appDurableWiring.test.tsx:1938:vitest_pos:expect(retry!.disabled).toBe(false);
+web/src/appDurableWiring.test.tsx:1945:vitest_pos:expect((host2.querySelector('[data-testid="settle-resume"] button') as HTMLButtonElement).disabled).toBe(false);
+web/src/appDurableWiring.test.tsx:2016:vitest_pos:expect(confirm()!.disabled).toBe(false);
+web/src/appDurableWiring.test.tsx:2022:vitest_pos:expect(resolveBodies.length).toBe(1);
+web/src/appDurableWiring.test.tsx:2031:vitest_pos:expect(alerts.length).toBe(1);
+web/src/appDurableWiring.test.tsx:2034:vitest_pos:).toBe(alerts[0]);
+web/src/appDurableWiring.test.tsx:2038:vitest_pos:expect(retry.disabled).toBe(false);
+web/src/appDurableWiring.test.tsx:2040:vitest_pos:expect(alerts[0].textContent).toContain("stream-fail");
+web/src/appDurableWiring.test.tsx:2046:vitest_pos:expect(confirm()!.disabled).toBe(false);
+web/src/appDurableWiring.test.tsx:2050:vitest_pos:await vi.waitFor(() => expect(resolveBodies.length).toBe(2));
+web/src/appDurableWiring.test.tsx:2053:vitest_pos:expect(resolveBodies[0]).toEqual(resolveBodies[1]);
+web/src/appDurableWiring.test.tsx:2055:vitest_pos:expect(Array.isArray(body0.choices)).toBe(true);
+web/src/appDurableWiring.test.tsx:2056:vitest_pos:expect(body0.choices!.length).toBe(2);
+web/src/appDurableWiring.test.tsx:2060:vitest_pos:expect(host.querySelectorAll('[role="alert"]').length).toBe(1);
+web/src/appDurableWiring.test.tsx:2114:vitest_pos:expect(hudAlert!.textContent).toContain(FAIL_MSG);
+web/src/appDurableWiring.test.tsx:2167:vitest_pos:expect(modalAlert!.textContent).toContain(FAIL_MSG);
+web/src/appDurableWiring.test.tsx:2170:vitest_pos:expect(host.querySelectorAll('[role="alert"]').length).toBe(1);
+web/src/appDurableWiring.test.tsx:2271:vitest_pos:expect(confirm()!.disabled).toBe(false);
+web/src/appDurableWiring.test.tsx:2275:vitest_pos:expect(resolveCount).toBe(1);
+web/src/appDurableWiring.test.tsx:2276:vitest_pos:expect(confirm()!.disabled).toBe(true);
+web/src/appDurableWiring.test.tsx:2277:vitest_pos:expect(optionButtons().every((b) => b.disabled)).toBe(true);
+web/src/appDurableWiring.test.tsx:2283:vitest_pos:expect(resolveCount).toBe(1);
+web/src/appDurableWiring.test.tsx:2289:vitest_pos:expect(resolveCount).toBe(1);
+web/src/appDurableWiring.test.tsx:2334:vitest_pos:expect(resume!.disabled).toBe(false);
+web/src/appDurableWiring.test.tsx:2354:vitest_pos:expect(resume.disabled).toBe(false);
+web/src/appDurableWiring.test.tsx:2411:vitest_pos_prose_gazetteish:expect(host.textContent).toContain("· 核账");
+web/src/appDurableWiring.test.tsx:2412:vitest_pos_prose_gazetteish:expect(host.textContent).toContain(`${SNAP_TREASURY}万两`);
+web/src/appDurableWiring.test.tsx:2413:vitest_pos_prose_gazetteish:expect(host.textContent).toContain(`${SNAP_INNER}万两`);
+web/src/appDurableWiring.test.tsx:2414:vitest_pos:expect(host.textContent).toContain(String(SNAP_MINXIN));
+web/src/appDurableWiring.test.tsx:2415:vitest_pos:expect(host.textContent).toContain(String(SNAP_HUANGWEI));
+web/src/appDurableWiring.test.tsx:2419:vitest_neg:expect(host.textContent).not.toContain(MIDCOURSE_ISSUE);
+web/src/appDurableWiring.test.tsx:2422:vitest_pos:expect(byAria(host, "省份列表")?.getAttribute("aria-disabled")).toBe("true");
+web/src/appDurableWiring.test.tsx:2423:vitest_pos:expect(byAria(host, "军队列表")?.getAttribute("aria-disabled")).toBe("true");
+web/src/appDurableWiring.test.tsx:2445:vitest_pos:expect(document.body.textContent).toContain(SNAP_LEGACY);
+web/src/appDurableWiring.test.tsx:2453:vitest_pos_prose_gazetteish:expect(economyOpen!.textContent).toContain(`${SNAP_TREASURY}万两`);
+web/src/appDurableWiring.test.tsx:2456:vitest_pos_prose_gazetteish:expect(economyOpen!.textContent).toContain(`${SNAP_ARMY_PAY_DUE}万两`);
+web/src/appDurableWiring.test.tsx:2457:vitest_neg:expect(economyOpen!.textContent).not.toContain(`${SNAP_ARMY_PAY_DISBURSED}万两`);
+web/src/appDurableWiring.test.tsx:2458:vitest_neg:expect(economyOpen!.textContent).not.toContain(`${SNAP_ARMY_PAY_ARRIVED}万两`);
+web/src/appDurableWiring.test.tsx:2459:vitest_neg:expect(economyOpen!.textContent).not.toContain(`${SNAP_ARMY_PAY_LOSS}万两`);
+web/src/appDurableWiring.test.tsx:2460:vitest_neg:expect(economyOpen!.textContent).not.toContain(`第 ${SNAP_ARMY_PAY_SETTLED_TURN} 月`);
+web/src/appDurableWiring.test.tsx:2469:vitest_pos:expect(buildingOpen!.textContent).toContain(SNAP_BUILDING);
+web/src/appDurableWiring.test.tsx:2479:vitest_pos:expect(host.querySelector(".court-drawer.open")!.textContent).toContain(SNAP_MINISTER);
+web/src/appDurableWiring.test.tsx:2487:vitest_pos:expect(apptOpen!.textContent).toContain(SNAP_MINISTER);
+web/src/appDurableWiring.test.tsx:2489:vitest_pos:expect(apptRow?.tagName).toBe("DIV");
+web/src/appDurableWiring.test.tsx:2497:vitest_pos:expect(haremOpen!.textContent).toContain(SNAP_CONSORT);
+web/src/appDurableWiring.test.tsx:2503:vitest_neg:expect(haremCard!.tagName.toLowerCase()).not.toBe("button");
+web/src/appDurableWiring.test.tsx:2513:vitest_neg:expect(memorialsDialog.textContent).not.toContain(MIDCOURSE_ISSUE);
+web/src/appDurableWiring.test.tsx:2516:vitest_pos_prose_gazetteish:expect(memorialsDialog.textContent).toContain("本月无疏");
+web/src/appDurableWiring.test.tsx:2517:vitest_neg:expect(memorialsDialog.textContent).not.toContain(SETTLEMENT_CLOSED_REASON);
+web/src/appDurableWiring.test.tsx:2518:vitest_neg:expect(memorialsDialog.textContent).not.toContain(SNAP_MEMORIAL);
+web/src/appDurableWiring.test.tsx:2527:vitest_pos:expect(host.querySelector('[role="dialog"][aria-label="史册：历代奏报、诏书与递话"]')!.textContent).toMatch(/1627\s*年\s*9\s*月/);
+web/src/appDurableWiring.test.tsx:2564:vitest_pos:expect(loadRequests).toEqual([]);
+web/src/appDurableWiring.test.tsx:2572:vitest_pos:expect(loadRequests).toEqual([{ path: "/api/saves/auto_begin/load", method: "POST" }]);
+web/src/appDurableWiring.test.tsx:2573:vitest_pos:expect(loadButton.disabled).toBe(true);
+web/src/appDurableWiring.test.tsx:2585:vitest_pos:expect(loadButton.disabled).toBe(false);
+web/src/appDurableWiring.test.tsx:2595:vitest_pos:expect(loadRequests[1]).toEqual({ path: "/api/saves/auto_begin/load", method: "POST" });
+web/src/appDurableWiring.test.tsx:2600:vitest_neg:expect(host.textContent).not.toContain(MIDCOURSE_ISSUE);
+web/src/appDurableWiring.test.tsx:2623:vitest_pos_prose_gazetteish:expect(economyOpen!.textContent).toContain(`${SNAP_ARMY_PAY_DUE}万两`);
+web/src/appDurableWiring.test.tsx:2624:vitest_neg:expect(economyOpen!.textContent).not.toContain(`${SNAP_ARMY_PAY_DISBURSED}万两`);
+web/src/appDurableWiring.test.tsx:2625:vitest_neg:expect(economyOpen!.textContent).not.toContain(`${SNAP_ARMY_PAY_ARRIVED}万两`);
+web/src/appDurableWiring.test.tsx:2626:vitest_neg:expect(economyOpen!.textContent).not.toContain(`${SNAP_ARMY_PAY_LOSS}万两`);
+web/src/appDurableWiring.test.tsx:2656:vitest_pos:expect(host.querySelector("pre.memorial-text")!.textContent).toBe(SNAP_GAZETTE);
+web/src/appDurableWiring.test.tsx:2658:vitest_neg:expect(masthead).not.toContain("天启七年十月");
+web/src/appDurableWiring.test.tsx:2664:vitest_neg:expect(host.textContent).not.toContain(MIDCOURSE_ISSUE);
+web/src/appDurableWiring.test.tsx:2703:vitest_neg:expect(host.textContent).not.toContain("· 核账");
+web/src/appDurableWiring.test.tsx:2704:vitest_pos:expect(byAria(host, "省份列表")?.getAttribute("aria-disabled")).toBe("false");
+web/src/appDurableWiring.test.tsx:2705:vitest_pos:expect(byAria(host, "军队列表")?.getAttribute("aria-disabled")).toBe("false");
+web/src/appDurableWiring.test.tsx:2715:vitest_pos_prose_gazetteish:expect(economyOpen!.textContent).toContain(`${SNAP_ARMY_PAY_DUE}万两`);
+web/src/appDurableWiring.test.tsx:2716:vitest_pos_prose_gazetteish:expect(economyOpen!.textContent).toContain(`${SNAP_ARMY_PAY_DISBURSED}万两`);
+web/src/appDurableWiring.test.tsx:2717:vitest_pos_prose_gazetteish:expect(economyOpen!.textContent).toContain(`${SNAP_ARMY_PAY_ARRIVED}万两`);
+web/src/appDurableWiring.test.tsx:2718:vitest_pos_prose_gazetteish:expect(economyOpen!.textContent).toContain(`${SNAP_ARMY_PAY_LOSS}万两`);
+web/src/appDurableWiring.test.tsx:2719:vitest_pos_prose_gazetteish:expect(economyOpen!.textContent).toContain(`第 ${SNAP_ARMY_PAY_SETTLED_TURN} 月`);
+web/src/appDurableWiring.test.tsx:2782:vitest_neg:expect(memorialsDialog.textContent).not.toContain(MIDCOURSE_ISSUE);
+web/src/appDurableWiring.test.tsx:2783:vitest_pos_prose_gazetteish:expect(memorialsDialog.textContent).toContain("杨嗣昌");
+web/src/appDurableWiring.test.tsx:2784:vitest_pos:expect(memorialsDialog.querySelector("pre.memorial-text")?.textContent).toBe(MEMORIAL_BODY);
+web/src/appDurableWiring.test.tsx:2785:vitest_neg:expect(memorialsDialog.textContent).not.toContain(SETTLEMENT_CLOSED_REASON);
+web/src/appDurableWiring.test.tsx:2786:vitest_neg:expect(memorialsDialog.textContent).not.toContain("progress:11");
+web/src/appDurableWiring.test.tsx:2791:vitest_pos:).toBe(true);
+web/src/appDurableWiring.test.tsx:2819:vitest_pos:).toBe(false);
+web/src/appDurableWiring.test.tsx:2855:vitest_eq_prose:expect(cmdByCaption(host, "奏疏")?.getAttribute("aria-label")).toBe("奏疏：1 件待览");
+web/src/appDurableWiring.test.tsx:2865:vitest_pos:).toBe(true);
+web/src/appDurableWiring.test.tsx:2876:vitest_eq_prose:expect(cmdByCaption(host, "奏疏")?.getAttribute("aria-label")).toBe("奏疏：1 件待览");
+web/src/appDurableWiring.test.tsx:2980:vitest_pos:expect(card?.getAttribute("data-directive-phase")).toBe("inflight");
+web/src/appDurableWiring.test.tsx:2981:vitest_pos:expect(card?.getAttribute("data-request-op")).toBe("save");
+web/src/appDurableWiring.test.tsx:2982:vitest_pos:expect(card?.getAttribute("aria-busy")).toBe("true");
+web/src/appDurableWiring.test.tsx:2987:vitest_pos:expect(savePatches).toBe(1);
+web/src/appDurableWiring.test.tsx:3003:vitest_pos:expect(card?.getAttribute("data-directive-phase")).toBe("failed");
+web/src/appDurableWiring.test.tsx:3004:vitest_neg:expect(card?.getAttribute("aria-invalid")).not.toBe("true");
+web/src/appDurableWiring.test.tsx:3005:vitest_pos:expect(card?.querySelector('[data-role="local-error"][role="alert"]')?.textContent).toBe("save-fail-token");
+web/src/appDurableWiring.test.tsx:3011:vitest_eq_prose:expect(editAfterSaveFail?.value).toBe("改稿边饷");
+web/src/appDurableWiring.test.tsx:3070:vitest_pos:expect(card?.getAttribute("data-directive-phase")).toBe("inflight");
+web/src/appDurableWiring.test.tsx:3071:vitest_pos:expect(card?.getAttribute("data-request-op")).toBe("delete");
+web/src/appDurableWiring.test.tsx:3072:vitest_pos:expect(card?.getAttribute("aria-busy")).toBe("true");
+web/src/appDurableWiring.test.tsx:3081:vitest_pos:expect(cancelEdit!.disabled).toBe(false);
+web/src/appDurableWiring.test.tsx:3086:vitest_pos:expect(requests).toEqual(beforeCancel);
+web/src/appDurableWiring.test.tsx:3094:vitest_pos:expect(nineTools.every((b) => b.disabled)).toBe(true);
+web/src/appDurableWiring.test.tsx:3298:vitest_pos:expect(host.querySelector('[data-directive-phase="cased"]')?.getAttribute("data-directive-id")).toBe("42");
+web/src/appDurableWiring.test.tsx:3341:vitest_pos:expect(footer?.disabled).toBe(false);
+web/src/appDurableWiring.test.tsx:3370:vitest_pos:expect(card?.getAttribute("data-directive-id")).toBe("42");
+web/src/appDurableWiring.test.tsx:3371:vitest_eq_prose:expect(card?.getAttribute("data-source")).toBe("大臣拟旨");
+web/src/appDurableWiring.test.tsx:3372:vitest_eq_prose:expect(card?.getAttribute("data-actor")).toBe("毕自严");
+web/src/appDurableWiring.test.tsx:3378:vitest_pos:expect(issuedZone!.contains(card!)).toBe(true);
+web/src/appDurableWiring.test.tsx:3379:vitest_pos:expect(draftZone!.contains(card!)).toBe(false);
+web/src/appDurableWiring.test.tsx:3382:vitest_pos:expect(draftZone!.contains(draftCard!)).toBe(true);
+web/src/appDurableWiring.test.tsx:3383:vitest_pos:expect(issuedZone!.contains(draftCard!)).toBe(false);
+web/src/appDurableWiring.test.tsx:3387:vitest_neg:expect(card?.getAttribute("aria-busy")).not.toBe("true");
+web/src/appDurableWiring.test.tsx:3388:vitest_neg:expect(card?.getAttribute("aria-invalid")).not.toBe("true");
+web/src/appDurableWiring.test.tsx:3390:vitest_pos_prose_gazetteish:expect(card?.textContent || "").toContain("着户部核边饷");
+web/src/appDurableWiring.test.tsx:3430:vitest_pos:expect(footer?.disabled).toBe(false);
+web/src/appDurableWiring.test.tsx:3433:vitest_pos:await vi.waitFor(() => expect(paths.some((path) => path === "POST /api/decree/issue/stream")).toBe(true));
+web/src/appDurableWiring.test.tsx:3435:vitest_pos:expect(paths.some((path) => path === "POST /api/decree/advance_without_edict")).toBe(false);
+web/src/appDurableWiring.test.tsx:3482:vitest_pos:expect(footer?.disabled).toBe(false);
+web/src/appDurableWiring.test.tsx:3494:vitest_pos:expect(paths.filter((p) => p.startsWith("POST /api/decree/")).length).toBe(settlePostsBefore);
+web/src/appDurableWiring.test.tsx:3505:vitest_pos:await vi.waitFor(() => expect(paths.some((p) => p === "POST /api/decree/advance_without_edict")).toBe(true));
+web/src/appDurableWiring.test.tsx:3507:vitest_pos:expect(paths.some((p) => p === "POST /api/decree/issue/stream")).toBe(false);
+web/src/appDurableWiring.test.tsx:3541:vitest_pos:expect(footer?.disabled).toBe(true);
+web/src/appDurableWiring.test.tsx:3543:vitest_pos:expect(paths.some((p) => p.startsWith("POST /api/decree/"))).toBe(false);
+web/src/appDurableWiring.test.tsx:3618:vitest_pos:expect(calls.some((c) => c.startsWith("POST ") && c.includes("secret_order"))).toBe(false);
+web/src/appDurableWiring.test.tsx:3619:vitest_pos:expect(calls.some((c) => c.startsWith("POST ") && c.includes("/chat"))).toBe(false);
 web/src/buildResources.test.ts:48:vitest_pos:expect(existsSync(indexPath)).toBe(true);
 web/src/buildResources.test.ts:50:vitest_pos:expect(externalResourceUrls(html)).toEqual([]);
 web/src/buildResources.test.ts:52:vitest_neg:expect(html).not.toContain(host);
@@ -1274,130 +1243,121 @@ web/src/components/decisionModal.test.tsx:142:vitest_pos:expect(event.defaultPre
 web/src/components/decisionModal.test.tsx:144:vitest_pos:expect(document.activeElement).toBe(option);
 web/src/components/decisionModal.test.tsx:165:vitest_pos:expect(document.activeElement).toBe(cheatInput);
 web/src/components/decisionModal.test.tsx:169:vitest_pos:expect(event.defaultPrevented).toBe(false);
-web/src/components/decisionModal.test.tsx:184:vitest_eq_prose:expect(document.querySelector(".decision-document-section h3")?.textContent).toBe("河工修治");
-web/src/components/decisionModal.test.tsx:185:vitest_pos:expect(document.activeElement).toBe(document.querySelector<HTMLButtonElement>(".decision-option"));
-web/src/components/decisionModal.test.tsx:193:vitest_eq_prose:expect(documentPage!.querySelector(".decision-document-section:nth-of-type(1) .decision-section-label")?.textContent).toBe("疏文");
-web/src/components/decisionModal.test.tsx:194:vitest_eq_prose:expect(documentPage!.querySelector(".decision-document-section:nth-of-type(1) h3")?.textContent).toBe("关宁军饷");
-web/src/components/decisionModal.test.tsx:195:vitest_eq_prose:expect(documentPage!.querySelector(".decision-document-section:nth-of-type(2) .decision-section-label")?.textContent).toBe("内阁票拟");
-web/src/components/decisionModal.test.tsx:196:vitest_eq_prose:expect(documentPage!.querySelector(".decision-document-section:nth-of-type(2) .decision-option-label")?.textContent).toBe("拟批：拨帑速发");
-web/src/components/decisionModal.test.tsx:197:vitest_eq_prose:expect(documentPage!.querySelector(".decision-document-section:nth-of-type(3) label")?.textContent).toBe("朱笔亲批");
-web/src/components/decisionModal.test.tsx:201:vitest_pos:expect(sealConfirm!.tagName).toBe("BUTTON");
-web/src/components/decisionModal.test.tsx:206:vitest_pos_prose_gazetteish:expect(document.body.textContent).toContain("河工修治");
-web/src/components/decisionModal.test.tsx:242:vitest_pos:expect(document.querySelector<HTMLButtonElement>(".decision-confirm")!.disabled).toBe(true);
-web/src/components/decisionModal.test.tsx:282:vitest_pos:expect(result).toEqual([]);
-web/src/components/decisionModal.test.tsx:284:vitest_neg:expect(document.body.textContent).not.toContain("着户部核拨军饷");
-web/src/components/decisionModal.test.tsx:298:vitest_pos:expect(seal.tagName).toBe("BUTTON");
-web/src/components/decisionModal.test.tsx:299:vitest_neg:expect(seal.getAttribute("aria-hidden")).not.toBe("true");
-web/src/components/decisionModal.test.tsx:300:vitest_pos:expect(seal.disabled).toBe(true);
-web/src/components/decisionModal.test.tsx:306:vitest_pos:expect(sealRule!.style.pointerEvents === "" || sealRule!.style.pointerEvents === "auto").toBe(true);
-web/src/components/decisionModal.test.tsx:307:vitest_pos:expect(sealRule!.style.cursor).toBe("pointer");
-web/src/components/decisionModal.test.tsx:308:vitest_pos:expect(sealRule!.style.border.includes("double") || sealRule!.style.borderStyle === "double").toBe(true);
-web/src/components/decisionModal.test.tsx:319:vitest_pos:expect(confirm().disabled).toBe(true);
-web/src/components/decisionModal.test.tsx:320:vitest_pos_prose_gazetteish:expect(hint()).toContain("请择一票拟，或亲笔批示。");
-web/src/components/decisionModal.test.tsx:325:vitest_pos:expect(confirm().disabled).toBe(false);
-web/src/components/decisionModal.test.tsx:326:vitest_pos:expect(options()[0].classList.contains("is-picked")).toBe(true);
-web/src/components/decisionModal.test.tsx:327:vitest_pos:expect(hint()).toMatch(/已择|落印/);
-web/src/components/decisionModal.test.tsx:328:vitest_neg:expect(hint()).not.toContain("请择一票拟");
-web/src/components/decisionModal.test.tsx:340:vitest_pos:expect(confirm().disabled).toBe(false);
-web/src/components/decisionModal.test.tsx:374:vitest_pos:expect(shared).toEqual([]);
-web/src/components/decisionModal.test.tsx:391:vitest_pos:expect(bareFocusRules).toEqual([]);
-web/src/components/decisionModal.test.tsx:395:vitest_neg:expect(hoverKey).not.toBe(pickedKey);
-web/src/components/decisionModal.test.tsx:399:vitest_neg:expect(focusKey).not.toBe(pickedFocusComparable);
+web/src/components/decisionModal.test.tsx:184:vitest_pos:expect(document.activeElement).toBe(document.querySelector<HTMLButtonElement>(".decision-option"));
+web/src/components/decisionModal.test.tsx:192:vitest_eq_prose:expect(documentPage!.querySelector(".decision-document-section:nth-of-type(1) .decision-section-label")?.textContent).toBe("疏文");
+web/src/components/decisionModal.test.tsx:193:vitest_eq_prose:expect(documentPage!.querySelector(".decision-document-section:nth-of-type(1) h3")?.textContent).toBe("关宁军饷");
+web/src/components/decisionModal.test.tsx:194:vitest_eq_prose:expect(documentPage!.querySelector(".decision-document-section:nth-of-type(2) .decision-section-label")?.textContent).toBe("内阁票拟");
+web/src/components/decisionModal.test.tsx:195:vitest_eq_prose:expect(documentPage!.querySelector(".decision-document-section:nth-of-type(3) label")?.textContent).toBe("朱笔亲批");
+web/src/components/decisionModal.test.tsx:199:vitest_pos:expect(sealConfirm!.tagName).toBe("BUTTON");
+web/src/components/decisionModal.test.tsx:239:vitest_pos:expect(document.querySelector<HTMLButtonElement>(".decision-confirm")!.disabled).toBe(true);
+web/src/components/decisionModal.test.tsx:279:vitest_pos:expect(result).toEqual([]);
+web/src/components/decisionModal.test.tsx:281:vitest_neg:expect(document.body.textContent).not.toContain("着户部核拨军饷");
+web/src/components/decisionModal.test.tsx:295:vitest_pos:expect(seal.tagName).toBe("BUTTON");
+web/src/components/decisionModal.test.tsx:296:vitest_neg:expect(seal.getAttribute("aria-hidden")).not.toBe("true");
+web/src/components/decisionModal.test.tsx:297:vitest_pos:expect(seal.disabled).toBe(true);
+web/src/components/decisionModal.test.tsx:303:vitest_pos:expect(sealRule!.style.pointerEvents === "" || sealRule!.style.pointerEvents === "auto").toBe(true);
+web/src/components/decisionModal.test.tsx:304:vitest_pos:expect(sealRule!.style.cursor).toBe("pointer");
+web/src/components/decisionModal.test.tsx:305:vitest_pos:expect(sealRule!.style.border.includes("double") || sealRule!.style.borderStyle === "double").toBe(true);
+web/src/components/decisionModal.test.tsx:316:vitest_pos:expect(confirm().disabled).toBe(true);
+web/src/components/decisionModal.test.tsx:317:vitest_pos_prose_gazetteish:expect(hint()).toContain("请择一票拟，或亲笔批示。");
+web/src/components/decisionModal.test.tsx:322:vitest_pos:expect(confirm().disabled).toBe(false);
+web/src/components/decisionModal.test.tsx:323:vitest_pos:expect(options()[0].classList.contains("is-picked")).toBe(true);
+web/src/components/decisionModal.test.tsx:324:vitest_pos:expect(hint()).toMatch(/已择|落印/);
+web/src/components/decisionModal.test.tsx:325:vitest_neg:expect(hint()).not.toContain("请择一票拟");
+web/src/components/decisionModal.test.tsx:337:vitest_pos:expect(confirm().disabled).toBe(false);
+web/src/components/decisionModal.test.tsx:371:vitest_pos:expect(shared).toEqual([]);
+web/src/components/decisionModal.test.tsx:388:vitest_pos:expect(bareFocusRules).toEqual([]);
+web/src/components/decisionModal.test.tsx:392:vitest_neg:expect(hoverKey).not.toBe(pickedKey);
+web/src/components/decisionModal.test.tsx:396:vitest_neg:expect(focusKey).not.toBe(pickedFocusComparable);
+web/src/components/decisionModal.test.tsx:402:vitest_pos:expect(options[0].classList.contains("is-picked")).toBe(false);
+web/src/components/decisionModal.test.tsx:404:vitest_pos:expect(document.activeElement).toBe(options[0]);
 web/src/components/decisionModal.test.tsx:405:vitest_pos:expect(options[0].classList.contains("is-picked")).toBe(false);
-web/src/components/decisionModal.test.tsx:407:vitest_pos:expect(document.activeElement).toBe(options[0]);
-web/src/components/decisionModal.test.tsx:408:vitest_pos:expect(options[0].classList.contains("is-picked")).toBe(false);
-web/src/components/decisionModal.test.tsx:412:vitest_pos:expect(options[0].classList.contains("is-picked")).toBe(true);
-web/src/components/decisionModal.test.tsx:415:vitest_pos:expect(focusRule!.style.outline.includes("none") || focusRule!.style.outline === "").toBe(false);
-web/src/components/decisionModal.test.tsx:426:vitest_pos:expect(options()[0].classList.contains("is-picked")).toBe(false);
-web/src/components/decisionModal.test.tsx:427:vitest_pos:expect(options()[1].classList.contains("is-picked")).toBe(false);
-web/src/components/decisionModal.test.tsx:428:vitest_pos:expect(confirm().disabled).toBe(true);
-web/src/components/decisionModal.test.tsx:431:vitest_pos:expect(options()[0].classList.contains("is-picked")).toBe(true);
-web/src/components/decisionModal.test.tsx:432:vitest_pos:expect(confirm().disabled).toBe(false);
-web/src/components/decisionModal.test.tsx:446:vitest_pos:expect(confirm().disabled).toBe(false);
-web/src/components/decisionModal.test.tsx:467:vitest_pos:expect(confirm().disabled).toBe(true);
-web/src/components/decisionModal.test.tsx:469:vitest_pos_prose_gazetteish:expect(document.querySelector(".decision-hint-line")?.textContent).toContain("此疏须择一票拟。");
-web/src/components/decisionModal.test.tsx:514:vitest_pos:expect(actions).toEqual([
-web/src/components/decisionModal.test.tsx:521:vitest_pos:expect(confirmBtn().disabled).toBe(false);
-web/src/components/decisionModal.test.tsx:534:vitest_pos:expect(payload[0].action).toBe("hold");
-web/src/components/decisionModal.test.tsx:535:vitest_pos:expect(payload[0].decision_key).toBe("rescript_draft:1:0");
-web/src/components/decisionModal.test.tsx:536:vitest_pos:expect(payload[1].label).toBe("准");
-web/src/components/decisionModal.test.tsx:537:vitest_pos:expect(payload[1].decision_key).toBe("decision:1:1");
-web/src/components/decisionModal.test.tsx:545:vitest_pos:expect(document.querySelector<HTMLButtonElement>(".decision-confirm")!.disabled).toBe(false);
-web/src/components/decisionModal.test.tsx:551:vitest_pos:expect(defPayload.decision_key).toBe("rescript_draft:1:0");
-web/src/components/decisionModal.test.tsx:577:vitest_pos:expect(pendingDecisionsFrom(crossMonth)).toEqual(crossMonth);
-web/src/components/decisionModal.test.tsx:587:vitest_pos:expect(onResolve.mock.calls[0][0][0].decision_key).toBe("rescript_draft:3:2");
-web/src/components/decisionModal.test.tsx:588:vitest_pos:expect(onResolve.mock.calls[0][0][0].action).toBe("hold");
-web/src/components/decisionModal.test.tsx:639:vitest_pos:expect(choice.action).toBe("midzhi");
-web/src/components/decisionModal.test.tsx:641:vitest_eq_prose:expect(choice.label).toBe("加衔恩赏");
-web/src/components/decisionModal.test.tsx:642:vitest_eq_prose:expect(choice.hint).toBe("荣誉");
-web/src/components/decisionModal.test.tsx:643:vitest_neg:expect(choice.label).not.toBe("另旨·中旨");
-web/src/components/decisionModal.test.tsx:644:vitest_neg:expect(String(choice.hint || "")).not.toBe("中旨直发");
-web/src/components/decisionModal.test.tsx:645:vitest_pos:expect(choice.action_type).toBe("grant_allocation");
-web/src/components/decisionModal.test.tsx:646:vitest_eq_prose:expect(choice.grant_action).toBe("加衔");
-web/src/components/decisionModal.test.tsx:647:vitest_pos:expect(choice.target_kind).toBe("character");
-web/src/components/decisionModal.test.tsx:648:vitest_eq_prose:expect(choice.target_id).toBe("杨嗣昌");
-web/src/components/decisionModal.test.tsx:649:vitest_eq_prose:expect(choice.name).toBe("杨嗣昌");
-web/src/components/decisionModal.test.tsx:650:vitest_eq_prose:expect(choice.office).toBe("太子太保");
-web/src/components/decisionModal.test.tsx:651:vitest_pos:expect(choice.locality_scope).toBe("none");
-web/src/components/decisionModal.test.tsx:652:vitest_pos:expect(choice.participant_roster).toEqual([
+web/src/components/decisionModal.test.tsx:409:vitest_pos:expect(options[0].classList.contains("is-picked")).toBe(true);
+web/src/components/decisionModal.test.tsx:412:vitest_pos:expect(focusRule!.style.outline.includes("none") || focusRule!.style.outline === "").toBe(false);
+web/src/components/decisionModal.test.tsx:423:vitest_pos:expect(options()[0].classList.contains("is-picked")).toBe(false);
+web/src/components/decisionModal.test.tsx:424:vitest_pos:expect(options()[1].classList.contains("is-picked")).toBe(false);
+web/src/components/decisionModal.test.tsx:425:vitest_pos:expect(confirm().disabled).toBe(true);
+web/src/components/decisionModal.test.tsx:428:vitest_pos:expect(options()[0].classList.contains("is-picked")).toBe(true);
+web/src/components/decisionModal.test.tsx:429:vitest_pos:expect(confirm().disabled).toBe(false);
+web/src/components/decisionModal.test.tsx:443:vitest_pos:expect(confirm().disabled).toBe(false);
+web/src/components/decisionModal.test.tsx:464:vitest_pos:expect(confirm().disabled).toBe(true);
+web/src/components/decisionModal.test.tsx:466:vitest_pos_prose_gazetteish:expect(document.querySelector(".decision-hint-line")?.textContent).toContain("此疏须择一票拟。");
+web/src/components/decisionModal.test.tsx:511:vitest_pos:expect(actions).toEqual([
+web/src/components/decisionModal.test.tsx:518:vitest_pos:expect(confirmBtn().disabled).toBe(false);
+web/src/components/decisionModal.test.tsx:531:vitest_pos:expect(payload[0].action).toBe("hold");
+web/src/components/decisionModal.test.tsx:532:vitest_pos:expect(payload[0].decision_key).toBe("rescript_draft:1:0");
+web/src/components/decisionModal.test.tsx:533:vitest_pos:expect(payload[1].label).toBe("准");
+web/src/components/decisionModal.test.tsx:534:vitest_pos:expect(payload[1].decision_key).toBe("decision:1:1");
+web/src/components/decisionModal.test.tsx:542:vitest_pos:expect(document.querySelector<HTMLButtonElement>(".decision-confirm")!.disabled).toBe(false);
+web/src/components/decisionModal.test.tsx:548:vitest_pos:expect(defPayload.decision_key).toBe("rescript_draft:1:0");
+web/src/components/decisionModal.test.tsx:574:vitest_pos:expect(pendingDecisionsFrom(crossMonth)).toEqual(crossMonth);
+web/src/components/decisionModal.test.tsx:584:vitest_pos:expect(onResolve.mock.calls[0][0][0].decision_key).toBe("rescript_draft:3:2");
+web/src/components/decisionModal.test.tsx:585:vitest_pos:expect(onResolve.mock.calls[0][0][0].action).toBe("hold");
+web/src/components/decisionModal.test.tsx:636:vitest_pos:expect(choice.action).toBe("midzhi");
+web/src/components/decisionModal.test.tsx:638:vitest_eq_prose:expect(choice.label).toBe("加衔恩赏");
+web/src/components/decisionModal.test.tsx:639:vitest_eq_prose:expect(choice.hint).toBe("荣誉");
+web/src/components/decisionModal.test.tsx:640:vitest_neg:expect(choice.label).not.toBe("另旨·中旨");
+web/src/components/decisionModal.test.tsx:641:vitest_neg:expect(String(choice.hint || "")).not.toBe("中旨直发");
+web/src/components/decisionModal.test.tsx:642:vitest_pos:expect(choice.action_type).toBe("grant_allocation");
+web/src/components/decisionModal.test.tsx:643:vitest_eq_prose:expect(choice.grant_action).toBe("加衔");
+web/src/components/decisionModal.test.tsx:644:vitest_pos:expect(choice.target_kind).toBe("character");
+web/src/components/decisionModal.test.tsx:645:vitest_eq_prose:expect(choice.target_id).toBe("杨嗣昌");
+web/src/components/decisionModal.test.tsx:646:vitest_eq_prose:expect(choice.name).toBe("杨嗣昌");
+web/src/components/decisionModal.test.tsx:647:vitest_eq_prose:expect(choice.office).toBe("太子太保");
+web/src/components/decisionModal.test.tsx:648:vitest_pos:expect(choice.locality_scope).toBe("none");
+web/src/components/decisionModal.test.tsx:649:vitest_pos:expect(choice.participant_roster).toEqual([
 web/src/components/drawers.test.tsx:163:vitest_pos:expect(host.textContent).toContain("26000");
 web/src/components/drawers.test.tsx:164:vitest_pos_prose:expect(host.textContent).toContain("4万");
-web/src/components/drawers.test.tsx:165:vitest_neg:expect(host.textContent).not.toContain("欠饷约60万两，数月军饷");
-web/src/components/drawers.test.tsx:166:vitest_neg:expect(host.textContent).not.toContain("士气：尚稳");
-web/src/components/drawers.test.tsx:167:vitest_neg:expect(host.textContent).not.toContain("优秀");
-web/src/components/drawers.test.tsx:168:vitest_neg:expect(host.textContent).not.toContain("63万两");
-web/src/components/drawers.test.tsx:169:vitest_neg:expect(host.textContent).not.toContain("忠诚73");
-web/src/components/drawers.test.tsx:194:vitest_neg:expect(host.textContent).not.toContain("欠饷约15万两");
-web/src/components/drawers.test.tsx:195:vitest_neg:expect(host.textContent).not.toContain("约两月军饷");
-web/src/components/drawers.test.tsx:196:vitest_neg:expect(host.textContent).not.toContain("12.5万两");
-web/src/components/drawers.test.tsx:223:vitest_neg:expect(host.textContent).not.toContain(statusSentence);
-web/src/components/drawers.test.tsx:224:vitest_neg:expect(host.textContent).not.toContain("欠饷严重");
-web/src/components/drawers.test.tsx:225:vitest_neg:expect(host.textContent).not.toMatch(/状态/);
-web/src/components/drawers.test.tsx:226:vitest_neg:expect(host.textContent).not.toContain("欠饷约60万两，数月军饷");
-web/src/components/drawers.test.tsx:227:vitest_neg:expect(host.textContent).not.toContain("士气：不振");
-web/src/components/drawers.test.tsx:228:vitest_neg:expect(host.textContent).not.toContain("不满");
-web/src/components/drawers.test.tsx:236:vitest_neg:expect(host.textContent).not.toContain("万口");
-web/src/components/drawers.test.tsx:237:vitest_neg:expect(host.textContent).not.toContain("不足一万");
-web/src/components/drawers.test.tsx:238:vitest_neg:expect(host.textContent).not.toContain("undefined");
-web/src/components/drawers.test.tsx:255:vitest_neg:expect(huang!.left).not.toBe("");
-web/src/components/drawers.test.tsx:256:vitest_neg:expect(huang!.top).not.toBe("");
-web/src/components/drawers.test.tsx:257:vitest_neg:expect(bi!.left).not.toBe("");
-web/src/components/drawers.test.tsx:258:vitest_neg:expect(bi!.top).not.toBe("");
-web/src/components/drawers.test.tsx:259:vitest_neg:expect(`${huang!.left}|${huang!.top}`).not.toBe(`${bi!.left}|${bi!.top}`);
-web/src/components/drawers.test.tsx:263:vitest_neg:expect(c.style.visibility).not.toBe("hidden");
-web/src/components/drawers.test.tsx:264:vitest_pos:expect(c.style.position).toBe("absolute");
-web/src/components/drawers.test.tsx:307:vitest_neg:expect(before!.left).not.toBe("");
-web/src/components/drawers.test.tsx:344:vitest_neg:expect(dragged!.left).not.toBe("");
-web/src/components/drawers.test.tsx:346:vitest_neg:expect(`${dragged!.left}|${dragged!.top}`).not.toBe("86.2%|53.2%");
-web/src/components/drawers.test.tsx:360:vitest_neg:expect(after!.left).not.toBe("");
-web/src/components/drawers.test.tsx:362:vitest_pos:expect(after).toEqual(dragged);
-web/src/components/drawers.test.tsx:452:vitest_pos:expect(shiAfter).toEqual(shiDragged);
-web/src/components/drawers.test.tsx:456:vitest_pos:expect(zhangBeforeDrag).toEqual({ left: "86.2%", top: "53.2%" });
-web/src/components/drawers.test.tsx:457:vitest_neg:expect(zhangAfter).not.toEqual(zhangBeforeDrag);
-web/src/components/drawers.test.tsx:470:vitest_neg:expect(saved["施凤来"]).not.toEqual({ px: 0.9, py: 0.9 });
-web/src/components/drawers.test.tsx:551:vitest_pos:expect(postsBefore.length).toBe(0);
-web/src/components/drawers.test.tsx:572:vitest_pos:expect(postsMid.length).toBe(0);
-web/src/components/drawers.test.tsx:593:vitest_pos:expect(shiAfter).toEqual(shiDragged);
-web/src/components/drawers.test.tsx:602:vitest_pos:expect(posts.length).toBe(1);
-web/src/components/drawers.test.tsx:608:vitest_neg:expect(saved["施凤来"]).not.toEqual({ px: 0.9, py: 0.9 });
-web/src/components/drawers.test.tsx:626:vitest_neg:expect(a!.left).not.toBe("");
-web/src/components/drawers.test.tsx:627:vitest_neg:expect(b!.left).not.toBe("");
-web/src/components/drawers.test.tsx:629:vitest_neg:expect(`${a!.left}|${a!.top}`).not.toBe(`${b!.left}|${b!.top}`);
-web/src/components/drawers.test.tsx:658:vitest_neg:expect(`${a!.left}|${a!.top}`).not.toBe(`${b!.left}|${b!.top}`);
-web/src/components/drawers.test.tsx:730:vitest_pos:expect(posts.length).toBe(1);
-web/src/components/drawers.test.tsx:759:vitest_pos:expect(onOpenChat.mock.calls[0][0]).toBe(lai);
-web/src/components/drawers.test.tsx:760:vitest_pos:expect(onOpenChat.mock.calls[1][0]).toBe(wen);
-web/src/components/drawers.test.tsx:823:vitest_neg:expect(card!.tagName).not.toBe("BUTTON");
-web/src/components/drawers.test.tsx:833:vitest_pos:expect(resume!.disabled).toBe(false);
-web/src/components/drawers.test.tsx:846:vitest_pos:expect(gatedResume!.disabled).toBe(true);
-web/src/components/drawers.test.tsx:847:vitest_pos:expect(gatedResume!.getAttribute("aria-disabled")).toBe("true");
-web/src/components/drawers.test.tsx:896:vitest_eq_prose:expect(transit!.textContent).toBe("山东");
-web/src/components/drawers.test.tsx:898:vitest_eq_prose:expect(host.querySelector(".minister-office")?.textContent).toBe("辽东巡抚");
-web/src/components/drawers.test.tsx:913:vitest_pos:expect(place!.classList.contains("minister-transit")).toBe(false);
-web/src/components/drawers.test.tsx:914:vitest_eq_prose:expect(place!.textContent).toBe("河南");
-web/src/components/drawers.test.tsx:915:vitest_eq_prose:expect(host.querySelector(".minister-office")?.textContent).toBe("兵部右侍郎");
-web/src/components/drawers.test.tsx:932:vitest_eq_prose:expect(transit!.textContent).toBe("山东");
-web/src/components/drawers.test.tsx:934:vitest_eq_prose:expect(host.querySelector(".minister-office")?.textContent).toBe("辽东巡抚");
+web/src/components/drawers.test.tsx:165:vitest_neg:expect(host.textContent).not.toContain("优秀");
+web/src/components/drawers.test.tsx:166:vitest_neg:expect(host.textContent).not.toContain("63万两");
+web/src/components/drawers.test.tsx:167:vitest_neg:expect(host.textContent).not.toContain("忠诚73");
+web/src/components/drawers.test.tsx:192:vitest_neg:expect(host.textContent).not.toContain("12.5万两");
+web/src/components/drawers.test.tsx:219:vitest_neg:expect(host.textContent).not.toContain(statusSentence);
+web/src/components/drawers.test.tsx:220:vitest_neg:expect(host.textContent).not.toContain("欠饷严重");
+web/src/components/drawers.test.tsx:221:vitest_neg:expect(host.textContent).not.toMatch(/状态/);
+web/src/components/drawers.test.tsx:222:vitest_neg:expect(host.textContent).not.toContain("不满");
+web/src/components/drawers.test.tsx:230:vitest_neg:expect(host.textContent).not.toContain("万口");
+web/src/components/drawers.test.tsx:231:vitest_neg:expect(host.textContent).not.toContain("不足一万");
+web/src/components/drawers.test.tsx:232:vitest_neg:expect(host.textContent).not.toContain("undefined");
+web/src/components/drawers.test.tsx:249:vitest_neg:expect(huang!.left).not.toBe("");
+web/src/components/drawers.test.tsx:250:vitest_neg:expect(huang!.top).not.toBe("");
+web/src/components/drawers.test.tsx:251:vitest_neg:expect(bi!.left).not.toBe("");
+web/src/components/drawers.test.tsx:252:vitest_neg:expect(bi!.top).not.toBe("");
+web/src/components/drawers.test.tsx:253:vitest_neg:expect(`${huang!.left}|${huang!.top}`).not.toBe(`${bi!.left}|${bi!.top}`);
+web/src/components/drawers.test.tsx:257:vitest_neg:expect(c.style.visibility).not.toBe("hidden");
+web/src/components/drawers.test.tsx:258:vitest_pos:expect(c.style.position).toBe("absolute");
+web/src/components/drawers.test.tsx:301:vitest_neg:expect(before!.left).not.toBe("");
+web/src/components/drawers.test.tsx:338:vitest_neg:expect(dragged!.left).not.toBe("");
+web/src/components/drawers.test.tsx:340:vitest_neg:expect(`${dragged!.left}|${dragged!.top}`).not.toBe("86.2%|53.2%");
+web/src/components/drawers.test.tsx:354:vitest_neg:expect(after!.left).not.toBe("");
+web/src/components/drawers.test.tsx:356:vitest_pos:expect(after).toEqual(dragged);
+web/src/components/drawers.test.tsx:446:vitest_pos:expect(shiAfter).toEqual(shiDragged);
+web/src/components/drawers.test.tsx:450:vitest_pos:expect(zhangBeforeDrag).toEqual({ left: "86.2%", top: "53.2%" });
+web/src/components/drawers.test.tsx:451:vitest_neg:expect(zhangAfter).not.toEqual(zhangBeforeDrag);
+web/src/components/drawers.test.tsx:464:vitest_neg:expect(saved["施凤来"]).not.toEqual({ px: 0.9, py: 0.9 });
+web/src/components/drawers.test.tsx:545:vitest_pos:expect(postsBefore.length).toBe(0);
+web/src/components/drawers.test.tsx:566:vitest_pos:expect(postsMid.length).toBe(0);
+web/src/components/drawers.test.tsx:587:vitest_pos:expect(shiAfter).toEqual(shiDragged);
+web/src/components/drawers.test.tsx:596:vitest_pos:expect(posts.length).toBe(1);
+web/src/components/drawers.test.tsx:602:vitest_neg:expect(saved["施凤来"]).not.toEqual({ px: 0.9, py: 0.9 });
+web/src/components/drawers.test.tsx:620:vitest_neg:expect(a!.left).not.toBe("");
+web/src/components/drawers.test.tsx:621:vitest_neg:expect(b!.left).not.toBe("");
+web/src/components/drawers.test.tsx:623:vitest_neg:expect(`${a!.left}|${a!.top}`).not.toBe(`${b!.left}|${b!.top}`);
+web/src/components/drawers.test.tsx:652:vitest_neg:expect(`${a!.left}|${a!.top}`).not.toBe(`${b!.left}|${b!.top}`);
+web/src/components/drawers.test.tsx:724:vitest_pos:expect(posts.length).toBe(1);
+web/src/components/drawers.test.tsx:753:vitest_pos:expect(onOpenChat.mock.calls[0][0]).toBe(lai);
+web/src/components/drawers.test.tsx:754:vitest_pos:expect(onOpenChat.mock.calls[1][0]).toBe(wen);
+web/src/components/drawers.test.tsx:817:vitest_neg:expect(card!.tagName).not.toBe("BUTTON");
+web/src/components/drawers.test.tsx:827:vitest_pos:expect(resume!.disabled).toBe(false);
+web/src/components/drawers.test.tsx:840:vitest_pos:expect(gatedResume!.disabled).toBe(true);
+web/src/components/drawers.test.tsx:841:vitest_pos:expect(gatedResume!.getAttribute("aria-disabled")).toBe("true");
+web/src/components/drawers.test.tsx:890:vitest_eq_prose:expect(transit!.textContent).toBe("山东");
+web/src/components/drawers.test.tsx:892:vitest_eq_prose:expect(host.querySelector(".minister-office")?.textContent).toBe("辽东巡抚");
+web/src/components/drawers.test.tsx:907:vitest_pos:expect(place!.classList.contains("minister-transit")).toBe(false);
+web/src/components/drawers.test.tsx:908:vitest_eq_prose:expect(place!.textContent).toBe("河南");
+web/src/components/drawers.test.tsx:909:vitest_eq_prose:expect(host.querySelector(".minister-office")?.textContent).toBe("兵部右侍郎");
+web/src/components/drawers.test.tsx:926:vitest_eq_prose:expect(transit!.textContent).toBe("山东");
+web/src/components/drawers.test.tsx:928:vitest_eq_prose:expect(host.querySelector(".minister-office")?.textContent).toBe("辽东巡抚");
 web/src/components/gameMenu.test.tsx:103:vitest_pos:expect(text).toContain("Base URL");
 web/src/components/gameMenu.test.tsx:104:vitest_pos_prose:expect(text).toContain("推理强度");
 web/src/components/gameMenu.test.tsx:105:vitest_neg:expect(text).not.toContain("CLI Runner");
@@ -1477,9 +1437,7 @@ web/src/components/map.test.tsx:148:vitest_pos:expect(host.textContent).toContai
 web/src/components/map.test.tsx:149:vitest_neg:expect(host.textContent).not.toMatch(/(?<![\d])2800(?![\d])/);
 web/src/components/map.test.tsx:150:vitest_pos:expect(host.textContent).toMatch(/1\.1\s*万/);
 web/src/components/map.test.tsx:153:vitest_neg:expect(host.textContent).not.toContain("不满"); // makeArmy 默认 mutiny_tier 不得直显
-web/src/components/map.test.tsx:154:vitest_neg:expect(host.textContent).not.toContain("士气：不振");
-web/src/components/map.test.tsx:155:vitest_neg:expect(host.textContent).not.toContain("欠饷不足十万两，约两月军饷");
-web/src/components/map.test.tsx:190:vitest_pos:expect(selected).toEqual(["dongjiang_area"]);
+web/src/components/map.test.tsx:188:vitest_pos:expect(selected).toEqual(["dongjiang_area"]);
 web/src/components/menuPage.test.tsx:128:vitest_pos:expect(continueBtn?.disabled).toBe(false);
 web/src/components/menuPage.test.tsx:147:vitest_pos:expect(errorPayloads).toEqual([]);
 web/src/components/menuPage.test.tsx:231:vitest_pos_prose:expect(document.querySelector(".menu-busy")?.textContent).toContain("检查模型后端");
@@ -1526,120 +1484,119 @@ web/src/components/modals.test.tsx:312:vitest_pos:expect(button?.disabled).toBe(
 web/src/components/modals.test.tsx:331:vitest_pos:expect(footer?.disabled).toBe(false);
 web/src/components/modals.test.tsx:337:vitest_pos_prose_gazetteish:expect(panel?.textContent).toContain("失败密令未处理");
 web/src/components/modals.test.tsx:454:vitest_pos:expect(stage!.textContent || "").toMatch(/请陛下问话|等候开口/);
-web/src/components/modals.test.tsx:456:vitest_neg:expect(stage!.textContent || "").not.toMatch(/臣.*叩见|恭请圣安/);
-web/src/components/modals.test.tsx:466:vitest_neg:expect(host.textContent).not.toContain("转入诏书草案");
-web/src/components/modals.test.tsx:467:vitest_neg:expect(host.textContent).not.toContain("任免");
-web/src/components/modals.test.tsx:474:vitest_pos:expect(buttons.some((button) => (button.textContent || "").trim() === "退朝")).toBe(false);
-web/src/components/modals.test.tsx:502:vitest_pos_prose_gazetteish:expect(document.querySelector(".scene.beat-entrance")?.textContent).toContain("入殿");
-web/src/components/modals.test.tsx:503:vitest_pos_prose_gazetteish:expect(document.querySelector(".scene.beat-exit")?.textContent).toContain("告退");
-web/src/components/modals.test.tsx:512:vitest_pos_prose_gazetteish:expect(textarea.placeholder).toContain("宣 X");
-web/src/components/modals.test.tsx:513:vitest_pos_prose_gazetteish:expect(textarea.placeholder).toContain("退朝");
-web/src/components/modals.test.tsx:519:vitest_neg:expect(textarea.placeholder).not.toContain("大臣");
-web/src/components/modals.test.tsx:520:vitest_neg:expect(textarea.placeholder).not.toContain("他");
-web/src/components/modals.test.tsx:542:vitest_pos_prose_gazetteish:expect(note?.textContent).toContain("重试");
-web/src/components/modals.test.tsx:543:vitest_pos_prose_gazetteish:expect(document.querySelector('[data-testid="reply-retry-13"]')?.textContent).toContain("回话已保存，后续处理失败");
-web/src/components/modals.test.tsx:544:vitest_pos:expect(document.querySelector('[data-testid="reply-retry-13"]')?.textContent).toContain("/tmp/post-reply-pack");
-web/src/components/modals.test.tsx:611:vitest_eq_prose:expect(avatars[0]?.alt).toBe("曹化淳");
-web/src/components/modals.test.tsx:612:vitest_pos:expect(avatars[0]?.getAttribute("src")).toMatch(/^\/portraits\/custom\/%E6%9B%B9%E5%8C%96%E6%B7%B3\?t=/);
-web/src/components/modals.test.tsx:613:vitest_pos:expect(avatars[1]?.getAttribute("src")).toBe("/portraits/minister_attendant-former.png");
-web/src/components/modals.test.tsx:648:vitest_eq_prose:expect(host.querySelector(".audience-type-label")?.textContent).toBe("越次召对");
-web/src/components/modals.test.tsx:650:vitest_pos:expect(host.querySelector(".chat-portrait-wrap img")?.getAttribute("src")).toBe("/portraits/minister_hong.png");
-web/src/components/modals.test.tsx:653:vitest_pos_prose_gazetteish:expect(ministerMessages[ministerMessages.length - 1]?.textContent).toContain("杨嗣昌");
-web/src/components/modals.test.tsx:665:vitest_pos:expect(translationFailure?.textContent).toContain("/tmp/audience-turn-1");
-web/src/components/modals.test.tsx:666:vitest_pos_prose_gazetteish:expect(translationFailure?.textContent).toContain("请交给作者");
-web/src/components/modals.test.tsx:669:vitest_pos_prose_gazetteish:expect(divisions[0]?.textContent).toContain("洪承畴");
-web/src/components/modals.test.tsx:670:vitest_neg:expect(divisions[1]?.textContent).not.toMatch(/杨嗣昌|洪承畴/);
-web/src/components/modals.test.tsx:694:vitest_neg:expect(document.body.textContent).not.toContain("旧夜问话");
-web/src/components/modals.test.tsx:695:vitest_neg:expect(document.body.textContent).not.toContain("旧夜答复");
-web/src/components/modals.test.tsx:696:vitest_neg:expect(document.body.textContent).not.toContain("同夜他臣");
-web/src/components/modals.test.tsx:697:vitest_neg:expect(document.body.textContent).not.toContain("旧轮迟到递话");
-web/src/components/modals.test.tsx:700:vitest_neg:expect(document.body.textContent).not.toContain("旧夜问话");
-web/src/components/modals.test.tsx:722:vitest_neg:expect(document.body.textContent).not.toContain("撤回前问话");
-web/src/components/modals.test.tsx:723:vitest_neg:expect(document.body.textContent).not.toContain("撤回前答复");
-web/src/components/modals.test.tsx:724:vitest_neg:expect(document.body.textContent).not.toContain("仍在旧 snapshot");
-web/src/components/modals.test.tsx:727:vitest_neg:expect(document.body.textContent).not.toContain("撤回前答复");
-web/src/components/modals.test.tsx:754:vitest_neg:expect(document.body.textContent).not.toContain("旧分线程不应闪回");
-web/src/components/modals.test.tsx:756:vitest_neg:expect(document.body.textContent).not.toContain("旧分线程不应闪回");
-web/src/components/modals.test.tsx:757:vitest_pos_prose_gazetteish:expect(document.querySelector('[role="alert"]')?.textContent).toContain("召对记录读取失败");
-web/src/components/modals.test.tsx:782:vitest_pos:expect(log.scrollTop).toBe(600);
-web/src/components/modals.test.tsx:786:vitest_pos:expect(log.scrollTop).toBe(700);
-web/src/components/modals.test.tsx:792:vitest_pos:expect(log.scrollTop).toBe(100);
-web/src/components/modals.test.tsx:803:vitest_pos:expect(log.scrollTop).toBe(137);
-web/src/components/modals.test.tsx:836:vitest_pos_prose_gazetteish:expect(document.body.textContent).toContain("旧卷");
-web/src/components/modals.test.tsx:837:vitest_neg:expect(document.body.textContent).not.toContain("刚完成的新问");
-web/src/components/modals.test.tsx:838:vitest_neg:expect(document.body.textContent).not.toContain("刚完成的答复");
-web/src/components/modals.test.tsx:881:vitest_pos_prose_gazetteish:expect(document.body.textContent).toContain("旧卷");
-web/src/components/modals.test.tsx:882:vitest_neg:expect(document.body.textContent).not.toContain("失败前新问");
-web/src/components/modals.test.tsx:883:vitest_neg:expect(document.body.textContent).not.toContain("失败前已完成");
-web/src/components/modals.test.tsx:884:vitest_pos_prose_gazetteish:expect(document.querySelector('[role="alert"]')?.textContent).toContain("召对记录读取失败");
-web/src/components/modals.test.tsx:904:vitest_pos_prose_gazetteish:expect(document.body.textContent).toContain("旧卷");
-web/src/components/modals.test.tsx:906:vitest_neg:expect(document.body.textContent).not.toContain("旧分线程答");
-web/src/components/modals.test.tsx:931:vitest_pos:expect(streamed?.classList.contains("scene")).toBe(true);
-web/src/components/modals.test.tsx:971:vitest_eq_prose:expect(host.querySelector(".audience-roster h2")?.textContent).toBe("便殿 · 戌时");
-web/src/components/modals.test.tsx:981:vitest_eq_prose:expect(host.querySelector(".audience-roster h2")?.textContent).toBe("文华殿 · 午时");
-web/src/components/modals.test.tsx:993:vitest_eq_prose:expect(host.querySelector(".chat-portrait-wrap img")?.getAttribute("src")).toBe("/portraits/minister_夜访者.png");
-web/src/components/modals.test.tsx:994:vitest_eq_prose:expect(host.querySelector(".audience-roster img")?.getAttribute("src")).toBe("/portraits/minister_夜访者.png");
-web/src/components/modals.test.tsx:995:vitest_eq_prose:expect(host.querySelector("img.aside-avatar")?.getAttribute("src")).toBe("/portraits/minister_夜访者.png");
-web/src/components/modals.test.tsx:1013:vitest_pos:expect(host.querySelector(".chat-portrait-wrap img")?.getAttribute("src")).toMatch(/^\/portraits\/custom\/%E6%B4%AA%E6%89%BF%E7%95%B4\?t=/);
-web/src/components/modals.test.tsx:1014:vitest_pos:expect(host.querySelector(".audience-roster img")?.getAttribute("src")).toMatch(/^\/portraits\/custom\/%E6%B4%AA%E6%89%BF%E7%95%B4\?t=/);
-web/src/components/modals.test.tsx:1015:vitest_pos:expect(host.querySelector("img.aside-avatar")?.getAttribute("src")).toMatch(/^\/portraits\/custom\/%E6%B4%AA%E6%89%BF%E7%95%B4\?t=/);
-web/src/components/modals.test.tsx:1053:vitest_pos:.toEqual(["waiting", "waiting"]);
-web/src/components/modals.test.tsx:1059:vitest_pos:expect(host.querySelector(".chat-portrait-wrap img")?.getAttribute("src")).toBe("/portraits/minister_hong.png");
-web/src/components/modals.test.tsx:1061:vitest_pos:.toEqual(["/portraits/minister_hong.png", "/portraits/minister_xu.png"]);
-web/src/components/modals.test.tsx:1062:vitest_pos:expect(host.querySelector('[data-roster-name="许誉卿"]')?.getAttribute("data-presence")).toBe("departed");
-web/src/components/modals.test.tsx:1069:vitest_pos:expect(host.querySelector(".chat-portrait-wrap img")?.getAttribute("src")).toBe("/portraits/minister_xu.png");
-web/src/components/modals.test.tsx:1089:vitest_pos:expect(host.querySelector(".chat-portrait-wrap img")?.getAttribute("src")).toBe("/portraits/minister_hong.png");
-web/src/components/modals.test.tsx:1092:vitest_pos:expect(host.querySelector(".chat-portrait-wrap img")?.getAttribute("src")).toBe("/portraits/minister_hong.png");
-web/src/components/modals.test.tsx:1094:vitest_pos:expect(host.querySelector(".chat-portrait-wrap img")?.getAttribute("src")).toBe("/portraits/minister_xu.png");
-web/src/components/modals.test.tsx:1095:vitest_pos:expect(host.querySelector('[data-roster-name="洪承畴"]')?.getAttribute("data-presence")).toBe("departed");
-web/src/components/modals.test.tsx:1132:vitest_pos:expect(document.querySelector('[data-audience-turn-id="11"]')).toBe(streamingTurn);
-web/src/components/modals.test.tsx:1140:vitest_pos:expect(document.querySelector('[data-audience-turn-id="11"]')).toBe(streamingTurn);
-web/src/components/modals.test.tsx:1195:vitest_pos:expect(Array.from(turn?.querySelectorAll(".turn-segment p") ?? [], (node) => node.textContent).join("")).toBe(originalStory);
-web/src/components/modals.test.tsx:1196:vitest_pos:expect(stage.scrollTop).toBe(100);
-web/src/components/modals.test.tsx:1199:vitest_pos:expect(stage.scrollTop).toBe(200);
-web/src/components/modals.test.tsx:1201:vitest_pos:expect(document.querySelector(`[data-audience-turn-id="${turnId}"]`)).toBe(turn);
-web/src/components/modals.test.tsx:1207:vitest_pos:expect(Array.from(turn?.querySelectorAll(".turn-segment p") ?? [], (node) => node.textContent).join("")).toBe(originalStory);
-web/src/components/modals.test.tsx:1309:vitest_pos:expect(bareModal!.classList.contains("modal-layout-bare")).toBe(true);
-web/src/components/modals.test.tsx:1327:vitest_pos:expect(archiveModal!.classList.contains("modal-layout-bare")).toBe(false);
-web/src/components/modals.test.tsx:1329:vitest_pos_prose_gazetteish:expect(archiveHost.querySelector(".modal-title h1")?.textContent).toContain("起居注");
-web/src/components/modals.test.tsx:1371:vitest_pos_prose_gazetteish:expect(source?.querySelector('[role="alert"]')?.textContent).toContain("retry failed");
-web/src/components/modals.test.tsx:1398:vitest_pos:expect(newRetry?.disabled).toBe(false);
-web/src/components/modals.test.tsx:1402:vitest_pos_prose_gazetteish:expect(host.querySelector(".history-turn-item.active")?.textContent).toContain("乙夜");
-web/src/components/modals.test.tsx:1404:vitest_neg:expect(host.textContent).not.toContain("甲夜奏对");
-web/src/components/modals.test.tsx:1405:vitest_pos:expect(host.querySelector<HTMLButtonElement>('[data-testid="archive-translation-retry-32"] button')?.disabled).toBe(true);
-web/src/components/modals.test.tsx:1449:vitest_pos:expect(posts).toBe(1);
-web/src/components/modals.test.tsx:1470:vitest_pos_prose_gazetteish:expect(host.textContent).toContain("召对记录");
-web/src/components/modals.test.tsx:1471:vitest_pos_prose_gazetteish:expect(host.textContent).toContain("涉及人物：洪承畴");
-web/src/components/modals.test.tsx:1472:vitest_pos_prose_gazetteish:expect(host.textContent).toContain("场次32");
-web/src/components/modals.test.tsx:1474:vitest_pos_prose_gazetteish:expect(host.textContent).toContain("场次32");
-web/src/components/modals.test.tsx:1480:vitest_pos_prose_gazetteish:expect(host.textContent).toContain("群臣奏对");
-web/src/components/modals.test.tsx:1483:vitest_pos:expect(archivedAvatar?.getAttribute("src")).toBe("/portraits/minister_former-attendant.png");
-web/src/components/modals.test.tsx:1487:vitest_pos_prose_gazetteish:expect(host.textContent).toContain("场次31");
-web/src/components/modals.test.tsx:1488:vitest_pos:expect(host.querySelector<HTMLSelectElement>('select[aria-label="按臣过滤"]')?.value).toBe("");
-web/src/components/modals.test.tsx:1501:vitest_pos:expect(host.textContent).toMatch(/奏报.*诏书.*递话|奏报、诏书与递话/);
-web/src/components/modals.test.tsx:1502:vitest_neg:expect(host.textContent).not.toContain("不应出现的场卷");
-web/src/components/modals.test.tsx:1542:vitest_pos:expect(section!.querySelector("pre")?.textContent).toBe(raw);
-web/src/components/modals.test.tsx:1544:vitest_pos:.some((element) => element.textContent === decree)).toBe(true);
-web/src/components/modals.test.tsx:1614:vitest_pos:expect(attendantSection!.querySelector("pre")?.textContent).toBe(raw);
-web/src/components/modals.test.tsx:1617:vitest_pos:expect(memorialPres[0].textContent).toBe(raw);
-web/src/components/modals.test.tsx:1655:vitest_pos_prose_gazetteish:expect(label).toContain("递话");
-web/src/components/modals.test.tsx:1656:vitest_neg:expect(label).not.toContain("奏报");
-web/src/components/modals.test.tsx:1660:vitest_pos_prose_gazetteish:expect(dialog?.getAttribute("aria-label") || "").toContain("递话");
-web/src/components/modals.test.tsx:1661:vitest_pos_prose_gazetteish:expect(host.textContent).toContain("递话");
-web/src/components/modals.test.tsx:1662:vitest_neg:expect(host.textContent).not.toMatch(/仅收奏报与诏书/);
-web/src/components/modals.test.tsx:1672:vitest_pos_prose_gazetteish:expect(thinkingText()).toContain("大臣思索中");
-web/src/components/modals.test.tsx:1687:vitest_pos_prose_gazetteish:expect(cancelBtn?.textContent).toContain("离开等待");
-web/src/components/modals.test.tsx:1736:vitest_pos:expect(thinkingP?.textContent).toMatch(/\d+\s*秒/);
-web/src/components/modals.test.tsx:1747:vitest_neg:expect(document.body.textContent).not.toContain("实账");
-web/src/components/modals.test.tsx:1748:vitest_neg:expect(document.body.textContent).not.toContain("账目明细");
-web/src/components/modals.test.tsx:1774:vitest_neg:expect(mastSept).not.toContain("天启七年十月");
-web/src/components/modals.test.tsx:1782:vitest_neg:expect(mastDec).not.toContain("崇祯元年正月");
-web/src/components/modals.test.tsx:1783:vitest_neg:expect(mastDec).not.toContain("天启七年正月");
-web/src/components/modals.test.tsx:1793:vitest_neg:expect(host.textContent).not.toContain("尚无上月邸报");
-web/src/components/modals.test.tsx:1794:vitest_neg:expect(host.textContent).not.toContain("登基伊始");
-web/src/components/modals.test.tsx:1818:vitest_pos:expect(scroll!.contains(dismissWrap)).toBe(false);
-web/src/components/modals.test.tsx:1845:vitest_pos:expect(aside?.textContent).toBe(rawWithWs);
-web/src/components/modals.test.tsx:1847:vitest_pos:expect(host.querySelector(".gazette-document")?.contains(aside)).toBe(false);
+web/src/components/modals.test.tsx:465:vitest_neg:expect(host.textContent).not.toContain("转入诏书草案");
+web/src/components/modals.test.tsx:466:vitest_neg:expect(host.textContent).not.toContain("任免");
+web/src/components/modals.test.tsx:473:vitest_pos:expect(buttons.some((button) => (button.textContent || "").trim() === "退朝")).toBe(false);
+web/src/components/modals.test.tsx:501:vitest_pos_prose_gazetteish:expect(document.querySelector(".scene.beat-entrance")?.textContent).toContain("入殿");
+web/src/components/modals.test.tsx:502:vitest_pos_prose_gazetteish:expect(document.querySelector(".scene.beat-exit")?.textContent).toContain("告退");
+web/src/components/modals.test.tsx:511:vitest_pos_prose_gazetteish:expect(textarea.placeholder).toContain("宣 X");
+web/src/components/modals.test.tsx:512:vitest_pos_prose_gazetteish:expect(textarea.placeholder).toContain("退朝");
+web/src/components/modals.test.tsx:518:vitest_neg:expect(textarea.placeholder).not.toContain("大臣");
+web/src/components/modals.test.tsx:519:vitest_neg:expect(textarea.placeholder).not.toContain("他");
+web/src/components/modals.test.tsx:541:vitest_pos_prose_gazetteish:expect(note?.textContent).toContain("重试");
+web/src/components/modals.test.tsx:542:vitest_pos_prose_gazetteish:expect(document.querySelector('[data-testid="reply-retry-13"]')?.textContent).toContain("回话已保存，后续处理失败");
+web/src/components/modals.test.tsx:543:vitest_pos:expect(document.querySelector('[data-testid="reply-retry-13"]')?.textContent).toContain("/tmp/post-reply-pack");
+web/src/components/modals.test.tsx:610:vitest_eq_prose:expect(avatars[0]?.alt).toBe("曹化淳");
+web/src/components/modals.test.tsx:611:vitest_pos:expect(avatars[0]?.getAttribute("src")).toMatch(/^\/portraits\/custom\/%E6%9B%B9%E5%8C%96%E6%B7%B3\?t=/);
+web/src/components/modals.test.tsx:612:vitest_pos:expect(avatars[1]?.getAttribute("src")).toBe("/portraits/minister_attendant-former.png");
+web/src/components/modals.test.tsx:647:vitest_eq_prose:expect(host.querySelector(".audience-type-label")?.textContent).toBe("越次召对");
+web/src/components/modals.test.tsx:649:vitest_pos:expect(host.querySelector(".chat-portrait-wrap img")?.getAttribute("src")).toBe("/portraits/minister_hong.png");
+web/src/components/modals.test.tsx:652:vitest_pos_prose_gazetteish:expect(ministerMessages[ministerMessages.length - 1]?.textContent).toContain("杨嗣昌");
+web/src/components/modals.test.tsx:664:vitest_pos:expect(translationFailure?.textContent).toContain("/tmp/audience-turn-1");
+web/src/components/modals.test.tsx:665:vitest_pos_prose_gazetteish:expect(translationFailure?.textContent).toContain("请交给作者");
+web/src/components/modals.test.tsx:668:vitest_pos_prose_gazetteish:expect(divisions[0]?.textContent).toContain("洪承畴");
+web/src/components/modals.test.tsx:669:vitest_neg:expect(divisions[1]?.textContent).not.toMatch(/杨嗣昌|洪承畴/);
+web/src/components/modals.test.tsx:693:vitest_neg:expect(document.body.textContent).not.toContain("旧夜问话");
+web/src/components/modals.test.tsx:694:vitest_neg:expect(document.body.textContent).not.toContain("旧夜答复");
+web/src/components/modals.test.tsx:695:vitest_neg:expect(document.body.textContent).not.toContain("同夜他臣");
+web/src/components/modals.test.tsx:696:vitest_neg:expect(document.body.textContent).not.toContain("旧轮迟到递话");
+web/src/components/modals.test.tsx:699:vitest_neg:expect(document.body.textContent).not.toContain("旧夜问话");
+web/src/components/modals.test.tsx:721:vitest_neg:expect(document.body.textContent).not.toContain("撤回前问话");
+web/src/components/modals.test.tsx:722:vitest_neg:expect(document.body.textContent).not.toContain("撤回前答复");
+web/src/components/modals.test.tsx:723:vitest_neg:expect(document.body.textContent).not.toContain("仍在旧 snapshot");
+web/src/components/modals.test.tsx:726:vitest_neg:expect(document.body.textContent).not.toContain("撤回前答复");
+web/src/components/modals.test.tsx:753:vitest_neg:expect(document.body.textContent).not.toContain("旧分线程不应闪回");
+web/src/components/modals.test.tsx:755:vitest_neg:expect(document.body.textContent).not.toContain("旧分线程不应闪回");
+web/src/components/modals.test.tsx:756:vitest_pos_prose_gazetteish:expect(document.querySelector('[role="alert"]')?.textContent).toContain("召对记录读取失败");
+web/src/components/modals.test.tsx:781:vitest_pos:expect(log.scrollTop).toBe(600);
+web/src/components/modals.test.tsx:785:vitest_pos:expect(log.scrollTop).toBe(700);
+web/src/components/modals.test.tsx:791:vitest_pos:expect(log.scrollTop).toBe(100);
+web/src/components/modals.test.tsx:802:vitest_pos:expect(log.scrollTop).toBe(137);
+web/src/components/modals.test.tsx:835:vitest_pos_prose_gazetteish:expect(document.body.textContent).toContain("旧卷");
+web/src/components/modals.test.tsx:836:vitest_neg:expect(document.body.textContent).not.toContain("刚完成的新问");
+web/src/components/modals.test.tsx:837:vitest_neg:expect(document.body.textContent).not.toContain("刚完成的答复");
+web/src/components/modals.test.tsx:880:vitest_pos_prose_gazetteish:expect(document.body.textContent).toContain("旧卷");
+web/src/components/modals.test.tsx:881:vitest_neg:expect(document.body.textContent).not.toContain("失败前新问");
+web/src/components/modals.test.tsx:882:vitest_neg:expect(document.body.textContent).not.toContain("失败前已完成");
+web/src/components/modals.test.tsx:883:vitest_pos_prose_gazetteish:expect(document.querySelector('[role="alert"]')?.textContent).toContain("召对记录读取失败");
+web/src/components/modals.test.tsx:903:vitest_pos_prose_gazetteish:expect(document.body.textContent).toContain("旧卷");
+web/src/components/modals.test.tsx:905:vitest_neg:expect(document.body.textContent).not.toContain("旧分线程答");
+web/src/components/modals.test.tsx:930:vitest_pos:expect(streamed?.classList.contains("scene")).toBe(true);
+web/src/components/modals.test.tsx:970:vitest_eq_prose:expect(host.querySelector(".audience-roster h2")?.textContent).toBe("便殿 · 戌时");
+web/src/components/modals.test.tsx:980:vitest_eq_prose:expect(host.querySelector(".audience-roster h2")?.textContent).toBe("文华殿 · 午时");
+web/src/components/modals.test.tsx:992:vitest_eq_prose:expect(host.querySelector(".chat-portrait-wrap img")?.getAttribute("src")).toBe("/portraits/minister_夜访者.png");
+web/src/components/modals.test.tsx:993:vitest_eq_prose:expect(host.querySelector(".audience-roster img")?.getAttribute("src")).toBe("/portraits/minister_夜访者.png");
+web/src/components/modals.test.tsx:994:vitest_eq_prose:expect(host.querySelector("img.aside-avatar")?.getAttribute("src")).toBe("/portraits/minister_夜访者.png");
+web/src/components/modals.test.tsx:1012:vitest_pos:expect(host.querySelector(".chat-portrait-wrap img")?.getAttribute("src")).toMatch(/^\/portraits\/custom\/%E6%B4%AA%E6%89%BF%E7%95%B4\?t=/);
+web/src/components/modals.test.tsx:1013:vitest_pos:expect(host.querySelector(".audience-roster img")?.getAttribute("src")).toMatch(/^\/portraits\/custom\/%E6%B4%AA%E6%89%BF%E7%95%B4\?t=/);
+web/src/components/modals.test.tsx:1014:vitest_pos:expect(host.querySelector("img.aside-avatar")?.getAttribute("src")).toMatch(/^\/portraits\/custom\/%E6%B4%AA%E6%89%BF%E7%95%B4\?t=/);
+web/src/components/modals.test.tsx:1052:vitest_pos:.toEqual(["waiting", "waiting"]);
+web/src/components/modals.test.tsx:1058:vitest_pos:expect(host.querySelector(".chat-portrait-wrap img")?.getAttribute("src")).toBe("/portraits/minister_hong.png");
+web/src/components/modals.test.tsx:1060:vitest_pos:.toEqual(["/portraits/minister_hong.png", "/portraits/minister_xu.png"]);
+web/src/components/modals.test.tsx:1061:vitest_pos:expect(host.querySelector('[data-roster-name="许誉卿"]')?.getAttribute("data-presence")).toBe("departed");
+web/src/components/modals.test.tsx:1068:vitest_pos:expect(host.querySelector(".chat-portrait-wrap img")?.getAttribute("src")).toBe("/portraits/minister_xu.png");
+web/src/components/modals.test.tsx:1088:vitest_pos:expect(host.querySelector(".chat-portrait-wrap img")?.getAttribute("src")).toBe("/portraits/minister_hong.png");
+web/src/components/modals.test.tsx:1091:vitest_pos:expect(host.querySelector(".chat-portrait-wrap img")?.getAttribute("src")).toBe("/portraits/minister_hong.png");
+web/src/components/modals.test.tsx:1093:vitest_pos:expect(host.querySelector(".chat-portrait-wrap img")?.getAttribute("src")).toBe("/portraits/minister_xu.png");
+web/src/components/modals.test.tsx:1094:vitest_pos:expect(host.querySelector('[data-roster-name="洪承畴"]')?.getAttribute("data-presence")).toBe("departed");
+web/src/components/modals.test.tsx:1131:vitest_pos:expect(document.querySelector('[data-audience-turn-id="11"]')).toBe(streamingTurn);
+web/src/components/modals.test.tsx:1139:vitest_pos:expect(document.querySelector('[data-audience-turn-id="11"]')).toBe(streamingTurn);
+web/src/components/modals.test.tsx:1194:vitest_pos:expect(Array.from(turn?.querySelectorAll(".turn-segment p") ?? [], (node) => node.textContent).join("")).toBe(originalStory);
+web/src/components/modals.test.tsx:1195:vitest_pos:expect(stage.scrollTop).toBe(100);
+web/src/components/modals.test.tsx:1198:vitest_pos:expect(stage.scrollTop).toBe(200);
+web/src/components/modals.test.tsx:1200:vitest_pos:expect(document.querySelector(`[data-audience-turn-id="${turnId}"]`)).toBe(turn);
+web/src/components/modals.test.tsx:1206:vitest_pos:expect(Array.from(turn?.querySelectorAll(".turn-segment p") ?? [], (node) => node.textContent).join("")).toBe(originalStory);
+web/src/components/modals.test.tsx:1308:vitest_pos:expect(bareModal!.classList.contains("modal-layout-bare")).toBe(true);
+web/src/components/modals.test.tsx:1326:vitest_pos:expect(archiveModal!.classList.contains("modal-layout-bare")).toBe(false);
+web/src/components/modals.test.tsx:1328:vitest_pos_prose_gazetteish:expect(archiveHost.querySelector(".modal-title h1")?.textContent).toContain("起居注");
+web/src/components/modals.test.tsx:1370:vitest_pos_prose_gazetteish:expect(source?.querySelector('[role="alert"]')?.textContent).toContain("retry failed");
+web/src/components/modals.test.tsx:1397:vitest_pos:expect(newRetry?.disabled).toBe(false);
+web/src/components/modals.test.tsx:1401:vitest_pos_prose_gazetteish:expect(host.querySelector(".history-turn-item.active")?.textContent).toContain("乙夜");
+web/src/components/modals.test.tsx:1403:vitest_neg:expect(host.textContent).not.toContain("甲夜奏对");
+web/src/components/modals.test.tsx:1404:vitest_pos:expect(host.querySelector<HTMLButtonElement>('[data-testid="archive-translation-retry-32"] button')?.disabled).toBe(true);
+web/src/components/modals.test.tsx:1448:vitest_pos:expect(posts).toBe(1);
+web/src/components/modals.test.tsx:1469:vitest_pos_prose_gazetteish:expect(host.textContent).toContain("召对记录");
+web/src/components/modals.test.tsx:1470:vitest_pos_prose_gazetteish:expect(host.textContent).toContain("涉及人物：洪承畴");
+web/src/components/modals.test.tsx:1471:vitest_pos_prose_gazetteish:expect(host.textContent).toContain("场次32");
+web/src/components/modals.test.tsx:1473:vitest_pos_prose_gazetteish:expect(host.textContent).toContain("场次32");
+web/src/components/modals.test.tsx:1479:vitest_pos_prose_gazetteish:expect(host.textContent).toContain("群臣奏对");
+web/src/components/modals.test.tsx:1482:vitest_pos:expect(archivedAvatar?.getAttribute("src")).toBe("/portraits/minister_former-attendant.png");
+web/src/components/modals.test.tsx:1486:vitest_pos_prose_gazetteish:expect(host.textContent).toContain("场次31");
+web/src/components/modals.test.tsx:1487:vitest_pos:expect(host.querySelector<HTMLSelectElement>('select[aria-label="按臣过滤"]')?.value).toBe("");
+web/src/components/modals.test.tsx:1500:vitest_pos:expect(host.textContent).toMatch(/奏报.*诏书.*递话|奏报、诏书与递话/);
+web/src/components/modals.test.tsx:1501:vitest_neg:expect(host.textContent).not.toContain("不应出现的场卷");
+web/src/components/modals.test.tsx:1541:vitest_pos:expect(section!.querySelector("pre")?.textContent).toBe(raw);
+web/src/components/modals.test.tsx:1543:vitest_pos:.some((element) => element.textContent === decree)).toBe(true);
+web/src/components/modals.test.tsx:1613:vitest_pos:expect(attendantSection!.querySelector("pre")?.textContent).toBe(raw);
+web/src/components/modals.test.tsx:1616:vitest_pos:expect(memorialPres[0].textContent).toBe(raw);
+web/src/components/modals.test.tsx:1654:vitest_pos_prose_gazetteish:expect(label).toContain("递话");
+web/src/components/modals.test.tsx:1655:vitest_neg:expect(label).not.toContain("奏报");
+web/src/components/modals.test.tsx:1659:vitest_pos_prose_gazetteish:expect(dialog?.getAttribute("aria-label") || "").toContain("递话");
+web/src/components/modals.test.tsx:1660:vitest_pos_prose_gazetteish:expect(host.textContent).toContain("递话");
+web/src/components/modals.test.tsx:1661:vitest_neg:expect(host.textContent).not.toMatch(/仅收奏报与诏书/);
+web/src/components/modals.test.tsx:1671:vitest_pos_prose_gazetteish:expect(thinkingText()).toContain("大臣思索中");
+web/src/components/modals.test.tsx:1686:vitest_pos_prose_gazetteish:expect(cancelBtn?.textContent).toContain("离开等待");
+web/src/components/modals.test.tsx:1735:vitest_pos:expect(thinkingP?.textContent).toMatch(/\d+\s*秒/);
+web/src/components/modals.test.tsx:1746:vitest_neg:expect(document.body.textContent).not.toContain("实账");
+web/src/components/modals.test.tsx:1747:vitest_neg:expect(document.body.textContent).not.toContain("账目明细");
+web/src/components/modals.test.tsx:1773:vitest_neg:expect(mastSept).not.toContain("天启七年十月");
+web/src/components/modals.test.tsx:1781:vitest_neg:expect(mastDec).not.toContain("崇祯元年正月");
+web/src/components/modals.test.tsx:1782:vitest_neg:expect(mastDec).not.toContain("天启七年正月");
+web/src/components/modals.test.tsx:1792:vitest_neg:expect(host.textContent).not.toContain("尚无上月邸报");
+web/src/components/modals.test.tsx:1793:vitest_neg:expect(host.textContent).not.toContain("登基伊始");
+web/src/components/modals.test.tsx:1817:vitest_pos:expect(scroll!.contains(dismissWrap)).toBe(false);
+web/src/components/modals.test.tsx:1844:vitest_pos:expect(aside?.textContent).toBe(rawWithWs);
+web/src/components/modals.test.tsx:1846:vitest_pos:expect(host.querySelector(".gazette-document")?.contains(aside)).toBe(false);
 web/src/components/settlementFaces.test.tsx:110:vitest_pos:expect(host.querySelector("[data-testid=wang-settlement-slip]")?.textContent).toContain(WANG_SETTLEMENT_SLIP);
 web/src/components/settlementFaces.test.tsx:111:vitest_pos_prose_gazetteish:expect(host.textContent).toContain("· 核账");
 web/src/components/settlementFaces.test.tsx:112:vitest_neg:expect(host.textContent).not.toContain("· 待批");
@@ -1780,43 +1737,38 @@ web/src/mindreadingDelivery.test.tsx:300:vitest_eq_prose:expect(busyRef.current)
 web/src/mindreadingDelivery.test.tsx:301:vitest_eq_prose:expect(hookRef.current!.pendingUserMessage).toBe("问2");  // 旧流未清掉流 2 的待答文
 web/src/mindreadingDelivery.test.tsx:326:vitest_pos:expect(chatRows()).toEqual(["user:问1", "minister:答1", "user:问2", "minister:答2"]);
 web/src/mindreadingDelivery.test.tsx:330:vitest_pos:expect(chatRows()).toEqual(["user:问1", "minister:答1", "user:问2", "minister:答2"]);
-web/src/ministerScrollLens.test.ts:48:vitest_pos:expect(lens).toEqual([]);
-web/src/ministerScrollLens.test.ts:49:vitest_neg:expect(lens.map((m) => m.content).join("")).not.toContain("密令");
-web/src/ministerScrollLens.test.ts:50:vitest_neg:expect(lens.map((m) => m.content).join("")).not.toContain("臣领旨");
-web/src/ministerScrollLens.test.ts:51:vitest_neg:expect(lens.map((m) => m.content).join("")).not.toContain("神色凝重");
-web/src/ministerScrollLens.test.ts:57:vitest_pos:expect(lens.map((m) => m.content)).toEqual([
-web/src/ministerScrollLens.test.ts:82:vitest_pos:expect(hong.map((m) => m.content)).toEqual(["洪问", "洪答", "洪递话"]);
-web/src/ministerScrollLens.test.ts:84:vitest_pos:expect(hong.some((m) => m.speaker === "朕")).toBe(true);
-web/src/ministerScrollLens.test.ts:85:vitest_pos:expect(hong.some((m) => m.speaker === "王承恩")).toBe(true);
-web/src/ministerScrollLens.test.ts:88:vitest_pos:expect(wang.map((m) => m.content)).toEqual(["王问", "王答", "王递话"]);
-web/src/ministerScrollLens.test.ts:89:vitest_pos:expect(wang.some((m) => m.content.startsWith("洪"))).toBe(false);
-web/src/ministerScrollLens.test.ts:92:vitest_pos:expect(orphan).toEqual([]);
-web/src/ministerScrollLens.test.ts:103:vitest_pos:expect(filterScrollForSelectedMinister(scroll, "许誉卿").map((m) => m.content)).toEqual([
-web/src/ministerScrollLens.test.ts:106:vitest_pos:expect(filterScrollForSelectedMinister(scroll, "洪承畴").map((m) => m.content)).toEqual([
-web/src/ministerScrollLens.test.ts:117:vitest_pos:expect(filterScrollForSelectedMinister(scroll, "洪承畴")).toEqual(scroll);
-web/src/ministerScrollLens.test.ts:118:vitest_pos:expect(filterScrollForSelectedMinister(scroll, "许誉卿")).toEqual(scroll);
-web/src/ministerScrollLens.test.ts:125:vitest_pos:expect(hong.map((m) => m.content)).toEqual([
-web/src/ministerScrollLens.test.ts:135:vitest_pos:expect(hong.some((m) => m.speaker === "杨嗣昌")).toBe(true);
-web/src/ministerScrollLens.test.ts:136:vitest_pos:expect(hong.some((m) => m.speaker === "王承恩")).toBe(true);
-web/src/ministerScrollLens.test.ts:140:vitest_pos:expect(yang.some((m) => m.content === "臣自三边来。")).toBe(false);
-web/src/ministerScrollLens.test.ts:141:vitest_pos:expect(yang.some((m) => m.content === "洪承畴趋入殿中。")).toBe(false);
-web/src/ministerScrollLens.test.ts:142:vitest_pos:expect(yang.some((m) => m.content === "殿侧容臣插一句。")).toBe(false);
-web/src/ministerScrollLens.test.ts:145:vitest_pos:expect(filterScrollForSelectedMinister(scroll, "许誉卿")).toEqual([]);
-web/src/ministerScrollLens.test.ts:156:vitest_pos:expect(hong.map((m) => m.content)).toEqual(["洪承畴入殿。", "问", "答", "侧言"]);
-web/src/ministerScrollLens.test.ts:157:vitest_pos:expect(filterScrollForSelectedMinister(scroll, "杨嗣昌")).toEqual([]);
-web/src/ministerScrollLens.test.ts:163:vitest_pos:expect(filterScrollForSelectedMinister(scroll, "许誉卿")).toEqual([]);
-web/src/ministerScrollLens.test.ts:183:vitest_pos:expect(hong.map((m) => m.content)).toEqual([
-web/src/ministerScrollLens.test.ts:191:vitest_pos:expect(hong.some((m) => m.content.includes("杨"))).toBe(false);
-web/src/ministerScrollLens.test.ts:192:vitest_pos:expect(hong.some((m) => m.content === "杨部神色郑重。")).toBe(false);
-web/src/ministerScrollLens.test.ts:195:vitest_pos:expect(yang.map((m) => m.content)).toEqual([
-web/src/ministerScrollLens.test.ts:200:vitest_pos:expect(yang.some((m) => m.content === "臣自三边来。")).toBe(false);
-web/src/ministerScrollLens.test.ts:201:vitest_pos:expect(yang.some((m) => m.content === "洪承畴趋入殿中。")).toBe(false);
-web/src/ministerScrollLens.test.ts:202:vitest_pos:expect(yang.some((m) => m.content === "殿侧容臣插一句。")).toBe(false);
-web/src/ministerScrollLens.test.ts:212:vitest_pos:expect(filterScrollForSelectedMinister(scroll, "许誉卿")).toEqual([]);
-web/src/ministerScrollLens.test.ts:215:vitest_pos:).toEqual(["辽饷何解？"]);
-web/src/ministerScrollLens.test.ts:219:vitest_pos:).toEqual([]);
-web/src/ministerScrollLens.test.ts:228:vitest_pos:expect(filterScrollForSelectedMinister(scroll, "洪承畴", { sceneSpeaker: "殿上" }).map((m) => m.content)).toEqual([
-web/src/ministerScrollLens.test.ts:240:vitest_pos:expect(visible.map((message) => ({ role: message.role, speaker: message.speaker, chat_turn_id: message.chat_turn_id }))).toEqual([
+web/src/ministerScrollLens.test.ts:59:vitest_pos:expect(lens).toEqual([]);
+web/src/ministerScrollLens.test.ts:61:vitest_neg:expect(lens.map((m) => m.content).join("")).not.toContain("密令");
+web/src/ministerScrollLens.test.ts:67:vitest_pos:expect(rolesSpeakers(lens)).toEqual([
+web/src/ministerScrollLens.test.ts:92:vitest_pos:expect(rolesSpeakers(hong)).toEqual([
+web/src/ministerScrollLens.test.ts:98:vitest_pos:expect(hong.some((m) => m.speaker === "朕")).toBe(true);
+web/src/ministerScrollLens.test.ts:99:vitest_pos:expect(hong.some((m) => m.speaker === "王承恩")).toBe(true);
+web/src/ministerScrollLens.test.ts:102:vitest_pos:expect(rolesSpeakers(wang)).toEqual([
+web/src/ministerScrollLens.test.ts:107:vitest_pos:expect(wang.some((m) => m.speaker === "洪承畴")).toBe(false);
+web/src/ministerScrollLens.test.ts:110:vitest_pos:expect(orphan).toEqual([]);
+web/src/ministerScrollLens.test.ts:121:vitest_pos:expect(rolesSpeakers(filterScrollForSelectedMinister(scroll, "许誉卿"))).toEqual([
+web/src/ministerScrollLens.test.ts:126:vitest_pos:expect(rolesSpeakers(filterScrollForSelectedMinister(scroll, "洪承畴"))).toEqual([
+web/src/ministerScrollLens.test.ts:138:vitest_pos:expect(filterScrollForSelectedMinister(scroll, "洪承畴")).toEqual(scroll);
+web/src/ministerScrollLens.test.ts:139:vitest_pos:expect(filterScrollForSelectedMinister(scroll, "许誉卿")).toEqual(scroll);
+web/src/ministerScrollLens.test.ts:147:vitest_pos:expect(hong.some((m) => m.speaker === "杨嗣昌")).toBe(true);
+web/src/ministerScrollLens.test.ts:148:vitest_pos:expect(hong.some((m) => m.speaker === "王承恩")).toBe(true);
+web/src/ministerScrollLens.test.ts:149:vitest_pos:expect(rolesSpeakers(hong)).toEqual([
+web/src/ministerScrollLens.test.ts:161:vitest_pos:expect(yang.some((m) => m.speaker === "洪承畴" && m.role === "minister")).toBe(false);
+web/src/ministerScrollLens.test.ts:162:vitest_pos:expect(yang.some((m) => m.speaker === "朕")).toBe(false);
+web/src/ministerScrollLens.test.ts:165:vitest_pos:expect(filterScrollForSelectedMinister(scroll, "许誉卿")).toEqual([]);
+web/src/ministerScrollLens.test.ts:176:vitest_pos:expect(rolesSpeakers(hong)).toEqual([
+web/src/ministerScrollLens.test.ts:182:vitest_pos:expect(filterScrollForSelectedMinister(scroll, "杨嗣昌")).toEqual([]);
+web/src/ministerScrollLens.test.ts:188:vitest_pos:expect(filterScrollForSelectedMinister(scroll, "许誉卿")).toEqual([]);
+web/src/ministerScrollLens.test.ts:208:vitest_pos:expect(rolesSpeakers(hong)).toEqual([
+web/src/ministerScrollLens.test.ts:216:vitest_pos:expect(hong.some((m) => m.speaker === "杨嗣昌")).toBe(false);
+web/src/ministerScrollLens.test.ts:219:vitest_pos:expect(rolesSpeakers(yang)).toEqual([
+web/src/ministerScrollLens.test.ts:224:vitest_pos:expect(yang.some((m) => m.speaker === "洪承畴" && m.role === "minister")).toBe(false);
+web/src/ministerScrollLens.test.ts:225:vitest_pos:expect(yang.some((m) => m.speaker === "孙传庭")).toBe(false);
+web/src/ministerScrollLens.test.ts:235:vitest_pos:expect(filterScrollForSelectedMinister(scroll, "许誉卿")).toEqual([]);
+web/src/ministerScrollLens.test.ts:238:vitest_pos:).toEqual([{ role: "user", speaker: "朕", chat_turn_id: 12 }]);
+web/src/ministerScrollLens.test.ts:242:vitest_pos:).toEqual([]);
+web/src/ministerScrollLens.test.ts:253:vitest_pos:).toEqual([
+web/src/ministerScrollLens.test.ts:267:vitest_pos:expect(rolesSpeakers(visible)).toEqual([
 web/src/reasoningSupport.test.ts:19:vitest_pos:})).toBe(false);
 web/src/reasoningSupport.test.ts:27:vitest_pos:})).toBe(true);
 web/src/reasoningSupport.test.ts:37:vitest_pos:})).toBe(true);
@@ -1875,17 +1827,16 @@ web/src/staleGuard.test.tsx:325:vitest_pos:expect(host.querySelector("[data-test
 web/src/staleGuard.test.tsx:339:vitest_pos:expect(host.querySelector("[data-testid=input]")?.textContent).toBe("");
 web/src/staleGuard.test.tsx:340:vitest_pos:expect(host.querySelector("[data-testid=cleared]")?.textContent).toBe("1");
 web/src/staleGuard.test.tsx:387:vitest_eq_prose:expect(host.querySelector("[data-testid=failures]")?.textContent).toBe("密令未能正式落库");
-web/src/staleGuard.test.tsx:388:vitest_eq_prose:expect(host.querySelector("[data-testid=decisions]")?.textContent).toBe("辽东战守");
-web/src/staleGuard.test.tsx:389:vitest_pos:expect(host.querySelector("[data-testid=busy]")?.textContent).toBe("");
-web/src/staleGuard.test.tsx:435:vitest_pos:expect(host.querySelector("[data-testid=selected]")?.textContent).toBe("");
-web/src/staleGuard.test.tsx:436:vitest_pos:expect(host.querySelector("[data-testid=active]")?.textContent).toBe("chat");
-web/src/staleGuard.test.tsx:437:vitest_pos:expect(host.querySelector("[data-testid=busy]")?.textContent).toBe("");
-web/src/staleGuard.test.tsx:438:vitest_pos:expect(host.querySelector("[data-testid=recovery]")?.textContent).toBe("true");
-web/src/staleGuard.test.tsx:454:vitest_pos:expect(host.querySelector("[data-testid=global]")?.textContent).toBe("1");
-web/src/staleGuard.test.tsx:456:vitest_pos:expect(host.querySelector("[data-testid=panel]")?.textContent).toBe("");
-web/src/staleGuard.test.tsx:468:vitest_pos:expect(host.querySelector("[data-testid=global]")?.textContent).toBe("1");
-web/src/staleGuard.test.tsx:475:vitest_eq_prose:expect(host.querySelector("[data-testid=failures]")?.textContent).toBe("旧失败");
-web/src/staleGuard.test.tsx:481:vitest_eq_prose:expect(host.querySelector("[data-testid=failures]")?.textContent).toBe("旧失败");
+web/src/staleGuard.test.tsx:388:vitest_pos:expect(host.querySelector("[data-testid=busy]")?.textContent).toBe("");
+web/src/staleGuard.test.tsx:434:vitest_pos:expect(host.querySelector("[data-testid=selected]")?.textContent).toBe("");
+web/src/staleGuard.test.tsx:435:vitest_pos:expect(host.querySelector("[data-testid=active]")?.textContent).toBe("chat");
+web/src/staleGuard.test.tsx:436:vitest_pos:expect(host.querySelector("[data-testid=busy]")?.textContent).toBe("");
+web/src/staleGuard.test.tsx:437:vitest_pos:expect(host.querySelector("[data-testid=recovery]")?.textContent).toBe("true");
+web/src/staleGuard.test.tsx:453:vitest_pos:expect(host.querySelector("[data-testid=global]")?.textContent).toBe("1");
+web/src/staleGuard.test.tsx:455:vitest_pos:expect(host.querySelector("[data-testid=panel]")?.textContent).toBe("");
+web/src/staleGuard.test.tsx:467:vitest_pos:expect(host.querySelector("[data-testid=global]")?.textContent).toBe("1");
+web/src/staleGuard.test.tsx:474:vitest_eq_prose:expect(host.querySelector("[data-testid=failures]")?.textContent).toBe("旧失败");
+web/src/staleGuard.test.tsx:480:vitest_eq_prose:expect(host.querySelector("[data-testid=failures]")?.textContent).toBe("旧失败");
 web/src/styles.test.ts:17:vitest_pos_prose:expect(narrowLayout).toContain("grid-template-columns: minmax(120px, 38%) minmax(0, 1fr);");
 web/src/styles.test.ts:18:vitest_neg:expect(narrowLayout).not.toContain("overflow: hidden;");
 web/src/styles.test.ts:19:vitest_pos_prose:expect(narrowLayout).toContain("overflow-y: auto;");
@@ -1961,4 +1912,4 @@ web/src/useSettlementFlow.test.tsx:589:vitest_pos:expect(host.querySelector("[da
 web/src/useSettlementFlow.test.tsx:625:vitest_pos:expect(host.querySelector('[data-testid="phase"]')?.textContent).toBe("settling");
 web/src/useSettlementFlow.test.tsx:626:vitest_pos:expect(host.querySelector('[data-testid="busy"]')?.textContent).toBe("");
 ==== F3 MATERIAL_BODY_POSITIVE_COUNT=0 ====
-==== F3 HIT_COUNT=1960 ====
+==== F3 HIT_COUNT=1911 ====

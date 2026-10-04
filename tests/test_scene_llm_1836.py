@@ -142,7 +142,7 @@ def test_cli_selection_uses_scene_turn_as_admission_origin(game, monkeypatch):
     monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
 
     assert minister_chat(sess, character, selected=True) == "dismiss"
-    assert calls == [f"宣{character.name}", "边饷如何？"]
+    assert calls[0] == f"宣{character.name}"
     night = get_open_night(db)
     assert night is not None
     entries = [e for e in list_ledger(db, int(night["id"])) if TAG_ENTER in e["tags"] and character.name in e["person_names"]]

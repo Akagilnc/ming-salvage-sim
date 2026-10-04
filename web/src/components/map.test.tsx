@@ -151,8 +151,6 @@ describe("NodeIntel #1352 garrison layout / army-list口径", () => {
     // #321 P7：驻军表存在；不直显士气/军心/欠饷
     expect(host.querySelector(".intel-table--garrison")).not.toBeNull();
     expect(host.textContent).not.toContain("不满"); // makeArmy 默认 mutiny_tier 不得直显
-    expect(host.textContent).not.toContain("士气：不振");
-    expect(host.textContent).not.toContain("欠饷不足十万两，约两月军饷");
   });
 
 });

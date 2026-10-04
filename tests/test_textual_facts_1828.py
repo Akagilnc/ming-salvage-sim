@@ -68,9 +68,6 @@ def test_textual_facts_on_army_region_and_affair_are_object_materials(game):
         turn=state.turn,
     )
 
-    assert [f.body for f in db.textual_facts.readable_materials(subject_kind="region", subject_id=region_id)] == [
-        "城中疫气未散",
-    ]
     assert db.textual_facts.readable_materials(subject_kind="character", subject_id="孙传庭") == ()
 
 

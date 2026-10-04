@@ -1,16 +1,19 @@
-# #1834 修内司回执：F9 / F12 / F3（续施工·全仓处置收束）
+# #1834 修内司回执：F9 / F12 / F3（续施工·实质审查收束）
 
 依据：fix-packet + 冻结判词 `00-1834-judge-52809cdf3.json`；现行 #1834 / #1812；ADR 0143、0155；质量法 #13。
-Owner 授权：保留 SIGTERM 前工作树未提交改动并在其上完成；禁止 amend/stash/reset/checkout 覆盖/clean/push/PR。
+Owner 授权：保留既有工作树并在其上完成；禁止 amend/stash/reset/checkout 覆盖/clean/push/PR。
 **未合并，不声称关票。**
 
 ## 本轮相对前轮缺口
 
-前轮报告曾写「F3 宽枚举长尾另跟踪」——与判词「全仓同类修净」及 owner「报告不得再留 F3 非材料口长尾待办」冲突。本轮：
+前轮以 `classify_f3_disposition.py` 词表/短汉字(<16)/ASCII/全体 `.not.` 自动 KEEP，再以 `FIX=0` 宣称全仓完成——**不能代表逐条语义审查**，会漏自由正文子串（短汉、note 名字、归档字段等式、非权限负向等）。
 
-1. 结构探针改为喂入 `_material_facts_text` 的 Mapping 键集合（`payload`/`stigma`/`execution_signal`），**不再**用材料树散文字段头 `payload：` 作判据。
-2. F3 枚举补 list/tuple 散文相等与 vitest `toBe`/`toEqual`；全仓候选逐条处置（FIX 删断言 / KEEP 附依据），`FIX_REMAINING=0`。
-3. 审查未提交改动：恢复 `extract_agent_text` / stream `out` **原样传输**等式；补回四角色结构存在性（非正文）；未为绿放宽合法失败路径。
+本轮：
+
+1. 对宽豁免组做实质逐条核上下文；删漏项自由正文机械依赖（不换非空/len/哨兵）。
+2. **删除**本轮自建的自动分类/自动删码：`scripts/classify_f3_disposition.py`、`scripts/apply_f3_fix_deletes.py`（已获删除授权）。
+3. 留下：真实枚举脚本、结构探针、冻结已核处置表 `f3_disposition.jsonl`（一行一条，含本轮 FIX 审计）。
+4. **报告不以词表 FIX=0 证明完成**；完成判据=手审删除漏项 + 冻结表 + 受影响面复验。
 
 ## 三类根因（判词）
 
@@ -20,88 +23,161 @@ Owner 授权：保留 SIGTERM 前工作树未提交改动并在其上完成；�
 
 ## 修法
 
-- F9/F12 生产删除：已在 `fc08d7713`（本轮复核 STRUCT + 变异探针）。
-- F3：按 `classify_f3_disposition.py` 决策删除 FIX 断言；保留结构化字段 / 原样传输 / 固定 UI（P7）/ 权限负向 / 错误标识。
+- F9/F12 生产删除：已在 `fc08d7713`（本轮复核 STRUCT + 探针）。
+- F3：手审后删除漏项（酿制段正文、邸报/报告锁、composed note、对话 content 锁、定性展示负向、票拟 label 列表等）。合法保留：原样传输（`extract_agent_text` / stream out / 写入→读回 body / `merge_founding_segment` 字节契约）、结构化枚举/身份、P7 固定 UI、来源权限/隔离负向、类型化错误标识。
+- `ministerScrollLens`：去掉对话 content 等式，改验 `role`/`speaker`/`chat_turn_id` 结构（非自由正文）。
 
 ## 可执行全仓枚举
 
 七变量前缀 + `PYTHONDONTWRITEBYTECODE=1` + `PYTHONPATH=$PWD` + `../Ming_LLM/.venv/bin/python`。
 
 ```sh
-../Ming_LLM/.venv/bin/python evidence/1834-fixer-f9-f12-f3/scripts/enum_f9_material_payload.py | tee evidence/1834-fixer-f9-f12-f3/enum_f9.txt
-../Ming_LLM/.venv/bin/python evidence/1834-fixer-f9-f12-f3/scripts/enum_f12_history_dump.py | tee evidence/1834-fixer-f9-f12-f3/enum_f12.txt
-../Ming_LLM/.venv/bin/python evidence/1834-fixer-f9-f12-f3/scripts/enum_f3_free_text_asserts.py | tee evidence/1834-fixer-f9-f12-f3/enum_f3.txt
-../Ming_LLM/.venv/bin/python evidence/1834-fixer-f9-f12-f3/scripts/classify_f3_disposition.py
+env \
+  CLAUDE_CODE_SHELL_PREFIX=/usr/bin/false \
+  CODEX_SHELL_PREFIX=/usr/bin/false \
+  AGY_SHELL_PREFIX=/usr/bin/false \
+  HERMES_SHELL_PREFIX=/usr/bin/false \
+  OPENCODE_SHELL_PREFIX=/usr/bin/false \
+  CURSOR_SHELL_PREFIX=/usr/bin/false \
+  AIDER_SHELL_PREFIX=/usr/bin/false \
+  PYTHONDONTWRITEBYTECODE=1 \
+  PYTHONPATH=$PWD \
+  ../Ming_LLM/.venv/bin/python evidence/1834-fixer-f9-f12-f3/scripts/enum_f9_material_payload.py \
+  | tee evidence/1834-fixer-f9-f12-f3/enum_f9.txt
+
+env \
+  CLAUDE_CODE_SHELL_PREFIX=/usr/bin/false \
+  CODEX_SHELL_PREFIX=/usr/bin/false \
+  AGY_SHELL_PREFIX=/usr/bin/false \
+  HERMES_SHELL_PREFIX=/usr/bin/false \
+  OPENCODE_SHELL_PREFIX=/usr/bin/false \
+  CURSOR_SHELL_PREFIX=/usr/bin/false \
+  AIDER_SHELL_PREFIX=/usr/bin/false \
+  PYTHONDONTWRITEBYTECODE=1 \
+  PYTHONPATH=$PWD \
+  ../Ming_LLM/.venv/bin/python evidence/1834-fixer-f9-f12-f3/scripts/enum_f12_history_dump.py \
+  | tee evidence/1834-fixer-f9-f12-f3/enum_f12.txt
+
+env \
+  CLAUDE_CODE_SHELL_PREFIX=/usr/bin/false \
+  CODEX_SHELL_PREFIX=/usr/bin/false \
+  AGY_SHELL_PREFIX=/usr/bin/false \
+  HERMES_SHELL_PREFIX=/usr/bin/false \
+  OPENCODE_SHELL_PREFIX=/usr/bin/false \
+  CURSOR_SHELL_PREFIX=/usr/bin/false \
+  AIDER_SHELL_PREFIX=/usr/bin/false \
+  PYTHONDONTWRITEBYTECODE=1 \
+  PYTHONPATH=$PWD \
+  ../Ming_LLM/.venv/bin/python evidence/1834-fixer-f9-f12-f3/scripts/enum_f3_free_text_asserts.py \
+  | tee evidence/1834-fixer-f9-f12-f3/enum_f3.txt
 ```
 
-复扫：`evidence/1834-fixer-f9-f12-f3/rescan.txt`  
-成员表真源：`f3_disposition.json`（全量）+ `f3_fix_list.txt`（本轮末为空）。
+复扫：`evidence/1834-fixer-f9-f12-f3/rescan.txt`
+处置真源：`f3_disposition.jsonl`（现行 KEEP 候选 + 本轮 FIX 审计行）；`f3_fix_list.txt`（本轮手删清单）。
 
 | 轴 | 结果 |
 | --- | --- |
 | F9 | `dossier.items_dump=PRESENT`；skip 含 payload/stigma/execution_signal；HIT=70 |
 | F12 | audit dump loop=ABSENT；keeps=实况轨,issues,characters,relation_edge_events；HIT=142 |
-| F3 | MATERIAL_BODY_POSITIVE=0；HIT=1960；**FIX=0 KEEP=1960** |
+| F3 | MATERIAL_BODY_POSITIVE=0；现行枚举 HIT=1911 KEEP；本轮手删 FIX 审计=68（非词表自动归零） |
 
-## F3 处置分组（完整；无长尾待办）
+## F3 处置（手审；无「词表完成」声称）
 
-### FIX（已删净；末态 0 条）
+### FIX（本轮手删；见 `f3_fix_list.txt` / jsonl 中 `decision=FIX`）
 
-本轮曾列并删除的同类（路径见 git diff / 应用前 `f3_fix_list` 快照逻辑）：对话答案/回话列表、memorial/execution_note/stance 自由正文、材料 `read_material` 正文相等、CLI capsys 自由子串、vitest 对话/邸报夹具正文等。删除方式=整条 Assert/expect，**不**换成非空/len/哨兵/测试专用生产出口。
+含：关系酿制 `recent_segment`/`founding_segment` 字面锁、残留 textual_facts body 列表、请旨 `presented_context`、composed grant note（应解/实抵）、邸报/SSE report 字面、thinking/reasoning dump 自由子串、edge/criterion/context/summary 自由锁、Web 对话 content 等式与非权限对话负向、票拟 option label 列表、定性军牌文案负向等。删除方式=整条 Assert/expect，**不**换成非空/len/哨兵/测试专用生产出口。`ministerScrollLens` 以 role/speaker 结构断言承接过滤契约。
 
-### KEEP（1960；按依据计数）
+### KEEP（现行 1911；依据见 jsonl `basis`）
 
-| basis | count | 含义 |
-| --- | ---: | --- |
-| structured_enum_or_identity_field | 685 | 官职/身份/枚举/配置键等结构化相等 |
-| cli_fixed_option_or_error_identifier | 390 | 固定错误串/prompt 硬约束/技术诊断 |
-| ui_identity_or_fixed_label_or_technical | 379 | UI 身份点名、技术属性 |
-| structured_enum_identity_transport_or_contract | 192 | 其它结构化契约 |
-| permission_or_negative_contract | 172 | 权限/非泄漏负向 |
-| ui_fixed_chrome_p7 | 65 | 界面固定话语（P7 例外） |
-| structured_field_equality | 49 | archive/presented/body 等字段搬运 |
-| verbatim_transmission_equality | 21 | `extract_agent_text` / stream out / 玩家问话回显 |
-| path_or_directory_structure | 4 | 材料路径成员 |
-| structured_presence_not_free_prose | 3 | office/classes 等结构存在性 |
-
-逐条路径:行号:detail 见 `f3_disposition.json`（不得在报告另留「未分类库存」）。
+合法类：结构化枚举/身份、原样传输契约、P7 固定 UI、来源权限/隔离负向、类型化错误/技术诊断、材料路径成员、结构化存在性。归档字段等式仅在确有写入→读回/字节合并等真实契约时保留。
 
 ## 结构探针（非 pytest）
 
 `evidence/1834-fixer-f9-f12-f3/scripts/probe_f9_f12_structural.py`
 
-- 判据：输入 Mapping 不得含 machine keys；`list_world_effect_history` 不得含 audit 表；开放/关闭/恢复 × 世界+公共作者。
-- **不用** `payload：` 等散文字段头。
-
 | 运行 | 结果（`probe.txt`） |
 | --- | --- |
 | current | ALL_GREEN（各态 files=279） |
-| `--old` | OLD_LOGIC_RED machine keys entered material feed |
-| `--old-f12` | F12_OLD_LOGIC_RED dumps ['person_logs'] |
 
-## 聚焦测试
+## 聚焦测试（完整可复现）
+
+七 BIN=`/usr/bin/false` + `PYTHONDONTWRITEBYTECODE=1` + `PYTHONPATH=$PWD` + `../Ming_LLM/.venv/bin/python`。
+
+文件列表 A（本轮 gitdiff 触及的 Python 测试；动态生成）：
 
 ```sh
-# A：核心聚焦 + 全部已改 tests（除 breach 文件，见下）
-# B：tests/test_breach_plea_623.py 单独进程
-# 前缀：七 BIN=/usr/bin/false + PYTHONDONTWRITEBYTECODE=1
-# 解释器：../Ming_LLM/.venv/bin/python
+AFFECTED=$(git diff --name-only HEAD -- 'tests/*.py' | tr '\n' ' ')
+env \
+  CLAUDE_CODE_SHELL_PREFIX=/usr/bin/false \
+  CODEX_SHELL_PREFIX=/usr/bin/false \
+  AGY_SHELL_PREFIX=/usr/bin/false \
+  HERMES_SHELL_PREFIX=/usr/bin/false \
+  OPENCODE_SHELL_PREFIX=/usr/bin/false \
+  CURSOR_SHELL_PREFIX=/usr/bin/false \
+  AIDER_SHELL_PREFIX=/usr/bin/false \
+  PYTHONDONTWRITEBYTECODE=1 \
+  PYTHONPATH=$PWD \
+  ../Ming_LLM/.venv/bin/python -m pytest -q $AFFECTED
 ```
 
-结果（`focused-pytest.txt`）：
+本轮实际 A 文件（19）：
 
-- A：`1228 passed, 1 skipped`，real **57.85s**
-- B：`32 passed`，real **2.58s**
+```
+tests/test_relation_brew_636.py
+tests/test_textual_facts_1828.py
+tests/test_fiscal_levy_effect.py
+tests/test_grant_reconciliation_567.py
+tests/test_month_chain_1843.py
+tests/test_player_payload_1022.py
+tests/test_qa_b3_409_ux.py
+tests/test_cli_backend.py
+tests/test_deepseek_thinking_disable_1797.py
+tests/test_audience_translation_1838.py
+tests/test_due_review_621.py
+tests/test_relation_read_640.py
+tests/test_style_temperament_641.py
+tests/test_qa_s2_copy_prompts_1356_1402.py
+tests/test_month_chain_1847.py
+tests/test_scene_llm_1836.py
+tests/test_relation_seed_638.py
+tests/test_person_delta_adapter.py
+tests/test_pihong_dossier_1490.py
+```
 
-说明：`test_decree_continuation_keeps_forecast_and_lands_affair_effect` 与 `test_revoke_forecast_translation_input_carries_original_and_continuing_dossier` 同进程顺序依赖（恢复 `decree_text` 真理断言后仍复现）——**非本轮 F3 删文引入**；分进程均绿。未跑全量。Web vitest：本机无 `web/node_modules`，未跑。
+结果（`focused-pytest.txt`）：**551 passed, 1 skipped**，real **38.37s**。未重跑前轮 1228 套。
+
+Web vitest（触及 `web/src/ministerScrollLens.test.ts` 等）：本机无 `web/node_modules`，未跑（`focused-vitest.txt`）。
+
+### 同进程顺序污染（保留失败证据；不洗白）
+
+```sh
+env \
+  CLAUDE_CODE_SHELL_PREFIX=/usr/bin/false \
+  CODEX_SHELL_PREFIX=/usr/bin/false \
+  AGY_SHELL_PREFIX=/usr/bin/false \
+  HERMES_SHELL_PREFIX=/usr/bin/false \
+  OPENCODE_SHELL_PREFIX=/usr/bin/false \
+  CURSOR_SHELL_PREFIX=/usr/bin/false \
+  AIDER_SHELL_PREFIX=/usr/bin/false \
+  PYTHONDONTWRITEBYTECODE=1 \
+  PYTHONPATH=$PWD \
+  ../Ming_LLM/.venv/bin/python -m pytest -q \
+    tests/test_month_chain_1847.py::test_decree_continuation_keeps_forecast_and_lands_affair_effect \
+    tests/test_breach_plea_623.py::test_revoke_forecast_translation_input_carries_original_and_continuing_dossier
+```
+
+实测：**1 failed, 1 passed**（后者 `KeyError: 'request'`）。分进程各 1 passed。非本轮 F3 删文引入；见 `focused-pytest.txt` 尾部。
 
 ## 复杂度 / 合法性
 
 - 无新增来源账/摘要/模型调用/输出擦洗/生产出口。
-- 邻票 **#1873**（四类文字事实公共读侧）不施工。
+- 邻票 **#1873** 不施工。
 - 自查二连 done。
 
 ## 剩余范围（仅授权外）
 
 - **#1873** 邻票。
+- 同进程顺序污染（上节）——另票/另修。
+- Web vitest 需本机 `web/node_modules`。
 - 分支未合并 → **不声称 #1834 关闭**。
+- HEAD SHA：见提交后 `git rev-parse HEAD`（本报告定稿时写入提交说明）。

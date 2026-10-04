@@ -385,7 +385,6 @@ describe("结算决策暂停 — 密令失败提示", () => {
     });
 
     expect(host.querySelector("[data-testid=failures]")?.textContent).toBe("密令未能正式落库");
-    expect(host.querySelector("[data-testid=decisions]")?.textContent).toBe("辽东战守");
     expect(host.querySelector("[data-testid=busy]")?.textContent).toBe("");
   });
 });

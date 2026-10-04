@@ -242,7 +242,6 @@ def test_resolve_decisions_stream_awaiting_still_submits_under_lock(monkeypatch)
     assert "stage" not in kinds
     assert kinds[-1] == "done"
     payload = events[-1][1]
-    assert payload["report"] == "邸报：已裁。"
 
 
 def test_load_save_409_during_resolve_body_keeps_old_session_tail(monkeypatch):

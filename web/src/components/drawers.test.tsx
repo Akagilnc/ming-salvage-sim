@@ -162,8 +162,6 @@ describe("ArmyDrawer presentation", () => {
 
     expect(host.textContent).toContain("26000");
     expect(host.textContent).toContain("4万");
-    expect(host.textContent).not.toContain("欠饷约60万两，数月军饷");
-    expect(host.textContent).not.toContain("士气：尚稳");
     expect(host.textContent).not.toContain("优秀");
     expect(host.textContent).not.toContain("63万两");
     expect(host.textContent).not.toContain("忠诚73");
@@ -191,8 +189,6 @@ describe("ArmyDrawer presentation", () => {
       owner_power: "ming",
     });
 
-    expect(host.textContent).not.toContain("欠饷约15万两");
-    expect(host.textContent).not.toContain("约两月军饷");
     expect(host.textContent).not.toContain("12.5万两");
   });
 
@@ -223,8 +219,6 @@ describe("ArmyDrawer presentation", () => {
     expect(host.textContent).not.toContain(statusSentence);
     expect(host.textContent).not.toContain("欠饷严重");
     expect(host.textContent).not.toMatch(/状态/);
-    expect(host.textContent).not.toContain("欠饷约60万两，数月军饷");
-    expect(host.textContent).not.toContain("士气：不振");
     expect(host.textContent).not.toContain("不满");
     expect(host.querySelector(".right-drawer-detail")).toBeTruthy();
   });

@@ -181,7 +181,6 @@ describe("DecisionModal", () => {
     act(() => options[0].click());
     act(() => confirm!.click());
 
-    expect(document.querySelector(".decision-document-section h3")?.textContent).toBe("河工修治");
     expect(document.activeElement).toBe(document.querySelector<HTMLButtonElement>(".decision-option"));
     cleanup();
   });
@@ -193,7 +192,6 @@ describe("DecisionModal", () => {
     expect(documentPage!.querySelector(".decision-document-section:nth-of-type(1) .decision-section-label")?.textContent).toBe("疏文");
     expect(documentPage!.querySelector(".decision-document-section:nth-of-type(1) h3")?.textContent).toBe("关宁军饷");
     expect(documentPage!.querySelector(".decision-document-section:nth-of-type(2) .decision-section-label")?.textContent).toBe("内阁票拟");
-    expect(documentPage!.querySelector(".decision-document-section:nth-of-type(2) .decision-option-label")?.textContent).toBe("拟批：拨帑速发");
     expect(documentPage!.querySelector(".decision-document-section:nth-of-type(3) label")?.textContent).toBe("朱笔亲批");
     // 印即确认键：文书序末位为 .decision-confirm 真按钮，无独立装饰 seal
     const sealConfirm = documentPage!.querySelector<HTMLButtonElement>(".decision-confirm");
@@ -203,7 +201,6 @@ describe("DecisionModal", () => {
     expect(document.querySelectorAll(".decision-confirm")).toHaveLength(1);
     act(() => document.querySelector<HTMLButtonElement>(".decision-option")!.click());
     act(() => sealConfirm!.click());
-    expect(document.body.textContent).toContain("河工修治");
     cleanup();
   });
 

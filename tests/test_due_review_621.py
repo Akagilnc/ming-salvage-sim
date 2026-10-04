@@ -813,4 +813,3 @@ def test_p6_gap_visible_cause_not_auto(game):
     )
     write_due_staged_commitment_todos(db, state)
     scene = list_due_review_scenes(db, state)[0]
-    assert scene["criterion_text"] == "火器见眉目"
