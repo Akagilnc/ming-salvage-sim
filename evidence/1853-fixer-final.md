@@ -168,6 +168,6 @@ tsc --noEmit -p tsconfig.json → TSC_EXIT=0
 
 ## Commit
 
-- （本轮提交后回填 hash）
+- `466ccd929d0ca61c532a8493791344e3157492b3`
 - `ak-roles: fix(#1853): delete settlement pending_action_failures dead readers`
 - 分支：`ak-roles/issue-1853-j2-j5-unify`（未 push、未开 PR）
