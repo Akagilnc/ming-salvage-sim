@@ -143,6 +143,17 @@ describe("empty bar label presentation (#626)", () => {
     cleanup();
   });
 
+  it("detail modal keeps parentheses when bar meanings are present", () => {
+    const cleanup = render(
+      <SituationDetailModal issue={makeIssue()} onClose={() => undefined} />
+    );
+    const text = document.body.textContent || "";
+    // makeIssue() 固定 bar_good_meaning / bar_bad_meaning → UI 原样拼装
+    expect(text).toContain("达成（欠饷清偿）");
+    expect(text).toContain("失败（军心溃散）");
+    cleanup();
+  });
+
   it("issue board progress ends stay blank rather than showing empty labels", () => {
     const cleanup = render(<IssueGroup title="待办" issues={[makeEmptyBarIssue()]} />);
     const ends = Array.from(document.querySelectorAll(".issue-progress > span"));

@@ -7,6 +7,7 @@ from ming_sim.issues import (
     apply_issue_inertia_and_ongoing,
     apply_score_extraction,
     commitment_progress_payload,
+    show_active_issues,
 )
 
 
@@ -524,6 +525,40 @@ def test_until_stop_arrears_commitment_settlement_oracle_resolves_with_restore(g
     assert paid[:2] == [50, 100]
     assert paid == sorted(paid) and paid[-1] > paid[1]
     assert payloads[-1]["commitment_progress"]["remaining_arrears"] == 0
+
+
+def test_commitment_progress_contexts_are_structured(game, capsys):
+    """stage_text 夹具「直到补齐」与确定性进度「已第1月」经 CLI 原样呈现。"""
+    db, state, content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.execute("UPDATE legacies SET status='cleared' WHERE status='active'")
+    db.conn.execute("UPDATE armies SET arrears=0 WHERE owner_power='ming'")
+    db.conn.execute("UPDATE armies SET arrears=25 WHERE id='guanning'")
+    db.conn.commit()
+    db.insert_issue(
+        state,
+        kind="initiative",
+        title="关宁月饷",
+        origin_kind="decree",
+        origin_ref="decree:turn-1:guanning-pay",
+        bar_value=0,
+        inertia=0,
+        stage_text="每月拨银补关宁旧欠，直到补齐。",
+        ongoing_effects={
+            "economy": [
+                {"account": "国库", "delta": -10, "reason": "关宁月饷", "purpose": "补饷"}
+            ]
+        },
+        stop_condition=json.dumps({"army.guanning.arrears": "<=0"}, ensure_ascii=False),
+        commitment_kind="until_stop",
+    )
+
+    _advance_player_month(db, state, content)
+
+    show_active_issues(db)
+    output = capsys.readouterr().out
+    assert "已第1月" in output
+    assert "直到补齐" in output
 
 
 def test_commitment_progress_fractional_strict_gate_can_be_satisfied(game):

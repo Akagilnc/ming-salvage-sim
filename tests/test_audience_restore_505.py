@@ -292,7 +292,12 @@ def test_retry_regenerates_reply_without_duplicate_question(restore_env):
         "SELECT content FROM chat_messages WHERE role='user'"
     ).fetchall()
     assert [r["content"] for r in users] == ["剿抚孰先？", "续问军情？"]
-    # 轮完成：generating/interrupted → active，回话已链接（不以回话正文或长度替代）。
+    replies = db.conn.execute(
+        "SELECT content FROM chat_messages WHERE role='minister'"
+    ).fetchall()
+    # ChatTurnResult(answer="臣重奏：剿为先。") 夹具 → DB 原样落库（透明传输）
+    assert [r["content"] for r in replies] == ["臣重奏：剿为先。"]
+    # 轮完成：generating/interrupted → active，回话已链接。
     row = db.conn.execute(
         "SELECT status, minister_message_id FROM chat_turns WHERE id=?", (ct,)
     ).fetchone()

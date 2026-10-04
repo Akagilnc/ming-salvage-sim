@@ -83,6 +83,28 @@ describe("召对陈旧守卫（staleness guard）", () => {
 
     expect(host.querySelector("[data-testid=notice]")?.textContent).toBe("");
   });
+
+  it("未切人时响应正常应用不被守卫误丢", async () => {
+    let resolve!: (v: string) => void;
+    const pending = new Promise<string>((r) => {
+      resolve = r;
+    });
+
+    const host = render(<StaleGuardFixture getResponse={() => pending} />);
+
+    // send for 甲, no switch
+    act(() => {
+      (host.querySelector("[data-testid=send]") as HTMLButtonElement).click();
+    });
+
+    await act(async () => {
+      resolve("甲的回话");
+      await pending;
+    });
+
+    // 夹具 resolve("甲的回话") → 面板原样呈现（透明传输，非生成散文锁）
+    expect(host.querySelector("[data-testid=notice]")?.textContent).toBe("甲：甲的回话");
+  });
 });
 
 /** Mirrors sendChat success path after streamChat returns: global state refresh
@@ -228,6 +250,19 @@ describe("召对陈旧守卫 — 广范围（loadMinisterChat 历史加载）", 
       await pending;
     });
     expect(host.querySelector("[data-testid=panel]")?.textContent).toBe("");
+  });
+
+  it("未切人时历史正常加载不被误丢", async () => {
+    let resolve!: (v: string) => void;
+    const pending = new Promise<string>((r) => (resolve = r));
+    const host = render(<LoadGuardFixture getHistory={() => pending} />);
+    act(() => (host.querySelector("[data-testid=load]") as HTMLButtonElement).click());
+    await act(async () => {
+      resolve("甲的历史");
+      await pending;
+    });
+    // 夹具 resolve("甲的历史") → 面板原样呈现
+    expect(host.querySelector("[data-testid=panel]")?.textContent).toBe("甲：甲的历史");
   });
 });
 

@@ -69,6 +69,26 @@ def test_clichat_runner_exit_raises_typed_llm_unavailable(monkeypatch):
     assert exc.code  # typed
 
 
+def test_clichat_normal_reply_still_returns(monkeypatch):
+    """夹具 CLI 回包经 _fake_completion 原样透传（非生成散文锁）。"""
+    cc = cb.CliChat(id="cli-test", backend="agy")
+    monkeypatch.setattr(cc, "_call_cli", lambda p: ("臣遵旨，边事容臣细奏。", 1))
+    monkeypatch.setattr(cb, "_trace", lambda rec: None)
+    captured = {}
+    real_fake = cb._fake_completion
+
+    def spy(text, model_id, *a, **k):
+        captured["text"] = text
+        return real_fake(text, model_id, *a, **k)
+
+    monkeypatch.setattr(cb, "_fake_completion", spy)
+    cc.invoke(
+        [SimpleNamespace(role="user", content="边事如何")],
+        Message(role="assistant"),
+    )
+    assert captured["text"] == "臣遵旨，边事容臣细奏。"
+
+
 # ── seam 2: extract_agent_text ──
 
 

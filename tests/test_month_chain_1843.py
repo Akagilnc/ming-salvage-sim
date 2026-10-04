@@ -839,10 +839,12 @@ def test_month_chain_lands_specialized_facts_before_due_and_gazette(game, monkey
         for item in db.list_dossier_progress(dossier_id)
     )
     recon = db.list_dossier_reconciliations(grant_id)[-1]
+    assert recon["note"] == "实抵已到"
     assert recon["turn"] == int(state.turn)
     denunciations = db.list_faction_denunciations(
         turn=int(state.turn), target_dossier_id=dossier_id,
     )
+    assert [row["memorial_text"] for row in denunciations] == ["其侵冒有据"]
     assert db.conn.execute(
         "SELECT knowledge_status FROM chat_messages WHERE id=?", (message_id,),
     ).fetchone()["knowledge_status"] == "released"

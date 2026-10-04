@@ -726,6 +726,25 @@ describe("ChatModal — single night-scroll authority (#539)", () => {
     expect(document.body.textContent).not.toContain("撤回前答复");
   });
 
+  it("does not treat an ordinary history reduction as a withdrawal", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ night_id: 23, protagonist: "", roster: [], translation_pending: false, messages: [
+      { role: "user", speaker: "朕", content: "公共卷仍保留", chat_turn_id: 1 },
+      { role: "minister", speaker: MINISTER_MOCK.name, content: "公共答复仍保留", chat_turn_id: 1 },
+    ] }) }));
+    let updateChat!: (chat: ChatMessage[]) => void;
+    renderModal({
+      minister: MINISTER_MOCK, portraitPrefix: "minister_", currentNightId: 23,
+      chat: [{ role: "user", content: "个人 history", chatTurnId: 1 }],
+      registerChatUpdate: (update) => { updateChat = update; },
+    });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    await act(async () => { updateChat([]); await Promise.resolve(); });
+
+    // mock fetch 固定字节 → 夜卷呈现（透明传输）
+    expect(document.body.textContent).toContain("公共卷仍保留");
+    expect(document.body.textContent).toContain("公共答复仍保留");
+  });
+
   it("does not flash old minister chat while the night scroll is loading or failed", async () => {
     let reject!: (reason?: unknown) => void;
     vi.stubGlobal("fetch", vi.fn().mockReturnValue(new Promise((_resolve, rejectPromise) => { reject = rejectPromise; })));
@@ -998,6 +1017,16 @@ describe("ChatModal — one-night audience scroll (#1849)", () => {
     expect(host.querySelector(".chat-portrait-wrap img")?.getAttribute("src")).toMatch(/^\/portraits\/custom\/%E6%B4%AA%E6%89%BF%E7%95%B4\?t=/);
     expect(host.querySelector(".audience-roster img")?.getAttribute("src")).toMatch(/^\/portraits\/custom\/%E6%B4%AA%E6%89%BF%E7%95%B4\?t=/);
     expect(host.querySelector("img.aside-avatar")?.getAttribute("src")).toMatch(/^\/portraits\/custom\/%E6%B4%AA%E6%89%BF%E7%95%B4\?t=/);
+  });
+
+  it("shows the whole chronological night instead of a selected-minister window", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ night_id: 23, protagonist: "", roster: [], translation_pending: false, messages: nightScroll }) }));
+    renderModal({ minister: xu, ministers: [hong, xu], portraitPrefix: "minister_", currentNightId: 23 });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    // nightScroll 夹具三句原样上卷（透明传输；非 LLM 生成锁）
+    expect(document.body.textContent).toContain("密令：整饬边备");
+    expect(document.body.textContent).toContain("臣领旨");
+    expect(document.body.textContent).toContain("神色凝重");
   });
 
   it("uses roster clicks as summon commands without changing panels", async () => {

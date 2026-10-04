@@ -263,6 +263,12 @@ def test_load_relation_history_before_returns_full_stable_prior_stream(game):
     prior = load_relation_history_before(
         db, source=source, target=target, before_year=1630, before_period=5,
     )
+    # record_relation_edge_event context 夹具 → prior 原样有序回读
+    assert [row["context"] for row in prior] == [
+        "杨嗣昌与倪元璐初有细缝。",
+        "清丈议上，杨嗣昌挡了倪元璐的硬路。",
+        "二人当面言和，暂释前隙。",
+    ]
     # 稳定序＝纪年 (year, period) ＋事件 id；语境字节不改。
     assert [(int(r["year"]), int(r["period"])) for r in prior] == [
         (1627, 10), (1628, 11), (1629, 3),

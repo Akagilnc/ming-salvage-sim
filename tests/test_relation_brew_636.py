@@ -105,6 +105,8 @@ def test_founding_segment_survives_consecutive_brews_byte_identical(game):
 
     first = db.get_relation_summary(EMPEROR_NODE, "杨嗣昌")
     assert first["dimension"] == "君臣"
+    # brew_fn.outputs / edge context 夹具 → founding_segment 原样落库
+    assert first["founding_segment"] == "越次一召，擢杨嗣昌于五品郎中。"
 
     # 次月：新边事件入账（先落事件、后在本月末酿——与生产同序），酿制手不再报
     # 奠基句——奠基段字节不丢不改。次月无新事件的关系不因历史旧事件被选中。
@@ -117,6 +119,7 @@ def test_founding_segment_survives_consecutive_brews_byte_identical(game):
 
     second = db.get_relation_summary(EMPEROR_NODE, "杨嗣昌")
     assert second["founding_segment"] == first["founding_segment"]
+    assert second["recent_segment"] == "杨嗣昌所托办结，恩遇正浓。"
 
     # 第三月：酿制手重复报同一奠基句也不重复入段（补酿不重复记账）。
     state.turn += 1
@@ -181,6 +184,7 @@ def test_flip_brew_input_must_contain_new_edge_events(game):
     payload = relation_calls[0]
     assert payload["new_events"] and payload["new_events"][0]["context"] == "钱谦益哭谏被拒，圣眷转衰。"
     assert payload["new_events"][0]["event_kind"] == "辜负"
+    assert payload["recent_segment"] == "钱谦益蒙知遇。"
     summary = db.get_relation_summary(EMPEROR_NODE, "钱谦益")
     assert summary["last_event_id"] >= flip_id
 
@@ -228,6 +232,7 @@ def test_failed_month_degrades_to_pending_and_rebrews_next_month(game):
     assert len(new_hits) == 1 and prior_hits == []
     assert db.get_relation_brew_pending() == []
     summary = db.get_relation_summary("温体仁", "周延儒")
+    assert summary["recent_segment"] == "温周结怨，朝堂侧目。"
     assert summary["dimension"] == "大臣"
     assert int(summary["last_event_id"]) >= int(failed_id)
 

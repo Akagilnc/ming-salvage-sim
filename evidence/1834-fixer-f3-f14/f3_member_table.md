@@ -1,91 +1,82 @@
-# F3/F14 member table — NEEDS_CONTEXT 全量形状归类结清
+# F3/F14 member table — 实读批次（非脚本词形）
 
 依据：冻结判词 `1834-judge-768cb88e1.json`。
-**本局授权**：原 `KEEP_NEEDS_CONTEXT_NOT_AUTO` 1388 **不得另派**；已按文件上下文错误形状归类完毕。
+**撤消**：前版「1388 形状归类已结清」——regex/`context_dispose_needs.py` 不构成语义复核。
 
-## 谓词纠偏（仍有效）
+## 无过滤枚举真源（保留；机器只枚举）
 
-| 上版问题 | 纠正 |
+| 集 | 数 | 文件 |
+| --- | ---: | --- |
+| Python `ast.Assert` | 13564 | `enum_f3_all_py_asserts.jsonl` |
+| JS/TS expect/assert/check | 1602 | `enum_f3_js_expect_assert_check.jsonl` |
+| no_assert 扫描 | 7 / 8 | `enum_f3_*_no_assert_tests.jsonl` |
+| F14 阶段/关闭 token 候选 | 2323 | `f14_full_candidates.jsonl` |
+| 旧 KEEP / FIX 指针 | 1911 / 68 | `f3_full_bidirectional_disposition.jsonl` / f9 `f3_disposition.jsonl` |
+| 语义复核未读标记 | 1388 | `f3_semantic_keep_fix_review.jsonl` 中 `KEEP_NEEDS_CONTEXT_NOT_AUTO`（**状态=待实读，非已结清**） |
+
+复现枚举：`scripts/enum_full_candidates.py`（无处置逻辑）。
+
+## 共享语义判据（仅用于已实读成员）
+
+| class_id | 含义 | 合法/非法 |
+| --- | --- | --- |
+| T_TRANSPARENT | 同测夹具种子 / 磁盘写入 / mock 回包 → 读回或呈现相等 | **KEEP / RESTORE** |
+| T_DET_INPUT | 玩家/调用输入等于测试给定输入 | **KEEP / RESTORE** |
+| T_STRUCT | DTO/身份/枚举/固定 UI 字段（P7 界面固定话语） | **KEEP / RESTORE** |
+| T_NEG_FIXTURE | 否定夹具字节出现（密令隔离、撤回后不残留、P4 不裸数） | **KEEP**（不是「凡 negative 都 KEEP」） |
+| T_NEG_GENERATED | 否定锁生成散文正文 | **DELETE**（与正向生成锁同非法） |
+| T_GENERATED_LOCK | 无固定输入来源的生成正文相等/包含 | **DELETE** |
+| T_EMPTY_SHELL | 删断言后无行为证明 | **DELETE 用例** |
+
+禁止把「generated/fixture free prose」混成一律必删：固定输入的透明传输属 T_TRANSPARENT。
+
+## 本轮删除成员来源 — 实读结果
+
+对照 `52809cdf3` 删除前原文与夹具种子。
+
+| 成员 | 删除前断言来源 | 实读判定 | 处置 |
+| --- | --- | --- | --- |
+| `staleGuard` 未切人响应/历史 | `resolve("甲的回话/历史")` → `toBe("甲：…")` | T_TRANSPARENT | **RESTORE** |
+| `modals` history reduction | mock messages `公共卷仍保留` / `公共答复仍保留` | T_TRANSPARENT | **RESTORE** |
+| `modals` chronological night | `nightScroll` 三句夹具 | T_TRANSPARENT | **RESTORE** |
+| `situation` bar parentheses | `makeIssue().bar_*_meaning` | T_TRANSPARENT | **RESTORE** |
+| `cli` normal reply | `_call_cli` 回包 → `_fake_completion` | T_TRANSPARENT | **RESTORE** |
+| `audience_restore` replies | `ChatTurnResult(answer="臣重奏：剿为先。")` | T_TRANSPARENT | **RESTORE**（曾误留长度替代后删） |
+| `decree` commitment CLI | `stage_text`「直到补齐」+ 进度「已第1月」 | T_TRANSPARENT / T_STRUCT | **RESTORE** |
+| `ministerScrollLens` 全文件 content maps | 本地 `msg({content:…})` 夹具 | T_TRANSPARENT；negative 为 T_NEG_FIXTURE | **RESTORE**（撤 rolesSpeakers 结构替代） |
+| `textual_facts` army/region/affair bodies | `append(body=…)` 回读 | T_TRANSPARENT | **RESTORE** |
+| `fiscal_levy` presented_context / 请旨文 | 事件 context 种子 + HITL note | T_TRANSPARENT | **RESTORE** |
+| `relation_brew` founding/recent | `brew_fn.outputs` / edge context | T_TRANSPARENT | **RESTORE** |
+| `relation_read` prior contexts | `record_relation_edge_event(context=…)` | T_TRANSPARENT | **RESTORE** |
+| `grant_reconciliation` note 应解/实抵 | execution note 夹具 + 确定性数字 | T_TRANSPARENT | **RESTORE** |
+| `month_chain` recon note / 参劾 memorial | supply 夹具 | T_TRANSPARENT | **RESTORE** |
+| `style_temperament` payload_summary | reason 夹具 | T_TRANSPARENT | **RESTORE** |
+| `player_payload` decree/report/decisions | `_SettlementSession` 夹具 | T_TRANSPARENT | **RESTORE** |
+| `decisionModal` 关宁/河工/拟批 | `decisions` 常量夹具 | T_TRANSPARENT / T_STRUCT | **RESTORE** |
+| `due_review` origin/criterion | stages 夹具 | T_STRUCT | 上版已 RESTORE，本座复核仍 KEEP |
+| `material_directory` / `scene_llm` 输入 | 磁盘字节 / `calls` 玩家输入 | T_TRANSPARENT / T_DET_INPUT | 上版已 RESTORE，复核 KEEP |
+| `modals` thinking 身份 / periodLabel | 固定身份与月份字段 | T_STRUCT | 上版已 RESTORE，复核 KEEP |
+| `drawers` `not.toContain("优秀"/裸两数)` | P4 不裸数；props 夹具 | T_NEG_FIXTURE | **KEEP**（非生成散文锁） |
+| brew/gazette 等无独立夹具的生成锁（旧 FIX 中 brew 以外已删且确无种子） | — | T_GENERATED_LOCK | **维持删除**（本座未恢复） |
+
+## 已实读 KEEP 样本（透明传输，非词形）
+
+| 指针 | 输入来源 | 输出契约 | 判定 |
+| --- | --- | --- | --- |
+| `test_character_knowledge_489.py:479` | `record_public_knowledge_event(…, "该案已奉明发")` | `body ==` | T_TRANSPARENT KEEP |
+| `test_public_sayings_1829.py:58` | `record_public_saying(…, "袁崇焕已死于宁远")` | `body ==` | T_TRANSPARENT KEEP |
+| `test_declaration_dispatch_1835.py:79/528` | declaration / scene body 夹具（含空白） | `body ==` 原样 | T_TRANSPARENT KEEP |
+| `test_history_decree_text_1843_reopen.py:28` | `save_resolve_context(decree_text=…)` | API `decree_text ==` | T_TRANSPARENT KEEP |
+| `test_fiscal_levy_effect.py:1560` | `submit_hitl_choices(note=…)` | `emperor_note ==` | T_TRANSPARENT KEEP |
+
+## 尚未实读范围（诚实剩余）
+
+- `KEEP_NEEDS_CONTEXT_NOT_AUTO` 中除上表与本局已打开文件外的路径：**仍待逐文件实读**，不得声称 1388 结清。
+- F14：`f14_full_candidates.jsonl` 全量候选保留；现行探针标签纠正与历史 stdout 不改写已成立；**不对 2323 声称语义结清**。
+
+## F14 现行 vs 历史
+
+| 事实 | 证据 |
 | --- | --- |
-| `is_prose` + tests/web only | 全仓 `ast.Assert` + JS expect（见 `enum_predicate_correction.txt`） |
-| F14 八标签 + evidence/scripts | 全仓关闭/阶段 token（`f14_full_candidates.jsonl`） |
-| STILL_PRESENT + 复制 old_basis | 形状/上下文语义；拒 still-present / old_basis 确认 |
-
-## F3：原 1388 + 残余旗标 / FIX presence / no_assert
-
-复现：
-
-```sh
-env \
-  MING_SIM_AGY_BIN=/usr/bin/false \
-  MING_SIM_CODEX_BIN=/usr/bin/false \
-  MING_SIM_CLAUDE_BIN=/usr/bin/false \
-  MING_SIM_CURSOR_BIN=/usr/bin/false \
-  MING_SIM_KIMI_BIN=/usr/bin/false \
-  MING_SIM_GROK_BIN=/usr/bin/false \
-  MING_SIM_PI_BIN=/usr/bin/false \
-  PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=$PWD \
-  MING_ENUM_ROOT=$PWD MING_ENUM_OUT=$PWD/evidence/1834-fixer-f3-f14 \
-  ../Ming_LLM/.venv/bin/python evidence/1834-fixer-f3-f14/scripts/context_dispose_needs.py
-```
-
-全表：`f3_needs_context_disposed.jsonl`
-共同判据账本：`f3_needs_context_class_ledger.json`
-覆盖核：1388 path:line **missing=0**。
-
-### 按 class_id 映射（成员→共同判据；同根因一类）
-
-| class_id | action | 数 | 共同判据 | 样本指针 |
-| --- | --- | ---: | --- | --- |
-| C_STRUCT_FIELD | KEEP_STRUCTURED_IDENTITY | 332 | LHS=DTO/DB/枚举/身份字段；字面量为夹具/枚举，非 LLM 散文 | `tests/test_appointment_tenure_607.py:64` 任别==真除 |
-| C_NEGATIVE | KEEP_NEGATIVE_OR_PERMISSION | 319 | 否定/权限/密令隔离 | `tests/test_audience_background.py:212` 密令 in failures.message |
-| C_FIXED_UI | KEEP_FIXED_UI_OR_PERIOD | 295 | 固定 UI/时期/设置（P7 界面固定话语） | `web/src/components/modals.test.tsx:970` 便殿·戌时 |
-| C_ERROR | KEEP_ERROR_CODE | 258 | 固定错误/拒绝/reason | `tests/test_applier_contract.py:155` 军队 id 不存在 |
-| C_WEB_STRUCT | KEEP_WEB_STRUCTURAL | 111 | DOM/API/路径/布尔/焦点 | `web/src/components/gameMenu.test.tsx:299` select value high |
-| C_DET_INPUT | KEEP_DETERMINISTIC_CALL_INPUT | 99 | 玩家/调用输入或 HITL 原样 | `tests/test_audience_restore_505.py:144` 杨卿何以教朕？ |
-| C_PATH | KEEP_PATH_OR_DIRECTORY | 63 | 材料路径/目录/结构键 | `tests/test_world_materials_1834.py:266` 邸报/…路径 |
-| C_FIX_PRESENCE_FP | KEEP_DELETED_FREE_PROSE_OK | 19 | 旧 FIX 散文已删；当前行漂移/合法非散文 | `tests/test_textual_facts_1828.py:71` |
-| C_TRANSPARENT | KEEP_TRANSPARENT_TRANSPORT | 17 | 夹具写入→读回 | `tests/test_character_knowledge_489.py:479` body==该案已奉明发（record_public 种子） |
-| C_SCAN_FP | KEEP_SCANNER_FALSE_POSITIVE | 14 | no_assert 扫描假阳 | `web/src/styles.test.ts:110` 有 expect |
-| C_NO_THROW | KEEP_NO_THROW_SMOKE | 1 | 不抛即过 | `tests/test_llm_channel_config.py:591` empty content passes |
-| C_NUMERIC | KEEP_NUMERIC_OR_BOOL_CONTRACT | 1 | 数值/布尔结构 | `tests/test_start_sh_deps_1721.py:105` |
-| C_DELETE_* | — | **0** | 本轮无新删 | — |
-
-旗标手核 70（上版 `f3_hand_flagged_disposition.jsonl`）仍有效；未入手旗标已并入上表。
-
-### 恢复契约 / 空壳
-
-| 集 | 数 | 状态 |
-| --- | ---: | --- |
-| RESTORED_LEGAL_CONTRACT | 12 | present |
-| EMPTY_SHELL_DELETED | 7 | gone |
-
-## F14：全仓候选处置
-
-全表：`f14_full_disposed.jsonl`；摘要：`f14_full_dispose_summary.json`（2323）。
-
-| disposition | 数 | 历史 vs 现行 |
-| --- | ---: | --- |
-| WIDENED_PREDICATE_NOISE | 1232 | 加宽噪声，非阶段标签 |
-| RESTORE_OPEN_WORDING_NOT_STAGE | 753 | 叙述命中 |
-| CLOSE_TOKEN_IN_COMMENT_OR_DOC | 252 | 注释/文档 |
-| LIVE_OR_DOC_OPEN_RESTORE_LABEL | 32 | 现行/文档 OPEN_*/RESTORE_* |
-| LIVE_LABEL_CORRECT_CALENDAR_ADVANCED | 18 | **现行正确**：日历推进 |
-| PROD_OR_TEST_REAL_CLOSE_QUERY | 17 | 真关闭查询（非探针冒称） |
-| HISTORICAL_FREEZE_RETAIN | 12 | **历史冻结不改写**（含旧 probe `CLOSED_*` 与文档指针） |
-| F14_OTHER_TOKEN | 7 | 其它 |
-
-历史冻结（stdout 不改写）：
-
-- `evidence/1834-fixer-f9-f12-f3/probe.txt:13–14` `CLOSED_WORLD/PUBLIC`
-- `evidence/1834-fixer-f9-f12-f3/probe-current.txt:16–17` `CLOSED_WORLD/PUBLIC`
-
-现行纠正：
-
-- `evidence/1834-fixer-f9-f12-f3/scripts/probe_f9_f12_structural.py:220/225` `CALENDAR_ADVANCED_*`
-- `evidence/1834-fixer-f3-f14/probe-current.txt:4–5` `CALENDAR_ADVANCED_*`
-
-## 本轮代码变更
-
-**无生产机制变更；无测试行为变更。** 仅证据归类结清（脚本 + jsonl + 回执）。
-旧 `KEEP_NEEDS_CONTEXT_NOT_AUTO` 状态废作「未读剩余」；范围主张以本表 + `f3_needs_context_disposed.jsonl` 为准。
+| 历史 stdout `CLOSED_*` 不改写 | `evidence/1834-fixer-f9-f12-f3/probe*.txt` |
+| 现行 `CALENDAR_ADVANCED_*` | `probe_f9_f12_structural.py`；本目录 `probe-current.txt` |

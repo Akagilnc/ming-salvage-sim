@@ -135,12 +135,12 @@ def test_settlement_sse_routes_serialize_only_player_narrative(
     event, payload = asyncio.run(_serialized_terminal_event(route_name))
 
     assert event == expected_event
+    # _SettlementSession 夹具 decree/decisions/report → SSE 原样序列化
+    assert payload["decree"] == "诏曰：国丈家赀约数十万两，仍发帑三十万两、调兵五千赈辽。"
     if expected_event == "decisions":
-        assert isinstance(payload.get("decisions"), list) and payload["decisions"]
-        assert payload["decisions"][0].get("title") == "辽饷"
-        assert "context" in payload["decisions"][0]
+        assert payload["decisions"] == [{"title": "辽饷", "context": "家赀约十万两，是否发帑"}]
     else:
-        assert "report" in payload
+        assert payload["report"] == "邸报：国丈家赀约数十万两，三十万两帑银与五千援军已抵辽东。"
         assert payload["advanced"] is False
     structured_keys: set[str] = set()
     pending = [payload]
