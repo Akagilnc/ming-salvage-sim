@@ -250,7 +250,9 @@ R3 回执只写类别「value_matrix／secret_order／covert／month_chain／rep
 ## Commit 与 git 状态（R4）
 
 - 施工前 HEAD：`79661de14b745cb3f16f18099b2edb00bfb70730`
-- R4 清退＋证据：（本提交）
+- R4 清退＋证据：`66d8d86d0f00a250a6b8f7014f1b95c2481dd1bf`
+- 标题：`ak-roles: fix(#1843) complete F2 joint enum member table and retire 3 residuals`
+- diffstat：`3 files changed, 341 insertions(+), 71 deletions(-)`
 - `git diff --check`：干净
 
 ## 剩余范围
