@@ -1192,6 +1192,6 @@ env MING_SIM_AGY_BIN=/usr/bin/false MING_SIM_CODEX_BIN=/usr/bin/false \
 
 ### 交卷 HEAD（本轮）
 
-- 本轮提交：以交卷后 `git rev-parse HEAD` 为准（先代码+成员表，报告 tip 可同提交或随 tip）。
+- 本轮提交：`69c159957e3f42c967de7837cccc5081a9ee4e02`
 - 生产修面仍见 `edb376032`（F1+F2）；本轮为 F3 75 表结清。
 - **未 push / 未 PR / 未 amend / 未 stash**。
