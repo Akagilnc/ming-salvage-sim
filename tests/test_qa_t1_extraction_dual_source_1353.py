@@ -244,7 +244,6 @@ def test_close_after_chat_passes_write_gate_like_auto_close(
     sess.content = content
     sess.registry = None
     sess.llm_config = object()
-    sess._scene_registry = None
     sess._write_gate = gate
     sess._write_queue = q
     # 口令收夜与颁诏 auto_close 同穿 write_gate；#1842 后不因 pending 中止。
@@ -290,7 +289,6 @@ def test_close_after_chat_session_write_gate_fallback(game, tmp_path, monkeypatc
     sess.registry = None
     sess.llm_config = object()
     sess._write_queue = q
-    sess._scene_registry = None
     sess._write_gate = gate
 
     sess.close_night_after_chat_if_needed("court_break")
@@ -659,8 +657,6 @@ def test_resolve_turn_write_gate_held_by_caller_no_reenter(game, tmp_path, monke
     sess.content = content
     sess.registry = None
     sess.llm_config = object()
-    sess._scene_registry = None
-    sess._beat_generator = None
     sess._write_queue = queue
     sess._write_gate = gate
     sess.agno_db = None
