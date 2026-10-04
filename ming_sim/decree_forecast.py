@@ -130,15 +130,6 @@ def forecast_snapshot(
     db, state = session.db, session.state
     body = copy.deepcopy(candidate)
     payload = _payload_dict(body)
-    # 同夜暗护：密令已成案、这道拨银还是暂存。预推副本带上指向本暂存的护行，
-    # 不把拨银提前成案，也不写回暂存载荷。
-    pending_action_id = body.get("pending_action_id")
-    covert_sources: list = []
-    if pending_action_id and hasattr(db, "list_covert_escorts_aimed_at_pending"):
-        covert_sources = db.list_covert_escorts_aimed_at_pending(int(pending_action_id))
-        if covert_sources:
-            payload = dict(payload)
-            payload["escort_sources"] = list(covert_sources)
     body["payload"] = payload
     text = (
         str(decree_text)
@@ -159,9 +150,9 @@ def forecast_snapshot(
         # 不用 MAX(id)+1 猜号——两道同夜预推会猜到同一个未来号，落账时串路。
         # 猜号只留在判官候选的整数 id 上（批红契约要正整数），不进护送目录。
         catalog_token = _uncased_grant_catalog_token(db, body, decree_ref)
-        if catalog_token and (covert_sources or payload_declares_escort(payload)):
+        if catalog_token and payload_declares_escort(payload):
             grounding = _append_this_decree_escort_grounding(
-                grounding, body, covert_sources, catalog_token,
+                grounding, body, [], catalog_token,
             )
         this_decree = _this_decree_fact(body, decree_text=text, db=db)
         if catalog_token:

@@ -963,9 +963,9 @@ def _reader_sees_route_actual(db: Any, name: str, dossier: dict) -> bool:
         keys = dossier.get("office_archive_keys") or []
         if reader_key and isinstance(keys, list) and reader_key in {str(key) for key in keys}:
             return True
-    if hasattr(db, "list_escort_link_pairs"):
-        for pair in db.list_escort_link_pairs():
-            if int(pair["target_dossier_id"]) != int(dossier["id"]):
+    if hasattr(db, "list_dossier_links"):
+        for pair in db.list_dossier_links(int(dossier["id"]), direction="incoming"):
+            if str(pair.get("relation_type") or "") not in {"护卫", "稽核"}:
                 continue
             source = db.get_decree_dossier(int(pair["source_dossier_id"]))
             if source is None or name not in _covert_participant_names(source):
@@ -977,13 +977,12 @@ def _reader_sees_route_actual(db: Any, name: str, dossier: dict) -> bool:
 
 
 def grant_route_reader_facts(db: Any, name: str, dossiers: list) -> list[dict[str, object]]:
-    """按身份投影拨帑护行：实况、可引用的来源案卷、本次核账、或仅奏报原文。
+    """按身份投影拨帑护行：可引用的来源案卷、本次核账、或仅奏报原文。
 
+    专用逐路实况账本已退役（#1900 J18）；``escorted`` 本切片恒为假。
     来源案卷号是字段，不是从正文里搜数字。看不见这道密令、或被排除的人，
     ``source_dossier_id`` 为空；外人 ``route_visible`` 为假，只留奏报原文。
     """
-    if not hasattr(db, "_grant_escort_presence"):
-        return []
     facts: list[dict[str, object]] = []
     for dossier in dossiers:
         if not isinstance(dossier, dict):
@@ -992,7 +991,12 @@ def grant_route_reader_facts(db: Any, name: str, dossiers: list) -> list[dict[st
             continue
         dossier_id = int(dossier["id"])
         if _reader_sees_route_actual(db, name, dossier):
-            escorted, source_id, _relation, note = db._grant_escort_presence(dossier_id)
+            source_id = None
+            if hasattr(db, "list_dossier_links"):
+                for pair in db.list_dossier_links(dossier_id, direction="incoming"):
+                    if str(pair.get("relation_type") or "") in {"护卫", "稽核"}:
+                        source_id = int(pair["source_dossier_id"])
+                        break
             cited = (
                 int(source_id)
                 if _reader_may_cite_escort_source(db, name, dossier_id, source_id)
@@ -1003,9 +1007,9 @@ def grant_route_reader_facts(db: Any, name: str, dossiers: list) -> list[dict[st
             facts.append({
                 "dossier_id": dossier_id,
                 "route_visible": True,
-                "escorted": bool(escorted),
+                "escorted": False,
                 "source_dossier_id": cited,
-                "note": note,
+                "note": "",
                 "memorial_text": "",
                 "arrived_amount": (
                     int(latest["arrived_amount"]) if latest is not None else None
@@ -1703,8 +1707,7 @@ def continuing_dossier_facts(db: Any, turn: int) -> list[dict[str, object]]:
     真实强颁在同一次颁布里会把在途案卷转入 executing，或把终局载荷结案，
     不会带着 promulgated 进入次月。
 
-    #1900：逐路带该回合**实际**护送实况（账本事实），世界段照实况交代各路
-    护没护成，不拿案卷关联或密令整体成败反推。
+    专用逐路实况账本已退役（#1900 J18）；字段形状保留，本切片 escorted 恒为假。
     """
     rows = db.list_decree_dossiers_for_simulation(int(turn))
     facts: list[dict[str, object]] = []
@@ -1716,9 +1719,6 @@ def continuing_dossier_facts(db: Any, turn: int) -> list[dict[str, object]]:
         payload = row.get("payload") or {}
         if not isinstance(payload, dict):
             payload = {}
-        escorted, escort_source_id, escort_relation, escort_note = db._grant_escort_presence(
-            dossier_id, turn=int(turn),
-        )
         facts.append({
             "id": dossier_id,
             "status": status,
@@ -1728,10 +1728,10 @@ def continuing_dossier_facts(db: Any, turn: int) -> list[dict[str, object]]:
             "target_id": str(row.get("target_id") or ""),
             "grant_action": str(payload.get("grant_action") or ""),
             "paid": dossier_paid_amount(db, dossier_id),
-            "escorted": bool(escorted),
-            "escort_source_dossier_id": escort_source_id,
-            "escort_relation_type": str(escort_relation or ""),
-            "escort_note": escort_note,
+            "escorted": False,
+            "escort_source_dossier_id": None,
+            "escort_relation_type": "",
+            "escort_note": "",
         })
     return facts
 

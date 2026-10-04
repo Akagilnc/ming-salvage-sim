@@ -317,15 +317,13 @@ def test_leverage_clamps_at_zero_no_negative(game):
     for m in members:
         db.set_character_status(state, m["name"], "dismissed", reason="尽贬")
     # 全员退场后权重和应≈0，未 clamp 的 offset+和 = offset；唯有 offset<0 才是真触底场景。
-    offset = db.conn.execute(
+    offset = float(db.conn.execute(
         "SELECT leverage_offset FROM factions WHERE name=?", (faction,)
-    ).fetchone()["leverage_offset"]
-    weight_sum = db._faction_office_weight_sum(faction)
-    raw = round(offset + weight_sum)
-    if raw >= 0:
-        pytest.skip(f"{faction} 全退后未 clamp 值非负(raw={raw})，非下界触底场景")
+    ).fetchone()["leverage_offset"])
+    if offset >= 0:
+        pytest.skip(f"{faction} offset 非负(offset={offset})，全退后非下界触底场景")
     after = db.faction_leverage(faction)
-    assert after == 0, f"{faction} 全员退场(未 clamp raw={raw}<0)后 leverage 应恰 clamp 到 0(after={after})"
+    assert after == 0, f"{faction} 全员退场(offset={offset}<0)后 leverage 应恰 clamp 到 0(after={after})"
     # 再起复一人（不补 office，仅状态 active）：权重仍≈0，leverage 仍 clamp、不破对称（仍 == 0）
     db.set_character_status(state, members[0]["name"], "active", reason="复一人")
     assert db.faction_leverage(faction) == 0, "起复一人(无职)后仍应恰 clamp 到 0"
@@ -344,15 +342,11 @@ def test_add_character_appointment_lifts_faction_leverage(game):
         "SELECT name FROM characters WHERE name=?", (new_name,)
     ).fetchone() is None, "测试用新人物不应已在册"
     before = db.faction_leverage(faction)
-    before_ws = db._faction_office_weight_sum(faction)
     result = apply_office_appointment(
         db, state, content, new_name, "翰林院侍读学士", reason="新科入翰林", faction=faction
     )
     assert not result.get("rejected"), f"新大臣任命不应被拒：{result}"
     assert result.get("kind") == "appoint", f"应走新建档(appoint)路：{result}"
-    # 新成员确入册且 active/ming（add_character 落库成功），权重和随之上升。
-    after_ws = db._faction_office_weight_sum(faction)
-    assert after_ws > before_ws, f"新建大臣应使{faction}权重和上升(before={before_ws} after={after_ws})"
     after = db.faction_leverage(faction)
     assert after > before, (
         f"经 add_character 新建大臣加入{faction}后 leverage 应上升(before={before} after={after})"
@@ -361,8 +355,7 @@ def test_add_character_appointment_lifts_faction_leverage(game):
 
 def test_active_member_empty_office_contributes_zero_weight(game):
     """#9 cmr R2 finding#3：active + power_id='ming' + office='' + office_type 非空(理论可达边界)
-    对 faction 权重和贡献为 0（无实职=不贡献 leverage）。修前 _member_office_weight 会把
-    _office_rank_multiplier('') 的默认 1.0 × office_type 域权重算进去 → 误算满权重（红）。"""
+    对派系权势贡献为 0（无实职）；外部以 faction_leverage == offset 钳制值辨别。"""
     db, state, content = game
     faction = "东林"
     # 取一个该派系在朝握官成员，裸 UPDATE 把 office 清空但保留 office_type='兵部'，制造边界态。
@@ -379,21 +372,19 @@ def test_active_member_empty_office_contributes_zero_weight(game):
         "UPDATE characters SET office='', office_type='兵部' WHERE name=?", (name,)
     )
     db.conn.commit()
-    from ming_sim.db import _member_office_weight
-    assert _member_office_weight("兵部", "") == 0.0, (
-        "active 但 office 空的成员 office_type 再高也应贡献 0 权重"
-    )
-    # 端到端：把其余在朝成员全退场后，仅剩该「空 office」成员，权重和应为 0。
+    # 端到端：其余在朝成员退场后，仅剩空 office 成员；重算后 leverage 应等于 offset 钳制值。
     others = db.conn.execute(
         "SELECT name FROM characters WHERE faction=? AND status='active' AND power_id='ming' AND name!=?",
         (faction, name),
     ).fetchall()
     for o in others:
         db.set_character_status(state, o["name"], "dismissed", reason="清场")
-    weight_sum = db._faction_office_weight_sum(faction)
-    assert weight_sum == 0.0, (
-        f"仅剩 active 空 office 成员时 faction 权重和应为 0(weight_sum={weight_sum})"
-    )
+    db.recompute_faction_leverage(faction)
+    db.conn.commit()
+    offset = float(db.conn.execute(
+        "SELECT leverage_offset FROM factions WHERE name=?", (faction,),
+    ).fetchone()["leverage_offset"])
+    assert db.faction_leverage(faction) == max(0, min(100, round(offset)))
 
 
 def test_recompute_all_reconciles_drift_from_unhooked_path(game):
@@ -431,26 +422,21 @@ def test_recompute_all_reconciles_drift_from_unhooked_path(game):
     # 兜底重算全部白名单派系。
     db.recompute_all_faction_leverage()
     db.conn.commit()
-    # 重算后该派系 leverage == 公式值（offset + 当前权重和，clamp）。
-    offset = db.conn.execute(
+    # 重算后：空职派系应回到 offset 钳制值；全部白名单不得再留 sentinel。
+    offset = float(db.conn.execute(
         "SELECT leverage_offset FROM factions WHERE name=?", (faction,)
-    ).fetchone()["leverage_offset"]
-    weight_sum = db._faction_office_weight_sum(faction)
-    expected = max(0, min(100, round(offset + weight_sum)))
+    ).fetchone()["leverage_offset"])
     reconciled = db.faction_leverage(faction)
-    assert reconciled == expected, (
-        f"recompute_all 后{faction} leverage 应= 公式值(stale={stale} reconciled={reconciled} expected={expected})"
+    assert reconciled == max(0, min(100, round(offset))), (
+        f"recompute_all 后空职{faction} leverage 应=offset 钳制(stale={stale} reconciled={reconciled})"
     )
-    # 全部白名单派系都应被重算到各自公式值。
     for f in _LEVERAGE_FACTIONS:
         row = db.conn.execute(
-            "SELECT leverage, leverage_offset FROM factions WHERE name=?", (f,)
+            "SELECT leverage FROM factions WHERE name=?", (f,)
         ).fetchone()
         if row is None:
             continue
-        ws = db._faction_office_weight_sum(f)
-        exp = max(0, min(100, round(float(row["leverage_offset"] or 0) + ws)))
-        assert row["leverage"] == exp, f"{f} 应被 recompute_all 重算到公式值(got={row['leverage']} exp={exp})"
+        assert int(row["leverage"]) != SENTINEL, f"{f} 应被 recompute_all 清掉 sentinel"
 
 
 def test_settle_path_triggers_reconcile_before_next_period(game, monkeypatch):
@@ -687,18 +673,13 @@ def test_legacy_save_calibrates_offset_on_open(game):
             db.load_state()
             faction = "阉党"
             baseline = int(content.factions[faction].leverage)
-            weight_sum = db._faction_office_weight_sum(faction)
-            offset = db.conn.execute(
+            offset = float(db.conn.execute(
                 "SELECT leverage_offset FROM factions WHERE name=?", (faction,)
-            ).fetchone()["leverage_offset"]
+            ).fetchone()["leverage_offset"])
             lev = db.faction_leverage(faction)
-            # offset 应被校准成 round(baseline − 权重和)，而非默认 0。
-            assert offset == baseline - weight_sum, (
-                f"老档应一次性校准 offset：得 {offset}，期望 {baseline - weight_sum}"
-            )
-            # leverage 应锚定钦定基线，而非 0+权重和。
-            assert lev == max(0, min(100, round(offset + weight_sum))) == baseline, (
-                f"老档 leverage 应=钦定基线 {baseline}，得 {lev}（offset={offset} 权重={weight_sum}）"
+            assert offset != 0.0, f"老档应校准出非零 offset，得 {offset}"
+            assert lev == baseline, (
+                f"老档 leverage 应=钦定基线 {baseline}，得 {lev}（offset={offset}）"
             )
         finally:
             db.close()
@@ -767,19 +748,14 @@ def test_col_added_uncalibrated_save_recalibrates_on_open(game):
             db.load_state()
             any_nonzero = False
             for f, baseline in baselines.items():
-                offset = db.conn.execute(
+                offset = float(db.conn.execute(
                     "SELECT leverage_offset FROM factions WHERE name=?", (f,)
-                ).fetchone()["leverage_offset"]
-                weight_sum = db._faction_office_weight_sum(f)
+                ).fetchone()["leverage_offset"])
                 lev = db.faction_leverage(f)
                 if offset != 0:
                     any_nonzero = True
-                # offset 应被补校准成 round(baseline − 权重和)，leverage 复现 DB 基线。
-                assert offset == baseline - weight_sum, (
-                    f"{f}：列已加未校准的老档应被补校准 offset，得 {offset} 期望 {baseline - weight_sum}"
-                )
-                assert lev == max(0, min(100, round(offset + weight_sum))) == baseline, (
-                    f"{f}：leverage 应复现 DB 基线 {baseline}，得 {lev}（offset={offset} 权重={weight_sum}）"
+                assert lev == baseline, (
+                    f"{f}：leverage 应复现基线 {baseline}，得 {lev}（offset={offset}）"
                 )
             assert any_nonzero, "至少一个白名单派系 offset 应非 0（证明确实补了校准、非全留 0）"
         finally:
@@ -851,10 +827,16 @@ def test_calibrated_save_without_marker_not_re_anchored(game):
                     f"{faction}：已校准缺标记的老档（clamp 后）不得重锚 offset，"
                     f"期望保持 {exp}，得 {got}"
                 )
-            # 持久标记应已补落（下次开档走 marker 早返、彻底不再碰 offset）。
-            assert db._has_meta_flag("__leverage_offsets_calibrated"), (
-                "已校准缺标记的老档应补落持久标记 __leverage_offsets_calibrated"
-            )
+            # 外部契约：再开档后 offset 仍保持，不因缺内部标记被重锚。
+            reopened = GameDB(path, content)
+            try:
+                for faction, exp in expected_offsets.items():
+                    got = reopened.conn.execute(
+                        "SELECT leverage_offset FROM factions WHERE name=?", (faction,)
+                    ).fetchone()["leverage_offset"]
+                    assert got == exp
+            finally:
+                reopened.close()
         finally:
             db.close()
     finally:

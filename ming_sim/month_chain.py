@@ -1016,16 +1016,10 @@ def _enrich_eligible_dossiers_for_supply(
 
 
 def _escort_route_facts(db: Any, dossier_id: int) -> Dict[str, object]:
-    """一道案卷的逐路护送实况（账本事实，与密奏分开）。
-
-    #1900：整月密报按各路**实际**护送汇总执行状态，不许拿密令整体成败或
-    案卷关联反推。这里直接读 ``dossier_escort_outcomes`` 唯一真源。
-    """
+    """一道案卷的护送相关投影；专用逐路实况账本已退役（#1900 J18）。"""
     return {
-        "escort_routes": db.list_dossier_escort_outcomes(int(dossier_id)),
-        "escort_routes_as_escort_source": db.list_escort_outcomes_for_source(
-            int(dossier_id),
-        ),
+        "escort_routes": [],
+        "escort_routes_as_escort_source": [],
     }
 
 
@@ -1034,8 +1028,7 @@ def build_secret_orders_supply_feed(
 ) -> Dict[str, Any]:
     """整月密报供料：沿邸报作者本月材料读口，但不滤密令来源；另附密令对象与盘面。
 
-    不拼装「已生效效果」清单，也不另造逐段实际结果账本；逐路护送实况只从
-    ``dossier_escort_outcomes`` 读（#1900 读取闭环）。
+    不拼装「已生效效果」清单，也不另造逐段实际结果账本；专用逐路实况账本已退役。
     """
     from ming_sim.covert_progress import _is_issuance_turn
     from ming_sim.materials import _world_board_text

@@ -378,13 +378,13 @@ personnel_secret 模块产出；与公共 `dossier_participants` **分立**（�
 连同 `clamp_grant_arrival_amount` 及其坏提案拒收一族一并退役。
 
 现行口径：月度对账口 `record_monthly_grant_reconciliations(turn)` **不接提案**——实抵与损耗由
-引擎给出：`arrived = (grant_arrival_bounds(ordered, escorted=该路已落实际护送) 的中位)`，
-`loss = ordered - arrived`。「该路是否实有护送」只认逐路已落实况（`dossier_escort_outcomes`，
-由转译 `escort_results` 节落账），不凭案卷关联存在、不凭密令整体成败或结案。仍**不二次扣库**、
-不改原 `economy_move`、不写 0058 进展。
+引擎给出：`arrived = (grant_arrival_bounds(ordered, escorted=…) 的中位)`，
+`loss = ordered - arrived`。#1900 已撤销的专用逐路实况账本 / 双载体承接 / 聚合读口 /
+`escort_results`·`escort_links` 分节与入口专用资格校验已退役；本切片核账按无护口径，
+功能接续留家族收尾，缺口记 #1873。仍**不二次扣库**、不改原 `economy_move`、不写 0058 进展。
 扫描面带 `turn` 时含**本回合结案**的在途拨帑（`status='closed' AND closed_turn=turn`）：
 正常结案与办理失败都不免除该次核账。核账基数是已经离开账本的实银（`dossier_paid_amount`）：
-足额时等于面额；不足额但已有出库时按实付，再沿既有折损范围与该路实况定实抵和损耗，
+足额时等于面额；不足额但已有出库时按实付，再沿既有折损范围定实抵和损耗，
 未付面额不计损耗。真正零出库的 failed 不进扫描面。不带 `turn` 的供料读侧只看在途，不翻历史结案。
 
 ### `commissions[].grant.escort` — 押解随拨银旨（#1900）
@@ -395,25 +395,12 @@ personnel_secret 模块产出；与公共 `dossier_participants` **分立**（�
 后落进本案卷 `participant_roster` 单一真源；`escort.note` 为原文，零删改（ADR 0142）。
 没给 `escort` 即无押解，代码不猜；已声明却不是 ADR 0053 条目形状 → 逐项拒收，不静默丢弃。
 
-### `commissions[].secret_order.escort_pending_targets` — 同夜暗护指向（#1900）
+### ~~`commissions[].secret_order.escort_pending_targets` / `escort_sources` / `escort_links` / `escort_results` / `dossier_escort_outcomes`~~ — 已退役（#1900 J18）
 
-另行暗中加派护送走既有密令声明接缝。被护的拨银交办**同夜**下达时还只是暂存、没有案卷，
-故此项按本夜暂存清单里的 action id 指过去：每项 `{pending_action_id, relation_type∈{护卫,稽核},
-note}`。受理只收本夜尚未成案的拨帑暂存。非拨帑暂存、他夜暂存、受理前已成案的拨银、
-非法关系类型、空说明逐项拒收，不放宽受理域。密令成案时按身份承接已受理的 id：
-随后 committed 或已成案不再把指向丢掉。尚未成案的留在密令案卷载荷，等拨银成案再落；
-已经成案的当场承接。`GameDB._resolve_covert_escort_carry` 按实际案卷 id 序落笔。
-
-落点保持单向新指旧，不提前拨银成案、不双向互写、不放宽通用新指旧校验。
-密令单独先提交、拨银后成案时，拨银案卷 id 更大，关联槽装不下这个方向，记在拨银案卷
-载荷 `escort_sources`（每项 `{secret_order_dossier_id, relation_type, note}`），读缝
-`GameDB.escort_source_dossiers_of`。默认批量按 pending id 序提交、拨银先成案时，密令案卷
-id 更大，走既有 `escort_links` 关联槽（新密令指旧拨银），不写 `escort_sources`。
-这不是「密令必然先成案、id 必然更小」——那只是密令单独先提交时的顺序。
-护行主体凭据由 `_escort_source_relation` 按「关联槽那条链 ∪ 承接落点那条记录」合取。
-受理前已成案的旧拨银仍只走 `escort_links` 声明入口，不进这条暂存承接。
-「谁护谁」的配对由**单一读口** `GameDB.list_escort_link_pairs()` 出（两处载体取并集，同一对重复时以 0054 槽为准）；权威目标目录的 `escort_link` 行与 `record_monthly_supervision_presence`
-的稽核在场都读它，不让目录、在场与校验闸各读各的。
+旧处方新造的暗护双载体承接、专用实况账本、配对聚合读口、入口专用资格校验及分节声明已随
+ADR 0054／0058 已署修订与 #1812 删简验收一并退役；不另造替代机制。另行暗护玩法本身未宣布取消，
+功能如何接续留家族收尾，缺口记 #1873。既有 `decree_dossier_links` 关联槽与密令 `dossier_links`
+载荷仍属 0054 通用关联，不在本条「已退役专用机制」之列。
 
 ### `dossier_progress_reports` — 长差密令逐月密奏（#566 / ADR 0058）
 personnel_secret 模块产出；settle 内经 `record_monthly_dossier_progress` 消费。

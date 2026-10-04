@@ -2,12 +2,6 @@
 
 from __future__ import annotations
 
-from ming_sim.db import (
-    _member_office_weight,
-)
-
-
-
 
 def test_fresh_seed_contains_sourced_six_sciences_censors(game):
     """许誉卿开局在朝；韩一良至 1628 年才以户科给事中登场。"""
@@ -31,31 +25,33 @@ def test_fresh_seed_contains_sourced_six_sciences_censors(game):
     assert by_name["韩一良"]["status"] == "offstage"
     assert by_name["韩一良"]["debut_year"] == 1628
 
-    before = db._faction_office_weight_sum("中立")
+    before = db.faction_leverage("中立")
     assert state.year == 1627
     assert db.apply_historical_debuts(state) == []
-    assert db._faction_office_weight_sum("中立") == before
+    assert db.faction_leverage("中立") == before
 
     state.year = 1628
     debuted = db.apply_historical_debuts(state)
     assert any(item["name"] == "韩一良" for item in debuted)
     assert db.get_character_status("韩一良")[0] == "active"
-    assert db._faction_office_weight_sum("中立") == before + _member_office_weight(
-        "六科", "户科给事中"
-    )
+    # 登场后中立派权势应随给事中入朝可见上升（真实入口→外部 leverage）。
+    assert db.faction_leverage("中立") > before
 
 
-def test_six_sciences_censor_exit_recomputes_its_faction_leverage(game, monkeypatch):
-    """TD-6：给事中退场仍经过 #9 的派系权势重算链。"""
+def test_six_sciences_censor_exit_recomputes_its_faction_leverage(game):
+    """TD-6：给事中退场经真实入口改人物状态，派系权势外部可见下降。"""
     db, state, _content = game
     censor = db.conn.execute(
-        "SELECT name, faction FROM characters WHERE name='许誉卿'"
+        "SELECT name, faction FROM characters WHERE name=?",
+        ("许誉卿",),
     ).fetchone()
     assert censor is not None
-
-    calls: list[str] = []
-    monkeypatch.setattr(db, "recompute_faction_leverage", lambda faction: calls.append(faction))
+    faction = str(censor["faction"])
+    before = db.faction_leverage(faction)
 
     db.set_character_status(state, censor["name"], "dismissed", reason="测试退场")
+    db.conn.commit()
 
-    assert calls == [censor["faction"]]
+    assert db.get_character_status(censor["name"])[0] == "dismissed"
+    after = db.faction_leverage(faction)
+    assert after < before

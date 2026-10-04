@@ -313,7 +313,6 @@ def run_turn_translation_job(
                 protagonist=ProtagonistResult(validated=None, rejected=[]),
                 registrations=empty, effects=empty,
                 inquiries=empty, rushes=empty, travel_tones=empty,
-                escort_links=empty, escort_results=empty,
             )
 
     try:

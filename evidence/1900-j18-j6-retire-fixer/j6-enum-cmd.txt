@@ -1,0 +1,5 @@
+# J6 枚举谓词（票面/判词类定义全文，未收窄）：
+# 非契约内部证明、mock替代被测行为、helper专测、退役行为、非契约文字锁、
+# 内部oracle、调用mock；必要闸负向不可盲删。
+rg -n --glob 'tests/**/*.py' --glob '!.baseline/**' \
+  'monkeypatch\.setattr\([^)]*(recompute_|power_band|_has_meta|_require_|_apply_|_backfill_|_restore_|_member_office|_faction_office|_private|__leverage)|assert .*\._[a-zA-Z].*|assert calls|lambda[^:]*: calls\.append|routed:|__leverage_offsets_calibrated|_has_meta_flag'

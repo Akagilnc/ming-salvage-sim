@@ -1,0 +1,263 @@
+docs/DELTA_SCHEMA.md:382:`loss = ordered - arrived`。「该路是否实有护送」只认逐路已落实况（`dossier_escort_outcomes`，
+docs/DELTA_SCHEMA.md:383:由转译 `escort_results` 节落账），不凭案卷关联存在、不凭密令整体成败或结案。仍**不二次扣库**、
+docs/DELTA_SCHEMA.md:398:### `commissions[].secret_order.escort_pending_targets` — 同夜暗护指向（#1900）
+docs/DELTA_SCHEMA.md:405:已经成案的当场承接。`GameDB._resolve_covert_escort_carry` 按实际案卷 id 序落笔。
+docs/DELTA_SCHEMA.md:409:载荷 `escort_sources`（每项 `{secret_order_dossier_id, relation_type, note}`），读缝
+docs/DELTA_SCHEMA.md:410:`GameDB.escort_source_dossiers_of`。默认批量按 pending id 序提交、拨银先成案时，密令案卷
+docs/DELTA_SCHEMA.md:411:id 更大，走既有 `escort_links` 关联槽（新密令指旧拨银），不写 `escort_sources`。
+docs/DELTA_SCHEMA.md:413:护行主体凭据由 `_escort_source_relation` 按「关联槽那条链 ∪ 承接落点那条记录」合取。
+docs/DELTA_SCHEMA.md:415:「谁护谁」的配对由**单一读口** `GameDB.list_escort_link_pairs()` 出（两处载体取并集，同一对重复时以 0054 槽为准）；权威目标目录的 `escort_link` 行与 `record_monthly_supervision_presence`
+docs/evidence/issue-1571/boundary-inventory.md:135:- 13 个 → supervision 子模块（6 公开 #22-24/#26-28 + 7 私有实现件；`trigger_supervision_countermeasures` 拆分移段适配器组，其纯读半析出 supervision 公开第 7 入口 `list_supervision_countermeasure_candidates`（#25）——析出新入口不占 124 方法额度）；6 个 → reconciliation 子模块（4 公开 #29-32 + 2 私有：`list_monthly_grant_reconciliation_targets`、`_grant_escort_presence`）；
+docs/evidence/issue-1571/boundary-inventory.md:166:| `_grant_escort_presence` | db.py:12826-12834 | 子模块 reconciliation |  |
+docs/evidence/issue-1571/pr-slices.md:125:- 内容：`_grant_escort_presence`（9）、`list_monthly_grant_reconciliation_targets`（42）、`list_dossier_reconciliations`（29）、`list_open_grant_reconciliations`（22）、`record_monthly_grant_reconciliations`（95）、`merge_grant_reconciliation_into_execution_note`（13）。公开面 4 个（`list_monthly_grant_reconciliation_targets`、`_grant_escort_presence` 子模块私有——前者零生产外部调用、仅包内 `list_open_grant_reconciliations`/`record_monthly_grant_reconciliations` 用，boundary §2.1 私有清单），公开入口见 boundary §2.1 #29-32。
+docs/evidence/issue-1571/pr-slices.md:128:- 依赖：PR-2（`merge_execution_note` 叶与颁赏纯件 `_grant_allocation_is_monthly/honorific` 均已进 kernel）、PR-5（`list_dossier_links`——`_grant_escort_presence` 用）。
+tests/test_grant_reconciliation_567.py:99:        db.record_dossier_escort_result(
+ming_sim/month_chain.py:1018:def _escort_route_facts(db: Any, dossier_id: int) -> Dict[str, object]:
+ming_sim/month_chain.py:1022:    案卷关联反推。这里直接读 ``dossier_escort_outcomes`` 唯一真源。
+ming_sim/month_chain.py:1025:        "escort_routes": db.list_dossier_escort_outcomes(int(dossier_id)),
+ming_sim/month_chain.py:1026:        "escort_routes_as_escort_source": db.list_escort_outcomes_for_source(
+ming_sim/month_chain.py:1038:    ``dossier_escort_outcomes`` 读（#1900 读取闭环）。
+ming_sim/month_chain.py:1047:        row.update(_escort_route_facts(db, int(row.get("dossier_id") or 0)))
+ming_sim/month_chain.py:1056:        order.update(_escort_route_facts(db, int(dossier["id"])))
+tests/test_escort_route_1900.py:6:- 转译声明 ``commissions[].secret_order`` → 密令暂存／成案核；``escort_pending_targets``
+tests/test_escort_route_1900.py:8:  拨银的 ``escort_sources``；默认批量按 pending id 序、拨银先成案时走关联槽。单向新指旧，
+tests/test_escort_route_1900.py:11:- 转译声明 ``escort_results`` → ``GameDB.record_dossier_escort_result``（逐路实况）
+tests/test_escort_route_1900.py:12:- ``list_dossier_escort_outcomes`` / ``list_monthly_grant_reconciliation_targets``
+tests/test_escort_route_1900.py:139:        "escort_results": [
+tests/test_escort_route_1900.py:145:    landed = db.list_dossier_escort_outcomes(grant)
+tests/test_escort_route_1900.py:161:    assert reopened.list_dossier_escort_outcomes(grant) == landed
+tests/test_escort_route_1900.py:162:    assert reopened.list_escort_outcomes_for_source(escort_dossier) == landed
+tests/test_escort_route_1900.py:184:        "escort_results": [
+tests/test_escort_route_1900.py:192:    by_route = {r["dossier_id"]: r for r in db.list_escort_outcomes_for_source(escort_dossier)}
+tests/test_escort_route_1900.py:215:        "escort_results": [
+tests/test_escort_route_1900.py:243:    result = _declare(db, state, {"escort_results": [
+tests/test_escort_route_1900.py:247:    assert result.escort_results.applied == []
+tests/test_escort_route_1900.py:248:    assert [r.category for r in result.escort_results.rejected] == ["invalid_state"]
+tests/test_escort_route_1900.py:249:    assert db.list_dossier_escort_outcomes(grant) == []
+tests/test_escort_route_1900.py:267:    result = _declare(db, state, {"escort_results": [
+tests/test_escort_route_1900.py:271:    assert result.escort_results.applied == []
+tests/test_escort_route_1900.py:272:    assert [r.category for r in result.escort_results.rejected] == ["invalid_shape"]
+tests/test_escort_route_1900.py:273:    assert db.list_dossier_escort_outcomes(grant) == []
+tests/test_escort_route_1900.py:299:        "escort_results": [
+tests/test_escort_route_1900.py:314:    assert [item.category for item in result.escort_results.rejected] == ["invalid_state"]
+tests/test_escort_route_1900.py:315:    assert [int(row["dossier_id"]) for row in result.escort_results.applied] == [grant]
+tests/test_escort_route_1900.py:320:    assert db.list_dossier_escort_outcomes(assignment) == []
+tests/test_escort_route_1900.py:338:        "escort_results": [{
+tests/test_escort_route_1900.py:343:    assert result.escort_links.applied == [] and result.escort_results.applied == []
+tests/test_escort_route_1900.py:345:    assert [r.category for r in result.escort_results.rejected] == ["hallucinated_id"]
+tests/test_escort_route_1900.py:359:        "escort_results": [{
+tests/test_escort_route_1900.py:377:    assert len(db.list_dossier_escort_outcomes(grant)) == 1
+tests/test_escort_route_1900.py:381:    _declare(db, state, {"escort_results": [{
+tests/test_escort_route_1900.py:390:    assert [r["turn"] for r in db.list_dossier_escort_outcomes(grant)] == [first, first + 2]
+tests/test_escort_route_1900.py:405:    result = _declare(db, state, {"escort_results": [
+tests/test_escort_route_1900.py:408:    assert result.escort_results.rejected == []
+tests/test_escort_route_1900.py:409:    landed = db.list_dossier_escort_outcomes(grant)
+tests/test_escort_route_1900.py:434:    result = _declare(db, state, {"escort_results": [
+tests/test_escort_route_1900.py:437:    assert result.escort_results.applied == []
+tests/test_escort_route_1900.py:438:    assert [r.category for r in result.escort_results.rejected] == ["invalid_state"]
+tests/test_escort_route_1900.py:439:    assert db.list_dossier_escort_outcomes(grant) == []
+tests/test_escort_route_1900.py:446:    _declare(db, state, {"escort_results": [
+tests/test_escort_route_1900.py:449:    assert db.list_dossier_escort_outcomes(grant) == []
+tests/test_escort_route_1900.py:462:    result = _declare(db, state, {"escort_results": [
+tests/test_escort_route_1900.py:466:    assert result.escort_results.applied == []
+tests/test_escort_route_1900.py:467:    assert [r.category for r in result.escort_results.rejected] == ["hallucinated_id"]
+tests/test_escort_route_1900.py:468:    assert db.list_dossier_escort_outcomes(grant) == []
+tests/test_escort_route_1900.py:594:        "escort_results": [{
+tests/test_escort_route_1900.py:599:    assert result.escort_links.rejected == [] and result.escort_results.rejected == []
+tests/test_escort_route_1900.py:600:    landed = db.list_dossier_escort_outcomes(grant)
+tests/test_escort_route_1900.py:611:    _declare(db, state, {"escort_results": [
+tests/test_escort_route_1900.py:614:    outcomes = db.list_dossier_escort_outcomes(grant)
+tests/test_escort_route_1900.py:621:        assert reopened.list_dossier_escort_outcomes(grant) == outcomes
+tests/test_escort_route_1900.py:638:    _declare(db, state, {"escort_results": [
+tests/test_escort_route_1900.py:641:    keeper = db.list_dossier_escort_outcomes(grant)
+tests/test_escort_route_1900.py:665:    _declare(db, state, {"escort_results": [
+tests/test_escort_route_1900.py:670:    assert len(db.list_dossier_escort_outcomes(grant)) == 1
+tests/test_escort_route_1900.py:671:    assert db.list_dossier_escort_outcomes(grant)[0]["note"] == "本轮改判失护"
+tests/test_escort_route_1900.py:672:    assert db.list_dossier_escort_outcomes(new_grant)
+tests/test_escort_route_1900.py:677:    assert db.list_dossier_escort_outcomes(grant) == keeper
+tests/test_escort_route_1900.py:678:    assert db.list_dossier_escort_outcomes(new_grant) == []
+tests/test_escort_route_1900.py:698:            "escort_pending_targets": targets,
+tests/test_escort_route_1900.py:799:    # 本例是密令单独先提交：拨银仍暂存，后成案的拨银记 escort_sources。
+tests/test_escort_route_1900.py:817:        assert "escort_sources" not in ordinary_payload
+tests/test_escort_route_1900.py:819:        assert covert_snap["this_decree"]["payload"]["escort_sources"] == [{
+tests/test_escort_route_1900.py:832:        assert "escort_sources" not in stored
+tests/test_escort_route_1900.py:837:        declaration={"escort_results": [{
+tests/test_escort_route_1900.py:844:        declaration={"escort_results": [{
+tests/test_escort_route_1900.py:855:    assert db.escort_source_dossiers_of(covert_dossier) == [{
+tests/test_escort_route_1900.py:859:    assert db.escort_source_dossiers_of(ordinary_dossier) == []
+tests/test_escort_route_1900.py:862:    assert db.list_escort_link_pairs() == [{
+tests/test_escort_route_1900.py:870:    assert settled[ordinary_snap["decree_ref"]].escort_results.rejected == []
+tests/test_escort_route_1900.py:871:    assert settled[covert_snap["decree_ref"]].escort_results.rejected == []
+tests/test_escort_route_1900.py:872:    ordinary_outcome = db.list_dossier_escort_outcomes(ordinary_dossier)
+tests/test_escort_route_1900.py:873:    covert_outcome = db.list_dossier_escort_outcomes(covert_dossier)
+tests/test_escort_route_1900.py:921:    assert db.list_escort_link_pairs() == [{
+tests/test_escort_route_1900.py:1006:    assert escort["payload"].get("escort_pending_targets") == [{
+tests/test_escort_route_1900.py:1012:    assert db.escort_source_dossiers_of(cased_dossier) == []
+tests/test_escort_route_1900.py:1013:    assert db.list_escort_link_pairs() == []
+tests/test_escort_route_1900.py:1016:    assert db.escort_source_dossiers_of(legal_dossier) == [{
+tests/test_escort_route_1900.py:1021:    assert db.escort_source_dossiers_of(cased_dossier) == []
+tests/test_escort_route_1900.py:1035:    assert db.escort_source_dossiers_of(cased_dossier) == []
+tests/test_escort_route_1900.py:1150:    assert db.escort_source_dossiers_of(dossier_a) == []
+tests/test_escort_route_1900.py:1151:    assert db.escort_source_dossiers_of(dossier_b) == []
+tests/test_escort_route_1900.py:1165:    assert db.list_escort_link_pairs() == pairs
+tests/test_escort_route_1900.py:1166:    lived = _declare(db, state, {"escort_results": [{
+tests/test_escort_route_1900.py:1172:    assert lived.escort_results.rejected == []
+tests/test_escort_route_1900.py:1174:    outcomes = db.list_dossier_escort_outcomes(dossier_a)
+tests/test_escort_route_1900.py:1178:        assert reopened.list_escort_link_pairs() == pairs
+tests/test_escort_route_1900.py:1179:        assert reopened.list_dossier_escort_outcomes(dossier_a) == outcomes
+tests/test_escort_route_1900.py:1209:        "escort_results": [{
+tests/test_escort_route_1900.py:1261:    db.record_dossier_escort_result(
+tests/test_escort_route_1900.py:1293:    _declare(db, state, {"escort_results": [{
+tests/test_escort_route_1900.py:1309:    assert [(row["escorted"], row["note"]) for row in db.list_dossier_escort_outcomes(plain)] == [
+tests/test_escort_route_1900.py:1312:    db.record_dossier_escort_result(
+tests/test_escort_route_1900.py:1316:    assert [(row["escorted"], row["note"]) for row in db.list_dossier_escort_outcomes(plain)] == [
+ming_sim/month_translate.py:79:        "- 本段若交代某笔在途拨帑此趟护没护成，按路在 escort_results 逐路声明 escorted"
+ming_sim/materials.py:966:    if hasattr(db, "list_escort_link_pairs"):
+ming_sim/materials.py:967:        for pair in db.list_escort_link_pairs():
+ming_sim/materials.py:985:    if not hasattr(db, "_grant_escort_presence"):
+ming_sim/materials.py:995:            escorted, source_id, _relation, note = db._grant_escort_presence(dossier_id)
+ming_sim/materials.py:1489:        db.escort_route_ledger_text()
+ming_sim/materials.py:1490:        if hasattr(db, "escort_route_ledger_text") else ""
+ming_sim/materials.py:1719:        escorted, escort_source_id, escort_relation, escort_note = db._grant_escort_presence(
+ming_sim/decree_forecast.py:137:    if pending_action_id and hasattr(db, "list_covert_escorts_aimed_at_pending"):
+ming_sim/decree_forecast.py:138:        covert_sources = db.list_covert_escorts_aimed_at_pending(int(pending_action_id))
+ming_sim/decree_forecast.py:141:            payload["escort_sources"] = list(covert_sources)
+ming_sim/audience_translate.py:46:    "escort_results",
+ming_sim/audience_translate.py:223:    # #1900：在途拨帑案卷与其已立的护送关联——escort_links / escort_results 只认这里
+ming_sim/audience_translate.py:229:        escorted = db._grant_escort_presence(int(row["id"]))
+ming_sim/audience_translate.py:240:    # #1900：「谁护谁」的配对行。单一读口 list_escort_link_pairs 出 0054 槽的链
+ming_sim/audience_translate.py:241:    # 与同夜承接记录；escort_links / escort_results 只认这里的精确案卷 id。
+ming_sim/audience_translate.py:242:    for pair in db.list_escort_link_pairs():
+ming_sim/audience_translate.py:258:        "escort_links 与 escort_results 的案卷 id 必须取对应目录中的精确 id，禁止编造。\n"
+ming_sim/audience_translate.py:307:        '"escort_pending_targets": [{"pending_action_id": "被暗护的拨银交办在本夜暂存清单里的 id", '
+ming_sim/audience_translate.py:340:        '  "escort_results": [\n'
+ming_sim/audience_translate.py:438:        "被护数笔就写几条；只交代「谁护谁」，此路此趟究竟护没护成由 escort_results 另报，"
+ming_sim/audience_translate.py:441:        "escort_pending_targets 按【本夜暂存清单】里那道拨银交办的 id 指过去（暗护的案卷"
+ming_sim/audience_translate.py:447:        "同样由 escort_results 另报，escort_source_dossier_id 留空。\n"
+ming_sim/audience_translation.py:316:                escort_links=empty, escort_results=empty,
+ming_sim/db.py:1592:            CREATE TABLE IF NOT EXISTS dossier_escort_outcomes (
+ming_sim/db.py:1606:            CREATE INDEX IF NOT EXISTS idx_dossier_escort_outcomes_source
+ming_sim/db.py:1607:                ON dossier_escort_outcomes(escort_source_dossier_id, turn, id);
+ming_sim/db.py:9231:        "dossier_escort_outcomes": "id",
+ming_sim/db.py:12172:    def record_dossier_escort_result(
+ming_sim/db.py:12204:            return self._insert_escort_outcome(
+ming_sim/db.py:12214:        relation = self._escort_source_relation(did, sid)
+ming_sim/db.py:12217:        return self._insert_escort_outcome(
+ming_sim/db.py:12221:    def _escort_source_relation(self, grant_dossier_id: int, source_dossier_id: int) -> Optional[str]:
+ming_sim/db.py:12227:          ``escort_sources`` 里记回指。
+ming_sim/db.py:12229:        关系类型一律取自既有真源，经 :meth:`list_escort_link_pairs` 单一读口，
+ming_sim/db.py:12234:        for pair in self.list_escort_link_pairs():
+ming_sim/db.py:12242:    def _insert_escort_outcome(
+ming_sim/db.py:12248:            INSERT INTO dossier_escort_outcomes
+ming_sim/db.py:12264:        return self.list_dossier_escort_outcomes(did, through_turn=int(turn))[-1]
+ming_sim/db.py:12267:    def _coerce_escort_outcome_row(row: Any) -> Dict[str, object]:
+ming_sim/db.py:12279:    def list_dossier_escort_outcomes(
+ming_sim/db.py:12283:        sql = "SELECT * FROM dossier_escort_outcomes WHERE dossier_id=?"
+ming_sim/db.py:12290:            self._coerce_escort_outcome_row(row)
+ming_sim/db.py:12294:    def list_escort_outcomes_for_source(self, source_dossier_id: int) -> List[Dict[str, object]]:
+ming_sim/db.py:12297:            "SELECT * FROM dossier_escort_outcomes "
+ming_sim/db.py:12301:        return [self._coerce_escort_outcome_row(row) for row in rows]
+ming_sim/db.py:12303:    def _same_night_grant_commission(
+ming_sim/db.py:12308:        受理时的资格见 :meth:`_is_staged_grant_commission`（还须仍 pending、尚未成案）。
+ming_sim/db.py:12330:    def _is_staged_grant_commission(
+ming_sim/db.py:12338:        if not self._same_night_grant_commission(
+ming_sim/db.py:12355:    def _carry_pending_covert_escort_targets(
+ming_sim/db.py:12363:        :meth:`_resolve_covert_escort_carry` 当场承接；若仍未成案，指向留到它成案。
+ming_sim/db.py:12366:        raw = payload.get("escort_pending_targets")
+ming_sim/db.py:12391:            if not self._same_night_grant_commission(
+ming_sim/db.py:12406:        self._write_dossier_payload_key(int(dossier["id"]), "escort_pending_targets", resolved)
+ming_sim/db.py:12407:        self._resolve_covert_escort_carry(commit=commit)
+ming_sim/db.py:12409:    def _resolve_covert_escort_carry(self, *, commit: bool = False) -> None:
+ming_sim/db.py:12414:        ``escort_sources``（关联槽要求新指旧，装不下旧密令指向新拨银）。
+ming_sim/db.py:12426:            ).get("escort_pending_targets")
+ming_sim/db.py:12466:                        sources = payload.get("escort_sources")
+ming_sim/db.py:12476:                                grant_dossier_id, "escort_sources", sources,
+ming_sim/db.py:12481:                    escort_dossier_id, "escort_pending_targets", remaining,
+ming_sim/db.py:12485:    def escort_source_dossiers_of(self, dossier_id: int) -> List[Dict[str, object]]:
+ming_sim/db.py:12493:        sources = payload.get("escort_sources")
+ming_sim/db.py:12498:    def list_covert_escorts_aimed_at_pending(
+ming_sim/db.py:12504:        只读密令案卷载荷上已经校验过的 ``escort_pending_targets``。
+ming_sim/db.py:12513:            targets = self._dossier_payload_dict(dossier_id).get("escort_pending_targets")
+ming_sim/db.py:12556:    def escort_route_ledger_text(self) -> str:
+ming_sim/db.py:12576:                SELECT dossier_id FROM dossier_escort_outcomes
+ming_sim/db.py:12593:            escorted, source, _relation, note = self._grant_escort_presence(dossier_id)
+ming_sim/db.py:12602:    def list_escort_link_pairs(self) -> List[Dict[str, object]]:
+ming_sim/db.py:12606:        走 ``escort_sources``（关联槽装不下旧密令指向新拨银，见 ADR 0054）。
+ming_sim/db.py:12622:            for entry in self.escort_source_dossiers_of(int(row["id"])):
+ming_sim/db.py:12657:    def _grant_escort_presence(
+ming_sim/db.py:12668:            "SELECT * FROM dossier_escort_outcomes WHERE dossier_id=? "
+ming_sim/db.py:12749:            escorted, source_id, relation, note = self._grant_escort_presence(
+ming_sim/db.py:12824:        实际护送（``_grant_escort_presence``），二者皆引擎定，代码无软判可 clamp。
+ming_sim/db.py:12913:            pair for pair in self.list_escort_link_pairs()
+ming_sim/db.py:18745:                    self._carry_pending_covert_escort_targets(
+ming_sim/db.py:19703:            self._resolve_covert_escort_carry(commit=commit)
+ming_sim/declaration_dispatch.py:143:    escort_results: SectionResult
+ming_sim/declaration_dispatch.py:165:            escort_results=self.escort_results.merge(other.escort_results),
+ming_sim/declaration_dispatch.py:173:    "inquiries", "rushes", "travel_tones", "escort_links", "escort_results",
+ming_sim/declaration_dispatch.py:186:        escort_links=empty, escort_results=empty,
+ming_sim/declaration_dispatch.py:333:        escort_links=_dispatch_escort_links(
+ming_sim/declaration_dispatch.py:336:        escort_results=_dispatch_escort_results(
+ming_sim/declaration_dispatch.py:337:            db, state, declaration.get("escort_results"), source=source,
+ming_sim/declaration_dispatch.py:384:    月度拨帑核账各有自己的真源与节拍（``dossier_escort_outcomes`` ＋
+ming_sim/declaration_dispatch.py:701:        ("escort_results", "dossier_id"),
+ming_sim/declaration_dispatch.py:1187:def _covert_pending_targets(
+ming_sim/declaration_dispatch.py:1195:    if "escort_pending_targets" not in secret:
+ming_sim/declaration_dispatch.py:1197:    raw = secret.get("escort_pending_targets")
+ming_sim/declaration_dispatch.py:1216:        if not db._is_staged_grant_commission(
+ming_sim/declaration_dispatch.py:1438:            # 直挂；同夜暂存的拨银交办由 escort_pending_targets 承接。
+ming_sim/declaration_dispatch.py:1440:            kept_targets, target_errors = _covert_pending_targets(
+ming_sim/declaration_dispatch.py:1450:                staged_secret["escort_pending_targets"] = kept_targets
+ming_sim/declaration_dispatch.py:1774:    同夜暂存拨银的暗护指向由调用方放入已校验的 ``escort_pending_targets``。
+ming_sim/declaration_dispatch.py:1794:def _escort_source_dossier_id(
+ming_sim/declaration_dispatch.py:1814:def _dispatch_escort_links(
+ming_sim/declaration_dispatch.py:1820:    ``escort_results`` 一节。逐项拒收，坏项不牵连同批合法项。
+ming_sim/declaration_dispatch.py:1828:        source_id = _escort_source_dossier_id(db, item.get("escort_source_dossier_id"))
+ming_sim/declaration_dispatch.py:1877:def _dispatch_escort_results(
+ming_sim/declaration_dispatch.py:1895:        source_id = _escort_source_dossier_id(
+ming_sim/declaration_dispatch.py:1915:                row = db.record_dossier_escort_result(
+docs/adr/0054-ledger-cross-links-and-effect-backrefs.md:11:#1900 的重构验收只引用 [#1812「重构验收（2026-10-02 陛下重定）」](https://github.com/Akagilnc/ming-salvage-sim/issues/1812)。此前本 ADR 指定的 `escort_pending_targets` / `escort_sources` 双载体承接、配对聚合读口、入口专用资格校验及 `dossier_escort_outcomes` 专用账本处方撤销，不作为继续扩展或保全本切片新增机制的依据；配套记录、核算、供料、重开及撤回路径随本切片删简，不另定替代机制。职责搬迁、旧路退役由 [#1900](https://github.com/Akagilnc/ming-salvage-sim/issues/1900) 承接，功能如何接续留家族收尾，发现的缺口记 #1873；不是以新处方补齐全部功能，也不是宣布取消暗护或沿途损耗的玩法。
+docs/DELTA_SCHEMA.md:411:id 更大，走既有 `escort_links` 关联槽（新密令指旧拨银），不写 `escort_sources`。
+docs/DELTA_SCHEMA.md:414:受理前已成案的旧拨银仍只走 `escort_links` 声明入口，不进这条暂存承接。
+ming_sim/declaration_dispatch.py:142:    escort_links: SectionResult
+ming_sim/declaration_dispatch.py:164:            escort_links=self.escort_links.merge(other.escort_links),
+ming_sim/declaration_dispatch.py:173:    "inquiries", "rushes", "travel_tones", "escort_links", "escort_results",
+ming_sim/declaration_dispatch.py:186:        escort_links=empty, escort_results=empty,
+ming_sim/declaration_dispatch.py:333:        escort_links=_dispatch_escort_links(
+ming_sim/declaration_dispatch.py:334:            db, state, declaration.get("escort_links"), source=source,
+ming_sim/declaration_dispatch.py:702:        ("escort_links", "target_dossier_id"),
+ming_sim/declaration_dispatch.py:1814:def _dispatch_escort_links(
+ming_sim/audience_translation.py:316:                escort_links=empty, escort_results=empty,
+ming_sim/audience_translate.py:45:    "escort_links",
+ming_sim/audience_translate.py:213:    # 前者。不列这一行，escort_links 在真实流程里第一次根本无从指向。
+ming_sim/audience_translate.py:223:    # #1900：在途拨帑案卷与其已立的护送关联——escort_links / escort_results 只认这里
+ming_sim/audience_translate.py:241:    # 与同夜承接记录；escort_links / escort_results 只认这里的精确案卷 id。
+ming_sim/audience_translate.py:258:        "escort_links 与 escort_results 的案卷 id 必须取对应目录中的精确 id，禁止编造。\n"
+ming_sim/audience_translate.py:336:        '  "escort_links": [\n'
+ming_sim/audience_translate.py:436:        "- 命人护行／沿途照看某笔**在途拨帑** → escort_links 一条，escort_source_dossier_id 填【权威目标目录】"
+ming_sim/audience_translate.py:442:        "此刻还没成案，指不到 dossier 行）；已成案的旧拨银仍走上面的 escort_links。\n"
+ming_sim/audience_translate.py:443:        "- **本场新交办的拨银自带押解**（「着某人押解护送」）→ 不另立密令、不另挂 escort_links，"
+tests/test_escort_route_1900.py:10:- 转译声明 ``escort_links`` → ``GameDB.add_dossier_links``（关联真源，单向新指旧）
+tests/test_escort_route_1900.py:68:    result = _declare(db, state, {"escort_links": [
+tests/test_escort_route_1900.py:72:    assert result.escort_links.rejected == []
+tests/test_escort_route_1900.py:84:    bad = _declare(db, state, {"escort_links": [
+tests/test_escort_route_1900.py:92:    assert [r.category for r in bad.escort_links.rejected] == [
+tests/test_escort_route_1900.py:95:    assert all(r.reason for r in bad.escort_links.rejected)
+tests/test_escort_route_1900.py:115:    _declare(db, state, {"escort_links": [
+tests/test_escort_route_1900.py:135:        "escort_links": [
+tests/test_escort_route_1900.py:178:        "escort_links": [
+tests/test_escort_route_1900.py:211:        "escort_links": [
+tests/test_escort_route_1900.py:263:    _declare(db, state, {"escort_links": [
+tests/test_escort_route_1900.py:293:        "escort_links": [
+tests/test_escort_route_1900.py:307:    assert result.escort_links.applied == [{
+tests/test_escort_route_1900.py:312:    assert [item.category for item in result.escort_links.rejected] == ["invalid_state"]
+tests/test_escort_route_1900.py:313:    assert result.escort_links.rejected[0].reason
+tests/test_escort_route_1900.py:334:        "escort_links": [{
+tests/test_escort_route_1900.py:343:    assert result.escort_links.applied == [] and result.escort_results.applied == []
+tests/test_escort_route_1900.py:344:    assert [r.category for r in result.escort_links.rejected] == ["hallucinated_id"]
+tests/test_escort_route_1900.py:355:        "escort_links": [{
+tests/test_escort_route_1900.py:590:        "escort_links": [{
+tests/test_escort_route_1900.py:599:    assert result.escort_links.rejected == [] and result.escort_results.rejected == []
+tests/test_escort_route_1900.py:633:    _declare(db, state, {"escort_links": [{
+tests/test_escort_route_1900.py:1024:    linked = _declare(db, state, {"escort_links": [{
+tests/test_escort_route_1900.py:1030:    assert linked.escort_links.rejected == []
+tests/test_escort_route_1900.py:1205:        "escort_links": [{

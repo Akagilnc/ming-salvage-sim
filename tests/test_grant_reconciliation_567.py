@@ -93,13 +93,7 @@ def _escort_order(db, state, grant_ids, *, tags=None):
         for gid in grant_ids
     ]
     db.add_dossier_links(escort_id, links)
-    # #1900：关联只答「谁护谁」。有护口径另须逐路落下「此趟实有护送」，
-    # 对账只读后者——未落实况的路不作有护（不凭关联顶替）。
-    for gid in grant_ids:
-        db.record_dossier_escort_result(
-            state.turn, dossier_id=int(gid), escort_source_dossier_id=escort_id,
-            escorted=True, note="护行路按月核验",
-        )
+    # #1900 J18：专用逐路实况账本已退役；关联只答「谁护谁」，核账按无护口径。
     return order_id, escort_id
 
 
@@ -243,20 +237,20 @@ def test_failed_close_reconciles_only_when_the_silver_already_left(game):
         for t in db.list_monthly_grant_reconciliation_targets(turn)
     }
     assert dossier_id not in scanned
-    assert scanned[paid]["escorted"] is True
+    assert scanned[paid]["escorted"] is False
     assert scanned[paid]["ordered_amount"] == ORDERED
-    assert scanned[partial]["escorted"] is True
+    assert scanned[partial]["escorted"] is False
     assert scanned[partial]["ordered_amount"] == 7
-    assert scanned[partial]["escort_source_dossier_id"] == escort_id
+    assert scanned[partial]["escort_source_dossier_id"] is None
     moves_before = db.list_economy_moves_for_dossier(partial)
     reports = {
         int(item["dossier_id"]): item for item in _record_recon(db, turn)
     }
     assert set(reports) == {paid, partial}
-    lo, hi = grant_arrival_bounds(ORDERED, escorted=True)
+    lo, hi = grant_arrival_bounds(ORDERED, escorted=False)
     assert reports[paid]["arrived_amount"] == (lo + hi) // 2
     assert reports[paid]["loss_amount"] == ORDERED - reports[paid]["arrived_amount"]
-    partial_lo, partial_hi = grant_arrival_bounds(7, escorted=True)
+    partial_lo, partial_hi = grant_arrival_bounds(7, escorted=False)
     partial_row = reports[partial]
     assert partial_row["ordered_amount"] == 7
     assert partial_row["arrived_amount"] == (partial_lo + partial_hi) // 2

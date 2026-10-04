@@ -1,0 +1,1 @@
+docs/DELTA_SCHEMA.md:398:### ~~`commissions[].secret_order.escort_pending_targets` / `escort_sources` / `escort_links` / `escort_results` / `dossier_escort_outcomes`~~ — 已退役（#1900 J18）

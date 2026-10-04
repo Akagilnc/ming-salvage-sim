@@ -41,9 +41,6 @@ _DECLARATION_KEYS: tuple[str, ...] = (
     "inquiries",
     "rushes",
     "travel_tones",
-    # #1900：护送关联与逐路护送实况分节——关联答「谁护谁」，实况答「这趟护没护成」。
-    "escort_links",
-    "escort_results",
 )
 _ARRAY_SECTIONS = frozenset(
     k for k in _DECLARATION_KEYS if k not in {"protagonist", "effects"}
@@ -209,40 +206,15 @@ def build_translation_target_grounding(db: Any, state: Any = None) -> str:
         "SELECT id, title FROM secret_orders WHERE status='active' ORDER BY id"
     ).fetchall():
         lines.append(f"secret_order\t{int(row['id'])}\t{str(row['title'] or '')}")
-    # #1900：护行主体是**密令案卷**，其 id 与 secret_orders.id 是两个值，转译要填的是
-    # 前者。不列这一行，escort_links 在真实流程里第一次根本无从指向。
-    for row in db.conn.execute(
-        "SELECT d.id AS dossier_id, d.secret_order_id, s.title "
-        "FROM decree_dossiers d JOIN secret_orders s ON s.id = d.secret_order_id "
-        "ORDER BY d.id"
-    ).fetchall():
-        lines.append(
-            f"escort_dossier\t{int(row['dossier_id'])}\t{int(row['secret_order_id'])}"
-            f"\t{str(row['title'] or '')}"
-        )
-    # #1900：在途拨帑案卷与其已立的护送关联——escort_links / escort_results 只认这里
-    # 的精确 dossier id；未在途的拨帑案卷不列，免得凭空指向。
+    # 在途拨帑与自带押解标记（普通押解随拨银旨）；专用护送目录/实况行已退役。
     for row in db.conn.execute(
         "SELECT id, action_type, target_kind, target_id FROM decree_dossiers "
         "WHERE status='executing' AND action_type='grant_allocation' ORDER BY id"
     ).fetchall():
-        escorted = db._grant_escort_presence(int(row["id"]))
-        # 该道拨银旨自带押解（#1900 常态）时标出来：这一路报实况不必填
-        # escort_source_dossier_id；没有这行、LLM 会误以为只能走密令暗护。
         declared = db.dossier_declares_escort(int(row["id"]))
         lines.append(
             f"dossier\t{int(row['id'])}\t{str(row['target_kind'] or '')}:{str(row['target_id'] or '')}"
             + ("\t自带押解" if declared else "")
-            # 实况与安排分离（ADR 0153）：来源案卷存在 ≠ 这趟护成了。只认已落的
-            # 逐路布尔实况，不拿来源 id 冒充有护。
-            + (f"\t有护:{escorted[1]}" if escorted[0] else "")
-        )
-    # #1900：「谁护谁」的配对行。单一读口 list_escort_link_pairs 出 0054 槽的链
-    # 与同夜承接记录；escort_links / escort_results 只认这里的精确案卷 id。
-    for pair in db.list_escort_link_pairs():
-        lines.append(
-            f"escort_link\t{int(pair['source_dossier_id'])}\t{int(pair['target_dossier_id'])}"
-            f"\t{str(pair['relation_type'])}"
         )
     if state is not None:
         from ming_sim.due_review import list_due_review_scenes
@@ -254,10 +226,8 @@ def build_translation_target_grounding(db: Any, state: Any = None) -> str:
     body = "\n".join(lines)
     return (
         "【权威目标目录】\n"
-        "grant.target_id / appointment.region_id / rushes.target_id / 禁摊派案卷 id / "
-        "escort_links 与 escort_results 的案卷 id 必须取对应目录中的精确 id，禁止编造。\n"
-        "其中护行主体填 escort_dossier 行的第一个数（密令案卷 id，区别于 secret_order 行的密令 id），"
-        "被护拨帑案卷填 dossier 行。\n"
+        "grant.target_id / appointment.region_id / rushes.target_id / 禁摊派案卷 id "
+        "必须取对应目录中的精确 id，禁止编造。\n"
         f"{body}\n"
     )
 
@@ -303,9 +273,7 @@ def build_c0_declaration_shape() -> str:
         '      "pacification": {"target_id": "自新内乱首领的具名 id", "mode": "ordinary|midzhi"},\n'
         '      "secret_order": {"title": "密令标题", "content": "密令正文", '
         '"assignee": "承办人 id", "tags": [], "deadline_months": 0, '
-        '"covert_task": {}, '
-        '"escort_pending_targets": [{"pending_action_id": "被暗护的拨银交办在本夜暂存清单里的 id", '
-        '"relation_type": "护卫|稽核", "note": "暗护缘由原句"}]},\n'
+        '"covert_task": {}},\n'
         '      "secret_order_progress": {"order_id": "往期有效密令 id", "note": "本轮具名进展"},\n'
         '      "strategy_selection": {"target_id": "已选方案的政策目标 id", '
         '"source_chat_turn_id": "本场已说的大臣陈策轮 chat_turn_id（不能填本轮）"},\n'
@@ -333,14 +301,6 @@ def build_c0_declaration_shape() -> str:
         '  "rushes": [{"target_kind": "commitment|secret_order", "target_id": 正整数, '
         '"stage_idx": 0, "deadline_months": 1, "reason": "催办缘由"}],\n'
         '  "travel_tones": [{"person_name": "人名", "tone": "常行|加急|星夜兼程"}],\n'
-        '  "escort_links": [\n'
-        '    {"escort_source_dossier_id": 护行密令案卷 id, "target_dossier_id": 被护拨帑案卷 id,\n'
-        '     "relation_type": "护卫|稽核", "note": "护送缘由"}\n'
-        "  ],\n"
-        '  "escort_results": [\n'
-        '    {"dossier_id": 被护拨帑案卷 id, "escorted": true|false, "note": "此路此趟护送实况原文（可空）",\n'
-        '     "escort_source_dossier_id": 护行密令案卷 id（仅暗护时填；押解随旨则省略）}\n'
-        "  ],\n"
         '  "on_scene_facts": [\n'
         "    {\n"
         '      "name": "人名",\n'
@@ -433,18 +393,10 @@ def build_audience_translate_prompt(
         "- 暗渠揭破场面呈上后皇帝禁摊派 → commissions 一项 dossier_action_type=prohibit_covert_levy，target_id 填当前场面案卷 dossier_id。\n"
         "- 大臣具名举荐某人任某差并附荐词 → commissions 任命 + recommendation（荐者/荐词原句）。\n"
         "- 皇帝交代近侍查某事 → inquiries；催某件分段事或密令 → rushes；传召说明缓急 → travel_tones。\n"
-        "- 命人护行／沿途照看某笔**在途拨帑** → escort_links 一条，escort_source_dossier_id 填【权威目标目录】"
-        "escort_dossier 行里那道密令的案卷 id，target_dossier_id 填 dossier 行里被护的拨帑案卷 id，"
-        "被护数笔就写几条；只交代「谁护谁」，此路此趟究竟护没护成由 escort_results 另报，"
-        "一令护多路时逐路各报各的，别用整条密令的成败代替。\n"
-        "- **同夜刚下拨银又另行暗中加派护送** → 该 secret_order 项的 "
-        "escort_pending_targets 按【本夜暂存清单】里那道拨银交办的 id 指过去（暗护的案卷"
-        "此刻还没成案，指不到 dossier 行）；已成案的旧拨银仍走上面的 escort_links。\n"
-        "- **本场新交办的拨银自带押解**（「着某人押解护送」）→ 不另立密令、不另挂 escort_links，"
+        "- **本场新交办的拨银自带押解**（「着某人押解护送」）→ 不另立密令，"
         "在该 commissions 项的 grant.escort.escortees 按 ADR 0053 参与人条目写押解人"
         "（character_id／tier 机械档／role 职分／delegator_id 委派人，无委派留空），"
-        "此人即进本案参与人名单；此路此趟护没护成"
-        "同样由 escort_results 另报，escort_source_dossier_id 留空。\n"
+        "此人即进本案参与人名单。\n"
         f"{grounding_block}"
         f"【本场已说的话】\n{said_block}\n"
         f"【本夜暂存清单】{pending_block}\n"

@@ -139,8 +139,6 @@ class DeclarationDispatchResult:
     inquiries: SectionResult
     rushes: SectionResult
     travel_tones: SectionResult
-    escort_links: SectionResult
-    escort_results: SectionResult
 
     def merge(self, other: "DeclarationDispatchResult") -> "DeclarationDispatchResult":
         """按 section 逐个 merge，供 :func:`settle_staged_declarations_in_decree_order`
@@ -161,8 +159,6 @@ class DeclarationDispatchResult:
             inquiries=self.inquiries.merge(other.inquiries),
             rushes=self.rushes.merge(other.rushes),
             travel_tones=self.travel_tones.merge(other.travel_tones),
-            escort_links=self.escort_links.merge(other.escort_links),
-            escort_results=self.escort_results.merge(other.escort_results),
         )
 
 
@@ -170,7 +166,7 @@ _SECTION_FIELDS: Tuple[str, ...] = (
     "commissions", "promises", "endorsements", "textual_facts", "public_sayings",
     "on_scene_facts", "presence", "scene_facts", "edge_events",
     "protagonist", "registrations", "effects",
-    "inquiries", "rushes", "travel_tones", "escort_links", "escort_results",
+    "inquiries", "rushes", "travel_tones",
 )
 _KNOWN_SECTIONS = frozenset(_SECTION_FIELDS)
 
@@ -183,7 +179,6 @@ def _empty_dispatch_result() -> DeclarationDispatchResult:
         on_scene_facts=empty, presence=empty, scene_facts=empty, edge_events=empty,
         protagonist=ProtagonistResult(validated=None, rejected=[]), registrations=empty,
         effects=empty, inquiries=empty, rushes=empty, travel_tones=empty,
-        escort_links=empty, escort_results=empty,
     )
 
 
@@ -328,14 +323,6 @@ def _dispatch_declaration_sections(
             db, declaration.get("travel_tones"), night_id=night_id, source=source,
             chat_turn_id=origin_ctid, source_turn_error=source_turn_err, state=state,
         ),
-        # #1900：护送关联（谁护谁）与逐路实况（这趟护没护成）分节声明；
-        # 月度拨帑对账只读后者，前者不作有护凭据。
-        escort_links=_dispatch_escort_links(
-            db, state, declaration.get("escort_links"), source=source,
-        ),
-        escort_results=_dispatch_escort_results(
-            db, state, declaration.get("escort_results"), source=source,
-        ),
     )
     _record_unknown_sections(collector, declaration, turn, source)
     _record_section_rejections(collector, result, turn)
@@ -380,9 +367,8 @@ def _persist_specialized_extraction(
 ) -> None:
     """转译契约仍收的专属案卷字段，交既有写入口，不在通用 applier 里再写一份。
 
-    密奏须先有本回合稽核在场扫描，origin 才带得上同派标记。逐路护送实况与
-    月度拨帑核账各有自己的真源与节拍（``dossier_escort_outcomes`` ＋
-    ``record_monthly_grant_reconciliations``，#1900），本口不碰。
+    密奏须先有本回合稽核在场扫描，origin 才带得上同派标记。
+    月度拨帑核账走 ``record_monthly_grant_reconciliations``，本口不碰。
 
     过月主链（ADR 0157 步骤 4a）整月密奏与执行态由独立供料 run 落账；
     ``defer_monthly_secret_supply`` 时不把逐段字段拼成整月义务。
@@ -658,58 +644,6 @@ def discard_staged_declaration(db: Any, decree_ref: str) -> int:
     return db.staged_declarations.discard(decree_ref)
 
 
-def _grant_dossier_ids_for_pending(db: Any, pending_action_id: int) -> List[int]:
-    rows = db.conn.execute(
-        "SELECT id FROM decree_dossiers "
-        "WHERE action_type='grant_allocation' AND pending_action_id=? ORDER BY id",
-        (int(pending_action_id),),
-    ).fetchall()
-    return [int(row["id"]) for row in rows]
-
-
-def _pending_action_identity(decree_ref: str) -> Optional[int]:
-    """``pending-action:{id}:v{version}`` → 暂存主键。对不上就不是这道交办。"""
-    prefix = "pending-action:"
-    if not str(decree_ref).startswith(prefix) or ":v" not in decree_ref:
-        return None
-    action_text, version_text = decree_ref[len(prefix):].split(":v", 1)
-    if not action_text.isdigit() or not version_text.isdigit():
-        return None
-    action_id, version = int(action_text), int(version_text)
-    if action_id <= 0 or version <= 0:
-        return None
-    return action_id
-
-
-def _bind_pending_grant_escort_identity(
-    db: Any, decree_ref: str, declaration: object,
-) -> object:
-    """成案之后，把本旨目录里的暂存标识换成这一道拨银自己的案卷。
-
-    只替换与本 decree_ref 逐字相同的被护端。零个或多个拨银案卷都不猜，
-    留下原标识，让通用案卷校验按幻影拒收。不改护行来源，不改其它数字。
-    """
-    pending_action_id = _pending_action_identity(decree_ref)
-    if pending_action_id is None or not isinstance(declaration, dict):
-        return declaration
-    grant_ids = _grant_dossier_ids_for_pending(db, pending_action_id)
-    if len(grant_ids) != 1:
-        return declaration
-    grant_id = grant_ids[0]
-    cloned = copy.deepcopy(declaration)
-    for section, field in (
-        ("escort_results", "dossier_id"),
-        ("escort_links", "target_dossier_id"),
-    ):
-        items = cloned.get(section)
-        if not isinstance(items, list):
-            continue
-        for item in items:
-            if isinstance(item, dict) and item.get(field) == decree_ref:
-                item[field] = grant_id
-    return cloned
-
-
 def settle_staged_declarations_in_decree_order(
     db: Any,
     state: Any,
@@ -750,9 +684,7 @@ def settle_staged_declarations_in_decree_order(
                     for item in staged:
                         merged = merged.merge(_dispatch_declaration_sections(
                             db, state,
-                            _bind_pending_grant_escort_identity(
-                                db, decree_ref, item.declaration,
-                            ),
+                            item.declaration,
                             minister_name=minister_name, night_id=night_id, source=source,
                             collector=collector,
                             visible_refs=item.visible_refs,
@@ -1184,65 +1116,6 @@ def _merge_participant_rosters(existing: object, incoming: list) -> list:
     return merged
 
 
-def _covert_pending_targets(
-    db: Any, secret: Mapping[str, object], *, night_id: int, turn: int,
-) -> tuple[Optional[List[Dict[str, object]]], List[tuple[str, str]]]:
-    """同夜暗护指向：缺省合法；已声明却不可用则逐项拒收，不静默丢掉。
-
-    返回 (保留条目或 None=没声明, [(reason, category), ...])。密令本身仍可落地，
-    坏指向不进暂存。
-    """
-    if "escort_pending_targets" not in secret:
-        return None, []
-    raw = secret.get("escort_pending_targets")
-    if not isinstance(raw, list):
-        return [], [("暗护指向须为条目列表", "invalid_shape")]
-    from ming_sim.db import _GRANT_ESCORT_RELATIONS
-    from ming_sim.strict_types import strict_int
-
-    kept: List[Dict[str, object]] = []
-    errors: List[tuple[str, str]] = []
-    for item in raw:
-        if not isinstance(item, Mapping):
-            errors.append(("暗护指向条目须为对象", "invalid_shape"))
-            continue
-        try:
-            staged_id = strict_int(
-                item.get("pending_action_id"), accept_numeric_strings=False,
-            )
-        except (TypeError, ValueError):
-            errors.append(("暗护指向的暂存交办不存在", "hallucinated_id"))
-            continue
-        if not db._is_staged_grant_commission(
-            staged_id, night_id=int(night_id), turn=int(turn),
-        ):
-            exists = db.conn.execute(
-                "SELECT 1 FROM pending_actions WHERE id=?", (staged_id,),
-            ).fetchone()
-            errors.append((
-                "暗护指向的暂存交办不存在" if exists is None else "暗护指向须为本夜拨帑暂存",
-                "hallucinated_id" if exists is None else "invalid_state",
-            ))
-            continue
-        relation = item.get("relation_type")
-        if not isinstance(relation, str) or relation not in _GRANT_ESCORT_RELATIONS:
-            errors.append((f"暗护关系类型非法：{relation}", "invalid_enum"))
-            continue
-        note = item.get("note")
-        if not isinstance(note, str):
-            errors.append(("暗护说明须为原文", "invalid_shape"))
-            continue
-        if not note.strip():
-            errors.append(("暗护说明不能为空", "invalid_shape"))
-            continue
-        kept.append({
-            "pending_action_id": staged_id,
-            "relation_type": relation,
-            "note": note,
-        })
-    return kept, errors
-
-
 def _attach_commission_affair(
     db: Any, item: Mapping[str, object], payload: Dict[str, Any],
     *, rejected: List[RejectedItem], source: Provenance,
@@ -1433,21 +1306,12 @@ def _dispatch_commissions(
                 _reject(rejected, item, "密令缺本轮口谕源轮", "missing_ref", source)
                 continue
             actor = str(minister_name or "").strip() or str(source_turn["minister_name"])
-            # #1900 暗护入口：沿既有密令暂存接缝 stage_pending_action（成案落
-            # _apply_pending_action 的「新建」核）。已记录的旧拨银由 dossier_links
-            # 直挂；同夜暂存的拨银交办由 escort_pending_targets 承接。
-            # 指向在入暂存前校验：缺省合法，已声明却不可用逐项拒收，不静默丢掉。
-            kept_targets, target_errors = _covert_pending_targets(
-                db, secret, night_id=int(night_id), turn=int(state.turn),
-            )
-            for reason, category in target_errors:
-                _reject(rejected, item, reason, category, source)
+            # 另行暗护沿既有密令声明入口；专用暂存资格校验与双载体承接已退役。
+            # 已记录拨银可由密令载荷 dossier_links 走既有关联槽（功能接续 #1873）。
             staged_secret = _secret_order_staged_payload(
                 secret, actor,
                 origin_chat_message_id=int(source_turn["user_message_id"]),
             )
-            if kept_targets:
-                staged_secret["escort_pending_targets"] = kept_targets
             row_id = db.stage_pending_action(
                 int(state.turn), "secret_order", "新建", actor,
                 staged_secret,
@@ -1748,182 +1612,6 @@ def _dispatch_commissions(
             night_id=int(night_id),
         )
         applied.append({"id": row_id, "payload": payload, "kind": "directive"})
-    return SectionResult(applied=applied, rejected=rejected)
-
-
-def _escort_dossier_id(db: Any, raw: object) -> Optional[int]:
-    """案卷 id 解析：只认真实存在的案卷；不存在／非整数返回 None 交调用方逐项拒收。"""
-    from ming_sim.strict_types import strict_int
-
-    try:
-        dossier_id = strict_int(raw, accept_numeric_strings=False)
-    except (TypeError, ValueError):
-        return None
-    if dossier_id <= 0 or db.get_decree_dossier(dossier_id) is None:
-        return None
-    return dossier_id
-
-
-def _secret_order_staged_payload(
-    secret: Mapping[str, object], actor: str, *, origin_chat_message_id: int,
-) -> Dict[str, Any]:
-    """密令新建声明 → 暂存载荷（收夜成案核 ``_apply_pending_action`` 唯一消费）。
-
-    只搬 typed 字段，一个字都不生成（CLAUDE.md P7 / ADR 0142）：标题、正文、
-    差务合同原样透传。已记录的旧拨银走 ``dossier_links``（0054 单向新指旧）；
-    同夜暂存拨银的暗护指向由调用方放入已校验的 ``escort_pending_targets``。
-    """
-    payload: Dict[str, Any] = {
-        "title": str(secret.get("title") or ""),
-        "content": str(secret.get("content") or ""),
-        "assignee": str(secret.get("assignee") or actor or ""),
-        "tags": list(secret.get("tags") or []),
-        "deadline_months": secret.get("deadline_months", 0),
-        "excluded_names": list(secret.get("excluded_names") or []),
-        "excluded_offices": list(secret.get("excluded_offices") or []),
-        "origin_chat_message_id": int(origin_chat_message_id),
-    }
-    if isinstance(secret.get("covert_task"), Mapping):
-        payload["covert_task"] = dict(secret["covert_task"])
-    links = secret.get("dossier_links")
-    if isinstance(links, list):
-        payload["dossier_links"] = links
-    return payload
-
-
-def _escort_source_dossier_id(
-    db: Any, raw: object, *, escorted_dossier_id: Optional[int] = None,
-) -> Optional[int]:
-    """护行主体解析（#1900 两口径）。
-
-    - 省略/等于被护案卷自身 → 押解随拨银旨（常态，owner 2026-09-30 裁定）。
-    - 给了别的案卷 id → 只认由密令立起的案卷（0054 单向新指旧的暗护那一端）。
-    """
-    if raw in (None, ""):
-        return int(escorted_dossier_id) if escorted_dossier_id else None
-    dossier_id = _escort_dossier_id(db, raw)
-    if dossier_id is None:
-        return None
-    if escorted_dossier_id and dossier_id == int(escorted_dossier_id):
-        return dossier_id
-    if not db.is_secret_order_dossier(dossier_id):
-        return None
-    return dossier_id
-
-
-def _dispatch_escort_links(
-    db: Any, state: Any, raw: object, *, source: Provenance,
-) -> SectionResult:
-    """#1900：护送关联声明 → 0054 案卷关联写口（新密令案卷指旧拨帑案卷）。
-
-    关联只答「谁护谁」，不带状态位（0054 防第三真源）；本票的逐路实况另有
-    ``escort_results`` 一节。逐项拒收，坏项不牵连同批合法项。
-    """
-    # 护送口径闭集与「被护端须为拨帑案卷」都取自 db 侧既有判据，不另抄一份。
-    from ming_sim.db import _GRANT_ESCORT_RELATIONS, is_grant_allocation_dossier
-
-    items, rejected = _section_items(raw, label="护送关联声明", source=source)
-    applied: List[Any] = []
-    for item in items:
-        source_id = _escort_source_dossier_id(db, item.get("escort_source_dossier_id"))
-        target_id = _escort_dossier_id(db, item.get("target_dossier_id"))
-        if source_id is None or target_id is None:
-            _reject(
-                rejected, item,
-                "护送关联须含已存在的护行密令案卷与被护拨帑案卷 id", "hallucinated_id", source,
-            )
-            continue
-        # 对象域在进通用关联写口之前收口。错对象不落链，也就不会派生稽核在场。
-        if not is_grant_allocation_dossier(db.get_decree_dossier(target_id)):
-            _reject(
-                rejected, item,
-                "护送关联的被护端须为已记录的拨帑案卷", "invalid_state", source,
-            )
-            continue
-        relation = str(item.get("relation_type") or "").strip()
-        if relation not in _GRANT_ESCORT_RELATIONS:
-            _reject(
-                rejected, item,
-                f"护送关联类型须为 {'／'.join(sorted(_GRANT_ESCORT_RELATIONS))}：{relation}",
-                "invalid_enum", source,
-            )
-            continue
-        note = _declared_prose(item.get("note"))
-        if note is None:
-            _reject(rejected, item, "护送关联缺说明", "invalid_shape", source)
-            continue
-        try:
-            with _item_savepoint_scope(db, f"escort_link_{int(state.turn)}_{id(item)}"):
-                db.add_dossier_links(
-                    source_id,
-                    [{
-                        "target_dossier_id": target_id,
-                        "relation_type": relation,
-                        "note": note,
-                    }],
-                    commit=False,
-                )
-        except ValueError as exc:
-            _reject(rejected, item, str(exc), "invalid_state", source)
-            continue
-        applied.append({
-            "escort_source_dossier_id": source_id,
-            "target_dossier_id": target_id,
-            "relation_type": relation,
-        })
-    return SectionResult(applied=applied, rejected=rejected)
-
-
-def _dispatch_escort_results(
-    db: Any, state: Any, raw: object, *, source: Provenance,
-) -> SectionResult:
-    """#1900：逐路实际护送声明 → 该路此回合的护送实况（对账唯一读口）。
-
-    密令整体成败／结案不作数：一令护多路时逐路各读各路，成功护送后结案仍按
-    该路已落的有护对账；未实际护送的路不得只凭关联当作有护。
-    """
-    items, rejected = _section_items(raw, label="护送实况声明", source=source)
-    applied: List[Any] = []
-    for item in items:
-        dossier_id = _escort_dossier_id(db, item.get("dossier_id"))
-        if dossier_id is None:
-            _reject(
-                rejected, item, "护送实况须含已存在的被护拨帑案卷 id",
-                "hallucinated_id", source,
-            )
-            continue
-        source_id = _escort_source_dossier_id(
-            db, item.get("escort_source_dossier_id"), escorted_dossier_id=dossier_id,
-        )
-        if source_id is None:
-            _reject(
-                rejected, item,
-                "护送实况的护行人须为该道拨银旨自身（押解随旨）或一道已存在的护行密令案卷",
-                "hallucinated_id", source,
-            )
-            continue
-        escorted = item.get("escorted")
-        if not isinstance(escorted, bool):
-            _reject(rejected, item, "护送实况须明写 escorted 布尔", "invalid_shape", source)
-            continue
-        note = item.get("note")
-        if note is not None and not isinstance(note, str):
-            _reject(rejected, item, "护送实况 note 须为原文", "invalid_shape", source)
-            continue
-        try:
-            with _item_savepoint_scope(db, f"escort_result_{int(state.turn)}_{id(item)}"):
-                row = db.record_dossier_escort_result(
-                    int(state.turn),
-                    dossier_id=dossier_id,
-                    escort_source_dossier_id=source_id,
-                    escorted=bool(escorted),
-                    note=str(note or ""),
-                    commit=False,
-                )
-        except ValueError as exc:
-            _reject(rejected, item, str(exc), "invalid_state", source)
-            continue
-        applied.append(row)
     return SectionResult(applied=applied, rejected=rejected)
 
 

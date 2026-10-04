@@ -1,0 +1,1 @@
+tests/test_faction_leverage_9.py:358:    对 faction 权重和贡献为 0（无实职=不贡献 leverage）。修前 _member_office_weight 会把
