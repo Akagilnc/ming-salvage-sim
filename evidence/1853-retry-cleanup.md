@@ -4,7 +4,7 @@
 - 分支：`ak-roles/issue-1853-retry-cleanup`
 - 起始 HEAD（J2-T/J8 首轮）：`2e392c22469b3dea6f5e69d21d1abe49adac8714`
 - 首轮交卷：`f88af780d0f5e402a9c06a50f5dd88d98488ba5e`（J2-T + 仅三 reply getter 的窄 J8）
-- **本轮交卷 commit：见文末 SHA（J8 扩类：全仓重试/转译重试查询护栏）**
+- **本轮交卷 commit：`3c4aca7045eaea539bbaee6ae672a853f9d4f73c`（J8 扩类：全仓重试/转译重试查询护栏）**
 - 派单：`01a108c7-fcb1-77bc-a311-40f04c296e26@fixer`
 - 判词冻结：`07-1853-judge-2e392c224.json` payloads **末份**；复扫纠正：J8 不得收窄为三个 reply getter
 - **未合入目标分支；不 push / 不开 PR；不 amend / 不 stash**
@@ -164,4 +164,4 @@ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$PWD" \
 
 ## commit
 
-（提交后回填）`SHA` — `ak-roles: fix(#1853): expand J8 retry-query empty-guard cleanup beyond reply getters`
+`3c4aca7045eaea539bbaee6ae672a853f9d4f73c` — `ak-roles: fix(#1853): expand J8 retry-query empty-guard cleanup beyond reply getters`
