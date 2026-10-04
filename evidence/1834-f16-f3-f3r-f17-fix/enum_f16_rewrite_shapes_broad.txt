@@ -42,7 +42,7 @@ ming_sim/action_materialize.py:916:        staged["execution_surface"] = str(exe
 ming_sim/action_materialize.py:925:        if not str(staged.get("title") or "").strip():
 ming_sim/action_materialize.py:930:    lead = str(assignee or "").strip()
 ming_sim/action_materialize.py:952:    text = str(raw or "").strip()
-ming_sim/action_materialize.py:1019:    return _RESPONSIBLE_BODY_SPLIT.split(str(text or ""))
+ming_sim/action_materialize.py:1022:    return _RESPONSIBLE_BODY_SPLIT.split(str(text or ""))
 ming_sim/action_materialize.py:1032:        text = value.strip()
 ming_sim/action_materialize.py:1035:        parts = [p.strip() for p in re_split_bodies(text) if p.strip()]
 ming_sim/action_materialize.py:1045:        name = str(item or "").strip()
@@ -53,7 +53,7 @@ ming_sim/action_materialize.py:1070:    minister = str(current_minister or "").s
 ming_sim/action_materialize.py:1076:        name = str(body or "").strip()
 ming_sim/action_materialize.py:1128:    want_name = str(name or "").strip()
 ming_sim/action_materialize.py:1129:    want_office = str(office or "").strip()
-ming_sim/action_materialize.py:1130:    want_region = str(region_id or "").strip()
+ming_sim/action_materialize.py:1133:    want_region = str(region_id or "").strip()
 ming_sim/action_materialize.py:1137:        staged_name = str(payload.get("name") or "").strip()
 ming_sim/action_materialize.py:1145:        staged_office = str(payload.get("office") or "").strip()
 ming_sim/action_materialize.py:1150:        ).strip()
@@ -70,7 +70,7 @@ ming_sim/action_materialize.py:1309:    tid = str(target_id or "").strip()
 ming_sim/action_materialize.py:1310:    kind = str(target_kind or "").strip()
 ming_sim/action_materialize.py:1313:        kind = kind.strip()
 ming_sim/action_materialize.py:1314:        rest = rest.strip()
-ming_sim/action_materialize.py:1338:    status = str(dossier.get("status") or "").strip()
+ming_sim/action_materialize.py:1341:    status = str(dossier.get("status") or "").strip()
 ming_sim/action_materialize.py:1339:    action = str(dossier.get("action_type") or "").strip()
 ming_sim/action_materialize.py:1362:    if str(target_candidate or "").strip() == "含糊":
 ming_sim/action_materialize.py:1364:    raw = str(target_id or "").strip()
@@ -81,14 +81,14 @@ ming_sim/action_materialize.py:1388:        if str(row["kind"] or "").strip() !=
 ming_sim/action_materialize.py:1390:        if str(row["status"] or "").strip() != "active":
 ming_sim/action_materialize.py:1393:        origin = str(row["origin_ref"] or "").strip()
 ming_sim/action_materialize.py:1396:                linked = int(origin.split(":", 1)[1])
-ming_sim/action_materialize.py:1433:    holder = str(holder_id or "").strip()
+ming_sim/action_materialize.py:1436:    holder = str(holder_id or "").strip()
 ming_sim/action_materialize.py:1434:    priv = str(privilege or "").strip()
 ming_sim/action_materialize.py:1509:    if not body.strip():
 ming_sim/action_materialize.py:1515:    tid_raw = str(target_id or "").strip()
 ming_sim/action_materialize.py:1516:    matter_title = title_raw if title_raw.strip() else tid_raw
 ming_sim/action_materialize.py:1517:    if not matter_title.strip():
 ming_sim/action_materialize.py:1523:    actor = str(minister_name or "").strip()
-ming_sim/action_materialize.py:1536:    pointed = str(target_candidate or "").strip()
+ming_sim/action_materialize.py:1539:    pointed = str(target_candidate or "").strip()
 ming_sim/action_materialize.py:1550:            if str(payload.get("dossier_action_type") or "").strip() != "assignment":
 ming_sim/action_materialize.py:1574:    category = str(transaction_category or "").strip()
 ming_sim/action_materialize.py:1578:    lead = str(assignee or "").strip()
@@ -102,7 +102,7 @@ ming_sim/action_materialize.py:1732:    if not body.strip():
 ming_sim/action_materialize.py:1738:    tid_raw = str(target_id or "").strip()
 ming_sim/action_materialize.py:1739:    matter_title = title_raw if title_raw.strip() else tid_raw
 ming_sim/action_materialize.py:1740:    if not matter_title.strip():
-ming_sim/action_materialize.py:1775:    pointed = str(target_candidate or "").strip()
+ming_sim/action_materialize.py:1778:    pointed = str(target_candidate or "").strip()
 ming_sim/action_materialize.py:1789:            if str(payload.get("dossier_action_type") or "").strip() != "referral":
 ming_sim/action_materialize.py:1841:    if str(target_candidate or "").strip() == "含糊":
 ming_sim/action_materialize.py:1844:    if not body.strip():
@@ -446,13 +446,6 @@ ming_sim/action_clusters.py:343:        if str(candidate.get(controller) or "").
 ming_sim/action_clusters.py:361:    return str(candidate.get(controller) or "").strip() in allowed
 ming_sim/action_clusters.py:372:        v = str(value if value is not None else default).strip()
 ming_sim/action_clusters.py:402:                    else str(raw or "").strip()
-web/src/appDurableWiring.test.tsx:62:  host.querySelector('[data-testid="settlement-gazette-panel"] pre.memorial-text')?.textContent?.trim() ?? "";
-web/src/appDurableWiring.test.tsx:71:    return (label?.textContent || "").trim() === name;
-web/src/appDurableWiring.test.tsx:167:        ].join("");
-web/src/appDurableWiring.test.tsx:589:    expect(host.querySelector('[data-testid="translation-retry-8"][role="alert"]')?.textContent?.trim()).toBeTruthy();
-web/src/appDurableWiring.test.tsx:596:    expect(host.querySelector('[data-testid="reply-retry-7"][role="alert"]')?.textContent?.trim()).toBeTruthy();
-web/src/appDurableWiring.test.tsx:2513:    expect(emptyNote!.textContent?.trim()).toBeTruthy();
-web/src/appDurableWiring.test.tsx:3174:      (b) => (b.textContent || "").trim() === "继续",
 ming_sim/decree.py:113:        person_name = str(item.get("person_name") or "").strip()
 ming_sim/decree.py:122:        name = str(arrival.get("name") or "").strip()
 ming_sim/decree.py:125:        location = str(arrival.get("location") or "").strip()
@@ -819,7 +812,6 @@ ming_sim/covert_progress.py:1754:                ).strip(),
 ming_sim/covert_progress.py:1907:    invalid = str(declaration.get("invalid") or "").strip()
 ming_sim/covert_progress.py:1933:    tip_source = str(tip.get("source") or "").strip() if isinstance(tip, Mapping) else ""
 ming_sim/covert_progress.py:1979:        spoil_key = str(spoliation.get("fact_key") or "").strip()
-web/src/buildResources.test.ts:65:      ? join(distDir, faviconHref!.slice(1))
 ming_sim/context.py:166:    return "，".join(parts)
 ming_sim/context.py:173:        raise LLMContractError(f"数据库中的数值变化 JSON 已损坏：{raw[:200]}") from error
 ming_sim/context.py:175:        raise LLMContractError(f"数据库中的数值变化不是 object：{raw[:200]}")
@@ -888,9 +880,6 @@ ming_sim/content.py:571:            last_action=str(entry.get("last_action") or 
 ming_sim/content.py:572:            aliases="，".join(string_list(entry.get("aliases", []), "powers.json::powers[item].aliases")),
 ming_sim/person_write_inventory.py:141:            sql_src = "".join(
 ming_sim/person_write_inventory.py:149:        sql = " ".join(sql_src.split())
-web/src/staleGuard.test.tsx:230:      <div data-testid="failures">{failures.join("|")}</div>
-web/src/staleGuard.test.tsx:367:      <div data-testid="failures">{failures.join("|")}</div>
-web/src/staleGuard.test.tsx:368:      <div data-testid="decisions">{decisions.map((d) => d.title).join("|")}</div>
 ming_sim/issues.py:114:    op = str(item.get("动作") or item.get("op") or "").strip()
 ming_sim/issues.py:119:        holder_id = str(item.get("holder_id") or "").strip()
 ming_sim/issues.py:120:        privilege = str(item.get("privilege") or item.get("权项") or "").strip()
@@ -1176,8 +1165,6 @@ ming_sim/cli/terminal.py:675:                    pending_character = session.con
 ming_sim/cli/terminal.py:791:        if (llm_config.advanced_model or "").strip():
 ming_sim/cli/terminal.py:792:            adv_url = (llm_config.advanced_base_url or "").strip() or base_url
 ming_sim/cli/terminal.py:815:            raw = input(prompt).strip()
-web/src/useSettlementFlow.test.tsx:70:  ].join("\n");
-web/src/useSettlementFlow.test.tsx:495:  ].join("\n");
 ming_sim/relation_read.py:71:        name = str(viewer).strip()
 ming_sim/relation_read.py:104:    summary = "\n".join(summary_parts)
 ming_sim/participant_roster.py:52:    n = str(name or "").strip()
@@ -1534,7 +1521,7 @@ ming_sim/cli_backend.py:4422:        materials = str(getattr(self, "materials_di
 ming_sim/cli_backend.py:4428:                str(getattr(self, "reasoning_strength", "") or "").strip().lower() or None
 ming_sim/cli_backend.py:4447:        materials = str(getattr(self, "materials_dir", "") or "").strip() or None
 ming_sim/cli_backend.py:4524:        materials = str(getattr(self, "materials_dir", "") or "").strip() or None
-ming_sim/cli_backend.py:4534:                reasoning_strength=str(getattr(self, "reasoning_strength", "") or "").strip().lower() or None,
+ming_sim/cli_backend.py:4465:                reasoning_strength=str(getattr(self, "reasoning_strength", "") or "").strip().lower() or None,
 ming_sim/cli_backend.py:4601:    val = (os.environ.get("MING_SIM_LLM_BACKEND") or "").strip().lower()
 ming_sim/cli_backend.py:4644:    channel = str(getattr(args, "channel", "") or "cli").strip().lower() or "cli"
 ming_sim/cli_backend.py:4645:    model = str(getattr(args, "model", "") or "").strip()
@@ -1544,13 +1531,13 @@ ming_sim/cli_backend.py:4652:            or (os.environ.get("MING_SIM_API_KEY") 
 ming_sim/cli_backend.py:4655:            str(getattr(args, "base_url", "") or "").strip()
 ming_sim/cli_backend.py:4656:            or (os.environ.get("OPENAI_BASE_URL") or "").strip()
 ming_sim/cli_backend.py:4657:            or (os.environ.get("MING_SIM_API_BASE_URL") or "").strip()
-ming_sim/cli_backend.py:4674:    runner = str(getattr(args, "runner", "") or "").strip().lower()
-ming_sim/cli_backend.py:4694:    （MING_SIM_TRACE 用 .strip().lower()）。
-ming_sim/cli_backend.py:4698:    trace_setting = os.environ.get("MING_SIM_TRACE_PATH", "").strip()
-ming_sim/cli_backend.py:4699:    if not trace_setting or os.environ.get("MING_SIM_TRACE", "1").strip().lower() in {
-ming_sim/cli_backend.py:4711:    channel = str(getattr(cfg, "channel", "") or getattr(args, "channel", "") or "").strip().lower()
-ming_sim/cli_backend.py:4716:        ).strip().lower()
-ming_sim/cli_backend.py:4722:    ).strip()
+ming_sim/cli_backend.py:4605:    runner = str(getattr(args, "runner", "") or "").strip().lower()
+ming_sim/cli_backend.py:4625:    （MING_SIM_TRACE 用 .strip().lower()）。
+ming_sim/cli_backend.py:4629:    trace_setting = os.environ.get("MING_SIM_TRACE_PATH", "").strip()
+ming_sim/cli_backend.py:4630:    if not trace_setting or os.environ.get("MING_SIM_TRACE", "1").strip().lower() in {
+ming_sim/cli_backend.py:4642:    channel = str(getattr(cfg, "channel", "") or getattr(args, "channel", "") or "").strip().lower()
+ming_sim/cli_backend.py:4647:        ).strip().lower()
+ming_sim/cli_backend.py:4653:    ).strip()
 ming_sim/audience_night.py:56:        for office in offices.split(",")
 ming_sim/audience_night.py:243:    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 ming_sim/audience_night.py:317:            "".join(traceback.format_exception(type(exc), exc, exc.__traceback__)),
@@ -2143,22 +2130,10 @@ web/src/components/gameMenu.tsx:407:        normalizedModel === (info?.model || 
 web/src/components/gameMenu.tsx:408:        normalizedAdvancedBaseUrl === (info?.advanced_base_url || "").trim() &&
 web/src/components/gameMenu.tsx:409:        normalizedAdvancedModel === (info?.advanced_model || "").trim()
 web/src/components/gameMenu.tsx:478:          advanced_api_key: advancedApiKey.trim() ? advancedApiKey : "__keep__",
-web/src/components/gameMenu.test.tsx:759:      (b.textContent || "").trim() === "加载" || (b.textContent || "").includes("加载")
 web/src/components/audienceArchiveModal.tsx:100:      <aside className="history-turn-list"><ul>{nights.slice().reverse().map((night) => <li key={night.night_id}>
 web/src/components/audienceArchiveModal.tsx:106:          <b>{night.title}</b><small>涉及人物：{night.involved_people?.join("、") || "无载"}</small>
 web/src/components/situation.tsx:24:  if (text.trim()) return text;
 web/src/components/situation.tsx:31:  return raw.trim() ? raw : "";
-web/src/components/menuPage.test.tsx:125:      button.textContent?.trim() === "继续"
-web/src/components/menuPage.test.tsx:174:      button.textContent?.trim() === "继续"
-web/src/components/menuPage.test.tsx:225:      button.textContent?.trim() === "继续"
-web/src/components/menuPage.test.tsx:264:      button.textContent?.trim() === "继续"
-web/src/components/menuPage.test.tsx:271:    expect((busy?.textContent || "").trim()).not.toBe("");
-web/src/components/menuPage.test.tsx:299:    expect((subtitle?.textContent || "").trim()).not.toBe("");
-web/src/components/menuPage.test.tsx:993:      b.textContent?.trim() === "开始新游戏"
-web/src/components/menuPage.test.tsx:1012:      (b.textContent || "").trim() === "继续"
-web/src/components/situation.test.tsx:87:    expect((progress?.textContent || "").trim()).not.toBe("");
-web/src/components/situation.test.tsx:154:    expect(ends.every((el) => (el.textContent || "").trim() === "")).toBe(true);
-web/src/components/situation.test.tsx:231:    expect(empty!.textContent?.trim()).toBeTruthy();
 web/src/components/hud.tsx:526:      <div className={["fullscreen-modal", bgClass, hideTitle ? "modal-layout-bare" : ""].filter(Boolean).join(" ")}>
 ming_sim/llm_config.py:56:    key = str(value or "").strip()
 ming_sim/llm_config.py:63:    key = str(value or "").strip()
@@ -2221,16 +2196,6 @@ web/src/components/map.tsx:707:                      {region.name.split(" / ")[0
 web/src/components/map.tsx:741:                  <span>{node.region?.name.split(" / ")[0] || node.label}</span>
 web/src/components/drawers.tsx:63:    const parts = (office || "").split(",").map((s) => s.trim());
 web/src/components/drawers.tsx:155:  const listKey = list.map((m) => m.name).join("|");
-web/src/components/modals.test.tsx:454:    expect((stage!.querySelector(".chat-empty-chrome")?.textContent || "").trim()).not.toBe("");
-web/src/components/modals.test.tsx:473:    expect(buttons.some((button) => (button.textContent || "").trim() === "退朝")).toBe(false);
-web/src/components/modals.test.tsx:518:    expect(textarea.placeholder.trim()).not.toBe("");
-web/src/components/modals.test.tsx:525:    expect(textarea.placeholder.trim()).not.toBe("");
-web/src/components/modals.test.tsx:1158:    const neutral = [{ role: "scene", speaker: "", content: parts.join(""), beat: "dialogue", chat_turn_id: turnId }, trailing];
-web/src/components/modals.test.tsx:1184:    const originalStory = Array.from(turn?.querySelectorAll("p") ?? [], (node) => node.textContent).join("");
-web/src/components/modals.test.tsx:1204:    expect(Array.from(turn?.querySelectorAll(".turn-segment p") ?? [], (node) => node.textContent).join("")).toBe(originalStory);
-web/src/components/modals.test.tsx:1216:    expect(Array.from(turn?.querySelectorAll(".turn-segment p") ?? [], (node) => node.textContent).join("")).toBe(originalStory);
-web/src/components/modals.test.tsx:1678:    expect((dialog?.getAttribute("aria-label") || "").trim()).not.toBe("");
-web/src/components/modals.test.tsx:1803:    ).join("\n\n");
 web/src/components/decisionModal.tsx:81:        ? !!(pick.summon_target || "").trim()
 web/src/components/decisionModal.tsx:87:      : !!(pick.label || (pick.note || "").trim());
 web/src/components/decisionModal.tsx:208:    ].join(",");

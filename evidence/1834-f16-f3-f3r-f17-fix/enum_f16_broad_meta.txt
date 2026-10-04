@@ -1,2 +1,3 @@
-CMD: rg -n --glob ming_sim/**/*.py --glob web_app.py --glob web/src/**/*.{ts,tsx} strip|lstrip|rstrip|trim|trimStart|trimEnd|replace|re.sub|[:n]|split|join|substring|slice
-HIT_COUNT=2241
+CMD: rg -n --glob 'ming_sim/**/*.py' --glob 'web_app.py' --glob 'web/src/**/*.{ts,tsx}' strip|lstrip|rstrip|trim|trimStart|trimEnd|replace|re.sub|[:n]|split|join|substring|slice
+FILTER: production only — exclude web/src/**/*.test.* (not F16 supply/write semantic candidates)
+HIT_COUNT=2206

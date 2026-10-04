@@ -1,21 +1,30 @@
-METHOD (user counter-example + continued F16 class; self-audit: drop new permanent proof tests;
-delete no-caller recommendation remnant; map all 2241 broad hits to concrete locs)
+METHOD (user counter-example + continued F16 class; self-audit recheck:
+drop new permanent proof tests; delete no-caller recommendation remnant;
+map production broad hits to concrete locs; remap drifted empty/OOB rows)
 
 1) Broad rewrite-shape enum (production globs; NOT strip/[:n]/re.sub only):
    rg -n --glob 'ming_sim/**/*.py' --glob 'web_app.py' --glob 'web/src/**/*.{ts,tsx}' \
      '\.strip\(\)|\.lstrip\(\)|\.rstrip\(\)|\.trim\(\)|\.trimStart\(\)|\.trimEnd\(\)|\.replace\(|re\.sub\(|\[:\s*\d+\s*\]|\.split\(|\.join\(|\.substring\(|\.slice\('
+   FILTER: production only — exclude web/src/**/*.test.* (tests are not F16
+   supply/write semantic candidates; do not KEEP them as static_asset).
    → enum_f16_rewrite_shapes_broad.txt  (HIT_COUNT in enum_f16_broad_meta.txt)
 
 2) High-signal return/assign/yield of strip|trim:
    → enum_f16_return_assign_strip.txt
 
 3) Disposition authority = f16_disposition_after_counterexample.tsv (16 grouped rows)
-   Full member locs = f16_disposition_member_locs.tsv (every broad hit → one group; no many/various/otherwise)
+   Full member locs = f16_disposition_member_locs.tsv
+   - Every production broad hit → one group; no many/various/otherwise.
+   - Empty snippet ≠ semantic read. Drifted/deleted locs remapped with
+     old→new function (see f16_member_loc_remap.txt); snippet = current source line.
    - Group by real same duty; one conclusion per group; true-source basis = opened exemplar + callers.
    - Class: free-prose supply/write rewrite → FIX; machine-key / JSON envelope /
      local emptiness-copy → KEEP. Emptiness: strip on copy; value stays raw.
    - Explicit: rewriting stdout/CLI packaging of LLM body is NOT a legal KEEP.
    - Retired `_cli_recommendation_call` cluster with zero callers → DELETED (not host-KEEP).
+     (Attribution: this DELETED/host-KEEP rule is **self-audit** under CLAUDE.md /
+     ADR 0142 + zero-caller remnant facts — not a verbatim user continued-ruling clause.
+     User continued-ruling sole source = continued-ruling.json.)
 
 4) Prior tables:
    - f16_hand_member_table.tsv → already REVOKED_TEMPLATE
