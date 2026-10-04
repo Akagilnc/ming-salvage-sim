@@ -43,7 +43,6 @@ def test_capture_drops_dachen_generic_no_409(game, monkeypatch):
         text, None, db=db, content=content,
     )
     ids = [str(item["character_id"]) for item in (payload.get("participant_roster") or [])]
-    assert "大臣" not in ids
     assert ids == ["毕自严"]
 
     session = GameSession.__new__(GameSession)

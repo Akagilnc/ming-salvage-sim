@@ -347,7 +347,6 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
     expect(historyReads).toBeGreaterThan(1);
     expect(host.querySelector("textarea")?.value).toBe("");
     expect(host.querySelector('[data-audience-turn-id="8"]')?.textContent).toContain("边务如何");
-    expect(host.querySelector('[data-audience-turn-id="8"]')).not.toBeNull();
   });
 
 
@@ -2477,7 +2476,6 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     // court roster：名册可读、召对写入口拔除
     await click(byAria(host, "朝堂·召见大臣"));
     await tick();
-    expect(host.querySelector(".court-drawer.open")).not.toBeNull();
     expect(host.querySelector(".court-drawer.open")!.textContent).toContain(SNAP_MINISTER);
     await closeOpenOverlay(host);
 

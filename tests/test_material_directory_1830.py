@@ -123,7 +123,7 @@ def test_matter_carriers_follow_the_real_knowledge_projection(game, tmp_path):
     不替换知识输入，也不另调内部 helper 把投影重算一遍当证据。
 
     开场「正经手事务」只列经手事务这半条不在本文件承担：`PreparedMaterials`
-    只导出 root/opening/index_lines，开场里没有事务号的结构化出口，而解析
+    只导出 root/opening，开场里没有事务号的结构化出口，而解析
     开场正文去认段头措辞正是本类禁止的盯文。按票面不为此新增生产测试钩子。
     """
     db, state, content = game

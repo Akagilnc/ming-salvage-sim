@@ -690,7 +690,6 @@ def test_leader_only_mutation_changes_faction_posture_not_roster(game):
     )
 
     # Gatekeeper bench unchanged — 安抚首领 ≠ 换把关人.
-    assert "许誉卿" in _gatekeeper_names(after)
     assert _gatekeeper_names(after) == _gatekeeper_names(before)
     assert after["gatekeepers"] == before["gatekeepers"]
 

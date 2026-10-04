@@ -374,7 +374,7 @@ def materialize_pay_order_decree(
                 " (removed_turn, key, value, kind, origin_ref, reason, beyond_intent)"
                 " VALUES (?, ?, ?, 'override', ?, ?, 0)",
                 (turn, until_key, stale_until, origin,
-                 "永久旨覆写清旧期限（#653 F1.4 stale until）"[:240]),
+                 "永久旨覆写清旧期限（#653 F1.4 stale until）"),
             )
             db.conn.execute("DELETE FROM fiscal_config WHERE key = ?", (until_key,))
             db.record_fiscal_config_change(
@@ -439,7 +439,7 @@ def restore_pay_order_override(
             " (removed_turn, key, value, kind, origin_ref, reason, beyond_intent)"
             " VALUES (?, ?, ?, 'override', ?, ?, 0)",
             (int(turn), key, old, origin,
-             (reason or "撤销 override 旨，形状退出格律")[:240]),
+             (reason or "撤销 override 旨，形状退出格律")),
         )
         db.conn.execute("DELETE FROM fiscal_config WHERE key = ?", (key,))
         db.record_fiscal_config_change(
@@ -458,7 +458,7 @@ def restore_pay_order_override(
                 " (removed_turn, key, value, kind, origin_ref, reason, beyond_intent)"
                 " VALUES (?, ?, ?, 'override', ?, ?, 0)",
                 (int(turn), until_key, old_until, origin,
-                 "撤销 override 旨，清除期限伴随键"[:240]),
+                 "撤销 override 旨，清除期限伴随键"),
             )
             db.conn.execute("DELETE FROM fiscal_config WHERE key=?", (until_key,))
             db.record_fiscal_config_change(

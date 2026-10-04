@@ -227,7 +227,6 @@ def test_metrics_refresh_never_empty_window(game):
     reload_state_from_db(db, state)
 
     assert id(state.metrics) == before_id
-    assert "幽灵指标" not in state.metrics
     fresh = db.load_state()
     assert state.metrics == fresh.metrics
 

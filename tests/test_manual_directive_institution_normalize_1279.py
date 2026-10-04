@@ -192,10 +192,6 @@ def test_capture_manual_directive_drops_collective_and_institution_names(
             {"character_id": "毕自严", "tier": "协办"},
         ],
     )
-    assert name not in ids
-    assert "王承恩" not in ids
-    assert "田尔耕" not in ids
-    assert "魏忠贤" not in ids
     assert ids == ["毕自严"]
 
 

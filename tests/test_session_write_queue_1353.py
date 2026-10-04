@@ -181,7 +181,6 @@ def test_post_barrier_claim_run_waits_for_barrier():
     th.start()
     trail_blocked.wait()
     # 屏障未放行前尾随不得写
-    assert "trail_write" not in order
     assert order == ["barrier_start"]
 
     barrier_hold.set()

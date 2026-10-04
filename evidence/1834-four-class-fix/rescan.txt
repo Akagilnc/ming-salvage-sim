@@ -1,0 +1,21 @@
+### F15 rescan
+ming_sim/month_chain.py:323:        exclude_secret_order_dossiers=True,
+ming_sim/materials.py:1256:def secret_order_affair_ids(db: Any) -> set[int]:
+ming_sim/materials.py:1402:def _world_affair_lines(
+ming_sim/materials.py:1406:    exclude_affair_ids: set[int] | None = None,
+ming_sim/materials.py:1414:    ``exclude_affair_ids`` drops whole matters (name/origin included) so public
+ming_sim/materials.py:1421:    excluded = exclude_affair_ids or set()
+ming_sim/materials.py:1434:            f"起因：{affair.origin}", f"状态：{affair.status}", *fact_lines,
+ming_sim/materials.py:2439:    exclude_secret_order_dossiers: bool = False,
+ming_sim/materials.py:2463:    secret_dossiers = secret_order_dossier_ids(db) if exclude_secret_order_dossiers else set()
+ming_sim/materials.py:2464:    secret_affairs = secret_order_affair_ids(db) if exclude_secret_order_dossiers else set()
+ming_sim/materials.py:2465:    affair_lines, opening_affair_lines = _world_affair_lines(
+ming_sim/materials.py:2466:        db, include_fact, exclude_affair_ids=secret_affairs or None,
+### F16 rescan free-text crop for material supply
+(no hits)
+ming_sim/staged_commitment.py:78:            "origin_context": (origin_context or criterion)[:240],
+### F13 rescan
+evidence/1834-four-class-fix/scripts/probe_four_class.py:186:        before = hasattr(pm, "index_lines")
+evidence/1834-four-class-fix/scripts/probe_four_class.py:188:        after = hasattr(pm, "index_lines")
+### F3-R remaining in→eq / null+content candidates
+JS_KEEP_WAITFOR web/src/appDurableWiring.test.tsx:1919-1921

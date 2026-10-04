@@ -754,7 +754,6 @@ def test_cli_target_kinds_accepts_canonical_eight():
     """producer 与 durable 共八值（含 dossier）：合法通过、法外 fail-loud。"""
     from ming_sim import cli_backend as cb
     assert TARGET_KINDS is EP_TARGET_KINDS
-    assert "dossier" in TARGET_KINDS
     assert TARGET_KINDS == frozenset({
         "policy", "character", "office", "army", "region", "issue", "account",
         "dossier",

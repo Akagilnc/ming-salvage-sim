@@ -70,7 +70,6 @@ def write_identity_materials(
     from types import SimpleNamespace
 
     root = Path(prepared.root)
-    index = list(getattr(prepared, "index_lines", ()) or ())
     written: List[str] = []
     for raw in names:
         name = str(raw or "").strip()
@@ -83,14 +82,12 @@ def write_identity_materials(
         knowledge, issue_materials = _character_material_projection(db, state, character)
         rel = identity_material_rel(name)
         _write_tree((root / rel).parent, db, state, character, knowledge, issue_materials)
-        index.append(rel)
         written.append(rel)
     if written:
         index_path = root / _INDEX_NAME
         # Append paths without re-reading or normalizing the existing free text.
         with index_path.open("a", encoding="utf-8", newline="") as stream:
             stream.write("\n" + "\n".join(written) + "\n")
-        object.__setattr__(prepared, "index_lines", tuple(index))
     return written
 
 
@@ -1256,6 +1253,15 @@ def secret_order_dossier_ids(db: Any) -> set[int]:
     }
 
 
+def secret_order_affair_ids(db: Any) -> set[int]:
+    """密令案卷已挂接的事务 id。公共供料排除名／起因时与案卷排除共用同一边界。"""
+    return {
+        int(row["affair_id"])
+        for row in db.list_decree_dossiers()
+        if row.get("secret_order_id") and int(row.get("affair_id") or 0) > 0
+    }
+
+
 # 密令来源 origin / source_id 唯一前缀（#1862 reopen）。拼接与判定都走这里。
 SECRET_ORDER_ORIGIN_PREFIX = "secret_order:"
 
@@ -1393,21 +1399,31 @@ def _knowledge_for_experience(knowledge: dict, include_event: Any) -> dict:
     return projected
 
 
-def _world_affair_lines(db: Any, include_fact: Any = None) -> tuple[
+def _world_affair_lines(
+    db: Any,
+    include_fact: Any = None,
+    *,
+    exclude_affair_ids: set[int] | None = None,
+) -> tuple[
     list[tuple[str, str, str, str]], list[tuple[str, str, str, str]],
 ]:
     """Project all durable matters once; only open matters enter the opening.
 
     Each line is (dir_key, title, directory_text, opening_text). The directory
     retains origin and every dated fact; the opening uses the latest fact only.
+    ``exclude_affair_ids`` drops whole matters (name/origin included) so public
+    feeds cannot bypass the secret-dossier boundary via metadata alone.
     """
     store = getattr(db, "affairs", None)
     if store is None:
         return [], []
     textual_facts = getattr(db, "textual_facts", None)
+    excluded = exclude_affair_ids or set()
     lines: list[tuple[str, str, str, str]] = []
     opening_lines: list[tuple[str, str, str, str]] = []
     for affair in store.list_all():
+        if int(affair.id) in excluded:
+            continue
         facts = (
             store.current_situation(textual_facts, affair.id)
             if textual_facts is not None else ()
@@ -1816,7 +1832,10 @@ def _write_world_tree(
         for key, title, text, _opening in affair_lines
     }
     for affair in db.affairs.list_all():
-        affair_materials[f"affair-{affair.id}"].append(_material_facts_text({
+        key = f"affair-{affair.id}"
+        if key not in affair_materials:
+            continue
+        affair_materials[key].append(_material_facts_text({
             "直挂事务实况": _world_effect_materials(
                 db, db.affairs.origin_ref(affair.id), exclude_dossier_ids or set(),
                 secret_turn_ids or set(), exclude_origin_prefix,
@@ -2439,11 +2458,14 @@ def prepare_world_materials(
     # 不另建一套「世界公开说法」查询。排除边界按调用职责落，不按有无姓名落。
     knowledge = build_character_knowledge(db, state, "", public_feed=public_feed)
     public_events = knowledge.get("public_events") or []
-    affair_lines, opening_affair_lines = _world_affair_lines(db, include_fact)
-    dossier_facts = continuing_dossier_facts(db, int(state.turn))
     # #1834 大理寺 bounce 3：与人物经历同一纪律——本次 prepare 只算一次盘面全量
     # 投影，目录写入与 opening 共用同一份冻结结果，不重复查两遍账本。
     secret_dossiers = secret_order_dossier_ids(db) if exclude_secret_order_dossiers else set()
+    secret_affairs = secret_order_affair_ids(db) if exclude_secret_order_dossiers else set()
+    affair_lines, opening_affair_lines = _world_affair_lines(
+        db, include_fact, exclude_affair_ids=secret_affairs or None,
+    )
+    dossier_facts = continuing_dossier_facts(db, int(state.turn))
     if secret_dossiers:
         dossier_facts = [
             fact for fact in dossier_facts

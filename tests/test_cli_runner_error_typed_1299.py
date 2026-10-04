@@ -67,7 +67,6 @@ def test_clichat_normal_reply_still_returns(monkeypatch):
         [SimpleNamespace(role="user", content="边事如何")],
         Message(role="assistant"),
     )
-    assert "臣遵旨" in captured["text"]
     assert captured["text"] == "臣遵旨，边事容臣细奏。"
 
 
