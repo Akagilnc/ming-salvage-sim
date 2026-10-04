@@ -555,7 +555,6 @@ def test_multi_target_with_one_bad_endpoint_writes_zero_edges_for_item(game):
     rejected = [r for r in res if r.get("rejected")]
     assert len(rejected) == 1
     assert rejected[0].get("category") == "invalid_relation_event"
-    assert rejected[0].get("reason")  # 有拒收说明；不锁散文原文
     # 坏项零写入（含好端点也不部分落库）；好项不受牵连
     rows = _edge_rows(db)
     assert _triplets(rows) == {("毕自严", "王绍徽", "协作")}
@@ -742,7 +741,6 @@ def test_never_qualified_endpoints_still_rejected_in_mutating_batch(game):
     rejected = [r for r in res if r.get("rejected")]
     assert len(rejected) == 2
     assert all(r["category"] == "invalid_relation_event" for r in rejected)
-    assert all(r.get("reason") for r in rejected)  # 有拒收说明；不锁端点名散文
     assert _triplets(_edge_rows(db)) == {
         ("王绍徽", "毕自严", "结怨"), ("孙承宗", "毕自严", "协作"),
     }
@@ -767,7 +765,6 @@ def test_live_roster_cannot_rescue_endpoint_outside_passed_union(game):
     )
     assert len(res) == 1 and res[0].get("rejected")
     assert res[0]["category"] == "invalid_relation_event"
-    assert res[0].get("reason")  # 有拒收说明；不锁端点名散文
     assert _edge_rows(db) == []  # 零边写入
 
 

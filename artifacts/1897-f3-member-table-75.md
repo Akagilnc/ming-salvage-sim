@@ -45,7 +45,7 @@
 | 36 | `test_pihong_dossier_1490.py:493` `test_ordinary_event_with_hallucinated_capability_submits` | SSE_PROTOCOL | **保留** | SSE 线协议控序（event: done/error），非自由正文盯文 |
 | 37 | `test_pihong_dossier_1490.py:494` `test_ordinary_event_with_hallucinated_capability_submits` | SSE_PROTOCOL | **保留** | SSE 线协议控序（event: done/error），非自由正文盯文 |
 | 38 | `test_pihong_dossier_1490.py:500` `test_ordinary_event_with_hallucinated_capability_submits` | NOTE_EQ | **清** | 更正：P6 豁免非法；删 note/label 散文等值；保留无 dossier_decision |
-| 39 | `test_pihong_dossier_1490.py:574` `test_657_p6_mapper_deliberate_preserve_free_text` | TITLE_LOCK | **清** | 再更正：title>80 旧限制证明整段删除；改名 `test_657_stop_condition_type_and_layer_a_schema`（仅结构闸） |
+| 39 | `test_pihong_dossier_1490.py:574` `test_657_p6_mapper_deliberate_preserve_free_text` | TITLE_LOCK | **清→独立 schema 负向** | 旧 title>80 / 改名杂糅案删除；现 `test_657_stop_condition_normalize_schema_negative` 直测 `normalize_stop_condition`（str 接受；None/空白→""；dict/list/其它 ValueError）。layer_a/deliberate→stalled 另有覆盖，不改名留存 |
 | 40 | `test_pihong_dossier_1490.py:1456` `test_1621_http_follow_draft_uses_catalog_army_id` | SSE_PROTOCOL | **保留** | SSE 线协议控序（event: done/error），非自由正文盯文 |
 | 41 | `test_pihong_dossier_1490.py:1457` `test_1621_http_follow_draft_uses_catalog_army_id` | SSE_PROTOCOL | **保留** | SSE 线协议控序（event: done/error），非自由正文盯文 |
 | 42 | `test_pihong_dossier_1490.py:1603` `test_1589_empty_desk_rejects_nonempty_keyless_choices` | SSE_PROTOCOL | **保留** | SSE 线协议控序（event: done/error），非自由正文盯文 |

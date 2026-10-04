@@ -348,7 +348,7 @@ def test_urge_history_restore_from_committed_pending_ac7(game):
     db2 = GameDB(path)
     hist = collect_urge_history(db2, commitment_ref=issue_id)
     assert len(hist) >= 1
-    assert hist[0]["reason"] == "restore-probe"
+    assert int(hist[0]["deadline_months"]) == 3  # restore 结构字段；不锁 reason 散文
 
 
 def test_rush_without_issue_fail_closed_no_remonstrance(game):
@@ -598,7 +598,6 @@ def test_commitment_rush_via_pending_actions_gate(game):
     hist = collect_urge_history(db, commitment_ref=issue_id)
     assert len(hist) >= 1
     assert hist[-1]["new_due"] == state.turn + 1
-    assert hist[-1].get("reason")  # 有催办说明；不锁散文原文
     chosen = [
         t for t in db.list_next_audience_todos(commitment_ref=issue_id)
         if t["entry_kind"] in {ENTRY_KIND_RUSH_REMONSTRANCE, ENTRY_KIND_GRACE_PLEA}

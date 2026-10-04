@@ -555,41 +555,18 @@ def test_657_c1_decided_mismatch_rejects_and_cas0(game):
     with pytest.raises(ValueError):
         ra.validate_all([empty_decided], [{'decision_key': key, 'action': 'hold', 'label': '留中'}])
 
-def test_657_stop_condition_type_and_layer_a_schema(game):
-    """#657：stop_condition 须为 str；layer_a 缺键/坏型拒；deliberate→stalled。
-    专为 title 字数旧限制的证明案已整案删（不锁自由文本、不换形留 title>80）。"""
-    from ming_sim import rescript_actions as ra
-    from ming_sim.rescript_draft import normalize_rescript_layer_a_option
-    db, state, content = game
-    m = db.conn.execute("SELECT name FROM characters WHERE status='active' AND power_id='ming' LIMIT 1").fetchone()
-    mname = str(m['name']) if m else '杨嗣昌'
-    urgent, _ = _plant_urgent_desk(db, state)
-    key = urgent['decision_key']
-    batch = ra.validate_all([urgent], [{'decision_key': key, 'action': 'deliberate', 'label': '下部议'}])
-    pre = ra.PrewriteResults(deliberate_by_key={key: {'title': '廷议题', 'body': '臣请集议。', 'supporter_ids': []}})
-    ra.apply_rescript_batch(db, state, batch, pre, content=content)
-    drow = db.find_deliberation_dossier_by_decision_key(key)
-    assert drow is not None
-    payload = _dossier_payload(drow)
-    assert payload.get('deliberation_state') == 'stalled'
-    issue = db.conn.execute('SELECT origin_ref FROM issues WHERE origin_ref=?', (f"dossier:{int(drow['id'])}",)).fetchone()
-    assert issue is not None
-    choice = ra.canonical_choice({'decision_key': 'rescript_draft:1:0', 'action': 'midzhi', 'action_type': 'assignment', 'label': 'x', 'hint': 'h', 'target_kind': 'region', 'target_id': 'shaanxi', 'locality_scope': 'single', 'region_id': 'shaanxi', 'transaction_category': '督赈', 'assignee_name': mname, 'commitment_kind': 'until_stop', 'stop_condition': '军饷清完乃止', 'deadline_months': 1})
-    assert isinstance(choice['stop_condition'], str)
-    with pytest.raises(ValueError):
-        ra.canonical_choice({'decision_key': 'rescript_draft:1:0', 'action': 'midzhi', 'stop_condition': {'army.x.arrears': '<=0'}})
-    base_a = {'label': '拟', 'hint': 'h', 'action_type': 'assignment', 'target_kind': 'region', 'target_id': 'shaanxi', 'locality_scope': 'single', 'assignee_name': '', 'region_id': 'shaanxi', 'transaction_category': '督赈'}
-    assert normalize_rescript_layer_a_option(base_a)['assignee_name'] == ''
-    for miss in ('assignee_name', 'region_id', 'transaction_category'):
-        bad = dict(base_a)
-        del bad[miss]
+def test_657_stop_condition_normalize_schema_negative():
+    """#1897/#39：独立 schema 负向——normalize_stop_condition（C.6）仅接受 str；
+    dict/list/其它类型响亮 ValueError。旧 title>80 保真案与改名杂糅案整段删除；
+    layer_a/deliberate→stalled 另有独立覆盖，不在此改名留存。"""
+    from ming_sim.rescript_draft import normalize_stop_condition
+    assert normalize_stop_condition("until-arrears-cleared") == "until-arrears-cleared"
+    assert normalize_stop_condition(None) == ""
+    assert normalize_stop_condition("   ") == ""
+    assert normalize_stop_condition("  keep-pad  ") == "  keep-pad  "  # 非空不 strip
+    for bad in ({"army.x.arrears": "<=0"}, ["x"], 12, True):
         with pytest.raises(ValueError):
-            normalize_rescript_layer_a_option(bad)
-    for bad_key, bad_val in (('assignee_name', None), ('region_id', 12), ('transaction_category', ['督赈'])):
-        bad = dict(base_a)
-        bad[bad_key] = bad_val
-        with pytest.raises(ValueError):
-            normalize_rescript_layer_a_option(bad)
+            normalize_stop_condition(bad)
 
 def test_657_default_hold_missing_and_empty_action(game):
     """#657 Class2 V1–V5：缺行/keyed 无 action/keyed 空 action → hold；

@@ -179,7 +179,6 @@ def test_apply_score_extraction_rejects_person_change_power_move_without_way(rea
     assert changes[0]["origin_ref"] == "盘面自发"
     assert changes[0]["动作"] == "易主"
     assert changes[0]["rejected"] is True
-    assert changes[0]["reason"]
     assert changes[0]["category"] == "missing_field"
     assert changes[0]["item"]["name"] == name
     assert changes[0]["item"]["动作"] == "易主"
@@ -291,7 +290,6 @@ def test_apply_score_extraction_rejects_invalid_loyalty_assessment(game, item, c
     assert changes[0]["origin_ref"] == "盘面自发"
     assert changes[0]["动作"] == "评定"
     assert changes[0]["rejected"] is True
-    assert changes[0]["reason"]
     assert changes[0]["category"] == category
     assert changes[0]["item"] == item
 
@@ -524,7 +522,6 @@ def test_apply_score_extraction_rejects_malformed_power_move_backlash_before_wri
     assert changes[0]["origin_ref"] == "盘面自发"
     assert changes[0]["动作"] == "易主"
     assert changes[0]["rejected"] is True
-    assert changes[0]["reason"]
     assert changes[0]["category"] == "invalid_enum"
     assert changes[0]["item"] == item
 
@@ -555,7 +552,6 @@ def test_legacy_status_change_rejects_non_active_target_before_transition_matrix
             "SELECT status, status_reason FROM characters WHERE name=?", (name,)
         ).fetchone()
         assert row["status"] == "dismissed"
-        assert row["status_reason"]  # 有缘由；不锁散文原文
         assert applied["character_status_changes"] == []
         changes = applied["applied_person_changes"]
         assert len(changes) == 1
@@ -563,7 +559,6 @@ def test_legacy_status_change_rejects_non_active_target_before_transition_matrix
         assert changes[0]["origin_ref"] == "盘面自发"
         assert changes[0]["动作"] == "处置"
         assert changes[0]["rejected"] is True
-        assert changes[0]["reason"]
         assert changes[0]["category"] == "invalid_transition"
         assert changes[0]["status"] == "exiled"
         assert changes[0]["item"]["name"] == name
@@ -1107,7 +1102,6 @@ def test_apply_score_extraction_does_not_release_when_derived_appointment_is_inv
         assert changes[0]["动作"] == "任命"
         assert changes[0]["new_office"] == ""
         assert changes[0]["rejected"] is True
-        assert changes[0]["reason"]
         assert changes[0]["category"] == "missing_field"
         assert changes[0]["item"]["name"] == name
         assert changes[0]["item"]["动作"] == "任命"
@@ -1143,11 +1137,9 @@ def test_apply_score_extraction_accepts_status_reason_as_person_reason(game):
             "SELECT status, status_reason FROM characters WHERE name=?", (name,)
         ).fetchone()
         assert row["status"] == "dismissed"
-        assert row["status_reason"]  # 非空；不锁散文原文
         assert applied["applied_person_changes"][0]["name"] == name
         assert applied["applied_person_changes"][0]["动作"] == "处置"
         assert applied["applied_person_changes"][0]["status"] == "dismissed"
-        assert applied["applied_person_changes"][0].get("reason")
     finally:
         content.characters[name].status = old_status
         content.characters[name].office = old_office
@@ -1204,7 +1196,7 @@ def test_apply_score_extraction_rolls_back_derived_release_when_office_write_fai
         assert changes[0]["name"] == name
         assert changes[0]["new_office"] == "陕西总督"
         assert changes[0]["rejected"] is True
-        assert changes[0]["rejected"] is True and changes[0]["reason"]
+        assert changes[0]["rejected"] is True
         assert changes[0]["derived_from"] == "放归"
     finally:
         content.characters[name].status = old_status
@@ -1287,7 +1279,7 @@ def test_derived_release_rejection_keeps_prior_person_change_in_atomic_batch(
         assert changes[1]["name"] == second
         assert changes[1]["new_office"] == "陕西总督"
         assert changes[1]["rejected"] is True
-        assert changes[1]["rejected"] is True and changes[1]["reason"]
+        assert changes[1]["rejected"] is True
         assert changes[1]["derived_from"] == "放归"
     finally:
         content.characters[first].status = old_first_status
@@ -1345,7 +1337,7 @@ def test_derived_release_restores_when_post_office_helper_raises(game, monkeypat
         assert changes[0]["name"] == name
         assert changes[0]["new_office"] == "陕西总督"
         assert changes[0]["rejected"] is True
-        assert changes[0]["rejected"] is True and changes[0]["reason"]
+        assert changes[0]["rejected"] is True
         assert changes[0]["derived_from"] == "放归"
     finally:
         content.characters[name].status = old_status
@@ -1402,7 +1394,6 @@ def test_apply_score_extraction_does_not_release_non_ming_when_derived_appointme
         assert changes[0]["name"] == name
         assert changes[0]["new_office"] == "陕西总督"
         assert changes[0]["rejected"] is True
-        assert changes[0]["reason"]
         assert changes[0]["category"] == "invalid_transition"
         assert changes[0]["item"] == raw_item
     finally:
@@ -1824,7 +1815,6 @@ def test_apply_score_extraction_rejects_unknown_person_change(read_game, with_co
     assert changes[0]["动作"] == "处置"
     assert changes[0]["status"] == "dismissed"
     assert changes[0]["rejected"] is True
-    assert changes[0]["reason"]
     assert changes[0]["category"] == "hallucinated_id"
     assert changes[0]["item"] == item
 
@@ -1848,7 +1838,6 @@ def test_apply_score_extraction_rejects_dead_status_outbound(game):
     assert changes[0]["动作"] == "处置"
     assert changes[0]["status"] == "dismissed"
     assert changes[0]["rejected"] is True
-    assert changes[0]["reason"]
     assert changes[0]["category"] == "invalid_transition"
     assert changes[0]["item"] == {"name": name, "origin_ref": "盘面自发", "动作": "处置", "status": "dismissed"}
 
@@ -2066,14 +2055,12 @@ def test_apply_score_extraction_rejects_invalid_person_travel(game):
     assert changes[0]["origin_ref"] == "盘面自发"
     assert changes[0]["动作"] == "行止"
     assert changes[0]["rejected"] is True
-    assert changes[0]["reason"]
     assert changes[0]["category"] == "missing_field"
     assert changes[0]["item"] == {"name": "孔有德", "origin_ref": "盘面自发", "动作": "行止"}
     assert changes[1]["name"] == name
     assert changes[1]["origin_ref"] == "盘面自发"
     assert changes[1]["动作"] == "行止"
     assert changes[1]["rejected"] is True
-    assert changes[1]["reason"]
     assert changes[1]["category"] == "invalid_transition"
     assert changes[1]["item"] == {"name": name, "origin_ref": "盘面自发", "动作": "行止", "transit_to": "liaodong"}
 
@@ -2099,7 +2086,6 @@ def test_apply_score_extraction_rejects_unknown_person_travel_region(read_game):
     assert changes[0]["origin_ref"] == "盘面自发"
     assert changes[0]["动作"] == "行止"
     assert changes[0]["rejected"] is True
-    assert changes[0]["reason"]
     assert changes[0]["category"] == "missing_ref"
     assert changes[0]["item"] == {"name": name, "origin_ref": "盘面自发", "动作": "行止", "transit_to": "not_a_region"}
 
@@ -2193,7 +2179,6 @@ def test_set_character_status_clears_stale_reason_code_when_missing(game):
             "SELECT status, status_reason, reason_code FROM characters WHERE name=?", (name,)
         ).fetchone()
         assert row["status"] == "offstage"
-        assert row["status_reason"]  # last-write 有缘由；不锁散文原文
         assert row["reason_code"] == ""
     finally:
         content.characters[name].status = old_status
@@ -2408,7 +2393,6 @@ def test_reappoint_rollback_restores_character_reason(game, monkeypatch):
 
     ch = content.characters[name]
     assert ch.status == "dismissed", f"回滚后内存 status 未还原：{ch.status!r}"
-    assert ch.status_reason  # 回滚后有缘由；不锁散文原文
     assert ch.reason_code == "获罪削籍", f"回滚后内存 reason_code 未还原：{ch.reason_code!r}"
 
 
@@ -2718,7 +2702,6 @@ def test_reload_syncs_reason_code_status_reason_to_content(game):
 
     ch = content.characters[name]
     assert getattr(ch, "reason_code", None) == "获罪削籍", "重载未同步 reason_code"
-    assert getattr(ch, "status_reason", None)  # 重载有缘由；不锁散文原文
 
 
 def test_disposition_syncs_reason_code_to_content_in_txn(game):
@@ -2740,7 +2723,6 @@ def test_disposition_syncs_reason_code_to_content_in_txn(game):
     ch = content.characters[name]
     assert ch.status == "dismissed"
     assert ch.reason_code == "获罪削籍", f"in-txn 内存 reason_code 未同步，实得 {ch.reason_code!r}"
-    assert ch.status_reason  # in-txn 有缘由；不锁散文原文
 
 
 def test_reappointment_clears_displaced_mark_in_both_db_and_content(game):
@@ -2791,7 +2773,8 @@ def test_yizhu_clears_status_reason_in_db(game):
     status_changed_turn 记本回合——否则 active 者带着旧下狱缘由，DB 自相矛盾。"""
     db, state, content = game
     name = active_ming_character(db, content)
-    db.set_character_status(state, name, "imprisoned", "松山兵败被执", reason_code="陷虏")
+    old_imprison_reason = "松山兵败被执"
+    db.set_character_status(state, name, "imprisoned", old_imprison_reason, reason_code="陷虏")
     if name in content.characters:
         content.characters[name].status = "imprisoned"
 
@@ -2810,8 +2793,7 @@ def test_yizhu_clears_status_reason_in_db(game):
         "SELECT status, status_reason, status_changed_turn, reason_code FROM characters WHERE name=?", (name,)
     ).fetchone()
     assert row["status"] == "active"
-    assert row["status_reason"] != "松山兵败被执", "易主后 DB 仍滞留旧下狱缘由"
-    assert row["status_reason"]  # 已换新缘由；不锁散文原文
+    assert row["status_reason"] != old_imprison_reason, "易主后 DB 仍滞留旧下狱缘由"
     assert row["status_changed_turn"] == state.turn, "易主即状态变更，status_changed_turn 须记本回合（docstring 称验却漏断言=F2 半漏）"
     assert row["reason_code"] == ""
 

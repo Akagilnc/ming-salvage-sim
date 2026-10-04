@@ -347,7 +347,6 @@ def test_summons_translation_does_not_apply_monthly_effects_at_night(game):
     ).fetchone()
     assert rejection is not None
     assert rejection["category"] == "invalid_state"
-    assert rejection["reason"]
 
 
 def test_scene_stay_attend_uses_actual_protagonist_not_virtual_speaker(game, monkeypatch):

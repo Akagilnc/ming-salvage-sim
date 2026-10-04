@@ -1402,3 +1402,643 @@ env MING_SIM_AGY_BIN=/usr/bin/false MING_SIM_CODEX_BIN=/usr/bin/false \
 
 - tip HEAD：`384c01a838696c30472312d442b655a5222a9132`（fix `5a17149c1`）
 - **未 push / 未 PR / 未 amend**；误触 stash 已 pop 恢复。
+
+
+---
+
+## 纠正回执（非空 reason 洗绿 / #39 独立 schema / 可核证据，本轮）
+
+- 基线 tip（施工前 query）：`b7b1b57073e346c74c6f4cf4ffddeef2fc32cb6a`（其上一段 tip `384c01a83` 已过时，本轮不自引用为交卷 tip）
+- 批评点：上轮称「未用非空洗绿」但 urge/relation 写非空 reason；#39 改名留存未证独立 schema；无字段 AST 只落 `/tmp` 无全文；假宣 5525 已审；变异后两条缺七变量；聚焦 371 无精确文件表；tip 自引用过时
+- 本轮：**保留上文全部过程史与 stash 违例记账**；删非空 reason / 标题锁洗绿；#39 改为真正独立 schema 负向；候选全表进仓；脚本全文可复跑；七变量统一实测；**未** stash/amend/push/PR
+- **未声称已 merge / 关票 / reviewer 放行 / 5500 行逐条手审结清**
+
+### 顾问（本轮）
+
+| 类 | 正确行为 | 根因（复核） | 最简修法 |
+|---|---|---|---|
+| F1 | 邸报供料不进未披露实况 | 修面已门控；本轮复跑仍 GREEN | 不动生产；复证 |
+| F2 | 执行区故障响亮；领域拒收仅校验区 | 宽吞已删；本轮复跑仍 GREEN | 不动生产；复证 |
+| F3 | 授权测不机械锁自由文本 | 非空 reason / 改名杂糅 / 标题集合仍属自由文机械依赖 | 删非空；#39 直测 normalize_stop_condition；标题改结构条数/kind |
+
+### 合法性违例（如实保留，不洗白）
+
+- **上轮（corr4 / `5a17149c1` 施工）误触 `git stash` 并立即 pop 恢复**：违例事实保留；本轮工作树未再 stash（`git stash list` 顶项仍为历史他票条目，非本轮新建）。
+- 本轮：**未** stash / amend / push / PR / kill / hard-timeout。
+
+### 本轮类处置（实测清退，非宣称全仓结清）
+
+| 类 | 成员 | 处置 |
+|---|---|---|
+| NONEMPTY_REASON | `test_urge_lever_624` hist reason 非空；restore `==restore-probe` | **清**；改 `deadline_months` / `new_due` 结构 |
+| NONEMPTY_REASON | `test_relation_capture_633` ×3 reason 非空 | **清**；保留 `category` / rejected / 零边 |
+| NONEMPTY_REASON | `test_person_delta_adapter` status_reason/reason 非空洗绿（上轮换形） | **清**；保留 rejected/category/reason_code/status |
+| NONEMPTY_STYLE | `test_style_temperament_641` reason/style/summary 非空 | **清**；before/after 身份 + 键存在 + 空白长度结构 |
+| TITLE_SET | `test_month_chain_1847` titles==问一/问二 等 ×3 | **清**；`len(desk)` + `kind`/`status` |
+| NONEMPTY_REASON | `test_secret_order_payoff_1504` spoliation reason 非空 | **清**；保留 `applied is False` |
+| NONEMPTY_REASON | `test_audience_translate_1837` / `test_region_cannon_delta` reason 非空 | **清**；保留 category |
+| #39 SCHEMA | 改名杂糅 `test_657_stop_condition_type_and_layer_a_schema` | **整案改写**为 `test_657_stop_condition_normalize_schema_negative`：直测 `normalize_stop_condition`（无他处覆盖；dict/list/非 str → ValueError） |
+
+保留（举证）：SSE / FORM 闭集 / typed reason_code / GATE_NEG `text` 不在载荷 / heal 键 schema / events.json #189 独立域 / reason_code 闭集码。
+
+### 无字段 AST 枚举（可复跑；全文）
+
+分析目录：`/tmp/1897-f1f3-corr5/`（不进仓）。进仓副本：`artifacts/1897-enum-f3-nofield.py`（与下附全文同源）。
+
+```bash
+env MING_SIM_AGY_BIN=/usr/bin/false MING_SIM_CODEX_BIN=/usr/bin/false \
+  MING_SIM_CLAUDE_BIN=/usr/bin/false MING_SIM_CURSOR_BIN=/usr/bin/false \
+  MING_SIM_KIMI_BIN=/usr/bin/false MING_SIM_GROK_BIN=/usr/bin/false \
+  MING_SIM_PI_BIN=/usr/bin/false PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$PWD" \
+  ../Ming_LLM/.venv/bin/python /tmp/1897-f1f3-corr5/enum_f3_nofield.py
+# 或：同脚本进仓路径 artifacts/1897-enum-f3-nofield.py（OUT 仍写 /tmp/1897-f1f3-corr5）
+```
+
+实测摘要（`artifacts/1897-f3-nofield-summary.json`）：
+
+```json
+{
+  "ALL_TEST_FILES": 223,
+  "AUTH_RELATED_FILES": 95,
+  "AUTH_RELATED_FILE_LIST": [
+    "test_advances_section_rejections.py",
+    "test_affairs_1831.py",
+    "test_appointment_tenure_607.py",
+    "test_army_card_status_1501.py",
+    "test_audience_background.py",
+    "test_audience_translate_1837.py",
+    "test_audience_translate_1837_reopen.py",
+    "test_audience_travel_gating_670.py",
+    "test_authority_ledger_611.py",
+    "test_breach_plea_623.py",
+    "test_candidate_supply_1893.py",
+    "test_character_knowledge_489.py",
+    "test_close_issues_section_rejections.py",
+    "test_commitment_backlash_626.py",
+    "test_covert_levy_651.py",
+    "test_credit_events_628.py",
+    "test_declaration_dispatch_1835.py",
+    "test_decree_commitment_creation_136.py",
+    "test_decree_commitment_settlement_229.py",
+    "test_decree_dossiers_571.py",
+    "test_deformation_dual_rail_622.py",
+    "test_dossier_endorsements_612.py",
+    "test_dossier_links_559.py",
+    "test_dossier_reported_progress_619.py",
+    "test_due_review_621.py",
+    "test_economy_section_rejections.py",
+    "test_effect_origin_558.py",
+    "test_env_isolation.py",
+    "test_event_trigger_gate.py",
+    "test_execution_joint_liability_565.py",
+    "test_execution_pressure_654.py",
+    "test_faction_brew_637.py",
+    "test_faction_class_section_rejections.py",
+    "test_faction_denunciation_627.py",
+    "test_faction_leverage_9.py",
+    "test_family_tail_615.py",
+    "test_family_tail_restore_570.py",
+    "test_featured_dossiers_494.py",
+    "test_fiscal_beyond_intent_1260.py",
+    "test_fiscal_levy_effect.py",
+    "test_gazette_author_1862.py",
+    "test_grant_reconciliation_567.py",
+    "test_issue_entities.py",
+    "test_material_directory_1830.py",
+    "test_mechanical_tail_1845.py",
+    "test_memorial_inbox_1726.py",
+    "test_menu_lifecycle_drain_396.py",
+    "test_month_chain_1843.py",
+    "test_month_chain_1847.py",
+    "test_mutiny_actual_residence_659.py",
+    "test_mutiny_noop_whitelist_319.py",
+    "test_new_issues_section_rejections.py",
+    "test_on_scene_immediate_write_1839.py",
+    "test_opening_gazette_delete_1356.py",
+    "test_pay_order_override_653.py",
+    "test_pay_order_override_extraction_653.py",
+    "test_person_archive_contract_index.py",
+    "test_person_delta_adapter.py",
+    "test_person_transit_write_667.py",
+    "test_pihong_dossier_1490.py",
+    "test_player_army_projection_321.py",
+    "test_population_transfers_649.py",
+    "test_population_transfers_662.py",
+    "test_population_unit_648.py",
+    "test_power_section_rejections.py",
+    "test_promulgation_judge_561.py",
+    "test_public_projection_consistency_1830.py",
+    "test_qa_1281_issue_audience_case_facts.py",
+    "test_qa_c3_secret_order_path_1357_1376.py",
+    "test_refugee_loop_652.py",
+    "test_region_cannon_delta.py",
+    "test_relation_capture_633.py",
+    "test_rescript_choices_563.py",
+    "test_rescript_draft_656.py",
+    "test_rescript_heal_isolation_1801.py",
+    "test_rescript_option_field_heal_1746.py",
+    "test_secret_dossier_participants_1252.py",
+    "test_secret_order_declaration_landing_1897.py",
+    "test_secret_order_isolation_883.py",
+    "test_secret_order_monthly_progress_566.py",
+    "test_secret_order_payoff_1504.py",
+    "test_secret_order_section_rejections.py",
+    "test_secret_order_update.py",
+    "test_section4_rejections.py",
+    "test_section_fiscal_rejections.py",
+    "test_settlement_write_guard_393.py",
+    "test_staged_assignment_identity_1890.py",
+    "test_style_temperament_641.py",
+    "test_supervision_625.py",
+    "test_surcharge_causal_chain_650.py",
+    "test_transit_aging_346.py",
+    "test_urge_lever_624.py",
+    "test_web_chat_serialization_393.py",
+    "test_world_materials_1834.py",
+    "test_yuan_arrival_185.py"
+  ],
+  "ASSERT_ROWS_ALL": 14500,
+  "BY_KIND": {
+    "assert": 13402,
+    "pytest.raises": 1092,
+    "assert_star": 6
+  },
+  "DUPS": null,
+  "STR_ASSERT_CANDIDATE_ALL": 9305,
+  "STR_ASSERT_CANDIDATE_AUTH": 5501,
+  "AUTH_TEST_FUNCS": 1719,
+  "NOTE": "No TEXT_ATTRS/field whitelist; STR_ASSERT_CANDIDATE is pre-semantic."
+}
+```
+
+#### 完整候选表路径（审计材料，非新测试机制）
+
+| 产物 | 路径 | 行数/说明 |
+|---|---|---|
+| 授权候选全表 | `artifacts/1897-f3-str-cand-auth.tsv` | **5500** 行（预语义 STR_ASSERT_CANDIDATE） |
+| 全仓候选全表 | `artifacts/1897-f3-str-cand-all.tsv` | 9304 行 |
+| 授权函数索引 | `artifacts/1897-f3-auth-funcs.tsv` | 授权 test_* 函数 |
+| 粗分桶（非手审） | `artifacts/1897-f3-str-cand-auth-classed.tsv` + `artifacts/1897-f3-cand-class-summary.json` | 启发式分桶 |
+| 原 75 成员表 | `artifacts/1897-f3-member-table-75.md` | #39 已更正 |
+
+**明确不宣称**：未对 5500 行逐条手审结清。分桶摘要：
+
+```json
+{
+  "AUTH_CANDIDATES": 5501,
+  "CLASS_COUNTS": {
+    "STR_CAND_UNREVIEWED": 3936,
+    "TOUCHED_SURFACE_SEE_MEMBER": 1215,
+    "TYPED_REASON_CODE": 170,
+    "STRUCT_CODE": 117,
+    "SSE_PROTOCOL": 34,
+    "STRUCT_COND": 19,
+    "FORM_ENUM": 9,
+    "GATE_NEG": 1
+  },
+  "NOTE": "Class tags are audit buckets from static heuristics + this-round touched file set. NOT a claim that every row was hand-adjudicated. CLEAR actions are listed in report disposition table."
+}
+```
+
+本轮语义审阅范围 = 上表「本轮类处置」触及文件 + 原 75 表 #39；其余 `STR_CAND_UNREVIEWED` 为审计剩余，不冒称已清。
+
+### F1/F2/F3 变异（三条均带七变量；实测）
+
+```bash
+env MING_SIM_AGY_BIN=/usr/bin/false MING_SIM_CODEX_BIN=/usr/bin/false \
+  MING_SIM_CLAUDE_BIN=/usr/bin/false MING_SIM_CURSOR_BIN=/usr/bin/false \
+  MING_SIM_KIMI_BIN=/usr/bin/false MING_SIM_GROK_BIN=/usr/bin/false \
+  MING_SIM_PI_BIN=/usr/bin/false PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$PWD" \
+  ../Ming_LLM/.venv/bin/python /tmp/1897-f1f3-corr5/mutate_f1.py
+# {'world_has': True, 'gazette_has': False, 'gazette_body_visible': False, 'old_unconditional_has': True, 'old_body_visible': True, 'verdict': 'GREEN', 'world_hits': ['密令/实况/1.txt'], 'gazette_hits': []}
+
+env MING_SIM_AGY_BIN=/usr/bin/false MING_SIM_CODEX_BIN=/usr/bin/false \
+  MING_SIM_CLAUDE_BIN=/usr/bin/false MING_SIM_CURSOR_BIN=/usr/bin/false \
+  MING_SIM_KIMI_BIN=/usr/bin/false MING_SIM_GROK_BIN=/usr/bin/false \
+  MING_SIM_PI_BIN=/usr/bin/false PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$PWD" \
+  ../Ming_LLM/.venv/bin/python /tmp/1897-f1f3-corr5/mutate_f2.py
+# {'current_write': 'ValueError:密令进展缺少对应案卷', 'apply_missing_dossier': 'ValueError:密令进展缺少对应案卷', 'unknown_ok_no_raise': True, 'unknown_has_missing_ref': True, 'old_pattern_reject': {'rejected': True, 'reason': '密令进展缺少对应案卷', 'category': 'legacy_inline'}, 'verdict': 'GREEN'}
+
+env MING_SIM_AGY_BIN=/usr/bin/false MING_SIM_CODEX_BIN=/usr/bin/false \
+  MING_SIM_CLAUDE_BIN=/usr/bin/false MING_SIM_CURSOR_BIN=/usr/bin/false \
+  MING_SIM_KIMI_BIN=/usr/bin/false MING_SIM_GROK_BIN=/usr/bin/false \
+  MING_SIM_PI_BIN=/usr/bin/false PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$PWD" \
+  ../Ming_LLM/.venv/bin/python /tmp/1897-f1f3-corr5/mutate_f3.py
+# {'update_ok': True, 'old_title_sentinel_still_green': True, 'current_tags_contract': ['甲·改'], 'current_tags_contract_holds': True, 'brief_linked': True, 'verdict': 'GREEN'}
+```
+
+三脚本全文仍见上文 `mutate_f1.py` / `mutate_f2.py` / `mutate_f3.py` 附录（corr 同源）；本轮执行目录 `/tmp/1897-f1f3-corr5/`。
+
+### 聚焦测试（精确命令 + 文件表 + 实测）
+
+```bash
+env MING_SIM_AGY_BIN=/usr/bin/false MING_SIM_CODEX_BIN=/usr/bin/false \
+  MING_SIM_CLAUDE_BIN=/usr/bin/false MING_SIM_CURSOR_BIN=/usr/bin/false \
+  MING_SIM_KIMI_BIN=/usr/bin/false MING_SIM_GROK_BIN=/usr/bin/false \
+  MING_SIM_PI_BIN=/usr/bin/false PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$PWD" \
+  ../Ming_LLM/.venv/bin/python -m pytest -q -p no:cacheprovider --tb=line \
+  tests/test_pihong_dossier_1490.py \
+  tests/test_person_delta_adapter.py \
+  tests/test_pay_order_override_653.py \
+  tests/test_style_temperament_641.py \
+  tests/test_urge_lever_624.py \
+  tests/test_relation_capture_633.py \
+  tests/test_effect_origin_558.py \
+  tests/test_web_chat_serialization_393.py \
+  tests/test_secret_order_update.py \
+  tests/test_secret_order_declaration_landing_1897.py \
+  tests/test_secret_order_payoff_1504.py \
+  tests/test_month_chain_1847.py \
+  tests/test_audience_translate_1837.py \
+  tests/test_region_cannon_delta.py \
+  --deselect tests/test_pihong_dossier_1490.py::test_1682_phase2_surfaces_ambiguous_stored_choice \
+  --deselect tests/test_audience_translate_1837.py::test_appointment_and_relief_through_scene_chat_then_close_and_settle
+```
+
+**实测**：`496 passed, 1 skipped, 2 deselected in 32.37s`
+
+预存 deselect（非本轮引入；HEAD 无本轮 diff 同红）：
+1. `test_1682_phase2_surfaces_ambiguous_stored_choice` → `LLMContractError: 无待决推演上下文`
+2. `test_appointment_and_relief_through_scene_chat_then_close_and_settle` → `sqlite3.IntegrityError: FOREIGN KEY constraint failed`
+
+`git diff --check`：无输出。未跑全量。
+
+### 无字段枚举脚本全文（可粘贴复跑）
+
+```python
+#!/usr/bin/env python3
+"""#1897 F3: full tests/ AST enum — NO field-name vocabulary filter.
+
+Enumerate every assert / assert_* / pytest.raises / match= / Compare.
+Auth-related = seam symbol touch OR stem anchor (authorized test system).
+Free-text CANDIDATE = assert/compare involves non-empty str literal or
+whole-object/list literal with str values — membership NOT gated on attr names.
+Semantic keep/clear is adjudicated after this dump (see member table).
+"""
+from __future__ import annotations
+
+import ast
+import json
+import re
+from pathlib import Path
+
+ROOT = Path("/Users/akagilnc/WorkSpace/Ming_LLM-1897-w5")
+TESTS = ROOT / "tests"
+OUT = Path("/tmp/1897-f1f3-corr5")
+
+SEAM = {
+    "create_secret_order",
+    "update_secret_order",
+    "update_secret_order_by_id",
+    "update_secret_order_sim_note",
+    "update_secret_order_progress",
+    "list_secret_orders",
+    "list_dossier_progress",
+    "get_secret_order",
+    "dispatch_declaration",
+    "prepare_world_materials",
+    "prepare_gazette_author_materials",
+    "prepare_character_materials",
+    "settle_due_secret_orders",
+    "build_covert_task_contract",
+    "record_secret_order_disclosure",
+    "secret_order_dossier_ids",
+    "apply_score_extraction",
+    "dossier_progress",
+    "_write_secret_actual_note_files",
+    "apply_monthly_covert_actual_progress",
+}
+STEM = (
+    "secret_order",
+    "declaration",
+    "due_review",
+    "execution_pressure",
+    "monthly_progress",
+    "dossier_reported",
+    "deformation",
+    "staged_assignment",
+    "audience_translate",
+    "family_tail",
+    "character_knowledge",
+    "breach_plea",
+    "month_chain",
+    "isolation",
+    "payoff",
+    "gazette",
+    "world_materials",
+    "decree_dossiers",
+    "section_rejection",
+    "covert",
+    "dossier",
+    "pihong",
+    "rescript",
+    "person_delta",
+    "pay_order",
+    "urge_lever",
+    "relation_capture",
+    "authority_ledger",
+)
+
+
+def has_cjk(s: str) -> bool:
+    return any("\u4e00" <= c <= "\u9fff" for c in s)
+
+
+def test_ranges(tree: ast.AST):
+    r = []
+    for n in ast.walk(tree):
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name.startswith("test"):
+            r.append((n.lineno, getattr(n, "end_lineno", n.lineno), n.name))
+    return sorted(r)
+
+
+def test_at(ranges, ln: int) -> str:
+    name = "<module>"
+    for a, b, n in ranges:
+        if a <= ln <= b:
+            name = n
+        elif a > ln:
+            break
+    return name
+
+
+def seams_in(src: str, tree: ast.AST):
+    names = set()
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Name):
+            names.add(n.id)
+        elif isinstance(n, ast.Attribute):
+            names.add(n.attr)
+        elif isinstance(n, ast.ImportFrom):
+            for a in n.names:
+                names.add(a.name)
+    hit = sorted(names & SEAM)
+    if not hit:
+        hit = [s for s in SEAM if s in src]
+    return hit
+
+
+def str_consts_in(node: ast.AST) -> list[str]:
+    out = []
+    for n in ast.walk(node):
+        if isinstance(n, ast.Constant) and isinstance(n.value, str) and n.value:
+            out.append(n.value)
+    return out
+
+
+def has_collection_lit(node: ast.AST) -> bool:
+    for n in ast.walk(node):
+        if isinstance(n, (ast.Dict, ast.List, ast.Tuple, ast.Set)):
+            return True
+    return False
+
+
+def is_raises_call(node: ast.AST) -> bool:
+    if not isinstance(node, ast.Call):
+        return False
+    u = ast.unparse(node.func)
+    return "raises" in u
+
+
+def match_kw(node: ast.Call):
+    for kw in node.keywords or []:
+        if kw.arg == "match" and kw.value is not None:
+            return kw.value
+    return None
+
+
+def classify_expr(expr: ast.AST):
+    """Predicate features — NO field-name whitelist."""
+    cats = set()
+    strs = str_consts_in(expr)
+    if any(has_cjk(s) for s in strs):
+        cats.add("cjk_lit")
+    if any(len(s) >= 2 for s in strs):
+        cats.add("str_lit")
+    if has_collection_lit(expr):
+        cats.add("collection_lit")
+    for n in ast.walk(expr):
+        if isinstance(n, ast.Compare):
+            ops = n.ops
+            if any(isinstance(op, (ast.In, ast.NotIn)) for op in ops):
+                cats.add("in_op")
+            if any(isinstance(op, (ast.Eq, ast.NotEq)) for op in ops):
+                cats.add("eq_op")
+            if any(isinstance(op, (ast.Gt, ast.GtE, ast.Lt, ast.LtE)) for op in ops):
+                # length/limit compares involving str often title>80 style
+                cats.add("ord_op")
+    # Candidate for free-text mechanical dependency review:
+    # any string literal in equality/containment/collection assert surface.
+    if strs and (cats & {"eq_op", "in_op", "collection_lit", "str_lit"}):
+        cats.add("STR_ASSERT_CANDIDATE")
+    return sorted(cats), strs, ast.unparse(expr)[:220]
+
+
+files = []
+rows = []
+dups = {}
+func_index = []  # auth-related test functions for semantic pass
+
+for path in sorted(TESTS.glob("test_*.py")):
+    src = path.read_text(encoding="utf-8")
+    try:
+        tree = ast.parse(src)
+    except SyntaxError:
+        continue
+    files.append(path.name)
+    bag = {}
+    for n in tree.body:
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name.startswith("test"):
+            bag.setdefault(n.name, []).append(n.lineno)
+    for name, lns in bag.items():
+        if len(lns) > 1:
+            dups.setdefault(path.name, []).append({"name": name, "lines": lns})
+    ranges = test_ranges(tree)
+    seam = seams_in(src, tree)
+    auth = bool(seam) or any(h in path.stem for h in STEM)
+
+    # index auth test functions
+    if auth:
+        for n in tree.body:
+            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name.startswith("test"):
+                func_index.append(
+                    {
+                        "file": path.name,
+                        "line": n.lineno,
+                        "test": n.name,
+                        "seams": seam,
+                        "doc": ast.get_docstring(n) or "",
+                    }
+                )
+
+    for n in ast.walk(tree):
+        ln = getattr(n, "lineno", None)
+        if ln is None:
+            continue
+        tname = test_at(ranges, ln)
+
+        if isinstance(n, ast.Assert):
+            cats, strs, detail = classify_expr(n.test)
+            rows.append(
+                {
+                    "file": path.name,
+                    "line": ln,
+                    "test": tname,
+                    "kind": "assert",
+                    "cats": cats,
+                    "strs": strs[:8],
+                    "detail": detail,
+                    "auth_related": auth,
+                    "seams": seam,
+                }
+            )
+        elif isinstance(n, ast.With):
+            for item in n.items:
+                ctx = item.context_expr
+                if is_raises_call(ctx):
+                    mk = match_kw(ctx) if isinstance(ctx, ast.Call) else None
+                    cats = ["raises"]
+                    strs = str_consts_in(mk) if mk is not None else []
+                    if strs:
+                        cats.append("match_kw")
+                        cats.append("STR_ASSERT_CANDIDATE")
+                        if any(has_cjk(s) for s in strs):
+                            cats.append("cjk_lit")
+                    rows.append(
+                        {
+                            "file": path.name,
+                            "line": ln,
+                            "test": tname,
+                            "kind": "pytest.raises",
+                            "cats": cats,
+                            "strs": strs[:8],
+                            "detail": ast.unparse(ctx)[:220],
+                            "auth_related": auth,
+                            "seams": seam,
+                        }
+                    )
+        elif isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute):
+            a = n.func.attr
+            if a.startswith("assert") or a in (
+                "assert_called",
+                "assert_called_once",
+                "assert_called_with",
+                "assert_called_once_with",
+                "assert_any_call",
+                "assert_has_calls",
+                "assert_not_called",
+            ):
+                cats, strs, detail = classify_expr(n)
+                kind = "assert_star" if a.startswith("assert") and not a.startswith("assert_called") and a != "assert_not_called" else "mock_assert"
+                # unittest-style assertEqual etc.
+                if a.startswith("assert") and a not in (
+                    "assert_called",
+                    "assert_called_once",
+                    "assert_called_with",
+                    "assert_called_once_with",
+                    "assert_any_call",
+                    "assert_has_calls",
+                    "assert_not_called",
+                ):
+                    kind = "assert_star"
+                if strs and kind in ("assert_star", "mock_assert"):
+                    cats = list(set(cats) | {"STR_ASSERT_CANDIDATE"})
+                rows.append(
+                    {
+                        "file": path.name,
+                        "line": ln,
+                        "test": tname,
+                        "kind": kind,
+                        "cats": sorted(set(cats)),
+                        "strs": strs[:8],
+                        "detail": detail,
+                        "auth_related": auth,
+                        "seams": seam,
+                    }
+                )
+            # pytest.raises as bare call (rare)
+            if a == "raises" and isinstance(n.func.value, ast.Name) and n.func.value.id == "pytest":
+                mk = match_kw(n)
+                cats = ["raises"]
+                strs = str_consts_in(mk) if mk is not None else []
+                if strs:
+                    cats += ["match_kw", "STR_ASSERT_CANDIDATE"]
+                rows.append(
+                    {
+                        "file": path.name,
+                        "line": ln,
+                        "test": tname,
+                        "kind": "pytest.raises",
+                        "cats": cats,
+                        "strs": strs[:8],
+                        "detail": ast.unparse(n)[:220],
+                        "auth_related": auth,
+                        "seams": seam,
+                    }
+                )
+
+cand = [r for r in rows if "STR_ASSERT_CANDIDATE" in r.get("cats", [])]
+cand_auth = [r for r in cand if r["auth_related"]]
+by = {}
+for r in rows:
+    by[r["kind"]] = by.get(r["kind"], 0) + 1
+auth_files = sorted({r["file"] for r in rows if r["auth_related"]})
+
+summary = {
+    "ALL_TEST_FILES": len(files),
+    "AUTH_RELATED_FILES": len(auth_files),
+    "AUTH_RELATED_FILE_LIST": auth_files,
+    "ASSERT_ROWS_ALL": len(rows),
+    "BY_KIND": by,
+    "DUPS": dups or None,
+    "STR_ASSERT_CANDIDATE_ALL": len(cand),
+    "STR_ASSERT_CANDIDATE_AUTH": len(cand_auth),
+    "AUTH_TEST_FUNCS": len(func_index),
+    "NOTE": "No TEXT_ATTRS/field whitelist; STR_ASSERT_CANDIDATE is pre-semantic.",
+}
+
+(OUT / "f3_full_summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
+(OUT / "f3_all_asserts.tsv").write_text(
+    "\n".join(
+        f"{r['file']}:{r['line']}\t{r['kind']}\tauth={int(r['auth_related'])}\t{r['test']}\t{','.join(r['cats'])}\t{r['detail']}"
+        for r in rows
+    ),
+    encoding="utf-8",
+)
+(OUT / "f3_str_cand_all.tsv").write_text(
+    "\n".join(
+        f"{r['file']}:{r['line']}\tauth={int(r['auth_related'])}\t{r['test']}\t{','.join(r['cats'])}\t{json.dumps(r['strs'], ensure_ascii=False)}\t{r['detail']}"
+        for r in cand
+    ),
+    encoding="utf-8",
+)
+(OUT / "f3_str_cand_auth.tsv").write_text(
+    "\n".join(
+        f"{r['file']}:{r['line']}\t{r['test']}\t{','.join(r['cats'])}\t{json.dumps(r['strs'], ensure_ascii=False)}\t{r['detail']}"
+        for r in cand_auth
+    ),
+    encoding="utf-8",
+)
+(OUT / "f3_auth_funcs.tsv").write_text(
+    "\n".join(f"{r['file']}:{r['line']}\t{r['test']}\t{','.join(r['seams'])}" for r in func_index),
+    encoding="utf-8",
+)
+
+print(json.dumps({k: summary[k] for k in (
+    "ALL_TEST_FILES", "AUTH_RELATED_FILES", "ASSERT_ROWS_ALL", "BY_KIND",
+    "DUPS", "STR_ASSERT_CANDIDATE_ALL", "STR_ASSERT_CANDIDATE_AUTH", "AUTH_TEST_FUNCS", "NOTE"
+)}, ensure_ascii=False, indent=2))
+print("AUTH_RELATED_FILES:")
+for f in auth_files:
+    print(f)
+```
+
+### 自查二连（本轮）
+
+1. **同类型**：删非空 reason/style 洗绿与标题集合锁；#39 改为独立 schema 负向；未用键存在顶替承重契约；真闸负向/闭集/SSE 保留。
+2. **引入面**：聚焦 496；F1/F2/F3 GREEN；候选全表进仓可核；未改生产校验；临时目录 `/tmp/1897-f1f3-corr5` 不进仓；**本轮未 stash**。
+
+### 交卷 HEAD（本轮）
+
+- tip HEAD：交卷提交后以 `git rev-parse HEAD` 为准（本段不自引用预填 hash）。
+- **未 push / 未 PR / 未 amend / 本轮未 stash**。

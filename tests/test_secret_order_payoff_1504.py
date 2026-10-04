@@ -1208,9 +1208,8 @@ def test_spoliation_requires_real_knowledge_source(game):
     out = apply_investigation_spoliation(
         db, target=target, fact_key=key, effect="gone", commit=True,
     )
-    # 断言行为（未毁、实证不动），不锁诊断散文的措辞
+    # 断言行为（未毁、实证不动），不锁诊断散文 / 非空 reason
     assert out["applied"] is False
-    assert out["reason"]
     assert db.list_investigation_spoiled_facts(target) == []
 
     # 凭空捏造一个不相干的人 → 仍不毁（账本里查无此关系边）

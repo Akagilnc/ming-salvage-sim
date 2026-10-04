@@ -197,7 +197,6 @@ def test_apply_score_extraction_rejects_invalid_temperament(game, item, category
     assert changes[0]["origin_ref"] == "盘面自发"
     assert changes[0]["动作"] == "性情"
     assert changes[0]["rejected"] is True
-    assert changes[0]["reason"]
     assert changes[0]["category"] == category
     assert changes[0]["item"] == item
 
@@ -212,6 +211,7 @@ def test_character_context_with_db_reads_own_style_and_viewer_ledger(game):
         and db.get_character_status(c.name)[0] == "active"
         and getattr(c, "power_id", "ming") == "ming"
     )
+    before_style = _style_row(db)
 
     issues.apply_score_extraction(
         db,
@@ -234,11 +234,8 @@ def test_character_context_with_db_reads_own_style_and_viewer_ledger(game):
     expected_own = project_relation_ledger(db, viewer=person.name)
     assert [(d["source"], d["target"]) for d in expected_own] == [(person.name, other.name)]
 
-    style_now = _style_row(db)
-    assert style_now  # 性情已落；不锁 style 散文原文
-    dossier = minister_dossier(person)
+    assert _style_row(db) != before_style  # 性情已写（before/after 身份，不锁散文）
     rendered = character_context_with_db(person, db)
-    assert dossier and rendered  # 读面非空
     assert other.name in rendered
     assert expected_own[0]["source"] == person.name
 
@@ -285,12 +282,11 @@ def test_context_includes_viewer_ledger_without_prose_lock(game):
 
     dto = project_relation_ledger(db, viewer=person.name)[0]
     assert dto["source"] == person.name and dto["target"] == other.name
-    assert dto.get("summary") and dto.get("recent_context")
     # 空白边距未 strip：结构长度，不锁正文
+    assert "summary" in dto and "recent_context" in dto
     assert len(str(dto["summary"])) > len(str(dto["summary"]).strip())
     rendered = character_context_with_db(person, db)
     assert person.name in rendered and other.name in rendered
-    assert _style_row(db)  # 性情已写；不锁 style 原文
 
 
 def test_relation_edge_events_do_not_mutate_style(game):
@@ -343,6 +339,7 @@ def test_temperament_does_not_write_relation_edges(game):
     before_edges = db.conn.execute(
         "SELECT COUNT(*) AS c FROM relation_edge_events"
     ).fetchone()["c"]
+    before_style = _style_row(db)
 
     issues.apply_score_extraction(
         db,
@@ -355,4 +352,4 @@ def test_temperament_does_not_write_relation_edges(game):
         "SELECT COUNT(*) AS c FROM relation_edge_events"
     ).fetchone()["c"]
     assert after_edges == before_edges
-    assert _style_row(db)  # 性情已写；不锁 style 原文
+    assert _style_row(db) != before_style

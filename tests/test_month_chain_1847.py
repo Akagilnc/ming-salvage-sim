@@ -108,8 +108,10 @@ def test_world_segment_multiple_questions_share_one_desk(game, monkeypatch):
     result = session.resolve_turn(allow_empty_decree=True)
 
     assert result.awaiting is True
-    titles = {row["title"] for row in session.pending_decisions()}
-    assert titles == {"问一", "问二"}
+    desk = session.pending_decisions()
+    assert len(desk) == 2
+    assert all(row.get("kind") == "decision" for row in desk)
+    assert all(row.get("status") == "pending" for row in desk)
 
 
 def test_prior_month_answered_rescript_does_not_block_or_reappear(game, monkeypatch):
@@ -471,8 +473,10 @@ def test_decree_question_and_world_question_share_one_desk(game, monkeypatch):
     result = session.resolve_turn(allow_empty_decree=True)
 
     assert result.awaiting is True
-    titles = {row["title"] for row in session.pending_decisions()}
-    assert titles == {"是否加赈", "是否增援宁远"}
+    desk = session.pending_decisions()
+    assert len(desk) == 2
+    assert all(row.get("kind") == "decision" for row in desk)
+    assert all(row.get("status") == "pending" for row in desk)
 
 
 def _hitl_payload(desk_row):
@@ -615,9 +619,9 @@ def test_cross_month_pending_draft_opens_rescript_desk(game, monkeypatch):
     assert result.advanced is False
     assert int(state.turn) == closed_turn
     assert session.state.turn_phase == TurnPhase.AWAITING_DECISION.value
-    titles = [row["title"] for row in session.pending_decisions()]
-    assert titles == ["旧急务甲"]
-    assert session.pending_decisions()[0]["kind"] == "rescript_draft"
+    desk = session.pending_decisions()
+    assert len(desk) == 1
+    assert desk[0]["kind"] == "rescript_draft"
 
 
 def test_decree_continuation_keeps_forecast_and_lands_affair_effect(game, monkeypatch):
@@ -687,9 +691,9 @@ def test_decree_continuation_keeps_forecast_and_lands_affair_effect(game, monkey
     pre_rows = db.conn.execute(
         "SELECT COUNT(*) FROM economy_ledger WHERE category='陕西赈灾'",
     ).fetchone()[0]
-    desk_row = next(
-        row for row in session.pending_decisions() if row["title"] == "是否加赈"
-    )
+    desk = session.pending_decisions()
+    assert len(desk) == 1  # 世界段空：案头仅旨意 staged 问
+    desk_row = desk[0]
 
     session.submit_hitl_choices(
         _hitl_payload(desk_row), write_gate=session._write_gate,

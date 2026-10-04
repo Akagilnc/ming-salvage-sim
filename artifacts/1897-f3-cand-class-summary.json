@@ -1,0 +1,14 @@
+{
+  "AUTH_CANDIDATES": 5501,
+  "CLASS_COUNTS": {
+    "STR_CAND_UNREVIEWED": 3936,
+    "TOUCHED_SURFACE_SEE_MEMBER": 1215,
+    "TYPED_REASON_CODE": 170,
+    "STRUCT_CODE": 117,
+    "SSE_PROTOCOL": 34,
+    "STRUCT_COND": 19,
+    "FORM_ENUM": 9,
+    "GATE_NEG": 1
+  },
+  "NOTE": "Class tags are audit buckets from static heuristics + this-round touched file set. NOT a claim that every row was hand-adjudicated. CLEAR actions are listed in report disposition table."
+}
