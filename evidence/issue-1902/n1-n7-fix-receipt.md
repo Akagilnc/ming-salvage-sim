@@ -3,7 +3,7 @@
 - 分支：`ak-roles/1902-n1-n7-fixer-ccbdf378a`
 - 工作树：`/Users/akagilnc/WorkSpace/Ming_LLM-1902-w5`
 - 底座 HEAD（开工）：`ccbdf378a`
-- 本轮提交：*(commit 后回填)*
+- 本轮提交：63dfe0d0cb79f8b6855448f70d10cd37d0446152
 - 判词真源：末份 `03-1902-judge-ccbdf378a.json` payload（N1–N7）
 - N6 完整成员表：`evidence/issue-1902/n6-ast-member-table.tsv`（+ 摘要 `n6-ast-member-table.md`）
 - 枚举原始输出：`evidence/issue-1902/n1-n7-enum.out`
