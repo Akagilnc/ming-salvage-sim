@@ -388,7 +388,7 @@ def test_ending_summary_runs_in_mechanical_tail_after_advance(
     executor = _install_deferred(monkeypatch)
     tail_reads_under_gate = []
     main_saves_under_gate = []
-    orig_reports = db.list_turn_reports
+    orig_reports = db.turn_reports.list_archives
     orig_save_state = db.save_state
     in_tail = False
 
@@ -402,7 +402,7 @@ def test_ending_summary_runs_in_mechanical_tail_after_advance(
             main_saves_under_gate.append(bool(gate.locked()))
         return orig_save_state(game_state)
 
-    monkeypatch.setattr(db, "list_turn_reports", _reports)
+    monkeypatch.setattr(db.turn_reports, "list_archives", _reports)
     monkeypatch.setattr(db, "save_state", _save_state)
 
     try:

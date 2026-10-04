@@ -852,9 +852,51 @@ def clamp_grant_arrival_amount(
     return max(lo, min(hi, proposed))
 
 
+_ARMY_PAY_SOURCE_CUTOVER_KEY = "__army_pay_source_cutover"
 _FISCAL_ENGINE_KEY = "__fiscal_engine"
 _FISCAL_ENGINE_LEGACY = 0
 _FISCAL_ENGINE_SUBSTRATE_HUB = 1
+
+_SECRET_ORDER_BODY_COLUMNS = ("result", "sim_note")
+
+
+def _secret_order_record_body(record: Mapping[str, object]) -> str:
+    """Stored prose must already be a string. A missing or non-string body is not rewritten as empty text."""
+    body = record.get("body")
+    if not isinstance(body, str):
+        raise TypeError("密令正文记录缺少正文")
+    return body
+
+
+def _secret_order_period_recorded(
+    records: Sequence[Mapping[str, object]], year: int, period: int,
+) -> bool:
+    return any(
+        int(record.get("year") or 0) == int(year)
+        and int(record.get("period") or 0) == int(period)
+        for record in records
+    )
+
+
+def _project_secret_order_bodies(records: Sequence[Mapping[str, object]]) -> str:
+    """Project records by year, month, then write order. Body text is copied whole."""
+    ordered = sorted(
+        enumerate(records),
+        key=lambda pair: (
+            int(pair[1].get("year") or 0),
+            int(pair[1].get("period") or 0),
+            pair[0],
+        ),
+    )
+    parts: List[str] = []
+    for _, record in ordered:
+        marker = str(record.get("marker") or "")
+        parts.append(
+            f"〔{period_label(int(record.get('year') or 0), int(record.get('period') or 0))}〕"
+            f"{marker}{_secret_order_record_body(record)}"
+        )
+    return "\n".join(parts)
+
 
 def _secret_order_kept_body(text: object) -> str:
     """空白正文记空串；已有字句原样保留，含内部空行。"""
@@ -993,8 +1035,11 @@ class GameDB:
         self.turn_reports = TurnReportStore(self.conn)
         self.resolve_contexts = ResolveContextStore(self.conn)
         self.month_open_snapshots = MonthOpenSnapshotStore(self.conn)
+        # 老档缺列补齐（W4 tip 现役契约；#1889 CREATE 已含同列，ensure 对新建档为 no-op）
+        self._ensure_legacy_army_columns()
         self.conn.commit()
         self.init_fiscal_config()
+        self._migrate_missing_fiscal_engine_from_pay_source_cutover()
 
     def init_fiscal_config(self) -> None:
         """从 content/fiscal_config.json（self.content.fiscal_items）seed 财政科目目录。
@@ -1687,6 +1732,8 @@ class GameDB:
                 },
                 touch=False,
             )
+        self._mark_army_pay_source_cutover_enabled()
+        self._mark_substrate_hub_fiscal_engine_enabled()
         self._reconcile_all_army_pay_source_regions()
         self._reconcile_central_army_pay_arrears_container()
         self.assert_army_pay_source_container_conservation()
@@ -5326,6 +5373,93 @@ class GameDB:
         row = self.conn.execute(f"SELECT 1 FROM {table} LIMIT 1").fetchone()
         return row is not None
 
+    def ensure_column(self, table: str, column: str, definition: str) -> bool:
+        """确保 table.column 存在。返回 True=本次新增了该列；False=列已存在。"""
+        columns = {
+            row["name"] for row in self.conn.execute(f"PRAGMA table_info({table})").fetchall()
+        }
+        if column not in columns:
+            self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+            return True
+        return False
+
+    def _backfill_salary_rate(self) -> None:
+        """#44 旧档迁移：salary_rate 列首次 ADD 时回填 <=0 的明军率。"""
+        has_maint = "maintenance_per_turn" in {
+            r["name"] for r in self.conn.execute("PRAGMA table_info(armies)").fetchall()
+        }
+        if has_maint:
+            rows = self.conn.execute(
+                "SELECT id, manpower, maintenance_per_turn FROM armies "
+                "WHERE owner_power='ming' AND salary_rate <= 0"
+            ).fetchall()
+        else:
+            rows = self.conn.execute(
+                "SELECT id FROM armies WHERE owner_power='ming' AND salary_rate <= 0"
+            ).fetchall()
+        for r in rows:
+            aid = str(r["id"])
+            army = self.content.armies.get(aid)
+            if army is not None and army.salary_rate > 0:
+                rate = float(army.salary_rate)
+            elif has_maint:
+                manpower = int(r["manpower"] or 0)
+                maint = float(r["maintenance_per_turn"] or 0)
+                rate = (
+                    (maint * 10000 / manpower)
+                    if (manpower > 0 and maint > 0)
+                    else SALARY_RATE_ANCHOR
+                )
+            else:
+                rate = SALARY_RATE_ANCHOR
+            self.conn.execute(
+                "UPDATE armies SET salary_rate=? WHERE id=?", (rate, aid),
+            )
+
+    def _drop_maintenance_column(self) -> None:
+        """#173：物理移除退役的 armies.maintenance_per_turn 列（幂等）。"""
+        cols = {
+            r["name"] for r in self.conn.execute("PRAGMA table_info(armies)").fetchall()
+        }
+        if "maintenance_per_turn" in cols:
+            self.conn.execute("ALTER TABLE armies DROP COLUMN maintenance_per_turn")
+
+    def _ensure_legacy_army_columns(self) -> None:
+        """老档军队列补齐 + salary backfill + 维护费列 drop（W4 tip init_schema 契约）。"""
+        self.ensure_column("armies", "owner_power", "TEXT NOT NULL DEFAULT 'ming'")
+        self.ensure_column("armies", "station_region", "TEXT NOT NULL DEFAULT ''")
+        self.ensure_column("armies", "province_pay_arrears", "REAL NOT NULL DEFAULT 0")
+        self.ensure_column("armies", "central_pay_arrears", "REAL NOT NULL DEFAULT 0")
+        self.ensure_column(
+            "armies", "consecutive_pay_shortfall_months", "INTEGER NOT NULL DEFAULT 0",
+        )
+        self.ensure_column("armies", "pay_source_region", "TEXT NOT NULL DEFAULT ''")
+        self.ensure_column("armies", "province_pay_share", "REAL NOT NULL DEFAULT 0")
+        self.ensure_column("armies", "central_pay_share", "REAL NOT NULL DEFAULT 0")
+        self.ensure_column("armies", "is_tusi", "INTEGER NOT NULL DEFAULT 0")
+        self.ensure_column("armies", "self_funded_pay", "INTEGER NOT NULL DEFAULT 0")
+        self.ensure_column("armies", "mutiny_status", "TEXT NOT NULL DEFAULT ''")
+        self.ensure_column(
+            "armies", "is_mutinied",
+            "INTEGER NOT NULL DEFAULT 0 CHECK(is_mutinied IN (0, 1))",
+        )
+        self.ensure_column("armies", "mutiny_count", "INTEGER NOT NULL DEFAULT 0")
+        self.ensure_column("armies", "mutiny_probation", "INTEGER NOT NULL DEFAULT 0")
+        self.ensure_column("armies", "full_pay_streak", "INTEGER NOT NULL DEFAULT 0")
+        self.ensure_column("armies", "redemption_count", "INTEGER NOT NULL DEFAULT 0")
+        self.ensure_column("armies", "firearm_equipment", "INTEGER NOT NULL DEFAULT 0")
+        self.ensure_column("armies", "cannon_equipment", "INTEGER NOT NULL DEFAULT 0")
+        if self.ensure_column("armies", "salary_rate", "REAL NOT NULL DEFAULT 0"):
+            self._backfill_salary_rate()
+        self._drop_maintenance_column()
+
+    def is_army_pay_source_cutover_enabled(self) -> bool:
+        row = self.conn.execute(
+            "SELECT value FROM fiscal_config WHERE key = ?",
+            (_ARMY_PAY_SOURCE_CUTOVER_KEY,),
+        ).fetchone()
+        return bool(row and int(row["value"] or 0) == 1)
+
     def is_substrate_hub_fiscal_engine_enabled(self) -> bool:
         return self.fiscal_engine() == "substrate_hub"
 
@@ -5336,6 +5470,27 @@ class GameDB:
         ).fetchone()
         value = int(row["value"] or 0) if row is not None else _FISCAL_ENGINE_LEGACY
         return "substrate_hub" if value == _FISCAL_ENGINE_SUBSTRATE_HUB else "legacy"
+
+    def _migrate_missing_fiscal_engine_from_pay_source_cutover(self) -> None:
+        if self.conn.execute(
+            "SELECT 1 FROM fiscal_config WHERE key = ?",
+            (_FISCAL_ENGINE_KEY,),
+        ).fetchone():
+            return
+        if not self.is_army_pay_source_cutover_enabled():
+            return
+        self._mark_substrate_hub_fiscal_engine_enabled()
+        self.conn.commit()
+
+    def _mark_army_pay_source_cutover_enabled(self) -> None:
+        self.conn.execute(
+            """
+            INSERT INTO fiscal_config (key, value, kind, note)
+            VALUES (?, 1, 'meta', 'army pay source per-source accumulator cutover')
+            ON CONFLICT(key) DO UPDATE SET value=excluded.value, kind=excluded.kind, note=excluded.note
+            """,
+            (_ARMY_PAY_SOURCE_CUTOVER_KEY,),
+        )
 
     def _mark_substrate_hub_fiscal_engine_enabled(self) -> None:
         self.conn.execute(
@@ -6293,6 +6448,101 @@ class GameDB:
                 commit=commit,
             )
 
+
+    def knowledge_items_for_turn(self, turn: int) -> List[Dict[str, object]]:
+        """Return source-scoped public material for archive projection.
+
+        Aggregate archives are presentation artifacts.  Replaying the durable
+        public rows here keeps source_id and explicit exclusions attached to
+        each item when a turn report is saved.  Source rows are included as
+        well: settlement producers may register a participating item before
+        the report is rendered, and the archive write must
+        not lose that item's access boundary.
+        """
+        rows = self.conn.execute(
+            "SELECT turn, year, period, kind, title, body, source_id, excluded_names "
+            "FROM character_knowledge_events WHERE character_name='' AND turn=? "
+            "ORDER BY id",
+            (int(turn),),
+        ).fetchall()
+        by_source: Dict[str, Dict[str, object]] = {}
+        # An explicit public row is the payload for that source. A later
+        # source_projection of the same source_id must not replace it.
+        public_kept: set[str] = set()
+        for row in rows:
+            try:
+                excluded_names = json.loads(row["excluded_names"] or "[]")
+            except (TypeError, ValueError):
+                excluded_names = []
+            if not isinstance(excluded_names, list):
+                excluded_names = []
+            key = str(row["source_id"] or "")
+            is_public = str(row["kind"] or "") == "public"
+            if key and key in public_kept and not is_public:
+                continue
+            by_source[key] = {
+                "title": row["title"], "body": row["body"],
+                "source_id": row["source_id"], "excluded_names": excluded_names,
+            }
+            if key and is_public:
+                public_kept.add(key)
+
+        source_rows = self.conn.execute(
+            "SELECT title, body, source_id, participant_roster, excluded_names, "
+            "excluded_targets FROM character_knowledge_sources WHERE turn=? "
+            "ORDER BY id",
+            (int(turn),),
+        ).fetchall()
+        characters = self.conn.execute(
+            "SELECT name, office, office_type FROM characters"
+        ).fetchall()
+        character_names = {str(row["name"]) for row in characters}
+        for row in source_rows:
+            participants = participant_roster_names(row["participant_roster"])
+            try:
+                excluded_names = json.loads(row["excluded_names"] or "[]")
+            except (TypeError, ValueError):
+                excluded_names = []
+            if not isinstance(excluded_names, list):
+                excluded_names = []
+            try:
+                excluded_targets = json.loads(row["excluded_targets"] or "{}")
+            except (TypeError, ValueError):
+                excluded_targets = {}
+            if not isinstance(excluded_targets, dict):
+                excluded_targets = {}
+            target_people = {
+                str(name) for name in excluded_targets.get("people", [])
+            }
+            target_offices = {
+                str(office) for office in excluded_targets.get("offices", [])
+            }
+            excluded_names = list(dict.fromkeys(
+                [*(str(name) for name in excluded_names),
+                 *(str(item["name"]) for item in characters
+                   if item["name"] in target_people
+                   or item["office"] in target_offices
+                   or item["office_type"] in target_offices)]
+            ))
+            # A participant-scoped source is materialized as a public ledger
+            # row whose exclusion snapshot is stable across later transfers.
+            # Empty rosters are genuinely public and therefore add no names.
+            if participants:
+                excluded_names = list(dict.fromkeys(
+                    [*(str(name) for name in excluded_names),
+                     *(sorted(character_names - participants))]
+                ))
+            # An explicit public event can describe a source after it becomes
+            # public (for example, a disclosed secret order).  It is more
+            # specific than the source's original private payload, so never
+            # let archive materialization overwrite it merely because both
+            # share provenance.
+            by_source.setdefault(str(row["source_id"] or ""), {
+                "title": row["title"], "body": row["body"],
+                "source_id": row["source_id"], "excluded_names": excluded_names,
+            })
+        return list(by_source.values())
+
     # ── 结局总结 ──
 
     def save_ending_summary(
@@ -6356,6 +6606,76 @@ class GameDB:
             "has_attendant": bool(slot["has_attendant"]),
             "has_directive": bool(slot["has_directive"]),
         } for turn, slot in sorted(by_turn.items())]
+
+
+    def list_closed_night_archives(self) -> List[Dict[str, object]]:
+        """逐场列出 closed audience night，并保留玩家可见命名所需的容器属性。"""
+        rows = self.conn.execute(
+            """
+            SELECT id,turn,year,period,time_of_day,location,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY turn, location, time_of_day ORDER BY id
+                   ) AS scene_number,
+                   COUNT(*) OVER (
+                       PARTITION BY turn, location, time_of_day
+                   ) AS scene_count
+            FROM audience_nights WHERE status='closed' ORDER BY turn,id
+            """
+        ).fetchall()
+        if not rows:
+            return []
+
+        from ming_sim.audience_night import _json_list, night_archive_metadata
+
+        night_ids = [int(row["id"]) for row in rows]
+        placeholders = ",".join("?" for _ in night_ids)
+        ledger_rows = self.conn.execute(
+            f"SELECT night_id,person_names,tags,source_chat_turn_id "
+            f"FROM story_ledger_entries WHERE night_id IN ({placeholders}) "
+            "ORDER BY night_id,COALESCE(order_key,seq),id",
+            night_ids,
+        ).fetchall()
+        turn_rows = self.conn.execute(
+            f"SELECT night_id,minister_name FROM chat_turns "
+            f"WHERE night_id IN ({placeholders}) "
+            f"AND status NOT IN ('undone', 'failed', 'consumed') "
+            "ORDER BY night_id,night_seq,id",
+            night_ids,
+        ).fetchall()
+        ledgers_by_night: Dict[int, List[Dict[str, Any]]] = {night_id: [] for night_id in night_ids}
+        turns_by_night: Dict[int, List[Dict[str, Any]]] = {night_id: [] for night_id in night_ids}
+        for row in ledger_rows:
+            ledgers_by_night[int(row["night_id"])].append({
+                "person_names": [str(name) for name in _json_list(row["person_names"])],
+                "tags": [str(tag) for tag in _json_list(row["tags"])],
+                "source_chat_turn_id": int(row["source_chat_turn_id"] or 0),
+            })
+        for row in turn_rows:
+            turns_by_night[int(row["night_id"])].append({
+                "minister_name": str(row["minister_name"] or ""),
+            })
+
+        archives: List[Dict[str, object]] = []
+        for r in rows:
+            night_id = int(r["id"])
+            metadata = night_archive_metadata(
+                ledgers_by_night[night_id], turns_by_night[night_id],
+            )
+            scene_suffix = f" · 第{int(r['scene_number'])}场" if int(r["scene_count"]) > 1 else ""
+            title = (
+                f"{int(r['year'])}年{int(r['period'])}月 · "
+                f"{str(r['time_of_day'] or '')}{str(r['location'] or '')} · "
+                f"{metadata['audience_type']}{scene_suffix}"
+            )
+            archives.append({
+                "kind": "night", "night_id": night_id, "turn": int(r["turn"]),
+                "year": int(r["year"]), "period": int(r["period"]),
+                "time_of_day": str(r["time_of_day"] or ""), "location": str(r["location"] or ""),
+                "scene_number": int(r["scene_number"]), "scene_count": int(r["scene_count"]),
+                "audience_type": metadata["audience_type"], "title": title,
+                "involved_people": metadata["involved_people"],
+            })
+        return archives
 
     def list_archived_turns(self) -> List[Dict[str, object]]:
         """兼容组合读面：月档和场档保持独立条目，不再以 SQL join 互相复制。"""
@@ -9857,9 +10177,15 @@ class GameDB:
 
     def breach_decree_dossier(
         self, state: GameState, dossier_id: int, *, reason: str = "撤回成命",
-        commit: bool = True,
+        commit: bool = True, close_target: bool = True,
     ) -> bool:
-        """Withdraw an issued promise; commit=False belongs wholly to its caller."""
+        """Withdraw an issued promise; commit=False belongs wholly to its caller.
+
+        #1894：``close_target=False`` 只落 0056 名声代价（毁约判定、皇威、当事
+        大臣观感、派系），**不**代模型把目标案卷结案——案卷的终局由执行格
+        判官的 ``dossier_executions`` 声明落（撤令当月见办理结果）。早于此处
+        关案会让那份声明被「案卷不在 executing」拒收。
+        """
         if commit:
             from ming_sim.decree import atomic_and_reload
             transaction = atomic_and_reload(self, state)
@@ -9929,9 +10255,14 @@ class GameDB:
                 self.dossiers.set_interruption_reason_if_empty(
                     int(dossier_id), reason,
                 )
-            else:
+            elif close_target:
                 self.dossiers.force_close(
                     int(dossier_id), turn=int(state.turn), reason=reason,
+                )
+            else:
+                logging.getLogger(__name__).info(
+                    "breach recorded without closing dossier=%s reason=%s",
+                    int(dossier_id), reason,
                 )
         return True
 

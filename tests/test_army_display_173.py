@@ -37,7 +37,7 @@ def test_army_public_exits_approx_arrears_and_hide_split_accounts(game):
     # 受控裸分 token：不与兵额/合计饷银等合法可数事实混淆
     scores = dict(loyalty=67, supply=69, morale=61, training=59, equipment=53, mobility=47)
     db.conn.execute(
-        "UPDATE armies SET arrears=12.5, province_pay_arrears=17, central_pay_arrears=46,"
+        "UPDATE armies SET province_pay_arrears=17, central_pay_arrears=46,"
         "manpower=20000, cannon_equipment=0, firearm_equipment=0,"
         "loyalty=?, supply=?, morale=?, training=?, equipment=?, mobility=? WHERE id=?",
         (*scores.values(), row["id"]),
@@ -59,7 +59,7 @@ def test_army_payload_exposes_approx_arrears_text_not_raw(game):
     db.conn.execute(
         """
         UPDATE armies
-        SET arrears=12.5, province_pay_arrears=12.5, central_pay_arrears=0
+        SET province_pay_arrears=12.5, central_pay_arrears=0
         WHERE id=?
         """,
         (row["id"],),
@@ -87,7 +87,7 @@ def test_danger_order_uses_army_needed_for_arrears_months(game):
     for aid in (a["id"], b["id"]):
         db.conn.execute(
             "UPDATE armies SET supply=80,morale=80,loyalty=80,training=80,"
-            "arrears=50,manpower=20000 WHERE id=?",
+            "province_pay_arrears=0,central_pay_arrears=50,manpower=20000 WHERE id=?",
             (aid,),
         )
     db.conn.execute("UPDATE armies SET salary_rate=5.0 WHERE id=?", (a["id"],))
@@ -116,10 +116,10 @@ def test_danger_order_preserves_fractional_arrears(game):
             (aid,),
         )
     db.conn.execute(
-        "UPDATE armies SET name='A低欠饷军', arrears=12.1 WHERE id=?", (low["id"],)
+        "UPDATE armies SET name='A低欠饷军', province_pay_arrears=0, central_pay_arrears=12.1 WHERE id=?", (low["id"],)
     )
     db.conn.execute(
-        "UPDATE armies SET name='Z高欠饷军', arrears=12.9 WHERE id=?", (high["id"],)
+        "UPDATE armies SET name='Z高欠饷军', province_pay_arrears=0, central_pay_arrears=12.9 WHERE id=?", (high["id"],)
     )
     db.conn.commit()
 

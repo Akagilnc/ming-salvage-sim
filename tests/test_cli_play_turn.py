@@ -583,7 +583,7 @@ def test_terminal_minister_chat_accepts_retry_reply_command(game, monkeypatch):
         night_id=night_id, status="generating",
     )
     mid = db.append_chat_message(character.name, state.turn, "user", question)
-    db.update_chat_turn_messages(ct, user_message_id=mid)
+    db.reign.update_chat_turn_messages(ct, user_message_id=mid)
     db.conn.execute("UPDATE chat_turns SET status='interrupted' WHERE id=?", (ct,))
     db.conn.commit()
 

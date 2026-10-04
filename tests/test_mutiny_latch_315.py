@@ -39,7 +39,7 @@ def _setup(
         # 现役 cutover 守恒：豁免军份额/欠饷须全 0；本案只验 latch 不被 tick 改写。
         db.conn.execute(
             """UPDATE armies SET owner_power='ming', is_tusi=?, self_funded_pay=?,
-               manpower=10000, salary_rate=1, loyalty=?, arrears=0, is_mutinied=?,
+               manpower=10000, salary_rate=1, loyalty=?, is_mutinied=?,
                pay_source_region='', province_pay_share=0, central_pay_share=0,
                province_pay_arrears=0, central_pay_arrears=0 WHERE id=?""",
             (is_tusi, self_funded_pay, loyalty, latched, ARMY),
@@ -49,10 +49,10 @@ def _setup(
         central_arrears = arrears  # active hub source-split seed
         db.conn.execute(
             """UPDATE armies SET owner_power='ming', is_tusi=0, self_funded_pay=0,
-               manpower=10000, salary_rate=1, loyalty=?, arrears=?, is_mutinied=?,
+               manpower=10000, salary_rate=1, loyalty=?, is_mutinied=?,
                province_pay_share=0, central_pay_share=1,
                province_pay_arrears=0, central_pay_arrears=? WHERE id=?""",
-            (loyalty, arrears, latched, central_arrears, ARMY),
+            (loyalty, latched, central_arrears, ARMY),
         )
     db.conn.commit()
 
@@ -60,8 +60,8 @@ def _setup(
 def _set_arrears(db, arrears: float):
     central_arrears = arrears  # active hub source-split seed
     db.conn.execute(
-        "UPDATE armies SET arrears=?, province_pay_arrears=0, central_pay_arrears=? WHERE id=?",
-        (arrears, central_arrears, ARMY),
+        "UPDATE armies SET province_pay_arrears=0, central_pay_arrears=? WHERE id=?",
+        (central_arrears, ARMY),
     )
     db.conn.commit()
 

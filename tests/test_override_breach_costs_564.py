@@ -281,7 +281,7 @@ def test_public_apply_rejects_invalid_mode_decision_reaction_shape_before_writes
     with pytest.raises(ValueError):
         db.apply_dossier_verdicts(state, [verdict])
 
-    assert db.list_decree_dossier_decisions(dossier_id) == []
+    assert db.dossiers.decisions(dossier_id) == []
     assert db.dossiers.get(dossier_id)["status"] == "proposed"
 
 
@@ -308,7 +308,7 @@ def test_midzhi_apply_omits_guessed_parties_and_keeps_satisfaction(game):
         assert json.loads(str(stored["affected_parties_json"] or "[]")) == []
         assert decision in {
             str(r.get("decision") or "")
-            for r in db.list_decree_dossier_decisions(dossier_id)
+            for r in db.dossiers.decisions(dossier_id)
         }
 
 

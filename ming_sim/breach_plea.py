@@ -26,6 +26,7 @@ import logging
 import re
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
+from ming_sim.applier import load_stored_list, load_stored_object
 from ming_sim.models import loads_effect_dict
 from ming_sim.staged_commitment import (
     ENTRY_KIND_STAGED,
@@ -715,45 +716,7 @@ def finalize_persist(
         commitment_ref=commitment_ref,
     )
     breach_applied = bool(tail.get("breach_0056"))
-
-    # 执行格：经既有适配器落格（禁裸 SQL 宽吞）
-    if target_dossier_id > 0:
-        dossier = db.dossiers.get(int(target_dossier_id))
-        if dossier is not None and str(dossier.get("status") or "") == "executing":
-            db.record_dossier_execution(
-                int(target_dossier_id), outcome, note, int(state.turn),
-                close=close, commit=False,
-            )
-            if outcome in {"degraded", "failed", "transformed"}:
-                db.record_dossier_progress(
-                    int(target_dossier_id), int(state.turn), outcome, note,
-                    is_terminal=True,
-                    origin=DOSSIER_REPORT_ORIGIN_VERDICT,
-                    commit=False,
-                )
-            exec_result = {
-                "dossier_id": int(target_dossier_id),
-                "outcome": outcome,
-                "close": close,
-            }
-        elif dossier is not None:
-            exec_result = {
-                "dossier_id": int(target_dossier_id),
-                "outcome": str(dossier.get("execution_outcome") or outcome),
-                "already_closed": True,
-            }
-            if not str(dossier.get("execution_outcome") or "").strip():
-                try:
-                    db.record_dossier_execution(
-                        int(target_dossier_id), outcome, note, int(state.turn),
-                        close=False, commit=False,
-                    )
-                    exec_result["outcome"] = outcome
-                except (TypeError, ValueError, KeyError) as exc:
-                    logger.warning(
-                        "record_dossier_execution backfill failed dossier=%s: %s",
-                        target_dossier_id, exc,
-                    )
+    # #1894：执行格终值由判官本月 dossier_executions 声明落账，此处不代判根基档。
 
     # 0079 信用事件：坚持=回绝哭谏
     # 所载含撤人 → 按主办集合落辜负；仅跳过本 finalize 0056 已实写同人

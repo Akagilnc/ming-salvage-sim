@@ -147,14 +147,13 @@ def _write_mutiny_fixture(
 ) -> None:
     central = arrears  # active hub source-split seed
     db.conn.execute(
-        """UPDATE armies SET loyalty=?, arrears=?, is_mutinied=?,
+        """UPDATE armies SET loyalty=?, is_mutinied=?,
            mutiny_count=?, mutiny_probation=?, full_pay_streak=?, redemption_count=?,
            morale=?, province_pay_arrears=0, central_pay_arrears=?,
            manpower=10000, owner_power='ming'
            WHERE id=?""",
         (
             loyalty,
-            arrears,
             is_mutinied,
             mutiny_count,
             mutiny_probation,
@@ -252,7 +251,7 @@ def test_four_chains_embed_situation_matrix(game):
     # 不改 loyalty/latch/probation（档位输入）。
     db.conn.execute(
         """UPDATE armies SET supply=100, training=100, morale=100, loyalty=100,
-           arrears=0, province_pay_arrears=0, central_pay_arrears=0,
+           province_pay_arrears=0, central_pay_arrears=0,
            is_mutinied=0, mutiny_probation=0
            WHERE id != ?""",
         (ARMY,),
@@ -295,7 +294,7 @@ def test_four_chains_embed_situation_matrix(game):
     _assert_ming_register(db, military)
 
     # 链3：detail（LLM 输入装配；旧 inspect_army 查询工具已退役）
-    detail = db.army_detail(ARMY)
+    detail = db.army_roster(filter_names=[ARMY])
     _assert_chain_embeds_situation(detail, sit, "army_detail")
 
     # 链4：roster（LLM 输入装配）

@@ -91,9 +91,9 @@ def _set(
 ) -> None:
     central = arrears  # active hub source-split seed
     db.conn.execute(
-        """UPDATE armies SET loyalty=?, arrears=?, is_mutinied=?,
+        """UPDATE armies SET loyalty=?, is_mutinied=?,
            province_pay_arrears=0, central_pay_arrears=? WHERE id=?""",
-        (loyalty, arrears, latched, central, ARMY),
+        (loyalty, latched, central, ARMY),
     )
     if mutiny_count is not None:
         db.conn.execute(

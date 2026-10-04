@@ -855,7 +855,7 @@ def test_657_return_revise_round_prior_and_clear_anchor(web_game, monkeypatch):
     content = GameContent.load()
     probe = GameDB(db_path, content)
     try:
-        hit = next((r for r in probe.list_rescript_drafts() if r['title'] == '改票急务'))
+        hit = next((r for r in probe.issues.list_rescript_drafts() if r['title'] == '改票急务'))
         assert hit['status'] == 'pending'
         assert int(hit['revision_round'] or 0) == 1
         assert (hit['choice'] or {}).get('action') == 'return_revise'
@@ -873,7 +873,7 @@ def test_657_return_revise_round_prior_and_clear_anchor(web_game, monkeypatch):
     assert r2['_body_canonical'] == body_canon
     probe = GameDB(db_path, content)
     try:
-        hit = next((r for r in probe.list_rescript_drafts() if r['title'] == '改票急务'))
+        hit = next((r for r in probe.issues.list_rescript_drafts() if r['title'] == '改票急务'))
         assert int(hit['revision_round'] or 0) == 1
         assert not (hit['choice'] or {})
         state = probe.load_state()
@@ -891,7 +891,7 @@ def test_657_return_revise_round_prior_and_clear_anchor(web_game, monkeypatch):
     assert r3.get('done') is True, r3
     probe = GameDB(db_path, content)
     try:
-        hit = next((r for r in probe.list_rescript_drafts() if r['title'] == '改票急务'))
+        hit = next((r for r in probe.issues.list_rescript_drafts() if r['title'] == '改票急务'))
         assert hit['status'] == 'decided'
         assert (hit['choice'] or {}).get('action') == 'follow_draft'
         assert len(probe.dossiers.list_dossiers()) >= 1
@@ -1482,7 +1482,7 @@ def test_657_mixed_batch_follow_plus_decision_and_no_context_copy(web_game, monk
     content = GameContent.load()
     probe = GameDB(db_path, content)
     try:
-        hit = next((r for r in probe.list_rescript_drafts() if r['title'] == '混批急务'))
+        hit = next((r for r in probe.issues.list_rescript_drafts() if r['title'] == '混批急务'))
         assert hit['status'] == 'decided'
         decs = probe.issues.list_pending_decisions(int(probe.load_state().turn))
         assert decs and all((row['status'] == 'decided' for row in decs))
@@ -1532,7 +1532,7 @@ def test_1589_mixed_desk_keyless_choice_rejected_batch_zero_writes(web_game):
         state = probe.load_state()
         assert int(state.turn) == turn_before
         assert str(state.turn_phase) == TurnPhase.AWAITING_DECISION.value
-        rows = probe.list_rescript_desk(turn_before)
+        rows = probe.issues.list_rescript_desk(turn_before)
         assert len(rows) == 2, rows
         assert all((str(row.get('status')) == 'pending' for row in rows)), rows
         assert all((not row.get('choice') for row in rows)), rows

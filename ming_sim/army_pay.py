@@ -265,11 +265,11 @@ def settle_hub_central_army_pay(
         db.conn.execute(
             """
             UPDATE armies
-            SET central_pay_arrears = ?, arrears = ?, morale = ?,
+            SET central_pay_arrears = ?, morale = ?,
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
             """,
-            (central_arrears, new_arrears, new_morale, army_id),
+            (central_arrears, new_morale, army_id),
         )
         if shortfall > 0:
             reason_tag = (
@@ -497,10 +497,10 @@ def _pay_single_army_arrears(
     db.conn.execute(
         """
         UPDATE armies
-        SET province_pay_arrears = ?, central_pay_arrears = ?, arrears = ?
+        SET province_pay_arrears = ?, central_pay_arrears = ?
         WHERE id = ?
         """,
-        (province_new, central_new, new_arrears, str(row["id"])),
+        (province_new, central_new, str(row["id"])),
     )
     db.conn.execute(
         """INSERT INTO army_logs

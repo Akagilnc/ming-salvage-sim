@@ -36,7 +36,7 @@ def _setup_army(db, aid, *, loyalty=50, arrears=0.0, manpower=10000,
         """
         UPDATE armies
         SET owner_power=?, is_tusi=?, self_funded_pay=0,
-            manpower=?, salary_rate=?, loyalty=?, arrears=?, morale=50
+            manpower=?, salary_rate=?, loyalty=?, province_pay_arrears=0, central_pay_arrears=?, morale=50
         WHERE id=?
         """,
         (owner_power, is_tusi, manpower, salary_rate, loyalty, arrears, aid),
@@ -95,7 +95,7 @@ def test_substrate_hub_pure_province_source_loyalty_regression(game):
             manpower=10000, salary_rate=1.0, loyalty=50, morale=50,
             province_pay_share=1.0, central_pay_share=0.0,
             pay_source_region='fujian',
-            province_pay_arrears=3.0, central_pay_arrears=0, arrears=3.0
+            province_pay_arrears=3.0, central_pay_arrears=0
         WHERE id=?
         """,
         (aid,),
@@ -126,7 +126,7 @@ def test_substrate_hub_hybrid_source_loyalty_regression(game):
             manpower=10000, salary_rate=1.0, loyalty=50, morale=50,
             province_pay_share=0.55, central_pay_share=0.45,
             pay_source_region='shanxi',
-            province_pay_arrears=3.0, central_pay_arrears=0, arrears=3.0
+            province_pay_arrears=3.0, central_pay_arrears=0
         WHERE id=?
         """,
         (aid,),
@@ -153,8 +153,8 @@ def test_tusi_and_non_ming_untouched_on_hub(game):
     _setup_army(db, ELITE, owner_power="houjin", arrears=0.0, loyalty=66)
     db.conn.execute(
         "UPDATE armies SET province_pay_share=0, central_pay_share=0, "
-        "pay_source_region='', province_pay_arrears=0, central_pay_arrears=0, "
-        "arrears=0 WHERE id IN (?, ?)",
+        "pay_source_region='', province_pay_arrears=0, central_pay_arrears=0 "
+        "WHERE id IN (?, ?)",
         (KEG, ELITE),
     )
     db.conn.commit()
@@ -169,7 +169,7 @@ def test_self_funded_army_untouched_on_hub(game):
     _silence_other_armies(db, keep=(KEG,))
     db.conn.execute(
         "UPDATE armies SET owner_power='ming', is_tusi=0, self_funded_pay=1, "
-        "manpower=10000, salary_rate=1.0, loyalty=50, arrears=0.0, "
+        "manpower=10000, salary_rate=1.0, loyalty=50, province_pay_arrears=0, central_pay_arrears=0, "
         "province_pay_share=0, central_pay_share=0, pay_source_region='', "
         "province_pay_arrears=0, central_pay_arrears=0 WHERE id=?",
         (KEG,),

@@ -71,7 +71,7 @@ def test_same_segment_denunciation_creates_exposure_todo(game, monkeypatch):
         source=Provenance.player_decree,
         visible_refs={"dossiers": {did}},
     )
-    assert db.list_faction_denunciations(target_dossier_id=did)
+    assert db.dossiers.denunciations(target_dossier_id=did)
     todos = db.list_next_audience_todos(status="pending")
     assert any(t["entry_kind"] == ENTRY_KIND for t in todos)
 
@@ -221,7 +221,7 @@ def test_tacit_and_prohibition_use_real_canonical_identity_and_are_idempotent(ga
     _exposed_todo(db, state, monkeypatch, did)
     origin = f"dossier:{did}"
     key = next(iter(db.get_fiscal_config()))
-    db.conn.execute("UPDATE armies SET arrears=10, province_pay_arrears=0, central_pay_arrears=10 WHERE id=?", (army_id,))
+    db.conn.execute("UPDATE armies SET province_pay_arrears=0, central_pay_arrears=10 WHERE id=?", (army_id,))
 
     # An unrelated ordinary fiscal receipt must not impersonate the terminal order.
     unrelated = apply_score_extraction(db, state, {"fiscal_changes": [{
@@ -283,7 +283,7 @@ def test_prohibition_consumes_immediately_when_arrears_are_already_zero(game, mo
     db, state, _ = game
     did, _, army_id, _ = _bound_case(db, state)
     _exposed_todo(db, state, monkeypatch, did)
-    db.conn.execute("UPDATE armies SET arrears=0, province_pay_arrears=0, central_pay_arrears=0 WHERE id=?", (army_id,))
+    db.conn.execute("UPDATE armies SET province_pay_arrears=0, central_pay_arrears=0 WHERE id=?", (army_id,))
     _promulgated_prohibition(db, state, did)
 
     assert settle_exposure_from_canonical_actions(db, state, {}) == 1
@@ -294,11 +294,11 @@ def test_prohibition_reminder_is_consumed_after_later_payoff(game, monkeypatch):
     db, state, _ = game
     did, _, army_id, _ = _bound_case(db, state)
     _exposed_todo(db, state, monkeypatch, did)
-    db.conn.execute("UPDATE armies SET arrears=6, province_pay_arrears=0, central_pay_arrears=6 WHERE id=?", (army_id,))
+    db.conn.execute("UPDATE armies SET province_pay_arrears=0, central_pay_arrears=6 WHERE id=?", (army_id,))
     _promulgated_prohibition(db, state, did)
 
     assert settle_exposure_from_canonical_actions(db, state, {}) == 1
-    db.conn.execute("UPDATE armies SET arrears=0, province_pay_arrears=0, central_pay_arrears=0 WHERE id=?", (army_id,))
+    db.conn.execute("UPDATE armies SET province_pay_arrears=0, central_pay_arrears=0 WHERE id=?", (army_id,))
     assert settle_exposure_from_canonical_actions(db, state, {}) == 1
     assert db.list_next_audience_todos(status="pending") == []
 
@@ -324,8 +324,7 @@ def test_prohibition_blocks_every_covert_write_but_preserves_ordinary_legs(game)
         """
         UPDATE armies
         SET owner_power='ming', is_tusi=0, self_funded_pay=0,
-            province_pay_share=0, central_pay_share=1.0,
-            arrears=8, province_pay_arrears=0, central_pay_arrears=8
+            province_pay_share=0, central_pay_share=1.0, province_pay_arrears=0, central_pay_arrears=8
         WHERE id=?
         """,
         (army_id,),
@@ -490,7 +489,7 @@ def test_zero_pay_receipts_are_not_durable_tacit_effects(game, monkeypatch):
     db, state, _ = game
     did, _, army_id, _ = _bound_case(db, state)
     _exposed_todo(db, state, monkeypatch, did)
-    db.conn.execute("UPDATE armies SET arrears=0, province_pay_arrears=0, central_pay_arrears=0")
+    db.conn.execute("UPDATE armies SET province_pay_arrears=0, central_pay_arrears=0")
     origin = f"dossier:{did}"
     directed = _apply_economy_list(db, state, [{
         "account": "国库", "delta": -2, "purpose": "补饷",

@@ -32,8 +32,8 @@ def _configure(db) -> None:
 def _set_arrears(db, arrears: float) -> None:
     central = arrears  # active hub source-split seed
     db.conn.execute(
-        "UPDATE armies SET arrears=?,province_pay_arrears=0,central_pay_arrears=? WHERE id=?",
-        (arrears, central, ARMY),
+        "UPDATE armies SET province_pay_arrears=0,central_pay_arrears=? WHERE id=?",
+        (central, ARMY),
     )
     db.conn.commit()
 

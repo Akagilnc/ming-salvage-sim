@@ -56,7 +56,7 @@ def test_no_edict_advance_runs_full_settlement_chain(game, monkeypatch):
     assert int(state.turn) == closed_turn
     # 世界段必经（负向：快路已死，也不再走 extractor）
     assert len(sim_calls) == 1
-    assert not db.get_turn_report(closed_turn)
+    assert not db.turn_reports.report_text(closed_turn)
     # 局势 bar：惯性推进后至少有一条变化，或 inertia 路径已跑过（空盘面也允许全不变）
     bars_after = _issue_bars(db)
     # 有 inertia≠0 的 issue 时 bar 应动；无则仅要求链跑通（上面 turn/report/sim 已锁）
@@ -93,7 +93,7 @@ def test_no_edict_fast_path_branch_is_dead(game, monkeypatch):
     assert result.advanced is False
     assert len(sim_calls) == 1
     assert int(state.turn) == closed_turn
-    assert not db.get_turn_report(closed_turn)
+    assert not db.turn_reports.report_text(closed_turn)
 
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
@@ -144,7 +144,7 @@ def test_with_edict_resolve_turn_still_full_settlement(game, monkeypatch):
     assert result.advanced is False
     assert len(sim_calls) == 1
     assert int(state.turn) == closed_turn
-    assert not db.get_turn_report(closed_turn)
+    assert not db.turn_reports.report_text(closed_turn)
 
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
@@ -186,4 +186,4 @@ def test_web_no_edict_endpoint_routes_to_full_settlement(game, monkeypatch):
     assert response["advanced"] is False
     assert len(sim_calls) == 1
     assert int(state.turn) == closed_turn
-    assert not db.get_turn_report(closed_turn)
+    assert not db.turn_reports.report_text(closed_turn)

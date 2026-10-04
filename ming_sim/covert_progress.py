@@ -23,7 +23,7 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence
 from ming_sim.applier import load_stored_object
 from ming_sim.constants import ECONOMY_ACCOUNTS, REGION_FIELD_ALIASES
 from ming_sim.materials import secret_order_origin
-from ming_sim.person_archive_contract import PERSON_ACTIONS
+from ming_sim.person_archive_contract import PERSON_ACTIONS, PERSON_LEGAL_REASON_CODES
 from ming_sim.value_matrix import (
     normalize_axes,
     normalize_direction,
@@ -51,6 +51,7 @@ INVESTIGATION_PROVENANCE_KEY = "investigation_provenance"
 INVESTIGATION_TIPS_KEY = "investigation_tips"
 INVESTIGATION_CLUES_KEY = "investigation_clues"
 INVESTIGATION_ACTS_KEY = "investigation_acts"
+DEFAULT_SUBSTANTIATION_REASON = "依律"
 
 # #1896 逐证难度：首版常数随 playtest（同 0011-4 D4-6 先例），本 ADR 不发明精确值。
 # 真相底两类事实的基准难度不同：seed_guilt 是一条待坐实的罪谱，把柄边是已落库的

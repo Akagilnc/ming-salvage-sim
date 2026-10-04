@@ -92,9 +92,9 @@ def _insert_dynamic_ming_army(db, aid, name, manpower):
     #173：维护费列已删，不再传 maintenance。"""
     db.conn.execute(
         "INSERT INTO armies (id, name, station, theater, commander, controller, troop_type, "
-        "manpower, supply, morale, training, equipment, arrears, mobility, "
+        "manpower, supply, morale, training, equipment, mobility, "
         "loyalty, salary_rate, status, owner_power) "
-        "VALUES (?, ?, '某地', 'jingji', '某将', 'ming', '步', ?, 80, 70, 60, 50, 0, 50, 70, 0, '驻防', 'ming')",
+        "VALUES (?, ?, '某地', 'jingji', '某将', 'ming', '步', ?, 80, 70, 60, 50, 50, 70, 0, '驻防', 'ming')",
         (aid, name, manpower),
     )
 
@@ -208,8 +208,8 @@ def test_auto_pay_reaches_salary_army_via_arrears_filter(game):
     aid = str(db.conn.execute(
         "SELECT id FROM armies WHERE owner_power='ming' LIMIT 1").fetchone()["id"])
     # 只留这一支有欠饷，孤立验证「它是否进得了受饷分发」
-    db.conn.execute("UPDATE armies SET arrears=0, province_pay_arrears=0, central_pay_arrears=0 WHERE owner_power='ming'")
-    db.conn.execute("UPDATE armies SET salary_rate=1.5, arrears=10, province_pay_arrears=0, central_pay_arrears=10 WHERE id=?", (aid,))
+    db.conn.execute("UPDATE armies SET province_pay_arrears=0, central_pay_arrears=0 WHERE owner_power='ming'")
+    db.conn.execute("UPDATE armies SET salary_rate=1.5, province_pay_arrears=0, central_pay_arrears=10 WHERE id=?", (aid,))
     db.conn.commit()
     spent = _auto_pay_arrears_by_priority(db, state, "国库", 5, "补饷", "诏拨补饷")
     assert spent > 0, "兜底拨饷应能花到该军"
@@ -221,8 +221,8 @@ def test_auto_pay_empty_allowed_ids_pays_no_armies(game):
     db, state, _ = game
     aid = str(db.conn.execute(
         "SELECT id FROM armies WHERE owner_power='ming' LIMIT 1").fetchone()["id"])
-    db.conn.execute("UPDATE armies SET arrears=0, province_pay_arrears=0, central_pay_arrears=0 WHERE owner_power='ming'")
-    db.conn.execute("UPDATE armies SET arrears=10, province_pay_arrears=0, central_pay_arrears=10 WHERE id=?", (aid,))
+    db.conn.execute("UPDATE armies SET province_pay_arrears=0, central_pay_arrears=0 WHERE owner_power='ming'")
+    db.conn.execute("UPDATE armies SET province_pay_arrears=0, central_pay_arrears=10 WHERE id=?", (aid,))
     db.conn.commit()
     spent = _auto_pay_arrears_by_priority(
         db, state, "国库", 5, "补饷", "空范围补饷", allowed_army_ids=[]
@@ -237,8 +237,8 @@ def test_auto_pay_strips_allowed_army_ids_before_filtering(game):
     db, state, _ = game
     aid = str(db.conn.execute(
         "SELECT id FROM armies WHERE owner_power='ming' LIMIT 1").fetchone()["id"])
-    db.conn.execute("UPDATE armies SET arrears=0, province_pay_arrears=0, central_pay_arrears=0 WHERE owner_power='ming'")
-    db.conn.execute("UPDATE armies SET arrears=10, province_pay_arrears=0, central_pay_arrears=10 WHERE id=?", (aid,))
+    db.conn.execute("UPDATE armies SET province_pay_arrears=0, central_pay_arrears=0 WHERE owner_power='ming'")
+    db.conn.execute("UPDATE armies SET province_pay_arrears=0, central_pay_arrears=10 WHERE id=?", (aid,))
     db.conn.commit()
 
     spent = _auto_pay_arrears_by_priority(

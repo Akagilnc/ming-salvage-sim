@@ -301,6 +301,17 @@ class _WorkerPathDB:
     def agno_runs_length(self, *a, **k):
         return 0
 
+    @property
+    def reign(self):
+        return self
+
+    def __getattr__(self, name):
+        if name.startswith('_'):
+            raise AttributeError(name)
+        def _stub(*_a, **_k):
+            return None
+        return _stub
+
 
 def test_worker_cleanup_failure_still_emits_error_and_releases_gate():
     """R3 self-check: worker 内 scene payload 崩 → _fail_chat_turn_and_reload 自身也崩 →
@@ -586,7 +597,7 @@ class _FailLeavingAgnoRunAgent:
                 self.db,
                 self.session_id,
                 rid,
-                run_index=self.db.agno_runs_length(self.session_id),
+                run_index=self.db.reign.agno_runs_length(self.session_id),
             )
             raise self.error_factory(n)
         yield RunContent("臣")

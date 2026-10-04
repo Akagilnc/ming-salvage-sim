@@ -262,7 +262,7 @@ def test_ac2_scripted_accept_and_clamp(game):
     assert hit["memorial_text"] == body
     assert origin_has_mark(hit["origin"], ORIGIN_MARK_DENUNCIATION_TRUE)
 
-    rows = db.list_faction_denunciations(turn=state.turn, target_dossier_id=did)
+    rows = db.dossiers.denunciations(turn=state.turn, target_dossier_id=did)
     assert len(rows) == 1
     assert rows[0]["memorial_text"] == body
 
@@ -350,7 +350,7 @@ def test_ac4_dedup_upgrade_closed_and_restore(game, tmp_path, content):
     # 同 turn 同键二次拒（去重由承接查询单源，非 UNIQUE）
     same_turn_dup = db.accept_faction_denunciations(state, [entry], commit=True)
     assert same_turn_dup == []
-    assert len(db.list_faction_denunciations(target_dossier_id=did)) == 1
+    assert len(db.dossiers.denunciations(target_dossier_id=did)) == 1
 
     # 同 turn 案情升级可再落（禁 UNIQUE(turn,...)：否则 IntegrityError）
     _escalate_fork(db, state, did, token="same-turn")
@@ -362,14 +362,14 @@ def test_ac4_dedup_upgrade_closed_and_restore(game, tmp_path, content):
         commit=True,
     )
     assert len(same_turn_up) == 1
-    assert len(db.list_faction_denunciations(target_dossier_id=did)) == 2
+    assert len(db.dossiers.denunciations(target_dossier_id=did)) == 2
 
     # 同人同案同真伪类跨 turn 亦拒（去重键不含 turn）
     state.turn = int(state.turn) + 1
     db.save_state(state)
     second = db.accept_faction_denunciations(state, [entry], commit=True)
     assert second == []
-    assert len(db.list_faction_denunciations(target_dossier_id=did)) == 2
+    assert len(db.dossiers.denunciations(target_dossier_id=did)) == 2
 
     # 跨 turn 案情再升级可再落
     _escalate_fork(db, state, did, token="up")
@@ -381,7 +381,7 @@ def test_ac4_dedup_upgrade_closed_and_restore(game, tmp_path, content):
         commit=True,
     )
     assert len(upgraded) == 1
-    assert len(db.list_faction_denunciations(target_dossier_id=did)) == 3
+    assert len(db.dossiers.denunciations(target_dossier_id=did)) == 3
 
     # closed 案卷拒
     did_closed = _subject_dossier(db, state, owner=subject_name, token="cls")
@@ -400,14 +400,14 @@ def test_ac4_dedup_upgrade_closed_and_restore(game, tmp_path, content):
     assert closed_hits == []
 
     # restore 无损接续
-    expected = db.list_faction_denunciations()
+    expected = db.dossiers.denunciations()
     backup = tmp_path / "restore-627.db"
     db.backup_to(str(backup))
     db.close()
 
     restored = GameDB(str(backup), content=content)
     try:
-        got = restored.list_faction_denunciations()
+        got = restored.dossiers.denunciations()
         assert got == expected
         # restore 后同键重跑不双计
         again = restored.accept_faction_denunciations(
@@ -418,7 +418,7 @@ def test_ac4_dedup_upgrade_closed_and_restore(game, tmp_path, content):
             commit=True,
         )
         assert again == []
-        assert restored.list_faction_denunciations() == expected
+        assert restored.dossiers.denunciations() == expected
     finally:
         restored.close()
 
@@ -437,7 +437,7 @@ def test_ac5_zero_template_exposure_and_622(game):
     _make_forked(db, state, did, token="ban")
 
     fp_before = _world_fingerprint(db)
-    loophole_before = db.list_loophole_exposures(did)
+    loophole_before = db.dossiers.exposure_rows(did)
     knowledge_n_before = db.conn.execute(
         "SELECT COUNT(*) AS n FROM character_knowledge_events"
     ).fetchone()["n"]
@@ -464,7 +464,7 @@ def test_ac5_zero_template_exposure_and_622(game):
 
     # 暴露落条目自身，不写 loophole、不回注知识轨、不改世界状态
     assert hits[0]["payload"].get("fork_exposure", {}).get("fork") is True
-    assert db.list_loophole_exposures(did) == loophole_before
+    assert db.dossiers.exposure_rows(did) == loophole_before
     assert db.conn.execute(
         "SELECT COUNT(*) AS n FROM character_knowledge_events"
     ).fetchone()["n"] == knowledge_n_before

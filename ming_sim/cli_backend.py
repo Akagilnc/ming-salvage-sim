@@ -30,6 +30,7 @@ import subprocess
 import tempfile
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -38,11 +39,13 @@ from typing import Any, Callable, Dict, Iterator, List, Mapping, Optional, Tuple
 from agno.models.message import Message
 from agno.models.openai import OpenAIChat
 from agno.models.response import ModelResponse
-from openai.types.chat import ChatCompletion, ChatCompletionMessage
+from openai.types.chat import ChatCompletion, ChatCompletionMessage, ChatCompletionMessageFunctionToolCall
 from openai.types.chat.chat_completion import Choice
+from openai.types.chat.chat_completion_message_function_tool_call import Function as ToolFunction
 from pydantic import BaseModel
 
 from ming_sim.applier import load_stored_object
+from ming_sim.constants import DOSSIER_LINK_TYPES
 
 # CLI runner 默认模型单一真源在 models（L0 叶子），此处 re-export 保留
 # `from ming_sim.cli_backend import CODEX_DEFAULT_MODEL` 既有路径（#60）。

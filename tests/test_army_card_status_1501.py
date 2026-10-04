@@ -218,7 +218,7 @@ def test_shared_consumers_still_surface_status(read_game):
         assert "status" not in card or card.get("status") in (None, "")
 
     # 4) army_detail → 真实详情缝（关宁全量，必含 seed status）
-    detail = db.army_detail(_GUANNING_ID)
+    detail = db.army_roster(filter_names=[_GUANNING_ID])
     assert seed_status in detail, f"army_detail 缺关宁 status\n{detail!r}"
 
     # 5) army_roster → 真实名册缝（全表，含各军 status）

@@ -585,14 +585,14 @@ def test_883_shared_archive_bypass_positive_and_negative(game):
     create_test_secret_order(db, state, assignee.name, "旁路密查", secret_marker, [])
     first_report = "公开句；本月漕运如常。"
     db.save_turn_report(state, first_report)
-    assert db.get_turn_report(state.turn) == first_report
+    assert db.turn_reports.report_text(state.turn) == first_report
 
     # 正向：无未公开密令简报时，纯公开正文可落共享档。
     db.conn.execute("DELETE FROM secret_order_briefs")
     db.conn.execute("DELETE FROM secret_orders")
     db.conn.commit()
     db.save_turn_report(state, public_marker)
-    assert db.get_turn_report(state.turn) == public_marker
+    assert db.turn_reports.report_text(state.turn) == public_marker
 
 
 def test_976_held_user_chat_released_when_never_classified_as_secret(game):
