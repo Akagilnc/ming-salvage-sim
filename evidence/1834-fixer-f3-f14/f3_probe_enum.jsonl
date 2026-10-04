@@ -1,0 +1,6 @@
+{"path": "evidence/1834-fixer-f9-f12-f3/scripts/probe_f9_f12_structural.py", "line": 204, "kind": "probe_stage_check", "detail": "check(\"OPEN_WORLD\", world)", "action": "F14_STAGE_CHECK_CALL"}
+{"path": "evidence/1834-fixer-f9-f12-f3/scripts/probe_f9_f12_structural.py", "line": 209, "kind": "probe_stage_check", "detail": "check(\"OPEN_PUBLIC\", public)", "action": "F14_STAGE_CHECK_CALL"}
+{"path": "evidence/1834-fixer-f9-f12-f3/scripts/probe_f9_f12_structural.py", "line": 220, "kind": "probe_stage_check", "detail": "check(\"CALENDAR_ADVANCED_WORLD\", world)", "action": "F14_STAGE_CHECK_CALL"}
+{"path": "evidence/1834-fixer-f9-f12-f3/scripts/probe_f9_f12_structural.py", "line": 225, "kind": "probe_stage_check", "detail": "check(\"CALENDAR_ADVANCED_PUBLIC\", public)", "action": "F14_STAGE_CHECK_CALL"}
+{"path": "evidence/1834-fixer-f9-f12-f3/scripts/probe_f9_f12_structural.py", "line": 235, "kind": "probe_stage_check", "detail": "check(\"RESTORE_WORLD\", world)", "action": "F14_STAGE_CHECK_CALL"}
+{"path": "evidence/1834-fixer-f9-f12-f3/scripts/probe_f9_f12_structural.py", "line": 240, "kind": "probe_stage_check", "detail": "check(\"RESTORE_PUBLIC\", public)", "action": "F14_STAGE_CHECK_CALL"}

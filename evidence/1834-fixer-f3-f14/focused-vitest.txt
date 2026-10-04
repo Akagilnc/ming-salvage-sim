@@ -1,0 +1,16 @@
+==== focused vitest via read-only symlink to Ming_LLM-1901-w5/web/node_modules (cleaned after) ====
+command: vitest run --environment jsdom <5 files>
+host: Ming_LLM-1834-w5 (no install; symlink removed)
+
+ RUN  v4.1.9 /Users/akagilnc/WorkSpace/Ming_LLM-1834-w5/web
+
+Not implemented: navigation to another Document
+
+ Test Files  5 passed (5)
+      Tests  139 passed (139)
+   Start at  02:57:52
+   Duration  4.06s (transform 1.05s, setup 0ms, import 1.49s, tests 3.47s, environment 2.42s)
+
+real 4.20
+user 7.02
+sys 0.92
