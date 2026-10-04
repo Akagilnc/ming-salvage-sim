@@ -137,8 +137,6 @@ def _sess(db, state, content, monkeypatch, translate_fn):
     )
     sess.temporary_characters = {}
     sess.agno_db = None
-    sess._beat_generator = None
-    sess._scene_registry = None
     sess._write_gate = get_session_write_queue(sess).write_gate
     # 断言失败时预推仍在跑；登记后夹具在关库前先排空，任务不越过清理边界。
     note_queue_until_game_teardown(db, get_session_write_queue(sess))

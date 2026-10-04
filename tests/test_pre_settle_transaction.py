@@ -327,7 +327,6 @@ def test_advance_without_edict_refused_at_awaiting(game):
     sess.deaths_this_turn, sess.debuts_this_turn = [], []
     sess.last_decree = sess.last_report = ""
     sess._decree_draft_fingerprint = ()
-    sess._scene_registry = sess._beat_generator = None
     sess.auto_save = lambda *a, **k: None
     result = sess.advance_without_decree()
     assert result is not None and result.awaiting is True

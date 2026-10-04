@@ -47,8 +47,6 @@ def _recovery_session(db, state, content, monkeypatch):
     sess.debuts_this_turn = []
     sess.last_decree = ""
     sess.last_report = ""
-    sess._beat_generator = None
-    sess._scene_registry = None
     sess._decree_draft_fingerprint = ()
     sess._write_gate = get_session_write_queue(sess).write_gate
     monkeypatch.setattr(GameSession, "auto_save", lambda self, tag: None)

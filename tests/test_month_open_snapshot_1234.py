@@ -240,8 +240,6 @@ def test_capture_before_mutation_on_resolve_turn_entry(game, monkeypatch):
     sess.last_decree = ""
     sess.last_report = ""
     sess._decree_draft_fingerprint = ()
-    sess._beat_generator = None
-    sess._scene_registry = None
     sess.auto_save = lambda *_a, **_k: None
 
     def _boom(*_a, **_k):
@@ -283,8 +281,6 @@ def test_capture_before_mutation_on_advance_without_edict(game, monkeypatch):
     sess.last_decree = ""
     sess.last_report = ""
     sess._decree_draft_fingerprint = ()
-    sess._beat_generator = None
-    sess._scene_registry = None
     sess.auto_save = lambda *_a, **_k: None
 
     def _boom(*_a, **_k):
