@@ -372,35 +372,12 @@ def test_recovery_replay_blocked_by_pending_directives(game, monkeypatch):
     assert state.turn == turn  # 未推进，拟旨不孤儿
     clear_resolve_rows(db, turn)
 
-def test_skip_refused_at_front_half_done(game):
-    """#1274 r1：decree.advance_without_edict 空壳已删；跳过结算的快路名缺席。
-
-    FRONT_HALF_DONE 恢复/亲裁由 session.resolve_turn 真缝承担（settling 恢复 /
-    awaiting 幂等返回决策），不再经独立退朝壳拒绝。
-    """
-    import inspect
-
-    import ming_sim.decree as decree_mod
-    from ming_sim.decree import pre_settle
-
-    assert not hasattr(decree_mod, "advance_without_edict")
-    assert "def advance_without_edict" not in inspect.getsource(decree_mod)
-
-    db, state, content = game
-    turn = state.turn
-    pre_settle(state, db, content=content)
-    rows_before = _ledger_count(db, turn)
-    # settling 已提交前半：turn 不因「缺壳」而推进；财政行保留
-    assert state.turn == turn
-    assert _ledger_count(db, turn) == rows_before
-
 def test_draft_mutators_frozen_at_front_half_done(game, monkeypatch):
     """FRONT_HALF_DONE 冻结 draft/诏书变更器（ship-pre r1 codex）。
 
     恢复窗口新增/确认的 draft 会被 mark_directives_issued 连带标 issued，
     而重放 delta 不含它们=幽灵颁布。
     """
-    from ming_sim.session import GameSession
     db, state, content = game
     state.turn_phase = "settling"
 

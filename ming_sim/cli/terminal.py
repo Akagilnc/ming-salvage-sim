@@ -272,7 +272,7 @@ def _retry_interrupted_reply_cli(session: GameSession, minister_name: str) -> Op
             db.record_chat_turn_rollback_diffs(
                 chat_turn_id, before_snapshot, db.capture_chat_rollback_snapshot(),
             )
-        print(f"\n{minister_name}：{wrap(answer)}\n")
+        print(f"\n{minister_name}：{answer}\n")
     except Exception as exc:
         # 失败翻回 interrupted 保持可再重试（与 web restore_interrupted_after_failed_retry 同语义）。
         try:
@@ -475,7 +475,7 @@ def minister_chat(session: GameSession, character: Character, *, selected: bool 
             except BaseException as cleanup_error:
                 raise original_error from cleanup_error
             raise
-        print(wrap(result.answer))
+        print(result.answer)
         print()
         _print_pending_action_failures(getattr(result, "pending_action_failures", []) or [])
         if result.proposed_directive is not None:
@@ -510,13 +510,13 @@ def review_directives(session: GameSession) -> str:
         if pending:
             print(f"  · {len(pending)} 道历史拟旨候结束回合成案：")
             for d in pending:
-                print(f"  [待核定] #{d.id}  {wrap(d.text)}")
+                print(f"  [待核定] #{d.id}  {d.text}")
         if staged_directives:
             print(f"  · {len(staged_directives)} 道对话拟旨待颁诏默认同意。")
         if drafts:
             for idx, d in enumerate(drafts, 1):
                 print(f"{idx}. #{d.id}")
-                print(f"   {wrap(d.text)}")
+                print(f"   {d.text}")
         elif not pending and not staged_directives:
             print("（暂无指令。back 继续召见，或 add 新增。）")
         print("\n操作：issue 结束回合 | back 继续召见 | add 新增 | edit N 改 | del N 删 | exit 退出")

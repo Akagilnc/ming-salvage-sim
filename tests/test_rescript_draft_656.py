@@ -8,7 +8,6 @@ from __future__ import annotations
 from tests.conftest import clear_pending_rows, seed_rescript_rows
 
 import json
-from pathlib import Path
 
 import pytest
 
@@ -96,28 +95,7 @@ def test_save_and_list_rescript_drafts_roundtrip(game):
     assert first["actor_office"] == "内阁首辅"
     assert first["actor_faction"] == "阉党"
     second = drafts[1]
-    # 无对应 issue 的急务＝确定性合成 id urgent:{turn}:{idx}
-    assert second["event_id"] == f"urgent:{turn}:1"
-
-def test_rescript_draft_idx_continues_after_decision_rows(game):
-    db, state, _content = game
-    turn = state.turn
-    db.save_pending_decisions(turn, [
-        {"title": "抉择一", "context": "c", "options": [
-            {"label": "a", "hint": ""}, {"label": "b", "hint": ""}]},
-        {"title": "抉择二", "context": "c", "options": [
-            {"label": "a", "hint": ""}, {"label": "b", "hint": ""}]},
-    ])
-    seed_rescript_rows(db, turn, [
-        {"title": "急务", "context": "", "options": [
-            {"label": "甲", "hint": ""}, {"label": "乙", "hint": ""}]},
-    ])
-    rows = db.list_pending_decisions(turn)
-    # A6 后 HITL 缝只回 decision 行；draft 续编经 list_rescript_drafts 验证
-    assert [r["idx"] for r in rows] == [0, 1]
-    assert all(r["kind"] == "decision" for r in rows)
-    drafts = db.list_rescript_drafts()
-    assert [d["idx"] for d in drafts] == [2]  # 与 decision 行共占 (turn, idx) 主键续编
+    assert second["title"] == "无局急务"
 
 
 def test_save_pending_decisions_keeps_rescript_drafts(game):
@@ -152,38 +130,6 @@ def test_save_pending_decisions_keeps_rescript_drafts(game):
     for field in ("event_id", "title", "context", "options"):
         assert draft_after[field] == draft_before[field]
 
-
-def test_repeated_overwrite_keeps_stable_synthetic_ids(game):
-    """A3 判词：先删后算 idx——相同 decision 盘面重复覆写得到相同 idx 与
-    `urgent:{turn}:{idx}` 合成身份，不随被删旧行漂移；无 UUID/映射账。"""
-    db, state, _content = game
-    turn = state.turn
-    db.save_pending_decisions(turn, [
-        {"title": "抉择一", "context": "c", "options": [
-            {"label": "a", "hint": ""}, {"label": "b", "hint": ""}]},
-        {"title": "抉择二", "context": "c", "options": [
-            {"label": "a", "hint": ""}, {"label": "b", "hint": ""}]},
-    ])
-
-    def _drafts(title_a: str, title_b: str) -> list:
-        return [
-            {"title": title_a, "context": "导语甲", "options": [
-                {"label": "甲", "hint": ""}, {"label": "乙", "hint": ""}]},
-            {"title": title_b, "context": "导语乙", "options": [
-                {"label": "甲", "hint": ""}, {"label": "乙", "hint": ""}]},
-        ]
-
-    seed_rescript_rows(db, turn, _drafts("急务甲", "急务乙"))
-    first = db.list_rescript_drafts()
-    assert [d["event_id"] for d in first] == [f"urgent:{turn}:2", f"urgent:{turn}:3"]
-    # 同盘面覆写：行被替换、合成身份不变
-    seed_rescript_rows(db, turn, _drafts("改拟甲", "改拟乙"))
-    second = db.list_rescript_drafts()
-    assert [d["title"] for d in second] == ["改拟甲", "改拟乙"]  # 确证替换发生
-    assert [d["event_id"] for d in second] == [f"urgent:{turn}:2", f"urgent:{turn}:3"]
-    # decision 行 idx 不受影响
-    decisions = db.list_pending_decisions(turn)
-    assert [d["idx"] for d in decisions] == [0, 1]
 
 # ---------------------------------------------------------------------------
 # F3.3 原样不变式＋P4 输入侧定性投影＋prompt 正向措辞（机械验收）

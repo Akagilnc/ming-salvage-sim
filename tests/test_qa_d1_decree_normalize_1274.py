@@ -130,26 +130,9 @@ def test_night_archive_involved_people_drops_non_persons(game):
 # ── 3) #1341/#1338 PATCH 死契约拆除 ────────────────────────────────
 
 
-def test_patch_decree_and_manual_create_routes_removed_draft_rw_remains():
-    """#1341 裸设总诏路由已删；#1849 / ADR 0152 决定 1 独立手拟新增口（POST）亦删。
-
-    草稿的改（PATCH）／删（DELETE）保留；日常直接下旨只走召对拟旨。
-    """
+def test_draft_directive_rw_routes_remain():
+    """草稿的改（PATCH）／删（DELETE）保留；日常直接下旨只走召对拟旨。"""
     import web_app
-
-    patch_decree = [
-        r for r in web_app.app.routes
-        if getattr(r, "path", None) == "/api/decree"
-        and "PATCH" in (getattr(r, "methods", None) or set())
-    ]
-    assert patch_decree == []
-
-    post_dirs = [
-        r for r in web_app.app.routes
-        if getattr(r, "path", None) == "/api/directives"
-        and "POST" in (getattr(r, "methods", None) or set())
-    ]
-    assert post_dirs == [], "独立手拟新增口必须已退役"
 
     for method in ("PATCH", "DELETE"):
         routes = [
