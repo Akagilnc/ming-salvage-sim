@@ -1,37 +1,149 @@
 class	group_id	paths_fns	disposition	source_contract	dest_path	caller_evidence	notes
-N6	play_as_emperor.parse_emperor_output.input	scripts/play_as_emperor.py::parse_emperor_output	DELETED_FIX	source=agent JSON field `input` (free-prose keyboard action)	dest=return → ask_emperor → run() → pexpect.sendline(action)	run() L358/L466 ask_emperor; L361/L482 sendline(action)	Removed regressive input_text.splitlines()[0]; envelope strip only for JSON locate; empty-gate `if not str(raw).strip()` raises with original raw; input field never strip/slice
-N6	play_as_emperor.parse_emperor_output.envelope_strip	scripts/play_as_emperor.py::parse_emperor_output	KEEP	source=agent raw JSON envelope whitespace	dest=json.loads formal locate only; does not rewrite `input`/`reasoning` payloads	parse_emperor_output after empty-gate	Formal parse prep; judged by reading function body
-N6	play_as_emperor.run.sendline_passthrough	scripts/play_as_emperor.py::run	KEEP	source=ask_emperor action (free prose)	dest=pexpect.sendline(action) unmodified; action[:200] absent	run() comment + sendline call; mutation probe PASS	Prior DELETE of action[:200] confirmed absent
-N6	play_as_emperor.ask_emperor.cli_chunk_window	scripts/play_as_emperor.py::ask_emperor	KEEP_HARNESS_CONTEXT	source=CLI PTY chunk (strip_ansi(child.before+prompt))	dest=agent.run prompt via cli_chunk[-3500:] model context window; NOT sendline rewrite	ask_emperor payload f-string	Reviewed: truncates model-visible CLI feed (probe harness context); keyboard action path separate. Remaining: whether harness window should grow is out of N6 DELETE scope for this round
-N6	play_as_emperor.strip_ansi	scripts/play_as_emperor.py::strip_ansi	KEEP	source=CLI PTY bytes with CSI	dest=cli_chunk without terminal controls for agent prompt chrome	run() L348 cli_chunk=strip_ansi(...)	ANSI control strip; not emperor free-prose synonym rewrite
-N6	play_as_emperor.action_empty_gate	scripts/play_as_emperor.py::run	KEEP	source=action free prose	dest=`if action.strip() in {…}` empty/closed-token gate only; sendline still gets unstripped action	run() L362	Correct empty-gate pattern; transport unstripped
-N6	agents.run_agent_stream_text.on_thinking	ming_sim/agents.py::run_agent_stream_text	KEEP	source=reasoning_content stream deltas	dest=on_thinking(merged) full text; tlog gets tail preview only	L427-430, L459-463	Thinking char-cap DELETED prior; callback gets full merged
-N6	agents.run_agent_stream_text.on_text	ming_sim/agents.py::run_agent_stream_text	KEEP	source=content stream deltas	dest=on_text(delta) full; return streamed full; strip only empty-gate	L449-450, L468-470	`if streamed.strip(): text=streamed` returns original streamed
-N6	agents.parse_agent_json	ming_sim/agents.py::parse_agent_json	KEEP	source=LLM JSON/fence raw	dest=json.loads formal; raise on fail	parse_agent_json + strip_json_fence	Formal JSON parse; not emperor display rewrite
-N6	cli_backend._compose_inworld_fact_report	ming_sim/cli_backend.py::_compose_inworld_fact_report	KEEP	source=CLI/API generated prose	dest=return text unchanged; strip empty-gate only	L1830-1833	`if text.strip(): return text` — correct pattern
-N6	cli_backend._grounding_source_text	ming_sim/cli_backend.py::_grounding_source_text	KEEP	source=player_message + failed_slot_refs	dest=compare-only grounding surface (ADR 0142); not written back to player transport	L1431-1448; web useChatActions keeps unstripped message	strip builds compare parts; player lane transport separate (useChatActions message=text)
-N6	cli_backend._loads_lenient	ming_sim/cli_backend.py::_loads_lenient	KEEP	source=LLM raw JSON/fence	dest=json.loads / JSONC formal parse; None on fail	L3558-3588	Formal extractor parse
-N6	cli_backend._content_reflects_emperor_intent	ming_sim/cli_backend.py::_content_reflects_emperor_intent	KEEP	source=emperor_intent + content strings	dest=boolean coverage compare after ws-compact; originals not stored rewritten	L3671-3680	Compare-only; assemble_secret_order uses originals
-N6	cli_backend._trace_field_cap	ming_sim/cli_backend.py::_trace	KEEP	source=trace prompt/response strings	dest=operator JSONL trace file only; not model/emperor feed	L332-337 FIELD_CAP	Operator log cap
-N6	cli_backend._iter_cli_runner_text.diag_slice	ming_sim/cli_backend.py::_iter_cli_runner_text	KEEP	source=stdout/stderr on failure	dest=RuntimeError/provider_message diagnostic[:200]	L819,L826	Operator/error diag preview
-N6	cli_backend.identity_strips	ming_sim/cli_backend.py::{_cli_config_parts,_known_person_canon,_roster_identity_forms,_extract_secret_order formal fields,…}	KEEP	source=runner/model/cid/office/assignee closed ids	dest=config/lookup/DB keys; formal identity normalize	sampled L994-1010, L1536-1568, L3960-4036	Form fields; not free-prose rewrite. Group review of identity strip family in this file
-N6	web.useChatActions.sendChat	web/src/useChatActions.ts::sendChat	KEEP	source=composer text (player free prose)	dest=message=text untrimmed after `if (!text.trim()) return`	L149-154	Correct empty-gate; transport unstripped
-N6	web.highlights.segment	web/src/highlights.ts::{matchHighlightPhrases,segmentHighlightedContent}	KEEP	source=displayContent drama string	dest=segment slices of unchanged drama; match substrings only	file header comment + slice for UI segments	No synonym rewrite; slice splits display for mark spans
-N6	web.format.splitReportItems	web/src/format.ts::splitReportItems	KEEP	source=structured report lines with known prefix	dest=UI list split on fixed delimiters for panel chrome	format.ts L124-131; callers use for structured summary panels	Delimiter/prefix peel for UI list; not LLM synonym rewrite of drama
-N6	web.settleStream.sse	web/src/settleStream.ts	KEEP	source=SSE event/data lines	dest=protocol parse trim of event name / error message chrome	L22-23, L58-60	SSE framing; payload message transport separate
-N6	web_app._humanize_condition	web_app.py::_humanize_condition	KEEP	source=issue resolve/fail condition text	dest=formal character.* DSL → labels; free prose returned unchanged	L224-234; mutation evidence 1847-n6-n10-mutation.txt N6_CURRENT_projection_raw_equal	Free prose pass-through verified at state projection seam
-N6	web_app.report_empty_gate	web_app.py (turn report archive payload)	KEEP	source=report / attendant_message	dest=`if not str(...).strip()` absence gate; payload returns original strings	L5239-5262	Correct empty-gate; payload unstripped
-N6	declaration_dispatch._declared_prose	ming_sim/declaration_dispatch.py::_declared_prose	KEEP	source=declared prose str	dest=`if not value.strip(): return None` else `return value`	L768-778	Correct empty-gate; returns original
-N6	month_chain.report_gates	ming_sim/month_chain.py (archive/report gates)	KEEP	source=title/report/prefix strings	dest=empty-gates via .strip(); non-empty returns/stores original	L350-352, L621, L637	Empty-gate pattern
-N6	agents.session_run_truncate	ming_sim/agents.py::{_history_backed_truncate_anchor,_truncate_history_backed_agent_runs}	KEEP	source=GameDB agno session run rows	dest=delete empty completed runs (row count); not free-text content edit	keyword hits + fn bodies	Session run-row truncate; not prose
-N11	retired_symbols_deleted	ming_sim + tests (named)	DELETED_KNOWN	source=retired mechanism symbols listed in prior rounds	dest=absent from live tree (marker confirm)	_legacy_commitment_stop_gate; PERSON_LEGACY_*; _infer_tag; caller_tag alts; __leverage_offsets_rank_rules_562; dedicated legacy tests	Symbol deletion confirmed by prior commits; not re-derived from vocab scan
-N11	live_gates_keep	ming_sim/db.py + tests + pairing	KEEP	source=live migration/negative contract symbols	dest=live calibration / 0055 decision_key / pairing_warnings not-in-applied	__leverage_offsets_calibrated; float_v2; pairing_warnings negative asserts; 0055 decision_key tests	Human cite: live contract; boundary forbid delete (0055负向闸 retained)
-N11	vocab_hits_incomplete_scan	all N11_PAT vocabulary hits	PENDING_HUMAN	source=legacy/compat/deprecated word scan (incomplete for full class)	dest=n11_focus.tsv POTENTIAL_NOISE rows	scan_classify N11_PAT	Cannot claim full-class EXCLUDED from symbol list alone — remaining scope below
-N12	converged_duplicates_known	ministerFilters/drawers/issues/db/fiscal_tick/web_app	CONVERGED_KNOWN	source=prior identical full-enum duplicates	dest=single definition reads	prior family commits	Historical converge markers; re-affirmed by reading current single definitions
-N12	spike_oracle	spike_settle_tick.py	KEEP	source=spike oracle mirrors of fiscal enums	dest=explicit spike exemption (scanned, not silent drop)	spike_settle_tick.py + exempt table	Human re-affirm: spike mirror allowed
-N12	power_write_subset	ming_sim/db.py + issues.py power field sets	KEEP	source={leverage,military_strength,supply} write whitelist	dest=subset of POWER_SCORE_FIELDS at two gates — not identical full enum duplicate	db.py + issues.py write paths	Human cite: subset ≠ duplicate full enum
-N12	literal_hits_not_verdict	n12_literal_hits.tsv all rows	PENDING_HUMAN	source=named-key/assign literal scan	dest=scan surface only	scan_n12_literals	Full-class exclusion requires per-hit second-definition check; not auto-EXCLUDED
-N13	warm_keychain_deleted	ming_sim/cli_backend.py	DELETED_KNOWN	source=_warm_keychain hard timeout path	dest=function+calls removed	dddd600bb / prior self-check	Confirmed absent
-N13	play_as_emperor.terminate_soft	scripts/play_as_emperor.py::run finally	KEEP	source=pexpect child	dest=terminate(force=False) SIGTERM only	L516	Reviewed: force=False
-N13	cli_backend.login_shell_no_timeout	ming_sim/cli_backend.py::_login_shell_path	KEEP	source=login shell PATH probe subprocess	dest=subprocess without timeout kw; natural exit	AST/read: no timeout=	Reviewed
-N13	remaining_timeout_hits	n13_focus.tsv PENDING_HUMAN rows	PENDING_HUMAN	source=timeout/close/terminate mechanical hits	dest=need per-site confirm no process.kill on expiry	scan_classify_n13	Production non-test PENDING rows remain for human clear
+N6	N6.agents.parse_agent_json	parse_agent_json	KEEP	source=LLM JSON/fence	dest=json.loads	parse_agent_json	Formal
+N6	N6.agents.run_agent_stream_text.on_text	agents.py	KEEP	source=content deltas	dest=on_text full	agents.py	Full
+N6	N6.agents.run_agent_stream_text.on_thinking	agents.py	KEEP	source=reasoning deltas	dest=on_thinking full; tlog preview	agents.py	Full callback
+N6	N6.agents.session_run_truncate	agents session truncate	KEEP	source=session run rows	dest=row-count truncate	agents session truncate	Not prose
+N6	N6.cli_backend._compose_inworld_fact_report	_compose_inworld_fact_report	KEEP	source=CLI/API prose	dest=return text; strip empty-gate	_compose_inworld_fact_report	Empty-gate
+N6	N6.cli_backend._content_reflects_emperor_intent	_content_reflects_emperor_intent	KEEP	source=intent+content	dest=boolean; originals not stored rewritten	_content_reflects_emperor_intent	Compare
+N6	N6.cli_backend._grounding_source_text	_grounding_source_text	KEEP	source=player_message compare	dest=compare-only; transport separate	_grounding_source_text	Compare
+N6	N6.cli_backend._iter_cli_runner_text.diag_slice	_iter_cli_runner_text	KEEP	source=stdout/stderr failure	dest=diag[:200]	_iter_cli_runner_text	Diag
+N6	N6.cli_backend._loads_lenient	_loads_lenient	KEEP	source=LLM JSON	dest=formal parse	_loads_lenient	Formal
+N6	N6.cli_backend._trace_field_cap	_trace	KEEP	source=trace strings	dest=operator JSONL	_trace	Log
+N6	N6.cli_backend.assemble_secret_order_content	assemble_secret_order_content L3688-3703	KEEP	source=emperor_intent+extractor 内容	dest=secret-order content; emperor bytes not strip/slice	assemble_secret_order_content L3688-3703	Verified this round
+N6	N6.cli_backend.identity_strips	identity family	KEEP	source=closed ids	dest=config/lookup	identity family	Form
+N6	N6.declaration_dispatch._declared_prose	_declared_prose	KEEP	source=declared prose	dest=return original	_declared_prose	Empty-gate
+N6	N6.exempt.doc	ming_sim/simulation.py	EXEMPT_DOC	source=comment/doc	dest=n/a	scanner MECHANICAL_DOC	Doc exemption
+N6	N6.exempt.script_probe	scripts/secret_order_probe2.py	KEEP_log_trace	source=probe/harness text	dest=operator preview	scripts/*	Harness not live player lane
+N6	N6.exempt.test	web/src/styles.test.ts	EXEMPT_TEST	source=tests/	dest=pytest	scanner MECHANICAL_TEST	Test exemption
+N6	N6.launcher.py::boot_log	launcher.py	KEEP_log_trace	source=sys.version boot line	dest=_log operator only	L148	Not game transport
+N6	N6.ming_sim/action_clusters.py::fieldspec	ming_sim/action_clusters.py	KEEP_formal_id	source=FieldSpec enum/max_len	dest=candidate; draft_text raw	_enum	Form
+N6	N6.ming_sim/action_materialize.py::stage_ids	ming_sim/action_materialize.py	KEEP_formal_id	source=grant/target/office ids	dest=stage candidates	stage_*	Formal
+N6	N6.ming_sim/agents.py::stream	ming_sim/agents.py	KEEP	source=stream deltas	dest=callbacks full; tlog preview	run_agent_stream_text	Prior
+N6	N6.ming_sim/applier.py::sqlite_sanitize	ming_sim/applier.py	KEEP_sqlite_sanitize	source=any TEXT bind	dest=UTF-8-safe storage	sanitize_sqlite_text	Storage
+N6	N6.ming_sim/appointment_tenure.py::formal_ids	ming_sim/appointment_tenure.py	KEEP_formal_id	source=tenure/privilege	dest=rank/weight enums	normalize_appointment_tenure	Formal
+N6	N6.ming_sim/assets.py::asset_load_wrap	ming_sim/assets.py	KEEP_structure_split_join	source=content files / chrome wrap / JSON fence	dest=bundled asset / CLI wrap / parse_agent_json	wrap/load_text_asset/strip_json_fence	Structure
+N6	N6.ming_sim/audience_night.py::cmd_and_body	ming_sim/audience_night.py	KEEP_compare_only	source=closed cmds + ledger body	dest=CMD enum; body empty-gate	recognize_*/append_ledger	Compare+gate
+N6	N6.ming_sim/audience_translate.py::prompt_feed	ming_sim/audience_translate.py	KEEP_empty_gate	source=chat/ledger body	dest=prompt original body	build_audience_translate_prompt	Empty-gate
+N6	N6.ming_sim/audience_translation.py::ids_log_compare	ming_sim/audience_translation.py	KEEP_compare_only	source=person_name; scene_facts vs reply	dest=protagonist id; integrity compare; log join	_bind_round_after_dispatch/_observe_finished_future	Ids+compare
+N6	N6.ming_sim/authority_privileges.py::formal_ids	ming_sim/authority_privileges.py	KEEP_formal_id	source=AUTHORITY_PRIVILEGES	dest=SQL IN join	module L11	Enum SQL
+N6	N6.ming_sim/breach_plea.py::refs	ming_sim/breach_plea.py	KEEP_formal_id	source=dossier:/issue: refs	dest=plea meta	parse_dossier_id	Formal
+N6	N6.ming_sim/centrifuge_ledger.py::formal_ids	ming_sim/centrifuge_ledger.py	KEEP_formal_id	source=reason_code/faction	dest=ledger keys	_optional_text	Formal
+N6	N6.ming_sim/cli/terminal.py::menu_prose	ming_sim/cli/terminal.py	KEEP_empty_gate	source=menu tokens vs 朕问 prose	dest=menu vs scene_chat unstripped	review_directives/minister_chat	Verified
+N6	N6.ming_sim/cli_backend.py::mixed_reviewed	ming_sim/cli_backend.py	KEEP	source=see transport + formal + log families	dest=secret assemble KEEP; config/ids formal; diag log	cli_backend reviewed seams	File-group; transport cited in prior rows
+N6	N6.ming_sim/commitment_backlash.py::formal_ids	ming_sim/commitment_backlash.py	KEEP_formal_id	source=source_kind/outcome	dest=origin_ref	backlash_origin_ref	Formal
+N6	N6.ming_sim/content.py::gate_dsl	ming_sim/content.py	KEEP_formal_id	source=events.json gates	dest=load form errors	gate_key_form_error	Formal
+N6	N6.ming_sim/context.py::match_prompt	ming_sim/context.py	KEEP_compare_only	source=minister match / prompt rows	dest=exact match; prompt empty-gate	match_minister_from_text	Exact
+N6	N6.ming_sim/covert_levy.py::formal_ids	ming_sim/covert_levy.py	KEEP_formal_id	source=origin_ref/executor ids	dest=receipt/actors	canonical_fiscal_result	Formal
+N6	N6.ming_sim/covert_progress.py::contract_ids	ming_sim/covert_progress.py	KEEP_formal_id	source=covert axes/accounts	dest=typed contract	build_covert_task_contract	Formal
+N6	N6.ming_sim/credit_events.py::ids_context	ming_sim/credit_events.py	KEEP_empty_gate	source=ids strip; context unstripped	dest=edge write	write_credit_event	Ids+passthrough
+N6	N6.ming_sim/db.py::formal_ids_sqlite	ming_sim/db.py	KEEP_formal_id	source=dossier/assignee/target/power ids + sqlite sanitize	dest=DB keys / TEXT storage	db.py bulk sampled	File-group review
+N6	N6.ming_sim/declaration_dispatch.py::prose_and_ids	ming_sim/declaration_dispatch.py	KEEP_empty_gate	source=declared prose + commission ids	dest=prose original; ids formal	_declared_prose/_dispatch_commissions	Empty-gate+ids
+N6	N6.ming_sim/decree.py::ids_gate	ming_sim/decree.py	KEEP_formal_id	source=arrival/rescript ids	dest=waiting list / write empty-gate	collect_new_arrival_waiting_audience	Formal
+N6	N6.ming_sim/decree_forecast.py::empty_gate	ming_sim/decree_forecast.py	KEEP_empty_gate	source=forecast prefix	dest=translate if non-empty; prefix original	produce_forecast_product L333	Empty-gate
+N6	N6.ming_sim/decree_vocabulary.py::qual_label	ming_sim/decree_vocabulary.py	KEEP_formal_id	source=closed status keys	dest=CN labels; memorial unstripped	qualitative_dossier_*	P4
+N6	N6.ming_sim/due_review.py::formal_ids	ming_sim/due_review.py	KEEP_formal_id	source=entry_kind/origin_ref	dest=lane/dossier id	normalize_audience_entry_kind	Formal
+N6	N6.ming_sim/entities/affair/store.py::sqlite_ref	ming_sim/entities/affair/store.py	KEEP_formal_id	source=title/origin_ref	dest=sanitize_sqlite + ref	open/parse_origin_ref	Storage
+N6	N6.ming_sim/entities/staged_declaration/store.py::sqlite_json	ming_sim/entities/staged_declaration/store.py	KEEP_formal_id	source=decree_ref/JSON	dest=sanitize_sqlite_text	write/stage	Storage
+N6	N6.ming_sim/entities/textual_fact/store.py::body_and_ids	ming_sim/entities/textual_fact/store.py	KEEP_empty_gate	source=body prose + subject ids	dest=empty-gate body→sanitize_sqlite; ids strip	append L72-79	Empty-gate+ids
+N6	N6.ming_sim/error_pack.py::version_tb	ming_sim/error_pack.py	KEEP_log_trace	source=VERSION/traceback	dest=error pack files	write_error_pack/_read_version	Operator pack
+N6	N6.ming_sim/execution_pressure.py::formal_ids	ming_sim/execution_pressure.py	KEEP_formal_id	source=target_kind/id/locality	dest=region resolve/matrix	normalize_locality_scope/_resolve_single_region_id	Formal
+N6	N6.ming_sim/executor_routing.py::formal_ids	ming_sim/executor_routing.py	KEEP_formal_id	source=action_type/assignee ids	dest=route leads	classify_execution_coverage/resolve_lead_executors	Formal
+N6	N6.ming_sim/faction_brew.py::error_preview	ming_sim/faction_brew.py	KEEP_log_trace	source=bad stance raw	dest=error[:800]; stance_segment unstripped	parse_faction_stance_output	Diag
+N6	N6.ming_sim/fiscal_fact_brief.py::formal_ids	ming_sim/fiscal_fact_brief.py	KEEP_formal_id	source=station/target/claim keys	dest=fact rows+TSV chrome	build_fiscal_fact_brief	Formal
+N6	N6.ming_sim/flows.py::economy_enums	ming_sim/flows.py	KEEP_formal_id	source=economy_moves enums	dest=membership	_apply_economy_list	Formal
+N6	N6.ming_sim/highlight_judge.py::json_gate	ming_sim/highlight_judge.py	KEEP_empty_gate	source=judge raw/highlights	dest=list of original items	parse_highlight_judge_output	Empty-gate
+N6	N6.ming_sim/issues.py::formal_gates	ming_sim/issues.py	KEEP_formal_id	source=extractor ids + gate DSL + closed enums	dest=apply/reject/gate	issues.py bulk sampled	File-group review
+N6	N6.ming_sim/knowledge.py::prose_join	ming_sim/knowledge.py	KEEP_empty_gate	source=knowledge body	dest=join passthrough	source_projection	Passthrough
+N6	N6.ming_sim/llm_config.py::config	ming_sim/llm_config.py	KEEP_form_ui	source=runtime LLM fields	dest=runtime_llm.json	save_runtime_llm	Form
+N6	N6.ming_sim/llm_contract.py::empty_and_diag	ming_sim/llm_contract.py	KEEP_empty_gate	source=field str; raw error	dest=return original; detail[:800]	require_non_empty_text/abort_llm_contract	Empty-gate+diag
+N6	N6.ming_sim/llm_model.py::config_diag	ming_sim/llm_model.py	KEEP_form_ui	source=LLMConfig / ERROR content	dest=model kwargs / ClassifiedFailure	create_chat_model	Form+diag
+N6	N6.ming_sim/llm_transport.py::error_diag	ming_sim/llm_transport.py	KEEP_log_trace	source=stream error content	dest=ClassifiedFailure provider_message	llm_transport error path	Diag not drama
+N6	N6.ming_sim/matching.py::alias	ming_sim/matching.py	KEEP_formal_id	source=region/army names	dest=alias catalog exact resolve	canonical_*_exact	Catalog
+N6	N6.ming_sim/materials.py::path_and_body	ming_sim/materials.py	KEEP_empty_gate	source=path stems + title/body	dest=path-safe + materials files	_safe_segment/_character_affair_lines	Path+empty-gate
+N6	N6.ming_sim/models.py::predicates	ming_sim/models.py	KEEP_compare_only	source=effect fields	dest=has_work bool	_economy_effect_has_work	Compare
+N6	N6.ming_sim/month_chain.py::report_protocol	ming_sim/month_chain.py	KEEP_empty_gate	source=title/report/decision markers	dest=empty-gate + protocol peel	month_chain gates	Empty-gate+protocol
+N6	N6.ming_sim/month_translate.py::id_prompt	ming_sim/month_translate.py	KEEP_structure_split_join	source=effect ref ids	dest=prompt block join	_effect_ref_grounding	Ids prompt
+N6	N6.ming_sim/office_rank.py::office_stem	ming_sim/office_rank.py	KEEP_formal_id	source=office titles	dest=rank match	concurrent_office_titles	Formal
+N6	N6.ming_sim/participant_roster.py::formal_ids	ming_sim/participant_roster.py	KEEP_formal_id	source=character_id/tier/executor	dest=roster keys	is_non_person_participant_name/resolve_dossier_owner_name	Formal
+N6	N6.ming_sim/paths.py::path_id	ming_sim/paths.py	KEEP_formal_id	source=MING_SIM_USER_DATA_DIR	dest=Path	user_data_dir L44	Path
+N6	N6.ming_sim/pay_order.py::keys_and_audit	ming_sim/pay_order.py	KEEP_formal_id	source=override keys/region_id; tombstone[:240]	dest=config write; audit cap	materialize_pay_order_decree	Formal+audit
+N6	N6.ming_sim/person_archive_contract.py::formal_ids	ming_sim/person_archive_contract.py	KEEP_formal_id	source=reason_code/title/status enums	dest=ADR0009 whitelist	normalize_reason_code	Formal
+N6	N6.ming_sim/person_delta_adapter.py::formal_ids	ming_sim/person_delta_adapter.py	KEEP_formal_id	source=office_type	dest=appointment spill filter	normalize_person_changes L94	Formal
+N6	N6.ming_sim/person_write_inventory.py::sql_norm	ming_sim/person_write_inventory.py	KEEP_structure_split_join	source=SQL string const	dest=inventory AST location	_write_locations_in_source	Whitespace norm
+N6	N6.ming_sim/public_sayings.py::body	ming_sim/public_sayings.py	KEEP_empty_gate	source=body prose	dest=sanitize_sqlite after empty-gate	record_public_saying	#1812
+N6	N6.ming_sim/recommendations.py::ids_reason	ming_sim/recommendations.py	KEEP_empty_gate	source=name ids; 荐词 reason	dest=edge; reason original after gate	build_recommendation_brief/validate	Ids+passthrough
+N6	N6.ming_sim/registry.py::prompt_gate	ming_sim/registry.py	KEEP_empty_gate	source=scene_agent_prompt	dest=Agent instructions; empty→chrome	create_scene_agent	Empty-gate
+N6	N6.ming_sim/relation_brew.py::brew_diag_join	ming_sim/relation_brew.py	KEEP_log_trace	source=bad brew raw / prompt parts	dest=error[:800]; prompt join; foundings unstripped	parse_brew_output	Diag; zero-clamp comments
+N6	N6.ming_sim/relation_read.py::prose_join	ming_sim/relation_read.py	KEEP_empty_gate	source=founding/recent segments	dest=summary join passthrough	_relation_dto	Passthrough
+N6	N6.ming_sim/relation_seed.py::empty_and_id	ming_sim/relation_seed.py	KEEP_empty_gate	source=context prose; ids	dest=store original; id ws reject	_non_empty_str/_identifier	Empty-gate
+N6	N6.ming_sim/relations.py::edge	ming_sim/relations.py	KEEP_empty_gate	source=actor ids; 语境 passthrough	dest=edge write	_capture_one_interaction	Ids+context
+N6	N6.ming_sim/report.py::chrome_join	ming_sim/report.py	KEEP_structure_split_join	source=structured metric deltas	dest=CLI period report chrome	status_delta replace prefix	Chrome not drama synonym
+N6	N6.ming_sim/rescript_actions.py::empty_gate	ming_sim/rescript_actions.py	KEEP_empty_gate	source=choice label/note	dest=reject empty; persist original choice_json	persist_answers L53	Empty-gate
+N6	N6.ming_sim/rescript_draft.py::empty_gate	ming_sim/rescript_draft.py	KEEP_empty_gate	source=批语 text	dest=midzhi/settled gates; text unstripped	consume	Empty-gate
+N6	N6.ming_sim/session.py::office_autosave_chat	ming_sim/session.py	KEEP_formal_id	source=office ids/autosave/message	dest=DB/prune; message unstripped	apply_appointment/scene_chat	Formal+transport
+N6	N6.ming_sim/settlement_payload.py::decision_peel	ming_sim/settlement_payload.py	KEEP_structure_split_join	source=<<DECISION>> blocks / option labels	dest=protocol peel; label empty-gate stores original	parse_decision_blocks	Protocol
+N6	N6.ming_sim/simulation.py::alias_keys	ming_sim/simulation.py	KEEP_formal_id	source=delta item keys	dest=ITEM_FIELD_ALIASES	_canonical_item_fields L216	Schema keys
+N6	N6.ming_sim/staged_commitment.py::stages_json	ming_sim/staged_commitment.py	KEEP_structure_split_join	source=stages_json / outcome	dest=json.loads; err preview; empty-gate outcome	stages_to_json	Structure
+N6	N6.ming_sim/strict_types.py::empty_gate	ming_sim/strict_types.py	KEEP_empty_gate	source=verdict fields	dest=shape predicates only	validate_rejection_verdict	Compare empty
+N6	N6.ming_sim/structured_decree.py::canonical	ming_sim/structured_decree.py	KEEP_formal_id	source=action/target ids	dest=assembled payload	assemble_structured_decree	Formal
+N6	N6.ming_sim/supervision.py::origin_mark	ming_sim/supervision.py	KEEP_formal_id	source=report origin marks	dest=DSL compose/parse	compose_report_origin	Formal
+N6	N6.ming_sim/urge_lever.py::ids_and_reason_gate	ming_sim/urge_lever.py	KEEP_empty_gate	source=entry_kind ids; urge reason	dest=scene; reason original or chrome default	project_urge_audience_scene/rush_staged_commitment_stage	Ids+empty-gate
+N6	N6.ming_sim/value_matrix.py::formal_ids	ming_sim/value_matrix.py	KEEP_formal_id	source=axis/faction	dest=matrix lookup	normalize_axis	Formal
+N6	N6.month_chain.report_gates	month_chain	KEEP	source=title/report/prefix	dest=empty-gate originals	month_chain	Empty-gate
+N6	N6.play_as_emperor.action_empty_gate	run()	KEEP	source=action free prose	dest=empty-gate; sendline unstripped	run()	Empty-gate
+N6	N6.play_as_emperor.ask_emperor.cli_chunk_window	ask_emperor	KEEP_HARNESS_CONTEXT	source=CLI PTY chunk	dest=agent prompt cli_chunk[-3500:]	ask_emperor	Harness context not sendline
+N6	N6.play_as_emperor.parse_emperor_output.envelope_strip	parse_emperor_output	KEEP	source=agent raw JSON envelope whitespace	dest=json.loads locate only	parse_emperor_output	Formal locate
+N6	N6.play_as_emperor.parse_emperor_output.input	parse_emperor_output	DELETED_FIX	source=agent JSON field input (free-prose)	dest=ask_emperor→sendline	parse_emperor_output	Prior: removed splitlines()[0]
+N6	N6.play_as_emperor.run.sendline_passthrough	run()	KEEP	source=ask_emperor action	dest=pexpect.sendline unmodified	run()	Mutation PASS
+N6	N6.play_as_emperor.strip_ansi	strip_ansi	KEEP	source=PTY CSI	dest=cli_chunk chrome	strip_ansi	ANSI
+N6	N6.scripts/play_as_emperor.py::transport_and_log	scripts/play_as_emperor.py	KEEP	source=see prior transport rows; remaining log/ANSI	dest=sendline unstripped; log previews	play_as_emperor	Prior DELETED_FIX + KEEP
+N6	N6.web.format.splitReportItems	format.ts	KEEP	source=structured report lines	dest=UI list delimiters	format.ts	Chrome
+N6	N6.web.highlights.segment	highlights.ts	KEEP	source=displayContent	dest=UI segments unchanged drama	highlights.ts	No synonym
+N6	N6.web.settleStream.sse	settleStream.ts	KEEP	source=SSE framing	dest=protocol parse	settleStream.ts	Framing
+N6	N6.web.ui_form_or_chrome	web/src/useSettlementFlow.ts	KEEP_form_ui	source=web UI form/chrome	dest=menu/panel	remaining web/src	UI form/chrome
+N6	N6.web.useChatActions.sendChat	useChatActions.ts L149-154	KEEP	source=composer text	dest=message=text untrimmed	useChatActions.ts L149-154	Verified
+N6	N6.web/src/components/gameMenu.tsx::form	web/src/components/gameMenu.tsx	KEEP_form_ui	source=save/LLM fields	dest=/api/saves	trim form	Form
+N6	N6.web/src/components/menuPage.tsx::form	web/src/components/menuPage.tsx	KEEP_form_ui	source=LLM menu inputs	dest=POST /api/menu/llm	trim config	Form
+N6	N6.web/src/format.ts::splitReport	web/src/format.ts	KEEP	source=structured report	dest=UI list	splitReportItems	Chrome
+N6	N6.web/src/highlights.ts::segment	web/src/highlights.ts	KEEP	source=displayContent	dest=UI segments	highlights.ts	No synonym
+N6	N6.web/src/settleStream.ts::sse	web/src/settleStream.ts	KEEP	source=SSE	dest=protocol	settleStream.ts	Framing
+N6	N6.web/src/useChatActions.ts::sendChat	web/src/useChatActions.ts	KEEP	source=composer	dest=message=text	L149-154	Transport
+N6	N6.web_app._humanize_condition	_humanize_condition	KEEP	source=gate DSL	dest=labels; free prose unchanged	_humanize_condition	Verified
+N6	N6.web_app.chat_transport	chat_stream handlers	KEEP	source=ChatRequest.message	dest=DB/scene_chat raw	chat_stream handlers	Verified unstripped
+N6	N6.web_app.py::web_mixed	web_app.py	KEEP	source=chat message / gate DSL / LLM menu / save name	dest=raw chat; labels; config; path allowlist	chat_stream/_humanize/api_menu_save_llm	Reviewed seams
+N6	N6.web_app.report_empty_gate	web_app report gates	KEEP	source=report/attendant	dest=empty-gate originals	web_app report gates	Empty-gate
+N11	N11.deleted_known_prior	N11.deleted_known_prior	DELETED_KNOWN	source=prior-round retired symbols	dest=absent	scan DELETED_KNOWN	Already deleted
+N11	N11.live.calibrated	N11.live.calibrated	KEEP_live	source=metrics meta-flag __leverage_offsets_calibrated	dest=init_schema crash-safety + calibrate write/read	db.py L2620-2734,5847-5890; test_faction_leverage_9	Live migration
+N11	N11.live.empire_legacy_mechanic	N11.live.empire_legacy_mechanic	KEEP_live	source=帝国修正/legacy effect keys + _LEGACY_* + fiscal_engine==legacy + allow_legacy_partial_power	dest=live empire-modifier + fiscal-engine consumers	issues.py/simulation.py/flows.py/web_app humanize	Domain mechanic
+N11	N11.live.float_v2	N11.live.float_v2	KEEP_live	source=metrics meta-flag __leverage_offsets_float_v2	dest=one-shot float offset migration	db.py L2731-2734,5888-5890	Live
+N11	N11.live.pairing_warnings_negative	N11.live.pairing_warnings_negative	KEEP_live	source=retired pairing_warnings must not reappear	dest=negative assert; helpers deleted	test_person_delta_adapter.py:159	Negative gate
+N11	N11.noise.vocab_or_comment	N11.noise.vocab_or_comment	EXCLUDED_noise	source=legacy/compat/deprecated vocab without deletable retired mechanism symbol	dest=no delete target after symbol check	comments/tests/residual vocab rows	Full-class exclusion basis: vocab≠mechanism
+N12	N12.converged.court_office	N12.converged.court_office	CONVERGED_KNOWN	COURT_OFFICE_TYPES/ORDER + MINISTRY derived	single canonical; ts order dual surface	db.py; ministerFilters; drawers	Re-affirmed
+N12	N12.converged.due_subjects	N12.converged.due_subjects	CONVERGED_KNOWN	DUE_SUBJECTS/ARREARS_SUBJECTS	pay_order; fiscal_tick alias	pay_order.py	Single def
+N12	N12.converged.favorites	N12.converged.favorites	CONVERGED_KNOWN	_DEFAULT_FAVORITES	web_app single const	web_app.py	Single def
+N12	N12.converged.gate_metric	N12.converged.gate_metric	CONVERGED_KNOWN	GATE_METRIC_KEYS sole assign	constants.py; issues import	constants.py; issues L3340	Single def
+N12	N12.converged.person_statuses	N12.converged.person_statuses	CONVERGED_KNOWN	PERSON_STATUSES sole assign	person_archive_contract; db/issues import	person_archive_contract.py	Single def
+N12	N12.deleted.caller_tag	N12.deleted.caller_tag	DELETED_KNOWN	ming_sim_caller_tag/_guess_caller_tag	absent	prior	Gone
+N12	N12.keep.power_subset	N12.keep.power_subset	KEEP_subset	{leverage,military_strength,supply} write whitelist	subset of POWER_SCORE_FIELDS	db.py+issues.py	Subset≠duplicate
+N12	N12.keep.single_def_other	N12.keep.single_def_other	KEEP_single_def	other named constants in n12_literal_hits	sole def or import/alias; no unused second full identical enum	per-hit second-def check	No DELETE_duplicate
+N12	N12.keep.spike_oracle	N12.keep.spike_oracle	KEEP_spike	spike_settle_tick KNOWN_ACTIONS mirror	explicit spike exemption	spike_settle_tick.py	Allowed
+N13	N13.cli_backend.login_shell_no_timeout	ming_sim/cli_backend.py	KEEP	source=login shell PATH probe	dest=_RAW_RUN without timeout kw; natural exit	L232-235 _login_shell_path	Prior DELETE of timeout=
+N13	N13.cli_backend.resource_close	ming_sim/cli_backend.py	KEEP	source=stdin handle / file handle	dest=IO .close() resource release	L464 stdin.close; L769 handle.close	Not pexpect force-close
+N13	N13.cli_backend.terminate_sigterm	ming_sim/cli_backend.py	KEEP	source=CLI subprocess Popen	dest=proc.terminate() SIGTERM; wait(timeout=5) then pass — no kill escalate	cli_backend.py:_terminate_cli_process L384-390	Reviewed: never process.kill/SIGKILL
+N13	N13.cli_backend.timeout_poll_join	ming_sim/cli_backend.py	KEEP	source=Queue.get / Thread.join / wait soft deadlines	dest=idle poll / worker join; no process.kill on expiry	L388 wait; L494 chunks.get; L534 worker.join	Soft wait/join only
+N13	N13.db.resource_close	ming_sim/db.py	KEEP	source=sqlite connection/copy dest	dest=conn.close()/dest.close()	L973,22570,22590	SQLite close
+N13	N13.highlight_judge.future_timeout	ming_sim/highlight_judge.py	KEEP	source=ThreadPoolExecutor future	dest=future.result(timeout)→[] degrade; no process.kill	L61-102	LLM call degrade
+N13	N13.launcher.http_probe	launcher.py	KEEP	source=urllib.urlopen health probe	dest=HTTP timeout 0.5s socket	L94	HTTP client
+N13	N13.launcher.socket_close	launcher.py	KEEP	source=socket	dest=s.close()	L83	Socket close
+N13	N13.llm_transport.model_timeout_bind	ming_sim/llm_transport.py	KEEP	source=SDK model.timeout attempt budget	dest=bind/restore model.timeout; not process.kill	L499,523,530,548	SDK soft timeout
+N13	N13.play_as_emperor.log_close	scripts/play_as_emperor.py	KEEP	source=log file	dest=log_file.close()	L517	File close
+N13	N13.play_as_emperor.terminate_soft	scripts/play_as_emperor.py	KEEP	source=pexpect child	dest=terminate(force=False) SIGTERM only	L516	force=False
+N13	N13.play_as_emperor.timeout_expect	scripts/play_as_emperor.py	KEEP	source=pexpect expect deadlines	dest=TIMEOUT→pass/break; finally soft terminate	L311,L336,L509,L582	No kill on expect timeout
+N13	N13.scripts.gen_portraits_http	scripts/gen_portraits.py	KEEP	source=urllib image API	dest=HTTP timeout	L84	Asset HTTP
+N13	N13.scripts.resource_close	scripts/secret_order_probe2.py	KEEP	source=probe/gate script db/session	dest=.close() after harness	promulgation/midzhi/break_rank/military/family/jisi/secret_order probes	Harness close
+N13	N13.session.resource_close	ming_sim/session.py	KEEP	source=GameDB/session	dest=db.close()	L745,2144	DB close
+N13	N13.session_write_queue.resource_close	ming_sim/session_write_queue.py	KEEP	source=session handle	dest=session.close()	L611,624	Session close
+N13	N13.session_write_queue.timeout	ming_sim/session_write_queue.py	KEEP	source=threading.Condition/Lock acquire	dest=cv.wait/acquire timeout — thread sync only	L66,71,93,178,185,495	No subprocess kill
+N13	N13.web_app.cli_timeout_config	web_app.py	KEEP	source=runtime/menu cli.timeout_seconds idle budget field	dest=LLMConfig/runtime slot; idle policy not wall-clock SIGKILL	L621,1116,1134,4408,4930	Config for idle
+N13	N13.web_app.resource_close	web_app.py	KEEP	source=sqlite/session/fd	dest=.close() resource release	L852,954,979,1028-1064,4316	DB/session/fd close
+N13	N13.web_app.shutdown_sigterm_self	web_app.py	KEEP	source=menu shutdown after drain	dest=os.kill(getpid(), SIGTERM) self soft stop; win32 os._exit	L4893-4900	SIGTERM not SIGKILL

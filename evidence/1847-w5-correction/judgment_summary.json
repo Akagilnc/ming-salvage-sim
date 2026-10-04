@@ -1,0 +1,42 @@
+{
+  "method": "human group review by module/fn/datatype; apply script maps rows→authored groups only (no strip-shape KEEP)",
+  "n6_universe": 3118,
+  "n6_pending_scan_still_mechanical": 2502,
+  "n6_pending_unresolved_after_human": 0,
+  "n6_pending_human_dispositions": {
+    "KEEP_formal_id": 1410,
+    "KEEP_empty_gate": 338,
+    "KEEP_structure_split_join": 32,
+    "KEEP_compare_only": 87,
+    "KEEP_sqlite_sanitize": 7,
+    "KEEP": 387,
+    "KEEP_log_trace": 112,
+    "KEEP_form_ui": 129
+  },
+  "n6_coarse_residual_bucket_rows": 0,
+  "n11_universe": 666,
+  "n11_pending_or_potential_scan": 637,
+  "n11_unresolved": 0,
+  "n11_human_disp": {
+    "KEEP_live": 169,
+    "EXCLUDED_noise": 468,
+    "DELETED_KNOWN": 29
+  },
+  "n12_hits": 176,
+  "n12_unresolved": 0,
+  "n12_human_disp": {
+    "KEEP_single_def": 110,
+    "KEEP_subset": 5,
+    "CONVERGED_KNOWN": 59,
+    "KEEP_spike": 2
+  },
+  "n13_pending_scan": 95,
+  "n13_unresolved": 0,
+  "human_judgment_groups": 148,
+  "code_fixes_this_round": [],
+  "delete_fix_found": [],
+  "transport_mutations": {
+    "ask_emperor_pty": "prior evidence/1847-w5-correction/n6_ask_emperor_pty_mutation.py PASS",
+    "web_http_secret_assemble": "no transport code change this round — source→dest verified KEEP; no new mutation required"
+  }
+}

@@ -16,4 +16,5 @@ NOTE: evidence/1847-mutation-probes.py HTTP/UI is NOT this entry (referee reject
 [PASS] N6_NO_ACTION_SLICE_200
 [PASS] N6_NO_INPUT_SPLITLINES0
 [PASS] N6_EMPTY_GATE_USES_STRIP_NOT_ASSIGN
-=== DONE failed=False real=1.22s ===
+=== DONE failed=False real=2.71s ===
+WROTE /Users/akagilnc/WorkSpace/Ming_LLM-1847-w5/evidence/1847-w5-correction/n6_ask_emperor_pty_mutation.txt
