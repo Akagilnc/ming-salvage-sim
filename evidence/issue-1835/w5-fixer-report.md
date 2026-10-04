@@ -20,7 +20,7 @@
 
 ## 枚举命令（类定义全文，未收窄为点名）
 
-全表处置：`evidence/issue-1835/advisor-rescan/disposition-full-table.md`  
+全表处置：`evidence/issue-1835/advisor-rescan/disposition-full-table.md`
 宽扫原始：`evidence/issue-1835/advisor-rescan/enumeration-broad.txt`
 
 ```sh
@@ -114,10 +114,10 @@ rg -n '(resolve_condition|fail_condition).{0,40}\.strip\(|\.strip\(\).{0,40}(res
 
 链（全表，不止 resolve_condition）：
 
-1. knowledge/DB → `_visible_affair_lines`：`resolve`/`fail`/`situation(stage_text)` 原值入库字典  
-2. 写 `当前情况.txt`：`.strip()` 仅判空副本；写出用原值  
-3. `_candidate_event_fact` → 候选事件文件：`resolve`/`fail`/`precondition`/`summary` 原值  
-4. `knowledge._prose`：`str(text or "")` 不 strip  
+1. knowledge/DB → `_visible_affair_lines`：`resolve`/`fail`/`situation(stage_text)` 原值入库字典
+2. 写 `当前情况.txt`：`.strip()` 仅判空副本；写出用原值
+3. `_candidate_event_fact` → 候选事件文件：`resolve`/`fail`/`precondition`/`summary` 原值
+4. `knowledge._prose`：`str(text or "")` 不 strip
 
 | 成员 | 处置 |
 |---|---|
@@ -127,7 +127,7 @@ rg -n '(resolve_condition|fail_condition).{0,40}\.strip\(|\.strip\(\).{0,40}(res
 
 ## 变异证据（真实行为红/绿，非 AST 缺席冒充）
 
-独立进程 `/tmp/1835-w5-mut-advisor/mutate_probes.py`（不改工作树持久态）：  
+独立进程 `/tmp/1835-w5-mut-advisor/mutate_probes.py`（不改工作树持久态）：
 `evidence/issue-1835/advisor-rescan/mutation-probes.txt` — **21/21 PASS**
 
 含：C6 今日且到此→none / 退朝→close_night / 再插入软词 RED→恢复 GREEN；C5 declare_closed 缺席 + SQL 夹具可关 + 注入方法可见/删除恢复；C7 空白保留 / strip 变异 RED / 当前路径 GREEN；C2 extend GREEN vs nest RED 可观测；C4 SettlementOutcome 赋属性 FrozenInstanceError。

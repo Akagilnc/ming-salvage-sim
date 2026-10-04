@@ -1942,7 +1942,9 @@ def event_to_issue(db: GameDB, state: GameState, ev: Event, *, commit: bool = Tr
         ongoing = {"metrics": {"皇威": 1}}
         inertia = +10
         polarity = "pos"
-    effect_resolve, effect_fail = _situation_terminal_effects(ev.kind, int(ev.severity), polarity)
+    # 终结效果真源在 situation_drift（#1901 局势漂移腿）；此处直接取，不另造转接壳。
+    from ming_sim.situation_drift import situation_terminal_effects
+    effect_resolve, effect_fail = situation_terminal_effects(ev.kind, int(ev.severity), polarity)
     # 精调字段优先：合并自 opening_crises 的手调危机带 bar/ongoing/effect/meaning，直接用其值；
     # 缺省（0/空）则用上面按 severity/kind 推导的默认。
     if ev.bar_value:
@@ -1991,15 +1993,6 @@ def event_to_issue(db: GameDB, state: GameState, ev: Event, *, commit: bool = Tr
         db.conn.commit()
     return issue_id
 
-
-_COLLAPSIBLE_KINDS = frozenset({
-    "人祸", "兵变", "流寇", "民变", "抗税", "党争", "朝议", "外族", "边事",
-})
-
-
-def _situation_terminal_effects(kind: str, severity: int, polarity: str):
-    from ming_sim.situation_drift import situation_terminal_effects
-    return situation_terminal_effects(kind, severity, polarity)
 
 def _normalize_cancellable(raw: object) -> str:
     """LLM 偶发臆造 cancellable 值（by_policy 之类），归一到合法白名单。"""

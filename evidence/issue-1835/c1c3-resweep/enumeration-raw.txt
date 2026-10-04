@@ -1,0 +1,670 @@
+COMMAND: python3 AST walk defs + Name/Attribute/ImportFrom consumers across ming_sim+tests+web_app.py
+TARGETS: ['ming_sim/situation_drift.py', 'ming_sim/displaced_population.py', 'ming_sim/issues.py']
+PY_FILES_SCANNED: 390
+
+DEF ming_sim/situation_drift.py:47 situation_terminal_effects nested=False parent=None forwarder=False same=0 cross=2 total=2
+  REF ming_sim/issues.py:2001 import_from:ming_sim.situation_drift
+  REF ming_sim/issues.py:2002 Name
+DEF ming_sim/situation_drift.py:60 _metrics nested=True parent=situation_terminal_effects forwarder=False same=2 cross=0 total=2
+  REF ming_sim/situation_drift.py:68 Name
+  REF ming_sim/situation_drift.py:69 Name
+DEF ming_sim/situation_drift.py:73 default_situation_shape nested=False parent=None forwarder=False same=0 cross=0 total=0
+DEF ming_sim/situation_drift.py:105 _commitment_bar_value nested=False parent=None forwarder=False same=1 cross=0 total=1
+  REF ming_sim/situation_drift.py:449 Attribute
+DEF ming_sim/situation_drift.py:117 _commitment_ongoing_effects_for_settlement nested=False parent=None forwarder=False same=1 cross=0 total=1
+  REF ming_sim/situation_drift.py:337 Name
+DEF ming_sim/situation_drift.py:150 _resolve_commitment_issue nested=False parent=None forwarder=False same=2 cross=2 total=4
+  REF ming_sim/situation_drift.py:325 Name
+  REF ming_sim/situation_drift.py:496 Name
+  REF tests/test_commitment_backlash_626.py:44 import_from:ming_sim.situation_drift
+  REF tests/test_commitment_backlash_626.py:507 Name
+DEF ming_sim/situation_drift.py:195 _expire_commitment_issue nested=False parent=None forwarder=False same=1 cross=3 total=4
+  REF ming_sim/situation_drift.py:332 Name
+  REF tests/test_commitment_backlash_626.py:44 import_from:ming_sim.situation_drift
+  REF tests/test_commitment_backlash_626.py:560 Name
+  REF tests/test_commitment_backlash_626.py:617 Name
+DEF ming_sim/situation_drift.py:239 apply_situation_monthly_drift nested=False parent=None forwarder=False same=0 cross=25 total=25
+  REF ming_sim/month_chain.py:1411 import_from:ming_sim.situation_drift
+  REF ming_sim/month_chain.py:1436 Name
+  REF tests/test_commitment_backlash_626.py:44 import_from:ming_sim.situation_drift
+  REF tests/test_commitment_backlash_626.py:402 Name
+  REF tests/test_commitment_backlash_626.py:414 Name
+  REF tests/test_decree_commitment_settlement_229.py:7 import_from:ming_sim.situation_drift
+  REF tests/test_decree_commitment_settlement_229.py:301 Name
+  REF tests/test_decree_commitment_settlement_229.py:331 Name
+  REF tests/test_decree_commitment_settlement_229.py:360 Name
+  REF tests/test_deformation_dual_rail_622.py:23 import_from:ming_sim.situation_drift
+  REF tests/test_deformation_dual_rail_622.py:451 Name
+  REF tests/test_effect_origin_558.py:107 import_from:ming_sim.situation_drift
+  REF tests/test_effect_origin_558.py:108 Name
+  REF tests/test_fiscal_beyond_intent_1260.py:18 import_from:ming_sim.situation_drift
+  REF tests/test_fiscal_beyond_intent_1260.py:371 Name
+  REF tests/test_issue_entities.py:553 import_from:ming_sim.situation_drift
+  REF tests/test_issue_entities.py:562 Name
+  REF tests/test_issue_entities.py:570 import_from:ming_sim.situation_drift
+  REF tests/test_issue_entities.py:593 Name
+  REF tests/test_issue_entities.py:604 import_from:ming_sim.situation_drift
+  ... +5 more
+DEF ming_sim/displaced_population.py:32 surcharge_population_pool_members nested=False parent=None forwarder=False same=1 cross=0 total=1
+  REF ming_sim/displaced_population.py:89 Name
+DEF ming_sim/displaced_population.py:42 apply_levy_driven_transfers nested=False parent=None forwarder=False same=0 cross=2 total=2
+  REF ming_sim/month_chain.py:625 import_from:ming_sim.displaced_population
+  REF ming_sim/month_chain.py:631 Name
+DEF ming_sim/issues.py:64 _issue_condition_text nested=False parent=None forwarder=False same=1 cross=3 total=4
+  REF ming_sim/issues.py:103 Name
+  REF ming_sim/entities/issue/tracker.py:418 Attribute
+  REF ming_sim/entities/issue/tracker.py:433 Attribute
+  REF ming_sim/entities/issue/tracker.py:569 Attribute
+DEF ming_sim/issues.py:74 _normalize_commitment_kind nested=False parent=None forwarder=False same=0 cross=3 total=3
+  REF ming_sim/db.py:16520 import_from:ming_sim.issues
+  REF ming_sim/db.py:16539 Name
+  REF ming_sim/entities/issue/tracker.py:419 Attribute
+DEF ming_sim/issues.py:81 _validate_commitment_stop_condition nested=False parent=None forwarder=False same=0 cross=1 total=1
+  REF ming_sim/entities/issue/tracker.py:505 Attribute
+DEF ming_sim/issues.py:109 bind_content nested=False parent=None forwarder=False same=0 cross=200 total=200
+  REF ming_sim/session.py:25 import_from:ming_sim.agents
+  REF ming_sim/session.py:31 import_from:ming_sim.context
+  REF ming_sim/session.py:58 import_from:ming_sim.issues
+  REF tests/conftest.py:17 import_from:ming_sim.context
+  REF tests/conftest.py:30 Attribute
+  REF tests/test_affairs_1831.py:179 Attribute
+  REF tests/test_audience_travel_gating_670.py:1364 Attribute
+  REF tests/test_event_chain_cascade.py:63 Attribute
+  REF tests/test_event_chain_cascade.py:85 Attribute
+  REF tests/test_event_chain_cascade.py:101 Attribute
+  REF tests/test_event_chain_cascade.py:117 Attribute
+  REF tests/test_event_chain_cascade.py:137 Attribute
+  REF tests/test_event_chain_cascade.py:153 Attribute
+  REF tests/test_event_chain_cascade.py:169 Attribute
+  REF tests/test_event_chain_cascade.py:189 Attribute
+  REF tests/test_event_chain_cascade.py:209 Attribute
+  REF tests/test_event_chain_cascade.py:224 Attribute
+  REF tests/test_event_chain_cascade.py:256 Attribute
+  REF tests/test_event_chain_cascade.py:280 Attribute
+  REF tests/test_event_chain_cascade.py:296 Attribute
+  ... +180 more
+DEF ming_sim/issues.py:115 _ctx nested=False parent=None forwarder=False same=11 cross=46 total=57
+  REF ming_sim/issues.py:507 Name
+  REF ming_sim/issues.py:777 Name
+  REF ming_sim/issues.py:1025 Name
+  REF ming_sim/issues.py:1199 Name
+  REF ming_sim/issues.py:1226 Name
+  REF ming_sim/issues.py:1253 Name
+  REF ming_sim/issues.py:1256 Name
+  REF ming_sim/issues.py:1654 Name
+  REF ming_sim/issues.py:1703 Name
+  REF ming_sim/issues.py:1769 Name
+  REF ming_sim/issues.py:2242 Name
+  REF ming_sim/agents.py:583 Name
+  REF ming_sim/agents.py:620 Name
+  REF ming_sim/agents.py:655 Name
+  REF ming_sim/agents.py:694 Name
+  REF ming_sim/agents.py:695 Name
+  REF ming_sim/agents.py:735 Name
+  REF ming_sim/agents.py:761 Name
+  REF ming_sim/agents.py:794 Name
+  REF ming_sim/agents.py:826 Name
+  ... +37 more
+DEF ming_sim/issues.py:121 _canonical_issue_origin nested=False parent=None forwarder=False same=0 cross=7 total=7
+  REF ming_sim/entities/issue/tracker.py:148 Attribute
+  REF ming_sim/entities/issue/tracker.py:163 Attribute
+  REF ming_sim/entities/issue/tracker.py:815 Attribute
+  REF ming_sim/entities/issue/tracker.py:929 Attribute
+  REF ming_sim/situation_drift.py:28 import_from:ming_sim.issues
+  REF ming_sim/situation_drift.py:268 Name
+  REF ming_sim/situation_drift.py:344 Name
+DEF ming_sim/issues.py:133 commitment_condition_role nested=False parent=None forwarder=False same=0 cross=2 total=2
+  REF ming_sim/entities/issue/tracker.py:437 Attribute
+  REF ming_sim/entities/issue/tracker.py:763 Attribute
+DEF ming_sim/issues.py:148 _legacy_commitment_stop_gate nested=False parent=None forwarder=False same=1 cross=0 total=1
+  REF ming_sim/issues.py:165 Name
+DEF ming_sim/issues.py:156 _commitment_stop_gate nested=False parent=None forwarder=False same=2 cross=10 total=12
+  REF ming_sim/issues.py:222 Name
+  REF ming_sim/issues.py:227 Name
+  REF ming_sim/entities/issue/commitment_display.py:20 import_from:ming_sim.issues
+  REF ming_sim/entities/issue/commitment_display.py:29 Name
+  REF ming_sim/entities/issue/commitment_display.py:68 import_from:ming_sim.issues
+  REF ming_sim/entities/issue/commitment_display.py:84 Name
+  REF ming_sim/entities/issue/commitment_display.py:118 import_from:ming_sim.issues
+  REF ming_sim/entities/issue/commitment_display.py:127 Name
+  REF ming_sim/situation_drift.py:28 import_from:ming_sim.issues
+  REF ming_sim/situation_drift.py:261 Name
+  REF ming_sim/situation_drift.py:323 Name
+  REF ming_sim/situation_drift.py:494 Name
+DEF ming_sim/issues.py:168 _commitment_remaining_from_gate nested=False parent=None forwarder=False same=0 cross=2 total=2
+  REF ming_sim/entities/issue/commitment_display.py:20 import_from:ming_sim.issues
+  REF ming_sim/entities/issue/commitment_display.py:30 Name
+DEF ming_sim/issues.py:203 _latest_commitment_paid_total nested=False parent=None forwarder=False same=0 cross=2 total=2
+  REF ming_sim/entities/issue/commitment_display.py:20 import_from:ming_sim.issues
+  REF ming_sim/entities/issue/commitment_display.py:31 Name
+DEF ming_sim/issues.py:221 _commitment_gate_references_arrears nested=False parent=None forwarder=False same=0 cross=7 total=7
+  REF ming_sim/entities/issue/commitment_display.py:20 import_from:ming_sim.issues
+  REF ming_sim/entities/issue/commitment_display.py:52 Name
+  REF ming_sim/entities/issue/commitment_display.py:68 import_from:ming_sim.issues
+  REF ming_sim/entities/issue/commitment_display.py:91 Name
+  REF ming_sim/situation_drift.py:28 import_from:ming_sim.issues
+  REF ming_sim/situation_drift.py:118 Name
+  REF ming_sim/situation_drift.py:390 Name
+DEF ming_sim/issues.py:225 _commitment_arrears_gate_army_ids nested=False parent=None forwarder=False same=0 cross=3 total=3
+  REF ming_sim/situation_drift.py:28 import_from:ming_sim.issues
+  REF ming_sim/situation_drift.py:120 Name
+  REF ming_sim/situation_drift.py:389 Name
+DEF ming_sim/issues.py:239 _monthly_person_rating_changes nested=False parent=None forwarder=False same=1 cross=0 total=1
+  REF ming_sim/issues.py:316 Name
+DEF ming_sim/issues.py:257 _invalid_monthly_person_rating_reason nested=False parent=None forwarder=False same=0 cross=1 total=1
+  REF ming_sim/entities/issue/tracker.py:478 Attribute
+DEF ming_sim/issues.py:275 _person_change_has_unsupported_monthly_work nested=False parent=None forwarder=False same=1 cross=0 total=1
+  REF ming_sim/issues.py:299 Name
+DEF ming_sim/issues.py:288 _unsupported_monthly_ongoing_fields nested=False parent=None forwarder=False same=0 cross=1 total=1
+  REF ming_sim/entities/issue/tracker.py:413 Attribute
+DEF ming_sim/issues.py:304 _monthly_ongoing_effects_has_work nested=False parent=None forwarder=False same=0 cross=7 total=7
+  REF ming_sim/entities/issue/commitment_display.py:68 import_from:ming_sim.issues
+  REF ming_sim/entities/issue/commitment_display.py:88 Name
+  REF ming_sim/entities/issue/commitment_display.py:118 import_from:ming_sim.issues
+  REF ming_sim/entities/issue/commitment_display.py:130 Name
+  REF ming_sim/entities/issue/tracker.py:412 Attribute
+  REF ming_sim/situation_drift.py:28 import_from:ming_sim.issues
+  REF ming_sim/situation_drift.py:321 Name
+DEF ming_sim/issues.py:321 _ack_due_commitment_issue nested=False parent=None forwarder=False same=0 cross=1 total=1
+  REF ming_sim/entities/issue/tracker.py:746 Attribute
+DEF ming_sim/issues.py:355 _event_issue_refs nested=False parent=None forwarder=False same=1 cross=0 total=1
+  REF ming_sim/issues.py:1068 Name
+DEF ming_sim/issues.py:363 _event_trigger_refs nested=False parent=None forwarder=False same=2 cross=1 total=3
+  REF ming_sim/issues.py:1069 Name
+  REF ming_sim/issues.py:1705 Name
+  REF tests/test_advance_paths_atomic.py:114 Attribute
+DEF ming_sim/issues.py:367 _event_terminal_states nested=False parent=None forwarder=False same=2 cross=0 total=2
+  REF ming_sim/issues.py:364 Name
+  REF ming_sim/issues.py:1770 Name
+DEF ming_sim/issues.py:376 _event_terminal_records nested=False parent=None forwarder=False same=4 cross=0 total=4
+  REF ming_sim/issues.py:782 Name
+  REF ming_sim/issues.py:1029 Name
+  REF ming_sim/issues.py:1168 Name
+  REF ming_sim/issues.py:1173 Name
+DEF ming_sim/issues.py:415 _normalize_event_terminal_reason nested=False parent=None forwarder=False same=1 cross=0 total=1
+  REF ming_sim/issues.py:431 Name
+DEF ming_sim/issues.py:426 _fiscal_levy_normalized_terminal_reason_or_abort nested=False parent=None forwarder=False same=2 cross=2 total=4
+  REF ming_sim/issues.py:450 Name
+  REF ming_sim/issues.py:1175 Name
+  REF ming_sim/settlement/preflight.py:1252 import_from:ming_sim.issues
+  REF ming_sim/settlement/preflight.py:1278 Name
+DEF ming_sim/issues.py:442 _canonicalize_existing_fiscal_levy_terminal_reason nested=False parent=None forwarder=False same=1 cross=0 total=1
+  REF ming_sim/issues.py:787 Name
+DEF ming_sim/issues.py:463 _as_float nested=False parent=None forwarder=False same=11 cross=0 total=11
+  REF ming_sim/issues.py:481 Name
+  REF ming_sim/issues.py:485 Name
+  REF ming_sim/issues.py:497 Name
+  REF ming_sim/issues.py:502 Name
+  REF ming_sim/issues.py:550 Name
+  REF ming_sim/issues.py:587 Name
+  REF ming_sim/issues.py:598 Name
+  REF ming_sim/issues.py:663 Name
+  REF ming_sim/issues.py:723 Name
+  REF ming_sim/issues.py:735 Name
+  REF ming_sim/issues.py:736 Name
+DEF ming_sim/issues.py:475 _is_stored_number nested=False parent=None forwarder=False same=1 cross=0 total=1
+  REF ming_sim/issues.py:732 Name
+DEF ming_sim/issues.py:479 _fiscal_levy_liao_seed nested=False parent=None forwarder=False same=1 cross=0 total=1
+  REF ming_sim/issues.py:662 Name
+DEF ming_sim/issues.py:488 _fiscal_levy_base_transport nested=False parent=None forwarder=False same=1 cross=0 total=1
+  REF ming_sim/issues.py:664 Name
+DEF ming_sim/issues.py:506 _fiscal_levy_event_by_id nested=False parent=None forwarder=False same=3 cross=4 total=7
+  REF ming_sim/issues.py:616 Name
+  REF ming_sim/issues.py:618 Name
+  REF ming_sim/issues.py:1149 Name
+  REF ming_sim/month_translate.py:44 import_from:ming_sim.issues
+  REF ming_sim/month_translate.py:53 Name
+  REF tests/test_fiscal_levy_effect.py:55 import_from:ming_sim.issues
+  REF tests/test_fiscal_levy_effect.py:58 Name
+DEF ming_sim/issues.py:510 _fiscal_levy_event_approved nested=False parent=None forwarder=False same=3 cross=0 total=3
+  REF ming_sim/issues.py:625 Name
+  REF ming_sim/issues.py:635 Name
+  REF ming_sim/issues.py:637 Name
+DEF ming_sim/issues.py:521 _fiscal_levy_stopped nested=False parent=None forwarder=False same=1 cross=0 total=1
+  REF ming_sim/issues.py:626 Name
+DEF ming_sim/issues.py:532 _fiscal_levy_land_share_amount nested=False parent=None forwarder=False same=1 cross=0 total=1
+  REF ming_sim/issues.py:588 Name
+DEF ming_sim/issues.py:542 _fiscal_levy_land_denominator nested=False parent=None forwarder=False same=1 cross=0 total=1
+  REF ming_sim/issues.py:692 Name
+DEF ming_sim/issues.py:559 _load_region_fiscal_for_fiscal_levy nested=False parent=None forwarder=False same=1 cross=0 total=1
+  REF ming_sim/issues.py:642 Name
+DEF ming_sim/issues.py:578 _fiscal_levy_share_seed nested=False parent=None forwarder=False same=2 cross=0 total=2
+  REF ming_sim/issues.py:700 Name
+  REF ming_sim/issues.py:708 Name
+DEF ming_sim/issues.py:591 _validate_fiscal_levy_share_meta nested=False parent=None forwarder=False same=1 cross=0 total=1
+  REF ming_sim/issues.py:665 Name
+DEF ming_sim/issues.py:601 _fiscal_levy_mark_provisional nested=False parent=None forwarder=False same=1 cross=0 total=1
+  REF ming_sim/issues.py:749 Name
+DEF ming_sim/issues.py:615 _jiao_levy_in_force nested=False parent=None forwarder=False same=1 cross=0 total=1
+  REF ming_sim/issues.py:636 Name
+DEF ming_sim/issues.py:630 _apply_fiscal_levy_targets nested=False parent=None forwarder=False same=1 cross=0 total=1
+  REF ming_sim/issues.py:805 Name
+DEF ming_sim/issues.py:765 apply_historical_fiscal_rates nested=False parent=None forwarder=False same=0 cross=41 total=41
+  REF ming_sim/decree.py:47 import_from:ming_sim.issues
+  REF ming_sim/decree.py:1175 Name
+  REF tests/test_fiscal_levy_effect.py:8 import_from:ming_sim.issues
+  REF tests/test_fiscal_levy_effect.py:86 Name
+  REF tests/test_fiscal_levy_effect.py:287 Name
+  REF tests/test_fiscal_levy_effect.py:322 Name
+  REF tests/test_fiscal_levy_effect.py:347 Name
+  REF tests/test_fiscal_levy_effect.py:378 Name
+  REF tests/test_fiscal_levy_effect.py:397 Name
+  REF tests/test_fiscal_levy_effect.py:451 Name
+  REF tests/test_fiscal_levy_effect.py:462 Name
+  REF tests/test_fiscal_levy_effect.py:500 Name
+  REF tests/test_fiscal_levy_effect.py:512 Name
+  REF tests/test_fiscal_levy_effect.py:532 Name
+  REF tests/test_fiscal_levy_effect.py:541 Name
+  REF tests/test_fiscal_levy_effect.py:604 Name
+  REF tests/test_fiscal_levy_effect.py:686 Name
+  REF tests/test_fiscal_levy_effect.py:702 Name
+  REF tests/test_fiscal_levy_effect.py:724 Name
+  REF tests/test_fiscal_levy_effect.py:767 Name
+  ... +21 more
+DEF ming_sim/issues.py:781 run_fiscal_levy_pass nested=True parent=apply_historical_fiscal_rates forwarder=False same=2 cross=0 total=2
+  REF ming_sim/issues.py:809 Name
+  REF ming_sim/issues.py:811 Name
+DEF ming_sim/issues.py:818 _numeric_predicate_accepts nested=False parent=None forwarder=False same=2 cross=0 total=2
+  REF ming_sim/issues.py:834 Name
+  REF ming_sim/issues.py:835 Name
+DEF ming_sim/issues.py:832 _event_triggered_numeric_dependency_kind nested=False parent=None forwarder=False same=1 cross=0 total=1
+  REF ming_sim/issues.py:957 Name
+DEF ming_sim/issues.py:845 _event_dependency_ids nested=False parent=None forwarder=False same=3 cross=0 total=3
+  REF ming_sim/issues.py:859 Name
+  REF ming_sim/issues.py:988 Name
+  REF ming_sim/issues.py:1037 Name
+DEF ming_sim/issues.py:857 _validate_event_dependency_graph_acyclic nested=False parent=None forwarder=False same=1 cross=0 total=1
+  REF ming_sim/issues.py:1026 Name
+DEF ming_sim/issues.py:872 dfs nested=True parent=_validate_event_dependency_graph_acyclic forwarder=False same=2 cross=0 total=2
+  REF ming_sim/issues.py:885 Name
+  REF ming_sim/issues.py:891 Name
+DEF ming_sim/issues.py:895 _event_chain_impossible_reason nested=False parent=None forwarder=False same=1 cross=0 total=1
+  REF ming_sim/issues.py:1039 Name
+DEF ming_sim/issues.py:901 _format_values nested=True parent=_event_chain_impossible_reason forwarder=False same=4 cross=0 total=4
+  REF ming_sim/issues.py:915 Name
+  REF ming_sim/issues.py:916 Name
+  REF ming_sim/issues.py:936 Name
+  REF ming_sim/issues.py:937 Name
+DEF ming_sim/issues.py:904 allow_states nested=True parent=_event_chain_impossible_reason forwarder=False same=2 cross=0 total=2
+  REF ming_sim/issues.py:923 Name
+  REF ming_sim/issues.py:976 Name
+DEF ming_sim/issues.py:922 allow_state nested=True parent=_event_chain_impossible_reason forwarder=False same=2 cross=0 total=2
+  REF ming_sim/issues.py:959 Name
+  REF ming_sim/issues.py:983 Name
+DEF ming_sim/issues.py:925 allow_outcomes nested=True parent=_event_chain_impossible_reason forwarder=False same=1 cross=0 total=1
+  REF ming_sim/issues.py:984 Name
+DEF ming_sim/issues.py:943 forbid_state nested=True parent=_event_chain_impossible_reason forwarder=False same=1 cross=0 total=1
+  REF ming_sim/issues.py:961 Name
+DEF ming_sim/issues.py:1013 apply_event_cascading_invalidations nested=False parent=None forwarder=False same=4 cross=17 total=21
+  REF ming_sim/issues.py:1182 Name
+  REF ming_sim/issues.py:1741 Name
+  REF ming_sim/issues.py:1846 Name
+  REF ming_sim/issues.py:1989 Name
+  REF ming_sim/entities/issue/delta_section.py:117 import_from:ming_sim.issues
+  REF ming_sim/entities/issue/delta_section.py:217 Name
+  REF ming_sim/entities/issue/tracker.py:351 Attribute
+  REF tests/test_event_chain_cascade.py:93 Attribute
+  REF tests/test_event_chain_cascade.py:109 Attribute
+  REF tests/test_event_chain_cascade.py:126 Attribute
+  REF tests/test_event_chain_cascade.py:145 Attribute
+  REF tests/test_event_chain_cascade.py:161 Attribute
+  REF tests/test_event_chain_cascade.py:177 Attribute
+  REF tests/test_event_chain_cascade.py:198 Attribute
+  REF tests/test_event_chain_cascade.py:219 Attribute
+  REF tests/test_event_chain_cascade.py:245 Attribute
+  REF tests/test_event_chain_cascade.py:288 Attribute
+  REF tests/test_event_chain_cascade.py:304 Attribute
+  REF tests/test_event_chain_cascade.py:327 Attribute
+  REF tests/test_event_chain_cascade.py:346 Attribute
+  ... +1 more
+DEF ming_sim/issues.py:1031 run_cascade nested=True parent=apply_event_cascading_invalidations forwarder=False same=2 cross=0 total=2
+  REF ming_sim/issues.py:1061 Name
+  REF ming_sim/issues.py:1063 Name
+DEF ming_sim/issues.py:1067 _spawned_event_refs nested=False parent=None forwarder=False same=2 cross=0 total=2
+  REF ming_sim/issues.py:1200 Name
+  REF ming_sim/issues.py:1655 Name
+DEF ming_sim/issues.py:1073 _event_window_open nested=False parent=None forwarder=False same=6 cross=2 total=8
+  REF ming_sim/issues.py:1154 Name
+  REF ming_sim/issues.py:1207 Name
+  REF ming_sim/issues.py:1670 Name
+  REF ming_sim/issues.py:1689 Name
+  REF ming_sim/issues.py:1724 Name
+  REF ming_sim/issues.py:1789 Name
+  REF tests/test_fiscal_levy_effect.py:55 import_from:ming_sim.issues
+  REF tests/test_fiscal_levy_effect.py:59 Name
+DEF ming_sim/issues.py:1091 _event_outcome_label nested=False parent=None forwarder=False same=2 cross=5 total=7
+  REF ming_sim/issues.py:1114 Name
+  REF ming_sim/issues.py:1119 Name
+  REF ming_sim/declaration_dispatch.py:506 import_from:ming_sim.issues
+  REF ming_sim/declaration_dispatch.py:569 Name
+  REF ming_sim/settlement/preflight.py:721 Name
+  REF ming_sim/settlement/preflight.py:1252 import_from:ming_sim.issues
+  REF ming_sim/settlement/preflight.py:1274 Name
+DEF ming_sim/issues.py:1100 _merge_first_event_outcome nested=False parent=None forwarder=False same=0 cross=6 total=6
+  REF ming_sim/declaration_dispatch.py:371 import_from:ming_sim.issues
+  REF ming_sim/declaration_dispatch.py:385 Name
+  REF ming_sim/declaration_dispatch.py:506 import_from:ming_sim.issues
+  REF ming_sim/declaration_dispatch.py:537 Name
+  REF ming_sim/settlement/preflight.py:1252 import_from:ming_sim.issues
+  REF ming_sim/settlement/preflight.py:1273 Name
+DEF ming_sim/issues.py:1125 apply_petition_event_outcome nested=False parent=None forwarder=False same=0 cross=8 total=8
+  REF ming_sim/declaration_dispatch.py:506 import_from:ming_sim.issues
+  REF ming_sim/declaration_dispatch.py:572 Name
+  REF tests/test_fiscal_levy_effect.py:61 Attribute
+  REF tests/test_fiscal_levy_effect.py:723 Attribute
+  REF tests/test_fiscal_levy_effect.py:744 Attribute
+  REF tests/test_fiscal_levy_effect.py:801 Attribute
+  REF tests/test_fiscal_levy_effect.py:1684 Attribute
+  REF tests/test_fiscal_levy_effect.py:1699 Attribute
+DEF ming_sim/issues.py:1190 gather_fiscal_levy_petitions nested=False parent=None forwarder=False same=0 cross=7 total=7
+  REF ming_sim/materials.py:1505 import_from:ming_sim.issues
+  REF ming_sim/materials.py:1524 Name
+  REF ming_sim/month_chain.py:1601 import_from:ming_sim.issues
+  REF ming_sim/month_chain.py:1607 Name
+  REF tests/test_fiscal_levy_effect.py:1556 Attribute
+  REF tests/test_world_materials_1834.py:315 Attribute
+  REF tests/test_world_materials_1834.py:333 Attribute
+DEF ming_sim/issues.py:1215 petition_outcome_is_admissible nested=False parent=None forwarder=False same=0 cross=4 total=4
+  REF ming_sim/month_translate.py:44 import_from:ming_sim.issues
+  REF ming_sim/month_translate.py:51 Name
+  REF ming_sim/settlement/preflight.py:1252 import_from:ming_sim.issues
+  REF ming_sim/settlement/preflight.py:1268 Name
+DEF ming_sim/issues.py:1239 _closed_outcome_labels nested=False parent=None forwarder=False same=1 cross=0 total=1
+  REF ming_sim/issues.py:1256 Name
+DEF ming_sim/issues.py:1246 strategic_event_outcome_labels nested=False parent=None forwarder=False same=0 cross=5 total=5
+  REF ming_sim/materials.py:1310 import_from:ming_sim.issues
+  REF ming_sim/materials.py:1329 Name
+  REF tests/test_candidate_supply_1893.py:341 import_from:ming_sim.issues
+  REF tests/test_candidate_supply_1893.py:359 Name
+  REF tests/test_candidate_supply_1893.py:364 Name
+DEF ming_sim/issues.py:1259 _event_window_expired nested=False parent=None forwarder=False same=7 cross=0 total=7
+  REF ming_sim/issues.py:798 Name
+  REF ming_sim/issues.py:1207 Name
+  REF ming_sim/issues.py:1663 Name
+  REF ming_sim/issues.py:1684 Name
+  REF ming_sim/issues.py:1712 Name
+  REF ming_sim/issues.py:1736 Name
+  REF ming_sim/issues.py:1781 Name
+DEF ming_sim/issues.py:1272 _dead_person_core_subjects nested=False parent=None forwarder=False same=2 cross=0 total=2
+  REF ming_sim/issues.py:1667 Name
+  REF ming_sim/issues.py:1717 Name
+DEF ming_sim/issues.py:1284 _person_core_avoided_reason nested=False parent=None forwarder=False same=2 cross=0 total=2
+  REF ming_sim/issues.py:1675 Name
+  REF ming_sim/issues.py:1727 Name
+DEF ming_sim/issues.py:1347 _gate_sql_field nested=False parent=None forwarder=False same=2 cross=2 total=4
+  REF ming_sim/issues.py:1394 Name
+  REF ming_sim/issues.py:1460 Name
+  REF ming_sim/settlement/preflight.py:197 import_from:ming_sim.issues
+  REF ming_sim/settlement/preflight.py:267 Name
+DEF ming_sim/issues.py:1358 _eval_gate_key nested=False parent=None forwarder=False same=3 cross=0 total=3
+  REF ming_sim/issues.py:101 Name
+  REF ming_sim/issues.py:180 Name
+  REF ming_sim/issues.py:1501 Name
+DEF ming_sim/issues.py:1452 _eval_gate_key_str nested=False parent=None forwarder=False same=2 cross=0 total=2
+  REF ming_sim/issues.py:96 Name
+  REF ming_sim/issues.py:1487 Name
+DEF ming_sim/issues.py:1476 _gate_passed nested=False parent=None forwarder=False same=8 cross=35 total=43
+  REF ming_sim/issues.py:1209 Name
+  REF ming_sim/issues.py:1297 Name
+  REF ming_sim/issues.py:1674 Name
+  REF ming_sim/issues.py:1691 Name
+  REF ming_sim/issues.py:1726 Name
+  REF ming_sim/issues.py:1791 Name
+  REF ming_sim/issues.py:2228 Name
+  REF ming_sim/issues.py:2243 Name
+  REF ming_sim/situation_drift.py:28 import_from:ming_sim.issues
+  REF ming_sim/situation_drift.py:324 Name
+  REF ming_sim/situation_drift.py:495 Name
+  REF tests/test_event_trigger_gate.py:466 import_from:ming_sim.issues
+  REF tests/test_event_trigger_gate.py:467 Name
+  REF tests/test_event_trigger_gate.py:474 import_from:ming_sim.issues
+  REF tests/test_event_trigger_gate.py:475 Name
+  REF tests/test_event_trigger_gate.py:476 Name
+  REF tests/test_event_trigger_gate.py:620 import_from:ming_sim.issues
+  REF tests/test_event_trigger_gate.py:623 Name
+  REF tests/test_event_trigger_gate.py:650 import_from:ming_sim.issues
+  REF tests/test_event_trigger_gate.py:653 Name
+  ... +23 more
+DEF ming_sim/issues.py:1517 gather_impeachment_surge_candidates nested=False parent=None forwarder=False same=0 cross=18 total=18
+  REF ming_sim/decree.py:47 import_from:ming_sim.issues
+  REF ming_sim/entities/issue/tracker.py:204 Attribute
+  REF ming_sim/materials.py:1345 import_from:ming_sim.issues
+  REF ming_sim/materials.py:1354 Name
+  REF tests/test_impeachment_surge_655.py:10 import_from:ming_sim.issues
+  REF tests/test_impeachment_surge_655.py:82 Name
+  REF tests/test_impeachment_surge_655.py:104 Name
+  REF tests/test_impeachment_surge_655.py:135 Name
+  REF tests/test_impeachment_surge_655.py:150 Name
+  REF tests/test_impeachment_surge_655.py:172 Name
+  REF tests/test_impeachment_surge_655.py:188 Name
+  REF tests/test_impeachment_surge_655.py:216 Name
+  REF tests/test_impeachment_surge_655.py:236 Name
+  REF tests/test_impeachment_surge_655.py:261 Name
+  REF tests/test_impeachment_surge_655.py:282 Name
+  REF tests/test_impeachment_surge_655.py:285 Name
+  REF tests/test_impeachment_surge_655.py:313 Name
+  REF tests/test_impeachment_surge_655.py:316 Name
+DEF ming_sim/issues.py:1646 gather_candidate_events nested=False parent=None forwarder=False same=0 cross=69 total=69
+  REF ming_sim/entities/issue/tracker.py:58 Attribute
+  REF ming_sim/entities/issue/tracker.py:304 Attribute
+  REF ming_sim/materials.py:1345 import_from:ming_sim.issues
+  REF ming_sim/materials.py:1350 Name
+  REF ming_sim/materials.py:1490 import_from:ming_sim.issues
+  REF ming_sim/materials.py:1492 Name
+  REF ming_sim/settlement/preflight.py:1246 import_from:ming_sim.issues
+  REF ming_sim/settlement/preflight.py:1248 Name
+  REF ming_sim/settlement/run.py:166 import_from:ming_sim.issues
+  REF ming_sim/settlement/run.py:181 Name
+  REF tests/test_event_chain_cascade.py:184 Attribute
+  REF tests/test_event_chain_cascade.py:275 Attribute
+  REF tests/test_event_chain_cascade.py:311 Attribute
+  REF tests/test_event_chain_cascade.py:334 Attribute
+  REF tests/test_event_trigger_gate.py:117 Attribute
+  REF tests/test_event_trigger_gate.py:131 Attribute
+  REF tests/test_event_trigger_gate.py:145 Attribute
+  REF tests/test_event_trigger_gate.py:166 Attribute
+  REF tests/test_event_trigger_gate.py:189 Attribute
+  REF tests/test_event_trigger_gate.py:202 Attribute
+  ... +49 more
+DEF ming_sim/issues.py:1696 apply_event_terminal_states nested=False parent=None forwarder=False same=0 cross=16 total=16
+  REF ming_sim/decree.py:47 import_from:ming_sim.issues
+  REF ming_sim/decree.py:1194 Name
+  REF ming_sim/month_chain.py:936 import_from:ming_sim.issues
+  REF ming_sim/month_chain.py:944 Name
+  REF tests/test_event_chain_cascade.py:77 Attribute
+  REF tests/test_event_chain_cascade.py:269 Attribute
+  REF tests/test_event_trigger_gate.py:174 Attribute
+  REF tests/test_event_trigger_gate.py:319 Attribute
+  REF tests/test_event_trigger_gate.py:387 Attribute
+  REF tests/test_event_trigger_gate.py:447 Attribute
+  REF tests/test_event_trigger_gate.py:1625 Attribute
+  REF tests/test_event_trigger_gate.py:2020 Attribute
+  REF tests/test_event_trigger_gate.py:4373 Attribute
+  REF tests/test_fiscal_levy_effect.py:1027 Attribute
+  REF tests/test_fiscal_levy_effect.py:1238 Attribute
+  REF tests/test_fiscal_levy_effect.py:1272 Attribute
+DEF ming_sim/issues.py:1708 run_terminal_state_pass nested=True parent=apply_event_terminal_states forwarder=False same=2 cross=0 total=2
+  REF ming_sim/issues.py:1745 Name
+  REF ming_sim/issues.py:1747 Name
+DEF ming_sim/issues.py:1751 auto_trigger_seed_issues nested=False parent=None forwarder=False same=0 cross=23 total=23
+  REF ming_sim/decree.py:47 import_from:ming_sim.issues
+  REF ming_sim/decree.py:1198 Name
+  REF ming_sim/month_chain.py:936 import_from:ming_sim.issues
+  REF ming_sim/month_chain.py:945 Name
+  REF tests/test_event_trigger_gate.py:346 Attribute
+  REF tests/test_event_trigger_gate.py:355 Attribute
+  REF tests/test_event_trigger_gate.py:860 Attribute
+  REF tests/test_event_trigger_gate.py:2043 Attribute
+  REF tests/test_event_trigger_gate.py:2067 Attribute
+  REF tests/test_event_trigger_gate.py:2072 Attribute
+  REF tests/test_event_trigger_gate.py:2108 Attribute
+  REF tests/test_event_trigger_gate.py:2129 Attribute
+  REF tests/test_event_trigger_gate.py:2151 Attribute
+  REF tests/test_event_trigger_gate.py:2160 Attribute
+  REF tests/test_event_trigger_gate.py:2178 Attribute
+  REF tests/test_event_trigger_gate.py:2211 Attribute
+  REF tests/test_event_trigger_gate.py:2250 Attribute
+  REF tests/test_event_trigger_gate.py:2274 Attribute
+  REF tests/test_event_trigger_gate.py:2330 Attribute
+  REF tests/test_event_trigger_gate.py:2362 Attribute
+  ... +3 more
+DEF ming_sim/issues.py:1765 _auto_trigger_seed_issues_in_atomic nested=False parent=None forwarder=False same=1 cross=0 total=1
+  REF ming_sim/issues.py:1759 Name
+DEF ming_sim/issues.py:1850 _bar_ascii nested=False parent=None forwarder=False same=1 cross=0 total=1
+  REF ming_sim/issues.py:1874 Name
+DEF ming_sim/issues.py:1856 _format_inertia nested=False parent=None forwarder=False same=1 cross=0 total=1
+  REF ming_sim/issues.py:1879 Name
+DEF ming_sim/issues.py:1864 show_active_issues nested=False parent=None forwarder=False same=0 cross=2 total=2
+  REF ming_sim/cli/terminal.py:651 import_from:ming_sim.issues
+  REF ming_sim/cli/terminal.py:652 Name
+DEF ming_sim/issues.py:1873 _print_row nested=True parent=show_active_issues forwarder=False same=2 cross=0 total=2
+  REF ming_sim/issues.py:1889 Name
+  REF ming_sim/issues.py:1891 Name
+DEF ming_sim/issues.py:1895 event_to_issue nested=False parent=None forwarder=False same=1 cross=6 total=7
+  REF ming_sim/issues.py:1814 Name
+  REF ming_sim/breach_plea.py:512 import_from:ming_sim.issues
+  REF ming_sim/breach_plea.py:529 Name
+  REF ming_sim/entities/issue/tracker.py:357 Attribute
+  REF tests/test_new_issues_section_rejections.py:357 Attribute
+  REF tests/test_new_issues_section_rejections.py:387 Attribute
+  REF tests/test_new_issues_section_rejections.py:389 Attribute
+DEF ming_sim/issues.py:2000 _situation_terminal_effects nested=False parent=None forwarder=True same=1 cross=0 total=1
+  REF ming_sim/issues.py:1945 Name
+DEF ming_sim/issues.py:2004 _normalize_cancellable nested=False parent=None forwarder=False same=0 cross=1 total=1
+  REF ming_sim/entities/issue/tracker.py:672 Attribute
+DEF ming_sim/issues.py:2019 _compute_inertia nested=False parent=None forwarder=False same=0 cross=1 total=1
+  REF ming_sim/entities/issue/tracker.py:560 Attribute
+DEF ming_sim/issues.py:2038 _content_population_effect_for_save nested=False parent=None forwarder=False same=4 cross=2 total=6
+  REF ming_sim/issues.py:1800 Name
+  REF ming_sim/issues.py:1831 Name
+  REF ming_sim/issues.py:1957 Name
+  REF ming_sim/issues.py:1959 Name
+  REF ming_sim/entities/issue/tracker.py:343 Attribute
+  REF ming_sim/entities/issue/tracker.py:367 Attribute
+DEF ming_sim/issues.py:2079 neutralize_covert_fiscal_effects nested=False parent=None forwarder=False same=0 cross=2 total=2
+  REF ming_sim/covert_levy.py:124 import_from:ming_sim.issues
+  REF ming_sim/covert_levy.py:125 Name
+DEF ming_sim/issues.py:2164 record_secret_order_disclosure nested=False parent=None forwarder=False same=0 cross=4 total=4
+  REF ming_sim/entities/secret_order/delta_section.py:21 import_from:ming_sim.issues
+  REF ming_sim/entities/secret_order/delta_section.py:54 Name
+  REF ming_sim/month_chain.py:1022 import_from:ming_sim.issues
+  REF ming_sim/month_chain.py:1027 Name
+DEF ming_sim/issues.py:2216 clear_gated_legacies nested=False parent=None forwarder=False same=0 cross=3 total=3
+  REF ming_sim/decree.py:47 import_from:ming_sim.issues
+  REF ming_sim/month_chain.py:1412 import_from:ming_sim.issues
+  REF ming_sim/month_chain.py:1443 Name
+DEF ming_sim/issues.py:2237 sync_opening_legacies nested=False parent=None forwarder=False same=0 cross=6 total=6
+  REF ming_sim/session.py:59 import_from:ming_sim.issues
+  REF ming_sim/session.py:691 Name
+  REF tests/conftest.py:40 Attribute
+  REF tests/test_audience_restore_505.py:52 Attribute
+  REF tests/test_fiscal_substrate_bridge.py:32 import_from:ming_sim.issues
+  REF tests/test_fiscal_substrate_bridge.py:1263 Name
+
+=== MODULE CONSTANTS / ALLCAPS-ish ===
+CONST ming_sim/situation_drift.py:42 COLLAPSIBLE_SITUATION_KINDS same=1 cross=0 total=1
+  REF ming_sim/situation_drift.py:69 Name
+CONST ming_sim/displaced_population.py:29 SETTLE_META_JIAPIAI_KEY same=2 cross=0 total=2
+  REF ming_sim/displaced_population.py:83 Name
+  REF ming_sim/displaced_population.py:85 Name
+CONST ming_sim/issues.py:56 _content same=2 cross=5 total=7
+  REF ming_sim/issues.py:116 Name
+  REF ming_sim/issues.py:118 Name
+  REF ming_sim/agents.py:54 Name
+  REF ming_sim/agents.py:56 Name
+  REF ming_sim/context.py:70 Name
+  REF ming_sim/context.py:72 Name
+  REF tests/test_pihong_dossier_1490.py:552 Name
+CONST ming_sim/issues.py:58 COMMITMENT_KIND_UNTIL_STOP same=2 cross=0 total=2
+  REF ming_sim/issues.py:76 Name
+  REF ming_sim/issues.py:77 Name
+CONST ming_sim/issues.py:59 _FISCAL_LEVY_TARGET_ABS_TOL same=2 cross=0 total=2
+  REF ming_sim/issues.py:752 Name
+  REF ming_sim/issues.py:753 Name
+CONST ming_sim/issues.py:390 FISCAL_LEVY_EVENT_CATEGORY same=4 cross=6 total=10
+  REF ming_sim/issues.py:784 Name
+  REF ming_sim/issues.py:1203 Name
+  REF ming_sim/issues.py:1228 Name
+  REF ming_sim/issues.py:1661 Name
+  REF ming_sim/declaration_dispatch.py:506 import_from:ming_sim.issues
+  REF ming_sim/declaration_dispatch.py:567 Name
+  REF ming_sim/settlement/preflight.py:1252 import_from:ming_sim.issues
+  REF ming_sim/settlement/preflight.py:1267 Name
+  REF tests/test_event_trigger_gate.py:2380 import_from:ming_sim.issues
+  REF tests/test_event_trigger_gate.py:2386 Name
+CONST ming_sim/issues.py:391 _LIAO_LEVY_RISE_EVENT_ID same=1 cross=0 total=1
+  REF ming_sim/issues.py:635 Name
+CONST ming_sim/issues.py:392 _LIAN_LEVY_START_EVENT_ID same=1 cross=0 total=1
+  REF ming_sim/issues.py:637 Name
+CONST ming_sim/issues.py:393 _LIAO_LEVY_RISE_FACTOR same=1 cross=0 total=1
+  REF ming_sim/issues.py:717 Name
+CONST ming_sim/issues.py:394 _JIAO_LEVY_START_EVENT_ID same=3 cross=0 total=3
+  REF ming_sim/issues.py:616 Name
+  REF ming_sim/issues.py:620 Name
+  REF ming_sim/issues.py:625 Name
+CONST ming_sim/issues.py:395 _JIAO_LEVY_STOP_EVENT_ID same=3 cross=0 total=3
+  REF ming_sim/issues.py:618 Name
+  REF ming_sim/issues.py:620 Name
+  REF ming_sim/issues.py:626 Name
+CONST ming_sim/issues.py:396 _JIAO_LEVY_NATIONAL_MONTHLY same=1 cross=0 total=1
+  REF ming_sim/issues.py:705 Name
+CONST ming_sim/issues.py:397 _LIAN_LEVY_NATIONAL_MONTHLY same=1 cross=0 total=1
+  REF ming_sim/issues.py:713 Name
+CONST ming_sim/issues.py:398 _SETTLE_META_BASE_TRANSPORT_KEY same=5 cross=0 total=5
+  REF ming_sim/issues.py:407 Name
+  REF ming_sim/issues.py:494 Name
+  REF ming_sim/issues.py:498 Name
+  REF ming_sim/issues.py:499 Name
+  REF ming_sim/issues.py:746 Name
+CONST ming_sim/issues.py:399 _SETTLE_META_LIAO_SEED_KEY same=5 cross=0 total=5
+  REF ming_sim/issues.py:408 Name
+  REF ming_sim/issues.py:480 Name
+  REF ming_sim/issues.py:482 Name
+  REF ming_sim/issues.py:483 Name
+  REF ming_sim/issues.py:741 Name
+CONST ming_sim/issues.py:400 _SETTLE_META_JIAO_SEED_KEY same=5 cross=0 total=5
+  REF ming_sim/issues.py:409 Name
+  REF ming_sim/issues.py:593 Name
+  REF ming_sim/issues.py:698 Name
+  REF ming_sim/issues.py:702 Name
+  REF ming_sim/issues.py:743 Name
+CONST ming_sim/issues.py:401 _SETTLE_META_LIAN_SEED_KEY same=5 cross=0 total=5
+  REF ming_sim/issues.py:410 Name
+  REF ming_sim/issues.py:594 Name
+  REF ming_sim/issues.py:699 Name
+  REF ming_sim/issues.py:710 Name
+  REF ming_sim/issues.py:745 Name
+CONST ming_sim/issues.py:402 _SETTLE_META_LAND_DENOMINATOR_KEY same=6 cross=0 total=6
+  REF ming_sim/issues.py:411 Name
+  REF ming_sim/issues.py:549 Name
+  REF ming_sim/issues.py:551 Name
+  REF ming_sim/issues.py:552 Name
+  REF ming_sim/issues.py:595 Name
+  REF ming_sim/issues.py:748 Name
+CONST ming_sim/issues.py:406 _FISCAL_LEVY_PROVISIONAL_KEYS same=1 cross=0 total=1
+  REF ming_sim/issues.py:608 Name
+CONST ming_sim/issues.py:815 _EVENT_GATE_KEY_RE same=2 cross=0 total=2
+  REF ming_sim/issues.py:848 Name
+  REF ming_sim/issues.py:947 Name
+CONST ming_sim/issues.py:854 _EVENT_DEPENDENCY_GRAPH_VALIDATION_CACHE same=2 cross=0 total=2
+  REF ming_sim/issues.py:865 Name
+  REF ming_sim/issues.py:892 Name
+CONST ming_sim/issues.py:1302 _GATE_AGG_FUNCS same=2 cross=3 total=5
+  REF ming_sim/issues.py:1387 Name
+  REF ming_sim/issues.py:1449 Name
+  REF ming_sim/settlement/preflight.py:197 import_from:ming_sim.issues
+  REF ming_sim/settlement/preflight.py:261 Name
+  REF ming_sim/settlement/preflight.py:283 Name
+CONST ming_sim/issues.py:1310 _CHARACTER_NUMERIC_GATE_FIELDS same=1 cross=0 total=1
+  REF ming_sim/issues.py:1328 Name
+CONST ming_sim/issues.py:1322 _GATE_NUMERIC_SQL_FIELDS same=2 cross=0 total=2
+  REF ming_sim/issues.py:1341 Name
+  REF ming_sim/issues.py:1351 Name
+CONST ming_sim/issues.py:1332 _GATE_TEXT_SQL_FIELDS same=3 cross=0 total=3
+  REF ming_sim/issues.py:1340 Name
+  REF ming_sim/issues.py:1343 Name
+  REF ming_sim/issues.py:1351 Name
+CONST ming_sim/issues.py:1339 _GATE_SQL_FIELDS same=2 cross=0 total=2
+  REF ming_sim/issues.py:1344 Name
+  REF ming_sim/issues.py:1348 Name
+CONST ming_sim/issues.py:1995 _COLLAPSIBLE_KINDS same=0 cross=0 total=0

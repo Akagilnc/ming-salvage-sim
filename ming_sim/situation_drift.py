@@ -70,50 +70,6 @@ def situation_terminal_effects(kind: str, severity: int, polarity: str):
     return effect_resolve, effect_fail
 
 
-def default_situation_shape(kind: str, title: str):
-    """局势开局形状：kind → (ongoing 过程效果, inertia 档, polarity)。
-
-    灾害月损（天灾/灾情/饥荒的国库赈济损耗）与惯性档同属一条每月漂移结算，
-    故与消费它们的 `apply_situation_monthly_drift` 同处一地，不各持一份 kind 表。
-    polarity：neg=负面危机（平息回血/崩坏重创）；pos=正面机遇（把握加成/错失轻微）。
-    5 个原 metric（边防/民变/党争/执行/瞒报）已废除，ongoing 按 kind 改用
-    民心/皇威 或留空让 LLM 在推进时自定。结构性影响由 region/army/external/class delta 承担。
-    """
-    if kind in ("天灾", "灾情", "饥荒"):
-        return (
-            {"metrics": {"民心": -2},
-             "economy": [{"account": "国库", "delta": -8, "category": "赈济损耗", "reason": title}]},
-            -10, "neg",
-        )
-    if kind in ("人祸", "兵变", "流寇", "民变", "抗税"):
-        return {"metrics": {"民心": -2}}, -10, "neg"
-    if kind in ("外族", "边事"):
-        return {"metrics": {"皇威": -1}}, -5, "neg"
-    if kind in ("党争", "朝议"):
-        return {}, -5, "neg"
-    if kind in ("丰收", "祥瑞", "民和"):
-        return {"metrics": {"民心": 2}}, +10, "pos"
-    if kind in ("友邦", "归附", "盟约"):
-        return {"metrics": {"皇威": 1}}, +5, "pos"
-    if kind in ("良策", "试点", "献宝", "科技"):
-        return {}, +5, "pos"
-    if kind in ("战机", "敌乱"):
-        return {"metrics": {"皇威": 1}}, +10, "pos"
-    return {}, -5, "neg"
-
-
-def _commitment_bar_value(progress: Dict[str, object]) -> Optional[int]:
-    if "remaining_arrears" not in progress:
-        return None
-    paid = max(0, int(progress.get("paid_total") or 0))
-    # remaining_arrears 由 commitment_progress_payload 从持久账本派生，非自由文本；
-    # 腐值响亮失败，不得静默当作「零欠」把履约进度顶到 100。
-    remaining = max(0.0, float(progress.get("remaining_arrears") or 0))
-    total = paid + remaining
-    if total <= 0:
-        return 100
-    return max(0, min(100, int(round(paid * 100 / total))))
-
 def _commitment_ongoing_effects_for_settlement(row: sqlite3.Row, ongoing: Dict[str, object]) -> Dict[str, object]:
     if not _commitment_gate_references_arrears(row):
         return ongoing

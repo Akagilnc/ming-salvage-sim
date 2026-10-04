@@ -144,5 +144,3 @@ def load(spec: SectionSpec):
     """
     module = importlib.import_module(spec.path)
     return getattr(module, spec.attr)
-
-

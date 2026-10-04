@@ -1,7 +1,6 @@
 """Affair records: identity, birth, pointers (ADR 0154).
 
-ADR 0154（2026-09-30）：不设「宣布了结」动作；closed 态由世界记录自然承接，
-本 store 不提供 declare_closed / close 词表写口。
+ADR 0154（2026-09-30）：不设「宣布了结」动作；closed 态由世界记录自然承接。
 """
 
 from __future__ import annotations

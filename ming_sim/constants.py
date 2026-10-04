@@ -251,8 +251,7 @@ ARMY_FIELD_ALIASES = {
 }
 EXIT_COMMANDS = {"exit", "退出游戏", "退出", "exit game"}
 # 收夜明确口令封闭集（ADR 0047 / 0158：「散夜」钮=「退朝」口令；CLI q/quit 同管线）。
-# #1812 待拍事项第5项已裁撤「留下听着」「今日就到这里吧」；同族 NL 软收夜
-# 「今日且到此」一并退出本集。前端/CLI 不得另复制词表或语义旁路。
+# 前端/CLI 不得另复制词表或语义旁路。
 COURT_BREAK_COMMANDS = {"q", "quit", "退朝", "下朝"}
 # 大臣告退口令（非收夜；与 COURT_BREAK 互斥）
 MINISTER_DISMISS_COMMANDS = {"done", "退下", "跪安", "退了", "下去"}
