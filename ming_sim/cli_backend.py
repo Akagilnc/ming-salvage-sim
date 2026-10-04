@@ -3537,15 +3537,6 @@ def resubmit_draft_admission_payload(
 
 
 
-def _matched_prefix(message: str, prefixes) -> Optional[str]:
-    """消息命中某前缀则返回前缀后的正文（玩家那句意图），否则 None。"""
-    pm = (message or "").strip()
-    for pre in prefixes:
-        if pm.startswith(pre):
-            return pm[len(pre):].strip()
-    return None
-
-
 def _scan_outside_strings(text: str, handle) -> str:
     """逐字扫描 text，字符串内部（含转义）原样输出；字符串外的字符交给
     handle(text, i, out, n) -> next_i 处理（append 想保留的到 out、返回下一位置）。
@@ -3818,69 +3809,26 @@ def _choose_assignee(
 
 
 def _split_audience_context(context: str) -> Tuple[str, str]:
-    """把召对上下文快照剥成 (皇帝任务文本, "")：去掉「皇帝：/大臣：」角色标签、
-    「【本轮确认】…」只保留期限/约束等实质补充。皇帝行=任务正文（作御旨守门输入+兜底种子）。
+    """把召对上下文快照剥成 (皇帝任务文本, "")。
 
-    #1274 K1 / ADR 0142：大臣行不再并入 content 拼装——实质补充须由 extractor「内容」字段
-    承载；第二返回值恒为空串，保留元组形以免调用点分叉。
+    只按既有结构化角色前缀（「皇帝：」「【本轮确认】」）保序收录；非空检查可用，
+    不改写运输值。不做问句/相关性/长度等自由语义分类。大臣行不入 content 拼装
+    （#1274 K1 / ADR 0142）；第二返回值恒为空串，保留元组形以免调用点分叉。
     """
-    entries: List[Tuple[str, str]] = []  # ("e"=皇帝任务行,)
+    emperor_lines: List[str] = []
     for raw in (context or "").splitlines():
-        line = raw.strip()
-        if not line:
+        if not (raw or "").strip():
             continue
-        if line.startswith("【本轮确认】"):
-            material = _secret_confirmation_material(line.removeprefix("【本轮确认】"))
-            if material:
-                entries.append(("e", material))
+        if raw.startswith("【本轮确认】"):
+            material = raw.removeprefix("【本轮确认】")
+            if material.strip():
+                emperor_lines.append(material)
             continue
-        if line.startswith("皇帝："):
-            task = line[len("皇帝："):].strip()
-            if task:
-                entries.append(("e", task))
-        # 大臣行：不入 content 拼装（extractor 读完整上下文自行抽「内容」）
-    # 只取最近的任务跨度：排除同回合更早的无关问答，但保留连续多条相关皇帝任务行。
-    # 旧实现从最后一条皇帝行起，能排除「京营操练如何？」这类无关问答，却会丢掉
-    # 「先命洪承畴赈灾、再令东厂护银」这种前几轮连续补充的同一密令任务。
-    boundary = -1
-    for i, (kind, text) in enumerate(entries):
-        if kind == "e" and not _secret_context_task_like(text):
-            boundary = i
-    emperor_indices = [i for i, (kind, _text) in enumerate(entries) if i > boundary and kind == "e"]
-    if not emperor_indices:
-        emperor_indices = [i for i, (kind, _text) in enumerate(entries) if kind == "e"]
-    start = emperor_indices[-1] if emperor_indices else None
-    selected_emperor = entries[start][1] if start is not None else ""
-    if start is not None:
-        for i in reversed(emperor_indices[:-1]):
-            prior_text = entries[i][1]
-            if not _secret_context_tasks_related(prior_text, selected_emperor):
-                break
-            start = i
-            selected_emperor = prior_text + "\n" + selected_emperor
-    span = entries[start:] if start is not None else entries
-    emperor_lines = [text for kind, text in span if kind == "e"]
+        if raw.startswith("皇帝："):
+            task = raw[len("皇帝："):]
+            if task.strip():
+                emperor_lines.append(task)
     return "\n".join(emperor_lines), ""
-
-
-def _secret_context_task_like(text: str) -> bool:
-    """Non-empty, non-question emperor lines are tasks. No free-prose keyword classify (N10)."""
-    compact = re.sub(r"\s+", "", text or "")
-    if not compact:
-        return False
-    if compact.endswith("?") or compact.endswith("？"):
-        return False
-    return True
-
-
-def _secret_context_tasks_related(prior: str, later: str) -> bool:
-    """Consecutive non-empty emperor lines stay contiguous; no keyword/topic heuristics (N10)."""
-    return bool(re.sub(r"\s+", "", prior or "")) and bool(re.sub(r"\s+", "", later or ""))
-
-
-def _secret_confirmation_material(text: str) -> str:
-    """Transport confirmation line body unchanged; no atom-stripping rewrite (N6)."""
-    return (text or "").strip()
 
 
 def _merge_secret_content(*parts: str) -> str:
@@ -4221,15 +4169,6 @@ def _extract_secret_order(
         result["extract_raw"] = raw
     return result
 
-
-
-def _secret_prefix_needs_recent_context(secret_intent: str) -> bool:
-    """Short/empty secret-button intent pulls prior audience text; length only (N10: no keyword)."""
-    text = (secret_intent or "").strip()
-    if not text:
-        return True
-    compact = re.sub(r"[\s，,。.!！?？；;：:、]+", "", text)
-    return len(compact) <= 12
 
 
 _CLI_RECOMMENDATION_CALL = re.compile(

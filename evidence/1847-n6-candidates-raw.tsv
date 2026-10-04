@@ -451,97 +451,88 @@ py	ming_sim/cli_backend.py	3299	strip_call	strip	_is_manual_special_decree_fallb
 py	ming_sim/cli_backend.py	3300	strip_call	strip	_is_manual_special_decree_fallback	"        and str(payload.get(""locality_scope"") or """").strip() == ""none"""	prod
 py	ming_sim/cli_backend.py	3384	join_call	join	build_draft_admission_resubmit_feedback	"    return """".join(parts)"	prod
 py	ming_sim/cli_backend.py	3438	strip_call	strip	project_draft_extract_to_directive_payload	"        payload[""name""] = str(payload.get(""target_id"") or """").strip()"	prod
-py	ming_sim/cli_backend.py	3542	strip_call	strip	_matched_prefix	"    pm = (message or """").strip()"	prod
-py	ming_sim/cli_backend.py	3544	startswith_call	startswith	_matched_prefix	        if pm.startswith(pre):	prod
-py	ming_sim/cli_backend.py	3545	strip_call	strip	_matched_prefix	            return pm[len(pre):].strip()	prod
-py	ming_sim/cli_backend.py	3573	join_call	join	_scan_outside_strings	"    return """".join(out)"	prod
-py	ming_sim/cli_backend.py	3583	find_call	find	_strip_comment	"            nl = t.find(""\n"", i)"	prod
-py	ming_sim/cli_backend.py	3605	strip_call	strip	_loads_lenient	"    t = (raw or """").strip()"	prod
-py	ming_sim/cli_backend.py	3606	startswith_call	startswith	_loads_lenient	"    if t.startswith(""```""):"	prod
-py	ming_sim/cli_backend.py	3607	re_sub	sub	_loads_lenient	"        t = re.sub(r""^```[a-zA-Z]*\s*"", """", t)"	prod
-py	ming_sim/cli_backend.py	3608	strip_call	strip	_loads_lenient	"        t = re.sub(r""\s*```$"", """", t).strip()"	prod
-py	ming_sim/cli_backend.py	3608	re_sub	sub	_loads_lenient	"        t = re.sub(r""\s*```$"", """", t).strip()"	prod
-py	ming_sim/cli_backend.py	3611	find_call	find	_loads_lenient	"        starts.append((t.find(""{""), ""}""))"	prod
-py	ming_sim/cli_backend.py	3613	find_call	find	_loads_lenient	"        starts.append((t.find(""[""), ""]""))"	prod
-py	ming_sim/cli_backend.py	3618	rfind_call	rfind	_loads_lenient	    j = t.rfind(closer)	prod
-py	ming_sim/cli_backend.py	3693	lower_call	lower	_d	"        if isinstance(b, dict) and str(b.get(""action"") or """").lower() == ""create"" and not b.get(""region_id""):"	prod
-py	ming_sim/cli_backend.py	3703	re_compile	compile	_d	"_CLAUSE_SPLIT = re.compile(r""[，,。.；;！!？?、：:\n\r]+"")"	prod
-py	ming_sim/cli_backend.py	3716	re_sub	sub	_content_reflects_emperor_intent	"    c = re.sub(r""\s+"", """", content or """")"	prod
-py	ming_sim/cli_backend.py	3717	re_sub	sub	_content_reflects_emperor_intent	"    e = re.sub(r""\s+"", """", emperor_intent)"	prod
-py	ming_sim/cli_backend.py	3720	split_call	split	_content_reflects_emperor_intent	    clauses = [seg for seg in _CLAUSE_SPLIT.split(e) if seg]	prod
-py	ming_sim/cli_backend.py	3756	re_compile	compile	assemble_secret_order_content	"_ASSIGNEE_HINT_STOP_RE = re.compile(r""[部寺院局省州府县营阁监科室库厂仓]"")"	prod
-py	ming_sim/cli_backend.py	3758	re_compile	compile	assemble_secret_order_content	_ASSIGNEE_HINT_INSTITUTION_RE = re.compile(	prod
-py	ming_sim/cli_backend.py	3759	join_call	join	assemble_secret_order_content	"    ""|"".join(re.escape(token) for token in _ASSIGNEE_HINT_INSTITUTION_TOKENS)"	prod
-py	ming_sim/cli_backend.py	3780	re_compile	compile	_is_institution_like_name	_ASSIGNEE_IMPERATIVE_RE = re.compile(	prod
-py	ming_sim/cli_backend.py	3784	re_compile	compile	_is_institution_like_name	"_ASSIGN_NAME_HEAD_ADVERB_RE = re.compile(r""^[即速快立妥当应须且便赶]"")"	prod
-py	ming_sim/cli_backend.py	3790	strip_call	strip	_extract_imperative_assignee	        name = m.group(1).strip()	prod
-py	ming_sim/cli_backend.py	3792	slice_trunc_expr	[:expr]	_extract_imperative_assignee	            name = name[:-1]	prod
-py	ming_sim/cli_backend.py	3814	strip_call	strip	_choose_assignee	"    llm = (assignee_llm or """").strip()"	prod
-py	ming_sim/cli_backend.py	3829	strip_call	strip	_split_audience_context	        line = raw.strip()	prod
-py	ming_sim/cli_backend.py	3832	startswith_call	startswith	_split_audience_context	"        if line.startswith(""【本轮确认】""):"	prod
-py	ming_sim/cli_backend.py	3833	removeprefix_call	removeprefix	_split_audience_context	"            material = _secret_confirmation_material(line.removeprefix(""【本轮确认】""))"	prod
-py	ming_sim/cli_backend.py	3837	startswith_call	startswith	_split_audience_context	"        if line.startswith(""皇帝：""):"	prod
-py	ming_sim/cli_backend.py	3838	strip_call	strip	_split_audience_context	"            task = line[len(""皇帝：""):].strip()"	prod
-py	ming_sim/cli_backend.py	3855	slice_trunc_expr	[:expr]	_split_audience_context	        for i in reversed(emperor_indices[:-1]):	prod
-py	ming_sim/cli_backend.py	3863	join_call	join	_split_audience_context	"    return ""\n"".join(emperor_lines), """""	prod
-py	ming_sim/cli_backend.py	3868	re_sub	sub	_secret_context_task_like	"    compact = re.sub(r""\s+"", """", text or """")"	prod
-py	ming_sim/cli_backend.py	3871	endswith_call	endswith	_secret_context_task_like	"    if compact.endswith(""?"") or compact.endswith(""？""):"	prod
-py	ming_sim/cli_backend.py	3878	re_sub	sub	_secret_context_tasks_related	"    return bool(re.sub(r""\s+"", """", prior or """")) and bool(re.sub(r""\s+"", """", later or """"))"	prod
-py	ming_sim/cli_backend.py	3883	strip_call	strip	_secret_confirmation_material	"    return (text or """").strip()"	prod
-py	ming_sim/cli_backend.py	3901	join_call	join	_merge_secret_content	"    return ""\n"".join(merged)"	prod
-py	ming_sim/cli_backend.py	3908	strip_call	strip	_secret_metadata_from_command	        line = raw_line.strip()	prod
-py	ming_sim/cli_backend.py	3911	re_match	match	_secret_metadata_from_command	"        m_tags = re.match(r""^(?:标签|tag|tags)\s*[：:]\s*(.+)$"", line, flags=re.IGNORECASE)"	prod
-py	ming_sim/cli_backend.py	3913	split_call	split	_secret_metadata_from_command	"            for item in re.split(r""[,，、/;；\s]+"", m_tags.group(1)):"	prod
-py	ming_sim/cli_backend.py	3913	re_split	split	_secret_metadata_from_command	"            for item in re.split(r""[,，、/;；\s]+"", m_tags.group(1)):"	prod
-py	ming_sim/cli_backend.py	3914	strip_call	strip	_secret_metadata_from_command	                cleaned = item.strip()	prod
-py	ming_sim/cli_backend.py	3918	re_match	match	_secret_metadata_from_command	"        m_deadline = re.match(r""^(?:期限|限期|deadline)\s*[：:]\s*(.+)$"", line, flags=re.IGNORECASE)"	prod
-py	ming_sim/cli_backend.py	3920	re_search	search	_secret_metadata_from_command	"            match = re.search(r""([+-]?\d+)\s*(?:个)?月"", m_deadline.group(1))"	prod
-py	ming_sim/cli_backend.py	3940	strip_call	strip	_normalize_dossier_link_proposals	"        relation = str(link.get(""relation_type"") or """").strip()"	prod
-py	ming_sim/cli_backend.py	3973	join_call	join	confirm_dossier_links	"        ""【可选提议】\n"" + ""\n"".join("	prod
-py	ming_sim/cli_backend.py	4045	join_call	join	_extract_secret_order	"        ""【可引用旧案卷】\n"" + ""\n"".join("	prod
-py	ming_sim/cli_backend.py	4096	strip_call	strip	_extract_secret_order	"    _assignee_llm = str(obj.get(""承办人"") or """").strip()"	prod
-py	ming_sim/cli_backend.py	4124	strip_call	strip	_extract_secret_order	    tags = [str(t).strip() for t in tags if str(t).strip()] if isinstance(tags, list) else []	prod
-py	ming_sim/cli_backend.py	4166	strip_call	strip	_extract_secret_order	"    kind = str(obj.get(""差务"") or obj.get(""kind"") or """").strip()"	prod
-py	ming_sim/cli_backend.py	4168	strip_call	strip	_extract_secret_order	    axes = [str(a).strip() for a in axes if str(a).strip()] if isinstance(axes, list) else []	prod
-py	ming_sim/cli_backend.py	4169	strip_call	strip	_extract_secret_order	"    unit = str(obj.get(""交付单位"") or """").strip()"	prod
-py	ming_sim/cli_backend.py	4228	strip_call	strip	_secret_prefix_needs_recent_context	"    text = (secret_intent or """").strip()"	prod
-py	ming_sim/cli_backend.py	4231	re_sub	sub	_secret_prefix_needs_recent_context	"    compact = re.sub(r""[\s，,。.!！?？；;：:、]+"", """", text)"	prod
-py	ming_sim/cli_backend.py	4235	re_compile	compile	_secret_prefix_needs_recent_context	_CLI_RECOMMENDATION_CALL = re.compile(	prod
-py	ming_sim/cli_backend.py	4263	rfind_call	rfind	_cli_stream_safe_prefix	    marker_at = text.rfind(_CLI_RECOMMENDATION_PREFIX)	prod
-py	ming_sim/cli_backend.py	4265	slice_trunc_expr	[:expr]	_cli_stream_safe_prefix	        return text[:marker_at], text[marker_at:]	prod
-py	ming_sim/cli_backend.py	4268	endswith_call	endswith	_cli_stream_safe_prefix	        if text.endswith(_CLI_RECOMMENDATION_PREFIX[:length]):	prod
-py	ming_sim/cli_backend.py	4268	slice_trunc_expr	[:expr]	_cli_stream_safe_prefix	        if text.endswith(_CLI_RECOMMENDATION_PREFIX[:length]):	prod
-py	ming_sim/cli_backend.py	4270	slice_trunc_expr	[:expr]	_cli_stream_safe_prefix	"    return (text[:-keep], text[-keep:]) if keep else (text, """")"	prod
-py	ming_sim/cli_backend.py	4291	strip_call	strip	_cli_recommendation_call	"            or any(not str(payload.get(key) or """").strip() for key in required)"	prod
-py	ming_sim/cli_backend.py	4299	slice_trunc_expr	[:expr]	_cli_recommendation_call	    return text[:match.start()], [call]	prod
-py	ming_sim/cli_backend.py	4325	strip_call	strip	_call_cli	"        materials = str(getattr(self, ""materials_dir"", """") or """").strip() or None"	prod
-py	ming_sim/cli_backend.py	4331	lower_call	lower	_call_cli	"                str(getattr(self, ""reasoning_strength"", """") or """").strip().lower() or None"	prod
-py	ming_sim/cli_backend.py	4331	strip_call	strip	_call_cli	"                str(getattr(self, ""reasoning_strength"", """") or """").strip().lower() or None"	prod
-py	ming_sim/cli_backend.py	4350	strip_call	strip	invoke	"        materials = str(getattr(self, ""materials_dir"", """") or """").strip() or None"	prod
-py	ming_sim/cli_backend.py	4427	strip_call	strip	invoke_stream	"        materials = str(getattr(self, ""materials_dir"", """") or """").strip() or None"	prod
-py	ming_sim/cli_backend.py	4437	lower_call	lower	invoke_stream	"                reasoning_strength=str(getattr(self, ""reasoning_strength"", """") or """").strip().lower() or None,"	prod
-py	ming_sim/cli_backend.py	4437	strip_call	strip	invoke_stream	"                reasoning_strength=str(getattr(self, ""reasoning_strength"", """") or """").strip().lower() or None,"	prod
-py	ming_sim/cli_backend.py	4504	lower_call	lower	cli_backend_from_env	"    val = (os.environ.get(""MING_SIM_LLM_BACKEND"") or """").strip().lower()"	prod
-py	ming_sim/cli_backend.py	4504	strip_call	strip	cli_backend_from_env	"    val = (os.environ.get(""MING_SIM_LLM_BACKEND"") or """").strip().lower()"	prod
-py	ming_sim/cli_backend.py	4547	lower_call	lower	gate_llm_config_from_args	"    channel = str(getattr(args, ""channel"", """") or ""cli"").strip().lower() or ""cli"""	prod
-py	ming_sim/cli_backend.py	4547	strip_call	strip	gate_llm_config_from_args	"    channel = str(getattr(args, ""channel"", """") or ""cli"").strip().lower() or ""cli"""	prod
-py	ming_sim/cli_backend.py	4548	strip_call	strip	gate_llm_config_from_args	"    model = str(getattr(args, ""model"", """") or """").strip()"	prod
-py	ming_sim/cli_backend.py	4553	strip_call	strip	gate_llm_config_from_args	"            str(getattr(args, ""api_key"", """") or """").strip()"	prod
-py	ming_sim/cli_backend.py	4554	strip_call	strip	gate_llm_config_from_args	"            or (os.environ.get(""OPENAI_API_KEY"") or """").strip()"	prod
-py	ming_sim/cli_backend.py	4555	strip_call	strip	gate_llm_config_from_args	"            or (os.environ.get(""MING_SIM_API_KEY"") or """").strip()"	prod
-py	ming_sim/cli_backend.py	4558	strip_call	strip	gate_llm_config_from_args	"            str(getattr(args, ""base_url"", """") or """").strip()"	prod
-py	ming_sim/cli_backend.py	4559	strip_call	strip	gate_llm_config_from_args	"            or (os.environ.get(""OPENAI_BASE_URL"") or """").strip()"	prod
-py	ming_sim/cli_backend.py	4560	strip_call	strip	gate_llm_config_from_args	"            or (os.environ.get(""MING_SIM_API_BASE_URL"") or """").strip()"	prod
-py	ming_sim/cli_backend.py	4577	lower_call	lower	gate_llm_config_from_args	"    runner = str(getattr(args, ""runner"", """") or """").strip().lower()"	prod
-py	ming_sim/cli_backend.py	4577	strip_call	strip	gate_llm_config_from_args	"    runner = str(getattr(args, ""runner"", """") or """").strip().lower()"	prod
-py	ming_sim/cli_backend.py	4601	strip_call	strip	require_fresh_cli_trace	"    trace_setting = os.environ.get(""MING_SIM_TRACE_PATH"", """").strip()"	prod
-py	ming_sim/cli_backend.py	4602	lower_call	lower	require_fresh_cli_trace	"    if not trace_setting or os.environ.get(""MING_SIM_TRACE"", ""1"").strip().lower() in {"	prod
-py	ming_sim/cli_backend.py	4602	strip_call	strip	require_fresh_cli_trace	"    if not trace_setting or os.environ.get(""MING_SIM_TRACE"", ""1"").strip().lower() in {"	prod
-py	ming_sim/cli_backend.py	4614	lower_call	lower	gate_evidence_config	"    channel = str(getattr(cfg, ""channel"", """") or getattr(args, ""channel"", """") or """").strip().lower()"	prod
-py	ming_sim/cli_backend.py	4614	strip_call	strip	gate_evidence_config	"    channel = str(getattr(cfg, ""channel"", """") or getattr(args, ""channel"", """") or """").strip().lower()"	prod
-py	ming_sim/cli_backend.py	4617	lower_call	lower	gate_evidence_config	        runner = str(	prod
-py	ming_sim/cli_backend.py	4617	strip_call	strip	gate_evidence_config	        runner = str(	prod
-py	ming_sim/cli_backend.py	4620	strip_call	strip	gate_evidence_config	    model = str(	prod
+py	ming_sim/cli_backend.py	3564	join_call	join	_scan_outside_strings	"    return """".join(out)"	prod
+py	ming_sim/cli_backend.py	3574	find_call	find	_strip_comment	"            nl = t.find(""\n"", i)"	prod
+py	ming_sim/cli_backend.py	3596	strip_call	strip	_loads_lenient	"    t = (raw or """").strip()"	prod
+py	ming_sim/cli_backend.py	3597	startswith_call	startswith	_loads_lenient	"    if t.startswith(""```""):"	prod
+py	ming_sim/cli_backend.py	3598	re_sub	sub	_loads_lenient	"        t = re.sub(r""^```[a-zA-Z]*\s*"", """", t)"	prod
+py	ming_sim/cli_backend.py	3599	strip_call	strip	_loads_lenient	"        t = re.sub(r""\s*```$"", """", t).strip()"	prod
+py	ming_sim/cli_backend.py	3599	re_sub	sub	_loads_lenient	"        t = re.sub(r""\s*```$"", """", t).strip()"	prod
+py	ming_sim/cli_backend.py	3602	find_call	find	_loads_lenient	"        starts.append((t.find(""{""), ""}""))"	prod
+py	ming_sim/cli_backend.py	3604	find_call	find	_loads_lenient	"        starts.append((t.find(""[""), ""]""))"	prod
+py	ming_sim/cli_backend.py	3609	rfind_call	rfind	_loads_lenient	    j = t.rfind(closer)	prod
+py	ming_sim/cli_backend.py	3684	lower_call	lower	_d	"        if isinstance(b, dict) and str(b.get(""action"") or """").lower() == ""create"" and not b.get(""region_id""):"	prod
+py	ming_sim/cli_backend.py	3694	re_compile	compile	_d	"_CLAUSE_SPLIT = re.compile(r""[，,。.；;！!？?、：:\n\r]+"")"	prod
+py	ming_sim/cli_backend.py	3707	re_sub	sub	_content_reflects_emperor_intent	"    c = re.sub(r""\s+"", """", content or """")"	prod
+py	ming_sim/cli_backend.py	3708	re_sub	sub	_content_reflects_emperor_intent	"    e = re.sub(r""\s+"", """", emperor_intent)"	prod
+py	ming_sim/cli_backend.py	3711	split_call	split	_content_reflects_emperor_intent	    clauses = [seg for seg in _CLAUSE_SPLIT.split(e) if seg]	prod
+py	ming_sim/cli_backend.py	3747	re_compile	compile	assemble_secret_order_content	"_ASSIGNEE_HINT_STOP_RE = re.compile(r""[部寺院局省州府县营阁监科室库厂仓]"")"	prod
+py	ming_sim/cli_backend.py	3749	re_compile	compile	assemble_secret_order_content	_ASSIGNEE_HINT_INSTITUTION_RE = re.compile(	prod
+py	ming_sim/cli_backend.py	3750	join_call	join	assemble_secret_order_content	"    ""|"".join(re.escape(token) for token in _ASSIGNEE_HINT_INSTITUTION_TOKENS)"	prod
+py	ming_sim/cli_backend.py	3771	re_compile	compile	_is_institution_like_name	_ASSIGNEE_IMPERATIVE_RE = re.compile(	prod
+py	ming_sim/cli_backend.py	3775	re_compile	compile	_is_institution_like_name	"_ASSIGN_NAME_HEAD_ADVERB_RE = re.compile(r""^[即速快立妥当应须且便赶]"")"	prod
+py	ming_sim/cli_backend.py	3781	strip_call	strip	_extract_imperative_assignee	        name = m.group(1).strip()	prod
+py	ming_sim/cli_backend.py	3783	slice_trunc_expr	[:expr]	_extract_imperative_assignee	            name = name[:-1]	prod
+py	ming_sim/cli_backend.py	3805	strip_call	strip	_choose_assignee	"    llm = (assignee_llm or """").strip()"	prod
+py	ming_sim/cli_backend.py	3820	strip_call	strip	_split_audience_context	"        if not (raw or """").strip():"	prod
+py	ming_sim/cli_backend.py	3822	startswith_call	startswith	_split_audience_context	"        if raw.startswith(""【本轮确认】""):"	prod
+py	ming_sim/cli_backend.py	3823	removeprefix_call	removeprefix	_split_audience_context	"            material = raw.removeprefix(""【本轮确认】"")"	prod
+py	ming_sim/cli_backend.py	3824	strip_call	strip	_split_audience_context	            if material.strip():	prod
+py	ming_sim/cli_backend.py	3827	startswith_call	startswith	_split_audience_context	"        if raw.startswith(""皇帝：""):"	prod
+py	ming_sim/cli_backend.py	3829	strip_call	strip	_split_audience_context	            if task.strip():	prod
+py	ming_sim/cli_backend.py	3831	join_call	join	_split_audience_context	"    return ""\n"".join(emperor_lines), """""	prod
+py	ming_sim/cli_backend.py	3849	join_call	join	_merge_secret_content	"    return ""\n"".join(merged)"	prod
+py	ming_sim/cli_backend.py	3856	strip_call	strip	_secret_metadata_from_command	        line = raw_line.strip()	prod
+py	ming_sim/cli_backend.py	3859	re_match	match	_secret_metadata_from_command	"        m_tags = re.match(r""^(?:标签|tag|tags)\s*[：:]\s*(.+)$"", line, flags=re.IGNORECASE)"	prod
+py	ming_sim/cli_backend.py	3861	split_call	split	_secret_metadata_from_command	"            for item in re.split(r""[,，、/;；\s]+"", m_tags.group(1)):"	prod
+py	ming_sim/cli_backend.py	3861	re_split	split	_secret_metadata_from_command	"            for item in re.split(r""[,，、/;；\s]+"", m_tags.group(1)):"	prod
+py	ming_sim/cli_backend.py	3862	strip_call	strip	_secret_metadata_from_command	                cleaned = item.strip()	prod
+py	ming_sim/cli_backend.py	3866	re_match	match	_secret_metadata_from_command	"        m_deadline = re.match(r""^(?:期限|限期|deadline)\s*[：:]\s*(.+)$"", line, flags=re.IGNORECASE)"	prod
+py	ming_sim/cli_backend.py	3868	re_search	search	_secret_metadata_from_command	"            match = re.search(r""([+-]?\d+)\s*(?:个)?月"", m_deadline.group(1))"	prod
+py	ming_sim/cli_backend.py	3888	strip_call	strip	_normalize_dossier_link_proposals	"        relation = str(link.get(""relation_type"") or """").strip()"	prod
+py	ming_sim/cli_backend.py	3921	join_call	join	confirm_dossier_links	"        ""【可选提议】\n"" + ""\n"".join("	prod
+py	ming_sim/cli_backend.py	3993	join_call	join	_extract_secret_order	"        ""【可引用旧案卷】\n"" + ""\n"".join("	prod
+py	ming_sim/cli_backend.py	4044	strip_call	strip	_extract_secret_order	"    _assignee_llm = str(obj.get(""承办人"") or """").strip()"	prod
+py	ming_sim/cli_backend.py	4072	strip_call	strip	_extract_secret_order	    tags = [str(t).strip() for t in tags if str(t).strip()] if isinstance(tags, list) else []	prod
+py	ming_sim/cli_backend.py	4114	strip_call	strip	_extract_secret_order	"    kind = str(obj.get(""差务"") or obj.get(""kind"") or """").strip()"	prod
+py	ming_sim/cli_backend.py	4116	strip_call	strip	_extract_secret_order	    axes = [str(a).strip() for a in axes if str(a).strip()] if isinstance(axes, list) else []	prod
+py	ming_sim/cli_backend.py	4117	strip_call	strip	_extract_secret_order	"    unit = str(obj.get(""交付单位"") or """").strip()"	prod
+py	ming_sim/cli_backend.py	4174	re_compile	compile	_extract_secret_order	_CLI_RECOMMENDATION_CALL = re.compile(	prod
+py	ming_sim/cli_backend.py	4202	rfind_call	rfind	_cli_stream_safe_prefix	    marker_at = text.rfind(_CLI_RECOMMENDATION_PREFIX)	prod
+py	ming_sim/cli_backend.py	4204	slice_trunc_expr	[:expr]	_cli_stream_safe_prefix	        return text[:marker_at], text[marker_at:]	prod
+py	ming_sim/cli_backend.py	4207	endswith_call	endswith	_cli_stream_safe_prefix	        if text.endswith(_CLI_RECOMMENDATION_PREFIX[:length]):	prod
+py	ming_sim/cli_backend.py	4207	slice_trunc_expr	[:expr]	_cli_stream_safe_prefix	        if text.endswith(_CLI_RECOMMENDATION_PREFIX[:length]):	prod
+py	ming_sim/cli_backend.py	4209	slice_trunc_expr	[:expr]	_cli_stream_safe_prefix	"    return (text[:-keep], text[-keep:]) if keep else (text, """")"	prod
+py	ming_sim/cli_backend.py	4230	strip_call	strip	_cli_recommendation_call	"            or any(not str(payload.get(key) or """").strip() for key in required)"	prod
+py	ming_sim/cli_backend.py	4238	slice_trunc_expr	[:expr]	_cli_recommendation_call	    return text[:match.start()], [call]	prod
+py	ming_sim/cli_backend.py	4264	strip_call	strip	_call_cli	"        materials = str(getattr(self, ""materials_dir"", """") or """").strip() or None"	prod
+py	ming_sim/cli_backend.py	4270	lower_call	lower	_call_cli	"                str(getattr(self, ""reasoning_strength"", """") or """").strip().lower() or None"	prod
+py	ming_sim/cli_backend.py	4270	strip_call	strip	_call_cli	"                str(getattr(self, ""reasoning_strength"", """") or """").strip().lower() or None"	prod
+py	ming_sim/cli_backend.py	4289	strip_call	strip	invoke	"        materials = str(getattr(self, ""materials_dir"", """") or """").strip() or None"	prod
+py	ming_sim/cli_backend.py	4366	strip_call	strip	invoke_stream	"        materials = str(getattr(self, ""materials_dir"", """") or """").strip() or None"	prod
+py	ming_sim/cli_backend.py	4376	lower_call	lower	invoke_stream	"                reasoning_strength=str(getattr(self, ""reasoning_strength"", """") or """").strip().lower() or None,"	prod
+py	ming_sim/cli_backend.py	4376	strip_call	strip	invoke_stream	"                reasoning_strength=str(getattr(self, ""reasoning_strength"", """") or """").strip().lower() or None,"	prod
+py	ming_sim/cli_backend.py	4443	lower_call	lower	cli_backend_from_env	"    val = (os.environ.get(""MING_SIM_LLM_BACKEND"") or """").strip().lower()"	prod
+py	ming_sim/cli_backend.py	4443	strip_call	strip	cli_backend_from_env	"    val = (os.environ.get(""MING_SIM_LLM_BACKEND"") or """").strip().lower()"	prod
+py	ming_sim/cli_backend.py	4486	lower_call	lower	gate_llm_config_from_args	"    channel = str(getattr(args, ""channel"", """") or ""cli"").strip().lower() or ""cli"""	prod
+py	ming_sim/cli_backend.py	4486	strip_call	strip	gate_llm_config_from_args	"    channel = str(getattr(args, ""channel"", """") or ""cli"").strip().lower() or ""cli"""	prod
+py	ming_sim/cli_backend.py	4487	strip_call	strip	gate_llm_config_from_args	"    model = str(getattr(args, ""model"", """") or """").strip()"	prod
+py	ming_sim/cli_backend.py	4492	strip_call	strip	gate_llm_config_from_args	"            str(getattr(args, ""api_key"", """") or """").strip()"	prod
+py	ming_sim/cli_backend.py	4493	strip_call	strip	gate_llm_config_from_args	"            or (os.environ.get(""OPENAI_API_KEY"") or """").strip()"	prod
+py	ming_sim/cli_backend.py	4494	strip_call	strip	gate_llm_config_from_args	"            or (os.environ.get(""MING_SIM_API_KEY"") or """").strip()"	prod
+py	ming_sim/cli_backend.py	4497	strip_call	strip	gate_llm_config_from_args	"            str(getattr(args, ""base_url"", """") or """").strip()"	prod
+py	ming_sim/cli_backend.py	4498	strip_call	strip	gate_llm_config_from_args	"            or (os.environ.get(""OPENAI_BASE_URL"") or """").strip()"	prod
+py	ming_sim/cli_backend.py	4499	strip_call	strip	gate_llm_config_from_args	"            or (os.environ.get(""MING_SIM_API_BASE_URL"") or """").strip()"	prod
+py	ming_sim/cli_backend.py	4516	lower_call	lower	gate_llm_config_from_args	"    runner = str(getattr(args, ""runner"", """") or """").strip().lower()"	prod
+py	ming_sim/cli_backend.py	4516	strip_call	strip	gate_llm_config_from_args	"    runner = str(getattr(args, ""runner"", """") or """").strip().lower()"	prod
+py	ming_sim/cli_backend.py	4540	strip_call	strip	require_fresh_cli_trace	"    trace_setting = os.environ.get(""MING_SIM_TRACE_PATH"", """").strip()"	prod
+py	ming_sim/cli_backend.py	4541	lower_call	lower	require_fresh_cli_trace	"    if not trace_setting or os.environ.get(""MING_SIM_TRACE"", ""1"").strip().lower() in {"	prod
+py	ming_sim/cli_backend.py	4541	strip_call	strip	require_fresh_cli_trace	"    if not trace_setting or os.environ.get(""MING_SIM_TRACE"", ""1"").strip().lower() in {"	prod
+py	ming_sim/cli_backend.py	4553	lower_call	lower	gate_evidence_config	"    channel = str(getattr(cfg, ""channel"", """") or getattr(args, ""channel"", """") or """").strip().lower()"	prod
+py	ming_sim/cli_backend.py	4553	strip_call	strip	gate_evidence_config	"    channel = str(getattr(cfg, ""channel"", """") or getattr(args, ""channel"", """") or """").strip().lower()"	prod
+py	ming_sim/cli_backend.py	4556	lower_call	lower	gate_evidence_config	        runner = str(	prod
+py	ming_sim/cli_backend.py	4556	strip_call	strip	gate_evidence_config	        runner = str(	prod
+py	ming_sim/cli_backend.py	4559	strip_call	strip	gate_evidence_config	    model = str(	prod
 py	ming_sim/commitment_backlash.py	39	strip_call	strip	backlash_origin_ref	"    kind = str(source_kind or """").strip()"	prod
 py	ming_sim/commitment_backlash.py	52	strip_call	strip	classify_backlash_source	"    outcome = str(execution_outcome or """").strip()"	prod
 py	ming_sim/content.py	103	strip_call	strip	load_character_content	"        if not crime_raw.strip() and seed_guilt_fields[""severity""] != ""无"":"	prod

@@ -6,8 +6,9 @@ FIX_DONE	ming_sim/issues.py	834	fiscal_reason_identity	N10 free reason removed f
 FIX_DONE	ming_sim/issues.py	849	fiscal_purpose_identity	N10 purpose enum removed from fiscal identity
 FIX_DONE	ming_sim/breach_plea.py	1352	purpose_keyword_admission	N10 purpose keywords removed; delta only
 FIX_DONE	ming_sim/breach_plea.py	1376	reason_keyword_admission	N10 reason keywords removed; structured delta only
-FIX_DONE	ming_sim/cli_backend.py	3866	secret_task_keyword	N10 task-like keyword regex deleted
-FIX_DONE	ming_sim/cli_backend.py	3877	secret_related_keyword	N10 relatedness keyword/topic deleted
-FIX_DONE	ming_sim/cli_backend.py	4238	secret_prefix_keyword	N10 prefix atom/keyword classify → length only
-FIX_DONE	ming_sim/cli_backend.py	3866	atom_strip_deleted	N6 confirmation atom-stripping deleted
+FIX_DONE	ming_sim/cli_backend.py	-	secret_task_like_deleted	N10 task-like question-mark classify deleted; full structured emperor lines kept
+FIX_DONE	ming_sim/cli_backend.py	-	secret_tasks_related_deleted	N10 dual-nonempty relatedness classify deleted
+FIX_DONE	ming_sim/cli_backend.py	-	secret_prefix_length_deleted	N10 len(compact)<=12 prefix classify deleted
+FIX_DONE	ming_sim/cli_backend.py	-	secret_confirmation_strip_deleted	N6 confirmation body strip rewrite deleted; removeprefix only
+FIX_DONE	ming_sim/cli_backend.py	-	matched_prefix_deleted	adjacent prefix strip transport helper deleted (caller already retired)
 FIX_DONE	tests/test_web_issue_condition_display.py	-	assert_deleted	helper free-text equality proving assertion removed

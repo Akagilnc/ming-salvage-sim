@@ -287,24 +287,58 @@ def load_prior(path: pathlib.Path):
             prior[key] = row
             # also by file+line+kind
             prior[(row.get("file", ""), row.get("line", ""), row.get("kind", ""))] = row
+            # line-stable fallback: file+kind+snip (survives insert/delete churn)
+            prior[(row.get("file", ""), row.get("kind", ""), row.get("snip", "")[:80])] = row
+            # ctx+kind+snip for deleted-helper synthetic rows
+            if row.get("ctx"):
+                prior[(row.get("file", ""), row.get("ctx", ""), row.get("kind", ""), row.get("snip", "")[:80])] = row
     return prior
 
 
+def _prior_lookup(prior, row):
+    file, kind, snip = row["file"], row["kind"], row["snip"][:80]
+    line = str(row["line"])
+    ctx = row.get("ctx") or ""
+    return (
+        prior.get((file, line, kind, snip))
+        or prior.get((file, line, kind))
+        or prior.get((file, kind, snip))
+        or (prior.get((file, ctx, kind, snip)) if ctx else None)
+    )
+
+
 def classify_n6(row, prior):
-    key3 = (row["file"], str(row["line"]), row["kind"])
-    key4 = (row["file"], str(row["line"]), row["kind"], row["snip"][:80])
-    old = prior.get(key4) or prior.get(key3)
+    old = _prior_lookup(prior, row)
     snip = row["snip"]
     file = row["file"]
     kind = row["kind"]
+    ctx = row.get("ctx") or ""
 
     # Known FIX_DONE sites
     if "web_app.py" in file and "_CONDITION_DISPLAY_REPLACEMENTS" in snip and "for src, dst" in snip:
         return "FIX_DONE", "free-prose fallback replace removed; formal value path only"
+    # Deleted secret confirmation rewrite / atom-strip helpers
+    if ctx in {
+        "_secret_confirmation_material",
+        "_secret_context_task_like",
+        "_secret_context_tasks_related",
+        "_secret_prefix_needs_recent_context",
+        "_matched_prefix",
+    }:
+        return "FIX_DONE", "secret task/related/confirm/prefix classify deleted; structured-role transport only"
+    # Structured role/confirm prefix peel — identity, body not rewritten
+    if ctx == "_split_audience_context" and kind in {
+        "startswith_call", "removeprefix_call", "endswith_call",
+    }:
+        return "KEEP_identity_or_formal", "structured role/confirm prefix peel; body transported"
     if kind in {"strip_call", "trim_call"} and re.search(r"if\s+not\s+.+\.strip|if\s+.+\.strip\(\)|if\s*\(\s*.*\.trim", snip):
         return "KEEP_empty_check", "strip/trim only for emptiness predicate"
     if kind in {"strip_call", "trim_call"} and re.search(r"=\s*.*\.(strip|trim)\(\)", snip):
-        # assigned — need human unless prior KEEP
+        # assigned — need human unless prior KEEP on formal/identity only
+        if "return" in snip and ".strip()" in snip and any(
+            x in (ctx or snip) for x in ("confirmation", "emperor", "intent", "content", "reason", "condition")
+        ):
+            return "NEEDS_HUMAN", "strip assigned on free-prose-ish transport — verify not rewrite"
         if old and old.get("disposition", "").startswith("KEEP"):
             return old["disposition"], old.get("reason", "prior KEEP retained after re-verify")
         if old and old.get("disposition") == "FIX_DONE":
@@ -314,11 +348,13 @@ def classify_n6(row, prior):
     if old and old.get("disposition") in {"FIX_DONE", "FIX"}:
         return "FIX_DONE", old.get("reason", "prior fix")
     if old and str(old.get("disposition", "")).startswith("KEEP"):
-        # re-verify: do not blindly trust KEEP_match_or_normalize on humanize transport
+        # re-verify: do not blindly trust KEEP on humanize / length / free-text classify substitutes
         if "humanize" in snip.lower() or "_humanize_condition" in snip:
             if "return text" in snip or "passes through" in (old.get("reason") or ""):
                 return "KEEP_identity_or_formal", "formal DSL or free prose pass-through (re-verified)"
             return "NEEDS_HUMAN", "humanize site — re-verify transport vs formal"
+        if any(x in snip for x in ("len(compact)", 'endswith("?")', "endswith(\"？\")", "endswith('?')")):
+            return "NEEDS_HUMAN", "length/question free-text classify substitute — not KEEP"
         return old["disposition"], f"prior:{old.get('reason', '')}"[:120]
 
     if kind in {"split_call", "join_call", "filter_call"} and any(
@@ -333,9 +369,7 @@ def classify_n6(row, prior):
 
 
 def classify_n10(row, prior):
-    key3 = (row["file"], str(row["line"]), row["kind"])
-    key4 = (row["file"], str(row["line"]), row["kind"], row["snip"][:80])
-    old = prior.get(key4) or prior.get(key3)
+    old = _prior_lookup(prior, row)
     snip = row["snip"]
     file = row["file"]
     kind = row["kind"]
@@ -350,6 +384,30 @@ def classify_n10(row, prior):
         if "purpose" in snip and "item.get" in snip:
             return "FIX_DONE", "purpose enum removed from fiscal identity tokens"
         return "KEEP_identity_or_formal", "ADR0027 account+科目名(key/display↔category); no reason/purpose/word-sense"
+
+    # Secret context free-semantic substitutes (question/length/dual-nonempty) — never KEEP
+    if ctx in {
+        "_secret_context_task_like",
+        "_secret_context_tasks_related",
+        "_secret_prefix_needs_recent_context",
+        "_secret_confirmation_material",
+        "_matched_prefix",
+    } or any(
+        name in snip
+        for name in (
+            "_secret_context_task_like",
+            "_secret_context_tasks_related",
+            "_secret_prefix_needs_recent_context",
+            "_secret_confirmation_material",
+        )
+    ):
+        return "FIX_DONE", "secret task/related/prefix/confirm classify deleted; full structured context to LLM"
+    if any(x in snip for x in ("len(compact)", 'endswith("?")', "endswith(\"？\")", "endswith('?')")) and (
+        "secret" in ctx or "secret" in snip or "compact" in snip
+    ):
+        return "NEEDS_HUMAN", "length/question free-text classify — not KEEP"
+    if "bool(re.sub" in snip and "and bool" in snip:
+        return "NEEDS_HUMAN", "dual-nonempty relatedness substitute — not KEEP"
 
     # Formal enums / catalogs
     if "ministerFilters" in file or "office_type" in snip or "/首辅/" in snip:
@@ -372,9 +430,37 @@ def classify_n10(row, prior):
     ):
         return "KEEP_identity_or_formal", "structural id/url/type match"
 
+    # Structured role/formal prefix peel (皇帝：/【本轮确认】) — identity, not free-prose classify
+    if kind in {
+        "str_startswith", "startswith_branch", "startswith_call", "removeprefix_call",
+    } and (
+        ctx == "_split_audience_context"
+        or "【本轮确认】" in snip
+        or "皇帝：" in snip
+    ):
+        return "KEEP_identity_or_formal", "structured role/confirm prefix peel; body transported"
+
     if old and old.get("disposition") in {"FIX_DONE", "FIX"}:
+        # Do not retain FIX_DONE that claimed length-only / nonempty substitutes as the fix
+        reason = old.get("reason") or ""
+        if any(x in reason for x in ("length only", "non-empty non-question", "both non-empty", "len(compact)")):
+            return "NEEDS_HUMAN", "prior FIX claimed length/nonempty substitute — re-verify deletion"
         return "FIX_DONE", old.get("reason", "prior fix")
     if old and str(old.get("disposition", "")).startswith("KEEP"):
+        # NEVER keep prior KEEP that launders nonempty/length free-text classify
+        reason = old.get("reason") or ""
+        if any(
+            x in snip or x in reason
+            for x in (
+                "len(compact)",
+                'endswith("?")',
+                "endswith(\"？\")",
+                "non-empty non-question",
+                "both non-empty",
+                "length only",
+            )
+        ):
+            return "NEEDS_HUMAN", "prior KEEP on nonempty/length free-text classify — not KEEP"
         return old["disposition"], f"prior:{old.get('reason', '')}"[:120]
 
     # High-suspicion: regex/keyword on free fields deciding buckets
@@ -395,6 +481,34 @@ def write_tsv(path, rows, fields):
         w = csv.DictWriter(f, fieldnames=fields, delimiter="\t", lineterminator="\n", extrasaction="ignore")
         w.writeheader()
         w.writerows(rows)
+
+
+def _rewrite_deleted_secret_reason(old: dict) -> str:
+    ctx = old.get("ctx") or ""
+    snip = old.get("snip") or ""
+    reason = old.get("reason") or ""
+    if ctx in {
+        "_secret_context_task_like",
+        "_secret_context_tasks_related",
+        "_secret_prefix_needs_recent_context",
+        "_secret_confirmation_material",
+        "_matched_prefix",
+    } or any(
+        name in snip or name in reason
+        for name in (
+            "secret_task",
+            "secret_related",
+            "secret_prefix",
+            "atom_strip",
+            "_secret_context_task_like",
+            "_secret_prefix_needs_recent_context",
+        )
+    ) or any(
+        x in reason
+        for x in ("length only", "non-empty non-question", "both non-empty", "len(compact)")
+    ):
+        return "secret task/related/prefix/confirm classify deleted; structured-role full context transport"
+    return reason or "deleted illegal site"
 
 
 def main():
@@ -450,7 +564,7 @@ def main():
             if not any(x["file"] == key[0] and str(x["line"]) == key[1] and x["kind"] == key[2] for x in n6_cls):
                 n6_cls.append({
                     "disposition": "FIX_DONE",
-                    "reason": old.get("reason", "deleted illegal site"),
+                    "reason": _rewrite_deleted_secret_reason(old),
                     "lang": old.get("lang", ""),
                     "file": key[0], "line": key[1], "kind": key[2],
                     "detail": old.get("detail", ""), "ctx": old.get("ctx", ""),
@@ -468,12 +582,34 @@ def main():
             if not any(x["file"] == key[0] and str(x["line"]) == key[1] and x["kind"] == key[2] for x in n10_cls):
                 n10_cls.append({
                     "disposition": "FIX_DONE",
-                    "reason": old.get("reason", "deleted illegal site"),
+                    "reason": _rewrite_deleted_secret_reason(old),
                     "lang": old.get("lang", ""),
                     "file": key[0], "line": key[1], "kind": key[2],
                     "detail": old.get("detail", ""), "ctx": old.get("ctx", ""),
                     "snip": old.get("snip", ""), "source": "prod",
                 })
+
+    # Canonical FIX_DONE markers for deleted secret classify helpers (dedupe by ctx)
+    for table, kind, ctx, snip in (
+        (n6_cls, "atom_strip_deleted", "_secret_confirmation_material", "helper deleted; body not rewritten"),
+        (n10_cls, "secret_task_keyword", "_secret_context_task_like", "helper deleted"),
+        (n10_cls, "secret_related_keyword", "_secret_context_tasks_related", "helper deleted"),
+        (n10_cls, "secret_prefix_keyword", "_secret_prefix_needs_recent_context", "helper deleted"),
+    ):
+        if any((x.get("ctx") == ctx and str(x.get("disposition") or "").startswith("FIX")) for x in table):
+            continue
+        table.append({
+            "disposition": "FIX_DONE",
+            "reason": "secret task/related/prefix/confirm classify deleted; structured-role full context transport",
+            "lang": "py",
+            "file": "ming_sim/cli_backend.py",
+            "line": "-",
+            "kind": kind,
+            "detail": "",
+            "ctx": ctx,
+            "snip": snip,
+            "source": "prod",
+        })
 
     fields = ["disposition", "reason", "lang", "file", "line", "kind", "detail", "ctx", "snip", "source"]
     write_tsv(EVIDENCE / "1847-n6-members-classified.tsv", n6_cls, fields)

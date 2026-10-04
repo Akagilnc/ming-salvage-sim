@@ -19,9 +19,20 @@
 === N10 breach keyword removal ===
 [PASS] N10_BREACH_NO_PURPOSE_SET
 [PASS] N10_BREACH_NO_REASON_SET
-=== N10/N6 secret context deletion ===
-[PASS] N10_SECRET_NO_TASK_KW
-[PASS] N6_SECRET_NO_ATOM_STRIP
-[PASS] N10_SECRET_PREFIX_LENGTH_ONLY
-
-[PASS] N6_GET_STATE_HTTP_raw_equal True status=200 rc_eq=True fc_eq=True
+=== N10/N6 secret context: real _extract_secret_order force_default entry ===
+[PASS] N10_SECRET_REAL_ENTRY_KEEPS_QUESTION 京营操练如何？
+先命洪承畴赈灾
+再令东厂护银
+准
+[PASS] N10_SECRET_REAL_ENTRY_KEEPS_ALL_TASKS 京营操练如何？
+先命洪承畴赈灾
+再令东厂护银
+准
+[PASS] N6_SECRET_REAL_ENTRY_CONFIRM_BODY 京营操练如何？
+先命洪承畴赈灾
+再令东厂护银
+准
+[PASS] N10_SECRET_REAL_ENTRY_NO_MINISTER_LINE 京营操练如何？
+先命洪承畴赈灾
+再令东厂护银
+准

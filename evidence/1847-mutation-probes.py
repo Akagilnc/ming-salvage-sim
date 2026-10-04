@@ -186,12 +186,47 @@ fn = src_bp.split("def resolve_breach_pleas_from_extraction")[1].split("\ndef ")
 ok("N10_BREACH_NO_PURPOSE_SET", "履行承诺" not in fn, "")
 ok("N10_BREACH_NO_REASON_SET", '{"加拨", "续拨", "复供"}' not in fn and 'in {"加拨"' not in fn, "")
 
-log("=== N10/N6 secret context deletion ===")
-src_cli = (ROOT / "ming_sim/cli_backend.py").read_text(encoding="utf-8")
-ok("N10_SECRET_NO_TASK_KW", "(命|令|着|遣|派|督办" not in src_cli, "")
-conf_fn = src_cli.split("def _secret_confirmation_material")[1].split("\ndef ")[0]
-ok("N6_SECRET_NO_ATOM_STRIP", "准卿所奏" not in conf_fn and "return (text or \"\").strip()" in conf_fn, "")
-ok("N10_SECRET_PREFIX_LENGTH_ONLY", "len(compact) <= 12" in src_cli and "_SECRET_CONFIRM_ATOM_RE" not in src_cli, "")
+log("=== N10/N6 secret context: real _extract_secret_order force_default entry ===")
+import json
+from ming_sim import cli_backend as cb
+
+_old_flip_question_drop = (
+    # Old path dropped question-marked emperor lines before packing; current must keep them.
+    "皇帝：京营操练如何？\n"
+    "大臣：回陛下，尚在整备。\n"
+    "皇帝：先命洪承畴赈灾\n"
+    "皇帝：再令东厂护银\n"
+    "【本轮确认】准"
+)
+
+def _fake_secret_extract(prompt, llm_config=None, tag=""):
+    return json.dumps(
+        {"标题": "赈灾护银", "内容": "", "承办人": "毕自严", "期限月数": 1, "标签": []},
+        ensure_ascii=False,
+    ), 1
+
+_orig_extract = cb._run_json_extractor_for_config
+cb._run_json_extractor_for_config = _fake_secret_extract
+try:
+    secret = cb._extract_secret_order(
+        _old_flip_question_drop,
+        "臣领旨",
+        "毕自严",
+        force_default_assignee=True,
+    )
+    body = str(secret.get("content") or "")
+    # Old: question-mark task_like dropped 「京营操练如何？」; relatedness/length gates cut span.
+    # Current: structured-role peel only; full emperor/confirm bodies to assemble path.
+    ok("N10_SECRET_REAL_ENTRY_KEEPS_QUESTION", "京营操练如何？" in body, body[:120])
+    ok(
+        "N10_SECRET_REAL_ENTRY_KEEPS_ALL_TASKS",
+        "先命洪承畴赈灾" in body and "再令东厂护银" in body,
+        body[:120],
+    )
+    ok("N6_SECRET_REAL_ENTRY_CONFIRM_BODY", "准" in body, body[:120])
+    ok("N10_SECRET_REAL_ENTRY_NO_MINISTER_LINE", "回陛下" not in body, body[:120])
+finally:
+    cb._run_json_extractor_for_config = _orig_extract
 
 OUT.write_text("\n".join(lines) + "\n", encoding="utf-8")
 log(f"WROTE {OUT}")
