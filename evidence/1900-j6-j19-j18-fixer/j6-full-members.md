@@ -5,11 +5,13 @@
 法源：对自由文本一切机械依赖均属盯文；**P7 禁模板负向不是合法盯文豁免**（若成立须删，不得标 KEEP）。
 
 枚举：`git ls-files` 全仓测试 + Python AST（比较/包含/相等/正则/生成文本名 + mock/helper/oracle/wait/boundary）+ TS 行扫。
-原始候选：`j6-ast-candidates.jsonl`；摘要：`j6-ast-summary.json`；命令：`enum-cmd.txt`。
+命令真源（含可执行 heredoc）：`enum-cmd.txt`。
+机械候选宇宙：`j6-ast-candidates.jsonl`（4499=py4006+ts493）+ 最短规模 `j6-ast-summary.json`。
+**本表=FOCUS 裁决子集（TOTAL_FOCUS=1258），不是全部机械候选**；非 FOCUS 的 STR_LITERAL/ASSERT 仅留 jsonl，不得用焦点计数冒称全部。md 未涵盖全部故保留 jsonl。
 
 **本表禁止未决项，禁止以他票/web 划拒修。** 不成立→KEEP+契约；成立→FIX。
 
-## 处置计数
+## 处置计数（焦点表，≠全部候选）
 
 ```
 KEEP_DOM_FIXTURE_OR_STRUCTURE: 396
@@ -38,6 +40,7 @@ KEEP_STRUCTURED_SUMMON: 1
 KEEP_TRACE_ONCE: 1
 KEEP_THREAD_CAPTURE: 1
 TOTAL_FOCUS: 1258
+RAW_CANDIDATES: 4499
 ```
 
 ## 本轮代码 FIX

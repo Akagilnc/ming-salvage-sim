@@ -1,14 +1,197 @@
-# #1900 J6/J19/J18 枚举命令真源（工作树根执行）
-# 权威成员表：j6/j19/j18-full-members.md（仅 md）
-# AST 原始候选：j6-ast-candidates.jsonl + j6-ast-summary.json
+# #1900 J6/J19/J18 枚举命令真源（工作树根执行；一次性调查，非入库通用框架）
+# 权威成员表：j6/j19/j18-full-members.md
+# 机械候选宇宙：j6-ast-candidates.jsonl + 最短规模结果 j6-ast-summary.json
+# 范围说明：jsonl=全形状机械命中；j6-full-members.md 焦点表=FOCUS 标签裁决子集（≠全部候选）
 
 ## J6 — 测试文件定位
 git ls-files | rg -i '\.(py|ts|tsx)$' | rg -i '(^tests/|/tests/|\.test\.|\.spec\.|/__tests__/)'
 
-## J6 — Python AST + TS 行扫
-# 最短 python heredoc 产出 j6-ast-candidates.jsonl（不造通用框架入库）。
-# 谓词：assert 比较/包含/相等/正则/生成文本名；wait_until；boundary setattr；oracle helper；TS toContain/mock。
+## J6 — Python AST + TS 行扫（原命令照录；产出 j6-ast-candidates.jsonl / j6-ast-summary.json）
+python3 - <<'PY'
+"""#1900 J6 AST enum: generated-text asserts + mock/helper/oracle/initial-fail shapes."""
+from __future__ import annotations
+import ast, json, os, re, subprocess, pathlib
+root = pathlib.Path('.').resolve()
+files = subprocess.check_output(
+    ['git','ls-files','-z'], cwd=root
+).split(b'\0')
+paths=[]
+for b in files:
+    if not b: continue
+    s=b.decode()
+    if s.startswith('evidence/') or '/__pycache__/' in s: continue
+    if s.endswith('.py') and (
+        s.startswith('tests/') or '/tests/' in s or s.endswith('_test.py')
+        or '/test_' in s.split('/')[-1]
+    ):
+        paths.append(s)
+    elif re.search(r'\.(test|spec)\.(ts|tsx)$', s) or '/__tests__/' in s:
+        paths.append(s)
 
+# also catch web vitest under web/
+for b in files:
+    if not b: continue
+    s=b.decode()
+    if s.startswith('web/') and re.search(r'\.(test|spec)\.(ts|tsx)$', s):
+        if s not in paths: paths.append(s)
+
+ASSERT_FUNCS={'assert','assertEqual','assertEquals','assertNotEqual','assertIn','assertNotIn',
+              'assertTrue','assertFalse','assertIs','assertIsNot','assertIsNone','assertIsNotNone',
+              'assertRegex','assertNotRegex','assertCountEqual','assertListEqual','assertDictEqual',
+              'assertRaisesRegex','assertWarnsRegex'}
+MOCK_ATTRS={'assert_called','assert_called_once','assert_called_with','assert_called_once_with',
+            'assert_any_call','assert_has_calls','assert_not_called','call_count','called',
+            'mock_calls','method_calls'}
+TEXT_HINT=re.compile(
+    r'(prompt|opening|night_said|answer|content|body|title|text|message|reply|memorial|'
+    r'gazette|print|stdout|stderr|chunk|narrative|prose|utter|saying|draft|marker|leak|'
+    r'承旨|遵旨|钦此|赴京|禁模板|后轮|LEAK|固定)', re.I
+)
+ORACLE_HINT=re.compile(r'(oracle|call_count|call_oracle|fixed_translate|direction_|power_band|_strictly_before)', re.I)
+WAIT_HINT=re.compile(r'wait_until', re.I)
+
+class V(ast.NodeVisitor):
+    def __init__(self, path):
+        self.path=path; self.rows=[]; self.stack=[]
+    def visit_FunctionDef(self,n):
+        self.stack.append(n.name); self.generic_visit(n); self.stack.pop()
+    visit_AsyncFunctionDef=visit_FunctionDef
+    def _test(self):
+        return next((x for x in reversed(self.stack) if x.startswith('test_')), self.stack[-1] if self.stack else '')
+    def _add(self, node, tags, snippet):
+        self.rows.append({
+            'file': self.path, 'line': getattr(node,'lineno',0),
+            'test': self._test(), 'tags': sorted(set(tags)),
+            'snippet': snippet[:160].replace('\n',' '),
+        })
+    def visit_Assert(self,n):
+        src=ast.dump(n.test)
+        tags=[]
+        # compare / contain / eq
+        for sub in ast.walk(n.test):
+            if isinstance(sub, ast.Compare):
+                for op in sub.ops:
+                    if isinstance(op,(ast.Eq,ast.NotEq,ast.In,ast.NotIn)):
+                        tags.append('ASSERT_COMPARE')
+                # string literal involved
+                for part in [sub.left, *sub.comparators]:
+                    if isinstance(part, ast.Constant) and isinstance(part.value,str) and len(part.value)>=2:
+                        tags.append('STR_LITERAL')
+                        if TEXT_HINT.search(part.value): tags.append('GEN_TEXT_HINT')
+                    if isinstance(part, ast.Name) and TEXT_HINT.search(part.id):
+                        tags.append('GEN_TEXT_NAME')
+                    if isinstance(part, ast.Attribute) and TEXT_HINT.search(part.attr):
+                        tags.append('GEN_TEXT_ATTR')
+            if isinstance(sub, ast.Call):
+                fn=sub.func
+                name=''
+                if isinstance(fn, ast.Name): name=fn.id
+                elif isinstance(fn, ast.Attribute): name=fn.attr
+                if name in ('match','search','fullmatch','findall') or name.startswith('assertRegex'):
+                    tags.append('REGEX')
+                if name in MOCK_ATTRS or 'assert_called' in name:
+                    tags.append('MOCK_CALL')
+        if tags:
+            try: sn=ast.unparse(n)
+            except Exception: sn=src[:120]
+            if any(t in tags for t in ('STR_LITERAL','GEN_TEXT_HINT','GEN_TEXT_NAME','GEN_TEXT_ATTR','REGEX','MOCK_CALL','ASSERT_COMPARE')):
+                # keep if text-ish or mock; drop pure numeric structured unless mock
+                keep = bool({'GEN_TEXT_HINT','GEN_TEXT_NAME','GEN_TEXT_ATTR','REGEX','MOCK_CALL','STR_LITERAL'} & set(tags))
+                if keep:
+                    self._add(n, tags, sn)
+        self.generic_visit(n)
+    def visit_Call(self,n):
+        fn=n.func; name=''; attrs=[]
+        if isinstance(fn, ast.Name): name=fn.id
+        elif isinstance(fn, ast.Attribute):
+            name=fn.attr; attrs=[fn.attr]
+            if isinstance(fn.value, ast.Name): attrs.append(fn.value.id)
+        tags=[]
+        if name in ('monkeypatch','setattr') or 'monkeypatch' in attrs:
+            # only record setattr on interesting targets later via parent
+            pass
+        if name in MOCK_ATTRS or name.startswith('assert_called'):
+            tags.append('MOCK_CALL')
+        if name=='wait_until':
+            tags.append('WAIT_UNTIL')
+            try: sn=ast.unparse(n)
+            except Exception: sn=name
+            if 'attempt' in sn.lower() or 'len(' in sn:
+                tags.append('INITIAL_OR_ATTEMPT')
+            self._add(n, tags, sn)
+        if name in ('raises','pytest.raises') or (isinstance(fn,ast.Attribute) and fn.attr=='raises'):
+            # match= prose lock
+            for kw in n.keywords:
+                if kw.arg=='match':
+                    tags.append('RAISES_MATCH')
+                    try: sn=ast.unparse(n)
+                    except Exception: sn='raises(match=)'
+                    self._add(n, tags, sn)
+        if ORACLE_HINT.search(name or ''):
+            tags.append('ORACLE_HELPER')
+            try: sn=ast.unparse(n)
+            except Exception: sn=name
+            self._add(n, tags+[name], sn)
+        if tags and 'WAIT_UNTIL' not in tags and 'RAISES_MATCH' not in tags and 'ORACLE_HELPER' not in tags:
+            try: sn=ast.unparse(n)
+            except Exception: sn=name
+            self._add(n, tags, sn)
+        # monkeypatch.setattr
+        if isinstance(fn, ast.Attribute) and fn.attr=='setattr':
+            try: sn=ast.unparse(n)
+            except Exception: sn='setattr'
+            if any(x in sn for x in ('Thread','wait_until','translate','supply','run_','Fake','MagicMock','stub')):
+                self._add(n, ['BOUNDARY_STUB'], sn)
+        self.generic_visit(n)
+
+py_rows=[]; ts_hits=[]
+for rel in paths:
+    p=root/rel
+    if rel.endswith('.py'):
+        try: tree=ast.parse(p.read_text(encoding='utf-8'), filename=rel)
+        except Exception as e:
+            py_rows.append({'file':rel,'line':0,'test':'','tags':['PARSE_FAIL'],'snippet':str(e)[:120]})
+            continue
+        v=V(rel); v.visit(tree); py_rows.extend(v.rows)
+    else:
+        text=p.read_text(encoding='utf-8', errors='replace')
+        for i,line in enumerate(text.splitlines(),1):
+            tags=[]
+            if re.search(r'\b(toHaveBeenCalled|mockImplementation|vi\.spyOn|jest\.spyOn)\b', line):
+                tags.append('MOCK_CALL')
+            if re.search(r'\b(toContain|toMatch|toEqual|toBe|toStrictEqual)\b', line) and re.search(r'[\'\"][^\'\"]{2,}[\'\"]', line):
+                if TEXT_HINT.search(line) or re.search(r'[\'\"][^\'\"]{6,}[\'\"]', line):
+                    tags.append('STR_ASSERT')
+            if tags:
+                ts_hits.append({'file':rel,'line':i,'test':'','tags':tags,'snippet':line.strip()[:160]})
+
+# write raw enum
+out_dir=pathlib.Path('evidence/1900-j6-j19-j18-fixer')
+out_dir.mkdir(parents=True, exist_ok=True)
+raw={'python_files':len([p for p in paths if p.endswith('.py')]),
+     'ts_files':len([p for p in paths if not p.endswith('.py')]),
+     'python_candidates':len(py_rows),'ts_candidates':len(ts_hits),
+     'paths_sample':paths[:20],'path_count':len(paths)}
+(out_dir/'j6-ast-summary.json').write_text(json.dumps(raw,ensure_ascii=False,indent=2),encoding='utf-8')
+# dump all candidates as jsonl
+with (out_dir/'j6-ast-candidates.jsonl').open('w',encoding='utf-8') as f:
+    for r in py_rows+ts_hits:
+        f.write(json.dumps(r,ensure_ascii=False)+'\n')
+print('paths', len(paths), 'py_cand', len(py_rows), 'ts_cand', len(ts_hits))
+# tag histogram
+from collections import Counter
+c=Counter()
+for r in py_rows:
+    for t in r['tags']: c[t]+=1
+print('tag_hist', dict(c.most_common(30)))
+# files with GEN_TEXT
+gt=[r for r in py_rows if 'GEN_TEXT_HINT' in r['tags'] or 'GEN_TEXT_NAME' in r['tags'] or 'GEN_TEXT_ATTR' in r['tags']]
+print('gen_text_rows', len(gt))
+print('raises_match', sum(1 for r in py_rows if 'RAISES_MATCH' in r['tags']))
+print('wait_until', sum(1 for r in py_rows if 'WAIT_UNTIL' in r['tags']))
+print('mock_call', sum(1 for r in py_rows if 'MOCK_CALL' in r['tags']))
+print('boundary_stub', sum(1 for r in py_rows if 'BOUNDARY_STUB' in r['tags']))
+PY
 ## J6 — 禁样复扫
 rg -n --glob 'tests/**/*.py' 'LEAK_MARKER|_strictly_before|test_current_unissued_draft|len\(night_said\)|wait_until\(.*_attempts'
 
