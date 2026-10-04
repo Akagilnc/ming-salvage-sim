@@ -1069,12 +1069,15 @@ def _attach_commission_escort(
         list(entries), db=db, content=getattr(db, "content", None),
     )
     # 单一真源：参与人名单只存 participant_roster；escort 记录是它的押解投影。
+    # 复用 GameDB 现役 normalize + equality 追加（同 _merge_directive_payload）。
+    from ming_sim.db import GameDB
+
     existing = payload.get("participant_roster")
-    merged = list(existing) if isinstance(existing, list) else []
-    for entry in roster:
-        if entry not in merged:
-            merged.append(entry)
-    payload["participant_roster"] = merged
+    payload["participant_roster"] = GameDB.merge_participant_roster_entries(
+        existing if isinstance(existing, list) else [],
+        roster,
+        strict_incoming=True,
+    )
     record: Dict[str, Any] = {
         "escortees": [str(entry["character_id"]) for entry in roster],
     }
@@ -1108,14 +1111,14 @@ def _attach_commission_staging_fields(
     if isinstance(roster, list) and roster:
         # 押解名单已先写入 participant_roster。此处再给一份名单时合并，
         # 不整表替换——否则押解人的职责与机械档从真源消失，只剩投影。
-        # 复用押解侧既有 equality 追加（同 _attach_commission_escort），
-        # 不按人物 id 静默丢后项（#1900 J19）。
+        # 复用 GameDB 现役 normalize + equality 追加（#1900 J19），不另维规则。
+        from ming_sim.db import GameDB
+
         existing = payload.get("participant_roster")
-        merged = list(existing) if isinstance(existing, list) else []
-        for entry in roster:
-            if entry not in merged:
-                merged.append(entry)
-        payload["participant_roster"] = merged
+        payload["participant_roster"] = GameDB.merge_participant_roster_entries(
+            existing if isinstance(existing, list) else [],
+            roster,
+        )
     elif lead and not isinstance(payload.get("participant_roster"), list):
         payload["participant_roster"] = [{
             "character_id": lead, "tier": "主办", "role": "", "delegator_id": None,

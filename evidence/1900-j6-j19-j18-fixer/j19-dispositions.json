@@ -1,0 +1,86 @@
+[
+  {
+    "file": "ming_sim/declaration_dispatch.py",
+    "line": 1055,
+    "text": "shaped = db._normalize_participant_roster(list(entries), strict_structured=True)",
+    "disposition": "KEEP_LIVE_NORMALIZE",
+    "why": "权威 normalize"
+  },
+  {
+    "file": "ming_sim/declaration_dispatch.py",
+    "line": 1076,
+    "text": "payload[\"participant_roster\"] = GameDB.merge_participant_roster_entries(",
+    "disposition": "KEEP_LIVE_SHARED",
+    "why": "现役 normalize+equality 单缝"
+  },
+  {
+    "file": "ming_sim/issues.py",
+    "line": 6910,
+    "text": "added = db.append_decree_dossier_participants(dossier_id, [{",
+    "disposition": "KEEP_LIVE_APPEND",
+    "why": "持久化追加（同人异档 raise）"
+  },
+  {
+    "file": "ming_sim/db.py",
+    "line": 13768,
+    "text": "base_roster = self._normalize_participant_roster(",
+    "disposition": "KEEP_LIVE_NORMALIZE",
+    "why": "权威 normalize"
+  },
+  {
+    "file": "ming_sim/db.py",
+    "line": 14446,
+    "text": "def append_decree_dossier_participants(",
+    "disposition": "KEEP_LIVE_APPEND",
+    "why": "持久化追加（同人异档 raise）"
+  },
+  {
+    "file": "ming_sim/db.py",
+    "line": 17611,
+    "text": "incoming[\"participant_roster\"] = self.merge_participant_roster_entries(",
+    "disposition": "KEEP_LIVE_SHARED",
+    "why": "现役 normalize+equality 单缝"
+  },
+  {
+    "file": "ming_sim/decree_vocabulary.py",
+    "line": 75,
+    "text": "# GameDB._normalize_participant_roster；此处只登记键名与 capability 派生方式。",
+    "disposition": "KEEP_LIVE_NORMALIZE",
+    "why": "权威 normalize"
+  },
+  {
+    "file": "ming_sim/rescript_draft.py",
+    "line": 193,
+    "text": "# 机械三档与条目形状唯一真源＝GameDB._normalize_participant_roster（ADR 0053）；",
+    "disposition": "KEEP_LIVE_NORMALIZE",
+    "why": "权威 normalize"
+  },
+  {
+    "file": "ming_sim/cli_backend.py",
+    "line": 2073,
+    "text": "canonical_roster = db._normalize_participant_roster(",
+    "disposition": "KEEP_LIVE_NORMALIZE",
+    "why": "权威 normalize"
+  },
+  {
+    "file": "tests/test_decree_dossiers_571.py",
+    "line": 82,
+    "text": "db.append_decree_dossier_participants(dossier_id, [{",
+    "disposition": "KEEP_LIVE_APPEND",
+    "why": "持久化追加（同人异档 raise）"
+  },
+  {
+    "file": "tests/test_character_knowledge_489.py",
+    "line": 712,
+    "text": "db.append_decree_dossier_participants(dossier_id, [{",
+    "disposition": "KEEP_LIVE_APPEND",
+    "why": "持久化追加（同人异档 raise）"
+  },
+  {
+    "file": "tests/test_secret_dossier_participants_1252.py",
+    "line": 66,
+    "text": "db.append_decree_dossier_participants(dossier_id, [{",
+    "disposition": "KEEP_LIVE_APPEND",
+    "why": "持久化追加（同人异档 raise）"
+  }
+]

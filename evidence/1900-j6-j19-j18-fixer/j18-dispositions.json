@@ -1,0 +1,205 @@
+[
+  {
+    "file": "ming_sim/declaration_dispatch.py",
+    "line": 2080,
+    "text": "order = db.get_secret_order(target_id) if hasattr(db, \"get_secret_order\") else None",
+    "disposition": "KEEP_LIVE_READ",
+    "why": "存活一般读取"
+  },
+  {
+    "file": "ming_sim/db.py",
+    "line": 859,
+    "text": "def payload_declares_escort(payload: object) -> bool:",
+    "disposition": "KEEP_LIVE_READ",
+    "why": "存活一般读取"
+  },
+  {
+    "file": "ming_sim/db.py",
+    "line": 12297,
+    "text": "return payload_declares_escort(payload)",
+    "disposition": "KEEP_LIVE_READ",
+    "why": "存活一般读取"
+  },
+  {
+    "file": "ming_sim/db.py",
+    "line": 14944,
+    "text": "from ming_sim.materials import SECRET_ORDER_ORIGIN_PREFIX, is_secret_order_origin",
+    "disposition": "KEEP_LIVE_READ",
+    "why": "存活一般读取"
+  },
+  {
+    "file": "ming_sim/db.py",
+    "line": 14946,
+    "text": "if is_secret_order_origin(supplied):",
+    "disposition": "KEEP_LIVE_READ",
+    "why": "存活一般读取"
+  },
+  {
+    "file": "ming_sim/decree_forecast.py",
+    "line": 297,
+    "text": "declared = payload_declares_escort(payload)",
+    "disposition": "KEEP_LIVE_READ",
+    "why": "存活一般读取"
+  },
+  {
+    "file": "ming_sim/month_translate.py",
+    "line": 34,
+    "text": "\"secret_dossiers\": sorted(secret_order_dossier_ids(db)),",
+    "disposition": "KEEP_LIVE_READ",
+    "why": "存活一般读取"
+  },
+  {
+    "file": "ming_sim/decree.py",
+    "line": 750,
+    "text": "for o in db.list_secret_orders(status=\"done\"):",
+    "disposition": "KEEP_LIVE_READ",
+    "why": "存活一般读取"
+  },
+  {
+    "file": "ming_sim/covert_progress.py",
+    "line": 662,
+    "text": "rows = list(db.list_secret_orders(status=\"active\"))",
+    "disposition": "KEEP_LIVE_READ",
+    "why": "存活一般读取"
+  },
+  {
+    "file": "ming_sim/covert_progress.py",
+    "line": 1782,
+    "text": "orders = list(db.list_secret_orders(status=\"active\"))",
+    "disposition": "KEEP_LIVE_READ",
+    "why": "存活一般读取"
+  },
+  {
+    "file": "ming_sim/month_chain.py",
+    "line": 195,
+    "text": "is_secret_order_origin(origin)",
+    "disposition": "KEEP_LIVE_READ",
+    "why": "存活一般读取"
+  },
+  {
+    "file": "ming_sim/month_chain.py",
+    "line": 304,
+    "text": "secret_order_dossier_ids,",
+    "disposition": "KEEP_LIVE_READ",
+    "why": "存活一般读取"
+  },
+  {
+    "file": "ming_sim/month_chain.py",
+    "line": 1204,
+    "text": "dict(o) for o in db.list_secret_orders(status=\"active\")",
+    "disposition": "KEEP_LIVE_READ",
+    "why": "存活一般读取"
+  },
+  {
+    "file": "ming_sim/month_chain.py",
+    "line": 1277,
+    "text": "o for o in db.list_secret_orders(status=\"active\")",
+    "disposition": "KEEP_LIVE_READ",
+    "why": "存活一般读取"
+  },
+  {
+    "file": "tests/test_month_chain_1847.py",
+    "line": 1641,
+    "text": "assert db.get_secret_order(order_id)[\"status\"] == \"active\"",
+    "disposition": "KEEP_LIVE_READ",
+    "why": "存活一般读取"
+  },
+  {
+    "file": "tests/test_dossier_links_559.py",
+    "line": 124,
+    "text": "before_orders = len(db.list_secret_orders())",
+    "disposition": "KEEP_LIVE_READ",
+    "why": "存活一般读取"
+  },
+  {
+    "file": "tests/test_secret_order_monthly_progress_566.py",
+    "line": 72,
+    "text": "emperor_order = next(item for item in db.list_secret_orders() if item[\"id\"] == order_id)",
+    "disposition": "KEEP_LIVE_READ",
+    "why": "存活一般读取"
+  },
+  {
+    "file": "tests/test_secret_order_section_rejections.py",
+    "line": 56,
+    "text": "\"\"\"正向守门（cmr r2 claude）：合法 active 密令 update 不被新 get_secret_order gate 误拒，",
+    "disposition": "KEEP_LIVE_READ",
+    "why": "存活一般读取"
+  },
+  {
+    "file": "tests/test_secret_order_section_rejections.py",
+    "line": 91,
+    "text": "in_tx = db.get_secret_order(oid)",
+    "disposition": "KEEP_LIVE_READ",
+    "why": "存活一般读取"
+  },
+  {
+    "file": "tests/test_secret_order_section_rejections.py",
+    "line": 96,
+    "text": "row = db.get_secret_order(oid)",
+    "disposition": "KEEP_LIVE_READ",
+    "why": "存活一般读取"
+  },
+  {
+    "file": "tests/test_secret_order_section_rejections.py",
+    "line": 102,
+    "text": "\"\"\"超 SQLite 64-bit 范围的 order_id（int() 不抛但 get_secret_order 绑定会 OverflowError）",
+    "disposition": "KEEP_LIVE_READ",
+    "why": "存活一般读取"
+  },
+  {
+    "file": "tests/test_grant_reconciliation_567.py",
+    "line": 12,
+    "text": "不再有软判提案入参，坏提案拒收一族随之退役；实抵一律取引擎按护行口径算出的区间中位。",
+    "disposition": "KEEP_TEST_NOTE",
+    "why": "测试退役说明"
+  },
+  {
+    "file": "tests/test_secret_order_payoff_1504.py",
+    "line": 384,
+    "text": "closed = db.get_secret_order(oid)",
+    "disposition": "KEEP_LIVE_READ",
+    "why": "存活一般读取"
+  },
+  {
+    "file": "tests/test_secret_order_payoff_1504.py",
+    "line": 396,
+    "text": "before = str(db.get_secret_order(oid)[\"result\"] or \"\")",
+    "disposition": "KEEP_LIVE_READ",
+    "why": "存活一般读取"
+  },
+  {
+    "file": "tests/test_secret_order_payoff_1504.py",
+    "line": 705,
+    "text": "live = db.get_secret_order(oid)",
+    "disposition": "KEEP_LIVE_READ",
+    "why": "存活一般读取"
+  },
+  {
+    "file": "tests/test_secret_order_payoff_1504.py",
+    "line": 800,
+    "text": "oid = int(db.list_secret_orders(status=\"active\")[0][\"id\"])",
+    "disposition": "KEEP_LIVE_READ",
+    "why": "存活一般读取"
+  },
+  {
+    "file": "tests/test_secret_order_payoff_1504.py",
+    "line": 1508,
+    "text": "state.turn = int(db.get_secret_order(oid)[\"due_turn\"])",
+    "disposition": "KEEP_LIVE_READ",
+    "why": "存活一般读取"
+  },
+  {
+    "file": "docs/**",
+    "line": "—",
+    "text": "(retirement notes aggregated)",
+    "disposition": "KEEP_RETIREMENT_NOTE",
+    "why": "退役史注"
+  },
+  {
+    "file": "docs/evidence/issue-1571/boundary-inventory.md",
+    "line": 396,
+    "text": "| `list_secret_orders` @21408 | `get_dossier_for_secret_order`、`list_dossier_progress` |",
+    "disposition": "KEEP_LIVE_READ",
+    "why": "存活一般读取"
+  }
+]

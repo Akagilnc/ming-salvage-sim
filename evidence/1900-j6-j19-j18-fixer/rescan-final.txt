@@ -1,15 +1,15 @@
-=== final rescan ===
-J19: none
-J18 dead/stale: none
-tests/test_menu_lifecycle_drain_396.py:101:    move_attempts: list[tuple[str, str]] = []
-tests/test_menu_lifecycle_drain_396.py:110:        move_attempts.append((str(src), str(dst)))
-tests/test_menu_lifecycle_drain_396.py:123:    wait_until(lambda: len(move_attempts) > 0)
-tests/test_menu_lifecycle_drain_396.py:124:    assert any(src == db_path for src, _dst in move_attempts)
-tests/test_menu_lifecycle_drain_396.py:179:    move_attempts: list[tuple[str, str]] = []
-tests/test_menu_lifecycle_drain_396.py:190:        move_attempts.append((str(src), str(dst)))
-tests/test_menu_lifecycle_drain_396.py:205:    wait_until(lambda: any(src == wal_path for src, _dst in move_attempts))
-tests/test_menu_lifecycle_drain_396.py:206:    assert any(src == db_path for src, _dst in move_attempts)
-tests/test_menu_lifecycle_drain_396.py:220:    close_attempts: list[int] = []
-tests/test_menu_lifecycle_drain_396.py:224:        close_attempts.append(1)
-tests/test_menu_lifecycle_drain_396.py:244:    wait_until(lambda: len(close_attempts) > 0)
-tests/test_menu_lifecycle_drain_396.py:245:    assert close_attempts
+### j19_silent
+exit=0
+(no hits)
+
+### j19_parallel_loop
+exit=0
+(no hits)
+
+### j18_dead
+exit=0
+(no hits)
+
+### j6_prompt
+exit=0
+(no hits)

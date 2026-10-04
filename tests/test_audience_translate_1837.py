@@ -259,6 +259,52 @@ def test_translation_entry_preserves_unknown_rejection_and_source_cutoff(
         db, night_id, until_chat_turn_id=source,
     )
 
+    # ADR 0155 结构化读侧：until_chat_turn_id 截止只含严格早于源轮的轮次。
+    # 用 list_chat_turns + 消息条数契约辨别，不搜拼装 prompt / 对话正文。
+    from ming_sim.audience_night import list_chat_turns_for_night
+
+    turns = list_chat_turns_for_night(db, night_id)
+    by_id = {int(t["id"]): t for t in turns}
+    assert int(source) in by_id and int(later) in by_id
+    source_seq = int(by_id[int(source)]["night_seq"] or 0)
+
+    def _strictly_before(tid: int) -> bool:
+        seq = int(by_id[tid]["night_seq"] or 0)
+        if seq < source_seq:
+            return True
+        if seq > source_seq:
+            return False
+        return tid < int(source)
+
+    before_ids = {tid for tid in by_id if _strictly_before(tid)}
+    assert int(later) not in before_ids
+    assert int(source) not in before_ids
+    assert before_ids
+
+    def _nonempty_message_count(turn_ids: set[int]) -> int:
+        n = 0
+        for tid in turn_ids:
+            turn = by_id[tid]
+            for key in ("user_message_id", "minister_message_id"):
+                mid = turn.get(key)
+                if not mid:
+                    continue
+                row = db.conn.execute(
+                    "SELECT content FROM chat_messages WHERE id=?", (int(mid),),
+                ).fetchone()
+                if row is not None and str(row["content"] or "").strip():
+                    n += 1
+        return n
+
+    # 行数契约：截止前非空消息数（本案无账文附加）= night_said 长度。
+    assert len(night_said) == _nonempty_message_count(before_ids)
+    # 调用参数契约：源轮截止 ⊂ 后轮截止 ⊆ 无截止。
+    said_later = audience_translate.build_night_said_so_far(
+        db, night_id, until_chat_turn_id=later,
+    )
+    said_all = audience_translate.build_night_said_so_far(db, night_id)
+    assert len(night_said) < len(said_later) <= len(said_all)
+
     declaration = {
         "commissions": [{"text": "拟旨赈济"}],
         "commisssions": [{"text": "拼错交办"}],
@@ -266,18 +312,6 @@ def test_translation_entry_preserves_unknown_rejection_and_source_cutoff(
             {"body": "提及未在册者", "role": "scene", "person_names": ["未在册者"]},
         ],
     }
-    # 结构化泄漏标记：若截止失效，后轮会以 [chat_turn_id={later}] 进入 prompt。
-    LEAK_MARKER = {"body": f"leak-turn-{int(later)}", "role": "scene", "person_names": []}
-    later_token = f"[chat_turn_id={int(later)}]"
-
-    def _translate(prompt, config):
-        # 截止失效时后轮结构化 turn id 会进入 prompt；落账用独立标记辨别（不锁对话正文）。
-        result = {**offline_empty_audience_translate(prompt, config), **declaration}
-        if later_token in prompt:
-            facts = list(result.get("scene_facts") or [])
-            facts.append(dict(LEAK_MARKER))
-            result["scene_facts"] = facts
-        return result
 
     from ming_sim.audience_translation import apply_audience_round_translation
     decl = audience_translate.translate_audience_turn(
@@ -287,7 +321,9 @@ def test_translation_entry_preserves_unknown_rejection_and_source_cutoff(
         pending_summaries=audience_translate.build_pending_summaries(
             db, int(state.turn), night_id=night_id,
         ),
-        translate_fn=_translate,
+        translate_fn=lambda prompt, config: {
+            **offline_empty_audience_translate(prompt, config), **declaration,
+        },
     )
     applied = apply_audience_round_translation(
         db, state, decl,
@@ -311,14 +347,6 @@ def test_translation_entry_preserves_unknown_rejection_and_source_cutoff(
         "SELECT COUNT(*) FROM story_ledger_entries WHERE night_id=? AND id=?",
         (night_id, applied.scene_facts.applied[0]["id"]),
     ).fetchone()[0] == 1
-    bodies = [
-        str(row["body"] or "")
-        for row in db.conn.execute(
-            "SELECT body FROM story_ledger_entries WHERE night_id=?",
-            (night_id,),
-        ).fetchall()
-    ]
-    assert LEAK_MARKER["body"] not in bodies
     malformed = dispatch_declaration(
         db, state,
         {"scene_facts": [{"body": "坏形状", "role": ["scene"], "person_names": []}]},

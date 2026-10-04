@@ -119,13 +119,22 @@ def test_drain_archive_move_failure_keeps_wal_and_shm(monkeypatch, tmp_path):
     _reset_path_leases()
     assert web_app._register_holder(db_path, game) is not None
     asyncio.run(web_app.api_menu_new_game())
-    # 失败路径须实际经过：drain/archive worker 必须尝试过 move。
-    wait_until(lambda: len(move_attempts) > 0)
+    # 同步到 drain/archive 完成：close 已执行且主库 move 已失败返回，非仅「尝试过」。
+    wait_until(
+        lambda: (
+            closed == [1]
+            and any(src == db_path for src, _dst in move_attempts)
+            and os.path.exists(db_path)
+            and os.path.exists(wal_path)
+            and os.path.exists(shm_path)
+            and list((tmp_path / "saves").glob("*.db")) == []
+        )
+    )
     assert any(src == db_path for src, _dst in move_attempts)
-
     assert os.path.exists(db_path)
     assert os.path.exists(wal_path)
     assert os.path.exists(shm_path)
+    assert list((tmp_path / "saves").glob("*.db")) == []
 
 
 def test_drain_archive_moves_wal_and_shm_with_main_db(monkeypatch, tmp_path):
@@ -201,10 +210,19 @@ def test_drain_archive_rolls_back_main_db_when_wal_move_fails(monkeypatch, tmp_p
     _reset_path_leases()
     assert web_app._register_holder(db_path, game) is not None
     asyncio.run(web_app.api_menu_new_game())
-    # 须见到主库 move + WAL move 失败路径，而非未启动 worker 的初始态。
-    wait_until(lambda: any(src == wal_path for src, _dst in move_attempts))
+    # 同步到回滚结束：close 完成、WAL move 已失败、主库已回到旧路径。
+    wait_until(
+        lambda: (
+            closed == [1]
+            and any(src == db_path for src, _dst in move_attempts)
+            and any(src == wal_path for src, _dst in move_attempts)
+            and os.path.exists(db_path)
+            and os.path.exists(wal_path)
+            and list((tmp_path / "saves").glob("*.db")) == []
+        )
+    )
     assert any(src == db_path for src, _dst in move_attempts)
-
+    assert any(src == wal_path for src, _dst in move_attempts)
     assert os.path.exists(db_path)
     assert os.path.exists(wal_path)
     assert list((tmp_path / "saves").glob("*.db")) == []
@@ -239,11 +257,17 @@ def test_drain_archive_skips_move_when_session_close_fails(monkeypatch, tmp_path
     _reset_path_leases()
     assert web_app._register_holder(db_path, game) is not None
     asyncio.run(web_app.api_menu_new_game())
-    wait_until(lambda: web_app.web_game is not game)
-    # drain worker 必须实际走过 close 失败；不得以未启动 worker 的初始态当绿。
-    wait_until(lambda: len(close_attempts) > 0)
-    assert close_attempts
-
+    # 同步到 close 失败路径结束：新局已接管、close 已抛、未搬库。
+    wait_until(
+        lambda: (
+            web_app.web_game is not game
+            and close_attempts == [1]
+            and moves == []
+            and os.path.exists(db_path)
+            and list((tmp_path / "saves").glob("*.db")) == []
+        )
+    )
+    assert close_attempts == [1]
     assert moves == []
     assert os.path.exists(db_path)
     assert list((tmp_path / "saves").glob("*.db")) == []
