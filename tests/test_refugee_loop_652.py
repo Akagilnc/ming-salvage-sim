@@ -481,6 +481,9 @@ def test_monthly_recovery_follows_each_month_actual_payment(game, monkeypatch):
             (f"dossier:{dossier_id}", turn),
         ).fetchone()[0]
         assert paid > 0
+        # #652/0087：每月回流人数＝本回合实付万两×RECOVERY_PERSONS_PER_WAN×fulfilled。
+        from ming_sim.constants import RECOVERY_PERSONS_PER_WAN
+        expected_transfer = int(round(int(paid) * RECOVERY_PERSONS_PER_WAN * 1.0))
         db.conn.execute(
             "INSERT INTO turn_reports (turn, year, period, report) VALUES (?, ?, ?, ?)",
             (turn, state.year, state.period, "邸报已成"),
@@ -488,7 +491,10 @@ def test_monthly_recovery_follows_each_month_actual_payment(game, monkeypatch):
         db.conn.commit()
         assert session.advance_without_decree().advanced is True
         after = _pop(db, "流民", "shaanxi")
-        assert after < before
+        assert after == before - expected_transfer, (
+            f"每月回流应按实付 {paid} 万两转移 {expected_transfer} 人；"
+            f"before={before} after={after}"
+        )
         before = after
 
 
@@ -571,14 +577,20 @@ def test_in_transit_relief_stays_executing_before_gazette(game, monkeypatch):
         assert str(other["execution_outcome"] or "") == ""
         still = {int(row["id"]) for row in continuing_dossier_facts(loaded, loaded_state.turn)}
         assert henan_id in still and shaanxi_id not in still
-        # 回流基线＝**实抵**（652 既定口径）：这道拨帑本回合正常结案，#1900 要求
-        # 照常核账，故实抵取引擎沿途折损后的账行，而非出库面额。
+        # 回流基线＝**实抵**（652/0087）：引擎无护中位 × RECOVERY_PERSONS_PER_WAN。
+        from ming_sim.constants import RECOVERY_PERSONS_PER_WAN
+        from ming_sim.db import grant_arrival_bounds
         recon = loaded.list_dossier_reconciliations(shaanxi_id)
         assert [int(r["turn"]) for r in recon] == [closed_turn]
         arrived = int(recon[-1]["arrived_amount"])
-        assert 0 < arrived < amount
-        assert _pop(loaded, "流民", "shaanxi") < displaced_before
-        assert _pop(loaded, "农民", "shaanxi") > farmer_before
+        lo, hi = grant_arrival_bounds(amount, escorted=False)
+        expected_arrived = (lo + hi) // 2
+        assert arrived == expected_arrived, (
+            f"无护中位实抵应为 {expected_arrived}（[{lo},{hi}]），得 {arrived}"
+        )
+        expected_transfer = int(round(arrived * RECOVERY_PERSONS_PER_WAN * 1.0))
+        assert _pop(loaded, "流民", "shaanxi") == displaced_before - expected_transfer
+        assert _pop(loaded, "农民", "shaanxi") == farmer_before + expected_transfer
     finally:
         loaded.close()
 

@@ -246,13 +246,20 @@ def test_pending_round_approval_endorsed_before_close_or_after_month_join(
 def test_translation_entry_preserves_unknown_rejection_and_source_cutoff(
     game, monkeypatch,
 ):
-    """真实转译入口：未知 section 留痕；上下文只含严格早于源轮的轮次。"""
+    """真实转译入口：未知 section 留痕；源轮截止只含严格早于源轮的轮次。"""
     db, state, content = game
     night = open_night(db, state, location="乾清宫", time_of_day="夜")
     night_id = int(night["id"])
     _persist_night_chat(db, state, night_id, "第一问", "第一答")
     source = _persist_night_chat(db, state, night_id, "本轮问", "本轮答")
     _persist_night_chat(db, state, night_id, "后轮问", "后轮答")
+    night_said = audience_translate.build_night_said_so_far(
+        db, night_id, until_chat_turn_id=source,
+    )
+    # ADR 0155：截止独立契约——后轮不得进入源轮已说。
+    assert any("第一问" in line or "第一答" in line for line in night_said)
+    assert all("后轮问" not in line and "后轮答" not in line for line in night_said)
+
     declaration = {
         "commissions": [{"text": "拟旨赈济"}],
         "commisssions": [{"text": "拼错交办"}],
@@ -260,17 +267,25 @@ def test_translation_entry_preserves_unknown_rejection_and_source_cutoff(
             {"body": "提及未在册者", "role": "scene", "person_names": ["未在册者"]},
         ],
     }
+
+    def _translate(prompt, config):
+        # 若截止失效把后轮写进 prompt，转译结果会带上泄漏标记，不得固定伪证。
+        result = {**offline_empty_audience_translate(prompt, config), **declaration}
+        if "后轮问" in prompt or "后轮答" in prompt:
+            facts = list(result.get("scene_facts") or [])
+            facts.append({"body": "后轮问", "role": "scene", "person_names": []})
+            result["scene_facts"] = facts
+        return result
+
     from ming_sim.audience_translation import apply_audience_round_translation
     decl = audience_translate.translate_audience_turn(
         emperor_message="本轮问",
         reply="本轮答",
-        night_said=audience_translate.build_night_said_so_far(
-            db, night_id, until_chat_turn_id=source,
-        ),
+        night_said=night_said,
         pending_summaries=audience_translate.build_pending_summaries(
             db, int(state.turn), night_id=night_id,
         ),
-        translate_fn=lambda prompt, config: {**offline_empty_audience_translate(prompt, config), **declaration},
+        translate_fn=_translate,
     )
     applied = apply_audience_round_translation(
         db, state, decl,
@@ -294,15 +309,14 @@ def test_translation_entry_preserves_unknown_rejection_and_source_cutoff(
         "SELECT COUNT(*) FROM story_ledger_entries WHERE night_id=? AND id=?",
         (night_id, applied.scene_facts.applied[0]["id"]),
     ).fetchone()[0] == 1
-    later_bodies = [
+    bodies = [
         str(row["body"] or "")
         for row in db.conn.execute(
             "SELECT body FROM story_ledger_entries WHERE night_id=?",
             (night_id,),
         ).fetchall()
     ]
-    later_payloads = [str(row["payload_json"] or "") for row in pending]
-    assert all("后轮问" not in text for text in later_bodies + later_payloads)
+    assert all(body != "后轮问" for body in bodies)
     malformed = dispatch_declaration(
         db, state,
         {"scene_facts": [{"body": "坏形状", "role": ["scene"], "person_names": []}]},

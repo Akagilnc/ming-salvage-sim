@@ -27,16 +27,18 @@ def test_expenditure_not_amplified_by_legacy(game):
 
 
 def test_income_still_modified_by_legacy(game):
-    """国库 -12% 帝国修正 → 收入 100 万仍被折减（issue #341：只去掉支出侧放大，收入侧保持修正）。"""
+    """国库 -12% 帝国修正 → 收入 100 万按 apply_legacy_pct 折减（#341 / #341 Testing Decisions）。"""
     db, state, content = game
     net_pct = int(db.legacy_modifiers(state).get("国库", 0) or 0)
     assert net_pct < 0, f"前置条件：游戏开局应有负的国库帝国修正（实为 {net_pct}）"
+    expected = db.apply_legacy_pct(100, net_pct)
+    assert expected == 88, f"开局净修正应使 100→88（net_pct={net_pct}，得 {expected}）"
 
     state.metrics["国库"] = 0
     actual = db.record_issue_economy_move(state, "国库", 100, "测试", "测试收入 #341")
 
-    assert actual < 100 and actual != 100, (
-        f"收入 100 万应被负帝国修正折减；实入 {actual}（net_pct={net_pct}）"
+    assert actual == expected, (
+        f"收入 100 万应按公式实入 {expected}；实入 {actual}（net_pct={net_pct}）"
     )
 
 

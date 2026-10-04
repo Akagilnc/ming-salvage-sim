@@ -834,19 +834,11 @@ def resolve_office_type_preserving_title(
     return infer_office_type_from_office(office, declared or fallback, llm_config, use_llm=use_llm)
 
 
-# #567 / ADR 0054：押解实抵 clamp 界（北极星 30 两面值 → 无护 15-18 / 有护 22-25）。
-# 代码只 clamp；软判提案落在界内原样收。比例相对 30 锚定，保证有护下界 > 无护上界。
+# #567 / ADR 0054：押解实抵区间（北极星 30 两面值 → 无护 15-18 / 有护 22-25）。
+# 引擎取区间中位落核账（#1900）；比例相对 30 锚定，保证有护下界 > 无护上界。
 _GRANT_ARRIVAL_SCALE = 30
 _GRANT_ARRIVAL_BARE = (15, 18)
 _GRANT_ARRIVAL_ESCORT = (22, 25)
-_GRANT_ESCORT_RELATIONS = frozenset({"护卫", "稽核"})
-
-
-def is_grant_allocation_dossier(row: object) -> bool:
-    """护送对象契约：被护端只认拨帑案卷（#1900 / ADR 0054）。"""
-    if not isinstance(row, Mapping):
-        return False
-    return str(row.get("action_type") or "") == "grant_allocation"
 
 
 def grant_arrival_bounds(ordered_amount: int, *, escorted: bool) -> Tuple[int, int]:
@@ -12308,29 +12300,6 @@ class GameDB:
     # 普通押解仍走 grant.escort→participant_roster；关联槽仍走 decree_dossier_links。
     # 功能接续留家族收尾，缺口记 #1873。
 
-    def _dossier_payload_dict(self, dossier_id: int) -> Dict[str, object]:
-        row = self.conn.execute(
-            "SELECT payload_json FROM decree_dossiers WHERE id=?", (int(dossier_id),),
-        ).fetchone()
-        try:
-            payload = json.loads(str(row["payload_json"] or "{}")) if row else {}
-        except (TypeError, ValueError):
-            return {}
-        return payload if isinstance(payload, dict) else {}
-
-    def _write_dossier_payload_key(
-        self, dossier_id: int, key: str, value: object, *,
-        commit: bool = False,
-    ) -> None:
-        payload = self._dossier_payload_dict(int(dossier_id))
-        payload[key] = value
-        self.conn.execute(
-            "UPDATE decree_dossiers SET payload_json=?, updated_at=CURRENT_TIMESTAMP "
-            "WHERE id=?",
-            (json.dumps(payload, ensure_ascii=False), int(dossier_id)),
-        )
-        self._commit_dossier_write(commit)
-
     def list_monthly_grant_reconciliation_targets(
         self, turn: Optional[int] = None,
     ) -> List[Dict[str, object]]:
@@ -12558,45 +12527,23 @@ class GameDB:
 
         turn_i = int(turn)
         presence_written = 0
-        # 稽核配对只读既有 0054 关联槽（专用聚合读口已退役）。
-        pairs = [
-            {
-                "source_dossier_id": int(row["source_dossier_id"]),
-                "target_dossier_id": int(row["target_dossier_id"]),
-                "relation_type": str(row["relation_type"]),
-            }
-            for row in self.conn.execute(
-                "SELECT source_dossier_id, target_dossier_id, relation_type "
-                "FROM decree_dossier_links WHERE relation_type=? ORDER BY id",
-                (SUPERVISION_RELATION,),
-            ).fetchall()
-        ]
-        status_ids = {
-            dossier_id
-            for pair in pairs
-            for dossier_id in (
-                int(pair["source_dossier_id"]), int(pair["target_dossier_id"]),
-            )
-        }
-        by_id: Dict[int, str] = {}
-        if status_ids:
-            statuses = self.conn.execute(
-                "SELECT id, status FROM decree_dossiers WHERE id IN ({})".format(
-                    ",".join("?" * len(status_ids)),
-                ),
-                tuple(status_ids),
-            ).fetchall()
-            by_id = {int(row["id"]): str(row["status"] or "") for row in statuses}
-        link_rows = [
-            {
-                "source_dossier_id": int(pair["source_dossier_id"]),
-                "target_dossier_id": int(pair["target_dossier_id"]),
-                "relation_type": SUPERVISION_RELATION,
-                "source_status": by_id.get(int(pair["source_dossier_id"]), ""),
-                "target_status": by_id.get(int(pair["target_dossier_id"]), ""),
-            }
-            for pair in pairs
-        ]
+        # 稽核配对只读既有 0054 关联槽；双方 status 用 SQLite JOIN 一次取出。
+        # https://www.sqlite.org/lang_select.html
+        link_rows = self.conn.execute(
+            """
+            SELECT
+                l.source_dossier_id AS source_dossier_id,
+                l.target_dossier_id AS target_dossier_id,
+                s.status AS source_status,
+                t.status AS target_status
+            FROM decree_dossier_links l
+            JOIN decree_dossiers s ON s.id = l.source_dossier_id
+            JOIN decree_dossiers t ON t.id = l.target_dossier_id
+            WHERE l.relation_type=?
+            ORDER BY l.id
+            """,
+            (SUPERVISION_RELATION,),
+        ).fetchall()
         for link in link_rows:
             source_status = str(link["source_status"] or "")
             target_status = str(link["target_status"] or "")
@@ -14670,8 +14617,7 @@ class GameDB:
         return [self._dossier_row(r) for r in rows]
 
     def is_secret_order_dossier(self, dossier_id: int) -> bool:
-        """案卷是否由密令立起（护行主体）。护送关联与护送实况的来源端只认这种案卷，
-        免得拿别的事务案卷充护行人。单一判据 = 案卷自身的 secret_order_id。"""
+        """案卷是否由密令立起。单一判据 = 案卷自身的 secret_order_id。"""
         row = self.conn.execute(
             "SELECT secret_order_id FROM decree_dossiers WHERE id=?",
             (int(dossier_id),),

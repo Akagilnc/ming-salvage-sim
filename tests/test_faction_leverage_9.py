@@ -945,10 +945,7 @@ def test_calibrated_save_without_marker_not_re_anchored(game, tmp_path):
                 f"{faction}：已校准缺标记的老档（clamp 后）不得重锚 offset，"
                 f"期望保持 {exp}，得 {got}"
             )
-        # 持久标记应已补落（下次开档走 marker 早返、彻底不再碰 offset）。
-        assert db._has_meta_flag("__leverage_offsets_calibrated"), (
-            "已校准缺标记的老档应补落持久标记 __leverage_offsets_calibrated"
-        )
+        # 外部契约：offset 保持；不锁私有迁移标记名。
     finally:
         db.close()
 
@@ -1106,9 +1103,6 @@ def test_old_integer_offset_migrated_to_float(game):
 
     reopened = GameDB(db.path, content)
     try:
-        assert reopened._has_meta_flag("__leverage_offsets_float_v2"), (
-            "v2 迁移标记应已落库（老档重开应触发 v2 迁移）"
-        )
         offset = reopened.conn.execute(
             "SELECT leverage_offset FROM factions WHERE name=?", (faction,)
         ).fetchone()["leverage_offset"]

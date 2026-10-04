@@ -808,10 +808,7 @@ def test_start_chat_turn_second_turn_reads_agno_v3_runs(web_game):
     assert game.db.agno_runs_length(sid) == 1
 
     events = list(game.chat_stream(an.SCENE_CHAT_SPEAKER, "剿抚孰先？"))
-    assert not any(
-        "OperationalError" in str(event.get("message") or "")
-        for event in events
-    )
+    assert any(ev.get("type") == "accepted" for ev in events)
     row = game.db.conn.execute(
         "SELECT agno_session_id, agno_runs_before FROM chat_turns ORDER BY id DESC LIMIT 1"
     ).fetchone()

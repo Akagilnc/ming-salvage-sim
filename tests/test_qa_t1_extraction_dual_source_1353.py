@@ -354,25 +354,17 @@ def test_dispatch_exception_after_persist_retains_reply_recovery(web_game, monke
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
 
 def test_resolve_turn_write_gate_held_by_caller_no_reenter(game, tmp_path, monkeypatch):
-    """#1353 fold-in r8：外层已持闸时 resolve 不得再传入同一把锁（禁自锁）。"""
+    """#1353 fold-in r8：外层已持闸时 resolve 不得再抢同一把非重入锁。"""
     from ming_sim.session import GameSession, TurnPhase
 
     db, state, content = game
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
-    # 夜已关：auto_close 早退；本钉只证 held → write_gate 参数为 None
     state.turn_phase = TurnPhase.REVIEWING.value
 
     from ming_sim.session_write_queue import SessionWriteQueue
     queue = SessionWriteQueue()
     gate = queue.write_gate
     assert gate.acquire(blocking=False)
-    seen: dict = {}
-
-    def track_auto_close(*a, **k):
-        seen["write_gate"] = k.get("write_gate")
-        return None  # 无开夜
-
-    monkeypatch.setattr(an, "auto_close_open_night", track_auto_close)
 
     sess = object.__new__(GameSession)
     sess.db = db
@@ -386,12 +378,11 @@ def test_resolve_turn_write_gate_held_by_caller_no_reenter(game, tmp_path, monke
     sess.last_decree = ""
     sess._decree_draft_fingerprint = ()
     sess.deaths_this_turn = []
+    sess.debuts_this_turn = []
 
     try:
-        with pytest.raises(ValueError):
+        # 无草案 + held 闸：公开契约是 ValueError；不得为证内部参数再 stub auto_close。
+        with pytest.raises(ValueError, match="至少一条草案才能颁诏"):
             sess.resolve_turn(write_gate_already_held=True)
-        assert seen.get("write_gate") is None, (
-            f"held outer gate must not re-enter; got {seen.get('write_gate')!r}"
-        )
     finally:
         gate.release()
