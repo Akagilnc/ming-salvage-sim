@@ -366,7 +366,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
       if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
       if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
       if (u.pathname.endsWith("/api/game/state")) return jsonResp(makeState(1, [], roster));
-      if (u.pathname.endsWith("/api/decree/advance_without_edict")) return jsonResp({ state: makeState(2, [], roster), pending_action_failures: [] });
+      if (u.pathname.endsWith("/api/decree/advance_without_edict")) return jsonResp({ state: makeState(2, [], roster) });
       if (u.pathname.endsWith("/chat/stream")) return sseResp("done", { response: "臣等恭送", directives: [], pending_count: 0, suggestions: [], can_undo_last_chat: false, court_action: "court_break" });
       if (u.pathname.endsWith("/api/audience/chat")) return jsonResp({ minister: roster[0], history: [], suggestions: [], campaign_id: "c1", night_id: 77 });
       return jsonResp({});

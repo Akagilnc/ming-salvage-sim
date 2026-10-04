@@ -1,32 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ApiRequestError, normalizeApiError, streamChat } from "./api";
-import type { PendingActionFailure } from "./types";
-
-const failure = (id: number, message = `失败 ${id}`): PendingActionFailure => ({
-  id,
-  kind: "secret_order",
-  action: "新建",
-  message,
-});
-
-describe("normalizeApiError", () => {
-  it("preserves pending action failures from structured API errors", () => {
-    const pending_action_failures = [failure(9, "退朝落库失败")];
-
-    expect(normalizeApiError({
-      detail: {
-        message: "退朝失败",
-        pending_action_failures,
-      },
-    }, "fallback")).toEqual({
-      message: "退朝失败",
-      provider_message: undefined,
-      status_code: undefined,
-      code: undefined,
-      pending_action_failures,
-    });
-  });
-});
+import { ApiRequestError, streamChat } from "./api";
 
 describe("streamChat typed error projection", () => {
   afterEach(() => {

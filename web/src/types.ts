@@ -624,14 +624,6 @@ export type SecretOrder = {
 
 export type ProposedDirective = { id: number; text: string; status: string; notes: string };
 
-export type PendingActionFailure = {
-  id: number;
-  kind: string;
-  action: string;
-  minister_name?: string;
-  message: string;
-};
-
 /** #505：崩溃后待重试的中断回话（系统层恢复，非内容选项）。 */
 export type ReplyRetry = {
   chat_turn_id: number;
@@ -718,7 +710,6 @@ export type ApiErrorDetail = {
   provider_message?: string;
   status_code?: number | null;
   turn?: number;
-  pending_action_failures?: PendingActionFailure[];
 };
 
 export type AppView = "menu" | "game";

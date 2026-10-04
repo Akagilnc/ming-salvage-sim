@@ -162,7 +162,6 @@ class ChatTurnResult:
     refresh_ministers: List[str] = field(default_factory=list)
     secret_order_id: int = 0       # 本轮新建密令 id（0=未下密令）
     pending_action_id: int = 0     # 本轮暂存的待颁诏动作 id（动作闸门 ADR 0006，0=无）
-    pending_action_failures: List[Dict[str, Any]] = field(default_factory=list)
     # #502 AC5：多道并存时口头准驳含糊 → 结构化含糊态（含候选集），驱动大臣当场追问哪一道。
     directive_confirmation_ambiguous: Optional[Dict[str, Any]] = None
     # Typed decree validation recovery (failed_fields + LLM report); sync/retry must project it.

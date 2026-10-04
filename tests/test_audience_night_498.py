@@ -610,7 +610,6 @@ def test_cli_minister_chat_anchors_turn_to_night(game, monkeypatch):
             answer="臣有本奏。", proposed_directive=None, appointed_minister="",
             registered_minister="", displaced_minister="", court_action="",
             next_minister="", secret_order_id=0, pending_action_id=0,
-            pending_action_failures=[],
         )
 
     def scene_chat(message, *, chat_turn_id=0, stream_emit=None, minister_name=""):
