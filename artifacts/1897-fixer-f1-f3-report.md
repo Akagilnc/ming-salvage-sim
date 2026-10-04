@@ -1193,6 +1193,6 @@ env MING_SIM_AGY_BIN=/usr/bin/false MING_SIM_CODEX_BIN=/usr/bin/false \
 ### 交卷 HEAD（本轮）
 
 - 本轮修面提交：`69c159957e3f42c967de7837cccc5081a9ee4e02`
-- 报告 tip：`33911ecc57fc7aacade64342530a938dd9f23134`
+- 报告 tip：分支 HEAD（本 docs 提交）；修面=`69c159957e3f42c967de7837cccc5081a9ee4e02`
 - 生产修面仍见 `edb376032`（F1+F2）；本轮为 F3 75 表结清。
 - **未 push / 未 PR / 未 amend / 未 stash**。
