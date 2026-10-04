@@ -10,11 +10,10 @@ from ming_sim.army_pay import derive_army_mutiny_state
 from ming_sim.flows import apply_fixed_period_flows
 
 ARMY = "guanning"
-PATHS = ("substrate_hub",)
 
 
-def _configure(db, fiscal_path: str) -> None:
-    value = 1  # army-pay fiscal path: substrate_hub only
+def _configure(db) -> None:
+    value = 1  # active substrate_hub cutover
     for key in ("__army_pay_source_cutover", "__fiscal_engine"):
         db.conn.execute(
             "INSERT INTO fiscal_config(key,value,kind,note) VALUES (?,?,'meta','test') "
@@ -31,8 +30,8 @@ def _configure(db, fiscal_path: str) -> None:
     db.conn.commit()
 
 
-def _set(db, fiscal_path: str, *, loyalty: int, arrears: float, latched: int) -> None:
-    central = arrears if fiscal_path == "substrate_hub" else 0
+def _set(db, *, loyalty: int, arrears: float, latched: int) -> None:
+    central = arrears  # active hub source-split seed
     db.conn.execute(
         """UPDATE armies SET loyalty=?, arrears=?, is_mutinied=?,
            province_pay_arrears=0, central_pay_arrears=? WHERE id=?""",
@@ -51,66 +50,64 @@ def _tick(db, state):
     ).fetchone()
 
 
-@pytest.mark.parametrize("fiscal_path", PATHS)
-def test_repeated_mutiny_persists_count_cap_and_probation(game, fiscal_path):
+def test_repeated_mutiny_persists_count_cap_and_probation(game):
     db, state, _ = game
-    _configure(db, fiscal_path)
+    _configure(db)
 
-    _set(db, fiscal_path, loyalty=19, arrears=5, latched=0)
+    _set(db, loyalty=19, arrears=5, latched=0)
     first = _tick(db, state)
     assert tuple(first[k] for k in ("loyalty", "is_mutinied", "mutiny_count", "mutiny_probation")) == (14, 1, 1, 0)
 
     # 持续入闩不重计；高军心也先受第一振 cap=80，再解闩。
-    _set(db, fiscal_path, loyalty=95, arrears=0, latched=1)
+    _set(db, loyalty=95, arrears=0, latched=1)
     released = _tick(db, state)
     assert tuple(released[k] for k in ("loyalty", "is_mutinied", "mutiny_count")) == (80, 0, 1)
 
-    _set(db, fiscal_path, loyalty=19, arrears=5, latched=0)
+    _set(db, loyalty=19, arrears=5, latched=0)
     second = _tick(db, state)
     assert tuple(second[k] for k in ("is_mutinied", "mutiny_count", "mutiny_probation")) == (1, 2, 3)
 
     # 入闩期间即使满饷也不消耗察看期；解闩时第二振 cap=60，满饷才递减。
-    _set(db, fiscal_path, loyalty=20, arrears=0, latched=1)
+    _set(db, loyalty=20, arrears=0, latched=1)
     assert _tick(db, state)["mutiny_probation"] == 3
 
     # 同 tick 解闩但仍非满饷时，察看期不得提前消耗。
-    _set(db, fiscal_path, loyalty=60, arrears=1, latched=1)
+    _set(db, loyalty=60, arrears=1, latched=1)
     partial_release = _tick(db, state)
     assert tuple(partial_release[k] for k in ("loyalty", "is_mutinied", "mutiny_probation")) == (60, 0, 3)
 
-    _set(db, fiscal_path, loyalty=95, arrears=0, latched=1)
+    _set(db, loyalty=95, arrears=0, latched=1)
     probation = _tick(db, state)
     assert tuple(probation[k] for k in ("loyalty", "is_mutinied", "mutiny_count", "mutiny_probation")) == (60, 0, 2, 2)
     assert derive_army_mutiny_state(probation) == "不满"
 
     # 解闩后的非满饷月不减；连续满饷归零后且 loyalty>=60 才恢复正常。
-    _set(db, fiscal_path, loyalty=60, arrears=1, latched=0)
+    _set(db, loyalty=60, arrears=1, latched=0)
     partial_pay = _tick(db, state)
     assert tuple(partial_pay[k] for k in ("loyalty", "is_mutinied", "mutiny_probation")) == (60, 0, 2)
     assert derive_army_mutiny_state(partial_pay) == "不满"
-    _set(db, fiscal_path, loyalty=55, arrears=0, latched=0)
+    _set(db, loyalty=55, arrears=0, latched=0)
     full_pay_1 = _tick(db, state)
     assert tuple(full_pay_1[k] for k in ("loyalty", "mutiny_probation")) == (60, 1)
     assert derive_army_mutiny_state(full_pay_1) == "不满"
-    _set(db, fiscal_path, loyalty=55, arrears=0, latched=0)
+    _set(db, loyalty=55, arrears=0, latched=0)
     full_pay_2 = _tick(db, state)
     assert tuple(full_pay_2[k] for k in ("loyalty", "mutiny_probation")) == (60, 0)
     assert derive_army_mutiny_state(full_pay_2) == "正常"
 
     # 察看期重入是第三振 → #318 同事务经 adapter 转流寇（清 latch）。
-    _set(db, fiscal_path, loyalty=19, arrears=5, latched=0)
+    _set(db, loyalty=19, arrears=5, latched=0)
     third = _tick(db, state)
     assert tuple(third[k] for k in ("is_mutinied", "mutiny_count", "mutiny_probation", "owner_power")) == (0, 3, 0, "bandits")
 
 
-@pytest.mark.parametrize("fiscal_path", PATHS)
-def test_mutiny_count_is_capped_at_three(game, fiscal_path):
+def test_mutiny_count_is_capped_at_three(game):
     db, state, _ = game
-    _configure(db, fiscal_path)
+    _configure(db)
     db.conn.execute(
         "UPDATE armies SET mutiny_count=3, mutiny_probation=0 WHERE id=?", (ARMY,)
     )
-    _set(db, fiscal_path, loyalty=19, arrears=5, latched=0)
+    _set(db, loyalty=19, arrears=5, latched=0)
 
     row = _tick(db, state)
 
@@ -121,8 +118,7 @@ def test_mutiny_count_is_capped_at_three(game, fiscal_path):
     assert row["is_mutinied"] == 0
 
 
-@pytest.mark.parametrize("fiscal_path", PATHS)
-def test_old_save_migrates_and_mutiny_progress_survives_reopen(game, tmp_path, fiscal_path):
+def test_old_save_migrates_and_mutiny_progress_survives_reopen(game, tmp_path):
     db, state, content = game
     path = str(tmp_path / "old-save.db")
     copied = sqlite3.connect(path)
@@ -147,13 +143,13 @@ def test_old_save_migrates_and_mutiny_progress_survives_reopen(game, tmp_path, f
 
     reopened = GameDB(path, content)
     try:
-        _configure(reopened, fiscal_path)
-        _set(reopened, fiscal_path, loyalty=95, arrears=0, latched=1)
+        _configure(reopened)
+        _set(reopened, loyalty=95, arrears=0, latched=1)
         restored = _tick(reopened, state)
         assert tuple(restored[k] for k in ("loyalty", "is_mutinied", "mutiny_count", "mutiny_probation")) == (60, 0, 2, 1)
         assert derive_army_mutiny_state(restored) == "不满"
 
-        _set(reopened, fiscal_path, loyalty=55, arrears=0, latched=0)
+        _set(reopened, loyalty=55, arrears=0, latched=0)
         recovered = _tick(reopened, state)
         assert tuple(recovered[k] for k in ("loyalty", "is_mutinied", "mutiny_count", "mutiny_probation")) == (60, 0, 2, 0)
         assert derive_army_mutiny_state(recovered) == "正常"

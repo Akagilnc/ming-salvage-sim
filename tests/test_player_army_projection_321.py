@@ -21,7 +21,6 @@ from tests.test_army_card_status_1501 import _assert_ming_register
 
 ARMY = "guanning"
 
-PATHS = ("substrate_hub",)
 
 _RAW_KEYS = frozenset({"morale", "loyalty", "arrears"})
 _SIT_KEYS = frozenset({"mutiny_tier", "morale_text", "arrears_text"})
@@ -115,8 +114,8 @@ def test_player_army_situation_six_tier_truth_table(
         assert sit["mutiny_tier"] in ("一般", "优秀", "死忠")
 
 
-def _configure(db, fiscal_path: str) -> None:
-    value = 1  # army-pay fiscal path: substrate_hub only
+def _configure(db) -> None:
+    value = 1  # active substrate_hub cutover
     for key in ("__army_pay_source_cutover", "__fiscal_engine"):
         db.conn.execute(
             "INSERT INTO fiscal_config(key,value,kind,note) VALUES (?,?,'meta','test') "
@@ -136,7 +135,6 @@ def _configure(db, fiscal_path: str) -> None:
 
 def _write_mutiny_fixture(
     db,
-    fiscal_path: str,
     *,
     loyalty: int,
     arrears: float,
@@ -147,7 +145,7 @@ def _write_mutiny_fixture(
     redemption_count: int,
     morale: int = 55,
 ) -> None:
-    central = arrears if fiscal_path == "substrate_hub" else 0
+    central = arrears  # active hub source-split seed
     db.conn.execute(
         """UPDATE armies SET loyalty=?, arrears=?, is_mutinied=?,
            mutiny_count=?, mutiny_probation=?, full_pay_streak=?, redemption_count=?,
@@ -237,11 +235,10 @@ def test_four_chains_embed_situation_matrix(game):
     # 代表：latch=0, L=55, p=0 → 不满；arrears>0（精确小数 12.5）
     is_mutinied, loyalty, probation, expected = 0, 55, 0, "不满"
     db, state, content = game
-    _configure(db, "substrate_hub")
+    _configure(db)
     arrears = 12.5
     _write_mutiny_fixture(
         db,
-        "substrate_hub",
         loyalty=loyalty,
         arrears=arrears,
         is_mutinied=is_mutinied,
@@ -312,22 +309,20 @@ def test_four_chains_embed_situation_matrix(game):
     _assert_ming_register(db, blob)
 
 
-@pytest.mark.parametrize("fiscal_path", PATHS)
-def test_restore_five_columns_and_player_tier_across_paths(game, tmp_path, fiscal_path):
+def test_restore_five_columns_and_player_tier_survives_reopen(game, tmp_path):
     """AC6–9：五持久列跨 reopen；仅凭 DB load_state 接续 tick；tick 后逐字段 oracle。"""
     db, _state, content = game
-    path = str(tmp_path / f"restore-321-{fiscal_path}.db")
+    path = str(tmp_path / "restore-321-hub.db")
     copied = sqlite3.connect(path)
     db.conn.backup(copied)
     copied.close()
 
     opened = GameDB(path, content)
     try:
-        _configure(opened, fiscal_path)
+        _configure(opened)
         # 票面 literal：count=2 redemption=1 → cap=70；streak=7 → tick 后 8；probation 2→1
         _write_mutiny_fixture(
             opened,
-            fiscal_path,
             loyalty=95,
             arrears=0,
             is_mutinied=1,

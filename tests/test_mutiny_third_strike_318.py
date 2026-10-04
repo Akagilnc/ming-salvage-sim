@@ -14,7 +14,6 @@ from ming_sim.army_pay import derive_army_mutiny_state
 from ming_sim.flows import apply_fixed_period_flows
 
 ARMY = "guanning"
-PATHS = ("substrate_hub",)
 BANDIT_POWERS = frozenset({"bandits", "bandit_li_zicheng"})
 
 
@@ -34,8 +33,8 @@ def _find_simulator_army(rows, army_id: str = ARMY):
     )
 
 
-def _configure(db, fiscal_path: str) -> None:
-    value = 1  # army-pay fiscal path: substrate_hub only
+def _configure(db) -> None:
+    value = 1  # active substrate_hub cutover
     for key in ("__army_pay_source_cutover", "__fiscal_engine"):
         db.conn.execute(
             "INSERT INTO fiscal_config(key,value,kind,note) VALUES (?,?,'meta','test') "
@@ -55,7 +54,6 @@ def _configure(db, fiscal_path: str) -> None:
 
 def _set(
     db,
-    fiscal_path: str,
     *,
     loyalty: int,
     arrears: float,
@@ -64,7 +62,7 @@ def _set(
     mutiny_probation: int | None = None,
     manpower: int | None = None,
 ) -> None:
-    central = arrears if fiscal_path == "substrate_hub" else 0
+    central = arrears  # active hub source-split seed
     db.conn.execute(
         """UPDATE armies SET loyalty=?, arrears=?, is_mutinied=?,
            province_pay_arrears=0, central_pay_arrears=? WHERE id=?""",
@@ -108,13 +106,12 @@ def _logs(db, fields: tuple[str, ...]):
     ).fetchall()
 
 
-@pytest.mark.parametrize("fiscal_path", PATHS)
-def test_third_strike_transfers_to_bandit_via_adapter(game, fiscal_path):
+def test_third_strike_transfers_to_bandit_via_adapter(game):
     db, state, _ = game
-    _configure(db, fiscal_path)
+    _configure(db)
     # count 已 2：再 0→1 进闩即第 3 振
     _set(
-        db, fiscal_path, loyalty=19, arrears=5, latched=0,
+        db, loyalty=19, arrears=5, latched=0,
         mutiny_count=2, mutiny_probation=0,
     )
     before_arrears = float(
@@ -181,12 +178,11 @@ def test_third_strike_transfers_to_bandit_via_adapter(game, fiscal_path):
         )
 
 
-@pytest.mark.parametrize("fiscal_path", PATHS)
-def test_third_strike_does_not_repeat_while_already_bandit(game, fiscal_path):
+def test_third_strike_does_not_repeat_while_already_bandit(game):
     db, state, _ = game
-    _configure(db, fiscal_path)
+    _configure(db)
     _set(
-        db, fiscal_path, loyalty=19, arrears=5, latched=0,
+        db, loyalty=19, arrears=5, latched=0,
         mutiny_count=2, mutiny_probation=0,
     )
     first = _tick(db, state)
@@ -203,12 +199,11 @@ def test_third_strike_does_not_repeat_while_already_bandit(game, fiscal_path):
     assert len(owner_logs) == 1
 
 
-@pytest.mark.parametrize("fiscal_path", PATHS)
-def test_zero_manpower_latched_clears_before_continue_no_third_strike(game, fiscal_path):
+def test_zero_manpower_latched_clears_before_continue_no_third_strike(game):
     db, state, _ = game
-    _configure(db, fiscal_path)
+    _configure(db)
     _set(
-        db, fiscal_path, loyalty=10, arrears=9, latched=1,
+        db, loyalty=10, arrears=9, latched=1,
         mutiny_count=2, mutiny_probation=3, manpower=0,
     )
 
@@ -226,23 +221,23 @@ def test_zero_manpower_latched_clears_before_continue_no_third_strike(game, fisc
     assert logs, "零兵清闩须写 army_logs 审计"
 
 
-@pytest.mark.parametrize("fiscal_path", PATHS)
 @pytest.mark.parametrize("cutover", (0, 1))
 def test_empty_source_delta_cannot_defect_latched_first_or_second_strike(
-    game, fiscal_path, cutover
+    game, cutover
 ):
+    """DB adapter 事实契约（apply_army_deltas），非结算财政 path 兼容矩阵。"""
     db, state, _ = game
-    _configure(db, fiscal_path)
-    # cutover 开/关都必须经同一 adapter，禁止 text 直写旁路
+    _configure(db)
+    # adapter 事实：cutover 开/关均须经同一 adapter，禁止 text 直写旁路（非结算兼容）
     db.conn.execute(
         "INSERT INTO fiscal_config(key,value,kind,note) VALUES "
-        "('__army_pay_source_cutover',?,'meta','test') "
+        "('__army_pay_source_cutover',?,'meta','adapter-fact') "
         "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
         (cutover,),
     )
     for count in (1, 2):
         _set(
-            db, fiscal_path, loyalty=15, arrears=6, latched=1,
+            db, loyalty=15, arrears=6, latched=1,
             mutiny_count=count, mutiny_probation=0 if count == 1 else 3,
         )
         db.conn.execute(
@@ -280,13 +275,13 @@ def test_empty_source_delta_cannot_defect_latched_first_or_second_strike(
 
 def test_non_latched_generic_owner_change_still_works_via_adapter(game):
     db, state, _ = game
-    _configure(db, "substrate_hub")
+    _configure(db)
     db.conn.execute(
         "INSERT INTO fiscal_config(key,value,kind,note) VALUES "
         "('__army_pay_source_cutover',1,'meta','test') "
         "ON CONFLICT(key) DO UPDATE SET value=excluded.value"
     )
-    _set(db, "substrate_hub", loyalty=70, arrears=3, latched=0, mutiny_count=0)
+    _set(db, loyalty=70, arrears=3, latched=0, mutiny_count=0)
     db.conn.execute(
         """UPDATE armies SET pay_source_region='liaodong',
            province_pay_share=0, central_pay_share=1,
@@ -327,11 +322,12 @@ def test_non_latched_generic_owner_change_still_works_via_adapter(game):
 
 @pytest.mark.parametrize("cutover", (0, 1))
 def test_transfer_to_ming_rejects_mutiny_count_ge_3(game, cutover):
+    """DB adapter 事实契约（apply_army_deltas），非结算财政 path 兼容矩阵。"""
     db, state, _ = game
-    _configure(db, "substrate_hub")
+    _configure(db)
     db.conn.execute(
         "INSERT INTO fiscal_config(key,value,kind,note) VALUES "
-        "('__army_pay_source_cutover',?,'meta','test') "
+        "('__army_pay_source_cutover',?,'meta','adapter-fact') "
         "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
         (cutover,),
     )
@@ -370,12 +366,12 @@ def test_transfer_to_ming_rejects_mutiny_count_ge_3(game, cutover):
 
 @pytest.mark.parametrize("cutover", (0, 1))
 def test_transfer_to_ming_requires_d6_pay_source(game, cutover):
-    """外军 mutiny<3 同条合法 D6 → ming：cutover 开/关均原子成功；缺饷源均拒。"""
+    """DB adapter 事实契约：外军 mutiny<3 同条合法 D6→ming；非结算财政 path 兼容。"""
     db, state, _ = game
-    _configure(db, "substrate_hub")
+    _configure(db)
     db.conn.execute(
         "INSERT INTO fiscal_config(key,value,kind,note) VALUES "
-        "('__army_pay_source_cutover',?,'meta','test') "
+        "('__army_pay_source_cutover',?,'meta','adapter-fact') "
         "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
         (cutover,),
     )
@@ -429,7 +425,6 @@ def test_transfer_to_ming_requires_d6_pay_source(game, cutover):
 
 
 
-@pytest.mark.parametrize("fiscal_path", PATHS)
 @pytest.mark.parametrize(
     "identity",
     (
@@ -438,12 +433,12 @@ def test_transfer_to_ming_requires_d6_pay_source(game, cutover):
     ),
     ids=("tusi", "self_funded"),
 )
-def test_hub_excluded_zero_manpower_latched_clears_once(game, fiscal_path, identity):
+def test_hub_excluded_zero_manpower_latched_clears_once(game, identity):
     """hub 资格外（土司/自养）零兵旧闩：分叉前全军归一仍清闩，且仅一条清闩审计。"""
     db, state, _ = game
-    _configure(db, fiscal_path)
+    _configure(db)
     _set(
-        db, fiscal_path, loyalty=10, arrears=0, latched=1,
+        db, loyalty=10, arrears=0, latched=1,
         mutiny_count=2, mutiny_probation=3, manpower=0,
     )
     # 豁免军双累加器/份额须为 0（cutover 守恒）；本测只钉清闩，不测发饷
@@ -470,13 +465,12 @@ def test_hub_excluded_zero_manpower_latched_clears_once(game, fiscal_path, ident
     assert len(clear_logs) == 1
 
 
-@pytest.mark.parametrize("fiscal_path", PATHS)
-def test_persisted_third_strike_defects_next_tick_once(game, fiscal_path):
+def test_persisted_third_strike_defects_next_tick_once(game):
     """父版可持久 (latched=1,count=3,ming)：下一 tick 恰好一次核销→清闩→bandits。"""
     db, state, _ = game
-    _configure(db, fiscal_path)
+    _configure(db)
     _set(
-        db, fiscal_path, loyalty=10, arrears=5, latched=1,
+        db, loyalty=10, arrears=5, latched=1,
         mutiny_count=3, mutiny_probation=0, manpower=10000,
     )
 
@@ -500,13 +494,12 @@ def test_persisted_third_strike_defects_next_tick_once(game, fiscal_path):
     assert len(owner_logs2) == 1
 
 
-@pytest.mark.parametrize("fiscal_path", PATHS)
-def test_persisted_third_strike_defects_on_recovery_boundary(game, fiscal_path):
+def test_persisted_third_strike_defects_on_recovery_boundary(game):
     """恢复边界：loyalty=35+满饷会解闩，须在 advance 前转出，不得逃过第三振。"""
     db, state, _ = game
-    _configure(db, fiscal_path)
+    _configure(db)
     _set(
-        db, fiscal_path, loyalty=35, arrears=0, latched=1,
+        db, loyalty=35, arrears=0, latched=1,
         mutiny_count=3, mutiny_probation=0, manpower=10000,
     )
 
@@ -540,9 +533,8 @@ def test_persisted_third_strike_defects_on_recovery_boundary(game, fiscal_path):
 def test_hub_excluded_persisted_third_strike_defects_once(game, identity):
     """hub 资格外脏第三振正兵力：分叉前全军缝仍一次转出（不受 WHERE 子集过滤）。"""
     db, state, _ = game
-    _configure(db, "substrate_hub")
-    _set(
-        db, "substrate_hub", loyalty=35, arrears=0, latched=1,
+    _configure(db)
+    _set(db, loyalty=35, arrears=0, latched=1,
         mutiny_count=3, mutiny_probation=0, manpower=10000,
     )
     db.conn.execute(
