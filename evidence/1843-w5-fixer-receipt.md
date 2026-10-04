@@ -203,5 +203,5 @@ L5 仅修 TSV 空字段与两测 EOF 空行；**未**改断言逻辑，不重跑
 ## 最终 commit
 
 - 分支：`ak-roles/issue-1843-w5-r11-f2`
-- hash：
+- hash：`ca57d23fc66c9d03aa5a8b55cdcfe438cbdc96e8`（L5 实质修补；其后 docs 仅回填 hash）
 - 未 push；未合并；未关票。
