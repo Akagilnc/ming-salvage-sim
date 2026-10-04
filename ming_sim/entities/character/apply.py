@@ -80,7 +80,7 @@ def apply_person_changes(
         normalized = {
             key: value
             for key, value in result.items()
-            if key not in {"rejected", "category", "item", "backlash_results"}
+            if key not in {"rejected", "category", "item"}
         }
         db.record_person_log(
             state,
@@ -621,7 +621,7 @@ def apply_person_changes(
                 if not power_rejections:
                     rejections.append(rejected(item, "易主 未产生变更", "noop"))
                 continue
-            backlash_results, backlash_rejections = db.apply_power_deltas(
+            _backlash_applied, backlash_rejections = db.apply_power_deltas(
                 state,
                 backlash,
                 commit=False,
@@ -653,10 +653,9 @@ def apply_person_changes(
                 db.set_character_transit(name, content=content, commit=False)
                 wrapped = {"动作": action, "方式": way, "反噬": backlash, **result}
                 wrapped["new_title"] = new_title
-                if backlash_rejections:
-                    wrapped["backlash_results"] = backlash_rejections
                 applied.append(wrapped)
                 log_applied(wrapped, item)
+                rejections.extend(backlash_rejections)
             continue
 
         if action == "行止":

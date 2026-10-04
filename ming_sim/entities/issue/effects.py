@@ -291,8 +291,6 @@ def _apply_issue_entities(
             require_origin=True,
         )
         tolerated.extend(results_rejections)
-        for result in results:
-            tolerated.extend(result.pop("backlash_results", None) or [])
         if applied_person_changes is not None:
             applied_person_changes.extend(results)
     return tolerated
@@ -577,8 +575,6 @@ def _apply_monthly_ongoing_entities(
         if applied_people:
             applied.append({"人物变更": applied_people})
         rejections.extend(results_rejections)
-        for result in results:
-            rejections.extend(result.pop("backlash_results", None) or [])
         if applied_person_changes is not None:
             applied_person_changes.extend(results)
 

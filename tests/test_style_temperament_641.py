@@ -15,7 +15,7 @@ import pytest
 import ming_sim.issues as issues
 from ming_sim.context import character_context_with_db, minister_dossier
 from ming_sim.decree import reload_state_from_db
-from ming_sim.issues import apply_issue_inertia_and_ongoing
+from ming_sim.situation_drift import apply_situation_monthly_drift
 from ming_sim.person_archive_contract import format_person_actions
 from ming_sim.relation_read import project_relation_ledger
 from ming_sim.settlement import SettlementContext, settle_delta
@@ -66,7 +66,7 @@ def test_inertia_natural_resolve_applies_temperament_style(game):
         inertia=1,
         effect_on_resolve={"人物变更": [_temperament_item()]},
     )
-    apply_issue_inertia_and_ongoing(db, state)
+    apply_situation_monthly_drift(db, state)
 
     assert before_db == before_rt
     assert _style_row(db) == NEW_STYLE

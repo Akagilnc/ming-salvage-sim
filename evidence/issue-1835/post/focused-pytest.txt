@@ -1,0 +1,278 @@
+........................................................................ [ 20%]
+...........................................s............................ [ 41%]
+........................................................................ [ 61%]
+......................................................FFF............... [ 82%]
+.................................F..FF...F......FFFF...........          [100%]
+=================================== FAILURES ===================================
+E   NameError: name 'commitment_progress_payload' is not defined
+/Users/akagilnc/WorkSpace/Ming_LLM-1835-w5/ming_sim/situation_drift.py:159: NameError: name 'commitment_progress_payload' is not defined
+E   NameError: name 'commitment_progress_payload' is not defined
+/Users/akagilnc/WorkSpace/Ming_LLM-1835-w5/ming_sim/situation_drift.py:204: NameError: name 'commitment_progress_payload' is not defined
+E   NameError: name 'commitment_progress_payload' is not defined
+/Users/akagilnc/WorkSpace/Ming_LLM-1835-w5/ming_sim/situation_drift.py:204: NameError: name 'commitment_progress_payload' is not defined
+E   NameError: name 'commitment_progress_payload' is not defined
+
+The above exception was the direct cause of the following exception:
+E   ming_sim.exceptions.SettlementAbort: 本月结算失败，进度已保存，可重试。
+    错误包已生成：/private/var/folders/nb/ml2z6k013psg7rdtt0t6g91m0000gn/T/pytest-of-akagilnc/pytest-1898/test_legacy_character_resolve_0/user_data/error_packs/turn1_attempt1
+    请把该文件夹发给作者，以便排查。
+----------------------------- Captured stdout call -----------------------------
+[07:29:37.517] 结算 1/4 固定月度财政 tick
+[07:29:37.521] [fiscal-substrate] beizhili 推进：实征5.4/起运5.4/火耗入截留0.9；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠2（hub，待入国库）
+[07:29:37.521] [fiscal-substrate] dongjiang_area 推进：实征0.0/起运0.0/火耗入截留0.0；末态欠账 军饷欠34/官俸欠0/宗禄欠0/民欠0（hub，待入国库）
+[07:29:37.521] [fiscal-substrate] fujian 推进：实征2.2/起运1.8/火耗入截留0.4；末态欠账 军饷欠7/官俸欠1/宗禄欠0/民欠1（hub，待入国库）
+[07:29:37.521] [fiscal-substrate] guangdong 推进：实征2.9/起运2.8/火耗入截留0.5；末态欠账 军饷欠6/官俸欠1/宗禄欠0/民欠1（hub，待入国库）
+[07:29:37.521] [fiscal-substrate] guangxi 推进：实征0.7/起运0.7/火耗入截留0.1；末态欠账 军饷欠0/官俸欠0/宗禄欠1/民欠1（hub，待入国库）
+[07:29:37.521] [fiscal-substrate] guizhou 推进：实征0.1/起运0.0/火耗入截留0.0；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠0（hub，待入国库）
+[07:29:37.521] [fiscal-substrate] henan 推进：实征12.9/起运12.9/火耗入截留2.3；末态欠账 军饷欠0/官俸欠0/宗禄欠16/民欠9（hub，待入国库）
+[07:29:37.521] [fiscal-substrate] huguang 推进：实征39.5/起运18.5/火耗入截留5.5；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠11（hub，待入国库）
+[07:29:37.521] [fiscal-substrate] jiangxi 推进：实征18.8/起运7.7/火耗入截留2.8；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠6（hub，待入国库）
+[07:29:37.521] [fiscal-substrate] liaodong 推进：实征0.0/起运0.0/火耗入截留0.0；末态欠账 军饷欠83/官俸欠0/宗禄欠0/民欠0（hub，待入国库）
+[07:29:37.521] [fiscal-substrate] nanzhili 推进：实征29.5/起运14.7/火耗入截留4.1；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠6（hub，待入国库）
+[07:29:37.521] [fiscal-substrate] shaanxi 推进：实征4.0/起运2.2/火耗入截留0.7；末态欠账 军饷欠16/官俸欠1/宗禄欠4/民欠3（hub，待入国库）
+[07:29:37.521] [fiscal-substrate] shandong 推进：实征14.1/起运8.2/火耗入截留2.3；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠8（hub，待入国库）
+[07:29:37.521] [fiscal-substrate] shanxi 推进：实征13.3/起运9.7/火耗入截留2.3；末态欠账 军饷欠16/官俸欠0/宗禄欠8/民欠7（hub，待入国库）
+[07:29:37.521] [fiscal-substrate] sichuan 推进：实征2.0/起运1.9/火耗入截留0.3；末态欠账 军饷欠0/官俸欠1/宗禄欠1/民欠1（hub，待入国库）
+[07:29:37.521] [fiscal-substrate] yunnan 推进：实征0.2/起运0.1/火耗入截留0.0；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠0（hub，待入国库）
+[07:29:37.521] [fiscal-substrate] zhejiang 推进：实征21.2/起运7.0/火耗入截留2.8；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠5（hub，待入国库）
+/Users/akagilnc/WorkSpace/Ming_LLM-1835-w5/ming_sim/month_chain.py:738: ming_sim.exceptions.SettlementAbort: 本月结算失败，进度已保存，可重试。
+E   NameError: name 'commitment_progress_payload' is not defined
+/Users/akagilnc/WorkSpace/Ming_LLM-1835-w5/ming_sim/situation_drift.py:159: NameError: name 'commitment_progress_payload' is not defined
+E   NameError: name 'commitment_progress_payload' is not defined
+/Users/akagilnc/WorkSpace/Ming_LLM-1835-w5/ming_sim/situation_drift.py:204: NameError: name 'commitment_progress_payload' is not defined
+E   NameError: name 'commitment_progress_payload' is not defined
+
+The above exception was the direct cause of the following exception:
+E   ming_sim.exceptions.SettlementAbort: 本月结算失败，进度已保存，可重试。
+    错误包已生成：/private/var/folders/nb/ml2z6k013psg7rdtt0t6g91m0000gn/T/pytest-of-akagilnc/pytest-1898/test_until_stop_arrears_commit0/user_data/error_packs/turn4_attempt1
+    请把该文件夹发给作者，以便排查。
+----------------------------- Captured stdout call -----------------------------
+[07:29:37.712] 结算 1/4 固定月度财政 tick
+[07:29:37.716] [fiscal-substrate] beizhili 推进：实征5.4/起运5.4/火耗入截留0.9；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠2（hub，待入国库）
+[07:29:37.716] [fiscal-substrate] dongjiang_area 推进：实征0.0/起运0.0/火耗入截留0.0；末态欠账 军饷欠34/官俸欠0/宗禄欠0/民欠0（hub，待入国库）
+[07:29:37.716] [fiscal-substrate] fujian 推进：实征2.2/起运1.8/火耗入截留0.4；末态欠账 军饷欠3/官俸欠1/宗禄欠0/民欠1（hub，待入国库）
+[07:29:37.716] [fiscal-substrate] guangdong 推进：实征2.9/起运2.8/火耗入截留0.5；末态欠账 军饷欠2/官俸欠1/宗禄欠0/民欠1（hub，待入国库）
+[07:29:37.716] [fiscal-substrate] guangxi 推进：实征0.7/起运0.7/火耗入截留0.1；末态欠账 军饷欠0/官俸欠0/宗禄欠1/民欠1（hub，待入国库）
+[07:29:37.716] [fiscal-substrate] guizhou 推进：实征0.1/起运0.0/火耗入截留0.0；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠0（hub，待入国库）
+[07:29:37.716] [fiscal-substrate] henan 推进：实征12.9/起运12.9/火耗入截留2.3；末态欠账 军饷欠0/官俸欠0/宗禄欠16/民欠9（hub，待入国库）
+[07:29:37.716] [fiscal-substrate] huguang 推进：实征39.5/起运18.5/火耗入截留5.5；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠11（hub，待入国库）
+[07:29:37.716] [fiscal-substrate] jiangxi 推进：实征18.8/起运7.7/火耗入截留2.8；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠6（hub，待入国库）
+[07:29:37.716] [fiscal-substrate] liaodong 推进：实征0.0/起运0.0/火耗入截留0.0；末态欠账 军饷欠83/官俸欠0/宗禄欠0/民欠0（hub，待入国库）
+[07:29:37.716] [fiscal-substrate] nanzhili 推进：实征29.5/起运14.7/火耗入截留4.1；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠6（hub，待入国库）
+[07:29:37.716] [fiscal-substrate] shaanxi 推进：实征4.0/起运2.2/火耗入截留0.7；末态欠账 军饷欠0/官俸欠1/宗禄欠4/民欠3（hub，待入国库）
+[07:29:37.716] [fiscal-substrate] shandong 推进：实征14.1/起运8.2/火耗入截留2.3；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠8（hub，待入国库）
+[07:29:37.716] [fiscal-substrate] shanxi 推进：实征13.3/起运9.7/火耗入截留2.3；末态欠账 军饷欠0/官俸欠0/宗禄欠8/民欠7（hub，待入国库）
+[07:29:37.716] [fiscal-substrate] sichuan 推进：实征2.0/起运1.9/火耗入截留0.3；末态欠账 军饷欠0/官俸欠1/宗禄欠1/民欠1（hub，待入国库）
+[07:29:37.716] [fiscal-substrate] yunnan 推进：实征0.2/起运0.1/火耗入截留0.0；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠0（hub，待入国库）
+[07:29:37.716] [fiscal-substrate] zhejiang 推进：实征21.2/起运7.0/火耗入截留2.8；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠5（hub，待入国库）
+[07:29:37.733] 结算 1/4 固定月度财政 tick
+[07:29:37.737] [fiscal-substrate] beizhili 推进：实征5.4/起运5.4/火耗入截留0.9；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠5（hub，待入国库）
+[07:29:37.737] [fiscal-substrate] dongjiang_area 推进：实征0.0/起运0.0/火耗入截留0.0；末态欠账 军饷欠43/官俸欠0/宗禄欠0/民欠0（hub，待入国库）
+[07:29:37.737] [fiscal-substrate] fujian 推进：实征2.2/起运1.8/火耗入截留0.4；末态欠账 军饷欠5/官俸欠2/宗禄欠0/民欠2（hub，待入国库）
+[07:29:37.737] [fiscal-substrate] guangdong 推进：实征2.9/起运2.8/火耗入截留0.5；末态欠账 军饷欠4/官俸欠2/宗禄欠0/民欠2（hub，待入国库）
+[07:29:37.737] [fiscal-substrate] guangxi 推进：实征0.7/起运0.7/火耗入截留0.1；末态欠账 军饷欠0/官俸欠1/宗禄欠1/民欠1（hub，待入国库）
+[07:29:37.737] [fiscal-substrate] guizhou 推进：实征0.1/起运0.0/火耗入截留0.0；末态欠账 军饷欠0/官俸欠1/宗禄欠0/民欠0（hub，待入国库）
+[07:29:37.737] [fiscal-substrate] henan 推进：实征12.9/起运12.9/火耗入截留2.3；末态欠账 军饷欠0/官俸欠1/宗禄欠25/民欠17（hub，待入国库）
+[07:29:37.737] [fiscal-substrate] huguang 推进：实征39.5/起运18.5/火耗入截留5.5；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠22（hub，待入国库）
+[07:29:37.737] [fiscal-substrate] jiangxi 推进：实征18.8/起运7.7/火耗入截留2.8；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠13（hub，待入国库）
+[07:29:37.737] [fiscal-substrate] liaodong 推进：实征0.0/起运0.0/火耗入截留0.0；末态欠账 军饷欠86/官俸欠0/宗禄欠0/民欠0（hub，待入国库）
+[07:29:37.737] [fiscal-substrate] nanzhili 推进：实征29.5/起运14.7/火耗入截留4.1；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠13（hub，待入国库）
+[07:29:37.737] [fiscal-substrate] shaanxi 推进：实征4.0/起运2.2/火耗入截留0.7；末态欠账 军饷欠0/官俸欠2/宗禄欠8/民欠7（hub，待入国库）
+[07:29:37.737] [fiscal-substrate] shandong 推进：实征14.1/起运8.2/火耗入截留2.3；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠15（hub，待入国库）
+[07:29:37.737] [fiscal-substrate] shanxi 推进：实征13.3/起运9.7/火耗入截留2.3；末态欠账 军饷欠0/官俸欠0/宗禄欠16/民欠14（hub，待入国库）
+[07:29:37.737] [fiscal-substrate] sichuan 推进：实征2.0/起运1.9/火耗入截留0.3；末态欠账 军饷欠0/官俸欠2/宗禄欠2/民欠2（hub，待入国库）
+[07:29:37.737] [fiscal-substrate] yunnan 推进：实征0.2/起运0.1/火耗入截留0.0；末态欠账 军饷欠0/官俸欠1/宗禄欠0/民欠0（hub，待入国库）
+[07:29:37.737] [fiscal-substrate] zhejiang 推进：实征21.2/起运7.0/火耗入截留2.8；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠11（hub，待入国库）
+[07:29:37.752] 结算 1/4 固定月度财政 tick
+[07:29:37.756] [fiscal-substrate] beizhili 推进：实征5.4/起运5.4/火耗入截留0.9；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠7（hub，待入国库）
+[07:29:37.756] [fiscal-substrate] dongjiang_area 推进：实征0.0/起运0.0/火耗入截留0.0；末态欠账 军饷欠52/官俸欠0/宗禄欠0/民欠0（hub，待入国库）
+[07:29:37.756] [fiscal-substrate] fujian 推进：实征2.2/起运1.8/火耗入截留0.4；末态欠账 军饷欠8/官俸欠4/宗禄欠0/民欠3（hub，待入国库）
+[07:29:37.756] [fiscal-substrate] guangdong 推进：实征2.9/起运2.8/火耗入截留0.5；末态欠账 军饷欠6/官俸欠3/宗禄欠0/民欠4（hub，待入国库）
+[07:29:37.756] [fiscal-substrate] guangxi 推进：实征0.7/起运0.7/火耗入截留0.1；末态欠账 军饷欠0/官俸欠1/宗禄欠2/民欠2（hub，待入国库）
+[07:29:37.756] [fiscal-substrate] guizhou 推进：实征0.1/起运0.0/火耗入截留0.0；末态欠账 军饷欠0/官俸欠1/宗禄欠0/民欠0（hub，待入国库）
+[07:29:37.756] [fiscal-substrate] henan 推进：实征12.9/起运12.9/火耗入截留2.3；末态欠账 军饷欠0/官俸欠2/宗禄欠34/民欠26（hub，待入国库）
+[07:29:37.756] [fiscal-substrate] huguang 推进：实征39.5/起运18.5/火耗入截留5.5；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠33（hub，待入国库）
+[07:29:37.756] [fiscal-substrate] jiangxi 推进：实征18.8/起运7.7/火耗入截留2.8；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠19（hub，待入国库）
+[07:29:37.756] [fiscal-substrate] liaodong 推进：实征0.0/起运0.0/火耗入截留0.0；末态欠账 军饷欠89/官俸欠0/宗禄欠0/民欠0（hub，待入国库）
+[07:29:37.756] [fiscal-substrate] nanzhili 推进：实征29.5/起运14.7/火耗入截留4.1；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠19（hub，待入国库）
+[07:29:37.756] [fiscal-substrate] shaanxi 推进：实征4.0/起运2.2/火耗入截留0.7；末态欠账 军饷欠0/官俸欠3/宗禄欠12/民欠10（hub，待入国库）
+[07:29:37.756] [fiscal-substrate] shandong 推进：实征14.1/起运8.2/火耗入截留2.3；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠23（hub，待入国库）
+[07:29:37.756] [fiscal-substrate] shanxi 推进：实征13.3/起运9.7/火耗入截留2.3；末态欠账 军饷欠0/官俸欠0/宗禄欠24/民欠21（hub，待入国库）
+[07:29:37.756] [fiscal-substrate] sichuan 推进：实征2.0/起运1.9/火耗入截留0.3；末态欠账 军饷欠0/官俸欠3/宗禄欠2/民欠4（hub，待入国库）
+[07:29:37.756] [fiscal-substrate] yunnan 推进：实征0.2/起运0.1/火耗入截留0.0；末态欠账 军饷欠0/官俸欠1/宗禄欠0/民欠1（hub，待入国库）
+[07:29:37.756] [fiscal-substrate] zhejiang 推进：实征21.2/起运7.0/火耗入截留2.8；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠16（hub，待入国库）
+[07:29:37.774] 结算 1/4 固定月度财政 tick
+[07:29:37.778] [fiscal-substrate] beizhili 推进：实征5.4/起运5.4/火耗入截留0.9；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠9（hub，待入国库）
+[07:29:37.778] [fiscal-substrate] dongjiang_area 推进：实征0.0/起运0.0/火耗入截留0.0；末态欠账 军饷欠61/官俸欠0/宗禄欠0/民欠0（hub，待入国库）
+[07:29:37.778] [fiscal-substrate] fujian 推进：实征2.2/起运1.8/火耗入截留0.4；末态欠账 军饷欠10/官俸欠5/宗禄欠0/民欠3（hub，待入国库）
+[07:29:37.778] [fiscal-substrate] guangdong 推进：实征2.9/起运2.8/火耗入截留0.5；末态欠账 军饷欠7/官俸欠4/宗禄欠0/民欠5（hub，待入国库）
+[07:29:37.778] [fiscal-substrate] guangxi 推进：实征0.7/起运0.7/火耗入截留0.1；末态欠账 军饷欠0/官俸欠2/宗禄欠3/民欠3（hub，待入国库）
+[07:29:37.778] [fiscal-substrate] guizhou 推进：实征0.1/起运0.0/火耗入截留0.0；末态欠账 军饷欠0/官俸欠1/宗禄欠0/民欠0（hub，待入国库）
+[07:29:37.778] [fiscal-substrate] henan 推进：实征12.9/起运12.9/火耗入截留2.3；末态欠账 军饷欠0/官俸欠3/宗禄欠44/民欠34（hub，待入国库）
+[07:29:37.778] [fiscal-substrate] huguang 推进：实征39.5/起运18.5/火耗入截留5.5；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠45（hub，待入国库）
+[07:29:37.778] [fiscal-substrate] jiangxi 推进：实征18.8/起运7.7/火耗入截留2.8；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠25（hub，待入国库）
+[07:29:37.778] [fiscal-substrate] liaodong 推进：实征0.0/起运0.0/火耗入截留0.0；末态欠账 军饷欠92/官俸欠0/宗禄欠0/民欠0（hub，待入国库）
+[07:29:37.778] [fiscal-substrate] nanzhili 推进：实征29.5/起运14.7/火耗入截留4.1；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠26（hub，待入国库）
+[07:29:37.778] [fiscal-substrate] shaanxi 推进：实征4.0/起运2.2/火耗入截留0.7；末态欠账 军饷欠0/官俸欠4/宗禄欠16/民欠13（hub，待入国库）
+[07:29:37.778] [fiscal-substrate] shandong 推进：实征14.1/起运8.2/火耗入截留2.3；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠30（hub，待入国库）
+[07:29:37.778] [fiscal-substrate] shanxi 推进：实征13.3/起运9.7/火耗入截留2.3；末态欠账 军饷欠0/官俸欠0/宗禄欠32/民欠29（hub，待入国库）
+[07:29:37.778] [fiscal-substrate] sichuan 推进：实征2.0/起运1.9/火耗入截留0.3；末态欠账 军饷欠0/官俸欠4/宗禄欠3/民欠5（hub，待入国库）
+[07:29:37.778] [fiscal-substrate] yunnan 推进：实征0.2/起运0.1/火耗入截留0.0；末态欠账 军饷欠0/官俸欠2/宗禄欠0/民欠1（hub，待入国库）
+[07:29:37.778] [fiscal-substrate] zhejiang 推进：实征21.2/起运7.0/火耗入截留2.8；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠21（hub，待入国库）
+/Users/akagilnc/WorkSpace/Ming_LLM-1835-w5/ming_sim/month_chain.py:738: ming_sim.exceptions.SettlementAbort: 本月结算失败，进度已保存，可重试。
+E   NameError: name 'commitment_progress_payload' is not defined
+
+The above exception was the direct cause of the following exception:
+E   ming_sim.exceptions.SettlementAbort: 本月结算失败，进度已保存，可重试。
+    错误包已生成：/private/var/folders/nb/ml2z6k013psg7rdtt0t6g91m0000gn/T/pytest-of-akagilnc/pytest-1898/test_commitment_end_turn_expir0/user_data/error_packs/turn1_attempt1
+    请把该文件夹发给作者，以便排查。
+----------------------------- Captured stdout call -----------------------------
+[07:29:37.985] 结算 1/4 固定月度财政 tick
+[07:29:37.990] [fiscal-substrate] beizhili 推进：实征5.4/起运5.4/火耗入截留0.9；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠2（hub，待入国库）
+[07:29:37.990] [fiscal-substrate] dongjiang_area 推进：实征0.0/起运0.0/火耗入截留0.0；末态欠账 军饷欠34/官俸欠0/宗禄欠0/民欠0（hub，待入国库）
+[07:29:37.990] [fiscal-substrate] fujian 推进：实征2.2/起运1.8/火耗入截留0.4；末态欠账 军饷欠3/官俸欠1/宗禄欠0/民欠1（hub，待入国库）
+[07:29:37.990] [fiscal-substrate] guangdong 推进：实征2.9/起运2.8/火耗入截留0.5；末态欠账 军饷欠2/官俸欠1/宗禄欠0/民欠1（hub，待入国库）
+[07:29:37.990] [fiscal-substrate] guangxi 推进：实征0.7/起运0.7/火耗入截留0.1；末态欠账 军饷欠0/官俸欠0/宗禄欠1/民欠1（hub，待入国库）
+[07:29:37.990] [fiscal-substrate] guizhou 推进：实征0.1/起运0.0/火耗入截留0.0；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠0（hub，待入国库）
+[07:29:37.990] [fiscal-substrate] henan 推进：实征12.9/起运12.9/火耗入截留2.3；末态欠账 军饷欠0/官俸欠0/宗禄欠16/民欠9（hub，待入国库）
+[07:29:37.990] [fiscal-substrate] huguang 推进：实征39.5/起运18.5/火耗入截留5.5；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠11（hub，待入国库）
+[07:29:37.990] [fiscal-substrate] jiangxi 推进：实征18.8/起运7.7/火耗入截留2.8；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠6（hub，待入国库）
+[07:29:37.990] [fiscal-substrate] liaodong 推进：实征0.0/起运0.0/火耗入截留0.0；末态欠账 军饷欠83/官俸欠0/宗禄欠0/民欠0（hub，待入国库）
+[07:29:37.990] [fiscal-substrate] nanzhili 推进：实征29.5/起运14.7/火耗入截留4.1；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠6（hub，待入国库）
+[07:29:37.990] [fiscal-substrate] shaanxi 推进：实征4.0/起运2.2/火耗入截留0.7；末态欠账 军饷欠0/官俸欠1/宗禄欠4/民欠3（hub，待入国库）
+[07:29:37.990] [fiscal-substrate] shandong 推进：实征14.1/起运8.2/火耗入截留2.3；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠8（hub，待入国库）
+[07:29:37.990] [fiscal-substrate] shanxi 推进：实征13.3/起运9.7/火耗入截留2.3；末态欠账 军饷欠0/官俸欠0/宗禄欠8/民欠7（hub，待入国库）
+[07:29:37.990] [fiscal-substrate] sichuan 推进：实征2.0/起运1.9/火耗入截留0.3；末态欠账 军饷欠0/官俸欠1/宗禄欠1/民欠1（hub，待入国库）
+[07:29:37.990] [fiscal-substrate] yunnan 推进：实征0.2/起运0.1/火耗入截留0.0；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠0（hub，待入国库）
+[07:29:37.990] [fiscal-substrate] zhejiang 推进：实征21.2/起运7.0/火耗入截留2.8；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠5（hub，待入国库）
+/Users/akagilnc/WorkSpace/Ming_LLM-1835-w5/ming_sim/month_chain.py:738: ming_sim.exceptions.SettlementAbort: 本月结算失败，进度已保存，可重试。
+E   NameError: name 'commitment_progress_payload' is not defined
+
+The above exception was the direct cause of the following exception:
+E   ming_sim.exceptions.SettlementAbort: 本月结算失败，进度已保存，可重试。
+    错误包已生成：/private/var/folders/nb/ml2z6k013psg7rdtt0t6g91m0000gn/T/pytest-of-akagilnc/pytest-1898/test_limited_duration_commitme0/user_data/error_packs/turn3_attempt1
+    请把该文件夹发给作者，以便排查。
+----------------------------- Captured stdout call -----------------------------
+[07:29:38.012] 结算 1/4 固定月度财政 tick
+[07:29:38.017] [fiscal-substrate] beizhili 推进：实征5.4/起运5.4/火耗入截留0.9；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠2（hub，待入国库）
+[07:29:38.017] [fiscal-substrate] dongjiang_area 推进：实征0.0/起运0.0/火耗入截留0.0；末态欠账 军饷欠34/官俸欠0/宗禄欠0/民欠0（hub，待入国库）
+[07:29:38.017] [fiscal-substrate] fujian 推进：实征2.2/起运1.8/火耗入截留0.4；末态欠账 军饷欠3/官俸欠1/宗禄欠0/民欠1（hub，待入国库）
+[07:29:38.017] [fiscal-substrate] guangdong 推进：实征2.9/起运2.8/火耗入截留0.5；末态欠账 军饷欠2/官俸欠1/宗禄欠0/民欠1（hub，待入国库）
+[07:29:38.017] [fiscal-substrate] guangxi 推进：实征0.7/起运0.7/火耗入截留0.1；末态欠账 军饷欠0/官俸欠0/宗禄欠1/民欠1（hub，待入国库）
+[07:29:38.017] [fiscal-substrate] guizhou 推进：实征0.1/起运0.0/火耗入截留0.0；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠0（hub，待入国库）
+[07:29:38.017] [fiscal-substrate] henan 推进：实征12.9/起运12.9/火耗入截留2.3；末态欠账 军饷欠0/官俸欠0/宗禄欠16/民欠9（hub，待入国库）
+[07:29:38.017] [fiscal-substrate] huguang 推进：实征39.5/起运18.5/火耗入截留5.5；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠11（hub，待入国库）
+[07:29:38.017] [fiscal-substrate] jiangxi 推进：实征18.8/起运7.7/火耗入截留2.8；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠6（hub，待入国库）
+[07:29:38.017] [fiscal-substrate] liaodong 推进：实征0.0/起运0.0/火耗入截留0.0；末态欠账 军饷欠83/官俸欠0/宗禄欠0/民欠0（hub，待入国库）
+[07:29:38.017] [fiscal-substrate] nanzhili 推进：实征29.5/起运14.7/火耗入截留4.1；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠6（hub，待入国库）
+[07:29:38.017] [fiscal-substrate] shaanxi 推进：实征4.0/起运2.2/火耗入截留0.7；末态欠账 军饷欠0/官俸欠1/宗禄欠4/民欠3（hub，待入国库）
+[07:29:38.017] [fiscal-substrate] shandong 推进：实征14.1/起运8.2/火耗入截留2.3；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠8（hub，待入国库）
+[07:29:38.017] [fiscal-substrate] shanxi 推进：实征13.3/起运9.7/火耗入截留2.3；末态欠账 军饷欠0/官俸欠0/宗禄欠8/民欠7（hub，待入国库）
+[07:29:38.017] [fiscal-substrate] sichuan 推进：实征2.0/起运1.9/火耗入截留0.3；末态欠账 军饷欠0/官俸欠1/宗禄欠1/民欠1（hub，待入国库）
+[07:29:38.017] [fiscal-substrate] yunnan 推进：实征0.2/起运0.1/火耗入截留0.0；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠0（hub，待入国库）
+[07:29:38.017] [fiscal-substrate] zhejiang 推进：实征21.2/起运7.0/火耗入截留2.8；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠5（hub，待入国库）
+[07:29:38.032] 结算 1/4 固定月度财政 tick
+[07:29:38.037] [fiscal-substrate] beizhili 推进：实征5.4/起运5.4/火耗入截留0.9；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠5（hub，待入国库）
+[07:29:38.037] [fiscal-substrate] dongjiang_area 推进：实征0.0/起运0.0/火耗入截留0.0；末态欠账 军饷欠43/官俸欠0/宗禄欠0/民欠0（hub，待入国库）
+[07:29:38.037] [fiscal-substrate] fujian 推进：实征2.2/起运1.8/火耗入截留0.4；末态欠账 军饷欠5/官俸欠2/宗禄欠0/民欠2（hub，待入国库）
+[07:29:38.037] [fiscal-substrate] guangdong 推进：实征2.9/起运2.8/火耗入截留0.5；末态欠账 军饷欠4/官俸欠2/宗禄欠0/民欠2（hub，待入国库）
+[07:29:38.037] [fiscal-substrate] guangxi 推进：实征0.7/起运0.7/火耗入截留0.1；末态欠账 军饷欠0/官俸欠1/宗禄欠1/民欠1（hub，待入国库）
+[07:29:38.037] [fiscal-substrate] guizhou 推进：实征0.1/起运0.0/火耗入截留0.0；末态欠账 军饷欠0/官俸欠1/宗禄欠0/民欠0（hub，待入国库）
+[07:29:38.037] [fiscal-substrate] henan 推进：实征12.9/起运12.9/火耗入截留2.3；末态欠账 军饷欠0/官俸欠1/宗禄欠25/民欠17（hub，待入国库）
+[07:29:38.037] [fiscal-substrate] huguang 推进：实征39.5/起运18.5/火耗入截留5.5；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠22（hub，待入国库）
+[07:29:38.037] [fiscal-substrate] jiangxi 推进：实征18.8/起运7.7/火耗入截留2.8；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠13（hub，待入国库）
+[07:29:38.037] [fiscal-substrate] liaodong 推进：实征0.0/起运0.0/火耗入截留0.0；末态欠账 军饷欠86/官俸欠0/宗禄欠0/民欠0（hub，待入国库）
+[07:29:38.037] [fiscal-substrate] nanzhili 推进：实征29.5/起运14.7/火耗入截留4.1；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠13（hub，待入国库）
+[07:29:38.037] [fiscal-substrate] shaanxi 推进：实征4.0/起运2.2/火耗入截留0.7；末态欠账 军饷欠0/官俸欠2/宗禄欠8/民欠7（hub，待入国库）
+[07:29:38.037] [fiscal-substrate] shandong 推进：实征14.1/起运8.2/火耗入截留2.3；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠15（hub，待入国库）
+[07:29:38.037] [fiscal-substrate] shanxi 推进：实征13.3/起运9.7/火耗入截留2.3；末态欠账 军饷欠0/官俸欠0/宗禄欠16/民欠14（hub，待入国库）
+[07:29:38.037] [fiscal-substrate] sichuan 推进：实征2.0/起运1.9/火耗入截留0.3；末态欠账 军饷欠0/官俸欠2/宗禄欠2/民欠2（hub，待入国库）
+[07:29:38.037] [fiscal-substrate] yunnan 推进：实征0.2/起运0.1/火耗入截留0.0；末态欠账 军饷欠0/官俸欠1/宗禄欠0/民欠0（hub，待入国库）
+[07:29:38.037] [fiscal-substrate] zhejiang 推进：实征21.2/起运7.0/火耗入截留2.8；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠11（hub，待入国库）
+[07:29:38.052] 结算 1/4 固定月度财政 tick
+[07:29:38.056] [fiscal-substrate] beizhili 推进：实征5.4/起运5.4/火耗入截留0.9；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠7（hub，待入国库）
+[07:29:38.057] [fiscal-substrate] dongjiang_area 推进：实征0.0/起运0.0/火耗入截留0.0；末态欠账 军饷欠52/官俸欠0/宗禄欠0/民欠0（hub，待入国库）
+[07:29:38.057] [fiscal-substrate] fujian 推进：实征2.2/起运1.8/火耗入截留0.4；末态欠账 军饷欠8/官俸欠4/宗禄欠0/民欠3（hub，待入国库）
+[07:29:38.057] [fiscal-substrate] guangdong 推进：实征2.9/起运2.8/火耗入截留0.5；末态欠账 军饷欠6/官俸欠3/宗禄欠0/民欠4（hub，待入国库）
+[07:29:38.057] [fiscal-substrate] guangxi 推进：实征0.7/起运0.7/火耗入截留0.1；末态欠账 军饷欠0/官俸欠1/宗禄欠2/民欠2（hub，待入国库）
+[07:29:38.057] [fiscal-substrate] guizhou 推进：实征0.1/起运0.0/火耗入截留0.0；末态欠账 军饷欠0/官俸欠1/宗禄欠0/民欠0（hub，待入国库）
+[07:29:38.057] [fiscal-substrate] henan 推进：实征12.9/起运12.9/火耗入截留2.3；末态欠账 军饷欠0/官俸欠2/宗禄欠34/民欠26（hub，待入国库）
+[07:29:38.057] [fiscal-substrate] huguang 推进：实征39.5/起运18.5/火耗入截留5.5；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠33（hub，待入国库）
+[07:29:38.057] [fiscal-substrate] jiangxi 推进：实征18.8/起运7.7/火耗入截留2.8；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠19（hub，待入国库）
+[07:29:38.057] [fiscal-substrate] liaodong 推进：实征0.0/起运0.0/火耗入截留0.0；末态欠账 军饷欠89/官俸欠0/宗禄欠0/民欠0（hub，待入国库）
+[07:29:38.057] [fiscal-substrate] nanzhili 推进：实征29.5/起运14.7/火耗入截留4.1；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠19（hub，待入国库）
+[07:29:38.057] [fiscal-substrate] shaanxi 推进：实征4.0/起运2.2/火耗入截留0.7；末态欠账 军饷欠0/官俸欠3/宗禄欠12/民欠10（hub，待入国库）
+[07:29:38.057] [fiscal-substrate] shandong 推进：实征14.1/起运8.2/火耗入截留2.3；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠23（hub，待入国库）
+[07:29:38.057] [fiscal-substrate] shanxi 推进：实征13.3/起运9.7/火耗入截留2.3；末态欠账 军饷欠0/官俸欠0/宗禄欠24/民欠21（hub，待入国库）
+[07:29:38.057] [fiscal-substrate] sichuan 推进：实征2.0/起运1.9/火耗入截留0.3；末态欠账 军饷欠0/官俸欠3/宗禄欠2/民欠4（hub，待入国库）
+[07:29:38.057] [fiscal-substrate] yunnan 推进：实征0.2/起运0.1/火耗入截留0.0；末态欠账 军饷欠0/官俸欠1/宗禄欠0/民欠1（hub，待入国库）
+[07:29:38.057] [fiscal-substrate] zhejiang 推进：实征21.2/起运7.0/火耗入截留2.8；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠16（hub，待入国库）
+/Users/akagilnc/WorkSpace/Ming_LLM-1835-w5/ming_sim/month_chain.py:738: ming_sim.exceptions.SettlementAbort: 本月结算失败，进度已保存，可重试。
+E   NameError: name 'commitment_progress_payload' is not defined
+
+The above exception was the direct cause of the following exception:
+E   ming_sim.exceptions.SettlementAbort: 本月结算失败，进度已保存，可重试。
+    错误包已生成：/private/var/folders/nb/ml2z6k013psg7rdtt0t6g91m0000gn/T/pytest-of-akagilnc/pytest-1898/test_until_stop_condition_beat0/user_data/error_packs/turn1_attempt1
+    请把该文件夹发给作者，以便排查。
+----------------------------- Captured stdout call -----------------------------
+[07:29:38.082] 结算 1/4 固定月度财政 tick
+[07:29:38.086] [fiscal-substrate] beizhili 推进：实征5.4/起运5.4/火耗入截留0.9；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠2（hub，待入国库）
+[07:29:38.086] [fiscal-substrate] dongjiang_area 推进：实征0.0/起运0.0/火耗入截留0.0；末态欠账 军饷欠34/官俸欠0/宗禄欠0/民欠0（hub，待入国库）
+[07:29:38.086] [fiscal-substrate] fujian 推进：实征2.2/起运1.8/火耗入截留0.4；末态欠账 军饷欠3/官俸欠1/宗禄欠0/民欠1（hub，待入国库）
+[07:29:38.086] [fiscal-substrate] guangdong 推进：实征2.9/起运2.8/火耗入截留0.5；末态欠账 军饷欠2/官俸欠1/宗禄欠0/民欠1（hub，待入国库）
+[07:29:38.086] [fiscal-substrate] guangxi 推进：实征0.7/起运0.7/火耗入截留0.1；末态欠账 军饷欠0/官俸欠0/宗禄欠1/民欠1（hub，待入国库）
+[07:29:38.086] [fiscal-substrate] guizhou 推进：实征0.1/起运0.0/火耗入截留0.0；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠0（hub，待入国库）
+[07:29:38.086] [fiscal-substrate] henan 推进：实征12.9/起运12.9/火耗入截留2.3；末态欠账 军饷欠0/官俸欠0/宗禄欠16/民欠9（hub，待入国库）
+[07:29:38.086] [fiscal-substrate] huguang 推进：实征39.5/起运18.5/火耗入截留5.5；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠11（hub，待入国库）
+[07:29:38.086] [fiscal-substrate] jiangxi 推进：实征18.8/起运7.7/火耗入截留2.8；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠6（hub，待入国库）
+[07:29:38.086] [fiscal-substrate] liaodong 推进：实征0.0/起运0.0/火耗入截留0.0；末态欠账 军饷欠83/官俸欠0/宗禄欠0/民欠0（hub，待入国库）
+[07:29:38.086] [fiscal-substrate] nanzhili 推进：实征29.5/起运14.7/火耗入截留4.1；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠6（hub，待入国库）
+[07:29:38.086] [fiscal-substrate] shaanxi 推进：实征4.0/起运2.2/火耗入截留0.7；末态欠账 军饷欠0/官俸欠1/宗禄欠4/民欠3（hub，待入国库）
+[07:29:38.086] [fiscal-substrate] shandong 推进：实征14.1/起运8.2/火耗入截留2.3；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠8（hub，待入国库）
+[07:29:38.086] [fiscal-substrate] shanxi 推进：实征13.3/起运9.7/火耗入截留2.3；末态欠账 军饷欠0/官俸欠0/宗禄欠8/民欠7（hub，待入国库）
+[07:29:38.086] [fiscal-substrate] sichuan 推进：实征2.0/起运1.9/火耗入截留0.3；末态欠账 军饷欠0/官俸欠1/宗禄欠1/民欠1（hub，待入国库）
+[07:29:38.087] [fiscal-substrate] yunnan 推进：实征0.2/起运0.1/火耗入截留0.0；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠0（hub，待入国库）
+[07:29:38.087] [fiscal-substrate] zhejiang 推进：实征21.2/起运7.0/火耗入截留2.8；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠5（hub，待入国库）
+/Users/akagilnc/WorkSpace/Ming_LLM-1835-w5/ming_sim/month_chain.py:738: ming_sim.exceptions.SettlementAbort: 本月结算失败，进度已保存，可重试。
+E   NameError: name 'commitment_progress_payload' is not defined
+
+The above exception was the direct cause of the following exception:
+E   ming_sim.exceptions.SettlementAbort: 本月结算失败，进度已保存，可重试。
+    错误包已生成：/private/var/folders/nb/ml2z6k013psg7rdtt0t6g91m0000gn/T/pytest-of-akagilnc/pytest-1898/test_cancelled_commitment_is_d0/user_data/error_packs/turn1_attempt1
+    请把该文件夹发给作者，以便排查。
+----------------------------- Captured stdout call -----------------------------
+[07:29:38.114] 结算 1/4 固定月度财政 tick
+[07:29:38.118] [fiscal-substrate] beizhili 推进：实征5.4/起运5.4/火耗入截留0.9；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠2（hub，待入国库）
+[07:29:38.118] [fiscal-substrate] dongjiang_area 推进：实征0.0/起运0.0/火耗入截留0.0；末态欠账 军饷欠34/官俸欠0/宗禄欠0/民欠0（hub，待入国库）
+[07:29:38.118] [fiscal-substrate] fujian 推进：实征2.2/起运1.8/火耗入截留0.4；末态欠账 军饷欠7/官俸欠1/宗禄欠0/民欠1（hub，待入国库）
+[07:29:38.118] [fiscal-substrate] guangdong 推进：实征2.9/起运2.8/火耗入截留0.5；末态欠账 军饷欠6/官俸欠1/宗禄欠0/民欠1（hub，待入国库）
+[07:29:38.118] [fiscal-substrate] guangxi 推进：实征0.7/起运0.7/火耗入截留0.1；末态欠账 军饷欠0/官俸欠0/宗禄欠1/民欠1（hub，待入国库）
+[07:29:38.118] [fiscal-substrate] guizhou 推进：实征0.1/起运0.0/火耗入截留0.0；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠0（hub，待入国库）
+[07:29:38.118] [fiscal-substrate] henan 推进：实征12.9/起运12.9/火耗入截留2.3；末态欠账 军饷欠0/官俸欠0/宗禄欠16/民欠9（hub，待入国库）
+[07:29:38.118] [fiscal-substrate] huguang 推进：实征39.5/起运18.5/火耗入截留5.5；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠11（hub，待入国库）
+[07:29:38.118] [fiscal-substrate] jiangxi 推进：实征18.8/起运7.7/火耗入截留2.8；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠6（hub，待入国库）
+[07:29:38.118] [fiscal-substrate] liaodong 推进：实征0.0/起运0.0/火耗入截留0.0；末态欠账 军饷欠83/官俸欠0/宗禄欠0/民欠0（hub，待入国库）
+[07:29:38.118] [fiscal-substrate] nanzhili 推进：实征29.5/起运14.7/火耗入截留4.1；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠6（hub，待入国库）
+[07:29:38.118] [fiscal-substrate] shaanxi 推进：实征4.0/起运2.2/火耗入截留0.7；末态欠账 军饷欠16/官俸欠1/宗禄欠4/民欠3（hub，待入国库）
+[07:29:38.118] [fiscal-substrate] shandong 推进：实征14.1/起运8.2/火耗入截留2.3；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠8（hub，待入国库）
+[07:29:38.118] [fiscal-substrate] shanxi 推进：实征13.3/起运9.7/火耗入截留2.3；末态欠账 军饷欠16/官俸欠0/宗禄欠8/民欠7（hub，待入国库）
+[07:29:38.118] [fiscal-substrate] sichuan 推进：实征2.0/起运1.9/火耗入截留0.3；末态欠账 军饷欠0/官俸欠1/宗禄欠1/民欠1（hub，待入国库）
+[07:29:38.118] [fiscal-substrate] yunnan 推进：实征0.2/起运0.1/火耗入截留0.0；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠0（hub，待入国库）
+[07:29:38.118] [fiscal-substrate] zhejiang 推进：实征21.2/起运7.0/火耗入截留2.8；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠5（hub，待入国库）
+/Users/akagilnc/WorkSpace/Ming_LLM-1835-w5/ming_sim/month_chain.py:738: ming_sim.exceptions.SettlementAbort: 本月结算失败，进度已保存，可重试。
+=========================== short test summary info ============================
+FAILED tests/test_commitment_backlash_626.py::test_ac3_regret_then_resolve_no_breach_verdict_hammer
+FAILED tests/test_commitment_backlash_626.py::test_ac3_regret_then_expire_dropped_no_hammer
+FAILED tests/test_commitment_backlash_626.py::test_ac3_plea_due_expire_then_commitment_expire_no_hammer
+FAILED tests/test_decree_commitment_settlement_229.py::test_legacy_character_resolve_condition_commitment_settles_when_threshold_reached
+FAILED tests/test_decree_commitment_settlement_229.py::test_commitment_stop_gate_resolve_respects_outer_transaction_rollback
+FAILED tests/test_decree_commitment_settlement_229.py::test_commitment_expiry_respects_outer_transaction_rollback
+FAILED tests/test_decree_commitment_settlement_229.py::test_until_stop_arrears_commitment_settlement_oracle_resolves_with_restore
+FAILED tests/test_decree_commitment_settlement_229.py::test_commitment_end_turn_expires_without_resolve_effects
+FAILED tests/test_decree_commitment_settlement_229.py::test_limited_duration_commitment_ticks_until_end_turn_then_expires
+FAILED tests/test_decree_commitment_settlement_229.py::test_until_stop_condition_beats_later_end_turn_for_stacked_commitment
+FAILED tests/test_decree_commitment_settlement_229.py::test_cancelled_commitment_is_distinct_from_expired_commitment
+11 failed, 339 passed, 1 skipped in 9.94s
+real 10.43
+user 6.76
+sys 2.66

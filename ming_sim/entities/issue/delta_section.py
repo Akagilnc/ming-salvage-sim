@@ -202,8 +202,6 @@ def _resolve_strategic_events(run, issue_summary) -> Dict[str, SectionResult]:
                     result.setdefault("origin_ref", origin_ref)
             bucket["person_issue"].extend(results)
             reject_bucket["person_issue"].extend(refused)
-            for result in results:
-                reject_bucket["person_issue"].extend(result.pop("backlash_results", None) or [])
         for power_id, raw_changes in run.ordered_strategic_items("power_updates", event_id):
             origin_ref = str(raw_changes.get("origin_ref") or "").strip()
             payload = {k: v for k, v in raw_changes.items() if k != "origin_ref"}

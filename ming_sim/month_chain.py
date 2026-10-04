@@ -622,13 +622,13 @@ def _run_opening_levy(
     """月初旧账只消费一次，先于本月旨意改账。"""
     if chain.get("opening_levy_done"):
         return
-    from ming_sim.issues import _apply_levy_driven_transfers
+    from ming_sim.displaced_population import apply_levy_driven_transfers
     from ming_sim.applier import RejectionCollector, mirror_rejections_after_commit
     from ming_sim.error_pack import rejections_jsonl_path
 
     collector = RejectionCollector()
     with atomic(db):
-        _applied, rejected = _apply_levy_driven_transfers(db, commit=False, source=source)
+        _applied, rejected = apply_levy_driven_transfers(db, commit=False, source=source)
         if rejected:
             for item in rejected:
                 collector.record("population_transfers", item, turn)
@@ -1408,7 +1408,8 @@ def _run_month_drift(
 ) -> None:
     if chain.get("inertia_done") or not chain.get("world_committed"):
         return
-    from ming_sim.issues import apply_issue_inertia_and_ongoing, clear_gated_legacies
+    from ming_sim.situation_drift import apply_situation_monthly_drift
+    from ming_sim.issues import clear_gated_legacies
     from ming_sim.due_review import apply_pending_due_reviews
     from ming_sim.staged_commitment import write_due_staged_commitment_todos
     from ming_sim.breach_plea import expire_breach_pleas_on_due, scan_and_write_breach_pleas
@@ -1432,7 +1433,7 @@ def _run_month_drift(
         write_exposure_todos(db, state)
         settle_exposure_from_canonical_actions(db, state, None)
         person_changes: list[dict[str, object]] = []
-        rejections = apply_issue_inertia_and_ongoing(
+        rejections = apply_situation_monthly_drift(
             db, state, applied_person_changes=person_changes,
             source=source)
         for item in rejections:

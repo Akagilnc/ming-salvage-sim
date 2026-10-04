@@ -634,7 +634,7 @@ def test_inertia_natural_resolution_tolerated_rejection_no_crash(game):
     """inertia 自然推到 100 结案的 issue,其 effect 含容忍类脏项(army 非法字段)
     → 不得崩(tlog 留痕路在 issues.py 没 import 即 NameError 崩月,
     cmr S2 r3 claude P1)。好字段照落。"""
-    import ming_sim.issues as I
+    import ming_sim.entities.issue.effects as I
 
     db, state, content = game
     aid = db.conn.execute("SELECT id FROM armies LIMIT 1").fetchone()[0]
@@ -649,8 +649,8 @@ def test_inertia_natural_resolution_tolerated_rejection_no_crash(game):
     )
     db.conn.commit()
 
-    from ming_sim.issues import apply_issue_inertia_and_ongoing
-    apply_issue_inertia_and_ongoing(db, state)  # 不抛
+    from ming_sim.situation_drift import apply_situation_monthly_drift
+    apply_situation_monthly_drift(db, state)  # 不抛
 
     row = db.conn.execute("SELECT status FROM issues WHERE id=?", (issue_id,)).fetchone()
     assert row[0] == "resolved"
@@ -663,7 +663,7 @@ def test_issue_path_tolerates_previously_skipped_cases(game):
     """国策结案路对「历史上 print-skip」的三案(army 非法字段等)不升级为崩月
     ——S2 把它们改成拒收记录后,_raise_on_rejected 不得把历史可活的脏数据
     变成新的中断路(cmr S2 r1 claude P2:「维持原行为」当真)。好字段照落。"""
-    import ming_sim.issues as I
+    import ming_sim.entities.issue.effects as I
 
     db, state, content = game
     aid = db.conn.execute("SELECT id FROM armies LIMIT 1").fetchone()[0]

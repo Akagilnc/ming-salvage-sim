@@ -49,8 +49,6 @@ def apply_declared_person_changes(run, changes, *, phase: str):
                 result.setdefault("origin_ref", origin_ref)
         rows.extend(results)
         rejections.extend(refused)
-        for result in results:
-            rejections.extend(result.pop("backlash_results", None) or [])
     return SectionResult(applied=rows, rejected=rejections)
 
 def apply_pre_issue(run):

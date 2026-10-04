@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import importlib
 from dataclasses import dataclass
-from typing import Dict, Optional, Tuple
+from typing import Dict, Tuple
 
 
 @dataclass(frozen=True)
@@ -29,14 +29,12 @@ class SectionSpec:
     path: 段适配器模块的 lazy 路径。
     attr: 模块内导出名（同一模块可登记多条：人物 pre/post、财政三段）。
     delta_keys: 本段消费的声明效果字段。
-    ordinal: 显式执行序，免依赖字面量顺序传达约束。
     """
 
     name: str
     path: str
     attr: str
     delta_keys: Tuple[str, ...]
-    ordinal: int
 
 
 # 段序＝旧单体入口的实读执行顺序（人物 pre → 局势 → 人物 post →
@@ -50,58 +48,58 @@ class SectionSpec:
 #    surcharge_claims（见 run.SettlementRun）。
 _SECTIONS: Tuple[SectionSpec, ...] = (
     SectionSpec("breach_plea", "ming_sim.entities.breach_plea.delta_section",
-                "apply", (), 10),
+                "apply", ()),
     SectionSpec("dossier_participants", "ming_sim.entities.dossier.delta_section",
-                "apply_participants", ("dossier_participants",), 20),
+                "apply_participants", ("dossier_participants",)),
     SectionSpec("secret_dossier_participants",
                 "ming_sim.entities.dossier.delta_section",
                 "apply_secret_dossier_participants",
-                ("secret_dossier_participants",), 30),
+                ("secret_dossier_participants",)),
     SectionSpec("dossier_executions", "ming_sim.entities.dossier.delta_section",
-                "apply_executions", ("dossier_executions",), 40),
+                "apply_executions", ("dossier_executions",)),
     SectionSpec("authority", "ming_sim.entities.authority.delta_section",
-                "apply", ("authority_changes",), 50),
+                "apply", ("authority_changes",)),
     SectionSpec("metric", "ming_sim.entities.metric.delta_section",
-                "apply", ("metric_delta",), 60),
+                "apply", ("metric_delta",)),
     SectionSpec("economy", "ming_sim.entities.economy.delta_section",
-                "apply", ("economy_moves",), 70),
+                "apply", ("economy_moves",)),
     SectionSpec("faction", "ming_sim.entities.faction.delta_section",
-                "apply", ("faction_delta",), 80),
+                "apply", ("faction_delta",)),
     SectionSpec("class", "ming_sim.entities.social_class.delta_section",
-                "apply", ("class_delta",), 90),
+                "apply", ("class_delta",)),
     SectionSpec("surcharge", "ming_sim.entities.surcharge.delta_section",
-                "apply", ("surcharge_decrees",), 100),
+                "apply", ("surcharge_decrees",)),
     SectionSpec("population", "ming_sim.entities.population.delta_section",
-                "apply", ("population_transfers",), 110),
+                "apply", ("population_transfers",)),
     SectionSpec("new_armies", "ming_sim.entities.army.delta_section",
-                "apply_new_armies", ("new_armies",), 120),
+                "apply_new_armies", ("new_armies",)),
     SectionSpec("region_changes", "ming_sim.entities.region.delta_section",
-                "apply", ("region_delta",), 130),
+                "apply", ("region_delta",)),
     SectionSpec("army_changes", "ming_sim.entities.army.delta_section",
-                "apply_deltas", ("army_delta",), 140),
+                "apply_deltas", ("army_delta",)),
     SectionSpec("power", "ming_sim.entities.power.delta_section",
-                "apply", ("power_updates", "bandit_absorptions"), 150),
+                "apply", ("power_updates", "bandit_absorptions")),
     SectionSpec("person_pre", "ming_sim.entities.character.delta_section",
-                "apply_pre_issue", ("人物变更",), 160),
+                "apply_pre_issue", ("人物变更",)),
     SectionSpec("issue", "ming_sim.entities.issue.delta_section",
                 "apply",
-                ("issue_advances", "new_issues", "close_issues", "cancels"), 200),
+                ("issue_advances", "new_issues", "close_issues", "cancels")),
     SectionSpec("affair", "ming_sim.entities.affair.delta_section",
-                "apply", ("affair_declarations",), 210),
+                "apply", ("affair_declarations",)),
     SectionSpec("person_post", "ming_sim.entities.character.delta_section",
-                "apply_post_issue", ("人物变更",), 220),
+                "apply_post_issue", ("人物变更",)),
     SectionSpec("fiscal_removes", "ming_sim.entities.fiscal.delta_section",
-                "apply_removes", ("fiscal_removes",), 230),
+                "apply_removes", ("fiscal_removes",)),
     SectionSpec("fiscal_creates", "ming_sim.entities.fiscal.delta_section",
-                "apply_creates", ("fiscal_creates",), 240),
+                "apply_creates", ("fiscal_creates",)),
     SectionSpec("fiscal_changes", "ming_sim.entities.fiscal.delta_section",
-                "apply_changes", ("fiscal_changes",), 250),
+                "apply_changes", ("fiscal_changes",)),
     SectionSpec("secret_order", "ming_sim.entities.secret_order.delta_section",
-                "apply", ("secret_order_updates",), 260),
+                "apply", ("secret_order_updates",)),
     SectionSpec("credit_event", "ming_sim.entities.credit_event.delta_section",
-                "apply", (), 270),
+                "apply", ()),
     SectionSpec("relation_edge", "ming_sim.entities.relation.delta_section",
-                "apply", ("relation_edge_events",), 280),
+                "apply", ("relation_edge_events",)),
 )
 
 # 无落库段的声明效果字段：登记为框架条目，只为派生视图不缩键（ADR 0150 决定 4）。
@@ -116,9 +114,6 @@ def section_specs() -> Tuple[SectionSpec, ...]:
     return _SECTIONS
 
 
-def ordered_sections() -> Tuple[str, ...]:
-    """段名执行序。"""
-    return tuple(spec.name for spec in _SECTIONS)
 
 
 def delta_keys() -> Tuple[str, ...]:
@@ -151,9 +146,3 @@ def load(spec: SectionSpec):
     return getattr(module, spec.attr)
 
 
-def section_for_delta_key(key: str) -> Optional[SectionSpec]:
-    """某声明效果字段落在哪一段（派生视图 / 调试用；多段共用的取首条）。"""
-    for spec in _SECTIONS:
-        if key in spec.delta_keys:
-            return spec
-    return None

@@ -12,9 +12,7 @@ from ming_sim.strict_types import strict_int
 
 _ATTACH_NEW = "new"
 _ATTACH_EXISTING = "existing"
-_ATTACH_CLOSE = "close"
 ATTACH_BIRTH = frozenset({_ATTACH_NEW, _ATTACH_EXISTING})
-ATTACH_RESULT_CLOSE = frozenset({_ATTACH_CLOSE})
 ATTACH_EXPERIENCE = frozenset({_ATTACH_EXISTING})
 _ORIGIN_AFFAIR = "affair"
 _ORIGIN_DOSSIER = "dossier"
@@ -201,28 +199,6 @@ class AffairStore:
             "SELECT id FROM affairs WHERE birth_key=?", (key,),
         ).fetchone()
         return None if row is None else int(row["id"])
-
-    def close_from_declaration(
-        self,
-        declaration: Mapping[str, object],
-        *,
-        turn: int,
-        authorized_ids: set[int],
-    ) -> int:
-        """Close only a visible affair without an active linked issue."""
-        parsed = parse_affair_declaration(
-            declaration, allowed=ATTACH_RESULT_CLOSE,
-        )
-        affair_id = int(parsed["affair_id"])
-        if affair_id not in authorized_ids:
-            raise UnauthorizedAffairOriginRef()
-        active_issue = self._conn.execute(
-            "SELECT 1 FROM issues WHERE affair_id=? AND status='active' LIMIT 1",
-            (affair_id,),
-        ).fetchone()
-        if active_issue is not None:
-            raise ValueError("事务尚有未了局势")
-        return self.declare_closed(affair_id, turn=turn).id
 
     def attach_from_declaration(
         self,
@@ -474,12 +450,8 @@ def parse_affair_declaration(
     if not isinstance(raw, Mapping):
         raise DeclarationDataError("事务声明须为对象")
     attach = str(raw.get("attach") or "").strip()
-    permitted = ATTACH_BIRTH | ATTACH_RESULT_CLOSE if allowed is None else allowed
+    permitted = ATTACH_BIRTH if allowed is None else allowed
     if attach not in permitted:
-        if attach == _ATTACH_CLOSE:
-            raise DeclarationDataError("本阶段不能了结事务")
-        if attach in ATTACH_BIRTH and permitted == ATTACH_RESULT_CLOSE:
-            raise DeclarationDataError("顶层事务声明只接受了结")
         raise DeclarationDataError("事务声明 attach 不在本阶段")
     if attach == _ATTACH_NEW:
         name = str(raw.get("name") or "")
@@ -497,9 +469,7 @@ def parse_affair_declaration(
     try:
         affair_id = parse_positive_affair_id(raw.get("affair_id"))
     except (TypeError, ValueError) as exc:
-        raise DeclarationDataError(
-            "了结须有 affair_id" if attach == _ATTACH_CLOSE else "接到已开事务须有 affair_id"
-        ) from exc
+        raise DeclarationDataError("接到已开事务须有 affair_id") from exc
     return {"attach": attach, "affair_id": affair_id}
 
 

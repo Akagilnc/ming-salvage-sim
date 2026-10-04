@@ -1,0 +1,122 @@
+# Pre-fix mechanical enumeration dumps
+
+## C1 dual kernels
+ming_sim/entities/metric/apply.py:13:def apply_metric_dict(
+ming_sim/entities/population/recovery.py:34:def _apply_recovery_driven_transfers(
+ming_sim/issues.py:2238:def _apply_levy_driven_transfers(
+ming_sim/issues.py:2463:def apply_issue_inertia_and_ongoing(
+ming_sim/flows.py:669:def _apply_metric_dict(
+ming_sim/flows.py:703:def _apply_economy_list(
+ming_sim/situation_drift.py:346:def apply_situation_monthly_drift(
+ming_sim/displaced_population.py:44:def apply_levy_driven_transfers(
+ming_sim/displaced_population.py:146:def apply_recovery_driven_transfers(
+ming_sim/entities/economy/apply.py:11:def _apply_economy_list(
+
+## C1 month_chain call sites
+625:    from ming_sim.issues import _apply_levy_driven_transfers
+631:        _applied, rejected = _apply_levy_driven_transfers(db, commit=False, source=source)
+1411:    from ming_sim.issues import apply_issue_inertia_and_ongoing, clear_gated_legacies
+1435:        rejections = apply_issue_inertia_and_ongoing(
+1859:        from ming_sim.entities.population.recovery import _apply_recovery_driven_transfers
+1860:        _apply_recovery_driven_transfers(db, state)
+
+## C1 issues reexports
+# #1835：实体后果写口迁至 entities.issue.effects；旧名仍从此处 re-export，
+# 供 W4 situation_drift / 既有测试直调 issues._apply_issue_entities 等符号。
+_ISSUE_PSEUDO_EVENT = issue_effects._ISSUE_PSEUDO_EVENT
+_apply_issue_buildings = issue_effects._apply_issue_buildings
+_apply_issue_entities = issue_effects._apply_issue_entities
+_invalid_monthly_mapping_shape = issue_effects._invalid_monthly_mapping_shape
+_monthly_economy_items = issue_effects._monthly_economy_items
+_monthly_mapping_effect = issue_effects._monthly_mapping_effect
+_spawn_legacy_from_effect = issue_effects._spawn_legacy_from_effect
+
+## C2 backlash nest + pop bridges
+ming_sim/entities/issue/delta_section.py:206:                reject_bucket["person_issue"].extend(result.pop("backlash_results", None) or [])
+ming_sim/entities/issue/effects.py:295:            tolerated.extend(result.pop("backlash_results", None) or [])
+ming_sim/entities/issue/effects.py:581:            rejections.extend(result.pop("backlash_results", None) or [])
+ming_sim/entities/character/apply.py:83:            if key not in {"rejected", "category", "item", "backlash_results"}
+ming_sim/entities/character/apply.py:624:            backlash_results, backlash_rejections = db.apply_power_deltas(
+ming_sim/entities/character/apply.py:656:                if backlash_rejections:
+ming_sim/entities/character/apply.py:657:                    wrapped["backlash_results"] = backlash_rejections
+ming_sim/entities/character/delta_section.py:53:            rejections.extend(result.pop("backlash_results", None) or [])
+ming_sim/settlement/preflight.py:1143:            for refusal in result.get("backlash_results") or []:
+
+## C3 dead interfaces
+ming_sim/settlement/registry.py:32:    ordinal: 显式执行序，免依赖字面量顺序传达约束。
+ming_sim/settlement/registry.py:39:    ordinal: int
+ming_sim/settlement/registry.py:119:def ordered_sections() -> Tuple[str, ...]:
+ming_sim/settlement/registry.py:154:def section_for_delta_key(key: str) -> Optional[SectionSpec]:
+ming_sim/settlement/run.py:72:    caller_transaction: bool = False
+ming_sim/settlement/run.py:271:        caller_transaction=bool(db.conn.in_transaction),
+ming_sim/settlement/run.py:661:    caller_transaction = db.conn.in_transaction
+ming_sim/settlement/run.py:683:    if caller_transaction:
+
+## C4 proof tests / describe
+ming_sim/settlement/views.py:80:def describe(outcome: Any, key: str) -> str:
+tests/test_settlement_fixed_point_1835.py:6:def test_victory_status_is_set_on_typed_outcome(game):
+tests/test_settlement_fixed_point_1835.py:22:def test_ongoing_outcome_carries_no_victory_status(game):
+tests/test_person_delta_adapter.py:2044:            f"{describe(r, "name")} location={loc!r} 非合法 region_id（破 region_id 不变式）"
+tests/test_person_delta_adapter.py:2303:        ), f"同股顶层剿股应显式拒收,实得 {describe(applied, 'power_changes')}"
+tests/test_person_delta_adapter.py:2380:        ), f"空反噬招安也应显式拒收同股顶层剿股,实得 {describe(applied, 'power_changes')}"
+tests/test_person_delta_adapter.py:2443:        ), f"非法招安应拒收,实得 {describe(applied, 'applied_person_changes')}"
+tests/test_person_delta_adapter.py:2447:        ), f"招安拒收后剿股应落账,实得 {describe(applied, "power_changes")}"
+tests/test_person_delta_adapter.py:2516:        ), f"死头目招安须拒收,实得 {describe(applied, 'applied_person_changes')}"
+tests/test_person_delta_adapter.py:2591:        ), f"错股反噬须拒收,实得 {describe(applied, 'applied_person_changes')}"
+
+## C5 close
+ming_sim/entities/affair/delta_section.py:13:from ming_sim.entities.affair import ATTACH_RESULT_CLOSE, parse_affair_declaration
+ming_sim/entities/affair/delta_section.py:33:            parsed = parse_affair_declaration(raw, allowed=ATTACH_RESULT_CLOSE)
+ming_sim/entities/affair/delta_section.py:46:            _refuse(raw, "事务尚有未了局势", "invalid_shape")
+ming_sim/entities/affair/delta_section.py:54:        closed = run.db.affairs.declare_closed(affair_id, turn=int(run.state.turn))
+ming_sim/entities/affair/__init__.py:6:    ATTACH_RESULT_CLOSE,
+ming_sim/entities/affair/__init__.py:19:    "ATTACH_RESULT_CLOSE",
+ming_sim/entities/affair/store.py:17:ATTACH_RESULT_CLOSE = frozenset({_ATTACH_CLOSE})
+ming_sim/entities/affair/store.py:142:    def declare_closed(self, affair_id: int, *, turn: int) -> Affair:
+ming_sim/entities/affair/store.py:205:    def close_from_declaration(
+ming_sim/entities/affair/store.py:214:            declaration, allowed=ATTACH_RESULT_CLOSE,
+ming_sim/entities/affair/store.py:224:            raise ValueError("事务尚有未了局势")
+ming_sim/entities/affair/store.py:225:        return self.declare_closed(affair_id, turn=turn).id
+ming_sim/entities/affair/store.py:477:    permitted = ATTACH_BIRTH | ATTACH_RESULT_CLOSE if allowed is None else allowed
+ming_sim/entities/affair/store.py:481:        if attach in ATTACH_BIRTH and permitted == ATTACH_RESULT_CLOSE:
+
+## C6 NL commands
+ming_sim/constants.py:257:AMBIGUOUS_CLOSE_COMMANDS = {"今日就到这里吧？", "今日就到这里吧"}
+ming_sim/constants.py:259:STAY_ATTEND_COMMANDS = {"留下听着"}
+ming_sim/audience_night.py:147:CMD_AMBIGUOUS_CLOSE = "ambiguous_close"
+ming_sim/audience_night.py:148:CMD_STAY_ATTEND = "stay_attend"
+ming_sim/audience_night.py:151:    CMD_CLOSE_NIGHT, CMD_AMBIGUOUS_CLOSE, CMD_STAY_ATTEND, CMD_NONE,
+ming_sim/audience_night.py:2032:def recognize_audience_command(message: str) -> str:
+ming_sim/audience_night.py:2040:        AMBIGUOUS_CLOSE_COMMANDS,
+ming_sim/audience_night.py:2042:        STAY_ATTEND_COMMANDS,
+ming_sim/audience_night.py:2049:    if text in STAY_ATTEND_COMMANDS or lowered in STAY_ATTEND_COMMANDS:
+ming_sim/audience_night.py:2050:        return CMD_STAY_ATTEND
+ming_sim/audience_night.py:2053:    if text in AMBIGUOUS_CLOSE_COMMANDS or lowered in AMBIGUOUS_CLOSE_COMMANDS:
+ming_sim/audience_night.py:2054:        return CMD_AMBIGUOUS_CLOSE
+ming_sim/audience_night.py:2078:    if recognize_audience_command(text) != CMD_NONE:
+ming_sim/cli/terminal.py:17:    STAY_ATTEND_COMMANDS,
+ming_sim/cli/terminal.py:177:    if raw in STAY_ATTEND_COMMANDS or lowered in STAY_ATTEND_COMMANDS:
+ming_sim/session.py:988:    def _recognize_audience_command_verdict(self, message: str) -> str:
+ming_sim/session.py:992:            recognize_audience_command,
+ming_sim/session.py:995:        return normalize_audience_command_verdict(recognize_audience_command(message))
+ming_sim/session.py:999:    def _ensure_close_night_confirm_cue(answer: str) -> str:
+ming_sim/session.py:1002:        ask = "陛下是要退朝么？"
+ming_sim/session.py:1133:            CMD_AMBIGUOUS_CLOSE,
+ming_sim/session.py:1136:            CMD_STAY_ATTEND,
+ming_sim/session.py:1165:        audience_command_verdict = self._recognize_audience_command_verdict(message_text)
+ming_sim/session.py:1169:            if audience_command_verdict == CMD_AMBIGUOUS_CLOSE:
+ming_sim/session.py:1172:                result.answer = GameSession._ensure_close_night_confirm_cue("")
+ming_sim/session.py:1174:            if audience_command_verdict == CMD_STAY_ATTEND:
+
+## C7 strip conditions
+600:        resolve = str(issue.get("resolve_condition") or "")
+601:        fail = str(issue.get("fail_condition") or "")
+607:            "resolve_condition": str(issue.get("resolve_condition") or "").strip(),
+608:            "fail_condition": str(issue.get("fail_condition") or "").strip(),
+944:            f"办结条件：{item['resolve_condition']}" if item["resolve_condition"] else "",
+945:            f"失败条件：{item['fail_condition']}" if item["fail_condition"] else "",
+1309:    resolve_condition / fail_condition；不给 effect 载荷，代码不代模型算软判。
+1330:        "resolve_condition": str(getattr(ev, "resolve_condition", "") or ""),
+1331:        "fail_condition": str(getattr(ev, "fail_condition", "") or ""),
+1574:            ("可解条件", item["resolve_condition"]),
+1575:            ("崩坏条件", item["fail_condition"]),

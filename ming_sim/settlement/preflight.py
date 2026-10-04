@@ -1139,13 +1139,6 @@ def _strategic_event_result_preflight_error(
                     f"{result.item.get('name') or ''}{result.item.get('动作') or ''} {result.reason}"
                 )
 
-        for result in results:
-            for refusal in result.get("backlash_results") or []:
-                return (
-                    f"战略/外敌事件「{event_title or event_id}」人物战果反噬拒收："
-                    f"{refusal.reason or refusal.category}"
-                )
-
     if new_armies:
         # Invisible origins are already itemwise. Do not field-probe them into
         # an envelope failure; the origin loop and the real write still own them.

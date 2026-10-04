@@ -69,7 +69,6 @@ class SettlementRun:
     ordered_deltas: Dict[str, List[Tuple[str, object]]]
     ordered_effect_event_ids: Dict[str, List[str]]
     effect_sequence: Optional[EffectSequence] = None
-    caller_transaction: bool = False
     commit_now: bool = True
     # 前置闸产物：sanitize / 同批事务声明 identity 冲突。
     shape_rejections: List[Tuple[str, dict, str]] = field(default_factory=list)
@@ -268,7 +267,6 @@ def _preflight(
         ordered_deltas=ordered_deltas,
         ordered_effect_event_ids=dict(ordered_effect_event_ids or {}),
         effect_sequence=effect_sequence,
-        caller_transaction=bool(db.conn.in_transaction),
         commit_now=not bool(db.conn.in_transaction),
         shape_rejections=validate_rejections,
         runtime_content=ctx.content if ctx.content is not None else content_context(),

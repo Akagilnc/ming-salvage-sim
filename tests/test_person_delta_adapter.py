@@ -20,7 +20,7 @@ from ming_sim.declaration_dispatch import dispatch_declaration
 from tests.conftest import active_ming_character
 from tests.dossier_test_helpers import create_test_secret_order
 from ming_sim.settlement import SettlementContext, settle_delta
-from ming_sim.settlement.views import rejected_view, describe, issue_rows, shape_rejections, view
+from ming_sim.settlement.views import rejected_view, issue_rows, shape_rejections, view
 
 
 
@@ -2041,7 +2041,7 @@ def test_migration_does_not_write_nonregion_location(read_game):
     for r in rows:
         loc = r["location"] or ""
         assert loc == "" or loc in region_ids, \
-            f"{describe(r, "name")} location={loc!r} 非合法 region_id（破 region_id 不变式）"
+            f"{view(r, "name")} location={loc!r} 非合法 region_id（破 region_id 不变式）"
 
 
 def test_yizhu_clears_status_reason_in_db(game):
@@ -2300,7 +2300,7 @@ def test_bandit_amnesty_rejects_same_power_top_level_suppression(game):
         assert any(
             isinstance(item.item, dict) and item.item.get("power_id") == zhang_power
             for item in rejected_view(applied, "power_changes")
-        ), f"同股顶层剿股应显式拒收,实得 {describe(applied, 'power_changes')}"
+        ), f"同股顶层剿股应显式拒收,实得 {view(applied, 'power_changes')}"
     finally:
         for name, row in old_rows.items():
             db.conn.execute(
@@ -2377,7 +2377,7 @@ def test_bandit_amnesty_rejects_same_power_top_level_suppression_when_backlash_e
         assert any(
             isinstance(item.item, dict) and item.item.get("power_id") == zhang_power
             for item in rejected_view(applied, "power_changes")
-        ), f"空反噬招安也应显式拒收同股顶层剿股,实得 {describe(applied, 'power_changes')}"
+        ), f"空反噬招安也应显式拒收同股顶层剿股,实得 {view(applied, 'power_changes')}"
     finally:
         db.conn.execute(
             "UPDATE characters SET power_id=?, status=?, office=?, office_type=? WHERE name=?",
@@ -2440,11 +2440,11 @@ def test_rejected_bandit_amnesty_does_not_block_same_power_suppression(game):
         assert any(
             item.category == "invalid_enum"
             for item in rejected_view(applied, "applied_person_changes")
-        ), f"非法招安应拒收,实得 {describe(applied, 'applied_person_changes')}"
+        ), f"非法招安应拒收,实得 {view(applied, 'applied_person_changes')}"
         assert any(
             item.get("power") == "张献忠非法招安测试股" and item.get("delta") == -7
             for item in view(applied, "power_changes")
-        ), f"招安拒收后剿股应落账,实得 {describe(applied, "power_changes")}"
+        ), f"招安拒收后剿股应落账,实得 {view(applied, "power_changes")}"
     finally:
         db.conn.execute(
             "UPDATE characters SET power_id=?, status=?, office=?, office_type=? WHERE name=?",
@@ -2513,7 +2513,7 @@ def test_orphan_bandit_power_can_be_suppressed_when_dead_leader_amnesty_is_rejec
         assert any(
             isinstance(item.item, dict) and item.item.get("动作") == "易主"
             for item in rejected_view(applied, "applied_person_changes")
-        ), f"死头目招安须拒收,实得 {describe(applied, 'applied_person_changes')}"
+        ), f"死头目招安须拒收,实得 {view(applied, 'applied_person_changes')}"
     finally:
         db.conn.execute(
             "UPDATE characters SET power_id=?, status=?, office=?, office_type=? WHERE name=?",
@@ -2588,7 +2588,7 @@ def test_bandit_amnesty_rejects_backlash_targeting_another_bandit_power(game):
         assert any(
             isinstance(item.item, dict) and item.item.get("动作") == "易主"
             for item in rejected_view(applied, "applied_person_changes")
-        ), f"错股反噬须拒收,实得 {describe(applied, 'applied_person_changes')}"
+        ), f"错股反噬须拒收,实得 {view(applied, 'applied_person_changes')}"
     finally:
         for name, row in old_rows.items():
             db.conn.execute(

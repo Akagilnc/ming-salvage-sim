@@ -18,7 +18,6 @@ from ming_sim.settlement.outcome import (
 )
 from ming_sim.settlement.registry import (
     SectionSpec,
-    ordered_sections,
     section_specs,
 )
 from ming_sim.settlement.run import (
@@ -34,7 +33,6 @@ __all__ = [
     "SettlementOutcome",
     "SettlementRun",
     "SectionSpec",
-    "ordered_sections",
     "section_specs",
     "settle_delta",
 ]

@@ -75,20 +75,3 @@ def class_deltas(outcome: Any) -> dict:
 def victory_status_of(outcome: Any) -> dict:
     """结局判定附加结果（叙事型优先；ongoing 不入）。"""
     return dict(getattr(outcome, "victory_status", None) or {})
-
-
-def describe(outcome: Any, key: str) -> str:
-    """段结果的简短可读摘要，供断言消息 / 报错文本使用。
-
-    断言消息常写成 f-string（``f"…实得 {applied['fiscal_changes']}"``）——那里
-    不能塞函数调用之外的复杂表达式，故本函数给出单调用形态：把该段的已落项与
-    拒收项并看成人读摘要。
-
-    这是**诊断文本**，不是数据口：消费端判「落了没有」仍读 :func:`view` /
-    :func:`rejected_view`。
-    """
-    landed = view(outcome, key)
-    refused = rejected_view(outcome, key)
-    if not refused:
-        return repr(landed)
-    return f"{landed!r} + {len(refused)} rejected"
