@@ -146,7 +146,7 @@ MING_SIM_PI_BIN=/usr/bin/false \
 
 ## 提交
 
-- commit: （填入下方 SHA）
+- commit: `e49928cb62df359f2df78fc2f9a2f0712758ed2b`
 - files: `ming_sim/db.py`, `ming_sim/fiscal_tick.py`, `evidence/1847-w6-verdict.json`, `evidence/1847-w6-report.md`
 
 ## 自查二连 done
