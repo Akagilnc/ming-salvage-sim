@@ -101,4 +101,4 @@ sys 0.55
 
 ## 8. SHA
 
-- 本提交 SHA：见 stdout / `git rev-parse HEAD`（提交后回填）
+- 本提交 SHA：`8e26da68bc96cb992cc84a430ab168fcd0a9f6a6`
