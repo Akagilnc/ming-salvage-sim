@@ -22,7 +22,7 @@ monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10e7b6890>
 
     def test_revoke_forecast_translation_input_carries_original_and_continuing_dossier(game, monkeypatch):
         """#1894：撤令的逐旨推演段文转译时，原案卷与在途案卷清单都在输入里。
-    
+
         走真实推演入口 ``produce_forecast_product``：撤令的办理结果由执行格判官在
         本段声明 ``dossier_executions``，清单不给原案卷 id 就无从落它的执行格。
         同一段也验目标身份：载荷同时含原案与承诺 id 时两者都读到（不读到其一即止）。
@@ -32,7 +32,7 @@ monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10e7b6890>
         from ming_sim import month_translate
         from ming_sim.decree_forecast import forecast_snapshot, produce_forecast_product
         from tests.test_decree_forecast_1861 import _sess
-    
+
         db, state, content = game
         db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
         db.conn.commit()
@@ -46,10 +46,10 @@ monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10e7b6890>
             bar_value=20, end_turn=state.turn + 30,
             participants=[{"character_id": holder, "tier": "主办", "role": "承办"}],
         )
-    
+
         # 召对真入口暂存的撤令载荷（含原案 + 承诺两个结构化身份）
         from ming_sim.declaration_dispatch import dispatch_declaration
-    
+
         staged = dispatch_declaration(
             db, state,
             {"commissions": [{
@@ -65,13 +65,13 @@ monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10e7b6890>
         ).fetchone()["payload_json"])
         assert int(payload["revoke_target_dossier_id"]) == did
         assert int(payload["revoke_target_issue_id"]) == int(cid)
-    
+
         sess = _sess(db, state, content, monkeypatch, lambda request, config: {})
         captured = {}
-    
+
         def forecast_text(_agent, _prompt, **kwargs):
             return "外廷准行，此令撤在途中。"
-    
+
         def judge(_agent, prompt, **kwargs):
             entry = json.loads(prompt)["dossiers"][0]
             # 撤令的颁布判官据原旨事实判准行（真实链：判官供料不缺席）
@@ -80,12 +80,12 @@ monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10e7b6890>
             return json.dumps({
                 "verdicts": [{"dossier_id": entry["id"], "decision": "promulgated"}],
             })
-    
+
         def capture_request(request, _llm_config):
             # 段文转译的结构化输入接缝（MonthTranslationInput），不解析 prompt 文本
             captured["request"] = request
             return {}
-    
+
         monkeypatch.setattr(decree_mod, "run_agent_text", judge)
         monkeypatch.setattr(forecast_mod.agents, "run_agent_text", forecast_text)
         monkeypatch.setattr(month_translate, "_default_month_translate_runner", capture_request)
@@ -95,7 +95,7 @@ monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10e7b6890>
             decree_ref="forecast:revoke",
         )
         product = produce_forecast_product(sess, snapshot)
-    
+
         assert product["verdict"]["decision"] == "promulgated"
         # 推演本旨事实里带着原旨身份（逐旨推演判官与转译同一份供料）
         forecast_target = snapshot["this_decree"]["revoke_target"]

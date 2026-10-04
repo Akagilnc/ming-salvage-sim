@@ -6,9 +6,9 @@ Owner 授权：保留既有工作树并在其上完成；禁止 amend/stash/rese
 
 ## 证据纠错说明（本提交）
 
-自验发现上一版 `report.md` **全部命令**误用 `CLAUDE_CODE_SHELL_PREFIX` / `CODEX_SHELL_PREFIX` 等非 owner 要求变量；且聚焦测试用 `AFFECTED=$(git diff --name-only HEAD -- 'tests/*.py')`——**提交后工作树干净时 AFFECTED 为空，`$AFFECTED` 展开会误跑全量**。
+自验发现上一版 `report.md` **全部命令**误用 `CLAUDE_CODE_SHELL_PREFIX` / `CODEX_SHELL_PREFIX` 等非 owner 要求变量；且聚焦测试用 `AFFECTED=$(git diff --name-only HEAD -- 'tests/*.py')`——**提交后工作树干净时 AFFECTED 为空，`$AFFECTED` 展开会误跑全量**（七变量先前错误执行留痕见下「旧命令留痕」，维持不删）。
 
-本提交：只纠证据与报告命令，**不改测试/生产行为**。所有复验已用 owner 七变量实际跑过（非仅文字替换）。
+另：上一纠错提交复验中，zsh `mapfile` 失败致空列表**曾误启动全量并被杀掉**，但 `report.md:235` 仍写「未跑全量」——**本提交仅诚实纠该证据表述**（详见「误启动全量／中止」）；不改测试/生产行为，不重跑测试。
 
 **Owner 要求的测试安全前缀（七 BIN）**：
 
@@ -232,7 +232,17 @@ tests/test_style_temperament_641.py
 tests/test_textual_facts_1828.py
 ```
 
-结果（`focused-pytest.txt`）：**551 passed, 1 skipped**，real **50.92s**。未跑全量。
+结果（`focused-pytest.txt`）：**551 passed, 1 skipped**，real **50.92s**（此为纠错后正确聚焦重跑）。
+
+### 误启动全量／中止（有记录；不得称「从未跑全量」）
+
+复验首轮曾用 `mapfile -t FILES <<< "$AFFECTED"`；**zsh 无 `mapfile`**，stdout 明确承认失败后 `FILES` 为空列表，导致 `pytest` 无文件参数 → **误启动全量**。已知命令信号（仅记有记录者，不猜测 exit）：
+
+1. 助手 stdout：`mapfile` 在 zsh 不可用，导致空参数误跑全量——正在终止并按固定文件列表重跑。
+2. 中止命令：`kill 55257` / `pkill -f "Ming_LLM/.venv/bin/python -m pytest"`（及后续 `kill 55274 55275 55257`）。
+3. 当时曾写入标记 `CORRUPTED_BY_ACCIDENTAL_FULL_SUITE_ABORT` 至 `focused-pytest.txt`，随后被正确聚焦重跑覆盖为现行 551 passed 证据。
+
+**事实**：曾误启全量并已中止；**非**「未跑／从未跑全量」。其后才用固定 SHA 19 文件列表完成聚焦复验。
 
 Web vitest（触及 `web/src/ministerScrollLens.test.ts` 等）：本机无 `web/node_modules`，未跑（`focused-vitest.txt`）。
 
