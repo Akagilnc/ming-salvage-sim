@@ -109,6 +109,59 @@ def test_commission_malformed_escort_is_rejected_not_dropped(game):
         assert [r.category for r in result.commissions.rejected] == ["invalid_shape"], escort
         assert all(r.reason for r in result.commissions.rejected), escort
 
+    # #1900 J19-R1：交办名单复用 normalize 后，非法档须逐项 invalid_shape，
+    # 不得未捕获 ValueError 整份中止；同批合法项继续。入口＝真实 dispatch。
+    actor = _actor(db)
+    bad_entry = {
+        "character_id": actor, "tier": "乱档", "role": "", "delegator_id": None,
+    }
+    good_escort = {
+        "escortees": [_escort_entry(db, actor, tier="协办", role="押解护送")],
+        "note": "沿途照关防",
+    }
+    roster_cases = (
+        {"text": "拨银三十万两往陕西赈灾。",
+         "participant_roster": [bad_entry], "grant": dict(base)},
+        {"text": "拨银三十万两往陕西赈灾。",
+         "grant": {**base, "participant_roster": [bad_entry]}},
+        {"text": "拨银三十万两往陕西，着人押解。",
+         "participant_roster": [bad_entry],
+         "grant": {**base, "escort": good_escort}},
+        {"text": "拨银三十万两往陕西，着人押解。",
+         "grant": {**base, "participant_roster": [bad_entry], "escort": good_escort}},
+    )
+    for item in roster_cases:
+        result = _declare(db, state, {"commissions": [item]})
+        assert result.commissions.applied == [], item
+        assert [r.category for r in result.commissions.rejected] == ["invalid_shape"], item
+        assert any("机械档非法" in (r.reason or "") for r in result.commissions.rejected), item
+
+    batch = _declare(db, state, {"commissions": [
+        {"text": "拨银三十万两往陕西赈灾（非法名单）。",
+         "participant_roster": [bad_entry], "grant": dict(base)},
+        {"text": "拨银三十万两往陕西赈灾（合法）。", "grant": dict(base)},
+    ]})
+    assert [r.category for r in batch.commissions.rejected] == ["invalid_shape"]
+    assert len(batch.commissions.applied) == 1
+    assert "escort" not in batch.commissions.applied[0]["payload"]
+
+    # J19 既结：同人主办+协办两条均保留（equality 追加，不按 character_id 裁）
+    same = _declare(db, state, {"commissions": [{
+        "text": f"拨银，着{actor}押解并统筹。",
+        "participant_roster": [{
+            "character_id": actor, "tier": "主办", "role": "统筹", "delegator_id": None,
+        }],
+        "grant": {**base, "escort": good_escort},
+    }]})
+    assert same.commissions.rejected == []
+    roster = same.commissions.applied[0]["payload"]["participant_roster"]
+    assert {
+        "character_id": actor, "tier": "协办", "role": "押解护送", "delegator_id": None,
+    } in roster
+    assert {
+        "character_id": actor, "tier": "主办", "role": "统筹", "delegator_id": None,
+    } in roster
+
 
 def test_commission_escort_names_must_exist(game):
     """押解人须是真实人物：不存在的人名逐项拒收，不静默丢押解。"""

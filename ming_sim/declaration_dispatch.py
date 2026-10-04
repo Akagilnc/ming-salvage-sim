@@ -1611,9 +1611,15 @@ def _dispatch_commissions(
         if grant_raw:
             payload["mode"] = mode
         # 非 #1815 新形；声明给出则透传到 directive payload，代码不猜当前大臣。
-        _attach_commission_staging_fields(
-            payload, item, turn=int(state.turn),
-        )
+        # 名单 normalize/merge 的 ValueError（如非法机械档）走逐项 invalid_shape，
+        # 与同函数 declaration_from_payload 接缝一致（#1900 J19-R1）；不整份中止。
+        try:
+            _attach_commission_staging_fields(
+                payload, item, turn=int(state.turn),
+            )
+        except (TypeError, ValueError) as exc:
+            _reject(rejected, item, str(exc), "invalid_shape", source)
+            continue
 
         if not _attach_commission_affair(
             db, item, payload, rejected=rejected, source=source,
