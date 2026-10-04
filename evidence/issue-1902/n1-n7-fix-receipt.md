@@ -3,7 +3,7 @@
 - 分支：`ak-roles/1902-n1-n7-fixer-ccbdf378a`
 - 工作树：`/Users/akagilnc/WorkSpace/Ming_LLM-1902-w5`
 - 底座 HEAD（开工）：`ccbdf378a`
-- 本轮提交：见文末 `git rev-parse HEAD`（交卷后戳）
+- 本轮提交：`ef5bd0f315971e5bec77c8b10b1144b14813635a`
 - 判词真源：末份 `03-1902-judge-ccbdf378a.json` payload（N1–N7）
 - 枚举原始输出：`evidence/issue-1902/n1-n7-enum.out`（由下方内嵌脚本 tee；**不是**可执行脚本）
 - 临时目录：`/tmp/ming1902-n1n7-selfverify/`（探针/变异；不入库永久扫描器）
