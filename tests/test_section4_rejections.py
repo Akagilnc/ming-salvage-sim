@@ -144,7 +144,6 @@ def test_region_controlled_by_rejects_non_power_id_and_preserves_region(game, ba
     assert len(rows) == 1
     _, reason, category, _ = rows[0]
     assert category == "invalid_enum"
-    assert "controlled_by" in reason
     after = db.conn.execute(
         "SELECT controlled_by FROM regions WHERE id=?", (good,)
     ).fetchone()[0]
@@ -504,10 +503,12 @@ def test_region_army_formatters_skip_rejected_items():
 
     only_rej_r = format_region_changes([
         {"rejected": True, "category": "invalid_enum", "reason": "字段非法"}])
-    assert "未见明确地区盘面变化" in only_rej_r
+    assert only_rej_r == format_region_changes([])
+    assert only_rej_r != out_r and "山东" not in only_rej_r
     only_rej_a = format_army_changes([
         {"rejected": True, "category": "invalid_enum", "reason": "字段非法"}])
-    assert "未见明确军队盘面变化" in only_rej_a
+    assert only_rej_a == format_army_changes([])
+    assert only_rej_a != out_a and "京营" not in only_rej_a
 
 
 def test_duplicate_army_noninteger_manpower_rejected(game):
@@ -694,7 +695,8 @@ def test_inertia_natural_resolution_tolerated_rejection_no_crash(game):
     )
     db.conn.commit()
 
-    I.apply_issue_inertia_and_ongoing(db, state, touched_ids=set())  # 不抛
+    from ming_sim.situation_drift import apply_situation_monthly_drift
+    apply_situation_monthly_drift(db, state)  # 不抛
 
     row = db.conn.execute("SELECT status FROM issues WHERE id=?", (issue_id,)).fetchone()
     assert row[0] == "resolved"

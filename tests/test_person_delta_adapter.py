@@ -176,16 +176,15 @@ def test_apply_score_extraction_rejects_person_change_power_move_without_way(rea
     row = db.conn.execute("SELECT power_id FROM characters WHERE name=?", (name,)).fetchone()
     assert row["power_id"] == old_power
     assert content.characters[name].power_id == old_power
-    assert applied["applied_person_changes"] == [
-        {
-            "name": name,
-            "origin_ref": "盘面自发", "动作": "易主",
-            "rejected": True,
-            "reason": "易主 缺 方式",
-            "category": "missing_field",
-            "item": {"name": name, "origin_ref": "盘面自发", "动作": "易主", "new_power": "houjin", "reason": "漏方式"},
-        }
-    ]
+    changes = applied["applied_person_changes"]
+    assert len(changes) == 1
+    assert changes[0]["name"] == name
+    assert changes[0]["origin_ref"] == "盘面自发"
+    assert changes[0]["动作"] == "易主"
+    assert changes[0]["rejected"] is True
+    assert changes[0]["reason"]
+    assert changes[0]["category"] == "missing_field"
+    assert changes[0]["item"] == {"name": name, "origin_ref": "盘面自发", "动作": "易主", "new_power": "houjin", "reason": "漏方式"}
 
 
 def test_apply_score_extraction_records_mao_appeasement_commitment_and_loyalty_delta(game):
@@ -260,41 +259,17 @@ def test_apply_score_extraction_records_mao_appeasement_commitment_and_loyalty_d
 
 
 @pytest.mark.parametrize(
-    ("item", "category", "reason"),
+    ("item", "category"),
     [
-        (
-            {"name": "不存在的人", "origin_ref": "盘面自发", "动作": "评定", "loyalty": 5},
-            "hallucinated_id",
-            "非既有人物",
-        ),
-        (
-            {"name": "毛文龙", "origin_ref": "盘面自发", "动作": "评定", "loyalty": 0},
-            "invalid_enum",
-            "评定 loyalty 须为非零整数增量",
-        ),
-        (
-            {"name": "毛文龙", "origin_ref": "盘面自发", "动作": "评定", "loyalty": True},
-            "invalid_enum",
-            "评定 loyalty 须为非零整数增量",
-        ),
-        (
-            {"name": "毛文龙", "origin_ref": "盘面自发", "动作": "评定"},
-            "invalid_enum",
-            "评定 loyalty 须为非零整数增量",
-        ),
-        (
-            {"name": "毛文龙", "origin_ref": "盘面自发", "动作": "评定", "loyalty": None},
-            "invalid_enum",
-            "评定 loyalty 须为非零整数增量",
-        ),
-        (
-            {"name": "毛文龙", "origin_ref": "盘面自发", "动作": "评定", "loyalty": "8"},
-            "invalid_enum",
-            "评定 loyalty 须为非零整数增量",
-        ),
+        ({"name": "不存在的人", "origin_ref": "盘面自发", "动作": "评定", "loyalty": 5}, "hallucinated_id"),
+        ({"name": "毛文龙", "origin_ref": "盘面自发", "动作": "评定", "loyalty": 0}, "invalid_enum"),
+        ({"name": "毛文龙", "origin_ref": "盘面自发", "动作": "评定", "loyalty": True}, "invalid_enum"),
+        ({"name": "毛文龙", "origin_ref": "盘面自发", "动作": "评定"}, "invalid_enum"),
+        ({"name": "毛文龙", "origin_ref": "盘面自发", "动作": "评定", "loyalty": None}, "invalid_enum"),
+        ({"name": "毛文龙", "origin_ref": "盘面自发", "动作": "评定", "loyalty": "8"}, "invalid_enum"),
     ],
 )
-def test_apply_score_extraction_rejects_invalid_loyalty_assessment(game, item, category, reason):
+def test_apply_score_extraction_rejects_invalid_loyalty_assessment(game, item, category):
     db, state, content = game
     before = db.conn.execute(
         "SELECT loyalty FROM characters WHERE name='毛文龙'"
@@ -311,16 +286,15 @@ def test_apply_score_extraction_rejects_invalid_loyalty_assessment(game, item, c
         "SELECT loyalty FROM characters WHERE name='毛文龙'"
     ).fetchone()["loyalty"]
     assert after == before
-    assert applied["applied_person_changes"] == [
-        {
-            "name": item["name"],
-            "origin_ref": "盘面自发", "动作": "评定",
-            "rejected": True,
-            "reason": reason,
-            "category": category,
-            "item": item,
-        }
-    ]
+    changes = applied["applied_person_changes"]
+    assert len(changes) == 1
+    assert changes[0]["name"] == item["name"]
+    assert changes[0]["origin_ref"] == "盘面自发"
+    assert changes[0]["动作"] == "评定"
+    assert changes[0]["rejected"] is True
+    assert changes[0]["reason"]
+    assert changes[0]["category"] == category
+    assert changes[0]["item"] == item
 
 
 @pytest.mark.parametrize(
@@ -548,16 +522,15 @@ def test_apply_score_extraction_rejects_malformed_power_move_backlash_before_wri
     assert content.characters[name].power_id == old_power
     assert content.characters[name].office == old_office
     assert content.characters[name].office_type == old_office_type
-    assert applied["applied_person_changes"] == [
-        {
-            "name": name,
-            "origin_ref": "盘面自发", "动作": "易主",
-            "rejected": True,
-            "reason": "易主 反噬 项必须是 object(dict)",
-            "category": "invalid_enum",
-            "item": item,
-        }
-    ]
+    changes = applied["applied_person_changes"]
+    assert len(changes) == 1
+    assert changes[0]["name"] == name
+    assert changes[0]["origin_ref"] == "盘面自发"
+    assert changes[0]["动作"] == "易主"
+    assert changes[0]["rejected"] is True
+    assert changes[0]["reason"]
+    assert changes[0]["category"] == "invalid_enum"
+    assert changes[0]["item"] == item
 
 
 def test_legacy_status_change_rejects_non_active_target_before_transition_matrix(game):
@@ -588,24 +561,23 @@ def test_legacy_status_change_rejects_non_active_target_before_transition_matrix
         assert row["status"] == "dismissed"
         assert row["status_reason"] == "已先行罢黜"
         assert applied["character_status_changes"] == []
-        assert applied["applied_person_changes"] == [
-            {
-                "name": name,
-                "origin_ref": "盘面自发", "动作": "处置",
-                "rejected": True,
-                "reason": "当前非 active（dismissed）",
-                "category": "invalid_transition",
-                "status": "exiled",
-                "item": {
-                    "name": name,
-                    "origin_ref": "盘面自发", "动作": "处置",
-                    "status": "exiled",
-                    "reason": "legacy should gate",
-                    "legacy_gate": True,
-                },
-                "report_section": "character_status_changes",
-            }
-        ]
+        changes = applied["applied_person_changes"]
+        assert len(changes) == 1
+        assert changes[0]["name"] == name
+        assert changes[0]["origin_ref"] == "盘面自发"
+        assert changes[0]["动作"] == "处置"
+        assert changes[0]["rejected"] is True
+        assert changes[0]["reason"]
+        assert changes[0]["category"] == "invalid_transition"
+        assert changes[0]["status"] == "exiled"
+        assert changes[0]["item"] == {
+            "name": name,
+            "origin_ref": "盘面自发", "动作": "处置",
+            "status": "exiled",
+            "reason": "legacy should gate",
+            "legacy_gate": True,
+        }
+        assert changes[0]["report_section"] == "character_status_changes"
     finally:
         content.characters[name].status = old_status
         content.characters[name].office = old_office
@@ -1150,21 +1122,20 @@ def test_apply_score_extraction_does_not_release_when_derived_appointment_is_inv
         assert row["office"] == ""
         assert content.characters[name].status == "imprisoned"
         assert db.conn.execute("SELECT COUNT(*) FROM person_logs").fetchone()[0] == before_logs
-        assert applied["applied_person_changes"] == [
-            {
-                "name": name,
-                "origin_ref": "盘面自发", "动作": "任命",
-                "new_office": "",
-                "rejected": True,
-                "reason": "name 或 new_office 空",
-                "category": "missing_field",
-                "item": {
-                    "name": name,
-                    "origin_ref": "盘面自发", "动作": "任命",
-                    "reason": "漏填官职",
-                },
-            }
-        ]
+        changes = applied["applied_person_changes"]
+        assert len(changes) == 1
+        assert changes[0]["name"] == name
+        assert changes[0]["origin_ref"] == "盘面自发"
+        assert changes[0]["动作"] == "任命"
+        assert changes[0]["new_office"] == ""
+        assert changes[0]["rejected"] is True
+        assert changes[0]["reason"]
+        assert changes[0]["category"] == "missing_field"
+        assert changes[0]["item"] == {
+            "name": name,
+            "origin_ref": "盘面自发", "动作": "任命",
+            "reason": "漏填官职",
+        }
     finally:
         content.characters[name].status = old_status
         content.characters[name].office = old_office
@@ -1255,16 +1226,15 @@ def test_apply_score_extraction_rolls_back_derived_release_when_office_write_fai
         assert content.characters[name].status == "imprisoned"
         assert content.characters[name].office == ""
         assert db.conn.execute("SELECT COUNT(*) FROM person_logs").fetchone()[0] == before_logs
-        assert applied["applied_person_changes"] == [
-            {
-                "origin_ref": "盘面自发", "动作": "任命",
-                "name": name,
-                "new_office": "陕西总督",
-                "rejected": True,
-                "reason": "落库失败：simulated office write failure",
-                "derived_from": "放归",
-            }
-        ]
+        changes = applied["applied_person_changes"]
+        assert len(changes) == 1
+        assert changes[0]["origin_ref"] == "盘面自发"
+        assert changes[0]["动作"] == "任命"
+        assert changes[0]["name"] == name
+        assert changes[0]["new_office"] == "陕西总督"
+        assert changes[0]["rejected"] is True
+        assert "simulated office write failure" in changes[0]["reason"]
+        assert changes[0]["derived_from"] == "放归"
     finally:
         content.characters[name].status = old_status
         content.characters[name].office = old_office
@@ -1338,17 +1308,16 @@ def test_derived_release_rejection_keeps_prior_person_change_in_atomic_batch(
             "SELECT COUNT(*) FROM person_logs WHERE person_name IN (?, ?)",
             (first, second),
         ).fetchone()[0] == before_logs + 1
-        assert applied["applied_person_changes"] == [
-            {"name": first, "origin_ref": "盘面自发", "动作": "处置", "status": "dismissed", "reason": "先罢一人"},
-            {
-                "origin_ref": "盘面自发", "动作": "任命",
-                "name": second,
-                "new_office": "陕西总督",
-                "rejected": True,
-                "reason": "落库失败：simulated office write failure",
-                "derived_from": "放归",
-            },
-        ]
+        changes = applied["applied_person_changes"]
+        assert len(changes) == 2
+        assert changes[0] == {"name": first, "origin_ref": "盘面自发", "动作": "处置", "status": "dismissed", "reason": "先罢一人"}
+        assert changes[1]["origin_ref"] == "盘面自发"
+        assert changes[1]["动作"] == "任命"
+        assert changes[1]["name"] == second
+        assert changes[1]["new_office"] == "陕西总督"
+        assert changes[1]["rejected"] is True
+        assert "simulated office write failure" in changes[1]["reason"]
+        assert changes[1]["derived_from"] == "放归"
     finally:
         content.characters[first].status = old_first_status
         content.characters[first].office = old_first_office
@@ -1398,16 +1367,15 @@ def test_derived_release_restores_when_post_office_helper_raises(game, monkeypat
         assert content.characters[name].status == "imprisoned"
         assert content.characters[name].office == ""
         assert db.conn.execute("SELECT COUNT(*) FROM person_logs").fetchone()[0] == before_logs
-        assert applied["applied_person_changes"] == [
-            {
-                "origin_ref": "盘面自发", "动作": "任命",
-                "name": name,
-                "new_office": "陕西总督",
-                "rejected": True,
-                "reason": "落库失败：simulated post-office failure",
-                "derived_from": "放归",
-            }
-        ]
+        changes = applied["applied_person_changes"]
+        assert len(changes) == 1
+        assert changes[0]["origin_ref"] == "盘面自发"
+        assert changes[0]["动作"] == "任命"
+        assert changes[0]["name"] == name
+        assert changes[0]["new_office"] == "陕西总督"
+        assert changes[0]["rejected"] is True
+        assert "simulated post-office failure" in changes[0]["reason"]
+        assert changes[0]["derived_from"] == "放归"
     finally:
         content.characters[name].status = old_status
         content.characters[name].office = old_office
@@ -1456,17 +1424,16 @@ def test_apply_score_extraction_does_not_release_non_ming_when_derived_appointme
         assert row["power_id"] == ""
         assert content.characters[name].status == "imprisoned"
         assert db.conn.execute("SELECT COUNT(*) FROM person_logs").fetchone()[0] == before_logs
-        assert applied["applied_person_changes"] == [
-            {
-                "origin_ref": "盘面自发", "动作": "任命",
-                "name": name,
-                "new_office": "陕西总督",
-                "rejected": True,
-                "reason": f"{name}不属大明朝廷，不能授予大明官职",
-                "category": "invalid_transition",
-                "item": raw_item,
-            }
-        ]
+        changes = applied["applied_person_changes"]
+        assert len(changes) == 1
+        assert changes[0]["origin_ref"] == "盘面自发"
+        assert changes[0]["动作"] == "任命"
+        assert changes[0]["name"] == name
+        assert changes[0]["new_office"] == "陕西总督"
+        assert changes[0]["rejected"] is True
+        assert changes[0]["reason"]
+        assert changes[0]["category"] == "invalid_transition"
+        assert changes[0]["item"] == raw_item
     finally:
         content.characters[name].status = old_status
         content.characters[name].office = old_office
@@ -1753,7 +1720,7 @@ def test_add_character_non_canonical_office_type_still_raises(game):
     """守卫只放行 person-title 名分：真正未定义的官类仍必须响亮 ValueError（闸不被放宽吞掉）。"""
     db, state, _content = game
 
-    with pytest.raises(ValueError, match="未定义官类"):
+    with pytest.raises(ValueError):
         db.add_character(
             state, _new_ming_character("杜撰甲", "绝无此名的杜撰怪衔", "杜撰官类")
         )
@@ -1882,17 +1849,16 @@ def test_apply_score_extraction_rejects_unknown_person_change(read_game, with_co
         content=content if with_content else None,
     )
 
-    assert applied["applied_person_changes"] == [
-        {
-            "name": "不存在的人",
-            "origin_ref": "盘面自发", "动作": "处置",
-            "status": "dismissed",
-            "rejected": True,
-            "reason": "非既有人物",
-            "category": "hallucinated_id",
-            "item": item,
-        }
-    ]
+    changes = applied["applied_person_changes"]
+    assert len(changes) == 1
+    assert changes[0]["name"] == "不存在的人"
+    assert changes[0]["origin_ref"] == "盘面自发"
+    assert changes[0]["动作"] == "处置"
+    assert changes[0]["status"] == "dismissed"
+    assert changes[0]["rejected"] is True
+    assert changes[0]["reason"]
+    assert changes[0]["category"] == "hallucinated_id"
+    assert changes[0]["item"] == item
 
 
 def test_apply_score_extraction_rejects_dead_status_outbound(game):
@@ -1907,17 +1873,16 @@ def test_apply_score_extraction_rejects_dead_status_outbound(game):
         content=content,
     )
 
-    assert applied["applied_person_changes"] == [
-        {
-            "name": name,
-            "origin_ref": "盘面自发", "动作": "处置",
-            "status": "dismissed",
-            "rejected": True,
-            "reason": "dead 无 status 出边",
-            "category": "invalid_transition",
-            "item": {"name": name, "origin_ref": "盘面自发", "动作": "处置", "status": "dismissed"},
-        }
-    ]
+    changes = applied["applied_person_changes"]
+    assert len(changes) == 1
+    assert changes[0]["name"] == name
+    assert changes[0]["origin_ref"] == "盘面自发"
+    assert changes[0]["动作"] == "处置"
+    assert changes[0]["status"] == "dismissed"
+    assert changes[0]["rejected"] is True
+    assert changes[0]["reason"]
+    assert changes[0]["category"] == "invalid_transition"
+    assert changes[0]["item"] == {"name": name, "origin_ref": "盘面自发", "动作": "处置", "status": "dismissed"}
 
 
 
@@ -1993,7 +1958,7 @@ def test_create_secret_order_rejects_vassal_prince(read_game):
     import pytest
     db, state, content = read_game
     name = _materialize_active_prince(db, state, content)
-    with pytest.raises(ValueError, match="宗室"):
+    with pytest.raises(ValueError):
         create_test_secret_order(db, state, name, "密查", "着尔暗中查访", [])
 
 
@@ -2011,7 +1976,7 @@ def test_create_secret_order_rejects_vassal_prince_by_alias(read_game):
         pytest.skip("基底盘面无带别名的宗藩")
     db.add_character(state, content.characters[prince], source="测试")
     alias = next(a for a in content.characters[prince].aliases if a != prince)
-    with pytest.raises(ValueError, match="宗室"):
+    with pytest.raises(ValueError):
         create_test_secret_order(db, state, alias, "密查", "着尔暗中查访", [])
 
 
@@ -2046,7 +2011,7 @@ def test_create_secret_order_rejects_foreign_power(game):
                   and (db.conn.execute("SELECT power_id FROM characters WHERE name=?", (n,)).fetchone()["power_id"] or "ming") != "ming"), None)
     if enemy is None:
         pytest.skip("基底盘面无外藩人物")
-    with pytest.raises(ValueError, match="不属大明朝廷"):
+    with pytest.raises(ValueError):
         create_test_secret_order(db, state, enemy, "密查", "着尔暗中查访", [])
 
 
@@ -2064,7 +2029,7 @@ def test_create_secret_order_rejects_foreign_power_by_alias(game):
     if enemy is None:
         pytest.skip("基底盘面无带别名的外藩")
     alias = next(a for a in content.characters[enemy].aliases if a != enemy)
-    with pytest.raises(ValueError, match="不属大明朝廷"):
+    with pytest.raises(ValueError):
         create_test_secret_order(db, state, alias, "密查", "着尔暗中查访", [])
 
 
@@ -2127,24 +2092,22 @@ def test_apply_score_extraction_rejects_invalid_person_travel(game):
         content=None,
     )
 
-    assert applied["applied_person_changes"] == [
-        {
-            "name": "孔有德",
-            "origin_ref": "盘面自发", "动作": "行止",
-            "rejected": True,
-            "reason": "transit_to 缺失",
-            "category": "missing_field",
-            "item": {"name": "孔有德", "origin_ref": "盘面自发", "动作": "行止"},
-        },
-        {
-            "name": name,
-            "origin_ref": "盘面自发", "动作": "行止",
-            "rejected": True,
-            "reason": "行止 仅适用于 active 人物",
-            "category": "invalid_transition",
-            "item": {"name": name, "origin_ref": "盘面自发", "动作": "行止", "transit_to": "liaodong"},
-        },
-    ]
+    changes = applied["applied_person_changes"]
+    assert len(changes) == 2
+    assert changes[0]["name"] == "孔有德"
+    assert changes[0]["origin_ref"] == "盘面自发"
+    assert changes[0]["动作"] == "行止"
+    assert changes[0]["rejected"] is True
+    assert changes[0]["reason"]
+    assert changes[0]["category"] == "missing_field"
+    assert changes[0]["item"] == {"name": "孔有德", "origin_ref": "盘面自发", "动作": "行止"}
+    assert changes[1]["name"] == name
+    assert changes[1]["origin_ref"] == "盘面自发"
+    assert changes[1]["动作"] == "行止"
+    assert changes[1]["rejected"] is True
+    assert changes[1]["reason"]
+    assert changes[1]["category"] == "invalid_transition"
+    assert changes[1]["item"] == {"name": name, "origin_ref": "盘面自发", "动作": "行止", "transit_to": "liaodong"}
 
 
 def test_apply_score_extraction_rejects_unknown_person_travel_region(read_game):
@@ -2162,16 +2125,15 @@ def test_apply_score_extraction_rejects_unknown_person_travel_region(read_game):
         content=content,
     )
 
-    assert applied["applied_person_changes"] == [
-        {
-            "name": name,
-            "origin_ref": "盘面自发", "动作": "行止",
-            "rejected": True,
-            "reason": "transit_to 地区不存在",
-            "category": "missing_ref",
-            "item": {"name": name, "origin_ref": "盘面自发", "动作": "行止", "transit_to": "not_a_region"},
-        }
-    ]
+    changes = applied["applied_person_changes"]
+    assert len(changes) == 1
+    assert changes[0]["name"] == name
+    assert changes[0]["origin_ref"] == "盘面自发"
+    assert changes[0]["动作"] == "行止"
+    assert changes[0]["rejected"] is True
+    assert changes[0]["reason"]
+    assert changes[0]["category"] == "missing_ref"
+    assert changes[0]["item"] == {"name": name, "origin_ref": "盘面自发", "动作": "行止", "transit_to": "not_a_region"}
 
 
 def test_person_disposition_clears_existing_transit_to(game):

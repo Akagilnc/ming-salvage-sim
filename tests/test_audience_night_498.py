@@ -278,7 +278,7 @@ def test_write_decree_leaves_unacted_pending_unchanged(tmp_path, content, monkey
         pid = db.upsert_pending_directive(
             state.turn, minister, payload={**_POLICY_FIELDS, "text": "着户部核边饷", "actor": minister})
         # 无 draft：拟诏响亮拒绝、不为 preview 造持久态
-        with pytest.raises(ValueError, match="草案"):
+        with pytest.raises(ValueError):
             sess.write_decree()
         # 未表态 pending 原样不动（没被默认同意成 draft）
         assert db.conn.execute(

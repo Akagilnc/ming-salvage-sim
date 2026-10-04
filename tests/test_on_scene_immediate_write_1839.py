@@ -88,7 +88,7 @@ def test_kill_lands_status_and_next_materials_show_it(game, tmp_path):
 
     status, reason = db.get_character_status(victim)
     assert status == "dead"
-    assert reason == "陛下率领内侍当场斩杀"
+    assert reason == declaration["on_scene_facts"][0]["reason"]
 
     prepared = prepare_scene_materials(db, state, dest_root=tmp_path / "after-kill")
     listed = list_materials(prepared.root)

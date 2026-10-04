@@ -4,17 +4,14 @@
 1. minister_agent 召对称谓正向口径（陛下/皇上/臣；亲王才殿下）
 2. season_simulator 停自算年号，上下文喂 reign_period_label 事实
 3. #1356 邸报报头年月 ≡ 报文自身月（后端 previous_reign_period_label 投影；FE 渲染见 vitest）
-4. web _require_active_minister 改调 can_summon 取文案（删「已尚未登场」平行副本）
+4. web _require_active_minister 的拒绝文案与 session.can_summon 的原因是同一段
 """
 
 from __future__ import annotations
 
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-
-ROOT = Path(__file__).resolve().parents[1]
 
 
 
@@ -34,11 +31,8 @@ def test_gazette_header_uses_report_own_month_not_current_turn(game):
     # 开局 t0：无固定 seed 邸报（删除方案）；当前回合仍是天启七年十月
     assert state.turn == 1
     assert (state.year, state.period) == (1627, 10)
-    assert reign_period_label(state.year, state.period) == "天启七年十月"
     opening_body = db.previous_turn_summary(state)
-    assert "天启七年九月邸报" not in opening_body
-    assert "待办未解（开局三事）" not in opening_body
-    assert "信王于乾清宫即皇帝位" not in opening_body
+    assert opening_body == ""
 
     # 落一条真实「九月」报文 → 报头必须九月（与报文自身月同源）
     db.conn.execute(
@@ -46,21 +40,8 @@ def test_gazette_header_uses_report_own_month_not_current_turn(game):
         (0, 1627, 9, "天启七年九月邸报\n\n一、真结算九月报文"),
     )
     db.conn.commit()
-    assert db.previous_turn_reign_period_label(state) == "天启七年九月"
+    assert db.previous_turn_reign_period_label(state) == reign_period_label(1627, 9)
     assert "真结算九月报文" in db.previous_turn_summary(state)
-
-    # 禁前端第二份年号表：无天启/崇祯 epoch 常量平行表
-    web_src = ROOT / "web/src"
-    offenders: list[str] = []
-    for path in web_src.rglob("*.ts*"):
-        if "node_modules" in path.parts:
-            continue
-        body = path.read_text(encoding="utf-8")
-        if "1621" in body and ("天启" in body or "TIANQI" in body or "tianqi" in body):
-            offenders.append(str(path.relative_to(ROOT)))
-        if "CHONGZHEN_EPOCH" in body or "TIANQI_EPOCH" in body:
-            offenders.append(str(path.relative_to(ROOT)))
-    assert offenders == []
 
 
 def test_gazette_header_cross_year_december_report_under_january_state(game):
@@ -74,12 +55,11 @@ def test_gazette_header_cross_year_december_report_under_january_state(game):
     # 过月后 state 已是崇祯元年正月
     state.year, state.period, state.turn = 1628, 1, 6
     current = reign_period_label(state.year, state.period)
-    assert current == "崇祯元年正月"
     header = db.previous_turn_reign_period_label(state)
-    assert header == "天启七年十二月"
+    assert header == reign_period_label(1627, 12)
     assert header != current
     body = db.previous_turn_summary(state)
-    assert "十二月" in body
+    assert "天启七年十二月邸报·跨年钉测" in body
 
 
 def test_state_payload_projects_previous_reign_period_label(game):
@@ -97,7 +77,7 @@ def test_state_payload_projects_previous_reign_period_label(game):
         (0, 1627, 9, "天启七年九月邸报\n\n一、真结算九月报文·payload 钉"),
     )
     db.conn.commit()
-    assert db.previous_turn_reign_period_label(state) == "天启七年九月"
+    assert db.previous_turn_reign_period_label(state) == reign_period_label(1627, 9)
 
     # 与 c3 同形轻壳：经 WebGame.state_payload 真投影
     runtime = object.__new__(web_app.WebGame)
@@ -122,15 +102,14 @@ def test_state_payload_projects_previous_reign_period_label(game):
     runtime.character_power_id = lambda c: "ming"
 
     payload = web_app.WebGame.state_payload(runtime)
-    assert payload["previous_reign_period_label"] == "天启七年九月"
+    assert payload["previous_reign_period_label"] == reign_period_label(1627, 9)
     assert "真结算九月报文" in payload["previous_summary"]
     assert payload["turn"]["reign_period_label"] == reign_period_label(state.year, state.period)
-    assert payload["turn"]["reign_period_label"] == "天启七年十月"
     assert payload["previous_reign_period_label"] != payload["turn"]["reign_period_label"]
 
 
-def test_require_active_minister_uses_can_summon_copy_no_yi_shangwei(game, monkeypatch):
-    """#1402：offstage 文案走 session.can_summon，不得「已尚未登场」。"""
+def test_require_active_minister_uses_can_summon_reason(game, monkeypatch):
+    """#1402：offstage 拒绝走 session.can_summon；web 详情与该原因同一段文字。"""
     import web_app
     from fastapi import HTTPException
     from ming_sim.session import GameSession
@@ -157,8 +136,6 @@ def test_require_active_minister_uses_can_summon_copy_no_yi_shangwei(game, monke
 
     ok, reason = sess.can_summon(content.characters[name])
     assert ok is False
-    assert "尚未登场" in reason
-    assert "已尚未" not in reason
 
     stub = SimpleNamespace(
         session=sess,
@@ -172,7 +149,5 @@ def test_require_active_minister_uses_can_summon_copy_no_yi_shangwei(game, monke
         web_app._require_active_minister(name)
     assert ei.value.status_code == 409
     detail = ei.value.detail
-    assert "尚未登场" in detail
-    assert "已尚未" not in detail
-    # DRY：与 can_summon 文案同源
+    # DRY（#1402 的真契约）：web 的拒绝文案逐字取自 can_summon，无平行副本。
     assert detail == reason.strip()

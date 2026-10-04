@@ -116,9 +116,6 @@ def _fake_settlement_llm(monkeypatch, *, narrative="本月邸报：边饷已清�
 def web_game(tmp_path, monkeypatch, _offline_scene_beat_generator):
     """真实 WebGame（新档、temp DB）；构造即不连 LLM，仅 runtime 与动作级 LLM 边界中和。
 
-    显式 opt-in `_offline_scene_beat_generator`：在 GameSession.__init__ 前注入确定性
-    beat factory，避免 sk-test 401；实例仍走生产 ChatTurnSceneRegistry。
-
     允许 canned seam（定义真源 / runtime lookup，本 fixture 唯一 fake 面）：
 
     - #1842：收夜不再起 endorsement-only 批
