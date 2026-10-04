@@ -96,9 +96,8 @@ def _persist_appointment_summon(
                 raise ValueError("任命后传召所关联的暂存任命不存在")
             stored = load_stored_object(row["payload_json"], label='payload_json')
             stored["summon_after"] = "是"
-            session.db.conn.execute(
-                "UPDATE pending_actions SET payload_json=? WHERE id=?",
-                (json.dumps(stored, ensure_ascii=False), int(pending_id)),
+            session.db.dossiers.set_pending_payload(
+                int(pending_id), json.dumps(stored, ensure_ascii=False),
             )
         ensure_inactive_office_summon(
             session.db, pending_id, person_name,
@@ -184,9 +183,8 @@ def _apply_existing_appointment_hit(
             current = session.db.pending_action_payload_row(resolved)
             stored = load_stored_object(current["payload_json"], label='payload_json')
             stored.update(recommendation_fields)
-            session.db.conn.execute(
-                "UPDATE pending_actions SET payload_json=? WHERE id=?",
-                (json.dumps(stored, ensure_ascii=False), resolved),
+            session.db.dossiers.set_pending_payload(
+                resolved, json.dumps(stored, ensure_ascii=False),
             )
         if summon_after and person_name:
             _persist_appointment_summon(

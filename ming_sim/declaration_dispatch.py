@@ -249,12 +249,9 @@ def _dispatch_declaration_sections(
         db, state, declaration.get("registrations"), source=source,
         source_turn_error=source_turn_err,
     )
-    preexisting_pending_ids = {
-        int(row["id"]) for row in db.conn.execute(
-            "SELECT id FROM pending_actions WHERE turn=? AND status='pending'",
-            (int(state.turn),),
-        ).fetchall()
-    }
+    preexisting_pending_ids = set(
+        db.dossiers.pending_ids_for_turn(int(state.turn), status="pending")
+    )
     commissions = _dispatch_commissions(
         db, state, declaration.get("commissions"),
         minister_name=minister_name, source=source,
@@ -1576,11 +1573,7 @@ def _dispatch_endorsements(
                 "invalid_shape", source,
             )
             continue
-        row = db.conn.execute(
-            "SELECT id, night_id, status, payload_json FROM pending_actions "
-            "WHERE id=? AND turn=?",
-            (action_id, int(state.turn)),
-        ).fetchone()
+        row = db.dossiers.pending_row_for_turn(action_id, int(state.turn))
         if row is None or int(row["night_id"] or 0) != int(night_id):
             _reject(
                 rejected, item, f"暂存动作不属本夜暂存清单：{action_id}",
@@ -1981,11 +1974,7 @@ def _dispatch_promises(
         # 只认本夜（或本次无夜上下文）暂存清单里的动作：id 真实存在但挂在
         # 另一夜，声明也不得应允/拒绝它——同样按「不存在实体」拒收（不静默
         # 误批，也不当真拒收物理删除他夜暂存）。
-        row = db.conn.execute(
-            "SELECT night_id, kind, action, minister_name, night_approved, payload_json FROM pending_actions "
-            "WHERE id=? AND turn=? AND status='pending'",
-            (action_id, int(state.turn)),
-        ).fetchone()
+        row = db.dossiers.pending_decision_row(action_id, int(state.turn))
         if (
             row is None or action_id not in preexisting_pending_ids
             or int(row["night_id"] or 0) != int(night_id)
@@ -2027,9 +2016,8 @@ def _dispatch_promises(
             if not isinstance(payload, dict):
                 raise ValueError("密令候选载荷损坏")
             payload["content"] = new_content
-            db.conn.execute(
-                "UPDATE pending_actions SET payload_json=?, night_approved=0 WHERE id=?",
-                (json.dumps(payload, ensure_ascii=False), action_id),
+            db.dossiers.set_pending_payload_clear_approval(
+                action_id, json.dumps(payload, ensure_ascii=False),
             )
         elif decision == "应允":
             # ADR 0038：密令应允即落地（夜内直写白名单）；任免/拟旨只标
@@ -2067,14 +2055,12 @@ def _dispatch_promises(
                         payload["mode"] = declared_mode
                         if int(row["night_approved"] or 0):
                             db._discard_pending_decree_forecast(action_id)
-                            db.conn.execute(
-                                "UPDATE pending_actions SET payload_json=?, version=version+1 WHERE id=?",
-                                (json.dumps(payload, ensure_ascii=False), action_id),
+                            db.dossiers.set_pending_payload_bump_version(
+                                action_id, json.dumps(payload, ensure_ascii=False),
                             )
                         else:
-                            db.conn.execute(
-                                "UPDATE pending_actions SET payload_json=? WHERE id=?",
-                                (json.dumps(payload, ensure_ascii=False), action_id),
+                            db.dossiers.set_pending_payload(
+                                action_id, json.dumps(payload, ensure_ascii=False),
                             )
                         changed = True
                 if int(row["night_approved"] or 0) and not changed:

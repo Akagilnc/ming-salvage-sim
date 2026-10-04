@@ -1988,6 +1988,496 @@ class DossierStore:
     def delete_pending_action(self, action_id: object) -> None:
         self._conn.execute("DELETE FROM pending_actions WHERE id=?", (action_id,))
 
+    # ── pending_actions persistence primitives (fact owner) ─────────
+
+    def pending_action_row(self, action_id: int) -> Any:
+        return self._conn.execute(
+            "SELECT * FROM pending_actions WHERE id=?", (int(action_id),),
+        ).fetchone()
+
+    def pending_action_payload_row(self, action_id: int) -> Any:
+        return self._conn.execute(
+            "SELECT payload_json FROM pending_actions WHERE id=?", (int(action_id),),
+        ).fetchone()
+
+    def pending_action_payload_status(self, action_id: int) -> Any:
+        return self._conn.execute(
+            "SELECT payload_json, status FROM pending_actions WHERE id=?",
+            (int(action_id),),
+        ).fetchone()
+
+    def pending_directive_pending_row(self, action_id: int) -> Any:
+        return self._conn.execute(
+            "SELECT id, payload_json FROM pending_actions "
+            "WHERE id=? AND kind='directive' AND status='pending'",
+            (int(action_id),),
+        ).fetchone()
+
+    def pending_directive_version_row(self, action_id: int) -> Any:
+        return self._conn.execute(
+            "SELECT version FROM pending_actions WHERE id=? AND kind='directive'",
+            (int(action_id),),
+        ).fetchone()
+
+    def pending_kind_version_row(self, action_id: int) -> Any:
+        return self._conn.execute(
+            "SELECT kind, version FROM pending_actions WHERE id=?",
+            (int(action_id),),
+        ).fetchone()
+
+    def pending_version_row(self, action_id: int) -> Any:
+        return self._conn.execute(
+            "SELECT version FROM pending_actions WHERE id=?",
+            (int(action_id),),
+        ).fetchone()
+
+    def pending_committed_directive_id_row(self, action_id: int) -> Any:
+        return self._conn.execute(
+            "SELECT committed_directive_id FROM pending_actions WHERE id=?",
+            (int(action_id),),
+        ).fetchone()
+
+    def pending_night_id_row(self, action_id: int) -> Any:
+        return self._conn.execute(
+            "SELECT night_id FROM pending_actions WHERE id=?",
+            (int(action_id),),
+        ).fetchone()
+
+    def pending_kind_row(self, action_id: int) -> Any:
+        return self._conn.execute(
+            "SELECT kind FROM pending_actions WHERE id=?", (int(action_id),),
+        ).fetchone()
+
+    def pending_forecast_state_row(self, action_id: int) -> Any:
+        return self._conn.execute(
+            "SELECT status,kind,action,night_approved,night_id,version "
+            "FROM pending_actions WHERE id=?",
+            (int(action_id),),
+        ).fetchone()
+
+    def pending_version_forecast_row(self, action_id: int) -> Any:
+        return self._conn.execute(
+            "SELECT version, status, kind, action, night_approved, night_id "
+            "FROM pending_actions WHERE id=?",
+            (int(action_id),),
+        ).fetchone()
+
+    def pending_row_for_turn(self, action_id: int, turn: int) -> Any:
+        return self._conn.execute(
+            "SELECT id, night_id, status, payload_json FROM pending_actions "
+            "WHERE id=? AND turn=?",
+            (int(action_id), int(turn)),
+        ).fetchone()
+
+    def pending_decision_row(self, action_id: int, turn: int) -> Any:
+        return self._conn.execute(
+            "SELECT night_id, kind, action, minister_name, night_approved, payload_json "
+            "FROM pending_actions WHERE id=? AND turn=? AND status='pending'",
+            (int(action_id), int(turn)),
+        ).fetchone()
+
+    def pending_office_candidate_row(self, candidate_id: int) -> Any:
+        return self._conn.execute(
+            "SELECT id,payload_json,status FROM pending_actions "
+            "WHERE id=? AND kind='office'",
+            (int(candidate_id),),
+        ).fetchone()
+
+    def pending_directive_candidate_row(self, candidate_id: int) -> Any:
+        return self._conn.execute(
+            "SELECT id,payload_json,status,version FROM pending_actions "
+            "WHERE id=? AND kind='directive'",
+            (int(candidate_id),),
+        ).fetchone()
+
+    def find_pending_directive_id(self, turn: int, minister_name: str) -> Any:
+        return self._conn.execute(
+            "SELECT id FROM pending_actions "
+            "WHERE turn=? AND minister_name=? AND kind='directive' AND status='pending'",
+            (int(turn), str(minister_name)),
+        ).fetchone()
+
+    def pending_id_for_committed_directive(self, directive_id: int) -> Any:
+        return self._conn.execute(
+            "SELECT id FROM pending_actions WHERE committed_directive_id=? "
+            "ORDER BY id DESC LIMIT 1",
+            (int(directive_id),),
+        ).fetchone()
+
+    def pending_ids_for_turn(self, turn: int, *, status: str = "pending") -> list[int]:
+        return [
+            int(row["id"])
+            for row in self._conn.execute(
+                "SELECT id FROM pending_actions WHERE turn=? AND status=?",
+                (int(turn), str(status)),
+            ).fetchall()
+        ]
+
+    def night_approved_directive_ids(self, action_ids: Iterable[int]) -> list[int]:
+        ids = sorted({int(i) for i in action_ids})
+        if not ids:
+            return []
+        placeholders = ",".join("?" for _ in ids)
+        rows = self._conn.execute(
+            "SELECT id FROM pending_actions WHERE id IN (" + placeholders + ") "
+            "AND kind='directive' AND action='拟旨' AND status='pending' "
+            "AND night_approved=1 AND night_id>0",
+            ids,
+        ).fetchall()
+        return [int(row["id"]) for row in rows]
+
+    def closed_nights_with_approved_pending(
+        self, turn: int, closed_status: str,
+    ) -> list[Any]:
+        """Cross-entity projection: nights that still hold night-approved pending."""
+        return self._conn.execute(
+            "SELECT DISTINCT n.id FROM audience_nights n "
+            "JOIN pending_actions pa ON pa.night_id=n.id "
+            "WHERE n.turn=? AND n.status=? AND "
+            "pa.status='pending' AND pa.night_approved=1 ORDER BY n.id",
+            (int(turn), str(closed_status)),
+        ).fetchall()
+
+    def list_pending_actions(
+        self, turn: int, status: str = "pending", minister_name: Optional[str] = None,
+    ) -> list[dict[str, object]]:
+        if minister_name is None:
+            rows = self._conn.execute(
+                "SELECT id, turn, kind, action, target_id, minister_name, payload_json, status "
+                "FROM pending_actions WHERE turn = ? AND status = ? ORDER BY id",
+                (int(turn), str(status)),
+            ).fetchall()
+        else:
+            rows = self._conn.execute(
+                "SELECT id, turn, kind, action, target_id, minister_name, payload_json, status "
+                "FROM pending_actions WHERE turn = ? AND status = ? AND minister_name = ? "
+                "ORDER BY id",
+                (int(turn), str(status), str(minister_name)),
+            ).fetchall()
+        return [
+            {
+                "id": int(r["id"]),
+                "turn": int(r["turn"]),
+                "kind": r["kind"],
+                "action": r["action"],
+                "target_id": None if r["target_id"] is None else int(r["target_id"]),
+                "minister_name": r["minister_name"],
+                "payload_json": r["payload_json"],
+                "status": r["status"],
+            }
+            for r in rows
+        ]
+
+    def list_failed_secret_order_actions(
+        self, minister_name: Optional[str] = None,
+    ) -> list[dict[str, object]]:
+        sql = (
+            "SELECT id, turn, kind, action, target_id, minister_name, payload_json, status "
+            "FROM pending_actions WHERE status='failed' AND kind='secret_order'"
+        )
+        params: tuple[object, ...] = ()
+        if minister_name is not None:
+            sql += " AND minister_name=?"
+            params = (str(minister_name),)
+        sql += " ORDER BY turn DESC, id"
+        rows = self._conn.execute(sql, params).fetchall()
+        return [
+            {
+                "id": int(r["id"]),
+                "turn": int(r["turn"]),
+                "kind": r["kind"],
+                "action": r["action"],
+                "target_id": None if r["target_id"] is None else int(r["target_id"]),
+                "minister_name": r["minister_name"],
+                "payload_json": r["payload_json"],
+                "status": r["status"],
+            }
+            for r in rows
+        ]
+
+    def list_night_approved_pending(
+        self, night_id: int, *, kind: Optional[str] = None,
+    ) -> list[dict[str, object]]:
+        if kind is None:
+            rows = self._conn.execute(
+                "SELECT id, turn, kind, action, target_id, minister_name, "
+                "payload_json, status, night_id, night_approved "
+                "FROM pending_actions "
+                "WHERE night_id = ? AND night_approved = 1 AND status = 'pending' "
+                "ORDER BY id",
+                (int(night_id),),
+            ).fetchall()
+        else:
+            rows = self._conn.execute(
+                "SELECT id, turn, kind, action, target_id, minister_name, "
+                "payload_json, status, night_id, night_approved "
+                "FROM pending_actions "
+                "WHERE night_id = ? AND night_approved = 1 AND status = 'pending' "
+                "AND kind = ? ORDER BY id",
+                (int(night_id), str(kind)),
+            ).fetchall()
+        return [
+            {
+                "id": int(r["id"]),
+                "turn": int(r["turn"]),
+                "kind": r["kind"],
+                "action": r["action"],
+                "target_id": r["target_id"],
+                "minister_name": r["minister_name"],
+                "payload_json": r["payload_json"],
+                "status": r["status"],
+                "night_id": int(r["night_id"] or 0),
+                "night_approved": int(r["night_approved"] or 0),
+            }
+            for r in rows
+        ]
+
+    def list_pending_for_translate(
+        self, turn: int, *, night_id: int = 0,
+    ) -> list[Any]:
+        params: list[object] = [int(turn)]
+        sql = (
+            "SELECT id, kind, action, payload_json, night_id, night_approved "
+            "FROM pending_actions WHERE turn=? AND status='pending'"
+        )
+        if int(night_id or 0) > 0:
+            sql += " AND night_id=?"
+            params.append(int(night_id))
+        sql += " ORDER BY id"
+        return self._conn.execute(sql, tuple(params)).fetchall()
+
+    def secret_order_pending_payloads(self) -> list[Any]:
+        return self._conn.execute(
+            "SELECT payload_json FROM pending_actions "
+            "WHERE kind='secret_order' AND status IN ('pending','failed')"
+        ).fetchall()
+
+    def insert_pending_action(
+        self,
+        turn: int,
+        kind: str,
+        action: str,
+        target_id: Optional[int],
+        minister_name: str,
+        payload_json: str,
+        night_id: int,
+    ) -> int:
+        cur = self._conn.execute(
+            """INSERT INTO pending_actions
+               (turn, kind, action, target_id, minister_name, payload_json, status,
+                night_id, night_approved)
+               VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, 0)""",
+            (
+                int(turn), str(kind), str(action),
+                None if target_id is None else int(target_id),
+                str(minister_name or ""),
+                payload_json,
+                int(night_id),
+            ),
+        )
+        return int(cur.lastrowid)
+
+    def set_pending_payload(self, action_id: int, payload_json: str) -> None:
+        self._conn.execute(
+            "UPDATE pending_actions SET payload_json=? WHERE id=?",
+            (payload_json, int(action_id)),
+        )
+
+    def set_pending_payload_clear_approval(
+        self, action_id: int, payload_json: str,
+    ) -> None:
+        self._conn.execute(
+            "UPDATE pending_actions SET payload_json=?, night_approved=0 WHERE id=?",
+            (payload_json, int(action_id)),
+        )
+
+    def set_pending_payload_bump_version(
+        self, action_id: int, payload_json: str,
+    ) -> None:
+        self._conn.execute(
+            "UPDATE pending_actions SET payload_json=?, version=version+1 WHERE id=?",
+            (payload_json, int(action_id)),
+        )
+
+    def rehome_pending_payload(
+        self,
+        action_id: int,
+        payload_json: str,
+        night_id: int,
+        *,
+        bump_version: bool = False,
+    ) -> None:
+        if bump_version:
+            self._conn.execute(
+                "UPDATE pending_actions SET payload_json=?, night_id=?, night_approved=0, "
+                "version=version+1 WHERE id=?",
+                (payload_json, int(night_id), int(action_id)),
+            )
+        else:
+            self._conn.execute(
+                "UPDATE pending_actions SET payload_json=?, night_id=?, night_approved=0 "
+                "WHERE id=?",
+                (payload_json, int(night_id), int(action_id)),
+            )
+
+    def set_pending_status(self, action_id: int, status: str) -> None:
+        self._conn.execute(
+            "UPDATE pending_actions SET status=? WHERE id=?",
+            (str(status), int(action_id)),
+        )
+
+    def set_committed_directive_id(
+        self, action_id: int, directive_id: int,
+    ) -> None:
+        self._conn.execute(
+            "UPDATE pending_actions SET committed_directive_id=? WHERE id=?",
+            (int(directive_id), int(action_id)),
+        )
+
+    def carry_pending_to_turn(self, action_id: int, turn: int) -> None:
+        self._conn.execute(
+            "UPDATE pending_actions "
+            "SET turn=?, night_id=0, night_approved=0 WHERE id=?",
+            (int(turn), int(action_id)),
+        )
+
+    def mark_pending_night_approved(
+        self, action_ids: Iterable[int], *, night_id: Optional[int] = None,
+    ) -> int:
+        ids = [int(i) for i in action_ids]
+        if not ids:
+            return 0
+        placeholders = ",".join("?" for _ in ids)
+        params: list[Any] = list(ids)
+        extra = ""
+        if night_id is not None:
+            extra = " AND night_id = ?"
+            params.append(int(night_id))
+        cur = self._conn.execute(
+            f"UPDATE pending_actions SET night_approved = 1 "
+            f"WHERE id IN ({placeholders}) AND status = 'pending'{extra}",
+            params,
+        )
+        return int(cur.rowcount or 0)
+
+    def hold_over_pending_actions(
+        self,
+        turn: int,
+        minister_name: str,
+        action_ids: Optional[Iterable[int]] = None,
+    ) -> int:
+        params: list[object] = [int(turn), str(minister_name)]
+        where = "turn=? AND minister_name=? AND status='pending'"
+        if action_ids is not None:
+            allowed_ids = [int(action_id) for action_id in action_ids]
+            if not allowed_ids:
+                return 0
+            placeholders = ",".join("?" for _ in allowed_ids)
+            where += f" AND id IN ({placeholders})"
+            params.extend(allowed_ids)
+        cur = self._conn.execute(
+            f"UPDATE pending_actions SET status='held_over', night_approved=0 "
+            f"WHERE {where}",
+            tuple(params),
+        )
+        return int(cur.rowcount or 0)
+
+    def withdraw_pending_action_row(self, action_id: int, turn: int) -> Any:
+        return self._conn.execute(
+            "SELECT id, kind, version FROM pending_actions "
+            "WHERE id=? AND turn=? AND status='pending'",
+            (int(action_id), int(turn)),
+        ).fetchone()
+
+    def delete_pending_if_pending(self, action_id: int, turn: int) -> int:
+        cur = self._conn.execute(
+            "DELETE FROM pending_actions WHERE id=? AND turn=? AND status='pending'",
+            (int(action_id), int(turn)),
+        )
+        return int(cur.rowcount or 0)
+
+    def pending_ids_matching_minister(
+        self,
+        turn: int,
+        minister_name: str,
+        *,
+        kind: Optional[str] = None,
+        kind_filter_exclude: Optional[str] = None,
+        action_ids: Optional[Iterable[int]] = None,
+    ) -> list[int]:
+        params: list[object] = [int(turn), str(minister_name)]
+        where = "turn=? AND minister_name=? AND status='pending'"
+        if action_ids is not None:
+            allowed_ids = [int(action_id) for action_id in action_ids]
+            if not allowed_ids:
+                return []
+            placeholders = ",".join("?" for _ in allowed_ids)
+            where += f" AND id IN ({placeholders})"
+            params.extend(allowed_ids)
+        if kind_filter_exclude is not None:
+            where += " AND kind<>?"
+            params.append(str(kind_filter_exclude))
+        if kind is not None:
+            where += " AND kind=?"
+            params.append(str(kind))
+        return [
+            int(row["id"])
+            for row in self._conn.execute(
+                f"SELECT id FROM pending_actions WHERE {where}",
+                tuple(params),
+            ).fetchall()
+        ]
+
+    def delete_pending_matching_minister(
+        self,
+        turn: int,
+        minister_name: str,
+        *,
+        kind_filter_exclude: Optional[str] = None,
+        action_ids: Optional[Iterable[int]] = None,
+    ) -> int:
+        params: list[object] = [int(turn), str(minister_name)]
+        where = "turn=? AND minister_name=? AND status='pending'"
+        if action_ids is not None:
+            allowed_ids = [int(action_id) for action_id in action_ids]
+            if not allowed_ids:
+                return 0
+            placeholders = ",".join("?" for _ in allowed_ids)
+            where += f" AND id IN ({placeholders})"
+            params.extend(allowed_ids)
+        if kind_filter_exclude is not None:
+            where += " AND kind<>?"
+            params.append(str(kind_filter_exclude))
+        cur = self._conn.execute(
+            f"DELETE FROM pending_actions WHERE {where}",
+            tuple(params),
+        )
+        return int(cur.rowcount or 0)
+
+    def pending_directive_ids_for_turn(self, turn: int) -> list[int]:
+        return [
+            int(row["id"])
+            for row in self._conn.execute(
+                "SELECT id FROM pending_actions "
+                "WHERE turn=? AND kind='directive' AND status='pending'",
+                (int(turn),),
+            ).fetchall()
+        ]
+
+    def delete_pending_directives_for_turn(self, turn: int) -> int:
+        cur = self._conn.execute(
+            "DELETE FROM pending_actions "
+            "WHERE turn=? AND kind='directive' AND status='pending'",
+            (int(turn),),
+        )
+        return int(cur.rowcount or 0)
+
+    def delete_failed_secret_order_intents(self) -> int:
+        cur = self._conn.execute(
+            "DELETE FROM pending_actions WHERE status='failed' AND kind='secret_order'"
+        )
+        return int(cur.rowcount or 0)
+
     def actual_progress_units(self, dossier_id: int) -> float:
         row = self._conn.execute(
             "SELECT COALESCE(SUM(units), 0) AS total FROM dossier_actual_progress "

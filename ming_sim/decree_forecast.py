@@ -164,9 +164,7 @@ def forecast_snapshot(
 
 def _pending_snapshot(session: Any, pending_action_id: int, night_id: int) -> Optional[Dict[str, Any]]:
     db, state = session.db, session.state
-    row = db.conn.execute(
-        "SELECT * FROM pending_actions WHERE id=?", (int(pending_action_id),),
-    ).fetchone()
+    row = db.dossiers.pending_action_row(int(pending_action_id))
     if row is None:
         return None
     pending = dict(row)
@@ -263,10 +261,7 @@ def decree_ref_for_dossier(db: Any, dossier: Dict[str, Any]) -> str:
         return held_dossier_decree_ref(int(dossier["id"]))
     pending_id = int(dossier.get("pending_action_id") or 0)
     if pending_id > 0:
-        row = db.conn.execute(
-            "SELECT version FROM pending_actions WHERE id=?",
-            (pending_id,),
-        ).fetchone()
+        row = db.dossiers.pending_version_row(pending_id)
         version = int(row["version"] or 1) if row is not None else 1
         return pending_action_decree_ref(pending_id, version)
     return held_dossier_decree_ref(int(dossier["id"]))
@@ -354,11 +349,9 @@ def _forecast(
 
         def stage_if_current() -> None:
             if "pending_action_id" in snapshot:
-                row = session.db.conn.execute(
-                    "SELECT status,kind,action,night_approved,night_id,version "
-                    "FROM pending_actions WHERE id=?",
-                    (snapshot["pending_action_id"],),
-                ).fetchone()
+                row = session.db.dossiers.pending_forecast_state_row(
+                    snapshot["pending_action_id"],
+                )
                 if row is None or (
                     row["status"] != "pending"
                     or row["kind"] != "directive"
@@ -456,11 +449,7 @@ def schedule_pending_decree_forecast(
         return False
     action_id = int(pending_action_id)
     nid = int(night_id)
-    row = session.db.conn.execute(
-        "SELECT version, status, kind, action, night_approved, night_id "
-        "FROM pending_actions WHERE id=?",
-        (action_id,),
-    ).fetchone()
+    row = session.db.dossiers.pending_version_forecast_row(action_id)
     if row is None or (
         row["status"] != "pending"
         or row["kind"] != "directive"
@@ -497,9 +486,7 @@ def schedule_restored_decree_forecasts(owner_or_db: Any, pending_action_ids: lis
     db = session.db
     bind_forecast_owner(session)
     for action_id in pending_action_ids:
-        row = db.conn.execute(
-            "SELECT night_id FROM pending_actions WHERE id=?", (int(action_id),),
-        ).fetchone()
+        row = db.dossiers.pending_night_id_row(int(action_id))
         if row is not None and int(row["night_id"] or 0) > 0:
             schedule_pending_decree_forecast(
                 session, int(action_id), night_id=int(row["night_id"]),

@@ -59,21 +59,12 @@ class AudienceTranslateError(RuntimeError):
 def build_pending_summaries(db: Any, turn: int, *, night_id: int = 0) -> List[str]:
     """本夜（或本回合）暂存清单摘要，供转译读。
 
-    直接读表：``list_pending_actions`` 投影不含 night_id / night_approved，
-    转译必须看见本夜归属与应允态，不能靠那条呈现投影。
+    经 DossierStore 读含 night_id / night_approved 的暂存投影；
+    转译必须看见本夜归属与应允态，不能靠 list_pending_actions 呈现投影。
     """
-    if not hasattr(db, "conn"):
+    if not hasattr(db, "dossiers"):
         return []
-    params: list[Any] = [int(turn)]
-    sql = (
-        "SELECT id, kind, action, payload_json, night_id, night_approved "
-        "FROM pending_actions WHERE turn=? AND status='pending'"
-    )
-    if int(night_id or 0) > 0:
-        sql += " AND night_id=?"
-        params.append(int(night_id))
-    sql += " ORDER BY id"
-    rows = db.conn.execute(sql, tuple(params)).fetchall()
+    rows = db.dossiers.list_pending_for_translate(int(turn), night_id=int(night_id or 0))
     out: List[str] = []
     for row in rows:
         payload = load_stored_object(row["payload_json"], label="payload_json")

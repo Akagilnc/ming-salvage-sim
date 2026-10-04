@@ -6464,14 +6464,7 @@ class GameDB:
                 raise ValueError(f"不支持的回滚策略：{strategy}")
         if not restored_directive_ids:
             return []
-        placeholders = ",".join("?" for _ in restored_directive_ids)
-        rows = self.conn.execute(
-            "SELECT id FROM pending_actions WHERE id IN (" + placeholders + ") "
-            "AND kind='directive' AND action='拟旨' AND status='pending' "
-            "AND night_approved=1 AND night_id>0",
-            sorted(restored_directive_ids),
-        ).fetchall()
-        return [int(row["id"]) for row in rows]
+        return self.dossiers.night_approved_directive_ids(restored_directive_ids)
 
     def undo_chat_turn(self, chat_turn_id: int) -> Dict[str, Any]:
         row = self.read_chat_turn(chat_turn_id)
@@ -6526,10 +6519,7 @@ class GameDB:
                 pa_id = before_data.get("id")
             if pa_id is None:
                 continue
-            live = self.conn.execute(
-                "SELECT committed_directive_id FROM pending_actions WHERE id=?",
-                (int(pa_id),),
-            ).fetchone()
+            live = self.dossiers.pending_committed_directive_id_row(int(pa_id))
             if live is not None and int(live["committed_directive_id"] or 0) > 0:
                 did = int(live["committed_directive_id"])
                 if did not in seen_draft_ids:
@@ -11990,20 +11980,13 @@ class GameDB:
         return len(rows)
 
     def pending_action_payload_row(self, action_id: int) -> Any:
-        return self.conn.execute(
-            "SELECT payload_json FROM pending_actions WHERE id=?", (int(action_id),),
-        ).fetchone()
+        return self.dossiers.pending_action_payload_row(action_id)
 
     def _pending_directive_row(self, action_id: int) -> Any:
-        return self.conn.execute(
-            "SELECT id, payload_json FROM pending_actions "
-            "WHERE id=? AND kind='directive' AND status='pending'", (int(action_id),),
-        ).fetchone()
+        return self.dossiers.pending_directive_pending_row(action_id)
 
     def _directive_candidate_version_row(self, action_id: int) -> Any:
-        return self.conn.execute(
-            "SELECT version FROM pending_actions WHERE id=? AND kind='directive'", (int(action_id),),
-        ).fetchone()
+        return self.dossiers.pending_directive_version_row(action_id)
 
     def stage_pending_action(
         self, turn: int, kind: str, action: str, minister_name: str,
@@ -12021,18 +12004,12 @@ class GameDB:
         from ming_sim.audience_night import assert_night_accepts_player_input
         open_n = assert_night_accepts_player_input(self, what="暂存")
         night_id = int(open_n["id"]) if open_n is not None else 0
-        cur = self.conn.execute(
-            """INSERT INTO pending_actions
-               (turn, kind, action, target_id, minister_name, payload_json, status,
-                night_id, night_approved)
-               VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, 0)""",
-            (
-                int(turn), str(kind), str(action),
-                None if target_id is None else int(target_id),
-                str(minister_name or ""),
-                json.dumps(payload_data, ensure_ascii=False),
-                night_id,
-            ),
+        action_id = self.dossiers.insert_pending_action(
+            int(turn), str(kind), str(action),
+            None if target_id is None else int(target_id),
+            str(minister_name or ""),
+            json.dumps(payload_data, ensure_ascii=False),
+            night_id,
         )
         # 与历史 stage 路径一致：非 suspended/atomic 嵌套时提交。
         # 不可用 owns_transaction()——INSERT 已打开隐式事务时它恒 False。
@@ -12041,7 +12018,7 @@ class GameDB:
             and int(getattr(self.conn, "_atomic_depth", 0) or 0) == 0
         ):
             self.conn.commit()
-        return int(cur.lastrowid)
+        return action_id
 
     def mark_pending_night_approved(
         self, action_ids: Iterable[int], *, night_id: Optional[int] = None,
@@ -12071,37 +12048,23 @@ class GameDB:
                 self, int(night_id) if night_id is not None else None,
                 what="应允暂存",
             )
-        ids = [int(i) for i in action_ids]
-        if not ids:
-            return 0
-        placeholders = ",".join("?" for _ in ids)
-        params: List[Any] = list(ids)
-        extra = ""
-        if night_id is not None:
-            extra = " AND night_id = ?"
-            params.append(int(night_id))
         # #1842：背书随转译挂载荷，不再置 late_endorsement_pending。
-        cur = self.conn.execute(
-            f"UPDATE pending_actions SET night_approved = 1 "
-            f"WHERE id IN ({placeholders}) AND status = 'pending'{extra}",
-            params,
+        updated = self.dossiers.mark_pending_night_approved(
+            action_ids, night_id=night_id,
         )
-        if (
+        if updated and (
             not bool(getattr(self.conn, "_commit_suspended", False))
             and int(getattr(self.conn, "_atomic_depth", 0) or 0) == 0
         ):
             self.conn.commit()
-        return int(cur.rowcount or 0)
+        return updated
 
     def attach_pending_action_endorsement(
         self, action_id: int, entry: Mapping[str, object], *, commit: bool = True,
     ) -> None:
         """#1842：把本轮背书挂进暂存载荷 endorsements 列表（不造待背书表）。"""
         aid = int(action_id)
-        row = self.conn.execute(
-            "SELECT payload_json, status FROM pending_actions WHERE id=?",
-            (aid,),
-        ).fetchone()
+        row = self.dossiers.pending_action_payload_status(aid)
         if row is None:
             raise KeyError(f"暂存动作不存在：{aid}")
         if str(row["status"] or "") != "pending":
@@ -12151,9 +12114,8 @@ class GameDB:
             "imperial": imperial, "source_chat_turn_id": source_cid,
         })
         payload["endorsements"] = kept
-        self.conn.execute(
-            "UPDATE pending_actions SET payload_json=? WHERE id=?",
-            (json.dumps(payload, ensure_ascii=False), aid),
+        self.dossiers.set_pending_payload(
+            aid, json.dumps(payload, ensure_ascii=False),
         )
         if commit and (
             not bool(getattr(self.conn, "_commit_suspended", False))
@@ -12200,39 +12162,7 @@ class GameDB:
         self, night_id: int, *, kind: Optional[str] = None,
     ) -> List[Dict[str, object]]:
         """本夜已应允且仍 pending 的暂存（收夜提交真源）。"""
-        if kind is None:
-            rows = self.conn.execute(
-                "SELECT id, turn, kind, action, target_id, minister_name, "
-                "payload_json, status, night_id, night_approved "
-                "FROM pending_actions "
-                "WHERE night_id = ? AND night_approved = 1 AND status = 'pending' "
-                "ORDER BY id",
-                (int(night_id),),
-            ).fetchall()
-        else:
-            rows = self.conn.execute(
-                "SELECT id, turn, kind, action, target_id, minister_name, "
-                "payload_json, status, night_id, night_approved "
-                "FROM pending_actions "
-                "WHERE night_id = ? AND night_approved = 1 AND status = 'pending' "
-                "AND kind = ? ORDER BY id",
-                (int(night_id), str(kind)),
-            ).fetchall()
-        return [
-            {
-                "id": int(r["id"]),
-                "turn": int(r["turn"]),
-                "kind": r["kind"],
-                "action": r["action"],
-                "target_id": r["target_id"],
-                "minister_name": r["minister_name"],
-                "payload_json": r["payload_json"],
-                "status": r["status"],
-                "night_id": int(r["night_id"] or 0),
-                "night_approved": int(r["night_approved"] or 0),
-            }
-            for r in rows
-        ]
+        return self.dossiers.list_night_approved_pending(night_id, kind=kind)
 
     def upsert_pending_directive(
         self, turn: int, minister_name: str, payload: Dict[str, object],
@@ -12242,11 +12172,7 @@ class GameDB:
         返回行 id。"""
         from ming_sim.audience_night import assert_night_accepts_player_input
         assert_night_accepts_player_input(self, what="暂存")
-        row = self.conn.execute(
-            "SELECT id FROM pending_actions "
-            "WHERE turn=? AND minister_name=? AND kind='directive' AND status='pending'",
-            (int(turn), str(minister_name)),
-        ).fetchone()
+        row = self.dossiers.find_pending_directive_id(int(turn), str(minister_name))
         if row is not None:
             # #498：同回合可跨两夜（一月多夜）。旧夜遗留的 pending directive 被本夜复用更新时，
             # 必须把归属原子迁到当前开着的夜并清 night_approved，否则本夜应允的
@@ -12256,11 +12182,11 @@ class GameDB:
             merged = self._merge_directive_payload(
                 existing_payload["payload_json"] if existing_payload else "{}", payload or {})
             self._discard_pending_decree_forecast(int(row["id"]))
-            self.conn.execute(
-                "UPDATE pending_actions SET payload_json=?, night_id=?, night_approved=0, "
-                "version=version+1 WHERE id=?",
-                (json.dumps(merged, ensure_ascii=False),
-                 self._current_open_night_id(), int(row["id"])),
+            self.dossiers.rehome_pending_payload(
+                int(row["id"]),
+                json.dumps(merged, ensure_ascii=False),
+                self._current_open_night_id(),
+                bump_version=True,
             )
             self.conn.commit()
             return int(row["id"])
@@ -12290,20 +12216,16 @@ class GameDB:
         """
         from ming_sim.audience_night import assert_night_accepts_player_input
         assert_night_accepts_player_input(self, what="任免路径应答")
-        row = self.conn.execute(
-            "SELECT id,payload_json,status FROM pending_actions "
-            "WHERE id=? AND kind='office'",
-            (int(candidate_id),),
-        ).fetchone()
+        row = self.dossiers.pending_office_candidate_row(int(candidate_id))
         if row is None:
             return 0
         if row["status"] != "pending":
             raise ValueError("已成案任免不得改路径")
         merged = self._merge_underscore_control_keys(row["payload_json"], payload)
-        self.conn.execute(
-            "UPDATE pending_actions SET payload_json=?, night_id=?, night_approved=0 WHERE id=?",
-            (json.dumps(merged, ensure_ascii=False),
-             self._current_open_night_id(), int(candidate_id)),
+        self.dossiers.rehome_pending_payload(
+            int(candidate_id),
+            json.dumps(merged, ensure_ascii=False),
+            self._current_open_night_id(),
         )
         if (
             not bool(getattr(self.conn, "_commit_suspended", False))
@@ -12323,22 +12245,18 @@ class GameDB:
         #612：player-facing draft mutation 统一走 assert_night_accepts_player_input，CLOSING 拒。"""
         from ming_sim.audience_night import assert_night_accepts_player_input
         assert_night_accepts_player_input(self, what="改草")
-        row = self.conn.execute(
-            "SELECT id,payload_json,status,version FROM pending_actions "
-            "WHERE id=? AND kind='directive'",
-            (int(candidate_id),),
-        ).fetchone()
+        row = self.dossiers.pending_directive_candidate_row(int(candidate_id))
         if row is None:
             return 0
         if row["status"] != "pending":
             raise ValueError("已成案旨意不得改草")
         merged = self._merge_directive_payload(row["payload_json"], payload)
         self._discard_pending_decree_forecast(int(row["id"]), int(row["version"] or 1))
-        self.conn.execute(
-            "UPDATE pending_actions SET payload_json=?, night_id=?, night_approved=0, "
-            "version=version+1 WHERE id=?",
-            (json.dumps(merged, ensure_ascii=False),
-             self._current_open_night_id(), int(candidate_id)),
+        self.dossiers.rehome_pending_payload(
+            int(candidate_id),
+            json.dumps(merged, ensure_ascii=False),
+            self._current_open_night_id(),
+            bump_version=True,
         )
         self.conn.commit()
         return int(candidate_id)
@@ -12348,10 +12266,7 @@ class GameDB:
             pending_id = int(target_id)
         except (TypeError, ValueError):
             return
-        row = self.conn.execute(
-            "SELECT kind, version FROM pending_actions WHERE id=?",
-            (pending_id,),
-        ).fetchone()
+        row = self.dossiers.pending_kind_version_row(pending_id)
         if row is None or str(row["kind"] or "") != "directive":
             return
         self._discard_pending_decree_forecast(pending_id, int(row["version"] or 1))
@@ -12452,9 +12367,8 @@ class GameDB:
         if "_needs_clarification" not in payload:
             return int(candidate_id)
         payload.pop("_needs_clarification", None)
-        self.conn.execute(
-            "UPDATE pending_actions SET payload_json=? WHERE id=?",
-            (json.dumps(payload, ensure_ascii=False), int(candidate_id)),
+        self.dossiers.set_pending_payload(
+            int(candidate_id), json.dumps(payload, ensure_ascii=False),
         )
         self.conn.commit()
         return int(candidate_id)
@@ -12584,9 +12498,8 @@ class GameDB:
             return 0
         payload = load_stored_object(row["payload_json"], label="payload_json")
         payload["_needs_clarification"] = True
-        self.conn.execute(
-            "UPDATE pending_actions SET payload_json=? WHERE id=?",
-            (json.dumps(payload, ensure_ascii=False), int(candidate_id)),
+        self.dossiers.set_pending_payload(
+            int(candidate_id), json.dumps(payload, ensure_ascii=False),
         )
         self.conn.commit()
         return int(candidate_id)
@@ -12596,58 +12509,14 @@ class GameDB:
     ) -> List[Dict[str, object]]:
         """读本回合待确认动作(默认 pending),按 id 序(=操作发生序)。
         minister_name 非空时只取该召对对象的暂存(对话确认按当前大臣过滤,不波及他人)。"""
-        if minister_name is None:
-            rows = self.conn.execute(
-                "SELECT id, turn, kind, action, target_id, minister_name, payload_json, status "
-                "FROM pending_actions WHERE turn = ? AND status = ? ORDER BY id",
-                (int(turn), str(status)),
-            ).fetchall()
-        else:
-            rows = self.conn.execute(
-                "SELECT id, turn, kind, action, target_id, minister_name, payload_json, status "
-                "FROM pending_actions WHERE turn = ? AND status = ? AND minister_name = ? ORDER BY id",
-                (int(turn), str(status), str(minister_name)),
-            ).fetchall()
-        return [
-            {
-                "id": int(r["id"]),
-                "turn": int(r["turn"]),
-                "kind": r["kind"],
-                "action": r["action"],
-                "target_id": None if r["target_id"] is None else int(r["target_id"]),
-                "minister_name": r["minister_name"],
-                "payload_json": r["payload_json"],
-                "status": r["status"],
-            }
-            for r in rows
-        ]
+        return self.dossiers.list_pending_actions(
+            turn, status=status, minister_name=minister_name,
+        )
 
     def list_failed_secret_order_actions(
         self, minister_name: Optional[str] = None,
     ) -> List[Dict[str, object]]:
-        sql = (
-            "SELECT id, turn, kind, action, target_id, minister_name, payload_json, status "
-            "FROM pending_actions WHERE status='failed' AND kind='secret_order'"
-        )
-        params: tuple[object, ...] = ()
-        if minister_name is not None:
-            sql += " AND minister_name=?"
-            params = (str(minister_name),)
-        sql += " ORDER BY turn DESC, id"
-        rows = self.conn.execute(sql, params).fetchall()
-        return [
-            {
-                "id": int(r["id"]),
-                "turn": int(r["turn"]),
-                "kind": r["kind"],
-                "action": r["action"],
-                "target_id": None if r["target_id"] is None else int(r["target_id"]),
-                "minister_name": r["minister_name"],
-                "payload_json": r["payload_json"],
-                "status": r["status"],
-            }
-            for r in rows
-        ]
+        return self.dossiers.list_failed_secret_order_actions(minister_name)
 
     def _prepare_pending_directive(
         self, state: GameState, pa: Dict[str, object], *, content=None,
@@ -12753,10 +12622,7 @@ class GameDB:
                 if classification == "invalid":
                     cm = atomic(self) if owns_transaction else contextlib.nullcontext()
                     with cm:
-                        self.conn.execute(
-                            "UPDATE pending_actions SET status='failed' WHERE id=?",
-                            (int(pa["id"]),),
-                        )
+                        self.dossiers.set_pending_status(int(pa["id"]), "failed")
                     continue
                 payload = dict(prepared["payload"])
                 payload["_canonical_pending_directive"] = True
@@ -12797,15 +12663,13 @@ class GameDB:
                         state, pa, payload, content=content,
                         rejection_collector=rejection_collector)
                     if ok:
-                        self.conn.execute(
-                            "UPDATE pending_actions SET status='committed' WHERE id=?", (int(pa["id"]),))
+                        self.dossiers.set_pending_status(int(pa["id"]), "committed")
                     else:
                         self.conn.execute(f"ROLLBACK TO {savepoint}")
                         restore_office_memory()
                         # 落不了的(目标已非 active、未知动作、坏 payload)标 failed,不留 pending——
                         # 否则回合推进后成旧回合不可见死行,永不再处理(ship-pre CMR codex)。
-                        self.conn.execute(
-                            "UPDATE pending_actions SET status='failed' WHERE id=?", (int(pa["id"]),))
+                        self.dossiers.set_pending_status(int(pa["id"]), "failed")
                 except Exception as exc:
                     self.conn.execute(f"ROLLBACK TO {savepoint}")
                     restore_office_memory()
@@ -12820,8 +12684,7 @@ class GameDB:
                         )
                     tlog(f"[pending_actions] 落库失败 id={pa['id']} {pa['kind']}/{pa['action']}：{exc}")
                     ok = False
-                    self.conn.execute(
-                        "UPDATE pending_actions SET status='failed' WHERE id=?", (int(pa["id"]),))
+                    self.dossiers.set_pending_status(int(pa["id"]), "failed")
                 finally:
                     self.conn.execute(f"RELEASE {savepoint}")
                 if rejection_collector is not None:
@@ -12893,18 +12756,12 @@ class GameDB:
                         state, pa, payload_for_apply, content=content,
                         rejection_collector=rejection_collector)
                     if ok:
-                        self.conn.execute(
-                            "UPDATE pending_actions SET status='committed' WHERE id=?",
-                            (int(pa["id"]),),
-                        )
+                        self.dossiers.set_pending_status(int(pa["id"]), "committed")
                         result = {"id": pa["id"], "kind": pa["kind"],
                                   "action": pa["action"], "target_id": pa["target_id"]}
                     else:
                         self.conn.execute(f"ROLLBACK TO {savepoint}")
-                        self.conn.execute(
-                            "UPDATE pending_actions SET status='failed' WHERE id=?",
-                            (int(pa["id"]),),
-                        )
+                        self.dossiers.set_pending_status(int(pa["id"]), "failed")
                 except Exception as exc:
                     # #654 r3-C.2 路1：directive 特路与通用分支同款——回滚后标 failed，不崩结算
                     self.conn.execute(f"ROLLBACK TO {savepoint}")
@@ -12912,10 +12769,7 @@ class GameDB:
                     from ming_sim.applier import RejectionCollectorRequired
                     if isinstance(exc, RejectionCollectorRequired):
                         raise
-                    self.conn.execute(
-                        "UPDATE pending_actions SET status='failed' WHERE id=?",
-                        (int(pa["id"]),),
-                    )
+                    self.dossiers.set_pending_status(int(pa["id"]), "failed")
                     tlog(
                         f"[pending_actions] 落库失败标 failed id={pa['id']} "
                         f"{pa['kind']}/{pa['action']}：{exc}"
@@ -13078,12 +12932,9 @@ class GameDB:
                 "tightness": max(0, int(result["old_due"]) - int(result["due_turn"])),
                 "reason": str(result.get("reason") or ""),
             })
-            self.conn.execute(
-                "UPDATE pending_actions SET payload_json=? WHERE id=?",
-                (
-                    json.dumps(merged, ensure_ascii=False, separators=(",", ":")),
-                    int(pa["id"]),
-                ),
+            self.dossiers.set_pending_payload(
+                int(pa["id"]),
+                json.dumps(merged, ensure_ascii=False, separators=(",", ":")),
             )
             return True
         if pa["kind"] == "directive" and pa["action"] == "拟旨":
@@ -13109,10 +12960,7 @@ class GameDB:
             did = int(cur.lastrowid)
             # 回填本暂存产生的 draft 行 id，供 undo_chat_turn 精确删除（BUG 3）；turn_directives
             # 行时序晚于 chat 快照、不在 rollback_items，需此 id 才能只删本轮自产的草案。
-            self.conn.execute(
-                "UPDATE pending_actions SET committed_directive_id=? WHERE id=?",
-                (int(did), int(pa["id"])),
-            )
+            self.dossiers.set_committed_directive_id(int(pa["id"]), int(did))
             # pending 只是皇帝核定前的候选，不是 ADR 0051 的成案点；默认同意进入
             # draft 时则已越过最终提交边界，应当立即取得案卷身份。
             # #658：与 free-form / confirm 共吃 _ensure_directive_dossier（含御笔强推）。
@@ -13438,27 +13286,20 @@ class GameDB:
             or int(getattr(self.conn, "_atomic_depth", 0) or 0) > 0
             or self.conn.in_transaction
         )
-        row = self.conn.execute(
-            "SELECT id, kind, version FROM pending_actions "
-            "WHERE id=? AND turn=? AND status='pending'",
-            (int(action_id), int(turn)),
-        ).fetchone()
+        row = self.dossiers.withdraw_pending_action_row(int(action_id), int(turn))
         if row is None:
             return False
         if str(row["kind"] or "") == "directive":
             self._discard_pending_decree_forecast(
                 int(action_id), int(row["version"] or 1),
             )
-        cur = self.conn.execute(
-            "DELETE FROM pending_actions WHERE id=? AND turn=? AND status='pending'",
-            (int(action_id), int(turn)),
-        )
-        if cur.rowcount > 0 and str(row["kind"] or "") == "office":
+        deleted = self.dossiers.delete_pending_if_pending(int(action_id), int(turn))
+        if deleted > 0 and str(row["kind"] or "") == "office":
             from ming_sim.audience_night import discard_inactive_office_summon
             discard_inactive_office_summon(self, int(action_id))
         if owns_transaction:
             self.conn.commit()
-        return cur.rowcount > 0
+        return deleted > 0
 
     def hold_over_pending_actions(
         self, turn: int, minister_name: str,
@@ -13472,23 +13313,12 @@ class GameDB:
             or int(getattr(self.conn, "_atomic_depth", 0) or 0) > 0
             or self.conn.in_transaction
         )
-        params: List[object] = [int(turn), str(minister_name)]
-        where = "turn=? AND minister_name=? AND status='pending'"
-        if action_ids is not None:
-            allowed_ids = [int(action_id) for action_id in action_ids]
-            if not allowed_ids:
-                return 0
-            placeholders = ",".join("?" for _ in allowed_ids)
-            where += f" AND id IN ({placeholders})"
-            params.extend(allowed_ids)
-        cur = self.conn.execute(
-            f"UPDATE pending_actions SET status='held_over', night_approved=0 "
-            f"WHERE {where}",
-            tuple(params),
+        updated = self.dossiers.hold_over_pending_actions(
+            int(turn), str(minister_name), action_ids,
         )
-        if owns_transaction:
+        if owns_transaction and updated:
             self.conn.commit()
-        return int(cur.rowcount or 0)
+        return updated
 
     def drop_pending_actions_for_minister(
         self, turn: int, minister_name: str, kind_filter_exclude: Optional[str] = None,
@@ -13505,37 +13335,19 @@ class GameDB:
             or int(getattr(self.conn, "_atomic_depth", 0) or 0) > 0
             or self.conn.in_transaction
         )
-        params: List[object] = [int(turn), str(minister_name)]
-        where = "turn=? AND minister_name=? AND status='pending'"
-        if action_ids is not None:
-            allowed_ids = [int(action_id) for action_id in action_ids]
-            if not allowed_ids:
-                return 0
-            placeholders = ",".join("?" for _ in allowed_ids)
-            where += f" AND id IN ({placeholders})"
-            params.extend(allowed_ids)
-        if kind_filter_exclude is not None:
-            where += " AND kind<>?"
-            params.append(str(kind_filter_exclude))
-        office_ids = [
-            int(row["id"])
-            for row in self.conn.execute(
-                f"SELECT id FROM pending_actions WHERE {where} AND kind='office'",
-                tuple(params),
-            ).fetchall()
-        ]
-        directive_ids = [
-            int(row["id"])
-            for row in self.conn.execute(
-                f"SELECT id FROM pending_actions WHERE {where} AND kind='directive'",
-                tuple(params),
-            ).fetchall()
-        ]
+        office_ids = self.dossiers.pending_ids_matching_minister(
+            int(turn), str(minister_name), kind="office",
+            kind_filter_exclude=kind_filter_exclude, action_ids=action_ids,
+        )
+        directive_ids = self.dossiers.pending_ids_matching_minister(
+            int(turn), str(minister_name), kind="directive",
+            kind_filter_exclude=kind_filter_exclude, action_ids=action_ids,
+        )
         for pending_id in directive_ids:
             self._discard_deleted_directive_forecast(pending_id)
-        cur = self.conn.execute(
-            f"DELETE FROM pending_actions WHERE {where}",
-            tuple(params),
+        deleted = self.dossiers.delete_pending_matching_minister(
+            int(turn), str(minister_name),
+            kind_filter_exclude=kind_filter_exclude, action_ids=action_ids,
         )
         if office_ids:
             from ming_sim.audience_night import discard_inactive_office_summon
@@ -13543,24 +13355,16 @@ class GameDB:
                 discard_inactive_office_summon(self, pending_id)
         if owns_transaction:
             self.conn.commit()
-        return cur.rowcount
+        return deleted
 
     def discard_pending_directives(self, turn: int) -> int:
         """退朝无诏时丢弃本回合尚未落库的对话式拟旨暂存（kind=directive, status=pending）。
         须在 commit_pending_actions 之前调用，防止 commit 把草案插成孤儿 turn_directives
         行——退朝路不颁诏，孤儿 draft 永不经 extractor、不可见（codex r5 F2）。
         返回删除条数。"""
-        rows = self.conn.execute(
-            "SELECT id FROM pending_actions WHERE turn=? AND kind='directive' AND status='pending'",
-            (int(turn),),
-        ).fetchall()
-        for row in rows:
-            self._discard_deleted_directive_forecast(int(row["id"]))
-        cur = self.conn.execute(
-            "DELETE FROM pending_actions WHERE turn=? AND kind='directive' AND status='pending'",
-            (int(turn),),
-        )
-        return cur.rowcount
+        for pending_id in self.dossiers.pending_directive_ids_for_turn(int(turn)):
+            self._discard_deleted_directive_forecast(pending_id)
+        return self.dossiers.delete_pending_directives_for_turn(int(turn))
 
     def discard_failed_secret_order_intents(self) -> int:
         """过回合前丢弃既有 failed secret-order intents（CONTEXT：未处理失败下达在过回合丢弃）。
@@ -13569,10 +13373,7 @@ class GameDB:
         再提交本轮 pending，使同次 commit 新产生的 failure 仍保留、可恢复。
         返回删除条数；不拥有 commit（嵌在 pre_settle owning transaction 内）。
         """
-        cur = self.conn.execute(
-            "DELETE FROM pending_actions WHERE status='failed' AND kind='secret_order'"
-        )
-        return cur.rowcount
+        return self.dossiers.delete_failed_secret_order_intents()
 
     def save_resolve_context(
         self, turn: int, decree_text: str,
@@ -13810,14 +13611,7 @@ class GameDB:
         if not target_kind or not target_id:
             raise ValueError("普通旨意缺少受控目标，拒绝成案")
         executor_kind, executor_id = self._directive_executor(action_type, structured)
-        pending = self.conn.execute(
-            """
-            SELECT id FROM pending_actions
-            WHERE committed_directive_id=?
-            ORDER BY id DESC LIMIT 1
-            """,
-            (int(directive_id),),
-        ).fetchone()
+        pending = self.dossiers.pending_id_for_committed_directive(int(directive_id))
         return self.create_decree_dossiers(
             state,
             action_type=action_type,
@@ -15138,10 +14932,7 @@ class GameDB:
         """
         out: Dict[int, bool] = {}
         brief_rows = self.character_knowledge.secret_brief_pins()
-        pending_rows = self.conn.execute(
-            "SELECT payload_json FROM pending_actions "
-            "WHERE kind='secret_order' AND status IN ('pending','failed')"
-        ).fetchall()
+        pending_rows = self.dossiers.secret_order_pending_payloads()
         for row in brief_rows:
             for mid in self._brief_origin_chat_message_ids(int(row["order_id"])):
                 out[mid] = True

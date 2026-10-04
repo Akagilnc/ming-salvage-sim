@@ -802,10 +802,8 @@ def _carry_pending_clarification_actions(
     for pending_action in db.list_pending_actions(before_turn):
         prepared = db._prepare_pending_directive(state, pending_action, content=content)
         if prepared["classification"] == "needs_clarification":
-            db.conn.execute(
-                "UPDATE pending_actions "
-                "SET turn=?, night_id=0, night_approved=0 WHERE id=?",
-                (int(state.turn), int(pending_action["id"])),
+            db.dossiers.carry_pending_to_turn(
+                int(pending_action["id"]), int(state.turn),
             )
 
 

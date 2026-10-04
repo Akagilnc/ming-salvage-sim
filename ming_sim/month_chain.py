@@ -136,9 +136,7 @@ def _decree_ref_is_secret(db: Any, decree_ref: str) -> bool:
     raw = str(decree_ref)[len(prefix):].split(":", 1)[0]
     if not raw.isdigit() or not hasattr(db, "conn"):
         return False
-    row = db.conn.execute(
-        "SELECT kind FROM pending_actions WHERE id=?", (int(raw),),
-    ).fetchone()
+    row = db.dossiers.pending_kind_row(int(raw))
     return row is not None and str(row["kind"] or "") == "secret_order"
 
 

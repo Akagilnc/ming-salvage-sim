@@ -1101,13 +1101,9 @@ def commit_late_night_approved(
     llm_config: Any = None, write_gate: Any = None,
 ) -> None:
     """过月 join 后沿收夜提交、明发入口补完迟到应允（#1842：背书随载荷，不另补批）。"""
-    nights = db.conn.execute(
-        "SELECT DISTINCT n.id FROM audience_nights n "
-        "JOIN pending_actions pa ON pa.night_id=n.id "
-        "WHERE n.turn=? AND n.status=? AND "
-        "pa.status='pending' AND pa.night_approved=1 ORDER BY n.id",
-        (int(state.turn), NIGHT_STATUS_CLOSED),
-    ).fetchall()
+    nights = db.dossiers.closed_nights_with_approved_pending(
+        int(state.turn), NIGHT_STATUS_CLOSED,
+    )
     if not nights:
         return
     gate = _gate_cm(write_gate)
