@@ -151,4 +151,7 @@ MING_SIM_PI_BIN=/usr/bin/false
 
 ## 7. Commit
 
-（提交后回填 SHA）
+- SHA：`39c7c9309a27b8a46e1f98ec95982613c899ae7d`
+- 短哈希：`39c7c9309`
+- 标题：`ak-roles: fix(#1900): retire J18 escort-feed residue and restore J6 contract discrimination`
+- `git diff --stat bb448254c HEAD`：10 files, +225/−348（含本回执）
