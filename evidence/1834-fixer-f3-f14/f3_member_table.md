@@ -12,7 +12,7 @@
 | `OLD_KEEP_BIDIR` 仅 `STILL_PRESENT` + 复制 `old_basis` | 形状启发式语义复核 + **旗标子集人工**按真正输入/固定界面/错误码/透明输送/生成散文判断；不以旧 basis 自动确认 |
 
 旧窄枚举脚本保留为历史，**不得再作范围主张真源**：见 `enum_predicate_correction.txt`。
-临时脚本（非生产机制）：`tmp/1834-fixer-f3-f14-enum-expand/`。
+临时工作副本：`tmp/1834-fixer-f3-f14-enum-expand/`（gitignore）；冻结复现脚本：`evidence/1834-fixer-f3-f14/scripts/`（非生产机制）。
 
 ## 扫描规模（真实机械计数）
 
