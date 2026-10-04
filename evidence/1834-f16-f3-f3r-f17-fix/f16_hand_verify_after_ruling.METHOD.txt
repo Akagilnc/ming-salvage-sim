@@ -1,0 +1,23 @@
+METHOD (continued-ruling F16-R; replaces revoked template table)
+
+1) Enum commands (full rewrite-shape scan, production only):
+   rg -n --glob 'ming_sim/**/*.py' --glob 'web_app.py' --glob 'web/src/**/*.{ts,tsx}' \
+     '\.strip\(\)|\.trim\(\)|\[:\d+\]|re\.sub\('
+   → enum_f16_rewrite_shapes_rerun.txt (HIT_COUNT in enum_f16_rerun_meta.txt)
+
+2) Narrow to free-prose-ish field assignment / .get().strip forms:
+   → enum_f16_freeprose_assign_strip.txt
+   → enum_f16_freeprose_get_strip.txt
+
+3) Disposition authority = f16_hand_verify_after_ruling.tsv
+   - Every FIX/KEEP row opened at the cited line and judged by whether the
+     field enters durable write or material supply as free prose.
+   - Same-role sites may share one written basis only when the read role is
+     actually the same (e.g. origin_ref machine-key parse); field names are
+     not template-substituted into a stock sentence.
+   - Prior f16_hand_member_table.tsv is REVOKED (see
+     f16_hand_member_table.REVOKED_TEMPLATE.txt).
+
+4) Class boundary (judge F16): delete free-prose rewrite on supply/write;
+   machine-key normalize and local emptiness checks remain legal.
+   Emptiness: strip on a copy; stored/supplied value stays raw.

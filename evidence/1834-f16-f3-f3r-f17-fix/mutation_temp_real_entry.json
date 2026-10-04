@@ -3,18 +3,20 @@
     "entry_points": [
       "ming_sim.staged_commitment.normalize_commitment_stages",
       "ming_sim.settlement_payload.parse_decision_blocks",
-      "GameDB.apply_region_deltas → region_logs.reason (seeded opening DB via tests.conftest._seed_opening_db)"
+      "ming_sim.db._seed_guilt_storage_value",
+      "ming_sim.covert_progress.decide_secret_order_settlement",
+      "ming_sim.cli_backend._split_audience_context"
     ],
-    "old_logic_restore": "In-process monkeypatch replaces normalize_commitment_stages / parse_decision_blocks with local old_* that .strip() free-prose fields; then restores original symbols. No permanent proof script retained.",
-    "old_normalize_excerpt": "criterion/origin_context = str(...).strip() before append",
-    "old_parse_excerpt": "title/context/label/hint = str(...).strip() after <<DECISION>> json.loads"
+    "old_logic_restore": "REVOKED (continued-ruling F17-R). Prior claim that in-process old_* monkeypatch restored production strip logic is withdrawn: those old_* were newly written stand-ins, not git show ee3b5da31:<path> production files. No old/new side-by-side this round.",
+    "observation_scope": "current-side only: real entry calls on HEAD after F16-R fixes; does not prove old production red."
   },
   "staged_current_preserves": true,
-  "staged_old_preserves": false,
   "decision_current_preserves": true,
-  "decision_old_preserves": false,
-  "region_log_reason_full": true,
-  "region_log_reason_length": 53,
-  "region_log_reason_suffix": "禁再向百姓加派。",
-  "verdict": true
+  "crime_current_preserves": true,
+  "secret_origin_current_preserves": true,
+  "split_audience_current_preserves": true,
+  "origin_whitespace_fallback_ok": true,
+  "verdict_current_side_only": true,
+  "verdict_old_logic_restored": false,
+  "note": "Honest: proves current preserve behavior only. Does not claim class F17 mutation gate closed via old-logic restore."
 }

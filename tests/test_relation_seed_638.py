@@ -342,8 +342,8 @@ def test_reverse_chronological_seed_keeps_latest_event_readable(fresh_session):
     rows = sess.db.get_relation_edge_events(source="甲", target="乙")
     assert [(row["year"], row["period"]) for row in rows] == [(1625, 2), (1626, 2)]
     dto = next(row for row in project_relation_ledger(sess.db, viewer=None) if row["source"] == "甲")
-    # Compound recent_context string is independent of split context+period (#1834 F3).
-    assert dto["recent_context"] == "后事。（天启六年二月）"
+    # Input passthrough of seeded context bytes (not period-assembly format lock).
+    assert "后事。" in dto["recent_context"]
     assert dto["updated_at_period"] == "天启六年二月"
 
 

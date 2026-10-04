@@ -197,7 +197,9 @@ def _seed_guilt_storage_value(value: object) -> str:
     if isinstance(value, Mapping):
         if not value:
             return ""
-        crime = str(value.get("crime") or "").strip()
+        # Free prose crime: preserve raw on durable write (#1834 F16 / ADR 0142).
+        # severity is a machine enum key (无/轻/中/重); strip is normalization.
+        crime = str(value.get("crime") or "")
         severity = str(value.get("severity") or "无").strip()
         return safe_json_dumps({"crime": crime, "severity": severity}, ensure_ascii=False)
     return str(value or "")

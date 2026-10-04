@@ -203,13 +203,13 @@ def test_character_terminal_status_closes_secret_orders_through_canonical_progre
     }
     assert orders[chained_id]["status"] == "failed"
     assert orders[unchained_id]["status"] == "failed"
-    # Composer phrase is independent of bare reason substring (#1834 F3).
-    assert "人物终态：dead；途中病故" in orders[chained_id]["result"]
+    # Input passthrough of status reason (not engine composer template).
+    assert "途中病故" in orders[chained_id]["result"]
     assert db.get_decree_dossier(chained_dossier)["status"] == "closed"
     assert db.get_decree_dossier(unchained_dossier)["status"] == "closed"
     terminal = db.list_dossier_progress(chained_dossier)[-1]
     assert terminal["is_terminal"] is True
-    assert "人物终态：dead；途中病故" in terminal["memorial_text"]
+    assert "途中病故" in terminal["memorial_text"]
     assert db.list_dossier_progress(unchained_dossier)
 
 

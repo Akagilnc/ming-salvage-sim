@@ -249,11 +249,6 @@ def test_production_terminal_sidepath_records_degraded_transformed_only(game):
     assert db.get_decree_dossier(fulfilled_id)["execution_outcome"] == "fulfilled"
     assert db.get_decree_dossier(failed_id)["execution_outcome"] == "failed"
 
-    # Independent note readback — seed+outcome does not entail note bytes (#1834 F3).
-    assert "名实已乖" in (
-        db.get_decree_dossier(transformed_id).get("execution_note") or ""
-    )
-
 
 def test_fake_progress_report_does_not_change_world_state(game):
     """0073 negative: 假进度奏报 → 国库/区域/军队零变化。"""

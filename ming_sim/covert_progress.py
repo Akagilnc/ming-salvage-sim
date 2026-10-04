@@ -589,7 +589,8 @@ def decide_secret_order_settlement(review_input: Mapping[str, object]) -> Dict[s
     actual = float(review_input.get("actual_units") or 0.0)
     target = float(review_input.get("target_units") or 0.0)
     has_reports = bool(review_input.get("has_reports"))
-    origin = str(review_input.get("origin_context") or "").strip()
+    # Free prose origin_context: preserve raw; strip only emptiness (#1834 F16).
+    origin = str(review_input.get("origin_context") or "")
 
     delivered = target > 0.0 and actual + 1e-9 >= target
     if delivered:
@@ -602,7 +603,7 @@ def decide_secret_order_settlement(review_input: Mapping[str, object]) -> Dict[s
         note = f"machine_settle gap Σ={actual:g}/{target:g}"
         if has_reports:
             note = f"{note};表报有之、不翻实账"
-    if origin:
+    if origin.strip():
         note = f"{note} ({origin})"
     return {
         "status": status,

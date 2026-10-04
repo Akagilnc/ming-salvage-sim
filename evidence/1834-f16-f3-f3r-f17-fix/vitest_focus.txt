@@ -16,6 +16,5 @@ Not implemented: navigation to another Document
 
  Test Files  7 passed (7)
       Tests  190 passed (190)
-   Start at  07:52:44
-   Duration  4.49s (transform 1.75s, setup 0ms, import 2.42s, tests 3.92s, environment 5.12s)
-
+   Start at  08:07:43
+   Duration  5.18s (transform 2.02s, setup 0ms, import 2.81s, tests 4.46s, environment 5.75s)

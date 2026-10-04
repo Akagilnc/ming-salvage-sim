@@ -1,0 +1,6 @@
+REVOKED as authoritative evidence (continued-ruling F16-R).
+Reason: large KEEP rows used identical template basis strings with field-name
+substitution ("strip/trim not rewriting…", "machine-key/enum…") without
+line-context read of persistence/supply role. Replaced by
+f16_hand_verify_after_ruling.tsv + METHOD.
+Original file retained as historical artifact only: f16_hand_member_table.tsv

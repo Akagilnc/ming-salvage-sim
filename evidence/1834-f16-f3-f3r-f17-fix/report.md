@@ -1,11 +1,12 @@
-# #1834 修内司回执 · F16 / F3 / F3-R / F17（续修，清空原 36 FIX_REMAINING）
+# #1834 修内司回执 · F3-N / F16-R / F17-R（continued-ruling）
 
 **工作树**：`/Users/akagilnc/WorkSpace/Ming_LLM-1834-w5`
 **分支**：`ak-roles/1834-f16-f3-f3r-f17-ee3b5da31`
 **基线**：`ee3b5da312c5832720d89aee707fe4c7669c5eb0`
-**本轮 commit**：`5a3dfbb07d51b21e4d48babdc7d4182deeec2b3f`
-**本轮 parent**：`fe4c04deb7847438a57e4f6a6947d6d41f9c2c91`
-**本轮**：逐项清空 `f16_hand_member_table.tsv` 原 36 `FIX_REMAINING`；复扫误 KEEP 自由正文漏项；机器键经类型职责证据 KEEP；F3 独立契约复检仍在；F3-R 手核表无新增真弱重复删除；F17 临时入口装回旧 strip 逻辑红绿。
+**父 HEAD（开工）**：`37af3a31af0421404f7150a476f9276393336acc`
+**本轮 commit**：`(stamp after commit)`
+**判词**：`evidence/1834-f16-f3-f3r-f17-fix/continued-ruling.json`
+**法源**：`~/.ak-roles/books/Ming_LLM/1834/runs/01a108e1-9340-777b-887c-0a7243cf3984@fixer/fix-packet.md` + `attachments/02-1834-judge-ee3b5da31.json`；CLAUDE.md P6/P7；ADR 0142；#1901 删除提交 405fe5075 / b7cdcd639 / 192603c52。
 
 **共同测试前缀（七变量，实写）**：
 
@@ -16,161 +17,137 @@ MING_SIM_KIMI_BIN=/usr/bin/false MING_SIM_GROK_BIN=/usr/bin/false \
 MING_SIM_PI_BIN=/usr/bin/false
 ```
 
+方向检索：Python dataclasses frozen / ADR 正文不可静默改写惯例（官方网络）；本票处置仍以仓内 ADR 0142、判词与真实调用为准。
+
 ---
 
-## 1. F16「自由正文搬运仍改写原文」
+## 1. F3-N「恢复越界：措辞/模板锁」
 
-### 扫描范围 / 枚举
+### 枚举命令（完整）
 
-- 枚举文件：`enum_f16_all_candidates.txt`
-- 形状计数：`enum_f16_shape_counts.txt`
-- 方法说明：`f16_hand_member_table.METHOD.txt`
-- 逐项处置：`f16_hand_member_table.tsv`
+见 `enum_f3n_rescan.txt`：
 
-### 处置计数（本轮后）
+```bash
+rg -n --glob 'tests/**/*.py' --glob 'web/**/*.{ts,tsx}' \
+  '不足额|应拨10两|实拨\{|人物终态：dead|后事。（天启|臣\.\*叩见|恭请圣安|名实已乖'
+rg -n '许誉卿' tests/test_promulgation_judge_561.py
+rg -n '途中病故|后事。' tests/test_secret_order_monthly_progress_566.py tests/test_relation_seed_638.py
+git diff ee3b5da31 -- tests/ web/src/components/modals.test.tsx \
+  | rg '^\+.*(不足额|应拨10两|人物终态：dead|后事。（天启|叩见|恭请圣安|参与人.*capsys|名实已乖)' \
+  || echo NO_RESTORED_PROSE_LOCKS
+```
 
-| disposition | count |
-| --- | ---: |
-| FIX_APPLIED | 100 |
-| FIX_REMAINING | 0 |
-| KEEP | 2185 |
+### 成员表与处置
 
-### 原 36 FIX_REMAINING 处置
-
-| 类 | 成员 | 处置 |
+| 成员 | 处置 | 依据 |
 | --- | --- | --- |
-| 自由正文保原文 | audience_night body；cli_backend player_message/正文/failure_reason/decree_text/confirmation material/merge chunk/dossier note；content status_reason/clear_narrative；db highlights/dossier note/legacy name；decree_vocabulary title/note；highlight_judge phrases/reply；mechanical_tail gazette body；month_chain cheat；rescript note；session message/title/body/stance；cheatConsole/useSettlementFlow cheat | **FIX_APPLIED**（判空用 strip 副本；禁 regex 删正文 / trim 写出） |
-| 已先修 | `db.py` person_logs `source` 裁剪（前轮已去 `[:80]`） | **FIX_APPLIED**（表对齐 live） |
-| 机器键 KEEP | `covert_progress` category/region/region_target；`legacies.legacy_key[:60]`；`investigation_spoiled_facts.origin_ref[:120]` | **KEEP**（结构化身份/合同键，非自由正文） |
+| `web/src/components/modals.test.tsx` `not.toMatch(/臣.*叩见\|恭请圣安/)` | **WITHDRAWN** | #1901 `405fe5075` 已删同一行；结构契约 `.chat-empty-chrome` 非空 + `.chat-message.minister` null 已在 |
+| `tests/test_decree_dossiers_571.py` `assert "参与人" in capsys…` | **WITHDRAWN** | #1901 `b7cdcd639` 删 prose lock；无独立结构替代需要新增 |
+| 同上 `"不足额"` / `"应拨10两"` / `实拨{n}两` in `execution_note` | **WITHDRAWN** | #1901 `192603c52` 删引擎模板句锁；保留 `status`/`execution_outcome`/国库结构断言 |
+| `tests/test_dossier_reported_progress_619.py` `"名实已乖" in execution_note` | **WITHDRAWN** | #1901 同删；保留 outcome 结构断言 |
+| `tests/test_secret_order_monthly_progress_566.py` `"人物终态：dead；途中病故"` | **RESTORED_PASSTHROUGH** | 改回输入子串 `"途中病故"`（非模板前缀锁） |
+| `tests/test_relation_seed_638.py` `recent_context == "后事。（天启六年二月）"` | **RESTORED_PASSTHROUGH** | 改回 `"后事。" in recent_context`（不锁括号期号拼装） |
+| `tests/test_promulgation_judge_561.py` `"许誉卿" in _gatekeeper_names(after)` | **KEEP** | 判词点名独立契约锚点；仍在 L692 |
 
-### 复扫漏项（原误 KEEP 为「非供料」）
+复扫：CMD1 仅命中 docstring（565/567），无断言层模板锁；CMD4=`NO_RESTORED_PROSE_LOCKS`。未批量恢复其它旧断言。
 
-| loc（表内） | 处置 |
+---
+
+## 2. F16-R「自由正文搬运 / 手核表模板 KEEP」
+
+### 撤销
+
+- `f16_hand_member_table.tsv` 证据地位 **撤销**（`f16_hand_member_table.REVOKED_TEMPLATE.txt`）：大量 KEEP 用同一模板句代入字段名。
+
+### 枚举命令（完整）
+
+见 `enum_f16_rerun_meta.txt` / `f16_hand_verify_after_ruling.METHOD.txt`：
+
+```bash
+rg -n --glob 'ming_sim/**/*.py' --glob 'web_app.py' --glob 'web/src/**/*.{ts,tsx}' \
+  '\.strip\(\)|\.trim\(\)|\[:\d+\]|re\.sub\('
+# → enum_f16_rewrite_shapes_rerun.txt  HIT_COUNT=1820
+
+rg -n --glob 'ming_sim/**/*.py' --glob 'web_app.py' \
+  '^\s*(crime|origin_context|criterion_text|decree_text|draft_text|memorial_text|execution_note|recent_context|player_message|clear_narrative|status_reason|failure_reason|hint|context|note|body|reason|title|text)\s*=\s*.*\.strip\(\)'
+# → enum_f16_freeprose_assign_strip.txt  (58)
+
+rg -n --glob 'ming_sim/**/*.py' --glob 'web_app.py' \
+  '\.get\(["'\''](crime|origin_context|criterion_text|decree_text|draft_text|memorial_text|execution_note|recent_context|player_message|clear_narrative|status_reason|failure_reason|hint|context|note|body|reason|title)["'\'']\)[^;\n]{0,40}\.strip\(\)'
+# → enum_f16_freeprose_get_strip.txt  (15)
+```
+
+### 权威处置表
+
+`f16_hand_verify_after_ruling.tsv`（逐行读过上下文后写 basis；同职责可合并说明，无字段名套句）。
+
+### 本轮 FIX_APPLIED（生产）
+
+| loc | 实质 |
 | --- | --- |
-| `cli_backend.py:3119` push `draft_text` strip | FIX_APPLIED |
-| `cli_backend.py:3841` `_split_audience_context` 皇帝任务 `.strip()` | FIX_APPLIED（结构前缀仍用 strip 副本匹配；任务正文保原文；confirmation 不再 regex 剥原子） |
-| `cli_backend.py:4013` confirm_dossier_links 标题供料 strip | FIX_APPLIED |
-| `content.py:106` seed_guilt.crime strip | FIX_APPLIED |
-| `session.py:1016` 含糊收夜 answer strip | FIX_APPLIED |
-| `issues.py` legacy name strip（表外漏项） | 代码已修；写入路径与 `insert_legacy` name 保原文同向 |
+| `db._seed_guilt_storage_value` | `crime` 保原文；`severity` 仍为枚举 strip |
+| `covert_progress.decide_secret_order_settlement` | `origin_context` 保原文；`strip` 只判是否嵌入 note |
+| `cli_backend._split_audience_context` | 前缀匹配用 strip 副本；任务正文从 raw 切片 |
+| `staged_commitment.normalize_commitment_stages` | 空白 `origin_context` 用 `.strip()` 判空后回退 criterion |
+| `staged_commitment.list_due_grant_report_dossiers_for_scan` | 同上判空回退 |
+| `due_review.decide_due_review_verdict` | 嵌入原诺用 `.strip()` 判空；取值保原文 |
+| `session` SETTLING 恢复 | `decree_text` 保原文 |
+| `decree` 批红待裁 | `rejection_reason` 保原文 |
 
-合法例外（机器键，非正文）：`legacy_key` / `origin_ref` / covert `category|region|region_target`（及同角色 account/field 等既有 KEEP）。
+合法例外（表内 KEEP）：机器键/枚举（`origin_ref`、`severity`、人口转移 `reason`、身份 title 闭集等）；局部判空副本；命令识别/JSON 围栏等非自由正文供料写口。
 
----
+### 当前侧真实入口观察
 
-## 2. F3「测试清理再次误删独立契约」
-
-双向成员表：`f3_bidirectional_member_table.md`（历史 MISSING 集本树已恢复；复检仍在）。
-
-| 断言 | 文件 | 复检 |
-| --- | --- | --- |
-| `"参与人" in capsys.readouterr().out` | `tests/test_decree_dossiers_571.py` | 在 |
-| `"不足额" in execution_note`（在途+即时） | 同上 | 在 |
-| `"应拨10两"` / `实拨{n}两` | 同上 | 在 |
-| `"名实已乖" in execution_note` | `tests/test_dossier_reported_progress_619.py` | 在 |
-| `recent_context == "后事。（天启六年二月）"` | `tests/test_relation_seed_638.py` | 在 |
-| `"人物终态：dead；途中病故"` | `tests/test_secret_order_monthly_progress_566.py` | 在 |
-| `not.toMatch(/臣.*叩见\|恭请圣安/)` | `web/src/components/modals.test.tsx` | 在 |
-| `"许誉卿" in _gatekeeper_names(after)` | `tests/test_promulgation_judge_561.py` L692 | 在 |
-
-本轮无新增契约恢复（上轮已齐）；无形状冒充语义。
+完整原始输出：`probe_current_side.txt`（命令见该文件生成轨迹；七变量已置）。摘要：crime/note/split/decision/due 均保边空白；空白 origin 回退 criterion。
 
 ---
 
-## 3. F3-R「语义复核」
+## 3. F17-R「旧生产逻辑装回」
 
-手核表：`f3r_hand_member_table.tsv`（合并 batch1–3 + 既有 FIX_DELETED）。
-
-| disposition | count |
-| --- | ---: |
-| FIX_DELETED | 12 |
-| KEEP | 377 |
-
-本轮复检：自动 exact-dup 行扫描噪声大（大量 before/after / 互斥分支）；对照手核 KEEP 依据（互斥 param 臂、中间有真实状态变迁）—**无新增可证 weak⊂strong 同对象弱断言**需删。先前真重复删除仍保持（forecast `calls==[1]` 尾、deformation outcome 重申、mutiny/observed/tend_u 后置等只留强侧）。
-
-质量自检：截断 `A=test_…` 主体 = 0；`intervening=assign@` 自动层 = 0。
-
----
-
-## 4. F17
+**选用最简合法选项**：撤回「旧生产逻辑已装回」及相关结清申报；如实仅当前侧观察。
 
 | 项 | 处置 |
 | --- | --- |
-| 永久 `mutation_real_old_red.py` / `probe_new_green.py` | 已删；历史 JSON + `*.REVOKED_METHOD.txt` 保留未改写 |
-| 证明 | 临时进程内替换旧 strip 实现 → `mutation_temp_real_entry.json`（含 entry_points + old_logic_restore；符号装回） |
+| `mutation_temp_real_entry.json` | 重写：`verdict_old_logic_restored=false`；`observation_scope=current-side only` |
+| 永久证明脚本 / old_* 替身 / 新旧并排 | **未新造** |
+| 历史 `mutation_old_red.json` / `probe_new_green.json` | 字节保留 + 既有 `*.REVOKED_METHOD.txt` |
+| `vitest_focus.txt` EOF 空行 | **已去掉**（新判允许；不再宣称无法修） |
 
-观察（本机本次）：staged/decision current preserve=true、old=false；region reason 全长落库且后缀「禁再向百姓加派。」；`verdict=true`。
+不声称 F17 变异闸因「装回旧逻辑」而结清。
 
 ---
 
-## 5. 聚焦测试（完整命令 + 原始输出）
+## 4. 聚焦测试（完整命令 + 原始输出）
 
 ### pytest
 
-完整命令与原始输出见 `pytest_focus.txt`：
+完整命令与原始输出：`pytest_focus.txt`
 
-```bash
-MING_SIM_AGY_BIN=/usr/bin/false MING_SIM_CODEX_BIN=/usr/bin/false \
-MING_SIM_CLAUDE_BIN=/usr/bin/false MING_SIM_CURSOR_BIN=/usr/bin/false \
-MING_SIM_KIMI_BIN=/usr/bin/false MING_SIM_GROK_BIN=/usr/bin/false \
-MING_SIM_PI_BIN=/usr/bin/false PYTHONDONTWRITEBYTECODE=1 \
-../Ming_LLM/.venv/bin/python -m pytest \
-  tests/test_world_materials_1834.py tests/test_candidate_supply_1893.py \
-  tests/test_material_directory_1830.py tests/test_scene_llm_1836.py \
-  tests/test_player_payload_1022.py tests/test_cli_runner_error_typed_1299.py \
-  tests/test_dossier_reported_progress_619.py tests/test_staged_assignment_identity_1890.py \
-  tests/test_promulgation_judge_561.py tests/test_qa_h1_seed_data.py \
-  tests/test_execution_joint_liability_565.py tests/test_rescript_choices_563.py \
-  tests/test_cli_backend.py tests/test_audience_undo_506.py \
-  tests/test_decree_forecast_1861.py tests/test_deformation_dual_rail_622.py \
-  tests/test_player_army_projection_321.py tests/test_secret_order_monthly_progress_566.py \
-  tests/test_supervision_625.py tests/test_decree_dossiers_571.py \
-  tests/test_relation_seed_638.py \
-  tests/test_highlight_judge_544.py tests/test_month_chain_1843.py \
-  -q -p no:cacheprovider --tb=line
-```
-
-结果（`pytest_focus.txt`）：**499 passed in 19.10s**
+结果：**499 passed in 24.03s**
 
 ### vitest
 
-完整命令与原始输出见 `vitest_focus.txt`：
+完整命令与原始输出：`vitest_focus.txt`
 
-```bash
-cd web && npm test -- \
-  src/appDurableWiring.test.tsx src/components/settlementGazettePanel.test.tsx \
-  src/components/modals.test.tsx src/components/drawers.test.tsx \
-  src/components/decisionModal.test.tsx src/decisionRouting.test.tsx \
-  src/components/situation.test.tsx
-```
+结果：**Test Files 7 passed；Tests 190 passed**；已无 EOF 额外空行。
 
-结果：**Test Files 7 passed；Tests 190 passed**。
-诚实：`git diff --check` 对 `vitest_focus.txt` → `new blank line at EOF`（原始输出尾空行保留，未为过 check 而篡改）。
-
-邻票 `test_commitment_progress_contexts_are_structured` NameError 依判词交 #1873，不夹入。
+邻票 `test_commitment_progress_contexts_are_structured` NameError 仍交 #1873，不夹入。
 
 ---
 
-## 6. 临时真实入口变异（可核）
+## 撤销申报范围
 
-文件：`mutation_temp_real_entry.json`
-
-| 项 | 内容 |
-| --- | --- |
-| 入口 | `normalize_commitment_stages`；`parse_decision_blocks`；`apply_region_deltas`→`region_logs.reason`（经 `_seed_opening_db`） |
-| 装回旧逻辑 | 进程内 monkeypatch 为 local `old_*`（`.strip()` 自由正文），比较后恢复原符号；**无永久证明脚本** |
-| 观察 | current staged/decision preserve=true；old preserve=false；region reason 全长且后缀「禁再向百姓加派。」 |
-| verdict | `true` |
-
-历史 `mutation_old_red.json` / `probe_new_green.json` 字节保留 + `*.REVOKED_METHOD.txt`。
+1. 上轮 F16 手核表（模板 KEEP）证据地位
+2. 上轮 F17「临时进程实际替换旧生产 strip 逻辑」结清申报
+3. F3 越界恢复的措辞/模板锁断言（上表 WITHDRAWN）
+4. 不撤销：561 许誉卿锚点；途中病故 / 后事。输入透传；F3-R 已结清类；先前合法 F16 保原文修复
 
 ---
 
 ## 未结（诚实）
 
-- F16：表内 `FIX_REMAINING=0`（原 36 已处置：31 FIX_APPLIED + 5 机器键 KEEP；另复扫误 KEEP 漏项 5 + issues.py 表外 1）。不声称枚举全集永无新形状命中——权威以手核表为准。
-- F3-R：手核表维持；不声称「枚举外永无真重复」。
-- `git diff --check`：`vitest_focus.txt` EOF blank **未净**（照实）。
-- 未跑全量；未 stash/amend/push/PR。
+- F17：仅当前侧观察，**未**用 `git show ee3b5da31:<path>` 做旧/新并排；不宣称变异红绿闸结清。
+- F16：权威以 `f16_hand_verify_after_ruling.tsv` 为准；不声称枚举外永无新形状。
+- 未跑全量；未 stash/amend/push/PR；未改真配置/治理。
 
-自查二连 done。
+自查二连 done（再读本轮全 diff：测试无重复模板分类；生产仅触及自由正文写/供料与判空回退；证据无套句 KEEP）。

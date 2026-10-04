@@ -673,7 +673,8 @@ def _rescript_decisions(
             "event_id": f"dossier:{dossier_id}",
             "title": "批红待裁",
             "context": str(dossier.get("decree_text") or ""),
-            "rejection_reason": str(verdict.get("reason") or "").strip(),
+            # Free prose rejection reason: preserve raw (#1834 F16 / ADR 0142).
+            "rejection_reason": str(verdict.get("reason") or ""),
             "opposition": opposition,
             # hint（非 note）：前端 isPendingDecision / DecisionOption 认 hint；
             # dossier_id/dossier_decision 是批红能力字段，点选必须原样回传（#1490）。

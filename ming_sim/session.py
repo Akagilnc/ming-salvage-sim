@@ -1867,8 +1867,9 @@ class GameSession:
             ctx = self.db.get_resolve_context(self.state.turn)
             if ctx is not None:
                 recovered_source = _provenance_from_stored(ctx.get("source"))
-                stored = str(ctx.get("decree_text") or "").strip()
-                if stored:
+                # Free prose decree_text: preserve raw; strip only emptiness.
+                stored = str(ctx.get("decree_text") or "")
+                if stored.strip():
                     self.last_decree = stored
                     decree = stored
         # #1234/#1235：点击受理即独立提交月初快照（不进 pre_settle 事务）。

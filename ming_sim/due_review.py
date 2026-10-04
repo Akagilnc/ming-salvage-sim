@@ -396,7 +396,8 @@ def decide_due_review_verdict(review_input: Dict[str, object]) -> Dict[str, obje
 
     if mid:
         note = f"中段复核：{criterion}仍在办理"
-        if origin:
+        # Emptiness on strip copy; note embeds origin raw bytes (#1834 F16).
+        if origin.strip():
             note = f"中段复核（{origin}）：{criterion}仍在办理"
         return {
             "outcome": "executing",
@@ -420,7 +421,7 @@ def decide_due_review_verdict(review_input: Dict[str, object]) -> Dict[str, obje
     else:
         outcome = "failed"
         note = f"到期复核：{criterion}届期无实绩"
-    if origin:
+    if origin.strip():
         note = f"{note}（原诺：{origin}）"
     return {
         "outcome": outcome,

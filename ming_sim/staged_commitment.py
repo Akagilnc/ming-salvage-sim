@@ -73,7 +73,8 @@ def normalize_commitment_stages(raw: object) -> List[Dict[str, object]]:
             criterion = origin_context
         if not criterion.strip():
             continue
-        if not origin_context:
+        # Emptiness on strip copy; fallback value keeps criterion raw bytes.
+        if not origin_context.strip():
             origin_context = criterion
         out.append({
             "stage_idx": stage_idx,
@@ -248,7 +249,8 @@ def list_due_grant_report_dossiers_for_scan(
         if not criterion.strip():
             criterion = title if title.strip() else "依限奏报"
         origin = str(row["decree_text"] or payload.get("text") or "")
-        if not origin:
+        # Emptiness on strip copy; fallback keeps criterion raw (#1834 F16).
+        if not origin.strip():
             origin = criterion
         due.append({
             "commitment_ref": 0,

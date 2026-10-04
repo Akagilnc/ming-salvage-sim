@@ -3841,17 +3841,23 @@ def _split_audience_context(context: str) -> Tuple[str, str]:
     """
     entries: List[Tuple[str, str]] = []  # ("e"=皇帝任务行,)
     for raw in (context or "").splitlines():
-        # Structural prefix match on stripped copy; payload preserve-raw.
-        line = raw.strip()
-        if not line:
+        # Structural prefix match on stripped copy; payload from raw line
+        # (preserve edge whitespace after the role marker) (#1834 F16).
+        stripped = raw.strip()
+        if not stripped:
             continue
-        if line.startswith("【本轮确认】"):
-            material = _secret_confirmation_material(line.removeprefix("【本轮确认】"))
+        if stripped.startswith("【本轮确认】"):
+            marker = "【本轮确认】"
+            pos = raw.find(marker)
+            payload = raw[pos + len(marker):] if pos >= 0 else stripped[len(marker):]
+            material = _secret_confirmation_material(payload)
             if material.strip():
                 entries.append(("e", material))
             continue
-        if line.startswith("皇帝："):
-            task = line[len("皇帝："):]
+        if stripped.startswith("皇帝："):
+            marker = "皇帝："
+            pos = raw.find(marker)
+            task = raw[pos + len(marker):] if pos >= 0 else stripped[len(marker):]
             if task.strip():
                 entries.append(("e", task))
         # 大臣行：不入 content 拼装（extractor 读完整上下文自行抽「内容」）

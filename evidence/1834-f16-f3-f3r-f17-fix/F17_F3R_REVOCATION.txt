@@ -14,10 +14,19 @@ REVOKED (04b62b858-era false hand table — replaced, not rewritten as authority
 - enum_f16_supply_path_after.tsv as authoritative post-fix inventory
   → see enum_f16_supply_path_after.REVOKED_STALE.txt
 
+REVOKED (continued-ruling F16-R / F17-R):
+- f16_hand_member_table.tsv — template KEEP basis strings (field-name substitution)
+  → see f16_hand_member_table.REVOKED_TEMPLATE.txt
+- mutation_temp_real_entry.json prior claim "old production strip logic restored"
+  via in-process old_* stand-ins (not git show ee3b5da31 production files)
+  → replaced JSON states observation_scope=current-side only;
+     verdict_old_logic_restored=false
+
 Current F3-R evidence = enum_f3r_*_all_candidates.txt (enumeration only)
   + f3r_semantic_batch{1,2,3}*.tsv (per-batch hand reads)
-  + f3r_hand_member_table.tsv (merged hand disposition).
-Current F16 evidence = enum_f16_all_candidates.txt + f16_hand_member_table.tsv
-  + f16_hand_member_table.METHOD.txt (honest unfinished = FIX_REMAINING).
-F17 proof = temporary in-process old-logic replace in mutation_temp_real_entry.json
-  (entry_points + old_logic_restore); no permanent proof scripts.
+  + f3r_hand_member_table.tsv (merged hand disposition; F3-R class already cleared).
+Current F16 evidence = enum_f16_rewrite_shapes_rerun.txt
+  + enum_f16_freeprose_assign_strip.txt + enum_f16_freeprose_get_strip.txt
+  + f16_hand_verify_after_ruling.tsv + f16_hand_verify_after_ruling.METHOD.txt
+Current F17 = current-side real-entry observation only
+  (mutation_temp_real_entry.json); no old-logic restore claim; no permanent proof scripts.
