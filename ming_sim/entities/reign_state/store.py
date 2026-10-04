@@ -278,6 +278,13 @@ class ReignStateStore:
     def read_month_ledger(self, params: Any = ()) -> Any:
         return self._conn.execute('SELECT account, delta, category, reason, origin_ref FROM economy_ledger WHERE turn=? ORDER BY id', params)
 
+    def read_budget_ledger_rows(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            'SELECT id, account, delta, balance_after, category, reason '
+            'FROM economy_ledger WHERE turn = ? ORDER BY id',
+            params,
+        ).fetchall()
+
     def read_household_ledger(self, params: Any = ()) -> Any:
         return self._conn.execute("SELECT e.year,e.period,e.delta,e.balance_after,e.category,e.reason,\n                      e.origin_ref,e.dossier_id\n               FROM economy_ledger e\n               WHERE e.account='国库' ORDER BY e.id DESC", params).fetchall()
 
@@ -945,4 +952,3 @@ class ReignStateStore:
             ),
         )
         return int(cur.lastrowid)
-

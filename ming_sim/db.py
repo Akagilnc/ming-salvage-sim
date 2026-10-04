@@ -4275,27 +4275,6 @@ class GameDB:
             out.extend(other)
         return "\n".join(out)
 
-    def turn_army_summary(self, turn: int, limit: int = 10) -> str:
-        rows = ArmyStore(self.conn).read_turn_army_summary((turn, limit))
-        if not rows:
-            return f"本{TURN_UNIT}军队盘面无明确变化。"
-        parts = []
-        for row in rows:
-            label = ARMY_FIELD_LABELS.get(str(row["field"]), str(row["field"]))
-            delta = row["delta"]
-            if delta is None:
-                parts.append(f"{row['army_name']}{label}改为{row['new_value']}（{row['reason']}）")
-            else:
-                delta_num = float(delta)
-                sign = "+" if delta_num > 0 else ""
-                if row["field"] == "manpower":
-                    parts.append(f"{row['army_name']}{label}{sign}{int(delta_num)}人（{row['reason']}）")
-                else:
-                    # #1383：非整数 delta（省源欠饷等）走万两收整单真源，杜绝 :g IEEE 残渣
-                    delta_text = format_wanliang_amount(delta_num)
-                    parts.append(f"{row['army_name']}{label}{sign}{delta_text}（{row['reason']}）")
-        return "；".join(parts) + "。"
-
     def apply_army_deltas(
         self,
         state: GameState,

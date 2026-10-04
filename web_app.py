@@ -1338,11 +1338,7 @@ class WebGame:
         # summary 不含官职（卡片/详情已单独显 office），避免重复
         summary = f"{character.faction}一系，行事{character.style}。"
         power_id = self.db.resolve_power_id(character)  # 权威解析单一真源（#125）
-        loc_row = self.db.conn.execute(
-            "SELECT location, transit_to "
-            "FROM characters WHERE name=?",
-            (character.name,),
-        ).fetchone()
+        loc_row = self.db.characters.read_admit_audience((character.name,))
         location = str(loc_row["location"] or "") if loc_row is not None else ""
         transit_to = str(loc_row["transit_to"] or "") if loc_row is not None else ""
         regions = getattr(self.content, "regions", None) or {}
@@ -1677,11 +1673,7 @@ class WebGame:
             "期初",
         }
         cur_turn = int(self.state.turn)
-        rows = self.db.conn.execute(
-            "SELECT id, account, delta, balance_after, category, reason "
-            "FROM economy_ledger WHERE turn = ? ORDER BY id",
-            (cur_turn - 1,),
-        ).fetchall()
+        rows = self.db.reign.read_budget_ledger_rows((cur_turn - 1,))
         for name, account in budget.items():
             movements = [
                 {
@@ -2001,10 +1993,7 @@ class WebGame:
         """持闸调用；以落库相位分流转译补偿与回话后尾随恢复。"""
         if not chat_turn_id or not hasattr(self.db, "conn"):
             return False
-        row = self.db.conn.execute(
-            "SELECT status, minister_message_id, extract_status FROM chat_turns WHERE id = ?",
-            (chat_turn_id,),
-        ).fetchone()
+        row = self.db.reign.read_chat_turn(chat_turn_id)
         if not row or row["status"] != "active" or not row["minister_message_id"]:
             return False
         from ming_sim.audience_night import write_audience_error_pack
@@ -2039,9 +2028,10 @@ class WebGame:
         if not chat_turn_id:
             return
         self._record_chat_rollback_items(chat_turn_id, before_snapshot)
-        row = self.db.conn.execute(
-            "SELECT user_message_id FROM chat_turns WHERE id = ?", (chat_turn_id,),
-        ).fetchone() if hasattr(self.db, "conn") else None
+        row = (
+            self.db.reign.chat_turn_user_message_id(chat_turn_id)
+            if hasattr(self.db, "reign") else None
+        )
         if row is not None and row["user_message_id"]:
             restored_ids = self.db.restore_interrupted_after_failed_retry(chat_turn_id)
             from ming_sim.decree_forecast import schedule_restored_decree_forecasts
@@ -4307,12 +4297,12 @@ def _main_db_campaign_id() -> str:
     if not os.path.isfile(db_path):
         return ""
     try:
+        from ming_sim.entities.reign_state.store import ReignStateStore
         conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
         try:
-            row = conn.execute(
-                "SELECT value FROM kv_store WHERE key='campaign_id'"
-            ).fetchone()
-            return str(row[0]).strip() if row and row[0] else ""
+            value = ReignStateStore(conn).kv_get("campaign_id")
+            return str(value).strip() if value else ""
         finally:
             conn.close()
     except (OSError, sqlite3.Error):
