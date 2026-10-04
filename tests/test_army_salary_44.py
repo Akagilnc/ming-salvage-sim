@@ -166,5 +166,3 @@ def test_auto_pay_strips_allowed_army_ids_before_filtering(game):
     row = _army_row(db, aid)
     assert spent > 0
     assert row["arrears"] < 10
-
-

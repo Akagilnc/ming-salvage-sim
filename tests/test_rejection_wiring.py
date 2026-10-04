@@ -553,5 +553,3 @@ def test_inertia_power_move_backlash_rejection_lands_in_reports(game, monkeypatc
         assert rows[0]["category"] == "hallucinated_id"
     finally:
         ch.power_id, ch.office, ch.office_type = old_power, old_office, old_office_type
-
-

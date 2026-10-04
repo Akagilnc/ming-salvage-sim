@@ -1,1 +1,17 @@
+# Full pre2 tests inventory (large; not copied into git)
+# Absolute path at generation time:
 /tmp/1843-f2-r12/pre2-all-tests-inventory.tsv
+# Observed size at generation: 4588 lines incl. header (all_test_functions=2865)
+
+# Reproduce from committed script + commands:
+#   cp evidence/1843-w5-fixer-closure_enum.py.txt /tmp/1843-f2-r12/closure_enum.py
+#   cp evidence/1843-w5-fixer-retired-cleaned.txt /tmp/1843-f2-r12/retired-cleaned.txt
+#   MING_SIM_AGY_BIN=/usr/bin/false MING_SIM_CODEX_BIN=/usr/bin/false \
+#   MING_SIM_CLAUDE_BIN=/usr/bin/false MING_SIM_CURSOR_BIN=/usr/bin/false \
+#   MING_SIM_KIMI_BIN=/usr/bin/false MING_SIM_GROK_BIN=/usr/bin/false \
+#   MING_SIM_PI_BIN=/usr/bin/false \
+#   /Users/akagilnc/WorkSpace/Ming_LLM/.venv/bin/python /tmp/1843-f2-r12/closure_enum.py \
+#     /Users/akagilnc/WorkSpace/Ming_LLM-1843-w5 /tmp/1843-f2-r12 pre2 \
+#     /tmp/1843-f2-r12/retired-cleaned.txt
+# Output: /tmp/1843-f2-r12/pre2-all-tests-inventory.tsv
+# See also: evidence/1843-w5-fixer-enum-commands.txt

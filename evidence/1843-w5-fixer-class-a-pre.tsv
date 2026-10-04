@@ -1,94 +1,94 @@
 class	member	kind	disposition	reason	prod_n	test_n	prod_sites	test_sites	extra
-F2-R11-1	ming_sim/cli_backend.py::_backfill_healed_participant_refs	prod_migrate_backfill_purge	CANDIDATE	生产侧 migrate/backfill/purge 定义；须按消费链判定旧档专用 vs 现役接缝	1	0	ming_sim/cli_backend.py:2637
-F2-R11-1	ming_sim/db.py::_backfill_bandit_power_split	prod_migrate_backfill_purge	CANDIDATE	生产侧 migrate/backfill/purge 定义；须按消费链判定旧档专用 vs 现役接缝	1	0	ming_sim/db.py:2362
-F2-R11-1	ming_sim/db.py::_backfill_event_triggers_from_event_pool_issues	prod_migrate_backfill_purge	CANDIDATE	生产侧 migrate/backfill/purge 定义；须按消费链判定旧档专用 vs 现役接缝	1	0	ming_sim/db.py:2382
-F2-R11-1	ming_sim/db.py::_backfill_person_core_character_static_fields	prod_migrate_backfill_purge	CANDIDATE	生产侧 migrate/backfill/purge 定义；须按消费链判定旧档专用 vs 现役接缝	1	0	ming_sim/db.py:2360
-F2-R11-1	ming_sim/db.py::_backfill_proposed_appointment_break_ranks	prod_migrate_backfill_purge	CANDIDATE	生产侧 migrate/backfill/purge 定义；须按消费链判定旧档专用 vs 现役接缝	1	0	ming_sim/db.py:2496
-F2-R11-1	ming_sim/db.py::_backfill_salary_rate	prod_migrate_backfill_purge	CANDIDATE	生产侧 migrate/backfill/purge 定义；须按消费链判定旧档专用 vs 现役接缝	1	3	ming_sim/db.py:2312	tests/test_army_salary_44.py:101;tests/test_army_salary_44.py:119;tests/test_army_salary_44.py:140
-F2-R11-1	ming_sim/db.py::_known_opening_gazette_seed_text	prod_migrate_backfill_purge	CANDIDATE	生产侧 migrate/backfill/purge 定义；须按消费链判定旧档专用 vs 现役接缝	1	0	ming_sim/db.py:5640
-F2-R11-1	ming_sim/db.py::_migrate_arrears_unit_to_silver	prod_migrate_backfill_purge	CANDIDATE	生产侧 migrate/backfill/purge 定义；须按消费链判定旧档专用 vs 现役接缝	2	0	ming_sim/db.py:4022;ming_sim/db.py:2319
-F2-R11-1	ming_sim/db.py::_migrate_building_logs_to_durable_audit	prod_migrate_backfill_purge	CANDIDATE	生产侧 migrate/backfill/purge 定义；须按消费链判定旧档专用 vs 现役接缝	1	0	ming_sim/db.py:2278
-F2-R11-1	ming_sim/db.py::_migrate_character_identity_seed	prod_migrate_backfill_purge	CANDIDATE	生产侧 migrate/backfill/purge 定义；须按消费链判定旧档专用 vs 现役接缝	1	0	ming_sim/db.py:2361
-F2-R11-1	ming_sim/db.py::_migrate_character_location_aliases	prod_migrate_backfill_purge	CANDIDATE	生产侧 migrate/backfill/purge 定义；须按消费链判定旧档专用 vs 现役接缝	1	0	ming_sim/db.py:2333
-F2-R11-1	ming_sim/db.py::_migrate_legacy_office_pollution	prod_migrate_backfill_purge	CANDIDATE	生产侧 migrate/backfill/purge 定义；须按消费链判定旧档专用 vs 现役接缝	2	1	ming_sim/db.py:2690;ming_sim/db.py:4031	tests/test_person_delta_adapter.py:2602
-F2-R11-1	ming_sim/db.py::_migrate_legacy_reaction_severity	prod_migrate_backfill_purge	CANDIDATE	生产侧 migrate/backfill/purge 定义；须按消费链判定旧档专用 vs 现役接缝	1	0	ming_sim/db.py:2485
-F2-R11-1	ming_sim/db.py::_migrate_missing_fiscal_engine_from_pay_source_cutover	prod_migrate_backfill_purge	CANDIDATE	生产侧 migrate/backfill/purge 定义；须按消费链判定旧档专用 vs 现役接缝	1	0	ming_sim/db.py:2743
-F2-R11-1	ming_sim/db.py::_migrate_next_audience_todos_drop_issue_fk	prod_migrate_backfill_purge	CANDIDATE	生产侧 migrate/backfill/purge 定义；须按消费链判定旧档专用 vs 现役接缝	1	0	ming_sim/db.py:2344
-F2-R11-1	ming_sim/db.py::_migrate_offsets_to_float_precision	prod_migrate_backfill_purge	CANDIDATE	生产侧 migrate/backfill/purge 定义；须按消费链判定旧档专用 vs 现役接缝	1	0	ming_sim/db.py:2729
-F2-R11-1	ming_sim/db.py::_migrate_reaction_value	prod_migrate_backfill_purge	CANDIDATE	生产侧 migrate/backfill/purge 定义；须按消费链判定旧档专用 vs 现役接缝	1	0	ming_sim/db.py:15514
-F2-R11-1	ming_sim/db.py::_purge_fixed_opening_gazette_seed	prod_migrate_backfill_purge	CANDIDATE	生产侧 migrate/backfill/purge 定义；须按消费链判定旧档专用 vs 现役接缝	1	2	ming_sim/db.py:2745	tests/test_opening_gazette_delete_1356.py:90;tests/test_opening_gazette_delete_1356.py:91
-F2-R11-1	content/opening_gazette.md	content_resource	CANDIDATE	内容资源名含旧 gazette/simulator 痕迹；须按装载/消费链判定	0	0
-F2-R11-1	tests/conftest.py::_atomic_connless_test_shell_compat	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0
-F2-R11-1	tests/conftest.py::_isolate_cli_bin_resolution	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0
-F2-R11-1	tests/conftest.py::_isolated_user_data_dir	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0
-F2-R11-1	tests/conftest.py::_offline_audience_translation_provider	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0
-F2-R11-1	tests/conftest.py::_offline_scene_beat_generator	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0
-F2-R11-1	tests/conftest.py::_restore_content_characters	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0
-F2-R11-1	tests/conftest.py::_transport_retry_interval_instant	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0
-F2-R11-1	tests/test_audience_background.py::_EmptyAgent	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0
-F2-R11-1	tests/test_audience_background.py::_assert_next_accepted	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0
-F2-R11-1	tests/test_audience_background.py::_character	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0
-F2-R11-1	tests/test_audience_presence_500.py::_session_double	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0
-F2-R11-1	tests/test_audience_presence_500.py::_tool_registry	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0
-F2-R11-1	tests/test_audience_restore_505.py::_character	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0
-F2-R11-1	tests/test_audience_undo_506.py::_confirm	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0
-F2-R11-1	tests/test_audience_undo_506.py::_mark_pending	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0
-F2-R11-1	tests/test_centrifuge_ledger_690.py::_collect_typed_keys	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0
-F2-R11-1	tests/test_chat_stream_failpaths_393.py::_FailLeavingAgnoRunAgent	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0
-F2-R11-1	tests/test_cli_backend.py::_patch_backend	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0
-F2-R11-1	tests/test_cli_play_turn.py::_noop_atomic	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0
-F2-R11-1	tests/test_court_break_player_lock_1727.py::_CannedExtractor	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0
-F2-R11-1	tests/test_court_layout_1290.py::_runtime_write_gate	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0
-F2-R11-1	tests/test_decree_dossiers_571.py::_complete_session	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0
-F2-R11-1	tests/test_dossier_endorsements_612.py::_Agent	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0
-F2-R11-1	tests/test_enter_settlement_period_1235.py::_BoomExtractor	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0
-F2-R11-1	tests/test_enter_settlement_period_1235.py::_CannedExtractor	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0
-F2-R11-1	tests/test_enter_settlement_period_1235.py::_terminal_sse	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0
-F2-R11-1	tests/test_fiscal_levy_effect.py::_settled_land_by_region	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0
-F2-R11-1	tests/test_menu_lifecycle_drain_396.py::_character	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0
-F2-R11-1	tests/test_month_loop_tracer_1468.py::_BoomExtractor	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0
-F2-R11-1	tests/test_month_loop_tracer_1468.py::_CannedExtractor	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0
-F2-R11-1	tests/test_month_loop_tracer_1468.py::_assert_court_break_closed	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0
-F2-R11-1	tests/test_month_loop_tracer_1468.py::_install_canned_minister	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0
-F2-R11-1	tests/test_month_loop_tracer_1468.py::_month_ord_of	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0
-F2-R11-1	tests/test_month_loop_tracer_1468.py::_play_one_month	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0
-F2-R11-1	tests/test_month_loop_tracer_1468.py::_setup_open_night_participant	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0
-F2-R11-1	tests/test_pihong_dossier_1490.py::_1778_plant_and_follow	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0
-F2-R11-1	tests/test_pihong_dossier_1490.py::_1778_raw_options	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0
-F2-R11-1	tests/test_pihong_dossier_1490.py::_658_session	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0
-F2-R11-1	tests/test_pihong_dossier_1490.py::_gen	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0
-F2-R11-1	tests/test_pihong_dossier_1490.py::_ok_revise_text	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0
-F2-R11-1	tests/test_pre_settle_transaction.py::_must_not_run	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0
-F2-R11-1	tests/test_qa_b3_409_ux.py::_ClosingNightDB	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0
-F2-R11-1	tests/test_qa_h1_seed_data.py::_bajiu_names	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0
-F2-R11-1	tests/test_refugee_loop_652.py::_reflux	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0
-F2-R11-1	tests/test_settlement_write_guard_393.py::_runtime_write_gate	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0
-F2-R11-1	tests/test_state_reload.py::_boom_reload	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0
-F2-R11-1	tests/test_state_reload.py::_restore_content	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0
-F2-R11-1	tests/test_state_reload.py::_spy	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0
-F2-R11-1	tests/test_structured_decree_contract_1624.py::_army_none_legal_item	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0
-F2-R11-1	tests/test_structured_decree_contract_1624.py::_month_end_ctx	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0
-F2-R11-1	tests/test_transit_countdown_668.py::_assert_ledger_match	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0
-F2-R11-1	tests/test_web_chat_serialization_393.py::_SecretOrderAgent	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0
-F2-R11-1	tests/test_web_chat_serialization_393.py::_character	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0
-F2-R11-1	tests/test_web_chat_serialization_393.py::_merge_staged_new_secret_order_content	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0
-F2-R11-1	tests/test_audience_night_498.py::test_old_save_migration_night_id_index_order	exclusive_old_save_or_migrate_test	CANDIDATE	测试名表明旧档/迁移/别名写回专属行为；须按是否仍咬现役写口判定	0	0
-F2-R11-1	tests/test_audience_travel_gating_670.py::test_legacy_capital_aliases_admit_in_capital_and_migrate_on_reopen	exclusive_old_save_or_migrate_test	CANDIDATE	测试名表明旧档/迁移/别名写回专属行为；须按是否仍咬现役写口判定	0	0
-F2-R11-1	tests/test_audience_travel_gating_670.py::test_non_capital_location_aliases_migrate_on_reopen	exclusive_old_save_or_migrate_test	CANDIDATE	测试名表明旧档/迁移/别名写回专属行为；须按是否仍咬现役写口判定	0	0
-F2-R11-1	tests/test_audience_travel_gating_670.py::test_shuntian_zhili_aliases_migrate_on_reopen	exclusive_old_save_or_migrate_test	CANDIDATE	测试名表明旧档/迁移/别名写回专属行为；须按是否仍咬现役写口判定	0	0
-F2-R11-1	tests/test_bandit_power_model_190.py::test_old_save_schema_init_backfills_bandit_power_split	exclusive_old_save_or_migrate_test	CANDIDATE	测试名表明旧档/迁移/别名写回专属行为；须按是否仍咬现役写口判定	0	0
-F2-R11-1	tests/test_executor_routing_721.py::test_legacy_character_executor_migrates_without_overriding_roster	exclusive_old_save_or_migrate_test	CANDIDATE	测试名表明旧档/迁移/别名写回专属行为；须按是否仍咬现役写口判定	0	0
-F2-R11-1	tests/test_faction_leverage_9.py::test_old_integer_offset_migrated_to_float	exclusive_old_save_or_migrate_test	CANDIDATE	测试名表明旧档/迁移/别名写回专属行为；须按是否仍咬现役写口判定	0	0
-F2-R11-1	tests/test_fiscal_substrate_bridge.py::test_old_dongjiang_pay_funnel_due_backfills_before_new_pay_rows	exclusive_old_save_or_migrate_test	CANDIDATE	测试名表明旧档/迁移/别名写回专属行为；须按是否仍咬现役写口判定	0	0
-F2-R11-1	tests/test_fiscal_substrate_bridge.py::test_pre_s6_cutover_save_without_fiscal_engine_migrates_to_substrate_hub	exclusive_old_save_or_migrate_test	CANDIDATE	测试名表明旧档/迁移/别名写回专属行为；须按是否仍咬现役写口判定	0	0
-F2-R11-1	tests/test_llm_channel_config.py::test_load_llm_config_migrates_legacy_advanced_thinking_to_reasoning	exclusive_old_save_or_migrate_test	CANDIDATE	测试名表明旧档/迁移/别名写回专属行为；须按是否仍咬现役写口判定	0	0
-F2-R11-1	tests/test_llm_channel_config.py::test_load_llm_config_migrates_legacy_none_thinking_to_off	exclusive_old_save_or_migrate_test	CANDIDATE	测试名表明旧档/迁移/别名写回专属行为；须按是否仍咬现役写口判定	0	0
-F2-R11-1	tests/test_mutiny_progression_316.py::test_old_save_migrates_and_mutiny_progress_survives_reopen	exclusive_old_save_or_migrate_test	CANDIDATE	测试名表明旧档/迁移/别名写回专属行为；须按是否仍咬现役写口判定	0	0
-F2-R11-1	tests/test_opening_gazette_delete_1356.py::test_old_save_exact_purge_keeps_real_with_phrase_counterexample	exclusive_old_save_or_migrate_test	CANDIDATE	测试名表明旧档/迁移/别名写回专属行为；须按是否仍咬现役写口判定	0	0
-F2-R11-1	tests/test_override_breach_costs_564.py::test_legacy_persisted_reaction_severity_migrates_narrowly_and_idempotently	exclusive_old_save_or_migrate_test	CANDIDATE	测试名表明旧档/迁移/别名写回专属行为；须按是否仍咬现役写口判定	0	0
-F2-R11-1	tests/test_person_archive_schema.py::test_old_save_schema_is_upgraded_for_person_archive_fields	exclusive_old_save_or_migrate_test	CANDIDATE	测试名表明旧档/迁移/别名写回专属行为；须按是否仍咬现役写口判定	0	0
-F2-R11-1	tests/test_person_delta_adapter.py::test_fresh_seed_migrates_legacy_office_pollution	exclusive_old_save_or_migrate_test	CANDIDATE	测试名表明旧档/迁移/别名写回专属行为；须按是否仍咬现役写口判定	0	0
-F2-R11-1	tests/test_person_delta_adapter.py::test_legacy_office_pollution_migrated_on_load	exclusive_old_save_or_migrate_test	CANDIDATE	测试名表明旧档/迁移/别名写回专属行为；须按是否仍咬现役写口判定	0	0
-F2-R11-1	tests/test_person_delta_adapter.py::test_legacy_office_pollution_resolves_transit_to_region_id	exclusive_old_save_or_migrate_test	CANDIDATE	测试名表明旧档/迁移/别名写回专属行为；须按是否仍咬现役写口判定	0	0
-F2-R11-1	tests/test_pihong_dossier_1490.py::_1778_roster_of	hist_seed_still_defined	CANDIDATE	历史退役/判词种子名仍有定义；须反核现役入口	0	1		tests/test_pihong_dossier_1490.py:2546
-F2-R11-1	tests/test_structured_decree_contract_1624.py::_army_single_bad_item	hist_seed_still_defined	CANDIDATE	历史退役/判词种子名仍有定义；须反核现役入口	0	1		tests/test_structured_decree_contract_1624.py:117
+F2-R11-1	ming_sim/cli_backend.py::_backfill_healed_participant_refs	prod_migrate_backfill_purge	CANDIDATE	生产侧 migrate/backfill/purge 定义；须按消费链判定旧档专用 vs 现役接缝	1	0	ming_sim/cli_backend.py:2637	无	不适用
+F2-R11-1	ming_sim/db.py::_backfill_bandit_power_split	prod_migrate_backfill_purge	CANDIDATE	生产侧 migrate/backfill/purge 定义；须按消费链判定旧档专用 vs 现役接缝	1	0	ming_sim/db.py:2362	无	不适用
+F2-R11-1	ming_sim/db.py::_backfill_event_triggers_from_event_pool_issues	prod_migrate_backfill_purge	CANDIDATE	生产侧 migrate/backfill/purge 定义；须按消费链判定旧档专用 vs 现役接缝	1	0	ming_sim/db.py:2382	无	不适用
+F2-R11-1	ming_sim/db.py::_backfill_person_core_character_static_fields	prod_migrate_backfill_purge	CANDIDATE	生产侧 migrate/backfill/purge 定义；须按消费链判定旧档专用 vs 现役接缝	1	0	ming_sim/db.py:2360	无	不适用
+F2-R11-1	ming_sim/db.py::_backfill_proposed_appointment_break_ranks	prod_migrate_backfill_purge	CANDIDATE	生产侧 migrate/backfill/purge 定义；须按消费链判定旧档专用 vs 现役接缝	1	0	ming_sim/db.py:2496	无	不适用
+F2-R11-1	ming_sim/db.py::_backfill_salary_rate	prod_migrate_backfill_purge	CANDIDATE	生产侧 migrate/backfill/purge 定义；须按消费链判定旧档专用 vs 现役接缝	1	3	ming_sim/db.py:2312	tests/test_army_salary_44.py:101;tests/test_army_salary_44.py:119;tests/test_army_salary_44.py:140	不适用
+F2-R11-1	ming_sim/db.py::_known_opening_gazette_seed_text	prod_migrate_backfill_purge	CANDIDATE	生产侧 migrate/backfill/purge 定义；须按消费链判定旧档专用 vs 现役接缝	1	0	ming_sim/db.py:5640	无	不适用
+F2-R11-1	ming_sim/db.py::_migrate_arrears_unit_to_silver	prod_migrate_backfill_purge	CANDIDATE	生产侧 migrate/backfill/purge 定义；须按消费链判定旧档专用 vs 现役接缝	2	0	ming_sim/db.py:4022;ming_sim/db.py:2319	无	不适用
+F2-R11-1	ming_sim/db.py::_migrate_building_logs_to_durable_audit	prod_migrate_backfill_purge	CANDIDATE	生产侧 migrate/backfill/purge 定义；须按消费链判定旧档专用 vs 现役接缝	1	0	ming_sim/db.py:2278	无	不适用
+F2-R11-1	ming_sim/db.py::_migrate_character_identity_seed	prod_migrate_backfill_purge	CANDIDATE	生产侧 migrate/backfill/purge 定义；须按消费链判定旧档专用 vs 现役接缝	1	0	ming_sim/db.py:2361	无	不适用
+F2-R11-1	ming_sim/db.py::_migrate_character_location_aliases	prod_migrate_backfill_purge	CANDIDATE	生产侧 migrate/backfill/purge 定义；须按消费链判定旧档专用 vs 现役接缝	1	0	ming_sim/db.py:2333	无	不适用
+F2-R11-1	ming_sim/db.py::_migrate_legacy_office_pollution	prod_migrate_backfill_purge	CANDIDATE	生产侧 migrate/backfill/purge 定义；须按消费链判定旧档专用 vs 现役接缝	2	1	ming_sim/db.py:2690;ming_sim/db.py:4031	tests/test_person_delta_adapter.py:2602	不适用
+F2-R11-1	ming_sim/db.py::_migrate_legacy_reaction_severity	prod_migrate_backfill_purge	CANDIDATE	生产侧 migrate/backfill/purge 定义；须按消费链判定旧档专用 vs 现役接缝	1	0	ming_sim/db.py:2485	无	不适用
+F2-R11-1	ming_sim/db.py::_migrate_missing_fiscal_engine_from_pay_source_cutover	prod_migrate_backfill_purge	CANDIDATE	生产侧 migrate/backfill/purge 定义；须按消费链判定旧档专用 vs 现役接缝	1	0	ming_sim/db.py:2743	无	不适用
+F2-R11-1	ming_sim/db.py::_migrate_next_audience_todos_drop_issue_fk	prod_migrate_backfill_purge	CANDIDATE	生产侧 migrate/backfill/purge 定义；须按消费链判定旧档专用 vs 现役接缝	1	0	ming_sim/db.py:2344	无	不适用
+F2-R11-1	ming_sim/db.py::_migrate_offsets_to_float_precision	prod_migrate_backfill_purge	CANDIDATE	生产侧 migrate/backfill/purge 定义；须按消费链判定旧档专用 vs 现役接缝	1	0	ming_sim/db.py:2729	无	不适用
+F2-R11-1	ming_sim/db.py::_migrate_reaction_value	prod_migrate_backfill_purge	CANDIDATE	生产侧 migrate/backfill/purge 定义；须按消费链判定旧档专用 vs 现役接缝	1	0	ming_sim/db.py:15514	无	不适用
+F2-R11-1	ming_sim/db.py::_purge_fixed_opening_gazette_seed	prod_migrate_backfill_purge	CANDIDATE	生产侧 migrate/backfill/purge 定义；须按消费链判定旧档专用 vs 现役接缝	1	2	ming_sim/db.py:2745	tests/test_opening_gazette_delete_1356.py:90;tests/test_opening_gazette_delete_1356.py:91	不适用
+F2-R11-1	content/opening_gazette.md	content_resource	CANDIDATE	内容资源名含旧 gazette/simulator 痕迹；须按装载/消费链判定	0	0	无	无	不适用
+F2-R11-1	tests/conftest.py::_atomic_connless_test_shell_compat	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0	无	无	不适用
+F2-R11-1	tests/conftest.py::_isolate_cli_bin_resolution	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0	无	无	不适用
+F2-R11-1	tests/conftest.py::_isolated_user_data_dir	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0	无	无	不适用
+F2-R11-1	tests/conftest.py::_offline_audience_translation_provider	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0	无	无	不适用
+F2-R11-1	tests/conftest.py::_offline_scene_beat_generator	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0	无	无	不适用
+F2-R11-1	tests/conftest.py::_restore_content_characters	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0	无	无	不适用
+F2-R11-1	tests/conftest.py::_transport_retry_interval_instant	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0	无	无	不适用
+F2-R11-1	tests/test_audience_background.py::_EmptyAgent	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0	无	无	不适用
+F2-R11-1	tests/test_audience_background.py::_assert_next_accepted	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0	无	无	不适用
+F2-R11-1	tests/test_audience_background.py::_character	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0	无	无	不适用
+F2-R11-1	tests/test_audience_presence_500.py::_session_double	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0	无	无	不适用
+F2-R11-1	tests/test_audience_presence_500.py::_tool_registry	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0	无	无	不适用
+F2-R11-1	tests/test_audience_restore_505.py::_character	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0	无	无	不适用
+F2-R11-1	tests/test_audience_undo_506.py::_confirm	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0	无	无	不适用
+F2-R11-1	tests/test_audience_undo_506.py::_mark_pending	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0	无	无	不适用
+F2-R11-1	tests/test_centrifuge_ledger_690.py::_collect_typed_keys	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0	无	无	不适用
+F2-R11-1	tests/test_chat_stream_failpaths_393.py::_FailLeavingAgnoRunAgent	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0	无	无	不适用
+F2-R11-1	tests/test_cli_backend.py::_patch_backend	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0	无	无	不适用
+F2-R11-1	tests/test_cli_play_turn.py::_noop_atomic	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0	无	无	不适用
+F2-R11-1	tests/test_court_break_player_lock_1727.py::_CannedExtractor	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0	无	无	不适用
+F2-R11-1	tests/test_court_layout_1290.py::_runtime_write_gate	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0	无	无	不适用
+F2-R11-1	tests/test_decree_dossiers_571.py::_complete_session	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0	无	无	不适用
+F2-R11-1	tests/test_dossier_endorsements_612.py::_Agent	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0	无	无	不适用
+F2-R11-1	tests/test_enter_settlement_period_1235.py::_BoomExtractor	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0	无	无	不适用
+F2-R11-1	tests/test_enter_settlement_period_1235.py::_CannedExtractor	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0	无	无	不适用
+F2-R11-1	tests/test_enter_settlement_period_1235.py::_terminal_sse	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0	无	无	不适用
+F2-R11-1	tests/test_fiscal_levy_effect.py::_settled_land_by_region	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0	无	无	不适用
+F2-R11-1	tests/test_menu_lifecycle_drain_396.py::_character	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0	无	无	不适用
+F2-R11-1	tests/test_month_loop_tracer_1468.py::_BoomExtractor	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0	无	无	不适用
+F2-R11-1	tests/test_month_loop_tracer_1468.py::_CannedExtractor	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0	无	无	不适用
+F2-R11-1	tests/test_month_loop_tracer_1468.py::_assert_court_break_closed	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0	无	无	不适用
+F2-R11-1	tests/test_month_loop_tracer_1468.py::_install_canned_minister	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0	无	无	不适用
+F2-R11-1	tests/test_month_loop_tracer_1468.py::_month_ord_of	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0	无	无	不适用
+F2-R11-1	tests/test_month_loop_tracer_1468.py::_play_one_month	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0	无	无	不适用
+F2-R11-1	tests/test_month_loop_tracer_1468.py::_setup_open_night_participant	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0	无	无	不适用
+F2-R11-1	tests/test_pihong_dossier_1490.py::_1778_plant_and_follow	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0	无	无	不适用
+F2-R11-1	tests/test_pihong_dossier_1490.py::_1778_raw_options	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0	无	无	不适用
+F2-R11-1	tests/test_pihong_dossier_1490.py::_658_session	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0	无	无	不适用
+F2-R11-1	tests/test_pihong_dossier_1490.py::_gen	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0	无	无	不适用
+F2-R11-1	tests/test_pihong_dossier_1490.py::_ok_revise_text	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0	无	无	不适用
+F2-R11-1	tests/test_pre_settle_transaction.py::_must_not_run	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0	无	无	不适用
+F2-R11-1	tests/test_qa_b3_409_ux.py::_ClosingNightDB	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0	无	无	不适用
+F2-R11-1	tests/test_qa_h1_seed_data.py::_bajiu_names	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0	无	无	不适用
+F2-R11-1	tests/test_refugee_loop_652.py::_reflux	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0	无	无	不适用
+F2-R11-1	tests/test_settlement_write_guard_393.py::_runtime_write_gate	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0	无	无	不适用
+F2-R11-1	tests/test_state_reload.py::_boom_reload	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0	无	无	不适用
+F2-R11-1	tests/test_state_reload.py::_restore_content	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0	无	无	不适用
+F2-R11-1	tests/test_state_reload.py::_spy	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0	无	无	不适用
+F2-R11-1	tests/test_structured_decree_contract_1624.py::_army_none_legal_item	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0	无	无	不适用
+F2-R11-1	tests/test_structured_decree_contract_1624.py::_month_end_ctx	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0	无	无	不适用
+F2-R11-1	tests/test_transit_countdown_668.py::_assert_ledger_match	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0	无	无	不适用
+F2-R11-1	tests/test_web_chat_serialization_393.py::_SecretOrderAgent	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0	无	无	不适用
+F2-R11-1	tests/test_web_chat_serialization_393.py::_character	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0	无	无	不适用
+F2-R11-1	tests/test_web_chat_serialization_393.py::_merge_staged_new_secret_order_content	dead_test_helper_zero_ext	CANDIDATE	测试下划线 helper 定义后无外部引用；可能为死闭包，须结合历史消费者/同文件活测判定	0	0	无	无	不适用
+F2-R11-1	tests/test_audience_night_498.py::test_old_save_migration_night_id_index_order	exclusive_old_save_or_migrate_test	CANDIDATE	测试名表明旧档/迁移/别名写回专属行为；须按是否仍咬现役写口判定	0	0	无	无	不适用
+F2-R11-1	tests/test_audience_travel_gating_670.py::test_legacy_capital_aliases_admit_in_capital_and_migrate_on_reopen	exclusive_old_save_or_migrate_test	CANDIDATE	测试名表明旧档/迁移/别名写回专属行为；须按是否仍咬现役写口判定	0	0	无	无	不适用
+F2-R11-1	tests/test_audience_travel_gating_670.py::test_non_capital_location_aliases_migrate_on_reopen	exclusive_old_save_or_migrate_test	CANDIDATE	测试名表明旧档/迁移/别名写回专属行为；须按是否仍咬现役写口判定	0	0	无	无	不适用
+F2-R11-1	tests/test_audience_travel_gating_670.py::test_shuntian_zhili_aliases_migrate_on_reopen	exclusive_old_save_or_migrate_test	CANDIDATE	测试名表明旧档/迁移/别名写回专属行为；须按是否仍咬现役写口判定	0	0	无	无	不适用
+F2-R11-1	tests/test_bandit_power_model_190.py::test_old_save_schema_init_backfills_bandit_power_split	exclusive_old_save_or_migrate_test	CANDIDATE	测试名表明旧档/迁移/别名写回专属行为；须按是否仍咬现役写口判定	0	0	无	无	不适用
+F2-R11-1	tests/test_executor_routing_721.py::test_legacy_character_executor_migrates_without_overriding_roster	exclusive_old_save_or_migrate_test	CANDIDATE	测试名表明旧档/迁移/别名写回专属行为；须按是否仍咬现役写口判定	0	0	无	无	不适用
+F2-R11-1	tests/test_faction_leverage_9.py::test_old_integer_offset_migrated_to_float	exclusive_old_save_or_migrate_test	CANDIDATE	测试名表明旧档/迁移/别名写回专属行为；须按是否仍咬现役写口判定	0	0	无	无	不适用
+F2-R11-1	tests/test_fiscal_substrate_bridge.py::test_old_dongjiang_pay_funnel_due_backfills_before_new_pay_rows	exclusive_old_save_or_migrate_test	CANDIDATE	测试名表明旧档/迁移/别名写回专属行为；须按是否仍咬现役写口判定	0	0	无	无	不适用
+F2-R11-1	tests/test_fiscal_substrate_bridge.py::test_pre_s6_cutover_save_without_fiscal_engine_migrates_to_substrate_hub	exclusive_old_save_or_migrate_test	CANDIDATE	测试名表明旧档/迁移/别名写回专属行为；须按是否仍咬现役写口判定	0	0	无	无	不适用
+F2-R11-1	tests/test_llm_channel_config.py::test_load_llm_config_migrates_legacy_advanced_thinking_to_reasoning	exclusive_old_save_or_migrate_test	CANDIDATE	测试名表明旧档/迁移/别名写回专属行为；须按是否仍咬现役写口判定	0	0	无	无	不适用
+F2-R11-1	tests/test_llm_channel_config.py::test_load_llm_config_migrates_legacy_none_thinking_to_off	exclusive_old_save_or_migrate_test	CANDIDATE	测试名表明旧档/迁移/别名写回专属行为；须按是否仍咬现役写口判定	0	0	无	无	不适用
+F2-R11-1	tests/test_mutiny_progression_316.py::test_old_save_migrates_and_mutiny_progress_survives_reopen	exclusive_old_save_or_migrate_test	CANDIDATE	测试名表明旧档/迁移/别名写回专属行为；须按是否仍咬现役写口判定	0	0	无	无	不适用
+F2-R11-1	tests/test_opening_gazette_delete_1356.py::test_old_save_exact_purge_keeps_real_with_phrase_counterexample	exclusive_old_save_or_migrate_test	CANDIDATE	测试名表明旧档/迁移/别名写回专属行为；须按是否仍咬现役写口判定	0	0	无	无	不适用
+F2-R11-1	tests/test_override_breach_costs_564.py::test_legacy_persisted_reaction_severity_migrates_narrowly_and_idempotently	exclusive_old_save_or_migrate_test	CANDIDATE	测试名表明旧档/迁移/别名写回专属行为；须按是否仍咬现役写口判定	0	0	无	无	不适用
+F2-R11-1	tests/test_person_archive_schema.py::test_old_save_schema_is_upgraded_for_person_archive_fields	exclusive_old_save_or_migrate_test	CANDIDATE	测试名表明旧档/迁移/别名写回专属行为；须按是否仍咬现役写口判定	0	0	无	无	不适用
+F2-R11-1	tests/test_person_delta_adapter.py::test_fresh_seed_migrates_legacy_office_pollution	exclusive_old_save_or_migrate_test	CANDIDATE	测试名表明旧档/迁移/别名写回专属行为；须按是否仍咬现役写口判定	0	0	无	无	不适用
+F2-R11-1	tests/test_person_delta_adapter.py::test_legacy_office_pollution_migrated_on_load	exclusive_old_save_or_migrate_test	CANDIDATE	测试名表明旧档/迁移/别名写回专属行为；须按是否仍咬现役写口判定	0	0	无	无	不适用
+F2-R11-1	tests/test_person_delta_adapter.py::test_legacy_office_pollution_resolves_transit_to_region_id	exclusive_old_save_or_migrate_test	CANDIDATE	测试名表明旧档/迁移/别名写回专属行为；须按是否仍咬现役写口判定	0	0	无	无	不适用
+F2-R11-1	tests/test_pihong_dossier_1490.py::_1778_roster_of	hist_seed_still_defined	CANDIDATE	历史退役/判词种子名仍有定义；须反核现役入口	0	1	无	tests/test_pihong_dossier_1490.py:2546	不适用
+F2-R11-1	tests/test_structured_decree_contract_1624.py::_army_single_bad_item	hist_seed_still_defined	CANDIDATE	历史退役/判词种子名仍有定义；须反核现役入口	0	1	无	tests/test_structured_decree_contract_1624.py:117	不适用
