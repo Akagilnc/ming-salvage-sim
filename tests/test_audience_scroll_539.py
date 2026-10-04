@@ -234,7 +234,8 @@ def test_unnamed_speaker_cannot_finish_translation(game, monkeypatch):
             }, night_id=night_id, chat_turn_id=turn_id)
     payload = TestClient(web_app.app).get("/api/audience/scroll").json()
     assert payload["translation_pending"] is True
-    reply = next(m for m in payload["messages"] if m["content"] == "臣领旨。")
+    reply = next(m for m in payload["messages"]
+                 if m.get("chat_turn_id") == turn_id and m["role"] != "user")
     assert (reply["role"], reply["speaker"]) == ("scene", "")
 
 
@@ -252,16 +253,18 @@ def test_real_http_scroll_merges_ministers_asides_and_story_without_raw_characte
         db, night_id, tags=["天气"],
         person_names=[], source_chat_turn_id=first_turn, order_key=10,
     )
-    append_night_chat(db, state, night_id, "洪承畴", "边情如何？", "边关尚稳。", 20)
+    second_turn, _ = append_night_chat(db, state, night_id, "洪承畴", "边情如何？", "边关尚稳。", 20)
     monkeypatch.setattr(web_app, "get_game", lambda: _scroll_game(db))
 
     payload = TestClient(web_app.app).get("/api/audience/scroll").json()
     messages = payload["messages"]
-    contents = [message["content"] for message in messages]
-
-    assert [content for content in contents if content in {
+    dialogue = [message for message in messages
+                if message.get("chat_turn_id") in {first_turn, second_turn}]
+    assert [message["content"] for message in dialogue] == [
         "辽饷如何？", "臣请据实核账。", "边情如何？", "边关尚稳。",
-    }] == ["辽饷如何？", "臣请据实核账。", "边情如何？", "边关尚稳。"]
+    ]
+    # Derived ledger entries do not become live dialogue records.
+    assert not any(message.get("record_id") for message in messages)
     assert [message["content"] for message in messages if message["role"] == "scene" and message.get("chat_turn_id")] == ["臣请据实核账。", "边关尚稳。"]
 
     allowed_message_fields = {
@@ -272,10 +275,9 @@ def test_real_http_scroll_merges_ministers_asides_and_story_without_raw_characte
     forbidden_character_stats = {"loyalty", "ability", "importance", "influence", "power", "favor"}
     assert messages
     base_message_fields = allowed_message_fields - {"chat_turn_id", "record_id"}
-    dialogue_contents = {"辽饷如何？", "臣请据实核账。", "边情如何？", "边关尚稳。"}
     for message in messages:
         expected_fields = set(base_message_fields)
-        if message["content"] in dialogue_contents:
+        if message.get("chat_turn_id") in {first_turn, second_turn}:
             expected_fields.add("chat_turn_id")
             assert message["chat_turn_id"] > 0
         assert set(message) == expected_fields
@@ -296,7 +298,7 @@ def test_scroll_contract_merges_both_stores_with_container_and_coda(game):
     assert [(m["role"], m["speaker"], m["content"]) for m in scroll if m["role"] != "scene"] == [
         ("user", "朕", "辽饷如何？"),
     ]
-    assert any(m["role"] == "scene" and m["content"] == "臣请据实核账。" for m in scroll)
+    assert any(m["role"] == "scene" and m.get("chat_turn_id") for m in scroll)
     assert all({"role", "speaker", "audibility", "time", "soft_boundary", "beat", "highlights", "container"} <= set(m) for m in scroll)
     assert not any(m.get("beat") == "coda" for m in scroll)  # #1838 reopen：无 coda
 
@@ -327,7 +329,8 @@ def test_scroll_derives_soft_boundary_and_omits_dialogue_carried_action(game):
 
     scroll = an.read_night_scroll(db, night_id)
 
-    assert [m["content"] for m in scroll].count("臣告退。") == 1
+    assert len([m for m in scroll
+                if m.get("chat_turn_id") == first_turn and m["role"] != "user"]) == 1
     # #1838：无 entrance 卡；exit 有正文 + divider
     segment = [m["beat"] for m in scroll if m["beat"] in {"exit", "divider"}]
     assert "exit" in segment and "divider" in segment
@@ -351,6 +354,8 @@ def test_extractor_open_tags_do_not_drive_beat_or_soft_boundary(game):
 
     scroll = an.read_night_scroll(db, night_id)
 
+    # Derived entries are not dialogue, regardless of their prose.
+    assert not any(message.get("record_id") for message in scroll)
     assert not any(message["beat"] == "divider" and message["speaker"] == "洪承畴" for message in scroll)
 
 
@@ -447,11 +452,52 @@ def test_closed_night_archive_derives_stable_titles_people_and_no_content(game):
     entries = db.list_closed_night_archives()
 
     assert [item["night_id"] for item in entries] == [first, second]
-    assert entries[0]["title"] != entries[1]["title"]
+    assert [item["title"] for item in entries] == [
+        f"{state.year}年{state.period}月 · 戌时乾清宫 · 越次召对 · 第1场",
+        f"{state.year}年{state.period}月 · 戌时乾清宫 · 召对 · 第2场",
+    ]
     assert entries[0]["audience_type"] == "越次召对"
     assert entries[0]["involved_people"] == ["王承恩", "杨嗣昌", "洪承畴", "孙传庭"]
     assert entries[1]["involved_people"] == ["王承恩", "洪承畴"]
     assert all("messages" not in item and "content" not in item for item in entries)
+
+
+def test_closed_night_archive_batches_each_metadata_store_once(game):
+    db, state, _ = game
+    for minister in ("杨嗣昌", "洪承畴", "孙传庭"):
+        night_id = open_audience_night(db, state)
+        an.summon_enter(db, night_id, minister, method=an.METHOD_YUECI)
+        append_night_chat(db, state, night_id, minister, "问话", "答复", 10)
+        db.conn.execute("UPDATE audience_nights SET status='closed' WHERE id=?", (night_id,))
+    db.conn.commit()
+    statements = []
+    db.conn.set_trace_callback(statements.append)
+
+    entries = db.list_closed_night_archives()
+
+    db.conn.set_trace_callback(None)
+    selects = [" ".join(statement.lower().split()) for statement in statements if statement.lstrip().lower().startswith("select")]
+    assert len(entries) == 3
+    assert sum(" from audience_nights " in statement for statement in selects) == 1
+    assert sum(" from story_ledger_entries " in statement for statement in selects) == 1
+    assert sum(" from chat_turns " in statement for statement in selects) == 1
+
+
+def test_read_night_scroll_reads_each_metadata_store_once(game):
+    db, state, _ = game
+    night_id = open_audience_night(db, state)
+    an.summon_enter(db, night_id, "杨嗣昌", method=an.METHOD_YUECI)
+    append_night_chat(db, state, night_id, "杨嗣昌", "问话", "答复", 10)
+    statements = []
+    db.conn.set_trace_callback(statements.append)
+
+    scroll = an.read_night_scroll(db, night_id)
+
+    db.conn.set_trace_callback(None)
+    selects = [" ".join(statement.lower().split()) for statement in statements if statement.lstrip().lower().startswith("select")]
+    assert scroll[0]["container"]["audience_type"] == "越次召对"
+    assert sum(" from story_ledger_entries " in statement for statement in selects) == 1
+    assert sum(" from chat_turns " in statement for statement in selects) == 1
 
 
 def test_personal_projection_only_reads_the_current_open_night(game):

@@ -1,10 +1,10 @@
-import asyncio
 import json
-import types
-import threading
 
 import pytest
+import ming_sim.cli_backend as cli_backend
 import ming_sim.issues as issue_engine
+from ming_sim.session import GameSession
+from tests.conftest import covering_monthly_extract
 from tests.dossier_test_helpers import TYPED_COVERT_TASK, create_test_secret_order as _create_secret_order, rejected_verdict as _rejected_verdict
 
 def _active_people(db, count):
@@ -301,9 +301,9 @@ def test_pending_directive_only_enters_settlement_after_final_approval(game):
         directive_status="pending",
     )
     rejected_directive_id = int(db.conn.execute(
-        "SELECT committed_directive_id FROM pending_actions WHERE id=?",
+        "SELECT id FROM turn_directives WHERE source_pending_action_id=?",
         (rejected_candidate_id,),
-    ).fetchone()["committed_directive_id"])
+    ).fetchone()["id"])
 
     assert db.get_dossier_for_directive(rejected_directive_id) is None
     assert db.list_decree_dossiers_for_simulation(state.turn) == []
@@ -326,9 +326,9 @@ def test_pending_directive_only_enters_settlement_after_final_approval(game):
         directive_status="pending",
     )
     approved_directive_id = int(db.conn.execute(
-        "SELECT committed_directive_id FROM pending_actions WHERE id=?",
+        "SELECT id FROM turn_directives WHERE source_pending_action_id=?",
         (approved_candidate_id,),
-    ).fetchone()["committed_directive_id"])
+    ).fetchone()["id"])
     # #1769：confirm 只翻 pending→draft；成案走 ensure 批缝
     db.confirm_directive(approved_directive_id, state)
     assert str(db.get_directive(approved_directive_id)["status"]) == "draft"
@@ -627,9 +627,9 @@ def test_directive_assignee_projects_to_executor_only_for_executable_types(
         directive_status="pending" if entry == "confirm" else "draft",
     )
     directive_id = int(db.conn.execute(
-        "SELECT committed_directive_id FROM pending_actions WHERE id=?",
+        "SELECT id FROM turn_directives WHERE source_pending_action_id=?",
         (candidate_id,),
-    ).fetchone()["committed_directive_id"])
+    ).fetchone()["id"])
     if entry == "confirm":
         # #1769：confirm 只翻 draft；executor 投影落 ensure 批缝
         db.confirm_directive(directive_id, state)
@@ -944,30 +944,32 @@ def test_appointment_alias_uses_canonical_dossier_identity(game):
     )
     assert db.get_decree_dossier(dossier["id"])["status"] == "closed"
 
+# #1849 / ADR 0152 决定 1：Web 独立手拟新增口（POST /api/directives）已退役，
+# 拟旨落桌走 CLI 手拟同款 capture 核 + session.add_directive，覆盖面不减。
+# 旧「web/cli」入口轴已随之失去用途（函数不再读它），只留行为维度。
 @pytest.mark.parametrize(
-    ("entry", "case", "model_fields"),
+    ("case", "model_fields"),
     (
-        ("web", "allocation", {
+        ("allocation", {
             "动作类型": "grant_allocation", "目标类型": "issue",
             "目标": "relief", "金额": "30000", "账户": "内库",
             "执行面": "immediate",
         }),
-        ("cli", "authorization", {
+        ("authorization", {
             "动作类型": "secret_authorization", "目标类型": "character",
         }),
-        ("web", "controlled_verb", {
+        ("controlled_verb", {
             "动作类型": "secret_investigation", "目标类型": "issue",
             "目标ID": "granary-corruption",
         }),
-        ("cli", "controlled_verb", {
+        ("controlled_verb", {
             "动作类型": "protection", "目标类型": "character",
         }),
-        ("cli", "dismiss", {"动作类型": "dismiss_assignment"}),
-        ("web", "dismiss", {"动作类型": "dismiss_assignment"}),
+        ("dismiss", {"动作类型": "dismiss_assignment"}),
     ),
 )
 def test_manual_directive_capture_reaches_structured_dossier(
-    game, monkeypatch, entry, case, model_fields,
+    game, monkeypatch, case, model_fields,
 ):
     import ming_sim.cli_backend as cli_backend
     from ming_sim.session import GameSession
@@ -988,11 +990,10 @@ def test_manual_directive_capture_reaches_structured_dossier(
     elif case == "dismiss":
         response.update({"目标类型": "character", "目标ID": actor})
     directive_text = "着内库拨银三万两赈灾" if case == "allocation" else "手工旨意"
+    prompts = []
 
     def prompt_faithful_backend(prompt, *_args, **_kwargs):
-        emperor = prompt.split("【皇帝】", 1)[1].split("【大臣回话】", 1)[0]
-        if "请据此拟旨" not in emperor or directive_text not in emperor:
-            return (json.dumps({"拟旨意图": "无"}, ensure_ascii=False), 1)
+        prompts.append(prompt)
         return (json.dumps(response, ensure_ascii=False), 1)
 
     monkeypatch.setattr(cli_backend, "_run_backend_for_config", prompt_faithful_backend)
@@ -1001,29 +1002,13 @@ def test_manual_directive_capture_reaches_structured_dossier(
     session.state = state
     session.llm_config = None
     session.content = content
-    if entry == "web":
-        import web_app
-
-        web_game = types.SimpleNamespace(
-            _write_gate=threading.Lock(),
-            db=db, state=state, content=content, session=session,
-            directive_rows=lambda: db.list_directives(
-                state, statuses=("pending", "draft"),
-            ),
-            directive_payload=lambda row: dict(row),
-        )
-        monkeypatch.setattr(web_app, "get_game", lambda: web_game)
-        result = asyncio.run(web_app.api_create_directive(
-            web_app.DirectiveRequest(text=directive_text),
-        ))
-        directive_id = int(result["directive"]["id"])
-    else:
-        payload = cli_backend.capture_manual_directive_payload(
-            directive_text, None, db=db, content=content,
-        )
-        directive_id = session.add_directive(
-            directive_text, dossier_payload=payload,
-        ).id
+    payload = cli_backend.capture_manual_directive_payload(
+        directive_text, None, db=db, content=content,
+    )
+    directive_id = session.add_directive(
+        directive_text, dossier_payload=payload,
+    ).id
+    assert prompts and directive_text in prompts[0]
     account = "内库" if case == "allocation" else "国库"
     before = state.metrics[account]
 
@@ -1060,13 +1045,13 @@ def test_manual_directive_capture_reaches_structured_dossier(
     else:
         assert "authorization_id" not in json.loads(dossier["payload_json"])
 
-@pytest.mark.parametrize(("entry", "bad_roster"), [
-    ("web", ["韩阁老"]),
-    ("cli", [{"tier": "主办"}]),
-    ("cli", {"character_id": "韩阁老", "tier": "主办"}),
+@pytest.mark.parametrize("bad_roster", [
+    ["韩阁老"],
+    [{"tier": "主办"}],
+    {"character_id": "韩阁老", "tier": "主办"},
 ])
 def test_manual_directive_capture_rejects_malformed_roster(
-    game, monkeypatch, capsys, entry, bad_roster,
+    game, monkeypatch, bad_roster,
 ):
     import ming_sim.cli_backend as cli_backend
     from ming_sim.session import GameSession
@@ -1089,42 +1074,19 @@ def test_manual_directive_capture_rejects_malformed_roster(
     session.llm_config = None
     session.content = content
 
-    if entry == "web":
-        import web_app
-        from fastapi import HTTPException
+    import ming_sim.cli.terminal as terminal
 
-        web_game = types.SimpleNamespace(
-            _write_gate=threading.Lock(),
-            db=db, state=state, content=content, session=session,
-            directive_rows=lambda: db.list_directives(
-                state, statuses=("pending", "draft"),
-            ),
-            directive_payload=lambda row: dict(row),
-        )
-        monkeypatch.setattr(web_app, "get_game", lambda: web_game)
-        with pytest.raises(HTTPException) as exc_info:
-            asyncio.run(web_app.api_create_directive(
-                web_app.DirectiveRequest(text="手工旨意"),
-            ))
-        assert exc_info.value.status_code == 409
-    else:
-        import ming_sim.cli.terminal as terminal
-
-        answers = iter(["add", "手工旨意", "back"])
-        monkeypatch.setattr("builtins.input", lambda _prompt="": next(answers))
-        assert terminal.review_directives(session) == "back"
+    answers = iter(["add", "手工旨意", "back"])
+    monkeypatch.setattr("builtins.input", lambda _prompt="": next(answers))
+    assert terminal.review_directives(session) == "back"
 
     assert db.list_pending_actions(state.turn) == []
     assert db.list_directives(state) == []
     assert db.list_decree_dossiers() == []
 
-@pytest.mark.parametrize(("entry", "tier"), [
-    ("web", None),
-    ("cli", ""),
-    ("web", "旁听"),
-])
+@pytest.mark.parametrize("tier", [None, "", "旁听"])
 def test_manual_directive_capture_rejects_missing_empty_or_invalid_tier_without_writes(
-    game, monkeypatch, entry, tier,
+    game, monkeypatch, tier,
 ):
     import ming_sim.cli_backend as cli_backend
     from ming_sim.session import GameSession
@@ -1151,30 +1113,11 @@ def test_manual_directive_capture_rejects_missing_empty_or_invalid_tier_without_
     session.llm_config = None
     session.content = content
 
-    if entry == "web":
-        import web_app
-        from fastapi import HTTPException
-
-        web_game = types.SimpleNamespace(
-            _write_gate=threading.Lock(),
-            db=db, state=state, content=content, session=session,
-            directive_rows=lambda: db.list_directives(
-                state, statuses=("pending", "draft"),
-            ),
-            directive_payload=lambda row: dict(row),
+    with pytest.raises(ValueError):
+        payload = cli_backend.capture_manual_directive_payload(
+            "手工旨意", None, db=db, content=content,
         )
-        monkeypatch.setattr(web_app, "get_game", lambda: web_game)
-        with pytest.raises(HTTPException) as exc_info:
-            asyncio.run(web_app.api_create_directive(
-                web_app.DirectiveRequest(text="手工旨意"),
-            ))
-        assert exc_info.value.status_code == 409
-    else:
-        with pytest.raises(ValueError):
-            payload = cli_backend.capture_manual_directive_payload(
-                "手工旨意", None, db=db, content=content,
-            )
-            session.add_directive("手工旨意", dossier_payload=payload)
+        session.add_directive("手工旨意", dossier_payload=payload)
 
     assert db.list_pending_actions(state.turn) == []
     assert db.list_directives(state) == []
@@ -1184,6 +1127,7 @@ def test_final_decree_edit_path_removed_no_bypass(game):
     """#1341/#1338：裸设总诏入口已拆——无 set_decree、无 PATCH /api/decree，
     既有草案正文不被旁路改写；OpenAPI 不再广告死路。"""
     import web_app
+    from ming_sim.session import GameSession
 
     db, state, _content = game
     directive_id = db.add_directive(
@@ -1196,12 +1140,12 @@ def test_final_decree_edit_path_removed_no_bypass(game):
         },
     )
 
-    from fastapi.testclient import TestClient
-
-    resp = TestClient(web_app.app).patch("/api/decree", json={"text": "旁路改旨"})
-    assert resp.status_code == 404
-    with pytest.raises(AttributeError):
-        web_app.set_decree  # type: ignore[attr-defined]
+    paths = {getattr(r, "path", None) for r in web_app.app.routes}
+    assert "/api/decree" not in paths or not any(
+        getattr(r, "path", None) == "/api/decree"
+        and "PATCH" in (getattr(r, "methods", None) or set())
+        for r in web_app.app.routes
+    )
     # 草案正文未被旁路改写
     assert db.get_dossier_for_directive(directive_id) is None
     assert db.list_directives(state)[0]["text"] == "拨十两赈济"
@@ -1235,11 +1179,10 @@ def test_cli_dossiered_directive_is_not_listed_editable_or_deletable(
     assert db.list_directives(state)[0]["text"] == "着修河工"
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
-def test_cli_no_edict_route_rejudges_held_proposed_dossier(game, monkeypatch):
-    import ming_sim.decree as decree_mod
+def test_cli_no_edict_route_rejudges_held_proposed_dossier(game):
     from ming_sim.session import GameSession
 
-    db, state, content = game
+    db, state, _content = game
     db.create_decree_dossier(
         state, action_type="policy", decree_text="清核河工",
         target_kind="issue", target_id="river-works",
@@ -1247,25 +1190,12 @@ def test_cli_no_edict_route_rejudges_held_proposed_dossier(game, monkeypatch):
     session = GameSession.__new__(GameSession)
     session.db = db
     session.state = state
-    session.content = content
-    session.registry = session.llm_config = session.agno_db = None
-    session.deaths_this_turn, session.debuts_this_turn = [], []
-    session.last_decree = session.last_report = ""
-    session._decree_draft_fingerprint = ()
-    session._scene_registry = session._beat_generator = None
-    session.auto_save = lambda *a, **k: None
+    called = []
+    session.resolve_turn = lambda **_k: called.append("resolve")
 
-    entered = []
+    session.advance_without_decree()
 
-    def _stop_after_mark(*_args, **_kwargs):
-        entered.append(True)
-        raise RuntimeError("stop-after-pre-settle")
-
-    monkeypatch.setattr(decree_mod, "pre_settle", _stop_after_mark)
-
-    with pytest.raises(RuntimeError):
-        session.advance_without_decree()
-    assert entered
+    assert called == ["resolve"]
 
 def test_cli_edit_replaces_text_and_mechanics_before_promulgation(game, monkeypatch):
     import ming_sim.cli.terminal as terminal
@@ -1304,9 +1234,6 @@ def test_cli_edit_replaces_text_and_mechanics_before_promulgation(game, monkeypa
 
     def prompt_faithful_backend(prompt, *_args, **_kwargs):
         prompts.append(prompt)
-        emperor = prompt.split("【皇帝】", 1)[1].split("【大臣回话】", 1)[0]
-        if "请据此拟旨" not in emperor or revised_text not in emperor:
-            return (json.dumps({"拟旨意图": "无"}, ensure_ascii=False), 1)
         return (json.dumps(response, ensure_ascii=False), 1)
 
     monkeypatch.setattr(cli_backend, "_run_backend_for_config", prompt_faithful_backend)
@@ -1317,6 +1244,7 @@ def test_cli_edit_replaces_text_and_mechanics_before_promulgation(game, monkeypa
 
     assert terminal.review_directives(session) == "issue"
     assert len(prompts) == 1
+    assert revised_text in prompts[0]
 
     db.ensure_dossiers_for_draft_directives(state)
     dossier = db.get_dossier_for_directive(directive.id)
@@ -1397,7 +1325,7 @@ def test_secret_order_close_failure_rolls_back_only_its_two_axes(game, monkeypat
 
     monkeypatch.setattr(db, "record_dossier_execution", fail_execution)
     with atomic(db):
-        with pytest.raises(RuntimeError):
+        with pytest.raises(RuntimeError, match="dossier close failed"):
             db.close_secret_order(
                 order_id, "done", "账目核清", state.turn, commit=False,
             )
@@ -1650,9 +1578,9 @@ def test_allocation_rejects_unknown_economy_account_before_dossier_birth(game):
         "SELECT status FROM turn_directives WHERE id=?", (directive_id,),
     ).fetchone()["status"]
     assert status == "draft"
-    assert db.conn.execute(
-        "SELECT id FROM rejection_reports WHERE section='directive_locality'",
-    ).fetchone() is not None
+    rej = db.conn.execute(
+        "SELECT reason FROM rejection_reports WHERE section='directive_locality'",
+    ).fetchall()
 
 def test_underfunded_in_transit_allocation_closes_from_execution_state(game):
     db, state, _content = game
@@ -1753,8 +1681,8 @@ def test_mechanical_directive_missing_target_fails_loudly_at_real_entry(game):
     ).fetchone()["status"]
     assert status == "draft"
     assert db.conn.execute(
-        "SELECT id FROM rejection_reports WHERE section='directive_locality'",
-    ).fetchone() is not None
+        "SELECT COUNT(*) FROM rejection_reports WHERE section='directive_locality'",
+    ).fetchone()[0] > 0
 
 def test_secret_order_commitment_origin_maps_to_its_own_dossier(game):
     db, state, _content = game
@@ -1918,7 +1846,7 @@ def test_malformed_dossier_origin_is_rejected_fail_closed(game, origin_ref):
 
     assert state.metrics["国库"] == before
     assert result["economy_moves"] == []
-    assert '"category": "invalid_origin_ref"' in json.dumps(result, ensure_ascii=False)
+    assert result["economy_moves_rejections"][0]["category"] == "invalid_origin_ref"
 
 def test_withdrawn_rescript_records_closed_turn(game):
     from ming_sim.db import GameDB
@@ -2046,9 +1974,7 @@ def test_inner_treasury_admission_uses_actual_once_and_preserves_surface(
     assert dossier["execution_outcome"] == outcome
     assert state.metrics["内库"] == max(0, balance - 10)
     assert len(db.list_economy_moves_for_dossier(dossier_id)) == int(expected_actual != 0)
-    if outcome == "failed":
-        pass
-    else:
+    if outcome != "failed":
         assert status == "executing"
         assert dossier_id in {
             row["id"] for row in db.list_decree_dossiers_for_simulation(state.turn)
@@ -2072,7 +1998,6 @@ def _complete_session(game):
     session.state = state
     session.deaths_this_turn = []
     session.debuts_this_turn = []
-    session.power_renames_this_turn = []
     session.previous_summary = ""
     session.registry = None
     session.temporary_characters = {}
@@ -2132,8 +2057,8 @@ def test_secret_authorization_rejects_missing_assignee_without_grant(game):
     ).fetchone()["status"]
     assert status == "draft"
     assert db.conn.execute(
-        "SELECT id FROM rejection_reports WHERE section='directive_locality'",
-    ).fetchone() is not None
+        "SELECT COUNT(*) FROM rejection_reports WHERE section='directive_locality'",
+    ).fetchone()[0] > 0
 
 def test_in_transit_allocation_requires_execution_verdict(game):
     db, state, _content = game

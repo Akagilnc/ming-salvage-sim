@@ -4,7 +4,7 @@
 ① AC1：#623 既有辜负写口行为覆盖，本片不重写该 origin
 ② 兑付/撑完 + 谏处置三型（正）；校验拒收（fulfilled/任命）不落伪信用（负）
 ③ 处置映射：丢卒两笔 / 包庇撑腰 / 查办不记（负）；真变形案卷 + #565 连坐面
-④ 幂等（origin 写前判重）+ 叙事语境 + restore + 只写不读
+④ 幂等（origin 写前判重）+ 叙事语境 + restore
 """
 
 from __future__ import annotations
@@ -21,7 +21,6 @@ from ming_sim.credit_events import (
     KIND_SCAPEGOAT,
     resolve_credit_events_from_extraction,
     scapegoat_actor_kind_from_origin,
-    write_credit_event,
 )
 from ming_sim.db import GameDB
 from ming_sim.issues import apply_score_extraction
@@ -353,18 +352,19 @@ def test_fulfill_back_and_urge_three_decisions(game):
         if f"issue:{cid_g}:credit:grant_grace" in str(e["origin"])
     ]
     assert g_edges, "准宽限须写撑腰"
+    assert g_edges[-1]["context"] in {grace_purpose, "准宽限", "乞恩宽限"}
 
     rg_edges = [
         e for e in _credit_edges(db, event_kind=KIND_BETRAY, target="徐光启")
         if f"issue:{cid_rg}:credit:reject_grace" in str(e["origin"])
     ]
-    assert rg_edges
+    assert rg_edges and rg_edges[-1]["context"] == "乞恩宽限"
 
     rr_edges = [
         e for e in _credit_edges(db, event_kind=KIND_BETRAY, target="黄道周")
         if f"issue:{cid_rr}:credit:reject_remonstrance" in str(e["origin"])
     ]
-    assert rr_edges
+    assert rr_edges and rr_edges[-1]["context"] == "期限过急，恐难如期"
 
 
 # ── ③ 处置映射正负 ───────────────────────────────────────────────────
@@ -644,11 +644,3 @@ def test_idempotent_narrative_restore_write_only(game, tmp_path):
     finally:
         restored.close()
 
-    # 只写不读：本轴无消费端 API（调用侧断言）
-    import ming_sim.credit_events as ce
-    public = [n for n in dir(ce) if not n.startswith("_")]
-    assert "read_credit" not in " ".join(public).lower()
-    assert "consume_credit" not in " ".join(public).lower()
-    assert "apply_loyalty" not in " ".join(public).lower()
-    # write_credit_event 为写；resolve_* 为识别写，非账本消费
-    assert callable(write_credit_event)

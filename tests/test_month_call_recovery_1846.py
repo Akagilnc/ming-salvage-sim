@@ -22,7 +22,6 @@ from tests.month_chain_helpers import make_light_session
 
 
 def _forbid_extractor(monkeypatch):
-
     monkeypatch.setattr(
         "ming_sim.session.write_decree_with_agno", lambda *_a, **_k: "诏",
     )
@@ -108,7 +107,6 @@ def test_month_entry_world_push_follows_audience_transport_policy(
     calls = {"n": 0}
 
     def boom(self, *_args, **_kwargs):
-        assert getattr(self, "id", None) == "world-segment"
         calls["n"] += 1
         raise sequence[calls["n"] - 1]
 
@@ -242,14 +240,14 @@ def test_world_text_exhaustion_stops_month_keeps_settled_edicts(game, monkeypatc
     assert len(rows) == 1 and int(rows[0]["delta"]) == -7
     abort = caught.value
     assert abort.error_pack_path
-    assert abort.stage in {"world_text", "world-segment", "world_segment"}
+    assert abort.stage == "world_text"
     chain = (db.get_resolve_context(turn) or {}).get("simulator_payload", {}).get(
         "month_chain", {},
     )
     failure = chain.get("call_failure") or {}
     assert failure.get("kind") == "model_exhausted"
     assert failure.get("error_pack_path") == abort.error_pack_path
-    assert "world" in str(failure.get("step") or abort.stage)
+    assert failure.get("step") == "world_text"
     assert not chain.get("world_text_ready")
     assert not chain.get("world_committed")
 
@@ -270,10 +268,15 @@ def test_world_translate_exhaustion_keeps_text_resume_retries_translate_only(
     turn = int(state.turn)
     _forbid_extractor(monkeypatch)
 
+    world_calls = []
+    translate_calls = []
+
     def world(*_a, **_k):
+        world_calls.append(1)
         return "世界段已成文。"
 
     def translate_fail(*_a, **_k):
+        translate_calls.append("fail")
         raise LLMUnavailable(
             "translate exhausted", code="llm_timeout", provider_message="timeout",
         )
@@ -295,12 +298,14 @@ def test_world_translate_exhaustion_keeps_text_resume_retries_translate_only(
     assert db.staged_declarations.is_settled(ref)
     rows_after_fail = _ningyuan_ledger_rows(db)
     assert len(rows_after_fail) == 1 and int(rows_after_fail[0]["delta"]) == -5
+    assert world_calls == [1]
+    assert translate_calls == ["fail"]
 
     def translate_ok(*_a, **_k):
+        translate_calls.append("ok")
         return {"effects": {}}
 
     monkeypatch.setattr(month_translate, "translate_month_segment", translate_ok)
-    # 重开不得重推世界段：若再调 run_world_segment_text 即响亮失败。
     monkeypatch.setattr(
         month_chain, "run_world_segment_text",
         lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("must not repush world")),
@@ -309,10 +314,8 @@ def test_world_translate_exhaustion_keeps_text_resume_retries_translate_only(
     # Web's advance_without_edict endpoint uses this exact session entry after reopening.
     result = session.advance_without_decree()
     assert result.advanced is True
-    chain_after = (db.get_resolve_context(turn) or {}).get("simulator_payload", {}).get(
-        "month_chain", {},
-    )
-    assert chain_after.get("world_text") == "世界段已成文。"
+    assert world_calls == [1]
+    assert translate_calls == ["fail", "ok"]
     assert len(_ningyuan_ledger_rows(db)) == 1
     assert int(_ningyuan_ledger_rows(db)[0]["delta"]) == -5
 

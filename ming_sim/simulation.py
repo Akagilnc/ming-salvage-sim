@@ -177,7 +177,7 @@ EMPTY_EXTRACTION: Dict[str, object] = {
     "faction_denunciations": [],
     "authority_changes": [],
     "dossier_progress_reports": [],
-    "emperor_fate": None,  # 崇祯结局：abdicate(退位/禅让)/suicide(自尽/殉国)/null(无)
+    "emperor_fate": None,  # 已声明的皇帝终态。abdicate/suicide 保留原状态号；被废/暴毙及其它非空声明同样终局；null 不终局
     "relation_edge_events": [],  # #633/ADR 0082 结算口：邸报大臣互动边事件
     "affair_declarations": [],
 }

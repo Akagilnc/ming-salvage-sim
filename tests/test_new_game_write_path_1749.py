@@ -160,10 +160,41 @@ def _install_canned_scene_double(game, monkeypatch) -> None:
     stub_audience_translate(monkeypatch, _empty_translate_fn)
 
 
-def _directive(client: TestClient, text: str) -> None:
-    r = client.post("/api/directives", json={"text": text, "notes": ""})
-    _assert_not_bare_500(r, step="directives")
+def _directive(text: str) -> None:
+    """#1849：独立手拟新增口已退役，改经现行 capture 核 + session 落一条草稿
+    （召对拟旨同一条 turn_directives 写入）。
+
+    本函数只作**播种前置**（被测对象多在落桌之后）；凡要证「Web 写端点仍可写」
+    的用例请走 _rewrite_draft_via_http——幸存真实写入口 PATCH /api/directives/{id}。
+    """
+    _seed_draft(text)
+
+
+def _seed_draft(text: str) -> int:
+    from tests.directive_seed_helpers import seed_manual_draft
+
+    game = web_app.web_game
+    assert game is not None
+    _wait_pending_writes(game)
+    draft_id = seed_manual_draft(game.session, text)
+    _wait_pending_writes(game)
+    return draft_id
+
+
+def _rewrite_draft_via_http(client: TestClient, seed_text: str, *, marker: str) -> str:
+    """#1849：可写证明经**幸存真实写入口** PATCH /api/directives/{id}。
+
+    播种只是前置（改稿得先有一条草稿）；改稿本身走真实 HTTP 入口，落库结果由
+    调用方用独立 DB 快照核对。新增口已退役，此处不得改回 POST。
+    """
+    draft_id = _seed_draft(seed_text)
+    r = client.patch(f"/api/directives/{draft_id}", json={"text": marker})
+    _assert_not_bare_500(r, step="patch-draft")
     assert r.status_code == 200, r.text
+    game = web_app.web_game
+    assert game is not None
+    _wait_pending_writes(game)
+    return marker
 
 
 def _chat_stream(client: TestClient, minister: str, msg: str) -> dict:
@@ -221,7 +252,7 @@ def _write_and_verify_live(
     """经真实 directives + chat/stream 写入，独立 DB 核对 campaign/回话终态。"""
     _install_canned_scene_double(game, monkeypatch)
     d_text = f"着户部清核辽饷（{label}）。"
-    _directive(client, d_text)
+    _directive(d_text)
     _wait_pending_writes(game)
     st = client.get("/api/game/state")
     minister = _pick_active_minister(st.json())
@@ -314,7 +345,7 @@ def test_new_game_write_path_direct_and_via_exit(tracer_client, monkeypatch):
 
     # ── 路二：exit → new_game（确定性；真实 exit 并发交错留临时真跑，不进永久案）──
     pre_exit = "着户部清核辽饷（pre-exit）。"
-    _directive(client, pre_exit)
+    _directive(pre_exit)
     _wait_pending_writes(g1)
     n_exit = len(spawns)
     assert client.post("/api/menu/exit_to_menu").status_code == 200
@@ -376,10 +407,12 @@ def test_new_game_write_path_direct_and_via_exit(tracer_client, monkeypatch):
         night_id=rec2["night_id"],
         minister_message_id=rec2["minister_message_id"],
     )
+    # 恢复后可写：播种只作前置，改稿经幸存真实写入口 PATCH 并验持久结果。
     cont_more = "着再拨饷银（续）。"
-    _directive(client, cont_more)
-    _wait_pending_writes(g3)
-    assert cont_more in _db_snapshot(g3.db_path)["directive_texts"]
+    cont_edited = _rewrite_draft_via_http(
+        client, cont_more, marker="着再拨饷银（续·改稿）。",
+    )
+    assert cont_edited in _db_snapshot(g3.db_path)["directive_texts"]
 
     # ── 旧档 c0/c1 经真实 load_save 恢复同条旨意与召对轮 ──
     for arch, camp, rec in (
@@ -414,8 +447,9 @@ def test_new_game_construct_failure_keeps_old_writable(tracer_client, monkeypatc
     assert g0 is not None
     p0 = g0.db_path
     c0 = _campaign(g0)
-    _directive(client, "着户部清核辽饷（pre-fail）。")
+    _directive("着户部清核辽饷（pre-fail）。")
     _wait_pending_writes(g0)
+    main_before = web_app._get_main_db_path()
 
     real_begin = GameSession.begin_turn
     boom_on = {"armed": True}
@@ -428,17 +462,20 @@ def test_new_game_construct_failure_keeps_old_writable(tracer_client, monkeypatc
 
     monkeypatch.setattr(GameSession, "begin_turn", _boom_begin)
     # TestClient 默认 raise_server_exceptions：构造失败原样上抛，仍须恢复旧局。
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError, match="begin_turn boom"):
         client.post("/api/menu/new_game")
     assert web_app.web_game is g0
-    assert g0.db_path == p0
+    assert web_app._same_db_path(web_app._get_main_db_path(), main_before)
+    assert web_app._same_db_path(g0.db_path, p0)
     assert _campaign(g0) == c0
+    # 恢复后可写：播种只作前置，改稿经幸存真实写入口 PATCH 并验持久结果。
     after = "着户部清核辽饷（after-fail）。"
-    _directive(client, after)
-    _wait_pending_writes(g0)
+    after_edited = _rewrite_draft_via_http(
+        client, after, marker="着户部清核辽饷（after-fail·改稿）。",
+    )
     snap = _db_snapshot(p0)
     assert snap["campaign_id"] == c0
-    assert after in snap["directive_texts"]
+    assert after_edited in snap["directive_texts"]
 
 
 def test_gamesession_load_state_failure_closes_partial_resources(tmp_path, monkeypatch):
@@ -460,7 +497,7 @@ def test_gamesession_load_state_failure_closes_partial_resources(tmp_path, monke
         raise RuntimeError("load_state boom")
 
     monkeypatch.setattr(GameDB, "load_state", boom_load)
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError, match="load_state boom"):
         GameSession(
             db_path=dbp,
             llm_config=LLMConfig(api_key="sk-test", base_url="http://x", model="m"),
@@ -472,7 +509,7 @@ def test_gamesession_load_state_failure_closes_partial_resources(tmp_path, monke
 
 
 def test_load_save_close_fail_restores_writable_old_game(tracer_client, monkeypatch):
-    """真实 load_save 入口：关旧局失败 → 409、恢复指针且 /api/directives 仍可写；不搬活库。"""
+    """真实 load_save 入口：关旧局失败 → 409、恢复指针且草稿写入仍可落；不搬活库。"""
     client = tracer_client
     _install_canned_minister_factory(monkeypatch)
     seed = client.post("/api/menu/new_game")
@@ -493,16 +530,21 @@ def test_load_save_close_fail_restores_writable_old_game(tracer_client, monkeypa
         r = client.post("/api/menu/load_save/snap1749")
         assert r.status_code == 409, r.text
         assert web_app.web_game is g0
+        assert web_app._runtime_restorable(g0)
         assert not g0._write_queue.is_sealed(), "drain failure must unseal restored runtime"
         assert os.path.isfile(old_path)
-        saves_root = Path(web_app.user_data_path()) / "saves"
-        assert not list(saves_root.glob("drained_*.db")) if saves_root.is_dir() else True
+        # close 失败 holder 仍在：AR-req 不得搬活库（外部文件终态）
+        web_app._path_request_archive(old_path)
+        assert os.path.isfile(old_path)
+        assert _drained(Path(web_app.user_data_path())) == []
+        # 恢复后可写：播种只作前置，改稿经幸存真实写入口 PATCH 并验持久结果。
         marker = "着户部清核辽饷（load-save-close-fail）。"
-        _directive(client, marker)
-        _wait_pending_writes(g0)
+        marker_edited = _rewrite_draft_via_http(
+            client, marker, marker="着户部清核辽饷（load-save-close-fail·改稿）。",
+        )
         snap = _db_snapshot(old_path)
         assert snap["campaign_id"] == c0
-        assert marker in snap["directive_texts"]
+        assert marker_edited in snap["directive_texts"]
     finally:
         g0.session.close = real_close  # type: ignore[method-assign]
 
@@ -519,7 +561,7 @@ def test_exit_close_fail_blocks_archive_on_real_new_game(tracer_client, monkeypa
     old_path = g0.db_path
     c0 = _campaign(g0)
     marker = "着户部清核辽饷（exit-close-fail）。"
-    _directive(client, marker)
+    _directive(marker)
     _wait_pending_writes(g0)
 
     real_close = g0.session.close

@@ -94,11 +94,19 @@ def test_pre_settle_tick_before_event_terminal_reads_new_location(game):
         row = _ledger(db, name)
         assert row['location'] == 'beizhili' and row['transit_to'] == ''
         assert not db.has_event_terminal_state('__test_transit_gate_668__', 'avoided')
+        from types import SimpleNamespace
+        from ming_sim.applier import Provenance
+        import ming_sim.month_chain as month_chain
+        month_chain._consume_event_gates_after_edicts(
+            SimpleNamespace(db=db, state=state), {},
+            decree_text="", source=Provenance.system_simulation,
+        )
+        assert not db.has_event_terminal_state('__test_transit_gate_668__', 'avoided')
     finally:
         content.events.remove(ev)
 
 def test_pre_settle_tick_before_seed_auto_trigger_reads_new_location(game):
-    """F7.4：pre_settle 内 tick 先于 auto_trigger_seed_issues，seed 门读到新 location。"""
+    """F7.4：tick 在 pre_settle 落定，seed 门在逐旨后的唯一消费点读到新 location。"""
     db, state, content = game
     import ming_sim.issues as issues
     issues.bind_content(content)
@@ -115,6 +123,14 @@ def test_pre_settle_tick_before_seed_auto_trigger_reads_new_location(game):
         pre_settle(state, db, content=content)
         row = _ledger(db, name)
         assert row['location'] == 'beizhili' and row['transit_to'] == ''
+        assert db.find_any_issue_by_origin('event_pool', ev.id) is None
+        from types import SimpleNamespace
+        from ming_sim.applier import Provenance
+        import ming_sim.month_chain as month_chain
+        month_chain._consume_event_gates_after_edicts(
+            SimpleNamespace(db=db, state=state), {},
+            decree_text="", source=Provenance.system_simulation,
+        )
         issue = db.find_any_issue_by_origin('event_pool', ev.id)
         assert issue is not None, 'seed 门应在 tick 后读新 location 并硬立项'
         assert issue['status'] == 'active'

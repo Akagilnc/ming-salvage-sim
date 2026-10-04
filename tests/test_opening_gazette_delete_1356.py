@@ -42,8 +42,6 @@ def _session(db, state, content) -> GameSession:
     session.deaths_this_turn, session.debuts_this_turn = [], []
     session.last_decree = session.last_report = ""
     session._decree_draft_fingerprint = ()
-    session._scene_registry = None
-    session._beat_generator = None
     session.auto_save = lambda *a, **k: None
     return session
 

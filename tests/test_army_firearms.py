@@ -110,25 +110,16 @@ def test_create_army_cannon_count_clamped(game):
 
 
 
-def test_fresh_seed_wires_firearm_not_all_zero(content):
+def test_fresh_seed_wires_firearm_not_all_zero(content, tmp_path):
     """新档 seed 必须贯通火器（非全 0）。"""
-    import os
-    import tempfile
     from ming_sim.db import GameDB
 
-    fd, p = tempfile.mkstemp(suffix=".db")
-    os.close(fd)
-    try:
-        db = GameDB(p, content)
-        db.seed_static_data()
-        rows = db.conn.execute("SELECT firearm_equipment FROM armies").fetchall()
-        assert rows
-        assert any(int(r["firearm_equipment"]) > 0 for r in rows)
-        db.conn.close()
-    finally:
-        for f in (p, f"{p}_agno.db"):
-            if os.path.exists(f):
-                os.remove(f)
+    db = GameDB(str(tmp_path / "seed.db"), content)
+    db.seed_static_data()
+    rows = db.conn.execute("SELECT firearm_equipment FROM armies").fetchall()
+    assert rows
+    assert any(int(r["firearm_equipment"]) > 0 for r in rows)
+    db.conn.close()
 
 
 def test_create_army_cannon_nonint_rejected_not_crash(read_game):

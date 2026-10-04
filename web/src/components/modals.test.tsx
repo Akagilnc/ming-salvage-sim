@@ -244,16 +244,13 @@ function renderEdictModal(props: {
     root.render(
       <EdictModal
         state={props.state}
-        directiveText=""
         editingDirectiveId={null}
         editingDirectiveText=""
         decree=""
         report=""
         busy=""
         error={props.error ?? ""}
-        onDirectiveTextChange={() => {}}
         onEditingTextChange={() => {}}
-        onCreateDirective={() => {}}
         onStartEdit={() => {}}
         onCancelEdit={() => {}}
         onSaveDirective={() => {}}
@@ -285,6 +282,22 @@ afterEach(() => {
 });
 
 describe("EdictModal — decree desk behavior", () => {
+  // #1849 / ADR 0152 决定 1：独立手拟新增控件（「御笔自拟」+「新增草案」）已退出；
+  // 草稿区的改／删与已发区只读不受影响（下一例证）。
+  it("#1849 无独立手拟新增口：御案不渲拟诏文本框与新增草案钮", () => {
+    const { host } = renderEdictModal({
+      state: baseGameState({
+        directives: [{ id: 8, event_id: "", event_title: "", actor: "", text: "发饷辽东", source: "chat", status: "pending", notes: "", authority: "" }],
+      }),
+    });
+    expect(host.querySelector(".desk-compose")).toBeNull();
+    expect(host.querySelector(".desk-add-btn")).toBeNull();
+    expect(host.textContent).not.toContain("御笔自拟");
+    expect(host.textContent).not.toContain("新增草案");
+    // 草稿仍可改可删。
+    expect(host.querySelectorAll(".directive-tools button")).toHaveLength(2);
+  });
+
   it("issues an approved conversational draft without a second review gate", () => {
     const onIssue = vi.fn();
     const { host } = renderEdictModal({

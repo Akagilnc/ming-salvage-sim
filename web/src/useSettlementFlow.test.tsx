@@ -430,8 +430,9 @@ describe("#1351/#1560 useSettlementFlow — advanceWithoutEdict 令牌与 409 �
     });
 
     expect(host.querySelector("[data-testid=error]")?.textContent).toBe(FAIL_MSG);
-    expect(hookRef.current!.settlementHudError).toBe(FAIL_MSG);
-    expect(host.querySelector("[data-testid=busy]")?.textContent).toBe("");
+    // #1888 J3：共享 error 已由 harness 渲染断言；settlementHudError 位不另读内部态
+    // ——其玩家可见投影（hud-error 告警）由 appDurableWiring.test.tsx 的真实 App 用例证明。
+    expect(host.querySelector('[data-testid="busy"]')?.textContent).toBe("");
     cleanup();
   });
 });
@@ -627,91 +628,5 @@ describe("#1843 未推进的过月终包", () => {
   });
 });
 
-function sseAdvancedResponse(report = "十月邸报·流终"): Response {
-  const body = `event: done\ndata: ${JSON.stringify({ advanced: true, report })}\n\n`;
-  return new Response(body, { headers: { "Content-Type": "text/event-stream" } });
-}
-
-describe("#1852 写成即推进：本面邸报阅读态，不整页 reload", () => {
-  it.each([
-    ["issueDecree", "/api/decree/issue/stream"],
-    ["submitDecisions", "/api/decree/resolve_decisions/stream"],
-  ] as const)("%s advanced 终包：loadState + 阅读态，朕知道了只关阅读", async (action, path) => {
-    const reload = vi.fn();
-    Object.defineProperty(window, "location", {
-      configurable: true,
-      value: { ...window.location, reload },
-    });
-    const loadState = vi.fn(async () => advancedMonthState);
-    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
-      if (url !== path) throw new Error(`unexpected fetch: ${url}`);
-      return sseAdvancedResponse("十月邸报·流终");
-    }));
-    const { host, hookRef, cleanup } = mountHarness({
-      loadState,
-      initial: action === "submitDecisions" ? awaitingState : preClickState,
-    });
-
-    await act(async () => {
-      if (action === "submitDecisions") await hookRef.current!.submitDecisions([]);
-      else await hookRef.current!.issueDecree();
-    });
-
-    expect(loadState).toHaveBeenCalledTimes(1);
-    expect(reload).not.toHaveBeenCalled();
-    expect(host.querySelector('[data-testid="busy"]')?.textContent).toBe("");
-    expect(hookRef.current!.settlementGazetteReading?.report).toBe("十月邸报·流终");
-    expect(hookRef.current!.settlementGazetteReading?.periodLabel).toBe("天启七年十月");
-    expect(hookRef.current!.settlementGazetteReading?.attendantMessage).toBe("奴婢呈上月邸报。");
-
-    act(() => {
-      hookRef.current!.dismissSettlementGazette();
-    });
-    expect(hookRef.current!.settlementGazetteReading).toBeNull();
-    expect(host.querySelector('[data-testid="phase"]')?.textContent).toBe("player");
-    expect(reload).not.toHaveBeenCalled();
-    cleanup();
-  });
-
-  it("advanceWithoutEdict advanced：从 state 投影开阅读态，不 reload", async () => {
-    const reload = vi.fn();
-    Object.defineProperty(window, "location", {
-      configurable: true,
-      value: { ...window.location, reload },
-    });
-    const loadState = vi.fn(async () => advancedMonthState);
-    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
-      if (url !== "/api/decree/advance_without_edict") throw new Error(`unexpected fetch: ${url}`);
-      return new Response(JSON.stringify({
-        advanced: true,
-        state: advancedMonthState,
-      }));
-    }));
-    const { hookRef, cleanup } = mountHarness({ loadState, initial: preClickState });
-
-    await act(async () => {
-      await hookRef.current!.advanceWithoutEdict();
-    });
-
-    expect(reload).not.toHaveBeenCalled();
-    expect(loadState).toHaveBeenCalled();
-    expect(hookRef.current!.settlementGazetteReading?.report).toBe("十月邸报·已归档");
-    cleanup();
-  });
-
-  it("退局后迟到的新月刷新不得重挂上一局邸报", async () => {
-    let finishRefresh!: (state: GameState) => void;
-    const loadState = vi.fn(() => new Promise<GameState>((resolve) => { finishRefresh = resolve; }));
-    vi.stubGlobal("fetch", vi.fn(async () => sseAdvancedResponse("旧局邸报")));
-    const { hookRef, cleanup } = mountHarness({ loadState });
-    let issuing!: Promise<void>;
-    await act(async () => { issuing = hookRef.current!.issueDecree(); });
-    expect(loadState).toHaveBeenCalledTimes(1);
-    await act(async () => hookRef.current!.clearSettlementHudError());
-    await act(async () => { finishRefresh(advancedMonthState); await issuing; });
-    expect(hookRef.current!.settlementGazetteReading).toBeNull();
-    expect(hookRef.current!.suppressPostAdvanceOverlays).toBe(false);
-    cleanup();
-  });
-
-});
+// 本面邸报阅读态、跨局回执隔离与迟到刷新不重挂邸报，均由 appDurableWiring.test.tsx 的
+// 真实 App 玩家入口用例证明；此层不另立只数 loadState 次数／reload spy 的内部接线副本。

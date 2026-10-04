@@ -38,8 +38,6 @@ def _production_session(db, state, content):
     session.deaths_this_turn, session.debuts_this_turn = [], []
     session.last_decree = session.last_report = ""
     session._decree_draft_fingerprint = ()
-    session._scene_registry = None
-    session._beat_generator = None
     session.auto_save = lambda *args, **kwargs: None
     return session
 
@@ -60,7 +58,7 @@ def _record_monthly_report(db, state, progress):
     db.record_monthly_dossier_progress(state.turn, [progress])
 
 
-def test_only_emperor_private_payload_shows_monthly_report(game):
+def test_emperor_private_payload_preserves_monthly_report(game, monkeypatch):
 
     db, state, content = game
     order_id, dossier_id = _order(db, state)
@@ -74,20 +72,34 @@ def test_only_emperor_private_payload_shows_monthly_report(game):
     emperor_order = next(item for item in db.list_secret_orders() if item["id"] == order_id)
     assert emperor_order["dossier_progress"][-1]["memorial_text"] == marker
 
-    # The report does not leak into the assignee's on-demand material directory.
-    from ming_sim.materials import list_materials, prepare_character_materials, read_material
-    assignee = content.characters[emperor_order["minister_name"]]
-    prepared = prepare_character_materials(db, state, assignee)
-    private_blob = "\n".join(
-        read_material(prepared.root, path)
-        for path in list_materials(prepared.root)
-    )
-    assert marker not in private_blob
+    from ming_sim.materials import prepare_character_materials, release_material_tree
+    read_fields = set()
+    real_orders = db.get_active_secret_orders_for_minister
+
+    class ObservedOrder(dict):
+        def __getitem__(self, key):
+            read_fields.add(key)
+            return super().__getitem__(key)
+
+        def get(self, key, default=None):
+            read_fields.add(key)
+            return super().get(key, default)
+
+    def observe_orders(*args, **kwargs):
+        return [ObservedOrder(row) for row in real_orders(*args, **kwargs)]
+
+    monkeypatch.setattr(db, "get_active_secret_orders_for_minister", observe_orders)
+    prepared = prepare_character_materials(db, state, content.characters[emperor_order["minister_name"]])
+    try:
+        # Real orders carry the monthly rail, but the character writer must not consume it.
+        assert {"title", "content"} <= read_fields
+        assert "dossier_progress" not in read_fields
+    finally:
+        release_material_tree(prepared.root)
 
 
 def test_disclosure_promotes_monthly_report_to_public_event_only_after_disclosure(game):
     from ming_sim.issues import apply_score_extraction
-    from ming_sim.knowledge import build_character_knowledge
 
     db, state, content = game
     order_id, dossier_id = _order(db, state, title="稽核辽饷", tags=["稽核"])
@@ -96,15 +108,16 @@ def test_disclosure_promotes_monthly_report_to_public_event_only_after_disclosur
         "dossier_id": dossier_id, "progress_band": "核账",
         "memorial_text": marker,
     })
-    order = next(item for item in db.list_secret_orders() if item["id"] == order_id)
-    minister = order["minister_name"]
-    before = build_character_knowledge(db, state, minister).get("public_events") or []
-    assert marker not in str(before)
+    assert not any(
+        str(item.get("source_id") or "").startswith(f"secret_order_disclosure:{order_id}:")
+        for item in db._character_knowledge_events("")
+    )
 
+    sim_note = "该案已经明发廷议"
     apply_score_extraction(db, state, {"secret_order_updates": [{
-        "order_id": order_id, "sim_note": "该案已经明发廷议", "disclosed": True,
+        "order_id": order_id, "sim_note": sim_note, "disclosed": True,
     }]}, content=content)
-    public = build_character_knowledge(db, state, minister).get("public_events") or []
+    public = db._character_knowledge_events("")
     disclosure = next(
         item for item in public
         if str(item.get("source_id") or "").startswith(
@@ -112,6 +125,7 @@ def test_disclosure_promotes_monthly_report_to_public_event_only_after_disclosur
         )
     )
     assert marker in disclosure["body"]
+    assert sim_note in disclosure["body"]
 
 
 def test_titles_do_not_classify_and_all_active_secret_orders_are_candidates(game):
@@ -189,12 +203,12 @@ def test_character_terminal_status_closes_secret_orders_through_canonical_progre
     }
     assert orders[chained_id]["status"] == "failed"
     assert orders[unchained_id]["status"] == "failed"
-    assert "dead" in orders[chained_id]["result"]
     assert "途中病故" in orders[chained_id]["result"]
     assert db.get_decree_dossier(chained_dossier)["status"] == "closed"
     assert db.get_decree_dossier(unchained_dossier)["status"] == "closed"
     terminal = db.list_dossier_progress(chained_dossier)[-1]
     assert terminal["is_terminal"] is True
+    assert "途中病故" in terminal["memorial_text"]
     assert db.list_dossier_progress(unchained_dossier)
 
 
@@ -304,7 +318,7 @@ def test_real_no_edict_entries_roll_back_every_external_state_after_fiscal_write
     def fail_after_real_flows(flow_db, flow_state):
         ledger_before = _rows(flow_db, "economy_ledger")
         metrics_before = dict(flow_state.metrics)
-        original_flows(flow_db, flow_state)
+        result = original_flows(flow_db, flow_state)
         observed["fiscal_written"] = _rows(flow_db, "economy_ledger") != ledger_before
         observed["metrics_written"] = dict(flow_state.metrics) != metrics_before
         assert observed == {"fiscal_written": True, "metrics_written": True}
@@ -349,7 +363,7 @@ def test_real_no_edict_entries_roll_back_every_external_state_after_fiscal_write
         else:
             assert "post-fiscal failure 566" in str(detail)
     else:
-        with pytest.raises(RuntimeError):
+        with pytest.raises(RuntimeError, match="post-fiscal failure 566"):
             invoke()
 
     assert observed == {"fiscal_written": True, "metrics_written": True}

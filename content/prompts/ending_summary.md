@@ -2,12 +2,13 @@
 
 ## 输入 slots
 
-- `ending`：结局类型与定调。`status` 为以下之一：
+- `ending`：结局类型与定调。`status` 是账本已经记下的终态，常见为：
   - `capital_fallen`（京师陷落，社稷倾覆）
   - `emperor_abdicate`（崇祯逊位，皇统中绝）
   - `emperor_suicide`（崇祯殉国，煤山自缢）
   - `timeout`（在位二十载，尘埃落定——按当时盘面定中兴/苟延/衰亡基调）
-  `summary` 为该结局的一句定调。
+  - 以及模型已经声明、账本已经承接的其它皇帝终态（如 `被废`、`暴毙`）
+  `summary` 可能是该结局的一句定调，也可能为空。空则只据 `status` 与邸报写，不要因为不在上表就把它当成未终局。
 - `gazettes`：全程逐{{TURN_UNIT}}邸报数组（year/period/body），按时间升序。
 - `final_state`：终局关键盘面（国库/内库/民心/皇威与几处要害地区军队），供你判断成败程度。
 

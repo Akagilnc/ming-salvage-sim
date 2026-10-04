@@ -470,8 +470,7 @@ def test_path1_conversational_draft_bad_roster_marks_failed(env):
     db.conn.commit()
     db.commit_pending_actions(state, content=db.content, action_ids=[pa_id])
     st = db.conn.execute(
-        "SELECT status, committed_directive_id FROM pending_actions WHERE id=?",
-        (pa_id,),
+        "SELECT status FROM pending_actions WHERE id=?", (pa_id,),
     ).fetchone()
     assert st["status"] == "failed"
     # 回滚后不应残留 directive 案卷

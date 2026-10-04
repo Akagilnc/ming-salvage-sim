@@ -10,6 +10,7 @@ from ming_sim.cli_backend import capture_manual_directive_payload as _real_captu
 from ming_sim.structured_decree import (
     StructuredDecreeCombinationError,
 )
+from tests.directive_seed_helpers import seed_manual_draft
 from tests.test_month_loop_tracer_1468 import (  # noqa: F401
     _post_issue_stream,
     tracer_client,
@@ -359,11 +360,9 @@ def test_manual_owner_example_seal_advances(tracer_client, monkeypatch):  # noqa
 
     monkeypatch.setattr(cli_backend, "capture_manual_directive_payload", _real_capture)
     monkeypatch.setattr(cli_backend, "_run_backend_for_config", backend)
-    response = tracer_client.post(
-        "/api/directives",
-        json={"text": "着户部继续核查陕西赈务，按月具报。", "notes": ""},
-    )
-    assert response.status_code == 200, response.text
+    # #1849：独立手拟新增 Web 口已退役；经现行 capture 核 + session 落草案
+    # （召对拟旨同一条 turn_directives 写入），下游盖玺/案卷契约不变。
+    assert seed_manual_draft(game.session, "着户部继续核查陕西赈务，按月具报。") > 0
     turn_before = game.state.turn
     _post_issue_stream(
         tracer_client, expected_turn=turn_before, step="#1624 owner seal",
@@ -407,8 +406,9 @@ def test_http_manual_directive_lands_beyond_fifteen_initiatives_1790(
     """#1790 验收：≥15 件 initiative 在办时票拟再下一旨 → 第 16 成案、executing 差务、
     turn+1 不中止；该主办/属地在办案卷数 +1。
 
-    入口＝既有票拟 /api/directives（#1624 seal 同形），非 apply 层 helper、非 1565 交办、
-    非 #1783 拨帑 tracer。填帽 insert_issue 直落；观察面为持久化案卷。
+    入口＝现行落草案路（capture 核 + session.add_directive，#1624 seal 同形；#1849 后
+    独立手拟新增 Web 口已退役），非 apply 层 helper、非 1565 交办、非 #1783 拨帑 tracer。
+    填帽 insert_issue 直落；观察面为持久化案卷。
     """
     import ming_sim.cli_backend as cli_backend
     import web_app
@@ -440,11 +440,8 @@ def test_http_manual_directive_lands_beyond_fifteen_initiatives_1790(
 
     monkeypatch.setattr(cli_backend, "capture_manual_directive_payload", _real_capture)
     monkeypatch.setattr(cli_backend, "_run_backend_for_config", backend)
-    response = tracer_client.post(
-        "/api/directives",
-        json={"text": "着户部继续核查陕西赈务，按月具报。", "notes": ""},
-    )
-    assert response.status_code == 200, response.text
+    # #1849：独立手拟新增 Web 口已退役，改经现行 capture 核 + session 落草案。
+    assert seed_manual_draft(game.session, "着户部继续核查陕西赈务，按月具报。") > 0
 
     turn_before = int(state.turn)
     body = _post_issue_stream(

@@ -66,6 +66,7 @@ def test_relative_deadline_cannot_stage_llm_computed_expired_turn(game, monkeypa
 
 
 def test_single_pay_order_capture_rejects_missing_entries(monkeypatch):
+    """#1849：非法 entries 响亮拒收，禁洗成「无拟旨意图」再被写入口当成功产物。"""
     monkeypatch.setattr(
         cli_backend, "_run_backend_for_config",
         lambda *_args, **_kwargs: (json.dumps({
@@ -73,8 +74,8 @@ def test_single_pay_order_capture_rejects_missing_entries(monkeypatch):
             "目标类型": "account", "目标ID": "pay_order", "颁布方式": "普通",
         }, ensure_ascii=False), {}),
     )
-    result = cli_backend.extract_draft_intent("拟旨改饷序", "臣已拟妥")
-    assert result["draft_action"] == "无"
+    with pytest.raises(ValueError, match="entries"):
+        cli_backend.extract_draft_intent("拟旨改饷序", "臣已拟妥")
 
 
 def test_multi_pay_order_capture_preserves_reverse_non_tied_priorities(monkeypatch):

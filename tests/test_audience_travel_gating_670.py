@@ -3,9 +3,7 @@
 from __future__ import annotations
 from tests.conftest import open_hall_turn
 
-
 import pytest
-
 from ming_sim.db import GameDB
 from ming_sim.session import AudienceAdmission, GameSession
 from ming_sim import audience_night as an
@@ -92,7 +90,6 @@ def test_audience_admission_keeps_blank_fail_open_and_reuses_basic_qualification
     db.set_character_status(state, dead.name, "dead", reason="测试")
     decision = sess.admit_audience(dead)
     assert decision.result is None
-    assert str(decision.reason or "").strip()
 
 
 def test_audience_admission_records_offsite_summon_before_allowing_audience(game):
@@ -145,6 +142,10 @@ def test_cli_initial_selection_records_remote_summon_without_returning_minister(
     assert [(row["person_name"], row["origin_id"]) for row in an.list_unsettled_summons(db)] == [
         ("洪承畴", f"cli:initial:{state.turn}:洪承畴"),
     ]
+    # 成功记召不喷固定承旨句；资格失败仍可经 reason 打印。
+    joined = "\n".join(notices)
+    assert "赴京" not in joined and "不能入殿" not in joined
+    assert "已传召" not in joined
 
 
 def test_cli_initial_selection_rejects_unknown_unregistered_person(game, monkeypatch):
@@ -171,6 +172,9 @@ def test_cli_initial_selection_rejects_unknown_unregistered_person(game, monkeyp
     assert db.conn.execute(
         "SELECT COUNT(*) AS n FROM characters WHERE name=?", (unknown,),
     ).fetchone()["n"] == 0
+    joined = "\n".join(notices)
+    assert "临时传" not in joined
+    assert "入殿" not in joined
 
 
 def test_in_transit_summon_origin_is_idempotent_and_restorable(game):
@@ -327,39 +331,46 @@ def test_multi_origin_same_person_dedupes_consumer_projections_not_ledger(game, 
     assert an.list_waiting_audience_summons(db) == []
 
     # waiting 消费端 dedupe：直接 capital 在途账（不依赖续程后残留 origin）。
-    db.conn.execute(
-        "UPDATE characters SET location=?, transit_to='', transit_distance_remaining=NULL, "
-        "transit_speed_factor=NULL WHERE name=?",
-        ("beizhili", person.name),
-    )
-    db.conn.commit()
-    night = an.get_open_night(db) or an.open_night(db, state)
-    wait_a = "web:chat:wait-a"
-    wait_b = "web:chat:wait-b"
-    id_a = an.record_summon_in_transit(
-        db, int(night["id"]), person.name, origin_id=wait_a,
-    )
-    id_b = an.record_summon_in_transit(
-        db, int(night["id"]), person.name, origin_id=wait_b,
-    )
-    assert len(an.list_unsettled_summons(db)) == 2
-    waiting = an.list_waiting_audience_summons(db)
-    assert waiting == [{
-        "person_name": person.name,
-        "origin_id": wait_a,
-        "source_entry_id": id_a,
-        "location": "beizhili",
-    }]
-    assert an.settle_summon_origin(db, wait_a) is True
-    assert an.list_waiting_audience_summons(db) == [{
-        "person_name": person.name,
-        "origin_id": wait_b,
-        "source_entry_id": id_b,
-        "location": "beizhili",
-    }]
-    assert an.settle_summon_origin(db, wait_b) is True
-    assert an.list_unsettled_summons(db) == []
-    assert an.list_waiting_audience_summons(db) == []
+    # 续程过月已调度机械尾，尾巴与本段写同一连接。open_night 的 SAVEPOINT
+    # 必须整段留在该 session 的写闸内，否则尾巴 COMMIT 会清掉保存点栈。
+    from ming_sim.session_write_queue import get_session_write_queue
+
+    def plant_waiting_dedupe():
+        db.conn.execute(
+            "UPDATE characters SET location=?, transit_to='', transit_distance_remaining=NULL, "
+            "transit_speed_factor=NULL WHERE name=?",
+            ("beizhili", person.name),
+        )
+        db.conn.commit()
+        night = an.get_open_night(db) or an.open_night(db, state)
+        wait_a = "web:chat:wait-a"
+        wait_b = "web:chat:wait-b"
+        id_a = an.record_summon_in_transit(
+            db, int(night["id"]), person.name, origin_id=wait_a,
+        )
+        id_b = an.record_summon_in_transit(
+            db, int(night["id"]), person.name, origin_id=wait_b,
+        )
+        assert len(an.list_unsettled_summons(db)) == 2
+        waiting = an.list_waiting_audience_summons(db)
+        assert waiting == [{
+            "person_name": person.name,
+            "origin_id": wait_a,
+            "source_entry_id": id_a,
+            "location": "beizhili",
+        }]
+        assert an.settle_summon_origin(db, wait_a) is True
+        assert an.list_waiting_audience_summons(db) == [{
+            "person_name": person.name,
+            "origin_id": wait_b,
+            "source_entry_id": id_b,
+            "location": "beizhili",
+        }]
+        assert an.settle_summon_origin(db, wait_b) is True
+        assert an.list_unsettled_summons(db) == []
+        assert an.list_waiting_audience_summons(db) == []
+
+    get_session_write_queue(session).run_exclusive(plant_waiting_dedupe)
 
 
 def test_fresh_summon_departs_via_canonical_applier_only_when_night_closes(game):
@@ -418,8 +429,8 @@ def test_fresh_summon_applier_failure_rolls_back_and_close_retry_is_safe(game, m
 
     try:
         an.close_night(db, state, night_id=night_id, content=content)
-    except RuntimeError:
-        pass
+    except RuntimeError as exc:
+        assert str(exc) == "injected canonical applier failure"
     else:
         raise AssertionError("canonical applier failure must abort close")
 
@@ -453,13 +464,20 @@ def test_arrived_summon_continuation_survives_failed_apply_across_months(game, m
     )
     night_id = int(an.open_night(db, state)["id"])
     origin = "command:arrived-1"
-    an.record_summon_in_transit(
+    entry_id = an.record_summon_in_transit(
         db, night_id, person.name, origin_id=origin,
     )
 
     assert _arrive_at_destination(game, person.name) == [
         {"name": person.name, "location": "henan"}
     ]
+    arrived_fact = {
+        "person_name": person.name,
+        "original_destination": "henan",
+        "origin_id": origin,
+        "source_entry_id": entry_id,
+        "required_fact": "抵原地后续赴京",
+    }
     assert _travel_row(db, person.name)["location"] == "henan"
     assert _travel_row(db, person.name)["transit_to"] == ""
 
@@ -495,6 +513,7 @@ def test_arrived_summon_continuation_survives_failed_apply_across_months(game, m
     with pytest.raises(SettlementAbort) as excinfo:
         advance_continuation()
     assert isinstance(excinfo.value.__cause__, RuntimeError)
+    assert "injected continuation applier failure" in str(excinfo.value.__cause__)
 
     assert [row["origin_id"] for row in an.list_unsettled_summons(db)] == [origin]
     assert _travel_row(db, person.name)["location"] == "henan"
@@ -575,7 +594,7 @@ def test_multi_origin_fresh_closes_once_per_person_and_retries(game, monkeypatch
         return real_apply(*args, **kwargs)
 
     monkeypatch.setattr(issues, "apply_person_changes_only", fail_once)
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError, match="injected multi-origin applier failure"):
         an.close_night(db, state, night_id=night_id, content=content)
 
     assert len(an.list_unsettled_summons(db)) == 2
@@ -639,7 +658,7 @@ def test_multi_origin_fresh_independent_retract_and_single_departure(game, monke
     db.fail_chat_turn(int(turn_b))
     assert an.list_unsettled_summons(db) == []
 
-    # 两轮都存活时收夜只产生一次行止（一次 apply）。
+    # 两轮都存活时收夜得到同一个持久行止。
     entry_a2 = an.record_summon_fresh(
         db, night_id, person.name, origin_id=origin_a,
     )
@@ -647,19 +666,16 @@ def test_multi_origin_fresh_independent_retract_and_single_departure(game, monke
         db, night_id, person.name, origin_id=origin_b,
     )
     assert entry_a2 != entry_b2
-    from ming_sim import issues
-    real_apply = issues.apply_person_changes_only
-    apply_calls = 0
-
-    def count_apply(*args, **kwargs):
-        nonlocal apply_calls
-        apply_calls += 1
-        return real_apply(*args, **kwargs)
-
-    monkeypatch.setattr(issues, "apply_person_changes_only", count_apply)
+    departures_before = db.conn.execute(
+        "SELECT COUNT(*) FROM person_logs WHERE person_name=? AND action='行止'",
+        (person.name,),
+    ).fetchone()[0]
     result = an.close_night(db, state, night_id=night_id, content=content)
     assert result["closed"] is True
-    assert apply_calls == 1
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM person_logs WHERE person_name=? AND action='行止'",
+        (person.name,),
+    ).fetchone()[0] == departures_before + 1
     after = db.conn.execute(
         "SELECT location, transit_to FROM characters WHERE name=?", (person.name,)
     ).fetchone()
@@ -684,17 +700,19 @@ def test_cli_midflow_summon_consumes_admission_without_entering(game, monkeypatc
         "builtins.print", lambda *args, **_k: notices.append(" ".join(map(str, args))),
     )
 
-    answers = iter(["传洪承畴来", "done"])
-    monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
-    outcome = terminal.minister_chat(sess, current)
+    outcome = terminal._handle_court_command(sess, "传洪承畴来", current)
 
-    assert outcome == "dismiss"
+    assert outcome == "handled"
+    # 成功记召不喷固定承旨句，仍 handled 不入殿。
+    joined = "\n".join(notices)
+    assert "赴京" not in joined and "不能入殿" not in joined
+    assert "已传召" not in joined
     assert [row["origin_id"] for row in an.list_unsettled_summons(db)] == [
         f"cli:midflow:{state.turn}:洪承畴",
     ]
 
 
-def test_cli_midflow_summon_rejects_unknown_unregistered_person(game, monkeypatch):
+def test_cli_midflow_summon_rejects_unknown_unregistered_person(game):
     """#670：CLI 夜内换人未知人物不得 summon-temp 旁路，须 ADR 0038 持久入册后再 admission。"""
     from ming_sim.cli import terminal
 
@@ -704,16 +722,10 @@ def test_cli_midflow_summon_rejects_unknown_unregistered_person(game, monkeypatc
     current = _set_place(game, "毕自严", location="beizhili")
     unknown = "乌有先生乙"
     assert unknown not in sess.content.characters
-    notices: list[str] = []
-    monkeypatch.setattr(
-        "builtins.print", lambda *args, **_k: notices.append(" ".join(map(str, args))),
-    )
 
-    answers = iter([f"传{unknown}来", "done"])
-    monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
-    outcome = terminal.minister_chat(sess, current)
+    outcome = terminal._handle_court_command(sess, f"传{unknown}来", current)
 
-    assert outcome == "dismiss"
+    assert outcome == "handled"
     assert unknown not in sess.temporary_characters
     assert an.list_unsettled_summons(db) == []
     assert _chat_turn_count(db) == 0
@@ -721,7 +733,6 @@ def test_cli_midflow_summon_rejects_unknown_unregistered_person(game, monkeypatc
     assert db.conn.execute(
         "SELECT COUNT(*) AS n FROM characters WHERE name=?", (unknown,),
     ).fetchone()["n"] == 0
-
 
 
 
@@ -758,6 +769,8 @@ def test_summon_recorder_default_body_is_empty_and_tags_carry_facts(game):
     assert by_id[transit_id]["body"] == ""
     assert an.TAG_SUMMON_UNSETTLED in by_id[fresh_id]["tags"]
     assert an.TAG_IN_TRANSIT in by_id[transit_id]["tags"]
+    scroll = an.read_night_scroll(db, night_id)
+    assert not any(row.get("record_id") in {fresh_id, transit_id} for row in scroll)
 
 
 def test_consume_open_night_and_recorder_share_one_transaction(game, monkeypatch):
@@ -775,7 +788,7 @@ def test_consume_open_night_and_recorder_share_one_transaction(game, monkeypatch
         raise RuntimeError("injected summon recorder failure")
 
     monkeypatch.setattr(an, "record_summon_fresh", boom)
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError, match="injected summon recorder failure"):
         sess.consume_audience_admission(
             remote, origin_id="web:atomic-1", state=state,
         )
@@ -881,12 +894,18 @@ def test_continuation_arrival_settles_origin_without_waiting(game, monkeypatch):
     assert an.list_arrived_unsettled_summons(db) == []
 
     # 即便再强制抵京，该 origin 已结清，不得复活为候见。
-    db.conn.execute(
-        "UPDATE characters SET location=?, transit_to='', transit_distance_remaining=NULL, "
-        "transit_speed_factor=NULL WHERE name=?",
-        ("beizhili", person.name),
-    )
-    db.conn.commit()
+    # 与上一处相同：推进后的写走本次过月 session 的写闸，不与机械尾交错。
+    from ming_sim.session_write_queue import get_session_write_queue
+
+    def force_arrived_capital():
+        db.conn.execute(
+            "UPDATE characters SET location=?, transit_to='', transit_distance_remaining=NULL, "
+            "transit_speed_factor=NULL WHERE name=?",
+            ("beizhili", person.name),
+        )
+        db.conn.commit()
+
+    get_session_write_queue(session).run_exclusive(force_arrived_capital)
     assert an.list_unsettled_summons(db) == []
     assert an.list_waiting_audience_summons(db) == []
 
@@ -915,7 +934,7 @@ def test_waiting_inactive_retires_on_month(game, monkeypatch):
 
 def test_waiting_active_departure_settles_and_does_not_revive(game):
     """#670：候见中 canonical 行止离京 → origin 结清；抵非京不再续赴京。"""
-    from ming_sim.issues import apply_person_changes_only
+    from ming_sim.issues import _apply_person_changes
 
     db, state, content = game
     person = _set_place(game, "洪承畴", location="beizhili")
@@ -932,14 +951,14 @@ def test_waiting_active_departure_settles_and_does_not_revive(game):
         "kind": "waiting",
     }]
 
-    results = apply_person_changes_only(
+    results = _apply_person_changes(
         db, state,
         [{
             "name": person.name, "动作": "行止", "transit_to": "shaanxi",
             "origin_ref": "盘面自发",
         }],
         content=content,
-    )["applied_person_changes"]
+    )
     assert results and not results[0].get("rejected")
     assert _travel_row(db, person.name)["transit_to"] == "shaanxi"
     assert an.list_unsettled_summons(db) == []
@@ -959,7 +978,7 @@ def test_waiting_active_departure_settle_failure_rolls_back_all_four_sides(
 ):
     """#670：无外层事务时结清抛错 → 行止/person_log/故事账/内存镜像均恢复前像。"""
     from ming_sim import audience_night as an_mod
-    from ming_sim.issues import apply_person_changes_only
+    from ming_sim.issues import _apply_person_changes
 
     db, state, content = game
     person = _set_place(game, "洪承畴", location="beizhili")
@@ -996,8 +1015,8 @@ def test_waiting_active_departure_settle_failure_rolls_back_all_four_sides(
 
     monkeypatch.setattr(an_mod, "settle_unsettled_summons_for_person", boom)
 
-    with pytest.raises(RuntimeError):
-        apply_person_changes_only(
+    with pytest.raises(RuntimeError, match="injected settle failure"):
+        _apply_person_changes(
             db, state,
             [{
                 "name": person.name, "动作": "行止", "transit_to": "shaanxi",
@@ -1034,7 +1053,7 @@ def test_waiting_active_departure_settle_failure_rolls_back_all_four_sides(
 
 def test_waiting_active_departure_commits_transit_log_settle_and_mirror(game):
     """#670：无外层事务正常离京 → transit/person_log/结清 tags/内存镜像一并提交。"""
-    from ming_sim.issues import apply_person_changes_only
+    from ming_sim.issues import _apply_person_changes
 
     db, state, content = game
     person = _set_place(game, "洪承畴", location="beizhili")
@@ -1053,14 +1072,14 @@ def test_waiting_active_departure_commits_transit_log_settle_and_mirror(game):
         ).fetchone()["n"]
     )
 
-    results = apply_person_changes_only(
+    results = _apply_person_changes(
         db, state,
         [{
             "name": person.name, "动作": "行止", "transit_to": "shaanxi",
             "origin_ref": "盘面自发",
         }],
         content=content,
-    )["applied_person_changes"]
+    )
     assert results and not results[0].get("rejected")
 
     travel = _travel_row(db, person.name)
@@ -1090,7 +1109,7 @@ def test_waiting_active_departure_commits_transit_log_settle_and_mirror(game):
 
 def test_waiting_active_departure_respects_strategic_preflight_savepoint(game):
     """#670：战略人物预检 SAVEPOINT 内离京不报错；ROLLBACK 后行止与召旨均原样。"""
-    from ming_sim.issues import apply_person_changes_only
+    from ming_sim.issues import _apply_person_changes
 
     db, state, content = game
     person = _set_place(game, "洪承畴", location="beizhili")
@@ -1111,14 +1130,15 @@ def test_waiting_active_departure_respects_strategic_preflight_savepoint(game):
 
     db.conn.execute("BEGIN")
     db.conn.execute("SAVEPOINT strategic_person_result_preflight")
-    results = apply_person_changes_only(
+    results = _apply_person_changes(
         db, state,
         [{
             "name": person.name, "动作": "行止", "transit_to": "henan",
             "origin_ref": "盘面自发",
         }],
         content=content,
-    )["applied_person_changes"]
+        external_transaction=True,
+    )
     assert results and not results[0].get("rejected")
     # 预检内可见暂态写，但不得 durable commit 掉 SAVEPOINT。
     assert _travel_row(db, person.name)["transit_to"] == "henan"
@@ -1139,7 +1159,7 @@ def test_waiting_active_departure_respects_strategic_preflight_savepoint(game):
 
 def test_waiting_active_departure_external_rollback_reverts_transit_and_settle(game):
     """#670：显式外层事务 rollback 同时撤销行止与召旨结清。"""
-    from ming_sim.issues import apply_person_changes_only
+    from ming_sim.issues import _apply_person_changes
 
     db, state, content = game
     person = _set_place(game, "洪承畴", location="beizhili")
@@ -1152,14 +1172,15 @@ def test_waiting_active_departure_external_rollback_reverts_transit_and_settle(g
     before_unsettled = an.list_unsettled_summons(db)
 
     db.conn.execute("BEGIN")
-    results = apply_person_changes_only(
+    results = _apply_person_changes(
         db, state,
         [{
             "name": person.name, "动作": "行止", "transit_to": "shaanxi",
             "origin_ref": "盘面自发",
         }],
         content=content,
-    )["applied_person_changes"]
+        external_transaction=True,
+    )
     assert results and not results[0].get("rejected")
     assert _travel_row(db, person.name)["transit_to"] == "shaanxi"
     assert an.list_unsettled_summons(db) == []

@@ -6,7 +6,6 @@ Seams:
 - apply_pending_due_reviews → record_dossier_execution 适配器（有案卷桥）
 - 无案卷分支：只场面+奏报，不伪造案卷
 - 中段 executing+close=False 不连坐 vs 末段终值+close+至多一次连坐
-- EXTRACTION_MODULES 基数不变；无 AWAITING_DECISION / <<DECISION>>
 - 接管：到期目标 extractor 重复终值拒收
 """
 
@@ -16,13 +15,14 @@ from __future__ import annotations
 import pytest
 
 import ming_sim.issues as issue_engine
-from ming_sim.audience_night import open_night
+from ming_sim.audience_night import list_ledger, open_night
 from tests.test_month_chain_1843 import _prepare_player_month
 from ming_sim.due_review import (
     apply_pending_due_reviews,
     build_due_review_input,
     dossiers_with_pending_due_review,
     list_due_review_scenes,
+    project_due_review_scene,
 )
 from ming_sim.issues import apply_score_extraction
 from ming_sim.models import TurnPhase
@@ -222,6 +222,49 @@ def test_due_review_scene_tops_next_audience_with_origin_context(game):
     scene = scenes[0]
     assert scene["origin_context"] == "三年火器见眉目"
     assert "payload_json" not in scene
+
+
+def test_due_review_scene_tops_live_open_night_even_with_body(game):
+    """#1838 reopen：待裁场面进场景开场最小集，不再写开夜旁白账。"""
+    import json
+    from ming_sim.materials import (
+        _scene_pending_audience_facts,
+        prepare_scene_materials,
+        release_material_tree,
+    )
+
+    db, state, content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.commit()
+    stages = [{
+        "stage_idx": 0,
+        "due_turn": state.turn,
+        "criterion_text": "火器见眉目",
+        "origin_context": "三年火器见眉目",
+    }]
+    _insert_staged_commitment(db, state, content, stages=stages)
+    write_due_staged_commitment_todos(db, state)
+
+    open_night(db, state, time_of_day="戌时", location="乾清宫")
+    scenes = list_due_review_scenes(db, state)
+    assert len(scenes) == 1
+    scene = scenes[0]
+    prepared = prepare_scene_materials(db, state)
+    try:
+        facts = _scene_pending_audience_facts(db, state)
+        matched = [
+            json.loads(line) for line in facts
+            if json.loads(line).get("todo_id") == scene["todo_id"]
+        ]
+        assert len(matched) == 1
+        assert matched[0] == scene
+        payload = next(
+            line for line in facts
+            if json.loads(line).get("todo_id") == scene["todo_id"]
+        )
+        assert payload in prepared.opening
+    finally:
+        release_material_tree(prepared.root)
 
 
 # ── P1 有案卷桥 / 无案卷分支 ──────────────────────────────────────────
@@ -524,7 +567,6 @@ def test_three_beat_timing_todo_then_scene_then_slot(game, monkeypatch):
 
 
 
-
 def test_due_review_settle_does_not_pause_or_decision(game, monkeypatch):
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
@@ -568,6 +610,7 @@ def test_input_closed_set_degrades_when_sources_missing(game):
     assert inp["supervision_history"] == []  # 本夹具未挂稽核链
     assert inp["progress_reports"] == []
     assert inp.get("transformation_tendency_facts", {}).get("exposure_count", 0) == 0
+    scene = project_due_review_scene(db, todo, review_input=inp)
 
 
 def test_formal_review_blocks_extractor_second_terminal(game):
@@ -680,6 +723,7 @@ def test_due_month_extractor_blocked_before_todo_write(game):
     )
     item = result["dossier_executions"][0]
     assert item.get("rejected") is True
+    assert item.get("category") == "invalid_transition"
 
     after = db.get_decree_dossier(dossier_id)
     assert after["status"] == "executing"
@@ -697,7 +741,7 @@ def test_takeover_guard_fail_closed_on_ownership_error(game, monkeypatch):
     monkeypatch.setattr(
         "ming_sim.due_review.dossiers_with_pending_due_review", _boom,
     )
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError, match="ownership lookup boom"):
         issue_engine.apply_score_extraction(
             db, state,
             {

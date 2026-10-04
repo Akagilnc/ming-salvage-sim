@@ -8,12 +8,11 @@
 from __future__ import annotations
 
 import json
-import os
-import tempfile
 from pathlib import Path
 
-from ming_sim.content import load_character_content
+from ming_sim.content import load_character_content, load_event_content
 from ming_sim.db import GameDB
+from ming_sim.models import GameState
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -28,6 +27,21 @@ def _army_by_id(aid: str) -> dict:
         if item["id"] == aid:
             return item
     raise AssertionError(f"armies.json 缺 id={aid}")
+
+
+def _bajiu_names(characters: dict) -> set[str]:
+    return {
+        name
+        for name, ch in characters.items()
+        if "罢居" in (ch.office or "")
+    }
+
+
+def _deficit_seed():
+    events = load_event_content("seed_events.json")
+    by_id = {ev.id: ev for ev in events}
+    assert "deficit" in by_id
+    return by_id["deficit"]
 
 
 def test_guanning_commander_not_bajiu_offstage_yuan():
@@ -90,15 +104,14 @@ def test_seed_army_firearms_differentiated_within_p2_caps():
     assert int(nanjing["cannon_equipment"]) < int(guanning["cannon_equipment"])
 
 
-def test_fresh_seed_army_equipment_and_commanders_wire_through(content):
+def test_fresh_seed_army_equipment_and_commanders_wire_through(content, tmp_path):
     """开局贯通：DB 军队火器/炮与统帅名分与 seed 一致；统帅人物卡状态不自相矛盾。
 
     #1426：全量 id 集 + 每军 commander/controller/firearm/cannon 四字段对照 seed，
     禁只抽查关宁/东江而放过其它军误映射。
     """
     seed_by_id = {item["id"]: item for item in _armies_seed()}
-    fd, path = tempfile.mkstemp(suffix=".db")
-    os.close(fd)
+    path = str(tmp_path / "seed.db")
     db = None
     try:
         db = GameDB(path, content)
@@ -145,6 +158,24 @@ def test_fresh_seed_army_equipment_and_commanders_wire_through(content):
     finally:
         if db is not None:
             db.close()
-        for p in (path, f"{path}_agno.db"):
-            if os.path.exists(p):
-                os.remove(p)
+
+
+def test_deficit_stage_text_aligns_with_opening_treasury_and_hubu():
+    """#1361：户部亏空 stage_text 不得与开局国库实数/户部尚书名分恒冲突。
+
+    诊断：seed 静态「不足三百万」vs 开局 metrics 国库=320；毕自严=南京户部，
+    户部尚书=郭允厚。修法=定性奏报口吻 + 具题人对齐在任户部尚书。
+    """
+    _, characters = load_character_content()
+    guo = characters["郭允厚"]
+    bi = characters["毕自严"]
+    assert "户部尚书" in (guo.office or "") and "南京" not in (guo.office or ""), guo.office
+    assert "南京" in (bi.office or ""), bi.office
+
+    ev = _deficit_seed()
+    # audiences 须含在任户部尚书，召对注入才对口
+    audiences = list(ev.audiences or [])
+    assert "郭允厚" in audiences, audiences
+
+    # 开局国库硬锚（models.GameState 默认 = seed 贯通）
+    assert GameState().metrics["国库"] == 320
