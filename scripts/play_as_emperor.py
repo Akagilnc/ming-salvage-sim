@@ -238,10 +238,11 @@ def parse_emperor_output(raw: str) -> tuple[str, str]:
 def ask_emperor(agent: Agent, cli_chunk: str, prompt_hint: str, progress: str = "") -> tuple[str, str]:
     # progress：本月进度提示（已问几轮/已下旨几条/还差啥）。num_history_runs 只留近 8 轮，
     # agent 看不到完整本月动作易盲凑、重复召见，故每步显式喂进度，让它知道走到哪、该收尾还是继续。
+    # cli_chunk 含活 CLI 人物自由正文 → 递 emperor LLM 必须完整原文（禁止窗口裁剪；N6）。
     payload = (
         f"{progress}\n\n" if progress else ""
     ) + (
-        f"CLI 当前输出（最新一段）：\n```\n{cli_chunk[-3500:]}\n```\n\n"
+        f"CLI 当前输出：\n```\n{cli_chunk}\n```\n\n"
         f"当前等待输入的 prompt 是：{prompt_hint}\n\n"
         f"请输出下一条键盘输入（严格 JSON）。"
     )

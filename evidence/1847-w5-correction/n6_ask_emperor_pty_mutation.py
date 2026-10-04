@@ -57,9 +57,16 @@ class _DeterministicEmperor:
 
     def __init__(self, payload: dict):
         self._raw = json.dumps(payload, ensure_ascii=False)
+        self.last_prompt = ""
 
-    def run(self, _prompt: str):
+    def run(self, prompt: str):
+        self.last_prompt = str(prompt)
         return SimpleNamespace(content=self._raw)
+
+
+def old_cli_chunk_window(cli_chunk: str) -> str:
+    """Pre-fix: truncated CLI buffer before feeding emperor LLM."""
+    return cli_chunk[-3500:]
 
 
 def old_transport_package(raw_json: str) -> str:
@@ -147,10 +154,18 @@ def main() -> int:
             action_old != ACTION,
             f"old_len={len(action_old)}",
         )
+        # Live CLI buffer (model character free prose) → emperor LLM must be full text.
+        cli_full = "PREFIX_MARK《臣奏》\n" + ("块" * 4000) + "\nSUFFIX_MARK完"
+        old_fed = old_cli_chunk_window(cli_full)
+        ok(
+            f"N6_OLD_CLI_CHUNK_WINDOW_DROPS_PREFIX_{label}",
+            ("PREFIX_MARK" not in old_fed) and ("SUFFIX_MARK" in old_fed),
+            f"old_len={len(old_fed)} full_len={len(cli_full)}",
+        )
         agent = _DeterministicEmperor(payload)
         reasoning2, action_ask = ask_emperor(
             agent,
-            "CLI chunk " + ("块" * 4000),
+            cli_full,
             "朕问：",
             progress="【本月进度】探针",
         )
@@ -160,6 +175,18 @@ def main() -> int:
             f"len={len(action_ask)}",
         )
         ok(f"N6_ASK_EMPEROR_REASONING_{label}", reasoning2 == "试探运输", "")
+        ok(
+            f"N6_ASK_EMPEROR_CLI_CHUNK_FULL_{label}",
+            cli_full in agent.last_prompt
+            and "PREFIX_MARK" in agent.last_prompt
+            and "SUFFIX_MARK" in agent.last_prompt,
+            f"prompt_len={len(agent.last_prompt)}",
+        )
+        ok(
+            f"N6_ASK_EMPEROR_CLI_CHUNK_NOT_WINDOWED_{label}",
+            old_fed not in agent.last_prompt or cli_full in agent.last_prompt,
+            "current payload must embed full cli_chunk, not only [-3500:]",
+        )
 
     # PTY sendline uses LINE action (line-oriented recorder = CLI prompt readline).
     payload_line = {"reasoning": "试探运输", "input": ACTION_LINE}
@@ -185,6 +212,19 @@ def main() -> int:
 
     src = (ROOT / "scripts" / "play_as_emperor.py").read_text(encoding="utf-8")
     ok("N6_NO_ACTION_SLICE_200", "action[:200]" not in src, "")
+    ok("N6_NO_CLI_CHUNK_SLICE_3500", "cli_chunk[-3500:]" not in src, "")
+    ask_body = src.split("def ask_emperor", 1)[1].split("\ndef ", 1)[0]
+    ok(
+        "N6_ASK_EMPEROR_USES_FULL_CLI_CHUNK",
+        "{cli_chunk}" in ask_body and "[-3500:]" not in ask_body,
+        "",
+    )
+    # Frozen log diagnostic truncations remain legal (not LLM feed).
+    ok(
+        "N6_LOG_DIAG_TRUNC_RETAINED",
+        "child.before[-2000:]" in src and "prompt_hint.strip()[:40]" in src,
+        "",
+    )
     fn_body = src.split("def parse_emperor_output", 1)[1].split("def ask_emperor", 1)[0]
     ok("N6_NO_INPUT_SPLITLINES0", "splitlines()[0]" not in fn_body, "")
     ok(

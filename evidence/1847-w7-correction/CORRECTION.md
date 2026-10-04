@@ -31,7 +31,11 @@
 
 | 面 | 机械候选 | 报告列出 |
 |---|---|---|
-| N6 | 2894 `POTENTIAL_*`/`TEST_HIT` | 真类成员（残差）+ 合法同根例外（真实调用路径） |
+| N6 | 2893 `POTENTIAL_*`/`TEST_HIT` | 真类成员（残差/本轮 FIX）+ 合法同根例外（真实调用路径；无 KEEP_HARNESS） |
 | N11 | 24 闭包符号（旧消费者路径种子+独占 callee） | DELETED / KEEP_LIVE 及本轮删死投影 |
 | N13 | 284 hits | 生产软生命周期位点 + 文档化 continue 契约 |
 | N14 | 432 hits | 真成员残差/已修 + 例外；**不**把机械 `assert a==b` 当已审成员 |
+
+## 自验续修（KEEP_HARNESS_CONTEXT）
+
+`ask_emperor` 的 `cli_chunk[-3500:]` 曾误标 `KEEP_HARNESS_CONTEXT`。活 CLI 含模型人物自由正文，截断后递 emperor LLM = 活原文运输，非冻结卷宗。已删截断；日志诊断截断保留；无 harness/底座豁免。

@@ -34,11 +34,11 @@ scripts/jisi_army_dispatch_probe.py	144	close_call	POTENTIAL_N13	        sess.cl
 scripts/midzhi_spiral_judge_gate_570.py	264	close_call	POTENTIAL_N13	        db_a.close()
 scripts/midzhi_spiral_judge_gate_570.py	265	close_call	POTENTIAL_N13	        db_b.close()
 scripts/military_flow_probe.py	159	close_call	POTENTIAL_N13	        sess.close()
-scripts/play_as_emperor.py	539	except_Exception_pass	POTENTIAL_SWALLOW	        except Exception:
-scripts/play_as_emperor.py	518	close_call	POTENTIAL_N13	        # Pre-select ecological API only: pexpect.spawn.close(force=False)
-scripts/play_as_emperor.py	519	SIGKILL_ref	POTENTIAL_N13	        # (ptyprocess docs: force=False never reaches SIGKILL).
-scripts/play_as_emperor.py	527	close_call	POTENTIAL_N13	                child.close(force=False)
-scripts/play_as_emperor.py	538	close_call	POTENTIAL_N13	            log_file.close()
+scripts/play_as_emperor.py	540	except_Exception_pass	POTENTIAL_SWALLOW	        except Exception:
+scripts/play_as_emperor.py	519	close_call	POTENTIAL_N13	        # Pre-select ecological API only: pexpect.spawn.close(force=False)
+scripts/play_as_emperor.py	520	SIGKILL_ref	POTENTIAL_N13	        # (ptyprocess docs: force=False never reaches SIGKILL).
+scripts/play_as_emperor.py	528	close_call	POTENTIAL_N13	                child.close(force=False)
+scripts/play_as_emperor.py	539	close_call	POTENTIAL_N13	            log_file.close()
 scripts/promulgation_gate_561.py	408	close_call	POTENTIAL_N13	        db.close()
 scripts/promulgation_gate_561.py	465	close_call	POTENTIAL_N13	        db.close()
 scripts/secret_order_probe2.py	63	close_call	POTENTIAL_N13	    sess.close()

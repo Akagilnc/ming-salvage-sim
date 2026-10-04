@@ -1,11 +1,11 @@
 {
-  "tracked_files": 1374,
+  "tracked_files": 1377,
   "scanned_code_files": 418,
-  "exempt": 356,
-  "n6_raw": 2894,
-  "n6_classified": 2894,
+  "exempt": 359,
+  "n6_raw": 2893,
+  "n6_classified": 2893,
   "n6_buckets": {
-    "POTENTIAL_SLICE_SPLIT": 256,
+    "POTENTIAL_SLICE_SPLIT": 255,
     "POTENTIAL_OTHER": 519,
     "POTENTIAL_TRANSPORT_STRIP": 901,
     "POTENTIAL_STRIP": 279,
