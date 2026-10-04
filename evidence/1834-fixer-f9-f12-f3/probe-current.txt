@@ -1,0 +1,21 @@
+==== COMMAND ====
+env \
+  MING_SIM_AGY_BIN=/usr/bin/false \
+  MING_SIM_CODEX_BIN=/usr/bin/false \
+  MING_SIM_CLAUDE_BIN=/usr/bin/false \
+  MING_SIM_CURSOR_BIN=/usr/bin/false \
+  MING_SIM_KIMI_BIN=/usr/bin/false \
+  MING_SIM_GROK_BIN=/usr/bin/false \
+  MING_SIM_PI_BIN=/usr/bin/false \
+  PYTHONDONTWRITEBYTECODE=1 \
+  PYTHONPATH=$PWD \
+  ../Ming_LLM/.venv/bin/python evidence/1834-fixer-f9-f12-f3/scripts/probe_f9_f12_structural.py
+==== RUN current ====
+PASS OPEN_WORLD dossier=1 affair=1 files=279
+PASS OPEN_PUBLIC dossier=1 affair=1 files=279
+PASS CLOSED_WORLD dossier=1 affair=1 files=279
+PASS CLOSED_PUBLIC dossier=1 affair=1 files=279
+PASS RESTORE_WORLD dossier=1 affair=1 files=279
+PASS RESTORE_PUBLIC dossier=1 affair=1 files=279
+ALL_GREEN
+PROBE_CURRENT_EXIT=0

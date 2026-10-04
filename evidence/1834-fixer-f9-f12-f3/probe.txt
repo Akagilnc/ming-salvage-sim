@@ -1,3 +1,12 @@
+# SUPERSEDED as sole probe evidence.
+# Previous round only saved `current` here and omitted --old / --old-f12.
+# Corrected three-file evidence (seven MING_SIM_*_BIN actually run):
+#   probe-current.txt   → ALL_GREEN
+#   probe-old.txt       → OLD_LOGIC_RED (payload/stigma/execution_signal)
+#   probe-old-f12.txt   → F12_OLD_LOGIC_RED (person_logs dump)
+# See report.md §结构探针.
+
+==== legacy probe.txt body (current-only; incomplete) ====
 ==== probe current ====
 PASS OPEN_WORLD dossier=1 affair=1 files=279
 PASS OPEN_PUBLIC dossier=1 affair=1 files=279

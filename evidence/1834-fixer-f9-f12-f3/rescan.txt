@@ -1,14 +1,15 @@
+==== NOTE: re-verified with MING_SIM_*_BIN×7 (not SHELL_PREFIX*) ====
 ==== F9 STRUCT / ENUM ====
-73:STRUCT dossier.items_dump=PRESENT
-74:STRUCT _DOSSIER_MATERIAL_SKIP_has_payload_stigma_signal=YES
-75:==== F9 HIT_COUNT=70 ====
+86:STRUCT dossier.items_dump=PRESENT
+87:STRUCT _DOSSIER_MATERIAL_SKIP_has_payload_stigma_signal=YES
+88:==== F9 HIT_COUNT=70 ====
 ==== F12 STRUCT / ENUM ====
-145:STRUCT list_world_effect_history_audit_dump_loop=ABSENT
-146:STRUCT keeps=实况轨,issues,characters,relation_edge_events
-147:==== F12 HIT_COUNT=142 ====
+158:STRUCT list_world_effect_history_audit_dump_loop=ABSENT
+159:STRUCT keeps=实况轨,issues,characters,relation_edge_events
+160:==== F12 HIT_COUNT=142 ====
 ==== F3 ====
-==== F3 MATERIAL_BODY_POSITIVE_COUNT=0 ====
-==== F3 HIT_COUNT=1911 ====
+1927:==== F3 MATERIAL_BODY_POSITIVE_COUNT=0 ====
+1928:==== F3 HIT_COUNT=1911 ====
 F3_CURRENT_KEEP=1911
 F3_FIX_AUDIT=68
 NOTE: completion is hand-reviewed FIX audit + frozen jsonl; not wordlist FIX=0

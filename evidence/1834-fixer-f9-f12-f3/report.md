@@ -4,6 +4,48 @@
 Owner 授权：保留既有工作树并在其上完成；禁止 amend/stash/reset/checkout 覆盖/clean/push/PR。
 **未合并，不声称关票。**
 
+## 证据纠错说明（本提交）
+
+自验发现上一版 `report.md` **全部命令**误用 `CLAUDE_CODE_SHELL_PREFIX` / `CODEX_SHELL_PREFIX` 等非 owner 要求变量；且聚焦测试用 `AFFECTED=$(git diff --name-only HEAD -- 'tests/*.py')`——**提交后工作树干净时 AFFECTED 为空，`$AFFECTED` 展开会误跑全量**。
+
+本提交：只纠证据与报告命令，**不改测试/生产行为**。所有复验已用 owner 七变量实际跑过（非仅文字替换）。
+
+**Owner 要求的测试安全前缀（七 BIN）**：
+
+```text
+MING_SIM_AGY_BIN=/usr/bin/false
+MING_SIM_CODEX_BIN=/usr/bin/false
+MING_SIM_CLAUDE_BIN=/usr/bin/false
+MING_SIM_CURSOR_BIN=/usr/bin/false
+MING_SIM_KIMI_BIN=/usr/bin/false
+MING_SIM_GROK_BIN=/usr/bin/false
+MING_SIM_PI_BIN=/usr/bin/false
+```
+
+外加 `PYTHONDONTWRITEBYTECODE=1`、`PYTHONPATH=$PWD`、解释器 `../Ming_LLM/.venv/bin/python`。
+
+### 旧命令留痕（不符合；已更正）
+
+上一版曾写（**不符合**测试安全前缀；勿再跑）：
+
+```sh
+# NONCOMPLIANT TRACE — wrong vars (SHELL_PREFIX*) + post-commit empty AFFECTED risk
+AFFECTED=$(git diff --name-only HEAD -- 'tests/*.py' | tr '\n' ' ')
+env \
+  CLAUDE_CODE_SHELL_PREFIX=/usr/bin/false \
+  CODEX_SHELL_PREFIX=/usr/bin/false \
+  AGY_SHELL_PREFIX=/usr/bin/false \
+  HERMES_SHELL_PREFIX=/usr/bin/false \
+  OPENCODE_SHELL_PREFIX=/usr/bin/false \
+  CURSOR_SHELL_PREFIX=/usr/bin/false \
+  AIDER_SHELL_PREFIX=/usr/bin/false \
+  PYTHONDONTWRITEBYTECODE=1 \
+  PYTHONPATH=$PWD \
+  ../Ming_LLM/.venv/bin/python -m pytest -q $AFFECTED
+```
+
+枚举/探针上一版同样误用上述 `*_SHELL_PREFIX` 七变量——**已更正为 `MING_SIM_*_BIN`**，见下文完整命令。
+
 ## 本轮相对前轮缺口
 
 前轮以 `classify_f3_disposition.py` 词表/短汉字(<16)/ASCII/全体 `.not.` 自动 KEEP，再以 `FIX=0` 宣称全仓完成——**不能代表逐条语义审查**，会漏自由正文子串（短汉、note 名字、归档字段等式、非权限负向等）。
@@ -27,45 +69,43 @@ Owner 授权：保留既有工作树并在其上完成；禁止 amend/stash/rese
 - F3：手审后删除漏项（酿制段正文、邸报/报告锁、composed note、对话 content 锁、定性展示负向、票拟 label 列表等）。合法保留：原样传输（`extract_agent_text` / stream out / 写入→读回 body / `merge_founding_segment` 字节契约）、结构化枚举/身份、P7 固定 UI、来源权限/隔离负向、类型化错误标识。
 - `ministerScrollLens`：去掉对话 content 等式，改验 `role`/`speaker`/`chat_turn_id` 结构（非自由正文）。
 
-## 可执行全仓枚举
-
-七变量前缀 + `PYTHONDONTWRITEBYTECODE=1` + `PYTHONPATH=$PWD` + `../Ming_LLM/.venv/bin/python`。
+## 可执行全仓枚举（已用七 BIN 复跑）
 
 ```sh
 env \
-  CLAUDE_CODE_SHELL_PREFIX=/usr/bin/false \
-  CODEX_SHELL_PREFIX=/usr/bin/false \
-  AGY_SHELL_PREFIX=/usr/bin/false \
-  HERMES_SHELL_PREFIX=/usr/bin/false \
-  OPENCODE_SHELL_PREFIX=/usr/bin/false \
-  CURSOR_SHELL_PREFIX=/usr/bin/false \
-  AIDER_SHELL_PREFIX=/usr/bin/false \
+  MING_SIM_AGY_BIN=/usr/bin/false \
+  MING_SIM_CODEX_BIN=/usr/bin/false \
+  MING_SIM_CLAUDE_BIN=/usr/bin/false \
+  MING_SIM_CURSOR_BIN=/usr/bin/false \
+  MING_SIM_KIMI_BIN=/usr/bin/false \
+  MING_SIM_GROK_BIN=/usr/bin/false \
+  MING_SIM_PI_BIN=/usr/bin/false \
   PYTHONDONTWRITEBYTECODE=1 \
   PYTHONPATH=$PWD \
   ../Ming_LLM/.venv/bin/python evidence/1834-fixer-f9-f12-f3/scripts/enum_f9_material_payload.py \
   | tee evidence/1834-fixer-f9-f12-f3/enum_f9.txt
 
 env \
-  CLAUDE_CODE_SHELL_PREFIX=/usr/bin/false \
-  CODEX_SHELL_PREFIX=/usr/bin/false \
-  AGY_SHELL_PREFIX=/usr/bin/false \
-  HERMES_SHELL_PREFIX=/usr/bin/false \
-  OPENCODE_SHELL_PREFIX=/usr/bin/false \
-  CURSOR_SHELL_PREFIX=/usr/bin/false \
-  AIDER_SHELL_PREFIX=/usr/bin/false \
+  MING_SIM_AGY_BIN=/usr/bin/false \
+  MING_SIM_CODEX_BIN=/usr/bin/false \
+  MING_SIM_CLAUDE_BIN=/usr/bin/false \
+  MING_SIM_CURSOR_BIN=/usr/bin/false \
+  MING_SIM_KIMI_BIN=/usr/bin/false \
+  MING_SIM_GROK_BIN=/usr/bin/false \
+  MING_SIM_PI_BIN=/usr/bin/false \
   PYTHONDONTWRITEBYTECODE=1 \
   PYTHONPATH=$PWD \
   ../Ming_LLM/.venv/bin/python evidence/1834-fixer-f9-f12-f3/scripts/enum_f12_history_dump.py \
   | tee evidence/1834-fixer-f9-f12-f3/enum_f12.txt
 
 env \
-  CLAUDE_CODE_SHELL_PREFIX=/usr/bin/false \
-  CODEX_SHELL_PREFIX=/usr/bin/false \
-  AGY_SHELL_PREFIX=/usr/bin/false \
-  HERMES_SHELL_PREFIX=/usr/bin/false \
-  OPENCODE_SHELL_PREFIX=/usr/bin/false \
-  CURSOR_SHELL_PREFIX=/usr/bin/false \
-  AIDER_SHELL_PREFIX=/usr/bin/false \
+  MING_SIM_AGY_BIN=/usr/bin/false \
+  MING_SIM_CODEX_BIN=/usr/bin/false \
+  MING_SIM_CLAUDE_BIN=/usr/bin/false \
+  MING_SIM_CURSOR_BIN=/usr/bin/false \
+  MING_SIM_KIMI_BIN=/usr/bin/false \
+  MING_SIM_GROK_BIN=/usr/bin/false \
+  MING_SIM_PI_BIN=/usr/bin/false \
   PYTHONDONTWRITEBYTECODE=1 \
   PYTHONPATH=$PWD \
   ../Ming_LLM/.venv/bin/python evidence/1834-fixer-f9-f12-f3/scripts/enum_f3_free_text_asserts.py \
@@ -91,60 +131,108 @@ env \
 
 合法类：结构化枚举/身份、原样传输契约、P7 固定 UI、来源权限/隔离负向、类型化错误/技术诊断、材料路径成员、结构化存在性。归档字段等式仅在确有写入→读回/字节合并等真实契约时保留。
 
-## 结构探针（非 pytest）
+## 结构探针（非 pytest；三条全跑）
 
-`evidence/1834-fixer-f9-f12-f3/scripts/probe_f9_f12_structural.py`
+脚本：`evidence/1834-fixer-f9-f12-f3/scripts/probe_f9_f12_structural.py`
 
-| 运行 | 结果（`probe.txt`） |
-| --- | --- |
-| current | ALL_GREEN（各态 files=279） |
+**上一版只保存了 `current`（见旧 `probe.txt`），遗漏 `--old` / `--old-f12`——本轮补回并分文件存证。**
 
-## 聚焦测试（完整可复现）
+| 运行 | 证据文件 | 结果 |
+| --- | --- | --- |
+| current | `probe-current.txt` | ALL_GREEN（各态 files=279）；exit 0 |
+| `--old` | `probe-old.txt` | OLD_LOGIC_RED：machine keys `payload`/`stigma`/`execution_signal` 进材料；exit 2 |
+| `--old-f12` | `probe-old-f12.txt` | F12_OLD_LOGIC_RED：`list_world_effect_history` dumps `person_logs`；exit 2 |
 
-七 BIN=`/usr/bin/false` + `PYTHONDONTWRITEBYTECODE=1` + `PYTHONPATH=$PWD` + `../Ming_LLM/.venv/bin/python`。
-
-文件列表 A（本轮 gitdiff 触及的 Python 测试；动态生成）：
+完整命令：
 
 ```sh
-AFFECTED=$(git diff --name-only HEAD -- 'tests/*.py' | tr '\n' ' ')
 env \
-  CLAUDE_CODE_SHELL_PREFIX=/usr/bin/false \
-  CODEX_SHELL_PREFIX=/usr/bin/false \
-  AGY_SHELL_PREFIX=/usr/bin/false \
-  HERMES_SHELL_PREFIX=/usr/bin/false \
-  OPENCODE_SHELL_PREFIX=/usr/bin/false \
-  CURSOR_SHELL_PREFIX=/usr/bin/false \
-  AIDER_SHELL_PREFIX=/usr/bin/false \
+  MING_SIM_AGY_BIN=/usr/bin/false \
+  MING_SIM_CODEX_BIN=/usr/bin/false \
+  MING_SIM_CLAUDE_BIN=/usr/bin/false \
+  MING_SIM_CURSOR_BIN=/usr/bin/false \
+  MING_SIM_KIMI_BIN=/usr/bin/false \
+  MING_SIM_GROK_BIN=/usr/bin/false \
+  MING_SIM_PI_BIN=/usr/bin/false \
+  PYTHONDONTWRITEBYTECODE=1 \
+  PYTHONPATH=$PWD \
+  ../Ming_LLM/.venv/bin/python evidence/1834-fixer-f9-f12-f3/scripts/probe_f9_f12_structural.py
+# → tee probe-current.txt
+
+env \
+  MING_SIM_AGY_BIN=/usr/bin/false \
+  MING_SIM_CODEX_BIN=/usr/bin/false \
+  MING_SIM_CLAUDE_BIN=/usr/bin/false \
+  MING_SIM_CURSOR_BIN=/usr/bin/false \
+  MING_SIM_KIMI_BIN=/usr/bin/false \
+  MING_SIM_GROK_BIN=/usr/bin/false \
+  MING_SIM_PI_BIN=/usr/bin/false \
+  PYTHONDONTWRITEBYTECODE=1 \
+  PYTHONPATH=$PWD \
+  ../Ming_LLM/.venv/bin/python evidence/1834-fixer-f9-f12-f3/scripts/probe_f9_f12_structural.py --old
+# → tee probe-old.txt
+
+env \
+  MING_SIM_AGY_BIN=/usr/bin/false \
+  MING_SIM_CODEX_BIN=/usr/bin/false \
+  MING_SIM_CLAUDE_BIN=/usr/bin/false \
+  MING_SIM_CURSOR_BIN=/usr/bin/false \
+  MING_SIM_KIMI_BIN=/usr/bin/false \
+  MING_SIM_GROK_BIN=/usr/bin/false \
+  MING_SIM_PI_BIN=/usr/bin/false \
+  PYTHONDONTWRITEBYTECODE=1 \
+  PYTHONPATH=$PWD \
+  ../Ming_LLM/.venv/bin/python evidence/1834-fixer-f9-f12-f3/scripts/probe_f9_f12_structural.py --old-f12
+# → tee probe-old-f12.txt
+```
+
+## 聚焦测试（完整可复现；固定 SHA，防空 AFFECTED）
+
+**必须用固定区间** `89468d498..7ab5e8dea`，**不可** `git diff --name-only HEAD`（提交后为空会误跑全量）。先检查非空再跑：
+
+```sh
+AFFECTED=$(git diff --name-only 89468d498 7ab5e8dea -- 'tests/*.py')
+# 本轮 COUNT=19；若为空必须 ABORT，禁止 pytest 无参
+test -n "$AFFECTED" || { echo ABORT_EMPTY_AFFECTED; exit 1; }
+
+env \
+  MING_SIM_AGY_BIN=/usr/bin/false \
+  MING_SIM_CODEX_BIN=/usr/bin/false \
+  MING_SIM_CLAUDE_BIN=/usr/bin/false \
+  MING_SIM_CURSOR_BIN=/usr/bin/false \
+  MING_SIM_KIMI_BIN=/usr/bin/false \
+  MING_SIM_GROK_BIN=/usr/bin/false \
+  MING_SIM_PI_BIN=/usr/bin/false \
   PYTHONDONTWRITEBYTECODE=1 \
   PYTHONPATH=$PWD \
   ../Ming_LLM/.venv/bin/python -m pytest -q $AFFECTED
 ```
 
-本轮实际 A 文件（19）：
+本轮实际 A 文件（19；`focused-files.txt`）：
 
 ```
-tests/test_relation_brew_636.py
-tests/test_textual_facts_1828.py
+tests/test_audience_translation_1838.py
+tests/test_cli_backend.py
+tests/test_deepseek_thinking_disable_1797.py
+tests/test_due_review_621.py
 tests/test_fiscal_levy_effect.py
 tests/test_grant_reconciliation_567.py
 tests/test_month_chain_1843.py
-tests/test_player_payload_1022.py
-tests/test_qa_b3_409_ux.py
-tests/test_cli_backend.py
-tests/test_deepseek_thinking_disable_1797.py
-tests/test_audience_translation_1838.py
-tests/test_due_review_621.py
-tests/test_relation_read_640.py
-tests/test_style_temperament_641.py
-tests/test_qa_s2_copy_prompts_1356_1402.py
 tests/test_month_chain_1847.py
-tests/test_scene_llm_1836.py
-tests/test_relation_seed_638.py
 tests/test_person_delta_adapter.py
 tests/test_pihong_dossier_1490.py
+tests/test_player_payload_1022.py
+tests/test_qa_b3_409_ux.py
+tests/test_qa_s2_copy_prompts_1356_1402.py
+tests/test_relation_brew_636.py
+tests/test_relation_read_640.py
+tests/test_relation_seed_638.py
+tests/test_scene_llm_1836.py
+tests/test_style_temperament_641.py
+tests/test_textual_facts_1828.py
 ```
 
-结果（`focused-pytest.txt`）：**551 passed, 1 skipped**，real **38.37s**。未重跑前轮 1228 套。
+结果（`focused-pytest.txt`）：**551 passed, 1 skipped**，real **50.92s**。未跑全量。
 
 Web vitest（触及 `web/src/ministerScrollLens.test.ts` 等）：本机无 `web/node_modules`，未跑（`focused-vitest.txt`）。
 
@@ -152,13 +240,13 @@ Web vitest（触及 `web/src/ministerScrollLens.test.ts` 等）：本机无 `web
 
 ```sh
 env \
-  CLAUDE_CODE_SHELL_PREFIX=/usr/bin/false \
-  CODEX_SHELL_PREFIX=/usr/bin/false \
-  AGY_SHELL_PREFIX=/usr/bin/false \
-  HERMES_SHELL_PREFIX=/usr/bin/false \
-  OPENCODE_SHELL_PREFIX=/usr/bin/false \
-  CURSOR_SHELL_PREFIX=/usr/bin/false \
-  AIDER_SHELL_PREFIX=/usr/bin/false \
+  MING_SIM_AGY_BIN=/usr/bin/false \
+  MING_SIM_CODEX_BIN=/usr/bin/false \
+  MING_SIM_CLAUDE_BIN=/usr/bin/false \
+  MING_SIM_CURSOR_BIN=/usr/bin/false \
+  MING_SIM_KIMI_BIN=/usr/bin/false \
+  MING_SIM_GROK_BIN=/usr/bin/false \
+  MING_SIM_PI_BIN=/usr/bin/false \
   PYTHONDONTWRITEBYTECODE=1 \
   PYTHONPATH=$PWD \
   ../Ming_LLM/.venv/bin/python -m pytest -q \
@@ -166,12 +254,13 @@ env \
     tests/test_breach_plea_623.py::test_revoke_forecast_translation_input_carries_original_and_continuing_dossier
 ```
 
-实测：**1 failed, 1 passed**（后者 `KeyError: 'request'`）。分进程各 1 passed。非本轮 F3 删文引入；见 `focused-pytest.txt` 尾部。
+实测（`pollution-pair.txt`）：**1 failed, 1 passed**（后者 `KeyError: 'request'`）。分进程各 **1 passed**。非本轮 F3 删文引入；**不洗白**。
 
 ## 复杂度 / 合法性
 
 - 无新增来源账/摘要/模型调用/输出擦洗/生产出口。
 - 邻票 **#1873** 不施工。
+- 本提交仅证据/报告纠错，未改测试或生产代码。
 - 自查二连 done。
 
 ## 剩余范围（仅授权外）
@@ -180,4 +269,4 @@ env \
 - 同进程顺序污染（上节）——另票/另修。
 - Web vitest 需本机 `web/node_modules`。
 - 分支未合并 → **不声称 #1834 关闭**。
-- HEAD SHA：见提交后 `git rev-parse HEAD`（本报告定稿时写入提交说明）。
+- HEAD SHA：见本纠错提交后 `git rev-parse HEAD`。

@@ -1,3 +1,16 @@
+==== COMMAND ====
+env \
+  MING_SIM_AGY_BIN=/usr/bin/false \
+  MING_SIM_CODEX_BIN=/usr/bin/false \
+  MING_SIM_CLAUDE_BIN=/usr/bin/false \
+  MING_SIM_CURSOR_BIN=/usr/bin/false \
+  MING_SIM_KIMI_BIN=/usr/bin/false \
+  MING_SIM_GROK_BIN=/usr/bin/false \
+  MING_SIM_PI_BIN=/usr/bin/false \
+  PYTHONDONTWRITEBYTECODE=1 \
+  PYTHONPATH=$PWD \
+  ../Ming_LLM/.venv/bin/python evidence/1834-fixer-f9-f12-f3/scripts/enum_f3_free_text_asserts.py
+==== RUN ====
 ==== F3 FULL ENUM (free-text mechanical asserts) ====
 ROOT=/Users/akagilnc/WorkSpace/Ming_LLM-1834-w5
 tests/test_adr0015_per_item_rejection.py:27:assert_in_prose:'中文' in row['item_json']
