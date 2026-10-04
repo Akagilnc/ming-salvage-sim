@@ -1,0 +1,141 @@
+AUDIT=/tmp/ming1902-d5-mut-Z578Rt
+=== mutation1: reason unrelated (expect FAIL) ===
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_________ test_generate_rescript_draft_degrades_loudly_without_raising _________
+
+game = (<ming_sim.db.GameDB object at 0x10e506990>, GameState(year=1627, period=10, turn=1, turn_phase='summoning', ended=Fal...: '妃嫔供奉'}, {'key': '妃嫔_rate', 'value': 100, 'kind': 'rate', 'budget_role': 'fixed', 'note': '妃嫔供奉率%', 'order': 9999}]))
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10e5218c0>
+tmp_path = PosixPath('/private/var/folders/nb/ml2z6k013psg7rdtt0t6g91m0000gn/T/pytest-of-akagilnc/pytest-1153/test_generate_rescript_draft_d0')
+
+    def test_generate_rescript_draft_degrades_loudly_without_raising(game, monkeypatch, tmp_path):
+        """F2.5 响亮降级（r2 B3 收窄后）：typed LLMUnavailable → tlog＋附记，返回 None，不抛。"""
+        db, state, _content = game
+        monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+        unavailable = LLMUnavailable("LLM 不可用")
+    
+        def _boom(agent, prompt, tag, **_kwargs):
+            raise unavailable
+    
+        monkeypatch.setattr(rescript_mod, "run_agent_text", _boom)
+        payload = {"active_issues": [], "gazette": "邸报", "triage_actor": {}, "turn": {}}
+        assert generate_rescript_draft(object(), payload, state.turn) is None
+        note = tmp_path / "error_packs" / "rescript_draft_degraded" / f"turn{state.turn}.json"
+        assert note.is_file()
+        # 原始异常原因保存契约：结构化 reason 等于实际注入的 str(exc)，不锁固定措辞
+>       assert json.loads(note.read_text(encoding="utf-8"))["reason"] == str(unavailable)
+E       AssertionError: assert 'unrelated diagnostic' == 'LLM 不可用'
+E         
+E         - LLM 不可用
+E         + unrelated diagnostic
+
+tests/test_rescript_draft_656.py:817: AssertionError
+----------------------------- Captured stdout call -----------------------------
+[01:50:42.042] [rescript] user payload total=70 chars (~46 tok)
+[01:50:42.042] [rescript] 票拟生成失败，本月视作无头版：LLM 不可用
+=========================== short test summary info ============================
+FAILED tests/test_rescript_draft_656.py::test_generate_rescript_draft_degrades_loudly_without_raising
+1 failed in 0.30s
+real 1.04
+user 0.89
+sys 0.13
+EXIT:1
+=== mutation2: consumer drops facts (expect FAIL) ===
+F                                                                        [100%]
+=================================== FAILURES ===================================
+__________ test_due_review_scene_tops_live_open_night_even_with_body ___________
+
+game = (<ming_sim.db.GameDB object at 0x10e19b110>, GameState(year=1627, period=10, turn=1, turn_phase='summoning', ended=Fal...: '妃嫔供奉'}, {'key': '妃嫔_rate', 'value': 100, 'kind': 'rate', 'budget_role': 'fixed', 'note': '妃嫔供奉率%', 'order': 9999}]))
+
+    def test_due_review_scene_tops_live_open_night_even_with_body(game):
+        """#1838 reopen：待裁场面进场景开场最小集，不再写开夜旁白账。"""
+        from ming_sim.materials import _scene_opening_text, _scene_pending_audience_facts
+    
+        db, state, content = game
+        db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+        db.conn.commit()
+        criterion_text = "火器见眉目"
+        origin_context = "三年火器见眉目"
+        stages = [{
+            "stage_idx": 0,
+            "due_turn": state.turn,
+            "criterion_text": criterion_text,
+            "origin_context": origin_context,
+        }]
+        _insert_staged_commitment(db, state, content, stages=stages)
+        write_due_staged_commitment_todos(db, state)
+    
+        open_night(db, state, time_of_day="戌时", location="乾清宫")
+        facts = _scene_pending_audience_facts(db, state)
+        opening = _scene_opening_text(state, [], "", [], facts)
+        assert facts
+>       assert all(line in opening for line in facts)
+E       assert False
+E        +  where False = all(<generator object test_due_review_scene_tops_live_open_night_even_with_body.<locals>.<genexpr> at 0x10df701e0>)
+
+tests/test_due_review_621.py:254: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_due_review_621.py::test_due_review_scene_tops_live_open_night_even_with_body
+1 failed in 0.79s
+real 1.09
+user 0.91
+sys 0.15
+EXIT:1
+=== mutation3: roster only weishi (expect FAIL) ===
+F                                                                        [100%]
+=================================== FAILURES ===================================
+________ test_choose_minister_real_entry_excludes_weishi_includes_court ________
+
+game = (<ming_sim.db.GameDB object at 0x10c522490>, GameState(year=1627, period=10, turn=1, turn_phase='summoning', ended=Fal...: '妃嫔供奉'}, {'key': '妃嫔_rate', 'value': 100, 'kind': 'rate', 'budget_role': 'fixed', 'note': '妃嫔供奉率%', 'order': 9999}]))
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10c50c9e0>
+
+    def test_choose_minister_real_entry_excludes_weishi_includes_court(game, monkeypatch):
+        """#1317 r2：CLI choose_minister 真入口与可召谓词同口径（排未仕，留真臣）。"""
+        from ming_sim.cli import terminal as term
+    
+        db, _state, content = game
+        sess = _session_stub(db, content)
+    
+        # 强行 active 未仕，确认真入口仍不列
+        db.conn.execute(
+            "UPDATE characters SET status='active' WHERE name=?", ("史可法",),
+        )
+        db.conn.commit()
+    
+        printed: list[str] = []
+    
+        def fake_print(*args, **_kwargs):
+            printed.append(" ".join(str(a) for a in args))
+    
+        # quit ∈ COURT_BREAK_COMMANDS → 返回 None（退朝），只验证列名册副作用
+        monkeypatch.setattr("builtins.print", fake_print)
+        monkeypatch.setattr("builtins.input", lambda *_a, **_k: "quit")
+    
+        assert term.choose_minister(sess) is None
+    
+        blob = "\n".join(printed)
+        # 选择契约：排未仕、留真臣（名册副作用）；不锁标题固定措辞
+>       assert "史可法" not in blob
+E       AssertionError: assert '史可法' not in '\n可召见大臣：\n1. 史可法（未仕，东林）'
+E         
+E         '史可法' is contained here:
+E           
+E           可召见大臣：
+E           1. 史可法（未仕，东林）
+E         ?    +++
+
+tests/test_web_court_visibility.py:560: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_web_court_visibility.py::test_choose_minister_real_entry_excludes_weishi_includes_court
+1 failed in 0.26s
+real 1.09
+user 0.94
+sys 0.13
+EXIT:1
+=== restore: no probes (expect PASS) ===
+...                                                                      [100%]
+3 passed in 0.97s
+real 1.33
+user 1.11
+sys 0.15
+EXIT:0

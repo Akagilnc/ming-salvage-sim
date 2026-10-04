@@ -231,24 +231,29 @@ def test_due_review_scene_tops_next_audience_with_origin_context(game):
 
 def test_due_review_scene_tops_live_open_night_even_with_body(game):
     """#1838 reopen：待裁场面进场景开场最小集，不再写开夜旁白账。"""
-    from ming_sim.materials import _scene_pending_audience_facts
+    from ming_sim.materials import _scene_opening_text, _scene_pending_audience_facts
 
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
     db.conn.commit()
+    criterion_text = "火器见眉目"
+    origin_context = "三年火器见眉目"
     stages = [{
         "stage_idx": 0,
         "due_turn": state.turn,
-        "criterion_text": "火器见眉目",
-        "origin_context": "三年火器见眉目",
+        "criterion_text": criterion_text,
+        "origin_context": origin_context,
     }]
     _insert_staged_commitment(db, state, content, stages=stages)
     write_due_staged_commitment_todos(db, state)
 
     open_night(db, state, time_of_day="戌时", location="乾清宫")
     facts = _scene_pending_audience_facts(db, state)
+    opening = _scene_opening_text(state, [], "", [], facts)
     assert facts
+    assert all(line in opening for line in facts)
     joined = "\n".join(facts)
+    assert origin_context in joined or criterion_text in joined
 
 
 # ── P1 有案卷桥 / 无案卷分支 ──────────────────────────────────────────

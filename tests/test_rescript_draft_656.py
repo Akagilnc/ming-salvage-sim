@@ -803,16 +803,18 @@ def test_generate_rescript_draft_degrades_loudly_without_raising(game, monkeypat
     """F2.5 响亮降级（r2 B3 收窄后）：typed LLMUnavailable → tlog＋附记，返回 None，不抛。"""
     db, state, _content = game
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    unavailable = LLMUnavailable("LLM 不可用")
 
     def _boom(agent, prompt, tag, **_kwargs):
-        raise LLMUnavailable("LLM 不可用")
+        raise unavailable
 
     monkeypatch.setattr(rescript_mod, "run_agent_text", _boom)
     payload = {"active_issues": [], "gazette": "邸报", "triage_actor": {}, "turn": {}}
     assert generate_rescript_draft(object(), payload, state.turn) is None
     note = tmp_path / "error_packs" / "rescript_draft_degraded" / f"turn{state.turn}.json"
     assert note.is_file()
-    # 标准 JSON 转义保真：结构化 reason，不锁原文呈现
+    # 原始异常原因保存契约：结构化 reason 等于实际注入的 str(exc)，不锁固定措辞
+    assert json.loads(note.read_text(encoding="utf-8"))["reason"] == str(unavailable)
 
 def test_generate_rescript_draft_program_error_propagates(game, monkeypatch):
     """r2 裁决 B3 / ADR 0005：程序错不得以「非承重支路」为由吞成降级。

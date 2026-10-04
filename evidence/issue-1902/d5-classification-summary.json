@@ -1,0 +1,23 @@
+{
+  "python": 566,
+  "web": 47,
+  "total": 613,
+  "dispositions": {
+    "retained_and_repaired_source_contracts": 12,
+    "retained_independent_contracts_and_removed_noncontract_proofs": 436,
+    "maintained_independent_contract_retirement": 77,
+    "retained_real_entry_contract_migration": 36,
+    "repaired_scene_consumer_and_source_contract": 1,
+    "deleted_retired_helper_proof": 2,
+    "repaired_source_persistence_contract": 1,
+    "repaired_selection_contract_cleared_hollow_residue": 1,
+    "maintained_retirement": 26,
+    "retained_independent_behavior_contracts": 21
+  },
+  "unresolved": [],
+  "thisRoundRepairs": [
+    "tests/test_due_review_621.py::test_due_review_scene_tops_live_open_night_even_with_body",
+    "tests/test_rescript_draft_656.py::test_generate_rescript_draft_degrades_loudly_without_raising",
+    "tests/test_web_court_visibility.py::test_choose_minister_real_entry_excludes_weishi_includes_court"
+  ]
+}

@@ -556,3 +556,6 @@ def test_choose_minister_real_entry_excludes_weishi_includes_court(game, monkeyp
     assert term.choose_minister(sess) is None
 
     blob = "\n".join(printed)
+    # 选择契约：排未仕、留真臣（名册副作用）；不锁标题固定措辞
+    assert "史可法" not in blob
+    assert "温体仁" in blob or "毕自严" in blob
