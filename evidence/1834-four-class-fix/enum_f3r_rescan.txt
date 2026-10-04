@@ -1,0 +1,7 @@
+NOTIN_THEN_EQ	tests/test_qa_t1_extraction_dual_source_1353.py:352,361	not-in order ⊂ order ==
+NOTIN_THEN_EQ	tests/test_qa_t1_extraction_dual_source_1353.py:353,361	not-in order ⊂ order ==
+NOTIN_THEN_EQ	tests/test_session_write_queue_1353.py:85,93	not-in order ⊂ order ==
+NOTIN_THEN_EQ	tests/test_session_write_queue_1353.py:264,273	not-in order ⊂ order ==
+NOTIN_THEN_EQ	tests/test_session_write_queue_1353.py:372,378	not-in order ⊂ order ==
+NOTIN_THEN_EQ	tests/test_session_write_queue_1353.py:466,472	not-in order ⊂ order ==
+TOTAL=6

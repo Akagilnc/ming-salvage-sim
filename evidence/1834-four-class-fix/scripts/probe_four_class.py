@@ -17,6 +17,7 @@ import ming_sim.issues as issues_mod
 from ming_sim.db import GameDB
 from ming_sim.materials import (
     PreparedMaterials,
+    affair_ids_for_dossiers,
     list_materials,
     read_material,
     release_material_tree,
@@ -24,6 +25,7 @@ from ming_sim.materials import (
     write_identity_materials,
 )
 from ming_sim.month_chain import prepare_gazette_author_materials
+from ming_sim.staged_commitment import normalize_commitment_stages
 from tests.conftest import append_night_chat, open_audience_night
 from tests.dossier_test_helpers import TYPED_COVERT_TASK
 
@@ -86,6 +88,7 @@ def main() -> int:
             db.conn.commit()
 
         secret_ids = secret_order_dossier_ids(db)
+        derived_affairs = affair_ids_for_dossiers(db, secret_ids)
         prepared = prepare_gazette_author_materials(db, state)
         hits = []
         for rel in list_materials(prepared.root):
@@ -98,6 +101,12 @@ def main() -> int:
                 })
         f15 = {
             "secret_dossier_in_exclude_set": secret_did in secret_ids,
+            "affair_derived_from_dossiers": affair_id in derived_affairs,
+            "parallel_secret_order_affair_ids_fn": hasattr(
+                sys.modules.get("ming_sim.materials")
+                or __import__("ming_sim.materials", fromlist=["*"]),
+                "secret_order_affair_ids",
+            ),
             "opening_has_name": secret_name in prepared.opening,
             "opening_has_origin": secret_origin in prepared.opening,
             "file_hits": hits,
@@ -105,6 +114,7 @@ def main() -> int:
                 secret_name not in prepared.opening
                 and secret_origin not in prepared.opening
                 and not hits
+                and affair_id in derived_affairs
             ),
         }
 
@@ -169,6 +179,12 @@ def main() -> int:
         ]
         db.read_dossier_fork_state = original_fork  # type: ignore[method-assign]
 
+        long_c = "甲" * 250
+        long_o = "乙" * 280
+        stages = normalize_commitment_stages([{
+            "stage_idx": 0, "due_turn": 9,
+            "criterion_text": long_c, "origin_context": long_o,
+        }])
         f16 = {
             "decree_len": len(long_decree),
             "case_summaries": summaries,
@@ -180,6 +196,12 @@ def main() -> int:
             "stored_reason_lens": [len(r) for r in stored_reasons],
             "fiscal_full": any(r == long_reason for r in stored_reasons),
             "fiscal_suffix": any(r.endswith("严禁再向百姓加派。") for r in stored_reasons),
+            "staged_criterion_full": (
+                stages and str(stages[0]["criterion_text"]) == long_c
+            ),
+            "staged_origin_full": (
+                stages and str(stages[0]["origin_context"]) == long_o
+            ),
         }
 
         pm = PreparedMaterials(root=prepared.root, opening="probe")
@@ -196,7 +218,12 @@ def main() -> int:
 
         out = {"F15": f15, "F16": f16, "F13": f13}
         print(json.dumps(out, ensure_ascii=False, indent=2))
-        ok = f15["clean"] and f13["clean"] and f16["fiscal_full"] and f16["case_full"]
+        ok = (
+            f15["clean"] and f13["clean"]
+            and f16["fiscal_full"] and f16["case_full"]
+            and f16["staged_criterion_full"] and f16["staged_origin_full"]
+            and not f15["parallel_secret_order_affair_ids_fn"]
+        )
         return 0 if ok else 1
     finally:
         if prepared is not None:

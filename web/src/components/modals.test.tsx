@@ -334,9 +334,8 @@ describe("EdictModal — decree desk behavior", () => {
     expect(confirm).not.toHaveBeenCalled();
     expect(onAdvance).not.toHaveBeenCalled();
     const panel = host.querySelector('[aria-label="退朝确认"]');
-    expect(panel).not.toBeNull();
     expect(panel?.textContent).toContain("失败密令未处理");
-    const cancel = Array.from(panel!.querySelectorAll("button")).find((b) =>
+    const cancel = Array.from(panel?.querySelectorAll("button") ?? []).find((b) =>
       (b.textContent || "").includes("取消")
     );
     act(() => cancel?.click());
@@ -1837,7 +1836,6 @@ describe("ReportModal — narrative settlement bulletin", () => {
       attendantMessage: rawWithWs,
     });
     const aside = host.querySelector("[data-testid=gazette-attendant]");
-    expect(aside).not.toBeNull();
     // 递话原文含首尾空白与 markdown 标记；官方邸报逐字契约只在 App→DOM tracer
     expect(aside?.textContent).toBe(rawWithWs);
     // 递话区在纸面 article 之外

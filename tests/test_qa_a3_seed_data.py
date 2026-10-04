@@ -99,8 +99,6 @@ def test_zhang_fengyi_office_strips_future_title():
     _, characters = load_character_content()
     ch = characters["张凤翼"]
     office = ch.office or ""
-    assert "后" not in office, f"仍含未来官职旁注: {office!r}"
-    assert "兵部尚书" not in office, f"未来兵书不得入当期 office: {office!r}"
     assert office == "总督", f"当期名分偏离仓内可核口径: {office!r}"
 
 

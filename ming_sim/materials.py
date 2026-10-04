@@ -1253,12 +1253,14 @@ def secret_order_dossier_ids(db: Any) -> set[int]:
     }
 
 
-def secret_order_affair_ids(db: Any) -> set[int]:
-    """密令案卷已挂接的事务 id。公共供料排除名／起因时与案卷排除共用同一边界。"""
+def affair_ids_for_dossiers(db: Any, dossier_ids: set[int]) -> set[int]:
+    """由已过滤的案卷 id 派生关联事务 id；不再平行重判 secret_order_id。"""
+    if not dossier_ids:
+        return set()
     return {
         int(row["affair_id"])
         for row in db.list_decree_dossiers()
-        if row.get("secret_order_id") and int(row.get("affair_id") or 0) > 0
+        if int(row["id"]) in dossier_ids and int(row.get("affair_id") or 0) > 0
     }
 
 
@@ -2461,7 +2463,8 @@ def prepare_world_materials(
     # #1834 大理寺 bounce 3：与人物经历同一纪律——本次 prepare 只算一次盘面全量
     # 投影，目录写入与 opening 共用同一份冻结结果，不重复查两遍账本。
     secret_dossiers = secret_order_dossier_ids(db) if exclude_secret_order_dossiers else set()
-    secret_affairs = secret_order_affair_ids(db) if exclude_secret_order_dossiers else set()
+    # 公共元数据旁路：关联事务从已排除案卷 id 派生，不平行重跑 secret_order_id 判断。
+    secret_affairs = affair_ids_for_dossiers(db, secret_dossiers)
     affair_lines, opening_affair_lines = _world_affair_lines(
         db, include_fact, exclude_affair_ids=secret_affairs or None,
     )

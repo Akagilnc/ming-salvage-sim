@@ -1,0 +1,38 @@
+{
+  "F15": {
+    "secret_dossier_in_exclude_set": true,
+    "affair_derived_from_dossiers": true,
+    "parallel_secret_order_affair_ids_fn": false,
+    "opening_has_name": false,
+    "opening_has_origin": false,
+    "file_hits": [],
+    "clean": true
+  },
+  "F16": {
+    "decree_len": 59,
+    "case_summaries": [
+      "着户部核边饷亏空，查清国丈侵吞数目及仓场实存，务须据实回奏，并将侵蚀年月、经手官吏、挪移路径一并开列，不许另向百姓加派"
+    ],
+    "case_full": true,
+    "case_suffix": true,
+    "reason_len": 414,
+    "stored_reason_lens": [
+      414
+    ],
+    "fiscal_full": true,
+    "fiscal_suffix": true,
+    "staged_criterion_full": true,
+    "staged_origin_full": true
+  },
+  "F13": {
+    "declared_fields": [
+      "root",
+      "opening"
+    ],
+    "before": false,
+    "after": false,
+    "written_n": 1,
+    "clean": true
+  }
+}
+

@@ -1,21 +1,27 @@
-### F15 rescan
-ming_sim/month_chain.py:323:        exclude_secret_order_dossiers=True,
-ming_sim/materials.py:1256:def secret_order_affair_ids(db: Any) -> set[int]:
-ming_sim/materials.py:1402:def _world_affair_lines(
-ming_sim/materials.py:1406:    exclude_affair_ids: set[int] | None = None,
-ming_sim/materials.py:1414:    ``exclude_affair_ids`` drops whole matters (name/origin included) so public
-ming_sim/materials.py:1421:    excluded = exclude_affair_ids or set()
-ming_sim/materials.py:1434:            f"起因：{affair.origin}", f"状态：{affair.status}", *fact_lines,
-ming_sim/materials.py:2439:    exclude_secret_order_dossiers: bool = False,
-ming_sim/materials.py:2463:    secret_dossiers = secret_order_dossier_ids(db) if exclude_secret_order_dossiers else set()
-ming_sim/materials.py:2464:    secret_affairs = secret_order_affair_ids(db) if exclude_secret_order_dossiers else set()
-ming_sim/materials.py:2465:    affair_lines, opening_affair_lines = _world_affair_lines(
-ming_sim/materials.py:2466:        db, include_fact, exclude_affair_ids=secret_affairs or None,
-### F16 rescan free-text crop for material supply
-(no hits)
-ming_sim/staged_commitment.py:78:            "origin_context": (origin_context or criterion)[:240],
-### F13 rescan
-evidence/1834-four-class-fix/scripts/probe_four_class.py:186:        before = hasattr(pm, "index_lines")
-evidence/1834-four-class-fix/scripts/probe_four_class.py:188:        after = hasattr(pm, "index_lines")
-### F3-R remaining in→eq / null+content candidates
-JS_KEEP_WAITFOR web/src/appDurableWiring.test.tsx:1919-1921
+# Rescan after r2 (full-class enum, not sample-narrowed)
+
+## F15
+command:
+  ../Ming_LLM/.venv/bin/python evidence/1834-four-class-fix/scripts/enum_four_class.py
+PARALLEL secret_order_affair_ids: (none)
+derive path:
+  ming_sim/materials.py: affair_ids_for_dossiers(db, secret_dossiers)
+  prepare_world_materials uses secret_order_dossier_ids → affair_ids_for_dossiers
+  prepare_gazette_author_materials → exclude_secret_order_dossiers=True
+
+## F16
+PROSE_SLICE remaining after FIX of material-feed members: see enum_f16_members.txt
+material-feed crops removed include staged_commitment criterion/origin,
+settlement_payload due content, flows economy reason, issues stage_text/title/
+narrative/resolve/fail/status_reason, db status_reason/terminal_reason/case_summary/fiscal,
+due_review notes, covert_progress notes.
+KEEP rows are log/raise/path/CLI/list-length or no materials consumer (documented in report).
+
+## F13
+object.__setattr__ / index_lines in ming_sim+tests: 0 rows
+
+## F3-R
+remaining after FIX: 6 NOTIN_THEN_EQ all temporal (assert before mutation, == after)
+  tests/test_qa_t1_extraction_dual_source_1353.py
+  tests/test_session_write_queue_1353.py
+JS null+content non-waitFor: 0

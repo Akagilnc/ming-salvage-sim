@@ -137,9 +137,8 @@ describe("NodeIntel #1352 garrison layout / army-list口径", () => {
     const host = renderNodeIntel(node);
 
     const table = host.querySelector(".intel-table--garrison");
-    expect(table).not.toBeNull();
-    expect(table!.textContent).toContain(String(node.armies[0].manpower));
-    expect(table!.textContent).toContain(String(node.armies[0].army_needed));
+    expect(table?.textContent).toContain(String(node.armies[0].manpower));
+    expect(table?.textContent).toContain(String(node.armies[0].army_needed));
     // #321 P7：驻军表存在；不直显士气/军心/欠饷
     expect(host.textContent).not.toContain("不满"); // makeArmy 默认 mutiny_tier 不得直显
     expect(host.textContent).not.toContain("士气：不振");

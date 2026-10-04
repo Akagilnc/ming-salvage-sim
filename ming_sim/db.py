@@ -5697,7 +5697,7 @@ class GameDB:
                     bar_good_meaning=ev.bar_good_meaning or "已平",
                     bar_bad_meaning=ev.bar_bad_meaning or "失控",
                     inertia=inertia,
-                    stage_text=ev.stage_text or ev.summary[:80],
+                    stage_text=ev.stage_text or ev.summary,
                     severity=int(ev.severity),
                     region_hint=ev.region_hint,
                     faction_hint=",".join(ev.interests[:2]),
@@ -5828,22 +5828,23 @@ class GameDB:
         # 原职仍留在 character_offices 备档可追溯。复职（active）不动 office。
         ousted = status in _OUSTED_STATES
         reason_code_value = str(reason_code or "")[:40]
+        status_reason = str(reason or "")
         if ousted:
             self.conn.execute(
                 "UPDATE characters SET status=?, status_reason=?, "
                 "status_changed_turn=?, office='', reason_code=? WHERE name=?",
-                (status, reason[:200], state.turn, reason_code_value, name),
+                (status, status_reason, state.turn, reason_code_value, name),
             )
             self.set_character_transit(name, content=content, commit=False)
         else:
             self.conn.execute(
                 "UPDATE characters SET status=?, status_reason=?, status_changed_turn=?, reason_code=? WHERE name=?",
-                (status, reason[:200], state.turn, reason_code_value, name),
+                (status, status_reason, state.turn, reason_code_value, name),
             )
         if content is not None and name in content.characters:
             character = content.characters[name]
             character.status = status
-            character.status_reason = reason[:200]
+            character.status_reason = status_reason
             character.reason_code = reason_code_value
             if ousted:
                 character.office = ""
@@ -16277,7 +16278,7 @@ class GameDB:
             id="military_order", title="军令调遣", kind="圣旨", summary="",
             urgency=0, severity=0, credibility=100, interests=[], audiences=[],
         )
-        delta: Dict[str, object] = {"reason": reason[:80]}
+        delta: Dict[str, object] = {"reason": reason}
         if dest:
             delta["station"] = dest
         if dest_region:
@@ -19705,7 +19706,7 @@ class GameDB:
             ON CONFLICT(event_id) DO UPDATE SET
                 {self._event_terminal_upgrade_assignments(fill_triggered_reason=True)}
             """,
-            (event_id, state.turn, state.year, state.period, source, str(terminal_reason or "")[:200]),
+            (event_id, state.turn, state.year, state.period, source, str(terminal_reason or "")),
         )
         if commit:
             self.conn.commit()
@@ -19728,7 +19729,7 @@ class GameDB:
             ON CONFLICT(event_id) DO UPDATE SET
                 {self._event_terminal_upgrade_assignments()}
             """,
-            (event_id, state.turn, state.year, state.period, source, reason[:200]),
+            (event_id, state.turn, state.year, state.period, source, reason),
         )
         if commit:
             self.conn.commit()
@@ -19751,7 +19752,7 @@ class GameDB:
             ON CONFLICT(event_id) DO UPDATE SET
                 {self._event_terminal_upgrade_assignments()}
             """,
-            (event_id, state.turn, state.year, state.period, source, reason[:200]),
+            (event_id, state.turn, state.year, state.period, source, reason),
         )
         if commit:
             self.conn.commit()

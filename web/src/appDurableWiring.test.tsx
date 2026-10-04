@@ -2109,8 +2109,7 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     expect(host.querySelector('[role="dialog"]')).toBeNull();
     expect(host.querySelector('[data-testid="decision-recovery"]')).toBeNull();
     const hudAlert = host.querySelector('[data-testid="hud-error"][role="alert"]');
-    expect(hudAlert).not.toBeNull();
-    expect(hudAlert!.textContent).toContain(FAIL_MSG);
+    expect(hudAlert?.textContent).toContain(FAIL_MSG);
     // 核账期面已退（fail-closed 回 player）——月初快照/核账叙事不得被告警改写为核账态
     expect(host.querySelector("[data-testid=wang-settlement-slip]")).toBeNull();
     expect(host.querySelector("[data-testid=settlement-lock-decor]")).toBeNull();
@@ -2395,11 +2394,10 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     drawer: Element | null,
     expected: number[], absent: number[] = [],
   ) => {
-    expect(drawer).not.toBeNull();
     for (const value of expected) {
-      expect(drawer!.textContent).toContain(formatMoney(value));
+      expect(drawer?.textContent).toContain(formatMoney(value));
     }
-    for (const value of absent) expect(drawer!.textContent).not.toContain(formatMoney(value));
+    for (const value of absent) expect(drawer?.textContent).not.toContain(formatMoney(value));
   };
   it("只读组逐面可达且吃月初叠影；关闭组不可达且半程面不泄漏", async () => {
     // phase=settling：续跑小条不挡 HUD；settlement_display 叠影照常
@@ -2466,8 +2464,7 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     await click(byAria(host, "建筑列表"));
     await tick();
     const buildingOpen = host.querySelector(".right-drawer-building.open");
-    expect(buildingOpen).not.toBeNull();
-    expect(buildingOpen!.textContent).toContain(SNAP_BUILDING);
+    expect(buildingOpen?.textContent).toContain(SNAP_BUILDING);
     // 半程省/兵抽屉仍不得被连带打开
     expect(host.querySelector(".right-drawer-region.open")).toBeNull();
     expect(host.querySelector(".right-drawer-army.open")).toBeNull();
@@ -2483,8 +2480,7 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     await click(byAria(host, "官员任免"));
     await tick();
     const apptOpen = host.querySelector(".right-drawer-appointment.open");
-    expect(apptOpen).not.toBeNull();
-    expect(apptOpen!.textContent).toContain(SNAP_MINISTER);
+    expect(apptOpen?.textContent).toContain(SNAP_MINISTER);
     const apptRow = apptOpen!.querySelector(".right-drawer-row-minister");
     expect(apptRow?.tagName).toBe("DIV");
     await closeOpenOverlay(host);
@@ -2493,8 +2489,7 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     await click(byAria(host, "后宫"));
     await tick();
     const haremOpen = host.querySelector(".harem-drawer.open");
-    expect(haremOpen).not.toBeNull();
-    expect(haremOpen!.textContent).toContain(SNAP_CONSORT);
+    expect(haremOpen?.textContent).toContain(SNAP_CONSORT);
     // #1849 reopen：后宫卡与朝臣同形只读，不再是可点开面板的 button。
     const haremCard = Array.from(haremOpen!.querySelectorAll(".minister-card")).find((el) =>
       (el.textContent || "").includes(SNAP_CONSORT),
@@ -2658,9 +2653,8 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     expect(masthead).not.toContain("天启七年十月");
     // #671 App 接线：递话可见且位于 .gazette-document 之外
     const attendant = host.querySelector("[data-testid=gazette-attendant]");
-    expect(attendant).not.toBeNull();
-    expect(attendant!.textContent).toContain(SNAP_ATTENDANT);
-    expect(attendant!.closest(".gazette-document")).toBeNull();
+    expect(attendant?.textContent).toContain(SNAP_ATTENDANT);
+    expect(attendant?.closest(".gazette-document")).toBeNull();
     // 半程议题仍不泄漏；上月已结只读面可同屏
     expect(host.textContent).not.toContain(MIDCOURSE_ISSUE);
     expect(host.querySelector(".situation-closed-list")).not.toBeNull();
@@ -2690,8 +2684,7 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
       await vi.waitFor(() => expect(host.querySelector('[role="dialog"][aria-label="邸报"]')).not.toBeNull());
     });
     const attendant = host.querySelector("[data-testid=gazette-attendant]");
-    expect(attendant).not.toBeNull();
-    expect(attendant!.textContent).toContain(SNAP_ATTENDANT);
+    expect(attendant?.textContent).toContain(SNAP_ATTENDANT);
   });
 
   it("月完后 settlement_display=false：关闭组入口恢复；递话条收；局势半程面重现", async () => {

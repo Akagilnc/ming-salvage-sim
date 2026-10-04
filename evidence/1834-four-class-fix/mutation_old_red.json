@@ -1,0 +1,24 @@
+{
+  "F15_old_red": {
+    "opening_has_name": true,
+    "file_hit_n": 1,
+    "clean": false
+  },
+  "F16_staged_old_red": {
+    "criterion_len": 200,
+    "origin_len": 240,
+    "suffix_kept": false
+  },
+  "F16_fiscal_old_red": {
+    "stored_lens": [
+      240
+    ],
+    "full": false
+  },
+  "F16_due_old_red": {
+    "len": 120,
+    "full": false
+  },
+  "verdict": true
+}
+
