@@ -130,7 +130,14 @@ MING_SIM_PI_BIN=/usr/bin/false
 | 点名/触及节点（含 escort、income、refugee、month_chain、substrate 两案、六科、promulgation…） | **58 passed** | real 5.09s |
 | 触及文件套件 12 文件 | **186 passed** | real 10.65s |
 
-日志：`focused-named.log` / `focused-files.log`。不为证明新造测试。
+日志摘要已写入本回执；原始 `*.log` 受 `.gitignore` 忽略，仅留工作树本地。
+
+| 集 | 结果 | 墙钟 |
+|---|---|---|
+| 点名/触及节点（含 escort、income、refugee、month_chain、substrate 两案、六科、promulgation…） | **58 passed** | real 5.09s |
+| 触及文件套件 12 文件 | **186 passed** | real 10.65s |
+
+不为证明新造测试。
 
 ---
 
@@ -143,7 +150,7 @@ MING_SIM_PI_BIN=/usr/bin/false
 | `recompute_faction_leverage` noop | 1 failed（50≠48） | 1 passed |
 | `build_night_said_so_far` 忽略截止 | 1 failed（落账含「后轮泄漏」） | 1 passed |
 
-日志：`mutations.log`。
+日志摘要见上表与本回执 §5；原始 `mutations.log` 本地留存（gitignore）。
 
 ---
 
@@ -156,7 +163,10 @@ MING_SIM_PI_BIN=/usr/bin/false
 
 ---
 
-## 7. Commits（本轮起）
+## 7. Commits
 
-- 先前：`39c7c9309` 窄枚举施工（已由本轮纠正 oracle/枚举义务）
-- 本轮 SHA：（提交后回填）
+- 先前窄枚举：`39c7c9309`
+- 本轮全仓扫类 + 违法 oracle 纠正：`9b4b159a6c37c99527007f8176756b20d939d4f1`
+- 短哈希：`9b4b159a6`
+- 标题：`ak-roles: fix(#1900): full-class J18/J6 rescan, drop dead helper and illegal oracles`
+- `git diff --stat bb448254c HEAD`：以本工作树为准（含成员表与日志）
