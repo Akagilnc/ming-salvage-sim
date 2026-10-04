@@ -1,4 +1,4 @@
 rule	detail
-literal_hit_not_duplicate_enum	n12_literal_hits=176; single-definition COURT/GATE/PERSON/DUE/FAVORITES reads + subsets KEEP; only identical full enums converged
-smell_unused_alt_iface	caller_tag helpers deleted; remaining name smells without second definition EXCLUDED as non-duplicate
-spike_oracle	spike_settle_tick.py KEEP_spike_oracle explicit; not silent archive drop
+literal_hits_are_scan_surface_not_verdict	n12_literal_hits=176; named-key/assign scan only — NOT full-class duplicate proof; exclusion requires per-hit second-definition check
+no_auto_exclude_from_symbol_list	smell without second definition ≠ EXCLUDED; remains in literal_hits for human
+human_judgment_required	KEEP/CONVERGED/spike exemption only in evidence/1847-w5-correction/human_judgment.tsv

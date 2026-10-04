@@ -1,5 +1,9 @@
 # #1847 w5 修内司 class report（自查修正续修）
 
+> **SUPERSEDED for verdict claims** by `evidence/1847-w5-correction/CORRECTION.md`
+> (shape-auto `KEEP_*` ≠ 逐项验证；`1847-mutation-probes.py` ≠ ask_emperor→PTY 真入口).
+> This file retained as historical dossier — do not treat KEEP counts below as verified.
+
 - worktree: `/Users/akagilnc/WorkSpace/Ming_LLM-1847-w5`
 - branch: `ak-roles/1847-fixer-n6-n11-n12-n13`
 - prior delivery HEAD（不合格）: `8fb20d8f1` — CRLF TSV、`KEEP_review_bucket` 无具体来源去向、`_warm_keychain` Popen+wait(timeout)+terminate 仍属硬时限护栏

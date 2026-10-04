@@ -213,19 +213,25 @@ PROMPT_PATTERNS = [
 
 
 def parse_emperor_output(raw: str) -> tuple[str, str]:
-    """Parse JSON {reasoning, input} from agent output. Returns (reasoning, input_text)."""
-    text = raw.strip()
+    """Parse JSON {reasoning, input} from agent output. Returns (reasoning, input_text).
+
+    Envelope whitespace may be trimmed only to locate the JSON object.
+    The extracted ``input`` field is free-prose keyboard action → PTY sendline:
+    do not strip / splitlines / slice it here (N6 transport).
+    """
+    if not str(raw or "").strip():
+        raise ValueError(f"崇祯 agent 输出无法解析为 JSON: {raw}")
+    # Formal JSON envelope locate only — not rewrite of ``input`` payload.
+    text = str(raw).strip()
     fence = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
     if fence:
         text = fence.group(1)
     obj_match = re.search(r"\{.*\}", text, re.DOTALL)
     if not obj_match:
-        raise ValueError(f"崇祯 agent 输出无法解析为 JSON: {raw[:200]}")
+        raise ValueError(f"崇祯 agent 输出无法解析为 JSON: {raw}")
     obj = json.loads(obj_match.group(0))
     reasoning = str(obj.get("reasoning", ""))
     input_text = str(obj.get("input", ""))
-    if "\n" in input_text:
-        input_text = input_text.splitlines()[0]
     return reasoning, input_text
 
 

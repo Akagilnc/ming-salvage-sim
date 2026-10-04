@@ -1,54 +1,26 @@
 {
-  "n6_raw": 3119,
+  "contract": "mechanical_only_no_auto_KEEP",
+  "n6_raw": 3118,
   "n6_disp": {
-    "KEEP_doc_or_comment": 78,
-    "KEEP_empty_normalize": 1543,
-    "KEEP_sqlite_sanitize": 67,
-    "KEEP_list_cap_ui": 15,
-    "KEEP_ansi_strip": 16,
-    "KEEP_id_hash": 12,
-    "KEEP_struct_field_cap": 74,
-    "KEEP_log_or_trace": 41,
-    "KEEP_formal_regex": 80,
-    "KEEP_ws_compact_compare": 6,
-    "KEEP_join_structure": 292,
-    "KEEP_split_structure": 93,
-    "KEEP_formal_replace": 10,
-    "KEEP_casefold_compare": 29,
-    "KEEP_session_run_truncate": 19,
-    "KEEP_log_preview": 2,
-    "KEEP_diag_error": 36,
-    "KEEP_office_token_split": 2,
-    "KEEP_form_struct": 36,
-    "KEEP_format_struct": 3,
-    "KEEP_path_normalize": 2,
-    "KEEP_formal_json_parse": 17,
-    "KEEP_template_placeholder": 1,
-    "KEEP_non_text_api": 1,
-    "KEEP_metric_label_prefix": 2,
-    "KEEP_binary_or_pixels": 2,
-    "DELETED": 2,
-    "KEEP_test": 555,
-    "KEEP_ui_chrome": 70,
-    "KEEP_humanize_structured": 13
+    "MECHANICAL_DOC": 61,
+    "PENDING_HUMAN": 2502,
+    "MECHANICAL_TEST": 555
   },
+  "n6_pending_human": 2502,
   "n13": 544,
   "n13_disp": {
-    "KEEP_resource_close": 54,
-    "KEEP_soft_timeout": 34,
-    "KEEP_doc": 7,
-    "KEEP_subprocess_no_timeout": 1,
-    "KEEP_sigterm": 4,
-    "KEEP_sigterm_self": 2,
-    "KEEP_test": 442
+    "PENDING_HUMAN": 95,
+    "MECHANICAL_DOC": 7,
+    "MECHANICAL_TEST": 442
   },
   "n13_fix": 0,
   "n11_raw": 666,
   "n11_disp": {
-    "EXCLUDED_noise": 617,
-    "KEEP": 20,
-    "DELETED": 29
+    "POTENTIAL_NOISE": 617,
+    "PENDING_HUMAN": 20,
+    "DELETED_KNOWN": 29
   },
-  "n11_members_non_noise": 49,
-  "n12_hits": 176
+  "n11_pending_or_potential": 637,
+  "n12_hits": 176,
+  "human_judgment": "evidence/1847-w5-correction/human_judgment.tsv"
 }

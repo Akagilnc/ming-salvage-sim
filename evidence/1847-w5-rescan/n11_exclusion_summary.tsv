@@ -1,2 +1,4 @@
-exclusion_reason	count
-legacy/compat/deprecated vocabulary hit without retired mechanism symbol; not N11 delete member	617
+mechanical_disposition	count
+POTENTIAL_NOISE	617
+DELETED_KNOWN	29
+PENDING_HUMAN	20

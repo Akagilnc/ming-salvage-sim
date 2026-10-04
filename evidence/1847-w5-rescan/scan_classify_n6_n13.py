@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""#1847 w5 frozen dossier: N6/N11/N12/N13 rescan + per-member classify.
+"""#1847 w5 frozen dossier: N6/N11/N12/N13 mechanical rescan.
 
 One-shot evidence generator (not a permanent runtime mechanism).
 Re-run:
@@ -7,9 +7,14 @@ Re-run:
   /Users/akagilnc/WorkSpace/Ming_LLM/.venv/bin/python \
     evidence/1847-w5-rescan/scan_classify_n6_n13.py
 
-Writes LF TSVs under evidence/1847-w5-rescan/ and copies canonical member
-tables to evidence/1847-w5-n{6,11,12,13}-members.tsv (+ exempt).
-Every N6 row must carry concrete source→dest (no KEEP_review_bucket).
+Writes LF TSVs under evidence/1847-w5-rescan/ and syncs mechanical tables to
+evidence/1847-w5-n{6,11,12,13}-members.tsv (+ exempt).
+
+CORRECTED CONTRACT (post dddd600bb self-check reject):
+- Mechanical rules may ONLY emit POTENTIAL_* / PENDING_HUMAN / MECHANICAL_* /
+  DELETED_KNOWN — never KEEP_* shape-guess verdicts.
+- Human KEEP/DELETE lives only in evidence/1847-w5-correction/human_judgment.tsv
+  (built by human review of live callers + source/sink cites).
 """
 from __future__ import annotations
 
@@ -147,19 +152,25 @@ def field_from_snip(snip: str) -> str:
 def classify_n6_py(
     path: str, lineno: int, kind: str, detail: str, snip: str, lines: list[str], fn: str
 ) -> tuple[str, str]:
+    """Shape heuristics only → POTENTIAL/PENDING/MECHANICAL. Never KEEP.
+
+    KEEP/DELETE for live production requires human_judgment.tsv with real
+    source-contract + destination-path cites (see evidence/1847-w5-correction/).
+    """
     s = snip
     dest_fn = fn
     stripped = s.lstrip()
+    fields = field_from_snip(s)
 
     if "思考已截断" in s or "_THINKING_STREAM_CHAR_LIMIT" in s:
         return (
-            "DELETED",
-            "thinking free-text char cap removed; on_thinking full text",
+            "DELETED_KNOWN",
+            "prior-round removal marker: thinking free-text char cap; confirm absent in live source",
         )
     if path.endswith("play_as_emperor.py") and "[:200]" in s:
         return (
-            "DELETED",
-            "live free-text action truncate→PTY removed prior round",
+            "DELETED_KNOWN",
+            "prior-round removal marker: action[:200]→PTY; confirm absent in live source",
         )
 
     if (
@@ -168,8 +179,8 @@ def classify_n6_py(
         or stripped.startswith("'''")
     ):
         return (
-            "KEEP_doc_or_comment",
-            f"src=comment/doc @ {path}:{lineno} fn={dest_fn}; dest=documentation only",
+            "MECHANICAL_DOC",
+            f"shape=comment/doc @ {path}:{lineno} fn={dest_fn}; not a KEEP verdict",
         )
 
     if (
@@ -179,287 +190,26 @@ def classify_n6_py(
         or ".test." in path
     ):
         return (
-            "KEEP_test",
-            f"src=test fixture/assert @ {path}:{lineno} fn={dest_fn}; dest=pytest/vitest only",
+            "MECHANICAL_TEST",
+            f"shape=tests/ path @ {path}:{lineno} fn={dest_fn}; not a KEEP verdict",
         )
 
-    if "tlog(" in s or "_log(" in s or "logging." in s or re.search(r"\bprint\s*\(", s):
-        return (
-            "KEEP_log_or_trace",
-            f"src=local preview @ {path}:{lineno} fn={dest_fn}; dest=operator tlog/print only; not inter-model feed",
-        )
-
-    if "sanitize_sqlite" in s:
-        return (
-            "KEEP_sqlite_sanitize",
-            f"src=DB-bound value @ fn={dest_fn} → dest=sqlite TEXT via sanitize_sqlite_text; NUL/control storage contract",
-        )
-
-    if (
-        "parse_agent_json" in dest_fn
-        or "strip_json_fence" in s
-        or r"\x00-\x08" in s
-        or "json.loads" in s
-        or "```" in s
-    ):
-        return (
-            "KEEP_formal_json_parse",
-            f"src=LLM raw JSON/fence @ fn={dest_fn} → dest=json.loads formal parse (control-char/fence); raise on fail; not emperor rewrite",
-        )
-
-    if "datetime" in s and ".replace(" in s and "microsecond" in s:
-        return (
-            "KEEP_non_text_api",
-            f"src=datetime @ fn={dest_fn} → dest=isoformat; datetime.replace(microsecond) not free-text",
-        )
-
-    if "relative_to" in s or ("\\\\" in s and "replace" in s and "/" in s):
-        return (
-            "KEEP_path_normalize",
-            f"src=Path @ fn={dest_fn} → dest=posix path string; OS path form",
-        )
-
-    if "{{" in s and "}}" in s and "replace" in s:
-        return (
-            "KEEP_template_placeholder",
-            f"src=prompt template @ fn={dest_fn} → dest=closed placeholder substitution {{{{…}}}}",
-        )
-
-    if r"\x1b" in s or "ansi" in s.lower():
-        return (
-            "KEEP_ansi_strip",
-            f"src=CLI stream @ fn={dest_fn} → dest=diagnostic without CSI; terminal control strip",
-        )
-
-    if "humanize" in detail.lower() or "humanize" in s:
-        return (
-            "KEEP_humanize_structured",
-            f"src=structured modifiers/gate dict @ fn={dest_fn} → dest=UI/effect label from structured fields",
-        )
-
-    if (
-        "truncate_agno" in s
-        or "truncate_history" in s
-        or "truncate_chat_turn" in s
-        or (detail == "truncate" and "agno" in s.lower())
-        or (detail == "truncate" and ("keep_count" in s or "Truncate session" in s))
-        or "def _history_backed_truncate" in s
-        or "def _truncate_history_backed" in s
-    ):
-        return (
-            "KEEP_session_run_truncate",
-            f"src=GameDB agno session runs @ fn={dest_fn} → dest=delete empty completed runs before transport retry; run-row count not free-text content",
-        )
-
-    if kind == "keyword" and detail in ("截断", "裁剪", "truncate", "原文"):
-        return (
-            "KEEP_doc_or_comment",
-            f"src=keyword {detail} non-mutating @ {path}:{lineno} fn={dest_fn}; dest=documentation/identifier",
-        )
-
-    if detail == "max_len" or "max_len" in s:
-        return (
-            "KEEP_form_struct",
-            f"src=FieldSpec/form max_len @ fn={dest_fn} → dest=structured form validation boundary",
-        )
-
-    if kind in ("slice", "rg_slice") or "[:" in s:
-        m = re.search(r"\[:(\d+)\]", s)
-        n = m.group(1) if m else "?"
-        if any(x in s for x in ("raise", "Error", 'f"', "f'", "腐坏", "须为")):
-            return (
-                "KEEP_diag_error",
-                f"src=exception/diagnostic preview[:{n}] @ fn={dest_fn} → dest=operator error string",
-            )
-        if "tlog" in s or "_log" in s:
-            return (
-                "KEEP_log_or_trace",
-                f"src=log preview[:{n}] @ fn={dest_fn} → dest=operator log",
-            )
-        if "pix[" in s or "portrait" in s or "image" in path:
-            return (
-                "KEEP_binary_or_pixels",
-                f"src=image/pixel slice @ fn={dest_fn} → dest=image processing",
-            )
-        if any(
-            x in s
-            for x in ("options[:", "hit[:", "person_names[:", "interests[:", "visible")
-        ):
-            return (
-                "KEEP_list_cap_ui",
-                f"src=structured list[:{n}] @ fn={dest_fn} → dest=UI/options list-length cap; element text unedited",
-            )
-        if "normalized_text" in s or "审计" in s:
-            return (
-                "KEEP_struct_field_cap",
-                f"src=structured audit JSON note @ fn={dest_fn}; full-store contract (forbids mid-cut)",
-            )
-        if "remaining" in s or "merged[:" in s:
-            return (
-                "KEEP_log_preview",
-                f"src=stream buffer @ fn={dest_fn} → dest=tlog preview; on_thinking/on_text get full merged",
-            )
-        fields = field_from_snip(s)
-        return (
-            "KEEP_struct_field_cap",
-            f"src={fields} @ fn={dest_fn} → dest=bounded structured field/id preview[:{n}]; empty source→empty; formal length on identifier/label",
-        )
-
-    if detail in ("strip", "lstrip", "rstrip") or any(
-        x in s for x in (".strip(", ".lstrip(", ".rstrip(")
-    ):
-        fields = field_from_snip(s)
-        if "return" in s:
-            use = "return"
-        elif "if " in s and any(op in s for op in ("==", "!=", "not ")):
-            use = "empty-or-equality-gate"
-        elif "=" in s:
-            use = "assign-then-use"
-        else:
-            use = "compare/lookup"
-        note = (
-            f"src={fields} @ fn={dest_fn}:{path}:{lineno} → dest={use}; "
-            f"strip empty-normalize only (leading/trailing ws removed; only-ws→empty); "
-            f"non-ws payload preserved; formal identity/key compare — not free-prose rewrite"
-        )
-        return "KEEP_empty_normalize", note
-
-    if detail == "split" or ".split(" in s:
-        fields = field_from_snip(s)
-        return (
-            "KEEP_split_structure",
-            f"src={fields} @ fn={dest_fn} → dest=token/path/CSV structure split; delimiter formal parse",
-        )
-
-    if detail in ("join",) or ".join(" in s:
-        fields = field_from_snip(s)
-        return (
-            "KEEP_join_structure",
-            f"src={fields}|collection @ fn={dest_fn} → dest=delimiter-join of structured parts/ids/labels; elements not synonym-rewritten",
-        )
-
-    if detail in ("lower", "upper", "casefold") or any(
-        x in s for x in (".lower(", ".upper(", ".casefold(")
-    ):
-        fields = field_from_snip(s)
-        return (
-            "KEEP_casefold_compare",
-            f"src={fields} @ fn={dest_fn} → dest=casefold for closed-enum/sql compare; original stored value not rewritten for emperor feed",
-        )
-
-    if detail in ("partition", "rpartition", "rsplit", "removeprefix", "removesuffix"):
-        fields = field_from_snip(s)
-        return (
-            "KEEP_split_structure",
-            f"src={fields} @ fn={dest_fn} → dest={detail} formal token/stem split; identifier form",
-        )
-
-    if detail in ("encode", "decode"):
-        fields = field_from_snip(s)
-        return (
-            "KEEP_id_hash",
-            f"src={fields} @ fn={dest_fn} → dest=bytes/utf-8 encode for hash/id; not prose edit",
-        )
-
-    if detail in ("match", "fullmatch", "search", "findall") or any(
-        x in s for x in (".match(", ".fullmatch(", ".search(", ".findall(")
-    ):
-        fields = field_from_snip(s)
-        return (
-            "KEEP_formal_regex",
-            f"src={fields} @ fn={dest_fn} → dest={detail} against closed pattern/DSL; formal parse",
-        )
-
-    if detail == "format" or ".format(" in s:
-        fields = field_from_snip(s)
-        return (
-            "KEEP_format_struct",
-            f"src={fields} @ fn={dest_fn} → dest=str.format of structured fields; template fill not prose rewrite",
-        )
-
-    if detail == "FIELD_CAP" or "FIELD_CAP" in s:
-        return (
-            "KEEP_form_struct",
-            f"src=FIELD_CAP constant @ fn={dest_fn} → dest=structured form field length boundary",
-        )
-
-    if detail == "replace" or ".replace(" in s:
-        fields = field_from_snip(s)
-        if any(x in s for x in ("兼掌", "兼署", "兼")):
-            return (
-                "KEEP_office_token_split",
-                f"src=office title token @ fn={dest_fn} → dest=split concurrent-office separators for roster parse; stem preserved",
-            )
-        if "数值变化" in s:
-            return (
-                "KEEP_metric_label_prefix",
-                f"src=format_metric_delta structured number → dest=UI label; strips fixed prefix only",
-            )
-        if "portrait_id" in s:
-            return (
-                "KEEP_id_hash",
-                f"src=portrait_id → dest=int after prefix peel; identifier form",
-            )
-        return (
-            "KEEP_formal_replace",
-            f"src={fields} @ fn={dest_fn} → dest=formal delimiter/placeholder/path replace; closed alphabet",
-        )
-
-    if kind == "re" or str(detail).startswith("re.") or "re." in s:
-        fields = field_from_snip(s)
-        if "CMRPATH" in s:
-            return (
-                "KEEP_formal_dsl",
-                f"src=login-shell stdout sentinels → dest=_login_shell_path PATH extract; sentinel DSL",
-            )
-        if "待核定" in s:
-            return (
-                "KEEP_formal_dsl",
-                f"src=CLI chunk [待核定]#N → dest=pending id list; marker DSL",
-            )
-        if "AUTO_SAVE_PREFIX" in s or "re.escape" in s:
-            return (
-                "KEEP_id_hash",
-                f"src=autosave filename → dest=cid via escaped prefix DSL",
-            )
-        if r"\s+" in s and "sub" in s:
-            return (
-                "KEEP_ws_compact_compare",
-                f"src={fields} @ fn={dest_fn} → dest=whitespace-compact for closed-catalog equality; compare-only",
-            )
-        return (
-            "KEEP_formal_regex",
-            f"src={fields} @ fn={dest_fn} → dest=formal parse/match ({detail}); closed pattern",
-        )
-
-    if kind in ("rg_mutate_near_text", "rg_context"):
-        fields = field_from_snip(s)
-        return (
-            "KEEP_scan_context",
-            f"src=rg context near mutate @ {path}:{lineno} fn={dest_fn} fields={fields}; sibling of call row",
-        )
-
-    if path.endswith((".ts", ".tsx", ".js", ".jsx")):
-        fields = field_from_snip(s)
-        if "not.toMatch" in s or "expect(" in s:
-            return "KEEP_test", f"src=frontend test @ {path}:{lineno}; dest=vitest"
-        return (
-            "KEEP_ui_chrome",
-            f"src={fields} @ fn={dest_fn} → dest=UI chrome/format; structured field display",
-        )
-
-    if "sanitize" in detail or "sanitize" in s:
-        fields = field_from_snip(s)
-        return (
-            "KEEP_sqlite_sanitize",
-            f"src={fields} @ fn={dest_fn} → dest=sanitize helper for DB/shape contract",
-        )
-
-    fields = field_from_snip(s)
-    return (
-        "KEEP_verified_non_transport",
-        f"src={fields} kind={kind}/{detail} @ fn={dest_fn}:{path}:{lineno} → dest=verified non emperor/model free-text transport; caller={dest_fn}",
+    # Remaining: potential live mutate — pending human source→dest review.
+    shape = kind if kind not in ("call", "js_call", "re") else detail
+    if detail in ("strip", "lstrip", "rstrip") or ".strip(" in s or ".trim(" in s:
+        shape = "strip/trim"
+    elif kind in ("slice", "rg_slice") or "[:" in s:
+        shape = "slice"
+    elif detail == "split" or ".split(" in s:
+        shape = "split"
+    elif detail == "join" or ".join(" in s:
+        shape = "join"
+    note = (
+        f"POTENTIAL live mutate shape={shape} fields={fields} "
+        f"@ fn={dest_fn}:{path}:{lineno}; PENDING_HUMAN source→dest review "
+        f"(auto rules must not invent formal-identity/KEEP)"
     )
+    return "PENDING_HUMAN", note
 
 
 def scan_n6():
@@ -636,72 +386,66 @@ def scan_n13():
 
 
 def classify_n13(path, line, kind, snip):
+    """Mechanical triage only. Soft-timeout/close KEEP requires human confirm."""
     if path.startswith("tests/"):
-        return "KEEP_test", "test double / assert; not production kill path"
+        return "MECHANICAL_TEST", "tests/ path hit; not a KEEP verdict"
     stripped = snip.lstrip()
     if stripped.startswith("#") or stripped.startswith('"""') or stripped.startswith("'''"):
-        return "KEEP_doc", "comment/doc only; no runtime kill/timeout call"
+        return "MECHANICAL_DOC", "comment/doc shape; not a KEEP verdict"
     if kind == "SIGKILL_ref" or (
         "SIGKILL" in snip
         and ".kill(" not in snip
         and "os.kill" not in snip
         and "killpg" not in snip
     ):
-        return "KEEP_doc", "documentation / negative comment only; no runtime SIGKILL"
+        return "MECHANICAL_DOC", "SIGKILL word without kill call shape; not a KEEP verdict"
     if "_warm_keychain" in snip or "find-generic-password" in snip:
         return (
-            "DELETED",
-            "keychain warmup removed this round (was run(timeout)/Popen+wait hard guard)",
+            "DELETED_KNOWN",
+            "prior-round removal marker: keychain warmup hard guard",
         )
     if kind in ("kill_call", "ast_kill") or ".kill(" in snip or "os.kill" in snip:
         if "SIGTERM" in snip or "signal.SIGTERM" in snip:
-            return "KEEP_sigterm_self", "os.kill(..., SIGTERM) soft stop; not SIGKILL"
-        return "FIX_NEEDED_SIGKILL", "reachable kill/SIGKILL — must remove"
+            return (
+                "PENDING_HUMAN",
+                "POTENTIAL os.kill/SIGTERM — confirm soft stop, not SIGKILL escalate",
+            )
+        return "FIX_NEEDED_SIGKILL", "reachable kill/SIGKILL shape — must remove or human-clear"
     if "subprocess.run" in snip or kind == "subprocess_run" or "_RAW_RUN" in snip:
         if "timeout" in snip:
             return (
                 "FIX_NEEDED_RUN_TIMEOUT",
                 "subprocess.run(timeout) → stdlib process.kill=SIGKILL",
             )
-        return "KEEP_subprocess_no_timeout", "subprocess.run/call without timeout; natural exit"
+        return (
+            "PENDING_HUMAN",
+            "subprocess.run/call without timeout kw — confirm natural exit, no later kill",
+        )
     if kind in ("terminate_any", "ast_terminate") or ".terminate(" in snip:
-        return "KEEP_sigterm", "terminate()=SIGTERM only; no force escalate"
+        return (
+            "PENDING_HUMAN",
+            "terminate() hit — confirm SIGTERM-only and force=False",
+        )
     if kind == "close_force" or "force=True" in snip:
         return "FIX_NEEDED_FORCE_CLOSE", "close(force=True) can escalate — must remove"
     if kind == "ast_close" or ".close(" in snip:
         if "force" in snip and "True" in snip:
             return "FIX_NEEDED_FORCE_CLOSE", "close(force=True)"
-        return "KEEP_resource_close", "DB/file/stdin/session close; not pexpect force-close"
+        return (
+            "PENDING_HUMAN",
+            "resource .close() hit — confirm not pexpect force-close / SIGKILL path",
+        )
     if "timeout" in snip or kind in ("timeout_kw", "wait_timeout"):
         if "subprocess.run" in snip or "_RAW_RUN" in snip:
             return (
                 "FIX_NEEDED_RUN_TIMEOUT",
                 "subprocess.run(timeout) kill path",
             )
-        if "urlopen" in snip or "urllib" in snip:
-            return "KEEP_soft_timeout", "HTTP urlopen timeout; no process.kill"
-        if "model.timeout" in snip or "attempt_timeout" in snip:
-            return "KEEP_soft_timeout", "SDK/API attempt timeout; not OS process kill"
-        if any(
-            x in snip
-            for x in (
-                ".wait(timeout",
-                ".join(timeout",
-                ".get(timeout",
-                ".result(timeout",
-                "_cv.wait",
-                "_cond.wait",
-            )
-        ):
-            return (
-                "KEEP_soft_timeout",
-                "wait/join/queue/cv soft budget; no process.kill on expiry",
-            )
         return (
-            "KEEP_soft_timeout",
-            f"soft timeout keyword @ {path}:{line}; verified no process.kill on expiry",
+            "PENDING_HUMAN",
+            f"timeout keyword @ {path}:{line} kind={kind} — confirm no process.kill on expiry",
         )
-    return "KEEP_verified", f"verified non-SIGKILL @ {path}:{line} kind={kind}"
+    return "PENDING_HUMAN", f"N13 hit @ {path}:{line} kind={kind}; pending human clear"
 
 
 N11_PAT = re.compile(
@@ -725,57 +469,45 @@ def scan_n11():
 
 
 def classify_n11_hit(path, line, snip):
-    checks = [
-        (
-            "_legacy_commitment_stop_gate",
-            "DELETED",
-            "resolve_condition prose→gate compat removed",
-        ),
-        (
-            "PERSON_LEGACY_ALLEGIANCE_CHANGE_WAYS",
-            "DELETED",
-            "unused legacy constant removed",
-        ),
-        ("_infer_tag", "DELETED", "empty shell after keyword infer deleted"),
-        ("_guess_caller_tag", "DELETED", "unused alt caller tag iface deleted"),
-        ("ming_sim_caller_tag", "DELETED", "unused alt caller tag iface deleted"),
-        (
-            "__leverage_offsets_rank_rules_562",
-            "DELETED",
-            "retired migration marker write removed",
-        ),
-        (
-            "__leverage_offsets_calibrated",
-            "KEEP",
-            "serves live calibration migration",
-        ),
-        ("float_v2", "KEEP", "serves live precision migration"),
+    """Symbol-list triage is incomplete for full N11 class.
+
+    Named retired symbols → DELETED_KNOWN markers only.
+    Vocabulary hits (legacy/compat/deprecated) → POTENTIAL_NOISE pending
+    human exclusion with complete basis — never auto KEEP / auto EXCLUDED.
+    """
+    known_deleted = [
+        ("_legacy_commitment_stop_gate", "resolve_condition prose→gate compat removed"),
+        ("PERSON_LEGACY_ALLEGIANCE_CHANGE_WAYS", "unused legacy constant removed"),
+        ("_infer_tag", "empty shell after keyword infer deleted"),
+        ("_guess_caller_tag", "unused alt caller tag iface deleted"),
+        ("ming_sim_caller_tag", "unused alt caller tag iface deleted"),
+        ("__leverage_offsets_rank_rules_562", "retired migration marker write removed"),
     ]
-    for sym, disp, note in checks:
+    for sym, note in known_deleted:
         if sym in snip:
-            return disp, note, sym
-    if "pairing_warnings" in snip:
-        if "not in" in snip or "assert" in snip:
-            return (
-                "KEEP",
-                "pairing_warnings not in applied — negative live contract assert",
-                "pairing_warnings",
-            )
-        return (
-            "EXCLUDED_noise",
-            "pairing_warnings word hit without retired return-key member",
-            "pairing_warnings",
-        )
-    if "decision_key" in snip or "0055" in path:
-        return "KEEP", "0055/rescript live gate; boundary forbid delete", "decision_key"
+            return "DELETED_KNOWN", f"prior-round removal marker: {note}", sym
     if path.startswith("tests/") and (
         "test_legacy" in snip or "legacy_character" in snip
     ):
-        return "DELETED", "dedicated legacy test removed", "test_legacy"
+        return "DELETED_KNOWN", "dedicated legacy test removal marker", "test_legacy"
+    # Specific live symbols still need human KEEP in human_judgment — not auto.
+    for sym in (
+        "__leverage_offsets_calibrated",
+        "float_v2",
+        "pairing_warnings",
+        "decision_key",
+    ):
+        if sym in snip:
+            return (
+                "PENDING_HUMAN",
+                f"named live-adjacent symbol {sym}; human must cite live contract or retire",
+                sym,
+            )
     return (
-        "EXCLUDED_noise",
-        "legacy/compat/deprecated vocabulary hit without retired mechanism symbol; not N11 delete member",
-        "noise",
+        "POTENTIAL_NOISE",
+        "vocabulary hit (legacy/compat/deprecated/…) — incomplete symbol search; "
+        "PENDING_HUMAN full-class exclusion basis (not auto-EXCLUDED)",
+        "vocab",
     )
 
 
@@ -825,7 +557,8 @@ def main() -> int:
     print("Scanning N6...")
     n6_raw = scan_n6()
     n6 = classify_all_n6(n6_raw)
-    assert not any(r[5] == "KEEP_review_bucket" for r in n6), "KEEP_review_bucket remains"
+    keepish = [r for r in n6 if str(r[5]).startswith("KEEP")]
+    assert not keepish, f"auto classifier must not emit KEEP_* ({len(keepish)} rows)"
     print("N6 raw", len(n6_raw), "disp", Counter(r[5] for r in n6).most_common(12))
 
     print("Scanning N13...")
@@ -886,104 +619,112 @@ def main() -> int:
     shutil.copyfile(OUT / "n6_members_classified.tsv", ROOT / "evidence" / "1847-w5-n6-members.tsv")
     shutil.copyfile(OUT / "n13_focus.tsv", ROOT / "evidence" / "1847-w5-n13-members.tsv")
 
-    # N11 members = non-noise only + exclusion summary row file
-    n11_members = [r for r in n11_class if r[3] != "EXCLUDED_noise"]
+    # N11 mechanical table = all hits (no auto-EXCLUDED). Human KEEP/DELETE elsewhere.
+    n11_members = list(n11_class)
     write_tsv(
         ROOT / "evidence" / "1847-w5-n11-members.tsv",
         ["path", "line", "symbol", "disposition", "note", "class"],
         [
-            (a, b, c, d, e, "retired_or_live_gate" if d != "EXCLUDED_noise" else "noise")
+            (
+                a,
+                b,
+                c,
+                d,
+                e,
+                "mechanical_only_not_verdict",
+            )
             for a, b, c, d, e, _ in n11_members
         ],
     )
-    excl = Counter(r[4] for r in n11_class if r[3] == "EXCLUDED_noise")
+    excl = Counter(r[3] for r in n11_class)
     write_tsv(
         OUT / "n11_exclusion_summary.tsv",
-        ["exclusion_reason", "count"],
+        ["mechanical_disposition", "count"],
         sorted(excl.items(), key=lambda x: -x[1]),
     )
 
-    # N12 curated members (actions taken + explicit keeps) — rebuild from known set + hits
+    # N12: mechanical literal hits are complete scan surface; curated actions are
+    # historical markers only. Full-class KEEP/EXCLUDE requires human_judgment.
     n12_members = [
         (
             "ming_sim/token_stats.py",
             "—",
             "ming_sim_caller_tag / _guess_caller_tag",
-            "DELETED",
-            "prior round unused alt iface",
+            "DELETED_KNOWN",
+            "prior-round unused alt iface marker",
             "多余替代接口",
         ),
         (
             "web/src/components/ministerFilters.ts",
             "—",
             "MINISTRY from COURT",
-            "CONVERGED",
-            "prior round",
+            "CONVERGED_KNOWN",
+            "prior-round converge marker",
             "重复定义",
         ),
         (
             "web/src/components/drawers.tsx",
             "—",
             "inline court list→COURT_OFFICE_TYPE_ORDER",
-            "CONVERGED",
-            "prior round",
+            "CONVERGED_KNOWN",
+            "prior-round converge marker",
             "重复定义",
         ),
         (
             "ming_sim/issues.py",
             "—",
             "_LEGACY_ACCOUNT_KEYS→GATE_METRIC_KEYS",
-            "CONVERGED",
-            "this family",
+            "CONVERGED_KNOWN",
+            "prior-round converge marker",
             "重复定义",
         ),
         (
             "ming_sim/db.py",
             "—",
             "MINISTRY_OFFICE_TYPES = COURT - {内阁}",
-            "CONVERGED",
-            "this family",
+            "CONVERGED_KNOWN",
+            "prior-round converge marker",
             "重复定义",
         ),
         (
             "ming_sim/db.py + issues.py",
             "—",
             "person status set→PERSON_STATUSES",
-            "CONVERGED",
-            "this family",
+            "CONVERGED_KNOWN",
+            "prior-round converge marker",
             "重复定义",
         ),
         (
             "ming_sim/fiscal_tick.py",
             "—",
             "_DUE/_ARREARS→pay_order subjects",
-            "CONVERGED",
-            "this family",
+            "CONVERGED_KNOWN",
+            "prior-round converge marker",
             "重复定义",
         ),
         (
             "web_app.py",
             "—",
             "_DEFAULT_FAVORITES single module const",
-            "CONVERGED",
-            "this family",
+            "CONVERGED_KNOWN",
+            "prior-round converge marker",
             "重复定义",
         ),
         (
             "spike_settle_tick.py",
             "—",
             "CASH/CLAIM/KNOWN_ACTIONS mirror fiscal_tick",
-            "KEEP_spike_oracle",
-            "explicit spike oracle mirror; scanned not silently dropped",
-            "spike镜像豁免",
+            "PENDING_HUMAN",
+            "spike oracle mirror — human must re-affirm exemption; not auto KEEP",
+            "spike镜像待人工",
         ),
         (
             "ming_sim/db.py + issues.py",
             "—",
             "power delta field set {leverage,military_strength,supply}",
-            "KEEP",
-            "narrow write-whitelist subset of POWER_SCORE_FIELDS at two gates; not identical full enum",
-            "子集非全等重复",
+            "PENDING_HUMAN",
+            "subset-vs-full-enum — human must cite both definitions; not auto KEEP",
+            "子集待人工",
         ),
     ]
     write_tsv(
@@ -996,16 +737,17 @@ def main() -> int:
         ["rule", "detail"],
         [
             (
-                "literal_hit_not_duplicate_enum",
-                f"n12_literal_hits={len(n12_hits)}; single-definition COURT/GATE/PERSON/DUE/FAVORITES reads + subsets KEEP; only identical full enums converged",
+                "literal_hits_are_scan_surface_not_verdict",
+                f"n12_literal_hits={len(n12_hits)}; named-key/assign scan only — "
+                "NOT full-class duplicate proof; exclusion requires per-hit second-definition check",
             ),
             (
-                "smell_unused_alt_iface",
-                "caller_tag helpers deleted; remaining name smells without second definition EXCLUDED as non-duplicate",
+                "no_auto_exclude_from_symbol_list",
+                "smell without second definition ≠ EXCLUDED; remains in literal_hits for human",
             ),
             (
-                "spike_oracle",
-                "spike_settle_tick.py KEEP_spike_oracle explicit; not silent archive drop",
+                "human_judgment_required",
+                "KEEP/CONVERGED/spike exemption only in evidence/1847-w5-correction/human_judgment.tsv",
             ),
         ],
     )
@@ -1034,15 +776,20 @@ def main() -> int:
     )
 
     summary = {
+        "contract": "mechanical_only_no_auto_KEEP",
         "n6_raw": len(n6_raw),
         "n6_disp": dict(Counter(r[5] for r in n6)),
+        "n6_pending_human": sum(1 for r in n6 if r[5] == "PENDING_HUMAN"),
         "n13": len(n13),
         "n13_disp": dict(Counter(r[3] for r in n13)),
         "n13_fix": len(fix_n13),
         "n11_raw": len(n11_raw),
         "n11_disp": dict(Counter(r[3] for r in n11_class)),
-        "n11_members_non_noise": len(n11_members),
+        "n11_pending_or_potential": sum(
+            1 for r in n11_class if r[3] in ("PENDING_HUMAN", "POTENTIAL_NOISE")
+        ),
         "n12_hits": len(n12_hits),
+        "human_judgment": "evidence/1847-w5-correction/human_judgment.tsv",
     }
     (OUT / "summary.json").write_text(
         json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"

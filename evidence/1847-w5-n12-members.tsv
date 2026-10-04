@@ -1,11 +1,11 @@
 path	line	symbol	disposition	note	class
-ming_sim/token_stats.py	—	ming_sim_caller_tag / _guess_caller_tag	DELETED	prior round unused alt iface	多余替代接口
-web/src/components/ministerFilters.ts	—	MINISTRY from COURT	CONVERGED	prior round	重复定义
-web/src/components/drawers.tsx	—	inline court list→COURT_OFFICE_TYPE_ORDER	CONVERGED	prior round	重复定义
-ming_sim/issues.py	—	_LEGACY_ACCOUNT_KEYS→GATE_METRIC_KEYS	CONVERGED	this family	重复定义
-ming_sim/db.py	—	MINISTRY_OFFICE_TYPES = COURT - {内阁}	CONVERGED	this family	重复定义
-ming_sim/db.py + issues.py	—	person status set→PERSON_STATUSES	CONVERGED	this family	重复定义
-ming_sim/fiscal_tick.py	—	_DUE/_ARREARS→pay_order subjects	CONVERGED	this family	重复定义
-web_app.py	—	_DEFAULT_FAVORITES single module const	CONVERGED	this family	重复定义
-spike_settle_tick.py	—	CASH/CLAIM/KNOWN_ACTIONS mirror fiscal_tick	KEEP_spike_oracle	explicit spike oracle mirror; scanned not silently dropped	spike镜像豁免
-ming_sim/db.py + issues.py	—	power delta field set {leverage,military_strength,supply}	KEEP	narrow write-whitelist subset of POWER_SCORE_FIELDS at two gates; not identical full enum	子集非全等重复
+ming_sim/token_stats.py	—	ming_sim_caller_tag / _guess_caller_tag	DELETED_KNOWN	prior-round unused alt iface marker	多余替代接口
+web/src/components/ministerFilters.ts	—	MINISTRY from COURT	CONVERGED_KNOWN	prior-round converge marker	重复定义
+web/src/components/drawers.tsx	—	inline court list→COURT_OFFICE_TYPE_ORDER	CONVERGED_KNOWN	prior-round converge marker	重复定义
+ming_sim/issues.py	—	_LEGACY_ACCOUNT_KEYS→GATE_METRIC_KEYS	CONVERGED_KNOWN	prior-round converge marker	重复定义
+ming_sim/db.py	—	MINISTRY_OFFICE_TYPES = COURT - {内阁}	CONVERGED_KNOWN	prior-round converge marker	重复定义
+ming_sim/db.py + issues.py	—	person status set→PERSON_STATUSES	CONVERGED_KNOWN	prior-round converge marker	重复定义
+ming_sim/fiscal_tick.py	—	_DUE/_ARREARS→pay_order subjects	CONVERGED_KNOWN	prior-round converge marker	重复定义
+web_app.py	—	_DEFAULT_FAVORITES single module const	CONVERGED_KNOWN	prior-round converge marker	重复定义
+spike_settle_tick.py	—	CASH/CLAIM/KNOWN_ACTIONS mirror fiscal_tick	PENDING_HUMAN	spike oracle mirror — human must re-affirm exemption; not auto KEEP	spike镜像待人工
+ming_sim/db.py + issues.py	—	power delta field set {leverage,military_strength,supply}	PENDING_HUMAN	subset-vs-full-enum — human must cite both definitions; not auto KEEP	子集待人工

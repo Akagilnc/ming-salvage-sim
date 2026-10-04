@@ -2320,32 +2320,31 @@ scripts/promulgation_gate_561.py	223	call	strip	mutate_call_live	target_id = str
 scripts/promulgation_gate_561.py	140	call	strip	mutate_call_live	records = [json.loads(line) for line in chunk.splitlines() if line.strip()]
 scripts/midzhi_spiral_judge_gate_570.py	314	call	strip	mutate_call_live	if line.strip()
 scripts/probe_directive_contract.py	10	call	strip	mutate_call_live	probe = str(probe_id or "").strip()
-scripts/play_as_emperor.py	223	slice	slice:200	string_slice	raise ValueError(f"崇祯 agent 输出无法解析为 JSON: {raw[:200]}")
-scripts/play_as_emperor.py	223	rg_slice	[:200]	rg_slice	raise ValueError(f"崇祯 agent 输出无法解析为 JSON: {raw[:200]}")
-scripts/play_as_emperor.py	380	slice	slice:40	string_slice	log(f"\n--- step {step} | prompt: {prompt_hint.strip()[:40]} ---")
-scripts/play_as_emperor.py	380	rg_slice	[:40]	rg_slice	log(f"\n--- step {step} | prompt: {prompt_hint.strip()[:40]} ---")
-scripts/play_as_emperor.py	415	slice	slice:8	string_slice	log(f"[压测] 本月已问 {chat_rounds_this_turn} 轮，强制退朝颁诏（界面：{prompt_hint.strip()[:8]}）")
-scripts/play_as_emperor.py	415	rg_slice	[:8]	rg_slice	log(f"[压测] 本月已问 {chat_rounds_this_turn} 轮，强制退朝颁诏（界面：{prompt_hint.strip()[:8]}）")
-scripts/play_as_emperor.py	217	call	strip	mutate_call_live	text = raw.strip()
-scripts/play_as_emperor.py	218	call	search	mutate_call_live	fence = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
-scripts/play_as_emperor.py	221	call	search	mutate_call_live	obj_match = re.search(r"\{.*\}", text, re.DOTALL)
-scripts/play_as_emperor.py	250	call	sub	mutate_call_live	return re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", text)
-scripts/play_as_emperor.py	557	call	strip	mutate_call_live	api_key = (os.environ.get("PLAYTEST_API_KEY")
+scripts/play_as_emperor.py	386	slice	slice:40	string_slice	log(f"\n--- step {step} | prompt: {prompt_hint.strip()[:40]} ---")
+scripts/play_as_emperor.py	386	rg_slice	[:40]	rg_slice	log(f"\n--- step {step} | prompt: {prompt_hint.strip()[:40]} ---")
+scripts/play_as_emperor.py	421	slice	slice:8	string_slice	log(f"[压测] 本月已问 {chat_rounds_this_turn} 轮，强制退朝颁诏（界面：{prompt_hint.strip()[:8]}）")
+scripts/play_as_emperor.py	421	rg_slice	[:8]	rg_slice	log(f"[压测] 本月已问 {chat_rounds_this_turn} 轮，强制退朝颁诏（界面：{prompt_hint.strip()[:8]}）")
+scripts/play_as_emperor.py	225	call	strip	mutate_call_live	text = str(raw).strip()
+scripts/play_as_emperor.py	226	call	search	mutate_call_live	fence = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
+scripts/play_as_emperor.py	229	call	search	mutate_call_live	obj_match = re.search(r"\{.*\}", text, re.DOTALL)
+scripts/play_as_emperor.py	256	call	sub	mutate_call_live	return re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", text)
+scripts/play_as_emperor.py	563	call	strip	mutate_call_live	api_key = (os.environ.get("PLAYTEST_API_KEY")
 scripts/play_as_emperor.py	168	call	lower	mutate_call_live	if "deepseek.com" in base_url.lower():
-scripts/play_as_emperor.py	245	call	join	mutate_call_live	raw = "".join(str(item) for item in raw)
+scripts/play_as_emperor.py	222	call	strip	mutate_call_live	if not str(raw or "").strip():
+scripts/play_as_emperor.py	251	call	join	mutate_call_live	raw = "".join(str(item) for item in raw)
 scripts/play_as_emperor.py	170	call	lower	mutate_call_live	elif "dashscope" in base_url.lower() or "aliyuncs" in base_url.lower():
 scripts/play_as_emperor.py	191	call	format	mutate_call_live	instructions=[EMPEROR_SYSTEM_PROMPT.format(goal=goal, persona=persona)],
-scripts/play_as_emperor.py	431	call	findall	mutate_call_live	pending_ids = re.findall(r"\[待核定\]\s*#(\d+)", cli_chunk)
+scripts/play_as_emperor.py	437	call	findall	mutate_call_live	pending_ids = re.findall(r"\[待核定\]\s*#(\d+)", cli_chunk)
 scripts/play_as_emperor.py	172	call	lower	mutate_call_live	elif "minimaxi.com" in base_url.lower() or "minimax.io" in base_url.lower():
 scripts/play_as_emperor.py	177	call	rstrip	mutate_call_live	base_url=base_url if base_url.endswith("/v1") else base_url.rstrip("/") + "/v1",
-scripts/play_as_emperor.py	358	call	strip	mutate_call_live	reasoning, action = ask_emperor(emperor, cli_chunk, prompt_hint.strip(), progress)
-scripts/play_as_emperor.py	362	call	strip	mutate_call_live	if action.strip() in {"", "可", "准", "是", "yes"}:
-scripts/play_as_emperor.py	466	call	strip	mutate_call_live	reasoning, action = ask_emperor(emperor, cli_chunk, prompt_hint.strip(), progress)
-scripts/play_as_emperor.py	475	call	strip	mutate_call_live	state.history.append({"step": step, "prompt": prompt_hint.strip(), "reasoning": reasoning, "input": action})
-scripts/play_as_emperor.py	487	call	lower	mutate_call_live	if "召见谁" in prompt_hint and action.lower() not in {"quit", "q", "exit", "back", ""}:
-scripts/play_as_emperor.py	490	call	lower	mutate_call_live	if "朕问" in prompt_hint and action.lower() not in {"quit", "q", "exit", "back", "退下", ""}:
-scripts/play_as_emperor.py	380	call	strip	mutate_call_live	log(f"\n--- step {step} | prompt: {prompt_hint.strip()[:40]} ---")
-scripts/play_as_emperor.py	415	call	strip	mutate_call_live	log(f"[压测] 本月已问 {chat_rounds_this_turn} 轮，强制退朝颁诏（界面：{prompt_hint.strip()[:8]}）")
+scripts/play_as_emperor.py	364	call	strip	mutate_call_live	reasoning, action = ask_emperor(emperor, cli_chunk, prompt_hint.strip(), progress)
+scripts/play_as_emperor.py	368	call	strip	mutate_call_live	if action.strip() in {"", "可", "准", "是", "yes"}:
+scripts/play_as_emperor.py	472	call	strip	mutate_call_live	reasoning, action = ask_emperor(emperor, cli_chunk, prompt_hint.strip(), progress)
+scripts/play_as_emperor.py	481	call	strip	mutate_call_live	state.history.append({"step": step, "prompt": prompt_hint.strip(), "reasoning": reasoning, "input": action})
+scripts/play_as_emperor.py	493	call	lower	mutate_call_live	if "召见谁" in prompt_hint and action.lower() not in {"quit", "q", "exit", "back", ""}:
+scripts/play_as_emperor.py	496	call	lower	mutate_call_live	if "朕问" in prompt_hint and action.lower() not in {"quit", "q", "exit", "back", "退下", ""}:
+scripts/play_as_emperor.py	386	call	strip	mutate_call_live	log(f"\n--- step {step} | prompt: {prompt_hint.strip()[:40]} ---")
+scripts/play_as_emperor.py	421	call	strip	mutate_call_live	log(f"[压测] 本月已问 {chat_rounds_this_turn} 轮，强制退朝颁诏（界面：{prompt_hint.strip()[:8]}）")
 scripts/jisi_army_dispatch_probe.py	138	slice	slice:1600	string_slice	"report_head": report[:1600],
 scripts/jisi_army_dispatch_probe.py	138	rg_slice	[:1600]	rg_slice	"report_head": report[:1600],
 scripts/jisi_army_dispatch_probe.py	152	slice	slice:4000	string_slice	print(text[:4000])

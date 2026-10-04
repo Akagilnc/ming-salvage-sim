@@ -1,6 +1,10 @@
-# #1847 w5 frozen scan dossier（一次性卷宗，非永久运行机制）
+# #1847 w5 frozen scan dossier（机械扫描；非 KEEP 判决）
 
-本目录冻结本轮全类枚举扫描脚本与原始产物，供核验复现。**不是**游戏运行时机制。
+本目录冻结全类枚举扫描脚本与原始产物，供核验复现。**不是**游戏运行时机制。
+
+**CORRECTED CONTRACT**：自动规则只标 `PENDING_HUMAN` / `POTENTIAL_*` / `MECHANICAL_*` /
+`DELETED_KNOWN`，**不产 KEEP verdict**。人工 KEEP/DELETE 见
+`evidence/1847-w5-correction/human_judgment.tsv`。
 
 ## 复现命令
 
@@ -10,29 +14,23 @@ cd /Users/akagilnc/WorkSpace/Ming_LLM-1847-w5
   evidence/1847-w5-rescan/scan_classify_n6_n13.py
 ```
 
-脚本会重写本目录下 `n6_*` / `n11_*` / `n12_*` / `n13_*` / `summary.json`，并同步 LF 规范表到：
-
-- `evidence/1847-w5-n6-members.tsv`
-- `evidence/1847-w5-n11-members.tsv`
-- `evidence/1847-w5-n12-members.tsv`
-- `evidence/1847-w5-n13-members.tsv`
-- `evidence/1847-w5-exempt-files.tsv`
-
 ## 产物
 
 | 文件 | 含义 |
 |---|---|
-| `scan_classify_n6_n13.py` | 枚举+逐项分类真源脚本 |
-| `n6_candidates_raw.tsv` | N6 机械候选 |
-| `n6_members_classified.tsv` | N6 已验证去留（含具体 source→dest） |
-| `n11_focus.tsv` | N11 全扫命中（含 EXCLUDED_noise） |
-| `n11_exclusion_summary.tsv` | N11 噪音排除口径计数 |
-| `n12_literal_hits.tsv` | N12 字面量/枚举名命中 |
-| `n12_exclusion_note.tsv` | N12 未入成员表的排除规则 |
-| `n13_focus.tsv` | N13 全扫命中与去留 |
+| `scan_classify_n6_n13.py` | 机械枚举+潜在标记（无 KEEP） |
+| `n6_candidates_raw.tsv` | N6 机械候选原始表（保留） |
+| `n6_members_classified.tsv` | N6 机械 disposition（PENDING/MECHANICAL…） |
+| `n11_focus.tsv` | N11 全扫命中（含 POTENTIAL_NOISE） |
+| `n11_exclusion_summary.tsv` | 机械 disposition 计数（非完整排除证明） |
+| `n12_literal_hits.tsv` | N12 字面量/枚举名命中（扫描面） |
+| `n12_exclusion_note.tsv` | 排除须人工；字面命中≠判决 |
+| `n13_focus.tsv` | N13 全扫命中与机械标记 |
 | `summary.json` | 计数摘要 |
 
-## 说明
+## 修正引用（不删除本卷宗）
 
-- 上轮 `/tmp/1847-w5-rescan/` 临时目录已不可核；本卷宗取代之。
-- 先前 N6/N10 真实入口变异证据仍在 `evidence/1847-n6-n10-mutation.txt` / `evidence/1847-selfcheck-mutation.txt`（勿覆盖）。
+- `evidence/1847-w5-correction/CORRECTION.md`
+- `evidence/1847-w5-correction/human_judgment.tsv`
+- `evidence/1847-w5-correction/remaining_scope.md`
+- `evidence/1847-w5-correction/n6_ask_emperor_pty_mutation.py`
