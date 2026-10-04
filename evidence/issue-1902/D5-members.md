@@ -86,11 +86,11 @@ git ls-files | rg -i "$PRED" | sort -u
 | 45 | `tests/test_breach_plea_623.py` | M | a-1/+0 | W | 净删 assert 1（拒句/match/呈现/内部；行为断言复核仍在） 〔旧表沿用；本轮复读无新增 D5 清退〕 |
 | 46 | `tests/test_centrifuge_ledger_690.py` | - | UNTOUCHED | C | 0ca77fecc→HEAD 未触及；实读无 D5-A/B 清退命中 |
 | 47 | `tests/test_character_knowledge_489.py` | M | a-5/+5 | R | 断言重组 -5/+5（保留/改写行为或来源面） 〔旧表沿用；本轮复读无新增 D5 清退〕 |
-| 48 | `tests/test_chat_stream_failpaths_393.py` | M | a-5/+1 | R | 断言重组 -5/+1（保留/改写行为或来源面） 〔旧表沿用；本轮复读无新增 D5 清退〕 |
+| 48 | `tests/test_chat_stream_failpaths_393.py` | M | SIGNAL | W | D5-A§5：`test_worker_cleanup_double_failure_emits_original_error_end_and_logs` 删 caplog/`exc_info`；保留 error→end；`type(ev).__name__`/`RunErrorEvent` 为 agno 事件替身非日志筛选 |
 | 49 | `tests/test_cli_backend.py` | M | a-43/+17 | C | 入口/合并路径重构断言重组 〔旧表沿用；本轮复读无新增 D5 清退〕 |
-| 50 | `tests/test_cli_entry_1902.py` | A | FILE_ADD | A | 1902 CLI 入口契约新案 〔旧表沿用；本轮复读无新增 D5 清退〕 |
+| 50 | `tests/test_cli_entry_1902.py` | A | SIGNAL | C | D5-A§5：`test_save_load_round_trip_through_shared_core` 清退未使用 capsys/monkeypatch；存读档结构化仍在 |
 | 51 | `tests/test_cli_model_choices.py` | - | UNTOUCHED | C | 0ca77fecc→HEAD 未触及；实读无 D5-A/B 清退命中 |
-| 52 | `tests/test_cli_play_turn.py` | M | a-16/+17 | R | 断言重组 -16/+17（保留/改写行为或来源面） 〔旧表沿用；本轮复读无新增 D5 清退〕 |
+| 52 | `tests/test_cli_play_turn.py` | M | SIGNAL | R | D5-A§5：**保留** capsys 五案——`str(exc)`←`play_turn` `print(f"\n{error}")`；failure id←`_print_pending_action_failures`/`_pending_action_failure_payload["id"]`；月报←`_adjudicate_cli_decisions`→`result.report`→`print(report)`（详见 d5-signal-receipt §B） |
 | 53 | `tests/test_cli_runner_error_typed_1299.py` | M | a-1/+0 | W | 净删 assert 1（拒句/match/呈现/内部；行为断言复核仍在） 〔旧表沿用；本轮复读无新增 D5 清退〕 |
 | 54 | `tests/test_cli_transport_1465.py` | M | a-0/+0 | C | 断言行未变：调用/夹具/wait/helper 重接 〔旧表沿用；本轮复读无新增 D5 清退〕 |
 | 55 | `tests/test_close_issues_section_rejections.py` | M | a-5/+0 | W | 净删 assert 5（拒句/match/呈现/内部；行为断言复核仍在） 〔旧表沿用；本轮复读无新增 D5 清退〕 |
@@ -103,10 +103,10 @@ git ls-files | rg -i "$PRED" | sort -u
 | 62 | `tests/test_db_broad_except_surface.py` | M | FINAL | W | 提交前自验：去 `_capture_tlog`/`assert msgs`（D5-A 诊断信号）；保留损坏 JSON 回退真实结果案 |
 | 63 | `tests/test_decision_event_binding_389.py` | - | UNTOUCHED | C | 0ca77fecc→HEAD 未触及；实读无 D5-A/B 清退命中 |
 | 64 | `tests/test_declaration_dispatch_1835.py` | M | a-0/+0 | C | 断言行未变：调用/夹具/wait/helper 重接 〔旧表沿用；本轮复读无新增 D5 清退〕 |
-| 65 | `tests/test_decree_commitment_creation_136.py` | M | a-23/+1 | R | 断言重组 -23/+1（保留/改写行为或来源面） 〔旧表沿用；本轮复读无新增 D5 清退〕 |
+| 65 | `tests/test_decree_commitment_creation_136.py` | M | SIGNAL | W | D5-A§5：`…_emits_residual_signal`→`…_still_lands` 删 capsys「徐光启三务公费」；整删 `…_no_residual_signal`（「督江差役」负向）；保留异名 fiscal 落库 |
 | 66 | `tests/test_decree_commitment_schema_136.py` | M | a-1/+0 | W | 净删 assert 1（拒句/match/呈现/内部；行为断言复核仍在） 〔旧表沿用；本轮复读无新增 D5 清退〕 |
-| 67 | `tests/test_decree_commitment_settlement_229.py` | M | a-6/+1 | R | 断言重组 -6/+1（保留/改写行为或来源面） 〔旧表沿用；本轮复读无新增 D5 清退〕 |
-| 68 | `tests/test_decree_dossiers_571.py` | M | ROUND | H | 删 test_final_decree_edit_path_removed_no_bypass：只建草稿自证、无旁路、失效重复 |
+| 67 | `tests/test_decree_commitment_settlement_229.py` | M | SIGNAL | C | D5-A§5：`test_commitment_progress_contexts_are_structured` 清退仅 drain 的 capsys；保留 commitment_display 输入结构化 |
+| 68 | `tests/test_decree_dossiers_571.py` | M | SIGNAL | H | 上轮删无旁路伪证；本轮 D5-A§5：`test_manual_directive_capture_rejects_malformed_roster` 清退未使用 capsys |
 | 69 | `tests/test_decree_forecast_1861.py` | - | UNTOUCHED | C | 0ca77fecc→HEAD 未触及；实读无 D5-A/B 清退命中 |
 | 70 | `tests/test_deepseek_thinking_disable_1797.py` | M | a-6/+3 | R | 改走 _dump_value 序列化入口携带原始 reasoning/usage/finish; 非锁 dump 模板 〔旧表沿用；本轮复读无新增 D5 清退〕 |
 | 71 | `tests/test_deformation_dual_rail_622.py` | - | UNTOUCHED | C | 0ca77fecc→HEAD 未触及；实读无 D5-A/B 清退命中 |
@@ -138,8 +138,8 @@ git ls-files | rg -i "$PRED" | sort -u
 | 97 | `tests/test_family_tail_restore_570.py` | - | UNTOUCHED | C | 0ca77fecc→HEAD 未触及；实读无 D5-A/B 清退命中 |
 | 98 | `tests/test_featured_dossiers_494.py` | M | a-11/+7 | W | 档料标题/键名盯文→dossier 非空且进入 context 〔旧表沿用；本轮复读无新增 D5 清退〕 |
 | 99 | `tests/test_fiscal_beyond_intent_1260.py` | - | UNTOUCHED | C | 0ca77fecc→HEAD 未触及；实读无 D5-A/B 清退命中 |
-| 100 | `tests/test_fiscal_levy_effect.py` | M | FINAL | W | 提交前自验：删四处死 msgs→静默换形；保留隔离行为断言；incomplete 案 HEAD 原 silent 仍在 |
-| 101 | `tests/test_fiscal_substrate_bridge.py` | M | ROUND | W | 去 turn_army_summary 标签嵌入/机器键缺席盯文；保留 army_logs 结构化；tlog 条数案已删 |
+| 100 | `tests/test_fiscal_levy_effect.py` | M | SIGNAL | W | D5-A§5：`test_fiscal_levy_incomplete_first_pass_does_not_freeze_zero_share_seed` 静默 tlog monkeypatch 清退；保留隔离行为断言 |
+| 101 | `tests/test_fiscal_substrate_bridge.py` | M | ROUND | W | 去 turn_army_summary 标签嵌入/机器键缺席盯文；保留 army_logs 结构化；tlog 条数案已删；D5-A§5 宽扫：`test_army_delta_arrears_rejects_exempt_army_under_cutover` 的 `assert logs["count"]`=army_logs COUNT 假阳性 |
 | 102 | `tests/test_fiscal_tick.py` | - | UNTOUCHED | C | 0ca77fecc→HEAD 未触及；实读无 D5-A/B 清退命中 |
 | 103 | `tests/test_gazette_author_1862.py` | M | a-0/+0 | C | 断言行未变：调用/夹具/wait/helper 重接 〔旧表沿用；本轮复读无新增 D5 清退〕 |
 | 104 | `tests/test_grant_reconciliation_567.py` | M | a-3/+0 | W | 净删 assert 3（拒句/match/呈现/内部；行为断言复核仍在） 〔旧表沿用；本轮复读无新增 D5 清退〕 |
@@ -152,7 +152,7 @@ git ls-files | rg -i "$PRED" | sort -u
 | 111 | `tests/test_issue_entities.py` | M | a-0/+0 | C | 断言行未变：调用/夹具/wait/helper 重接 〔旧表沿用；本轮复读无新增 D5 清退〕 |
 | 112 | `tests/test_junxin_alias_loyalty_313.py` | - | UNTOUCHED | C | 0ca77fecc→HEAD 未触及；实读无 D5-A/B 清退命中 |
 | 113 | `tests/test_junxin_monthly_tick_314.py` | M | a-4/+0 | W | 净删 assert 4（拒句/match/呈现/内部；行为断言复核仍在） 〔旧表沿用；本轮复读无新增 D5 清退〕 |
-| 114 | `tests/test_llm_channel_config.py` | M | a-22/+0 | H | 内部配置形状/重复证明清退 〔旧表沿用；本轮复读无新增 D5 清退〕 |
+| 114 | `tests/test_llm_channel_config.py` | M | SIGNAL | H | D5-A§5：`test_agent_factories_omit_max_tokens_on_param_surface` 清退静默 tlog monkeypatch；保留 factory kwargs 结构化断言 |
 | 115 | `tests/test_llm_key_helpers.py` | - | SUPPORT | C | 测试支撑/夹具/说明，无断言契约；非 D5 清退对象 |
 | 116 | `tests/test_loyalty_soft_adjust_clamp_320.py` | - | UNTOUCHED | C | 0ca77fecc→HEAD 未触及；实读无 D5-A/B 清退命中 |
 | 117 | `tests/test_manual_directive_institution_normalize_1279.py` | M | a-6/+0 | W | 净删 assert 6（拒句/match/呈现/内部；行为断言复核仍在） 〔旧表沿用；本轮复读无新增 D5 清退〕 |
@@ -166,7 +166,7 @@ git ls-files | rg -i "$PRED" | sort -u
 | 125 | `tests/test_minister_chat_timeout.py` | M | a-0/+0 | C | 断言行未变：调用/夹具/wait/helper 重接 〔旧表沿用；本轮复读无新增 D5 清退〕 |
 | 126 | `tests/test_month_call_recovery_1846.py` | M | a-2/+0 | W | 净删 assert 2（拒句/match/呈现/内部；行为断言复核仍在） 〔旧表沿用；本轮复读无新增 D5 清退〕 |
 | 127 | `tests/test_month_chain_1843.py` | M | a-4/+0 | W | 净删 assert 4（拒句/match/呈现/内部；行为断言复核仍在） 〔旧表沿用；本轮复读无新增 D5 清退〕 |
-| 128 | `tests/test_month_chain_1847.py` | M | a-5/+5 | R | 断言重组 -5/+5（保留/改写行为或来源面） 〔旧表沿用；本轮复读无新增 D5 清退〕 |
+| 128 | `tests/test_month_chain_1847.py` | M | a-5/+5 | R | 断言重组 -5/+5；D5-A§5 宽扫：`call_count` 三案（incomplete/crash_recovery/non_validation）计 `supply_run` 重试，非 logger.call_count 〔本轮复读〕 |
 | 129 | `tests/test_month_loop_tracer_1468.py` | M | a-3/+2 | R | 断言重组 -3/+2（保留/改写行为或来源面） 〔旧表沿用；本轮复读无新增 D5 清退〕 |
 | 130 | `tests/test_month_open_snapshot_1234.py` | M | a-2/+1 | R | 断言重组 -2/+1（保留/改写行为或来源面） 〔旧表沿用；本轮复读无新增 D5 清退〕 |
 | 131 | `tests/test_month_translate_1840.py` | - | UNTOUCHED | C | 0ca77fecc→HEAD 未触及；实读无 D5-A/B 清退命中 |
@@ -175,7 +175,7 @@ git ls-files | rg -i "$PRED" | sort -u
 | 134 | `tests/test_mutiny_noop_whitelist_319.py` | M | a-2/+0 | W | 净删 assert 2（拒句/match/呈现/内部；行为断言复核仍在） 〔旧表沿用；本轮复读无新增 D5 清退〕 |
 | 135 | `tests/test_mutiny_progression_316.py` | - | UNTOUCHED | C | 0ca77fecc→HEAD 未触及；实读无 D5-A/B 清退命中 |
 | 136 | `tests/test_mutiny_redemption_317.py` | - | UNTOUCHED | C | 0ca77fecc→HEAD 未触及；实读无 D5-A/B 清退命中 |
-| 137 | `tests/test_mutiny_third_strike_318.py` | M | a-7/+0 | W | 净删 assert 7（拒句/match/呈现/内部；行为断言复核仍在） 〔旧表沿用；本轮复读无新增 D5 清退〕 |
+| 137 | `tests/test_mutiny_third_strike_318.py` | M | a-7/+0 | W | 净删 assert 7；D5-A§5 宽扫：`test_zero_manpower_latched_clears_before_continue_no_third_strike` 的 `assert logs`=army_logs 结构化 〔本轮复读〕 |
 | 138 | `tests/test_named_characters_seed_484.py` | M | a-0/+0 | C | 断言行未变：调用/夹具/wait/helper 重接 〔旧表沿用；本轮复读无新增 D5 清退〕 |
 | 139 | `tests/test_new_game_dependency_mismatch_1721.py` | M | a-0/+0 | C | 断言行未变：调用/夹具/wait/helper 重接 〔旧表沿用；本轮复读无新增 D5 清退〕 |
 | 140 | `tests/test_new_game_smoke.py` | M | a-0/+0 | C | 断言行未变：调用/夹具/wait/helper 重接 〔旧表沿用；本轮复读无新增 D5 清退〕 |
@@ -186,16 +186,16 @@ git ls-files | rg -i "$PRED" | sort -u
 | 145 | `tests/test_office_rank_562.py` | - | UNTOUCHED | C | 0ca77fecc→HEAD 未触及；实读无 D5-A/B 清退命中 |
 | 146 | `tests/test_on_scene_immediate_write_1839.py` | M | a-1/+0 | W | 净删 assert 1（拒句/match/呈现/内部；行为断言复核仍在） 〔旧表沿用；本轮复读无新增 D5 清退〕 |
 | 147 | `tests/test_opening_gazette_delete_1356.py` | M | a-6/+0 | W | 净删 assert 6（拒句/match/呈现/内部；行为断言复核仍在） 〔旧表沿用；本轮复读无新增 D5 清退〕 |
-| 148 | `tests/test_override_breach_costs_564.py` | M | a-1/+0 | W | 净删 assert 1（拒句/match/呈现/内部；行为断言复核仍在） 〔旧表沿用；本轮复读无新增 D5 清退〕 |
+| 148 | `tests/test_override_breach_costs_564.py` | M | SIGNAL | W | D5-A§5：`test_legacy_persisted_reaction_severity_migrates_narrowly_and_idempotently` 删 caplog 表名/id/`expected_exc`；保留迁移结构化落库 |
 | 149 | `tests/test_p4_guard_new_surfaces_547.py` | - | UNTOUCHED | C | 0ca77fecc→HEAD 未触及；实读无 D5-A/B 清退命中 |
 | 150 | `tests/test_pay_order_override_653.py` | M | a-8/+0 | W | 净删 assert 8（拒句/match/呈现/内部；行为断言复核仍在） 〔旧表沿用；本轮复读无新增 D5 清退〕 |
 | 151 | `tests/test_pay_order_override_extraction_653.py` | M | a-5/+0 | W | 净删 assert 5（拒句/match/呈现/内部；行为断言复核仍在） 〔旧表沿用；本轮复读无新增 D5 清退〕 |
 | 152 | `tests/test_person_archive_contract_index.py` | - | UNTOUCHED | C | 0ca77fecc→HEAD 未触及；实读无 D5-A/B 清退命中 |
 | 153 | `tests/test_person_archive_schema.py` | M | a-15/+0 | W | 净删 assert 15（拒句/match/呈现/内部；行为断言复核仍在） 〔旧表沿用；本轮复读无新增 D5 清退〕 |
-| 154 | `tests/test_person_delta_adapter.py` | M | a-2/+0 | W | 净删 assert 2（拒句/match/呈现/内部；行为断言复核仍在） 〔旧表沿用；本轮复读无新增 D5 清退〕 |
+| 154 | `tests/test_person_delta_adapter.py` | M | a-2/+0 | W | 净删 assert 2；D5-A§5 宽扫：三案 `assert logs` 均查 `person_logs` 结构化（derived_release/death_tick/debut_tick） 〔本轮复读〕 |
 | 155 | `tests/test_person_transit_write_667.py` | - | UNTOUCHED | C | 0ca77fecc→HEAD 未触及；实读无 D5-A/B 清退命中 |
-| 156 | `tests/test_pihong_dossier_1490.py` | M | a-14/+3 | R | label/hint==server_option; note==lying.note; wait_idle; 删 match/批红句 〔旧表沿用；本轮复读无新增 D5 清退〕 |
-| 157 | `tests/test_player_army_projection_321.py` | M | ROUND | R | 保留：sit 源字段嵌入 report/materials=实际模型调用输入来源（非 formatter 自证） |
+| 156 | `tests/test_pihong_dossier_1490.py` | M | a-14/+3 | R | label/hint==server_option; note==lying.note; wait_idle; 删 match/批红句；D5-A§5 宽扫：`assert logs`=person_logs；`type(exc).__name__` 在 `_657_subprocess_resolve` 摘要非日志筛选 〔本轮复读〕 |
+| 157 | `tests/test_player_army_projection_321.py` | M | SIGNAL | R | 上轮保留 sit 输入来源；本轮 D5-A§5：**保留** `test_four_chains_embed_situation_matrix`→`redirect_stdout`+`print_header`（`ming_sim/report.py`）哨兵军名不得回流 |
 | 158 | `tests/test_player_payload_1022.py` | M | a-1/+0 | W | 净删 assert 1（拒句/match/呈现/内部；行为断言复核仍在） 〔旧表沿用；本轮复读无新增 D5 清退〕 |
 | 159 | `tests/test_population_transfers_649.py` | M | a-3/+0 | W | 净删 assert 3（拒句/match/呈现/内部；行为断言复核仍在） 〔旧表沿用；本轮复读无新增 D5 清退〕 |
 | 160 | `tests/test_population_transfers_662.py` | - | UNTOUCHED | C | 0ca77fecc→HEAD 未触及；实读无 D5-A/B 清退命中 |
@@ -206,7 +206,7 @@ git ls-files | rg -i "$PRED" | sort -u
 | 165 | `tests/test_promulgation_seam_560.py` | M | a-0/+0 | C | 断言行未变：调用/夹具/wait/helper 重接 〔旧表沿用；本轮复读无新增 D5 清退〕 |
 | 166 | `tests/test_public_character_place_1683.py` | - | UNTOUCHED | C | 0ca77fecc→HEAD 未触及；实读无 D5-A/B 清退命中 |
 | 167 | `tests/test_public_sayings_1829.py` | M | a-1/+1 | R | 断言重组 -1/+1（保留/改写行为或来源面） 〔旧表沿用；本轮复读无新增 D5 清退〕 |
-| 168 | `tests/test_qa_1281_issue_audience_case_facts.py` | M | a-0/+0 | W | raises 去 match 盯文; 行为 raises 仍在 〔旧表沿用；本轮复读无新增 D5 清退〕 |
+| 168 | `tests/test_qa_1281_issue_audience_case_facts.py` | M | a-0/+0 | W | raises 去 match 盯文; 行为 raises 仍在；D5-A§5 宽扫命中 `test_malformed_event_audience_fails_loud_from_material_entry` 的 `pytest.raises(expected_exc)`（TypeError/JSONDecodeError）=raises 类型契约非日志类名筛选 〔本轮复读〕 |
 | 169 | `tests/test_qa_a3_seed_data.py` | M | a-3/+0 | W | 净删 assert 3（拒句/match/呈现/内部；行为断言复核仍在） 〔旧表沿用；本轮复读无新增 D5 清退〕 |
 | 170 | `tests/test_qa_b3_409_ux.py` | M | a-13/+1 | R | 断言重组 -13/+1（保留/改写行为或来源面） 〔旧表沿用；本轮复读无新增 D5 清退〕 |
 | 171 | `tests/test_qa_c2_phase_settlement_mask_1374.py` | - | UNTOUCHED | C | 0ca77fecc→HEAD 未触及；实读无 D5-A/B 清退命中 |
@@ -216,7 +216,7 @@ git ls-files | rg -i "$PRED" | sort -u
 | 175 | `tests/test_qa_e1_numeric_presentation.py` | M | a-21/+1 | R | 断言重组 -21/+1（保留/改写行为或来源面） 〔旧表沿用；本轮复读无新增 D5 清退〕 |
 | 176 | `tests/test_qa_h1_seed_data.py` | M | a-1/+0 | W | 净删 assert 1（拒句/match/呈现/内部；行为断言复核仍在） 〔旧表沿用；本轮复读无新增 D5 清退〕 |
 | 177 | `tests/test_qa_s2_copy_prompts_1356_1402.py` | M | a-11/+0 | W | 净删 assert 11（拒句/match/呈现/内部；行为断言复核仍在） 〔旧表沿用；本轮复读无新增 D5 清退〕 |
-| 178 | `tests/test_qa_t1_extraction_dual_source_1353.py` | M | a-0/+0 | C | 断言行未变：调用/夹具/wait/helper 重接 〔旧表沿用；本轮复读无新增 D5 清退〕 |
+| 178 | `tests/test_qa_t1_extraction_dual_source_1353.py` | M | a-0/+0 | C | 断言行未变；D5-A§5 宽扫：`test_production_seam_cancel_blocks_trail_write` 的 `type(exc).__name__`→outcome 结构化非日志 〔本轮复读〕 |
 | 179 | `tests/test_qa_u2_liaodong_buildings.py` | - | UNTOUCHED | C | 0ca77fecc→HEAD 未触及；实读无 D5-A/B 清退命中 |
 | 180 | `tests/test_qa_u3_map_nodes_1401.py` | - | UNTOUCHED | C | 0ca77fecc→HEAD 未触及；实读无 D5-A/B 清退命中 |
 | 181 | `tests/test_recommendation_batch_snapshot_1583.py` | M | a-0/+0 | C | 断言行未变：调用/夹具/wait/helper 重接 〔旧表沿用；本轮复读无新增 D5 清退〕 |
@@ -231,11 +231,11 @@ git ls-files | rg -i "$PRED" | sort -u
 | 190 | `tests/test_relation_brew_636.py` | M | a-22/+3 | R | 断言重组 -22/+3（保留/改写行为或来源面） 〔旧表沿用；本轮复读无新增 D5 清退〕 |
 | 191 | `tests/test_relation_capture_633.py` | M | a-19/+0 | R | 坏端点名→reason 本轮以变量补回; 其余拒句 match 盯文维持删; 零边行为保留 〔旧表沿用；本轮复读无新增 D5 清退〕 |
 | 192 | `tests/test_relation_read_640.py` | - | UNTOUCHED | C | 0ca77fecc→HEAD 未触及；实读无 D5-A/B 清退命中 |
-| 193 | `tests/test_relation_seed_638.py` | M | a-19/+1 | R | 断言重组 -19/+1（保留/改写行为或来源面） 〔旧表沿用；本轮复读无新增 D5 清退〕 |
+| 193 | `tests/test_relation_seed_638.py` | M | SIGNAL | R | D5-A§5：`test_existing_save_is_never_touched_by_seed_import` 清退未使用 tlog→logs.append；保留旧档流水/摘要不变 |
 | 194 | `tests/test_relation_store_632.py` | M | a-0/+0 | C | 断言行未变：调用/夹具/wait/helper 重接 〔旧表沿用；本轮复读无新增 D5 清退〕 |
 | 195 | `tests/test_release_bundle_assets.py` | - | UNTOUCHED | C | 0ca77fecc→HEAD 未触及；实读无 D5-A/B 清退命中 |
 | 196 | `tests/test_rescript_choices_563.py` | M | a-4/+1 | R | 断言重组 -4/+1（保留/改写行为或来源面） 〔旧表沿用；本轮复读无新增 D5 清退〕 |
-| 197 | `tests/test_rescript_draft_656.py` | M | a-23/+1 | R | reason==str(unavailable); title-in-tlog 本轮补回; 删 prompt/SQL/match 盯文 〔旧表沿用；本轮复读无新增 D5 清退〕 |
+| 197 | `tests/test_rescript_draft_656.py` | M | SIGNAL | W | D5-A§5：empty/non_list options 两案删 tlog→`logs.append` 与 title-in-logs；保留 siblings 结构化 |
 | 198 | `tests/test_rescript_heal_isolation_1801.py` | - | UNTOUCHED | C | 0ca77fecc→HEAD 未触及；实读无 D5-A/B 清退命中 |
 | 199 | `tests/test_rescript_option_field_heal_1746.py` | - | UNTOUCHED | C | 0ca77fecc→HEAD 未触及；实读无 D5-A/B 清退命中 |
 | 200 | `tests/test_run_agent_text_transport_1465.py` | - | UNTOUCHED | C | 0ca77fecc→HEAD 未触及；实读无 D5-A/B 清退命中 |
@@ -252,7 +252,7 @@ git ls-files | rg -i "$PRED" | sort -u
 | 211 | `tests/test_session_write_queue_1353.py` | M | a-10/+0 | W | 净删 assert 10（拒句/match/呈现/内部；行为断言复核仍在） 〔旧表沿用；本轮复读无新增 D5 清退〕 |
 | 212 | `tests/test_settle_core.py` | - | UNTOUCHED | C | 0ca77fecc→HEAD 未触及；实读无 D5-A/B 清退命中 |
 | 213 | `tests/test_settlement_write_guard_393.py` | M | a-6/+0 | W | 净删 assert 6（拒句/match/呈现/内部；行为断言复核仍在） 〔旧表沿用；本轮复读无新增 D5 清退〕 |
-| 214 | `tests/test_shared_resource_order_1844.py` | M | a-0/+0 | C | 断言行未变：调用/夹具/wait/helper 重接 〔旧表沿用；本轮复读无新增 D5 清退〕 |
+| 214 | `tests/test_shared_resource_order_1844.py` | M | a-0/+0 | C | 断言行未变；D5-A§5 宽扫：`test_player_decrees_sequential_army_station_reads_updated_roster` 的 `assert logs[-N]`=army_logs station 结构化 〔本轮复读〕 |
 | 215 | `tests/test_six_sciences_seed_608.py` | M | a-1/+0 | W | 净删 assert 1（拒句/match/呈现/内部；行为断言复核仍在） 〔旧表沿用；本轮复读无新增 D5 清退〕 |
 | 216 | `tests/test_start_sh_deps_1721.py` | - | UNTOUCHED | C | 0ca77fecc→HEAD 未触及；实读无 D5-A/B 清退命中 |
 | 217 | `tests/test_state_reload.py` | M | a-0/+0 | C | 断言行未变：调用/夹具/wait/helper 重接 〔旧表沿用；本轮复读无新增 D5 清退〕 |
@@ -267,7 +267,7 @@ git ls-files | rg -i "$PRED" | sort -u
 | 226 | `tests/test_urge_lever_624.py` | M | a-0/+0 | C | 断言行未变：调用/夹具/wait/helper 重接 〔旧表沿用；本轮复读无新增 D5 清退〕 |
 | 227 | `tests/test_value_matrix_691.py` | - | UNTOUCHED | C | 0ca77fecc→HEAD 未触及；实读无 D5-A/B 清退命中 |
 | 228 | `tests/test_verify_llm_clocks_884.py` | - | UNTOUCHED | C | 0ca77fecc→HEAD 未触及；实读无 D5-A/B 清退命中 |
-| 229 | `tests/test_web_audience_night_498.py` | M | ROUND | R | 改真实 HTTP 404/405；删 registered_paths |
+| 229 | `tests/test_web_audience_night_498.py` | M | ROUND | R | 改真实 HTTP 404/405；删 registered_paths；D5-A§5 宽扫：`RunCompletedEvent` 类名注释=agno 终帧替身非日志筛选 〔本轮复读〕 |
 | 230 | `tests/test_web_budget_payload.py` | - | UNTOUCHED | C | 0ca77fecc→HEAD 未触及；实读无 D5-A/B 清退命中 |
 | 231 | `tests/test_web_chat_serialization_393.py` | M | a-4/+2 | R | 断言重组 -4/+2（保留/改写行为或来源面） 〔旧表沿用；本轮复读无新增 D5 清退〕 |
 | 232 | `tests/test_web_court_visibility.py` | M | a-7/+2 | R | choose_minister 真实选择→Character/None; 删 print 名册与拒因中文子串 〔旧表沿用；本轮复读无新增 D5 清退〕 |
@@ -303,7 +303,7 @@ git ls-files | rg -i "$PRED" | sort -u
 | 262 | `web/src/settlementPresentation.test.ts` | M | e-23/+0 | W | 年月/王承恩条固定句与 formatter 证明 〔旧表沿用；本轮复读无新增 D5 清退〕 |
 | 263 | `web/src/staleGuard.test.tsx` | - | WEB_FULL | X | 本轮全仓纳入；textContent 多为 UI 铬字/按钮/来源透传或 P4 负向闸，见回执 Web 保留表；无机器字段黑名单残留 |
 | 264 | `web/src/useDurableProjection.test.tsx` | - | WEB_FULL | X | 本轮全仓纳入；textContent 多为 UI 铬字/按钮/来源透传或 P4 负向闸，见回执 Web 保留表；无机器字段黑名单残留 |
-| 265 | `web/src/useSettlementFlow.test.tsx` | - | WEB_FULL | X | 本轮全仓纳入；textContent 多为 UI 铬字/按钮/来源透传或 P4 负向闸，见回执 Web 保留表；无机器字段黑名单残留 |
+| 265 | `web/src/useSettlementFlow.test.tsx` | M | SIGNAL | W | D5-A§5：`throttles inflight reloads…` 删 `vi.spyOn(console,"warn")` 及 pollError∈warn.mock.calls；保留 phase/error/loadState 收敛 |
 
 ## 计数
 
@@ -318,4 +318,4 @@ git ls-files | rg -i "$PRED" | sort -u
 
 ## 本轮（工作树未提交）点名清退摘要
 
-详见 `d5-current-receipt.md`。关键纠正：禁止把「helper 源标签在呈现文」泛化成合法例外；formatter 产出嵌入与 `_ints`/锁措辞/弱 text!=raw 一律清退；禁止以「可观测」洗白 tlog/`assert msgs` 内部信号证明。
+详见 `d5-current-receipt.md` 与本轮 `d5-signal-receipt.md`。关键纠正：禁止把「helper 源标签在呈现文」泛化成合法例外；formatter 产出嵌入与 `_ints`/锁措辞/弱 text!=raw 一律清退；禁止以「可观测」洗白 tlog/`assert msgs`/caplog/capsys 诊断信号证明；**D5-A§5 须全仓枚举**（非仅点名样本或两文件复扫）；候选须精确路径+函数+断言，不得 `test_*`／「等N案」泛指；logger mock／call_count／exc class 宽扫一并入表；capsys 保留须逐条引用生产 stdout 来源。

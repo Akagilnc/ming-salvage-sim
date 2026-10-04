@@ -186,7 +186,6 @@ describe("#1625 useSettlementFlow — observation refresh convergence", () => {
       .mockResolvedValueOnce(null)
       .mockRejectedValueOnce(pollError)
       .mockResolvedValueOnce(settledState);
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const { host, cleanup } = mountHarness({ initial: inflightState, loadState });
 
     expect(loadState).not.toHaveBeenCalled();
@@ -206,7 +205,6 @@ describe("#1625 useSettlementFlow — observation refresh convergence", () => {
     expect(loadState).toHaveBeenCalledTimes(2);
     expect(host.querySelector('[data-testid="phase"]')?.textContent).toBe("summoning");
     expect(host.querySelector('[data-testid="error"]')?.textContent).toBe("");
-    expect(warn.mock.calls.some((call) => call.includes(pollError))).toBe(true);
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(1000);

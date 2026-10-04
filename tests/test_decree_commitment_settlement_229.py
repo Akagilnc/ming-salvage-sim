@@ -1418,7 +1418,7 @@ def test_due_one_shot_commitment_ack_closes_review_loop_without_effects(game):
     ).fetchone()[0] == len(advances)
 
 
-def test_commitment_progress_contexts_are_structured(game, monkeypatch, capsys):
+def test_commitment_progress_contexts_are_structured(game, monkeypatch):
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
     db.conn.execute("UPDATE legacies SET status='cleared' WHERE status='active'")
@@ -1456,5 +1456,4 @@ def test_commitment_progress_contexts_are_structured(game, monkeypatch, capsys):
 
     monkeypatch.setattr(issues_mod, "commitment_display_text", record_display)
     issues_mod.show_active_issues(db)
-    capsys.readouterr()
     assert inputs == [(issue_id, 1)]

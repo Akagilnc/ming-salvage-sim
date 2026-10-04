@@ -332,11 +332,9 @@ def test_worker_cleanup_failure_still_emits_error_and_releases_gate():
     _assert_write_path_free(runtime)
 
 
-def test_worker_cleanup_double_failure_emits_original_error_end_and_logs(caplog):
+def test_worker_cleanup_double_failure_emits_original_error_end():
     """#1353 r13 / ADR 0005：payload-None 清理 abandon + fail 双二次失败 →
-    消费者有界收到*原始* error→end；清理异常只 logger.exception 记 traceback，不覆盖原错、不阻断终态。"""
-    import logging
-
+    消费者有界收到*原始* error→end；清理异常不覆盖原错、不阻断终态。"""
     db = _WorkerPathDB()
     runtime, minister = _base_runtime(db)
     agent = _StreamCrashAgent()
@@ -360,11 +358,10 @@ def test_worker_cleanup_double_failure_emits_original_error_end_and_logs(caplog)
         finally:
             done.set()
 
-    with caplog.at_level(logging.ERROR, logger="web_app"):
-        th = threading.Thread(target=consume, daemon=True)
-        th.start()
-        done.wait()
-        th.join()
+    th = threading.Thread(target=consume, daemon=True)
+    th.start()
+    done.wait()
+    th.join()
 
     assert box.get("ok") is True, box
     types = [e.get("type") for e in events]
@@ -375,7 +372,6 @@ def test_worker_cleanup_double_failure_emits_original_error_end_and_logs(caplog)
     err = next(e for e in events if e.get("type") == "error")
     # 原始 error 不变：清理二次崩溃不得覆盖 message
     assert err.get("message") == primary, err
-    assert any(r.exc_info for r in caplog.records), caplog.records
     _assert_write_path_free(runtime)
 
 

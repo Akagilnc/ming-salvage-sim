@@ -312,7 +312,7 @@ def test_midzhi_apply_omits_guessed_parties_and_keeps_satisfaction(game):
         }
 
 
-def test_legacy_persisted_reaction_severity_migrates_narrowly_and_idempotently(game, caplog):
+def test_legacy_persisted_reaction_severity_migrates_narrowly_and_idempotently(game):
     db, state, content = game
     dossier_id = _dossier(db, state)
     legacy = [{"kind": "faction", "key": "东林", "severity": "大怒", "note": "留存"},
@@ -332,10 +332,6 @@ def test_legacy_persisted_reaction_severity_migrates_narrowly_and_idempotently(g
         "INSERT INTO pending_promulgation_verdicts(turn,dossier_id,verdict_json) VALUES (?,?,?)",
         (state.turn, dossier_id, json.dumps(pending, ensure_ascii=False)),
     )
-    try:
-        json.loads(malformed_payload)
-    except ValueError as exc:
-        expected_exc = str(exc)
 
     db.conn.commit()
     path = db.path
@@ -359,10 +355,6 @@ def test_legacy_persisted_reaction_severity_migrates_narrowly_and_idempotently(g
             (malformed_id,),
         ).fetchone()[0]
         assert leftover == malformed_payload
-        warning = caplog.text
-        assert "decree_dossier_decisions" in warning
-        assert str(malformed_id) in warning
-        assert expected_exc in warning
     finally:
         reopened.close()
 

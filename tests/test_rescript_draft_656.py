@@ -736,10 +736,8 @@ def test_validate_items_many_options_not_gated_or_truncated():
     assert len(drafts) == 1
     assert [o["label"] for o in drafts[0]["options"]] == [f"拟{i}" for i in range(5)]
 
-def test_validate_items_empty_options_drops_item_keeps_siblings(monkeypatch):
-    """#1801：0 项按 F2.3 不足照实消失；其它条目仍呈上；日志响亮；不整批判死。"""
-    logs: list[str] = []
-    monkeypatch.setattr(rescript_mod, "tlog", logs.append)
+def test_validate_items_empty_options_drops_item_keeps_siblings():
+    """#1801：0 项按 F2.3 不足照实消失；其它条目仍呈上；不整批判死。"""
     good = _valid_item(0)
     empty = _valid_item(1)
     empty["options"] = []
@@ -747,22 +745,15 @@ def test_validate_items_empty_options_drops_item_keeps_siblings(monkeypatch):
     assert len(drafts) == 1
     assert drafts[0]["title"] == good["title"]
     assert len(drafts[0]["options"]) == 2
-    assert logs, "0 项条目消失须响亮留痕"
-    # 诊断通道携带实际消失条目 title（实际输入），不锁固定措辞模板
-    assert any(empty["title"] in msg for msg in logs)
 
-def test_validate_items_non_list_options_drops_item_keeps_siblings(monkeypatch):
-    """#1801：非 list options 该条目消失；其它条目仍呈上；日志响亮；不整批判死。"""
-    logs: list[str] = []
-    monkeypatch.setattr(rescript_mod, "tlog", logs.append)
+def test_validate_items_non_list_options_drops_item_keeps_siblings():
+    """#1801：非 list options 该条目消失；其它条目仍呈上；不整批判死。"""
     good = _valid_item(0)
     bad = _valid_item(1)
     bad["options"] = "not-a-list"
     drafts = validate_rescript_draft_items({"items": [good, bad]}, set())
     assert len(drafts) == 1
     assert drafts[0]["title"] == good["title"]
-    assert logs, "非 list options 条目消失须响亮留痕"
-    assert any(bad["title"] in msg for msg in logs)
 
 def test_validate_items_empty_list_is_legal_headless_month():
     """合法 items=[] 仍是「本月确无急务」（F2.3 不凑数）。"""

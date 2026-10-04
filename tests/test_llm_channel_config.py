@@ -785,7 +785,6 @@ def test_agent_factories_omit_max_tokens_on_param_surface(monkeypatch):
     monkeypatch.setattr(agents_mod, "_ctx", lambda: fake_ctx)
     monkeypatch.setattr(agents_mod, "create_chat_model", spy)
     monkeypatch.setattr(agents_mod, "Agent", lambda **kwargs: kwargs)
-    monkeypatch.setattr(agents_mod, "tlog", lambda *a, **k: None)
     monkeypatch.setattr(agents_mod, "describe_effective_model", lambda cfg: "m")
     monkeypatch.setattr(agents_mod, "is_minimax_base_url", lambda url: False)
     monkeypatch.setattr(agents_mod, "_llm_for_role", lambda cfg, role: cfg)

@@ -457,7 +457,7 @@ def test_question_association_failure_leaves_no_orphan_turn(game, monkeypatch):
     assert an.get_open_night(db) is not None
 
 
-def test_save_load_round_trip_through_shared_core(game, monkeypatch, capsys):
+def test_save_load_round_trip_through_shared_core(game):
     """CLI 存档 → 改库 → 读档：真走共享核 ``save_slots.replace_database``（#1902 F2）。
 
     判官原证：备份/热替换/失败恢复/候选重建/可恢复判定全在 WebGame 私有方法里，

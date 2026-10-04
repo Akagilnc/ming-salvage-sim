@@ -1051,7 +1051,7 @@ def test_manual_directive_capture_reaches_structured_dossier(
     ("web", ["韩阁老"]),
 ])
 def test_manual_directive_capture_rejects_malformed_roster(
-    game, monkeypatch, capsys, entry, bad_roster,
+    game, monkeypatch, entry, bad_roster,
 ):
     import ming_sim.cli_backend as cli_backend
     from ming_sim.session import GameSession

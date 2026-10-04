@@ -371,7 +371,7 @@ def test_fiscal_levy_bad_region_does_not_redistribute_jiao_lian_targets(game):
 
 @pytest.mark.parametrize("bad_shape", ["land", "p", "st", "settle"])
 def test_fiscal_levy_incomplete_first_pass_does_not_freeze_zero_share_seed(
-    game, monkeypatch, bad_shape
+    game, bad_shape
 ):
     db, state, content = game
     issues.bind_content(content)
@@ -395,7 +395,6 @@ def test_fiscal_levy_incomplete_first_pass_does_not_freeze_zero_share_seed(
         fiscal["settle"]["st"] = []
     else:
         fiscal["settle"] = []
-    monkeypatch.setattr(issues, "tlog", lambda msg: None)
     db.conn.execute(
         "UPDATE regions SET fiscal = ? WHERE id = ?",
         (json.dumps(fiscal, ensure_ascii=False), "shaanxi"),
