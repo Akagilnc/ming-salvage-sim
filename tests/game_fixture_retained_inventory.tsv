@@ -517,7 +517,6 @@ tests/test_section4_rejections.py	test_issue_path_tolerated_rejections_reach_rep
 tests/test_section4_rejections.py	test_inertia_natural_resolution_tolerated_rejection_no_crash	680	writable isolation required at line 689: production mutation/isolation call: insert_issue
 tests/test_section4_rejections.py	test_required_field_historical_strictness_on_issue_path	728	writable isolation required: entity mutation path: _apply_issue_entities dispatches real issue/army database writers
 tests/test_section_fiscal_rejections.py	test_remove_unknown_fiscal_key_rejected_good_removal_lands	42	writable isolation required: line 49 invokes run_settle
-tests/test_section_fiscal_rejections.py	test_remove_dynamic_tax_still_zeroes_region_field	66	writable isolation required: line 71 invokes execute(UPDATE regions SET fiscal=json_set(COALESCE(NULLIF(fiscal,''),'{}'),'$.l)
 tests/test_section_fiscal_rejections.py	test_remove_structural_sink_loss_rate_rejected	89	writable isolation required: line 96 invokes run_settle
 tests/test_section_fiscal_rejections.py	test_remove_central_human_loss_rate_rejected_as_loss_pair	106	writable isolation required: line 113 invokes run_settle
 tests/test_section_fiscal_rejections.py	test_remove_central_human_loss_rate_stem_rejected_as_loss_pair	123	writable isolation required: line 130 invokes run_settle
@@ -529,7 +528,6 @@ tests/test_section_fiscal_rejections.py	test_change_unknown_key_rejected_good_ch
 tests/test_section_fiscal_rejections.py	test_change_dirty_delta_rejected_sibling_lands	277	writable isolation required: line 285 invokes run_settle
 tests/test_section_fiscal_rejections.py	test_change_zero_delta_no_op_not_rejected	300	writable isolation required: line 306 invokes run_settle
 tests/test_section_fiscal_rejections.py	test_change_empty_key_rejected	313	writable isolation required: line 319 invokes run_settle
-tests/test_section_fiscal_rejections.py	test_change_dynamic_tax_rate_scales_region_field	329	writable isolation required: line 333 invokes execute(UPDATE regions SET fiscal=json_set(COALESCE(NULLIF(fiscal,''),'{}'),'$.l)
 tests/test_section_fiscal_rejections.py	test_change_structural_sink_loss_rate_below_floor_rejected	353	writable isolation required: line 360 invokes run_settle
 tests/test_section_fiscal_rejections.py	test_change_central_loss_rate_pair_above_100_rejected	370	writable isolation required: line 378 invokes run_settle
 tests/test_section_fiscal_rejections.py	test_change_central_loss_rate_rebalance_uses_batch_final_total	394	writable isolation required: line 397 invokes execute(UPDATE fiscal_config SET value = 80 WHERE key = 'central_taicang_human_l)
