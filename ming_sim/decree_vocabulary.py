@@ -22,17 +22,6 @@ DOSSIER_ACTION_TYPES = frozenset({
 
 DIRECTIVE_ACTION_TYPES = DOSSIER_ACTION_TYPES - {"appointment", "secret_order"}
 
-# #1778 决定 2（owner「1」）：批红可路由七类闭集整体取消——票拟/中旨 action_type
-# 值域＝库级全集 DOSSIER_ACTION_TYPES（机器必须懂的形状检查仍在，ADR 0040）。
-# 本集只钉「原七类 → 落库类型」的映射终点：罢免在 choice 上仍用 appointment +
-# appoint_action=罢免，emitted 为 dismiss_assignment（#657 §C C.1）。
-RESCRIPT_EMITTED_DOSSIER_ACTION_TYPES = frozenset({
-    "assignment", "military_order", "grant_allocation", "appointment",
-    "dismiss_assignment",  # 罢免支
-    "punishment", "authorization", "pacification",
-})
-assert RESCRIPT_EMITTED_DOSSIER_ACTION_TYPES <= DOSSIER_ACTION_TYPES
-
 # Ming #654 / owner A：旨意 target_kind 唯一八值真源（含结构目标 dossier）。
 # durable normalization / producer / locality oracle 共引；禁第二份枚举。
 TARGET_KINDS = frozenset({

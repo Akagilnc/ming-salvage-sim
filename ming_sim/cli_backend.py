@@ -382,12 +382,16 @@ def _cli_idle_seconds() -> float:
 
 
 def _terminate_cli_process(proc: Any) -> None:
-    """收尾子进程：SIGTERM only. Never escalate to SIGKILL (shared #9 / #1847 N13)."""
-    try:
-        proc.terminate()
-        proc.wait(timeout=5)
-    except Exception:
-        pass
+    """收尾子进程：SIGTERM only. Never escalate to SIGKILL (shared #9 / #1847 N13).
+
+    Soft lifecycle only: terminate → wait. TimeoutExpired and other failures
+    propagate so callers can leave a real diagnostic; never kill()/SIGKILL,
+    never swallow the failure.
+    """
+    if proc.poll() is not None:
+        return
+    proc.terminate()
+    proc.wait(timeout=5)
 
 
 def _iter_cli_process_lines(
@@ -529,10 +533,21 @@ def _iter_cli_process_lines(
             )
             time.sleep(_CLI_POLL_SECONDS)
     finally:
-        _terminate_cli_process(proc)
+        cleanup_err: Optional[BaseException] = None
+        try:
+            _terminate_cli_process(proc)
+        except BaseException as exc:
+            # Soft-stop failure must leave a real trace without covering an
+            # in-flight read/idle failure (raise-from-finally would suppress it).
+            cleanup_err = exc
+            logger.warning("CLI soft terminate failed: %s", exc)
         for worker in workers:
             worker.join(timeout=5)
         result.stderr = "".join(stderr_parts)
+        if cleanup_err is not None:
+            result.stderr = (
+                result.stderr + f"\n[soft terminate failed: {cleanup_err}]"
+            ).lstrip("\n")
         result.returncode = proc.poll()
 
 def _codex_reasoning_effort(reasoning_strength: Optional[str]) -> str:
@@ -1213,19 +1228,6 @@ def _messages_to_prompt(
     return prompt
 
 
-# ── 拟旨 / 下密令入档（CLI 后端）────────────────────────────────────────
-# 原版（api key）靠 agno 工具 propose_directive/secret_order，模型 function-call 触发。
-# agy/codex/claude 不做 function-calling，唯一缺口在此。玩家用「拟旨/下密令」按钮 =
-# 消息带「拟旨如下：/密令如下：」前缀 = 已表态要下旨，据此分派：
-#   拟旨：大臣回话原文即这道圣旨草稿，整段入档（单一文本字段，够用；多轮聊出多道 →
-#         颁诏时玩家去重）。
-#   密令（#397/#413/#1274 K1）：交 _extract_secret_order 抽结构化字段；content=
-#         御旨+extractor「内容」（reply 不入拼装；大臣实质补充走 schema 字段）；候选先入
-#         pending_actions 确认闸门，皇帝应允或回合默认提交时才正式落库。
-_DRAFT_PREFIXES = ("拟旨如下：", "拟旨如下:", "拟旨：", "拟旨:")
-_SECRET_PREFIXES = ("密令如下：", "密令如下:", "密令：", "密令:")
-
-
 # 大臣会话动作抽取（CLI 后端无 function-calling）：
 # 不靠关键字白名单（脆、永远漏），交给 LLM 读对话判意图——皇帝本轮对该大臣【现有密令】
 # 要做什么（更新内容 / 提交核议 / 催办 / 记进展），以及若是妃嫔有无调教。
@@ -1438,12 +1440,13 @@ def _grounding_source_text(
     只扫本函数拼出的源。
     """
     parts: List[str] = []
-    text = str(player_message or "").strip()
-    if text:
+    # #1847 N6：玩家原文运输不得 strip；判空用局部副本。
+    text = str(player_message or "")
+    if text.strip():
         parts.append(text)
     for raw in failed_slot_refs or []:
-        ref = str(raw or "").strip()
-        if ref:
+        ref = str(raw or "")
+        if ref.strip():
             parts.append(ref)
     return "\n".join(parts)
 
@@ -3655,438 +3658,6 @@ def enrich_initiative_effects(title: str, stage: str = "", llm_config: Any = Non
         "ongoing_effects": _d(norm.get("ongoing_effects")),
         "effect_on_fail": _d(norm.get("effect_on_fail")),
     }
-
-
-_CLAUSE_SPLIT = re.compile(r"[，,。.；;！!？?、：:\n\r]+")
-
-
-def _content_reflects_emperor_intent(content: str, emperor_intent: str) -> bool:
-    """LLM『内容』是否完整保留皇帝显式旨意（#397 Step5 防丢御旨守门）。
-
-    皇帝旨意常由若干分句（以中英文标点断句）组成，每一分句都是不可吞掉的『一部分』。
-    故按分句逐条核验：去空白后每个分句须作为连续子串出现在『内容』里——只留前半段、
-    丢掉后半段显式条款（如漏『三月内回奏』）即判未覆盖，走兜底合并。容许 LLM 在分句之外
-    增补大臣要点/润色衔接，但不得吞掉任何一分句。旧 LCS≥半 判据会放过半段丢失，已弃用。
-    皇帝无显式旨意（前缀后为空）时视为无需守护。"""
-    if not emperor_intent:
-        return True
-    c = re.sub(r"\s+", "", content or "")
-    e = re.sub(r"\s+", "", emperor_intent)
-    if not e:
-        return True
-    clauses = [seg for seg in _CLAUSE_SPLIT.split(e) if seg]
-    if not clauses:
-        return True
-    return all(clause in c for clause in clauses)
-
-
-# ── 密令 content 结构化装配（#1274 K1 / ADR 0142）──
-# content = 御旨 + extractor schema「内容」。reply 永不入拼装输入；
-# 大臣实质补充必须由 extractor 显式契约字段承载，禁从回话自由散文抠语义。
-
-
-def assemble_secret_order_content(
-    *,
-    emperor_intent: str,
-    extractor_content: str,
-) -> str:
-    """密令正文唯一结构化装配：御旨 + extractor「内容」。
-
-    签名故意不含 reply/minister_reply——答奏归对话记录；补全字段（标签/期限）
-    走 payload 结构化键，不经本函数自由文本拼装。三路（抽取/暂存合并/更新·哨兵）
-    同口径。
-    """
-    emperor = emperor_intent or ""
-    extracted = extractor_content or ""
-    if extracted and _content_reflects_emperor_intent(extracted, emperor):
-        return extracted
-    return _merge_secret_content(emperor, extracted)
-
-
-# #1847: no free-text imperative assignee extract / character-class institution guess.
-# Structured 承办人 field + closed non-person registry only; else default.
-
-
-def _choose_assignee(
-    assignee_llm: str,
-    player_command: str,
-    default_assignee: str,
-) -> str:
-    """选定承办人：只取显式结构化「承办人」字段（ADR 0142 / #1847）。
-
-    禁从 player_command / minister_reply 自由散文机械反推承办人。
-    非人机关名走 participant_roster 闭集拒识。
-    """
-    del player_command
-    llm = (assignee_llm or "").strip()
-    if llm and not _is_non_person_participant_name(llm):
-        return llm
-    return default_assignee
-
-
-def _split_audience_context(context: str) -> Tuple[str, str]:
-    """把召对上下文快照剥成 (皇帝任务文本, "")。
-
-    只按既有结构化角色前缀（「皇帝：」「【本轮确认】」）保序收录；非空检查可用，
-    不改写运输值。不做问句/相关性/长度等自由语义分类。大臣行不入 content 拼装
-    （#1274 K1 / ADR 0142）；第二返回值恒为空串，保留元组形以免调用点分叉。
-    """
-    emperor_lines: List[str] = []
-    for raw in (context or "").splitlines():
-        if not (raw or "").strip():
-            continue
-        if raw.startswith("【本轮确认】"):
-            material = raw.removeprefix("【本轮确认】")
-            if material.strip():
-                emperor_lines.append(material)
-            continue
-        if raw.startswith("皇帝："):
-            task = raw[len("皇帝："):]
-            if task.strip():
-                emperor_lines.append(task)
-    return "\n".join(emperor_lines), ""
-
-
-def _merge_secret_content(*parts: str) -> str:
-    """把皇帝显式旨意 / LLM 内容 / 大臣回话合并成一道密令正文，去重保序。
-
-    #397 Step6：兜底合并须同时保住御旨与大臣补充（承办人/要点），任一非空都并入；
-    完全相同的段（去空白后）只留一份，避免 LLM 内容与回话雷同时整段重复。"""
-    merged: List[str] = []
-    seen: set = set()
-    for p in parts:
-        chunk = p or ""
-        if not chunk:
-            continue
-        if chunk in seen:
-            continue
-        seen.add(chunk)
-        merged.append(chunk)
-    return "\n".join(merged)
-
-
-def _secret_metadata_from_command(text: str) -> Tuple[List[str], int]:
-    tags: List[str] = []
-    deadline = 0
-    for raw_line in (text or "").splitlines():
-        line = raw_line.strip()
-        if not line:
-            continue
-        m_tags = re.match(r"^(?:标签|tag|tags)\s*[：:]\s*(.+)$", line, flags=re.IGNORECASE)
-        if m_tags:
-            for item in re.split(r"[,，、/;；\s]+", m_tags.group(1)):
-                cleaned = item.strip()
-                if cleaned and cleaned not in tags:
-                    tags.append(cleaned)
-            continue
-        m_deadline = re.match(r"^(?:期限|限期|deadline)\s*[：:]\s*(.+)$", line, flags=re.IGNORECASE)
-        if m_deadline:
-            match = re.search(r"([+-]?\d+)\s*(?:个)?月", m_deadline.group(1))
-            if match:
-                deadline = max(0, min(int(match.group(1)), 36))
-    return tags, deadline
-
-
-def _normalize_dossier_link_proposals(
-    dossier_candidates: Optional[List[Dict[str, Any]]],
-    suggested_links: Any,
-) -> Dict[Tuple[int, str], Dict[str, Any]]:
-    """Return the one canonical, visible set of dossier-link proposals."""
-    candidate_ids = {
-        row["id"] for row in (dossier_candidates or [])
-        if isinstance(row, dict) and type(row.get("id")) is int
-    }
-    proposals: Dict[Tuple[int, str], Dict[str, Any]] = {}
-    for link in suggested_links if isinstance(suggested_links, list) else []:
-        if not isinstance(link, dict) or type(link.get("target_dossier_id")) is not int:
-            continue
-        target = link["target_dossier_id"]
-        relation = str(link.get("relation_type") or "").strip()
-        note = str(link.get("note") or "")
-        if target in candidate_ids and relation in DOSSIER_LINK_TYPES and note:
-            proposals[(target, relation)] = {
-                "target_dossier_id": target, "relation_type": relation, "note": note}
-    return proposals
-
-
-def confirm_dossier_links(
-    minister_reply: str,
-    dossier_candidates: Optional[List[Dict[str, Any]]],
-    suggested_links: Any,
-    llm_config: Any = None,
-) -> List[Dict[str, Any]]:
-    """Use one structured semantic verdict to narrow model-suggested links.
-
-    Internal IDs are capabilities only: the verdict may select an ID only from
-    both the reader-visible candidates and the producer's structured proposal.
-    A failed/ambiguous verdict authorises nothing.
-    """
-    candidates = {
-        int(row["id"]): str(row.get("secret_title") or row.get("decree_text") or "")
-        for row in (dossier_candidates or [])
-        if isinstance(row, dict) and type(row.get("id")) is int
-    }
-    proposals = _normalize_dossier_link_proposals(dossier_candidates, suggested_links)
-    if not proposals:
-        return []
-    prompt = (
-        "你是案卷关联确认判词，不是对话角色。只依据【大臣最终可见回话】的完整语义判断；"
-        "否定、仅引用旧案、模糊复述、长短标题包含歧义、未明确承诺关联，均不得确认。"
-        "内部ID只用于输出，不是确认依据。只输出合法JSON："
-        "{\"confirmed_links\":[{\"target_dossier_id\":整数,\"relation_type\":\"护卫/稽核/接应\"}]}。\n"
-        "【可选提议】\n" + "\n".join(
-            f"- #{target} {candidates[target]}；{relation}；{item['note']}"
-            for (target, relation), item in proposals.items()
-        ) + "\n【大臣最终可见回话】\n" + (minister_reply or "（空）")
-    )
-    try:
-        raw, _ = _run_json_extractor_for_config(prompt, llm_config, tag="dossier_link_confirmation")
-        verdict = _loads_lenient(raw) or {}
-    except Exception as exc:
-        _log(f"案卷关联确认失败：{exc}")
-        return []
-    if not isinstance(verdict, dict):
-        return []
-    links = verdict.get("confirmed_links")
-    if not isinstance(links, list):
-        return []
-    confirmed = set()
-    for link in links:
-        if not isinstance(link, dict) or type(link.get("target_dossier_id")) is not int:
-            return []
-        relation = link.get("relation_type")
-        if relation not in DOSSIER_LINK_TYPES:
-            return []
-        confirmed.add((link["target_dossier_id"], relation))
-    return [item for identity, item in proposals.items() if identity in confirmed]
-
-
-def _extract_secret_order(
-    player_command: str,
-    minister_reply: str,
-    default_assignee: str,
-    llm_config: Any = None,
-    force_default_assignee: bool = False,
-    dossier_candidates: Optional[List[Dict[str, Any]]] = None,
-) -> Dict[str, Any]:
-    """聚焦提取：把密令交代+大臣回话抽成结构化字段。纯抽取任务（不扮演），
-    与月末 extractor 同款可靠。
-
-    call/transport 失败 → 既有系统失败接缝（cli_runner_unavailable / LLMUnavailable）响亮上抛（0005/0046）。
-    """
-    prompt = (
-        "你是一个严谨的信息抽取器，不是大臣，不要扮演、不要写圣旨。\n"
-        "下面是皇帝下达的一道密令交代，以及承命大臣的回话。请抽出这道密令的结构化字段，"
-        "只输出一个 JSON 对象，不要 markdown 代码围栏、不要 JSON 以外任何字：\n"
-        "{\n"
-        "  \"标题\": \"密令简称，概括任务，如 密查关宁军饷、暗结蒙古诸部（不硬截长度）\",\n"
-        "  \"内容\": \"密令完整任务详情：目标、保密要求、做法；须并入大臣回话中的实质补充"
-        "（承办建议/步骤/方法），但不得写入领旨/遵旨/谢恩等答奏套话\",\n"
-        "  \"承办人\": \"实际承办此密令的人名；皇帝或大臣指明谁就填谁，没指明就填 "
-        + (default_assignee or "") + "\",\n"
-        "  \"期限月数\": 整数，皇帝限了期就填月数（如『三月内结案』填3），没限填0,\n"
-        "  \"标签\": [\"相关人名/地区/事项关键词\"],\n"
-        "  \"排除对象\": {\"人物\": [\"明确说要瞒住的人名\"], \"机构\": [\"不走的衙门\"]},\n"
-        "  \"案卷关联\": [{\"目标案卷ID\": 123, \"类型\": \"护卫/稽核/接应\", "
-        "\"说明\": \"一句说明\"}],\n"
-        "  \"差务\": \"差务类型名，如 补发饷银、缉获人犯、清丈；必须点明，不得用标题或标签猜测\",\n"
-        "  \"价值轴\": [\"闭集轴名，如 实务事功、既得利益\"],\n"
-        "  \"方向\": 1,\n"
-        "  \"交付单位\": \"canonical applier 单位：万两、人犯或万亩；专题查核留空，普通交付差务必须填写\",\n"
-        "  \"交付目标\": 到期须交付的正数目标（调查为须坐实的事实条数）,\n"
-        "  \"效果符号\": 1,\n"
-        "  \"调查对象\": \"查人填人物规范名；北极星专题查核填相关人员范围（如 辽饷转运及押运相关人员）；非调查留空\",\n"
-        "  \"调查事实\": \"本道密令所指的那条罪证标识——已有线索/举发/证词明确指向哪一条就填哪一条的标识"
-        "（与既有在查案卷同目标时可复用其罪证标识）；没指明具体哪一条就留空，引擎不会替你挑一条\",\n"
-        "  \"钱粮用途\": \"支出 purpose（补饷/其它）；收入留空\", \"钱粮类别\": \"category\", \"钱粮账户\": \"account\",\n"
-        "  \"钱粮标靶种类\": \"补饷时填 army，其余留空\", \"钱粮标靶编号\": \"补饷时填军队 id，其余留空\",\n"
-        "  \"人物动作\": \"人物变更动作，非人物留空\",\n"
-        "  \"地区\": \"region_delta 地区 id\", \"地区字段\": \"落库字段\", \"地区目标值\": \"落库后的目标值\"\n"
-        "}\n"
-        "专题查核须填写非空调查对象、正数事实条数交付目标和效果符号，交付单位留空；普通交付差务须填写 canonical 交付单位、正数交付目标及该单位既有 identity 字段。\n"
-        "差务、价值轴不得留空；必填数值不得用 0 凑数。\n"
-        "案卷关联只能填写大臣回话中已明确复述确认、且在下列候选中的具体旧案卷 ID；模糊指代、未确认或没有 ID 时填空列表。\n"
-        "【可引用旧案卷】\n" + "\n".join(
-            f"- #{int(row['id'])} {row.get('secret_title') or row.get('decree_text') or row.get('action_type') or ''}"
-            for row in (dossier_candidates or [])
-        ) + "\n\n"
-        "【皇帝密令】" + (player_command or "（无）") + "\n"
-        "【大臣回话】" + (minister_reply or "（无）") + "\n"
-    )
-    raw = ""
-    confirmation_future = None
-    confirmation_pool = None
-    if dossier_candidates:
-        # Confirmation reads only the already-visible reply/candidate set, so it
-        # can run beside field extraction; extracted proposals are intersected locally below.
-        broad_proposals = [
-            {"target_dossier_id": int(row["id"]), "relation_type": relation, "note": "待抽取后核对"}
-            for row in dossier_candidates for relation in DOSSIER_LINK_TYPES
-        ]
-        confirmation_pool = ThreadPoolExecutor(max_workers=1)
-        confirmation_future = confirmation_pool.submit(
-            confirm_dossier_links, minister_reply, dossier_candidates, broad_proposals, llm_config)
-    extract_failed = False
-    extract_failure_reason = ""
-    try:
-        raw, _attempts = _run_json_extractor_for_config(prompt, llm_config, tag="secret_extract")
-    except Exception as exc:
-        # 程序/transport 真异常：响亮上抛（0005/0046）；不标 typed 旗、不正常返回。
-        from ming_sim.exceptions import LLMUnavailable
-        from ming_sim.llm_model import cli_runner_unavailable
-
-        _log(f"密令提取失败：{exc}")
-        if isinstance(exc, LLMUnavailable):
-            raise
-        raise cli_runner_unavailable(exc, backend="secret_extract") from exc
-    finally:
-        # The confirmation future remains readable after shutdown.  Owning the
-        # executor here guarantees cleanup even if any later normalization raises.
-        if confirmation_pool is not None:
-            confirmation_pool.shutdown(wait=True)
-    # 解析失败（None）与合法空对象 {}：保留各自身份供 gaps/诊断，但下游统一走
-    # land_or_recover（能落暂存 / 不能落 compose recovery）；不得 or {} 合流洗成成功空抽取。
-    parsed = _loads_lenient(raw)
-    if parsed is None:
-        if not extract_failed:
-            extract_failed = True
-            extract_failure_reason = "密令抽取结果无法解析"
-        elif not extract_failure_reason:
-            extract_failure_reason = "密令抽取结果无法解析"
-        obj = {}
-    else:
-        obj = parsed
-    _content_llm = str(obj.get("内容") or "")
-    _assignee_llm = str(obj.get("承办人") or "").strip()
-    # 上下文合成路径（force_default_assignee，#354 短确认从对话取正文）：player_command 是带
-    # 「皇帝：/大臣：」标签的对话快照——剥角色标签得纯御旨任务，作装配输入。
-    # #1274 K1 / ADR 0142：content = 御旨 + extractor「内容」；reply 永不入拼装。
-    # 大臣实质补充必须出现在 extractor schema「内容」字段（上 prompt 已钉契约）。
-    if force_default_assignee:
-        _emperor_fallback, _ = _split_audience_context(player_command)
-    else:
-        _emperor_fallback = player_command
-    content = assemble_secret_order_content(
-        emperor_intent=_emperor_fallback,
-        extractor_content=_content_llm,
-    )
-    # #1565/0142：题名只认抽取器结构化「标题」；禁从 content/player_command 散文截取。
-    # 缺标题由下游 land_or_recover 统一 recovery 可见可恢复，不在此合成。
-    title = str(obj.get("标题") or "")
-    # 承办人：皇帝祈使点名 > 结构化「承办人」字段 > 默认（ADR 0142：禁 minister_reply/
-    # extractor 散文反推）。
-    assignee = default_assignee if force_default_assignee else _choose_assignee(
-        _assignee_llm, player_command, default_assignee,
-    )
-    raw_deadline = obj.get("期限月数")
-    explicit_zero_deadline = raw_deadline in (0, "0")
-    try:
-        deadline = max(0, min(int(raw_deadline or 0), 36))
-    except (TypeError, ValueError):
-        deadline = 0
-    tags = obj.get("标签")
-    tags = [str(t).strip() for t in tags if str(t).strip()] if isinstance(tags, list) else []
-    from ming_sim.content import GameContent
-    from ming_sim.db import canonical_secret_order_exclusions
-    raw_targets = obj.get("排除对象") if isinstance(obj.get("排除对象"), dict) else {}
-    raw_people = raw_targets.get("人物", raw_targets.get("people", obj.get("排除名单", [])))
-    raw_offices = raw_targets.get("机构", raw_targets.get("offices", []))
-    # Registry identity only: load shipped character office/office_type set.
-    # Do not fall back to hardcoded office vocabulary when content is absent.
-    excluded_names, excluded_offices = canonical_secret_order_exclusions(
-        GameContent.load(),
-        raw_people if isinstance(raw_people, list) else [],
-        raw_offices if isinstance(raw_offices, list) else [],
-        player_command,
-    )
-    fallback_tags, fallback_deadline = _secret_metadata_from_command(player_command)
-    if not tags:
-        tags = fallback_tags
-    if not deadline and not explicit_zero_deadline:
-        deadline = fallback_deadline
-    raw_links = obj.get("案卷关联")
-    extracted_proposals = [
-        {
-            "target_dossier_id": link.get("目标案卷ID"),
-            "relation_type": link.get("类型"),
-            "note": link.get("说明"),
-        }
-        for link in raw_links if isinstance(link, dict)
-    ] if isinstance(raw_links, list) else []
-    proposals = _normalize_dossier_link_proposals(dossier_candidates, extracted_proposals)
-    dossier_links = list(proposals.values())
-    if confirmation_future is not None:
-        try:
-            confirmed = {
-                (item["target_dossier_id"], item["relation_type"])
-                for item in confirmation_future.result()
-            }
-        except Exception as exc:
-            _log(f"案卷关联确认失败：{exc}")
-            confirmed = set()
-        dossier_links = [
-            item for identity, item in proposals.items() if identity in confirmed
-        ]
-    else:
-        dossier_links = confirm_dossier_links(
-            minister_reply, dossier_candidates, dossier_links, llm_config=llm_config)
-    kind = str(obj.get("差务") or obj.get("kind") or "").strip()
-    axes = obj.get("价值轴")
-    axes = [str(a).strip() for a in axes if str(a).strip()] if isinstance(axes, list) else []
-    unit = str(obj.get("交付单位") or "").strip()
-    try:
-        direction = int(obj.get("方向") or 1)
-    except (TypeError, ValueError):
-        direction = 1
-    if direction not in (1, -1):
-        direction = 1
-    from ming_sim.covert_progress import CovertContractError, build_covert_task_contract
-    try:
-        covert_task = build_covert_task_contract(
-            kind=kind,
-            axes=axes,
-            direction=direction,
-            delivery_unit=unit,
-            delivery_target_units=obj.get("交付目标"),
-            purpose=obj.get("钱粮用途"),
-            category=obj.get("钱粮类别"),
-            account=obj.get("钱粮账户"),
-            target_kind=obj.get("钱粮标靶种类"),
-            target_id=obj.get("钱粮标靶编号"),
-            person_action=obj.get("人物动作"),
-            region=obj.get("地区"),
-            field=obj.get("地区字段"),
-            region_target=obj.get("地区目标值"),
-            investigation_target=obj.get("调查对象"),
-            investigation_fact=obj.get("调查事实"),
-            effect_sign=obj.get("效果符号"),
-        )
-    except CovertContractError as exc:
-        covert_task = None
-        contract_error = str(exc)
-    else:
-        contract_error = ""
-    # 抽取失败真因优先于缺标题/缺合同——否则 malformed/异常被洗成「缺标题」。
-    if extract_failure_reason:
-        contract_error = extract_failure_reason
-    elif not title and not contract_error:
-        contract_error = "密令缺少结构化标题"
-    result = {"title": title, "content": content, "assignee": assignee,
-            "deadline_months": deadline, "tags": tags, "excluded_names": excluded_names,
-            "excluded_offices": excluded_offices, "dossier_links": dossier_links,
-            "excluded_targets": {"people": excluded_names, "offices": excluded_offices}}
-    if covert_task is not None:
-        result["covert_task"] = covert_task
-    if contract_error:
-        result["contract_error"] = contract_error
-    # 首抽 command provenance：恢复供料复用，不靠散文重猜（#354 / C3）。
-    result["_extract_command"] = player_command
-    if extract_failed:
-        result["extract_failed"] = True
-    # 原产物保留：合法 JSON 坏合同与 parse 失败均供后续反馈/诊断（#1765 C3/C4）。
-    if isinstance(raw, str) and raw:
-        result["extract_raw"] = raw
-    return result
 
 
 

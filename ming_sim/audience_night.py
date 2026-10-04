@@ -2254,8 +2254,9 @@ def audience_scene_recap(
         nid = int(open_n["id"])
     bodies: List[str] = []
     for entry in audible_entries_for(db, int(nid), name):
-        body = str(entry.get("body") or "").strip()
-        if body:
+        # #1812 P6 / #1847 N6：故事账正文是自由正文；判空用局部副本，运输用原文。
+        body = str(entry.get("body") or "")
+        if body.strip():
             bodies.append(body)
     if not bodies:
         return ""
@@ -2337,33 +2338,6 @@ def ensure_summon_enter(
     )
 
 
-def rescript_summon_origin_ref(source_turn: int, idx: int, revision_round: int) -> str:
-    """#657 D.0 origin 公式唯一真源。"""
-    return f"rescript_draft:{int(source_turn)}:{int(idx)}:summon:r{int(revision_round)}"
-
-
-def rescript_summon_origin_consumed(
-    entry: Optional[Mapping[str, Any]],
-) -> bool:
-    """#1838 reopen / #657：已消费 ≔ origin 行存在 ∧ TAG_ENTER∈tags。
-
-    不再依赖旁白正文；入殿账正文恒空。
-    """
-    if entry is None:
-        return False
-    tags_raw = entry.get("tags")
-    if isinstance(tags_raw, str):
-        try:
-            tags_list = json.loads(tags_raw or "[]")
-        except Exception:
-            tags_list = []
-    elif isinstance(tags_raw, (list, tuple)):
-        tags_list = list(tags_raw)
-    else:
-        tags_list = []
-    tags = [str(t) for t in tags_list]
-    return TAG_ENTER in tags
-
 
 def _ledger_by_origin_ref(db: Any, origin: str) -> Optional[Dict[str, Any]]:
     origin = str(origin or "").strip()
@@ -2386,78 +2360,6 @@ def _ledger_by_origin_ref(db: Any, origin: str) -> Optional[Dict[str, Any]]:
         "person_names": [str(n) for n in _json_list(raw.get("person_names"))],
     }
 
-
-def prepare_rescript_summon_scaffold(
-    db: Any,
-    state: GameState,
-    *,
-    person_name: str,
-    origin_ref: str,
-    method: str = METHOD_XUANRU,
-    time_of_day: str = "",
-    location: str = "",
-) -> Dict[str, Any]:
-    """#1838 reopen / #657：批红召见只落入殿事实账。
-
-    返回 {entry_id, night_id, consumed: bool}。
-    已消费 ≔ origin_ref 行存在 ∧ TAG_ENTER；不再建 generating 对话轮、不依赖旁白正文。
-    幂等靠 origin_ref UNIQUE。
-    """
-    from ming_sim.applier import atomic
-
-    name = str(person_name or "").strip()
-    origin = str(origin_ref or "").strip()
-    if not name or not origin:
-        raise AudienceNightError("prepare_rescript_summon 缺 name/origin", code="bad_args")
-
-    existing = _ledger_by_origin_ref(db, origin)
-    if existing is not None:
-        return {
-            "entry_id": int(existing["id"]),
-            "chat_turn_id": int(existing.get("origin_chat_turn_id") or 0),
-            "night_id": int(existing["night_id"]),
-            "consumed": rescript_summon_origin_consumed(existing),
-        }
-
-    try:
-        with atomic(db):
-            night = get_open_night(db)
-            if night is None or str(night.get("status") or "") != NIGHT_STATUS_OPEN:
-                night = open_night(
-                    db, state,
-                    time_of_day=time_of_day, location=location,
-                )
-            night_id = int(night["id"])
-            entry_id = summon_enter(
-                db, night_id, name,
-                method=method,
-                origin_ref=origin,
-                commit=False,
-            )
-        return {
-            "entry_id": int(entry_id),
-            "chat_turn_id": 0,
-            "night_id": night_id,
-            "consumed": True,
-        }
-    except sqlite3.IntegrityError as exc:
-        unique_codes = {
-            getattr(sqlite3, "SQLITE_CONSTRAINT_UNIQUE", None),
-            getattr(sqlite3, "SQLITE_CONSTRAINT", None),
-        }
-        unique_codes.discard(None)
-        err_code = getattr(exc, "sqlite_errorcode", None)
-        if unique_codes and err_code not in unique_codes:
-            raise
-        again = _ledger_by_origin_ref(db, origin)
-        if again is None:
-            raise
-        return {
-            "entry_id": int(again["id"]),
-            "chat_turn_id": int(again.get("origin_chat_turn_id") or 0),
-            "night_id": int(again["night_id"]),
-            "consumed": rescript_summon_origin_consumed(again),
-        }
 
 
 def mark_actions_night_approved(

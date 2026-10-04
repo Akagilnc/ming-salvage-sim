@@ -511,10 +511,38 @@ def run(
             pass
 
     finally:
-        # Soft stop only (SIGHUP/SIGINT). Never escalate to SIGKILL (shared #9).
-        if child.isalive():
-            child.terminate(force=False)
-        log_file.close()
+        # Soft close covers the full PtyProcess lifecycle without SIGKILL.
+        # Official API: close(force=False) → terminate(force=False) only
+        # (https://ptyprocess.readthedocs.io/en/latest/api.html). Default
+        # close()/__del__ uses force=True and can escalate to SIGKILL.
+        cleanup_err: Optional[BaseException] = None
+        try:
+            if child is not None and not getattr(child, "closed", False):
+                child.close(force=False)
+        except BaseException as exc:
+            cleanup_err = exc
+            log(f"[soft cleanup failed: {exc}]")
+            # Soft close may raise before marking closed; finish FD lifecycle
+            # so PtyProcess.__del__ does not escalate to SIGKILL.
+            pty = getattr(child, "ptyproc", None)
+            if pty is not None and not getattr(pty, "closed", True):
+                try:
+                    pty.fileobj.close()
+                except Exception:
+                    pass
+                pty.fd = -1
+                pty.closed = True
+            try:
+                child.child_fd = -1
+                child.closed = True
+            except Exception:
+                pass
+        try:
+            log_file.close()
+        except Exception:
+            pass
+        if cleanup_err is not None:
+            raise cleanup_err
 
     print(f"\n=== 结束。完成 {completed_periods}/{turns} 月。Log: {log_path} ===")
     print("\n### 玩家(qwen) 侧 token：")
