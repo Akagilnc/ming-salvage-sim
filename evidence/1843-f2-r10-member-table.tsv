@@ -1,0 +1,25 @@
+class	member	kind	disposition	reason
+F2-R10-1	ming_sim/content.py::rescript_draft_prompt	field+load	DELETE	旧初拟独占；agents 改票不读；AST Attribute 生产消费者=0
+F2-R10-1	content/prompts/rescript_draft.md	exclusive_asset	DELETE	仅被已删加载绑定与措辞锁测试消费
+F2-R10-1	content/prompts/event_selector.md	exclusive_asset	DELETE	旧 simulator 候选情势挑选 prompt；零加载、零 py 引用
+F2-R10-1	tests/test_rescript_draft_656.py::_CANNED	dead_fixture	DELETE	模块内 Load=0；旧生成路径残留
+F2-R10-1	tests/test_rescript_draft_656.py::_retire_existing_actors	dead_fixture	DELETE	Load=0
+F2-R10-1	tests/test_rescript_draft_656.py::_add_character	dead_fixture	DELETE	Load=0
+F2-R10-1	tests/test_rescript_draft_656.py::_valid_item	dead_fixture	DELETE	Load=0；悬空 shape 夹具
+F2-R10-1	tests/test_rescript_draft_656.py::_legal_item+parametrize(mutate)	hanging_parametrize	DELETE	parametrize 挂在非 test helper；无消费者测试
+F2-R10-1	tests/test_advance_paths_atomic.py::test_submit_event_decision_binds_from_candidate_snapshot_without_event_id	retired_behavior_test	DELETE	保护已退役标题猜绑；session 接缝已删
+F2-R10-1	ming_sim/content.py::scene_agent_prompt	shared_prompt	RETAIN	registry.py getattr 真消费
+F2-R10-1	ming_sim/rescript_draft.py::normalize_*/rescript_layer_a_prompt_contract/_parse_rescript_json_strict	shared_module	RETAIN	session/agents/rescript_actions 现役
+F2-R10-1	ming_sim/db.py::save_rescript_drafts/list_rescript_drafts/save_resolve_context	shared_storage	RETAIN	批红/月链现役写读口
+F2-R10-1	ming_sim/content.py::faction_metrics	orphan_field	RETAIN_OUT_OF_CLASS	零消费者但非本类旧结算独占树（无 F2 删除消费者承接）
+F2-R10-2	tests/test_pay_order_override_653.py::test_central_hub_tier_order_and_old_arrears_unchanged_by_haircut	source_lock	DELETE	inspect.getsource；game=None 仍绿
+F2-R10-2	tests/test_rescript_draft_656.py::test_prompt_zero_numeric_instruction_is_positive_qualitative	wording_lock	DELETE	锁旧 prompt 措辞；同义改写即红
+F2-R10-2	tests/test_rescript_draft_656.py::test_657_s1… hasattr ROUTABLE/FANOUT	internal_absence_lock	DELETE	只锁内部符号缺席；保留 emitted⊂dossier 结构化断言
+F2-R10-2	tests/test_fiscal_substrate_bridge.py::test_budget_projection_passes_copied_settle_snapshots_to_fiscal_tick	identity_helper	DELETE	对象 identity；与 5047 外部快照契约重复；变异绿/外部红
+F2-R10-2	tests/test_fiscal_substrate_bridge.py::test_all_ming_settle_substrates_advance_with_observable_shadow_tlog	log_format_lock+dup	DELETE	tlog 前缀/条数/格式化数值锁；结构化部分与 advance_through_fixed_flows 重复
+F2-R10-2	tests/test_fiscal_substrate_bridge.py::test_shadow_spine_uses_batch_bridge_without_per_region_reload	mock_internal	DELETE	替换 bridge 只查 call_count+日志
+F2-R10-2	tests/test_qa_e1_numeric_presentation.py::note/internal/budget_key not-in after keyset	duplicate_after_keyset	DELETE	键集后同义否定；保留 set=={name,amount} 与工程词 HUD 负向
+F2-R10-2	tests/test_qa_e1_numeric_presentation.py::keyset+engineering token HUD	structured_negative	RETAIN	G1：确定性 HUD 契约；非模型正文
+F2-R10-2	tests/test_fiscal_substrate_bridge.py::test_budget_projection_preserves_persisted_fiscal_snapshots	external_contract	RETAIN	真实预算入口→持久账不变
+F2-R10-2	tests/test_fiscal_substrate_bridge.py::test_all_ming_settle_substrates_advance_through_fixed_flows	external_contract	RETAIN	真实 fixed_flows→落库结构化
+F2-R10-2	evidence/1843-w4merge-fixer-receipt.md:103	false_receipt	CORRECT	原「不恢复措辞/形状锁」与合并 diff 不符，已改正文

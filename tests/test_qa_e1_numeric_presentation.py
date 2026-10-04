@@ -87,9 +87,6 @@ def test_player_budget_payload_strips_engineering_notes(read_game):
         for direction in ("income", "expense"):
             for item in payload[account_name][direction]:
                 assert set(item) == {"name", "amount"}
-                assert "note" not in item
-                assert "internal" not in item
-                assert "budget_key" not in item
                 player_texts.append(str(item.get("name") or ""))
                 player_texts.append(str(item.get("amount") or ""))
     joined = "\n".join(player_texts)

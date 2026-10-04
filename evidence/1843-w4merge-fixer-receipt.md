@@ -100,7 +100,7 @@ $PY -m pytest \
 ### 为何测试改动是最低必要成本契约
 
 1. 派单范围=冲突涉及文件的聚焦测，不是全量 suite（#1185 / fix-packet）。
-2. 测试侧只做接缝对齐：属主改径（`army_needed`→`army_pay`）、不复活 F2 已删符号、不恢复 #1901 已清措辞/形状锁；不新增行为断言、不扩测面。
+2. 测试侧本意是接缝对齐（属主改径 `army_needed`→`army_pay`、不复活 F2 已删符号）。**事后纠正（#1843 F2-R10-2）**：合并 diff 实际恢复了非契约源码／措辞／内部结构锁及平行案（如 `inspect.getsource` 公式锁、`rescript_draft.md` 措辞锁、fiscal identity／tlog 形状锁）；不得再写「不恢复 #1901 已清措辞/形状锁」——该句与当时合并树不符。处置见本轮 `evidence/1843-f2-r10-fixer-receipt.md`。
 3. 删测仅当依赖已退役生产符号或与双方退役意图冲突（如 `army_detail` public-exits、`format_*_changes`、`turn_*_summary`、`generate_rescript_draft` 树）；保留底座现役契约测与 F2 现役改票路径。
 4. 七 `MING_SIM_*_BIN=/usr/bin/false` 为派单硬门（防真调模型）；本补证不重跑已绿聚焦。
 

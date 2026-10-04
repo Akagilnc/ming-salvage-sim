@@ -1,0 +1,19 @@
+........................................................................ [ 25%]
+........................................................................ [ 51%]
+........................................................................ [ 77%]
+................................................................         [100%]
+============================= slowest 10 durations =============================
+0.23s setup    tests/test_fiscal_substrate_bridge.py::test_fixed_flows_substrate_hub_failure_rolls_back_cutover_writes
+0.22s setup    tests/test_fiscal_substrate_bridge.py::test_liaodong_and_dongjiang_are_pure_military_pay_funnels
+0.17s setup    tests/test_fiscal_substrate_bridge.py::test_south_southwest_settle_tick_golden_and_bridge_persist[yunnan]
+0.14s setup    tests/test_fiscal_substrate_bridge.py::test_south_southwest_settle_tick_golden_and_bridge_persist[guizhou]
+0.14s setup    tests/test_fiscal_substrate_bridge.py::test_all_15_regular_provinces_first_tick_golden[guizhou]
+0.13s setup    tests/test_qa_e1_numeric_presentation.py::test_player_budget_payload_strips_engineering_notes
+0.13s setup    tests/test_fiscal_substrate_bridge.py::test_shaanxi_seed_is_relabelled_to_historical_shadow_scale
+0.13s setup    tests/test_fiscal_substrate_bridge.py::test_huguang_seed_stacks_jiangnan_surplus_with_chu_princely_due
+0.13s setup    tests/test_fiscal_substrate_bridge.py::test_all_15_regular_provinces_first_tick_golden[guangxi]
+0.13s setup    tests/test_fiscal_substrate_bridge.py::test_all_15_regular_provinces_first_tick_golden[henan]
+280 passed in 18.15s
+real 18.48
+user 8.35
+sys 6.94

@@ -1,0 +1,42 @@
+#1843 F2-R10 整类机械枚举命令（施工腿；工作树 Ming_LLM-1843-w5）
+底座 HEAD（施工前）: 4d25772aed61e63ca94cb64fa2dcda755b0890bf
+分支: ak-roles/issue-1843-w5-r6-f2
+判词末份末 payload: attachments/02-1843-judge-4d25772ae.json → payloads[-1]
+
+环境前缀（全部探针/测试）:
+MING_SIM_AGY_BIN=/usr/bin/false MING_SIM_CODEX_BIN=/usr/bin/false \
+MING_SIM_CLAUDE_BIN=/usr/bin/false MING_SIM_CURSOR_BIN=/usr/bin/false \
+MING_SIM_KIMI_BIN=/usr/bin/false MING_SIM_GROK_BIN=/usr/bin/false \
+MING_SIM_PI_BIN=/usr/bin/false PYTHONDONTWRITEBYTECODE=1
+
+--- F2-R10-1 谓词（类定义全文，未收窄）---
+类名: 旧结算／simulator 独占支持及专属测试退役未闭合
+方向: 沿旧消费者追清独占资产、加载绑定、夹具和失效行为测试；
+      保留现役 normalize、revise、prewrite 及共用存储。
+      不补回旧功能、不用裸 SQL 续命、不造扫描机制。
+
+枚举:
+1) GameContent *_prompt 字段 + load_text_asset 绑定；AST Attribute / getattr 生产消费者（excl content.py）
+2) content/prompts/*.md 相对 load 表：LOADED vs UNLOADED
+3) tests/test_rescript_draft_656.py 模块级符号 AST Load 计数；悬空 parametrize（decorator 挂非 test_）
+4) tests 中保护「无 event_id / 候选标题猜绑」的失效行为测（sample + 全仓名搜）
+5) 共享写口抽检：normalize_*/save_rescript_drafts/save_resolve_context/scene_agent getattr
+
+--- F2-R10-2 谓词（类定义全文，未收窄）---
+类名: 合并恢复非契约源码／措辞锁、内部结构测试及重复测试
+方向: 删除非契约源码／措辞锁、helper／内部结构案及重复案；
+      复用已有真实入口→外部结构化结果；保留必要结构化负向；
+      HUD 键集后同义否定按重复删；不另造证明测试／扫描机制；纠正不实回执。
+
+枚举:
+1) rg inspect.getsource tests/test_*.py
+2) 测试内 read content/prompts/*.md 并断言中文措辞
+3) assert not hasattr(...内部符号...) 针对已删词表符号
+4) fiscal_substrate_bridge：identity-only（is not original_*）/
+   成功路径 tlog 前缀·条数·格式化数值锁 /
+   mock bridge 只查 call_count+日志；与既有外部契约对照
+5) HUD：set(item)=={name,amount} 之后的 "note"/"internal"/"budget_key" not in 同义否定
+6) evidence/1843-w4merge-fixer-receipt.md 不实「不恢复措辞/形状锁」句
+
+成员表: evidence/1843-f2-r10-member-table.tsv
+复扫与聚焦: evidence/1843-f2-r10-fixer-receipt.md / evidence/1843-f2-r10-pytest.log

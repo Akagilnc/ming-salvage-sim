@@ -5,16 +5,11 @@
 from __future__ import annotations
 
 import json
-import sqlite3
-from pathlib import Path
 
 import pytest
 
-from ming_sim.applier import Provenance, RejectedItem, RejectionCollector
 from ming_sim.db import GameDB
 
-
-_CANNED = '{"economy_moves": [], "new_armies": [], "new_issues": [], "secret_order_updates": []}'
 
 # #1778 决定 3：生成批次的票拟必带参与名单（ADR 0053 三档，至少一名主办）。
 _ROSTER = [{"character_id": "毕自严", "tier": "主办", "role": "", "delegator_id": None}]
@@ -38,32 +33,6 @@ def _layer_a_opt(label: str = "拟", hint: str = "h", **kw) -> dict:
 
 def _two_opts(a: str = "甲", ha: str = "h1", b: str = "乙", hb: str = "h2", **kw) -> list:
     return [_layer_a_opt(label=a, hint=ha, **kw), _layer_a_opt(label=b, hint=hb, **kw)]
-
-def _retire_existing_actors(db) -> None:
-    db.conn.execute(
-        "UPDATE characters SET status='retired' WHERE status='active' AND power_id='ming' "
-        "AND (office LIKE '%首辅%' OR office LIKE '%掌印%')"
-    )
-
-def _add_character(db, name: str, office: str, faction: str, office_type: str = "内阁") -> None:
-    template = db.conn.execute("SELECT * FROM characters LIMIT 1").fetchone()
-    columns = [r[1] for r in db.conn.execute("PRAGMA table_info(characters)").fetchall()]
-    values = [template[c] for c in columns]
-    values[columns.index("name")] = name
-    values[columns.index("office")] = office
-    values[columns.index("office_type")] = office_type
-    values[columns.index("faction")] = faction
-    values[columns.index("status")] = "active"
-    values[columns.index("power_id")] = "ming"
-    db.conn.execute(
-        f"INSERT INTO characters ({','.join(columns)}) VALUES ({','.join('?' for _ in columns)})",
-        values,
-    )
-    db.conn.commit()
-
-# ---------------------------------------------------------------------------
-# F3.1 分拣人唯一规则
-# ---------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------
 # F2.1/F2.2 载体与字段映射
@@ -214,50 +183,6 @@ def test_repeated_overwrite_keeps_stable_synthetic_ids(game):
     assert [d["idx"] for d in decisions] == [0, 1]
 
 # ---------------------------------------------------------------------------
-# F3.3 原样不变式＋P4 输入侧定性投影＋prompt 正向措辞（机械验收）
-# ---------------------------------------------------------------------------
-
-def test_prompt_zero_numeric_instruction_is_positive_qualitative():
-    """P4 落 prompt 用正向表述，不写「不要显示数值」式负向句；其余承载事实/F2.3/
-    结构化契约的合法约束不得借机删除。"""
-    prompt = (Path(__file__).resolve().parents[1] / "content" / "prompts" / "rescript_draft.md") \
-        .read_text(encoding="utf-8")
-    assert "不要出现任何数字数值" not in prompt
-    assert "不要显示" not in prompt
-    assert "定性说法" in prompt            # 正向定性措辞在
-    assert "不得虚构" in prompt            # 事实约束保留
-    assert "不许凑数" in prompt            # F2.3 约束保留
-    assert "只输出一个 JSON object" in prompt  # 结构化契约保留
-
-# ---------------------------------------------------------------------------
-# shape 校验＋权威快照绑定（F2.2/F2.3/F2.5）
-# ---------------------------------------------------------------------------
-
-def _valid_item(i: int) -> dict:
-    return {
-        "title": f"条目{i}", "context": f"导语{i}",
-        "options": _two_opts("甲拟", "所安者饥民", "乙拟", "所拂者小农"),
-    }
-
-@pytest.mark.parametrize("mutate", [
-    lambda item: item.update(title=""),
-    lambda item: item.update(title="   "),
-    lambda item: item.pop("title"),
-    lambda item: item.update(context=""),
-    lambda item: item.pop("context"),
-    lambda item: item["options"].__setitem__(0, {"label": "a"}),      # hint 缺失
-    lambda item: item["options"].__setitem__(0, {"label": "", "hint": "h"}),
-    lambda item: item["options"].__setitem__(0, {"hint": "h"}),       # label 缺失
-])
-
-def _legal_item() -> dict:
-    return {
-        "title": "陕西告饥",
-        "context": "秦地赤旱千里。",
-        "options": _two_opts("发帑赈济", "所安者饥民", "缓征加赈", "先赈后征"),
-    }
-
-# ---------------------------------------------------------------------------
 # F1.3/F2.5 崩溃恢复：不重跑票拟步（持久层读回）＋restore 往返无损
 # ---------------------------------------------------------------------------
 
@@ -388,15 +313,12 @@ def test_657_s1_schema_columns_and_no_banned_fields(game):
 
 def test_657_s1_rescript_emitted_set_subset_of_dossier(game):
     """A12 前置（#1778 后）：只剩 emitted 闭集 ⊂ DOSSIER；七类 routable 已整体取消。"""
-    import ming_sim.decree_vocabulary as dv
     from ming_sim.decree_vocabulary import (
         DOSSIER_ACTION_TYPES,
         RESCRIPT_EMITTED_DOSSIER_ACTION_TYPES,
     )
     assert RESCRIPT_EMITTED_DOSSIER_ACTION_TYPES <= DOSSIER_ACTION_TYPES
     assert "dismiss_assignment" in RESCRIPT_EMITTED_DOSSIER_ACTION_TYPES
-    assert not hasattr(dv, "RESCRIPT_ROUTABLE_ACTION_TYPES")
-    assert not hasattr(dv, "NATIONAL_FANOUT_ACTION_TYPES")
     _ = game  # fixture keeps DB init path green
 
 def test_657_s1_derive_draft_capability_stable_and_sensitive():
