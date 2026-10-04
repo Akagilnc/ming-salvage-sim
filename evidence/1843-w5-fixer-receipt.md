@@ -138,4 +138,7 @@ MING_SIM_PI_BIN=/usr/bin/false PYTHONDONTWRITEBYTECODE=1 \
 
 ## 最终 commit
 
-（提交后由 git 回填 hash；标题前缀 `ak-roles:`）
+- 分支：`ak-roles/issue-1843-w5-r11-f2`
+- hash：`522ded2ef2a4be87fe247bef61e7979ff6465cf3`
+- 标题：`ak-roles: fix(#1843) retire F2-R11 old-save trees and non-contract test locks`
+- 工作树干净；未 push；未合并；未关票。
