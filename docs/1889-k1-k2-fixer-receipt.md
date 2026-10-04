@@ -1,8 +1,8 @@
 # #1889 修内司回执：K1 / K2（删简复用，非加诊断框架）
 
-派单：`~/.ak-roles/books/Ming_LLM/unbound/runs/01a10813-895f-7b5f-a223-2e7879189496@fixer/fix-packet.md`  
-判词附件（payloads **末份**为准）：`attachments/01-1889-judge-11da7ae74.json`  
-上轮纠偏 commit：`2a9f164c4`；本轮独立纠正后 HEAD 见 git。  
+派单：`~/.ak-roles/books/Ming_LLM/unbound/runs/01a10813-895f-7b5f-a223-2e7879189496@fixer/fix-packet.md`
+判词附件（payloads **末份**为准）：`attachments/01-1889-judge-11da7ae74.json`
+上轮纠偏 commit：`2a9f164c4`；本轮生产纠正后扫描快照 HEAD=`04fc8d377add8ce8639eada1843f8c78990aeba7`。
 本文件是施工证据，不另立 authority。
 
 官方方向（删简 / 复用，不造轮）：
@@ -22,7 +22,7 @@
 | 以零调用删 `PersonLogStore.for_person/by_origin`、`TextualFactStore.pointing_at`、`AffairStore.experiences/origin_refs/point_issue`、`CharacterKnowledgeStore.public_events_for_turn/sources_for_turn`、`DossierStore.pending_directive_*` | **精确恢复**（自 `7c25c5cae` 方法体手贴回，非 `git checkout`）；零调用≠消费者已退役；票面人物经历 / 文字事实挂对象 / 事务关联 / 公私知识 / pending 旨意职责仍在 |
 | `parse_issue_id` 改 `int(rest)`、`parse_dossier_id` 复用 `parse_origin_ref` → 接受 `+1`/`01`/内部空格/全角数字 | **撤回**：`breach_plea` 恢复严格 `^dossier:([1-9][0-9]*)$` / `^issue:([1-9][0-9]*)$` 唯一一份；`credit_events`/`due_review` 只 import `parse_*`，不另立 RE |
 | fund/`_issue_refs_strict` 的 `target_id` 误改走 `parse_issue_id` | **撤回**为原 `startswith("issue:")` + `int(split)`；与严格 origin_ref 解析解耦 |
-| 回执复扫数字写 3546/176/60，与当时 stdout 3566/195/61 不符 | **本轮重跑枚举，以 stdout 为准写回执**（见下表） |
+| 回执曾写施工前/旧复扫数字（含 3566），与扫描快照 `04fc8d377` stdout 不符 | **本轮对明确扫描 HEAD 重跑 `--write`，以 stdout 为准写回执**（见下表） |
 | 测试报告把两道命令的 passed 混写、且未写全命令 | **分列两道完整命令 + 输出 + 时长** |
 
 未恢复（已有退役证据，保持删）：`GameDB.army_detail` / `ArmyStore.read_army_detail`（tools 消费者已删；materials 改定性名册）、`list_night_promulgated_directives`/`directives_by_ids`、`ReignStateStore` debug 表 CRUD / `rollback_chat_turn_ids_for_messages`。
@@ -35,7 +35,7 @@
 python3 scripts/1889_k1_k2_enumerate.py --write
 ```
 
-全集：`git ls-files` 全部 `*.py`（含 `main.py`/`launcher.py`/`web_app.py`/`server/`/`scripts/`/`spike_settle_tick.py`）+ 测试 `tests/**`；另登记 tracked web vitest `*.{test,spec}.{ts,tsx}`（26，本票非持久职责，仅宇宙覆盖）。  
+全集：`git ls-files` 全部 `*.py`（含 `main.py`/`launcher.py`/`web_app.py`/`server/`/`scripts/`/`spike_settle_tick.py`）+ 测试 `tests/**`；另登记 tracked web vitest `*.{test,spec}.{ts,tsx}`（26，本票非持久职责，仅宇宙覆盖）。
 删除入口：`fa0175a26..HEAD` ∪ `ddf53881f..HEAD` 的 `-def`；持久消费者 = `ming_sim/db.py` 或 `ming_sim/entities/**/store.py`；真正已删 = 持久子集且 HEAD 无同名定义。
 
 落盘：
@@ -46,12 +46,14 @@ python3 scripts/1889_k1_k2_enumerate.py --write
 | `docs/1889-k1-k2-members.tsv` | Store/GameDB + SQL DROP +（ming_sim 内）同形常量 |
 | `docs/1889-k1-k2-k2-hits.tsv` | 测试交叉（call/patch/hasattr/meta/bytecode/web） |
 
-### 复扫计数（本轮纠正后 stdout，2026-10-05）
+### 复扫计数（扫描快照 `04fc8d377add8ce8639eada1843f8c78990aeba7`，stdout，2026-10-05）
+
+扫描命令：`python3 scripts/1889_k1_k2_enumerate.py --write`（工作树生产/测试与该 SHA 一致；其后若只改文档，生产测试不变）。
 
 ```text
 git-tracked py=383 tests=229 web_tests=26
 Store/GameDB methods=1219
-deleted union names=3566 truly_deleted_persistence=187
+deleted union names=3558 truly_deleted_persistence=187
 K1 members=1219 (unref_store=10 unref_gamedb=1 dup_const=0)
 K2 hits=60
 wrote docs/1889-k1-k2-*.tsv
@@ -59,9 +61,10 @@ wrote docs/1889-k1-k2-*.tsv
 
 | 项 | 值 |
 |---|---|
+| 扫描快照 SHA | `04fc8d377add8ce8639eada1843f8c78990aeba7` |
 | git-tracked py | 383（tests=229；web_tests=26） |
 | Store/GameDB 方法 | 1219 |
-| 删除 union 名 | 3566 |
+| 删除 union 名 | 3558（勿用施工前 3566） |
 | 真正已删持久名 | 187 |
 | K1 members | 1219（unref_store=10 / unref_gamedb=1 / dup_const=0） |
 | `_DOSSIER_REF_RE`/`_ISSUE_REF_RE` 定义份数 | **各 1**（仅 `breach_plea.py`；credit/due 无本地 RE） |
@@ -91,7 +94,7 @@ wrote docs/1889-k1-k2-*.tsv
 | `dossier:+1` / `dossier:01` / `dossier: 1` | — | — | **拒** | 曾接受 |
 | `issue:0` / `dossier:0` / 空 / `affair:1` | 拒 | 拒 | 拒 | 拒 |
 
-结论：本轮 `parse_*` 与旧严格 RE **零 mismatch**；宽松实现在 `+1`/`01`/内部空格/全角数字上越权放宽已纠正。  
+结论：本轮 `parse_*` 与旧严格 RE **零 mismatch**；宽松实现在 `+1`/`01`/内部空格/全角数字上越权放宽已纠正。
 `target_id` 分支仍按原 `startswith`+`int(split)`（可收 `issue:+1`/`01`），与严格 `parse_issue_id` 分离。
 
 ### 票面职责接口（静态未引用 → **留/已恢复**，非猜删）
@@ -155,14 +158,11 @@ env \
     tests/test_new_game_smoke.py
 ```
 
-输出：
+输出（主座实际七 BIN=/usr/bin/false 运行回执 A 全命令；本轮只写入证据，不重跑）：
 
 ```text
 ..........................                                               [100%]
-26 passed in 1.71s
-real 2.20
-user 1.57
-sys 0.45
+26 passed in 2.07s
 ```
 
 ### 命令 B（qa_a3 过滤；`-k` 只作用于本文件）
