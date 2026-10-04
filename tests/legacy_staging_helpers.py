@@ -125,5 +125,3 @@ def yuan_row(db, name="袁崇焕"):
         "transit_speed_factor, transit_start_turn FROM characters WHERE name=?",
         (name,),
     ).fetchone()
-
-

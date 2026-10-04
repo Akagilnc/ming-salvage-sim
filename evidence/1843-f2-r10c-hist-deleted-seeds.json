@@ -1,0 +1,307 @@
+[
+  {
+    "symbol": "RESCRIPT_OPTION_FIELD_HEAL_RETRIES",
+    "sha": "7a96584abf67d0a4817752dbcde5a36b5835a034",
+    "subject": "ak-roles: fix(#1843) retire test-only settlement/simulator support trees (F2 R5)"
+  },
+  {
+    "symbol": "RESCRIPT_OPTION_FIELD_HEAL_RETRIES",
+    "sha": "b1900c284fe1d889fc8f630ec7a42622554904a5",
+    "subject": "ak-roles: complete continuation escape, prose preservation and retired closure sweep"
+  },
+  {
+    "symbol": "RESCRIPT_OPTION_FIELD_HEAL_RETRIES",
+    "sha": "7ddcf51351defa3ab0ec71a4916ee1a0452b2fa7",
+    "subject": "ak-roles: feat(#1847): route raw rescripts through the month chain"
+  },
+  {
+    "symbol": "_apply_option_heal",
+    "sha": "7ddcf51351defa3ab0ec71a4916ee1a0452b2fa7",
+    "subject": "ak-roles: feat(#1847): route raw rescripts through the month chain"
+  },
+  {
+    "symbol": "army_detail",
+    "sha": "3faebeb13dd28ffa221b336c6d48c24b02102ee8",
+    "subject": "db优化"
+  },
+  {
+    "symbol": "bind_decisions_to_candidate_events",
+    "sha": "b85cb3f16536aae7ff172fb22a848d12c717771d",
+    "subject": "ak-roles: fix(#1843) retire obsolete settlement/simulator support tree (F2)"
+  },
+  {
+    "symbol": "bind_decisions_to_candidate_events",
+    "sha": "00e2d9a44828cd369e9624e8c263f85ebd5934bf",
+    "subject": "ak-roles: fix #1847 N6 prose transport, N7 stderr body, N9 retired closure"
+  },
+  {
+    "symbol": "bind_decisions_to_candidate_events",
+    "sha": "b1900c284fe1d889fc8f630ec7a42622554904a5",
+    "subject": "ak-roles: complete continuation escape, prose preservation and retired closure sweep"
+  },
+  {
+    "symbol": "build_fiscal_fact_brief",
+    "sha": "c1e375bfaa5a851810bf748a092aea9684c5a8a8",
+    "subject": "ak-roles: fix(#1891): retire post-merge C1 orphans and restore HITL storage asserts"
+  },
+  {
+    "symbol": "build_fiscal_fact_brief",
+    "sha": "e570e17ac26ba2330419aee3d0bc4c5cf4b4ffdd",
+    "subject": "ak-roles: trim #1900 redundant semantic evidence and realign J6 auth"
+  },
+  {
+    "symbol": "build_fiscal_fact_brief",
+    "sha": "b85cb3f16536aae7ff172fb22a848d12c717771d",
+    "subject": "ak-roles: fix(#1843) retire obsolete settlement/simulator support tree (F2)"
+  },
+  {
+    "symbol": "build_fiscal_fact_brief",
+    "sha": "b1900c284fe1d889fc8f630ec7a42622554904a5",
+    "subject": "ak-roles: complete continuation escape, prose preservation and retired closure sweep"
+  },
+  {
+    "symbol": "building_detail",
+    "sha": "3faebeb13dd28ffa221b336c6d48c24b02102ee8",
+    "subject": "db优化"
+  },
+  {
+    "symbol": "candidate_events",
+    "sha": "b85cb3f16536aae7ff172fb22a848d12c717771d",
+    "subject": "ak-roles: fix(#1843) retire obsolete settlement/simulator support tree (F2)"
+  },
+  {
+    "symbol": "candidate_events",
+    "sha": "00e2d9a44828cd369e9624e8c263f85ebd5934bf",
+    "subject": "ak-roles: fix #1847 N6 prose transport, N7 stderr body, N9 retired closure"
+  },
+  {
+    "symbol": "candidate_events",
+    "sha": "b1900c284fe1d889fc8f630ec7a42622554904a5",
+    "subject": "ak-roles: complete continuation escape, prose preservation and retired closure sweep"
+  },
+  {
+    "symbol": "candidate_events",
+    "sha": "2879e69e0461107c0266d249ba016318cc54124e",
+    "subject": "ak-roles: #1838 reopen 删旁白 beat 整层，戏文只由场景 LLM 写"
+  },
+  {
+    "symbol": "candidate_events",
+    "sha": "81c4d209889fbaa12508cbceec0db052a06f55e6",
+    "subject": "ak-roles: fix: connect world-segment material reads and drop extractor leftovers"
+  },
+  {
+    "symbol": "candidate_events",
+    "sha": "9e931e5726ccd7a29af3eb8a10827b0d4023c2ee",
+    "subject": "恢复两段式推演"
+  },
+  {
+    "symbol": "candidate_events",
+    "sha": "e6d0504e6ac1f415655e4f5854bd047b76e7d7b3",
+    "subject": "提交"
+  },
+  {
+    "symbol": "candidate_events",
+    "sha": "9f3436a52b4a44a97a95b9f0c2f466413afff88e",
+    "subject": "提交"
+  },
+  {
+    "symbol": "clear_resolve_context",
+    "sha": "45b11dc7a856cd25d00505bcfae94fc9b95d8de1",
+    "subject": "ak-roles: #1871 reopen 删读心/分类器/故事抽取残留/递话 agent"
+  },
+  {
+    "symbol": "clear_resolve_context",
+    "sha": "242837870ef6ed3ebc0196baee80adc2d0af4838",
+    "subject": "ak-roles: #1843 reopen 删旧结算核与 turn_extractions，修回 #670/#651"
+  },
+  {
+    "symbol": "clear_resolve_context",
+    "sha": "ff63db72b3a4f8384ec4370c41415ad1ec19b22d",
+    "subject": "ak-roles: #1846 reopen — 删除 ready=1 持久 delta 与重放整套"
+  },
+  {
+    "symbol": "clear_resolve_context",
+    "sha": "3faebeb13dd28ffa221b336c6d48c24b02102ee8",
+    "subject": "db优化"
+  },
+  {
+    "symbol": "command_power_rank",
+    "sha": "7a96584abf67d0a4817752dbcde5a36b5835a034",
+    "subject": "ak-roles: fix(#1843) retire test-only settlement/simulator support trees (F2 R5)"
+  },
+  {
+    "symbol": "create_rescript_draft_agent",
+    "sha": "e570e17ac26ba2330419aee3d0bc4c5cf4b4ffdd",
+    "subject": "ak-roles: trim #1900 redundant semantic evidence and realign J6 auth"
+  },
+  {
+    "symbol": "discard_pending_directives",
+    "sha": "45b11dc7a856cd25d00505bcfae94fc9b95d8de1",
+    "subject": "ak-roles: #1871 reopen 删读心/分类器/故事抽取残留/递话 agent"
+  },
+  {
+    "symbol": "execution_distortion_weight",
+    "sha": "7a96584abf67d0a4817752dbcde5a36b5835a034",
+    "subject": "ak-roles: fix(#1843) retire test-only settlement/simulator support trees (F2 R5)"
+  },
+  {
+    "symbol": "faction_report",
+    "sha": "3f73fb3c13fd943d73a23806620de75bd35652dd",
+    "subject": "ak-roles: #1837 reopen 删旧大臣 agent，转译承接禁摊派/荐人/查访/催办/行程语气"
+  },
+  {
+    "symbol": "faction_report",
+    "sha": "075c5e05c676d6867bc8c087f5028b6b61e93771",
+    "subject": "ak-roles: fix(#1832): retract court domain and duplicate hearing cap"
+  },
+  {
+    "symbol": "faction_report",
+    "sha": "3faebeb13dd28ffa221b336c6d48c24b02102ee8",
+    "subject": "db优化"
+  },
+  {
+    "symbol": "generate_rescript_draft",
+    "sha": "7a96584abf67d0a4817752dbcde5a36b5835a034",
+    "subject": "ak-roles: fix(#1843) retire test-only settlement/simulator support trees (F2 R5)"
+  },
+  {
+    "symbol": "generate_rescript_draft",
+    "sha": "4acbf05fce774f46002b0eb8ef87941db5382c34",
+    "subject": "ak-roles: fix(#1902): drop D5 scanners and repair real-entry proofs"
+  },
+  {
+    "symbol": "generate_rescript_draft",
+    "sha": "b1900c284fe1d889fc8f630ec7a42622554904a5",
+    "subject": "ak-roles: complete continuation escape, prose preservation and retired closure sweep"
+  },
+  {
+    "symbol": "generate_rescript_draft",
+    "sha": "7ddcf51351defa3ab0ec71a4916ee1a0452b2fa7",
+    "subject": "ak-roles: feat(#1847): route raw rescripts through the month chain"
+  },
+  {
+    "symbol": "generate_rescript_draft",
+    "sha": "d0afb1d4369155f6e550f2b2082c04a3e8f056d7",
+    "subject": "ak-roles: fix: retire the five-module extractor settlement path"
+  },
+  {
+    "symbol": "get_pending_promulgation_verdicts",
+    "sha": "ef9166578a05fcd324c4a542a68614e7d058c1f7",
+    "subject": "ak-roles: align phase2 test boundaries and finish repository retirement sweep"
+  },
+  {
+    "symbol": "list_night_promulgated_directives",
+    "sha": "45b11dc7a856cd25d00505bcfae94fc9b95d8de1",
+    "subject": "ak-roles: #1871 reopen 删读心/分类器/故事抽取残留/递话 agent"
+  },
+  {
+    "symbol": "list_promulgated_directives",
+    "sha": "45b11dc7a856cd25d00505bcfae94fc9b95d8de1",
+    "subject": "ak-roles: #1871 reopen 删读心/分类器/故事抽取残留/递话 agent"
+  },
+  {
+    "symbol": "pending_promulgation_verdicts",
+    "sha": "ef9166578a05fcd324c4a542a68614e7d058c1f7",
+    "subject": "ak-roles: align phase2 test boundaries and finish repository retirement sweep"
+  },
+  {
+    "symbol": "rescript_draft",
+    "sha": "138f8b714cacb9d9619e6b3a094c7961a4d56979",
+    "subject": "ak-roles: fix(#1902): drop permanent F1–F4 scanners and clear class remnants"
+  },
+  {
+    "symbol": "rescript_draft",
+    "sha": "e570e17ac26ba2330419aee3d0bc4c5cf4b4ffdd",
+    "subject": "ak-roles: trim #1900 redundant semantic evidence and realign J6 auth"
+  },
+  {
+    "symbol": "rescript_draft",
+    "sha": "374f02d7f83ea7de0655dd903db3d0bedf1c97da",
+    "subject": "ak-roles: close #1900 J6 source semantic disposition and confirmation retire"
+  },
+  {
+    "symbol": "rescript_draft",
+    "sha": "7a96584abf67d0a4817752dbcde5a36b5835a034",
+    "subject": "ak-roles: fix(#1843) retire test-only settlement/simulator support trees (F2 R5)"
+  },
+  {
+    "symbol": "rescript_draft",
+    "sha": "4acbf05fce774f46002b0eb8ef87941db5382c34",
+    "subject": "ak-roles: fix(#1902): drop D5 scanners and repair real-entry proofs"
+  },
+  {
+    "symbol": "rescript_draft",
+    "sha": "b1900c284fe1d889fc8f630ec7a42622554904a5",
+    "subject": "ak-roles: complete continuation escape, prose preservation and retired closure sweep"
+  },
+  {
+    "symbol": "rescript_draft",
+    "sha": "7ddcf51351defa3ab0ec71a4916ee1a0452b2fa7",
+    "subject": "ak-roles: feat(#1847): route raw rescripts through the month chain"
+  },
+  {
+    "symbol": "rescript_draft",
+    "sha": "2879e69e0461107c0266d249ba016318cc54124e",
+    "subject": "ak-roles: #1838 reopen 删旁白 beat 整层，戏文只由场景 LLM 写"
+  },
+  {
+    "symbol": "rescript_draft",
+    "sha": "d0afb1d4369155f6e550f2b2082c04a3e8f056d7",
+    "subject": "ak-roles: fix: retire the five-module extractor settlement path"
+  },
+  {
+    "symbol": "rescript_draft",
+    "sha": "3933ece660bce6046d0a28289d8979d5ebefb86d",
+    "subject": "ak-roles: fix(#1620): strict army identity, DRY xiexang, recovery scan soft-fail"
+  },
+  {
+    "symbol": "rescript_draft",
+    "sha": "4666c5f8efb0252e1e8e5e72df2bdbf69a07e187",
+    "subject": "ak-roles: fix(#1620): strict army identity, DRY xiexang, recovery scan soft-fail"
+  },
+  {
+    "symbol": "season_simulator_prompt",
+    "sha": "b968a9c6888871ad90668cabc90a65075ae5d41a",
+    "subject": "sandcastle: test: retain fixture audit and remove text pins"
+  },
+  {
+    "symbol": "season_simulator_prompt",
+    "sha": "ab795b850059c85e4da86bccac7d0ba91bf20950",
+    "subject": "sandcastle: test: retain fixture audit and remove text pins"
+  },
+  {
+    "symbol": "select_triage_actor",
+    "sha": "7ddcf51351defa3ab0ec71a4916ee1a0452b2fa7",
+    "subject": "ak-roles: feat(#1847): route raw rescripts through the month chain"
+  },
+  {
+    "symbol": "turn_army_summary",
+    "sha": "3faebeb13dd28ffa221b336c6d48c24b02102ee8",
+    "subject": "db优化"
+  },
+  {
+    "symbol": "turn_region_summary",
+    "sha": "3faebeb13dd28ffa221b336c6d48c24b02102ee8",
+    "subject": "db优化"
+  },
+  {
+    "symbol": "validate_delta_shape",
+    "sha": "ef8e19baf9559f2fd3284db4cce393f1ae8b09e7",
+    "subject": "ak-roles: #1846 reopen fix — 删 driver 与 ready 旧列/测资"
+  },
+  {
+    "symbol": "validate_delta_shape",
+    "sha": "242837870ef6ed3ebc0196baee80adc2d0af4838",
+    "subject": "ak-roles: #1843 reopen 删旧结算核与 turn_extractions，修回 #670/#651"
+  },
+  {
+    "symbol": "validate_delta_shape",
+    "sha": "ff63db72b3a4f8384ec4370c41415ad1ec19b22d",
+    "subject": "ak-roles: #1846 reopen — 删除 ready=1 持久 delta 与重放整套"
+  },
+  {
+    "symbol": "validate_rescript_draft_items",
+    "sha": "7ddcf51351defa3ab0ec71a4916ee1a0452b2fa7",
+    "subject": "ak-roles: feat(#1847): route raw rescripts through the month chain"
+  }
+]

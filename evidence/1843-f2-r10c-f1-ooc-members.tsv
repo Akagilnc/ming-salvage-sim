@@ -1,0 +1,31 @@
+class	member	kind	purpose	hist_check	disposition	basis
+F2-R10-1	ming_sim/content.py::faction_metrics	orphan_content_field	GameContent 字段：load 时赋值为 tuple(factions.keys())	初始提交 de0d7ad41 起仅 content.py 声明+赋值；全历史无任何 .faction_metrics 读取方（含 Initial 当时亦无 simulator/settlement 消费者）。现役派系路径读 content.factions（session/db），不读本字段。	RETAIN_OUT_OF_CLASS	非已退役旧结算/simulator 消费者独占支持树成员；属从未接线的内容旁路字段。F2-R10-1 不以「git log -S 只有 Initial」单独结案，而是查实 Initial 当时亦无旧消费者。不借本类清扫一般孤儿字段。
+F2-R10-1	tests/dossier_test_helpers.py::LIAO_PAY_COVERT_TASK	dead_const	辽饷密令任务常量 dict（kind/axes/delivery）	全仓仅定义；无 Load；与 hist 退役种子无引用链	RETAIN_OUT_OF_CLASS	密令/案卷测试残留常量，非旧 simulator 独占支持树；不借本类清扫一般零引用常量。
+F2-R10-1	tests/test_affairs_1831.py::PROGRESS	dead_const	事务进度叙述字符串「护送银两已出京…」	本文件仅赋值；同名 PROGRESS_BANDS 在 ming_sim/qualitative.py 为另一符号	RETAIN_OUT_OF_CLASS	affairs 测试残留文案常量，无旧结算消费者承接；类外。
+F2-R10-1	tests/test_audience_background.py::_assert_next_accepted	dead_helper	断言 background stream 下一条为 accepted 事件	定义后零 Load；现役同文件测试改用内联断言	RETAIN_OUT_OF_CLASS	召对 background 流测试 helper，与旧 simulator 独占树无关。
+F2-R10-1	tests/test_audience_presence_500.py::_session_double	dead_helper	构造最小 GameSession 双（db/state/content/registry）	定义后零 Load	RETAIN_OUT_OF_CLASS	召对 presence 测试壳，非旧结算独占支持。
+F2-R10-1	tests/test_audience_presence_500.py::_tool_registry	dead_helper	假 Agent/Registry，固定 tools 列表回放	定义后零 Load	RETAIN_OUT_OF_CLASS	召对工具注册测试双，类外。
+F2-R10-1	tests/test_centrifuge_ledger_690.py::_SENTINEL_DEBT	dead_sentinel	离心账探针哨兵常量 424242	六哨兵均仅赋值零引用	RETAIN_OUT_OF_CLASS	财政离心账测试哨兵，非旧 simulator 树。
+F2-R10-1	tests/test_centrifuge_ledger_690.py::_SENTINEL_WARINESS	dead_sentinel	哨兵 434343	仅赋值	RETAIN_OUT_OF_CLASS	同上。
+F2-R10-1	tests/test_centrifuge_ledger_690.py::_SENTINEL_OVERDRAW	dead_sentinel	哨兵 444444	仅赋值	RETAIN_OUT_OF_CLASS	同上。
+F2-R10-1	tests/test_centrifuge_ledger_690.py::_SENTINEL_LEG	dead_sentinel	哨兵 454545	仅赋值	RETAIN_OUT_OF_CLASS	同上。
+F2-R10-1	tests/test_centrifuge_ledger_690.py::_SENTINEL_AMOUNT	dead_sentinel	哨兵 464646	仅赋值	RETAIN_OUT_OF_CLASS	同上。
+F2-R10-1	tests/test_centrifuge_ledger_690.py::_SENTINEL_BASE	dead_sentinel	哨兵 474747	仅赋值	RETAIN_OUT_OF_CLASS	同上。
+F2-R10-1	tests/test_decree_dossiers_571.py::_complete_session	dead_helper	在 fixture 真 DB 上装配 GameSession（_bind_all_content）	定义后零 Load；同文件现役测试直接用 game fixture	RETAIN_OUT_OF_CLASS	案卷测试 session 装配残留，非旧结算独占树。
+F2-R10-1	tests/test_fiscal_levy_effect.py::_settled_land_by_region	dead_helper	按省汇总官民田（读 substrate settle payload）	定义后零 Load；名称含 settle 但是省级财政 substrate，非旧 simulator	RETAIN_OUT_OF_CLASS	现役财政征税效果测试残留 helper；不属于已退役旧结算消费者支持树。
+F2-R10-1	tests/test_qa_h1_seed_data.py::_bajiu_names	dead_helper	从 characters 筛 office 含「罢居」的人名集合	定义后零 Load	RETAIN_OUT_OF_CLASS	种子数据 QA helper，类外。
+F2-R10-1	tests/test_refugee_loop_652.py::_reflux	dead_helper	过滤 reason==回流 的 transfers	定义后零 Load	RETAIN_OUT_OF_CLASS	流民回流测试过滤残留，类外。
+F2-R10-1	tests/test_structured_decree_contract_1624.py::_month_end_ctx	dead_helper	构造月末材料目录上下文 dict（issues/region/army targets）	定义后零 Load	RETAIN_OUT_OF_CLASS	结构化旨意契约测试上下文壳；服务现役材料目录，非旧 simulator 独占。
+F2-R10-1	tests/test_structured_decree_contract_1624.py::_army_none_legal_item	dead_helper	纠错轮合法项：军目标 + locality_scope=none	定义后零 Load	RETAIN_OUT_OF_CLASS	结构化旨意合法项工厂残留，类外。
+F2-R10-1	tests/test_transit_countdown_668.py::_assert_ledger_match	dead_helper	断言人物 transit 账本字段与 expected 五元组一致	本符号零 Load；勿与 test_deformation_dual_rail_622._assert_ledger_matches（多一个 s）混淆	RETAIN_OUT_OF_CLASS	路程倒计时测试断言 helper 残留，类外。
+F2-R10-1	tests/test_cli_backend.py::_patch_backend	dead_helper	monkeypatch cb._run_backend 返回固定 payload	仅定义；上轮机械分类误标 DELETE	RETAIN_OUT_OF_CLASS	CLI 后端探针 helper；无 hist 退役结算消费者独占链。纠正：不能因零引用+关键词误收入本类。
+F2-R10-1	tests/test_cli_play_turn.py::_noop_atomic	dead_helper	空 atomic 上下文管理器	仅定义	RETAIN_OUT_OF_CLASS	CLI play_turn 测试空壳，类外。
+F2-R10-1	tests/test_enter_settlement_period_1235.py::_terminal_sse	dead_helper	解析 HTTP SSE 末块 event/data	仅定义；文件名含 settlement 但是现役 enter-settlement-period API	RETAIN_OUT_OF_CLASS	现役过月 SSE 解析 helper 残留；非已退役旧 simulator 支持树。
+F2-R10-1	tests/test_month_loop_tracer_1468.py::_install_canned_minister	dead_helper	安装 _CannedMinisterAgent 到 scene agent	仅定义；勿与 test_new_game_write_path_1749._install_canned_minister_factory 混淆	RETAIN_OUT_OF_CLASS	月环 tracer 召对桩残留；服务现役月环，非旧 simulator 独占。
+F2-R10-1	tests/test_month_loop_tracer_1468.py::_month_ord_of	dead_helper	year*12+period 跨年安全月序	仅定义	RETAIN_OUT_OF_CLASS	月环 tracer 工具函数残留，类外。
+F2-R10-1	tests/test_month_loop_tracer_1468.py::_play_one_month	dead_helper	召对→拟旨→流式颁诏推进一月	仅定义；现役测试改用其它编排	RETAIN_OUT_OF_CLASS	现役月环编排 helper 残留，非旧结算独占树。
+F2-R10-1	tests/test_month_loop_tracer_1468.py::_setup_open_night_participant	dead_helper	new_game+开夜+参与者	仅定义	RETAIN_OUT_OF_CLASS	召对夜测试布置残留，类外。
+F2-R10-1	tests/test_month_loop_tracer_1468.py::_assert_court_break_closed	dead_helper	断言 court_break 与夜关闭外部契约	仅定义	RETAIN_OUT_OF_CLASS	退朝外部契约断言残留，类外。
+F2-R10-1	tests/test_pihong_dossier_1490.py::_658_session	dead_helper	最小 GameSession 壳供 chat/add_directive	仅定义	RETAIN_OUT_OF_CLASS	批红案卷 #658 场景壳残留；现役批红路径，非旧 simulator。
+F2-R10-1	tests/test_pihong_dossier_1490.py::_1778_raw_options	dead_helper	错误包 turn1 丢弃选项工厂	仅定义	RETAIN_OUT_OF_CLASS	#1778 票面选项夹具残留，类外。
+F2-R10-1	tests/test_pihong_dossier_1490.py::_1778_plant_and_follow	dead_helper	落桌→follow_draft/midzhi 成案布置	仅定义	RETAIN_OUT_OF_CLASS	#1778 批红布置残留；外部结构化结果断言路径，非旧结算独占。
