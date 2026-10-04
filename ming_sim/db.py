@@ -17625,6 +17625,66 @@ class GameDB:
         tlog(f"[pending_actions] 落库失败上抛 id={pa['id']} {pa['kind']}/{pa['action']}：{exc}")
         raise
 
+    def _run_pending_action_commit_lifecycle(
+        self,
+        state: GameState,
+        pa: Dict[str, object],
+        payload: Dict[str, object],
+        *,
+        content=None,
+        rejection_collector=None,
+        owns_transaction: Optional[bool] = None,
+        restore_on_rollback=None,
+        savepoint_prefix: str = "pending_action_apply",
+    ) -> bool:
+        """暂存提交的唯一共同生命周期（#1853 J4-R）。
+
+        atomic → savepoint → apply → committed/failed → 异常分流 → release → collector flush。
+        拟旨输入准备与 office 内存恢复由调用方在前后处理；本方法不复制第二套生命周期。
+        返回 True 表示已 committed；软失败返回 False；真异常经既有出口上抛。
+        """
+        if owns_transaction is None:
+            owns_transaction = not (
+                bool(getattr(self.conn, "_commit_suspended", False))
+                or int(getattr(self.conn, "_atomic_depth", 0) or 0) > 0
+            )
+        cm = atomic(self) if owns_transaction else contextlib.nullcontext()
+        ok = False
+        with cm:
+            savepoint = f"{savepoint_prefix}_{int(pa['id'])}"
+            self.conn.execute(f"SAVEPOINT {savepoint}")
+            try:
+                ok = self._apply_pending_action(
+                    state, pa, payload, content=content,
+                    rejection_collector=rejection_collector)
+                if ok:
+                    self.conn.execute(
+                        "UPDATE pending_actions SET status='committed' WHERE id=?",
+                        (int(pa["id"]),),
+                    )
+                else:
+                    self.conn.execute(f"ROLLBACK TO {savepoint}")
+                    if restore_on_rollback is not None:
+                        restore_on_rollback()
+                    # 落不了的(目标已非 active、未知动作、坏 payload)标 failed,不留 pending——
+                    # 否则回合推进后成旧回合不可见死行,永不再处理(ship-pre CMR codex)。
+                    self.conn.execute(
+                        "UPDATE pending_actions SET status='failed' WHERE id=?",
+                        (int(pa["id"]),),
+                    )
+            except Exception as exc:
+                self.conn.execute(f"ROLLBACK TO {savepoint}")
+                if restore_on_rollback is not None:
+                    restore_on_rollback()
+                self._dispose_pending_action_apply_exception(
+                    pa, exc, rejection_collector=rejection_collector,
+                )
+            finally:
+                self.conn.execute(f"RELEASE {savepoint}")
+            if rejection_collector is not None:
+                rejection_collector.flush_to_db(self)
+        return ok
+
     def _record_typed_business_refusal(
         self, pa: Dict[str, object], exc: BaseException, rejection_collector,
     ) -> None:
@@ -18134,52 +18194,30 @@ class GameDB:
                     payload = {}
             except (ValueError, TypeError):
                 payload = {}
-            cm = atomic(self) if owns_transaction else contextlib.nullcontext()
-            with cm:
-                savepoint = f"pending_action_apply_{int(pa['id'])}"
-                ok = False
-                office_memory_key = None
-                office_memory_before = None
-                office_memory_had_key = False
-                if pa["kind"] == "office" and content is not None:
-                    office_memory_key = str(payload.get("name") or "").strip()
-                    if office_memory_key:
-                        office_memory_had_key = office_memory_key in content.characters
-                        office_memory_before = content.characters.get(office_memory_key)
+            office_memory_key = None
+            office_memory_before = None
+            office_memory_had_key = False
+            if pa["kind"] == "office" and content is not None:
+                office_memory_key = str(payload.get("name") or "").strip()
+                if office_memory_key:
+                    office_memory_had_key = office_memory_key in content.characters
+                    office_memory_before = content.characters.get(office_memory_key)
 
-                def restore_office_memory() -> None:
-                    if not office_memory_key:
-                        return
-                    if office_memory_had_key:
-                        content.characters[office_memory_key] = office_memory_before
-                    else:
-                        content.characters.pop(office_memory_key, None)
+            def restore_office_memory() -> None:
+                if not office_memory_key:
+                    return
+                if office_memory_had_key:
+                    content.characters[office_memory_key] = office_memory_before
+                else:
+                    content.characters.pop(office_memory_key, None)
 
-                self.conn.execute(f"SAVEPOINT {savepoint}")
-                try:
-                    ok = self._apply_pending_action(
-                        state, pa, payload, content=content,
-                        rejection_collector=rejection_collector)
-                    if ok:
-                        self.conn.execute(
-                            "UPDATE pending_actions SET status='committed' WHERE id=?", (int(pa["id"]),))
-                    else:
-                        self.conn.execute(f"ROLLBACK TO {savepoint}")
-                        restore_office_memory()
-                        # 落不了的(目标已非 active、未知动作、坏 payload)标 failed,不留 pending——
-                        # 否则回合推进后成旧回合不可见死行,永不再处理(ship-pre CMR codex)。
-                        self.conn.execute(
-                            "UPDATE pending_actions SET status='failed' WHERE id=?", (int(pa["id"]),))
-                except Exception as exc:
-                    self.conn.execute(f"ROLLBACK TO {savepoint}")
-                    restore_office_memory()
-                    self._dispose_pending_action_apply_exception(
-                        pa, exc, rejection_collector=rejection_collector,
-                    )
-                finally:
-                    self.conn.execute(f"RELEASE {savepoint}")
-                if rejection_collector is not None:
-                    rejection_collector.flush_to_db(self)
+            ok = self._run_pending_action_commit_lifecycle(
+                state, pa, payload,
+                content=content,
+                rejection_collector=rejection_collector,
+                owns_transaction=owns_transaction,
+                restore_on_rollback=restore_office_memory if office_memory_key else None,
+            )
             if ok:
                 item: Dict[str, object] = {
                     "id": pa["id"],
@@ -18234,49 +18272,21 @@ class GameDB:
         *, content=None, directive_status: str = "draft",
         rejection_collector=None,
     ) -> Optional[Dict[str, object]]:
-        """提交一条对话式拟旨暂存，并让 draft 行与 pending 状态同事务落定。"""
-        owns_transaction = not (
-            bool(getattr(self.conn, "_commit_suspended", False))
-            or int(getattr(self.conn, "_atomic_depth", 0) or 0) > 0
+        """提交一条对话式拟旨暂存；输入准备保留，共同生命周期走唯一实现。"""
+        payload_for_apply = dict(payload)
+        payload_for_apply["_directive_status"] = directive_status
+        ok = self._run_pending_action_commit_lifecycle(
+            state, pa, payload_for_apply,
+            content=content,
+            rejection_collector=rejection_collector,
+            savepoint_prefix="pending_action_directive",
         )
-        cm = atomic(self) if owns_transaction else contextlib.nullcontext()
-        result = None
-        try:
-            with cm:
-                savepoint = f"pending_action_directive_{int(pa['id'])}"
-                self.conn.execute(f"SAVEPOINT {savepoint}")
-                try:
-                    payload_for_apply = dict(payload)
-                    payload_for_apply["_directive_status"] = directive_status
-                    ok = self._apply_pending_action(
-                        state, pa, payload_for_apply, content=content,
-                        rejection_collector=rejection_collector)
-                    if ok:
-                        self.conn.execute(
-                            "UPDATE pending_actions SET status='committed' WHERE id=?",
-                            (int(pa["id"]),),
-                        )
-                        result = {"id": pa["id"], "kind": pa["kind"],
-                                  "action": pa["action"], "target_id": pa["target_id"]}
-                    else:
-                        self.conn.execute(f"ROLLBACK TO {savepoint}")
-                        self.conn.execute(
-                            "UPDATE pending_actions SET status='failed' WHERE id=?",
-                            (int(pa["id"]),),
-                        )
-                except Exception as exc:
-                    self.conn.execute(f"ROLLBACK TO {savepoint}")
-                    self._dispose_pending_action_apply_exception(
-                        pa, exc, rejection_collector=rejection_collector,
-                    )
-                finally:
-                    self.conn.execute(f"RELEASE {savepoint}")
-                if rejection_collector is not None:
-                    rejection_collector.flush_to_db(self)
-        except Exception as exc:
-            tlog(f"[pending_actions] 落库异常 id={pa['id']} {pa['kind']}/{pa['action']}：{exc}")
-            raise
-        return result
+        if not ok:
+            return None
+        return {
+            "id": pa["id"], "kind": pa["kind"],
+            "action": pa["action"], "target_id": pa["target_id"],
+        }
 
     def _apply_pending_action(
         self, state: GameState, pa: Dict[str, object], payload: Dict[str, object],
@@ -18320,23 +18330,24 @@ class GameDB:
                         category="missing_task_type",
                         item={"pending_action_id": int(pa["id"])},
                     )
+                # 输入校验拒收仅包声明契约；create_secret_order 内部执行异常交已有真出口（#1853 J9）。
                 try:
                     frozen_task = build_covert_task_contract(covert_task=raw_task)
-                    order_id = self.create_secret_order(
-                        state, assignee, title, content_text, tags, deadline_months=deadline,
-                        excluded_names=excluded, excluded_offices=excluded_offices,
-                        origin_minister_name=str(pa.get("minister_name") or "") or None,
-                        origin_chat_message_id=origin_mid,
-                        origin_chat_message_ids=[] if origin_mid is None else None,
-                        pending_action_id=int(pa["id"]),
-                        covert_task=frozen_task,
-                    )
                 except CovertContractError as exc:
                     raise PendingActionRefusal(
                         str(exc),
                         category="covert_contract",
                         item={"pending_action_id": int(pa["id"])},
                     ) from exc
+                order_id = self.create_secret_order(
+                    state, assignee, title, content_text, tags, deadline_months=deadline,
+                    excluded_names=excluded, excluded_offices=excluded_offices,
+                    origin_minister_name=str(pa.get("minister_name") or "") or None,
+                    origin_chat_message_id=origin_mid,
+                    origin_chat_message_ids=[] if origin_mid is None else None,
+                    pending_action_id=int(pa["id"]),
+                    covert_task=frozen_task,
+                )
                 if order_id is not None and payload.get("dossier_links") is not None:
                     links = payload.get("dossier_links")
                     if not isinstance(links, list):
