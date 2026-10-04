@@ -561,6 +561,7 @@ def test_three_beat_timing_todo_then_scene_then_slot(game, monkeypatch):
     assert db.list_next_audience_todos(status=TODO_STATUS_PENDING) == []
 
 
+
 def test_due_review_settle_does_not_pause_or_decision(game, monkeypatch):
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")

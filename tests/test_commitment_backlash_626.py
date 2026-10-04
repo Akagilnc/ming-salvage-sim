@@ -13,11 +13,6 @@ Seams:
 
 from __future__ import annotations
 
-import json
-from pathlib import Path
-
-import ming_sim.commitment_backlash as backlash_mod
-
 # #1894：#623 的代码生成余波（半途而废局势）已删；该 seed 事件 id 在此仅作
 # 「不得再出现」的负向断言锚，不再由 breach_plea 导出。
 HALFWAY_SETBACK_EVENT_ID = "breach_halfway_setback"
@@ -47,11 +42,11 @@ from ming_sim.commitment_backlash import (
 )
 from ming_sim.db import GameDB
 from ming_sim.decree import pre_settle
-from ming_sim.issues import (
+from ming_sim.issues import apply_score_extraction
+from ming_sim.situation_drift import (
     _expire_commitment_issue,
     _resolve_commitment_issue,
-    apply_issue_inertia_and_ongoing,
-    apply_score_extraction,
+    apply_situation_monthly_drift,
 )
 from ming_sim.models import TurnPhase, loads_effect_dict
 from ming_sim.staged_commitment import TODO_STATUS_PENDING
@@ -407,7 +402,7 @@ def test_ac2_halfway_persist_one_commitment_metrics_no_double_count(game):
         (BACKLASH_ORIGIN_KIND,),
     )
     db.conn.commit()
-    apply_issue_inertia_and_ongoing(db, state)
+    apply_situation_monthly_drift(db, state)
     minxin_after_settle = int(state.metrics.get("民心", 0) or 0)
     huangwei_after_settle = int(state.metrics.get("皇威", 0) or 0)
     assert minxin_after_settle == minxin_2, (
@@ -419,7 +414,7 @@ def test_ac2_halfway_persist_one_commitment_metrics_no_double_count(game):
 
     # 次月：本 issue 不再引起 metrics 续扣（I1 与 settle 次数无关）
     state.turn = int(state.turn) + 1
-    apply_issue_inertia_and_ongoing(db, state)
+    apply_situation_monthly_drift(db, state)
     assert int(state.metrics.get("民心", 0) or 0) == minxin_after_settle
     assert int(state.metrics.get("皇威", 0) or 0) == huangwei_after_settle
 

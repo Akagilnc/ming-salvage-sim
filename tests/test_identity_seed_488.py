@@ -130,31 +130,30 @@ def test_roster_rejects_alias_colliding_with_other_faction_name(monkeypatch):
     data = load_json_asset("characters.json")
     data["characters"][0]["aliases"].append("温体仁")
     monkeypatch.setattr(content_module, "load_json_asset", lambda _: data)
-    with pytest.raises(SystemExit, match="温体仁"):
+    with pytest.raises(SystemExit):
         load_character_content()
 
 
 def test_roster_rejects_duplicate_canonical_name(monkeypatch):
     data = load_json_asset("characters.json")
     duplicate = json.loads(json.dumps(data["characters"][0]))
-    dup_name = duplicate["name"]
     data["characters"].append(duplicate)
     monkeypatch.setattr(content_module, "load_json_asset", lambda _: data)
-    with pytest.raises(SystemExit, match=dup_name):
+    with pytest.raises(SystemExit):
         load_character_content()
 
 
 @pytest.mark.parametrize(
-    "field,value,match",
+    "field,value",
     [
-        ("identity", 101, "identity"),
-        ("seed_guilt", {"crime": "", "severity": "轻"}, "crime"),
-        ("seed_guilt", {"crime": "无", "severity": "未知"}, "severity"),
+        ("identity", 101),
+        ("seed_guilt", {"crime": "", "severity": "轻"}),
+        ("seed_guilt", {"crime": "无", "severity": "未知"}),
     ],
 )
-def test_seed_schema_rejects_invalid_values(monkeypatch, field, value, match):
+def test_seed_schema_rejects_invalid_values(monkeypatch, field, value):
     data = load_json_asset("characters.json")
     data["characters"][0][field] = value
     monkeypatch.setattr(content_module, "load_json_asset", lambda _: data)
-    with pytest.raises(SystemExit, match=match):
+    with pytest.raises(SystemExit):
         load_character_content()

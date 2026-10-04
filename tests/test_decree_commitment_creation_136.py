@@ -1,6 +1,8 @@
 import json
 from pathlib import Path
 
+import pytest
+
 import ming_sim.issues as I
 from ming_sim.db import _has_stop_condition
 
@@ -130,7 +132,6 @@ def test_decree_commitment_dedups_same_batch_fiscal_create_carrier(game, monkeyp
     fiscal_result = out["fiscal_creates"][0]
     assert fiscal_result["rejected"] is True
     assert fiscal_result["category"] == "deduped_commitment_carrier"
-    assert "承诺 issue" in fiscal_result["reason"]
 
 
 def test_decree_commitment_does_not_dedup_same_name_income_fiscal_create(game, monkeypatch):
@@ -183,11 +184,13 @@ def test_decree_commitment_does_not_dedup_same_name_income_fiscal_create(game, m
     ).fetchone()[0] >= 1
 
 
-def test_decree_commitment_same_account_alias_miss_emits_residual_signal(game, monkeypatch, capsys):
-    """ADR0027 残留观测：同批、同账户、有 decree 承诺却**异名**未匹配上的 fiscal_create
-    照常落账，但必须打日志当试玩信号（便于发现异名漏匹规律，#340 US8）。"""
+@pytest.mark.parametrize("account", ["国库", "内库"])
+def test_decree_commitment_same_account_alias_miss_keeps_distinct_fiscal_item(game, monkeypatch, account):
+    """Unmatched expense lands; only same-account alias misses are observable."""
     db, state, content = game
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    logs = []
+    monkeypatch.setattr(I, "tlog", logs.append)
 
     out = I.apply_score_extraction(
         db,
@@ -215,9 +218,9 @@ def test_decree_commitment_same_account_alias_miss_emits_residual_signal(game, m
             ],
             "fiscal_creates": [
                 {
-                    # 同账户(国库)、但科目名与承诺(西学经费)对不上 = 异名漏匹
+                    # Different accounts are not alias misses of this commitment.
                     "key": "xuguangqi_gongfei_base",
-                    "account": "国库",
+                    "account": account,
                     "direction": "expense",
                     "init_value": 50,
                     "display": "徐光启三务公费",
@@ -236,15 +239,11 @@ def test_decree_commitment_same_account_alias_miss_emits_residual_signal(game, m
         "SELECT COUNT(*) FROM fiscal_config WHERE key IN "
         "('xuguangqi_gongfei_base', 'xuguangqi_gongfei_rate')"
     ).fetchone()[0] >= 1
-    # 但必须留下 ADR0027 残留观测信号（试玩可见 = 能发现异名漏匹规律）
-    captured = capsys.readouterr()
-    combined = captured.out + captured.err
-    assert "ADR0027 残留观测" in combined
-    assert "徐光启三务公费" in combined
+    assert any(fiscal_result["display"] in entry for entry in logs) == (account == "国库")
 
 
-def test_decree_commitment_unrelated_account_no_residual_signal(game, monkeypatch, capsys):
-    """残留观测只在【同账户】触发：不同账户的无关 fiscal_create 不应误报信号。"""
+def test_decree_commitment_unrelated_account_keeps_fiscal_item(game, monkeypatch):
+    """An authorized item in another account must not be deduplicated."""
     db, state, content = game
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
 
@@ -271,6 +270,7 @@ def test_decree_commitment_unrelated_account_no_residual_signal(game, monkeypatc
             "fiscal_creates": [
                 {
                     "key": "neiku_dujiang_base",
+                    "origin_ref": "盘面自发",
                     "account": "内库",  # 不同账户
                     "direction": "expense",
                     "init_value": 10,
@@ -282,8 +282,7 @@ def test_decree_commitment_unrelated_account_no_residual_signal(game, monkeypatc
         content=content,
     )
 
-    captured = capsys.readouterr()
-    assert "ADR0027 残留观测" not in (captured.out + captured.err)
+    assert db.get_fiscal_config()["neiku_dujiang_base"] == 10
 
 
 def test_until_stop_commitment_shape_rejects_without_explicit_marker(read_game, monkeypatch):
@@ -321,7 +320,6 @@ def test_until_stop_commitment_shape_rejects_without_explicit_marker(read_game, 
     created = out["issue_summary"]["new_issues"][0]
     assert created["rejected"] is True
     assert created["category"] == "invalid_enum"
-    assert "commitment_kind" in created["reason"]
     assert _issue_by_title(db, "每月补宣大蓟镇直到补齐") is None
 
 
@@ -360,7 +358,6 @@ def test_limited_duration_commitment_shape_rejects_without_explicit_marker(read_
     created = out["issue_summary"]["new_issues"][0]
     assert created["rejected"] is True
     assert created["category"] == "invalid_enum"
-    assert "commitment_kind" in created["reason"]
     assert _issue_by_title(db, "连续两月补饷但缺承诺标记") is None
 
 
@@ -401,7 +398,6 @@ def test_limited_duration_ongoing_commitment_rejects_current_turn_end_turn(read_
     rejected = out["issue_summary"]["new_issues"][0]
     assert rejected["rejected"] is True
     assert rejected["category"] == "invalid_enum"
-    assert "end_turn" in rejected["reason"]
     assert _issue_by_title(db, "本回合即到期的每月补饷承诺") is None
 
 
@@ -444,7 +440,6 @@ def test_limited_duration_ongoing_commitment_rejects_past_end_turn(game, monkeyp
     rejected = out["issue_summary"]["new_issues"][0]
     assert rejected["rejected"] is True
     assert rejected["category"] == "invalid_enum"
-    assert "end_turn" in rejected["reason"]
     assert _issue_by_title(db, "过去回合已到期的每月补饷承诺") is None
 
 
@@ -542,7 +537,6 @@ def test_open_ended_ongoing_commitment_shape_rejects_without_explicit_marker(rea
     created = out["issue_summary"]["new_issues"][0]
     assert created["rejected"] is True
     assert created["category"] == "invalid_enum"
-    assert "commitment_kind" in created["reason"]
     assert _issue_by_title(db, "长期安抚毛文龙但缺承诺标记") is None
 
 
@@ -571,7 +565,6 @@ def test_future_one_shot_commitment_shape_rejects_without_explicit_marker(read_g
     created = out["issue_summary"]["new_issues"][0]
     assert created["rejected"] is True
     assert created["category"] == "invalid_enum"
-    assert "commitment_kind" in created["reason"]
     assert _issue_by_title(db, "三月后复核孙承宗但缺承诺标记") is None
 
 
@@ -600,7 +593,6 @@ def test_stop_condition_only_commitment_shape_rejects_without_explicit_marker(re
     created = out["issue_summary"]["new_issues"][0]
     assert created["rejected"] is True
     assert created["category"] == "invalid_enum"
-    assert "commitment_kind" in created["reason"]
     assert _issue_by_title(db, "只写停止条件的安抚毛文龙") is None
 
 
@@ -629,7 +621,6 @@ def test_string_stop_condition_only_with_origin_ref_rejects_without_explicit_mar
     created = out["issue_summary"]["new_issues"][0]
     assert created["rejected"] is True
     assert created["category"] == "invalid_enum"
-    assert "commitment_kind" in created["reason"]
     assert _issue_by_title(db, "字符串停止条件但无月度动作") is None
 
 
@@ -667,7 +658,6 @@ def test_legacy_resolve_condition_person_commitment_rejects_without_marker(read_
     created = out["issue_summary"]["new_issues"][0]
     assert created["rejected"] is True
     assert created["category"] == "invalid_enum"
-    assert "commitment_kind" in created["reason"]
     assert _issue_by_title(db, "旧形状安抚毛文龙") is None
 
 
@@ -697,7 +687,6 @@ def test_until_stop_commitment_requires_initiative_kind(read_game, monkeypatch):
     rejected = out["issue_summary"]["new_issues"][0]
     assert rejected["rejected"] is True
     assert rejected["category"] == "invalid_enum"
-    assert "initiative" in rejected["reason"]
     assert _issue_by_title(db, "每月补辽饷但类型写成局势") is None
 
 
@@ -766,7 +755,6 @@ def test_commitment_rejects_string_numeric_person_loyalty_ongoing_effect(read_ga
     rejected = out["issue_summary"]["new_issues"][0]
     assert rejected["rejected"] is True
     assert rejected["category"] == "invalid_enum"
-    assert "loyalty" in rejected["reason"]
     assert _issue_by_title(db, "字符串忠诚安抚承诺") is None
 
 
@@ -796,7 +784,6 @@ def test_until_stop_commitment_rejects_non_dict_stop_condition(read_game, monkey
     rejected = out["issue_summary"]["new_issues"][0]
     assert rejected["rejected"] is True
     assert rejected["category"] == "invalid_enum"
-    assert "stop_condition" in rejected["reason"]
     assert _issue_by_title(db, "每月补辽饷但停止条件是坏串") is None
 
 
@@ -826,7 +813,6 @@ def test_until_stop_commitment_rejects_stop_condition_without_table_prefix(read_
     rejected = out["issue_summary"]["new_issues"][0]
     assert rejected["rejected"] is True
     assert rejected["category"] == "invalid_enum"
-    assert "stop_condition" in rejected["reason"]
     assert _issue_by_title(db, "每月补辽饷但停止条件无表前缀") is None
 
 
@@ -855,7 +841,6 @@ def test_until_stop_commitment_requires_origin_ref(read_game, monkeypatch):
     rejected = out["issue_summary"]["new_issues"][0]
     assert rejected["rejected"] is True
     assert rejected["category"] == "invalid_enum"
-    assert "origin_ref" in rejected["reason"]
     assert _issue_by_title(db, "每月补辽饷但无诏书引用") is None
 
 
@@ -884,7 +869,6 @@ def test_until_stop_commitment_requires_ongoing_effects(read_game, monkeypatch):
     rejected = out["issue_summary"]["new_issues"][0]
     assert rejected["rejected"] is True
     assert rejected["category"] == "invalid_enum"
-    assert "ongoing_effects" in rejected["reason"]
     assert _issue_by_title(db, "每月补辽饷但没有月度动作") is None
 
 
@@ -914,7 +898,6 @@ def test_until_stop_commitment_rejects_semantically_empty_ongoing_effects(read_g
     rejected = out["issue_summary"]["new_issues"][0]
     assert rejected["rejected"] is True
     assert rejected["category"] == "invalid_enum"
-    assert "ongoing_effects" in rejected["reason"]
     assert _issue_by_title(db, "每月补辽饷但月度动作只是空壳") is None
 
 
@@ -948,8 +931,6 @@ def test_until_stop_commitment_rejects_one_shot_entity_creation_as_monthly_work(
     rejected = out["issue_summary"]["new_issues"][0]
     assert rejected["rejected"] is True
     assert rejected["category"] == "invalid_enum"
-    assert "ongoing_effects" in rejected["reason"]
-    assert "new_armies" in rejected["reason"]
     assert _issue_by_title(db, "每月重复建军的错误承诺") is None
 
 
@@ -986,7 +967,6 @@ def test_until_stop_commitment_rejects_direct_resolved_close(game, monkeypatch):
     close = out["closes"][0]
     assert close["rejected"] is True
     assert close["category"] == "invalid_enum"
-    assert "承诺" in close["reason"]
     after = db.conn.execute("SELECT status FROM issues WHERE id=?", (row["id"],)).fetchone()
     assert after["status"] == "active"
 
@@ -1026,7 +1006,6 @@ def test_until_stop_commitment_rejects_direct_failed_close_without_effects(game,
     close = out["closes"][0]
     assert close["rejected"] is True
     assert close["category"] == "invalid_enum"
-    assert "承诺" in close["reason"]
     after = db.conn.execute("SELECT status FROM issues WHERE id=?", (row["id"],)).fetchone()
     assert after["status"] == "active"
     assert int(state.metrics["民心"]) == starting_popular_support

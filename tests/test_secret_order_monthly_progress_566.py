@@ -1,6 +1,5 @@
 """#566: production settlement owns the durable monthly progress rail."""
 
-import json
 import threading
 
 import pytest
@@ -39,8 +38,6 @@ def _production_session(db, state, content):
     session.deaths_this_turn, session.debuts_this_turn = [], []
     session.last_decree = session.last_report = ""
     session._decree_draft_fingerprint = ()
-    session._scene_registry = None
-    session._beat_generator = None
     session.auto_save = lambda *args, **kwargs: None
     return session
 

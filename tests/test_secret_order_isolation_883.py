@@ -1486,7 +1486,7 @@ def test_1026_secret_order_update_rollback_restores_existing_brief(game, rollbac
     assert dict(restored_brief) == old_brief
 
 
-def test_976_rt05_save_restore_between_hold_and_release(game):
+def test_976_rt05_save_restore_between_hold_and_release(game, tmp_path):
     """红队⑤ should：存档-恢复夹在 hold 与 release 之间 — P1 无损。"""
     import os
 
@@ -1515,8 +1515,8 @@ def test_976_rt05_save_restore_between_hold_and_release(game):
     mid_late = db.append_chat_message(b.name, state.turn, "minister", late)
     assert _ks(db, mid_late) == "held"
 
-    path = db.path
-    backup_path = path + ".backup976"
+    # 备份落本用例私有目录：db.path 在系统共享 temp，同级写文件不留用例隔离（#1901 J6）。
+    backup_path = str(tmp_path / "backup976.db")
     db.backup_to(backup_path)
     db.close()
 

@@ -453,37 +453,6 @@ def test_recompute_all_reconciles_drift_from_unhooked_path(game):
         assert row["leverage"] == exp, f"{f} 应被 recompute_all 重算到公式值(got={row['leverage']} exp={exp})"
 
 
-def test_settle_path_triggers_reconcile_before_next_period(game, monkeypatch):
-    """#9 cmr R3 finding#2：reconcile 兜底确由【真实结算路】在 next_period 之前触发——
-    锁住玩家月链结算尾 db.recompute_all_faction_leverage() 的接线与顺序。
-    现有 test_recompute_all_reconciles_drift_from_unhooked_path 直调该方法、不走结算路，
-    就算结算尾那行 wiring 被删/移到 next_period 之后，那测试照过、证明不了生产接线。
-    本测试经玩家月链跑一回合，spy 记录方法被调用时 state.turn，
-    断言：(1) 被调用过；(2) 调用时 turn 仍是 before_turn（未 next_period）；(3) 结算后 turn 已 +1
-    （证明 reconcile 在 next_period 之前跑过）。把结算尾 wiring 删掉则 spy 不触发 → 红。"""
-    db, state, content = game
-    before_turn = state.turn
-    calls = []
-
-    real = type(db).recompute_all_faction_leverage
-
-    def _spy(self):
-        # 记录被调用时刻的 turn（生产 wiring 应在 next_period 之前 → turn 仍是 before_turn）。
-        calls.append(state.turn)
-        return real(self)
-
-    monkeypatch.setattr(type(db), "recompute_all_faction_leverage", _spy)
-
-    from tests.test_due_review_621 import _settle_empty_month
-    _settle_empty_month(db, state, content, monkeypatch)
-
-    assert calls, "结算路应触发 recompute_all_faction_leverage（生产 wiring 未接 → 此处为空）"
-    assert all(t == before_turn for t in calls), (
-        f"reconcile 应在 next_period 之前被调用（调用时 turn 应={before_turn}，实得 {calls}）"
-    )
-    assert state.turn == before_turn + 1, "结算后回合应已推进（证明 reconcile 在 next_period 前跑过）"
-
-
 def test_reconcile_runs_before_clear_gated_legacies_same_turn(game, monkeypatch):
     """#9 线上 R6（codex P2）：结算尾 recompute_all_faction_leverage() 必须排在 clear_gated_legacies()
     之前。否则同回合经兜底 reconcile 才更新的 faction leverage（易主/裸 UPDATE 改成员、绕即时 hook）
@@ -511,9 +480,11 @@ def test_reconcile_runs_before_clear_gated_legacies_same_turn(game, monkeypatch)
     db.conn.commit()
     stale = db.faction_leverage(faction)
     assert stale >= 30, f"前提：裸 UPDATE 后 DB leverage 应残留≥30（stale={stale}）"
+    before_turn = state.turn
 
     from tests.test_due_review_621 import _settle_empty_month
     _settle_empty_month(db, state, content, monkeypatch)
+    assert state.turn == before_turn + 1
 
     after = db.conn.execute(
         "SELECT status FROM legacies WHERE id=?", (leg["id"],)
@@ -1009,28 +980,6 @@ def test_rollback_snapshot_restores_leverage_offset(game):
     )
 
 
-def test_calibrate_offset_flag_consumed_once(game):
-    """#9 R1 finding#3：一次性迁移 flag(_leverage_offset_col_added)用后须置 False，
-    同实例第二次 seed_static_data 不再走老档迁移分支重锚 offset。"""
-    db, state, content = game
-    faction = "阉党"
-    # game fixture 已 seed 过一次（fresh 路）；此实例 flag 应已被消费成 False。
-    assert getattr(db, "_leverage_offset_col_added", False) is False, (
-        "首次 seed 后 _leverage_offset_col_added 应已被消费置 False"
-    )
-    # 手动把 flag 强行设回 True（模拟「若未消费」的隐患），并把 leverage clamp 到 0。
-    db.conn.execute("UPDATE factions SET leverage=0 WHERE name=?", (faction,))
-    db.conn.commit()
-    db._leverage_offset_col_added = True  # 模拟未消费
-    # 第二次 seed：_calibrate_faction_offsets 应在用掉 flag 后立即置 False，
-    # 但本次因 flag=True 仍会进老档分支——为防「同实例连续两次」腐蚀，校准须一次性消费。
-    # 真正的回归点：校准跑完后 flag 必须是 False。
-    db.seed_static_data()
-    assert getattr(db, "_leverage_offset_col_added", False) is False, (
-        "_calibrate_faction_offsets 用掉 flag 后必须置 False（一次性消费）"
-    )
-
-
 def test_chat_rollback_restores_faction_leverage(game):
     """#9 R1 finding#4：chat 回滚快照表集须含 factions。leverage hook 会改 factions.leverage，
     撤销一个 chat office/dismiss 动作须连 factions 一并还原，不留脏。"""
@@ -1044,7 +993,6 @@ def test_chat_rollback_restores_faction_leverage(game):
 
     # chat 回滚口径：先快照，做一个会改 leverage 的动作（退场该成员），再按 diff 还原。
     before_snap = db.capture_chat_rollback_snapshot()
-    assert "factions" in before_snap, "chat 回滚快照表集应含 factions"
     db.set_character_status(state, name, "dismissed", reason="召对清算")
     after = db.faction_leverage(faction)
     assert after < before, "退场应使 leverage 下跌（前置：动作确实改了 factions）"

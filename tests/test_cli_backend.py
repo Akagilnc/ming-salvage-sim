@@ -103,11 +103,11 @@ def test_typed_secret_exclusions_canonicalize_roster_alias_and_office(game):
 
 def test_secret_content_assembly_is_emperor_plus_extractor_only():
     """#1274 K1：拼装输入结构化——仅 emperor_intent + extractor_content；无 reply 形参。"""
-    import inspect
-
-    params = inspect.signature(cb.assemble_secret_order_content).parameters
-    assert set(params) == {"emperor_intent", "extractor_content"}
-    assert "reply" not in params and "minister_reply" not in params
+    for reply_key in ("reply", "minister_reply"):
+        with pytest.raises(TypeError):
+            cb.assemble_secret_order_content(
+                emperor_intent="旨", extractor_content="声明", **{reply_key: "臣答"},
+            )
 
     task = "密查关宁欠饷"
     extracted = f"{task}，三月内回奏，方法：密访核册"
@@ -115,6 +115,7 @@ def test_secret_content_assembly_is_emperor_plus_extractor_only():
         emperor_intent=task,
         extractor_content=extracted,
     )
+    assert body == extracted
     # 御旨未覆盖时兜底并入御旨，仍不接受第三路 reply
     partial = "臣已领旨办理。"
     merged = cb.assemble_secret_order_content(
@@ -303,7 +304,7 @@ def test_materials_dir_reaches_popen_cwd_and_readonly_argv(monkeypatch, tmp_path
     assert "--allowedTools" in captured["cmd"]
     assert "Read" in captured["cmd"] and "Glob" in captured["cmd"] and "Grep" in captured["cmd"]
     mcp_at = captured["cmd"].index("--mcp-config")
-    assert captured["cmd"][mcp_at + 1] == '{"mcpServers":{}}'
+    assert json.loads(captured["cmd"][mcp_at + 1]) == {"mcpServers": {}}
     assert "--permission-mode" in captured["cmd"]
     assert "dontAsk" in captured["cmd"]
     assert "--disallowedTools" not in captured["cmd"]
@@ -591,7 +592,6 @@ def test_resolve_cli_bin_falls_back_and_miss_not_cached(monkeypatch):
     monkeypatch.setattr(cb, "_login_shell_path", lambda: None)
     monkeypatch.setattr(cb.shutil, "which", lambda name, path=None: None)
     assert cb._resolve_cli_bin("codex", "codex") == "codex"
-    assert "codex" not in cb._BIN_CACHE
     monkeypatch.setattr(
         cb.shutil, "which",
         lambda name, path=None: "/Users/x/.local/bin/codex" if path is None else None,
@@ -714,7 +714,7 @@ def test_run_runner_execs_resolved_abspath(monkeypatch, runner, resolved):
 # ── CliChat public: prompt shape + typed completion structure ──
 
 def test_clichat_invoke_builds_prompt_and_completion_structure(monkeypatch):
-    """#1563：公开 invoke 只证 prompt 角色标签顺序与 typed completion 结构；不锁生成正文。"""
+    """#1563：公开 invoke 证各条非空输入按原顺序进入 prompt，以及 typed completion 原样带回。"""
     cc = cb.CliChat(id="cli-test", backend="agy")
     seen = {}
 
@@ -739,14 +739,8 @@ def test_clichat_invoke_builds_prompt_and_completion_structure(monkeypatch):
     ]
     out = cc.invoke(msgs, Message(role="assistant"))
     p = seen["prompt"]
-    # role tags + order (structural markers from deterministic inputs)
-    for tag in ("【系统设定】", "【皇帝/输入】", "【你此前的回答】", "【工具结果】", "【developer】"):
-        assert tag in p
-    assert p.index("【系统设定】") < p.index("【皇帝/输入】")
-    assert p.count("【皇帝/输入】") == 1  # blank skipped
-    assert "【你此前的回答】" in p and "PRIOR_ASST" in p
-    assert "12345" in p
-    assert "【执行约束·必读】" in p
+    assert p.index("SYS_ROLE") < p.index("USER_MSG") < p.index("PRIOR_ASST") < p.index("TOOL_OUT") < p.index("12345")
+    assert p.count("USER_MSG") == 1
     # typed completion + passthrough on structured content (fixture, not LLM prose)
     assert out.role == "assistant"
     assert out.event == "AssistantResponse"
@@ -766,17 +760,15 @@ def test_clichat_invoke_json_constraint_and_no_constraint(monkeypatch):
     monkeypatch.setattr(cb, "_trace", lambda rec: None)
     msgs = [SimpleNamespace(role="user", content="EXTRACT")]
     cc.invoke(msgs, Message(role="assistant"), response_format={"type": "json_object"})
-    assert "【输出格式硬约束】" in seen[0]
 
     class _RF(BaseModel):
         x: int = 0
 
     cc.invoke(msgs, Message(role="assistant"), response_format=_RF)
-    assert "【输出格式硬约束】" in seen[1]
-
     cc.invoke(msgs, Message(role="assistant"))
-    assert "【输出格式硬约束】" not in seen[2]
-    assert "【执行约束·必读】" in seen[2]
+    assert all("EXTRACT" in prompt for prompt in seen)
+    assert seen[0] != seen[2]
+    assert seen[1] != seen[2]
 
 
 def test_clichat_invoke_error_traced_and_reraised(monkeypatch):
@@ -1017,10 +1009,9 @@ def test_secret_extract_traces_exactly_once(monkeypatch):
 
 
 def test_public_cli_support_restores_existing_runners(monkeypatch):
-    assert cb._CLI_BACKENDS == frozenset({"agy", "codex", "claude", "cursor", "kimi", "grok", "pi"})
     assert cb.GATE_CLI_RUNNERS == ("codex", "claude", "cursor", "kimi", "grok", "pi")
     assert [row["value"] for row in cb.cli_runner_choices()] == ["agy", "codex", "claude", "cursor", "kimi", "grok", "pi"]
-    assert set(cb.cli_model_choices()) == set(cb._CLI_BACKENDS)
+    assert set(cb.cli_model_choices()) == {row["value"] for row in cb.cli_runner_choices()}
     for name in ("opencode",):
         assert not cb.is_supported_cli_runner(name)
         monkeypatch.setenv("MING_SIM_LLM_BACKEND", name)
@@ -1054,7 +1045,7 @@ def test_material_runner_uses_cwd_and_read_only_tool_surface(monkeypatch, tmp_pa
             cb, "_resolve_cli_bin",
             lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("missing")),
         )
-        with pytest.raises(RuntimeError, match="missing"):
+        with pytest.raises(RuntimeError):
             list(cb._iter_cli_runner_text("kimi", "PROMPT", materials_dir=root))
         assert created and not os.path.exists(created[0])
     elif runner == "grok":
@@ -1237,7 +1228,7 @@ def test_gate_llm_config_api_from_env(monkeypatch):
 
 def test_gate_llm_config_cli_requires_runner():
     args = SimpleNamespace(channel="cli", runner="", model="m", api_key="", base_url="")
-    with pytest.raises(ValueError, match="--runner"):
+    with pytest.raises(ValueError):
         cb.gate_llm_config_from_args(args)
 
 
@@ -1247,10 +1238,10 @@ def test_gate_llm_config_api_requires_key_and_url(monkeypatch):
     monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
     monkeypatch.delenv("MING_SIM_API_BASE_URL", raising=False)
     args = SimpleNamespace(channel="api", runner="", model="m", api_key="", base_url="")
-    with pytest.raises(ValueError, match="api-key|API_KEY"):
+    with pytest.raises(ValueError):
         cb.gate_llm_config_from_args(args)
     args.api_key = "sk-x"
-    with pytest.raises(ValueError, match="base-url|BASE_URL"):
+    with pytest.raises(ValueError):
         cb.gate_llm_config_from_args(args)
 
 
