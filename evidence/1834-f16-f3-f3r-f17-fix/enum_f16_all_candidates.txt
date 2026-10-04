@@ -86,7 +86,7 @@ ming_sim/db.py:8722:                # name/status 自由正文进 buildings_repo
 ming_sim/db.py:8836:                    # name/status 自由正文进 buildings_report：禁 [:N]/strip 改写（#1834 F16）。
 ming_sim/db.py:9961:        kept = merged[:keep]
 ming_sim/db.py:16589:        # 撤旨理由是自由正文，进案卷/材料可读链，禁止 [:N]（#1834 F16）。
-### strip()[: 
+### strip()[:
 ming_sim/issues.py:3849:                    controller = str(value).strip()[:160] if value is not None else ""
 ming_sim/db.py:7374:            reason = str(raw_changes.get("reason") or raw_changes.get("原因") or event.title).strip()[:80]
 ming_sim/db.py:7973:            reason = str(raw_changes.get("reason") or raw_changes.get("原因") or event.title).strip()[:80]

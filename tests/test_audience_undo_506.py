@@ -285,8 +285,6 @@ def test_undo_pending_translation_leaves_no_orphan_retry(game):
 
     # 撤回后：该轮不再是待补重试真源（无孤儿重试入口），补跑不复活该轮账
 
-    assert len(db.list_unextracted_replies(night_id=night_id)) == 0
-
     assert db.list_unextracted_replies(night_id=night_id) == []
     # kill+重开后仍无重试入口（撤销持久）
     db2 = _reopen(db, content)

@@ -3,8 +3,10 @@
 
 Lists mechanical duplicate/entailment *candidates* for human disposition:
 - Python: exact duplicate assert text; In/NotIn→Eq on same haystack (full fn, no window);
-  Eq→In reverse; is-not-None→Eq; len-compare→later Eq co-occurrence.
+  Eq→In/NotIn reverse; is-not-None→Eq; len Gt/GtE/NotEq→later Eq; len==0↔x==[] ;
+  x==y → len(x)==len(y). Farther same-function pairs included (no window cap).
 - JS/TS tests: duplicate expect; weak existence then strong on related target; reverse.
+Enumeration only — never writes disposition / KEEP.
 
 Does NOT narrow by filename / CJK / prose heuristics / assert-window caps.
 Writes under evidence/1834-f16-f3-f3r-f17-fix/. Does not rewrite historical probe stdout.
@@ -96,15 +98,71 @@ def _enum_py() -> list[str]:
                                         f"ISNOTNONE_THEN_EQ\t{rel}:{ln},{ln2}\t{fn.name}\t"
                                         f"{txt[:80]} -> {txt2[:80]}"
                                     )
-                if "len(" in txt and any(
-                    isinstance(op, (ast.Gt, ast.GtE, ast.NotEq)) for op in ops
-                ):
+                # len(x) op N then later Eq — include Eq so len==0→x==[] is visible.
+                if isinstance(test.left, ast.Call) and getattr(
+                    test.left.func, "id", None
+                ) == "len" and test.left.args:
+                    len_arg = ast.get_source_segment(src, test.left.args[0]) or ""
                     for ln2, txt2, t2 in asserts[i + 1 :]:
-                        if isinstance(t2, ast.Compare) and any(
-                            isinstance(op, ast.Eq) for op in t2.ops
+                        if not (
+                            isinstance(t2, ast.Compare)
+                            and any(isinstance(op, ast.Eq) for op in t2.ops)
+                        ):
+                            continue
+                        eq_left = ast.get_source_segment(src, t2.left) or ""
+                        eq_right = (
+                            ast.get_source_segment(src, t2.comparators[0]) or ""
+                            if t2.comparators
+                            else ""
+                        )
+                        if (
+                            any(isinstance(op, ast.Eq) for op in ops)
+                            and comps
+                            and comps[0] in {"0", "0.0"}
+                            and eq_left == len_arg
+                            and eq_right.replace(" ", "") in {"[]", "()", "{}"}
                         ):
                             summary.append(
+                                f"LEN0_THEN_EMPTY_EQ\t{rel}:{ln},{ln2}\t{fn.name}\t"
+                                f"{txt[:80]} -> {txt2[:80]}"
+                            )
+                        elif any(isinstance(op, (ast.Gt, ast.GtE, ast.NotEq)) for op in ops):
+                            summary.append(
                                 f"LEN_THEN_EQ_CAND\t{rel}:{ln},{ln2}\t{fn.name}\t"
+                                f"{txt[:80]} -> {txt2[:80]}"
+                            )
+                # x == y then len(x) == len(y)
+                if (
+                    any(isinstance(op, ast.Eq) for op in ops)
+                    and not (
+                        isinstance(test.left, ast.Call)
+                        and getattr(test.left.func, "id", None) == "len"
+                    )
+                ):
+                    for ln2, txt2, t2 in asserts[i + 1 :]:
+                        if not (
+                            isinstance(t2, ast.Compare)
+                            and any(isinstance(op, ast.Eq) for op in t2.ops)
+                        ):
+                            continue
+                        t2_left = ast.get_source_segment(src, t2.left) or ""
+                        t2_right = (
+                            ast.get_source_segment(src, t2.comparators[0]) or ""
+                            if t2.comparators
+                            else ""
+                        )
+                        if not (
+                            t2_left.startswith("len(") and t2_right.startswith("len(")
+                        ):
+                            continue
+                        if left_s and (
+                            left_s in t2_left
+                            or left_s in t2_right
+                            or (comps and comps[0] in t2_left)
+                            or (comps and comps[0] in t2_right)
+                        ):
+                            summary.append(
+                                f"EQ_THEN_LEN\t{rel}:{ln},{ln2}\t{fn.name}\t"
                                 f"{txt[:80]} -> {txt2[:80]}"
                             )
     return summary

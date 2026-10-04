@@ -1,1 +1,12 @@
-REVOKED: evidence/1834-four-class-fix/scripts/dispose_f3r_candidates.py auto-KEEP by candidate kind is not semantic disposition. Use evidence/1834-f16-f3-f3r-f17-fix/scripts/dispose_f3r_semantic.py. Historical enum_f3r_disposition.tsv (410 KEEP) and report.md F3-R clearance claims are invalid evidence.
+REVOKED (historical, outputs retained unmodified):
+- evidence/1834-four-class-fix/scripts/dispose_f3r_candidates.py — auto-KEEP by kind
+- evidence/1834-four-class-fix/enum_f3r_disposition.tsv (410 KEEP) + report.md F3-R clearance
+- evidence/1834-four-class-fix/mutation_old_red.py + probe_four_class free_prose_no_strip
+
+REVOKED (this worktree, e998bc2d4-era false layer — deleted, not rewritten):
+- scripts/dispose_f3r_semantic.py — still auto-KEEP by kind under "hand:" labels (F3-R reoffense)
+- enum_f3r_disposition.tsv produced by that script
+- scripts/mutation_real_old_red.py (275) + scripts/probe_new_green.py (110) — permanent parallel proof mechanisms (F17)
+
+Current F3-R evidence = enum_f3r_*_all_candidates.txt (enumeration only) + f3r_hand_member_table.tsv (hand semantic disposition).
+F17 proof = temporary in-process old-logic replace recorded in report.md / mutation_old_red.json method note; no permanent proof scripts.

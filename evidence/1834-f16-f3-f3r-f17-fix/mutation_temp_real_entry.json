@@ -1,0 +1,11 @@
+{
+  "method": "temporary_inprocess_replace_production_symbol_with_old_strip; no permanent proof script retained",
+  "staged_current_preserves": true,
+  "staged_old_preserves": false,
+  "decision_current_preserves": true,
+  "decision_old_preserves": false,
+  "region_log_reason_full": true,
+  "region_log_reason_length": 109,
+  "region_log_reason_suffix": "禁再向百姓加派。",
+  "verdict": true
+}

@@ -18,8 +18,8 @@ DUPLICATE_ASSERT	tests/test_audience_travel_gating_670.py:518,527	test_arrived_s
 DUPLICATE_ASSERT	tests/test_audience_travel_gating_670.py:481,528	test_arrived_summon_continuation_survives_failed_apply_across_months	_travel_row(db, person.name)["location"] == "henan"
 DUPLICATE_ASSERT	tests/test_audience_travel_gating_670.py:482,529	test_arrived_summon_continuation_survives_failed_apply_across_months	_travel_row(db, person.name)["transit_to"] == ""
 DUPLICATE_ASSERT	tests/test_audience_travel_gating_670.py:893,909	test_continuation_arrival_settles_origin_without_waiting	an.list_unsettled_summons(db) == []
-DUPLICATE_ASSERT	tests/test_audience_undo_506.py:452,472	test_undo_dismiss_round_removes_exit_ledger_and_restores_presence	m in an.present_names_at(db, n1)
-DUPLICATE_ASSERT	tests/test_audience_undo_506.py:509,526	test_attach_origin_bind_atomic_no_orphan_enter_on_midway_crash	m not in an.persons_present_tonight(db, night_id)
+DUPLICATE_ASSERT	tests/test_audience_undo_506.py:450,470	test_undo_dismiss_round_removes_exit_ledger_and_restores_presence	m in an.present_names_at(db, n1)
+DUPLICATE_ASSERT	tests/test_audience_undo_506.py:507,524	test_attach_origin_bind_atomic_no_orphan_enter_on_midway_crash	m not in an.persons_present_tonight(db, night_id)
 DUPLICATE_ASSERT	tests/test_breach_plea_623.py:874,879	test_silence_keeps_pending_across_settle	_pending_pleas(db)
 DUPLICATE_ASSERT	tests/test_candidate_supply_1893.py:216,229	test_selected_event_lands_once_via_existing_new_issues_write	db.conn.execute( "SELECT COUNT(*) FROM issues WHERE origin_kind='event_pool' AND origin_ref=?", (ev.id,), ).fetchone()[0] == 1
 DUPLICATE_ASSERT	tests/test_character_knowledge_489.py:1240,1251	test_structured_person_scope_replaces_role_wide_world_reports	db.get_character_knowledge(state, bare.name)["scope"]["region_ids"] == ()
@@ -42,7 +42,7 @@ LEN_THEN_EQ_CAND	tests/test_character_knowledge_489.py:1201,1263	test_structured
 LEN_THEN_EQ_CAND	tests/test_character_knowledge_489.py:1201,1264	test_structured_person_scope_replaces_role_wide_world_reports	len(regions) >= 2 -> db.get_character_knowledge(state, bare.name)["scope"]["region_ids"] == ("jiangxi
 LEN_THEN_EQ_CAND	tests/test_character_knowledge_489.py:1201,1272	test_structured_person_scope_replaces_role_wide_world_reports	len(regions) >= 2 -> db._office_archive_key(
         keke_lead["office"], keke_lead["office_type"],
- 
+
 LEN_THEN_EQ_CAND	tests/test_character_knowledge_489.py:1201,1131	test_structured_person_scope_replaces_role_wide_world_reports	len(regions) >= 2 -> content.characters[name].office_region == region
 LEN_THEN_EQ_CAND	tests/test_character_knowledge_489.py:1201,1132	test_structured_person_scope_replaces_role_wide_world_reports	len(regions) >= 2 -> db.character_office_region(name) == region
 LEN_THEN_EQ_CAND	tests/test_character_knowledge_489.py:1201,1134	test_structured_person_scope_replaces_role_wide_world_reports	len(regions) >= 2 -> view["scope"]["region_ids"] == (region,)
@@ -54,8 +54,7 @@ DUPLICATE_ASSERT	tests/test_character_knowledge_489.py:1398,1410	test_household_
 DUPLICATE_ASSERT	tests/test_character_knowledge_489.py:1442,1467	test_household_secret_ledger_hides_case_by_excluded_office	{(-2, "delta"), (-2, "balance_after")} <= household_ledger_reads
 DUPLICATE_ASSERT	tests/test_character_knowledge_489.py:1443,1468	test_household_secret_ledger_hides_case_by_excluded_office	{(-2, "reason"), (-2, "category")}.isdisjoint(household_ledger_reads)
 LEN_THEN_EQ_CAND	tests/test_cli_backend.py:72,82	test_extract_secret_order_preserves_long_title_without_formal_cap	len(long_title) > 20 -> result["title"] == long_title
-LEN_THEN_EQ_CAND	tests/test_cli_backend.py:72,83	test_extract_secret_order_preserves_long_title_without_formal_cap	len(long_title) > 20 -> len(result["title"]) == len(long_title)
-DUPLICATE_ASSERT	tests/test_cli_backend.py:612,613	test_resolve_cli_bin_caches	cb._resolve_cli_bin("codex", "codex") == "/abs/codex"
+DUPLICATE_ASSERT	tests/test_cli_backend.py:611,612	test_resolve_cli_bin_caches	cb._resolve_cli_bin("codex", "codex") == "/abs/codex"
 DUPLICATE_ASSERT	tests/test_cli_transport_1465.py:203,214	test_cli_chat_stream_three_transient_exhausted_system_fail_night_open_then_resend	an.get_open_night(db) is not None
 DUPLICATE_ASSERT	tests/test_commitment_backlash_626.py:551,571	test_ac3_regret_then_expire_dropped_no_hammer	assess_foundation_tier(db, cid) == FOUNDATION_HALFWAY
 DUPLICATE_ASSERT	tests/test_commitment_backlash_626.py:601,626	test_ac3_plea_due_expire_then_commitment_expire_no_hammer	assess_foundation_tier(db, cid) == FOUNDATION_HALFWAY
@@ -166,8 +165,6 @@ DUPLICATE_ASSERT	tests/test_month_chain_1847.py:1510,1520	test_step_4a_crash_rec
 DUPLICATE_ASSERT	tests/test_month_chain_1847.py:1638,1662	test_step_4a_missing_covert_fidelity_records_inline_rejection	db.get_secret_order(order_id)["status"] == "active"
 DUPLICATE_ASSERT	tests/test_month_chain_1847.py:1639,1663	test_step_4a_missing_covert_fidelity_records_inline_rejection	db.conn.execute( "SELECT COUNT(*) FROM dossier_actual_progress WHERE dossier_id=? AND turn=?", (dossier_id, turn), ).fetchone()[0] == 0
 DUPLICATE_ASSERT	tests/test_month_chain_1847.py:1855,1859	test_step_4a_non_validation_failure_keeps_product_on_retry	call_count == 1
-LEN_THEN_EQ_CAND	tests/test_month_loop_tracer_1468.py:447,455	test_issue_extraction_llm_dead_single_source_not_cta	count == len(pending_list) >= 1 -> str(still.get("status")) == an.NIGHT_STATUS_OPEN
-LEN_THEN_EQ_CAND	tests/test_month_loop_tracer_1468.py:447,457	test_issue_extraction_llm_dead_single_source_not_cta	count == len(pending_list) >= 1 -> _turn_of(after) == turn0
 DUPLICATE_ASSERT	tests/test_month_translate_1840.py:156,166	test_pre_push_segment_translation_stages_declaration_without_world_writes	db.textual_facts.readable_materials( subject_kind="character", subject_id=person, ) == facts_before
 DUPLICATE_ASSERT	tests/test_month_translate_1840.py:384,402	test_staged_month_declarations_settle_in_given_order_and_effects_are_idempotent	db.conn.execute( "SELECT morale FROM armies WHERE id=?", (army,), ).fetchone()[0] == army_before + 3
 DUPLICATE_ASSERT	tests/test_month_translate_1840.py:488,491	test_unparseable_month_segment_does_not_stage_or_commit	db.staged_declarations.staged_for("bad-json") == ()

@@ -80,7 +80,6 @@ def test_extract_secret_order_preserves_long_title_without_formal_cap(monkeypatc
         f"密令如下：{long_title}\n查明事实并回奏。", "臣领密旨", "毕自严",
     )
     assert result["title"] == long_title
-    assert len(result["title"]) == len(long_title)
 
 
 def test_typed_secret_exclusions_canonicalize_roster_alias_and_office(game):

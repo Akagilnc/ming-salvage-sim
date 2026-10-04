@@ -1,0 +1,14 @@
+
+> ming-salvage-web@0.1.0 test
+> vitest run --environment jsdom src/appDurableWiring.test.tsx src/components/settlementGazettePanel.test.tsx src/components/modals.test.tsx src/components/drawers.test.tsx src/components/decisionModal.test.tsx src/decisionRouting.test.tsx src/components/situation.test.tsx
+
+
+ RUN  v4.1.9 /Users/akagilnc/WorkSpace/Ming_LLM-1834-w5/web
+
+Not implemented: navigation to another Document
+
+ Test Files  7 passed (7)
+      Tests  190 passed (190)
+   Start at  07:19:10
+   Duration  4.19s (transform 1.43s, setup 0ms, import 2.10s, tests 3.54s, environment 4.89s)
+

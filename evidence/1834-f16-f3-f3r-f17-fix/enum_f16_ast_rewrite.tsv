@@ -235,7 +235,7 @@ REVIEW	ming_sim/cli_backend.py	3100	assign	_tk	str(_projected.get('target_kind')
 REVIEW	ming_sim/cli_backend.py	3104	assign	_tid	str(_projected.get('target_id') if _act == 'grant_allocation' else obj.get('目标ID') or '').strip()
 FREE_PROSE_CAND	ming_sim/cli_backend.py	3117	dict	draft_text	(minister_reply or player_message or '').strip()
 REVIEW	ming_sim/cli_backend.py	3133	assign	dossier_action	str(obj.get('动作类型') or 'special_decree').strip()
-MACHINE_KEY	ming_sim/cli_backend.py	3140	assign	target_kind	str(_tk_raw or '').strip() if dossier_action == 'grant_allocation' else _coerce_draft_target_kind(_tk_raw if _tk_raw not in (None, '') else 
+MACHINE_KEY	ming_sim/cli_backend.py	3140	assign	target_kind	str(_tk_raw or '').strip() if dossier_action == 'grant_allocation' else _coerce_draft_target_kind(_tk_raw if _tk_raw not in (None, '') else
 REVIEW	ming_sim/cli_backend.py	3145	assign	target_id_value	str(_projected.get('target_id') if dossier_action == 'grant_allocation' else obj.get('目标ID') or '').strip()
 REVIEW	ming_sim/cli_backend.py	3191	assign	merged	str(obj.get('合并草案') or '').strip()
 FREE_PROSE_CAND	ming_sim/cli_backend.py	3204	assign	draft_text	(minister_reply or '').strip()

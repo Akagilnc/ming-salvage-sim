@@ -3169,7 +3169,7 @@ def _spawn_legacy_from_effect(
         state,
         name=name,
         modifiers=modifiers,
-        narrative_hint=str(legacy.get("narrative_hint") or "")[:200],
+        narrative_hint=str(legacy.get("narrative_hint") or ""),
         duration_months=duration,
         source_issue_id=issue_id,
         commit=commit,
@@ -7053,10 +7053,8 @@ def _apply_surcharge_decrees(
         if claim in claimed_origins:
             _reject("invalid_enum", "surcharge_decrees 同批同一旨意与省份只能成功一次")
             continue
-        reason = str(item.get("reason") or "").strip()
-        if len(reason) > 120:
-            _reject("invalid_enum", f"surcharge_decrees reason 超 120 字：{reason!r}")
-            continue
+        # Free prose surcharge reason: preserve raw; no length gate/crop (#1834 F16).
+        reason = str(item.get("reason") or "")
         meta = dict(settle.get("_meta") or {})
         old = max(0.0, float(meta.get(SETTLE_META_JIAPIAI_KEY, 0) or 0))
         new = max(0.0, old + amount)  # 负额停征/蠲免，账面钳 ≥0
