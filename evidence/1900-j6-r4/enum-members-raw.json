@@ -1,0 +1,898 @@
+[
+  {
+    "file": "tests/test_advances_section_rejections.py",
+    "line": 108,
+    "kind": "REWRITE",
+    "assert": "with pytest.raises(RuntimeError):",
+    "replaced": "with pytest.raises(RuntimeError, match=\"模拟 advance_issue\"):",
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_audience_night_498.py",
+    "line": 511,
+    "kind": "REWRITE",
+    "assert": "with pytest.raises(RuntimeError):",
+    "replaced": "with pytest.raises(RuntimeError, match=\"inject roster fail\"):",
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_audience_restore_505.py",
+    "line": 811,
+    "kind": "REWRITE_CONTEXT",
+    "assert": "assert any(ev.get(\"type\") == \"accepted\" for ev in events)",
+    "replaced": null,
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_audience_restore_505.py",
+    "line": null,
+    "kind": "DELETE",
+    "assert": "assert not any(",
+    "replaced": null,
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_audience_translate_1837.py",
+    "line": 257,
+    "kind": "REWRITE_CONTEXT",
+    "assert": "assert int(later) > int(source)",
+    "replaced": null,
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_audience_translate_1837.py",
+    "line": 319,
+    "kind": "REWRITE_CONTEXT",
+    "assert": "assert LEAK_MARKER[\"body\"] not in bodies",
+    "replaced": null,
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_audience_translate_1837.py",
+    "line": null,
+    "kind": "DELETE",
+    "assert": "assert all(\"后轮问\" not in text for text in later_bodies + later_payloads)",
+    "replaced": null,
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_audience_travel_gating_670.py",
+    "line": 597,
+    "kind": "REWRITE",
+    "assert": "with pytest.raises(RuntimeError):",
+    "replaced": "with pytest.raises(RuntimeError, match=\"injected multi-origin applier failure\"):",
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_audience_travel_gating_670.py",
+    "line": 597,
+    "kind": "REWRITE",
+    "assert": "with pytest.raises(RuntimeError):",
+    "replaced": "with pytest.raises(RuntimeError, match=\"injected summon recorder failure\"):",
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_audience_travel_gating_670.py",
+    "line": 597,
+    "kind": "REWRITE",
+    "assert": "with pytest.raises(RuntimeError):",
+    "replaced": "with pytest.raises(RuntimeError, match=\"injected settle failure\"):",
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_cli_play_turn.py",
+    "line": 242,
+    "kind": "REWRITE",
+    "assert": "with pytest.raises(RuntimeError):",
+    "replaced": "with pytest.raises(RuntimeError, match=\"LLM down\"):",
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_cli_play_turn.py",
+    "line": 242,
+    "kind": "REWRITE",
+    "assert": "with pytest.raises(RuntimeError):",
+    "replaced": "with pytest.raises(RuntimeError, match=\"LLM down\"):",
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_cli_play_turn.py",
+    "line": 242,
+    "kind": "REWRITE",
+    "assert": "with pytest.raises(RuntimeError):",
+    "replaced": "with pytest.raises(RuntimeError, match=\"reply persist failed\"):",
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_cli_runner_error_typed_1299.py",
+    "line": 70,
+    "kind": "REWRITE_CONTEXT",
+    "assert": "assert captured[\"text\"] == \"臣遵旨，边事容臣细奏。\"",
+    "replaced": null,
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_cli_runner_error_typed_1299.py",
+    "line": null,
+    "kind": "DELETE",
+    "assert": "assert \"臣遵旨\" in captured[\"text\"]",
+    "replaced": null,
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_close_issues_section_rejections.py",
+    "line": 165,
+    "kind": "REWRITE",
+    "assert": "with pytest.raises(RuntimeError):",
+    "replaced": "with pytest.raises(RuntimeError, match=\"模拟 close_issue\"):",
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_decree_commitment_settlement_229.py",
+    "line": 562,
+    "kind": "REWRITE_CONTEXT",
+    "assert": "assert int(progress.get(\"paid_total\") or 0) >= 0",
+    "replaced": null,
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_decree_commitment_settlement_229.py",
+    "line": 563,
+    "kind": "REWRITE_CONTEXT",
+    "assert": "assert \"remaining_arrears\" in progress",
+    "replaced": null,
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_decree_commitment_settlement_229.py",
+    "line": 1448,
+    "kind": "REWRITE_CONTEXT",
+    "assert": "assert row[\"resolution_summary\"] == \"皇帝已复试孙承宗，此承诺已由圣裁处理。\"",
+    "replaced": null,
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_decree_commitment_settlement_229.py",
+    "line": null,
+    "kind": "DELETE",
+    "assert": "assert \"直到补齐\" in output",
+    "replaced": null,
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_decree_commitment_settlement_229.py",
+    "line": null,
+    "kind": "DELETE",
+    "assert": "assert \"圣裁处理\" in row[\"resolution_summary\"]",
+    "replaced": null,
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_decree_dossiers_571.py",
+    "line": 460,
+    "kind": "REWRITE",
+    "assert": "with pytest.raises(RuntimeError):",
+    "replaced": "with pytest.raises(RuntimeError, match=\"dossier close failed\"):",
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_due_review_621.py",
+    "line": 744,
+    "kind": "REWRITE",
+    "assert": "with pytest.raises(RuntimeError):",
+    "replaced": "with pytest.raises(RuntimeError, match=\"ownership lookup boom\"):",
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_empire_modifier_income_only_341.py",
+    "line": 34,
+    "kind": "REWRITE_CONTEXT",
+    "assert": "assert net_pct == -12, f\"前置条件：开局国库帝国修正应为 -12（实为 {net_pct}）\"",
+    "replaced": null,
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_empire_modifier_income_only_341.py",
+    "line": 40,
+    "kind": "REWRITE_CONTEXT",
+    "assert": "assert actual == expected_income, (",
+    "replaced": null,
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_empire_modifier_income_only_341.py",
+    "line": null,
+    "kind": "DELETE",
+    "assert": "assert net_pct < 0, f\"前置条件：游戏开局应有负的国库帝国修正（实为 {net_pct}）\"",
+    "replaced": null,
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_empire_modifier_income_only_341.py",
+    "line": null,
+    "kind": "DELETE",
+    "assert": "assert actual < 100 and actual != 100, (",
+    "replaced": null,
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_event_chain_cascade.py",
+    "line": 244,
+    "kind": "REWRITE",
+    "assert": "with pytest.raises(RuntimeError):",
+    "replaced": "with pytest.raises(RuntimeError, match=\"injected cancel failure\"):",
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_event_trigger_gate.py",
+    "line": 2167,
+    "kind": "REWRITE",
+    "assert": "with pytest.raises(RuntimeError):",
+    "replaced": "with pytest.raises(RuntimeError, match=\"boom after issue insert\"):",
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_executor_routing_721.py",
+    "line": 360,
+    "kind": "REWRITE",
+    "assert": "with pytest.raises(RuntimeError):",
+    "replaced": "with pytest.raises(RuntimeError, match=\"rollback first\"):",
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_executor_routing_721.py",
+    "line": 360,
+    "kind": "REWRITE",
+    "assert": "with pytest.raises(RuntimeError):",
+    "replaced": "with pytest.raises(RuntimeError, match=\"force outer rollback\"):",
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_faction_brew_637.py",
+    "line": 292,
+    "kind": "REWRITE",
+    "assert": "with pytest.raises(sqlite3.OperationalError):",
+    "replaced": "with pytest.raises(sqlite3.OperationalError, match=\"派系认领库不可写\"):",
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_faction_brew_637.py",
+    "line": 292,
+    "kind": "REWRITE",
+    "assert": "with pytest.raises(sqlite3.OperationalError):",
+    "replaced": "with pytest.raises(sqlite3.OperationalError, match=\"派系落定库不可写\"):",
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_faction_leverage_9.py",
+    "line": null,
+    "kind": "DELETE",
+    "assert": "assert db._has_meta_flag(\"__leverage_offsets_calibrated\"), (",
+    "replaced": null,
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_faction_leverage_9.py",
+    "line": null,
+    "kind": "DELETE",
+    "assert": "assert reopened._has_meta_flag(\"__leverage_offsets_float_v2\"), (",
+    "replaced": null,
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_fiscal_substrate_bridge.py",
+    "line": 1317,
+    "kind": "REWRITE_CONTEXT",
+    "assert": "assert net_pct == -12",
+    "replaced": null,
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_fiscal_substrate_bridge.py",
+    "line": 1542,
+    "kind": "REWRITE_CONTEXT",
+    "assert": "assert len(colliding) >= 2  # hub 投影行 + 用户 fiscal_item 行",
+    "replaced": null,
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_fiscal_substrate_bridge.py",
+    "line": 1549,
+    "kind": "REWRITE_CONTEXT",
+    "assert": "assert expected is not None, f\"本案只覆盖开局 -12% 或净 0（实为 {net_pct}）\"",
+    "replaced": null,
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_fiscal_substrate_bridge.py",
+    "line": 1783,
+    "kind": "REWRITE",
+    "assert": "with pytest.raises(RuntimeError):",
+    "replaced": "with pytest.raises(RuntimeError, match=\"boom after hub\"):",
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_fiscal_substrate_bridge.py",
+    "line": 1783,
+    "kind": "REWRITE",
+    "assert": "with pytest.raises(RuntimeError):",
+    "replaced": "with pytest.raises(RuntimeError, match=\"rollback probe\"):",
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_fiscal_substrate_bridge.py",
+    "line": null,
+    "kind": "DELETE",
+    "assert": "assert net_pct < 0",
+    "replaced": null,
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_fiscal_substrate_bridge.py",
+    "line": null,
+    "kind": "DELETE",
+    "assert": "assert any(row.get(\"internal\") == \"substrate_hub\" for row in salt_lines)",
+    "replaced": null,
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_fiscal_substrate_bridge.py",
+    "line": null,
+    "kind": "DELETE",
+    "assert": "assert any(row.get(\"internal\") != \"substrate_hub\" for row in salt_lines)",
+    "replaced": null,
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_llm_channel_config.py",
+    "line": 474,
+    "kind": "REWRITE_CONTEXT",
+    "assert": "assert \"model\" in captured and \"prompt\" in captured",
+    "replaced": null,
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_llm_channel_config.py",
+    "line": 475,
+    "kind": "REWRITE_CONTEXT",
+    "assert": "assert captured[\"prompt\"]  # smoke 已触发",
+    "replaced": null,
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_llm_channel_config.py",
+    "line": 503,
+    "kind": "REWRITE_CONTEXT",
+    "assert": "assert seen.get(\"config\") is cfg",
+    "replaced": null,
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_llm_channel_config.py",
+    "line": 504,
+    "kind": "REWRITE_CONTEXT",
+    "assert": "assert seen.get(\"tag\") == \"verify\"",
+    "replaced": null,
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_llm_channel_config.py",
+    "line": 505,
+    "kind": "REWRITE_CONTEXT",
+    "assert": "assert seen.get(\"prompt\")",
+    "replaced": null,
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_llm_channel_config.py",
+    "line": 504,
+    "kind": "REWRITE_CONTEXT",
+    "assert": "assert seen.get(\"tag\") == \"verify\"",
+    "replaced": null,
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_llm_channel_config.py",
+    "line": 505,
+    "kind": "REWRITE_CONTEXT",
+    "assert": "assert seen.get(\"prompt\")",
+    "replaced": null,
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_llm_channel_config.py",
+    "line": null,
+    "kind": "DELETE",
+    "assert": "assert captured[\"prompt\"] == \"输出 ok\"",
+    "replaced": null,
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_llm_channel_config.py",
+    "line": null,
+    "kind": "DELETE",
+    "assert": "assert seen[\"prompt\"] == \"输出 ok\"",
+    "replaced": null,
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_llm_channel_config.py",
+    "line": null,
+    "kind": "DELETE",
+    "assert": "assert seen[\"config\"] is cfg",
+    "replaced": null,
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_llm_channel_config.py",
+    "line": null,
+    "kind": "DELETE",
+    "assert": "assert seen[\"prompt\"] == \"输出 ok\"",
+    "replaced": null,
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_material_directory_1830.py",
+    "line": 283,
+    "kind": "REWRITE",
+    "assert": "with pytest.raises(RuntimeError):",
+    "replaced": "with pytest.raises(RuntimeError, match=\"secret-order-db-boom\"):",
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_month_chain_1843.py",
+    "line": 401,
+    "kind": "REWRITE",
+    "assert": "with pytest.raises(RuntimeError):",
+    "replaced": "with pytest.raises(RuntimeError, match=\"chain persistence failed\"):",
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_month_chain_1843.py",
+    "line": 401,
+    "kind": "REWRITE",
+    "assert": "with pytest.raises(RuntimeError):",
+    "replaced": "with pytest.raises(RuntimeError, match=\"transient settlement crash\"):",
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_month_chain_1843.py",
+    "line": 713,
+    "kind": "REWRITE_CONTEXT",
+    "assert": "assert ordered == 100",
+    "replaced": null,
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_month_chain_1843.py",
+    "line": 715,
+    "kind": "REWRITE_CONTEXT",
+    "assert": "assert recon[\"arrived_amount\"] == expected_arrived",
+    "replaced": null,
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_month_chain_1843.py",
+    "line": 716,
+    "kind": "REWRITE_CONTEXT",
+    "assert": "assert recon[\"loss_amount\"] == ordered - expected_arrived",
+    "replaced": null,
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_month_chain_1843.py",
+    "line": null,
+    "kind": "DELETE",
+    "assert": "assert recon[\"arrived_amount\"] == (lo + hi) // 2",
+    "replaced": null,
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_month_chain_1843.py",
+    "line": null,
+    "kind": "DELETE",
+    "assert": "assert recon[\"loss_amount\"] == int(recon[\"ordered_amount\"]) - recon[\"arrived_amount\"]",
+    "replaced": null,
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_month_chain_1847.py",
+    "line": 1801,
+    "kind": "REWRITE",
+    "assert": "with pytest.raises(RuntimeError):",
+    "replaced": "with pytest.raises(RuntimeError, match=\"injected chain save failure\"):",
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_month_chain_1847.py",
+    "line": 1801,
+    "kind": "REWRITE",
+    "assert": "with pytest.raises(RuntimeError):",
+    "replaced": "with pytest.raises(RuntimeError, match=\"injected disclosure save failure\"):",
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_new_game_write_path_1749.py",
+    "line": 465,
+    "kind": "REWRITE",
+    "assert": "with pytest.raises(RuntimeError):",
+    "replaced": "with pytest.raises(RuntimeError, match=\"begin_turn boom\"):",
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_new_game_write_path_1749.py",
+    "line": 465,
+    "kind": "REWRITE",
+    "assert": "with pytest.raises(RuntimeError):",
+    "replaced": "with pytest.raises(RuntimeError, match=\"load_state boom\"):",
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_new_issues_section_rejections.py",
+    "line": 311,
+    "kind": "REWRITE",
+    "assert": "with pytest.raises(RuntimeError):",
+    "replaced": "with pytest.raises(RuntimeError, match=\"模拟 insert_issue\"):",
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_new_issues_section_rejections.py",
+    "line": 311,
+    "kind": "REWRITE",
+    "assert": "with pytest.raises(RuntimeError):",
+    "replaced": "with pytest.raises(RuntimeError, match=\"模拟 event_to_issue\"):",
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_new_issues_section_rejections.py",
+    "line": 311,
+    "kind": "REWRITE",
+    "assert": "with pytest.raises(RuntimeError):",
+    "replaced": "with pytest.raises(RuntimeError, match=\"模拟 event_pool\"):",
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_override_breach_costs_564.py",
+    "line": 384,
+    "kind": "REWRITE",
+    "assert": "with pytest.raises(RuntimeError):",
+    "replaced": "with pytest.raises(RuntimeError, match=\"after authority\"):",
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_override_breach_costs_564.py",
+    "line": 384,
+    "kind": "REWRITE",
+    "assert": "with pytest.raises(RuntimeError):",
+    "replaced": "with pytest.raises(RuntimeError, match=\"later\"):",
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_person_delta_adapter.py",
+    "line": null,
+    "kind": "DELETE",
+    "assert": "assert \"simulated office write failure\" in changes[0][\"reason\"]",
+    "replaced": null,
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_person_delta_adapter.py",
+    "line": null,
+    "kind": "DELETE",
+    "assert": "assert \"simulated office write failure\" in changes[1][\"reason\"]",
+    "replaced": null,
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_person_delta_adapter.py",
+    "line": null,
+    "kind": "DELETE",
+    "assert": "assert \"simulated post-office failure\" in changes[0][\"reason\"]",
+    "replaced": null,
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_pihong_dossier_1490.py",
+    "line": 830,
+    "kind": "REWRITE",
+    "assert": "with pytest.raises(RuntimeError):",
+    "replaced": "with pytest.raises(RuntimeError, match='event ledger inject'):",
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_power_section_rejections.py",
+    "line": 136,
+    "kind": "REWRITE",
+    "assert": "with pytest.raises(KeyError):",
+    "replaced": "with pytest.raises(KeyError, match=\"canonical person power writer bug\"):",
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_pre_settle_transaction.py",
+    "line": 103,
+    "kind": "REWRITE",
+    "assert": "with pytest.raises(RuntimeError):",
+    "replaced": "with pytest.raises(RuntimeError, match=\"phase-write boom\"):",
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_pre_settle_transaction.py",
+    "line": 103,
+    "kind": "REWRITE",
+    "assert": "with pytest.raises(RuntimeError):",
+    "replaced": "with pytest.raises(RuntimeError, match=\"pre_settle boom\"):",
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_pre_settle_transaction.py",
+    "line": 103,
+    "kind": "REWRITE",
+    "assert": "with pytest.raises(RuntimeError):",
+    "replaced": "with pytest.raises(RuntimeError, match=\"auto_submit boom\"):",
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_pre_settle_transaction.py",
+    "line": 103,
+    "kind": "REWRITE",
+    "assert": "with pytest.raises(RuntimeError):",
+    "replaced": "with pytest.raises(RuntimeError, match=\"placeholder save crash\"):",
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_promulgation_judge_561.py",
+    "line": null,
+    "kind": "DELETE",
+    "assert": "assert by_name[\"东林\"][\"leverage\"] == power_band(5)",
+    "replaced": null,
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_promulgation_judge_561.py",
+    "line": null,
+    "kind": "DELETE",
+    "assert": "assert by_name[\"阉党\"][\"leverage\"] == power_band(95)",
+    "replaced": null,
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_promulgation_judge_561.py",
+    "line": null,
+    "kind": "DELETE",
+    "assert": "assert by_name[\"东林\"][\"leverage\"] == \"routed:42\"",
+    "replaced": null,
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_qa_t1_extraction_dual_source_1353.py",
+    "line": null,
+    "kind": "DELETE",
+    "assert": "assert seen.get(\"write_gate\") is None, (",
+    "replaced": null,
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_refugee_loop_652.py",
+    "line": 494,
+    "kind": "REWRITE_CONTEXT",
+    "assert": "assert after == before - expected_transfer, (",
+    "replaced": null,
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_refugee_loop_652.py",
+    "line": 588,
+    "kind": "REWRITE_CONTEXT",
+    "assert": "assert arrived == expected_arrived, (",
+    "replaced": null,
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_refugee_loop_652.py",
+    "line": 591,
+    "kind": "REWRITE",
+    "assert": "assert _pop(loaded, \"流民\", \"shaanxi\") == displaced_before - expected_transfer",
+    "replaced": "assert _pop(loaded, \"流民\", \"shaanxi\") < displaced_before",
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_refugee_loop_652.py",
+    "line": 592,
+    "kind": "REWRITE",
+    "assert": "assert _pop(loaded, \"农民\", \"shaanxi\") == farmer_before + expected_transfer",
+    "replaced": "assert _pop(loaded, \"农民\", \"shaanxi\") > farmer_before",
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_refugee_loop_652.py",
+    "line": null,
+    "kind": "DELETE",
+    "assert": "assert after < before",
+    "replaced": null,
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_refugee_loop_652.py",
+    "line": null,
+    "kind": "DELETE",
+    "assert": "assert 0 < arrived < amount",
+    "replaced": null,
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_rejection_wiring.py",
+    "line": 94,
+    "kind": "REWRITE",
+    "assert": "with pytest.raises(RuntimeError):",
+    "replaced": "with pytest.raises(RuntimeError, match=\"crash after flush\"):",
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_rejection_wiring.py",
+    "line": 94,
+    "kind": "REWRITE",
+    "assert": "with pytest.raises(RuntimeError):",
+    "replaced": "with pytest.raises(RuntimeError, match=\"outer rollback\"):",
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_relation_brew_636.py",
+    "line": 465,
+    "kind": "REWRITE",
+    "assert": "with pytest.raises(sqlite3.OperationalError):",
+    "replaced": "with pytest.raises(sqlite3.OperationalError, match=\"认领库不可写\"):",
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_relation_brew_636.py",
+    "line": 465,
+    "kind": "REWRITE",
+    "assert": "with pytest.raises(sqlite3.OperationalError):",
+    "replaced": "with pytest.raises(sqlite3.OperationalError, match=\"落定库不可写\"):",
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_relation_brew_636.py",
+    "line": 465,
+    "kind": "REWRITE",
+    "assert": "with pytest.raises(sqlite3.OperationalError):",
+    "replaced": "with pytest.raises(sqlite3.OperationalError, match=\"pending 库不可写\"):",
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_relation_brew_636.py",
+    "line": 522,
+    "kind": "REWRITE",
+    "assert": "with pytest.raises(KeyError):",
+    "replaced": "with pytest.raises(KeyError, match=\"酿制手程序错误\"):",
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_relation_brew_636.py",
+    "line": 542,
+    "kind": "REWRITE",
+    "assert": "with pytest.raises(ValueError):",
+    "replaced": "with pytest.raises(ValueError, match=\"酿制手程序错误\"):",
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_relation_seed_638.py",
+    "line": 278,
+    "kind": "REWRITE",
+    "assert": "with pytest.raises(RuntimeError):",
+    "replaced": "with pytest.raises(RuntimeError, match=\"injected write failure\"):",
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_relation_seed_638.py",
+    "line": 67,
+    "kind": "REWRITE",
+    "assert": "with pytest.raises(ValueError):",
+    "replaced": "with pytest.raises(ValueError, match=\"injected seed failure\"):",
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_rescript_draft_656.py",
+    "line": 753,
+    "kind": "REWRITE",
+    "assert": "assert any(\"options_len=0\" in msg for msg in logs)",
+    "replaced": "assert any(empty[\"title\"] in msg for msg in logs)",
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_rescript_draft_656.py",
+    "line": 766,
+    "kind": "REWRITE",
+    "assert": "assert any(\"options_type=str\" in msg and \"options_len=n/a\" in msg for msg in logs)",
+    "replaced": "assert any(bad[\"title\"] in msg for msg in logs)",
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_rescript_draft_656.py",
+    "line": 838,
+    "kind": "REWRITE",
+    "assert": "with pytest.raises(RuntimeError):",
+    "replaced": "with pytest.raises(RuntimeError, match=\"programmer bug sentinel\"):",
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_secret_order_monthly_progress_566.py",
+    "line": 366,
+    "kind": "REWRITE",
+    "assert": "with pytest.raises(RuntimeError):",
+    "replaced": "with pytest.raises(RuntimeError, match=\"post-fiscal failure 566\"):",
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_session_write_queue_1353.py",
+    "line": 525,
+    "kind": "REWRITE",
+    "assert": "with pytest.raises(AssertionError):",
+    "replaced": "with pytest.raises(AssertionError, match=\"did not drain\"):",
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_session_write_queue_1353.py",
+    "line": 536,
+    "kind": "REWRITE",
+    "assert": "with pytest.raises(RuntimeError):",
+    "replaced": "with pytest.raises(RuntimeError, match=\"queue boom\"):",
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_state_reload.py",
+    "line": 125,
+    "kind": "REWRITE",
+    "assert": "with pytest.raises(RuntimeError):",
+    "replaced": "with pytest.raises(RuntimeError, match=\"save boom\"):",
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_state_reload.py",
+    "line": 125,
+    "kind": "REWRITE",
+    "assert": "with pytest.raises(RuntimeError):",
+    "replaced": "with pytest.raises(RuntimeError, match=\"post-commit step crash\"):",
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_state_reload.py",
+    "line": 125,
+    "kind": "REWRITE",
+    "assert": "with pytest.raises(RuntimeError):",
+    "replaced": "with pytest.raises(RuntimeError, match=\"post-commit step crash\"):",
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_state_reload.py",
+    "line": 125,
+    "kind": "REWRITE",
+    "assert": "with pytest.raises(RuntimeError):",
+    "replaced": "with pytest.raises(RuntimeError, match=\"boom\"):",
+    "lang": "py"
+  },
+  {
+    "file": "tests/test_state_reload.py",
+    "line": 345,
+    "kind": "REWRITE",
+    "assert": "with pytest.raises(RuntimeError) as ei:",
+    "replaced": "with pytest.raises(RuntimeError, match=\"orig\") as ei:",
+    "lang": "py"
+  },
+  {
+    "file": "web/src/useSettlementFlow.test.tsx",
+    "line": 305,
+    "kind": "ADD",
+    "assert": "expect(alert?.textContent).toContain(\"/tmp/tail-error\");",
+    "replaced": null,
+    "lang": "ts"
+  },
+  {
+    "file": "web/src/useSettlementFlow.test.tsx",
+    "line": 225,
+    "kind": "ADD",
+    "assert": "expect(vi.getTimerCount()).toBe(0);",
+    "replaced": null,
+    "lang": "ts"
+  }
+]

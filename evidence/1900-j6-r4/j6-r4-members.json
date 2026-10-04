@@ -1,0 +1,870 @@
+[
+  {
+    "file": "tests/test_advances_section_rejections.py",
+    "line": 108,
+    "kind": "ADDED_OR_REWRITTEN",
+    "assert": "with pytest.raises(RuntimeError):",
+    "lang": "py",
+    "disposition": "KEEP_RAISES_TYPE",
+    "rationale": "删 match= 措辞锁后保留异常类型；负向/回滚契约仍有效",
+    "post_fix": "PRESENT"
+  },
+  {
+    "file": "tests/test_audience_night_498.py",
+    "line": 511,
+    "kind": "ADDED_OR_REWRITTEN",
+    "assert": "with pytest.raises(RuntimeError):",
+    "lang": "py",
+    "disposition": "KEEP_RAISES_TYPE",
+    "rationale": "删 match= 措辞锁后保留异常类型；负向/回滚契约仍有效",
+    "post_fix": "PRESENT"
+  },
+  {
+    "file": "tests/test_audience_restore_505.py",
+    "line": 811,
+    "kind": "ADDED_OR_REWRITTEN",
+    "assert": "assert any(ev.get(\"type\") == \"accepted\" for ev in events)",
+    "lang": "py",
+    "disposition": "KEEP_STREAM_EVENT",
+    "rationale": "chat_stream accepted 事件类型；替 OperationalError 措辞锁",
+    "post_fix": "PRESENT"
+  },
+  {
+    "file": "tests/test_audience_translate_1837.py",
+    "line": 257,
+    "kind": "ADDED_OR_REWRITTEN",
+    "assert": "assert int(later) > int(source)",
+    "lang": "py",
+    "disposition": "KEEP_CUTOFF_ORDER",
+    "rationale": "源轮/后轮 id 序结构化前置",
+    "post_fix": "PRESENT"
+  },
+  {
+    "file": "tests/test_audience_translate_1837.py",
+    "line": 319,
+    "kind": "ADDED_OR_REWRITTEN",
+    "assert": "assert LEAK_MARKER[\"body\"] not in bodies",
+    "lang": "py",
+    "disposition": "KEEP_CUTOFF_MARKER",
+    "rationale": "源轮截止失效时结构化泄漏标记负向",
+    "post_fix": "PRESENT"
+  },
+  {
+    "file": "tests/test_audience_travel_gating_670.py",
+    "line": 597,
+    "kind": "ADDED_OR_REWRITTEN",
+    "assert": "with pytest.raises(RuntimeError):",
+    "lang": "py",
+    "disposition": "KEEP_RAISES_TYPE",
+    "rationale": "删 match= 措辞锁后保留异常类型；负向/回滚契约仍有效",
+    "post_fix": "PRESENT"
+  },
+  {
+    "file": "tests/test_audience_travel_gating_670.py",
+    "line": 791,
+    "kind": "ADDED_OR_REWRITTEN",
+    "assert": "with pytest.raises(RuntimeError):",
+    "lang": "py",
+    "disposition": "KEEP_RAISES_TYPE",
+    "rationale": "删 match= 措辞锁后保留异常类型；负向/回滚契约仍有效",
+    "post_fix": "PRESENT"
+  },
+  {
+    "file": "tests/test_audience_travel_gating_670.py",
+    "line": 1018,
+    "kind": "ADDED_OR_REWRITTEN",
+    "assert": "with pytest.raises(RuntimeError):",
+    "lang": "py",
+    "disposition": "KEEP_RAISES_TYPE",
+    "rationale": "删 match= 措辞锁后保留异常类型；负向/回滚契约仍有效",
+    "post_fix": "PRESENT"
+  },
+  {
+    "file": "tests/test_cli_play_turn.py",
+    "line": 242,
+    "kind": "ADDED_OR_REWRITTEN",
+    "assert": "with pytest.raises(RuntimeError):",
+    "lang": "py",
+    "disposition": "KEEP_RAISES_TYPE",
+    "rationale": "删 match= 措辞锁后保留异常类型；负向/回滚契约仍有效",
+    "post_fix": "PRESENT"
+  },
+  {
+    "file": "tests/test_cli_play_turn.py",
+    "line": 325,
+    "kind": "ADDED_OR_REWRITTEN",
+    "assert": "with pytest.raises(RuntimeError):",
+    "lang": "py",
+    "disposition": "KEEP_RAISES_TYPE",
+    "rationale": "删 match= 措辞锁后保留异常类型；负向/回滚契约仍有效",
+    "post_fix": "PRESENT"
+  },
+  {
+    "file": "tests/test_cli_play_turn.py",
+    "line": 371,
+    "kind": "ADDED_OR_REWRITTEN",
+    "assert": "with pytest.raises(RuntimeError):",
+    "lang": "py",
+    "disposition": "KEEP_RAISES_TYPE",
+    "rationale": "删 match= 措辞锁后保留异常类型；负向/回滚契约仍有效",
+    "post_fix": "PRESENT"
+  },
+  {
+    "file": "tests/test_cli_runner_error_typed_1299.py",
+    "line": 70,
+    "kind": "ADDED_OR_REWRITTEN",
+    "assert": "assert captured[\"text\"] == \"臣遵旨，边事容臣细奏。\"",
+    "lang": "py",
+    "disposition": "KEEP_PASSTHROUGH",
+    "rationale": "fixture 回传全文相等=CLI 文本透传契约，非生产措辞锁",
+    "post_fix": "PRESENT"
+  },
+  {
+    "file": "tests/test_close_issues_section_rejections.py",
+    "line": 165,
+    "kind": "ADDED_OR_REWRITTEN",
+    "assert": "with pytest.raises(RuntimeError):",
+    "lang": "py",
+    "disposition": "KEEP_RAISES_TYPE",
+    "rationale": "删 match= 措辞锁后保留异常类型；负向/回滚契约仍有效",
+    "post_fix": "PRESENT"
+  },
+  {
+    "file": "tests/test_decree_commitment_settlement_229.py",
+    "line": 562,
+    "kind": "ADDED_OR_REWRITTEN",
+    "assert": "assert int(progress.get(\"paid_total\") or 0) >= 0",
+    "lang": "py",
+    "disposition": "FIX_DELETE",
+    "rationale": "恒真占位（>=0）；允许仅保留 months_elapsed==1",
+    "post_fix": "REMOVED_BY_FIX"
+  },
+  {
+    "file": "tests/test_decree_commitment_settlement_229.py",
+    "line": 563,
+    "kind": "ADDED_OR_REWRITTEN",
+    "assert": "assert \"remaining_arrears\" in progress",
+    "lang": "py",
+    "disposition": "FIX_DELETE",
+    "rationale": "键存在占位；无独立准确期望",
+    "post_fix": "REMOVED_BY_FIX"
+  },
+  {
+    "file": "tests/test_decree_commitment_settlement_229.py",
+    "line": 1448,
+    "kind": "ADDED_OR_REWRITTEN",
+    "assert": "assert row[\"resolution_summary\"] == \"皇帝已复试孙承宗，此承诺已由圣裁处理。\"",
+    "lang": "py",
+    "disposition": "KEEP_NARRATIVE_PASSTHROUGH",
+    "rationale": "resolution_summary 承接测试输入 narrative 原文无损",
+    "post_fix": "PRESENT"
+  },
+  {
+    "file": "tests/test_decree_dossiers_571.py",
+    "line": 1328,
+    "kind": "ADDED_OR_REWRITTEN",
+    "assert": "with pytest.raises(RuntimeError):",
+    "lang": "py",
+    "disposition": "KEEP_RAISES_TYPE",
+    "rationale": "删 match= 措辞锁后保留异常类型；负向/回滚契约仍有效",
+    "post_fix": "PRESENT"
+  },
+  {
+    "file": "tests/test_due_review_621.py",
+    "line": 744,
+    "kind": "ADDED_OR_REWRITTEN",
+    "assert": "with pytest.raises(RuntimeError):",
+    "lang": "py",
+    "disposition": "KEEP_RAISES_TYPE",
+    "rationale": "删 match= 措辞锁后保留异常类型；负向/回滚契约仍有效",
+    "post_fix": "PRESENT"
+  },
+  {
+    "file": "tests/test_empire_modifier_income_only_341.py",
+    "line": 34,
+    "kind": "ADDED_OR_REWRITTEN",
+    "assert": "assert net_pct == -12, f\"前置条件：开局国库帝国修正应为 -12（实为 {net_pct}）\"",
+    "lang": "py",
+    "disposition": "KEEP_INDEPENDENT_CONST",
+    "rationale": "独立常量/准确数值期望；替方向比较或实现 oracle",
+    "post_fix": "PRESENT"
+  },
+  {
+    "file": "tests/test_empire_modifier_income_only_341.py",
+    "line": 40,
+    "kind": "ADDED_OR_REWRITTEN",
+    "assert": "assert actual == expected_income, (",
+    "lang": "py",
+    "disposition": "KEEP_INDEPENDENT_CONST",
+    "rationale": "独立常量/准确数值期望；替方向比较或实现 oracle",
+    "post_fix": "PRESENT"
+  },
+  {
+    "file": "tests/test_event_chain_cascade.py",
+    "line": 244,
+    "kind": "ADDED_OR_REWRITTEN",
+    "assert": "with pytest.raises(RuntimeError):",
+    "lang": "py",
+    "disposition": "KEEP_RAISES_TYPE",
+    "rationale": "删 match= 措辞锁后保留异常类型；负向/回滚契约仍有效",
+    "post_fix": "PRESENT"
+  },
+  {
+    "file": "tests/test_event_trigger_gate.py",
+    "line": 2167,
+    "kind": "ADDED_OR_REWRITTEN",
+    "assert": "with pytest.raises(RuntimeError):",
+    "lang": "py",
+    "disposition": "KEEP_RAISES_TYPE",
+    "rationale": "删 match= 措辞锁后保留异常类型；负向/回滚契约仍有效",
+    "post_fix": "PRESENT"
+  },
+  {
+    "file": "tests/test_executor_routing_721.py",
+    "line": 360,
+    "kind": "ADDED_OR_REWRITTEN",
+    "assert": "with pytest.raises(RuntimeError):",
+    "lang": "py",
+    "disposition": "KEEP_RAISES_TYPE",
+    "rationale": "删 match= 措辞锁后保留异常类型；负向/回滚契约仍有效",
+    "post_fix": "PRESENT"
+  },
+  {
+    "file": "tests/test_executor_routing_721.py",
+    "line": 393,
+    "kind": "ADDED_OR_REWRITTEN",
+    "assert": "with pytest.raises(RuntimeError):",
+    "lang": "py",
+    "disposition": "KEEP_RAISES_TYPE",
+    "rationale": "删 match= 措辞锁后保留异常类型；负向/回滚契约仍有效",
+    "post_fix": "PRESENT"
+  },
+  {
+    "file": "tests/test_faction_brew_637.py",
+    "line": 292,
+    "kind": "ADDED_OR_REWRITTEN",
+    "assert": "with pytest.raises(sqlite3.OperationalError):",
+    "lang": "py",
+    "disposition": "KEEP_RAISES_TYPE",
+    "rationale": "删 match= 措辞锁后保留异常类型；负向/回滚契约仍有效",
+    "post_fix": "PRESENT"
+  },
+  {
+    "file": "tests/test_faction_brew_637.py",
+    "line": 305,
+    "kind": "ADDED_OR_REWRITTEN",
+    "assert": "with pytest.raises(sqlite3.OperationalError):",
+    "lang": "py",
+    "disposition": "KEEP_RAISES_TYPE",
+    "rationale": "删 match= 措辞锁后保留异常类型；负向/回滚契约仍有效",
+    "post_fix": "PRESENT"
+  },
+  {
+    "file": "tests/test_fiscal_substrate_bridge.py",
+    "line": 1317,
+    "kind": "ADDED_OR_REWRITTEN",
+    "assert": "assert net_pct == -12",
+    "lang": "py",
+    "disposition": "KEEP_INDEPENDENT_CONST",
+    "rationale": "独立常量/准确数值期望；替方向比较或实现 oracle",
+    "post_fix": "PRESENT"
+  },
+  {
+    "file": "tests/test_fiscal_substrate_bridge.py",
+    "line": 1542,
+    "kind": "ADDED_OR_REWRITTEN",
+    "assert": "assert len(colliding) >= 2  # hub 投影行 + 用户 fiscal_item 行",
+    "lang": "py",
+    "disposition": "FIX_REWRITE",
+    "rationale": "软下界占位 → len==2 准确期望",
+    "post_fix": "REWRITTEN_BY_FIX"
+  },
+  {
+    "file": "tests/test_fiscal_substrate_bridge.py",
+    "line": 1549,
+    "kind": "ADDED_OR_REWRITTEN",
+    "assert": "assert expected is not None, f\"本案只覆盖开局 -12% 或净 0（实为 {net_pct}）\"",
+    "lang": "py",
+    "disposition": "FIX_REWRITE",
+    "rationale": "分支占位 → 钉 net_pct==0 + expected=7（本案夹具）",
+    "post_fix": "REWRITTEN_BY_FIX"
+  },
+  {
+    "file": "tests/test_fiscal_substrate_bridge.py",
+    "line": 2030,
+    "kind": "ADDED_OR_REWRITTEN",
+    "assert": "with pytest.raises(RuntimeError):",
+    "lang": "py",
+    "disposition": "KEEP_RAISES_TYPE",
+    "rationale": "删 match= 措辞锁后保留异常类型；负向/回滚契约仍有效",
+    "post_fix": "PRESENT"
+  },
+  {
+    "file": "tests/test_fiscal_substrate_bridge.py",
+    "line": 4864,
+    "kind": "ADDED_OR_REWRITTEN",
+    "assert": "with pytest.raises(RuntimeError):",
+    "lang": "py",
+    "disposition": "KEEP_RAISES_TYPE",
+    "rationale": "删 match= 措辞锁后保留异常类型；负向/回滚契约仍有效",
+    "post_fix": "PRESENT"
+  },
+  {
+    "file": "tests/test_llm_channel_config.py",
+    "line": 474,
+    "kind": "ADDED_OR_REWRITTEN",
+    "assert": "assert \"model\" in captured and \"prompt\" in captured",
+    "lang": "py",
+    "disposition": "KEEP_ROUTE_KEY",
+    "rationale": "smoke 触发：prompt/model 键存在；不锁正文/非空",
+    "post_fix": "PRESENT"
+  },
+  {
+    "file": "tests/test_llm_channel_config.py",
+    "line": 475,
+    "kind": "ADDED_OR_REWRITTEN",
+    "assert": "assert captured[\"prompt\"]  # smoke 已触发",
+    "lang": "py",
+    "disposition": "FIX_DELETE",
+    "rationale": "prompt 非空占位；路由已由 model/CliChat 键覆盖",
+    "post_fix": "REMOVED_BY_FIX"
+  },
+  {
+    "file": "tests/test_llm_channel_config.py",
+    "line": 503,
+    "kind": "ADDED_OR_REWRITTEN",
+    "assert": "assert seen.get(\"config\") is cfg",
+    "lang": "py",
+    "disposition": "KEEP_ROUTE_CONFIG",
+    "rationale": "CLI/legacy 渠道路由：config 对象与 verify tag",
+    "post_fix": "PRESENT"
+  },
+  {
+    "file": "tests/test_llm_channel_config.py",
+    "line": 504,
+    "kind": "ADDED_OR_REWRITTEN",
+    "assert": "assert seen.get(\"tag\") == \"verify\"",
+    "lang": "py",
+    "disposition": "KEEP_ROUTE_CONFIG",
+    "rationale": "CLI/legacy 渠道路由：config 对象与 verify tag",
+    "post_fix": "PRESENT"
+  },
+  {
+    "file": "tests/test_llm_channel_config.py",
+    "line": 505,
+    "kind": "ADDED_OR_REWRITTEN",
+    "assert": "assert seen.get(\"prompt\")",
+    "lang": "py",
+    "disposition": "FIX_DELETE",
+    "rationale": "prompt 非空占位；路由已由 config/tag 覆盖",
+    "post_fix": "REMOVED_BY_FIX"
+  },
+  {
+    "file": "tests/test_llm_channel_config.py",
+    "line": 544,
+    "kind": "ADDED_OR_REWRITTEN",
+    "assert": "assert seen.get(\"tag\") == \"verify\"",
+    "lang": "py",
+    "disposition": "KEEP_ROUTE_CONFIG",
+    "rationale": "CLI/legacy 渠道路由：config 对象与 verify tag",
+    "post_fix": "PRESENT"
+  },
+  {
+    "file": "tests/test_llm_channel_config.py",
+    "line": 545,
+    "kind": "ADDED_OR_REWRITTEN",
+    "assert": "assert seen.get(\"prompt\")",
+    "lang": "py",
+    "disposition": "FIX_DELETE",
+    "rationale": "prompt 非空占位；路由已由 config/tag 覆盖",
+    "post_fix": "REMOVED_BY_FIX"
+  },
+  {
+    "file": "tests/test_material_directory_1830.py",
+    "line": 283,
+    "kind": "ADDED_OR_REWRITTEN",
+    "assert": "with pytest.raises(RuntimeError):",
+    "lang": "py",
+    "disposition": "KEEP_RAISES_TYPE",
+    "rationale": "删 match= 措辞锁后保留异常类型；负向/回滚契约仍有效",
+    "post_fix": "PRESENT"
+  },
+  {
+    "file": "tests/test_month_chain_1843.py",
+    "line": 401,
+    "kind": "ADDED_OR_REWRITTEN",
+    "assert": "with pytest.raises(RuntimeError):",
+    "lang": "py",
+    "disposition": "KEEP_RAISES_TYPE",
+    "rationale": "删 match= 措辞锁后保留异常类型；负向/回滚契约仍有效",
+    "post_fix": "PRESENT"
+  },
+  {
+    "file": "tests/test_month_chain_1843.py",
+    "line": 479,
+    "kind": "ADDED_OR_REWRITTEN",
+    "assert": "with pytest.raises(RuntimeError):",
+    "lang": "py",
+    "disposition": "KEEP_RAISES_TYPE",
+    "rationale": "删 match= 措辞锁后保留异常类型；负向/回滚契约仍有效",
+    "post_fix": "PRESENT"
+  },
+  {
+    "file": "tests/test_month_chain_1843.py",
+    "line": 713,
+    "kind": "ADDED_OR_REWRITTEN",
+    "assert": "assert ordered == 100",
+    "lang": "py",
+    "disposition": "KEEP_INDEPENDENT_CONST",
+    "rationale": "独立常量/准确数值期望；替方向比较或实现 oracle",
+    "post_fix": "PRESENT"
+  },
+  {
+    "file": "tests/test_month_chain_1843.py",
+    "line": 715,
+    "kind": "ADDED_OR_REWRITTEN",
+    "assert": "assert recon[\"arrived_amount\"] == expected_arrived",
+    "lang": "py",
+    "disposition": "KEEP_INDEPENDENT_CONST",
+    "rationale": "独立常量/准确数值期望；替方向比较或实现 oracle",
+    "post_fix": "PRESENT"
+  },
+  {
+    "file": "tests/test_month_chain_1843.py",
+    "line": 716,
+    "kind": "ADDED_OR_REWRITTEN",
+    "assert": "assert recon[\"loss_amount\"] == ordered - expected_arrived",
+    "lang": "py",
+    "disposition": "KEEP_INDEPENDENT_CONST",
+    "rationale": "独立常量/准确数值期望；替方向比较或实现 oracle",
+    "post_fix": "PRESENT"
+  },
+  {
+    "file": "tests/test_month_chain_1847.py",
+    "line": 1801,
+    "kind": "ADDED_OR_REWRITTEN",
+    "assert": "with pytest.raises(RuntimeError):",
+    "lang": "py",
+    "disposition": "KEEP_RAISES_TYPE",
+    "rationale": "删 match= 措辞锁后保留异常类型；负向/回滚契约仍有效",
+    "post_fix": "PRESENT"
+  },
+  {
+    "file": "tests/test_month_chain_1847.py",
+    "line": 2256,
+    "kind": "ADDED_OR_REWRITTEN",
+    "assert": "with pytest.raises(RuntimeError):",
+    "lang": "py",
+    "disposition": "KEEP_RAISES_TYPE",
+    "rationale": "删 match= 措辞锁后保留异常类型；负向/回滚契约仍有效",
+    "post_fix": "PRESENT"
+  },
+  {
+    "file": "tests/test_new_game_write_path_1749.py",
+    "line": 465,
+    "kind": "ADDED_OR_REWRITTEN",
+    "assert": "with pytest.raises(RuntimeError):",
+    "lang": "py",
+    "disposition": "KEEP_RAISES_TYPE",
+    "rationale": "删 match= 措辞锁后保留异常类型；负向/回滚契约仍有效",
+    "post_fix": "PRESENT"
+  },
+  {
+    "file": "tests/test_new_game_write_path_1749.py",
+    "line": 500,
+    "kind": "ADDED_OR_REWRITTEN",
+    "assert": "with pytest.raises(RuntimeError):",
+    "lang": "py",
+    "disposition": "KEEP_RAISES_TYPE",
+    "rationale": "删 match= 措辞锁后保留异常类型；负向/回滚契约仍有效",
+    "post_fix": "PRESENT"
+  },
+  {
+    "file": "tests/test_new_issues_section_rejections.py",
+    "line": 311,
+    "kind": "ADDED_OR_REWRITTEN",
+    "assert": "with pytest.raises(RuntimeError):",
+    "lang": "py",
+    "disposition": "KEEP_RAISES_TYPE",
+    "rationale": "删 match= 措辞锁后保留异常类型；负向/回滚契约仍有效",
+    "post_fix": "PRESENT"
+  },
+  {
+    "file": "tests/test_new_issues_section_rejections.py",
+    "line": 354,
+    "kind": "ADDED_OR_REWRITTEN",
+    "assert": "with pytest.raises(RuntimeError):",
+    "lang": "py",
+    "disposition": "KEEP_RAISES_TYPE",
+    "rationale": "删 match= 措辞锁后保留异常类型；负向/回滚契约仍有效",
+    "post_fix": "PRESENT"
+  },
+  {
+    "file": "tests/test_new_issues_section_rejections.py",
+    "line": 373,
+    "kind": "ADDED_OR_REWRITTEN",
+    "assert": "with pytest.raises(RuntimeError):",
+    "lang": "py",
+    "disposition": "KEEP_RAISES_TYPE",
+    "rationale": "删 match= 措辞锁后保留异常类型；负向/回滚契约仍有效",
+    "post_fix": "PRESENT"
+  },
+  {
+    "file": "tests/test_override_breach_costs_564.py",
+    "line": 384,
+    "kind": "ADDED_OR_REWRITTEN",
+    "assert": "with pytest.raises(RuntimeError):",
+    "lang": "py",
+    "disposition": "KEEP_RAISES_TYPE",
+    "rationale": "删 match= 措辞锁后保留异常类型；负向/回滚契约仍有效",
+    "post_fix": "PRESENT"
+  },
+  {
+    "file": "tests/test_override_breach_costs_564.py",
+    "line": 453,
+    "kind": "ADDED_OR_REWRITTEN",
+    "assert": "with pytest.raises(RuntimeError):",
+    "lang": "py",
+    "disposition": "KEEP_RAISES_TYPE",
+    "rationale": "删 match= 措辞锁后保留异常类型；负向/回滚契约仍有效",
+    "post_fix": "PRESENT"
+  },
+  {
+    "file": "tests/test_pihong_dossier_1490.py",
+    "line": 830,
+    "kind": "ADDED_OR_REWRITTEN",
+    "assert": "with pytest.raises(RuntimeError):",
+    "lang": "py",
+    "disposition": "KEEP_RAISES_TYPE",
+    "rationale": "删 match= 措辞锁后保留异常类型；负向/回滚契约仍有效",
+    "post_fix": "PRESENT"
+  },
+  {
+    "file": "tests/test_power_section_rejections.py",
+    "line": 136,
+    "kind": "ADDED_OR_REWRITTEN",
+    "assert": "with pytest.raises(KeyError):",
+    "lang": "py",
+    "disposition": "KEEP_RAISES_TYPE",
+    "rationale": "删 match= 措辞锁后保留异常类型；负向/回滚契约仍有效",
+    "post_fix": "PRESENT"
+  },
+  {
+    "file": "tests/test_pre_settle_transaction.py",
+    "line": 103,
+    "kind": "ADDED_OR_REWRITTEN",
+    "assert": "with pytest.raises(RuntimeError):",
+    "lang": "py",
+    "disposition": "KEEP_RAISES_TYPE",
+    "rationale": "删 match= 措辞锁后保留异常类型；负向/回滚契约仍有效",
+    "post_fix": "PRESENT"
+  },
+  {
+    "file": "tests/test_pre_settle_transaction.py",
+    "line": 127,
+    "kind": "ADDED_OR_REWRITTEN",
+    "assert": "with pytest.raises(RuntimeError):",
+    "lang": "py",
+    "disposition": "KEEP_RAISES_TYPE",
+    "rationale": "删 match= 措辞锁后保留异常类型；负向/回滚契约仍有效",
+    "post_fix": "PRESENT"
+  },
+  {
+    "file": "tests/test_pre_settle_transaction.py",
+    "line": 154,
+    "kind": "ADDED_OR_REWRITTEN",
+    "assert": "with pytest.raises(RuntimeError):",
+    "lang": "py",
+    "disposition": "KEEP_RAISES_TYPE",
+    "rationale": "删 match= 措辞锁后保留异常类型；负向/回滚契约仍有效",
+    "post_fix": "PRESENT"
+  },
+  {
+    "file": "tests/test_pre_settle_transaction.py",
+    "line": 432,
+    "kind": "ADDED_OR_REWRITTEN",
+    "assert": "with pytest.raises(RuntimeError):",
+    "lang": "py",
+    "disposition": "KEEP_RAISES_TYPE",
+    "rationale": "删 match= 措辞锁后保留异常类型；负向/回滚契约仍有效",
+    "post_fix": "PRESENT"
+  },
+  {
+    "file": "tests/test_refugee_loop_652.py",
+    "line": 494,
+    "kind": "ADDED_OR_REWRITTEN",
+    "assert": "assert after == before - expected_transfer, (",
+    "lang": "py",
+    "disposition": "KEEP_INDEPENDENT_CONST",
+    "rationale": "独立常量/准确数值期望；替方向比较或实现 oracle",
+    "post_fix": "PRESENT"
+  },
+  {
+    "file": "tests/test_refugee_loop_652.py",
+    "line": 588,
+    "kind": "ADDED_OR_REWRITTEN",
+    "assert": "assert arrived == expected_arrived, (",
+    "lang": "py",
+    "disposition": "KEEP_INDEPENDENT_CONST",
+    "rationale": "独立常量/准确数值期望；替方向比较或实现 oracle",
+    "post_fix": "PRESENT"
+  },
+  {
+    "file": "tests/test_refugee_loop_652.py",
+    "line": 591,
+    "kind": "ADDED_OR_REWRITTEN",
+    "assert": "assert _pop(loaded, \"流民\", \"shaanxi\") == displaced_before - expected_transfer",
+    "lang": "py",
+    "disposition": "KEEP_INDEPENDENT_CONST",
+    "rationale": "独立常量/准确数值期望；替方向比较或实现 oracle",
+    "post_fix": "PRESENT"
+  },
+  {
+    "file": "tests/test_refugee_loop_652.py",
+    "line": 592,
+    "kind": "ADDED_OR_REWRITTEN",
+    "assert": "assert _pop(loaded, \"农民\", \"shaanxi\") == farmer_before + expected_transfer",
+    "lang": "py",
+    "disposition": "KEEP_INDEPENDENT_CONST",
+    "rationale": "独立常量/准确数值期望；替方向比较或实现 oracle",
+    "post_fix": "PRESENT"
+  },
+  {
+    "file": "tests/test_rejection_wiring.py",
+    "line": 94,
+    "kind": "ADDED_OR_REWRITTEN",
+    "assert": "with pytest.raises(RuntimeError):",
+    "lang": "py",
+    "disposition": "KEEP_RAISES_TYPE",
+    "rationale": "删 match= 措辞锁后保留异常类型；负向/回滚契约仍有效",
+    "post_fix": "PRESENT"
+  },
+  {
+    "file": "tests/test_rejection_wiring.py",
+    "line": 137,
+    "kind": "ADDED_OR_REWRITTEN",
+    "assert": "with pytest.raises(RuntimeError):",
+    "lang": "py",
+    "disposition": "KEEP_RAISES_TYPE",
+    "rationale": "删 match= 措辞锁后保留异常类型；负向/回滚契约仍有效",
+    "post_fix": "PRESENT"
+  },
+  {
+    "file": "tests/test_relation_brew_636.py",
+    "line": 465,
+    "kind": "ADDED_OR_REWRITTEN",
+    "assert": "with pytest.raises(sqlite3.OperationalError):",
+    "lang": "py",
+    "disposition": "KEEP_RAISES_TYPE",
+    "rationale": "删 match= 措辞锁后保留异常类型；负向/回滚契约仍有效",
+    "post_fix": "PRESENT"
+  },
+  {
+    "file": "tests/test_relation_brew_636.py",
+    "line": 488,
+    "kind": "ADDED_OR_REWRITTEN",
+    "assert": "with pytest.raises(sqlite3.OperationalError):",
+    "lang": "py",
+    "disposition": "KEEP_RAISES_TYPE",
+    "rationale": "删 match= 措辞锁后保留异常类型；负向/回滚契约仍有效",
+    "post_fix": "PRESENT"
+  },
+  {
+    "file": "tests/test_relation_brew_636.py",
+    "line": 507,
+    "kind": "ADDED_OR_REWRITTEN",
+    "assert": "with pytest.raises(sqlite3.OperationalError):",
+    "lang": "py",
+    "disposition": "KEEP_RAISES_TYPE",
+    "rationale": "删 match= 措辞锁后保留异常类型；负向/回滚契约仍有效",
+    "post_fix": "PRESENT"
+  },
+  {
+    "file": "tests/test_relation_brew_636.py",
+    "line": 522,
+    "kind": "ADDED_OR_REWRITTEN",
+    "assert": "with pytest.raises(KeyError):",
+    "lang": "py",
+    "disposition": "KEEP_RAISES_TYPE",
+    "rationale": "删 match= 措辞锁后保留异常类型；负向/回滚契约仍有效",
+    "post_fix": "PRESENT"
+  },
+  {
+    "file": "tests/test_relation_brew_636.py",
+    "line": 542,
+    "kind": "ADDED_OR_REWRITTEN",
+    "assert": "with pytest.raises(ValueError):",
+    "lang": "py",
+    "disposition": "KEEP_RAISES_TYPE",
+    "rationale": "删 match= 措辞锁后保留异常类型；负向/回滚契约仍有效",
+    "post_fix": "PRESENT"
+  },
+  {
+    "file": "tests/test_relation_seed_638.py",
+    "line": 278,
+    "kind": "ADDED_OR_REWRITTEN",
+    "assert": "with pytest.raises(RuntimeError):",
+    "lang": "py",
+    "disposition": "KEEP_RAISES_TYPE",
+    "rationale": "删 match= 措辞锁后保留异常类型；负向/回滚契约仍有效",
+    "post_fix": "PRESENT"
+  },
+  {
+    "file": "tests/test_relation_seed_638.py",
+    "line": 300,
+    "kind": "ADDED_OR_REWRITTEN",
+    "assert": "with pytest.raises(ValueError):",
+    "lang": "py",
+    "disposition": "KEEP_RAISES_TYPE",
+    "rationale": "删 match= 措辞锁后保留异常类型；负向/回滚契约仍有效",
+    "post_fix": "PRESENT"
+  },
+  {
+    "file": "tests/test_rescript_draft_656.py",
+    "line": 753,
+    "kind": "ADDED_OR_REWRITTEN",
+    "assert": "assert any(\"options_len=0\" in msg for msg in logs)",
+    "lang": "py",
+    "disposition": "FIX_DELETE",
+    "rationale": "日志字符串 token 锁；非结构化契约；保留 drafts+assert logs",
+    "post_fix": "REMOVED_BY_FIX"
+  },
+  {
+    "file": "tests/test_rescript_draft_656.py",
+    "line": 766,
+    "kind": "ADDED_OR_REWRITTEN",
+    "assert": "assert any(\"options_type=str\" in msg and \"options_len=n/a\" in msg for msg in logs)",
+    "lang": "py",
+    "disposition": "FIX_DELETE",
+    "rationale": "日志字符串 token 锁；非结构化契约；保留 drafts+assert logs",
+    "post_fix": "REMOVED_BY_FIX"
+  },
+  {
+    "file": "tests/test_rescript_draft_656.py",
+    "line": 838,
+    "kind": "ADDED_OR_REWRITTEN",
+    "assert": "with pytest.raises(RuntimeError):",
+    "lang": "py",
+    "disposition": "KEEP_RAISES_TYPE",
+    "rationale": "删 match= 措辞锁后保留异常类型；负向/回滚契约仍有效",
+    "post_fix": "PRESENT"
+  },
+  {
+    "file": "tests/test_secret_order_monthly_progress_566.py",
+    "line": 366,
+    "kind": "ADDED_OR_REWRITTEN",
+    "assert": "with pytest.raises(RuntimeError):",
+    "lang": "py",
+    "disposition": "KEEP_RAISES_TYPE",
+    "rationale": "删 match= 措辞锁后保留异常类型；负向/回滚契约仍有效",
+    "post_fix": "PRESENT"
+  },
+  {
+    "file": "tests/test_session_write_queue_1353.py",
+    "line": 525,
+    "kind": "ADDED_OR_REWRITTEN",
+    "assert": "with pytest.raises(AssertionError):",
+    "lang": "py",
+    "disposition": "KEEP_RAISES_TYPE",
+    "rationale": "删 match= 措辞锁后保留异常类型；负向/回滚契约仍有效",
+    "post_fix": "PRESENT"
+  },
+  {
+    "file": "tests/test_session_write_queue_1353.py",
+    "line": 536,
+    "kind": "ADDED_OR_REWRITTEN",
+    "assert": "with pytest.raises(RuntimeError):",
+    "lang": "py",
+    "disposition": "KEEP_RAISES_TYPE",
+    "rationale": "删 match= 措辞锁后保留异常类型；负向/回滚契约仍有效",
+    "post_fix": "PRESENT"
+  },
+  {
+    "file": "tests/test_state_reload.py",
+    "line": 125,
+    "kind": "ADDED_OR_REWRITTEN",
+    "assert": "with pytest.raises(RuntimeError):",
+    "lang": "py",
+    "disposition": "KEEP_RAISES_TYPE",
+    "rationale": "删 match= 措辞锁后保留异常类型；负向/回滚契约仍有效",
+    "post_fix": "PRESENT"
+  },
+  {
+    "file": "tests/test_state_reload.py",
+    "line": 166,
+    "kind": "ADDED_OR_REWRITTEN",
+    "assert": "with pytest.raises(RuntimeError):",
+    "lang": "py",
+    "disposition": "KEEP_RAISES_TYPE",
+    "rationale": "删 match= 措辞锁后保留异常类型；负向/回滚契约仍有效",
+    "post_fix": "PRESENT"
+  },
+  {
+    "file": "tests/test_state_reload.py",
+    "line": 258,
+    "kind": "ADDED_OR_REWRITTEN",
+    "assert": "with pytest.raises(RuntimeError):",
+    "lang": "py",
+    "disposition": "KEEP_RAISES_TYPE",
+    "rationale": "删 match= 措辞锁后保留异常类型；负向/回滚契约仍有效",
+    "post_fix": "PRESENT"
+  },
+  {
+    "file": "tests/test_state_reload.py",
+    "line": 301,
+    "kind": "ADDED_OR_REWRITTEN",
+    "assert": "with pytest.raises(RuntimeError):",
+    "lang": "py",
+    "disposition": "KEEP_RAISES_TYPE",
+    "rationale": "删 match= 措辞锁后保留异常类型；负向/回滚契约仍有效",
+    "post_fix": "PRESENT"
+  },
+  {
+    "file": "tests/test_state_reload.py",
+    "line": 345,
+    "kind": "ADDED_OR_REWRITTEN",
+    "assert": "with pytest.raises(RuntimeError) as ei:",
+    "lang": "py",
+    "disposition": "KEEP_RAISES_TYPE",
+    "rationale": "删 match= 措辞锁后保留异常类型；负向/回滚契约仍有效",
+    "post_fix": "PRESENT"
+  },
+  {
+    "file": "web/src/useSettlementFlow.test.tsx",
+    "line": 305,
+    "kind": "ADDED_OR_REWRITTEN",
+    "assert": "expect(alert?.textContent).toContain(\"/tmp/tail-error\");",
+    "lang": "ts",
+    "disposition": "KEEP_ERROR_PACK_PATH",
+    "rationale": "UI 呈现 mechanical_tail_failure.error_pack_path 结构化字段",
+    "post_fix": "PRESENT"
+  },
+  {
+    "file": "web/src/useSettlementFlow.test.tsx",
+    "line": 309,
+    "kind": "ADDED_OR_REWRITTEN",
+    "assert": "expect(vi.getTimerCount()).toBe(0);",
+    "lang": "ts",
+    "disposition": "KEEP_POLL_STOP",
+    "rationale": "失败后轮询停止（timer=0）",
+    "post_fix": "PRESENT"
+  },
+  {
+    "file": "tests/test_fiscal_substrate_bridge.py",
+    "line": 1542,
+    "assert": "assert len(colliding) == 2  # hub 投影行 + 用户 fiscal_item 行",
+    "lang": "py",
+    "disposition": "KEEP_INDEPENDENT_CONST",
+    "rationale": "独立常量/准确数值期望；替方向比较或实现 oracle",
+    "post_fix": "NEW_FROM_FIX"
+  },
+  {
+    "file": "tests/test_fiscal_substrate_bridge.py",
+    "line": 1548,
+    "assert": "assert net_pct == 0",
+    "lang": "py",
+    "disposition": "KEEP_INDEPENDENT_CONST",
+    "rationale": "独立常量/准确数值期望；替方向比较或实现 oracle",
+    "post_fix": "NEW_FROM_FIX"
+  }
+]

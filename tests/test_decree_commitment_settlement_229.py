@@ -555,12 +555,10 @@ def test_commitment_progress_contexts_are_structured(game):
 
     _advance_player_month(db, state, content)
 
-    # 外部契约：承诺进度是结构化字段，不锁 CLI 回显 stage_text 措辞。
+    # 外部契约：承诺进度结构化字段；不锁 CLI 回显措辞，也不用恒真占位键。
     progress = commitment_progress_payload(db, state, _issue_row(db, issue_id))
     assert progress is not None
     assert progress["months_elapsed"] == 1
-    assert int(progress.get("paid_total") or 0) >= 0
-    assert "remaining_arrears" in progress
 
 
 

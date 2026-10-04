@@ -1539,14 +1539,14 @@ def test_substrate_hub_display_name_collision_books_user_fiscal_exact(fresh_game
 
     budget = flows_mod.compute_budget_lines(db, state)
     colliding = [row for row in budget["国库"]["income"] if row["name"] == display]
-    assert len(colliding) >= 2  # hub 投影行 + 用户 fiscal_item 行
+    assert len(colliding) == 2  # hub 投影行 + 用户 fiscal_item 行
 
     flows_mod.apply_fixed_period_flows(db, state)
 
     net_pct = int(db.legacy_modifiers(state).get("国库", 0) or 0)
-    # 开局 -12% → 面额 7 实入 6；无修正时 7。独立常量，不调实现函数。
-    expected = 6 if net_pct == -12 else (7 if net_pct == 0 else None)
-    assert expected is not None, f"本案只覆盖开局 -12% 或净 0（实为 {net_pct}）"
+    # 本案夹具将各省改后金并清盐商税后净修正为 0 → 面额 7 实入 7。独立常量。
+    assert net_pct == 0
+    expected = 7
     rows = db.conn.execute(
         """
         SELECT delta, reason
