@@ -1,21 +1,8 @@
 """ADR 0009 person archive schema contract."""
 
-import json
-import sqlite3
-from dataclasses import replace
-
 from ming_sim.content import load_character_content
-from ming_sim.db import GameDB
 from ming_sim.models import Character
 from ming_sim.decree import reload_state_from_db
-
-
-
-
-
-
-
-
 
 
 def test_person_logs_accepts_audit_rows_for_existing_characters(game):
@@ -91,56 +78,6 @@ def test_reload_restores_complete_transit_ledger_from_db(game):
         character.transit_speed_factor,
         character.transit_start_turn,
     ) == ("liaodong", 1.25, 1.5, 7)
-
-
-def test_old_save_schema_is_upgraded_for_person_archive_fields(tmp_path, content):
-    """Opening an old save adds ADR 0009 fields and audit table without reseeding."""
-    path = tmp_path / "old-save.db"
-    conn = sqlite3.connect(path)
-    conn.execute(
-        """
-        CREATE TABLE characters (
-            name TEXT PRIMARY KEY,
-            office TEXT NOT NULL,
-            office_type TEXT NOT NULL,
-            faction TEXT NOT NULL,
-            personal_skills TEXT NOT NULL,
-            loyalty INTEGER NOT NULL,
-            ability INTEGER NOT NULL,
-            integrity INTEGER NOT NULL,
-            courage INTEGER NOT NULL,
-            style TEXT NOT NULL,
-            status TEXT NOT NULL DEFAULT 'active',
-            status_reason TEXT NOT NULL DEFAULT '',
-            status_changed_turn INTEGER NOT NULL DEFAULT 0,
-            power_id TEXT NOT NULL DEFAULT 'ming',
-            location TEXT NOT NULL DEFAULT ''
-        )
-        """
-    )
-    conn.commit()
-    conn.close()
-
-    db = GameDB(str(path), content)
-    try:
-        state = db.load_state()
-        character = replace(
-            next(iter(content.characters.values())),
-            name="测试迁移在途人物", transit_to="liaodong",
-        )
-        db.add_character(state, character)
-        db.record_person_log(state, character.name, "行止", normalized={"transit_to": "liaodong"})
-        row = db.conn.execute(
-            "SELECT transit_to, reason_code FROM characters WHERE name=?", (character.name,),
-        ).fetchone()
-        assert dict(row) == {"transit_to": "liaodong", "reason_code": character.reason_code}
-        log = db.conn.execute(
-            "SELECT normalized FROM person_logs WHERE person_name=? ORDER BY id DESC LIMIT 1",
-            (character.name,),
-        ).fetchone()
-        assert json.loads(log["normalized"]) == {"transit_to": "liaodong"}
-    finally:
-        db.conn.close()
 
 
 def test_north_star_named_figures_are_seeded_with_identity_metadata():

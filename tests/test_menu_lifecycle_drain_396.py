@@ -109,7 +109,6 @@ def test_drain_archive_move_failure_keeps_wal_and_shm(monkeypatch, tmp_path):
     monkeypatch.setattr(web_app, "web_game", game)
     monkeypatch.setenv("MING_SIM_DB", db_path)
     monkeypatch.setattr(web_app, "WebGame", lambda *_a, **_k: SimpleNamespace(state_payload=lambda: {"turn": 1}))
-    monkeypatch.setattr(web_app.steam_events, "with_events", lambda payload, events: payload)
 
     _reset_path_leases()
     assert web_app._register_holder(db_path, game) is not None
@@ -142,7 +141,6 @@ def test_drain_archive_moves_wal_and_shm_with_main_db(monkeypatch, tmp_path):
     monkeypatch.setattr(web_app, "web_game", game)
     monkeypatch.setenv("MING_SIM_DB", db_path)
     monkeypatch.setattr(web_app, "WebGame", lambda *_a, **_k: SimpleNamespace(state_payload=lambda: {"turn": 1}))
-    monkeypatch.setattr(web_app.steam_events, "with_events", lambda payload, events: payload)
 
     _reset_path_leases()
     assert web_app._register_holder(db_path, game) is not None
@@ -188,7 +186,6 @@ def test_drain_archive_rolls_back_main_db_when_wal_move_fails(monkeypatch, tmp_p
     monkeypatch.setattr(web_app, "web_game", game)
     monkeypatch.setenv("MING_SIM_DB", db_path)
     monkeypatch.setattr(web_app, "WebGame", lambda *_a, **_k: SimpleNamespace(state_payload=lambda: {"turn": 1}))
-    monkeypatch.setattr(web_app.steam_events, "with_events", lambda payload, events: payload)
 
     _reset_path_leases()
     assert web_app._register_holder(db_path, game) is not None
@@ -218,7 +215,6 @@ def test_drain_archive_skips_move_when_session_close_fails(monkeypatch, tmp_path
     monkeypatch.setattr(web_app, "web_game", game)
     monkeypatch.setenv("MING_SIM_DB", db_path)
     monkeypatch.setattr(web_app, "WebGame", lambda *_a, **_k: SimpleNamespace(state_payload=lambda: {"turn": 1}))
-    monkeypatch.setattr(web_app.steam_events, "with_events", lambda payload, events: payload)
 
     _reset_path_leases()
     assert web_app._register_holder(db_path, game) is not None
