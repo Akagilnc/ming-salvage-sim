@@ -1319,11 +1319,13 @@ def test_fixed_flows_substrate_hub_books_split_treasury_income_and_central_losse
     expected_salt = 3        # round(3 * 0.88)
     expected_commerce = 4    # round(4 * 0.88)
 
+    # 公开预算名（起运/盐税/商税/太仓亏空），不锁 internal 实现标记。
+    hub_income_names = {"起运", "盐税", "商税"}
     pre_budget = flows_mod.compute_budget_lines(db, state)
     pre_income = [row["amount"] for row in pre_budget["国库"]["income"]
-                  if row.get("internal") == "substrate_hub"]
+                  if row["name"] in hub_income_names]
     pre_expense = [row["amount"] for row in pre_budget["国库"]["expense"]
-                   if row.get("internal") == "substrate_hub"]
+                   if row["name"] == "太仓亏空"]
     assert sorted(pre_income) == sorted([expected_remittance, expected_salt, expected_commerce])
     assert pre_expense == [3]
 
@@ -1491,16 +1493,18 @@ def test_budget_lines_read_persisted_substrate_hub_income_source(fresh_game):
     budget = flows_mod.compute_budget_lines(db, state)
 
     income = [row["amount"] for row in budget["国库"]["income"]]
+    hub_income_names = {"起运", "盐税", "商税"}
     expenses = [row["amount"] for row in budget["国库"]["expense"]
-                if row.get("internal") == "substrate_hub"]
+                if row["name"] == "太仓亏空"]
     assert sorted(row["amount"] for row in budget["国库"]["income"]
-                  if row.get("internal") == "substrate_hub") == [3, 4, 11]
+                  if row["name"] in hub_income_names) == [3, 4, 11]
     # Sum all raw rows: no display-name mapping or hidden duplicate legacy tax.
     assert sum(income) == 11 + 3 + 4
     assert expenses == [3]
 
 
-def test_substrate_hub_skip_uses_internal_marker_not_user_fixed_display(fresh_game):
+def test_substrate_hub_display_name_collision_books_user_fiscal_exact(fresh_game):
+    """显示名与 hub 公开预算名撞车时，用户定额仍按独立常量落账（不锁 internal 标记）。"""
     import ming_sim.flows as flows_mod
 
     db, state = fresh_game
@@ -1520,23 +1524,22 @@ def test_substrate_hub_skip_uses_internal_marker_not_user_fixed_display(fresh_ga
             fiscal = json_set(fiscal, '$.salt_tax', 0, '$.commerce_tax', 0)
         """
     )
-    display = next(row["name"] for row in flows_mod.compute_budget_lines(db, state)["国库"]["income"]
-                   if row.get("internal") == "substrate_hub")
+    # hub 公开预算名（flows 投影），非 internal 实现字段。
+    display = "起运"
     db.create_fiscal_item(
         "巡盐加派_base",
         "国库",
         "income",
         display,
         7,
-        note="display intentionally collides with substrate hub salt tax",
+        note="display intentionally collides with substrate hub remittance name",
         commit=False,
     )
     db.conn.commit()
 
     budget = flows_mod.compute_budget_lines(db, state)
-    salt_lines = [row for row in budget["国库"]["income"] if row["name"] == display]
-    assert any(row.get("internal") == "substrate_hub" for row in salt_lines)
-    assert any(row.get("internal") != "substrate_hub" for row in salt_lines)
+    colliding = [row for row in budget["国库"]["income"] if row["name"] == display]
+    assert len(colliding) >= 2  # hub 投影行 + 用户 fiscal_item 行
 
     flows_mod.apply_fixed_period_flows(db, state)
 
@@ -1553,6 +1556,7 @@ def test_substrate_hub_skip_uses_internal_marker_not_user_fixed_display(fresh_ga
         """,
         (display,),
     ).fetchall()
+    # 用户定额路径落账；hub 起运在省份全后金/零税设定下不另注入同名定额行。
     assert [int(row["delta"]) for row in rows] == [expected]
     assert all(str(row["reason"] or "").strip() for row in rows)
 

@@ -1,39 +1,46 @@
-# J6 完整候选处置表（复扫后）
+# J6 完整候选处置表（权威）
 
 谓词：monkeypatch.setattr、call_oracle、marker、fixed_translate、direction、prose/OperationalError、helper 命名；含 web mock 行。
-不以点名文件限界。LLM/IO 边界 stub 默认保留（禁止的是顶替被测行为）。
+不以点名文件限界。**边界替身不得默认合法**；须逐项外部契约/真实入口/实际结果。
 
-## 须修/须删残留
+权威数据：[`j6-full-disposition.json`](j6-full-disposition.json)  
+Web 行（含第三方排除说明）：[`j6-web-members.json`](j6-web-members.json)  
+原始 AST 枚举证据：[`j6-ast-candidates.json`](j6-ast-candidates.json)
 
-**0**（night_said 正文锁、apply_legacy_pct/grant_arrival_bounds 实现 oracle、点名 spy/标记伪证均已处置）。
+已删本局重复拷贝：`j6-focus.json`、`j6-members.json`、`j18-members.json`（与权威表重复/窄枚举）。
 
-## 处置计数
+## 本轮已逐项语义审（原 NEEDS_* 52）
 
-- KEEP_BOUNDARY_STUB: 308
-- KEEP_OTHER: 188
-- NEEDS_READ_PROSE: 49
-- KEEP_MONTH_TRANSLATE_BOUNDARY: 26
-- KEEP_ORDERING_OR_QUAL: 15
-- KEEP_NAME_COLLISION: 10
-- KEEP_QUALITATIVE_DIRECTION: 10
-- KEEP_BOUNDARY: 6
-- NEEDS_READ: 3
-- KEEP_GATE_CONTRACT: 1
-- KEEP_STRUCTURED_CUTOFF: 1
-- KEEP_INDEPENDENT_CONST: 1
+处置见 JSON `audited=true`；其中代码侧 **FIX_APPLIED / FIX_APPLIED_RENAME = 9**：
 
-## Web mock 行合计 145 → KEEP_UI_BOUNDARY
+| 处置 | 说明 |
+|---|---|
+| FIX_APPLIED | CLI「直到补齐」措辞锁；注入 OperationalError `match=` 文案；注入 reason 子串；ack narrative 子串→全文 |
+| FIX_APPLIED_RENAME | `internal==substrate_hub` 标记锁 → 公开预算名碰撞 + ledger 精确额 |
 
-- `web/src/components/modals.test.tsx`: 50
-- `web/src/useSettlementFlow.test.tsx`: 25
-- `web/src/components/gameMenu.test.tsx`: 18
-- `web/src/components/menuPage.test.tsx`: 13
-- `web/src/components/decisionModal.test.tsx`: 13
-- `web/src/components/drawers.test.tsx`: 6
-- `web/node_modules/exponential-backoff/src/backoff.spec.ts`: 5
-- `web/node_modules/exponential-backoff/src/delay/always/always.delay.spec.ts`: 4
-- `web/src/appDurableWiring.test.tsx`: 3
-- `web/node_modules/simple-update-notifier/src/index.spec.ts`: 3
-- `web/node_modules/simple-update-notifier/src/getDistVersion.spec.ts`: 2
-- `web/node_modules/simple-update-notifier/src/hasNewVersion.spec.ts`: 2
-- `web/src/components/settlementGazettePanel.test.tsx`: 1
+其余 43 项已落 KEEP_*（seed 金样 / 闸类型 / 月链边界 / 原文无损 / 事务回滚等），**不再留 NEEDS_READ***。
+
+## 处置计数（Python 焦点 618）
+
+```
+PENDING_STUB_DEFAULT: 308   ← 未结：默认边界戳记，非语义裁决
+PENDING_OTHER_DEFAULT: 188  ← 未结：默认「未命中谓词」戳记
+KEEP_MONTH_TRANSLATE_BOUNDARY: 28
+KEEP_ORDERING_OR_QUAL: 15
+KEEP_NAME_COLLISION: 10
+KEEP_QUALITATIVE_DIRECTION: 10
+FIX_APPLIED(+RENAME): 9
+KEEP_BOUNDARY: 6
+KEEP_SEED_GOLDEN: 5
+KEEP_TX_BOUNDARY: 5
+（其余 KEEP_* 各 ≤2；NEEDS_*=0）
+```
+
+## Web mock 行
+
+- 自有 `web/src/**`：129 → `PENDING_WEB_UI_DEFAULT`（未逐项语义审；**未结**）
+- `web/node_modules/**`：16 → `EXCLUDE_THIRD_PARTY`（**仅排除说明，不算自有测试处置**）
+
+## 诚实未结
+
+不得将 PENDING_* 归零宣称结清。本轮结清的是「NEEDS_READ* 未审桶」与已发现的违法文字锁/`internal` 标记类；**J6 整类仍未结**。

@@ -462,7 +462,7 @@ def test_prepare_claim_db_error_propagates_loudly(game):
         raise sqlite3.OperationalError("认领库不可写")
 
     db.claim_relation_brew_targets = boom
-    with pytest.raises(sqlite3.OperationalError, match="认领库不可写"):
+    with pytest.raises(sqlite3.OperationalError):
         run_month_end_relation_brew(db, state, _brew_fn_factory([]))
 
 
@@ -485,7 +485,7 @@ def test_apply_db_error_propagates_loudly_not_disguised_as_llm_failure(game):
         return original_mark(**kwargs)
 
     db.mark_relation_brew_pending = spy_mark
-    with pytest.raises(sqlite3.OperationalError, match="落定库不可写"):
+    with pytest.raises(sqlite3.OperationalError):
         run_month_end_relation_brew(db, state, _brew_fn_factory([]))
     assert marked == []  # 宽吞与重复补降级已删
 
@@ -504,7 +504,7 @@ def test_mark_failure_after_llm_failure_propagates_loudly(game):
         raise sqlite3.OperationalError("pending 库不可写")
 
     db.mark_relation_brew_pending = boom
-    with pytest.raises(sqlite3.OperationalError, match="pending 库不可写"):
+    with pytest.raises(sqlite3.OperationalError):
         run_month_end_relation_brew(db, state, failing_brew)
 
 

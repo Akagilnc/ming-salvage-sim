@@ -1233,7 +1233,6 @@ def test_apply_score_extraction_rolls_back_derived_release_when_office_write_fai
         assert changes[0]["name"] == name
         assert changes[0]["new_office"] == "陕西总督"
         assert changes[0]["rejected"] is True
-        assert "simulated office write failure" in changes[0]["reason"]
         assert changes[0]["derived_from"] == "放归"
     finally:
         content.characters[name].status = old_status
@@ -1316,7 +1315,6 @@ def test_derived_release_rejection_keeps_prior_person_change_in_atomic_batch(
         assert changes[1]["name"] == second
         assert changes[1]["new_office"] == "陕西总督"
         assert changes[1]["rejected"] is True
-        assert "simulated office write failure" in changes[1]["reason"]
         assert changes[1]["derived_from"] == "放归"
     finally:
         content.characters[first].status = old_first_status
@@ -1374,7 +1372,6 @@ def test_derived_release_restores_when_post_office_helper_raises(game, monkeypat
         assert changes[0]["name"] == name
         assert changes[0]["new_office"] == "陕西总督"
         assert changes[0]["rejected"] is True
-        assert "simulated post-office failure" in changes[0]["reason"]
         assert changes[0]["derived_from"] == "放归"
     finally:
         content.characters[name].status = old_status

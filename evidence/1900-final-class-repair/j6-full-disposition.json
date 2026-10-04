@@ -7,8 +7,8 @@
       "stub:_verify_llm_configs_or_raise",
       "stub:save_runtime_llm"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_web_llm_runtime_config.py",
@@ -17,8 +17,8 @@
     "hits": [
       "stub:load_runtime_llm"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_web_llm_runtime_config.py",
@@ -28,8 +28,8 @@
       "stub:_verify_llm_configs_or_raise",
       "stub:get_game"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_web_llm_runtime_config.py",
@@ -39,8 +39,8 @@
       "stub:_verify_llm_configs_or_raise",
       "stub:get_game"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_web_llm_runtime_config.py",
@@ -50,8 +50,8 @@
       "stub:_verify_llm_configs_or_raise",
       "stub:get_game"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_web_llm_runtime_config.py",
@@ -61,8 +61,8 @@
       "stub:load_runtime_llm",
       "stub:save_runtime_llm"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_web_llm_runtime_config.py",
@@ -72,8 +72,8 @@
       "stub:load_runtime_llm",
       "stub:save_runtime_llm"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_web_llm_runtime_config.py",
@@ -83,8 +83,8 @@
       "stub:_verify_llm_configs_or_raise",
       "stub:get_game"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_web_llm_runtime_config.py",
@@ -106,8 +106,8 @@
       "stub:_verify_llm_configs_or_raise",
       "stub:get_game"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_web_llm_runtime_config.py",
@@ -120,8 +120,8 @@
       "stub:_scan_saves",
       "stub:load_runtime_llm"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_web_llm_runtime_config.py",
@@ -134,8 +134,8 @@
       "stub:_scan_saves",
       "stub:load_runtime_llm"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_web_llm_runtime_config.py",
@@ -148,8 +148,8 @@
       "stub:_scan_saves",
       "stub:load_runtime_llm"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_web_llm_runtime_config.py",
@@ -162,8 +162,8 @@
       "stub:_scan_saves",
       "stub:load_runtime_llm"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_web_llm_runtime_config.py",
@@ -176,8 +176,8 @@
       "stub:_scan_saves",
       "stub:load_runtime_llm"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_web_llm_runtime_config.py",
@@ -188,8 +188,8 @@
       "stub:load_runtime_llm",
       "stub:save_runtime_llm"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_web_llm_runtime_config.py",
@@ -215,8 +215,8 @@
       "stub:_scan_saves",
       "stub:load_runtime_llm"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_web_llm_runtime_config.py",
@@ -226,8 +226,8 @@
       "stub:_verify_llm_configs_or_raise",
       "stub:save_runtime_llm"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_web_llm_runtime_config.py",
@@ -237,8 +237,8 @@
       "stub:_verify_llm_configs_or_raise",
       "stub:save_runtime_llm"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_web_llm_runtime_config.py",
@@ -249,8 +249,8 @@
       "stub:load_runtime_llm",
       "stub:save_runtime_llm"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_web_llm_runtime_config.py",
@@ -261,8 +261,8 @@
       "stub:load_runtime_llm",
       "stub:save_runtime_llm"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_web_llm_runtime_config.py",
@@ -276,8 +276,8 @@
       "stub:load_runtime_llm",
       "stub:web_game"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_web_llm_runtime_config.py",
@@ -287,8 +287,8 @@
       "stub:_verify_llm_configs_or_raise",
       "stub:get_game"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_web_llm_runtime_config.py",
@@ -301,8 +301,8 @@
       "stub:_scan_saves",
       "stub:load_runtime_llm"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_web_llm_runtime_config.py",
@@ -312,8 +312,8 @@
       "stub:load_runtime_llm",
       "stub:web_game"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_web_llm_runtime_config.py",
@@ -323,8 +323,8 @@
       "stub:load_runtime_llm",
       "stub:web_game"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_web_llm_runtime_config.py",
@@ -334,8 +334,8 @@
       "stub:load_runtime_llm",
       "stub:web_game"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_web_llm_runtime_config.py",
@@ -346,8 +346,8 @@
       "stub:load_runtime_llm",
       "stub:save_runtime_llm"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_web_llm_runtime_config.py",
@@ -363,8 +363,8 @@
       "stub:load_runtime_llm",
       "stub:web_game"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_web_llm_runtime_config.py",
@@ -373,8 +373,8 @@
     "hits": [
       "stub:load_runtime_llm"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_web_llm_runtime_config.py",
@@ -383,8 +383,8 @@
     "hits": [
       "stub:load_runtime_llm"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_web_llm_runtime_config.py",
@@ -394,8 +394,8 @@
       "stub:get_game",
       "stub:load_runtime_llm"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_web_llm_runtime_config.py",
@@ -407,8 +407,8 @@
       "stub:get_game",
       "stub:load_runtime_llm"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_web_llm_runtime_config.py",
@@ -419,8 +419,8 @@
       "stub:load_runtime_llm",
       "stub:save_runtime_llm"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_web_llm_runtime_config.py",
@@ -430,8 +430,8 @@
       "stub:_verify_llm_configs_or_raise",
       "stub:save_runtime_llm"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_web_llm_runtime_config.py",
@@ -440,8 +440,8 @@
     "hits": [
       "stub:load_runtime_llm"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_covert_levy_651.py",
@@ -450,8 +450,8 @@
     "hits": [
       "stub:read_dossier_fork_state"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_covert_levy_651.py",
@@ -460,8 +460,8 @@
     "hits": [
       "stub:read_dossier_fork_state"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_covert_levy_651.py",
@@ -470,8 +470,8 @@
     "hits": [
       "stub:read_dossier_fork_state"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_covert_levy_651.py",
@@ -480,8 +480,8 @@
     "hits": [
       "stub:read_dossier_fork_state"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_covert_levy_651.py",
@@ -490,8 +490,8 @@
     "hits": [
       "stub:read_dossier_fork_state"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_covert_levy_651.py",
@@ -500,8 +500,8 @@
     "hits": [
       "stub:read_dossier_fork_state"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_commitment_backlash_626.py",
@@ -520,8 +520,8 @@
     "hits": [
       "stub:get_game"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_player_payload_1022.py",
@@ -530,8 +530,8 @@
     "hits": [
       "stub:get_game"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_player_payload_1022.py",
@@ -540,8 +540,8 @@
     "hits": [
       "stub:get_game"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_no_edict_full_settlement_1274.py",
@@ -552,8 +552,8 @@
       "stub:_serialized_web_write",
       "stub:get_game"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_public_sayings_1829.py",
@@ -562,8 +562,8 @@
     "hits": [
       "stub:build_character_knowledge"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_secret_order_isolation_883.py",
@@ -603,8 +603,8 @@
       "stub:DEFAULT_IN_FLIGHT_POLL_S",
       "stub:list_in_flight_chat_turns"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_qa_t1_extraction_dual_source_1353.py",
@@ -613,8 +613,8 @@
     "hits": [
       "stub:run_highlight_judge"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_qa_t1_extraction_dual_source_1353.py",
@@ -634,8 +634,8 @@
     "hits": [
       "stub:reopen_interrupted_chat_turn_for_retry"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_audience_restore_505.py",
@@ -644,8 +644,9 @@
     "hits": [
       "prose_lock_diag"
     ],
-    "disposition": "NEEDS_READ_PROSE",
-    "basis": "诊断/OperationalError 文字锁候选"
+    "disposition": "KEEP_STRUCTURED_CHAT",
+    "basis": "真实 chat_stream 入口；断言 accepted + agno_runs_before 结构化落账；无 OperationalError 文案锁",
+    "audited": true
   },
   {
     "file": "tests/test_audience_restore_505.py",
@@ -654,8 +655,8 @@
     "hits": [
       "stub:summon_enter"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_qa_e1_numeric_presentation.py",
@@ -664,8 +665,8 @@
     "hits": [
       "stub:compute_budget_lines"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_new_issues_section_rejections.py",
@@ -674,8 +675,8 @@
     "hits": [
       "stub:insert_issue"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_new_issues_section_rejections.py",
@@ -684,8 +685,8 @@
     "hits": [
       "stub:insert_issue"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_new_issues_section_rejections.py",
@@ -694,8 +695,8 @@
     "hits": [
       "stub:insert_issue"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_settle_core.py",
@@ -714,8 +715,9 @@
     "hits": [
       "prose_lock_diag"
     ],
-    "disposition": "NEEDS_READ_PROSE",
-    "basis": "中文措辞 in 断言候选"
+    "disposition": "KEEP_SEED_FIELD",
+    "basis": "摘要含种子态势字段「民变事实」；claim_rows 不消耗限额——结构化 field 集合",
+    "audited": true
   },
   {
     "file": "tests/test_pay_order_override_653.py",
@@ -725,8 +727,9 @@
       "helper_name",
       "stub:_effective_dues"
     ],
-    "disposition": "NEEDS_READ",
-    "basis": "helper 命名候选，需读后裁决"
+    "disposition": "KEEP_ORACLE_MUTATION",
+    "basis": "settle_tick 真实入口；劫持 _effective_dues 后须抛 FiscalConservationError——测独立 oracle 抗变异，非 helper 专测",
+    "audited": true
   },
   {
     "file": "tests/test_pay_order_override_653.py",
@@ -735,8 +738,8 @@
     "hits": [
       "stub:_resolve_order_param"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_pay_order_override_653.py",
@@ -745,8 +748,8 @@
     "hits": [
       "stub:宗禄"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_fiscal_substrate_bridge.py",
@@ -755,18 +758,19 @@
     "hits": [
       "stub:load_json_asset"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_fiscal_substrate_bridge.py",
-    "line": 1502,
-    "name": "test_substrate_hub_skip_uses_internal_marker_not_user_fixed_display",
+    "line": 1506,
+    "name": "test_substrate_hub_display_name_collision_books_user_fiscal_exact",
     "hits": [
-      "helper_name"
+      "display_collision"
     ],
-    "disposition": "NEEDS_READ",
-    "basis": "helper 命名候选，需读后裁决"
+    "disposition": "FIX_APPLIED_RENAME",
+    "basis": "已迁：改名 test_substrate_hub_display_name_collision_books_user_fiscal_exact；用公开预算名+ledger 精确额，去掉 internal 锁",
+    "audited": true
   },
   {
     "file": "tests/test_fiscal_substrate_bridge.py",
@@ -775,8 +779,8 @@
     "hits": [
       "stub:record_issue_economy_move"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_fiscal_substrate_bridge.py",
@@ -785,8 +789,8 @@
     "hits": [
       "stub:_advance_province_fiscal_substrate"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_fiscal_substrate_bridge.py",
@@ -795,8 +799,8 @@
     "hits": [
       "stub:load_json_asset"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_fiscal_substrate_bridge.py",
@@ -805,8 +809,8 @@
     "hits": [
       "stub:load_json_asset"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_fiscal_substrate_bridge.py",
@@ -815,8 +819,8 @@
     "hits": [
       "stub:load_json_asset"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_fiscal_substrate_bridge.py",
@@ -825,8 +829,9 @@
     "hits": [
       "prose_lock_diag"
     ],
-    "disposition": "NEEDS_READ_PROSE",
-    "basis": "中文措辞 in 断言候选"
+    "disposition": "KEEP_SEED_GOLDEN",
+    "basis": "seed meta/settle 数值与 primary_source 字段——开局史料金样契约",
+    "audited": true
   },
   {
     "file": "tests/test_fiscal_substrate_bridge.py",
@@ -835,8 +840,9 @@
     "hits": [
       "prose_lock_diag"
     ],
-    "disposition": "NEEDS_READ_PROSE",
-    "basis": "中文措辞 in 断言候选"
+    "disposition": "KEEP_SEED_GOLDEN",
+    "basis": "山西 seed Due/起运/postures 精确金样",
+    "audited": true
   },
   {
     "file": "tests/test_fiscal_substrate_bridge.py",
@@ -855,8 +861,8 @@
     "hits": [
       "stub:_army_pay_source_rows_for_region"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_fiscal_substrate_bridge.py",
@@ -865,8 +871,9 @@
     "hits": [
       "prose_lock_diag"
     ],
-    "disposition": "NEEDS_READ_PROSE",
-    "basis": "中文措辞 in 断言候选"
+    "disposition": "KEEP_SEED_GOLDEN",
+    "basis": "江南核心省 seed+first_tick 精确金样",
+    "audited": true
   },
   {
     "file": "tests/test_fiscal_substrate_bridge.py",
@@ -875,8 +882,9 @@
     "hits": [
       "prose_lock_diag"
     ],
-    "disposition": "NEEDS_READ_PROSE",
-    "basis": "中文措辞 in 断言候选"
+    "disposition": "KEEP_SEED_GOLDEN",
+    "basis": "湖广 postures/Due/tick 结果相对南直比较",
+    "audited": true
   },
   {
     "file": "tests/test_fiscal_substrate_bridge.py",
@@ -885,8 +893,8 @@
     "hits": [
       "stub:tlog"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_fiscal_substrate_bridge.py",
@@ -895,8 +903,8 @@
     "hits": [
       "stub:tlog"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_fiscal_substrate_bridge.py",
@@ -905,8 +913,8 @@
     "hits": [
       "stub:user_data_dir"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_fiscal_substrate_bridge.py",
@@ -915,8 +923,8 @@
     "hits": [
       "stub:user_data_dir"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_fiscal_substrate_bridge.py",
@@ -925,8 +933,8 @@
     "hits": [
       "stub:user_data_dir"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_fiscal_substrate_bridge.py",
@@ -936,8 +944,8 @@
       "stub:record_issue_economy_move",
       "stub:user_data_dir"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_fiscal_substrate_bridge.py",
@@ -946,8 +954,8 @@
     "hits": [
       "stub:user_data_dir"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_fiscal_substrate_bridge.py",
@@ -956,8 +964,8 @@
     "hits": [
       "stub:user_data_dir"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_fiscal_substrate_bridge.py",
@@ -966,8 +974,8 @@
     "hits": [
       "stub:user_data_dir"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_fiscal_substrate_bridge.py",
@@ -976,8 +984,8 @@
     "hits": [
       "stub:user_data_dir"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_fiscal_substrate_bridge.py",
@@ -986,8 +994,8 @@
     "hits": [
       "stub:user_data_dir"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_fiscal_substrate_bridge.py",
@@ -996,8 +1004,8 @@
     "hits": [
       "stub:user_data_dir"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_fiscal_substrate_bridge.py",
@@ -1006,8 +1014,8 @@
     "hits": [
       "stub:tlog"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_fiscal_substrate_bridge.py",
@@ -1016,8 +1024,8 @@
     "hits": [
       "stub:tlog"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_fiscal_substrate_bridge.py",
@@ -1026,8 +1034,8 @@
     "hits": [
       "stub:tlog"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_fiscal_substrate_bridge.py",
@@ -1036,8 +1044,8 @@
     "hits": [
       "stub:tlog"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_fiscal_substrate_bridge.py",
@@ -1046,8 +1054,8 @@
     "hits": [
       "stub:tlog"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_fiscal_substrate_bridge.py",
@@ -1056,8 +1064,8 @@
     "hits": [
       "stub:tlog"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_breach_plea_623.py",
@@ -1067,8 +1075,8 @@
       "stub:_default_month_translate_runner",
       "stub:run_agent_text"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_web_audience_night_498.py",
@@ -1080,8 +1088,8 @@
       "stub:_sleep_retry_interval",
       "stub:web_game"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_web_audience_night_498.py",
@@ -1090,8 +1098,9 @@
     "hits": [
       "prose_lock_diag"
     ],
-    "disposition": "NEEDS_READ_PROSE",
-    "basis": "中文措辞 in 断言候选"
+    "disposition": "KEEP_HTTP_SURFACE",
+    "basis": "退役路由 404/409 + dossier 结构化字段；「着户部核边饷」为本案自写旨文回读",
+    "audited": true
   },
   {
     "file": "tests/test_web_audience_night_498.py",
@@ -1100,8 +1109,8 @@
     "hits": [
       "stub:wait_prior"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_web_audience_night_498.py",
@@ -1110,8 +1119,8 @@
     "hits": [
       "stub:wait_prior"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_runtime_llm_config.py",
@@ -1120,8 +1129,8 @@
     "hits": [
       "stub:RUNTIME_LLM_PATH"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_runtime_llm_config.py",
@@ -1130,8 +1139,8 @@
     "hits": [
       "stub:RUNTIME_LLM_PATH"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_runtime_llm_config.py",
@@ -1140,8 +1149,8 @@
     "hits": [
       "stub:RUNTIME_LLM_PATH"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_runtime_llm_config.py",
@@ -1150,8 +1159,8 @@
     "hits": [
       "stub:RUNTIME_LLM_PATH"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_runtime_llm_config.py",
@@ -1160,8 +1169,8 @@
     "hits": [
       "stub:RUNTIME_LLM_PATH"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_runtime_llm_config.py",
@@ -1170,8 +1179,8 @@
     "hits": [
       "stub:RUNTIME_LLM_PATH"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_runtime_llm_config.py",
@@ -1180,8 +1189,8 @@
     "hits": [
       "stub:RUNTIME_LLM_PATH"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_runtime_llm_config.py",
@@ -1190,8 +1199,8 @@
     "hits": [
       "stub:RUNTIME_LLM_PATH"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_runtime_llm_config.py",
@@ -1200,8 +1209,8 @@
     "hits": [
       "stub:RUNTIME_LLM_PATH"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_runtime_llm_config.py",
@@ -1210,8 +1219,8 @@
     "hits": [
       "stub:RUNTIME_LLM_PATH"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_runtime_llm_config.py",
@@ -1220,8 +1229,8 @@
     "hits": [
       "stub:RUNTIME_LLM_PATH"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_runtime_llm_config.py",
@@ -1230,8 +1239,8 @@
     "hits": [
       "stub:RUNTIME_LLM_PATH"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_runtime_llm_config.py",
@@ -1240,8 +1249,8 @@
     "hits": [
       "stub:RUNTIME_LLM_PATH"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_runtime_llm_config.py",
@@ -1250,8 +1259,8 @@
     "hits": [
       "stub:RUNTIME_LLM_PATH"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_runtime_llm_config.py",
@@ -1260,8 +1269,8 @@
     "hits": [
       "stub:RUNTIME_LLM_PATH"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_runtime_llm_config.py",
@@ -1270,8 +1279,8 @@
     "hits": [
       "stub:RUNTIME_LLM_PATH"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_runtime_llm_config.py",
@@ -1280,8 +1289,8 @@
     "hits": [
       "stub:RUNTIME_LLM_PATH"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_runtime_llm_config.py",
@@ -1290,8 +1299,8 @@
     "hits": [
       "stub:RUNTIME_LLM_PATH"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_runtime_llm_config.py",
@@ -1300,8 +1309,8 @@
     "hits": [
       "stub:RUNTIME_LLM_PATH"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_runtime_llm_config.py",
@@ -1310,8 +1319,8 @@
     "hits": [
       "stub:RUNTIME_LLM_PATH"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_runtime_llm_config.py",
@@ -1320,8 +1329,8 @@
     "hits": [
       "stub:RUNTIME_LLM_PATH"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_runtime_llm_config.py",
@@ -1330,8 +1339,8 @@
     "hits": [
       "stub:RUNTIME_LLM_PATH"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_runtime_llm_config.py",
@@ -1340,8 +1349,8 @@
     "hits": [
       "stub:RUNTIME_LLM_PATH"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_declaration_dispatch_1835.py",
@@ -1351,8 +1360,9 @@
       "prose_lock_diag",
       "stub:flush_to_db"
     ],
-    "disposition": "NEEDS_READ_PROSE",
-    "basis": "中文措辞 in 断言候选"
+    "disposition": "KEEP_REJECT_CATEGORY",
+    "basis": "真实 settle 入口；rejected.category=hallucinated_id + sibling applied；flush stub 仅证 fail-loud",
+    "audited": true
   },
   {
     "file": "tests/test_declaration_dispatch_1835.py",
@@ -1361,8 +1371,9 @@
     "hits": [
       "prose_lock_diag"
     ],
-    "disposition": "NEEDS_READ_PROSE",
-    "basis": "中文措辞 in 断言候选"
+    "disposition": "KEEP_ROSTER_STATE",
+    "basis": "注册 applied/rejected.category + characters 表 status/office",
+    "audited": true
   },
   {
     "file": "tests/test_declaration_dispatch_1835.py",
@@ -1371,8 +1382,9 @@
     "hits": [
       "prose_lock_diag"
     ],
-    "disposition": "NEEDS_READ_PROSE",
-    "basis": "中文措辞 in 断言候选"
+    "disposition": "KEEP_ORDER_IDEMPOTENT",
+    "basis": "暂存丢弃+旨序 settle 幂等；hallucinated_id 类别与 body 列表",
+    "audited": true
   },
   {
     "file": "tests/test_audience_translation_1838.py",
@@ -1392,8 +1404,8 @@
       "stub:run_world_segment_text",
       "stub:translate_month_segment"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_month_chain_1847.py",
@@ -1403,8 +1415,8 @@
       "stub:run_world_segment_text",
       "stub:translate_month_segment"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_month_chain_1847.py",
@@ -1414,8 +1426,8 @@
       "stub:run_world_segment_text",
       "stub:translate_month_segment"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_month_chain_1847.py",
@@ -1424,8 +1436,8 @@
     "hits": [
       "stub:run_world_segment_text"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_month_chain_1847.py",
@@ -1435,8 +1447,8 @@
       "stub:run_world_segment_text",
       "stub:translate_month_segment"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_month_chain_1847.py",
@@ -1449,8 +1461,9 @@
       "stub:run_world_segment_text",
       "stub:translate_month_segment"
     ],
-    "disposition": "NEEDS_READ_PROSE",
-    "basis": "中文措辞 in 断言候选"
+    "disposition": "KEEP_MONTH_TRANSLATE_BOUNDARY",
+    "basis": "LLM 月链边界替身；断言 desk/chain 状态与片段标签",
+    "audited": true
   },
   {
     "file": "tests/test_month_chain_1847.py",
@@ -1462,8 +1475,8 @@
       "stub:run_world_segment_text",
       "stub:translate_month_segment"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_month_chain_1847.py",
@@ -1475,8 +1488,8 @@
       "stub:run_world_segment_text",
       "stub:translate_month_segment"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_month_chain_1847.py",
@@ -1486,8 +1499,8 @@
       "stub:run_world_segment_text",
       "stub:translate_month_segment"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_month_chain_1847.py",
@@ -1498,8 +1511,8 @@
       "stub:run_world_segment_text",
       "stub:translate_month_segment"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_month_chain_1847.py",
@@ -1510,8 +1523,8 @@
       "stub:run_world_segment_text",
       "stub:translate_month_segment"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_month_chain_1847.py",
@@ -1521,8 +1534,8 @@
       "stub:run_world_segment_text",
       "stub:translate_month_segment"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_month_chain_1847.py",
@@ -1532,8 +1545,8 @@
       "stub:run_world_segment_text",
       "stub:translate_month_segment"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_month_chain_1847.py",
@@ -1542,8 +1555,8 @@
     "hits": [
       "stub:run_world_segment_text"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_month_chain_1847.py",
@@ -1554,8 +1567,8 @@
       "stub:run_world_segment_text",
       "stub:translate_month_segment"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_month_chain_1847.py",
@@ -1565,8 +1578,8 @@
       "stub:run_world_segment_text",
       "stub:translate_month_segment"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_month_chain_1847.py",
@@ -1575,8 +1588,8 @@
     "hits": [
       "stub:run_world_segment_text"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_month_chain_1847.py",
@@ -1586,8 +1599,8 @@
       "stub:_record_dossier_verdict_metadata",
       "stub:run_world_segment_text"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_month_chain_1847.py",
@@ -1599,8 +1612,8 @@
       "stub:translate_month_segment",
       "stub:逊国已闻"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_month_chain_1847.py",
@@ -1611,8 +1624,8 @@
       "stub:run_world_segment_text",
       "stub:translate_month_segment"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_month_chain_1847.py",
@@ -1623,8 +1636,8 @@
       "stub:run_world_segment_text",
       "stub:translate_month_segment"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_month_chain_1847.py",
@@ -1636,8 +1649,8 @@
       "stub:run_world_segment_text",
       "stub:translate_month_segment"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_month_chain_1847.py",
@@ -1648,8 +1661,8 @@
       "stub:run_world_segment_text",
       "stub:translate_month_segment"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_month_chain_1847.py",
@@ -1699,8 +1712,9 @@
       "prose_lock_diag",
       "stub:_save_chain"
     ],
-    "disposition": "NEEDS_READ_PROSE",
-    "basis": "中文措辞 in 断言候选"
+    "disposition": "KEEP_TX_BOUNDARY",
+    "basis": "_save_chain stub 诱导失败；断言同事务 disclosures 落账语义",
+    "audited": true
   },
   {
     "file": "tests/test_month_chain_1847.py",
@@ -1725,8 +1739,8 @@
       "stub:run_world_segment_text",
       "stub:translate_month_segment"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_month_chain_1847.py",
@@ -1738,8 +1752,8 @@
       "stub:run_world_segment_text",
       "stub:translate_month_segment"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_month_chain_1847.py",
@@ -1748,8 +1762,8 @@
     "hits": [
       "stub:_save_chain"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_mechanical_tail_1845.py",
@@ -1759,8 +1773,8 @@
       "stub:_executor",
       "stub:barrier"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_mechanical_tail_1845.py",
@@ -1769,8 +1783,8 @@
     "hits": [
       "stub:_executor"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_mechanical_tail_1845.py",
@@ -1780,8 +1794,8 @@
       "stub:list_turn_reports",
       "stub:save_state"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_decree_commitment_creation_136.py",
@@ -1790,8 +1804,8 @@
     "hits": [
       "stub:tlog"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_decree_commitment_creation_136.py",
@@ -1800,8 +1814,8 @@
     "hits": [
       "stub:enrich_initiative_effects"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_audience_night_498.py",
@@ -1810,8 +1824,8 @@
     "hits": [
       "stub:append_ledger_entry"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_month_chain_1843.py",
@@ -1822,8 +1836,9 @@
       "stub:run_world_segment_text",
       "stub:settle_staged_declarations_in_decree_order"
     ],
-    "disposition": "NEEDS_READ_PROSE",
-    "basis": "中文措辞 in 断言候选"
+    "disposition": "KEEP_MONTH_TRANSLATE_BOUNDARY",
+    "basis": "世界段边界替身；崩溃不双扣的 ledger 结果",
+    "audited": true
   },
   {
     "file": "tests/test_month_chain_1843.py",
@@ -1833,8 +1848,8 @@
       "stub:_run_decree_continuation_text",
       "stub:run_world_segment_text"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_month_chain_1843.py",
@@ -1843,8 +1858,8 @@
     "hits": [
       "stub:run_world_segment_text"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_month_chain_1843.py",
@@ -1853,8 +1868,8 @@
     "hits": [
       "stub:run_world_segment_text"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_month_chain_1843.py",
@@ -1863,8 +1878,8 @@
     "hits": [
       "stub:translate_month_segment"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_month_chain_1843.py",
@@ -1874,8 +1889,8 @@
       "stub:run_world_segment_text",
       "stub:translate_month_segment"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_month_chain_1843.py",
@@ -1884,8 +1899,8 @@
     "hits": [
       "stub:settle_staged_declarations_in_decree_order"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_month_chain_1843.py",
@@ -1894,8 +1909,8 @@
     "hits": [
       "stub:run_world_segment_text"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_month_chain_1843.py",
@@ -1905,8 +1920,8 @@
       "stub:run_secret_orders_supply",
       "stub:run_world_segment_text"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_month_chain_1843.py",
@@ -1916,8 +1931,8 @@
       "stub:prepare_world_materials",
       "stub:run_agent_text"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_person_delta_adapter.py",
@@ -1926,8 +1941,8 @@
     "hits": [
       "stub:apply_office_appointment"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_person_delta_adapter.py",
@@ -1936,8 +1951,8 @@
     "hits": [
       "stub:set_character_office"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_person_delta_adapter.py",
@@ -1946,8 +1961,8 @@
     "hits": [
       "stub:set_character_office"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_person_delta_adapter.py",
@@ -1957,8 +1972,9 @@
       "helper_name",
       "stub:_displace_duplicate_offices"
     ],
-    "disposition": "NEEDS_READ",
-    "basis": "helper 命名候选，需读后裁决"
+    "disposition": "FIX_APPLIED",
+    "basis": "真实 apply_score_extraction；失败注入后 status/office 回滚+rejected；已删注入文案子串锁",
+    "audited": true
   },
   {
     "file": "tests/test_person_delta_adapter.py",
@@ -1967,8 +1983,8 @@
     "hits": [
       "stub:resolve_office_type_preserving_title"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_person_delta_adapter.py",
@@ -1977,8 +1993,8 @@
     "hits": [
       "stub:apply_office_appointment"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_person_delta_adapter.py",
@@ -1987,8 +2003,8 @@
     "hits": [
       "stub:apply_appointment"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_person_delta_adapter.py",
@@ -2007,8 +2023,8 @@
     "hits": [
       "stub:create_decree_dossier"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_decree_dossiers_571.py",
@@ -2017,8 +2033,8 @@
     "hits": [
       "stub:_run_backend_for_config"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_decree_dossiers_571.py",
@@ -2027,8 +2043,8 @@
     "hits": [
       "stub:_run_backend_for_config"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_decree_dossiers_571.py",
@@ -2037,8 +2053,8 @@
     "hits": [
       "stub:_run_backend_for_config"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_decree_dossiers_571.py",
@@ -2048,8 +2064,8 @@
       "stub:_run_backend_for_config",
       "stub:write_decree"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_decree_dossiers_571.py",
@@ -2058,8 +2074,8 @@
     "hits": [
       "stub:record_dossier_execution"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_decree_dossiers_571.py",
@@ -2068,8 +2084,8 @@
     "hits": [
       "stub:_run_backend_for_config"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_decree_dossiers_571.py",
@@ -2078,8 +2094,8 @@
     "hits": [
       "stub:_run_backend_for_config"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_decree_dossiers_571.py",
@@ -2088,8 +2104,8 @@
     "hits": [
       "stub:_run_backend_for_config"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_audience_continuous_507.py",
@@ -2098,8 +2114,9 @@
     "hits": [
       "prose_lock_diag"
     ],
-    "disposition": "NEEDS_READ_PROSE",
-    "basis": "中文措辞 in 断言候选"
+    "disposition": "KEEP_SCENE_MEMBERSHIP",
+    "basis": "scene recap 成员边界——入场前对话排除",
+    "audited": true
   },
   {
     "file": "tests/test_audience_continuous_507.py",
@@ -2108,8 +2125,9 @@
     "hits": [
       "prose_lock_diag"
     ],
-    "disposition": "NEEDS_READ_PROSE",
-    "basis": "中文措辞 in 断言候选"
+    "disposition": "KEEP_SCENE_FLOW",
+    "basis": "乾清连续夜骨架状态机",
+    "audited": true
   },
   {
     "file": "tests/test_fiscal_levy_effect.py",
@@ -2118,8 +2136,8 @@
     "hits": [
       "stub:run_world_segment_text"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_fiscal_levy_effect.py",
@@ -2128,8 +2146,8 @@
     "hits": [
       "stub:tlog"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_fiscal_levy_effect.py",
@@ -2138,8 +2156,8 @@
     "hits": [
       "stub:tlog"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_fiscal_levy_effect.py",
@@ -2148,8 +2166,8 @@
     "hits": [
       "stub:tlog"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_fiscal_levy_effect.py",
@@ -2158,8 +2176,8 @@
     "hits": [
       "stub:tlog"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_fiscal_levy_effect.py",
@@ -2169,8 +2187,8 @@
       "prose_lock_diag",
       "stub:tlog"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_fiscal_levy_effect.py",
@@ -2179,8 +2197,8 @@
     "hits": [
       "stub:event_by_id"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_llm_channel_config.py",
@@ -2189,8 +2207,8 @@
     "hits": [
       "stub:OpenAIChat"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_llm_channel_config.py",
@@ -2199,8 +2217,8 @@
     "hits": [
       "stub:OpenAIChat"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_llm_channel_config.py",
@@ -2209,8 +2227,8 @@
     "hits": [
       "stub:OpenAIChat"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_llm_channel_config.py",
@@ -2220,8 +2238,8 @@
       "stub:Popen",
       "stub:_resolve_cli_bin"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_llm_channel_config.py",
@@ -2231,8 +2249,8 @@
       "stub:Agent",
       "stub:extract_agent_text"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_llm_channel_config.py",
@@ -2241,8 +2259,8 @@
     "hits": [
       "stub:_run_backend_for_config"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_llm_channel_config.py",
@@ -2251,8 +2269,8 @@
     "hits": [
       "stub:_run_backend_for_config"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_llm_channel_config.py",
@@ -2261,8 +2279,8 @@
     "hits": [
       "stub:_run_backend_for_config"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_llm_channel_config.py",
@@ -2271,8 +2289,8 @@
     "hits": [
       "stub:_run_backend_for_config"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_llm_channel_config.py",
@@ -2283,8 +2301,8 @@
       "stub:OpenAIChat",
       "stub:extract_agent_text"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_llm_channel_config.py",
@@ -2293,8 +2311,8 @@
     "hits": [
       "stub:Agent"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_llm_channel_config.py",
@@ -2303,8 +2321,8 @@
     "hits": [
       "stub:Agent"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_llm_channel_config.py",
@@ -2313,8 +2331,8 @@
     "hits": [
       "stub:Agent"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_llm_channel_config.py",
@@ -2323,8 +2341,8 @@
     "hits": [
       "stub:Agent"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_llm_channel_config.py",
@@ -2340,8 +2358,8 @@
       "stub:is_minimax_base_url",
       "stub:tlog"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_character_knowledge_489.py",
@@ -2351,8 +2369,8 @@
       "stub:army_report",
       "stub:treasury_report"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_character_knowledge_489.py",
@@ -2361,8 +2379,8 @@
     "hits": [
       "stub:faction_report"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_character_knowledge_489.py",
@@ -2373,8 +2391,8 @@
       "stub:faction_report",
       "stub:treasury_report"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_character_knowledge_489.py",
@@ -2396,8 +2414,8 @@
       "stub:list_issued_directives",
       "stub:list_turn_reports"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_character_knowledge_489.py",
@@ -2419,8 +2437,8 @@
       "stub:_new_secret_order_failure_payloads_for_turn",
       "stub:get_game"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_qa_c2_phase_settlement_mask_1374.py",
@@ -2432,8 +2450,8 @@
       "stub:_new_secret_order_failure_payloads_for_turn",
       "stub:get_game"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_qa_c2_phase_settlement_mask_1374.py",
@@ -2446,8 +2464,8 @@
       "stub:clear_orphan_month_open_snapshot",
       "stub:get_game"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_shared_resource_order_1844.py",
@@ -2486,8 +2504,8 @@
     "hits": [
       "stub:get_game"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_court_layout_1290.py",
@@ -2496,8 +2514,8 @@
     "hits": [
       "stub:get_game"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_menu_lifecycle_drain_396.py",
@@ -2506,8 +2524,8 @@
     "hits": [
       "stub:web_game"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_menu_lifecycle_drain_396.py",
@@ -2518,8 +2536,8 @@
       "stub:user_data_path",
       "stub:web_game"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_menu_lifecycle_drain_396.py",
@@ -2531,8 +2549,8 @@
       "stub:user_data_path",
       "stub:web_game"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_menu_lifecycle_drain_396.py",
@@ -2543,8 +2561,8 @@
       "stub:user_data_path",
       "stub:web_game"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_menu_lifecycle_drain_396.py",
@@ -2556,8 +2574,8 @@
       "stub:user_data_path",
       "stub:web_game"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_menu_lifecycle_drain_396.py",
@@ -2569,8 +2587,8 @@
       "stub:user_data_path",
       "stub:web_game"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_menu_lifecycle_drain_396.py",
@@ -2582,8 +2600,8 @@
       "stub:sleep",
       "stub:web_game"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_menu_lifecycle_drain_396.py",
@@ -2592,8 +2610,8 @@
     "hits": [
       "stub:web_game"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_menu_lifecycle_drain_396.py",
@@ -2602,8 +2620,8 @@
     "hits": [
       "stub:web_game"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_menu_lifecycle_drain_396.py",
@@ -2612,8 +2630,8 @@
     "hits": [
       "stub:Thread"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_menu_lifecycle_drain_396.py",
@@ -2624,8 +2642,8 @@
       "stub:user_data_path",
       "stub:web_game"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_menu_lifecycle_drain_396.py",
@@ -2636,8 +2654,8 @@
       "stub:user_data_path",
       "stub:web_game"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_material_directory_1830.py",
@@ -2646,8 +2664,9 @@
     "hits": [
       "prose_lock_diag"
     ],
-    "disposition": "NEEDS_READ_PROSE",
-    "basis": "中文措辞 in 断言候选"
+    "disposition": "KEEP_MATERIAL_SURFACE",
+    "basis": "材料目录排除 raw turn_report、保留公开邸报——可见表面",
+    "audited": true
   },
   {
     "file": "tests/test_material_directory_1830.py",
@@ -2656,8 +2675,8 @@
     "hits": [
       "stub:get_active_secret_orders_for_minister"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_section4_rejections.py",
@@ -2666,8 +2685,8 @@
     "hits": [
       "stub:apply_region_deltas"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_section4_rejections.py",
@@ -2676,8 +2695,8 @@
     "hits": [
       "stub:apply_army_deltas"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_section4_rejections.py",
@@ -2686,8 +2705,8 @@
     "hits": [
       "stub:create_armies_from_extraction"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_section4_rejections.py",
@@ -2696,8 +2715,9 @@
     "hits": [
       "prose_lock_diag"
     ],
-    "disposition": "NEEDS_READ_PROSE",
-    "basis": "中文措辞 in 断言候选"
+    "disposition": "KEEP_REJECT_FIELD",
+    "basis": "rejection_reports 留痕；非法字段名来自本案 delta 输入键",
+    "audited": true
   },
   {
     "file": "tests/test_power_section_rejections.py",
@@ -2706,8 +2726,8 @@
     "hits": [
       "stub:apply_power_deltas"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_power_section_rejections.py",
@@ -2716,8 +2736,8 @@
     "hits": [
       "stub:apply_character_power_changes"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_qa_d1_decree_normalize_1274.py",
@@ -2726,8 +2746,8 @@
     "hits": [
       "stub:_run_backend_for_config"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_qa_d1_decree_normalize_1274.py",
@@ -2736,8 +2756,8 @@
     "hits": [
       "stub:_run_backend_for_config"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_qa_d1_decree_normalize_1274.py",
@@ -2747,8 +2767,8 @@
       "stub:_run_backend_for_config",
       "stub:extract_draft_intent"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_qa_d1_decree_normalize_1274.py",
@@ -2758,8 +2778,8 @@
       "stub:_run_backend_for_config",
       "stub:time"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_qa_d1_decree_normalize_1274.py",
@@ -2768,8 +2788,8 @@
     "hits": [
       "stub:_run_backend_for_config"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_error_pack.py",
@@ -2778,8 +2798,8 @@
     "hits": [
       "stub:get_game"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_error_pack.py",
@@ -2788,8 +2808,8 @@
     "hits": [
       "stub:bundled_path"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_candidate_supply_1893.py",
@@ -2848,8 +2868,8 @@
     "hits": [
       "stub:load_json_asset"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_audience_undo_506.py",
@@ -2858,8 +2878,9 @@
     "hits": [
       "prose_lock_diag"
     ],
-    "disposition": "NEEDS_READ_PROSE",
-    "basis": "诊断/OperationalError 文字锁候选"
+    "disposition": "KEEP_WRITE_AUDIT",
+    "basis": "夜写白名单审计：放行/捕获",
+    "audited": true
   },
   {
     "file": "tests/test_audience_undo_506.py",
@@ -2868,8 +2889,8 @@
     "hits": [
       "stub:_truncate_agno_runs_in_tx"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_audience_undo_506.py",
@@ -2878,8 +2899,9 @@
     "hits": [
       "prose_lock_diag"
     ],
-    "disposition": "NEEDS_READ_PROSE",
-    "basis": "诊断/OperationalError 文字锁候选"
+    "disposition": "KEEP_UNDO_RESTORE",
+    "basis": "撤回后 staging 行恢复",
+    "audited": true
   },
   {
     "file": "tests/test_audience_translation_once_1898.py",
@@ -2889,8 +2911,8 @@
       "stub:load_runtime_llm",
       "stub:run_highlight_judge"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_audience_travel_gating_670.py",
@@ -2899,8 +2921,8 @@
     "hits": [
       "stub:apply_person_changes_only"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_audience_travel_gating_670.py",
@@ -2909,8 +2931,8 @@
     "hits": [
       "stub:apply_score_extraction"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_audience_travel_gating_670.py",
@@ -2919,8 +2941,8 @@
     "hits": [
       "stub:apply_person_changes_only"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_audience_travel_gating_670.py",
@@ -2929,8 +2951,8 @@
     "hits": [
       "stub:record_summon_fresh"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_audience_travel_gating_670.py",
@@ -2939,8 +2961,8 @@
     "hits": [
       "stub:settle_unsettled_summons_for_person"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_decree_forecast_1861.py",
@@ -2950,8 +2972,8 @@
       "stub:run_agent_text",
       "stub:run_declaration_translate_prompt"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_decree_forecast_1861.py",
@@ -2960,8 +2982,8 @@
     "hits": [
       "stub:run_agent_text"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_decree_forecast_1861.py",
@@ -2970,8 +2992,8 @@
     "hits": [
       "stub:run_agent_text"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_decree_forecast_1861.py",
@@ -2981,8 +3003,8 @@
       "stub:run_agent_text",
       "stub:run_declaration_translate_prompt"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_decree_forecast_1861.py",
@@ -2992,8 +3014,8 @@
       "stub:run_agent_text",
       "stub:run_declaration_translate_prompt"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_decree_forecast_1861.py",
@@ -3003,8 +3025,8 @@
       "stub:run_agent_text",
       "stub:run_declaration_translate_prompt"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_minister_chat_timeout.py",
@@ -3014,8 +3036,8 @@
       "stub:Popen",
       "stub:_cli_process_clock"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_web_chat_serialization_393.py",
@@ -3025,8 +3047,8 @@
       "stub:_require_active_minister",
       "stub:get_game"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_web_chat_serialization_393.py",
@@ -3035,8 +3057,8 @@
     "hits": [
       "stub:get_game"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_relation_brew_636.py",
@@ -3045,8 +3067,8 @@
     "hits": [
       "stub:load_relation_history_before"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_relation_brew_636.py",
@@ -3055,8 +3077,9 @@
     "hits": [
       "prose_lock_diag"
     ],
-    "disposition": "NEEDS_READ_PROSE",
-    "basis": "诊断/OperationalError 文字锁候选"
+    "disposition": "FIX_APPLIED",
+    "basis": "真实 brew 入口；OperationalError 类型上抛；已删 match 文案锁",
+    "audited": true
   },
   {
     "file": "tests/test_relation_brew_636.py",
@@ -3065,8 +3088,9 @@
     "hits": [
       "prose_lock_diag"
     ],
-    "disposition": "NEEDS_READ_PROSE",
-    "basis": "诊断/OperationalError 文字锁候选"
+    "disposition": "FIX_APPLIED",
+    "basis": "同上；并断言未伪装降级 mark",
+    "audited": true
   },
   {
     "file": "tests/test_relation_brew_636.py",
@@ -3075,8 +3099,9 @@
     "hits": [
       "prose_lock_diag"
     ],
-    "disposition": "NEEDS_READ_PROSE",
-    "basis": "诊断/OperationalError 文字锁候选"
+    "disposition": "FIX_APPLIED",
+    "basis": "pending 写失败仍 OperationalError 上抛；已删 match 文案锁",
+    "audited": true
   },
   {
     "file": "tests/test_gazette_author_1862.py",
@@ -3086,8 +3111,8 @@
       "stub:run_gazette_text",
       "stub:run_world_segment_text"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_gazette_author_1862.py",
@@ -3102,8 +3127,8 @@
       "stub:run_world_segment_text",
       "stub:treasury_report"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_gazette_author_1862.py",
@@ -3113,8 +3138,8 @@
       "stub:run_gazette_text",
       "stub:run_world_segment_text"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_rescript_heal_isolation_1801.py",
@@ -3123,8 +3148,8 @@
     "hits": [
       "stub:run_agent_text"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_rescript_heal_isolation_1801.py",
@@ -3133,8 +3158,8 @@
     "hits": [
       "stub:run_agent_text"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_rescript_heal_isolation_1801.py",
@@ -3143,8 +3168,8 @@
     "hits": [
       "stub:run_agent_text"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_rescript_heal_isolation_1801.py",
@@ -3153,8 +3178,8 @@
     "hits": [
       "stub:run_agent_text"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_rescript_heal_isolation_1801.py",
@@ -3163,8 +3188,8 @@
     "hits": [
       "stub:run_agent_text"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_rescript_heal_isolation_1801.py",
@@ -3173,8 +3198,8 @@
     "hits": [
       "stub:run_agent_text"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_close_issues_section_rejections.py",
@@ -3183,8 +3208,8 @@
     "hits": [
       "stub:close_issue"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_rescript_choices_563.py",
@@ -3193,8 +3218,8 @@
     "hits": [
       "stub:_run_backend_for_config"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_rescript_choices_563.py",
@@ -3203,8 +3228,8 @@
     "hits": [
       "stub:_run_backend_for_config"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_secret_order_monthly_progress_566.py",
@@ -3224,8 +3249,9 @@
     "hits": [
       "prose_lock_diag"
     ],
-    "disposition": "NEEDS_READ_PROSE",
-    "basis": "中文措辞 in 断言候选"
+    "disposition": "KEEP_PROGRESS_RAIL",
+    "basis": "密令经规范 progress 轨关闭——状态/进度结果",
+    "audited": true
   },
   {
     "file": "tests/test_secret_order_monthly_progress_566.py",
@@ -3237,8 +3263,8 @@
       "stub:get_game",
       "stub:write_decree_with_agno"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_run_agent_text_transport_1465.py",
@@ -3247,8 +3273,8 @@
     "hits": [
       "stub:_dump_llm_messages"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_run_agent_text_transport_1465.py",
@@ -3257,8 +3283,8 @@
     "hits": [
       "stub:_dump_llm_messages"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_advance_paths_atomic.py",
@@ -3267,8 +3293,8 @@
     "hits": [
       "stub:resolve_decisions_phase2"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_advance_paths_atomic.py",
@@ -3277,8 +3303,8 @@
     "hits": [
       "stub:resolve_decisions_phase2"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_advance_paths_atomic.py",
@@ -3287,8 +3313,8 @@
     "hits": [
       "stub:resolve_decisions_phase2"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_advance_paths_atomic.py",
@@ -3297,8 +3323,8 @@
     "hits": [
       "stub:resolve_decisions_phase2"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_cli_runner_error_typed_1299.py",
@@ -3308,8 +3334,8 @@
       "stub:_call_cli",
       "stub:_trace"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_cli_runner_error_typed_1299.py",
@@ -3320,8 +3346,8 @@
       "stub:_fake_completion",
       "stub:_trace"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_audience_scroll_539.py",
@@ -3330,8 +3356,8 @@
     "hits": [
       "stub:get_game"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_audience_scroll_539.py",
@@ -3340,8 +3366,8 @@
     "hits": [
       "stub:get_game"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_audience_scroll_539.py",
@@ -3350,8 +3376,8 @@
     "hits": [
       "stub:get_game"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_audience_scroll_539.py",
@@ -3360,8 +3386,8 @@
     "hits": [
       "stub:get_game"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_audience_scroll_539.py",
@@ -3370,8 +3396,8 @@
     "hits": [
       "stub:get_game"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_audience_scroll_539.py",
@@ -3380,8 +3406,8 @@
     "hits": [
       "stub:get_game"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_audience_scroll_539.py",
@@ -3390,8 +3416,8 @@
     "hits": [
       "stub:get_game"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_audience_scroll_539.py",
@@ -3400,8 +3426,8 @@
     "hits": [
       "stub:get_game"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_audience_scroll_539.py",
@@ -3410,8 +3436,8 @@
     "hits": [
       "stub:get_game"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_audience_scroll_539.py",
@@ -3420,8 +3446,8 @@
     "hits": [
       "stub:get_game"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_audience_scroll_539.py",
@@ -3430,8 +3456,8 @@
     "hits": [
       "stub:get_game"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_month_open_snapshot_1234.py",
@@ -3440,8 +3466,8 @@
     "hits": [
       "stub:auto_close_open_night"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_month_open_snapshot_1234.py",
@@ -3450,8 +3476,8 @@
     "hits": [
       "stub:auto_close_open_night"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_pay_order_override_extraction_653.py",
@@ -3460,8 +3486,8 @@
     "hits": [
       "stub:_run_backend_for_config"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_pay_order_override_extraction_653.py",
@@ -3470,8 +3496,8 @@
     "hits": [
       "stub:_run_backend_for_config"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_pay_order_override_extraction_653.py",
@@ -3480,8 +3506,8 @@
     "hits": [
       "stub:_run_backend_for_config"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_pay_order_override_extraction_653.py",
@@ -3490,8 +3516,8 @@
     "hits": [
       "stub:_run_backend_for_config"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_state_reload.py",
@@ -3500,8 +3526,8 @@
     "hits": [
       "stub:save_state"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_state_reload.py",
@@ -3510,8 +3536,8 @@
     "hits": [
       "stub:auto_submit_due_secret_orders"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_state_reload.py",
@@ -3521,8 +3547,8 @@
       "stub:auto_submit_due_secret_orders",
       "stub:reload_state_from_db"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_state_reload.py",
@@ -3531,8 +3557,8 @@
     "hits": [
       "stub:auto_submit_due_secret_orders"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_state_reload.py",
@@ -3541,8 +3567,8 @@
     "hits": [
       "stub:_sync_offices_from_db_impl"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_state_reload.py",
@@ -3551,8 +3577,8 @@
     "hits": [
       "stub:reload_state_from_db"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_state_reload.py",
@@ -3561,8 +3587,8 @@
     "hits": [
       "stub:reload_state_from_db"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_state_reload.py",
@@ -3571,8 +3597,8 @@
     "hits": [
       "stub:reload_state_from_db"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_promulgation_judge_561.py",
@@ -3581,8 +3607,8 @@
     "hits": [
       "stub:resolve_directives"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_promulgation_judge_561.py",
@@ -3592,8 +3618,8 @@
       "stub:Agent",
       "stub:create_chat_model"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_promulgation_judge_561.py",
@@ -3603,8 +3629,8 @@
       "stub:create_promulgation_judge_agent",
       "stub:run_agent_text"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_promulgation_judge_561.py",
@@ -3615,8 +3641,8 @@
       "stub:create_promulgation_judge_agent",
       "stub:run_agent_text"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_faction_leverage_9.py",
@@ -3736,8 +3762,9 @@
     "hits": [
       "prose_lock_diag"
     ],
-    "disposition": "NEEDS_READ_PROSE",
-    "basis": "中文措辞 in 断言候选"
+    "disposition": "KEEP_E2E_SCENE",
+    "basis": "召对→收夜→settle 真实入口；人物/财政可见结果",
+    "audited": true
   },
   {
     "file": "tests/test_audience_translate_1837.py",
@@ -3766,8 +3793,8 @@
     "hits": [
       "stub:Queue"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_world_materials_1834.py",
@@ -3776,8 +3803,9 @@
     "hits": [
       "prose_lock_diag"
     ],
-    "disposition": "NEEDS_READ_PROSE",
-    "basis": "中文措辞 in 断言候选"
+    "disposition": "KEEP_MATERIAL_TREE",
+    "basis": "prepare 写出 typed 树+gazette index 表面",
+    "audited": true
   },
   {
     "file": "tests/test_named_characters_seed_484.py",
@@ -3786,8 +3814,9 @@
     "hits": [
       "prose_lock_diag"
     ],
-    "disposition": "NEEDS_READ_PROSE",
-    "basis": "中文措辞 in 断言候选"
+    "disposition": "KEEP_SEED_GOLDEN",
+    "basis": "具名人物 seed 法司/职官金样",
+    "audited": true
   },
   {
     "file": "tests/test_named_characters_seed_484.py",
@@ -3796,8 +3825,8 @@
     "hits": [
       "stub:load_json_asset"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_execution_joint_liability_565.py",
@@ -3806,8 +3835,9 @@
     "hits": [
       "prose_lock_diag"
     ],
-    "disposition": "NEEDS_READ_PROSE",
-    "basis": "中文措辞 in 断言候选"
+    "disposition": "KEEP_MERGE_RESTORE",
+    "basis": "处决注记 merge/restore 接口结果",
+    "audited": true
   },
   {
     "file": "tests/test_p4_guard_new_surfaces_547.py",
@@ -3816,8 +3846,8 @@
     "hits": [
       "stub:get_game"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_p4_guard_new_surfaces_547.py",
@@ -3826,8 +3856,8 @@
     "hits": [
       "stub:get_game"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_recommendation_edges_635.py",
@@ -3836,8 +3866,8 @@
     "hits": [
       "stub:record_relation_edge_event"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_event_chain_cascade.py",
@@ -3846,8 +3876,8 @@
     "hits": [
       "stub:cancel_issue"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_issue_entities.py",
@@ -3856,8 +3886,8 @@
     "hits": [
       "stub:enrich_initiative_effects"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_issue_entities.py",
@@ -3866,8 +3896,8 @@
     "hits": [
       "stub:enrich_initiative_effects"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_issue_entities.py",
@@ -3876,8 +3906,8 @@
     "hits": [
       "stub:enrich_initiative_effects"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_advances_section_rejections.py",
@@ -3886,8 +3916,8 @@
     "hits": [
       "stub:advance_issue"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_appointment_tenure_607.py",
@@ -3896,8 +3926,8 @@
     "hits": [
       "stub:_displace_duplicate_offices"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_surcharge_causal_chain_650.py",
@@ -3906,8 +3936,8 @@
     "hits": [
       "stub:run_world_segment_text"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_army_salary_44.py",
@@ -3926,8 +3956,8 @@
     "hits": [
       "stub:run_agent_text"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_rescript_option_field_heal_1746.py",
@@ -3936,8 +3966,8 @@
     "hits": [
       "stub:run_agent_text"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_rescript_option_field_heal_1746.py",
@@ -3946,8 +3976,8 @@
     "hits": [
       "stub:run_agent_text"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_rescript_option_field_heal_1746.py",
@@ -3956,8 +3986,8 @@
     "hits": [
       "stub:run_agent_text"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_rescript_option_field_heal_1746.py",
@@ -3966,8 +3996,8 @@
     "hits": [
       "stub:run_agent_text"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_rescript_option_field_heal_1746.py",
@@ -3976,8 +4006,8 @@
     "hits": [
       "stub:run_agent_text"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_rescript_option_field_heal_1746.py",
@@ -3986,8 +4016,8 @@
     "hits": [
       "stub:run_agent_text"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_rescript_option_field_heal_1746.py",
@@ -3996,8 +4026,8 @@
     "hits": [
       "stub:run_agent_text"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_rescript_option_field_heal_1746.py",
@@ -4006,8 +4036,8 @@
     "hits": [
       "stub:run_agent_text"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_rescript_option_field_heal_1746.py",
@@ -4016,8 +4046,8 @@
     "hits": [
       "stub:run_agent_text"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_rescript_option_field_heal_1746.py",
@@ -4026,8 +4056,8 @@
     "hits": [
       "stub:run_agent_text"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_rescript_option_field_heal_1746.py",
@@ -4036,8 +4066,8 @@
     "hits": [
       "stub:run_agent_text"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_rescript_option_field_heal_1746.py",
@@ -4046,8 +4076,8 @@
     "hits": [
       "stub:run_agent_text"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_audience_draft_grant_once_1777.py",
@@ -4057,8 +4087,8 @@
       "stub:build_audience_translate_prompt",
       "stub:web_game"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_qa_b3_409_ux.py",
@@ -4068,8 +4098,8 @@
       "stub:get_night",
       "stub:get_open_night"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_qa_b3_409_ux.py",
@@ -4079,8 +4109,8 @@
       "stub:_failed_secret_order_ids_for_turn",
       "stub:get_game"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_qa_b3_409_ux.py",
@@ -4091,8 +4121,8 @@
       "stub:_new_secret_order_failure_payloads_for_turn",
       "stub:get_game"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_qa_b3_409_ux.py",
@@ -4105,8 +4135,8 @@
       "stub:_new_secret_order_failure_payloads_for_turn",
       "stub:get_game"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_session_write_queue_1353.py",
@@ -4115,8 +4145,8 @@
     "hits": [
       "stub:wait_idle"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_structured_decree_contract_1624.py",
@@ -4125,8 +4155,8 @@
     "hits": [
       "stub:run_agent_text"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_structured_decree_contract_1624.py",
@@ -4136,8 +4166,8 @@
       "stub:_run_backend_for_config",
       "stub:capture_manual_directive_payload"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_structured_decree_contract_1624.py",
@@ -4147,8 +4177,8 @@
       "stub:_run_backend_for_config",
       "stub:capture_manual_directive_payload"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_structured_decree_contract_1624.py",
@@ -4157,8 +4187,8 @@
     "hits": [
       "stub:_run_backend_for_config"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_structured_decree_contract_1624.py",
@@ -4167,8 +4197,8 @@
     "hits": [
       "stub:_run_backend_for_config"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_event_trigger_gate.py",
@@ -4177,8 +4207,8 @@
     "hits": [
       "stub:load_json_asset"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_event_trigger_gate.py",
@@ -4187,8 +4217,8 @@
     "hits": [
       "stub:load_json_asset"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_event_trigger_gate.py",
@@ -4197,8 +4227,8 @@
     "hits": [
       "stub:load_json_asset"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_event_trigger_gate.py",
@@ -4207,8 +4237,8 @@
     "hits": [
       "stub:load_json_asset"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_event_trigger_gate.py",
@@ -4217,8 +4247,8 @@
     "hits": [
       "stub:load_json_asset"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_event_trigger_gate.py",
@@ -4227,8 +4257,8 @@
     "hits": [
       "stub:load_json_asset"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_event_trigger_gate.py",
@@ -4237,8 +4267,9 @@
     "hits": [
       "prose_lock_diag"
     ],
-    "disposition": "NEEDS_READ_PROSE",
-    "basis": "诊断/OperationalError 文字锁候选"
+    "disposition": "KEEP_GATE_FAIL_LOUD",
+    "basis": "gate 求值 typo 字段→ValueError（类型契约，非诊断文案）",
+    "audited": true
   },
   {
     "file": "tests/test_event_trigger_gate.py",
@@ -4247,8 +4278,9 @@
     "hits": [
       "prose_lock_diag"
     ],
-    "disposition": "NEEDS_READ_PROSE",
-    "basis": "诊断/OperationalError 文字锁候选"
+    "disposition": "KEEP_GATE_FAIL_LOUD",
+    "basis": "文本分支同样 ValueError 类型契约",
+    "audited": true
   },
   {
     "file": "tests/test_event_trigger_gate.py",
@@ -4257,8 +4289,8 @@
     "hits": [
       "stub:load_json_asset"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_event_trigger_gate.py",
@@ -4267,8 +4299,9 @@
     "hits": [
       "prose_lock_diag"
     ],
-    "disposition": "NEEDS_READ_PROSE",
-    "basis": "诊断/OperationalError 文字锁候选"
+    "disposition": "KEEP_EVENT_SHAPE",
+    "basis": "事件效果统一 person_change 键",
+    "audited": true
   },
   {
     "file": "tests/test_event_trigger_gate.py",
@@ -4277,8 +4310,8 @@
     "hits": [
       "stub:event_to_issue"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_event_trigger_gate.py",
@@ -4287,8 +4320,8 @@
     "hits": [
       "stub:load_json_asset"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_event_trigger_gate.py",
@@ -4297,8 +4330,9 @@
     "hits": [
       "prose_lock_diag"
     ],
-    "disposition": "NEEDS_READ_PROSE",
-    "basis": "诊断/OperationalError 文字锁候选"
+    "disposition": "KEEP_CONTENT_SHAPE",
+    "basis": "内容层软判战果形状",
+    "audited": true
   },
   {
     "file": "tests/test_event_trigger_gate.py",
@@ -4307,8 +4341,8 @@
     "hits": [
       "stub:_STRATEGIC_FOREIGN_NODE_OUTCOME_TARGETS"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_event_trigger_gate.py",
@@ -4317,8 +4351,8 @@
     "hits": [
       "stub:event_terminal_state"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_event_trigger_gate.py",
@@ -4327,8 +4361,8 @@
     "hits": [
       "stub:_apply_issue_entities"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_event_trigger_gate.py",
@@ -4349,8 +4383,8 @@
     "hits": [
       "stub:gather_candidate_events"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_event_trigger_gate.py",
@@ -4359,8 +4393,8 @@
     "hits": [
       "stub:gather_candidate_events"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_deepseek_thinking_disable_1797.py",
@@ -4370,8 +4404,8 @@
       "stub:_DUMP_LLM",
       "stub:_DUMP_PATH"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_rescript_draft_656.py",
@@ -4380,8 +4414,8 @@
     "hits": [
       "stub:run_agent_text"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_rescript_draft_656.py",
@@ -4390,8 +4424,8 @@
     "hits": [
       "stub:run_agent_text"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_rescript_draft_656.py",
@@ -4400,8 +4434,8 @@
     "hits": [
       "stub:run_agent_text"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_rescript_draft_656.py",
@@ -4410,8 +4444,8 @@
     "hits": [
       "stub:run_agent_text"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_rescript_draft_656.py",
@@ -4420,8 +4454,8 @@
     "hits": [
       "stub:run_agent_text"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_rescript_draft_656.py",
@@ -4430,8 +4464,8 @@
     "hits": [
       "stub:run_agent_text"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_rescript_draft_656.py",
@@ -4440,8 +4474,8 @@
     "hits": [
       "stub:run_agent_text"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_rescript_draft_656.py",
@@ -4450,8 +4484,8 @@
     "hits": [
       "stub:run_agent_text"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_rescript_draft_656.py",
@@ -4460,8 +4494,8 @@
     "hits": [
       "stub:run_agent_text"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_rescript_draft_656.py",
@@ -4470,8 +4504,8 @@
     "hits": [
       "stub:tlog"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_rescript_draft_656.py",
@@ -4480,8 +4514,8 @@
     "hits": [
       "stub:tlog"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_rescript_draft_656.py",
@@ -4490,8 +4524,8 @@
     "hits": [
       "stub:run_agent_text"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_rescript_draft_656.py",
@@ -4501,8 +4535,8 @@
       "stub:run_agent_text",
       "stub:validate_rescript_draft_items"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_rescript_draft_656.py",
@@ -4511,8 +4545,8 @@
     "hits": [
       "stub:run_agent_text"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_rescript_draft_656.py",
@@ -4531,8 +4565,9 @@
     "hits": [
       "prose_lock_diag"
     ],
-    "disposition": "NEEDS_READ_PROSE",
-    "basis": "中文措辞 in 断言候选"
+    "disposition": "KEEP_DESK_MERGE",
+    "basis": "批红案头跨月合并列表",
+    "audited": true
   },
   {
     "file": "tests/test_person_transit_write_667.py",
@@ -4541,8 +4576,8 @@
     "hits": [
       "stub:from_file"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_person_transit_write_667.py",
@@ -4552,8 +4587,8 @@
       "stub:_MEIPASS",
       "stub:frozen"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_month_call_recovery_1846.py",
@@ -4562,8 +4597,8 @@
     "hits": [
       "stub:run"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_month_call_recovery_1846.py",
@@ -4572,8 +4607,8 @@
     "hits": [
       "stub:produce_forecast_product"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_month_call_recovery_1846.py",
@@ -4582,8 +4617,8 @@
     "hits": [
       "stub:run_world_segment_text"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_month_call_recovery_1846.py",
@@ -4593,8 +4628,8 @@
       "stub:run_world_segment_text",
       "stub:translate_month_segment"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_month_call_recovery_1846.py",
@@ -4604,8 +4639,8 @@
       "stub:run_world_segment_text",
       "stub:translate_month_segment"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_month_call_recovery_1846.py",
@@ -4619,8 +4654,9 @@
       "stub:web_game",
       "stub:write_error_pack"
     ],
-    "disposition": "NEEDS_READ_PROSE",
-    "basis": "中文措辞 in 断言候选"
+    "disposition": "KEEP_RECOVERY_PASS_THROUGH",
+    "basis": "注入 LLMUnavailable 原文进入 settlement_recovery.message——玩家可见恢复契约",
+    "audited": true
   },
   {
     "file": "tests/test_month_call_recovery_1846.py",
@@ -4630,8 +4666,8 @@
       "stub:dispatch_month_segment",
       "stub:run_world_segment_text"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_month_call_recovery_1846.py",
@@ -4642,8 +4678,8 @@
       "stub:run_world_segment_text",
       "stub:translate_month_segment"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_month_call_recovery_1846.py",
@@ -4654,8 +4690,8 @@
       "stub:settle_staged_declarations_in_decree_order",
       "stub:translate_month_segment"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_month_call_recovery_1846.py",
@@ -4667,8 +4703,8 @@
       "stub:translate_month_segment",
       "stub:write_error_pack"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_opening_gazette_delete_1356.py",
@@ -4677,8 +4713,9 @@
     "hits": [
       "prose_lock_diag"
     ],
-    "disposition": "NEEDS_READ_PROSE",
-    "basis": "中文措辞 in 断言候选"
+    "disposition": "KEEP_PURGE_FINGERPRINT",
+    "basis": "开局邸报精确 purge；反例保留含种子短语的真结算稿",
+    "audited": true
   },
   {
     "file": "tests/test_history_decree_text_1843_reopen.py",
@@ -4687,8 +4724,8 @@
     "hits": [
       "stub:get_game"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_transit_countdown_668.py",
@@ -4707,8 +4744,8 @@
     "hits": [
       "stub:bundled_path"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_refugee_loop_652.py",
@@ -4717,8 +4754,8 @@
     "hits": [
       "stub:next_period"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_refugee_loop_652.py",
@@ -4750,8 +4787,9 @@
       "prose_lock_diag",
       "stub:commit"
     ],
-    "disposition": "NEEDS_READ_PROSE",
-    "basis": "诊断/OperationalError 文字锁候选"
+    "disposition": "KEEP_TX_BOUNDARY",
+    "basis": "commit 失败注入；kv 回滚+无开事务",
+    "audited": true
   },
   {
     "file": "tests/test_transaction_boundary.py",
@@ -4761,8 +4799,9 @@
       "prose_lock_diag",
       "stub:commit"
     ],
-    "disposition": "NEEDS_READ_PROSE",
-    "basis": "诊断/OperationalError 文字锁候选"
+    "disposition": "KEEP_TX_BOUNDARY",
+    "basis": "atomic 出口 commit 失败回滚",
+    "audited": true
   },
   {
     "file": "tests/test_transaction_boundary.py",
@@ -4772,8 +4811,9 @@
       "prose_lock_diag",
       "stub:execute"
     ],
-    "disposition": "NEEDS_READ_PROSE",
-    "basis": "诊断/OperationalError 文字锁候选"
+    "disposition": "KEEP_TX_BOUNDARY",
+    "basis": "BEGIN 失败恢复 flags",
+    "audited": true
   },
   {
     "file": "tests/test_memorial_inbox_1726.py",
@@ -4782,8 +4822,8 @@
     "hits": [
       "stub:get_game"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_intrigue_concealment_1896.py",
@@ -4804,8 +4844,8 @@
       "stub:review_directives",
       "stub:show_active_issues"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_cli_play_turn.py",
@@ -4817,8 +4857,8 @@
       "stub:review_directives",
       "stub:show_active_issues"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_cli_play_turn.py",
@@ -4829,8 +4869,8 @@
       "stub:review_directives",
       "stub:show_active_issues"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_cli_play_turn.py",
@@ -4842,8 +4882,8 @@
       "stub:review_directives",
       "stub:show_active_issues"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_cli_play_turn.py",
@@ -4854,8 +4894,8 @@
       "stub:review_directives",
       "stub:show_active_issues"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_cli_play_turn.py",
@@ -4867,8 +4907,8 @@
       "stub:review_directives",
       "stub:show_active_issues"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_cli_play_turn.py",
@@ -4879,8 +4919,8 @@
       "stub:review_directives",
       "stub:show_active_issues"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_centrifuge_ledger_690.py",
@@ -4890,8 +4930,9 @@
       "prose_lock_diag",
       "stub:execute"
     ],
-    "disposition": "NEEDS_READ_PROSE",
-    "basis": "诊断/OperationalError 文字锁候选"
+    "disposition": "KEEP_TX_BOUNDARY",
+    "basis": "写路径/rebuild 失败快照回滚",
+    "audited": true
   },
   {
     "file": "tests/test_override_breach_costs_564.py",
@@ -4900,8 +4941,8 @@
     "hits": [
       "stub:record_relation_edge_event"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_override_breach_costs_564.py",
@@ -4910,8 +4951,8 @@
     "hits": [
       "stub:cancel_issue"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_decree_commitment_settlement_229.py",
@@ -4920,8 +4961,9 @@
     "hits": [
       "prose_lock_diag"
     ],
-    "disposition": "NEEDS_READ_PROSE",
-    "basis": "中文措辞 in 断言候选"
+    "disposition": "FIX_APPLIED",
+    "basis": "删 CLI「直到补齐」措辞锁；保留 months_elapsed/paid_total/remaining_arrears 结构化",
+    "audited": true
   },
   {
     "file": "tests/test_decree_commitment_settlement_229.py",
@@ -4930,8 +4972,9 @@
     "hits": [
       "prose_lock_diag"
     ],
-    "disposition": "NEEDS_READ_PROSE",
-    "basis": "中文措辞 in 断言候选"
+    "disposition": "FIX_APPLIED",
+    "basis": "resolution_summary 改为全文==narrative（原文无损）；status/ack/metrics 结构化",
+    "audited": true
   },
   {
     "file": "tests/test_enter_settlement_period_1235.py",
@@ -4940,8 +4983,8 @@
     "hits": [
       "stub:_auto_close_open_night_gate_free"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_enter_settlement_period_1235.py",
@@ -4950,8 +4993,8 @@
     "hits": [
       "stub:_auto_close_open_night_gate_free"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_enter_settlement_period_1235.py",
@@ -4960,8 +5003,8 @@
     "hits": [
       "stub:_auto_close_open_night_gate_free"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_enter_settlement_period_1235.py",
@@ -4970,8 +5013,8 @@
     "hits": [
       "stub:get_month_open_snapshot"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_enter_settlement_period_1235.py",
@@ -4981,8 +5024,8 @@
       "stub:_auto_close_open_night_gate_free",
       "stub:_serialized_web_write"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_enter_settlement_period_1235.py",
@@ -4991,8 +5034,8 @@
     "hits": [
       "stub:_auto_close_open_night_gate_free"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_enter_settlement_period_1235.py",
@@ -5003,8 +5046,8 @@
       "stub:_auto_close_open_night_gate_free",
       "stub:resolve_turn"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_enter_settlement_period_1235.py",
@@ -5013,8 +5056,8 @@
     "hits": [
       "stub:_auto_close_open_night_gate_free"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_verify_llm_clocks_884.py",
@@ -5024,8 +5067,8 @@
       "stub:Agent",
       "stub:extract_agent_text"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_chat_stream_failpaths_393.py",
@@ -5037,8 +5080,8 @@
       "stub:_new_secret_order_failure_payloads_for_turn",
       "stub:get_game"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_chat_stream_failpaths_393.py",
@@ -5047,8 +5090,8 @@
     "hits": [
       "stub:_sleep_retry_interval"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_chat_stream_failpaths_393.py",
@@ -5057,8 +5100,8 @@
     "hits": [
       "stub:_sleep_retry_interval"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_chat_stream_failpaths_393.py",
@@ -5067,8 +5110,8 @@
     "hits": [
       "stub:RUNTIME_LLM_PATH"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_chat_stream_failpaths_393.py",
@@ -5078,8 +5121,8 @@
       "stub:RUNTIME_LLM_PATH",
       "stub:time"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_chat_stream_failpaths_393.py",
@@ -5128,8 +5171,8 @@
     "hits": [
       "stub:run_highlight_judge"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_highlight_judge_544.py",
@@ -5138,8 +5181,8 @@
     "hits": [
       "stub:run_highlight_judge"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_highlight_judge_544.py",
@@ -5148,8 +5191,8 @@
     "hits": [
       "stub:run_highlight_judge"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_highlight_judge_544.py",
@@ -5158,8 +5201,8 @@
     "hits": [
       "stub:run_highlight_judge"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_draft_admission_resubmit_1769.py",
@@ -5169,8 +5212,8 @@
       "direction:source_turn<int",
       "stub:web_game"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_draft_admission_resubmit_1769.py",
@@ -5179,8 +5222,8 @@
     "hits": [
       "stub:_ensure_directive_dossier"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_draft_admission_resubmit_1769.py",
@@ -5189,8 +5232,8 @@
     "hits": [
       "stub:resubmit_draft_admission_payload"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_draft_admission_resubmit_1769.py",
@@ -5199,8 +5242,8 @@
     "hits": [
       "stub:resolve_directives"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_draft_admission_resubmit_1769.py",
@@ -5210,8 +5253,8 @@
       "stub:create_decree_writer_agent",
       "stub:write_decree_with_agno"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_month_translate_1840.py",
@@ -5363,8 +5406,8 @@
       "stub:_has_main_db",
       "stub:web_game"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_menu_continue_stream_1195.py",
@@ -5376,8 +5419,8 @@
       "stub:_has_main_db",
       "stub:web_game"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_menu_continue_stream_1195.py",
@@ -5386,8 +5429,8 @@
     "hits": [
       "stub:_has_main_db"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_menu_continue_stream_1195.py",
@@ -5399,8 +5442,8 @@
       "stub:_has_main_db",
       "stub:web_game"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_menu_continue_stream_1195.py",
@@ -5413,8 +5456,8 @@
       "stub:user_data_path",
       "stub:web_game"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_secret_dossier_participants_1252.py",
@@ -5444,8 +5487,8 @@
       "stub:_sync_offices_from_db_impl",
       "stub:auto_save"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_pre_settle_transaction.py",
@@ -5454,8 +5497,8 @@
     "hits": [
       "stub:save_state"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_pre_settle_transaction.py",
@@ -5464,8 +5507,8 @@
     "hits": [
       "stub:auto_submit_due_secret_orders"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_pre_settle_transaction.py",
@@ -5474,8 +5517,8 @@
     "hits": [
       "stub:auto_submit_due_secret_orders"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_pre_settle_transaction.py",
@@ -5484,8 +5527,8 @@
     "hits": [
       "stub:resolve_directives"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_pre_settle_transaction.py",
@@ -5494,8 +5537,8 @@
     "hits": [
       "stub:save_resolve_context"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_faction_brew_637.py",
@@ -5504,8 +5547,9 @@
     "hits": [
       "prose_lock_diag"
     ],
-    "disposition": "NEEDS_READ_PROSE",
-    "basis": "诊断/OperationalError 文字锁候选"
+    "disposition": "FIX_APPLIED",
+    "basis": "OperationalError 类型上抛；已删 match 文案锁",
+    "audited": true
   },
   {
     "file": "tests/test_faction_brew_637.py",
@@ -5514,8 +5558,9 @@
     "hits": [
       "prose_lock_diag"
     ],
-    "disposition": "NEEDS_READ_PROSE",
-    "basis": "诊断/OperationalError 文字锁候选"
+    "disposition": "FIX_APPLIED",
+    "basis": "同上",
+    "audited": true
   },
   {
     "file": "tests/test_cli_transport_1465.py",
@@ -5524,8 +5569,8 @@
     "hits": [
       "stub:_cli_process_clock"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_cli_transport_1465.py",
@@ -5534,8 +5579,8 @@
     "hits": [
       "stub:_cli_process_clock"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_relation_seed_638.py",
@@ -5545,8 +5590,8 @@
       "stub:_run_backend_for_config",
       "stub:verify_llm_available"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_relation_seed_638.py",
@@ -5557,8 +5602,8 @@
       "stub:bundled_path",
       "stub:verify_llm_available"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_relation_seed_638.py",
@@ -5567,8 +5612,8 @@
     "hits": [
       "stub:load_bundled_seed_document"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_relation_seed_638.py",
@@ -5579,8 +5624,8 @@
       "stub:import_bundled_relationship_seed",
       "stub:verify_llm_available"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_relation_seed_638.py",
@@ -5590,8 +5635,8 @@
       "stub:_run_backend_for_config",
       "stub:verify_llm_available"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_grant_reconciliation_567.py",
@@ -5602,8 +5647,8 @@
       "stub:run_highlight_judge",
       "stub:web_game"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_secret_order_payoff_1504.py",
@@ -5615,8 +5660,8 @@
       "stub:prepare_world_materials",
       "stub:run_agent_text"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_new_game_write_path_1749.py",
@@ -5625,8 +5670,9 @@
     "hits": [
       "prose_lock_diag"
     ],
-    "disposition": "NEEDS_READ_PROSE",
-    "basis": "诊断/OperationalError 文字锁候选"
+    "disposition": "KEEP_NEW_GAME_PATH",
+    "basis": "新档/exit 写路径与归档快照一致性",
+    "audited": true
   },
   {
     "file": "tests/test_new_game_write_path_1749.py",
@@ -5635,8 +5681,8 @@
     "hits": [
       "stub:begin_turn"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_new_game_write_path_1749.py",
@@ -5646,8 +5692,9 @@
       "prose_lock_diag",
       "stub:load_state"
     ],
-    "disposition": "NEEDS_READ_PROSE",
-    "basis": "诊断/OperationalError 文字锁候选"
+    "disposition": "KEEP_RESOURCE_CLOSE",
+    "basis": "load_state 失败关闭部分资源；类型断言",
+    "audited": true
   },
   {
     "file": "tests/test_cli_model_choices.py",
@@ -5656,8 +5703,8 @@
     "hits": [
       "stub:get_game"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_enrich_list_guards.py",
@@ -5666,8 +5713,8 @@
     "hits": [
       "stub:_run_backend_for_config"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_relation_read_640.py",
@@ -5676,8 +5723,9 @@
     "hits": [
       "prose_lock_diag"
     ],
-    "disposition": "NEEDS_READ_PROSE",
-    "basis": "中文措辞 in 断言候选"
+    "disposition": "KEEP_VERBATIM_SEED",
+    "basis": "判官面 summary/recent_context 原文无损承接 seed brew 段",
+    "audited": true
   },
   {
     "file": "tests/test_relation_read_640.py",
@@ -5686,8 +5734,9 @@
     "hits": [
       "prose_lock_diag"
     ],
-    "disposition": "NEEDS_READ_PROSE",
-    "basis": "中文措辞 in 断言候选"
+    "disposition": "KEEP_VIEW_VISIBILITY",
+    "basis": "判官全知 vs 角色视角边可见性",
+    "audited": true
   },
   {
     "file": "tests/test_identity_seed_488.py",
@@ -5696,8 +5745,8 @@
     "hits": [
       "stub:load_json_asset"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_identity_seed_488.py",
@@ -5706,8 +5755,8 @@
     "hits": [
       "stub:load_json_asset"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_identity_seed_488.py",
@@ -5716,8 +5765,8 @@
     "hits": [
       "stub:load_json_asset"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_affairs_1831.py",
@@ -5726,8 +5775,8 @@
     "hits": [
       "stub:attach_from_declaration"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_rejection_wiring.py",
@@ -5736,8 +5785,8 @@
     "hits": [
       "stub:flush_to_db"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_rejection_wiring.py",
@@ -5746,8 +5795,8 @@
     "hits": [
       "stub:_next_attempt"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_rejection_wiring.py",
@@ -5756,8 +5805,9 @@
     "hits": [
       "prose_lock_diag"
     ],
-    "disposition": "NEEDS_READ_PROSE",
-    "basis": "中文措辞 in 断言候选"
+    "disposition": "KEEP_REJECT_FIELD",
+    "basis": "inertia 路 rejection_reports 留痕；字段名来自输入 delta",
+    "audited": true
   },
   {
     "file": "tests/test_pihong_dossier_1490.py",
@@ -5766,8 +5816,8 @@
     "hits": [
       "stub:resolve_decisions_phase2"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_pihong_dossier_1490.py",
@@ -5776,8 +5826,8 @@
     "hits": [
       "stub:resolve_decisions_phase2"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_pihong_dossier_1490.py",
@@ -5786,8 +5836,8 @@
     "hits": [
       "stub:resolve_decisions_phase2"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_pihong_dossier_1490.py",
@@ -5796,8 +5846,8 @@
     "hits": [
       "stub:resolve_decisions_phase2"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_pihong_dossier_1490.py",
@@ -5806,8 +5856,8 @@
     "hits": [
       "stub:resolve_decisions_phase2"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_pihong_dossier_1490.py",
@@ -5816,8 +5866,8 @@
     "hits": [
       "stub:record_event_decision_choice"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_pihong_dossier_1490.py",
@@ -5838,8 +5888,8 @@
     "hits": [
       "stub:get_decree_dossier"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_pihong_dossier_1490.py",
@@ -5849,8 +5899,8 @@
       "stub:run_agent_text",
       "stub:run_prewrite_llms"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_pihong_dossier_1490.py",
@@ -5859,8 +5909,8 @@
     "hits": [
       "stub:run_agent_text"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_pihong_dossier_1490.py",
@@ -5879,8 +5929,8 @@
     "hits": [
       "stub:resolve_decisions_phase2"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_pihong_dossier_1490.py",
@@ -5889,8 +5939,8 @@
     "hits": [
       "stub:resolve_decisions_phase2"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_pihong_dossier_1490.py",
@@ -5899,8 +5949,8 @@
     "hits": [
       "stub:resolve_decisions_phase2"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_pihong_dossier_1490.py",
@@ -5909,8 +5959,8 @@
     "hits": [
       "stub:resolve_decisions_phase2"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_pihong_dossier_1490.py",
@@ -5921,8 +5971,8 @@
       "stub:create_rescript_revise_agent",
       "stub:run_agent_text"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_pihong_dossier_1490.py",
@@ -5931,8 +5981,8 @@
     "hits": [
       "stub:_begin_settlement_entry"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_pihong_dossier_1490.py",
@@ -5942,8 +5992,8 @@
       "stub:pending_decisions",
       "stub:resolve_decisions_phase2"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_pihong_dossier_1490.py",
@@ -5952,8 +6002,8 @@
     "hits": [
       "stub:run_world_segment_text"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_pihong_dossier_1490.py",
@@ -5964,8 +6014,8 @@
       "stub:llm_promulgation_verdicts",
       "stub:write_decree_with_agno"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_pihong_dossier_1490.py",
@@ -5974,8 +6024,8 @@
     "hits": [
       "stub:_run_backend_for_config"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_pihong_dossier_1490.py",
@@ -5985,8 +6035,8 @@
       "stub:write_decree_with_agno",
       "stub:动作类型"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_pihong_dossier_1490.py",
@@ -5995,8 +6045,8 @@
     "hits": [
       "stub:_run_backend_for_config"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_pihong_dossier_1490.py",
@@ -6005,8 +6055,8 @@
     "hits": [
       "stub:run_agent_text"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_office_inference.py",
@@ -6015,8 +6065,8 @@
     "hits": [
       "stub:_run_backend"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_office_inference.py",
@@ -6026,8 +6076,8 @@
       "prose_lock_diag",
       "stub:_run_backend_for_config"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_office_inference.py",
@@ -6037,8 +6087,8 @@
       "stub:_run_backend",
       "stub:_run_backend_for_config"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_office_inference.py",
@@ -6047,8 +6097,8 @@
     "hits": [
       "stub:_run_backend_for_config"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_office_inference.py",
@@ -6057,8 +6107,8 @@
     "hits": [
       "stub:_run_backend_for_config"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_office_inference.py",
@@ -6067,8 +6117,8 @@
     "hits": [
       "stub:_run_backend_for_config"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_settlement_write_guard_393.py",
@@ -6078,8 +6128,8 @@
       "stub:capture_manual_directive_payload",
       "stub:get_game"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_settlement_write_guard_393.py",
@@ -6089,8 +6139,8 @@
       "stub:capture_manual_directive_payload",
       "stub:get_game"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_settlement_write_guard_393.py",
@@ -6099,8 +6149,8 @@
     "hits": [
       "stub:get_game"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_settlement_write_guard_393.py",
@@ -6109,8 +6159,8 @@
     "hits": [
       "stub:get_game"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_settlement_write_guard_393.py",
@@ -6119,8 +6169,8 @@
     "hits": [
       "stub:get_game"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_settlement_write_guard_393.py",
@@ -6129,8 +6179,8 @@
     "hits": [
       "stub:get_game"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_settlement_write_guard_393.py",
@@ -6140,8 +6190,8 @@
       "stub:_auto_close_open_night_gate_free",
       "stub:get_game"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_settlement_write_guard_393.py",
@@ -6150,8 +6200,8 @@
     "hits": [
       "stub:get_game"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_cli_backend.py",
@@ -6160,8 +6210,8 @@
     "hits": [
       "stub:_run_backend"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_cli_backend.py",
@@ -6170,8 +6220,8 @@
     "hits": [
       "stub:_run_json_extractor_for_config"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_cli_backend.py",
@@ -6180,8 +6230,9 @@
     "hits": [
       "prose_lock_diag"
     ],
-    "disposition": "NEEDS_READ_PROSE",
-    "basis": "中文措辞 in 断言候选"
+    "disposition": "KEEP_ASSEMBLY_SHAPE",
+    "basis": "密令组装=皇帝+extractor；任务句为装配输入回读",
+    "audited": true
   },
   {
     "file": "tests/test_cli_backend.py",
@@ -6190,8 +6241,8 @@
     "hits": [
       "stub:_run_agy"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_cli_backend.py",
@@ -6200,8 +6251,8 @@
     "hits": [
       "stub:_run_agy"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_cli_backend.py",
@@ -6211,8 +6262,8 @@
       "stub:_run_backend",
       "stub:_trace"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_cli_backend.py",
@@ -6222,8 +6273,8 @@
       "stub:_run_backend",
       "stub:_trace"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_cli_backend.py",
@@ -6233,8 +6284,8 @@
       "stub:_run_backend",
       "stub:_trace"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_cli_backend.py",
@@ -6244,8 +6295,8 @@
       "stub:Popen",
       "stub:_trace"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_cli_backend.py",
@@ -6254,8 +6305,8 @@
     "hits": [
       "stub:_iter_cli_runner_text"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_cli_backend.py",
@@ -6265,8 +6316,8 @@
       "stub:_login_shell_path",
       "stub:which"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_cli_backend.py",
@@ -6278,8 +6329,8 @@
       "stub:isdir",
       "stub:which"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_cli_backend.py",
@@ -6289,8 +6340,8 @@
       "stub:_login_shell_path",
       "stub:which"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_cli_backend.py",
@@ -6300,8 +6351,8 @@
       "stub:_login_shell_path",
       "stub:which"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_cli_backend.py",
@@ -6311,8 +6362,8 @@
       "stub:_login_shell_path",
       "stub:which"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_cli_backend.py",
@@ -6322,8 +6373,8 @@
       "stub:_DISCOVERED_LOGIN_PATH",
       "stub:_RAW_RUN"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_cli_backend.py",
@@ -6333,8 +6384,8 @@
       "stub:_DISCOVERED_LOGIN_PATH",
       "stub:_RAW_RUN"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_cli_backend.py",
@@ -6344,8 +6395,8 @@
       "stub:_DISCOVERED_LOGIN_PATH",
       "stub:_RAW_RUN"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_cli_backend.py",
@@ -6355,8 +6406,8 @@
       "stub:_login_shell_path",
       "stub:which"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_cli_backend.py",
@@ -6366,8 +6417,8 @@
       "stub:_resolve_cli_bin",
       "stub:_warm_keychain"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_cli_backend.py",
@@ -6377,8 +6428,8 @@
       "stub:_call_cli",
       "stub:_trace"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_cli_backend.py",
@@ -6388,8 +6439,8 @@
       "stub:_call_cli",
       "stub:_trace"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_cli_backend.py",
@@ -6399,8 +6450,8 @@
       "stub:_call_cli",
       "stub:_trace"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_cli_backend.py",
@@ -6411,8 +6462,8 @@
       "stub:_run_claude",
       "stub:_run_codex"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_cli_backend.py",
@@ -6432,8 +6483,8 @@
       "stub:_run_codex",
       "stub:_trace"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_cli_backend.py",
@@ -6443,8 +6494,8 @@
       "stub:_run_codex",
       "stub:_trace"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_cli_backend.py",
@@ -6454,8 +6505,8 @@
       "stub:_run_codex",
       "stub:_trace"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_cli_backend.py",
@@ -6465,8 +6516,8 @@
       "stub:_run_codex",
       "stub:_trace"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_cli_backend.py",
@@ -6477,8 +6528,8 @@
       "stub:_run_codex",
       "stub:_trace"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_cli_backend.py",
@@ -6488,8 +6539,8 @@
       "stub:_run_agy",
       "stub:_trace"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_cli_backend.py",
@@ -6499,8 +6550,8 @@
       "stub:NamedTemporaryFile",
       "stub:_resolve_cli_bin"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_cli_backend.py",
@@ -6509,8 +6560,8 @@
     "hits": [
       "stub:_trace"
     ],
-    "disposition": "KEEP_BOUNDARY_STUB",
-    "basis": "monkeypatch 仅替 LLM/IO/会话边界，非被测路径"
+    "disposition": "PENDING_STUB_DEFAULT",
+    "basis": "先前默认「边界替身」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_manual_directive_locality_1685.py",
@@ -6520,8 +6571,8 @@
       "stub:_run_backend_for_config",
       "stub:capture_manual_directive_payload"
     ],
-    "disposition": "KEEP_OTHER",
-    "basis": "未命中 J6 缺陷谓词核心"
+    "disposition": "PENDING_OTHER_DEFAULT",
+    "basis": "先前默认「未命中谓词」戳记，非本轮逐项语义裁决；残留待审"
   },
   {
     "file": "tests/test_web_budget_payload.py",
@@ -6530,8 +6581,9 @@
     "hits": [
       "prose_lock_diag"
     ],
-    "disposition": "NEEDS_READ_PROSE",
-    "basis": "中文措辞 in 断言候选"
+    "disposition": "KEEP_PAYLOAD_FILTER",
+    "basis": "budget_payload 类别过滤：中央军饷隐藏、临时调拨可见",
+    "audited": true
   },
   {
     "file": "tests/test_dossier_reported_progress_619.py",
