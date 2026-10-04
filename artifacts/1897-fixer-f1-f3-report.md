@@ -2182,7 +2182,7 @@ env MING_SIM_AGY_BIN=/usr/bin/false MING_SIM_CODEX_BIN=/usr/bin/false \
 
 ### 交卷 HEAD（本轮）
 
-- tip HEAD（query）：`5649ab8906b4fe8a08ace2c18d3af02923f7623f`
+- tip HEAD（query）：`135dcdaf960ee90f8cc7a292f5c5d443836c4e65`（fix `5649ab8906b4fe8a08ace2c18d3af02923f7623f`）
 - **F1：修净**（公共供料排除实况旁路仍在）。
 - **F2：修净**（执行区宽吞仍删；缺案卷响亮）。
 - **F3：修净**（真成员已清；保留例外上表记账；UNREVIEWED=0；不以 5500 未审结案）。
