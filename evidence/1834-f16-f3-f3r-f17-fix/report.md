@@ -4,6 +4,7 @@
 **分支**：`ak-roles/1834-f16-f3-f3r-f17-ee3b5da31`
 **基线**：`ee3b5da312c5832720d89aee707fe4c7669c5eb0`
 **父 HEAD（开工）**：`71c0a4868`（stamp after f1635db3a）
+**本轮 commit**：`aa7374f1181f6b06cf98c221cea779131f23cd0d`
 **判词**：`evidence/1834-f16-f3-f3r-f17-fix/continued-ruling.json` + 用户反例（cli_backend 856/859）
 **法源**：CLAUDE.md P6 / ADR 0142；判词 F16「自由文本零删改」；stdout 包装改写**不是**合法例外。
 
