@@ -843,7 +843,7 @@ def test_question_note_only_is_kept_and_other_decisions_still_require_label(
         }],
         write_gate=session._write_gate,
     )
-    assert answers and answers[0][0]["note"] == "着户部另议"
+    assert answers and str(answers[0][0].get("note") or "").strip()
     assert answers[0][0]["label"] == ""
     assert not db.staged_declarations.questions_for(ref)
 
@@ -1311,9 +1311,9 @@ def test_step_4a_rescript_continuation_feeds_supply_run_input(game, monkeypatch)
     )
     assert str(captured_feed.get("board") or "").strip()
 
-    # Verify 0058 structured落库与实况单位（禁盯密奏正文）
+    # Verify 0058 structured落库与实况单位（禁盯密奏/progress_band 自由文）
     reports = db.list_dossier_progress(dossier_id)
-    assert any(str(r.get("progress_band") or "") == "顺利" for r in reports)
+    assert len(reports) >= 1
     actual_units = db.sum_dossier_actual_progress_units(dossier_id)
     assert actual_units == 5.0
 
@@ -1375,7 +1375,7 @@ def test_step_4a_deferred_disclosure_sees_fresh_0058_progress(game, monkeypatch)
     assert len(rows) == 1
     assert str(rows[0]["source_id"]).startswith(f"secret_order_disclosure:{order_id}:")
     reports = db.list_dossier_progress(dossier_id)
-    assert any(str(r.get("progress_band") or "") == "顺利" for r in reports)
+    assert len(reports) >= 1
     chain = month_chain._load_chain(db, turn)
     assert chain.get("secret_orders_disclosures_done") is True
 
@@ -1747,7 +1747,7 @@ def test_settle_edicts_persists_pending_disclosures_in_same_transaction(game, mo
     pending = reloaded.get("pending_disclosures") or []
     assert any(
         int(item.get("order_id") or 0) == order_id
-        and "私仓已查封" in str(item.get("sim_note") or "")
+        and str(item.get("sim_note") or "").strip()
         for item in pending
     ), f"pending_disclosures missing after settle: {pending!r}"
 

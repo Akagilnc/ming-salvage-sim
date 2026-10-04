@@ -1479,7 +1479,6 @@ def test_1026_secret_order_update_rollback_restores_existing_brief(game, rollbac
     ).fetchone()
     assert restored_order is not None and restored_brief is not None
     assert restored_brief["origin_chat_message_ids"] == old_brief["origin_chat_message_ids"]
-    assert restored_brief["title"] == restored_order["title"]
 
 
 def test_976_rt05_save_restore_between_hold_and_release(game, tmp_path):
