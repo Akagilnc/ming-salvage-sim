@@ -1,4 +1,4 @@
-#1897 R1/R2 全仓枚举与分类（最终自验轮）
+#1897 R1/R2 全仓枚举（可执行命令 → 系统临时目录；不入库候选 dump）
 
 ## 官方依据：str.strip 会变换原文
 
@@ -6,12 +6,10 @@ curl https://docs.python.org/3/library/stdtypes.html#str.strip
 →「Return a copy of the string with the leading and trailing characters removed…」
 本地：'  原旨  ' -> '原旨' changed=True
 
-## 枚举命令（可直接执行；全仓 git ls-files，不只 ming_sim）
+## 枚举命令（全仓 git ls-files；输出到 /tmp，不写仓库）
 
-机械候选明细（冻结源码命中）：candidates-ast.txt
-成员/例外表（语义授权）：members-exceptions.txt
-
-完整 inline AST（本轮实际执行并写出 candidates-ast.txt）：
+成员/例外真源：members-exceptions.txt
+候选明细不入库；需要时执行下列命令写出 `/tmp/1897-r1r2-candidates-ast.txt`。
 
 ```bash
 cd /Users/akagilnc/WorkSpace/Ming_LLM-1897-w5 && python3 <<'PY'
@@ -19,7 +17,7 @@ from __future__ import annotations
 import ast, re, subprocess
 from pathlib import Path
 ROOT = Path('.').resolve()
-OUT = ROOT / 'evidence/issue-1897-r1r2-fix/candidates-ast.txt'
+OUT = Path('/tmp/1897-r1r2-candidates-ast.txt')
 METHODS = {
     'strip','lstrip','rstrip','replace','split','rsplit',
     'partition','rpartition','removeprefix','removesuffix',
@@ -92,17 +90,8 @@ rg -n '\.strip\(\)|\.lstrip\(\)|\.rstrip\(\)|\[:\s*\d+\]|\.replace\(|re\.sub\(|\
 rg -n '催办失真|催紧之下|催之愈急|表报难掩|催办之下终无' --glob '*.py'
 ```
 
-核查边界 = 现行票面「正文原样存取；删去从正文拆条目、猜月份、改字」+ 判词 R1/R2 类定义全文；
-沿声明→暂存/应允/提交→承诺与密令→月奏报/实况/结案→执行说明→材料供料 / 请旨批红完整读写链。
+核查边界 = 声明→暂存/应允/提交→承诺与密令→月奏报/实况/结案→执行说明→材料供料 / 请旨批红。
 
 ## 完整成员 / 例外
 
-见 members-exceptions.txt（逐条文件/函数指针；无「多处/…」充当完整成员）。
-
-本轮补清类成员：
-- ming_sim/month_chain.py:_consume_rescript_answers._answer_from_row
-- ming_sim/session.py deliberate title/body
-
-## 上轮已结（复核）
-- staged_commitment/issues/breach_plea/settlement_payload/due_review/audience_translate [:N] 截断已在 2959d228d 删除
-- db.merge_execution_note 正文拆条文字身份去重已在 2959d228d 删除；本轮复扫无回归
+见 members-exceptions.txt。
