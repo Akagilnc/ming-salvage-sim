@@ -1,20 +1,11 @@
-# focused vitest
-cd web && npm test -- \
-  src/appDurableWiring.test.tsx src/components/settlementGazettePanel.test.tsx \
-  src/components/modals.test.tsx src/components/drawers.test.tsx \
-  src/components/decisionModal.test.tsx src/decisionRouting.test.tsx \
-  src/components/situation.test.tsx
-
-
-> ming-salvage-web@0.1.0 test
-> vitest run --environment jsdom src/appDurableWiring.test.tsx src/components/settlementGazettePanel.test.tsx src/components/modals.test.tsx src/components/drawers.test.tsx src/components/decisionModal.test.tsx src/decisionRouting.test.tsx src/components/situation.test.tsx
-
 
  RUN  v4.1.9 /Users/akagilnc/WorkSpace/Ming_LLM-1834-w5/web
 
-Not implemented: navigation to another Document
+···········
 
- Test Files  7 passed (7)
-      Tests  190 passed (190)
-   Start at  08:07:43
-   Duration  5.18s (transform 2.02s, setup 0ms, import 2.81s, tests 4.46s, environment 5.75s)
+ Test Files  1 passed (1)
+      Tests  11 passed (11)
+   Start at  08:29:32
+   Duration  669ms (transform 45ms, setup 0ms, import 97ms, tests 35ms, environment 473ms)
+
+CMD: cd web && MING_SIM_*_BIN=/usr/bin/false npx vitest run --environment jsdom src/components/situation.test.tsx

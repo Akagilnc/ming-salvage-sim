@@ -1,0 +1,2 @@
+CMD: rg -n --glob ming_sim/**/*.py --glob web_app.py --glob web/src/**/*.{ts,tsx} strip|lstrip|rstrip|trim|trimStart|trimEnd|replace|re.sub|[:n]|split|join|substring|slice
+HIT_COUNT=2241

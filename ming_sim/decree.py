@@ -783,7 +783,8 @@ def write_decree_with_agno(
         raise llm_unavailable_from_error(error, "拟诏") from error
     if not text.strip():
         raise LLMContractError("拟诏输出为空。")
-    return text.strip()
+    # #1834 F16 / #671：判空用副本；拟诏正文保原文进入 last_decree / 供料链。
+    return text
 
 
 def _requires_full_settlement(state: GameState, db: GameDB) -> bool:

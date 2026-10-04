@@ -1,0 +1,20 @@
+METHOD (user counter-example + continued F16 class; replaces packaging-KEEP table)
+
+1) Broad rewrite-shape enum (production only; NOT strip/[:n]/re.sub only):
+   rg -n --glob 'ming_sim/**/*.py' --glob 'web_app.py' --glob 'web/src/**/*.{ts,tsx}' \
+     '\.strip\(\)|\.lstrip\(\)|\.rstrip\(\)|\.trim\(\)|\.trimStart\(\)|\.trimEnd\(\)|\.replace\(|re\.sub\(|\[:\s*\d+\s*\]|\.split\(|\.join\(|\.substring\(|\.slice\('
+   → enum_f16_rewrite_shapes_broad.txt  (HIT_COUNT in enum_f16_broad_meta.txt)
+
+2) High-signal return/assign/yield of strip|trim:
+   → enum_f16_return_assign_strip.txt
+
+3) Disposition authority = f16_disposition_after_counterexample.tsv
+   - Group by real same duty; every member loc listed; one conclusion per group.
+   - Opened role/upstream/downstream before KEEP/FIX (no template sentence + field sub).
+   - Class: free-prose supply/write rewrite → FIX; machine-key / JSON envelope /
+     local emptiness-copy → KEEP. Emptiness: strip on copy; value stays raw.
+   - Explicit: rewriting stdout/CLI packaging of LLM body is NOT a legal KEEP.
+
+4) Prior tables:
+   - f16_hand_member_table.tsv → already REVOKED_TEMPLATE
+   - f16_hand_verify_after_ruling.tsv → REVOKED_PACKAGING_KEEP (this round)

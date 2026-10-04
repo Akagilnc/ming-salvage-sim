@@ -946,11 +946,14 @@ def stage_grant_allocation_candidate(
 
 
 def _parse_json_field(raw: object) -> Any:
-    """Classifier FieldSpec 只能承字符串；dict/list JSON 串在此还原。"""
+    """Classifier FieldSpec 只能承字符串；dict/list JSON 串在此还原。
+
+    #1834 F16：json.loads 前用 strip 只判空；非 JSON 回落返回原文（禁先 strip 再当正文）。
+    """
     if isinstance(raw, (dict, list)):
         return raw
-    text = str(raw or "").strip()
-    if not text:
+    text = str(raw or "")
+    if not text.strip():
         return None
     try:
         value = json.loads(text)

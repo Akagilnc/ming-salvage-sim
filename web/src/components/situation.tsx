@@ -19,14 +19,16 @@ export function groupIssues(issues: Issue[]) {
 }
 
 function commitmentProgressText(issue: Issue) {
-  const text = issue.commitment_progress_text?.trim();
-  if (text) return text;
+  // #1834 F16：判空用 trim 副本；展示/供料取原文（禁 trim 后当正文）。
+  const text = issue.commitment_progress_text ?? "";
+  if (text.trim()) return text;
   return issue.commitment_progress ? "未知进度" : "";
 }
 
 /** 空串不渲染括号端标（#626：硬门可留空 bar，web 不画『达成（）』/空进度端）。 */
 function barLabel(text: string | undefined | null): string {
-  return (text || "").trim();
+  const raw = text || "";
+  return raw.trim() ? raw : "";
 }
 
 function outcomeHead(kind: "达成" | "失败", meaning: string | undefined | null): string {

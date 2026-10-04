@@ -520,7 +520,9 @@ def test_run_codex_stdout_empty_fallback(monkeypatch):
         _P(stdout="", stderr="STDOUT_BODY\nOpenAI Codex v0.125.0\nlogs"),
     )
     out, n = cb._run_codex("p")
-    assert out == "STDOUT_BODY"
+    # #1834 F16：只切横幅边界，不对 LLM 段 strip；stderr 段内换行保留。
+    assert out == "STDOUT_BODY\n"
+    assert n == 1
 
 
 def test_run_claude_maps_reasoning_strength_to_thinking_tokens(monkeypatch):

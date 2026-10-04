@@ -72,6 +72,15 @@ describe("commitment progress display", () => {
     cleanup();
   });
 
+  it("preserves padded commitment progress text verbatim", () => {
+    const padded = "\n  限至第4月·到期待裁  \n";
+    const issue = { ...makeIssue(), commitment_progress_text: padded };
+    const cleanup = render(<IssueGroup title="待办" issues={[issue]} />);
+    const progress = document.querySelector(".issue-commitment-progress");
+    expect(progress?.textContent).toBe(padded);
+    cleanup();
+  });
+
   it("uses a styled fallback when a commitment has progress but no text", () => {
     const cleanup = render(<IssueGroup title="待办" issues={[makeCommitmentWithoutProgressText()]} />);
     const progress = document.querySelector(".issue-commitment-progress");

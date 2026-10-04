@@ -853,14 +853,22 @@ def _iter_cli_runner_text(
                 code="llm_connection_error",
                 provider_message=f"agy auth race：{(stdout_text + stderr)[:200]}",
             )
-        text = stdout_text.strip() or final_text.strip()
-        if runner == "codex" and not json_events and not text:
+        # #1834 F16 / ADR 0142 / #671：LLM 正文保原文；strip 只作判空副本，不得改写后再 yield。
+        # 「stdout 包装清理」不是合法例外——正文进入 supply/write 间接链。
+        if stdout_text.strip():
+            text = stdout_text
+        elif final_text.strip():
+            text = final_text
+        else:
+            text = ""
+        if runner == "codex" and not json_events and not text.strip():
             # 兜底：stdout 空时干净段可能落在合并流 "OpenAI Codex v" 之前。
-            text = (stdout_text + stderr).split("OpenAI Codex v")[0].strip()
+            # 只切横幅边界，不对 LLM 段 strip。
+            text = (stdout_text + stderr).split("OpenAI Codex v")[0]
         # 非零退出不洗成瞬断：无 typed status 的失败当确定性失败（#1780 / ADR 0142）。
         if returncode != 0:
             raise RuntimeError(f"{runner} 调用失败（退出码 {returncode}）：{stderr[:200]}")
-        if not text:
+        if not text.strip():
             raise transport_failure_unavailable(
                 empty_output_failure(), attempts=1, exhausted=False,
             )
@@ -868,7 +876,7 @@ def _iter_cli_runner_text(
         if not json_events:
             yield text
         elif not pieces and final_text.strip():
-            yield final_text.strip()
+            yield final_text
     finally:
         if kimi_agent_path:
             try:
@@ -895,7 +903,8 @@ def _run_cli_runner(
             materials_dir=materials_dir,
         )
     )
-    return text.strip(), 1
+    # 正文已在 _iter_cli_runner_text 判活；此处禁二次 strip（#1834 F16）。
+    return text, 1
 
 
 def _run_agy(prompt: str, *, materials_dir: Optional[str] = None) -> Tuple[str, int]:
@@ -3551,11 +3560,14 @@ def resubmit_draft_admission_payload(
 
 
 def _matched_prefix(message: str, prefixes) -> Optional[str]:
-    """消息命中某前缀则返回前缀后的正文（玩家那句意图），否则 None。"""
-    pm = (message or "").strip()
+    """消息命中某前缀则返回前缀后的正文（玩家那句意图），否则 None。
+
+    只 lstrip 定位前缀；前缀后正文（含尾空白）原样返回（#1834 F16）。
+    """
+    pm = (message or "").lstrip()
     for pre in prefixes:
         if pm.startswith(pre):
-            return pm[len(pre):].strip()
+            return pm[len(pre):]
     return None
 
 
