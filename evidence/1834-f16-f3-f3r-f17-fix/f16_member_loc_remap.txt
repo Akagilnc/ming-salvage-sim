@@ -41,9 +41,9 @@ static_asset_config_load	web/src/components/menuPage.test.tsx:271	expect((busy?.
 static_asset_config_load	web/src/components/menuPage.test.tsx:299	expect((subtitle?.textContent || "").trim()).not.toBe("");
 static_asset_config_load	web/src/components/menuPage.test.tsx:993	b.textContent?.trim() === "开始新游戏"
 static_asset_config_load	web/src/components/menuPage.test.tsx:1012	(b.textContent || "").trim() === "继续"
-static_asset_config_load	web/src/components/situation.test.tsx:87	
-static_asset_config_load	web/src/components/situation.test.tsx:154	metrics: {},
-static_asset_config_load	web/src/components/situation.test.tsx:231	);
+static_asset_config_load	web/src/components/situation.test.tsx:87	REMOVED_EMPTY_SNIPPET_was_not_semantic_read
+static_asset_config_load	web/src/components/situation.test.tsx:154	REMOVED_non_production; broad was trim-empty check; member snip was misaligned to metrics:{}
+static_asset_config_load	web/src/components/situation.test.tsx:231	REMOVED_non_production; broad was empty!.textContent?.trim(); member snip was misaligned to );
 static_asset_config_load	web/src/components/modals.test.tsx:454	expect((stage!.querySelector(".chat-empty-chrome")?.textContent || "").trim()).not.toBe("");
 static_asset_config_load	web/src/components/modals.test.tsx:473	expect(buttons.some((button) => (button.textContent || "").trim() === "退朝")).toBe(false);
 static_asset_config_load	web/src/components/modals.test.tsx:518	expect(textarea.placeholder.trim()).not.toBe("");
