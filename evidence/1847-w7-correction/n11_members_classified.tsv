@@ -1,0 +1,25 @@
+symbol	mech_bucket	mech_reason	def_count	prod_ref_count	test_ref_count	defs	prod_refs_nondef	test_refs_nondef
+RESCRIPT_EMITTED_DOSSIER_ACTION_TYPES	ABSENT	no def/ref in tracked prod+tests (already deleted or never present)	0	0	0	-	-	-
+_CLAUSE_SPLIT	ABSENT	no def/ref in tracked prod+tests (already deleted or never present)	0	0	0	-	-	-
+_DRAFT_PREFIXES	ABSENT	no def/ref in tracked prod+tests (already deleted or never present)	0	0	0	-	-	-
+_SECRET_LANDING_GAP_LABELS	ABSENT	no def/ref in tracked prod+tests (already deleted or never present)	0	0	0	-	-	-
+_SECRET_PREFIXES	ABSENT	no def/ref in tracked prod+tests (already deleted or never present)	0	0	0	-	-	-
+_choose_assignee	ABSENT	no def/ref in tracked prod+tests (already deleted or never present)	0	0	0	-	-	-
+_content_reflects_emperor_intent	ABSENT	no def/ref in tracked prod+tests (already deleted or never present)	0	0	0	-	-	-
+_extract_secret_order	ABSENT	no def/ref in tracked prod+tests (already deleted or never present)	0	0	0	-	-	-
+_ledger_by_origin_ref	KEEP_LIVE_CONSUMER	production refs outside defs: ming_sim/audience_night.py:1764;ming_sim/audience_night.py:1789;ming_sim/audience_night.py:1808	1	3	0	ming_sim/audience_night.py:2342	ming_sim/audience_night.py:1764;ming_sim/audience_night.py:1789;ming_sim/audience_night.py:1808	-
+_merge_secret_content	ABSENT	no def/ref in tracked prod+tests (already deleted or never present)	0	0	0	-	-	-
+_normalize_dossier_link_proposals	ABSENT	no def/ref in tracked prod+tests (already deleted or never present)	0	0	0	-	-	-
+_secret_landing_gap_feature	ABSENT	no def/ref in tracked prod+tests (already deleted or never present)	0	0	0	-	-	-
+_secret_metadata_from_command	ABSENT	no def/ref in tracked prod+tests (already deleted or never present)	0	0	0	-	-	-
+_so_json	ABSENT	no def/ref in tracked prod+tests (already deleted or never present)	0	0	0	-	-	-
+_split_audience_context	ABSENT	no def/ref in tracked prod+tests (already deleted or never present)	0	0	0	-	-	-
+assemble_secret_order_content	ABSENT	no def/ref in tracked prod+tests (already deleted or never present)	0	0	0	-	-	-
+compose_secret_order_landing_recovery	ABSENT	no def/ref in tracked prod+tests (already deleted or never present)	0	0	0	-	-	-
+confirm_dossier_links	ABSENT	no def/ref in tracked prod+tests (already deleted or never present)	0	0	0	-	-	-
+find_deliberation_dossier_by_decision_key	ABSENT	no def/ref in tracked prod+tests (already deleted or never present)	0	0	0	-	-	-
+prepare_rescript_summon_scaffold	ABSENT	no def/ref in tracked prod+tests (already deleted or never present)	0	0	0	-	-	-
+rescript_summon_origin_consumed	ABSENT	no def/ref in tracked prod+tests (already deleted or never present)	0	0	0	-	-	-
+rescript_summon_origin_ref	ABSENT	no def/ref in tracked prod+tests (already deleted or never present)	0	0	0	-	-	-
+secret_order_can_land	KEEP_LIVE_CONSUMER	production refs outside defs: ming_sim/declaration_dispatch.py:1242	1	1	0	ming_sim/cli_backend.py:1956	ming_sim/declaration_dispatch.py:1242	-
+secret_order_landing_gaps	KEEP_LIVE_CONSUMER	production refs outside defs: ming_sim/cli_backend.py:1958	1	1	0	ming_sim/cli_backend.py:1940	ming_sim/cli_backend.py:1958	-

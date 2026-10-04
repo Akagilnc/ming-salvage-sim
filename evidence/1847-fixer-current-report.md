@@ -1,4 +1,4 @@
-#1847 修内司交卷 — w7 第三次自检修正
+#1847 修内司交卷 — w7 主席复检修正（废除伪结清）
 
 - worktree: `/Users/akagilnc/WorkSpace/Ming_LLM-1847-w5`
 - branch: `ak-roles/1847-fixer-w7-n6-n11-n13-n14`
@@ -6,71 +6,86 @@
 - 判词真源: 附件 `03-1847-judge-bcf7a7bf7.json` **末份 payload**
 - 禁令: 未 amend / rewrite / push / PR / stash
 
-## 主席复检未结 → 本轮纠正
+## 主席未结 → 本轮纠正
 
-上一交卷以机械 `POTENTIAL_*` / `MECHANICAL_OTHER` / `name_pattern_not_authority` 冒充语义结案；`n14_fix` 列 51 项未读未修；证据 TSV 默认 CRLF 导致 `git diff --check` 尾空白爆炸。本轮：
+上一交卷 `finalize_judgments.py` 按 `FREE_TEXT_NAMES`/snip 正则自动 KEEP（read_text→G_IO、未命中名→G_NOT_TRANSPORT、slice→展示截断 KEEP），伪称语义结清。本轮：
 
-1. **逐项语义终裁**：全仓重扫后按来源→去向 / 消费者图 / 外部行为归入终态桶；`disposition_summary.json.unresolved_open_buckets = 0`（无 POTENTIAL/MECHANICAL 待分类）。
-2. **N11 消费者图闭包**：只裁决判词种子 + 独占 landing-recovery 孤儿；**删除** `compose_secret_order_landing_recovery` / `_secret_landing_gap_feature` / `_SECRET_LANDING_GAP_LABELS`（零消费者）。不按 name_pattern 灌表。`_ledger_by_origin_ref` / `secret_order_can_land` 现役保留。
-3. **N13**：生产吞失败/强杀/析构逐项终裁；注释中的 `.kill(` 不作 FIX。`close(force=False)` 为前置生态选择；软失败后只补齐官方 close 会写的 public `closed`/`fd` 字段（已核 `dir(PtyProcess)` 无 detach）。
-4. **N14 真成员**：删散文哨兵、改结构化 `report_section` / `payload.text` / 原文全等；`str(结构化字段)` 归 `FALSE_POSITIVE_STRUCT_COERCE`，不自动当身份哨兵。
-5. **证据收敛**：CSV `lineterminator='\n'`；去掉 raw/classified 重复副本与旧 classify；保留可重跑 `scan_*` + `finalize_judgments.py`、结论表、N13 变异探针。
+1. **删除**伪结清脚本及 map/summary（见 `evidence/1847-w7-correction/CORRECTION.md`）。
+2. **保留**通用机械枚举 `scan_n6_n11_n13_n14.py`（只产 `POTENTIAL_*` 等机械桶；N11 按旧消费者路径闭包，不按 name_pattern 灌表；局部变量不进 defs）。
+3. **实际阅读**生产自由正文赋值/返回/供料/展示与 trim/re.sub/replace/slice/read_text 用途；报告只列真类成员 + 合法同根例外（真实调用路径）。
+4. **N11**：闭包含 extract/summon/landing 独占助手；删死投影 `secret_order_landing_recovery`（session + web_app）；保留 `_ledger_by_origin_ref` / `secret_order_can_land` / `secret_order_landing_gaps` 现役路径。
+5. **N13**：生产位点逐项阅读；best-effort 一律写明 continue 契约（见 `human_n13.tsv`），否则不予 KEEP。
+6. **N14**：不把 `assert a==b` 一律当 `BEHAVIOR_EQUALITY`；区分真实入口负向案 vs 同值空复查。机械 298 条仍是候选，不是已审成员。
 
-## 可重跑枚举
+## 可重跑机械枚举（非法源）
 
 ```bash
+MING_SIM_AGY_BIN=/usr/bin/false MING_SIM_CODEX_BIN=/usr/bin/false \
+MING_SIM_CLAUDE_BIN=/usr/bin/false MING_SIM_CURSOR_BIN=/usr/bin/false \
+MING_SIM_KIMI_BIN=/usr/bin/false MING_SIM_GROK_BIN=/usr/bin/false \
+MING_SIM_PI_BIN=/usr/bin/false \
 /Users/akagilnc/WorkSpace/Ming_LLM/.venv/bin/python \
-  evidence/1847-w7-correction/finalize_judgments.py
+  evidence/1847-w7-correction/scan_n6_n11_n13_n14.py
 ```
 
-| 类 | 结论表 | 终态 |
+| 类 | 机械候选（`scan_summary.json`） | 人工结论表 |
 |---|---|---|
-| N6 | `n6_groups.tsv` + `n6_map.tsv`（2843→9 组） | open_potential=0；transport_fix_hits=[] |
-| N11 | `n11_closure.tsv`（16 符号） | 15 DELETED_CONFIRMED + 1 KEEP_LIVE_SHARED；actionable=[] |
-| N13 | `n13_final.tsv`（284） | fix_residue=[]；生产 55 项均 KEEP_* |
-| N14 | `n14_groups.tsv` + `n14_map.tsv` | open_potential=0；getsource=0 |
+| N6 | 2894（全 `POTENTIAL_*`/`TEST_HIT`，**零自动 KEEP**） | `human_n6.tsv` |
+| N11 | 24 闭包符号（21 ABSENT + 3 KEEP_LIVE_CONSUMER） | `human_n11.tsv` |
+| N13 | 284 | `human_n13.tsv` |
+| N14 | 432（含 298 `assert_same_name_eq` 机械候选） | `human_n14.tsv` |
 
-### N6 分组保留依据（同根）
+**明确非声称**：机械候选数 ≠ 已审核成员数；未把 2894/432 行映射成 KEEP。
 
-| group | disposition | 核要点 |
-|---|---|---|
-| G_EMPTY_LOCAL | KEEP_EMPTY_LOCAL | 判空局部 strip；运输用原文（如 audience_night body） |
-| G_IDENT | KEEP_IDENTIFIER_NORMALIZE | id/name/status/office/action 等 |
-| G_FORM | KEEP_FORM_LANGUAGE | JSON 信封 / 封闭口令 |
-| G_TEMPLATE / G_PATH / G_IO / G_SLICE_STRUCT | KEEP_* | 模板、路径、IO、结构切片 |
-| G_NOT_TRANSPORT | FALSE_POSITIVE_NOT_TRANSPORT | 变更器命中但非自由正文运输 sink |
-| G_TEST | OUT_OF_N6_CLASS | 归 N14 |
+## N6（真成员 + 合法例外）
 
-### N11 闭包
+- **真类成员残差**：无（自由正文运输 sink 经阅读：故事账→opening、spoken、gazette、public_sayings、parse_emperor→sendline、issue fail_condition 非 DSL 直通，均无 strip/replace 入运输）。
+- **合法同根例外**（路径见 `human_n6.tsv`）：empty-local 判空、封闭口令/DSL form、harness `cli_chunk[-3500:]`、asset fingerprint `read_text`、error/diag 截断、sqlite sanitize。
+- **read_text**：不再豁免；人工区分 asset/config IO vs 自由正文运输（本轮未发现 decode 后删改入运输）。
+- **展示截断**：玩家面 `fail_condition` 原样（`situation.tsx`）；error/diag/harness 截断见例外表。`format.ts:splitReportItems` 无生产引用。
 
-| symbol | disposition |
+## N11（旧消费者路径闭包）
+
+| 处置 | 符号 |
 |---|---|
-| rescript_summon_* / prepare_* / RESCRIPT_EMITTED_* / find_deliberation_* / _extract_secret_order / assemble_* / _DRAFT/_SECRET/_so_json / confirm_dossier_links | DELETED_CONFIRMED |
-| compose_secret_order_landing_recovery 及 feature/labels | DELETED_CONFIRMED（本轮删） |
-| _ledger_by_origin_ref | KEEP_LIVE_SHARED |
+| DELETED_CONFIRMED | summon/extract/landing 岛及独占助手（见 human 表 21 ABSENT） |
+| DELETED_THIS_ROUND | `secret_order_landing_recovery`（session 字段 + `_chat_payload` 键；零前端消费者、零生产者） |
+| KEEP_LIVE_SHARED | `_ledger_by_origin_ref` ← `audience_night.py:1764/1789/1808`；`secret_order_can_land` ← `declaration_dispatch.py:1242`；`secret_order_landing_gaps` ← `can_land` |
 
-### N13 生产终裁摘要
+未按 legacy 字样猜删；0055 / 另旨·中旨 / 御笔强推案未动。
 
-- soft：`KEEP_SOFT_*`（cli_backend / play_as_emperor）
-- 注释 SIGKILL/kill：`KEEP_DOC_COMMENT`
-- rollback/telemetry/launcher/log close：`KEEP_*_BEST_EFFORT` / `KEEP_RESOURCE_CLOSE`
-- web_app 自 SIGTERM：`KEEP_SOFT_SELF_SIGTERM`
-- FIX 残留：**[]**
+## N13（continue 契约）
 
-### N14 本轮代码修复
+生产软收尾：
 
-- `test_month_chain_1847`：删 `"不是行动" not in str(origin)`；`sim_note` 改为原文全等
-- `test_audience_translate_1837`：`payload_json` → `payload["text"] == "拟旨赈济"`
-- `test_web_audience_night_498`：`match["text"] == "着户部核边饷"`
-- `test_issue_entities` / `test_population_transfers_649`：`report_section` 结构化筛拒收
+- `cli_backend._terminate_cli_process` / `_iter_cli_process_lines.finally`：软终止失败留痕，不覆盖 body 失败。
+- `play_as_emperor.close(force=False)`：生态选择；软失败补官方 closed/fd；`log_file.close` 为 host best-effort（契约见 human 表）。
+- db/audience_night rollback：best-effort 后 **必 raise**。
+- token_stats / launcher：telemetry/host glue continue 契约已文档化。
+- FIX 残差：**[]**（无可达 `force=True` / 子进程 SIGKILL）。
 
-其余 `str(origin/office/id/…)` → 组 `FALSE_POSITIVE_STRUCT_COERCE`；异常文案 → `KEEP_ERROR_DIAGNOSTIC`；`assert a==b` → `KEEP_BEHAVIOR_EQUALITY`。
+变异：`n13_lifecycle_probe.py` → `n13_lifecycle_probe.json`；stderr **VERDICT GREEN**（七 false）。N6 PTY mutation：全部 PASS（`n6_ask_emperor_pty_mutation.txt`）。
 
-## N13 变异（旧红/现绿）
+## N14
 
-`n13_lifecycle_probe.py` → `n13_lifecycle_probe.json`：raise 不覆盖 body；cli soft-fail 留痕；pty soft 路径无 SIGKILL。VERDICT **GREEN**。
+- getsource 真成员：0。
+- `assert a==b`：**不**一律行为相等；负向真实入口（操作已跑、期望不变）保留；同值空复查在聚焦案中已无。
+- 机械 `POTENTIAL_SAME_VALUE_RECHECK` 298 = 候选，**不是**已审成员。
 
-## 聚焦测试
+## 真实入口变异（七 false）
+
+```bash
+MING_SIM_AGY_BIN=/usr/bin/false MING_SIM_CODEX_BIN=/usr/bin/false \
+MING_SIM_CLAUDE_BIN=/usr/bin/false MING_SIM_CURSOR_BIN=/usr/bin/false \
+MING_SIM_KIMI_BIN=/usr/bin/false MING_SIM_GROK_BIN=/usr/bin/false \
+MING_SIM_PI_BIN=/usr/bin/false \
+/Users/akagilnc/WorkSpace/Ming_LLM/.venv/bin/python \
+  evidence/1847-w7-correction/n13_lifecycle_probe.py
+```
+
+N6 ask_emperor→PTY：既有 `evidence/1847-w5-correction/n6_ask_emperor_pty_mutation.py`（真入口，非 mutation-probes HTTP）。
+
+## 聚焦测试（七 false）
 
 ```bash
 MING_SIM_AGY_BIN=/usr/bin/false MING_SIM_CODEX_BIN=/usr/bin/false \
@@ -89,9 +104,9 @@ MING_SIM_PI_BIN=/usr/bin/false \
 
 ## 提交前质量复检
 
-- `git diff --check`：绿（TSV 均为 LF）
-- 净删简：删 landing-recovery 孤儿；N14 去散文哨兵；无新增监管/重试层
-- 0055 / 无人站台 / 中旨 / 御笔强推案仍在
+- 无源码判桶测试、无灌卷伪 KEEP map
+- 无新增监管/重试/保护层
+- 0055 / 无人站台 / 中旨 / 御笔强推仍在
 - 无 secrets；无 amend/push/PR/stash
 
 ## git 事实
@@ -101,5 +116,5 @@ MING_SIM_PI_BIN=/usr/bin/false \
 
 ## 自查二连 done
 
-- 同类：机械 POTENTIAL 冒充结案；name_pattern 冒充 N11；str() 字段强制当身份哨兵；CRLF 灌爆 diff --check
-- 引入：终裁桶须可核到 map/closure；N11 不经 live shared 一跳灌 get/keys；注释 kill 不进 FIX
+- 同类：FREE_TEXT_NAMES/snip 自动 KEEP；N11 只贴判词种子；N13 best-effort 无 continue 契约；N14 assert 一律 BEHAVIOR_EQUALITY；机械候选冒充已审成员
+- 引入：删死投影须核前端零引用；N11 defs 不含局部 Assign；报告分开「机械候选 / 人工成员」

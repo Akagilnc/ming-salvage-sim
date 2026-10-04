@@ -1,0 +1,35 @@
+{
+  "tracked_files": 1374,
+  "scanned_code_files": 418,
+  "exempt": 356,
+  "n6_raw": 2894,
+  "n6_classified": 2894,
+  "n6_buckets": {
+    "POTENTIAL_SLICE_SPLIT": 256,
+    "POTENTIAL_OTHER": 519,
+    "POTENTIAL_TRANSPORT_STRIP": 901,
+    "POTENTIAL_STRIP": 279,
+    "POTENTIAL_EMPTY_LOCAL": 450,
+    "POTENTIAL_REPLACE": 36,
+    "POTENTIAL_READ_TEXT": 15,
+    "TEST_HIT": 438
+  },
+  "n11_symbols": 24,
+  "n11_mech_buckets": {
+    "ABSENT": 21,
+    "KEEP_LIVE_CONSUMER": 3
+  },
+  "n13_hits": 284,
+  "n13_buckets": {
+    "POTENTIAL_SWALLOW": 29,
+    "POTENTIAL_N13": 248,
+    "POTENTIAL_KILL": 3,
+    "MECHANICAL_DOC": 4
+  },
+  "n14_hits": 432,
+  "n14_buckets": {
+    "POTENTIAL_SAME_VALUE_RECHECK": 298,
+    "POTENTIAL_N14": 103,
+    "POTENTIAL_IDENTITY_SENTINEL": 31
+  }
+}
