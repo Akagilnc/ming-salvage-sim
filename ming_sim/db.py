@@ -23,7 +23,7 @@ from ming_sim.constants import (
     ARMY_FIELD_ALIASES, ARMY_FIELD_LABELS, ARMY_QUANTITY_FIELDS, ARMY_SCORE_FIELDS, ARMY_TEXT_FIELDS,
     BUILDING_CATEGORIES, BUILDING_FIELD_LABELS, BUILDING_OUTPUT_METRICS,
     BUILDING_QUANTITY_FIELDS, BUILDING_SCORE_FIELDS, BUILDING_TEXT_FIELDS,
-    ECONOMY_ACCOUNTS, POWER_FIELD_LABELS, POWER_SCORE_FIELDS,
+    ECONOMY_ACCOUNTS, GATE_METRIC_KEYS, POWER_FIELD_LABELS, POWER_SCORE_FIELDS,
     POWER_FIELD_ALIASES, POWER_TEXT_FIELDS, MONEY_UNIT, REGION_FIELD_LABELS, REGION_QUANTITY_FIELDS,
     FISCAL_SCORE_FIELDS, REGION_FIELD_ALIASES, REGION_SCORE_FIELDS, REGION_TEXT_FIELDS,
     DOSSIER_LINK_TYPES, SALARY_RATE_ANCHOR, TURN_UNIT,
@@ -107,7 +107,6 @@ def _army_owner_transition_pay_kwargs(normalized: Mapping[str, object]) -> Dict[
         key: (normalized[key] if key in normalized else _SENTINEL)
         for key in _ARMY_OWNER_TRANSITION_PAY_KEYS
     }
-_COMMITMENT_STOP_CONDITION_RE = re.compile(r"character\.[^.]+\.loyalty\s*(?:>=|>)\s*\d+")
 
 
 def mutiny_loyalty_cap(mutiny_count: int, redemption_count: int = 0) -> int:
@@ -462,10 +461,6 @@ def _player_army_situation(row, monthly_pay: object) -> Dict[str, str]:
         "morale_text": _qualitative_army_stat("morale", row["morale"]),
         "arrears_text": _army_arrears_report_text(row, monthly_pay),
     }
-
-
-def _is_commitment_stop_condition(resolve_condition: object) -> bool:
-    return bool(_COMMITMENT_STOP_CONDITION_RE.fullmatch(str(resolve_condition or "").strip()))
 
 
 def _has_stop_condition(stop_condition: object) -> bool:
@@ -19937,11 +19932,9 @@ class GameDB:
         new_status = row["status"]
         closed_turn = row["closed_turn"]
         has_stop_condition = _has_stop_condition(row["stop_condition"])
-        commitment_stop_condition = (
-            bool(row["commitment_kind"])
-            or has_stop_condition
-            or _is_commitment_stop_condition(row["resolve_condition"])
-        )
+        # commitment_kind / structured stop_condition JSON only (#1847 N11: retired
+        # resolve_condition prose→gate regex half deleted with issues.py write half).
+        commitment_stop_condition = bool(row["commitment_kind"]) or has_stop_condition
         if to_value >= 100 and not commitment_stop_condition:
             new_status = "resolved"
             closed_turn = state.turn
@@ -20125,7 +20118,9 @@ class GameDB:
         self.expire_legacies(state, commit=cache_allowed)
         if cache_allowed and self._legacy_mod_cache is not None:
             return self._legacy_mod_cache
-        agg: Dict[str, object] = {"国库": 0, "内库": 0, "民心": 0, "皇威": 0, "regions": {}, "armies": {}}
+        agg: Dict[str, object] = {k: 0 for k in GATE_METRIC_KEYS}
+        agg["regions"] = {}
+        agg["armies"] = {}
         for lg in self.conn.execute(
             "SELECT modifiers FROM legacies WHERE status='active' ORDER BY id"
         ).fetchall():
@@ -20134,7 +20129,7 @@ class GameDB:
             except Exception as exc:
                 tlog(f"[db] legacy modifiers JSON 损坏，跳过该 legacy：{exc}")  # #14 surface
                 continue
-            for acc in ("国库", "内库", "民心", "皇威"):
+            for acc in GATE_METRIC_KEYS:  # #14 single source; was duplicate inline 4-tuple
                 v = eff.get(acc)
                 if isinstance(v, (int, float)):
                     agg[acc] = int(agg[acc]) + int(v)

@@ -222,8 +222,8 @@ def settle_tick(
     r: Dict[str, Any] = dict(
         实征=0, 火耗实收=0, 清欠=0, 拨付gross=0, 起运到京=0, 实付=0, 偿旧欠=0, 行政补饷=0,
         漂没=0, 中饱=0, 民欠新增=0, 蠲免=0, unmet_relief=0,
-        NewDebt={"军饷欠": 0, "官俸欠": 0, "宗禄欠": 0},
-        Repaid={"军饷欠": 0, "官俸欠": 0, "宗禄欠": 0},
+        NewDebt={c: 0 for c in _ARREARS_KEYS},
+        Repaid={c: 0 for c in _ARREARS_KEYS},
         action还={"军饷欠": 0},
         # #653 流水分解新字段：per-科目实付分账（TSV 断言实付序）＋折发免除额
         实付分账={h: 0.0 for h in _DUE_KEYS},
@@ -478,7 +478,7 @@ def _assert_conservation(
         x = min(o_S, bal)
         o_rep[c] = x
         o_S -= x
-    for c in ("军饷欠", "官俸欠", "宗禄欠"):
+    for c in _ARREARS_KEYS:  # #14 single source; was duplicate inline 3-tuple
         exp = claim0[c] - o_a还.get(c, 0) + o_nd[c] - o_rep[c]
         if abs(claim[c] - exp) > EPS:
             raise FiscalConservationError(f"债务对账破：{c} {claim[c]:.4f} ≠ oracle {exp:.4f}")
