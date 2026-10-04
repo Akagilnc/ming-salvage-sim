@@ -3,6 +3,7 @@
 - 工作树：`/Users/akagilnc/WorkSpace/Ming_LLM-1853-w5`
 - 分支：`ak-roles/issue-1853-retry-cleanup`
 - 起始 HEAD：`2e392c22469b3dea6f5e69d21d1abe49adac8714`
+- 交卷 commit：`f88af780d0f5e402a9c06a50f5dd88d98488ba5e`
 - 派单：`01a108c7-fcb1-77bc-a311-40f04c296e26@fixer/fix-packet.md`
 - 判词冻结：`07-1853-judge-2e392c224.json` payloads **末份**未结两类：J2-T、J8
 - 互联网旁证：
@@ -214,4 +215,4 @@ cd web
 
 ## commit
 
-见本轮 `git rev-parse HEAD`（提交后回填）。
+`f88af780d0f5e402a9c06a50f5dd88d98488ba5e` — `ak-roles: fix(#1853): retire translate-retry history chain and required-DB empty guards`
