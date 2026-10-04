@@ -100,7 +100,9 @@ def _get_client_base_url(self_client_holder: object) -> str:
             return ""
         base = getattr(client, "base_url", "")
         return str(base) if base else ""
-    except Exception:
+    except Exception as exc:
+        # #1902 F1 / ADR 0005：统计旁路可继续，但不得静默。
+        tlog(f"[token_stats] base_url lookup failed: {type(exc).__name__}: {exc}")
         return ""
 
 

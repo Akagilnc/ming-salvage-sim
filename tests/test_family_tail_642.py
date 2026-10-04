@@ -13,11 +13,7 @@ from __future__ import annotations
 import json
 import threading
 
-from ming_sim.content import GameContent
-from ming_sim.context import bind_content
 from ming_sim.db import GameDB
-import ming_sim.issues as issues_mod
-from ming_sim.models import LLMConfig
 from ming_sim.relation_brew import FOUNDINGS_KEY, MonthEndRelationBrewLeg, RECENT_KEY
 from ming_sim.relations import MINISTER_EDGE_KINDS
 from ming_sim.session import ChatTurnResult, GameSession
@@ -35,15 +31,3 @@ class _CannedJudge:
         from types import SimpleNamespace
         return SimpleNamespace(content=self.payload)
 
-
-
-
-def _gate_cfg() -> LLMConfig:
-    return LLMConfig(api_key="x", base_url="http://x", model="x", channel="api")
-
-
-def _bind_content() -> GameContent:
-    content = GameContent.load()
-    bind_content(content)
-    issues_mod.bind_content(content)
-    return content

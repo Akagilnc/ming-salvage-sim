@@ -52,7 +52,6 @@ from ming_sim.issues import (
     clear_gated_legacies,
     gather_impeachment_surge_candidates,
     sanitize_delta_shape,
-    validate_delta_shape,
 )
 from ming_sim.llm_model import extract_agent_text, llm_unavailable_from_error
 from ming_sim.models import FRONT_HALF_DONE_PHASES, GameState, LLMConfig, TurnPhase

@@ -490,12 +490,6 @@ _CANNED = {
 }
 
 
-def _module_of(tag: str) -> str:
-    return tag.split("/", 1)[1]
-
-
-
-
 # ── V1：端点须为当前在朝合格大臣（复用既有名册投影，先校验后零边写入） ──
 
 

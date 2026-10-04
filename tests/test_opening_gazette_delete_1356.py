@@ -30,11 +30,6 @@ def _seed_text() -> str:
     return (ROOT / "content" / "opening_gazette.md").read_text(encoding="utf-8").strip()
 
 
-def _canned_settle(monkeypatch, narrative: str) -> None:
-    from tests.settlement_seam_helpers import canned_full_settlement
-    canned_full_settlement(monkeypatch, narrative=narrative)
-
-
 def _session(db, state, content) -> GameSession:
     session = GameSession.__new__(GameSession)
     session.db, session.state, session.content = db, state, content

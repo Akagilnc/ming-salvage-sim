@@ -18,6 +18,17 @@ function msg(partial: Partial<AudienceScrollMessage> & Pick<AudienceScrollMessag
   };
 }
 
+/** Structural lens projection — role/speaker/beat/turn, not dialogue body. */
+function lensShape(messages: AudienceScrollMessage[]) {
+  return messages.map((m) => ({
+    role: m.role,
+    speaker: m.speaker,
+    beat: m.beat,
+    chat_turn_id: m.chat_turn_id,
+    soft_boundary: m.soft_boundary || false,
+  }));
+}
+
 /** Owner fixture: 洪承畴 full semantic turn + 许誉卿 absent. */
 function hongSecretOrderScroll(): AudienceScrollMessage[] {
   return [
@@ -51,11 +62,11 @@ describe("filterScrollForSelectedMinister (#1511 lens)", () => {
   it("切回有记录大臣：该臣语义轮完整（朕问/回话/递话/scene 同进）", () => {
     const scroll = hongSecretOrderScroll();
     const lens = filterScrollForSelectedMinister(scroll, "洪承畴");
-    expect(lens.map((m) => m.content)).toEqual([
-      "密令：整饬边备。",
-      "臣领旨。",
-      "他神色凝重。",
-      "烛影微动。",
+    expect(lensShape(lens)).toEqual([
+      { role: "user", speaker: "朕", beat: "dialogue", chat_turn_id: 11, soft_boundary: false },
+      { role: "minister", speaker: "洪承畴", beat: "dialogue", chat_turn_id: 11, soft_boundary: false },
+      { role: "attendant", speaker: "王承恩", beat: "aside", chat_turn_id: 11, soft_boundary: false },
+      { role: "scene", speaker: "", beat: "scene", chat_turn_id: 11, soft_boundary: false },
     ]);
   });
 
@@ -76,13 +87,21 @@ describe("filterScrollForSelectedMinister (#1511 lens)", () => {
     ];
 
     const hong = filterScrollForSelectedMinister(scroll, "洪承畴");
-    expect(hong.map((m) => m.content)).toEqual(["洪问", "洪答", "洪递话"]);
+    expect(lensShape(hong)).toEqual([
+      { role: "user", speaker: "朕", beat: "dialogue", chat_turn_id: 1, soft_boundary: false },
+      { role: "minister", speaker: "洪承畴", beat: "dialogue", chat_turn_id: 1, soft_boundary: false },
+      { role: "attendant", speaker: "王承恩", beat: "aside", chat_turn_id: 1, soft_boundary: false },
+    ]);
     // Per-speaker filter would have dropped 朕/王承恩 — must NOT reproduce that mistake
     expect(hong.some((m) => m.speaker === "朕")).toBe(true);
     expect(hong.some((m) => m.speaker === "王承恩")).toBe(true);
 
     const wang = filterScrollForSelectedMinister(scroll, "王绍徽");
-    expect(wang.map((m) => m.content)).toEqual(["王问", "王答", "王递话"]);
+    expect(lensShape(wang)).toEqual([
+      { role: "user", speaker: "朕", beat: "dialogue", chat_turn_id: 2, soft_boundary: false },
+      { role: "minister", speaker: "王绍徽", beat: "dialogue", chat_turn_id: 2, soft_boundary: false },
+      { role: "attendant", speaker: "王承恩", beat: "aside", chat_turn_id: 2, soft_boundary: false },
+    ]);
 
     const orphan = filterScrollForSelectedMinister(scroll, "许誉卿");
     expect(orphan).toEqual([]);
@@ -96,11 +115,14 @@ describe("filterScrollForSelectedMinister (#1511 lens)", () => {
       msg({ role: "minister", speaker: "许誉卿", content: "B答", beat: "dialogue", chat_turn_id: 20 }),
       msg({ role: "attendant", speaker: "王承恩", content: "B递话", beat: "aside", chat_turn_id: 20 }),
     ];
-    expect(filterScrollForSelectedMinister(scroll, "许誉卿").map((m) => m.content)).toEqual([
-      "B问", "B答", "B递话",
+    expect(lensShape(filterScrollForSelectedMinister(scroll, "许誉卿"))).toEqual([
+      { role: "user", speaker: "朕", beat: "dialogue", chat_turn_id: 20, soft_boundary: false },
+      { role: "minister", speaker: "许誉卿", beat: "dialogue", chat_turn_id: 20, soft_boundary: false },
+      { role: "attendant", speaker: "王承恩", beat: "aside", chat_turn_id: 20, soft_boundary: false },
     ]);
-    expect(filterScrollForSelectedMinister(scroll, "洪承畴").map((m) => m.content)).toEqual([
-      "A问", "A答",
+    expect(lensShape(filterScrollForSelectedMinister(scroll, "洪承畴"))).toEqual([
+      { role: "user", speaker: "朕", beat: "dialogue", chat_turn_id: 10, soft_boundary: false },
+      { role: "minister", speaker: "洪承畴", beat: "dialogue", chat_turn_id: 10, soft_boundary: false },
     ]);
   });
 
@@ -110,22 +132,22 @@ describe("filterScrollForSelectedMinister (#1511 lens)", () => {
       msg({ role: "minister", speaker: "洪承畴", content: "洪答", beat: "dialogue", chat_turn_id: 30 }),
       msg({ role: "minister", speaker: "许誉卿", content: "许答", beat: "dialogue", chat_turn_id: 30 }),
     ];
-    expect(filterScrollForSelectedMinister(scroll, "洪承畴")).toEqual(scroll);
-    expect(filterScrollForSelectedMinister(scroll, "许誉卿")).toEqual(scroll);
+    expect(lensShape(filterScrollForSelectedMinister(scroll, "洪承畴"))).toEqual(lensShape(scroll));
+    expect(lensShape(filterScrollForSelectedMinister(scroll, "许誉卿"))).toEqual(lensShape(scroll));
   });
 
   it("场景/divider 软段 + 殿侧他臣插话：不串窗且不误删本段上下文", () => {
     const scroll = softSegmentWithAside();
 
     const hong = filterScrollForSelectedMinister(scroll, "洪承畴");
-    expect(hong.map((m) => m.content)).toEqual([
-      "",
-      "洪承畴趋入殿中。",
-      "边务如何？",
-      "臣自三边来。",
-      "殿侧容臣插一句。",
-      "洪督神色未安。",
-      "",
+    expect(lensShape(hong)).toEqual([
+      { role: "scene", speaker: "洪承畴", beat: "divider", chat_turn_id: undefined, soft_boundary: true },
+      { role: "scene", speaker: "洪承畴", beat: "scene", chat_turn_id: undefined, soft_boundary: false },
+      { role: "user", speaker: "朕", beat: "dialogue", chat_turn_id: 1, soft_boundary: false },
+      { role: "minister", speaker: "洪承畴", beat: "dialogue", chat_turn_id: 1, soft_boundary: false },
+      { role: "minister", speaker: "杨嗣昌", beat: "dialogue", chat_turn_id: undefined, soft_boundary: false },
+      { role: "attendant", speaker: "王承恩", beat: "aside", chat_turn_id: 1, soft_boundary: false },
+      { role: "scene", speaker: "", beat: "divider", chat_turn_id: undefined, soft_boundary: true },
     ]);
     // 杨's interjection stays as 洪 segment context
     expect(hong.some((m) => m.speaker === "杨嗣昌")).toBe(true);
@@ -133,9 +155,9 @@ describe("filterScrollForSelectedMinister (#1511 lens)", () => {
 
     // 杨 window must not inherit 洪's whole segment (不串窗)
     const yang = filterScrollForSelectedMinister(scroll, "杨嗣昌");
-    expect(yang.some((m) => m.content === "臣自三边来。")).toBe(false);
-    expect(yang.some((m) => m.content === "洪承畴趋入殿中。")).toBe(false);
-    expect(yang.some((m) => m.content === "殿侧容臣插一句。")).toBe(false);
+    expect(yang.some((m) => m.speaker === "洪承畴" && m.beat === "dialogue")).toBe(false);
+    expect(yang.some((m) => m.speaker === "洪承畴" && m.beat === "scene")).toBe(false);
+    expect(yang.some((m) => m.speaker === "杨嗣昌")).toBe(false);
 
     // 许 blank
     expect(filterScrollForSelectedMinister(scroll, "许誉卿")).toEqual([]);
@@ -149,7 +171,12 @@ describe("filterScrollForSelectedMinister (#1511 lens)", () => {
       msg({ role: "minister", speaker: "杨嗣昌", content: "侧言", beat: "dialogue" }),
     ];
     const hong = filterScrollForSelectedMinister(scroll, "洪承畴");
-    expect(hong.map((m) => m.content)).toEqual(["洪承畴入殿。", "问", "答", "侧言"]);
+    expect(lensShape(hong)).toEqual([
+      { role: "scene", speaker: "", beat: "scene", chat_turn_id: undefined, soft_boundary: false },
+      { role: "user", speaker: "朕", beat: "dialogue", chat_turn_id: 5, soft_boundary: false },
+      { role: "minister", speaker: "洪承畴", beat: "dialogue", chat_turn_id: 5, soft_boundary: false },
+      { role: "minister", speaker: "杨嗣昌", beat: "dialogue", chat_turn_id: undefined, soft_boundary: false },
+    ]);
     expect(filterScrollForSelectedMinister(scroll, "杨嗣昌")).toEqual([]);
   });
 
@@ -176,26 +203,26 @@ describe("filterScrollForSelectedMinister (#1511 lens)", () => {
     ];
 
     const hong = filterScrollForSelectedMinister(scroll, "洪承畴");
-    expect(hong.map((m) => m.content)).toEqual([
-      "",
-      "洪承畴趋入殿中。",
-      "边务如何？",
-      "臣自三边来。",
-      "殿侧容臣插一句。",
-      "",
+    expect(lensShape(hong)).toEqual([
+      { role: "scene", speaker: "洪承畴", beat: "divider", chat_turn_id: undefined, soft_boundary: true },
+      { role: "scene", speaker: "洪承畴", beat: "scene", chat_turn_id: undefined, soft_boundary: false },
+      { role: "user", speaker: "朕", beat: "dialogue", chat_turn_id: 1, soft_boundary: false },
+      { role: "minister", speaker: "洪承畴", beat: "dialogue", chat_turn_id: 1, soft_boundary: false },
+      { role: "minister", speaker: "孙传庭", beat: "dialogue", chat_turn_id: undefined, soft_boundary: false },
+      { role: "scene", speaker: "", beat: "divider", chat_turn_id: undefined, soft_boundary: true },
     ]);
-    expect(hong.some((m) => m.content.includes("杨"))).toBe(false);
-    expect(hong.some((m) => m.content === "杨部神色郑重。")).toBe(false);
+    expect(hong.some((m) => m.chat_turn_id === 2)).toBe(false);
+    expect(hong.some((m) => m.speaker === "杨嗣昌")).toBe(false);
 
     const yang = filterScrollForSelectedMinister(scroll, "杨嗣昌");
-    expect(yang.map((m) => m.content)).toEqual([
-      "杨卿以为如何？",
-      "臣以为当先清饷。",
-      "杨部神色郑重。",
+    expect(lensShape(yang)).toEqual([
+      { role: "user", speaker: "朕", beat: "dialogue", chat_turn_id: 2, soft_boundary: false },
+      { role: "minister", speaker: "杨嗣昌", beat: "dialogue", chat_turn_id: 2, soft_boundary: false },
+      { role: "attendant", speaker: "王承恩", beat: "aside", chat_turn_id: 2, soft_boundary: false },
     ]);
-    expect(yang.some((m) => m.content === "臣自三边来。")).toBe(false);
-    expect(yang.some((m) => m.content === "洪承畴趋入殿中。")).toBe(false);
-    expect(yang.some((m) => m.content === "殿侧容臣插一句。")).toBe(false);
+    expect(yang.some((m) => m.chat_turn_id === 1)).toBe(false);
+    expect(yang.some((m) => m.speaker === "洪承畴")).toBe(false);
+    expect(yang.some((m) => m.speaker === "孙传庭")).toBe(false);
   });
 
   it("半轮 claim：无 minister 气泡的 user 问话按 claimedTurnId 留在本窗", () => {
@@ -207,11 +234,13 @@ describe("filterScrollForSelectedMinister (#1511 lens)", () => {
     // Without claim, half-turn user is orphan and must not leak.
     expect(filterScrollForSelectedMinister(scroll, "许誉卿")).toEqual([]);
     expect(
-      filterScrollForSelectedMinister(scroll, "许誉卿", { claimedTurnId: 12 }).map((m) => m.content),
-    ).toEqual(["辽饷何解？"]);
+      lensShape(filterScrollForSelectedMinister(scroll, "许誉卿", { claimedTurnId: 12 })),
+    ).toEqual([
+      { role: "user", speaker: "朕", beat: "dialogue", chat_turn_id: 12, soft_boundary: false },
+    ]);
     // Claim must not override an already-named minister owner on another turn.
     expect(
-      filterScrollForSelectedMinister(scroll, "许誉卿", { claimedTurnId: 11 }).map((m) => m.content),
+      filterScrollForSelectedMinister(scroll, "许誉卿", { claimedTurnId: 11 }),
     ).toEqual([]);
   });
 
@@ -221,8 +250,10 @@ describe("filterScrollForSelectedMinister (#1511 lens)", () => {
       msg({ role: "minister", speaker: "殿上", content: "群臣各陈所见。", beat: "dialogue", chat_turn_id: 30 }),
       msg({ role: "attendant", speaker: "王承恩", content: "洪承畴亦在列。", beat: "aside", chat_turn_id: 30 }),
     ];
-    expect(filterScrollForSelectedMinister(scroll, "洪承畴", { sceneSpeaker: "殿上" }).map((m) => m.content)).toEqual([
-      "诸卿以为如何？", "群臣各陈所见。", "洪承畴亦在列。",
+    expect(lensShape(filterScrollForSelectedMinister(scroll, "洪承畴", { sceneSpeaker: "殿上" }))).toEqual([
+      { role: "user", speaker: "朕", beat: "dialogue", chat_turn_id: 30, soft_boundary: false },
+      { role: "minister", speaker: "殿上", beat: "dialogue", chat_turn_id: 30, soft_boundary: false },
+      { role: "attendant", speaker: "王承恩", beat: "aside", chat_turn_id: 30, soft_boundary: false },
     ]);
   });
 

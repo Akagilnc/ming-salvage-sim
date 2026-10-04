@@ -107,15 +107,6 @@ def _punish(**kw) -> dict:
     return base
 
 
-def _stamp_heal_ids(items: list) -> list:
-    out = deepcopy(items)
-    for ii, it in enumerate(out):
-        for oi, opt in enumerate(it.get("options") or []):
-            if isinstance(opt, dict):
-                opt["heal_id"] = f"{ii}:{oi}"
-    return out
-
-
 def _heals_json(pairs: list[tuple[str, dict]]) -> str:
     return json.dumps(
         {"heals": [{"heal_id": hid, **fields} for hid, fields in pairs]},

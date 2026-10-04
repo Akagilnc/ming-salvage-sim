@@ -29,6 +29,7 @@ import subprocess
 import tempfile
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -2660,6 +2661,7 @@ def extract_draft_intent(
             + "【大臣完整回话】" + (minister_reply or "（无）") + "\n"
         )
         raw = ""
+        soft_extract_failed = False
         try:
             raw, _ = _run_backend_for_config(prompt, llm_config, tag="draft_intent")
         except Exception as exc:
@@ -2667,6 +2669,18 @@ def extract_draft_intent(
             if correction_block:
                 raise
             _log(f"多旨稿抽取失败：{exc}")
+            soft_extract_failed = True
+        if soft_extract_failed:
+            # 首抽 LLM 失败的公开 degrade＝无意图；与非法批次产物洗「无」分离。
+            return _finalize_extract_with_combo(
+                {
+                    "draft_action": "无",
+                    "draft_text": "",
+                    "drafts": [],
+                    "target_candidate": "",
+                },
+                draft_combo_flags=[],
+            )
         obj = _loads_lenient(raw) or {}
         values = obj.get("成品旨稿") if isinstance(obj, dict) else None
         drafts = []
@@ -2722,8 +2736,8 @@ def extract_draft_intent(
             try:
                 structured_kind = classify_directive_structured_kind(probe)
             except ValueError:
-                invalid_batch = True
-                break
+                # #1902 F1：分类非法不得洗成「无意图」；与单旨/project 同响亮上抛。
+                raise
             if not text or mode is None or text in seen_texts or structured_kind == "empty":
                 invalid_batch = True
                 break
@@ -2807,7 +2821,11 @@ def extract_draft_intent(
                 **stamped_declaration,
             })
             draft_combo_flags.append(needs_combo)
-        if invalid_batch or not any(draft is not None for draft in drafts):
+        if invalid_batch:
+            # #1902 F1：形状/计数非法批次不得洗成正常「无意图」。
+            raise ValueError("多旨稿抽取批次非法：成品旨稿形状或分类不符")
+        if not any(draft is not None for draft in drafts):
+            # 全署理等合法空批次 → 无意图（test_draft_extraction_does_not_capture_acting_appointment）。
             drafts = []
             draft_combo_flags = []
         batch_result = {
@@ -3461,7 +3479,9 @@ def enrich_initiative_effects(title: str, stage: str = "", llm_config: Any = Non
     try:
         from ming_sim.simulation import _canonical_item_fields
         norm = _canonical_item_fields(obj) if obj else {}
-    except Exception:
+    except Exception as exc:
+        # #1902 F1 / ADR 0005：规范化旁路可继续，但不得静默。
+        _log(f"国策效果字段规范化失败：{exc}")
         norm = obj
     # isinstance 守门：norm 或其子段被 LLM 给成非 dict 时归 {}，不让 dict("乱填") 抛错
     # 越过上层 floor、把空壳国策放进库（CMR codexB）。
@@ -3829,10 +3849,13 @@ def confirm_dossier_links(
     confirmed = set()
     for link in links:
         if not isinstance(link, dict) or type(link.get("target_dossier_id")) is not int:
-            return []
+            # #1902 F1：条目非法不得洗成「确认零关联」空表成功。
+            raise ValueError("案卷关联确认产物非法：confirmed_links 条目非法")
         relation = link.get("relation_type")
         if relation not in DOSSIER_LINK_TYPES:
-            return []
+            raise ValueError(
+                f"案卷关联确认产物非法：relation_type={relation!r}"
+            )
         confirmed.add((link["target_dossier_id"], relation))
     return [item for identity, item in proposals.items() if identity in confirmed]
 

@@ -9,10 +9,6 @@ from ming_sim.models import Character
 from ming_sim.session import _sync_offices_from_db_impl
 
 
-def _columns(db, table):
-    return {row["name"] for row in db.conn.execute(f"PRAGMA table_info({table})").fetchall()}
-
-
 def _column_info(db, table):
     return {row["name"]: dict(row) for row in db.conn.execute(f"PRAGMA table_info({table})").fetchall()}
 

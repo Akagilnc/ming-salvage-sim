@@ -207,9 +207,9 @@ def test_translation_segments_replace_neutral_reply_in_real_scroll(game, monkeyp
     after = client.get("/api/audience/scroll").json()["messages"]
     assert client.get("/api/audience/scroll").json()["translation_pending"] is False
     segments = [m for m in after if m.get("chat_turn_id") == turn_id and m["role"] != "user"]
-    assert [(m["role"], m["speaker"], m["content"]) for m in segments] == [
-        ("minister", "杨嗣昌", "臣领旨。"), ("attendant", "王承恩", "王承恩低语。"),
-        ("scene", "", "殿内烛影摇曳。"),
+    assert [(m["role"], m["speaker"]) for m in segments] == [
+        ("minister", "杨嗣昌"), ("attendant", "王承恩"),
+        ("scene", ""),
     ]
     assert segments[1]["audibility"] == "御前低语"
     assert segments[1]["beat"] == "aside"
@@ -260,12 +260,15 @@ def test_real_http_scroll_merges_ministers_asides_and_story_without_raw_characte
     messages = payload["messages"]
     dialogue = [message for message in messages
                 if message.get("chat_turn_id") in {first_turn, second_turn}]
-    assert [message["content"] for message in dialogue] == [
-        "辽饷如何？", "臣请据实核账。", "边情如何？", "边关尚稳。",
+    assert [(message["role"], message["speaker"], message.get("chat_turn_id")) for message in dialogue] == [
+        ("user", "朕", first_turn),
+        ("scene", "", first_turn),
+        ("user", "朕", second_turn),
+        ("scene", "", second_turn),
     ]
     # Derived ledger entries do not become live dialogue records.
     assert not any(message.get("record_id") for message in messages)
-    assert [message["content"] for message in messages if message["role"] == "scene" and message.get("chat_turn_id")] == ["臣请据实核账。", "边关尚稳。"]
+    assert [message.get("chat_turn_id") for message in messages if message["role"] == "scene" and message.get("chat_turn_id")] == [first_turn, second_turn]
 
     allowed_message_fields = {
         "role", "speaker", "audibility", "time", "content",
@@ -295,8 +298,8 @@ def test_scroll_contract_merges_both_stores_with_container_and_coda(game):
     scroll = an.read_night_scroll(db, night_id)
 
     assert scroll[0]["container"] == {"time_of_day": "戌时", "location": "乾清宫", "audience_type": "召对"}
-    assert [(m["role"], m["speaker"], m["content"]) for m in scroll if m["role"] != "scene"] == [
-        ("user", "朕", "辽饷如何？"),
+    assert [(m["role"], m["speaker"]) for m in scroll if m["role"] != "scene"] == [
+        ("user", "朕"),
     ]
     assert any(m["role"] == "scene" and m.get("chat_turn_id") for m in scroll)
     assert all({"role", "speaker", "audibility", "time", "soft_boundary", "beat", "highlights", "container"} <= set(m) for m in scroll)

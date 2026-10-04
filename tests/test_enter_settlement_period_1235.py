@@ -113,16 +113,6 @@ def _click_before(state) -> dict[str, int]:
     return {k: int(state.metrics[k]) for k in MONTH_OPEN_KEYS}
 
 
-def _terminal_sse(response: httpx.Response) -> tuple[str, dict]:
-    """末个 SSE 事件的 (name, payload)。
-
-    #1902 F7：解析真源在 tests.sse_helpers（仓内只此一份），此处不再自带一份。
-    """
-    pairs = parse_sse_event_pairs(response.text)
-    assert pairs
-    return pairs[-1]
-
-
 def _open_night_with_unextracted_reply(game, minister, reply="臣愿肩起此事。"):
     """票面夹具：开夜 + 回话已落、story 抽取未落（extract_status 待补）。"""
     db, state = game.db, game.state

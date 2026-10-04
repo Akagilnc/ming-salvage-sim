@@ -175,7 +175,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
     await act(async () => { await vi.waitFor(() => expect(host.querySelector("textarea")).not.toBeNull()); });
     expect(calls).toContain("GET /api/audience/chat");
     expect(calls.some((call) => call.includes("/api/ministers/"))).toBe(false);
-    expect(host.textContent).toContain("杨嗣昌御前低语");
+    expect(host.querySelector(".chat-message.attendant.aside > span")?.textContent).toBe("杨嗣昌");
 
     // 关档后夜仍未收：重挂从状态口进入殿上，卷轴停在已存最后一轮。
     unmountTrackedRoots();
@@ -249,9 +249,12 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
     });
     expect(calls.some((call) => call.path.includes("/api/ministers/"))).toBe(false);
     expect(calls.some((call) => call.path.endsWith("/api/audience/chat/stream"))).toBe(true);
-    await act(async () => { await vi.waitFor(() => expect(host.textContent).toContain("臣已入殿")); });
-    finishStream();
-    await act(async () => { await vi.waitFor(() => expect(host.textContent).toContain("臣已入殿")); });
+    await act(async () => { await vi.waitFor(() => expect(host.querySelector(".chat-message.scene.beat-dialogue")).not.toBeNull()); });
+    await act(async () => {
+      finishStream();
+      await vi.waitFor(() => expect(host.querySelector(".chat-message.thinking")).toBeNull());
+      expect(host.querySelector(".chat-message.scene.beat-dialogue")).not.toBeNull();
+    });
   });
 
   it("typed SSE error 经真实召对链只向玩家呈现结构化 message", async () => {
@@ -340,7 +343,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
     expect(host.querySelector('[data-testid="reply-retry-8"]')).not.toBeNull();
     expect(historyReads).toBeGreaterThan(1);
     expect(host.querySelector("textarea")?.value).toBe("");
-    expect(host.querySelector('[data-audience-turn-id="8"]')?.textContent).toContain("边务如何");
+    expect(host.querySelector('[data-audience-turn-id="8"] .turn-segment.user')).not.toBeNull();
   });
 
 

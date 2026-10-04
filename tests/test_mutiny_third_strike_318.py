@@ -17,22 +17,6 @@ PATHS = ("legacy", "substrate_hub")
 BANDIT_POWERS = frozenset({"bandits", "bandit_li_zicheng"})
 
 
-def _simulator_army_dicts(payload_armies):
-    """Normalize simulator armies payload (dict-rows or col/row matrix) to dict list."""
-    if isinstance(payload_armies, dict) and "rows" in payload_armies:
-        cols = payload_armies.get("cols") or payload_armies.get("columns") or []
-        return [dict(zip(cols, row)) for row in payload_armies["rows"]]
-    return list(payload_armies)
-
-
-def _find_simulator_army(rows, army_id: str = ARMY):
-    return next(
-        r
-        for r in rows
-        if "关宁" in str(r.get("name", "")) or str(r.get("id", "")) == army_id
-    )
-
-
 def _configure(db, fiscal_path: str) -> None:
     value = 0 if fiscal_path == "legacy" else 1
     for key in ("__army_pay_source_cutover", "__fiscal_engine"):

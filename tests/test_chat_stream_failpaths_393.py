@@ -437,22 +437,6 @@ def test_worker_postprocess_exception_emits_error_end():
 _parse_sse = parse_sse_event_pairs
 
 
-def _assert_structured_llm_http(response) -> dict:
-    assert response.status_code != 500, response.text
-    assert response.status_code == 400, response.text
-    body = response.json()
-    detail = body.get("detail") if isinstance(body, dict) else None
-    assert isinstance(detail, dict), body
-    assert detail.get("code"), detail
-    assert detail.get("message"), detail
-    assert "provider_message" in detail, detail
-    assert "Internal Server Error" not in response.text
-    assert "Internal Server Error" not in str(detail.get("message") or "")
-    return detail
-
-
-
-
 def test_nonstream_api_issue_decree_llm_unavailable_is_structured_not_500(
     game, monkeypatch,
 ):

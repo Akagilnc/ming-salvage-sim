@@ -7,7 +7,6 @@ return 会退出 play_turn，外层主循环重进时重印回合引导/在册�
 
 from __future__ import annotations
 
-from contextlib import contextmanager
 from types import SimpleNamespace
 
 import pytest
@@ -18,11 +17,6 @@ from ming_sim.exceptions import LLMContractError, LLMUnavailable, SettlementAbor
 from ming_sim.llm_model import CLI_RUNNER_PLAYER_MESSAGE
 from ming_sim.session import GameSession, TurnPhase
 from ming_sim import audience_night as an
-
-
-@contextmanager
-def _noop_atomic(_db):
-    yield
 
 
 class _Snap:

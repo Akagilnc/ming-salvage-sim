@@ -115,16 +115,6 @@ def _army_single_bad_item() -> dict:
     }
 
 
-def _army_none_legal_item() -> dict:
-    """纠错轮合法：同军目标 + locality_scope=none。"""
-    item = _army_single_bad_item()
-    item["options"][0] = {
-        **item["options"][0],
-        "locality_scope": "none",
-    }
-    return item
-
-
 def test_shared_validate_rejects_region_id_and_category_holes():
     """共同 assemble/validate 最低可证层：钉原洞 typed 拒绝。
 

@@ -243,21 +243,6 @@ def test_mid_countdown_save_reopen_continues_identically(game, tmp_path):
             pass
         raise
 
-def _assert_ledger_match(db, name: str, expected):
-    loc, to, remaining, factor, start_turn = expected
-    row = _ledger(db, name)
-    assert row['location'] == loc
-    assert row['transit_to'] == to
-    assert row['transit_start_turn'] == start_turn
-    if remaining is None:
-        assert row['transit_distance_remaining'] is None
-    else:
-        assert row['transit_distance_remaining'] == pytest.approx(remaining)
-    if factor is None:
-        assert row['transit_speed_factor'] is None
-    else:
-        assert row['transit_speed_factor'] == pytest.approx(factor)
-
 def test_arrivals_sorted_by_name_stable(game):
     db, state, content = game
     rows = db.conn.execute("SELECT name FROM characters WHERE status='active' AND power_id='ming' ORDER BY name LIMIT 2").fetchall()

@@ -26,11 +26,6 @@ from ming_sim.models import TurnPhase
 from ming_sim.session import GameSession
 
 
-def _canned(monkeypatch):
-    from tests.settlement_seam_helpers import canned_full_settlement
-    canned_full_settlement(monkeypatch, narrative="令牌测无旨月邸报。")
-
-
 def _session(db, state, content):
     session = GameSession.__new__(GameSession)
     session.db = db
