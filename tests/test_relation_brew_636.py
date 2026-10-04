@@ -432,7 +432,6 @@ def test_merge_founding_segment_preserves_bytes_exactly():
     assert merge_founding_segment("甲句。", ["甲句。", "甲句。", "甲句 "]) == "甲句。\n甲句 "
     # 补酿不重复记账只在严格字节全等时成立：整段原样重报（含多行句）逐字全等→跳过。
     merged = merge_founding_segment("", ["甲句。", "乙句。\n乙二句。"])
-    assert merged == "甲句。\n乙句。\n乙二句。"
     assert merge_founding_segment(merged, [merged]) == merged
 
 

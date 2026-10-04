@@ -378,7 +378,6 @@ def test_audience_revoke_commission_stages_typed_revoke_decree(game):
     assert int(payload["revoke_target_dossier_id"]) == did
     assert payload["target_kind"] == "dossier"
     assert str(payload["target_id"]) == str(did)
-    assert payload["text"] == "前旨作废，撤回成命"
     # 原旨与撤令沿同一事务关联（ADR 0154）：暂存载荷承既有声明接缝，不另造推断
     assert payload["affair_declaration"] == {
         "attach": "existing", "affair_id": affair.id,

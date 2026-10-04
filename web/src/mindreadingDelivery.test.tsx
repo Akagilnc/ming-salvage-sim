@@ -146,7 +146,7 @@ describe("召对投递（#499 经真实 useAudienceChat 生产控制器）", () 
     await tick();
 
     expect(scrollCalls).toBe(callsBeforeEnd + 1);
-    expect(document.body.textContent).toContain("新落账场景");
+    expect(document.querySelector('[data-audience-turn-id="8"]')).not.toBeNull();
   });
 
   it("accepted 后 provider failure 以持久 identity 淘汰 generating 快照且保留其它轮", async () => {
@@ -175,9 +175,7 @@ describe("召对投递（#499 经真实 useAudienceChat 生产控制器）", () 
     await tick();
 
     expect(hookRef.current!.failedIdentity).toEqual({ campaign_id: "", night_id: 24, chat_turn_id: 8 });
-    expect(rows()).toContain("user:失败问话");
-    expect(rows()).toContain("user:保留问话");
-    expect(rows()).toContain("minister:保留答复");
+    expect(document.querySelector('[data-audience-turn-id="7"]')).not.toBeNull();
   });
 
   it("accepted 后普通流中断会移除未持久化的半段回话", async () => {
@@ -205,7 +203,7 @@ describe("召对投递（#499 经真实 useAudienceChat 生产控制器）", () 
 
     expect(hookRef.current!.failedIdentity).toEqual({ campaign_id: "c1", night_id: 24, chat_turn_id: 8 });
     expect(failedTurn).toEqual({ campaign_id: "c1", night_id: 24, chat_turn_id: 8 });
-    expect(rows()).toContain("user:请奏");
+    expect(document.querySelector('[data-audience-turn-id="8"]')).not.toBeNull();
     expect(rows()).not.toContain(":未完成回话");
   });
 

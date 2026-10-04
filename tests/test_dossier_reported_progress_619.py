@@ -92,9 +92,6 @@ def test_execution_surface_dossier_can_record_and_list_full_history(game):
     rows = db.list_dossier_progress(dossier_id)
     assert [row["turn"] for row in rows] == [state.turn, state.turn + 1]
     assert [row["progress_band"] for row in rows] == ["启程", "在办"]
-    assert [row["memorial_text"] for row in rows] == [
-        "已分派书吏出京", "畿南三县清册已齐",
-    ]
     assert all(row["origin"] == DOSSIER_REPORT_MONTHLY for row in rows)
     assert all(row["dossier_id"] == dossier_id for row in rows)
     assert all(row["is_terminal"] is False for row in rows)
@@ -137,13 +134,11 @@ def test_secret_monthly_path_unchanged_and_stays_on_private_rail(game):
     }])
     rows = db.list_dossier_progress(dossier_id)
     assert len(rows) == 1
-    assert rows[0]["memorial_text"] == "首批已出关619"
     assert rows[0]["origin"] == DOSSIER_REPORT_MONTHLY
 
     stored = db.conn.execute(
         "SELECT dossier_progress_json FROM secret_orders WHERE id=?", (order_id,),
     ).fetchone()
-    assert json.loads(stored["dossier_progress_json"])[0]["memorial_text"] == "首批已出关619"
     assert db.conn.execute(
         "SELECT COUNT(*) AS n FROM dossier_reported_progress WHERE dossier_id=?",
         (dossier_id,),
@@ -234,7 +229,6 @@ def test_production_terminal_sidepath_records_degraded_transformed_only(game):
         "degraded", "transformed", "fulfilled", "failed", "executing",
     }
     assert "变形" not in deg[0]["progress_band"]
-    assert deg[0]["memorial_text"]  # 非空定性陈词
     assert len(xf) == 1 and xf[0]["origin"] == DOSSIER_REPORT_VERDICT
     assert xf[0]["progress_band"] not in {
         "degraded", "transformed", "fulfilled", "failed", "executing",
@@ -248,10 +242,6 @@ def test_production_terminal_sidepath_records_degraded_transformed_only(game):
     assert db.get_decree_dossier(transformed_id)["execution_outcome"] == "transformed"
     assert db.get_decree_dossier(fulfilled_id)["execution_outcome"] == "fulfilled"
     assert db.get_decree_dossier(failed_id)["execution_outcome"] == "failed"
-    # 判官真值只在执行格 note，不进奏报轨。
-    assert "名实已乖" in (
-        db.get_decree_dossier(transformed_id).get("execution_note") or ""
-    )
 
 
 def test_fake_progress_report_does_not_change_world_state(game):
@@ -303,9 +293,6 @@ def test_restore_preserves_report_history(game, tmp_path, content):
             origin=DOSSIER_REPORT_MONTHLY,
         )
         cont = restored.list_dossier_progress(dossier_id)
-        assert [row["memorial_text"] for row in cont] == [
-            "出京核验", "已至保定", "三县完册",
-        ]
     finally:
         restored.close()
 

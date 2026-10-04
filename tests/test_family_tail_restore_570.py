@@ -182,6 +182,5 @@ def test_mid_month_restore_keeps_dossier_four_faces(game, tmp_path, content):
             origin=DOSSIER_REPORT_MONTHLY,
         )
         cont = restored.list_dossier_progress(errand_id)
-        assert [row["memorial_text"] for row in cont] == ["已出京赴陕", "已抵西安"]
     finally:
         restored.close()

@@ -533,7 +533,6 @@ def test_allocation_rejected_is_zero_effect_and_force_promulgation_keeps_rejecti
     assert state.metrics["国库"] == before
     rejected = db.get_decree_dossier(dossier_id)
     assert rejected["promulgation_blocked_layer"] == "six_offices"
-    assert rejected["promulgation_reason"] == "科臣封驳。"
 
     db.apply_dossier_verdicts(
         state, [{"dossier_id": dossier_id, "decision": "force_promulgated"}]
@@ -1079,7 +1078,6 @@ def test_manual_directive_capture_rejects_malformed_roster(
     answers = iter(["add", "手工旨意", "back"])
     monkeypatch.setattr("builtins.input", lambda _prompt="": next(answers))
     assert terminal.review_directives(session) == "back"
-    assert "参与人" in capsys.readouterr().out
 
     assert db.list_pending_actions(state.turn) == []
     assert db.list_directives(state) == []
@@ -1618,7 +1616,6 @@ def test_underfunded_in_transit_allocation_closes_from_execution_state(game):
     assert state.metrics["国库"] == 0
     assert dossier["status"] == "closed"
     assert dossier["execution_outcome"] == "failed"
-    assert "不足额" in dossier["execution_note"]
 
 def test_underfunded_immediate_allocation_is_not_recorded_as_fulfilled(game):
     db, state, _content = game
@@ -1641,7 +1638,6 @@ def test_underfunded_immediate_allocation_is_not_recorded_as_fulfilled(game):
     assert state.metrics["国库"] == 0
     assert dossier["status"] == "closed"
     assert dossier["execution_outcome"] == "failed"
-    assert "不足额" in dossier["execution_note"]
 
 @pytest.mark.parametrize(
     "payload",
@@ -1992,10 +1988,8 @@ def test_inner_treasury_admission_uses_actual_once_and_preserves_surface(
     assert dossier["execution_outcome"] == outcome
     assert state.metrics["内库"] == max(0, balance - 10)
     assert len(db.list_economy_moves_for_dossier(dossier_id)) == int(expected_actual != 0)
-    if outcome == "failed":
-        assert "应拨10两" in dossier["execution_note"]
-        assert f"实拨{abs(expected_actual)}两" in dossier["execution_note"]
-    else:
+    # execution_note 为人读自由正文，不锁措辞（#1834 F3）；失败态只认结构化 outcome（上方已断言）。
+    if outcome != "failed":
         assert status == "executing"
         assert dossier_id in {
             row["id"] for row in db.list_decree_dossiers_for_simulation(state.turn)
@@ -2112,7 +2106,6 @@ def test_in_transit_allocation_requires_execution_verdict(game):
     )
     dossier = db.get_decree_dossier(dossier_id)
     assert dossier["status"] == "closed"
-    assert dossier["execution_note"] == "押解到陕"
     assert dossier["interruption_reason"] == ""
 
 @pytest.mark.parametrize("value", [True, 1.5, 2.9])

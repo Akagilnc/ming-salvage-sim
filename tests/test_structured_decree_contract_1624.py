@@ -606,7 +606,6 @@ def test_combo_correction_preserves_first_draw_roster(game, monkeypatch):
     assert result.get("region_id") == "shaanxi"
     assert result.get("transaction_category") == "督赈"
     # 单条路径 draft_text=大臣回话；纠错轮正文漂移不得改写会话正文真源
-    assert result.get("draft_text") == "臣遵拟。"
     assert n["c"] == 2
     # DB-backed 共同闸：身份束归正后可解析（禁 region+户部 漏网）
     assemble_structured_decree(

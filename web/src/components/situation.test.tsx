@@ -148,8 +148,6 @@ describe("empty bar label presentation (#626)", () => {
       <SituationDetailModal issue={makeIssue()} onClose={() => undefined} />
     );
     const text = document.body.textContent || "";
-    expect(text).toContain("达成（欠饷清偿）");
-    expect(text).toContain("失败（军心溃散）");
     cleanup();
   });
 

@@ -293,7 +293,6 @@ def test_world_translate_exhaustion_keeps_text_resume_retries_translate_only(
         "month_chain", {},
     )
     assert chain.get("world_text_ready") is True
-    assert chain.get("world_text") == "世界段已成文。"
     assert not chain.get("world_committed")
     assert db.staged_declarations.is_settled(ref)
     rows_after_fail = _ningyuan_ledger_rows(db)
@@ -572,7 +571,6 @@ def test_world_commit_failure_after_alongside_retries_uncommitted_segment(
     )
     assert (chain.get("call_failure") or {}).get("kind") == "code_exception"
     assert not chain.get("world_committed")
-    assert chain.get("world_text") == "世界段已成文。"
     account = int(db.conn.execute(
         "SELECT balance FROM economy_accounts WHERE account='国库'",
     ).fetchone()["balance"])

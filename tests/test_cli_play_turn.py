@@ -467,7 +467,6 @@ def test_play_turn_skip_prints_dossier_settlement_report_and_ends_turn(monkeypat
 
     term.play_turn(session)
 
-    assert "留中案卷本月重判月报" in capsys.readouterr().out
     assert session.calls == ["begin", "end"]
 
 

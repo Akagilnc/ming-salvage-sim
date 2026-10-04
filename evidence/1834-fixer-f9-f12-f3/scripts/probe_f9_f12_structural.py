@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """#1834 F9/F12 structural boundary probe (manual, not pytest).
 
-Checks structure only — no free-text prose sentinels:
-  F9: material trees must not emit decoded machine field headers
-      payload： / stigma： / execution_signal： (from _material_facts_text).
+Checks structure only — no free-text prose sentinels or rendered field-header
+regexes:
+  F9: while forming the material catalog, the Mapping fed to
+      _material_facts_text must not contain decoded machine keys
+      payload / stigma / execution_signal (from dossier items).
   F12: list_world_effect_history must not contain person_logs (or sibling
       audit dump tables); prepare_world_materials + prepare_gazette_author_materials
       succeed for open / close(advance) / restore.
@@ -22,31 +24,19 @@ import os
 import shutil
 import sys
 import tempfile
+from collections.abc import Mapping
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
 
-MACHINE_FIELD_HEADERS = ("payload：", "stigma：", "execution_signal：")
+MACHINE_INPUT_KEYS = frozenset({"payload", "stigma", "execution_signal"})
 AUDIT_DUMP_TABLES = (
     "person_logs", "army_logs", "building_logs", "power_logs", "region_logs",
     "population_transfer_ledger", "investigation_spoiled_facts",
     "office_change_records", "authority_records", "decree_cost_events",
     "dossier_loophole_exposures", "dossier_supervision_presence",
 )
-
-
-def _scan_tree_for_machine_headers(label: str, root: Path) -> None:
-    for path in root.rglob("*"):
-        if not path.is_file():
-            continue
-        text = path.read_text(encoding="utf-8")
-        rel = str(path.relative_to(root))
-        for header in MACHINE_FIELD_HEADERS:
-            if header in text:
-                raise AssertionError(
-                    f"{label}: machine field header {header!r} in material {rel}"
-                )
 
 
 def _assert_history_clean(db, origin: str) -> None:
@@ -80,6 +70,33 @@ def _patch_old_f12(db_mod):
     return orig
 
 
+def _assert_no_machine_keys(value, path: str = "$") -> None:
+    """Walk feed structure; fail if decoded machine keys are present."""
+    if isinstance(value, Mapping):
+        leaked = sorted(MACHINE_INPUT_KEYS & set(value.keys()))
+        if leaked:
+            raise AssertionError(
+                f"machine input keys {leaked} entered material feed at {path}"
+            )
+        for key, item in value.items():
+            _assert_no_machine_keys(item, f"{path}.{key}")
+    elif isinstance(value, (list, tuple)):
+        for i, item in enumerate(value):
+            _assert_no_machine_keys(item, f"{path}[{i}]")
+
+
+def _install_input_structure_guard(materials_mod):
+    """Guard existing renderer inputs — no production export, no prose headers."""
+    orig = materials_mod._material_facts_text
+
+    def guarded(value, indent: str = ""):
+        _assert_no_machine_keys(value)
+        return orig(value, indent)
+
+    materials_mod._material_facts_text = guarded
+    return orig
+
+
 def _active_minister(db) -> str:
     row = db.conn.execute(
         "SELECT name FROM characters WHERE status='active' ORDER BY name LIMIT 1"
@@ -106,6 +123,7 @@ def run(mode: str) -> str:
     tmp = Path(tempfile.mkdtemp(prefix="1834-struct-probe-"))
     db_path = tmp / "probe.db"
     db = None
+    orig_facts = None
     try:
         db = GameDB(str(db_path), content)
         db.seed_static_data()
@@ -118,6 +136,8 @@ def run(mode: str) -> str:
             _patch_old_f12(db_mod)
         elif mode == "old-f12":
             _patch_old_f12(db_mod)
+
+        orig_facts = _install_input_structure_guard(materials_mod)
 
         # Real dossier with decoded machine loads (loyalty bare value inside payload).
         affair = db.affairs.open(
@@ -171,7 +191,6 @@ def run(mode: str) -> str:
         def check(label: str, prepared) -> None:
             root = Path(prepared.root)
             nfiles = sum(1 for p in root.rglob("*") if p.is_file())
-            _scan_tree_for_machine_headers(label, root)
             _assert_history_clean(db, origin)
             _assert_history_clean(db, db.affairs.origin_ref(affair_id))
             print(f"PASS {label} dossier={did} affair={affair_id} files={nfiles}")
@@ -220,6 +239,8 @@ def run(mode: str) -> str:
 
         return "ALL_GREEN"
     finally:
+        if orig_facts is not None:
+            materials_mod._material_facts_text = orig_facts
         if db is not None:
             try:
                 db.close()

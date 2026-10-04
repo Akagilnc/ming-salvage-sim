@@ -160,7 +160,6 @@ describe("ArmyDrawer presentation", () => {
       owner_power: "ming",
     });
 
-    expect(host.textContent).toContain("登莱兵与水师");
     expect(host.textContent).toContain("26000");
     expect(host.textContent).toContain("4万");
     expect(host.textContent).not.toContain("欠饷约60万两，数月军饷");

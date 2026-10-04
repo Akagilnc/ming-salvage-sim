@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """F3 full-repo enum: free-text mechanical dependencies in tests (Python + Web).
 
-Wide scan → human classification. Tags each hit; does not delete.
+Wide scan → classify with classify_f3_disposition.py. Tags each hit; does not delete.
+
+Covers: assert in/==/truthy/len; list/tuple prose equality; vitest
+toContain/toHaveTextContent/toMatch/toBe/toEqual positives and .not. negatives.
 """
 from __future__ import annotations
 
@@ -13,8 +16,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[3]
 SKIP = {".git", ".venv", "venv", "node_modules", "__pycache__", "evidence", "dist", "build"}
 CJK = re.compile(r"[\u4e00-\u9fff]")
-VITEST_POS = re.compile(r"\.(?:toContain|toHaveTextContent|toMatch)\s*\(")
-VITEST_NEG = re.compile(r"\.not\.(?:toContain|toHaveTextContent|toMatch)\s*\(")
+VITEST_POS = re.compile(
+    r"\.(?:toContain|toHaveTextContent|toMatch|toBe|toEqual)\s*\("
+)
+VITEST_NEG = re.compile(
+    r"\.not\.(?:toContain|toHaveTextContent|toMatch|toBe|toEqual)\s*\("
+)
 
 
 def is_prose(s: str) -> bool:
@@ -44,6 +51,16 @@ def lit(node: ast.AST) -> str | None:
     return None
 
 
+def prose_lits_in(node: ast.AST) -> list[str]:
+    out: list[str] = []
+    if isinstance(node, (ast.List, ast.Tuple)):
+        for el in node.elts:
+            s = lit(el)
+            if s is not None and is_prose(s):
+                out.append(s)
+    return out
+
+
 class V(ast.NodeVisitor):
     def __init__(self):
         self.hits: list[tuple[int, str, str]] = []
@@ -54,8 +71,6 @@ class V(ast.NodeVisitor):
         if isinstance(t, ast.Compare) and any(isinstance(op, ast.In) for op in t.ops):
             left_s = lit(t.left)
             right = namey(t.comparators[0]) if t.comparators else ""
-            # Precise material-read carriers (avoid substring traps like
-            # audit_night_direct_writes matching "direct").
             material_body_rhs = (
                 "read_material" in right
                 or "tools[" in right
@@ -64,7 +79,7 @@ class V(ast.NodeVisitor):
                 or right == "blob"
                 or right in {"disk", "direct", "api"}
                 or right.endswith("[fact_rel]")
-                or ("author_files[" in right)  # body lookup author_files[path]
+                or ("author_files[" in right)
             )
             path_rhs = (
                 "author_files" in right
@@ -72,12 +87,13 @@ class V(ast.NodeVisitor):
                 or right.endswith("paths")
                 or "petition_paths" in right
             ) and "author_files[" not in right
-            if left_s is not None and is_prose(left_s):
+            if any(isinstance(op, ast.NotIn) for op in t.ops):
+                self.hits.append((node.lineno, "neg_membership", ast.unparse(t)[:160]))
+            elif left_s is not None and is_prose(left_s):
                 kind = "material_body_prose" if material_body_rhs else "assert_in_prose"
                 self.hits.append((node.lineno, kind, f"{left_s!r} in {right}"))
             elif left_s is None and material_body_rhs:
                 left_n = namey(t.left)
-                # path var in author_files keys → path membership, not body
                 if path_rhs or left_n.endswith(("_rel", "_path", "path", "rel")):
                     self.hits.append(
                         (node.lineno, "path_member_named", f"{left_n} in {right}")
@@ -96,9 +112,7 @@ class V(ast.NodeVisitor):
                 self.hits.append(
                     (node.lineno, "path_member", f"{left_s!r} in {right}")
                 )
-            elif " not in " in ast.unparse(t) or any(isinstance(op, ast.NotIn) for op in t.ops):
-                self.hits.append((node.lineno, "neg_membership", ast.unparse(t)[:160]))
-        # == prose
+        # == prose (scalar or list/tuple of prose)
         if isinstance(t, ast.Compare) and any(isinstance(op, ast.Eq) for op in t.ops):
             for side in [t.left, *t.comparators]:
                 s = lit(side)
@@ -121,6 +135,15 @@ class V(ast.NodeVisitor):
                     )
                     kind = "structured_field_eq_prose" if structured else "assert_eq_prose"
                     self.hits.append((node.lineno, kind, f"{other} == {s!r}"))
+                for ps in prose_lits_in(side):
+                    other = namey(t.left if side is not t.left else t.comparators[0])
+                    self.hits.append(
+                        (
+                            node.lineno,
+                            "assert_list_eq_prose",
+                            f"{other} == [... {ps!r} ...]",
+                        )
+                    )
         # truthy / len on body-ish
         if isinstance(t, ast.Call) and isinstance(t.func, ast.Name) and t.func.id == "len":
             arg = namey(t.args[0]) if t.args else "?"
@@ -154,34 +177,35 @@ def scan_vitest(path: Path) -> list[tuple[int, str, str]]:
             continue
         if VITEST_POS.search(line):
             m = re.search(
-                r"""(?:toContain|toHaveTextContent|toMatch)\(\s*(['"`])(.*?)\1""",
+                r"""(?:toContain|toHaveTextContent|toMatch|toBe|toEqual)\(\s*(['"`])(.*?)\1""",
                 line,
             )
             lit_s = m.group(2) if m else ""
+            matcher = "toBe" if ".toBe(" in line or ".toEqual(" in line else "toContain"
             gazetteish = any(
                 k in path.name.lower()
                 for k in ("gazette", "situation", "settlement", "modal", "durable")
             )
             if is_prose(lit_s):
-                kind = "vitest_pos_prose_gazetteish" if gazetteish else "vitest_pos_prose"
+                if matcher == "toBe":
+                    kind = "vitest_eq_prose"
+                else:
+                    kind = (
+                        "vitest_pos_prose_gazetteish"
+                        if gazetteish
+                        else "vitest_pos_prose"
+                    )
             else:
                 kind = "vitest_pos"
             hits.append((i, kind, line.strip()[:200]))
     return hits
 
 
-def main() -> int:
-    print("==== F3 FULL ENUM (free-text mechanical asserts) ====")
-    print(f"ROOT={ROOT}")
-    hits = 0
-    material_body = 0
+def iter_hits():
     for path in sorted((ROOT / "tests").rglob("*.py")):
         rel = str(path.relative_to(ROOT))
         for lineno, kind, detail in scan_py(path):
-            print(f"{rel}:{lineno}:{kind}:{detail}")
-            hits += 1
-            if kind.startswith("material_body"):
-                material_body += 1
+            yield rel, lineno, kind, detail
     web = ROOT / "web"
     if web.exists():
         for path in sorted(web.rglob("*.test.*")):
@@ -189,8 +213,19 @@ def main() -> int:
                 continue
             rel = str(path.relative_to(ROOT))
             for lineno, kind, detail in scan_vitest(path):
-                print(f"{rel}:{lineno}:{kind}:{detail}")
-                hits += 1
+                yield rel, lineno, kind, detail
+
+
+def main() -> int:
+    print("==== F3 FULL ENUM (free-text mechanical asserts) ====")
+    print(f"ROOT={ROOT}")
+    hits = 0
+    material_body = 0
+    for rel, lineno, kind, detail in iter_hits():
+        print(f"{rel}:{lineno}:{kind}:{detail}")
+        hits += 1
+        if kind.startswith("material_body"):
+            material_body += 1
     print(f"==== F3 MATERIAL_BODY_POSITIVE_COUNT={material_body} ====")
     print(f"==== F3 HIT_COUNT={hits} ====")
     return 0

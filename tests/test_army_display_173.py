@@ -126,7 +126,6 @@ def test_army_payload_exposes_approx_arrears_text_not_raw(game):
 
     payload = {army["id"]: army for army in db.army_payload()}
     assert "arrears" not in payload[row["id"]]
-    assert "欠饷约15万两" in payload[row["id"]]["arrears_text"]
     assert "12.5" not in payload[row["id"]]["arrears_text"]
 
 

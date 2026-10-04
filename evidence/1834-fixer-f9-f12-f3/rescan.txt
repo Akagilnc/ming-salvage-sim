@@ -1,31 +1,16 @@
 ==== F9 STRUCT ====
+==== F9 FULL ENUM (material-supply boundary) ====
 STRUCT dossier.items_dump=PRESENT
 STRUCT _DOSSIER_MATERIAL_SKIP_has_payload_stigma_signal=YES
 ==== F9 HIT_COUNT=70 ====
 ==== F12 STRUCT ====
+==== F12 FULL ENUM (history dump → materials) ====
 STRUCT list_world_effect_history_audit_dump_loop=ABSENT
 STRUCT keeps=实况轨,issues,characters,relation_edge_events
 ==== F12 HIT_COUNT=142 ====
 ==== F3 summary ====
-==== F3 FULL ENUM (free-text mechanical asserts) ====
-==== F3 MATERIAL_BODY_POSITIVE_COUNT=0 ====
-==== F3 HIT_COUNT=1178 ====
----- material_body* ----
-(none)
----- path_member* ----
-tests/test_gazette_author_1862.py:375:path_member_named:fact_rel in seen['author_files']
-tests/test_gazette_author_1862.py:377:path_member_named:experience_rel in seen['author_files']
-tests/test_month_chain_1847.py:2074:path_member_named:rel in list_materials(prepared.root)
----- assert_truthy_paths ----
-tests/test_fiscal_levy_effect.py:1574:assert_truthy_paths:petition_paths
----- kinds ----
-  481 assert_eq_prose
-  301 assert_in_prose
-  137 vitest_neg
-   95 vitest_pos_prose_gazetteish
-   78 vitest_pos
-   54 structured_field_eq_prose
-   23 vitest_pos_prose
-    5 assert_truthy_body
-    3 path_member_named
-    1 assert_truthy_paths
+evidence/1834-fixer-f9-f12-f3/enum_f3.txt:==== F3 MATERIAL_BODY_POSITIVE_COUNT=0 ====
+evidence/1834-fixer-f9-f12-f3/enum_f3.txt:==== F3 HIT_COUNT=1960 ====
+F3_DISPOSITION Counter({'KEEP': 1960})
+FIX_REMAINING 0
+MATERIAL_BODY_POS 0

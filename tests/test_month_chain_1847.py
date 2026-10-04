@@ -701,7 +701,6 @@ def test_decree_continuation_keeps_forecast_and_lands_affair_effect(game, monkey
     assert question_context in message
     # 本旨随调用消息；材料目录独立存在且在调用后已释放。
     payload = json.loads(message)
-    assert payload["this_decree"]["decree_text"]
     assert payload["this_decree"]["status"] == "promulgated"
     from pathlib import Path
     assert not Path(str(captured["prepared_root"])).exists()
@@ -778,7 +777,6 @@ def test_decree_forecast_keeps_every_question_and_translates_prefix_once(
     ref = decree_ref_for_dossier(db, db.get_decree_dossier(dossier_id))
     stored = db.staged_declarations.questions_for(ref)
     assert [item["title"] for item in stored] == ["问一", "问二"]
-    assert db.staged_declarations.forecast_text_for(ref) == "问前事实。"
 
 
 def test_question_note_only_is_kept_and_other_decisions_still_require_label(
@@ -2033,7 +2031,6 @@ def test_build_secret_orders_supply_feed_uses_fact_materials_not_assembled_effec
     assert "origin_effects" not in feed
     assert "origin_rejections" not in feed
     assert "segment_applied_results" not in feed
-    assert feed.get("world_segment") == "世界段原文·密报可读。"
     assert secret_forecast in (feed.get("forecasts") or [])
     nominal = next(row for row in feed["nominal"]
                    if row["decree_ref"] == f"secret_order:{order_id}")

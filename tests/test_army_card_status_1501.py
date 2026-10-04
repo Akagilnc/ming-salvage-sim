@@ -178,7 +178,6 @@ def test_army_report_keeps_row_status(read_game):
     seed_status = _guanning_db_status(db)
     report = db.army_report(limit=20)
     assert seed_status in report, "army_report 须保留 DB status 原句"
-    assert "欠饷严重" in report
     _assert_text_keeps_statuses(
         report, _danger_top_statuses(db, 20), "army_report(limit=20)"
     )
@@ -210,7 +209,6 @@ def test_shared_consumers_still_surface_status(read_game):
     # 4) army_detail → 真实详情缝（关宁全量，必含 seed status）
     detail = db.army_detail(_GUANNING_ID)
     assert seed_status in detail, f"army_detail 缺关宁 status\n{detail!r}"
-    assert "欠饷严重" in detail
 
     # 5) army_roster → 真实名册缝（全表，含各军 status）
     roster = db.army_roster()

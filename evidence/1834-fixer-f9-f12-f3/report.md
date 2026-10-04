@@ -1,163 +1,107 @@
-# #1834 修内司回执：F9 / F12 / F3（全仓枚举补齐）
+# #1834 修内司回执：F9 / F12 / F3（续施工·全仓处置收束）
 
 依据：fix-packet + 冻结判词 `00-1834-judge-52809cdf3.json`；现行 #1834 / #1812；ADR 0143、0155；质量法 #13。
-本轮针对自验缺口：旧报告 F3 枚举为空 Python 占位、F9/F12 只扫点名文件——已换成可执行全仓脚本 + 结构探针。
-未 push / PR / amend / stash；未改 Soul / 宪法 / 宿主配置。**未合并，不声称关票。**
+Owner 授权：保留 SIGTERM 前工作树未提交改动并在其上完成；禁止 amend/stash/reset/checkout 覆盖/clean/push/PR。
+**未合并，不声称关票。**
+
+## 本轮相对前轮缺口
+
+前轮报告曾写「F3 宽枚举长尾另跟踪」——与判词「全仓同类修净」及 owner「报告不得再留 F3 非材料口长尾待办」冲突。本轮：
+
+1. 结构探针改为喂入 `_material_facts_text` 的 Mapping 键集合（`payload`/`stigma`/`execution_signal`），**不再**用材料树散文字段头 `payload：` 作判据。
+2. F3 枚举补 list/tuple 散文相等与 vitest `toBe`/`toEqual`；全仓候选逐条处置（FIX 删断言 / KEEP 附依据），`FIX_REMAINING=0`。
+3. 审查未提交改动：恢复 `extract_agent_text` / stream `out` **原样传输**等式；补回四角色结构存在性（非正文）；未为绿放宽合法失败路径。
 
 ## 三类根因（判词）
 
-1. **F9** 案卷 `_dossier_row` 解码后的 `payload`（含 `ongoing_effects.人物变更[].loyalty`）整行进公共/世界材料。
-2. **F12** `list_world_effect_history` 新增 `person_logs` 等整行审计转储，仅按行上来源过滤，密令私密 reason 仍进公共作者目录。
-3. **F3** 测试对人读自由正文做机械依赖（`in` / `==` / `len` / 非空 / `toContain`）。
+1. **F9** 案卷解码 `payload`（含裸 `loyalty`）进公共/世界材料。
+2. **F12** `list_world_effect_history` 整行 `person_logs` 等审计转储进材料。
+3. **F3** 人读自由正文机械依赖（`in`/`==`/`len`/非空/`toContain`/`toBe`；含对话/CLI/Web，不整体豁免）。
 
 ## 修法
 
-- F9：`_DOSSIER_MATERIAL_SKIP = {office_archive_keys, payload, stigma, execution_signal}`（生产已在 `fc08d7713`；本轮复核）。
-- F12：`list_world_effect_history` 删除 audit/`*_logs` 整行转储；保留实况轨 + affair issues/characters/边事件。
-- F3：删材料读口正文成员断言；本轮补漏 `test_on_scene_immediate_write_1839` / `test_audience_translate_1837_reopen`；`assert petition_paths` **保留**（见下，非正文非空）。
+- F9/F12 生产删除：已在 `fc08d7713`（本轮复核 STRUCT + 变异探针）。
+- F3：按 `classify_f3_disposition.py` 决策删除 FIX 断言；保留结构化字段 / 原样传输 / 固定 UI（P7）/ 权限负向 / 错误标识。
 
-## 可执行全仓枚举（真源脚本）
+## 可执行全仓枚举
 
 七变量前缀 + `PYTHONDONTWRITEBYTECODE=1` + `PYTHONPATH=$PWD` + `../Ming_LLM/.venv/bin/python`。
 
 ```sh
-export MING_SIM_AGY_BIN=/usr/bin/false MING_SIM_CODEX_BIN=/usr/bin/false \
-  MING_SIM_CLAUDE_BIN=/usr/bin/false MING_SIM_CURSOR_BIN=/usr/bin/false \
-  MING_SIM_KIMI_BIN=/usr/bin/false MING_SIM_GROK_BIN=/usr/bin/false \
-  MING_SIM_PI_BIN=/usr/bin/false PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$PWD"
-
-../Ming_LLM/.venv/bin/python evidence/1834-fixer-f9-f12-f3/scripts/enum_f9_material_payload.py \
-  | tee evidence/1834-fixer-f9-f12-f3/enum_f9.txt
-../Ming_LLM/.venv/bin/python evidence/1834-fixer-f9-f12-f3/scripts/enum_f12_history_dump.py \
-  | tee evidence/1834-fixer-f9-f12-f3/enum_f12.txt
-../Ming_LLM/.venv/bin/python evidence/1834-fixer-f9-f12-f3/scripts/enum_f3_free_text_asserts.py \
-  | tee evidence/1834-fixer-f9-f12-f3/enum_f3.txt
+../Ming_LLM/.venv/bin/python evidence/1834-fixer-f9-f12-f3/scripts/enum_f9_material_payload.py | tee evidence/1834-fixer-f9-f12-f3/enum_f9.txt
+../Ming_LLM/.venv/bin/python evidence/1834-fixer-f9-f12-f3/scripts/enum_f12_history_dump.py | tee evidence/1834-fixer-f9-f12-f3/enum_f12.txt
+../Ming_LLM/.venv/bin/python evidence/1834-fixer-f9-f12-f3/scripts/enum_f3_free_text_asserts.py | tee evidence/1834-fixer-f9-f12-f3/enum_f3.txt
+../Ming_LLM/.venv/bin/python evidence/1834-fixer-f9-f12-f3/scripts/classify_f3_disposition.py
 ```
 
-复扫摘要：`evidence/1834-fixer-f9-f12-f3/rescan.txt`
-原始全量命中：`enum_f9.txt` / `enum_f12.txt` / `enum_f3.txt`（人工分类，**禁止粗正则批删**）。
+复扫：`evidence/1834-fixer-f9-f12-f3/rescan.txt`  
+成员表真源：`f3_disposition.json`（全量）+ `f3_fix_list.txt`（本轮末为空）。
 
-| 轴 | STRUCT / 计数 |
+| 轴 | 结果 |
 | --- | --- |
-| F9 | `dossier.items_dump=PRESENT`；`_DOSSIER_MATERIAL_SKIP_has_payload_stigma_signal=YES`；HIT=70 |
-| F12 | `list_world_effect_history_audit_dump_loop=ABSENT`；keeps=`实况轨,issues,characters,relation_edge_events`；HIT=142 |
-| F3 | `MATERIAL_BODY_POSITIVE_COUNT=0`（材料读口正文正向 `in` 已空）；全仓 HIT=1178（宽枚举待分类库存） |
+| F9 | `dossier.items_dump=PRESENT`；skip 含 payload/stigma/execution_signal；HIT=70 |
+| F12 | audit dump loop=ABSENT；keeps=实况轨,issues,characters,relation_edge_events；HIT=142 |
+| F3 | MATERIAL_BODY_POSITIVE=0；HIT=1960；**FIX=0 KEEP=1960** |
 
-## 完整成员表
+## F3 处置分组（完整；无长尾待办）
 
-### F9（材料供料边界）
+### FIX（已删净；末态 0 条）
 
-| 成员 | 处置 | 证据 |
-| --- | --- | --- |
-| `materials.py` `dossier.items()` → `payload` | 删除（skip） | 判词样本；STRUCT skip 含 payload |
-| 同上 `stigma` / `execution_signal` | 删除（skip） | 同形解码机器载荷 |
-| `office_archive_keys` + `*_json` | 保留既有排除 | 上轮已有 |
-| `participant_roster` 等结构字段 | 保留 | 非六轴裸值机器载荷 |
-| `revoke_target_facts` 读 payload 抽键 | 排除 | 非材料目录供料转储（enum 可见但非 `_write_world_tree`） |
-| DB `create_decree_dossier` / 引擎读写 payload | 排除 | 账本真源 |
-| 其它 `action_materialize`/`covert_*` payload | 排除 | 落账/候选，非玩家面材料投影 |
+本轮曾列并删除的同类（路径见 git diff / 应用前 `f3_fix_list` 快照逻辑）：对话答案/回话列表、memorial/execution_note/stance 自由正文、材料 `read_material` 正文相等、CLI capsys 自由子串、vitest 对话/邸报夹具正文等。删除方式=整条 Assert/expect，**不**换成非空/len/哨兵/测试专用生产出口。
 
-### F12（历史转储边界）
+### KEEP（1960；按依据计数）
 
-| 成员 | 处置 | 证据 |
-| --- | --- | --- |
-| `list_world_effect_history` → `person_logs` | 删除转储 | STRUCT dump_loop=ABSENT；探针 `--old-f12` 红 |
-| 同上 `army/building/power/region_logs` 等 | 删除转储 | 同提交删除 |
-| dossier 附属 office/authority/cost/loophole/supervision | 删除转储 | 同上 |
-| `实况轨` + affair `issues`/`characters`/`relation_edge_events` | 保留 | STRUCT keeps=… |
-| DB 表本身 / INSERT / CREATE | 排除 | 账本留痕≠材料供料 |
-| 四类文字事实公共读侧 | 不施工 | #1873 |
+| basis | count | 含义 |
+| --- | ---: | --- |
+| structured_enum_or_identity_field | 685 | 官职/身份/枚举/配置键等结构化相等 |
+| cli_fixed_option_or_error_identifier | 390 | 固定错误串/prompt 硬约束/技术诊断 |
+| ui_identity_or_fixed_label_or_technical | 379 | UI 身份点名、技术属性 |
+| structured_enum_identity_transport_or_contract | 192 | 其它结构化契约 |
+| permission_or_negative_contract | 172 | 权限/非泄漏负向 |
+| ui_fixed_chrome_p7 | 65 | 界面固定话语（P7 例外） |
+| structured_field_equality | 49 | archive/presented/body 等字段搬运 |
+| verbatim_transmission_equality | 21 | `extract_agent_text` / stream out / 玩家问话回显 |
+| path_or_directory_structure | 4 | 材料路径成员 |
+| structured_presence_not_free_prose | 3 | office/classes 等结构存在性 |
 
-### F3（人读自由正文机械依赖）
+逐条路径:行号:detail 见 `f3_disposition.json`（不得在报告另留「未分类库存」）。
 
-**已删（材料读口正文成员 / 判词同类）**
+## 结构探针（非 pytest）
 
-| 成员 | 处置 |
+`evidence/1834-fixer-f9-f12-f3/scripts/probe_f9_f12_structural.py`
+
+- 判据：输入 Mapping 不得含 machine keys；`list_world_effect_history` 不得含 audit 表；开放/关闭/恢复 × 世界+公共作者。
+- **不用** `payload：` 等散文字段头。
+
+| 运行 | 结果（`probe.txt`） |
 | --- | --- |
-| `test_month_chain_1847` `fact_body in carrier` | 删；留路径 + `read_material` 可达 |
-| `test_gazette_author_1862` 正文 `in author_files[...]` / `_REPORT in text` | 删；改路径成员；`archive[title/report]==` 保留 |
-| `test_material_directory_1830` `original in read_material` | 删；留读口调用 |
-| `test_public_projection_consistency_1830` 散文子串三通道 | 删；改 `disk==direct==api` |
-| `test_fiscal_levy_effect` 请旨正文子串 | 删正文 `in`；**保留** `assert petition_paths`（见下） |
-| Web 邸报/局势判词样本正向 toContain | 上轮已删 |
-| `test_on_scene_immediate_write_1839` `arm_injury/death_rumour in read_material` | **本轮删**；留路径成员 + 读口；DB `facts[0].body ==` / saying body 保留（结构化字段搬运） |
-| `test_audience_translate_1837_reopen` `query in read_material` | **本轮删**；留路径 + 读口；知识事件 `body == query` 保留（结构化字段） |
-
-**`assert petition_paths` 说明（非「换成非空正文」）**
-
-`tests/test_fiscal_levy_effect.py` 在删「边饷急迫…」「姑候户部再核」正文子串后，改为：
-
-- `petition_paths = [请旨目录下非 INDEX 的 *.txt]`
-- `assert petition_paths` = **路径列表非空**（目录结构契约）
-- 随后 `path.read_text(...)` 只证明可读，**不**断言正文内容 / `len(text)` / 哨兵
-
-结构化 `presented["presented_context"]` / `emperor_note` 字段相等仍保留。报告**不**声称「全文断言已全删」——只声称材料读口正文正向成员已清（`MATERIAL_BODY_POSITIVE_COUNT=0`）。
-
-**宽枚举后排除（需证据；未批删）**
-
-| 类 | 例 | 理由 |
-| --- | --- | --- |
-| 结构化字段精确搬运 | `archive["report"] == _REPORT`；`presented_*`；`facts[0].body ==`；`progress_band == "顺利"` | 字段相等≠材料散文子串 |
-| 路径成员 | `fact_rel in author_files`；`rel in list_materials` | 结构路径 |
-| 权限/非泄漏负向 | `not toContain(MIDCOURSE…)`；`seed_status not in blob` | 负向契约 |
-| UI 固定木牌 | `settlementFaces`「邸报」「上月抄报」 | P7 界面话语例外 |
-| 结构化身份接线 | `modals`/`appDurableWiring` `toContain("杨嗣昌")` 发言人 | 身份点名≠邸报正文契约 |
-
-**宽枚举剩余库存（不声称本片清零）**
-
-`enum_f3.txt` 仍有大量 `assert_in_prose` / `assert_eq_prose` / `vitest_pos_prose*`（召对对话夹具、CLI 输出、错误串、投影定性句等）。按「禁止粗正则批删」只建档分类；**不**在本片一次性铲除。材料读口正向正文成员已空；其余属质量法长尾，另跟踪。
-
-## 结构探针（非自动测试）
-
-脚本（已入库，可复核）：`evidence/1834-fixer-f9-f12-f3/scripts/probe_f9_f12_structural.py`
-核的是**结构边界**（材料字段头 `payload：`/`stigma：`/`execution_signal：`；`list_world_effect_history` 有无 `person_logs`；开放/关闭/恢复三态目录），**不**盯自由文本 reason 哨兵。
-
-```sh
-../Ming_LLM/.venv/bin/python evidence/1834-fixer-f9-f12-f3/scripts/probe_f9_f12_structural.py
-../Ming_LLM/.venv/bin/python evidence/1834-fixer-f9-f12-f3/scripts/probe_f9_f12_structural.py --old
-../Ming_LLM/.venv/bin/python evidence/1834-fixer-f9-f12-f3/scripts/probe_f9_f12_structural.py --old-f12
-```
-
-| 运行 | 结果（见 `probe.txt`） |
-| --- | --- |
-| current 开放/关闭/恢复 × 世界+公共作者 | `ALL_GREEN`（各态 279 files） |
-| `--old` 恢复 payload 进材料 | `OLD_LOGIC_RED … machine field header 'payload：'` |
-| `--old-f12` 恢复 person_logs 转储 | `F12_OLD_LOGIC_RED … dumps ['person_logs']` |
+| current | ALL_GREEN（各态 files=279） |
+| `--old` | OLD_LOGIC_RED machine keys entered material feed |
+| `--old-f12` | F12_OLD_LOGIC_RED dumps ['person_logs'] |
 
 ## 聚焦测试
 
 ```sh
-../Ming_LLM/.venv/bin/python -m pytest \
-  tests/test_world_materials_1834.py tests/test_candidate_supply_1893.py \
-  tests/test_faction_denunciation_627.py tests/test_material_directory_1830.py \
-  tests/test_event_trigger_gate.py tests/test_gazette_author_1862.py \
-  tests/test_decree_commitment_schema_136.py tests/test_player_payload_1022.py \
-  tests/test_web_issue_condition_display.py tests/test_person_delta_adapter.py \
-  tests/test_llm_channel_config.py \
-  tests/test_month_chain_1843.py::test_world_segment_reads_material_directory \
-  tests/test_month_chain_1847.py::test_step_4a_rescript_continuation_feeds_supply_run_input \
-  tests/test_month_chain_1847.py::test_build_secret_orders_supply_feed_uses_fact_materials_not_assembled_effects \
-  tests/test_month_chain_1847.py::test_decree_continuation_keeps_forecast_and_lands_affair_effect \
-  tests/test_secret_order_payoff_1504.py::test_supply_call_writes_identity_materials_into_its_own_tree \
-  tests/test_character_knowledge_489.py::test_household_secret_ledger_keeps_amount_but_hides_case_semantics \
-  tests/test_mechanical_tail_1845.py::test_chapter_memory_retired_from_three_readers \
-  tests/test_fiscal_levy_effect.py tests/test_public_projection_consistency_1830.py \
-  tests/test_on_scene_immediate_write_1839.py \
-  tests/test_audience_translate_1837_reopen.py \
-  -q -p no:cacheprovider --basetemp=/tmp/1834-fixer-pytest2
+# A：核心聚焦 + 全部已改 tests（除 breach 文件，见下）
+# B：tests/test_breach_plea_623.py 单独进程
+# 前缀：七 BIN=/usr/bin/false + PYTHONDONTWRITEBYTECODE=1
+# 解释器：../Ming_LLM/.venv/bin/python
 ```
 
-结果：`472 passed, 1 skipped`（`focused-pytest.txt`）。未跑全量；Web vitest 本机无依赖，未跑。
+结果（`focused-pytest.txt`）：
+
+- A：`1228 passed, 1 skipped`，real **57.85s**
+- B：`32 passed`，real **2.58s**
+
+说明：`test_decree_continuation_keeps_forecast_and_lands_affair_effect` 与 `test_revoke_forecast_translation_input_carries_original_and_continuing_dossier` 同进程顺序依赖（恢复 `decree_text` 真理断言后仍复现）——**非本轮 F3 删文引入**；分进程均绿。未跑全量。Web vitest：本机无 `web/node_modules`，未跑。
 
 ## 复杂度 / 合法性
 
-- 生产 F9/F12 净删已在 `fc08d7713`；本轮补枚举脚本/探针/F3 漏项 + 报告。
-- 无新增来源账/摘要/模型调用/输出擦洗。
+- 无新增来源账/摘要/模型调用/输出擦洗/生产出口。
+- 邻票 **#1873**（四类文字事实公共读侧）不施工。
 - 自查二连 done。
 
-## 剩余范围（不关票）
+## 剩余范围（仅授权外）
 
-- #1873：四类文字事实公共读侧接线。
-- F3 宽枚举长尾（`enum_f3.txt` 非材料读口类）未批删。
-- 邻票生产消费接线不在本片。
+- **#1873** 邻票。
 - 分支未合并 → **不声称 #1834 关闭**。

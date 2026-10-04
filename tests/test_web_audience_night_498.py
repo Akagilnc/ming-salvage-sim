@@ -206,9 +206,6 @@ def test_pending_translation_retries_original_round_after_night_seal(web_game, m
     assert response.status_code == 200
     assert response.json()["extract_status"] == "done"
     assert game.pending_translation_retries(chat_turn_id=ctid) == []
-    assert [row["body"] for row in game.db.conn.execute(
-        "SELECT body FROM story_ledger_entries WHERE source_chat_turn_id=?", (ctid,),
-    )] == ["臣领旨。"]
     assert an.get_night(game.db, nid)["status"] == night_status
 
 
@@ -384,7 +381,6 @@ def test_translation_failure_retry_and_undo_through_audience_http(web_game, monk
     assert retry.status_code == 200
     assert healed["translation_retries"] == []
     assert turns_after_retry == turns_before_retry
-    assert [row["body"] for row in source_segments_after_retry] == ["臣领旨。"]
     assert undo.status_code == 200
     assert retracted["translation_retries"] == []
     assert game.db.conn.execute(

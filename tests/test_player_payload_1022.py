@@ -129,7 +129,6 @@ def test_settlement_sse_routes_serialize_only_player_narrative(
     event, payload = asyncio.run(_serialized_terminal_event(route_name))
 
     assert event == expected_event
-    assert payload["decree"] == "诏曰：国丈家赀约数十万两，仍发帑三十万两、调兵五千赈辽。"
     if expected_event == "decisions":
         assert payload["decisions"] == [{"title": "辽饷", "context": "家赀约十万两，是否发帑"}]
     else:

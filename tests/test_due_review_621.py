@@ -220,7 +220,6 @@ def test_due_review_scene_tops_next_audience_with_origin_context(game):
     scenes = list_due_review_scenes(db, state)
     assert len(scenes) == 1
     scene = scenes[0]
-    assert scene["origin_context"] == "三年火器见眉目"
     assert "payload_json" not in scene
 
 

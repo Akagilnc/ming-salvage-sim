@@ -378,7 +378,6 @@ def test_due_commitment_shaped_submit_does_not_poison_or_deadlock(web_game, monk
     assert decided_row['status'] == 'decided'
     stored_choice = decided_row['choice'] or {}
     assert stored_choice.get('label') == '准其销号'
-    assert stored_choice.get('note') == '准销。'
     assert not stored_choice.get('dossier_decision')
 
 def test_lying_label_rebuilt_from_server_option(web_game, monkeypatch):
@@ -404,7 +403,6 @@ def test_lying_label_rebuilt_from_server_option(web_game, monkeypatch):
     assert choice.get('dossier_decision') == 'force_promulgated'
     assert choice.get('label') == '强颁', choice
     assert choice.get('hint') == '以中旨强行颁出', choice
-    assert choice.get('note') == '准。先济关宁边饷。'
 
 def test_parse_rescript_capability_pair_rejects_non_positive_and_unknown():
     """#1494 共享校验器：正整数 id + 支持动作枚举；其余一律 None。"""
@@ -500,7 +498,6 @@ def test_ordinary_event_with_hallucinated_capability_submits(web_game, monkeypat
     assert decided['status'] == 'decided'
     stored = decided['choice'] or {}
     assert stored.get('label') == '准其销号'
-    assert stored.get('note') == '准销。'
     assert not stored.get('dossier_decision')
 _ROSTER_LEAD = '毕自严'
 _ROSTER = [{'character_id': _ROSTER_LEAD, 'tier': '主办', 'role': '总核', 'delegator_id': None}]
@@ -2012,7 +2009,6 @@ def test_657_default_hold_preserves_red_pen_note(game):
     batch = ra.validate_all([urgent], [{'decision_key': key, 'note': '着再议。'}], default_hold_missing=True)
     assert key in batch.default_hold_keys
     assert batch.items[0].choice.get('action') == 'hold'
-    assert batch.items[0].choice.get('note') == '着再议。'
 
 def test_657_appointment_name_target_id_conflict_batch_reject(game):
     """⑥ appointment/dismiss name≠target_id 在 mapper 单一边界整批拒绝。"""

@@ -1415,11 +1415,8 @@ def test_wuyin_lubian_content_treats_lu_death_as_soft_battle_outcome():
     songshan = next(item for item in events if item["id"] == "songshan_battle")
 
     assert "殉国" not in wuyin["title"]
-    assert "本局按盘面软判" in wuyin["summary"]
     assert "卢象升得" not in wuyin["resolve_condition"]
     assert "卢象升孤军战死" not in wuyin["fail_condition"]
-    assert "卢象升生死由软判" in wuyin["precondition"]
-    assert "本局按盘面软判援锦主帅" in songshan["summary"]
     assert "洪承畴率" not in songshan["summary"]
     assert "洪承畴稳" not in songshan["resolve_condition"]
     assert "洪承畴降金" not in songshan["fail_condition"]

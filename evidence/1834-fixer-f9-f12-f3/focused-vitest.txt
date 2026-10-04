@@ -1,1 +1,1 @@
-(eval):3: no such file or directory: ./node_modules/.bin/vitest
+web/node_modules absent; vitest skipped
