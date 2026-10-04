@@ -193,6 +193,6 @@ env MING_SIM_AGY_BIN=/usr/bin/false MING_SIM_CODEX_BIN=/usr/bin/false \
 
 ## 交卷 HEAD
 
-- 代码修提交（修面 HEAD）：
-- 报告提交：本文件随后独立 docs commit；tip 以 edb3760324a46295eb28ead69706151b2b806526 为准。
-- 验证：edb3760324a46295eb28ead69706151b2b806526；?? artifacts/1897-fixer-f1-f3-report.md 应交空。
+- 代码修提交（修面 HEAD）：`edb3760324a46295eb28ead69706151b2b806526`
+- 报告/tip：以交卷后 `git rev-parse HEAD` 为准（本段修复后另有 docs commit，不冒充修面）。
+- 验证命令：`git rev-parse HEAD`；`git rev-parse edb376032`；`git status --porcelain=v1` 应交空。
