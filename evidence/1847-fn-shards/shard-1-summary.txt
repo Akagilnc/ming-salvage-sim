@@ -1,0 +1,1 @@
+Shard-1 audit covered 248 members across 118 function groups. Dispositions: KEEP_identity_or_formal=179, KEEP_structural=33, KEEP_empty_check=29, KEEP_transport=6, FIX=1, NEEDS_HUMAN=0. FIX list: ming_sim/issues.py:3271:_normalize_cancellable.

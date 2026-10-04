@@ -1,0 +1,21 @@
+shard-7-decisions summary (N6/N10 remainder audit r2)
+total_members=120
+
+disposition_counts:
+  FIX: 8
+  KEEP_empty_check: 17
+  KEEP_field_ref: 13
+  KEEP_identity_or_formal: 38
+  KEEP_structural: 21
+  KEEP_transport: 23
+
+FIX_count=8
+FIX_list:
+  web/src/components/map.tsx:694 <module> (split_call) — source=region.name display string → sink=map label drops post-/ segment; delete split(' / ')[0] truncation
+  web/src/components/map.tsx:707 <module> (split_call) — source=region.name display string → sink=map label drops post-/ segment; delete split(' / ')[0] truncation
+  web/src/components/map.tsx:741 <module> (split_call) — source=region.name display string → sink=map label drops post-/ segment; delete split(' / ')[0] truncation
+  ming_sim/office_rank.py:68 _match_rank_rule (in_compare) — source=office title text → sink=rank rule via substring stem match; delete token-not-in-text stem walk (use exact title registry)
+  scripts/secret_order_probe2.py:61 main (str_in_compare) — source=gazette paragraph text → sink=stdout filter; delete 密旨/曹化淳/… substring admission loop
+  scripts/secret_order_probe2.py:61 main (in_compare) — source=gazette paragraph text → sink=stdout filter; delete 密旨/曹化淳/… substring admission loop
+  ming_sim/context.py:398 match_minister_from_text (in_compare) — source=cleaned free text → sink=minister pick via name-in-substring tie-break; delete name-in-cleaned disambiguation
+  ming_sim/db.py:742 _office_type_from_table (in_compare) — source=office title text → sink=office_type via stem substring; delete stem-in-text priority walk

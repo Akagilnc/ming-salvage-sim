@@ -1,0 +1,121 @@
+lens	file	line	fn	kind	disposition	reason	source_field	sink_contract
+N10	ming_sim/issues.py	2711	event_to_issue	membership_compare	KEEP_identity_or_formal	source=ev.kind → sink=ongoing/inertia defaults; closed EVENT kind enum (天灾/灾情/饥荒)	ev.kind	event_kind_ongoing_template
+N10	ming_sim/issues.py	2714	event_to_issue	membership_compare	KEEP_identity_or_formal	source=ev.kind → sink=ongoing/inertia defaults; closed EVENT kind enum (人祸/兵变/流寇/民变/抗税)	ev.kind	event_kind_ongoing_template
+N10	ming_sim/issues.py	2717	event_to_issue	membership_compare	KEEP_identity_or_formal	source=ev.kind → sink=ongoing/inertia defaults; closed EVENT kind enum (外族/边事)	ev.kind	event_kind_ongoing_template
+N10	ming_sim/issues.py	2720	event_to_issue	membership_compare	KEEP_identity_or_formal	source=ev.kind → sink=ongoing/inertia defaults; closed EVENT kind enum (党争/朝议)	ev.kind	event_kind_ongoing_template
+N10	ming_sim/issues.py	2723	event_to_issue	membership_compare	KEEP_identity_or_formal	source=ev.kind → sink=ongoing/inertia defaults; closed EVENT kind enum (丰收/祥瑞/民和)	ev.kind	event_kind_ongoing_template
+N10	ming_sim/issues.py	2727	event_to_issue	membership_compare	KEEP_identity_or_formal	source=ev.kind → sink=ongoing/inertia defaults; closed EVENT kind enum (友邦/归附/盟约)	ev.kind	event_kind_ongoing_template
+N10	ming_sim/issues.py	2731	event_to_issue	membership_compare	KEEP_identity_or_formal	source=ev.kind → sink=ongoing/inertia defaults; closed EVENT kind enum (良策/试点/献宝/科技)	ev.kind	event_kind_ongoing_template
+N10	ming_sim/issues.py	2734	event_to_issue	membership_compare	KEEP_identity_or_formal	source=ev.kind → sink=ongoing/inertia defaults; closed EVENT kind enum (战机/敌乱)	ev.kind	event_kind_ongoing_template
+N10	ming_sim/issues.py	2711	event_to_issue	in_compare	KEEP_identity_or_formal	source=ev.kind → sink=ongoing/inertia defaults; closed EVENT kind enum (天灾/灾情/饥荒)	ev.kind	event_kind_ongoing_template
+N10	ming_sim/cli_backend.py	330	_infer_tag	str_in_compare	KEEP_transport	source=prompt → sink=trace tag; function del prompt returns constant other (no wording→tag classify)	prompt	trace_tag_constant_other
+N10	ming_sim/cli_backend.py	334	_infer_tag	str_in_compare	KEEP_transport	source=prompt → sink=trace tag; function del prompt returns constant other (no wording→tag classify)	prompt	trace_tag_constant_other
+N10	ming_sim/cli_backend.py	336	_infer_tag	str_in_compare	KEEP_transport	source=prompt → sink=trace tag; function del prompt returns constant other (no wording→tag classify)	prompt	trace_tag_constant_other
+N10	ming_sim/cli_backend.py	338	_infer_tag	str_in_compare	KEEP_transport	source=prompt → sink=trace tag; function del prompt returns constant other (no wording→tag classify)	prompt	trace_tag_constant_other
+N10	ming_sim/cli_backend.py	330	_infer_tag	in_compare	KEEP_transport	source=prompt → sink=trace tag; function del prompt returns constant other (no wording→tag classify)	prompt	trace_tag_constant_other
+N10	ming_sim/cli_backend.py	334	_infer_tag	in_compare	KEEP_transport	source=prompt → sink=trace tag; function del prompt returns constant other (no wording→tag classify)	prompt	trace_tag_constant_other
+N10	ming_sim/cli_backend.py	336	_infer_tag	in_compare	KEEP_transport	source=prompt → sink=trace tag; function del prompt returns constant other (no wording→tag classify)	prompt	trace_tag_constant_other
+N10	ming_sim/cli_backend.py	338	_infer_tag	in_compare	KEEP_transport	source=prompt → sink=trace tag; function del prompt returns constant other (no wording→tag classify)	prompt	trace_tag_constant_other
+N10	ming_sim/breach_plea.py	209	_dedicated_accounts	str_in_compare	KEEP_structural	source=sqlite row keys → sink=tags column default; key-presence not prose	row.keys	tags_column_default
+N10	ming_sim/breach_plea.py	217	_dedicated_accounts	str_startswith	KEEP_field_ref	source=issue tag string → sink=account id after closed 专款: prefix	tags[]	dedicated_account_id
+N10	ming_sim/breach_plea.py	220	_dedicated_accounts	str_in_compare	KEEP_structural	source=sqlite row keys → sink=ongoing_effects default; key-presence	row.keys	ongoing_effects_default
+N10	ming_sim/breach_plea.py	209	_dedicated_accounts	in_compare	KEEP_structural	source=sqlite row keys → sink=tags column default; key-presence not prose	row.keys	tags_column_default
+N10	ming_sim/breach_plea.py	217	_dedicated_accounts	startswith_branch	KEEP_field_ref	source=issue tag string → sink=account id after closed 专款: prefix	tags[]	dedicated_account_id
+N10	ming_sim/breach_plea.py	220	_dedicated_accounts	in_compare	KEEP_structural	source=sqlite row keys → sink=ongoing_effects default; key-presence	row.keys	ongoing_effects_default
+N6	web/src/components/ministerFilters.ts	29	<module>	filter_call	KEEP_identity_or_formal	source=minister.power_id → sink=ming court subset; closed power_id identity	power_id	ming_court_filter
+N6	web/src/components/ministerFilters.ts	32	<module>	filter_call	KEEP_identity_or_formal	source=office_type/status/office → sink=内阁+六部 tab; closed office_type enum + active gate	office_type|status	cabinet_ministry_tab
+N6	web/src/components/ministerFilters.ts	42	<module>	filter_call	KEEP_identity_or_formal	source=status → sink=在职 tab; closed active enum	status	active_tab
+N6	web/src/components/ministerFilters.ts	43	<module>	filter_call	KEEP_identity_or_formal	source=favorite flag → sink=收藏 tab; boolean field not prose	favorite	favorite_tab
+N6	web/src/components/ministerFilters.ts	48	<module>	filter_call	KEEP_identity_or_formal	source=consort.power_id → sink=ming subset; closed power_id	power_id	ming_consort_filter
+N6	web/src/components/ministerFilters.ts	49	<module>	filter_call	KEEP_identity_or_formal	source=favorite → sink=收藏 tab; boolean field	favorite	favorite_tab
+N6	web/src/components/map.tsx	363	<module>	filter_call	KEEP_structural	source=REGION_PATH_GROUPS → sink=render list; THEATER_ONLY_REGION_IDS closed id set exclusion	group.regionId	theater_only_exclude
+N6	web/src/components/map.tsx	380	<module>	filter_call	KEEP_structural	source=EXTERNAL_PATH_GROUPS → sink=render list; paths.length structural non-empty gate	group.paths	nonempty_paths_gate
+N6	web/src/components/map.tsx	694	<module>	split_call	FIX	source=region.name display string → sink=map label drops post-/ segment; delete split(' / ')[0] truncation	region.name	map_label_full_name
+N6	web/src/components/map.tsx	707	<module>	split_call	FIX	source=region.name display string → sink=map label drops post-/ segment; delete split(' / ')[0] truncation	region.name	map_label_full_name
+N6	web/src/components/map.tsx	741	<module>	split_call	FIX	source=region.name display string → sink=map label drops post-/ segment; delete split(' / ')[0] truncation	region.name	map_label_full_name
+N10	ming_sim/issues.py	3247	_situation_terminal_effects	membership_compare	KEEP_identity_or_formal	source=kind → sink=terminal metrics axis; closed situation kind enum	kind	terminal_axis_enum
+N10	ming_sim/issues.py	3249	_situation_terminal_effects	membership_compare	KEEP_identity_or_formal	source=kind → sink=fail effect / axis branch; closed kind sets incl _COLLAPSIBLE_KINDS	kind	terminal_effect_enum
+N10	ming_sim/issues.py	3247	_situation_terminal_effects	in_compare	KEEP_identity_or_formal	source=kind → sink=terminal metrics axis; closed situation kind enum	kind	terminal_axis_enum
+N10	ming_sim/issues.py	3263	_situation_terminal_effects	in_compare	KEEP_identity_or_formal	source=kind → sink=fail effect / axis branch; closed kind sets incl _COLLAPSIBLE_KINDS	kind	terminal_effect_enum
+N6	ming_sim/cli_backend.py	2152	_pay_order_grounding_facts	join_call	KEEP_transport	source=closed DUE/ARREARS/DEFAULT constants → sink=extractor prompt grounding text	DUE_SUBJECTS|ARREARS_SUBJECTS	prompt_grounding_line
+N6	ming_sim/cli_backend.py	2153	_pay_order_grounding_facts	join_call	KEEP_transport	source=closed DUE/ARREARS/DEFAULT constants → sink=extractor prompt grounding text	DUE_SUBJECTS|ARREARS_SUBJECTS	prompt_grounding_line
+N6	ming_sim/cli_backend.py	2155	_pay_order_grounding_facts	join_call	KEEP_transport	source=closed DUE/ARREARS/DEFAULT constants → sink=extractor prompt grounding text	DUE_SUBJECTS|ARREARS_SUBJECTS	prompt_grounding_line
+N6	ming_sim/cli_backend.py	2156	_pay_order_grounding_facts	join_call	KEEP_transport	source=closed DUE/ARREARS/DEFAULT constants → sink=extractor prompt grounding text	DUE_SUBJECTS|ARREARS_SUBJECTS	prompt_grounding_line
+N10	ming_sim/covert_levy.py	146	settle_exposure_from_canonical_actions	str_startswith	KEEP_field_ref	source=relation resolution origin → sink=paid_cost match; closed dossier:id:relation: prefix	origin	dossier_relation_prefix
+N10	ming_sim/covert_levy.py	111	settle_exposure_from_canonical_actions	in_compare	KEEP_identity_or_formal	source=participant.tier → sink=actor set; closed 主办/协办 enum	participant.tier	actor_roster_tier
+N10	ming_sim/covert_levy.py	146	settle_exposure_from_canonical_actions	startswith_branch	KEEP_field_ref	source=relation resolution origin → sink=paid_cost match; closed dossier:id:relation: prefix	origin	dossier_relation_prefix
+N10	ming_sim/strict_types.py	39	validate_affected_parties	membership_compare	KEEP_identity_or_formal	source=item.kind → sink=validate; closed faction|class enum	item.kind	affected_kind_enum
+N10	ming_sim/strict_types.py	42	validate_affected_parties	membership_compare	KEEP_identity_or_formal	source=item.direction → sink=validate; closed positive|negative enum	item.direction	direction_enum
+N10	ming_sim/strict_types.py	43	validate_affected_parties	membership_compare	KEEP_identity_or_formal	source=item.intensity → sink=validate; closed weak|strong enum	item.intensity	intensity_enum
+N6	ming_sim/db.py	7787	army_roster	join_call	KEEP_transport	source=army row fields → sink=LLM roster pipe line; join delimiter only	row fields	roster_pipe_line
+N6	ming_sim/db.py	7797	army_roster	removeprefix_call	KEEP_transport	source=_qualitative_army_stat label → sink=roster cell; remove fixed 装备： form-language prefix	qualitative label	roster_cell_prefix
+N6	ming_sim/db.py	7804	army_roster	join_call	KEEP_transport	source=foreign army fields → sink=roster pipe line; delimiter only	row fields	foreign_roster_line
+N6	ming_sim/rescript_actions.py	43	persist_answers	startswith_call	KEEP_field_ref	source=event_id → sink=decision validation branch; closed dossier:/deliberation: prefixes	event_id	event_id_prefix_gate
+N6	ming_sim/rescript_actions.py	47	persist_answers	startswith_call	KEEP_field_ref	source=event_id → sink=decision validation branch; closed dossier:/deliberation: prefixes	event_id	event_id_prefix_gate
+N6	ming_sim/rescript_actions.py	74	persist_answers	startswith_call	KEEP_field_ref	source=event_id → sink=decision validation branch; closed dossier:/deliberation: prefixes	event_id	event_id_prefix_gate
+N10	ming_sim/audience_night.py	1441	list_unsettled_summons	str_startswith	KEEP_field_ref	source=story_ledger tag → sink=origin_id; closed _SUMMON_ORIGIN_PREFIX strip	tags[]	summon_origin_id
+N10	ming_sim/audience_night.py	1441	list_unsettled_summons	startswith_branch	KEEP_field_ref	source=story_ledger tag → sink=origin_id; closed _SUMMON_ORIGIN_PREFIX strip	tags[]	summon_origin_id
+N10	ming_sim/cli_backend.py	3815	_secret_metadata_from_command	re_search	KEEP_identity_or_formal	source=command line → sink=deadline field; form-language 期限/限期/deadline label parse	line	deadline_label_parse
+N10	ming_sim/cli_backend.py	3817	_secret_metadata_from_command	re_search	KEEP_structural	source=deadline capture group → sink=integer months; numeric extract not prose classify	deadline group	deadline_months_int
+N10	ming_sim/db.py	14140	_validate_dossier_endorsement	membership_compare	KEEP_identity_or_formal	source=endorsement kind → sink=DB write gate; closed 会签/当面站台/御笔手敕 enum	kind	endorsement_kind_enum
+N10	ming_sim/db.py	14140	_validate_dossier_endorsement	in_compare	KEEP_identity_or_formal	source=endorsement kind → sink=DB write gate; closed 会签/当面站台/御笔手敕 enum	kind	endorsement_kind_enum
+N10	ming_sim/db.py	795	infer_office_type_from_office	in_compare	KEEP_identity_or_formal	source=declared office_type → sink=fallback; closed COURT_OFFICE_TYPES membership	office_type	COURT_OFFICE_TYPES
+N10	ming_sim/db.py	811	infer_office_type_from_office	in_compare	KEEP_identity_or_formal	source=declared office_type → sink=fallback; closed COURT_OFFICE_TYPES membership	office_type	COURT_OFFICE_TYPES
+N10	ming_sim/due_review.py	594	apply_pending_due_reviews	membership_compare	KEEP_identity_or_formal	source=audience_todo lane → sink=skip urge/covert; closed lane constant enum	lane	audience_lane_constants
+N10	ming_sim/due_review.py	594	apply_pending_due_reviews	in_compare	KEEP_identity_or_formal	source=audience_todo lane → sink=skip urge/covert; closed lane constant enum	lane	audience_lane_constants
+N10	ming_sim/issues.py	8335	_apply_ordinary_entity_step	str_startswith	KEEP_field_ref	source=origin_ref → sink=skip grant_allocation economy; closed dossier: prefix	origin_ref	dossier_origin_prefix
+N10	ming_sim/issues.py	8335	_apply_ordinary_entity_step	startswith_branch	KEEP_field_ref	source=origin_ref → sink=skip grant_allocation economy; closed dossier: prefix	origin_ref	dossier_origin_prefix
+N10	ming_sim/materials.py	142	_resolve_inside	str_startswith	KEEP_structural	source=rel path string → sink=path jail; ~ or absolute rejected, not prose classify	rel path	materials_path_jail
+N10	ming_sim/materials.py	142	_resolve_inside	startswith_branch	KEEP_structural	source=rel path string → sink=path jail; ~ or absolute rejected, not prose classify	rel path	materials_path_jail
+N10	ming_sim/office_rank.py	59	_match_rank_rule	in_compare	KEEP_structural	source=rank rule dict → sink=skip rule; required_field key presence	rule	rule_field_presence
+N10	ming_sim/office_rank.py	68	_match_rank_rule	in_compare	FIX	source=office title text → sink=rank rule via substring stem match; delete token-not-in-text stem walk (use exact title registry)	office title	offices_json_stem_substring
+N10	ming_sim/session.py	969	consume_audience_admission	membership_compare	KEEP_identity_or_formal	source=decision.result → sink=summon ledger path; closed AudienceAdmission enum	decision.result	AudienceAdmission_enum
+N10	ming_sim/session.py	969	consume_audience_admission	in_compare	KEEP_identity_or_formal	source=decision.result → sink=summon ledger path; closed AudienceAdmission enum	decision.result	AudienceAdmission_enum
+N10	scripts/secret_order_probe2.py	61	main	str_in_compare	FIX	source=gazette paragraph text → sink=stdout filter; delete 密旨/曹化淳/… substring admission loop	report paragraph	debug_print_filter
+N10	scripts/secret_order_probe2.py	61	main	in_compare	FIX	source=gazette paragraph text → sink=stdout filter; delete 密旨/曹化淳/… substring admission loop	report paragraph	debug_print_filter
+N6	ming_sim/action_clusters.py	211	season_option_contract_prompt	join_call	KEEP_transport	source=allowed enum set → sink=prompt contract; closed field allowed values	allowed	prompt_allowed_set
+N6	ming_sim/action_clusters.py	221	season_option_contract_prompt	join_call	KEEP_transport	source=field detail strings → sink=prompt contract assembly	details	prompt_contract_assembly
+N6	ming_sim/context.py	218	minister_dossier	strip_call	KEEP_empty_check	source=character.style → sink=style_present gate; strip only emptiness, raw style unchanged	character.style	style_presence_gate
+N6	ming_sim/context.py	222	minister_dossier	join_call	KEEP_transport	source=personal_skills list → sink=dossier prompt; delimiter join only	personal_skills	dossier_skills_line
+N6	ming_sim/db.py	18878	project_applicable_authorities	strip_call	KEEP_empty_check	source=dossier.executor_kind → sink=authority projection; strip only emptiness	executor_kind	empty_trim_gate
+N6	ming_sim/db.py	18896	project_applicable_authorities	strip_call	KEEP_empty_check	source=dossier.target_kind → sink=authority projection; strip only emptiness	target_kind	empty_trim_gate
+N6	ming_sim/issues.py	1864	_event_chain_impossible_reason	strip_call	KEEP_empty_check	source=trigger_gate cond → sink=DSL parse; strip only emptiness	raw_cond	gate_cond_trim
+N6	ming_sim/issues.py	1886	_event_chain_impossible_reason	split_call	KEEP_structural	source=gate cond value → sink=terminal_state set; form-language | separator in event DSL	gate value	event_gate_dsl_split
+N6	ming_sim/structured_decree.py	228	validate_structured_decree_combination	strip_call	KEEP_empty_check	source=target_kind → sink=combo validate; strip emptiness before TARGET_KINDS	target_kind	empty_trim_gate
+N6	ming_sim/structured_decree.py	289	validate_structured_decree_combination	strip_call	KEEP_empty_check	source=assignee fields → sink=assignment validate; strip emptiness only	assignee_*	empty_trim_gate
+N6	web_app.py	4263	_save_visible_for_campaign	startswith_call	KEEP_field_ref	source=save fname → sink=visibility gate; closed AUTO_SAVE_PREFIX	fname	autosave_prefix_gate
+N6	web_app.py	4266	_save_visible_for_campaign	startswith_call	KEEP_field_ref	source=save fname → sink=visibility gate; closed AUTO_SAVE_PREFIX	fname	autosave_prefix_gate
+N10	ming_sim/cli/terminal.py	555	review_directives	keyword_or	KEEP_structural	source=docstring return type → sink=documentation only; no runtime prose classify	docstring	return_type_doc
+N10	ming_sim/context.py	398	match_minister_from_text	in_compare	FIX	source=cleaned free text → sink=minister pick via name-in-substring tie-break; delete name-in-cleaned disambiguation	cleaned text	minister_substring_disambiguation
+N10	ming_sim/db.py	742	_office_type_from_table	in_compare	FIX	source=office title text → sink=office_type via stem substring; delete stem-in-text priority walk	office title	offices_json_stem_substring
+N10	ming_sim/db.py	21413	create_secret_order	in_compare	KEEP_identity_or_formal	source=minister raw name → sink=character row; exact name or exact alias list membership	minister_name	character_exact_alias
+N10	ming_sim/db.py	6204	set_character_office	in_compare	KEEP_structural	source=character name → sink=content.characters sync; exact registry key presence	name	content_characters_key
+N10	ming_sim/entities/affair/store.py	419	origin_ref_from_result_item	in_compare	KEEP_structural	source=affair_id int → sink=batch authorized set; closed id membership gate	affair_id	authorized_ids_set
+N10	ming_sim/issues.py	5700	_restore_person_write_state	in_compare	KEEP_structural	source=live character name → sink=delete if absent from snapshot; set membership not prose	name	snapshot_names_set
+N10	ming_sim/llm_config.py	234	is_minimax_base_url	str_in_compare	KEEP_identity_or_formal	source=base_url host → sink=provider extra_body routing; closed minimax host ids	base_url	provider_host_enum
+N10	ming_sim/relations.py	96	_validated_settlement_origin	in_compare	KEEP_structural	source=dossier id from origin_ref → sink=reject if not in frozen batch set	dossier id	frozen_dossier_ids
+N10	scripts/play_as_emperor.py	172	create_emperor_agent	str_in_compare	KEEP_identity_or_formal	source=base_url host → sink=agent provider pick; closed minimax host ids	base_url	provider_host_enum
+N10	web/src/format.ts	45	<module>	regex_test	KEEP_structural	source=effect value string → sink=Number coerce; integer regex typing not narrative rewrite	value	numeric_coerce
+N6	ming_sim/action_materialize.py	672	__init__	join_call	KEEP_transport	source=missing field names → sink=ValidationError message; structural field list	field_failures	error_field_list
+N6	ming_sim/action_materialize.py	718	require_explicit_xiexang_fields	strip_call	KEEP_empty_check	source=cadence → sink=validate; strip then closed 一次性/每月 enum	cadence	cadence_enum_gate
+N6	ming_sim/audience_night.py	768	assert_persons_not_dead	join_call	KEEP_transport	source=dead name list → sink=ValueError message; delimiter join only	dead[]	error_name_list
+N6	ming_sim/breach_plea.py	1284	_note_funding_item	strip_call	KEEP_empty_check	source=origin_ref → sink=funding note; strip emptiness only	origin_ref	empty_trim_gate
+N6	ming_sim/cli_backend.py	3270	_coerce_draft_target_kind	strip_call	KEEP_empty_check	source=raw target_kind → sink=TARGET_KINDS validate; strip then closed enum	raw target_kind	TARGET_KINDS_gate
+N6	ming_sim/cli_backend.py	3595	_loads_lenient	strip_call	KEEP_structural	source=raw JSON blob → sink=json.loads; leading/trailing whitespace trim encoding only	raw	json_whitespace_trim
+N6	ming_sim/cli_backend.py	1829	build_participant_correction_feedback	join_call	KEEP_transport	source=invalid participant names → sink=correction prompt; delimiter join only	names[]	correction_prompt_names
+N6	ming_sim/content.py	163	load_character_content	join_call	KEEP_transport	source=cross_faction name list → sink=fail-loud message; delimiter join only	cross_faction_names	error_name_list
+N6	ming_sim/covert_progress.py	499	coerce_covert_task_contract	strip_call	KEEP_empty_check	source=investigation target field → sink=contract coerce; strip emptiness only	inv_target	empty_trim_gate
+N6	ming_sim/db.py	13276	_grant_allocation_is_monthly	strip_call	KEEP_identity_or_formal	source=payload.cadence → sink=monthly grant gate; strip then closed 每月 enum	cadence	cadence_每月_enum
+N6	ming_sim/db.py	12961	accept_faction_denunciations	strip_call	KEEP_empty_check	source=accuser faction → sink=denunciation row; strip emptiness only	accuser_faction	empty_trim_gate
+N6	ming_sim/db.py	14770	list_decree_dossiers	join_call	KEEP_structural	source=SQL clause fragments → sink=WHERE assembly; structural SQL join	clauses[]	sql_where_join
+N6	ming_sim/db.py	11788	record_dossier_progress	strip_call	KEEP_empty_check	source=progress_band → sink=DB write; strip emptiness only	progress_band	empty_trim_gate
+N6	ming_sim/declaration_dispatch.py	906	_assert_commission_grant_target_exists	strip_call	KEEP_empty_check	source=target_kind → sink=existence assert; strip emptiness only	target_kind	empty_trim_gate
+N6	ming_sim/decree_vocabulary.py	296	render_referenceable_dossier_brief	join_call	KEEP_transport	source=marker strings → sink=brief facts line; delimiter join only	markers[]	brief_markers_line
+N6	ming_sim/issues.py	2904	_admit_transit_departure	strip_call	KEEP_empty_check	source=transit_to → sink=region id validate; strip emptiness only	transit_to	empty_trim_gate
+N6	ming_sim/issues.py	892	_monthly_person_rating_changes	strip_call	KEEP_identity_or_formal	source=person change 动作 → sink=filter 评定 rows; closed action token after strip	item.动作	action_评定_token
+N6	ming_sim/llm_config.py	170	_normalize_runtime_llm	strip_call	KEEP_empty_check	source=channel → sink=VALID_CHANNELS; strip/lowercase emptiness gate before enum	channel	VALID_CHANNELS
+N6	ming_sim/models.py	183	_person_effect_has_work	strip_call	KEEP_empty_check	source=动作/action field → sink=work detection; strip emptiness only	动作|action	empty_trim_gate
+N6	ming_sim/relations.py	132	validate_edge_kind	strip_call	KEEP_empty_check	source=event_kind → sink=EDGE_KINDS validate; strip then closed enum	event_kind	EDGE_KINDS
+N6	scripts/make_steam_library_assets.py	97	make_logo	filter_call	KEEP_structural	source=PIL Image → sink=GaussianBlur; ImageFilter not text filter	logo image	image_blur_filter
+N6	web/src/components/gameMenu.tsx	384	<module>	includes_call	KEEP_identity_or_formal	source=reasoning strength string → sink=UI normalize; closed off/low/medium/high whitelist	reasoning strength	reasoning_strength_enum
+N6	web_app.py	227	_humanize_condition	re_fullmatch	KEEP_structural	source=condition text → sink=display label; formal character.* DSL fullmatch, free prose passthrough	condition text	character_condition_dsl

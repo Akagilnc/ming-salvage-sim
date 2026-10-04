@@ -1,0 +1,15 @@
+shard-6-decisions summary (1847 N6/N10 remainder r2)
+total_members	120
+
+disposition_counts
+FIX	1
+KEEP_empty_check	23
+KEEP_field_ref	16
+KEEP_identity_or_formal	49
+KEEP_structural	20
+KEEP_transport	11
+
+FIX_count	1
+
+FIX_list
+web_app.py:886 _safe_save_name (join_call) — source=user save name → sink=filesystem path: delete filter-join character stripping; validate allowlist without rewriting name

@@ -1,0 +1,12 @@
+shard-5 members: 120
+disposition counts:
+  FIX: 2
+  KEEP_empty_check: 22
+  KEEP_field_ref: 8
+  KEEP_identity_or_formal: 66
+  KEEP_structural: 12
+  KEEP_transport: 10
+
+FIX list:
+  - ming_sim/issues.py:_normalize_cancellable:3273 (in_compare)
+  - web/src/components/gameMenu.tsx:<module>:384 (includes_branch)

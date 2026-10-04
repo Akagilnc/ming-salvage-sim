@@ -1,0 +1,8 @@
+shard-1-r2 audit members=121 groups=61
+disposition_counts:
+  KEEP_empty_check	28
+  KEEP_field_ref	4
+  KEEP_identity_or_formal	48
+  KEEP_structural	41
+FIX_count=0
+FIX_list: (none)

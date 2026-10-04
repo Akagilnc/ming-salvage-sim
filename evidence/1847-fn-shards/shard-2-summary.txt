@@ -1,0 +1,1 @@
+shard-2 audit: members=248; KEEP_empty_check=27; KEEP_identity_or_formal=190; KEEP_structural=23; KEEP_transport=7; FIX=1; NEEDS_HUMAN=0. FIX list: ming_sim/breach_plea.py:519:assess_foundation_tier.

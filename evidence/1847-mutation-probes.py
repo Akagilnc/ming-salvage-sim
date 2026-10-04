@@ -259,6 +259,79 @@ ok(
     "",
 )
 src_mf = (ROOT / "web/src/components/ministerFilters.ts").read_text(encoding="utf-8")
+ok(
+    "N10_NO_PAIRING_PHRASE_ADMIT",
+    "_MILITARY_RAISE_PHRASES" not in (ROOT / "ming_sim/issues.py").read_text(encoding="utf-8")
+    and "_initiative_resolve_pairing_warnings" not in (ROOT / "ming_sim/issues.py").read_text(encoding="utf-8")
+    and "_emit_pairing_warnings" not in (ROOT / "ming_sim/issues.py").read_text(encoding="utf-8"),
+    "",
+)
+ok(
+    "N10_NO_CANCELLABLE_SYNONYM_REWRITE",
+    "by_policy" not in (ROOT / "ming_sim/issues.py").read_text(encoding="utf-8").split("def _normalize_cancellable")[1].split("\ndef ")[0],
+    "",
+)
+ok(
+    "N6_NO_ARREARS_PREFIX_REWRITE",
+    "startswith(\"欠饷\")" not in (ROOT / "ming_sim/issues.py").read_text(encoding="utf-8").split("def _commitment_arrears_remaining_text")[1].split("\ndef ")[0],
+    "",
+)
+ok(
+    "N6_NO_PLEA_REASON_SUBSTRING_MERGE",
+    "add not in prev" not in (ROOT / "ming_sim/breach_plea.py").read_text(encoding="utf-8"),
+    "",
+)
+ok(
+    "N10_NO_PROMPT_CALLER_TAG_INFER",
+    "扮演被皇帝召见" not in (ROOT / "ming_sim/cli_backend.py").read_text(encoding="utf-8").split("def _infer_tag")[1].split("\ndef ")[0]
+    and "module_allowed_fields" not in (ROOT / "ming_sim/cli_backend.py").read_text(encoding="utf-8").split("def _infer_tag")[1].split("\ndef ")[0],
+    "",
+)
+ok(
+    "N10_NO_FIDELITY_SYNONYM_ALIASES",
+    "_FIDELITY_ALIASES" not in (ROOT / "ming_sim/covert_progress.py").read_text(encoding="utf-8")
+    and "faithful" not in (ROOT / "ming_sim/covert_progress.py").read_text(encoding="utf-8").split("def normalize_fidelity_state")[1].split("\ndef ")[0],
+    "",
+)
+ok(
+    "N10_NO_STRATEGIC_OUTCOME_LABEL_ALIASES",
+    "_STRATEGIC_EVENT_OUTCOME_LABEL_ALIASES" not in (ROOT / "ming_sim/issues.py").read_text(encoding="utf-8"),
+    "",
+)
+ok(
+    "N10_NO_PAIRING_DEAD_HELPERS",
+    "def _has_economy_entry" not in (ROOT / "ming_sim/issues.py").read_text(encoding="utf-8")
+    and "def _nonempty_list" not in (ROOT / "ming_sim/issues.py").read_text(encoding="utf-8")
+    and "def _nonempty_dict" not in (ROOT / "ming_sim/issues.py").read_text(encoding="utf-8"),
+    "",
+)
+ok(
+    "N10_NO_LEGACY_RANK_STEM_REANCHOR",
+    "_rank_rules_562_legacy_weight_sum" not in (ROOT / "ming_sim/db.py").read_text(encoding="utf-8")
+    and "_reanchor_offsets_for_rank_rules_562" not in (ROOT / "ming_sim/db.py").read_text(encoding="utf-8"),
+    "",
+)
+ok(
+    "N10_NO_DIRECTION_SYNONYM_NORMALIZE",
+    "_DIRECTION_NORMALIZE" not in (ROOT / "ming_sim/issues.py").read_text(encoding="utf-8"),
+    "",
+)
+ok(
+    "N10_NO_FREE_CHINESE_EMPEROR_FATE",
+    'return {"status": token, "summary": ""}' not in (ROOT / "ming_sim/issues.py").read_text(encoding="utf-8").split("def _declared_emperor_ending")[1].split("\ndef ")[0],
+    "",
+)
+ok(
+    "N6_NO_MAP_NAME_SPLIT_TRUNCATION",
+    'split(" / ")[0]' not in (ROOT / "web/src/components/map.tsx").read_text(encoding="utf-8"),
+    "",
+)
+ok(
+    "N10_NO_REASONING_STRENGTH_SYNONYMS",
+    "minimal" not in (ROOT / "web/src/components/gameMenu.tsx").read_text(encoding="utf-8").split("normalizeStrength")[1].split("const [apiReasoningStrength")[0],
+    "",
+)
+
 ok("N10_UI_NO_OFFICE_TITLE_REGEX", not any(x in src_mf for x in ("/首辅/", "/前|罢|致仕/", "/尚书/")), "")
 ok("N10_UI_FILTER_USES_OFFICE_TYPE_ENUM", "office_type" in src_mf and "status" in src_mf, "")
 src_triage = (ROOT / "ming_sim/rescript_draft.py").read_text(encoding="utf-8")
