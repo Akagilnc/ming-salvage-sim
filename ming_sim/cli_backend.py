@@ -2738,6 +2738,14 @@ def extract_draft_intent(
             except ValueError:
                 # #1902 F1：分类非法不得洗成「无意图」；与单旨/project 同响亮上抛。
                 raise
+            if action == "acting_appointment":
+                # #529 署理走既有 pending 人事候选路径应答（0064 任别），不经草案 acting_appointment。
+                # 与单旨同：旁路先于颁布方式校验——全署理合法批次常无「颁布方式」，
+                # 不得因 mode None 被标成 invalid_batch（#1902 G1）。
+                # 保留原批次位置，避免后续按候选序号消费时错配 sibling。
+                drafts.append(None)
+                draft_combo_flags.append(False)
+                continue
             if not text or mode is None or text in seen_texts or structured_kind == "empty":
                 invalid_batch = True
                 break
@@ -2749,12 +2757,6 @@ def extract_draft_intent(
                     "target_dossier_id": imperial_push_target_dossier_id(probe),
                     **stamped_declaration,
                 })
-                draft_combo_flags.append(False)
-                continue
-            if action == "acting_appointment":
-                # #529 署理走既有 pending 人事候选路径应答（0064 任别），不经草案 acting_appointment。
-                # 保留原批次位置，避免后续按候选序号消费时错配 sibling。
-                drafts.append(None)
                 draft_combo_flags.append(False)
                 continue
             if action not in DRAFT_ACTION_TYPES:

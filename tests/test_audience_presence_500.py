@@ -103,6 +103,9 @@ def _cli_session(db, state, content):
         chat=chat, scene_chat=scene_chat,
         # #1842：persist 尾必调；轻壳无 pending 时 no-op。
         schedule_pending_scene_translation=lambda result: None,
+        # #1902 F2/G2：中断重试取数已下沉会话层；轻壳无中断时返回空
+        # （与 test_audience_night_498 同形，禁缺方法 AttributeError）。
+        pending_audience_reply_retries=lambda: [],
     )
 
 
