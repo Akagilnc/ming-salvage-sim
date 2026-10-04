@@ -189,7 +189,10 @@ MING_SIM_PI_BIN=/usr/bin/false \
 
 R1 清退：`b85cb3f16536aae7ff172fb22a848d12c717771d`  
 R1 stamp：`d3a3688f222a6f0b2c9d276b5d7f054a4e52e63e`  
-R2 清退 commit：（本文件随 R2 独立 `ak-roles:` commit 写入后回填 hash）
+R2 清退 commit：`44f87c4c50d7429d87e068384a041312350156d8`  
+标题：`ak-roles: fix(#1843) retire stream/season/army F2 residuals after false-negative`  
+diffstat：`7 files changed, 119 insertions(+), 433 deletions(-)`。  
+本段 stamp 为后续独立 docs commit（禁止 amend）。
 
 ## 剩余范围
 
