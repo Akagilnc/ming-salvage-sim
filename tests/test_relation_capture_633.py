@@ -535,11 +535,12 @@ def test_hallucinated_and_emperor_endpoints_rejected_per_item_zero_edges(game):
 def test_multi_target_with_one_bad_endpoint_writes_zero_edges_for_item(game):
     """同互动含任一非法端点：先整项校验后零边写入，不做部分落库；好项隔离照落。"""
     db, state, content = game
+    bad_target = "幻觉丙"
     out = apply_score_extraction(
         db, state,
         {
             "relation_edge_events": [
-                {"施动者": "温体仁", "受动者": ["周延儒", "幻觉丙"],
+                {"施动者": "温体仁", "受动者": ["周延儒", bad_target],
                  "类目": "联名", "语境": "联名混入幻觉联署者。",
                  "来源引用": "盘面自发"},
                 {"施动者": "毕自严", "受动者": "王绍徽", "类目": "协作",
@@ -551,6 +552,8 @@ def test_multi_target_with_one_bad_endpoint_writes_zero_edges_for_item(game):
     res = out["relation_edge_event_resolutions"]
     rejected = [r for r in res if r.get("rejected")]
     assert len(rejected) == 1
+    # 拒因携带实际非法端点名（输入来源），不锁固定拒句模板
+    assert bad_target in rejected[0]["reason"]
     # 坏项零写入（含好端点也不部分落库）；好项不受牵连
     rows = _edge_rows(db)
     assert _triplets(rows) == {("毕自严", "王绍徽", "协作")}

@@ -547,7 +547,9 @@ def _issue_audience_case_events(
             stage = _prose(issue["stage_text"]).strip()
         except (KeyError, IndexError, TypeError):
             stage = ""
-        if not stage or character_name not in _issue_audience_names(db, issue):
+        # Non-event_pool returns None (N/A); same clamp as materials / project_issue_materials.
+        audiences = _issue_audience_names(db, issue) or set()
+        if not stage or character_name not in audiences:
             continue
         if not knowledge_row_visible_to(
             db,
