@@ -1,0 +1,4488 @@
+{
+  "post_except_continue_total": 494,
+  "post_except_continue_focus": [
+    {
+      "file": "ming_sim/declaration_dispatch.py",
+      "fn": "_dispatch_commissions",
+      "except_line": 1459,
+      "has_log": false,
+      "body_preview": "_reject(rejected, item, str(exc), \"invalid_shape\", source)"
+    },
+    {
+      "file": "ming_sim/declaration_dispatch.py",
+      "fn": "_dispatch_commissions",
+      "except_line": 1496,
+      "has_log": false,
+      "body_preview": "_reject(rejected, item, str(exc), \"hallucinated_id\", source)"
+    },
+    {
+      "file": "ming_sim/declaration_dispatch.py",
+      "fn": "_dispatch_commissions",
+      "except_line": 1499,
+      "has_log": false,
+      "body_preview": "_reject(rejected, item, str(exc), _xiexang_reject_category(exc), source)"
+    },
+    {
+      "file": "ming_sim/declaration_dispatch.py",
+      "fn": "_dispatch_commissions",
+      "except_line": 1504,
+      "has_log": false,
+      "body_preview": "_reject(rejected, item, str(exc), \"invalid_shape\", source)"
+    },
+    {
+      "file": "ming_sim/declaration_dispatch.py",
+      "fn": "_dispatch_commissions",
+      "except_line": 1108,
+      "has_log": false,
+      "body_preview": "_reject(rejected, item, str(exc), \"invalid_state\", source)"
+    },
+    {
+      "file": "ming_sim/declaration_dispatch.py",
+      "fn": "_dispatch_commissions",
+      "except_line": 1110,
+      "has_log": false,
+      "body_preview": "_reject(rejected, item, str(exc), \"invalid_shape\", source)"
+    },
+    {
+      "file": "ming_sim/declaration_dispatch.py",
+      "fn": "_dispatch_commissions",
+      "except_line": 1127,
+      "has_log": false,
+      "body_preview": "origin_id = 0"
+    },
+    {
+      "file": "ming_sim/declaration_dispatch.py",
+      "fn": "_dispatch_commissions",
+      "except_line": 1170,
+      "has_log": false,
+      "body_preview": "order_id = 0"
+    },
+    {
+      "file": "ming_sim/declaration_dispatch.py",
+      "fn": "_dispatch_commissions",
+      "except_line": 1202,
+      "has_log": false,
+      "body_preview": "order_id = 0"
+    },
+    {
+      "file": "ming_sim/declaration_dispatch.py",
+      "fn": "_dispatch_commissions",
+      "except_line": 1261,
+      "has_log": false,
+      "body_preview": "_reject(rejected, item, f\"密令差务契约不成立：{exc}\", \"invalid_shape\", source)"
+    },
+    {
+      "file": "ming_sim/declaration_dispatch.py",
+      "fn": "_dispatch_commissions",
+      "except_line": 1322,
+      "has_log": false,
+      "body_preview": "_reject(rejected, item, str(exc), \"invalid_shape\", source)"
+    },
+    {
+      "file": "ming_sim/declaration_dispatch.py",
+      "fn": "_dispatch_commissions",
+      "except_line": 1510,
+      "has_log": false,
+      "body_preview": "_reject(rejected, item, str(exc), \"hallucinated_id\", source)"
+    },
+    {
+      "file": "ming_sim/declaration_dispatch.py",
+      "fn": "_dispatch_endorsements",
+      "except_line": 1662,
+      "has_log": false,
+      "body_preview": "action_id = 0"
+    },
+    {
+      "file": "ming_sim/declaration_dispatch.py",
+      "fn": "_dispatch_endorsements",
+      "except_line": 1705,
+      "has_log": false,
+      "body_preview": "_reject(rejected, item, str(exc), \"invalid_item\", source)"
+    },
+    {
+      "file": "ming_sim/declaration_dispatch.py",
+      "fn": "_dispatch_endorsements",
+      "except_line": 1730,
+      "has_log": false,
+      "body_preview": "_reject(rejected, item, str(exc), \"invalid_item\", source)"
+    },
+    {
+      "file": "ming_sim/declaration_dispatch.py",
+      "fn": "_dispatch_inquiries",
+      "except_line": 1884,
+      "has_log": false,
+      "body_preview": "_reject(rejected, item, str(exc), \"hallucinated_id\", source)"
+    },
+    {
+      "file": "ming_sim/declaration_dispatch.py",
+      "fn": "_dispatch_rushes",
+      "except_line": 1927,
+      "has_log": false,
+      "body_preview": "target_id = 0"
+    },
+    {
+      "file": "ming_sim/declaration_dispatch.py",
+      "fn": "_dispatch_rushes",
+      "except_line": 1939,
+      "has_log": false,
+      "body_preview": "deadline = 1"
+    },
+    {
+      "file": "ming_sim/declaration_dispatch.py",
+      "fn": "_dispatch_rushes",
+      "except_line": 1960,
+      "has_log": false,
+      "body_preview": "_reject(rejected, item, \"催办缺目标分段索引\", \"invalid_shape\", source)"
+    },
+    {
+      "file": "ming_sim/declaration_dispatch.py",
+      "fn": "_dispatch_travel_tones",
+      "except_line": 2033,
+      "has_log": false,
+      "body_preview": "_reject(rejected, item, str(exc), \"invalid_enum\", source)"
+    },
+    {
+      "file": "ming_sim/declaration_dispatch.py",
+      "fn": "_dispatch_travel_tones",
+      "except_line": 2041,
+      "has_log": false,
+      "body_preview": "from ming_sim.session import AudienceAdmission, GameSession"
+    },
+    {
+      "file": "ming_sim/declaration_dispatch.py",
+      "fn": "_dispatch_travel_tones",
+      "except_line": 2063,
+      "has_log": false,
+      "body_preview": "_reject(rejected, item, str(exc), \"invalid_state\", source)"
+    },
+    {
+      "file": "ming_sim/declaration_dispatch.py",
+      "fn": "_dispatch_promises",
+      "except_line": 2088,
+      "has_log": false,
+      "body_preview": "action_id = 0"
+    },
+    {
+      "file": "ming_sim/declaration_dispatch.py",
+      "fn": "_dispatch_promises",
+      "except_line": 2171,
+      "has_log": false,
+      "body_preview": "oid_i = 0"
+    },
+    {
+      "file": "ming_sim/declaration_dispatch.py",
+      "fn": "_dispatch_textual_facts",
+      "except_line": 2309,
+      "has_log": false,
+      "body_preview": "_reject(rejected, item, str(exc), \"hallucinated_id\", source)"
+    },
+    {
+      "file": "ming_sim/declaration_dispatch.py",
+      "fn": "_dispatch_textual_facts",
+      "except_line": 2312,
+      "has_log": false,
+      "body_preview": "_reject(rejected, item, str(exc), \"invalid_shape\", source)"
+    },
+    {
+      "file": "ming_sim/declaration_dispatch.py",
+      "fn": "_dispatch_textual_facts",
+      "except_line": 2325,
+      "has_log": false,
+      "body_preview": "_reject(rejected, item, str(exc), \"invalid_shape\", source)"
+    },
+    {
+      "file": "ming_sim/declaration_dispatch.py",
+      "fn": "_dispatch_public_sayings",
+      "except_line": 2376,
+      "has_log": false,
+      "body_preview": "_reject(rejected, item, str(exc), \"hallucinated_id\", source)"
+    },
+    {
+      "file": "ming_sim/declaration_dispatch.py",
+      "fn": "_dispatch_public_sayings",
+      "except_line": 2398,
+      "has_log": false,
+      "body_preview": "_reject(rejected, item, str(exc), \"invalid_shape\", source)"
+    },
+    {
+      "file": "ming_sim/declaration_dispatch.py",
+      "fn": "_dispatch_on_scene_facts",
+      "except_line": 2459,
+      "has_log": false,
+      "body_preview": "_reject(rejected, item, exc.reason, exc.category, source)"
+    },
+    {
+      "file": "ming_sim/declaration_dispatch.py",
+      "fn": "_dispatch_presence",
+      "except_line": 2531,
+      "has_log": false,
+      "body_preview": "_reject(rejected, item, str(exc), \"hallucinated_id\", source)"
+    },
+    {
+      "file": "ming_sim/declaration_dispatch.py",
+      "fn": "_dispatch_presence",
+      "except_line": 2547,
+      "has_log": true,
+      "body_preview": "_reject(rejected, item, str(exc), _category_for_audience_night_error(exc), source)"
+    },
+    {
+      "file": "ming_sim/declaration_dispatch.py",
+      "fn": "_dispatch_scene_facts",
+      "except_line": 2617,
+      "has_log": true,
+      "body_preview": "_reject(rejected, item, str(exc), _category_for_audience_night_error(exc), source)"
+    },
+    {
+      "file": "ming_sim/declaration_dispatch.py",
+      "fn": "_dispatch_scene_facts",
+      "except_line": 2600,
+      "has_log": false,
+      "body_preview": "_reject(rejected, item, str(exc), \"hallucinated_id\", source)"
+    },
+    {
+      "file": "ming_sim/declaration_dispatch.py",
+      "fn": "_dispatch_edge_events",
+      "except_line": 2665,
+      "has_log": false,
+      "body_preview": "_reject(rejected, item, str(exc), \"invalid_enum\", source)"
+    },
+    {
+      "file": "ming_sim/declaration_dispatch.py",
+      "fn": "_dispatch_edge_events",
+      "except_line": 2670,
+      "has_log": false,
+      "body_preview": "_reject(rejected, item, str(exc), \"hallucinated_id\", source)"
+    },
+    {
+      "file": "ming_sim/declaration_dispatch.py",
+      "fn": "_dispatch_edge_events",
+      "except_line": 2693,
+      "has_log": false,
+      "body_preview": "_reject(rejected, item, exc.reason, exc.category, source)"
+    },
+    {
+      "file": "ming_sim/declaration_dispatch.py",
+      "fn": "_dispatch_registrations",
+      "except_line": 2771,
+      "has_log": false,
+      "body_preview": "loyalty = 55"
+    },
+    {
+      "file": "ming_sim/declaration_dispatch.py",
+      "fn": "_dispatch_registrations",
+      "except_line": 2810,
+      "has_log": false,
+      "body_preview": "_reject(rejected, item, exc.reason, exc.category, source)"
+    },
+    {
+      "file": "ming_sim/declaration_dispatch.py",
+      "fn": "_dispatch_registrations",
+      "except_line": 2813,
+      "has_log": false,
+      "body_preview": "_reject(rejected, item, str(exc), str(exc.category), source)"
+    },
+    {
+      "file": "ming_sim/issues.py",
+      "fn": "_apply_extracted_army_delta",
+      "except_line": 8029,
+      "has_log": false,
+      "body_preview": "requested = 0"
+    },
+    {
+      "file": "ming_sim/issues.py",
+      "fn": "_apply_score_extraction_body",
+      "except_line": 8313,
+      "has_log": false,
+      "body_preview": "dossier_execution_results.append({\n                \"rejected\": True, \"category\": \"invalid_transition"
+    },
+    {
+      "file": "ming_sim/issues.py",
+      "fn": "_apply_score_extraction_body",
+      "except_line": 8331,
+      "has_log": false,
+      "body_preview": "reason = str(exc)"
+    },
+    {
+      "file": "ming_sim/issues.py",
+      "fn": "_apply_score_extraction_body",
+      "except_line": 8909,
+      "has_log": false,
+      "body_preview": "validate_rejections.append(\n                (\"affair_declarations\", {\"raw_value\": raw}, str(exc)),\n "
+    },
+    {
+      "file": "ming_sim/issues.py",
+      "fn": "_apply_score_extraction_body",
+      "except_line": 9403,
+      "has_log": false,
+      "body_preview": "applied_fiscal.append({\n                \"rejected\": True,\n                \"reason\": f\"调率目标「{key}」非法："
+    },
+    {
+      "file": "ming_sim/issues.py",
+      "fn": "_apply_score_extraction_body",
+      "except_line": 9428,
+      "has_log": false,
+      "body_preview": "for change in pair_changes:\n                applied_fiscal.append({\n                    \"rejected\": "
+    },
+    {
+      "file": "ming_sim/issues.py",
+      "fn": "_apply_score_extraction_body",
+      "except_line": 9488,
+      "has_log": false,
+      "body_preview": "applied_secret_orders.append({\"order_id\": raw_id, \"rejected\": True,\n                                "
+    },
+    {
+      "file": "ming_sim/issues.py",
+      "fn": "_apply_score_extraction_body",
+      "except_line": 9520,
+      "has_log": false,
+      "body_preview": "applied_secret_orders.append({\"order_id\": real_id, \"rejected\": True, \"reason\": str(exc)})"
+    },
+    {
+      "file": "ming_sim/issues.py",
+      "fn": "_apply_score_extraction_body",
+      "except_line": 8552,
+      "has_log": false,
+      "body_preview": "db.conn.execute(f\"ROLLBACK TO {savepoint}\")"
+    },
+    {
+      "file": "ming_sim/issues.py",
+      "fn": "_apply_score_extraction_body",
+      "except_line": 8617,
+      "has_log": false,
+      "body_preview": "db.conn.execute(f\"ROLLBACK TO {savepoint}\")"
+    },
+    {
+      "file": "ming_sim/issues.py",
+      "fn": "_apply_score_extraction_body",
+      "except_line": 9080,
+      "has_log": false,
+      "body_preview": "event_person_results.append({\n                    \"name\": str(item.get(\"name\") or \"\").strip(),\n     "
+    },
+    {
+      "file": "ming_sim/issues.py",
+      "fn": "_apply_score_extraction_body",
+      "except_line": 8851,
+      "has_log": false,
+      "body_preview": "stripped[k] = v"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "create_armies_from_extraction",
+      "except_line": 8476,
+      "has_log": false,
+      "body_preview": "created.append({\n                    \"id\": aid, \"rejected\": True, \"category\": \"invalid_enum\",\n      "
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "create_armies_from_extraction",
+      "except_line": 8443,
+      "has_log": false,
+      "body_preview": "created.append({\n                        \"id\": aid, \"rejected\": True, \"category\": \"invalid_enum\",\n  "
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "create_armies_from_extraction",
+      "except_line": 8584,
+      "has_log": false,
+      "body_preview": "created.append({\n                        \"id\": aid, \"rejected\": True, \"category\": \"invalid_enum\",\n  "
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "create_armies_from_extraction",
+      "except_line": 8502,
+      "has_log": false,
+      "body_preview": "_dirty_field = (_f, _v)"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "list_rescript_drafts",
+      "except_line": 11115,
+      "has_log": true,
+      "body_preview": "tlog(f\"[db] options_json 损坏，回空：{exc}\")"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "list_rescript_drafts",
+      "except_line": 11121,
+      "has_log": true,
+      "body_preview": "tlog(f\"[db] choice_json 损坏，回 None（draft turn={r['turn']} idx={r['idx']}）：{exc}\")"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "list_rescript_drafts",
+      "except_line": 11126,
+      "has_log": true,
+      "body_preview": "tlog(f\"[db] prior_options_json 损坏，回空：{exc}\")"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "ensure_dossiers_for_draft_directives",
+      "except_line": 19442,
+      "has_log": true,
+      "body_preview": "self.conn.execute(f\"ROLLBACK TO {sp}\")"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "_secret_origin_message_protection",
+      "except_line": 21332,
+      "has_log": false,
+      "body_preview": "continue"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "_secret_origin_message_protection",
+      "except_line": 21346,
+      "has_log": false,
+      "body_preview": "continue"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "_secret_origin_message_protection",
+      "except_line": 21361,
+      "has_log": false,
+      "body_preview": "turns = []"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "_secret_origin_message_protection",
+      "except_line": 21339,
+      "has_log": false,
+      "body_preview": "continue"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "_secret_origin_message_protection",
+      "except_line": 21372,
+      "has_log": false,
+      "body_preview": "continue"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "update_secret_order_by_id",
+      "except_line": 21961,
+      "has_log": false,
+      "body_preview": "prior_targets = {}"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "update_secret_order_by_id",
+      "except_line": 21967,
+      "has_log": false,
+      "body_preview": "legacy_people = []"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "update_secret_order_by_id",
+      "except_line": 22008,
+      "has_log": false,
+      "body_preview": "payload = {}"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "rush_secret_order",
+      "except_line": 22348,
+      "has_log": false,
+      "body_preview": "months = 1"
+    },
+    {
+      "file": "ming_sim/audience_translation.py",
+      "fn": "catch_up_pending_translations",
+      "except_line": 642,
+      "has_log": true,
+      "body_preview": "logger.exception(\n                \"catch_up_pending_translations: turn failed night=%s chat_turn_id="
+    },
+    {
+      "file": "ming_sim/audience_translation.py",
+      "fn": "catch_up_pending_translations",
+      "except_line": 613,
+      "has_log": true,
+      "body_preview": "logger.exception(\n                    \"catch_up_pending_translations: turn failed night=%s chat_turn"
+    },
+    {
+      "file": "ming_sim/breach_plea.py",
+      "fn": "_extract_ref_ids",
+      "except_line": 1257,
+      "has_log": false,
+      "body_preview": "continue"
+    },
+    {
+      "file": "ming_sim/breach_plea.py",
+      "fn": "_extract_ref_ids",
+      "except_line": 1264,
+      "has_log": false,
+      "body_preview": "pass"
+    },
+    {
+      "file": "ming_sim/breach_plea.py",
+      "fn": "resolve_breach_pleas_from_extraction",
+      "except_line": 1349,
+      "has_log": false,
+      "body_preview": "delta = 0"
+    },
+    {
+      "file": "ming_sim/breach_plea.py",
+      "fn": "resolve_breach_pleas_from_extraction",
+      "except_line": 1366,
+      "has_log": false,
+      "body_preview": "delta = 0"
+    },
+    {
+      "file": "ming_sim/breach_plea.py",
+      "fn": "resolve_breach_pleas_from_extraction",
+      "except_line": 1374,
+      "has_log": false,
+      "body_preview": "pass"
+    },
+    {
+      "file": "ming_sim/breach_plea.py",
+      "fn": "resolve_breach_pleas_from_extraction",
+      "except_line": 1313,
+      "has_log": false,
+      "body_preview": "pass"
+    },
+    {
+      "file": "ming_sim/breach_plea.py",
+      "fn": "resolve_breach_pleas_from_extraction",
+      "except_line": 1333,
+      "has_log": false,
+      "body_preview": "pass"
+    },
+    {
+      "file": "ming_sim/breach_plea.py",
+      "fn": "resolve_breach_pleas_from_extraction",
+      "except_line": 1341,
+      "has_log": false,
+      "body_preview": "pass"
+    },
+    {
+      "file": "ming_sim/decree_vocabulary.py",
+      "fn": "derive_draft_capability",
+      "except_line": 103,
+      "has_log": false,
+      "body_preview": "canonical[key] = 0"
+    },
+    {
+      "file": "ming_sim/decree.py",
+      "fn": "_open_affair_ids_from_payload",
+      "except_line": 738,
+      "has_log": false,
+      "body_preview": "continue"
+    },
+    {
+      "file": "ming_sim/relations.py",
+      "fn": "resolve_relation_edge_events_from_extraction",
+      "except_line": 330,
+      "has_log": false,
+      "body_preview": "results.append({\n                \"rejected\": True, \"category\": \"invalid_relation_event\",\n           "
+    },
+    {
+      "file": "ming_sim/materials.py",
+      "fn": "_own_affair_lines",
+      "except_line": 449,
+      "has_log": false,
+      "body_preview": "continue"
+    },
+    {
+      "file": "ming_sim/materials.py",
+      "fn": "_own_affair_lines",
+      "except_line": 479,
+      "has_log": false,
+      "body_preview": "continue"
+    },
+    {
+      "file": "ming_sim/materials.py",
+      "fn": "_own_affair_lines",
+      "except_line": 486,
+      "has_log": false,
+      "body_preview": "roster = set()"
+    },
+    {
+      "file": "ming_sim/materials.py",
+      "fn": "_own_affair_lines",
+      "except_line": 497,
+      "has_log": false,
+      "body_preview": "continue"
+    },
+    {
+      "file": "ming_sim/materials.py",
+      "fn": "_character_affair_lines",
+      "except_line": 549,
+      "has_log": false,
+      "body_preview": "continue"
+    },
+    {
+      "file": "ming_sim/materials.py",
+      "fn": "_opening_affair_lines",
+      "except_line": 662,
+      "has_log": false,
+      "body_preview": "continue"
+    },
+    {
+      "file": "ming_sim/materials.py",
+      "fn": "_opening_affair_lines",
+      "except_line": 671,
+      "has_log": false,
+      "body_preview": "roster = set()"
+    },
+    {
+      "file": "ming_sim/session.py",
+      "fn": "_resubmit_draft_admission_failures",
+      "except_line": 1810,
+      "has_log": false,
+      "body_preview": "continue"
+    },
+    {
+      "file": "ming_sim/session.py",
+      "fn": "_resubmit_draft_admission_failures",
+      "except_line": 1819,
+      "has_log": false,
+      "body_preview": "continue"
+    },
+    {
+      "file": "ming_sim/session.py",
+      "fn": "_resubmit_draft_admission_failures",
+      "except_line": 1904,
+      "has_log": true,
+      "body_preview": "logger.warning(\n                    \"[1769] draft#%s admission resubmit write-back rejected: %s\",\n  "
+    },
+    {
+      "file": "ming_sim/session.py",
+      "fn": "_drain_catch_up_and_continue",
+      "except_line": 1977,
+      "has_log": true,
+      "body_preview": "pack_path = write_error_pack(\n                            self.db, self.state, exc=pending_exc,\n    "
+    },
+    {
+      "file": "ming_sim/rescript_draft.py",
+      "fn": "_enforce_layer_a_action_conditional",
+      "except_line": 670,
+      "has_log": false,
+      "body_preview": "amount = 0"
+    },
+    {
+      "file": "ming_sim/rescript_draft.py",
+      "fn": "_enforce_layer_a_action_conditional",
+      "except_line": 647,
+      "has_log": false,
+      "body_preview": "_fail(\n                        \"amount\",\n                        current=amt_raw,\n                  "
+    },
+    {
+      "file": "ming_sim/rescript_draft.py",
+      "fn": "normalize_rescript_layer_a_option",
+      "except_line": 844,
+      "has_log": false,
+      "body_preview": "_fail(\n                \"locality_scope\",\n                current=out.get(\"locality_scope\"),\n        "
+    },
+    {
+      "file": "ming_sim/rescript_draft.py",
+      "fn": "normalize_rescript_layer_a_option",
+      "except_line": 878,
+      "has_log": false,
+      "body_preview": "_fail(PARTICIPANT_ROSTER_KEY, current=roster_raw, expected=roster_expected)"
+    },
+    {
+      "file": "ming_sim/rescript_draft.py",
+      "fn": "normalize_rescript_layer_a_option",
+      "except_line": 915,
+      "has_log": false,
+      "body_preview": "for raw_fact in exc.field_failures:\n                _note_failed(\n                    facts, str(raw"
+    },
+    {
+      "file": "ming_sim/rescript_draft.py",
+      "fn": "normalize_rescript_layer_a_option",
+      "except_line": 933,
+      "has_log": false,
+      "body_preview": "_fail(\n                \"stop_condition\",\n                current=raw.get(\"stop_condition\"),\n        "
+    },
+    {
+      "file": "ming_sim/rescript_draft.py",
+      "fn": "normalize_rescript_layer_a_option",
+      "except_line": 949,
+      "has_log": false,
+      "body_preview": "_fail(\n                    key,\n                    current=raw[key],\n                    expected={"
+    },
+    {
+      "file": "ming_sim/rescript_draft.py",
+      "fn": "normalize_rescript_layer_a_option",
+      "except_line": 1078,
+      "has_log": false,
+      "body_preview": "for raw_fact in exc.field_failures:\n                            _note_failed(\n                      "
+    },
+    {
+      "file": "ming_sim/rescript_draft.py",
+      "fn": "_note_option_utf8_failures",
+      "except_line": 1298,
+      "has_log": false,
+      "body_preview": "_note_failed(\n                    facts, key_s,\n                    current=val,\n                   "
+    },
+    {
+      "file": "ming_sim/rescript_draft.py",
+      "fn": "_write_degraded_note",
+      "except_line": 1705,
+      "has_log": true,
+      "body_preview": "tlog(f\"[rescript] 降级附记写盘失败：{exc}\")"
+    },
+    {
+      "file": "ming_sim/rescript_draft.py",
+      "fn": "generate_rescript_draft",
+      "except_line": 2278,
+      "has_log": false,
+      "body_preview": "pending_missing = list(exc.failures)"
+    },
+    {
+      "file": "ming_sim/rescript_draft.py",
+      "fn": "generate_rescript_draft",
+      "except_line": 2280,
+      "has_log": false,
+      "body_preview": "if pending_missing is not None:\n                pending_missing = _with_heal_response_contract_failu"
+    },
+    {
+      "file": "ming_sim/rescript_draft.py",
+      "fn": "generate_rescript_draft",
+      "except_line": 2344,
+      "has_log": true,
+      "body_preview": "dropped2 = _drop_options_by_failures(dropped, list(still_exc.failures))"
+    },
+    {
+      "file": "ming_sim/llm_model.py",
+      "fn": "_extract_provider_error",
+      "except_line": 64,
+      "has_log": false,
+      "body_preview": "payload = None"
+    },
+    {
+      "file": "ming_sim/cli_backend.py",
+      "fn": "_login_shell_path",
+      "except_line": 239,
+      "has_log": false,
+      "body_preview": "discovered = \"\""
+    },
+    {
+      "file": "ming_sim/cli_backend.py",
+      "fn": "_trace",
+      "except_line": 346,
+      "has_log": true,
+      "body_preview": "_log(f\"trace 写盘失败：{exc}\")"
+    },
+    {
+      "file": "ming_sim/cli_backend.py",
+      "fn": "_warm_keychain",
+      "except_line": 357,
+      "has_log": false,
+      "body_preview": "pass"
+    },
+    {
+      "file": "ming_sim/cli_backend.py",
+      "fn": "_terminate_cli_process",
+      "except_line": 400,
+      "has_log": false,
+      "body_preview": "try:\n            proc.kill()\n            proc.wait(timeout=5)\n        except Exception:\n            "
+    },
+    {
+      "file": "ming_sim/cli_backend.py",
+      "fn": "_terminate_cli_process",
+      "except_line": 404,
+      "has_log": false,
+      "body_preview": "pass"
+    },
+    {
+      "file": "ming_sim/cli_backend.py",
+      "fn": "_iter_cli_process_lines",
+      "except_line": 465,
+      "has_log": false,
+      "body_preview": "logger.debug(\"CLI %s 管道读中断（子进程已收尾）：%s\", kind, exc)"
+    },
+    {
+      "file": "ming_sim/cli_backend.py",
+      "fn": "_iter_cli_process_lines",
+      "except_line": 480,
+      "has_log": true,
+      "body_preview": "result.stdin_error = exc"
+    },
+    {
+      "file": "ming_sim/cli_backend.py",
+      "fn": "_iter_cli_process_lines",
+      "except_line": 510,
+      "has_log": false,
+      "body_preview": "check_idle_budget(\n                    last_activity_at=last_activity, policy=policy, clock=tick,\n  "
+    },
+    {
+      "file": "ming_sim/cli_backend.py",
+      "fn": "_iter_cli_runner_text",
+      "except_line": 858,
+      "has_log": false,
+      "body_preview": "pass"
+    },
+    {
+      "file": "ming_sim/cli_backend.py",
+      "fn": "_iter_cli_runner_text",
+      "except_line": 808,
+      "has_log": false,
+      "body_preview": "continue"
+    },
+    {
+      "file": "ming_sim/cli_backend.py",
+      "fn": "_backend_label",
+      "except_line": 1055,
+      "has_log": false,
+      "body_preview": "parts = None"
+    },
+    {
+      "file": "ming_sim/cli_backend.py",
+      "fn": "_finalize_extract_with_combo",
+      "except_line": 2083,
+      "has_log": false,
+      "body_preview": "draft_failures[idx] = frozenset(exc.failed_fields)"
+    },
+    {
+      "file": "ming_sim/cli_backend.py",
+      "fn": "_stalled_deliberation_push_facts",
+      "except_line": 2556,
+      "has_log": false,
+      "body_preview": "continue"
+    },
+    {
+      "file": "ming_sim/cli_backend.py",
+      "fn": "extract_draft_intent",
+      "except_line": 2723,
+      "has_log": false,
+      "body_preview": "invalid_batch = True"
+    },
+    {
+      "file": "ming_sim/cli_backend.py",
+      "fn": "project_draft_extract_to_directive_payload",
+      "except_line": 3239,
+      "has_log": false,
+      "body_preview": "pre_kind = \"ordinary\""
+    },
+    {
+      "file": "ming_sim/cli_backend.py",
+      "fn": "_loads_lenient",
+      "except_line": 3415,
+      "has_log": false,
+      "body_preview": "try:\n            obj = json.loads(_strip_jsonc(body))\n        except (ValueError, TypeError):\n      "
+    },
+    {
+      "file": "ming_sim/cli_backend.py",
+      "fn": "enrich_initiative_effects",
+      "except_line": 3459,
+      "has_log": true,
+      "body_preview": "_log(f\"国策效果补全失败：{exc}\")"
+    },
+    {
+      "file": "ming_sim/cli_backend.py",
+      "fn": "enrich_initiative_effects",
+      "except_line": 3465,
+      "has_log": false,
+      "body_preview": "norm = obj"
+    },
+    {
+      "file": "ming_sim/cli_backend.py",
+      "fn": "_extract_secret_order",
+      "except_line": 3959,
+      "has_log": false,
+      "body_preview": "deadline = 0"
+    },
+    {
+      "file": "ming_sim/cli_backend.py",
+      "fn": "_extract_secret_order",
+      "except_line": 4010,
+      "has_log": false,
+      "body_preview": "direction = 1"
+    },
+    {
+      "file": "ming_sim/cli_backend.py",
+      "fn": "_extract_secret_order",
+      "except_line": 4034,
+      "has_log": false,
+      "body_preview": "covert_task = None"
+    },
+    {
+      "file": "ming_sim/cli_backend.py",
+      "fn": "_extract_secret_order",
+      "except_line": 3995,
+      "has_log": true,
+      "body_preview": "_log(f\"案卷关联确认失败：{exc}\")"
+    },
+    {
+      "file": "ming_sim/cli_backend.py",
+      "fn": "_pump",
+      "except_line": 465,
+      "has_log": false,
+      "body_preview": "logger.debug(\"CLI %s 管道读中断（子进程已收尾）：%s\", kind, exc)"
+    },
+    {
+      "file": "ming_sim/cli_backend.py",
+      "fn": "_feed_stdin",
+      "except_line": 480,
+      "has_log": true,
+      "body_preview": "result.stdin_error = exc"
+    },
+    {
+      "file": "ming_sim/month_chain.py",
+      "fn": "_step_4a_secret_order_supply",
+      "except_line": 1305,
+      "has_log": false,
+      "body_preview": "chain[\"secret_orders_supply_invalid\"] = True"
+    },
+    {
+      "file": "ming_sim/month_chain.py",
+      "fn": "_step_4a_secret_order_supply",
+      "except_line": 1328,
+      "has_log": false,
+      "body_preview": "if validation_failed:\n                # 无效标记须先落盘：_abort_month_call 只叠 call_failure 到已提交链。\n          "
+    },
+    {
+      "file": "ming_sim/month_chain.py",
+      "fn": "_step_4a_secret_order_supply",
+      "except_line": 1354,
+      "has_log": false,
+      "body_preview": "_abort_4a(exc)"
+    },
+    {
+      "file": "ming_sim/month_chain.py",
+      "fn": "_step_4a_secret_order_supply",
+      "except_line": 1390,
+      "has_log": false,
+      "body_preview": "if invalid_declarations:\n                chain[\"secret_orders_supply_invalid\"] = True\n              "
+    },
+    {
+      "file": "ming_sim/month_chain.py",
+      "fn": "_step_4a_secret_order_supply",
+      "except_line": 1405,
+      "has_log": false,
+      "body_preview": "_abort_4a(exc)"
+    },
+    {
+      "file": "ming_sim/token_stats.py",
+      "fn": "install_token_stats_patch",
+      "except_line": 160,
+      "has_log": true,
+      "body_preview": "tlog(f\"[token_stats] record_usage failed: {type(exc).__name__}: {exc}\")"
+    },
+    {
+      "file": "ming_sim/token_stats.py",
+      "fn": "install_token_stats_patch",
+      "except_line": 173,
+      "has_log": true,
+      "body_preview": "tlog(f\"[token_stats] record_usage failed: {type(exc).__name__}: {exc}\")"
+    },
+    {
+      "file": "ming_sim/token_stats.py",
+      "fn": "patched_create",
+      "except_line": 160,
+      "has_log": true,
+      "body_preview": "tlog(f\"[token_stats] record_usage failed: {type(exc).__name__}: {exc}\")"
+    },
+    {
+      "file": "ming_sim/token_stats.py",
+      "fn": "patched_acreate",
+      "except_line": 173,
+      "has_log": true,
+      "body_preview": "tlog(f\"[token_stats] record_usage failed: {type(exc).__name__}: {exc}\")"
+    },
+    {
+      "file": "ming_sim/credit_events.py",
+      "fn": "resolve_fulfillment_credit_from_extraction",
+      "except_line": 743,
+      "has_log": false,
+      "body_preview": "continue"
+    },
+    {
+      "file": "ming_sim/entities/affair/store.py",
+      "fn": "experiences",
+      "except_line": 447,
+      "has_log": false,
+      "body_preview": "tags = []"
+    },
+    {
+      "file": "ming_sim/entities/affair/store.py",
+      "fn": "experiences",
+      "except_line": 453,
+      "has_log": false,
+      "body_preview": "people = []"
+    },
+    {
+      "file": "web_app.py",
+      "fn": "_spawn_startup_catch_up_nonfatal",
+      "except_line": 3210,
+      "has_log": true,
+      "body_preview": "logger.exception(\"startup extraction catch-up scheduling failed\")"
+    },
+    {
+      "file": "web_app.py",
+      "fn": "_run_startup_extraction_catch_up",
+      "except_line": 2507,
+      "has_log": true,
+      "body_preview": "tlog(f\"[audience-translation] 启动补跑意外故障（不锁档、已忽略）：{exc}\")"
+    }
+  ],
+  "draft_action_wu_returns_focus": [
+    {
+      "file": "ming_sim/cli_backend.py",
+      "fn": "extract_draft_intent",
+      "line": 2988,
+      "preview": "return {\"draft_action\": \"无\", \"draft_text\": \"\", \"target_candidate\": \"\"}"
+    }
+  ],
+  "post_except_continue_all": [
+    {
+      "file": "ming_sim/declaration_dispatch.py",
+      "fn": "_dispatch_commissions",
+      "except_line": 1459,
+      "has_log": false,
+      "body_preview": "_reject(rejected, item, str(exc), \"invalid_shape\", source)"
+    },
+    {
+      "file": "ming_sim/declaration_dispatch.py",
+      "fn": "_dispatch_commissions",
+      "except_line": 1496,
+      "has_log": false,
+      "body_preview": "_reject(rejected, item, str(exc), \"hallucinated_id\", source)"
+    },
+    {
+      "file": "ming_sim/declaration_dispatch.py",
+      "fn": "_dispatch_commissions",
+      "except_line": 1499,
+      "has_log": false,
+      "body_preview": "_reject(rejected, item, str(exc), _xiexang_reject_category(exc), source)"
+    },
+    {
+      "file": "ming_sim/declaration_dispatch.py",
+      "fn": "_dispatch_commissions",
+      "except_line": 1504,
+      "has_log": false,
+      "body_preview": "_reject(rejected, item, str(exc), \"invalid_shape\", source)"
+    },
+    {
+      "file": "ming_sim/declaration_dispatch.py",
+      "fn": "_dispatch_commissions",
+      "except_line": 1108,
+      "has_log": false,
+      "body_preview": "_reject(rejected, item, str(exc), \"invalid_state\", source)"
+    },
+    {
+      "file": "ming_sim/declaration_dispatch.py",
+      "fn": "_dispatch_commissions",
+      "except_line": 1110,
+      "has_log": false,
+      "body_preview": "_reject(rejected, item, str(exc), \"invalid_shape\", source)"
+    },
+    {
+      "file": "ming_sim/declaration_dispatch.py",
+      "fn": "_dispatch_commissions",
+      "except_line": 1127,
+      "has_log": false,
+      "body_preview": "origin_id = 0"
+    },
+    {
+      "file": "ming_sim/declaration_dispatch.py",
+      "fn": "_dispatch_commissions",
+      "except_line": 1170,
+      "has_log": false,
+      "body_preview": "order_id = 0"
+    },
+    {
+      "file": "ming_sim/declaration_dispatch.py",
+      "fn": "_dispatch_commissions",
+      "except_line": 1202,
+      "has_log": false,
+      "body_preview": "order_id = 0"
+    },
+    {
+      "file": "ming_sim/declaration_dispatch.py",
+      "fn": "_dispatch_commissions",
+      "except_line": 1261,
+      "has_log": false,
+      "body_preview": "_reject(rejected, item, f\"密令差务契约不成立：{exc}\", \"invalid_shape\", source)"
+    },
+    {
+      "file": "ming_sim/declaration_dispatch.py",
+      "fn": "_dispatch_commissions",
+      "except_line": 1322,
+      "has_log": false,
+      "body_preview": "_reject(rejected, item, str(exc), \"invalid_shape\", source)"
+    },
+    {
+      "file": "ming_sim/declaration_dispatch.py",
+      "fn": "_dispatch_commissions",
+      "except_line": 1510,
+      "has_log": false,
+      "body_preview": "_reject(rejected, item, str(exc), \"hallucinated_id\", source)"
+    },
+    {
+      "file": "ming_sim/declaration_dispatch.py",
+      "fn": "_dispatch_endorsements",
+      "except_line": 1662,
+      "has_log": false,
+      "body_preview": "action_id = 0"
+    },
+    {
+      "file": "ming_sim/declaration_dispatch.py",
+      "fn": "_dispatch_endorsements",
+      "except_line": 1705,
+      "has_log": false,
+      "body_preview": "_reject(rejected, item, str(exc), \"invalid_item\", source)"
+    },
+    {
+      "file": "ming_sim/declaration_dispatch.py",
+      "fn": "_dispatch_endorsements",
+      "except_line": 1730,
+      "has_log": false,
+      "body_preview": "_reject(rejected, item, str(exc), \"invalid_item\", source)"
+    },
+    {
+      "file": "ming_sim/declaration_dispatch.py",
+      "fn": "_dispatch_inquiries",
+      "except_line": 1884,
+      "has_log": false,
+      "body_preview": "_reject(rejected, item, str(exc), \"hallucinated_id\", source)"
+    },
+    {
+      "file": "ming_sim/declaration_dispatch.py",
+      "fn": "_dispatch_rushes",
+      "except_line": 1927,
+      "has_log": false,
+      "body_preview": "target_id = 0"
+    },
+    {
+      "file": "ming_sim/declaration_dispatch.py",
+      "fn": "_dispatch_rushes",
+      "except_line": 1939,
+      "has_log": false,
+      "body_preview": "deadline = 1"
+    },
+    {
+      "file": "ming_sim/declaration_dispatch.py",
+      "fn": "_dispatch_rushes",
+      "except_line": 1960,
+      "has_log": false,
+      "body_preview": "_reject(rejected, item, \"催办缺目标分段索引\", \"invalid_shape\", source)"
+    },
+    {
+      "file": "ming_sim/declaration_dispatch.py",
+      "fn": "_dispatch_travel_tones",
+      "except_line": 2033,
+      "has_log": false,
+      "body_preview": "_reject(rejected, item, str(exc), \"invalid_enum\", source)"
+    },
+    {
+      "file": "ming_sim/declaration_dispatch.py",
+      "fn": "_dispatch_travel_tones",
+      "except_line": 2041,
+      "has_log": false,
+      "body_preview": "from ming_sim.session import AudienceAdmission, GameSession"
+    },
+    {
+      "file": "ming_sim/declaration_dispatch.py",
+      "fn": "_dispatch_travel_tones",
+      "except_line": 2063,
+      "has_log": false,
+      "body_preview": "_reject(rejected, item, str(exc), \"invalid_state\", source)"
+    },
+    {
+      "file": "ming_sim/declaration_dispatch.py",
+      "fn": "_dispatch_promises",
+      "except_line": 2088,
+      "has_log": false,
+      "body_preview": "action_id = 0"
+    },
+    {
+      "file": "ming_sim/declaration_dispatch.py",
+      "fn": "_dispatch_promises",
+      "except_line": 2171,
+      "has_log": false,
+      "body_preview": "oid_i = 0"
+    },
+    {
+      "file": "ming_sim/declaration_dispatch.py",
+      "fn": "_dispatch_textual_facts",
+      "except_line": 2309,
+      "has_log": false,
+      "body_preview": "_reject(rejected, item, str(exc), \"hallucinated_id\", source)"
+    },
+    {
+      "file": "ming_sim/declaration_dispatch.py",
+      "fn": "_dispatch_textual_facts",
+      "except_line": 2312,
+      "has_log": false,
+      "body_preview": "_reject(rejected, item, str(exc), \"invalid_shape\", source)"
+    },
+    {
+      "file": "ming_sim/declaration_dispatch.py",
+      "fn": "_dispatch_textual_facts",
+      "except_line": 2325,
+      "has_log": false,
+      "body_preview": "_reject(rejected, item, str(exc), \"invalid_shape\", source)"
+    },
+    {
+      "file": "ming_sim/declaration_dispatch.py",
+      "fn": "_dispatch_public_sayings",
+      "except_line": 2376,
+      "has_log": false,
+      "body_preview": "_reject(rejected, item, str(exc), \"hallucinated_id\", source)"
+    },
+    {
+      "file": "ming_sim/declaration_dispatch.py",
+      "fn": "_dispatch_public_sayings",
+      "except_line": 2398,
+      "has_log": false,
+      "body_preview": "_reject(rejected, item, str(exc), \"invalid_shape\", source)"
+    },
+    {
+      "file": "ming_sim/declaration_dispatch.py",
+      "fn": "_dispatch_on_scene_facts",
+      "except_line": 2459,
+      "has_log": false,
+      "body_preview": "_reject(rejected, item, exc.reason, exc.category, source)"
+    },
+    {
+      "file": "ming_sim/declaration_dispatch.py",
+      "fn": "_dispatch_presence",
+      "except_line": 2531,
+      "has_log": false,
+      "body_preview": "_reject(rejected, item, str(exc), \"hallucinated_id\", source)"
+    },
+    {
+      "file": "ming_sim/declaration_dispatch.py",
+      "fn": "_dispatch_presence",
+      "except_line": 2547,
+      "has_log": true,
+      "body_preview": "_reject(rejected, item, str(exc), _category_for_audience_night_error(exc), source)"
+    },
+    {
+      "file": "ming_sim/declaration_dispatch.py",
+      "fn": "_dispatch_scene_facts",
+      "except_line": 2617,
+      "has_log": true,
+      "body_preview": "_reject(rejected, item, str(exc), _category_for_audience_night_error(exc), source)"
+    },
+    {
+      "file": "ming_sim/declaration_dispatch.py",
+      "fn": "_dispatch_scene_facts",
+      "except_line": 2600,
+      "has_log": false,
+      "body_preview": "_reject(rejected, item, str(exc), \"hallucinated_id\", source)"
+    },
+    {
+      "file": "ming_sim/declaration_dispatch.py",
+      "fn": "_dispatch_edge_events",
+      "except_line": 2665,
+      "has_log": false,
+      "body_preview": "_reject(rejected, item, str(exc), \"invalid_enum\", source)"
+    },
+    {
+      "file": "ming_sim/declaration_dispatch.py",
+      "fn": "_dispatch_edge_events",
+      "except_line": 2670,
+      "has_log": false,
+      "body_preview": "_reject(rejected, item, str(exc), \"hallucinated_id\", source)"
+    },
+    {
+      "file": "ming_sim/declaration_dispatch.py",
+      "fn": "_dispatch_edge_events",
+      "except_line": 2693,
+      "has_log": false,
+      "body_preview": "_reject(rejected, item, exc.reason, exc.category, source)"
+    },
+    {
+      "file": "ming_sim/declaration_dispatch.py",
+      "fn": "_dispatch_registrations",
+      "except_line": 2771,
+      "has_log": false,
+      "body_preview": "loyalty = 55"
+    },
+    {
+      "file": "ming_sim/declaration_dispatch.py",
+      "fn": "_dispatch_registrations",
+      "except_line": 2810,
+      "has_log": false,
+      "body_preview": "_reject(rejected, item, exc.reason, exc.category, source)"
+    },
+    {
+      "file": "ming_sim/declaration_dispatch.py",
+      "fn": "_dispatch_registrations",
+      "except_line": 2813,
+      "has_log": false,
+      "body_preview": "_reject(rejected, item, str(exc), str(exc.category), source)"
+    },
+    {
+      "file": "ming_sim/issues.py",
+      "fn": "_payload_owned_person_duplicate",
+      "except_line": 350,
+      "has_log": false,
+      "body_preview": "seat = raw_seat"
+    },
+    {
+      "file": "ming_sim/issues.py",
+      "fn": "_commitment_stop_gate",
+      "except_line": 529,
+      "has_log": false,
+      "body_preview": "gate = {}"
+    },
+    {
+      "file": "ming_sim/issues.py",
+      "fn": "_commitment_remaining_from_gate",
+      "except_line": 553,
+      "has_log": false,
+      "body_preview": "continue"
+    },
+    {
+      "file": "ming_sim/issues.py",
+      "fn": "_latest_commitment_paid_total",
+      "except_line": 579,
+      "has_log": false,
+      "body_preview": "continue"
+    },
+    {
+      "file": "ming_sim/issues.py",
+      "fn": "commitment_progress_payload",
+      "except_line": 611,
+      "has_log": false,
+      "body_preview": "origin_turn = 0"
+    },
+    {
+      "file": "ming_sim/issues.py",
+      "fn": "_commitment_bar_value",
+      "except_line": 699,
+      "has_log": false,
+      "body_preview": "remaining = 0.0"
+    },
+    {
+      "file": "ming_sim/issues.py",
+      "fn": "_commitment_ongoing_effects_for_settlement",
+      "except_line": 742,
+      "has_log": false,
+      "body_preview": "delta = 0"
+    },
+    {
+      "file": "ming_sim/issues.py",
+      "fn": "_commitment_fiscal_create_duplicate_reason",
+      "except_line": 867,
+      "has_log": false,
+      "body_preview": "continue"
+    },
+    {
+      "file": "ming_sim/issues.py",
+      "fn": "_commitment_carrier_same_account_unmatched",
+      "except_line": 896,
+      "has_log": false,
+      "body_preview": "continue"
+    },
+    {
+      "file": "ming_sim/issues.py",
+      "fn": "_apply_fiscal_levy_targets",
+      "except_line": 1600,
+      "has_log": true,
+      "body_preview": "denominator_complete = False"
+    },
+    {
+      "file": "ming_sim/issues.py",
+      "fn": "gather_impeachment_surge_candidates",
+      "except_line": 2332,
+      "has_log": false,
+      "body_preview": "continue"
+    },
+    {
+      "file": "ming_sim/issues.py",
+      "fn": "_register_runtime_rollback_snapshot",
+      "except_line": 2845,
+      "has_log": false,
+      "body_preview": "character_attrs[name] = {}"
+    },
+    {
+      "file": "ming_sim/issues.py",
+      "fn": "_register_runtime_rollback_snapshot",
+      "except_line": 2860,
+      "has_log": false,
+      "body_preview": "pass"
+    },
+    {
+      "file": "ming_sim/issues.py",
+      "fn": "_pending_person_changes_block_event_gate",
+      "except_line": 3025,
+      "has_log": false,
+      "body_preview": "continue"
+    },
+    {
+      "file": "ming_sim/issues.py",
+      "fn": "_content_population_effect_for_save",
+      "except_line": 3475,
+      "has_log": false,
+      "body_preview": "pass"
+    },
+    {
+      "file": "ming_sim/issues.py",
+      "fn": "_has_economy_entry",
+      "except_line": 4618,
+      "has_log": false,
+      "body_preview": "continue"
+    },
+    {
+      "file": "ming_sim/issues.py",
+      "fn": "_emit_pairing_warnings",
+      "except_line": 4689,
+      "has_log": false,
+      "body_preview": "tags = []"
+    },
+    {
+      "file": "ming_sim/issues.py",
+      "fn": "apply_issue_tracker_output",
+      "except_line": 4778,
+      "has_log": false,
+      "body_preview": "applied_advances.append({\n                \"rejected\": True, \"category\": \"invalid_enum\",\n            "
+    },
+    {
+      "file": "ming_sim/issues.py",
+      "fn": "apply_issue_tracker_output",
+      "except_line": 4792,
+      "has_log": false,
+      "body_preview": "applied_advances.append({\n                \"rejected\": True, \"category\": \"invalid_enum\",\n            "
+    },
+    {
+      "file": "ming_sim/issues.py",
+      "fn": "apply_issue_tracker_output",
+      "except_line": 5165,
+      "has_log": false,
+      "body_preview": "end_turn_marker_shape = False"
+    },
+    {
+      "file": "ming_sim/issues.py",
+      "fn": "apply_issue_tracker_output",
+      "except_line": 5311,
+      "has_log": false,
+      "body_preview": "applied_new.append({\n                \"rejected\": True, \"category\": \"invalid_enum\",\n                \""
+    },
+    {
+      "file": "ming_sim/issues.py",
+      "fn": "apply_issue_tracker_output",
+      "except_line": 5361,
+      "has_log": false,
+      "body_preview": "applied_new.append({\n                \"rejected\": True, \"category\": \"invalid_enum\",\n                \""
+    },
+    {
+      "file": "ming_sim/issues.py",
+      "fn": "apply_issue_tracker_output",
+      "except_line": 5478,
+      "has_log": false,
+      "body_preview": "applied_closes.append({\n                \"rejected\": True, \"category\": \"invalid_enum\",\n              "
+    },
+    {
+      "file": "ming_sim/issues.py",
+      "fn": "apply_issue_tracker_output",
+      "except_line": 5640,
+      "has_log": false,
+      "body_preview": "continue"
+    },
+    {
+      "file": "ming_sim/issues.py",
+      "fn": "apply_issue_tracker_output",
+      "except_line": 5251,
+      "has_log": false,
+      "body_preview": "applied_new.append({\n                    \"rejected\": True, \"category\": \"invalid_enum\",\n             "
+    },
+    {
+      "file": "ming_sim/issues.py",
+      "fn": "apply_issue_tracker_output",
+      "except_line": 5347,
+      "has_log": false,
+      "body_preview": "applied_new.append({\"rejected\": True, \"category\": \"invalid_participant_roster\",\n                    "
+    },
+    {
+      "file": "ming_sim/issues.py",
+      "fn": "apply_issue_tracker_output",
+      "except_line": 5393,
+      "has_log": false,
+      "body_preview": "applied_new.append({\n                    \"rejected\": True, \"category\": \"invalid_enum\", \"item\": ni,\n "
+    },
+    {
+      "file": "ming_sim/issues.py",
+      "fn": "apply_issue_tracker_output",
+      "except_line": 5273,
+      "has_log": false,
+      "body_preview": "print(f\"[issue/enrich] 补全失败，沿用空效果：{exc}\")"
+    },
+    {
+      "file": "ming_sim/issues.py",
+      "fn": "_apply_person_changes",
+      "except_line": 6649,
+      "has_log": false,
+      "body_preview": "applied.append(rejected(item, \"任别非白名单\", \"invalid_enum\"))"
+    },
+    {
+      "file": "ming_sim/issues.py",
+      "fn": "_apply_person_changes",
+      "except_line": 6920,
+      "has_log": false,
+      "body_preview": "dossier_id = 0"
+    },
+    {
+      "file": "ming_sim/issues.py",
+      "fn": "_apply_person_changes",
+      "except_line": 6943,
+      "has_log": false,
+      "body_preview": "payload = {}"
+    },
+    {
+      "file": "ming_sim/issues.py",
+      "fn": "_apply_dossier_participant_items",
+      "except_line": 7206,
+      "has_log": false,
+      "body_preview": "results.append({\n                \"rejected\": True, \"category\": \"invalid_participant_roster\",\n       "
+    },
+    {
+      "file": "ming_sim/issues.py",
+      "fn": "_apply_bandit_absorptions",
+      "except_line": 7527,
+      "has_log": false,
+      "body_preview": "_reject(\"invalid_enum\", f\"bandit_absorptions requested_count 非整数：{raw_req!r}\")"
+    },
+    {
+      "file": "ming_sim/issues.py",
+      "fn": "_recovery_effective_silver_wan",
+      "except_line": 7612,
+      "has_log": false,
+      "body_preview": "continue"
+    },
+    {
+      "file": "ming_sim/issues.py",
+      "fn": "_apply_recovery_driven_transfers",
+      "except_line": 7655,
+      "has_log": false,
+      "body_preview": "continue"
+    },
+    {
+      "file": "ming_sim/issues.py",
+      "fn": "_apply_extracted_army_delta",
+      "except_line": 8029,
+      "has_log": false,
+      "body_preview": "requested = 0"
+    },
+    {
+      "file": "ming_sim/issues.py",
+      "fn": "_apply_score_extraction_body",
+      "except_line": 8313,
+      "has_log": false,
+      "body_preview": "dossier_execution_results.append({\n                \"rejected\": True, \"category\": \"invalid_transition"
+    },
+    {
+      "file": "ming_sim/issues.py",
+      "fn": "_apply_score_extraction_body",
+      "except_line": 8331,
+      "has_log": false,
+      "body_preview": "reason = str(exc)"
+    },
+    {
+      "file": "ming_sim/issues.py",
+      "fn": "_apply_score_extraction_body",
+      "except_line": 8909,
+      "has_log": false,
+      "body_preview": "validate_rejections.append(\n                (\"affair_declarations\", {\"raw_value\": raw}, str(exc)),\n "
+    },
+    {
+      "file": "ming_sim/issues.py",
+      "fn": "_apply_score_extraction_body",
+      "except_line": 9403,
+      "has_log": false,
+      "body_preview": "applied_fiscal.append({\n                \"rejected\": True,\n                \"reason\": f\"调率目标「{key}」非法："
+    },
+    {
+      "file": "ming_sim/issues.py",
+      "fn": "_apply_score_extraction_body",
+      "except_line": 9428,
+      "has_log": false,
+      "body_preview": "for change in pair_changes:\n                applied_fiscal.append({\n                    \"rejected\": "
+    },
+    {
+      "file": "ming_sim/issues.py",
+      "fn": "_apply_score_extraction_body",
+      "except_line": 9488,
+      "has_log": false,
+      "body_preview": "applied_secret_orders.append({\"order_id\": raw_id, \"rejected\": True,\n                                "
+    },
+    {
+      "file": "ming_sim/issues.py",
+      "fn": "_apply_score_extraction_body",
+      "except_line": 9520,
+      "has_log": false,
+      "body_preview": "applied_secret_orders.append({\"order_id\": real_id, \"rejected\": True, \"reason\": str(exc)})"
+    },
+    {
+      "file": "ming_sim/issues.py",
+      "fn": "_apply_score_extraction_body",
+      "except_line": 8552,
+      "has_log": false,
+      "body_preview": "db.conn.execute(f\"ROLLBACK TO {savepoint}\")"
+    },
+    {
+      "file": "ming_sim/issues.py",
+      "fn": "_apply_score_extraction_body",
+      "except_line": 8617,
+      "has_log": false,
+      "body_preview": "db.conn.execute(f\"ROLLBACK TO {savepoint}\")"
+    },
+    {
+      "file": "ming_sim/issues.py",
+      "fn": "_apply_score_extraction_body",
+      "except_line": 9080,
+      "has_log": false,
+      "body_preview": "event_person_results.append({\n                    \"name\": str(item.get(\"name\") or \"\").strip(),\n     "
+    },
+    {
+      "file": "ming_sim/issues.py",
+      "fn": "_apply_score_extraction_body",
+      "except_line": 8851,
+      "has_log": false,
+      "body_preview": "stripped[k] = v"
+    },
+    {
+      "file": "ming_sim/issues.py",
+      "fn": "apply_issue_inertia_and_ongoing",
+      "except_line": 9833,
+      "has_log": false,
+      "body_preview": "continue"
+    },
+    {
+      "file": "ming_sim/issues.py",
+      "fn": "clear_gated_legacies",
+      "except_line": 9982,
+      "has_log": false,
+      "body_preview": "gate = {}"
+    },
+    {
+      "file": "ming_sim/issues.py",
+      "fn": "_fields",
+      "except_line": 350,
+      "has_log": false,
+      "body_preview": "seat = raw_seat"
+    },
+    {
+      "file": "ming_sim/issues.py",
+      "fn": "restore_runtime",
+      "except_line": 2860,
+      "has_log": false,
+      "body_preview": "pass"
+    },
+    {
+      "file": "ming_sim/issues.py",
+      "fn": "overlay_power_delta",
+      "except_line": 3025,
+      "has_log": false,
+      "body_preview": "continue"
+    },
+    {
+      "file": "ming_sim/issues.py",
+      "fn": "_apply_person_changes_itemwise",
+      "except_line": 8552,
+      "has_log": false,
+      "body_preview": "db.conn.execute(f\"ROLLBACK TO {savepoint}\")"
+    },
+    {
+      "file": "ming_sim/issues.py",
+      "fn": "_apply_economy_moves_list",
+      "except_line": 8617,
+      "has_log": false,
+      "body_preview": "db.conn.execute(f\"ROLLBACK TO {savepoint}\")"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "fold_loyalty_alias_delta",
+      "except_line": 165,
+      "has_log": false,
+      "body_preview": "continue"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "_approx_wanliang",
+      "except_line": 365,
+      "has_log": false,
+      "body_preview": "value = 0.0"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "_qualitative_army_stat",
+      "except_line": 418,
+      "has_log": false,
+      "body_preview": "n = 0"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "_player_army_situation",
+      "except_line": 450,
+      "has_log": false,
+      "body_preview": "loyalty = 0"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "_offices_table",
+      "except_line": 728,
+      "has_log": true,
+      "body_preview": "tlog(f\"[content] offices.json 意外加载失败，回空表：{exc}\")"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "_office_type_via_llm",
+      "except_line": 770,
+      "has_log": false,
+      "body_preview": "out = \"\""
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "__init__",
+      "except_line": 975,
+      "has_log": true,
+      "body_preview": "logger.exception(\"GameDB init failed; conn.close failed\")"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "settle_ming_province_substrate_ticks",
+      "except_line": 3204,
+      "has_log": false,
+      "body_preview": "outcomes.append(ProvinceFiscalTickOutcome(region_id, None, exc))"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "_record_claim_flow_logs",
+      "except_line": 3301,
+      "has_log": false,
+      "body_preview": "amount = 0.0"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "_migrate_character_identity_seed",
+      "except_line": 5402,
+      "has_log": false,
+      "body_preview": "aliases = []"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "seed_opening_crises",
+      "except_line": 5712,
+      "has_log": false,
+      "body_preview": "print(f\"[WARN] 开局危机落库失败：{exc}；跳过 {ev.title}\")"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "next_pool_portrait_id",
+      "except_line": 6380,
+      "has_log": false,
+      "body_preview": "pass"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "effect_origin_rejection",
+      "except_line": 6958,
+      "has_log": false,
+      "body_preview": "valid = False"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "effect_origin_rejection",
+      "except_line": 6977,
+      "has_log": false,
+      "body_preview": "valid = False"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "apply_power_deltas",
+      "except_line": 7063,
+      "has_log": false,
+      "body_preview": "changes.append({\n                        \"power\": row[\"name\"], \"field\": str(raw_field),\n            "
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "apply_region_deltas",
+      "except_line": 7389,
+      "has_log": false,
+      "body_preview": "changes.append({\n                            \"region\": row[\"name\"], \"field\": field,\n                "
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "apply_region_deltas",
+      "except_line": 7483,
+      "has_log": false,
+      "body_preview": "changes.append({\n                            \"region\": row[\"name\"], \"field\": field,\n                "
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "apply_army_deltas",
+      "except_line": 8064,
+      "has_log": false,
+      "body_preview": "changes.append({\n                            \"army\": row[\"name\"], \"field\": field,\n                  "
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "create_armies_from_extraction",
+      "except_line": 8476,
+      "has_log": false,
+      "body_preview": "created.append({\n                    \"id\": aid, \"rejected\": True, \"category\": \"invalid_enum\",\n      "
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "create_armies_from_extraction",
+      "except_line": 8443,
+      "has_log": false,
+      "body_preview": "created.append({\n                        \"id\": aid, \"rejected\": True, \"category\": \"invalid_enum\",\n  "
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "create_armies_from_extraction",
+      "except_line": 8584,
+      "has_log": false,
+      "body_preview": "created.append({\n                        \"id\": aid, \"rejected\": True, \"category\": \"invalid_enum\",\n  "
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "create_armies_from_extraction",
+      "except_line": 8502,
+      "has_log": false,
+      "body_preview": "_dirty_field = (_f, _v)"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "adjust_factions",
+      "except_line": 8970,
+      "has_log": false,
+      "body_preview": "continue"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "_agno_table_run_dicts",
+      "except_line": 9885,
+      "has_log": false,
+      "body_preview": "decoded = None"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "undo_chat_turn",
+      "except_line": 10323,
+      "has_log": false,
+      "body_preview": "continue"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "knowledge_items_for_turn",
+      "except_line": 10637,
+      "has_log": false,
+      "body_preview": "excluded_names = []"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "knowledge_items_for_turn",
+      "except_line": 10666,
+      "has_log": false,
+      "body_preview": "excluded_names = []"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "knowledge_items_for_turn",
+      "except_line": 10672,
+      "has_log": false,
+      "body_preview": "excluded_targets = {}"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "get_ending_summary",
+      "except_line": 10739,
+      "has_log": true,
+      "body_preview": "tlog(f\"[db] timeline JSON 损坏，回空：{exc}\")"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "list_pending_decisions",
+      "except_line": 10996,
+      "has_log": true,
+      "body_preview": "tlog(f\"[db] options_json 损坏，回空：{exc}\")"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "list_pending_decisions",
+      "except_line": 11002,
+      "has_log": true,
+      "body_preview": "tlog(f\"[db] choice_json 损坏，回 None（idx={r['idx']}）：{exc}\")"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "list_pending_decisions",
+      "except_line": 11007,
+      "has_log": true,
+      "body_preview": "tlog(f\"[db] prior_options_json 损坏，回空：{exc}\")"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "list_rescript_drafts",
+      "except_line": 11115,
+      "has_log": true,
+      "body_preview": "tlog(f\"[db] options_json 损坏，回空：{exc}\")"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "list_rescript_drafts",
+      "except_line": 11121,
+      "has_log": true,
+      "body_preview": "tlog(f\"[db] choice_json 损坏，回 None（draft turn={r['turn']} idx={r['idx']}）：{exc}\")"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "list_rescript_drafts",
+      "except_line": 11126,
+      "has_log": true,
+      "body_preview": "tlog(f\"[db] prior_options_json 损坏，回空：{exc}\")"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "_project_rescript_desk_row",
+      "except_line": 11182,
+      "has_log": true,
+      "body_preview": "tlog(f\"[db] options_json 损坏，回空：{exc}\")"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "_project_rescript_desk_row",
+      "except_line": 11190,
+      "has_log": true,
+      "body_preview": "tlog(f\"[db] choice_json 损坏，回 None（desk {kind}:{source_turn}:{idx}）：{exc}\")"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "_project_rescript_desk_row",
+      "except_line": 11195,
+      "has_log": true,
+      "body_preview": "tlog(f\"[db] prior_options_json 损坏，回空：{exc}\")"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "get_rescript_desk_rows_by_keys",
+      "except_line": 11235,
+      "has_log": false,
+      "body_preview": "continue"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "_normalize_directive_dossier_payload",
+      "except_line": 11605,
+      "has_log": false,
+      "body_preview": "aid = 0"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "_normalize_directive_dossier_payload",
+      "except_line": 11625,
+      "has_log": false,
+      "body_preview": "grant_did = 0"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "_normalize_directive_dossier_payload",
+      "except_line": 11644,
+      "has_log": false,
+      "body_preview": "revoke_did = 0"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "_normalize_directive_dossier_payload",
+      "except_line": 11651,
+      "has_log": false,
+      "body_preview": "revoke_iid = 0"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "_normalize_directive_dossier_payload",
+      "except_line": 11726,
+      "has_log": false,
+      "body_preview": "due_turn = deadline = 0"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "_normalize_directive_dossier_payload",
+      "except_line": 11768,
+      "has_log": false,
+      "body_preview": "end_turn = 0"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "_normalize_directive_dossier_payload",
+      "except_line": 11664,
+      "has_log": false,
+      "body_preview": "tid = 0"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "_normalize_directive_dossier_payload",
+      "except_line": 11709,
+      "has_log": false,
+      "body_preview": "amount = 0"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "_normalize_directive_dossier_payload",
+      "except_line": 11776,
+      "has_log": false,
+      "body_preview": "months = 0"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "record_dossier_progress",
+      "except_line": 12086,
+      "has_log": false,
+      "body_preview": "payload = {}"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "list_monthly_dossier_progress_nudges",
+      "except_line": 12203,
+      "has_log": false,
+      "body_preview": "payload = {}"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "list_monthly_grant_reconciliation_targets",
+      "except_line": 12305,
+      "has_log": false,
+      "body_preview": "payload = {}"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "list_monthly_grant_reconciliation_targets",
+      "except_line": 12318,
+      "has_log": false,
+      "body_preview": "ordered = 0"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "record_monthly_grant_reconciliations",
+      "except_line": 12453,
+      "has_log": false,
+      "body_preview": "_reject(item, \"对账提案案卷编号无效\", \"invalid_enum\")"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "record_monthly_grant_reconciliations",
+      "except_line": 12487,
+      "has_log": false,
+      "body_preview": "_reject(item, f\"对账{amount_label}值无效\", \"invalid_enum\")"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "list_faction_denunciations",
+      "except_line": 12908,
+      "has_log": false,
+      "body_preview": "payload = {}"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "accept_faction_denunciations",
+      "except_line": 13229,
+      "has_log": false,
+      "body_preview": "continue"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "accept_faction_denunciations",
+      "except_line": 13273,
+      "has_log": false,
+      "body_preview": "prev_payload = {}"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "trigger_commitment_backlashes",
+      "except_line": 13406,
+      "has_log": false,
+      "body_preview": "did = 0"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "find_deliberation_dossier_by_decision_key",
+      "except_line": 14509,
+      "has_log": false,
+      "body_preview": "out[\"payload\"] = {}"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "append_decree_dossier_participants",
+      "except_line": 14528,
+      "has_log": false,
+      "body_preview": "existing_raw = []"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "add_dossier_links",
+      "except_line": 14924,
+      "has_log": false,
+      "body_preview": "target_id = 0"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "apply_dossier_promulgation",
+      "except_line": 15778,
+      "has_log": false,
+      "body_preview": "due_turn = 0"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "apply_dossier_promulgation",
+      "except_line": 15783,
+      "has_log": false,
+      "body_preview": "due_turn = 0"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "_migrate_legacy_reaction_severity",
+      "except_line": 15846,
+      "has_log": true,
+      "body_preview": "logging.getLogger(__name__).warning(\n                        \"跳过 %s 表迁移行 %s：%s\",\n                   "
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "_apply_revoke_authority_verdict_effect",
+      "except_line": 16472,
+      "has_log": false,
+      "body_preview": "authority_id = 0"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "resolve_revoke_decree_target_ids",
+      "except_line": 16534,
+      "has_log": false,
+      "body_preview": "tid = 0"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "resolve_revoke_decree_target_ids",
+      "except_line": 16557,
+      "has_log": false,
+      "body_preview": "target_dossier_id = 0"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "_apply_referral_verdict_effect",
+      "except_line": 16722,
+      "has_log": false,
+      "body_preview": "end_turn = 0"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "_apply_assignment_verdict_effect",
+      "except_line": 16818,
+      "has_log": false,
+      "body_preview": "end_turn = 0"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "attach_pending_action_endorsement",
+      "except_line": 17335,
+      "has_log": false,
+      "body_preview": "payload = {}"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "_merge_underscore_control_keys",
+      "except_line": 17633,
+      "has_log": false,
+      "body_preview": "old = {}"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "clear_directive_needs_clarification",
+      "except_line": 17716,
+      "has_log": false,
+      "body_preview": "payload = {}"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "flag_directive_needs_clarification",
+      "except_line": 17875,
+      "has_log": false,
+      "body_preview": "payload = {}"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "commit_pending_actions",
+      "except_line": 18073,
+      "has_log": false,
+      "body_preview": "payload = {}"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "_apply_pending_action",
+      "except_line": 18367,
+      "has_log": false,
+      "body_preview": "stage_idx = 0"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "_invalid_office_recommendation_snapshots",
+      "except_line": 18629,
+      "has_log": false,
+      "body_preview": "payload = {}"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "project_applicable_authorities",
+      "except_line": 19159,
+      "has_log": false,
+      "body_preview": "roster = []"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "ensure_dossiers_for_draft_directives",
+      "except_line": 19442,
+      "has_log": true,
+      "body_preview": "self.conn.execute(f\"ROLLBACK TO {sp}\")"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "legacy_modifiers",
+      "except_line": 20517,
+      "has_log": true,
+      "body_preview": "tlog(f\"[db] legacy modifiers JSON 损坏，跳过该 legacy：{exc}\")"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "knowledge_exclusion_targets_for_source",
+      "except_line": 21200,
+      "has_log": false,
+      "body_preview": "payload = {}"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "knowledge_exclusion_targets_for_source",
+      "except_line": 21176,
+      "has_log": false,
+      "body_preview": "payload = {}"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "knowledge_exclusion_targets_for_source",
+      "except_line": 21189,
+      "has_log": false,
+      "body_preview": "payload = {}"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "_coerce_positive_message_ids",
+      "except_line": 21295,
+      "has_log": false,
+      "body_preview": "continue"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "_secret_origin_message_protection",
+      "except_line": 21332,
+      "has_log": false,
+      "body_preview": "continue"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "_secret_origin_message_protection",
+      "except_line": 21346,
+      "has_log": false,
+      "body_preview": "continue"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "_secret_origin_message_protection",
+      "except_line": 21361,
+      "has_log": false,
+      "body_preview": "turns = []"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "_secret_origin_message_protection",
+      "except_line": 21339,
+      "has_log": false,
+      "body_preview": "continue"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "_secret_origin_message_protection",
+      "except_line": 21372,
+      "has_log": false,
+      "body_preview": "continue"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "_withhold_origin_chat_messages",
+      "except_line": 21406,
+      "has_log": false,
+      "body_preview": "rows = []"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "update_secret_order_by_id",
+      "except_line": 21961,
+      "has_log": false,
+      "body_preview": "prior_targets = {}"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "update_secret_order_by_id",
+      "except_line": 21967,
+      "has_log": false,
+      "body_preview": "legacy_people = []"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "update_secret_order_by_id",
+      "except_line": 22008,
+      "has_log": false,
+      "body_preview": "payload = {}"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "rush_secret_order",
+      "except_line": 22348,
+      "has_log": false,
+      "body_preview": "months = 1"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "apply_relation_brew_result",
+      "except_line": 22737,
+      "has_log": false,
+      "body_preview": "pass"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "mark_relation_brew_pending",
+      "except_line": 22770,
+      "has_log": false,
+      "body_preview": "pass"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "mark_faction_brew_pending",
+      "except_line": 22903,
+      "has_log": false,
+      "body_preview": "pass"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "apply_faction_brew_result",
+      "except_line": 22957,
+      "has_log": false,
+      "body_preview": "pass"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "fn": "_reclaim",
+      "except_line": 10323,
+      "has_log": false,
+      "body_preview": "continue"
+    },
+    {
+      "file": "ming_sim/audience_translate.py",
+      "fn": "build_pending_summaries",
+      "except_line": 76,
+      "has_log": false,
+      "body_preview": "payload = {}"
+    },
+    {
+      "file": "ming_sim/decree_forecast.py",
+      "fn": "schedule_approved_from_dispatch",
+      "except_line": 541,
+      "has_log": false,
+      "body_preview": "continue"
+    },
+    {
+      "file": "ming_sim/fiscal_fact_brief.py",
+      "fn": "build_fiscal_fact_brief",
+      "except_line": 468,
+      "has_log": false,
+      "body_preview": "continue"
+    },
+    {
+      "file": "ming_sim/fiscal_fact_brief.py",
+      "fn": "build_fiscal_fact_brief",
+      "except_line": 561,
+      "has_log": false,
+      "body_preview": "continue"
+    },
+    {
+      "file": "ming_sim/rescript_actions.py",
+      "fn": "_option_by_capability",
+      "except_line": 249,
+      "has_log": false,
+      "body_preview": "continue"
+    },
+    {
+      "file": "ming_sim/rescript_actions.py",
+      "fn": "run_prewrite_llms",
+      "except_line": 677,
+      "has_log": false,
+      "body_preview": "errors.append(exc)"
+    },
+    {
+      "file": "ming_sim/rescript_actions.py",
+      "fn": "map_rescript_option_or_choice",
+      "except_line": 798,
+      "has_log": false,
+      "body_preview": "due = 0"
+    },
+    {
+      "file": "ming_sim/rescript_actions.py",
+      "fn": "map_rescript_option_or_choice",
+      "except_line": 803,
+      "has_log": false,
+      "body_preview": "months = 0"
+    },
+    {
+      "file": "ming_sim/rescript_actions.py",
+      "fn": "map_rescript_option_or_choice",
+      "except_line": 938,
+      "has_log": false,
+      "body_preview": "amount = 0"
+    },
+    {
+      "file": "ming_sim/rescript_actions.py",
+      "fn": "map_rescript_option_or_choice",
+      "except_line": 947,
+      "has_log": false,
+      "body_preview": "amount = 0"
+    },
+    {
+      "file": "ming_sim/rescript_actions.py",
+      "fn": "_create_from_mapped",
+      "except_line": 1059,
+      "has_log": false,
+      "body_preview": "due_turn = 0"
+    },
+    {
+      "file": "ming_sim/execution_pressure.py",
+      "fn": "assert_target_locality_matrix",
+      "except_line": 182,
+      "has_log": false,
+      "body_preview": "_matrix_fail(\n            str(exc),\n            field_failures=(\n                _fact(\n            "
+    },
+    {
+      "file": "ming_sim/public_sayings.py",
+      "fn": "_json_name_list",
+      "except_line": 124,
+      "has_log": false,
+      "body_preview": "values = []"
+    },
+    {
+      "file": "ming_sim/public_sayings.py",
+      "fn": "_json_target_map",
+      "except_line": 134,
+      "has_log": false,
+      "body_preview": "payload = {}"
+    },
+    {
+      "file": "ming_sim/staged_commitment.py",
+      "fn": "normalize_commitment_stages",
+      "except_line": 56,
+      "has_log": false,
+      "body_preview": "continue"
+    },
+    {
+      "file": "ming_sim/staged_commitment.py",
+      "fn": "normalize_commitment_stages",
+      "except_line": 62,
+      "has_log": false,
+      "body_preview": "stage_idx = idx"
+    },
+    {
+      "file": "ming_sim/staged_commitment.py",
+      "fn": "should_skip_form3_due_for_staged",
+      "except_line": 163,
+      "has_log": false,
+      "body_preview": "et = 0"
+    },
+    {
+      "file": "ming_sim/staged_commitment.py",
+      "fn": "list_due_grant_report_dossiers_for_scan",
+      "except_line": 234,
+      "has_log": false,
+      "body_preview": "payload = {}"
+    },
+    {
+      "file": "ming_sim/audience_translation.py",
+      "fn": "run_turn_translation_job",
+      "except_line": 294,
+      "has_log": false,
+      "body_preview": "mid = 0"
+    },
+    {
+      "file": "ming_sim/audience_translation.py",
+      "fn": "schedule_audience_turn_translation",
+      "except_line": 435,
+      "has_log": true,
+      "body_preview": "logger.exception(\n                \"audience translation predecessor failed; \"\n                \"conti"
+    },
+    {
+      "file": "ming_sim/audience_translation.py",
+      "fn": "schedule_audience_turn_translation",
+      "except_line": 505,
+      "has_log": true,
+      "body_preview": "if not _out.done():\n                _out.set_exception(exc)"
+    },
+    {
+      "file": "ming_sim/audience_translation.py",
+      "fn": "catch_up_pending_translations",
+      "except_line": 642,
+      "has_log": true,
+      "body_preview": "logger.exception(\n                \"catch_up_pending_translations: turn failed night=%s chat_turn_id="
+    },
+    {
+      "file": "ming_sim/audience_translation.py",
+      "fn": "catch_up_pending_translations",
+      "except_line": 613,
+      "has_log": true,
+      "body_preview": "logger.exception(\n                    \"catch_up_pending_translations: turn failed night=%s chat_turn"
+    },
+    {
+      "file": "ming_sim/audience_translation.py",
+      "fn": "_observe_predecessor",
+      "except_line": 435,
+      "has_log": true,
+      "body_preview": "logger.exception(\n                \"audience translation predecessor failed; \"\n                \"conti"
+    },
+    {
+      "file": "ming_sim/audience_translation.py",
+      "fn": "_bridge_work",
+      "except_line": 505,
+      "has_log": true,
+      "body_preview": "if not _out.done():\n                _out.set_exception(exc)"
+    },
+    {
+      "file": "ming_sim/strict_types.py",
+      "fn": "validate_rejection_verdict",
+      "except_line": 120,
+      "has_log": false,
+      "body_preview": "typed_affected = False"
+    },
+    {
+      "file": "ming_sim/breach_plea.py",
+      "fn": "commitment_natural_due_turn",
+      "except_line": 112,
+      "has_log": false,
+      "body_preview": "keys = list(row.keys()) if isinstance(row, dict) else []"
+    },
+    {
+      "file": "ming_sim/breach_plea.py",
+      "fn": "commitment_natural_due_turn",
+      "except_line": 124,
+      "has_log": false,
+      "body_preview": "end_turn = 0"
+    },
+    {
+      "file": "ming_sim/breach_plea.py",
+      "fn": "_commitment_origin_refs",
+      "except_line": 151,
+      "has_log": false,
+      "body_preview": "origin = \"\""
+    },
+    {
+      "file": "ming_sim/breach_plea.py",
+      "fn": "_sponsor_names_for_commitment",
+      "except_line": 162,
+      "has_log": false,
+      "body_preview": "roster = []"
+    },
+    {
+      "file": "ming_sim/breach_plea.py",
+      "fn": "_sponsor_names_for_commitment",
+      "except_line": 172,
+      "has_log": false,
+      "body_preview": "origin_ref = \"\""
+    },
+    {
+      "file": "ming_sim/breach_plea.py",
+      "fn": "_dedicated_accounts",
+      "except_line": 206,
+      "has_log": false,
+      "body_preview": "keys = []"
+    },
+    {
+      "file": "ming_sim/breach_plea.py",
+      "fn": "_dedicated_accounts",
+      "except_line": 212,
+      "has_log": false,
+      "body_preview": "tags = []"
+    },
+    {
+      "file": "ming_sim/breach_plea.py",
+      "fn": "_spent_amount_and_fiscal_count",
+      "except_line": 473,
+      "has_log": false,
+      "body_preview": "origin = \"\""
+    },
+    {
+      "file": "ming_sim/breach_plea.py",
+      "fn": "_spent_amount_and_fiscal_count",
+      "except_line": 480,
+      "has_log": false,
+      "body_preview": "delta = 0"
+    },
+    {
+      "file": "ming_sim/breach_plea.py",
+      "fn": "stop_origin_commitment_ticks",
+      "except_line": 604,
+      "has_log": false,
+      "body_preview": "continue"
+    },
+    {
+      "file": "ming_sim/breach_plea.py",
+      "fn": "_promised_monthly_amount",
+      "except_line": 883,
+      "has_log": false,
+      "body_preview": "delta = 0"
+    },
+    {
+      "file": "ming_sim/breach_plea.py",
+      "fn": "_fiscal_funding_cut_this_turn",
+      "except_line": 947,
+      "has_log": false,
+      "body_preview": "continue"
+    },
+    {
+      "file": "ming_sim/breach_plea.py",
+      "fn": "_sponsor_transferred",
+      "except_line": 1082,
+      "has_log": false,
+      "body_preview": "roster = []"
+    },
+    {
+      "file": "ming_sim/breach_plea.py",
+      "fn": "_sponsor_transferred",
+      "except_line": 1110,
+      "has_log": false,
+      "body_preview": "payload = {}"
+    },
+    {
+      "file": "ming_sim/breach_plea.py",
+      "fn": "_extract_ref_ids",
+      "except_line": 1257,
+      "has_log": false,
+      "body_preview": "continue"
+    },
+    {
+      "file": "ming_sim/breach_plea.py",
+      "fn": "_extract_ref_ids",
+      "except_line": 1264,
+      "has_log": false,
+      "body_preview": "pass"
+    },
+    {
+      "file": "ming_sim/breach_plea.py",
+      "fn": "resolve_breach_pleas_from_extraction",
+      "except_line": 1349,
+      "has_log": false,
+      "body_preview": "delta = 0"
+    },
+    {
+      "file": "ming_sim/breach_plea.py",
+      "fn": "resolve_breach_pleas_from_extraction",
+      "except_line": 1366,
+      "has_log": false,
+      "body_preview": "delta = 0"
+    },
+    {
+      "file": "ming_sim/breach_plea.py",
+      "fn": "resolve_breach_pleas_from_extraction",
+      "except_line": 1374,
+      "has_log": false,
+      "body_preview": "pass"
+    },
+    {
+      "file": "ming_sim/breach_plea.py",
+      "fn": "resolve_breach_pleas_from_extraction",
+      "except_line": 1313,
+      "has_log": false,
+      "body_preview": "pass"
+    },
+    {
+      "file": "ming_sim/breach_plea.py",
+      "fn": "resolve_breach_pleas_from_extraction",
+      "except_line": 1333,
+      "has_log": false,
+      "body_preview": "pass"
+    },
+    {
+      "file": "ming_sim/breach_plea.py",
+      "fn": "resolve_breach_pleas_from_extraction",
+      "except_line": 1341,
+      "has_log": false,
+      "body_preview": "pass"
+    },
+    {
+      "file": "ming_sim/breach_plea.py",
+      "fn": "_note_funding_item",
+      "except_line": 1333,
+      "has_log": false,
+      "body_preview": "pass"
+    },
+    {
+      "file": "ming_sim/breach_plea.py",
+      "fn": "_note_funding_item",
+      "except_line": 1341,
+      "has_log": false,
+      "body_preview": "pass"
+    },
+    {
+      "file": "ming_sim/decree_vocabulary.py",
+      "fn": "derive_draft_capability",
+      "except_line": 103,
+      "has_log": false,
+      "body_preview": "canonical[key] = 0"
+    },
+    {
+      "file": "ming_sim/decree.py",
+      "fn": "_collect_compliant_promulgation_items",
+      "except_line": 190,
+      "has_log": false,
+      "body_preview": "continue"
+    },
+    {
+      "file": "ming_sim/decree.py",
+      "fn": "_open_affair_ids_from_payload",
+      "except_line": 738,
+      "has_log": false,
+      "body_preview": "continue"
+    },
+    {
+      "file": "ming_sim/decree.py",
+      "fn": "write_decree_with_agno",
+      "except_line": 763,
+      "has_log": false,
+      "body_preview": "closed_evidence = []"
+    },
+    {
+      "file": "ming_sim/decree.py",
+      "fn": "_provenance_from_stored",
+      "except_line": 900,
+      "has_log": false,
+      "body_preview": "pass"
+    },
+    {
+      "file": "ming_sim/decree.py",
+      "fn": "_provenance_from_stored",
+      "except_line": 907,
+      "has_log": false,
+      "body_preview": "pass"
+    },
+    {
+      "file": "ming_sim/relations.py",
+      "fn": "resolve_relation_edge_events_from_extraction",
+      "except_line": 330,
+      "has_log": false,
+      "body_preview": "results.append({\n                \"rejected\": True, \"category\": \"invalid_relation_event\",\n           "
+    },
+    {
+      "file": "ming_sim/materials.py",
+      "fn": "release_material_tree",
+      "except_line": 214,
+      "has_log": false,
+      "body_preview": "primary = exc"
+    },
+    {
+      "file": "ming_sim/materials.py",
+      "fn": "release_material_tree",
+      "except_line": 220,
+      "has_log": false,
+      "body_preview": "if primary is None:\n                primary = exc"
+    },
+    {
+      "file": "ming_sim/materials.py",
+      "fn": "release_previous_material_tree",
+      "except_line": 248,
+      "has_log": true,
+      "body_preview": "logging.getLogger(__name__).exception(\n            \"previous materials tree cleanup failed; live roo"
+    },
+    {
+      "file": "ming_sim/materials.py",
+      "fn": "_publish_material_tree",
+      "except_line": 276,
+      "has_log": false,
+      "body_preview": "cleanup_err = exc"
+    },
+    {
+      "file": "ming_sim/materials.py",
+      "fn": "_publish_material_tree",
+      "except_line": 282,
+      "has_log": false,
+      "body_preview": "if cleanup_err is None:\n                    cleanup_err = exc"
+    },
+    {
+      "file": "ming_sim/materials.py",
+      "fn": "_own_affair_lines",
+      "except_line": 449,
+      "has_log": false,
+      "body_preview": "continue"
+    },
+    {
+      "file": "ming_sim/materials.py",
+      "fn": "_own_affair_lines",
+      "except_line": 479,
+      "has_log": false,
+      "body_preview": "continue"
+    },
+    {
+      "file": "ming_sim/materials.py",
+      "fn": "_own_affair_lines",
+      "except_line": 486,
+      "has_log": false,
+      "body_preview": "roster = set()"
+    },
+    {
+      "file": "ming_sim/materials.py",
+      "fn": "_own_affair_lines",
+      "except_line": 497,
+      "has_log": false,
+      "body_preview": "continue"
+    },
+    {
+      "file": "ming_sim/materials.py",
+      "fn": "_character_affair_lines",
+      "except_line": 549,
+      "has_log": false,
+      "body_preview": "continue"
+    },
+    {
+      "file": "ming_sim/materials.py",
+      "fn": "_opening_affair_lines",
+      "except_line": 662,
+      "has_log": false,
+      "body_preview": "continue"
+    },
+    {
+      "file": "ming_sim/materials.py",
+      "fn": "_opening_affair_lines",
+      "except_line": 671,
+      "has_log": false,
+      "body_preview": "roster = set()"
+    },
+    {
+      "file": "ming_sim/session.py",
+      "fn": "prune_auto_saves",
+      "except_line": 86,
+      "has_log": false,
+      "body_preview": "pass"
+    },
+    {
+      "file": "ming_sim/session.py",
+      "fn": "prune_auto_saves",
+      "except_line": 107,
+      "has_log": false,
+      "body_preview": "pass"
+    },
+    {
+      "file": "ming_sim/session.py",
+      "fn": "_sync_offices_from_db_impl",
+      "except_line": 599,
+      "has_log": false,
+      "body_preview": "aliases = []"
+    },
+    {
+      "file": "ming_sim/session.py",
+      "fn": "_sync_offices_from_db_impl",
+      "except_line": 605,
+      "has_log": false,
+      "body_preview": "personal_skills = []"
+    },
+    {
+      "file": "ming_sim/session.py",
+      "fn": "_sync_offices_from_db_impl",
+      "except_line": 611,
+      "has_log": false,
+      "body_preview": "seed_guilt = {}"
+    },
+    {
+      "file": "ming_sim/session.py",
+      "fn": "__init__",
+      "except_line": 754,
+      "has_log": true,
+      "body_preview": "logger.exception(\"GameSession init failed; db.close failed\")"
+    },
+    {
+      "file": "ming_sim/session.py",
+      "fn": "__init__",
+      "except_line": 760,
+      "has_log": true,
+      "body_preview": "logger.exception(\"GameSession init failed; attach residual_session failed\")"
+    },
+    {
+      "file": "ming_sim/session.py",
+      "fn": "__init__",
+      "except_line": 744,
+      "has_log": true,
+      "body_preview": "logger.exception(\"GameSession init failed; agno_db.close failed\")"
+    },
+    {
+      "file": "ming_sim/session.py",
+      "fn": "schedule_close_night_after_chat_if_needed",
+      "except_line": 1104,
+      "has_log": true,
+      "body_preview": "logger.exception(\n                    \"background close_night_after_chat failed court_action=%s\",\n  "
+    },
+    {
+      "file": "ming_sim/session.py",
+      "fn": "scene_chat",
+      "except_line": 1452,
+      "has_log": false,
+      "body_preview": "target = None"
+    },
+    {
+      "file": "ming_sim/session.py",
+      "fn": "_resubmit_draft_admission_failures",
+      "except_line": 1810,
+      "has_log": false,
+      "body_preview": "continue"
+    },
+    {
+      "file": "ming_sim/session.py",
+      "fn": "_resubmit_draft_admission_failures",
+      "except_line": 1819,
+      "has_log": false,
+      "body_preview": "continue"
+    },
+    {
+      "file": "ming_sim/session.py",
+      "fn": "_resubmit_draft_admission_failures",
+      "except_line": 1904,
+      "has_log": true,
+      "body_preview": "logger.warning(\n                    \"[1769] draft#%s admission resubmit write-back rejected: %s\",\n  "
+    },
+    {
+      "file": "ming_sim/session.py",
+      "fn": "await_translations_before_month",
+      "except_line": 1977,
+      "has_log": true,
+      "body_preview": "pack_path = write_error_pack(\n                            self.db, self.state, exc=pending_exc,\n    "
+    },
+    {
+      "file": "ming_sim/session.py",
+      "fn": "_run",
+      "except_line": 1104,
+      "has_log": true,
+      "body_preview": "logger.exception(\n                    \"background close_night_after_chat failed court_action=%s\",\n  "
+    },
+    {
+      "file": "ming_sim/session.py",
+      "fn": "_drain_catch_up_and_continue",
+      "except_line": 1977,
+      "has_log": true,
+      "body_preview": "pack_path = write_error_pack(\n                            self.db, self.state, exc=pending_exc,\n    "
+    },
+    {
+      "file": "ming_sim/rescript_draft.py",
+      "fn": "_enforce_layer_a_action_conditional",
+      "except_line": 670,
+      "has_log": false,
+      "body_preview": "amount = 0"
+    },
+    {
+      "file": "ming_sim/rescript_draft.py",
+      "fn": "_enforce_layer_a_action_conditional",
+      "except_line": 647,
+      "has_log": false,
+      "body_preview": "_fail(\n                        \"amount\",\n                        current=amt_raw,\n                  "
+    },
+    {
+      "file": "ming_sim/rescript_draft.py",
+      "fn": "normalize_rescript_layer_a_option",
+      "except_line": 844,
+      "has_log": false,
+      "body_preview": "_fail(\n                \"locality_scope\",\n                current=out.get(\"locality_scope\"),\n        "
+    },
+    {
+      "file": "ming_sim/rescript_draft.py",
+      "fn": "normalize_rescript_layer_a_option",
+      "except_line": 878,
+      "has_log": false,
+      "body_preview": "_fail(PARTICIPANT_ROSTER_KEY, current=roster_raw, expected=roster_expected)"
+    },
+    {
+      "file": "ming_sim/rescript_draft.py",
+      "fn": "normalize_rescript_layer_a_option",
+      "except_line": 915,
+      "has_log": false,
+      "body_preview": "for raw_fact in exc.field_failures:\n                _note_failed(\n                    facts, str(raw"
+    },
+    {
+      "file": "ming_sim/rescript_draft.py",
+      "fn": "normalize_rescript_layer_a_option",
+      "except_line": 933,
+      "has_log": false,
+      "body_preview": "_fail(\n                \"stop_condition\",\n                current=raw.get(\"stop_condition\"),\n        "
+    },
+    {
+      "file": "ming_sim/rescript_draft.py",
+      "fn": "normalize_rescript_layer_a_option",
+      "except_line": 949,
+      "has_log": false,
+      "body_preview": "_fail(\n                    key,\n                    current=raw[key],\n                    expected={"
+    },
+    {
+      "file": "ming_sim/rescript_draft.py",
+      "fn": "normalize_rescript_layer_a_option",
+      "except_line": 1078,
+      "has_log": false,
+      "body_preview": "for raw_fact in exc.field_failures:\n                            _note_failed(\n                      "
+    },
+    {
+      "file": "ming_sim/rescript_draft.py",
+      "fn": "_note_option_utf8_failures",
+      "except_line": 1298,
+      "has_log": false,
+      "body_preview": "_note_failed(\n                    facts, key_s,\n                    current=val,\n                   "
+    },
+    {
+      "file": "ming_sim/rescript_draft.py",
+      "fn": "_write_degraded_note",
+      "except_line": 1705,
+      "has_log": true,
+      "body_preview": "tlog(f\"[rescript] 降级附记写盘失败：{exc}\")"
+    },
+    {
+      "file": "ming_sim/rescript_draft.py",
+      "fn": "generate_rescript_draft",
+      "except_line": 2278,
+      "has_log": false,
+      "body_preview": "pending_missing = list(exc.failures)"
+    },
+    {
+      "file": "ming_sim/rescript_draft.py",
+      "fn": "generate_rescript_draft",
+      "except_line": 2280,
+      "has_log": false,
+      "body_preview": "if pending_missing is not None:\n                pending_missing = _with_heal_response_contract_failu"
+    },
+    {
+      "file": "ming_sim/rescript_draft.py",
+      "fn": "generate_rescript_draft",
+      "except_line": 2344,
+      "has_log": true,
+      "body_preview": "dropped2 = _drop_options_by_failures(dropped, list(still_exc.failures))"
+    },
+    {
+      "file": "ming_sim/participant_roster.py",
+      "fn": "resolve_dossier_owner_name",
+      "except_line": 72,
+      "has_log": false,
+      "body_preview": "roster = []"
+    },
+    {
+      "file": "ming_sim/urge_lever.py",
+      "fn": "derive_opportunity_band",
+      "except_line": 59,
+      "has_log": false,
+      "body_preview": "pass"
+    },
+    {
+      "file": "ming_sim/urge_lever.py",
+      "fn": "derive_opportunity_band",
+      "except_line": 50,
+      "has_log": false,
+      "body_preview": "pass"
+    },
+    {
+      "file": "ming_sim/urge_lever.py",
+      "fn": "collect_urge_history",
+      "except_line": 118,
+      "has_log": false,
+      "body_preview": "so_id = 0"
+    },
+    {
+      "file": "ming_sim/urge_lever.py",
+      "fn": "resolve_host_character",
+      "except_line": 179,
+      "has_log": false,
+      "body_preview": "roster = []"
+    },
+    {
+      "file": "ming_sim/urge_lever.py",
+      "fn": "resolve_host_character",
+      "except_line": 203,
+      "has_log": false,
+      "body_preview": "integrity = 50"
+    },
+    {
+      "file": "ming_sim/urge_lever.py",
+      "fn": "resolve_host_character",
+      "except_line": 207,
+      "has_log": false,
+      "body_preview": "courage = 50"
+    },
+    {
+      "file": "ming_sim/urge_lever.py",
+      "fn": "resolve_host_character",
+      "except_line": 164,
+      "has_log": false,
+      "body_preview": "roster = []"
+    },
+    {
+      "file": "ming_sim/urge_lever.py",
+      "fn": "resolve_host_character",
+      "except_line": 190,
+      "has_log": false,
+      "body_preview": "parts = []"
+    },
+    {
+      "file": "ming_sim/urge_lever.py",
+      "fn": "rush_staged_commitment_stage",
+      "except_line": 301,
+      "has_log": false,
+      "body_preview": "months = 1"
+    },
+    {
+      "file": "ming_sim/applier.py",
+      "fn": "mirror_rejections_after_commit",
+      "except_line": 439,
+      "has_log": true,
+      "body_preview": "from ming_sim.token_stats import tlog"
+    },
+    {
+      "file": "ming_sim/applier.py",
+      "fn": "commit",
+      "except_line": 78,
+      "has_log": false,
+      "body_preview": "callback_errors.append(exc)"
+    },
+    {
+      "file": "ming_sim/applier.py",
+      "fn": "rollback",
+      "except_line": 95,
+      "has_log": false,
+      "body_preview": "callback_errors.append(exc)"
+    },
+    {
+      "file": "ming_sim/applier.py",
+      "fn": "_mirror",
+      "except_line": 439,
+      "has_log": true,
+      "body_preview": "from ming_sim.token_stats import tlog"
+    },
+    {
+      "file": "ming_sim/agents.py",
+      "fn": "_dump_llm_messages",
+      "except_line": 155,
+      "has_log": true,
+      "body_preview": "tlog(f\"[{tag}] dump 写盘失败：{e}\")"
+    },
+    {
+      "file": "ming_sim/agents.py",
+      "fn": "_dump_llm_messages",
+      "except_line": 100,
+      "has_log": false,
+      "body_preview": "msgs = None"
+    },
+    {
+      "file": "ming_sim/agents.py",
+      "fn": "parse_agent_json",
+      "except_line": 504,
+      "has_log": false,
+      "body_preview": "data = None"
+    },
+    {
+      "file": "ming_sim/agents.py",
+      "fn": "parse_agent_json",
+      "except_line": 515,
+      "has_log": false,
+      "body_preview": "data = None"
+    },
+    {
+      "file": "ming_sim/agents.py",
+      "fn": "parse_agent_json",
+      "except_line": 522,
+      "has_log": false,
+      "body_preview": "data = None"
+    },
+    {
+      "file": "ming_sim/error_pack.py",
+      "fn": "_next_attempt",
+      "except_line": 64,
+      "has_log": false,
+      "body_preview": "continue"
+    },
+    {
+      "file": "ming_sim/error_pack.py",
+      "fn": "latest_error_pack_for_turn",
+      "except_line": 128,
+      "has_log": false,
+      "body_preview": "continue"
+    },
+    {
+      "file": "ming_sim/error_pack.py",
+      "fn": "write_error_pack",
+      "except_line": 181,
+      "has_log": false,
+      "body_preview": "attempt += 1"
+    },
+    {
+      "file": "ming_sim/llm_model.py",
+      "fn": "_extract_provider_error",
+      "except_line": 64,
+      "has_log": false,
+      "body_preview": "payload = None"
+    },
+    {
+      "file": "ming_sim/qualitative.py",
+      "fn": "qualitative_bucket",
+      "except_line": 61,
+      "has_log": false,
+      "body_preview": "score = default"
+    },
+    {
+      "file": "ming_sim/qualitative.py",
+      "fn": "qualitative_band",
+      "except_line": 84,
+      "has_log": false,
+      "body_preview": "index = qualitative_bucket(default, (20, 40, 60, 80), 0) - (1 if default else 0)"
+    },
+    {
+      "file": "ming_sim/qualitative.py",
+      "fn": "city_defense_description",
+      "except_line": 122,
+      "has_log": false,
+      "body_preview": "level = 0"
+    },
+    {
+      "file": "ming_sim/qualitative.py",
+      "fn": "building_output_effect",
+      "except_line": 144,
+      "has_log": false,
+      "body_preview": "output = 0"
+    },
+    {
+      "file": "ming_sim/qualitative.py",
+      "fn": "population_wan_kou_label",
+      "except_line": 209,
+      "has_log": false,
+      "body_preview": "n = 0"
+    },
+    {
+      "file": "ming_sim/covert_progress.py",
+      "fn": "read_covert_task_contract",
+      "except_line": 549,
+      "has_log": false,
+      "body_preview": "loaded = None"
+    },
+    {
+      "file": "ming_sim/covert_progress.py",
+      "fn": "_lanes_from_payload",
+      "except_line": 830,
+      "has_log": false,
+      "body_preview": "effort = 0.0"
+    },
+    {
+      "file": "ming_sim/covert_progress.py",
+      "fn": "_lanes_from_payload",
+      "except_line": 834,
+      "has_log": false,
+      "body_preview": "difficulty = 0.0"
+    },
+    {
+      "file": "ming_sim/covert_progress.py",
+      "fn": "_lanes_from_payload",
+      "except_line": 838,
+      "has_log": false,
+      "body_preview": "months = 0"
+    },
+    {
+      "file": "ming_sim/covert_progress.py",
+      "fn": "globally_used_fact_keys",
+      "except_line": 865,
+      "has_log": false,
+      "body_preview": "continue"
+    },
+    {
+      "file": "ming_sim/covert_progress.py",
+      "fn": "investigation_fact_difficulty",
+      "except_line": 1011,
+      "has_log": false,
+      "body_preview": "ability = _ABILITY_REFERENCE"
+    },
+    {
+      "file": "ming_sim/covert_progress.py",
+      "fn": "investigation_monthly_capacity",
+      "except_line": 1091,
+      "has_log": false,
+      "body_preview": "ability = _ABILITY_CAPACITY_REFERENCE"
+    },
+    {
+      "file": "ming_sim/covert_progress.py",
+      "fn": "originated_quantity_this_turn",
+      "except_line": 1636,
+      "has_log": false,
+      "body_preview": "continue"
+    },
+    {
+      "file": "ming_sim/covert_progress.py",
+      "fn": "monthly_actual_units",
+      "except_line": 1661,
+      "has_log": false,
+      "body_preview": "quantity = 0.0"
+    },
+    {
+      "file": "ming_sim/covert_progress.py",
+      "fn": "_selection_map",
+      "except_line": 1676,
+      "has_log": false,
+      "body_preview": "continue"
+    },
+    {
+      "file": "ming_sim/highlight_judge.py",
+      "fn": "run_highlight_judge",
+      "except_line": 63,
+      "has_log": false,
+      "body_preview": "timeout = DEFAULT_HIGHLIGHT_JUDGE_TIMEOUT_S"
+    },
+    {
+      "file": "ming_sim/settlement_payload.py",
+      "fn": "parse_decision_blocks",
+      "except_line": 56,
+      "has_log": false,
+      "body_preview": "continue"
+    },
+    {
+      "file": "ming_sim/settlement_payload.py",
+      "fn": "parse_decision_blocks",
+      "except_line": 88,
+      "has_log": false,
+      "body_preview": "continue"
+    },
+    {
+      "file": "ming_sim/settlement_payload.py",
+      "fn": "parse_decision_blocks",
+      "except_line": 73,
+      "has_log": false,
+      "body_preview": "options = []"
+    },
+    {
+      "file": "ming_sim/structured_decree.py",
+      "fn": "validate_structured_decree_combination",
+      "except_line": 245,
+      "has_log": false,
+      "body_preview": "pending.extend(dict(f) for f in exc.field_failures)"
+    },
+    {
+      "file": "ming_sim/assets.py",
+      "fn": "format_wanliang_amount",
+      "except_line": 71,
+      "has_log": false,
+      "body_preview": "amount = 0.0"
+    },
+    {
+      "file": "ming_sim/due_review.py",
+      "fn": "_todo_origin_ref",
+      "except_line": 148,
+      "has_log": false,
+      "body_preview": "pass"
+    },
+    {
+      "file": "ming_sim/cli_backend.py",
+      "fn": "_login_shell_path",
+      "except_line": 239,
+      "has_log": false,
+      "body_preview": "discovered = \"\""
+    },
+    {
+      "file": "ming_sim/cli_backend.py",
+      "fn": "_trace",
+      "except_line": 346,
+      "has_log": true,
+      "body_preview": "_log(f\"trace 写盘失败：{exc}\")"
+    },
+    {
+      "file": "ming_sim/cli_backend.py",
+      "fn": "_warm_keychain",
+      "except_line": 357,
+      "has_log": false,
+      "body_preview": "pass"
+    },
+    {
+      "file": "ming_sim/cli_backend.py",
+      "fn": "_terminate_cli_process",
+      "except_line": 400,
+      "has_log": false,
+      "body_preview": "try:\n            proc.kill()\n            proc.wait(timeout=5)\n        except Exception:\n            "
+    },
+    {
+      "file": "ming_sim/cli_backend.py",
+      "fn": "_terminate_cli_process",
+      "except_line": 404,
+      "has_log": false,
+      "body_preview": "pass"
+    },
+    {
+      "file": "ming_sim/cli_backend.py",
+      "fn": "_iter_cli_process_lines",
+      "except_line": 465,
+      "has_log": false,
+      "body_preview": "logger.debug(\"CLI %s 管道读中断（子进程已收尾）：%s\", kind, exc)"
+    },
+    {
+      "file": "ming_sim/cli_backend.py",
+      "fn": "_iter_cli_process_lines",
+      "except_line": 480,
+      "has_log": true,
+      "body_preview": "result.stdin_error = exc"
+    },
+    {
+      "file": "ming_sim/cli_backend.py",
+      "fn": "_iter_cli_process_lines",
+      "except_line": 510,
+      "has_log": false,
+      "body_preview": "check_idle_budget(\n                    last_activity_at=last_activity, policy=policy, clock=tick,\n  "
+    },
+    {
+      "file": "ming_sim/cli_backend.py",
+      "fn": "_iter_cli_runner_text",
+      "except_line": 858,
+      "has_log": false,
+      "body_preview": "pass"
+    },
+    {
+      "file": "ming_sim/cli_backend.py",
+      "fn": "_iter_cli_runner_text",
+      "except_line": 808,
+      "has_log": false,
+      "body_preview": "continue"
+    },
+    {
+      "file": "ming_sim/cli_backend.py",
+      "fn": "_backend_label",
+      "except_line": 1055,
+      "has_log": false,
+      "body_preview": "parts = None"
+    },
+    {
+      "file": "ming_sim/cli_backend.py",
+      "fn": "_finalize_extract_with_combo",
+      "except_line": 2083,
+      "has_log": false,
+      "body_preview": "draft_failures[idx] = frozenset(exc.failed_fields)"
+    },
+    {
+      "file": "ming_sim/cli_backend.py",
+      "fn": "_stalled_deliberation_push_facts",
+      "except_line": 2556,
+      "has_log": false,
+      "body_preview": "continue"
+    },
+    {
+      "file": "ming_sim/cli_backend.py",
+      "fn": "extract_draft_intent",
+      "except_line": 2723,
+      "has_log": false,
+      "body_preview": "invalid_batch = True"
+    },
+    {
+      "file": "ming_sim/cli_backend.py",
+      "fn": "project_draft_extract_to_directive_payload",
+      "except_line": 3239,
+      "has_log": false,
+      "body_preview": "pre_kind = \"ordinary\""
+    },
+    {
+      "file": "ming_sim/cli_backend.py",
+      "fn": "_loads_lenient",
+      "except_line": 3415,
+      "has_log": false,
+      "body_preview": "try:\n            obj = json.loads(_strip_jsonc(body))\n        except (ValueError, TypeError):\n      "
+    },
+    {
+      "file": "ming_sim/cli_backend.py",
+      "fn": "enrich_initiative_effects",
+      "except_line": 3459,
+      "has_log": true,
+      "body_preview": "_log(f\"国策效果补全失败：{exc}\")"
+    },
+    {
+      "file": "ming_sim/cli_backend.py",
+      "fn": "enrich_initiative_effects",
+      "except_line": 3465,
+      "has_log": false,
+      "body_preview": "norm = obj"
+    },
+    {
+      "file": "ming_sim/cli_backend.py",
+      "fn": "_extract_secret_order",
+      "except_line": 3959,
+      "has_log": false,
+      "body_preview": "deadline = 0"
+    },
+    {
+      "file": "ming_sim/cli_backend.py",
+      "fn": "_extract_secret_order",
+      "except_line": 4010,
+      "has_log": false,
+      "body_preview": "direction = 1"
+    },
+    {
+      "file": "ming_sim/cli_backend.py",
+      "fn": "_extract_secret_order",
+      "except_line": 4034,
+      "has_log": false,
+      "body_preview": "covert_task = None"
+    },
+    {
+      "file": "ming_sim/cli_backend.py",
+      "fn": "_extract_secret_order",
+      "except_line": 3995,
+      "has_log": true,
+      "body_preview": "_log(f\"案卷关联确认失败：{exc}\")"
+    },
+    {
+      "file": "ming_sim/cli_backend.py",
+      "fn": "_pump",
+      "except_line": 465,
+      "has_log": false,
+      "body_preview": "logger.debug(\"CLI %s 管道读中断（子进程已收尾）：%s\", kind, exc)"
+    },
+    {
+      "file": "ming_sim/cli_backend.py",
+      "fn": "_feed_stdin",
+      "except_line": 480,
+      "has_log": true,
+      "body_preview": "result.stdin_error = exc"
+    },
+    {
+      "file": "ming_sim/flows.py",
+      "fn": "_fixed_flow_scalars_are_numeric",
+      "except_line": 89,
+      "has_log": false,
+      "body_preview": "finite_number = False"
+    },
+    {
+      "file": "ming_sim/flows.py",
+      "fn": "_substrate_hub_jingyun_due_by_region",
+      "except_line": 759,
+      "has_log": false,
+      "body_preview": "continue"
+    },
+    {
+      "file": "ming_sim/flows.py",
+      "fn": "_apply_metric_dict",
+      "except_line": 923,
+      "has_log": false,
+      "body_preview": "continue"
+    },
+    {
+      "file": "ming_sim/flows.py",
+      "fn": "_apply_economy_list",
+      "except_line": 1145,
+      "has_log": false,
+      "body_preview": "delta, bad_delta = 0, True"
+    },
+    {
+      "file": "ming_sim/flows.py",
+      "fn": "apply_fixed_period_flows",
+      "except_line": 1936,
+      "has_log": false,
+      "body_preview": "pass"
+    },
+    {
+      "file": "ming_sim/flows.py",
+      "fn": "_apply_faction_dict",
+      "except_line": 2136,
+      "has_log": false,
+      "body_preview": "rejected.append(_value_reject(key, val, val))"
+    },
+    {
+      "file": "ming_sim/flows.py",
+      "fn": "_apply_faction_dict",
+      "except_line": 2126,
+      "has_log": false,
+      "body_preview": "rejected.append(_value_reject(key, raw, val, fname))"
+    },
+    {
+      "file": "ming_sim/flows.py",
+      "fn": "_apply_population_transfers",
+      "except_line": 2252,
+      "has_log": false,
+      "body_preview": "_reject(\"invalid_enum\", f\"population_transfers amount 非整数：{raw_amount!r}\")"
+    },
+    {
+      "file": "ming_sim/flows.py",
+      "fn": "_apply_class_dict",
+      "except_line": 2391,
+      "has_log": false,
+      "body_preview": "rejected.append(_value_reject(key, raw, fields, fname))"
+    },
+    {
+      "file": "ming_sim/audience_night.py",
+      "fn": "open_night",
+      "except_line": 959,
+      "has_log": false,
+      "body_preview": "pass"
+    },
+    {
+      "file": "ming_sim/audience_night.py",
+      "fn": "rescript_summon_origin_consumed",
+      "except_line": 2302,
+      "has_log": false,
+      "body_preview": "tags_list = []"
+    },
+    {
+      "file": "ming_sim/month_chain.py",
+      "fn": "_month_fact_materials",
+      "except_line": 170,
+      "has_log": false,
+      "body_preview": "declaration = {}"
+    },
+    {
+      "file": "ming_sim/month_chain.py",
+      "fn": "_month_fact_materials",
+      "except_line": 174,
+      "has_log": false,
+      "body_preview": "visible = {}"
+    },
+    {
+      "file": "ming_sim/month_chain.py",
+      "fn": "_month_fact_materials",
+      "except_line": 221,
+      "has_log": false,
+      "body_preview": "item = {}"
+    },
+    {
+      "file": "ming_sim/month_chain.py",
+      "fn": "run_player_month_chain",
+      "except_line": 534,
+      "has_log": false,
+      "body_preview": "abort_from(exc)"
+    },
+    {
+      "file": "ming_sim/month_chain.py",
+      "fn": "run_player_month_chain",
+      "except_line": 551,
+      "has_log": false,
+      "body_preview": "abort_from(exc)"
+    },
+    {
+      "file": "ming_sim/month_chain.py",
+      "fn": "_abort_month_call",
+      "except_line": 728,
+      "has_log": false,
+      "body_preview": "pack_exc = caught_pack"
+    },
+    {
+      "file": "ming_sim/month_chain.py",
+      "fn": "_guard_month_call",
+      "except_line": 777,
+      "has_log": false,
+      "body_preview": "_abort_month_call(\n            db, state, chain, decree_text=decree_text, source=source,\n           "
+    },
+    {
+      "file": "ming_sim/month_chain.py",
+      "fn": "_guard_month_call",
+      "except_line": 784,
+      "has_log": false,
+      "body_preview": "_abort_month_call(\n            db, state, chain, decree_text=decree_text, source=source,\n           "
+    },
+    {
+      "file": "ming_sim/month_chain.py",
+      "fn": "_step_4a_secret_order_supply",
+      "except_line": 1305,
+      "has_log": false,
+      "body_preview": "chain[\"secret_orders_supply_invalid\"] = True"
+    },
+    {
+      "file": "ming_sim/month_chain.py",
+      "fn": "_step_4a_secret_order_supply",
+      "except_line": 1328,
+      "has_log": false,
+      "body_preview": "if validation_failed:\n                # 无效标记须先落盘：_abort_month_call 只叠 call_failure 到已提交链。\n          "
+    },
+    {
+      "file": "ming_sim/month_chain.py",
+      "fn": "_step_4a_secret_order_supply",
+      "except_line": 1354,
+      "has_log": false,
+      "body_preview": "_abort_4a(exc)"
+    },
+    {
+      "file": "ming_sim/month_chain.py",
+      "fn": "_step_4a_secret_order_supply",
+      "except_line": 1390,
+      "has_log": false,
+      "body_preview": "if invalid_declarations:\n                chain[\"secret_orders_supply_invalid\"] = True\n              "
+    },
+    {
+      "file": "ming_sim/month_chain.py",
+      "fn": "_step_4a_secret_order_supply",
+      "except_line": 1405,
+      "has_log": false,
+      "body_preview": "_abort_4a(exc)"
+    },
+    {
+      "file": "ming_sim/save_slots.py",
+      "fn": "replace_database",
+      "except_line": 221,
+      "has_log": true,
+      "body_preview": "logger.exception(\"failed to remove hot replace backup %s\", backup_path)"
+    },
+    {
+      "file": "ming_sim/llm_config.py",
+      "fn": "_slot_number",
+      "except_line": 92,
+      "has_log": false,
+      "body_preview": "try:\n            return caster(float(value))  # \"4096.0\" / 含小数的字符串兜底\n        except (TypeError, Valu"
+    },
+    {
+      "file": "ming_sim/token_stats.py",
+      "fn": "install_token_stats_patch",
+      "except_line": 160,
+      "has_log": true,
+      "body_preview": "tlog(f\"[token_stats] record_usage failed: {type(exc).__name__}: {exc}\")"
+    },
+    {
+      "file": "ming_sim/token_stats.py",
+      "fn": "install_token_stats_patch",
+      "except_line": 173,
+      "has_log": true,
+      "body_preview": "tlog(f\"[token_stats] record_usage failed: {type(exc).__name__}: {exc}\")"
+    },
+    {
+      "file": "ming_sim/token_stats.py",
+      "fn": "patched_create",
+      "except_line": 160,
+      "has_log": true,
+      "body_preview": "tlog(f\"[token_stats] record_usage failed: {type(exc).__name__}: {exc}\")"
+    },
+    {
+      "file": "ming_sim/token_stats.py",
+      "fn": "patched_acreate",
+      "except_line": 173,
+      "has_log": true,
+      "body_preview": "tlog(f\"[token_stats] record_usage failed: {type(exc).__name__}: {exc}\")"
+    },
+    {
+      "file": "ming_sim/knowledge.py",
+      "fn": "_exclusion_lists_from_row",
+      "except_line": 99,
+      "has_log": false,
+      "body_preview": "excluded_names = set()"
+    },
+    {
+      "file": "ming_sim/knowledge.py",
+      "fn": "_exclusion_lists_from_row",
+      "except_line": 104,
+      "has_log": false,
+      "body_preview": "raw_targets = None"
+    },
+    {
+      "file": "ming_sim/knowledge.py",
+      "fn": "_exclusion_lists_from_row",
+      "except_line": 109,
+      "has_log": false,
+      "body_preview": "targets = {}"
+    },
+    {
+      "file": "ming_sim/knowledge.py",
+      "fn": "_subject_matches_exclusion",
+      "except_line": 134,
+      "has_log": false,
+      "body_preview": "name, office_type, office = fallback_name, \"\", \"\""
+    },
+    {
+      "file": "ming_sim/knowledge.py",
+      "fn": "knowledge_row_visible_to",
+      "except_line": 158,
+      "has_log": false,
+      "body_preview": "reader = None"
+    },
+    {
+      "file": "ming_sim/knowledge.py",
+      "fn": "knowledge_row_visible_to",
+      "except_line": 198,
+      "has_log": false,
+      "body_preview": "source = None"
+    },
+    {
+      "file": "ming_sim/knowledge.py",
+      "fn": "knowledge_row_visible_to",
+      "except_line": 205,
+      "has_log": false,
+      "body_preview": "event_is_public = False"
+    },
+    {
+      "file": "ming_sim/knowledge.py",
+      "fn": "_source_archive_rows",
+      "except_line": 354,
+      "has_log": false,
+      "body_preview": "excluded = []"
+    },
+    {
+      "file": "ming_sim/knowledge.py",
+      "fn": "_household_ledger",
+      "except_line": 406,
+      "has_log": false,
+      "body_preview": "reader = None"
+    },
+    {
+      "file": "ming_sim/knowledge.py",
+      "fn": "_issue_audience_case_events",
+      "except_line": 515,
+      "has_log": false,
+      "body_preview": "continue"
+    },
+    {
+      "file": "ming_sim/knowledge.py",
+      "fn": "_issue_audience_case_events",
+      "except_line": 521,
+      "has_log": false,
+      "body_preview": "stage = \"\""
+    },
+    {
+      "file": "ming_sim/knowledge.py",
+      "fn": "_issue_audience_case_events",
+      "except_line": 533,
+      "has_log": false,
+      "body_preview": "origin_turn = int(state.turn)"
+    },
+    {
+      "file": "ming_sim/knowledge.py",
+      "fn": "build_character_knowledge",
+      "except_line": 761,
+      "has_log": false,
+      "body_preview": "participants = set()"
+    },
+    {
+      "file": "ming_sim/knowledge.py",
+      "fn": "build_character_knowledge",
+      "except_line": 776,
+      "has_log": false,
+      "body_preview": "target_roster = []"
+    },
+    {
+      "file": "ming_sim/credit_events.py",
+      "fn": "_issue_refs_strict",
+      "except_line": 541,
+      "has_log": false,
+      "body_preview": "continue"
+    },
+    {
+      "file": "ming_sim/credit_events.py",
+      "fn": "_issue_refs_strict",
+      "except_line": 547,
+      "has_log": false,
+      "body_preview": "pass"
+    },
+    {
+      "file": "ming_sim/credit_events.py",
+      "fn": "_collect_grant_issue_ids",
+      "except_line": 570,
+      "has_log": false,
+      "body_preview": "delta = 0"
+    },
+    {
+      "file": "ming_sim/credit_events.py",
+      "fn": "resolve_fulfillment_credit_from_extraction",
+      "except_line": 743,
+      "has_log": false,
+      "body_preview": "continue"
+    },
+    {
+      "file": "ming_sim/action_materialize.py",
+      "fn": "stage_pacification_candidate",
+      "except_line": 256,
+      "has_log": false,
+      "body_preview": "continue"
+    },
+    {
+      "file": "ming_sim/action_materialize.py",
+      "fn": "stage_punishment_candidate",
+      "except_line": 461,
+      "has_log": false,
+      "body_preview": "n = 0"
+    },
+    {
+      "file": "ming_sim/action_materialize.py",
+      "fn": "stage_punishment_candidate",
+      "except_line": 413,
+      "has_log": false,
+      "body_preview": "continue"
+    },
+    {
+      "file": "ming_sim/action_materialize.py",
+      "fn": "stage_punishment_candidate",
+      "except_line": 423,
+      "has_log": false,
+      "body_preview": "stored_issue_id = 0"
+    },
+    {
+      "file": "ming_sim/action_materialize.py",
+      "fn": "require_explicit_xiexang_fields",
+      "except_line": 697,
+      "has_log": false,
+      "body_preview": "n = 0"
+    },
+    {
+      "file": "ming_sim/action_materialize.py",
+      "fn": "stage_grant_allocation_candidate",
+      "except_line": 868,
+      "has_log": false,
+      "body_preview": "break"
+    },
+    {
+      "file": "ming_sim/action_materialize.py",
+      "fn": "_assignment_absolute_end_turn",
+      "except_line": 972,
+      "has_log": false,
+      "body_preview": "et = 0"
+    },
+    {
+      "file": "ming_sim/action_materialize.py",
+      "fn": "_assignment_absolute_end_turn",
+      "except_line": 976,
+      "has_log": false,
+      "body_preview": "months = 0"
+    },
+    {
+      "file": "ming_sim/action_materialize.py",
+      "fn": "_write_path_nature_ledger",
+      "except_line": 1264,
+      "has_log": false,
+      "body_preview": "last = None"
+    },
+    {
+      "file": "ming_sim/action_materialize.py",
+      "fn": "_parse_revoke_decree_target",
+      "except_line": 1396,
+      "has_log": false,
+      "body_preview": "linked = 0"
+    },
+    {
+      "file": "ming_sim/action_materialize.py",
+      "fn": "_resolve_unique_active_authority",
+      "except_line": 1438,
+      "has_log": false,
+      "body_preview": "aid = 0"
+    },
+    {
+      "file": "ming_sim/action_materialize.py",
+      "fn": "_resolve_unique_active_authority",
+      "except_line": 1446,
+      "has_log": false,
+      "body_preview": "effective = 0"
+    },
+    {
+      "file": "ming_sim/action_materialize.py",
+      "fn": "stage_assignment_candidate",
+      "except_line": 1566,
+      "has_log": false,
+      "body_preview": "origin_cid = 0"
+    },
+    {
+      "file": "ming_sim/action_materialize.py",
+      "fn": "stage_assignment_candidate",
+      "except_line": 1543,
+      "has_log": false,
+      "body_preview": "break"
+    },
+    {
+      "file": "ming_sim/action_materialize.py",
+      "fn": "stage_authorization_candidate",
+      "except_line": 1671,
+      "has_log": false,
+      "body_preview": "break"
+    },
+    {
+      "file": "ming_sim/action_materialize.py",
+      "fn": "stage_referral_candidate",
+      "except_line": 1743,
+      "has_log": false,
+      "body_preview": "months = 0"
+    },
+    {
+      "file": "ming_sim/action_materialize.py",
+      "fn": "stage_referral_candidate",
+      "except_line": 1804,
+      "has_log": false,
+      "body_preview": "origin_cid = 0"
+    },
+    {
+      "file": "ming_sim/action_materialize.py",
+      "fn": "stage_referral_candidate",
+      "except_line": 1779,
+      "has_log": false,
+      "body_preview": "break"
+    },
+    {
+      "file": "ming_sim/action_materialize.py",
+      "fn": "stage_revoke_authority_candidate",
+      "except_line": 1868,
+      "has_log": false,
+      "body_preview": "break"
+    },
+    {
+      "file": "ming_sim/action_materialize.py",
+      "fn": "stage_revoke_decree_candidate",
+      "except_line": 1947,
+      "has_log": false,
+      "body_preview": "break"
+    },
+    {
+      "file": "ming_sim/cli/terminal.py",
+      "fn": "_print_pending_action_failures",
+      "except_line": 82,
+      "has_log": false,
+      "body_preview": "failure_id = None"
+    },
+    {
+      "file": "ming_sim/cli/terminal.py",
+      "fn": "choose_minister",
+      "except_line": 141,
+      "has_log": false,
+      "body_preview": "print(\"请输入有效编号或姓名。\")"
+    },
+    {
+      "file": "ming_sim/cli/terminal.py",
+      "fn": "_retry_interrupted_reply_cli",
+      "except_line": 296,
+      "has_log": true,
+      "body_preview": "logger.exception(\n                \"CLI retry rollback/forecast recovery failed chat_turn_id=%s\", cha"
+    },
+    {
+      "file": "ming_sim/cli/terminal.py",
+      "fn": "minister_chat",
+      "except_line": 388,
+      "has_log": false,
+      "body_preview": "print(f\"\\n收夜未成：{err}\\n\")"
+    },
+    {
+      "file": "ming_sim/cli/terminal.py",
+      "fn": "_cli_rebuild_session",
+      "except_line": 574,
+      "has_log": true,
+      "body_preview": "logger.exception(\"CLI rebuild candidate close failed\")"
+    },
+    {
+      "file": "ming_sim/cli/terminal.py",
+      "fn": "review_directives",
+      "except_line": 728,
+      "has_log": false,
+      "body_preview": "print(f\"\\n{error}\")"
+    },
+    {
+      "file": "ming_sim/cli/terminal.py",
+      "fn": "play_turn",
+      "except_line": 848,
+      "has_log": false,
+      "body_preview": "print(f\"\\n{error}\")"
+    },
+    {
+      "file": "ming_sim/cli/terminal.py",
+      "fn": "play_turn",
+      "except_line": 878,
+      "has_log": false,
+      "body_preview": "print(f\"\\n{error}\")"
+    },
+    {
+      "file": "ming_sim/cli/terminal.py",
+      "fn": "run_cli",
+      "except_line": 1001,
+      "has_log": false,
+      "body_preview": "print(\"\\n退出游戏。\")"
+    },
+    {
+      "file": "ming_sim/cli/terminal.py",
+      "fn": "run_cli",
+      "except_line": 1003,
+      "has_log": false,
+      "body_preview": "print(f\"\\n{error}\")"
+    },
+    {
+      "file": "ming_sim/cli/terminal.py",
+      "fn": "run_cli",
+      "except_line": 1005,
+      "has_log": false,
+      "body_preview": "print(f\"\\n程序中止：{error}\")"
+    },
+    {
+      "file": "ming_sim/cli/terminal.py",
+      "fn": "run_cli",
+      "except_line": 1007,
+      "has_log": false,
+      "body_preview": "print(\"\\n退出游戏。\")"
+    },
+    {
+      "file": "ming_sim/cli/terminal.py",
+      "fn": "run_cli",
+      "except_line": 1027,
+      "has_log": true,
+      "body_preview": "logger.exception(\n                        \"CLI exit: unseal after drain failure also failed\"\n       "
+    },
+    {
+      "file": "ming_sim/entities/affair/store.py",
+      "fn": "experiences",
+      "except_line": 447,
+      "has_log": false,
+      "body_preview": "tags = []"
+    },
+    {
+      "file": "ming_sim/entities/affair/store.py",
+      "fn": "experiences",
+      "except_line": 453,
+      "has_log": false,
+      "body_preview": "people = []"
+    },
+    {
+      "file": "web_app.py",
+      "fn": "_verify_smoke_leg",
+      "except_line": 419,
+      "has_log": false,
+      "body_preview": "pass"
+    },
+    {
+      "file": "web_app.py",
+      "fn": "_spawn_startup_catch_up_nonfatal",
+      "except_line": 3210,
+      "has_log": true,
+      "body_preview": "logger.exception(\"startup extraction catch-up scheduling failed\")"
+    },
+    {
+      "file": "web_app.py",
+      "fn": "_atomic_write_text",
+      "except_line": 3380,
+      "has_log": true,
+      "body_preview": "logger.exception(\"cleanup atomic write tmp failed path=%s\", tmp_file)"
+    },
+    {
+      "file": "web_app.py",
+      "fn": "_c7_try_fulfill_archive",
+      "except_line": 3718,
+      "has_log": true,
+      "body_preview": "logger.exception(\"C7 archive execute failed path=%s\", norm)"
+    },
+    {
+      "file": "web_app.py",
+      "fn": "_settle_close_result",
+      "except_line": 3809,
+      "has_log": true,
+      "body_preview": "logger.exception(\"settle close note failed path=%s\", path)"
+    },
+    {
+      "file": "web_app.py",
+      "fn": "_close_unregistered",
+      "except_line": 3829,
+      "has_log": true,
+      "body_preview": "logger.exception(\"private close failed path=%s\", norm)"
+    },
+    {
+      "file": "web_app.py",
+      "fn": "_discard_unpublished_candidate",
+      "except_line": 3871,
+      "has_log": true,
+      "body_preview": "logger.exception(\n            \"discard unpublished candidate failed path=%s\", path,\n        )"
+    },
+    {
+      "file": "web_app.py",
+      "fn": "_discard_unpublished_candidate",
+      "except_line": 3864,
+      "has_log": true,
+      "body_preview": "logger.exception(\n                        \"discard unpublished candidate drain failed path=%s\",\n    "
+    },
+    {
+      "file": "web_app.py",
+      "fn": "_archive_move_db_files",
+      "except_line": 3948,
+      "has_log": true,
+      "body_preview": "logger.exception(\"archive shm move failed path=%s\", shm_path)"
+    },
+    {
+      "file": "web_app.py",
+      "fn": "_archive_move_db_files",
+      "except_line": 3941,
+      "has_log": true,
+      "body_preview": "logger.exception(\"archive rollback failed path=%s\", old_db_path)"
+    },
+    {
+      "file": "web_app.py",
+      "fn": "_drain_close_body",
+      "except_line": 3971,
+      "has_log": true,
+      "body_preview": "logger.exception(\"unseal after drain/close failure failed\")"
+    },
+    {
+      "file": "web_app.py",
+      "fn": "_spawn_drain_close",
+      "except_line": 4032,
+      "has_log": true,
+      "body_preview": "logger.exception(\"drain/close worker failed path=%s\", path)"
+    },
+    {
+      "file": "web_app.py",
+      "fn": "_scan_saves",
+      "except_line": 4160,
+      "has_log": false,
+      "body_preview": "continue"
+    },
+    {
+      "file": "web_app.py",
+      "fn": "api_menu_continue",
+      "except_line": 4481,
+      "has_log": false,
+      "body_preview": "ev_queue.put((\"__error__\", {\"message\": str(exc)}))"
+    },
+    {
+      "file": "web_app.py",
+      "fn": "api_menu_continue",
+      "except_line": 4483,
+      "has_log": true,
+      "body_preview": "ev_queue.put((\"__error__\", _llm_error_detail(exc)))"
+    },
+    {
+      "file": "web_app.py",
+      "fn": "api_menu_continue",
+      "except_line": 4485,
+      "has_log": false,
+      "body_preview": "ev_queue.put((\"__error__\", _dependency_mismatch_detail(exc)))"
+    },
+    {
+      "file": "web_app.py",
+      "fn": "api_menu_continue",
+      "except_line": 4487,
+      "has_log": true,
+      "body_preview": "logger.exception(\"continue worker failed\")"
+    },
+    {
+      "file": "web_app.py",
+      "fn": "api_menu_shutdown",
+      "except_line": 4710,
+      "has_log": true,
+      "body_preview": "logger.exception(\"shutdown drain/close failed; continuing process exit\")"
+    },
+    {
+      "file": "web_app.py",
+      "fn": "api_issue_decree_stream",
+      "except_line": 5507,
+      "has_log": false,
+      "body_preview": "ev_queue.put((\n                \"__error__\",\n                {\"message\": str(e), \"pending_action_fail"
+    },
+    {
+      "file": "web_app.py",
+      "fn": "api_issue_decree_stream",
+      "except_line": 5514,
+      "has_log": false,
+      "body_preview": "detail = e.detail"
+    },
+    {
+      "file": "web_app.py",
+      "fn": "api_issue_decree_stream",
+      "except_line": 5530,
+      "has_log": true,
+      "body_preview": "ev_queue.put((\n                \"__error__\",\n                _settlement_sse_error_data(e, failure_sn"
+    },
+    {
+      "file": "web_app.py",
+      "fn": "api_resolve_decisions_stream",
+      "except_line": 5629,
+      "has_log": false,
+      "body_preview": "ev_queue.put((\n                \"__error__\",\n                {\"message\": str(e), \"pending_action_fail"
+    },
+    {
+      "file": "web_app.py",
+      "fn": "api_resolve_decisions_stream",
+      "except_line": 5637,
+      "has_log": true,
+      "body_preview": "ev_queue.put((\n                \"__error__\",\n                _settlement_sse_error_data(e, failure_sn"
+    },
+    {
+      "file": "web_app.py",
+      "fn": "__init__",
+      "except_line": 834,
+      "has_log": true,
+      "body_preview": "logger.exception(\n                        \"WebGame init failed; session.close failed path=%s\", db_pa"
+    },
+    {
+      "file": "web_app.py",
+      "fn": "list_saves",
+      "except_line": 856,
+      "has_log": false,
+      "body_preview": "continue"
+    },
+    {
+      "file": "web_app.py",
+      "fn": "_dispose_rebuild_residual",
+      "except_line": 898,
+      "has_log": true,
+      "body_preview": "logger.exception(\n                        \"dispose rebuild residual drain failed path=%s\", path,\n   "
+    },
+    {
+      "file": "web_app.py",
+      "fn": "_dispose_rebuild_residual",
+      "except_line": 915,
+      "has_log": true,
+      "body_preview": "logger.exception(\n                        \"dispose rebuild residual close failed path=%s\", path,\n   "
+    },
+    {
+      "file": "web_app.py",
+      "fn": "_rebuild_session",
+      "except_line": 988,
+      "has_log": true,
+      "body_preview": "logger.exception(\"failed to close rejected replacement session\")"
+    },
+    {
+      "file": "web_app.py",
+      "fn": "legacies_payload",
+      "except_line": 1518,
+      "has_log": false,
+      "body_preview": "eff = {}"
+    },
+    {
+      "file": "web_app.py",
+      "fn": "legacies_payload",
+      "except_line": 1522,
+      "has_log": false,
+      "body_preview": "clear_gate = {}"
+    },
+    {
+      "file": "web_app.py",
+      "fn": "retry_interrupted_reply",
+      "except_line": 2285,
+      "has_log": true,
+      "body_preview": "logger.exception(\n                        \"retry cleanup: restore_interrupted failed chat_turn_id=%s"
+    },
+    {
+      "file": "web_app.py",
+      "fn": "_run_startup_extraction_catch_up",
+      "except_line": 2507,
+      "has_log": true,
+      "body_preview": "tlog(f\"[audience-translation] 启动补跑意外故障（不锁档、已忽略）：{exc}\")"
+    },
+    {
+      "file": "web_app.py",
+      "fn": "chat_stream",
+      "except_line": 2695,
+      "has_log": true,
+      "body_preview": "logger.exception(\n                    \"stream prologue cleanup: fail_chat_turn/reload failed chat_tu"
+    },
+    {
+      "file": "web_app.py",
+      "fn": "chat_stream",
+      "except_line": 2728,
+      "has_log": true,
+      "body_preview": "logger.exception(\n                    \"stream identity cleanup: fail_chat_turn/reload failed chat_tu"
+    },
+    {
+      "file": "web_app.py",
+      "fn": "chat_stream",
+      "except_line": 2839,
+      "has_log": true,
+      "body_preview": "if payload is not None and not reply_done_emitted:\n                        ev_queue.put({\"type\": \"do"
+    },
+    {
+      "file": "web_app.py",
+      "fn": "chat_stream",
+      "except_line": 2920,
+      "has_log": true,
+      "body_preview": "logger.exception(\n                    \"stream start cleanup: fail_chat_turn/reload failed chat_turn_"
+    },
+    {
+      "file": "web_app.py",
+      "fn": "chat_stream",
+      "except_line": 2687,
+      "has_log": false,
+      "body_preview": "pass"
+    },
+    {
+      "file": "web_app.py",
+      "fn": "chat_stream",
+      "except_line": 2868,
+      "has_log": true,
+      "body_preview": "logger.exception(\n                            \"stream worker cleanup: fail_chat_turn/reload failed c"
+    },
+    {
+      "file": "web_app.py",
+      "fn": "chat_stream",
+      "except_line": 2885,
+      "has_log": true,
+      "body_preview": "logger.exception(\n                                \"stream worker cleanup: fail_chat_turn/reload fail"
+    },
+    {
+      "file": "web_app.py",
+      "fn": "_run",
+      "except_line": 4032,
+      "has_log": true,
+      "body_preview": "logger.exception(\"drain/close worker failed path=%s\", path)"
+    },
+    {
+      "file": "web_app.py",
+      "fn": "worker",
+      "except_line": 4481,
+      "has_log": false,
+      "body_preview": "ev_queue.put((\"__error__\", {\"message\": str(exc)}))"
+    },
+    {
+      "file": "web_app.py",
+      "fn": "worker",
+      "except_line": 4483,
+      "has_log": true,
+      "body_preview": "ev_queue.put((\"__error__\", _llm_error_detail(exc)))"
+    },
+    {
+      "file": "web_app.py",
+      "fn": "worker",
+      "except_line": 4485,
+      "has_log": false,
+      "body_preview": "ev_queue.put((\"__error__\", _dependency_mismatch_detail(exc)))"
+    },
+    {
+      "file": "web_app.py",
+      "fn": "worker",
+      "except_line": 4487,
+      "has_log": true,
+      "body_preview": "logger.exception(\"continue worker failed\")"
+    },
+    {
+      "file": "web_app.py",
+      "fn": "worker",
+      "except_line": 5507,
+      "has_log": false,
+      "body_preview": "ev_queue.put((\n                \"__error__\",\n                {\"message\": str(e), \"pending_action_fail"
+    },
+    {
+      "file": "web_app.py",
+      "fn": "worker",
+      "except_line": 5514,
+      "has_log": false,
+      "body_preview": "detail = e.detail"
+    },
+    {
+      "file": "web_app.py",
+      "fn": "worker",
+      "except_line": 5530,
+      "has_log": true,
+      "body_preview": "ev_queue.put((\n                \"__error__\",\n                _settlement_sse_error_data(e, failure_sn"
+    },
+    {
+      "file": "web_app.py",
+      "fn": "worker",
+      "except_line": 5629,
+      "has_log": false,
+      "body_preview": "ev_queue.put((\n                \"__error__\",\n                {\"message\": str(e), \"pending_action_fail"
+    },
+    {
+      "file": "web_app.py",
+      "fn": "worker",
+      "except_line": 5637,
+      "has_log": true,
+      "body_preview": "ev_queue.put((\n                \"__error__\",\n                _settlement_sse_error_data(e, failure_sn"
+    },
+    {
+      "file": "web_app.py",
+      "fn": "worker",
+      "except_line": 2839,
+      "has_log": true,
+      "body_preview": "if payload is not None and not reply_done_emitted:\n                        ev_queue.put({\"type\": \"do"
+    },
+    {
+      "file": "web_app.py",
+      "fn": "worker",
+      "except_line": 2868,
+      "has_log": true,
+      "body_preview": "logger.exception(\n                            \"stream worker cleanup: fail_chat_turn/reload failed c"
+    },
+    {
+      "file": "web_app.py",
+      "fn": "worker",
+      "except_line": 2885,
+      "has_log": true,
+      "body_preview": "logger.exception(\n                                \"stream worker cleanup: fail_chat_turn/reload fail"
+    }
+  ]
+}

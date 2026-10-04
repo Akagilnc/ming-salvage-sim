@@ -424,15 +424,15 @@ def open_hall_turn(
         NIGHT_STATUS_CLOSING,
         NIGHT_STATUS_OPEN,
         SCENE_CHAT_SPEAKER,
-        ensure_open_night_for_audience,
         ensure_summon_enter,
         get_open_night,
+        open_night,
     )
     night = get_open_night(db)
     if night is not None and str(night.get("status") or "") == NIGHT_STATUS_CLOSING:
-        ensure_open_night_for_audience(db, state)  # raises
+        open_night(db, state)  # raises
     if night is None or str(night.get("status") or "") != NIGHT_STATUS_OPEN:
-        night = ensure_open_night_for_audience(db, state)
+        night = open_night(db, state)
     night_id = int(night["id"])
     ctid = int(db.create_chat_turn(
         state,

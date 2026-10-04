@@ -64,18 +64,6 @@ def _so_json(**fields) -> str:
     return json.dumps(base, ensure_ascii=False)
 
 
-def _patch_backend(monkeypatch, payload: str):
-    monkeypatch.setattr(cb, "_run_backend", lambda p: (payload, 1))
-
-
-
-
-
-
-
-
-
-
 
 def test_secret_exclusion_extracts_people_and_offices(monkeypatch):
     canned = json.dumps({
@@ -84,7 +72,9 @@ def test_secret_exclusion_extracts_people_and_offices(monkeypatch):
         "承办人": "毕自严",
         "排除对象": {"人物": ["魏忠贤"], "机构": ["司礼监"]},
     }, ensure_ascii=False)
-    monkeypatch.setattr(cb, "_run_backend", lambda p: (canned, 1))
+    def fake_json_extractor(prompt, llm_config=None, tag="", *, policy=None):
+        return canned, 1
+    monkeypatch.setattr(cb, "_run_json_extractor_for_config", fake_json_extractor)
     result = cb._extract_secret_order("密查账目", "臣领旨", "毕自严")
     assert result["excluded_names"] == ["魏忠贤"]
     assert result["excluded_offices"] == ["司礼监"]
@@ -186,7 +176,9 @@ def test_enrich_building_region_floor(monkeypatch):
 
 
 def test_enrich_backend_error_returns_empty_effects(monkeypatch):
-    monkeypatch.setattr(cb, "_run_backend", lambda p: (_ for _ in ()).throw(RuntimeError("backend down")))
+    def boom(prompt, llm_config=None, tag="", *, policy=None):
+        raise RuntimeError("backend down")
+    monkeypatch.setattr(cb, "_run_backend_for_config", boom)
     monkeypatch.setattr(cb, "_trace", lambda rec: None)
     out = cb.enrich_initiative_effects("设格致局", "")
     assert out == {"effect_on_resolve": {}, "ongoing_effects": {}, "effect_on_fail": {}}
@@ -194,8 +186,10 @@ def test_enrich_backend_error_returns_empty_effects(monkeypatch):
 
 def test_enrich_nondict_subfields_guarded(monkeypatch):
     monkeypatch.setattr(
-        cb, "_run_backend",
-        lambda p: ('{"effect_on_resolve": "坏数据", "ongoing_effects": ["x"], "effect_on_fail": 3}', 1),
+        cb, "_run_backend_for_config",
+        lambda prompt, llm_config=None, tag="", *, policy=None: (
+            '{"effect_on_resolve": "坏数据", "ongoing_effects": ["x"], "effect_on_fail": 3}', 1
+        ),
     )
     monkeypatch.setattr(cb, "_trace", lambda r: None)
     out = cb.enrich_initiative_effects("设局", "")

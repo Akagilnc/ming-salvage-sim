@@ -1154,9 +1154,9 @@ class GameSession:
         from ming_sim.applier import atomic
         from ming_sim.audience_night import (
             SCENE_CHAT_SPEAKER,
-            ensure_open_night_for_audience,
             ensure_summon_enter,
             get_open_night,
+            open_night,
         )
         from ming_sim.decree_forecast import schedule_held_decree_forecasts
 
@@ -1165,7 +1165,7 @@ class GameSession:
         accepted_turn = int(self.state.turn)
         before_snapshot = self.db.capture_chat_rollback_snapshot()
         night_was_open = get_open_night(self.db) is not None
-        night = get_open_night(self.db) or ensure_open_night_for_audience(
+        night = get_open_night(self.db) or open_night(
             self.db, self.state,
         )
         if not night_was_open:
@@ -1396,9 +1396,9 @@ class GameSession:
             CMD_CLOSE_NIGHT,
             SCENE_CHAT_SPEAKER,
             close_night,
-            ensure_open_night_for_audience,
             ensure_summon_enter,
             get_open_night,
+            open_night,
             recognize_xuan_command,
         )
         from ming_sim.llm_model import extract_agent_text
@@ -1413,7 +1413,7 @@ class GameSession:
         night = get_open_night(self.db)
         opened_new_night = night is None
         if opened_new_night:
-            night = ensure_open_night_for_audience(self.db, self.state)
+            night = open_night(self.db, self.state)
             from ming_sim.decree_forecast import schedule_held_decree_forecasts
             schedule_held_decree_forecasts(self)
         night_id = int(night["id"])

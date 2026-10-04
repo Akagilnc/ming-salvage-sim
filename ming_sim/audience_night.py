@@ -1384,16 +1384,6 @@ def auto_close_open_night(
     )
 
 
-def ensure_open_night_for_audience(
-    db: Any,
-    state: GameState,
-    *,
-    time_of_day: str = "",
-    location: str = "",
-) -> Dict[str, Any]:
-    return open_night(db, state, time_of_day=time_of_day, location=location)
-
-
 def _summon_origin_tag(origin_id: object) -> str:
     origin = str(origin_id or "").strip()
     return f"{_SUMMON_ORIGIN_PREFIX}{origin}" if origin else ""

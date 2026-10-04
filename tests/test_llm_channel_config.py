@@ -756,13 +756,6 @@ def test_cli_supports_reasoning_strength_matrix(runner, expected):
     assert cli_supports_reasoning_strength(runner) is expected
 
 
-def test_cli_reasoning_strength_runners_authoritative_set():
-    """能力名单是结构化集合。谓词行为见 test_cli_supports_reasoning_strength_matrix。"""
-    from ming_sim.cli_backend import CLI_REASONING_STRENGTH_RUNNERS
-
-    assert CLI_REASONING_STRENGTH_RUNNERS == frozenset({"codex", "claude", "grok", "pi"})
-
-
 def test_agent_factories_omit_max_tokens_on_param_surface(monkeypatch):
     """#1472：ming_sim.agents 现役工厂 + gate 真实参数面无 max_tokens 键。"""
     from types import SimpleNamespace

@@ -237,8 +237,6 @@ def _real_submit_session(monkeypatch, db, state, content, *, candidate_ids=()):
 
 def test_cli_blank_pick_on_urgent_reaches_core_hold(game, monkeypatch):
     """急务回车 → 经真 submit_hitl_choices 机械 hold，案卷落 decided（外部可见）。"""
-    from ming_sim import rescript_actions as ra
-
     db, state, content = game
     db.save_rescript_drafts(int(state.turn), [{
         "title": "陕西告饥", "context": "秦地赤旱",
@@ -246,7 +244,6 @@ def test_cli_blank_pick_on_urgent_reaches_core_hold(game, monkeypatch):
     }])
     db.conn.commit()
     session = _real_submit_session(monkeypatch, db, state, content)
-    desk_row = db.list_rescript_desk(int(state.turn))[0]
     monkeypatch.setattr("builtins.input", lambda _prompt="": "")
 
     term._adjudicate_cli_decisions(
@@ -255,11 +252,8 @@ def test_cli_blank_pick_on_urgent_reaches_core_hold(game, monkeypatch):
         ),
     )
 
-    # 核侧事实：空 pick 只在急务上落机械 hold（default_hold_missing）。
-    assert ra.validate_all(
-        [desk_row], [{"decision_key": desk_row["decision_key"]}],
-    ).default_hold_keys == [desk_row["decision_key"]]
     # 外部可见：经真编排落库即 decided + hold。
+    # （不在此案重复正向断言 validate_all helper；核侧空 pick 契约见 ordinary 拒收案。）
     stored = db.list_rescript_drafts()[0]
     assert stored["status"] == "decided"
     assert stored["choice"]["action"] == "hold"

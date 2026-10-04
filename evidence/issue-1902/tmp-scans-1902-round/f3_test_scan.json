@@ -1,0 +1,2153 @@
+{
+  "path_count": 267,
+  "paths": [
+    "tests/README.md",
+    "tests/army_pay_helpers.py",
+    "tests/audience_chat_helpers.py",
+    "tests/cli_process_doubles.py",
+    "tests/conftest.py",
+    "tests/directive_entry_helpers.py",
+    "tests/dossier_test_helpers.py",
+    "tests/fiscal_test_utils.py",
+    "tests/fixtures/agno-2.7.3-py3-none-any.whl",
+    "tests/game_fixture_retained_inventory.tsv",
+    "tests/issue_stream_helpers.py",
+    "tests/legacy_staging_helpers.py",
+    "tests/month_chain_helpers.py",
+    "tests/offline_audience_reply.py",
+    "tests/section_rejection_helpers.py",
+    "tests/sse_helpers.py",
+    "tests/test_adr0015_per_item_rejection.py",
+    "tests/test_advance_paths_atomic.py",
+    "tests/test_advance_without_edict_token_1351.py",
+    "tests/test_advances_section_rejections.py",
+    "tests/test_affairs_1831.py",
+    "tests/test_applier_contract.py",
+    "tests/test_appointment_tenure_607.py",
+    "tests/test_army_card_status_1501.py",
+    "tests/test_army_display_173.py",
+    "tests/test_army_firearms.py",
+    "tests/test_army_maintenance_retire_173.py",
+    "tests/test_army_pay_source_prompt_contract.py",
+    "tests/test_army_salary_44.py",
+    "tests/test_audience_background.py",
+    "tests/test_audience_continuous_507.py",
+    "tests/test_audience_draft_grant_once_1777.py",
+    "tests/test_audience_extraction_501.py",
+    "tests/test_audience_night_498.py",
+    "tests/test_audience_presence_500.py",
+    "tests/test_audience_restore_505.py",
+    "tests/test_audience_scroll_539.py",
+    "tests/test_audience_translate_1837.py",
+    "tests/test_audience_translate_1837_reopen.py",
+    "tests/test_audience_translation_1838.py",
+    "tests/test_audience_translation_once_1898.py",
+    "tests/test_audience_travel_gating_670.py",
+    "tests/test_audience_undo_506.py",
+    "tests/test_authority_ledger_611.py",
+    "tests/test_bandit_power_model_190.py",
+    "tests/test_breach_plea_623.py",
+    "tests/test_candidate_supply_1893.py",
+    "tests/test_centrifuge_ledger_690.py",
+    "tests/test_character_knowledge_489.py",
+    "tests/test_chat_stream_failpaths_393.py",
+    "tests/test_cli_backend.py",
+    "tests/test_cli_entry_1902.py",
+    "tests/test_cli_model_choices.py",
+    "tests/test_cli_play_turn.py",
+    "tests/test_cli_runner_error_typed_1299.py",
+    "tests/test_cli_transport_1465.py",
+    "tests/test_close_issues_section_rejections.py",
+    "tests/test_commitment_backlash_626.py",
+    "tests/test_commitment_display_348.py",
+    "tests/test_court_break_player_lock_1727.py",
+    "tests/test_court_layout_1290.py",
+    "tests/test_covert_levy_651.py",
+    "tests/test_credit_events_628.py",
+    "tests/test_db_broad_except_surface.py",
+    "tests/test_decision_event_binding_389.py",
+    "tests/test_declaration_dispatch_1835.py",
+    "tests/test_decree_commitment_creation_136.py",
+    "tests/test_decree_commitment_schema_136.py",
+    "tests/test_decree_commitment_settlement_229.py",
+    "tests/test_decree_dossiers_571.py",
+    "tests/test_decree_forecast_1861.py",
+    "tests/test_deepseek_thinking_disable_1797.py",
+    "tests/test_deformation_dual_rail_622.py",
+    "tests/test_distance_matrix.py",
+    "tests/test_dossier_endorsements_612.py",
+    "tests/test_dossier_links_559.py",
+    "tests/test_dossier_reported_progress_619.py",
+    "tests/test_draft_admission_resubmit_1769.py",
+    "tests/test_due_review_621.py",
+    "tests/test_economy_section_rejections.py",
+    "tests/test_effect_origin_558.py",
+    "tests/test_empire_modifier_income_only_341.py",
+    "tests/test_enrich_list_guards.py",
+    "tests/test_enter_settlement_period_1235.py",
+    "tests/test_env_isolation.py",
+    "tests/test_error_pack.py",
+    "tests/test_event_chain_cascade.py",
+    "tests/test_event_trigger_gate.py",
+    "tests/test_execution_joint_liability_565.py",
+    "tests/test_execution_pressure_654.py",
+    "tests/test_execution_tenure_613.py",
+    "tests/test_executor_routing_721.py",
+    "tests/test_faction_brew_637.py",
+    "tests/test_faction_class_section_rejections.py",
+    "tests/test_faction_denunciation_627.py",
+    "tests/test_faction_leverage_9.py",
+    "tests/test_family_tail_615.py",
+    "tests/test_family_tail_642.py",
+    "tests/test_family_tail_restore_570.py",
+    "tests/test_featured_dossiers_494.py",
+    "tests/test_fiscal_beyond_intent_1260.py",
+    "tests/test_fiscal_levy_effect.py",
+    "tests/test_fiscal_substrate_bridge.py",
+    "tests/test_fiscal_tick.py",
+    "tests/test_gazette_author_1862.py",
+    "tests/test_grant_reconciliation_567.py",
+    "tests/test_highlight_judge_544.py",
+    "tests/test_history_decree_text_1843_reopen.py",
+    "tests/test_identity_seed_488.py",
+    "tests/test_impeachment_surge_655.py",
+    "tests/test_initiative_resolve_pairing.py",
+    "tests/test_intrigue_concealment_1896.py",
+    "tests/test_issue_decree_token_1277.py",
+    "tests/test_issue_entities.py",
+    "tests/test_junxin_alias_loyalty_313.py",
+    "tests/test_junxin_monthly_tick_314.py",
+    "tests/test_llm_channel_config.py",
+    "tests/test_llm_key_helpers.py",
+    "tests/test_loyalty_soft_adjust_clamp_320.py",
+    "tests/test_manual_directive_institution_normalize_1279.py",
+    "tests/test_manual_directive_locality_1685.py",
+    "tests/test_material_directory_1830.py",
+    "tests/test_mechanical_tail_1845.py",
+    "tests/test_memorial_inbox_1726.py",
+    "tests/test_menu_continue_stream_1195.py",
+    "tests/test_menu_lifecycle_drain_396.py",
+    "tests/test_mindreading_491.py",
+    "tests/test_minister_chat_timeout.py",
+    "tests/test_month_call_recovery_1846.py",
+    "tests/test_month_chain_1843.py",
+    "tests/test_month_chain_1847.py",
+    "tests/test_month_loop_tracer_1468.py",
+    "tests/test_month_open_snapshot_1234.py",
+    "tests/test_month_translate_1840.py",
+    "tests/test_mutiny_actual_residence_659.py",
+    "tests/test_mutiny_latch_315.py",
+    "tests/test_mutiny_noop_whitelist_319.py",
+    "tests/test_mutiny_progression_316.py",
+    "tests/test_mutiny_redemption_317.py",
+    "tests/test_mutiny_third_strike_318.py",
+    "tests/test_named_characters_seed_484.py",
+    "tests/test_new_game_dependency_mismatch_1721.py",
+    "tests/test_new_game_smoke.py",
+    "tests/test_new_game_write_path_1749.py",
+    "tests/test_new_issues_section_rejections.py",
+    "tests/test_no_edict_full_settlement_1274.py",
+    "tests/test_office_inference.py",
+    "tests/test_office_rank_562.py",
+    "tests/test_on_scene_immediate_write_1839.py",
+    "tests/test_opening_gazette_delete_1356.py",
+    "tests/test_override_breach_costs_564.py",
+    "tests/test_p4_guard_new_surfaces_547.py",
+    "tests/test_pay_order_override_653.py",
+    "tests/test_pay_order_override_extraction_653.py",
+    "tests/test_person_archive_contract_index.py",
+    "tests/test_person_archive_schema.py",
+    "tests/test_person_delta_adapter.py",
+    "tests/test_person_transit_write_667.py",
+    "tests/test_pihong_dossier_1490.py",
+    "tests/test_player_army_projection_321.py",
+    "tests/test_player_payload_1022.py",
+    "tests/test_population_transfers_649.py",
+    "tests/test_population_transfers_662.py",
+    "tests/test_population_unit_648.py",
+    "tests/test_power_section_rejections.py",
+    "tests/test_pre_settle_transaction.py",
+    "tests/test_promulgation_judge_561.py",
+    "tests/test_promulgation_seam_560.py",
+    "tests/test_public_character_place_1683.py",
+    "tests/test_public_projection_consistency_1830.py",
+    "tests/test_public_sayings_1829.py",
+    "tests/test_qa_1281_issue_audience_case_facts.py",
+    "tests/test_qa_a3_seed_data.py",
+    "tests/test_qa_b3_409_ux.py",
+    "tests/test_qa_c2_phase_settlement_mask_1374.py",
+    "tests/test_qa_c2_settlement_display_lifecycle_1343.py",
+    "tests/test_qa_c3_secret_order_path_1357_1376.py",
+    "tests/test_qa_d1_decree_normalize_1274.py",
+    "tests/test_qa_e1_numeric_presentation.py",
+    "tests/test_qa_h1_seed_data.py",
+    "tests/test_qa_s2_copy_prompts_1356_1402.py",
+    "tests/test_qa_t1_extraction_dual_source_1353.py",
+    "tests/test_qa_u2_liaodong_buildings.py",
+    "tests/test_qa_u3_map_nodes_1401.py",
+    "tests/test_recommendation_batch_snapshot_1583.py",
+    "tests/test_recommendation_edges_635.py",
+    "tests/test_recommendations.py",
+    "tests/test_refugee_loop_652.py",
+    "tests/test_region_cannon_delta.py",
+    "tests/test_region_citydefense.py",
+    "tests/test_reign_period_label.py",
+    "tests/test_rejection_wiring.py",
+    "tests/test_relation_brew_636.py",
+    "tests/test_relation_capture_633.py",
+    "tests/test_relation_read_640.py",
+    "tests/test_relation_seed_638.py",
+    "tests/test_relation_store_632.py",
+    "tests/test_release_bundle_assets.py",
+    "tests/test_rescript_choices_563.py",
+    "tests/test_rescript_draft_656.py",
+    "tests/test_rescript_heal_isolation_1801.py",
+    "tests/test_rescript_option_field_heal_1746.py",
+    "tests/test_run_agent_text_transport_1465.py",
+    "tests/test_runtime_llm_config.py",
+    "tests/test_scene_llm_1836.py",
+    "tests/test_secret_dossier_participants_1252.py",
+    "tests/test_secret_order_isolation_883.py",
+    "tests/test_secret_order_monthly_progress_566.py",
+    "tests/test_secret_order_payoff_1504.py",
+    "tests/test_secret_order_section_rejections.py",
+    "tests/test_secret_order_update.py",
+    "tests/test_section4_rejections.py",
+    "tests/test_section_fiscal_rejections.py",
+    "tests/test_session_write_queue_1353.py",
+    "tests/test_settle_core.py",
+    "tests/test_settlement_write_guard_393.py",
+    "tests/test_shared_resource_order_1844.py",
+    "tests/test_six_sciences_seed_608.py",
+    "tests/test_staged_assignment_identity_1890.py",
+    "tests/test_start_sh_deps_1721.py",
+    "tests/test_state_reload.py",
+    "tests/test_structured_decree_contract_1624.py",
+    "tests/test_style_temperament_641.py",
+    "tests/test_supervision_625.py",
+    "tests/test_surcharge_causal_chain_650.py",
+    "tests/test_textual_facts_1828.py",
+    "tests/test_transaction_boundary.py",
+    "tests/test_transit_aging_346.py",
+    "tests/test_transit_countdown_668.py",
+    "tests/test_urge_lever_624.py",
+    "tests/test_value_matrix_691.py",
+    "tests/test_verify_llm_clocks_884.py",
+    "tests/test_web_audience_night_498.py",
+    "tests/test_web_budget_payload.py",
+    "tests/test_web_chat_serialization_393.py",
+    "tests/test_web_court_visibility.py",
+    "tests/test_web_entry_1902.py",
+    "tests/test_web_llm_runtime_config.py",
+    "tests/test_world_materials_1834.py",
+    "tests/test_yuan_arrival_185.py",
+    "tests/wait_utils.py",
+    "tests/web_audience_test_doubles.py",
+    "web/src/appDurableWiring.test.tsx",
+    "web/src/buildResources.test.ts",
+    "web/src/chatFailures.test.ts",
+    "web/src/cliRunners.test.ts",
+    "web/src/components/cliRunnerDropdown.consistency.test.tsx",
+    "web/src/components/decisionModal.test.tsx",
+    "web/src/components/drawers.test.tsx",
+    "web/src/components/gameMenu.test.tsx",
+    "web/src/components/map.test.tsx",
+    "web/src/components/menuPage.test.tsx",
+    "web/src/components/modals.test.tsx",
+    "web/src/components/settlementFaces.test.tsx",
+    "web/src/components/settlementGazettePanel.test.tsx",
+    "web/src/components/situation.test.tsx",
+    "web/src/decisionRouting.test.tsx",
+    "web/src/escClose.test.tsx",
+    "web/src/mindreading.test.ts",
+    "web/src/mindreadingDelivery.test.tsx",
+    "web/src/ministerScrollLens.test.ts",
+    "web/src/reasoningSupport.test.ts",
+    "web/src/settleStream.test.ts",
+    "web/src/settlementPresentation.test.ts",
+    "web/src/staleGuard.test.tsx",
+    "web/src/useDurableProjection.test.tsx",
+    "web/src/useSettlementFlow.test.tsx"
+  ],
+  "flags_by_path": {
+    "tests/README.md": {
+      "flags": [],
+      "bytes": 662
+    },
+    "tests/army_pay_helpers.py": {
+      "flags": [],
+      "bytes": 762
+    },
+    "tests/audience_chat_helpers.py": {
+      "flags": [],
+      "bytes": 1692
+    },
+    "tests/cli_process_doubles.py": {
+      "flags": [],
+      "bytes": 7647
+    },
+    "tests/conftest.py": {
+      "flags": [],
+      "bytes": 25324
+    },
+    "tests/directive_entry_helpers.py": {
+      "flags": [],
+      "bytes": 1032
+    },
+    "tests/dossier_test_helpers.py": {
+      "flags": [],
+      "bytes": 3476
+    },
+    "tests/fiscal_test_utils.py": {
+      "flags": [],
+      "bytes": 348
+    },
+    "tests/fixtures/agno-2.7.3-py3-none-any.whl": {
+      "flags": [],
+      "bytes": 4970337
+    },
+    "tests/game_fixture_retained_inventory.tsv": {
+      "flags": [],
+      "bytes": 111216
+    },
+    "tests/issue_stream_helpers.py": {
+      "flags": [],
+      "bytes": 4639
+    },
+    "tests/legacy_staging_helpers.py": {
+      "flags": [],
+      "bytes": 4737
+    },
+    "tests/month_chain_helpers.py": {
+      "flags": [],
+      "bytes": 2468
+    },
+    "tests/offline_audience_reply.py": {
+      "flags": [],
+      "bytes": 199
+    },
+    "tests/section_rejection_helpers.py": {
+      "flags": [],
+      "bytes": 1387
+    },
+    "tests/sse_helpers.py": {
+      "flags": [],
+      "bytes": 2022
+    },
+    "tests/test_adr0015_per_item_rejection.py": {
+      "flags": [],
+      "bytes": 3001
+    },
+    "tests/test_advance_paths_atomic.py": {
+      "flags": [],
+      "bytes": 17876
+    },
+    "tests/test_advance_without_edict_token_1351.py": {
+      "flags": [],
+      "bytes": 2450
+    },
+    "tests/test_advances_section_rejections.py": {
+      "flags": [],
+      "bytes": 7148
+    },
+    "tests/test_affairs_1831.py": {
+      "flags": [],
+      "bytes": 9981
+    },
+    "tests/test_applier_contract.py": {
+      "flags": [],
+      "bytes": 14858
+    },
+    "tests/test_appointment_tenure_607.py": {
+      "flags": [],
+      "bytes": 7378
+    },
+    "tests/test_army_card_status_1501.py": {
+      "flags": [
+        "assert_substr_in",
+        "weak_or_source"
+      ],
+      "bytes": 9672
+    },
+    "tests/test_army_display_173.py": {
+      "flags": [
+        "assert_substr_in"
+      ],
+      "bytes": 8031
+    },
+    "tests/test_army_firearms.py": {
+      "flags": [
+        "assert_substr_in"
+      ],
+      "bytes": 6260
+    },
+    "tests/test_army_maintenance_retire_173.py": {
+      "flags": [],
+      "bytes": 7987
+    },
+    "tests/test_army_pay_source_prompt_contract.py": {
+      "flags": [],
+      "bytes": 1583
+    },
+    "tests/test_army_salary_44.py": {
+      "flags": [],
+      "bytes": 16972
+    },
+    "tests/test_audience_background.py": {
+      "flags": [],
+      "bytes": 11279
+    },
+    "tests/test_audience_continuous_507.py": {
+      "flags": [
+        "assert_substr_in"
+      ],
+      "bytes": 6699
+    },
+    "tests/test_audience_draft_grant_once_1777.py": {
+      "flags": [],
+      "bytes": 11189
+    },
+    "tests/test_audience_extraction_501.py": {
+      "flags": [],
+      "bytes": 2623
+    },
+    "tests/test_audience_night_498.py": {
+      "flags": [
+        "assert_substr_in"
+      ],
+      "bytes": 30612
+    },
+    "tests/test_audience_presence_500.py": {
+      "flags": [
+        "assert_substr_in"
+      ],
+      "bytes": 15338
+    },
+    "tests/test_audience_restore_505.py": {
+      "flags": [
+        "named_helper_or_pure"
+      ],
+      "bytes": 40864
+    },
+    "tests/test_audience_scroll_539.py": {
+      "flags": [
+        "assert_substr_in"
+      ],
+      "bytes": 25186
+    },
+    "tests/test_audience_translate_1837.py": {
+      "flags": [
+        "assert_substr_in",
+        "named_helper_or_pure"
+      ],
+      "bytes": 40594
+    },
+    "tests/test_audience_translate_1837_reopen.py": {
+      "flags": [],
+      "bytes": 26915
+    },
+    "tests/test_audience_translation_1838.py": {
+      "flags": [],
+      "bytes": 16572
+    },
+    "tests/test_audience_translation_once_1898.py": {
+      "flags": [],
+      "bytes": 3777
+    },
+    "tests/test_audience_travel_gating_670.py": {
+      "flags": [
+        "assert_substr_in"
+      ],
+      "bytes": 57248
+    },
+    "tests/test_audience_undo_506.py": {
+      "flags": [
+        "assert_substr_in"
+      ],
+      "bytes": 27271
+    },
+    "tests/test_authority_ledger_611.py": {
+      "flags": [],
+      "bytes": 19020
+    },
+    "tests/test_bandit_power_model_190.py": {
+      "flags": [],
+      "bytes": 3797
+    },
+    "tests/test_breach_plea_623.py": {
+      "flags": [
+        "assert_substr_in"
+      ],
+      "bytes": 59531
+    },
+    "tests/test_candidate_supply_1893.py": {
+      "flags": [
+        "assert_substr_in"
+      ],
+      "bytes": 19209
+    },
+    "tests/test_centrifuge_ledger_690.py": {
+      "flags": [
+        "assert_substr_in"
+      ],
+      "bytes": 27245
+    },
+    "tests/test_character_knowledge_489.py": {
+      "flags": [
+        "assert_substr_in"
+      ],
+      "bytes": 69935
+    },
+    "tests/test_chat_stream_failpaths_393.py": {
+      "flags": [
+        "assert_substr_in"
+      ],
+      "bytes": 43990
+    },
+    "tests/test_cli_backend.py": {
+      "flags": [
+        "assert_substr_in",
+        "setattr_run_backend"
+      ],
+      "bytes": 46523
+    },
+    "tests/test_cli_entry_1902.py": {
+      "flags": [
+        "helper_plus_land_db"
+      ],
+      "bytes": 25058
+    },
+    "tests/test_cli_model_choices.py": {
+      "flags": [
+        "assert_substr_in"
+      ],
+      "bytes": 6983
+    },
+    "tests/test_cli_play_turn.py": {
+      "flags": [
+        "assert_substr_in"
+      ],
+      "bytes": 24666
+    },
+    "tests/test_cli_runner_error_typed_1299.py": {
+      "flags": [
+        "assert_substr_in"
+      ],
+      "bytes": 5943
+    },
+    "tests/test_cli_transport_1465.py": {
+      "flags": [
+        "assert_substr_in"
+      ],
+      "bytes": 15274
+    },
+    "tests/test_close_issues_section_rejections.py": {
+      "flags": [],
+      "bytes": 8252
+    },
+    "tests/test_commitment_backlash_626.py": {
+      "flags": [],
+      "bytes": 31652
+    },
+    "tests/test_commitment_display_348.py": {
+      "flags": [],
+      "bytes": 5704
+    },
+    "tests/test_court_break_player_lock_1727.py": {
+      "flags": [
+        "assert_substr_in"
+      ],
+      "bytes": 7620
+    },
+    "tests/test_court_layout_1290.py": {
+      "flags": [],
+      "bytes": 2114
+    },
+    "tests/test_covert_levy_651.py": {
+      "flags": [],
+      "bytes": 28074
+    },
+    "tests/test_credit_events_628.py": {
+      "flags": [],
+      "bytes": 25548
+    },
+    "tests/test_db_broad_except_surface.py": {
+      "flags": [],
+      "bytes": 3369
+    },
+    "tests/test_decision_event_binding_389.py": {
+      "flags": [],
+      "bytes": 3305
+    },
+    "tests/test_declaration_dispatch_1835.py": {
+      "flags": [
+        "assert_substr_in"
+      ],
+      "bytes": 34938
+    },
+    "tests/test_decree_commitment_creation_136.py": {
+      "flags": [],
+      "bytes": 41671
+    },
+    "tests/test_decree_commitment_schema_136.py": {
+      "flags": [
+        "assert_substr_in"
+      ],
+      "bytes": 9917
+    },
+    "tests/test_decree_commitment_settlement_229.py": {
+      "flags": [],
+      "bytes": 52085
+    },
+    "tests/test_decree_dossiers_571.py": {
+      "flags": [
+        "assert_substr_in"
+      ],
+      "bytes": 85286
+    },
+    "tests/test_decree_forecast_1861.py": {
+      "flags": [],
+      "bytes": 26899
+    },
+    "tests/test_deepseek_thinking_disable_1797.py": {
+      "flags": [],
+      "bytes": 7992
+    },
+    "tests/test_deformation_dual_rail_622.py": {
+      "flags": [
+        "assert_substr_in"
+      ],
+      "bytes": 24727
+    },
+    "tests/test_distance_matrix.py": {
+      "flags": [],
+      "bytes": 3054
+    },
+    "tests/test_dossier_endorsements_612.py": {
+      "flags": [],
+      "bytes": 8509
+    },
+    "tests/test_dossier_links_559.py": {
+      "flags": [],
+      "bytes": 7552
+    },
+    "tests/test_dossier_reported_progress_619.py": {
+      "flags": [
+        "assert_substr_in"
+      ],
+      "bytes": 12994
+    },
+    "tests/test_draft_admission_resubmit_1769.py": {
+      "flags": [
+        "setattr_run_backend"
+      ],
+      "bytes": 28934
+    },
+    "tests/test_due_review_621.py": {
+      "flags": [
+        "weak_or_source"
+      ],
+      "bytes": 31592
+    },
+    "tests/test_economy_section_rejections.py": {
+      "flags": [],
+      "bytes": 7373
+    },
+    "tests/test_effect_origin_558.py": {
+      "flags": [],
+      "bytes": 16862
+    },
+    "tests/test_empire_modifier_income_only_341.py": {
+      "flags": [],
+      "bytes": 2690
+    },
+    "tests/test_enrich_list_guards.py": {
+      "flags": [
+        "setattr_run_backend"
+      ],
+      "bytes": 4816
+    },
+    "tests/test_enter_settlement_period_1235.py": {
+      "flags": [],
+      "bytes": 30304
+    },
+    "tests/test_env_isolation.py": {
+      "flags": [],
+      "bytes": 742
+    },
+    "tests/test_error_pack.py": {
+      "flags": [],
+      "bytes": 7823
+    },
+    "tests/test_event_chain_cascade.py": {
+      "flags": [
+        "named_helper_or_pure"
+      ],
+      "bytes": 15342
+    },
+    "tests/test_event_trigger_gate.py": {
+      "flags": [
+        "assert_substr_in"
+      ],
+      "bytes": 176538
+    },
+    "tests/test_execution_joint_liability_565.py": {
+      "flags": [
+        "assert_substr_in"
+      ],
+      "bytes": 16503
+    },
+    "tests/test_execution_pressure_654.py": {
+      "flags": [
+        "assert_substr_in"
+      ],
+      "bytes": 38722
+    },
+    "tests/test_execution_tenure_613.py": {
+      "flags": [],
+      "bytes": 6207
+    },
+    "tests/test_executor_routing_721.py": {
+      "flags": [],
+      "bytes": 18519
+    },
+    "tests/test_faction_brew_637.py": {
+      "flags": [
+        "named_helper_or_pure"
+      ],
+      "bytes": 30546
+    },
+    "tests/test_faction_class_section_rejections.py": {
+      "flags": [],
+      "bytes": 9812
+    },
+    "tests/test_faction_denunciation_627.py": {
+      "flags": [
+        "assert_substr_in"
+      ],
+      "bytes": 15940
+    },
+    "tests/test_faction_leverage_9.py": {
+      "flags": [
+        "assert_substr_in"
+      ],
+      "bytes": 66782
+    },
+    "tests/test_family_tail_615.py": {
+      "flags": [],
+      "bytes": 9869
+    },
+    "tests/test_family_tail_642.py": {
+      "flags": [],
+      "bytes": 1589
+    },
+    "tests/test_family_tail_restore_570.py": {
+      "flags": [],
+      "bytes": 7010
+    },
+    "tests/test_featured_dossiers_494.py": {
+      "flags": [],
+      "bytes": 2224
+    },
+    "tests/test_fiscal_beyond_intent_1260.py": {
+      "flags": [
+        "named_helper_or_pure"
+      ],
+      "bytes": 18625
+    },
+    "tests/test_fiscal_levy_effect.py": {
+      "flags": [
+        "assert_substr_in"
+      ],
+      "bytes": 64291
+    },
+    "tests/test_fiscal_substrate_bridge.py": {
+      "flags": [
+        "assert_substr_in",
+        "named_helper_or_pure"
+      ],
+      "bytes": 191559
+    },
+    "tests/test_fiscal_tick.py": {
+      "flags": [],
+      "bytes": 12746
+    },
+    "tests/test_gazette_author_1862.py": {
+      "flags": [
+        "assert_substr_in"
+      ],
+      "bytes": 23215
+    },
+    "tests/test_grant_reconciliation_567.py": {
+      "flags": [
+        "assert_substr_in"
+      ],
+      "bytes": 24680
+    },
+    "tests/test_highlight_judge_544.py": {
+      "flags": [
+        "assert_substr_in",
+        "weak_or_source"
+      ],
+      "bytes": 14934
+    },
+    "tests/test_history_decree_text_1843_reopen.py": {
+      "flags": [],
+      "bytes": 1032
+    },
+    "tests/test_identity_seed_488.py": {
+      "flags": [],
+      "bytes": 7041
+    },
+    "tests/test_impeachment_surge_655.py": {
+      "flags": [],
+      "bytes": 13524
+    },
+    "tests/test_initiative_resolve_pairing.py": {
+      "flags": [],
+      "bytes": 10457
+    },
+    "tests/test_intrigue_concealment_1896.py": {
+      "flags": [],
+      "bytes": 4076
+    },
+    "tests/test_issue_decree_token_1277.py": {
+      "flags": [],
+      "bytes": 4072
+    },
+    "tests/test_issue_entities.py": {
+      "flags": [],
+      "bytes": 23454
+    },
+    "tests/test_junxin_alias_loyalty_313.py": {
+      "flags": [],
+      "bytes": 3110
+    },
+    "tests/test_junxin_monthly_tick_314.py": {
+      "flags": [
+        "named_helper_or_pure"
+      ],
+      "bytes": 14316
+    },
+    "tests/test_llm_channel_config.py": {
+      "flags": [
+        "setattr_run_backend"
+      ],
+      "bytes": 29569
+    },
+    "tests/test_llm_key_helpers.py": {
+      "flags": [],
+      "bytes": 1740
+    },
+    "tests/test_loyalty_soft_adjust_clamp_320.py": {
+      "flags": [],
+      "bytes": 6336
+    },
+    "tests/test_manual_directive_institution_normalize_1279.py": {
+      "flags": [
+        "setattr_run_backend"
+      ],
+      "bytes": 7865
+    },
+    "tests/test_manual_directive_locality_1685.py": {
+      "flags": [
+        "setattr_run_backend"
+      ],
+      "bytes": 2150
+    },
+    "tests/test_material_directory_1830.py": {
+      "flags": [
+        "assert_substr_in"
+      ],
+      "bytes": 12345
+    },
+    "tests/test_mechanical_tail_1845.py": {
+      "flags": [
+        "assert_substr_in"
+      ],
+      "bytes": 21927
+    },
+    "tests/test_memorial_inbox_1726.py": {
+      "flags": [],
+      "bytes": 8845
+    },
+    "tests/test_menu_continue_stream_1195.py": {
+      "flags": [
+        "assert_substr_in"
+      ],
+      "bytes": 8038
+    },
+    "tests/test_menu_lifecycle_drain_396.py": {
+      "flags": [
+        "assert_substr_in"
+      ],
+      "bytes": 29351
+    },
+    "tests/test_mindreading_491.py": {
+      "flags": [],
+      "bytes": 1137
+    },
+    "tests/test_minister_chat_timeout.py": {
+      "flags": [],
+      "bytes": 4276
+    },
+    "tests/test_month_call_recovery_1846.py": {
+      "flags": [
+        "assert_substr_in"
+      ],
+      "bytes": 28439
+    },
+    "tests/test_month_chain_1843.py": {
+      "flags": [
+        "assert_substr_in"
+      ],
+      "bytes": 38394
+    },
+    "tests/test_month_chain_1847.py": {
+      "flags": [
+        "assert_substr_in"
+      ],
+      "bytes": 90436
+    },
+    "tests/test_month_loop_tracer_1468.py": {
+      "flags": [
+        "assert_substr_in"
+      ],
+      "bytes": 20107
+    },
+    "tests/test_month_open_snapshot_1234.py": {
+      "flags": [],
+      "bytes": 18440
+    },
+    "tests/test_month_translate_1840.py": {
+      "flags": [
+        "assert_substr_in"
+      ],
+      "bytes": 44962
+    },
+    "tests/test_mutiny_actual_residence_659.py": {
+      "flags": [
+        "assert_substr_in"
+      ],
+      "bytes": 6236
+    },
+    "tests/test_mutiny_latch_315.py": {
+      "flags": [],
+      "bytes": 5501
+    },
+    "tests/test_mutiny_noop_whitelist_319.py": {
+      "flags": [],
+      "bytes": 19351
+    },
+    "tests/test_mutiny_progression_316.py": {
+      "flags": [],
+      "bytes": 6774
+    },
+    "tests/test_mutiny_redemption_317.py": {
+      "flags": [],
+      "bytes": 5630
+    },
+    "tests/test_mutiny_third_strike_318.py": {
+      "flags": [],
+      "bytes": 19506
+    },
+    "tests/test_named_characters_seed_484.py": {
+      "flags": [
+        "assert_substr_in"
+      ],
+      "bytes": 6272
+    },
+    "tests/test_new_game_dependency_mismatch_1721.py": {
+      "flags": [
+        "assert_substr_in"
+      ],
+      "bytes": 4391
+    },
+    "tests/test_new_game_smoke.py": {
+      "flags": [
+        "setattr_run_backend"
+      ],
+      "bytes": 5322
+    },
+    "tests/test_new_game_write_path_1749.py": {
+      "flags": [],
+      "bytes": 23849
+    },
+    "tests/test_new_issues_section_rejections.py": {
+      "flags": [],
+      "bytes": 23254
+    },
+    "tests/test_no_edict_full_settlement_1274.py": {
+      "flags": [],
+      "bytes": 7064
+    },
+    "tests/test_office_inference.py": {
+      "flags": [
+        "assert_substr_in",
+        "setattr_run_backend"
+      ],
+      "bytes": 13766
+    },
+    "tests/test_office_rank_562.py": {
+      "flags": [
+        "assert_substr_in"
+      ],
+      "bytes": 19678
+    },
+    "tests/test_on_scene_immediate_write_1839.py": {
+      "flags": [
+        "assert_substr_in"
+      ],
+      "bytes": 14447
+    },
+    "tests/test_opening_gazette_delete_1356.py": {
+      "flags": [
+        "assert_substr_in"
+      ],
+      "bytes": 5562
+    },
+    "tests/test_override_breach_costs_564.py": {
+      "flags": [
+        "assert_substr_in"
+      ],
+      "bytes": 23689
+    },
+    "tests/test_p4_guard_new_surfaces_547.py": {
+      "flags": [
+        "assert_substr_in"
+      ],
+      "bytes": 10157
+    },
+    "tests/test_pay_order_override_653.py": {
+      "flags": [
+        "assert_substr_in",
+        "named_helper_or_pure",
+        "setattr_run_backend"
+      ],
+      "bytes": 76664
+    },
+    "tests/test_pay_order_override_extraction_653.py": {
+      "flags": [
+        "setattr_run_backend"
+      ],
+      "bytes": 4540
+    },
+    "tests/test_person_archive_contract_index.py": {
+      "flags": [],
+      "bytes": 7555
+    },
+    "tests/test_person_archive_schema.py": {
+      "flags": [
+        "assert_substr_in"
+      ],
+      "bytes": 4894
+    },
+    "tests/test_person_delta_adapter.py": {
+      "flags": [
+        "named_helper_or_pure"
+      ],
+      "bytes": 156434
+    },
+    "tests/test_person_transit_write_667.py": {
+      "flags": [],
+      "bytes": 10371
+    },
+    "tests/test_pihong_dossier_1490.py": {
+      "flags": [
+        "assert_substr_in",
+        "helper_plus_land_db",
+        "named_helper_or_pure",
+        "setattr_run_backend"
+      ],
+      "bytes": 195307
+    },
+    "tests/test_player_army_projection_321.py": {
+      "flags": [],
+      "bytes": 15680
+    },
+    "tests/test_player_payload_1022.py": {
+      "flags": [],
+      "bytes": 6071
+    },
+    "tests/test_population_transfers_649.py": {
+      "flags": [
+        "assert_substr_in"
+      ],
+      "bytes": 20408
+    },
+    "tests/test_population_transfers_662.py": {
+      "flags": [],
+      "bytes": 6983
+    },
+    "tests/test_population_unit_648.py": {
+      "flags": [],
+      "bytes": 14086
+    },
+    "tests/test_power_section_rejections.py": {
+      "flags": [],
+      "bytes": 10198
+    },
+    "tests/test_pre_settle_transaction.py": {
+      "flags": [],
+      "bytes": 17042
+    },
+    "tests/test_promulgation_judge_561.py": {
+      "flags": [
+        "assert_substr_in",
+        "named_helper_or_pure"
+      ],
+      "bytes": 39295
+    },
+    "tests/test_promulgation_seam_560.py": {
+      "flags": [],
+      "bytes": 1588
+    },
+    "tests/test_public_character_place_1683.py": {
+      "flags": [],
+      "bytes": 1947
+    },
+    "tests/test_public_projection_consistency_1830.py": {
+      "flags": [],
+      "bytes": 9470
+    },
+    "tests/test_public_sayings_1829.py": {
+      "flags": [],
+      "bytes": 9445
+    },
+    "tests/test_qa_1281_issue_audience_case_facts.py": {
+      "flags": [],
+      "bytes": 9107
+    },
+    "tests/test_qa_a3_seed_data.py": {
+      "flags": [
+        "assert_substr_in"
+      ],
+      "bytes": 7997
+    },
+    "tests/test_qa_b3_409_ux.py": {
+      "flags": [],
+      "bytes": 10332
+    },
+    "tests/test_qa_c2_phase_settlement_mask_1374.py": {
+      "flags": [
+        "assert_substr_in"
+      ],
+      "bytes": 10236
+    },
+    "tests/test_qa_c2_settlement_display_lifecycle_1343.py": {
+      "flags": [],
+      "bytes": 9174
+    },
+    "tests/test_qa_c3_secret_order_path_1357_1376.py": {
+      "flags": [],
+      "bytes": 4042
+    },
+    "tests/test_qa_d1_decree_normalize_1274.py": {
+      "flags": [
+        "assert_substr_in",
+        "setattr_run_backend"
+      ],
+      "bytes": 6699
+    },
+    "tests/test_qa_e1_numeric_presentation.py": {
+      "flags": [],
+      "bytes": 3199
+    },
+    "tests/test_qa_h1_seed_data.py": {
+      "flags": [
+        "assert_substr_in"
+      ],
+      "bytes": 8316
+    },
+    "tests/test_qa_s2_copy_prompts_1356_1402.py": {
+      "flags": [
+        "assert_substr_in"
+      ],
+      "bytes": 5963
+    },
+    "tests/test_qa_t1_extraction_dual_source_1353.py": {
+      "flags": [],
+      "bytes": 26608
+    },
+    "tests/test_qa_u2_liaodong_buildings.py": {
+      "flags": [],
+      "bytes": 4186
+    },
+    "tests/test_qa_u3_map_nodes_1401.py": {
+      "flags": [
+        "assert_substr_in"
+      ],
+      "bytes": 7245
+    },
+    "tests/test_recommendation_batch_snapshot_1583.py": {
+      "flags": [],
+      "bytes": 6386
+    },
+    "tests/test_recommendation_edges_635.py": {
+      "flags": [],
+      "bytes": 10015
+    },
+    "tests/test_recommendations.py": {
+      "flags": [
+        "assert_substr_in"
+      ],
+      "bytes": 13733
+    },
+    "tests/test_refugee_loop_652.py": {
+      "flags": [],
+      "bytes": 25606
+    },
+    "tests/test_region_cannon_delta.py": {
+      "flags": [],
+      "bytes": 4501
+    },
+    "tests/test_region_citydefense.py": {
+      "flags": [
+        "assert_substr_in"
+      ],
+      "bytes": 2259
+    },
+    "tests/test_reign_period_label.py": {
+      "flags": [],
+      "bytes": 1528
+    },
+    "tests/test_rejection_wiring.py": {
+      "flags": [
+        "assert_substr_in"
+      ],
+      "bytes": 22707
+    },
+    "tests/test_relation_brew_636.py": {
+      "flags": [],
+      "bytes": 29877
+    },
+    "tests/test_relation_capture_633.py": {
+      "flags": [],
+      "bytes": 35371
+    },
+    "tests/test_relation_read_640.py": {
+      "flags": [
+        "assert_substr_in"
+      ],
+      "bytes": 13728
+    },
+    "tests/test_relation_seed_638.py": {
+      "flags": [
+        "setattr_run_backend"
+      ],
+      "bytes": 27604
+    },
+    "tests/test_relation_store_632.py": {
+      "flags": [
+        "assert_substr_in"
+      ],
+      "bytes": 8645
+    },
+    "tests/test_release_bundle_assets.py": {
+      "flags": [],
+      "bytes": 3653
+    },
+    "tests/test_rescript_choices_563.py": {
+      "flags": [],
+      "bytes": 15342
+    },
+    "tests/test_rescript_draft_656.py": {
+      "flags": [
+        "assert_substr_in",
+        "named_helper_or_pure"
+      ],
+      "bytes": 56242
+    },
+    "tests/test_rescript_heal_isolation_1801.py": {
+      "flags": [
+        "assert_substr_in"
+      ],
+      "bytes": 9034
+    },
+    "tests/test_rescript_option_field_heal_1746.py": {
+      "flags": [
+        "assert_substr_in"
+      ],
+      "bytes": 34087
+    },
+    "tests/test_run_agent_text_transport_1465.py": {
+      "flags": [
+        "assert_substr_in"
+      ],
+      "bytes": 5934
+    },
+    "tests/test_runtime_llm_config.py": {
+      "flags": [],
+      "bytes": 23463
+    },
+    "tests/test_scene_llm_1836.py": {
+      "flags": [],
+      "bytes": 9562
+    },
+    "tests/test_secret_dossier_participants_1252.py": {
+      "flags": [],
+      "bytes": 11226
+    },
+    "tests/test_secret_order_isolation_883.py": {
+      "flags": [
+        "named_helper_or_pure"
+      ],
+      "bytes": 67962
+    },
+    "tests/test_secret_order_monthly_progress_566.py": {
+      "flags": [
+        "assert_substr_in"
+      ],
+      "bytes": 16329
+    },
+    "tests/test_secret_order_payoff_1504.py": {
+      "flags": [],
+      "bytes": 113859
+    },
+    "tests/test_secret_order_section_rejections.py": {
+      "flags": [],
+      "bytes": 4316
+    },
+    "tests/test_secret_order_update.py": {
+      "flags": [
+        "assert_substr_in"
+      ],
+      "bytes": 7223
+    },
+    "tests/test_section4_rejections.py": {
+      "flags": [
+        "assert_substr_in"
+      ],
+      "bytes": 29980
+    },
+    "tests/test_section_fiscal_rejections.py": {
+      "flags": [],
+      "bytes": 28633
+    },
+    "tests/test_session_write_queue_1353.py": {
+      "flags": [
+        "assert_substr_in"
+      ],
+      "bytes": 16355
+    },
+    "tests/test_settle_core.py": {
+      "flags": [],
+      "bytes": 2776
+    },
+    "tests/test_settlement_write_guard_393.py": {
+      "flags": [],
+      "bytes": 14766
+    },
+    "tests/test_shared_resource_order_1844.py": {
+      "flags": [],
+      "bytes": 15646
+    },
+    "tests/test_six_sciences_seed_608.py": {
+      "flags": [
+        "assert_substr_in"
+      ],
+      "bytes": 2565
+    },
+    "tests/test_staged_assignment_identity_1890.py": {
+      "flags": [],
+      "bytes": 31684
+    },
+    "tests/test_start_sh_deps_1721.py": {
+      "flags": [
+        "assert_substr_in"
+      ],
+      "bytes": 5254
+    },
+    "tests/test_state_reload.py": {
+      "flags": [],
+      "bytes": 15470
+    },
+    "tests/test_structured_decree_contract_1624.py": {
+      "flags": [
+        "setattr_run_backend"
+      ],
+      "bytes": 31324
+    },
+    "tests/test_style_temperament_641.py": {
+      "flags": [],
+      "bytes": 14704
+    },
+    "tests/test_supervision_625.py": {
+      "flags": [
+        "assert_substr_in"
+      ],
+      "bytes": 17967
+    },
+    "tests/test_surcharge_causal_chain_650.py": {
+      "flags": [
+        "assert_substr_in",
+        "weak_or_source"
+      ],
+      "bytes": 21906
+    },
+    "tests/test_textual_facts_1828.py": {
+      "flags": [],
+      "bytes": 5395
+    },
+    "tests/test_transaction_boundary.py": {
+      "flags": [
+        "named_helper_or_pure"
+      ],
+      "bytes": 21976
+    },
+    "tests/test_transit_aging_346.py": {
+      "flags": [],
+      "bytes": 10231
+    },
+    "tests/test_transit_countdown_668.py": {
+      "flags": [],
+      "bytes": 13098
+    },
+    "tests/test_urge_lever_624.py": {
+      "flags": [
+        "assert_substr_in"
+      ],
+      "bytes": 26089
+    },
+    "tests/test_value_matrix_691.py": {
+      "flags": [],
+      "bytes": 3614
+    },
+    "tests/test_verify_llm_clocks_884.py": {
+      "flags": [],
+      "bytes": 6957
+    },
+    "tests/test_web_audience_night_498.py": {
+      "flags": [
+        "assert_substr_in"
+      ],
+      "bytes": 37445
+    },
+    "tests/test_web_budget_payload.py": {
+      "flags": [
+        "assert_substr_in"
+      ],
+      "bytes": 661
+    },
+    "tests/test_web_chat_serialization_393.py": {
+      "flags": [
+        "assert_substr_in"
+      ],
+      "bytes": 12932
+    },
+    "tests/test_web_court_visibility.py": {
+      "flags": [
+        "assert_substr_in"
+      ],
+      "bytes": 25913
+    },
+    "tests/test_web_entry_1902.py": {
+      "flags": [],
+      "bytes": 1119
+    },
+    "tests/test_web_llm_runtime_config.py": {
+      "flags": [
+        "assert_substr_in",
+        "lock_internal_capability_set",
+        "setattr_run_backend"
+      ],
+      "bytes": 53869
+    },
+    "tests/test_world_materials_1834.py": {
+      "flags": [
+        "assert_substr_in"
+      ],
+      "bytes": 15544
+    },
+    "tests/test_yuan_arrival_185.py": {
+      "flags": [],
+      "bytes": 7281
+    },
+    "tests/wait_utils.py": {
+      "flags": [],
+      "bytes": 1589
+    },
+    "tests/web_audience_test_doubles.py": {
+      "flags": [],
+      "bytes": 3636
+    },
+    "web/src/appDurableWiring.test.tsx": {
+      "flags": [],
+      "bytes": 156070
+    },
+    "web/src/buildResources.test.ts": {
+      "flags": [],
+      "bytes": 3623
+    },
+    "web/src/chatFailures.test.ts": {
+      "flags": [],
+      "bytes": 4209
+    },
+    "web/src/cliRunners.test.ts": {
+      "flags": [],
+      "bytes": 1280
+    },
+    "web/src/components/cliRunnerDropdown.consistency.test.tsx": {
+      "flags": [],
+      "bytes": 7914
+    },
+    "web/src/components/decisionModal.test.tsx": {
+      "flags": [],
+      "bytes": 30034
+    },
+    "web/src/components/drawers.test.tsx": {
+      "flags": [],
+      "bytes": 31824
+    },
+    "web/src/components/gameMenu.test.tsx": {
+      "flags": [],
+      "bytes": 35881
+    },
+    "web/src/components/map.test.tsx": {
+      "flags": [],
+      "bytes": 6038
+    },
+    "web/src/components/menuPage.test.tsx": {
+      "flags": [],
+      "bytes": 40201
+    },
+    "web/src/components/modals.test.tsx": {
+      "flags": [],
+      "bytes": 98944
+    },
+    "web/src/components/settlementFaces.test.tsx": {
+      "flags": [],
+      "bytes": 21487
+    },
+    "web/src/components/settlementGazettePanel.test.tsx": {
+      "flags": [],
+      "bytes": 1831
+    },
+    "web/src/components/situation.test.tsx": {
+      "flags": [],
+      "bytes": 6759
+    },
+    "web/src/decisionRouting.test.tsx": {
+      "flags": [],
+      "bytes": 9188
+    },
+    "web/src/escClose.test.tsx": {
+      "flags": [],
+      "bytes": 7373
+    },
+    "web/src/mindreading.test.ts": {
+      "flags": [],
+      "bytes": 777
+    },
+    "web/src/mindreadingDelivery.test.tsx": {
+      "flags": [],
+      "bytes": 14867
+    },
+    "web/src/ministerScrollLens.test.ts": {
+      "flags": [],
+      "bytes": 13346
+    },
+    "web/src/reasoningSupport.test.ts": {
+      "flags": [],
+      "bytes": 2317
+    },
+    "web/src/settleStream.test.ts": {
+      "flags": [],
+      "bytes": 2586
+    },
+    "web/src/settlementPresentation.test.ts": {
+      "flags": [],
+      "bytes": 2806
+    },
+    "web/src/staleGuard.test.tsx": {
+      "flags": [],
+      "bytes": 18665
+    },
+    "web/src/useDurableProjection.test.tsx": {
+      "flags": [],
+      "bytes": 5326
+    },
+    "web/src/useSettlementFlow.test.tsx": {
+      "flags": [],
+      "bytes": 22658
+    }
+  },
+  "suspect_count": 108,
+  "setattr_hits": [
+    {
+      "file": "tests/test_cli_backend.py",
+      "line": 68,
+      "target": "_run_backend"
+    },
+    {
+      "file": "tests/test_cli_backend.py",
+      "line": 87,
+      "target": "_run_backend"
+    },
+    {
+      "file": "tests/test_cli_backend.py",
+      "line": 189,
+      "target": "_run_backend"
+    },
+    {
+      "file": "tests/test_cli_backend.py",
+      "line": 196,
+      "target": "_run_backend"
+    },
+    {
+      "file": "tests/test_decree_dossiers_571.py",
+      "line": 994,
+      "target": "_run_backend_for_config"
+    },
+    {
+      "file": "tests/test_decree_dossiers_571.py",
+      "line": 1062,
+      "target": "_run_backend_for_config"
+    },
+    {
+      "file": "tests/test_decree_dossiers_571.py",
+      "line": 1106,
+      "target": "_run_backend_for_config"
+    },
+    {
+      "file": "tests/test_decree_dossiers_571.py",
+      "line": 1358,
+      "target": "_run_backend_for_config"
+    },
+    {
+      "file": "tests/test_decree_dossiers_571.py",
+      "line": 1663,
+      "target": "_run_backend_for_config"
+    },
+    {
+      "file": "tests/test_decree_dossiers_571.py",
+      "line": 1704,
+      "target": "_run_backend_for_config"
+    },
+    {
+      "file": "tests/test_draft_admission_resubmit_1769.py",
+      "line": 170,
+      "target": "_run_backend_for_config"
+    },
+    {
+      "file": "tests/test_enrich_list_guards.py",
+      "line": 23,
+      "target": "_run_backend_for_config"
+    },
+    {
+      "file": "tests/test_llm_channel_config.py",
+      "line": 455,
+      "target": "_run_backend_for_config"
+    },
+    {
+      "file": "tests/test_llm_channel_config.py",
+      "line": 477,
+      "target": "_run_backend_for_config"
+    },
+    {
+      "file": "tests/test_llm_channel_config.py",
+      "line": 503,
+      "target": "_run_backend_for_config"
+    },
+    {
+      "file": "tests/test_manual_directive_institution_normalize_1279.py",
+      "line": 42,
+      "target": "_run_backend_for_config"
+    },
+    {
+      "file": "tests/test_manual_directive_locality_1685.py",
+      "line": 41,
+      "target": "_run_backend_for_config"
+    },
+    {
+      "file": "tests/test_new_game_smoke.py",
+      "line": 49,
+      "target": "_run_backend_for_config"
+    },
+    {
+      "file": "tests/test_office_inference.py",
+      "line": 66,
+      "target": "_run_backend"
+    },
+    {
+      "file": "tests/test_office_inference.py",
+      "line": 88,
+      "target": "_run_backend_for_config"
+    },
+    {
+      "file": "tests/test_office_inference.py",
+      "line": 112,
+      "target": "_run_backend_for_config"
+    },
+    {
+      "file": "tests/test_office_inference.py",
+      "line": 126,
+      "target": "_run_backend"
+    },
+    {
+      "file": "tests/test_office_inference.py",
+      "line": 145,
+      "target": "_run_backend_for_config"
+    },
+    {
+      "file": "tests/test_office_inference.py",
+      "line": 168,
+      "target": "_run_backend_for_config"
+    },
+    {
+      "file": "tests/test_office_inference.py",
+      "line": 201,
+      "target": "_run_backend_for_config"
+    },
+    {
+      "file": "tests/test_pay_order_override_653.py",
+      "line": 1616,
+      "target": "_run_backend_for_config"
+    },
+    {
+      "file": "tests/test_pay_order_override_extraction_653.py",
+      "line": 25,
+      "target": "_run_backend_for_config"
+    },
+    {
+      "file": "tests/test_pay_order_override_extraction_653.py",
+      "line": 54,
+      "target": "_run_backend_for_config"
+    },
+    {
+      "file": "tests/test_pay_order_override_extraction_653.py",
+      "line": 73,
+      "target": "_run_backend_for_config"
+    },
+    {
+      "file": "tests/test_pay_order_override_extraction_653.py",
+      "line": 96,
+      "target": "_run_backend_for_config"
+    },
+    {
+      "file": "tests/test_pihong_dossier_1490.py",
+      "line": 2528,
+      "target": "_run_backend_for_config"
+    },
+    {
+      "file": "tests/test_pihong_dossier_1490.py",
+      "line": 2637,
+      "target": "_run_backend_for_config"
+    },
+    {
+      "file": "tests/test_pihong_dossier_1490.py",
+      "line": 2659,
+      "target": "_run_backend_for_config"
+    },
+    {
+      "file": "tests/test_pihong_dossier_1490.py",
+      "line": 2683,
+      "target": "_run_backend_for_config"
+    },
+    {
+      "file": "tests/test_pihong_dossier_1490.py",
+      "line": 2777,
+      "target": "_run_backend_for_config"
+    },
+    {
+      "file": "tests/test_qa_d1_decree_normalize_1274.py",
+      "line": 41,
+      "target": "_run_backend_for_config"
+    },
+    {
+      "file": "tests/test_qa_d1_decree_normalize_1274.py",
+      "line": 81,
+      "target": "_run_backend_for_config"
+    },
+    {
+      "file": "tests/test_qa_d1_decree_normalize_1274.py",
+      "line": 156,
+      "target": "_run_backend_for_config"
+    },
+    {
+      "file": "tests/test_relation_seed_638.py",
+      "line": 37,
+      "target": "_run_backend_for_config"
+    },
+    {
+      "file": "tests/test_relation_seed_638.py",
+      "line": 188,
+      "target": "_run_backend_for_config"
+    },
+    {
+      "file": "tests/test_relation_seed_638.py",
+      "line": 214,
+      "target": "_run_backend_for_config"
+    },
+    {
+      "file": "tests/test_relation_seed_638.py",
+      "line": 293,
+      "target": "_run_backend_for_config"
+    },
+    {
+      "file": "tests/test_relation_seed_638.py",
+      "line": 450,
+      "target": "_run_backend_for_config"
+    },
+    {
+      "file": "tests/test_rescript_choices_563.py",
+      "line": 40,
+      "target": "_run_backend_for_config"
+    },
+    {
+      "file": "tests/test_rescript_choices_563.py",
+      "line": 53,
+      "target": "_run_backend_for_config"
+    },
+    {
+      "file": "tests/test_structured_decree_contract_1624.py",
+      "line": 346,
+      "target": "_run_backend_for_config"
+    },
+    {
+      "file": "tests/test_structured_decree_contract_1624.py",
+      "line": 428,
+      "target": "_run_backend_for_config"
+    },
+    {
+      "file": "tests/test_structured_decree_contract_1624.py",
+      "line": 596,
+      "target": "_run_backend_for_config"
+    },
+    {
+      "file": "tests/test_structured_decree_contract_1624.py",
+      "line": 754,
+      "target": "_run_backend_for_config"
+    },
+    {
+      "file": "tests/test_web_llm_runtime_config.py",
+      "line": 1037,
+      "target": "_run_backend_for_config"
+    }
+  ],
+  "prose_hits": [
+    {
+      "file": "tests/test_army_card_status_1501.py",
+      "line": 181,
+      "text": "assert \"欠饷严重\" in report"
+    },
+    {
+      "file": "tests/test_army_card_status_1501.py",
+      "line": 208,
+      "text": "assert \"status\" not in card or card.get(\"status\") in (None, \"\")",
+      "kind": "weak_or"
+    },
+    {
+      "file": "tests/test_army_card_status_1501.py",
+      "line": 213,
+      "text": "assert \"欠饷严重\" in detail"
+    },
+    {
+      "file": "tests/test_chat_stream_failpaths_393.py",
+      "line": 448,
+      "text": "assert \"provider_message\" in detail, detail"
+    },
+    {
+      "file": "tests/test_due_review_621.py",
+      "line": 256,
+      "text": "assert origin_context in opening or criterion_text in opening",
+      "kind": "weak_or"
+    },
+    {
+      "file": "tests/test_fiscal_levy_effect.py",
+      "line": 1574,
+      "text": "assert \"边饷急迫，请旨定夺。\" in text"
+    },
+    {
+      "file": "tests/test_fiscal_levy_effect.py",
+      "line": 1575,
+      "text": "assert \"姑候户部再核\" in text"
+    },
+    {
+      "file": "tests/test_highlight_judge_544.py",
+      "line": 124,
+      "text": "assert (\"user\", []) in roles or any(r == \"user\" and h == [] for r, h in roles)",
+      "kind": "weak_or"
+    },
+    {
+      "file": "tests/test_month_chain_1847.py",
+      "line": 701,
+      "text": "assert \"预推不可见:陕西赈灾\" in message"
+    },
+    {
+      "file": "tests/test_new_game_dependency_mismatch_1721.py",
+      "line": 80,
+      "text": "assert \"message\" in detail and str(detail[\"message\"]).strip()"
+    },
+    {
+      "file": "tests/test_section4_rejections.py",
+      "line": 147,
+      "text": "assert \"controlled_by\" in reason"
+    },
+    {
+      "file": "tests/test_surcharge_causal_chain_650.py",
+      "line": 92,
+      "text": "assert \"_meta\" not in before or before[\"_meta\"].get(\"加派基线\") is None",
+      "kind": "weak_or"
+    },
+    {
+      "file": "tests/test_surcharge_causal_chain_650.py",
+      "line": 362,
+      "text": "assert \"shaanxi\" in detail"
+    },
+    {
+      "file": "tests/test_web_court_visibility.py",
+      "line": 274,
+      "text": "assert \"宗室\" in reason"
+    },
+    {
+      "file": "tests/test_web_court_visibility.py",
+      "line": 313,
+      "text": "assert \"大明\" in reason  # 拒因须点明非大明，而非误报「尚未登场」等状态话术"
+    }
+  ],
+  "cap_hits": [
+    {
+      "file": "tests/test_web_llm_runtime_config.py",
+      "line": 981,
+      "text": "assert set(status[\"llm\"][\"cli_reasoning_runners\"]) == set(CLI_REASONING_STRENGTH_RUNNERS)"
+    },
+    {
+      "file": "tests/test_web_llm_runtime_config.py",
+      "line": 1001,
+      "text": "assert set(get_result[\"cli_reasoning_runners\"]) == set(CLI_REASONING_STRENGTH_RUNNERS)"
+    },
+    {
+      "file": "tests/test_web_llm_runtime_config.py",
+      "line": 1019,
+      "text": "assert set(post_result[\"cli_reasoning_runners\"]) == set(CLI_REASONING_STRENGTH_RUNNERS)"
+    }
+  ],
+  "validate_all_hits": [
+    {
+      "file": "tests/test_cli_entry_1902.py",
+      "line": 145,
+      "text": "核内 validate_all 对缺 action 的 decision 行既不默认 hold 也拒收（\"decision 选项"
+    },
+    {
+      "file": "tests/test_cli_entry_1902.py",
+      "line": 256,
+      "text": "# （不在此案重复正向断言 validate_all helper；核侧空 pick 契约见 ordinary 拒收案。）"
+    },
+    {
+      "file": "tests/test_cli_entry_1902.py",
+      "line": 274,
+      "text": "ra.validate_all([desk_row], [{\"decision_key\": desk_row[\"decision_key\"]}])"
+    },
+    {
+      "file": "tests/test_cli_entry_1902.py",
+      "line": 307,
+      "text": "资格判定只在核内（``rescript_actions.validate_all`` 的 note-only 通道，与 Web"
+    },
+    {
+      "file": "tests/test_execution_pressure_654.py",
+      "line": 450,
+      "text": "def test_validate_all_unknown_roster_name_zero_rows_before_insert(env):"
+    },
+    {
+      "file": "tests/test_pihong_dossier_1490.py",
+      "line": 550,
+      "text": "ra.validate_all([urgent], [{'decision_key': key, 'action': 'follow_draft', 'draft_capability': 'not-a-real-cap', 'label': opts[0]['label']}])"
+    },
+    {
+      "file": "tests/test_pihong_dossier_1490.py",
+      "line": 552,
+      "text": "ra.validate_all([urgent], [{'decision_key': 'rescript_draft:999:0', 'action': 'hold', 'label': '留中'}])"
+    },
+    {
+      "file": "tests/test_pihong_dossier_1490.py",
+      "line": 560,
+      "text": "batch = ra.validate_all([urgent], [{'decision_key': key, 'action': 'hold', 'label': '留中'}])"
+    },
+    {
+      "file": "tests/test_pihong_dossier_1490.py",
+      "line": 567,
+      "text": "ra.validate_all([decided_row], [{'decision_key': key, 'action': 'hold', 'label': '另留'}])"
+    },
+    {
+      "file": "tests/test_pihong_dossier_1490.py",
+      "line": 570,
+      "text": "ra.validate_all([empty_decided], [{'decision_key': key, 'action': 'hold', 'label': '留中'}])"
+    },
+    {
+      "file": "tests/test_pihong_dossier_1490.py",
+      "line": 592,
+      "text": "batch = ra.validate_all([urgent], [{'decision_key': key, 'action': 'deliberate', 'label': '下部议'}])"
+    },
+    {
+      "file": "tests/test_pihong_dossier_1490.py",
+      "line": 635,
+      "text": "batch = ra.validate_all([urgent], [], default_hold_missing=True)"
+    },
+    {
+      "file": "tests/test_pihong_dossier_1490.py",
+      "line": 638,
+      "text": "batch2 = ra.validate_all([urgent], [{'decision_key': key}], default_hold_missing=True)"
+    },
+    {
+      "file": "tests/test_pihong_dossier_1490.py",
+      "line": 641,
+      "text": "batch3 = ra.validate_all([urgent], [{'decision_key': key, 'action': ''}], default_hold_missing=True)"
+    },
+    {
+      "file": "tests/test_pihong_dossier_1490.py",
+      "line": 653,
+      "text": "batch4 = ra.validate_all([decided_desk], [stored], default_hold_missing=True)"
+    },
+    {
+      "file": "tests/test_pihong_dossier_1490.py",
+      "line": 657,
+      "text": "ra.validate_all([decided_desk], [{'decision_key': key}], default_hold_missing=True)"
+    },
+    {
+      "file": "tests/test_pihong_dossier_1490.py",
+      "line": 659,
+      "text": "ra.validate_all([decided_desk], [{'decision_key': key, 'action': 'hold', 'label': '另留'}], default_hold_missing=True)"
+    },
+    {
+      "file": "tests/test_pihong_dossier_1490.py",
+      "line": 670,
+      "text": "ra.validate_all([row2], [{'decision_key': key2, 'action': ''}], default_hold_missing=True)"
+    },
+    {
+      "file": "tests/test_pihong_dossier_1490.py",
+      "line": 671,
+      "text": "batch5 = ra.validate_all([row2], [revise_choice], default_hold_missing=True)"
+    },
+    {
+      "file": "tests/test_pihong_dossier_1490.py",
+      "line": 703,
+      "text": "batch = ra.validate_all([urgent], [{'decision_key': key, 'action': 'hold', 'label': '留中'}])"
+    },
+    {
+      "file": "tests/test_pihong_dossier_1490.py",
+      "line": 715,
+      "text": "batch = ra.validate_all([urgent], [{'decision_key': key, 'action': 'follow_draft', 'draft_capability': opt['draft_capability'], 'label': opt['label']}])"
+    },
+    {
+      "file": "tests/test_pihong_dossier_1490.py",
+      "line": 727,
+      "text": "batch = ra.validate_all([urgent], [midzhi_choice])"
+    },
+    {
+      "file": "tests/test_pihong_dossier_1490.py",
+      "line": 738,
+      "text": "batch = ra.validate_all([urgent], [{'decision_key': key, 'action': 'deliberate', 'label': '下部议'}])"
+    },
+    {
+      "file": "tests/test_pihong_dossier_1490.py",
+      "line": 749,
+      "text": "batch = ra.validate_all([urgent], [{'decision_key': key, 'action': 'summon', 'label': '召见', 'summon_target': '杨嗣昌'}])"
+    },
+    {
+      "file": "tests/test_pihong_dossier_1490.py",
+      "line": 838,
+      "text": "batch = ra.validate_all(desk, [{'decision_key': u_key, 'action': 'follow_draft', 'draft_capability': opt['draft_capability'], 'label': opt['label']}, {'decision"
+    },
+    {
+      "file": "tests/test_pihong_dossier_1490.py",
+      "line": 917,
+      "text": "batch = ra.validate_all([urgent], [{'decision_key': key, 'action': 'deliberate', 'label': '下部议'}])"
+    },
+    {
+      "file": "tests/test_pihong_dossier_1490.py",
+      "line": 972,
+      "text": "batch = ra.validate_all([row], [choice])"
+    },
+    {
+      "file": "tests/test_pihong_dossier_1490.py",
+      "line": 1160,
+      "text": "batch = ra.validate_all([next((r for r in desk if r['decision_key'] == key))], [choice])"
+    },
+    {
+      "file": "tests/test_pihong_dossier_1490.py",
+      "line": 1168,
+      "text": "batch2 = ra.validate_all([decided_desk], [stored])"
+    },
+    {
+      "file": "tests/test_pihong_dossier_1490.py",
+      "line": 1184,
+      "text": "batch = ra.validate_all(desk, choices)"
+    },
+    {
+      "file": "tests/test_pihong_dossier_1490.py",
+      "line": 1201,
+      "text": "failed_batch = ra.validate_all(failed_rows, failed_choices)"
+    },
+    {
+      "file": "tests/test_pihong_dossier_1490.py",
+      "line": 1785,
+      "text": "batch = ra.validate_all([urgent], [{'decision_key': key, 'action': 'follow_draft', 'draft_capability': opt['draft_capability'], 'label': opt['label'], 'target_i"
+    },
+    {
+      "file": "tests/test_pihong_dossier_1490.py",
+      "line": 1807,
+      "text": "batch = ra.validate_all([urgent], [choice])"
+    },
+    {
+      "file": "tests/test_pihong_dossier_1490.py",
+      "line": 1825,
+      "text": "batch = ra.validate_all([urgent], [{'decision_key': key, 'action': 'midzhi', 'label': '中旨赈陕', 'action_type': 'assignment', 'target_kind': 'region', 'target_id':"
+    },
+    {
+      "file": "tests/test_pihong_dossier_1490.py",
+      "line": 1949,
+      "text": "batch = ra.validate_all([urgent], [{'decision_key': key, 'note': '着再议。'}], default_hold_missing=True)"
+    },
+    {
+      "file": "tests/test_pihong_dossier_1490.py",
+      "line": 2300,
+      "text": "batch = ra.validate_all(desk, [{'decision_key': key, 'action': 'return_revise', 'label': '发回改票', 'draft_capability': opt['draft_capability']}])"
+    },
+    {
+      "file": "tests/test_pihong_dossier_1490.py",
+      "line": 2337,
+      "text": "batch = ra.validate_all([urgent], [{'decision_key': key, 'action': 'deliberate', 'label': '下部议'}])"
+    },
+    {
+      "file": "tests/test_pihong_dossier_1490.py",
+      "line": 2396,
+      "text": "batch = ra.validate_all([urgent], [{'decision_key': key, 'action': 'deliberate', 'label': '下部议'}])"
+    },
+    {
+      "file": "tests/test_pihong_dossier_1490.py",
+      "line": 2432,
+      "text": "batch3 = ra.validate_all([urgent3], [{'decision_key': key3, 'action': 'deliberate', 'label': '下部议'}])"
+    },
+    {
+      "file": "tests/test_pihong_dossier_1490.py",
+      "line": 2461,
+      "text": "batch = ra.validate_all([urgent], [{'decision_key': key, 'action': 'deliberate', 'label': '下部议'}])"
+    },
+    {
+      "file": "tests/test_pihong_dossier_1490.py",
+      "line": 2501,
+      "text": "batch = ra.validate_all([urgent], [{'decision_key': key, 'action': 'deliberate', 'label': '下部议'}])"
+    },
+    {
+      "file": "tests/test_rescript_choices_563.py",
+      "line": 247,
+      "text": "batch = ra.validate_all(desk, requests)"
+    },
+    {
+      "file": "tests/test_rescript_choices_563.py",
+      "line": 396,
+      "text": "batch = ra.validate_all(desk, [{"
+    },
+    {
+      "file": "tests/test_rescript_choices_563.py",
+      "line": 403,
+      "text": "ra.validate_all(desk, [{"
+    },
+    {
+      "file": "tests/test_structured_decree_contract_1624.py",
+      "line": 313,
+      "text": "batch = ra.validate_all([urgent], [{"
+    }
+  ]
+}
