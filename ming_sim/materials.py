@@ -427,7 +427,9 @@ def _own_affair_lines(
             roster = participant_roster_names(issue["participant_roster"])
         except (KeyError, IndexError, TypeError):
             roster = set()
-        if character_name in roster or character_name in _issue_audience_names(db, issue):
+        # _issue_audience_names 对非 event_pool 返回 None（N/A）；与 knowledge 同口径按空集。
+        audiences = _issue_audience_names(db, issue) or set()
+        if character_name in roster or character_name in audiences:
             handling_ids.add(linked_affair_id)
 
     candidate_ids = dossier_participant_ids | set(linked_material) | handling_ids
@@ -609,7 +611,9 @@ def _opening_affair_lines(
             roster = participant_roster_names(issue["participant_roster"])
         except (KeyError, IndexError, TypeError):
             roster = set()
-        if character_name not in roster and character_name not in _issue_audience_names(db, issue):
+        # _issue_audience_names 对非 event_pool 返回 None（N/A）；与 knowledge 同口径按空集。
+        audiences = _issue_audience_names(db, issue) or set()
+        if character_name not in roster and character_name not in audiences:
             continue
         seen.add(dir_key)
         handled.append(visible[dir_key][:2])

@@ -229,9 +229,9 @@ def test_due_review_scene_tops_next_audience_with_origin_context(game):
     assert "payload_json" not in scene
 
 
-def test_due_review_scene_tops_live_open_night_even_with_body(game):
+def test_due_review_scene_tops_live_open_night_even_with_body(game, tmp_path):
     """#1838 reopen：待裁场面进场景开场最小集，不再写开夜旁白账。"""
-    from ming_sim.materials import _scene_opening_text, _scene_pending_audience_facts
+    from ming_sim.materials import prepare_scene_materials, release_material_tree
 
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
@@ -248,12 +248,14 @@ def test_due_review_scene_tops_live_open_night_even_with_body(game):
     write_due_staged_commitment_todos(db, state)
 
     open_night(db, state, time_of_day="戌时", location="乾清宫")
-    facts = _scene_pending_audience_facts(db, state)
-    opening = _scene_opening_text(state, [], "", [], facts)
-    assert facts
-    assert all(line in opening for line in facts)
-    joined = "\n".join(facts)
-    assert origin_context in joined or criterion_text in joined
+    # 真实场景供料入口（与 test_scene_llm_1836 / test_on_scene_immediate_write_1839 同形），
+    # 不串联 _scene_pending_audience_facts + _scene_opening_text 两个 helper。
+    prepared = prepare_scene_materials(db, state, dest_root=tmp_path / "due-review-scene")
+    try:
+        opening = prepared.opening
+        assert origin_context in opening or criterion_text in opening
+    finally:
+        release_material_tree(prepared.root)
 
 
 # ── P1 有案卷桥 / 无案卷分支 ──────────────────────────────────────────

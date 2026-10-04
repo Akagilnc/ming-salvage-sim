@@ -535,27 +535,24 @@ def test_choose_minister_real_entry_excludes_weishi_includes_court(game, monkeyp
     """#1317 r2：CLI choose_minister 真入口与可召谓词同口径（排未仕，留真臣）。"""
     from ming_sim.cli import terminal as term
 
-    db, _state, content = game
+    db, state, content = game
     sess = _session_stub(db, content)
+    sess.state = state
 
-    # 强行 active 未仕，确认真入口仍不列
+    # 强行 active 未仕；真臣保持在京，走真实选择→结构化返回（不盯打印名册）
     db.conn.execute(
         "UPDATE characters SET status='active' WHERE name=?", ("史可法",),
     )
+    db.conn.execute(
+        "UPDATE characters SET location=? WHERE name=?", ("beizhili", "温体仁"),
+    )
     db.conn.commit()
 
-    printed: list[str] = []
+    monkeypatch.setattr("builtins.input", lambda *_a, **_k: "温体仁")
+    chosen = term.choose_minister(sess)
+    assert chosen is not None
+    assert chosen.name == "温体仁"
 
-    def fake_print(*args, **_kwargs):
-        printed.append(" ".join(str(a) for a in args))
-
-    # quit ∈ COURT_BREAK_COMMANDS → 返回 None（退朝），只验证列名册副作用
-    monkeypatch.setattr("builtins.print", fake_print)
-    monkeypatch.setattr("builtins.input", lambda *_a, **_k: "quit")
-
+    answers = iter(["史可法", "quit"])
+    monkeypatch.setattr("builtins.input", lambda *_a, **_k: next(answers))
     assert term.choose_minister(sess) is None
-
-    blob = "\n".join(printed)
-    # 选择契约：排未仕、留真臣（名册副作用）；不锁标题固定措辞
-    assert "史可法" not in blob
-    assert "温体仁" in blob or "毕自严" in blob
