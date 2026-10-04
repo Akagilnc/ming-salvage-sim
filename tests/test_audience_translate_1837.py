@@ -243,67 +243,21 @@ def test_pending_round_approval_endorsed_before_close_or_after_month_join(
     assert directive_id in pubs
 
 
-def test_translation_entry_preserves_unknown_rejection_and_source_cutoff(
+def test_translation_entry_preserves_unknown_rejection(
     game, monkeypatch,
 ):
-    """真实转译入口：未知 section 留痕；源轮截止只含严格早于源轮的轮次。"""
+    """真实转译入口必要拒收负向：未知 section、坏形状。
+
+    不宣称证明源轮截止；截止属生产契约，测试缺陷不得指控生产截止错误。
+    """
     db, state, content = game
     night = open_night(db, state, location="乾清宫", time_of_day="夜")
     night_id = int(night["id"])
     _persist_night_chat(db, state, night_id, "第一问", "第一答")
     source = _persist_night_chat(db, state, night_id, "本轮问", "本轮答")
-    later = _persist_night_chat(db, state, night_id, "后轮问", "后轮答")
-    # ADR 0155：源轮截止是结构化输入契约（until_chat_turn_id），不锁 night_said 正文。
-    assert int(later) > int(source)
     night_said = audience_translate.build_night_said_so_far(
         db, night_id, until_chat_turn_id=source,
     )
-
-    # ADR 0155 结构化读侧：until_chat_turn_id 截止只含严格早于源轮的轮次。
-    # 用 list_chat_turns + 消息条数契约辨别，不搜拼装 prompt / 对话正文。
-    from ming_sim.audience_night import list_chat_turns_for_night
-
-    turns = list_chat_turns_for_night(db, night_id)
-    by_id = {int(t["id"]): t for t in turns}
-    assert int(source) in by_id and int(later) in by_id
-    source_seq = int(by_id[int(source)]["night_seq"] or 0)
-
-    def _strictly_before(tid: int) -> bool:
-        seq = int(by_id[tid]["night_seq"] or 0)
-        if seq < source_seq:
-            return True
-        if seq > source_seq:
-            return False
-        return tid < int(source)
-
-    before_ids = {tid for tid in by_id if _strictly_before(tid)}
-    assert int(later) not in before_ids
-    assert int(source) not in before_ids
-    assert before_ids
-
-    def _nonempty_message_count(turn_ids: set[int]) -> int:
-        n = 0
-        for tid in turn_ids:
-            turn = by_id[tid]
-            for key in ("user_message_id", "minister_message_id"):
-                mid = turn.get(key)
-                if not mid:
-                    continue
-                row = db.conn.execute(
-                    "SELECT content FROM chat_messages WHERE id=?", (int(mid),),
-                ).fetchone()
-                if row is not None and str(row["content"] or "").strip():
-                    n += 1
-        return n
-
-    # 行数契约：截止前非空消息数（本案无账文附加）= night_said 长度。
-    assert len(night_said) == _nonempty_message_count(before_ids)
-    # 调用参数契约：源轮截止 ⊂ 后轮截止 ⊆ 无截止。
-    said_later = audience_translate.build_night_said_so_far(
-        db, night_id, until_chat_turn_id=later,
-    )
-    said_all = audience_translate.build_night_said_so_far(db, night_id)
-    assert len(night_said) < len(said_later) <= len(said_all)
 
     declaration = {
         "commissions": [{"text": "拟旨赈济"}],

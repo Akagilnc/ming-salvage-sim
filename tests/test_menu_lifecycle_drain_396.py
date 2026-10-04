@@ -18,6 +18,43 @@ from ming_sim.session_write_queue import SessionWriteQueue
 _reset_path_leases = reset_menu_path_leases
 
 
+def _capture_real_drain_threads(monkeypatch):
+    """复用既有线程工厂手法：保留真实 Thread 引用，不 mock worker 行为。
+
+    api_menu_new_game 返回后 join 真实线程，再断言外部文件与失败经过。
+    变异若压制 spawn/start，入口返回后 assert/外部结果立即确定性红。
+    """
+    real_Thread = web_app.threading.Thread
+    spawned: list = []
+
+    class _KeepingThread:
+        def __init__(
+            self, group=None, target=None, name=None, args=(), kwargs=None, *, daemon=None,
+        ):
+            kwargs = {} if kwargs is None else dict(kwargs)
+            self._real = real_Thread(
+                group=group, target=target, name=name,
+                args=args, kwargs=kwargs, daemon=daemon,
+            )
+            spawned.append(self._real)
+
+        def start(self):
+            return self._real.start()
+
+        def join(self, *a, **k):
+            return self._real.join(*a, **k)
+
+        def is_alive(self):
+            return self._real.is_alive()
+
+        @property
+        def real(self):
+            return self._real
+
+    monkeypatch.setattr(web_app.threading, "Thread", _KeepingThread)
+    return spawned
+
+
 def test_exit_to_menu_returns_before_delayed_close_drains(monkeypatch, tmp_path):
     queue = SessionWriteQueue()
     gate = queue.write_gate
@@ -110,6 +147,7 @@ def test_drain_archive_move_failure_keeps_wal_and_shm(monkeypatch, tmp_path):
         move_attempts.append((str(src), str(dst)))
         raise OSError("locked")
 
+    workers = _capture_real_drain_threads(monkeypatch)
     monkeypatch.setattr(web_app, "user_data_path", lambda *parts: str(tmp_path.joinpath(*parts)))
     monkeypatch.setattr(web_app.shutil, "move", fail_move)
     monkeypatch.setattr(web_app, "web_game", game)
@@ -119,17 +157,11 @@ def test_drain_archive_move_failure_keeps_wal_and_shm(monkeypatch, tmp_path):
     _reset_path_leases()
     assert web_app._register_holder(db_path, game) is not None
     asyncio.run(web_app.api_menu_new_game())
-    # 同步到 drain/archive 完成：close 已执行且主库 move 已失败返回，非仅「尝试过」。
-    wait_until(
-        lambda: (
-            closed == [1]
-            and any(src == db_path for src, _dst in move_attempts)
-            and os.path.exists(db_path)
-            and os.path.exists(wal_path)
-            and os.path.exists(shm_path)
-            and list((tmp_path / "saves").glob("*.db")) == []
-        )
-    )
+    assert workers
+    for th in workers:
+        if th.ident is not None:
+            th.join()
+    assert closed == [1]
     assert any(src == db_path for src, _dst in move_attempts)
     assert os.path.exists(db_path)
     assert os.path.exists(wal_path)
@@ -201,6 +233,7 @@ def test_drain_archive_rolls_back_main_db_when_wal_move_fails(monkeypatch, tmp_p
             raise OSError("wal locked")
         return real_move(src, dst)
 
+    workers = _capture_real_drain_threads(monkeypatch)
     monkeypatch.setattr(web_app, "user_data_path", lambda *parts: str(tmp_path.joinpath(*parts)))
     monkeypatch.setattr(web_app.shutil, "move", fail_wal_move)
     monkeypatch.setattr(web_app, "web_game", game)
@@ -210,17 +243,11 @@ def test_drain_archive_rolls_back_main_db_when_wal_move_fails(monkeypatch, tmp_p
     _reset_path_leases()
     assert web_app._register_holder(db_path, game) is not None
     asyncio.run(web_app.api_menu_new_game())
-    # 同步到回滚结束：close 完成、WAL move 已失败、主库已回到旧路径。
-    wait_until(
-        lambda: (
-            closed == [1]
-            and any(src == db_path for src, _dst in move_attempts)
-            and any(src == wal_path for src, _dst in move_attempts)
-            and os.path.exists(db_path)
-            and os.path.exists(wal_path)
-            and list((tmp_path / "saves").glob("*.db")) == []
-        )
-    )
+    assert workers
+    for th in workers:
+        if th.ident is not None:
+            th.join()
+    assert closed == [1]
     assert any(src == db_path for src, _dst in move_attempts)
     assert any(src == wal_path for src, _dst in move_attempts)
     assert os.path.exists(db_path)
@@ -248,6 +275,7 @@ def test_drain_archive_skips_move_when_session_close_fails(monkeypatch, tmp_path
         db_path=db_path,
         session=SimpleNamespace(close=fail_close),
     )
+    workers = _capture_real_drain_threads(monkeypatch)
     monkeypatch.setattr(web_app, "user_data_path", lambda *parts: str(tmp_path.joinpath(*parts)))
     monkeypatch.setattr(web_app.shutil, "move", lambda src, dst: moves.append((src, dst)))
     monkeypatch.setattr(web_app, "web_game", game)
@@ -257,16 +285,11 @@ def test_drain_archive_skips_move_when_session_close_fails(monkeypatch, tmp_path
     _reset_path_leases()
     assert web_app._register_holder(db_path, game) is not None
     asyncio.run(web_app.api_menu_new_game())
-    # 同步到 close 失败路径结束：新局已接管、close 已抛、未搬库。
-    wait_until(
-        lambda: (
-            web_app.web_game is not game
-            and close_attempts == [1]
-            and moves == []
-            and os.path.exists(db_path)
-            and list((tmp_path / "saves").glob("*.db")) == []
-        )
-    )
+    assert workers
+    for th in workers:
+        if th.ident is not None:
+            th.join()
+    assert web_app.web_game is not game
     assert close_attempts == [1]
     assert moves == []
     assert os.path.exists(db_path)

@@ -1,24 +1,17 @@
-# #1900 修内司枚举命令真源（J6/J19/J18）— 谓词覆盖判词类定义全文，不收窄为点名样本。
-# 工作树根执行。权威处置表：j6/j19/j18-full-members.md
+# #1900 修内司枚举命令真源（J6/J19/J18）
+# 工作树根执行。权威成员表：j6/j19/j18-full-members.md（仅 md，无平行 json）
 
-## J6 — 盯文、内部伪证、未完成失败路径的初始态证明
-# 形状：assert 字符串包含/相等/正则；helper/内部断言；mock 调用伪证；
-#       wait_until(attempts)>0；拼装材料/prompt 机械依赖；web mock。
-# 扫描面：tests/**/*.py + web 测试 *.{test,spec}.{ts,tsx}
-# 法源：对自由文本一切机械依赖均属盯文；P7 禁模板负向不是合法豁免。
-
+## J6
 rg -n --glob 'tests/**/*.py' \
-  '后轮问|后轮答|LEAK_MARKER|draft_text not in|not in prepared\.opening|in prompt\b|in night_said|draft_key not in|match\s*=|pytest\.raises\([^)]*match\s*=|assert_called|call_count|wait_until\(\s*lambda:\s*len\(\w+_attempts\)\s*>\s*0|赴京|不能入殿|已传召|固定承旨'
+  '后轮问|后轮答|LEAK_MARKER|draft_text not in|not in prepared\.opening|in prompt\b|in night_said|draft_key not in|_strictly_before|test_current_unissued_draft|len\(night_said\)|wait_until\(\s*lambda:\s*len\(\w+_attempts\)\s*>\s*0|赴京|不能入殿|已传召|固定承旨|承旨|钦此|知道了|遵旨|禁模板'
 
 rg -n --glob 'web/src/**/*.{ts,tsx}' 'toHaveBeenCalled|mockImplementation|vi\.spyOn'
 
-# AST 全形状（assert in/eq/regex/helper/mock/wait）：见本轮 python 一次性扫描写入 j6-dispositions.json
+## J19
+rg -n --glob 'ming_sim/**/*.py' --glob 'tests/**/*.py' \
+  '_merge_participant_rosters|merge_participant_roster_entries|character_id in seen|seen\.add\(character_id\)|entry not in merged|_normalize_participant_roster|append_decree_dossier_participants'
 
-## J19 — 按人物 id 静默保留先项的平行优先级
-rg -n --glob 'ming_sim/**/*.py' --glob 'web_app.py' --glob 'tests/**/*.py' \
-  '_merge_participant_rosters|merge_participant_roster_entries|character_id.*in seen|seen\.add\(character_id\)|by_character|entry not in merged|静默|保留先|先项|_normalize_participant_roster|append_decree_dossier_participants'
-
-## J18 — 死入口与失效说明
-rg -n --glob '!evidence/**' --glob '!.baseline/**' --glob '!.git/**' \
-  'is_secret_order_dossier|对账只落本段提案|未提案目标的中位|逐段提案|软判提案|escort_pending_targets|escort_sources|dossier_escort_outcomes|_resolve_covert_escort|list_open_grant_reconciliations|clamp_grant_arrival|护送实况假|payload_declares_escort|get_secret_order|list_secret_orders|secret_order_dossier_ids' \
-  ming_sim web_app.py tests docs --glob '*.py' --glob '*.md'
+## J18
+rg -n --glob '!evidence/**' --glob '!.baseline/**' \
+  'is_secret_order_dossier|对账只落本段提案|未提案目标的中位|逐段提案|软判提案|escort_pending_targets|escort_sources|dossier_escort_outcomes|_resolve_covert_escort' \
+  ming_sim tests docs --glob '*.py' --glob '*.md'

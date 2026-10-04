@@ -17604,14 +17604,16 @@ class GameDB:
         """
         old = self._decode_directive_dossier_payload(existing_json)
         incoming = dict(new_payload or {})
-        new_roster = self._normalize_participant_roster(incoming.get("participant_roster") or [])
-        if not new_roster:
-            incoming.pop("participant_roster", None)
-        else:
+        # 一次 merge（内部 normalize）；空 incoming 名单 pop，保留旧名册语义。
+        add_roster = incoming.get("participant_roster") or []
+        if add_roster:
             incoming["participant_roster"] = self.merge_participant_roster_entries(
                 old.get("participant_roster") or [],
-                incoming.get("participant_roster") or [],
+                add_roster,
             )
+        else:
+            incoming.pop("participant_roster", None)
+
         # 先对 incoming 互斥分类（并存即拒），再决定从 old 继承哪些字段
         incoming_kind = (
             classify_directive_structured_kind(incoming)

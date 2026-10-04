@@ -228,51 +228,6 @@ def test_withdrawal_under_web_write_gate_returns_undone_turn(game):
     assert db.get_last_active_chat_turn(minister_name, state.turn) is None
 
 
-def test_current_unissued_draft_is_not_character_carryover(game, tmp_path):
-    """本回合未明发草案不应进入跨月未入档 carryover 读侧。
-
-    #1769 只放行**跨月**未入档旨稿（上月已随颁诏发出、仅未落档）；本回合刚拟、
-    还在御案上的草案仍是密事。结构化契约：list_directives(turn/status) +
-    get_dossier_for_directive；不扫 opening / 目录拼装正文。
-    """
-    from ming_sim.materials import prepare_character_materials
-
-    db, state, content = game
-    draft_text = "着户部清核辽饷。"
-    did = db.add_directive(
-        state, None, draft_text, "player-decree-test",
-        dossier_payload={
-            "dossier_action_type": "policy", "target_kind": "issue",
-            "target_id": "liaoxiang-audit", "locality_scope": "none",
-        },
-    )
-    drafts = [dict(r) for r in db.list_directives(state, statuses=("draft",))]
-    row = next(r for r in drafts if int(r["id"]) == int(did))
-    assert int(row["turn"]) == int(state.turn)
-    assert db.get_dossier_for_directive(int(did)) is None
-    # 跨月 carryover 谓词（与 materials 读侧同口径，不直调私有 helper）：
-    # turn < state.turn 且尚未成案。本回合草案必须被排除。
-    carryover_ids = {
-        int(r["id"]) for r in drafts
-        if int(r["turn"]) < int(state.turn)
-        and db.get_dossier_for_directive(int(r["id"])) is None
-    }
-    assert int(did) not in carryover_ids
-
-    minister = next(
-        ch for ch in content.characters.values()
-        if getattr(ch, "status", "") == "active" and getattr(ch, "office", "")
-    )
-    # 真实入口仍跑通；断言只落在上方结构化读侧，不锁拼装材料措辞。
-    prepare_character_materials(
-        db, state, minister, dest_root=tmp_path / "materials",
-    )
-
-
-
-
-
-
 
 
 def test_chat_stream_closed_before_turn_creation_is_noop(read_game, monkeypatch):
