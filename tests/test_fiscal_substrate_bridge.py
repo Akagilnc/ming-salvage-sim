@@ -21,7 +21,6 @@ import pytest
 
 import ming_sim.content as content_mod
 from ming_sim.applier import atomic
-from ming_sim.constants import ARMY_FIELD_LABELS
 from ming_sim.content import GameContent
 from ming_sim.context import bind_content
 from ming_sim.db import GameDB

@@ -1,0 +1,2727 @@
+[
+  {
+    "file": "ming_sim/action_materialize.py",
+    "name": "stage_authorization_candidate",
+    "qual": "stage_authorization_candidate",
+    "kind": "FunctionDef",
+    "lineno": 1616,
+    "end": 1700,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [
+      "tests/test_execution_pressure_654.py"
+    ],
+    "test_only": true,
+    "dead_no_refs": false,
+    "hist": {
+      "commit": "82be2f178",
+      "subject": "ak-roles: repair #1837 audience provenance and retire classifier materializers",
+      "sample": "-    pending_id = stage_authorization_candidate(",
+      "commits_touching": 3
+    }
+  },
+  {
+    "file": "ming_sim/action_materialize.py",
+    "name": "stage_grant_allocation_candidate",
+    "qual": "stage_grant_allocation_candidate",
+    "kind": "FunctionDef",
+    "lineno": 771,
+    "end": 943,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [
+      "tests/test_execution_pressure_654.py"
+    ],
+    "test_only": true,
+    "dead_no_refs": false,
+    "hist": {
+      "commit": "82be2f178",
+      "subject": "ak-roles: repair #1837 audience provenance and retire classifier materializers",
+      "sample": "-    pending_id = stage_grant_allocation_candidate(",
+      "commits_touching": 9
+    }
+  },
+  {
+    "file": "ming_sim/applier.py",
+    "name": "ApplyContext",
+    "qual": "ApplyContext",
+    "kind": "ClassDef",
+    "lineno": 273,
+    "end": 282,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [
+      "tests/test_applier_contract.py"
+    ],
+    "test_only": true,
+    "dead_no_refs": false,
+    "hist": {
+      "commit": null,
+      "subject": null,
+      "sample": null,
+      "commits_touching": 1,
+      "top": [
+        "a191b1957 feat(applier): section adapter contract types and rejection collector (ADR 0008 "
+      ]
+    }
+  },
+  {
+    "file": "ming_sim/audience_night.py",
+    "name": "audit_night_direct_writes",
+    "qual": "audit_night_direct_writes",
+    "kind": "FunctionDef",
+    "lineno": 673,
+    "end": 723,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [
+      "tests/test_audience_undo_506.py",
+      "tests/test_on_scene_immediate_write_1839.py"
+    ],
+    "test_only": true,
+    "dead_no_refs": false,
+    "hist": {
+      "commit": null,
+      "subject": null,
+      "sample": null,
+      "commits_touching": 1,
+      "top": [
+        "a60973009 feat(506): 撤回本轮效果逆转——轮级前像撤销日志延伸至召对夜容器 + 夜内直写白名单审计"
+      ]
+    }
+  },
+  {
+    "file": "ming_sim/audience_night.py",
+    "name": "list_arrived_unsettled_summons",
+    "qual": "list_arrived_unsettled_summons",
+    "kind": "FunctionDef",
+    "lineno": 1503,
+    "end": 1537,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [
+      "tests/test_audience_travel_gating_670.py"
+    ],
+    "test_only": true,
+    "dead_no_refs": false,
+    "hist": {
+      "commit": "53c83c3eb",
+      "subject": "ak-roles: retire obsolete simulator board payload for #1861",
+      "sample": "-        list_arrived_unsettled_summons,",
+      "commits_touching": 3
+    }
+  },
+  {
+    "file": "ming_sim/audience_night.py",
+    "name": "list_night_timeline",
+    "qual": "list_night_timeline",
+    "kind": "FunctionDef",
+    "lineno": 458,
+    "end": 475,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [
+      "tests/test_audience_night_498.py"
+    ],
+    "test_only": true,
+    "dead_no_refs": false,
+    "hist": {
+      "commit": "a5255bce0",
+      "subject": "ak-roles: fix(#1837): 本场已说读 chat_messages、拒收幻影实体、禁模板正文",
+      "sample": "-    from ming_sim.audience_night import list_night_timeline",
+      "commits_touching": 3
+    }
+  },
+  {
+    "file": "ming_sim/audience_night.py",
+    "name": "persons_entered_tonight",
+    "qual": "persons_entered_tonight",
+    "kind": "FunctionDef",
+    "lineno": 2278,
+    "end": 2283,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [
+      "tests/test_cli_play_turn.py",
+      "tests/test_month_loop_tracer_1468.py"
+    ],
+    "test_only": true,
+    "dead_no_refs": false,
+    "hist": {
+      "commit": "3e4d4fcd2",
+      "subject": "ak-roles: retire orphan beat writer and route offsite summons through scene",
+      "sample": "-        if beat_generator is not None and minister_name not in persons_entered_tonight(db, night_id):",
+      "commits_touching": 11
+    }
+  },
+  {
+    "file": "ming_sim/audience_night.py",
+    "name": "persons_present_tonight",
+    "qual": "persons_present_tonight",
+    "kind": "FunctionDef",
+    "lineno": 2286,
+    "end": 2295,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [
+      "tests/test_audience_continuous_507.py",
+      "tests/test_audience_undo_506.py",
+      "tests/test_cli_play_turn.py",
+      "tests/test_month_loop_tracer_1468.py"
+    ],
+    "test_only": true,
+    "dead_no_refs": false,
+    "hist": {
+      "commit": "4508956e5",
+      "subject": "ak-roles: #1842 reopen 转译唯一后台路径、背书并进转译、删收夜背书批",
+      "sample": "-    persons_present_tonight,",
+      "commits_touching": 5
+    }
+  },
+  {
+    "file": "ming_sim/centrifuge_ledger.py",
+    "name": "STIGMA_REASON_CODES",
+    "qual": "STIGMA_REASON_CODES",
+    "kind": "AnnConst",
+    "lineno": 43,
+    "end": 43,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [
+      "tests/test_centrifuge_ledger_690.py"
+    ],
+    "test_only": true,
+    "dead_no_refs": false,
+    "hist": {
+      "commit": null,
+      "subject": null,
+      "sample": null,
+      "commits_touching": 1,
+      "top": [
+        "4a51bf835 ak-roles: feat(#690): land blood-debt ratchet substrate (0011-2)"
+      ]
+    }
+  },
+  {
+    "file": "ming_sim/centrifuge_ledger.py",
+    "name": "accrue_blood_debt",
+    "qual": "accrue_blood_debt",
+    "kind": "FunctionDef",
+    "lineno": 115,
+    "end": 158,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [
+      "tests/test_centrifuge_ledger_690.py"
+    ],
+    "test_only": true,
+    "dead_no_refs": false,
+    "hist": {
+      "commit": null,
+      "subject": null,
+      "sample": null,
+      "commits_touching": 1,
+      "top": [
+        "4a51bf835 ak-roles: feat(#690): land blood-debt ratchet substrate (0011-2)"
+      ]
+    }
+  },
+  {
+    "file": "ming_sim/centrifuge_ledger.py",
+    "name": "accrue_detection_wariness",
+    "qual": "accrue_detection_wariness",
+    "kind": "FunctionDef",
+    "lineno": 161,
+    "end": 190,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [
+      "tests/test_centrifuge_ledger_690.py"
+    ],
+    "test_only": true,
+    "dead_no_refs": false,
+    "hist": {
+      "commit": null,
+      "subject": null,
+      "sample": null,
+      "commits_touching": 1,
+      "top": [
+        "4a51bf835 ak-roles: feat(#690): land blood-debt ratchet substrate (0011-2)"
+      ]
+    }
+  },
+  {
+    "file": "ming_sim/centrifuge_ledger.py",
+    "name": "rebuild_centrifuge_cache",
+    "qual": "rebuild_centrifuge_cache",
+    "kind": "FunctionDef",
+    "lineno": 193,
+    "end": 248,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [
+      "tests/test_centrifuge_ledger_690.py"
+    ],
+    "test_only": true,
+    "dead_no_refs": false,
+    "hist": {
+      "commit": null,
+      "subject": null,
+      "sample": null,
+      "commits_touching": 1,
+      "top": [
+        "4a51bf835 ak-roles: feat(#690): land blood-debt ratchet substrate (0011-2)"
+      ]
+    }
+  },
+  {
+    "file": "ming_sim/cli_backend.py",
+    "name": "_extract_secret_order",
+    "qual": "_extract_secret_order",
+    "kind": "FunctionDef",
+    "lineno": 4052,
+    "end": 4274,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [
+      "tests/test_cli_backend.py"
+    ],
+    "test_only": true,
+    "dead_no_refs": false,
+    "hist": {
+      "commit": "82be2f178",
+      "subject": "ak-roles: repair #1837 audience provenance and retire classifier materializers",
+      "sample": "-    from ming_sim.cli_backend import _extract_secret_order, extract_minister_actions",
+      "commits_touching": 20
+    }
+  },
+  {
+    "file": "ming_sim/db.py",
+    "name": "MINISTRY_OFFICE_TYPES",
+    "qual": "MINISTRY_OFFICE_TYPES",
+    "kind": "Const",
+    "lineno": 713,
+    "end": 713,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [
+      "tests/test_faction_leverage_9.py"
+    ],
+    "test_only": true,
+    "dead_no_refs": false,
+    "hist": {
+      "commit": "752725abb",
+      "subject": "refactor(probe): 会话动作改 LLM 判意图 + 官职分类换 offices.json 参考表",
+      "sample": "-    for ministry in MINISTRY_OFFICE_TYPES:",
+      "commits_touching": 2
+    }
+  },
+  {
+    "file": "ming_sim/db.py",
+    "name": "_is_active_secret_order_assignee",
+    "qual": "GameDB._is_active_secret_order_assignee",
+    "kind": "FunctionDef",
+    "lineno": 21008,
+    "end": 21022,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [
+      "tests/test_secret_order_isolation_883.py"
+    ],
+    "test_only": true,
+    "dead_no_refs": false,
+    "hist": {
+      "commit": "cbc522a1b",
+      "subject": "codex: fix(#485): close family correctness findings",
+      "sample": "-        if self._is_active_secret_order_assignee(minister):",
+      "commits_touching": 4
+    }
+  },
+  {
+    "file": "ming_sim/db.py",
+    "name": "army_detail",
+    "qual": "GameDB.army_detail",
+    "kind": "FunctionDef",
+    "lineno": 7712,
+    "end": 7739,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [
+      "tests/test_army_card_status_1501.py",
+      "tests/test_army_display_173.py",
+      "tests/test_army_firearms.py",
+      "tests/test_player_army_projection_321.py"
+    ],
+    "test_only": true,
+    "dead_no_refs": false,
+    "hist": {
+      "commit": "34e5c181b",
+      "subject": "ak-roles: feat(#1833): delete unused board query tool builders",
+      "sample": "-            return context.db.army_detail(army)",
+      "commits_touching": 6
+    }
+  },
+  {
+    "file": "ming_sim/db.py",
+    "name": "clear_pending_decisions",
+    "qual": "GameDB.clear_pending_decisions",
+    "kind": "FunctionDef",
+    "lineno": 10837,
+    "end": 10844,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [
+      "tests/test_advance_paths_atomic.py",
+      "tests/test_pihong_dossier_1490.py",
+      "tests/test_rescript_draft_656.py"
+    ],
+    "test_only": true,
+    "dead_no_refs": false,
+    "hist": {
+      "commit": "c90a43a1b",
+      "subject": "ak-roles: retire player ready replay and honor historical rescript waits",
+      "sample": "-        db.clear_pending_decisions(before_turn)",
+      "commits_touching": 5
+    }
+  },
+  {
+    "file": "ming_sim/db.py",
+    "name": "clear_resolve_context",
+    "qual": "GameDB.clear_resolve_context",
+    "kind": "FunctionDef",
+    "lineno": 18790,
+    "end": 18793,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [
+      "tests/test_advance_paths_atomic.py",
+      "tests/test_pre_settle_transaction.py"
+    ],
+    "test_only": true,
+    "dead_no_refs": false,
+    "hist": {
+      "commit": "242837870",
+      "subject": "ak-roles: #1843 reopen 删旧结算核与 turn_extractions，修回 #670/#651",
+      "sample": "-    db.clear_resolve_context(before_turn)",
+      "commits_touching": 10
+    }
+  },
+  {
+    "file": "ming_sim/db.py",
+    "name": "count_active_initiatives",
+    "qual": "GameDB.count_active_initiatives",
+    "kind": "FunctionDef",
+    "lineno": 19373,
+    "end": 19377,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [
+      "tests/test_structured_decree_contract_1624.py"
+    ],
+    "test_only": true,
+    "dead_no_refs": false,
+    "hist": {
+      "commit": "f96779eb8",
+      "subject": "ak-roles: fix(#1790): drop initiative active-count hard cap",
+      "sample": "-    initiative_active = db.count_active_initiatives()",
+      "commits_touching": 5
+    }
+  },
+  {
+    "file": "ming_sim/db.py",
+    "name": "drop_pending_actions_for_minister",
+    "qual": "GameDB.drop_pending_actions_for_minister",
+    "kind": "FunctionDef",
+    "lineno": 18651,
+    "end": 18704,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [
+      "tests/test_audience_undo_506.py",
+      "tests/test_secret_order_isolation_883.py"
+    ],
+    "test_only": true,
+    "dead_no_refs": false,
+    "hist": {
+      "commit": "b5cda8126",
+      "subject": "ak-roles: remove superseded CLI action dispatcher and prefix tests",
+      "sample": "-                self.db.drop_pending_actions_for_minister(",
+      "commits_touching": 3
+    }
+  },
+  {
+    "file": "ming_sim/db.py",
+    "name": "get_faction_stance_summary",
+    "qual": "GameDB.get_faction_stance_summary",
+    "kind": "FunctionDef",
+    "lineno": 22577,
+    "end": 22582,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [
+      "tests/test_faction_brew_637.py"
+    ],
+    "test_only": true,
+    "dead_no_refs": false,
+    "hist": {
+      "commit": null,
+      "subject": null,
+      "sample": null,
+      "commits_touching": 1,
+      "top": [
+        "13dd6983c ak-roles: feat(#637): [479·S6] 派系态势摘要——涉派集合党籍∩factions 纯投影、pending 复用单所有者同批补酿、S6"
+      ]
+    }
+  },
+  {
+    "file": "ming_sim/db.py",
+    "name": "get_message_highlights",
+    "qual": "GameDB.get_message_highlights",
+    "kind": "FunctionDef",
+    "lineno": 8939,
+    "end": 8946,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [
+      "tests/test_highlight_judge_544.py"
+    ],
+    "test_only": true,
+    "dead_no_refs": false,
+    "hist": {
+      "commit": null,
+      "subject": null,
+      "sample": null,
+      "commits_touching": 1,
+      "top": [
+        "d341abc92 ak-roles: feat(#544): 高亮判官同通道后处理与清单落库"
+      ]
+    }
+  },
+  {
+    "file": "ming_sim/db.py",
+    "name": "list_dossier_actual_rail",
+    "qual": "GameDB.list_dossier_actual_rail",
+    "kind": "FunctionDef",
+    "lineno": 20601,
+    "end": 20615,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [
+      "tests/test_secret_order_payoff_1504.py"
+    ],
+    "test_only": true,
+    "dead_no_refs": false,
+    "hist": {
+      "commit": null,
+      "subject": null,
+      "sample": null,
+      "commits_touching": 1,
+      "top": [
+        "86e3246ed ak-roles: feat(#1504): 密令实况轨机械进度+到期缺口对账，拆 closes 真源"
+      ]
+    }
+  },
+  {
+    "file": "ming_sim/db.py",
+    "name": "list_dossier_link_rejections",
+    "qual": "GameDB.list_dossier_link_rejections",
+    "kind": "FunctionDef",
+    "lineno": 14745,
+    "end": 14759,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [
+      "tests/test_dossier_links_559.py"
+    ],
+    "test_only": true,
+    "dead_no_refs": false,
+    "hist": {
+      "commit": null,
+      "subject": null,
+      "sample": null,
+      "commits_touching": 1,
+      "top": [
+        "faad34d69 feat: persist confirmed dossier links (#559)"
+      ]
+    }
+  },
+  {
+    "file": "ming_sim/db.py",
+    "name": "list_dossiers_for_directive",
+    "qual": "GameDB.list_dossiers_for_directive",
+    "kind": "FunctionDef",
+    "lineno": 14425,
+    "end": 14434,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [
+      "tests/test_execution_pressure_654.py"
+    ],
+    "test_only": true,
+    "dead_no_refs": false,
+    "hist": {
+      "commit": null,
+      "subject": null,
+      "sample": null,
+      "commits_touching": 1,
+      "top": [
+        "8cead41cf ak-roles: fix(#654): 差务 region_id fan-out + 两轴清单纯机面"
+      ]
+    }
+  },
+  {
+    "file": "ming_sim/db.py",
+    "name": "list_endorsed_dossier_candidates",
+    "qual": "GameDB.list_endorsed_dossier_candidates",
+    "kind": "FunctionDef",
+    "lineno": 14443,
+    "end": 14463,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [
+      "tests/test_pihong_dossier_1490.py"
+    ],
+    "test_only": true,
+    "dead_no_refs": false,
+    "hist": {
+      "commit": "cb6b87eee",
+      "subject": "ak-roles: retire parallel action intent classifier entrypoints",
+      "sample": "-        backing_candidates = self.db.list_endorsed_dossier_candidates(",
+      "commits_touching": 5
+    }
+  },
+  {
+    "file": "ming_sim/db.py",
+    "name": "list_execution_liability_parties",
+    "qual": "GameDB.list_execution_liability_parties",
+    "kind": "FunctionDef",
+    "lineno": 15818,
+    "end": 15825,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [
+      "tests/test_execution_joint_liability_565.py"
+    ],
+    "test_only": true,
+    "dead_no_refs": false,
+    "hist": {
+      "commit": null,
+      "subject": null,
+      "sample": null,
+      "commits_touching": 2,
+      "top": [
+        "09b27ee90 ak-roles: fix(#565): 连坐责任投影单一真源与表面收敛",
+        "2d8eb23da ak-roles: feat(#565): 执行格终值连坐挂载适配器"
+      ]
+    }
+  },
+  {
+    "file": "ming_sim/db.py",
+    "name": "list_office_effects_for_dossier",
+    "qual": "GameDB.list_office_effects_for_dossier",
+    "kind": "FunctionDef",
+    "lineno": 18957,
+    "end": 18965,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [
+      "tests/test_decree_dossiers_571.py"
+    ],
+    "test_only": true,
+    "dead_no_refs": false,
+    "hist": {
+      "commit": "7d97b9c33",
+      "subject": "ak-roles: feat(#1847): persist segment applied results as 4a supply source",
+      "sample": "-            for item in self.list_office_effects_for_dossier(did):",
+      "commits_touching": 5
+    }
+  },
+  {
+    "file": "ming_sim/db.py",
+    "name": "record_monthly_supervision_facts",
+    "qual": "GameDB.record_monthly_supervision_facts",
+    "kind": "FunctionDef",
+    "lineno": 12436,
+    "end": 12453,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [
+      "tests/test_supervision_625.py"
+    ],
+    "test_only": true,
+    "dead_no_refs": false,
+    "hist": {
+      "commit": "0d61714ef",
+      "subject": "ak-roles: fix(#625): 六 class——归属单源/unpack/死码/拆写口/在场门/module闸",
+      "sample": "-    db.record_monthly_supervision_facts(before_turn, commit=False)",
+      "commits_touching": 2
+    }
+  },
+  {
+    "file": "ming_sim/db.py",
+    "name": "reject_directive",
+    "qual": "GameDB.reject_directive",
+    "kind": "FunctionDef",
+    "lineno": 19249,
+    "end": 19259,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [
+      "tests/test_decree_dossiers_571.py"
+    ],
+    "test_only": true,
+    "dead_no_refs": false,
+    "hist": {
+      "commit": "ee4649ae5",
+      "subject": "ak-roles: route court break through end-turn owner",
+      "sample": "-            session.reject_directive(draft.id)",
+      "commits_touching": 2
+    }
+  },
+  {
+    "file": "ming_sim/db.py",
+    "name": "save_pending_promulgation_verdicts",
+    "qual": "GameDB.save_pending_promulgation_verdicts",
+    "kind": "FunctionDef",
+    "lineno": 15983,
+    "end": 15997,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [
+      "tests/test_pihong_dossier_1490.py",
+      "tests/test_promulgation_judge_561.py",
+      "tests/test_promulgation_seam_560.py"
+    ],
+    "test_only": true,
+    "dead_no_refs": false,
+    "hist": {
+      "commit": "ae3739f09",
+      "subject": "ak-roles: fix(#1843): hold month advance until the gazette exists",
+      "sample": "-    db.save_pending_promulgation_verdicts(state.turn, verdict_rows)",
+      "commits_touching": 4
+    }
+  },
+  {
+    "file": "ming_sim/db.py",
+    "name": "save_rescript_drafts",
+    "qual": "GameDB.save_rescript_drafts",
+    "kind": "FunctionDef",
+    "lineno": 10846,
+    "end": 10862,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [
+      "tests/test_pihong_dossier_1490.py",
+      "tests/test_rescript_choices_563.py",
+      "tests/test_rescript_draft_656.py",
+      "tests/test_structured_decree_contract_1624.py"
+    ],
+    "test_only": true,
+    "dead_no_refs": false,
+    "hist": {
+      "commit": "ff63db72b",
+      "subject": "ak-roles: #1846 reopen — 删除 ready=1 持久 delta 与重放整套",
+      "sample": "-            db.save_rescript_drafts(turn, rescript_drafts)",
+      "commits_touching": 5
+    }
+  },
+  {
+    "file": "ming_sim/db.py",
+    "name": "settle_province_tick",
+    "qual": "GameDB.settle_province_tick",
+    "kind": "FunctionDef",
+    "lineno": 3142,
+    "end": 3163,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [
+      "tests/test_fiscal_substrate_bridge.py",
+      "tests/test_pay_order_override_653.py"
+    ],
+    "test_only": true,
+    "dead_no_refs": false,
+    "hist": {
+      "commit": "a6cecfc86",
+      "subject": "sandcastle: codex: refactor(fiscal): batch shadow substrate ticks",
+      "sample": "-    坏 fiscal 容器和 st/p 形状不在 spine 预验证，交由 settle_province_tick fail-loud",
+      "commits_touching": 5
+    }
+  },
+  {
+    "file": "ming_sim/db.py",
+    "name": "unread_memorial_count",
+    "qual": "GameDB.unread_memorial_count",
+    "kind": "FunctionDef",
+    "lineno": 12771,
+    "end": 12773,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [
+      "tests/test_memorial_inbox_1726.py"
+    ],
+    "test_only": true,
+    "dead_no_refs": false,
+    "hist": {
+      "commit": "ffa929051",
+      "subject": "ak-roles: fix(#1726): judgment-r1 dead code, single-list count, state entry assert",
+      "sample": "-        return int(self.db.unread_memorial_count())",
+      "commits_touching": 2
+    }
+  },
+  {
+    "file": "ming_sim/db.py",
+    "name": "upsert_pending_directive",
+    "qual": "GameDB.upsert_pending_directive",
+    "kind": "FunctionDef",
+    "lineno": 17231,
+    "end": 17274,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [
+      "tests/test_audience_night_498.py",
+      "tests/test_web_audience_night_498.py"
+    ],
+    "test_only": true,
+    "dead_no_refs": false,
+    "hist": {
+      "commit": "8158e34af",
+      "subject": "ak-roles: retire legacy audience action paths and exercise player-month outcomes",
+      "sample": "-            candidate_id = self.upsert_pending_directive(",
+      "commits_touching": 8
+    }
+  },
+  {
+    "file": "ming_sim/db.py",
+    "name": "upsert_secret_order",
+    "qual": "GameDB.upsert_secret_order",
+    "kind": "FunctionDef",
+    "lineno": 21651,
+    "end": 21678,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [
+      "tests/test_secret_order_update.py"
+    ],
+    "test_only": true,
+    "dead_no_refs": false,
+    "hist": {
+      "commit": "6a6faad7d",
+      "subject": "sandcastle: feat: unify secret-order audience confirmation",
+      "sample": "-            oid, _ = self.db.upsert_secret_order(",
+      "commits_touching": 9
+    }
+  },
+  {
+    "file": "ming_sim/llm_config.py",
+    "name": "for_role",
+    "qual": "for_role",
+    "kind": "FunctionDef",
+    "lineno": 397,
+    "end": 422,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [
+      "tests/test_llm_channel_config.py",
+      "tests/test_runtime_llm_config.py"
+    ],
+    "test_only": true,
+    "dead_no_refs": false,
+    "hist": {
+      "commit": null,
+      "subject": null,
+      "sample": null,
+      "commits_touching": 17,
+      "top": [
+        "7a96584ab ak-roles: fix(#1843) retire test-only settlement/simulator support trees (F2 R5)",
+        "5047271cf ak-roles: unify decree forecast snapshot and drop simulator board feed (#1861 re",
+        "1c2b68ba7 ak-roles: #1862 reopen drop dead simulator and unify secret origin"
+      ]
+    }
+  },
+  {
+    "file": "ming_sim/materials.py",
+    "name": "prepare_character_materials",
+    "qual": "prepare_character_materials",
+    "kind": "FunctionDef",
+    "lineno": 1119,
+    "end": 1152,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [
+      "tests/test_army_card_status_1501.py",
+      "tests/test_character_knowledge_489.py",
+      "tests/test_gazette_author_1862.py",
+      "tests/test_material_directory_1830.py",
+      "tests/test_person_delta_adapter.py",
+      "tests/test_public_projection_consistency_1830.py",
+      "tests/test_qa_1281_issue_audience_case_facts.py",
+      "tests/test_secret_order_monthly_progress_566.py"
+    ],
+    "test_only": true,
+    "dead_no_refs": false,
+    "hist": {
+      "commit": "e798bf7d1",
+      "subject": "ak-roles: stop preparing retired minister stream materials",
+      "sample": "-            from ming_sim.materials import prepare_character_materials",
+      "commits_touching": 9
+    }
+  },
+  {
+    "file": "ming_sim/month_open_snapshot.py",
+    "name": "MONTH_OPEN_KEYS",
+    "qual": "MONTH_OPEN_KEYS",
+    "kind": "Const",
+    "lineno": 20,
+    "end": 20,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [
+      "tests/test_enter_settlement_period_1235.py",
+      "tests/test_month_open_snapshot_1234.py",
+      "tests/test_qa_c2_phase_settlement_mask_1374.py",
+      "tests/test_qa_c2_settlement_display_lifecycle_1343.py"
+    ],
+    "test_only": true,
+    "dead_no_refs": false,
+    "hist": {
+      "commit": null,
+      "subject": null,
+      "sample": null,
+      "commits_touching": 1,
+      "top": [
+        "485ce4fb8 ak-roles: feat(#1234): T1 月初快照+核账展示态（路③等价状态）"
+      ]
+    }
+  },
+  {
+    "file": "ming_sim/month_translate.py",
+    "name": "stage_month_segment",
+    "qual": "stage_month_segment",
+    "kind": "FunctionDef",
+    "lineno": 240,
+    "end": 264,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [
+      "tests/test_breach_plea_623.py",
+      "tests/test_month_translate_1840.py"
+    ],
+    "test_only": true,
+    "dead_no_refs": false,
+    "hist": {
+      "commit": null,
+      "subject": null,
+      "sample": null,
+      "commits_touching": 1,
+      "top": [
+        "12fecf589 ak-roles: feat: add monthly segment declaration translation"
+      ]
+    }
+  },
+  {
+    "file": "ming_sim/pay_order.py",
+    "name": "revoke_pay_order_decree",
+    "qual": "revoke_pay_order_decree",
+    "kind": "FunctionDef",
+    "lineno": 472,
+    "end": 490,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [
+      "tests/test_pay_order_override_653.py"
+    ],
+    "test_only": true,
+    "dead_no_refs": false,
+    "hist": {
+      "commit": null,
+      "subject": null,
+      "sample": null,
+      "commits_touching": 1,
+      "top": [
+        "b5a86550f ak-roles: feat(#653): 偿还序 override＋Due 折发系数＋阶级怨气喂判（[#477 S6] ADR 0090）"
+      ]
+    }
+  },
+  {
+    "file": "ming_sim/relation_brew.py",
+    "name": "run_month_end_relation_brew",
+    "qual": "run_month_end_relation_brew",
+    "kind": "FunctionDef",
+    "lineno": 438,
+    "end": 462,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [
+      "tests/test_faction_brew_637.py",
+      "tests/test_relation_brew_636.py"
+    ],
+    "test_only": true,
+    "dead_no_refs": false,
+    "hist": {
+      "commit": "6526eca4f",
+      "subject": "ak-roles: fix(#1845): serialize mechanical tail writes and recovery",
+      "sample": "-from ming_sim.relation_brew import run_month_end_relation_brew",
+      "commits_touching": 4
+    }
+  },
+  {
+    "file": "ming_sim/session.py",
+    "name": "list_ministers",
+    "qual": "GameSession.list_ministers",
+    "kind": "FunctionDef",
+    "lineno": 843,
+    "end": 859,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [
+      "tests/test_person_delta_adapter.py",
+      "tests/test_web_court_visibility.py"
+    ],
+    "test_only": true,
+    "dead_no_refs": false,
+    "hist": {
+      "commit": "8ca7e1dbf",
+      "subject": "ak-roles: fix(#1317): r2 拆身份归一与可召资格两条单真源",
+      "sample": "-    与 _find_existing_minister / list_ministers / can_summon / visible_in_court /",
+      "commits_touching": 5
+    }
+  },
+  {
+    "file": "ming_sim/session.py",
+    "name": "schedule_close_night_after_chat_if_needed",
+    "qual": "GameSession.schedule_close_night_after_chat_if_needed",
+    "kind": "FunctionDef",
+    "lineno": 1079,
+    "end": 1122,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [
+      "tests/test_audience_presence_500.py",
+      "tests/test_scene_llm_1836.py"
+    ],
+    "test_only": true,
+    "dead_no_refs": false,
+    "hist": {
+      "commit": "4cea2ee3a",
+      "subject": "ak-roles: #1849 reopen 删净按大臣开面板旧路，召对只剩殿上入口",
+      "sample": "-                self.session, \"schedule_close_night_after_chat_if_needed\", None,",
+      "commits_touching": 2
+    }
+  },
+  {
+    "file": "ming_sim/session.py",
+    "name": "write_decree",
+    "qual": "GameSession.write_decree",
+    "kind": "FunctionDef",
+    "lineno": 1562,
+    "end": 1585,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [
+      "tests/test_advance_paths_atomic.py",
+      "tests/test_audience_night_498.py",
+      "tests/test_draft_admission_resubmit_1769.py",
+      "tests/test_pre_settle_transaction.py"
+    ],
+    "test_only": true,
+    "dead_no_refs": false,
+    "hist": {
+      "commit": "3da2178cf",
+      "subject": "ak-roles: retire dossiered directive review surfaces",
+      "sample": "-            decree = game.session.write_decree()",
+      "commits_touching": 11
+    }
+  },
+  {
+    "file": "ming_sim/session_write_queue.py",
+    "name": "is_sealed",
+    "qual": "SessionWriteQueue.is_sealed",
+    "kind": "FunctionDef",
+    "lineno": 262,
+    "end": 264,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [
+      "tests/test_menu_lifecycle_drain_396.py",
+      "tests/test_new_game_write_path_1749.py"
+    ],
+    "test_only": true,
+    "dead_no_refs": false,
+    "hist": {
+      "commit": null,
+      "subject": null,
+      "sample": null,
+      "commits_touching": 1,
+      "top": [
+        "c128d90a5 ak-roles: fix(#1353): fold-in r12——per-session 单写者票据队列替换 drain 机构"
+      ]
+    }
+  },
+  {
+    "file": "ming_sim/session_write_queue.py",
+    "name": "run_exclusive",
+    "qual": "SessionWriteQueue.run_exclusive",
+    "kind": "FunctionDef",
+    "lineno": 520,
+    "end": 528,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [
+      "tests/test_audience_travel_gating_670.py",
+      "tests/test_pihong_dossier_1490.py",
+      "tests/test_session_write_queue_1353.py"
+    ],
+    "test_only": true,
+    "dead_no_refs": false,
+    "hist": {
+      "commit": null,
+      "subject": null,
+      "sample": null,
+      "commits_touching": 1,
+      "top": [
+        "c128d90a5 ak-roles: fix(#1353): fold-in r12——per-session 单写者票据队列替换 drain 机构"
+      ]
+    }
+  },
+  {
+    "file": "ming_sim/session_write_queue.py",
+    "name": "vacate",
+    "qual": "SessionWriteQueue.vacate",
+    "kind": "FunctionDef",
+    "lineno": 336,
+    "end": 338,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [
+      "tests/test_session_write_queue_1353.py"
+    ],
+    "test_only": true,
+    "dead_no_refs": false,
+    "hist": {
+      "commit": "b9e5abfdd",
+      "subject": "ak-roles: fix(#1353): fold-in r10——裸读入闸/越屏障拒聊/写段序 P5/流式终态",
+      "sample": "-  (success, fail, or cancel → empty vacate).",
+      "commits_touching": 6
+    }
+  },
+  {
+    "file": "ming_sim/supervision.py",
+    "name": "DENUNCIATION_ALLOWED_COLS",
+    "qual": "DENUNCIATION_ALLOWED_COLS",
+    "kind": "Const",
+    "lineno": 72,
+    "end": 76,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [
+      "tests/test_faction_denunciation_627.py"
+    ],
+    "test_only": true,
+    "dead_no_refs": false,
+    "hist": {
+      "commit": null,
+      "subject": null,
+      "sample": null,
+      "commits_touching": 1,
+      "top": [
+        "45e5fa0a2 ak-roles: #627 政敌检举轨——真伪底与带私货审计"
+      ]
+    }
+  },
+  {
+    "file": "ming_sim/supervision.py",
+    "name": "DENUNCIATION_TABLE",
+    "qual": "DENUNCIATION_TABLE",
+    "kind": "Const",
+    "lineno": 71,
+    "end": 71,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [
+      "tests/test_faction_denunciation_627.py"
+    ],
+    "test_only": true,
+    "dead_no_refs": false,
+    "hist": {
+      "commit": null,
+      "subject": null,
+      "sample": null,
+      "commits_touching": 1,
+      "top": [
+        "45e5fa0a2 ak-roles: #627 政敌检举轨——真伪底与带私货审计"
+      ]
+    }
+  },
+  {
+    "file": "ming_sim/supervision.py",
+    "name": "EXPOSURE_TABLE",
+    "qual": "EXPOSURE_TABLE",
+    "kind": "Const",
+    "lineno": 80,
+    "end": 80,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [
+      "tests/test_supervision_625.py"
+    ],
+    "test_only": true,
+    "dead_no_refs": false,
+    "hist": {
+      "commit": null,
+      "subject": null,
+      "sample": null,
+      "commits_touching": 1,
+      "top": [
+        "8e37ab6ee ak-roles: #625 钝化事实底＋人身条件化判官口径（0077）"
+      ]
+    }
+  },
+  {
+    "file": "ming_sim/supervision.py",
+    "name": "FORBIDDEN_DULLING_COL_FRAGMENTS",
+    "qual": "FORBIDDEN_DULLING_COL_FRAGMENTS",
+    "kind": "Const",
+    "lineno": 89,
+    "end": 91,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [
+      "tests/test_supervision_625.py"
+    ],
+    "test_only": true,
+    "dead_no_refs": false,
+    "hist": {
+      "commit": null,
+      "subject": null,
+      "sample": null,
+      "commits_touching": 1,
+      "top": [
+        "8e37ab6ee ak-roles: #625 钝化事实底＋人身条件化判官口径（0077）"
+      ]
+    }
+  },
+  {
+    "file": "ming_sim/supervision.py",
+    "name": "PRESENCE_TABLE",
+    "qual": "PRESENCE_TABLE",
+    "kind": "Const",
+    "lineno": 79,
+    "end": 79,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [
+      "tests/test_supervision_625.py"
+    ],
+    "test_only": true,
+    "dead_no_refs": false,
+    "hist": {
+      "commit": null,
+      "subject": null,
+      "sample": null,
+      "commits_touching": 1,
+      "top": [
+        "8e37ab6ee ak-roles: #625 钝化事实底＋人身条件化判官口径（0077）"
+      ]
+    }
+  },
+  {
+    "file": "ming_sim/value_matrix.py",
+    "name": "axis_collision_stances",
+    "qual": "axis_collision_stances",
+    "kind": "FunctionDef",
+    "lineno": 100,
+    "end": 133,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [
+      "tests/test_value_matrix_691.py"
+    ],
+    "test_only": true,
+    "dead_no_refs": false,
+    "hist": {
+      "commit": null,
+      "subject": null,
+      "sample": null,
+      "commits_touching": 1,
+      "top": [
+        "14084751f ak-roles: fix(#691): route target-aware axis collisions"
+      ]
+    }
+  },
+  {
+    "file": "ming_sim/value_matrix.py",
+    "name": "matrix_snapshot",
+    "qual": "matrix_snapshot",
+    "kind": "FunctionDef",
+    "lineno": 136,
+    "end": 139,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [
+      "tests/test_value_matrix_691.py"
+    ],
+    "test_only": true,
+    "dead_no_refs": false,
+    "hist": {
+      "commit": null,
+      "subject": null,
+      "sample": null,
+      "commits_touching": 1,
+      "top": [
+        "ffbf0a3d3 ak-roles: fix(#1504) typed covert contract, origin-driven actuals, fail-loud 005"
+      ]
+    }
+  },
+  {
+    "file": "ming_sim/value_matrix.py",
+    "name": "value_axes",
+    "qual": "value_axes",
+    "kind": "FunctionDef",
+    "lineno": 46,
+    "end": 47,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [
+      "tests/test_value_matrix_691.py"
+    ],
+    "test_only": true,
+    "dead_no_refs": false,
+    "hist": {
+      "commit": "14084751f",
+      "subject": "ak-roles: fix(#691): route target-aware axis collisions",
+      "sample": "-VALUE_AXES: tuple[str, ...] = ()  # 兼容旧 import；运行时用 value_axes()",
+      "commits_touching": 2
+    }
+  },
+  {
+    "file": "ming_sim/action_clusters.py",
+    "name": "cluster_effect",
+    "qual": "cluster_effect",
+    "kind": "FunctionDef",
+    "lineno": 215,
+    "end": 217,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [],
+    "test_only": false,
+    "dead_no_refs": true,
+    "hist": {
+      "commit": "b5cda8126",
+      "subject": "ak-roles: remove superseded CLI action dispatcher and prefix tests",
+      "sample": "-            cluster_effect,",
+      "commits_touching": 5
+    }
+  },
+  {
+    "file": "ming_sim/action_materialize.py",
+    "name": "minister_speaker_role",
+    "qual": "minister_speaker_role",
+    "kind": "FunctionDef",
+    "lineno": 29,
+    "end": 59,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [],
+    "test_only": false,
+    "dead_no_refs": true,
+    "hist": {
+      "commit": "82be2f178",
+      "subject": "ak-roles: repair #1837 audience provenance and retire classifier materializers",
+      "sample": "-    role = minister_speaker_role(",
+      "commits_touching": 4
+    }
+  },
+  {
+    "file": "ming_sim/action_materialize.py",
+    "name": "stage_referral_candidate",
+    "qual": "stage_referral_candidate",
+    "kind": "FunctionDef",
+    "lineno": 1703,
+    "end": 1813,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [],
+    "test_only": false,
+    "dead_no_refs": true,
+    "hist": {
+      "commit": "82be2f178",
+      "subject": "ak-roles: repair #1837 audience provenance and retire classifier materializers",
+      "sample": "-    pending_id = stage_referral_candidate(",
+      "commits_touching": 3
+    }
+  },
+  {
+    "file": "ming_sim/action_materialize.py",
+    "name": "stage_revoke_authority_candidate",
+    "qual": "stage_revoke_authority_candidate",
+    "kind": "FunctionDef",
+    "lineno": 1815,
+    "end": 1894,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [],
+    "test_only": false,
+    "dead_no_refs": true,
+    "hist": {
+      "commit": "82be2f178",
+      "subject": "ak-roles: repair #1837 audience provenance and retire classifier materializers",
+      "sample": "-    pending_id = stage_revoke_authority_candidate(",
+      "commits_touching": 3
+    }
+  },
+  {
+    "file": "ming_sim/audience_night.py",
+    "name": "CLOSE_STEPS",
+    "qual": "CLOSE_STEPS",
+    "kind": "Const",
+    "lineno": 176,
+    "end": 180,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [],
+    "test_only": false,
+    "dead_no_refs": true,
+    "hist": {
+      "commit": null,
+      "subject": null,
+      "sample": null,
+      "commits_touching": 3,
+      "top": [
+        "d306dfc17 ak-roles: fix late night approvals through endorsement and publication",
+        "c2c3defe9 ak-roles: fix(#612): CLOSING freeze, cursor-bound endorsement, draft office",
+        "ba68bb2c4 sandcastle: feat(498): 召对夜容器与故事账本地基"
+      ]
+    }
+  },
+  {
+    "file": "ming_sim/audience_night.py",
+    "name": "find_prior_speaker_still_present",
+    "qual": "find_prior_speaker_still_present",
+    "kind": "FunctionDef",
+    "lineno": 2463,
+    "end": 2479,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [],
+    "test_only": false,
+    "dead_no_refs": true,
+    "hist": {
+      "commit": "3e4d4fcd2",
+      "subject": "ak-roles: retire orphan beat writer and route offsite summons through scene",
+      "sample": "-            prior_speaker = find_prior_speaker_still_present(db, night_id, exclude_name=minister_name)",
+      "commits_touching": 4
+    }
+  },
+  {
+    "file": "ming_sim/audience_night.py",
+    "name": "night_dossiers_ready",
+    "qual": "night_dossiers_ready",
+    "kind": "FunctionDef",
+    "lineno": 345,
+    "end": 349,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [],
+    "test_only": false,
+    "dead_no_refs": true,
+    "hist": {
+      "commit": null,
+      "subject": null,
+      "sample": null,
+      "commits_touching": 1,
+      "top": [
+        "4508956e5 ak-roles: #1842 reopen 转译唯一后台路径、背书并进转译、删收夜背书批"
+      ]
+    }
+  },
+  {
+    "file": "ming_sim/audience_translate.py",
+    "name": "run_audience_turn_translation",
+    "qual": "run_audience_turn_translation",
+    "kind": "FunctionDef",
+    "lineno": 551,
+    "end": 594,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [],
+    "test_only": false,
+    "dead_no_refs": true,
+    "hist": {
+      "commit": "4508956e5",
+      "subject": "ak-roles: #1842 reopen 转译唯一后台路径、背书并进转译、删收夜背书批",
+      "sample": "-        run_audience_turn_translation,",
+      "commits_touching": 3
+    }
+  },
+  {
+    "file": "ming_sim/cli/terminal.py",
+    "name": "_CONFIRM_WORDS",
+    "qual": "_CONFIRM_WORDS",
+    "kind": "Const",
+    "lineno": 42,
+    "end": 42,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [],
+    "test_only": false,
+    "dead_no_refs": true,
+    "hist": {
+      "commit": "ee4649ae5",
+      "subject": "ak-roles: route court break through end-turn owner",
+      "sample": "-        if low in _CONFIRM_WORDS:",
+      "commits_touching": 2
+    }
+  },
+  {
+    "file": "ming_sim/cli/terminal.py",
+    "name": "_REJECT_WORDS",
+    "qual": "_REJECT_WORDS",
+    "kind": "Const",
+    "lineno": 43,
+    "end": 43,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [],
+    "test_only": false,
+    "dead_no_refs": true,
+    "hist": {
+      "commit": "ee4649ae5",
+      "subject": "ak-roles: route court break through end-turn owner",
+      "sample": "-        if low in _REJECT_WORDS:",
+      "commits_touching": 2
+    }
+  },
+  {
+    "file": "ming_sim/cli/terminal.py",
+    "name": "_fail_cli_chat_turn_scene",
+    "qual": "_fail_cli_chat_turn_scene",
+    "kind": "FunctionDef",
+    "lineno": 156,
+    "end": 196,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [],
+    "test_only": false,
+    "dead_no_refs": true,
+    "hist": {
+      "commit": "2879e69e0",
+      "subject": "ak-roles: #1838 reopen 删旁白 beat 整层，戏文只由场景 LLM 写",
+      "sample": "-            _fail_cli_chat_turn_scene(",
+      "commits_touching": 2
+    }
+  },
+  {
+    "file": "ming_sim/cli_backend.py",
+    "name": "_DRAFT_PREFIXES",
+    "qual": "_DRAFT_PREFIXES",
+    "kind": "Const",
+    "lineno": 1261,
+    "end": 1261,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [],
+    "test_only": false,
+    "dead_no_refs": true,
+    "hist": {
+      "commit": "b5cda8126",
+      "subject": "ak-roles: remove superseded CLI action dispatcher and prefix tests",
+      "sample": "-    from ming_sim.cli_backend import _DRAFT_PREFIXES",
+      "commits_touching": 19
+    }
+  },
+  {
+    "file": "ming_sim/cli_backend.py",
+    "name": "_SECRET_PREFIXES",
+    "qual": "_SECRET_PREFIXES",
+    "kind": "Const",
+    "lineno": 1262,
+    "end": 1262,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [],
+    "test_only": false,
+    "dead_no_refs": true,
+    "hist": {
+      "commit": "b5cda8126",
+      "subject": "ak-roles: remove superseded CLI action dispatcher and prefix tests",
+      "sample": "-_SECRET_PREFIXES = (\"密令如下：\", \"密令如下:\", \"密令：\", \"密令:\")",
+      "commits_touching": 22
+    }
+  },
+  {
+    "file": "ming_sim/cli_backend.py",
+    "name": "_cli_prompt",
+    "qual": "_cli_prompt",
+    "kind": "FunctionDef",
+    "lineno": 4316,
+    "end": 4333,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [],
+    "test_only": false,
+    "dead_no_refs": true,
+    "hist": {
+      "commit": "dd8c0f072",
+      "subject": "ak-roles: align CLI scene rollback history and remove retired recommendation envelope",
+      "sample": "-        prompt = _cli_prompt(messages, response_format, tools, materials_dir=materials)",
+      "commits_touching": 2
+    }
+  },
+  {
+    "file": "ming_sim/cli_backend.py",
+    "name": "_cli_recommendation_call",
+    "qual": "_cli_recommendation_call",
+    "kind": "FunctionDef",
+    "lineno": 4348,
+    "end": 4374,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [],
+    "test_only": false,
+    "dead_no_refs": true,
+    "hist": {
+      "commit": "dd8c0f072",
+      "subject": "ak-roles: align CLI scene rollback history and remove retired recommendation envelope",
+      "sample": "-        text, tool_calls = _cli_recommendation_call(text, tools)",
+      "commits_touching": 3
+    }
+  },
+  {
+    "file": "ming_sim/cli_backend.py",
+    "name": "_cli_stream_safe_prefix",
+    "qual": "_cli_stream_safe_prefix",
+    "kind": "FunctionDef",
+    "lineno": 4336,
+    "end": 4345,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [],
+    "test_only": false,
+    "dead_no_refs": true,
+    "hist": {
+      "commit": "dd8c0f072",
+      "subject": "ak-roles: align CLI scene rollback history and remove retired recommendation envelope",
+      "sample": "-                ready, held = _cli_stream_safe_prefix(held + str(delta))",
+      "commits_touching": 2
+    }
+  },
+  {
+    "file": "ming_sim/cli_backend.py",
+    "name": "_matched_prefix",
+    "qual": "_matched_prefix",
+    "kind": "FunctionDef",
+    "lineno": 3543,
+    "end": 3549,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [],
+    "test_only": false,
+    "dead_no_refs": true,
+    "hist": {
+      "commit": "b5cda8126",
+      "subject": "ak-roles: remove superseded CLI action dispatcher and prefix tests",
+      "sample": "-    draft_intent = _matched_prefix(player_message, _DRAFT_PREFIXES)",
+      "commits_touching": 3
+    }
+  },
+  {
+    "file": "ming_sim/cli_backend.py",
+    "name": "_secret_prefix_needs_recent_context",
+    "qual": "_secret_prefix_needs_recent_context",
+    "kind": "FunctionDef",
+    "lineno": 4290,
+    "end": 4307,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [],
+    "test_only": false,
+    "dead_no_refs": true,
+    "hist": {
+      "commit": "b5cda8126",
+      "subject": "ak-roles: remove superseded CLI action dispatcher and prefix tests",
+      "sample": "-        if _secret_prefix_needs_recent_context(secret_intent) and (secret_context or \"\").strip():",
+      "commits_touching": 3
+    }
+  },
+  {
+    "file": "ming_sim/cli_backend.py",
+    "name": "ainvoke",
+    "qual": "CliChat.ainvoke",
+    "kind": "AsyncFunctionDef",
+    "lineno": 4466,
+    "end": 4481,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [],
+    "test_only": false,
+    "dead_no_refs": true,
+    "hist": {
+      "commit": "9eb510a8a",
+      "subject": "ak-roles: fix #884 drop invalid ainvoke wrap from transport bind",
+      "sample": "-    - 包 invoke_stream / invoke / ainvoke：提供方 HTTP typed status 写入本",
+      "commits_touching": 4
+    }
+  },
+  {
+    "file": "ming_sim/cli_backend.py",
+    "name": "ainvoke_stream",
+    "qual": "CliChat.ainvoke_stream",
+    "kind": "AsyncFunctionDef",
+    "lineno": 4528,
+    "end": 4530,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [],
+    "test_only": false,
+    "dead_no_refs": true,
+    "hist": {
+      "commit": null,
+      "subject": null,
+      "sample": null,
+      "commits_touching": 1,
+      "top": [
+        "fbd78f120 feat(probe): CLI LLM backend (agy/codex) — play without api key"
+      ]
+    }
+  },
+  {
+    "file": "ming_sim/cli_backend.py",
+    "name": "compose_decree_validation_recovery",
+    "qual": "compose_decree_validation_recovery",
+    "kind": "FunctionDef",
+    "lineno": 1915,
+    "end": 1960,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [],
+    "test_only": false,
+    "dead_no_refs": true,
+    "hist": {
+      "commit": "82be2f178",
+      "subject": "ak-roles: repair #1837 audience provenance and retire classifier materializers",
+      "sample": "-    from ming_sim.cli_backend import compose_decree_validation_recovery",
+      "commits_touching": 3
+    }
+  },
+  {
+    "file": "ming_sim/cli_backend.py",
+    "name": "compose_secret_order_landing_recovery",
+    "qual": "compose_secret_order_landing_recovery",
+    "kind": "FunctionDef",
+    "lineno": 2002,
+    "end": 2034,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [],
+    "test_only": false,
+    "dead_no_refs": true,
+    "hist": {
+      "commit": "e2fc6369d",
+      "subject": "ak-roles: #1871 reopen 删分类器落地链残留死码",
+      "sample": "-        compose_secret_order_landing_recovery,",
+      "commits_touching": 2
+    }
+  },
+  {
+    "file": "ming_sim/constants.py",
+    "name": "MINISTER_DISMISS_COMMANDS",
+    "qual": "MINISTER_DISMISS_COMMANDS",
+    "kind": "Const",
+    "lineno": 259,
+    "end": 259,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [],
+    "test_only": false,
+    "dead_no_refs": true,
+    "hist": {
+      "commit": null,
+      "subject": null,
+      "sample": null,
+      "commits_touching": 1,
+      "top": [
+        "de0d7ad41 Initial public release"
+      ]
+    }
+  },
+  {
+    "file": "ming_sim/content.py",
+    "name": "dict_of_string_lists",
+    "qual": "dict_of_string_lists",
+    "kind": "FunctionDef",
+    "lineno": 600,
+    "end": 602,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [],
+    "test_only": false,
+    "dead_no_refs": true,
+    "hist": {
+      "commit": "53d9a7435",
+      "subject": "ak-roles: repair #1837 source pins, grounding and recommendation; retire legacy routes and skills",
+      "sample": "-    office_skills_data = dict_of_string_lists(data.get(\"office_skills\"), \"skills.json.office_skills\")",
+      "commits_touching": 5
+    }
+  },
+  {
+    "file": "ming_sim/content.py",
+    "name": "dict_of_strings",
+    "qual": "dict_of_strings",
+    "kind": "FunctionDef",
+    "lineno": 605,
+    "end": 612,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [],
+    "test_only": false,
+    "dead_no_refs": true,
+    "hist": {
+      "commit": "53d9a7435",
+      "subject": "ak-roles: repair #1837 source pins, grounding and recommendation; retire legacy routes and skills",
+      "sample": "-    skill_descriptions = dict_of_strings(data.get(\"skill_descriptions\"), \"skills.json.skill_descriptions\")",
+      "commits_touching": 4
+    }
+  },
+  {
+    "file": "ming_sim/db.py",
+    "name": "_is_audience_chat_shared_channel",
+    "qual": "GameDB._is_audience_chat_shared_channel",
+    "kind": "FunctionDef",
+    "lineno": 21004,
+    "end": 21006,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [],
+    "test_only": false,
+    "dead_no_refs": true,
+    "hist": {
+      "commit": "cbc522a1b",
+      "subject": "codex: fix(#485): close family correctness findings",
+      "sample": "-        if self._is_audience_chat_shared_channel(kind_text, source_id):",
+      "commits_touching": 4
+    }
+  },
+  {
+    "file": "ming_sim/db.py",
+    "name": "_primary_source_only_army_pay_container_total",
+    "qual": "GameDB._primary_source_only_army_pay_container_total",
+    "kind": "FunctionDef",
+    "lineno": 4381,
+    "end": 4382,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [],
+    "test_only": false,
+    "dead_no_refs": true,
+    "hist": {
+      "commit": "d19f391b0",
+      "subject": "sandcastle: cmr fix: preserve Dongjiang pay funnel seed",
+      "sample": "-        primary_source_only_total = self._primary_source_only_army_pay_container_total()",
+      "commits_touching": 2
+    }
+  },
+  {
+    "file": "ming_sim/db.py",
+    "name": "attach_secret_oral_pin",
+    "qual": "GameDB.attach_secret_oral_pin",
+    "kind": "FunctionDef",
+    "lineno": 11099,
+    "end": 11119,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [],
+    "test_only": false,
+    "dead_no_refs": true,
+    "hist": {
+      "commit": "82be2f178",
+      "subject": "ak-roles: repair #1837 audience provenance and retire classifier materializers",
+      "sample": "-                payload=session.db.attach_secret_oral_pin(",
+      "commits_touching": 9
+    }
+  },
+  {
+    "file": "ming_sim/db.py",
+    "name": "building_detail",
+    "qual": "GameDB.building_detail",
+    "kind": "FunctionDef",
+    "lineno": 8777,
+    "end": 8805,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [],
+    "test_only": false,
+    "dead_no_refs": true,
+    "hist": {
+      "commit": "7182174c8",
+      "subject": "sandcastle: cmr S4 r1: close minister knowledge read bypasses",
+      "sample": "-            return context.db.building_detail(building_name, qualitative=True)",
+      "commits_touching": 2
+    }
+  },
+  {
+    "file": "ming_sim/db.py",
+    "name": "clear_directive_needs_clarification",
+    "qual": "GameDB.clear_directive_needs_clarification",
+    "kind": "FunctionDef",
+    "lineno": 17461,
+    "end": 17487,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [],
+    "test_only": false,
+    "dead_no_refs": true,
+    "hist": {
+      "commit": "b5cda8126",
+      "subject": "ak-roles: remove superseded CLI action dispatcher and prefix tests",
+      "sample": "-                        self.db.clear_directive_needs_clarification(int(p[\"id\"]))",
+      "commits_touching": 3
+    }
+  },
+  {
+    "file": "ming_sim/db.py",
+    "name": "complete_rescript_summon_scaffold_turn",
+    "qual": "GameDB.complete_rescript_summon_scaffold_turn",
+    "kind": "FunctionDef",
+    "lineno": 9148,
+    "end": 9166,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [],
+    "test_only": false,
+    "dead_no_refs": true,
+    "hist": {
+      "commit": "2879e69e0",
+      "subject": "ak-roles: #1838 reopen 删旁白 beat 整层，戏文只由场景 LLM 写",
+      "sample": "-            if ctid_done > 0 and hasattr(db, \"complete_rescript_summon_scaffold_turn\"):",
+      "commits_touching": 3
+    }
+  },
+  {
+    "file": "ming_sim/db.py",
+    "name": "discard_pending_directives",
+    "qual": "GameDB.discard_pending_directives",
+    "kind": "FunctionDef",
+    "lineno": 18706,
+    "end": 18721,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [],
+    "test_only": false,
+    "dead_no_refs": true,
+    "hist": {
+      "commit": "faec8ba6b",
+      "subject": "sandcastle: codex: fix: wire decree dossiers into settlement (#571)",
+      "sample": "-            db.discard_pending_directives(state.turn)",
+      "commits_touching": 2
+    }
+  },
+  {
+    "file": "ming_sim/db.py",
+    "name": "flag_directive_needs_clarification",
+    "qual": "GameDB.flag_directive_needs_clarification",
+    "kind": "FunctionDef",
+    "lineno": 17620,
+    "end": 17646,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [],
+    "test_only": false,
+    "dead_no_refs": true,
+    "hist": {
+      "commit": "b5cda8126",
+      "subject": "ak-roles: remove superseded CLI action dispatcher and prefix tests",
+      "sample": "-                        self.db.flag_directive_needs_clarification(int(p[\"id\"]))",
+      "commits_touching": 4
+    }
+  },
+  {
+    "file": "ming_sim/db.py",
+    "name": "list_night_promulgated_directives",
+    "qual": "GameDB.list_night_promulgated_directives",
+    "kind": "FunctionDef",
+    "lineno": 17489,
+    "end": 17523,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [],
+    "test_only": false,
+    "dead_no_refs": true,
+    "hist": {
+      "commit": "cb5c6caef",
+      "subject": "ak-roles: bind promulgated readers to 明发 publication fact (#612)",
+      "sample": "-        if hasattr(db, \"list_night_promulgated_directives\"):",
+      "commits_touching": 3
+    }
+  },
+  {
+    "file": "ming_sim/db.py",
+    "name": "list_office_vacancies",
+    "qual": "GameDB.list_office_vacancies",
+    "kind": "FunctionDef",
+    "lineno": 4046,
+    "end": 4056,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [],
+    "test_only": false,
+    "dead_no_refs": true,
+    "hist": {
+      "commit": "006705ced",
+      "subject": "ak-roles: remove obsolete skill grants and keyword inquiry reports",
+      "sample": "-        return _vacancy_statement(db.list_office_vacancies(), query), \"office_vacancies\"",
+      "commits_touching": 4
+    }
+  },
+  {
+    "file": "ming_sim/db.py",
+    "name": "list_promulgated_directives",
+    "qual": "GameDB.list_promulgated_directives",
+    "kind": "FunctionDef",
+    "lineno": 17525,
+    "end": 17618,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [],
+    "test_only": false,
+    "dead_no_refs": true,
+    "hist": {
+      "commit": null,
+      "subject": null,
+      "sample": null,
+      "commits_touching": 1,
+      "top": [
+        "57f58f7ab sandcastle: feat(502): 夜内定案的旨明发可辨识·按夜/按区间取数（AC6）"
+      ]
+    }
+  },
+  {
+    "file": "ming_sim/db.py",
+    "name": "mark_chat_turn_failed",
+    "qual": "GameDB.mark_chat_turn_failed",
+    "kind": "FunctionDef",
+    "lineno": 9480,
+    "end": 9486,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [],
+    "test_only": false,
+    "dead_no_refs": true,
+    "hist": {
+      "commit": "2879e69e0",
+      "subject": "ak-roles: #1838 reopen 删旁白 beat 整层，戏文只由场景 LLM 写",
+      "sample": "-            db.mark_chat_turn_failed(int(close_ctid))",
+      "commits_touching": 4
+    }
+  },
+  {
+    "file": "ming_sim/db.py",
+    "name": "read_credit_events_as_edges",
+    "qual": "GameDB.read_credit_events_as_edges",
+    "kind": "FunctionDef",
+    "lineno": 22381,
+    "end": 22383,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [],
+    "test_only": false,
+    "dead_no_refs": true,
+    "hist": {
+      "commit": null,
+      "subject": null,
+      "sample": null,
+      "commits_touching": 1,
+      "top": [
+        "e5f45136b codex: implement directed relation edge storage"
+      ]
+    }
+  },
+  {
+    "file": "ming_sim/due_review.py",
+    "name": "DUE_REVIEW_ENTRY_KIND_WHITELIST",
+    "qual": "DUE_REVIEW_ENTRY_KIND_WHITELIST",
+    "kind": "Const",
+    "lineno": 45,
+    "end": 45,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [],
+    "test_only": false,
+    "dead_no_refs": true,
+    "hist": {
+      "commit": null,
+      "subject": null,
+      "sample": null,
+      "commits_touching": 1,
+      "top": [
+        "13a7adf3a ak-roles: #624 催双刃拉杆＋反催谏言（0078）"
+      ]
+    }
+  },
+  {
+    "file": "ming_sim/due_review.py",
+    "name": "current_audience_scene",
+    "qual": "current_audience_scene",
+    "kind": "FunctionDef",
+    "lineno": 313,
+    "end": 319,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [],
+    "test_only": false,
+    "dead_no_refs": true,
+    "hist": {
+      "commit": "51af199b6",
+      "subject": "ak-roles: fix multi-dossier exposure routing and remove retired dialogue benchmark",
+      "sample": "-        from ming_sim.due_review import current_audience_scene",
+      "commits_touching": 9
+    }
+  },
+  {
+    "file": "ming_sim/entities/affair/store.py",
+    "name": "experiences",
+    "qual": "AffairStore.experiences",
+    "kind": "FunctionDef",
+    "lineno": 429,
+    "end": 464,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [],
+    "test_only": false,
+    "dead_no_refs": true,
+    "hist": {
+      "commit": "6f74777fe",
+      "subject": "ak-roles: fix(#1831): group new affairs by explicit identity",
+      "sample": "-    \"\"\"Open affairs for extractor/simulator: identity plus story-ledger experiences.\"\"\"",
+      "commits_touching": 5
+    }
+  },
+  {
+    "file": "ming_sim/entities/affair/store.py",
+    "name": "point_dossier",
+    "qual": "AffairStore.point_dossier",
+    "kind": "FunctionDef",
+    "lineno": 284,
+    "end": 285,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [],
+    "test_only": false,
+    "dead_no_refs": true,
+    "hist": {
+      "commit": "60e90ea6a",
+      "subject": "ak-roles: fix(#1831): unify affair pointers and wire real declarations",
+      "sample": "-            self.affairs.point_dossier(int(dossier_id), affair_id)",
+      "commits_touching": 2
+    }
+  },
+  {
+    "file": "ming_sim/entities/affair/store.py",
+    "name": "point_issue",
+    "qual": "AffairStore.point_issue",
+    "kind": "FunctionDef",
+    "lineno": 316,
+    "end": 317,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [],
+    "test_only": false,
+    "dead_no_refs": true,
+    "hist": {
+      "commit": null,
+      "subject": null,
+      "sample": null,
+      "commits_touching": 1,
+      "top": [
+        "bcf6c202d ak-roles: feat(#1831): affair records, pointers, and night-close birth"
+      ]
+    }
+  },
+  {
+    "file": "ming_sim/entities/staged_declaration/store.py",
+    "name": "_STATUS_DISCARDED",
+    "qual": "_STATUS_DISCARDED",
+    "kind": "Const",
+    "lineno": 20,
+    "end": 20,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [],
+    "test_only": false,
+    "dead_no_refs": true,
+    "hist": {
+      "commit": null,
+      "subject": null,
+      "sample": null,
+      "commits_touching": 1,
+      "top": [
+        "2f0edd210 ak-roles: fix(#1835): 补入册与旨意暂存/作废/幂等结算，改正在场文字模板与拒收类别"
+      ]
+    }
+  },
+  {
+    "file": "ming_sim/entities/staged_declaration/store.py",
+    "name": "_STATUS_SETTLED",
+    "qual": "_STATUS_SETTLED",
+    "kind": "Const",
+    "lineno": 21,
+    "end": 21,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [],
+    "test_only": false,
+    "dead_no_refs": true,
+    "hist": {
+      "commit": null,
+      "subject": null,
+      "sample": null,
+      "commits_touching": 1,
+      "top": [
+        "2f0edd210 ak-roles: fix(#1835): 补入册与旨意暂存/作废/幂等结算，改正在场文字模板与拒收类别"
+      ]
+    }
+  },
+  {
+    "file": "ming_sim/entities/staged_declaration/store.py",
+    "name": "_STATUS_STAGED",
+    "qual": "_STATUS_STAGED",
+    "kind": "Const",
+    "lineno": 19,
+    "end": 19,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [],
+    "test_only": false,
+    "dead_no_refs": true,
+    "hist": {
+      "commit": null,
+      "subject": null,
+      "sample": null,
+      "commits_touching": 1,
+      "top": [
+        "2f0edd210 ak-roles: fix(#1835): 补入册与旨意暂存/作废/幂等结算，改正在场文字模板与拒收类别"
+      ]
+    }
+  },
+  {
+    "file": "ming_sim/entities/textual_fact/store.py",
+    "name": "pointing_at",
+    "qual": "TextualFactStore.pointing_at",
+    "kind": "FunctionDef",
+    "lineno": 113,
+    "end": 137,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [],
+    "test_only": false,
+    "dead_no_refs": true,
+    "hist": {
+      "commit": "28a35575b",
+      "subject": "ak-roles: fix(#1831): narrow affair declarations by stage",
+      "sample": "-        return textual_facts.pointing_at(",
+      "commits_touching": 2
+    }
+  },
+  {
+    "file": "ming_sim/flows.py",
+    "name": "_HUANG_TIAN_RENT_PER_WAN_MU",
+    "qual": "_HUANG_TIAN_RENT_PER_WAN_MU",
+    "kind": "Const",
+    "lineno": 24,
+    "end": 24,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [],
+    "test_only": false,
+    "dead_no_refs": true,
+    "hist": {
+      "commit": null,
+      "subject": null,
+      "sample": null,
+      "commits_touching": 1,
+      "top": [
+        "7b4e5f734 feat(后宫): 打通选妃流程 + 调教 tool 提权 + candidate 升格修复"
+      ]
+    }
+  },
+  {
+    "file": "ming_sim/flows.py",
+    "name": "_fiscal_container_value",
+    "qual": "_fiscal_container_value",
+    "kind": "FunctionDef",
+    "lineno": 285,
+    "end": 290,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [],
+    "test_only": false,
+    "dead_no_refs": true,
+    "hist": {
+      "commit": "d785a0a8f",
+      "subject": "fix: address online fiscal hub review findings",
+      "sample": "-    remittance = _round_nonnegative_amount(_fiscal_container_value(db, \"hub_省级起运到京\"))",
+      "commits_touching": 4
+    }
+  },
+  {
+    "file": "ming_sim/flows.py",
+    "name": "_province_collection_rate",
+    "qual": "_province_collection_rate",
+    "kind": "FunctionDef",
+    "lineno": 59,
+    "end": 61,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [],
+    "test_only": false,
+    "dead_no_refs": true,
+    "hist": {
+      "commit": null,
+      "subject": null,
+      "sample": null,
+      "commits_touching": 1,
+      "top": [
+        "7b4e5f734 feat(后宫): 打通选妃流程 + 调教 tool 提权 + candidate 升格修复"
+      ]
+    }
+  },
+  {
+    "file": "ming_sim/flows.py",
+    "name": "_province_transport_ratio",
+    "qual": "_province_transport_ratio",
+    "kind": "FunctionDef",
+    "lineno": 54,
+    "end": 56,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [],
+    "test_only": false,
+    "dead_no_refs": true,
+    "hist": {
+      "commit": null,
+      "subject": null,
+      "sample": null,
+      "commits_touching": 1,
+      "top": [
+        "7b4e5f734 feat(后宫): 打通选妃流程 + 调教 tool 提权 + candidate 升格修复"
+      ]
+    }
+  },
+  {
+    "file": "ming_sim/issues.py",
+    "name": "validate_delta_shape",
+    "qual": "validate_delta_shape",
+    "kind": "FunctionDef",
+    "lineno": 6094,
+    "end": 6096,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [],
+    "test_only": false,
+    "dead_no_refs": true,
+    "hist": {
+      "commit": "ff63db72b",
+      "subject": "ak-roles: #1846 reopen — 删除 ready=1 持久 delta 与重放整套",
+      "sample": "-    **持久化前先过 validate_delta_shape**——形状畸形的 delta 绝不入 resolve_context",
+      "commits_touching": 11
+    }
+  },
+  {
+    "file": "ming_sim/llm_contract.py",
+    "name": "require_bool",
+    "qual": "require_bool",
+    "kind": "FunctionDef",
+    "lineno": 41,
+    "end": 44,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [],
+    "test_only": false,
+    "dead_no_refs": true,
+    "hist": {
+      "commit": null,
+      "subject": null,
+      "sample": null,
+      "commits_touching": 1,
+      "top": [
+        "de0d7ad41 Initial public release"
+      ]
+    }
+  },
+  {
+    "file": "ming_sim/llm_contract.py",
+    "name": "require_int_range",
+    "qual": "require_int_range",
+    "kind": "FunctionDef",
+    "lineno": 24,
+    "end": 38,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [],
+    "test_only": false,
+    "dead_no_refs": true,
+    "hist": {
+      "commit": null,
+      "subject": null,
+      "sample": null,
+      "commits_touching": 1,
+      "top": [
+        "de0d7ad41 Initial public release"
+      ]
+    }
+  },
+  {
+    "file": "ming_sim/llm_contract.py",
+    "name": "require_non_empty_text",
+    "qual": "require_non_empty_text",
+    "kind": "FunctionDef",
+    "lineno": 18,
+    "end": 21,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [],
+    "test_only": false,
+    "dead_no_refs": true,
+    "hist": {
+      "commit": null,
+      "subject": null,
+      "sample": null,
+      "commits_touching": 1,
+      "top": [
+        "de0d7ad41 Initial public release"
+      ]
+    }
+  },
+  {
+    "file": "ming_sim/materials.py",
+    "name": "MaterialsRoot",
+    "qual": "MaterialsRoot",
+    "kind": "ClassDef",
+    "lineno": 159,
+    "end": 183,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [],
+    "test_only": false,
+    "dead_no_refs": true,
+    "hist": {
+      "commit": "3f73fb3c1",
+      "subject": "ak-roles: #1837 reopen 删旧大臣 agent，转译承接禁摊派/荐人/查访/催办/行程语气",
+      "sample": "-    MaterialsRoot,",
+      "commits_touching": 3
+    }
+  },
+  {
+    "file": "ming_sim/materials.py",
+    "name": "release_previous_material_tree",
+    "qual": "release_previous_material_tree",
+    "kind": "FunctionDef",
+    "lineno": 227,
+    "end": 252,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [],
+    "test_only": false,
+    "dead_no_refs": true,
+    "hist": {
+      "commit": "3f73fb3c1",
+      "subject": "ak-roles: #1837 reopen 删旧大臣 agent，转译承接禁摊派/荐人/查访/催办/行程语气",
+      "sample": "-    release_previous_material_tree,",
+      "commits_touching": 2
+    }
+  },
+  {
+    "file": "ming_sim/models.py",
+    "name": "ChatResult",
+    "qual": "ChatResult",
+    "kind": "ClassDef",
+    "lineno": 339,
+    "end": 342,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [],
+    "test_only": false,
+    "dead_no_refs": true,
+    "hist": {
+      "commit": null,
+      "subject": null,
+      "sample": null,
+      "commits_touching": 1,
+      "top": [
+        "de0d7ad41 Initial public release"
+      ]
+    }
+  },
+  {
+    "file": "ming_sim/models.py",
+    "name": "CourtContext",
+    "qual": "CourtContext",
+    "kind": "ClassDef",
+    "lineno": 684,
+    "end": 687,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [],
+    "test_only": false,
+    "dead_no_refs": true,
+    "hist": {
+      "commit": "3f73fb3c1",
+      "subject": "ak-roles: #1837 reopen 删旧大臣 agent，转译承接禁摊派/荐人/查访/催办/行程语气",
+      "sample": "-from ming_sim.models import Character, CourtContext, LLMConfig",
+      "commits_touching": 24
+    }
+  },
+  {
+    "file": "ming_sim/person_archive_contract.py",
+    "name": "ACCEPTANCE_SCENARIOS",
+    "qual": "ACCEPTANCE_SCENARIOS",
+    "kind": "Const",
+    "lineno": 203,
+    "end": 311,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [],
+    "test_only": false,
+    "dead_no_refs": true,
+    "hist": {
+      "commit": null,
+      "subject": null,
+      "sample": null,
+      "commits_touching": 1,
+      "top": [
+        "9317c25fc test(person): add ADR0009 contract index"
+      ]
+    }
+  },
+  {
+    "file": "ming_sim/person_archive_contract.py",
+    "name": "PERSON_LEGACY_ALLEGIANCE_CHANGE_WAYS",
+    "qual": "PERSON_LEGACY_ALLEGIANCE_CHANGE_WAYS",
+    "kind": "Const",
+    "lineno": 59,
+    "end": 59,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [],
+    "test_only": false,
+    "dead_no_refs": true,
+    "hist": {
+      "commit": null,
+      "subject": null,
+      "sample": null,
+      "commits_touching": 1,
+      "top": [
+        "9317c25fc test(person): add ADR0009 contract index"
+      ]
+    }
+  },
+  {
+    "file": "ming_sim/person_archive_contract.py",
+    "name": "PERSON_LEGAL_REASON_CODES",
+    "qual": "PERSON_LEGAL_REASON_CODES",
+    "kind": "Const",
+    "lineno": 51,
+    "end": 51,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [],
+    "test_only": false,
+    "dead_no_refs": true,
+    "hist": {
+      "commit": "b39b51bbe",
+      "subject": "ak-roles: #1896 retire reverse thresholds, land real actions, clues and identity supply",
+      "sample": "-from ming_sim.person_archive_contract import PERSON_ACTIONS, PERSON_LEGAL_REASON_CODES",
+      "commits_touching": 3
+    }
+  },
+  {
+    "file": "ming_sim/person_write_inventory.py",
+    "name": "discover_character_write_sql_locations",
+    "qual": "discover_character_write_sql_locations",
+    "kind": "FunctionDef",
+    "lineno": 112,
+    "end": 119,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [],
+    "test_only": false,
+    "dead_no_refs": true,
+    "hist": {
+      "commit": null,
+      "subject": null,
+      "sample": null,
+      "commits_touching": 1,
+      "top": [
+        "daf63e7cc test(person): inventory character write points"
+      ]
+    }
+  },
+  {
+    "file": "ming_sim/person_write_inventory.py",
+    "name": "person_write_locations_by_disposition",
+    "qual": "person_write_locations_by_disposition",
+    "kind": "FunctionDef",
+    "lineno": 157,
+    "end": 165,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [],
+    "test_only": false,
+    "dead_no_refs": true,
+    "hist": {
+      "commit": null,
+      "subject": null,
+      "sample": null,
+      "commits_touching": 1,
+      "top": [
+        "daf63e7cc test(person): inventory character write points"
+      ]
+    }
+  },
+  {
+    "file": "ming_sim/qualitative.py",
+    "name": "qualitative_character_attribute",
+    "qual": "qualitative_character_attribute",
+    "kind": "FunctionDef",
+    "lineno": 53,
+    "end": 55,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [],
+    "test_only": false,
+    "dead_no_refs": true,
+    "hist": {
+      "commit": "534b9be53",
+      "subject": "sandcastle: fix: unify qualitative projection and remove prose scrubbers",
+      "sample": "-from ming_sim.qualitative import qualitative_character_attribute",
+      "commits_touching": 2
+    }
+  },
+  {
+    "file": "ming_sim/rescript_actions.py",
+    "name": "_TERMINAL_ACTIONS",
+    "qual": "_TERMINAL_ACTIONS",
+    "kind": "Const",
+    "lineno": 51,
+    "end": 53,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [],
+    "test_only": false,
+    "dead_no_refs": true,
+    "hist": {
+      "commit": null,
+      "subject": null,
+      "sample": null,
+      "commits_touching": 3,
+      "top": [
+        "a0dced310 feat(#657): 片2 C1＋五动作——rescript_actions 唯一新模块",
+        "d0ed34c7f fix: persist complete promulgation verdict contract",
+        "fecda3c2d sandcastle: fix: make decree dossiers authoritative"
+      ]
+    }
+  },
+  {
+    "file": "ming_sim/session.py",
+    "name": "_target_active_officeholder",
+    "qual": "_target_active_officeholder",
+    "kind": "FunctionDef",
+    "lineno": 409,
+    "end": 427,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [],
+    "test_only": false,
+    "dead_no_refs": true,
+    "hist": {
+      "commit": "82be2f178",
+      "subject": "ak-roles: repair #1837 audience provenance and retire classifier materializers",
+      "sample": "-        _target_active_officeholder,",
+      "commits_touching": 6
+    }
+  },
+  {
+    "file": "ming_sim/session_write_queue.py",
+    "name": "holder_kind",
+    "qual": "ClassifiedWriteGate.holder_kind",
+    "kind": "FunctionDef",
+    "lineno": 110,
+    "end": 112,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [],
+    "test_only": false,
+    "dead_no_refs": true,
+    "hist": {
+      "commit": null,
+      "subject": null,
+      "sample": null,
+      "commits_touching": 1,
+      "top": [
+        "d68fbd9b6 ak-roles: fix(#1842): ClassifiedWriteGate atomic translation holder kind"
+      ]
+    }
+  },
+  {
+    "file": "ming_sim/supervision.py",
+    "name": "EXPOSURE_ALLOWED_COLS",
+    "qual": "EXPOSURE_ALLOWED_COLS",
+    "kind": "Const",
+    "lineno": 85,
+    "end": 87,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [],
+    "test_only": false,
+    "dead_no_refs": true,
+    "hist": {
+      "commit": null,
+      "subject": null,
+      "sample": null,
+      "commits_touching": 1,
+      "top": [
+        "8e37ab6ee ak-roles: #625 钝化事实底＋人身条件化判官口径（0077）"
+      ]
+    }
+  },
+  {
+    "file": "ming_sim/supervision.py",
+    "name": "PRESENCE_ALLOWED_COLS",
+    "qual": "PRESENCE_ALLOWED_COLS",
+    "kind": "Const",
+    "lineno": 81,
+    "end": 84,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [],
+    "test_only": false,
+    "dead_no_refs": true,
+    "hist": {
+      "commit": null,
+      "subject": null,
+      "sample": null,
+      "commits_touching": 1,
+      "top": [
+        "8e37ab6ee ak-roles: #625 钝化事实底＋人身条件化判官口径（0077）"
+      ]
+    }
+  },
+  {
+    "file": "ming_sim/supervision.py",
+    "name": "SUPERVISION_SURFACE_KEYS",
+    "qual": "SUPERVISION_SURFACE_KEYS",
+    "kind": "Const",
+    "lineno": 29,
+    "end": 33,
+    "prod_other": [],
+    "same_file_extra": 0,
+    "test_files": [],
+    "test_only": false,
+    "dead_no_refs": true,
+    "hist": {
+      "commit": "81c4d2098",
+      "subject": "ak-roles: fix: connect world-segment material reads and drop extractor leftovers",
+      "sample": "-    from ming_sim.supervision import SUPERVISION_SURFACE_KEYS, unpack_supervision_surface",
+      "commits_touching": 2
+    }
+  }
+]

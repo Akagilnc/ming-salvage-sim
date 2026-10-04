@@ -6091,10 +6091,6 @@ def sanitize_delta_shape(extracted: dict) -> tuple[dict, list[tuple[str, dict, s
     return cleaned, rejections
 
 
-def validate_delta_shape(extracted: dict) -> None:
-    """Validate unsplittable delta shape; split-capable bad items are ADR0015 rejections."""
-    sanitize_delta_shape(extracted)
-
 
 @contextmanager
 def _appointment_tenure_scope(db: GameDB, appointment_tenure: str):

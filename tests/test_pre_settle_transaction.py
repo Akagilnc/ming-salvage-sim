@@ -377,7 +377,6 @@ def test_resolve_turn_idempotent_at_awaiting(game, monkeypatch):
     res = sess.resolve_turn()
     assert res.awaiting is True
     assert res.decisions
-    db.clear_resolve_context(state.turn)
 
 
 def test_guarded_early_return_does_not_consume_pending(game):

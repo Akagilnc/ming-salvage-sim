@@ -26,12 +26,6 @@ from ming_sim.qualitative import qualitative_character_axis
 SUPERVISION_RELATION = "稽核"
 
 # 督办判官读面的三个结构化键
-SUPERVISION_SURFACE_KEYS = (
-    "supervision_history",
-    "loophole_exposures",
-    "transformation_tendency_facts",
-)
-
 # transformation_tendency_facts 空形——唯一真源（禁调用方手写七键字面量）
 EMPTY_TRANSFORMATION_TENDENCY_FACTS: Dict[str, object] = {
     "longest_consecutive_presence_months": 0,

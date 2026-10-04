@@ -15,7 +15,6 @@ import re
 from types import SimpleNamespace
 
 import web_app
-from ming_sim.assets import format_wanliang_amount
 from ming_sim.flows import apply_fixed_period_flows, compute_budget_lines
 
 # 多于一位小数的 IEEE 残渣（如 1.2000000000000002 / 0.09999999999999964）

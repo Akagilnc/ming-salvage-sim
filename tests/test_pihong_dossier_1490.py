@@ -1155,7 +1155,14 @@ def test_1682_late_grants_follow_policy_without_consuming_verdict_batch(game, mo
     choices = [{'decision_key': row['decision_key'], 'label': row['options'][0]['label']} for row in desk]
     unrelated_id = db.create_decree_dossier(state, action_type='policy', decree_text='待判旧案', target_kind='issue', target_id='unrelated-1682')
     pending = {'dossier_id': unrelated_id, 'decision': 'promulgated'}
-    db.save_pending_promulgation_verdicts(state.turn, [pending])
+    db.conn.execute(
+        'DELETE FROM pending_promulgation_verdicts WHERE turn=?', (int(state.turn),)
+    )
+    db.conn.execute(
+        'INSERT INTO pending_promulgation_verdicts(turn,dossier_id,verdict_json) VALUES (?,?,?)',
+        (int(state.turn), int(pending['dossier_id']), json.dumps(pending, ensure_ascii=False)),
+    )
+    db.conn.commit()
     batch = ra.validate_all(desk, choices)
     ra.apply_rescript_batch(db, state, batch, ra.PrewriteResults(), content=content)
     grants = [row for row in db.list_decree_dossiers() if row['action_type'] == 'grant_allocation' and _dossier_payload(row).get('decision_key') in {choice['decision_key'] for choice in choices}]
@@ -1169,7 +1176,11 @@ def test_1682_late_grants_follow_policy_without_consuming_verdict_batch(game, mo
     assert reviewed['status'] == 'proposed'
     assert reviewed['promulgation_decision'] == ''
     assert db.list_economy_moves_for_dossier(int(reviewed['id'])) == []
-    assert db.get_pending_promulgation_verdicts(state.turn) == [pending]
+    got = [json.loads(r[0]) for r in db.conn.execute(
+        'SELECT verdict_json FROM pending_promulgation_verdicts WHERE turn=? ORDER BY dossier_id',
+        (int(state.turn),),
+    ).fetchall()]
+    assert got == [pending]
     db.save_pending_decisions(state.turn, [{'event_id': '', 'title': '先拨内帑', 'context': 'c', 'options': [options[0]]}, {'event_id': '', 'title': '后拨内帑失读', 'context': 'c', 'options': [options[0]]}])
     failed_rows = [row for row in db.list_rescript_desk(int(state.turn)) if row['title'] in {'先拨内帑', '后拨内帑失读'}]
     failed_choices = [{'decision_key': row['decision_key'], 'label': row['options'][0]['label']} for row in failed_rows]
@@ -1178,7 +1189,10 @@ def test_1682_late_grants_follow_policy_without_consuming_verdict_batch(game, mo
     decisions_before = db.list_pending_decisions(int(state.turn))
     accounts_before = db.conn.execute('SELECT account, metric_key, balance, note FROM economy_accounts ORDER BY account').fetchall()
     ledger_before = db.conn.execute('SELECT * FROM economy_ledger ORDER BY id').fetchall()
-    verdicts_before = db.get_pending_promulgation_verdicts(state.turn)
+    verdicts_before = [json.loads(r[0]) for r in db.conn.execute(
+        'SELECT verdict_json FROM pending_promulgation_verdicts WHERE turn=? ORDER BY dossier_id',
+        (int(state.turn),),
+    ).fetchall()]
     metrics_before = copy.deepcopy(state.metrics)
     original_get = db.get_decree_dossier
     existing_ids = {int(row['id']) for row in dossiers_before}
@@ -1202,7 +1216,11 @@ def test_1682_late_grants_follow_policy_without_consuming_verdict_batch(game, mo
     assert db.list_pending_decisions(int(state.turn)) == decisions_before
     assert db.conn.execute('SELECT account, metric_key, balance, note FROM economy_accounts ORDER BY account').fetchall() == accounts_before
     assert db.conn.execute('SELECT * FROM economy_ledger ORDER BY id').fetchall() == ledger_before
-    assert db.get_pending_promulgation_verdicts(state.turn) == verdicts_before
+    got_after = [json.loads(r[0]) for r in db.conn.execute(
+        'SELECT verdict_json FROM pending_promulgation_verdicts WHERE turn=? ORDER BY dossier_id',
+        (int(state.turn),),
+    ).fetchall()]
+    assert got_after == verdicts_before
     assert state.metrics == metrics_before
     assert db.load_state().metrics == metrics_before
 

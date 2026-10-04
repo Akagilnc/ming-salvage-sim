@@ -346,7 +346,11 @@ def test_legacy_persisted_reaction_severity_migrates_narrowly_and_idempotently(g
     reopened.close()
     reopened = GameDB(path, content)
     try:
-        saved = reopened.get_pending_promulgation_verdicts(state.turn)[0]["affected_parties"]
+        raw = reopened.conn.execute(
+            "SELECT verdict_json FROM pending_promulgation_verdicts WHERE turn=? ORDER BY dossier_id",
+            (state.turn,),
+        ).fetchone()[0]
+        saved = json.loads(raw)["affected_parties"]
         assert saved[0] == {"kind": "faction", "key": "东林", "note": "留存", "direction": "negative", "intensity": "strong"}
         assert (saved[1]["direction"], saved[1]["intensity"]) == ("negative", "weak")
         assert saved[2]["severity"] == "高兴"

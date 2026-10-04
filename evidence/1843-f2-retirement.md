@@ -4,8 +4,8 @@
 分支：`ak-roles/issue-1843-w5-r5-f2`（自 `ak-roles/issue-1843-w5` @ `77c00eadc`）
 底座：`claude/1812-w4` 是 HEAD 祖先
 派单（全文）：`/Users/akagilnc/.ak-roles/books/Ming_LLM/unbound/runs/01a10837-1305-7258-8ea9-a0150c437f00@fixer/fix-packet.md`
-判词原文（全文）：`/Users/akagilnc/.ak-roles/books/Ming_LLM/unbound/runs/01a10837-1305-7258-8ea9-a0150c437f00@fixer/attachments/00-1843-judge-77c00eadc.json`（F2 成立、未结；整类承接）
-施工基线：`ae4a2a3e6c60afd8a09f03252e692632d8c6bee6`
+最新判词原文（R8 完整 JSON）：`.../1843/runs/01a10837-1305-7258-8ea9-a0150c437f00@fixer/session/session.jsonl` L46；派单附件旧庭：`attachments/00-1843-judge-77c00eadc.json`
+施工基线（R1–R7 误用下界，R8 取消）：~~`ae4a2a3e6`~~ → **无历史下界**；判词原文 session 用户消息 JSON（R8）
 
 ## 轮次
 
@@ -18,6 +18,110 @@
 | R5 | `77c00eadc` | 删一批测试独占／死树；**回执谓词误收窄 same_file_prod==0** → `7a96584ab` |
 | R6 | `7a96584ab` | 闭包补删常量／`_current_game_turn`；**谓词仍错：固定样本种子＋整文件 live 白名单** → `6a232bee5` |
 | R7 | `6a232bee5` | **纠正范围**：`ae4a2a3e6..HEAD` 机械枚举全部已删／变更消费者；按删除前函数体追支持；现役按真实入口核实 |
+| R8 | `dd7d530f9` | **取消历史下界**：HEAD 零生产消费者全量 → `git log -S` 不限下界；退役基线前旧腿残留 + 死导入 |
+
+
+## R8（本轮；取消 ae4a2a3e6 下界）
+
+判词原文路径（完整 JSON，禁止摘要替代）：
+`/Users/akagilnc/.ak-roles/books/Ming_LLM/1843/runs/01a10837-1305-7258-8ea9-a0150c437f00@fixer/session/session.jsonl` 第 46 条 user message（落盘 `/tmp/1843-r8-judge.json`）。
+派单附件旧判词（77c00eadc 庭）：同 run `attachments/00-1843-judge-77c00eadc.json`。
+未结两类：
+1. 旧结算／simulator／颁布结算专用支持树漏退役（枚举被 `ae4a2a3e6` 基线收窄）
+2. 本轮删除遗留的测试死导入（同一退役尾巴）
+
+### 纠正历史全集误宣称
+
+- R7 写「历史全集 DELETED_QUALS=108」「零残留 COUNT=0」时枚举范围为 `ae4a2a3e6..HEAD`。
+- 判词点名删除消费者提交 `242837870` / `f3c4c7348` / `81c4d2098` / `d0afb1d43` 及 R8 样本 `53c83c3eb` / `ae3739f09` / `0d61714ef` / `faec8ba6b` 经 `git merge-base --is-ancestor $c ae4a2a3e6` **全部 BEFORE base**。
+- 因此 R7「历史全集」**不成立**；类定义无下界。本轮谓词改为：当前 HEAD 零生产消费者（含 `scripts/`、`web_app.py`、`main.py`、`launcher.py`）→ 逐名无下界 `git log -S` → 凡属旧结算／旧 simulator 盘面／旧颁布结算腿者与专属测试一并退役。
+
+### 枚举命令
+
+见 `evidence/1843-f2-r8-enum-commands.txt`。实测：`ZERO_PROD_CANDIDATES=128`（main/launcher 过滤后 127）→ 逐名 `git log -S` → 成员表 `evidence/1843-f2-r8-member-table.tsv`（含 disposition）。
+
+### 成员表（R8 退役：逐名）
+
+| 符号 | 最后生产调用删除 | 归属 | 处置 |
+|---|---|---|---|
+| `list_arrived_unsettled_summons` | `53c83c3eb` 旧 simulator board payload | 旧盘面供料 | 删定义；剥 `test_audience_travel_gating_670` 专用断言 |
+| `save_pending_promulgation_verdicts` | `ae3739f09` 旧颁布装配 | 旧颁布写口 | 删；测试改 SQL 布景或删专用测 |
+| `get_pending_promulgation_verdicts` | 与 save 同树 | 死树互引读口 | 删 |
+| `record_monthly_supervision_facts` | `0d61714ef` 拆出 settle 组合 | 旧结算组合写口 | 删；测试改 `record_monthly_supervision_presence` |
+| `discard_pending_directives` | `faec8ba6b` 旧退朝结算 | 旧退朝丢旨 | 删（无测试引用） |
+| `clear_resolve_context` | `242837870` 删旧结算核 | 旧结算清理 | 删；去掉测试收尾调用 |
+| `army_detail` | `34e5c181b` board query tools | 旧 simulator 查询 | 删；测试改 `army_roster` |
+| `building_detail` | `7182174c8` board 读旁路 | 旧 board 查询 | 删 |
+| `list_night_promulgated_directives` / `list_promulgated_directives` | `cb5c6caef` 明发账取代 | 旧颁布读口 | 删 |
+| `validate_delta_shape` | `ff63db72b` ready=1 重放 | 旧结算形状闸 | 删；`decree` 去死 import；现役留 `sanitize_delta_shape` |
+| `SUPERVISION_SURFACE_KEYS` | `81c4d2098` extractor leftovers | 旧监督面常量 | 删（`unpack_supervision_surface` 现役保留） |
+
+### 成员表（R8 保留：真实入口／业务写口）
+
+| 符号 | 依据 |
+|---|---|
+| `previous_turn_summary` | `session.begin_turn` 生产调用（非零消费者） |
+| `normalize_appointment_tenure` | `supervision` 现役 |
+| `canonical_fields_for_delivery` | 密令交付现役 |
+| `sanitize_delta_shape` | `declaration_dispatch`／`issues` 现役 |
+| `army_roster` | `army_detail` 替代出口 |
+| `record_monthly_supervision_presence`／`record_monthly_loophole_exposures_from_reconciliations` | `month_chain`／`declaration_dispatch` |
+| `save_rescript_drafts`／`clear_pending_decisions` | 改票／批红业务写口（零生产调用但非旧腿专用；上呈保留） |
+| `RejectionCollector`／现役改票 | 判词明示保留 |
+| F1／F3 邻接 42 名 | 见成员表 `F1_F3_ADJ`；本票不施工 |
+| OTHER_ADJ 68 名 | 零消费者但删除谱系非本类；写入回执不扩大设计 |
+
+### 死导入（类 2）
+
+相对本轮 diff 变未用、已删：
+- `tests/test_rescript_draft_656.py`：`rescript_mod`、`LLMUnavailable`（及同条未用的 `SettlementAbort`）
+- `tests/test_qa_e1_numeric_presentation.py`：`format_wanliang_amount`
+- `tests/test_fiscal_substrate_bridge.py`：`ARMY_FIELD_LABELS`
+生产侧本轮新变未用 import：无（`building_*` 仍被其他方法使用）。
+
+### 聚焦测试（R8）
+
+```bash
+cd /Users/akagilnc/WorkSpace/Ming_LLM-1843-w5
+MING_SIM_AGY_BIN=/usr/bin/false \
+MING_SIM_CODEX_BIN=/usr/bin/false \
+MING_SIM_CLAUDE_BIN=/usr/bin/false \
+MING_SIM_CURSOR_BIN=/usr/bin/false \
+MING_SIM_KIMI_BIN=/usr/bin/false \
+MING_SIM_GROK_BIN=/usr/bin/false \
+MING_SIM_PI_BIN=/usr/bin/false \
+/Users/akagilnc/WorkSpace/Ming_LLM/.venv/bin/python -m pytest \
+  tests/test_audience_travel_gating_670.py \
+  tests/test_supervision_625.py \
+  tests/test_promulgation_seam_560.py \
+  tests/test_promulgation_judge_561.py \
+  tests/test_pihong_dossier_1490.py \
+  tests/test_override_breach_costs_564.py \
+  tests/test_army_firearms.py \
+  tests/test_army_display_173.py \
+  tests/test_army_card_status_1501.py \
+  tests/test_player_army_projection_321.py \
+  tests/test_rescript_draft_656.py \
+  tests/test_qa_e1_numeric_presentation.py \
+  tests/test_fiscal_substrate_bridge.py::test_province_pay_shortfall_reduces_pure_province_army_morale \
+  tests/test_pre_settle_transaction.py \
+  tests/test_advance_paths_atomic.py \
+  tests/test_month_chain_1843.py \
+  tests/test_grant_reconciliation_567.py \
+  --deselect tests/test_advance_paths_atomic.py::test_submit_event_decision_binds_from_candidate_snapshot_without_event_id \
+  -q -p no:cacheprovider --durations=8
+```
+
+实测：`317 passed, 2 skipped, 1 deselected in 28.03s`（`evidence/1843-f2-r8-pytest.log`）。
+deselected 项在 **未改 db.py 的 HEAD** 上同样失败，属既有红，非本轮引入。
+
+### 自查二连（R8）
+
+- 同类型：取消下界后按类定义全扫；基线前旧腿与死导入一并清。
+- 引入 bug：未动现役 `sanitize_delta_shape`／改票／presence 写口；未扩大 F1／F3。
+- 合法性：无护栏／兼容层／扫描机制／证明性测试；未 amend／stash 交卷／push／PR。
+- **不冒称** 庭审收敛或关票。
+
 
 ## Advisor 前置判断（R7；不冒充庭审）
 

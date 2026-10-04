@@ -7709,35 +7709,6 @@ class GameDB:
             f"{TURN_UNIT}名义应发军饷合计{format_money(monthly_amount(total_pay))}。"
         )
 
-    def army_detail(self, raw_name: str) -> str:
-        # 先按 DB id/name 直查（含动态 new_armies 建出的、不在静态 content.armies 的军队），
-        # 再退回静态别名模糊匹配（如「关宁军」→ guanning）。SELECT * 渲染含火器/随军大炮，
-        # 故新军详情 read 也闭合（CMR codexB/C：army render 收敛到此单一真源，杀 read 侧 whack-a-mole）。
-        row = self.conn.execute(
-            "SELECT * FROM armies WHERE id = ? OR name = ?", (raw_name, raw_name)
-        ).fetchone()
-        if row is None:
-            army_id = match_army_id_from_text(raw_name, self.content.armies)
-            if army_id is not None:
-                row = self.conn.execute("SELECT * FROM armies WHERE id = ?", (army_id,)).fetchone()
-        if row is None:
-            raise ValueError(f"未找到军队：{raw_name}")
-        pay = self._army_pay(row)  # #173：月饷取引擎实扣应发
-        sit = _player_army_situation(row, pay)
-        return (
-            f"{row['name']}：驻扎地{row['station']}，统帅{row['commander']}，"
-            f"兵种{row['troop_type']}，人数{row['manpower']}人，"
-            f"月应发军饷{format_money(monthly_amount(pay))} /{TURN_UNIT}，"
-            f"{_qualitative_army_stat('supply', row['supply'])}，"
-            f"{sit['morale_text']}，"
-            f"{_qualitative_army_stat('training', row['training'])}，"
-            f"{_qualitative_army_stat('equipment', row['equipment'])}，"
-            f"火器{row['firearm_equipment']}，随军大炮{row['cannon_equipment']}门，"
-            f"{sit['arrears_text']}，{_qualitative_army_stat('mobility', row['mobility'])}，"
-            f"军心：{sit['mutiny_tier']}。"
-            f"状态：{row['status']}"
-        )
-
     def army_roster(
         self,
         filter_names: Optional[List[str]] = None,
@@ -8773,36 +8744,6 @@ class GameDB:
             }
             for r in rows
         ]
-
-    def building_detail(self, name_or_id: str, qualitative: bool = False) -> str:
-        key = (name_or_id or "").strip()
-        row = self.conn.execute(
-            "SELECT * FROM buildings WHERE id = ? OR name = ?", (key, key)
-        ).fetchone()
-        if row is None:
-            row = self.conn.execute(
-                "SELECT * FROM buildings WHERE name LIKE ?", (f"%{key}%",)
-            ).fetchone()
-        if row is None:
-            raise ValueError(f"未找到建筑 '{name_or_id}'")
-        metric = str(row["output_metric"])
-        if metric in ("民心", "皇威") and qualitative:
-            out = building_output_effect(metric, row["output_amount"])
-        else:
-            out = f"产出{metric}{row['output_amount']}/{TURN_UNIT}" if metric else "无结算产出"
-        if qualitative:
-            level, condition, risk = building_qualitative_fields(row)
-            return (
-                f"{row['name']}（{row['category']}，{row['region_id']}，{row['origin']}）："
-                f"规模{level}，{condition}，维护{row['maintenance']}{MONEY_UNIT}/{TURN_UNIT}，风险{risk}，{out}。\n"
-                f"{row['status']}"
-            )
-        return (
-            f"{row['name']}（{row['category']}，{row['region_id']}，{row['origin']}）："
-            f"等级{row['level']}，完好{row['condition']}，"
-            f"维护{row['maintenance']}{MONEY_UNIT}/{TURN_UNIT}，风险{row['risk']}，{out}。\n"
-            f"{row['status']}"
-        )
 
     def adjust_factions(self, deltas: Dict[str, object], commit: bool = True) -> List[Dict[str, object]]:
         """逐项落库；查无此派系名 → missing_ref 逐项拒收留痕（ADR 0008 决定 1，#14/#63
@@ -12433,25 +12374,6 @@ class GameDB:
             self.conn.commit()
         return {"exposure_written": exposure_written, "turn": turn_i}
 
-    def record_monthly_supervision_facts(
-        self, turn: int, *, commit: bool = False,
-    ) -> Dict[str, object]:
-        """兼容组合：在场扫描 + 对账暴露派生（测试/restore 便捷口）。
-
-        生产 settle 节拍应分调两单职责函数（origin 前 / 对账后）。
-        """
-        presence = self.record_monthly_supervision_presence(turn, commit=False)
-        exposure = self.record_monthly_loophole_exposures_from_reconciliations(
-            turn, commit=False,
-        )
-        if commit:
-            self.conn.commit()
-        return {
-            "presence_written": int(presence.get("presence_written") or 0),
-            "exposure_written": int(exposure.get("exposure_written") or 0),
-            "turn": int(turn),
-        }
-
     def record_loophole_exposure(
         self,
         dossier_id: int,
@@ -15980,43 +15902,6 @@ class GameDB:
                 )
         return True
 
-    def save_pending_promulgation_verdicts(
-        self, turn: int, verdicts: Iterable[Dict[str, object]],
-    ) -> None:
-        """Persist one complete turn-scoped batch before simulation starts."""
-        rows = list(verdicts)
-        with atomic(self):
-            self.conn.execute(
-                "DELETE FROM pending_promulgation_verdicts WHERE turn=?", (int(turn),)
-            )
-            for verdict in rows:
-                self.conn.execute(
-                    "INSERT INTO pending_promulgation_verdicts(turn,dossier_id,verdict_json) VALUES (?,?,?)",
-                    (int(turn), strict_int(verdict.get("dossier_id")),
-                     safe_json_dumps(verdict, ensure_ascii=False)),
-                )
-
-    def get_pending_promulgation_verdicts(
-        self, turn: int,
-    ) -> List[Dict[str, object]]:
-        rows = self.conn.execute(
-            "SELECT verdict_json FROM pending_promulgation_verdicts WHERE turn=? ORDER BY dossier_id",
-            (int(turn),),
-        ).fetchall()
-        result = []
-        for row in rows:
-            raw_value = row["verdict_json"]
-            try:
-                value = json.loads(raw_value)
-                if not isinstance(value, dict):
-                    raise ValueError("待应用颁布判决须为对象")
-            except ValueError as exc:
-                raise LLMContractError(
-                    f"待应用颁布判决读取失败：{exc}", raw_value=raw_value,
-                ) from exc
-            result.append(value)
-        return result
-
     def _apply_military_order_station_effect(
         self, state, *, army_id: str, station: str, actor: str, reason: str,
         origin_ref: str, station_region: str = "",
@@ -17486,137 +17371,6 @@ class GameDB:
         self.conn.commit()
         return int(candidate_id)
 
-    def list_night_promulgated_directives(self, night_id: int) -> List[Dict[str, object]]:
-        """按夜取数（#502 AC6 / #612）：本夜已落公开层明发账的旨。
-
-        只认唯一 exact engine-command publication-fact seam（口令账上的精确
-        明发#directive_id），不以 pending_actions committed 等同已明发，也不认
-        抽取账开放 tags 或畸形后缀。收夜可先落 draft 前提，抽取失败时那些
-        committed 行仍非公开明发投影。机器辨识、零自由文本解析。"""
-        from ming_sim.audience_night import (
-            engine_command_mingfa_publication_ids,
-            list_ledger,
-        )
-        ids = sorted(
-            engine_command_mingfa_publication_ids(list_ledger(self, int(night_id)))
-        )
-        if not ids:
-            return []
-        placeholders = ",".join("?" * len(ids))
-        rows = self.conn.execute(
-            f"""
-            SELECT td.id AS directive_id, td.turn, td.year, td.period,
-                   td.actor, td.text, td.status
-            FROM turn_directives td
-            WHERE td.id IN ({placeholders})
-            ORDER BY td.id
-            """,
-            ids,
-        ).fetchall()
-        return [
-            {
-                "directive_id": int(r["directive_id"]), "turn": int(r["turn"]),
-                "year": int(r["year"]), "period": int(r["period"]),
-                "actor": r["actor"] or "", "text": r["text"] or "", "status": r["status"] or "",
-            }
-            for r in rows
-        ]
-
-    def list_promulgated_directives(
-        self, turn_from: Optional[int] = None, turn_to: Optional[int] = None,
-    ) -> List[Dict[str, object]]:
-        """按区间取数（#502 AC6 / #612）：回合区间内已落公开层明发账的旨（含所属夜 id）。
-
-        turn_from/to 为闭区间；留空则不设该端界。与 list_night_promulgated_directives
-        同源：唯一 exact engine-command publication-fact seam，不以 committed
-        pending_actions 等同明发，不认抽取账开放 tags 或畸形后缀。
-
-        JSON 解码前按 audience_nights.turn 权威关系收窄 ledger；exact tag 仍只由
-        现有 helper 判定。
-        """
-        from ming_sim.audience_night import (
-            _json_list,
-            engine_command_mingfa_publication_facts,
-        )
-        clauses = ["1=1"]
-        params: List[object] = []
-        if turn_from is not None:
-            clauses.append("n.turn >= ?")
-            params.append(int(turn_from))
-        if turn_to is not None:
-            clauses.append("n.turn <= ?")
-            params.append(int(turn_to))
-        where = " AND ".join(clauses)
-        ledger_rows = self.conn.execute(
-            f"""
-            SELECT e.night_id AS night_id, e.tags AS tags,
-                   e.source_chat_turn_id AS source_chat_turn_id,
-                   n.turn AS night_turn
-            FROM story_ledger_entries e
-            JOIN audience_nights n ON n.id = e.night_id
-            WHERE {where}
-            """,
-            params,
-        ).fetchall()
-        entries = [
-            {
-                "night_id": int(row["night_id"] or 0),
-                "tags": [str(tag) for tag in _json_list(row["tags"])],
-                "source_chat_turn_id": int(row["source_chat_turn_id"] or 0),
-            }
-            for row in ledger_rows
-        ]
-        night_turn_by_id = {
-            int(row["night_id"] or 0): int(row["night_turn"] or 0)
-            for row in ledger_rows
-        }
-        facts = engine_command_mingfa_publication_facts(entries)
-        if not facts:
-            return []
-        ids = sorted({directive_id for _night_id, directive_id in facts})
-        placeholders = ",".join("?" * len(ids))
-        td_rows = self.conn.execute(
-            f"""
-            SELECT td.id AS directive_id, td.turn, td.actor, td.text, td.status
-            FROM turn_directives td
-            WHERE td.id IN ({placeholders})
-            """,
-            ids,
-        ).fetchall()
-        by_id = {
-            int(r["directive_id"]): {
-                "directive_id": int(r["directive_id"]),
-                "turn": int(r["turn"]),
-                "actor": r["actor"] or "",
-                "text": r["text"] or "",
-                "status": r["status"] or "",
-            }
-            for r in td_rows
-        }
-        out: List[Dict[str, object]] = []
-        for night_id, directive_id in sorted(
-            facts,
-            key=lambda item: (
-                night_turn_by_id.get(item[0], by_id.get(item[1], {}).get("turn", 0)),
-                item[1],
-                item[0],
-            ),
-        ):
-            base = by_id.get(directive_id)
-            if base is None:
-                continue
-            # Prefer night.turn (SQL-narrowed authority); fall back to directive.turn.
-            turn = int(night_turn_by_id.get(int(night_id), int(base["turn"])))
-            out.append({
-                "directive_id": int(base["directive_id"]),
-                "turn": turn,
-                "night_id": int(night_id),
-                "actor": base["actor"],
-                "text": base["text"],
-                "status": base["status"],
-            })
-        return out
-
     def flag_directive_needs_clarification(self, candidate_id: int) -> int:
         """含糊准驳（#502 AC5）：给 pending directive 候选打「待澄清」标，使其**不被**颁诏/过回合
         「不回→默认同意」误提交（含糊口令 ≠ 未表态）。皇帝下一句指明后由确认路清标并准驳。
@@ -18703,23 +18457,6 @@ class GameDB:
             self.conn.commit()
         return cur.rowcount
 
-    def discard_pending_directives(self, turn: int) -> int:
-        """退朝无诏时丢弃本回合尚未落库的对话式拟旨暂存（kind=directive, status=pending）。
-        须在 commit_pending_actions 之前调用，防止 commit 把草案插成孤儿 turn_directives
-        行——退朝路不颁诏，孤儿 draft 永不经 extractor、不可见（codex r5 F2）。
-        返回删除条数。"""
-        rows = self.conn.execute(
-            "SELECT id FROM pending_actions WHERE turn=? AND kind='directive' AND status='pending'",
-            (int(turn),),
-        ).fetchall()
-        for row in rows:
-            self._discard_deleted_directive_forecast(int(row["id"]))
-        cur = self.conn.execute(
-            "DELETE FROM pending_actions WHERE turn=? AND kind='directive' AND status='pending'",
-            (int(turn),),
-        )
-        return cur.rowcount
-
     def discard_failed_secret_order_intents(self) -> int:
         """过回合前丢弃既有 failed secret-order intents（CONTEXT：未处理失败下达在过回合丢弃）。
 
@@ -18787,11 +18524,6 @@ class GameDB:
             "attendant_message": attendant_message,  # #671 王承恩独立递话
         }
 
-    def clear_resolve_context(self, turn: int) -> None:
-        self.conn.execute("DELETE FROM pending_resolve_context WHERE turn = ?", (int(turn),))
-        self.conn.execute("DELETE FROM pending_promulgation_verdicts WHERE turn = ?", (int(turn),))
-        self.conn.commit()
-
     # ── #1234 月初快照（路③呈现投影）────────────────────────────────
 
     def capture_month_open_snapshot(self, state: GameState) -> bool:
@@ -18836,7 +18568,7 @@ class GameDB:
         }
 
     def clear_month_open_snapshot(self, turn: int) -> None:
-        """过期/清除本回合快照。atomic 内 commit 为 no-op，与 clear_resolve_context 同窗。"""
+        """过期/清除本回合快照。atomic 内 commit 为 no-op，与月初快照清除同窗。"""
         self.conn.execute(
             "DELETE FROM month_open_snapshot WHERE turn = ?", (int(turn),)
         )

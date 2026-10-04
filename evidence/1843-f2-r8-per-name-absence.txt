@@ -1,0 +1,13 @@
+SUPERVISION_SURFACE_KEYS	GONE
+army_detail	GONE
+building_detail	GONE
+clear_resolve_context	GONE
+discard_pending_directives	GONE
+get_pending_promulgation_verdicts	GONE
+list_arrived_unsettled_summons	GONE
+list_night_promulgated_directives	GONE
+list_promulgated_directives	GONE
+record_monthly_supervision_facts	GONE
+save_pending_promulgation_verdicts	GONE
+validate_delta_shape	GONE
+SUMMARY gone=12 bad=0

@@ -69,14 +69,14 @@ def test_army_public_exits_approx_arrears_and_hide_split_accounts(game):
     )
     db.conn.commit()
     name = row["name"]
-    detail, roster = db.army_detail(name), db.army_roster(filter_names=[name])
+    roster = db.army_roster(filter_names=[name])
     report = db.army_report(limit=100)
     # 按出口结构隔离目标军字段（report 只扫目标段，避开合计饷银）
     seg = next(p for p in report.split("：", 1)[-1].split("；") if p.startswith(name + "："))
-    exits = (detail, seg, roster)
+    exits = (seg, roster)
     joined = "\n".join(exits)
     # 欠饷裸精确小数不得进入真实出口（与 #321 raw 哨兵同形）
-    assert name in detail and "12.5" not in joined
+    assert name in roster and "12.5" not in joined
     for forbidden in ("province_pay_arrears", "central_pay_arrears", "省份额欠", "中央份额欠"):
         assert forbidden not in joined
     db.conn.execute(
@@ -84,7 +84,7 @@ def test_army_public_exits_approx_arrears_and_hide_split_accounts(game):
         (row["id"],),
     )
     db.conn.commit()
-    assert db.army_detail(name) != detail
+    assert db.army_roster(filter_names=[name]) != roster
     for text in exits:
         for bare in scores.values():
             assert not re.search(rf"(?<!\d){bare}(?!\d)", text)
@@ -105,7 +105,7 @@ def test_army_arrears_presentation_rounds_half_steps_up(game):
             (arrears, arrears, row["id"]),
         )
         db.conn.commit()
-        assert expected in db.army_detail(row["name"])
+        assert expected in db.army_roster(filter_names=[row["name"]])
 
 
 def test_army_payload_exposes_approx_arrears_text_not_raw(game):

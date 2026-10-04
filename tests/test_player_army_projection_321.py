@@ -309,11 +309,7 @@ def test_four_chains_embed_situation_matrix(game):
         f"report.print_header 不得回流目标军 name={header_army_sentinel!r}\n{header_out}"
     )
 
-    # 链3：detail（LLM 输入装配；旧 inspect_army 查询工具已退役）
-    detail = db.army_detail(ARMY)
-    _assert_chain_embeds_situation(detail, sit, "army_detail")
-
-    # 链4：roster（LLM 输入装配）
+    # 链3：roster（LLM 输入装配；旧 army_detail / inspect_army 查询工具已退役）
     roster = db.army_roster()
     _assert_chain_embeds_situation(roster, sit, "army_roster")
 

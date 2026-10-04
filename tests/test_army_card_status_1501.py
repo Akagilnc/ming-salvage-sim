@@ -5,7 +5,7 @@
 - 军牌前端不渲染状态句（前端单测另钉）
 - 共享出口逐点真实调用：army_report / intelligence /
   knowledge / state_payload.army_warning /
-  army_detail / army_roster，仍含原 status（禁以直调 army_report 顶替消费点）
+  army_roster，仍含原 status（禁以直调 army_report 顶替消费点）
   （#321 P7：print_header 已拆除 army_report 直显，不再作为 status 消费点）
 - DB armies.status 零改写；payload 用 arrears_text approximate，省略 raw arrears
 """
@@ -207,12 +207,11 @@ def test_shared_consumers_still_surface_status(read_game):
     for card in payload.get("armies") or []:
         assert "status" not in card or card.get("status") in (None, "")
 
-    # 4) army_detail → 真实详情缝（关宁全量，必含 seed status）
-    detail = db.army_detail(_GUANNING_ID)
-    assert seed_status in detail, f"army_detail 缺关宁 status\n{detail!r}"
+    # 4) army_roster → 真实名册缝（关宁与全表，含各军 status）
+    detail = db.army_roster(filter_names=[_GUANNING_ID])
+    assert seed_status in detail, f"army_roster 缺关宁 status\n{detail!r}"
     assert "欠饷严重" in detail
 
-    # 5) army_roster → 真实名册缝（全表，含各军 status）
     roster = db.army_roster()
     all_statuses = [
         str(row["status"] or "").strip()

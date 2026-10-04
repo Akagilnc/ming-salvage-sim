@@ -436,7 +436,6 @@ def test_recovery_replay_blocked_by_pending_directives(game, monkeypatch):
     with pytest.raises(ValueError, match="核定"):
         sess.resolve_turn()
     assert state.turn == turn  # 未推进，拟旨不孤儿
-    db.clear_resolve_context(turn)
 
 def test_skip_refused_at_front_half_done(game):
     """#1274 r1：decree.advance_without_edict 空壳已删；跳过结算的快路名缺席。

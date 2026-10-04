@@ -144,11 +144,11 @@ def test_army_public_exits_surface_firearm_and_cannon(game):
         )
 
     _set(firearm_equipment=45, cannon_equipment=3)
-    detail = db.army_detail(name)
-    assert "45" in detail and "3" in detail
+    detail = _roster_line(qualitative=False)
+    assert "45" in detail and detail.endswith("|3")
     _set(firearm_equipment=91, cannon_equipment=7)
-    detail_hi = db.army_detail(name)
-    assert detail != detail_hi and "91" in detail_hi and "7" in detail_hi and "91" not in detail
+    detail_hi = _roster_line(qualitative=False)
+    assert detail != detail_hi and "|91|" in f"|{detail_hi}|" and detail_hi.endswith("|7") and "|91|" not in f"|{detail}|"
 
     # report：抬危入榜；固定火器只改炮数；截取目标军行核对炮门可数事实
     _set(firearm_equipment=45, cannon_equipment=11, supply=1, morale=1, loyalty=1, training=1)
@@ -171,8 +171,11 @@ def test_army_public_exits_surface_firearm_and_cannon(game):
         "firearm_equipment": 77, "cannon_equipment": 5, **_pay_source(),
     }], actor="测试")
     for key in ("probe_fire_new", "火器新营"):
-        d = db.army_detail(key)
-        assert "77" in d and "5" in d
+        d = next(
+            line for line in db.army_roster(filter_names=[key]).splitlines()
+            if "|" in line and (line.startswith("火器新营|") or "probe_fire_new" in line)
+        )
+        assert d.split("|")[-2] == "77" and d.split("|")[-1] == "5"
 
 
 def test_fresh_seed_wires_firearm_not_all_zero(content, tmp_path):
