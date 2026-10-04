@@ -370,7 +370,7 @@ def test_apply_score_extraction_rejects_unknown_top_level_key(game):
         db, state, {"region_delta_typo": {"shanxi": {"unrest": 5}}, "metric_delta": {"民心": 1}},
     )
     shape = [r for r in applied["validate_shape_rejections"]
-             if "region_delta_typo" in str(r.get("reason"))]
+             if r.get("report_section") == "region_delta_typo"]
     assert shape and shape[0]["rejected"] is True
     assert shape[0]["item"] == {"raw_value": {"shanxi": {"unrest": 5}}}
     assert applied["metric_delta"].get("民心") == 1  # 其余 section 不受累

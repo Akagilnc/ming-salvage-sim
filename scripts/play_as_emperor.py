@@ -515,15 +515,12 @@ def run(
         body_err = exc
         raise
     finally:
-        # Ecological soft close: pexpect/ptyprocess close(force=False).
-        # Docs: https://ptyprocess.readthedocs.io/en/latest/api.html
-        # close() closes the FD first, then terminate(force); force=False never
-        # reaches SIGKILL. If soft terminate fails it raises before setting
-        # closed=True; PtyProcess.__del__ would then call close()→SIGKILL.
-        # No public detach API exists (verified against installed ptyprocess +
-        # pexpect sources); the only non-kill completion is marking closed after
-        # the official close already shut the FD. No fileobj re-close, no
-        # except:pass around status writes, no raise that covers body_err.
+        # Pre-select ecological API only: pexpect.spawn.close(force=False)
+        # (ptyprocess docs: force=False never reaches SIGKILL).
+        # Official close closes the FD first, then soft-terminate; on soft-fail it
+        # raises before writing closed=True. There is no public detach API
+        # (dir(PtyProcess) / spawn.close source). Finish the same public fields
+        # successful close() would write — no fileobj re-close, no supervisor.
         cleanup_err: Optional[BaseException] = None
         try:
             if child is not None and not child.closed:
@@ -531,13 +528,12 @@ def run(
         except BaseException as exc:
             cleanup_err = exc
             log(f"[soft cleanup failed: {exc}]")
-            pty = getattr(child, "ptyproc", None)
-            if pty is not None and not pty.closed:
-                # FD already closed by PtyProcess.close before the raise.
-                pty.fd = -1
-                pty.closed = True
             child.child_fd = -1
             child.closed = True
+            pty = getattr(child, "ptyproc", None)
+            if pty is not None:
+                pty.fd = -1
+                pty.closed = True
         try:
             log_file.close()
         except Exception:

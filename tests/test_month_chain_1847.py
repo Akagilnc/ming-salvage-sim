@@ -1839,7 +1839,6 @@ def test_step_4a_missing_covert_fidelity_records_inline_rejection(game, monkeypa
     declared_origin = db.list_dossier_progress(dossier_id)[-1]["origin"]
     assert origin_has_mark(declared_origin, ORIGIN_MARK_SAME_FACTION_BLIND)
     assert origin_has_mark(declared_origin, ORIGIN_MARK_PRIVATE_GOODS)
-    assert "不是行动" not in str(declared_origin)
     kept_relations = {
         row.get("faction_relation")
         for row in db.list_supervision_history(dossier_id, as_of_turn=turn)
@@ -1912,7 +1911,7 @@ def test_settle_edicts_persists_pending_disclosures_in_same_transaction(game, mo
     pending = reloaded.get("pending_disclosures") or []
     assert any(
         int(item.get("order_id") or 0) == order_id
-        and "私仓已查封" in str(item.get("sim_note") or "")
+        and item.get("sim_note") == "私仓已查封，案情明发"
         for item in pending
     ), f"pending_disclosures missing after settle: {pending!r}"
 

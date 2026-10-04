@@ -1,0 +1,10 @@
+group_id	disposition	member_count	reason	note
+G14_GETSOURCE	FIXED_OR_ABSENT	0	inspect.getsource 源码证明 — 本轮扫描无存活真成员（advance_paths 已清）	delete source-proof tests
+G14_AST_ASSET	KEEP_ASSET_PARSE	2	ast.parse 解析打包/规格资产，非生产函数 getsource 形状锁	asset/spec file
+G14_STRUCT_COERCE	FALSE_POSITIVE_STRUCT_COERCE	26	str(结构化字段) 仅类型强制：origin/office/id/authorization/payload 键等，非自由正文身份哨兵	structured field coerce
+G14_ERROR_SURFACE	KEEP_ERROR_DIAGNOSTIC	18	异常/API error message 诊断契约（注入失败原文），非游戏自由正文身份	exception/provider_message
+G14_RAW_TRANSPORT	KEEP_RAW_TRANSPORT	18	原文运输原样性：text/sim_note/fact_body 与夹具字面全等或 CR/CRLF 边界	transport equality
+G14_BEHAVIOR_EQ	KEEP_BEHAVIOR_EQUALITY	694	行为结果 assert a==b（独立期望或状态字段），非同样本无操作空复查	behavioral equality
+G14_READ_MATERIAL	KEEP_READ_MATERIAL	53	经 production read_material 或合法夹具 Path.read_text	material/fixture IO
+G14_NEWLINE	KEEP_NEWLINE_FIXTURE	4	CR/CRLF 运输边界夹具	newline fixture
+G14_FIXED	FIXED_THIS_ROUND	0	本轮已改：结构化 report_section / payload.text / 删除散文哨兵 / 原文全等	restructured assertion

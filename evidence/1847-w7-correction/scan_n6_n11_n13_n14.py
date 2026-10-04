@@ -161,7 +161,10 @@ def scan_n6_ts(rel: str, text: str) -> List[Dict[str, Any]]:
 
 def write_tsv(path: pathlib.Path, fieldnames: List[str], rows: List[Dict[str, Any]]) -> None:
     with path.open("w", encoding="utf-8", newline="") as fh:
-        w = csv.DictWriter(fh, fieldnames=fieldnames, delimiter="\t", extrasaction="ignore")
+        w = csv.DictWriter(
+            fh, fieldnames=fieldnames, delimiter="\t",
+            extrasaction="ignore", lineterminator="\n",
+        )
         w.writeheader()
         for r in rows:
             w.writerow(r)
@@ -288,13 +291,9 @@ def main() -> int:
                 pass
     defs, refs = collect_defs_and_refs(py_files)
 
-    # Expand seed by same-file private helpers referenced only from seed defs (1-hop)
+    # Consumer-graph only: judge seeds (+ optional one-hop filled by finalize_judgments).
+    # Name-pattern expansion is NOT authority and must not appear in closure tables.
     expanded = set(N11_SEED)
-    # Also scan for names containing retired markers — as POTENTIAL only
-    for name in list(defs.keys()):
-        low = name.lower()
-        if any(k in low for k in ("rescript_summon", "secret_order", "legacy_", "_legacy")):
-            expanded.add(name)
 
     n11_rows = []
     for name in sorted(expanded):

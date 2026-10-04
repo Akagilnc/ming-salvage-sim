@@ -28,7 +28,7 @@
     ],
     "cleanup_error_type": "TimeoutExpired",
     "stderr_marker": true,
-    "elapsed": 15.27,
+    "elapsed": 15.26,
     "covered_by_cleanup_only": false
   },
   {

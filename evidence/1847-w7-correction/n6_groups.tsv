@@ -1,0 +1,10 @@
+group_id	disposition	member_count	reason	source_contract	dest_path
+G_TEST	OUT_OF_N6_CLASS	393	test file — identity/transport proofs owned by N14	n/a	n/a
+G_EMPTY_LOCAL	KEEP_EMPTY_LOCAL	72	判空用局部 strip/trim；运输 sink 用原文（audience_night/materials/public_sayings 等）	free-text field	boolean/empty gate only
+G_IDENT	KEEP_IDENTIFIER_NORMALIZE	391	name/id/key/status/method/path/office 等标识或枚举规范化，非自由正文运输	structured identifier	lookup/compare key
+G_FORM	KEEP_FORM_LANGUAGE	50	JSON 信封定位、封闭口令集、形式条件/白名单比对	form/command/json envelope	parser locate or command match
+G_TEMPLATE	KEEP_TEMPLATE_PLACEHOLDER	2	资源模板 {{PLACEHOLDER}} 替换，非 LLM 自由正文运输	assets template	rendered prompt resource
+G_PATH	KEEP_PATH_SANITIZE	7	材料路径/文件名安全字符替换	path segment	filesystem key
+G_IO	KEEP_IO_BOUNDARY	9	read_text/decode 的换行或编码边界，非自由正文删改后入运输	file bytes	decoded string for parse
+G_SLICE_STRUCT	KEEP_STRUCTURE_SLICE	241	前缀剥离/JSON 切片/token 窗，操作对象为形式结构或展示截断	structured or display buffer	parser/log window
+G_NOT_TRANSPORT	FALSE_POSITIVE_NOT_TRANSPORT	1678	扫描命中文本变更器，但来源→去向不是自由正文运输 sink（无 body/opening 等赋值入运输）	non-transport text	local compute / log / compare

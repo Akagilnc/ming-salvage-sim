@@ -294,7 +294,11 @@ def test_translation_entry_preserves_unknown_rejection_and_source_cutoff(
     pending = db.conn.execute(
         "SELECT payload_json FROM pending_actions WHERE status='pending' ORDER BY id"
     ).fetchall()
-    assert any("拟旨赈济" in str(row["payload_json"]) for row in pending)
+    pending_payloads = [json.loads(row["payload_json"]) for row in pending]
+    assert any(
+        isinstance(payload, dict) and payload.get("text") == "拟旨赈济"
+        for payload in pending_payloads
+    )
     rejected = db.conn.execute(
         "SELECT section, category FROM rejection_reports WHERE turn=?",
         (int(state.turn),),

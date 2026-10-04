@@ -553,7 +553,7 @@ def test_asgi_dossiered_directive_has_no_retired_review_surface(web_game):
     assert int(match["dossier_id"]) > 0
     assert match["dossier_status"] == "proposed"
     assert match["source"] == "手动新增"
-    assert "着户部核边饷" in str(match["text"])
+    assert match["text"] == "着户部核边饷"
 
 def test_asgi_inflight_reply_lands_then_issue_closes_and_advances(web_game, monkeypatch):
     """AC10「回话完成入档后才收夜再颁诏」：#1353 过月屏障等 chat 整轮票清零后收夜再颁诏。
