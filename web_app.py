@@ -60,7 +60,6 @@ from ming_sim.exceptions import DependencyMismatch, ExitGame, LLMUnavailable, Se
 from ming_sim.llm_config import (
     CLI_DEFAULT_TIMEOUT_SECONDS,
     VALID_CHANNELS,
-    cli_model_from_env,
     is_real_api_key,
     api_supports_reasoning_strength,
     cli_supports_reasoning_strength,
@@ -71,7 +70,6 @@ from ming_sim.llm_config import (
     normalize_openai_base_url,
     normalize_thinking_level,
     normalize_reasoning_strength,
-    legacy_reasoning_strength,
     save_runtime_llm,
     _slot_header_table,
 )
@@ -4217,42 +4215,42 @@ async def api_menu_status() -> Dict[str, Any]:
         cli_runner_choices,
         is_supported_cli_runner,
     )
-    # #1902：宿主只由运行档声明（channel + cli.runner）；env 选宿主的旧路已退役，
-    # 通道判定与 llm_config.llm_config_from_runtime 同一口径。
-    channel = str(runtime.get("channel") or "").strip().lower()
+    from ming_sim.llm_config import llm_config_from_runtime
+    # #1902 F2：有效配置只认共核 llm_config_from_runtime；入口只保留原样存盘值供表单。
+    cfg = llm_config_from_runtime(
+        runtime,
+        base_url=os.environ.get("OPENAI_BASE_URL", ""),
+        model=os.environ.get("OPENAI_MODEL", ""),
+        api_key=os.environ.get("OPENAI_API_KEY", ""),
+        timeout_seconds=float(os.environ.get("OPENAI_TIMEOUT_SECONDS") or API_DEFAULT_TIMEOUT_SECONDS),
+        thinking_level="",
+        advanced_model=os.environ.get("OPENAI_ADVANCED_MODEL", ""),
+        advanced_base_url=os.environ.get("OPENAI_ADVANCED_BASE_URL", ""),
+        advanced_api_key=os.environ.get("OPENAI_ADVANCED_API_KEY", ""),
+        advanced_thinking_level="",
+    )
     cli_slot = runtime.get("cli") if isinstance(runtime.get("cli"), dict) else {}
     api_slot = runtime.get("api") if isinstance(runtime.get("api"), dict) else {}
-    if channel not in VALID_CHANNELS:
-        channel = "cli" if str(cli_slot.get("runner") or "").strip() else "api"
-    cli_runner = str(cli_slot.get("runner") or ("agy" if channel == "cli" else "")).strip().lower()
-    # cli_model_saved = 原样存盘值（空=用户选「默认」档）；cli_model = 兜底成默认名的 resolved 值。
+    # cli_model_saved = 原样存盘值（空=用户选「默认」档）；cli_model = 共核 resolved。
     # 表单（CliModelField 下拉）须读 raw，否则空保存被 resolved 成默认名 → 下拉误判「其他(手填)」
-    # 并把字面量钉死（CMR R1 Claude+Gemini concur）。resolved 仅供「当前后端」展示行。
+    # 并把字面量钉死（CMR R1 Claude+Gemini concur）。
     cli_model_saved = str(cli_slot.get("model") or "").strip()
-    cli_model = cli_model_saved or str(cli_model_from_env(cli_runner, "")).strip()
-    cli_timeout = _runtime_float(cli_slot.get("timeout_seconds"), CLI_DEFAULT_TIMEOUT_SECONDS)
-    has_api_key = _has_real_api_key(runtime.get("api_key")) or _has_real_api_key(os.environ.get("OPENAI_API_KEY"))
-    base_url = runtime.get("base_url") or os.environ.get("OPENAI_BASE_URL", "")
-    model = runtime.get("model") or os.environ.get("OPENAI_MODEL", "")
-    reasoning_strength = normalize_reasoning_strength(
-        (cli_slot.get("reasoning_strength") if channel == "cli" else runtime.get("reasoning_strength"))
-        or runtime.get("reasoning_strength", "")
-    )
     cli_reasoning_strength = normalize_reasoning_strength(cli_slot.get("reasoning_strength"))
     api_reasoning_strength = normalize_reasoning_strength(api_slot.get("reasoning_strength"))
+    has_api_key = _has_real_api_key(cfg.api_key) or _has_real_api_key(os.environ.get("OPENAI_API_KEY"))
     reasoning_supported = (
-        cli_supports_reasoning_strength(cli_runner)
-        if channel == "cli"
+        cli_supports_reasoning_strength(cfg.cli_runner)
+        if cfg.channel == "cli"
         else _api_reasoning_supported_for_effective_model(
-            str(base_url),
-            str(model),
-            str(runtime.get("advanced_base_url") or os.environ.get("OPENAI_ADVANCED_BASE_URL", "")),
-            str(runtime.get("advanced_model") or os.environ.get("OPENAI_ADVANCED_MODEL", "")),
+            str(cfg.base_url),
+            str(cfg.model),
+            str(cfg.advanced_base_url),
+            str(cfg.advanced_model),
         )
     )
     # readiness 按 active channel 判：API 通道看真实 key，CLI 通道看 runner 是否受支持。
     # 不能因 inactive API 槽（ADR 0001 保留）里有 key 就把不可用的 CLI runner 误报成 ready。
-    llm_ready = has_api_key if channel == "api" else is_supported_cli_runner(cli_runner)
+    llm_ready = has_api_key if cfg.channel == "api" else is_supported_cli_runner(cfg.cli_runner)
     return {
         "has_api_key": has_api_key,
         "llm_ready": llm_ready,
@@ -4262,32 +4260,32 @@ async def api_menu_status() -> Dict[str, Any]:
         "campaigns": _scan_campaigns(),
         "current_campaign": _main_db_campaign_id(),
         "llm": {
-            "channel": channel,
-            "base_url": base_url,
-            "model": model,
+            "channel": cfg.channel,
+            "base_url": cfg.base_url,
+            "model": cfg.model,
             "has_api_key": has_api_key,
-            "cli_runner": cli_runner,
-            "cli_model": cli_model,
+            "cli_runner": cfg.cli_runner,
+            "cli_model": cfg.cli_model,
             "cli_model_saved": cli_model_saved,
             "cli_model_choices": cli_model_choices(),
             # #1274 W1：CLI Runner 下拉单源（= _CLI_BACKENDS 有序），menuPage/gameMenu 共吃。
             "cli_runners": cli_runner_choices(),
-            "cli_timeout_seconds": cli_timeout,
-            "reasoning_strength": reasoning_strength,
+            "cli_timeout_seconds": cfg.cli_timeout_seconds,
+            "reasoning_strength": cfg.reasoning_strength,
             "api_reasoning_strength": api_reasoning_strength,
             "cli_reasoning_strength": cli_reasoning_strength,
             "reasoning_supported": reasoning_supported,
             "reasoning_strengths": list(REASONING_STRENGTH_CHOICES),
             # #1271：能力名单自 cli_backend 单源导出，供前端 fallback 消费（禁前端硬编码）。
             "cli_reasoning_runners": sorted(CLI_REASONING_STRENGTH_RUNNERS),
-            "timeout_seconds": float(runtime.get("timeout_seconds") or os.environ.get("OPENAI_TIMEOUT_SECONDS") or API_DEFAULT_TIMEOUT_SECONDS),
-            "thinking_level": runtime.get("thinking_level") or os.environ.get("OPENAI_THINKING_LEVEL", ""),
-            "advanced_model": runtime.get("advanced_model") or os.environ.get("OPENAI_ADVANCED_MODEL", ""),
-            "advanced_base_url": runtime.get("advanced_base_url") or os.environ.get("OPENAI_ADVANCED_BASE_URL", ""),
-            "has_advanced_api_key": _has_real_api_key(runtime.get("advanced_api_key")) or _has_real_api_key(os.environ.get("OPENAI_ADVANCED_API_KEY")),
+            "timeout_seconds": cfg.timeout_seconds,
+            "thinking_level": cfg.thinking_level,
+            "advanced_model": cfg.advanced_model,
+            "advanced_base_url": cfg.advanced_base_url,
+            "has_advanced_api_key": _has_real_api_key(cfg.advanced_api_key) or _has_real_api_key(os.environ.get("OPENAI_ADVANCED_API_KEY")),
             "advanced_thinking_level": "",
             # #1794：设置页读回附加请求头表（API 槽）；归一后扁平单读。
-            "default_headers": dict(runtime.get("default_headers") or {}),
+            "default_headers": dict(cfg.default_headers or {}),
         },
     }
 

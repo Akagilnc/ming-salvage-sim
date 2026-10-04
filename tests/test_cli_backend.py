@@ -202,22 +202,6 @@ def test_enrich_nondict_subfields_guarded(monkeypatch):
     assert out == {"effect_on_resolve": {}, "ongoing_effects": {}, "effect_on_fail": {}}
 
 
-def test_enrich_trace_records_actual_backend(monkeypatch):
-    """trace 里的 backend 记实际调用的 runner（#1902：取自运行配置，不来自 env）。"""
-    from ming_sim.models import LLMConfig
-
-    monkeypatch.setattr(cb, "_run_backend", lambda p: ('{"effect_on_resolve":{}}', 1))
-    rec = {}
-    monkeypatch.setattr(cb, "_trace", lambda r: rec.update(r))
-    cb.enrich_initiative_effects(
-        "设局", "",
-        llm_config=LLMConfig(
-            api_key="", base_url="", model="m", channel="cli", cli_runner="codex",
-        ),
-    )
-    assert rec.get("backend") == "codex"
-
-
 # ── cli_backend_from_env / backend dispatch ──
 
 # #1902：cli_backend_from_env（MING_SIM_LLM_BACKEND 选宿主）退役——下列

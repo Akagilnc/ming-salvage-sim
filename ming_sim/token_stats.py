@@ -157,8 +157,9 @@ def install_token_stats_patch() -> None:
             try:
                 model_id = getattr(resp, "model", kwargs.get("model", "unknown"))
                 _record_usage(model_id, getattr(resp, "usage", None))
-            except Exception:
-                pass
+            except Exception as exc:
+                # ADR 0005 / #1902 F1：统计旁路可继续，但不得静默抹去原因。
+                tlog(f"[token_stats] record_usage failed: {type(exc).__name__}: {exc}")
             return resp
 
         async def patched_acreate(self, *args, **kwargs):
@@ -169,8 +170,9 @@ def install_token_stats_patch() -> None:
             try:
                 model_id = getattr(resp, "model", kwargs.get("model", "unknown"))
                 _record_usage(model_id, getattr(resp, "usage", None))
-            except Exception:
-                pass
+            except Exception as exc:
+                # ADR 0005 / #1902 F1：统计旁路可继续，但不得静默抹去原因。
+                tlog(f"[token_stats] record_usage failed: {type(exc).__name__}: {exc}")
             return resp
 
         Completions.create = patched_create  # type: ignore

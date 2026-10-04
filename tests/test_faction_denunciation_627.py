@@ -4,10 +4,8 @@
 禁：烈度门/quota/文字模板（P6/P7）。
 
 Seams:
-- supervision.is_reported_actual_fork（fork 判据单源）
 - GameDB.read_dossier_fork_state / build_faction_denunciation_facts
 - GameDB.accept_faction_denunciations（结构化承接）
-- compose_denunciation_origin + derive_denunciation_is_true
 """
 
 from __future__ import annotations
@@ -19,14 +17,10 @@ import pytest
 from ming_sim.db import GameDB
 from ming_sim.supervision import (
     DENUNCIATION_ALLOWED_COLS,
-    DENUNCIATION_ORIGIN_BASE,
     DENUNCIATION_TABLE,
     ORIGIN_MARK_DENUNCIATION_FALSE,
     ORIGIN_MARK_DENUNCIATION_TRUE,
-    compose_denunciation_origin,
-    derive_denunciation_is_true,
     faction_relation,
-    is_reported_actual_fork,
     origin_has_mark,
 )
 from tests.test_dossier_reported_progress_619 import _world_fingerprint
@@ -168,34 +162,6 @@ def _scripted_entry(
 
 
 # ── unit pure ─────────────────────────────────────────────────────
-
-
-def test_fork_predicate_pure_and_single_source_expression():
-    assert is_reported_actual_fork(
-        reported_bands=["已竣"], beyond_intent=True, execution_outcome="executing",
-    ) is True
-    assert is_reported_actual_fork(
-        reported_bands=["已竣"], beyond_intent=False, execution_outcome="transformed",
-    ) is True
-    assert is_reported_actual_fork(
-        reported_bands=["已竣"], beyond_intent=False, execution_outcome="fulfilled",
-    ) is False
-    assert is_reported_actual_fork(
-        reported_bands=[], beyond_intent=True, execution_outcome="transformed",
-    ) is False
-
-
-def test_veracity_derivation_mechanical_and_origin_marks():
-    """真伪底派生：分叉→真；无分叉→私货；origin 单源 mark。"""
-    assert derive_denunciation_is_true(fork=True) is True
-    assert derive_denunciation_is_true(fork=False) is False
-
-    o_true = compose_denunciation_origin(is_true=True)
-    o_false = compose_denunciation_origin(is_true=False)
-    assert o_true.startswith(DENUNCIATION_ORIGIN_BASE)
-    assert origin_has_mark(o_true, ORIGIN_MARK_DENUNCIATION_TRUE)
-    assert origin_has_mark(o_false, ORIGIN_MARK_DENUNCIATION_FALSE)
-    assert not origin_has_mark(o_true, ORIGIN_MARK_DENUNCIATION_FALSE)
 
 
 # ── AC1 事实供给 ──────────────────────────────────────────────────

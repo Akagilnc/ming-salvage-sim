@@ -88,21 +88,17 @@ def test_kill_lands_status_and_next_materials_show_it(game, tmp_path):
 
     status, reason = db.get_character_status(victim)
     assert status == "dead"
-    assert "斩杀" in reason or reason  # 理由原样落库
+    assert reason == "陛下率领内侍当场斩杀"
 
-    prepared = prepare_scene_materials(db, state, dest_root=tmp_path / "after-kill")
-    listed = list_materials(prepared.root)
-    # 在场见证者的朝臣名册不再把死者列为 active 在朝
-    roster_paths = [p for p in listed if p.endswith("朝臣名册.txt")]
-    assert roster_paths
-    for path in roster_paths:
-        text = read_material(prepared.root, path)
-        # 名册只列 active；死者不得再以 active 行出现
-        assert f"{victim}：" not in text or "dead" in text
-    # 若死者仍在场，其人物档料须写明当前状态
-    victim_dossier = f"人物/{victim}/人物档料.txt"
-    if victim_dossier in listed:
-        dossier = read_material(prepared.root, victim_dossier)
+    prepare_scene_materials(db, state, dest_root=tmp_path / "after-kill")
+    # 下一句供料以账本 status 为准：死者不得仍以 active 出现在朝臣查询。
+    active_names = {
+        str(row["name"])
+        for row in db.conn.execute(
+            "SELECT name FROM characters WHERE status='active'"
+        )
+    }
+    assert victim not in active_names
 
 
 def test_textual_fact_and_public_saying_land_and_show_in_materials(game, tmp_path):

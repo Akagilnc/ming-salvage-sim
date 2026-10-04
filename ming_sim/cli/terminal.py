@@ -812,16 +812,13 @@ def play_turn(session: GameSession) -> Optional[GameSession]:
     show_active_issues(session.db)
 
     pending_character: Optional[Character] = None
-    def _review(sess: GameSession) -> str:
-        """走模块级 review_directives（测试可 monkeypatch 它，签名保持单参）。"""
-        return review_directives(sess)
 
     while True:
         if session.current_phase() == TurnPhase.SUMMONING:
             character = pending_character or choose_minister(session)
             pending_character = None
             if character is None:
-                action = _review(session)
+                action = review_directives(session)
             else:
                 chat_action = minister_chat(session, character, selected=True)
                 if chat_action == "dismiss":
@@ -830,9 +827,9 @@ def play_turn(session: GameSession) -> Optional[GameSession]:
                     pending_character = session.content.characters[chat_action.split(":", 1)[1]]
                     continue
                 # court_break 或对话结束 → 审阅
-                action = _review(session)
+                action = review_directives(session)
         else:
-            action = _review(session)
+            action = review_directives(session)
 
         if action == "back":
             continue

@@ -2518,10 +2518,8 @@ def _stalled_deliberation_push_facts(db: Any) -> str:
     """#658：自由下旨可强推的 stalled 廷议＋active issue 投影（候选相关切片）。"""
     if db is None:
         return ""
-    try:
-        rows = db.list_decree_dossiers(status="proposed")
-    except Exception:
-        return ""
+    # #1902 F1：库查询失败不得洗成空事实继续抽取；逐行脏载荷仍可跳过。
+    rows = db.list_decree_dossiers(status="proposed")
     lines: List[str] = []
     for row in rows or []:
         try:
@@ -2674,14 +2672,11 @@ def extract_draft_intent(
         draft_combo_flags: List[bool] = []
         seen_texts = set()
         invalid_batch = not isinstance(values, list) or len(values) != draft_count
-        try:
-            batch_declaration = (
-                _affair_declaration_from_draft_obj(obj)
-                if isinstance(obj, dict) else {}
-            )
-        except ValueError:
-            batch_declaration = {}
-            invalid_batch = True
+        # #1902 F1：非法事务声明不得剥掉后当正常批次；保留原始 ValueError。
+        batch_declaration = (
+            _affair_declaration_from_draft_obj(obj)
+            if isinstance(obj, dict) else {}
+        )
         stamped_declaration = (
             {
                 "affair_declaration": _stamp_split_birth_key(
@@ -2797,8 +2792,8 @@ def extract_draft_intent(
             if action == "pay_order_override" and (
                 not isinstance(entries, list) or not entries
             ):
-                invalid_batch = True
-                break
+                # #1902 F1 / #1849：缺 entries 的非法产物响亮拒收，禁洗成无意图。
+                raise ValueError("pay_order_override 须有非空 entries")
             if entries is not None:
                 mechanical["entries"] = entries
             drafts.append({
@@ -2980,10 +2975,8 @@ def extract_draft_intent(
         push_mode = _directive_mode(obj.get("颁布方式"))
         if push_mode is not None:
             push_out["mode"] = push_mode
-        try:
-            push_declaration = _affair_declaration_from_draft_obj(obj)
-        except (TypeError, ValueError):
-            push_declaration = {}
+        # #1902 F1：非法事务声明不得删除后仍返回成功载荷。
+        push_declaration = _affair_declaration_from_draft_obj(obj)
         if push_declaration:
             push_out["affair_declaration"] = _stamp_split_birth_key(
                 push_declaration["affair_declaration"]
@@ -3048,21 +3041,19 @@ def extract_draft_intent(
     if mode is not None:
         mechanical["mode"] = mode
     merged = str(obj.get("合并草案") or "").strip()
-    # #654 H 已在上方对 _action=="无" 短路；此处仅保留 #653 pay_order 验形。
+    # #654 H 已在上方对 _action=="无" 短路；#653/#1849/#1902 F1：缺 entries 响亮拒收。
     if dossier_action == "pay_order_override" and (
-        not isinstance(mechanical["entries"], list) or not mechanical["entries"]
+        not isinstance(mechanical.get("entries"), list) or not mechanical.get("entries")
     ):
-        return {"draft_action": "无", "draft_text": "", "target_candidate": ""}
+        raise ValueError("pay_order_override 须有非空 entries")
     if not _candidates:
         # 无候选：沿用单条语义——补充模式合并、否则大臣回话即草案。
         if _supplement_mode:
             draft_text = merged if merged else _existing_draft_text
         else:
             draft_text = (minister_reply or "").strip()
-        try:
-            single_declaration = _affair_declaration_from_draft_obj(obj)
-        except (TypeError, ValueError):
-            return {"draft_action": "无", "draft_text": "", "target_candidate": ""}
+        # #1902 F1：非法事务声明不得洗成「无」意图；保留原始原因。
+        single_declaration = _affair_declaration_from_draft_obj(obj)
         if single_declaration:
             single_declaration = {
                 "affair_declaration": _stamp_split_birth_key(
@@ -3103,10 +3094,8 @@ def extract_draft_intent(
         existing = str(_by_id[int(target)].get("text") or "")
         # 补某道：优先合并全文；LLM 未合并时保留原文（避免用确认语覆盖），原文亦空则退回话。
         draft_text = merged if merged else (existing if existing else (minister_reply or "").strip())
-    try:
-        cand_declaration = _affair_declaration_from_draft_obj(obj)
-    except (TypeError, ValueError):
-        return {"draft_action": "无", "draft_text": "", "target_candidate": ""}
+    # #1902 F1：非法事务声明不得洗成「无」意图；保留原始原因。
+    cand_declaration = _affair_declaration_from_draft_obj(obj)
     if cand_declaration:
         cand_declaration = {
             "affair_declaration": _stamp_split_birth_key(
