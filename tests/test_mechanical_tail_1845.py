@@ -56,6 +56,25 @@ def _run_deferred(executor):
     executor.future.set_result(None)
 
 
+def _month_chain_payload(db, closed_turn: int) -> dict:
+    """公开 resolve_context.simulator_payload.month_chain。"""
+    ctx = db.get_resolve_context(int(closed_turn)) or {}
+    payload = ctx.get("simulator_payload") or {}
+    chain = payload.get("month_chain") if isinstance(payload, dict) else None
+    return dict(chain) if isinstance(chain, dict) else {}
+
+
+def _tail_status(db, closed_turn: int) -> str:
+    """公开 resolve_context 上的机械尾状态（不经 month_chain 私有读链）。"""
+    tail = _month_chain_payload(db, closed_turn).get("mechanical_tail") or {}
+    return str(tail.get("status") or "") if isinstance(tail, dict) else ""
+
+
+def _tail_record(db, closed_turn: int) -> dict:
+    tail = _month_chain_payload(db, closed_turn).get("mechanical_tail") or {}
+    return dict(tail) if isinstance(tail, dict) else {}
+
+
 def test_advance_schedules_mechanical_tail_after_front_month_advance(game, monkeypatch):
     """提交到受管后台票；前台推进后尾状态先 pending，延期执行后变 done。"""
     db, state, content = game
@@ -77,12 +96,12 @@ def test_advance_schedules_mechanical_tail_after_front_month_advance(game, monke
         result = session.resolve_turn(allow_empty_decree=True)
         assert result.advanced is True
         assert int(state.turn) == closed_turn + 1
-        assert month_chain._load_chain(db, closed_turn)["mechanical_tail"]["status"] == "pending"
+        assert _tail_status(db, closed_turn) == "pending"
     finally:
         if hasattr(executor, "fn"):
             _run_deferred(executor)
     assert get_session_write_queue(session).wait_idle(timeout_s=1)
-    assert month_chain._load_chain(db, closed_turn)["mechanical_tail"]["status"] == "done"
+    assert _tail_status(db, closed_turn) == "done"
 
 
 def test_reopen_resumes_incomplete_mechanical_tail(game, monkeypatch):
@@ -93,7 +112,7 @@ def test_reopen_resumes_incomplete_mechanical_tail(game, monkeypatch):
     _forbid_extractor(monkeypatch)
     _archive_and_stub_world(db, state, monkeypatch)
 
-    from ming_sim.mechanical_tail import ensure_mechanical_tails
+    from ming_sim.mechanical_tail import ensure_mechanical_tails, mark_mechanical_tail_pending
 
     session = make_light_session(db, state, content)
     session.llm_config = object()
@@ -112,24 +131,21 @@ def test_reopen_resumes_incomplete_mechanical_tail(game, monkeypatch):
         if hasattr(executor, "fn"):
             _run_deferred(executor)
     get_session_write_queue(session).wait_idle(timeout_s=5)
-    assert month_chain._load_chain(db, closed_turn)["mechanical_tail"]["status"] == "done"
+    assert _tail_status(db, closed_turn) == "done"
 
-    # 模拟进程退出后只剩 DB pending、写队列票已失
-    chain = month_chain._load_chain(db, closed_turn)
-    chain["mechanical_tail"] = {
-        "status": "pending",
-        "settled_year": closed_year,
-        "settled_period": closed_period,
-        "ending_outcome": None,
-    }
-    month_chain._save_chain(db, closed_turn, chain, source=Provenance.system_simulation)
+    # 模拟进程退出后只剩 DB pending、写队列票已失（公开 mark 接缝，不手改私有链）
+    mark_mechanical_tail_pending(
+        db, closed_turn,
+        settled_year=closed_year, settled_period=closed_period,
+        source=Provenance.system_simulation,
+    )
     try:
         ensure_mechanical_tails(session)
     finally:
         if not executor.future.done():
             _run_deferred(executor)
     get_session_write_queue(session).wait_idle(timeout_s=5)
-    assert month_chain._load_chain(db, closed_turn)["mechanical_tail"]["status"] == "done"
+    assert _tail_status(db, closed_turn) == "done"
 
 
 def test_exhausted_mechanical_tail_fails_and_blocks_next_month(game, monkeypatch):
@@ -159,7 +175,7 @@ def test_exhausted_mechanical_tail_fails_and_blocks_next_month(game, monkeypatch
             with pytest.raises(LLMUnavailable):
                 _run_deferred(executor)
     assert get_session_write_queue(session).wait_idle(timeout_s=5)
-    status = month_chain._load_chain(db, closed_turn)["mechanical_tail"]["status"]
+    status = _tail_status(db, closed_turn)
     assert status == "failed"
 
     db.save_turn_report(state, "下月邸报")
@@ -199,7 +215,7 @@ def test_real_brew_failure_reaches_tail_failure_and_retry(game, monkeypatch):
     failure = WebGame.mechanical_tail_failure(SimpleNamespace(db=db, state=state))
     assert failure["error"] == "酿制耗尽"
     assert failure["error_pack_path"]
-    assert month_chain._load_chain(db, closed_turn)["mechanical_tail"]["status"] == "failed"
+    assert _tail_status(db, closed_turn) == "failed"
     from ming_sim.mechanical_tail import retry_failed_mechanical_tail
     from tests.test_relation_brew_636 import _brew_fn_factory
     monkeypatch.setattr("ming_sim.agents.run_agent_text", lambda _agent, prompt, **_kw: _brew_fn_factory([])(prompt))
@@ -209,7 +225,7 @@ def test_real_brew_failure_reaches_tail_failure_and_retry(game, monkeypatch):
     finally:
         if hasattr(retry_executor, "fn"):
             _run_deferred(retry_executor)
-    assert month_chain._load_chain(db, closed_turn)["mechanical_tail"]["status"] == "done"
+    assert _tail_status(db, closed_turn) == "done"
     assert WebGame.mechanical_tail_failure(SimpleNamespace(db=db, state=state)) is None
 
 
@@ -257,7 +273,7 @@ def test_web_barrier_resumes_pending_tail_before_join(game, monkeypatch):
 
     def barrier(fn):
         order.append("barrier")
-        assert month_chain._load_chain(db, closed_turn)["mechanical_tail"]["status"] == "done"
+        assert _tail_status(db, closed_turn) == "done"
         return original_barrier(fn)
 
     monkeypatch.setattr(queue, "barrier", barrier)
@@ -293,7 +309,7 @@ def test_non_exhausted_tail_failure_stays_pending_and_retries(game, monkeypatch)
 
     monkeypatch.setattr("ming_sim.mechanical_tail._run_relation_brew", fail)
     assert session.resolve_turn(allow_empty_decree=True).advanced is True
-    assert month_chain._load_chain(db, closed_turn)["mechanical_tail"]["status"] == "failed"
+    assert _tail_status(db, closed_turn) == "failed"
     from ming_sim.mechanical_tail import ensure_mechanical_tails, retry_failed_mechanical_tail, failed_mechanical_tail
     ensure_mechanical_tails(session)
     assert failed_mechanical_tail(db, state)[0] == closed_turn
@@ -320,7 +336,7 @@ def test_non_exhausted_tail_failure_stays_pending_and_retries(game, monkeypatch)
     assert manifest["exception_type"] == "ValueError"
     assert manifest["turn"] == closed_turn + 1
     assert int(state.turn) == closed_turn + 1
-    tail = month_chain._load_chain(db, closed_turn)["mechanical_tail"]
+    tail = _tail_record(db, closed_turn)
     assert tail["status"] == "failed"
     assert tail["error_pack_path"] == caught.value.error_pack_path
 
@@ -328,7 +344,7 @@ def test_non_exhausted_tail_failure_stays_pending_and_retries(game, monkeypatch)
     assert retry_failed_mechanical_tail(session)
     assert session.resolve_turn(allow_empty_decree=True).advanced is True
     assert int(state.turn) == closed_turn + 2
-    assert month_chain._load_chain(db, closed_turn)["mechanical_tail"]["status"] == "done"
+    assert _tail_status(db, closed_turn) == "done"
 
 
 @pytest.mark.parametrize("model_text,tail_status,visible", [
@@ -390,7 +406,7 @@ def test_ending_summary_runs_in_mechanical_tail_after_advance(
     try:
         assert session.resolve_turn(allow_empty_decree=True).advanced is True
         assert state.ended is True
-        assert month_chain._load_chain(db, closed_turn)["mechanical_tail"]["status"] == "pending"
+        assert _tail_status(db, closed_turn) == "pending"
         assert db.get_ending_summary() is None
         from types import SimpleNamespace
         from web_app import WebGame
@@ -410,7 +426,7 @@ def test_ending_summary_runs_in_mechanical_tail_after_advance(
     assert seen_thread == [threading.main_thread()]
     assert tail_reads_under_gate
     assert all(tail_reads_under_gate)
-    tail = month_chain._load_chain(db, closed_turn)["mechanical_tail"]
+    tail = _tail_record(db, closed_turn)
     assert tail["status"] == tail_status
     ending = db.get_ending_summary()
     landed = WebGame.ending_payload(SimpleNamespace(db=db, state=state))
@@ -540,7 +556,7 @@ def test_mechanical_tail_missing_llm_config_surfaces_retry(game, monkeypatch):
     assert retry_failed_mechanical_tail(session) is True
     _run_deferred(executor2)
     assert get_session_write_queue(session).wait_idle(timeout_s=5)
-    chain = month_chain._load_chain(db, closed_turn)
+    chain = _month_chain_payload(db, closed_turn)
     assert chain["mechanical_tail"]["status"] == "done"
     ending = db.get_ending_summary()
     assert ending is not None

@@ -9,3 +9,4 @@
   ],
   "note": "universe only; not J6 class membership; not retain disposition"
 }
+wrote evidence/1900-j18-j6-retire-fixer/j6-universe.jsonl (2879 lines)

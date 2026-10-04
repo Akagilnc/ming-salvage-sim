@@ -1,21 +1,15 @@
-# J18 行为形状复扫（授权：双载体/专用账本/聚合/专用校验/配套供料预推恢复）
-# 命令：
-rg -n "escort_route_ledger|_escort_route_facts|escort_routes_as_escort|escort_pending_targets|escort_sources|dossier_escort_outcomes|list_escort_link_pairs|record_dossier_escort|_covert_pending|_resolve_covert|_carry_pending_covert|_is_staged_grant" ming_sim tests docs/DELTA_SCHEMA.md web_app.py --glob '!.baseline/**'
-#
-# 命中：
+# J18 行为形状复扫（删简后）
+# command: rg revoked escort mechanism shapes
 docs/DELTA_SCHEMA.md:398:### ~~`commissions[].secret_order.escort_pending_targets` / `escort_sources` / `escort_links` / `escort_results` / `dossier_escort_outcomes`~~ — 已退役（#1900 J18）
-#
-# 实况/奏报身份供料（原则保留；escorted 本切片恒假，非专用账本）：
-855:        route_lines = _escort_identity_lines(db, name, dossiers)
-931:    """押解参与人、本案衙门底账、未被排除的暗护参与人读逐路实况；其余只读奏报。"""
-979:def grant_route_reader_facts(db: Any, name: str, dossiers: list) -> list[dict[str, object]]:
-980:    """按身份投影拨帑护行：可引用的来源案卷、本次核账、或仅奏报原文。
-984:    ``source_dossier_id`` 为空；外人 ``route_visible`` 为假，只留奏报原文。
-1010:                "escorted": False,
-1038:def _escort_identity_lines(db: Any, name: str, dossiers: list) -> str:
-1039:    """按身份供料：账本读者看逐路实况与本次核账，外人只看奏报原文。"""
-1041:    for fact in grant_route_reader_facts(db, name, dossiers):
-1059:        lines.append(f"- [内部键 {dossier_id}] 奏报：{fact['memorial_text']}")
-1476:    推演者不受此限）。各段落直取账本读方法，不经任何奏报/邸报文本中转——满足
-1477:    「推演者读到的是实况数不是奏报数」。"""
-1725:            "escorted": False,
+
+# feed/record/restore companion (identity materials still present; escorted always false)
+ming_sim/materials.py:855:        route_lines = _escort_identity_lines(db, name, dossiers)
+ming_sim/materials.py:979:def grant_route_reader_facts(db: Any, name: str, dossiers: list) -> list[dict[str, object]]:
+ming_sim/materials.py:982:    专用逐路实况账本已退役（#1900 J18）；``escorted`` 本切片恒为假。
+ming_sim/materials.py:1010:                "escorted": False,
+ming_sim/materials.py:1028:                "escorted": None,
+ming_sim/materials.py:1038:def _escort_identity_lines(db: Any, name: str, dossiers: list) -> str:
+ming_sim/materials.py:1041:    for fact in grant_route_reader_facts(db, name, dossiers):
+ming_sim/materials.py:1046:                f"{'有护' if fact['escorted'] else '无护'}"
+ming_sim/materials.py:1704:    专用逐路实况账本已退役（#1900 J18）；字段形状保留，本切片 escorted 恒为假。
+ming_sim/materials.py:1725:            "escorted": False,

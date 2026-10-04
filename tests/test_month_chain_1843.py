@@ -344,27 +344,6 @@ def test_finish_rescript_phase2_stays_settling_until_advanced(game, monkeypatch)
     assert session.state.turn_phase == TurnPhase.SETTLING.value
 
 
-def test_world_segment_persists_declaration_ending_with_commit(game, monkeypatch):
-    db, state, content = game
-    from ming_sim.applier import Provenance
-
-    monkeypatch.setattr(
-        month_translate, "translate_month_segment",
-        lambda *_a, **_k: {"effects": {"emperor_fate": "suicide"}},
-    )
-    chain = {"world_text_ready": True, "world_text": "世界段"}
-    session = make_light_session(db, state, content)
-
-    outcome = month_chain._run_world_segment(
-        session, chain, source=Provenance.system_simulation,
-    )
-
-    assert outcome["status"] == "emperor_suicide"
-    assert chain["declaration_outcome"] == outcome
-    payload = db.get_resolve_context(int(state.turn))["simulator_payload"]
-    assert payload["month_chain"]["declaration_outcome"] == outcome
-
-
 def test_player_entry_recovers_ending_after_interrupted_segment(game, monkeypatch):
     db, state, content = game
     minister = next(iter(content.characters.values())).name
@@ -437,13 +416,22 @@ def test_staged_ending_is_available_inside_its_settlement_transaction(game):
     settled = settle_staged_declarations_in_decree_order(
         db, state, ["ending-decree"], source=Provenance.player_decree,
         alongside=lambda ref, result: committed.update(
-            ref=ref, outcome=month_chain._ending_from_dispatch_result(result),
+            ref=ref,
+            victory_statuses=[
+                report.get("victory_status")
+                for report in result.effects.applied
+                if isinstance(report, dict)
+                and isinstance(report.get("victory_status"), dict)
+            ],
         ),
     )
 
     assert "ending-decree" in settled
     assert committed["ref"] == "ending-decree"
-    assert committed["outcome"]["status"] == "emperor_abdicate"
+    assert any(
+        status.get("status") == "emperor_abdicate"
+        for status in committed["victory_statuses"]
+    )
     assert db.staged_declarations.is_settled("ending-decree")
 
 

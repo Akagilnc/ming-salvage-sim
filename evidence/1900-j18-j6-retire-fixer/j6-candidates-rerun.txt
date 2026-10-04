@@ -9,3 +9,4 @@
   },
   "note": "structural candidates only; absence of flag does not prove non-membership; do not treat this file as retain disposition"
 }
+wrote evidence/1900-j18-j6-retire-fixer/j6-structural-candidates.jsonl (151 lines)

@@ -604,8 +604,7 @@ def test_legacy_agno_sessions_runs_blob_still_counts_and_truncates(restore_env):
     db = env.db
     _seed_agno_legacy_blob(db, "legacy", ["r1", "r2", "r3"], with_table=False)
     assert db.agno_runs_length("legacy") == 3
-    db._truncate_agno_runs_in_tx("legacy", 1)
-    db.conn.commit()
+    db.truncate_agno_session_runs("legacy", 1)
     assert db.agno_runs_length("legacy") == 1
     runs, _ = db._decode_agno_runs(
         db.conn.execute(
@@ -666,8 +665,7 @@ def test_logical_history_matches_agno_merge_with_duplicate_legacy_ids(restore_en
     assert db.agno_runs_length("sess") == 3
     assert _agno_public_run_ids(env.path, "sess") == ["r0", "r0", "r1"]
 
-    db._truncate_agno_runs_in_tx("sess", 1)
-    db.conn.commit()
+    db.truncate_agno_session_runs("sess", 1)
     assert db.agno_runs_length("sess") == 1
     assert _agno_public_run_ids(env.path, "sess") == ["r0"]
     table_ids = [
@@ -753,8 +751,7 @@ def test_truncate_migrated_overlap_does_not_resurrect_via_agno_read(restore_env)
     db.conn.commit()
 
     assert db.agno_runs_length("sess") == 3
-    db._truncate_agno_runs_in_tx("sess", 2)
-    db.conn.commit()
+    db.truncate_agno_session_runs("sess", 2)
     assert db.agno_runs_length("sess") == 2
     assert db.agno_runs_length("other") == 1
 

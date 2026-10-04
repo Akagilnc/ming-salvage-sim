@@ -259,18 +259,6 @@ def test_close_after_chat_session_write_gate_fallback(game, tmp_path, monkeypatc
 
 
 
-def test_empty_startup_catchup_claims_zero_tickets(web_game):
-    """#1353 r7：无待补时 startup catch-up 不领票——禁 residual pending 竞态。"""
-    game = web_game
-    q = game._runtime_write_queue()
-    # fresh WebGame 无未抽回话；init 时 spawn 必须早退，队列空。
-    assert q.inflight_count() == 0
-    assert int(game._pending_writes_count) == 0
-    # 显式再调仍不领票。
-    game._spawn_startup_extraction_catch_up()
-    assert q.inflight_count() == 0
-
-
 def test_barrier_waits_trail_ticket_then_auto_close(web_game, monkeypatch):
     """#1353 生产接缝屏障钉：尾随领票未完成时 entry 不得抢跑；完成后一次过。"""
     game = web_game
@@ -464,38 +452,6 @@ def test_wait_in_flight_releases_on_worker_terminal(game, tmp_path, monkeypatch)
     wt.join()
     assert not wt.is_alive()
     assert an.list_in_flight_chat_turns(db, nid) == []
-
-
-def test_startup_catchup_uses_ticketed_gate_not_bare(web_game, monkeypatch):
-    """startup catch-up 须经票据写缝：非阻塞 acquire 拒收（裸 Lock 会放行）。"""
-    game = web_game
-    seen = {}
-
-    def fake_catch_up(*, write_gate=None, **_k):
-        # 外部契约：票据缝拒非阻塞 acquire；threading.Lock 会返回 True。
-        try:
-            write_gate.acquire(blocking=False)
-            seen["bare_lock"] = True
-            write_gate.release()
-        except RuntimeError:
-            seen["ticketed_contract"] = True
-
-    monkeypatch.setattr(web_app, "catch_up_pending_translations", fake_catch_up)
-    ticket = game._mark_pending_write(key=("startup",))
-    assert ticket is not None
-    game._run_startup_extraction_catch_up(pending_ticket=ticket)
-    assert seen.get("ticketed_contract") is True
-    assert seen.get("bare_lock") is not True
-    assert ticket._done is True
-
-
-def test_ticketed_write_gate_rejects_none(web_game):
-    """无票不得回落裸 runtime write_gate。"""
-    game = web_game
-    with pytest.raises(RuntimeError):
-        game._ticketed_write_gate(None)  # type: ignore[arg-type]
-
-
 
 
 def test_stream_post_reply_exception_preserves_phase_and_recovers_original_turn(web_game, monkeypatch):

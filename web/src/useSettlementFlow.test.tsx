@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { EndingModal } from "./components/endingModal";
+import { MechanicalTailFailure } from "./components/mechanicalTailFailure";
 import type { GameState, PendingDecision } from "./types";
 import { useSettlementFlow } from "./useSettlementFlow";
 
@@ -133,6 +134,9 @@ function mountHarness(opts: {
         <div data-testid="phase">{turn?.phase || ""}</div>
         <div data-testid="settlement-display">{String(Boolean(turn?.settlement_display))}</div>
         {state?.ending ? <EndingModal ending={state.ending} failure={state.mechanical_tail_failure} onClose={() => {}} onRetry={opts.onRetry ?? (() => {})} /> : null}
+        {!state?.ending && state?.mechanical_tail_failure ? (
+          <MechanicalTailFailure failure={state.mechanical_tail_failure} onRetry={opts.onRetry ?? (() => {})} />
+        ) : null}
       </div>
     );
   }
@@ -287,12 +291,13 @@ describe("#1845 background tail failure observation", () => {
     const running = { ...preClickState, mechanical_tail_pending: true } as GameState;
     const failed = {
       ...running, mechanical_tail_pending: false,
-      mechanical_tail_failure: { error_pack_path: "/tmp/tail-error" },
+      mechanical_tail_failure: { error: "模型调用耗尽", error_pack_path: "/tmp/tail-error" },
     } as GameState;
     const loadState = vi.fn<() => Promise<GameState | null>>().mockResolvedValue(failed);
-    const { cleanup } = mountHarness({ initial: running, loadState });
+    const { host, cleanup } = mountHarness({ initial: running, loadState });
     await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
     expect(loadState).toHaveBeenCalledTimes(1);
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain("模型调用耗尽");
     await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
     expect(loadState).toHaveBeenCalledTimes(1);
     cleanup();

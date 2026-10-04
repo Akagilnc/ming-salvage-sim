@@ -138,16 +138,16 @@
 {"file": "tests/test_audience_restore_505.py", "kind": "py", "name": "test_lost_reopen_cas_rejects_without_second_reply", "line": 463, "end": 477, "sha256": "2e9427ffef158248"}
 {"file": "tests/test_audience_restore_505.py", "kind": "py", "name": "test_retry_rejected_in_settlement_phase", "line": 483, "end": 497, "sha256": "e724e797f13434e5"}
 {"file": "tests/test_audience_restore_505.py", "kind": "py", "name": "test_reconcile_truncates_agno_runs_to_turn_start", "line": 570, "end": 598, "sha256": "d0628a7b101cfff3"}
-{"file": "tests/test_audience_restore_505.py", "kind": "py", "name": "test_legacy_agno_sessions_runs_blob_still_counts_and_truncates", "line": 601, "end": 615, "sha256": "7825d39d43cf7d4d"}
-{"file": "tests/test_audience_restore_505.py", "kind": "py", "name": "test_logical_history_matches_agno_merge_with_duplicate_legacy_ids", "line": 634, "end": 680, "sha256": "1ce18a8a53bc9164"}
-{"file": "tests/test_audience_restore_505.py", "kind": "py", "name": "test_reconcile_blob_baseline_drops_table_only_new_run", "line": 683, "end": 718, "sha256": "833e10e936b67edd"}
-{"file": "tests/test_audience_restore_505.py", "kind": "py", "name": "test_truncate_migrated_overlap_does_not_resurrect_via_agno_read", "line": 721, "end": 762, "sha256": "7b097a450bf000ec"}
-{"file": "tests/test_audience_restore_505.py", "kind": "py", "name": "test_reconcile_marks_questionless_orphan_failed", "line": 765, "end": 787, "sha256": "92c7e8f3ac27a241"}
-{"file": "tests/test_audience_restore_505.py", "kind": "py", "name": "test_start_chat_turn_second_turn_reads_agno_v3_runs", "line": 815, "end": 837, "sha256": "a4b905d6f2b27045"}
-{"file": "tests/test_audience_restore_505.py", "kind": "py", "name": "test_load_save_reconciles_interrupted_orphan", "line": 840, "end": 856, "sha256": "ac99dc64d1630144"}
-{"file": "tests/test_audience_restore_505.py", "kind": "py", "name": "test_657_rescript_summon_writes_enter_fact_and_is_idempotent", "line": 873, "end": 906, "sha256": "5e3d43e30da3fe18"}
-{"file": "tests/test_audience_restore_505.py", "kind": "py", "name": "test_657_rescript_summon_no_chat_turn_scaffold", "line": 909, "end": 926, "sha256": "7f72b861596796ee"}
-{"file": "tests/test_audience_restore_505.py", "kind": "py", "name": "test_657_rescript_summon_atomic_on_enter_failure", "line": 929, "end": 957, "sha256": "827dcb6dc23dc9a5"}
+{"file": "tests/test_audience_restore_505.py", "kind": "py", "name": "test_legacy_agno_sessions_runs_blob_still_counts_and_truncates", "line": 601, "end": 614, "sha256": "670b3ba6503c02f9"}
+{"file": "tests/test_audience_restore_505.py", "kind": "py", "name": "test_logical_history_matches_agno_merge_with_duplicate_legacy_ids", "line": 633, "end": 678, "sha256": "c8bc82372e112a25"}
+{"file": "tests/test_audience_restore_505.py", "kind": "py", "name": "test_reconcile_blob_baseline_drops_table_only_new_run", "line": 681, "end": 716, "sha256": "833e10e936b67edd"}
+{"file": "tests/test_audience_restore_505.py", "kind": "py", "name": "test_truncate_migrated_overlap_does_not_resurrect_via_agno_read", "line": 719, "end": 759, "sha256": "6befcc8757ae7a3b"}
+{"file": "tests/test_audience_restore_505.py", "kind": "py", "name": "test_reconcile_marks_questionless_orphan_failed", "line": 762, "end": 784, "sha256": "92c7e8f3ac27a241"}
+{"file": "tests/test_audience_restore_505.py", "kind": "py", "name": "test_start_chat_turn_second_turn_reads_agno_v3_runs", "line": 812, "end": 834, "sha256": "a4b905d6f2b27045"}
+{"file": "tests/test_audience_restore_505.py", "kind": "py", "name": "test_load_save_reconciles_interrupted_orphan", "line": 837, "end": 853, "sha256": "ac99dc64d1630144"}
+{"file": "tests/test_audience_restore_505.py", "kind": "py", "name": "test_657_rescript_summon_writes_enter_fact_and_is_idempotent", "line": 870, "end": 903, "sha256": "5e3d43e30da3fe18"}
+{"file": "tests/test_audience_restore_505.py", "kind": "py", "name": "test_657_rescript_summon_no_chat_turn_scaffold", "line": 906, "end": 923, "sha256": "7f72b861596796ee"}
+{"file": "tests/test_audience_restore_505.py", "kind": "py", "name": "test_657_rescript_summon_atomic_on_enter_failure", "line": 926, "end": 954, "sha256": "827dcb6dc23dc9a5"}
 {"file": "tests/test_audience_scroll_539.py", "kind": "py", "name": "test_real_player_sse_replaces_closed_same_turn_night_before_failed_reply", "line": 19, "end": 57, "sha256": "1e29cf5faa8f9a0f"}
 {"file": "tests/test_audience_scroll_539.py", "kind": "py", "name": "test_real_player_summon_sse_precedes_reply_and_scroll_shows_protagonist", "line": 60, "end": 84, "sha256": "4d1c083aa96647a6"}
 {"file": "tests/test_audience_scroll_539.py", "kind": "py", "name": "test_live_and_closed_night_share_the_real_http_contract", "line": 87, "end": 109, "sha256": "0b3d1c0fb0c422db"}
@@ -1310,15 +1310,15 @@
 {"file": "tests/test_material_directory_1830.py", "kind": "py", "name": "test_read_material_stays_inside_directory", "line": 152, "end": 181, "sha256": "e28daab91cf3b5fa"}
 {"file": "tests/test_material_directory_1830.py", "kind": "py", "name": "test_character_materials_exclude_legacy_raw_turn_report_and_keep_public_gazettes", "line": 184, "end": 243, "sha256": "b052806f90971e01"}
 {"file": "tests/test_material_directory_1830.py", "kind": "py", "name": "test_secret_order_materials_keep_full_content_and_fail_loud_on_db_error", "line": 246, "end": 271, "sha256": "742322e0b93a04c8"}
-{"file": "tests/test_mechanical_tail_1845.py", "kind": "py", "name": "test_advance_schedules_mechanical_tail_after_front_month_advance", "line": 59, "end": 85, "sha256": "3503c001e53bc555"}
-{"file": "tests/test_mechanical_tail_1845.py", "kind": "py", "name": "test_reopen_resumes_incomplete_mechanical_tail", "line": 88, "end": 132, "sha256": "072c030a4befb7dd"}
-{"file": "tests/test_mechanical_tail_1845.py", "kind": "py", "name": "test_exhausted_mechanical_tail_fails_and_blocks_next_month", "line": 135, "end": 168, "sha256": "90b581e4479213bc"}
-{"file": "tests/test_mechanical_tail_1845.py", "kind": "py", "name": "test_real_brew_failure_reaches_tail_failure_and_retry", "line": 171, "end": 213, "sha256": "3e23ddba8d75441c"}
-{"file": "tests/test_mechanical_tail_1845.py", "kind": "py", "name": "test_web_barrier_resumes_pending_tail_before_join", "line": 216, "end": 265, "sha256": "f7a60c54de50d9fa"}
-{"file": "tests/test_mechanical_tail_1845.py", "kind": "py", "name": "test_non_exhausted_tail_failure_stays_pending_and_retries", "line": 268, "end": 331, "sha256": "71e203f4f9b4da92"}
-{"file": "tests/test_mechanical_tail_1845.py", "kind": "py", "name": "test_ending_summary_runs_in_mechanical_tail_after_advance", "line": 338, "end": 426, "sha256": "e778226fe8714afa"}
-{"file": "tests/test_mechanical_tail_1845.py", "kind": "py", "name": "test_chapter_memory_retired_from_three_readers", "line": 429, "end": 489, "sha256": "5bc542d07a227f4a"}
-{"file": "tests/test_mechanical_tail_1845.py", "kind": "py", "name": "test_mechanical_tail_missing_llm_config_surfaces_retry", "line": 492, "end": 547, "sha256": "dfba8d96c91ef853"}
+{"file": "tests/test_mechanical_tail_1845.py", "kind": "py", "name": "test_advance_schedules_mechanical_tail_after_front_month_advance", "line": 78, "end": 104, "sha256": "09bec4648219bce2"}
+{"file": "tests/test_mechanical_tail_1845.py", "kind": "py", "name": "test_reopen_resumes_incomplete_mechanical_tail", "line": 107, "end": 148, "sha256": "f8cbdab923317df4"}
+{"file": "tests/test_mechanical_tail_1845.py", "kind": "py", "name": "test_exhausted_mechanical_tail_fails_and_blocks_next_month", "line": 151, "end": 184, "sha256": "469b82289087053f"}
+{"file": "tests/test_mechanical_tail_1845.py", "kind": "py", "name": "test_real_brew_failure_reaches_tail_failure_and_retry", "line": 187, "end": 229, "sha256": "e8b3b0db1da07108"}
+{"file": "tests/test_mechanical_tail_1845.py", "kind": "py", "name": "test_web_barrier_resumes_pending_tail_before_join", "line": 232, "end": 281, "sha256": "581e755e8ec5d42a"}
+{"file": "tests/test_mechanical_tail_1845.py", "kind": "py", "name": "test_non_exhausted_tail_failure_stays_pending_and_retries", "line": 284, "end": 347, "sha256": "da0b4d878c4bbd6a"}
+{"file": "tests/test_mechanical_tail_1845.py", "kind": "py", "name": "test_ending_summary_runs_in_mechanical_tail_after_advance", "line": 354, "end": 442, "sha256": "d31109d79a1f9f15"}
+{"file": "tests/test_mechanical_tail_1845.py", "kind": "py", "name": "test_chapter_memory_retired_from_three_readers", "line": 445, "end": 505, "sha256": "5bc542d07a227f4a"}
+{"file": "tests/test_mechanical_tail_1845.py", "kind": "py", "name": "test_mechanical_tail_missing_llm_config_surfaces_retry", "line": 508, "end": 563, "sha256": "ef70420681646b03"}
 {"file": "tests/test_memorial_inbox_1726.py", "kind": "py", "name": "test_new_game_memorial_inbox_empty", "line": 41, "end": 47, "sha256": "a6092115c536ceea"}
 {"file": "tests/test_memorial_inbox_1726.py", "kind": "py", "name": "test_progress_and_denunciation_project_as_memorials", "line": 50, "end": 98, "sha256": "5b536ad32c566aa3"}
 {"file": "tests/test_memorial_inbox_1726.py", "kind": "py", "name": "test_mark_read_binds_to_row_not_dossier_and_persists", "line": 101, "end": 143, "sha256": "061c0c718aaaef16"}
@@ -1329,24 +1329,23 @@
 {"file": "tests/test_menu_continue_stream_1195.py", "kind": "py", "name": "test_menu_continue_404_when_no_main_db", "line": 101, "end": 105, "sha256": "a3277c545affb6c9"}
 {"file": "tests/test_menu_continue_stream_1195.py", "kind": "py", "name": "test_stale_continue_worker_does_not_publish_after_exit", "line": 108, "end": 157, "sha256": "98dae3e7da04383c"}
 {"file": "tests/test_menu_continue_stream_1195.py", "kind": "py", "name": "test_stale_continue_worker_does_not_publish_after_new_game", "line": 160, "end": 222, "sha256": "40f63edc91b365e4"}
-{"file": "tests/test_menu_lifecycle_drain_396.py", "kind": "py", "name": "test_drain_and_close_session_waits_for_gate_then_closes", "line": 31, "end": 57, "sha256": "7e779db23873434e"}
-{"file": "tests/test_menu_lifecycle_drain_396.py", "kind": "py", "name": "test_exit_to_menu_returns_before_delayed_close_drains", "line": 60, "end": 86, "sha256": "3d3b16d855cde250"}
-{"file": "tests/test_menu_lifecycle_drain_396.py", "kind": "py", "name": "test_new_game_returns_before_delayed_close_drains", "line": 89, "end": 125, "sha256": "cc41f1877cdef98e"}
-{"file": "tests/test_menu_lifecycle_drain_396.py", "kind": "py", "name": "test_get_main_db_path_prefers_active_db_over_launch_env", "line": 129, "end": 138, "sha256": "28f444d027b596d1"}
-{"file": "tests/test_menu_lifecycle_drain_396.py", "kind": "py", "name": "test_new_game_failure_restores_old_game_and_main_db_path", "line": 141, "end": 188, "sha256": "d484d67a6cb3daea"}
-{"file": "tests/test_menu_lifecycle_drain_396.py", "kind": "py", "name": "test_drain_archive_move_failure_keeps_wal_and_shm", "line": 191, "end": 218, "sha256": "c487f2bddd78387d"}
-{"file": "tests/test_menu_lifecycle_drain_396.py", "kind": "py", "name": "test_drain_archive_moves_wal_and_shm_with_main_db", "line": 221, "end": 255, "sha256": "a25f9c33e0a8b239"}
-{"file": "tests/test_menu_lifecycle_drain_396.py", "kind": "py", "name": "test_drain_archive_rolls_back_main_db_when_wal_move_fails", "line": 258, "end": 290, "sha256": "5a445290c5d6bc79"}
-{"file": "tests/test_menu_lifecycle_drain_396.py", "kind": "py", "name": "test_drain_archive_skips_move_when_session_close_fails", "line": 293, "end": 322, "sha256": "b2144aecb9b69a95"}
-{"file": "tests/test_menu_lifecycle_drain_396.py", "kind": "py", "name": "test_restore_main_db_path_config_remove_failure_is_loud", "line": 325, "end": 342, "sha256": "1e97d2c6bc31125a"}
-{"file": "tests/test_menu_lifecycle_drain_396.py", "kind": "py", "name": "test_new_game_active_write_failure_restores_env_and_old_game", "line": 345, "end": 368, "sha256": "881a505fdc1c7ff1"}
-{"file": "tests/test_menu_lifecycle_drain_396.py", "kind": "py", "name": "test_shutdown_waits_for_drain_before_returning_or_killing", "line": 371, "end": 403, "sha256": "c9322fc11e829ebe"}
-{"file": "tests/test_menu_lifecycle_drain_396.py", "kind": "py", "name": "test_shutdown_without_web_game_skips_drain_and_kills", "line": 406, "end": 418, "sha256": "d34335b7aece2fc6"}
-{"file": "tests/test_menu_lifecycle_drain_396.py", "kind": "py", "name": "test_drain_waits_for_queued_chat_stream_not_just_gate_holder", "line": 561, "end": 633, "sha256": "dc514f96abe7adcc"}
-{"file": "tests/test_menu_lifecycle_drain_396.py", "kind": "py", "name": "test_drain_rejects_late_pending_write_before_gate_acquire", "line": 636, "end": 663, "sha256": "d54138f4a7092563"}
-{"file": "tests/test_menu_lifecycle_drain_396.py", "kind": "py", "name": "test_spawn_pending_write_thread_start_failure_releases_ownership", "line": 666, "end": 696, "sha256": "59beea9e6839bee0"}
-{"file": "tests/test_menu_lifecycle_drain_396.py", "kind": "py", "name": "test_new_game_switches_db_path_when_web_game_is_none", "line": 701, "end": 744, "sha256": "80d5759b73559009"}
-{"file": "tests/test_menu_lifecycle_drain_396.py", "kind": "py", "name": "test_new_game_switches_db_path_when_web_game_none_and_no_env", "line": 747, "end": 766, "sha256": "765c4091141f6c1a"}
+{"file": "tests/test_menu_lifecycle_drain_396.py", "kind": "py", "name": "test_exit_to_menu_returns_before_delayed_close_drains", "line": 31, "end": 57, "sha256": "3d3b16d855cde250"}
+{"file": "tests/test_menu_lifecycle_drain_396.py", "kind": "py", "name": "test_new_game_returns_before_delayed_close_drains", "line": 60, "end": 96, "sha256": "cc41f1877cdef98e"}
+{"file": "tests/test_menu_lifecycle_drain_396.py", "kind": "py", "name": "test_get_main_db_path_prefers_active_db_over_launch_env", "line": 100, "end": 109, "sha256": "28f444d027b596d1"}
+{"file": "tests/test_menu_lifecycle_drain_396.py", "kind": "py", "name": "test_new_game_failure_restores_old_game_and_main_db_path", "line": 112, "end": 159, "sha256": "d484d67a6cb3daea"}
+{"file": "tests/test_menu_lifecycle_drain_396.py", "kind": "py", "name": "test_drain_archive_move_failure_keeps_wal_and_shm", "line": 162, "end": 189, "sha256": "c487f2bddd78387d"}
+{"file": "tests/test_menu_lifecycle_drain_396.py", "kind": "py", "name": "test_drain_archive_moves_wal_and_shm_with_main_db", "line": 192, "end": 226, "sha256": "a25f9c33e0a8b239"}
+{"file": "tests/test_menu_lifecycle_drain_396.py", "kind": "py", "name": "test_drain_archive_rolls_back_main_db_when_wal_move_fails", "line": 229, "end": 261, "sha256": "5a445290c5d6bc79"}
+{"file": "tests/test_menu_lifecycle_drain_396.py", "kind": "py", "name": "test_drain_archive_skips_move_when_session_close_fails", "line": 264, "end": 293, "sha256": "b2144aecb9b69a95"}
+{"file": "tests/test_menu_lifecycle_drain_396.py", "kind": "py", "name": "test_restore_main_db_path_config_remove_failure_is_loud", "line": 296, "end": 313, "sha256": "1e97d2c6bc31125a"}
+{"file": "tests/test_menu_lifecycle_drain_396.py", "kind": "py", "name": "test_new_game_active_write_failure_restores_env_and_old_game", "line": 316, "end": 339, "sha256": "881a505fdc1c7ff1"}
+{"file": "tests/test_menu_lifecycle_drain_396.py", "kind": "py", "name": "test_shutdown_waits_for_drain_before_returning_or_killing", "line": 342, "end": 374, "sha256": "c9322fc11e829ebe"}
+{"file": "tests/test_menu_lifecycle_drain_396.py", "kind": "py", "name": "test_shutdown_without_web_game_skips_drain_and_kills", "line": 377, "end": 389, "sha256": "d34335b7aece2fc6"}
+{"file": "tests/test_menu_lifecycle_drain_396.py", "kind": "py", "name": "test_drain_waits_for_queued_chat_stream_not_just_gate_holder", "line": 532, "end": 604, "sha256": "dc514f96abe7adcc"}
+{"file": "tests/test_menu_lifecycle_drain_396.py", "kind": "py", "name": "test_drain_rejects_late_pending_write_before_gate_acquire", "line": 607, "end": 634, "sha256": "d54138f4a7092563"}
+{"file": "tests/test_menu_lifecycle_drain_396.py", "kind": "py", "name": "test_spawn_pending_write_thread_start_failure_releases_ownership", "line": 637, "end": 667, "sha256": "59beea9e6839bee0"}
+{"file": "tests/test_menu_lifecycle_drain_396.py", "kind": "py", "name": "test_new_game_switches_db_path_when_web_game_is_none", "line": 672, "end": 715, "sha256": "80d5759b73559009"}
+{"file": "tests/test_menu_lifecycle_drain_396.py", "kind": "py", "name": "test_new_game_switches_db_path_when_web_game_none_and_no_env", "line": 718, "end": 737, "sha256": "765c4091141f6c1a"}
 {"file": "tests/test_minister_chat_timeout.py", "kind": "py", "name": "test_minister_chat_idle_death_time_follows_settings_threshold", "line": 53, "end": 98, "sha256": "2259d2278809100d"}
 {"file": "tests/test_month_call_recovery_1846.py", "kind": "py", "name": "test_month_entry_world_push_follows_audience_transport_policy", "line": 82, "end": 143, "sha256": "33e6d7d83874fde3"}
 {"file": "tests/test_month_call_recovery_1846.py", "kind": "py", "name": "test_forecast_exhaustion_does_not_overwrite_prior_ending", "line": 146, "end": 209, "sha256": "daa24ff3f330d4d9"}
@@ -1363,17 +1362,16 @@
 {"file": "tests/test_month_chain_1843.py", "kind": "py", "name": "test_questions_hold_rescript_and_gazette_is_required_before_advance", "line": 217, "end": 293, "sha256": "fe73042991c003bc"}
 {"file": "tests/test_month_chain_1843.py", "kind": "py", "name": "test_player_recovery_uses_resolve_context_decree_not_ready_delta", "line": 296, "end": 318, "sha256": "95124cce25e59d08"}
 {"file": "tests/test_month_chain_1843.py", "kind": "py", "name": "test_finish_rescript_phase2_stays_settling_until_advanced", "line": 321, "end": 344, "sha256": "1ac02fe73d21079e"}
-{"file": "tests/test_month_chain_1843.py", "kind": "py", "name": "test_world_segment_persists_declaration_ending_with_commit", "line": 347, "end": 365, "sha256": "8fc0cb08d49e6aad"}
-{"file": "tests/test_month_chain_1843.py", "kind": "py", "name": "test_player_entry_recovers_ending_after_interrupted_segment", "line": 368, "end": 422, "sha256": "726c650e00152b44"}
-{"file": "tests/test_month_chain_1843.py", "kind": "py", "name": "test_staged_ending_is_available_inside_its_settlement_transaction", "line": 425, "end": 447, "sha256": "8aa62558e9b29a40"}
-{"file": "tests/test_month_chain_1843.py", "kind": "py", "name": "test_failed_declaration_commit_reloads_memory_from_db", "line": 450, "end": 493, "sha256": "568e1067228e6c20"}
-{"file": "tests/test_month_chain_1843.py", "kind": "py", "name": "test_held_dossier_settlement_failure_retry_and_reentry_isolation", "line": 496, "end": 578, "sha256": "6804ec9aea210c90"}
-{"file": "tests/test_month_chain_1843.py", "kind": "py", "name": "test_advance_uses_staged_declaration_ending", "line": 581, "end": 598, "sha256": "9dac2c91541ccaac"}
-{"file": "tests/test_month_chain_1843.py", "kind": "py", "name": "test_advance_reloads_memory_after_transaction_rollback", "line": 601, "end": 619, "sha256": "ba78dd7f1da66c0b"}
-{"file": "tests/test_month_chain_1843.py", "kind": "py", "name": "test_missing_world_model_stops_before_world_commit", "line": 622, "end": 635, "sha256": "552954adb8b8eb89"}
-{"file": "tests/test_month_chain_1843.py", "kind": "py", "name": "test_month_drift_settles_due_secret_and_records_inertia_rejection", "line": 638, "end": 686, "sha256": "e80ddb35a6906ccf"}
-{"file": "tests/test_month_chain_1843.py", "kind": "py", "name": "test_world_segment_reads_material_directory", "line": 689, "end": 731, "sha256": "e839c7d57f108bef"}
-{"file": "tests/test_month_chain_1843.py", "kind": "py", "name": "test_month_chain_lands_specialized_facts_before_due_and_gazette", "line": 734, "end": 835, "sha256": "881b2a38182b7769"}
+{"file": "tests/test_month_chain_1843.py", "kind": "py", "name": "test_player_entry_recovers_ending_after_interrupted_segment", "line": 347, "end": 401, "sha256": "726c650e00152b44"}
+{"file": "tests/test_month_chain_1843.py", "kind": "py", "name": "test_staged_ending_is_available_inside_its_settlement_transaction", "line": 404, "end": 435, "sha256": "bd00670445cc9239"}
+{"file": "tests/test_month_chain_1843.py", "kind": "py", "name": "test_failed_declaration_commit_reloads_memory_from_db", "line": 438, "end": 481, "sha256": "568e1067228e6c20"}
+{"file": "tests/test_month_chain_1843.py", "kind": "py", "name": "test_held_dossier_settlement_failure_retry_and_reentry_isolation", "line": 484, "end": 566, "sha256": "6804ec9aea210c90"}
+{"file": "tests/test_month_chain_1843.py", "kind": "py", "name": "test_advance_uses_staged_declaration_ending", "line": 569, "end": 586, "sha256": "9dac2c91541ccaac"}
+{"file": "tests/test_month_chain_1843.py", "kind": "py", "name": "test_advance_reloads_memory_after_transaction_rollback", "line": 589, "end": 607, "sha256": "ba78dd7f1da66c0b"}
+{"file": "tests/test_month_chain_1843.py", "kind": "py", "name": "test_missing_world_model_stops_before_world_commit", "line": 610, "end": 623, "sha256": "552954adb8b8eb89"}
+{"file": "tests/test_month_chain_1843.py", "kind": "py", "name": "test_month_drift_settles_due_secret_and_records_inertia_rejection", "line": 626, "end": 674, "sha256": "e80ddb35a6906ccf"}
+{"file": "tests/test_month_chain_1843.py", "kind": "py", "name": "test_world_segment_reads_material_directory", "line": 677, "end": 719, "sha256": "e839c7d57f108bef"}
+{"file": "tests/test_month_chain_1843.py", "kind": "py", "name": "test_month_chain_lands_specialized_facts_before_due_and_gazette", "line": 722, "end": 823, "sha256": "881b2a38182b7769"}
 {"file": "tests/test_month_chain_1847.py", "kind": "py", "name": "test_world_question_opens_rescript_desk_and_awaits", "line": 66, "end": 89, "sha256": "182253c69925af60"}
 {"file": "tests/test_month_chain_1847.py", "kind": "py", "name": "test_world_segment_multiple_questions_share_one_desk", "line": 92, "end": 109, "sha256": "f846d07c3aa65abd"}
 {"file": "tests/test_month_chain_1847.py", "kind": "py", "name": "test_prior_month_answered_rescript_does_not_block_or_reappear", "line": 112, "end": 148, "sha256": "623db21295b01509"}
@@ -1953,18 +1951,15 @@
 {"file": "tests/test_qa_t1_extraction_dual_source_1353.py", "kind": "py", "name": "test_close_retry_on_healed_cleanup_no_stale_ids", "line": 151, "end": 167, "sha256": "36d13869d635bbf5"}
 {"file": "tests/test_qa_t1_extraction_dual_source_1353.py", "kind": "py", "name": "test_close_after_chat_passes_write_gate_like_auto_close", "line": 170, "end": 221, "sha256": "f08da05e921bb27e"}
 {"file": "tests/test_qa_t1_extraction_dual_source_1353.py", "kind": "py", "name": "test_close_after_chat_session_write_gate_fallback", "line": 224, "end": 257, "sha256": "e75c2a04184b7f76"}
-{"file": "tests/test_qa_t1_extraction_dual_source_1353.py", "kind": "py", "name": "test_empty_startup_catchup_claims_zero_tickets", "line": 262, "end": 271, "sha256": "590ead0f43b31c79"}
-{"file": "tests/test_qa_t1_extraction_dual_source_1353.py", "kind": "py", "name": "test_barrier_waits_trail_ticket_then_auto_close", "line": 274, "end": 324, "sha256": "aec5be3b077b47f0"}
-{"file": "tests/test_qa_t1_extraction_dual_source_1353.py", "kind": "py", "name": "test_production_seam_cancel_blocks_trail_write", "line": 327, "end": 364, "sha256": "2c68c3757b144099"}
-{"file": "tests/test_qa_t1_extraction_dual_source_1353.py", "kind": "py", "name": "test_production_seam_post_barrier_ticket_ordered", "line": 367, "end": 420, "sha256": "83773114e56f2189"}
-{"file": "tests/test_qa_t1_extraction_dual_source_1353.py", "kind": "py", "name": "test_wait_in_flight_releases_on_worker_terminal", "line": 423, "end": 466, "sha256": "441389dd3cf06cc3"}
-{"file": "tests/test_qa_t1_extraction_dual_source_1353.py", "kind": "py", "name": "test_startup_catchup_uses_ticketed_gate_not_bare", "line": 469, "end": 489, "sha256": "88530de6c2d82750"}
-{"file": "tests/test_qa_t1_extraction_dual_source_1353.py", "kind": "py", "name": "test_ticketed_write_gate_rejects_none", "line": 492, "end": 496, "sha256": "188a7541509340c4"}
-{"file": "tests/test_qa_t1_extraction_dual_source_1353.py", "kind": "py", "name": "test_stream_post_reply_exception_preserves_phase_and_recovers_original_turn", "line": 501, "end": 530, "sha256": "a4d19ced7522547e"}
-{"file": "tests/test_qa_t1_extraction_dual_source_1353.py", "kind": "py", "name": "test_dispatch_exception_after_persist_retains_reply_recovery", "line": 534, "end": 557, "sha256": "834b313213904423"}
-{"file": "tests/test_qa_t1_extraction_dual_source_1353.py", "kind": "py", "name": "test_seal_rejects_new_claim_after_lifecycle", "line": 559, "end": 568, "sha256": "eb6edbb4991f6cc0"}
-{"file": "tests/test_qa_t1_extraction_dual_source_1353.py", "kind": "py", "name": "test_resolve_turn_write_gate_held_by_caller_no_reenter", "line": 574, "end": 617, "sha256": "a42221c7a405aaba"}
-{"file": "tests/test_qa_t1_extraction_dual_source_1353.py", "kind": "py", "name": "test_translation_catch_up_keeps_real_gate_when_another_owner_holds_it", "line": 620, "end": 648, "sha256": "28ad414985483848"}
+{"file": "tests/test_qa_t1_extraction_dual_source_1353.py", "kind": "py", "name": "test_barrier_waits_trail_ticket_then_auto_close", "line": 262, "end": 312, "sha256": "aec5be3b077b47f0"}
+{"file": "tests/test_qa_t1_extraction_dual_source_1353.py", "kind": "py", "name": "test_production_seam_cancel_blocks_trail_write", "line": 315, "end": 352, "sha256": "2c68c3757b144099"}
+{"file": "tests/test_qa_t1_extraction_dual_source_1353.py", "kind": "py", "name": "test_production_seam_post_barrier_ticket_ordered", "line": 355, "end": 408, "sha256": "83773114e56f2189"}
+{"file": "tests/test_qa_t1_extraction_dual_source_1353.py", "kind": "py", "name": "test_wait_in_flight_releases_on_worker_terminal", "line": 411, "end": 454, "sha256": "441389dd3cf06cc3"}
+{"file": "tests/test_qa_t1_extraction_dual_source_1353.py", "kind": "py", "name": "test_stream_post_reply_exception_preserves_phase_and_recovers_original_turn", "line": 457, "end": 486, "sha256": "a4d19ced7522547e"}
+{"file": "tests/test_qa_t1_extraction_dual_source_1353.py", "kind": "py", "name": "test_dispatch_exception_after_persist_retains_reply_recovery", "line": 490, "end": 513, "sha256": "834b313213904423"}
+{"file": "tests/test_qa_t1_extraction_dual_source_1353.py", "kind": "py", "name": "test_seal_rejects_new_claim_after_lifecycle", "line": 515, "end": 524, "sha256": "eb6edbb4991f6cc0"}
+{"file": "tests/test_qa_t1_extraction_dual_source_1353.py", "kind": "py", "name": "test_resolve_turn_write_gate_held_by_caller_no_reenter", "line": 530, "end": 573, "sha256": "a42221c7a405aaba"}
+{"file": "tests/test_qa_t1_extraction_dual_source_1353.py", "kind": "py", "name": "test_translation_catch_up_keeps_real_gate_when_another_owner_holds_it", "line": 576, "end": 604, "sha256": "28ad414985483848"}
 {"file": "tests/test_qa_u2_liaodong_buildings.py", "kind": "py", "name": "test_liaodong_buildings_content_nonempty_and_no_cheats", "line": 22, "end": 41, "sha256": "7ee98ba170dab258"}
 {"file": "tests/test_qa_u2_liaodong_buildings.py", "kind": "py", "name": "test_liaodong_buildings_seed_into_fresh_db", "line": 44, "end": 53, "sha256": "f8b875b45e6b6076"}
 {"file": "tests/test_qa_u2_liaodong_buildings.py", "kind": "py", "name": "test_liaodong_buildings_enter_monthly_period_flows", "line": 56, "end": 93, "sha256": "788e1775a5fb429b"}
@@ -2867,18 +2862,18 @@
 {"file": "web/src/staleGuard.test.tsx", "kind": "web", "name": "\"召对陈旧守卫 — 广范围（undoLastChat 全局生效、面板守卫）\" / \"撤回响应必须刷新失败列表，不能隐藏仍未落库的旧密令失败\"", "line": 475, "end": 486, "sha256": "611f2057e6a33d4e"}
 {"file": "web/src/useDurableProjection.test.tsx", "kind": "web", "name": "\"持久刷新协调器（#499 App 消费的 useDurableProjection）\" / \"撤回后旧 done 的 state / 密令响应迟到被弃写；新一代（撤回）胜出\"", "line": 34, "end": 82, "sha256": "54cf5e0212acc247"}
 {"file": "web/src/useDurableProjection.test.tsx", "kind": "web", "name": "\"持久刷新协调器（#499 App 消费的 useDurableProjection）\" / \"beginMutation 推进代次：作废在飞的旧刷新（返 null、不落陈旧 state），直接变更结果不被覆盖\"", "line": 84, "end": 105, "sha256": "06c5433fda08ea88"}
-{"file": "web/src/useSettlementFlow.test.tsx", "kind": "web", "name": "\"#1625 useSettlementFlow — observation refresh convergence\" / \"throttles inflight reloads and converges to the visible phase returned after waiting\"", "line": 165, "end": 218, "sha256": "a3f93b2efdc8b71d"}
-{"file": "web/src/useSettlementFlow.test.tsx", "kind": "web", "name": "\"#1845 ending summary stays background and becomes visible\" / \"opens with a pending summary and shows it when the tail lands\"", "line": 222, "end": 264, "sha256": "6b1db2a0ca740e37"}
-{"file": "web/src/useSettlementFlow.test.tsx", "kind": "web", "name": "\"#1845 background tail failure observation\" / \"shows a failed ending without a fabricated summary and retains retry\"", "line": 268, "end": 283, "sha256": "ccd8672c32b3b3f4"}
-{"file": "web/src/useSettlementFlow.test.tsx", "kind": "web", "name": "\"#1845 background tail failure observation\" / \"refreshes a non-ending month while the tail runs, then stops on persisted failure\"", "line": 285, "end": 299, "sha256": "d323c91d24f4d4cf"}
-{"file": "web/src/useSettlementFlow.test.tsx", "kind": "web", "name": "\"#1351/#1560 useSettlementFlow — advanceWithoutEdict 令牌与 409 幂等\" / \"POST 携 state.turn 为 expected_turn\"", "line": 303, "end": 338, "sha256": "8f9b61df02156224"}
-{"file": "web/src/useSettlementFlow.test.tsx", "kind": "web", "name": "\"#1351/#1560 useSettlementFlow — advanceWithoutEdict 令牌与 409 幂等\" / \"409 且服务端 turn>expected 时按已推进 reload，不设 error 条\"", "line": 340, "end": 368, "sha256": "3b9e89987ef08349"}
-{"file": "web/src/useSettlementFlow.test.tsx", "kind": "web", "name": "\"#1351/#1560 useSettlementFlow — advanceWithoutEdict 令牌与 409 幂等\" / \"409 且服务端 turn<=expected 时仍报错条、不 reload\"", "line": 370, "end": 398, "sha256": "58c94cb0c09526cc"}
-{"file": "web/src/useSettlementFlow.test.tsx", "kind": "web", "name": "\"#1351/#1560 useSettlementFlow — advanceWithoutEdict 令牌与 409 幂等\" / \"#1808 B pending failure remains a loud phase-1 error without a recovery panel\"", "line": 400, "end": 431, "sha256": "be1b49dc894eb340"}
-{"file": "web/src/useSettlementFlow.test.tsx", "kind": "web", "name": "\"#1433 useSettlementFlow — 退朝 awaiting 消费面（禁盲 reload hop）\" / \"advance 回 awaiting_decision 时消费 decisions + loadState，不 reload\"", "line": 435, "end": 482, "sha256": "f840f8b374532753"}
-{"file": "web/src/useSettlementFlow.test.tsx", "kind": "web", "name": "\"#1277 useSettlementFlow — issueDecree 令牌与 409 幂等\" / \"POST 携 state.turn 为 expected_turn；409 且 serverTurn>expected → reload 不设 error\"", "line": 510, "end": 544, "sha256": "1cb129f6a9fa508d"}
-{"file": "web/src/useSettlementFlow.test.tsx", "kind": "web", "name": "\"#1234 useSettlementFlow — 同会话 awaiting 停窗消费状态口\" / \"decisions 分支 await loadState：·待批出现（#1323）+ 四键为月初值，且不 reload\"", "line": 548, "end": 586, "sha256": "42632e863b5257eb"}
-{"file": "web/src/useSettlementFlow.test.tsx", "kind": "web", "name": "\"#1843 未推进的过月终包\" / \"%s 留在账本核账态而非按完成 reload\"", "line": 590, "end": 622, "sha256": "3c2a70572d5dafe1"}
-{"file": "web/src/useSettlementFlow.test.tsx", "kind": "web", "name": "\"#1852 写成即推进：本面邸报阅读态，不整页 reload\" / \"%s advanced 终包：loadState + 阅读态，朕知道了只关阅读\"", "line": 631, "end": 669, "sha256": "afce67ae55a8823a"}
-{"file": "web/src/useSettlementFlow.test.tsx", "kind": "web", "name": "\"#1852 写成即推进：本面邸报阅读态，不整页 reload\" / \"advanceWithoutEdict advanced：从 state 投影开阅读态，不 reload\"", "line": 671, "end": 695, "sha256": "b3ac23ccb979e064"}
-{"file": "web/src/useSettlementFlow.test.tsx", "kind": "web", "name": "\"#1852 写成即推进：本面邸报阅读态，不整页 reload\" / \"退局后迟到的新月刷新不得重挂上一局邸报\"", "line": 697, "end": 710, "sha256": "82a936e89da86c7c"}
+{"file": "web/src/useSettlementFlow.test.tsx", "kind": "web", "name": "\"#1625 useSettlementFlow — observation refresh convergence\" / \"throttles inflight reloads and converges to the visible phase returned after waiting\"", "line": 169, "end": 222, "sha256": "a3f93b2efdc8b71d"}
+{"file": "web/src/useSettlementFlow.test.tsx", "kind": "web", "name": "\"#1845 ending summary stays background and becomes visible\" / \"opens with a pending summary and shows it when the tail lands\"", "line": 226, "end": 268, "sha256": "6b1db2a0ca740e37"}
+{"file": "web/src/useSettlementFlow.test.tsx", "kind": "web", "name": "\"#1845 background tail failure observation\" / \"shows a failed ending without a fabricated summary and retains retry\"", "line": 272, "end": 287, "sha256": "ccd8672c32b3b3f4"}
+{"file": "web/src/useSettlementFlow.test.tsx", "kind": "web", "name": "\"#1845 background tail failure observation\" / \"refreshes a non-ending month while the tail runs, then stops on persisted failure\"", "line": 289, "end": 304, "sha256": "d781425ac8f5e340"}
+{"file": "web/src/useSettlementFlow.test.tsx", "kind": "web", "name": "\"#1351/#1560 useSettlementFlow — advanceWithoutEdict 令牌与 409 幂等\" / \"POST 携 state.turn 为 expected_turn\"", "line": 308, "end": 343, "sha256": "8f9b61df02156224"}
+{"file": "web/src/useSettlementFlow.test.tsx", "kind": "web", "name": "\"#1351/#1560 useSettlementFlow — advanceWithoutEdict 令牌与 409 幂等\" / \"409 且服务端 turn>expected 时按已推进 reload，不设 error 条\"", "line": 345, "end": 373, "sha256": "3b9e89987ef08349"}
+{"file": "web/src/useSettlementFlow.test.tsx", "kind": "web", "name": "\"#1351/#1560 useSettlementFlow — advanceWithoutEdict 令牌与 409 幂等\" / \"409 且服务端 turn<=expected 时仍报错条、不 reload\"", "line": 375, "end": 403, "sha256": "58c94cb0c09526cc"}
+{"file": "web/src/useSettlementFlow.test.tsx", "kind": "web", "name": "\"#1351/#1560 useSettlementFlow — advanceWithoutEdict 令牌与 409 幂等\" / \"#1808 B pending failure remains a loud phase-1 error without a recovery panel\"", "line": 405, "end": 436, "sha256": "be1b49dc894eb340"}
+{"file": "web/src/useSettlementFlow.test.tsx", "kind": "web", "name": "\"#1433 useSettlementFlow — 退朝 awaiting 消费面（禁盲 reload hop）\" / \"advance 回 awaiting_decision 时消费 decisions + loadState，不 reload\"", "line": 440, "end": 487, "sha256": "f840f8b374532753"}
+{"file": "web/src/useSettlementFlow.test.tsx", "kind": "web", "name": "\"#1277 useSettlementFlow — issueDecree 令牌与 409 幂等\" / \"POST 携 state.turn 为 expected_turn；409 且 serverTurn>expected → reload 不设 error\"", "line": 515, "end": 549, "sha256": "1cb129f6a9fa508d"}
+{"file": "web/src/useSettlementFlow.test.tsx", "kind": "web", "name": "\"#1234 useSettlementFlow — 同会话 awaiting 停窗消费状态口\" / \"decisions 分支 await loadState：·待批出现（#1323）+ 四键为月初值，且不 reload\"", "line": 553, "end": 591, "sha256": "42632e863b5257eb"}
+{"file": "web/src/useSettlementFlow.test.tsx", "kind": "web", "name": "\"#1843 未推进的过月终包\" / \"%s 留在账本核账态而非按完成 reload\"", "line": 595, "end": 627, "sha256": "3c2a70572d5dafe1"}
+{"file": "web/src/useSettlementFlow.test.tsx", "kind": "web", "name": "\"#1852 写成即推进：本面邸报阅读态，不整页 reload\" / \"%s advanced 终包：loadState + 阅读态，朕知道了只关阅读\"", "line": 636, "end": 674, "sha256": "afce67ae55a8823a"}
+{"file": "web/src/useSettlementFlow.test.tsx", "kind": "web", "name": "\"#1852 写成即推进：本面邸报阅读态，不整页 reload\" / \"advanceWithoutEdict advanced：从 state 投影开阅读态，不 reload\"", "line": 676, "end": 700, "sha256": "b3ac23ccb979e064"}
+{"file": "web/src/useSettlementFlow.test.tsx", "kind": "web", "name": "\"#1852 写成即推进：本面邸报阅读态，不整页 reload\" / \"退局后迟到的新月刷新不得重挂上一局邸报\"", "line": 702, "end": 715, "sha256": "82a936e89da86c7c"}
