@@ -253,6 +253,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
     expect(calls.some((call) => call.path.includes("/api/ministers/"))).toBe(false);
     expect(calls.some((call) => call.path.endsWith("/api/audience/chat/stream"))).toBe(true);
     // #1849：同殿宣人走 audience stream（非 /api/ministers/*）；mock 流字节「臣已入殿」经 delta/done 透明进 DOM。
+    await act(async () => { await vi.waitFor(() => expect(host.textContent).toContain("臣已入殿")); });
     finishStream();
     await act(async () => { await vi.waitFor(() => expect(host.textContent).toContain("臣已入殿")); });
   });

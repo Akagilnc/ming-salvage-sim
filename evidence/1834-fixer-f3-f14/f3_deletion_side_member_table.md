@@ -22,8 +22,8 @@
 | 013 | `tests/test_audience_scroll_539.py:268` | T_FIXTURE_ARG | RESTORE | append_night_chat replies "臣请据实核账。","边关尚稳。" | scroll messages role=scene with chat_turn_id | scene 载体原样 |
 | 014 | `tests/test_audience_scroll_539.py:513` | T_FIXTURE_ARG | RESTORE | append_night_chat(...,"杨嗣昌","本夜问话","本夜答复",10) | db.build_chat_projection("杨嗣昌") | 仅当前开夜投影 |
 | 015 | `tests/test_audience_translate_1837.py:476` | T_MOCK_RETURN | RESTORE | SimpleNamespace(content="臣等遵旨。",tools=[]) | r2.answer from _scene_turn | mock 回话进 answer |
-| 016 | `tests/test_audience_translate_1837.py:739` | T_MOCK_RETURN | RESTORE | FakeAgent.run→SimpleNamespace(content="臣在。") in test_translate_call_failure… | sess.scene_chat→result.answer | 转译失败前 mock 回话；本轮补回原测 |
-| 017 | `tests/test_audience_translate_1837.py:739` | T_MOCK_RETURN | RESTORE | same FakeAgent content="臣在。" (duplicate enum row) | same result.answer | 与 016 同条 |
+| 016 | `tests/test_audience_translate_1837.py:733` | T_MOCK_RETURN | RESTORE | FakeAgent.run→SimpleNamespace(content="臣在。") in test_translate_call_failure… | sess.scene_chat→result.answer | 同函数 L733 |
+| 017 | `tests/test_audience_translate_1837.py:733` | T_MOCK_RETURN | RESTORE | same FakeAgent content="臣在。" (duplicate enum row) | same result.answer | 与 016 同条 L733 |
 | 018 | `tests/test_audience_translate_1837_reopen.py:369` | T_DISK_OR_READ | RESTORE | query="去查那件未见于词表的事，原话留档。" | read_material(prepared.root, 人物/<attendant>/经历.txt) | 自写固定字节经材料树读回 |
 | 019 | `tests/test_audience_translation_1838.py:346` | T_DECLARATION_SEED | RESTORE | edge declaration context="当殿为赈灾站台" | relation_edge_events.context | 声明 context 落库 |
 | 020 | `tests/test_breach_plea_623.py:381` | T_DECLARATION_SEED | RESTORE | commissions[0].text="前旨作废，撤回成命" | pending_actions.payload_json["text"] | 撤令正文进暂存 payload |
@@ -57,7 +57,7 @@
 | 048 | `tests/test_event_trigger_gate.py:1422` | T_CONTENT_SEED | RESTORE | content/events.json songshan.summary …本局按盘面软判援锦主帅… | event summary | 内容种子 summary |
 | 049 | `tests/test_execution_joint_liability_565.py:405` | T_FIXTURE_ARG | RESTORE | merge_execution_note(...,"对账差额：应拨十两实拨三两") | execution_note | merge 参数原样 |
 | 050 | `tests/test_faction_brew_637.py:139` | T_CONTENT_SEED | RESTORE | default stance_segment "朝局如常。" for 皇党 | get_faction_stance_summary("皇党") | 未酿制默认段 |
-| 051 | `tests/test_faction_brew_637.py:140` | T_CONTENT_SEED | RESTORE | default stance_segment "朝局如常。" for 阉党 | get_faction_stance_summary("阉党") | 未酿制默认段 |
+| 051 | `tests/test_faction_brew_637.py:142` | T_CONTENT_SEED | RESTORE | default stance_segment "朝局如常。" for 阉党 | get_faction_stance_summary("阉党") | 同函数 L142 阉党朝局如常 |
 | 052 | `tests/test_faction_brew_637.py:174` | T_MOCK_RETURN | RESTORE | _dual_brew_fn_factory(stance="东林因钱谦益蒙召对而势涨。") | summary.stance_segment | brew mock stance |
 | 053 | `tests/test_faction_brew_637.py:232` | T_MOCK_RETURN | RESTORE | _dual_brew_fn_factory(stance="皇党内因温周之隙而生嫌隙。") | get_faction_stance_summary("皇党") | brew mock stance |
 | 054 | `tests/test_faction_brew_637.py:277` | T_MOCK_RETURN | RESTORE | brew override final "皇党因杨嗣昌被驳而渐离。" (prior "皇党旧文。") | get_faction_stance_summary("皇党") | 后酿覆盖 |
@@ -82,7 +82,7 @@
 | 073 | `tests/test_month_chain_1847.py:2036` | T_FIXTURE_ARG | RESTORE | world_text="世界段原文·密报可读。" | feed["world_segment"] | 密报供料 |
 | 074 | `tests/test_month_chain_1847.py:2076` | T_DISK_OR_READ | RESTORE | fact_body="文字事实正文：边材已动。\r\n同一条事实的第二行。  \r" | carrier via read_material/feed | 自写固定字节含\r |
 | 075 | `tests/test_month_translate_1840.py:212` | T_DECLARATION_SEED | RESTORE | bodies "人物先记一事","人物再记一事" | readable_materials character | 人物事实按序 |
-| 076 | `tests/test_month_translate_1840.py:213` | T_DECLARATION_SEED | RESTORE | bodies "军队先记一事","军队再记一事" | readable_materials army | 军队事实按序 |
+| 076 | `tests/test_month_translate_1840.py:215` | T_DECLARATION_SEED | RESTORE | bodies "军队先记一事","军队再记一事" | readable_materials army | 同函数 L215 army_facts |
 | 077 | `tests/test_month_translate_1840.py:389` | T_DECLARATION_SEED | RESTORE | region/affair textual_facts in same fixture block | readable_materials region/affair | 多主体事实 |
 | 078 | `tests/test_month_translate_1840.py:456` | T_DECLARATION_SEED | RESTORE | body "前一段已落" | readable_materials after later segment | 前段仍在 |
 | 079 | `tests/test_on_scene_immediate_write_1839.py:131` | T_DISK_OR_READ | RESTORE | arm_injury="左臂中箭，血透重甲，犹力战不退" | read_material(.../按月实况.txt) | 当殿事实读回 |
@@ -124,8 +124,8 @@
 | 115 | `tests/test_web_chat_serialization_393.py:364` | T_MOCK_RETURN | RESTORE | SSE done answer="臣已知悉。" | chat_result["answer"] | 序列化回话 |
 | 116 | `web/src/appDurableWiring.test.tsx:126` | T_FIXTURE_ARG | RESTORE | previous_summary:"天启七年九月邸报·试重开" | host.textContent | 重开摘要 |
 | 117 | `web/src/appDurableWiring.test.tsx:181` | T_FIXTURE_ARG | RESTORE | fixture "杨嗣昌御前低语" | host.textContent | 低语进 UI |
-| 118 | `web/src/appDurableWiring.test.tsx:255` | T_FIXTURE_ARG | RESTORE | minister content:"臣已入殿" | waitFor host.textContent | 入殿句进 App 投影 |
-| 119 | `web/src/appDurableWiring.test.tsx:255` | T_FIXTURE_ARG | RESTORE | same "臣已入殿" (dup) | same waitFor | 同 118 |
+| 118 | `web/src/appDurableWiring.test.tsx:256` | T_FIXTURE_ARG | RESTORE | minister content:"臣已入殿" | waitFor host.textContent | 同函数 finishStream 前 L256 恢复 delta 透明断言 |
+| 119 | `web/src/appDurableWiring.test.tsx:257` | T_FIXTURE_ARG | RESTORE | same "臣已入殿" (dup) | same waitFor | 同函数 finishStream 后仍有 sibling 臣已入殿；本行与 118 为前后双探针 |
 | 120 | `web/src/appDurableWiring.test.tsx:347` | T_FIXTURE_ARG | RESTORE | turn-8 fixture containing "边务如何" | [data-audience-turn-id="8"] | 指定 turn 正文 |
 | 121 | `web/src/appDurableWiring.test.tsx:1209` | T_FIXTURE_ARG | RESTORE | advancedState.issues title=MIDCOURSE_ISSUE after gazette dismiss (settlement_display=false) | host.textContent after 朕知道了 closes gazette | 旧注「新月盘面可见半程局势（已非核账）」：结算完后半程局势应显示，非核账期负向泄漏案 |
 | 122 | `web/src/appDurableWiring.test.tsx:1910` | T_FIXTURE_ARG | RESTORE | decision issue title "辽东战守" | modal.textContent | 议题 title |
@@ -137,15 +137,15 @@
 | 128 | `web/src/appDurableWiring.test.tsx:2697` | T_FIXTURE_ARG | RESTORE | last_attendant_message=SNAP_ATTENDANT (attendant-only gazette case) | [data-testid=gazette-attendant].textContent | 仅有递话时木牌仍原样展示 SNAP_ATTENDANT；现行源码已含正向 toContain |
 | 129 | `web/src/appDurableWiring.test.tsx:2714` | T_FIXTURE_ARG | RESTORE | settlementBaseState.issues title=MIDCOURSE_ISSUE with settlement_display=false | host.textContent in 月完后 case | 月完后局势半程面重现；现行源码已含正向 toContain |
 | 130 | `web/src/appDurableWiring.test.tsx:2716` | T_FIXTURE_ARG | RESTORE | settlementBaseState.closed_this_turn title=SNAP_CLOSED with settlement_display=false | host.textContent in 月完后 case | 月完后上月已结一并恢复；现行源码已含正向 toContain |
-| 131 | `web/src/components/drawers.test.tsx:163` | T_FIXTURE_ARG | RESTORE | Army props name:"登莱兵与水师" | ArmyDrawer host.textContent | 军名进抽屉 |
-| 132 | `web/src/components/drawers.test.tsx:166` | T_NEG_FIXTURE | RESTORE | arrears_text:"欠饷约60万两，数月军饷" | host.textContent.not.toContain | P7 arrears_text 不直显 |
-| 133 | `web/src/components/drawers.test.tsx:167` | T_NEG_FIXTURE | RESTORE | morale_text:"士气：尚稳" | host.textContent.not.toContain | P7 morale_text 不直显 |
+| 131 | `web/src/components/drawers.test.tsx:163` | T_FIXTURE_ARG | RESTORE | Army props name:"登莱兵与水师" | ArmyDrawer host.textContent | 同函数 keeps world facts L163；非 fractional arrears 他测 |
+| 132 | `web/src/components/drawers.test.tsx:166` | T_NEG_FIXTURE | RESTORE | arrears_text:"欠饷约60万两，数月军饷" | host.textContent.not.toContain | 同函数 keeps world facts L166；不得以 #1501 他测同串冒充 |
+| 133 | `web/src/components/drawers.test.tsx:167` | T_NEG_FIXTURE | RESTORE | morale_text:"士气：尚稳" | host.textContent.not.toContain | 同函数 keeps world facts L167；非 #1501 |
 | 134 | `web/src/components/drawers.test.tsx:195` | T_NEG_FIXTURE | RESTORE | arrears_text:"欠饷约15万两，约两月军饷" | host.textContent.not.toContain | P7 分数欠饷文案不直显 |
 | 135 | `web/src/components/drawers.test.tsx:196` | T_NEG_FIXTURE | RESTORE | same arrears_text suffix 约两月军饷 | host.textContent.not.toContain | P7 月数后缀不直显 |
 | 136 | `web/src/components/drawers.test.tsx:227` | T_NEG_FIXTURE | RESTORE | arrears_text:"欠饷约60万两，数月军饷" with status sentence | host.textContent.not.toContain | status 路径亦不直显 |
 | 137 | `web/src/components/drawers.test.tsx:228` | T_NEG_FIXTURE | RESTORE | morale_text:"士气：不振" | host.textContent.not.toContain | P7 morale_text 不直显 |
 | 138 | `web/src/components/map.test.tsx:154` | T_NEG_FIXTURE | RESTORE | map morale_text "士气：不振" | host.textContent.not.toContain | 地图驻军不直显 |
-| 139 | `web/src/components/map.test.tsx:155` | T_NEG_FIXTURE | RESTORE | map arrears_text "欠饷不足十万两，约两月军饷" | host.textContent.not.toContain | 地图不直显 |
+| 139 | `web/src/components/map.test.tsx:155` | T_NEG_FIXTURE | RESTORE | map arrears_text "欠饷不足十万两，约两月军饷" | host.textContent.not.toContain | 同函数驻军表 L155；非 population 他测 |
 | 140 | `web/src/components/modals.test.tsx:56` | T_FIXTURE_ARG | RESTORE | display concat 朕先问烛花一爆洪承畴后答 | host.textContent.toBe | 有机 markdown 清理后整串 |
 | 141 | `web/src/components/modals.test.tsx:457` | T_NEG_FIXTURE | RESTORE | forbid /臣.*叩见|恭请圣安/ | stage.textContent.not.toMatch | 禁止叩见套话 |
 | 142 | `web/src/components/modals.test.tsx:544` | T_FIXTURE_ARG | RESTORE | chat user content "剿抚孰先？" | note.textContent | 用户问话 |
@@ -157,16 +157,16 @@
 | 148 | `web/src/components/modals.test.tsx:609` | T_FIXTURE_ARG | RESTORE | aside "圣上，他有所隐瞒。" | .turn-segment.aside | aside |
 | 149 | `web/src/components/modals.test.tsx:614` | T_FIXTURE_ARG | RESTORE | attendant "公开传话。" | .turn-segment.attendant:not(.aside) | 公开传话 |
 | 150 | `web/src/components/modals.test.tsx:693` | T_FIXTURE_ARG | RESTORE | minister "同夜他臣" | document.body | 同夜他臣 |
-| 151 | `web/src/components/modals.test.tsx:694` | T_FIXTURE_ARG | RESTORE | attendant "旧轮迟到递话" | document.body | 迟到递话 |
+| 151 | `web/src/components/modals.test.tsx:696` | T_FIXTURE_ARG | RESTORE | attendant "旧轮迟到递话" | document.body | 同函数 L696 |
 | 152 | `web/src/components/modals.test.tsx:723` | T_FIXTURE_ARG | RESTORE | minister "撤回前答复" | document.body before withdraw | 撤回前可见 |
 | 153 | `web/src/components/modals.test.tsx:912` | T_FIXTURE_ARG | RESTORE | minister "非流式新答" | document.body | 非流式回话 |
 | 154 | `web/src/components/modals.test.tsx:940` | T_FIXTURE_ARG | RESTORE | "杨嗣昌御前低语" | document.body | 低语 |
 | 155 | `web/src/components/modals.test.tsx:1291` | T_FIXTURE_ARG | RESTORE | user "辽饷何解？" | document.body | 一夜卷问话 |
-| 156 | `web/src/components/modals.test.tsx:1292` | T_FIXTURE_ARG | RESTORE | user "密令：整饬边备。" | document.body (cases that still assert at ~1035) | 密令问话 |
-| 157 | `web/src/components/modals.test.tsx:1293` | T_FIXTURE_ARG | RESTORE | minister "臣领旨。" | document.body | 回话 |
-| 158 | `web/src/components/modals.test.tsx:1292` | T_FIXTURE_ARG | RESTORE | dup 密令：整饬边备 | document.body | 同 156 |
-| 159 | `web/src/components/modals.test.tsx:1293` | T_FIXTURE_ARG | RESTORE | dup 臣领旨 | document.body | 同 157 |
-| 160 | `web/src/components/modals.test.tsx:1306` | T_FIXTURE_ARG | RESTORE | attendant "他神色凝重。" | document.body | 低语神色 |
+| 156 | `web/src/components/modals.test.tsx:1296` | T_FIXTURE_ARG | RESTORE | user "密令：整饬边备。" | document.body in 半轮 replyRetry | 同函数半轮 replyRetry L1296 恢复密令夹具；不得以 shows chronological night:~1035 他测同串冒充 |
+| 157 | `web/src/components/modals.test.tsx:1297` | T_FIXTURE_ARG | RESTORE | minister "臣领旨。" | document.body in 半轮 replyRetry | 同函数半轮 replyRetry L1297 恢复臣领旨 |
+| 158 | `web/src/components/modals.test.tsx:1308` | T_FIXTURE_ARG | RESTORE | dup 密令：整饬边备 | document.body in 切回有记录大臣 | 同函数切回有记录大臣 L1308 恢复密令；非他测同串 |
+| 159 | `web/src/components/modals.test.tsx:1309` | T_FIXTURE_ARG | RESTORE | dup 臣领旨 | document.body in 切回有记录大臣 | 同函数切回有记录大臣 L1309 恢复臣领旨 |
+| 160 | `web/src/components/modals.test.tsx:1310` | T_FIXTURE_ARG | RESTORE | attendant "他神色凝重。" | document.body in 切回有记录大臣 | 同函数切回有记录大臣 L1310 恢复神色凝重 |
 | 161 | `web/src/components/modals.test.tsx:1421` | T_FIXTURE_ARG | RESTORE | archive "乙夜奏对"/"甲夜奏对" | AudienceArchiveModal text | 归档夜正文 |
 | 162 | `web/src/components/modals.test.tsx:1765` | T_FIXTURE_ARG | RESTORE | report "**辽东军情**\n- 军前缺饷" | ReportModal | 邸报标题 |
 | 163 | `web/src/components/modals.test.tsx:1766` | T_FIXTURE_ARG | RESTORE | report bullet 军前缺饷 | ReportModal | 邸报条目 |
@@ -175,8 +175,8 @@
 | 166 | `web/src/components/settlementGazettePanel.test.tsx:40` | T_FIXTURE_ARG | RESTORE | attendantMessage="奴婢呈报。" | [data-testid=gazette-attendant] | 呈报人话语 |
 | 167 | `web/src/mindreadingDelivery.test.tsx:149` | T_FIXTURE_ARG | RESTORE | scene "新落账场景" turn 8 | document.body | 新场景 |
 | 168 | `web/src/mindreadingDelivery.test.tsx:178` | T_FIXTURE_ARG | RESTORE | rows "user:失败问话" | rows() | 失败问话 |
-| 169 | `web/src/mindreadingDelivery.test.tsx:179` | T_FIXTURE_ARG | RESTORE | rows "user:保留问话" | rows() | 保留问话 |
-| 170 | `web/src/mindreadingDelivery.test.tsx:180` | T_FIXTURE_ARG | RESTORE | rows "minister:保留答复" | rows() | 保留答复 |
+| 169 | `web/src/mindreadingDelivery.test.tsx:180` | T_FIXTURE_ARG | RESTORE | rows "user:保留问话" | rows() | 同函数 provider failure L180；曾误插入 rows() 映射体已撤回 |
+| 170 | `web/src/mindreadingDelivery.test.tsx:181` | T_FIXTURE_ARG | RESTORE | rows "minister:保留答复" | rows() | 同函数 provider failure L181 |
 | 171 | `web/src/mindreadingDelivery.test.tsx:208` | T_FIXTURE_ARG | RESTORE | rows "user:请奏" | rows() | 请奏 |
 | 172 | `web/src/staleGuard.test.tsx:342` | T_FIXTURE_ARG | RESTORE | notice "甲：已离开实时回话" | [data-testid=notice] | 陈旧守卫提示 |
 | 173 | `web/src/staleGuard.test.tsx:391` | T_FIXTURE_ARG | RESTORE | decisions "辽东战守" | [data-testid=decisions] | 议题按钮文案 |

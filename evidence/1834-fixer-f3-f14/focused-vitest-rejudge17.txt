@@ -1,0 +1,16 @@
+
+ RUN  v4.1.9 /Users/akagilnc/WorkSpace/Ming_LLM-1834-w5/web
+
+Not implemented: navigation to another Document
+
+ Test Files  5 passed (5)
+      Tests  149 passed (149)
+   Start at  04:32:37
+   Duration  4.52s (transform 1.13s, setup 0ms, import 1.76s, tests 3.88s, environment 3.27s)
+
+real 4.85
+user 7.92
+sys 1.08
+
+# vitest exit 0; 149 passed (--environment jsdom); real 4.85s
+# bins: AGY/CODEX/CLAUDE/CURSOR/KIMI/GROK/PI=/usr/bin/false

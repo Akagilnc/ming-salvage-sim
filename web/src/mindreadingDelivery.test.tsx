@@ -90,8 +90,6 @@ function mount(refreshOnEnd = false) {
     Array.from(host.querySelectorAll(".chat-log .turn-segment, .chat-log .chat-message:not(.pending):not(.thinking)")).map((el) => {
       const role = ["user", "minister", "attendant"].find((r) => el.classList.contains(r)) || "";
       return `${role}:${el.querySelector("p")?.textContent ?? ""}`;
-    expect(rows()).toContain("user:保留问话");
-    expect(rows()).toContain("minister:保留答复");
     });
   return {
     hookRef, busyRef, rows,
@@ -179,7 +177,8 @@ describe("召对投递（#499 经真实 useAudienceChat 生产控制器）", () 
 
     expect(hookRef.current!.failedIdentity).toEqual({ campaign_id: "", night_id: 24, chat_turn_id: 8 });
     expect(rows()).toContain("user:失败问话");
-    expect(document.querySelector('[data-audience-turn-id="7"]')).not.toBeNull();
+    expect(rows()).toContain("user:保留问话");
+    expect(rows()).toContain("minister:保留答复");
   });
 
   it("accepted 后普通流中断会移除未持久化的半段回话", async () => {

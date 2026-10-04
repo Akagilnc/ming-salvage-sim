@@ -78,7 +78,6 @@ describe("NodeIntel #648 population (P7: LLM 长文，无 UI 模板)", () => {
     expect(host.textContent).not.toContain("万口");
     expect(host.textContent).not.toContain("不足一万");
     expect(host.textContent).not.toContain("undefined");
-    expect(host.textContent).not.toContain("欠饷不足十万两，约两月军饷");
   });
 });
 
@@ -153,6 +152,7 @@ describe("NodeIntel #1352 garrison layout / army-list口径", () => {
     expect(host.querySelector(".intel-table--garrison")).not.toBeNull();
     expect(host.textContent).not.toContain("不满"); // makeArmy 默认 mutiny_tier 不得直显
     expect(host.textContent).not.toContain("士气：不振");
+    expect(host.textContent).not.toContain("欠饷不足十万两，约两月军饷");
   });
 
 });

@@ -1293,6 +1293,8 @@ describe("ChatModal — one-night audience scroll (#1849)", () => {
     });
     await act(async () => { await Promise.resolve(); await Promise.resolve(); });
     expect(document.body.textContent).toContain("辽饷何解？");
+    expect(document.body.textContent).toContain("密令：整饬边备");
+    expect(document.body.textContent).toContain("臣领旨");
     // Single user bubble — claimed persisted turn suppresses the synthetic pending duplicate.
     const userBubbles = Array.from(document.querySelectorAll(".turn-segment.user"))
       .filter((node) => node.textContent?.includes("辽饷何解？"));
@@ -1303,6 +1305,9 @@ describe("ChatModal — one-night audience scroll (#1849)", () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ night_id: 23, protagonist: "", roster: [], translation_pending: false, messages: nightScroll }) }));
     renderModal({ minister: hong, ministers: [hong, xu], portraitPrefix: "minister_", currentNightId: 23 });
     await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    expect(document.body.textContent).toContain("密令：整饬边备");
+    expect(document.body.textContent).toContain("臣领旨");
+    expect(document.body.textContent).toContain("神色凝重");
     expect(document.querySelector(".minister-profile")).toBeNull();
   });
 
