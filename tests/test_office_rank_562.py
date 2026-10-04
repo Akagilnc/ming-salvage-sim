@@ -113,7 +113,26 @@ def test_same_rank_demotion_and_two_band_promotion_follow_upward_formula(game):
 
 
 def test_restoration_and_displaced_third_state_use_latest_historical_office(game):
+    """History basis uses closed status/reason enums — not free-text office markers (#1847)."""
     db, state, _content = game
+    # Seed 袁可立 as offstage with archived clean title (no 前/罢居 office-string gate).
+    db.conn.execute(
+        "UPDATE characters SET status='offstage', reason_code='自请', office='', office_type='身名分' "
+        "WHERE name='袁可立'"
+    )
+    exists = db.conn.execute(
+        "SELECT 1 FROM character_offices WHERE character_name='袁可立'"
+    ).fetchone()
+    if exists:
+        db.conn.execute(
+            "UPDATE character_offices SET office_title='登莱巡抚', office_type='地方' WHERE character_name='袁可立'"
+        )
+    else:
+        db.conn.execute(
+            "INSERT INTO character_offices(character_name, office_title, office_type, source) "
+            "VALUES('袁可立','登莱巡抚','地方','test')"
+        )
+    db.conn.commit()
     _yuan_id, yuan = _appointment_dossier(db, state, "袁可立", "陕西巡抚")
     assert yuan["break_rank"]["basis"] == "historical_office"
     assert yuan["break_rank"]["is_break_rank"] is False
@@ -128,7 +147,7 @@ def test_restoration_and_displaced_third_state_use_latest_historical_office(game
     _add(db, state, "候铨乙", "兵部尚书", "兵部")
     db.set_character_office("候铨乙", "听用候铨", "待铨")
     db.conn.execute("UPDATE characters SET reason_code='被顶替' WHERE name='候铨乙'")
-    # Recreate the archived previous office, as displacement does in production.
+    # Recreate the archived previous office via status/reason enum path (not free-text displace).
     db.conn.execute(
         "UPDATE character_offices SET office_title='兵部尚书',office_type='兵部' WHERE character_name='候铨乙'"
     )

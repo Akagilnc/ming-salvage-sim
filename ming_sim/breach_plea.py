@@ -1075,7 +1075,7 @@ def _sponsor_transferred(db: Any, name: str, commitment_row: Any) -> bool:
     if co is not None:
         current_office = str(co["office_title"] or current_office).strip() or current_office
 
-    # 承诺 roster 上记录的 role/office 快照
+    # 承诺 / 案卷侧只取 office 身份字段；role 是职分自由措辞，不得与 current_office 比语义。
     expected = ""
     try:
         roster = json.loads(commitment_row["participant_roster"] or "[]")
@@ -1089,12 +1089,11 @@ def _sponsor_transferred(db: Any, name: str, commitment_row: Any) -> bool:
                 continue
             if item.get("tier") != "主办":
                 continue
-            expected = str(
-                item.get("office") or item.get("role") or item.get("office_title") or ""
-            ).strip()
+            # #1847: no role fallback, no substring/length proxy for "is office".
+            expected = str(item.get("office") or item.get("office_title") or "").strip()
             break
 
-    # 案卷 executor office 快照
+    # 案卷 executor office 快照（结构化 office 字段，非自由 role）
     if not expected:
         did = parse_dossier_id(
             commitment_row["origin_ref"] if "origin_ref" in commitment_row.keys() else ""
@@ -1116,7 +1115,7 @@ def _sponsor_transferred(db: Any, name: str, commitment_row: Any) -> bool:
                         or ""
                     ).strip()
 
-    # office_change_records：有调任记录且当前 office 与最早/承诺侧不一致
+    # office_change_records：有调任记录且当前 office 与承诺侧 office 身份不等
     oc = db.conn.execute(
         """
         SELECT office_title FROM office_change_records
@@ -1128,31 +1127,8 @@ def _sponsor_transferred(db: Any, name: str, commitment_row: Any) -> bool:
         latest = str(oc["office_title"] or "").strip()
         if latest and expected and latest != expected and current_office != expected:
             return True
+    # Exact office-identity inequality only — no length/substring free-text classify.
     if expected and current_office and expected != current_office:
-        # role 常是职分非官职名：短 expected 且与 current_office 不完全相等 → 按 role 处理。
-        # #1847: 不用 expected in current_office 子串推断。
-        if len(expected) <= 4:
-            # 无可靠 office 快照时：看 office_change_records 是否在承诺 origin 之后有调任
-            if oc is not None:
-                # 有任何调任记录且 status active → 调
-                # 过宽；要求 dossier 绑承诺同源
-                did = parse_dossier_id(
-                    commitment_row["origin_ref"]
-                    if "origin_ref" in commitment_row.keys() else ""
-                )
-                if did is not None:
-                    linked = db.conn.execute(
-                        """
-                        SELECT 1 FROM office_change_records
-                        WHERE character_name=? AND dossier_id IS NOT NULL
-                          AND dossier_id != ?
-                        ORDER BY id DESC LIMIT 1
-                        """,
-                        (name, int(did)),
-                    ).fetchone()
-                    if linked is not None:
-                        return True
-            return False
         return True
     return False
 

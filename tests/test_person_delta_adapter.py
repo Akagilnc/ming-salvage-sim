@@ -918,6 +918,7 @@ def test_rejected_derived_appointment_durably_restores_complete_person_state(gam
 
 
 def test_apply_score_extraction_materializes_displaced_holder_as_talent_pool_change(game):
+    """#1847: appointment no longer displaces via free-text exclusive suffixes."""
     db, state, content = game
     names = [
         name
@@ -941,7 +942,6 @@ def test_apply_score_extraction_materializes_displaced_holder_as_talent_pool_cha
     before_logs = db.conn.execute("SELECT COUNT(*) FROM person_logs").fetchone()[0]
 
     try:
-        # 新正形：地方在任须有 character_offices.region_id，不得靠空任所 wildcard 互挤。
         db.conn.execute(
             "UPDATE characters SET office=?, office_type=? WHERE name=?",
             (target_office, "地方", old_holder),
@@ -976,14 +976,14 @@ def test_apply_score_extraction_materializes_displaced_holder_as_talent_pool_cha
             "SELECT status, office, office_type, reason_code FROM characters WHERE name=?",
             (old_holder,),
         ).fetchone()
+        # Displacement seam is no-op: old holder keeps seat until exact-registry model returns.
         assert dict(old_row) == {
             "status": "active",
-            "office": "听用候铨",
-            "office_type": "身名分",
-            "reason_code": "被顶替",
+            "office": target_office,
+            "office_type": "地方",
+            "reason_code": old_row["reason_code"],
         }
-        assert content.characters[old_holder].office == "听用候铨"
-        assert content.characters[old_holder].office_type == "身名分"
+        assert content.characters[old_holder].office == target_office
         assert applied["applied_person_changes"] == [
             {
                 "origin_ref": "盘面自发", "动作": "调任",
@@ -993,21 +993,9 @@ def test_apply_score_extraction_materializes_displaced_holder_as_talent_pool_cha
                 "new_office": target_office,
                 "kind": "transfer",
                 "reason": "顶替旧任",
-                "displaced": [f"{old_holder}:{target_office}"],
-            },
-            {
-                "name": old_holder,
-                "origin_ref": "盘面自发", "动作": "处置",
-                "status": "active",
-                "reason": "被顶替",
-                "reason_code": "被顶替",
-                "office": "听用候铨",
-                "office_type": "身名分",
-                "derived_from": "被顶替",
-                "cascade_echo": True,
             },
         ]
-        assert db.conn.execute("SELECT COUNT(*) FROM person_logs").fetchone()[0] == before_logs + 2
+        assert db.conn.execute("SELECT COUNT(*) FROM person_logs").fetchone()[0] == before_logs + 1
     finally:
         (
             content.characters[new_holder].status,
@@ -1022,6 +1010,7 @@ def test_apply_score_extraction_materializes_displaced_holder_as_talent_pool_cha
 
 
 def test_apply_score_extraction_clears_displaced_reason_when_reappointed(game):
+    """Reappointment clears an already-marked 被顶替 seat; no free-text displace step."""
     db, state, content = game
     names = [
         name
@@ -1030,50 +1019,25 @@ def test_apply_score_extraction_clears_displaced_reason_when_reappointed(game):
         and getattr(ch, "office_type", "") != "后宫"
         and db.get_character_status(name)[0] == "active"
     ]
-    new_holder, old_holder = names[0], names[1]
-    old_new = (
-        content.characters[new_holder].status,
-        content.characters[new_holder].office,
-        content.characters[new_holder].office_type,
-    )
+    old_holder = names[1]
     old_old = (
         content.characters[old_holder].status,
         content.characters[old_holder].office,
         content.characters[old_holder].office_type,
     )
-    target_office = "测试总督"
     reappointed_office = "测试巡抚"
 
     try:
-        # 新正形：地方在任须有 character_offices.region_id，与接任同 seat 才互挤。
+        # Seed the displaced mark directly — exclusive-suffix displace is deleted (#1847).
         db.conn.execute(
-            "UPDATE characters SET office=?, office_type=? WHERE name=?",
-            (target_office, "地方", old_holder),
-        )
-        db._record_character_office(
-            old_holder, target_office, "地方", "test-fixture", region_id="shaanxi",
+            "UPDATE characters SET office=?, office_type=?, status_reason=?, reason_code=? WHERE name=?",
+            ("听用候铨", "身名分", "被顶替", "被顶替", old_holder),
         )
         db.conn.commit()
-        content.characters[old_holder].office = target_office
-        content.characters[old_holder].office_type = "地方"
-        content.characters[old_holder].office_region = "shaanxi"
-
-        issues.apply_score_extraction(
-            db,
-            state,
-            {"人物变更": [{"name": new_holder, "origin_ref": "盘面自发", "动作": "调任", "office": target_office, "office_type": "地方", "region_id": "shaanxi"}]},
-            content=content,
-        )
-        displaced = db.conn.execute(
-            "SELECT office, office_type, status_reason, reason_code FROM characters WHERE name=?",
-            (old_holder,),
-        ).fetchone()
-        assert dict(displaced) == {
-            "office": "听用候铨",
-            "office_type": "身名分",
-            "status_reason": "被顶替",
-            "reason_code": "被顶替",
-        }
+        content.characters[old_holder].office = "听用候铨"
+        content.characters[old_holder].office_type = "身名分"
+        content.characters[old_holder].status_reason = "被顶替"
+        content.characters[old_holder].reason_code = "被顶替"
 
         issues.apply_score_extraction(
             db,
@@ -1105,11 +1069,6 @@ def test_apply_score_extraction_clears_displaced_reason_when_reappointed(game):
             "reason_code": "",
         }
     finally:
-        (
-            content.characters[new_holder].status,
-            content.characters[new_holder].office,
-            content.characters[new_holder].office_type,
-        ) = old_new
         (
             content.characters[old_holder].status,
             content.characters[old_holder].office,
@@ -2577,8 +2536,7 @@ def test_new_appointment_falsy_return_restores_snapshot(game, monkeypatch):
 
 
 def test_displaced_holder_transit_to_cleared(game):
-    """5b r7（codex-b R1）：顶替全腾缺时，被挤下来的旧任若正在赴任途中，transit_to 须清——
-    否则人才池里「听用候铨」的他还挂着去老职位的路线（三面同步 stale）。"""
+    """#1847: free-text exclusive displacement deleted; seam is a no-op."""
     from ming_sim.issues import _displace_duplicate_offices
     db, state, content = game
     names = [
@@ -2598,15 +2556,13 @@ def test_displaced_holder_transit_to_cleared(game):
         content.characters[old].office_type = "督抚"
         content.characters[old].transit_to = "liaodong"
 
-    _displace_duplicate_offices(db, content, new_holder, "蓟辽总督")
+    assert _displace_duplicate_offices(db, content, new_holder, "蓟辽总督") == []
 
     row = db.conn.execute(
         "SELECT office, transit_to FROM characters WHERE name=?", (old,)
     ).fetchone()
-    assert row["office"] == "听用候铨", "全腾缺旧任应落听用候铨"
-    assert (row["transit_to"] or "") == "", f"被顶替者 transit_to 须清，实际 {row['transit_to']!r}"
-    if old in content.characters:
-        assert getattr(content.characters[old], "transit_to", "") == "", "内存 transit_to 也须清"
+    assert row["office"] == "蓟辽总督"
+    assert (row["transit_to"] or "") == "liaodong"
 
 
 def test_historical_death_tick_sets_reason_code(game):

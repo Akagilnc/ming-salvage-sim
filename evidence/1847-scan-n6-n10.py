@@ -458,8 +458,20 @@ def classify_n10(row):
         if kind in {"re_sub_n10", "re_sub"} and ("前" in snip or "原" in snip):
             return "FIX_DONE", "office prefix vocabulary peel deleted"
         return "KEEP_identity_or_formal", "offices.json stem/registry match or formal concurrent split"
-    if ctx == "_is_exclusive_office" or "_EXCLUSIVE_OFFICE_SUFFIXES" in snip:
-        return "FIX_DONE", "exclusive-office suffix vocabulary deleted; no free-text exclusivity admit"
+    if ctx == "_is_exclusive_office" or "_EXCLUSIVE_OFFICE_SUFFIXES" in snip or (
+        ctx == "_displace_duplicate_offices" and ("_is_exclusive_office" in snip or "return []" in snip)
+    ):
+        return "FIX_DONE", "exclusive-office suffix vocab + Always-False helper deleted; displace seam is no-op"
+    if ctx == "_sponsor_transferred" and (
+        "len(expected)" in snip or "expected in current_office" in snip or 'item.get("role")' in snip
+    ):
+        return "FIX_DONE", "breach length/substring/role free-text transfer classify deleted"
+    if "decree.py" in file and ("LIKE '%首辅%'" in snip or "LIKE '%掌印%'" in snip or "LIKE '%给事中%'" in snip):
+        return "FIX_DONE", "promulgation gatekeeper office LIKE free-text admission deleted"
+    if ("_GATEKEEPER_OFFICE_TITLES" in snip or ctx == "gatekeepers" or "_GATEKEEPER_OFFICE_TITLES" in ctx) and (
+        "office IN" in snip or "office_type" in snip
+    ):
+        return "KEEP_identity_or_formal", "exact roster office titles + office_type enum for gatekeepers"
     if "ministerFilters.ts" in file and (
         "/首辅/" in snip or "/前|罢|致仕/" in snip or "officeRank" in snip or "/尚书/" in snip
     ):
@@ -467,7 +479,7 @@ def classify_n10(row):
     if ctx == "triage_officers" and ("LIKE" in snip or "首辅" in snip):
         if "LIKE" in snip:
             return "FIX_DONE", "triage office LIKE free-text admission deleted"
-        return "KEEP_identity_or_formal", "exact office title frozenset admission"
+        return "KEEP_identity_or_formal", "exact shipped roster office titles (内阁首辅/司礼监掌印太监)"
     if "ministerFilters" in file or (
         "office_type" in snip and kind in {"str_in_compare", "membership_compare", "includes_branch", "in_compare"}
     ):
@@ -598,15 +610,21 @@ def main():
         (n10_cls, "office_title_noise_deleted", "concurrent_office_titles",
          "前/原/罢居/革职 vocabulary peel deleted",
          "N10: office tokenizer keeps formal concurrent split only"),
-        (n10_cls, "exclusive_office_suffix_deleted", "_is_exclusive_office",
-         "exclusive office suffix vocabulary deleted",
-         "N10: exclusivity not admitted from free-text title suffixes"),
+        (n10_cls, "exclusive_office_suffix_deleted", "_displace_duplicate_offices",
+         "exclusive office suffix helper deleted; displace returns []",
+         "N10: exclusivity not admitted from free-text title suffixes; dead Always-False helper removed"),
         (n10_cls, "minister_filter_title_regex_deleted", "filterMinisters",
          "office title regex sort/admission deleted",
          "N10: minister filter uses office_type/status enum only"),
         (n10_cls, "triage_office_like_deleted", "triage_officers",
          "office LIKE '%首辅%' free-text admission deleted",
-         "N10: triage officers admitted by exact office title frozenset only"),
+         "N10: triage officers admitted by exact shipped roster office titles only"),
+        (n10_cls, "decree_gatekeeper_like_deleted", "gatekeepers",
+         "office LIKE '%首辅%'/掌印/给事中 free-text admission deleted",
+         "N10: promulgation gatekeepers use exact roster titles + office_type enum"),
+        (n10_cls, "breach_length_proxy_deleted", "_sponsor_transferred",
+         "len(expected)/role/substring transfer classify deleted",
+         "N10: sponsor transfer uses exact office-identity fields only"),
     ):
         if any((x.get("ctx") == ctx and x.get("kind") == kind) for x in table):
             continue
@@ -618,6 +636,8 @@ def main():
                 "ming_sim/cli_backend.py" if ("secret_" in kind or kind == "atom_strip_deleted") else
                 "ming_sim/db.py" if ("secret_suffix" in kind or "legacy_office" in kind) else
                 "ming_sim/issues.py" if "exclusive_office" in kind else
+                "ming_sim/decree.py" if "decree_gatekeeper" in kind else
+                "ming_sim/breach_plea.py" if "breach_length" in kind else
                 "web/src/components/ministerFilters.ts" if "minister_filter" in kind else
                 "ming_sim/rescript_draft.py" if "triage_office" in kind else
                 "ming_sim/office_rank.py"

@@ -271,18 +271,18 @@ py	ming_sim/breach_plea.py	1022	strip_call	strip	_scan_misappropriation	"       
 py	ming_sim/breach_plea.py	1069	strip_call	strip	_sponsor_transferred	"    current_office = str(char[""office""] or """").strip()"	prod
 py	ming_sim/breach_plea.py	1076	strip_call	strip	_sponsor_transferred	"        current_office = str(co[""office_title""] or current_office).strip() or current_office"	prod
 py	ming_sim/breach_plea.py	1088	strip_call	strip	_sponsor_transferred	"            if str(item.get(""character_id"") or """").strip() != name:"	prod
-py	ming_sim/breach_plea.py	1092	strip_call	strip	_sponsor_transferred	            expected = str(	prod
-py	ming_sim/breach_plea.py	1113	strip_call	strip	_sponsor_transferred	                    expected = str(	prod
-py	ming_sim/breach_plea.py	1128	strip_call	strip	_sponsor_transferred	"        latest = str(oc[""office_title""] or """").strip()"	prod
-py	ming_sim/breach_plea.py	1181	join_call	join	_scan_remove_sponsor	"        who = ""、"".join(hit[:3])"	prod
-py	ming_sim/breach_plea.py	1181	slice_trunc_expr	[:expr]	_scan_remove_sponsor	"        who = ""、"".join(hit[:3])"	prod
-py	ming_sim/breach_plea.py	1257	strip_call	strip	_extract_ref_ids	"        tid = str(it.get(""target_id"") or """").strip()"	prod
-py	ming_sim/breach_plea.py	1259	startswith_call	startswith	_extract_ref_ids	"            if tid.startswith(f""{p}:""):"	prod
-py	ming_sim/breach_plea.py	1261	split_call	split	_extract_ref_ids	"                    out.add(int(tid.split("":"", 1)[1]))"	prod
-py	ming_sim/breach_plea.py	1265	strip_call	strip	_extract_ref_ids	"            ref = str(it.get(key) or """").strip()"	prod
-py	ming_sim/breach_plea.py	1321	strip_call	strip	_note_funding_item	"        oref = str(it.get(""origin_ref"") or """").strip()"	prod
-py	ming_sim/breach_plea.py	1328	startswith_call	startswith	_note_funding_item	"        if tid.startswith(""issue:""):"	prod
-py	ming_sim/breach_plea.py	1330	split_call	split	_note_funding_item	"                fund_issue_ids.add(int(tid.split("":"", 1)[1]))"	prod
+py	ming_sim/breach_plea.py	1093	strip_call	strip	_sponsor_transferred	"            expected = str(item.get(""office"") or item.get(""office_title"") or """").strip()"	prod
+py	ming_sim/breach_plea.py	1112	strip_call	strip	_sponsor_transferred	                    expected = str(	prod
+py	ming_sim/breach_plea.py	1127	strip_call	strip	_sponsor_transferred	"        latest = str(oc[""office_title""] or """").strip()"	prod
+py	ming_sim/breach_plea.py	1157	join_call	join	_scan_remove_sponsor	"        who = ""、"".join(hit[:3])"	prod
+py	ming_sim/breach_plea.py	1157	slice_trunc_expr	[:expr]	_scan_remove_sponsor	"        who = ""、"".join(hit[:3])"	prod
+py	ming_sim/breach_plea.py	1233	strip_call	strip	_extract_ref_ids	"        tid = str(it.get(""target_id"") or """").strip()"	prod
+py	ming_sim/breach_plea.py	1235	startswith_call	startswith	_extract_ref_ids	"            if tid.startswith(f""{p}:""):"	prod
+py	ming_sim/breach_plea.py	1237	split_call	split	_extract_ref_ids	"                    out.add(int(tid.split("":"", 1)[1]))"	prod
+py	ming_sim/breach_plea.py	1241	strip_call	strip	_extract_ref_ids	"            ref = str(it.get(key) or """").strip()"	prod
+py	ming_sim/breach_plea.py	1297	strip_call	strip	_note_funding_item	"        oref = str(it.get(""origin_ref"") or """").strip()"	prod
+py	ming_sim/breach_plea.py	1304	startswith_call	startswith	_note_funding_item	"        if tid.startswith(""issue:""):"	prod
+py	ming_sim/breach_plea.py	1306	split_call	split	_note_funding_item	"                fund_issue_ids.add(int(tid.split("":"", 1)[1]))"	prod
 py	ming_sim/centrifuge_ledger.py	99	strip_call	strip	_optional_text	    text = str(value).strip()	prod
 py	ming_sim/centrifuge_ledger.py	262	strip_call	strip	_resolve_target_faction_identity	    if not isinstance(faction, str) or not faction.strip():	prod
 py	ming_sim/centrifuge_ledger.py	281	join_call	join	_load_namespace	"    placeholders = "","".join(""?"" for _ in keys)"	prod
@@ -1257,13 +1257,14 @@ py	ming_sim/decree.py	119	strip_call	strip	collect_new_arrival_waiting_audience	
 py	ming_sim/decree.py	128	strip_call	strip	collect_new_arrival_waiting_audience	"        name = str(arrival.get(""name"") or """").strip()"	prod
 py	ming_sim/decree.py	131	strip_call	strip	collect_new_arrival_waiting_audience	"        location = str(arrival.get(""location"") or """").strip()"	prod
 py	ming_sim/decree.py	133	strip_call	strip	collect_new_arrival_waiting_audience	"        wait_loc = str(waiting.get(""location"") or """").strip()"	prod
-py	ming_sim/decree.py	561	startswith_call	startswith	_validate_promulgation_verdict_item	"        if any(isinstance(key, str) and key.startswith(""resistance_"") for key in item):"	prod
-py	ming_sim/decree.py	673	strip_call	strip	_rescript_decisions	"            str(item.get(""key"") or """").strip()"	prod
-py	ming_sim/decree.py	675	strip_call	strip	_rescript_decisions	"            if isinstance(item, dict) and str(item.get(""key"") or """").strip()"	prod
-py	ming_sim/decree.py	677	join_call	join	_rescript_decisions	"        opposition = ""、"".join(opponents)"	prod
-py	ming_sim/decree.py	789	strip_call	strip	write_decree_with_agno	    if not text.strip():	prod
-py	ming_sim/decree.py	903	startswith_call	startswith	_provenance_from_stored	"    if text.startswith(""Provenance.""):"	prod
-py	ming_sim/decree.py	905	split_call	split	_provenance_from_stored	"            return Provenance[text.split(""."", 1)[1]]"	prod
+py	ming_sim/decree.py	351	join_call	join	build_promulgation_judge_context	"                placeholders="","".join(""?"" for _ in _GATEKEEPER_OFFICE_TITLES),"	prod
+py	ming_sim/decree.py	566	startswith_call	startswith	_validate_promulgation_verdict_item	"        if any(isinstance(key, str) and key.startswith(""resistance_"") for key in item):"	prod
+py	ming_sim/decree.py	678	strip_call	strip	_rescript_decisions	"            str(item.get(""key"") or """").strip()"	prod
+py	ming_sim/decree.py	680	strip_call	strip	_rescript_decisions	"            if isinstance(item, dict) and str(item.get(""key"") or """").strip()"	prod
+py	ming_sim/decree.py	682	join_call	join	_rescript_decisions	"        opposition = ""、"".join(opponents)"	prod
+py	ming_sim/decree.py	794	strip_call	strip	write_decree_with_agno	    if not text.strip():	prod
+py	ming_sim/decree.py	908	startswith_call	startswith	_provenance_from_stored	"    if text.startswith(""Provenance.""):"	prod
+py	ming_sim/decree.py	910	split_call	split	_provenance_from_stored	"            return Provenance[text.split(""."", 1)[1]]"	prod
 py	ming_sim/decree_forecast.py	333	strip_call	strip	produce_forecast_product	            if prefix.strip():	prod
 py	ming_sim/decree_vocabulary.py	96	strip_call	strip	dossier_action_policy	"        grant_action = str(payload.get(""grant_action"") or """").strip()"	prod
 py	ming_sim/decree_vocabulary.py	97	strip_call	strip	dossier_action_policy	"        cadence = str(payload.get(""cadence"") or """").strip()"	prod
@@ -1502,202 +1503,191 @@ py	ming_sim/issues.py	3126	strip_call	strip	identity_title_for_allegiance	"     
 py	ming_sim/issues.py	3133	startswith_call	startswith	identity_title_for_allegiance	"            if transition.startswith(""reject:""):"	prod
 py	ming_sim/issues.py	3148	strip_call	strip	identity_title_for_allegiance	"            new_office = str(item.get(""office"") or item.get(""new_office"") or """").strip()"	prod
 py	ming_sim/issues.py	3162	startswith_call	startswith	identity_title_for_allegiance	"            if transition.startswith(""reject:""):"	prod
-py	ming_sim/issues.py	3186	split_call	split	identity_title_for_allegiance	"            new_parts = [p for p in normalized_office.split("","") if _is_exclusive_office(p)]"	prod
-py	ming_sim/issues.py	3198	strip_call	strip	identity_title_for_allegiance	"                    current_parts = [p.strip() for p in row_value(other_row, ""office"").split("","") if p.strip()]"	prod
-py	ming_sim/issues.py	3198	split_call	split	identity_title_for_allegiance	"                    current_parts = [p.strip() for p in row_value(other_row, ""office"").split("","") if p.strip()]"	prod
-py	ming_sim/issues.py	3202	join_call	join	identity_title_for_allegiance	"                    displaced_office = ""听用候铨"" if not kept else "","".join(kept)"	prod
-py	ming_sim/issues.py	3299	lower_call	lower	_normalize_cancellable	"    val = str(raw or """").strip().lower()"	prod
-py	ming_sim/issues.py	3299	strip_call	strip	_normalize_cancellable	"    val = str(raw or """").strip().lower()"	prod
-py	ming_sim/issues.py	3376	strip_call	strip	_spawn_legacy_from_effect	"    dur_key = str(legacy.get(""duration"") or ""2年"").strip()"	prod
-py	ming_sim/issues.py	3401	strip_call	strip	_spawn_legacy_from_effect	                    field = aliases.get(str(raw_field).strip(), str(raw_field).strip())	prod
-py	ming_sim/issues.py	3494	join_call	join	_raise_on_rejected	"            reasons = ""；"".join(str(r.get(""reason"") or """") for r in strict)"	prod
-py	ming_sim/issues.py	3532	strip_call	strip	_raise_on_rejected	"            power_id = str(item.get(""power_id"") or """").strip()"	prod
-py	ming_sim/issues.py	3533	strip_call	strip	_raise_on_rejected	"            new_name = str(item.get(""new_name"") or """").strip()"	prod
-py	ming_sim/issues.py	3715	join_call	join	_validate_strategic_foreign_node_outcome_targets	"            f""strategic_foreign 事件 {', '.join(missing)} 缺 outcome target map。"""	prod
-py	ming_sim/issues.py	3720	join_call	join	_validate_strategic_foreign_node_outcome_targets	"            f""outcome target map 含非 strategic_foreign 事件：{', '.join(stale)}。"""	prod
-py	ming_sim/issues.py	3732	lower_call	lower	_event_pool_ids_for_strategic_foreign_nodes	"        if str(item.get(""origin_kind"") or """").lower() != ""event_pool"":"	prod
-py	ming_sim/issues.py	3734	strip_call	strip	_event_pool_ids_for_strategic_foreign_nodes	"        event_id = str(item.get(""id"") or item.get(""origin_ref"") or """").strip()"	prod
-py	ming_sim/issues.py	3768	strip_call	strip	_person_change_name	    return str(	prod
-py	ming_sim/issues.py	3857	strip_call	strip	_event_outcome_label	"    return str(raw or """").strip()"	prod
-py	ming_sim/issues.py	3862	strip_call	strip	_closed_outcome_labels	"    ev = content.event_by_id.get(str(event_id or """").strip()) if content is not None else None"	prod
-py	ming_sim/issues.py	3864	strip_call	strip	_closed_outcome_labels	    return frozenset(str(label).strip() for label in raw if str(label).strip())	prod
-py	ming_sim/issues.py	3878	strip_call	strip	_merge_first_event_outcome	"    eid = str(event_id or """").strip()"	prod
-py	ming_sim/issues.py	3880	strip_call	strip	_merge_first_event_outcome	        key_s = str(key).strip()	prod
-py	ming_sim/issues.py	3894	re_sub	sub	_normalize_event_outcome_label	"    compact = re.sub(r""\s+"", """", str(label or """"))"	prod
-py	ming_sim/issues.py	3898	re_sub	sub	_normalize_event_outcome_label	"        if compact == re.sub(r""\s+"", """", canonical):"	prod
-py	ming_sim/issues.py	3920	join_call	join	_strategic_event_outcome_label_or_error	"            f""合法标签：{'/'.join(sorted(allowed))}"""	prod
-py	ming_sim/issues.py	3971	strip_call	strip	_region_noop_error	        field = REGION_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())	prod
-py	ming_sim/issues.py	4012	strip_call	strip	_army_noop_error	        field = ARMY_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())	prod
-py	ming_sim/issues.py	4061	strip_call	strip	_jisi_outcome_profile_error	                field = REGION_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())	prod
-py	ming_sim/issues.py	4064	strip_call	strip	_jisi_outcome_profile_error	                new_controller = str(value).strip()	prod
-py	ming_sim/issues.py	4086	strip_call	strip	_jisi_outcome_profile_error	                field = REGION_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())	prod
-py	ming_sim/issues.py	4096	slice_trunc_expr	[:expr]	_jisi_outcome_profile_error	"                    controller = str(value).strip()[:160] if value is not None else """""	prod
-py	ming_sim/issues.py	4096	strip_call	strip	_jisi_outcome_profile_error	"                    controller = str(value).strip()[:160] if value is not None else """""	prod
-py	ming_sim/issues.py	4100	lower_call	lower	_jisi_outcome_profile_error	"                        or controller.lower() == ""null"""	prod
-py	ming_sim/issues.py	4144	strip_call	strip	_jisi_outcome_profile_error	                field = ARMY_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())	prod
-py	ming_sim/issues.py	4231	strip_call	strip	_jisi_outcome_profile_error	"            action = str(item.get(""动作"") or item.get(""action"") or """").strip()"	prod
-py	ming_sim/issues.py	4234	strip_call	strip	_jisi_outcome_profile_error	"                target_status = ""dismissed"" if action == ""罢黜"" else str(item.get(""status"") or """").strip()"	prod
-py	ming_sim/issues.py	4344	strip_call	strip	_jisi_outcome_profile_error	"                and (db.effect_origin_rejection(str(raw.get(""origin_ref"") or """").strip()) or {}).get(""category"")"	prod
-py	ming_sim/issues.py	4443	strip_call	strip	petition_outcome_is_admissible	"    eid = str(event_id or """").strip()"	prod
-py	ming_sim/issues.py	4454	strip_call	strip	petition_outcome_is_admissible	"        and not str(row.get(""terminal_state"") or """").strip()"	prod
-py	ming_sim/issues.py	4496	lower_call	lower	_preflight_declared_event_groups	"            and str(issue.get(""origin_kind"") or """").lower() == ""event_pool"""	prod
-py	ming_sim/issues.py	4497	strip_call	strip	_preflight_declared_event_groups	"            and str(issue.get(""id"") or issue.get(""origin_ref"") or """").strip() == event_id"	prod
-py	ming_sim/issues.py	4549	strip_call	strip	_strategic_result_item_has_material_world_state	"    action = str(item.get(""动作"") or item.get(""action"") or """").strip()"	prod
-py	ming_sim/issues.py	4612	join_call	join	_initiative_resolve_pairing_warnings	"    blob = str(title or """") + "" "" + "" "".join(str(t) for t in tag_list)"	prod
-py	ming_sim/issues.py	4631	slice_trunc_expr	[:expr]	_initiative_resolve_pairing_warnings	"                f""军事国策「{str(title)[:16]}」结案无 new_armies 配对（练军/募营疑未建军籍，#46）"""	prod
-py	ming_sim/issues.py	4635	slice_trunc_expr	[:expr]	_initiative_resolve_pairing_warnings	"                f""军事国策「{str(title)[:16]}」结案无人物变更配对（调将疑未落主将调任，#46）"""	prod
-py	ming_sim/issues.py	4643	slice_trunc_expr	[:expr]	_initiative_resolve_pairing_warnings	"                f""经制国策「{str(title)[:16]}」结案无月度 economy 配对"""	prod
-py	ming_sim/issues.py	4731	lower_call	lower	apply_issue_tracker_output	"        isinstance(item, dict) and str(item.get(""origin_kind"") or """").lower() == ""event_pool"""	prod
-py	ming_sim/issues.py	4883	lower_call	lower	apply_issue_tracker_output	"        origin_kind = str(ni.get(""origin_kind"") or """").lower()"	prod
-py	ming_sim/issues.py	4885	strip_call	strip	apply_issue_tracker_output	"            candidate_id = str(ni.get(""candidate_id"") or """").strip()"	prod
-py	ming_sim/issues.py	4899	strip_call	strip	apply_issue_tracker_output	                and all(isinstance(character_id, str) and character_id.strip() for character_id in roster)	prod
-py	ming_sim/issues.py	4902	strip_call	strip	apply_issue_tracker_output	                list(dict.fromkeys(character_id.strip() for character_id in roster))	prod
-py	ming_sim/issues.py	4912	strip_call	strip	apply_issue_tracker_output	            elif not isinstance(raw_title, str) or not raw_title.strip():	prod
-py	ming_sim/issues.py	4916	strip_call	strip	apply_issue_tracker_output	"            elif str(ni.get(""faction_hint"") or """").strip() != candidate[""faction_id""]:"	prod
-py	ming_sim/issues.py	4957	strip_call	strip	apply_issue_tracker_output	"            event_id = str(ni.get(""id"") or ni.get(""origin_ref"") or """").strip()"	prod
-py	ming_sim/issues.py	5138	strip_call	strip	_eff_dict	"        origin_ref = str(ni.get(""origin_ref"") or """").strip()"	prod
-py	ming_sim/issues.py	5150	strip_call	strip	_eff_dict	        if not legacy_resolve_text.strip() and isinstance(stop_condition_raw, str):	prod
-py	ming_sim/issues.py	5206	join_call	join	_eff_dict	"                        + "", "".join(unsupported_ongoing_fields)"	prod
-py	ming_sim/issues.py	5254	slice_trunc_expr	[:expr]	_eff_dict	"                    print(f""[issue/enrich] 国策「{title[:16]}」补效果 resolve={bool(resolve_eff)} ongoing={bool(ongoing_eff)}"")"	prod
-py	ming_sim/issues.py	5304	strip_call	strip	_eff_dict	"        if not resolve_condition.strip() and isinstance(ni.get(""stop_condition""), str):"	prod
-py	ming_sim/issues.py	5320	strip_call	strip	_eff_dict	                        if not participant.strip():	prod
-py	ming_sim/issues.py	5325	strip_call	strip	_eff_dict	"                    if not str(participant.get(""character_id"") or participant.get(""name"") or """").strip():"	prod
-py	ming_sim/issues.py	5327	strip_call	strip	_eff_dict	"                    tier = str(participant.get(""tier"") or participant.get(""档"") or ""知情"").strip()"	prod
-py	ming_sim/issues.py	5363	re_fullmatch	fullmatch	_eff_dict	"        dossier_origin = bool(re.fullmatch(r""dossier:[1-9][0-9]*"", origin_ref))"	prod
-py	ming_sim/issues.py	5468	lower_call	lower	_eff_dict	"        reason = str(cl.get(""reason"") or """").strip().lower()"	prod
-py	ming_sim/issues.py	5468	strip_call	strip	_eff_dict	"        reason = str(cl.get(""reason"") or """").strip().lower()"	prod
-py	ming_sim/issues.py	5486	strip_call	strip	_eff_dict	"            elif not str(chk[""commitment_kind""] or """").strip():"	prod
-py	ming_sim/issues.py	5652	strip_call	strip	_eff_dict	"        if str(row[""commitment_kind""] or """").strip():"	prod
-py	ming_sim/issues.py	5660	strip_call	strip	_eff_dict	"            origin_ref_c = str(row[""origin_ref""] or """").strip()"	prod
-py	ming_sim/issues.py	5694	strip_call	strip	_eff_dict	"        origin_ref = str(row[""origin_ref""] or """").strip()"	prod
-py	ming_sim/issues.py	5695	re_fullmatch	fullmatch	_eff_dict	"        if re.fullmatch(r""dossier:[1-9][0-9]*"", origin_ref) and db.effect_origin_rejection(origin_ref) is None:"	prod
-py	ming_sim/issues.py	5696	split_call	split	_eff_dict	"            linked_dossier = db.get_decree_dossier(int(origin_ref.split("":"", 1)[1]))"	prod
-py	ming_sim/issues.py	5770	split_call	split	_displace_duplicate_offices	"    new_parts = [p for p in normalize_office(new_office).split("","") if _is_exclusive_office(p)]"	prod
-py	ming_sim/issues.py	5773	strip_call	strip	_displace_duplicate_offices	"    new_seat = str(region_id or """").strip()"	prod
-py	ming_sim/issues.py	5781	strip_call	strip	_displace_duplicate_offices	"        holder_parts = [p.strip() for p in str(row[""office""]).split("","") if p.strip()]"	prod
-py	ming_sim/issues.py	5781	split_call	split	_displace_duplicate_offices	"        holder_parts = [p.strip() for p in str(row[""office""]).split("","") if p.strip()]"	prod
-py	ming_sim/issues.py	5796	join_call	join	_displace_duplicate_offices	"        new_holder_office = ""听用候铨"" if fully_displaced else "","".join(kept)"	prod
-py	ming_sim/issues.py	5811	strip_call	strip	_displace_duplicate_offices	"        retained_seat = """" if fully_displaced else str("	prod
-py	ming_sim/issues.py	5828	strip_call	strip	_displace_duplicate_offices	"        archived_seat = str(db.character_office_region(row[""name""]) or """").strip()"	prod
-py	ming_sim/issues.py	6135	strip_call	strip	apply_office_appointment	"    name = str(name or """").strip()"	prod
-py	ming_sim/issues.py	6136	strip_call	strip	apply_office_appointment	"    new_office = str(new_office or """").strip()"	prod
-py	ming_sim/issues.py	6326	strip_call	strip	rejected	"            ""name"": str(item.get(""name"") or """").strip(),"	prod
-py	ming_sim/issues.py	6327	strip_call	strip	rejected	"            ""动作"": str(item.get(""动作"") or """").strip(),"	prod
-py	ming_sim/issues.py	6374	strip_call	strip	log_applied	"        name = str(result.get(""name"") or """").strip()"	prod
-py	ming_sim/issues.py	6375	strip_call	strip	log_applied	"        action = str(result.get(""动作"") or result.get(""action"") or """").strip()"	prod
-py	ming_sim/issues.py	6403	strip_call	strip	identity_title_for_allegiance	"        title = str(item.get(""new_title"") or item.get(""title"") or """").strip()"	prod
-py	ming_sim/issues.py	6406	strip_call	strip	identity_title_for_allegiance	"        way = str(item.get(""方式"") or item.get(""way"") or """").strip()"	prod
-py	ming_sim/issues.py	6416	strip_call	strip	displaced_talent_pool_results	"            name_part = str(part).split("":"", 1)[0].strip()"	prod
-py	ming_sim/issues.py	6416	split_call	split	displaced_talent_pool_results	"            name_part = str(part).split("":"", 1)[0].strip()"	prod
-py	ming_sim/issues.py	6453	strip_call	strip	displaced_talent_pool_results	"        name = str(item.get(""name"") or """").strip()"	prod
-py	ming_sim/issues.py	6454	strip_call	strip	displaced_talent_pool_results	"        action = str(item.get(""动作"") or """").strip()"	prod
-py	ming_sim/issues.py	6514	strip_call	strip	displaced_talent_pool_results	            if not isinstance(raw_style, str) or not raw_style.strip():	prod
-py	ming_sim/issues.py	6544	strip_call	strip	displaced_talent_pool_results	"            status = ""dismissed"" if action == ""罢黜"" else str(item.get(""status"") or """").strip()"	prod
-py	ming_sim/issues.py	6586	startswith_call	startswith	displaced_talent_pool_results	"            if transition.startswith(""reject:""):"	prod
-py	ming_sim/issues.py	6594	removeprefix_call	removeprefix	displaced_talent_pool_results	"                        transition.removeprefix(""reject:"") or ""invalid_transition"","	prod
-py	ming_sim/issues.py	6640	strip_call	strip	displaced_talent_pool_results	"            current_office = str(row[""office""] or """").strip()"	prod
-py	ming_sim/issues.py	6641	strip_call	strip	displaced_talent_pool_results	"            current_office_type = str(row[""office_type""] or """").strip()"	prod
-py	ming_sim/issues.py	6655	startswith_call	startswith	displaced_talent_pool_results	"            if transition.startswith(""reject:""):"	prod
-py	ming_sim/issues.py	6660	removeprefix_call	removeprefix	displaced_talent_pool_results	"                        transition.removeprefix(""reject:"") or ""invalid_transition"","	prod
-py	ming_sim/issues.py	6664	startswith_call	startswith	displaced_talent_pool_results	"            derive_label = transition.removeprefix(""derive:"") if transition.startswith(""derive:"") else """""	prod
-py	ming_sim/issues.py	6664	removeprefix_call	removeprefix	displaced_talent_pool_results	"            derive_label = transition.removeprefix(""derive:"") if transition.startswith(""derive:"") else """""	prod
-py	ming_sim/issues.py	6665	startswith_call	startswith	displaced_talent_pool_results	"            effective_action = transition.removeprefix(""normalize:"") if transition.startswith(""normalize:"") else action"	prod
-py	ming_sim/issues.py	6665	removeprefix_call	removeprefix	displaced_talent_pool_results	"            effective_action = transition.removeprefix(""normalize:"") if transition.startswith(""normalize:"") else action"	prod
-py	ming_sim/issues.py	6667	strip_call	strip	displaced_talent_pool_results	            if not new_office.strip():	prod
-py	ming_sim/issues.py	6670	startswith_call	startswith	displaced_talent_pool_results	"                if transition.startswith(""normalize:""):"	prod
-py	ming_sim/issues.py	6696	strip_call	strip	displaced_talent_pool_results	                            region_id=str(	prod
-py	ming_sim/issues.py	6707	startswith_call	startswith	displaced_talent_pool_results	"                if transition.startswith(""normalize:""):"	prod
-py	ming_sim/issues.py	6711	strip_call	strip	displaced_talent_pool_results	"            row_power_id = str(row[""power_id""] or """").strip()"	prod
-py	ming_sim/issues.py	6714	strip_call	strip	displaced_talent_pool_results	"                content_power_id = str(getattr(content.characters[name], ""power_id"", """") or """").strip()"	prod
-py	ming_sim/issues.py	6722	strip_call	strip	displaced_talent_pool_results	"                result[""new_office""] = new_office.strip()"	prod
-py	ming_sim/issues.py	6723	startswith_call	startswith	displaced_talent_pool_results	"                if transition.startswith(""normalize:""):"	prod
-py	ming_sim/issues.py	6775	strip_call	strip	displaced_talent_pool_results	                    region_id=str(	prod
-py	ming_sim/issues.py	6820	startswith_call	startswith	displaced_talent_pool_results	"            elif transition.startswith(""normalize:""):"	prod
-py	ming_sim/issues.py	6832	strip_call	strip	displaced_talent_pool_results	"            way = str(item.get(""方式"") or item.get(""way"") or """").strip()"	prod
-py	ming_sim/issues.py	6856	startswith_call	startswith	displaced_talent_pool_results	"            if transition.startswith(""reject:""):"	prod
-py	ming_sim/issues.py	6861	removeprefix_call	removeprefix	displaced_talent_pool_results	"                        transition.removeprefix(""reject:"") or ""invalid_transition"","	prod
-py	ming_sim/issues.py	6866	strip_call	strip	displaced_talent_pool_results	"            old_power = str(row[""power_id""] or """").strip()"	prod
-py	ming_sim/issues.py	6869	strip_call	strip	displaced_talent_pool_results	                    str(power_id).strip()	prod
-py	ming_sim/issues.py	6871	strip_call	strip	displaced_talent_pool_results	                    if str(power_id).strip()	prod
-py	ming_sim/issues.py	6898	startswith_call	startswith	displaced_talent_pool_results	"            if require_origin and str(origin_ref or """").startswith(""dossier:""):"	prod
-py	ming_sim/issues.py	6900	split_call	split	displaced_talent_pool_results	"                    dossier_id = _parse_sqlite_id(str(origin_ref).split("":"", 1)[1])"	prod
-py	ming_sim/issues.py	6905	strip_call	strip	displaced_talent_pool_results	"                    action_type = str(dossier.get(""action_type"") or """").strip()"	prod
-py	ming_sim/issues.py	6928	strip_call	strip	displaced_talent_pool_results	                        bound_target = str(	prod
-py	ming_sim/issues.py	7015	strip_call	strip	displaced_talent_pool_results	"            prior_status = str(row[""status""] or ""active"").strip() or ""active"""	prod
-py	ming_sim/issues.py	7016	strip_call	strip	displaced_talent_pool_results	"            prior_transit = str(row[""transit_to""] or """").strip()"	prod
-py	ming_sim/issues.py	7017	strip_call	strip	displaced_talent_pool_results	"            prior_location = str(row[""location""] or """").strip()"	prod
-py	ming_sim/issues.py	7051	strip_call	strip	displaced_talent_pool_results	"                bool(str(transit_to or """").strip())"	prod
-py	ming_sim/issues.py	7114	strip_call	strip	_legacy_person_report_section	"    action = str(source.get(""动作"") or source.get(""action"") or result.get(""动作"") or """").strip()"	prod
-py	ming_sim/issues.py	7154	strip_call	strip	_apply_dossier_participant_items	"            character_id = str(item.get(""character_id"") or """").strip()"	prod
-py	ming_sim/issues.py	7155	strip_call	strip	_apply_dossier_participant_items	"            delegator_id = str(item.get(""delegator_id"") or """").strip()"	prod
-py	ming_sim/issues.py	7156	strip_call	strip	_apply_dossier_participant_items	"            tier = str(item.get(""tier"") or """").strip()"	prod
-py	ming_sim/issues.py	7263	strip_call	strip	_reject	"        region_id = str(item.get(""region_id"") or """").strip()"	prod
-py	ming_sim/issues.py	7301	strip_call	strip	_reject	"        origin_ref = str(item.get(""origin_ref"") or """").strip()"	prod
-py	ming_sim/issues.py	7302	re_fullmatch	fullmatch	_reject	"        dossier_match = re.fullmatch(r""dossier:([1-9][0-9]*)"", origin_ref)"	prod
-py	ming_sim/issues.py	7421	strip_call	strip	_is_bandit_power_id	"    pid = str(power_id or """").strip()"	prod
-py	ming_sim/issues.py	7422	startswith_call	startswith	_is_bandit_power_id	"    return pid == ""bandits"" or pid.startswith(""bandit_"")"	prod
-py	ming_sim/issues.py	7478	strip_call	strip	_reject	"        region_id = str(item.get(""region_id"") or """").strip()"	prod
-py	ming_sim/issues.py	7479	strip_call	strip	_reject	"        power_id = str(item.get(""power_id"") or """").strip()"	prod
-py	ming_sim/issues.py	7480	strip_call	strip	_reject	"        origin_ref = str(item.get(""origin_ref"") or """").strip()"	prod
-py	ming_sim/issues.py	7640	strip_call	strip	_apply_recovery_driven_transfers	"        grant_action = str(payload.get(""grant_action"") or """").strip()"	prod
-py	ming_sim/issues.py	7643	strip_call	strip	_apply_recovery_driven_transfers	"        target_kind = str(row[""target_kind""] or payload.get(""target_kind"") or """").strip()"	prod
-py	ming_sim/issues.py	7644	strip_call	strip	_apply_recovery_driven_transfers	"        region_id = str(row[""target_id""] or payload.get(""target_id"") or """").strip()"	prod
-py	ming_sim/issues.py	7649	strip_call	strip	_apply_recovery_driven_transfers	"        outcome = str(row[""execution_outcome""] or """").strip()"	prod
-py	ming_sim/issues.py	7652	strip_call	strip	_apply_recovery_driven_transfers	"        cadence = str(payload.get(""cadence"") or """").strip()"	prod
-py	ming_sim/issues.py	7742	strip_call	strip	neutralize_covert_fiscal_effects	"    raw_keys = {str(row.get(""key"") or """").strip() for row in rows if row.get(""beyond_intent"")}"	prod
-py	ming_sim/issues.py	7748	endswith_call	endswith	neutralize_covert_fiscal_effects	"        if raw_key.endswith((""_base"", ""_rate"")):"	prod
-py	ming_sim/issues.py	7879	replace_call	replace	record_secret_order_disclosure	        disclosure_prefix	prod
-py	ming_sim/issues.py	8003	strip_call	strip	_apply_extracted_army_delta	"    origin_ref = str(raw_changes.get(""origin_ref"") or """").strip()"	prod
-py	ming_sim/issues.py	8133	strip_call	strip	_stamp_batch_new_declaration	"        identity = str(parsed.get(""identity"") or """").strip()"	prod
-py	ming_sim/issues.py	8249	strip_call	strip	_origin_ref_from_result_item	"            outcome = str(item.get(""outcome"") or """").strip()"	prod
-py	ming_sim/issues.py	8406	strip_call	strip	_split_pre_issue_person_changes	"            if str(item.get(""动作"") or """").strip() == ""评定"":"	prod
-py	ming_sim/issues.py	8428	strip_call	strip	_amnesty_conflict_power_ids	"            if str(item.get(""动作"") or """").strip() != ""易主"":"	prod
-py	ming_sim/issues.py	8430	strip_call	strip	_amnesty_conflict_power_ids	"            if str(item.get(""方式"") or item.get(""way"") or """").strip() != ""主动归附"":"	prod
-py	ming_sim/issues.py	8432	strip_call	strip	_amnesty_conflict_power_ids	"            if str(item.get(""new_power"") or """").strip() != ""ming"":"	prod
-py	ming_sim/issues.py	8439	strip_call	strip	_amnesty_conflict_power_ids	"            name = str(item.get(""name"") or """").strip()"	prod
-py	ming_sim/issues.py	8449	strip_call	strip	_amnesty_conflict_power_ids	"            old_power = str(row[""power_id""] or """").strip()"	prod
-py	ming_sim/issues.py	8457	startswith_call	startswith	_amnesty_conflict_power_ids	"            if transition.startswith(""reject:""):"	prod
-py	ming_sim/issues.py	8460	strip_call	strip	_amnesty_conflict_power_ids	                str(power_id).strip()	prod
-py	ming_sim/issues.py	8462	strip_call	strip	_amnesty_conflict_power_ids	                if str(power_id).strip()	prod
-py	ming_sim/issues.py	8466	strip_call	strip	_amnesty_conflict_power_ids	"            explicit_title = str(item.get(""new_title"") or item.get(""title"") or """").strip()"	prod
-py	ming_sim/issues.py	8539	strip_call	strip	_apply_person_changes_itemwise	"                    ""name"": str(person_change.get(""name"") or """").strip(),"	prod
-py	ming_sim/issues.py	8540	strip_call	strip	_apply_person_changes_itemwise	"                    ""动作"": str(person_change.get(""动作"") or """").strip(),"	prod
-py	ming_sim/issues.py	8581	strip_call	strip	_apply_economy_moves_list	"                    if origin_ref and not str(move.get(""origin_ref"") or move.get(""来源引用"") or """").strip():"	prod
-py	ming_sim/issues.py	8583	startswith_call	startswith	_apply_economy_moves_list	"                    if origin_ref.startswith(""dossier:""):"	prod
-py	ming_sim/issues.py	8623	strip_call	strip	_apply_ordinary_entity_step	"            origin_ref = str(army_item.get(""origin_ref"") or """").strip()"	prod
-py	ming_sim/issues.py	8633	strip_call	strip	_apply_ordinary_entity_step	"            origin_ref = str(raw_changes.get(""origin_ref"") or """").strip()"	prod
-py	ming_sim/issues.py	8720	strip_call	strip	_merge_applied_deltas	"        if isinstance(item, dict) and str(item.get(""reason"") or """").strip() == ""回流"":"	prod
-py	ming_sim/issues.py	8757	strip_call	strip	_merge_applied_deltas	"            origin_ref = str(army_item.get(""origin_ref"") or """").strip()"	prod
-py	ming_sim/issues.py	8768	strip_call	strip	_merge_applied_deltas	"            origin_ref = str(raw_changes.get(""origin_ref"") or """").strip()"	prod
-py	ming_sim/issues.py	8824	strip_call	strip	_merge_applied_deltas	                mapped = POWER_FIELD_ALIASES.get(str(k).strip(), str(k).strip())	prod
-py	ming_sim/issues.py	8854	strip_call	strip	_merge_applied_deltas	"        origin_ref = str(raw_changes.get(""origin_ref"") or """").strip()"	prod
-py	ming_sim/issues.py	8900	strip_call	strip	_merge_applied_deltas	"            and str(item.get(""commitment_kind"") or """").strip()"	prod
-py	ming_sim/issues.py	8965	strip_call	strip	_reject_suppressed_strategic_results	"                ""动作"": str(item.get(""动作"") or item.get(""action"") or """").strip(),"	prod
-py	ming_sim/issues.py	8974	strip_call	strip	_reject_suppressed_strategic_results	"                ""id"": str(item.get(""id"") or """").strip() if isinstance(item, dict) else """","	prod
-py	ming_sim/issues.py	8984	strip_call	strip	_reject_suppressed_strategic_results	"            event_id = str(new_issue.get(""id"") or """").strip()"	prod
-py	ming_sim/issues.py	8989	strip_call	strip	_reject_suppressed_strategic_results	"        event_id = str(new_issue.get(""id"") or """").strip()"	prod
-py	ming_sim/issues.py	9013	strip_call	strip	_reject_suppressed_strategic_results	"        event_id = str(new_issue.get(""id"") or """").strip()"	prod
-py	ming_sim/issues.py	9039	strip_call	strip	_reject_suppressed_strategic_results	"            origin_ref = str(item.get(""origin_ref"") or """").strip()"	prod
-py	ming_sim/issues.py	9046	strip_call	strip	_reject_suppressed_strategic_results	"            origin_ref = str(raw_changes.get(""origin_ref"") or """").strip()"	prod
-py	ming_sim/issues.py	9064	strip_call	strip	_reject_suppressed_strategic_results	"                    ""name"": str(item.get(""name"") or """").strip(),"	prod
-py	ming_sim/issues.py	9065	strip_call	strip	_reject_suppressed_strategic_results	"                    ""动作"": str(item.get(""动作"") or """").strip(),"	prod
-py	ming_sim/issues.py	9075	strip_call	strip	_reject_suppressed_strategic_results	"            origin_ref = str(raw_changes.get(""origin_ref"") or """").strip()"	prod
-py	ming_sim/issues.py	9104	strip_call	strip	_norm_int_leaf	                return int(v.strip())	prod
-py	ming_sim/issues.py	9113	strip_call	strip	_norm_int_leaf	"        key = str(remove.get(""key"") or """").strip()"	prod
-py	ming_sim/issues.py	9153	strip_call	strip	_norm_int_leaf	"        origin_ref = str(remove.get(""origin_ref"") or """").strip()"	prod
-py	ming_sim/issues.py	9194	strip_call	strip	_norm_int_leaf	"        direction_raw = str(create.get(""direction"") or """").strip()"	prod
-py	ming_sim/issues.py	9196	strip_call	strip	_norm_int_leaf	"        key = str(create.get(""key"") or """").strip()"	prod
-py	ming_sim/issues.py	9197	strip_call	strip	_norm_int_leaf	"        account = str(create.get(""account"") or """").strip()"	prod
-py	ming_sim/issues.py	9225	strip_call	strip	_norm_int_leaf	"        origin_ref = str(create.get(""origin_ref"") or """").strip()"	prod
-py	ming_sim/issues.py	9295	strip_call	strip	_norm_int_leaf	"        key = str(change.get(""key"") or """").strip()"	prod
-py	ming_sim/issues.py	9341	strip_call	strip	_norm_int_leaf	"        origin_ref = str(change.get(""origin_ref"") or """").strip()"	prod
-py	ming_sim/issues.py	9462	strip_call	strip	_norm_int_leaf	        if raw_id is None or not sim_note.strip():	prod
-py	ming_sim/issues.py	9497	slice_trunc_expr	[:expr]	_norm_int_leaf	"            print(f""[secret_order] 推演副作用 id={real_id} note={sim_note[:60]!r}"")"	prod
-py	ming_sim/issues.py	9656	strip_call	strip	_declared_emperor_ending	    token = fate.strip()	prod
-py	ming_sim/issues.py	9657	lower_call	lower	_declared_emperor_ending	"    if not token or token.lower() in {""null"", ""none""}:"	prod
-py	ming_sim/issues.py	9663	replace_call	replace	_declared_emperor_ending	"    if token.isascii() and token.replace(""_"", """").isalnum() and not token[0].isdigit():"	prod
-py	ming_sim/issues.py	9664	startswith_call	startswith	_declared_emperor_ending	"        status = token if token.startswith(""emperor_"") else f""emperor_{token}"""	prod
-py	ming_sim/issues.py	9700	strip_call	strip	apply_issue_inertia_and_ongoing	"        commitment_kind = str(row[""commitment_kind""] if ""commitment_kind"" in row.keys() else """").strip()"	prod
+py	ming_sim/issues.py	3271	lower_call	lower	_normalize_cancellable	"    val = str(raw or """").strip().lower()"	prod
+py	ming_sim/issues.py	3271	strip_call	strip	_normalize_cancellable	"    val = str(raw or """").strip().lower()"	prod
+py	ming_sim/issues.py	3348	strip_call	strip	_spawn_legacy_from_effect	"    dur_key = str(legacy.get(""duration"") or ""2年"").strip()"	prod
+py	ming_sim/issues.py	3373	strip_call	strip	_spawn_legacy_from_effect	                    field = aliases.get(str(raw_field).strip(), str(raw_field).strip())	prod
+py	ming_sim/issues.py	3466	join_call	join	_raise_on_rejected	"            reasons = ""；"".join(str(r.get(""reason"") or """") for r in strict)"	prod
+py	ming_sim/issues.py	3504	strip_call	strip	_raise_on_rejected	"            power_id = str(item.get(""power_id"") or """").strip()"	prod
+py	ming_sim/issues.py	3505	strip_call	strip	_raise_on_rejected	"            new_name = str(item.get(""new_name"") or """").strip()"	prod
+py	ming_sim/issues.py	3687	join_call	join	_validate_strategic_foreign_node_outcome_targets	"            f""strategic_foreign 事件 {', '.join(missing)} 缺 outcome target map。"""	prod
+py	ming_sim/issues.py	3692	join_call	join	_validate_strategic_foreign_node_outcome_targets	"            f""outcome target map 含非 strategic_foreign 事件：{', '.join(stale)}。"""	prod
+py	ming_sim/issues.py	3704	lower_call	lower	_event_pool_ids_for_strategic_foreign_nodes	"        if str(item.get(""origin_kind"") or """").lower() != ""event_pool"":"	prod
+py	ming_sim/issues.py	3706	strip_call	strip	_event_pool_ids_for_strategic_foreign_nodes	"        event_id = str(item.get(""id"") or item.get(""origin_ref"") or """").strip()"	prod
+py	ming_sim/issues.py	3740	strip_call	strip	_person_change_name	    return str(	prod
+py	ming_sim/issues.py	3829	strip_call	strip	_event_outcome_label	"    return str(raw or """").strip()"	prod
+py	ming_sim/issues.py	3834	strip_call	strip	_closed_outcome_labels	"    ev = content.event_by_id.get(str(event_id or """").strip()) if content is not None else None"	prod
+py	ming_sim/issues.py	3836	strip_call	strip	_closed_outcome_labels	    return frozenset(str(label).strip() for label in raw if str(label).strip())	prod
+py	ming_sim/issues.py	3850	strip_call	strip	_merge_first_event_outcome	"    eid = str(event_id or """").strip()"	prod
+py	ming_sim/issues.py	3852	strip_call	strip	_merge_first_event_outcome	        key_s = str(key).strip()	prod
+py	ming_sim/issues.py	3866	re_sub	sub	_normalize_event_outcome_label	"    compact = re.sub(r""\s+"", """", str(label or """"))"	prod
+py	ming_sim/issues.py	3870	re_sub	sub	_normalize_event_outcome_label	"        if compact == re.sub(r""\s+"", """", canonical):"	prod
+py	ming_sim/issues.py	3892	join_call	join	_strategic_event_outcome_label_or_error	"            f""合法标签：{'/'.join(sorted(allowed))}"""	prod
+py	ming_sim/issues.py	3943	strip_call	strip	_region_noop_error	        field = REGION_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())	prod
+py	ming_sim/issues.py	3984	strip_call	strip	_army_noop_error	        field = ARMY_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())	prod
+py	ming_sim/issues.py	4033	strip_call	strip	_jisi_outcome_profile_error	                field = REGION_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())	prod
+py	ming_sim/issues.py	4036	strip_call	strip	_jisi_outcome_profile_error	                new_controller = str(value).strip()	prod
+py	ming_sim/issues.py	4058	strip_call	strip	_jisi_outcome_profile_error	                field = REGION_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())	prod
+py	ming_sim/issues.py	4068	slice_trunc_expr	[:expr]	_jisi_outcome_profile_error	"                    controller = str(value).strip()[:160] if value is not None else """""	prod
+py	ming_sim/issues.py	4068	strip_call	strip	_jisi_outcome_profile_error	"                    controller = str(value).strip()[:160] if value is not None else """""	prod
+py	ming_sim/issues.py	4072	lower_call	lower	_jisi_outcome_profile_error	"                        or controller.lower() == ""null"""	prod
+py	ming_sim/issues.py	4116	strip_call	strip	_jisi_outcome_profile_error	                field = ARMY_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())	prod
+py	ming_sim/issues.py	4203	strip_call	strip	_jisi_outcome_profile_error	"            action = str(item.get(""动作"") or item.get(""action"") or """").strip()"	prod
+py	ming_sim/issues.py	4206	strip_call	strip	_jisi_outcome_profile_error	"                target_status = ""dismissed"" if action == ""罢黜"" else str(item.get(""status"") or """").strip()"	prod
+py	ming_sim/issues.py	4316	strip_call	strip	_jisi_outcome_profile_error	"                and (db.effect_origin_rejection(str(raw.get(""origin_ref"") or """").strip()) or {}).get(""category"")"	prod
+py	ming_sim/issues.py	4415	strip_call	strip	petition_outcome_is_admissible	"    eid = str(event_id or """").strip()"	prod
+py	ming_sim/issues.py	4426	strip_call	strip	petition_outcome_is_admissible	"        and not str(row.get(""terminal_state"") or """").strip()"	prod
+py	ming_sim/issues.py	4468	lower_call	lower	_preflight_declared_event_groups	"            and str(issue.get(""origin_kind"") or """").lower() == ""event_pool"""	prod
+py	ming_sim/issues.py	4469	strip_call	strip	_preflight_declared_event_groups	"            and str(issue.get(""id"") or issue.get(""origin_ref"") or """").strip() == event_id"	prod
+py	ming_sim/issues.py	4521	strip_call	strip	_strategic_result_item_has_material_world_state	"    action = str(item.get(""动作"") or item.get(""action"") or """").strip()"	prod
+py	ming_sim/issues.py	4584	join_call	join	_initiative_resolve_pairing_warnings	"    blob = str(title or """") + "" "" + "" "".join(str(t) for t in tag_list)"	prod
+py	ming_sim/issues.py	4603	slice_trunc_expr	[:expr]	_initiative_resolve_pairing_warnings	"                f""军事国策「{str(title)[:16]}」结案无 new_armies 配对（练军/募营疑未建军籍，#46）"""	prod
+py	ming_sim/issues.py	4607	slice_trunc_expr	[:expr]	_initiative_resolve_pairing_warnings	"                f""军事国策「{str(title)[:16]}」结案无人物变更配对（调将疑未落主将调任，#46）"""	prod
+py	ming_sim/issues.py	4615	slice_trunc_expr	[:expr]	_initiative_resolve_pairing_warnings	"                f""经制国策「{str(title)[:16]}」结案无月度 economy 配对"""	prod
+py	ming_sim/issues.py	4703	lower_call	lower	apply_issue_tracker_output	"        isinstance(item, dict) and str(item.get(""origin_kind"") or """").lower() == ""event_pool"""	prod
+py	ming_sim/issues.py	4855	lower_call	lower	apply_issue_tracker_output	"        origin_kind = str(ni.get(""origin_kind"") or """").lower()"	prod
+py	ming_sim/issues.py	4857	strip_call	strip	apply_issue_tracker_output	"            candidate_id = str(ni.get(""candidate_id"") or """").strip()"	prod
+py	ming_sim/issues.py	4871	strip_call	strip	apply_issue_tracker_output	                and all(isinstance(character_id, str) and character_id.strip() for character_id in roster)	prod
+py	ming_sim/issues.py	4874	strip_call	strip	apply_issue_tracker_output	                list(dict.fromkeys(character_id.strip() for character_id in roster))	prod
+py	ming_sim/issues.py	4884	strip_call	strip	apply_issue_tracker_output	            elif not isinstance(raw_title, str) or not raw_title.strip():	prod
+py	ming_sim/issues.py	4888	strip_call	strip	apply_issue_tracker_output	"            elif str(ni.get(""faction_hint"") or """").strip() != candidate[""faction_id""]:"	prod
+py	ming_sim/issues.py	4929	strip_call	strip	apply_issue_tracker_output	"            event_id = str(ni.get(""id"") or ni.get(""origin_ref"") or """").strip()"	prod
+py	ming_sim/issues.py	5110	strip_call	strip	_eff_dict	"        origin_ref = str(ni.get(""origin_ref"") or """").strip()"	prod
+py	ming_sim/issues.py	5122	strip_call	strip	_eff_dict	        if not legacy_resolve_text.strip() and isinstance(stop_condition_raw, str):	prod
+py	ming_sim/issues.py	5178	join_call	join	_eff_dict	"                        + "", "".join(unsupported_ongoing_fields)"	prod
+py	ming_sim/issues.py	5226	slice_trunc_expr	[:expr]	_eff_dict	"                    print(f""[issue/enrich] 国策「{title[:16]}」补效果 resolve={bool(resolve_eff)} ongoing={bool(ongoing_eff)}"")"	prod
+py	ming_sim/issues.py	5276	strip_call	strip	_eff_dict	"        if not resolve_condition.strip() and isinstance(ni.get(""stop_condition""), str):"	prod
+py	ming_sim/issues.py	5292	strip_call	strip	_eff_dict	                        if not participant.strip():	prod
+py	ming_sim/issues.py	5297	strip_call	strip	_eff_dict	"                    if not str(participant.get(""character_id"") or participant.get(""name"") or """").strip():"	prod
+py	ming_sim/issues.py	5299	strip_call	strip	_eff_dict	"                    tier = str(participant.get(""tier"") or participant.get(""档"") or ""知情"").strip()"	prod
+py	ming_sim/issues.py	5335	re_fullmatch	fullmatch	_eff_dict	"        dossier_origin = bool(re.fullmatch(r""dossier:[1-9][0-9]*"", origin_ref))"	prod
+py	ming_sim/issues.py	5440	lower_call	lower	_eff_dict	"        reason = str(cl.get(""reason"") or """").strip().lower()"	prod
+py	ming_sim/issues.py	5440	strip_call	strip	_eff_dict	"        reason = str(cl.get(""reason"") or """").strip().lower()"	prod
+py	ming_sim/issues.py	5458	strip_call	strip	_eff_dict	"            elif not str(chk[""commitment_kind""] or """").strip():"	prod
+py	ming_sim/issues.py	5624	strip_call	strip	_eff_dict	"        if str(row[""commitment_kind""] or """").strip():"	prod
+py	ming_sim/issues.py	5632	strip_call	strip	_eff_dict	"            origin_ref_c = str(row[""origin_ref""] or """").strip()"	prod
+py	ming_sim/issues.py	5666	strip_call	strip	_eff_dict	"        origin_ref = str(row[""origin_ref""] or """").strip()"	prod
+py	ming_sim/issues.py	5667	re_fullmatch	fullmatch	_eff_dict	"        if re.fullmatch(r""dossier:[1-9][0-9]*"", origin_ref) and db.effect_origin_rejection(origin_ref) is None:"	prod
+py	ming_sim/issues.py	5668	split_call	split	_eff_dict	"            linked_dossier = db.get_decree_dossier(int(origin_ref.split("":"", 1)[1]))"	prod
+py	ming_sim/issues.py	6012	strip_call	strip	apply_office_appointment	"    name = str(name or """").strip()"	prod
+py	ming_sim/issues.py	6013	strip_call	strip	apply_office_appointment	"    new_office = str(new_office or """").strip()"	prod
+py	ming_sim/issues.py	6203	strip_call	strip	rejected	"            ""name"": str(item.get(""name"") or """").strip(),"	prod
+py	ming_sim/issues.py	6204	strip_call	strip	rejected	"            ""动作"": str(item.get(""动作"") or """").strip(),"	prod
+py	ming_sim/issues.py	6251	strip_call	strip	log_applied	"        name = str(result.get(""name"") or """").strip()"	prod
+py	ming_sim/issues.py	6252	strip_call	strip	log_applied	"        action = str(result.get(""动作"") or result.get(""action"") or """").strip()"	prod
+py	ming_sim/issues.py	6280	strip_call	strip	identity_title_for_allegiance	"        title = str(item.get(""new_title"") or item.get(""title"") or """").strip()"	prod
+py	ming_sim/issues.py	6283	strip_call	strip	identity_title_for_allegiance	"        way = str(item.get(""方式"") or item.get(""way"") or """").strip()"	prod
+py	ming_sim/issues.py	6293	strip_call	strip	displaced_talent_pool_results	"            name_part = str(part).split("":"", 1)[0].strip()"	prod
+py	ming_sim/issues.py	6293	split_call	split	displaced_talent_pool_results	"            name_part = str(part).split("":"", 1)[0].strip()"	prod
+py	ming_sim/issues.py	6330	strip_call	strip	displaced_talent_pool_results	"        name = str(item.get(""name"") or """").strip()"	prod
+py	ming_sim/issues.py	6331	strip_call	strip	displaced_talent_pool_results	"        action = str(item.get(""动作"") or """").strip()"	prod
+py	ming_sim/issues.py	6391	strip_call	strip	displaced_talent_pool_results	            if not isinstance(raw_style, str) or not raw_style.strip():	prod
+py	ming_sim/issues.py	6421	strip_call	strip	displaced_talent_pool_results	"            status = ""dismissed"" if action == ""罢黜"" else str(item.get(""status"") or """").strip()"	prod
+py	ming_sim/issues.py	6463	startswith_call	startswith	displaced_talent_pool_results	"            if transition.startswith(""reject:""):"	prod
+py	ming_sim/issues.py	6471	removeprefix_call	removeprefix	displaced_talent_pool_results	"                        transition.removeprefix(""reject:"") or ""invalid_transition"","	prod
+py	ming_sim/issues.py	6517	strip_call	strip	displaced_talent_pool_results	"            current_office = str(row[""office""] or """").strip()"	prod
+py	ming_sim/issues.py	6518	strip_call	strip	displaced_talent_pool_results	"            current_office_type = str(row[""office_type""] or """").strip()"	prod
+py	ming_sim/issues.py	6532	startswith_call	startswith	displaced_talent_pool_results	"            if transition.startswith(""reject:""):"	prod
+py	ming_sim/issues.py	6537	removeprefix_call	removeprefix	displaced_talent_pool_results	"                        transition.removeprefix(""reject:"") or ""invalid_transition"","	prod
+py	ming_sim/issues.py	6541	startswith_call	startswith	displaced_talent_pool_results	"            derive_label = transition.removeprefix(""derive:"") if transition.startswith(""derive:"") else """""	prod
+py	ming_sim/issues.py	6541	removeprefix_call	removeprefix	displaced_talent_pool_results	"            derive_label = transition.removeprefix(""derive:"") if transition.startswith(""derive:"") else """""	prod
+py	ming_sim/issues.py	6542	startswith_call	startswith	displaced_talent_pool_results	"            effective_action = transition.removeprefix(""normalize:"") if transition.startswith(""normalize:"") else action"	prod
+py	ming_sim/issues.py	6542	removeprefix_call	removeprefix	displaced_talent_pool_results	"            effective_action = transition.removeprefix(""normalize:"") if transition.startswith(""normalize:"") else action"	prod
+py	ming_sim/issues.py	6544	strip_call	strip	displaced_talent_pool_results	            if not new_office.strip():	prod
+py	ming_sim/issues.py	6547	startswith_call	startswith	displaced_talent_pool_results	"                if transition.startswith(""normalize:""):"	prod
+py	ming_sim/issues.py	6573	strip_call	strip	displaced_talent_pool_results	                            region_id=str(	prod
+py	ming_sim/issues.py	6584	startswith_call	startswith	displaced_talent_pool_results	"                if transition.startswith(""normalize:""):"	prod
+py	ming_sim/issues.py	6588	strip_call	strip	displaced_talent_pool_results	"            row_power_id = str(row[""power_id""] or """").strip()"	prod
+py	ming_sim/issues.py	6591	strip_call	strip	displaced_talent_pool_results	"                content_power_id = str(getattr(content.characters[name], ""power_id"", """") or """").strip()"	prod
+py	ming_sim/issues.py	6599	strip_call	strip	displaced_talent_pool_results	"                result[""new_office""] = new_office.strip()"	prod
+py	ming_sim/issues.py	6600	startswith_call	startswith	displaced_talent_pool_results	"                if transition.startswith(""normalize:""):"	prod
+py	ming_sim/issues.py	6652	strip_call	strip	displaced_talent_pool_results	                    region_id=str(	prod
+py	ming_sim/issues.py	6697	startswith_call	startswith	displaced_talent_pool_results	"            elif transition.startswith(""normalize:""):"	prod
+py	ming_sim/issues.py	6709	strip_call	strip	displaced_talent_pool_results	"            way = str(item.get(""方式"") or item.get(""way"") or """").strip()"	prod
+py	ming_sim/issues.py	6733	startswith_call	startswith	displaced_talent_pool_results	"            if transition.startswith(""reject:""):"	prod
+py	ming_sim/issues.py	6738	removeprefix_call	removeprefix	displaced_talent_pool_results	"                        transition.removeprefix(""reject:"") or ""invalid_transition"","	prod
+py	ming_sim/issues.py	6743	strip_call	strip	displaced_talent_pool_results	"            old_power = str(row[""power_id""] or """").strip()"	prod
+py	ming_sim/issues.py	6746	strip_call	strip	displaced_talent_pool_results	                    str(power_id).strip()	prod
+py	ming_sim/issues.py	6748	strip_call	strip	displaced_talent_pool_results	                    if str(power_id).strip()	prod
+py	ming_sim/issues.py	6775	startswith_call	startswith	displaced_talent_pool_results	"            if require_origin and str(origin_ref or """").startswith(""dossier:""):"	prod
+py	ming_sim/issues.py	6777	split_call	split	displaced_talent_pool_results	"                    dossier_id = _parse_sqlite_id(str(origin_ref).split("":"", 1)[1])"	prod
+py	ming_sim/issues.py	6782	strip_call	strip	displaced_talent_pool_results	"                    action_type = str(dossier.get(""action_type"") or """").strip()"	prod
+py	ming_sim/issues.py	6805	strip_call	strip	displaced_talent_pool_results	                        bound_target = str(	prod
+py	ming_sim/issues.py	6892	strip_call	strip	displaced_talent_pool_results	"            prior_status = str(row[""status""] or ""active"").strip() or ""active"""	prod
+py	ming_sim/issues.py	6893	strip_call	strip	displaced_talent_pool_results	"            prior_transit = str(row[""transit_to""] or """").strip()"	prod
+py	ming_sim/issues.py	6894	strip_call	strip	displaced_talent_pool_results	"            prior_location = str(row[""location""] or """").strip()"	prod
+py	ming_sim/issues.py	6928	strip_call	strip	displaced_talent_pool_results	"                bool(str(transit_to or """").strip())"	prod
+py	ming_sim/issues.py	6991	strip_call	strip	_legacy_person_report_section	"    action = str(source.get(""动作"") or source.get(""action"") or result.get(""动作"") or """").strip()"	prod
+py	ming_sim/issues.py	7031	strip_call	strip	_apply_dossier_participant_items	"            character_id = str(item.get(""character_id"") or """").strip()"	prod
+py	ming_sim/issues.py	7032	strip_call	strip	_apply_dossier_participant_items	"            delegator_id = str(item.get(""delegator_id"") or """").strip()"	prod
+py	ming_sim/issues.py	7033	strip_call	strip	_apply_dossier_participant_items	"            tier = str(item.get(""tier"") or """").strip()"	prod
+py	ming_sim/issues.py	7140	strip_call	strip	_reject	"        region_id = str(item.get(""region_id"") or """").strip()"	prod
+py	ming_sim/issues.py	7178	strip_call	strip	_reject	"        origin_ref = str(item.get(""origin_ref"") or """").strip()"	prod
+py	ming_sim/issues.py	7179	re_fullmatch	fullmatch	_reject	"        dossier_match = re.fullmatch(r""dossier:([1-9][0-9]*)"", origin_ref)"	prod
+py	ming_sim/issues.py	7298	strip_call	strip	_is_bandit_power_id	"    pid = str(power_id or """").strip()"	prod
+py	ming_sim/issues.py	7299	startswith_call	startswith	_is_bandit_power_id	"    return pid == ""bandits"" or pid.startswith(""bandit_"")"	prod
+py	ming_sim/issues.py	7355	strip_call	strip	_reject	"        region_id = str(item.get(""region_id"") or """").strip()"	prod
+py	ming_sim/issues.py	7356	strip_call	strip	_reject	"        power_id = str(item.get(""power_id"") or """").strip()"	prod
+py	ming_sim/issues.py	7357	strip_call	strip	_reject	"        origin_ref = str(item.get(""origin_ref"") or """").strip()"	prod
+py	ming_sim/issues.py	7517	strip_call	strip	_apply_recovery_driven_transfers	"        grant_action = str(payload.get(""grant_action"") or """").strip()"	prod
+py	ming_sim/issues.py	7520	strip_call	strip	_apply_recovery_driven_transfers	"        target_kind = str(row[""target_kind""] or payload.get(""target_kind"") or """").strip()"	prod
+py	ming_sim/issues.py	7521	strip_call	strip	_apply_recovery_driven_transfers	"        region_id = str(row[""target_id""] or payload.get(""target_id"") or """").strip()"	prod
+py	ming_sim/issues.py	7526	strip_call	strip	_apply_recovery_driven_transfers	"        outcome = str(row[""execution_outcome""] or """").strip()"	prod
+py	ming_sim/issues.py	7529	strip_call	strip	_apply_recovery_driven_transfers	"        cadence = str(payload.get(""cadence"") or """").strip()"	prod
+py	ming_sim/issues.py	7619	strip_call	strip	neutralize_covert_fiscal_effects	"    raw_keys = {str(row.get(""key"") or """").strip() for row in rows if row.get(""beyond_intent"")}"	prod
+py	ming_sim/issues.py	7625	endswith_call	endswith	neutralize_covert_fiscal_effects	"        if raw_key.endswith((""_base"", ""_rate"")):"	prod
+py	ming_sim/issues.py	7756	replace_call	replace	record_secret_order_disclosure	        disclosure_prefix	prod
+py	ming_sim/issues.py	7880	strip_call	strip	_apply_extracted_army_delta	"    origin_ref = str(raw_changes.get(""origin_ref"") or """").strip()"	prod
+py	ming_sim/issues.py	8010	strip_call	strip	_stamp_batch_new_declaration	"        identity = str(parsed.get(""identity"") or """").strip()"	prod
+py	ming_sim/issues.py	8126	strip_call	strip	_origin_ref_from_result_item	"            outcome = str(item.get(""outcome"") or """").strip()"	prod
+py	ming_sim/issues.py	8283	strip_call	strip	_split_pre_issue_person_changes	"            if str(item.get(""动作"") or """").strip() == ""评定"":"	prod
+py	ming_sim/issues.py	8305	strip_call	strip	_amnesty_conflict_power_ids	"            if str(item.get(""动作"") or """").strip() != ""易主"":"	prod
+py	ming_sim/issues.py	8307	strip_call	strip	_amnesty_conflict_power_ids	"            if str(item.get(""方式"") or item.get(""way"") or """").strip() != ""主动归附"":"	prod
+py	ming_sim/issues.py	8309	strip_call	strip	_amnesty_conflict_power_ids	"            if str(item.get(""new_power"") or """").strip() != ""ming"":"	prod
+py	ming_sim/issues.py	8316	strip_call	strip	_amnesty_conflict_power_ids	"            name = str(item.get(""name"") or """").strip()"	prod
+py	ming_sim/issues.py	8326	strip_call	strip	_amnesty_conflict_power_ids	"            old_power = str(row[""power_id""] or """").strip()"	prod
+py	ming_sim/issues.py	8334	startswith_call	startswith	_amnesty_conflict_power_ids	"            if transition.startswith(""reject:""):"	prod
+py	ming_sim/issues.py	8337	strip_call	strip	_amnesty_conflict_power_ids	                str(power_id).strip()	prod
+py	ming_sim/issues.py	8339	strip_call	strip	_amnesty_conflict_power_ids	                if str(power_id).strip()	prod
+py	ming_sim/issues.py	8343	strip_call	strip	_amnesty_conflict_power_ids	"            explicit_title = str(item.get(""new_title"") or item.get(""title"") or """").strip()"	prod
+py	ming_sim/issues.py	8416	strip_call	strip	_apply_person_changes_itemwise	"                    ""name"": str(person_change.get(""name"") or """").strip(),"	prod
+py	ming_sim/issues.py	8417	strip_call	strip	_apply_person_changes_itemwise	"                    ""动作"": str(person_change.get(""动作"") or """").strip(),"	prod
+py	ming_sim/issues.py	8458	strip_call	strip	_apply_economy_moves_list	"                    if origin_ref and not str(move.get(""origin_ref"") or move.get(""来源引用"") or """").strip():"	prod
+py	ming_sim/issues.py	8460	startswith_call	startswith	_apply_economy_moves_list	"                    if origin_ref.startswith(""dossier:""):"	prod
+py	ming_sim/issues.py	8500	strip_call	strip	_apply_ordinary_entity_step	"            origin_ref = str(army_item.get(""origin_ref"") or """").strip()"	prod
+py	ming_sim/issues.py	8510	strip_call	strip	_apply_ordinary_entity_step	"            origin_ref = str(raw_changes.get(""origin_ref"") or """").strip()"	prod
+py	ming_sim/issues.py	8597	strip_call	strip	_merge_applied_deltas	"        if isinstance(item, dict) and str(item.get(""reason"") or """").strip() == ""回流"":"	prod
+py	ming_sim/issues.py	8634	strip_call	strip	_merge_applied_deltas	"            origin_ref = str(army_item.get(""origin_ref"") or """").strip()"	prod
+py	ming_sim/issues.py	8645	strip_call	strip	_merge_applied_deltas	"            origin_ref = str(raw_changes.get(""origin_ref"") or """").strip()"	prod
+py	ming_sim/issues.py	8701	strip_call	strip	_merge_applied_deltas	                mapped = POWER_FIELD_ALIASES.get(str(k).strip(), str(k).strip())	prod
+py	ming_sim/issues.py	8731	strip_call	strip	_merge_applied_deltas	"        origin_ref = str(raw_changes.get(""origin_ref"") or """").strip()"	prod
+py	ming_sim/issues.py	8777	strip_call	strip	_merge_applied_deltas	"            and str(item.get(""commitment_kind"") or """").strip()"	prod
+py	ming_sim/issues.py	8842	strip_call	strip	_reject_suppressed_strategic_results	"                ""动作"": str(item.get(""动作"") or item.get(""action"") or """").strip(),"	prod
+py	ming_sim/issues.py	8851	strip_call	strip	_reject_suppressed_strategic_results	"                ""id"": str(item.get(""id"") or """").strip() if isinstance(item, dict) else """","	prod
+py	ming_sim/issues.py	8861	strip_call	strip	_reject_suppressed_strategic_results	"            event_id = str(new_issue.get(""id"") or """").strip()"	prod
+py	ming_sim/issues.py	8866	strip_call	strip	_reject_suppressed_strategic_results	"        event_id = str(new_issue.get(""id"") or """").strip()"	prod
+py	ming_sim/issues.py	8890	strip_call	strip	_reject_suppressed_strategic_results	"        event_id = str(new_issue.get(""id"") or """").strip()"	prod
+py	ming_sim/issues.py	8916	strip_call	strip	_reject_suppressed_strategic_results	"            origin_ref = str(item.get(""origin_ref"") or """").strip()"	prod
+py	ming_sim/issues.py	8923	strip_call	strip	_reject_suppressed_strategic_results	"            origin_ref = str(raw_changes.get(""origin_ref"") or """").strip()"	prod
+py	ming_sim/issues.py	8941	strip_call	strip	_reject_suppressed_strategic_results	"                    ""name"": str(item.get(""name"") or """").strip(),"	prod
+py	ming_sim/issues.py	8942	strip_call	strip	_reject_suppressed_strategic_results	"                    ""动作"": str(item.get(""动作"") or """").strip(),"	prod
+py	ming_sim/issues.py	8952	strip_call	strip	_reject_suppressed_strategic_results	"            origin_ref = str(raw_changes.get(""origin_ref"") or """").strip()"	prod
+py	ming_sim/issues.py	8981	strip_call	strip	_norm_int_leaf	                return int(v.strip())	prod
+py	ming_sim/issues.py	8990	strip_call	strip	_norm_int_leaf	"        key = str(remove.get(""key"") or """").strip()"	prod
+py	ming_sim/issues.py	9030	strip_call	strip	_norm_int_leaf	"        origin_ref = str(remove.get(""origin_ref"") or """").strip()"	prod
+py	ming_sim/issues.py	9071	strip_call	strip	_norm_int_leaf	"        direction_raw = str(create.get(""direction"") or """").strip()"	prod
+py	ming_sim/issues.py	9073	strip_call	strip	_norm_int_leaf	"        key = str(create.get(""key"") or """").strip()"	prod
+py	ming_sim/issues.py	9074	strip_call	strip	_norm_int_leaf	"        account = str(create.get(""account"") or """").strip()"	prod
+py	ming_sim/issues.py	9102	strip_call	strip	_norm_int_leaf	"        origin_ref = str(create.get(""origin_ref"") or """").strip()"	prod
+py	ming_sim/issues.py	9172	strip_call	strip	_norm_int_leaf	"        key = str(change.get(""key"") or """").strip()"	prod
+py	ming_sim/issues.py	9218	strip_call	strip	_norm_int_leaf	"        origin_ref = str(change.get(""origin_ref"") or """").strip()"	prod
+py	ming_sim/issues.py	9339	strip_call	strip	_norm_int_leaf	        if raw_id is None or not sim_note.strip():	prod
+py	ming_sim/issues.py	9374	slice_trunc_expr	[:expr]	_norm_int_leaf	"            print(f""[secret_order] 推演副作用 id={real_id} note={sim_note[:60]!r}"")"	prod
+py	ming_sim/issues.py	9533	strip_call	strip	_declared_emperor_ending	    token = fate.strip()	prod
+py	ming_sim/issues.py	9534	lower_call	lower	_declared_emperor_ending	"    if not token or token.lower() in {""null"", ""none""}:"	prod
+py	ming_sim/issues.py	9540	replace_call	replace	_declared_emperor_ending	"    if token.isascii() and token.replace(""_"", """").isalnum() and not token[0].isdigit():"	prod
+py	ming_sim/issues.py	9541	startswith_call	startswith	_declared_emperor_ending	"        status = token if token.startswith(""emperor_"") else f""emperor_{token}"""	prod
+py	ming_sim/issues.py	9577	strip_call	strip	apply_issue_inertia_and_ongoing	"        commitment_kind = str(row[""commitment_kind""] if ""commitment_kind"" in row.keys() else """").strip()"	prod
 py	ming_sim/knowledge.py	38	strip_call	strip	_issue_audience_names	"        origin_ref = str(issue[""origin_ref""] or """").strip()"	prod
 py	ming_sim/knowledge.py	76	strip_call	strip	_issue_audience_names	        stripped = name.strip()	prod
 py	ming_sim/knowledge.py	285	join_call	join	render_character_knowledge	"    return ""\n"".join(lines) if len(lines) > 1 else """""	prod
@@ -2040,9 +2030,9 @@ py	ming_sim/rescript_actions.py	43	startswith_call	startswith	persist_answers	" 
 py	ming_sim/rescript_actions.py	47	startswith_call	startswith	persist_answers	"        elif event_id.startswith(""deliberation:""):"	prod
 py	ming_sim/rescript_actions.py	53	strip_call	strip	persist_answers	"            if not (choice.get(""label"", """").strip() or choice.get(""note"", """").strip()):"	prod
 py	ming_sim/rescript_actions.py	74	startswith_call	startswith	persist_answers	"            if row[""kind""] == ""decision"" and event_id and not event_id.startswith("	prod
-py	ming_sim/rescript_draft.py	21	join_call	join	triage_officers	"            placeholders="","".join(""?"" for _ in _TRIAGE_OFFICE_TITLES),"	prod
-py	ming_sim/rescript_draft.py	132	strip_call	strip	consume_memorial_answers	                       or text.strip()):	prod
-py	ming_sim/rescript_draft.py	175	strip_call	strip	consume	        if text.strip() and not midzhi:	prod
+py	ming_sim/rescript_draft.py	24	join_call	join	triage_officers	"            placeholders="","".join(""?"" for _ in _TRIAGE_OFFICE_TITLES),"	prod
+py	ming_sim/rescript_draft.py	135	strip_call	strip	consume_memorial_answers	                       or text.strip()):	prod
+py	ming_sim/rescript_draft.py	178	strip_call	strip	consume	        if text.strip() and not midzhi:	prod
 py	ming_sim/session.py	86	join_call	join	prune_auto_saves	                _os.remove(_os.path.join(saves_dir, f))	prod
 py	ming_sim/session.py	89	strip_call	strip	prune_auto_saves	"    campaign_id = (campaign_id or """").strip()"	prod
 py	ming_sim/session.py	94	startswith_call	startswith	prune_auto_saves	"        if not (f.startswith(f""{AUTO_SAVE_PREFIX}{campaign_id}_"") and f.endswith("".db"")):"	prod

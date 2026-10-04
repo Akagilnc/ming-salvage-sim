@@ -335,6 +335,8 @@ def build_promulgation_judge_context(
             from ming_sim.materials import revoke_target_facts
             entry["revoke_target"] = revoke_target_facts(db, payload, row)
         dossier_rows.append(entry)
+    # Exact roster office identities + closed office_type enum — no LIKE stem vocabulary.
+    _GATEKEEPER_OFFICE_TITLES = ("内阁首辅", "司礼监掌印太监")
     gatekeepers = [
         {
             **dict(row),
@@ -344,8 +346,11 @@ def build_promulgation_judge_context(
         for row in db.conn.execute(
             "SELECT name,office,office_type,faction,courage,integrity FROM characters "
             "WHERE status='active' AND power_id='ming' AND "
-            "(office LIKE '%首辅%' OR office LIKE '%掌印%' OR office LIKE '%给事中%' "
-            "OR office_type='六科') ORDER BY office_type,office,name"
+            "(office IN ({placeholders}) OR office_type='六科') "
+            "ORDER BY office_type,office,name".format(
+                placeholders=",".join("?" for _ in _GATEKEEPER_OFFICE_TITLES),
+            ),
+            _GATEKEEPER_OFFICE_TITLES,
         ).fetchall()
     ]
     history = []

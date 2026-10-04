@@ -3183,35 +3183,7 @@ def _pending_person_changes_block_event_gate(
                 ),
             )
             overlay(name, "transit_to", "")
-            new_parts = [p for p in normalized_office.split(",") if _is_exclusive_office(p)]
-            if new_parts:
-                for other_name in set(shadow_rows):
-                    if other_name == name:
-                        continue
-                    other_row = character_row(other_name)
-                    if other_row is None:
-                        continue
-                    if row_value(other_row, "status", "active") != "active":
-                        continue
-                    if row_value(other_row, "power_id", "ming") not in {"", "ming"}:
-                        continue
-                    current_parts = [p.strip() for p in row_value(other_row, "office").split(",") if p.strip()]
-                    kept = [p for p in current_parts if p not in new_parts]
-                    if len(kept) == len(current_parts):
-                        continue
-                    displaced_office = "听用候铨" if not kept else ",".join(kept)
-                    old_type = row_value(other_row, "office_type")
-                    displaced_type = (
-                        "身名分"
-                        if not kept
-                        else infer_office_type_from_office(displaced_office, old_type, db.llm_config)
-                    )
-                    overlay(other_name, "office", displaced_office)
-                    overlay(other_name, "office_type", displaced_type)
-                    if not kept:
-                        overlay(other_name, "status_reason", "被顶替")
-                        overlay(other_name, "reason_code", "被顶替")
-                        overlay(other_name, "transit_to", "")
+            # #1847: no free-text exclusive-suffix displacement in shadow preview.
         else:
             continue
 
@@ -5741,14 +5713,9 @@ def apply_issue_tracker_output(
     }
 
 
-# #1847: exclusivity is not inferred from free-text office suffixes.
-# Displacement reconnect belongs to a later exact-registry seat model.
-
-
-def _is_exclusive_office(part: str) -> bool:
-    """Exclusive-seat admission must not be derived from title-suffix vocabulary."""
-    del part
-    return False
+# #1847: exclusivity must not be inferred from free-text office suffixes.
+# Without an exact-registry seat model, displacement is deleted — callers keep the
+# seam name but receive an empty result (no fake Always-False helper left behind).
 
 
 def _displace_duplicate_offices(
@@ -5760,99 +5727,9 @@ def _displace_duplicate_offices(
     region_id: str = "",
     commit: bool = True,
 ) -> List[str]:
-    """新任者 new_holder 拿到 new_office 后，把其中每个独占实职分项从其他 active 官员
-    office 里剔除，避免双缺官。返回被腾出的 (旧任者:职) 描述列表。
-
-    ``region_id`` 必须是一次任职的 resolved seat（经 _resolve_appointment_seat /
-    character_offices），不是调用方原始字符串。中央 resolved 为空 → 按 office
-    文字挤位；地方 resolved 非空 → 仅同 seat 互挤（同名巡抚跨省不顶替）。
-    """
-    new_parts = [p for p in normalize_office(new_office).split(",") if _is_exclusive_office(p)]
-    if not new_parts:
-        return []
-    new_seat = str(region_id or "").strip()
-    displaced: List[str] = []
-    displaced_names: set[str] = set()  # #9 cmr R1：被顶替者去重，循环后逐派系重算 leverage。
-    rows = db.conn.execute(
-        "SELECT name, office FROM characters WHERE status='active' AND power_id='ming' AND name!=?",
-        (new_holder,),
-    ).fetchall()
-    for row in rows:
-        holder_parts = [p.strip() for p in str(row["office"]).split(",") if p.strip()]
-        # Seat-aware exclusive collision: resolved local seat only bumps the
-        # same seat; empty resolved seat is central identity (title-only).
-        if new_seat:
-            holder_seat = db.character_office_region(row["name"])
-            if holder_seat != new_seat:
-                continue
-        conflicting = [p for p in holder_parts if p in new_parts]
-        if not conflicting:
-            continue  # 此人不占同名独缺
-        kept = [p for p in holder_parts if p not in conflicting]
-        displaced_names.add(row["name"])
-        for lost in conflicting:
-            displaced.append(f"{row['name']}:{lost}")
-        fully_displaced = not kept
-        new_holder_office = "听用候铨" if fully_displaced else ",".join(kept)
-        # 剔掉一个分项后,保留官职对应的 office_type 可能变了(如剔「兵部尚书」后只剩「左都御史」=都察院)。
-        # 若独占实职被完全腾空,旧任仍 active,但其名分必须落入人才池的「听用候铨」,
-        # 不能留下 active + 空 office 的半身份（ADR 0009 S5）。
-        old_type_row = db.conn.execute(
-            "SELECT office_type FROM characters WHERE name=?", (row["name"],)).fetchone()
-        old_type = old_type_row["office_type"] if old_type_row else ""
-        new_type = (
-            "身名分"
-            if fully_displaced
-            else infer_office_type_from_office(new_holder_office, old_type, db.llm_config)
-        )
-        # 排挤后 character_offices / 内存 office_region 与 characters 同事务同步：
-        # 全顶替 → 名分，备档删除、任所清空；部分保留 → 余职 + 原 seat 入 record。
-        # 内存 seat 必须以备档真源对齐（record 后可能因非地方 office_type 钳空）。
-        retained_seat = "" if fully_displaced else str(
-            db.character_office_region(row["name"]) or ""
-        ).strip()
-        if fully_displaced:
-            db.conn.execute(
-                "UPDATE characters SET office=?, office_type=?, status_reason=?, reason_code=? WHERE name=?",
-                (new_holder_office, new_type, "被顶替", "被顶替", row["name"]),
-            )
-            db.set_character_transit(str(row["name"]), content=content, commit=False)
-        else:
-            db.conn.execute(
-                "UPDATE characters SET office=?, office_type=? WHERE name=?",
-                (new_holder_office, new_type, row["name"]),
-            )
-        db._record_character_office(
-            row["name"], new_holder_office, new_type, "被顶替", region_id=retained_seat,
-        )
-        archived_seat = str(db.character_office_region(row["name"]) or "").strip()
-        if content is not None and row["name"] in content.characters:
-            ch = content.characters[row["name"]]
-            ch.office = new_holder_office
-            ch.office_type = new_type
-            ch.office_region = archived_seat
-            if fully_displaced:
-                ch.status_reason = "被顶替"
-                ch.reason_code = "被顶替"
-    # #9 cmr R1：被顶替者的 office_type 经上方裸 UPDATE 改了（全顶替→身名分=0 权重），绕过了
-    # set_character_office 钩子，故其所属派系（常与新任者异派系）的 leverage 须在此补重算，否则
-    # 残留偏高、违 #9 不变式。新任者自身派系已由 set_character_office 钩子重算，这里只补被顶替者。
-    # commit 前调用——recompute 读当前在朝成员、不内部 commit，正反映刚改完的 office_type；
-    # 绝对幂等（非白名单 return、重复无害）。去重后逐派系各调一次。
-    displaced_factions = set()
-    for dn in displaced_names:
-        frow = db.conn.execute(
-            "SELECT faction FROM characters WHERE name=?", (dn,)
-        ).fetchone()
-        # 空/None faction 提前滤掉（recompute_faction_leverage("") 虽被白名单校验 no-op，
-        # 但提前过滤免去无意义调用，集合也不残留空串。线上 R5 gemini medium。
-        if frow is not None and frow["faction"]:
-            displaced_factions.add(str(frow["faction"]))
-    for fac in displaced_factions:
-        db.recompute_faction_leverage(fac)
-    if commit:
-        db.conn.commit()
-    return displaced
+    """No-op: seat exclusivity is not derived from title wording (#1847 / ADR 0142)."""
+    del db, content, new_holder, new_office, region_id, commit
+    return []
 
 
 def _snapshot_person_write_state(db: GameDB, content: Optional[GameContent]):

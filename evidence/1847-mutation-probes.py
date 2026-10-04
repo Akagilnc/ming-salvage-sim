@@ -223,13 +223,38 @@ ok("N10_NO_TITLE_NOISE_SUFFIXES", "_TITLE_NOISE_SUFFIXES" not in src_or, "")
 ok("N10_NO_HISTORY_PREFIX_MARKERS", 'startswith(("前", "原"))' not in src_or and "罢居" not in src_or.split("def appointment_break_rank")[1].split("def ")[0], "")
 src_iss = (ROOT / "ming_sim/issues.py").read_text(encoding="utf-8")
 ok("N10_NO_EXCLUSIVE_OFFICE_SUFFIX_VOCAB", "_EXCLUSIVE_OFFICE_SUFFIXES" not in src_iss, "")
-ok("N10_EXCLUSIVE_OFFICE_NO_ENDSWITH_ADMIT", "part.endswith(suf)" not in src_iss.split("def _is_exclusive_office")[1].split("\ndef ")[0], "")
+ok("N10_NO_EXCLUSIVE_OFFICE_HELPER", "_is_exclusive_office" not in src_iss, "")
+ok(
+    "N10_DISPLACE_NO_FREE_TEXT_ADMIT",
+    "return []" in src_iss.split("def _displace_duplicate_offices")[1].split("\ndef ")[0],
+    "",
+)
 src_mf = (ROOT / "web/src/components/ministerFilters.ts").read_text(encoding="utf-8")
 ok("N10_UI_NO_OFFICE_TITLE_REGEX", not any(x in src_mf for x in ("/首辅/", "/前|罢|致仕/", "/尚书/")), "")
 ok("N10_UI_FILTER_USES_OFFICE_TYPE_ENUM", "office_type" in src_mf and "status" in src_mf, "")
 src_triage = (ROOT / "ming_sim/rescript_draft.py").read_text(encoding="utf-8")
-ok("N10_TRIAGE_NO_OFFICE_LIKE", "LIKE '%首辅%'" not in src_triage and "LIKE '%司礼监掌印%'" not in src_triage, "")
-ok("N10_TRIAGE_EXACT_OFFICE_TITLES", "_TRIAGE_OFFICE_TITLES" in src_triage and "office IN" in src_triage, "")
+# Live SQL must be exact IN (...); ignore comment prose that names the deleted LIKE.
+_triage_fn = src_triage.split("def triage_officers")[1].split("\ndef ")[0]
+ok("N10_TRIAGE_NO_OFFICE_LIKE", "LIKE '%" not in _triage_fn and "office IN" in _triage_fn, "")
+ok("N10_TRIAGE_EXACT_OFFICE_TITLES", "_TRIAGE_OFFICE_TITLES" in src_triage and "office IN" in _triage_fn, "")
+# Exact titles must be shipped roster office identities, not free phrasing stems.
+_roster_offices = {
+    str(ch.office).strip()
+    for ch in content.characters.values()
+    if ch.office
+}
+ok(
+    "N10_TRIAGE_TITLES_ARE_ROSTER_OFFICES",
+    {"内阁首辅", "司礼监掌印太监"} <= _roster_offices,
+    f"missing from roster offices",
+)
+src_decree = (ROOT / "ming_sim/decree.py").read_text(encoding="utf-8")
+ok("N10_DECREE_NO_GATEKEEPER_LIKE", "LIKE '%首辅%'" not in src_decree and "LIKE '%掌印%'" not in src_decree and "LIKE '%给事中%'" not in src_decree, "")
+ok("N10_DECREE_GATEKEEPER_EXACT_OR_TYPE", "_GATEKEEPER_OFFICE_TITLES" in src_decree and "office_type='六科'" in src_decree, "")
+fn_st = src_bp.split("def _sponsor_transferred")[1].split("\ndef ")[0]
+ok("N10_BREACH_NO_LEN_PROXY", "len(expected)" not in fn_st, "")
+ok("N10_BREACH_NO_SUBSTRING_IN_OFFICE", "expected in current_office" not in fn_st and "expected not in current_office" not in fn_st, "")
+ok("N10_BREACH_NO_ROLE_FALLBACK", 'item.get("role")' not in fn_st, "")
 
 log("=== N10/N6 secret context: real _extract_secret_order force_default entry ===")
 import json

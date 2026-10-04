@@ -10,11 +10,14 @@ from ming_sim.agents import parse_agent_json, run_agent_text
 from ming_sim.exceptions import LLMContractError, LLMUnavailable
 
 
+# Exact shipped roster ``characters.office`` identities for 票拟分拣 (ADR 0093).
+# Verified present as exact office strings in content/characters.json — not stem
+# vocabulary / LIKE '%首辅%'. Do not add free-text phrasing variants here.
 _TRIAGE_OFFICE_TITLES = frozenset({"内阁首辅", "司礼监掌印太监"})
 
 
 def triage_officers(db) -> list[dict]:
-    """Admit triage officers by exact office title identity — not free-text LIKE."""
+    """Admit triage officers by exact roster office identity only."""
     return [dict(row) for row in db.conn.execute(
         "SELECT * FROM characters WHERE status='active' AND power_id='ming' "
         "AND office IN ({placeholders}) ORDER BY name".format(
