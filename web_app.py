@@ -385,24 +385,13 @@ def _cleanup_failure_detail(err: SaveSlotCleanupError) -> str:
 
 
 def _advanced_llm_config_for_verify(config: LLMConfig) -> LLMConfig:
-    """主配置上的高级模型槽 → 单独烟测用的 LLMConfig。"""
-    return LLMConfig(
-        api_key=real_api_key_or_empty(config.advanced_api_key) or real_api_key_or_empty(config.api_key),
-        base_url=(config.advanced_base_url or "").strip() or config.base_url,
-        model=(config.advanced_model or "").strip(),
-        timeout_seconds=config.timeout_seconds,
-        thinking_level="",
-        advanced_model=config.advanced_model,
-        advanced_base_url=config.advanced_base_url,
-        advanced_api_key=config.advanced_api_key,
-        advanced_thinking_level="",
-        reasoning_strength=config.reasoning_strength,
-        channel=config.channel,
-        cli_runner=config.cli_runner,
-        cli_model=config.cli_model,
-        cli_timeout_seconds=config.cli_timeout_seconds,
-        default_headers=dict(config.default_headers or {}),
-    )
+    """主配置上的高级模型槽 → 单独烟测用的 LLMConfig。
+
+    #1902 N2：不另造生效字段映射；复用共核 ``for_role(..., "simulator")`` 的 advanced 切片。
+    """
+    from ming_sim.llm_config import for_role
+
+    return for_role(config, "simulator")
 
 
 def _verify_smoke_leg(config: LLMConfig, *, stage: str, prefix: str) -> Optional[HTTPException]:

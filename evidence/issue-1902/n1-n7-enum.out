@@ -1,41 +1,99 @@
 {
-  "n1_members": [
-    "ming_sim/cli_backend.py:3008:resubmit_generic"
+  "scope": {
+    "prod_py": 95,
+    "test_py": 222,
+    "test_web": 25
+  },
+  "n1_candidates": [
+    "ming_sim/cli_backend.py:2581:合法「无」→ ``{\"draft_action\": \"无\", ...}``；解析失败/缺键/非法枚举响亮上抛（N1）。",
+    "ming_sim/cli_backend.py:2665:return {\"draft_action\": \"无\", \"draft_text\": \"\", \"target_candidate\": \"\"}",
+    "ming_sim/cli_backend.py:2680:\"draft_action\": \"无\", \"draft_text\": \"\", \"target_candidate\": \"\",",
+    "ming_sim/cli_backend.py:2735:return {\"draft_action\": \"无\", \"draft_text\": \"\", \"target_candidate\": \"\"}",
+    "ming_sim/cli_backend.py:3002:raise ValueError(\"结算补交重写未返回拟旨意图\")"
   ],
-  "n2_members": [
-    "web_app.py:389:LLMConfig(",
-    "web_app.py:4228:llm_config_from_runtime(",
-    "ming_sim/cli_backend.py:4149:LLMConfig(",
-    "ming_sim/cli_backend.py:4135:LLMConfig(",
-    "ming_sim/cli/terminal.py:922:llm_config_from_runtime(",
-    "ming_sim/cli/terminal.py:925:llm_config_from_runtime("
+  "n2_llmconfig_sites": [
+    "ming_sim/agents.py:582:cfg = _llm_for_role(llm_config, \"simulator\")",
+    "ming_sim/agents.py:677:cfg = _llm_for_role(llm_config, \"simulator\")",
+    "ming_sim/agents.py:712:cfg = _llm_for_role(llm_config, \"simulator\")",
+    "ming_sim/agents.py:749:cfg = _llm_for_role(llm_config, \"simulator\")",
+    "ming_sim/agents.py:800:cfg = _llm_for_role(llm_config, \"extractor\")",
+    "ming_sim/agents.py:826:cfg = _llm_for_role(llm_config, \"extractor\")",
+    "ming_sim/agents.py:859:cfg = _llm_for_role(llm_config, \"extractor\")",
+    "ming_sim/agents.py:959:cfg = _llm_for_role(llm_config, \"simulator\")",
+    "ming_sim/cli/terminal.py:922:llm_config = llm_config_from_runtime(runtime, **entry_args)",
+    "ming_sim/cli/terminal.py:925:llm_config = llm_config_from_runtime(",
+    "ming_sim/cli_backend.py:4129:return LLMConfig(",
+    "ming_sim/cli_backend.py:4143:return LLMConfig(",
+    "ming_sim/llm_config.py:326:def llm_config_from_runtime(",
+    "ming_sim/llm_config.py:405:return LLMConfig(",
+    "ming_sim/llm_config.py:472:return LLMConfig(",
+    "ming_sim/llm_config.py:497:def for_role(cfg: LLMConfig, role: str) -> LLMConfig:",
+    "ming_sim/llm_config.py:505:return LLMConfig(",
+    "web_app.py:387:def _advanced_llm_config_for_verify(config: LLMConfig) -> LLMConfig:",
+    "web_app.py:390:#1902 N2：不另造生效字段映射；复用共核 ``for_role(..., \"simulator\")`` 的 advanced 切片。",
+    "web_app.py:394:return for_role(config, \"simulator\")",
+    "web_app.py:441:_advanced_llm_config_for_verify(config),",
+    "web_app.py:745:llm_config = _llm_config_from_runtime(",
+    "web_app.py:1092:cfg = _llm_config_from_runtime(",
+    "web_app.py:4217:cfg = llm_config_from_runtime(",
+    "web_app.py:4753:config = _llm_config_from_runtime(",
+    "web_app.py:4857:config = _llm_config_from_runtime("
   ],
-  "n3_members": [
+  "n3_restore_prod_sites": [
     "ming_sim/cli/terminal.py:226:取数走会话层 ``pending_audience_reply_retries``（#1902 F2）：建轮归「殿上」，",
     "ming_sim/cli/terminal.py:229:retries = session.pending_audience_reply_retries()",
     "ming_sim/cli/terminal.py:253:retries = session.pending_audience_reply_retries()",
+    "ming_sim/db.py:9239:def list_hall_chat_turns(self, night_id: int) -> List[Dict[str, Any]]:",
+    "ming_sim/db.py:9441:def get_interrupted_reply_retries(",
+    "ming_sim/db.py:9476:def get_post_reply_retries(self, minister_name: str) -> List[Dict[str, Any]]:",
     "ming_sim/session.py:1142:读取侧 ``list_hall_chat_turns`` 只按「殿上」取本夜轮，写成大臣名会让",
+    "ming_sim/session.py:1240:def pending_audience_reply_retries(self) -> List[Dict[str, Any]]:",
     "ming_sim/session.py:1244:而问话/回话挂被召大臣名。此前 CLI 拿大臣名去查 ``get_interrupted_reply_retries``",
     "ming_sim/session.py:1257:int(row[\"id\"]) for row in self.db.list_hall_chat_turns(int(night[\"id\"]))",
     "ming_sim/session.py:1262:row for row in self.db.get_interrupted_reply_retries(SCENE_CHAT_SPEAKER)",
-    "web_app.py:1853:turns = self.db.list_hall_chat_turns(int(night[\"id\"]))",
-    "web_app.py:1925:turns = self.db.list_hall_chat_turns(int(night[\"id\"]))",
-    "web_app.py:2104:return self.db.get_interrupted_reply_retries(minister_name)",
-    "web_app.py:2110:interrupted = self.session.pending_audience_reply_retries()",
-    "web_app.py:2114:ids = {int(row[\"id\"]) for row in self.db.list_hall_chat_turns(int(night[\"id\"]))}"
+    "web_app.py:1842:turns = self.db.list_hall_chat_turns(int(night[\"id\"]))",
+    "web_app.py:1914:turns = self.db.list_hall_chat_turns(int(night[\"id\"]))",
+    "web_app.py:2093:return self.db.get_interrupted_reply_retries(minister_name)",
+    "web_app.py:2095:def reply_retries(self, minister_name: str) -> List[Dict[str, Any]]:",
+    "web_app.py:2099:interrupted = self.session.pending_audience_reply_retries()",
+    "web_app.py:2103:ids = {int(row[\"id\"]) for row in self.db.list_hall_chat_turns(int(night[\"id\"]))}",
+    "web_app.py:2105:retry for retry in self.db.get_post_reply_retries(SCENE_CHAT_SPEAKER)",
+    "web_app.py:2114:post_reply = self.db.get_post_reply_retries(minister_name)"
   ],
-  "n4_getattr_left": [],
-  "n5_members": [
-    "ming_sim/cli_backend.py:2588:# 旧关键字（draft_count/has_pending_draft/…）若仍传入则忽略——模式已删，不另造拒收。"
+  "n4_lifecycle_sites": [
+    "ming_sim/cli/terminal.py:307:session.schedule_close_night_after_chat_if_needed(",
+    "ming_sim/cli/terminal.py:362:session.schedule_close_night_after_chat_if_needed(",
+    "ming_sim/session.py:1078:def schedule_close_night_after_chat_if_needed(",
+    "web_app.py:2308:self.session.schedule_close_night_after_chat_if_needed(",
+    "web_app.py:3078:def _auto_close_open_night_gate_free(",
+    "web_app.py:3309:_auto_close_open_night_gate_free("
   ],
-  "n6_remaining_bad_flags": {
-    "tests/test_decree_dossiers_571.py": {},
-    "tests/test_error_pack.py": {},
-    "tests/test_chat_stream_failpaths_393.py": {},
-    "tests/test_due_review_621.py": {},
-    "tests/test_llm_channel_config.py": {},
-    "web/src/useSettlementFlow.test.tsx": {},
-    "web/src/components/modals.test.tsx": {}
-  },
-  "n7_diff_vs_base_empty": true
+  "n5_dead_mode_sites": [],
+  "n6_wording_candidates": [],
+  "n6_weak_structure_candidates": [],
+  "n6_internal_identity_candidates": [
+    "tests/test_cli_entry_1902.py:51:assert write_gate is self.gate",
+    "tests/test_qa_c2_phase_settlement_mask_1374.py:100:assert write_cm is web_app._game_write_gate",
+    "tests/test_session_write_queue_1353.py:512:assert q1 is q2 is q3",
+    "tests/test_state_reload.py:55:assert returned is state",
+    "tests/test_state_reload.py:83:assert returned is state",
+    "tests/test_web_court_visibility.py:552:assert chosen is content.characters[\"温体仁\"]"
+  ],
+  "n6_source_retention_sites": [
+    "web/src/useSettlementFlow.test.tsx:183:const pollError = new Error(\"transient poll failure\");",
+    "web/src/useSettlementFlow.test.tsx:187:.mockRejectedValueOnce(pollError)",
+    "web/src/useSettlementFlow.test.tsx:210:expect(warn.mock.calls.some((call) => call.includes(pollError))).toBe(true);"
+  ],
+  "n7_diff_empty": true,
+  "counts": {
+    "n1": 5,
+    "n2": 26,
+    "n3": 19,
+    "n4": 6,
+    "n5": 0,
+    "n6_wording": 0,
+    "n6_weak": 0,
+    "n6_internal": 6,
+    "n6_source": 3
+  }
 }

@@ -2296,7 +2296,6 @@ def extract_draft_intent_with_roster_heal(
     heal_retries: int = DRAFT_PARTICIPANT_HEAL_RETRIES,
     initial_correction: str = "",
     require_execution_lead: bool = False,
-    **extract_kwargs: Any,
 ) -> Dict[str, Any]:
     """extract → 共同契约组合校验 + 名册校验；失败有界纠错重抽（P5 只走失败路）。
 
@@ -2322,8 +2321,7 @@ def extract_draft_intent_with_roster_heal(
     baseline_failed_fields: frozenset = frozenset()
     baseline_draft_failures: Dict[int, frozenset] = {}
     # 交办后置点将：拟旨意图=无时仍收承办人/名单键（#1778；不另造抽取器）。
-    if require_execution_lead:
-        extract_kwargs = {**extract_kwargs, "harvest_participants": True}
+    harvest_participants = bool(require_execution_lead)
 
     def _lead_gate(payload: Dict[str, Any], attempt: int) -> Optional[Dict[str, Any]]:
         """有主办则返回 payload；缺则写 correction 并返回 None（调用方 continue）。"""
@@ -2348,7 +2346,7 @@ def extract_draft_intent_with_roster_heal(
                 pay_order_facts=_pay_order_grounding_facts(content, db),
                 correction_feedback=correction,
                 db=db,
-                **extract_kwargs,
+                harvest_participants=harvest_participants,
             )
         except StructuredDecreeCombinationError as exc:
             # 共同契约组合失败：typed 有界重试；首败冻结 partial + 可修字段边界。
@@ -2575,18 +2573,14 @@ def extract_draft_intent(
     pay_order_facts: str = "",
     db: Any = None,
     harvest_participants: bool = False,
-    **_retired_mode_kwargs: Any,
 ) -> Dict[str, Any]:
     """现役单旨抽取（#1902 N5）：只承接补交 / heal 所需的单道拟旨模式。
 
-    多旨批次、补充合并、现有候选指认等旧模式已无生产消费者，随同清退；
-    仍传入的退役关键字仅吞掉，不启用分支。
+    多旨批次、补充合并、现有候选指认等旧模式已删；签名不再吞退役关键字。
 
     合法「无」→ ``{"draft_action": "无", ...}``；解析失败/缺键/非法枚举响亮上抛（N1）。
     content（#1428）注入名册接地；correction_feedback 非空时 LLM 挂死响亮上抛。
     """
-    # 旧关键字（draft_count/has_pending_draft/…）若仍传入则忽略——模式已删，不另造拒收。
-    del _retired_mode_kwargs
     roster_facts = _draft_intent_character_roster_facts(content)
     army_facts = _draft_intent_army_grounding_facts(content)
     correction_block = str(correction_feedback or "").strip()
@@ -2666,8 +2660,8 @@ def extract_draft_intent(
     except Exception as exc:
         if correction_block:
             raise
+        # 首抽 LLM 挂死：经 _log 公开后合法 degrade 为「无」（与非法产物洗「无」分离；#1902 N1）。
         _log(f"拟旨意图抽取失败：{exc}")
-        # 首抽 LLM 挂死的公开 degrade＝合法「无」；与非法产物洗「无」分离（#1902 N1）。
         return {"draft_action": "无", "draft_text": "", "target_candidate": ""}
     obj = _loads_lenient(raw)
     if not isinstance(obj, dict):
