@@ -118,5 +118,5 @@ MING_SIM_PI_BIN=/usr/bin/false PYTHONDONTWRITEBYTECODE=1 \
 ## 最终 commit
 
 - 分支：`ak-roles/issue-1843-w5-r11-f2`
-- hash：
+- hash：`687e54b088b760fd6c26383ded29055ba414ffa8`（实质 fix；其后 docs 仅回填 hash）
 - 未 push；未合并；未关票。
