@@ -2,26 +2,27 @@
 谓词：monkeypatch.setattr、call_oracle、marker、fixed_translate、direction、prose/OperationalError、helper 命名；含 web mock 行。
 不以点名文件限界。**边界替身不得默认合法**；须逐项外部契约/真实入口/实际结果。
 
-权威数据：[`j6-full-disposition.json`](j6-full-disposition.json)  
+权威数据：[`j6-full-disposition.json`](j6-full-disposition.json)
 Web 行：[`j6-web-members.json`](j6-web-members.json)
+机械枚举命令：[`enum-cmd.txt`](enum-cmd.txt)
 
 ## 本轮 PENDING_* 清桶
 
-原 `PENDING_STUB_DEFAULT:308` + `PENDING_OTHER_DEFAULT:188` + `PENDING_WEB_UI_DEFAULT:129` 已逐项读上下文并落独立 disposition；**PENDING_*=0**。
+原 `PENDING_STUB_DEFAULT:308` + `PENDING_OTHER_DEFAULT:188` + `PENDING_WEB_UI_DEFAULT:129` 已逐项读上下文并落独立 disposition；**PENDING_*=0**（Python 618 `audited=true`；Web 145 `audited=true`）。
 
 ## Python 处置计数（618）
 
 ```
-KEEP_LLM_BOUNDARY: 185
-KEEP_IO_BOUNDARY: 110
+KEEP_LLM_BOUNDARY: 182
+KEEP_IO_BOUNDARY: 109
 KEEP_HTTP_HARNESS: 83
-KEEP_STRUCTURED_RESULT: 79
+KEEP_STRUCTURED_RESULT: 78
 KEEP_TX_OR_GATE: 28
 KEEP_MONTH_TRANSLATE_BOUNDARY: 28
 KEEP_ORDERING_OR_QUAL: 15
+FIX_APPLIED: 14
 KEEP_NAME_COLLISION: 10
 KEEP_QUALITATIVE_DIRECTION: 10
-FIX_APPLIED: 9
 KEEP_BOUNDARY: 6
 FIX_APPLIED_PROSE: 5
 KEEP_SEED_GOLDEN: 5
@@ -62,13 +63,14 @@ KEEP_ASSEMBLY_SHAPE: 1
 KEEP_PAYLOAD_FILTER: 1
 ```
 
-## Web 处置计数
+## Web 处置计数（145）
 
 ```
-KEEP_WEB_FETCH_HARNESS: 104
-KEEP_WEB_CALLBACK_CONTRACT: 17
+KEEP_WEB_FETCH_HARNESS: 98
 EXCLUDE_THIRD_PARTY: 16
+KEEP_WEB_CALLBACK_CONTRACT: 15
 KEEP_WEB_WINDOW_BOUNDARY: 8
+FIX_APPLIED: 8
 ```
 
 ## 本轮代码侧类修
@@ -76,4 +78,5 @@ KEEP_WEB_WINDOW_BOUNDARY: 8
 - 整类删除注入/诊断 `pytest.raises(..., match=...)` 措辞锁（类型上抛 + 结构化副作用保留）
 - `power_band(...)` 实现 oracle 改为定性字面量「极弱/强盛」
 - CLI 罐头回话子串锁改为全文相等
+- 子代理 FIX：verify_llm smoke 锁、rescript `title in msg`、useSettlementFlow 仅 call-count → 结构化/harness 契约
 - 末判点名伪证（cutoff 泄漏标记、收入精确额、难民实抵）维持有效；变异咬合
