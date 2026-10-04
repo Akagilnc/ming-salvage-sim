@@ -4070,12 +4070,15 @@ def _extract_secret_order(
         deadline = 0
     tags = obj.get("标签")
     tags = [str(t).strip() for t in tags if str(t).strip()] if isinstance(tags, list) else []
+    from ming_sim.content import GameContent
     from ming_sim.db import canonical_secret_order_exclusions
     raw_targets = obj.get("排除对象") if isinstance(obj.get("排除对象"), dict) else {}
     raw_people = raw_targets.get("人物", raw_targets.get("people", obj.get("排除名单", [])))
     raw_offices = raw_targets.get("机构", raw_targets.get("offices", []))
+    # Registry identity only: load shipped character office/office_type set.
+    # Do not fall back to hardcoded office vocabulary when content is absent.
     excluded_names, excluded_offices = canonical_secret_order_exclusions(
-        None,
+        GameContent.load(),
         raw_people if isinstance(raw_people, list) else [],
         raw_offices if isinstance(raw_offices, list) else [],
         player_command,

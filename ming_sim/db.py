@@ -252,43 +252,31 @@ def _snapshot_secret_order_people(
     return list(dict.fromkeys(names))
 
 
-_SECRET_OFFICE_TYPES = (
-    "吏部", "户部", "礼部", "兵部", "刑部", "工部", "都察院", "大理寺", "通政司",
-    "司礼监", "内阁", "东厂", "锦衣卫", "翰林院", "詹事府",
-)
-_SECRET_OFFICE_TITLE_SUFFIX_RE = re.compile(
-    r"[\u4e00-\u9fff]{0,12}(?:首辅|次辅|大学士|阁臣|辅臣|尚书|侍郎|郎中|员外郎|主事|"
-    r"巡抚|总督|总兵|督师|经略|提督|都御史|御史|侍读学士|侍讲学士|侍读|侍讲|"
-    r"编修|检讨|修撰|庶吉士|庶常|少詹事|詹事|中允|赞善)$"
-)
-
-
 def _canonical_secret_exclusion_target(
     target: str, office_types: set[str], office_titles: set[str],
 ) -> tuple[str, str]:
-    """Classify a secrecy target using the shipped registry before fallback vocabulary."""
-    target = re.sub(r"(?:诸官|官员|诸司|诸人|上下|众人)$", "", target).strip()
-    if target in office_titles:
-        return "office", target
-    if target in office_types:
-        return "office", target
-    if _SECRET_OFFICE_TITLE_SUFFIX_RE.fullmatch(target):
-        return "office", target
-    for office_type in sorted(office_types | set(_SECRET_OFFICE_TYPES), key=len, reverse=True):
-        if target.startswith(office_type):
-            return "office", office_type if target != office_type else target
+    """Admit a secrecy office target only by exact roster registry identity.
+
+    No suffix vocabulary, no startswith stem guess, no free-text rewrite.
+    Whitespace strip is lookup-only against ``office_titles`` / ``office_types``.
+    """
+    key = str(target).strip()
+    if key in office_titles:
+        return "office", key
+    if key in office_types:
+        return "office", key
     return "", target
 
 
 def canonical_secret_order_exclusions(
     content: Any, explicit_people: Iterable[str], explicit_offices: Iterable[str], text: object,
 ) -> tuple[List[str], List[str]]:
-    """Canonicalize structured extractor targets before staging or DB.
+    """Admit structured extractor exclusion targets by roster identity only.
 
     Player prose is not a machine contract.  Only typed people/offices reach
-    this boundary; roster aliases and office titles are canonicalized here.
-    ``text`` remains accepted for callers that also pass the order body, but is
-    deliberately not consumed.
+    this boundary; people resolve via roster aliases, offices via exact
+    ``office`` / ``office_type`` registry membership.  ``text`` remains accepted
+    for callers that also pass the order body, but is deliberately not consumed.
     """
     del text
     people = _snapshot_secret_order_people(content, explicit_people, [])
@@ -2693,14 +2681,12 @@ class GameDB:
         )
         self.affairs = AffairStore(self.conn)
         self.conn.commit()
-        self._migrate_legacy_office_pollution()
         # #9 R1 finding#1 [P1]：老档迁移校准须放在新档 seed 与现存档打开都经过的点。
         # 现存档只 GameDB()（→ init_schema）+ load_state、不调 seed_static_data，故若校准仅在 seed 末尾，
         # 老档的 offset 永远停在默认 0 → leverage=0+权重和（未锚定钦定基线、错值）。
         # 因此：leverage_offset 列**本次刚 ADD**且 factions 表已有行（=老档，characters 此刻亦已持久化、
         # 权重和可算）时，在此立即一次性反推校准（offset_col_added=True 走老档分支：offset=当前 DB
-        # leverage − 权重和）。放在 _migrate_legacy_office_pollution 之后，使权重和按【已清洗】的 office
-        # 算（与 seed 路 _migrate→_calibrate 同序；pre-0009 污染 office 在迁移前会算错权重和）。
+        # leverage − 权重和）。#1847：不再跑 office 自由措辞→status 的旧档污染迁移。
         # 校准后 flag 被消费置 False（见 _calibrate_faction_offsets），seed 路再调时直接 return、不重锚。
         # fresh 新档此时 factions 表空（行在 seed_static_data 才 INSERT）→ 这里跳过，仍走 seed 末尾的
         # fresh 校准（从 content.factions 取钦定基线）。
@@ -2749,84 +2735,6 @@ class GameDB:
         self._migrate_missing_fiscal_engine_from_pay_source_cutover()
         # #1356：旧档精确 DELETE 已知 seed 全文（不动真实结算产物）
         self._purge_fixed_opening_gazette_seed()
-
-    def _migrate_legacy_office_pollution(self) -> None:
-        """ADR 0009 决定9/L94 一次性数据清洗（幂等，init 时跑）：pre-0009 存档把状态词塞在
-        office 串里（「前X，罢居Y」「…(在途)」），归位到 status/reason_code/location/transit_to，
-        使其正确进人才池（G1）。**条件触发**（office 含污染标记才动）——不误降已被玩家起复的
-        active 旧臣（其 office 已是真职、无标记，跳过）；幂等（清洗后再跑无标记可清）。"""
-        import re
-        # location 是 region_id；罢居地名（松江/高阳等府名）多非 region_id，只在解析出合法 region_id
-        # 才写 location（同下方在途循环口径，不把府名硬塞进 region_id 列）；罢居地信息留在 status_reason。
-        region_ids = {row["id"] for row in self.conn.execute("SELECT id FROM regions").fetchall()}
-        # 罢居=居家可起复：钱谦益 天启科场案削籍 → dismissed（→昭雪，B 口径）；其余罢居 → offstage（→起复）。
-        DISMISSED_OVERRIDE = {"钱谦益": "获罪削籍"}
-        from ming_sim.office_rank import canonical_office_title
-
-        for r in self.conn.execute(
-            "SELECT name, office FROM characters WHERE office LIKE '%罢居%' AND status='active'"
-        ).fetchall():
-            name = r["name"]
-            office = str(r["office"] or "")
-            m = re.search(r"罢居([^，,]+)", office)
-            loc = m.group(1).strip() if m else ""
-            loc_region = loc if loc in region_ids else ""
-            if name in DISMISSED_OVERRIDE:
-                status, rc = "dismissed", DISMISSED_OVERRIDE[name]
-            else:
-                status, rc = "offstage", "自请"
-            self.conn.execute(
-                "UPDATE characters SET status=?, reason_code=?, status_reason=?, office='', "
-                "location=CASE WHEN COALESCE(location,'')='' THEN ? ELSE location END, transit_to='' "
-                "WHERE name=?",
-                (status, rc, office, loc_region, name),
-            )
-            # #562：character_offices 保留最近实职备档供起复品级读取，去掉「前/罢居」污染尾。
-            historical = canonical_office_title(office)
-            if historical:
-                self.conn.execute(
-                    "UPDATE character_offices SET office_title=? WHERE character_name=?",
-                    (historical, name),
-                )
-        # #562：凡 character_offices 仍带「前/原/革职候勘/罢居」污染的备档一律洗净。
-        # 覆盖 seed 已是 dismissed 的革职候勘者（如胡廷宴），不只 罢居→offstage 那一支。
-        for r in self.conn.execute(
-            "SELECT character_name, office_title FROM character_offices"
-        ).fetchall():
-            raw_title = str(r["office_title"] or "")
-            cleaned = canonical_office_title(raw_title)
-            if cleaned and cleaned != raw_title:
-                self.conn.execute(
-                    "UPDATE character_offices SET office_title=? WHERE character_name=?",
-                    (cleaned, r["character_name"]),
-                )
-        # office 带「(在途)」→ 清串保留 active；transit_to 仅当解析出合法 region_id 才落（保守，不瞎猜目的地）。
-        for r in self.conn.execute(
-            "SELECT name, office FROM characters WHERE office LIKE '%在途%'"
-        ).fetchall():
-            name = r["name"]
-            office = str(r["office"] or "")
-            cleaned = office.replace("（在途）", "").replace("(在途)", "").strip().rstrip(",，")
-            # 目的地是中文地名（辽东/陕西），region_id 是英文（liaodong/shaanxi）——直接
-            # `in region_ids` 恒 False、transit_to 永不落（死分支，5b r6 Gemini high）。用
-            # match_region_id_from_text 把中文解析成 region_id（同 db.py:2626 口径），解析得到才落。
-            dest = ""
-            for kw in ("督师", "镇守", "赴", "之任"):
-                mm = re.search(kw + r"([一-龥]{2,4})", office)
-                if mm:
-                    rid = match_region_id_from_text(mm.group(1), self.content.regions)
-                    if rid:
-                        dest = rid
-                        break
-            if dest:
-                self.conn.execute(
-                    "UPDATE characters SET office=?, transit_to=? WHERE name=?", (cleaned, dest, name)
-                )
-            else:
-                self.conn.execute(
-                    "UPDATE characters SET office=? WHERE name=?", (cleaned, name)
-                )
-        self.conn.commit()
 
     def init_fiscal_config(self) -> None:
         """从 content/fiscal_config.json（self.content.fiscal_items）seed 财政科目目录。
@@ -4030,12 +3938,8 @@ class GameDB:
         # #173：维护费列退役 drop 已上移至 init_schema（每个打开路径都跑，含现存档的纯
         # init_schema 路径，见 cmr drop R1）；此处新档 seed INSERT 后该列本就不存在，无需再 drop。
         self._apply_region_city_levels()  # 新档 region 此时才 INSERT 完，按史实补 city_level
-        # 新档罢居/在途 office 污染清洗：init_schema 路径在空表上 no-op（构造在 seed 前），
-        # 故 seed 后须再跑一次才对新档生效（决定9/L94 一次性清洗；幂等，老档由 init_schema
-        # 路径已处理）。此刻 characters + regions 均已 INSERT，location region_id 校验可用。
-        # 5b r4（Claude + codex-b concur, P1）：漏此调用则新档 7 名罢居旧臣留 active+污染、不进人才池。
-        self._migrate_legacy_office_pollution()
-        # #9：派系势力 offset 校准。此刻 factions + characters 均已 INSERT、office 污染已洗。
+        # #1847：不跑 office 自由措辞→status/transit 的旧档污染迁移（#1812 无历史包袱）。
+        # #9：派系势力 offset 校准。此刻 factions + characters 均已 INSERT。
         # cmr R3：传 offset 列「本次是否刚 ADD」——老档反推只在迁移那次跑，常规 load 不碰 offset。
         self._calibrate_faction_offsets(
             is_fresh_factions_seed, getattr(self, "_leverage_offset_col_added", False)

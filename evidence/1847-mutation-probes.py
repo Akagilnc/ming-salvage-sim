@@ -186,6 +186,51 @@ fn = src_bp.split("def resolve_breach_pleas_from_extraction")[1].split("\ndef ")
 ok("N10_BREACH_NO_PURPOSE_SET", "履行承诺" not in fn, "")
 ok("N10_BREACH_NO_REASON_SET", '{"加拨", "续拨", "复供"}' not in fn and 'in {"加拨"' not in fn, "")
 
+log("=== N10/N6 secret exclusion: real canonical_secret_order_exclusions entry ===")
+from ming_sim.db import canonical_secret_order_exclusions
+
+# Find a roster office_type that exists exactly, and a free-wording near-miss.
+roster_type = next(
+    str(ch.office_type).strip()
+    for ch in content.characters.values()
+    if ch.office_type
+)
+# Judge evidence shape: same typed office channel; only wording differs → old vocab path flipped.
+exact_people, exact_offices = canonical_secret_order_exclusions(
+    content, [], [roster_type], "probe",
+)
+suffix_people, suffix_offices = canonical_secret_order_exclusions(
+    content, [], ["江南巡抚", "江南织造", "江南巡抚衙门", "某某监军", f"{roster_type}诸官"], "probe",
+)
+ok("N10_SECRET_EXACT_REGISTRY_ADMITS", roster_type in exact_offices, f"type={roster_type!r} offices={exact_offices!r}")
+# After fix: free wording / suffix peel must NOT admit; no transport rewrite of 诸官 either.
+ok(
+    "N10_SECRET_FREE_WORDING_NO_ADMIT",
+    suffix_offices == [],
+    f"offices={suffix_offices!r}",
+)
+ok(
+    "N6_SECRET_NO_SUFFIX_PEEL_TRANSPORT",
+    "诸官" not in "".join(suffix_offices) and f"{roster_type}诸官" not in suffix_offices,
+    f"offices={suffix_offices!r}",
+)
+src_db = (ROOT / "ming_sim/db.py").read_text(encoding="utf-8")
+ok("N10_SECRET_NO_SUFFIX_VOCAB", "_SECRET_OFFICE_TITLE_SUFFIX_RE" not in src_db, "")
+ok("N10_SECRET_NO_OFFICE_TYPE_VOCAB", "_SECRET_OFFICE_TYPES" not in src_db, "")
+ok("N10_NO_LEGACY_OFFICE_POLLUTION_MIGRATE", "_migrate_legacy_office_pollution" not in src_db, "")
+src_or = (ROOT / "ming_sim/office_rank.py").read_text(encoding="utf-8")
+ok("N10_NO_TITLE_NOISE_SUFFIXES", "_TITLE_NOISE_SUFFIXES" not in src_or, "")
+ok("N10_NO_HISTORY_PREFIX_MARKERS", 'startswith(("前", "原"))' not in src_or and "罢居" not in src_or.split("def appointment_break_rank")[1].split("def ")[0], "")
+src_iss = (ROOT / "ming_sim/issues.py").read_text(encoding="utf-8")
+ok("N10_NO_EXCLUSIVE_OFFICE_SUFFIX_VOCAB", "_EXCLUSIVE_OFFICE_SUFFIXES" not in src_iss, "")
+ok("N10_EXCLUSIVE_OFFICE_NO_ENDSWITH_ADMIT", "part.endswith(suf)" not in src_iss.split("def _is_exclusive_office")[1].split("\ndef ")[0], "")
+src_mf = (ROOT / "web/src/components/ministerFilters.ts").read_text(encoding="utf-8")
+ok("N10_UI_NO_OFFICE_TITLE_REGEX", not any(x in src_mf for x in ("/首辅/", "/前|罢|致仕/", "/尚书/")), "")
+ok("N10_UI_FILTER_USES_OFFICE_TYPE_ENUM", "office_type" in src_mf and "status" in src_mf, "")
+src_triage = (ROOT / "ming_sim/rescript_draft.py").read_text(encoding="utf-8")
+ok("N10_TRIAGE_NO_OFFICE_LIKE", "LIKE '%首辅%'" not in src_triage and "LIKE '%司礼监掌印%'" not in src_triage, "")
+ok("N10_TRIAGE_EXACT_OFFICE_TITLES", "_TRIAGE_OFFICE_TITLES" in src_triage and "office IN" in src_triage, "")
+
 log("=== N10/N6 secret context: real _extract_secret_order force_default entry ===")
 import json
 from ming_sim import cli_backend as cb

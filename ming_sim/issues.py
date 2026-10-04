@@ -5741,16 +5741,14 @@ def apply_issue_tracker_output(
     }
 
 
-# 独占实职关键词：office 分项以此结尾者视为「一人一缺」，须顶替去重。
-# 群体职（大学士/侍郎/郎中/主事/御史/翰林等）不在内，可多员并存。
-_EXCLUSIVE_OFFICE_SUFFIXES = (
-    "首辅", "次辅", "尚书", "总督", "巡抚", "总兵", "督师", "经略", "提督",
-)
+# #1847: exclusivity is not inferred from free-text office suffixes.
+# Displacement reconnect belongs to a later exact-registry seat model.
 
 
 def _is_exclusive_office(part: str) -> bool:
-    """office 单个分项是否独占实职。南京XX为留都缺，与京职互不冲突，单独算一缺。"""
-    return any(part.endswith(suf) for suf in _EXCLUSIVE_OFFICE_SUFFIXES)
+    """Exclusive-seat admission must not be derived from title-suffix vocabulary."""
+    del part
+    return False
 
 
 def _displace_duplicate_offices(

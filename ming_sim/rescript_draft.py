@@ -10,10 +10,17 @@ from ming_sim.agents import parse_agent_json, run_agent_text
 from ming_sim.exceptions import LLMContractError, LLMUnavailable
 
 
+_TRIAGE_OFFICE_TITLES = frozenset({"内阁首辅", "司礼监掌印太监"})
+
+
 def triage_officers(db) -> list[dict]:
+    """Admit triage officers by exact office title identity — not free-text LIKE."""
     return [dict(row) for row in db.conn.execute(
         "SELECT * FROM characters WHERE status='active' AND power_id='ming' "
-        "AND (office LIKE '%首辅%' OR office LIKE '%司礼监掌印%') ORDER BY name"
+        "AND office IN ({placeholders}) ORDER BY name".format(
+            placeholders=",".join("?" for _ in _TRIAGE_OFFICE_TITLES),
+        ),
+        tuple(sorted(_TRIAGE_OFFICE_TITLES)),
     )]
 
 

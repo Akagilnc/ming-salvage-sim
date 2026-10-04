@@ -1129,11 +1129,9 @@ def _sponsor_transferred(db: Any, name: str, commitment_row: Any) -> bool:
         if latest and expected and latest != expected and current_office != expected:
             return True
     if expected and current_office and expected != current_office:
-        # role 常是职分非官职名，仅当 expected 像官职（含于 current 或相等）才判
-        if expected == current_office:
-            return False
-        # 若 expected 是短 role（承办/清丈）而非 office，不误判
-        if len(expected) <= 4 and expected not in current_office:
+        # role 常是职分非官职名：短 expected 且与 current_office 不完全相等 → 按 role 处理。
+        # #1847: 不用 expected in current_office 子串推断。
+        if len(expected) <= 4:
             # 无可靠 office 快照时：看 office_change_records 是否在承诺 origin 之后有调任
             if oc is not None:
                 # 有任何调任记录且 status active → 调

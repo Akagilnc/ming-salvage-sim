@@ -1,14 +1,11 @@
-disposition	file	line	kind	note
-FIX_DONE	web_app.py	232	replace_fallback_deleted	N6 free-prose vocabulary replace fallback removed
-FIX_DONE	web/src/components/situation.tsx	7	presentation_keyword_class	N10 fail_condition keyword buckets removed
-FIX_DONE	ming_sim/issues.py	811	word_sense_strip	N10 Chinese word-sense stripping removed
-FIX_DONE	ming_sim/issues.py	834	fiscal_reason_identity	N10 free reason removed from fiscal identity
-FIX_DONE	ming_sim/issues.py	849	fiscal_purpose_identity	N10 purpose enum removed from fiscal identity
-FIX_DONE	ming_sim/breach_plea.py	1352	purpose_keyword_admission	N10 purpose keywords removed; delta only
-FIX_DONE	ming_sim/breach_plea.py	1376	reason_keyword_admission	N10 reason keywords removed; structured delta only
-FIX_DONE	ming_sim/cli_backend.py	-	secret_task_like_deleted	N10 task-like question-mark classify deleted; full structured emperor lines kept
-FIX_DONE	ming_sim/cli_backend.py	-	secret_tasks_related_deleted	N10 dual-nonempty relatedness classify deleted
-FIX_DONE	ming_sim/cli_backend.py	-	secret_prefix_length_deleted	N10 len(compact)<=12 prefix classify deleted
-FIX_DONE	ming_sim/cli_backend.py	-	secret_confirmation_strip_deleted	N6 confirmation body strip rewrite deleted; removeprefix only
-FIX_DONE	ming_sim/cli_backend.py	-	matched_prefix_deleted	adjacent prefix strip transport helper deleted (caller already retired)
-FIX_DONE	tests/test_web_issue_condition_display.py	-	assert_deleted	helper free-text equality proving assertion removed
+file	symbol	action	note
+ming_sim/db.py	_canonical_secret_exclusion_target	delete_vocab_keep_registry	suffix/startswith/诸官 peel removed; exact office_titles/office_types only
+ming_sim/db.py	_migrate_legacy_office_pollution	delete	legacy office free-text→status/transit migration removed (#1812)
+ming_sim/office_rank.py	appointment_break_rank	delete_free_text_gate	history via status/reason enum only
+ming_sim/office_rank.py	concurrent_office_titles	delete_prefix_suffix_vocab	formal concurrent separators only
+ming_sim/issues.py	_is_exclusive_office	delete_suffix_vocab	always False; no endswith admission
+web/src/components/ministerFilters.ts	filterMinisters	delete_title_regex	office_type+status enum sort/filter
+ming_sim/rescript_draft.py	triage_officers	exact_title_frozenset	no LIKE '%首辅%' free-text admit
+ming_sim/cli_backend.py	_extract_secret_order exclusions	pass_GameContent_registry	no None→hardcoded vocab path
+ming_sim/breach_plea.py	_sponsor_transferred	no_substring_in_office	short expected uses length+inequality only
+evidence/1847-scan-n6-n10.py	classify_*	no_prior_inheritance	prior: reasons forbidden; honest NEEDS_HUMAN retained

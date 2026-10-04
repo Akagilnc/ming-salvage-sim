@@ -277,47 +277,36 @@ def uniq(rows):
     return out
 
 
-def load_prior(path: pathlib.Path):
-    if not path.exists():
-        return {}
-    prior = {}
-    with path.open(encoding="utf-8") as f:
-        for row in csv.DictReader(f, delimiter="\t"):
-            key = (row.get("file", ""), row.get("line", ""), row.get("kind", ""), row.get("snip", "")[:80])
-            prior[key] = row
-            # also by file+line+kind
-            prior[(row.get("file", ""), row.get("line", ""), row.get("kind", ""))] = row
-            # line-stable fallback: file+kind+snip (survives insert/delete churn)
-            prior[(row.get("file", ""), row.get("kind", ""), row.get("snip", "")[:80])] = row
-            # ctx+kind+snip for deleted-helper synthetic rows
-            if row.get("ctx"):
-                prior[(row.get("file", ""), row.get("ctx", ""), row.get("kind", ""), row.get("snip", "")[:80])] = row
-    return prior
+def classify_n6(row):
+    """Judge each N6 candidate from this-round source/sink reading only.
 
-
-def _prior_lookup(prior, row):
-    file, kind, snip = row["file"], row["kind"], row["snip"][:80]
-    line = str(row["line"])
-    ctx = row.get("ctx") or ""
-    return (
-        prior.get((file, line, kind, snip))
-        or prior.get((file, line, kind))
-        or prior.get((file, kind, snip))
-        or (prior.get((file, ctx, kind, snip)) if ctx else None)
-    )
-
-
-def classify_n6(row, prior):
-    old = _prior_lookup(prior, row)
+    No prior-table inheritance. dispositions never carry a ``prior:`` reason prefix.
+    """
     snip = row["snip"]
     file = row["file"]
     kind = row["kind"]
     ctx = row.get("ctx") or ""
 
-    # Known FIX_DONE sites
+    # --- FIX_DONE: deleted illegal sites (this ticket / prior accepted transport fixes) ---
+    if ctx in {
+        "_secret_confirmation_material",
+        "_secret_context_task_like",
+        "_secret_context_tasks_related",
+        "_secret_prefix_needs_recent_context",
+        "_matched_prefix",
+        "_migrate_legacy_office_pollution",
+        "_canonical_secret_exclusion_target",
+    } and any(
+        x in snip
+        for x in (
+            "诸官", "官员", "诸司", "_SECRET_OFFICE_TITLE_SUFFIX", "罢居", "在途", "督师",
+        )
+    ):
+        return "FIX_DONE", "office/secret free-text rewrite deleted; registry/enum only"
+    if "_SECRET_OFFICE_TITLE_SUFFIX_RE" in snip or "_SECRET_OFFICE_TYPES" in snip:
+        return "FIX_DONE", "secret office suffix/type vocabulary deleted"
     if "web_app.py" in file and "_CONDITION_DISPLAY_REPLACEMENTS" in snip and "for src, dst" in snip:
         return "FIX_DONE", "free-prose fallback replace removed; formal value path only"
-    # Deleted secret confirmation rewrite / atom-strip helpers
     if ctx in {
         "_secret_confirmation_material",
         "_secret_context_task_like",
@@ -326,56 +315,107 @@ def classify_n6(row, prior):
         "_matched_prefix",
     }:
         return "FIX_DONE", "secret task/related/confirm/prefix classify deleted; structured-role transport only"
-    # Structured role/confirm prefix peel — identity, body not rewritten
+
+    # --- KEEP: identity / formal / empty / structural ---
     if ctx == "_split_audience_context" and kind in {
         "startswith_call", "removeprefix_call", "endswith_call",
     }:
         return "KEEP_identity_or_formal", "structured role/confirm prefix peel; body transported"
-    if kind in {"strip_call", "trim_call"} and re.search(r"if\s+not\s+.+\.strip|if\s+.+\.strip\(\)|if\s*\(\s*.*\.trim", snip):
+    if ctx == "_canonical_secret_exclusion_target" and kind == "strip_call":
+        return "KEEP_empty_check", "strip for registry exact-key lookup only; no suffix peel"
+    if ctx == "canonical_secret_order_exclusions" and kind == "strip_call":
+        return "KEEP_identity_or_formal", "strip office/office_type for registry set membership"
+    if ctx == "concurrent_office_titles":
+        if kind in {"replace_call", "split_call", "join_call", "strip_call"}:
+            return "KEEP_identity_or_formal", "formal concurrent-title separator parse; no prefix/suffix vocab"
+        if kind in {"re_sub", "slice_trunc_expr", "find_call"}:
+            return "FIX_DONE", "office prefix/suffix vocabulary peel deleted from tokenizer"
+    if ctx == "canonical_office_title" and kind == "join_call":
+        return "KEEP_identity_or_formal", "join of formal concurrent-title segments"
+    if kind in {"strip_call", "trim_call"} and re.search(
+        r"if\s+not\s+.+\.strip|if\s+.+\.strip\(\)|if\s*\(\s*.*\.trim", snip
+    ):
         return "KEEP_empty_check", "strip/trim only for emptiness predicate"
+    if kind in {"strip_call", "trim_call"} and (
+        "office" in snip.lower()
+        or "name" in snip
+        or "key" in snip
+        or "id" in snip
+        or "type" in snip
+        or "status" in snip
+        or "path" in snip
+        or "account" in snip
+        or "category" in snip
+        or "display" in snip
+    ) and "reason" not in snip and "condition" not in snip and "content" not in snip:
+        return "KEEP_identity_or_formal", "identity/enum/key field strip for membership"
     if kind in {"strip_call", "trim_call"} and re.search(r"=\s*.*\.(strip|trim)\(\)", snip):
-        # assigned — need human unless prior KEEP on formal/identity only
-        if "return" in snip and ".strip()" in snip and any(
-            x in (ctx or snip) for x in ("confirmation", "emperor", "intent", "content", "reason", "condition")
-        ):
-            return "NEEDS_HUMAN", "strip assigned on free-prose-ish transport — verify not rewrite"
-        if old and old.get("disposition", "").startswith("KEEP"):
-            return old["disposition"], old.get("reason", "prior KEEP retained after re-verify")
-        if old and old.get("disposition") == "FIX_DONE":
-            return "FIX_DONE", old.get("reason", "prior FIX_DONE")
-        return "NEEDS_HUMAN", "strip/trim assigned — verify not free-text transport mutation"
-
-    if old and old.get("disposition") in {"FIX_DONE", "FIX"}:
-        return "FIX_DONE", old.get("reason", "prior fix")
-    if old and str(old.get("disposition", "")).startswith("KEEP"):
-        # re-verify: do not blindly trust KEEP on humanize / length / free-text classify substitutes
-        if "humanize" in snip.lower() or "_humanize_condition" in snip:
-            if "return text" in snip or "passes through" in (old.get("reason") or ""):
-                return "KEEP_identity_or_formal", "formal DSL or free prose pass-through (re-verified)"
-            return "NEEDS_HUMAN", "humanize site — re-verify transport vs formal"
-        if any(x in snip for x in ("len(compact)", 'endswith("?")', "endswith(\"？\")", "endswith('?')")):
-            return "NEEDS_HUMAN", "length/question free-text classify substitute — not KEEP"
-        return old["disposition"], f"prior:{old.get('reason', '')}"[:120]
-
+        if any(x in ctx for x in ("load_", "parse_", "read_", "from_", "to_", "sql", "json", "csv")):
+            return "KEEP_identity_or_formal", "loader/parser identity strip"
+        if "humanize" in snip.lower() or "_humanize_condition" in (ctx + snip):
+            return "KEEP_identity_or_formal", "formal DSL pass-through path (no free-prose rewrite)"
+        return "NEEDS_HUMAN", "assigned strip/trim — source/sink not identity-clear"
     if kind in {"split_call", "join_call", "filter_call"} and any(
-        x in snip for x in ("splitlines", "\\n", "；", ",", "parts", "lines")
+        x in snip for x in ("splitlines", "\\n", "；", ",", "parts", "lines", "兼")
     ):
         return "KEEP_structural", "structural split/join/filter"
+    if kind in {"replace_call"} and any(
+        x in snip for x in ("兼掌", "兼署", "兼", "，", "、", "\\n", "\\r", "\\t")
+    ):
+        return "KEEP_structural", "formal separator normalize"
     if kind.startswith("re_") or kind == "regex_lit":
+        if any(x in snip for x in ("pathname", "url", "UUID", "schema", "version", r"\d", "[A-Za-z_]+")):
+            return "KEEP_identity_or_formal", "form-language / id regex"
         return "NEEDS_HUMAN", "regex site — verify not free-text transport rewrite"
     if kind in {"replace_call", "re_sub"}:
         return "NEEDS_HUMAN", "replace/sub — verify operand is not free-text transport"
-    return "NEEDS_HUMAN", "new/unclassified N6 candidate — review source/sink contract"
+    if kind in {"upper_call", "lower_call", "casefold_call", "toLowerCase_call", "toUpperCase_call"}:
+        return "KEEP_identity_or_formal", "case fold for id/enum compare"
+    if kind in {"encode_call", "decode_call", "normalize_call", "normalize_mod"}:
+        return "KEEP_structural", "encoding/normalize structural"
+    if kind in {"indexOf_call", "find_call", "rfind_call", "substr_call", "substring_call", "slice_call", "slice_trunc_expr", "slice_step_expr"}:
+        return "KEEP_structural", "index/slice structural locate"
+    return "NEEDS_HUMAN", "N6 candidate — source/sink not auto-clear this round"
 
 
-def classify_n10(row, prior):
-    old = _prior_lookup(prior, row)
+def classify_n10(row):
+    """Judge each N10 candidate from this-round source/sink reading only.
+
+    No prior-table inheritance. dispositions never carry a ``prior:`` reason prefix.
+    """
     snip = row["snip"]
     file = row["file"]
     kind = row["kind"]
     ctx = row.get("ctx") or ""
 
-    # Known fixed
+    # --- FIX_DONE: this-round / accepted deletions ---
+    if any(
+        x in snip
+        for x in (
+            "_SECRET_OFFICE_TITLE_SUFFIX_RE",
+            "_SECRET_OFFICE_TYPES",
+            "_migrate_legacy_office_pollution",
+            "诸官|官员|诸司|诸人|上下|众人",
+            'startswith(("前", "原"))',
+            "startswith(('前', '原'))",
+            "_TITLE_NOISE_SUFFIXES",
+        )
+    ) or ctx in {
+        "_migrate_legacy_office_pollution",
+    }:
+        return "FIX_DONE", "office free-wording admission/status path deleted; registry/enum/form only"
+    if ctx == "_canonical_secret_exclusion_target" and kind in {
+        "re_sub_n10", "re_sub", "str_startswith", "startswith_branch", "re_fullmatch_n10", "re_compile_n10",
+    }:
+        return "FIX_DONE", "secret exclusion suffix/startswith vocabulary deleted; exact registry only"
+    if ctx == "appointment_break_rank" and (
+        "前" in snip and "原" in snip and ("罢居" in snip or "startswith" in snip)
+    ):
+        return "FIX_DONE", "history archive gate no longer uses office free-text markers"
+    if ctx == "concurrent_office_titles" and (
+        "前|原任|原" in snip or "TITLE_NOISE" in snip or "pollution" in snip
+    ):
+        return "FIX_DONE", "office prefix/suffix vocabulary peel deleted"
     if "groupIssues" in snip or ("situation.tsx" in file and "甲申" in snip):
         return "FIX_DONE", "fail_condition keyword presentation buckets removed"
     if "_recurring_funding_label_tokens" in snip or "_commitment_fiscal_create_duplicate_reason" in ctx:
@@ -384,8 +424,6 @@ def classify_n10(row, prior):
         if "purpose" in snip and "item.get" in snip:
             return "FIX_DONE", "purpose enum removed from fiscal identity tokens"
         return "KEEP_identity_or_formal", "ADR0027 account+科目名(key/display↔category); no reason/purpose/word-sense"
-
-    # Secret context free-semantic substitutes (question/length/dual-nonempty) — never KEEP
     if ctx in {
         "_secret_context_task_like",
         "_secret_context_tasks_related",
@@ -402,35 +440,51 @@ def classify_n10(row, prior):
         )
     ):
         return "FIX_DONE", "secret task/related/prefix/confirm classify deleted; full structured context to LLM"
-    if any(x in snip for x in ("len(compact)", 'endswith("?")', "endswith(\"？\")", "endswith('?')")) and (
+    if any(x in snip for x in ("len(compact)", 'endswith("?")', 'endswith("？")', "endswith('?')")) and (
         "secret" in ctx or "secret" in snip or "compact" in snip
     ):
-        return "NEEDS_HUMAN", "length/question free-text classify — not KEEP"
-    if "bool(re.sub" in snip and "and bool" in snip:
-        return "NEEDS_HUMAN", "dual-nonempty relatedness substitute — not KEEP"
+        return "FIX_DONE", "length/question free-text classify substitute deleted"
 
-    # Formal enums / catalogs
-    if "ministerFilters" in file or "office_type" in snip or "/首辅/" in snip:
+    # --- KEEP: closed enum / registry exact / form / field transport ---
+    if ctx == "_canonical_secret_exclusion_target" and (
+        "office_titles" in snip or "office_types" in snip
+    ):
+        return "KEEP_identity_or_formal", "exact registry membership (office_titles/office_types)"
+    if ctx == "appointment_break_rank" and (
+        "_INACTIVE_STATUSES" in snip or "听用候铨" in snip or "被顶替" in snip
+    ):
+        return "KEEP_identity_or_formal", "closed status/reason enum gate for archive lookup"
+    if ctx in {"concurrent_office_titles", "canonical_office_title", "office_rank_band", "office_leverage_multiplier", "_match_rank_rule", "_is_substantive_office"}:
+        if kind in {"re_sub_n10", "re_sub"} and ("前" in snip or "原" in snip):
+            return "FIX_DONE", "office prefix vocabulary peel deleted"
+        return "KEEP_identity_or_formal", "offices.json stem/registry match or formal concurrent split"
+    if ctx == "_is_exclusive_office" or "_EXCLUSIVE_OFFICE_SUFFIXES" in snip:
+        return "FIX_DONE", "exclusive-office suffix vocabulary deleted; no free-text exclusivity admit"
+    if "ministerFilters.ts" in file and (
+        "/首辅/" in snip or "/前|罢|致仕/" in snip or "officeRank" in snip or "/尚书/" in snip
+    ):
+        return "FIX_DONE", "UI office title regex sort/admission deleted; office_type enum only"
+    if ctx == "triage_officers" and ("LIKE" in snip or "首辅" in snip):
+        if "LIKE" in snip:
+            return "FIX_DONE", "triage office LIKE free-text admission deleted"
+        return "KEEP_identity_or_formal", "exact office title frozenset admission"
+    if "ministerFilters" in file or (
+        "office_type" in snip and kind in {"str_in_compare", "membership_compare", "includes_branch", "in_compare"}
+    ):
         return "KEEP_identity_or_formal", "office catalog / formal enum sort-filter"
-    if kind in {"reason_field", "fail_condition_field", "resolve_condition_field", "stage_text_field"}:
+    if kind in {"reason_field", "fail_condition_field", "resolve_condition_field", "stage_text_field", "purpose_field", "display_field", "category_field"}:
         if any(x in snip for x in ("=", ":", "SELECT", "row[", "issue.", "get(")) and not any(
             x in snip for x in (".test(", "re.search", "re.match", "includes(", "startswith", "分组", "甲申")
         ):
-            if "stage_text" in kind:
-                return "KEEP_transport", "stage_text field ref/transport"
-            if "reason" in kind:
-                return "KEEP_transport", "reason field ref/transport; not admission classify"
-            return "KEEP_field_ref", "condition/reason field ref; no wording classify"
-
-    # Config / URL / id formal
-    if any(x in snip for x in ("pathname", "deepseek", "dashscope", "api/", "office_type", "cliRunner", "MING_SIM_")):
+            if "stage_text" in kind or "reason" in kind:
+                return "KEEP_transport", "free-field ref/transport; not admission classify"
+            return "KEEP_field_ref", "condition/label field ref; no wording classify"
+    if any(x in snip for x in ("pathname", "deepseek", "dashscope", "api/", "cliRunner", "MING_SIM_")):
         return "KEEP_identity_or_formal", "config/url/id formal match"
-    if kind in {"includes_branch", "startswith_branch", "endswith_branch"} and any(
-        x in snip for x in ("pathname", "url", "URL", "base", "model", "runner", "id", "key", "type")
+    if kind in {"includes_branch", "startswith_branch", "endswith_branch", "str_startswith", "str_endswith"} and any(
+        x in snip for x in ("pathname", "url", "URL", "base", "model", "runner", "id", "key", "type", "status", ".py", ".json", "http")
     ):
-        return "KEEP_identity_or_formal", "structural id/url/type match"
-
-    # Structured role/formal prefix peel (皇帝：/【本轮确认】) — identity, not free-prose classify
+        return "KEEP_identity_or_formal", "structural id/url/type/status match"
     if kind in {
         "str_startswith", "startswith_branch", "startswith_call", "removeprefix_call",
     } and (
@@ -439,76 +493,37 @@ def classify_n10(row, prior):
         or "皇帝：" in snip
     ):
         return "KEEP_identity_or_formal", "structured role/confirm prefix peel; body transported"
-
-    if old and old.get("disposition") in {"FIX_DONE", "FIX"}:
-        # Do not retain FIX_DONE that claimed length-only / nonempty substitutes as the fix
-        reason = old.get("reason") or ""
-        if any(x in reason for x in ("length only", "non-empty non-question", "both non-empty", "len(compact)")):
-            return "NEEDS_HUMAN", "prior FIX claimed length/nonempty substitute — re-verify deletion"
-        return "FIX_DONE", old.get("reason", "prior fix")
-    if old and str(old.get("disposition", "")).startswith("KEEP"):
-        # NEVER keep prior KEEP that launders nonempty/length free-text classify
-        reason = old.get("reason") or ""
-        if any(
-            x in snip or x in reason
-            for x in (
-                "len(compact)",
-                'endswith("?")',
-                "endswith(\"？\")",
-                "non-empty non-question",
-                "both non-empty",
-                "length only",
-            )
-        ):
-            return "NEEDS_HUMAN", "prior KEEP on nonempty/length free-text classify — not KEEP"
-        return old["disposition"], f"prior:{old.get('reason', '')}"[:120]
-
-    # High-suspicion: regex/keyword on free fields deciding buckets
-    if kind in {"regex_test", "re_search", "re_sub", "keyword_or"} and any(
-        x in snip for x in ("fail_condition", "resolve_condition", "stage_text", "reason", "title", "content", "text", "purpose", "display", "category")
+    if kind in {"str_in_compare", "membership_compare", "in_compare"} and any(
+        x in snip for x in (
+            "frozenset", "_INACTIVE", "_NON_OFFICE", "_UNOFFICED", "STATUS", "ACCOUNTS",
+            "CATEGORIES", "office_titles", "office_types", "region_ids", "allowed", "VALID",
+        )
+    ):
+        return "KEEP_identity_or_formal", "closed frozenset/registry membership"
+    if kind in {"map_get_classify"} and any(x in snip for x in ("get(\"", "get('", ".get(")):
+        if any(x in snip for x in ("reason", "purpose", "fail_condition", "stage_text", "content", "title")):
+            return "KEEP_transport", "dict get of transported field; not keyword admit"
+        return "KEEP_identity_or_formal", "structured dict key get"
+    if kind in {"label_token"} and "humanize" in snip:
+        return "KEEP_identity_or_formal", "formal DSL humanize; free prose pass-through"
+    # High-suspicion leftover free-field classify
+    if kind in {"regex_test", "re_search", "re_search_n10", "re_sub", "re_sub_n10", "keyword_or"} and any(
+        x in snip for x in ("fail_condition", "resolve_condition", "stage_text", "reason", "title", "content", "text", "purpose")
     ):
         return "NEEDS_HUMAN", "regex/keyword on free/label field — verify admission/classify"
     if kind in {"str_in_compare", "membership_compare"} and any(
-        x in snip for x in ("reason", "title", "stage", "condition", "purpose", "display", "category", "text")
+        x in snip for x in ("reason", "title", "stage", "condition", "purpose", "text")
     ):
         return "NEEDS_HUMAN", "membership on free/label field — verify"
-
-    return "NEEDS_HUMAN", "new/unclassified N10 candidate — review contract source/sink"
+    return "NEEDS_HUMAN", "N10 candidate — source/sink not auto-clear this round"
 
 
 def write_tsv(path, rows, fields):
+
     with path.open("w", encoding="utf-8", newline="") as f:
         w = csv.DictWriter(f, fieldnames=fields, delimiter="\t", lineterminator="\n", extrasaction="ignore")
         w.writeheader()
         w.writerows(rows)
-
-
-def _rewrite_deleted_secret_reason(old: dict) -> str:
-    ctx = old.get("ctx") or ""
-    snip = old.get("snip") or ""
-    reason = old.get("reason") or ""
-    if ctx in {
-        "_secret_context_task_like",
-        "_secret_context_tasks_related",
-        "_secret_prefix_needs_recent_context",
-        "_secret_confirmation_material",
-        "_matched_prefix",
-    } or any(
-        name in snip or name in reason
-        for name in (
-            "secret_task",
-            "secret_related",
-            "secret_prefix",
-            "atom_strip",
-            "_secret_context_task_like",
-            "_secret_prefix_needs_recent_context",
-        )
-    ) or any(
-        x in reason
-        for x in ("length only", "non-empty non-question", "both non-empty", "len(compact)")
-    ):
-        return "secret task/related/prefix/confirm classify deleted; structured-role full context transport"
-    return reason or "deleted illegal site"
 
 
 def main():
@@ -549,60 +564,64 @@ def main():
         ["lang", "file", "line", "kind", "detail", "ctx", "snip", "source"],
     )
 
-    prior_n6 = load_prior(EVIDENCE / "1847-n6-members-classified.tsv")
-    prior_n10 = load_prior(EVIDENCE / "1847-n10-members-classified.tsv")
-
     n6_cls = []
     for r in n6_raw:
-        disp, reason = classify_n6(r, prior_n6)
+        disp, reason = classify_n6(r)
+        assert not str(reason).startswith("prior:"), (r, reason)
         n6_cls.append({**r, "disposition": disp, "reason": reason})
-    # retain synthetic FIX_DONE rows from prior not in raw (deleted lines)
-    for key, old in list(prior_n6.items()):
-        if not isinstance(key, tuple) or len(key) != 3:
-            continue
-        if old.get("disposition") == "FIX_DONE":
-            if not any(x["file"] == key[0] and str(x["line"]) == key[1] and x["kind"] == key[2] for x in n6_cls):
-                n6_cls.append({
-                    "disposition": "FIX_DONE",
-                    "reason": _rewrite_deleted_secret_reason(old),
-                    "lang": old.get("lang", ""),
-                    "file": key[0], "line": key[1], "kind": key[2],
-                    "detail": old.get("detail", ""), "ctx": old.get("ctx", ""),
-                    "snip": old.get("snip", ""), "source": "prod",
-                })
 
     n10_cls = []
     for r in n10_raw:
-        disp, reason = classify_n10(r, prior_n10)
+        disp, reason = classify_n10(r)
+        assert not str(reason).startswith("prior:"), (r, reason)
         n10_cls.append({**r, "disposition": disp, "reason": reason})
-    for key, old in list(prior_n10.items()):
-        if not isinstance(key, tuple) or len(key) != 3:
-            continue
-        if old.get("disposition") == "FIX_DONE":
-            if not any(x["file"] == key[0] and str(x["line"]) == key[1] and x["kind"] == key[2] for x in n10_cls):
-                n10_cls.append({
-                    "disposition": "FIX_DONE",
-                    "reason": _rewrite_deleted_secret_reason(old),
-                    "lang": old.get("lang", ""),
-                    "file": key[0], "line": key[1], "kind": key[2],
-                    "detail": old.get("detail", ""), "ctx": old.get("ctx", ""),
-                    "snip": old.get("snip", ""), "source": "prod",
-                })
 
-    # Canonical FIX_DONE markers for deleted secret classify helpers (dedupe by ctx)
-    for table, kind, ctx, snip in (
-        (n6_cls, "atom_strip_deleted", "_secret_confirmation_material", "helper deleted; body not rewritten"),
-        (n10_cls, "secret_task_keyword", "_secret_context_task_like", "helper deleted"),
-        (n10_cls, "secret_related_keyword", "_secret_context_tasks_related", "helper deleted"),
-        (n10_cls, "secret_prefix_keyword", "_secret_prefix_needs_recent_context", "helper deleted"),
+    # Synthetic FIX_DONE markers for deleted sites (not inherited KEEP; this-round record)
+    for table, kind, ctx, snip, reason in (
+        (n6_cls, "atom_strip_deleted", "_secret_confirmation_material", "helper deleted; body not rewritten",
+         "secret confirm strip deleted; structured-role full context transport"),
+        (n6_cls, "secret_suffix_peel_deleted", "_canonical_secret_exclusion_target",
+         "诸官/suffix/startswith vocabulary deleted",
+         "N6/N10: secret exclusion free-text peel/vocab deleted; exact registry only"),
+        (n6_cls, "legacy_office_pollution_deleted", "_migrate_legacy_office_pollution",
+         "legacy office pollution migration deleted",
+         "N10: office free-text→status/transit migration deleted (#1812 no baggage)"),
+        (n10_cls, "secret_task_keyword", "_secret_context_task_like", "helper deleted",
+         "secret task/related/prefix/confirm classify deleted"),
+        (n10_cls, "secret_related_keyword", "_secret_context_tasks_related", "helper deleted",
+         "secret task/related/prefix/confirm classify deleted"),
+        (n10_cls, "secret_prefix_keyword", "_secret_prefix_needs_recent_context", "helper deleted",
+         "secret task/related/prefix/confirm classify deleted"),
+        (n10_cls, "office_history_marker_deleted", "appointment_break_rank",
+         "前/原/罢居 free-text history gate deleted",
+         "N10: history archive gated by closed status/reason enum only"),
+        (n10_cls, "office_title_noise_deleted", "concurrent_office_titles",
+         "前/原/罢居/革职 vocabulary peel deleted",
+         "N10: office tokenizer keeps formal concurrent split only"),
+        (n10_cls, "exclusive_office_suffix_deleted", "_is_exclusive_office",
+         "exclusive office suffix vocabulary deleted",
+         "N10: exclusivity not admitted from free-text title suffixes"),
+        (n10_cls, "minister_filter_title_regex_deleted", "filterMinisters",
+         "office title regex sort/admission deleted",
+         "N10: minister filter uses office_type/status enum only"),
+        (n10_cls, "triage_office_like_deleted", "triage_officers",
+         "office LIKE '%首辅%' free-text admission deleted",
+         "N10: triage officers admitted by exact office title frozenset only"),
     ):
-        if any((x.get("ctx") == ctx and str(x.get("disposition") or "").startswith("FIX")) for x in table):
+        if any((x.get("ctx") == ctx and x.get("kind") == kind) for x in table):
             continue
         table.append({
             "disposition": "FIX_DONE",
-            "reason": "secret task/related/prefix/confirm classify deleted; structured-role full context transport",
-            "lang": "py",
-            "file": "ming_sim/cli_backend.py",
+            "reason": reason,
+            "lang": "py" if not kind.startswith("minister_") else "ts",
+            "file": (
+                "ming_sim/cli_backend.py" if ("secret_" in kind or kind == "atom_strip_deleted") else
+                "ming_sim/db.py" if ("secret_suffix" in kind or "legacy_office" in kind) else
+                "ming_sim/issues.py" if "exclusive_office" in kind else
+                "web/src/components/ministerFilters.ts" if "minister_filter" in kind else
+                "ming_sim/rescript_draft.py" if "triage_office" in kind else
+                "ming_sim/office_rank.py"
+            ),
             "line": "-",
             "kind": kind,
             "detail": "",

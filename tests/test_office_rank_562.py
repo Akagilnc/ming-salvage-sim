@@ -242,9 +242,10 @@ def test_historical_military_commands_and_cabinet_fallback_use_nominal_bands():
     assert office_rank_band("不常见阁衔", "内阁") == 5
 
 
-def test_one_tokenizer_preserves_real_concurrent_offices_and_drops_only_pollution():
+def test_one_tokenizer_splits_concurrent_offices_by_formal_separators_only():
     title = "原任东阁大学士兼礼部尚书、左都御史，罢居松江"
-    assert canonical_office_title(title) == "东阁大学士,礼部尚书,左都御史"
+    # #1847: form conjunction/comma split only — no 前/原/罢居 vocabulary peel.
+    assert canonical_office_title(title) == "原任东阁大学士,礼部尚书,左都御史,罢居松江"
     assert office_rank_band(title) == 2
     assert office_leverage_multiplier(title) == 1.0
     assert office_rank_band("礼部尚书兼东阁大学士") == 2
@@ -390,31 +391,18 @@ def test_rank_rule_offset_reanchor_preserves_existing_save_leverage_once(game):
         reopened.close()
 
 
-def test_seed_archives_clean_historical_office_for_dismissed_ministers(game):
+def test_dismissed_minister_reads_archive_via_status_enum_not_title_pollution(game):
+    """#1847: history gate is closed status enum; no office-string 前/罢居/革职 peel."""
     db, _state, _content = game
-    yuan = db.conn.execute(
-        "SELECT office_title FROM character_offices WHERE character_name=?",
-        ("袁可立",),
-    ).fetchone()
-    assert yuan is not None
-    assert "巡抚" in yuan["office_title"]
-    assert "罢居" not in yuan["office_title"]
-    assert not yuan["office_title"].startswith("前")
-
-    _dossier_id, payload = _appointment_dossier(db, _state, "袁可立", "陕西巡抚")
-    assert payload["break_rank"]["basis"] == "historical_office"
-    assert payload["break_rank"]["is_break_rank"] is False
-    assert payload["break_rank"]["current_rank_band"] == 3
-
-    # 革职候勘 / 原任 污染也须在 seed 备档洗净，供起复读最近实职带。
     hu = db.conn.execute(
-        "SELECT office_title FROM character_offices WHERE character_name=?",
+        "SELECT status, office FROM characters WHERE name=?",
         ("胡廷宴",),
     ).fetchone()
     assert hu is not None
-    assert hu["office_title"] == "三边总督"
-    assert "革职" not in hu["office_title"]
-    assert not hu["office_title"].startswith("原")
+    assert hu["status"] == "dismissed"
+    # Seed may still carry polluted office prose; that must not be rewritten by migration.
+    assert "总督" in (hu["office"] or "")
+
     _hid, hu_payload = _appointment_dossier(db, _state, "胡廷宴", "三边总督")
     assert hu_payload["break_rank"]["basis"] == "historical_office"
     assert hu_payload["break_rank"]["is_break_rank"] is False
