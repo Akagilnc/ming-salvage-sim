@@ -1,0 +1,1824 @@
+### F16 class: free-prose rewrite (strip/slice/replace assigned into stored or supplied fields)
+### [:digits] slices
+ming_sim/cli_backend.py:854:                provider_message=f"agy auth race：{(stdout_text + stderr)[:200]}",
+ming_sim/cli_backend.py:862:            raise RuntimeError(f"{runner} 调用失败（退出码 {returncode}）：{stderr[:200]}")
+ming_sim/cli_backend.py:3028:            f"  [{int(c['id'])}] {str(c.get('summary') or c.get('text') or '')[:40]}"
+ming_sim/settlement_payload.py:95:            "options": options[:3],
+ming_sim/context.py:173:        raise LLMContractError(f"数据库中的数值变化 JSON 已损坏：{raw[:200]}") from error
+ming_sim/context.py:175:        raise LLMContractError(f"数据库中的数值变化不是 object：{raw[:200]}")
+ming_sim/relation_brew.py:182:            f"{stage} 输出不是唯一、完整、合法的 JSON object：{error}\n原始输出：{raw[:800]}"
+ming_sim/relation_brew.py:185:        raise LLMContractError(f"{stage} 酿制输出顶层不是 object\n原始输出：{raw[:800]}")
+ming_sim/decree_vocabulary.py:108:    return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:32]
+ming_sim/breach_plea.py:1183:        who = "、".join(hit[:3])
+ming_sim/faction_brew.py:186:            f"{stage} 输出不是唯一、完整、合法的 JSON object：{error}\n原始输出：{raw[:800]}"
+ming_sim/faction_brew.py:189:        raise LLMContractError(f"{stage} 酿制输出顶层不是 object\n原始输出：{raw[:800]}")
+ming_sim/agents.py:415:            tres = str(getattr(tool_res, "result", "") or "")[:200] if tool_res else ""
+ming_sim/agents.py:554:                        f"{stage} 输出不是合法 JSON：{error}\n原始输出：{raw[:800]}",
+ming_sim/agents.py:559:                    f"{stage} 输出不是合法 JSON\n原始输出：{raw[:800]}",
+ming_sim/staged_commitment.py:101:                f"stages_json 须为 JSON 数组字符串，解析失败：{text[:80]!r}"
+ming_sim/rescript_draft.py:1151:                f"急务票拟生成 输出含围栏外文字（整批 shape 错，F2.5）：围栏外含 prose，按票面应走整批降级\n原始输出：{raw[:800]}"
+ming_sim/rescript_draft.py:1160:            f"急务票拟生成 输出不是合法 JSON：{exc}\n原始输出：{raw[:800]}"
+ming_sim/rescript_draft.py:1164:            f"急务票拟生成 输出不是合法 JSON：顶层必须是 JSON object\n原始输出：{raw[:800]}"
+ming_sim/rescript_draft.py:1366:        raw={"error": type(exc).__name__, "detail": str(exc)[:500], "raw_summary": (raw or "")[:500]},
+ming_sim/rescript_draft.py:1372:                    "detail": str(exc)[:500],
+ming_sim/rescript_draft.py:1373:                    "raw_summary": (raw or "")[:500],
+ming_sim/rescript_draft.py:2122:            "detail": str(exc)[:500],
+ming_sim/rescript_draft.py:2123:            "raw_summary": (raw or "")[:500],
+ming_sim/rescript_draft.py:2252:                "raw_summary": raw[:800],
+ming_sim/llm_contract.py:13:        detail += f"\n原始输出：{raw[:800]}"
+ming_sim/audience_translate.py:81:        brief = text[:60] if text else str(row["kind"] or "")
+ming_sim/session.py:2507:                campaign_id = uuid.uuid4().hex[:12]
+ming_sim/issues.py:2478:    situations = [i for i in issues if i["kind"] == "situation"][:12]
+ming_sim/issues.py:2560:        faction_hint=",".join(ev.interests[:2]),
+ming_sim/issues.py:3172:        narrative_hint=str(legacy.get("narrative_hint") or "")[:200],
+ming_sim/issues.py:3849:                    controller = str(value).strip()[:160] if value is not None else ""
+ming_sim/issues.py:4384:                f"军事国策「{str(title)[:16]}」结案无 new_armies 配对（练军/募营疑未建军籍，#46）"
+ming_sim/issues.py:4388:                f"军事国策「{str(title)[:16]}」结案无人物变更配对（调将疑未落主将调任，#46）"
+ming_sim/issues.py:4396:                f"经制国策「{str(title)[:16]}」结案无月度 economy 配对"
+ming_sim/issues.py:5006:                    print(f"[issue/enrich] 国策「{title[:16]}」补效果 resolve={bool(resolve_eff)} ongoing={bool(ongoing_eff)}")
+ming_sim/issues.py:9022:            print(f"[secret_order] 推演副作用 id={real_id} note={sim_note[:60]!r}")
+ming_sim/declaration_dispatch.py:2595:        speaker_names = person_names[:1] if scroll_role in {"minister", "attendant"} else (
+ming_sim/materials.py:100:    digest = hashlib.sha256(text.encode("utf-8", errors="surrogatepass")).hexdigest()[:12]
+ming_sim/materials.py:101:    return f"{clean[:48]}-{digest}"
+ming_sim/materials.py:672:        handled.append(visible[dir_key][:2])
+ming_sim/db.py:5703:                    faction_hint=",".join(ev.interests[:2]),
+ming_sim/db.py:5830:        reason_code_value = str(reason_code or "")[:40]
+ming_sim/db.py:6124:                str(payload_summary or "")[:200],
+ming_sim/db.py:6125:                str(derived_from or "")[:120],
+ming_sim/db.py:6126:                normalized_text,  # 全量存：normalized 是结构化审计 JSON，[:500] 会从中间切断成不可解析（PR #106 CodeRabbit）
+ming_sim/db.py:6127:                str(source or "")[:80],
+ming_sim/db.py:6188:            reason = str(raw.get("reason") or raw.get("原因") or "")[:120]
+ming_sim/db.py:7039:            reason = (reason or "势力推演")[:120]
+ming_sim/db.py:7171:            (state.turn, state.year, state.period, power_id, old_name, new_name, old_aliases, new_aliases, reason[:200]),
+ming_sim/db.py:7374:            reason = str(raw_changes.get("reason") or raw_changes.get("原因") or event.title).strip()[:80]
+ming_sim/db.py:7973:            reason = str(raw_changes.get("reason") or raw_changes.get("原因") or event.title).strip()[:80]
+ming_sim/db.py:8463:                reason = str(item.get("reason") or item.get("status") or "扩军")[:80]
+ming_sim/db.py:8656:            reason = str(item.get("reason") or item.get("status") or "新立军队")[:80]
+ming_sim/db.py:8772:             str(row["name"]), (reason or "建筑废止").strip()[:80], origin_ref),
+ming_sim/db.py:8797:            reason = str(raw_changes.get("reason") or event.title).strip()[:80]
+ming_sim/db.py:19912:        label = str((choice or {}).get("label") or "")[:200] if isinstance(choice, dict) else ""
+ming_sim/db.py:19958:                    f"next_audience_todos.payload_json 须为 JSON 对象：{text[:80]!r}"
+ming_sim/db.py:19989:            tlog(f"[{surface}] 腐坏 JSON，拒绝静默等同空底：{text[:80]!r}")
+ming_sim/db.py:19991:                f"{surface} 腐坏 JSON：{text[:80]!r}"
+ming_sim/db.py:20455:                str(name)[:60], source_issue_id,
+ming_sim/db.py:20457:                str(narrative_hint)[:200],
+ming_sim/db.py:20460:                str(legacy_key)[:60],
+ming_sim/db.py:20879:                eff, str(origin_ref or "")[:120],
+ming_sim/db.py:21954:        tlog(f"[secret_order] create id={order_id} minister={minister_name} title={title[:20]}")
+ming_sim/db.py:22077:        tlog(f"[secret_order] update id={order_id} title={title[:20]}")
+ming_sim/db.py:22274:        tlog(f"[secret_order] submit_for_review id={order_id} due_now claim={note[:60]!r}")
+ming_sim/db.py:22341:        tlog(f"[secret_order] progress id={order_id} ok={ok} note={progress_note[:40]!r}")
+ming_sim/db.py:22365:        tlog(f"[secret_order] sim_note id={order_id} note={sim_note[:40]!r}")
+### variable slices
+ming_sim/office_rank.py:47:            clean = part[:pollution_at].strip()
+ming_sim/month_chain.py:1919:    return text[:first_start], questions
+ming_sim/cli_backend.py:1551:            prefix = form[:n]
+ming_sim/cli_backend.py:4340:        return text[:marker_at], text[marker_at:]
+ming_sim/cli_backend.py:4343:        if text.endswith(_CLI_RECOMMENDATION_PREFIX[:length]):
+ming_sim/agents.py:429:                    chunk = merged[:remaining]
+ming_sim/agents.py:468:            chunk = merged[:remaining]
+ming_sim/session.py:101:    keep_turn_nums = set(sorted(buckets.keys(), reverse=True)[:keep])
+ming_sim/breach_plea.py:313:    # 保留首类 primary；补充理由/案卷。理由进 due_review note → 案卷实况，禁止 [:N]（#1834 F16）。
+ming_sim/db.py:7563:                    # 自由正文进 region_report → 世界盘面：禁 [:N] 与 strip 改写（#1834 F16）。
+ming_sim/db.py:7758:        return rows[:limit] if limit is not None else rows
+ming_sim/db.py:8308:                    # station/commander/status 等自由正文进 army_report：禁 [:N]/strip 改写（#1834 F16）。
+ming_sim/db.py:8722:                # name/status 自由正文进 buildings_report：禁 [:N]/strip 改写（#1834 F16）。
+ming_sim/db.py:8836:                    # name/status 自由正文进 buildings_report：禁 [:N]/strip 改写（#1834 F16）。
+ming_sim/db.py:9961:        kept = merged[:keep]
+ming_sim/db.py:16589:        # 撤旨理由是自由正文，进案卷/材料可读链，禁止 [:N]（#1834 F16）。
+### strip()[: 
+ming_sim/issues.py:3849:                    controller = str(value).strip()[:160] if value is not None else ""
+ming_sim/db.py:7374:            reason = str(raw_changes.get("reason") or raw_changes.get("原因") or event.title).strip()[:80]
+ming_sim/db.py:7973:            reason = str(raw_changes.get("reason") or raw_changes.get("原因") or event.title).strip()[:80]
+ming_sim/db.py:8772:             str(row["name"]), (reason or "建筑废止").strip()[:80], origin_ref),
+ming_sim/db.py:8797:            reason = str(raw_changes.get("reason") or event.title).strip()[:80]
+### .strip() assignments / expressions on likely free prose
+ming_sim/action_materialize.py:43:            found = roster.get(str(minister_name or "").strip())
+ming_sim/action_materialize.py:53:        return "\n".join(p for p in parts if str(p or "").strip())
+ming_sim/action_materialize.py:54:    office = str(getattr(ch, "office", "") or "").strip() if ch is not None else ""
+ming_sim/action_materialize.py:56:        str(getattr(ch, "office_type", "") or "").strip() if ch is not None else ""
+ming_sim/action_materialize.py:58:    bits = [p for p in (str(minister_name or "").strip(), office or office_type) if p]
+ming_sim/action_materialize.py:98:        getattr(session, "content", None), str(person_name or "").strip(), session.db,
+ming_sim/action_materialize.py:235:    target = str(target_id or "").strip()
+ming_sim/action_materialize.py:238:    body = str(text or "").strip()
+ming_sim/action_materialize.py:260:        if str(payload.get("dossier_action_type") or "").strip() != "pacification":
+ming_sim/action_materialize.py:262:        if str(payload.get("target_id") or "").strip() != target:
+ming_sim/action_materialize.py:357:    target = str(target_id or "").strip()
+ming_sim/action_materialize.py:358:    action = str(punish_action or "").strip()
+ming_sim/action_materialize.py:359:    disposition = str(issue_disposition or "").strip()
+ming_sim/action_materialize.py:395:    body = str(text or "").strip()
+ming_sim/action_materialize.py:417:        if str(payload.get("dossier_action_type") or "").strip() != "punishment":
+ming_sim/action_materialize.py:419:        if str(payload.get("target_id") or "").strip() != target:
+ming_sim/action_materialize.py:449:    category = str(transaction_category or "").strip()
+ming_sim/action_materialize.py:511:    ga = str(grant_action or "").strip()
+ming_sim/action_materialize.py:512:    raw_account = str(account or "").strip()
+ming_sim/action_materialize.py:546:    ga = str(grant_action or "").strip()
+ming_sim/action_materialize.py:598:    action = str(intent.get("grant_action") or "").strip()
+ming_sim/action_materialize.py:599:    name = str(intent.get("name") or "").strip()
+ming_sim/action_materialize.py:600:    target_id = str(intent.get("target_id") or "").strip()
+ming_sim/action_materialize.py:608:        kind = str(intent.get("target_kind") or "").strip()
+ming_sim/action_materialize.py:619:    tid = str(raw_target or "").strip()
+ming_sim/action_materialize.py:641:    tid = str(raw_target or "").strip()
+ming_sim/action_materialize.py:705:    purpose_cur = str(purpose or "").strip()
+ming_sim/action_materialize.py:708:    canonical_target_kind = str(target_kind or "").strip()
+ming_sim/action_materialize.py:715:    target_id_cur = str(target_id or "").strip()
+ming_sim/action_materialize.py:718:    cadence_value = str(cadence or "").strip()
+ming_sim/action_materialize.py:757:    if not body.strip():
+ming_sim/action_materialize.py:762:    cadence_value = str(cadence or "").strip() or "一次性"
+ming_sim/action_materialize.py:802:    action = str(grant_action or "").strip()
+ming_sim/action_materialize.py:803:    target = str(target_id or "").strip()
+ming_sim/action_materialize.py:804:    kind = str(target_kind or "").strip()
+ming_sim/action_materialize.py:805:    body = str(text or "").strip()
+ming_sim/action_materialize.py:841:            field = str(getattr(exc, "field", "") or "").strip() or "amount"
+ming_sim/action_materialize.py:858:    pointed = str(target_candidate or "").strip()
+ming_sim/action_materialize.py:872:            if str(payload.get("dossier_action_type") or "").strip() != "grant_allocation":
+ming_sim/action_materialize.py:915:        staged["execution_surface"] = str(execution_surface or "").strip()
+ming_sim/action_materialize.py:924:        if not str(staged.get("title") or "").strip():
+ming_sim/action_materialize.py:927:                staged["title"] = str(label).strip()
+ming_sim/action_materialize.py:929:    lead = str(assignee or "").strip()
+ming_sim/action_materialize.py:951:    text = str(raw or "").strip()
+ming_sim/action_materialize.py:1031:        text = value.strip()
+ming_sim/action_materialize.py:1034:        parts = [p.strip() for p in re_split_bodies(text) if p.strip()]
+ming_sim/action_materialize.py:1044:        name = str(item or "").strip()
+ming_sim/action_materialize.py:1055:        str(row["name"]).strip()
+ming_sim/action_materialize.py:1057:        if str(row["name"] or "").strip()
+ming_sim/action_materialize.py:1068:    persons = {str(n).strip() for n in known_person_names if str(n or "").strip()}
+ming_sim/action_materialize.py:1069:    minister = str(current_minister or "").strip()
+ming_sim/action_materialize.py:1075:        name = str(body or "").strip()
+ming_sim/action_materialize.py:1127:    want_name = str(name or "").strip()
+ming_sim/action_materialize.py:1128:    want_office = str(office or "").strip()
+ming_sim/action_materialize.py:1129:    want_region = str(region_id or "").strip()
+ming_sim/action_materialize.py:1136:        staged_name = str(payload.get("name") or "").strip()
+ming_sim/action_materialize.py:1144:        staged_office = str(payload.get("office") or "").strip()
+ming_sim/action_materialize.py:1149:        ).strip()
+ming_sim/action_materialize.py:1175:    seat = str(region_id or "").strip()
+ming_sim/action_materialize.py:1190:    ).strip()
+ming_sim/action_materialize.py:1253:    name = str(payload.get("name") or "").strip()
+ming_sim/action_materialize.py:1254:    office = str(payload.get("office") or "").strip()
+ming_sim/action_materialize.py:1287:    priv = str(raw or "").strip()
+ming_sim/action_materialize.py:1301:    raw_scope = str(scope or "").strip()
+ming_sim/action_materialize.py:1304:        kind = kind.strip()
+ming_sim/action_materialize.py:1305:        tid = tid.strip()
+ming_sim/action_materialize.py:1308:    tid = str(target_id or "").strip()
+ming_sim/action_materialize.py:1309:    kind = str(target_kind or "").strip()
+ming_sim/action_materialize.py:1312:        kind = kind.strip()
+ming_sim/action_materialize.py:1313:        rest = rest.strip()
+ming_sim/action_materialize.py:1337:    status = str(dossier.get("status") or "").strip()
+ming_sim/action_materialize.py:1338:    action = str(dossier.get("action_type") or "").strip()
+ming_sim/action_materialize.py:1361:    if str(target_candidate or "").strip() == "含糊":
+ming_sim/action_materialize.py:1363:    raw = str(target_id or "").strip()
+ming_sim/action_materialize.py:1368:    kind = str(target_kind or "").strip()
+ming_sim/action_materialize.py:1371:        raw = raw.split(":", 1)[1].strip()
+ming_sim/action_materialize.py:1374:        raw = raw.split(":", 1)[1].strip()
+ming_sim/action_materialize.py:1387:        if str(row["kind"] or "").strip() != "initiative":
+ming_sim/action_materialize.py:1389:        if str(row["status"] or "").strip() != "active":
+ming_sim/action_materialize.py:1392:        origin = str(row["origin_ref"] or "").strip()
+ming_sim/action_materialize.py:1432:    holder = str(holder_id or "").strip()
+ming_sim/action_materialize.py:1433:    priv = str(privilege or "").strip()
+ming_sim/action_materialize.py:1507:    body = str(text or "").strip()
+ming_sim/action_materialize.py:1513:    matter_title = str(title or "").strip() or str(target_id or "").strip()
+ming_sim/action_materialize.py:1519:    matter_id = str(target_id or "").strip() or matter_title
+ming_sim/action_materialize.py:1520:    actor = str(minister_name or "").strip()
+ming_sim/action_materialize.py:1533:    pointed = str(target_candidate or "").strip()
+ming_sim/action_materialize.py:1547:            if str(payload.get("dossier_action_type") or "").strip() != "assignment":
+ming_sim/action_materialize.py:1571:    category = str(transaction_category or "").strip()
+ming_sim/action_materialize.py:1575:    lead = str(assignee or "").strip()
+ming_sim/action_materialize.py:1582:    kind_raw = str(commitment_kind or "").strip()
+ming_sim/action_materialize.py:1637:    if str(target_candidate or "").strip() == "含糊":
+ming_sim/action_materialize.py:1639:    body = str(text or "").strip()
+ming_sim/action_materialize.py:1642:    holder = str(minister_name or "").strip()
+ming_sim/action_materialize.py:1663:    pointed = str(target_candidate or "").strip()
+ming_sim/action_materialize.py:1675:            if str(payload.get("dossier_action_type") or "").strip() != "authorization":
+ming_sim/action_materialize.py:1728:    body = str(text or "").strip()
+ming_sim/action_materialize.py:1733:    matter_title = str(title or "").strip() or str(target_id or "").strip()
+ming_sim/action_materialize.py:1739:    matter_id = str(target_id or "").strip() or matter_title
+ming_sim/action_materialize.py:1769:    pointed = str(target_candidate or "").strip()
+ming_sim/action_materialize.py:1783:            if str(payload.get("dossier_action_type") or "").strip() != "referral":
+ming_sim/action_materialize.py:1835:    if str(target_candidate or "").strip() == "含糊":
+ming_sim/action_materialize.py:1837:    body = str(text or "").strip()
+ming_sim/action_materialize.py:1849:    holder = str(rec.get("holder_id") or "").strip()
+ming_sim/action_materialize.py:1860:    pointed = str(target_candidate or "").strip()
+ming_sim/action_materialize.py:1872:            if str(payload.get("dossier_action_type") or "").strip() != "revoke_authority":
+ming_sim/action_materialize.py:1917:    if str(target_candidate or "").strip() == "含糊":
+ming_sim/action_materialize.py:1919:    body = str(text or "").strip()
+ming_sim/action_materialize.py:1939:    pointed = str(target_candidate or "").strip()
+ming_sim/action_materialize.py:1951:            if str(payload.get("dossier_action_type") or "").strip() != "revoke_decree":
+ming_sim/office_rank.py:31:    text = str(office or "").strip()
+ming_sim/office_rank.py:34:    text = re.sub(r"^(?:前|原任|原)", "", text).strip()
+ming_sim/office_rank.py:39:        part = segment.strip()
+ming_sim/office_rank.py:47:            clean = part[:pollution_at].strip()
+ming_sim/office_rank.py:69:    text = str(title or "").strip()
+ming_sim/office_rank.py:83:            token = str(stem or "").strip()
+ming_sim/office_rank.py:107:    declared = str(office_type or "").strip()
+ming_sim/office_rank.py:108:    raw_title = str(office or "").strip()
+ming_sim/office_rank.py:138:                token = str(stem or "").strip()
+ming_sim/office_rank.py:166:    declared_type_is_real = str(office_type or "").strip() not in _UNOFFICED_TYPES
+ming_sim/office_rank.py:174:    person = str(name or "").strip()
+ming_sim/office_rank.py:175:    target = str(new_office or "").strip()
+ming_sim/office_rank.py:176:    target_type = str(new_office_type or "").strip()
+ming_sim/office_rank.py:187:        current_title = str(row["office"] or "").strip()
+ming_sim/office_rank.py:188:        current_type = str(row["office_type"] or "").strip()
+ming_sim/office_rank.py:206:                current_type = str(archived["office_type"] or "").strip()
+ming_sim/credit_events.py:65:    text = str(origin or "").strip()
+ming_sim/credit_events.py:78:    m = _DOSSIER_REF_RE.match(str(ref or "").strip())
+ming_sim/credit_events.py:83:    m = _ISSUE_REF_RE.match(str(ref or "").strip())
+ming_sim/credit_events.py:98:        text = str(part or "").strip()
+ming_sim/credit_events.py:113:    base = str(origin or "").strip()
+ming_sim/credit_events.py:139:    person = str(person or "").strip()
+ming_sim/credit_events.py:140:    kind = str(event_kind or "").strip()
+ming_sim/credit_events.py:141:    context = str(context or "").strip()
+ming_sim/credit_events.py:142:    origin = str(origin or "").strip()
+ming_sim/credit_events.py:185:        name = str(p.get("character_id") or "").strip()
+ming_sim/credit_events.py:242:    if str(dossier.get("execution_outcome") or "").strip() != "fulfilled":
+ming_sim/credit_events.py:290:        tier = str(entry.get("tier") or "").strip()
+ming_sim/credit_events.py:293:        pawn = str(entry.get("character_id") or "").strip()
+ming_sim/credit_events.py:294:        car = str(entry.get("delegator_id") or "").strip()
+ming_sim/credit_events.py:306:    return str(dossier.get("execution_outcome") or "").strip() == "transformed"
+ming_sim/credit_events.py:341:    action = str(item.get("动作") or item.get("action") or "").strip()
+ming_sim/credit_events.py:346:    status = str(item.get("status") or "").strip()
+ming_sim/credit_events.py:354:    action = str(item.get("动作") or item.get("action") or "").strip()
+ming_sim/credit_events.py:358:        status = str(item.get("status") or "").strip()
+ming_sim/credit_events.py:372:        name = str(it.get("name") or it.get("character_id") or "").strip()
+ming_sim/credit_events.py:481:            and str(p.get("character_id") or "").strip()
+ming_sim/credit_events.py:486:            if str(p.get("character_id") or "").strip()
+ming_sim/credit_events.py:543:    tid = str(item.get("target_id") or "").strip()
+ming_sim/credit_events.py:609:    return str(host.get("name") or "").strip()
+ming_sim/credit_events.py:739:        if str(it.get("outcome") or "").strip() != "fulfilled":
+ming_sim/entities/affair/store.py:97:        title = str(name or "").strip()
+ming_sim/entities/affair/store.py:98:        cause = str(origin or "").strip()
+ming_sim/entities/affair/store.py:103:        key = str(birth_key or "").strip()
+ming_sim/entities/affair/store.py:172:        key = str(parsed.get("birth_key") or "").strip()
+ming_sim/entities/affair/store.py:201:        key = str(parsed.get("birth_key") or "").strip()
+ming_sim/entities/affair/store.py:410:        origin_ref = str(item.get("origin_ref") or item.get("来源引用") or "").strip()
+ming_sim/entities/affair/store.py:449:            origin = str(row["origin_ref"] or "").strip()
+ming_sim/entities/affair/store.py:466:                "person_names": [str(name) for name in people if str(name).strip()],
+ming_sim/entities/affair/store.py:467:                "tags": [str(tag) for tag in tags if str(tag).strip()],
+ming_sim/entities/affair/store.py:488:    attach = str(raw.get("attach") or "").strip()
+ming_sim/entities/affair/store.py:497:        name = str(raw.get("name") or "").strip()
+ming_sim/entities/affair/store.py:498:        origin = str(raw.get("origin") or "").strip()
+ming_sim/entities/affair/store.py:501:        key = str(raw.get("birth_key") or "").strip()
+ming_sim/entities/affair/store.py:502:        identity = str(raw.get("identity") or "").strip()
+ming_sim/entities/affair/store.py:540:    text = str(origin_ref or "").strip()
+ming_sim/entities/textual_fact/store.py:72:        if not isinstance(body, str) or not body.strip():
+ming_sim/entities/textual_fact/store.py:80:        origin = sanitize_sqlite_text(str(origin_ref or "").strip())
+ming_sim/entities/textual_fact/store.py:119:        refs = [str(ref).strip() for ref in origin_refs if str(ref).strip()]
+ming_sim/entities/textual_fact/store.py:129:            kind = str(subject_kind or "").strip()
+ming_sim/entities/textual_fact/store.py:154:    kind = str(subject_kind or "").strip()
+ming_sim/entities/textual_fact/store.py:159:    target = str(subject_id or "").strip()
+ming_sim/entities/staged_declaration/store.py:91:        ref = str(decree_ref or "").strip()
+ming_sim/entities/staged_declaration/store.py:132:        ref = str(decree_ref or "").strip()
+ming_sim/entities/staged_declaration/store.py:161:        ref = str(decree_ref or "").strip()
+ming_sim/entities/staged_declaration/store.py:180:        ref = str(decree_ref or "").strip()
+ming_sim/entities/staged_declaration/store.py:189:        ref = str(decree_ref or "").strip()
+ming_sim/entities/staged_declaration/store.py:209:        ref = str(decree_ref or "").strip()
+ming_sim/entities/staged_declaration/store.py:219:            str(row["forecast_text"]).strip()
+ming_sim/entities/staged_declaration/store.py:221:            if str(row["forecast_text"] or "").strip()
+ming_sim/entities/staged_declaration/store.py:227:        ref = str(decree_ref or "").strip()
+ming_sim/entities/staged_declaration/store.py:241:        ref = str(decree_ref or "").strip()
+ming_sim/relation_seed.py:56:    if not value.strip():
+ming_sim/relation_seed.py:63:    if identifier != identifier.strip():
+ming_sim/llm_transport.py:408:    pmsg = str(content or "").strip() or "stream error"
+ming_sim/situation_drift.py:161:                    and not str(item.get("target_id") or "").strip()
+ming_sim/situation_drift.py:162:                    and not str(item.get("目标编号") or "").strip()
+ming_sim/situation_drift.py:163:                    and not str(item.get("target_kind") or item.get("目标类型") or "").strip()
+ming_sim/situation_drift.py:366:        commitment_kind = str(row["commitment_kind"] if "commitment_kind" in row.keys() else "").strip()
+ming_sim/knowledge.py:38:        origin_ref = str(issue["origin_ref"] or "").strip()
+ming_sim/knowledge.py:76:        stripped = name.strip()
+ming_sim/knowledge.py:455:        str(rid) for rid in (projected.get("region_ids") or ()) if str(rid or "").strip()
+ming_sim/knowledge.py:523:        if not str(stage).strip() or not _reader_in_issue_audience(db, issue, character_name):
+ming_sim/knowledge.py:780:        target_roster = [str(target).strip() for target in target_roster if str(target).strip()]
+ming_sim/commitment_backlash.py:39:    kind = str(source_kind or "").strip()
+ming_sim/commitment_backlash.py:52:    outcome = str(execution_outcome or "").strip()
+ming_sim/llm_config.py:56:    key = str(value or "").strip()
+ming_sim/llm_config.py:63:    key = str(value or "").strip()
+ming_sim/llm_config.py:98:    if value is None or (isinstance(value, str) and not value.strip()):
+ming_sim/llm_config.py:170:    channel = str(data.get("channel") or "").strip().lower()
+ming_sim/llm_config.py:220:    raw = (model or "").strip().lower()
+ming_sim/llm_config.py:263:    model_id = (model or "").strip().lower()
+ming_sim/llm_config.py:295:    return str(runner or "").strip().lower() in CLI_REASONING_STRENGTH_RUNNERS
+ming_sim/llm_config.py:299:    return (level or "").strip()
+ming_sim/llm_config.py:303:    strength = str(value or "").strip().lower()
+ming_sim/llm_config.py:309:    if str(data.get("advanced_model") or "").strip():
+ming_sim/llm_config.py:313:        legacy = str(value or "").strip().lower()
+ming_sim/llm_config.py:325:        return (os.environ.get("MING_SIM_CODEX_MODEL") or CODEX_DEFAULT_MODEL).strip()
+ming_sim/llm_config.py:327:        return (os.environ.get("MING_SIM_CLAUDE_MODEL") or CLAUDE_DEFAULT_MODEL).strip()
+ming_sim/llm_config.py:342:    api_key = (api_key or os.environ.get("OPENAI_API_KEY", "")).strip()
+ming_sim/llm_config.py:355:            api_key = getpass.getpass("请输入 API key（不会保存，回车取消）：").strip()
+ming_sim/llm_config.py:361:    adv_base = (advanced_base_url or "").strip()
+ming_sim/llm_config.py:378:        advanced_model=(advanced_model or "").strip(),
+ming_sim/llm_config.py:400:    if role in _ADVANCED_ROLES and (cfg.advanced_model or "").strip():
+ming_sim/llm_config.py:401:        adv_base = (cfg.advanced_base_url or "").strip() or cfg.base_url
+ming_sim/llm_config.py:408:            model=cfg.advanced_model.strip(),
+ming_sim/llm_config.py:462:    active_channel = (channel or "api").strip().lower()
+ming_sim/llm_config.py:481:    preserve_api = active_channel == "cli" and not any((value or "").strip() for value in api_inputs)
+ming_sim/llm_config.py:492:            "base_url": (base_url or "").strip(),
+ming_sim/llm_config.py:493:            "model": (model or "").strip(),
+ming_sim/llm_config.py:494:            "api_key": (api_key or "").strip(),
+ming_sim/llm_config.py:497:            "advanced_model": (advanced_model or "").strip(),
+ming_sim/llm_config.py:498:            "advanced_base_url": (advanced_base_url or "").strip(),
+ming_sim/llm_config.py:499:            "advanced_api_key": (advanced_api_key or "").strip(),
+ming_sim/llm_config.py:505:        "runner": (cli_runner if cli_runner is not None else str(existing_cli.get("runner", ""))).strip(),
+ming_sim/llm_config.py:506:        "model": (cli_model if cli_model is not None else str(existing_cli.get("model", ""))).strip(),
+ming_sim/month_chain.py:57:    if str(cheat_directive or "").strip():
+ming_sim/month_chain.py:58:        message = str(cheat_directive).strip() + "\n" + message
+ming_sim/month_chain.py:184:            if isinstance(forecast, str) and forecast.strip():
+ming_sim/month_chain.py:354:    if not isinstance(title, str) or not title.strip():
+ming_sim/month_chain.py:356:    if not isinstance(report, str) or not report.strip():
+ming_sim/month_chain.py:401:    if str(text or "").strip():
+ming_sim/month_chain.py:404:        if prefix.strip():
+ming_sim/month_chain.py:441:    if not prefix.strip():
+ming_sim/month_chain.py:530:        if str(cheat_directive or "").strip() and not chain.get("cheat_directive"):
+ming_sim/month_chain.py:531:            chain["cheat_directive"] = str(cheat_directive).strip()
+ming_sim/month_chain.py:602:    if archive is None or not str(archive.get("report") or "").strip():
+ming_sim/month_chain.py:618:        if archive is None or not str(archive.get("report") or "").strip():
+ming_sim/month_chain.py:1015:    if prefix.strip():
+ming_sim/month_chain.py:1078:    who = str(name or "").strip()
+ming_sim/month_chain.py:1184:            who = str((order.get(side) or {}).get("name") or "").strip()
+ming_sim/month_chain.py:1517:    if str(row["rescript_action"] or "").strip():
+ming_sim/month_chain.py:1592:        if str(value or "").strip()
+ming_sim/month_chain.py:1616:        event_id = str(ev.id or "").strip()
+ming_sim/month_chain.py:1623:        echoed = str(question.get("event_id") or "").strip()
+ming_sim/month_chain.py:1624:        origin_ref = str(question.get("origin_ref") or "").strip()
+ming_sim/month_chain.py:1639:        label = str(opt.get("label") or "").strip()
+ming_sim/month_chain.py:1644:            "hint": str(opt.get("hint") or "").strip(),
+ming_sim/month_chain.py:1652:        "title": str(question.get("title") or "").strip() or "请旨",
+ming_sim/month_chain.py:1653:        "context": str(question.get("context") or "").strip(),
+ming_sim/month_chain.py:1714:            "label": str(choice.get("label") or "").strip(),
+ming_sim/month_chain.py:1715:            "hint": str(choice.get("hint") or "").strip(),
+ming_sim/month_chain.py:1716:            "note": str(choice.get("note") or "").strip(),
+ming_sim/month_chain.py:1717:            "context": str(row.get("context") or "").strip(),
+ming_sim/month_chain.py:1776:    ).strip()
+ming_sim/audience_night.py:494:            name = str(raw_name or "").strip()
+ming_sim/audience_night.py:621:        if not str(entry.get("body") or "").strip():
+ming_sim/audience_night.py:642:        if not (is_exit and str(entry.get("body") or "").strip()):
+ming_sim/audience_night.py:761:        n = str(name or "").strip()
+ming_sim/audience_night.py:846:    persons = [str(n).strip() for n in (person_names or []) if str(n).strip()]
+ming_sim/audience_night.py:865:    origin = str(origin_ref or "").strip()
+ming_sim/audience_night.py:919:    time_of_day = str(time_of_day or "").strip() or DEFAULT_TIME_OF_DAY
+ming_sim/audience_night.py:920:    location = str(location or "").strip() or DEFAULT_LOCATION
+ming_sim/audience_night.py:974:    m = str(method or default).strip()
+ming_sim/audience_night.py:995:    name = str(person_name or "").strip()
+ming_sim/audience_night.py:1402:    origin = str(origin_id or "").strip()
+ming_sim/audience_night.py:1420:    status = str(row["status"] or "active").strip() or "active"
+ming_sim/audience_night.py:1421:    transit_to = str(row["transit_to"] or "").strip()
+ming_sim/audience_night.py:1422:    location = str(row["location"] or "").strip()
+ming_sim/audience_night.py:1490:        location = str(row["location"] or "").strip() if row is not None else ""
+ming_sim/audience_night.py:1519:        if row is None or str(row["transit_to"] or "").strip():
+ming_sim/audience_night.py:1521:        status = str(row["status"] or "active").strip() or "active"
+ming_sim/audience_night.py:1524:        destination = str(row["location"] or "").strip()
+ming_sim/audience_night.py:1550:        str(item.get("name") or item.get("人物") or "").strip()
+ming_sim/audience_night.py:1554:        and str(item.get("transit_to") or item.get("去向") or "").strip() == "beizhili"
+ming_sim/audience_night.py:1603:    origin = str(origin_id or "").strip()
+ming_sim/audience_night.py:1631:        status = str(row["status"] or "active").strip() or "active" if row is not None else "active"
+ming_sim/audience_night.py:1647:    name = str(person_name or "").strip()
+ming_sim/audience_night.py:1676:    name = str(person_name or "").strip()
+ming_sim/audience_night.py:1684:            if item["person_name"] == name and item["origin_id"] == str(origin_id).strip():
+ming_sim/audience_night.py:1711:    name = str(person_name or "").strip()
+ming_sim/audience_night.py:1770:        db, int(night_id), person_names=[str(person_name).strip()],
+ming_sim/audience_night.py:1855:            current_transit = str(row["transit_to"] or "").strip() if row is not None else ""
+ming_sim/audience_night.py:1856:            location = str(row["location"] or "").strip() if row is not None else ""
+ming_sim/audience_night.py:1927:    name = str(person_name or "").strip()
+ming_sim/audience_night.py:1934:            if item["person_name"] == name and item["origin_id"] == str(origin_id).strip():
+ming_sim/audience_night.py:1965:    name = str(person_name or "").strip()
+ming_sim/audience_night.py:2000:    name = str(person_name or "").strip()
+ming_sim/audience_night.py:2042:    text = str(message or "").strip()
+ming_sim/audience_night.py:2071:    text = str(message or "").strip()
+ming_sim/audience_night.py:2080:    name = str(m.group(1) or "").strip()
+ming_sim/audience_night.py:2144:    name = str(person_name or "").strip()
+ming_sim/audience_night.py:2163:    name = str(person_name or "").strip()
+ming_sim/audience_night.py:2191:    name = str(person_name or "").strip()
+ming_sim/audience_night.py:2246:    name = str(person_name or "").strip()
+ming_sim/audience_night.py:2257:        body = str(entry.get("body") or "").strip()
+ming_sim/audience_night.py:2325:    name = str(person_name or "").strip()
+ming_sim/audience_night.py:2369:    origin = str(origin or "").strip()
+ming_sim/audience_night.py:2408:    name = str(person_name or "").strip()
+ming_sim/audience_night.py:2409:    origin = str(origin_ref or "").strip()
+ming_sim/flows.py:810:        move_origin_ref = str(move.get("origin_ref") or "").strip()
+ming_sim/flows.py:811:        effective_origin_ref = str(origin_ref or move_origin_ref).strip()
+ming_sim/flows.py:825:        raw_purpose = str(move.get("purpose") or "").strip()
+ming_sim/flows.py:826:        raw_target_kind = str(move.get("target_kind") or "").strip()
+ming_sim/flows.py:827:        raw_target_id = str(move.get("target_id") or "").strip()
+ming_sim/flows.py:851:                    if str(army_id).strip()
+ming_sim/flows.py:1566:        source = str(item.get("source") or "").strip()
+ming_sim/flows.py:1567:        target = str(item.get("target") or "").strip()
+ming_sim/flows.py:1574:        src_cls, src_region = (part.strip() for part in source.split("@", 1))
+ming_sim/flows.py:1575:        dst_cls, dst_region = (part.strip() for part in target.split("@", 1))
+ming_sim/flows.py:1591:        reason = str(item.get("reason") or "").strip()
+ming_sim/flows.py:1617:        origin_ref = str(item.get("origin_ref") or "").strip()
+ming_sim/displaced_population.py:190:        grant_action = str(payload.get("grant_action") or "").strip()
+ming_sim/displaced_population.py:193:        target_kind = str(row["target_kind"] or payload.get("target_kind") or "").strip()
+ming_sim/displaced_population.py:194:        region_id = str(row["target_id"] or payload.get("target_id") or "").strip()
+ming_sim/displaced_population.py:199:        outcome = str(row["execution_outcome"] or "").strip()
+ming_sim/displaced_population.py:202:        cadence = str(payload.get("cadence") or "").strip()
+ming_sim/cli_backend.py:190:    return str(name or "").strip().lower() in _CLI_BACKENDS
+ming_sim/cli_backend.py:237:            discovered = m.group(1).strip()
+ming_sim/cli_backend.py:302:_TRACE_DISABLED = os.environ.get("MING_SIM_TRACE", "1").strip() in ("0", "false", "no")
+ming_sim/cli_backend.py:573:        return (os.environ.get("MING_SIM_CODEX_REASONING") or "").strip()
+ming_sim/cli_backend.py:574:    return _CODEX_REASONING_BY_STRENGTH.get(str(reasoning_strength or "").strip().lower(), "")
+ming_sim/cli_backend.py:642:    strength = str(reasoning_strength or "").strip().lower()
+ming_sim/cli_backend.py:647:    strength = str(reasoning_strength or "").strip().lower()
+ming_sim/cli_backend.py:706:                str(reasoning_strength or "").strip().lower()
+ming_sim/cli_backend.py:821:                stripped = line.strip()
+ming_sim/cli_backend.py:856:        text = stdout_text.strip() or final_text.strip()
+ming_sim/cli_backend.py:859:            text = (stdout_text + stderr).split("OpenAI Codex v")[0].strip()
+ming_sim/cli_backend.py:870:        elif not pieces and final_text.strip():
+ming_sim/cli_backend.py:871:            yield final_text.strip()
+ming_sim/cli_backend.py:898:    return text.strip(), 1
+ming_sim/cli_backend.py:1030:    return (getattr(llm_config, "channel", "") or "").strip().lower()
+ming_sim/cli_backend.py:1042:    runner = (getattr(llm_config, "cli_runner", "") or cli_backend_from_env() or "agy").strip().lower()
+ming_sim/cli_backend.py:1045:    model = (getattr(llm_config, "cli_model", "") or "").strip()
+ming_sim/cli_backend.py:1046:    reasoning_strength = str(getattr(llm_config, "reasoning_strength", "") or "").strip().lower()
+ming_sim/cli_backend.py:1174:        runner = (getattr(llm_config, "cli_runner", "") or cli_backend_from_env() or "agy").strip().lower()
+ming_sim/cli_backend.py:1185:        model = (str(getattr(llm_config, "cli_model", "") or "").strip()) or cli_model_from_env(runner)
+ming_sim/cli_backend.py:1220:        if not content.strip():
+ming_sim/cli_backend.py:1281:    }.get(str(value or "").strip())
+ming_sim/cli_backend.py:1313:        name = str(getattr(ch, "name", None) or key or "").strip()
+ming_sim/cli_backend.py:1317:            str(a).strip()
+ming_sim/cli_backend.py:1319:            if str(a).strip() and str(a).strip() != name
+ming_sim/cli_backend.py:1351:        army_id = str(getattr(army, "id", None) or key or "").strip()
+ming_sim/cli_backend.py:1354:        name = str(getattr(army, "name", None) or army_id).strip()
+ming_sim/cli_backend.py:1387:        name = str(raw or "").strip()
+ming_sim/cli_backend.py:1430:        name = str(match.group(1) or "").strip()
+ming_sim/cli_backend.py:1452:                cid = str(item.get(key) or "").strip()
+ming_sim/cli_backend.py:1477:    text = str(player_message or "").strip()
+ming_sim/cli_backend.py:1481:        ref = str(raw or "").strip()
+ming_sim/cli_backend.py:1490:    name = str(canon or "").strip()
+ming_sim/cli_backend.py:1498:        alias = str(raw or "").strip()
+ming_sim/cli_backend.py:1509:        canon = str(key or "").strip()
+ming_sim/cli_backend.py:1514:            alias = str(raw or "").strip()
+ming_sim/cli_backend.py:1572:    cid = str(raw or "").strip()
+ming_sim/cli_backend.py:1578:    key = str(found or "").strip()
+ming_sim/cli_backend.py:1591:    cid = str(entry.get("character_id") or "").strip()
+ming_sim/cli_backend.py:1596:    ).strip()
+ming_sim/cli_backend.py:1604:    cid = str(raw or "").strip()
+ming_sim/cli_backend.py:1674:                cid = str(raw or "").strip()
+ming_sim/cli_backend.py:1686:            if not str(raw or "").strip() or _is_non_person_participant_name(raw):
+ming_sim/cli_backend.py:1722:            if not str(raw or "").strip() or _is_non_person_participant_name(raw):
+ming_sim/cli_backend.py:1729:            ).strip()
+ming_sim/cli_backend.py:1837:    facts = str(roster_facts or "").strip()
+ming_sim/cli_backend.py:1868:        if text.strip():
+ming_sim/cli_backend.py:1897:        role = str(speaker_role or "").strip()
+ming_sim/cli_backend.py:1899:            name = str(speaker_name or "").strip()
+ming_sim/cli_backend.py:1940:    failed = {str(item).strip() for item in (failed_fields or []) if str(item).strip()}
+ming_sim/cli_backend.py:1943:    role = str(speaker_role or "").strip()
+ming_sim/cli_backend.py:1945:        name = str(speaker_name or "").strip()
+ming_sim/cli_backend.py:1952:    emperor = str(emperor_words or "").strip()
+ming_sim/cli_backend.py:1955:    prior = str(prior_output or "").strip()
+ming_sim/cli_backend.py:1974:    gaps = [str(g).strip() for g in (landing_gaps or []) if str(g).strip()]
+ming_sim/cli_backend.py:1987:    if not str(so.get("title") or "").strip():
+ming_sim/cli_backend.py:1989:    if not str(so.get("content") or "").strip():
+ming_sim/cli_backend.py:2014:    err = str(contract_error or "").strip()
+ming_sim/cli_backend.py:2016:    role = str(speaker_role or "").strip()
+ming_sim/cli_backend.py:2018:        name = str(speaker_name or "").strip()
+ming_sim/cli_backend.py:2026:    emperor = str(emperor_words or "").strip()
+ming_sim/cli_backend.py:2029:    prior = str(prior_output or "").strip()
+ming_sim/cli_backend.py:2041:    cid = str(raw or "").strip()
+ming_sim/cli_backend.py:2044:    canon = str(_canonical_minister_key(content, cid, db) or "").strip()
+ming_sim/cli_backend.py:2083:        delegator_raw = str(entry.get("delegator_id") or "").strip()
+ming_sim/cli_backend.py:2135:        rid = str(getattr(region, "id", None) or key or "").strip()
+ming_sim/cli_backend.py:2136:        name = str(getattr(region, "name", None) or "").strip()
+ming_sim/cli_backend.py:2344:        ).strip()
+ming_sim/cli_backend.py:2353:            if str(entry.get("tier") or "").strip() != "主办":
+ming_sim/cli_backend.py:2355:            name = str(entry.get("character_id") or "").strip()
+ming_sim/cli_backend.py:2356:            if name and not str(entry.get("delegator_id") or "").strip():
+ming_sim/cli_backend.py:2380:    if body.get("attach") != "new" or str(body.get("birth_key") or "").strip():
+ming_sim/cli_backend.py:2418:        ).strip()
+ming_sim/cli_backend.py:2689:            ).strip()
+ming_sim/cli_backend.py:2692:            ).strip()
+ming_sim/cli_backend.py:2743:    correction_block = str(correction_feedback or "").strip()
+ming_sim/cli_backend.py:2837:            text = str(value.get("正文") or "").strip()
+ming_sim/cli_backend.py:2838:            action = str(value.get("动作类型") or "").strip()
+ming_sim/cli_backend.py:2849:            ).strip()
+ming_sim/cli_backend.py:2852:            ).strip()
+ming_sim/cli_backend.py:2978:    ).strip()
+ming_sim/cli_backend.py:3071:    _action = str(obj.get("拟旨意图") or "").strip()
+ming_sim/cli_backend.py:3095:    _act = str(obj.get("动作类型") or "").strip()
+ming_sim/cli_backend.py:3103:    ).strip()
+ming_sim/cli_backend.py:3106:    ).strip()
+ming_sim/cli_backend.py:3119:            "draft_text": (minister_reply or player_message or "").strip(),
+ming_sim/cli_backend.py:3133:    dossier_action = str(obj.get("动作类型") or "special_decree").strip()
+ming_sim/cli_backend.py:3141:        str(_tk_raw or "").strip()
+ming_sim/cli_backend.py:3147:    ).strip()
+ming_sim/cli_backend.py:3191:    merged = str(obj.get("合并草案") or "").strip()
+ming_sim/cli_backend.py:3204:            draft_text = (minister_reply or "").strip()
+ming_sim/cli_backend.py:3224:    target_raw = str(obj.get("目标草案") or "").strip()
+ming_sim/cli_backend.py:3242:        draft_text = merged if merged else (minister_reply or "").strip()
+ming_sim/cli_backend.py:3246:        draft_text = merged if merged else (existing if existing else (minister_reply or "").strip())
+ming_sim/cli_backend.py:3274:    kind = str(raw or "").strip()
+ming_sim/cli_backend.py:3282:    if raw is None or str(raw).strip() == "":
+ming_sim/cli_backend.py:3300:        str(payload.get("dossier_action_type") or "").strip() == "special_decree"
+ming_sim/cli_backend.py:3301:        and str(payload.get("target_kind") or "").strip() == "policy"
+ming_sim/cli_backend.py:3302:        and str(payload.get("target_id") or "").strip() == "manual-directive"
+ming_sim/cli_backend.py:3303:        and str(payload.get("locality_scope") or "").strip() == "none"
+ming_sim/cli_backend.py:3321:    directive_text = str(text or "").strip()
+ming_sim/cli_backend.py:3378:    reason = str(failure_reason or "").strip() or "（未给出具体拒因）"
+ming_sim/cli_backend.py:3379:    text = str(decree_text or "").strip()
+ming_sim/cli_backend.py:3441:        payload["name"] = str(payload.get("target_id") or "").strip()
+ming_sim/cli_backend.py:3494:    text = str(decree_text or "").strip()
+ming_sim/cli_backend.py:3545:    pm = (message or "").strip()
+ming_sim/cli_backend.py:3548:            return pm[len(pre):].strip()
+ming_sim/cli_backend.py:3608:    t = (raw or "").strip()
+ming_sim/cli_backend.py:3611:        t = re.sub(r"\s*```$", "", t).strip()
+ming_sim/cli_backend.py:3745:    emperor = (emperor_intent or "").strip()
+ming_sim/cli_backend.py:3746:    extracted = (extractor_content or "").strip()
+ming_sim/cli_backend.py:3793:        name = m.group(1).strip()
+ming_sim/cli_backend.py:3817:    llm = (assignee_llm or "").strip()
+ming_sim/cli_backend.py:3832:        line = raw.strip()
+ming_sim/cli_backend.py:3841:            task = line[len("皇帝："):].strip()
+ming_sim/cli_backend.py:3915:    material = (text or "").strip()
+ming_sim/cli_backend.py:3933:    material = re.sub(r"^[\s，,。.!！?？；;：:、]+", "", material).strip()
+ming_sim/cli_backend.py:3945:        chunk = (p or "").strip()
+ming_sim/cli_backend.py:3960:        line = raw_line.strip()
+ming_sim/cli_backend.py:3966:                cleaned = item.strip()
+ming_sim/cli_backend.py:3992:        relation = str(link.get("relation_type") or "").strip()
+ming_sim/cli_backend.py:3993:        note = str(link.get("note") or "").strip()
+ming_sim/cli_backend.py:4013:        int(row["id"]): str(row.get("secret_title") or row.get("decree_text") or "").strip()
+ming_sim/cli_backend.py:4147:    _content_llm = str(obj.get("内容") or "").strip()
+ming_sim/cli_backend.py:4148:    _assignee_llm = str(obj.get("承办人") or "").strip()
+ming_sim/cli_backend.py:4163:    title = str(obj.get("标题") or "").strip()
+ming_sim/cli_backend.py:4176:    tags = [str(t).strip() for t in tags if str(t).strip()] if isinstance(tags, list) else []
+ming_sim/cli_backend.py:4218:    kind = str(obj.get("差务") or obj.get("kind") or "").strip()
+ming_sim/cli_backend.py:4220:    axes = [str(a).strip() for a in axes if str(a).strip()] if isinstance(axes, list) else []
+ming_sim/cli_backend.py:4221:    unit = str(obj.get("交付单位") or "").strip()
+ming_sim/cli_backend.py:4292:    text = (secret_intent or "").strip()
+ming_sim/cli_backend.py:4366:            or any(not str(payload.get(key) or "").strip() for key in required)
+ming_sim/cli_backend.py:4400:        materials = str(getattr(self, "materials_dir", "") or "").strip() or None
+ming_sim/cli_backend.py:4406:                str(getattr(self, "reasoning_strength", "") or "").strip().lower() or None
+ming_sim/cli_backend.py:4425:        materials = str(getattr(self, "materials_dir", "") or "").strip() or None
+ming_sim/cli_backend.py:4502:        materials = str(getattr(self, "materials_dir", "") or "").strip() or None
+ming_sim/cli_backend.py:4512:                reasoning_strength=str(getattr(self, "reasoning_strength", "") or "").strip().lower() or None,
+ming_sim/cli_backend.py:4579:    val = (os.environ.get("MING_SIM_LLM_BACKEND") or "").strip().lower()
+ming_sim/cli_backend.py:4622:    channel = str(getattr(args, "channel", "") or "cli").strip().lower() or "cli"
+ming_sim/cli_backend.py:4623:    model = str(getattr(args, "model", "") or "").strip()
+ming_sim/cli_backend.py:4628:            str(getattr(args, "api_key", "") or "").strip()
+ming_sim/cli_backend.py:4629:            or (os.environ.get("OPENAI_API_KEY") or "").strip()
+ming_sim/cli_backend.py:4630:            or (os.environ.get("MING_SIM_API_KEY") or "").strip()
+ming_sim/cli_backend.py:4633:            str(getattr(args, "base_url", "") or "").strip()
+ming_sim/cli_backend.py:4634:            or (os.environ.get("OPENAI_BASE_URL") or "").strip()
+ming_sim/cli_backend.py:4635:            or (os.environ.get("MING_SIM_API_BASE_URL") or "").strip()
+ming_sim/cli_backend.py:4652:    runner = str(getattr(args, "runner", "") or "").strip().lower()
+ming_sim/cli_backend.py:4672:    （MING_SIM_TRACE 用 .strip().lower()）。
+ming_sim/cli_backend.py:4676:    trace_setting = os.environ.get("MING_SIM_TRACE_PATH", "").strip()
+ming_sim/cli_backend.py:4677:    if not trace_setting or os.environ.get("MING_SIM_TRACE", "1").strip().lower() in {
+ming_sim/cli_backend.py:4689:    channel = str(getattr(cfg, "channel", "") or getattr(args, "channel", "") or "").strip().lower()
+ming_sim/cli_backend.py:4694:        ).strip().lower()
+ming_sim/cli_backend.py:4700:    ).strip()
+ming_sim/centrifuge_ledger.py:99:    text = str(value).strip()
+ming_sim/centrifuge_ledger.py:262:    if not isinstance(faction, str) or not faction.strip():
+ming_sim/due_review.py:49:    text = str(entry_kind or ENTRY_KIND_STAGED).strip()
+ming_sim/due_review.py:77:    text = str(origin_ref or "").strip()
+ming_sim/due_review.py:141:        raw = str(payload.get("origin_ref") or "").strip()
+ming_sim/due_review.py:150:    return str(meta_origin or "").strip()
+ming_sim/due_review.py:249:    origin = str(inp.get("origin_context") or todo.get("origin_context") or "").strip()
+ming_sim/due_review.py:392:    criterion = str(review_input.get("criterion_text") or "").strip() or "所约之事"
+ming_sim/due_review.py:393:    origin = str(review_input.get("origin_context") or "").strip()
+ming_sim/person_archive_contract.py:92:    raw = str(value or "").strip()
+ming_sim/person_archive_contract.py:103:    raw = str(value or "").strip()
+ming_sim/person_archive_contract.py:125:    status_key = str(status or "").strip()
+ming_sim/person_archive_contract.py:126:    action_key = str(action or "").strip()
+ming_sim/assets.py:27:            text = file.read().strip()
+ming_sim/assets.py:50:        return match.group(1).strip()
+ming_sim/assets.py:51:    return text.strip()
+ming_sim/assets.py:108:    if not isinstance(value, str) or not value.strip():
+ming_sim/assets.py:110:    return value.strip()
+ming_sim/structured_decree.py:89:        key = str(raw or "").strip()
+ming_sim/structured_decree.py:163:        if dest in out and _as_str(out.get(dest)).strip():
+ming_sim/structured_decree.py:166:    if not _as_str(out.get("action_type")).strip():
+ming_sim/structured_decree.py:168:            if _as_str(out.get(key)).strip():
+ming_sim/structured_decree.py:178:        if _as_str(raw.get(key)).strip():
+ming_sim/structured_decree.py:212:    action_type = _as_str(payload.get("action_type") or "").strip()
+ming_sim/structured_decree.py:213:    dossier_action_type = _as_str(payload.get("dossier_action_type") or "").strip()
+ming_sim/structured_decree.py:228:    target_kind = _as_str(payload.get("target_kind") or "").strip()
+ming_sim/structured_decree.py:229:    target_id = _as_str(payload.get("target_id") or "").strip()
+ming_sim/structured_decree.py:261:    region_id = _as_str(payload.get("region_id") or "").strip()
+ming_sim/structured_decree.py:279:    cat = _as_str(payload.get("transaction_category") or "").strip()
+ming_sim/structured_decree.py:294:        ).strip()
+ming_sim/structured_decree.py:345:    action = _as_str(src.get("action_type") or "").strip()
+ming_sim/structured_decree.py:346:    target_kind = _as_str(src.get("target_kind") or "").strip()
+ming_sim/structured_decree.py:347:    target_id = _as_str(src.get("target_id") or "").strip()
+ming_sim/structured_decree.py:348:    region_id = _as_str(src.get("region_id") or "").strip()
+ming_sim/structured_decree.py:363:        if not _as_str(out.get("dossier_action_type")).strip():
+ming_sim/structured_decree.py:382:    cat = _as_str(src.get("transaction_category") or "").strip()
+ming_sim/structured_decree.py:388:    assignee = _as_str(src.get("assignee_name") or "").strip()
+ming_sim/settlement_payload.py:37:        label = str(option.get("label") or "").strip()
+ming_sim/settlement_payload.py:60:        title = str(obj.get("title") or "").strip()
+ming_sim/settlement_payload.py:68:            label = str(o.get("label") or "").strip()
+ming_sim/settlement_payload.py:78:                "hint": str(o.get("hint") or "").strip(),
+ming_sim/settlement_payload.py:94:            "context": str(obj.get("context") or "").strip(),
+ming_sim/settlement_payload.py:97:        explicit_event_id = str(obj.get("event_id") or "").strip()
+ming_sim/settlement_payload.py:98:        origin_ref = str(obj.get("origin_ref") or "").strip()
+ming_sim/settlement_payload.py:190:        event_id = str(item.get("id") or "").strip()
+ming_sim/settlement_payload.py:191:        title = str(item.get("title") or "").strip()
+ming_sim/settlement_payload.py:201:        explicit = str(out.get("event_id") or "").strip()
+ming_sim/settlement_payload.py:212:        title = str(out.get("title") or "").strip()
+ming_sim/person_delta_adapter.py:96:        if str(item.get("office_type") or "").strip() != "后宫":
+ming_sim/highlight_judge.py:26:    text = str(raw or "").strip()
+ming_sim/highlight_judge.py:44:        phrase = item.strip()
+ming_sim/highlight_judge.py:58:    reply = str(minister_reply or "").strip()
+ming_sim/army_pay.py:409:        {str(army_id).strip() for army_id in allowed_army_ids if str(army_id).strip()}
+ming_sim/supervision.py:100:    a = str(auditor_faction or "").strip()
+ming_sim/supervision.py:101:    b = str(subject_faction or "").strip()
+ming_sim/supervision.py:117:        str(b).strip()
+ming_sim/supervision.py:119:        if str(b or "").strip()
+ming_sim/supervision.py:121:    outcome = str(execution_outcome or "").strip()
+ming_sim/supervision.py:185:    text = str(raw or "").strip()
+ming_sim/supervision.py:192:    parts = [part.strip() for part in text.split(ORIGIN_MARK_SEP) if part.strip()]
+ming_sim/supervision.py:199:    cleaned = [str(m).strip() for m in marks if str(m or "").strip()]
+ming_sim/supervision.py:208:    root = str(base or "").strip()
+ming_sim/supervision.py:216:    raw = str(origin or "").strip()
+ming_sim/covert_progress.py:111:    if str(purpose or "").strip() == "补饷":
+ming_sim/covert_progress.py:133:    text = str(raw or "").strip()
+ming_sim/covert_progress.py:159:        text = str(seed_guilt or "").strip()
+ming_sim/covert_progress.py:169:    severity = str(guilt.get("severity") or "").strip()
+ming_sim/covert_progress.py:183:    kind = str(source.get("kind") or payload.get("kind") or "").strip()
+ming_sim/covert_progress.py:193:    ).strip()
+ming_sim/covert_progress.py:241:    ).strip()
+ming_sim/covert_progress.py:247:    ).strip()
+ming_sim/covert_progress.py:289:    raw = str(unit or "").strip()
+ming_sim/covert_progress.py:312:    text = str(raw or "").strip()
+ming_sim/covert_progress.py:384:    resolved_kind = str(kind or "").strip()
+ming_sim/covert_progress.py:391:    inv_target = str(investigation_target or "").strip()
+ming_sim/covert_progress.py:414:        inv_fact = str(investigation_fact or "").strip()
+ming_sim/covert_progress.py:428:        purpose_text = str(purpose or "").strip()
+ming_sim/covert_progress.py:435:                kind_text = str(target_kind or "").strip()
+ming_sim/covert_progress.py:436:                id_text = str(target_id or "").strip()
+ming_sim/covert_progress.py:441:    category_text = str(category or "").strip()
+ming_sim/covert_progress.py:444:    account_text = str(account or "").strip()
+ming_sim/covert_progress.py:449:    region_text = str(region or "").strip()
+ming_sim/covert_progress.py:452:    field_text = str(field or "").strip()
+ming_sim/covert_progress.py:458:    target_text = str(region_target or "").strip()
+ming_sim/covert_progress.py:461:    action_text = str(person_action or "").strip()
+ming_sim/covert_progress.py:495:    if not str(raw.get("kind") or "").strip() or not normalize_axes(raw.get("axes")):
+ming_sim/covert_progress.py:501:    ).strip()
+ming_sim/covert_progress.py:513:        if str(delivery.get("investigation_target") or "").strip() != inv_target:
+ming_sim/covert_progress.py:546:        if isinstance(raw_json, str) and raw_json.strip():
+ming_sim/covert_progress.py:592:    origin = str(review_input.get("origin_context") or "").strip()
+ming_sim/covert_progress.py:625:    if existing.strip():
+ming_sim/covert_progress.py:631:        if text.strip():
+ming_sim/covert_progress.py:639:        (str(minister_name or "").strip(),),
+ming_sim/covert_progress.py:705:    return list(_FIELD_FOR_UNIT.get(str(unit or "").strip(), []))
+ming_sim/covert_progress.py:719:        purpose = str(delivery.get("purpose") or "").strip()
+ming_sim/covert_progress.py:720:        if str(item.get("purpose") or "").strip() != purpose:
+ming_sim/covert_progress.py:723:            if str(item.get("target_kind") or "").strip() != str(delivery.get("target_kind") or "").strip():
+ming_sim/covert_progress.py:725:            if str(item.get("target_id") or "").strip() != str(delivery.get("target_id") or "").strip():
+ming_sim/covert_progress.py:727:    category = str(delivery.get("category") or "").strip()
+ming_sim/covert_progress.py:728:    if str(item.get("category") or "").strip() != category:
+ming_sim/covert_progress.py:730:    account = str(delivery.get("account") or "").strip()
+ming_sim/covert_progress.py:731:    if str(item.get("account") or "").strip() != account:
+ming_sim/covert_progress.py:769:    name = str(target or "").strip()
+ming_sim/covert_progress.py:798:        return str(raw.get("severity") or "").strip()
+ming_sim/covert_progress.py:799:    text = str(raw or "").strip()
+ming_sim/covert_progress.py:807:        return str(parsed.get("severity") or "").strip()
+ming_sim/covert_progress.py:824:            key = str(item.get("fact_key") or "").strip()
+ming_sim/covert_progress.py:914:    name = str(target or "").strip()
+ming_sim/covert_progress.py:915:    key = str(fact_key or "").strip()
+ming_sim/covert_progress.py:955:    name = str(target or "").strip()
+ming_sim/covert_progress.py:956:    key = str(fact_key or "").strip()
+ming_sim/covert_progress.py:980:        other = str(other or "").strip()
+ming_sim/covert_progress.py:1003:    worker = str(investigator or "").strip()
+ming_sim/covert_progress.py:1043:    if str(worker_row["transit_to"] or "").strip():
+ming_sim/covert_progress.py:1045:    who = str(worker_row["location"] or "").strip()
+ming_sim/covert_progress.py:1046:    name = str(target or "").strip()
+ming_sim/covert_progress.py:1055:    there = str(target_row["location"] or "").strip()
+ming_sim/covert_progress.py:1078:    worker = str(investigator or "").strip()
+ming_sim/covert_progress.py:1127:    key = str(fact_key or "").strip()
+ming_sim/covert_progress.py:1251:        key = str(clue.get("fact_key") or "").strip()
+ming_sim/covert_progress.py:1320:    bound = str(fact_key or "").strip()
+ming_sim/covert_progress.py:1414:    who = str(declared_source or "").strip()
+ming_sim/covert_progress.py:1419:    for tip in _investigation_tips(db, int(dossier_id or 0), str(target or "").strip()):
+ming_sim/covert_progress.py:1420:        source = str(tip.get("source") or "").strip()
+ming_sim/covert_progress.py:1439:    who = str(source or "").strip()
+ming_sim/covert_progress.py:1440:    name = str(target or "").strip()
+ming_sim/covert_progress.py:1451:        str(tip.get("source") or "").strip() == who
+ming_sim/covert_progress.py:1511:    name = str(target or "").strip()
+ming_sim/covert_progress.py:1512:    key = str(fact_key or "").strip()
+ming_sim/covert_progress.py:1532:            "knowledge_source": str(knowledge_source or "").strip(),
+ming_sim/covert_progress.py:1540:    ).strip()
+ming_sim/covert_progress.py:1548:    ).strip()
+ming_sim/covert_progress.py:1552:    name = str(target or "").strip()
+ming_sim/covert_progress.py:1597:    key = str(fact_key or "").strip()
+ming_sim/covert_progress.py:1639:        action = str(delivery.get("person_action") or "").strip()
+ming_sim/covert_progress.py:1731:    fact = str(item.get("fact_key", item.get("所查事实")) or "").strip()
+ming_sim/covert_progress.py:1741:        source = str(tip.get("source", tip.get("递话人")) or "").strip()
+ming_sim/covert_progress.py:1746:        effect = str(spoil.get("effect") or "harder").strip()
+ming_sim/covert_progress.py:1750:                "fact_key": str(spoil.get("fact_key") or fact or "").strip(),
+ming_sim/covert_progress.py:1753:                ).strip(),
+ming_sim/covert_progress.py:1906:    invalid = str(declaration.get("invalid") or "").strip()
+ming_sim/covert_progress.py:1932:    tip_source = str(tip.get("source") or "").strip() if isinstance(tip, Mapping) else ""
+ming_sim/covert_progress.py:1978:        spoil_key = str(spoliation.get("fact_key") or "").strip()
+ming_sim/context.py:218:    style_present = bool(raw_style.strip())
+ming_sim/context.py:220:        identity = (character.summary or "").strip() or "未有专门 dossier，以官职、性情和任事处作通用特征化"
+ming_sim/context.py:274:        priv = str(row.get("privilege") or "").strip()
+ming_sim/context.py:296:        if summary.strip():
+ming_sim/context.py:299:        if recent.strip():
+ming_sim/context.py:301:        updated = str(row.get("updated_at_period") or "").strip()
+ming_sim/context.py:380:    cleaned = text.strip()
+ming_sim/content.py:103:        if not crime_raw.strip() and seed_guilt_fields["severity"] != "无":
+ming_sim/content.py:106:            "crime": crime_raw.strip(),
+ming_sim/content.py:131:            location=str(item.get("location") or "").strip(),
+ming_sim/content.py:132:            office_region=str(item.get("office_region") or "").strip(),
+ming_sim/content.py:133:            transit_to=str(item.get("transit_to") or "").strip(),
+ming_sim/content.py:140:            status_reason=str(item.get("status_reason") or "").strip(),
+ming_sim/content.py:141:            reason_code=str(item.get("reason_code") or "").strip(),
+ming_sim/content.py:177:    cond = cond.strip()
+ming_sim/content.py:179:    if sm and (sm.group(1) == "in=" or not re.match(r"^-?\d+$", sm.group(2).strip())):
+ming_sim/content.py:204:    if not field.strip() or not id_segment.strip():
+ming_sim/content.py:206:    if any(not m.strip() for m in id_segment.split("|")):
+ming_sim/content.py:213:            if not member.split("@", 1)[0].strip():
+ming_sim/content.py:215:            if "@" in member and not member.split("@", 1)[1].strip():
+ming_sim/content.py:234:    if not parts[1].strip() or not parts[2].strip():
+ming_sim/content.py:243:    sm = re.match(r"^(==|!=|in=)\s*(.+)$", cond.strip())
+ming_sim/content.py:244:    return bool(sm and (sm.group(1) == "in=" or not re.match(r"^-?\d+$", sm.group(2).strip())))
+ming_sim/content.py:256:        trigger_class = str(item.get("trigger_class") or "").strip()
+ming_sim/content.py:300:            cond = str(mv).strip()
+ming_sim/content.py:332:                category=str(item.get("category") or "").strip(),
+ming_sim/content.py:392:    if not isinstance(default_name, str) or not default_name.strip():
+ming_sim/content.py:394:    default_key = default_name.strip()
+ming_sim/content.py:456:            station_region=str(item.get("station_region") or "").strip(),
+ming_sim/content.py:478:            pay_source_region=str(item.get("pay_source_region") or "").strip(),
+ming_sim/content.py:531:        region_id = str(item.get("region_id") or "").strip()
+ming_sim/content.py:569:            last_action=str(entry.get("last_action") or "尚无新动").strip() or "尚无新动",
+ming_sim/content.py:593:            clear_narrative=str(entry.get("clear_narrative") or "").strip(),
+ming_sim/relation_read.py:71:        name = str(viewer).strip()
+ming_sim/llm_model.py:129:    reasoning_strength = (getattr(llm_config, "reasoning_strength", "") or "").strip().lower()
+ming_sim/llm_model.py:153:                thinking_type = (llm_config.thinking_level or "adaptive").strip().lower()
+ming_sim/llm_model.py:201:    channel = (getattr(llm_config, "channel", "") or "").strip().lower()
+ming_sim/llm_model.py:204:        backend = (getattr(llm_config, "cli_runner", "") or cli_backend_from_env() or "agy").strip().lower()
+ming_sim/llm_model.py:215:        cli_model = (getattr(llm_config, "cli_model", "") or "").strip()
+ming_sim/llm_model.py:230:        kwargs["api_key"] = (kwargs.get("api_key") or "").strip() or CLI_BACKEND_PLACEHOLDER
+ming_sim/llm_model.py:231:        kwargs["reasoning_strength"] = (getattr(llm_config, "reasoning_strength", "") or "").strip().lower()
+ming_sim/llm_model.py:243:        line = raw.split("#", 1)[0].strip()
+ming_sim/llm_model.py:285:    return str(raw).strip().upper() in {"ERROR", "FAILED"}
+ming_sim/llm_model.py:318:        pmsg = text.strip() or "run status=ERROR"
+ming_sim/llm_model.py:356:    channel = (getattr(llm_config, "channel", "") or "").strip().lower()
+ming_sim/llm_model.py:391:            if content is None or not str(content).strip():
+ming_sim/error_pack.py:72:        return Path(bundled_path("VERSION")).read_text(encoding="utf-8").strip()
+ming_sim/matching.py:32:    raw = str(token or "").strip()
+ming_sim/matching.py:53:    raw = str(location or "").strip()
+ming_sim/matching.py:68:        if part.strip():
+ming_sim/matching.py:69:            aliases.append(part.strip())
+ming_sim/matching.py:102:    text = str(raw).strip()
+ming_sim/matching.py:179:        if part.strip():
+ming_sim/matching.py:180:            aliases.append(part.strip())
+ming_sim/matching.py:202:    text = str(raw).strip()
+ming_sim/covert_levy.py:40:    result["origin_ref"] = str(origin or "").strip()
+ming_sim/covert_levy.py:52:    origin = str(origin_ref or "").strip()
+ming_sim/covert_levy.py:109:        actors = {str(dossier.get("executor_id") or "").strip()}
+ming_sim/covert_levy.py:112:                actors.add(str(participant.get("character_id") or "").strip())
+ming_sim/agents.py:63:_DUMP_LLM = os.environ.get("MING_SIM_DUMP_LLM", "").strip() in ("1", "true", "yes")
+ming_sim/agents.py:479:    if streamed.strip():
+ming_sim/agents.py:484:        if not text.strip():
+ming_sim/cli/terminal.py:110:        raw = input("召见谁？输入编号或姓名，quit 退朝审阅诏书，exit 退出游戏：").strip()
+ming_sim/cli/terminal.py:169:    raw = text.strip()
+ming_sim/cli/terminal.py:236:    question = str(last.get("question") or "").strip()
+ming_sim/cli/terminal.py:354:        question = f"宣{character.name}" if pending_xuan else input("朕问：").strip()
+ming_sim/cli/terminal.py:360:        low_q = question.lower().strip()
+ming_sim/cli/terminal.py:535:        raw = input("诏书草案> ").strip()
+ming_sim/cli/terminal.py:568:                text = input("指令内容：").strip()
+ming_sim/cli/terminal.py:591:                    new_text = input("新的指令内容：").strip()
+ming_sim/cli/terminal.py:789:        if (llm_config.advanced_model or "").strip():
+ming_sim/cli/terminal.py:790:            adv_url = (llm_config.advanced_base_url or "").strip() or base_url
+ming_sim/cli/terminal.py:813:            raw = input(prompt).strip()
+ming_sim/mechanical_tail.py:101:                body = str(row.get("report") or row.get("body") or "").strip()
+ming_sim/models.py:62:    return isinstance(raw, str) and bool(raw.strip())
+ming_sim/models.py:77:        account = str(item.get("account") or "").strip()
+ming_sim/models.py:127:            field = aliases.get(str(raw_field).strip(), str(raw_field).strip())
+ming_sim/models.py:143:        action = str(op.get("action") or "").strip().lower()
+ming_sim/models.py:145:            category = str(op.get("category") or "").strip()
+ming_sim/models.py:156:            field = BUILDING_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())
+ming_sim/models.py:170:        mapped = {ARMY_FIELD_ALIASES.get(str(k).strip(), str(k).strip()): v for k, v in item.items()}
+ming_sim/models.py:182:        name = str(item.get("name") or item.get("人物") or "").strip()
+ming_sim/models.py:183:        action = str(item.get("动作") or item.get("action") or "").strip()
+ming_sim/models.py:197:            if isinstance(style, str) and style.strip():
+ming_sim/recommendations.py:152:    name = str(snapshot.get("name") or "").strip()
+ming_sim/recommendations.py:202:    if not text.strip():
+ming_sim/recommendations.py:204:    source = str(recommender or "").strip()
+ming_sim/recommendations.py:205:    target = str(candidate or "").strip()
+ming_sim/urge_lever.py:168:                    name = str(item.get("character_id") or "").strip()
+ming_sim/urge_lever.py:183:                    cand = str(item.get("character_id") or "").strip()
+ming_sim/urge_lever.py:193:                    name = str(parts[0]).strip()
+ming_sim/urge_lever.py:328:    why = reason if str(reason or "").strip() else "奉旨加急"
+ming_sim/urge_lever.py:360:    return str(entry_kind or "").strip() in _URGE_AUDIENCE_KINDS
+ming_sim/urge_lever.py:365:    kind = str(todo.get("entry_kind") or "").strip()
+ming_sim/relations.py:61:    if not origin_ref.strip():
+ming_sim/relations.py:132:    kind = str(event_kind or "").strip()
+ming_sim/relations.py:147:    text = str(origin or "").strip()
+ming_sim/relations.py:167:    ).strip()
+ming_sim/relations.py:170:    context = str(record.get("context") or record.get("sentence") or "").strip()
+ming_sim/relations.py:220:    source = raw_source.strip()
+ming_sim/relations.py:238:        name = candidate.strip()
+ming_sim/relations.py:259:    if not raw_context.strip():
+ming_sim/staged_commitment.py:41:        text = raw.strip()
+ming_sim/staged_commitment.py:66:        ).strip()
+ming_sim/staged_commitment.py:69:        ).strip()
+ming_sim/staged_commitment.py:94:        text = stages.strip()
+ming_sim/staged_commitment.py:230:        if str(row["execution_outcome"] or "").strip():
+ming_sim/staged_commitment.py:241:        title = str(payload.get("title") or payload.get("purpose") or "").strip()
+ming_sim/staged_commitment.py:242:        criterion = str(payload.get("ongoing_effects") or "").strip() or title or "依限奏报"
+ming_sim/staged_commitment.py:243:        origin = str(row["decree_text"] or payload.get("text") or criterion).strip()
+ming_sim/action_clusters.py:40:# Machine keys / ids keep .strip() below.
+ming_sim/action_clusters.py:163:    action_type = str(option.get("action_type") or "").strip()
+ming_sim/action_clusters.py:185:            not isinstance(value, str) or not value.strip()
+ming_sim/action_clusters.py:296:    kind = str(obj.get("kind") or "").strip()
+ming_sim/action_clusters.py:299:    label = str(obj.get("动作类型") or "").strip()
+ming_sim/action_clusters.py:329:        normalized = str(raw).strip()
+ming_sim/action_clusters.py:343:        if str(candidate.get(controller) or "").strip() == controller_value:
+ming_sim/action_clusters.py:361:    return str(candidate.get(controller) or "").strip() in allowed
+ming_sim/action_clusters.py:372:        v = str(value if value is not None else default).strip()
+ming_sim/action_clusters.py:402:                    else str(raw or "").strip()
+ming_sim/appointment_tenure.py:46:    text = str(value or "").strip()
+ming_sim/appointment_tenure.py:67:        privilege = str(item.get("privilege") or "").strip()
+ming_sim/participant_roster.py:52:    n = str(name or "").strip()
+ming_sim/participant_roster.py:79:            if str(entry.get("tier") or "").strip() != "主办":
+ming_sim/participant_roster.py:81:            name = str(entry.get("character_id") or "").strip()
+ming_sim/participant_roster.py:84:    executor_id = str(dossier.get("executor_id") or "").strip()
+ming_sim/participant_roster.py:85:    executor_kind = str(dossier.get("executor_kind") or "").strip()
+ming_sim/participant_roster.py:124:        lead = str(item.get("character_id") or "").strip()
+ming_sim/participant_roster.py:134:        delegator = str(item.get("delegator_id") or "").strip()
+ming_sim/rescript_draft.py:502:        return str(val).strip()
+ming_sim/rescript_draft.py:528:            text = str(val).strip()
+ming_sim/rescript_draft.py:545:        got = str(out.get("target_kind") or "").strip()
+ming_sim/rescript_draft.py:691:        if not raw.strip():
+ming_sim/rescript_draft.py:794:        if not val.strip():
+ming_sim/rescript_draft.py:805:        action_type = str(out["action_type"]).strip()
+ming_sim/rescript_draft.py:818:                if raw_kind is not None and str(raw_kind).strip():
+ming_sim/rescript_draft.py:826:        target_kind = str(out["target_kind"]).strip()
+ming_sim/rescript_draft.py:904:        and str(out.get("target_kind") or "").strip()
+ming_sim/rescript_draft.py:906:        and str(out.get("locality_scope") or "").strip()
+ming_sim/rescript_draft.py:969:            grant_kind = str(raw["grant_kind"]).strip()
+ming_sim/rescript_draft.py:972:            raw_ga = str(raw["grant_action"]).strip()
+ming_sim/rescript_draft.py:1014:        resolved_ga = str(out.get("grant_action") or "").strip()
+ming_sim/rescript_draft.py:1022:                and str(out.get("account") or "").strip() != ""
+ming_sim/rescript_draft.py:1033:                field = str(getattr(exc, "field", "") or "").strip()
+ming_sim/rescript_draft.py:1051:                if str(out.get("grant_action") or "").strip() == "协饷":
+ming_sim/rescript_draft.py:1149:        if before.strip() or after.strip():
+ming_sim/rescript_draft.py:1153:        text = match.group(1).strip()
+ming_sim/rescript_draft.py:1155:        text = raw.strip()
+ming_sim/rescript_draft.py:1211:    kind = str(raw_option.get("target_kind") or "").strip()
+ming_sim/rescript_draft.py:1212:    tid = str(raw_option.get("target_id") or "").strip()
+ming_sim/rescript_draft.py:1256:        character_id = str(item.get("character_id") or "").strip()
+ming_sim/rescript_draft.py:1260:        delegator_id = str(item.get("delegator_id") or "").strip()
+ming_sim/rescript_draft.py:1462:        if not isinstance(value, str) or not value.strip():
+ming_sim/rescript_draft.py:1643:        elif isinstance(issue_id, str) and issue_id.strip().lstrip("-").isdigit():
+ming_sim/rescript_draft.py:1644:            issue_id = int(issue_id.strip())
+ming_sim/rescript_draft.py:1774:    if raw is not None and str(raw).strip():
+ming_sim/rescript_draft.py:1775:        return str(raw).strip()
+ming_sim/rescript_draft.py:1893:        want = failure.heal_id.strip()
+ming_sim/rescript_draft.py:1897:        want = (failure.heal_id or "").strip()
+ming_sim/rescript_draft.py:2190:            str(row["name"]).strip()
+ming_sim/rescript_draft.py:2194:            and str(row["name"]).strip()
+ming_sim/execution_pressure.py:45:    return "single" if str(target_kind or "").strip() == "region" else "none"
+ming_sim/execution_pressure.py:52:    text = str(raw).strip()
+ming_sim/execution_pressure.py:71:    tid = str(target_id or "").strip()
+ming_sim/execution_pressure.py:159:    kind = str(target_kind or "").strip()
+ming_sim/execution_pressure.py:252:    target_kind = str(payload.get("target_kind") or "").strip()
+ming_sim/execution_pressure.py:253:    target_id = str(payload.get("target_id") or "").strip()
+ming_sim/public_sayings.py:22:    if not title.strip():
+ming_sim/public_sayings.py:25:    if body.strip():
+ming_sim/public_sayings.py:31:    return list(dict.fromkeys(str(name).strip() for name in (names or ()) if str(name).strip()))
+ming_sim/public_sayings.py:50:    if not isinstance(body, str) or not body.strip():
+ming_sim/public_sayings.py:55:    affair = sanitize_sqlite_text(affair_ref.strip())
+ming_sim/public_sayings.py:128:    return [str(name) for name in values if str(name).strip()]
+ming_sim/public_sayings.py:141:            [str(name) for name in values if str(name).strip()]
+ming_sim/public_sayings.py:178:        name = str(involved_character).strip()
+ming_sim/session.py:89:    campaign_id = (campaign_id or "").strip()
+ming_sim/session.py:291:    name = str(name or "").strip()
+ming_sim/session.py:292:    office = str(office or "").strip()
+ming_sim/session.py:293:    office_type = str(office_type or "").strip()
+ming_sim/session.py:296:    alias_list = [str(a).strip() for a in (aliases or ()) if str(a).strip()]
+ming_sim/session.py:302:    faction_value = str(faction or "中立").strip()
+ming_sim/session.py:305:    seat = str(region_id or "").strip()
+ming_sim/session.py:343:            source=str(source_label or "").strip(),
+ming_sim/session.py:371:    n = str(name or "").strip()
+ming_sim/session.py:387:    clean_name = str(name or "").strip()
+ming_sim/session.py:415:    clean = str(name or "").strip()
+ming_sim/session.py:427:    return str(row["status"] or "") == "active" and bool(str(row["office"] or "").strip())
+ming_sim/session.py:437:    normalized_faction = str(faction or "中立").strip()
+ming_sim/session.py:463:    name = str(data.get("name") or "").strip()
+ming_sim/session.py:464:    office = str(data.get("office") or "").strip()
+ming_sim/session.py:473:        str(data.get("office_type") or "").strip(),
+ming_sim/session.py:490:    replaces = str(data.get("replaces") or "").strip()
+ming_sim/session.py:515:        ).strip(),
+ming_sim/session.py:610:            aliases=[str(item) for item in aliases if str(item).strip()],
+ming_sim/session.py:611:            personal_skills=[str(item) for item in personal_skills if str(item).strip()],
+ming_sim/session.py:638:            office_region=str(row["office_region"] or "").strip(),
+ming_sim/session.py:873:        clean_name = str(name_or_text or "").strip()
+ming_sim/session.py:974:        if not str(origin_id or "").strip():
+ming_sim/session.py:992:                origin_id=str(origin_id).strip(),
+ming_sim/session.py:1016:        text = (answer or "").strip()
+ming_sim/session.py:1161:        message_text = str(message or "").strip()
+ming_sim/session.py:1194:                named = str(minister_name or "").strip()
+ming_sim/session.py:1232:            fragment = str(xuan_fragment).strip()
+ming_sim/session.py:1868:                stored = str(ctx.get("decree_text") or "").strip()
+ming_sim/session.py:1934:        if pending_directives and recovered_source is None and (decree or "").strip():
+ming_sim/session.py:1957:                    and (self.last_decree or "").strip()):
+ming_sim/session.py:1969:        if recovered_source is None and (self.last_decree or "").strip():
+ming_sim/session.py:1993:            and not (decree_text or "").strip()
+ming_sim/session.py:2076:            str(c.get("decision_key") or "").strip()
+ming_sim/session.py:2079:            and str(c.get("decision_key") or "").strip()
+ming_sim/session.py:2080:            and str(c.get("decision_key") or "").strip() not in desk_keys
+ming_sim/session.py:2086:            raw = str(name or "").strip()
+ming_sim/session.py:2164:                str(getattr(characters.get(name), "faction", "") or "").strip()
+ming_sim/session.py:2187:            title = str(obj.get("title") or "").strip()
+ming_sim/session.py:2188:            body = str(obj.get("body") or "").strip()
+ming_sim/session.py:2189:            stance = str(obj.get("stance") or "").strip()
+ming_sim/session.py:2237:            target = str(item.choice.get("summon_target") or "").strip()
+ming_sim/session.py:2307:        if not (self.last_decree or "").strip():
+ming_sim/session.py:2381:            dk = str(recovered.get("decision_key") or "").strip()
+ming_sim/session.py:2388:                "target": str(recovered.get("summon_target") or "").strip(),
+ming_sim/session.py:2458:        if not (self.last_decree or "").strip():
+ming_sim/session.py:2505:            campaign_id = (self.db.kv_get("campaign_id") or "").strip()
+ming_sim/month_translate.py:112:    grounding = str(request.target_grounding or "").strip()
+ming_sim/pay_order.py:174:    rid = str(region_id or "").strip()
+ming_sim/pay_order.py:310:    origin = str(origin_ref or "").strip()
+ming_sim/decree.py:113:        person_name = str(item.get("person_name") or "").strip()
+ming_sim/decree.py:122:        name = str(arrival.get("name") or "").strip()
+ming_sim/decree.py:125:        location = str(arrival.get("location") or "").strip()
+ming_sim/decree.py:127:        wait_loc = str(waiting.get("location") or "").strip()
+ming_sim/decree.py:667:            str(item.get("key") or "").strip()
+ming_sim/decree.py:669:            if isinstance(item, dict) and str(item.get("key") or "").strip()
+ming_sim/decree.py:676:            "rejection_reason": str(verdict.get("reason") or "").strip(),
+ming_sim/decree.py:783:    if not text.strip():
+ming_sim/decree.py:785:    return text.strip()
+ming_sim/executor_routing.py:30:    action = str(action_type or "").strip()
+ming_sim/executor_routing.py:38:        punish_action = str((payload or {}).get("punish_action") or "").strip()
+ming_sim/executor_routing.py:70:        token = str(entry.get("category") or "").strip()
+ming_sim/executor_routing.py:98:        who = str(target_id or "").strip()
+ming_sim/executor_routing.py:114:    assignee = str(canonical_payload.get("assignee_id") or "").strip()
+ming_sim/executor_routing.py:126:        if str(entry.get("tier") or "").strip() != "主办":
+ming_sim/executor_routing.py:128:        name = str(entry.get("character_id") or "").strip()
+ming_sim/executor_routing.py:129:        if name and not str(entry.get("delegator_id") or "").strip() and name not in seen:
+ming_sim/breach_plea.py:81:    text = str(origin_ref or "").strip()
+ming_sim/breach_plea.py:95:    text = str(origin_context or "").strip()
+ming_sim/breach_plea.py:150:        origin = str(row["origin_ref"] or "").strip()
+ming_sim/breach_plea.py:167:                cid = str(item.get("character_id") or "").strip()
+ming_sim/breach_plea.py:180:                    cid = str(item.get("character_id") or "").strip()
+ming_sim/breach_plea.py:183:            exec_id = str(dossier.get("executor_id") or "").strip()
+ming_sim/breach_plea.py:199:        acc = str(raw or "").strip()
+ming_sim/breach_plea.py:216:            t = str(tag or "").strip()
+ming_sim/breach_plea.py:218:                _add(t.split(":", 1)[1].strip())
+ming_sim/breach_plea.py:233:    primary = str(meta.get("breach_kind") or "").strip()
+ming_sim/breach_plea.py:239:            kind = str(raw or "").strip()
+ming_sim/breach_plea.py:252:    want = str(breach_kind or "").strip()
+ming_sim/breach_plea.py:304:    absorbed_list = [str(x) for x in absorbed if str(x or "").strip()]
+ming_sim/breach_plea.py:305:    kind = str(breach_kind or "").strip()
+ming_sim/breach_plea.py:314:    if reason and not str(meta.get("reason") or "").strip():
+ming_sim/breach_plea.py:355:    if not str(row["commitment_kind"] or "").strip():
+ming_sim/breach_plea.py:358:    kind = str(breach_kind or "").strip()
+ming_sim/breach_plea.py:709:    return {str(r["target"]) for r in rows if str(r["target"] or "").strip()}
+ming_sim/breach_plea.py:1022:                oref = str(mv["origin_ref"] or "").strip()
+ming_sim/breach_plea.py:1069:    current_office = str(char["office"] or "").strip()
+ming_sim/breach_plea.py:1076:        current_office = str(co["office_title"] or current_office).strip() or current_office
+ming_sim/breach_plea.py:1088:            if str(item.get("character_id") or "").strip() != name:
+ming_sim/breach_plea.py:1094:            ).strip()
+ming_sim/breach_plea.py:1117:                    ).strip()
+ming_sim/breach_plea.py:1128:        latest = str(oc["office_title"] or "").strip()
+ming_sim/breach_plea.py:1259:        tid = str(it.get("target_id") or "").strip()
+ming_sim/breach_plea.py:1267:            ref = str(it.get(key) or "").strip()
+ming_sim/breach_plea.py:1323:        oref = str(it.get("origin_ref") or "").strip()
+ming_sim/simulation.py:216:        ITEM_FIELD_ALIASES.get(str(key).strip(), str(key).strip()): _canonical_item_fields(val)
+ming_sim/declaration_dispatch.py:470:        event_id = str(item.get("event_id") or "").strip()
+ming_sim/declaration_dispatch.py:776:    if not value.strip():
+ming_sim/declaration_dispatch.py:861:    ).strip() or "任命"
+ming_sim/declaration_dispatch.py:867:    name = str(appointment.get("name") or "").strip()
+ming_sim/declaration_dispatch.py:868:    office = str(appointment.get("office") or appointment.get("new_office") or "").strip()
+ming_sim/declaration_dispatch.py:890:    ).strip()
+ming_sim/declaration_dispatch.py:896:    ).strip()
+ming_sim/declaration_dispatch.py:906:    kind = str(target_kind or "").strip()
+ming_sim/declaration_dispatch.py:907:    tid = str(target_id or "").strip()
+ming_sim/declaration_dispatch.py:944:    grant_action = str(grant.get("grant_action") or grant.get("action") or "").strip()
+ming_sim/declaration_dispatch.py:957:    if not body.strip():
+ming_sim/declaration_dispatch.py:982:    target_kind = str(grant.get("target_kind") or "").strip()
+ming_sim/declaration_dispatch.py:983:    target_id = str(grant.get("target_id") or "").strip()
+ming_sim/declaration_dispatch.py:992:    cadence = str(grant.get("cadence") or "").strip() or "一次性"
+ming_sim/declaration_dispatch.py:997:    surface = str(grant.get("execution_surface") or "in_transit").strip() or "in_transit"
+ming_sim/declaration_dispatch.py:1016:    purpose = str(grant.get("purpose") or "").strip()
+ming_sim/declaration_dispatch.py:1038:    ).strip()
+ming_sim/declaration_dispatch.py:1119:            actor = str(minister_name or "").strip()
+ming_sim/declaration_dispatch.py:1131:            if not body or not actor or not isinstance(target_id, str) or not target_id.strip() or origin_id <= 0:
+ming_sim/declaration_dispatch.py:1150:                "target_id": target_id.strip(), "source_chat_turn_id": origin_id,
+ming_sim/declaration_dispatch.py:1174:            actor = str(minister_name or "").strip() or _commission_fallback_actor(db)
+ming_sim/declaration_dispatch.py:1178:                target is None or order_id <= 0 or not isinstance(note, str) or not note.strip()
+ming_sim/declaration_dispatch.py:1205:            actor = str(minister_name or "").strip() or _commission_fallback_actor(db)
+ming_sim/declaration_dispatch.py:1209:            if target is None or order_id <= 0 or not isinstance(content_text, str) or not content_text.strip():
+ming_sim/declaration_dispatch.py:1253:            actor = str(minister_name or "").strip() or str(source_turn["minister_name"])
+ming_sim/declaration_dispatch.py:1268:                "title": str(secret.get("title") or "").strip(),
+ming_sim/declaration_dispatch.py:1269:                "content": str(secret.get("content") or "").strip(),
+ming_sim/declaration_dispatch.py:1270:                "assignee": str(secret.get("assignee") or "").strip() or actor,
+ming_sim/declaration_dispatch.py:1298:            actor = str(minister_name or "").strip() or _commission_fallback_actor(db)
+ming_sim/declaration_dispatch.py:1349:            actor = str(minister_name or "").strip() or _commission_fallback_actor(db)
+ming_sim/declaration_dispatch.py:1386:            actor = str(minister_name or "").strip() or _commission_fallback_actor(db)
+ming_sim/declaration_dispatch.py:1415:            target = str(pacification.get("target_id") or "").strip()
+ming_sim/declaration_dispatch.py:1428:            actor = str(minister_name or "").strip() or _commission_fallback_actor(db)
+ming_sim/declaration_dispatch.py:1519:                and str(grant_raw.get("target_kind") or "").strip() == "region"
+ming_sim/declaration_dispatch.py:1520:                and str(grant_raw.get("target_id") or "").strip()
+ming_sim/declaration_dispatch.py:1522:                payload["region_id"] = str(grant_raw["target_id"]).strip()
+ming_sim/declaration_dispatch.py:1610:        actor = str(minister_name or payload.get("actor") or "").strip()
+ming_sim/declaration_dispatch.py:1665:        form = str(item.get("form") or "").strip()
+ming_sim/declaration_dispatch.py:1666:        endorser_id = str(item.get("endorser_id") or "").strip()
+ming_sim/declaration_dispatch.py:1753:    ).strip()
+ming_sim/declaration_dispatch.py:1780:    actor = str(minister_name or "").strip() or _commission_fallback_actor(db)
+ming_sim/declaration_dispatch.py:1818:    ).strip()
+ming_sim/declaration_dispatch.py:1824:    if not reason.strip():
+ming_sim/declaration_dispatch.py:1828:    target = str(payload.get("name") or "").strip()
+ming_sim/declaration_dispatch.py:1829:    office = str(payload.get("office") or "").strip()
+ming_sim/declaration_dispatch.py:1875:        attendant = str(item.get("attendant") or item.get("person_name") or "").strip()
+ming_sim/declaration_dispatch.py:1880:        if not isinstance(query, str) or not query.strip():
+ming_sim/declaration_dispatch.py:1925:        target_kind = str(item.get("target_kind") or "").strip()
+ming_sim/declaration_dispatch.py:1943:        actor = str(minister_name or "").strip() or _commission_fallback_actor(db)
+ming_sim/declaration_dispatch.py:2028:        person = str(item.get("person_name") or item.get("name") or "").strip()
+ming_sim/declaration_dispatch.py:2091:        decision = str(item.get("decision") or "").strip()
+ming_sim/declaration_dispatch.py:2139:                or not isinstance(new_content, str) or not new_content.strip()
+ming_sim/declaration_dispatch.py:2306:        subject_kind = str(item.get("subject_kind") or "").strip()
+ming_sim/declaration_dispatch.py:2307:        subject_id = str(item.get("subject_id") or "").strip()
+ming_sim/declaration_dispatch.py:2454:                    name = str(result.get("name") or "").strip()
+ming_sim/declaration_dispatch.py:2520:        name = str(item.get("person_name") or "").strip()
+ming_sim/declaration_dispatch.py:2521:        effect = _PRESENCE_ITEM_EFFECTS.get(str(item.get("effect") or "").strip())
+ming_sim/declaration_dispatch.py:2584:            or (scroll_role in {"minister", "attendant"} and (not person_names or not person_names[0].strip()))
+ming_sim/declaration_dispatch.py:2658:        source_name = str(item.get("source") or "").strip()
+ming_sim/declaration_dispatch.py:2659:        target_name = str(item.get("target") or "").strip()
+ming_sim/declaration_dispatch.py:2714:    name = str(raw.get("person_name") or "").strip()
+ming_sim/declaration_dispatch.py:2757:        name = str(item.get("name") or "").strip()
+ming_sim/declaration_dispatch.py:2758:        office = str(item.get("office") or "").strip()
+ming_sim/declaration_dispatch.py:2759:        office_type = str(item.get("office_type") or "").strip()
+ming_sim/declaration_dispatch.py:2777:        ).strip()
+ming_sim/llm_contract.py:19:    if not isinstance(value, str) or not value.strip():
+ming_sim/llm_contract.py:21:    return value.strip()
+ming_sim/value_matrix.py:51:    text = str(raw or "").strip()
+ming_sim/value_matrix.py:90:    fac = str(faction or "").strip()
+ming_sim/value_matrix.py:106:    target = str(target_faction or "").strip()
+ming_sim/audience_translation.py:128:        name = str(validated.get("person_name") or "").strip()
+ming_sim/decree_vocabulary.py:171:        grant_action = str(payload.get("grant_action") or "").strip()
+ming_sim/decree_vocabulary.py:172:        cadence = str(payload.get("cadence") or "").strip()
+ming_sim/decree_vocabulary.py:243:    key = str(outcome or "").strip()
+ming_sim/decree_vocabulary.py:256:            if text.strip():
+ming_sim/decree_vocabulary.py:262:    key = str(value or "").strip()
+ming_sim/decree_vocabulary.py:267:    key = str(value or "").strip()
+ming_sim/decree_vocabulary.py:272:    key = str(value or "").strip()
+ming_sim/decree_vocabulary.py:275:    if str(status or "").strip() == "executing" and not key:
+ming_sim/decree_vocabulary.py:282:    verdict = str(row.get("settlement_verdict") or "").strip()
+ming_sim/decree_vocabulary.py:285:    decision = str(row.get("promulgation_decision") or "").strip()
+ming_sim/decree_vocabulary.py:295:            source = str(item.get("source_action") or "").strip()
+ming_sim/decree_vocabulary.py:310:        base = str(row.get("promulgation_decision") or "").strip()
+ming_sim/decree_vocabulary.py:319:    mode = str(row.get("mode") or "").strip()
+ming_sim/decree_vocabulary.py:327:            source = str(item.get("source_action") or "").strip()
+ming_sim/decree_vocabulary.py:353:        ).strip()
+ming_sim/decree_vocabulary.py:359:        note = str(row.get("execution_note") or "").strip()
+ming_sim/materials.py:75:        name = str(raw or "").strip()
+ming_sim/materials.py:96:    text = str(name or "").strip() or "未名"
+ming_sim/materials.py:97:    clean = _UNSAFE.sub("_", text).strip()
+ming_sim/materials.py:130:    raw = str(rel or "").strip()
+ming_sim/materials.py:238:    old = str(old_root or "").strip()
+ming_sim/materials.py:239:    new = str(new_root or "").strip()
+ming_sim/materials.py:326:        text = str(value or "").strip()
+ming_sim/materials.py:437:        if not (title.strip() or body.strip()):
+ming_sim/materials.py:506:            opening_text = raw_latest if raw_latest.strip() else "见目录。"
+ming_sim/materials.py:552:        if not title.strip() or dir_key in seen:
+ming_sim/materials.py:556:        situation = raw_situation if raw_situation.strip() else "见目录。"
+ming_sim/materials.py:576:        if not title.strip() or dir_key in seen:
+ming_sim/materials.py:580:        situation = raw_situation if raw_situation.strip() else "见目录。"
+ming_sim/materials.py:591:        text = f"{body}（尚未入档）" if body.strip() else "尚未入档"
+ming_sim/materials.py:609:        if issue_id <= 0 or not title.strip():
+ming_sim/materials.py:618:            "situation": stage if stage.strip() else "见目录。",
+ming_sim/materials.py:619:            "resolve_condition": resolve if resolve.strip() else "",
+ming_sim/materials.py:620:            "fail_condition": fail if fail.strip() else "",
+ming_sim/materials.py:736:    parts.append(spoken if spoken.strip() else "（尚无）")
+ming_sim/materials.py:831:            if (raw := str(fact.body or "")).strip()
+ming_sim/materials.py:897:        if key in _LEDGER_KEYS and str(value or "").strip()
+ming_sim/materials.py:999:        if not title.strip() and not body.strip():
+ming_sim/materials.py:1072:        if not (title.strip() or body.strip()):
+ming_sim/materials.py:1137:            "situation": f"{body}（尚未入档）" if body.strip() else "尚未入档",
+ming_sim/materials.py:1165:        if not body.strip():
+ming_sim/materials.py:1187:        if current.strip():
+ming_sim/materials.py:1199:    if not shown.strip():
+ming_sim/materials.py:1222:        if not body.strip():
+ming_sim/materials.py:1369:    parts = [f"{title}：\n{body}" for title, body in sections if str(body or "").strip()]
+ming_sim/materials.py:1457:        str(row["name"] or "").strip()
+ming_sim/materials.py:1463:        if str(row["name"] or "").strip()
+ming_sim/materials.py:1472:        str(row["id"] or "").strip()
+ming_sim/materials.py:1478:        if str(row["id"] or "").strip()
+ming_sim/materials.py:1535:            "held": not str(row.get("terminal_state") or "").strip(),
+ming_sim/materials.py:2083:    return [str(item) for item in value if str(item).strip()]
+ming_sim/materials.py:2188:            if not body.strip():
+ming_sim/materials.py:2246:    parts.append(spoken if spoken.strip() else "（尚无）")
+ming_sim/materials.py:2276:    seg = _UNSAFE.sub("_", name).strip() or "未名"
+ming_sim/materials.py:2289:        status_text = str(status or "").strip()
+ming_sim/materials.py:2293:            if reason_text.strip():
+ming_sim/paths.py:44:    override = os.environ.get("MING_SIM_USER_DATA_DIR", "").strip()
+ming_sim/db.py:159:        if ARMY_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip()) != "loyalty":
+ming_sim/db.py:200:        crime = str(value.get("crime") or "").strip()
+ming_sim/db.py:201:        severity = str(value.get("severity") or "无").strip()
+ming_sim/db.py:237:        name = str(raw_name).strip()
+ming_sim/db.py:270:    target = re.sub(r"(?:诸官|官员|诸司|诸人|上下|众人)$", "", target).strip()
+ming_sim/db.py:295:    office_types = {str(character.office_type).strip() for character in getattr(content, "characters", {}).values()
+ming_sim/db.py:297:    office_titles = {str(character.office).strip() for character in getattr(content, "characters", {}).values()
+ming_sim/db.py:468:    return bool(_COMMITMENT_STOP_CONDITION_RE.fullmatch(str(resolve_condition or "").strip()))
+ming_sim/db.py:474:    raw = str(stop_condition or "").strip()
+ming_sim/db.py:537:        str(payload.get(key) or "").strip()
+ming_sim/db.py:618:    return str(raw).strip().lower() in {"1", "true", "yes", "y", "是", "土司", "自养", "自养军饷"}
+ming_sim/db.py:681:    if not office_n.strip():
+ming_sim/db.py:684:    for part in (p.strip() for p in office_n.split(",") if p.strip()):
+ming_sim/db.py:698:    s = (office or "").strip()
+ming_sim/db.py:705:    for p in (x.strip() for x in s.split(",")):
+ming_sim/db.py:768:        cand = (raw or "").strip().splitlines()[0].strip() if raw else ""
+ming_sim/db.py:790:    kind = (current_type or "").strip()
+ming_sim/db.py:831:    declared = (declared or "").strip()
+ming_sim/db.py:879:    return raw if raw.strip() else ""
+ming_sim/db.py:2773:            loc = m.group(1).strip() if m else ""
+ming_sim/db.py:2810:            cleaned = office.replace("（在途）", "").replace("(在途)", "").strip().rstrip(",，")
+ming_sim/db.py:2948:        raw = str(key or "").strip()
+ming_sim/db.py:2963:        raw = str(key or "").strip()
+ming_sim/db.py:2982:            key = str(raw_key or "").strip()
+ming_sim/db.py:3019:        normalized = {str(k or "").strip(): int(v) for k, v in values.items()}
+ming_sim/db.py:3606:                str(character.office_type).strip()
+ming_sim/db.py:3608:                if str(character.office_type).strip()
+ming_sim/db.py:3611:                str(office_type).strip()
+ming_sim/db.py:3613:                if str(office_type).strip()
+ming_sim/db.py:3652:        office_type = str(office_type or "").strip()
+ming_sim/db.py:3693:        seat = str(region_id or "").strip()
+ming_sim/db.py:3737:            str(event.id).strip()
+ming_sim/db.py:3739:            if str(event.id).strip()
+ming_sim/db.py:3745:        event_id = str(event_id or "").strip()
+ming_sim/db.py:3878:                seat = str(getattr(ch, "office_region", "") or "").strip() if ch else ""
+ming_sim/db.py:4593:        old_owner = str(row["owner_power"] or "").strip()
+ming_sim/db.py:4594:        owner_power = str(new_owner or "").strip()
+ming_sim/db.py:4644:                pay_source_region_val = str(row["pay_source_region"] or "").strip()
+ming_sim/db.py:4646:                pay_source_region_val = str(pay_source_region or "").strip()
+ming_sim/db.py:4824:            ARMY_FIELD_ALIASES.get(str(k).strip(), str(k).strip()): v
+ming_sim/db.py:4834:            proposed_owner = str(normalized.get("owner_power") or "").strip()
+ming_sim/db.py:4835:            if proposed_owner != str(row["owner_power"] or "").strip():
+ming_sim/db.py:4857:        owner_power = str(row["owner_power"] or "").strip()
+ming_sim/db.py:4858:        pay_source_region = str(normalized.get("pay_source_region", row["pay_source_region"]) or "").strip()
+ming_sim/db.py:5636:                return path.read_text(encoding="utf-8").strip()
+ming_sim/db.py:5720:        if not text.strip():
+ming_sim/db.py:5742:            if not raw.strip():
+ming_sim/db.py:6039:            for part in (p.strip() for p in normalize_office(office).split(",") if p.strip()):
+ming_sim/db.py:6058:            for part in (p.strip() for p in office_n.split(",") if p.strip()):
+ming_sim/db.py:6146:        wanted = [str(name).strip() for name in (names or []) if str(name).strip()]
+ming_sim/db.py:6186:            name = str(raw.get("name") or raw.get("姓名") or "").strip()
+ming_sim/db.py:6187:            new_power = str(raw.get("new_power") or raw.get("新势力") or "").strip()
+ming_sim/db.py:6849:                (name.strip(), region_id.strip()),
+ming_sim/db.py:6865:                (sat, lev, name.strip(), region_id.strip()),
+ming_sim/db.py:6918:            allowed = {str(kind).strip().lower() for kind in kinds}
+ming_sim/db.py:6923:                str(row["kind"] or "").strip().lower() in allowed
+ming_sim/db.py:6924:                or str(row["id"] or "").strip().lower() in allowed
+ming_sim/db.py:6951:        value = str(origin_ref or "").strip()
+ming_sim/db.py:7033:                    mapped = POWER_FIELD_ALIASES.get(str(k).strip(), str(k).strip())
+ming_sim/db.py:7034:                    if mapped == _canon and str(v or "").strip():
+ming_sim/db.py:7035:                        reason = str(v).strip()
+ming_sim/db.py:7041:                field = POWER_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())
+ming_sim/db.py:7138:        power_id = str(power_id or "").strip()
+ming_sim/db.py:7139:        new_name = str(new_name or "").strip()
+ming_sim/db.py:7148:        merged_aliases = [x.strip() for x in (aliases or old_aliases).replace("，", ",").split(",") if x.strip()]
+ming_sim/db.py:7374:            reason = str(raw_changes.get("reason") or raw_changes.get("原因") or event.title).strip()[:80]
+ming_sim/db.py:7376:                field = REGION_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())
+ming_sim/db.py:7566:                        text_value = str(value).strip()
+ming_sim/db.py:7588:                    if not text_value.strip() or text_value == str(old_value):
+ming_sim/db.py:7973:            reason = str(raw_changes.get("reason") or raw_changes.get("原因") or event.title).strip()[:80]
+ming_sim/db.py:7987:                    ARMY_FIELD_ALIASES.get(str(k).strip(), str(k).strip()): v
+ming_sim/db.py:7991:                    proposed_owner = str(normalized.get("owner_power") or "").strip()
+ming_sim/db.py:7992:                    if proposed_owner != str(row["owner_power"] or "").strip():
+ming_sim/db.py:8020:                field = ARMY_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())
+ming_sim/db.py:8038:                        str(value or "").strip(),
+ming_sim/db.py:8311:                        text_value = str(value).strip()
+ming_sim/db.py:8314:                    if not text_value.strip() or text_value == str(old_value):
+ming_sim/db.py:8413:            item = {_AA.get(str(k).strip(), str(k).strip()): v for k, v in raw.items()}
+ming_sim/db.py:8414:            aid = str(item.get("id") or "").strip()
+ming_sim/db.py:8424:            owner = str(item.get("owner_power") or "ming").strip() or "ming"
+ming_sim/db.py:8434:            name = str(item.get("name") or aid).strip()
+ming_sim/db.py:8554:            station_region = str(item.get("station_region") or "").strip()
+ming_sim/db.py:8576:                    pay_source_region = str(item.get("pay_source_region") or "").strip()
+ming_sim/db.py:8724:                (str(name) if str(name).strip() else "无名建筑"),
+ming_sim/db.py:8732:                (str(status) if str(status).strip() else "新立，尚在筹建。"),
+ming_sim/db.py:8745:                (str(name) if str(name).strip() else "无名建筑"),
+ming_sim/db.py:8772:             str(row["name"]), (reason or "建筑废止").strip()[:80], origin_ref),
+ming_sim/db.py:8797:            reason = str(raw_changes.get("reason") or event.title).strip()[:80]
+ming_sim/db.py:8827:                    text_value = str(value).strip()
+ming_sim/db.py:8838:                    if not text_value.strip() or text_value == str(old_value):
+ming_sim/db.py:8938:        key = (name_or_id or "").strip()
+ming_sim/db.py:9140:            phrase = item.strip()
+ming_sim/db.py:9169:            if isinstance(item, str) and item.strip():
+ming_sim/db.py:9170:                out.append(item.strip())
+ming_sim/db.py:11012:            choice_raw = (r["choice_json"] or "").strip()
+ming_sim/db.py:11095:            event_id = str(d.get("event_id") or "").strip()
+ming_sim/db.py:11131:            choice_raw = (r["choice_json"] or "").strip()
+ming_sim/db.py:11200:        choice_raw = (r["choice_json"] or "").strip()
+ming_sim/db.py:11239:            key = str(raw or "").strip()
+ming_sim/db.py:11281:        name = str(minister_name or "").strip()
+ming_sim/db.py:11372:                    str(origin_minister_name or "").strip(),
+ming_sim/db.py:11373:                    str(assignee_name or "").strip(),
+ming_sim/db.py:11467:        explicit = str(payload.get("dossier_action_type") or "").strip()
+ming_sim/db.py:11511:        action = str(normalized.get("dossier_action_type") or "").strip()
+ming_sim/db.py:11513:            grant_action = str(normalized.get("grant_action") or "").strip()
+ming_sim/db.py:11522:                purpose = str(normalized.get("purpose") or "").strip()
+ming_sim/db.py:11532:                    if account_raw is None or not str(account_raw).strip():
+ming_sim/db.py:11543:                ).strip()
+ming_sim/db.py:11562:            ).strip()
+ming_sim/db.py:11581:            priv = str(normalized.get("privilege") or "").strip()
+ming_sim/db.py:11587:            scope = str(normalized.get("scope") or "").strip()
+ming_sim/db.py:11589:                t_kind = str(normalized.get("target_kind") or "").strip()
+ming_sim/db.py:11590:                t_id = str(normalized.get("target_id") or "").strip()
+ming_sim/db.py:11596:            if not separator or not kind.strip() or not target.strip():
+ming_sim/db.py:11598:            normalized["scope"] = f"{kind.strip()}:{target.strip()}"
+ming_sim/db.py:11599:            normalized["target_kind"] = kind.strip()
+ming_sim/db.py:11600:            normalized["target_id"] = target.strip()
+ming_sim/db.py:11606:            ).strip()
+ming_sim/db.py:11628:            ).strip()
+ming_sim/db.py:11647:            raw_target = str(normalized.get("target_id") or "").strip()
+ming_sim/db.py:11667:                kind = str(normalized.get("target_kind") or "").strip()
+ming_sim/db.py:11671:                    raw = raw.split(":", 1)[1].strip()
+ming_sim/db.py:11674:                    raw = raw.split(":", 1)[1].strip()
+ming_sim/db.py:11699:            punish_action = str(normalized.get("punish_action") or "").strip()
+ming_sim/db.py:11700:            issue_disposition = str(normalized.get("issue_disposition") or "").strip()
+ming_sim/db.py:11743:            station = str(normalized.get("station") or "").strip()
+ming_sim/db.py:11764:                if str(normalized.get(banned) or "").strip():
+ming_sim/db.py:11797:        target_kind = str(normalized.get("target_kind") or "").strip()
+ming_sim/db.py:11798:        target_id = str(normalized.get("target_id") or "").strip()
+ming_sim/db.py:11829:        final_kind = str(normalized.get("target_kind") or "").strip()
+ming_sim/db.py:11876:        mode = value.strip() if isinstance(value, str) else value
+ming_sim/db.py:11940:        raw = str(origin or "").strip()
+ming_sim/db.py:11948:        if not raw.startswith(prefix) or not raw[len(prefix):].strip():
+ming_sim/db.py:12079:        band = str(progress_band or "").strip()
+ming_sim/db.py:12083:        if not band or not text.strip():
+ming_sim/db.py:12147:            if str(link.get("relation_type") or "").strip() != "稽核":
+ming_sim/db.py:12170:            str(item.get("progress_band") or "").strip()
+ming_sim/db.py:12172:            if str(item.get("progress_band") or "").strip()
+ming_sim/db.py:12175:            str(target.get("execution_outcome") or "").strip() if target else ""
+ming_sim/db.py:12259:            band = str(item.get("progress_band") or "").strip()
+ming_sim/db.py:12261:            if dossier_id not in candidates or dossier_id in supplied or not band or not text.strip():
+ming_sim/db.py:12287:                dossier_id, int(turn), str(item["progress_band"]).strip(),
+ming_sim/db.py:12300:            relation = str(link.get("relation_type") or "").strip()
+ming_sim/db.py:12507:            note = str(item.get("note") or "").strip()
+ming_sim/db.py:12666:                str(row["action_type"] or "grant_allocation").strip()
+ming_sim/db.py:12709:        form = str(execution_form or "").strip()
+ming_sim/db.py:12712:        atype = str(action_type or "").strip()
+ming_sim/db.py:12956:        return {str(item) for item in data if str(item or "").strip()}
+ming_sim/db.py:12960:        incoming = {str(k).strip() for k in keys if str(k or "").strip()}
+ming_sim/db.py:12987:                owner_cache[did] = str(name or "").strip() or self.MEMORIAL_AUTHOR_FALLBACK
+ming_sim/db.py:13004:                "author_name": str(row.get("accuser_name") or "").strip()
+ming_sim/db.py:13099:            name = str(crow["name"] or "").strip()
+ming_sim/db.py:13100:            fac = str(crow["faction"] or "").strip()
+ming_sim/db.py:13115:            if str(r["name"] or "").strip()
+ming_sim/db.py:13230:            accuser = str(raw.get("accuser_name") or "").strip()
+ming_sim/db.py:13232:            if not accuser or not memorial.strip():
+ming_sim/db.py:13252:            accuser_faction = str(accuser_row["faction"] or "").strip()
+ming_sim/db.py:13258:            if str(dossier.get("status") or "").strip() == "closed":
+ming_sim/db.py:13261:            subject_name = str(raw.get("subject_name") or "").strip()
+ming_sim/db.py:13407:            if crow is None or not str(crow["commitment_kind"] or "").strip():
+ming_sim/db.py:13451:                if not str(commitment.get("commitment_kind") or "").strip():
+ming_sim/db.py:13483:            title_c = str(crow["title"] if crow is not None else "").strip()
+ming_sim/db.py:13567:        return str((payload or {}).get("cadence") or "").strip() == "每月"
+ming_sim/db.py:13571:        return str((payload or {}).get("grant_action") or "").strip() in {"加衔", "荫叙"}
+ming_sim/db.py:13576:        return str((payload or {}).get("grant_action") or "").strip() == "协饷"
+ming_sim/db.py:13626:        ).strip()
+ming_sim/db.py:13631:        ).strip()
+ming_sim/db.py:13675:        }.get(str(payload.get("grant_action") or "").strip(), "奉旨月拨")
+ming_sim/db.py:13699:        ).strip()
+ming_sim/db.py:13700:        action = str(payload.get("grant_action") or "").strip()
+ming_sim/db.py:13796:        if target_kind and not str(payload_map.get("target_kind") or "").strip():
+ming_sim/db.py:13797:            payload_map["target_kind"] = str(target_kind).strip()
+ming_sim/db.py:13798:        if target_id not in (None, "") and not str(payload_map.get("target_id") or "").strip():
+ming_sim/db.py:13799:            payload_map["target_id"] = str(target_id).strip()
+ming_sim/db.py:13800:        if not str(payload_map.get("dossier_action_type") or "").strip():
+ming_sim/db.py:13801:            payload_map["dossier_action_type"] = str(action_type or "").strip()
+ming_sim/db.py:13817:            if str(oracle_payload.get("target_kind") or "").strip() == "person":
+ming_sim/db.py:13826:        canonical_assignee = str(payload_map.get("assignee_id") or "").strip()
+ming_sim/db.py:13828:            canonical_assignee = str(payload_map.get("assignee") or "").strip()
+ming_sim/db.py:13852:        action_key = str(action_type or "").strip()
+ming_sim/db.py:13857:            and str(executor_kind or "").strip() in {"", "character"}
+ming_sim/db.py:13858:            and str(executor_id or "").strip()
+ming_sim/db.py:13861:                "character_id": str(executor_id).strip(), "tier": "主办",
+ming_sim/db.py:13868:            str(item.get("character_id") or "").strip()
+ming_sim/db.py:13871:            and str(item.get("character_id") or "").strip()
+ming_sim/db.py:13872:            and not str(item.get("delegator_id") or "").strip()
+ming_sim/db.py:13887:                    str(i.get("character_id") or "").strip()
+ming_sim/db.py:14105:        action = str(action_type or "").strip()
+ming_sim/db.py:14110:        if not str(normalized_payload.get("text") or "").strip() and text:
+ming_sim/db.py:14112:        canonical_assignee = str(normalized_payload.get("assignee_id") or "").strip()
+ming_sim/db.py:14114:            canonical_assignee = str(normalized_payload.get("assignee") or "").strip()
+ming_sim/db.py:14151:            if not str(normalized_payload.get("target_kind") or "").strip() and target_kind:
+ming_sim/db.py:14152:                normalized_payload["target_kind"] = str(target_kind).strip()
+ming_sim/db.py:14153:            if not str(normalized_payload.get("target_id") or "").strip() and target_id:
+ming_sim/db.py:14154:                normalized_payload["target_id"] = str(target_id).strip()
+ming_sim/db.py:14162:        supplied_surface = str(canonical_payload.get("execution_surface") or "").strip()
+ming_sim/db.py:14167:        ).strip()
+ming_sim/db.py:14170:        ).strip()
+ming_sim/db.py:14179:            account = str(canonical_payload.get("account") or "").strip()
+ming_sim/db.py:14191:        rid = str(region_id or "").strip()
+ming_sim/db.py:14246:            and str(executor_kind or "").strip() in {"", "character"}
+ming_sim/db.py:14247:            and str(executor_id or "").strip()
+ming_sim/db.py:14250:                "character_id": str(executor_id).strip(), "tier": "主办", "role": "",
+ming_sim/db.py:14275:            str(item.get("character_id") or "").strip()
+ming_sim/db.py:14416:        dkey = decision_key.strip()
+ming_sim/db.py:14417:        kind, person = form.strip(), endorser_id.strip()
+ming_sim/db.py:14502:        key = str(decision_key or "").strip()
+ming_sim/db.py:14731:        kind = str(office_type or "").strip()
+ming_sim/db.py:14734:        seat = str(region_id or "").strip()
+ming_sim/db.py:14746:        person = str(name or "").strip()
+ming_sim/db.py:14755:                return str(row["region_id"] or "").strip()
+ming_sim/db.py:14763:            str(kind).strip()
+ming_sim/db.py:14765:            if str(kind).strip()
+ming_sim/db.py:14771:        name = str(character_name or "").strip()
+ming_sim/db.py:14778:        return str(row["region_id"] or "").strip() if row is not None else ""
+ming_sim/db.py:14800:        kind = str(office_type or "").strip()
+ming_sim/db.py:14808:        rid = str(region_id or "").strip()
+ming_sim/db.py:14938:            note = str(item.get("note") or "").strip() if isinstance(item, dict) else ""
+ming_sim/db.py:15013:        supplied = str(supplied_ref or "").strip()
+ming_sim/db.py:15215:        if str(legal_reason_code or "").strip():
+ming_sim/db.py:15217:        decision = str(decision or "").strip()
+ming_sim/db.py:15293:                str(gatekeeper_id).strip() if gatekeeper_id is not None else None,
+ming_sim/db.py:15350:        outcome = str(outcome or "").strip()
+ming_sim/db.py:15385:            action_type = str(row.get("action_type") or "").strip()
+ming_sim/db.py:15609:                    ).strip()
+ming_sim/db.py:15632:                            ).strip()
+ming_sim/db.py:15696:                ).strip()
+ming_sim/db.py:15705:                old_power = str(person_row["power_id"] or "").strip()
+ming_sim/db.py:16084:        text = str(fragment or "").strip()
+ming_sim/db.py:16090:        existing = str(row.get("execution_note") or "").strip()
+ming_sim/db.py:16116:        primary = self._EXECUTION_OUTCOME_INTENSITY.get(str(outcome or "").strip())
+ming_sim/db.py:16153:        outcome = str(outcome or "").strip()
+ming_sim/db.py:16158:        reason_text = str(reason or "执行连坐").strip() or "执行连坐"
+ming_sim/db.py:16214:                faction = str(row["faction"] or "").strip()
+ming_sim/db.py:16279:        dest = str(station or "").strip()
+ming_sim/db.py:16280:        dest_region = str(station_region or "").strip()
+ming_sim/db.py:16331:            person = str(item.get("name") or item.get("人物") or "").strip()
+ming_sim/db.py:16335:                displaced_name = str(part).split(":", 1)[0].strip()
+ming_sim/db.py:16351:        office_title = str(payload.get("office") or "").strip()
+ming_sim/db.py:16354:                str(i.get("name") or "").strip() == actor
+ming_sim/db.py:16355:                and str(i.get("new_office") or i.get("office") or "").strip()
+ming_sim/db.py:16371:                ).strip()
+ming_sim/db.py:16424:        ).strip()
+ming_sim/db.py:16425:        privilege = str(payload.get("privilege") or "").strip()
+ming_sim/db.py:16426:        scope = str(payload.get("scope") or "").strip()
+ming_sim/db.py:16430:            ).strip()
+ming_sim/db.py:16433:            ).strip()
+ming_sim/db.py:16535:            ).strip()
+ming_sim/db.py:16538:            ).strip()
+ming_sim/db.py:16540:                kind, raw = "dossier", raw.split(":", 1)[1].strip()
+ming_sim/db.py:16542:                kind, raw = "issue", raw.split(":", 1)[1].strip()
+ming_sim/db.py:16562:            if str(issue_row["kind"] or "").strip() != "initiative":
+ming_sim/db.py:16564:            origin = str(issue_row["origin_ref"] or "").strip()
+ming_sim/db.py:16627:        ).strip()
+ming_sim/db.py:16628:        station = str(payload.get("station") or "").strip()
+ming_sim/db.py:16634:        ).strip()
+ming_sim/db.py:16672:        title = str(payload.get("title") or "").strip()
+ming_sim/db.py:16674:            title = str(payload.get("target_id") or "").strip()
+ming_sim/db.py:16675:        body = str(payload.get("text") or row.get("decree_text") or "").strip()
+ming_sim/db.py:16875:        ).strip()
+ming_sim/db.py:16876:        punish_action = str(payload.get("punish_action") or "").strip()
+ming_sim/db.py:16877:        issue_disposition = str(payload.get("issue_disposition") or "").strip()
+ming_sim/db.py:16897:            faction = str(issue["faction_hint"] or "").strip()
+ming_sim/db.py:17032:        person = str(target or "").strip()
+ming_sim/db.py:17042:            if str(item.get("endorser_id") or "").strip() == person:
+ming_sim/db.py:17047:        context = str(reason or "").strip() or "处置站台者"
+ming_sim/db.py:17169:                        gatekeeper_id=(str(verdict["gatekeeper_id"]).strip()
+ming_sim/db.py:17351:        form = str(entry.get("form") or "").strip()
+ming_sim/db.py:17352:        endorser_id = str(entry.get("endorser_id") or "").strip()
+ming_sim/db.py:17386:                str(raw.get("form") or "").strip(),
+ming_sim/db.py:17387:                str(raw.get("endorser_id") or "").strip(),
+ming_sim/db.py:17420:            form = str(raw.get("form") or "").strip()
+ming_sim/db.py:17421:            endorser_id = str(raw.get("endorser_id") or "").strip()
+ming_sim/db.py:17984:        if not text.strip():
+ming_sim/db.py:17986:        actor = str(payload.get("actor") or pa.get("minister_name") or "").strip()
+ming_sim/db.py:18097:                    office_memory_key = str(payload.get("name") or "").strip()
+ming_sim/db.py:18268:                title = str(payload.get("title") or "").strip()
+ming_sim/db.py:18270:                assignee = str(payload.get("assignee") or pa["minister_name"] or "").strip()
+ming_sim/db.py:18271:                if not title or not content_text.strip() or not assignee:
+ming_sim/db.py:18274:                tags = [str(t).strip() for t in tags_raw if str(t).strip()] if isinstance(tags_raw, list) else []
+ming_sim/db.py:18277:                excluded = [str(t).strip() for t in excluded if str(t).strip()] if isinstance(excluded, list) else []
+ming_sim/db.py:18279:                excluded_offices = [str(t).strip() for t in excluded_offices if str(t).strip()] if isinstance(excluded_offices, list) else []
+ming_sim/db.py:18418:            if not text.strip():
+ming_sim/db.py:18480:        action = str(payload.get("appoint_action") or "").strip()
+ming_sim/db.py:18481:        name = str(payload.get("name") or "").strip()
+ming_sim/db.py:18484:        office = str(payload.get("office") or "").strip()
+ming_sim/db.py:18518:            decree_text=decree_text if decree_text.strip() else None,
+ming_sim/db.py:18526:        name = str(payload.get("name") or "").strip()
+ming_sim/db.py:18527:        office = str(payload.get("office") or "").strip()
+ming_sim/db.py:18528:        action = str(pa.get("action") or payload.get("appoint_action") or "").strip()
+ming_sim/db.py:18579:        if not text.strip():
+ming_sim/db.py:18619:        ).strip()
+ming_sim/db.py:18622:        name = str(payload.get("name") or "").strip()
+ming_sim/db.py:18675:        name = str(payload.get("name") or "").strip()
+ming_sim/db.py:18681:            reason = str(payload.get("reason") or "奉旨任免").strip() or "奉旨任免"
+ming_sim/db.py:18682:            office_type = str(payload.get("office_type") or "").strip()
+ming_sim/db.py:18717:                if not recommendation_reason.strip():
+ming_sim/db.py:18731:            ).strip()
+ming_sim/db.py:19129:                int(dossier_id), str(holder_id).strip(), str(privilege).strip(),
+ming_sim/db.py:19130:                str(scope).strip(),
+ming_sim/db.py:19143:        holder_id = str(holder_id or "").strip()
+ming_sim/db.py:19144:        privilege = str(privilege or "").strip()
+ming_sim/db.py:19145:        scope = str(scope or "").strip()
+ming_sim/db.py:19163:        executor_id = str(dossier.get("executor_id") or "").strip()
+ming_sim/db.py:19164:        executor_kind = str(dossier.get("executor_kind") or "").strip()
+ming_sim/db.py:19177:                if str(entry.get("tier") or "").strip() not in {"主办", "协办"}:
+ming_sim/db.py:19179:                character_id = str(entry.get("character_id") or "").strip()
+ming_sim/db.py:19182:        target_kind = str(dossier.get("target_kind") or "").strip()
+ming_sim/db.py:19183:        target_id = str(dossier.get("target_id") or "").strip()
+ming_sim/db.py:19305:        target_kind = str(structured.get("target_kind") or "").strip()
+ming_sim/db.py:19306:        target_id = str(structured.get("target_id") or "").strip()
+ming_sim/db.py:19807:            raw = str(r["choice_json"] or "").strip()
+ming_sim/db.py:19863:        eid = str(event_id or "").strip()
+ming_sim/db.py:19907:        eid = str(event_id or "").strip()
+ming_sim/db.py:19951:            text = payload_json.strip()
+ming_sim/db.py:19983:        text = str(raw).strip()
+ming_sim/db.py:20108:        new_status = str(status or "").strip()
+ming_sim/db.py:20205:            str(character_id).strip() for character_id in (target_roster or [])
+ming_sim/db.py:20206:            if str(character_id).strip()
+ming_sim/db.py:20613:        text = str(value).strip().lower()
+ming_sim/db.py:20855:        target = str(target_name or "").strip()
+ming_sim/db.py:20856:        key = str(fact_key or "").strip()
+ming_sim/db.py:20859:        eff = str(effect or "").strip()
+ming_sim/db.py:20894:        target = str(target_name or "").strip()
+ming_sim/db.py:20971:                    character_id = str(value.get("character_id") or "").strip()
+ming_sim/db.py:20974:                    character_id = str(value.get("character_id") or value.get("name") or "").strip()
+ming_sim/db.py:20980:                tier = str(tier_value or ("" if strict_structured else "知情")).strip()
+ming_sim/db.py:20982:                role = raw_role if raw_role.strip() else ""
+ming_sim/db.py:20983:                delegator = str(value.get("delegator_id") or value.get("delegator") or "").strip()
+ming_sim/db.py:20987:                character_id, tier, role, delegator = str(value).strip(), "知情", "", ""
+ming_sim/db.py:21004:            str(value).strip()
+ming_sim/db.py:21007:            if str(value or "").strip()
+ming_sim/db.py:21035:            character_id = str(item.get("character_id") or "").strip()
+ming_sim/db.py:21036:            delegator_id = str(item.get("delegator_id") or "").strip()
+ming_sim/db.py:21316:        name = str(minister_name or "").strip()
+ming_sim/db.py:21334:        ids = list(dict.fromkeys(str(sid) for sid in source_ids if str(sid or "").strip()))
+ming_sim/db.py:21500:        minister = str(minister_name or "").strip()
+ming_sim/db.py:21536:        name_filter = str(minister_name or "").strip()
+ming_sim/db.py:21538:            str(n).strip() for n in (minister_names or ()) if str(n or "").strip()
+ming_sim/db.py:21577:            minister = str(row["minister_name"] or "").strip()
+ming_sim/db.py:21630:             safe_json_dumps(list(dict.fromkeys(str(x).strip() for x in (excluded_names or []) if str(x).strip())), ensure_ascii=False),
+ming_sim/db.py:21631:             safe_json_dumps({k: list(dict.fromkeys(str(x).strip() for x in values if str(x).strip())) for k, values in (excluded_targets or {}).items()}, ensure_ascii=False)),
+ming_sim/db.py:21681:        assignee = str(minister_name or "").strip()
+ming_sim/db.py:21682:        origin = str(origin_minister_name or "").strip()
+ming_sim/db.py:21703:            list(dict.fromkeys(str(p).strip() for p in (excluded_names or []) if str(p).strip())),
+ming_sim/db.py:21706:        for name in dict.fromkeys(str(p).strip() for p in participants if str(p).strip()):
+ming_sim/db.py:21728:            [*inherited, *(str(name).strip() for name in (excluded_names or []) if str(name).strip())]
+ming_sim/db.py:21792:            _raw = (minister_name or "").strip()
+ming_sim/db.py:22164:                if has_progress_chain and close_text.strip():
+ming_sim/db.py:22168:                        if text.strip():
+ming_sim/db.py:22413:        why = reason if str(reason or "").strip() else "奉旨加急"
+ming_sim/db.py:22593:        source = str(source or "").strip()
+ming_sim/db.py:22594:        target = str(target or "").strip()
+ming_sim/db.py:22602:        if not context.strip():
+ming_sim/fiscal_fact_brief.py:434:        army_fact_region = str(row["station_region"] or "").strip()
+ming_sim/fiscal_fact_brief.py:494:        target_id = str(row["target_id"] or "").strip()
+ming_sim/registry.py:52:    scene_prompt = str(getattr(content, "scene_agent_prompt", "") or "").strip()
+ming_sim/strict_types.py:94:        isinstance(item, str) and bool(item.strip()) for item in value
+ming_sim/strict_types.py:104:            and bool(item["key"].strip())
+ming_sim/strict_types.py:138:             or not verdict["gatekeeper_id"].strip()
+ming_sim/strict_types.py:140:        or not isinstance(verdict.get("reason"), str) or not verdict["reason"].strip()
+ming_sim/issues.py:114:    op = str(item.get("动作") or item.get("op") or "").strip()
+ming_sim/issues.py:119:        holder_id = str(item.get("holder_id") or "").strip()
+ming_sim/issues.py:120:        privilege = str(item.get("privilege") or item.get("权项") or "").strip()
+ming_sim/issues.py:121:        scope = str(item.get("scope") or item.get("事域") or "").strip()
+ming_sim/issues.py:232:    text = str(origin_ref or "").strip()
+ming_sim/issues.py:261:    ).strip()
+ming_sim/issues.py:321:    person = str(item.get("name") or item.get("人物") or "").strip()
+ming_sim/issues.py:322:    target = str(payload.get("_minister_name") or payload.get("minister_name") or dossier.get("target_id") or "").strip()
+ming_sim/issues.py:323:    payload_action = str(payload.get("_office_action") or "").strip()
+ming_sim/issues.py:324:    item_action = str(item.get("动作") or item.get("action") or "").strip()
+ming_sim/issues.py:363:        return raw.strip()
+ming_sim/issues.py:366:    return str(raw).strip()
+ming_sim/issues.py:370:    value = str(raw or "").strip().lower()
+ming_sim/issues.py:380:        if not isinstance(key, str) or not key.strip():
+ming_sim/issues.py:382:        key = key.strip()
+ming_sim/issues.py:385:        if not isinstance(cond, str) or not cond.strip():
+ming_sim/issues.py:387:        cond_text = cond.strip()
+ming_sim/issues.py:389:        if sm and (sm.group(1) == "in=" or not re.match(r"^-?\d+$", sm.group(2).strip())):
+ming_sim/issues.py:421:    stored_ref = str(row["origin_ref"] or "").strip()
+ming_sim/issues.py:501:    if str(commitment_kind or "").strip():
+ming_sim/issues.py:506:    text = str(resolve_condition or "").strip()
+ming_sim/issues.py:516:    text = str(resolve_condition or "").strip()
+ming_sim/issues.py:544:        cond_text = str(cond or "").strip()
+ming_sim/issues.py:599:    if not str(row["commitment_kind"] if "commitment_kind" in keys else "").strip():
+ming_sim/issues.py:705:            army_id = army_id.strip()
+ming_sim/issues.py:765:        raw = str(value or "").strip()
+ming_sim/issues.py:805:    account = str(create.get("account") or "").strip()
+ming_sim/issues.py:806:    display = str(create.get("display") or "").strip() or (db._stem_of(str(create.get("key") or "")) or str(create.get("key") or ""))
+ming_sim/issues.py:815:        if str(item.get("account") or "").strip() != account:
+ming_sim/issues.py:840:    account = str(create.get("account") or "").strip()
+ming_sim/issues.py:844:        if str(item.get("account") or "").strip() != account:
+ming_sim/issues.py:867:        and str(item.get("动作") or "").strip() == "评定"
+ming_sim/issues.py:877:            name = str(item.get("name") or item.get("人物") or "").strip()
+ming_sim/issues.py:900:            name = str(item.get("name") or item.get("人物") or "").strip()
+ming_sim/issues.py:901:            action = str(item.get("动作") or item.get("action") or "").strip()
+ming_sim/issues.py:912:            name = str(item.get("name") or item.get("人物") or "").strip()
+ming_sim/issues.py:927:        name = str(item.get("name") or item.get("人物") or "").strip()
+ming_sim/issues.py:928:        action = str(item.get("动作") or item.get("action") or "").strip()
+ming_sim/issues.py:1215:    eid = str(event_id or "").strip()
+ming_sim/issues.py:1225:    raw = str(raw_label or "").strip()
+ming_sim/issues.py:1679:        cond = str(raw_cond).strip()
+ming_sim/issues.py:1700:        op, value = text.group(1), text.group(2).strip()
+ming_sim/issues.py:1701:        values = {part.strip() for part in value.split("|") if part.strip()}
+ming_sim/issues.py:2047:        cond = str(cond).strip()  # 非字符串条件值(JSON 漏引号写成 60/True)先 str 强转，不 .strip() 崩（PR#107 gemini）
+ming_sim/issues.py:2050:        if sm and (sm.group(1) == "in=" or not re.match(r"^-?\d+$", sm.group(2).strip())):
+ming_sim/issues.py:2051:            sop, sval = sm.group(1), sm.group(2).strip()
+ming_sim/issues.py:2067:            if sop == "in=" and cur not in {part.strip() for part in sval.split("|") if part.strip()}:
+ming_sim/issues.py:2131:            str(item.get("character_id") or "").strip()
+ming_sim/issues.py:2132:            for item in roster if isinstance(item, dict) and str(item.get("character_id") or "").strip()
+ming_sim/issues.py:2138:            str(item.get("character_id") or "").strip() for item in liability
+ming_sim/issues.py:2139:            if str(item.get("character_id") or "").strip()
+ming_sim/issues.py:2153:            or not str(char_by_name[name]["faction"] or "").strip()
+ming_sim/issues.py:2174:            and str(char_by_name[name]["faction"] or "").strip()
+ming_sim/issues.py:2214:                "decree_text": str(row["decree_text"] or "").strip(),
+ming_sim/issues.py:2215:                "execution_note": str(row["execution_note"] or "").strip(),
+ming_sim/issues.py:2216:                "execution_outcome": str(row["execution_outcome"] or "").strip(),
+ming_sim/issues.py:2679:    tone = "常行" if value is None else str(value).strip()
+ming_sim/issues.py:2693:    transit_to = str(item.get("transit_to") or "").strip()
+ming_sim/issues.py:2768:        value_text = str(value or "").strip()
+ming_sim/issues.py:2777:        pid = str(power_id or "").strip()
+ming_sim/issues.py:2784:            field = POWER_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())
+ming_sim/issues.py:2832:        current_office = row_value(row, "office").strip()
+ming_sim/issues.py:2833:        current_office_type = row_value(row, "office_type").strip()
+ming_sim/issues.py:2843:        title = str(item.get("new_title") or item.get("title") or "").strip()
+ming_sim/issues.py:2846:        way = str(item.get("方式") or item.get("way") or "").strip()
+ming_sim/issues.py:2852:        name = str(item.get("name") or "").strip()
+ming_sim/issues.py:2853:        action = str(item.get("动作") or "").strip()
+ming_sim/issues.py:2871:                status = str(item.get("status") or "").strip()
+ming_sim/issues.py:2897:            way = str(item.get("方式") or item.get("way") or "").strip()
+ming_sim/issues.py:2908:            new_power = str(item.get("new_power") or "").strip()
+ming_sim/issues.py:2913:            if row_value(row, "power_id", "ming").strip() == new_power:
+ming_sim/issues.py:2935:            new_office = str(item.get("office") or item.get("new_office") or "").strip()
+ming_sim/issues.py:2985:                    current_parts = [p.strip() for p in row_value(other_row, "office").split(",") if p.strip()]
+ming_sim/issues.py:3052:    val = str(raw or "").strip().lower()
+ming_sim/issues.py:3128:    name = str(legacy.get("name") or "").strip() or f"{issue_title}遗留"
+ming_sim/issues.py:3129:    dur_key = str(legacy.get("duration") or "2年").strip()
+ming_sim/issues.py:3154:                    field = aliases.get(str(raw_field).strip(), str(raw_field).strip())
+ming_sim/issues.py:3285:            power_id = str(item.get("power_id") or "").strip()
+ming_sim/issues.py:3286:            new_name = str(item.get("new_name") or "").strip()
+ming_sim/issues.py:3487:        event_id = str(item.get("id") or item.get("origin_ref") or "").strip()
+ming_sim/issues.py:3527:    ).strip()
+ming_sim/issues.py:3610:    return str(raw or "").strip()
+ming_sim/issues.py:3615:    ev = content.event_by_id.get(str(event_id or "").strip()) if content is not None else None
+ming_sim/issues.py:3617:    return frozenset(str(label).strip() for label in raw if str(label).strip())
+ming_sim/issues.py:3631:    eid = str(event_id or "").strip()
+ming_sim/issues.py:3633:        key_s = str(key).strip()
+ming_sim/issues.py:3724:        field = REGION_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())
+ming_sim/issues.py:3765:        field = ARMY_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())
+ming_sim/issues.py:3814:                field = REGION_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())
+ming_sim/issues.py:3817:                new_controller = str(value).strip()
+ming_sim/issues.py:3839:                field = REGION_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())
+ming_sim/issues.py:3849:                    controller = str(value).strip()[:160] if value is not None else ""
+ming_sim/issues.py:3897:                field = ARMY_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())
+ming_sim/issues.py:3984:            action = str(item.get("动作") or item.get("action") or "").strip()
+ming_sim/issues.py:3987:                target_status = "dismissed" if action == "罢黜" else str(item.get("status") or "").strip()
+ming_sim/issues.py:4097:                and (db.effect_origin_rejection(str(raw.get("origin_ref") or "").strip()) or {}).get("category")
+ming_sim/issues.py:4196:    eid = str(event_id or "").strip()
+ming_sim/issues.py:4207:        and not str(row.get("terminal_state") or "").strip()
+ming_sim/issues.py:4250:            and str(issue.get("id") or issue.get("origin_ref") or "").strip() == event_id
+ming_sim/issues.py:4302:    action = str(item.get("动作") or item.get("action") or "").strip()
+ming_sim/issues.py:4638:            candidate_id = str(ni.get("candidate_id") or "").strip()
+ming_sim/issues.py:4652:                and all(isinstance(character_id, str) and character_id.strip() for character_id in roster)
+ming_sim/issues.py:4655:                list(dict.fromkeys(character_id.strip() for character_id in roster))
+ming_sim/issues.py:4665:            elif not isinstance(raw_title, str) or not raw_title.strip():
+ming_sim/issues.py:4669:            elif str(ni.get("faction_hint") or "").strip() != candidate["faction_id"]:
+ming_sim/issues.py:4710:            event_id = str(ni.get("id") or ni.get("origin_ref") or "").strip()
+ming_sim/issues.py:4891:        origin_ref = str(ni.get("origin_ref") or "").strip()
+ming_sim/issues.py:5071:                        if not participant.strip():
+ming_sim/issues.py:5076:                    if not str(participant.get("character_id") or participant.get("name") or "").strip():
+ming_sim/issues.py:5078:                    tier = str(participant.get("tier") or participant.get("档") or "知情").strip()
+ming_sim/issues.py:5219:        reason = str(cl.get("reason") or "").strip().lower()
+ming_sim/issues.py:5237:            elif not str(chk["commitment_kind"] or "").strip():
+ming_sim/issues.py:5403:        if str(row["commitment_kind"] or "").strip():
+ming_sim/issues.py:5411:            origin_ref_c = str(row["origin_ref"] or "").strip()
+ming_sim/issues.py:5445:        origin_ref = str(row["origin_ref"] or "").strip()
+ming_sim/issues.py:5526:    new_seat = str(region_id or "").strip()
+ming_sim/issues.py:5534:        holder_parts = [p.strip() for p in str(row["office"]).split(",") if p.strip()]
+ming_sim/issues.py:5566:        ).strip()
+ming_sim/issues.py:5581:        archived_seat = str(db.character_office_region(row["name"]) or "").strip()
+ming_sim/issues.py:5888:    name = str(name or "").strip()
+ming_sim/issues.py:5889:    new_office = str(new_office or "").strip()
+ming_sim/issues.py:6079:            "name": str(item.get("name") or "").strip(),
+ming_sim/issues.py:6080:            "动作": str(item.get("动作") or "").strip(),
+ming_sim/issues.py:6127:        name = str(result.get("name") or "").strip()
+ming_sim/issues.py:6128:        action = str(result.get("动作") or result.get("action") or "").strip()
+ming_sim/issues.py:6156:        title = str(item.get("new_title") or item.get("title") or "").strip()
+ming_sim/issues.py:6159:        way = str(item.get("方式") or item.get("way") or "").strip()
+ming_sim/issues.py:6169:            name_part = str(part).split(":", 1)[0].strip()
+ming_sim/issues.py:6206:        name = str(item.get("name") or "").strip()
+ming_sim/issues.py:6207:        action = str(item.get("动作") or "").strip()
+ming_sim/issues.py:6267:            if not isinstance(raw_style, str) or not raw_style.strip():
+ming_sim/issues.py:6297:            status = "dismissed" if action == "罢黜" else str(item.get("status") or "").strip()
+ming_sim/issues.py:6393:            current_office = str(row["office"] or "").strip()
+ming_sim/issues.py:6394:            current_office_type = str(row["office_type"] or "").strip()
+ming_sim/issues.py:6420:            if not new_office.strip():
+ming_sim/issues.py:6454:                            ).strip(),
+ming_sim/issues.py:6464:            row_power_id = str(row["power_id"] or "").strip()
+ming_sim/issues.py:6467:                content_power_id = str(getattr(content.characters[name], "power_id", "") or "").strip()
+ming_sim/issues.py:6475:                result["new_office"] = new_office.strip()
+ming_sim/issues.py:6533:                    ).strip(),
+ming_sim/issues.py:6585:            way = str(item.get("方式") or item.get("way") or "").strip()
+ming_sim/issues.py:6619:            old_power = str(row["power_id"] or "").strip()
+ming_sim/issues.py:6622:                    str(power_id).strip()
+ming_sim/issues.py:6624:                    if str(power_id).strip()
+ming_sim/issues.py:6658:                    action_type = str(dossier.get("action_type") or "").strip()
+ming_sim/issues.py:6683:                        ).strip()
+ming_sim/issues.py:6768:            prior_status = str(row["status"] or "active").strip() or "active"
+ming_sim/issues.py:6769:            prior_transit = str(row["transit_to"] or "").strip()
+ming_sim/issues.py:6770:            prior_location = str(row["location"] or "").strip()
+ming_sim/issues.py:6804:                bool(str(transit_to or "").strip())
+ming_sim/issues.py:6867:    action = str(source.get("动作") or source.get("action") or result.get("动作") or "").strip()
+ming_sim/issues.py:6907:            character_id = str(item.get("character_id") or "").strip()
+ming_sim/issues.py:6908:            delegator_id = str(item.get("delegator_id") or "").strip()
+ming_sim/issues.py:6909:            tier = str(item.get("tier") or "").strip()
+ming_sim/issues.py:6919:                "role": str(item.get("role") or "").strip(),
+ming_sim/issues.py:6928:                    and row.get("role") == str(item.get("role") or "").strip()
+ming_sim/issues.py:7005:        region_id = str(item.get("region_id") or "").strip()
+ming_sim/issues.py:7043:        origin_ref = str(item.get("origin_ref") or "").strip()
+ming_sim/issues.py:7056:        reason = str(item.get("reason") or "").strip()
+ming_sim/issues.py:7084:    pid = str(power_id or "").strip()
+ming_sim/issues.py:7141:        region_id = str(item.get("region_id") or "").strip()
+ming_sim/issues.py:7142:        power_id = str(item.get("power_id") or "").strip()
+ming_sim/issues.py:7143:        origin_ref = str(item.get("origin_ref") or "").strip()
+ming_sim/issues.py:7267:    raw_keys = {str(row.get("key") or "").strip() for row in rows if row.get("beyond_intent")}
+ming_sim/issues.py:7528:    origin_ref = str(raw_changes.get("origin_ref") or "").strip()
+ming_sim/issues.py:7658:        identity = str(parsed.get("identity") or "").strip()
+ming_sim/issues.py:7774:            outcome = str(item.get("outcome") or "").strip()
+ming_sim/issues.py:7779:            note = str(item.get("note") or "").strip()
+ming_sim/issues.py:7931:            if str(item.get("动作") or "").strip() == "评定":
+ming_sim/issues.py:7953:            if str(item.get("动作") or "").strip() != "易主":
+ming_sim/issues.py:7955:            if str(item.get("方式") or item.get("way") or "").strip() != "主动归附":
+ming_sim/issues.py:7957:            if str(item.get("new_power") or "").strip() != "ming":
+ming_sim/issues.py:7964:            name = str(item.get("name") or "").strip()
+ming_sim/issues.py:7974:            old_power = str(row["power_id"] or "").strip()
+ming_sim/issues.py:7985:                str(power_id).strip()
+ming_sim/issues.py:7987:                if str(power_id).strip()
+ming_sim/issues.py:7991:            explicit_title = str(item.get("new_title") or item.get("title") or "").strip()
+ming_sim/issues.py:8064:                    "name": str(person_change.get("name") or "").strip(),
+ming_sim/issues.py:8065:                    "动作": str(person_change.get("动作") or "").strip(),
+ming_sim/issues.py:8106:                    if origin_ref and not str(move.get("origin_ref") or move.get("来源引用") or "").strip():
+ming_sim/issues.py:8148:            origin_ref = str(army_item.get("origin_ref") or "").strip()
+ming_sim/issues.py:8158:            origin_ref = str(raw_changes.get("origin_ref") or "").strip()
+ming_sim/issues.py:8245:        if isinstance(item, dict) and str(item.get("reason") or "").strip() == "回流":
+ming_sim/issues.py:8282:            origin_ref = str(army_item.get("origin_ref") or "").strip()
+ming_sim/issues.py:8293:            origin_ref = str(raw_changes.get("origin_ref") or "").strip()
+ming_sim/issues.py:8349:                mapped = POWER_FIELD_ALIASES.get(str(k).strip(), str(k).strip())
+ming_sim/issues.py:8379:        origin_ref = str(raw_changes.get("origin_ref") or "").strip()
+ming_sim/issues.py:8425:            and str(item.get("commitment_kind") or "").strip()
+ming_sim/issues.py:8490:                "动作": str(item.get("动作") or item.get("action") or "").strip(),
+ming_sim/issues.py:8499:                "id": str(item.get("id") or "").strip() if isinstance(item, dict) else "",
+ming_sim/issues.py:8509:            event_id = str(new_issue.get("id") or "").strip()
+ming_sim/issues.py:8514:        event_id = str(new_issue.get("id") or "").strip()
+ming_sim/issues.py:8538:        event_id = str(new_issue.get("id") or "").strip()
+ming_sim/issues.py:8564:            origin_ref = str(item.get("origin_ref") or "").strip()
+ming_sim/issues.py:8571:            origin_ref = str(raw_changes.get("origin_ref") or "").strip()
+ming_sim/issues.py:8589:                    "name": str(item.get("name") or "").strip(),
+ming_sim/issues.py:8590:                    "动作": str(item.get("动作") or "").strip(),
+ming_sim/issues.py:8600:            origin_ref = str(raw_changes.get("origin_ref") or "").strip()
+ming_sim/issues.py:8629:                return int(v.strip())
+ming_sim/issues.py:8638:        key = str(remove.get("key") or "").strip()
+ming_sim/issues.py:8678:        origin_ref = str(remove.get("origin_ref") or "").strip()
+ming_sim/issues.py:8719:        direction_raw = str(create.get("direction") or "").strip()
+ming_sim/issues.py:8721:        key = str(create.get("key") or "").strip()
+ming_sim/issues.py:8722:        account = str(create.get("account") or "").strip()
+ming_sim/issues.py:8749:        display = str(create.get("display") or "").strip() or (db._stem_of(key) or key)
+ming_sim/issues.py:8750:        origin_ref = str(create.get("origin_ref") or "").strip()
+ming_sim/issues.py:8782:                    str(create.get("display") or "").strip()
+ming_sim/issues.py:8820:        key = str(change.get("key") or "").strip()
+ming_sim/issues.py:8866:        origin_ref = str(change.get("origin_ref") or "").strip()
+ming_sim/issues.py:8987:        if raw_id is None or not sim_note.strip():
+ming_sim/issues.py:9181:    token = fate.strip()
+ming_sim/audience_translate.py:80:        text = str(payload.get("text") or row["action"] or "").strip()
+ming_sim/audience_translate.py:134:        minister = str(turn.get("minister_name") or "").strip() or "殿上"
+ming_sim/audience_translate.py:147:            if not body.strip():
+ming_sim/audience_translate.py:168:        if body.strip():
+ming_sim/audience_translate.py:381:    said_block = "\n".join(str(s) for s in night_said if str(s).strip()) or "（无）"
+ming_sim/audience_translate.py:382:    pending_block = "；".join(str(s) for s in pending_summaries if str(s).strip()) or "（无）"
+ming_sim/audience_translate.py:383:    grounding = str(target_grounding or "").strip()
+ming_sim/decree_forecast.py:333:            if prefix.strip():
+ming_sim/rescript_actions.py:59:    raw = str(key or "").strip()
+ming_sim/rescript_actions.py:87:    dk = str(decision.get("decision_key") or "").strip()
+ming_sim/rescript_actions.py:89:        kind = str(decision.get("kind") or "decision").strip() or "decision"
+ming_sim/rescript_actions.py:96:    kind = str(decision.get("kind") or "").strip()
+ming_sim/rescript_actions.py:99:        cap = str(item.get("draft_capability") or "").strip()
+ming_sim/rescript_actions.py:104:        if not str(item.get("label") or "").strip():
+ming_sim/rescript_actions.py:115:    decision_key = str(raw.get("decision_key") or "").strip()
+ming_sim/rescript_actions.py:119:    action = str(raw.get("action") or raw.get("dossier_decision") or "").strip()
+ming_sim/rescript_actions.py:123:    cap = str(raw.get("draft_capability") or "").strip()
+ming_sim/rescript_actions.py:182:    if isinstance(choice, str) and not choice.strip():
+ming_sim/rescript_actions.py:228:        cap = str(opt.get("draft_capability") or "").strip()
+ming_sim/rescript_actions.py:311:        key = str(raw.get("decision_key") or "").strip()
+ming_sim/rescript_actions.py:399:        action = str((req or {}).get("action") or "").strip() if req is not None else ""
+ming_sim/rescript_actions.py:472:            label = str(req.get("label") or "").strip()
+ming_sim/rescript_actions.py:473:            note = str(req.get("note") or "").strip()
+ming_sim/rescript_actions.py:519:            cap = str(req.get("draft_capability") or "").strip()
+ming_sim/rescript_actions.py:531:            if not str(stored_raw.get("label") or "").strip():
+ming_sim/rescript_actions.py:544:            at = str(req.get("action_type") or "").strip()
+ming_sim/rescript_actions.py:594:            target = str(req.get("summon_target") or "").strip()
+ming_sim/rescript_actions.py:602:                if str(detail or "").strip():
+ming_sim/rescript_actions.py:604:                    req["summon_target"] = str(detail).strip()
+ming_sim/rescript_actions.py:688:    action_type = str(src.get("action_type") or "").strip()
+ming_sim/rescript_actions.py:693:    target_kind = str(src.get("target_kind") or "").strip()
+ming_sim/rescript_actions.py:694:    target_id = str(src.get("target_id") or "").strip()
+ming_sim/rescript_actions.py:703:    decree_text = note_raw if note_raw.strip() else label_raw
+ming_sim/rescript_actions.py:705:    assignee_name = str(src.get("assignee_name") or src.get("assignee") or "").strip()
+ming_sim/rescript_actions.py:706:    region_id = str(src.get("region_id") or "").strip()
+ming_sim/rescript_actions.py:719:    decision_key = str(src.get("decision_key") or "").strip()
+ming_sim/rescript_actions.py:738:        cat = str(src.get("transaction_category") or "").strip()
+ming_sim/rescript_actions.py:744:        if title_raw.strip():
+ming_sim/rescript_actions.py:748:        ck = str(src.get("commitment_kind") or "无").strip() or "无"
+ming_sim/rescript_actions.py:775:        station = str(src.get("station") or "").strip()
+ming_sim/rescript_actions.py:794:        office = str(src.get("office") or "").strip()
+ming_sim/rescript_actions.py:797:        cat = str(src.get("transaction_category") or "").strip()
+ming_sim/rescript_actions.py:855:            cadence = str(src.get("cadence") or "").strip() or "一次性"
+ming_sim/rescript_actions.py:860:                surface = str(src.get("execution_surface") or "in_transit").strip()
+ming_sim/rescript_actions.py:866:        appoint_action = str(src.get("appoint_action") or "").strip()
+ming_sim/rescript_actions.py:869:        office = str(src.get("office") or "").strip()
+ming_sim/rescript_actions.py:870:        name = str(src.get("name") or "").strip()
+ming_sim/rescript_actions.py:894:        tenure = str(src.get("appointment_tenure") or "").strip()
+ming_sim/rescript_actions.py:903:        pa = str(src.get("punish_action") or "").strip()
+ming_sim/rescript_actions.py:906:        name = str(src.get("name") or "").strip()
+ming_sim/rescript_actions.py:939:            holder = str(src.get(k) or "").strip()
+ming_sim/rescript_actions.py:950:        priv = str(src.get("privilege") or "").strip()
+ming_sim/rescript_actions.py:965:        name = str(src.get("name") or "").strip()
+ming_sim/rescript_actions.py:1036:    assignee = str(normalized.get("assignee_id") or "").strip()
+ming_sim/rescript_actions.py:1062:    actor = str(item.row.get("actor_name") or "").strip()
+ming_sim/rescript_actions.py:1110:    if not body.strip():
+ming_sim/rescript_actions.py:1123:        name = raw.strip()
+ming_sim/rescript_actions.py:1181:        decree_text=body if body.strip() else title,
+ming_sim/rescript_actions.py:1231:    dkey = str(directive_identity or "").strip()
+ming_sim/rescript_actions.py:1363:            action = str(item.choice.get("action") or "").strip()
+ming_sim/rescript_actions.py:1398:                event_id = str(item.row.get("event_id") or "").strip()
+ming_sim/rescript_actions.py:1429:                cap = str(item.choice.get("draft_capability") or "").strip()
+ming_sim/rescript_actions.py:1487:                target = str(item.choice.get("summon_target") or "").strip()
+### replace/sub rewriting
+ming_sim/office_rank.py:34:    text = re.sub(r"^(?:前|原任|原)", "", text).strip()
+ming_sim/office_rank.py:35:    text = (text.replace("兼掌", ",").replace("兼署", ",").replace("兼", ",")
+ming_sim/office_rank.py:36:            .replace("，", ",").replace("、", ","))
+ming_sim/report.py:97:    return format_metric_delta(metric_delta(before, after)).replace("数值变化：", "")
+ming_sim/report.py:101:    return format_metric_delta(delta).replace("数值变化：", "")
+ming_sim/llm_config.py:208:    base = base_url.rstrip("/")
+ming_sim/audience_night.py:243:    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+ming_sim/cli_backend.py:3610:        t = re.sub(r"^```[a-zA-Z]*\s*", "", t)
+ming_sim/cli_backend.py:3611:        t = re.sub(r"\s*```$", "", t).strip()
+ming_sim/cli_backend.py:3719:    c = re.sub(r"\s+", "", content or "")
+ming_sim/cli_backend.py:3720:    e = re.sub(r"\s+", "", emperor_intent)
+ming_sim/cli_backend.py:3870:    compact = re.sub(r"\s+", "", text or "")
+ming_sim/cli_backend.py:3881:    later_compact = re.sub(r"\s+", "", later or "")
+ming_sim/cli_backend.py:3894:    compact = re.sub(r"\s+", "", text or "")
+ming_sim/cli_backend.py:3899:    compact = re.sub(r"[^\u4e00-\u9fff]", "", text or "")
+ming_sim/cli_backend.py:3900:    compact = re.sub(r"^(再|另|又|并|仍|复)?(令|命|着|遣|派)", "", compact)
+ming_sim/cli_backend.py:3901:    compact = re.sub(
+ming_sim/cli_backend.py:3906:    compact = re.sub(
+ming_sim/cli_backend.py:3927:        material = re.sub(r"^[\s，,。.!！?？；;：:、]+", "", material)
+ming_sim/cli_backend.py:3933:    material = re.sub(r"^[\s，,。.!！?？；;：:、]+", "", material).strip()
+ming_sim/cli_backend.py:3948:        key = re.sub(r"\s+", "", chunk)
+ming_sim/cli_backend.py:4295:    compact = re.sub(r"[\s，,。.!！?？；;：:、]+", "", text)
+ming_sim/cli_backend.py:4374:    return text[:match.start()].rstrip(), [call]
+ming_sim/assets.py:31:        text.replace("{{TURN_UNIT}}", TURN_UNIT)
+ming_sim/assets.py:32:        .replace("{{PERSON_ACTIONS}}", format_person_actions())
+ming_sim/matching.py:15:    return re.sub(r"[\s/／、，。,.：:；;（）()《》<>-]+", "", value)
+ming_sim/agents.py:426:                tlog(f"[{tag}/思考] {merged.replace(chr(10), ' ⏎ ')[-200:]}")
+ming_sim/agents.py:457:                merged = "".join(chunk_buf).replace("\n", " ⏎ ")
+ming_sim/agents.py:465:        tlog(f"[{tag}/思考] {merged.replace(chr(10), ' ⏎ ')[-200:]}")
+ming_sim/agents.py:475:        merged = "".join(chunk_buf).replace("\n", " ⏎ ")
+ming_sim/agents.py:517:            cleaned = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", snippet)
+ming_sim/agents.py:549:                first_block = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", first_block)
+ming_sim/cli/terminal.py:585:            if len(parts) == 2 and parts[1].lstrip("#").isdigit():
+ming_sim/cli/terminal.py:586:                target_id = int(parts[1].lstrip("#"))
+ming_sim/rescript_draft.py:1643:        elif isinstance(issue_id, str) and issue_id.strip().lstrip("-").isdigit():
+ming_sim/materials.py:299:        return [str(base.relative_to(root_r)).replace("\\", "/")]
+ming_sim/materials.py:303:            out.append(str(item.relative_to(root_r)).replace("\\", "/"))
+ming_sim/issues.py:520:    return {match.group(1): match.group(2).replace(" ", "")}
+ming_sim/issues.py:771:        normalized = re.sub(r"[\s，。、“”‘’：:；;,.·_\-（）()\[\]【】]+", "", key_stem)
+ming_sim/issues.py:794:            normalized = normalized.replace(word, "")
+ming_sim/issues.py:1079:    label = re.sub(r"\s+", "", str(raw or ""))
+ming_sim/issues.py:1084:        if label == re.sub(r"\s+", "", canonical):
+ming_sim/issues.py:3647:    compact = re.sub(r"\s+", "", str(label or ""))
+ming_sim/issues.py:3651:        if compact == re.sub(r"\s+", "", canonical):
+ming_sim/issues.py:7405:        .replace("\\", "\\\\")
+ming_sim/issues.py:7406:        .replace("%", "\\%")
+ming_sim/issues.py:7407:        .replace("_", "\\_")
+ming_sim/issues.py:9188:    if token.isascii() and token.replace("_", "").isalnum() and not token[0].isdigit():
+ming_sim/db.py:270:    target = re.sub(r"(?:诸官|官员|诸司|诸人|上下|众人)$", "", target).strip()
+ming_sim/db.py:701:    s = s.replace("兼掌", ",").replace("兼署", ",").replace("兼", ",")
+ming_sim/db.py:702:    s = s.replace("，", ",").replace("、", ",")
+ming_sim/db.py:2273:            """.replace("__AUTHORITY_PRIVILEGES__", AUTHORITY_PRIVILEGE_SQL_IN)
+ming_sim/db.py:2810:            cleaned = office.replace("（在途）", "").replace("(在途)", "").strip().rstrip(",，")
+ming_sim/db.py:5856:                state, name, f"人物终态：{status}；{reason}".rstrip("；"),
+ming_sim/db.py:6380:                used.add(int(r["portrait_id"].replace(prefix, "")))
+ming_sim/db.py:7148:        merged_aliases = [x.strip() for x in (aliases or old_aliases).replace("，", ",").split(",") if x.strip()]
+ming_sim/db.py:8704:        base = re.sub(r"[^a-z0-9]+", "", (region_id or "rgn").lower()) or "rgn"
+ming_sim/db.py:21101:            quoted = '"' + table.replace('"', '""') + '"'
+ming_sim/db.py:21154:                    "PRAGMA table_info(\"" + table.replace('"', '""') + "\")"
+### named samples
+ming_sim/staged_commitment.py:65:            item.get("criterion_text") or item.get("criterion") or ""
+ming_sim/staged_commitment.py:67:        origin_context = str(
+ming_sim/staged_commitment.py:68:            item.get("origin_context") or item.get("origin") or criterion or ""
+ming_sim/staged_commitment.py:70:        if not criterion and origin_context:
+ming_sim/staged_commitment.py:71:            criterion = origin_context
+ming_sim/staged_commitment.py:77:            "criterion_text": criterion,
+ming_sim/staged_commitment.py:78:            "origin_context": (origin_context or criterion),
+ming_sim/staged_commitment.py:112:                "stages_json 无有效段（每段须 due_turn>0 与 criterion_text）"
+ming_sim/staged_commitment.py:122:                "stages_json 无有效段（每段须 due_turn>0 与 criterion_text）"
+ming_sim/staged_commitment.py:198:                    "criterion_text": str(stage["criterion_text"]),
+ming_sim/staged_commitment.py:199:                    "origin_context": str(stage["origin_context"]),
+ming_sim/staged_commitment.py:248:            "criterion_text": criterion,
+ming_sim/staged_commitment.py:249:            "origin_context": origin,
+ming_sim/staged_commitment.py:279:            criterion_text=str(item["criterion_text"]),
+ming_sim/staged_commitment.py:280:            origin_context=str(item["origin_context"]),
+ming_sim/settlement_payload.py:44:def parse_decision_blocks(text: str) -> List[Dict[str, object]]:
+ming_sim/settlement_payload.py:47:    每块须含 title/context/options（2-3 项，每项 label + 可选 hint）。
+ming_sim/settlement_payload.py:78:                "hint": str(o.get("hint") or "").strip(),
+ming_sim/settlement_payload.py:81:            # label/hint remain presentation only.
+ming_sim/settlement_payload.py:94:            "context": str(obj.get("context") or "").strip(),
+ming_sim/settlement_payload.py:141:    origin_ref=dossier:N 回填成 event_id，但 options 只有 {label,hint}。那些行

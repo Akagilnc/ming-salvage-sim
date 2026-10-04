@@ -270,8 +270,6 @@ def test_assistant_row_delegator_gets_secondary_assistant_zero_mechanical(game):
     parties = db.list_execution_liability_parties(dossier_id)
     by_id = {p["character_id"]: p["responsibility"] for p in parties}
     assert by_id == {"倪元璐": "primary", "徐光启": "secondary"}
-    assert "黄道周" not in by_id
-    assert "王承恩" not in by_id
 
     before_donglin = _sat(db, "东林")
     before_xixue = _sat(db, "西学")
@@ -293,7 +291,6 @@ def test_assistant_row_delegator_gets_secondary_assistant_zero_mechanical(game):
         if e["origin"].startswith(f"dossier:{dossier_id}:")
     }
     assert edges == {"倪元璐", "徐光启"}
-    assert "黄道周" not in edges
 
 
 

@@ -123,8 +123,6 @@ def test_redeploy_moves_fact_region_keeps_pay_source(game):
         if e["subject_id"] == "dongjiang" and e["metric"] == "分源欠饷月数"
     }
     assert d_regions == {"shandong"}
-    assert "dongjiang_area" not in d_regions
-    assert "liaodong" not in d_regions
 
 
 def test_station_region_rejects_unknown_region_id(game):

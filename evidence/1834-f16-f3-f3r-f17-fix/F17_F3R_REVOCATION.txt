@@ -1,0 +1,1 @@
+REVOKED: evidence/1834-four-class-fix/scripts/dispose_f3r_candidates.py auto-KEEP by candidate kind is not semantic disposition. Use evidence/1834-f16-f3-f3r-f17-fix/scripts/dispose_f3r_semantic.py. Historical enum_f3r_disposition.tsv (410 KEEP) and report.md F3-R clearance claims are invalid evidence.

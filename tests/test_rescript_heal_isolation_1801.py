@@ -229,7 +229,6 @@ def test_1801_eight_items_all_pass_no_heal_no_trim(monkeypatch, tmp_path):
     assert len(drafts) == 8
     assert [d["title"] for d in drafts] == [f"条目{i}" for i in range(8)]
     assert tags == ["rescript-draft"]
-    assert "rescript-draft-heal" not in tags
     note = tmp_path / "error_packs" / "rescript_draft_degraded" / "turn104.json"
     assert not note.exists()
 

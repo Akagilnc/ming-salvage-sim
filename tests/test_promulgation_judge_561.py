@@ -442,9 +442,6 @@ def test_gate_evidence_reloads_dossier_after_reconsideration_mutation(game):
     assert fresh_context["dossiers"][0]["criteria_snapshot_source"]["authorization_ids"] == [
         str(authority_id),
     ]
-    assert "fresh-authorization" not in (
-        fresh_context["dossiers"][0]["criteria_snapshot_source"]["authorization_ids"]
-    )
 
 
 def test_gate_second_verdict_reads_pending_or_applied_history_strictly():
@@ -690,6 +687,9 @@ def test_leader_only_mutation_changes_faction_posture_not_roster(game):
     )
 
     # Gatekeeper bench unchanged — 安抚首领 ≠ 换把关人.
+    # Member anchor is independent of before/after list equality: both sides
+    # omitting 许誉卿 would still pass equality-only checks (#1834 F3).
+    assert "许誉卿" in _gatekeeper_names(after)
     assert _gatekeeper_names(after) == _gatekeeper_names(before)
     assert after["gatekeepers"] == before["gatekeepers"]
 

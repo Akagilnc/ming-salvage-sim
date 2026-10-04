@@ -244,7 +244,6 @@ def test_real_assignment_stage_lead_comes_from_extract_not_summoned_minister(env
         if item["tier"] == "主办"
     ]
     assert leads == ["毕自严"]
-    assert "陈新甲" not in leads
 
 
 def test_real_punishment_stage_preserves_category(env):

@@ -11519,11 +11519,13 @@ class GameDB:
             else:
                 from ming_sim.action_clusters import field_population_allowed
                 from ming_sim.action_materialize import require_grant_allocation_shape
-                purpose = str(normalized.get("purpose") or "").strip()
-                if purpose and not field_population_allowed(
-                    "grant_allocation", "purpose", normalized,
-                ):
-                    raise ValueError(f"非协饷拨帑不得夹带 purpose={purpose}")
+                if "purpose" in normalized:
+                    purpose = str(normalized.get("purpose") or "")
+                    if purpose.strip() and not field_population_allowed(
+                        "grant_allocation", "purpose", normalized,
+                    ):
+                        raise ValueError(f"非协饷拨帑不得夹带 purpose={purpose}")
+                    normalized["purpose"] = purpose
                 # #1716：amount/account 唯一验形；分类默认 grant_action=「无」时只借金钱动作过 shape，不回写。
                 # 普通/legacy fallback（缺/空 grant_action）须显式非空 account，禁默认国库。
                 shape_ga = grant_action if grant_action not in {"", "无"} else "赏赉"
@@ -11740,9 +11742,12 @@ class GameDB:
                 due_turn = deadline = 0
             if due_turn <= 0 and deadline > 0 and current_turn > 0:
                 due_turn = int(current_turn) + deadline
-            station = str(normalized.get("station") or "").strip()
+            if "station" in normalized:
+                # Free prose station: preserve bytes; emptiness only via local copy.
+                normalized["station"] = str(normalized.get("station") or "")
+            station = str(normalized.get("station") or "")
             has_deadline_intent = due_turn > 0 or deadline > 0
-            requires_due = not station  # 限期出战：无调驻面，due 为限期载体
+            requires_due = not station.strip()  # 限期出战：无调驻面，due 为限期载体
             if due_turn > int(current_turn or 0):
                 normalized["due_turn"] = due_turn
                 normalized.pop("deadline_months", None)
@@ -12504,7 +12509,7 @@ class GameDB:
                 proposed = amount
             else:
                 proposed = int(targets[dossier_id]["ordered_amount"]) - amount
-            note = str(item.get("note") or "").strip()
+            note = str(item.get("note") or "")
             supplied[dossier_id] = (proposed, note)
 
         # 无在途目标：坏提案已逐项拒收，不落假对账行。
@@ -16625,7 +16630,7 @@ class GameDB:
         army_id = str(
             payload.get("target_id") or row.get("target_id") or ""
         ).strip()
-        station = str(payload.get("station") or "").strip()
+        station = str(payload.get("station") or "")
         station_region = str(
             payload.get("station_region")
             or payload.get("实际驻地")
@@ -16669,10 +16674,12 @@ class GameDB:
         不得回填题名，不得以题名/target_id 冒充正文。
         真缺锚时 title 为空串——caller 复用既有 execution failed 接缝，保留案卷与正文。
         """
-        title = str(payload.get("title") or "").strip()
-        if not title:
+        title = str(payload.get("title") or "")
+        if not title.strip():
+            # target_id is a machine key / id — strip for identity lookup only.
             title = str(payload.get("target_id") or "").strip()
-        body = str(payload.get("text") or row.get("decree_text") or "").strip()
+        # Free prose body: preserve bytes (incl. edge whitespace).
+        body = str(payload.get("text") or row.get("decree_text") or "")
         return title, body
 
     def _apply_referral_verdict_effect(
@@ -17044,7 +17051,9 @@ class GameDB:
                 break
         if not hit:
             return
-        context = str(reason or "").strip() or "处置站台者"
+        context = str(reason or "")
+        if not context.strip():
+            context = "处置站台者"
         from ming_sim.credit_events import KIND_BETRAY, write_credit_event
         write_credit_event(
             self, state,
@@ -18265,10 +18274,10 @@ class GameDB:
         if pa["kind"] == "secret_order":
             oid = pa["target_id"]
             if pa["action"] == "新建":
-                title = str(payload.get("title") or "").strip()
+                title = str(payload.get("title") or "")
                 content_text = str(payload.get("content") or "")
                 assignee = str(payload.get("assignee") or pa["minister_name"] or "").strip()
-                if not title or not content_text.strip() or not assignee:
+                if not title.strip() or not content_text.strip() or not assignee:
                     return False
                 tags_raw = payload.get("tags") or []
                 tags = [str(t).strip() for t in tags_raw if str(t).strip()] if isinstance(tags_raw, list) else []
@@ -18678,7 +18687,9 @@ class GameDB:
         office = str(payload.get("office") or "")
         if pa["action"] == "任命":
             # 朝臣任命/升迁/调任 → person-only adapter（不经 full settlement recovery）。
-            reason = str(payload.get("reason") or "奉旨任免").strip() or "奉旨任免"
+            reason = str(payload.get("reason") or "奉旨任免")
+            if not reason.strip():
+                reason = "奉旨任免"
             office_type = str(payload.get("office_type") or "").strip()
             try:
                 appointment_tenure = appointment_tenure_from(payload)

@@ -71,7 +71,6 @@ def test_dongjiang_commander_is_active_mao_wenlong():
     assert (mao.status or "active") == "active"
     army = _army_by_id("dongjiang")
     assert army["commander"] == "毛文龙", army["commander"]
-    assert "旧部" not in army["commander"]
 
 
 def test_seed_army_firearms_differentiated_within_p2_caps():

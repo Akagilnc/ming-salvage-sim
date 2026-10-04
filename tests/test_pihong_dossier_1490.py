@@ -1848,7 +1848,6 @@ def test_657_follow_draft_ignores_client_field_overlay(game):
     assert str(created.get('target_id') or payload.get('target_id') or '') == 'shaanxi'
     assert 'henan' not in {str(created.get('target_id') or ''), str(payload.get('target_id') or ''), str(created.get('region_id') or ''), str(payload.get('region_id') or '')}
     assert str(payload.get('title') or '') == '权威标题'
-    assert '伪造标题' not in str(payload.get('title') or '')
     assert str(payload.get('transaction_category') or '') == '督赈'
     assert '不存在的人' not in str(payload.get('assignee_name') or '')
     assert '不存在的人' not in str(created.get('executor_id') or '')
@@ -1869,7 +1868,6 @@ def test_657_midzhi_persists_decision_key_and_llm_label(game):
     payload = json.loads(str(hit.get('payload_json') or '{}'))
     assert payload.get('decision_key') == key
     assert str(hit.get('decree_text') or '') == llm_label
-    assert '另旨·中旨' not in str(hit.get('decree_text') or '')
     with pytest.raises(ValueError):
         ra.map_rescript_option_or_choice({k: v for k, v in choice.items() if k != 'decision_key'}, mode='midzhi', db=db, content=content, state=state)
 

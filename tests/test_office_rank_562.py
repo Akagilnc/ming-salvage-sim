@@ -413,8 +413,6 @@ def test_seed_archives_clean_historical_office_for_dismissed_ministers(game):
     ).fetchone()
     assert hu is not None
     assert hu["office_title"] == "三边总督"
-    assert "革职" not in hu["office_title"]
-    assert not hu["office_title"].startswith("原")
     _hid, hu_payload = _appointment_dossier(db, _state, "胡廷宴", "三边总督")
     assert hu_payload["break_rank"]["basis"] == "historical_office"
     assert hu_payload["break_rank"]["is_break_rank"] is False

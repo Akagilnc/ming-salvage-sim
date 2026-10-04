@@ -185,7 +185,6 @@ def test_partial_heal_single_source_pending_only_fresh(
     payload = _pending_api(db)
     api_ids = {int(p["chat_turn_id"]) for p in payload.get("pending") or []}
     assert api_ids == {ctid_fresh}, api_ids
-    assert ctid_stale not in api_ids
 
 
 def test_close_retry_on_healed_cleanup_no_stale_ids(game, tmp_path, monkeypatch):

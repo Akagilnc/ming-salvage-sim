@@ -276,3 +276,12 @@ cd web && npm test -- src/appDurableWiring.test.tsx \
 复杂度：删裁剪/strip 改写与失效元数据；无摘要/护栏/兼容层/永久证明测。取证脚本：`enum_f3r_ast.py` + `dispose_f3r_candidates.py` + `probe_four_class.py` + `mutation_old_red.py`。
 
 未 push / 未开 PR / 未 stash / 未 amend / 未 kill。
+
+
+## REVOKED (ee3b5da31 末判后)
+
+- F16「未结：无」、F3-R「真重复已删／未结：无」结清申报失效。
+- `scripts/mutation_old_red.py` 入口外裁字／预裁参数／非装回旧逻辑 — 证明失效。
+- `scripts/probe_four_class.py` 的 `free_prose_no_strip` 源码措辞证明失效。
+- `scripts/dispose_f3r_candidates.py` 按形状自动 KEEP 失效；改用 `1834-f16-f3-f3r-f17-fix/scripts/dispose_f3r_semantic.py`。
+- 历史 stdout／json 文件保留不改写，仅本附注声明失效。

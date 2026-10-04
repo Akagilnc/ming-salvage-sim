@@ -113,7 +113,6 @@ def test_old_save_exact_purge_keeps_real_with_phrase_counterexample(game):
     assert db.conn.execute("SELECT 1 FROM turn_reports WHERE turn = 0").fetchone() is None
     kept = db.get_turn_report(1)
     assert kept == real
-    assert "真结算保留标记" in kept
     # 无 meta flag 机制
     assert (
         db.conn.execute(

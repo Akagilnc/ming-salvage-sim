@@ -61,21 +61,25 @@ def normalize_commitment_stages(raw: object) -> List[Dict[str, object]]:
             stage_idx = int(item.get("stage_idx", idx))
         except (TypeError, ValueError):
             stage_idx = idx
+        # Free prose → durable stages / materials: preserve bytes (incl. edge
+        # whitespace). Emptiness only on a local copy (#1834 F16 / ADR 0142).
         criterion = str(
             item.get("criterion_text") or item.get("criterion") or ""
-        ).strip()
+        )
         origin_context = str(
-            item.get("origin_context") or item.get("origin") or criterion or ""
-        ).strip()
-        if not criterion and origin_context:
+            item.get("origin_context") or item.get("origin") or ""
+        )
+        if not criterion.strip() and origin_context.strip():
             criterion = origin_context
-        if not criterion:
+        if not criterion.strip():
             continue
+        if not origin_context:
+            origin_context = criterion
         out.append({
             "stage_idx": stage_idx,
             "due_turn": due_turn,
             "criterion_text": criterion,
-            "origin_context": (origin_context or criterion),
+            "origin_context": origin_context,
         })
     out.sort(key=lambda s: (int(s["stage_idx"]), int(s["due_turn"])))
     return out
@@ -238,16 +242,21 @@ def list_due_grant_report_dossiers_for_scan(
         # due_turn 单源：有未来 due 且仍 executing 即到期候选（不另滤 cadence/grant_action）
         did = int(row["id"])
         due_turn = int(row["due_turn"] or 0)
-        title = str(payload.get("title") or payload.get("purpose") or "").strip()
-        criterion = str(payload.get("ongoing_effects") or "").strip() or title or "依限奏报"
-        origin = str(row["decree_text"] or payload.get("text") or criterion).strip()
+        # Free prose (title / ongoing_effects / decree_text) preserved raw.
+        title = str(payload.get("title") or payload.get("purpose") or "")
+        criterion = str(payload.get("ongoing_effects") or "")
+        if not criterion.strip():
+            criterion = title if title.strip() else "依限奏报"
+        origin = str(row["decree_text"] or payload.get("text") or "")
+        if not origin:
+            origin = criterion
         due.append({
             "commitment_ref": 0,
             "stage_idx": did,  # UNIQUE(commitment_ref, stage_idx, entry_kind)
             "due_turn": due_turn,
             "criterion_text": criterion,
             "origin_context": origin,
-            "title": title or criterion,
+            "title": title if title.strip() else criterion,
             "origin_ref": f"dossier:{did}",
             "payload_json": {
                 "dossier_id": did,

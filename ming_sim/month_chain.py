@@ -1636,21 +1636,22 @@ def _question_as_decision(question: Dict[str, object], *, event_id: str) -> Dict
     for opt in options:
         if not isinstance(opt, dict):
             continue
-        label = str(opt.get("label") or "").strip()
-        if not label:
+        label = str(opt.get("label") or "")
+        if not label.strip():
             continue
         cleaned.append({
             "label": label,
-            "hint": str(opt.get("hint") or "").strip(),
+            "hint": str(opt.get("hint") or ""),
             **{
                 key: opt[key] for key in opt
                 if key not in {"label", "hint"} and opt[key] is not None
             },
         })
+    title = str(question.get("title") or "")
     return {
         "event_id": event_id,
-        "title": str(question.get("title") or "").strip() or "请旨",
-        "context": str(question.get("context") or "").strip(),
+        "title": title if title.strip() else "请旨",
+        "context": str(question.get("context") or ""),
         "options": cleaned,
     }
 
@@ -1711,10 +1712,10 @@ def _consume_rescript_answers(
     def _answer_from_row(row: Dict[str, object]) -> Dict[str, object]:
         choice = row.get("choice") if isinstance(row.get("choice"), dict) else {}
         return {
-            "label": str(choice.get("label") or "").strip(),
-            "hint": str(choice.get("hint") or "").strip(),
-            "note": str(choice.get("note") or "").strip(),
-            "context": str(row.get("context") or "").strip(),
+            "label": str(choice.get("label") or ""),
+            "hint": str(choice.get("hint") or ""),
+            "note": str(choice.get("note") or ""),
+            "context": str(row.get("context") or ""),
             "event_id": str(row.get("event_id") or ""),
             "title": str(row.get("title") or ""),
         }

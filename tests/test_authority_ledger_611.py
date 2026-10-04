@@ -275,20 +275,12 @@ def test_projection_typed_domain_only_and_ignores_payload_authorization(game):
     dossier = db.get_decree_dossier(dossier_id)
     projected = db.project_applicable_authorities(state.turn, dossier)
     assert [row["id"] for row in projected] == [typed]
-    assert bare not in {row["id"] for row in projected}
-    assert informed_only not in {row["id"] for row in projected}
 
     context = decree_mod.build_promulgation_judge_context(db, state, [dossier])
     assert context["dossiers"][0]["held_authorities"] == projected
     assert context["dossiers"][0]["criteria_snapshot_source"]["authorization_ids"] == [
         str(typed),
     ]
-    assert "payload-auth" not in (
-        context["dossiers"][0]["criteria_snapshot_source"]["authorization_ids"]
-    )
-    assert "payload-list" not in (
-        context["dossiers"][0]["criteria_snapshot_source"]["authorization_ids"]
-    )
 
 
 def test_same_dossier_grant_replay_is_idempotent(game):
