@@ -164,7 +164,7 @@ git branch --show-current
 
 - branch: `ak-roles/1847-fixer-w7-n6-n11-n13-n14`
 - delivery commit: `b04ea3af3690a96268119bfb6f553b5289816a5c`
-- report-stamp commit: `4456b365df940bada261c73c00e07bfc7ccb2bf9`（本段修正后见最新 HEAD）
+- docs commits after delivery: `4456b365d`, `8195e6a66bef6d6ce3f71e77ea170570dedb9e38`
 - status: working tree clean after stamp fix
 
 ## 剩余事项
