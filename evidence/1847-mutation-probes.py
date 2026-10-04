@@ -281,10 +281,13 @@ ok(
     "add not in prev" not in (ROOT / "ming_sim/breach_plea.py").read_text(encoding="utf-8"),
     "",
 )
+_cli_src = (ROOT / "ming_sim/cli_backend.py").read_text(encoding="utf-8")
 ok(
     "N10_NO_PROMPT_CALLER_TAG_INFER",
-    "扮演被皇帝召见" not in (ROOT / "ming_sim/cli_backend.py").read_text(encoding="utf-8").split("def _infer_tag")[1].split("\ndef ")[0]
-    and "module_allowed_fields" not in (ROOT / "ming_sim/cli_backend.py").read_text(encoding="utf-8").split("def _infer_tag")[1].split("\ndef ")[0],
+    # _infer_tag deleted (#1847 N11/N12); absence itself proves no prompt→tag infer.
+    "def _infer_tag" not in _cli_src
+    and "扮演被皇帝召见" not in _cli_src
+    and "ming_sim_caller_tag" not in (ROOT / "ming_sim/token_stats.py").read_text(encoding="utf-8"),
     "",
 )
 ok(
@@ -316,9 +319,21 @@ ok(
     "_DIRECTION_NORMALIZE" not in (ROOT / "ming_sim/issues.py").read_text(encoding="utf-8"),
     "",
 )
+_ending_body = (
+    (ROOT / "ming_sim/issues.py")
+    .read_text(encoding="utf-8")
+    .split("def _declared_emperor_ending")[1]
+    .split("\ndef ")[0]
+)
+# Drop docstring so Chinese examples in docs don't false-fail the body check.
+_ending_code = _ending_body.split('"""', 2)[-1] if '"""' in _ending_body else _ending_body
 ok(
-    "N10_NO_FREE_CHINESE_EMPEROR_FATE",
-    'return {"status": token, "summary": ""}' not in (ROOT / "ming_sim/issues.py").read_text(encoding="utf-8").split("def _declared_emperor_ending")[1].split("\ndef ")[0],
+    "N10_EMPEROR_FATE_STRUCTURED_PASSTHROUGH",
+    # cb43ec63a：extractor 契约字段 emperor_fate 非空原样透传；禁同义改写表。
+    "fate.strip()" in _ending_code
+    and 'return {"status": token, "summary": ""}' in _ending_code
+    and "_FATE_ALIASES" not in _ending_code
+    and "_FATE_SYNONYM" not in _ending_code,
     "",
 )
 ok(

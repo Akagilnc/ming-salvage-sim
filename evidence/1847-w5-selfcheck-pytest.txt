@@ -1,0 +1,10 @@
+CMD: MING_SIM_AGY_BIN=/usr/bin/false MING_SIM_CODEX_BIN=/usr/bin/false MING_SIM_CLAUDE_BIN=/usr/bin/false MING_SIM_CURSOR_BIN=/usr/bin/false MING_SIM_KIMI_BIN=/usr/bin/false MING_SIM_GROK_BIN=/usr/bin/false MING_SIM_PI_BIN=/usr/bin/false /Users/akagilnc/WorkSpace/Ming_LLM/.venv/bin/python -m pytest tests/test_cli_backend.py tests/test_decree_commitment_settlement_229.py tests/test_person_delta_adapter.py tests/test_office_rank_562.py tests/test_new_issues_section_rejections.py tests/test_month_chain_1847.py -q --basetemp=/tmp/1847-w5-selfcheck/pytest
+........................................................................ [ 21%]
+........................................................................ [ 43%]
+........................................................................ [ 64%]
+........................................................................ [ 86%]
+.............................................                            [100%]
+333 passed in 17.64s
+real 18.31
+user 10.99
+sys 4.53

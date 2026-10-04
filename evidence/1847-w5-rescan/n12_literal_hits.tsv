@@ -1,0 +1,177 @@
+path	line	snippet
+ming_sim/simulation.py	8	ITEM_FIELD_ALIASES = {
+ming_sim/issues.py	23	POWER_SCORE_FIELDS, POWER_TEXT_FIELDS, CHARACTER_TEXT_FIELDS,
+ming_sim/issues.py	25	GATE_METRIC_KEYS,
+ming_sim/issues.py	71	PERSON_STATUSES,
+ming_sim/issues.py	2064	"power": set(POWER_SCORE_FIELDS),
+ming_sim/issues.py	2878	TRAVEL_SPEED_BY_TONE = {"常行": 1.0, "加急": 1.5, "星夜兼程": 2.0}
+ming_sim/issues.py	3079	if status not in PERSON_STATUSES:
+ming_sim/issues.py	3340	for k in GATE_METRIC_KEYS:  # single source (#14); was duplicate _LEGACY_ACCOUNT_KEYS
+ming_sim/issues.py	6142	person_statuses = set(PERSON_STATUSES)
+ming_sim/issues.py	6887	SURCHARGE_DECREE_FIELDS = frozenset({"region_id", "monthly_amount", "reason", "origin_ref"})
+ming_sim/db.py	26	ECONOMY_ACCOUNTS, POWER_FIELD_LABELS, POWER_SCORE_FIELDS,
+ming_sim/db.py	49	from ming_sim.person_archive_contract import PERSON_STATUSES, PERSON_TITLE_KINDS
+ming_sim/db.py	712	COURT_OFFICE_TYPES = {"内阁", "吏部", "户部", "礼部", "兵部", "刑部", "工部"}
+ming_sim/db.py	713	MINISTRY_OFFICE_TYPES = COURT_OFFICE_TYPES - {"内阁"}
+ming_sim/db.py	795	return "待铨" if kind in COURT_OFFICE_TYPES or not kind else kind
+ming_sim/db.py	811	return "待铨" if kind in COURT_OFFICE_TYPES or not kind else kind
+ming_sim/db.py	5725	if status not in PERSON_STATUSES:
+ming_sim/db.py	11510	DOSSIER_MODES = frozenset({"ordinary", "midzhi"})
+ming_sim/pay_order.py	34	DUE_SUBJECTS = ("军饷", "官俸", "宗禄", "赈济")
+ming_sim/pay_order.py	35	ARREARS_SUBJECTS = ("军饷欠", "官俸欠", "宗禄欠")
+ming_sim/pay_order.py	36	DEFAULT_DUE_PRIORITY = {"军饷": 10, "官俸": 20, "宗禄": 30, "赈济": 40}
+ming_sim/pay_order.py	37	DEFAULT_ARREARS_PRIORITY = {"军饷欠": 10, "官俸欠": 20, "宗禄欠": 30}
+ming_sim/pay_order.py	95	if subject not in DUE_SUBJECTS:
+ming_sim/pay_order.py	100	legal = DUE_SUBJECTS if family == DUE_PRIORITY_FAMILY else ARREARS_SUBJECTS
+ming_sim/pay_order.py	221	config, DUE_PRIORITY_FAMILY, DUE_SUBJECTS, DEFAULT_DUE_PRIORITY, region_id, turn,
+ming_sim/pay_order.py	224	config, ARREARS_PRIORITY_FAMILY, ARREARS_SUBJECTS,
+ming_sim/pay_order.py	228	for subject in DUE_SUBJECTS:
+ming_sim/action_clusters.py	62	LABEL_TO_KIND = {c.label_zh: c.kind for c in ACTION_CLUSTERS}
+ming_sim/action_clusters.py	63	KNOWN_KINDS = frozenset(c.kind for c in ACTION_CLUSTERS)
+ming_sim/fiscal_fact_brief.py	52	FACT_CLASS_MAP = {
+ming_sim/fiscal_fact_brief.py	190	from ming_sim.pay_order import DEFAULT_DUE_PRIORITY, DUE_SUBJECTS
+ming_sim/fiscal_fact_brief.py	194	subjects=DUE_SUBJECTS,
+ming_sim/fiscal_fact_brief.py	217	from ming_sim.pay_order import DEFAULT_DUE_PRIORITY, DUE_SUBJECTS, haircut_due, resolve_pay_order_overrides
+ming_sim/fiscal_fact_brief.py	220	default_order = tuple(sorted(DUE_SUBJECTS, key=DEFAULT_DUE_PRIORITY.__getitem__))
+ming_sim/fiscal_fact_brief.py	224	dues = {s: max(0.0, float(due_map.get(s, 0) or 0)) for s in DUE_SUBJECTS}
+ming_sim/fiscal_fact_brief.py	227	unpaid = {s: 0.0 for s in DUE_SUBJECTS}
+ming_sim/fiscal_fact_brief.py	244	actual_paid = {s: max(0.0, dues[s] - min(dues[s], unpaid[s])) for s in DUE_SUBJECTS}
+ming_sim/fiscal_fact_brief.py	275	ARREARS_SUBJECTS, DEFAULT_ARREARS_PRIORITY, resolve_pay_order_overrides,
+ming_sim/fiscal_fact_brief.py	279	default_order = tuple(sorted(ARREARS_SUBJECTS, key=DEFAULT_ARREARS_PRIORITY.__getitem__))
+ming_sim/fiscal_fact_brief.py	283	actual_repaid = {s: 0.0 for s in ARREARS_SUBJECTS}
+ming_sim/fiscal_fact_brief.py	304	for s in ARREARS_SUBJECTS
+ming_sim/fiscal_fact_brief.py	319	subjects=ARREARS_SUBJECTS,
+ming_sim/execution_pressure.py	12	LOCALITY_SCOPES = frozenset({"national", "single", "none"})
+ming_sim/execution_pressure.py	36	PROVINCE_KINDS = frozenset({"两京", "布政司"})
+ming_sim/models.py	356	VALID_CHANNELS = frozenset({"api", "cli"})  # 合法执行通道集合，新增通道只改这里
+ming_sim/strict_types.py	19	REJECTION_VERDICT_KEYS = frozenset({
+ming_sim/strict_types.py	24	REJECTION_SNAPSHOT_KEYS = frozenset({
+ming_sim/strict_types.py	29	IMPERIAL_AUTHORITY_BANDS = frozenset(POWER_BANDS)
+ming_sim/breach_plea.py	48	BREACH_KIND_LABELS = {
+ming_sim/decree_vocabulary.py	5	DOSSIER_ACTION_TYPES = frozenset({
+ming_sim/decree_vocabulary.py	29	RESCRIPT_EMITTED_DOSSIER_ACTION_TYPES = frozenset({
+ming_sim/decree_vocabulary.py	38	TARGET_KINDS = frozenset({
+ming_sim/decree_vocabulary.py	73	DOSSIER_ACTION_POLICY = {
+ming_sim/decree_vocabulary.py	117	DOSSIER_STATUS_CN = {
+ming_sim/decree_vocabulary.py	124	DOSSIER_DECISION_CN = {
+ming_sim/decree_vocabulary.py	132	DOSSIER_OUTCOME_CN = {
+ming_sim/fiscal_tick.py	27	from ming_sim.pay_order import ARREARS_SUBJECTS, DUE_SUBJECTS
+ming_sim/fiscal_tick.py	32	KNOWN_ACTIONS = {"补饷", "清丈", "挪借火耗", "追赃", "清欠", "蠲免", "营建"}
+ming_sim/fiscal_tick.py	33	_DUE_KEYS = DUE_SUBJECTS  # #14 single source with pay_order
+ming_sim/fiscal_tick.py	34	_ARREARS_KEYS = ARREARS_SUBJECTS
+ming_sim/fiscal_tick.py	71	if hk not in _DUE_KEYS:
+ming_sim/fiscal_tick.py	96	for h in _DUE_KEYS:
+ming_sim/fiscal_tick.py	138	if hk not in _DUE_KEYS:
+ming_sim/fiscal_tick.py	147	for h in _DUE_KEYS:
+ming_sim/fiscal_tick.py	199	C0 = {k: cash[k] for k in CASH_KEYS if k.startswith("C_")}
+ming_sim/fiscal_tick.py	207	if hk not in _DUE_KEYS:
+ming_sim/fiscal_tick.py	217	due_order = _resolve_order_param(p, "due_order", _DUE_KEYS)
+ming_sim/fiscal_tick.py	229	实付分账={h: 0.0 for h in _DUE_KEYS},
+ming_sim/fiscal_tick.py	230	**{f"haircut_{h}": _raw_due(p, h) - eff_due[h] for h in _DUE_KEYS},
+ming_sim/fiscal_tick.py	262	if a["type"] not in KNOWN_ACTIONS:
+ming_sim/fiscal_tick.py	376	for h in due_order:  # #653：override 在位时按旨序付款；缺省=祖制 _DUE_KEYS 序
+ming_sim/fiscal_tick.py	452	o_due_order = _oracle_order(p, "due_order", _DUE_KEYS)
+ming_sim/relations.py	14	MINISTER_EDGE_KINDS = frozenset({
+ming_sim/relations.py	17	CREDIT_EDGE_KINDS = frozenset({"兑现所托", "辜负", "撑腰", "弃卒保车", "知遇"})
+ming_sim/relations.py	21	CREDIT_DIRECTION = {
+ming_sim/constants.py	26	DOSSIER_LINK_TYPES = frozenset({"护卫", "稽核", "接应"})
+ming_sim/constants.py	51	BUILDING_FIELD_LABELS = {
+ming_sim/constants.py	62	BUILDING_FIELD_ALIASES = {
+ming_sim/constants.py	78	POWER_SCORE_FIELDS = ("leverage", "satisfaction", "military_strength", "cohesion", "supply")
+ming_sim/constants.py	84	POWER_FIELD_LABELS = {
+ming_sim/constants.py	96	POWER_FIELD_ALIASES = {
+ming_sim/constants.py	97	**{field: field for field in POWER_SCORE_FIELDS + POWER_TEXT_FIELDS},
+ming_sim/constants.py	123	REGION_FIELD_LABELS = {
+ming_sim/constants.py	140	ARMY_FIELD_LABELS = {
+ming_sim/constants.py	166	REGION_FIELD_ALIASES = {
+ming_sim/constants.py	199	ARMY_FIELD_ALIASES = {
+ming_sim/constants.py	251	EXIT_COMMANDS = {"exit", "退出游戏", "退出", "exit game"}
+ming_sim/constants.py	254	COURT_BREAK_COMMANDS = {"q", "quit", "退朝", "下朝", "今日且到此"}
+ming_sim/constants.py	256	AMBIGUOUS_CLOSE_COMMANDS = {"今日就到这里吧？", "今日就到这里吧"}
+ming_sim/constants.py	258	STAY_ATTEND_COMMANDS = {"留下听着"}
+ming_sim/constants.py	259	MINISTER_DISMISS_COMMANDS = {"done", "退下", "跪安", "退了", "下去"}
+ming_sim/constants.py	265	ECONOMY_PURPOSES = {
+ming_sim/constants.py	269	ECONOMY_TARGET_KINDS = {
+ming_sim/constants.py	284	POPULATION_TRANSFER_FIELDS = frozenset({"source", "target", "amount", "reason", "origin_ref"})
+ming_sim/constants.py	295	BANDIT_ABSORPTION_FIELDS = frozenset({
+ming_sim/constants.py	301	RECOVERY_GRANT_ACTIONS = frozenset({"赈灾", "招抚屯田"})
+ming_sim/constants.py	302	RECOVERY_OUTCOME_FACTORS = {
+ming_sim/constants.py	311	GATE_METRIC_KEYS = ("国库", "内库", "民心", "皇威")
+ming_sim/appointment_tenure.py	9	APPOINTMENT_TENURES = frozenset({"真除", "署理", "兼署", "加衔"})
+ming_sim/participant_roster.py	30	NON_PERSON_PARTICIPANT_NAMES = frozenset({
+ming_sim/participant_roster.py	39	BARE_INSTITUTION_PARTICIPANT_NAMES = frozenset({
+ming_sim/qualitative.py	11	CHARACTER_QUALITATIVE_BANDS = {
+ming_sim/qualitative.py	18	CHARACTER_AXIS_LABELS = {
+ming_sim/month_open_snapshot.py	19	# 点击前四键：国库/内库/民心/皇威（GATE_METRIC_KEYS 同源，显式钉死顺序）
+ming_sim/content.py	28	GATE_METRIC_KEYS,
+ming_sim/content.py	191	if key not in GATE_METRIC_KEYS:
+ming_sim/content.py	192	return f"未知 metric「{key}」（须 {'/'.join(GATE_METRIC_KEYS)} 之一，或用 表.id.字段 形式）"
+ming_sim/supervision.py	47	EXECUTION_FORMS = frozenset({
+ming_sim/supervision.py	62	INTEGRITY_UPRIGHT_BANDS = frozenset({"操守清正", "清介可称"})  # 孤直型
+ming_sim/supervision.py	63	INTEGRITY_MEDIOCRE_BANDS = frozenset({"操守多亏", "操守未稳", "操守平常"})  # 庸吏
+ming_sim/supervision.py	72	DENUNCIATION_ALLOWED_COLS = frozenset({
+ming_sim/supervision.py	81	PRESENCE_ALLOWED_COLS = frozenset({
+ming_sim/supervision.py	85	EXPOSURE_ALLOWED_COLS = frozenset({
+ming_sim/supervision.py	174	DECLARED_REPORT_ACTION_MARKS = frozenset({
+ming_sim/person_archive_contract.py	23	PERSON_STATUSES = (
+ming_sim/person_archive_contract.py	59	PERSON_REASON_CODE_ALIASES = {
+ming_sim/person_archive_contract.py	66	PERSON_REASON_TRANSITION_OVERRIDES = {
+ming_sim/person_archive_contract.py	73	PERSON_TITLE_KIND_TRANSITION_OVERRIDES = {
+ming_sim/person_archive_contract.py	142	PERSON_TRANSITION_MATRIX = {
+ming_sim/due_review.py	45	DUE_REVIEW_ENTRY_KIND_WHITELIST = frozenset({ENTRY_KIND_STAGED})
+ming_sim/cli_backend.py	128	CLI_REASONING_STRENGTH_RUNNERS = frozenset({"codex", "claude", "grok", "pi"})
+ming_sim/cli_backend.py	2088	科目闭集唯一真源 = pay_order.DUE_SUBJECTS / ARREARS_SUBJECTS。
+ming_sim/cli_backend.py	2091	ARREARS_SUBJECTS,
+ming_sim/cli_backend.py	2093	DUE_SUBJECTS,
+ming_sim/cli_backend.py	2118	due_set = "/".join(DUE_SUBJECTS)
+ming_sim/cli_backend.py	2119	arrears_set = "/".join(ARREARS_SUBJECTS)
+ming_sim/flows.py	544	ISSUE_METRIC_KEYS = {"民心", "皇威"}
+ming_sim/flows.py	545	ISSUE_METRIC_LOCK_CAPS = {
+ming_sim/audience_night.py	152	SUMMON_METHODS = frozenset({METHOD_XUANRU, METHOD_CHUANZHAO, METHOD_YUECI})
+ming_sim/audience_night.py	167	PRESENCE_EFFECTS = frozenset({PRESENCE_NONE, PRESENCE_ENTER, PRESENCE_EXIT})
+ming_sim/authority_privileges.py	10	AUTHORITY_PRIVILEGE_SET = frozenset(AUTHORITY_PRIVILEGES)
+ming_sim/commitment_backlash.py	28	SOURCE_KINDS = frozenset({
+ming_sim/action_materialize.py	480	GRANT_ACTIONS = frozenset({
+ming_sim/action_materialize.py	483	GRANT_HONORIFICS = frozenset({"加衔", "荫叙"})
+ming_sim/action_materialize.py	485	XIEXIANG_TARGET_KINDS = frozenset({"army"})
+ming_sim/entities/textual_fact/store.py	11	TEXTUAL_FACT_SUBJECT_KINDS = frozenset({"character", "army", "region", "affair"})
+ming_sim/entities/affair/store.py	15	ATTACH_BIRTH = frozenset({_ATTACH_NEW, _ATTACH_EXISTING})
+ming_sim/entities/affair/store.py	16	ATTACH_RESULT_CLOSE = frozenset({_ATTACH_CLOSE})
+ming_sim/entities/affair/store.py	17	ATTACH_EXPERIENCE = frozenset({_ATTACH_EXISTING})
+scripts/portrait_status.py	21	CONSORT_RANKS = {"皇后", "贵人", "贵妃", "妃", "嫔"}
+scripts/sum_token_log.py	35	PRICES = {
+scripts/play_as_emperor.py	36	PERSONA_PRESETS = {
+web/src/components/drawers.tsx	7	import { COURT_OFFICE_TYPE_ORDER } from "./ministerFilters";
+web/src/components/drawers.tsx	636	const offices = COURT_OFFICE_TYPE_ORDER;
+web/src/components/ministerFilters.ts	4	export const COURT_OFFICE_TYPE_ORDER = [
+web/src/components/ministerFilters.ts	14	const MINISTRY_OFFICE_TYPES = new Set<string>(
+web/src/components/ministerFilters.ts	15	COURT_OFFICE_TYPE_ORDER.filter((officeType) => officeType !== "内阁"),
+web/src/components/ministerFilters.ts	19	const index = (COURT_OFFICE_TYPE_ORDER as readonly string[]).indexOf(officeType);
+web/src/components/ministerFilters.ts	20	return index >= 0 ? index : COURT_OFFICE_TYPE_ORDER.length;
+web/src/components/ministerFilters.ts	28	(m.office_type === "内阁" || MINISTRY_OFFICE_TYPES.has(m.office_type || ""))
+web_app.py	122	ALLOWED_PORTRAIT_TYPES = {"image/png", "image/jpeg", "image/webp"}
+web_app.py	124	_DEFAULT_FAVORITES = frozenset({"王承恩", "曹化淳", "李若琏", "魏忠贤", "田尔耕"})
+web_app.py	832	self.favorites: set = set(json.loads(_fav_raw)) if _fav_raw else set(_DEFAULT_FAVORITES)
+web_app.py	1054	favorites = set(json.loads(fav_raw)) if fav_raw else set(_DEFAULT_FAVORITES)
+web_app.py	1662	FIXED_CATEGORIES = {
+tests/conftest.py	283	CHARACTER_AXIS_SENTINEL = {
+tests/test_pay_order_override_653.py	626	from ming_sim.fiscal_tick import _DUE_KEYS, _oracle_order
+tests/test_pay_order_override_653.py	628	_oracle_order({"due_order": bad}, "due_order", _DUE_KEYS)
+tests/test_pay_order_override_653.py	1376	for h in ft._DUE_KEYS:
+tests/test_fiscal_substrate_bridge.py	3450	ZHONGYUAN_JINGSHI_GOLDEN = {
+tests/test_fiscal_substrate_bridge.py	3478	REGULAR_PROVINCE_FIRST_TICK_GOLDEN = {
+tests/test_fiscal_substrate_bridge.py	3583	ZHONGYUAN_JINGSHI_PRIMARY_SOURCE = {
+tests/test_fiscal_substrate_bridge.py	3663	SOUTH_SOUTHWEST_SEEDS = {
+tests/test_fiscal_substrate_bridge.py	4116	JIANGNAN_CORE_EXPECTED = {
+tests/dossier_test_helpers.py	2	LIAO_PAY_COVERT_TASK = {
+tests/dossier_test_helpers.py	13	TYPED_COVERT_TASK = {
+tests/dossier_test_helpers.py	28	TYPED_COVERT_EXTRACT = {
+tests/test_value_matrix_691.py	9	EXPECTED_MATRIX = {
+tests/test_faction_leverage_9.py	592	COURT_OFFICE_TYPES/MINISTRY_OFFICE_TYPES 明列刑部为正经六部、offices.json 词干表也把
+tests/test_faction_leverage_9.py	597	MINISTRY_OFFICE_TYPES,
+tests/test_faction_leverage_9.py	604	for ministry in MINISTRY_OFFICE_TYPES:
+tests/test_faction_leverage_9.py	636	NON_COURT = {"后宫", "生员", "乡绅", "富商", "布衣", "流寇", "待铨"}
+tests/test_mutiny_third_strike_318.py	17	BANDIT_POWERS = frozenset({"bandits", "bandit_li_zicheng"})
+tests/test_family_tail_615.py	14	BLOCKED_LAYERS = {"cabinet_drafting", "palace_rescript", "six_offices"}
+tests/test_family_tail_615.py	15	SNAPSHOT_KEYS = {
+tests/test_relation_read_640.py	28	FROZEN_DTO_WHITELIST = {"source", "target", "summary", "recent_context", "updated_at_period"}

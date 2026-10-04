@@ -1,0 +1,4 @@
+rule	detail
+literal_hit_not_duplicate_enum	n12_literal_hits=176; single-definition COURT/GATE/PERSON/DUE/FAVORITES reads + subsets KEEP; only identical full enums converged
+smell_unused_alt_iface	caller_tag helpers deleted; remaining name smells without second definition EXCLUDED as non-duplicate
+spike_oracle	spike_settle_tick.py KEEP_spike_oracle explicit; not silent archive drop

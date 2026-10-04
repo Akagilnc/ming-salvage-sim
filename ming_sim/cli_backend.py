@@ -11,7 +11,7 @@
 这是探针的预期，不是缺陷。
 
 调用约定来自 wiki/concepts/codex-bot-conventions.md + cross-model-review.md：
-- agy：先暖 keychain（auth 是 race），Agy 1.2.0 用 `--print=<prompt>`。
+- agy：Agy 1.2.0 用 `--print=<prompt>`；auth race 靠 transport 可重试 typed（见 `_AGY_AUTH_MARKERS`），不另起 keychain 预热硬时限。
 - codex：`codex exec -` 必须 stdin pipe，绝不 positional；始终 2>&1。
 """
 
@@ -227,9 +227,11 @@ def _login_shell_path() -> Optional[str]:
         # printenv 是外部命令，读到的是登录 shell 导出的 env PATH（恒冒号分隔）。
         # flag 分开传 -l -i -c：组合形式 -lic 在 fish 等 shell 报错（不支持组合单字符
         # 选项）；分开形式各 shell 通吃，仍由外层 try 兜底（gemini PR#115 high）。
+        # 无 timeout：subprocess.run(timeout=…) 在 TimeoutExpired 会 process.kill()=SIGKILL
+        # （#1847 N13 / 共享硬规 #9）。登录 PATH 探测偶发；失败则走下方 except。
         proc = _RAW_RUN(
             [shell, "-l", "-i", "-c", 'printf "<<<CMRPATH>>>"; printenv PATH; printf "<<<ENDPATH>>>"'],
-            capture_output=True, text=True, timeout=8,
+            capture_output=True, text=True,
         )
         m = re.search(r"<<<CMRPATH>>>(.*?)<<<ENDPATH>>>", proc.stdout or "", re.S)
         if m:
@@ -343,31 +345,6 @@ def _trace(record: Dict[str, Any]) -> None:
             print(f"[cli_backend] LLM trace → {_TRACE_PATH}", flush=True)
     except Exception as exc:  # trace 永不应中断游戏
         _log(f"trace 写盘失败：{exc}")
-
-
-def _warm_keychain() -> None:
-    """暖 macOS keychain 路径，缓解 agy headless auth 的 1s race（见 wiki）。
-
-    不用 subprocess.run(timeout=…)：CPython 在 TimeoutExpired 时会 process.kill()
-    （POSIX=SIGKILL，共享硬规 #9 / #1847 N13）。软停即可；暖链失败可忽略。
-    """
-    proc = None
-    try:
-        proc = subprocess.Popen(
-            ["security", "find-generic-password", "-s", "Antigravity Safe Storage"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        try:
-            proc.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            proc.terminate()
-            try:
-                proc.wait(timeout=1)
-            except subprocess.TimeoutExpired:
-                pass  # no SIGKILL escalation
-    except Exception:
-        pass
 
 
 # CLI 子进程读循环轮询步长（秒）：只决定「多快发现静默/退出」，不是任何超时预算。
@@ -651,7 +628,7 @@ def _cli_runner_command(
     """runner → (argv, stdin 文本, env)。各 runner 调用约定单真源；执行读法共用 helper。
 
     实测约定（docs/LLM_BACKEND_BENCH.md §9 / #1256 / #1274-qa-y1）：
-    - agy 1.2.0：`--print=<prompt>` 单参数；调用前先暖 keychain（auth race）。
+    - agy 1.2.0：`--print=<prompt>` 单参数；auth race 靠 transport 可重试 typed。
     - codex：`exec -` 必须 stdin pipe（绝不 positional）；`--skip-git-repo-check`
       （沙箱 cwd 非 git）+ `--ephemeral`（并发不撞共享 session）；干净回话在 stdout。
     - claude：`-p --output-format text`，prompt 走 stdin；thinking 预算走 env。
@@ -783,8 +760,6 @@ def _iter_cli_runner_text(
     from ming_sim.exceptions import LLMUnavailable
     from ming_sim.llm_transport import empty_output_failure, transport_failure_unavailable
 
-    if runner == "agy":
-        _warm_keychain()  # 操作步骤（缓解 headless auth race），不是重试策略
     kimi_agent_path: Optional[str] = None
     if materials_dir and runner == "kimi":
         handle = tempfile.NamedTemporaryFile("w", suffix=".md", encoding="utf-8", delete=False)
@@ -888,7 +863,7 @@ def _run_cli_runner(
 
 
 def _run_agy(prompt: str, *, materials_dir: Optional[str] = None) -> Tuple[str, int]:
-    """调 agy --print=<prompt> 一次（warm keychain 仍做；重试归 transport）。"""
+    """调 agy --print=<prompt> 一次（重试归 transport）。"""
     return _run_cli_runner("agy", prompt, materials_dir=materials_dir)
 
 

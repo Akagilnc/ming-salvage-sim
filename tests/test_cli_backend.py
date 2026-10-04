@@ -685,7 +685,6 @@ def test_resolve_cli_bin_absolutizes_relative_result(monkeypatch):
 def test_run_runner_execs_resolved_abspath(monkeypatch, runner, resolved):
     cb._BIN_CACHE.clear()
     monkeypatch.setattr(cb, "_resolve_cli_bin", lambda name, configured: resolved)
-    monkeypatch.setattr(cb, "_warm_keychain", lambda: None)
     monkeypatch.delenv("MING_SIM_CODEX_REASONING", raising=False)
     captured = _capture_run(monkeypatch, _P(stdout="STDOUT_BODY"))
     getattr(cb, runner)("p")
@@ -836,10 +835,7 @@ def _agy_popen(monkeypatch, script):
     """agy 子进程替身：script 为逐次调用的 (stdout, returncode)。"""
     from tests.cli_process_doubles import FakeCliProcess
 
-    state = {"agy": 0, "warm": 0}
-
-    def fake_warm():
-        state["warm"] += 1
+    state = {"agy": 0}
 
     def fake_popen(cmd, **kw):
         index = state["agy"]
@@ -852,7 +848,6 @@ def _agy_popen(monkeypatch, script):
             popen_kwargs=kw,
         )
 
-    monkeypatch.setattr(cb, "_warm_keychain", fake_warm)
     monkeypatch.setattr(cb.subprocess, "Popen", fake_popen)
     return state
 
@@ -862,7 +857,6 @@ def test_run_agy_success_single_subprocess(monkeypatch):
     out, attempts = cb._run_agy("PROMPT")
     assert out == "STDOUT_BODY" and attempts == 1
     assert state["agy"] == 1
-    assert state["warm"] >= 1  # 暖 keychain 是操作步骤，不是重试策略
 
 
 @pytest.mark.parametrize(

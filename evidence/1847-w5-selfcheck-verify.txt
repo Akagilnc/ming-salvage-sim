@@ -1,0 +1,21 @@
+=== STRUCTURAL (NOT mutation real-run) ===
+[PASS] STRUCT_no__warm_keychain
+[PASS] STRUCT_no_subprocess_run_timeout
+[PASS] STRUCT_no_proc_kill_call
+[PASS] STRUCT_no_thinking_stream_cap
+[PASS] STRUCT_old_had__warm_keychain_wait_timeout
+LIMITATION: structural/AST/git-show only — not OS SIGKILL emission, not live PTY
+
+=== REAL ENTRY ===
+[PASS] ENTRY_import_no__warm_keychain
+[PASS] ENTRY__run_agy_callable_without_warm
+[PASS] ENTRY_no__legacy_commitment_stop_gate
+ELAPSED_s=0.834
+ALL_VERIFY_OK
+
+=== CROSS-REF ===
+focused_pytest: evidence/1847-w5-selfcheck-pytest.txt → 333 passed in 17.64s / real 18.31
+mutation_rerun: evidence/1847-w5-selfcheck-mutation-rerun.txt → EXIT=0 / real 1.22
+prior_mutation_kept: evidence/1847-n6-n10-mutation.txt + evidence/1847-selfcheck-mutation.txt
+rescan_dossier: evidence/1847-w5-rescan/ (scan_classify_n6_n13.py)
+git_diff_cb43ec63a_--check: 0 lines

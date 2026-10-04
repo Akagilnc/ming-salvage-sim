@@ -212,6 +212,5 @@ def install_fake_cli_runner(monkeypatch, runs: Sequence[Dict[str, Any]]) -> Fake
     script = FakeCliRunnerScript(runs)
     monkeypatch.setattr(cb.subprocess, "Popen", script.popen)
     monkeypatch.setattr(cb, "_resolve_cli_bin", lambda name, configured: f"/fake/{name}")
-    monkeypatch.setattr(cb, "_warm_keychain", lambda: None)
     monkeypatch.setattr(cb, "_trace", lambda rec: None)
     return script

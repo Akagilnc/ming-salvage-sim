@@ -1,13 +1,50 @@
 path	line	symbol	disposition	note	class
-ming_sim/db.py	—	__leverage_offsets_rank_rules_562 marker write	DELETED	prior round; no production consumer	retired migration marker
-tests/test_office_rank_562.py	—	marker-only reload test	DELETED	prior round dedicated retired test	专属测试
-ming_sim/cli_backend.py	—	_infer_tag stub	DELETED	prior round empty shell after keyword infer deleted	空壳
-tests/test_cli_backend.py	—	infers_trace_tag_from_prompt	DELETED	prior round dedicated retired test	专属测试
-ming_sim/issues.py	—	pairing_warnings empty return key	DELETED	prior round unused compat shape	兼容形状
-tests/test_initiative_resolve_pairing.py	—	pairing_warnings empty assert file	DELETED	prior round	专属测试
-ming_sim/issues.py	516	_legacy_commitment_stop_gate	DELETED	this round; resolve_condition prose→gate compat	退役兼容
-tests/test_decree_commitment_settlement_229.py	175	test_legacy_character_resolve_condition_...	DELETED	this round dedicated legacy test	专属测试
-ming_sim/person_archive_contract.py	59	PERSON_LEGACY_ALLEGIANCE_CHANGE_WAYS	DELETED	this round unused legacy constant	无用返回/常量形状
-tests/test_person_delta_adapter.py	159	pairing_warnings not in applied	KEEP	negative live contract assert	现役负向契约
-ming_sim/db.py	—	__leverage_offsets_calibrated / float_v2	KEEP	serves live calibration/precision migration	现役迁移
-rescript/0055 gates	—	decision_key / negative gates	KEEP	boundary forbid delete	0055现役闸
+ming_sim/db.py	2620	__leverage_offsets_calibrated	KEEP	serves live calibration migration	retired_or_live_gate
+ming_sim/db.py	2623	__leverage_offsets_calibrated	KEEP	serves live calibration migration	retired_or_live_gate
+ming_sim/db.py	2719	__leverage_offsets_calibrated	KEEP	serves live calibration migration	retired_or_live_gate
+ming_sim/db.py	2731	float_v2	KEEP	serves live precision migration	retired_or_live_gate
+ming_sim/db.py	2734	float_v2	KEEP	serves live precision migration	retired_or_live_gate
+ming_sim/db.py	5847	__leverage_offsets_calibrated	KEEP	serves live calibration migration	retired_or_live_gate
+ming_sim/db.py	5853	__leverage_offsets_calibrated	KEEP	serves live calibration migration	retired_or_live_gate
+ming_sim/db.py	5886	__leverage_offsets_calibrated	KEEP	serves live calibration migration	retired_or_live_gate
+ming_sim/db.py	5890	float_v2	KEEP	serves live precision migration	retired_or_live_gate
+tests/test_audience_restore_505.py	601	test_legacy	DELETED	dedicated legacy test removed	retired_or_live_gate
+tests/test_db_broad_except_surface.py	78	test_legacy	DELETED	dedicated legacy test removed	retired_or_live_gate
+tests/test_pay_order_override_653.py	902	test_legacy	DELETED	dedicated legacy test removed	retired_or_live_gate
+tests/test_web_audience_night_498.py	679	test_legacy	DELETED	dedicated legacy test removed	retired_or_live_gate
+tests/test_army_maintenance_retire_173.py	91	test_legacy	DELETED	dedicated legacy test removed	retired_or_live_gate
+tests/test_decree_commitment_creation_136.py	636	test_legacy	DELETED	dedicated legacy test removed	retired_or_live_gate
+tests/test_audience_night_498.py	88	test_legacy	DELETED	dedicated legacy test removed	retired_or_live_gate
+tests/test_person_delta_adapter.py	159	pairing_warnings	KEEP	pairing_warnings not in applied — negative live contract assert	retired_or_live_gate
+tests/test_person_delta_adapter.py	563	test_legacy	DELETED	dedicated legacy test removed	retired_or_live_gate
+tests/test_person_delta_adapter.py	2236	test_legacy	DELETED	dedicated legacy test removed	retired_or_live_gate
+tests/test_llm_channel_config.py	425	test_legacy	DELETED	dedicated legacy test removed	retired_or_live_gate
+tests/test_audience_travel_gating_670.py	837	test_legacy	DELETED	dedicated legacy test removed	retired_or_live_gate
+tests/test_population_unit_648.py	143	test_legacy	DELETED	dedicated legacy test removed	retired_or_live_gate
+tests/test_population_unit_648.py	279	test_legacy	DELETED	dedicated legacy test removed	retired_or_live_gate
+tests/test_population_unit_648.py	322	test_legacy	DELETED	dedicated legacy test removed	retired_or_live_gate
+tests/test_faction_leverage_9.py	776	test_legacy	DELETED	dedicated legacy test removed	retired_or_live_gate
+tests/test_faction_leverage_9.py	810	__leverage_offsets_calibrated	KEEP	serves live calibration migration	retired_or_live_gate
+tests/test_faction_leverage_9.py	832	__leverage_offsets_calibrated	KEEP	serves live calibration migration	retired_or_live_gate
+tests/test_faction_leverage_9.py	886	__leverage_offsets_calibrated	KEEP	serves live calibration migration	retired_or_live_gate
+tests/test_faction_leverage_9.py	912	__leverage_offsets_calibrated	KEEP	serves live calibration migration	retired_or_live_gate
+tests/test_faction_leverage_9.py	920	__leverage_offsets_calibrated	KEEP	serves live calibration migration	retired_or_live_gate
+tests/test_faction_leverage_9.py	945	__leverage_offsets_calibrated	KEEP	serves live calibration migration	retired_or_live_gate
+tests/test_faction_leverage_9.py	946	__leverage_offsets_calibrated	KEEP	serves live calibration migration	retired_or_live_gate
+tests/test_faction_leverage_9.py	1122	__leverage_offsets_calibrated	KEEP	serves live calibration migration	retired_or_live_gate
+tests/test_faction_leverage_9.py	1123	float_v2	KEEP	serves live precision migration	retired_or_live_gate
+tests/test_faction_leverage_9.py	1128	float_v2	KEEP	serves live precision migration	retired_or_live_gate
+tests/test_population_transfers_649.py	306	test_legacy	DELETED	dedicated legacy test removed	retired_or_live_gate
+tests/test_issue_entities.py	71	test_legacy	DELETED	dedicated legacy test removed	retired_or_live_gate
+tests/test_issue_entities.py	94	test_legacy	DELETED	dedicated legacy test removed	retired_or_live_gate
+tests/test_appointment_tenure_607.py	58	test_legacy	DELETED	dedicated legacy test removed	retired_or_live_gate
+tests/test_surcharge_causal_chain_650.py	458	test_legacy	DELETED	dedicated legacy test removed	retired_or_live_gate
+tests/test_army_salary_44.py	274	test_legacy	DELETED	dedicated legacy test removed	retired_or_live_gate
+tests/test_executor_routing_721.py	130	test_legacy	DELETED	dedicated legacy test removed	retired_or_live_gate
+tests/test_event_trigger_gate.py	1653	test_legacy	DELETED	dedicated legacy test removed	retired_or_live_gate
+tests/test_event_trigger_gate.py	1696	test_legacy	DELETED	dedicated legacy test removed	retired_or_live_gate
+tests/test_event_trigger_gate.py	1738	test_legacy	DELETED	dedicated legacy test removed	retired_or_live_gate
+tests/test_event_trigger_gate.py	3449	test_legacy	DELETED	dedicated legacy test removed	retired_or_live_gate
+tests/test_refugee_loop_652.py	620	test_legacy	DELETED	dedicated legacy test removed	retired_or_live_gate
+tests/test_override_breach_costs_564.py	316	test_legacy	DELETED	dedicated legacy test removed	retired_or_live_gate
+tests/test_effect_origin_558.py	161	test_legacy	DELETED	dedicated legacy test removed	retired_or_live_gate
