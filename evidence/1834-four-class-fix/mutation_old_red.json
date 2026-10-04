@@ -19,6 +19,10 @@
     "len": 120,
     "full": false
   },
+  "F16_building_old_red": {
+    "stored_len": 160,
+    "full": false,
+    "suffix_kept": false
+  },
   "verdict": true
 }
-

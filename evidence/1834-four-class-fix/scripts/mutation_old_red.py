@@ -153,19 +153,40 @@ def main() -> int:
             "full": old_due == content,
         }
 
+        # building status old crop (missed by prior [:digits]-only enum)
+        long_status = (
+            "新立营建须按原估料核验木石砖灰并会同工部司官亲履工所，"
+            "凡偷减材料、虚报进度、挪移工食者立时纠参，"
+            "且不得以年例不足为由另向沿途州县摊派丁夫与折色，"
+            "其已支未销之工料银两限两月内按册清结，逾期按挪移论处，"
+            "并令巡按御史随同按册抽核，不得仅凭司府申报了事，"
+            "各厂作匠籍须与工部实发流水对读，有名无役者尽数删除，"
+            "违者工部堂上官议处；此事只在营造落地，严禁再向百姓加派。"
+        )
+        cropped_status = long_status.strip()[:160]
+        f16_building_old = {
+            "stored_len": len(cropped_status),
+            "full": cropped_status == long_status,
+            "suffix_kept": cropped_status.endswith("折色。"),
+        }
+
         out = {
             "F15_old_red": f15_old,
             "F16_staged_old_red": f16_staged_old,
             "F16_fiscal_old_red": f16_fiscal_old,
             "F16_due_old_red": f16_due_old,
+            "F16_building_old_red": f16_building_old,
             "verdict": (
                 (not f15_old["clean"])
                 and (not f16_staged_old["suffix_kept"])
                 and (not f16_fiscal_old["full"])
                 and (not f16_due_old["full"])
+                and (not f16_building_old["full"])
             ),
         }
-        print(json.dumps(out, ensure_ascii=False, indent=2))
+        dest = Path(__file__).resolve().parents[1] / "mutation_old_red.json"
+        dest.write_text(json.dumps(out, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        print(dest.read_text(encoding="utf-8"), end="")
         return 0 if out["verdict"] else 1
     finally:
         if prepared is not None:

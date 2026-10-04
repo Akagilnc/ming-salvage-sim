@@ -7150,8 +7150,8 @@ class GameDB:
             if alias and alias not in merged_aliases:
                 merged_aliases.append(alias)
         new_aliases = "，".join(merged_aliases)
-        new_status = str(status or row["status"] or "")[:200]
-        new_last_action = str(last_action or reason or row["last_action"] or "")[:200]
+        new_status = str(status or row["status"] or "")
+        new_last_action = str(last_action or reason or row["last_action"] or "")
         if old_name == new_name and old_aliases == new_aliases and row["status"] == new_status and row["last_action"] == new_last_action:
             return None
         self.conn.execute(
@@ -7560,7 +7560,8 @@ class GameDB:
                     stored_new = new_value
                     log_delta = actual_delta
                 else:  # REGION_TEXT_FIELDS
-                    text_value = str(value).strip()[:160]
+                    # status/天灾/人祸等自由正文进 region_report → 世界盘面，禁止 [:N]（#1834 F16）。
+                    text_value = str(value).strip()
                     if field == "controlled_by":
                         if (
                             value is None
@@ -8301,7 +8302,8 @@ class GameDB:
                     stored_new = new_value
                     log_delta = actual_delta
                 elif field in ARMY_TEXT_FIELDS:
-                    text_value = str(value).strip()[:160]
+                    # station/commander/status 等进 army_report → 世界盘面，禁止 [:N]（#1834 F16）。
+                    text_value = str(value).strip()
                     if not text_value or text_value == str(old_value):
                         continue
                     # #659：station_region 非空须为已入库 regions.id；禁止从 station 文本反推。
@@ -8710,7 +8712,7 @@ class GameDB:
             (
                 building_id,
                 region_id,
-                name.strip()[:60] or "无名建筑",
+                name.strip() or "无名建筑",
                 category,
                 max(1, min(5, int(level))),
                 max(0, min(100, int(condition))),
@@ -8718,7 +8720,8 @@ class GameDB:
                 max(0, min(100, int(risk))),
                 output_metric,
                 max(0, int(output_amount)),
-                status.strip()[:160] or "新立，尚在筹建。",
+                # name/status 进 buildings_report → 世界盘面营建段，禁止 [:N]（#1834 F16）。
+                status.strip() or "新立，尚在筹建。",
                 origin,
                 state.turn,
             ),
@@ -8729,7 +8732,7 @@ class GameDB:
             (turn, year, period, building_id, field, old_value, new_value, delta, reason, actor, origin_ref)
             VALUES (?, ?, ?, ?, 'create', '', ?, NULL, ?, '档房', ?)
             """,
-            (state.turn, state.year, state.period, building_id, name.strip()[:60], "诏书新立建筑", origin_ref),
+            (state.turn, state.year, state.period, building_id, name.strip(), "诏书新立建筑", origin_ref),
         )
         if commit:
             self.conn.commit()
@@ -8818,7 +8821,8 @@ class GameDB:
                     stored_new = text_value
                     log_delta = None
                 elif field in BUILDING_TEXT_FIELDS:
-                    text_value = str(value).strip()[:160]
+                    # name/status 进 buildings_report → 世界盘面，禁止 [:N]（#1834 F16）。
+                    text_value = str(value).strip()
                     if not text_value or text_value == str(old_value):
                         continue
                     stored_new = text_value
@@ -16570,9 +16574,10 @@ class GameDB:
             payload, row,
         )
 
+        # 撤旨理由是自由正文，进案卷/材料可读链，禁止 [:N]（#1834 F16）。
         reason = str(
             payload.get("text") or row.get("decree_text") or "撤回成命"
-        )[:400]
+        )
 
         # #1894：撤旨照常过外廷。外廷（0055 颁布判决）准行即当月落实，
         # 不再把撤令延后到下一次召对等一场挽留——旧 ADR 0075「先顶哭谏、

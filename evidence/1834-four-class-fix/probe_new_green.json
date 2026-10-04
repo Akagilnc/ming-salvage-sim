@@ -22,7 +22,11 @@
     "fiscal_full": true,
     "fiscal_suffix": true,
     "staged_criterion_full": true,
-    "staged_origin_full": true
+    "staged_origin_full": true,
+    "building_status_len": 177,
+    "building_status_full": true,
+    "building_in_materials": true,
+    "max_len_slice_absent": true
   },
   "F13": {
     "declared_fields": [
@@ -35,4 +39,3 @@
     "clean": true
   }
 }
-

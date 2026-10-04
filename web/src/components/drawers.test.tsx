@@ -350,7 +350,6 @@ describe("朝堂空 layout 合法态（#1290/#1332）", () => {
     });
 
     const after = cardPos(host, "施凤来");
-    expect(after).not.toBeNull();
     expect(after!.left).not.toBe("");
     // 完成拖拽后 → 非空服务端 layout 回包不得回滚本地
     expect(after).toEqual(dragged);

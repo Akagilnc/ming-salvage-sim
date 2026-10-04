@@ -383,9 +383,9 @@ def assert_action_candidate_shape(obj: Any) -> Dict[str, Any]:
             else:
                 # Canonical generated body is transport, not user-entered metadata:
                 # preserve the extractor's bytes (including edge whitespace).
+                # Free-prose fields (title/stop_condition/ongoing_effects/stages/…)
+                # must not be length-cropped here — they feed issues → materials (#1834 F16).
                 s = str(raw or "") if name == "new_content" else str(raw or "").strip()
-            if spec.max_len is not None:
-                s = s[: spec.max_len]
             out[name] = s
     if "draft_text" in obj:
         out["draft_text"] = obj.get("draft_text")

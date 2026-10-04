@@ -185,6 +185,40 @@ def main() -> int:
             "stage_idx": 0, "due_turn": 9,
             "criterion_text": long_c, "origin_context": long_o,
         }])
+
+        # Building status → materials 营建段（本轮扩枚举漏网成员）
+        long_status = (
+            "新立营建须按原估料核验木石砖灰并会同工部司官亲履工所，"
+            "凡偷减材料、虚报进度、挪移工食者立时纠参，"
+            "且不得以年例不足为由另向沿途州县摊派丁夫与折色，"
+            "其已支未销之工料银两限两月内按册清结，逾期按挪移论处，"
+            "并令巡按御史随同按册抽核，不得仅凭司府申报了事，"
+            "各厂作匠籍须与工部实发流水对读，有名无役者尽数删除，"
+            "违者工部堂上官议处；此事只在营造落地，严禁再向百姓加派。"
+        )
+        assert len(long_status) > 160, len(long_status)
+        bid = db.add_building(
+            state,
+            region_id="beizhili",
+            name="边饷稽核公廨",
+            category="财政",
+            status=long_status,
+            origin=f"dossier:{plain}",
+            origin_ref=f"dossier:{plain}",
+            commit=True,
+        )
+        from ming_sim import action_clusters as ac
+        building_row = db.conn.execute(
+            "SELECT status FROM buildings WHERE id=?", (bid,)
+        ).fetchone()
+        stored_status = str(building_row["status"] if building_row else "")
+        release_material_tree(prepared.root)
+        prepared = prepare_gazette_author_materials(db, state)
+        board_hit = any(
+            long_status in read_material(prepared.root, rel)
+            for rel in list_materials(prepared.root)
+        )
+
         f16 = {
             "decree_len": len(long_decree),
             "case_summaries": summaries,
@@ -202,6 +236,12 @@ def main() -> int:
             "staged_origin_full": (
                 stages and str(stages[0]["origin_context"]) == long_o
             ),
+            "building_status_len": len(stored_status),
+            "building_status_full": stored_status == long_status,
+            "building_in_materials": board_hit,
+            "max_len_slice_absent": "s[: spec.max_len]" not in Path(
+                ac.__file__
+            ).read_text(encoding="utf-8"),
         }
 
         pm = PreparedMaterials(root=prepared.root, opening="probe")
@@ -217,11 +257,15 @@ def main() -> int:
         }
 
         out = {"F15": f15, "F16": f16, "F13": f13}
-        print(json.dumps(out, ensure_ascii=False, indent=2))
+        dest = Path(__file__).resolve().parents[1] / "probe_new_green.json"
+        dest.write_text(json.dumps(out, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        print(dest.read_text(encoding="utf-8"), end="")
         ok = (
             f15["clean"] and f13["clean"]
             and f16["fiscal_full"] and f16["case_full"]
             and f16["staged_criterion_full"] and f16["staged_origin_full"]
+            and f16["building_status_full"] and f16["building_in_materials"]
+            and f16["max_len_slice_absent"]
             and not f15["parallel_secret_order_affair_ids_fn"]
         )
         return 0 if ok else 1
