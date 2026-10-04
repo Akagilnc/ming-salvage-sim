@@ -1400,5 +1400,5 @@ env MING_SIM_AGY_BIN=/usr/bin/false MING_SIM_CODEX_BIN=/usr/bin/false \
 
 ### 交卷 HEAD（本轮）
 
-- tip HEAD：`5a17149c1bc887950032c9a155d3b60707f21abb`
+- tip HEAD：`384c01a838696c30472312d442b655a5222a9132`（fix `5a17149c1`）
 - **未 push / 未 PR / 未 amend**；误触 stash 已 pop 恢复。
