@@ -1,0 +1,335 @@
+# Expanded J6 related-form scan
+## mock SUT + calls-only assert
+tests/test_web_audience_night_498.py
+tests/test_new_issues_section_rejections.py
+tests/test_player_payload_1022.py
+tests/test_qa_t1_extraction_dual_source_1353.py
+tests/test_qa_e1_numeric_presentation.py
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored on flushing sys.stdout:
+BrokenPipeError: [Errno 32] Broken pipe
+## assert calls == patterns
+tests/test_settlement_write_guard_393.py:214:    assert calls == []
+tests/test_office_inference.py:157:    assert calls == [], f"seed 不应调 CLI 后端，实调 {len(calls)} 次：{calls[:3]}"
+tests/test_office_inference.py:195:        assert calls == [], f"开局全路径不应调 CLI 后端，实调 {len(calls)} 次：{calls[:3]}"
+tests/test_pihong_dossier_1490.py:316:    assert phase2_calls == [], '校验失败不得进入 phase2'
+tests/test_pihong_dossier_1490.py:419:    assert phase2_calls == [], '非法选择不得进入 phase2'
+tests/test_pihong_dossier_1490.py:426:    assert phase2_calls == []
+tests/test_pihong_dossier_1490.py:1505:    assert phase2_calls == [], '空 desk + 非空无键载荷须整批拒，不得进 phase2'
+tests/test_pihong_dossier_1490.py:1511:    assert phase2_calls == [1], '真正空 choices 续跑仍合法，走 submit_decisions'
+tests/test_decree_commitment_creation_136.py:1100:    assert calls == []
+tests/test_qa_d1_decree_normalize_1274.py:162:    assert calls == []
+tests/test_issue_entities.py:186:        assert calls == []
+tests/test_decree_forecast_1861.py:290:        assert calls == [1]
+tests/test_decree_forecast_1861.py:292:    assert calls == [1]
+tests/test_scene_llm_1836.py:145:    assert calls == [f"宣{character.name}", "边饷如何？"]
+tests/test_audience_restore_505.py:333:    assert calls == ["court_break"]
+tests/test_audience_travel_gating_670.py:663:    assert apply_calls == 1
+tests/test_qa_t1_extraction_dual_source_1353.py:526:    assert calls == ["退朝", "court_break"]
+tests/test_new_game_smoke.py:57:    assert calls == [], f"fresh 构造零 LLM 调用，实得 {calls}"
+tests/test_web_audience_night_498.py:291:        assert calls == ([0.0] if failure == "429" else [0.0, 5.0, 10.0])
+tests/test_relation_brew_636.py:132:    assert calls == []
+tests/test_relation_brew_636.py:359:    assert calls == []
+tests/test_gazette_author_1862.py:451:    assert world_calls == [1]
+tests/test_gazette_author_1862.py:459:    assert world_calls == [1]
+tests/test_structured_decree_contract_1624.py:267:    assert calls == ["rescript-draft", "rescript-draft-heal"]
+tests/test_web_llm_runtime_config.py:331:    assert commit_calls == []                    # verify 失败 → commit 从未被调
+tests/test_web_llm_runtime_config.py:986:        assert calls == [], f"fresh 构造不应触发 LLM 调用，实得 {calls}"
+tests/test_web_llm_runtime_config.py:1076:        assert calls == [], f"continue/load_save 不应触发 LLM 调用，实得 {calls}"
+tests/test_web_llm_runtime_config.py:1120:    assert close_calls == [{"write_gate_already_held": True}]
+tests/test_event_trigger_gate.py:4328:    assert calls == 1
+tests/test_transaction_boundary.py:348:    assert calls == ["last", "broken", "first"]
+tests/test_transaction_boundary.py:372:    assert calls == ["first", "broken", "last"]
+tests/test_faction_brew_637.py:186:    assert calls == []
+tests/test_faction_brew_637.py:243:    assert calls == []
+## private helper import + only private assert
+tests/conftest.py:158:    from ming_sim.session import _bind_all_content
+tests/test_decree_forecast_1861.py:397:    from ming_sim.month_chain import _settle_edicts
+tests/test_scene_llm_1836.py:163:    from ming_sim.materials import _scene_pending_audience_facts
+tests/test_mechanical_tail_1845.py:342:    from ming_sim.cli.terminal import _printed_ending_summary
+tests/test_p4_guard_new_surfaces_547.py:14:from ming_sim.decree import _rescript_decisions
+tests/test_month_chain_1843.py:505:    from ming_sim.month_chain import _settle_edicts
+tests/test_month_chain_1847.py:1516:    from ming_sim.month_chain import _load_chain, _settle_edicts
+tests/test_month_chain_1847.py:2002:    from ming_sim.month_chain import _settle_edicts
+tests/test_faction_leverage_9.py:63:    from ming_sim.db import _LEVERAGE_FACTIONS
+tests/test_faction_leverage_9.py:394:    from ming_sim.db import _LEVERAGE_FACTIONS
+tests/test_faction_leverage_9.py:450:    from ming_sim.db import _LEVERAGE_FACTIONS
+tests/test_faction_leverage_9.py:624:    from ming_sim.db import _LEVERAGE_FACTIONS
+tests/test_transaction_boundary.py:446:    from ming_sim.applier import _SuspendableConnection
+tests/test_transaction_boundary.py:467:    from ming_sim.applier import _SuspendableConnection
+tests/test_transaction_boundary.py:561:    from ming_sim.applier import _SuspendableConnection
+tests/test_web_audience_night_498.py:28:from ming_sim.audience_translate import _default_translate_runner as _real_audience_translate_runner
+tests/test_breach_plea_623.py:890:    from ming_sim.breach_plea import _dedicated_accounts
+tests/test_execution_tenure_613.py:12:    from ming_sim.issues import _appointment_tenure_scope
+## Chinese text lock patterns (措辞/wording/label locks)
+tests/test_office_inference.py:39:    assert infer("绝无此名的杜撰怪衔甲乙丙") == "待铨"
+tests/test_office_inference.py:54:    assert infer("绝无此名的杜撰怪衔丁戊己", llm_config=cfg) == "待铨"
+tests/test_office_inference.py:79:    assert infer("绝无此名的杜撰怪衔庚辛壬", llm_config=cfg) == "边镇"
+tests/test_rejection_wiring.py:102:    assert rows[0][1]  # 人读原因非空；措辞不是契约
+tests/test_rejection_wiring.py:198:    assert rows[0][1]  # 人读原因非空；措辞不是契约
+tests/test_decree_commitment_creation_136.py:312:    assert _issue_by_title(db, "连续两月补饷但缺承诺标记") is None
+tests/test_decree_commitment_creation_136.py:352:    assert _issue_by_title(db, "本回合即到期的每月补饷承诺") is None
+tests/test_decree_commitment_creation_136.py:394:    assert _issue_by_title(db, "过去回合已到期的每月补饷承诺") is None
+tests/test_decree_commitment_creation_136.py:491:    assert _issue_by_title(db, "长期安抚毛文龙但缺承诺标记") is None
+tests/test_decree_commitment_creation_136.py:519:    assert _issue_by_title(db, "三月后复核孙承宗但缺承诺标记") is None
+tests/test_decree_commitment_creation_136.py:547:    assert _issue_by_title(db, "只写停止条件的安抚毛文龙") is None
+tests/test_decree_commitment_creation_136.py:575:    assert _issue_by_title(db, "字符串停止条件但无月度动作") is None
+tests/test_decree_commitment_creation_136.py:641:    assert _issue_by_title(db, "每月补辽饷但类型写成局势") is None
+tests/test_decree_commitment_creation_136.py:738:    assert _issue_by_title(db, "每月补辽饷但停止条件是坏串") is None
+tests/test_decree_commitment_creation_136.py:767:    assert _issue_by_title(db, "每月补辽饷但停止条件无表前缀") is None
+tests/test_decree_commitment_creation_136.py:823:    assert _issue_by_title(db, "每月补辽饷但没有月度动作") is None
+tests/test_decree_commitment_creation_136.py:852:    assert _issue_by_title(db, "每月补辽饷但月度动作只是空壳") is None
+tests/test_scene_llm_1836.py:76:    assert len(calls) == 1, "整段戏文必须出自同一次场景调用"
+tests/test_person_delta_adapter.py:3055:        assert li_strength == 48, "招安张献忠不得波及李自成股"
+tests/test_person_delta_adapter.py:3328:        assert log_deltas == [-9], "死头目招安失败后不得再落易主反噬"
+tests/test_person_delta_adapter.py:3419:        assert li_strength == 48, "招安张献忠不得削李自成股"
+tests/test_credit_events_628.py:499:    assert sg_rel == [], "放归级联回声不得写弃卒保车边"
+tests/test_commitment_backlash_626.py:178:    assert hits, "事废判决次回合须立承诺所系反噬"
+tests/test_world_materials_1834.py:144:    assert character_rel and army_rel and region_rel, "三类对象的按月实况文件均应在世界目录里"
+tests/test_fiscal_substrate_bridge.py:3988:    assert p["起运定额"] > p["三饷应征"], "江南起运定额须覆盖三饷并含正赋大份额"
+tests/test_faction_class_section_rejections.py:190:    assert 0 < before < 100, "开局阶级满意度需留有增量断言空间"
+tests/test_character_knowledge_489.py:882:    assert "有人暗中安排了不应知晓的事务" not in excluded_text
+tests/test_faction_leverage_9.py:88:    assert row is not None, "西学需有握明官的在朝成员"
+tests/test_due_review_621.py:468:    assert second, "幂等腿须真正再入正式复核"
+## retired escort mechanism proofs still in tests
+(none)
+## _set_meta_flag / __leverage assert on marker itself
+tests/test_faction_leverage_9.py:705:    (__leverage_offsets_calibrated)缺失。模拟上次进程崩在「ensure_column 已 ADD 列并提交、
+tests/test_faction_leverage_9.py:728:        "DELETE FROM metrics WHERE key='__leverage_offsets_calibrated'"
+tests/test_faction_leverage_9.py:781:    leverage 已被 clamp 到偏离基线的值（这里全打到 0）、但 __leverage_offsets_calibrated 标记缺失。
+tests/test_faction_leverage_9.py:808:    seed_db.conn.execute("DELETE FROM metrics WHERE key='__leverage_offsets_calibrated'")
+tests/test_faction_leverage_9.py:816:    __leverage_offsets_calibrated（旧版 #9 代码已校准、未写标记）。若此后 leverage 被 clamp 偏离基线，
+tests/test_faction_leverage_9.py:977:    db._set_meta_flag("__leverage_offsets_calibrated")
+tests/test_faction_leverage_9.py:978:    db.conn.execute("DELETE FROM metrics WHERE key='__leverage_offsets_float_v2'")
+tests/test_office_rank_562.py:236:    db.conn.execute("DELETE FROM metrics WHERE key='__leverage_offsets_rank_rules_562'")

@@ -1,23 +1,23 @@
 #!/usr/bin/env python3
-"""#1900 J6 冻结分析：结构信号候选旗标（非生产机制，非语义处置）。
+"""#1900 J6 冻结分析：宽谓词结构候选旗标（非生产机制，非语义处置）。
 
-读 j6-universe.jsonl 对应源码，按结构信号列出**候选**（mock+calls-only、
-私有 helper 直调、meta 迁移标记、疑似文字锁）。
+读 j6-universe.jsonl 对应源码，按**保守宽谓词**列出候选。故意覆盖类定义全文信号：
+  - 所有 assert/expect 文本比对与计数
+  - 所有 mock/patch/spy 与调用断言
+  - 所有 helper/private 调用与内部公式/oracle
+  - 退役/迁移标记符号
+不因存在结果 token（list_/apply_/status_code 等）而跳过其它内部断言。
+web 不因有 fireEvent/userEvent 而豁免 mock/spy/calls。
 
 硬约束：
   - 有信号 ≠ 即属 J6 类；无信号 ≠ 不属类。
-  - 本脚本**禁止**写 action=retain。语义结论只写在 j6-class-members.jsonl。
+  - 本脚本**禁止**写 action=retain。语义结论只写在 disposition / class-members。
 
 用法（工作树根，先跑 j6_enumerate_universe.py）：
   python3 evidence/1900-j18-j6-retire-fixer/j6_flag_structural_candidates.py
-
-产出：
-  evidence/1900-j18-j6-retire-fixer/j6-structural-candidates.jsonl
-  evidence/1900-j18-j6-retire-fixer/j6-structural-candidates-summary.json
 """
 from __future__ import annotations
 
-import ast
 import json
 import pathlib
 import re
@@ -27,11 +27,95 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 OUT_DIR = pathlib.Path(__file__).resolve().parent
 UNIVERSE = OUT_DIR / "j6-universe.jsonl"
 
-EXT_BOUNDARIES = (
-    "Popen", "subprocess", "create_chat_model", "run_agent_text", "Agent",
-    "CliChat", "httpx", "urllib", "create_promulgation_judge_agent",
-    "create_decree_forecast_agent", "create_scene_agent", "create_relation_brew_agent",
-    "create_faction_brew_agent", "_run_backend_for_config",
+# Local test fixtures named _foo are still helper-shaped; flag them for semantic review.
+PRIVATE_CALL_RE = re.compile(
+    r"(?:"
+    r"from\s+ming_sim[\w.]*\s+import\s+[^\n]*\b_\w+"
+    r"|\b(?:db|game|session|web_app|month_chain|issues|decree_mod|ep)\._[a-zA-Z]\w*\s*\("
+    r"|\b_[a-zA-Z]\w*\s*\("
+    r")"
+)
+ORACLE_RE = re.compile(
+    r"\b(?:power_band|recompute_\w+|_\w*oracle\w*|oracle_\w+)\s*\(",
+    re.I,
+)
+TEXT_ASSERT_PY_RE = re.compile(
+    r"(?:"
+    r"pytest\.raises\s*\([^)]*\bmatch\s*="
+    r"|assert\s+[^\n]*(?:==|!=|in|not in)\s*[^\n]*[\"']"
+    r"|assert\s+[\"'][^\n]*(?:in|not in)"
+    r"|assert\s+[^\n]*\.(?:startswith|endswith|find|index|count)\s*\("
+    r")"
+)
+COUNT_ASSERT_PY_RE = re.compile(
+    r"(?:"
+    r"assert\s+len\s*\("
+    r"|assert\s+[^\n]*\b(?:count|calls?|attempts?|rows?|lines?|tickets?)\w*\s*==\s*\d+"
+    r"|assert\s+\d+\s*==\s*[^\n]*\b(?:count|calls?|len|attempts?|rows?|lines?)"
+    r"|assert\s+[^\n]*==\s*\d+\b"
+    r")"
+)
+MOCK_PY_RE = re.compile(
+    r"(?:"
+    r"monkeypatch\.setattr"
+    r"|unittest\.mock"
+    r"|MagicMock\s*\("
+    r"|Mock\s*\("
+    r"|AsyncMock\s*\("
+    r"|patch\s*\("
+    r"|create_autospec\s*\("
+    r"|PropertyMock\s*\("
+    r")"
+)
+CALLS_ASSERT_PY_RE = re.compile(
+    r"(?:"
+    r"assert_called"
+    r"|assert_not_called"
+    r"|assert_any_call"
+    r"|assert_has_calls"
+    r"|call_count"
+    r"|assert\s+\w*calls?\w*\s*=="
+    r")"
+)
+RETIRED_RE = re.compile(
+    r"(?:"
+    r"_set_meta_flag"
+    r"|__leverage_offsets"
+    r"|escort_sources"
+    r"|dossier_escort_outcomes"
+    r"|_resolve_covert_escort"
+    r"|retired|退役|legacy_"
+    r")",
+    re.I,
+)
+WEB_MOCK_RE = re.compile(
+    r"(?:"
+    r"toHaveBeenCalled"
+    r"|vi\.mock\s*\("
+    r"|vi\.spyOn\s*\("
+    r"|vi\.fn\s*\("
+    r"|jest\.fn\s*\("
+    r"|jest\.spyOn\s*\("
+    r"|jest\.mock\s*\("
+    r"|\.mockImplementation"
+    r"|\.mockReturnValue"
+    r")"
+)
+WEB_TEXT_RE = re.compile(
+    r"(?:"
+    r"toHaveTextContent\s*\("
+    r"|getBy(?:Text|LabelText|PlaceholderText|DisplayValue|AltText|Title|Role)\s*\("
+    r"|findBy(?:Text|LabelText|Role)\s*\("
+    r"|queryBy(?:Text|LabelText|Role)\s*\("
+    r"|expect\s*\([^)]*\)\s*\.\s*(?:toBe|toEqual|toContain|toMatch)\s*\(\s*[\"'`]"
+    r")"
+)
+WEB_COUNT_RE = re.compile(
+    r"(?:"
+    r"toHaveBeenCalledTimes\s*\("
+    r"|toHaveLength\s*\("
+    r"|expect\s*\([^)]*\.length[^)]*\)\s*\.\s*(?:toBe|toEqual)\s*\(\s*\d+"
+    r")"
 )
 
 
@@ -42,37 +126,33 @@ def _seg(source: str, line: int, end: int) -> str:
 
 def flag_py(seg: str) -> list[str]:
     flags: list[str] = []
-    has_mp = (
-        "monkeypatch.setattr" in seg
-        or "unittest.mock" in seg
-        or "MagicMock" in seg
-        or "patch(" in seg
-    )
-    asserts_calls = bool(re.search(r"assert\s+\w*calls\w*\s*==", seg)) or (
-        "assert_called" in seg
-    )
-    has_result = any(
-        token in seg
-        for token in (
-            "faction_leverage", "get_character", "list_", "reload_state",
-            "apply_", "commit_", "create_decree", "state_payload",
-            "status_code", "TestClient", "fetchone", "fetchall",
-            "prepare_character_materials", "army_payload",
-        )
-    )
-    ext = any(token in seg for token in EXT_BOUNDARIES)
-    if has_mp and asserts_calls and not has_result and not ext:
-        flags.append("mock_sut_calls_only")
-    if re.search(r"from\s+ming_sim[\w.]*\s+import\s+[^\n]*_\w+", seg) or re.search(
-        r"\b(?:db|game|session|web_app|month_chain|issues)\._[a-zA-Z]\w*\s*\(", seg,
-    ):
-        if not has_result:
-            flags.append("private_helper_call_no_obs_token")
-    if "_set_meta_flag" in seg or "__leverage_offsets" in seg:
-        flags.append("meta_migration_marker_touch")
-    if re.search(r"assert\s+.*(in|==|not in).*[\"'][\u4e00-\u9fff]{10,}", seg):
-        if any(k in seg for k in ("措辞", "wording", "label", "材料", "邸报")):
-            flags.append("possible_text_lock")
+    if TEXT_ASSERT_PY_RE.search(seg):
+        flags.append("assert_text_compare_or_match")
+    if COUNT_ASSERT_PY_RE.search(seg):
+        flags.append("assert_count")
+    if MOCK_PY_RE.search(seg):
+        flags.append("mock_or_patch_present")
+    if CALLS_ASSERT_PY_RE.search(seg):
+        flags.append("assert_calls_shape")
+    if PRIVATE_CALL_RE.search(seg):
+        flags.append("helper_or_private_call")
+    if ORACLE_RE.search(seg):
+        flags.append("internal_formula_oracle")
+    if RETIRED_RE.search(seg):
+        flags.append("retired_or_meta_marker")
+    return flags
+
+
+def flag_web(seg: str) -> list[str]:
+    flags: list[str] = []
+    if WEB_MOCK_RE.search(seg):
+        flags.append("web_mock_spy_or_calls")
+    if WEB_TEXT_RE.search(seg):
+        flags.append("web_text_assert")
+    if WEB_COUNT_RE.search(seg):
+        flags.append("web_count_assert")
+    if RETIRED_RE.search(seg):
+        flags.append("retired_or_meta_marker")
     return flags
 
 
@@ -86,18 +166,10 @@ def main() -> int:
         if not line.strip():
             continue
         row = json.loads(line)
-        if row["kind"] != "py":
-            # web：只记 toHaveBeenCalled 且无用户事件 token 的粗信号
-            path = ROOT / row["file"]
-            source = cache.setdefault(row["file"], path.read_text(encoding="utf-8", errors="replace"))
-            seg = _seg(source, row["line"], row["end"])
-            if "toHaveBeenCalled" in seg and "fireEvent" not in seg and "userEvent" not in seg:
-                candidates.append({**row, "flags": ["web_calls_without_ui_token"]})
-            continue
         path = ROOT / row["file"]
         source = cache.setdefault(row["file"], path.read_text(encoding="utf-8", errors="replace"))
         seg = _seg(source, row["line"], row["end"])
-        flags = flag_py(seg)
+        flags = flag_web(seg) if row["kind"] == "web" else flag_py(seg)
         if flags:
             candidates.append({**row, "flags": flags})
 
@@ -106,9 +178,16 @@ def main() -> int:
         "candidate_count": len(candidates),
         "by_flag": {},
         "note": (
-            "structural candidates only; absence of flag does not prove non-membership; "
+            "WIDE structural candidates only; presence of result/API tokens does not suppress "
+            "other flags; absence of flag does not prove non-membership; "
             "do not treat this file as retain disposition"
         ),
+        "widened": True,
+        "removed_narrowing": [
+            "no longer require Chinese>=10 + wording/label/材料/邸报 for text locks",
+            "no longer suppress helper/mock when list_/apply_/status_code tokens present",
+            "no longer require web toHaveBeenCalled AND absence of fireEvent/userEvent",
+        ],
     }
     for item in candidates:
         for flag in item["flags"]:

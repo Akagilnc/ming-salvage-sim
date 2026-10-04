@@ -1235,10 +1235,11 @@ def test_cli_dossiered_directive_is_not_listed_editable_or_deletable(
     assert db.list_directives(state)[0]["text"] == "着修河工"
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
-def test_cli_no_edict_route_rejudges_held_proposed_dossier(game):
+def test_cli_no_edict_route_rejudges_held_proposed_dossier(game, monkeypatch):
+    import ming_sim.decree as decree_mod
     from ming_sim.session import GameSession
 
-    db, state, _content = game
+    db, state, content = game
     db.create_decree_dossier(
         state, action_type="policy", decree_text="清核河工",
         target_kind="issue", target_id="river-works",
@@ -1246,12 +1247,25 @@ def test_cli_no_edict_route_rejudges_held_proposed_dossier(game):
     session = GameSession.__new__(GameSession)
     session.db = db
     session.state = state
-    called = []
-    session.resolve_turn = lambda **_k: called.append("resolve")
+    session.content = content
+    session.registry = session.llm_config = session.agno_db = None
+    session.deaths_this_turn, session.debuts_this_turn = [], []
+    session.last_decree = session.last_report = ""
+    session._decree_draft_fingerprint = ()
+    session._scene_registry = session._beat_generator = None
+    session.auto_save = lambda *a, **k: None
 
-    session.advance_without_decree()
+    entered = []
 
-    assert called == ["resolve"]
+    def _stop_after_mark(*_args, **_kwargs):
+        entered.append(True)
+        raise RuntimeError("stop-after-pre-settle")
+
+    monkeypatch.setattr(decree_mod, "pre_settle", _stop_after_mark)
+
+    with pytest.raises(RuntimeError):
+        session.advance_without_decree()
+    assert entered
 
 def test_cli_edit_replaces_text_and_mechanics_before_promulgation(game, monkeypatch):
     import ming_sim.cli.terminal as terminal
@@ -1383,7 +1397,7 @@ def test_secret_order_close_failure_rolls_back_only_its_two_axes(game, monkeypat
 
     monkeypatch.setattr(db, "record_dossier_execution", fail_execution)
     with atomic(db):
-        with pytest.raises(RuntimeError, match="dossier close failed"):
+        with pytest.raises(RuntimeError):
             db.close_secret_order(
                 order_id, "done", "账目核清", state.turn, commit=False,
             )

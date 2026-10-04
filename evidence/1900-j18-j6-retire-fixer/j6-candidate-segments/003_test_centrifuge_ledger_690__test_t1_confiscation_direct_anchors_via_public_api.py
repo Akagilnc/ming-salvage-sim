@@ -1,0 +1,25 @@
+def test_t1_confiscation_direct_anchors_via_public_api(game):
+    from ming_sim.centrifuge_ledger import accrue_blood_debt
+
+    db, state, _content = game
+    cases = (
+        (70, 7, 10),
+        (10, 61, 87),
+        (1, 69, 99),
+    )
+    for cw, expect_amount, expect_leg in cases:
+        idem = f"t1|抄家|cw{cw}"
+        accrue_blood_debt(
+            db=db,
+            turn=state.turn,
+            target=_TARGET_EUNUCH,
+            axis=_AXIS,
+            penalty_type="抄家",
+            crime_weight=cw,
+            idem_base=idem,
+        )
+        rows = _direct_rows(db, idem_base=idem)
+        assert len(rows) == 1
+        assert int(rows[0]["amount"]) == expect_amount
+        assert int(rows[0]["legitimacy_pct"]) == expect_leg
+        assert int(rows[0]["base"]) == 70

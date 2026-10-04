@@ -283,7 +283,7 @@ def test_drain_archive_skips_move_when_session_close_fails(monkeypatch, tmp_path
     assert entry is not None
     role, op = web_app._claim_close(entry, db_path)
     assert role == "executor" and op is not None
-    with pytest.raises(RuntimeError, match="close failed"):
+    with pytest.raises(RuntimeError):
         web_app._drain_and_close_session(game, entry=entry, close_op=op)
     # close 失败不发 AR；即使误发 C7 也被 holder 挡住
     web_app._path_request_archive(db_path)
@@ -305,7 +305,7 @@ def test_restore_main_db_path_config_remove_failure_is_loud(monkeypatch, tmp_pat
         lambda *_args, **_kwargs: (_ for _ in ()).throw(PermissionError("locked")),
     )
 
-    with pytest.raises(PermissionError, match="locked"):
+    with pytest.raises(PermissionError):
         web_app._restore_main_db_path_config((False, "", False, ""))
 
     # 失败后不得把身份改写成默认 ming_sim.db

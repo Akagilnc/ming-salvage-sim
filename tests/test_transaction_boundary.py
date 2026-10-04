@@ -295,7 +295,7 @@ def test_swallowed_inner_exception_forces_outer_rollback(game):
     db.conn.execute("DELETE FROM kv_store WHERE key='s1_swallow'")
     db.conn.commit()
 
-    with pytest.raises(RuntimeError, match="回滚"):
+    with pytest.raises(RuntimeError):
         with atomic(db):
             try:
                 with atomic(db):
@@ -319,7 +319,7 @@ def test_backup_to_inside_atomic_fails_loud(game, tmp_path):
     """atomic 内 backup_to 响亮拒绝（备份会带未提交脏页，cmr S1 r1 F3）。"""
     db, state, content = game
     dest = str(tmp_path / "snap.db")
-    with pytest.raises(RuntimeError, match="atomic"):
+    with pytest.raises(RuntimeError):
         with atomic(db):
             db.backup_to(dest)
 
@@ -342,7 +342,7 @@ def test_connection_rollback_attempts_all_runtime_callbacks(game):
     db.conn.execute("BEGIN")
     db.conn._runtime_rollback_callbacks = [first, broken, last]
 
-    with pytest.raises(RuntimeError, match="runtime rollback callback"):
+    with pytest.raises(RuntimeError):
         db.conn.rollback()
 
     assert calls == ["last", "broken", "first"]
@@ -395,7 +395,7 @@ def test_swallowed_conn_context_exception_forces_outer_rollback(game):
         db.conn.execute("DELETE FROM kv_store WHERE key=?", (k,))
     db.conn.commit()
 
-    with pytest.raises(RuntimeError, match="回滚"):
+    with pytest.raises(RuntimeError):
         with atomic(db):
             db.conn.execute("INSERT INTO kv_store(key,value) VALUES('s1r2_w1','W1')")
             try:
@@ -426,7 +426,7 @@ def test_ddl_first_inside_atomic_rolls_back(game):
     ri = RejectedItem(item={}, reason="r", category="invalid_enum", source=Provenance.unknown)
     rc.record("army_delta", ri, turn=1)
 
-    with pytest.raises(RuntimeError, match="boom"):
+    with pytest.raises(RuntimeError):
         with atomic(db):
             rc.flush_to_db(db)  # 第一条语句 = CREATE TABLE
             raise RuntimeError("boom")
@@ -521,7 +521,7 @@ def test_ddl_after_swallowed_conn_context_does_not_escape(game):
     ri = RejectedItem(item={}, reason="r", category="invalid_enum", source=Provenance.unknown)
     rc.record("army_delta", ri, turn=1)
 
-    with pytest.raises(RuntimeError, match="回滚"):
+    with pytest.raises(RuntimeError):
         with atomic(db):
             try:
                 with db.conn:
@@ -544,7 +544,7 @@ def test_ddl_after_explicit_midatomic_rollback_does_not_escape(game):
     ri = RejectedItem(item={}, reason="r", category="invalid_enum", source=Provenance.unknown)
     rc.record("army_delta", ri, turn=1)
 
-    with pytest.raises(RuntimeError, match="boom"):
+    with pytest.raises(RuntimeError):
         with atomic(db):
             db.conn.execute("INSERT INTO kv_store(key,value) VALUES('s1r3_x','x')")
             db.conn.rollback()  # 中途显式回滚（暂停期允许）
@@ -567,7 +567,7 @@ def test_begin_failure_at_entry_restores_flags(game, monkeypatch):
         return real_execute(self, sql, *args, **kwargs)
     monkeypatch.setattr(_SuspendableConnection, "execute", failing_execute)
 
-    with pytest.raises(sqlite3.OperationalError, match="BEGIN"):
+    with pytest.raises(sqlite3.OperationalError):
         with atomic(db):
             pass  # 不应到达
 

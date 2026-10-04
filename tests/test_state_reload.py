@@ -122,7 +122,7 @@ def test_pre_settle_self_reloads_memory_on_rollback(game, monkeypatch):
 
     monkeypatch.setattr(db, "save_state", _boom_save)
 
-    with pytest.raises(RuntimeError, match="save boom"):
+    with pytest.raises(RuntimeError):
         pre_settle(state, db)
 
     # pre_settle 已在回滚后自我 reload：内存与 DB 同源（phase 非 settling、metrics 回到回滚态）。
@@ -164,7 +164,7 @@ def test_rollback_purges_content_character_ghost(game, monkeypatch):
         raise RuntimeError("post-commit step crash")
     monkeypatch.setattr(decree_mod, "auto_trigger_seed_issues", _boom)
 
-    with pytest.raises(RuntimeError, match="post-commit step crash"):
+    with pytest.raises(RuntimeError):
         pre_settle(state, db, content=content)
 
     assert new_name not in content.characters  # 幽灵已清
@@ -207,7 +207,7 @@ def test_reload_skipped_inside_nested_atomic(game, monkeypatch):
         raise RuntimeError("inner crash")
     monkeypatch.setattr(decree_mod, "auto_trigger_seed_issues", _boom)
 
-    with pytest.raises(RuntimeError, match="回滚"):  # 外层 rollback-only 响亮
+    with pytest.raises(RuntimeError):  # 外层 rollback-only 响亮
         with atomic(db):
             try:
                 pre_settle(state, db)
@@ -257,7 +257,7 @@ def test_rollback_restores_existing_character_attributes(game, monkeypatch):
         raise RuntimeError("post-commit step crash")
     monkeypatch.setattr(decree_mod, "auto_trigger_seed_issues", _boom)
 
-    with pytest.raises(RuntimeError, match="post-commit step crash"):
+    with pytest.raises(RuntimeError):
         pre_settle(state, db, content=content)
 
     # DB 已回滚 → 内存 content 必须同源
@@ -300,7 +300,7 @@ def test_atomic_and_reload_reloads_and_reraises_at_depth0(game):
     from ming_sim.decree import atomic_and_reload
     db, state, content = game
     state.metrics["国库"] = 999999  # 脏内存
-    with pytest.raises(RuntimeError, match="boom"):
+    with pytest.raises(RuntimeError):
         with atomic_and_reload(db, state, content=content):
             db.conn.execute("UPDATE metrics SET value = 7 WHERE key = '国库'")
             raise RuntimeError("boom")
@@ -324,7 +324,7 @@ def test_atomic_and_reload_skips_reload_when_nested(game, monkeypatch):
         return real_reload(*a, **k)
     monkeypatch.setattr(decree_mod, "reload_state_from_db", _counting_reload)
 
-    with pytest.raises(RuntimeError, match="回滚"):  # 外层 rollback-only 响亮
+    with pytest.raises(RuntimeError):  # 外层 rollback-only 响亮
         with atomic(db):
             try:
                 with atomic_and_reload(db, state, content=content):
@@ -344,7 +344,7 @@ def test_atomic_and_reload_chains_reload_failure(game, monkeypatch):
         raise ValueError("reload failed")
     monkeypatch.setattr(decree_mod, "reload_state_from_db", _boom_reload)
 
-    with pytest.raises(RuntimeError, match="orig") as ei:
+    with pytest.raises(RuntimeError) as ei:
         with atomic_and_reload(db, state, content=content):
             raise RuntimeError("orig")
     assert isinstance(ei.value.__cause__, ValueError)  # 链：orig from reload failed

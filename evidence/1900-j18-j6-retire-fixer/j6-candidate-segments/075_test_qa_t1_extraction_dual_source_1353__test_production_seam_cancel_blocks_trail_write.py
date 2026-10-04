@@ -1,0 +1,38 @@
+def test_production_seam_cancel_blocks_trail_write(web_game):
+    """生产接缝撤回钉：暂停腿 → cancel_key → 放行，TicketedWriteGate 零写。"""
+    from ming_sim.session_write_queue import TicketCancelled
+
+    game = web_game
+    q = game._runtime_write_queue()
+    ticket = game._mark_pending_write(key=("turn", 4242))
+    assert ticket is not None
+
+    entered = threading.Event()
+    release = threading.Event()
+    wrote = {"n": 0}
+    outcome: dict = {}
+
+    def paused_trail() -> None:
+        entered.set()
+        release.wait()
+        gate = game._ticketed_write_gate(ticket)
+        try:
+            with gate:
+                wrote["n"] += 1
+            outcome["ok"] = True
+        except TicketCancelled as exc:
+            outcome["cancelled"] = type(exc).__name__
+        finally:
+            game._complete_pending_write(ticket)
+
+    th = threading.Thread(target=paused_trail, daemon=True)
+    th.start()
+    entered.wait()
+    n = q.cancel_key(("turn", 4242))
+    assert n == 1
+    release.set()
+    th.join()
+    assert not th.is_alive()
+    assert wrote["n"] == 0
+    assert outcome.get("cancelled") == "TicketCancelled"
+    assert "ok" not in outcome

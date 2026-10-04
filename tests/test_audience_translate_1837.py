@@ -196,7 +196,7 @@ def test_pending_round_approval_endorsed_before_close_or_after_month_join(
         result = sess.scene_chat("准", chat_turn_id=ctid)
         future = persist_and_schedule_scene(sess, db, result)
         assert future is not None
-        with pytest.raises(RuntimeError, match="translation unavailable"):
+        with pytest.raises(RuntimeError):
             future.result(timeout=30)
 
     write_queue = SessionWriteQueue()

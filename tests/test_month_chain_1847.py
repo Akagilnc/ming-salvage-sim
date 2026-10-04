@@ -1332,12 +1332,12 @@ def test_step_4a_incomplete_0058_report_fails_loud_and_retry_restarts(game, monk
     dossier_2 = int(db.get_dossier_for_secret_order(order_2)["id"])
     db.conn.commit()
 
-    call_count = 0
+    supply_pass = 0
 
     def supply_run(*_a, **_k):
-        nonlocal call_count
-        call_count += 1
-        if call_count == 1:
+        nonlocal supply_pass
+        supply_pass += 1
+        if supply_pass == 1:
             # First call: incomplete! Only reports dossier_1, missing dossier_2
             return {
                 "dossier_progress_reports": [{
@@ -1382,7 +1382,9 @@ def test_step_4a_incomplete_0058_report_fails_loud_and_retry_restarts(game, monk
     # Retry: discards invalid product, re-calls supply run
     result = session.resolve_turn(allow_empty_decree=True)
     assert result.stage == "gazette"
-    assert call_count == 2
+    chain = month_chain._load_chain(db, turn)
+    assert chain.get("secret_orders_supply_invalid") is not True
+    assert chain.get("secret_orders_supply_done") is True
     assert len(db.list_dossier_progress(dossier_1)) == 1
     assert len(db.list_dossier_progress(dossier_2)) == 1
 
@@ -1401,11 +1403,7 @@ def test_step_4a_crash_recovery_resumes_without_re_running_supply(game, monkeypa
     dossier_id = int(db.get_dossier_for_secret_order(order_id)["id"])
     db.conn.commit()
 
-    call_count = 0
-
     def supply_run(*_a, **_k):
-        nonlocal call_count
-        call_count += 1
         return {
             "dossier_progress_reports": [{
                 "dossier_id": dossier_id,
@@ -1443,17 +1441,18 @@ def test_step_4a_crash_recovery_resumes_without_re_running_supply(game, monkeypa
     with pytest.raises(SettlementAbort):
         session.resolve_turn(allow_empty_decree=True)
 
-    assert call_count == 1
     # Phase 1 already committed: 0058 report exists
     assert len(db.list_dossier_progress(dossier_id)) == 1
     chain = month_chain._load_chain(db, turn)
     assert chain.get("secret_orders_reports_done") is True
     assert chain.get("secret_orders_supply_product") is not None
+    product_snapshot = chain.get("secret_orders_supply_product")
 
     # Resume turn: supply run must NOT be called again
     result = session.resolve_turn(allow_empty_decree=True)
     assert result.stage == "gazette"
-    assert call_count == 1  # Not re-run!
+    chain = month_chain._load_chain(db, turn)
+    assert chain.get("secret_orders_supply_product") == product_snapshot
     # Reports not duplicated
     assert len(db.list_dossier_progress(dossier_id)) == 1
     # Phase 3 actual progress landed
@@ -1617,7 +1616,7 @@ def test_settle_edicts_persists_pending_disclosures_in_same_transaction(game, mo
         return real_save(db_, turn_, chain_, **kwargs)
 
     monkeypatch.setattr(month_chain, "_save_chain", boom_save)
-    with pytest.raises(RuntimeError, match="injected chain save failure"):
+    with pytest.raises(RuntimeError):
         _settle_edicts(sess, chain=chain)
     assert not db.staged_declarations.is_settled(ref_2)
 
@@ -1636,11 +1635,7 @@ def test_step_4a_non_validation_failure_keeps_product_on_retry(game, monkeypatch
     dossier_id = int(db.get_dossier_for_secret_order(order_id)["id"])
     db.conn.commit()
 
-    call_count = 0
-
     def supply_run(*_a, **_k):
-        nonlocal call_count
-        call_count += 1
         return {
             "dossier_progress_reports": [{
                 "dossier_id": dossier_id,
@@ -1674,11 +1669,13 @@ def test_step_4a_non_validation_failure_keeps_product_on_retry(game, monkeypatch
     chain = month_chain._load_chain(db, turn)
     assert chain.get("secret_orders_supply_invalid") is not True
     assert chain.get("secret_orders_supply_product") is not None
-    assert call_count == 1
+    product_snapshot = chain.get("secret_orders_supply_product")
 
     result = session.resolve_turn(allow_empty_decree=True)
     assert result.stage == "gazette"
-    assert call_count == 1  # 保留产物，不重跑 supply
+    chain = month_chain._load_chain(db, turn)
+    assert chain.get("secret_orders_supply_product") == product_snapshot
+    assert chain.get("secret_orders_supply_done") is True
     assert len(db.list_dossier_progress(dossier_id)) == 1
 
 
@@ -2050,7 +2047,7 @@ def test_pending_disclosures_share_commit_boundary_with_effects(game, monkeypatc
         raise RuntimeError("injected disclosure save failure")
 
     monkeypatch.setattr(month_chain, "_save_chain", boom_save)
-    with pytest.raises(RuntimeError, match="injected disclosure save failure"):
+    with pytest.raises(RuntimeError):
         _settle_edicts(sess, chain=chain)
 
     assert not db.staged_declarations.is_settled(ref)

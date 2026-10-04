@@ -1,80 +1,74 @@
-# #1900 修内司施工回执（续：161→语义处置闭环）
+# #1900 修内司施工回执（宽谓词 J6 续轮）
 
 工作树：`/Users/akagilnc/WorkSpace/Ming_LLM-1900-w5`
 分支：`ak-roles/1900-j18-retire-revoked-mechanisms`
-HEAD 将随本回执提交更新；既存 `?? .baseline/` 未动；无 stash / amend / rewrite / push / PR。
+既存 `?? .baseline/` 未动；无 stash / amend / rewrite / push / PR。
 
-未结类别以末份判词 continue payload 为准：J18（P1）、J6（P2）。
-
----
-
-## 1. J18（行为形状）
-
-### 复扫
-
-见 `j18-behavior-rescan.txt`：生产+测试对已撤销符号空；仅 `DELTA_SCHEMA` 退役标题。
-
-### 供料 / 记录 / 恢复配套
-
-- 身份供料原则保留：`grant_route_reader_facts` / `_escort_identity_lines` 仍区分实况读者与奏报原文。
-- 专用实况账本已退役：`escorted` 本切片恒假（非另造替代机制）。
-- 有护核账与暗护玩法接续归 #1873 / 家族收尾，不在本片另开处方。
-
-**本类结算依据**：授权范围内双载体/专用账本/聚合/专用校验及其记录·核算·供料·恢复配套已无行为形状残留；不凭符号空结清，已核对配套。
+未结类别以末份判词 continue payload 为准：J18（P1）、J6（P2）。本轮主攻 J6 自限谓词与类成员修净。
 
 ---
 
-## 2. J6（结构候选语义处置闭环）
+## 1. J6（宽谓词 + 语义成员）
 
-### 可重跑机械命令
+### 谓词纠正
 
-见 `j6-enum-cmd.txt`：
+`j6_flag_structural_candidates.py` 已去掉自限过滤：
+- 不再要求中文≥10 + 措辞/wording/label/材料/邸报
+- 不再因 list_/apply_/status_code 等结果 token 跳过 helper/mock
+- web 不再要求 toHaveBeenCalled 且无 fireEvent
+
+宽谓词覆盖：文本比对/计数、mock/patch/spy、helper/private、公式/oracle、退役标记、web mock/text/count。
+
+### 可重跑命令
 
 ```sh
 python3 evidence/1900-j18-j6-retire-fixer/j6_enumerate_universe.py
 python3 evidence/1900-j18-j6-retire-fixer/j6_flag_structural_candidates.py
 ```
 
-- 复扫后全集：`j6-universe-summary.json`（2879 成员 / 234 源文件）
-- 结构候选：`j6-structural-candidates-summary.json`（151；有信号≠属类；无信号≠不属类）
-- **语义处置表（权威）**：`j6-candidate-disposition.jsonl`（151/151，每条含 entry/result/mock_boundary/reason）
-- 类成员含本轮删改史：`j6-class-members.jsonl`
-- 扩扫 assert-calls：`j6-assert-calls-scan.txt` + `j6-expanded-assert-calls-disposition.jsonl`（33）
+### 计数（复扫后）
 
-### 本轮代码处置（确认类成员）
+- universe：见 `j6-universe-summary.json`（约 2868）
+- 宽结构候选：见 `j6-structural-candidates-summary.json`（约 2609；有信号≠属类）
+- **宽候选处置**：`j6-wide-candidate-disposition.jsonl`（全覆盖，含 disposition_basis）
+- **语义成员表**：`j6-semantic-members.jsonl` + `j6-class-members-wide-round.jsonl` + `j6-clear-residuals.jsonl`
+- 摘要：`j6-wide-disposition-summary.json` / `j6-disposition.md`
+
+### 本轮已落地代码处置（确认类成员）
 
 | action | 项 |
 |---|---|
-| delete | `test_drain_and_close_session_waits_for_gate_then_closes`；`test_empty_startup_catchup_claims_zero_tickets`；`test_startup_catchup_uses_ticketed_gate_not_bare`；`test_ticketed_write_gate_rejects_none`；`test_world_segment_persists_declaration_ending_with_commit` |
-| migrate | agno truncate→`truncate_agno_session_runs`；mechanical_tail 观测→`get_resolve_context` + 崩溃夹具→`mark_mechanical_tail_pending`；staged ending 去掉 `_ending_from_dispatch_result`；web L285 补 `MechanicalTailFailure` 可见失败面 |
-| retain | 其余结构候选与扩扫 assert-calls：逐条入口/结果/mock 边界理由见 disposition；必要闸负向未盲删 |
+| delete | `test_promulgation_judge_561` 七个 `scripts.promulgation_gate_561` 私有 helper 专测；legacy 引擎专测（pay_order / surcharge；clear-residuals 另列 fiscal dual-track） |
+| migrate | error_pack：去掉 `match=atomic`，改断完整五件包缺席；mirror 升结构化字段并引 ADR 0008；path 契约引决定 7；promulgation 去掉 `power_band` oracle→定性带；faction_leverage 去掉 `_set_meta_flag`；transit 删除 `_oracle_n` 公式；全仓注入型/`回滚` 等 `match=` 措辞锁；若干 call_count→公开结果（month_chain/rescript/decree） |
+| retain（有 spec） | error_pack 路径/镜像（ADR 0008 决定 5/7）；LLM 边界零调用+字节/选数结果；回调序契约等 |
 
-不以「无信号→retain」机章全集；不以候选计数当开放缺陷数。
+### 诚实边界（不夸张结类）
 
-**本类结算依据**：复扫后 151 结构候选均已语义处置；确认类成员已删或迁到真入口/实际结果；扩扫相关形式已覆盖；无剩候选留给下一庭。
+- 宽候选全量已处置，但 `wide_flag_no_high_confidence_member_rule` 的 retain **不是**「不属类」证明。
+- 高置信 in-tree outstanding（calls-only/材料规则误报）已人工改判；若复读宽命中段仍可能发现新成员。
+- **不自行宣布 J6 converged / 类净。**
 
 ---
 
-## 3. 聚焦测试
+## 2. 聚焦测试
 
 七变量均 `/usr/bin/false`。
 
-- Python：`focused-round3.log` — **227 passed**
-- Web：`web-focused-round3b.log` — **18 passed**（`useSettlementFlow.test.tsx`）
+- `focused-wide-round4.log`：**1271 passed, 1 skipped**
+- `focused-wide-round5.log`：**375 passed**（agent 删改触及面）
 
 未跑全量。
 
 ---
 
-## 4. 自查（质量顾问）
+## 3. 自查
 
-- 机器枚举 ≠ 语义处置；无信号 ≠ 不属类；unit ≠ helper 豁免。
-- 保留项均写可核入口/结果/mock 边界；未泛化机章 retain。
-- J18 按行为形状与配套核对，非符号空。
+- 机器枚举 ≠ 语义处置；无高置信规则 ≠ 不属类。
+- 点名样例：error_pack atomic/路径/mirror 已按 ADR 与实结果处理，非 public 名豁免。
 - 未 stash/amend/rewrite/push/PR；`.baseline/` 未动。
 - 自查二连 done。
 
-## 5. 合法阻断
+## 4. 合法阻断
 
-无。工作量不是合法阻断。有护核账玩法接续属 #1873/家族收尾，非本片施工阻断。
+无。工作量不是合法阻断。不把下一庭当兜底；本回执如实列出宽命中 retain 的非免责性。
 不自行宣布 merge / 关票 / converged。

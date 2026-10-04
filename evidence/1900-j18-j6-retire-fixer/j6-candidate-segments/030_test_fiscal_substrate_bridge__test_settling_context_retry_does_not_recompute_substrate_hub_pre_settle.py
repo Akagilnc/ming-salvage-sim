@@ -1,0 +1,24 @@
+def test_settling_context_retry_does_not_recompute_substrate_hub_pre_settle(fresh_game):
+    from ming_sim.decree import pre_settle
+
+    db, state = fresh_game
+    turn = state.turn
+
+    pre_settle(state, db)
+    before_ledger = _hub_ledger_snapshot(db, turn=turn)
+    before_containers = _hub_container_snapshot(db)
+    before_balance = state.metrics["国库"]
+
+    db.save_resolve_context(
+        turn,
+        "测试诏",
+        {},
+    )
+    assert db.get_resolve_context(turn) is not None
+
+    pre_settle(state, db)
+
+    assert _hub_ledger_snapshot(db, turn=turn) == before_ledger
+    assert _hub_container_snapshot(db) == before_containers
+    assert state.metrics["国库"] == before_balance
+    _assert_hub_conservation_oracle(before_ledger, before_containers)

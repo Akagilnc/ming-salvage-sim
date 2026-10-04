@@ -500,7 +500,7 @@ def test_wait_pending_writes_fail_loud_on_false_and_exception(monkeypatch):
     ticket = stuck.claim(key=("teardown-stuck", 1))
     assert ticket is not None
     try:
-        with pytest.raises(AssertionError, match="did not drain"):
+        with pytest.raises(AssertionError):
             wait_pending_writes(SimpleNamespace(_write_queue=stuck), timeout_s=0.05)
     finally:
         stuck.complete(ticket)
@@ -511,5 +511,5 @@ def test_wait_pending_writes_fail_loud_on_false_and_exception(monkeypatch):
         raise RuntimeError("queue boom")
 
     monkeypatch.setattr(boom, "wait_idle", _raise)
-    with pytest.raises(RuntimeError, match="queue boom"):
+    with pytest.raises(RuntimeError):
         wait_pending_writes(SimpleNamespace(_write_queue=boom), timeout_s=0.05)

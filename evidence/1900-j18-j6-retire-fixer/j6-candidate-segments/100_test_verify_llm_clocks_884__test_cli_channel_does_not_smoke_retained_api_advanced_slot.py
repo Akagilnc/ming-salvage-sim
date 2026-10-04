@@ -1,0 +1,27 @@
+def test_cli_channel_does_not_smoke_retained_api_advanced_slot(monkeypatch):
+    """CLI 通道只验当前 CLI 主槽；保留的 API advanced 槽不另起一腿。"""
+    seen: list[LLMConfig] = []
+
+    def fake_verify(cfg, **_k):
+        seen.append(cfg)
+
+    monkeypatch.setattr(web_app, "verify_llm_available", fake_verify)
+    cfg = LLMConfig(
+        api_key="sk-test",
+        base_url="https://api.example.com/v1",
+        model="gpt-main",
+        advanced_model="gpt-advanced",
+        advanced_base_url="https://adv.example.com/v1",
+        advanced_api_key="sk-adv",
+        channel="cli",
+        cli_runner="codex",
+        cli_model="gpt-cli",
+    )
+    web_app._verify_llm_configs_or_raise(cfg)
+    assert len(seen) == 1
+    assert seen[0].channel == "cli"
+    assert seen[0].cli_model == "gpt-cli"
+    assert seen[0].model != "gpt-advanced"
+    assert cfg.advanced_model == "gpt-advanced"
+    assert cfg.advanced_api_key == "sk-adv"
+    assert cfg.advanced_base_url == "https://adv.example.com/v1"

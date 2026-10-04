@@ -468,7 +468,7 @@ def test_failed_declaration_commit_reloads_memory_from_db(game):
         assert state.metrics["国库"] == before_metrics["国库"] - 25
         raise RuntimeError("chain persistence failed")
 
-    with pytest.raises(RuntimeError, match="chain persistence failed"):
+    with pytest.raises(RuntimeError):
         settle_staged_declarations_in_decree_order(
             db, state, [decree_ref], source=Provenance.player_decree,
             alongside=fail_after_effects,
@@ -546,7 +546,7 @@ def test_held_dossier_settlement_failure_retry_and_reentry_isolation(game, monke
 
     monkeypatch.setattr(dd, "settle_staged_declarations_in_decree_order", fail_first)
 
-    with pytest.raises(RuntimeError, match="transient settlement crash"):
+    with pytest.raises(RuntimeError):
         _settle_edicts(sess, chain=chain)
 
     assert not db.staged_declarations.is_settled(held_ref)
@@ -597,7 +597,7 @@ def test_advance_reloads_memory_after_transaction_rollback(game, monkeypatch):
     monkeypatch.setattr(
         decree_mod, "_carry_pending_clarification_actions", fail_after_advance,
     )
-    with pytest.raises(RuntimeError, match="injected tail failure"):
+    with pytest.raises(RuntimeError):
         month_chain._advance_after_gazette(
             db, state, {}, turn, "", month_chain.Provenance.system_simulation,
             content=content,

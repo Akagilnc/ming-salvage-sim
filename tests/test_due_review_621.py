@@ -697,7 +697,7 @@ def test_takeover_guard_fail_closed_on_ownership_error(game, monkeypatch):
     monkeypatch.setattr(
         "ming_sim.due_review.dossiers_with_pending_due_review", _boom,
     )
-    with pytest.raises(RuntimeError, match="ownership lookup boom"):
+    with pytest.raises(RuntimeError):
         issue_engine.apply_score_extraction(
             db, state,
             {

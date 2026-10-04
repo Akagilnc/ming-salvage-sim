@@ -1,0 +1,31 @@
+def test_run_agent_text_prior_messages_sent_as_message_list():
+    from agno.models.message import Message
+    from ming_sim.agents import run_agent_text
+
+    captured: list[object] = []
+
+    class _Agent:
+        def run(self, input):
+            captured.append(input)
+
+            class _Out:
+                content = '{"ok":true}'
+                messages = None
+
+            return _Out()
+
+    prior = [
+        {"role": "user", "content": "first-user"},
+        {"role": "assistant", "content": "first-assistant"},
+    ]
+    text = run_agent_text(
+        _Agent(), "heal-user", tag="rescript-draft-heal", prior_messages=prior,
+    )
+    assert text == '{"ok":true}'
+    payload = captured[0]
+    assert isinstance(payload, list) and len(payload) == 3
+    assert all(isinstance(m, Message) for m in payload)
+    assert [m.role for m in payload] == ["user", "assistant", "user"]
+    assert [m.content for m in payload] == [
+        "first-user", "first-assistant", "heal-user",
+    ]

@@ -973,8 +973,11 @@ def test_old_integer_offset_migrated_to_float(game):
         "UPDATE factions SET leverage=?, leverage_offset=? WHERE name=?",
         (drifted_lev, old_offset, faction),
     )
-    # 旧标记在、v2 标记不在（旧版代码遗留）
-    db._set_meta_flag("__leverage_offsets_calibrated")
+    # 旧标记在、v2 标记不在（旧版代码遗留）——经公开 metrics 表造夹具态，不调私有 _set_meta_flag
+    db.conn.execute(
+        "INSERT INTO metrics(key, value) VALUES('__leverage_offsets_calibrated', 1) "
+        "ON CONFLICT(key) DO UPDATE SET value=excluded.value"
+    )
     db.conn.execute("DELETE FROM metrics WHERE key='__leverage_offsets_float_v2'")
     db.conn.commit()
 

@@ -34,16 +34,31 @@ def test_attempt_derived_from_existing_dirs(game, monkeypatch, tmp_path):
     assert Path(p1) != Path(p2)
 
 def test_write_error_pack_inside_atomic_is_rejected(game, monkeypatch, tmp_path):
-    """在 atomic 内写包 → backup_to 守卫响亮拒绝（钉住「包必须在 atomic 外」约束）。"""
+    """在 atomic 内写包 → 响亮拒绝且不形成完整错误包（ADR 0008：包必须在 atomic 外）。"""
     from ming_sim.applier import atomic
-    from ming_sim.error_pack import write_error_pack
+    from ming_sim.error_pack import error_packs_root, write_error_pack
     db, state, content = game
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    root = error_packs_root()
 
-    with pytest.raises(RuntimeError, match="atomic"):
+    with pytest.raises(RuntimeError):
         with atomic(db):
             write_error_pack(db, state, exc=RuntimeError("x"),
                              extracted=None, resolve_ctx=None)
+
+    # 目录可能半建成，但不得留下完整五件包（无 backup/manifest）
+    complete = []
+    if root.exists():
+        for pack in root.iterdir():
+            if not pack.is_dir():
+                continue
+            needed = {
+                "traceback.txt", "delta.json", "resolve_context.json",
+                "save_backup.db", "manifest.json",
+            }
+            if needed <= {p.name for p in pack.iterdir()}:
+                complete.append(pack)
+    assert complete == []
 
 
 
@@ -55,11 +70,12 @@ def test_write_error_pack_inside_atomic_is_rejected(game, monkeypatch, tmp_path)
 
 
 def test_rejections_jsonl_path_in_error_dir(monkeypatch, tmp_path):
-    """拒收 jsonl 与错误包集中同一 user-data 错误目录（决定 7：一次打包全带走）。"""
+    """拒收 jsonl 与错误包集中同一 user-data 错误目录（ADR 0008 决定 7）。"""
     from ming_sim.error_pack import error_packs_root, rejections_jsonl_path
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
 
     jsonl = Path(rejections_jsonl_path())
+    # 契约：集中同一目录 + 固定文件名（ADR 0008 决定 7；error_pack.rejections_jsonl_path 文档）
     assert jsonl.parent == error_packs_root()
     assert jsonl.name == "rejections.jsonl"
 
@@ -87,7 +103,7 @@ def test_attempt_never_overwrites_existing_pack(game, tmp_path, monkeypatch):
     assert (stale / "manifest.json").read_text(encoding="utf-8") == '{"sentinel": "keep me"}'
 
 def test_mirror_writes_to_rejections_jsonl_path(game, tmp_path, monkeypatch):
-    """rejections_jsonl_path 开箱可写：父目录就位，mirror 直接 append（cmr S6 r1 F3）。"""
+    """rejections_jsonl_path 开箱可写：父目录就位，mirror 直接 append（ADR 0008 决定 5/7）。"""
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
     from ming_sim.applier import Provenance, RejectedItem, RejectionCollector
     from ming_sim.error_pack import rejections_jsonl_path
@@ -102,8 +118,11 @@ def test_mirror_writes_to_rejections_jsonl_path(game, tmp_path, monkeypatch):
     path = rejections_jsonl_path()
     rc.mirror_to_jsonl(path)
 
-    lines = open(path, encoding="utf-8").readlines()
-    assert len(lines) == 1
+    rows = [json.loads(line) for line in open(path, encoding="utf-8") if line.strip()]
+    assert len(rows) == 1
+    assert rows[0]["section"] == "army_delta"
+    assert rows[0]["category"] == "invalid_enum"
+    assert rows[0]["turn"] == 1
 
 def test_web_issue_endpoint_returns_structured_abort(monkeypatch):
     """SettlementAbort 在 /api/decree/issue 回结构化非 500，玩家看得到指引（cmr S6 r2 codex）。"""

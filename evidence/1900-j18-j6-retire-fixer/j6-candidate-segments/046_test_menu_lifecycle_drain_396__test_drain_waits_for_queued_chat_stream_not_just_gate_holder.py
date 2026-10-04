@@ -1,0 +1,73 @@
+def test_drain_waits_for_queued_chat_stream_not_just_gate_holder():
+    """#396 Gap B: drain 不能只等当前持锁 worker——已排队（阻塞在 gate.acquire()）的旧召对请求
+    也须先跑完写库，drain 才关 session。否则 drain 抢到下一轮 acquire 直接关连接，排队请求要么
+    永不跑、要么写 closed database。"""
+    allow_finish_a = threading.Event()
+    allow_finish_b = threading.Event()
+    closed: list[int] = []
+
+    char_a = minister_double("大臣甲")
+    char_b = minister_double("大臣乙")
+    state = SimpleNamespace(turn=1, year=1628, period=1, turn_phase="summoning")
+    db = _GapBDB()
+
+    runtime = object.__new__(web_app.WebGame)
+    runtime.session = _GapBSession(
+        {char_a.name: char_a, char_b.name: char_b},
+        {char_a.name: _GapBAgent(allow_finish_a), char_b.name: _GapBAgent(allow_finish_b)},
+        state, db)
+    runtime.session.close = lambda: closed.append(1)
+    runtime.chat_history = {char_a.name: [], char_b.name: [], "殿上": []}
+    runtime._write_queue = SessionWriteQueue()
+    runtime._write_gate = runtime._write_queue.write_gate
+    runtime._runtime_write_queue = lambda: runtime._write_queue  # type: ignore
+    runtime._mark_pending_write = lambda key=None: runtime._write_queue.claim(key=key or ("pending",))  # type: ignore
+    runtime._complete_pending_write = lambda ticket=None: runtime._write_queue.complete(ticket)  # type: ignore
+    runtime.directive_rows = lambda: []
+    runtime.directive_payload = lambda row: row
+    runtime.can_undo_last_chat = lambda _name: False
+
+    # #1849 reopen：召对只剩殿上；同入口并发第二流被拒，drain 仍须等在飞 A 写完。
+    stream_a = runtime.chat_stream("殿上", "请奏A")
+    first_a = next(stream_a)
+    assert first_a.get("type") == "delta"
+    assert "content" in first_a
+
+    b_events = list(runtime.chat_stream("殿上", "请奏B"))
+    assert b_events and b_events[-1].get("type") == "error"
+
+    drain_done = threading.Event()
+
+    def run_drain():
+        web_app._drain_and_close_session(runtime)
+        drain_done.set()
+
+    wait_prior_entered = threading.Event()
+    real_wait_prior = runtime._write_queue.wait_prior
+
+    def observe_wait_prior(ticket):
+        wait_prior_entered.set()
+        return real_wait_prior(ticket)
+
+    runtime._write_queue.wait_prior = observe_wait_prior  # type: ignore[method-assign]
+
+    thread_drain = threading.Thread(target=run_drain, daemon=True)
+    thread_drain.start()
+    wait_prior_entered.wait()
+    assert not drain_done.is_set(), "drain 在 A 在飞写完前就关了连接"
+
+    allow_finish_a.set()
+    # 消费 A 剩余事件至 end，放行 ticket
+    for item in stream_a:
+        if item.get("type") in ("done", "error", "end"):
+            if item.get("type") == "end":
+                break
+
+    drain_done.wait()
+    assert closed == [1]
+    assert not runtime._write_gate.locked()
+
+    assert any(
+        m["minister"] == "殿上" and m["role"] == "minister"
+        for m in db.messages
+    )

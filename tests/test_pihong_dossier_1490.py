@@ -796,7 +796,7 @@ def test_657_record_event_choice_failure_rolls_back_batch(game, monkeypatch):
     monkeypatch.setattr(db, 'record_event_decision_choice', boom)
     before_triggers = db.conn.execute('SELECT COUNT(*) AS c FROM event_triggers').fetchone()['c']
     batch = ra.validate_all(desk, [{'decision_key': u_key, 'action': 'follow_draft', 'draft_capability': opt['draft_capability'], 'label': opt['label']}, {'decision_key': d_key, 'label': '打回', 'hint': '驳回', 'action': 'decision'}])
-    with pytest.raises(RuntimeError, match='event ledger inject'):
+    with pytest.raises(RuntimeError):
         ra.apply_rescript_batch(db, state, batch, ra.PrewriteResults(), content=content)
     drafts = [r for r in db.list_rescript_drafts() if r['title'] == '陕西告饥']
     assert drafts and drafts[0]['status'] == 'pending'

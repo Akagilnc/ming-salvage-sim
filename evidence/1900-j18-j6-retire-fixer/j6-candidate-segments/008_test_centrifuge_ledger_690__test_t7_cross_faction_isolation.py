@@ -1,0 +1,29 @@
+def test_t7_cross_faction_isolation(game):
+    from ming_sim.centrifuge_ledger import accrue_blood_debt
+
+    db, state, _content = game
+    army = _faction_of(db, _TARGET_ARMY)
+    eunuch = _faction_of(db, _TARGET_EUNUCH)
+    assert army != eunuch
+    before_army_cache = [
+        dict(r) for r in _cache_rows(db) if r["faction"] == army
+    ]
+    before_army_log = [
+        dict(r) for r in _log_rows(db) if r["faction"] == army
+    ]
+    before_army_od = _overdraw_map(db)[army]
+
+    accrue_blood_debt(
+        db=db,
+        turn=state.turn,
+        target=_TARGET_EUNUCH,
+        axis=_AXIS,
+        penalty_type="抄家",
+        crime_weight=70,
+        idem_base="t7|eunuch",
+    )
+    assert [dict(r) for r in _cache_rows(db) if r["faction"] == army] == before_army_cache
+    assert [dict(r) for r in _log_rows(db) if r["faction"] == army] == before_army_log
+    assert _overdraw_map(db)[army] == before_army_od
+    written = [r for r in _log_rows(db) if str(r["idem_key"]).startswith("t7|eunuch|")]
+    assert written and all(r["faction"] == eunuch for r in written)

@@ -1,0 +1,10 @@
+def test_get_main_db_path_prefers_active_db_over_launch_env(monkeypatch, tmp_path):
+    """#402 R1（Codex）：重启后 active_db.txt 必须压过启动 env，才能继续 new_game 切出的新主库。"""
+    env_db_path = str(tmp_path / "launch_env.db")
+    active_db_path = str(tmp_path / "active_from_new_game.db")
+    monkeypatch.setenv("MING_SIM_DB", env_db_path)
+    monkeypatch.setattr(web_app, "user_data_path", lambda *parts: str(tmp_path.joinpath(*parts)))
+    with open(web_app._active_db_path_file(), "w", encoding="utf-8") as f:
+        f.write(active_db_path)
+
+    assert web_app._get_main_db_path() == active_db_path

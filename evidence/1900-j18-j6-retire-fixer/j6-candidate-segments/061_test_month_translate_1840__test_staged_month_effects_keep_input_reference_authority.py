@@ -1,0 +1,28 @@
+def test_staged_month_effects_keep_input_reference_authority(game):
+    from ming_sim.declaration_dispatch import settle_staged_declarations_in_decree_order
+    from ming_sim.month_translate import stage_month_segment
+
+    db, state, _ = game
+    visible = db.affairs.open(name="预推可见", origin="旨意", year=state.year,
+                              period=state.period, turn=state.turn)
+    future_affair_id = visible.id + 1
+    before = state.metrics["国库"]
+    stage_month_segment(
+        db, decree_ref="frozen-refs", segment="预推段", turn=int(state.turn),
+        decree_payload={}, translate_fn=lambda request, config: {"effects": {"economy_moves": [
+            {"origin_ref": f"affair:{visible.id}", "account": "国库", "delta": -1,
+             "category": "过月支出", "reason": "可见事务"},
+            {"origin_ref": f"affair:{future_affair_id}", "account": "国库", "delta": -1,
+             "category": "过月支出", "reason": "预推后新开事务"},
+        ]}},
+    )
+    assert state.metrics["国库"] == before
+    hidden = db.affairs.open(name="暂存后新开", origin="世界段", year=state.year,
+                             period=state.period, turn=state.turn)
+    assert hidden.id == future_affair_id
+    result = settle_staged_declarations_in_decree_order(db, state, ["frozen-refs"])["frozen-refs"]
+    assert state.metrics["国库"] == before - 1
+    rejections = result.effects.applied[0]["economy_moves_rejections"]
+    assert len(rejections) == 1
+    assert rejections[0]["rejected"] is True
+    assert rejections[0]["item"]["origin_ref"] == f"affair:{hidden.id}"

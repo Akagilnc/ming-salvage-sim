@@ -1,0 +1,56 @@
+def test_mechanical_tail_missing_llm_config_surfaces_retry(game, monkeypatch):
+    """缺模型配置：机械尾失败，错误原文写明缺少模型配置，可点重试。"""
+    from ming_sim.mechanical_tail import (
+        failed_mechanical_tail,
+        retry_failed_mechanical_tail,
+        schedule_mechanical_tail_after_advance,
+    )
+
+    db, state, content = game
+    closed_turn = int(state.turn)
+    session = make_light_session(db, state, content)
+    session.llm_config = None
+    session.agno_db = None
+    executor = _install_deferred(monkeypatch)
+
+    schedule_mechanical_tail_after_advance(
+        session,
+        closed_turn=closed_turn,
+        settled_year=int(state.year),
+        settled_period=int(state.period),
+        ending_outcome={"status": "emperor_abdicate", "summary": "退位"},
+    )
+    try:
+        _run_deferred(executor)
+    except Exception:
+        pass
+    assert get_session_write_queue(session).wait_idle(timeout_s=5)
+    failure = failed_mechanical_tail(db, state)
+    assert failure is not None
+    turn, tail = failure
+    assert turn == closed_turn
+    assert tail["status"] == "failed"
+    err = str(tail.get("error") or "")
+    assert "缺少模型配置" in err
+    assert tail.get("error_pack_path")
+
+    monkeypatch.setattr(
+        "ming_sim.mechanical_tail._run_relation_brew", lambda *a, **k: None,
+    )
+    monkeypatch.setattr(
+        "ming_sim.agents.create_ending_summary_agent", lambda *a, **k: object(),
+    )
+    monkeypatch.setattr(
+        "ming_sim.agents.run_agent_text", lambda *a, **k: "补配后总评",
+    )
+    session.llm_config = object()
+    session.agno_db = object()
+    executor2 = _install_deferred(monkeypatch)
+    assert retry_failed_mechanical_tail(session) is True
+    _run_deferred(executor2)
+    assert get_session_write_queue(session).wait_idle(timeout_s=5)
+    chain = month_chain._load_chain(db, closed_turn)
+    assert chain["mechanical_tail"]["status"] == "done"
+    ending = db.get_ending_summary()
+    assert ending is not None
+    assert ending["summary"] == "补配后总评"

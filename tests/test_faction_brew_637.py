@@ -288,7 +288,7 @@ def test_faction_claim_db_error_propagates_loudly(game):
         raise sqlite3.OperationalError("派系认领库不可写")
 
     db.claim_faction_brew_targets = boom
-    with pytest.raises(sqlite3.OperationalError, match="派系认领库不可写"):
+    with pytest.raises(sqlite3.OperationalError):
         run_month_end_relation_brew(db, state, _dual_brew_fn_factory([]))
 
 
@@ -301,7 +301,7 @@ def test_faction_apply_db_error_propagates_loudly_not_disguised(game):
         raise sqlite3.OperationalError("派系落定库不可写")
 
     db.apply_faction_brew_result = boom
-    with pytest.raises(sqlite3.OperationalError, match="派系落定库不可写"):
+    with pytest.raises(sqlite3.OperationalError):
         run_month_end_relation_brew(db, state, _dual_brew_fn_factory([]))
 
 

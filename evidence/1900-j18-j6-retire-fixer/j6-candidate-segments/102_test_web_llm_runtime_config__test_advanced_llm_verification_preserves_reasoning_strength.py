@@ -1,0 +1,19 @@
+def test_advanced_llm_verification_preserves_reasoning_strength(monkeypatch):
+    seen = []
+    monkeypatch.setattr(web_app, "verify_llm_available", lambda cfg: seen.append(cfg))
+    cfg = LLMConfig(
+        api_key="sk-test",
+        base_url="https://api.example.com/v1",
+        model="gpt-main",
+        advanced_model="gpt-advanced",
+        channel="api",
+        reasoning_strength="high",
+        advanced_thinking_level="minimal",
+    )
+
+    web_app._verify_llm_configs_or_raise(cfg)
+
+    by_model = {item.model: item for item in seen}
+    assert by_model["gpt-main"].reasoning_strength == "high"
+    assert by_model["gpt-advanced"].reasoning_strength == "high"
+    assert by_model["gpt-advanced"].thinking_level == ""

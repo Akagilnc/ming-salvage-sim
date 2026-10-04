@@ -1,0 +1,62 @@
+def test_month_entry_world_push_follows_audience_transport_policy(
+    game, monkeypatch, tmp_path, failure,
+):
+    """过月入口的世界推演走 ADR 0157 策略：429 一次终止；5xx/超时隔五秒，共三次。"""
+    from ming_sim.agents import Agent, bind_content
+    from ming_sim.models import LLMConfig
+
+    db, state, content = game
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    bind_content(content)
+    turn = int(state.turn)
+    _forbid_extractor(monkeypatch)
+    sleeps: list[float] = []
+    monkeypatch.setattr(
+        "ming_sim.llm_transport._sleep_retry_interval",
+        lambda seconds: sleeps.append(float(seconds)),
+    )
+    sequence = (
+        [_http_status_error(429)]
+        if failure == "429"
+        else [
+            _http_status_error(500),
+            APITimeoutError(request=None),
+            _http_status_error(503),
+        ]
+    )
+    calls = {"n": 0}
+
+    def boom(self, *_args, **_kwargs):
+        assert getattr(self, "id", None) == "world-segment"
+        calls["n"] += 1
+        raise sequence[calls["n"] - 1]
+
+    monkeypatch.setattr(Agent, "run", boom)
+    session = make_light_session(db, state, content)
+    session.llm_config = LLMConfig(
+        api_key="sk-test", base_url="https://api.example.com/v1",
+        model="gpt-test", channel="api",
+    )
+
+    with pytest.raises(SettlementAbort) as caught:
+        session.resolve_turn(allow_empty_decree=True)
+
+    if failure == "429":
+        assert calls["n"] == 1
+        assert sleeps == []
+    else:
+        assert calls["n"] == TRANSPORT_DEFAULT_MAX_ATTEMPTS
+        assert sleeps == [TRANSPORT_DEFAULT_RETRY_INTERVAL_SECONDS] * (
+            TRANSPORT_DEFAULT_MAX_ATTEMPTS - 1
+        )
+    assert int(state.turn) == turn
+    assert state.turn_phase == TurnPhase.SETTLING.value
+    assert caught.value.stage == "world_text"
+    chain = (db.get_resolve_context(turn) or {}).get("simulator_payload", {}).get(
+        "month_chain", {},
+    )
+    failure_row = chain.get("call_failure") or {}
+    assert failure_row.get("kind") == "model_exhausted"
+    assert failure_row.get("step") == "world_text"
+    assert not chain.get("world_text_ready")
+    assert not chain.get("world_committed")

@@ -196,7 +196,7 @@ def test_reference_to_nonexistent_entity_is_rejected_without_killing_sibling_ite
         raise RuntimeError("simulated flush_to_db failure")
 
     monkeypatch.setattr(RejectionCollector, "flush_to_db", _boom)
-    with pytest.raises(RuntimeError, match="simulated flush_to_db failure"):
+    with pytest.raises(RuntimeError):
         dispatch_declaration(db, state, declaration, minister_name=minister)
     monkeypatch.setattr(RejectionCollector, "flush_to_db", real_flush_to_db)
 

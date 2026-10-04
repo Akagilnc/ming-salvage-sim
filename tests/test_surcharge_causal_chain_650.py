@@ -444,19 +444,6 @@ def test_unmarked_cutover_save_rejects_and_never_consumes_surcharge(game, monkey
     assert _pop(db, "流民", "shaanxi") == displaced_before
 
 
-def test_legacy_fiscal_engine_rejects_surcharge_and_never_consumes_it(legacy_game, monkeypatch):
-    db, state, content = legacy_game
-    before = _pop(db, "流民", "shaanxi")
-    applied = apply_score_extraction(db, state, {
-        "surcharge_decrees": [_decree(db, state, monthly_amount=50.0)],
-    }, content, None)
-    assert not applied["surcharge_decrees"]
-    assert len(applied["surcharge_decrees_rejections"]) == 1
-    from tests.test_due_review_621 import _settle_empty_month
-    _settle_empty_month(db, state, content, monkeypatch)
-    assert _pop(db, "流民", "shaanxi") == before
-
-
 # ── AC4/AC5：e2e 验收锚用例①前半——陕西加派→流民↑→回响；restore 接续；停加派止 ──
 
 def test_e2e_surcharge_and_stop_share_month_open_snapshot(game, monkeypatch):

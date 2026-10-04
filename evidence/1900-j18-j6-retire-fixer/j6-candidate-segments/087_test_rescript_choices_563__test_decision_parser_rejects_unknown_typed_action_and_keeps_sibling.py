@@ -1,0 +1,97 @@
+def test_decision_parser_rejects_unknown_typed_action_and_keeps_sibling():
+    from ming_sim.settlement_payload import parse_decision_blocks
+
+    malformed = {
+        "title": "发帑", "context": "济军", "options": [{
+            "label": "发内帑三十万两", "hint": "济军",
+            "action_type": "grant_allocaton", "grant_action": "协饷",
+            "account": "内库", "amount": 30, "purpose": "补饷",
+            "target_kind": "army", "target_id": "guanning", "cadence": "一次性",
+        }, {"label": "暂缓", "hint": "守财"}],
+    }
+    blank_discriminator = {
+        **malformed,
+        "title": "空白拨帑",
+        "options": [
+            {**malformed["options"][0], "action_type": "   "},
+            malformed["options"][1],
+        ],
+    }
+    missing_discriminator = {
+        **malformed,
+        "title": "无类拨帑",
+        "options": [
+            {k: v for k, v in malformed["options"][0].items()
+             if k != "action_type"},
+            malformed["options"][1],
+        ],
+    }
+    incompatible_discriminator = {
+        **malformed,
+        "title": "错类拨帑",
+        "options": [
+            {**malformed["options"][0], "action_type": "punishment"},
+            malformed["options"][1],
+        ],
+    }
+    bare_incompatible_discriminator = {
+        **malformed,
+        "title": "裸错类",
+        "options": [
+            {"label": "惩处", "hint": "候旨", "action_type": "punishment"},
+            malformed["options"][1],
+        ],
+    }
+    inapplicable_grant_action = {
+        **malformed,
+        "title": "错配内帑",
+        "options": [
+            {
+                **malformed["options"][0],
+                "action_type": "grant_allocation",
+                "grant_action": "发内帑",
+            },
+            malformed["options"][1],
+        ],
+    }
+    inapplicable_target_kind = {
+        **malformed,
+        "title": "错配协饷目标",
+        "options": [
+            {
+                **malformed["options"][0],
+                "action_type": "grant_allocation",
+                "target_kind": "character",
+            },
+            malformed["options"][1],
+        ],
+    }
+    spaced_legal = {
+        **malformed,
+        "title": "犒军",
+        "options": [
+            {**malformed["options"][0], "action_type": " grant_allocation "},
+            malformed["options"][1],
+        ],
+    }
+    sibling = {
+        "title": "巡河", "context": "河工", "options": [
+            {"label": "遣员巡河", "hint": "查勘"},
+            {"label": "暂缓巡河", "hint": "候报"},
+        ],
+    }
+    raw = "".join(
+        f"<<DECISION>>{json.dumps(block, ensure_ascii=False)}<<END>>"
+        for block in (
+            malformed, blank_discriminator, missing_discriminator,
+            incompatible_discriminator, bare_incompatible_discriminator,
+            inapplicable_grant_action, inapplicable_target_kind,
+            spaced_legal, sibling,
+        )
+    )
+
+    decisions = parse_decision_blocks(raw)
+
+    assert [decision["title"] for decision in decisions] == ["犒军", "巡河"]
+    assert decisions[0]["options"][0]["action_type"] == "grant_allocation"
+    assert decisions[0]["options"][0]["amount"] == 30

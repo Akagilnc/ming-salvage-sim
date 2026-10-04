@@ -1,0 +1,57 @@
+# J6 wide disposition (priority flags)
+
+Source: `j6-structural-candidates.jsonl` filtered by `internal_formula_oracle` | `assert_calls_shape` | `retired_or_meta_marker`.
+**Total:** 140
+
+## Counts by action
+
+- **delete**: 6
+- **migrate**: 35
+- **retain**: 99
+
+## delete
+
+- `test_asgi_dossiered_directive_has_no_retired_review_surface`
+- `test_fixed_flows_legacy_engine_keeps_global_army_pay_route`
+- `test_legacy_engine_pay_order_materialize_fails_loud_not_fulfilled`
+- `test_legacy_fiscal_engine_rejects_surcharge_and_never_consumes_it`
+- `test_substrate_hub_dual_track_sanity_keeps_legacy_calc_as_reference`
+- `test_substrate_hub_skip_uses_internal_marker_not_user_fixed_display`
+
+## migrate
+
+- `test_active_member_empty_office_contributes_zero_weight`
+- `test_apply_score_extraction_does_not_echo_normalized_person_changes`
+- `test_apply_score_extraction_new_person_changes_shadow_legacy_person_keys`
+- `test_apply_score_extraction_rejects_forged_legacy_partial_power_way`
+- `test_apply_score_extraction_rejects_legacy_trapped_prisoner_office_change`
+- `test_cli_no_edict_route_rejudges_held_proposed_dossier`
+- `test_fixed_flows_substrate_hub_books_split_treasury_income_and_central_losses`
+- `test_fixed_flows_substrate_hub_central_pay_carries_transport_loss_without_jingyun`
+- `test_fixed_flows_substrate_hub_central_pay_shares_hub_tier_with_jingyun_grants`
+- `test_fresh_seed_migrates_legacy_office_pollution`
+- `test_gate_reconsideration_removes_only_named_opponent_and_keeps_real_bench`
+- `test_generate_unknown_top_field_requests_repair_before_exhaustion`
+- `test_half_weight_odd_baseline_no_round_drift`
+- `test_henan_normal_speed_arrives_next_month`
+- `test_legacy_office_pollution_migrated_on_load`
+- `test_legacy_pending_only_advances_to_durable_dossier_without_review_api`
+- `test_legacy_status_change_clears_transit_to_after_person_travel`
+- `test_legacy_status_change_rejects_non_active_target_before_transition_matrix`
+- `test_mid_countdown_save_reopen_continues_identically`
+- `test_non_whitelist_faction_delta_direct_leverage_survives_reconcile`
+- `test_old_integer_offset_migrated_to_float`
+- `test_ousted_in_transit_stops_countdown_and_never_arrives`
+- `test_pre_settle_tick_before_event_terminal_reads_new_location`
+- `test_pre_settle_tick_before_seed_auto_trigger_reads_new_location`
+- `test_rank_rule_offset_reanchor_preserves_existing_save_leverage_once`
+- `test_recompute_all_reconciles_drift_from_unhooked_path`
+- `test_reconcile_runs_before_clear_gated_legacies_same_turn`
+- `test_s2_reappointment_derives_qifu_from_retired`
+- `test_settling_context_retry_does_not_recompute_substrate_hub_pre_settle`
+- `test_speed_factors_match_f2_oracle_on_differentiated_route`
+- `test_step_4a_crash_recovery_resumes_without_re_running_supply`
+- `test_step_4a_incomplete_0058_report_fails_loud_and_retry_restarts`
+- `test_step_4a_non_validation_failure_keeps_product_on_retry`
+- `test_substrate_hub_cutover_runs_multi_tick_treasury_trajectory`
+- `test_whitelist_faction_delta_routes_to_offset_survives_reconcile`

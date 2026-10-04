@@ -1,0 +1,37 @@
+def test_missing_model_does_not_mark_world_continued(game, monkeypatch):
+    """世界段缺模型不得记 world_continued；重试才从问处续推。"""
+    db, state, content = game
+    closed_turn = int(state.turn)
+    _forbid_extractor(monkeypatch)
+    monkeypatch.setattr(
+        month_chain, "run_world_segment_text", lambda *a, **k: _WORLD_WITH_QUESTION,
+    )
+    monkeypatch.setattr(
+        month_translate, "translate_month_segment", lambda *a, **k: {"effects": {}},
+    )
+    session = make_light_session(db, state, content)
+    session.llm_config = None
+    session.resolve_turn(allow_empty_decree=True)
+    desk_row = session.pending_decisions()[0]
+    payload = _hitl_payload(desk_row)
+
+    try:
+        session.submit_hitl_choices(payload, write_gate=session._write_gate)
+        raised = None
+    except LLMUnavailable as exc:
+        raised = exc
+    assert raised is not None
+    chain = month_chain._load_chain(db, closed_turn)
+    assert chain.get("world_continued") is not True
+    assert chain.get("world_questions")
+    assert session.state.turn_phase == TurnPhase.AWAITING_DECISION.value
+
+    monkeypatch.setattr(
+        month_chain, "_run_world_continuation_text",
+        lambda *a, **k: "准调关宁，关宁增戍。",
+    )
+    session.llm_config = object()
+    session.submit_hitl_choices(payload, write_gate=session._write_gate)
+    chain = month_chain._load_chain(db, closed_turn)
+    assert chain.get("world_continued") is True
+    assert chain.get("world_questions") in (None, [], ())

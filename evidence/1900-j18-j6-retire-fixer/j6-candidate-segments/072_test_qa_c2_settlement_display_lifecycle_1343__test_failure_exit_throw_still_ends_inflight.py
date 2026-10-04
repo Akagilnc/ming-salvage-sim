@@ -1,0 +1,24 @@
+def test_failure_exit_throw_still_ends_inflight(game, monkeypatch):
+    """对称：失败支 exit 抛错亦不得卡住 inflight（嵌套 finally 销账）。"""
+    db, state, content = game
+    runtime = _shell(db, state, content)
+    state.turn_phase = TurnPhase.SUMMONING.value
+    db.save_state(state)
+
+    monkeypatch.setattr(web_app, "_accept_settlement_period", lambda _g: True)
+    monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", lambda _g, **_k: None)
+
+    def _boom_exit(*_a, **_k):
+        raise RuntimeError("exit boom")
+
+    monkeypatch.setattr(web_app, "_exit_settlement_display_on_failure", _boom_exit)
+
+    raised = None
+    try:
+        with web_app._settlement_period_entry(runtime, write_cm=_blocking_gate):
+            raise ValueError("body fail")
+    except RuntimeError as exc:
+        raised = exc
+
+    assert raised is not None and "exit boom" in str(raised)
+    assert web_app._settlement_entry_inflight(runtime) == 0

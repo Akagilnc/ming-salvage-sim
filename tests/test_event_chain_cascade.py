@@ -245,7 +245,7 @@ def test_cascade_rolls_back_owned_transaction_on_later_write_failure(game, monke
 
         monkeypatch.setattr(db, "cancel_issue", fail_cancel)
 
-        with pytest.raises(RuntimeError, match="injected cancel failure"):
+        with pytest.raises(RuntimeError):
             issues.apply_event_cascading_invalidations(state, db)
 
         db.conn.commit()

@@ -1,0 +1,140 @@
+## assert calls == / assert_called (tests)
+tests/test_web_llm_runtime_config.py:331:    assert commit_calls == []                    # verify 失败 → commit 从未被调
+tests/test_web_llm_runtime_config.py:986:        assert calls == [], f"fresh 构造不应触发 LLM 调用，实得 {calls}"
+tests/test_web_llm_runtime_config.py:1076:        assert calls == [], f"continue/load_save 不应触发 LLM 调用，实得 {calls}"
+tests/test_web_llm_runtime_config.py:1120:    assert close_calls == [{"write_gate_already_held": True}]
+tests/test_settlement_write_guard_393.py:214:    assert calls == []
+tests/test_office_inference.py:157:    assert calls == [], f"seed 不应调 CLI 后端，实调 {len(calls)} 次：{calls[:3]}"
+tests/test_office_inference.py:195:        assert calls == [], f"开局全路径不应调 CLI 后端，实调 {len(calls)} 次：{calls[:3]}"
+tests/test_qa_d1_decree_normalize_1274.py:162:    assert calls == []
+tests/test_audience_restore_505.py:333:    assert calls == ["court_break"]
+tests/test_pihong_dossier_1490.py:316:    assert phase2_calls == [], '校验失败不得进入 phase2'
+tests/test_pihong_dossier_1490.py:419:    assert phase2_calls == [], '非法选择不得进入 phase2'
+tests/test_pihong_dossier_1490.py:426:    assert phase2_calls == []
+tests/test_pihong_dossier_1490.py:1505:    assert phase2_calls == [], '空 desk + 非空无键载荷须整批拒，不得进 phase2'
+tests/test_pihong_dossier_1490.py:1511:    assert phase2_calls == [1], '真正空 choices 续跑仍合法，走 submit_decisions'
+tests/test_qa_t1_extraction_dual_source_1353.py:526:    assert calls == ["退朝", "court_break"]
+tests/test_web_audience_night_498.py:291:        assert calls == ([0.0] if failure == "429" else [0.0, 5.0, 10.0])
+tests/test_decree_commitment_creation_136.py:1100:    assert calls == []
+tests/test_new_game_smoke.py:57:    assert calls == [], f"fresh 构造零 LLM 调用，实得 {calls}"
+tests/test_gazette_author_1862.py:451:    assert world_calls == [1]
+tests/test_gazette_author_1862.py:459:    assert world_calls == [1]
+tests/test_scene_llm_1836.py:145:    assert calls == [f"宣{character.name}", "边饷如何？"]
+tests/test_relation_brew_636.py:132:    assert calls == []
+tests/test_relation_brew_636.py:359:    assert calls == []
+tests/test_audience_travel_gating_670.py:663:    assert apply_calls == 1
+tests/test_decree_forecast_1861.py:290:        assert calls == [1]
+tests/test_decree_forecast_1861.py:292:    assert calls == [1]
+tests/test_event_trigger_gate.py:4328:    assert calls == 1
+tests/test_issue_entities.py:186:        assert calls == []
+tests/test_structured_decree_contract_1624.py:267:    assert calls == ["rescript-draft", "rescript-draft-heal"]
+tests/test_transaction_boundary.py:348:    assert calls == ["last", "broken", "first"]
+tests/test_transaction_boundary.py:372:    assert calls == ["first", "broken", "last"]
+tests/test_faction_brew_637.py:186:    assert calls == []
+tests/test_faction_brew_637.py:243:    assert calls == []
+
+## toHaveBeenCalled without fireEvent/userEvent/click/getBy (web) — sample
+      93
+
+## private import from ming_sim
+tests/test_distance_matrix.py:6:from ming_sim.distance import DistanceMatrix, bake_distance_matrix
+tests/test_manual_directive_locality_1685.py:7:from ming_sim.cli_backend import capture_manual_directive_payload as _real_capture
+tests/test_urge_lever_624.py:26:from ming_sim.issues import apply_score_extraction
+tests/test_recommendations.py:8:from ming_sim.recommendations import build_recommendation_brief, validate_recommendation_snapshot
+tests/test_settlement_write_guard_393.py:19:from ming_sim.models import TurnPhase, FRONT_HALF_DONE_PHASES
+tests/test_settlement_write_guard_393.py:21:from ming_sim.session_write_queue import get_session_write_queue
+tests/test_office_inference.py:14:from ming_sim.context import bind_content
+tests/test_office_inference.py:16:from ming_sim.db import infer_office_type_from_office as infer
+tests/test_office_inference.py:207:    from ming_sim.decree import reload_state_from_db
+tests/test_office_inference.py:227:    from ming_sim.decree import reload_state_from_db
+tests/test_office_inference.py:255:    from ming_sim.issues import apply_office_appointment
+tests/test_pihong_dossier_1490.py:480:    from ming_sim.rescript_draft import normalize_rescript_layer_a_option
+tests/test_pihong_dossier_1490.py:507:    from ming_sim import rescript_actions as ra
+tests/test_pihong_dossier_1490.py:518:    from ming_sim import rescript_actions as ra
+tests/test_pihong_dossier_1490.py:536:    from ming_sim import rescript_actions as ra
+tests/test_pihong_dossier_1490.py:576:    from ming_sim.rescript_draft import normalize_rescript_layer_a_option
+tests/test_pihong_dossier_1490.py:593:    from ming_sim import rescript_actions as ra
+tests/test_pihong_dossier_1490.py:660:    from ming_sim import rescript_actions as ra
+tests/test_pihong_dossier_1490.py:661:    from ming_sim.decree_vocabulary import derive_draft_capability
+tests/test_pihong_dossier_1490.py:783:    from ming_sim import rescript_actions as ra
+tests/test_pihong_dossier_1490.py:812:    from ming_sim.rescript_draft import normalize_rescript_layer_a_option
+tests/test_pihong_dossier_1490.py:873:    from ming_sim import rescript_actions as ra
+tests/test_pihong_dossier_1490.py:894:    from ming_sim import rescript_actions as ra
+tests/test_pihong_dossier_1490.py:895:    from ming_sim.decree_vocabulary import DOSSIER_ACTION_TYPES, RESCRIPT_EMITTED_DOSSIER_ACTION_TYPES
+tests/test_pihong_dossier_1490.py:896:    from ming_sim.rescript_draft import normalize_rescript_layer_a_option
+tests/test_pihong_dossier_1490.py:1133:    from ming_sim import rescript_actions as ra
+tests/test_pihong_dossier_1490.py:1199:    from ming_sim.audience_night import TAG_ENTER
+tests/test_pihong_dossier_1490.py:1201:    from ming_sim.rescript_draft import normalize_rescript_layer_a_option
+tests/test_pihong_dossier_1490.py:1214:    from ming_sim.rescript_draft import generate_rescript_draft
+tests/test_pihong_dossier_1490.py:1263:        from ming_sim.session_write_queue import get_session_write_queue
+tests/test_pihong_dossier_1490.py:1345:            from ming_sim.audience_night import rescript_summon_origin_ref
+tests/test_pihong_dossier_1490.py:1366:    from ming_sim.rescript_draft import normalize_rescript_layer_a_option
+tests/test_pihong_dossier_1490.py:1422:    from ming_sim.rescript_draft import normalize_rescript_layer_a_option
+tests/test_pihong_dossier_1490.py:1519:    from ming_sim.rescript_draft import normalize_rescript_layer_a_option
+tests/test_pihong_dossier_1490.py:1546:    from ming_sim.rescript_draft import normalize_rescript_layer_a_option
+tests/test_pihong_dossier_1490.py:1612:    from ming_sim.rescript_draft import normalize_rescript_layer_a_option
+tests/test_pihong_dossier_1490.py:1670:    from ming_sim.rescript_draft import normalize_rescript_layer_a_option
+tests/test_pihong_dossier_1490.py:1739:    from ming_sim import rescript_actions as ra
+tests/test_pihong_dossier_1490.py:1761:    from ming_sim import rescript_actions as ra
+tests/test_pihong_dossier_1490.py:1783:    from ming_sim import rescript_actions as ra
+tests/test_pihong_dossier_1490.py:1803:    from ming_sim.audience_night import TAG_ENTER, rescript_summon_origin_ref
+tests/test_pihong_dossier_1490.py:1804:    from ming_sim.rescript_draft import normalize_rescript_layer_a_option
+tests/test_pihong_dossier_1490.py:1857:    from ming_sim.rescript_actions import project_preferred_hitl_choice
+tests/test_pihong_dossier_1490.py:1891:    from ming_sim import rescript_actions as ra
+tests/test_pihong_dossier_1490.py:1905:    from ming_sim import rescript_actions as ra
+tests/test_pihong_dossier_1490.py:1916:    from ming_sim import rescript_actions as ra
+tests/test_pihong_dossier_1490.py:1928:    from ming_sim import rescript_actions as ra
+tests/test_pihong_dossier_1490.py:1930:    from ming_sim.rescript_draft import normalize_rescript_layer_a_option
+tests/test_pihong_dossier_1490.py:1961:    from ming_sim.rescript_draft import normalize_rescript_layer_a_option
+tests/test_pihong_dossier_1490.py:1962:    from ming_sim.decree import prepare_resolve_front_half
+tests/test_pihong_dossier_1490.py:2056:    from ming_sim.audience_night import TAG_ENTER, rescript_summon_origin_ref
+tests/test_pihong_dossier_1490.py:2057:    from ming_sim.rescript_draft import normalize_rescript_layer_a_option
+tests/test_pihong_dossier_1490.py:2154:    from ming_sim.rescript_draft import normalize_rescript_layer_a_option
+tests/test_pihong_dossier_1490.py:2228:    from ming_sim.rescript_draft import normalize_rescript_layer_a_option
+tests/test_pihong_dossier_1490.py:2252:    from ming_sim import rescript_actions as ra
+tests/test_pihong_dossier_1490.py:2253:    from ming_sim.rescript_draft import normalize_rescript_layer_a_option
+tests/test_pihong_dossier_1490.py:2287:    from ming_sim import rescript_actions as ra
+tests/test_pihong_dossier_1490.py:2294:    from ming_sim import rescript_actions as ra
+tests/test_pihong_dossier_1490.py:2349:    from ming_sim import rescript_actions as ra
+tests/test_pihong_dossier_1490.py:2401:    from ming_sim.action_materialize import stage_punishment_candidate
+tests/test_pihong_dossier_1490.py:2402:    from ming_sim.credit_events import KIND_BETRAY
+tests/test_pihong_dossier_1490.py:2404:    from ming_sim import rescript_actions as ra
+tests/test_pihong_dossier_1490.py:2418:    from ming_sim import rescript_actions as ra
+tests/test_pihong_dossier_1490.py:2452:    from ming_sim import rescript_actions as ra
+tests/test_pihong_dossier_1490.py:2471:    from ming_sim import rescript_actions as ra
+tests/test_pihong_dossier_1490.py:2491:    from ming_sim.session_write_queue import get_session_write_queue
+tests/test_pihong_dossier_1490.py:2553:    from ming_sim.db import imperial_push_target_dossier_id, parse_backing_dossier_id
+tests/test_pihong_dossier_1490.py:2648:    from ming_sim.month_chain import run_player_month_chain
+tests/test_pihong_dossier_1490.py:2746:    from ming_sim.rescript_draft import generate_rescript_draft
+tests/test_pihong_dossier_1490.py:2774:    from ming_sim.session_write_queue import get_session_write_queue
+tests/test_pihong_dossier_1490.py:2929:    from ming_sim.rescript_draft import generate_rescript_draft
+tests/test_llm_channel_config.py:6:from ming_sim import cli_backend
+tests/test_llm_channel_config.py:9:from ming_sim.llm_config import for_role, load_llm_config
+tests/test_llm_channel_config.py:10:from ming_sim import llm_model
+tests/test_llm_channel_config.py:11:from ming_sim.llm_model import create_chat_model, verify_llm_available
+tests/test_llm_channel_config.py:178:    from ming_sim.llm_config import supports_openai_reasoning_effort
+tests/test_llm_channel_config.py:283:    from ming_sim.agents import bind_content as agents_bind, create_rescript_draft_agent
+tests/test_llm_channel_config.py:285:    from ming_sim.registry import create_scene_agent
+tests/test_llm_channel_config.py:700:    from ming_sim.llm_config import load_llm_config, CLI_DEFAULT_TIMEOUT_SECONDS
+tests/test_llm_channel_config.py:762:    from ming_sim import cli_backend as cb
+
+## wording/措辞 locks
+tests/test_rejection_wiring.py:102:    assert rows[0][1]  # 人读原因非空；措辞不是契约
+tests/test_rejection_wiring.py:198:    assert rows[0][1]  # 人读原因非空；措辞不是契约
+tests/test_relation_read_640.py:12:  source/target/summary/recent_context/updated_at_period；不锁摘要、语境或纪年措辞。
+tests/test_player_army_projection_321.py:205:    """真实军队、状态与地图 API 投影同一军队状态，不约束呈现措辞。"""
+tests/test_menu_continue_stream_1195.py:37:    """继续路径：先推 stage 事件，再 done 带 state（结构化终态；不锁阶段措辞）。"""
+tests/test_menu_continue_stream_1195.py:68:    # 契约：存在 stage 事件且 content 为 str；不比较生成/阶段措辞正文
+tests/test_chat_stream_failpaths_393.py:975:    按客户端规则重放后，临时正文 = done.answer（不叠旧半句）。不锁措辞。
+tests/test_rescript_draft_656.py:291:# F3.3 原样不变式＋P4 输入侧定性投影＋prompt 正向措辞（机械验收）
+tests/test_world_materials_1834.py:7:副本）；对盘面/事务/opening/经历/邸报等人读渲染文本的措辞或固定片段机械
+tests/test_draft_admission_resubmit_1769.py:8:不扫 LLM 自由文本——回禀措辞由 LLM 自己长（P7 / ADR 0142）。
+tests/test_draft_admission_resubmit_1769.py:10:人工审读指针（验收 2 与 4，不锁 LLM 措辞）：
+tests/test_audience_translate_1837.py:781:    # 库中不得出现模板拼装正文
+tests/test_army_display_173.py:7:#1185：不锁中文奏报措辞；真实出口差分/可数域值 tracer。
+tests/test_fiscal_substrate_bridge.py:1248:    # 不锁生成文本措辞。核账期（月初快照在场，settling/awaiting_decision）不得下发半程
+tests/test_character_knowledge_489.py:169:    # 原件的身份隐私负向；判词明确认可，不是生成措辞锁。
+tests/test_memorial_inbox_1726.py:163:    # 与 c3/s2 同形轻壳：经真 state_payload 投影链；object.__new__ 拼装可暂留。
+
+## escort retired in tests (should be empty except maybe comments)
+NONE
