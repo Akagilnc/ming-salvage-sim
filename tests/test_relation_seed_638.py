@@ -167,8 +167,9 @@ def test_seeded_pair_flows_into_month_end_brew_selection(fresh_session):
     new_events = collect_new_edge_events(
         db=sess.db, source="魏忠贤", target="杨涟", watermark=0,
     )
-    contexts = [e["context"] for e in new_events]
-    assert any("二十四大罪" in c for c in contexts), "seed 奠基边未进酿制输入"
+    seed_ids = {int(e["id"]) for e in pair_events}
+    new_ids = {int(e["id"]) for e in new_events}
+    assert seed_ids <= new_ids, "seed 奠基边未进酿制输入"
 
 
 def test_pregame_turn_scale_matches_load_state_mapping():
@@ -350,7 +351,8 @@ def test_reverse_chronological_seed_keeps_latest_event_readable(fresh_session):
     rows = sess.db.get_relation_edge_events(source="甲", target="乙")
     assert [(row["year"], row["period"]) for row in rows] == [(1625, 2), (1626, 2)]
     dto = next(row for row in project_relation_ledger(sess.db, viewer=None) if row["source"] == "甲")
-    assert dto["recent_context"] == "后事。（天启六年二月）"
+    # Preserve injected context without locking the appended presentation wording.
+    assert dto["recent_context"].startswith("后事。")
     assert dto["updated_at_period"] == "天启六年二月"
 
 

@@ -70,8 +70,6 @@ def test_new_game_t0_previous_reign_period_label_empty_with_empty_summary(game):
     assert db.previous_turn_summary(state) == ""
     label = db.previous_turn_reign_period_label(state)
     assert label == ""
-    assert "九月" not in label
-    assert "天启" not in label
 
 
 def test_state_payload_t0_previous_summary_empty(game):
@@ -106,4 +104,3 @@ def test_state_payload_t0_previous_summary_empty(game):
     assert payload["turn"]["reign_period_label"] == "天启七年十月"
     # r5：payload 开局 label 与空 summary 同口径，禁九月残留
     assert payload.get("previous_reign_period_label") in ("", None)
-    assert "九月" not in (payload.get("previous_reign_period_label") or "")

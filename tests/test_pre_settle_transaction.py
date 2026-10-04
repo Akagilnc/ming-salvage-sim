@@ -92,8 +92,10 @@ def test_due_secret_order_submission_rolls_back_on_pre_settle_crash(saved_game, 
     db.conn.execute(
         "UPDATE secret_orders SET status='active', due_turn=?, result='' WHERE id=2", (turn,))
     db.conn.commit()
-    assert db.conn.execute(
-        "SELECT status FROM secret_orders WHERE id=2").fetchone()[0] == "active"
+    before = db.conn.execute(
+        "SELECT status, result FROM secret_orders WHERE id=2").fetchone()
+    assert before[0] == "active"
+    original_result = before[1]
 
     orig_save = db.save_state
     def _boom_save(st):
@@ -110,7 +112,7 @@ def test_due_secret_order_submission_rolls_back_on_pre_settle_crash(saved_game, 
     finally:
         other.close()
     assert row[0] == "active"
-    assert "[期限届满]" not in (row[1] or "")
+    assert row[1] == original_result
 
 
 def test_pre_settle_rolls_back_on_seed_issue_failure(game, monkeypatch):

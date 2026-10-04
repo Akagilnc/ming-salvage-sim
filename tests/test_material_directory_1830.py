@@ -224,7 +224,6 @@ def test_read_material_stays_inside_directory(game, tmp_path):
     with pytest.raises(FileNotFoundError):
         read_material(prepared.root, display)
     miss = tools["read_material"](display)
-    assert miss.startswith("无法读取：")
     assert "本月邸报" not in miss
 
 

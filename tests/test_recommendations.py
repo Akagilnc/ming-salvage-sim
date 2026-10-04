@@ -5,7 +5,7 @@ import json
 import pytest
 
 from ming_sim.models import Character
-from ming_sim.recommendations import build_recommendation_brief, validate_recommendation_snapshot
+from ming_sim.recommendations import validate_recommendation_snapshot
 from tests.dossier_test_helpers import promulgate_proposed_appointments
 
 
@@ -280,7 +280,6 @@ def test_listed_heard_for_selection_candidate_stays_recovery_type_through_contex
     row = next(row for row in db.list_recommendation_candidates(state, recommender.name)
                if row["name"] == candidate.name)
     assert row["candidate_kind"] == "荐起复"
-    assert "荐起复" in build_recommendation_brief(db, state, recommender.name)
     assert validate_recommendation_snapshot(db, state, recommender.name, row)
 
     restored = db.load_state()

@@ -470,7 +470,7 @@ def test_verify_llm_available_respects_api_channel_over_backend_env(monkeypatch)
 
     verify_llm_available(cfg)
 
-    assert captured["prompt"] == "输出 ok"
+    assert isinstance(captured.get("prompt"), str) and captured["prompt"]
     assert not isinstance(captured["model"], CliChat)
 
 
@@ -496,7 +496,7 @@ def test_verify_llm_available_smokes_cli_channel_without_backend_env(monkeypatch
 
     verify_llm_available(cfg)
 
-    assert seen["prompt"] == "输出 ok"
+    assert isinstance(seen.get("prompt"), str) and seen["prompt"]
     assert seen["config"] is cfg
 
 
@@ -535,7 +535,7 @@ def test_verify_llm_available_smokes_legacy_env_only_backend(monkeypatch):
     monkeypatch.setattr(cli_backend, "_run_backend_for_config", fake_run)
     cfg = LLMConfig(api_key="cli-backend", base_url="", model="api-fallback", channel="")
     verify_llm_available(cfg)
-    assert seen["prompt"] == "输出 ok"
+    assert isinstance(seen.get("prompt"), str) and seen["prompt"]
 
 
 def test_verify_llm_available_legacy_env_only_failure_raises(monkeypatch):

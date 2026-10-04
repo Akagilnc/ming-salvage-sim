@@ -455,12 +455,14 @@ def test_authority_revoke_edge_reaches_holder_faction_with_emperor_target(game):
     }, content=content)["authority_changes"][0]
     assert revoke_result.get("rejected") is not True
 
-    # DB 里确实落了 holder→EMPEROR 的结怨边（context 只有权限名＋辖域）。
+    # DB 里确实落了 holder→EMPEROR 的结怨边；人话 context 不锁（issues.py 拼装）。
     edges = db.get_relation_edge_events(
         source=holder, target=EMPEROR_NODE, event_kind="结怨",
     )
     assert len(edges) == 1
-    assert edges[0]["context"] == f"收权·罢差·便宜行事·{domain}"
+    assert edges[0]["origin"].startswith(f"authority_revoke:{authority_id}")
+    assert db.get_authority(authority_id)["privilege"] == "便宜行事"
+    assert db.get_authority(authority_id)["scope"] == domain
 
     targets = select_faction_brew_targets(
         db, year=int(state.year), period=int(state.period),

@@ -138,9 +138,11 @@ def test_production_path_grant_restore_revoke_impression_tracer(game):
         source=holder, target=EMPEROR_NODE, event_kind="结怨",
     )
     assert len(edges) == 1
-    assert edges[0]["context"] == f"收权·罢差·便宜行事·{domain}"
+    # context 为人话拼装（issues.apply 收权边）；契约只锁 origin / 结构化 privilege·scope
     assert edges[0]["origin"].startswith(f"authority_revoke:{authority_id}")
     assert not edges[0]["evidence"]
+    assert record["privilege"] == "便宜行事"
+    assert record["scope"] == domain
 
     # Zero 0056 / 皇威 / faction cost on revoke.
     assert final_state.metrics == metrics_before

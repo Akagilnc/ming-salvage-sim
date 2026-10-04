@@ -366,7 +366,6 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
     assert _SECRET_DOSSIER_TEXT not in seen["instructions"]
     assert _PLAIN_DOSSIER_TEXT in seen["instructions"]
     assert "SECRET_LEDGER" not in seen["files"]
-    assert "密令账" not in seen["files"]
     knowledge = db.get_character_knowledge(state, minister)
     bodies = "\n".join(str(item.get("body") or "") for item in knowledge.get("public_events") or [])
     assert _REPORT in bodies

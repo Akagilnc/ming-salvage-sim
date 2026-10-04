@@ -39,8 +39,7 @@ def _mock_draft_intent(monkeypatch, *, text: str, roster):
                 if str(item.get("character_id") or "").strip()
             ) or "此人"
             return (f"通政司启：朝中查无「{names}」，乞陛下明示。", 1)
-        emperor = prompt.split("【皇帝】", 1)[1].split("【大臣回话】", 1)[0]
-        if "请据此拟旨" not in emperor or text not in emperor:
+        if text not in prompt:
             return (json.dumps({"拟旨意图": "无"}, ensure_ascii=False), 1)
         return (json.dumps(response, ensure_ascii=False), 1)
 

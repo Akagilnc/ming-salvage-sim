@@ -180,7 +180,6 @@ def test_character_terminal_status_closes_secret_orders_through_canonical_progre
     }
     assert orders[chained_id]["status"] == "failed"
     assert orders[unchained_id]["status"] == "failed"
-    assert "人物终态：dead；途中病故" in orders[chained_id]["result"]
     assert db.dossiers.get(chained_dossier)["status"] == "closed"
     assert db.dossiers.get(unchained_dossier)["status"] == "closed"
     terminal = db.list_dossier_progress(chained_dossier)[-1]

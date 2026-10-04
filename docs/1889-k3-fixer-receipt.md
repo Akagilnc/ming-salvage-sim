@@ -1,309 +1,141 @@
-# #1889 修内司回执：K3（非契约文案 / 材料标题 / 内部标签 / 删简残段）
+# #1889 K3 修内司重交回执
 
-派单：`~/.ak-roles/books/Ming_LLM/unbound/runs/01a10858-3646-7193-a4b4-8f1007247730@fixer/fix-packet.md`  
-判词附件（**末份 payload 为准**）：`attachments/02-1889-judge-cf79a8d0e.json`  
-工作树：`/Users/akagilnc/WorkSpace/Ming_LLM-1889-w5r`；分支 `ak-roles/1889-k3-text-contracts`  
-基线 HEAD（施工前 tip）：`cf79a8d0e891b22bd3a98bb03a7202d7e524e90c`  
-本文件是施工证据，不另立 authority。
+- 派单：`/Users/akagilnc/.ak-roles/books/Ming_LLM/1889/runs/01a10858-3646-7193-a4b4-8f1007247730@fixer/fix-packet.md`
+- 本轮 continue 判词原文：`/tmp/1889-k3-continue-verdict.json`。
+- 工作树：`/Users/akagilnc/WorkSpace/Ming_LLM-1889-w5r`；分支：`ak-roles/1889-k3-text-contracts`。
+- 本轮基线：`fe70b4db7`。前轮处置及测试记录可用 `git show fe70b4db7:docs/1889-k3-fixer-receipt.md` 核对。
+- 本回执是施工证据，不另立 authority。修内司建立新提交；不 amend、不 stash、不 push、不建 PR。
 
-**提交**：劳务只负责编辑与验证；修内司核验后建立独立 `ak-roles:` 提交，不 amend、不 push。提交 SHA 见终局工具回执。
+## 根因与更正
 
-未结类（末份原文）：
-1. **K3**「测试仍机械依赖非契约文案」— 成立。disposition：上一判全审遗漏、本轮新立的测试质量类。
+前轮把宽候选枚举及启发式保留冒称全类核尽，结论不成立；遗漏生产 prompt、文档正文、生产结果和报错文案。撤销前轮「无其它漏项」结论。
 
-处方方向（末份 `fix.classes[0]`）：优先删除 / 合并无必要行为价值的断言及删简残段；复用已有真实入口与结构化结果断言。保留现役公私可见边界、拒收及失败负向契约；用户输入文本的存读保真 ≠ 锁生成文案。不得恢复退役包装、为证明删除换形新增测试，或增加生产机制。
+本轮仍只处置 K3：生产 prompt/docs 正文、生产结果/报错、材料标题、内部标签、拼装 context 和种子叙事的非契约文案依赖。保留机器字段/枚举/路径、实体身份、同案注入保真、注入失败传播及现役拒收/保密负向。
 
-类边界（核对时分清，不得混谈）：
-- **固定菜单定位**（短标题 / 菜单 / 对话框 `aria-label` 找控件）≠ K3
-- **输入保真**（同案注入原文再负向/回读）≠ 锁生成叙事
-- **生成叙事 / 材料标题 / 内部标签 / 生产 chrome 措辞锁** = K3
+撤销 `/tmp/1889-k3-file-ledger*.json` 的全 KEEP 结论；`VERIFIED_KEEP_BASIS.txt` 常只取比较中的字段键，不能证明实际值合法。自建分类/openbook 脚本已移至 `/tmp/1889-k3-nav-scripts-20261005052452/`，不进提交。仅复用已存在的标准 AST 候选枚举，不增加生产机制、兼容入口或证明测试。
 
----
-
-## 枚举命令（宽候选 → 系统临时目录；非分类引擎）
+## 枚举与复扫
 
 ```sh
 python3 scripts/1889_k3_enumerate.py
 ```
 
-复用标准 AST：Python `ast`（全部 `Assert` / `Compare`含变量与多行、`pytest.raises(match=)`、字符串方法、bare `pass`）+ TypeScript compiler AST（全部 `expect*`、DOM/string selection）。候选只写系统临时目录；**不在脚本内做处置/分类**。扫描失败直接抛出，不洗白。
+范围为全仓 git 跟踪的 Python 测试及辅助文件、JS/TS test/spec 文件。枚举所有 Assert/Compare（包括变量、多行和嵌套列表/字典），raises match、字符串操作、pass，以及 TS expect/DOM/string 选择。扫描失败抛出；输出仅是冻结源码候选，不是运行时护栏，也不是自动分类裁决。
 
-本轮实测：
+基线输出：255 文件，Python 26396、JS/TS 3913、总候选 30309。
 
-```text
-files_scanned=255  py=26396  js=3913  total=30309
-CANDIDATES=/var/folders/nb/ml2z6k013psg7rdtt0t6g91m0000gn/T/1889-k3-enum-1mhkp2yi/candidates.jsonl
-```
+来源导航采用完整谓词及所属函数，追到输入 Assign/Raise/helper 或生产定义；不以短字串、ASCII、同函数任意 Call、source-window 或第一个字段键判 KEEP。诊断消息、SQL 和 schema 键不是文案值依赖，按方法归类，不重复立账。英文、中文、prompt 分段选择、docs 读取、完整字典/列表、context/status/summary/title/result 与报错 match 均在复核范围。
 
-`by_kind` 摘要：`Compare=13283` `Assert=12512` `pass=44` `raises_match=90`；其余为 `strmethod_*` / `expect_*` / `selection_*`。
+修后实际输出：255 文件，Python 26337、JS/TS 3913、总候选 30250；Compare 13251、Assert 12496、raises_match 90、pass 44。
 
-**已删本轮自建膨胀物**（授权清理）：`docs/1889-k3-members.tsv`、`docs/1889-k3-disposition-overrides.tsv`、旧 `scripts/_1889_k3_ts_scan.mjs`、旧分类引擎。  
-候选全量在临时目录，回执不落巨量表。KEEP 证据只写在「保留类别」节。
+完整临时路径：`/var/folders/nb/ml2z6k013psg7rdtt0t6g91m0000gn/T/1889-k3-enum-c3_2vyaa/candidates.jsonl`。
 
-### 复扫结论（按类定义读候选）
+候选数量不等于 finding 数量，亦不作为「类净」证明。处置全集如下，行号相对 `fe70b4db7`，函数名可直接定位；保留依据另列。
 
-扩扫后对新增候选源（变量/多行 `Compare`、全仓测试入口、TS expect/DOM/string）逐项按类定义核对：
-- **判词点名样本**（precondition 人话、`兵籍在册`/`任免簿`、`postures` 内部标签、删简 bare `pass`）均已落入下表删除/修改成员。
-- **补扫（本轮纠偏）**：上轮误把「UI 固定话语单元测」整类当 KEEP，并以 P7「界面固定话语不禁」缩窄 K3——**撤销**。P7 只豁免生产侧界面固定话语本身，**不豁免**测试锁非契约完整文案。同扫描复核对全部原「UI 固定话语」保留项：菜单/标题纯控件定位与形式语言/机器 ID 可留；锁完整 aria / 报错 / 状态标题全文断言不能留。补删/改成员见下表末行（`yearMonthLabel` 年月全文加「核账/待批」、`settleStream`「推演流意外中断。」）。
-- 其余扩扫中文断言仍多为：注入保真、实体/官职/科目键、材料路径契约、短菜单定位——归保留类别，不与生成叙事混谈。
-- 判词既有「措辞替换探针」（内存改 precondition 人话即红）只证明该类成立，**不充本轮行为修复或变异真跑证据**。本票 K3 = 删/改无效测试断言；**未为删除新造测试**。
+## 本轮成员表
 
----
+### prompt/docs、结果/报错、标题与 context
 
-## K3 全部成员（修前行号 + 函数名；删除/修改单表）
-
-行号相对基线 tip `cf79a8d0e`。成员 = 本轮实际删除或改写的非契约文案锁 / 材料标题 / 内部标签 / 删简残段。保留断言不进本表。
-
-| 处置 | 修前位置（文件:行 / 函数） | 原断言/残段 → 处置 |
+| 文件（tests/ 下） | 修前行 / 函数 | 处置 |
 |---|---|---|
-| 删 | `tests/test_audience_continuous_507.py:52` / `test_scene_recap_quotes_public_dialogue_within_presence_interval` | `assert "此人跋扈" not in recap` → 改注入变量负向（见下一行） |
-| 改 | 同上:52–53 | 先 `private_body = "此人跋扈"` 注入 ledger，再 `assert private_body not in recap` |
-| 改 | `tests/test_audience_draft_grant_once_1777.py:95` / `test_http_audience_one_matter_grant_with_deadline_1783` | 删 `if "【本轮皇帝】准" in text`；改 pending-directive 结构分支 |
-| 删 | `tests/test_breach_plea_623.py:430` / `test_persist_foundation_tiers` | bare `pass` |
-| 删 | `tests/test_character_knowledge_489.py:61–63` / `test_current_state_facts_are_selected_by_content_domain_not_role_label` | bare `pass` ×3 |
-| 删 | `tests/test_character_knowledge_489.py:354` / `test_secret_office_exclusion_does_not_hide_unrelated_world_bucket` | `assert view["world"]["public"] == "登基伊始…"` |
-| 删 | `tests/test_character_knowledge_489.py:1309` / `test_central_ledgers_and_unbounded_household_history_reach_final_materials` | `兵籍在册` + `军心`/`欠饷` 标题负向 |
-| 改 | 同上（原:1309） | 军名存在于 war 材料（结构化名册，不锁标题） |
-| 删 | 同上:1313 | `任免簿` 材料标题 |
-| 改 | 同上（原:1313） | 朝臣名册成员存在性 |
-| 删 | `tests/test_decree_dossiers_571.py:2045` / `test_inner_treasury_admission_uses_actual_once_and_preserves_surface` | bare `pass` |
-| 删 | `tests/test_due_review_621.py:247` / `test_due_review_scene_tops_live_open_night_even_with_body` | `当前待裁场面` 模板锁 |
-| 改 | 同上:247–248 | facts 原文进 opening（输入保真） |
-| 改 | `tests/test_event_trigger_gate.py:483–486` / `test_gate_key_form_error_rejects_typo_metric_table_structure` | 删 `未知 metric`/`未知表` 措辞锁；改非空 fail-loud |
-| 删 | `tests/test_event_trigger_gate.py:1419–1431` / `test_wuyin_lubian_content_treats_lu_death_as_soft_battle_outcome` | 整用例（precondition 人话及 resolve/fail 措辞锁） |
-| 删 | `tests/test_event_trigger_gate.py:2125–2126` / `test_huangtaiji_chengdi_auto_triggers_and_renames_houjin` | `称帝` in status；`last_action == "皇太极称帝改国号大清"` |
-| 删 | `tests/test_fiscal_substrate_bridge.py:400` / `test_region_loader_expands_shared_settle_meta_defaults` | `postures == ["江南财赋核心"]` |
-| 删 | `tests/test_fiscal_substrate_bridge.py:3383–3384` / `test_shanxi_seed_stacks_frontier_pay_and_jin_vassal_dues` | `边镇军饷`/`晋藩宗禄` in postures |
-| 删 | `tests/test_fiscal_substrate_bridge.py:3697` / `test_jiangnan_core_seeds_have_positive_remittance_golden` | `江南财赋核心` in postures |
-| 删 | `tests/test_fiscal_substrate_bridge.py:3720` / `test_huguang_seed_stacks_jiangnan_surplus_with_chu_princely_due` | `楚藩重宗禄` in postures |
-| 删 | `tests/test_menu_lifecycle_drain_396.py:607` / `test_drain_waits_for_queued_chat_stream_not_just_gate_holder` | `仍在进行` |
-| 删 | `tests/test_month_chain_1843.py:720,733` / `test_world_segment_reads_material_directory` | `盘面：` 开场模板 |
-| 删 | `tests/test_on_scene_immediate_write_1839.py:97,102` / `test_kill_lands_status_and_next_materials_include_roster` | bare `pass` ×2 |
-| 改 | 同上:97 | `victim not in` 名册材料 |
-| 删 | `tests/test_power_section_rejections.py:159` / `test_power_change_formatter_skips_rejected_items` | `未见明确势力盘面变化` |
-| 改 | 同上:159–160 | 拒收 reason `字段非法` 不回显（NEG） |
-| 删 | `tests/test_qa_b3_409_ux.py:75` / `test_serialized_web_write_settling_keeps_settlement_in_progress_copy` | `月末结算进行中` |
-| 删 | `tests/test_qa_b3_409_ux.py:89,91` / `test_serialized_web_write_rejects_front_half_done_phases` | bare `pass` ×2 |
-| 改 | `tests/test_rejection_wiring.py:240` / `test_inertia_tolerated_rejections_reach_reports` | 只保留注入字段名 `士气大振` |
-| 删 | `tests/test_secret_order_monthly_progress_566.py:338,340` / `test_real_no_edict_entries_roll_back_every_external_state_after_fiscal_write` | bare `pass` ×2 |
-| 删 | `tests/test_secret_order_update.py:22` / `test_upsert_creates_then_updates` | bare `pass` |
-| 删 | `tests/test_section4_rejections.py:507,510` / `test_region_army_formatters_skip_rejected_items` | `未见明确地区/军队盘面变化` |
-| 改 | 同上:507,510 | `字段非法` 不回显（NEG） |
-| 改 | `tests/test_section4_rejections.py:675` / `test_issue_path_tolerated_rejections_reach_reports` | 只保留注入 `士气大振` |
-| 删 | `tests/test_web_chat_serialization_393.py:390` / `test_nonstream_chat_rejects_when_session_draining` | `正在关闭` |
-| 删 | `web/src/appDurableWiring.test.tsx:2684,2705` | aria 全文 `奏疏：1 件待览` |
-| 改 | 同上:2685,2706 | badge 数字 `1`（结构化未读） |
-| 删 | `web/src/components/modals.test.tsx:1101` | aria 含「递话」 |
-| 改 | 同上 | dialog 存在（不锁 aria 叙事） |
-| 删 | `web/src/components/settlementFaces.test.tsx:128` | aria `/0\s*件待览/` |
-| 删 | `web/src/components/settlementFaces.test.tsx:274` | title 不含「核账」 |
-| 删 | `web/src/decisionRouting.test.tsx:142` | error 不含「重新拉取」 |
-| 删 | `web/src/mindreadingDelivery.test.tsx:293,298` | `busy === "大臣思索中"` |
-| 改 | 同上 | busy 非空（流占用结构；不锁 chrome 措辞） |
-| 删 | `web/src/settlementPresentation.test.ts:27–31` / `#1234 year-month label…` | `yearMonthLabel` 锁「1627 年 10 月」/「· 核账」全文；整用例删 |
-| 删 | `web/src/settlementPresentation.test.ts:33–45` / `#1323 …年月标 ·待批…` | `yearMonthLabel` 锁「· 待批」/「· 核账」；附带 `wangSettlementSlipVisible` 与下段矩阵重复，随删不换形 |
-| 改 | 同上 import | 清 unused `yearMonthLabel` |
-| 改 | `web/src/settleStream.test.ts:45` / `still returns interrupted…` | 删锁「推演流意外中断。」；改 `kind===error` + 非空 string（结构；不锁 chrome） |
-| 删 | `web/src/components/decisionModal.test.tsx:624–625` / `#657 midzhi projects…` | 注入 label「加衔恩赏」/hint「荣誉」已 `toBe` 保真后，再 `not.toBe("另旨·中旨")`/`not.toBe("中旨直发")` 锁生产钮文且重复结论 → 删两行；保留 label/hint 保真 + grant 结构化字段 |
-| 删 | `tests/test_pihong_dossier_1490.py:1869` / `test_657_midzhi_persists_decision_key_and_llm_label` | 同构：`decree_text == llm_label` 保真后仍 `assert '另旨·中旨' not in …` → 删；保留 decision_key / llm_label 正向 |
+| test_pay_order_override_extraction_653.py | 49、50、52 / test_single_pay_order_capture_grounds_relative_deadline_at_current_turn | 删除相对期限整句、until_turn 人话公式负向及默认优先级整句；保留机器标识及落账期限结果 |
+| test_surcharge_causal_chain_650.py | 85–92 / test_surcharge_schema_only_teaches_effect_eligible_dossiers | 删除整条 docs 章节切片/文案用例及失效 Path import；保留真实加派落账案 |
+| test_secret_order_monthly_progress_566.py | 183 / test_character_terminal_status_closes_secret_orders_through_canonical_progress_rail | 删除「人物终态：dead；途中病故」；保留 order/dossier/progress 状态 |
+| test_decree_dossiers_571.py | 1112、1175 / 两个 manual_directive_capture_rejects 用例 | 删除 HTTP detail「参与人」；保留 409、异常类型与零写入 |
+| test_decree_dossiers_571.py | 995–996 / test_manual_directive_capture_reaches_structured_dossier | 删除「【皇帝】」「【大臣回话】」分段及「请据此拟旨」闸；保留注入 directive_text 的传入检查 |
+| test_decree_dossiers_571.py | 1297–1298 / test_cli_edit_replaces_text_and_mechanics_before_promulgation | 同上，保留 revised_text 保真 |
+| test_manual_directive_institution_normalize_1279.py | 42–43 / _mock_draft_intent.backend | 同上，保留 text 保真与名册机制 |
+| test_recommendations.py | 283 / test_listed_heard_for_selection_candidate_stays_recovery_type_through_context_and_restore | 删除 brief「荐起复」及失效 import；保留 candidate_kind、验证与重载 |
+| test_month_chain_1847.py | 828、863 / test_question_note_only_is_kept_and_other_decisions_still_require_label | 报错「选项不在当前 options」改为 ValueError 类型；保留 staged questions / pending |
+| test_material_directory_1830.py | 227 / test_read_material_stays_inside_directory | 删除「无法读取：」；保留 FileNotFoundError 与注入正文不泄漏 |
+| test_fiscal_tick.py | 149 / test_fiscal_fail_loud；RAISE_CASES | 删除报错子串比较和 35 条案例的失效 msg 列；保留原 name/st/p/actions 与 ValueError 负向输入全集 |
+| test_audience_scroll_539.py | 265、267 / test_real_http_scroll_merges_ministers_asides_and_story_without_raw_character_stats | 删除未注入的作保/雨声文案负向；保留注入对话及 DTO 字段边界 |
+| test_audience_scroll_539.py | 359–360 / test_extractor_open_tags_do_not_drive_beat_or_soft_boundary | 删除未注入的入殿/告退旧事文案负向；保留 beat/divider 负向 |
+| test_audience_scroll_539.py | 457–459 / test_closed_night_archive_derives_stable_titles_people_and_no_content | 删除整组拼装档案 title；保留 night_id、audience_type、people 与正文边界 |
+| test_audience_travel_gating_670.py | 295、309 / test_multi_origin_same_person_dedupes_consumer_projections_not_ledger | 两处整字典移除 required_fact「抵原地后续赴京」全文锁；保留身份、目的地、origin、entry 及字段类型 |
+| test_audience_travel_gating_670.py | 821 / test_continuation_arrival_settles_origin_without_waiting | 同上，保留后续抵达/结清行为 |
+| test_authority_ledger_611.py | 141 / test_production_path_grant_restore_revoke_impression_tracer | 删除「收权·罢差·便宜行事·…」context；保留 origin 与实际 privilege/scope |
+| test_faction_brew_637.py | 463 / test_authority_revoke_edge_reaches_holder_faction_with_emperor_target | 同上；保留酿制选对及关联身份 |
+| test_llm_channel_config.py | 473、499、538 / 三个 test_verify_llm_available 用例 | 删除「输出 ok」整句锁；保留 prompt 有效输入、路由与配置结果 |
+| test_opening_gazette_delete_1356.py | 73–74、109 / 两个 t0 previous-summary 用例 | 删除已空 label 上重复的「九月」「天启」负向；保留空态契约 |
+| test_pre_settle_transaction.py | 113 / test_due_secret_order_submission_rolls_back_on_pre_settle_crash | 生产「[期限届满]」前缀负向改为回滚前后 result 原值相等；保留 active 及真实崩溃路径 |
+| test_relation_seed_638.py | 170–171 / test_seeded_pair_flows_into_month_end_brew_selection | 删除「二十四大罪」context 锁及 contexts 夹具；对已有 pair_events 与真实 collect_new_edge_events 的事件 id 检查包含关系 |
+| test_relation_seed_638.py | 353 / test_reverse_chronological_seed_keeps_latest_event_readable | 删除「后事。（天启六年二月）」拼装全文锁；保留注入 context 前缀及独立纪年值 |
+| test_gazette_author_1862.py | 369 / test_author_archives_own_title_and_same_run_advances | 删除「密令账」标题负向；保留全部注入 _SECRET_* 和 SECRET_LEDGER 隔离 |
+| test_fiscal_substrate_bridge.py | 115 / test_seed_royal_stipends_use_wanli_accounting_by_province | 删除 source 说明全文锁；保留字段存在与 conversion/items 数值 |
+| test_fiscal_substrate_bridge.py | 4455 / test_jiangnan_core_uses_wanli_huiji_lu_primary_seed | 删除 source.title 人话锁；保留 source 结构、chapter/scan_checked/财政数值 |
 
-**成员计数**：上表全部为删除或修改的真 K3 处置位。不含「保留」行。
+### fact-brief 内部 detail 标签（test_pay_order_override_653.py）
 
-**纠偏（开卷后）**：上表末两行 = 「注入原文相等后仍锁生产替代文案负向」同构漏项。全仓 AST 复扫候选中仅此两处含「另旨·中旨」/「中旨直发」负向；不得假称保密负向（NEG）。其它负向契约（拒收不回显、秘密排除、注入原文不外泄等）不动。
+复用一个测试侧结构查询 `_fact_brief_entries`，不增加生产机制。NewDebt/Repaid 从 origin_ref 指向的 region_logs.field 读取机器记号，不以按正负过滤再断言正负制造循环证明；保留具体数值及归因结果。
 
----
-
-## 保留类别（非修复成员；可核来源）
-
-| 码 | 含义 | 本轮触及可核例 |
-|---|---|---|
-| INPUT_FIDELITY | 同案注入原文再负向/回读 | `private_body`→recap 负向；due_review `facts`→opening；`test_error_pack` 注入 SettlementAbort 原文进 detail；midzhi `label`/`hint`/`decree_text==llm_label` 正向保真（**不含**再锁生产钮文负向） |
-| INJECTED_FAILURE | 测试注入失败字段/原文 | `士气大振` 非法字段名；error_pack 注入文案 |
-| ENTITY_ID | 实体改名/存在性 | `huangtaiji`→`大清`+aliases；军名/朝臣名在材料中 |
-| NEGATIVE_CONTRACT | 拒收/保密负向 | reason 不回显；secret_order 排除；victim 不在名册 |
-| MACHINE_ID | 结构化键/路径 | `转译声明的当场实况`；`朝臣名册.txt` 等材料路径；财政科目键 |
-| LOCATOR_SEAM | 短标题/菜单定位 | `奏疏`/`邸报`/`朝堂·召见大臣` 等找控件；**不含**完整 aria 叙事或动态「N 件待览」 |
-| STRUCTURAL_PASS | 合法 except/空体 | 本轮只删无作用删简残段 pass |
-| ERROR_SENTINEL | 常量哨兵通道（非锁措辞字面） | `decisionRouting` `toBe(PAUSED_DECISION_MSG)`——比的是导出哨兵身份，不另锁中文子串 |
-
-**撤销**：上轮「`yearMonthLabel`「· 核账/· 待批」= UI 固定话语 → KEEP」**作废**；该两例已入成员表删除。P7 界面固定话语豁免≠测试可锁非契约 chrome。  
-**仍属 INPUT_FIDELITY（非 UI 固定话语 KEEP）**：fixture 回读 `奴婢呈上月邸报` / `密令未能正式落库`；staleGuard fixture 自拼 `甲：已离开实时回话`。  
-补扫后同口径下未见其它「纯锁完整 aria/报错/状态标题」漏项需再删。
-
----
-
-## 测试（七个 false BIN）— 实测
-
-环境前缀（七个均设置）：
-
-```sh
-export MING_SIM_AGY_BIN=/usr/bin/false \
-  MING_SIM_CODEX_BIN=/usr/bin/false \
-  MING_SIM_CLAUDE_BIN=/usr/bin/false \
-  MING_SIM_CURSOR_BIN=/usr/bin/false \
-  MING_SIM_KIMI_BIN=/usr/bin/false \
-  MING_SIM_GROK_BIN=/usr/bin/false \
-  MING_SIM_PI_BIN=/usr/bin/false
-PY=/Users/akagilnc/WorkSpace/Ming_LLM/.venv/bin/python
-```
-
-### CMD1 — 触及 pytest nodeid（含本轮改动节点）
-
-```sh
-/usr/bin/time -p "$PY" -m pytest -q --tb=line \
-  tests/test_audience_continuous_507.py::test_scene_recap_quotes_public_dialogue_within_presence_interval \
-  tests/test_audience_draft_grant_once_1777.py::test_http_audience_one_matter_grant_with_deadline_1783 \
-  tests/test_breach_plea_623.py::test_persist_foundation_tiers \
-  tests/test_character_knowledge_489.py::test_central_ledgers_and_unbounded_household_history_reach_final_materials \
-  tests/test_character_knowledge_489.py::test_current_state_facts_are_selected_by_content_domain_not_role_label \
-  tests/test_character_knowledge_489.py::test_secret_office_exclusion_does_not_hide_unrelated_world_bucket \
-  tests/test_decree_dossiers_571.py::test_inner_treasury_admission_uses_actual_once_and_preserves_surface \
-  tests/test_due_review_621.py::test_due_review_scene_tops_live_open_night_even_with_body \
-  tests/test_error_pack.py::test_web_issue_endpoint_returns_structured_abort \
-  tests/test_event_trigger_gate.py::test_gate_key_form_error_rejects_typo_metric_table_structure \
-  tests/test_event_trigger_gate.py::test_huangtaiji_chengdi_auto_triggers_and_renames_houjin \
-  tests/test_fiscal_substrate_bridge.py::test_huguang_seed_stacks_jiangnan_surplus_with_chu_princely_due \
-  tests/test_fiscal_substrate_bridge.py::test_jiangnan_core_seeds_have_positive_remittance_golden \
-  tests/test_fiscal_substrate_bridge.py::test_region_loader_expands_shared_settle_meta_defaults \
-  tests/test_fiscal_substrate_bridge.py::test_shanxi_seed_stacks_frontier_pay_and_jin_vassal_dues \
-  tests/test_menu_lifecycle_drain_396.py::test_drain_waits_for_queued_chat_stream_not_just_gate_holder \
-  tests/test_month_chain_1843.py::test_world_segment_reads_material_directory \
-  tests/test_on_scene_immediate_write_1839.py::test_kill_lands_status_and_next_materials_include_roster \
-  tests/test_power_section_rejections.py::test_power_change_formatter_skips_rejected_items \
-  tests/test_qa_b3_409_ux.py::test_serialized_web_write_rejects_front_half_done_phases \
-  tests/test_qa_b3_409_ux.py::test_serialized_web_write_settling_keeps_settlement_in_progress_copy \
-  tests/test_rejection_wiring.py::test_inertia_tolerated_rejections_reach_reports \
-  tests/test_secret_order_monthly_progress_566.py::test_real_no_edict_entries_roll_back_every_external_state_after_fiscal_write \
-  tests/test_secret_order_update.py::test_upsert_creates_then_updates \
-  tests/test_section4_rejections.py::test_issue_path_tolerated_rejections_reach_reports \
-  tests/test_section4_rejections.py::test_region_army_formatters_skip_rejected_items \
-  tests/test_web_chat_serialization_393.py::test_nonstream_chat_rejects_when_session_draining
-```
-
-```text
-4 failed, 29 passed, 1 warning in 5.32s
-real 6.29
-user 4.47
-sys 1.19
-PY_EXIT:1
-```
-
-失败（如实；**非本轮未修完的 K3 文案锁**）：
-
-| nodeid | 原因 |
+| 修前行 / 函数 | 全部原谓词与处置 |
 |---|---|
-| `…draft_grant_once_1777…1783` | issue/stream → `stage=gazette` SettlementAbort（见下节基线复验：基线同红） |
-| `…due_review…with_body` | `GameDB.list_supervision_history` AttributeError（#1873）；失败在取 facts，早于文案断言 |
-| `…menu_lifecycle_drain…gate_holder` | `_GapBDB` 缺 `reign`（测试桩缺口）；失败在 chat_stream 启动 |
-| `…rejection_wiring…inertia…` | `GameDB.knowledge_items_for_turn` AttributeError（#1873） |
+| 661–663 / test_f23_region_logs_flow_sign_domain_repaid_negative | 省池_、_Repaid、_NewDebt 三个标签过滤 → region_logs 来源、科目及真实 field；保留两种符号断言 |
+| 704 / test_fact_brief_levy_uses_civil_arrears_breakdown_relation | 删除「三饷加派净额」；保留 levy 数值及被替代公式反例 |
+| 742、752–753 / test_fact_brief_attributes_priority_displacement_to_dossier | 本次与重开两处「旨序让位_」过滤 → metric/class/region/origin；保留 value 与重开结果 |
+| 867、869–871、874–875 / test_fact_brief_attributes_arrears_order_displacement_to_dossier | 「旧欠序让位_」过滤及整 tuple 标签、另一「旨序让位_」负向 → 官僚/军户、origin；保留 1.93 与零混入 |
+| 904 / test_fact_brief_priority_provenance_falls_back_to_nationwide_scope | 「旨序让位_军饷」→ 结构化来源选择；保留唯一性与 nationwide dossier |
+| 928 / test_fact_brief_priority_provenance_prefers_winning_scoped_over_later_nationwide | 同上；保留 scoped dossier |
+| 975 / test_fact_brief_arrears_provenance_prefers_winning_scoped_over_nationwide | 「旧欠序让位_官俸欠」→ 结构化来源选择 |
+| 999 / test_fact_brief_priority_provenance_ignores_later_noncausal_dossier | 「旨序让位_军饷」→ 结构化来源；保留 causal dossier |
+| 1048–1053、1066 / test_fiscal_fact_brief_haircut_and_relief_facts | 「折发_」「折发_军饷#central」「补发_」过滤 → metric/class/origin 与军队身份；保留实值方向 |
+| 1414 / test_fact_brief_zero_need_army_region_attribution_not_gated | 「省源偿欠」→ army_logs 来源；保留 -3 与属地 |
+| 1443 / test_fact_brief_central_haircut_floor_per_army_matches_real_accounting | 「折发_军饷#central」→ dossier/class/metric；保留实际 floor 数值 |
+| 1467 / test_fact_brief_unmet_relief_is_current_turn_damage | 「赈济未敷」→ region:shaanxi:settle.st.unmet_relief 机器指针；保留 5 与农民受损 |
+| 1489 / test_fact_brief_province_auto_repaied_is_beneficiary_fact | 「省源偿欠」→ army_logs 来源；保留 -6 与属地 |
+| 1625–1632 / test_claim_flow_logs_persisted_in_settle_bridge_and_restore_e2e | 省池_过滤、_NewDebt/_Repaid 文案后缀判符号、detail/value 集合预期 → 原始日志机器 flow、affected_class/value；保留来源、window 与存读保真 |
 
-### CMD2 — web 触及 vitest（含补扫新触及）
+## 保留依据与自检
 
-```sh
-cd web && /usr/bin/time -p npm test -- --run \
-  src/mindreadingDelivery.test.tsx \
-  src/appDurableWiring.test.tsx \
-  src/decisionRouting.test.tsx \
-  src/components/modals.test.tsx \
-  src/components/settlementFaces.test.tsx \
-  src/settlementPresentation.test.ts \
-  src/settleStream.test.ts
-```
+- 653 的 `陕西=@shaanxi`、`"duration_months":3` 是机器标识，末判明确可留。
+- `test_world_materials_1834.py:75` 的「历月邸报正文」由同函数 `save_turn_report(..., body, title="辽东告急")` 注入；INDEX 保标题、不含正文是实际公私/供料边界，不是标题文案锁。
+- error_pack、中文/英文 raises match 均追到测试注入失败；不把生产报错正文保留为失败契约。
+- _SECRET_*、SECRET_LEDGER、用户对话与急务 title 追到同案注入；保留其读写/隔离结果。
+- 纯纪年是 `tests/test_reign_period_label.py` 的机器格式契约。撤销施工中对 relation_read/seed 独立日期预期改成同一生产 helper 的变更，避免同源 oracle；只有 appended context 全文被删。
+- 财政科目、动作、状态、路径/schema 键和实体身份不因中文而归盯文；也不因短串/ASCII 自动放行。
+- 已删旧物随删：docs 用例 import、RAISE_CASES msg、brief import、context 夹具及重复标题观察。没有新增测试用例或为删除换形造证明。
 
-（实测结果见下节「补扫实测」；首轮五文件曾 134 passed。）
+## 验证（七个 false BIN）
 
-未跑全量。未 stash / amend / push / PR。未代提交。未为删除新造测试。
-
----
-
-## 补扫实测（yearMonthLabel / settleStream 纠偏后）
-
-环境前缀同七个 false BIN。新触及 + 既有 web 触及一并复跑：
-
-```sh
-cd web && /usr/bin/time -p npm test -- --run \
-  src/settlementPresentation.test.ts \
-  src/settleStream.test.ts \
-  src/mindreadingDelivery.test.tsx \
-  src/appDurableWiring.test.tsx \
-  src/decisionRouting.test.tsx \
-  src/components/modals.test.tsx \
-  src/components/settlementFaces.test.tsx
-```
-
-```text
-Test Files  7 passed (7)
-Tests  145 passed (145)
-Duration  5.27s
-real 5.84
-user 9.65
-sys 1.88
-VITEST_EXIT:0
-```
-
-（相对首轮五文件 134：+`settlementPresentation`/`settleStream`；删 2 个 yearMonthLabel 文案用例后总数 145。）
-
----
-
-## 基线复验：`draft_grant_once_1777` SettlementAbort
-
-同真实入口 nodeid：`tests/test_audience_draft_grant_once_1777.py::test_http_audience_one_matter_grant_with_deadline_1783`  
-方法：工作树文件先跑；再以 tip `HEAD` 版同文件临时替换后同入口复跑；最后恢复工作树版。证据目录：
-
-`/tmp/1889-k3-baseline-recheck-zq3KDD/`
-（含 `working.out`、`baseline.out`、`working_test_audience_draft_grant_once_1777.py`）
-
-| 版本 | EXIT | 失败形态 |
-|---|---|---|
-| 工作树（K3 改 pending 结构分支后） | 1 | `stage: gazette` SettlementAbort（「本月结算失败…可重试」） |
-| 基线 tip 文件（含原 `【本轮皇帝】准` 分支） | 1 | **同** `stage: gazette` SettlementAbort |
-
-结论：**基线同红**，不能把该红灯归因为本轮 K3 翻译分支改动，也**没有证据**单独写成「stub 缺口」；属既有 issue/stream→gazette 失败面（可与 #1873 并存登记，本切片不修功能）。
-
----
-
-## 纠偏实测（decisionModal / pihong midzhi 同构）
-
-环境前缀同七个 false BIN。
-
-### CMD3 — midzhi 注入保真后删生产钮文负向
+所有游戏导入/测试命令均设置：
 
 ```sh
-/usr/bin/time -p "$PY" -m pytest -q --tb=line \
-  tests/test_pihong_dossier_1490.py::test_657_midzhi_persists_decision_key_and_llm_label
+export MING_SIM_AGY_BIN=/usr/bin/false MING_SIM_CODEX_BIN=/usr/bin/false \
+  MING_SIM_CLAUDE_BIN=/usr/bin/false MING_SIM_CURSOR_BIN=/usr/bin/false \
+  MING_SIM_KIMI_BIN=/usr/bin/false MING_SIM_GROK_BIN=/usr/bin/false \
+  MING_SIM_PI_BIN=/usr/bin/false
+PY=../Ming_LLM/.venv/bin/python
 ```
 
-```text
-1 passed in 7.62s
-real 8.14
-user 1.35
-sys 2.63
-PY_EXIT:0
-```
+### 修内司核验：本轮变更文件聚焦（非全仓 suite）
 
 ```sh
-cd web && /usr/bin/time -p npm test -- --run src/components/decisionModal.test.tsx
+/usr/bin/time -p "$PY" -m pytest -q -p no:cacheprovider --tb=line \
+  $(git diff --name-only fe70b4db7 -- tests) \
+  > /tmp/1889-k3-final-focused.out 2>&1
 ```
 
-```text
-Test Files  1 passed (1)
-Tests  18 passed (18)
-Duration  3.00s
-real 4.01
-user 1.15
-sys 0.18
-VITEST_EXIT:0
+实际：`29 failed, 697 passed, 1 skipped, 1 warning in 34.70s`；`real 36.41`，exit 1。
+
+原始输出完整保留。29 个失败的根部为：3 个 list_closed_night_archives 缺失、12 个 knowledge_items_for_turn 缺失、13 个 list_supervision_history 缺失，以及 1 个期望注入异常但先遇 list_supervision_history 的失败；部分包装为 SettlementAbort。未靠改负向契约、恢复退役包装或补功能将它们洗绿。skip 为 saved_game 缺 gitignored data/probe.db。判词明定功能红灯不作为本切片门槛。
+
+此轮未改 Web 测试，未重跑 Web 或全仓 suite。
+
+### 保留独立纪年契约核验
+
+```sh
+/usr/bin/time -p "$PY" -m pytest -q -p no:cacheprovider --tb=line \
+  tests/test_relation_seed_638.py::test_fresh_seed_summary_is_readable_with_seed_event_clock \
+  tests/test_relation_seed_638.py::test_reverse_chronological_seed_keeps_latest_event_readable \
+  tests/test_relation_seed_638.py::test_pre_tianqi_seed_event_projects_honest_calendar_label \
+  tests/test_relation_read_640.py::test_updated_at_period_is_era_label_not_bare_turn
 ```
 
-复扫：`python3 scripts/1889_k3_enumerate.py` → 候选中「另旨·中旨」/「中旨直发」负向仅上述两处（已删）；无其它同构漏项。
+实际：`4 passed in 2.58s`，`real 3.55`。
 
----
+中间各轮已有测量原样留存，不充最终全绿证据：`/tmp/1889-k3-continue-pytest.out`（67绿/2红）、`/tmp/1889-k3-quality-full-touch.out`（414绿/21红）、`/tmp/1889-k3-honest-focus-prior.out`（100绿/1红）、`/tmp/1889-k3-honest-focus.out`（2绿/2红）、`/tmp/1889-k3-honest-trace/pytest-b3-touch.out`（2绿/1跳过）、`pytest-b4-seed-title-touch.out`（7绿/1红）。
 
-## 结论
+## 交卷结论
 
-**K3 文案/标签/残段成员已按修前行号全部删除或改写；上轮误留的 `yearMonthLabel` KEEP 已撤销并删净，同口径补改 `settleStream` 报错字面锁；开卷后再删 midzhi「注入保真后锁生产钮文」同构两处。**  
-不得以 P7「界面固定话语」豁免缩窄 K3；菜单/标题定位与机器 ID 仍可留。  
-注入原文相等 ≠ 再锁生产替代文案负向；不得假称保密负向。  
-枚举复用标准 AST，候选在系统临时目录，回执只列真成员（删/改）与保留类别指针。  
-聚焦实测：pytest 首轮 `29 passed / 4 failed`（含基线同红的 gazette abort + #1873/桩缺口）；补扫 vitest `145 passed`（7 files）；纠偏 midzhi pytest `1 passed` + decisionModal vitest `18 passed`。  
-判词措辞替换探针不充本轮行为修复证据。未代提交。
+末判点名及本轮自扫发现的 K3 同类均已按成员表处理；生产零改动。保留输入保真、机器契约和现役负向。不以候选数量或启发式 KEEP 宣告收敛，不署已合并/关票；提交后再由庭审裁断。功能缺口及缺档 skip 原样留存。

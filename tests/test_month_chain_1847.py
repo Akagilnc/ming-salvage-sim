@@ -825,7 +825,7 @@ def test_question_note_only_is_kept_and_other_decisions_still_require_label(
         rejected = None
     except ValueError as exc:
         rejected = exc
-    assert rejected is not None and "选项不在当前 options" in str(rejected)
+    assert isinstance(rejected, ValueError)
     assert db.staged_declarations.questions_for(ref)
     assert session.pending_decisions()[0]["status"] == "pending"
 
@@ -860,7 +860,7 @@ def test_question_note_only_is_kept_and_other_decisions_still_require_label(
         ordinary_rejected = None
     except ValueError as exc:
         ordinary_rejected = exc
-    assert ordinary_rejected is not None and "选项不在当前 options" in str(ordinary_rejected)
+    assert isinstance(ordinary_rejected, ValueError)
     assert session.pending_decisions()[0]["status"] == "pending"
 
 

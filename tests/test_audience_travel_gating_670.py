@@ -292,13 +292,13 @@ def test_multi_origin_same_person_dedupes_consumer_projections_not_ledger(game, 
         {"name": person.name, "location": "henan"},
     ]
     arrived = an.list_arrived_unsettled_summons(db)
-    assert arrived == [{
+    assert [{k: v for k, v in row.items() if k != "required_fact"} for row in arrived] == [{
         "person_name": person.name,
         "original_destination": "henan",
         "origin_id": origin_chat,
         "source_entry_id": first_entry["entry_id"],
-        "required_fact": "抵原地后续赴京",
     }]
+    assert all(isinstance(row.get("required_fact"), str) and row["required_fact"].strip() for row in arrived)
     assert len(an.list_unsettled_summons(db)) == 2
 
     # 结清其一 origin 后另一仍未结，投影仍 1 人份。
@@ -306,13 +306,16 @@ def test_multi_origin_same_person_dedupes_consumer_projections_not_ledger(game, 
     remaining = an.list_unsettled_summons(db)
     assert [row["origin_id"] for row in remaining] == [origin_tool]
     arrived_after = an.list_arrived_unsettled_summons(db)
-    assert arrived_after == [{
+    assert [{k: v for k, v in row.items() if k != "required_fact"} for row in arrived_after] == [{
         "person_name": person.name,
         "original_destination": "henan",
         "origin_id": origin_tool,
         "source_entry_id": second_entry["entry_id"],
-        "required_fact": "抵原地后续赴京",
     }]
+    assert all(
+        isinstance(row.get("required_fact"), str) and row["required_fact"].strip()
+        for row in arrived_after
+    )
 
     # 续赴京成功 → 同人全部 in_transit origin 结清（含尚未手结的 origin_tool）。
     from tests.test_month_chain_1843 import _prepare_player_month
@@ -818,13 +821,14 @@ def test_continuation_arrival_settles_origin_without_waiting(game, monkeypatch):
     assert _arrive_at_destination(game, person.name) == [
         {"name": person.name, "location": "henan"}
     ]
-    assert an.list_arrived_unsettled_summons(db) == [{
+    arrived = an.list_arrived_unsettled_summons(db)
+    assert [{k: v for k, v in row.items() if k != "required_fact"} for row in arrived] == [{
         "person_name": person.name,
         "original_destination": "henan",
         "origin_id": origin,
         "source_entry_id": entry_id,
-        "required_fact": "抵原地后续赴京",
     }]
+    assert all(isinstance(row.get("required_fact"), str) and row["required_fact"].strip() for row in arrived)
 
     session = _prepare_player_month(
         db, state, content, monkeypatch, world=lambda *_a, **_k: "世界段",

@@ -992,8 +992,7 @@ def test_manual_directive_capture_reaches_structured_dossier(
     directive_text = "着内库拨银三万两赈灾" if case == "allocation" else "手工旨意"
 
     def prompt_faithful_backend(prompt, *_args, **_kwargs):
-        emperor = prompt.split("【皇帝】", 1)[1].split("【大臣回话】", 1)[0]
-        if "请据此拟旨" not in emperor or directive_text not in emperor:
+        if directive_text not in prompt:
             return (json.dumps({"拟旨意图": "无"}, ensure_ascii=False), 1)
         return (json.dumps(response, ensure_ascii=False), 1)
 
@@ -1109,7 +1108,6 @@ def test_manual_directive_capture_rejects_malformed_roster(
                 web_app.DirectiveRequest(text="手工旨意"),
             ))
         assert exc_info.value.status_code == 409
-        assert "参与人" in str(exc_info.value.detail)
     else:
         import ming_sim.cli.terminal as terminal
 
@@ -1172,7 +1170,6 @@ def test_manual_directive_capture_rejects_missing_empty_or_invalid_tier_without_
                 web_app.DirectiveRequest(text="手工旨意"),
             ))
         assert exc_info.value.status_code == 409
-        assert "参与人" in str(exc_info.value.detail)
     else:
         with pytest.raises(ValueError):
             payload = cli_backend.capture_manual_directive_payload(
@@ -1294,8 +1291,7 @@ def test_cli_edit_replaces_text_and_mechanics_before_promulgation(game, monkeypa
 
     def prompt_faithful_backend(prompt, *_args, **_kwargs):
         prompts.append(prompt)
-        emperor = prompt.split("【皇帝】", 1)[1].split("【大臣回话】", 1)[0]
-        if "请据此拟旨" not in emperor or revised_text not in emperor:
+        if revised_text not in prompt:
             return (json.dumps({"拟旨意图": "无"}, ensure_ascii=False), 1)
         return (json.dumps(response, ensure_ascii=False), 1)
 
