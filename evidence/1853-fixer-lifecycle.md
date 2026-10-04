@@ -5,7 +5,7 @@
 - 判词：`attachments/08-1853-judge-3cbc92cfa.json` 末份（第 9 份 payload）
 - 基线 HEAD：`3cbc92cfaa090ecd15ffe7b567fb78f1725f4f44`
 - 生产修理提交：`2b4e6e2bd5ef4aa61ac594a1a91bff587887ea7c`
-- 本回执纠偏提交 SHA：见文末（本文件随该提交落地）
+- 本回执纠偏提交 SHA：`d722b6ce04ded5ccfb3d9a5a15f05042fd254084`
 - 施工分支：`ak-roles/issue-1853-j4r-j9-lifecycle`
 - 本回执不表示已合并或家族收尾完成
 
@@ -1154,4 +1154,4 @@ git branch --show-current
 git status --porcelain=v1 --untracked-files=all
 ```
 
-（提交后回填 SHA。）
+HEAD=`d722b6ce04ded5ccfb3d9a5a15f05042fd254084`；branch=`ak-roles/issue-1853-j4r-j9-lifecycle`；status 干净。
