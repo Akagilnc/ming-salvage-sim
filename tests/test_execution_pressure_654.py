@@ -361,7 +361,7 @@ def test_create_decree_dossier_int_abi_single_row(env):
     assert row["region_id"] == ""
 
 
-def test_get_dossier_for_directive_existence_sentinel(env):
+def test_dossier_get_for_directive_existence_sentinel(env):
     db, state, _ = env
     payload = {
         "target_kind": "region",

@@ -243,9 +243,6 @@ class IssueStore:
     def read_has_event_terminal_state(self, params: Any = ()) -> Any:
         return self._conn.execute('SELECT 1 FROM event_triggers WHERE event_id=? AND terminal_state=? LIMIT 1', params).fetchone()
 
-    def read_list_recent_issue_advances(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT * FROM issue_advances WHERE issue_id=? ORDER BY id DESC LIMIT ?', params).fetchall()
-
     def read_ensure_event_parent(self, params: Any = ()) -> Any:
         return self._conn.execute('SELECT 1 FROM events WHERE id=?', params).fetchone()
 
