@@ -304,135 +304,6 @@ def settle_hub_central_army_pay(
     db._reconcile_central_army_pay_arrears_container()
 
 
-def settle_legacy_army_pay(
-    db: "GameDB",
-    state: "GameState",
-    flows: List[Dict[str, object]],
-) -> None:
-    """legacy 各军军饷：按优先级先发当月，不足挂 arrears；含 #314 军心与哗变月链。"""
-    army_rows_raw = db.conn.execute(
-        # #44 army_needed 需 manpower/salary_rate/owner_power（应发挂钩兵力派生）
-        "SELECT id, name, manpower, salary_rate, owner_power, arrears, morale, loyalty, "
-        "consecutive_pay_shortfall_months, is_tusi, self_funded_pay, is_mutinied, "
-        "mutiny_count, mutiny_probation, full_pay_streak, redemption_count FROM armies"
-    ).fetchall()
-    if not army_rows_raw:
-        raise SystemExit("fiscal_tick: armies 表无数据，中止。")
-    army_map = {str(r["id"]): r for r in army_rows_raw}
-    ordered = [army_map[k] for k in ARMY_SALARY_PRIORITY if k in army_map]
-    ordered += [r for r in army_rows_raw if str(r["id"]) not in ARMY_SALARY_PRIORITY]
-
-    for row in ordered:
-        army_id = str(row["id"])
-        name = str(row["name"])
-        needed = army_needed(row)  # #44 应发挂钩兵力(ceil(manpower×salary_rate/10000)，仅 ming)
-        if needed <= 0:
-            continue
-        available = max(0, int(state.metrics["国库"]))
-        pay_current = min(needed, available)
-        shortfall = max(0.0, needed - pay_current)
-
-        old_arrears = float(row["arrears"] or 0)
-        old_morale = int(row["morale"])
-        # 月固定军饷只发当月，不主动还旧欠。旧欠累积拖着，等玩家下旨拨饷才清。
-        if pay_current > 0:
-            db.record_issue_economy_move(
-                state, "国库", -int(pay_current), "各军军饷", f"{name}{TURN_UNIT}军饷"
-            )
-        new_arrears = max(0.0, old_arrears + shortfall)
-        morale_delta = army_pay_morale_delta(needed, shortfall, old_arrears)
-        new_morale = max(0, min(100, old_morale + morale_delta))
-        old_mutiny_count = int(row["mutiny_count"])
-        old_mutiny_probation = int(row["mutiny_probation"])
-        old_is_mutinied = int(row["is_mutinied"])
-
-        # #314 军心月度 tick：仅 ming 且非土司非自养军；欠饷月数=floor(合计 arrears/needed)。
-        old_loyalty = int(row["loyalty"])
-        if str(row["owner_power"]) == "ming" and not bool(row["is_tusi"]) \
-                and not bool(row["self_funded_pay"]):
-            loyalty_delta = army_loyalty_tick_delta(new_arrears, needed)
-            new_loyalty = max(0, min(100, old_loyalty + loyalty_delta))
-            (
-                new_loyalty,
-                new_is_mutinied,
-                new_mutiny_count,
-                new_mutiny_probation,
-                new_full_pay_streak,
-                new_redemption_count,
-            ) = _advance_mutiny(
-                loyalty=new_loyalty, arrears=new_arrears, needed=needed,
-                current=old_is_mutinied, count=int(row["mutiny_count"]),
-                probation=int(row["mutiny_probation"]),
-                full_pay_streak=int(row["full_pay_streak"]),
-                redemption_count=int(row["redemption_count"]),
-            )
-        else:
-            new_loyalty = old_loyalty
-            new_is_mutinied = old_is_mutinied
-            new_mutiny_count = int(row["mutiny_count"])
-            new_mutiny_probation = int(row["mutiny_probation"])
-            new_full_pay_streak = int(row["full_pay_streak"])
-            new_redemption_count = int(row["redemption_count"])
-
-        shortfall_months = (
-            int(row["consecutive_pay_shortfall_months"] or 0) + 1
-            if shortfall > 1e-9 else 0
-        )
-        # 先落军心/振次/欠饷；第 3 振随后经 adapter 核销→清闩→转流寇
-        db.conn.execute(
-            """UPDATE armies
-               SET arrears = ?, morale = ?, loyalty = ?,
-                   consecutive_pay_shortfall_months = ?, is_mutinied = ?,
-                   mutiny_count = ?, mutiny_probation = ?,
-                   full_pay_streak = ?, redemption_count = ?
-               WHERE id = ?""",
-            (new_arrears, new_morale, new_loyalty, shortfall_months,
-             new_is_mutinied, new_mutiny_count, new_mutiny_probation,
-             new_full_pay_streak, new_redemption_count, army_id),
-        )
-        if shortfall > 0:
-            reason_tag = (
-                f"{TURN_UNIT}军饷欠发"
-                f"{format_wanliang_amount(shortfall)}万两"
-            )
-        else:
-            reason_tag = f"{TURN_UNIT}军饷足额"
-        loyalty_reason = _army_loyalty_reason(new_arrears, needed)
-        db.conn.executemany(
-            """INSERT INTO army_logs
-               (turn, year, period, army_id, field, old_value, new_value, delta, reason, event_id, edict_id, actor)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, '户部')""",
-            [
-                (state.turn, state.year, state.period, army_id,
-                 "arrears", str(old_arrears), str(new_arrears), new_arrears - old_arrears,
-                 reason_tag),
-                (state.turn, state.year, state.period, army_id,
-                 "morale", str(old_morale), str(new_morale), new_morale - old_morale,
-                 reason_tag),
-                (state.turn, state.year, state.period, army_id,
-                 "loyalty", str(old_loyalty), str(new_loyalty), new_loyalty - old_loyalty,
-                 loyalty_reason),
-                (state.turn, state.year, state.period, army_id,
-                 "mutiny_count", str(old_mutiny_count), str(new_mutiny_count),
-                 new_mutiny_count - old_mutiny_count, loyalty_reason),
-                (state.turn, state.year, state.period, army_id,
-                 "mutiny_probation", str(old_mutiny_probation), str(new_mutiny_probation),
-                 new_mutiny_probation - old_mutiny_probation, loyalty_reason),
-            ],
-        )
-        _maybe_third_strike_defect(
-            db, state, army_id=army_id,
-            new_latched=new_is_mutinied, new_mutiny_count=new_mutiny_count,
-        )
-        flows.append({
-            "dir": "expense", "account": "国库", "category": "各军军饷",
-            "army": name, "needed": needed, "paid": pay_current,
-            "shortfall": shortfall,
-            "arrears_delta": new_arrears - old_arrears,
-            "morale_delta": new_morale - old_morale,
-        })
-
-
 def settle_hub_army_loyalty_tick(db: "GameDB", state: "GameState") -> None:
     """#314 军心月度 tick（substrate_hub 统一，省级+中央结算后）。
 
@@ -534,7 +405,6 @@ def _auto_pay_arrears_by_priority(
     返回实际花出去的总额（万两）。"""
     if budget <= 0:
         return 0
-    pay_source_cutover = db.is_army_pay_source_cutover_enabled()
     allowed_ids = (
         {str(army_id).strip() for army_id in allowed_army_ids if str(army_id).strip()}
         if allowed_army_ids is not None
@@ -572,9 +442,9 @@ def _auto_pay_arrears_by_priority(
         )
         spent += spent_now
         remaining -= spent_now
-        if spent_now and pay_source_cutover:
+        if spent_now:
             touched_regions.add(str(row["pay_source_region"] or ""))
-    if spent and pay_source_cutover:
+    if spent:
         for region_id in sorted(touched_regions):
             db._reconcile_army_pay_source_region_container(region_id)
         db._reconcile_central_army_pay_arrears_container()
@@ -619,19 +489,16 @@ def _pay_single_army_arrears(
     current_arrears = float(row["arrears"] or 0)
     if amount <= 0 or current_arrears <= 0:
         return 0
-    pay_source_cutover = db.is_army_pay_source_cutover_enabled()
     actual_pay = min(
         int(amount),
         _payable_army_arrears_cap(current_arrears),
     )
     if actual_pay <= 0:
         return 0
-    province_old = central_old = total_old = 0.0
-    if pay_source_cutover:
-        province_old, central_old = _normalized_cutover_pay_arrears(row, current_arrears)
-        total_old = province_old + central_old
-        if total_old <= 1e-9:
-            return 0
+    province_old, central_old = _normalized_cutover_pay_arrears(row, current_arrears)
+    total_old = province_old + central_old
+    if total_old <= 1e-9:
+        return 0
     actual = db.record_issue_economy_move(
         state, account, -actual_pay, category, reason,
         purpose="补饷", target_kind="army", target_id=str(row["id"]),
@@ -640,25 +507,19 @@ def _pay_single_army_arrears(
     if not actual:
         return 0
     paid = abs(float(actual))
-    if pay_source_cutover:
-        province_pay = min(province_old, paid * province_old / total_old)
-        central_pay = min(central_old, paid * central_old / total_old)
-        province_new = max(0.0, province_old - province_pay)
-        central_new = max(0.0, central_old - central_pay)
-        new_arrears = province_new + central_new
-        db.conn.execute(
-            """
-            UPDATE armies
-            SET province_pay_arrears = ?, central_pay_arrears = ?, arrears = ?
-            WHERE id = ?
-            """,
-            (province_new, central_new, new_arrears, str(row["id"])),
-        )
-    else:
-        new_arrears = max(0.0, current_arrears + float(actual))
-        db.conn.execute(
-            "UPDATE armies SET arrears = ? WHERE id = ?", (new_arrears, str(row["id"]))
-        )
+    province_pay = min(province_old, paid * province_old / total_old)
+    central_pay = min(central_old, paid * central_old / total_old)
+    province_new = max(0.0, province_old - province_pay)
+    central_new = max(0.0, central_old - central_pay)
+    new_arrears = province_new + central_new
+    db.conn.execute(
+        """
+        UPDATE armies
+        SET province_pay_arrears = ?, central_pay_arrears = ?, arrears = ?
+        WHERE id = ?
+        """,
+        (province_new, central_new, new_arrears, str(row["id"])),
+    )
     db.conn.execute(
         """INSERT INTO army_logs
            (turn, year, period, army_id, field, old_value, new_value, delta, reason, event_id, edict_id, actor)

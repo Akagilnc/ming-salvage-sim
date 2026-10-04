@@ -14,7 +14,7 @@ from ming_sim.army_pay import derive_army_mutiny_state
 from ming_sim.flows import apply_fixed_period_flows
 
 ARMY = "guanning"
-PATHS = ("legacy", "substrate_hub")
+PATHS = ("substrate_hub",)
 BANDIT_POWERS = frozenset({"bandits", "bandit_li_zicheng"})
 
 
@@ -35,7 +35,7 @@ def _find_simulator_army(rows, army_id: str = ARMY):
 
 
 def _configure(db, fiscal_path: str) -> None:
-    value = 0 if fiscal_path == "legacy" else 1
+    value = 1  # army-pay fiscal path: substrate_hub only
     for key in ("__army_pay_source_cutover", "__fiscal_engine"):
         db.conn.execute(
             "INSERT INTO fiscal_config(key,value,kind,note) VALUES (?,?,'meta','test') "

@@ -770,61 +770,6 @@ def test_fixed_flows_substrate_hub_retires_global_central_pay_route(fresh_game):
     )
 
 
-def test_fixed_flows_legacy_engine_keeps_global_army_pay_route(fresh_game):
-    import ming_sim.flows as flows_mod
-
-    db, state = fresh_game
-    _disable_army_pay_source_cutover(db)
-    state.metrics["国库"] = 0
-    db.save_state(state)
-    db.conn.execute("UPDATE buildings SET output_amount = 0, maintenance = 0")
-    _zero_non_meta_fiscal_config(db)
-    db.conn.execute(
-        """
-        UPDATE regions
-        SET tax_per_turn = 0,
-            fiscal = json_set(
-                fiscal, '$.huang_tian', 0, '$.liao_xiang', 0,
-                '$.salt_tax', 0, '$.commerce_tax', 0
-            )
-        """
-    )
-    db.conn.execute(
-        """
-        UPDATE armies
-        SET owner_power = ?, self_funded_pay = 1, is_tusi = 1, province_pay_share = 0,
-            central_pay_share = 0, pay_source_region = '',
-            province_pay_arrears = 0, central_pay_arrears = 0, arrears = 0
-        """,
-        (db.conn.execute("SELECT id FROM powers WHERE id <> 'ming' LIMIT 1").fetchone()[0],),
-    )
-    db.conn.execute(
-        """
-        UPDATE armies
-        SET self_funded_pay = 0, is_tusi = 0, owner_power = 'ming',
-            pay_source_region = 'shaanxi', province_pay_share = 0.65,
-            central_pay_share = 0.35, province_pay_arrears = 0,
-            central_pay_arrears = 0, arrears = 0,
-            manpower = 10000, salary_rate = 10
-        WHERE id = 'shaanxi_army'
-        """
-    )
-    db.conn.commit()
-
-    flows_mod.apply_fixed_period_flows(db, state)
-
-    row = db.conn.execute(
-        """
-        SELECT arrears, province_pay_arrears, central_pay_arrears
-        FROM armies WHERE id = 'shaanxi_army'
-        """
-    ).fetchone()
-    assert row["arrears"] == pytest.approx(10)
-    assert row["province_pay_arrears"] == pytest.approx(0)
-    assert row["central_pay_arrears"] == pytest.approx(0)
-
-
-
 def test_substrate_hub_dual_track_sanity_keeps_legacy_calc_as_reference(fresh_game):
     import ming_sim.flows as flows_mod
 

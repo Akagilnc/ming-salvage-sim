@@ -17,7 +17,6 @@ from ming_sim.army_pay import (
     army_needed,
     settle_hub_army_loyalty_tick,
     settle_hub_central_army_pay,
-    settle_legacy_army_pay,
 )
 from ming_sim.assets import format_wanliang_amount
 from ming_sim.constants import TURN_UNIT
@@ -437,9 +436,9 @@ def _add_fiscal_container(db: GameDB, key: str, delta: float, note: str) -> None
 
 # 固定月度收支科目目录现走数据驱动：db.iter_budget_items() 从 fiscal_config 读
 # budget_role=fixed 的 base 项（account/direction/display）。加新税源只改 content/fiscal_config.json。
-# 税收/皇庄走 calc_province_fiscal（动态）；legacy 军饷走 army_needed，substrate_hub 军饷
-# 旧流水归零，预算只列京运补与中央份额拟拨，不预演结算分配或损耗。compute_budget_lines
-# 是预算展示同源，flows 落账 / UI budget_payload / db.treasury_budget_summary 三处共用。
+# 税收/皇庄走 calc_province_fiscal（动态）；军饷预算只列京运补与中央份额拟拨，
+# 不预演结算分配或损耗。compute_budget_lines 是预算展示同源，flows 落账 /
+# UI budget_payload / db.treasury_budget_summary 三处共用。
 
 
 def compute_budget_lines(
@@ -448,8 +447,8 @@ def compute_budget_lines(
     """唯一定额预算源。返回 {"国库":{"income":[行],"expense":[行]},"内库":{...}}；
     每行至少含 {name,amount,note}，可另带 budget_key 等工程元数据（军饷行固定 budget_key=army_pay，
     供落账/摘要按 key 认科目；消费方不得依赖 name 措辞）。
-    税收/皇庄＝calc_province_fiscal 动态值；legacy 军饷＝SUM(明军应发)；
-    substrate_hub 预算分列京运补与中央份额拟拨，不预演分配或损耗；
+    税收/皇庄＝calc_province_fiscal 动态值；
+    军饷预算分列京运补与中央份额拟拨，不预演分配或损耗；
     建筑＝按 condition 折产/维护；
     其余＝fiscal_config base×rate（全月值）。三处调用方据此各取所需，不重算。"""
     cfg = db.get_fiscal_config()
@@ -465,49 +464,37 @@ def compute_budget_lines(
              "note": "各省田赋+辽饷+盐税+商税（按腐败度/士绅阻力/民变动态折算）"}
         ]
         hub_expense_lines = []
-    # #44 legacy 军饷=SUM(应发)。#1366 substrate 预算只陈列结算前拟拨事实：
-    # 京运补与中央份额分开，均不受当月国库能力或未来转运损耗影响。
-    if db.fiscal_engine() == "legacy":
-        army_pay_lines = [{
+    # #1366 军饷预算只陈列结算前拟拨事实：京运补与中央份额分开，
+    # 均不受当月国库能力或未来转运损耗影响。
+    rows = db.conn.execute(
+        """
+        SELECT id, manpower, salary_rate, owner_power, central_pay_share,
+               pay_source_region
+        FROM armies
+        WHERE owner_power = 'ming' AND is_tusi = 0 AND self_funded_pay = 0
+          AND central_pay_share > 0
+        """
+    ).fetchall()
+    army_map = {str(row["id"]): row for row in rows}
+    ordered = [army_map[key] for key in ARMY_SALARY_PRIORITY if key in army_map]
+    ordered += [row for row in rows if str(row["id"]) not in ARMY_SALARY_PRIORITY]
+    central_due_by_army, _ = _central_dues_with_haircut(db, state, ordered)
+    army_pay_lines = [
+        {
             "budget_key": "army_pay",
-            "name": "各军军饷",
-            "amount": sum(
-                army_needed(r) for r in db.conn.execute(
-                    "SELECT manpower, salary_rate, owner_power FROM armies WHERE owner_power='ming'"
-                ).fetchall()
-            ),
-            "note": "各军月度名义应发军饷合计",
-        }]
-    else:
-        rows = db.conn.execute(
-            """
-            SELECT id, manpower, salary_rate, owner_power, central_pay_share,
-                   pay_source_region
-            FROM armies
-            WHERE owner_power = 'ming' AND is_tusi = 0 AND self_funded_pay = 0
-              AND central_pay_share > 0
-            """
-        ).fetchall()
-        army_map = {str(row["id"]): row for row in rows}
-        ordered = [army_map[key] for key in ARMY_SALARY_PRIORITY if key in army_map]
-        ordered += [row for row in rows if str(row["id"]) not in ARMY_SALARY_PRIORITY]
-        central_due_by_army, _ = _central_dues_with_haircut(db, state, ordered)
-        army_pay_lines = [
-            {
-                "budget_key": "army_pay",
-                "budget_part": "central",
-                "name": "中央军饷拟拨",
-                "amount": int(sum(max(0.0, due) for due in central_due_by_army.values())),
-                "note": "中央承担份额拟拨；不含未来转运损耗",
-            },
-            {
-                "budget_key": "army_pay",
-                "budget_part": "jingyun",
-                "name": "京运补拟拨",
-                "amount": int(sum(_substrate_hub_jingyun_due_by_region(db).values())),
-                "note": "各省京运补拟拨；不含未来转运损耗",
-            },
-        ]
+            "budget_part": "central",
+            "name": "中央军饷拟拨",
+            "amount": int(sum(max(0.0, due) for due in central_due_by_army.values())),
+            "note": "中央承担份额拟拨；不含未来转运损耗",
+        },
+        {
+            "budget_key": "army_pay",
+            "budget_part": "jingyun",
+            "name": "京运补拟拨",
+            "amount": int(sum(_substrate_hub_jingyun_due_by_region(db).values())),
+            "note": "各省京运补拟拨；不含未来转运损耗",
+        },
+    ]
 
     budget: Dict[str, Dict[str, list]] = {
         "国库": {"income": [], "expense": []},
@@ -919,7 +906,6 @@ def _apply_economy_list(
             if origin_error:
                 applied.append({"account": account, **origin_error, "item": move})
                 continue
-            pay_source_cutover = db.is_army_pay_source_cutover_enabled()
             payable_arrears = _payable_army_arrears_cap(float(row["arrears"] or 0))
             if payable_arrears <= 0:
                 current_arrears = float(row["arrears"] or 0)
@@ -946,9 +932,8 @@ def _apply_economy_list(
                 beyond_intent=beyond_raw,
             )
             if spent:
-                if pay_source_cutover:
-                    db._reconcile_army_pay_source_region_container(str(row["pay_source_region"] or ""))
-                    db._reconcile_central_army_pay_arrears_container()
+                db._reconcile_army_pay_source_region_container(str(row["pay_source_region"] or ""))
+                db._reconcile_central_army_pay_arrears_container()
                 if commit:
                     db.conn.commit()
                 from ming_sim.covert_levy import canonical_fiscal_result
@@ -1078,9 +1063,7 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
                       "category": category, "reason": reason})
 
     # ── substrate hub 顶层拨付：京运补 + 中央军饷优先占用月初国库 ──
-    # substrate_hub 下旧「户部直扣国库发饷」全局路径退役；省份额由 province substrate，
-    # 中央份额由 hub/outbound 后续路径承载，避免同一军饷从旧全局路双付。
-    pay_source_cutover = db.is_army_pay_source_cutover_enabled()
+    # 军饷结算只走现役 hub；省份额由 province substrate，中央份额由 hub/outbound 承载。
     if db.is_substrate_hub_fiscal_engine_enabled():
         db._current_month_central_pay_shortfalls = {}
         db._current_month_central_pay_dues = {}
@@ -1214,7 +1197,7 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
 
     _apply_budget_lines(skip_substrate_hub_lines=db.is_substrate_hub_fiscal_engine_enabled())
 
-    # ── #318 分叉前全军归一（legacy/hub 前一次；不挂资格子集）──
+    # ── #318 分叉前全军归一（不挂资格子集）──
     # 1) 零兵先清闩（防误转流寇） 2) 旧存档第三振正兵力在 advance 可解闩前转出
     for _pre_row in db.conn.execute(
         "SELECT id, manpower, salary_rate, owner_power, is_mutinied, mutiny_count "
@@ -1235,10 +1218,6 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
                 new_latched=1,
                 new_mutiny_count=int(_pre_row["mutiny_count"] or 0),
             )
-
-    # ── legacy 各军军饷（按优先级，先发当月；不足挂 arrears 累计万两）──
-    if db.fiscal_engine() == "legacy":
-        settle_legacy_army_pay(db, state, flows)
 
     # ── 建筑：固定产出 + 固定维护（纯程序化，不调 LLM）─────────────────────────
     # buildings 表 maintenance/output_amount 已是月值，不过 monthly_amount。
@@ -1367,7 +1346,6 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
                 })
             # ── #314 军心月度 tick（substrate_hub 统一，省级+中央结算后）──────────
             settle_hub_army_loyalty_tick(db, state)
-        if pay_source_cutover:
             db._reconcile_central_army_pay_arrears_container()
             try:
                 db.assert_army_pay_source_container_conservation()
@@ -1376,13 +1354,12 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
                     f"substrate_hub 军饷饷源守恒失败：{exc}"
                 ) from exc
     finally:
-        if pay_source_cutover:
-            for attr in (
-                "_current_month_central_pay_shortfalls",
-                "_current_month_pay_opening_arrears",
-            ):
-                if hasattr(db, attr):
-                    delattr(db, attr)
+        for attr in (
+            "_current_month_central_pay_shortfalls",
+            "_current_month_pay_opening_arrears",
+        ):
+            if hasattr(db, attr):
+                delattr(db, attr)
     return flows
 
 

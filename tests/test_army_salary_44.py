@@ -14,24 +14,6 @@ def _army_row(db, army_id):
     return db.conn.execute("SELECT * FROM armies WHERE id=?", (army_id,)).fetchone()
 
 
-def _use_legacy_fiscal_engine(db):
-    db.conn.execute(
-        """
-        INSERT INTO fiscal_config (key, value, kind, note)
-        VALUES ('__army_pay_source_cutover', 0, 'meta', 'test legacy salary path')
-        ON CONFLICT(key) DO UPDATE SET value = excluded.value, note = excluded.note
-        """
-    )
-    db.conn.execute(
-        """
-        INSERT INTO fiscal_config (key, value, kind, note)
-        VALUES ('__fiscal_engine', 0, 'meta', 'test legacy salary path')
-        ON CONFLICT(key) DO UPDATE SET value = excluded.value, note = excluded.note
-        """
-    )
-    db.conn.commit()
-
-
 @pytest.mark.parametrize("army_id,expected", [
     ("guanning", 15),   # 72000 × 2.0 / 10000 = 14.4 → ceil 15
     ("jingying", 9),    # 85000 × 1.0 / 10000 = 8.5 → ceil 9
@@ -271,71 +253,14 @@ def test_auto_pay_strips_allowed_army_ids_before_filtering(game):
     assert row["arrears"] < 10
 
 
-def test_legacy_full_pay_grants_morale_bonus_unless_old_arrears_remain(game):
-    """#44 军饷物质后果（legacy 结算咽喉）：本月足额且无旧欠 → 士气 +2；
-    本月足额但旧欠仍在账 → 不加不减（旧欠只阻止足额无欠奖励）。经真实 tick 断言落库。"""
-    from ming_sim.flows import apply_fixed_period_flows
+def test_army_pay_morale_delta_tiers():
+    """士气底料 oracle：本月缺口扣士气；足额无旧欠 +2；足额但旧欠在账 0。"""
+    from ming_sim.army_pay import army_pay_morale_delta
 
-    db, state, _ = game
-    _use_legacy_fiscal_engine(db)
-    aid = "guanning"
-    db.conn.execute("UPDATE armies SET manpower=0, arrears=0 WHERE owner_power='ming'")
-    db.conn.execute(
-        """UPDATE armies
-           SET owner_power='ming', manpower=10000, salary_rate=10.0,
-               arrears=0, morale=50
-           WHERE id=?""",
-        (aid,),
-    )
-    db.conn.commit()
-
-    state.metrics["国库"] = 10 ** 9
-    apply_fixed_period_flows(db, state)
-    assert _army_row(db, aid)["morale"] == 52, "足额无欠月应 +2"
-
-    db.conn.execute("UPDATE armies SET arrears=3, morale=50 WHERE id=?", (aid,))
-    db.conn.commit()
-    state.metrics["国库"] = 10 ** 9
-    apply_fixed_period_flows(db, state)
-    row = _army_row(db, aid)
-    assert row["morale"] == 50, "旧欠在账的足额月不得拿无欠奖励"
-    assert row["arrears"] == pytest.approx(3), "月固定军饷只发当月、不动旧欠"
-
-
-def test_legacy_salary_tick_preserves_fractional_opening_arrears(game):
-    from ming_sim.flows import apply_fixed_period_flows
-    db, state, _ = game
-    _use_legacy_fiscal_engine(db)
-    aid = "guanning"
-    db.conn.execute("UPDATE armies SET manpower=0, arrears=0 WHERE owner_power='ming'")
-    db.conn.execute(
-        """
-        UPDATE armies
-        SET owner_power='ming', manpower=10000, salary_rate=1.0, arrears=1.5, morale=50
-        WHERE id=?
-        """,
-        (aid,),
-    )
-    db.conn.commit()
-    state.metrics["国库"] = 50
-
-    apply_fixed_period_flows(db, state)
-
-    row = _army_row(db, aid)
-    assert row["arrears"] == pytest.approx(1.5)
-    log = db.conn.execute(
-        """
-        SELECT old_value, new_value, delta
-        FROM army_logs
-        WHERE army_id=? AND field='arrears'
-        ORDER BY id DESC
-        LIMIT 1
-        """,
-        (aid,),
-    ).fetchone()
-    assert log["old_value"] == "1.5"
-    assert log["new_value"] == "1.5"
-    assert log["delta"] == pytest.approx(0.0)
+    assert army_pay_morale_delta(10, 5, 0) == -4
+    assert army_pay_morale_delta(10, 0, 0) == 2
+    assert army_pay_morale_delta(10, 0, 3) == 0
+    assert army_pay_morale_delta(0, 0, 0) == 0
 
 
 def test_coerce_new_salary_rate_blocks_freeload():

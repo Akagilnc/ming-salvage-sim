@@ -14,7 +14,7 @@ from ming_sim.flows import _apply_economy_list, apply_fixed_period_flows
 from ming_sim import issues as issue_engine
 
 ARMY = "guanning"
-PATHS = ("legacy", "substrate_hub")
+PATHS = ("substrate_hub",)
 SPONTANEOUS = "盘面自发"
 
 DENY_SNAPSHOT_FIELDS = (
@@ -63,7 +63,7 @@ PAY_SOURCE_LEGAL_DELTAS = (
 
 
 def _configure(db, fiscal_path: str) -> None:
-    value = 0 if fiscal_path == "legacy" else 1
+    value = 1  # army-pay fiscal path: substrate_hub only
     for key in ("__army_pay_source_cutover", "__fiscal_engine"):
         db.conn.execute(
             "INSERT INTO fiscal_config(key,value,kind,note) VALUES (?,?,'meta','test') "
@@ -126,8 +126,8 @@ def _snapshot(db, fields=DENY_SNAPSHOT_FIELDS):
 
 def test_latched_denies_dispatch_armament_status_and_positive_manpower(game):
     db, state, _ = game
-    _configure(db, "legacy")
-    _set(db, "legacy", loyalty=30, arrears=5, latched=1, mutiny_count=1)
+    _configure(db, "substrate_hub")
+    _set(db, "substrate_hub", loyalty=30, arrears=5, latched=1, mutiny_count=1)
     before = _snapshot(db)
 
     db.apply_army_deltas(
@@ -158,9 +158,9 @@ def test_latched_denies_dispatch_armament_status_and_positive_manpower(game):
 
 def test_latched_manpower_strict_negative_applies_zero_and_positive_noop(game):
     db, state, _ = game
-    _configure(db, "legacy")
+    _configure(db, "substrate_hub")
     _set(
-        db, "legacy", loyalty=30, arrears=5, latched=1, mutiny_count=1, manpower=10000
+        db, "substrate_hub", loyalty=30, arrears=5, latched=1, mutiny_count=1, manpower=10000
     )
 
     db.apply_army_deltas(
@@ -181,9 +181,9 @@ def test_latched_manpower_strict_negative_applies_zero_and_positive_noop(game):
 
 def test_latched_loyalty_positive_applies_negative_noop(game):
     db, state, _ = game
-    _configure(db, "legacy")
+    _configure(db, "substrate_hub")
     # mutiny_count=1 → cap=80；从 30 +15 → 45
-    _set(db, "legacy", loyalty=30, arrears=5, latched=1, mutiny_count=1)
+    _set(db, "substrate_hub", loyalty=30, arrears=5, latched=1, mutiny_count=1)
 
     db.apply_army_deltas(
         state, _event(), None, "测试", {ARMY: {"loyalty": 15}}
@@ -199,8 +199,8 @@ def test_latched_loyalty_positive_applies_negative_noop(game):
 def test_latched_loyalty_raw_positive_noop_when_legacy_flips_effect_sign(game):
     """#319 P2：latched loyalty 以 post-modifier 实际方向为准；legacy 将 +20 翻成 -1 不得降。"""
     db, state, _ = game
-    _configure(db, "legacy")
-    _set(db, "legacy", loyalty=30, arrears=5, latched=1, mutiny_count=1)
+    _configure(db, "substrate_hub")
+    _set(db, "substrate_hub", loyalty=30, arrears=5, latched=1, mutiny_count=1)
     # 21 × -5% → net_pct=-105；apply_legacy_pct(+20,-105) → -1
     for i in range(21):
         db.insert_legacy(
@@ -226,8 +226,8 @@ def test_latched_loyalty_legacy_flip_preflight_rejects_strategic_envelope(game):
     issue_engine.bind_content(content)
     state.year = 1629
     state.period = 11
-    _configure(db, "legacy")
-    _set(db, "legacy", loyalty=30, arrears=5, latched=1, mutiny_count=1)
+    _configure(db, "substrate_hub")
+    _set(db, "substrate_hub", loyalty=30, arrears=5, latched=1, mutiny_count=1)
     for i in range(21):
         db.insert_legacy(
             state,
@@ -268,9 +268,9 @@ def test_latched_loyalty_at_mutiny_cap_preflight_rejects_strategic_envelope(game
     issue_engine.bind_content(content)
     state.year = 1629
     state.period = 11
-    _configure(db, "legacy")
+    _configure(db, "substrate_hub")
     # mutiny_count=1, redemption_count=0 → cap=80；loyalty 已贴 cap
-    _set(db, "legacy", loyalty=80, arrears=5, latched=1, mutiny_count=1)
+    _set(db, "substrate_hub", loyalty=80, arrears=5, latched=1, mutiny_count=1)
     db.conn.execute(
         "UPDATE armies SET redemption_count=0 WHERE id=?", (ARMY,)
     )
@@ -304,9 +304,9 @@ def test_latched_loyalty_at_mutiny_cap_preflight_rejects_strategic_envelope(game
 
 def test_latched_mixed_item_allows_and_denies_per_field(game):
     db, state, _ = game
-    _configure(db, "legacy")
+    _configure(db, "substrate_hub")
     _set(
-        db, "legacy", loyalty=30, arrears=5, latched=1, mutiny_count=1, manpower=10000
+        db, "substrate_hub", loyalty=30, arrears=5, latched=1, mutiny_count=1, manpower=10000
     )
     before = _snapshot(db, ("station", "status", "manpower", "loyalty"))
 
@@ -334,9 +334,9 @@ def test_latched_mixed_item_allows_and_denies_per_field(game):
 
 def test_latched_chinese_aliases_same_rules(game):
     db, state, _ = game
-    _configure(db, "legacy")
+    _configure(db, "substrate_hub")
     _set(
-        db, "legacy", loyalty=30, arrears=5, latched=1, mutiny_count=1, manpower=10000
+        db, "substrate_hub", loyalty=30, arrears=5, latched=1, mutiny_count=1, manpower=10000
     )
     before = _snapshot(db, ("station", "status", "manpower", "loyalty"))
 
@@ -364,9 +364,9 @@ def test_latched_chinese_aliases_same_rules(game):
 
 def test_non_latched_army_writes_all_legal_fields(game):
     db, state, _ = game
-    _configure(db, "legacy")
+    _configure(db, "substrate_hub")
     _set(
-        db, "legacy", loyalty=70, arrears=0, latched=0, mutiny_count=0, manpower=10000
+        db, "substrate_hub", loyalty=70, arrears=0, latched=0, mutiny_count=0, manpower=10000
     )
     before = _snapshot(
         db, ("station", "status", "manpower", "loyalty", "equipment", "training")
@@ -439,9 +439,9 @@ def test_pay_clear_via_economy_moves_next_tick_loyalty_plus_5(game, fiscal_path)
 
 def test_apply_score_extraction_respects_latched_field_gate(game):
     db, state, content = game
-    _configure(db, "legacy")
+    _configure(db, "substrate_hub")
     _set(
-        db, "legacy", loyalty=30, arrears=5, latched=1, mutiny_count=1, manpower=10000
+        db, "substrate_hub", loyalty=30, arrears=5, latched=1, mutiny_count=1, manpower=10000
     )
     before = _snapshot(db, ("station", "status", "manpower", "loyalty"))
 

@@ -26,17 +26,6 @@ def _pay_source():
     }
 
 
-def _disable_army_pay_source_cutover(db):
-    db.conn.execute(
-        """
-        INSERT INTO fiscal_config (key, value, kind, note)
-        VALUES ('__army_pay_source_cutover', 0, 'meta', 'legacy new-army test')
-        ON CONFLICT(key) DO UPDATE SET value = excluded.value, note = excluded.note
-        """
-    )
-    db.conn.commit()
-
-
 # ── schema：列已物理删除 ──────────────────────────────────────────────
 
 def test_armies_table_has_no_maintenance_column(read_game):
@@ -87,16 +76,6 @@ def test_existing_save_drops_maintenance_column_on_open(content, tmp_path):
 
 
 # ── 建军：manpower 唯一必填，维护费不再是字段 ──────────────────────────
-
-def test_legacy_new_army_needs_only_manpower(game):
-    db, state, _ = game
-    _disable_army_pay_source_cutover(db)
-    created = db.create_armies_from_extraction(state, [{
-        "id": "qin_army_x", "name": "秦军营", "owner_power": "ming", "manpower": 8000,
-    }])
-    assert not created[0].get("rejected"), f"只给 manpower 应建军成功：{created[0]}"
-    assert db.conn.execute("SELECT id FROM armies WHERE id='qin_army_x'").fetchone() is not None
-
 
 def test_new_army_maintenance_key_ignored(game):
     # LLM 若仍塞维护费/军费（别名已删）→ 当未知键忽略，不入库、不报错、建军照成。

@@ -319,12 +319,18 @@ def test_prohibition_blocks_every_covert_write_but_preserves_ordinary_legs(game)
     ]}, content, None, dossier_ids_at_input={did})
     assert all(not item.get("rejected") for item in setup["fiscal_creates"])
     historical_rows = list(db.list_fiscal_effects_for_dossier(did))
-    db.conn.execute("UPDATE armies SET arrears=8 WHERE id=?", (army_id,))
+    # 现役唯一补饷路按分源欠销账：固定饷源份额并同步两源欠，不走已退役的标量直写分支。
     db.conn.execute(
-        "INSERT INTO fiscal_config(key,value,kind,note) VALUES "
-        "('__army_pay_source_cutover',0,'meta','test') "
-        "ON CONFLICT(key) DO UPDATE SET value=excluded.value"
+        """
+        UPDATE armies
+        SET owner_power='ming', is_tusi=0, self_funded_pay=0,
+            province_pay_share=0, central_pay_share=1.0,
+            arrears=8, province_pay_arrears=0, central_pay_arrears=8
+        WHERE id=?
+        """,
+        (army_id,),
     )
+    db.conn.commit()
     _promulgated_prohibition(db, state, did)
 
     result = apply_score_extraction(db, state, {
