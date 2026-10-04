@@ -3803,8 +3803,16 @@ def _extract_secret_order(
         _assignee_llm, player_command, default_assignee,
     )
     raw_deadline = obj.get("期限月数")
-    # 缺席 → 0；在场损坏上抛。禁从 player_command 散文回落标签/期限（F12）。
-    deadline = max(0, min(int(raw_deadline or 0), 36))
+    # LLM 抽取：缺席→0；在场脏→DeclarationDataError（生产前缀分派已退役，仅 tests 直调）。
+    if raw_deadline in (None, ""):
+        deadline = 0
+    else:
+        try:
+            deadline = max(0, min(int(raw_deadline), 36))
+        except (TypeError, ValueError) as exc:
+            raise DeclarationDataError(
+                f"密令期限月数非法：{raw_deadline!r}"
+            ) from exc
     tags = obj.get("标签")
     tags = [str(t) for t in tags if str(t).strip()] if isinstance(tags, list) else []
     from ming_sim.db import canonical_secret_order_exclusions

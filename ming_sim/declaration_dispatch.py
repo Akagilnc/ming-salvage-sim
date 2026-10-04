@@ -1377,18 +1377,22 @@ def _dispatch_commissions(
                 continue
             from ming_sim.action_materialize import stage_punishment_candidate
             actor = str(minister_name or "").strip() or _commission_fallback_actor(db)
-            row_id = stage_punishment_candidate(
-                db, int(state.turn), actor,
-                text=body,
-                target_id=str(punishment.get("target_id") or ""),
-                punish_action=str(punishment.get("punish_action") or ""),
-                extracted_mode=punishment.get("mode"),
-                amount=punishment.get("amount"),
-                transaction_category=punishment.get("transaction_category"),
-                backing_dossier_id=punishment.get("backing_dossier_id"),
-                issue_id=punishment.get("issue_id"),
-                issue_disposition=punishment.get("issue_disposition"),
-            )
+            try:
+                row_id = stage_punishment_candidate(
+                    db, int(state.turn), actor,
+                    text=body,
+                    target_id=str(punishment.get("target_id") or ""),
+                    punish_action=str(punishment.get("punish_action") or ""),
+                    extracted_mode=punishment.get("mode"),
+                    amount=punishment.get("amount"),
+                    transaction_category=punishment.get("transaction_category"),
+                    backing_dossier_id=punishment.get("backing_dossier_id"),
+                    issue_id=punishment.get("issue_id"),
+                    issue_disposition=punishment.get("issue_disposition"),
+                )
+            except DecreeMaterializationValidationError as exc:
+                _reject(rejected, item, str(exc), "invalid_shape", source)
+                continue
             if row_id:
                 applied.append({"id": row_id, "kind": "directive"})
             else:
@@ -1516,9 +1520,13 @@ def _dispatch_commissions(
         if grant_raw:
             payload["mode"] = mode
         # 非 #1815 新形；声明给出则透传到 directive payload，代码不猜当前大臣。
-        _attach_commission_staging_fields(
-            payload, item, turn=int(state.turn),
-        )
+        try:
+            _attach_commission_staging_fields(
+                payload, item, turn=int(state.turn),
+            )
+        except DecreeMaterializationValidationError as exc:
+            _reject(rejected, item, str(exc), "invalid_shape", source)
+            continue
 
         if not _attach_commission_affair(
             db, item, payload, rejected=rejected, source=source,
@@ -1918,11 +1926,20 @@ def _dispatch_rushes(
                 "invalid_shape", source,
             )
             continue
-        try:
-            raw_deadline = item.get("deadline_months", 1)
-            deadline = max(0, min(int(raw_deadline if raw_deadline is not None else 1), 36))
-        except (TypeError, ValueError):
+        # LLM 催办：缺席默认 1；在场脏→invalid_shape（禁 except→1）。
+        raw_deadline = item.get("deadline_months", 1)
+        if raw_deadline is None:
             deadline = 1
+        else:
+            try:
+                deadline = max(0, min(int(raw_deadline), 36))
+            except (TypeError, ValueError):
+                _reject(
+                    rejected, item,
+                    f"催办期限非法：deadline_months={raw_deadline!r}",
+                    "invalid_shape", source,
+                )
+                continue
         reason = str(item.get("reason") or "")
         actor = str(minister_name or "").strip() or _commission_fallback_actor(db)
         if target_kind == "commitment":

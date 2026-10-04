@@ -673,7 +673,16 @@ def _enforce_layer_a_action_conditional(
                 )
                 amount = 0
             else:
-                amount = int(amt_raw or 0)  # type: ignore[arg-type]
+                try:
+                    amount = int(amt_raw or 0)  # type: ignore[arg-type]
+                except (TypeError, ValueError, OverflowError):
+                    # LLM 层 A：脏 amount→_fail，禁裸 int 穿出。
+                    _fail(
+                        "amount",
+                        current=amt_raw,
+                        expected={"forbid_positive_unless": {ctrl: cval}},
+                    )
+                    amount = 0
             if amount > 0:
                 _fail(
                     "amount",

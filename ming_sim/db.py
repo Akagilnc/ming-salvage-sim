@@ -460,12 +460,19 @@ def _is_commitment_stop_condition(resolve_condition: object) -> bool:
 
 
 def _has_stop_condition(stop_condition: object) -> bool:
+    """结构化 stop 是否在场。缺席/空白/legacy 散文→False；`{[` 形损坏→上抛。"""
     if isinstance(stop_condition, (dict, list)):
         return bool(stop_condition)
     raw = str(stop_condition or "").strip()
     if not raw:
         return False
-    parsed = json.loads(raw)
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        # safe_json_dumps 产出以 {[ 起；legacy 散文门不会。
+        if raw[0] in "{[":
+            raise ValueError("持久停止条件 JSON 损坏") from exc
+        return False
     if not isinstance(parsed, (dict, list)):
         raise ValueError("持久停止条件须为对象或列表")
     return bool(parsed)
@@ -11184,11 +11191,16 @@ class GameDB:
             normalized["assignee_id"] = holder
         if action == "revoke_authority":
             # #523 / #611：收权生产项必带现存 authority_records.id；不得从 payload 拼 id。
-            # 缺席 → DeclarationDataError；在场损坏上抛（禁 except→0 洗成缺席）。
+            # LLM 声明：缺席→DeclarationDataError；在场脏→同错。
             raw_aid = normalized.get("authority_id")
             if raw_aid in (None, ""):
                 raise DeclarationDataError("收权旨意缺少 authority_id")
-            aid = strict_int(raw_aid, accept_numeric_strings=True)
+            try:
+                aid = strict_int(raw_aid, accept_numeric_strings=True)
+            except (TypeError, ValueError) as exc:
+                raise DeclarationDataError(
+                    f"收权旨意 authority_id 非法：{raw_aid!r}"
+                ) from exc
             if aid <= 0:
                 raise DeclarationDataError("收权旨意缺少 authority_id")
             normalized["authority_id"] = aid
@@ -11205,7 +11217,12 @@ class GameDB:
                 normalized["target_id"] = holder
             raw_grant = normalized.get("grant_dossier_id")
             if raw_grant not in (None, ""):
-                grant_did = strict_int(raw_grant, accept_numeric_strings=True)
+                try:
+                    grant_did = strict_int(raw_grant, accept_numeric_strings=True)
+                except (TypeError, ValueError) as exc:
+                    raise DeclarationDataError(
+                        f"收权旨意 grant_dossier_id 非法：{raw_grant!r}"
+                    ) from exc
                 if grant_did > 0:
                     normalized["grant_dossier_id"] = grant_did
             # 身份真源在 authority_records；禁保留并行 authorization_id(s)
@@ -11218,16 +11235,22 @@ class GameDB:
                 raise DeclarationDataError("撤回成命目标不得为纯授权")
             revoke_did = 0
             revoke_iid = 0
-            raw_revoke_did = normalized.get("revoke_target_dossier_id")
-            if raw_revoke_did not in (None, ""):
-                revoke_did = strict_int(
-                    raw_revoke_did, accept_numeric_strings=True,
-                )
-            raw_revoke_iid = normalized.get("revoke_target_issue_id")
-            if raw_revoke_iid not in (None, ""):
-                revoke_iid = strict_int(
-                    raw_revoke_iid, accept_numeric_strings=True,
-                )
+            try:
+                raw_revoke_did = normalized.get("revoke_target_dossier_id")
+                if raw_revoke_did not in (None, ""):
+                    revoke_did = strict_int(
+                        raw_revoke_did, accept_numeric_strings=True,
+                    )
+                raw_revoke_iid = normalized.get("revoke_target_issue_id")
+                if raw_revoke_iid not in (None, ""):
+                    revoke_iid = strict_int(
+                        raw_revoke_iid, accept_numeric_strings=True,
+                    )
+            except (TypeError, ValueError) as exc:
+                raise DeclarationDataError(
+                    f"撤回成命目标标识非法：dossier={normalized.get('revoke_target_dossier_id')!r} "
+                    f"issue={normalized.get('revoke_target_issue_id')!r}"
+                ) from exc
             if revoke_did <= 0 and revoke_iid <= 0:
                 kind = str(normalized.get("target_kind") or "").strip()
                 raw = raw_target
@@ -11239,7 +11262,12 @@ class GameDB:
                     raw = raw.split(":", 1)[1].strip()
                 if not raw:
                     raise DeclarationDataError("撤回成命缺少目标成命标识")
-                tid = strict_int(raw, accept_numeric_strings=True)
+                try:
+                    tid = strict_int(raw, accept_numeric_strings=True)
+                except (TypeError, ValueError) as exc:
+                    raise DeclarationDataError(
+                        f"撤回成命目标标识非法：{raw!r}"
+                    ) from exc
                 if tid <= 0:
                     raise DeclarationDataError("撤回成命缺少目标成命标识")
                 if kind == "issue":
@@ -11277,29 +11305,40 @@ class GameDB:
             if issue_disposition == "压下" and punish_action != "无":
                 raise DeclarationDataError("弹劾潮压下须使用 canonical 无动作")
             normalized["punish_action"] = punish_action
-            # #517 r2：罚俸须正数 amount；缺席拒收，在场损坏上抛（禁洗成 0）。
+            # #517 r2：罚俸须正数 amount；缺席拒收，在场脏值 → DeclarationDataError 逐项拒收。
             if punish_action == "罚俸":
                 raw_amount = normalized.get("amount")
                 if raw_amount in (None, ""):
                     raise DeclarationDataError("罚俸旨意缺少正数 amount")
-                amount = strict_int(raw_amount, accept_numeric_strings=False)
+                try:
+                    amount = strict_int(raw_amount, accept_numeric_strings=False)
+                except (TypeError, ValueError) as exc:
+                    raise DeclarationDataError(
+                        f"罚俸旨意 amount 非法：{raw_amount!r}"
+                    ) from exc
                 if amount <= 0:
                     raise DeclarationDataError("罚俸旨意缺少正数 amount")
                 normalized["amount"] = amount
         if action == "military_order":
             # #521 r1：仅限期出战（无 station 调驻面）强制未来 due_turn；
             # 调驻/移镇可无期限成案。显式期限字段若出现仍须落成未来 due。
-            # 缺席 → 0；在场损坏上抛（禁 except→0 洗成缺席）。
+            # LLM 声明：缺席 → 0；在场脏值 → DeclarationDataError。
             raw_due_turn = normalized.get("due_turn")
             raw_deadline = normalized.get("deadline_months")
-            due_turn = (
-                0 if raw_due_turn in (None, "")
-                else strict_int(raw_due_turn, accept_numeric_strings=False)
-            )
-            deadline = (
-                0 if raw_deadline in (None, "")
-                else strict_int(raw_deadline, accept_numeric_strings=False)
-            )
+            try:
+                due_turn = (
+                    0 if raw_due_turn in (None, "")
+                    else strict_int(raw_due_turn, accept_numeric_strings=False)
+                )
+                deadline = (
+                    0 if raw_deadline in (None, "")
+                    else strict_int(raw_deadline, accept_numeric_strings=False)
+                )
+            except (TypeError, ValueError) as exc:
+                raise DeclarationDataError(
+                    f"军令期限非法：due_turn={raw_due_turn!r} "
+                    f"deadline_months={raw_deadline!r}"
+                ) from exc
             if due_turn <= 0 and deadline > 0 and current_turn > 0:
                 due_turn = int(current_turn) + deadline
             station = str(normalized.get("station") or "").strip()
@@ -11337,18 +11376,24 @@ class GameDB:
             )
             normalized["responsible_bodies"] = cleaned
             raw_end = normalized.get("end_turn")
-            end_turn = (
-                0 if raw_end in (None, "")
-                else strict_int(raw_end, accept_numeric_strings=True)
-            )
-            if end_turn <= 0 and current_turn > 0:
-                raw_months = normalized.get("deadline_months")
-                months = (
-                    0 if raw_months in (None, "")
-                    else strict_int(raw_months, accept_numeric_strings=True)
+            try:
+                end_turn = (
+                    0 if raw_end in (None, "")
+                    else strict_int(raw_end, accept_numeric_strings=True)
                 )
-                if months > 0:
-                    end_turn = int(current_turn) + months
+                if end_turn <= 0 and current_turn > 0:
+                    raw_months = normalized.get("deadline_months")
+                    months = (
+                        0 if raw_months in (None, "")
+                        else strict_int(raw_months, accept_numeric_strings=True)
+                    )
+                    if months > 0:
+                        end_turn = int(current_turn) + months
+            except (TypeError, ValueError) as exc:
+                raise DeclarationDataError(
+                    f"下议期限非法：end_turn={raw_end!r} "
+                    f"deadline_months={normalized.get('deadline_months')!r}"
+                ) from exc
             if end_turn <= int(current_turn or 0):
                 raise DeclarationDataError("下议缺少有效未来 end_turn/deadline_months")
             normalized["end_turn"] = end_turn
@@ -14564,7 +14609,14 @@ class GameDB:
             if raw_tid in (None, ""):
                 rejection = (0, relation, note, "关联缺少目标案卷")
                 break
-            target_id = strict_int(raw_tid, accept_numeric_strings=False)
+            # 确认关联或程序写；坏 shape→同函数拒收，不裸 VE 旁路审计。
+            try:
+                target_id = strict_int(raw_tid, accept_numeric_strings=False)
+            except (TypeError, ValueError):
+                rejection = (
+                    0, relation, note, f"关联目标案卷标识非法：{raw_tid!r}",
+                )
+                break
             if self.get_decree_dossier(target_id) is None:
                 rejection = (target_id, relation, note, "关联指向不存在案卷")
             elif target_id >= source_id:
@@ -19576,7 +19628,11 @@ class GameDB:
                 (
                     safe_json_dumps(stop_condition, ensure_ascii=False, separators=(",", ":"))
                     if isinstance(stop_condition, dict)
-                    else str(stop_condition or "")
+                    else (
+                        ""
+                        if not str(stop_condition or "").strip()
+                        else str(stop_condition)
+                    )
                 ),
                 str(commitment_kind or ""),
                 stages_blob,

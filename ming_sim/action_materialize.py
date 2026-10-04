@@ -349,7 +349,14 @@ def stage_punishment_candidate(
     if disposition in issue_dispositions_allowed() and issue_id is None:
         return 0
     if issue_id is not None and issue_id != "":
-        linked_issue_id = int(issue_id)
+        # LLM 声明脏 issue_id → ValidationError（dispatch 逐项拒收）。
+        try:
+            linked_issue_id = int(issue_id)
+        except (TypeError, ValueError) as exc:
+            raise DecreeMaterializationValidationError(
+                f"惩处交办 issue_id 非法：{issue_id!r}",
+                failed_fields=("issue_id",),
+            ) from exc
         if linked_issue_id <= 0:
             return 0
         issue = db.conn.execute(
@@ -432,8 +439,17 @@ def stage_punishment_candidate(
         if not valid:
             return 0
         staged["transaction_category"] = category
-    # 缺席 → 0（合法缺席契约 int(x or 0)）；在场损坏上抛，不 except 洗白。
-    n = int(amount or 0)
+    # LLM 声明：缺席→0；在场脏→ValidationError。持久损坏另路上抛。
+    if amount in (None, ""):
+        n = 0
+    else:
+        try:
+            n = int(amount)
+        except (TypeError, ValueError) as exc:
+            raise DecreeMaterializationValidationError(
+                f"惩处交办 amount 非法：{amount!r}",
+                failed_fields=("amount",),
+            ) from exc
     # #517 r2：罚俸 admission 要求正数 amount；缺/零不得成候选。
     if action == "罚俸":
         if n <= 0:
@@ -928,10 +944,16 @@ def _assignment_absolute_end_turn(
     - 显式期限月数优先：deadline_months=N → turn+N
     - end_turn 已严格大于当前 turn → 视为绝对回合
     - 否则 0<end_turn≤turn → 视为相对月数 turn+end_turn
+    LLM 声明：缺席→0；在场脏→ValidationError。
     """
-    # 缺席 → 0（int(x or 0)）；在场损坏上抛（禁 except→0 洗成缺席）。
-    et = int(end_turn or 0)
-    months = int(deadline_months or 0)
+    try:
+        et = 0 if end_turn in (None, "") else int(end_turn)
+        months = 0 if deadline_months in (None, "") else int(deadline_months)
+    except (TypeError, ValueError) as exc:
+        raise DecreeMaterializationValidationError(
+            f"责成期限非法：end_turn={end_turn!r} deadline_months={deadline_months!r}",
+            failed_fields=("end_turn", "deadline_months"),
+        ) from exc
     cur = int(turn)
     if months > 0:
         return cur + months
@@ -1320,8 +1342,14 @@ def _parse_revoke_decree_target(
         kind = "dossier"
     if raw in (None, ""):
         return None
-    # 在场损坏上抛；禁 except→None 洗成「无目标」。
-    tid = int(raw)
+    # LLM 声明脏 target → ValidationError；禁 except→None。
+    try:
+        tid = int(raw)
+    except (TypeError, ValueError) as exc:
+        raise DecreeMaterializationValidationError(
+            f"撤回成命目标标识非法：{raw!r}",
+            failed_fields=("target_id",),
+        ) from exc
     if tid <= 0:
         return None
     if kind == "issue":
@@ -1338,7 +1366,7 @@ def _parse_revoke_decree_target(
         suffix = origin.split(":", 1)[1]
         if suffix in (None, ""):
             return None
-        linked = int(suffix)
+        linked = int(suffix)  # 持久 origin_ref；损坏上抛
         # standalone / 无合法案卷来源：拒入闸，堵住 cancel_issue 免 0056 旁路
         if linked <= 0:
             return None
@@ -1377,12 +1405,22 @@ def _resolve_unique_active_authority(
     priv = str(privilege or "").strip()
     if priv in {"", "无"}:
         priv = ""
-    aid = int(authority_id or 0)
+    # LLM 声明 authority_id：缺席→0；在场脏→ValidationError。
+    if authority_id in (None, ""):
+        aid = 0
+    else:
+        try:
+            aid = int(authority_id)
+        except (TypeError, ValueError) as exc:
+            raise DecreeMaterializationValidationError(
+                f"收权 authority_id 非法：{authority_id!r}",
+                failed_fields=("authority_id",),
+            ) from exc
     if aid > 0:
         rec = db.get_authority(aid)
         if rec is None or bool(rec.get("revoked")):
             return None
-        effective = int(rec.get("effective_turn") or 0)
+        effective = int(rec.get("effective_turn") or 0)  # 持久；坏上抛
         if effective > int(turn):
             return None
         exp = rec.get("expires_turn")
@@ -1660,7 +1698,17 @@ def stage_referral_candidate(
         )
     matter_id = str(target_id or "").strip() or matter_title
 
-    months = int(deadline_months or 0)
+    # LLM 声明：缺席→0；在场脏→ValidationError。
+    if deadline_months in (None, ""):
+        months = 0
+    else:
+        try:
+            months = int(deadline_months)
+        except (TypeError, ValueError) as exc:
+            raise DecreeMaterializationValidationError(
+                f"下议期限非法：deadline_months={deadline_months!r}",
+                failed_fields=("deadline_months",),
+            ) from exc
     # FieldSpec int_hi=36 已在 normalize 夹紧；此处仍守 <=0 不产项
     if months <= 0:
         return 0

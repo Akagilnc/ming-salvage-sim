@@ -776,8 +776,12 @@ def map_rescript_option_or_choice(
         if station:
             payload["station"] = station
         else:
-            due = int(src.get("due_turn") or 0)
-            months = int(src.get("deadline_months") or 0)
+            # map 源=batch validated / server persisted option（§B.1 ValueError→整批回滚）。
+            due = 0 if src.get("due_turn") in (None, "") else int(src.get("due_turn"))
+            months = (
+                0 if src.get("deadline_months") in (None, "")
+                else int(src.get("deadline_months"))
+            )
             if months > 0:
                 due = current_turn + months
             if due <= current_turn:
@@ -912,13 +916,14 @@ def map_rescript_option_or_choice(
             raw_amount = src.get("amount")
             if raw_amount in (None, ""):
                 raise ValueError("罚俸须正 amount")
-            amount = int(raw_amount)
+            amount = int(raw_amount)  # validated/persisted option；§B.1
             if amount <= 0:
                 raise ValueError("罚俸须正 amount")
             payload["amount"] = amount
         else:
-            # 其它动作不得正 amount；缺席当 0，在场损坏上抛。
-            amount = int(src.get("amount") or 0)
+            # 其它动作不得正 amount；缺席 0（权威 option，非当轮 LLM 声明）。
+            raw_other = src.get("amount")
+            amount = 0 if raw_other in (None, "") else int(raw_other)
             if amount > 0:
                 raise ValueError("非罚俸不得带正 amount")
 
