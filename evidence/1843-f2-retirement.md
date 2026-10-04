@@ -5,6 +5,273 @@
 底座：`claude/1812-w4` 是 HEAD 祖先（`git merge-base --is-ancestor claude/1812-w4 HEAD` → yes）
 派单：`~/.ak-roles/books/Ming_LLM/1843/runs/01a107fa-7c79-7613-87d5-0cf4e634cafd@fixer/fix-packet.md`
 判词附件：`.../attachments/00-1856-judge-324c29f16.json`（F2 成立、未结；本票承接整类）
+重交原文：`evidence/1843-returned-finding.json`
+
+## 轮次
+
+| 轮次 | HEAD（施工前） | 说明 |
+|---|---|---|
+| R1 | `ae4a2a3e6c60afd8a09f03252e692632d8c6bee6` | 合规合并／读端／候选绑定／财政投影清退 → `b85cb3f16`；stamp → `d3a3688f2` |
+| R2 | `d3a3688f222a6f0b2c9d276b5d7f054a4e52e63e` | 纠正旧文本流／季提示／军队投影假阴性 → `44f87c4c5`；stamp → `641201cde` |
+| R3 | `9d4152542c226bc890dd5d231fdacc947d4381c2` | 封驳后穷尽删一批 ≤1-ref F2 → `ea297e120`；stamp → `79661de14`；**回执成员表用≈／多数／等聚合，被用户封驳** |
+| R4 | `79661de14b745cb3f16f18099b2edb00bfb70730` | 补全联合枚举（AST 空消费者 ∪ 词边界≤1）；逐名 git log -S；再删 3 个 F2；例外 57 行逐名；精确 pytest 命令 |
+
+## Advisor 前置判断（R4；不冒充庭审）
+
+- 授权：派单 F2 全类；requiredAction＝完整「全仓引用数≤1」枚举（含 tests，排除 docs/raw），逐成员追历史消费者；属 F2 删；不属列例外并附依据。
+- R3 失败点（必须保留）：例外表写「ORPHAN≈60」「多数 db.list_*」「require_*等」「各异」「无证 F2」——不是逐名历史消费者表；测试只写类别与「422 passed」无完整文件列表。
+- R4 手段：禁止名字 regex 预筛；ming_sim 全定义索引；受管 py AST 引用 + 词边界≤1 联合清单；逐名 `git log -S`；无消费者记录实际查询与引入提交，不以缺证据自动保留；F2 删、F1/F3 邻接只归类；删后复扫固定点。
+- 原始枚举落盘：`evidence/1843-f2-r4-enum-raw.txt`。
+
+## 精确枚举数字（R4）
+
+施工前（HEAD `79661de14`，删前）：
+
+| 指标 | 数量 |
+|---|---|
+| managed_py | 352 |
+| ming_sim_def_names | 2534 |
+| AST_ORPHAN（AST 消费者为空） | 60 |
+| WB_LE1（词边界≤1） | 51 |
+| JOINT（并集） | 60 |
+| AST_ONLY（AST0 且 WB>1） | 9 |
+| WB_ONLY | 0 |
+
+施工后固定点：
+
+| 指标 | 数量 |
+|---|---|
+| managed_py | 352 |
+| ming_sim_def_names | 2531 |
+| AST_ORPHAN | 57 |
+| WB_LE1 | 48 |
+| JOINT | 57 |
+| F2 本轮删除 | 3 |
+| 例外（JOINT 全员逐名） | 57 |
+| 级联新孤儿 | 0 |
+
+AST_ONLY 九名：`MaterialsRoot`、`__enter__`、`__exit__`、`ainvoke`、`experiences`、`faction_report`、`flag_directive_needs_clarification`、`list_night_promulgated_directives`、`minister_speaker_role`。
+
+## R4 枚举脚本（实际执行）
+
+```bash
+cd /Users/akagilnc/WorkSpace/Ming_LLM-1843-w5
+git rev-parse HEAD   # 施工前 79661de14b745cb3f16f18099b2edb00bfb70730
+
+python3 <<'PY'
+import ast, subprocess, re
+from pathlib import Path
+from collections import defaultdict
+
+files = [f for f in subprocess.check_output(['git','ls-files','*.py'], text=True).splitlines()
+         if not f.startswith('docs/raw/')]
+sources = {rel: Path(rel).read_text(encoding='utf-8', errors='ignore') for rel in files}
+
+defs = defaultdict(list)
+for rel, src in sources.items():
+    if not rel.startswith('ming_sim/'):
+        continue
+    try:
+        tree = ast.parse(src)
+    except SyntaxError:
+        continue
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            defs[node.name].append(f'{rel}:{node.lineno}')
+
+refs = defaultdict(list)
+for rel, src in sources.items():
+    try:
+        tree = ast.parse(src)
+    except SyntaxError:
+        continue
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name):
+            refs[node.id].append(f'{rel}:{node.lineno}')
+        elif isinstance(node, ast.Attribute):
+            refs[node.attr].append(f'{rel}:{node.lineno}')
+        elif isinstance(node, ast.alias):
+            n = node.asname or node.name.split('.')[-1]
+            refs[n].append(f'{rel}:{getattr(node, "lineno", 0) or 0}')
+
+token_hits = defaultdict(list)
+token_pat = re.compile(r'\b([A-Za-z_][A-Za-z0-9_]*)\b')
+for rel, src in sources.items():
+    for i, line in enumerate(src.splitlines(), 1):
+        for m in token_pat.finditer(line):
+            name = m.group(1)
+            if name in defs:
+                token_hits[name].append(f'{rel}:{i}')
+
+ast_orphans, wb_le1 = [], []
+for name, dlocs in sorted(defs.items()):
+    consumers = [r for r in refs.get(name, []) if r not in set(dlocs)]
+    hits = token_hits.get(name, [])
+    if not consumers:
+        ast_orphans.append(name)
+    if len(hits) <= 1:
+        wb_le1.append(name)
+joint = sorted(set(ast_orphans) | set(wb_le1))
+print('managed_py', len(files))
+print('ming_sim_def_names', len(defs))
+print('AST_ORPHAN', len(ast_orphans))
+print('WB_LE1', len(wb_le1))
+print('JOINT', len(joint))
+for name in joint:
+    print(name)
+PY
+
+# 历史交叉（联合清单每一名）：
+# git log -S'<symbol>' --oneline -- ming_sim tests
+```
+## 成员表（R4 处置：F2 删除，精确 3）
+
+| 符号 | 文件 | 引用状态 | 历史消费者／提交 | 归类 | 处置及理由 |
+|---|---|---|---|---|---|
+| `record_economy_moves` | ming_sim/db.py（已删） | 施工前 AST0／WB1 | git log -S -- ming_sim tests：仅 `de0d7ad41 Initial public release`；`git log -G'record_economy_moves('` 无调用加减 | F2 | Event/edict_id 旧结算流水写口；现役为 `_apply_economy_list`／案卷 ledger insert；无历史调用亦按 F2 形状删 |
+| `list_open_grant_reconciliations` | ming_sim/db.py（已删） | 施工前 AST0／WB1 | tip `81c4d2098` drop extractor leftovers 删除 `slim["grant_reconciliations"]=db.list_open_grant_reconciliations()`；引入 `2e9d54fc5` #567 | F2 | extractor slim 盘面专用读缝 |
+| `executable_decree_dossier_ids` | ming_sim/db.py（已删） | 施工前 AST0／WB1 | tip `7b3676765` drop unreachable promulgated world-segment branch 删除唯一消费者；引入于案卷 simulation 查询链 | F2 | 旧 simulation／world-segment T/T+1 id 过滤 |
+
+## 成员表（R4 例外：不施工，精确 57；一行一名）
+
+列：符号 | 定义位置 | 引用状态 | git log -S tip（最多 4） | 归类 | 为何非 F2（正向依据；非「缺证据」）
+
+| 符号 | 定义位置 | 引用状态 | git log -S | 归类 | 为何非 F2 |
+|---|---|---|---|---|---|
+| `ChatResult` | ming_sim/models.py:339 | AST消费者=0；词边界=1 | de0d7ad41	Initial public release | 非F2形状 | git log -S -- ming_sim tests 仅 de0d7ad41；Chat DTO，非结算／simulator／extractor 盘面 |
+| `MaterialsRoot` | ming_sim/materials.py:159 | AST消费者=0；词边界=2 | cedbc1f69	ak-roles: fix(#1830): 删户部底账数字子串与经历哨兵，契约落结构化来源与读者面；3f73fb3c1	ak-roles: #1837 reopen 删旧大臣 agent，转译承接禁摊派/荐人/查访/催办/行程语气；94b112b79	ak-roles: fix(#1812): close seven seat/materials/dispatch root classes；98e456a6b	ak-roles: fix(#1865): prove materials handle via real Agent+OpenAIChat entrance | 协议 | 材料树根类型；构造与类型标注／动态入口仍用，wb=2 含类内自引用 |
+| `__call__` | ming_sim/materials.py:182 | AST消费者=0；词边界=1 | 4cf4eb0a1	ak-roles: fix(#1898): 会合改标准库 Barrier + 终态观测缝，删任务生命周期推断；e3f982a9d	ak-roles: fix(#1898): 会合握手认任务终态，失败腿不再把测试挂死；511e82788	ak-roles: migrate secret-order matrix and unblock scene translation endpoint；aa60aafaf	ak-roles: remove retired minister secret-order entry tests | 协议 | MaterialsRoot 可调用协议；运行时 __call__ 触发，AST Name 不计 |
+| `__enter__` | ming_sim/applier.py:108,ming_sim/session_write_queue.py:124,ming_sim/session_write_queue.py:224 | AST消费者=0；词边界=8 | 242837870	ak-roles: #1843 reopen 删旧结算核与 turn_extractions，修回 #670/#651；d68fbd9b6	ak-roles: fix(#1842): ClassifiedWriteGate atomic translation holder kind；a135e2615	ak-roles: test(#1831): remove permanent thread-race test and its gate scaffolding；1bdf0a5b2	ak-roles: test(#1831): race-lock proof pins read to inside first gate | 协议 | context manager；with 语句协议，AST Name 不计消费者 |
+| `__exit__` | ming_sim/applier.py:111,ming_sim/session_write_queue.py:128,ming_sim/session_write_queue.py:228 | AST消费者=0；词边界=11 | d68fbd9b6	ak-roles: fix(#1842): ClassifiedWriteGate atomic translation holder kind；a135e2615	ak-roles: test(#1831): remove permanent thread-race test and its gate scaffolding；1bdf0a5b2	ak-roles: test(#1831): race-lock proof pins read to inside first gate；bc854212a	ak-roles: fix(#1465): migrate CLI runners onto unified transport, drop private loops and 300s walls | 协议 | context manager；with 语句协议，AST Name 不计消费者 |
+| `__post_init__` | ming_sim/decree.py:312 | AST消费者=0；词边界=1 | 350d84dec	ak-roles: fix(#1753): scope promulgation judge Agno session per attempt | 协议 | dataclass 协议钩子；运行时自动调用 |
+| `_cli_prompt` | ming_sim/cli_backend.py:4316 | AST消费者=0；词边界=1 | dd8c0f072	ak-roles: align CLI scene rollback history and remove retired recommendation envelope；afbcbbbd8	claude: test unadvanced cli retry structurally；7b3607f9f	claude: fix(decree): bind held dossier identity and isolate unadvanced cli turn；8489f4002	codex: fix(#485): converge P4 and streaming recommendation seams | F1 | 已判 F1 CLI 信封；派单不施工 |
+| `_cli_recommendation_call` | ming_sim/cli_backend.py:4348 | AST消费者=0；词边界=1 | dd8c0f072	ak-roles: align CLI scene rollback history and remove retired recommendation envelope；8489f4002	codex: fix(#485): converge P4 and streaming recommendation seams；cbc522a1b	codex: fix(#485): close family correctness findings | F1 | 已判 F1 CLI 信封；派单不施工 |
+| `_cli_stream_safe_prefix` | ming_sim/cli_backend.py:4336 | AST消费者=0；词边界=1 | dd8c0f072	ak-roles: align CLI scene rollback history and remove retired recommendation envelope；8489f4002	codex: fix(#485): converge P4 and streaming recommendation seams | F1 | 已判 F1 CLI 信封；派单不施工 |
+| `_fail_cli_chat_turn_scene` | ming_sim/cli/terminal.py:156 | AST消费者=0；词边界=1 | 2879e69e0	ak-roles: #1838 reopen 删旁白 beat 整层，戏文只由场景 LLM 写；38018852b	ak-roles: fix(#542): close scene via ChatTurnSceneRegistry + exit cleanup chain | F3 | 已判 F3；#1838 旁白退役残留 |
+| `_fiscal_container_value` | ming_sim/flows.py:285 | AST消费者=0；词边界=1 | d785a0a8f	fix: address online fiscal hub review findings；1b638a13d	sandcastle: cmr step6: persist outbound hub budget truth；8a26ada12	sandcastle: cmr step6: accumulate central loss containers；e445dde60	sandcastle: codex: fix(fiscal): address substrate hub review findings | 财政基座 | d785a0a8f 等 fiscal hub 评审后改调 _fiscal_container_values_when_complete；基座 helper 残留，非旧结算核／simulator 盘面 |
+| `_is_audience_chat_shared_channel` | ming_sim/db.py:21086 | AST消费者=0；词边界=1 | cbc522a1b	codex: fix(#485): close family correctness findings；269bf8736	sandcastle: fix #485/#976: audience hold-and-release dual-track (no scrub)；25f5e7f9b	sandcastle: fix #485 completeness: structural scrub of assignee audience chat (#883)；39b84d5df	sandcastle: fix #485 completeness: scrub audience secret text from shared knowledge (#883) | F3邻接 | cbc522a1b／#485 召对双轨知识；共享频道判定 |
+| `_matched_prefix` | ming_sim/cli_backend.py:3543 | AST消费者=0；词边界=1 | b5cda8126	ak-roles: remove superseded CLI action dispatcher and prefix tests；ecb062ead	ak-roles: remove retired conversation classifiers and stale inventory；fbd78f120	feat(probe): CLI LLM backend (agy/codex) — play without api key | F1邻接 | b5cda8126 撤 CLI action dispatcher；属 CLI 前缀路由残留 |
+| `_primary_source_only_army_pay_container_total` | ming_sim/db.py:4381 | AST消费者=0；词边界=1 | d19f391b0	sandcastle: cmr fix: preserve Dongjiang pay funnel seed；15bc834e0	sandcastle: cmr fix: repair fiscal seed and pay funnel findings | 财政军饷 | d19f391b0／15bc834e0 东江饷漏斗种子修复后无外部调用；军饷容器合计，非 simulator board |
+| `_province_collection_rate` | ming_sim/flows.py:59 | AST消费者=0；词边界=1 | 7b4e5f734	feat(后宫): 打通选妃流程 + 调教 tool 提权 + candidate 升格修复 | 选妃stub | git log -S 仅 7b4e5f734 后宫选妃；非结算／simulator |
+| `_province_transport_ratio` | ming_sim/flows.py:54 | AST消费者=0；词边界=1 | 7b4e5f734	feat(后宫): 打通选妃流程 + 调教 tool 提权 + candidate 升格修复 | 选妃stub | git log -S 仅 7b4e5f734 后宫选妃；非结算／simulator |
+| `_secret_prefix_needs_recent_context` | ming_sim/cli_backend.py:4290 | AST消费者=0；词边界=1 | b5cda8126	ak-roles: remove superseded CLI action dispatcher and prefix tests；ecb062ead	ak-roles: remove retired conversation classifiers and stale inventory；d891e4b6d	sandcastle: fix: preserve secret-order context from audience confirmation | F1邻接 | b5cda8126 撤 CLI action dispatcher；属 CLI 前缀路由残留 |
+| `_target_active_officeholder` | ming_sim/session.py:409 | AST消费者=0；词边界=1 | 82be2f178	ak-roles: repair #1837 audience provenance and retire classifier materializers；e2fc6369d	ak-roles: #1871 reopen 删分类器落地链残留死码；1b9a22146	ak-roles: fix(#1380): r1 前缀零LLM闸 + parallel P5/DRY + 删重复观测；bf2df57b6	ak-roles: fix(#1380/#1355): QA-C P0 起复当回合落库 + 密令存活钉 | F1邻接 | 82be2f178／e2fc6369d 撤分类器 materialize；官职目标解析 |
+| `ainvoke` | ming_sim/cli_backend.py:4466 | AST消费者=0；词边界=2 | ae3739f09	ak-roles: fix(#1843): hold month advance until the gazette exists；9eb510a8a	ak-roles: fix #884 drop invalid ainvoke wrap from transport bind；e5ff017b2	ak-roles: fix #884 Agno non-stream typed transport boundary for API verify；a9f1b1f8e	ak-roles: test(#1753): real seal/advance HTTP entry and Agent history resume | F1邻接 | ae3739f09 撤 CLI Agent 假适配；动态协议方法名，llm_transport 仍有同名字符串引用 |
+| `ainvoke_stream` | ming_sim/cli_backend.py:4528 | AST消费者=0；词边界=1 | ae3739f09	ak-roles: fix(#1843): hold month advance until the gazette exists；a9f1b1f8e	ak-roles: test(#1753): real seal/advance HTTP entry and Agent history resume；8489f4002	codex: fix(#485): converge P4 and streaming recommendation seams；8110e9753	test(probe): 补 CLI 后端/会话胶水/扩编测试,新增代码覆盖 79→92% | F1邻接 | ae3739f09 撤 CLI Agent 假适配；流式协议方法 |
+| `attach_secret_oral_pin` | ming_sim/db.py:11181 | AST消费者=0；词边界=1 | 82be2f178	ak-roles: repair #1837 audience provenance and retire classifier materializers；e2fc6369d	ak-roles: #1871 reopen 删分类器落地链残留死码；3f73fb3c1	ak-roles: #1837 reopen 删旧大臣 agent，转译承接禁摊派/荐人/查访/催办/行程语气；bcacdf379	sandcastle: fix(#515): registry materialize dispatcher + real-entry P5/undo tracers | F1邻接 | 82be2f178／e2fc6369d 撤分类器 materialize；密令口述钉 |
+| `building_detail` | ming_sim/db.py:8859 | AST消费者=0；词边界=1 | 7182174c8	sandcastle: cmr S4 r1: close minister knowledge read bypasses；09aea3cf9	feat(buildings): 建筑系统 + 推演 token 优化 + token 遥测 | 知识读口 | 7182174c8／#1889 关大臣知识旁路／工具读；建筑定性详情，非 extractor slim／simulator board |
+| `clear_directive_needs_clarification` | ming_sim/db.py:17543 | AST消费者=0；词边界=1 | b5cda8126	ak-roles: remove superseded CLI action dispatcher and prefix tests；4508956e5	ak-roles: #1842 reopen 转译唯一后台路径、背书并进转译、删收夜背书批；45b11dc7a	ak-roles: #1871 reopen 删读心/分类器/故事抽取残留/递话 agent；f6b5bbe4d	ak-roles: test: keep live entry boundaries after extractor retirement | F1邻接 | b5cda8126／4508956e5 撤 dispatcher／收夜背书批；澄清旗写口 |
+| `cluster_effect` | ming_sim/action_clusters.py:215 | AST消费者=0；词边界=1 | b5cda8126	ak-roles: remove superseded CLI action dispatcher and prefix tests；69be199b5	ak-roles: #1871 reopen 删分类器候选处理与 materialize_fn 字段；45b11dc7a	ak-roles: #1871 reopen 删读心/分类器/故事抽取残留/递话 agent；23a5b9a8d	sandcastle: fix(#515): close PR 1120 review evidence gaps | F1邻接 | b5cda8126／#1871 撤分类器候选；ACTION_CLUSTERS 意图映射 |
+| `complete_rescript_summon_scaffold_turn` | ming_sim/db.py:9230 | AST消费者=0；词边界=1 | 2879e69e0	ak-roles: #1838 reopen 删旁白 beat 整层，戏文只由场景 LLM 写；185698d55	ak-roles: fix(#657) 六类断根——desk入相/共享首选投影/phase2保旧并生新/单一终态清锚/默认hold保note/任命身份冲突拒；a4dfa1bfd	ak-roles: fix(#657) 收敛 HITL 唯一编排出口与 scaffold consumed 终态 | F3邻接 | 2879e69e0 #1838 旁白 beat 退役；批红召见脚手架 |
+| `compose_decree_validation_recovery` | ming_sim/cli_backend.py:1915 | AST消费者=0；词边界=1 | 82be2f178	ak-roles: repair #1837 audience provenance and retire classifier materializers；e2fc6369d	ak-roles: #1871 reopen 删分类器落地链残留死码；c56b4d025	ak-roles: fix(#1778): audience assignee from post-extract, no code fill；4ca0717bd	ak-roles: exercise recovery composer path | F1邻接 | 历史消费者 #1871 分类器落地链（e2fc6369d／82be2f178）；非旧结算／simulator |
+| `compose_secret_order_landing_recovery` | ming_sim/cli_backend.py:2002 | AST消费者=0；词边界=1 | 82be2f178	ak-roles: repair #1837 audience provenance and retire classifier materializers；68852e0e6	ak-roles: remove unreachable secret-prefix HTTP recovery suite；aaab7d590	ak-roles: retire API secret-prefix extraction cases after typed deadline coverage；aa60aafaf	ak-roles: remove retired minister secret-order entry tests | F1邻接 | 历史消费者 #1871 分类器落地链（e2fc6369d／82be2f178）；非旧结算／simulator |
+| `current_audience_scene` | ming_sim/due_review.py:313 | AST消费者=0；词边界=1 | 51af199b6	ak-roles: fix multi-dossier exposure routing and remove retired dialogue benchmark；53d9a7435	ak-roles: repair #1837 source pins, grounding and recommendation; retire legacy routes and skills；ce9527f7b	ak-roles: bind audience cases and preserve report and scene facts；82be2f178	ak-roles: repair #1837 audience provenance and retire classifier materializers | F3 | 已判 F3；单场召对场景读口 |
+| `dict_of_string_lists` | ming_sim/content.py:600 | AST消费者=0；词边界=1 | 53d9a7435	ak-roles: repair #1837 source pins, grounding and recommendation; retire legacy routes and skills；006705ced	ak-roles: remove obsolete skill grants and keyword inquiry reports；0fb025ebe	ak-roles: fix character knowledge by durable scope；06ac92688	sandcastle: cmr fix(#489): load office knowledge domains from content | 内容加载 | 53d9a7435 #1837 撤旧路由／skills 后无直调；content.py JSON 形状校验 |
+| `dict_of_strings` | ming_sim/content.py:605 | AST消费者=0；词边界=1 | 53d9a7435	ak-roles: repair #1837 source pins, grounding and recommendation; retire legacy routes and skills；006705ced	ak-roles: remove obsolete skill grants and keyword inquiry reports；90523a0fa	ak-roles: preserve urge reasons and retire minister tool materials；de0d7ad41	Initial public release | 内容加载 | 53d9a7435 #1837 撤旧路由／skills 后无直调；content.py JSON 形状校验 |
+| `discard_pending_directives` | ming_sim/db.py:18788 | AST消费者=0；词边界=1 | ecb062ead	ak-roles: remove retired conversation classifiers and stale inventory；45b11dc7a	ak-roles: #1871 reopen 删读心/分类器/故事抽取残留/递话 agent；413b5e209	ak-roles: repair forecast rollback and event alignment；faec8ba6b	sandcastle: codex: fix: wire decree dossiers into settlement (#571) | F1邻接 | ecb062ead／45b11dc7a 撤会话分类器与 inventory；旨意草稿丢弃 |
+| `discover_character_write_sql_locations` | ming_sim/person_write_inventory.py:112 | AST消费者=0；词边界=1 | 90015569f	ak-roles: test(#1185): wave1 delete 24 + move 20 knowledge→489；daf63e7cc	test(person): inventory character write points | 人物写点清单 | 90015569f #1185 测试搬迁后无测消费；inventory 工具，非结算 |
+| `experiences` | ming_sim/entities/affair/store.py:429 | AST消费者=0；词边界=2 | 45b11dc7a	ak-roles: #1871 reopen 删读心/分类器/故事抽取残留/递话 agent；b81af35ff	ak-roles: refactor: remove retired M18 paths；7149c9414	ak-roles: per-item reject unauthorized story and event-person origins；a135e2615	ak-roles: test(#1831): remove permanent thread-race test and its gate scaffolding | 事务经历 | 45b11dc7a #1871 撤读心／故事抽取；affair store 属性／方法，wb=2 自文件 |
+| `faction_report` | ming_sim/db.py:6714 | AST消费者=0；词边界=5 | 3f73fb3c1	ak-roles: #1837 reopen 删旧大臣 agent，转译承接禁摊派/荐人/查访/催办/行程语气；5047271cf	ak-roles: unify decree forecast snapshot and drop simulator board feed (#1861 reopen)；81c4d2098	ak-roles: fix: connect world-segment material reads and drop extractor leftovers；0fb025ebe	ak-roles: fix character knowledge by durable scope | 知识权限钉 | wb=5：tests/test_character_knowledge_489.py 以 setattr／字符串钉权限边界；5047271cf／81c4d2098 曾从 simulator／extractor 载荷撤出，定义仍供知识契约 |
+| `find_prior_speaker_still_present` | ming_sim/audience_night.py:2463 | AST消费者=0；词边界=1 | 3e4d4fcd2	ak-roles: retire orphan beat writer and route offsite summons through scene；2879e69e0	ak-roles: #1838 reopen 删旁白 beat 整层，戏文只由场景 LLM 写；6f0c3cb56	ak-roles: fix(#1585) close night writes last exit then unnamed divider；1f2dc2a60	ak-roles: #1585 handoff narration, concurrent enter+handoff generation, soft-segment divider | F3 | 已判 F3 召对／旁白；派单不施工 |
+| `flag_directive_needs_clarification` | ming_sim/db.py:17702 | AST消费者=0；词边界=2 | b5cda8126	ak-roles: remove superseded CLI action dispatcher and prefix tests；4508956e5	ak-roles: #1842 reopen 转译唯一后台路径、背书并进转译、删收夜背书批；45b11dc7a	ak-roles: #1871 reopen 删读心/分类器/故事抽取残留/递话 agent；f6b5bbe4d	ak-roles: test: keep live entry boundaries after extractor retirement | F1邻接 | b5cda8126／4508956e5 撤 dispatcher／收夜背书批；澄清旗写口 |
+| `has_player_visible_rejection` | ming_sim/applier.py:387 | AST消费者=0；词边界=1 | 5b6c868bc	ak-roles: fix(#1745): 判牒五类——section 隔离/删自有 collector/去固定邸报句/测减；d3c1550f2	issue #63: implement ADR0015 per-item rejection handoff；9f1c0da2b	fix(provenance): 皇帝下旨结算贯穿 player_decree 来源 + 重抽不丢 (Refs #146)；ee141f3b5	cmr C2 online R1 fix (codex P2 + CodeRabbit Major): hint after inertia collection; defer source-recovery to #144 | 拒收呈现 | 5b6c868bc #1745 判牒 section；玩家可见拒收判定，非旧结算核 |
+| `holder_kind` | ming_sim/session_write_queue.py:110 | AST消费者=0；词边界=1 | a9be44bb6	ak-roles: fix: unify audience translation lifecycle；7a2dfd1d5	ak-roles: fix(#1842): clear six-class residuals — drain core, AC tracers, docs；d68fbd9b6	ak-roles: fix(#1842): ClassifiedWriteGate atomic translation holder kind | 协议 | session_write_queue 属性／协议面；动态读取 |
+| `list_night_promulgated_directives` | ming_sim/db.py:17571 | AST消费者=0；词边界=2 | 4508956e5	ak-roles: #1842 reopen 转译唯一后台路径、背书并进转译、删收夜背书批；45b11dc7a	ak-roles: #1871 reopen 删读心/分类器/故事抽取残留/递话 agent；60cbfcc1c	ak-roles: fix(#612): scheme A night-level endorsement-only batch；7fa758ee8	ak-roles: test(#612): fold five parallel tracers into three existing ones | F3邻接 | 4508956e5 #1842 收夜背书批测试消费者撤；夜颁布读口 |
+| `list_office_vacancies` | ming_sim/db.py:4046 | AST消费者=0；词边界=1 | 006705ced	ak-roles: remove obsolete skill grants and keyword inquiry reports；5bb968919	ak-roles: test(#1185): wave2a rewrite 盯文→结构 (mindreading/near-minister/城防/密令/army)；77399e9c7	codex: cmr S3 r6: converge roster and office truth；cbc522a1b	codex: fix(#485): close family correctness findings | 名册读口 | 006705ced 撤 obsolete skill grants／keyword inquiry；官缺列表，非结算／simulator |
+| `list_promulgated_directives` | ming_sim/db.py:17607 | AST消费者=0；词边界=1 | 4508956e5	ak-roles: #1842 reopen 转译唯一后台路径、背书并进转译、删收夜背书批；45b11dc7a	ak-roles: #1871 reopen 删读心/分类器/故事抽取残留/递话 agent；8fb055a5d	ak-roles: fix(#612): night candidates, OPEN restore, chat admission, SQL range；60cbfcc1c	ak-roles: fix(#612): scheme A night-level endorsement-only batch | F3邻接 | 4508956e5 #1842 收夜背书批测试消费者撤；颁布读口 |
+| `mark_chat_turn_failed` | ming_sim/db.py:9562 | AST消费者=0；词边界=1 | 2879e69e0	ak-roles: #1838 reopen 删旁白 beat 整层，戏文只由场景 LLM 写；69c050596	ak-roles: refactor(#1585) reuse chat-turn failure transition；806d29019	支持撤回最后一次召对发言 | F3邻接 | 2879e69e0 #1838 旁白退役；会话失败标记 |
+| `minister_speaker_role` | ming_sim/action_materialize.py:29 | AST消费者=0；词边界=3 | 82be2f178	ak-roles: repair #1837 audience provenance and retire classifier materializers；e2fc6369d	ak-roles: #1871 reopen 删分类器落地链残留死码；81f8bacff	ak-roles: fix(#1765): C5–C7 residual + loud secret extract contract；23196d8ed	ak-roles: fix(#1765): gate r1 — drop count locks, parallel prose/transport | F1邻接 | 82be2f178／e2fc6369d 撤分类器 materialize；召对／CLI 档料 helper |
+| `night_dossiers_ready` | ming_sim/audience_night.py:345 | AST消费者=0；词边界=1 | d469fc404	ak-roles: remove duplicate and white-box endorsement tests；4508956e5	ak-roles: #1842 reopen 转译唯一后台路径、背书并进转译、删收夜背书批 | F3邻接 | 4508956e5／d469fc404 #1842 收夜背书批；非结算／simulator |
+| `person_write_locations_by_disposition` | ming_sim/person_write_inventory.py:157 | AST消费者=0；词边界=1 | 90015569f	ak-roles: test(#1185): wave1 delete 24 + move 20 knowledge→489；daf63e7cc	test(person): inventory character write points | 人物写点清单 | 90015569f #1185 测试搬迁后无测消费；inventory 工具，非结算 |
+| `point_dossier` | ming_sim/entities/affair/store.py:284 | AST消费者=0；词边界=1 | f3e697fb3	ak-roles: fix(#1812): closed affair 拒收 active linked issue，materials 单次冻结投影；98ac175ab	ak-roles: fix(#1812): affair id path collision, dead test-only helper, double prepare, closed-affair reattach；60e90ea6a	ak-roles: fix(#1831): unify affair pointers and wire real declarations；bcf6c202d	ak-roles: feat(#1831): affair records, pointers, and night-close birth | 事务指针 | f3e697fb3／#1831 affair 指针；实体 store API |
+| `point_issue` | ming_sim/entities/affair/store.py:316 | AST消费者=0；词边界=1 | f3e697fb3	ak-roles: fix(#1812): closed affair 拒收 active linked issue，materials 单次冻结投影；356495e31	ak-roles: fix(#1812): 关闭事务上仍活跃的 linked issue 回退到自己身份进开场；e6aea5637	ak-roles: fix(#1812): linked issue 归并到 affair 身份，不再连带丢弃可见材料；69f100b70	ak-roles: fix(#1812): affair 单一投影+全量文字事实，删授权全量透传改当场验证 | 事务指针 | f3e697fb3／#1831 affair 指针；实体 store API |
+| `pointing_at` | ming_sim/entities/textual_fact/store.py:113 | AST消费者=0；词边界=1 | 48f1c48f7	ak-roles: #1896 assert investigation outcomes on the month entry；c653d4719	ak-roles: #1896 investigation by per-fact difficulty and actual effort, not fixed progress；dc7e4bd8e	ak-roles: fix(#1831): unique batch declaration, ground existing, bind results；28a35575b	ak-roles: fix(#1831): narrow affair declarations by stage | 文字事实指针 | 48f1c48f7／#1896／#1831 textual_fact 指针 API |
+| `qualitative_character_attribute` | ming_sim/qualitative.py:53 | AST消费者=0；词边界=1 | 534b9be53	sandcastle: fix: unify qualitative projection and remove prose scrubbers；5fdac5884	sandcastle: codex: fix(web): #1022 remove player-facing raw ledgers | 呈现投影 | 534b9be53 统一定性投影撤 prose scrubber 调用；人物属性定性，非结算落账 |
+| `read_credit_events_as_edges` | ming_sim/db.py:22463 | AST消费者=0；词边界=1 | e5f45136b	codex: implement directed relation edge storage | 关系边 | git log -S 仅 e5f45136b directed relation edge storage；边读口，非结算／simulator |
+| `release_previous_material_tree` | ming_sim/materials.py:227 | AST消费者=0；词边界=1 | 3f73fb3c1	ak-roles: #1837 reopen 删旧大臣 agent，转译承接禁摊派/荐人/查访/催办/行程语气；94b112b79	ak-roles: fix(#1812): close seven seat/materials/dispatch root classes | 材料目录 | 3f73fb3c1 #1837 撤旧大臣 agent 后无直调；材料树生命周期 helper，非结算／simulator |
+| `require_bool` | ming_sim/llm_contract.py:41 | AST消费者=0；词边界=1 | de0d7ad41	Initial public release | 非F2形状 | git log -S 仅 de0d7ad41；llm_contract 校验叶，现役 abort_llm_contract 路径未改用此三函数 |
+| `require_int_range` | ming_sim/llm_contract.py:24 | AST消费者=0；词边界=1 | de0d7ad41	Initial public release | 非F2形状 | git log -S 仅 de0d7ad41；llm_contract 校验叶，非结算／simulator |
+| `require_non_empty_text` | ming_sim/llm_contract.py:18 | AST消费者=0；词边界=1 | de0d7ad41	Initial public release | 非F2形状 | git log -S 仅 de0d7ad41；llm_contract 校验叶，非结算／simulator |
+| `run_audience_turn_translation` | ming_sim/audience_translate.py:551 | AST消费者=0；词边界=1 | 4508956e5	ak-roles: #1842 reopen 转译唯一后台路径、背书并进转译、删收夜背书批；b3fc0c93e	ak-roles: test: restore court-break and translation tracers；f16aa3a51	ak-roles: #1842 T2 转译后台化与封夜提交 join；a5255bce0	ak-roles: fix(#1837): 本场已说读 chat_messages、拒收幻影实体、禁模板正文 | F3邻接 | 4508956e5 #1842 转译后台化；召对转译入口 |
+| `stage_referral_candidate` | ming_sim/action_materialize.py:1703 | AST消费者=0；词边界=1 | 82be2f178	ak-roles: repair #1837 audience provenance and retire classifier materializers；e2fc6369d	ak-roles: #1871 reopen 删分类器落地链残留死码；b62fb8d48	ak-roles: feat(#524): 下议 ACTION_CLUSTERS 纵切 | F1邻接 | 82be2f178／e2fc6369d 撤分类器落地；荐人候选 staging |
+| `stage_revoke_authority_candidate` | ming_sim/action_materialize.py:1815 | AST消费者=0；词边界=1 | 82be2f178	ak-roles: repair #1837 audience provenance and retire classifier materializers；e2fc6369d	ak-roles: #1871 reopen 删分类器落地链残留死码；5efb7c3e9	ak-roles: feat(#523): 收权·罢差 + 撤回成命 ACTION_CLUSTERS 纵切 | F1邻接 | 82be2f178／e2fc6369d 撤分类器落地；收权候选 staging |
+
+例外归类计数：F1=3；F3=3；F1邻接=16；F3邻接=7；协议=7；选妃stub=2；财政基座=1；财政军饷=1；知识读口=1；知识权限钉=1；内容加载=2；非F2形状=4；人物写点清单=2；事务指针=2；文字事实指针=1；事务经历=1；呈现投影=1；关系边=1；拒收呈现=1；名册读口=1；材料目录=1。合计 57。
+
+## 原类复扫（R4 固定点）
+
+- 本轮删除三符号 defs/refs=NONE。
+- 复扫 JOINT=57；相对删前 JOINT=60 仅少三删除名；NEW_ORPHANS=空。
+- R1–R3 已删 F2 符号抽查仍无生产／测试残留。
+
+## 聚焦测试（R4；完整可复现命令）
+
+```bash
+cd /Users/akagilnc/WorkSpace/Ming_LLM-1843-w5
+MING_SIM_AGY_BIN=/usr/bin/false \
+MING_SIM_CODEX_BIN=/usr/bin/false \
+MING_SIM_CLAUDE_BIN=/usr/bin/false \
+MING_SIM_CURSOR_BIN=/usr/bin/false \
+MING_SIM_KIMI_BIN=/usr/bin/false \
+MING_SIM_GROK_BIN=/usr/bin/false \
+MING_SIM_PI_BIN=/usr/bin/false \
+/Users/akagilnc/WorkSpace/Ming_LLM/.venv/bin/python -m pytest \
+  tests/test_grant_reconciliation_567.py \
+  tests/test_month_chain_1843.py \
+  tests/test_value_matrix_691.py \
+  tests/test_secret_order_monthly_progress_566.py \
+  tests/test_secret_order_isolation_883.py \
+  tests/test_covert_levy_651.py \
+  tests/test_rescript_draft_656.py \
+  tests/test_rescript_choices_563.py \
+  tests/test_character_knowledge_489.py \
+  tests/test_pay_order_override_653.py \
+  tests/test_economy_section_rejections.py \
+  tests/test_section_fiscal_rejections.py \
+  tests/test_secret_dossier_participants_1252.py \
+  tests/test_secret_order_section_rejections.py \
+  tests/test_execution_tenure_613.py \
+  -q -p no:cacheprovider --durations=8
+```
+
+实测（`/usr/bin/time -p`）：`401 passed, 1 skipped in 9.48s`；`real 10.27` `user 6.87` `sys 2.22`。日志：`/tmp/1843-f2-r4/pytest-r4.log`（系统临时）。未跑全量。
+
+### 关于 R3「422 passed」
+
+R3 回执只写类别「value_matrix／secret_order／covert／month_chain／report／rescript／section／knowledge／pay_order」与「422 passed, 1 skipped in 11.71s」，**未保存完整 pytest 文件列表**；fixer session／本机 terminals 亦未检索到可复现的 422 文件集。R4 不伪造该命令；以上为 R4 实际执行的完整命令与计数。R1（235）／R2（171）的完整文件列表仍见附录。
+
+## 自查质量／合法性（advisor，非审官）
+
+- 同类型：继续清退 extractor slim／simulation world-segment／Event-edict 旧结算写口。
+- 引入 bug：未动 `record_monthly_grant_reconciliations`／`_apply_economy_list`／现役月链写口。
+- 合法性：仅 F2 删 3；F1/F3 及邻接只归类；未 amend/stash/push/PR；未造证明性测试；不冒称 #1856 总核收敛。
+- 证据形态：禁止≈／多数／等；JOINT 57 行逐名；原始枚举另文件。
+
+## Commit 与 git 状态（R4）
+
+- 施工前 HEAD：`79661de14b745cb3f16f18099b2edb00bfb70730`
+- R4 清退＋证据：（本提交）
+- `git diff --check`：干净
+
+## 剩余范围
+
+F1／F3／分类器／收夜邻接零引用仍非本票；#1856 总核与全量 CI 留最终待合并。
+
+---
+
+## 附录 A：R3 不完整回执原文（封驳对象；保留失败经过）
+
+<details>
+<summary>R3 stamp 正文（含≈／多数／等聚合，已封驳）</summary>
+
+~~~
+# #1843 F2 旧结算／simulator 支持树清退回执
+
+工作树：`/Users/akagilnc/WorkSpace/Ming_LLM-1843-w5`
+分支：`ak-roles/issue-1843-w5`
+底座：`claude/1812-w4` 是 HEAD 祖先（`git merge-base --is-ancestor claude/1812-w4 HEAD` → yes）
+派单：`~/.ak-roles/books/Ming_LLM/1843/runs/01a107fa-7c79-7613-87d5-0cf4e634cafd@fixer/fix-packet.md`
+判词附件：`.../attachments/00-1856-judge-324c29f16.json`（F2 成立、未结；本票承接整类）
 重交原文：`evidence/1843-returned-finding.json`（用户封驳：枚举未穷尽；本轮按其 requiredAction 执行）
 
 ## 轮次
@@ -32,7 +299,7 @@
 
 ### R3 枚举脚本
 
-```bash
+~~~bash
 cd /Users/akagilnc/WorkSpace/Ming_LLM-1843-w5
 git rev-parse HEAD
 # managed_py via: git ls-files '*.py' | grep -v '^docs/raw/' | wc -l  → 352
@@ -82,7 +349,7 @@ PY
 
 # 历史交叉（每个 ORPHAN）：
 # git log -S'<symbol>' --oneline -- ming_sim tests | head
-```
+~~~
 
 对 ming_sim 全部定义做 defs 索引；对 git ls-files *.py（排除 docs/raw）统计 Name/Attribute/Import alias；consumers 为空即 ORPHAN；再对每个 ORPHAN 执行 git log -S。
 
@@ -148,6 +415,11 @@ F2 删除符号 defs/refs=NONE；级联 format_metric_delta／first_character �
 ## 剩余范围
 
 F1／F3／分类器／收夜邻接零引用仍非本票；#1856 总核与全量 CI 留最终待合并。
+
+---
+~~~
+
+</details>
 
 ---
 
