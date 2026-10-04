@@ -192,7 +192,8 @@ def test_new_appointee_identity_exists_before_promulgation_and_leads_dossier(env
     )
 
 
-def test_unknown_appointee_normalizes_unrecognized_faction(env):
+def test_unknown_appointee_keeps_declared_faction(env):
+    """#1847 N10：任命声明的派系是结构化字段，未知值原样透传，不得静默改写为「中立」。"""
     db, state, content = env
     name = "测试异派新臣"
     pending_id = db.stage_pending_action(
@@ -204,7 +205,7 @@ def test_unknown_appointee_normalizes_unrecognized_faction(env):
     person = db.conn.execute(
         "SELECT faction FROM characters WHERE name=?", (name,),
     ).fetchone()
-    assert person["faction"] == "中立"
+    assert person["faction"] == "不存在派"
 
 
 def test_real_assignment_stage_lead_comes_from_extract_not_summoned_minister(env):

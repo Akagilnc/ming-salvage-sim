@@ -299,12 +299,9 @@ def register_unlisted_person_record(
     for alias in alias_list:
         if _find_existing_minister(content, alias, db) is not None:
             return None
-    faction_value = str(faction or "").strip()
-    if not faction_value:
-        faction_value = "中立"
-    elif faction_value not in content.factions:
-        # #1847: unknown faction must not silently rewrite to 中立.
-        return None
+    # #1847 N10：未知派系不得静默改写为「中立」（自由措辞→结构分类）。
+    # 空缺才默认中立（只判空）；已声明非空值原样透传，不新增拒收护栏。
+    faction_value = str(faction or "").strip() or "中立"
     seat = str(region_id or "").strip()
     character = Character(
         name=name,
@@ -436,10 +433,13 @@ def canonical_new_appointment_person_fields(
     content: GameContent,
     faction: object,
 ) -> Dict[str, object]:
-    """Return the single canonical identity defaults for a newly appointed person."""
-    normalized_faction = str(faction or "中立").strip()
-    if normalized_faction not in content.factions:
-        normalized_faction = "中立"
+    """Return the single canonical identity defaults for a newly appointed person.
+
+    #1847 N10 同形：未知派系不得静默改写为「中立」；空缺才默认中立（只判空）。
+    ``content`` 保留调用方签名；不再经 content.factions 做词义归一。
+    """
+    _ = content
+    normalized_faction = str(faction or "").strip() or "中立"
     return {
         "faction": normalized_faction,
         "loyalty": 60,

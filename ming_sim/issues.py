@@ -9354,8 +9354,11 @@ def _apply_score_extraction_body(
 def _declared_emperor_ending(fate: object) -> Optional[Dict[str, object]]:
     """模型声明的皇帝终态走既有终局链。退位／自尽保留原状态号与定调。
 
-    #1847: only closed english tokens / emperor_* form-language ids.
-    Free Chinese/prose fate must not become a status.
+    其它非空声明（被废、暴毙，以及声明里的其它终态）同样终局，不再被旧的两值枚举丢掉。
+    不定调新句子：总评仍由结局 agent 据邸报来写。
+
+    #1847：emperor_fate 是 extractor 契约结构化字段值，原样透传为终态号；
+    不是从自由散文推断分类（ADR 0142 不授权丢弃已声明非空终态）。
     """
     if not isinstance(fate, str):
         return None
@@ -9369,7 +9372,7 @@ def _declared_emperor_ending(fate: object) -> Optional[Dict[str, object]]:
     if token.isascii() and token.replace("_", "").isalnum() and not token[0].isdigit():
         status = token if token.startswith("emperor_") else f"emperor_{token}"
         return {"status": status, "summary": ""}
-    return None
+    return {"status": token, "summary": ""}
 
 
 def _resolve_victory(db: GameDB, state: GameState, extracted: Dict[str, object]) -> Dict[str, object]:
