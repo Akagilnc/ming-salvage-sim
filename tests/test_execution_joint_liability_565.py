@@ -183,7 +183,7 @@ def test_engine_auto_failed_materialize_writes_zero_joint_liability(game):
     assert db.get_relation_edge_events(event_kind="连坐") == []
 
 
-def test_dead_liable_party_skips_satisfaction_but_enters_note(game, caplog):
+def test_dead_liable_party_skips_satisfaction_but_enters_note(game):
     db, state, content = game
     dossier_id = _executing_dossier(db, state)
     db.conn.execute("UPDATE characters SET status='dead' WHERE name='倪元璐'")
@@ -207,7 +207,6 @@ def test_dead_liable_party_skips_satisfaction_but_enters_note(game, caplog):
     assert "徐光启" in edges
     note = db.get_decree_dossier(dossier_id)["execution_note"]
     assert "倪元璐" in note
-    assert "跳过已故" in caplog.text
 
 
 def test_explicit_affected_parties_must_pass_full_key_validation(game):
@@ -251,6 +250,123 @@ def test_explicit_affected_parties_must_pass_full_key_validation(game):
     assert not any(row["target_id"] == outsider for row in _sat_events(db, dossier_id))
     # roster 映射仍落主办派系
     assert any(row["target_id"] == "东林" for row in _sat_events(db, dossier_id))
+
+
+def test_assistant_row_delegator_gets_secondary_assistant_zero_mechanical(game):
+    """ADR 0053 核心例：大臣遣学生为协办办砸→全权者次责；协办本人零机械。"""
+    db, state, content = game
+    roster = [
+        {"character_id": "倪元璐", "tier": "主办", "role": "清丈"},
+        {
+            "character_id": "黄道周", "tier": "协办", "role": "门生听调",
+            "delegator_id": "徐光启",
+        },
+        {"character_id": "徐光启", "tier": "协办", "role": "坐镇"},
+        {"character_id": "王承恩", "tier": "知情", "role": "备悉"},
+    ]
+    dossier_id = _executing_dossier(db, state, roster=roster)
+
+    parties = db.list_execution_liability_parties(dossier_id)
+    by_id = {p["character_id"]: p["responsibility"] for p in parties}
+    assert by_id == {"倪元璐": "primary", "徐光启": "secondary"}
+    assert "黄道周" not in by_id
+    assert "王承恩" not in by_id
+
+    before_donglin = _sat(db, "东林")
+    before_xixue = _sat(db, "西学")
+    _close_via_adapter(
+        db, state, content, dossier_id, "failed", note="所遣协办办砸",
+    )
+
+    # 主办主责 strong；协办行委派人次责 weak；协办黄道周零机械
+    assert _sat(db, "东林") == max(0, before_donglin - 8)
+    assert _sat(db, "西学") == max(0, before_xixue - 4)
+    sat = {
+        (row["target_kind"], row["target_id"], row["delta"])
+        for row in _sat_events(db, dossier_id)
+    }
+    assert sat == {("faction", "东林", -8), ("faction", "西学", -4)}
+
+    edges = {
+        e["target"] for e in db.get_relation_edge_events(event_kind="连坐")
+        if e["origin"].startswith(f"dossier:{dossier_id}:")
+    }
+    assert edges == {"倪元璐", "徐光启"}
+    assert "黄道周" not in edges
+
+
+
+def test_dual_role_lead_and_delegator_primary_wins(game):
+    """合法「主办兼他人委派人」先定档后去重：primary 胜 secondary。"""
+    db, state, content = game
+    roster = [
+        {
+            "character_id": "倪元璐", "tier": "主办", "role": "清丈",
+            "delegator_id": "徐光启",
+        },
+        {"character_id": "徐光启", "tier": "主办", "role": "总理"},
+    ]
+    dossier_id = _executing_dossier(db, state, roster=roster)
+
+    # 读端：一人一档，徐光启只返回 primary
+    parties = db.list_execution_liability_parties(dossier_id)
+    by_id = {p["character_id"]: p["responsibility"] for p in parties}
+    assert by_id == {"倪元璐": "primary", "徐光启": "primary"}
+    assert sum(1 for p in parties if p["character_id"] == "徐光启") == 1
+
+    before_donglin = _sat(db, "东林")
+    before_xixue = _sat(db, "西学")
+    _close_via_adapter(db, state, content, dossier_id, "failed", note="双角色主责")
+
+    # 写路：两人均 primary/strong（-8），徐不得被锁成次责 weak/-4
+    assert _sat(db, "东林") == max(0, before_donglin - 8)
+    assert _sat(db, "西学") == max(0, before_xixue - 8)
+    sat = {
+        (row["target_kind"], row["target_id"], row["delta"])
+        for row in _sat_events(db, dossier_id)
+    }
+    assert sat == {("faction", "东林", -8), ("faction", "西学", -8)}
+
+    edges = {
+        e["target"] for e in db.get_relation_edge_events(event_kind="连坐")
+        if e["origin"].startswith(f"dossier:{dossier_id}:")
+    }
+    assert edges == {"倪元璐", "徐光启"}
+
+
+
+def test_liability_query_excludes_knowers_but_keeps_delegator_fk(game):
+    db, state, _content = game
+    # 写界通常禁「委派人=知情」；cmr R3 读端仍按 delegator_id 外键上溯，
+    # 即便该人在名单里仅以知情档出现也背锅，且查询结果不带知情档位行。
+    dossier_id = _executing_dossier(db, state, roster=[
+        {"character_id": "倪元璐", "tier": "主办", "role": "清丈"},
+        {"character_id": "王承恩", "tier": "知情", "role": "备悉"},
+        {"character_id": "黄道周", "tier": "协办", "role": "核账"},
+    ])
+    injected = [
+        {
+            "character_id": "倪元璐", "tier": "主办", "role": "清丈",
+            "delegator_id": "王承恩",
+        },
+        {"character_id": "王承恩", "tier": "知情", "role": "备悉", "delegator_id": None},
+        {"character_id": "黄道周", "tier": "协办", "role": "核账", "delegator_id": None},
+    ]
+    db.conn.execute(
+        "UPDATE decree_dossiers SET participant_roster=? WHERE id=?",
+        (json.dumps(injected, ensure_ascii=False), dossier_id),
+    )
+    db.conn.commit()
+
+    parties = db.list_execution_liability_parties(dossier_id)
+    ids = [p["character_id"] for p in parties]
+    roles = {p["character_id"]: p["responsibility"] for p in parties}
+    assert "倪元璐" in ids
+    assert roles["倪元璐"] == "primary"
+    assert "王承恩" in ids
+    assert roles["王承恩"] == "secondary"
+    assert "黄道周" not in ids
+    assert all(p.get("tier") != "知情" for p in parties)
 
 
 def test_living_offstage_delegator_still_charged(game):

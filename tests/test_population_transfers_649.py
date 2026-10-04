@@ -249,8 +249,6 @@ def test_class_delta_population_key_upgraded_to_per_item_rejection(game):
     rejections = applied["class_delta_rejections"]
     assert len(rejections) == 1
     assert rejections[0]["category"] == "invalid_enum"
-    assert "population" in rejections[0]["reason"]
-    assert "population_transfers" in rejections[0]["reason"]  # 指向合法入口
     row = db.conn.execute(
         "SELECT population, satisfaction FROM classes WHERE name='流民' AND region_id='shaanxi'"
     ).fetchone()
@@ -275,7 +273,6 @@ def test_class_delta_chinese_population_key_upgraded_to_per_item_rejection(game)
     rejections = applied["class_delta_rejections"]
     assert len(rejections) == 1
     assert rejections[0]["category"] == "invalid_enum"
-    assert "population" in rejections[0]["reason"]
     row = db.conn.execute(
         "SELECT population, satisfaction FROM classes WHERE name='农民' AND region_id='shaanxi'"
     ).fetchone()

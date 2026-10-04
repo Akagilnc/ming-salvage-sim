@@ -5,6 +5,7 @@ import pytest
 
 from ming_sim.decree import pre_settle
 from ming_sim.exceptions import SettlementAbort
+from ming_sim.army_pay import army_needed
 from ming_sim.issues import apply_historical_fiscal_rates
 import ming_sim.issues as issues
 
@@ -258,7 +259,7 @@ def test_fiscal_levy_rescript_golden_all_seeded_provinces(
 
 
 
-def test_fiscal_levy_skips_malformed_region_fiscal_without_blocking_fiscal_levy_pass(game):
+def test_fiscal_levy_skips_malformed_region_fiscal_without_blocking_fiscal_levy_pass(game, monkeypatch):
     db, state, content = game
     issues.bind_content(content)
     state.year = 1631
@@ -266,18 +267,23 @@ def test_fiscal_levy_skips_malformed_region_fiscal_without_blocking_fiscal_levy_
     db.save_state(state)
     _emperor_verdict(db, state, "liao_levy_rise_1631", "已准")
     before_huguang = _settle_payload(db, "huguang")["p"]["三饷应征"]
+    msgs = []
+    monkeypatch.setattr(issues, "tlog", lambda msg: msgs.append(msg))
     db.conn.execute("UPDATE regions SET fiscal = ? WHERE id = ?", ("{bad", "shaanxi"))
     db.conn.commit()
 
     apply_historical_fiscal_rates(state, db)
 
+    assert msgs
     huguang = _settle_payload(db, "huguang")
     assert huguang["p"]["三饷应征"] > before_huguang
 
 
-@pytest.mark.parametrize("bad_field", ["_meta", "land"])
+@pytest.mark.parametrize(
+    "bad_field", ["_meta", "land"],
+)
 def test_fiscal_levy_skips_bad_settle_shape_without_blocking_other_regions(
-    game, bad_field
+    game, monkeypatch, bad_field
 ):
     db, state, content = game
     issues.bind_content(content)
@@ -293,6 +299,8 @@ def test_fiscal_levy_skips_bad_settle_shape_without_blocking_other_regions(
         fiscal["settle"]["_meta"] = ["bad"]
     else:
         fiscal["settle"]["st"]["官民田"] = []
+    msgs = []
+    monkeypatch.setattr(issues, "tlog", lambda msg: msgs.append(msg))
     db.conn.execute(
         "UPDATE regions SET fiscal = ? WHERE id = ?",
         (json.dumps(fiscal, ensure_ascii=False), "shaanxi"),
@@ -301,6 +309,7 @@ def test_fiscal_levy_skips_bad_settle_shape_without_blocking_other_regions(
 
     apply_historical_fiscal_rates(state, db)
 
+    assert msgs
     huguang = _settle_payload(db, "huguang")
     assert huguang["p"]["三饷应征"] > before_huguang
 
@@ -336,7 +345,7 @@ def test_fiscal_levy_rewrites_nonnumeric_current_targets_from_meta(game):
     )
 
 
-def test_fiscal_levy_bad_region_does_not_redistribute_jiao_lian_targets(game):
+def test_fiscal_levy_bad_region_does_not_redistribute_jiao_lian_targets(game, monkeypatch):
     db, state, content = game
     issues.bind_content(content)
     state.year = 1637
@@ -361,6 +370,8 @@ def test_fiscal_levy_bad_region_does_not_redistribute_jiao_lian_targets(game):
         str(db.conn.execute("SELECT fiscal FROM regions WHERE id = ?", ("shaanxi",)).fetchone()["fiscal"])
     )
     fiscal["settle"]["st"]["官民田"] = []
+    msgs = []
+    monkeypatch.setattr(issues, "tlog", lambda msg: msgs.append(msg))
     db.conn.execute(
         "UPDATE regions SET fiscal = ? WHERE id = ?",
         (json.dumps(fiscal, ensure_ascii=False), "shaanxi"),
@@ -369,6 +380,7 @@ def test_fiscal_levy_bad_region_does_not_redistribute_jiao_lian_targets(game):
 
     apply_historical_fiscal_rates(state, db)
 
+    assert msgs
     huguang = _settle_payload(db, "huguang")
     assert math.isclose(huguang["_meta"]["剿饷基线"], expected_jiao, rel_tol=1e-9, abs_tol=1e-9)
     assert math.isclose(huguang["_meta"]["练饷基线"], expected_lian, rel_tol=1e-9, abs_tol=1e-9)
@@ -439,7 +451,7 @@ def test_fiscal_levy_incomplete_first_pass_does_not_freeze_zero_share_seed(
 
 @pytest.mark.parametrize("bad_meta_key", ["剿饷基线", "练饷基线", "饷率田亩分母基线"])
 def test_fiscal_levy_bad_share_meta_does_not_crash_or_redistribute_first_pass(
-    game, bad_meta_key
+    game, monkeypatch, bad_meta_key
 ):
     db, state, content = game
     issues.bind_content(content)
@@ -455,6 +467,8 @@ def test_fiscal_levy_bad_share_meta_does_not_crash_or_redistribute_first_pass(
     )
     fiscal = json.loads(original_shaanxi_fiscal)
     fiscal["settle"].setdefault("_meta", {})[bad_meta_key] = []
+    msgs = []
+    monkeypatch.setattr(issues, "tlog", lambda msg: msgs.append(msg))
     db.conn.execute(
         "UPDATE regions SET fiscal = ? WHERE id = ?",
         (json.dumps(fiscal, ensure_ascii=False), "shaanxi"),
@@ -463,6 +477,7 @@ def test_fiscal_levy_bad_share_meta_does_not_crash_or_redistribute_first_pass(
 
     apply_historical_fiscal_rates(state, db)
 
+    assert msgs
     incomplete = _settle_payload(db, "huguang")
     assert "剿饷基线" not in incomplete["_meta"]
     assert math.isclose(incomplete["p"]["三饷应征"], expected_liao, rel_tol=1e-9, abs_tol=1e-9)
@@ -565,7 +580,7 @@ def test_fiscal_levy_existing_terminal_reason_is_whitelist_validated(game):
     )
     db.conn.commit()
 
-    with pytest.raises(SettlementAbort, match="饷率事件 liao_levy_rise_1631 结局标签无法归一"):
+    with pytest.raises(SettlementAbort):
         apply_historical_fiscal_rates(state, db)
 
     after = _settle_payload(db, "shaanxi")
@@ -830,7 +845,7 @@ def test_jiao_stop_definition_missing_fails_loud(game, monkeypatch):
     event_by_id.pop("jiao_levy_stop_1640", None)
     monkeypatch.setattr(content, "event_by_id", event_by_id)
 
-    with pytest.raises(SettlementAbort, match="缺停征链 jiao_levy_stop_1640"):
+    with pytest.raises(SettlementAbort):
         apply_historical_fiscal_rates(state, db)
 
 

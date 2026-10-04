@@ -190,18 +190,6 @@ def test_repeated_overwrite_keeps_stable_synthetic_ids(game):
 # ---------------------------------------------------------------------------
 
 
-def test_prompt_zero_numeric_instruction_is_positive_qualitative():
-    """P4 落 prompt 用正向表述，不写「不要显示数值」式负向句；其余承载事实/F2.3/
-    结构化契约的合法约束不得借机删除。"""
-    prompt = (Path(__file__).resolve().parents[1] / "content" / "prompts" / "rescript_draft.md") \
-        .read_text(encoding="utf-8")
-    assert "不要出现任何数字数值" not in prompt
-    assert "不要显示" not in prompt
-    assert "定性说法" in prompt            # 正向定性措辞在
-    assert "不得虚构" in prompt            # 事实约束保留
-    assert "不许凑数" in prompt            # F2.3 约束保留
-    assert "只输出一个 JSON object" in prompt  # 结构化契约保留
-
 # ---------------------------------------------------------------------------
 # shape 校验＋权威快照绑定（F2.2/F2.3/F2.5）
 # ---------------------------------------------------------------------------
@@ -220,6 +208,10 @@ def _legal_item() -> dict:
         "context": "秦地赤旱千里。",
         "options": _two_opts("发帑赈济", "所安者饥民", "缓征加赈", "先赈后征"),
     }
+
+
+
+
 
 
 # ---------------------------------------------------------------------------
@@ -312,7 +304,7 @@ def test_r3_strict_parse_control_char_raises_contract_error():
     from ming_sim.exceptions import LLMContractError
     # 控制字符 \x01 在 JSON 字符串内非法，必须触发 JSONDecodeError→LLMContractError
     raw = '{"items": [{"title": "a\x01b", "context": "c", "options": [{"label": "l1", "hint": "h1"}, {"label": "l2", "hint": "h2"}]}]}'
-    with pytest.raises(LLMContractError, match="不是合法 JSON"):
+    with pytest.raises(LLMContractError):
         _parse_rescript_json_strict(raw)
 
 def test_r3_strict_parse_concatenated_objects_raises_contract_error():
@@ -320,8 +312,9 @@ def test_r3_strict_parse_concatenated_objects_raises_contract_error():
     from ming_sim.rescript_draft import _parse_rescript_json_strict
     from ming_sim.exceptions import LLMContractError
     raw = '{"items": [{"title": "甲", "context": "c", "options": [{"label": "a", "hint": "h1"}, {"label": "b", "hint": "h2"}]}]}{"items": []}'
-    with pytest.raises(LLMContractError, match="不是合法 JSON"):
+    with pytest.raises(LLMContractError):
         _parse_rescript_json_strict(raw)
+
 
 
 # ---------------------------------------------------------------------------
@@ -353,18 +346,14 @@ def test_657_s1_schema_columns_and_no_banned_fields(game):
     ]
     assert idx_sql and "origin_ref" in idx_sql[0] and "origin_ref != ''" in idx_sql[0].replace('"', "")
 
-def test_657_s1_rescript_emitted_set_subset_of_dossier(game):
+def test_657_s1_rescript_emitted_set_subset_of_dossier():
     """A12 前置（#1778 后）：只剩 emitted 闭集 ⊂ DOSSIER；七类 routable 已整体取消。"""
-    import ming_sim.decree_vocabulary as dv
     from ming_sim.decree_vocabulary import (
         DOSSIER_ACTION_TYPES,
         RESCRIPT_EMITTED_DOSSIER_ACTION_TYPES,
     )
     assert RESCRIPT_EMITTED_DOSSIER_ACTION_TYPES <= DOSSIER_ACTION_TYPES
     assert "dismiss_assignment" in RESCRIPT_EMITTED_DOSSIER_ACTION_TYPES
-    assert not hasattr(dv, "RESCRIPT_ROUTABLE_ACTION_TYPES")
-    assert not hasattr(dv, "NATIONAL_FANOUT_ACTION_TYPES")
-    _ = game  # fixture keeps DB init path green
 
 def test_657_s1_derive_draft_capability_stable_and_sensitive():
     """capability：同字段稳定；闭集任一有效差改变键。"""

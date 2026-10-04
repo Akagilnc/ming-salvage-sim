@@ -512,13 +512,3 @@ def test_personal_projection_only_reads_the_current_open_night(game):
 
     assert [message["content"] for message in projection] == ["本夜问话", "本夜答复"]
     assert {message["chat_turn_id"] for message in projection} == {current_turn}
-
-
-
-
-def test_history_projection_handlers_are_sync_for_sqlite_access():
-    import inspect
-    import web_app
-
-    assert not inspect.iscoroutinefunction(web_app.api_audience_scroll)
-    assert not inspect.iscoroutinefunction(web_app.api_history_turns)

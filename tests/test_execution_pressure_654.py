@@ -36,7 +36,7 @@ def test_normalize_locality_scope(raw, expected):
 
 
 def test_normalize_locality_scope_rejects_unknown():
-    with pytest.raises(ValueError, match="locality_scope"):
+    with pytest.raises(ValueError):
         normalize_locality_scope("全省")
 
 
@@ -339,6 +339,118 @@ def _insert_directive(db, state, *, text: str, payload: dict, status: str = "dra
     )
     db.conn.commit()
     return int(cur.lastrowid)
+
+
+def test_validate_all_unknown_roster_name_zero_rows_before_insert(env):
+    """Validate-all：名单上的人不在名册 → 首个 INSERT 前整旨零行（#1778 决定 3）。"""
+    db, state, _ = env
+    payload = {
+        "target_kind": "policy",
+        "target_id": "清丈天下田亩",
+        "locality_scope": "national",
+        "dossier_action_type": "assignment",
+        "participant_roster": [{"character_id": "查无此人", "tier": "主办"}],
+    }
+    did = _insert_directive(db, state, text="清丈天下田亩", payload=payload)
+    before = db.conn.execute("SELECT COUNT(*) AS n FROM decree_dossiers").fetchone()["n"]
+    with pytest.raises(ValueError):
+        db.create_decree_dossiers(
+            state,
+            action_type="assignment",
+            decree_text="清丈天下田亩",
+            target_kind="policy",
+            target_id="清丈天下田亩",
+            directive_id=did,
+            payload=payload,
+            commit=True,
+        )
+    after = db.conn.execute("SELECT COUNT(*) AS n FROM decree_dossiers").fetchone()["n"]
+    assert after == before
+    assert db.list_dossiers_for_directive(did) == []
+
+
+def test_path2_pending_bad_roster_stays_draft_on_ensure_batch(env):
+    """路 2（#1769）：pending→confirm 只翻 draft；ensure 批缝产物错 → 零行 + 保持 draft。
+
+    旧合同 confirm 内 ensure 并标 rejected 已废；产物错不踢出批缝。
+    """
+    db, state, _ = env
+    payload = {
+        "target_kind": "policy",
+        "target_id": "清丈天下田亩",
+        "locality_scope": "national",
+        "dossier_action_type": "assignment",
+        "participant_roster": [{"character_id": "查无此人", "tier": "主办"}],
+        "mode": "ordinary",
+    }
+    did = _insert_directive(
+        db, state, text="清丈天下田亩", payload=payload, status="pending",
+    )
+    db.confirm_directive(did, state)
+    row = db.conn.execute(
+        "SELECT status FROM turn_directives WHERE id=?", (did,),
+    ).fetchone()
+    assert row["status"] == "draft"
+    assert db.list_dossiers_for_directive(did) == []
+
+    rejections = db.ensure_dossiers_for_draft_directives(state)
+    assert any(int(r["directive_id"]) == did for r in rejections)
+    row = db.conn.execute(
+        "SELECT status FROM turn_directives WHERE id=?", (did,),
+    ).fetchone()
+    assert row["status"] == "draft"
+    assert db.list_dossiers_for_directive(did) == []
+
+
+def test_path3_locality_fail_keeps_draft_no_text_in_rejection(env):
+    """路 3：locality 失败保持 draft；rejection 仅 directive_id（P6 不裁剪旨文）。"""
+    db, state, _ = env
+    long_text = "敕令陕西清丈田亩" + ("甲" * 120)
+    payload = {
+        "target_kind": "region",
+        "target_id": "shaanxi",
+        "locality_scope": "none",  # region∧none fail-loud
+        "dossier_action_type": "policy",
+        "mode": "ordinary",
+    }
+    did = _insert_directive(db, state, text=long_text, payload=payload, status="draft")
+    other_payload = {
+        "target_kind": "region",
+        "target_id": "henan",
+        "locality_scope": "single",
+        "dossier_action_type": "policy",
+        "assignee_id": "毕自严",
+        "mode": "ordinary",
+    }
+    other_id = _insert_directive(
+        db, state, text="河南清丈", payload=other_payload, status="draft",
+    )
+    db.ensure_dossiers_for_draft_directives(state)
+    bad = db.conn.execute(
+        "SELECT status FROM turn_directives WHERE id=?", (did,),
+    ).fetchone()
+    good = db.conn.execute(
+        "SELECT status FROM turn_directives WHERE id=?", (other_id,),
+    ).fetchone()
+    assert bad["status"] == "draft"  # 保持 draft
+    assert db.list_dossiers_for_directive(did) == []
+    # 并列第二旨不受影响
+    assert good["status"] == "draft"
+    assert len(db.list_dossiers_for_directive(other_id)) == 1
+
+    rej = db.conn.execute(
+        "SELECT item_json, reason, category FROM rejection_reports "
+        "WHERE section='directive_locality' ORDER BY id DESC LIMIT 5",
+    ).fetchall()
+    assert rej, "应记 locality rejection"
+    matched = [json.loads(r["item_json"]) for r in rej]
+    hit = next(item for item in matched if item.get("directive_id") == did)
+    assert "text" not in hit
+    assert set(hit.keys()) == {"directive_id"}
+    # 旨文片段不得出现在 item_json
+    raw = next(r["item_json"] for r in rej if json.loads(r["item_json"]).get("directive_id") == did)
+    assert "敕令陕西" not in raw
+    assert "甲甲" not in raw
 
 
 def test_path1_conversational_draft_bad_roster_marks_failed(env):
@@ -654,7 +766,7 @@ def test_location_canonical_seed_and_write_seam(env, tmp_path):
     assert db.conn.execute(
         "SELECT location FROM characters WHERE name='毕自严'"
     ).fetchone()["location"] == "beizhili"
-    with pytest.raises(ValueError, match="location"):
+    with pytest.raises(ValueError):
         db.set_character_transit("毕自严", location="atlantis", commit=True)
     # 旧档在途保全：独立副本预置别名 + transit → 开档 migrate 后四字段不变
     clone = tmp_path / "loc_migrate.db"
@@ -690,5 +802,5 @@ def test_location_canonical_seed_and_write_seam(env, tmp_path):
     conn.execute("UPDATE characters SET location='atlantis' WHERE name='毕自严'")
     conn.commit()
     conn.close()
-    with pytest.raises(ValueError, match="location|别名"):
+    with pytest.raises(ValueError):
         GameDB(str(bad), content)

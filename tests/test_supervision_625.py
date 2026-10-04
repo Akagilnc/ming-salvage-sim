@@ -15,8 +15,11 @@ from __future__ import annotations
 
 from tests.test_due_review_621 import _settle_empty_month
 from ming_sim.supervision import (
+    EMPTY_TRANSFORMATION_TENDENCY_FACTS,
+    EXPOSURE_ALLOWED_COLS,
     EXPOSURE_TABLE,
     FORBIDDEN_DULLING_COL_FRAGMENTS,
+    PRESENCE_ALLOWED_COLS,
     PRESENCE_TABLE,
     SUPERVISION_RELATION,
 )
@@ -143,6 +146,10 @@ def test_ac1_presence_exposure_schema_pragma_and_no_dulling_cols(game):
             "SELECT name FROM sqlite_master WHERE type='table'"
         ).fetchall()
     }
+    pcols = _table_cols(db, PRESENCE_TABLE)
+    ecols = _table_cols(db, EXPOSURE_TABLE)
+    assert pcols == PRESENCE_ALLOWED_COLS
+    assert ecols == EXPOSURE_ALLOWED_COLS
     # 全库不得长出钝化数值列。
     tables = [
         str(r[0])

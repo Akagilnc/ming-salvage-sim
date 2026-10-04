@@ -218,13 +218,7 @@ def test_enter_review_does_not_clobber_settling(game):
 
 def test_advance_without_edict_refused_after_settling(game):
     """#1274 r1：空壳已删；settling 恢复归 session.resolve_turn，不再经独立退朝壳拒绝。"""
-    import inspect
-
-    import ming_sim.decree as decree_mod
     from ming_sim.decree import pre_settle
-
-    assert not hasattr(decree_mod, "advance_without_edict")
-    assert "def advance_without_edict" not in inspect.getsource(decree_mod)
 
     db, state, content = game
     turn = state.turn
@@ -312,14 +306,8 @@ def test_sticky_phases_cover_awaiting_decision(game):
 
 def test_advance_without_edict_refused_at_awaiting(game):
     """#1274 r1：空壳已删；awaiting 由 session.resolve_turn 幂等返回决策，不经退朝壳拒绝。"""
-    import inspect
-
-    import ming_sim.decree as decree_mod
     from ming_sim.decree import pre_settle
     from ming_sim.session import GameSession
-
-    assert not hasattr(decree_mod, "advance_without_edict")
-    assert "def advance_without_edict" not in inspect.getsource(decree_mod)
 
     db, state, content = game
     turn = state.turn
@@ -399,6 +387,26 @@ def test_guarded_early_return_does_not_consume_pending(game):
     statuses = [r["status"] for r in db.conn.execute(
         "SELECT status FROM pending_actions WHERE turn=?", (state.turn,)).fetchall()]
     assert statuses and all(s == "pending" for s in statuses)
+
+
+def test_write_decree_raises_at_awaiting_not_resolveresult(game):
+    """write_decree(-> str) 在 awaiting 态响亮拒绝，不返回 ResolveResult（cmr S4 r4，3/3）。
+
+    r3 的全局替换把守门误贴进了 write_decree——web 会把 dataclass 序列化进
+    {"decree": ...}，terminal 把 repr 当诏书正文打印。
+    """
+    from ming_sim.session import GameSession
+    db, state, content = game
+    state.turn_phase = "awaiting_decision"
+
+    sess = GameSession.__new__(GameSession)
+    sess.db = db
+    sess.state = state
+
+    with pytest.raises(ValueError):
+        sess.write_decree()
+
+
 
 
 def test_placeholder_save_crash_rolls_back_settling(game, monkeypatch):

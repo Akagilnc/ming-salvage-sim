@@ -7,29 +7,11 @@ import math
 
 import pytest
 
-from ming_sim.flows import army_needed
+from ming_sim.army_pay import army_needed
 
 
 def _army_row(db, army_id):
     return db.conn.execute("SELECT * FROM armies WHERE id=?", (army_id,)).fetchone()
-
-
-def _use_legacy_fiscal_engine(db):
-    db.conn.execute(
-        """
-        INSERT INTO fiscal_config (key, value, kind, note)
-        VALUES ('__army_pay_source_cutover', 0, 'meta', 'test legacy salary path')
-        ON CONFLICT(key) DO UPDATE SET value = excluded.value, note = excluded.note
-        """
-    )
-    db.conn.execute(
-        """
-        INSERT INTO fiscal_config (key, value, kind, note)
-        VALUES ('__fiscal_engine', 0, 'meta', 'test legacy salary path')
-        ON CONFLICT(key) DO UPDATE SET value = excluded.value, note = excluded.note
-        """
-    )
-    db.conn.commit()
 
 
 @pytest.mark.parametrize("army_id,expected", [
@@ -220,31 +202,27 @@ def test_manpower_true_noop_no_log(game):
 
 
 def test_auto_pay_reaches_salary_army_via_arrears_filter(game):
-    # #44 受饷资格用 arrears>0（不再 maintenance>0）；#173 删 maintenance 列后，受饷 filter 唯一
-    # 依据 arrears>0。验证：salary_rate>0 累 arrears 的军被纳入受饷候选、且兜底拨饷真能花到（spent>0）。
-    from ming_sim.flows import _auto_pay_arrears_by_priority
+    # A salaried army with source debt participates in pooled repayment.
+    from ming_sim.army_pay import _auto_pay_arrears_by_priority
     db, state, _ = game
     aid = str(db.conn.execute(
         "SELECT id FROM armies WHERE owner_power='ming' LIMIT 1").fetchone()["id"])
     # 只留这一支有欠饷，孤立验证「它是否进得了受饷分发」
-    db.conn.execute("UPDATE armies SET arrears=0 WHERE owner_power='ming'")
-    db.conn.execute("UPDATE armies SET salary_rate=1.5, arrears=10 WHERE id=?", (aid,))
+    db.conn.execute("UPDATE armies SET arrears=0, province_pay_arrears=0, central_pay_arrears=0 WHERE owner_power='ming'")
+    db.conn.execute("UPDATE armies SET salary_rate=1.5, arrears=10, province_pay_arrears=0, central_pay_arrears=10 WHERE id=?", (aid,))
     db.conn.commit()
-    hit = {str(r["id"]) for r in db.conn.execute(
-        "SELECT id FROM armies WHERE owner_power='ming' AND arrears>0")}
-    assert aid in hit, "arrears>0 filter 应纳入累 arrears 的军"
     spent = _auto_pay_arrears_by_priority(db, state, "国库", 5, "补饷", "诏拨补饷")
     assert spent > 0, "兜底拨饷应能花到该军"
 
 
 def test_auto_pay_empty_allowed_ids_pays_no_armies(game):
     # #287 PR R2：空 scope 是「不允许任何军」，不能被 truthiness 当成「不限制」而回落全局池。
-    from ming_sim.flows import _auto_pay_arrears_by_priority
+    from ming_sim.army_pay import _auto_pay_arrears_by_priority
     db, state, _ = game
     aid = str(db.conn.execute(
         "SELECT id FROM armies WHERE owner_power='ming' LIMIT 1").fetchone()["id"])
-    db.conn.execute("UPDATE armies SET arrears=0 WHERE owner_power='ming'")
-    db.conn.execute("UPDATE armies SET arrears=10 WHERE id=?", (aid,))
+    db.conn.execute("UPDATE armies SET arrears=0, province_pay_arrears=0, central_pay_arrears=0 WHERE owner_power='ming'")
+    db.conn.execute("UPDATE armies SET arrears=10, province_pay_arrears=0, central_pay_arrears=10 WHERE id=?", (aid,))
     db.conn.commit()
     spent = _auto_pay_arrears_by_priority(
         db, state, "国库", 5, "补饷", "空范围补饷", allowed_army_ids=[]
@@ -255,12 +233,12 @@ def test_auto_pay_empty_allowed_ids_pays_no_armies(game):
 
 
 def test_auto_pay_strips_allowed_army_ids_before_filtering(game):
-    from ming_sim.flows import _auto_pay_arrears_by_priority
+    from ming_sim.army_pay import _auto_pay_arrears_by_priority
     db, state, _ = game
     aid = str(db.conn.execute(
         "SELECT id FROM armies WHERE owner_power='ming' LIMIT 1").fetchone()["id"])
-    db.conn.execute("UPDATE armies SET arrears=0 WHERE owner_power='ming'")
-    db.conn.execute("UPDATE armies SET arrears=10 WHERE id=?", (aid,))
+    db.conn.execute("UPDATE armies SET arrears=0, province_pay_arrears=0, central_pay_arrears=0 WHERE owner_power='ming'")
+    db.conn.execute("UPDATE armies SET arrears=10, province_pay_arrears=0, central_pay_arrears=10 WHERE id=?", (aid,))
     db.conn.commit()
 
     spent = _auto_pay_arrears_by_priority(
@@ -271,40 +249,14 @@ def test_auto_pay_strips_allowed_army_ids_before_filtering(game):
     assert row["arrears"] < 10
 
 
-def test_legacy_salary_tick_preserves_fractional_opening_arrears(game):
-    from ming_sim.flows import apply_fixed_period_flows
-    db, state, _ = game
-    _use_legacy_fiscal_engine(db)
-    aid = "guanning"
-    db.conn.execute("UPDATE armies SET manpower=0, arrears=0 WHERE owner_power='ming'")
-    db.conn.execute(
-        """
-        UPDATE armies
-        SET owner_power='ming', manpower=10000, salary_rate=1.0, arrears=1.5, morale=50
-        WHERE id=?
-        """,
-        (aid,),
-    )
-    db.conn.commit()
-    state.metrics["国库"] = 50
+def test_army_pay_morale_delta_tiers():
+    """士气底料 oracle：本月缺口扣士气；足额无旧欠 +2；足额但旧欠在账 0。"""
+    from ming_sim.army_pay import army_pay_morale_delta
 
-    apply_fixed_period_flows(db, state)
-
-    row = _army_row(db, aid)
-    assert row["arrears"] == pytest.approx(1.5)
-    log = db.conn.execute(
-        """
-        SELECT old_value, new_value, delta
-        FROM army_logs
-        WHERE army_id=? AND field='arrears'
-        ORDER BY id DESC
-        LIMIT 1
-        """,
-        (aid,),
-    ).fetchone()
-    assert log["old_value"] == "1.5"
-    assert log["new_value"] == "1.5"
-    assert log["delta"] == pytest.approx(0.0)
+    assert army_pay_morale_delta(10, 5, 0) == -4
+    assert army_pay_morale_delta(10, 0, 0) == 2
+    assert army_pay_morale_delta(10, 0, 3) == 0
+    assert army_pay_morale_delta(0, 0, 0) == 0
 
 
 def test_coerce_new_salary_rate_blocks_freeload():
@@ -324,7 +276,7 @@ def test_non_finite_salary_rate_anchored_not_crash():
     须落锚点、不得崩。inf>0 为真会漏过 coerce、经 army_needed 的 ceil(manpower×inf/10000) 抛
     OverflowError 崩整月结算。两道防线：_coerce_new_salary_rate（建军入口）+ army_needed（结算咽喉）。"""
     from ming_sim.db import _coerce_new_salary_rate
-    from ming_sim.flows import army_needed
+    from ming_sim.army_pay import army_needed
 
     assert _coerce_new_salary_rate(float("inf")) == 1.5, "inf→锚点"
     assert _coerce_new_salary_rate(float("-inf")) == 1.5, "-inf→锚点"

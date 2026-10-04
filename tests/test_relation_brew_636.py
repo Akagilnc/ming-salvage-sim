@@ -246,6 +246,30 @@ def test_prepare_attaches_prior_events_only_via_history_seam(game, monkeypatch):
 
 # --------------------------- 庭裁 r3/r4 F2 超长 fixture：32,700 字节零删改
 
+def test_brew_persistence_chain_preserves_32700_byte_fixture_byte_identical(game):
+    # Keep the long injected input; compare its before-image directly, not a
+    # parallel checksum/length oracle for the same preservation contract.
+    block = "崇祯边事关系账超长验收样文-Chongzhen-relation-brew-0123456789-".encode("utf-8")
+    fixture = block * 436
+    fixture_text = fixture.decode("utf-8")
+
+    db, state, _ = game
+    _add_edge(db, state, source=EMPEROR_NODE, target="杨嗣昌", kind="知遇",
+              context="越次一召。", origin="audience:turn-1")
+
+    def fixture_brew(payload_json: str) -> str:
+        return json.dumps(
+            {FOUNDINGS_KEY: [], RECENT_KEY: fixture_text}, ensure_ascii=False
+        )
+
+    # 经真实酿制持久化链路（run_month_end_relation_brew → apply_relation_brew_result）
+    # 写入→读回：字节原样，全链无截断无删改。
+    report = run_month_end_relation_brew(db, state, fixture_brew)
+    assert len(report["brewed"]) == 1
+
+    stored = db.get_relation_summary(EMPEROR_NODE, "杨嗣昌")["recent_segment"]
+    assert stored.encode("utf-8") == fixture
+
 
 # --------------------------------------------- P5：批内条目并行不串行
 

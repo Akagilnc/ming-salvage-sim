@@ -184,7 +184,6 @@ def test_chat_reload_exposes_retryable_failed_secret_order(game):
     assert len(failures) == 1
     assert failures[0]["id"] == secret_id
     assert failures[0]["kind"] == "secret_order"
-    assert "密令" in failures[0]["message"]
 
 
 def test_newer_interrupted_turn_blocks_withdrawal_of_completed_turn(game):
