@@ -1948,31 +1948,6 @@ def test_historical_auto_trigger_event_expires_after_latest_window(game):
         content.events.remove(ev)
 
 
-def test_gated_auto_trigger_seed_event_can_recur_after_previous_issue_resolved(game):
-    """PR review：seed auto_trigger 带 gate 时，旧 resolved issue 不应永久压住再触发。"""
-    db, state, content = game
-    issues.bind_content(content)
-    ev = _hist_event("__test_recurring_auto_seed__", {"民心": "<=5"})
-    ev.auto_trigger = True
-    ev.event_type = "situation"
-    content.seed_events.append(ev)
-    try:
-        state.metrics["民心"] = 3
-        first = issues.auto_trigger_seed_issues(state, db)
-        first_item = next(item for item in first if item["id"] == "__test_recurring_auto_seed__")
-        db.conn.execute(
-            "UPDATE issues SET status='resolved' WHERE id=?",
-            (first_item["issue_id"],),
-        )
-        db.conn.commit()
-
-        second = issues.auto_trigger_seed_issues(state, db)
-
-        second_item = next(item for item in second if item["id"] == "__test_recurring_auto_seed__")
-        assert second_item["issue_id"] != first_item["issue_id"]
-    finally:
-        content.seed_events.remove(ev)
-
 
 def test_huabei_plague_keeps_soft_degree_axis_as_situation_issue(game):
     """#192：天灾核心事实硬落后，蔓延/赈疫程度轴仍留 active issue 给软判推进。"""
@@ -2088,49 +2063,6 @@ def test_jingshi_plague_auto_triggers_and_weakens_capital_garrison(game):
     assert after["morale"] == before["morale"] - 16
 
 
-def test_huangtaiji_chengdi_auto_triggers_and_renames_houjin(game):
-    """#192：皇太极称帝核心事实确定性落库，后金稳定 id 展示为大清。"""
-    db, state, content = game
-    issues.bind_content(content)
-    state.year = 1636
-    state.period = 4
-
-    triggered = issues.auto_trigger_seed_issues(state, db)
-
-    assert any(item["id"] == "huangtaiji_chengdi" for item in triggered)
-    assert db.has_event_triggered("huangtaiji_chengdi")
-    assert all(ev.id != "huangtaiji_chengdi" for ev in issues.gather_candidate_events(state, db))
-    row = db.conn.execute(
-        "SELECT name, aliases, status, last_action FROM powers WHERE id=?",
-        ("houjin",),
-    ).fetchone()
-    # Rename facts only; do not lock seed effect prose for status/last_action.
-    assert row["name"] == "大清"
-    assert "后金" in row["aliases"]
-    assert "大清" in row["aliases"]
-
-
-def test_huangtaiji_chengdi_keeps_diplomatic_response_axis_as_situation_issue(game):
-    """#192：称帝核心事实硬落后，承不承认伪号/联蒙抗清仍要留给软判推进。"""
-    db, state, content = game
-    issues.bind_content(content)
-    state.year = 1636
-    state.period = 4
-
-    triggered = issues.auto_trigger_seed_issues(state, db)
-
-    item = next(entry for entry in triggered if entry["id"] == "huangtaiji_chengdi")
-    assert item["issue_id"] > 0
-    issue = db.conn.execute(
-        "SELECT status, kind, origin_kind, origin_ref FROM issues WHERE id=?",
-        (item["issue_id"],),
-    ).fetchone()
-    assert dict(issue) == {
-        "status": "active",
-        "kind": "situation",
-        "origin_kind": "event_pool",
-        "origin_ref": "huangtaiji_chengdi",
-    }
 
 
 def test_historical_power_rename_tick_reads_huangtaiji_event_effect(game):
@@ -4275,3 +4207,95 @@ def test_mao_wenlong_event_pool_duplicate_emit_is_idempotent(game):
         assert db.conn.execute(
             "SELECT COUNT(*) FROM person_logs WHERE person_name=?", ("毛文龙",)
         ).fetchone()[0] == before_logs + 1
+
+def test_huangtaiji_chengdi_lands_only_when_model_picks_it(game, monkeypatch):
+    """#1893/#192：称帝不选不落、选中一次落定——两向都走真实接缝。
+
+    旧断链有两处，且都在本用例须穿过的接缝上：月初 ``GameSession.begin_turn``
+    按日期自动改名（不选也发生），以及模型选中后局势/改名不随既有写口落账。
+    故此处不另造旁路断言：先走 begin_turn（历史故障所在入口），再走
+    ``dispatch_month_segment``（模型挑选所在入口），在外部可见结果上双向钉死。
+    """
+    from ming_sim.month_translate import dispatch_month_segment
+    from ming_sim.decree import prepare_resolve_front_half
+    from ming_sim.session import GameSession
+    import ming_sim.session as session_mod
+
+    db, state, content = game
+    issues.bind_content(content)
+    state.year, state.period = 1636, 4
+    db.save_state(state)
+
+    def _power_name():
+        return db.conn.execute(
+            "SELECT name, aliases, status FROM powers WHERE id='houjin'",
+        ).fetchone()
+
+    assert _power_name()["name"] == "后金", "本用例以未选中的后金为起点，起点已变则本用例空转"
+
+    # 不选：经真实 begin_turn 入口，日期到了也不改名、不发终态，候选仍在池里可挑。
+    # 用 __new__ 跳过重型 __init__（agno/registry/LLM），只装 begin_turn 需要的协作者。
+    monkeypatch.setattr(session_mod, "_sync_offices_from_db_impl", lambda *a, **k: None)
+    monkeypatch.setattr(GameSession, "auto_save", lambda self, tag: None)
+    sess = GameSession.__new__(GameSession)
+    sess.db, sess.content, sess.llm_config, sess.agno_db = db, content, None, None
+    sess.begin_turn()
+    state = sess.state
+    prepare_resolve_front_half(state, db, decree_text="", content=content)
+
+    assert _power_name()["name"] == "后金"
+    assert db.event_terminal_state("huangtaiji_chengdi") is None
+    assert db.find_any_issue_by_origin("event_pool", "huangtaiji_chengdi") is None
+    assert "huangtaiji_chengdi" in {
+        ev.id for ev in issues.gather_candidate_events(state, db)
+    }
+    assert all(
+        item["id"] != "huangtaiji_chengdi"
+        for item in issues.auto_trigger_seed_issues(state, db)
+    )
+
+    # 选：经真实 dispatch_month_segment 入口落一次终态、局势与改国号。
+    declaration = {"effects": {"new_issues": [{
+        "origin_kind": "event_pool", "id": "huangtaiji_chengdi",
+        "title": "皇太极称帝改国号大清",
+    }]}}
+    result = dispatch_month_segment(
+        db, state, segment="皇太极称帝",
+        translate_fn=lambda request, config: declaration,
+    )
+    applied = result.effects.applied[0]["issue_summary"]["new_issues"]
+    assert [item.get("rejected") for item in applied] == [False]
+    assert db.event_terminal_state("huangtaiji_chengdi") == "triggered"
+    row = _power_name()
+    assert row["name"] == "大清"
+    assert "后金" in row["aliases"] and "大清" in row["aliases"]
+    # #192：承不承认伪号/联蒙抗清仍是要软判推进的局势，不是即时结清的硬事件。
+    issue = db.conn.execute(
+        "SELECT status, kind, origin_kind, origin_ref FROM issues WHERE origin_ref=?",
+        ("huangtaiji_chengdi",),
+    ).fetchone()
+    assert dict(issue) == {
+        "status": "active",
+        "kind": "situation",
+        "origin_kind": "event_pool",
+        "origin_ref": "huangtaiji_chengdi",
+    }
+
+    # 读档续跑不重发：终态已在候选硬门里排掉。
+    issues.auto_trigger_seed_issues(state, db)
+    assert "huangtaiji_chengdi" not in {
+        ev.id for ev in issues.gather_candidate_events(state, db)
+    }
+    again = dispatch_month_segment(
+        db, state, segment="再说称帝",
+        translate_fn=lambda request, config: declaration,
+    )
+    assert [
+        item.get("rejected")
+        for item in again.effects.applied[0]["issue_summary"]["new_issues"]
+    ] == [True]
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM issues WHERE origin_kind='event_pool' AND origin_ref=?",
+        ("huangtaiji_chengdi",),
+    ).fetchone()[0] == 1
+

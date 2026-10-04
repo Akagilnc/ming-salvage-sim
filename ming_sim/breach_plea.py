@@ -32,7 +32,7 @@ from ming_sim.staged_commitment import (
     ENTRY_KIND_STAGED,
     TODO_STATUS_CONSUMED,
     TODO_STATUS_PENDING,
-    load_commitment_stages,
+    normalize_commitment_stages,
 )
 
 logger = logging.getLogger(__name__)
@@ -122,7 +122,7 @@ def commitment_natural_due_turn(row: Any) -> int:
     stages_raw = row["stages_json"] if "stages_json" in keys else (
         row.get("stages_json") if isinstance(row, dict) else None
     )
-    stages = load_commitment_stages(stages_raw)
+    stages = normalize_commitment_stages(stages_raw)
     if stages:
         return max(int(s["due_turn"]) for s in stages)
     try:
@@ -481,7 +481,7 @@ def assess_foundation_tier(db: Any, commitment_ref: int) -> str:
     row = _issue_row(db, int(commitment_ref))
     if row is None:
         return FOUNDATION_JUST_STARTED
-    stages = load_commitment_stages(
+    stages = normalize_commitment_stages(
         row["stages_json"] if "stages_json" in row.keys() else None
     )
     n_stages = len(stages)
@@ -714,6 +714,7 @@ def finalize_persist(
         apply_0056=apply_0056,
         close_target=False,
         commitment_ref=commitment_ref,
+        revoke_dossier_id=int(meta.get("revoke_dossier_id") or 0),
     )
     breach_applied = bool(tail.get("breach_0056"))
     # #1894：执行格终值由判官本月 dossier_executions 声明落账，此处不代判根基档。

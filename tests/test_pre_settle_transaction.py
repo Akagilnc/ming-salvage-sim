@@ -117,7 +117,6 @@ def test_due_secret_order_submission_rolls_back_on_pre_settle_crash(saved_game, 
 
 def test_pre_settle_rolls_back_on_seed_issue_failure(game, monkeypatch):
     """pre_settle 内部崩溃时财政回滚，结算相位不推进。"""
-    import ming_sim.decree as dm
     db, state, content = game
     turn = state.turn
     before_phase = state.turn_phase
@@ -125,9 +124,9 @@ def test_pre_settle_rolls_back_on_seed_issue_failure(game, monkeypatch):
 
     def _boom(*a, **k):
         raise RuntimeError("pre_settle boom")
-    monkeypatch.setattr(dm, "auto_trigger_seed_issues", _boom)
+    monkeypatch.setattr(db, "auto_submit_due_secret_orders", _boom)
 
-    with pytest.raises(RuntimeError, match='pre_settle boom'):
+    with pytest.raises(RuntimeError, match="pre_settle boom"):
         pre_settle(state, db)
 
     other = sqlite3.connect(db.path)
@@ -142,19 +141,19 @@ def test_pre_settle_rolls_back_on_seed_issue_failure(game, monkeypatch):
 
 
 def test_crash_inside_pre_settle_no_missing_fiscal(game, monkeypatch):
-    """pre_settle 内部注入异常（auto_trigger 抛）→ 异常透传、economy_ledger 无半行、
+    """pre_settle 内部注入异常（财政落账之后的到期密令抛）→ 异常透传、economy_ledger 无半行、
     phase 仍是入口态（非 settling）——整体回滚干净（ADR 0008 验收测试②）。"""
     db, state, content = game
     turn = state.turn
     before_phase = state.turn_phase
     before_ledger = _ledger_count(db, turn)
 
-    # auto_trigger_seed_issues 在固定财政落账之后调；让它抛，验前面已落的财政被回滚。
+    # auto_submit_due_secret_orders 在固定财政落账之后调；让它抛，验前面已落的财政被回滚。
     def _boom(*a, **k):
-        raise RuntimeError("auto_trigger boom")
-    monkeypatch.setattr(decree_mod, "auto_trigger_seed_issues", _boom)
+        raise RuntimeError("auto_submit boom")
+    monkeypatch.setattr(db, "auto_submit_due_secret_orders", _boom)
 
-    with pytest.raises(RuntimeError, match='auto_trigger boom'):
+    with pytest.raises(RuntimeError, match="auto_submit boom"):
         pre_settle(state, db)
 
     # 财政落账随回滚消失（用新连接读盘，验真回滚到磁盘态）
@@ -176,6 +175,7 @@ def test_crash_inside_pre_settle_no_missing_fiscal(game, monkeypatch):
 # ---------------------------------------------------------------------------
 # cmr S4 r1 修复回归（F1 settling 复位 / F2 sticky / F3 skip 路守门）
 # ---------------------------------------------------------------------------
+
 
 def test_two_consecutive_player_months_both_get_fiscal_tick(game, monkeypatch):
     """玩家连续结算两回合，第二回合财政照常落账（cmr S4 r1 F1，3/3 critical）。

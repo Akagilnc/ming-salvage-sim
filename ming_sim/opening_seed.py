@@ -219,5 +219,8 @@ def seed_opening_world(db: Any) -> None:
     db._apply_region_city_levels()  # 新档 region 此时才 INSERT 完，按史实补 city_level
     # #9：派系势力 offset 校准。此刻 factions + characters 均已 INSERT。
     # cmr R3：传 offset 列「本次是否刚 ADD」——首次校准只在建库那次跑，常规 load 不碰 offset。
-    db._calibrate_faction_offsets(is_fresh_factions_seed)
+    db._migrate_legacy_office_pollution()
+    db._calibrate_faction_offsets(
+        is_fresh_factions_seed, getattr(db, "_leverage_offset_col_added", False),
+    )
     db.conn.commit()

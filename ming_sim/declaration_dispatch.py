@@ -1941,8 +1941,8 @@ def _dispatch_rushes(
             except (KeyError, TypeError, ValueError):
                 _reject(rejected, item, "催办缺目标分段索引", "invalid_shape", source)
                 continue
-            from ming_sim.staged_commitment import load_commitment_stages
-            stages = load_commitment_stages(row["stages_json"])
+            from ming_sim.staged_commitment import normalize_commitment_stages
+            stages = normalize_commitment_stages(row["stages_json"])
             if not any(int(stage["stage_idx"]) == stage_idx for stage in stages):
                 _reject(rejected, item, "催办目标分段不存在", "invalid_state", source)
                 continue

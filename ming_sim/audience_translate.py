@@ -200,9 +200,9 @@ def build_translation_target_grounding(db: Any, state: Any = None) -> str:
         lines.append(
             f"character\t{row['name']}\t{str(row['office'] or row['name'])}"
         )
-    from ming_sim.staged_commitment import load_commitment_stages
+    from ming_sim.staged_commitment import normalize_commitment_stages
     for row in IssueStore(db.conn).read_build_translation_target_grounding():
-        stages = load_commitment_stages(row['stages_json'])
+        stages = normalize_commitment_stages(row['stages_json'])
         lines.append(f"issue\t{int(row['id'])}\t{str(row['title'] or '')}")
         for stage in stages:
             lines.append(f"stage\t{int(row['id'])}\t{stage['stage_idx']}\t{stage}")

@@ -19,6 +19,11 @@ from ming_sim.exceptions import LLMUnavailable
 from ming_sim.models import TurnPhase
 from tests.month_chain_helpers import make_light_session
 from tests.test_month_chain_1843 import _forbid_extractor, _stage_edict
+from ming_sim.supervision import (
+    ORIGIN_MARK_PRIVATE_GOODS,
+    ORIGIN_MARK_SAME_FACTION_BLIND,
+    origin_has_mark,
+)
 from tests.dossier_test_helpers import create_test_secret_order
 
 
@@ -1462,29 +1467,95 @@ def test_step_4a_crash_recovery_resumes_without_re_running_supply(game, monkeypa
     ).fetchone()[0] == 1
 
 
+def _faction_rows(db):
+    rows = db.conn.execute(
+        "SELECT name, faction FROM characters "
+        "WHERE status='active' AND power_id='ming' "
+        "AND COALESCE(faction,'') NOT IN ('','流寇','后金','宗室') "
+        "ORDER BY name"
+    ).fetchall()
+    by_faction: dict[str, list] = {}
+    for row in rows:
+        by_faction.setdefault(str(row["faction"]), []).append(row)
+    return by_faction
+
+def _supervise(db, state, *, auditor: str, subject_id: int, token: str) -> None:
+    audit_id = db.create_decree_dossier(
+        state,
+        action_type="policy",
+        decree_text=f"稽核{token}",
+        target_kind="issue",
+        target_id=f"audit-{token}",
+        executor_kind="character",
+        executor_id=auditor,
+        participants=[{"character_id": auditor, "tier": "主办"}],
+    )
+    db.apply_dossier_promulgation(state, audit_id, "promulgated")
+    db.dossiers.add_links(audit_id, [{
+        "target_dossier_id": int(subject_id),
+        "relation_type": "稽核",
+        "note": token,
+    }])
+
 def test_step_4a_missing_covert_fidelity_records_inline_rejection(game, monkeypatch):
-    """步骤 4a：密令缺少有效执行态时按 0073 记入 inline rejection，不静默吞掉。"""
+    """步骤 4a：0073 执行态校验失败停在 4a，不结案；重试废弃产物并重起供料。
+
+    同派与敌派监督随这次真实过月写入。未声明不落行动；声明后的记号可续读。
+    """
+    from ming_sim.exceptions import SettlementAbort
+
     db, state, content = game
     turn = int(state.turn)
-    minister = db.conn.execute(
-        "SELECT name FROM characters WHERE status='active' AND power_id='ming' LIMIT 1"
-    ).fetchone()[0]
-    order_id = create_test_secret_order(
-        db, state, minister, "密令执行态缺失", "差务", [], deadline_months=2,
+    by_faction = _faction_rows(db)
+    same_faction, same_rows = next(
+        (faction, rows) for faction, rows in by_faction.items() if len(rows) >= 2
     )
-    db.conn.execute("UPDATE secret_orders SET turn_issued=? WHERE id=?", (turn - 1, order_id))
+    enemy = next(
+        rows[0] for faction, rows in by_faction.items()
+        if faction != same_faction and rows
+    )
+    minister = str(same_rows[0]["name"])
+    same_auditor = str(same_rows[1]["name"])
+    order_id = create_test_secret_order(
+        db, state, minister, "密令执行态缺失", "差务", [], deadline_months=1,
+    )
+    db.conn.execute(
+        "UPDATE secret_orders SET turn_issued=?, due_turn=? WHERE id=?",
+        (turn - 1, turn, order_id),
+    )
     dossier_id = int(db.dossiers.get_for_secret_order(order_id)["id"])
+    _supervise(db, state, auditor=same_auditor, subject_id=dossier_id, token="same")
+    _supervise(db, state, auditor=str(enemy["name"]), subject_id=dossier_id, token="enemy")
     db.conn.commit()
 
-    # Supply run provides 0058 report, but omits covert_exec_selections!
+    call_count = 0
+
     def supply_run(*_a, **_k):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return {
+                "dossier_progress_reports": [{
+                    "dossier_id": dossier_id,
+                    "progress_band": "持平",
+                    "memorial_text": "按期奏报",
+                }],
+                "covert_exec_selections": [],
+            }
+        if call_count == 2:
+            # 替换后的产物：执行态合法，月报却是空的。旧完成相不得放它过关。
+            return {
+                "dossier_progress_reports": [],
+                "covert_exec_selections": [{"order_id": order_id, "fidelity": "忠实"}],
+            }
         return {
             "dossier_progress_reports": [{
                 "dossier_id": dossier_id,
                 "progress_band": "持平",
                 "memorial_text": "按期奏报",
+                "origin": "same_faction_blind+private_goods+不是行动",
             }],
-            "covert_exec_selections": [],
+            "covert_exec_selections": [{"order_id": order_id, "fidelity": "忠实"}],
         }
 
     _forbid_extractor(monkeypatch)
@@ -1494,17 +1565,65 @@ def test_step_4a_missing_covert_fidelity_records_inline_rejection(game, monkeypa
 
     session = make_light_session(db, state, content)
 
+    with pytest.raises(SettlementAbort) as caught:
+        session.resolve_turn(allow_empty_decree=True)
+    assert caught.value.stage == "secret_orders_supply"
+    chain = month_chain._load_chain(db, turn)
+    failure = chain.get("call_failure")
+    assert isinstance(failure, dict)
+    assert failure.get("step") == "secret_orders_supply"
+    assert chain.get("secret_orders_supply_invalid") is True
+    assert chain.get("covert_progress_done") is not True
+    assert chain.get("secret_orders_supply_done") is not True
+    assert db.get_secret_order(order_id)["status"] == "active"
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM dossier_actual_progress WHERE dossier_id=? AND turn=?",
+        (dossier_id, turn),
+    ).fetchone()[0] == 0
+    assert chain.get("secret_orders_reports_done") is True
+    silent_origin = db.list_dossier_progress(dossier_id)[-1]["origin"]
+    assert not origin_has_mark(silent_origin, ORIGIN_MARK_SAME_FACTION_BLIND)
+    assert not origin_has_mark(silent_origin, ORIGIN_MARK_PRIVATE_GOODS)
+    silent_relations = {
+        row.get("faction_relation")
+        for row in db.list_supervision_history(dossier_id, as_of_turn=turn)
+        if row.get("present")
+    }
+    assert silent_relations == {"same", "enemy"}
+
+    with pytest.raises(SettlementAbort) as replaced:
+        session.resolve_turn(allow_empty_decree=True)
+    assert replaced.value.stage == "secret_orders_supply"
+    assert call_count == 2
+    replaced_chain = month_chain._load_chain(db, turn)
+    assert replaced_chain.get("secret_orders_supply_invalid") is True
+    assert replaced_chain.get("secret_orders_reports_done") is not True
+    assert replaced_chain.get("secret_orders_supply_done") is not True
+    assert db.get_secret_order(order_id)["status"] == "active"
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM dossier_actual_progress WHERE dossier_id=? AND turn=?",
+        (dossier_id, turn),
+    ).fetchone()[0] == 0
+
     result = session.resolve_turn(allow_empty_decree=True)
     assert result.stage == "gazette"
-
-    # Inline rejection：断言机读 category，不读人读 prose（ADR 0142 / 0073）
-    rejections = db.conn.execute(
-        "SELECT section, category, reason FROM rejection_reports "
-        "WHERE turn=? AND section='covert_exec_selections'",
-        (turn,),
-    ).fetchall()
-    assert len(rejections) == 1
-    assert rejections[0]["category"] == "invalid_enum"
+    assert call_count == 3
+    assert len(db.list_dossier_progress(dossier_id)) == 1
+    declared_origin = db.list_dossier_progress(dossier_id)[-1]["origin"]
+    assert origin_has_mark(declared_origin, ORIGIN_MARK_SAME_FACTION_BLIND)
+    assert origin_has_mark(declared_origin, ORIGIN_MARK_PRIVATE_GOODS)
+    assert "不是行动" not in str(declared_origin)
+    kept_relations = {
+        row.get("faction_relation")
+        for row in db.list_supervision_history(dossier_id, as_of_turn=turn)
+        if row.get("present")
+    }
+    assert kept_relations == {"same", "enemy"}
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM dossier_actual_progress WHERE dossier_id=? AND turn=?",
+        (dossier_id, turn),
+    ).fetchone()[0] == 1
+    assert db.get_secret_order(order_id)["status"] != "active"
 
 
 def test_settle_edicts_persists_pending_disclosures_in_same_transaction(game, monkeypatch):
