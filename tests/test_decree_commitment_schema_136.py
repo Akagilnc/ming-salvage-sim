@@ -260,5 +260,3 @@ def test_existing_issues_table_gets_commitment_columns_idempotently(tmp_path, co
         assert cols["commitment_kind"]["dflt_value"] == "''"
     finally:
         db.close()
-
-
