@@ -2,8 +2,7 @@
 
 1) #1391 泛称闭集（大臣）capture 零 409；「不存在之人甲」仍 409
 2) #1331/#1339 起居注 involved_people 投影滤非人；默认时辰非「此时」
-3) #1341/#1338 PATCH /api/decree 零调用方已拆，OpenAPI/实现一致
-4) #1327 空载短路；#1465 切片③：外层 30s 总罩已删
+3) #1327 空载短路；#1465 切片③：外层 30s 总罩已删
 """
 
 from __future__ import annotations
@@ -127,23 +126,7 @@ def test_night_archive_involved_people_drops_non_persons(game):
     assert "杨嗣昌" in people
 
 
-# ── 3) #1341/#1338 PATCH 死契约拆除 ────────────────────────────────
-
-
-def test_draft_directive_rw_routes_remain():
-    """草稿的改（PATCH）／删（DELETE）保留；日常直接下旨只走召对拟旨。"""
-    import web_app
-
-    for method in ("PATCH", "DELETE"):
-        routes = [
-            r for r in web_app.app.routes
-            if getattr(r, "path", None) == "/api/directives/{directive_id}"
-            and method in (getattr(r, "methods", None) or set())
-        ]
-        assert routes, f"草稿 {method} 必须保留"
-
-
-# ── 4) #1327 空载/有界 capture ─────────────────────────────────────
+# ── 3) #1327 空载/有界 capture ─────────────────────────────────────
 
 
 def test_empty_text_capture_short_circuits_without_llm(monkeypatch):

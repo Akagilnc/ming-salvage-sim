@@ -24,7 +24,7 @@ from ming_sim.exceptions import LLMUnavailable
 from ming_sim.llm_model import CLI_RUNNER_PLAYER_MESSAGE
 from ming_sim.llm_transport import default_transport_policy
 from tests.web_audience_test_doubles import install_hall_admission, minister_double
-from tests.conftest import stub_audience_translate, stub_scene_agent
+from tests.conftest import stub_scene_agent
 
 
 def _assert_write_path_free(runtime) -> None:
@@ -606,7 +606,8 @@ def _transport_web_game(game, agent, monkeypatch):
 
 
 def _post_chat_stream(monkeypatch, web_game, minister: str, message: str = "边饷如何？"):
-    monkeypatch.setattr(web_app, "_require_active_minister", lambda _n: None)
+    # #1849：流式召对已固定 SCENE_CHAT_SPEAKER；旧 _require_active_minister 补丁随入口退役。
+    del minister
     monkeypatch.setattr(web_app, "get_game", lambda: web_game)
     return TestClient(web_app.app).post(
         "/api/audience/chat/stream", json={"message": message},

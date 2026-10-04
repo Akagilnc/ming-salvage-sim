@@ -1,0 +1,1390 @@
+[
+  {
+    "file": "tests/conftest.py",
+    "member": "seed_rescript_rows",
+    "shapes": [
+      "urgent_fixture_id"
+    ],
+    "lines": "27-41",
+    "asserts": []
+  },
+  {
+    "file": "tests/test_applier_contract.py",
+    "member": "test_ddl_in_open_transaction_rolls_back",
+    "shapes": [
+      "sqlite_master_check"
+    ],
+    "lines": "348-370",
+    "asserts": []
+  },
+  {
+    "file": "tests/test_appointment_tenure_607.py",
+    "member": "test_appointment_dossier_and_office_archive_preserve_each_tenure",
+    "shapes": [
+      "select_order_limit"
+    ],
+    "lines": "37-55",
+    "asserts": []
+  },
+  {
+    "file": "tests/test_army_display_173.py",
+    "member": "test_army_public_exits_approx_arrears_and_hide_split_accounts",
+    "shapes": [
+      "select_order_limit"
+    ],
+    "lines": "31-48",
+    "asserts": [
+      "assert key not in payload"
+    ]
+  },
+  {
+    "file": "tests/test_army_display_173.py",
+    "member": "test_army_payload_exposes_approx_arrears_text_not_raw",
+    "shapes": [
+      "select_order_limit"
+    ],
+    "lines": "51-73",
+    "asserts": [
+      "assert \"arrears\" not in payload[row[\"id\"]]"
+    ]
+  },
+  {
+    "file": "tests/test_army_firearms.py",
+    "member": "_cols",
+    "shapes": [
+      "pragma_table_info"
+    ],
+    "lines": "24-25",
+    "asserts": []
+  },
+  {
+    "file": "tests/test_army_maintenance_retire_173.py",
+    "member": "test_armies_table_has_no_maintenance_column",
+    "shapes": [
+      "pragma_table_info"
+    ],
+    "lines": "31-34",
+    "asserts": [
+      "assert \"maintenance_per_turn\" not in cols, \"维护费列应已物理删除\""
+    ]
+  },
+  {
+    "file": "tests/test_army_maintenance_retire_173.py",
+    "member": "test_drop_maintenance_column_removes_and_idempotent",
+    "shapes": [
+      "pragma_table_info"
+    ],
+    "lines": "37-47",
+    "asserts": [
+      "assert \"maintenance_per_turn\" in {         r[\"name\"] for r in db.conn.execute(\"PRAGMA table_info(armies)\").fetchall()}, \"前提：列已加回\"",
+      "assert \"maintenance_per_turn\" not in {         r[\"name\"] for r in db.conn.execute(\"PRAGMA table_info(armies)\").fetchall()}, \"drop 后列应消失\""
+    ]
+  },
+  {
+    "file": "tests/test_army_maintenance_retire_173.py",
+    "member": "test_existing_save_drops_maintenance_column_on_open",
+    "shapes": [
+      "pragma_table_info"
+    ],
+    "lines": "50-75",
+    "asserts": [
+      "assert \"maintenance_per_turn\" not in cols, \"现存档重开应在 init_schema 路径 drop 维护费列\""
+    ]
+  },
+  {
+    "file": "tests/test_army_salary_44.py",
+    "member": "test_defected_army_to_ming_owes_salary_not_free",
+    "shapes": [
+      "select_order_limit"
+    ],
+    "lines": "67-87",
+    "asserts": []
+  },
+  {
+    "file": "tests/test_army_salary_44.py",
+    "member": "test_manpower_clamp_to_zero_leaves_army_log",
+    "shapes": [
+      "select_order_limit"
+    ],
+    "lines": "169-187",
+    "asserts": []
+  },
+  {
+    "file": "tests/test_audience_night_498.py",
+    "member": "test_old_save_migration_night_id_index_order",
+    "shapes": [
+      "pragma_table_info"
+    ],
+    "lines": "358-411",
+    "asserts": []
+  },
+  {
+    "file": "tests/test_audience_translate_1837.py",
+    "member": "_hong_name",
+    "shapes": [
+      "select_order_limit"
+    ],
+    "lines": "80-93",
+    "asserts": []
+  },
+  {
+    "file": "tests/test_audience_translate_1837.py",
+    "member": "test_summons_translation_does_not_apply_monthly_effects_at_night",
+    "shapes": [
+      "select_order_limit"
+    ],
+    "lines": "312-344",
+    "asserts": []
+  },
+  {
+    "file": "tests/test_audience_translate_1837.py",
+    "member": "test_appointment_and_relief_through_scene_chat_then_close_and_settle",
+    "shapes": [
+      "select_order_limit"
+    ],
+    "lines": "349-517",
+    "asserts": []
+  },
+  {
+    "file": "tests/test_audience_translate_1837.py",
+    "member": "test_emperor_准_via_scene_chat_approves_no_reply_stays_unapproved",
+    "shapes": [
+      "select_order_limit"
+    ],
+    "lines": "520-580",
+    "asserts": []
+  },
+  {
+    "file": "tests/test_audience_translate_1837.py",
+    "member": "test_translation_pending_create_approve_reject_undo_via_real_chat_turn",
+    "shapes": [
+      "select_order_limit"
+    ],
+    "lines": "784-913",
+    "asserts": []
+  },
+  {
+    "file": "tests/test_audience_translate_1837.py",
+    "member": "test_pure_office_dossier_uses_payload_text_not_template",
+    "shapes": [
+      "select_order_limit"
+    ],
+    "lines": "916-958",
+    "asserts": []
+  },
+  {
+    "file": "tests/test_audience_translate_1837_reopen.py",
+    "member": "_hong",
+    "shapes": [
+      "select_order_limit"
+    ],
+    "lines": "27-35",
+    "asserts": []
+  },
+  {
+    "file": "tests/test_audience_undo_506.py",
+    "member": "test_undo_survives_db_created_before_undone_at_column",
+    "shapes": [
+      "pragma_table_info"
+    ],
+    "lines": "388-413",
+    "asserts": [
+      "assert \"undone_at\" not in {         r[\"name\"] for r in db.conn.execute(\"PRAGMA table_info(chat_turns)\").fetchall()     }",
+      "assert \"undone_at\" in {             r[\"name\"] for r in db2.conn.execute(\"PRAGMA table_info(chat_turns)\").fetchall()         }"
+    ]
+  },
+  {
+    "file": "tests/test_authority_ledger_611.py",
+    "member": "test_projection_typed_domain_only_and_ignores_payload_authorization",
+    "shapes": [
+      "select_order_limit"
+    ],
+    "lines": "231-291",
+    "asserts": [
+      "assert bare not in {row[\"id\"] for row in projected}",
+      "assert informed_only not in {row[\"id\"] for row in projected}",
+      "assert \"payload-auth\" not in (         context[\"dossiers\"][0][\"criteria_snapshot_source\"][\"authorization_ids\"]     )",
+      "assert \"payload-list\" not in (         context[\"dossiers\"][0][\"criteria_snapshot_source\"][\"authorization_ids\"]     )"
+    ]
+  },
+  {
+    "file": "tests/test_breach_plea_623.py",
+    "member": "_executing_policy_dossier",
+    "shapes": [
+      "select_order_limit"
+    ],
+    "lines": "58-79",
+    "asserts": []
+  },
+  {
+    "file": "tests/test_character_knowledge_489.py",
+    "member": "test_participation_survives_restore",
+    "shapes": [
+      "select_order_limit"
+    ],
+    "lines": "217-235",
+    "asserts": []
+  },
+  {
+    "file": "tests/test_character_knowledge_489.py",
+    "member": "test_character_added_after_archive_cannot_read_old_participant_source",
+    "shapes": [
+      "pragma_table_info"
+    ],
+    "lines": "1034-1065",
+    "asserts": [
+      "assert \"restricted:test-late-reader-boundary\" not in visible_ids"
+    ]
+  },
+  {
+    "file": "tests/test_character_knowledge_489.py",
+    "member": "test_structured_person_scope_replaces_role_wide_world_reports",
+    "shapes": [
+      "select_order_limit"
+    ],
+    "lines": "1081-1335",
+    "asserts": [
+      "assert \"region_id\" not in rejected[0][\"item\"]",
+      "assert int(wai_id) not in wai_visible"
+    ]
+  },
+  {
+    "file": "tests/test_character_knowledge_489.py",
+    "member": "test_army_truth_is_exactly_scoped_to_person_command",
+    "shapes": [
+      "select_order_limit"
+    ],
+    "lines": "1338-1350",
+    "asserts": []
+  },
+  {
+    "file": "tests/test_character_knowledge_489.py",
+    "member": "test_multi_lead_typed_archives_reach_only_each_office_successor",
+    "shapes": [
+      "select_order_limit"
+    ],
+    "lines": "1497-1567",
+    "asserts": [
+      "assert joint_id not in _referenceable_dossier_ids(db, outsider.name, turn)",
+      "assert joint_id not in _referenceable_dossier_ids(db, case_successor.name, turn)",
+      "assert inner_id not in _referenceable_dossier_ids(db, inner_other.name, turn)"
+    ]
+  },
+  {
+    "file": "tests/test_commitment_backlash_626.py",
+    "member": "test_ac1_breach_verdict_triggers_commitment_backlash",
+    "shapes": [
+      "select_order_limit"
+    ],
+    "lines": "149-198",
+    "asserts": []
+  },
+  {
+    "file": "tests/test_declaration_dispatch_1835.py",
+    "member": "_minister",
+    "shapes": [
+      "select_order_limit"
+    ],
+    "lines": "20-25",
+    "asserts": []
+  },
+  {
+    "file": "tests/test_declaration_dispatch_1835.py",
+    "member": "test_reference_to_nonexistent_entity_is_rejected_without_killing_sibling_item",
+    "shapes": [
+      "sqlite_master_check"
+    ],
+    "lines": "173-231",
+    "asserts": [
+      "assert db.conn.execute(         \"SELECT name FROM sqlite_master WHERE type='table' AND name='rejection_reports'\",     ).fetchone() is None"
+    ]
+  },
+  {
+    "file": "tests/test_declaration_dispatch_1835.py",
+    "member": "test_on_scene_fact_attaches_declared_affair_and_rejects_unopened_affair",
+    "shapes": [
+      "select_order_limit"
+    ],
+    "lines": "337-373",
+    "asserts": [
+      "assert \"affair_attach_error\" not in ok.on_scene_facts.applied[0]"
+    ]
+  },
+  {
+    "file": "tests/test_declaration_dispatch_1835.py",
+    "member": "test_edge_event_lands_and_categorizes_unknown_kind_and_hallucinated_person_differently",
+    "shapes": [
+      "select_order_limit"
+    ],
+    "lines": "533-552",
+    "asserts": []
+  },
+  {
+    "file": "tests/test_declaration_dispatch_1835.py",
+    "member": "test_edge_event_attaches_declared_affair",
+    "shapes": [
+      "select_order_limit"
+    ],
+    "lines": "555-579",
+    "asserts": []
+  },
+  {
+    "file": "tests/test_declaration_dispatch_1835.py",
+    "member": "test_edge_event_conflicting_affair_pointer_is_rejected_first_binding_kept",
+    "shapes": [
+      "select_order_limit"
+    ],
+    "lines": "582-623",
+    "asserts": []
+  },
+  {
+    "file": "tests/test_decree_commitment_schema_136.py",
+    "member": "_table_columns",
+    "shapes": [
+      "pragma_table_info"
+    ],
+    "lines": "19-23",
+    "asserts": []
+  },
+  {
+    "file": "tests/test_decree_commitment_schema_136.py",
+    "member": "test_issue_resolution_removes_building_and_keeps_remove_audit_log",
+    "shapes": [
+      "select_order_limit"
+    ],
+    "lines": "80-109",
+    "asserts": []
+  },
+  {
+    "file": "tests/test_decree_dossiers_571.py",
+    "member": "_active_people",
+    "shapes": [
+      "select_order_limit"
+    ],
+    "lines": "7-15",
+    "asserts": []
+  },
+  {
+    "file": "tests/test_decree_dossiers_571.py",
+    "member": "test_final_decree_edit_path_removed_no_bypass",
+    "shapes": [
+      "route_absence"
+    ],
+    "lines": "1021-1046",
+    "asserts": [
+      "assert \"/api/decree\" not in paths or not any(         getattr(r, \"path\", None) == \"/api/decree\"         and \"PATCH\" in (getattr(r, \"methods\", None) or set())         for r in web_a"
+    ]
+  },
+  {
+    "file": "tests/test_deformation_dual_rail_622.py",
+    "member": "test_ac5_audit_fork_signal_present_only_with_audit_link",
+    "shapes": [
+      "select_order_limit"
+    ],
+    "lines": "191-241",
+    "asserts": [
+      "assert \"audit_fork_signals\" not in escort_nudge"
+    ]
+  },
+  {
+    "file": "tests/test_deformation_dual_rail_622.py",
+    "member": "test_apply_economy_list_directed_pay_arrears_echoes_beyond_intent",
+    "shapes": [
+      "select_order_limit"
+    ],
+    "lines": "259-375",
+    "asserts": []
+  },
+  {
+    "file": "tests/test_dossier_reported_progress_619.py",
+    "member": "test_execution_surface_dossier_can_record_and_list_full_history",
+    "shapes": [
+      "pragma_table_info"
+    ],
+    "lines": "78-120",
+    "asserts": [
+      "assert \"is_secret\" not in cols",
+      "assert \"secret\" not in cols",
+      "assert \"track\" not in cols"
+    ]
+  },
+  {
+    "file": "tests/test_dossier_reported_progress_619.py",
+    "member": "test_secret_monthly_path_unchanged_and_stays_on_private_rail",
+    "shapes": [
+      "select_order_limit"
+    ],
+    "lines": "123-150",
+    "asserts": []
+  },
+  {
+    "file": "tests/test_dossier_reported_progress_619.py",
+    "member": "test_short_and_one_shot_dossiers_have_no_empty_monthly_shell",
+    "shapes": [
+      "select_order_limit"
+    ],
+    "lines": "153-172",
+    "asserts": []
+  },
+  {
+    "file": "tests/test_dossier_reported_progress_619.py",
+    "member": "test_terminal_surface_dossier_rejects_reported_progress",
+    "shapes": [
+      "select_order_limit"
+    ],
+    "lines": "309-336",
+    "asserts": []
+  },
+  {
+    "file": "tests/test_draft_admission_resubmit_1769.py",
+    "member": "_latest_directive_id",
+    "shapes": [
+      "select_order_limit"
+    ],
+    "lines": "215-222",
+    "asserts": []
+  },
+  {
+    "file": "tests/test_effect_origin_558.py",
+    "member": "test_issue_close_effects_inherit_parent_canonical_origin",
+    "shapes": [
+      "select_order_limit"
+    ],
+    "lines": "64-103",
+    "asserts": [
+      "assert db.conn.execute(         \"SELECT origin_ref FROM region_logs WHERE region_id=? ORDER BY id DESC LIMIT 1\",         (region_id,),     ).fetchone()[\"origin_ref\"] == origin"
+    ]
+  },
+  {
+    "file": "tests/test_effect_origin_558.py",
+    "member": "test_same_issue_row_inertia_and_ongoing_reuse_parent_canonical_origin",
+    "shapes": [
+      "select_order_limit"
+    ],
+    "lines": "106-136",
+    "asserts": [
+      "assert db.conn.execute(         \"SELECT origin_ref FROM economy_ledger WHERE category='同月持续支出' ORDER BY id DESC LIMIT 1\"     ).fetchone()[\"origin_ref\"] == origin",
+      "assert db.conn.execute(         \"SELECT origin_ref FROM region_logs WHERE region_id=? ORDER BY id DESC LIMIT 1\",         (region_id,),     ).fetchone()[\"origin_ref\"] == origin"
+    ]
+  },
+  {
+    "file": "tests/test_effect_origin_558.py",
+    "member": "test_ordinary_entity_log_families_persist_origin_at_write_seam",
+    "shapes": [
+      "select_order_limit"
+    ],
+    "lines": "216-233",
+    "asserts": []
+  },
+  {
+    "file": "tests/test_effect_origin_558.py",
+    "member": "test_power_backlash_from_allegiance_change_inherits_canonical_origin",
+    "shapes": [
+      "select_order_limit"
+    ],
+    "lines": "236-261",
+    "asserts": []
+  },
+  {
+    "file": "tests/test_effect_origin_558.py",
+    "member": "test_zero_manpower_origin_gate_matches_actual_arrears_writeoff",
+    "shapes": [
+      "select_order_limit"
+    ],
+    "lines": "311-355",
+    "asserts": []
+  },
+  {
+    "file": "tests/test_event_trigger_gate.py",
+    "member": "test_army_numeric_gate_preserves_fractional_arrears_tail",
+    "shapes": [
+      "select_order_limit"
+    ],
+    "lines": "717-727",
+    "asserts": []
+  },
+  {
+    "file": "tests/test_event_trigger_gate.py",
+    "member": "test_issue_tracker_rollback_removes_dynamic_character_attrs",
+    "shapes": [
+      "hasattr_absence"
+    ],
+    "lines": "1474-1488",
+    "asserts": [
+      "assert not hasattr(character, \"_test_runtime_ghost_attr\")"
+    ]
+  },
+  {
+    "file": "tests/test_event_trigger_gate.py",
+    "member": "test_person_write_state_restore_removes_dynamic_character_attrs",
+    "shapes": [
+      "hasattr_absence"
+    ],
+    "lines": "1714-1722",
+    "asserts": [
+      "assert not hasattr(content.characters[\"毛文龙\"], \"ghost_preflight_attr\")"
+    ]
+  },
+  {
+    "file": "tests/test_event_trigger_gate.py",
+    "member": "test_apply_score_extraction_class_delta_respects_outer_transaction_rollback",
+    "shapes": [
+      "select_order_limit"
+    ],
+    "lines": "2973-3008",
+    "asserts": []
+  },
+  {
+    "file": "tests/test_event_trigger_gate.py",
+    "member": "test_apply_score_extraction_top_level_entity_deltas_respect_outer_transaction_rollback",
+    "shapes": [
+      "select_order_limit"
+    ],
+    "lines": "3011-3074",
+    "asserts": []
+  },
+  {
+    "file": "tests/test_execution_pressure_654.py",
+    "member": "test_region_id_column_and_composite_indexes",
+    "shapes": [
+      "pragma_table_info"
+    ],
+    "lines": "217-236",
+    "asserts": []
+  },
+  {
+    "file": "tests/test_execution_pressure_654.py",
+    "member": "test_path3_locality_fail_keeps_draft_no_text_in_rejection",
+    "shapes": [
+      "select_order_limit"
+    ],
+    "lines": "415-463",
+    "asserts": [
+      "assert \"text\" not in hit",
+      "assert \"敕令陕西\" not in raw",
+      "assert \"甲甲\" not in raw"
+    ]
+  },
+  {
+    "file": "tests/test_execution_pressure_654.py",
+    "member": "test_revoke_decree_523_producer_durable_oracle_chain",
+    "shapes": [
+      "select_order_limit"
+    ],
+    "lines": "619-727",
+    "asserts": []
+  },
+  {
+    "file": "tests/test_executor_routing_721.py",
+    "member": "test_directive_routing_rejection_rolls_back_with_outer_owner",
+    "shapes": [
+      "sqlite_master_check"
+    ],
+    "lines": "378-410",
+    "asserts": []
+  },
+  {
+    "file": "tests/test_faction_denunciation_627.py",
+    "member": "_table_cols",
+    "shapes": [
+      "pragma_table_info"
+    ],
+    "lines": "189-193",
+    "asserts": []
+  },
+  {
+    "file": "tests/test_faction_leverage_9.py",
+    "member": "test_restore_uses_new_office_weight_not_old",
+    "shapes": [
+      "select_order_limit"
+    ],
+    "lines": "126-179",
+    "asserts": []
+  },
+  {
+    "file": "tests/test_faction_leverage_9.py",
+    "member": "test_power_id_defection_drops_faction_leverage_immediately",
+    "shapes": [
+      "select_order_limit"
+    ],
+    "lines": "1016-1038",
+    "asserts": []
+  },
+  {
+    "file": "tests/test_family_tail_615.py",
+    "member": "test_break_rank_appointment_rescript_td4_tracer",
+    "shapes": [
+      "select_order_limit"
+    ],
+    "lines": "126-242",
+    "asserts": []
+  },
+  {
+    "file": "tests/test_fiscal_beyond_intent_1260.py",
+    "member": "test_s1_fiscal_changes_beyond_intent_tracer_and_negatives",
+    "shapes": [
+      "select_order_limit"
+    ],
+    "lines": "179-240",
+    "asserts": []
+  },
+  {
+    "file": "tests/test_fiscal_substrate_bridge.py",
+    "member": "test_province_pay_shortfall_reduces_pure_province_army_morale",
+    "shapes": [
+      "select_order_limit"
+    ],
+    "lines": "2015-2103",
+    "asserts": []
+  },
+  {
+    "file": "tests/test_fiscal_substrate_bridge.py",
+    "member": "test_armies_provision_empty_mutiny_status_flag",
+    "shapes": [
+      "pragma_table_info"
+    ],
+    "lines": "2107-2121",
+    "asserts": []
+  },
+  {
+    "file": "tests/test_gazette_author_1862.py",
+    "member": "test_author_archives_own_title_and_same_run_advances",
+    "shapes": [
+      "select_order_limit"
+    ],
+    "lines": "89-462",
+    "asserts": [
+      "assert f\"secret_order_brief:{order_id}\" not in accepted_events",
+      "assert secret_did not in seen[\"opening_dossiers\"]",
+      "assert \"secret_order:9\" not in public_ids",
+      "assert f\"secret_order_brief:{order_id}\" not in public_ids"
+    ]
+  },
+  {
+    "file": "tests/test_highlight_judge_544.py",
+    "member": "test_build_chat_projection_includes_minister_highlights",
+    "shapes": [
+      "select_order_limit"
+    ],
+    "lines": "109-125",
+    "asserts": []
+  },
+  {
+    "file": "tests/test_history_decree_text_1843_reopen.py",
+    "member": "test_history_turn_reads_decree_text_from_resolve_context",
+    "shapes": [
+      "sqlite_master_check"
+    ],
+    "lines": "6-28",
+    "asserts": []
+  },
+  {
+    "file": "tests/test_issue_entities.py",
+    "member": "test_resolve_changes_character_status",
+    "shapes": [
+      "select_order_limit"
+    ],
+    "lines": "49-68",
+    "asserts": []
+  },
+  {
+    "file": "tests/test_junxin_monthly_tick_314.py",
+    "member": "test_substrate_hub_path_loyalty_tier",
+    "shapes": [
+      "select_order_limit"
+    ],
+    "lines": "68-83",
+    "asserts": []
+  },
+  {
+    "file": "tests/test_material_directory_1830.py",
+    "member": "test_material_tree_contains_only_structurally_related_world_details",
+    "shapes": [
+      "select_order_limit"
+    ],
+    "lines": "75-115",
+    "asserts": []
+  },
+  {
+    "file": "tests/test_material_directory_1830.py",
+    "member": "test_matter_carriers_follow_the_real_knowledge_projection",
+    "shapes": [
+      "select_order_limit"
+    ],
+    "lines": "118-154",
+    "asserts": []
+  },
+  {
+    "file": "tests/test_mechanical_tail_1845.py",
+    "member": "test_chapter_memory_retired_from_three_readers",
+    "shapes": [
+      "sqlite_master_check"
+    ],
+    "lines": "447-512",
+    "asserts": [
+      "assert \"event_memories\" not in tables",
+      "assert \"event_memory_sources\" not in tables",
+      "assert \"timeline\" not in seen[\"payload\"]",
+      "assert \"gazette\" not in row",
+      "assert \"decree_brief\" not in row",
+      "assert \"effect_brief\" not in row"
+    ]
+  },
+  {
+    "file": "tests/test_memorial_inbox_1726.py",
+    "member": "test_progress_and_denunciation_project_as_memorials",
+    "shapes": [
+      "select_order_limit"
+    ],
+    "lines": "50-98",
+    "asserts": [
+      "assert banned not in prog"
+    ]
+  },
+  {
+    "file": "tests/test_month_chain_1843.py",
+    "member": "test_month_chain_lands_specialized_facts_before_due_and_gazette",
+    "shapes": [
+      "select_order_limit"
+    ],
+    "lines": "756-856",
+    "asserts": []
+  },
+  {
+    "file": "tests/test_month_translate_1840.py",
+    "member": "test_world_segment_explicit_stock_transfers_share_actual_amount",
+    "shapes": [
+      "select_order_limit"
+    ],
+    "lines": "17-69",
+    "asserts": []
+  },
+  {
+    "file": "tests/test_month_translate_1840.py",
+    "member": "_army_id",
+    "shapes": [
+      "select_order_limit"
+    ],
+    "lines": "103-106",
+    "asserts": []
+  },
+  {
+    "file": "tests/test_month_translate_1840.py",
+    "member": "_region_id",
+    "shapes": [
+      "select_order_limit"
+    ],
+    "lines": "109-112",
+    "asserts": []
+  },
+  {
+    "file": "tests/test_month_translate_1840.py",
+    "member": "test_world_segment_applies_domain_effects_and_reports_rejected_effects",
+    "shapes": [
+      "select_order_limit"
+    ],
+    "lines": "152-276",
+    "asserts": []
+  },
+  {
+    "file": "tests/test_month_translate_1840.py",
+    "member": "test_world_segment_repeated_strategic_results_apply_in_order",
+    "shapes": [
+      "select_order_limit"
+    ],
+    "lines": "397-514",
+    "asserts": []
+  },
+  {
+    "file": "tests/test_mutiny_actual_residence_659.py",
+    "member": "test_fresh_seed_station_region_and_class_slices",
+    "shapes": [
+      "pragma_table_info"
+    ],
+    "lines": "101-119",
+    "asserts": []
+  },
+  {
+    "file": "tests/test_mutiny_progression_316.py",
+    "member": "test_old_save_migrates_and_mutiny_progress_survives_reopen",
+    "shapes": [
+      "pragma_table_info"
+    ],
+    "lines": "121-157",
+    "asserts": []
+  },
+  {
+    "file": "tests/test_mutiny_redemption_317.py",
+    "member": "test_redemption_progress_migrates_and_survives_reopen",
+    "shapes": [
+      "pragma_table_info"
+    ],
+    "lines": "127-159",
+    "asserts": []
+  },
+  {
+    "file": "tests/test_new_game_smoke.py",
+    "member": "test_existing_office_fk_violation_is_normalized_on_reopen",
+    "shapes": [
+      "select_order_limit"
+    ],
+    "lines": "117-143",
+    "asserts": [
+      "assert reopened.conn.execute(\"PRAGMA foreign_keys\").fetchone()[0] == 1",
+      "assert reopened.conn.execute(\"PRAGMA foreign_key_check\").fetchall() == []"
+    ]
+  },
+  {
+    "file": "tests/test_office_inference.py",
+    "member": "test_appointment_seat_identity_reuses_local_and_strips_central",
+    "shapes": [
+      "select_order_limit"
+    ],
+    "lines": "274-326",
+    "asserts": []
+  },
+  {
+    "file": "tests/test_override_breach_costs_564.py",
+    "member": "test_midzhi_rejection_no_party_fanout_then_force_only_authority",
+    "shapes": [
+      "select_order_limit"
+    ],
+    "lines": "74-100",
+    "asserts": []
+  },
+  {
+    "file": "tests/test_override_breach_costs_564.py",
+    "member": "test_midzhi_apply_omits_guessed_parties_and_keeps_satisfaction",
+    "shapes": [
+      "select_order_limit"
+    ],
+    "lines": "288-312",
+    "asserts": []
+  },
+  {
+    "file": "tests/test_pay_order_override_653.py",
+    "member": "test_real_revoke_restores_override_same_month_with_active_commitment",
+    "shapes": [
+      "select_order_limit"
+    ],
+    "lines": "433-482",
+    "asserts": [
+      "assert \"due_priority_军饷@shaanxi\" not in cfg",
+      "assert \"due_priority_军饷@shaanxi_until_turn\" not in cfg"
+    ]
+  },
+  {
+    "file": "tests/test_pay_order_override_653.py",
+    "member": "test_stale_until_cleared_by_permanent_overwrite",
+    "shapes": [
+      "select_order_limit"
+    ],
+    "lines": "720-743",
+    "asserts": [
+      "assert \"due_priority_军饷_until_turn\" not in cfg"
+    ]
+  },
+  {
+    "file": "tests/test_person_archive_schema.py",
+    "member": "_columns",
+    "shapes": [
+      "pragma_table_info"
+    ],
+    "lines": "12-13",
+    "asserts": []
+  },
+  {
+    "file": "tests/test_person_archive_schema.py",
+    "member": "_column_info",
+    "shapes": [
+      "pragma_table_info"
+    ],
+    "lines": "16-17",
+    "asserts": []
+  },
+  {
+    "file": "tests/test_person_archive_schema.py",
+    "member": "test_person_logs_accepts_audit_rows_for_existing_characters",
+    "shapes": [
+      "select_order_limit"
+    ],
+    "lines": "80-104",
+    "asserts": []
+  },
+  {
+    "file": "tests/test_person_delta_adapter.py",
+    "member": "test_apply_person_changes_disposition_does_not_commit_inside_batch",
+    "shapes": [
+      "select_order_limit"
+    ],
+    "lines": "372-446",
+    "asserts": []
+  },
+  {
+    "file": "tests/test_person_delta_adapter.py",
+    "member": "test_apply_score_extraction_materializes_derived_release_before_appointment",
+    "shapes": [
+      "select_order_limit"
+    ],
+    "lines": "789-843",
+    "asserts": []
+  },
+  {
+    "file": "tests/test_person_delta_adapter.py",
+    "member": "test_apply_score_extraction_persists_reason_code_and_person_log",
+    "shapes": [
+      "select_order_limit"
+    ],
+    "lines": "1548-1585",
+    "asserts": []
+  },
+  {
+    "file": "tests/test_person_delta_adapter.py",
+    "member": "test_person_log_normalized_not_truncated",
+    "shapes": [
+      "select_order_limit"
+    ],
+    "lines": "2039-2053",
+    "asserts": []
+  },
+  {
+    "file": "tests/test_person_delta_adapter.py",
+    "member": "test_displaced_holder_transit_to_cleared",
+    "shapes": [
+      "select_order_limit"
+    ],
+    "lines": "2583-2613",
+    "asserts": []
+  },
+  {
+    "file": "tests/test_person_delta_adapter.py",
+    "member": "test_historical_death_tick_sets_reason_code",
+    "shapes": [
+      "select_order_limit"
+    ],
+    "lines": "2616-2636",
+    "asserts": []
+  },
+  {
+    "file": "tests/test_person_delta_adapter.py",
+    "member": "test_historical_death_tick_writes_person_log",
+    "shapes": [
+      "select_order_limit"
+    ],
+    "lines": "2639-2658",
+    "asserts": []
+  },
+  {
+    "file": "tests/test_person_delta_adapter.py",
+    "member": "test_historical_debut_tick_sets_reason_code_and_log",
+    "shapes": [
+      "select_order_limit"
+    ],
+    "lines": "2661-2686",
+    "asserts": []
+  },
+  {
+    "file": "tests/test_pihong_dossier_1490.py",
+    "member": "test_657_five_actions_domain_writes",
+    "shapes": [
+      "pragma_table_info"
+    ],
+    "lines": "673-737",
+    "asserts": [
+      "assert 'consumed_epoch' not in cols"
+    ]
+  },
+  {
+    "file": "tests/test_pihong_dossier_1490.py",
+    "member": "test_657_abi_mapper_matrix_a1_a12",
+    "shapes": [
+      "pragma_table_info",
+      "select_order_limit"
+    ],
+    "lines": "908-1147",
+    "asserts": [
+      "assert 'rescript_origin' not in cols"
+    ]
+  },
+  {
+    "file": "tests/test_pihong_dossier_1490.py",
+    "member": "test_657_midzhi_verdict_no_party_satisfaction",
+    "shapes": [
+      "select_order_limit"
+    ],
+    "lines": "1560-1577",
+    "asserts": []
+  },
+  {
+    "file": "tests/test_pihong_dossier_1490.py",
+    "member": "test_657_appointment_name_target_id_conflict_batch_reject",
+    "shapes": [
+      "select_order_limit"
+    ],
+    "lines": "1695-1705",
+    "asserts": []
+  },
+  {
+    "file": "tests/test_pihong_dossier_1490.py",
+    "member": "test_657_punishment_name_target_id_conflict_zero_writes",
+    "shapes": [
+      "select_order_limit"
+    ],
+    "lines": "1707-1737",
+    "asserts": []
+  },
+  {
+    "file": "tests/test_power_section_rejections.py",
+    "member": "test_all_reason_aliases_consumed_as_reason",
+    "shapes": [
+      "select_order_limit"
+    ],
+    "lines": "239-253",
+    "asserts": []
+  },
+  {
+    "file": "tests/test_promulgation_judge_561.py",
+    "member": "test_promulgation_context_is_deterministic_and_excludes_satisfaction",
+    "shapes": [
+      "select_order_limit"
+    ],
+    "lines": "21-85",
+    "asserts": [
+      "assert \"satisfaction\" not in encoded",
+      "assert \"满意\" not in encoded"
+    ]
+  },
+  {
+    "file": "tests/test_promulgation_judge_561.py",
+    "member": "test_gate_evidence_reloads_dossier_after_reconsideration_mutation",
+    "shapes": [
+      "select_order_limit"
+    ],
+    "lines": "399-446",
+    "asserts": [
+      "assert \"fresh-authorization\" not in (         fresh_context[\"dossiers\"][0][\"criteria_snapshot_source\"][\"authorization_ids\"]     )"
+    ]
+  },
+  {
+    "file": "tests/test_qa_e1_numeric_presentation.py",
+    "member": "test_army_payload_arrears_text_is_approximate_not_raw",
+    "shapes": [
+      "select_order_limit"
+    ],
+    "lines": "87-100",
+    "asserts": [
+      "assert \"arrears\" not in card"
+    ]
+  },
+  {
+    "file": "tests/test_region_citydefense.py",
+    "member": "_region_cols",
+    "shapes": [
+      "pragma_table_info"
+    ],
+    "lines": "11-12",
+    "asserts": []
+  },
+  {
+    "file": "tests/test_rejection_wiring.py",
+    "member": "_rejection_rows",
+    "shapes": [
+      "pragma_table_info"
+    ],
+    "lines": "19-29",
+    "asserts": []
+  },
+  {
+    "file": "tests/test_relation_capture_633.py",
+    "member": "test_authorized_dossier_origin_accepted_bound_to_current_turn",
+    "shapes": [
+      "select_order_limit"
+    ],
+    "lines": "290-325",
+    "asserts": []
+  },
+  {
+    "file": "tests/test_relation_capture_633.py",
+    "member": "test_authorized_dossier_outside_frozen_batch_rejected_zero_edges",
+    "shapes": [
+      "select_order_limit"
+    ],
+    "lines": "331-361",
+    "asserts": []
+  },
+  {
+    "file": "tests/test_relation_capture_633.py",
+    "member": "test_unauthorized_dossier_inside_frozen_set_still_rejected",
+    "shapes": [
+      "select_order_limit"
+    ],
+    "lines": "364-394",
+    "asserts": []
+  },
+  {
+    "file": "tests/test_relation_capture_633.py",
+    "member": "test_missing_frozen_dossier_set_is_empty_closed_set",
+    "shapes": [
+      "select_order_limit"
+    ],
+    "lines": "397-428",
+    "asserts": []
+  },
+  {
+    "file": "tests/test_rescript_draft_656.py",
+    "member": "_add_character",
+    "shapes": [
+      "pragma_table_info"
+    ],
+    "lines": "47-61",
+    "asserts": []
+  },
+  {
+    "file": "tests/test_rescript_draft_656.py",
+    "member": "_pending_columns",
+    "shapes": [
+      "pragma_table_info"
+    ],
+    "lines": "270-271",
+    "asserts": []
+  },
+  {
+    "file": "tests/test_rescript_draft_656.py",
+    "member": "_ledger_columns",
+    "shapes": [
+      "pragma_table_info"
+    ],
+    "lines": "273-274",
+    "asserts": []
+  },
+  {
+    "file": "tests/test_rescript_draft_656.py",
+    "member": "test_657_s1_schema_columns_and_no_banned_fields",
+    "shapes": [
+      "pragma_table_info",
+      "sqlite_master_check"
+    ],
+    "lines": "276-293",
+    "asserts": [
+      "assert \"consumed_epoch\" not in pending_cols",
+      "assert \"rescript_origin\" not in dossier_cols"
+    ]
+  },
+  {
+    "file": "tests/test_secret_dossier_participants_1252.py",
+    "member": "_people",
+    "shapes": [
+      "select_order_limit"
+    ],
+    "lines": "16-22",
+    "asserts": []
+  },
+  {
+    "file": "tests/test_secret_order_payoff_1504.py",
+    "member": "_minister",
+    "shapes": [
+      "select_order_limit"
+    ],
+    "lines": "80-88",
+    "asserts": []
+  },
+  {
+    "file": "tests/test_secret_order_payoff_1504.py",
+    "member": "_catch_names",
+    "shapes": [
+      "select_order_limit"
+    ],
+    "lines": "192-202",
+    "asserts": []
+  },
+  {
+    "file": "tests/test_secret_order_payoff_1504.py",
+    "member": "test_supply_call_writes_identity_materials_into_its_own_tree",
+    "shapes": [
+      "select_order_limit"
+    ],
+    "lines": "797-929",
+    "asserts": [
+      "assert f\"事务/issue-{issue_rows[0]['id']}/当前情况.txt\" not in captured[\"paths\"][target]",
+      "assert f\"事务/issue-{issue_rows[1]['id']}/当前情况.txt\" not in captured[\"paths\"][name]",
+      "assert \"materials\" not in order[side]"
+    ]
+  },
+  {
+    "file": "tests/test_secret_order_payoff_1504.py",
+    "member": "test_positive_inflow_does_not_freeze_purpose_and_counts",
+    "shapes": [
+      "select_order_limit"
+    ],
+    "lines": "2331-2370",
+    "asserts": [
+      "assert \"purpose\" not in frozen[\"delivery\"]"
+    ]
+  },
+  {
+    "file": "tests/test_section_fiscal_rejections.py",
+    "member": "test_fiscal_change_reopens_with_value_origin_history_and_scaled_rows",
+    "shapes": [
+      "select_order_limit"
+    ],
+    "lines": "603-637",
+    "asserts": []
+  },
+  {
+    "file": "tests/test_shared_resource_order_1844.py",
+    "member": "_settled_declaration",
+    "shapes": [
+      "select_order_limit"
+    ],
+    "lines": "15-22",
+    "asserts": []
+  },
+  {
+    "file": "tests/test_shared_resource_order_1844.py",
+    "member": "test_player_decrees_sequential_army_station_reads_updated_roster",
+    "shapes": [
+      "select_order_limit"
+    ],
+    "lines": "174-221",
+    "asserts": []
+  },
+  {
+    "file": "tests/test_staged_assignment_identity_1890.py",
+    "member": "test_month_chain_staging_has_no_source_turn",
+    "shapes": [
+      "select_order_limit"
+    ],
+    "lines": "137-151",
+    "asserts": []
+  },
+  {
+    "file": "tests/test_staged_assignment_identity_1890.py",
+    "member": "test_void_discards_that_directive_night_forecast",
+    "shapes": [
+      "select_order_limit"
+    ],
+    "lines": "295-330",
+    "asserts": []
+  },
+  {
+    "file": "tests/test_staged_assignment_identity_1890.py",
+    "member": "test_declared_new_secret_order_lands_and_undo_removes_all_records",
+    "shapes": [
+      "select_order_limit"
+    ],
+    "lines": "336-399",
+    "asserts": []
+  },
+  {
+    "file": "tests/test_staged_assignment_identity_1890.py",
+    "member": "test_undo_deletes_only_this_turns_committed_draft_directive",
+    "shapes": [
+      "select_order_limit"
+    ],
+    "lines": "477-523",
+    "asserts": []
+  },
+  {
+    "file": "tests/test_style_temperament_641.py",
+    "member": "test_inertia_natural_resolve_applies_temperament_style",
+    "shapes": [
+      "select_order_limit"
+    ],
+    "lines": "48-84",
+    "asserts": []
+  },
+  {
+    "file": "tests/test_style_temperament_641.py",
+    "member": "test_apply_score_extraction_writes_temperament_style_and_log",
+    "shapes": [
+      "select_order_limit"
+    ],
+    "lines": "87-120",
+    "asserts": []
+  },
+  {
+    "file": "tests/test_style_temperament_641.py",
+    "member": "test_temperament_style_preserves_raw_bytes_through_write_kernel",
+    "shapes": [
+      "select_order_limit"
+    ],
+    "lines": "123-172",
+    "asserts": []
+  },
+  {
+    "file": "tests/test_supervision_625.py",
+    "member": "_table_cols",
+    "shapes": [
+      "pragma_table_info"
+    ],
+    "lines": "136-140",
+    "asserts": []
+  },
+  {
+    "file": "tests/test_supervision_625.py",
+    "member": "test_ac1_presence_exposure_schema_pragma_and_no_dulling_cols",
+    "shapes": [
+      "sqlite_master_check"
+    ],
+    "lines": "146-173",
+    "asserts": [
+      "assert _PRESENCE_TABLE in {         r[0] for r in db.conn.execute(             \"SELECT name FROM sqlite_master WHERE type='table'\"         ).fetchall()     }",
+      "assert _EXPOSURE_TABLE in {         r[0] for r in db.conn.execute(             \"SELECT name FROM sqlite_master WHERE type='table'\"         ).fetchall()     }",
+      "assert frag.lower() not in low, f\"{table}.{col} 命中禁列片段 {frag}\""
+    ]
+  },
+  {
+    "file": "tests/test_transaction_boundary.py",
+    "member": "test_ddl_first_inside_atomic_rolls_back",
+    "shapes": [
+      "sqlite_master_check"
+    ],
+    "lines": "414-437",
+    "asserts": []
+  },
+  {
+    "file": "tests/test_transit_countdown_668.py",
+    "member": "test_arrivals_sorted_by_name_stable",
+    "shapes": [
+      "select_order_limit"
+    ],
+    "lines": "261-273",
+    "asserts": []
+  },
+  {
+    "file": "tests/test_web_audience_night_498.py",
+    "member": "test_asgi_dossiered_directive_has_no_retired_review_surface",
+    "shapes": [
+      "route_absence"
+    ],
+    "lines": "512-546",
+    "asserts": [
+      "assert \"/api/decree/write\" not in registered_paths",
+      "assert directive_id not in {row[\"id\"] for row in body[\"directives\"]}"
+    ]
+  },
+  {
+    "file": "tests/test_web_audience_night_498.py",
+    "member": "test_legacy_pending_only_advances_to_durable_dossier_without_review_api",
+    "shapes": [
+      "route_absence"
+    ],
+    "lines": "583-629",
+    "asserts": [
+      "assert \"/api/directives/{directive_id}/confirm\" not in registered_paths",
+      "assert \"/api/directives/{directive_id}/reject\" not in registered_paths",
+      "assert dossiered_id not in {row[\"id\"] for row in state_payload[\"directives\"]}"
+    ]
+  },
+  {
+    "file": "tests/test_world_materials_1834.py",
+    "member": "test_world_materials_include_textual_facts_once_and_gazette_not_duplicated",
+    "shapes": [
+      "select_order_limit"
+    ],
+    "lines": "188-257",
+    "asserts": [
+      "assert f\"公开说法/{past_year}年{past_period}月.txt\" not in names"
+    ]
+  }
+]

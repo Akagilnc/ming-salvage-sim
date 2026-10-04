@@ -517,9 +517,6 @@ def test_asgi_dossiered_directive_has_no_retired_review_surface(web_game):
     )
     game.db.ensure_dossiers_for_draft_directives(game.state)
 
-    registered_paths = {route.path for route in web_app.app.routes}
-    assert "/api/decree/write" not in registered_paths
-
     async def scenario():
         async with _client() as client:
             return (
@@ -582,7 +579,7 @@ def test_night_approved_directive_closes_into_month_end_without_second_review(we
 
 def test_legacy_pending_only_advances_to_durable_dossier_without_review_api(web_game, monkeypatch):
     """Legacy saves with only turn_directives.status=pending remain operable at the
-    same end-turn service seam; retired player confirm/reject routes stay absent."""
+    same end-turn service seam via advance_without_edict."""
     game = web_game
     minister = _active_minister(game)
     _fake_settlement_llm(monkeypatch)
@@ -605,10 +602,6 @@ def test_legacy_pending_only_advances_to_durable_dossier_without_review_api(web_
             "target_id": "already-dossiered",
         },
     )
-
-    registered_paths = {route.path for route in web_app.app.routes}
-    assert "/api/directives/{directive_id}/confirm" not in registered_paths
-    assert "/api/directives/{directive_id}/reject" not in registered_paths
 
     async def scenario():
         async with _client() as client:

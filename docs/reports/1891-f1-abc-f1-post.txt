@@ -1,0 +1,2 @@
+tests/test_event_trigger_gate.py::test_issue_tracker_rollback_removes_dynamic_character_attrs [hasattr_absence] L1474-1488
+tests/test_event_trigger_gate.py::test_person_write_state_restore_removes_dynamic_character_attrs [hasattr_absence] L1714-1722

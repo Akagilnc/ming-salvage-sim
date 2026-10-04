@@ -382,10 +382,6 @@ def _cli_process_clock() -> float:
     return time.monotonic()
 
 
-# agy headless auth 是已知 race（见 wiki）：stdout/stderr 出现这些串即瞬断，可重试。
-_AGY_AUTH_MARKERS = ("Authentication required", "authentication timed out")
-
-
 @dataclass
 class _CliProcessOutcome:
     """子进程收尾事实（退出码 / stderr 诊断 / stdin 写错），由增量读循环回填。"""
@@ -771,27 +767,24 @@ def _iter_cli_runner_text(
 
     **活动信号与 content 解耦**：新字节刷新空转时刻是 `_iter_cli_process_lines`
     的事（读到就刷新，跨多久都不杀）；本函数只在该次 attempt 判活之后才把文本交
-    出去。故纯文本 runner（agy/claude/pi）**不逐行外抛 stdout**——那会把
-    `Authentication required` 一类机器文本当大臣正文送进 delta，而失败分类要等
-    子进程排干才跑，玩家已经看见了。终失败按票面走系统层人话（ADR 0046 否决失败
-    戏内化）。codex `--json` 是结构化事件流（`_codex_event_text` 认字段、不读散
-    文，ADR 0142），可照旧边到边出。
+    出去。故纯文本 runner（agy/claude/pi）**不逐行外抛 stdout**——未判活前不把
+    缓冲当大臣正文送进 delta。终失败按票面走系统层人话（ADR 0046 否决失败戏内
+    化）。codex `--json` 是结构化事件流（`_codex_event_text` 认字段、不读散文，
+    ADR 0142），可照旧边到边出。
 
     次数只在 llm_transport（run_with_transport / run_transport_stream）；此处禁
     私有 for-attempt 循环。失败按 typed 分类抛，交上层统一重试或终结：
-    - 静默超阈值 → TransportIdleTimeout（可重试；_iter_cli_process_lines 抛）
+    - 静默超预算 → TransportIdleTimeout（可重试；_iter_cli_process_lines 抛）
     - 空输出 → llm_empty_output（可重试）
-    - agy auth race → llm_connection_error（可重试；已知瞬断实证）
     - stdin 未送达 / 未知非零退出 → RuntimeError（确定性失败，一次不重试；禁从
-      stderr 散文抠状态）
+      stdout/stderr 散文抠认证状态）
 
-    静默预算只认 transport 策略 idle（= 设置页那一格的静默判死阈值，CLI 与 API 同权威）。
+    静默预算只认 transport 策略 idle（= 设置页那一格的静默判死预算，CLI 与 API 同权威）。
     """
-    from ming_sim.exceptions import LLMUnavailable
     from ming_sim.llm_transport import empty_output_failure, transport_failure_unavailable
 
     if runner == "agy":
-        _warm_keychain()  # 操作步骤（缓解 headless auth race），不是重试策略
+        _warm_keychain()  # 操作步骤（缓解 headless keychain 冷启动），不是正文词表重试
     kimi_agent_path: Optional[str] = None
     if materials_dir and runner == "kimi":
         handle = tempfile.NamedTemporaryFile("w", suffix=".md", encoding="utf-8", delete=False)
@@ -844,12 +837,6 @@ def _iter_cli_runner_text(
             raise RuntimeError(
                 f"{runner} 调用失败（prompt 未能写入子进程 stdin）：{outcome.stdin_error}"
             ) from outcome.stdin_error
-        if runner == "agy" and any(m in (stdout_text + stderr) for m in _AGY_AUTH_MARKERS):
-            raise LLMUnavailable(
-                "LLM 连接失败。",
-                code="llm_connection_error",
-                provider_message=f"agy auth race：{stdout_text + stderr}",
-            )
         text = stdout_text if stdout_text.strip() else final_text
         # 非零退出不洗成瞬断：无 typed status 的失败当确定性失败（#1780 / ADR 0142）。
         if returncode != 0:
@@ -3194,7 +3181,7 @@ def capture_manual_directive_payload(
     #1849：抽取调用失败不再降级 special_decree 冒充成功拟旨，一律响亮上抛。
     special_decree 另有一合法来路：模型真答「无拟旨意图」（产物空，非失败）。
     """
-    directive_text = str(text or "")
+    directive_text = str(text or "").strip()
     fallback_mode = resolve_directive_mode(existing=existing_mode)
     # 空载短路：无正文可抽 → 直落草案结构，零 LLM 调用（P5：禁为省写把可短路 LLM 串回）。
     if not directive_text:
