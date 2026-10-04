@@ -112,7 +112,7 @@ git diff --numstat fab71100c -- . ':(exclude)evidence'
 
 ### 上轮大补跑（完整命令；结果含失败——不得称整批绿）
 
-命令见前次回执所列 34 文件批次；实测 `evidence/1843-w5-fixer-pytest-missed.log`：
+命令见前次回执所列 34 文件批次；实测 `evidence/1843-w5-fixer-pytest-missed.txt`：
 
 ```text
 2 failed, 1100 passed, 2 skipped in 43.28s
@@ -167,5 +167,5 @@ MING_SIM_PI_BIN=/usr/bin/false PYTHONDONTWRITEBYTECODE=1 \
 ## 最终 commit
 
 - 分支：`ak-roles/issue-1843-w5-r11-f2`
-- hash：（提交后填）
+- hash：`4536f4db8d541937b447613353228b8a086bf115`
 - 未 push；未合并；未关票。
