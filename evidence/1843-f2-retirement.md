@@ -14,88 +14,329 @@
 | R2 | `d3a3688f2` | 旧文本流／季提示／军队投影 → `44f87c4c5` |
 | R3 | `9d4152542` | ≤1-ref 穷尽删一批 → `ea297e120`；成员表聚合被封驳 |
 | R4 | `79661de14` | AST0∪词边界≤1 联合表；删 3；误把测试引用当保留 → `66d8d86d0`；庭审 `77c00eadc` |
-| R5 | `77c00eadc` | 纠正测试独占／死树互引漏退役；纠正 R4 不成立例外 |
+| R5 | `77c00eadc` | 删一批测试独占／死树；**回执谓词误收窄 same_file_prod==0；成员表聚合；枚举命令仅注释** → `7a96584ab` |
+| R6 | `7a96584ab` | 纠正：全闭包（含同文件互引）+ 逐名表 + 真跑命令 + EOF + 漏退役级联 |
 
-## Advisor 前置判断（R5；不冒充庭审）
+## Advisor 前置判断（R6；不冒充庭审）
 
 - 授权：派单 F2 全类；判词方向「沿被删除消费者的历史承接向下追、从现役入口反向核用途，一并处理测试独占及死树内部互引」。
-- R4 失败点：AST 空消费者／词边界≤1 **不能**覆盖「仅旧测试保活」或死树互引；`faction_report`／`has_player_visible_rejection` 例外不成立。
-- 互联网确认的简洁解法：test-only reverse reachability（dead-cst `--query test-only` 一类）——**本轮只用临时分析命令**，不落库扫描机制、不造证明性测试。
-- R5 谓词：`ming_sim` 定义 + 全仓 AST 引用；**无外部生产消费者且无同文件生产互引**者为候选；再 `git log -S`／现役入口（`month_chain`／`session` 改票／`supervision`／`canonical_fields_for_delivery`）反向核；属旧结算／simulator／extractor／phase2 票拟 fan-out／period-report 盘面者删（含专用测试）；真实共用写口／改票层 A／任别归一保留并逐项证据。
-- 原始扫描落盘：`evidence/1843-f2-r5-strict-test-only.txt`、`evidence/1843-f2-r5-rescript-exclusive.txt`、`evidence/1843-f2-r5-rescan-after.txt`。
+- R5 失败点（主角色复核）：
+  1. 谓词限定 `same_file_prod==0` → **排除死树互引**，违判词；
+  2. 枚举命令块多为注释，缺可运行原文与结果；
+  3. `command_power_rank 等`／`exclusive heal helpers（19）` 聚合，未逐名；
+  4. 复扫 23 名未逐项证明；
+  5. `git diff HEAD^ HEAD --check` EOF 多空行（rescript_draft／llm_channel／pihong）。
+- R6 谓词（不收窄）：在父提交 `77c00eadc`（R5 删前）建 AST 定义／引用／函数体引用图；种子＝判词样本＋历史被删消费者；**支持闭包向下追（含同文件／跨文件互引）**；与现役根（`month_chain`／`session`／`supervision`／`decree`／`rescript_actions`／`declaration_dispatch`／`materials`／`cli_backend` 等）前向可达求交——闭包内且不可达现役者＝F2 删；可达现役者＝保留并逐项证据。测试独占与零消费者一并纳入。不落库扫描机制、不造证明性测试。
+- 原始扫描落盘：`evidence/1843-f2-r6-full-closure-pre.txt`、`evidence/1843-f2-r6-remaining-vs-deleted.txt`、`evidence/1843-f2-r6-per-name-absence.txt`、`evidence/1843-f2-r6-mutation-rescan.txt`、`evidence/1843-f2-r6-git-log-S-members.txt`。
 
-## R5 枚举命令（实际执行）
+## R6 枚举命令（实际执行；临时 `/tmp/1843-f2-r6`，不进仓机制）
 
 ```bash
 cd /Users/akagilnc/WorkSpace/Ming_LLM-1843-w5
-git rev-parse HEAD   # 施工前 77c00eadc7ce152c06bbb9a6958e69d805c7d3d6
-git checkout -b ak-roles/issue-1843-w5-r5-f2
+git rev-parse HEAD   # 施工前 7a96584abf67d0a4817752dbcde5a36b5835a034
 
-# 1) 无外部生产消费者清单（含仅测试保活）→ /tmp/1843-f2-r5/scan-test-only.txt
-#    收窄 strict：same_file_prod==0 → evidence/1843-f2-r5-strict-test-only.txt
+mkdir -p /tmp/1843-f2-r6
 
-# 2) 现役入口反向
-rg -n 'generate_rescript_draft|select_triage_actor|create_rescript_draft_agent|normalize_rescript_layer_a_option' ming_sim --glob '*.py'
-rg -n 'normalize_appointment_tenure|execution_distortion_weight' ming_sim --glob '*.py'
-rg -n 'canonical_fields_for_delivery|build_secret_covert_effect_briefs' ming_sim --glob '*.py'
+# 1) 父提交全闭包（含同文件互引；不以 same_file_prod==0 排除）
+#    完整输出：evidence/1843-f2-r6-full-closure-pre.txt
+#    实测摘要：PARENT=77c00eadc managed_py=352 ming_sim_def_names=3195
+#              live_reachable=2879 support_closure=2040 F2_DELETE_CANDIDATES=58
+python3 <<'PY' | tee /tmp/1843-f2-r6/full-closure-pre.txt
+import ast, json, subprocess, re
+from pathlib import Path
+from collections import defaultdict
+PARENT = '77c00eadc'
+files = [f for f in subprocess.check_output(['git','ls-tree','-r','--name-only',PARENT], text=True).splitlines()
+         if f.endswith('.py') and not f.startswith('docs/raw/')]
+def blob(rel):
+    return subprocess.check_output(['git','show',f'{PARENT}:{rel}'], text=True, errors='replace')
+sources = {rel: blob(rel) for rel in files}
+defs = defaultdict(list)
+def_bodies = {}
+file_defs = defaultdict(set)
+for rel, src in sources.items():
+    if not rel.startswith('ming_sim/'):
+        continue
+    try:
+        tree = ast.parse(src)
+    except SyntaxError:
+        continue
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            defs[node.name].append((rel, node.lineno, type(node).__name__))
+            file_defs[rel].add(node.name)
+            body_names = set()
+            for sub in ast.walk(node):
+                if isinstance(sub, ast.Name):
+                    body_names.add(sub.id)
+                elif isinstance(sub, ast.Attribute):
+                    body_names.add(sub.attr)
+            def_bodies[(rel, node.name)] = body_names
+    for node in tree.body:
+        if isinstance(node, ast.Assign):
+            for t in node.targets:
+                if isinstance(t, ast.Name) and re.match(r'^[A-Z_][A-Z0-9_]*$', t.id):
+                    defs[t.id].append((rel, node.lineno, 'Const'))
+                    file_defs[rel].add(t.id)
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            t = node.target
+            if re.match(r'^[A-Z_][A-Z0-9_]*$', t.id):
+                defs[t.id].append((rel, node.lineno, 'AnnConst'))
+                file_defs[rel].add(t.id)
+refs = defaultdict(list)
+for rel, src in sources.items():
+    try:
+        tree = ast.parse(src)
+    except SyntaxError:
+        continue
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name):
+            refs[node.id].append((rel, getattr(node,'lineno',0) or 0))
+        elif isinstance(node, ast.Attribute):
+            refs[node.attr].append((rel, getattr(node,'lineno',0) or 0))
+        elif isinstance(node, ast.alias):
+            n = node.asname or node.name.split('.')[-1]
+            refs[n].append((rel, getattr(node,'lineno',0) or 0))
+HIST_DELETED_CONSUMERS = {
+    'build_period_report','previous_turn_summary','execution_side_read_fields',
+    'generate_rescript_draft','select_triage_actor','create_rescript_draft_agent',
+    'validate_rescript_draft_items','build_secret_covert_effect_briefs',
+    'has_player_visible_rejection','faction_report','format_region_changes',
+    'format_army_changes','format_power_changes','turn_region_summary',
+    'turn_army_summary','execution_distortion_weight','command_power_rank',
+}
+LIVE_ROOT_FILES = {
+    'ming_sim/month_chain.py','ming_sim/session.py','ming_sim/supervision.py',
+    'ming_sim/decree.py','ming_sim/rescript_actions.py','ming_sim/declaration_dispatch.py',
+    'ming_sim/materials.py','ming_sim/cli_backend.py','ming_sim/web_api.py',
+    'ming_sim/issues.py','ming_sim/action_materialize.py','ming_sim/month_translate.py',
+    'ming_sim/audience_night.py','ming_sim/pre_settle.py','ming_sim/relation_brew.py',
+    'ming_sim/value_matrix.py','ming_sim/pay_order.py','ming_sim/centrifuge_ledger.py',
+}
+support_closure = set(); queue = list(HIST_DELETED_CONSUMERS); seen_q = set()
+while queue:
+    name = queue.pop()
+    if name in seen_q: continue
+    seen_q.add(name)
+    if name not in defs: continue
+    support_closure.add(name)
+    for f, ln, kind in defs[name]:
+        for bn in def_bodies.get((f, name), set()):
+            if bn in defs and bn not in seen_q:
+                queue.append(bn)
+live_reachable = set()
+for rootf in LIVE_ROOT_FILES:
+    if rootf not in sources: continue
+    for node in ast.walk(ast.parse(sources[rootf])):
+        names = []
+        if isinstance(node, ast.Name): names.append(node.id)
+        elif isinstance(node, ast.Attribute): names.append(node.attr)
+        elif isinstance(node, ast.alias): names.append(node.asname or node.name.split('.')[-1])
+        for n in names:
+            if n in defs: live_reachable.add(n)
+lq = list(live_reachable); lseen = set(live_reachable)
+while lq:
+    n = lq.pop()
+    for f, ln, kind in defs.get(n, []):
+        for bn in def_bodies.get((f, n), set()):
+            if bn in defs and bn not in lseen:
+                lseen.add(bn); live_reachable.add(bn); lq.append(bn)
+changed = True
+while changed:
+    changed = False
+    for name, dlist in defs.items():
+        if name in support_closure or name in live_reachable: continue
+        dfiles = {f for f,_,_ in defs[name]}
+        prod = [(f,ln) for f,ln in refs.get(name, []) if f.startswith('ming_sim/') and (f,ln) not in {(x,y) for x,y,_ in defs[name]}]
+        if not prod: continue
+        all_in_dead = True
+        for f, ln in prod:
+            containing = None
+            for dn in file_defs[f]:
+                for df, dln, _ in defs[dn]:
+                    if df == f and dln <= ln:
+                        if containing is None or dln > containing[1]:
+                            containing = (dn, dln)
+            if containing is None or containing[0] not in support_closure:
+                all_in_dead = False; break
+        if all_in_dead:
+            support_closure.add(name); changed = True
+f2_delete = sorted(n for n in support_closure if n not in live_reachable)
+print('PARENT', PARENT)
+print('managed_py', len(files))
+print('ming_sim_def_names', len(defs))
+print('live_reachable', len(live_reachable))
+print('support_closure', len(support_closure))
+print('F2_DELETE_CANDIDATES', len(f2_delete))
+print('---F2_DELETE---')
+for n in f2_delete:
+    locs = ','.join(f'{f}:{ln}' for f,ln,_ in defs[n][:3])
+    print(f'{n}\t{locs}')
+PY
 
-# 3) rescript 专用死树（generate/select/validate 为种子）
-# → evidence/1843-f2-r5-rescript-exclusive.txt（23 exclusive）
+# 2) 对照现 HEAD：哪些候选仍存活 → evidence/1843-f2-r6-remaining-vs-deleted.txt
+#    实测：still=17 gone=41；rescript 死树常量/_current_game_turn 为漏退役（R6 已删）
 
-# 4) 历史交叉（成员表每一名）
-# git log -S'<symbol>' --oneline -- ming_sim tests | head
+# 3) 现役入口反向（保留证据）
+rg -n 'normalize_rescript_layer_a_option|normalize_stop_condition|rescript_layer_a_prompt_contract' ming_sim --glob '*.py'
+rg -n 'normalize_appointment_tenure|appointment_tenure_from' ming_sim --glob '*.py'
+rg -n 'canonical_fields_for_delivery|create_rescript_revise_agent|save_rescript_drafts' ming_sim --glob '*.py'
+
+# 4) 逐名 git log -S → evidence/1843-f2-r6-git-log-S-members.txt
+# 5) 删后逐名缺席 → evidence/1843-f2-r6-per-name-absence.txt（54 名全 GONE，BAD=0）
+# 6) 入口变异 → evidence/1843-f2-r6-mutation-rescan.txt
+#    BASELINE present=0；MUTATION_ON present=12；MUTATION_OFF present=0；MUTATION_OK
 ```
 
-## 成员表（R5 处置：F2 删除）
+## 成员表（R6 处置：F2 删除；逐名，禁止聚合）
 
-| 符号 | 原位置 | 引用状态（删前） | 历史消费者／提交 | 归类 | 处置 |
-|---|---|---|---|---|---|
-| `format_region_changes` | report.py:35 | 仅 section4 测 | ea297e120 撤 build_period_report | F2 | 删＋删 formatter 拒收测 |
-| `format_army_changes` | report.py:51 | 同上 | 同上 | F2 | 删 |
-| `format_power_changes` | report.py:71 | 仅 power 测 | 旧盘面变更格式器 | F2 | 删 |
-| `turn_region_summary` | db.py:7258 | 仅 pay_order 测 | 242837870 撤 previous_turn_summary | F2 | 删＋删专用测 |
-| `turn_army_summary` | db.py:7847 | 仅 fiscal/qa_e1 测 | 同上 | F2 | 删＋删专用测；province_pay 测改钉 DB |
-| `execution_distortion_weight` | appointment_tenure.py:57 | 仅 tenure_613 测 | b85cb3f16 撤 execution_side_read_fields | F2 | 删 |
-| `command_power_rank` 等号令力树 | appointment_tenure.py | 仅上测／死树互引 | 号令力专用支持 | F2 级联 | 删；整测文件删 |
-| `build_secret_covert_effect_briefs` | covert_progress.py:644 | 仅 payoff_1504 | 81c4d2098 撤 extractor 私密载荷 | F2 | 删 |
-| `has_player_visible_rejection` | applier.py:387 | 零消费者 | f3c4c7348 旧结算邸报固定提示 | F2 | 删；纠正 R4 例外 |
-| `faction_report` | db.py:6714 | 仅 setattr 钉 | 81c4d2098／5047271cf 撤 board | F2 | 删；纠正 R4 例外 |
-| `create_rescript_draft_agent` | agents.py:667 | 仅 llm_channel 测 | d0afb1d43 撤 phase2 fan-out | F2 | 删；头表测改钉 revise |
-| `select_triage_actor` | rescript_draft.py:1106 | 仅 draft_656 测 | 同上 | F2 | 删 |
-| `generate_rescript_draft` | rescript_draft.py:2148 | 仅测 | 同上 | F2 | 删 |
-| `validate_rescript_draft_items` | rescript_draft.py:1380 | 仅 generate＋测 | generate 专用批校验 | F2 | 删 |
-| exclusive heal/degrade helpers（19） | rescript_draft.py | 死树互引 | exclusive 清单 | F2 死树 | 删 |
-| 专用旧测文件 | tenure_613／heal_1801／heal_1746 | 只测已删入口 | — | F2 | 整文件删 |
-| generate 专用测块 | draft_656 等 | — | — | F2 | 裁删；pihong HTTP 改 save_rescript_drafts 布景 |
+原位置均为删前 `77c00eadc` 行号。历史提交取 `git log -S`（全文 `evidence/1843-f2-r6-git-log-S-members.txt`）。
 
-## 成员表（R5 保留：真实共用／非 F2；逐项证据）
+### A. period-report／盘面格式器
+
+| 符号 | 原位置 | 删前引用 | 历史消费者／提交 | 处置 |
+|---|---|---|---|---|
+| `format_region_changes` | `ming_sim/report.py:35` | 仅 tests | ea297e120 撤 `build_period_report` | 删＋删 formatter 测 |
+| `format_army_changes` | `ming_sim/report.py:51` | 仅 tests | 同上 | 删 |
+| `format_power_changes` | `ming_sim/report.py:71` | 仅 tests | 旧盘面变更格式器 | 删 |
+
+### B. previous_turn_summary 支路
+
+| 符号 | 原位置 | 删前引用 | 历史消费者／提交 | 处置 |
+|---|---|---|---|---|
+| `turn_region_summary` | `ming_sim/db.py:7258` | 仅 tests | 242837870 撤 `previous_turn_summary` | 删＋删专用测 |
+| `turn_army_summary` | `ming_sim/db.py:7847` | 仅 tests | 同上 | 删；province_pay 测改钉 DB |
+
+### C. 号令力专用树（逐名）
+
+| 符号 | 原位置 | 删前引用 | 历史消费者／提交 | 处置 |
+|---|---|---|---|---|
+| `COMMAND_POWER_RANK` | `ming_sim/appointment_tenure.py:15` | 同文件互引＋测 | ee6fb05fe／ddc7bfb48 | 删 |
+| `_MAX_COMMAND_POWER_RANK` | `ming_sim/appointment_tenure.py:21` | 同文件互引 | ddc7bfb48 | 删 |
+| `_AUTHORITY_RELIEF_AMOUNTS` | `ming_sim/appointment_tenure.py:25` | 同文件互引 | ddc7bfb48 | 删 |
+| `AUTHORITY_COMMAND_RELIEF` | `ming_sim/appointment_tenure.py:26` | 同文件互引＋测 | ee6fb05fe | 删 |
+| `command_power_rank` | `ming_sim/appointment_tenure.py:52` | 同文件＋测 | b85cb3f16 撤 `execution_side_read_fields` | 删 |
+| `execution_distortion_weight` | `ming_sim/appointment_tenure.py:57` | 仅 tests | 同上 | 删；整测 `test_execution_tenure_613.py` 删 |
+
+### D. extractor 私密 briefs
+
+| 符号 | 原位置 | 删前引用 | 历史消费者／提交 | 处置 |
+|---|---|---|---|---|
+| `build_secret_covert_effect_briefs` | `ming_sim/covert_progress.py:644` | 仅 tests | 81c4d2098 撤 extractor 私密载荷 | 删（R5） |
+| `_current_game_turn` | `ming_sim/covert_progress.py:635` | 仅 briefs 同文件 | d8ba4c563；briefs 退役后零引用 | **R6 补删** |
+
+### E. 旧结算报告／供料例外纠正
+
+| 符号 | 原位置 | 删前引用 | 历史消费者／提交 | 处置 |
+|---|---|---|---|---|
+| `has_player_visible_rejection` | `ming_sim/applier.py:387` | 零消费者 | 5b6c868bc 旧结算邸报固定提示 | 删；纠正 R4 例外 |
+| `faction_report` | `ming_sim/db.py:6714` | 仅 setattr 钉 | 81c4d2098／5047271cf 撤 board | 删；纠正 R4 例外 |
+
+### F. phase2 票拟入口
+
+| 符号 | 原位置 | 删前引用 | 历史消费者／提交 | 处置 |
+|---|---|---|---|---|
+| `create_rescript_draft_agent` | `ming_sim/agents.py:667` | 仅 tests | d0afb1d43 撤 phase2 fan-out | 删；头表测改钉 `create_rescript_revise_agent` |
+| `select_triage_actor` | `ming_sim/rescript_draft.py:1106` | 仅 tests | 同上 | 删 |
+| `generate_rescript_draft` | `ming_sim/rescript_draft.py:2148` | 仅 tests | 同上 | 删 |
+| `validate_rescript_draft_items` | `ming_sim/rescript_draft.py:1380` | generate＋测 | generate 专用批校验 | 删 |
+
+### G. generate／validate 死树 helpers（逐名；含同文件互引）
+
+| 符号 | 原位置 | 删前引用 | 处置 |
+|---|---|---|---|
+| `_assert_utf8` | `ming_sim/rescript_draft.py:1132` | 死树互引 | 删（R5） |
+| `_option_failure_from_exc` | `ming_sim/rescript_draft.py:1167` | 死树互引 | 删（R5） |
+| `_ungrounded_roster_person_failure` | `ming_sim/rescript_draft.py:1234` | 死树互引 | 删（R5） |
+| `_item_heal_id` | `ming_sim/rescript_draft.py:1305` | 死树互引 | 删（R5） |
+| `_top_heal_id` | `ming_sim/rescript_draft.py:1309` | 死树互引 | 删（R5） |
+| `_item_failure` | `ming_sim/rescript_draft.py:1313` | 死树互引 | 删（R5） |
+| `_top_failure` | `ming_sim/rescript_draft.py:1334` | 死树互引 | 删（R5） |
+| `_contract_exc_to_top_failure` | `ming_sim/rescript_draft.py:1356` | 死树互引 | 删（R5） |
+| `_required_text_or_fail` | `ming_sim/rescript_draft.py:1453` | 死树互引 | 删（R5） |
+| `_board_issue_ids` | `ming_sim/rescript_draft.py:1674` | 死树互引 | 删（R5） |
+| `_write_degraded_note` | `ming_sim/rescript_draft.py:1684` | 死树互引 | 删（R5） |
+| `_option_heal_id` | `ming_sim/rescript_draft.py:1708` | 死树互引 | 删（R5） |
+| `_missing_field_heal_feedback` | `ming_sim/rescript_draft.py:1712` | 死树互引 | 删（R5） |
+| `_explicit_heal_id` | `ming_sim/rescript_draft.py:1770` | 死树互引 | 删（R5） |
+| `_healed_options_by_id` | `ming_sim/rescript_draft.py:1778` | 死树互引 | 删（R5） |
+| `_apply_option_heal` | `ming_sim/rescript_draft.py:1845` | 死树互引 | 删（R5） |
+| `_find_healed_unit_for_failure` | `ming_sim/rescript_draft.py:1886` | 死树互引 | 删（R5） |
+| `_merge_healed_missing_options` | `ming_sim/rescript_draft.py:1904` | 死树互引 | 删（R5） |
+| `_drop_options_by_failures` | `ming_sim/rescript_draft.py:1992` | 死树互引 | 删（R5） |
+| `_failure_log_rows` | `ming_sim/rescript_draft.py:2074` | 死树互引 | 删（R5） |
+| `_with_heal_response_contract_failure` | `ming_sim/rescript_draft.py:2106` | 死树互引 | 删（R5） |
+| `_degrade` | nested in `generate_rescript_draft` | 死树互引 | 删（R5） |
+| `_validate` | nested in `generate_rescript_draft` | 死树互引 | 删（R5） |
+
+### H. R6 补删：入口删后仍零引用的 generate 专用常量／批类型
+
+| 符号 | 原位置 | 删前／R5 后状态 | 处置 |
+|---|---|---|---|
+| `RESCRIPT_OPTION_FIELD_HEAL_RETRIES` | `ming_sim/rescript_draft.py:51` | R5 后零引用 | **R6 删** |
+| `_EXHAUST_DROP_OPTION` | `ming_sim/rescript_draft.py:144` | 仅 Failure 默认 | **R6 删** |
+| `_EXHAUST_DROP_ITEM` | `ming_sim/rescript_draft.py:145` | 零引用 | **R6 删** |
+| `_EXHAUST_DEGRADE_MONTH` | `ming_sim/rescript_draft.py:146` | 零引用 | **R6 删** |
+| `_EXHAUST_IGNORE_TOP_KEYS` | `ming_sim/rescript_draft.py:147` | 零引用 | **R6 删** |
+| `_SCOPE_OPTION` | `ming_sim/rescript_draft.py:148` | 仅 Failure 默认 | **R6 删** |
+| `_SCOPE_ITEM` | `ming_sim/rescript_draft.py:149` | 零引用 | **R6 删** |
+| `_SCOPE_TOP` | `ming_sim/rescript_draft.py:150` | 零引用 | **R6 删** |
+| `RescriptOptionMissingFailure` | `ming_sim/rescript_draft.py:154` | 仅 Batch | **R6 删** |
+| `RescriptOptionMissingFieldsBatch` | `ming_sim/rescript_draft.py:168` | 零引用 | **R6 删** |
+| `_TOP_ALLOWED_KEYS` | `ming_sim/rescript_draft.py:1108` | 零引用 | **R6 删** |
+| `_ITEM_ALLOWED_KEYS` | `ming_sim/rescript_draft.py:1109` | 零引用 | **R6 删** |
+
+### I. 专用旧测
+
+| 路径 | 处置 |
+|---|---|
+| `tests/test_execution_tenure_613.py` | 整文件删 |
+| `tests/test_rescript_heal_isolation_1801.py` | 整文件删 |
+| `tests/test_rescript_option_field_heal_1746.py` | 整文件删 |
+| generate 专用测块（`test_rescript_draft_656` 等） | 裁删 |
+| `tests/test_llm_channel_config.py` | 入口改钉 `create_rescript_revise_agent`（断言强度不降） |
+| `tests/test_pihong_dossier_1490.py` | HTTP 布景改 `save_rescript_drafts`（真实写口） |
+| `tests/test_fiscal_substrate_bridge.py` province_pay | 改钉 DB 行，不再经 `turn_army_summary` |
+
+## 成员表（R6 保留：真实共用／非 F2；逐项证据）
 
 | 符号 | 现役消费者证据 | 归类 | 为何非 F2 |
 |---|---|---|---|
-| `normalize_appointment_tenure` / `appointment_tenure_from` | supervision.py／issues.py／db.py | 任别契约 | 判词明示勿整删模块 |
-| `canonical_fields_for_delivery` | covert_progress 交付对账 | 密令共用字段 | 判词明示保留 |
-| `normalize_rescript_layer_a_option` 等层 A | session 改票；rescript_actions；agents revise/deliberate | 现役改票契约 | 勿整删共享 rescript |
-| `create_rescript_revise_agent` / `create_rescript_deliberate_agent` | session.py | 现役改票／廷议 | 非 phase2 票拟入口 |
-| `save_rescript_drafts` / desk 读口 | 批红桌／月链 | 急务票面写口 | 共用业务写口 |
+| `normalize_appointment_tenure` | `ming_sim/supervision.py`／`issues.py`／`db.py` | 任别契约 | 判词明示勿整删模块；live_reachable |
+| `appointment_tenure_from` | 同上 | 任别契约 | 同上 |
+| `APPOINTMENT_TENURES`／`DEFAULT_APPOINTMENT_TENURE` | 任别归一 | 任别契约 | 同上 |
+| `canonical_fields_for_delivery` | `ming_sim/covert_progress.py` 交付对账 | 密令共用字段 | 判词明示保留 |
+| `normalize_rescript_layer_a_option` | `session` 改票；`rescript_actions`；agents revise | 现役改票契约 | 勿整删共享 rescript |
+| `normalize_stop_condition` | `rescript_actions` | 层 A | 同上 |
+| `rescript_layer_a_prompt_contract`／`layer_a_option_shape` | agents／session | 层 A | 同上 |
+| `_parse_rescript_json_strict`／`_assert_army_targets_grounded` | session 改票 | 改票校验 | 同上 |
+| `RescriptOptionMissingFieldsError`／`_OPTION_REPLACE_FIELD`／`_field_failure`／`_note_failed`／`_raise_option_missing_fields` | `normalize_rescript_layer_a_option` | 改票 option 契约 | 非 generate 批 heal |
+| `create_rescript_revise_agent`／`create_rescript_deliberate_agent` | `session.py` | 现役改票／廷议 | 非 phase2 票拟入口 |
+| `save_rescript_drafts`／desk 读口 | 批红桌／月链／pihong 测布景 | 急务票面写口 | 共用业务写口 |
 | `RejectionCollector` 其余方法 | 现役落账拒收 | 拒收账本 | 不因删 has_player_visible 整退役 |
-| `print_header` / `metric_bar` | cli/terminal.py | CLI 呈现 | 非旧 period-report 格式器 |
+| `INSTITUTION_PARTICIPANT_TOKENS` | `participant_roster.py`＋`cli_backend.py` | 参与名单 | 判词保留参与名单；非旧结算树 |
+| `PERSON_TRANSITION_ACTIONS`／`PERSON_NON_TRANSITION_ACTIONS` | `person_archive_contract.py`→`PERSON_ACTIONS` | 人物契约 | 非 F2 |
+| `_DOSSIER_EXTERNAL_REVIEW_EXEMPT`／`_DOSSIER_IMMEDIATE_ACTIONS`／`_DOSSIER_NARRATIVE_ACTIONS`／`_DOSSIER_TERMINAL_ACTIONS` | `decree_vocabulary.py` dossier 元数据 | 旨意词汇 | 非 F2；上呈不施工 |
 | `settle_province_tick` | 财政基座 | 财政写口 | 非 simulator board |
 | F1／F3 邻接零引用 | R4 已归类 | 邻接 | 派单不施工 |
 
-## 纠正 R4 例外（原表不成立项）
+## 原类复扫（R6 固定点；逐名）
 
-| 原 R4 例外 | 原理由 | R5 裁决 |
-|---|---|---|
-| `has_player_visible_rejection` | 「拒收呈现，非旧结算核」 | **不成立**→删。历史服务旧结算报告固定提示；现役无消费者 |
-| `faction_report` | 「知识权限钉」 | **不成立**→删。setattr 禁止调用≠现役消费 |
+`evidence/1843-f2-r6-per-name-absence.txt`：上表 A–H 全部符号 `GONE defs=False refs=0`，`BAD=0`。
 
-## 原类复扫（R5 固定点）
+## 入口变异验证（临时；非测试）
 
-- 删除符号 defs/refs=NONE（`evidence/1843-f2-r5-rescan-after.txt`）。
-- 剩余 strict test-only settlementish 23 名均为共用写口／读口（上表保留）。
-- 无新增扫描机制；级联无新 F2 孤儿进入旧结算专用树。
+`evidence/1843-f2-r6-mutation-rescan.txt`：
 
-## 聚焦测试（R5；完整可复现命令）
+- BASELINE（当前工作树）`present=0`
+- MUTATION_ON（临时 `git show 77c00eadc` 覆盖 6 文件）`present=12`：`generate_rescript_draft`／`select_triage_actor`／`create_rescript_draft_agent`／`validate_rescript_draft_items`／`command_power_rank`／`execution_distortion_weight`／`format_region_changes`／`build_secret_covert_effect_briefs`／`has_player_visible_rejection`／`RESCRIPT_OPTION_FIELD_HEAL_RETRIES`／`_current_game_turn`／`_apply_option_heal`
+- MUTATION_OFF（恢复工作树备份）`present=0`；`MUTATION_OK`
+
+## EOF／whitespace
+
+R5 提交 diff `--check` 报三文件 EOF 多空行；R6 工作树已收束为单换行，本提交消除。
+
+## 聚焦测试（R6；完整可复现命令）
 
 ```bash
 cd /Users/akagilnc/WorkSpace/Ming_LLM-1843-w5
@@ -132,28 +373,27 @@ MING_SIM_PI_BIN=/usr/bin/false \
   tests/test_structured_decree_contract_1624.py \
   tests/test_appointment_tenure_607.py \
   tests/test_supervision_625.py \
+  tests/test_fiscal_substrate_bridge.py::test_province_pay_shortfall_reduces_pure_province_army_morale \
   -q -p no:cacheprovider --durations=8
 ```
 
-实测：`743 passed, 2 skipped in 34.88s`（`evidence/1843-f2-r5-pytest.log`）。
-另：`tests/test_fiscal_substrate_bridge.py::test_province_pay_shortfall_reduces_pure_province_army_morale` → `1 passed in 0.79s`。未跑全量。
+实测：`744 passed, 2 skipped in 39.43s`（`evidence/1843-f2-r6-pytest.log`）。未跑全量。
 
 ## 自查质量／合法性（advisor，非审官）
 
-同类型清测试独占旧盘面／phase2 票拟／extractor briefs／号令力走样树；未动月链与改票现役入口；仅 F2；未 amend/stash/push/PR；不宣布合并关票。
+同类型：补全闭包漏退役（generate 常量／Batch／`_current_game_turn`）＋证据逐名；未动月链与改票现役入口；仅 F2；未 amend/stash/push/PR；测试改布景不放松断言；不宣布合并关票。
 
-## Commit 与 git 状态（R5）
+## Commit 与 git 状态（R6）
 
-- 施工前 HEAD：`77c00eadc7ce152c06bbb9a6958e69d805c7d3d6`
-- R5 清退＋证据：见本提交
-- 标题：`ak-roles: fix(#1843) retire test-only settlement/simulator support trees (F2 R5)`
+- 施工前 HEAD：`7a96584abf67d0a4817752dbcde5a36b5835a034`
+- R6 清退＋证据：见本提交
+- 标题：`ak-roles: fix(#1843) complete F2 full-closure retirement receipt (R6)`
 
 ## 剩余范围
 
 F1／F3／分类器／收夜邻接仍非本票；#1856 总核与全量 CI 留最终待合并。
 
 ---
-
 
 <details>
 <summary>R1–R4 历史回执全文（保留失败经过）</summary>

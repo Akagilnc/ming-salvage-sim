@@ -1,0 +1,69 @@
+PER_NAME_ABSENCE
+format_region_changes	GONE	defs=False	refs=0	sample=[]
+format_army_changes	GONE	defs=False	refs=0	sample=[]
+format_power_changes	GONE	defs=False	refs=0	sample=[]
+turn_region_summary	GONE	defs=False	refs=0	sample=[]
+turn_army_summary	GONE	defs=False	refs=0	sample=[]
+execution_distortion_weight	GONE	defs=False	refs=0	sample=[]
+command_power_rank	GONE	defs=False	refs=0	sample=[]
+COMMAND_POWER_RANK	GONE	defs=False	refs=0	sample=[]
+_MAX_COMMAND_POWER_RANK	GONE	defs=False	refs=0	sample=[]
+_AUTHORITY_RELIEF_AMOUNTS	GONE	defs=False	refs=0	sample=[]
+AUTHORITY_COMMAND_RELIEF	GONE	defs=False	refs=0	sample=[]
+build_secret_covert_effect_briefs	GONE	defs=False	refs=0	sample=[]
+_current_game_turn	GONE	defs=False	refs=0	sample=[]
+has_player_visible_rejection	GONE	defs=False	refs=0	sample=[]
+faction_report	GONE	defs=False	refs=0	sample=[]
+create_rescript_draft_agent	GONE	defs=False	refs=0	sample=[]
+select_triage_actor	GONE	defs=False	refs=0	sample=[]
+generate_rescript_draft	GONE	defs=False	refs=0	sample=[]
+validate_rescript_draft_items	GONE	defs=False	refs=0	sample=[]
+_apply_option_heal	GONE	defs=False	refs=0	sample=[]
+_assert_utf8	GONE	defs=False	refs=0	sample=[]
+_board_issue_ids	GONE	defs=False	refs=0	sample=[]
+_contract_exc_to_top_failure	GONE	defs=False	refs=0	sample=[]
+_drop_options_by_failures	GONE	defs=False	refs=0	sample=[]
+_explicit_heal_id	GONE	defs=False	refs=0	sample=[]
+_failure_log_rows	GONE	defs=False	refs=0	sample=[]
+_find_healed_unit_for_failure	GONE	defs=False	refs=0	sample=[]
+_healed_options_by_id	GONE	defs=False	refs=0	sample=[]
+_item_failure	GONE	defs=False	refs=0	sample=[]
+_item_heal_id	GONE	defs=False	refs=0	sample=[]
+_merge_healed_missing_options	GONE	defs=False	refs=0	sample=[]
+_missing_field_heal_feedback	GONE	defs=False	refs=0	sample=[]
+_option_failure_from_exc	GONE	defs=False	refs=0	sample=[]
+_option_heal_id	GONE	defs=False	refs=0	sample=[]
+_top_failure	GONE	defs=False	refs=0	sample=[]
+_top_heal_id	GONE	defs=False	refs=0	sample=[]
+_ungrounded_roster_person_failure	GONE	defs=False	refs=0	sample=[]
+_with_heal_response_contract_failure	GONE	defs=False	refs=0	sample=[]
+_write_degraded_note	GONE	defs=False	refs=0	sample=[]
+_degrade	GONE	defs=False	refs=0	sample=[]
+_validate	GONE	defs=False	refs=0	sample=[]
+_required_text_or_fail	GONE	defs=False	refs=0	sample=[]
+RESCRIPT_OPTION_FIELD_HEAL_RETRIES	GONE	defs=False	refs=0	sample=[]
+RescriptOptionMissingFieldsBatch	GONE	defs=False	refs=0	sample=[]
+RescriptOptionMissingFailure	GONE	defs=False	refs=0	sample=[]
+_EXHAUST_DEGRADE_MONTH	GONE	defs=False	refs=0	sample=[]
+_EXHAUST_DROP_ITEM	GONE	defs=False	refs=0	sample=[]
+_EXHAUST_IGNORE_TOP_KEYS	GONE	defs=False	refs=0	sample=[]
+_EXHAUST_DROP_OPTION	GONE	defs=False	refs=0	sample=[]
+_SCOPE_ITEM	GONE	defs=False	refs=0	sample=[]
+_SCOPE_TOP	GONE	defs=False	refs=0	sample=[]
+_SCOPE_OPTION	GONE	defs=False	refs=0	sample=[]
+_TOP_ALLOWED_KEYS	GONE	defs=False	refs=0	sample=[]
+_ITEM_ALLOWED_KEYS	GONE	defs=False	refs=0	sample=[]
+BAD 0
+---LIVE_LAYER_A_STILL---
+normalize_rescript_layer_a_option DEF refs 84
+normalize_stop_condition DEF refs 5
+rescript_layer_a_prompt_contract DEF refs 2
+_parse_rescript_json_strict DEF refs 7
+_assert_army_targets_grounded DEF refs 2
+RescriptOptionMissingFieldsError DEF refs 3
+_OPTION_REPLACE_FIELD DEF refs 4
+canonical_fields_for_delivery DEF refs 2
+normalize_appointment_tenure DEF refs 2
+appointment_tenure_from DEF refs 8
+create_rescript_revise_agent DEF refs 4
+save_rescript_drafts DEF refs 20

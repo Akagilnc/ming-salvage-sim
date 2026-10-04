@@ -2830,5 +2830,3 @@ def test_1621_http_follow_draft_uses_catalog_army_id(web_game, monkeypatch):
     assert "event: done" in r.text, r.text
     dossiers = db.list_decree_dossiers()
     assert dossiers and dossiers[-1]["target_id"] == "guanning"
-
-

@@ -1,0 +1,83 @@
+CANDIDATE_STATUS_AT_HEAD
+GONE	AUTHORITY_COMMAND_RELIEF	residual_refs=0	sample=[]
+GONE	COMMAND_POWER_RANK	residual_refs=0	sample=[]
+STILL	INSTITUTION_PARTICIPANT_TOKENS	def=['ming_sim/participant_roster.py:20']	prod=1	tests=0	prod_sample=['ming_sim/participant_roster.py:47']	test_sample=[]
+STILL	PERSON_NON_TRANSITION_ACTIONS	def=['ming_sim/person_archive_contract.py:13']	prod=1	tests=0	prod_sample=['ming_sim/person_archive_contract.py:15']	test_sample=[]
+STILL	PERSON_TRANSITION_ACTIONS	def=['ming_sim/person_archive_contract.py:11']	prod=1	tests=0	prod_sample=['ming_sim/person_archive_contract.py:15']	test_sample=[]
+STILL	RESCRIPT_OPTION_FIELD_HEAL_RETRIES	def=['ming_sim/rescript_draft.py:51']	prod=0	tests=0	prod_sample=[]	test_sample=[]
+STILL	RescriptOptionMissingFieldsBatch	def=['ming_sim/rescript_draft.py:168']	prod=0	tests=0	prod_sample=[]	test_sample=[]
+GONE	_AUTHORITY_RELIEF_AMOUNTS	residual_refs=0	sample=[]
+STILL	_DOSSIER_EXTERNAL_REVIEW_EXEMPT	def=['ming_sim/decree_vocabulary.py:131']	prod=1	tests=0	prod_sample=['ming_sim/decree_vocabulary.py:150']	test_sample=[]
+STILL	_DOSSIER_IMMEDIATE_ACTIONS	def=['ming_sim/decree_vocabulary.py:134']	prod=1	tests=0	prod_sample=['ming_sim/decree_vocabulary.py:152']	test_sample=[]
+STILL	_DOSSIER_NARRATIVE_ACTIONS	def=['ming_sim/decree_vocabulary.py:123']	prod=1	tests=0	prod_sample=['ming_sim/decree_vocabulary.py:153']	test_sample=[]
+STILL	_DOSSIER_TERMINAL_ACTIONS	def=['ming_sim/decree_vocabulary.py:135']	prod=1	tests=0	prod_sample=['ming_sim/decree_vocabulary.py:157']	test_sample=[]
+STILL	_EXHAUST_DEGRADE_MONTH	def=['ming_sim/rescript_draft.py:146']	prod=0	tests=0	prod_sample=[]	test_sample=[]
+STILL	_EXHAUST_DROP_ITEM	def=['ming_sim/rescript_draft.py:145']	prod=0	tests=0	prod_sample=[]	test_sample=[]
+STILL	_EXHAUST_IGNORE_TOP_KEYS	def=['ming_sim/rescript_draft.py:147']	prod=0	tests=0	prod_sample=[]	test_sample=[]
+STILL	_ITEM_ALLOWED_KEYS	def=['ming_sim/rescript_draft.py:1109']	prod=0	tests=0	prod_sample=[]	test_sample=[]
+GONE	_MAX_COMMAND_POWER_RANK	residual_refs=0	sample=[]
+STILL	_SCOPE_ITEM	def=['ming_sim/rescript_draft.py:149']	prod=0	tests=0	prod_sample=[]	test_sample=[]
+STILL	_SCOPE_TOP	def=['ming_sim/rescript_draft.py:150']	prod=0	tests=0	prod_sample=[]	test_sample=[]
+STILL	_TOP_ALLOWED_KEYS	def=['ming_sim/rescript_draft.py:1108']	prod=0	tests=0	prod_sample=[]	test_sample=[]
+GONE	_apply_option_heal	residual_refs=0	sample=[]
+GONE	_assert_utf8	residual_refs=0	sample=[]
+GONE	_board_issue_ids	residual_refs=0	sample=[]
+GONE	_contract_exc_to_top_failure	residual_refs=0	sample=[]
+STILL	_current_game_turn	def=['ming_sim/covert_progress.py:635']	prod=0	tests=0	prod_sample=[]	test_sample=[]
+GONE	_degrade	residual_refs=0	sample=[]
+GONE	_drop_options_by_failures	residual_refs=0	sample=[]
+GONE	_explicit_heal_id	residual_refs=0	sample=[]
+GONE	_failure_log_rows	residual_refs=0	sample=[]
+GONE	_find_healed_unit_for_failure	residual_refs=0	sample=[]
+GONE	_healed_options_by_id	residual_refs=0	sample=[]
+GONE	_item_failure	residual_refs=0	sample=[]
+GONE	_item_heal_id	residual_refs=0	sample=[]
+GONE	_merge_healed_missing_options	residual_refs=0	sample=[]
+GONE	_missing_field_heal_feedback	residual_refs=0	sample=[]
+GONE	_option_failure_from_exc	residual_refs=0	sample=[]
+GONE	_option_heal_id	residual_refs=0	sample=[]
+GONE	_required_text_or_fail	residual_refs=0	sample=[]
+GONE	_top_failure	residual_refs=0	sample=[]
+GONE	_top_heal_id	residual_refs=0	sample=[]
+GONE	_ungrounded_roster_person_failure	residual_refs=0	sample=[]
+GONE	_validate	residual_refs=0	sample=[]
+GONE	_with_heal_response_contract_failure	residual_refs=0	sample=[]
+GONE	_write_degraded_note	residual_refs=0	sample=[]
+GONE	build_secret_covert_effect_briefs	residual_refs=0	sample=[]
+GONE	command_power_rank	residual_refs=0	sample=[]
+GONE	create_rescript_draft_agent	residual_refs=0	sample=[]
+GONE	execution_distortion_weight	residual_refs=0	sample=[]
+GONE	faction_report	residual_refs=0	sample=[]
+GONE	format_army_changes	residual_refs=0	sample=[]
+GONE	format_power_changes	residual_refs=0	sample=[]
+GONE	format_region_changes	residual_refs=0	sample=[]
+GONE	generate_rescript_draft	residual_refs=0	sample=[]
+GONE	has_player_visible_rejection	residual_refs=0	sample=[]
+GONE	select_triage_actor	residual_refs=0	sample=[]
+GONE	turn_army_summary	residual_refs=0	sample=[]
+GONE	turn_region_summary	residual_refs=0	sample=[]
+GONE	validate_rescript_draft_items	residual_refs=0	sample=[]
+SUMMARY still 17 gone 41
+---STILL_BY_FILE---
+FILE ming_sim/covert_progress.py
+  _current_game_turn	prod=0	tests=0
+FILE ming_sim/decree_vocabulary.py
+  _DOSSIER_EXTERNAL_REVIEW_EXEMPT	prod=1	tests=0
+  _DOSSIER_IMMEDIATE_ACTIONS	prod=1	tests=0
+  _DOSSIER_NARRATIVE_ACTIONS	prod=1	tests=0
+  _DOSSIER_TERMINAL_ACTIONS	prod=1	tests=0
+FILE ming_sim/participant_roster.py
+  INSTITUTION_PARTICIPANT_TOKENS	prod=1	tests=0
+FILE ming_sim/person_archive_contract.py
+  PERSON_NON_TRANSITION_ACTIONS	prod=1	tests=0
+  PERSON_TRANSITION_ACTIONS	prod=1	tests=0
+FILE ming_sim/rescript_draft.py
+  RESCRIPT_OPTION_FIELD_HEAL_RETRIES	prod=0	tests=0
+  RescriptOptionMissingFieldsBatch	prod=0	tests=0
+  _EXHAUST_DEGRADE_MONTH	prod=0	tests=0
+  _EXHAUST_DROP_ITEM	prod=0	tests=0
+  _EXHAUST_IGNORE_TOP_KEYS	prod=0	tests=0
+  _ITEM_ALLOWED_KEYS	prod=0	tests=0
+  _SCOPE_ITEM	prod=0	tests=0
+  _SCOPE_TOP	prod=0	tests=0
+  _TOP_ALLOWED_KEYS	prod=0	tests=0

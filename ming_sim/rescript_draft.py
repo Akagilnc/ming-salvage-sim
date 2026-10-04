@@ -19,18 +19,10 @@ issue 盘面事实，不新建 issue。event_id 以喂给 LLM 的 issue 盘面�
 
 from __future__ import annotations
 
-import copy
 import json
 import re
-from dataclasses import dataclass
-from datetime import datetime, timezone
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
-from openai import APIConnectionError, APIStatusError, APITimeoutError
-
-from ming_sim.agents import run_agent_text
-from ming_sim.assets import strip_json_fence
-from ming_sim.llm_model import llm_unavailable_from_error
 from ming_sim.db import GameDB
 from ming_sim.decree_vocabulary import (
     DOSSIER_ACTION_TYPES,
@@ -39,16 +31,12 @@ from ming_sim.decree_vocabulary import (
     _DRAFT_CAPABILITY_KEYS,
     derive_draft_capability,
 )
-from ming_sim.error_pack import error_packs_root
-from ming_sim.exceptions import LLMContractError, LLMUnavailable
+from ming_sim.exceptions import LLMContractError
 from ming_sim.participant_roster import PARTICIPANT_LEAD_TIER, PARTICIPANT_TIERS
 from ming_sim.structured_decree import StructuredDecreeCombinationError
-from ming_sim.token_stats import tlog
 
-# #1746：单 option 契约失败（缺/错/组合/接地/形）→ 同一会话补交（不含首抽）；耗尽只剔该 option。
-# decision: missing-field-heal-by-resume-not-drop / per-option-drop-after-heal-exhausted
+# #1746：单 option 契约失败（缺/错/组合/接地/形）→ RescriptOptionMissingFieldsError。
 # decision: heal-covers-illegal-values-too（不问错在哪；不按错误种类分闸）
-RESCRIPT_OPTION_FIELD_HEAL_RETRIES = 3
 # 整 option 替换语义标记（非 object 等）；出现在 missing_fields 时合并器接受完整 option 体。
 _OPTION_REPLACE_FIELD = "option"
 
@@ -139,42 +127,6 @@ def _raise_option_missing_fields(
         field_failures=field_failures,
     )
 
-
-# #1801：同一 heal 回路扩到 top/item/option；exhaust 决定耗尽后只影响自己的处置。
-_EXHAUST_DROP_OPTION = "drop_option"
-_EXHAUST_DROP_ITEM = "drop_item"
-_EXHAUST_DEGRADE_MONTH = "degrade_month"
-_EXHAUST_IGNORE_TOP_KEYS = "ignore_top_keys"
-_SCOPE_OPTION = "option"
-_SCOPE_ITEM = "item"
-_SCOPE_TOP = "top"
-
-
-@dataclass(frozen=True)
-class RescriptOptionMissingFailure:
-    item_index: int
-    option_index: int
-    title: str
-    missing_fields: Tuple[str, ...]  # 由 field_failures 派生
-    raw_option: object
-    # 机面结构身份：补交请求显式携带、响应回指；不依赖 title/label 自由文。
-    heal_id: str = ""
-    field_failures: Tuple[Dict[str, object], ...] = ()
-    # #1801 扩面：option（#1746 默认）/ item / top；exhaust 为耗尽处置。
-    scope: str = _SCOPE_OPTION
-    exhaust: str = _EXHAUST_DROP_OPTION
-
-
-class RescriptOptionMissingFieldsBatch(ValueError):
-    """一批可定位契约失败（validate isolate 模式一次收齐，供同一 heal 回路补交/剔除）。"""
-
-    def __init__(self, failures: Sequence[RescriptOptionMissingFailure]) -> None:
-        self.failures = list(failures)
-        parts = [
-            f"{f.scope}:{f.heal_id or f.title!r}#{f.option_index}:{','.join(f.missing_fields)}"
-            for f in self.failures
-        ]
-        super().__init__("票拟契约失败：" + "; ".join(parts))
 
 # #657 C.3 层 A option 必填键（缺一 shape 失败）；draft_capability 由服务端派生写入。
 # #1624 / PR#1719：required/present/action-conditional 为 typed 单源——
@@ -1103,14 +1055,6 @@ def normalize_rescript_layer_a_option(
     return out
 
 
-
-
-_TOP_ALLOWED_KEYS = frozenset({"items"})
-_ITEM_ALLOWED_KEYS = frozenset({"title", "context", "options", "issue_id"})
-
-
-
-
 def _parse_rescript_json_strict(raw: str) -> Dict[str, Any]:
     # r4 P1：围栏外 prose 必须走整批 shape 降级——容忍恰好覆盖全响应的单层围栏，
     # 围栏外任何非空白字符 → LLMContractError 整批降级；不得改 strip_json_fence 全局语义。
@@ -1244,29 +1188,3 @@ def _assert_army_targets_grounded(
             )
             if ground_exc is not None:
                 raise ValueError(str(ground_exc))
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

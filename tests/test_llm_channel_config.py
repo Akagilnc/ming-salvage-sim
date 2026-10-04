@@ -877,4 +877,3 @@ def test_scene_and_rescript_entries_pass_default_headers_at_transport(monkeypatc
     create_rescript_revise_agent(cfg, db)
     assert len(captured) == before + 1, "改票入口须再构造一次 OpenAIChat"
     assert captured[-1].get("default_headers") == headers
-
