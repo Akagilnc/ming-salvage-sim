@@ -229,6 +229,22 @@ ok(
     "def _displace_duplicate_offices" not in src_iss,
     "",
 )
+ok(
+    "N10_SECRET_SNAPSHOT_NO_SUBSTRING_OFFICE",
+    "office in str(character.office" not in src_db and "str(character.office or \"\") in office" not in src_db,
+    "",
+)
+ok(
+    "N10_NO_TOKEN_CALLER_PROMPT_KEYWORDS",
+    "扮演被皇帝召见" not in (ROOT / "ming_sim/token_stats.py").read_text(encoding="utf-8"),
+    "",
+)
+ok(
+    "N6_NO_AMBIGUOUS_CLOSE_ANSWER_REWRITE",
+    "_ensure_close_night_confirm_cue" not in (ROOT / "ming_sim/session.py").read_text(encoding="utf-8")
+    and "_ambiguous_close_confirm_cue" in (ROOT / "ming_sim/session.py").read_text(encoding="utf-8"),
+    "",
+)
 src_mf = (ROOT / "web/src/components/ministerFilters.ts").read_text(encoding="utf-8")
 ok("N10_UI_NO_OFFICE_TITLE_REGEX", not any(x in src_mf for x in ("/首辅/", "/前|罢|致仕/", "/尚书/")), "")
 ok("N10_UI_FILTER_USES_OFFICE_TYPE_ENUM", "office_type" in src_mf and "status" in src_mf, "")

@@ -243,10 +243,22 @@ def _snapshot_secret_order_people(
     names = list(dict.fromkeys(names))
     if not offices or content is None:
         return names
+    office_set = {str(o) for o in offices if str(o)}
+    from ming_sim.office_rank import concurrent_office_titles
     for character in content.characters.values():
-        if character.office_type in offices or character.office in offices or any(
-            office and (office in str(character.office or "") or str(character.office or "") in office)
-            for office in offices
+        held = {
+            str(part)
+            for part in (
+                concurrent_office_titles(character.office)
+                or [str(character.office or "").strip()]
+            )
+            if str(part)
+        }
+        # Exact registry / formal concurrent parts only — no substring admit (#1847).
+        if (
+            character.office_type in office_set
+            or character.office in office_set
+            or (held & office_set)
         ):
             names.append(character.name)
     return list(dict.fromkeys(names))

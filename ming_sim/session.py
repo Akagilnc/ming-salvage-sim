@@ -1011,15 +1011,9 @@ class GameSession:
 
 
     @staticmethod
-    def _ensure_close_night_confirm_cue(answer: str) -> str:
-        """含糊收夜：大臣戏内确认（不出戏），不直接收夜。"""
-        text = answer or ""
-        ask = "陛下是要退朝么？"
-        if ask in text:
-            return text or ask
-        if not text.strip():
-            return ask
-        return text + "\n" + ask
+    def _ambiguous_close_confirm_cue() -> str:
+        """含糊收夜：界面固定确认话语（P7 UI 固定话语，不改写 LLM 答文）。"""
+        return "陛下是要退朝么？"
 
     def close_night_after_chat_if_needed(
         self,
@@ -1184,7 +1178,7 @@ class GameSession:
             if audience_command_verdict == CMD_AMBIGUOUS_CLOSE:
                 if ctid > 0:
                     self._mark_control_turn_translation_done(ctid)
-                result.answer = GameSession._ensure_close_night_confirm_cue("")
+                result.answer = GameSession._ambiguous_close_confirm_cue()
                 return result
             if audience_command_verdict == CMD_STAY_ATTEND:
                 from ming_sim.audience_night import (
