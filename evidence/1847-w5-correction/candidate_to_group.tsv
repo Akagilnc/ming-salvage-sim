@@ -60,7 +60,7 @@ N6	ming_sim/declaration_dispatch.py	1428	PENDING_HUMAN	N6.ming_sim/declaration_d
 N6	ming_sim/declaration_dispatch.py	1520	PENDING_HUMAN	N6.ming_sim/declaration_dispatch.py::prose_and_ids	KEEP_empty_gate	and str(grant_raw.get("target_id") or "").strip()
 N6	ming_sim/declaration_dispatch.py	1522	PENDING_HUMAN	N6.ming_sim/declaration_dispatch.py::prose_and_ids	KEEP_empty_gate	payload["region_id"] = str(grant_raw["target_id"]).strip()
 N6	ming_sim/declaration_dispatch.py	1880	PENDING_HUMAN	N6.ming_sim/declaration_dispatch.py::prose_and_ids	KEEP_empty_gate	if not isinstance(query, str) or not query.strip():
-N6	ming_sim/declaration_dispatch.py	1131	PENDING_HUMAN	N6.ming_sim/declaration_dispatch.py::prose_and_ids	KEEP_empty_gate	if not body or not actor or not isinstance(target_id, str) or not target_id.strip() or origin_id <= 
+N6	ming_sim/declaration_dispatch.py	1131	PENDING_HUMAN	N6.ming_sim/declaration_dispatch.py::prose_and_ids	KEEP_empty_gate	if not body or not actor or not isinstance(target_id, str) or not target_id.strip() or origin_id <=
 N6	ming_sim/declaration_dispatch.py	1178	PENDING_HUMAN	N6.ming_sim/declaration_dispatch.py::prose_and_ids	KEEP_empty_gate	target is None or order_id <= 0 or not isinstance(note, str) or not note.strip()
 N6	ming_sim/declaration_dispatch.py	1209	PENDING_HUMAN	N6.ming_sim/declaration_dispatch.py::prose_and_ids	KEEP_empty_gate	if target is None or order_id <= 0 or not isinstance(content_text, str) or not content_text.strip():
 N6	ming_sim/declaration_dispatch.py	1270	PENDING_HUMAN	N6.ming_sim/declaration_dispatch.py::prose_and_ids	KEEP_empty_gate	"assignee": str(secret.get("assignee") or "").strip() or actor,
@@ -2340,7 +2340,7 @@ N6	scripts/play_as_emperor.py	177	PENDING_HUMAN	N6.scripts/play_as_emperor.py::t
 N6	scripts/play_as_emperor.py	364	PENDING_HUMAN	N6.scripts/play_as_emperor.py::transport_and_log	KEEP	reasoning, action = ask_emperor(emperor, cli_chunk, prompt_hint.strip(), progress)
 N6	scripts/play_as_emperor.py	368	PENDING_HUMAN	N6.scripts/play_as_emperor.py::transport_and_log	KEEP	if action.strip() in {"", "可", "准", "是", "yes"}:
 N6	scripts/play_as_emperor.py	472	PENDING_HUMAN	N6.scripts/play_as_emperor.py::transport_and_log	KEEP	reasoning, action = ask_emperor(emperor, cli_chunk, prompt_hint.strip(), progress)
-N6	scripts/play_as_emperor.py	481	PENDING_HUMAN	N6.scripts/play_as_emperor.py::transport_and_log	KEEP	state.history.append({"step": step, "prompt": prompt_hint.strip(), "reasoning": reasoning, "input": 
+N6	scripts/play_as_emperor.py	481	PENDING_HUMAN	N6.scripts/play_as_emperor.py::transport_and_log	KEEP	state.history.append({"step": step, "prompt": prompt_hint.strip(), "reasoning": reasoning, "input":
 N6	scripts/play_as_emperor.py	493	PENDING_HUMAN	N6.scripts/play_as_emperor.py::transport_and_log	KEEP	if "召见谁" in prompt_hint and action.lower() not in {"quit", "q", "exit", "back", ""}:
 N6	scripts/play_as_emperor.py	496	PENDING_HUMAN	N6.scripts/play_as_emperor.py::transport_and_log	KEEP	if "朕问" in prompt_hint and action.lower() not in {"quit", "q", "exit", "back", "退下", ""}:
 N6	scripts/play_as_emperor.py	386	PENDING_HUMAN	N6.scripts/play_as_emperor.py::transport_and_log	KEEP	log(f"\n--- step {step} | prompt: {prompt_hint.strip()[:40]} ---")
