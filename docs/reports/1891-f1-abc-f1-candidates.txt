@@ -1,3 +1,4 @@
+tests/conftest.py::seed_rescript_rows [urgent_fixture_id] L27-41
 tests/test_applier_contract.py::test_ddl_in_open_transaction_rolls_back [sqlite_master_check] L348-370
 tests/test_appointment_tenure_607.py::test_appointment_dossier_and_office_archive_preserve_each_tenure [select_order_limit] L37-55
 tests/test_army_display_173.py::test_army_public_exits_approx_arrears_and_hide_split_accounts [select_order_limit] L31-48
@@ -129,4 +130,4 @@ tests/test_style_temperament_641.py::test_temperament_style_preserves_raw_bytes_
 tests/test_transaction_boundary.py::test_ddl_first_inside_atomic_rolls_back [sqlite_master_check] L414-437
 tests/test_transit_countdown_668.py::test_arrivals_sorted_by_name_stable [select_order_limit] L261-273
 tests/test_world_materials_1834.py::test_world_materials_include_textual_facts_once_and_gazette_not_duplicated [select_order_limit] L188-257
-TOTAL 131
+TOTAL 132

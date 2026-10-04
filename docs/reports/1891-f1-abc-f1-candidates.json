@@ -1,5 +1,13 @@
 [
   {
+    "file": "tests/conftest.py",
+    "member": "seed_rescript_rows",
+    "shapes": [
+      "urgent_fixture_id"
+    ],
+    "lines": "27-41"
+  },
+  {
     "file": "tests/test_applier_contract.py",
     "member": "test_ddl_in_open_transaction_rolls_back",
     "shapes": [
