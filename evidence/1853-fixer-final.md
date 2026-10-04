@@ -173,6 +173,6 @@ pytest tests/test_audience_scroll_539.py::test_live_and_closed_night_share_the_r
 
 ## Commit
 
-- （本轮提交后回填 hash）
-- 前缀：`ak-roles:`
+- `1fb9888ad8a929c08daff9a95bb172a25539c45d`
+- `ak-roles: fix(#1853): delete failed-status system presentation and J2/J4 residue`
 - 分支：`ak-roles/issue-1853-j2-j5-unify`（未 push、未开 PR）
