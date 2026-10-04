@@ -4,7 +4,7 @@
 **分支**：`ak-roles/1834-f16-f3-f3r-f17-ee3b5da31`
 **基线**：`ee3b5da312c5832720d89aee707fe4c7669c5eb0`
 **前序误交**：`e998bc2d4` / `712c4029d`（自动 KEEP 层 + 永久证明脚本，本轮撤销）
-**本轮 commit**：提交后 `git rev-parse HEAD`
+**本轮 commit**：`04b62b858d14b3efb77afdcb7d7db1feca375e88`
 
 **共同测试前缀（七变量，实写）**：
 
