@@ -5,7 +5,7 @@
 - 起始 HEAD（J2-T/J8 首轮）：`2e392c22469b3dea6f5e69d21d1abe49adac8714`
 - 首轮交卷：`f88af780d0f5e402a9c06a50f5dd88d98488ba5e`（J2-T + 仅三 reply getter 的窄 J8）
 - 扩类交卷：`3c4aca7045eaea539bbaee6ae672a853f9d4f73c`（J8 查询空护栏扩类；表 B 误并查询）
-- **本轮交卷 commit：（见文末；纠正表 B + `already_done` 查询直调）**
+- **本轮交卷 commit：`55888a1b48cf5e40cdae43010d658f8a64002ebe`（纠正表 B + `already_done` 查询直调）**
 - 派单：`01a108c7-fcb1-77bc-a311-40f04c296e26@fixer`
 - 判词冻结：`07-1853-judge-2e392c224.json` payloads **末份**
 - **用户裁定（本轮）**：J2 放行；J8 未扫净。授权=重试/转译重试**查询**接缝内，必备接口被当可选、缺失仍正常继续全部直调（不只空 `[]`）一律直调；无新增机制/检查/适配/失败账本；不扩一般聊天/结算/关闭生命周期或 SDK/结果字段。
@@ -166,4 +166,4 @@ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$PWD" \
 
 ## commit
 
-见 `git rev-parse HEAD`（本轮独立 `ak-roles:` commit；不 amend）。
+`55888a1b48cf5e40cdae43010d658f8a64002ebe` — `ak-roles: fix(#1853): direct-call already_done story extract status query`
