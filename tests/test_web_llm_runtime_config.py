@@ -958,6 +958,8 @@ def test_1271_menu_save_cli_grok_high_round_trip(monkeypatch):
 
 def test_1271_three_endpoints_grok_reasoning_supported_and_capability_list(monkeypatch):
     """#1271：status/GET/POST 三端 reasoning_supported=True + payload 名单含 grok。"""
+    from ming_sim.cli_backend import CLI_REASONING_STRENGTH_RUNNERS
+
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
     monkeypatch.setattr(web_app, "_has_main_db", lambda: False)
@@ -976,6 +978,7 @@ def test_1271_three_endpoints_grok_reasoning_supported_and_capability_list(monke
     assert status["llm"]["reasoning_strength"] == "high"
     assert status["llm"]["reasoning_supported"] is True
     assert "grok" in status["llm"]["cli_reasoning_runners"]
+    assert set(status["llm"]["cli_reasoning_runners"]) == set(CLI_REASONING_STRENGTH_RUNNERS)
 
     cfg = LLMConfig(
         api_key="",
@@ -995,6 +998,7 @@ def test_1271_three_endpoints_grok_reasoning_supported_and_capability_list(monke
     assert get_result["reasoning_strength"] == "high"
     assert get_result["reasoning_supported"] is True
     assert "grok" in get_result["cli_reasoning_runners"]
+    assert set(get_result["cli_reasoning_runners"]) == set(CLI_REASONING_STRENGTH_RUNNERS)
 
     fake = SimpleNamespace(_write_gate=threading.Lock(),
         build_llm_config=lambda *a, **k: cfg,
@@ -1012,6 +1016,7 @@ def test_1271_three_endpoints_grok_reasoning_supported_and_capability_list(monke
     assert post_result["reasoning_strength"] == "high"
     assert post_result["reasoning_supported"] is True
     assert "grok" in post_result["cli_reasoning_runners"]
+    assert set(post_result["cli_reasoning_runners"]) == set(CLI_REASONING_STRENGTH_RUNNERS)
 
 
 def _count_llm_calls(monkeypatch):

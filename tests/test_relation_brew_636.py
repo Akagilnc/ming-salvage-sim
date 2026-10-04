@@ -13,7 +13,6 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
-import hashlib
 import httpx
 import json
 import sqlite3
@@ -328,14 +327,10 @@ def test_prepare_attaches_prior_events_only_via_history_seam(game, monkeypatch):
 # --------------------------- 庭裁 r3/r4 F2 超长 fixture：32,700 字节零删改
 
 def test_brew_persistence_chain_preserves_32700_byte_fixture_byte_identical(game):
-    # r4 冻结公式：B（UTF-8 75 字节）× 436 ＝ 32,700 字节，sha256 冻结。
+    # Keep the long injected input; compare its before-image directly, not a
+    # parallel checksum/length oracle for the same preservation contract.
     block = "崇祯边事关系账超长验收样文-Chongzhen-relation-brew-0123456789-".encode("utf-8")
-    assert len(block) == 75
     fixture = block * 436
-    assert len(fixture) == 32700
-    assert hashlib.sha256(fixture).hexdigest() == (
-        "8241a513648a4a99d6690f0a2cc942ee9523702301e6db12a9333c458c032240"
-    )
     fixture_text = fixture.decode("utf-8")
 
     db, state, _ = game
@@ -353,11 +348,7 @@ def test_brew_persistence_chain_preserves_32700_byte_fixture_byte_identical(game
     assert len(report["brewed"]) == 1
 
     stored = db.get_relation_summary(EMPEROR_NODE, "杨嗣昌")["recent_segment"]
-    stored_bytes = stored.encode("utf-8")
-    assert len(stored_bytes) == 32700
-    assert hashlib.sha256(stored_bytes).hexdigest() == (
-        "8241a513648a4a99d6690f0a2cc942ee9523702301e6db12a9333c458c032240"
-    )
+    assert stored.encode("utf-8") == fixture
 
 
 # --------------------------------------------- P5：批内条目并行不串行

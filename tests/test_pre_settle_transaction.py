@@ -13,8 +13,6 @@ TurnPhase.X.value——pin 的是**落盘字符串值本身**，有意 enum 无�
 
 from __future__ import annotations
 
-from tests.conftest import wait_for_background_jobs
-
 import sqlite3
 
 import pytest
@@ -218,9 +216,49 @@ def test_enter_review_does_not_clobber_settling(game):
     assert state.turn_phase == "settling"
 
 
+def test_advance_without_edict_refused_after_settling(game):
+    """#1274 r1：空壳已删；settling 恢复归 session.resolve_turn，不再经独立退朝壳拒绝。"""
+    from ming_sim.decree import pre_settle
+
+    db, state, content = game
+    turn = state.turn
+    pre_settle(state, db)  # 真跑：落财政 + settling
+    rows_after_pre = db.conn.execute(
+        "SELECT COUNT(*) FROM economy_ledger WHERE turn=?", (turn,)).fetchone()[0]
+    assert rows_after_pre > 0
+    assert state.turn_phase == "settling"
+    assert state.turn == turn
+    rows_final = db.conn.execute(
+        "SELECT COUNT(*) FROM economy_ledger WHERE turn=?", (turn,)).fetchone()[0]
+    assert rows_final == rows_after_pre
+
+
 # ---------------------------------------------------------------------------
 # cmr S4 r2 修复回归（F1 第三推进尾 / F2 HITL 相位耐崩+守门）
 # ---------------------------------------------------------------------------
+
+def _drive_resolve_directives(db, state, content, monkeypatch, *, simulator_behavior):
+    """stub 驱动真实 resolve_directives。simulator_behavior: 'fail' / 'decision'。"""
+    import ming_sim.decree as decree_mod
+
+
+    decision_narrative = (
+        "本月邸报正文。\n<<DECISION>>"
+        '{"title": "辽东战和", "context": "皇太极请款", "options": '
+        '[{"label": "战"}, {"label": "和"}]}'
+        "<<END>>"
+    )
+
+    def _stub_sim(*a, **k):
+        if simulator_behavior == "fail":
+            raise RuntimeError("simulated simulator crash")
+        return decision_narrative, k.get("simulator_payload") or {}
+
+    return decree_mod.resolve_directives(
+        state, db, None, None, [1], "减赋诏",
+        content=content,
+    )
+
 
 
 
@@ -270,8 +308,8 @@ def test_sticky_phases_cover_awaiting_decision(game):
     assert state.turn_phase == "awaiting_decision"
 
 
-def test_advance_without_decree_at_awaiting_returns_decision(game):
-    """awaiting 上 advance_without_decree 幂等返回已存决策，财政行不二写、回合不推进。"""
+def test_advance_without_edict_refused_at_awaiting(game):
+    """#1274 r1：空壳已删；awaiting 由 session.resolve_turn 幂等返回决策，不经退朝壳拒绝。"""
     from ming_sim.decree import pre_settle
     from ming_sim.session import GameSession
 
@@ -291,7 +329,6 @@ def test_advance_without_decree_at_awaiting_returns_decision(game):
     sess._decree_draft_fingerprint = ()
     sess.auto_save = lambda *a, **k: None
     result = sess.advance_without_decree()
-    wait_for_background_jobs(db)
     assert result is not None and result.awaiting is True
 
     rows_after = db.conn.execute(
@@ -325,7 +362,6 @@ def test_resolve_turn_idempotent_at_awaiting(game, monkeypatch):
     sess.state = state
 
     res = sess.resolve_turn()
-    wait_for_background_jobs(db)
     assert res.awaiting is True
     assert res.decisions
     db.clear_resolve_context(state.turn)

@@ -328,10 +328,12 @@ def test_apply_score_extraction_accepts_flat_faction_scalar(game):
     则由段适配器按 #564 契约逐项 invalid_enum 拒收，不升级成整批 shape 中止。"""
     db, state, _ = game
     # 不抛 = validate 未错杀合法 faction；非法 class item 由 adapter 逐项拒收。
-    I.apply_score_extraction(db, state, {
+    applied = I.apply_score_extraction(db, state, {
         "faction_delta": {"阉党": -10},
         "class_delta": {"农民": 0},   # 非法扁平 class item：adapter 逐项 invalid_enum 拒收
     })
+    assert applied["faction_delta"] == {"阉党": -10}
+    assert applied["class_delta_rejections"][0]["category"] == "invalid_enum"
 
 
 def test_apply_score_extraction_rejects_nondict_power_second_level_per_entity(game):
@@ -353,7 +355,11 @@ def test_apply_score_extraction_tolerates_null_field(read_game):
     不抛 ValueError(apply 本就 `.get(key) or {}` 容忍)。"""
     db, state, _ = read_game
     # region_delta=None(null)+ army_delta=None,均应被当空 no-op 放行,不抛。
+    before_regions = [tuple(row) for row in db.conn.execute("SELECT * FROM regions ORDER BY id")]
+    before_armies = [tuple(row) for row in db.conn.execute("SELECT * FROM armies ORDER BY id")]
     I.apply_score_extraction(db, state, {"region_delta": None, "army_delta": None})
+    assert [tuple(row) for row in db.conn.execute("SELECT * FROM regions ORDER BY id")] == before_regions
+    assert [tuple(row) for row in db.conn.execute("SELECT * FROM armies ORDER BY id")] == before_armies
 
 
 def test_apply_score_extraction_rejects_unknown_top_level_key(game):
@@ -509,7 +515,7 @@ def test_api_channel_initiative_does_not_use_backend_env_floor(game, monkeypatch
 def test_inertia_natural_resolve_applies_entities(game):
     """issue 靠 inertia 自然推到 100 结案 → effect_on_resolve 的实体后果(建军)也要落，
     不能只落 metrics/economy；须与 tracker advance/close 路径一致（codexB-P1）。"""
-    from ming_sim.issues import apply_issue_inertia_and_ongoing
+    from ming_sim.situation_drift import apply_situation_monthly_drift
     db, state, _ = game
     db.insert_issue(
         state, kind="situation", title="自然结案建军测试",
@@ -518,7 +524,7 @@ def test_inertia_natural_resolve_applies_entities(game):
             "id": "inertia_army_test", "name": "惯性军", "owner_power": "ming",
             "manpower": 5000, "maintenance_per_turn": 1, **_pay_source()}]},
     )
-    apply_issue_inertia_and_ongoing(db, state)   # inertia +1 把 bar 99→100 → resolved
+    apply_situation_monthly_drift(db, state)   # inertia +1 把 bar 99→100 → resolved
     cnt = db.conn.execute(
         "SELECT COUNT(*) FROM armies WHERE id='inertia_army_test'").fetchone()[0]
     assert cnt == 1                               # 自然结案也建了奖励军
@@ -526,7 +532,7 @@ def test_inertia_natural_resolve_applies_entities(game):
 
 def test_inertia_natural_resolve_applies_unified_person_change_with_bound_content(game):
     """自然结案的人物变更与 tracker close 同口径,不能因缺 content 误拒合法在册人物。"""
-    from ming_sim.issues import apply_issue_inertia_and_ongoing
+    from ming_sim.situation_drift import apply_situation_monthly_drift
     db, state, content = game
     name = active_ming_character(db, content)
     old_office = content.characters[name].office
@@ -549,7 +555,7 @@ def test_inertia_natural_resolve_applies_unified_person_change_with_bound_conten
             },
         )
 
-        apply_issue_inertia_and_ongoing(db, state)
+        apply_situation_monthly_drift(db, state)
 
         row = db.conn.execute("SELECT office FROM characters WHERE name=?", (name,)).fetchone()
         assert row["office"] == "陕西总督"
@@ -560,7 +566,7 @@ def test_inertia_natural_resolve_applies_unified_person_change_with_bound_conten
 
 def test_inertia_natural_fail_applies_entities(game):
     """issue 靠 inertia 自然跌到 0 失败 → effect_on_fail 的实体后果(人物状态)也要落。"""
-    from ming_sim.issues import apply_issue_inertia_and_ongoing
+    from ming_sim.situation_drift import apply_situation_monthly_drift
     from tests.conftest import active_ming_character
     db, state, content = game
     name = active_ming_character(db, content)
@@ -569,5 +575,5 @@ def test_inertia_natural_fail_applies_entities(game):
         bar_value=1, inertia=-1,
         effect_on_fail={"character_status_changes": [{"name": name, "status": "dismissed", "reason": "局势失控问责"}]},
     )
-    apply_issue_inertia_and_ongoing(db, state)   # inertia -1 把 bar 1→0 → failed
+    apply_situation_monthly_drift(db, state)   # inertia -1 把 bar 1→0 → failed
     assert db.get_character_status(name)[0] == "dismissed"

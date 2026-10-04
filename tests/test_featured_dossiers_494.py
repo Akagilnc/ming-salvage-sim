@@ -1,9 +1,14 @@
-"""#494 / ADR0033：特征化覆盖与认同度分桶，不锁档料标题。"""
+"""#494 featured minister/faction dossiers reach the public context seam.
+
+Coverage is the asset fields the assembler must deliver, and which faction
+blocks an identity bucket may see. Presentation labels are not the contract.
+"""
 
 from dataclasses import replace
 
+from ming_sim.assets import load_json_asset
 from ming_sim.context import (
-    _MINISTER_DOSSIERS,
+    _FACTION_DOSSIERS,
     character_context_with_db,
     faction_context_with_db,
     minister_dossier,
@@ -11,6 +16,8 @@ from ming_sim.context import (
 
 
 SEVEN_FACTIONS = ("阉党", "皇党", "东林", "军队", "宗室", "中立", "西学")
+_DOSSIERS = load_json_asset("minister_dossiers.json")
+_VOICE_FIELDS = ("motivation", "burden", "episode")
 
 
 def _court_ministers(content):
@@ -22,42 +29,68 @@ def _court_ministers(content):
     ]
 
 
+def _faction_row(db, faction: str):
+    return db.conn.execute(
+        "SELECT agenda, satisfaction, leverage FROM factions WHERE name = ?",
+        (faction,),
+    ).fetchone()
+
+
 def test_every_active_seven_faction_minister_has_featured_dossier(game):
-    db, _state, content = game
+    _db, _state, content = game
     ministers = _court_ministers(content)
-    assert ministers
+    assert len(ministers) >= 40
     for character in ministers:
-        dossier = minister_dossier(character)
-        assert dossier
-        assert dossier in character_context_with_db(character, db)
+        rendered = minister_dossier(character)
+        asset = _DOSSIERS.get(character.name)
+        if asset is not None:
+            for field in ("identity", *_VOICE_FIELDS):
+                value = str(asset[field]).strip()
+                assert value and value in rendered
+        else:
+            summary = (character.summary or "").strip()
+            assert summary and summary in rendered
 
 
 def test_seven_faction_dossiers_are_objective_and_identity_scoped(game):
     db, _state, content = game
     base = next(c for c in content.characters.values() if c.faction == "东林")
+
     for faction in SEVEN_FACTIONS:
-        character = replace(base, faction=faction)
-        low, middle, high = [
-            faction_context_with_db(replace(character, identity=identity), db)
-            for identity in (20, 60, 90)
-        ]
-        assert len({low, middle, high}) == 3
-        agenda = db.conn.execute(
-            "SELECT agenda FROM factions WHERE name=?", (faction,)
-        ).fetchone()["agenda"]
-        assert agenda not in low
-        assert agenda in middle and agenda in high
+        rendered = faction_context_with_db(replace(base, faction=faction, identity=65), db)
+        row = _faction_row(db, faction)
+        core = _FACTION_DOSSIERS[faction]["core"]
+        internal = _FACTION_DOSSIERS[faction]["internal"]
+        assert core in rendered
+        assert internal not in rendered
+        assert str(row["agenda"]) in rendered
+        assert str(int(row["satisfaction"])) not in rendered
+        assert str(int(row["leverage"])) not in rendered
+
+    faction = base.faction
+    core = _FACTION_DOSSIERS[faction]["core"]
+    internal = _FACTION_DOSSIERS[faction]["internal"]
+    agenda = str(_faction_row(db, faction)["agenda"])
+    middle = faction_context_with_db(replace(base, identity=60), db)
+    high = faction_context_with_db(replace(base, identity=90), db)
+    low = faction_context_with_db(replace(base, identity=20), db)
+    assert len({low, middle, high}) == 3
+    assert core in middle and core in high and core not in low
+    assert agenda in middle and agenda in high and agenda not in low
+    assert internal in high and internal not in middle and internal not in low
 
 
 def test_north_star_ministers_have_distinct_featured_voices(game):
     db, _state, content = game
+    names = ("毕自严", "杨嗣昌", "王绍徽")
     voices = []
-    for name in ("毕自严", "杨嗣昌", "王绍徽"):
+    for name in names:
         character = content.characters[name]
-        # 原始特征料作为输入；不按输出的标题、分号或中文字段词拆声部。
-        source = _MINISTER_DOSSIERS[name]
-        voice = tuple(source[field] for field in ("motivation", "burden", "episode"))
         full = character_context_with_db(character, db)
-        assert all(fragment in full for fragment in voice)
+        assert name in full
+        dossier = minister_dossier(character)
+        voice = tuple(str(_DOSSIERS[name][field]) for field in _VOICE_FIELDS)
+        assert all(part and part in dossier for part in voice)
+        assert dossier in full
         voices.append(voice)
     assert len(set(voices)) == 3

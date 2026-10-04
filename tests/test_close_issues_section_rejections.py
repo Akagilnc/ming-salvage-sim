@@ -94,6 +94,7 @@ def test_close_already_inactive_rejected_missing_ref(game):
     rej = _rejected(out)
     assert len(rej) == 1
     assert rej[0]["category"] == "missing_ref"
+    assert db.conn.execute("SELECT status FROM issues WHERE id=?", (iid,)).fetchone()["status"] == "resolved"
 
 
 def test_close_failed_on_uncollapsible_rejected_invalid_enum(game):

@@ -47,6 +47,7 @@ def test_promulgation_context_is_deterministic_and_excludes_satisfaction(game):
     )
     encoded = json.dumps(context, ensure_ascii=False, sort_keys=True)
     assert "satisfaction" not in encoded
+    assert "满意" not in encoded
     assert context["dossiers"][0]["mode"] == "midzhi"
     assert context["dossiers"][0]["break_rank"] == {"office_rank": "越三级"}
     assert set(context["factions"][0]) == {"name", "leverage", "agenda"}
@@ -325,9 +326,7 @@ def test_rejected_verdict_still_requires_full_rejection_contract(game):
     dossiers = db.list_decree_dossiers(status="proposed")
     context = decree_mod.build_promulgation_judge_context(db, state, dossiers)
 
-    with pytest.raises(
-        decree_mod.LLMContractError,
-    ):
+    with pytest.raises(decree_mod.LLMContractError):
         decree_mod.validate_promulgation_verdicts(
             [{"dossier_id": dossier_id, "decision": "rejected", "reason": "仅有缘由"}],
             dossiers, db, prepared_context=context,
@@ -599,6 +598,7 @@ def test_appointment_text_is_pure_gatekeeper_transfer_without_land_confiscation(
     """Recursive appointment sample must not smuggle hostile 隐田 policy."""
     from scripts.promulgation_gate_561 import APPOINTMENT_TEXT
 
+    assert "许誉卿" in APPOINTMENT_TEXT
     for token in ("隐田", "清丈", "追夺", "田亩"):
         assert token not in APPOINTMENT_TEXT, token
 
@@ -636,8 +636,13 @@ def test_appointment_rejection_check_requires_faction_gate_structure():
 
 def test_ordinary_class_all_promulgated_covers_planted_ordinary_only():
     """TD-1 / ADR 0055 S6: ordinary class = 寻常补饷; every planted one must pass."""
-    from scripts.promulgation_gate_561 import _ordinary_class_all_promulgated
+    from scripts.promulgation_gate_561 import (
+        ORDINARY_TEXT,
+        _ordinary_class_all_promulgated,
+    )
 
+    # Class is the pay edict itself — not an invented multi-sample roster.
+    assert "补" in ORDINARY_TEXT and "饷" in ORDINARY_TEXT
     assert _ordinary_class_all_promulgated([
         ({"ordinary": 1, "hostile": 2},
          {1: {"decision": "promulgated"}, 2: {"decision": "rejected"}}),
@@ -694,6 +699,7 @@ def test_leader_only_mutation_changes_faction_posture_not_roster(game):
     assert before_faction["agenda"] == BASE_DONGLIN_AGENDA
     assert after_faction["agenda"] == LEADER_APPEASED_AGENDA
     # Posture moves only via fixed agenda pair (ADR 0143: no int() on qualitative leverage).
+    assert after_faction["agenda"] != before_faction["agenda"]
     assert before_faction["leverage"] == after_faction["leverage"]
     assert isinstance(before_faction["leverage"], str)
     assert before_faction["leverage"] in IMPERIAL_AUTHORITY_BANDS

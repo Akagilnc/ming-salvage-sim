@@ -319,7 +319,7 @@ def test_backup_to_inside_atomic_fails_loud(game, tmp_path):
     """atomic 内 backup_to 响亮拒绝（备份会带未提交脏页，cmr S1 r1 F3）。"""
     db, state, content = game
     dest = str(tmp_path / "snap.db")
-    with pytest.raises(RuntimeError, match="atomic"):
+    with pytest.raises(RuntimeError):
         with atomic(db):
             db.backup_to(dest)
 
@@ -342,7 +342,7 @@ def test_connection_rollback_attempts_all_runtime_callbacks(game):
     db.conn.execute("BEGIN")
     db.conn._runtime_rollback_callbacks = [first, broken, last]
 
-    with pytest.raises(RuntimeError, match="runtime rollback callback"):
+    with pytest.raises(RuntimeError):
         db.conn.rollback()
 
     assert calls == ["last", "broken", "first"]

@@ -1,6 +1,5 @@
 """#566: production settlement owns the durable monthly progress rail."""
 
-import json
 import threading
 
 import pytest
@@ -41,6 +40,18 @@ def _production_session(db, state, content):
     session._decree_draft_fingerprint = ()
     session.auto_save = lambda *args, **kwargs: None
     return session
+
+
+def _canned_monthly_settlement(monkeypatch, extractor_calls):
+    """Keep the production settlement pipeline; replace only external LLM seams."""
+    from tests.settlement_seam_helpers import canned_full_settlement
+
+    def _track_world(*_a, **_k):
+        extractor_calls.append("world")
+        return "本月公开邸报"
+
+    canned_full_settlement(monkeypatch, narrative="本月公开邸报")
+    monkeypatch.setattr("ming_sim.month_chain.run_world_segment_text", _track_world)
 
 
 def _record_monthly_report(db, state, progress):
@@ -192,10 +203,12 @@ def test_character_terminal_status_closes_secret_orders_through_canonical_progre
     }
     assert orders[chained_id]["status"] == "failed"
     assert orders[unchained_id]["status"] == "failed"
+    assert "途中病故" in orders[chained_id]["result"]
     assert db.get_decree_dossier(chained_dossier)["status"] == "closed"
     assert db.get_decree_dossier(unchained_dossier)["status"] == "closed"
     terminal = db.list_dossier_progress(chained_dossier)[-1]
     assert terminal["is_terminal"] is True
+    assert "途中病故" in terminal["memorial_text"]
     assert db.list_dossier_progress(unchained_dossier)
 
 
@@ -350,7 +363,7 @@ def test_real_no_edict_entries_roll_back_every_external_state_after_fiscal_write
         else:
             assert "post-fiscal failure 566" in str(detail)
     else:
-        with pytest.raises(RuntimeError):
+        with pytest.raises(RuntimeError, match="post-fiscal failure 566"):
             invoke()
 
     assert observed == {"fiscal_written": True, "metrics_written": True}

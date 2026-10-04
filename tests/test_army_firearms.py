@@ -117,8 +117,6 @@ def test_create_army_cannon_count_clamped(game):
     assert val == 12
 
 
-
-
 def test_fresh_seed_wires_firearm_not_all_zero(content, tmp_path):
     """新档 seed 必须贯通火器（非全 0）。"""
     from ming_sim.db import GameDB

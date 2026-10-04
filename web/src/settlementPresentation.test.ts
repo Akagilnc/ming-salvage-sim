@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  FACE_GROUP,
   isFaceReachable,
   isSettlementDisplay,
   settlementFaceAccess,
@@ -37,6 +38,15 @@ const ROSTER: Record<Exclude<FaceAccess, "open">, SettlementFaceKey[]> = {
 };
 
 describe("#1236 T3 settlement face gates (唯一谓词 settlement_display)", () => {
+  it("mechanical roster covers every face key exactly once", () => {
+    const listed = Object.values(ROSTER).flat();
+    expect(new Set(listed).size).toBe(listed.length);
+    expect(new Set(listed)).toEqual(new Set(Object.keys(FACE_GROUP)));
+    for (const [group, keys] of Object.entries(ROSTER) as Array<[Exclude<FaceAccess, "open">, SettlementFaceKey[]]>) {
+      for (const key of keys) expect(FACE_GROUP[key]).toBe(group);
+    }
+  });
+
   it("isSettlementDisplay reads only the server flag", () => {
     expect(isSettlementDisplay(undefined)).toBe(false);
     expect(isSettlementDisplay({})).toBe(false);

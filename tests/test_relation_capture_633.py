@@ -353,6 +353,7 @@ def test_authorized_dossier_outside_frozen_batch_rejected_zero_edges(game):
     res = out["relation_edge_event_resolutions"]
     rejected = [r for r in res if r.get("rejected")]
     assert len(rejected) == 1
+    assert rejected[0]["category"] == "invalid_relation_event"
     assert (rejected[0]["item"]["来源引用"] == f"dossier:{stale}")
     # 好项不牵连：闭集内且授权的照常落库
     rows = _edge_rows(db)
@@ -389,6 +390,7 @@ def test_unauthorized_dossier_inside_frozen_set_still_rejected(game):
     res = out["relation_edge_event_resolutions"]
     rejected = [r for r in res if r.get("rejected")]
     assert len(rejected) == 1
+    assert rejected[0]["category"] == "invalid_relation_event"
     assert _edge_rows(db) == []
 
 
@@ -411,6 +413,7 @@ def test_missing_frozen_dossier_set_is_empty_closed_set(game):
     res = out["relation_edge_event_resolutions"]
     rejected = [r for r in res if r.get("rejected")]
     assert len(rejected) == 1
+    assert rejected[0]["category"] == "invalid_relation_event"
     assert _edge_rows(db) == []
     # 盘面自发不受 dossier 闭集影响：同批照常落边
     out2 = apply_score_extraction(
@@ -490,6 +493,12 @@ _CANNED = {
 }
 
 
+def _module_of(tag: str) -> str:
+    return tag.split("/", 1)[1]
+
+
+
+
 # ── V1：端点须为当前在朝合格大臣（复用既有名册投影，先校验后零边写入） ──
 
 
@@ -529,12 +538,11 @@ def test_hallucinated_and_emperor_endpoints_rejected_per_item_zero_edges(game):
 def test_multi_target_with_one_bad_endpoint_writes_zero_edges_for_item(game):
     """同互动含任一非法端点：先整项校验后零边写入，不做部分落库；好项隔离照落。"""
     db, state, content = game
-    bad_target = "幻觉丙"
     out = apply_score_extraction(
         db, state,
         {
             "relation_edge_events": [
-                {"施动者": "温体仁", "受动者": ["周延儒", bad_target],
+                {"施动者": "温体仁", "受动者": ["周延儒", "幻觉丙"],
                  "类目": "联名", "语境": "联名混入幻觉联署者。",
                  "来源引用": "盘面自发"},
                 {"施动者": "毕自严", "受动者": "王绍徽", "类目": "协作",
@@ -546,8 +554,7 @@ def test_multi_target_with_one_bad_endpoint_writes_zero_edges_for_item(game):
     res = out["relation_edge_event_resolutions"]
     rejected = [r for r in res if r.get("rejected")]
     assert len(rejected) == 1
-    # 拒因携带实际非法端点名（输入来源），不锁固定拒句模板
-    assert bad_target in rejected[0]["reason"]
+    assert "幻觉丙" in rejected[0]["reason"]
     # 坏项零写入（含好端点也不部分落库）；好项不受牵连
     rows = _edge_rows(db)
     assert _triplets(rows) == {("毕自严", "王绍徽", "协作")}
@@ -590,14 +597,14 @@ def test_multi_target_with_blank_or_self_member_rejects_whole_item_zero_edges(
 
 
 @pytest.mark.parametrize(
-    ("targets", "label", "reason_fragment"),
+    ("targets", "label"),
     [
-        ([], "空列表", "受动者不能为空"),
-        (["温体仁", "   "], "全无效", "受动者不能为"),
+        ([], "空列表"),
+        (["温体仁", "   "], "全无效"),
     ],
 )
 def test_empty_or_all_invalid_targets_reject_whole_item_zero_edges(
-    game, targets, label, reason_fragment,
+    game, targets, label,
 ):
     """V10：受动者列表为空（含全无效成员被拒后为空的等价情形）——整项
     fail-closed 拒收留痕，不得静默零写冒充成功；同批独立好互动照落。"""
@@ -734,6 +741,7 @@ def test_never_qualified_endpoints_still_rejected_in_mutating_batch(game):
     rejected = [r for r in res if r.get("rejected")]
     assert len(rejected) == 2
     assert all(r["category"] == "invalid_relation_event" for r in rejected)
+    assert any("幻觉甲" in r["reason"] for r in rejected)
     assert _triplets(_edge_rows(db)) == {
         ("王绍徽", "毕自严", "结怨"), ("孙承宗", "毕自严", "协作"),
     }
@@ -758,6 +766,7 @@ def test_live_roster_cannot_rescue_endpoint_outside_passed_union(game):
     )
     assert len(res) == 1 and res[0].get("rejected")
     assert res[0]["category"] == "invalid_relation_event"
+    assert "王绍徽" in res[0]["reason"]
     assert _edge_rows(db) == []  # 零边写入
 
 

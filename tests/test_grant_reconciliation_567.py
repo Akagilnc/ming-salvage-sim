@@ -11,8 +11,6 @@ Seams:
 
 from __future__ import annotations
 
-from tests.conftest import wait_for_background_jobs
-
 import json
 
 import pytest
@@ -242,6 +240,9 @@ def test_close_merges_recon_note_without_second_treasury_debit(game):
     closed = db.get_decree_dossier(gid)
     assert closed["status"] == "closed"
     note = closed["execution_note"]
+    assert "赈银押解到达" in note
+    recon = db.list_dossier_reconciliations(gid)[-1]
+    assert recon["arrived_amount"] == 16
     # 仍无二次扣库
     assert int(state.metrics["内库"]) == after_grant_inner
     assert db.list_economy_moves_for_dossier(gid) == moves_before
@@ -310,10 +311,8 @@ def test_recon_section_shape_rejected_other_sections_land(game, monkeypatch, sha
         }},
     )
     session.resolve_turn(allow_empty_decree=True)
-    wait_for_background_jobs(db)
     db.save_turn_report(state, "邸报", public_body="邸报")
     session.resolve_turn(allow_empty_decree=True)
-    wait_for_background_jobs(db)
 
     assert int(state.turn) == turn_before + 1
     # 同段已结案，无在途目标可供月末中位对账；execution 好段照常落库。
@@ -451,10 +450,8 @@ def test_1745_settle_bad_and_good_recon_same_atomic(game, monkeypatch):
         ]}},
     )
     session.resolve_turn(allow_empty_decree=True)
-    wait_for_background_jobs(db)
     db.save_turn_report(state, "邸报", public_body="邸报")
     session.resolve_turn(allow_empty_decree=True)
-    wait_for_background_jobs(db)
 
     assert int(state.turn) == turn_before + 1
     assert state.turn_phase != TurnPhase.AWAITING_DECISION.value
@@ -518,7 +515,6 @@ def test_1745_full_chain_player_state_no_fake_awaiting(game, monkeypatch):
     turn0 = int(state.turn)
     session = _prepare_player_month(db, state, content, monkeypatch)
     result = session.advance_without_decree()
-    wait_for_background_jobs(db)
     assert result is not None
     assert result.awaiting is False
     assert not (result.decisions or [])
@@ -560,10 +556,8 @@ def test_1745_web_state_payload_after_bad_recon_settle(
             ]}},
         )
         session.resolve_turn(allow_empty_decree=True)
-        wait_for_background_jobs(db)
         db.save_turn_report(state, "邸报", public_body="邸报")
         session.resolve_turn(allow_empty_decree=True)
-        wait_for_background_jobs(db)
 
         payload = game_web.state_payload()
         turn_blk = payload.get("turn") or {}

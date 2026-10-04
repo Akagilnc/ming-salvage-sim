@@ -1,11 +1,12 @@
 """#1274 QA A-新3：409/超时 UX 族（#1301/#1306/#1312/#1319(a)/#1322）。
 
-刀口只锁玩家面文案、相位分文、authority 投影与 resolve 锁前预检；
+刀口锁状态码、结构化 detail、相位分叉与 resolve 锁前预检；
 ADR 0036/0006 机制零动。
 """
 from __future__ import annotations
 
 import asyncio
+import json
 import threading
 from types import SimpleNamespace
 
@@ -16,7 +17,6 @@ import web_app
 from ming_sim import audience_night as an
 from ming_sim.session_write_queue import ClassifiedWriteGate
 from ming_sim.models import FRONT_HALF_DONE_PHASES, TurnPhase
-from tests.sse_helpers import parse_sse_event_pairs
 
 
 # ── #1301 玩家面 409 去裸 night_id ──────────────────────────────────────────
@@ -46,25 +46,44 @@ def test_closing_player_message_is_diegetic_without_bare_night_id(monkeypatch):
     with pytest.raises(an.AudienceNightError) as ei:
         an.assert_night_accepts_player_input(object(), what="召对")
 
+    msg = str(ei.value)
+    assert msg
     assert ei.value.code == "night_closing"
     assert ei.value.detail == {"night_id": 42, "what": "召对"}
+
+    with pytest.raises(an.AudienceNightError) as other:
+        an.assert_night_accepts_player_input(object(), what="阅折")
+    assert other.value.code == "night_closing"
+    assert other.value.detail == {"night_id": 42, "what": "阅折"}
 
 
 # ── #1306 FRONT_HALF_DONE 分相位文案 ────────────────────────────────────────
 
-def test_serialized_web_write_front_half_done_refuses_before_body():
-    """FRONT_HALF_DONE 一律 409，写体不进入。"""
-    entered = False
+def _front_half_detail(phase: str) -> str:
+    game = SimpleNamespace(
+        state=SimpleNamespace(turn_phase=phase),
+        _write_gate=ClassifiedWriteGate(),
+    )
+    with pytest.raises(HTTPException) as ei:
+        with web_app._serialized_web_write(game):
+            pass
+    assert ei.value.status_code == 409
+    detail = str(ei.value.detail)
+    assert detail
+    return detail
+
+
+def test_serialized_web_write_phase_messages_cover_front_half_done():
+    """#1306 全 FRONT_HALF_DONE 相位均 409，详情只按 awaiting / 其余两支分叉。"""
+    awaiting = _front_half_detail(TurnPhase.AWAITING_DECISION.value)
+    other = _front_half_detail(TurnPhase.SETTLING.value)
+    assert awaiting != other
     for phase in FRONT_HALF_DONE_PHASES:
-        game = SimpleNamespace(
-            state=SimpleNamespace(turn_phase=phase),
-            _write_gate=ClassifiedWriteGate(),
-        )
-        with pytest.raises(HTTPException) as ei:
-            with web_app._serialized_web_write(game):
-                entered = True
-        assert ei.value.status_code == 409
-    assert entered is False
+        detail = _front_half_detail(phase)
+        if phase == TurnPhase.AWAITING_DECISION.value:
+            assert detail == awaiting
+        else:
+            assert detail == other
 
 
 # ── #1319(a) authority 停用 notes 别名 ──────────────────────────────────────
@@ -90,6 +109,7 @@ def test_directive_payload_authority_not_notes_alias():
     payload = web_app.WebGame.directive_payload(game, row)
     assert payload["notes"] == "家赀约十万两"
     assert payload["authority"] == ""
+    assert payload["authority"] != payload["notes"]
 
 
 # ── #1322 resolve stream 相位预检在抢锁前 ───────────────────────────────────
@@ -129,10 +149,7 @@ class _ResolveGame:
 
 
 async def _consume_resolve_sse() -> list[tuple[str, object]]:
-    """Drain the whole SSE; return [(event, payload), ...] in order.
-
-    #1902 F7：解析真源在 tests.sse_helpers（仓内只此一份），此处不再自带一份。
-    """
+    """Drain the whole SSE; return [(event, payload), ...] in order."""
     response = await web_app.api_resolve_decisions_stream(
         web_app.ResolveDecisionsRequest(choices=[{"label": "发帑"}])
     )
@@ -140,7 +157,22 @@ async def _consume_resolve_sse() -> list[tuple[str, object]]:
         chunk.decode() if isinstance(chunk, bytes) else chunk
         async for chunk in response.body_iterator
     ]
-    return parse_sse_event_pairs("".join(chunks))
+    serialized = "".join(chunks)
+    events: list[tuple[str, object]] = []
+    for block in serialized.strip().split("\n\n"):
+        if not block.strip():
+            continue
+        ev_name = ""
+        data_raw = ""
+        for line in block.splitlines():
+            if line.startswith("event: "):
+                ev_name = line[len("event: "):].strip()
+            elif line.startswith("data: "):
+                data_raw += line[len("data: "):]
+        if not ev_name or not data_raw:
+            continue
+        events.append((ev_name, json.loads(data_raw)))
+    return events
 
 
 def test_resolve_decisions_stream_phase_precheck_before_lock(monkeypatch):
@@ -160,6 +192,7 @@ def test_resolve_decisions_stream_phase_precheck_before_lock(monkeypatch):
     assert events, "expected at least one SSE event"
     event, payload = events[-1]
     assert event == "error"
+    assert isinstance(payload, dict) and payload.get("message")
     assert game.session._submit_called is False
     assert game.actions == []
 

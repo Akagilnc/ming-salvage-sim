@@ -30,6 +30,11 @@ def _seed_text() -> str:
     return (ROOT / "content" / "opening_gazette.md").read_text(encoding="utf-8").strip()
 
 
+def _canned_settle(monkeypatch, narrative: str) -> None:
+    from tests.settlement_seam_helpers import canned_full_settlement
+    canned_full_settlement(monkeypatch, narrative=narrative)
+
+
 def _session(db, state, content) -> GameSession:
     session = GameSession.__new__(GameSession)
     session.db, session.state, session.content = db, state, content
@@ -147,7 +152,9 @@ def test_state_payload_t0_previous_summary_empty(game):
     runtime.public_character = lambda c: {"name": getattr(c, "name", "")}
     runtime.character_power_id = lambda c: "ming"
 
+    from ming_sim.models import reign_period_label
+
     payload = web_app.WebGame.state_payload(runtime)
     assert payload.get("previous_summary") == ""
-    assert payload["turn"]["reign_period_label"] == "天启七年十月"
+    assert payload["turn"]["reign_period_label"] == reign_period_label(1627, 10)
     assert payload.get("previous_reign_period_label") in ("", None)

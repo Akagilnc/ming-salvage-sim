@@ -133,7 +133,7 @@ def test_canonical_person_power_writer_code_exception_is_fail_loud(game, monkeyp
         raise KeyError("canonical person power writer bug")
 
     monkeypatch.setattr(type(db), "apply_character_power_changes", _boom)
-    with pytest.raises(KeyError):
+    with pytest.raises(KeyError, match="canonical person power writer bug"):
         import ming_sim.issues as issues
         issues.apply_score_extraction(db, state, {
             "人物变更": [{
@@ -143,6 +143,21 @@ def test_canonical_person_power_writer_code_exception_is_fail_loud(game, monkeyp
         }, content=content)
 
 
+def test_power_change_formatter_skips_rejected_items():
+    """report.format_power_changes 遇到同列的拒收项(无 delta/label 键)不得 KeyError——
+    拒收项不是盘面变化,只渲染 applied 项;全拒收时回落「未见变化」(S1 迁契约副作用守门)。"""
+    from ming_sim.report import format_power_changes
+
+    out = format_power_changes([
+        {"rejected": True, "category": "hallucinated_id", "reason": "查无此势力"},
+        {"power": "后金", "label": "威望", "old": 50, "new": 53, "delta": 3, "reason": "推演"},
+    ])
+    assert "后金" in out and "查无此势力" not in out
+
+    only_rejected = format_power_changes([
+        {"rejected": True, "category": "invalid_enum", "reason": "字段非法"}])
+    assert only_rejected == format_power_changes([])
+    assert only_rejected != out and "后金" not in only_rejected
 
 
 def test_dirty_power_value_rejected_sibling_field_lands(game):
@@ -199,6 +214,7 @@ def test_ming_power_update_rejected_with_trace(game):
     rows = [r for r in _rejection_rows(db, turn) if r[0] == "power_changes"]
     assert len(rows) == 1
     assert rows[0][2] == "invalid_enum"
+    assert "ming" in rows[0][1] or "大明" in rows[0][1]
 
 
 def test_float_and_bool_power_values_rejected(game):
@@ -252,4 +268,3 @@ def test_all_reason_aliases_consumed_as_reason(game):
         (good,)).fetchone()
     assert row is not None
     assert row[0] == "联姻蒙古"
-

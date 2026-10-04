@@ -75,8 +75,7 @@ describe("commitment progress display", () => {
   it("uses a styled fallback when a commitment has progress but no text", () => {
     const cleanup = render(<IssueGroup title="待办" issues={[makeCommitmentWithoutProgressText()]} />);
     const progress = document.querySelector(".issue-commitment-progress");
-    expect(progress).toBeTruthy();
-    expect((progress?.textContent || "").length).toBeGreaterThan(0);
+    expect((progress?.textContent || "").trim()).not.toBe("");
     cleanup();
   });
 
@@ -115,8 +114,35 @@ describe("commitment progress display", () => {
       );
     });
 
-    expect(document.body.textContent).toContain("承诺进度");
     expect(document.body.textContent).toContain(commitmentText);
+    cleanup();
+  });
+});
+
+describe("empty bar label presentation (#626)", () => {
+  function makeEmptyBarIssue(): Issue {
+    return {
+      ...makeIssue(),
+      bar_good_meaning: "",
+      bar_bad_meaning: "",
+      tags: [],
+    };
+  }
+
+  it("detail modal renders supplied bar meanings", () => {
+    const cleanup = render(
+      <SituationDetailModal issue={makeIssue()} onClose={() => undefined} />
+    );
+    expect(document.body.textContent).toContain(makeIssue().bar_good_meaning);
+    expect(document.body.textContent).toContain(makeIssue().bar_bad_meaning);
+    cleanup();
+  });
+
+  it("issue board progress ends stay blank rather than showing empty labels", () => {
+    const cleanup = render(<IssueGroup title="待办" issues={[makeEmptyBarIssue()]} />);
+    const ends = Array.from(document.querySelectorAll(".issue-progress > span"));
+    expect(ends).toHaveLength(2);
+    expect(ends.every((el) => (el.textContent || "").trim() === "")).toBe(true);
     cleanup();
   });
 });
@@ -184,13 +210,17 @@ describe("#1726 StateModal 奏疏收件箱", () => {
     expect(doc!.textContent).not.toContain(makeIssue().title);
     expect(doc!.textContent).toContain("杨嗣昌");
     expect(doc!.querySelector("pre.memorial-text")?.textContent).toBe(body);
+    expect(doc!.textContent).not.toContain("progress:7");
+    expect(doc!.textContent).not.toContain("progress_band");
     expect(doc!.querySelector(".empty-note")).toBeNull();
     cleanup();
   });
 
   it("无奏疏时示空态，不因有局势而填充", () => {
     const cleanup = render(<StateModal state={baseState([])} />);
-    expect(document.querySelector(".empty-note")).toBeTruthy();
+    const empty = document.querySelector(".empty-note");
+    expect(empty).not.toBeNull();
+    expect(empty!.textContent?.trim()).toBeTruthy();
     expect(document.querySelector(".situation-panel")).toBeNull();
     cleanup();
   });

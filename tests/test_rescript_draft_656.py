@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from pathlib import Path
 
 import pytest
 
@@ -736,8 +737,10 @@ def test_validate_items_many_options_not_gated_or_truncated():
     assert len(drafts) == 1
     assert [o["label"] for o in drafts[0]["options"]] == [f"拟{i}" for i in range(5)]
 
-def test_validate_items_empty_options_drops_item_keeps_siblings():
-    """#1801：0 项按 F2.3 不足照实消失；其它条目仍呈上；不整批判死。"""
+def test_validate_items_empty_options_drops_item_keeps_siblings(monkeypatch):
+    """#1801：0 项按 F2.3 不足照实消失；其它条目仍呈上；日志响亮；不整批判死。"""
+    logs: list[str] = []
+    monkeypatch.setattr(rescript_mod, "tlog", logs.append)
     good = _valid_item(0)
     empty = _valid_item(1)
     empty["options"] = []
@@ -745,15 +748,21 @@ def test_validate_items_empty_options_drops_item_keeps_siblings():
     assert len(drafts) == 1
     assert drafts[0]["title"] == good["title"]
     assert len(drafts[0]["options"]) == 2
+    assert logs, "0 项条目消失须响亮留痕"
+    assert any(empty["title"] in msg for msg in logs)
 
-def test_validate_items_non_list_options_drops_item_keeps_siblings():
-    """#1801：非 list options 该条目消失；其它条目仍呈上；不整批判死。"""
+def test_validate_items_non_list_options_drops_item_keeps_siblings(monkeypatch):
+    """#1801：非 list options 该条目消失；其它条目仍呈上；日志响亮；不整批判死。"""
+    logs: list[str] = []
+    monkeypatch.setattr(rescript_mod, "tlog", logs.append)
     good = _valid_item(0)
     bad = _valid_item(1)
     bad["options"] = "not-a-list"
     drafts = validate_rescript_draft_items({"items": [good, bad]}, set())
     assert len(drafts) == 1
     assert drafts[0]["title"] == good["title"]
+    assert logs, "非 list options 条目消失须响亮留痕"
+    assert any(bad["title"] in msg for msg in logs)
 
 def test_validate_items_empty_list_is_legal_headless_month():
     """合法 items=[] 仍是「本月确无急务」（F2.3 不凑数）。"""
@@ -797,18 +806,17 @@ def test_generate_rescript_draft_degrades_loudly_without_raising(game, monkeypat
     """F2.5 响亮降级（r2 B3 收窄后）：typed LLMUnavailable → tlog＋附记，返回 None，不抛。"""
     db, state, _content = game
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
-    unavailable = LLMUnavailable("LLM 不可用")
 
     def _boom(agent, prompt, tag, **_kwargs):
-        raise unavailable
+        raise LLMUnavailable("LLM 不可用")
 
     monkeypatch.setattr(rescript_mod, "run_agent_text", _boom)
     payload = {"active_issues": [], "gazette": "邸报", "triage_actor": {}, "turn": {}}
     assert generate_rescript_draft(object(), payload, state.turn) is None
     note = tmp_path / "error_packs" / "rescript_draft_degraded" / f"turn{state.turn}.json"
     assert note.is_file()
-    # 原始异常原因保存契约：结构化 reason 等于实际注入的 str(exc)，不锁固定措辞
-    assert json.loads(note.read_text(encoding="utf-8"))["reason"] == str(unavailable)
+    # 标准 JSON 转义保真：结构化 reason，不锁原文呈现
+    assert "LLM 不可用" in json.loads(note.read_text(encoding="utf-8"))["reason"]
 
 def test_generate_rescript_draft_program_error_propagates(game, monkeypatch):
     """r2 裁决 B3 / ADR 0005：程序错不得以「非承重支路」为由吞成降级。
@@ -979,6 +987,70 @@ def test_r3_lone_surrogate_field_rejects_whole_batch():
 # #657 片1：行事实与案头（schema + 词表 + desk 读）
 # ---------------------------------------------------------------------------
 
+def _pending_columns(db) -> set[str]:
+    return {r[1] for r in db.conn.execute("PRAGMA table_info(pending_decisions)").fetchall()}
+
+def _ledger_columns(db) -> set[str]:
+    return {r[1] for r in db.conn.execute("PRAGMA table_info(story_ledger_entries)").fetchall()}
+
+def test_657_s1_schema_columns_and_no_banned_fields(game):
+    """片1：revision_round/prior_options_json/origin_ref 列存在；无 consumed_epoch/rescript_origin。"""
+    db, _state, _content = game
+    pending_cols = _pending_columns(db)
+    assert "revision_round" in pending_cols
+    assert "prior_options_json" in pending_cols
+    assert "consumed_epoch" not in pending_cols
+    ledger_cols = _ledger_columns(db)
+    assert "origin_ref" in ledger_cols
+    dossier_cols = {r[1] for r in db.conn.execute("PRAGMA table_info(decree_dossiers)").fetchall()}
+    assert "rescript_origin" not in dossier_cols
+    # partial UNIQUE on non-empty origin_ref
+    idx_sql = [
+        str(r[0]) for r in db.conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='index' AND name='idx_ledger_origin_ref'"
+        ).fetchall()
+    ]
+    assert idx_sql and "origin_ref" in idx_sql[0] and "origin_ref != ''" in idx_sql[0].replace('"', "")
+
+def test_657_s1_rescript_emitted_set_subset_of_dossier():
+    """A12 前置（#1778 后）：只剩 emitted 闭集 ⊂ DOSSIER；七类 routable 已整体取消。"""
+    from ming_sim.decree_vocabulary import (
+        DOSSIER_ACTION_TYPES,
+        RESCRIPT_EMITTED_DOSSIER_ACTION_TYPES,
+    )
+    assert RESCRIPT_EMITTED_DOSSIER_ACTION_TYPES <= DOSSIER_ACTION_TYPES
+    assert "dismiss_assignment" in RESCRIPT_EMITTED_DOSSIER_ACTION_TYPES
+
+def test_657_s1_derive_draft_capability_stable_and_sensitive():
+    """capability：同字段稳定；闭集任一有效差改变键。"""
+    from ming_sim.decree_vocabulary import derive_draft_capability
+
+    base = {
+        "action_type": "assignment",
+        "label": "发帑赈济",
+        "hint": "所安者饥民",
+        "assignee_name": "杨嗣昌",
+        "target_kind": "region",
+        "target_id": "shaanxi",
+        "transaction_category": "督赈",
+        "locality_scope": "single",
+        "region_id": "shaanxi",
+    }
+    a = derive_draft_capability(base)
+    b = derive_draft_capability(dict(base))
+    assert isinstance(a, str) and a == b and len(a) >= 16
+    # 扰动 label
+    changed = dict(base)
+    changed["label"] = "缓征"
+    assert derive_draft_capability(changed) != a
+    # 扰动 assignee
+    changed2 = dict(base)
+    changed2["assignee_name"] = "洪承畴"
+    assert derive_draft_capability(changed2) != a
+    # 缺键按默认参与派生，不因插入空串而变
+    with_default = dict(base)
+    with_default["summon_target"] = ""
+    assert derive_draft_capability(with_default) == a
 
 def test_657_validate_rejects_label_hint_only_options():
     """#657 Class1：旧仅 label/hint 两键输入必须整批失败（无兼容适配层）。"""
