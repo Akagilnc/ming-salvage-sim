@@ -1,9 +1,9 @@
 {
   "universe_path": "evidence/1900-j18-j6-retire-fixer/j6-universe.jsonl",
-  "candidate_count": 2536,
+  "candidate_count": 2535,
   "by_flag": {
-    "assert_text_compare_or_match": 1761,
-    "mock_or_patch_present": 508,
+    "assert_text_compare_or_match": 1758,
+    "mock_or_patch_present": 507,
     "helper_or_private_call": 1677,
     "assert_count": 875,
     "retired_or_meta_marker": 80,

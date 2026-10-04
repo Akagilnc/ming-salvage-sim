@@ -25,6 +25,7 @@
 - 确认类成员：`delete` / `migrate`（代码侧删简修净）
 - 必要负向：真实入口 + 实际结果 → `retain`
 - 禁止：机器低置信 retain、一句「公开入口+可观察结果」、新增测试钩子/平行夹具
+- J6 测试质量 migrate **不得** pen 成 #1873 功能接续缺口；功能可缺 ≠ helper/mock/文字 oracle 证明可留
 
 ## 复扫
 
@@ -34,4 +35,4 @@ python3 evidence/1900-j18-j6-retire-fixer/j6_flag_structural_candidates.py
 python3 -c "import json; print(json.load(open('evidence/1900-j18-j6-retire-fixer/j6-wide-disposition-summary.json')))"
 ```
 
-不自行宣布 J6 converged / 类净。本轮：结构复扫 2477 全处置、`migrate_outstanding_in_tree=0`、`wide_flag=0`；J18 与家族缺口仍归 #1873。
+不自行宣布 J6 converged / 类净。本轮已落地先前误 pen 为 continuity_gap 的 7 条 J6 migrate→retain；`continuity_gap_migrate_names=[]`。J18 与真实家族功能缺口仍归 #1873。

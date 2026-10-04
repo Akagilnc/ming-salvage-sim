@@ -490,9 +490,7 @@ def test_verify_llm_available_cli_channel_failure_raises(monkeypatch):
 
 
 def test_verify_llm_available_smokes_legacy_env_only_backend(monkeypatch):
-    """legacy env-only 路径（无显式 channel + MING_SIM_LLM_BACKEND 设置）现在也真实 smoke
-    （旧版直接 return 跳过）：触发 _run_backend_for_config，失败抛 LLMUnavailable，
-    避免 fresh-start 在 runner 缺失时先删主库。"""
+    """env-only backend（无显式 channel + MING_SIM_LLM_BACKEND）须真实 smoke，不得静默跳过。"""
     monkeypatch.setenv("MING_SIM_LLM_BACKEND", "agy")
     seen = {}
 

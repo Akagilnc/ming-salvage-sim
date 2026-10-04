@@ -1,0 +1,61 @@
+=== auth query: 7 landed members ===
+tests/test_fiscal_substrate_bridge.py::test_settling_context_retry_does_not_recompute_substrate_hub_pre_settle
+  action=retain flags=['helper_or_private_call']
+  entry=decree.pre_settle
+  result=second pre_settle with saved resolve_context leaves hub ledger/containers/国库 unchanged
+  necessity=necessary: _hub_ledger_snapshot/_hub_container_snapshot are public economy_ledger/fiscal_containers reads for retry idempotence equality; hub-identity oracle already dropped
+  basis=source_read_migrate_landed_retain
+tests/test_fiscal_substrate_bridge.py::test_apply_fixed_period_flows_malformed_fiscal_container_isolated
+  action=retain flags=['helper_or_private_call']
+  entry=apply_fixed_period_flows
+  result=flows survive; shaanxi fiscal stays bad_container; 田赋辽饷盐商 amount excludes the bad province
+  necessity=necessary setup: _disable_army_pay_source_cutover selects non-cutover isolation path still in production; assert msgs and tlog spy dropped
+  basis=source_read_migrate_landed_retain
+tests/test_fiscal_substrate_bridge.py::test_apply_fixed_period_flows_malformed_fiscal_json_isolated
+  action=retain flags=['helper_or_private_call']
+  entry=apply_fixed_period_flows
+  result=flows survive; fiscal stays {bad; 田赋辽饷盐商 excludes shaanxi
+  necessity=necessary setup: non-cutover isolation path; assert msgs and tlog spy dropped
+  basis=source_read_migrate_landed_retain
+tests/test_fiscal_substrate_bridge.py::test_apply_fixed_period_flows_malformed_fiscal_scalar_isolated
+  action=retain flags=['helper_or_private_call']
+  entry=apply_fixed_period_flows
+  result=flows survive; 田赋辽饷盐商 amount excludes bad-scalar shaanxi
+  necessity=necessary setup: non-cutover isolation path; assert msgs and tlog spy dropped
+  basis=source_read_migrate_landed_retain
+tests/test_fiscal_substrate_bridge.py::test_all_ming_settle_substrates_advance_into_ledger
+  action=retain flags=['assert_count', 'helper_or_private_call']
+  entry=apply_fixed_period_flows
+  result=17 ming settle regions; 起运 income row; Jiangnan 省库库银 first_tick; border 军饷欠>=0; henan 宗禄欠>0; huguang Due.宗禄 > nanzhili
+  necessity=necessary: _read_settle reads public regions.fiscal.settle; private _region_pay_arrears_container_basis oracle already dropped; wording msgs dropped
+  basis=source_read_migrate_landed_retain
+tests/test_llm_channel_config.py::test_verify_llm_available_smokes_legacy_env_only_backend
+  action=retain flags=['mock_or_patch_present', 'retired_or_meta_marker']
+  entry=verify_llm_available
+  result=env-only cfg still enters _run_backend_for_config smoke instead of silent return
+  necessity=necessary CLI IO boundary mock; prompt wording lock dropped; name marks env-only path still in production via cli_backend_from_env
+  basis=source_read_migrate_landed_retain
+tests/test_qa_t1_extraction_dual_source_1353.py::test_resolve_turn_write_gate_held_by_caller_no_reenter
+  action=retain flags=[]
+  entry=GameSession.resolve_turn(write_gate_already_held=True) with outer gate held
+  result=ValueError (no match=); no deadlock
+  necessity=necessary write-gate negative: real resolve_turn entry + public ValueError; auto_close spy/stub removed (write_gate_already_held skips auto_close)
+  basis=source_read_migrate_landed_retain
+
+=== summary ===
+structural_rescan_count: 2535
+by_action: {'retain': 2431, 'migrate': 124, 'delete': 62}
+migrate_outstanding_in_tree: 0
+migrate_still_structural: 122
+j6_quality_seven_landed: 7
+continuity_gap_migrate_still_structural: 0
+continuity_gap_migrate_names: []
+
+=== structural presence of 7 ===
+test_settling_context_retry_does_not_recompute_substrate_hub_pre_settle IN_STRUCT ['tests/test_fiscal_substrate_bridge.py']
+test_apply_fixed_period_flows_malformed_fiscal_container_isolated IN_STRUCT ['tests/test_fiscal_substrate_bridge.py']
+test_apply_fixed_period_flows_malformed_fiscal_json_isolated IN_STRUCT ['tests/test_fiscal_substrate_bridge.py']
+test_apply_fixed_period_flows_malformed_fiscal_scalar_isolated IN_STRUCT ['tests/test_fiscal_substrate_bridge.py']
+test_all_ming_settle_substrates_advance_into_ledger IN_STRUCT ['tests/test_fiscal_substrate_bridge.py']
+test_verify_llm_available_smokes_legacy_env_only_backend IN_STRUCT ['tests/test_llm_channel_config.py']
+test_resolve_turn_write_gate_held_by_caller_no_reenter ABSENT []

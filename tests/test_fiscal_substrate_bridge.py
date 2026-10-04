@@ -3916,7 +3916,7 @@ def test_resolve_directives_nested_cutover_bad_state_uses_settlement_abort_error
 
 @pytest.mark.parametrize("bad_container", ["[]", "0", "false"])
 def test_apply_fixed_period_flows_malformed_fiscal_container_isolated(fresh_game, bad_container):
-    # Public entry contract: fixed fiscal must not crash before shadow substrate isolation can log.
+    # Public entry: bad fiscal container isolates; fixed flows survive; tax excludes that province.
     import ming_sim.flows as flows_mod
 
     db, state = fresh_game
@@ -3930,14 +3930,16 @@ def test_apply_fixed_period_flows_malformed_fiscal_container_isolated(fresh_game
 
     flow_rows = flows_mod.apply_fixed_period_flows(db, state)
 
-    assert isinstance(flow_rows, list) and flow_rows, "坏 fiscal 容器不该掀翻固定财政"
-    assert db.conn.execute("SELECT fiscal FROM regions WHERE id='shaanxi'").fetchone()["fiscal"] == bad_container
+    assert flow_rows
+    assert db.conn.execute(
+        "SELECT fiscal FROM regions WHERE id='shaanxi'"
+    ).fetchone()["fiscal"] == bad_container
     tax_flow = next(f for f in flow_rows if f.get("category") == "田赋辽饷盐商")
-    assert tax_flow["amount"] == expected_tax, "坏 fiscal 省当月固定税收应出列，不能按默认 fiscal 造钱"
+    assert tax_flow["amount"] == expected_tax
 
 
 def test_apply_fixed_period_flows_malformed_fiscal_json_isolated(fresh_game):
-    # Public entry contract: syntax-bad fiscal JSON must not abort before shadow isolation.
+    # Public entry: syntax-bad fiscal isolates; fixed flows survive; tax excludes that province.
     import ming_sim.flows as flows_mod
 
     db, state = fresh_game
@@ -3951,10 +3953,12 @@ def test_apply_fixed_period_flows_malformed_fiscal_json_isolated(fresh_game):
 
     flow_rows = flows_mod.apply_fixed_period_flows(db, state)
 
-    assert isinstance(flow_rows, list) and flow_rows, "坏 fiscal JSON 不该掀翻固定财政"
-    assert db.conn.execute("SELECT fiscal FROM regions WHERE id='shaanxi'").fetchone()["fiscal"] == "{bad"
+    assert flow_rows
+    assert db.conn.execute(
+        "SELECT fiscal FROM regions WHERE id='shaanxi'"
+    ).fetchone()["fiscal"] == "{bad"
     tax_flow = next(f for f in flow_rows if f.get("category") == "田赋辽饷盐商")
-    assert tax_flow["amount"] == expected_tax, "坏 fiscal 省当月固定税收应出列，不能按默认 fiscal 造钱"
+    assert tax_flow["amount"] == expected_tax
 
 
 @pytest.mark.parametrize("field,bad_value", [
@@ -3985,9 +3989,9 @@ def test_apply_fixed_period_flows_malformed_fiscal_scalar_isolated(fresh_game, f
 
     flow_rows = flows_mod.apply_fixed_period_flows(db, state)
 
-    assert isinstance(flow_rows, list) and flow_rows, "坏 fiscal 标量不该掀翻固定财政"
+    assert flow_rows
     tax_flow = next(f for f in flow_rows if f.get("category") == "田赋辽饷盐商")
-    assert tax_flow["amount"] == expected_tax, "坏 fiscal 标量省当月固定税收应出列"
+    assert tax_flow["amount"] == expected_tax
 
 
 def test_apply_fixed_period_flows_commits_shadow_substrate_when_standalone(fresh_game):
@@ -4049,20 +4053,20 @@ def test_all_ming_settle_substrates_advance_into_ledger(fresh_game):
         and flow.get("dir") == "income"
         and flow.get("category") == "起运"
         for flow in fixed_flows
-    ), "cutover 基座应把起运作为 hub 国库收入落账"
-    # 吸收原 jiangnan advances_and_logs：flows 路径落库 first_tick 省库库银硬锚（非仅 >0）
+    )
+    # flows 路径落库 first_tick 省库库银硬锚（非仅 >0）
     for region_id, expected in JIANGNAN_CORE_EXPECTED.items():
         settle = _read_settle(db, region_id)
         want = expected["first_tick"]["省库库银"]
-        assert settle["st"]["省库库银"] == pytest.approx(want, abs=1e-3), (
-            f"{region_id} flows 后省库库银 {settle['st']['省库库银']} ≠ first_tick {want}"
-        )
+        assert settle["st"]["省库库银"] == pytest.approx(want, abs=1e-3)
     for region_id in ("shaanxi", "shanxi", "liaodong", "dongjiang_area"):
         settle = _read_settle(db, region_id)
         assert settle["st"]["军饷欠"] >= 0
-    assert _read_settle(db, "henan")["st"]["宗禄欠"] > 0, "周/福藩重省应有宗禄欠压"
-    assert _read_settle(db, "huguang")["p"]["Due"]["宗禄"] > _read_settle(db, "nanzhili")["p"]["Due"]["宗禄"], \
-        "楚藩重省宗禄 Due 应重于江南基准"
+    assert _read_settle(db, "henan")["st"]["宗禄欠"] > 0
+    assert (
+        _read_settle(db, "huguang")["p"]["Due"]["宗禄"]
+        > _read_settle(db, "nanzhili")["p"]["Due"]["宗禄"]
+    )
 
 
 def test_seeded_substrates_keep_multi_tick_historical_trajectories(fresh_db):

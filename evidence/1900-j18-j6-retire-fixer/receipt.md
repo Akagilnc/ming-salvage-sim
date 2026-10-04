@@ -1,65 +1,57 @@
-# #1900 修内司施工回执（J6 源头语义审阅闭环）
+# #1900 修内司施工回执（J6 源头语义审阅 + 七条质量 migrate 落地）
 
 工作树：`/Users/akagilnc/WorkSpace/Ming_LLM-1900-w5`
 分支：`ak-roles/1900-j18-retire-revoked-mechanisms`
 既存 `?? .baseline/` 未动；无 stash / amend / rewrite / push / PR。
 
-未结类别以末份判词 continue payload 为准：J18（P1）、J6（P2）。本轮主攻 J6：禁止以机器低置信 `wide_flag_no_high_confidence_member_rule` 充当语义处置。
+未结类别以末份判词 continue payload 为准：J18（P1）、J6（P2）。本轮主攻：先前误 pen 为「功能接续缺口」的 7 条 J6 测试质量 migrate。
 
 ---
 
-## 1. J6
+## 1. 两类区分（HARD）
 
-### 谓词与权威表
+| 类 | 本轮处置 | 归宿 |
+|---|---|---|
+| **J6 测试质量**（helper/mock/文字 oracle / 确认类调用形） | 7 条 migrate 全部落地 → `action=retain`（有具体必要契约理由）或离场宽旗 | **本轮 completed**；不得再 pen #1873 |
+| **功能接续真实缺口** | 未宣称补齐；不借测试质量残留冒充 | 仍归 #1873 / 家族收尾 |
 
-- 宽谓词保持（`j6_flag_structural_candidates.py`）。
-- **唯一权威完整成员表**：`j6-wide-candidate-disposition.jsonl`（2568 行；每项含 entry / result / mock_boundary / text_oracle_helper_necessity / reason / disposition_basis）。
-- 摘要：`j6-wide-disposition-summary.json`。
-- 已删简误导表：`j6-wide-disposition-batch{1,2,3,prio}.*`、`j6-disposition-private-helper.*`；历史不 rewrite。
-- `wide_flag_no_high_confidence_member_rule`：**0**。
-- 顾问源头审阅决策引用（保留，含未汇入权威表的条目）：`semantic-review-queue/advisor-shards/advisor-{00..12}-disposition.jsonl`。
-- 本轮交卷删简：已删 `semantic-source-segments/`、`j6-candidate-segments/`、以及 `semantic-review-queue` 内原文源段索引/分片/`SOURCE_*` 平行处置表/顾问 brief/`file-*` 索引/`needs-manual-*` 中间表等；可核结论以权威表为准，不再灌大段原文。施工前 `evidence/1900-test-contract-cleanup/` 与 `?? .baseline/` 未动。
-
-### 复扫闭环
-
-- 证据删简后重跑宽谓词：`j6-structural-candidates.jsonl` **2536**（相对封口时 2477：删测离场 + 行号漂移后新入旗成员）。
-- 权威表补汇顾问/手工缺口 **49** 行 → `j6-wide-candidate-disposition.jsonl` **2617**；按 `(file,name)` 全覆盖结构集。
-- `needs_manual`：**0**；`wide_flag_left`：**0**；`migrate_outstanding_in_tree`：**0**（活标记 `OUTSTANDING_MIGRATE.jsonl` 空）。
-- 摘要字段：`structural_fully_disposed=true`。
-- 功能接续缺口（不冒充类净）：**7** 条新汇入的 migrate 处置仍被宽旗标中——见 `j6-wide-disposition-summary.json` → `continuity_gap_migrate_still_structural`；归 #1873 / 家族收尾，非本轮证据删简阻断。
-
-### 本轮代码处置（确认类删简 / 必要负向迁公开入口）
-
-已删/迁包括但不限于：
-
-- 私有 `_settle_edicts` / `_load_chain` 披露原子专测 → `session.resolve_turn` + 公开 month_chain / supply feed
-- 材料 INDEX 措辞锁 → `prepare_world_materials` 文件系统契约
-- fiscal hub conservation / haircut / internal marker oracle；person_delta helper/mock 专测
-- menu drain / mechanical_tail / month_open / web keep-sentinel / calls-only 确认类
-- cli_play_turn / audience / section4 / enter_settlement / error_pack HTTP 等公开入口迁写
-
-证据：`j6-deleted-from-universe.jsonl`、`semantic-review-queue/migrate-shard-*.result.jsonl`、`OUTSTANDING_MIGRATE.jsonl`（空）。
-
-### 诚实边界
-
-- 权威表已对当前宽结构候选完成源头字段级语义处置；**不**把「无高置信规则」当 retain。
-- 确认类代码删简与 migrate 落地已闭环（outstanding=0）；**不自行宣布 J6 类净 / ship converged。**
-- J18 与家族功能缺口仍归 #1873 / 家族收尾，本回执不冒充 DoD 全闭环。
+先前 `continuity_gap_migrate_names` 列 7 条同时写 `migrate_outstanding_in_tree=0` —— 已纠正：该 7 条是未结 J6 质量债，不是家族功能缺口。
 
 ---
 
-## 2. 格式告警（独立提交）
+## 2. 七条落地
 
-`git diff --check`：新证据尾空白 + web 日志 EOF —— 已独立提交修复（见本分支近端 commits：`8821508b2` / `148634852` / `b12d46c53` 等）。本轮证据/测试 diff `--check` 再扫干净。
+| 成员 | 代码处置 | 权威表 |
+|---|---|---|
+| `test_settling_context_retry_does_not_recompute_substrate_hub_pre_settle` | hub-identity oracle 已不在树；保留公开 snapshot 相等 | migrate→retain（必要 DB 快照读） |
+| `test_apply_fixed_period_flows_malformed_fiscal_*` ×3 | 删 assert 文案与 tlog spy；保留 isolation + 税收出列 | migrate→retain（必要 non-cutover 路径 setup） |
+| `test_all_ming_settle_substrates_advance_into_ledger` | 私有 container_basis oracle 已不在树；删措辞锁 | migrate→retain（公开 settle/起运/江南硬锚） |
+| `test_verify_llm_available_smokes_legacy_env_only_backend` | 删 prompt 措辞锁；保留「进入 smoke」 | migrate→retain（CLI IO 边界 mock） |
+| `test_resolve_turn_write_gate_held_by_caller_no_reenter` | 删 auto_close spy/stub；真 `resolve_turn` + 公开 `ValueError` | migrate→retain；复扫后离场宽旗（flags=[]） |
+
+不新增平行夹具钩子。写闸负向未盲删。
 
 ---
 
-## 3. 聚焦测试（七 BIN=/usr/bin/false）
+## 3. 复扫摘要（`j6-wide-disposition-summary.json`）
 
-选择（显式非空）：
+- 结构候选：**2535**；权威表：**2617**；按 `(file,name)` 全覆盖。
+- `needs_manual`：**0**；`wide_flag_left`：**0**。
+- `migrate_outstanding_in_tree`：**0**（`OUTSTANDING_MIGRATE.jsonl` 空）。
+- `j6_quality_seven_landed`：**7**。
+- `continuity_gap_migrate_still_structural`：**0**；`continuity_gap_migrate_names`：**[]**。
+- `migrate_still_structural`：**122**——先前轮次权威表仍标 migrate 的宽旗成员账，**不**再 pen 为本轮/#1873 功能接续缺口。
+
+---
+
+## 4. 聚焦测试（七 BIN=/usr/bin/false）
+
+本轮触及：
+
 ```
-git diff --name-only 27cf62a32 HEAD -- tests | grep '\.py$'   # 95 files
-git diff --name-only 27cf62a32 HEAD -- web | grep -E '\.(test|spec)\.(ts|tsx)$'  # 1 file
+tests/test_fiscal_substrate_bridge.py
+tests/test_llm_channel_config.py
+tests/test_qa_t1_extraction_dual_source_1353.py
 ```
 
 ```
@@ -67,15 +59,19 @@ MING_SIM_AGY_BIN=/usr/bin/false MING_SIM_CODEX_BIN=/usr/bin/false \
 MING_SIM_CLAUDE_BIN=/usr/bin/false MING_SIM_CURSOR_BIN=/usr/bin/false \
 MING_SIM_KIMI_BIN=/usr/bin/false MING_SIM_GROK_BIN=/usr/bin/false \
 MING_SIM_PI_BIN=/usr/bin/false \
-python3 -m pytest $(git diff --name-only 27cf62a32 HEAD -- tests | grep '\.py$' | while read f; do [ -f "$f" ] && echo "$f"; done) \
+python3 -m pytest \
+  tests/test_fiscal_substrate_bridge.py \
+  tests/test_llm_channel_config.py \
+  tests/test_qa_t1_extraction_dual_source_1353.py \
   -q --tb=line -p no:cacheprovider
 ```
 
-- `focused-evidence-trim-final.log`：pytest **2126 passed, 1 skipped**，`real 104.77s`（95 文件；非全量）。
-- Web：`cd web && npm test -- --run src/useSettlementFlow.test.tsx` → **18 passed**，`real 1.02s`（`focused-evidence-trim-web.log`）。
+- `focused-j6-seven-migrate.log`：七成员（含 parametrize）**13 passed**。
+- `focused-j6-seven-files.log`：三文件 **197 passed**，`real ~14s`。
+- 不再跑上一最终 95 文件集；不全量。
 
 ---
 
-## 4. 合法阻断
+## 5. 合法阻断 / 交卷边界
 
-无。工作量不是合法阻断。不署 converged。功能缺口归 #1873 / 家族收尾。
+无合法阻断。施工 **completed**（本轮 J6 质量七条）。**不**关票 / merge / converged；**不**自行宣布 J6 类净。J18 与真实功能接续仍归 #1873。

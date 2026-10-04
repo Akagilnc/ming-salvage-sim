@@ -279,14 +279,14 @@ def test_resolve_turn_write_gate_held_by_caller_no_reenter(game, tmp_path, monke
 
     db, state, content = game
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
-    # 外层已持闸：resolve 不得自锁；公开结果是 ValueError，不是死锁。
+    # 外层已持闸 + write_gate_already_held：公开结果是 ValueError，不是死锁。
+    # write_gate_already_held=True 时 resolve 不调用 auto_close，无需平行 stub。
     state.turn_phase = TurnPhase.REVIEWING.value
 
     from ming_sim.session_write_queue import SessionWriteQueue
     queue = SessionWriteQueue()
     gate = queue.write_gate
     assert gate.acquire(blocking=False)
-    monkeypatch.setattr(an, "auto_close_open_night", lambda *a, **k: None)
 
     sess = object.__new__(GameSession)
     sess.db = db
