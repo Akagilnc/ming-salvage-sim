@@ -1,67 +1,55 @@
-# #1835 w5 修内司回执（fixer · C1/C3 三模块全类补扫）
+# #1835 w5 证据复核回执（C1/C3 三模块 · 可运行 AST 全表）
 
-本轮只交修理提交，未 merge、未 push、未开 PR；不宣告关票。不提交终局回执（由驱动 session 汇验）。
+本轮只交证据复核提交，未 merge、未 push、未开 PR；不宣告关票。不提交终局回执（由驱动 session 汇验）。
 
 ## 授权与动因
 
-- 任务包路径（驱动给定）：`~/.ak-roles/books/Ming_LLM/unbound/runs/01a108ff-575c-70a9-a4e6-3f226f700bcf@fixer/fix-packet.md`（本机开干时该目录尚未落地；按驱动消息正文执行）
-- 票面：#1835 / #1812 / #1901；接缝 ADR 0150 / 0154 / 0047 / 0158
-- 动因：上轮 advisor-rescan 回执写「issues 旧核 AST 无 def/reexport」——谓词仍点名旧符号样本，**未**对 `situation_drift.py` / `displaced_population.py` / `issues.py` 全部顶层与嵌套 def 做同名跨仓消费者全表，漏掉：
-  1. `situation_drift._commitment_bar_value`（C1 同形重复零调用）
-  2. `default_situation_shape`（C3 零消费者）
-  3. `issues._situation_terminal_effects`（C1/C3 单调用转接壳）
+- 同工作树 `#1835` 最终证据复核（驱动消息正文）
+- 全局约束已读：`~/.claude/CLAUDE.md` SHARED_HARD_RULES + 仓内 `CLAUDE.md` / `AGENTS.md`
+- 动因：上轮 `disposition-full-table.md` 枚举命令是 **heredoc 注释壳**（不可运行）；跨仓同名表只点名 3 符号，**不足证明**对三模块 98 个顶层/嵌套 def 做了跨仓同名核对；消费者把未解析同名 Attribute 当准确消费者
 
-## 先前收窄结论纠正
+## 本轮产物（调查脚本，非测试）
 
-| 上轮表述 | 事实 |
+| 文件 | 作用 |
 |---|---|
-| 「issues inertia/levy 旧核与 re-export；本轮 AST 无 def/reexport」 | 对点名旧核符号为真，但**不等于**三模块全文已清；同形死副本与转接壳仍在 |
-| 「situation_drift / displaced_population 保留为 #1901 接缝」 | 模块接线应留，但模块内零消费者/同形重复/转接壳必须整类扫净 |
+| `ast_c1c3_resweep_enum.py` | 可运行调查脚本：单次 AST 索引全仓 FunctionDef/AsyncFunctionDef |
+| `enum-run-stdout.txt` | 实跑 stdout |
+| `enumeration-resolved.txt` | 98 def：CROSS_DEF + RESOLVED_PROD/TEST + SAME + UNCERTAIN |
+| `cross-name-candidates.txt` | 98 条每人完整跨模块同名定义路径 |
+| `review-flags.txt` | 零生产 / 转发壳 / 跨名机读摘要 |
+| `disposition-full-table.md` | 全表处置（含可运行命令 + 语义核对 + EOF 单换行） |
 
-## 枚举命令（真实执行，未收窄为点名样本）
+## 枚举命令（真实执行）
 
 ```sh
-python3 <<'PY'
-# AST walk FunctionDef/AsyncFunctionDef (top-level + nested) in:
-#   ming_sim/situation_drift.py
-#   ming_sim/displaced_population.py
-#   ming_sim/issues.py
-# Consumers: Name / Attribute Load + ImportFrom across ming_sim + tests + web_app.py
-# Plus module-level KINDS / ALLCAPS / _CONST assigns in the three files
-# Plus cross-repo same-name for _commitment_bar_value vs commitment_display
-PY
+cd /Users/akagilnc/WorkSpace/Ming_LLM-1835-w5
+python3 evidence/issue-1835/c1c3-resweep/ast_c1c3_resweep_enum.py \
+  2>&1 | tee evidence/issue-1835/c1c3-resweep/enum-run-stdout.txt
 ```
 
-产物：
+实跑摘要：`TARGET_DEFS=98 WITH_CROSS=3`；`TOPLEVEL_ZERO_RESOLVED_PROD_AND_SAME=0`；`TOPLEVEL_FORWARDERS=0`。
 
-- 修前原始：`evidence/issue-1835/c1c3-resweep/enumeration-raw.txt`
-- 修后原始：`evidence/issue-1835/c1c3-resweep/enumeration-post.txt`（DEFS=98，CONSTS=26，零引用顶层残留=0）
-- 全表处置：`evidence/issue-1835/c1c3-resweep/disposition-full-table.md`
+## 跨仓同名（完整 98）
 
-## 本轮删除
+机械结果：仅 3 个名字有跨模块同名定义；其余 95 条在 `cross-name-candidates.txt` 为 `CROSS_DEF (none)`。
 
-| 路径 | 成员 | 分类 | 处置 |
-|---|---|---|---|
-| `ming_sim/situation_drift.py` | `default_situation_shape` | C3 零消费者 | **已删**；开局形状真源=`issues.event_to_issue` 内联 kind 分支 |
-| `ming_sim/situation_drift.py` | `_commitment_bar_value` | C1 同形重复零调用 | **已删**；真源/唯一调用=`commitment_display._commitment_bar_value` |
-| `ming_sim/issues.py` | `_situation_terminal_effects` | C1/C3 转接壳 | **已删**；`event_to_issue` 直接 `from ming_sim.situation_drift import situation_terminal_effects`（lazy，避循环 import；不新增桥函数） |
-| `ming_sim/issues.py` | `_COLLAPSIBLE_KINDS` | C3 零引用常量 | **已删**（原壳附属）；真源=`COLLAPSIBLE_SITUATION_KINDS` |
+| 符号 | 语义核对 | 处置 |
+|---|---|---|
+| `bind_content` | 各模块私有 GameContent 注入；非平行局势核 | **保留全部** |
+| `_ctx` | 各模块读本模块 `_content`；测试夹具同名≠生产 | **保留全部** |
+| `_event_outcome_label` | 与 `preflight` **字面同形**，但两侧均有生产消费者 | **保留两侧**（不机械删；记后续 DRY 候选） |
 
-未新增任何兼容桥 / re-export / 转发壳。
+## C1/C3 删简闸
 
-## 注释与空白
-
-| 文件 | 处置 |
-|---|---|
-| `ming_sim/entities/affair/store.py` | docstring 去掉退役 `declare_closed` 词面 |
-| `ming_sim/materials.py` | 可见事务 docstring 去掉退役 `declare_closed` 词面 |
-| `ming_sim/constants.py` | `COURT_BREAK_COMMANDS` 注释去掉「今日且到此」退役叙事 |
-| `ming_sim/settlement/registry.py` | EOF 多余空行收成单换行 |
-| `evidence/issue-1835/w5-fixer-report.md` | 行尾空白 6 处清除 |
+- 真实生产零消费者（resolved_prod=0 且 same_module=0）：**0**
+- 单调用转发壳：**0**
+- 仅 uncertain Attribute：**0** → 无「不确定却误删」
+- 上轮四处删除（`default_situation_shape` / `_commitment_bar_value` / `_situation_terminal_effects` / `_COLLAPSIBLE_KINDS`）复核仍成立
+- **本轮无新增生产删码**
 
 ## 聚焦测试
 
-强制前缀：
+强制前缀七 `MING_SIM_*_BIN=/usr/bin/false`。解释器：`/Users/akagilnc/WorkSpace/Ming_LLM/.venv/bin/python`（cwd=本树）。
 
 ```sh
 env \
@@ -84,15 +72,13 @@ env \
   tests/test_month_translate_1840.py
 ```
 
-结果（`focused.txt`）：**421 passed, 1 skipped in 9.96s**；`/usr/bin/time -p` → real 10.43 / user 7.00 / sys 2.79。
-
-解释器：工作树无 `.venv`，用 `/Users/akagilnc/WorkSpace/Ming_LLM/.venv/bin/python`（cwd=本树）。
+结果写入 `focused.txt`：**421 passed, 1 skipped in 12.72s**；`/usr/bin/time -p` → real 13.30 / user 7.94 / sys 3.10。
 
 ## 自查二连
 
-- 同类型：三模块全文 AST 消费者表已落盘；修后顶层零引用=0；无新桥。
-- 引入 bug：聚焦含 commitment / month_chain / affairs / materials 相关案，全绿。
+- 同类型：可运行脚本 + 98 全表跨名 + 解析/未解析消费者分列已落盘；EOF 无多余空行；`git diff --check` 过。
+- 引入 bug：本轮不改生产代码；聚焦回归确认无回归。
 
 ## 禁令遵守
 
-未 stash / amend / rewrite / push / PR；未改宪法配置；自建物仅本工作树 `evidence/issue-1835/c1c3-resweep/` 与系统临时枚举脚本（无持久 `/tmp` 残留依赖）。
+未 stash / amend / rewrite / push / PR；未新增证明测试；不交终局工具。

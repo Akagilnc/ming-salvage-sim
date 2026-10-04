@@ -1,0 +1,209 @@
+CROSS-MODULE same-name for all TARGET defs (complete)
+TARGET_DEFS=98
+Each TARGET def lists all other-module FunctionDef/AsyncFunctionDef with the same name.
+
+TARGET ming_sim/situation_drift.py:47 situation_terminal_effects nested=False
+  CROSS_DEF (none)
+TARGET ming_sim/situation_drift.py:60 _metrics nested=True
+  CROSS_DEF (none)
+TARGET ming_sim/situation_drift.py:73 _commitment_ongoing_effects_for_settlement nested=False
+  CROSS_DEF (none)
+TARGET ming_sim/situation_drift.py:106 _resolve_commitment_issue nested=False
+  CROSS_DEF (none)
+TARGET ming_sim/situation_drift.py:151 _expire_commitment_issue nested=False
+  CROSS_DEF (none)
+TARGET ming_sim/situation_drift.py:195 apply_situation_monthly_drift nested=False
+  CROSS_DEF (none)
+TARGET ming_sim/displaced_population.py:32 surcharge_population_pool_members nested=False
+  CROSS_DEF (none)
+TARGET ming_sim/displaced_population.py:42 apply_levy_driven_transfers nested=False
+  CROSS_DEF (none)
+TARGET ming_sim/issues.py:64 _issue_condition_text nested=False
+  CROSS_DEF (none)
+TARGET ming_sim/issues.py:74 _normalize_commitment_kind nested=False
+  CROSS_DEF (none)
+TARGET ming_sim/issues.py:81 _validate_commitment_stop_condition nested=False
+  CROSS_DEF (none)
+TARGET ming_sim/issues.py:109 bind_content nested=False
+  CROSS_DEF ming_sim/agents.py:48 nested=False parent=None
+  CROSS_DEF ming_sim/context.py:64 nested=False parent=None
+TARGET ming_sim/issues.py:115 _ctx nested=False
+  CROSS_DEF ming_sim/agents.py:53 nested=False parent=None
+  CROSS_DEF ming_sim/context.py:69 nested=False parent=None
+  CROSS_DEF tests/test_rescript_heal_isolation_1801.py:23 nested=False parent=None
+  CROSS_DEF tests/test_rescript_option_field_heal_1746.py:20 nested=False parent=None
+TARGET ming_sim/issues.py:121 _canonical_issue_origin nested=False
+  CROSS_DEF (none)
+TARGET ming_sim/issues.py:133 commitment_condition_role nested=False
+  CROSS_DEF (none)
+TARGET ming_sim/issues.py:148 _legacy_commitment_stop_gate nested=False
+  CROSS_DEF (none)
+TARGET ming_sim/issues.py:156 _commitment_stop_gate nested=False
+  CROSS_DEF (none)
+TARGET ming_sim/issues.py:168 _commitment_remaining_from_gate nested=False
+  CROSS_DEF (none)
+TARGET ming_sim/issues.py:203 _latest_commitment_paid_total nested=False
+  CROSS_DEF (none)
+TARGET ming_sim/issues.py:221 _commitment_gate_references_arrears nested=False
+  CROSS_DEF (none)
+TARGET ming_sim/issues.py:225 _commitment_arrears_gate_army_ids nested=False
+  CROSS_DEF (none)
+TARGET ming_sim/issues.py:239 _monthly_person_rating_changes nested=False
+  CROSS_DEF (none)
+TARGET ming_sim/issues.py:257 _invalid_monthly_person_rating_reason nested=False
+  CROSS_DEF (none)
+TARGET ming_sim/issues.py:275 _person_change_has_unsupported_monthly_work nested=False
+  CROSS_DEF (none)
+TARGET ming_sim/issues.py:288 _unsupported_monthly_ongoing_fields nested=False
+  CROSS_DEF (none)
+TARGET ming_sim/issues.py:304 _monthly_ongoing_effects_has_work nested=False
+  CROSS_DEF (none)
+TARGET ming_sim/issues.py:321 _ack_due_commitment_issue nested=False
+  CROSS_DEF (none)
+TARGET ming_sim/issues.py:355 _event_issue_refs nested=False
+  CROSS_DEF (none)
+TARGET ming_sim/issues.py:363 _event_trigger_refs nested=False
+  CROSS_DEF (none)
+TARGET ming_sim/issues.py:367 _event_terminal_states nested=False
+  CROSS_DEF (none)
+TARGET ming_sim/issues.py:376 _event_terminal_records nested=False
+  CROSS_DEF (none)
+TARGET ming_sim/issues.py:415 _normalize_event_terminal_reason nested=False
+  CROSS_DEF (none)
+TARGET ming_sim/issues.py:426 _fiscal_levy_normalized_terminal_reason_or_abort nested=False
+  CROSS_DEF (none)
+TARGET ming_sim/issues.py:442 _canonicalize_existing_fiscal_levy_terminal_reason nested=False
+  CROSS_DEF (none)
+TARGET ming_sim/issues.py:463 _as_float nested=False
+  CROSS_DEF (none)
+TARGET ming_sim/issues.py:475 _is_stored_number nested=False
+  CROSS_DEF (none)
+TARGET ming_sim/issues.py:479 _fiscal_levy_liao_seed nested=False
+  CROSS_DEF (none)
+TARGET ming_sim/issues.py:488 _fiscal_levy_base_transport nested=False
+  CROSS_DEF (none)
+TARGET ming_sim/issues.py:506 _fiscal_levy_event_by_id nested=False
+  CROSS_DEF (none)
+TARGET ming_sim/issues.py:510 _fiscal_levy_event_approved nested=False
+  CROSS_DEF (none)
+TARGET ming_sim/issues.py:521 _fiscal_levy_stopped nested=False
+  CROSS_DEF (none)
+TARGET ming_sim/issues.py:532 _fiscal_levy_land_share_amount nested=False
+  CROSS_DEF (none)
+TARGET ming_sim/issues.py:542 _fiscal_levy_land_denominator nested=False
+  CROSS_DEF (none)
+TARGET ming_sim/issues.py:559 _load_region_fiscal_for_fiscal_levy nested=False
+  CROSS_DEF (none)
+TARGET ming_sim/issues.py:578 _fiscal_levy_share_seed nested=False
+  CROSS_DEF (none)
+TARGET ming_sim/issues.py:591 _validate_fiscal_levy_share_meta nested=False
+  CROSS_DEF (none)
+TARGET ming_sim/issues.py:601 _fiscal_levy_mark_provisional nested=False
+  CROSS_DEF (none)
+TARGET ming_sim/issues.py:615 _jiao_levy_in_force nested=False
+  CROSS_DEF (none)
+TARGET ming_sim/issues.py:630 _apply_fiscal_levy_targets nested=False
+  CROSS_DEF (none)
+TARGET ming_sim/issues.py:765 apply_historical_fiscal_rates nested=False
+  CROSS_DEF (none)
+TARGET ming_sim/issues.py:781 run_fiscal_levy_pass nested=True
+  CROSS_DEF (none)
+TARGET ming_sim/issues.py:818 _numeric_predicate_accepts nested=False
+  CROSS_DEF (none)
+TARGET ming_sim/issues.py:832 _event_triggered_numeric_dependency_kind nested=False
+  CROSS_DEF (none)
+TARGET ming_sim/issues.py:845 _event_dependency_ids nested=False
+  CROSS_DEF (none)
+TARGET ming_sim/issues.py:857 _validate_event_dependency_graph_acyclic nested=False
+  CROSS_DEF (none)
+TARGET ming_sim/issues.py:872 dfs nested=True
+  CROSS_DEF (none)
+TARGET ming_sim/issues.py:895 _event_chain_impossible_reason nested=False
+  CROSS_DEF (none)
+TARGET ming_sim/issues.py:901 _format_values nested=True
+  CROSS_DEF (none)
+TARGET ming_sim/issues.py:904 allow_states nested=True
+  CROSS_DEF (none)
+TARGET ming_sim/issues.py:922 allow_state nested=True
+  CROSS_DEF (none)
+TARGET ming_sim/issues.py:925 allow_outcomes nested=True
+  CROSS_DEF (none)
+TARGET ming_sim/issues.py:943 forbid_state nested=True
+  CROSS_DEF (none)
+TARGET ming_sim/issues.py:1013 apply_event_cascading_invalidations nested=False
+  CROSS_DEF (none)
+TARGET ming_sim/issues.py:1031 run_cascade nested=True
+  CROSS_DEF (none)
+TARGET ming_sim/issues.py:1067 _spawned_event_refs nested=False
+  CROSS_DEF (none)
+TARGET ming_sim/issues.py:1073 _event_window_open nested=False
+  CROSS_DEF (none)
+TARGET ming_sim/issues.py:1091 _event_outcome_label nested=False
+  CROSS_DEF ming_sim/settlement/preflight.py:693 nested=False parent=None
+TARGET ming_sim/issues.py:1100 _merge_first_event_outcome nested=False
+  CROSS_DEF (none)
+TARGET ming_sim/issues.py:1125 apply_petition_event_outcome nested=False
+  CROSS_DEF (none)
+TARGET ming_sim/issues.py:1190 gather_fiscal_levy_petitions nested=False
+  CROSS_DEF (none)
+TARGET ming_sim/issues.py:1215 petition_outcome_is_admissible nested=False
+  CROSS_DEF (none)
+TARGET ming_sim/issues.py:1239 _closed_outcome_labels nested=False
+  CROSS_DEF (none)
+TARGET ming_sim/issues.py:1246 strategic_event_outcome_labels nested=False
+  CROSS_DEF (none)
+TARGET ming_sim/issues.py:1259 _event_window_expired nested=False
+  CROSS_DEF (none)
+TARGET ming_sim/issues.py:1272 _dead_person_core_subjects nested=False
+  CROSS_DEF (none)
+TARGET ming_sim/issues.py:1284 _person_core_avoided_reason nested=False
+  CROSS_DEF (none)
+TARGET ming_sim/issues.py:1347 _gate_sql_field nested=False
+  CROSS_DEF (none)
+TARGET ming_sim/issues.py:1358 _eval_gate_key nested=False
+  CROSS_DEF (none)
+TARGET ming_sim/issues.py:1452 _eval_gate_key_str nested=False
+  CROSS_DEF (none)
+TARGET ming_sim/issues.py:1476 _gate_passed nested=False
+  CROSS_DEF (none)
+TARGET ming_sim/issues.py:1517 gather_impeachment_surge_candidates nested=False
+  CROSS_DEF (none)
+TARGET ming_sim/issues.py:1646 gather_candidate_events nested=False
+  CROSS_DEF (none)
+TARGET ming_sim/issues.py:1696 apply_event_terminal_states nested=False
+  CROSS_DEF (none)
+TARGET ming_sim/issues.py:1708 run_terminal_state_pass nested=True
+  CROSS_DEF (none)
+TARGET ming_sim/issues.py:1751 auto_trigger_seed_issues nested=False
+  CROSS_DEF (none)
+TARGET ming_sim/issues.py:1765 _auto_trigger_seed_issues_in_atomic nested=False
+  CROSS_DEF (none)
+TARGET ming_sim/issues.py:1850 _bar_ascii nested=False
+  CROSS_DEF (none)
+TARGET ming_sim/issues.py:1856 _format_inertia nested=False
+  CROSS_DEF (none)
+TARGET ming_sim/issues.py:1864 show_active_issues nested=False
+  CROSS_DEF (none)
+TARGET ming_sim/issues.py:1873 _print_row nested=True
+  CROSS_DEF (none)
+TARGET ming_sim/issues.py:1895 event_to_issue nested=False
+  CROSS_DEF (none)
+TARGET ming_sim/issues.py:1997 _normalize_cancellable nested=False
+  CROSS_DEF (none)
+TARGET ming_sim/issues.py:2012 _compute_inertia nested=False
+  CROSS_DEF (none)
+TARGET ming_sim/issues.py:2031 _content_population_effect_for_save nested=False
+  CROSS_DEF (none)
+TARGET ming_sim/issues.py:2072 neutralize_covert_fiscal_effects nested=False
+  CROSS_DEF (none)
+TARGET ming_sim/issues.py:2157 record_secret_order_disclosure nested=False
+  CROSS_DEF (none)
+TARGET ming_sim/issues.py:2209 clear_gated_legacies nested=False
+  CROSS_DEF (none)
+TARGET ming_sim/issues.py:2230 sync_opening_legacies nested=False
+  CROSS_DEF (none)
+
+=== INDEX: names with ≥1 CROSS_DEF ===
+bind_content @ ming_sim/issues.py:109 -> ming_sim/agents.py:48; ming_sim/context.py:64
+_ctx @ ming_sim/issues.py:115 -> ming_sim/agents.py:53; ming_sim/context.py:69; tests/test_rescript_heal_isolation_1801.py:23; tests/test_rescript_option_field_heal_1746.py:20
+_event_outcome_label @ ming_sim/issues.py:1091 -> ming_sim/settlement/preflight.py:693
