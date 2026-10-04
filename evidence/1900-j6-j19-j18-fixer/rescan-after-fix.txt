@@ -1,0 +1,19 @@
+=== J19 rescan ===
+(none)
+=== J18 dead helper ===
+(none)
+=== J6 prose markers ===
+(none)
+=== J6 archive proof ===
+101:    move_attempts: list[tuple[str, str]] = []
+110:        move_attempts.append((str(src), str(dst)))
+123:    wait_until(lambda: len(move_attempts) > 0)
+124:    assert any(src == db_path for src, _dst in move_attempts)
+179:    move_attempts: list[tuple[str, str]] = []
+190:        move_attempts.append((str(src), str(dst)))
+205:    wait_until(lambda: any(src == wal_path for src, _dst in move_attempts))
+206:    assert any(src == db_path for src, _dst in move_attempts)
+220:    close_attempts: list[int] = []
+224:        close_attempts.append(1)
+244:    wait_until(lambda: len(close_attempts) > 0)
+245:    assert close_attempts

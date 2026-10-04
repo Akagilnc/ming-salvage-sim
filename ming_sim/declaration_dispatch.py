@@ -378,9 +378,8 @@ def _persist_specialized_extraction(
 ) -> None:
     """转译契约仍收的专属案卷字段，交既有写入口，不在通用 applier 里再写一份。
 
-    密奏先落本回合稽核在场事实；origin 只承接密奏里已经声明的行动，不按派系补写。对账只落本段提案，
-    未提案目标的中位默认留到月末一次补，避免后段中位覆盖前段实抵。
-    月度拨帑核账走 ``record_monthly_grant_reconciliations``，本口不碰。
+    密奏先落本回合稽核在场事实；origin 只承接密奏里已经声明的行动，不按派系补写。
+    月度拨帑核账走 ``record_monthly_grant_reconciliations``（引擎中位实抵），本口不碰。
 
     过月主链（ADR 0157 步骤 4a）整月密奏与执行态由独立供料 run 落账；
     ``defer_monthly_secret_supply`` 时不把逐段字段拼成整月义务。
@@ -1109,9 +1108,14 @@ def _attach_commission_staging_fields(
     if isinstance(roster, list) and roster:
         # 押解名单已先写入 participant_roster。此处再给一份名单时合并，
         # 不整表替换——否则押解人的职责与机械档从真源消失，只剩投影。
-        payload["participant_roster"] = _merge_participant_rosters(
-            payload.get("participant_roster"), roster,
-        )
+        # 复用押解侧既有 equality 追加（同 _attach_commission_escort），
+        # 不按人物 id 静默丢后项（#1900 J19）。
+        existing = payload.get("participant_roster")
+        merged = list(existing) if isinstance(existing, list) else []
+        for entry in roster:
+            if entry not in merged:
+                merged.append(entry)
+        payload["participant_roster"] = merged
     elif lead and not isinstance(payload.get("participant_roster"), list):
         payload["participant_roster"] = [{
             "character_id": lead, "tier": "主办", "role": "", "delegator_id": None,
@@ -1129,26 +1133,6 @@ def _attach_commission_staging_fields(
     )
     if absolute_due > int(turn):
         payload["due_turn"] = absolute_due
-
-
-def _merge_participant_rosters(existing: object, incoming: list) -> list:
-    """两份参与人名单按人物 id 合并；已在册的条目保留，不猜机械档。"""
-    merged = list(existing) if isinstance(existing, list) else []
-    seen = {
-        str(entry.get("character_id") or "")
-        for entry in merged
-        if isinstance(entry, Mapping) and str(entry.get("character_id") or "")
-    }
-    for entry in incoming:
-        character_id = (
-            str(entry.get("character_id") or "") if isinstance(entry, Mapping) else ""
-        )
-        if character_id and character_id in seen:
-            continue
-        merged.append(entry)
-        if character_id:
-            seen.add(character_id)
-    return merged
 
 
 def _attach_commission_affair(

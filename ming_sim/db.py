@@ -14593,14 +14593,6 @@ class GameDB:
         ).fetchall()
         return [self._dossier_row(r) for r in rows]
 
-    def is_secret_order_dossier(self, dossier_id: int) -> bool:
-        """案卷是否由密令立起。单一判据 = 案卷自身的 secret_order_id。"""
-        row = self.conn.execute(
-            "SELECT secret_order_id FROM decree_dossiers WHERE id=?",
-            (int(dossier_id),),
-        ).fetchone()
-        return row is not None and row["secret_order_id"] is not None
-
     def get_dossier_for_secret_order(self, secret_order_id: int) -> Optional[Dict[str, object]]:
         row = self.conn.execute(
             "SELECT * FROM decree_dossiers WHERE secret_order_id=?",

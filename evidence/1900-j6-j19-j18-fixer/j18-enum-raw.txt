@@ -1,0 +1,19 @@
+=== J18: named dead / stale patterns ===
+tests/test_grant_reconciliation_567.py:12:不再有软判提案入参，坏提案拒收一族随之退役；实抵一律取引擎按护行口径算出的区间中位。
+ming_sim/decree_forecast.py:19:from ming_sim.db import payload_declares_escort
+ming_sim/decree_forecast.py:160:        if catalog_token and payload_declares_escort(payload):
+ming_sim/decree_forecast.py:297:    declared = payload_declares_escort(payload)
+ming_sim/db.py:859:def payload_declares_escort(payload: object) -> bool:
+ming_sim/db.py:12297:        return payload_declares_escort(payload)
+ming_sim/db.py:14596:    def is_secret_order_dossier(self, dossier_id: int) -> bool:
+ming_sim/declaration_dispatch.py:381:    密奏先落本回合稽核在场事实；origin 只承接密奏里已经声明的行动，不按派系补写。对账只落本段提案，
+ming_sim/declaration_dispatch.py:382:    未提案目标的中位默认留到月末一次补，避免后段中位覆盖前段实抵。
+docs/DELTA_SCHEMA.md:381:连同 `clamp_grant_arrival_amount` 及其坏提案拒收一族一并退役。
+docs/DELTA_SCHEMA.md:401:### ~~`commissions[].secret_order.escort_pending_targets` / `escort_sources` / `escort_links` / `escort_results` / `dossier_escort_outcomes`~~ — 已退役（#1900 J18）
+docs/design/game-v2-architecture.md:322:| 赈灾拨款 | `ming_sim/db.py`：`grant_arrival_bounds`、`record_monthly_grant_reconciliations` | 已有面额、护送及实际抵达的计算，不借重构重写同一机制（0054 的 `clamp_grant_arrival_amount` 软判口已于 #1900 退役：沿途损耗归引擎） |
+docs/evidence/issue-1571/boundary-inventory.md:105:| 30 | `list_open_grant_reconciliations` | `reconciliation` 子模块函数 | `reconciliation.list_open_grant_reconciliations(...)` | 随子模块导出 | 未结对账读面 | simulation.py:1362 |
+docs/evidence/issue-1571/boundary-inventory.md:120:| `list_monthly_grant_reconciliation_targets` | `list_open_grant_reconciliations`@12909、`record_monthly_grant_reconciliations`@12932 | reconciliation 私有 |
+docs/evidence/issue-1571/boundary-inventory.md:170:| `list_open_grant_reconciliations` | db.py:12909-12930 | 子模块 reconciliation |  |
+docs/evidence/issue-1571/boundary-inventory.md:325:| `list_open_grant_reconciliations` | simulation.py:1362 | 子模块 reconciliation |
+docs/adr/0054-ledger-cross-links-and-effect-backrefs.md:11:#1900 的重构验收只引用 [#1812「重构验收（2026-10-02 陛下重定）」](https://github.com/Akagilnc/ming-salvage-sim/issues/1812)。此前本 ADR 指定的 `escort_pending_targets` / `escort_sources` 双载体承接、配对聚合读口、入口专用资格校验及 `dossier_escort_outcomes` 专用账本处方撤销，不作为继续扩展或保全本切片新增机制的依据；配套记录、核算、供料、重开及撤回路径随本切片删简，不另定替代机制。职责搬迁、旧路退役由 [#1900](https://github.com/Akagilnc/ming-salvage-sim/issues/1900) 承接，功能如何接续留家族收尾，发现的缺口记 #1873；不是以新处方补齐全部功能，也不是宣布取消暗护或沿途损耗的玩法。
+docs/evidence/issue-1571/pr-slices.md:126:- 内容：`_grant_escort_presence`（9）、`list_monthly_grant_reconciliation_targets`（42）、`list_dossier_reconciliations`（29）、`list_open_grant_reconciliations`（22）、`record_monthly_grant_reconciliations`（95）、`merge_grant_reconciliation_into_execution_note`（13）。公开面 4 个（`list_monthly_grant_reconciliation_targets`、`_grant_escort_presence` 子模块私有——前者零生产外部调用、仅包内 `list_open_grant_reconciliations`/`record_monthly_grant_reconciliations` 用，boundary §2.1 私有清单），公开入口见 boundary §2.1 #29-32。

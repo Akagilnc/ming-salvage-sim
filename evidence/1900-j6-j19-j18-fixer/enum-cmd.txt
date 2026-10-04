@@ -1,0 +1,32 @@
+# #1900 修内司枚举命令真源（J6/J19/J18）
+# 谓词覆盖判词类定义全文，不收窄为点名样本。
+
+## J6 — 盯文、内部伪证及未经过失败行为的初始状态证明
+# 谓词：测试中 (1) 对自由文本/叙事措辞建机械依赖 (2) 以内部伪证/helper形状代替外部可见结果
+# (3) 失败路径未实际经过仍以初始态当证明
+# 扫描面：tests/**/*.py + web/src/**/*.{ts,tsx}
+
+rg -n --glob 'tests/**/*.py' \
+  '后轮问|后轮答|LEAK_MARKER|not in prepared\.opening|not in joined|draft_text not in|match\s*=|in prompt|in night_said|assert .*not in .*(opening|joined|prompt|msg|text)|monkeypatch\.setattr\(.*lambda|wait_until|api_menu_new_game|shutil\.move|session\.close'
+
+rg -n --glob 'web/src/**/*.{ts,tsx}' 'toHaveBeenCalled|mockImplementation|vi\.spyOn'
+
+# AST 候选：见 enum_j6.py（每条 test_* 的断言/stub 形状）
+
+## J19 — 普通押解与既有参与人接缝：按人物 id 静默保留先项的平行优先级
+# 谓词：合并 participant_roster 时按 character_id 静默丢弃后项 / 保留先项（非现役 normalize/append 语义）
+
+rg -n --glob 'ming_sim/**/*.py' --glob 'web_app.py' --glob 'tests/**/*.py' \
+  '_merge_participant_rosters|character_id.*in seen|seen\.add\(character_id\)|by_character|if character_id and character_id in seen|静默|保留先|先项'
+
+rg -n --glob 'ming_sim/**/*.py' 'participant_roster.*=.*_merge|for entry in incoming|if character_id.*in seen'
+
+## J18 — 退役清理剩余死入口与失效说明
+# 谓词：失去消费者的专用入口；描述已删除机制的说明；保留存活一般密令案卷读取
+
+rg -n --glob '!evidence/**' --glob '!.baseline/**' --glob '!.git/**' \
+  'is_secret_order_dossier|对账只落本段提案|未提案目标的中位|逐段提案|软判提案|escort_pending_targets|escort_sources|dossier_escort_outcomes|_resolve_covert_escort|list_open_grant_reconciliations|clamp_grant_arrival|护送实况假|payload_declares_escort' \
+  ming_sim web_app.py tests docs --glob '*.py' --glob '*.md'
+
+# 死入口：定义存在且生产调用者=0（tests/docs 不算消费者）
+# 见 enum_j18.py

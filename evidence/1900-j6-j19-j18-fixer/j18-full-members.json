@@ -1,0 +1,138 @@
+{
+  "defs": [
+    {
+      "file": "ming_sim/declaration_dispatch.py",
+      "name": "_persist_specialized_extraction",
+      "lineno": 369,
+      "doc_hit": true,
+      "name_hit": false,
+      "prod_refs": [
+        "ming_sim/declaration_dispatch.py:548:_persist_specialized_extraction("
+      ],
+      "test_refs": [],
+      "doc_refs": [],
+      "disposition": "STALE_DOCSTRING",
+      "prod_ref_count": 1
+    },
+    {
+      "file": "ming_sim/db.py",
+      "name": "payload_declares_escort",
+      "lineno": 859,
+      "doc_hit": false,
+      "name_hit": true,
+      "prod_refs": [
+        "ming_sim/db.py:12297:return payload_declares_escort(payload)",
+        "ming_sim/decree_forecast.py:19:from ming_sim.db import payload_declares_escort",
+        "ming_sim/decree_forecast.py:160:if catalog_token and payload_declares_escort(payload):",
+        "ming_sim/decree_forecast.py:297:declared = payload_declares_escort(payload)"
+      ],
+      "test_refs": [],
+      "doc_refs": [],
+      "disposition": "KEEP_LIVE",
+      "prod_ref_count": 4
+    },
+    {
+      "file": "ming_sim/db.py",
+      "name": "is_secret_order_dossier",
+      "lineno": 14596,
+      "doc_hit": false,
+      "name_hit": true,
+      "prod_refs": [],
+      "test_refs": [],
+      "doc_refs": [],
+      "disposition": "DEAD_NO_CONSUMER",
+      "prod_ref_count": 0
+    },
+    {
+      "file": "ming_sim/decree_forecast.py",
+      "name": "_append_this_decree_escort_grounding",
+      "lineno": 287,
+      "doc_hit": false,
+      "name_hit": false,
+      "prod_refs": [
+        "ming_sim/decree_forecast.py:161:grounding = _append_this_decree_escort_grounding("
+      ],
+      "test_refs": [],
+      "doc_refs": [],
+      "disposition": "KEEP_LIVE",
+      "prod_ref_count": 1
+    }
+  ],
+  "stale_phrases": [
+    {
+      "file": "ming_sim/declaration_dispatch.py",
+      "lineno": 381,
+      "line": "密奏先落本回合稽核在场事实；origin 只承接密奏里已经声明的行动，不按派系补写。对账只落本段提案，"
+    },
+    {
+      "file": "ming_sim/declaration_dispatch.py",
+      "lineno": 382,
+      "line": "未提案目标的中位默认留到月末一次补，避免后段中位覆盖前段实抵。"
+    },
+    {
+      "file": "ming_sim/declaration_dispatch.py",
+      "lineno": 1347,
+      "line": "# 另行暗护沿既有密令声明入口；专用暂存资格校验与双载体承接已退役。"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "lineno": 12299,
+      "line": "# #1900 J18：已撤销的专用暗护双载体 / 实况账本 / 聚合读口 / 专用资格校验已退役。"
+    },
+    {
+      "file": "ming_sim/decree_forecast.py",
+      "lineno": 292,
+      "line": "#1900 J18：已撤销的暗护双载体 escort_link 目录行不再写入；仅保留本旨自带押解标记。"
+    },
+    {
+      "file": "docs/DELTA_SCHEMA.md",
+      "lineno": 385,
+      "line": "`loss = ordered - arrived`。#1900 已撤销的专用逐路实况账本 / 双载体承接 / 聚合读口 /"
+    },
+    {
+      "file": "docs/DELTA_SCHEMA.md",
+      "lineno": 401,
+      "line": "### ~~`commissions[].secret_order.escort_pending_targets` / `escort_sources` / `escort_links` / `escort_results` / `dossier_escort_outcomes`~~ — 已退役（#1900 J18）"
+    },
+    {
+      "file": "docs/DELTA_SCHEMA.md",
+      "lineno": 403,
+      "line": "旧处方新造的暗护双载体承接、专用实况账本、配对聚合读口、入口专用资格校验及分节声明已随"
+    },
+    {
+      "file": "docs/adr/0054-ledger-cross-links-and-effect-backrefs.md",
+      "lineno": 11,
+      "line": "#1900 的重构验收只引用 [#1812「重构验收（2026-10-02 陛下重定）」](https://github.com/Akagilnc/ming-salvage-sim/issues/1812)。此前本 ADR 指定的 `escort_pending_targets` / `escort_sources` 双载体承接、配对聚合读口、入口专用资格校验及 `dossier_escort_o"
+    }
+  ],
+  "dead": [
+    {
+      "file": "ming_sim/db.py",
+      "name": "is_secret_order_dossier",
+      "lineno": 14596,
+      "doc_hit": false,
+      "name_hit": true,
+      "prod_refs": [],
+      "test_refs": [],
+      "doc_refs": [],
+      "disposition": "DEAD_NO_CONSUMER",
+      "prod_ref_count": 0
+    }
+  ],
+  "stale_docstring": [
+    {
+      "file": "ming_sim/declaration_dispatch.py",
+      "name": "_persist_specialized_extraction",
+      "lineno": 369,
+      "doc_hit": true,
+      "name_hit": false,
+      "prod_refs": [
+        "ming_sim/declaration_dispatch.py:548:_persist_specialized_extraction("
+      ],
+      "test_refs": [],
+      "doc_refs": [],
+      "disposition": "STALE_DOCSTRING",
+      "prod_ref_count": 1
+    }
+  ]
+}

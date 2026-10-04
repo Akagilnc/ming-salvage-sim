@@ -266,12 +266,14 @@ def test_translation_entry_preserves_unknown_rejection_and_source_cutoff(
             {"body": "提及未在册者", "role": "scene", "person_names": ["未在册者"]},
         ],
     }
-    LEAK_MARKER = {"body": "后轮泄漏", "role": "scene", "person_names": []}
+    # 结构化泄漏标记：若截止失效，后轮会以 [chat_turn_id={later}] 进入 prompt。
+    LEAK_MARKER = {"body": f"leak-turn-{int(later)}", "role": "scene", "person_names": []}
+    later_token = f"[chat_turn_id={int(later)}]"
 
     def _translate(prompt, config):
-        # 截止失效时后轮正文会进入 prompt；落账用独立结构化标记辨别（不锁 night_said）。
+        # 截止失效时后轮结构化 turn id 会进入 prompt；落账用独立标记辨别（不锁对话正文）。
         result = {**offline_empty_audience_translate(prompt, config), **declaration}
-        if "后轮问" in prompt or "后轮答" in prompt:
+        if later_token in prompt:
             facts = list(result.get("scene_facts") or [])
             facts.append(dict(LEAK_MARKER))
             result["scene_facts"] = facts

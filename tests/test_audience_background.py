@@ -233,19 +233,20 @@ def test_current_unissued_draft_is_not_character_carryover(game, tmp_path):
 
     #1769 只放行**跨月**未入档旨稿（上月已随颁诏发出、仅未落档）；本回合刚拟、
     还在御案上的草案仍是密事，不得越过排除边界。
-    真实入口：prepare_character_materials → opening / 目录不含本回合草案正文。
+    真实入口：prepare_character_materials → opening / 目录不含本回合草案结构化 id。
     """
-    from ming_sim.materials import list_materials, prepare_character_materials, read_material
+    from ming_sim.materials import list_materials, prepare_character_materials
 
     db, state, content = game
     draft_text = "着户部清核辽饷。"
-    db.add_directive(
+    did = db.add_directive(
         state, None, draft_text, "player-decree-test",
         dossier_payload={
             "dossier_action_type": "policy", "target_kind": "issue",
             "target_id": "liaoxiang-audit", "locality_scope": "none",
         },
     )
+    draft_key = f"draft-{int(did)}"
     minister = next(
         ch for ch in content.characters.values()
         if getattr(ch, "status", "") == "active" and getattr(ch, "office", "")
@@ -253,12 +254,12 @@ def test_current_unissued_draft_is_not_character_carryover(game, tmp_path):
     prepared = prepare_character_materials(
         db, state, minister, dest_root=tmp_path / "materials",
     )
-    assert draft_text not in prepared.opening
-    joined = "\n".join(
-        read_material(prepared.root, path)
-        for path in list_materials(prepared.root)
-    )
-    assert draft_text not in joined
+    # 跨月未入档以 opening 事务 id `draft-{id}` 为外部可见标记；本回合不得出现。
+    assert draft_key not in prepared.opening
+    assert f"#{draft_key}" not in prepared.opening
+    listed = list_materials(prepared.root)
+    assert not any(draft_key in path for path in listed)
+    assert not any(draft_key in line for line in prepared.index_lines)
 
 
 

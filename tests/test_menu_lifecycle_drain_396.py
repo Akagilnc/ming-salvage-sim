@@ -98,14 +98,20 @@ def test_drain_archive_move_failure_keeps_wal_and_shm(monkeypatch, tmp_path):
     queue = SessionWriteQueue()
     gate = queue.write_gate
     closed: list[int] = []
+    move_attempts: list[tuple[str, str]] = []
     game = SimpleNamespace(
         _write_queue=queue,
         _write_gate=gate,
         db_path=db_path,
         session=SimpleNamespace(close=lambda: closed.append(1)),
     )
+
+    def fail_move(src, dst):
+        move_attempts.append((str(src), str(dst)))
+        raise OSError("locked")
+
     monkeypatch.setattr(web_app, "user_data_path", lambda *parts: str(tmp_path.joinpath(*parts)))
-    monkeypatch.setattr(web_app.shutil, "move", lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("locked")))
+    monkeypatch.setattr(web_app.shutil, "move", fail_move)
     monkeypatch.setattr(web_app, "web_game", game)
     monkeypatch.setenv("MING_SIM_DB", db_path)
     monkeypatch.setattr(web_app, "WebGame", lambda *_a, **_k: SimpleNamespace(state_payload=lambda: {"turn": 1}))
@@ -113,6 +119,9 @@ def test_drain_archive_move_failure_keeps_wal_and_shm(monkeypatch, tmp_path):
     _reset_path_leases()
     assert web_app._register_holder(db_path, game) is not None
     asyncio.run(web_app.api_menu_new_game())
+    # 失败路径须实际经过：drain/archive worker 必须尝试过 move。
+    wait_until(lambda: len(move_attempts) > 0)
+    assert any(src == db_path for src, _dst in move_attempts)
 
     assert os.path.exists(db_path)
     assert os.path.exists(wal_path)
@@ -167,6 +176,7 @@ def test_drain_archive_rolls_back_main_db_when_wal_move_fails(monkeypatch, tmp_p
             f.write(content)
 
     closed: list[int] = []
+    move_attempts: list[tuple[str, str]] = []
     queue = SessionWriteQueue()
     game = SimpleNamespace(
         _write_queue=queue,
@@ -177,6 +187,7 @@ def test_drain_archive_rolls_back_main_db_when_wal_move_fails(monkeypatch, tmp_p
     real_move = web_app.shutil.move
 
     def fail_wal_move(src, dst):
+        move_attempts.append((str(src), str(dst)))
         if src == wal_path:
             raise OSError("wal locked")
         return real_move(src, dst)
@@ -190,6 +201,9 @@ def test_drain_archive_rolls_back_main_db_when_wal_move_fails(monkeypatch, tmp_p
     _reset_path_leases()
     assert web_app._register_holder(db_path, game) is not None
     asyncio.run(web_app.api_menu_new_game())
+    # 须见到主库 move + WAL move 失败路径，而非未启动 worker 的初始态。
+    wait_until(lambda: any(src == wal_path for src, _dst in move_attempts))
+    assert any(src == db_path for src, _dst in move_attempts)
 
     assert os.path.exists(db_path)
     assert os.path.exists(wal_path)
@@ -203,12 +217,18 @@ def test_drain_archive_skips_move_when_session_close_fails(monkeypatch, tmp_path
         f.write("db")
 
     moves: list[tuple[str, str]] = []
+    close_attempts: list[int] = []
     queue = SessionWriteQueue()
+
+    def fail_close():
+        close_attempts.append(1)
+        raise RuntimeError("close failed")
+
     game = SimpleNamespace(
         _write_queue=queue,
         _write_gate=queue.write_gate,
         db_path=db_path,
-        session=SimpleNamespace(close=lambda: (_ for _ in ()).throw(RuntimeError("close failed"))),
+        session=SimpleNamespace(close=fail_close),
     )
     monkeypatch.setattr(web_app, "user_data_path", lambda *parts: str(tmp_path.joinpath(*parts)))
     monkeypatch.setattr(web_app.shutil, "move", lambda src, dst: moves.append((src, dst)))
@@ -220,6 +240,9 @@ def test_drain_archive_skips_move_when_session_close_fails(monkeypatch, tmp_path
     assert web_app._register_holder(db_path, game) is not None
     asyncio.run(web_app.api_menu_new_game())
     wait_until(lambda: web_app.web_game is not game)
+    # drain worker 必须实际走过 close 失败；不得以未启动 worker 的初始态当绿。
+    wait_until(lambda: len(close_attempts) > 0)
+    assert close_attempts
 
     assert moves == []
     assert os.path.exists(db_path)

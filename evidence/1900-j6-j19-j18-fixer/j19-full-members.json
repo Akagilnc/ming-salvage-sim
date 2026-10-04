@@ -1,0 +1,60 @@
+{
+  "members": [
+    {
+      "kind": "call_or_def",
+      "file": "ming_sim/declaration_dispatch.py",
+      "lineno": 1112,
+      "line": "payload[\"participant_roster\"] = _merge_participant_rosters(",
+      "disposition": "FIX_REMOVE_PARALLEL"
+    },
+    {
+      "kind": "call_or_def",
+      "file": "ming_sim/declaration_dispatch.py",
+      "lineno": 1134,
+      "line": "def _merge_participant_rosters(existing: object, incoming: list) -> list:",
+      "disposition": "FIX_REMOVE_PARALLEL"
+    },
+    {
+      "kind": "seen_skip",
+      "file": "ming_sim/declaration_dispatch.py",
+      "lineno": 1146,
+      "line": "if character_id and character_id in seen:",
+      "window_has_merge_fn": true,
+      "disposition": "FIX_REMOVE_PARALLEL"
+    },
+    {
+      "kind": "seen_skip",
+      "file": "ming_sim/declaration_dispatch.py",
+      "lineno": 1150,
+      "line": "seen.add(character_id)",
+      "window_has_merge_fn": false,
+      "disposition": "FIX_REMOVE_PARALLEL"
+    }
+  ],
+  "live_semantics": [
+    {
+      "file": "ming_sim/db.py",
+      "lineno": 14446,
+      "line": "def append_decree_dossier_participants(",
+      "role": "LIVE_SEMANTICS"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "lineno": 20864,
+      "line": "def _normalize_participant_roster(",
+      "role": "LIVE_SEMANTICS"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "lineno": 14473,
+      "line": "raise ValueError(f\"参与人物已在案且机械档不同：{character_id}\")",
+      "role": "LIVE_SEMANTICS"
+    },
+    {
+      "file": "ming_sim/declaration_dispatch.py",
+      "lineno": 1076,
+      "line": "if entry not in merged:",
+      "role": "LIVE_SEMANTICS"
+    }
+  ]
+}

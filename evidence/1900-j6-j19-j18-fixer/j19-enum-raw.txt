@@ -1,0 +1,11 @@
+=== J19: character_id silent keep-first merge ===
+ming_sim/declaration_dispatch.py:1112:        payload["participant_roster"] = _merge_participant_rosters(
+ming_sim/declaration_dispatch.py:1134:def _merge_participant_rosters(existing: object, incoming: list) -> list:
+ming_sim/declaration_dispatch.py:1146:        if character_id and character_id in seen:
+ming_sim/declaration_dispatch.py:1150:            seen.add(character_id)
+=== J19: related merge helpers ===
+ming_sim/declaration_dispatch.py:1134:def _merge_participant_rosters(existing: object, incoming: list) -> list:
+ming_sim/declaration_dispatch.py:1142:    for entry in incoming:
+ming_sim/db.py:14446:    def append_decree_dossier_participants(
+ming_sim/db.py:14466:        by_character = {str(item["character_id"]): item for item in existing}
+ming_sim/db.py:20864:    def _normalize_participant_roster(
