@@ -1,0 +1,11 @@
+{
+  "universe_path": "evidence/1900-j18-j6-retire-fixer/j6-universe.jsonl",
+  "candidate_count": 161,
+  "by_flag": {
+    "private_helper_call_no_obs_token": 102,
+    "possible_text_lock": 1,
+    "meta_migration_marker_touch": 3,
+    "web_calls_without_ui_token": 55
+  },
+  "note": "structural candidates only; absence of flag does not prove non-membership; do not treat this file as retain disposition"
+}

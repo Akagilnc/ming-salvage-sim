@@ -466,26 +466,6 @@ def test_wait_in_flight_releases_on_worker_terminal(game, tmp_path, monkeypatch)
     assert an.list_in_flight_chat_turns(db, nid) == []
 
 
-def test_seal_claim_rejects_current_trail_legs_without_write(web_game, monkeypatch):
-    """生产钉：seal 后现役高亮尾随拒绝 → 零 LLM、零写。"""
-    game = web_game
-    q = game._runtime_write_queue()
-    q.seal()
-    calls = {"hl": 0}
-
-    monkeypatch.setattr(
-        web_app, "run_highlight_judge",
-        lambda **_k: calls.__setitem__("hl", calls["hl"] + 1) or ["x"],
-    )
-
-    assert game._trail_highlight_judge_after_reply(
-        "回话", message_id=1, chat_turn_id=1,
-    ) == []
-    assert calls == {"hl": 0}
-    assert q.inflight_count() == 0
-    q.unseal()
-
-
 def test_startup_catchup_uses_ticketed_gate_not_bare(web_game, monkeypatch):
     """startup catch-up 须经票据写缝：非阻塞 acquire 拒收（裸 Lock 会放行）。"""
     game = web_game

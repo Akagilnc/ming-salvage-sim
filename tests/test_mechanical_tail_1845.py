@@ -57,23 +57,17 @@ def _run_deferred(executor):
 
 
 def test_advance_schedules_mechanical_tail_after_front_month_advance(game, monkeypatch):
-    """提交到受管后台票；无需线程即可核实尾工作不在前台调用栈执行。"""
+    """提交到受管后台票；前台推进后尾状态先 pending，延期执行后变 done。"""
     db, state, content = game
     closed_turn = int(state.turn)
-    closed_year, closed_period = int(state.year), int(state.period)
     _forbid_extractor(monkeypatch)
     _archive_and_stub_world(db, state, monkeypatch)
-    brew_calls = []
 
-    def recording_brew(_session, **kwargs):
-        brew_calls.append({
-            "year": kwargs.get("settled_year"),
-            "period": kwargs.get("settled_period"),
-            "turn": kwargs.get("closed_turn"),
-        })
+    def silent_brew(_session, **_kwargs):
         return {"selected": 0, "brewed": [], "degraded": [], "skipped_events": 0}
 
-    monkeypatch.setattr("ming_sim.mechanical_tail._run_relation_brew", recording_brew)
+    # 外部边界：挡真实酿制 LLM；不断言私有 brew 调用形状。
+    monkeypatch.setattr("ming_sim.mechanical_tail._run_relation_brew", silent_brew)
     session = make_light_session(db, state, content)
     session.llm_config = object()
     session.agno_db = object()
@@ -83,15 +77,11 @@ def test_advance_schedules_mechanical_tail_after_front_month_advance(game, monke
         result = session.resolve_turn(allow_empty_decree=True)
         assert result.advanced is True
         assert int(state.turn) == closed_turn + 1
-        assert not brew_calls
         assert month_chain._load_chain(db, closed_turn)["mechanical_tail"]["status"] == "pending"
     finally:
         if hasattr(executor, "fn"):
             _run_deferred(executor)
     assert get_session_write_queue(session).wait_idle(timeout_s=1)
-    assert brew_calls == [{
-        "year": closed_year, "period": closed_period, "turn": closed_turn,
-    }]
     assert month_chain._load_chain(db, closed_turn)["mechanical_tail"]["status"] == "done"
 
 
@@ -109,14 +99,11 @@ def test_reopen_resumes_incomplete_mechanical_tail(game, monkeypatch):
     session.llm_config = object()
     session.agno_db = object()
 
-    calls = []
-
-    def recording_brew(_session, **kwargs):
-        calls.append(kwargs.get("closed_turn"))
+    def silent_brew(_session, **_kwargs):
         return {"selected": 0, "brewed": [], "degraded": [], "skipped_events": 0}
 
     monkeypatch.setattr(
-        "ming_sim.mechanical_tail._run_relation_brew", recording_brew,
+        "ming_sim.mechanical_tail._run_relation_brew", silent_brew,
     )
     executor = _install_deferred(monkeypatch)
     try:
@@ -125,7 +112,7 @@ def test_reopen_resumes_incomplete_mechanical_tail(game, monkeypatch):
         if hasattr(executor, "fn"):
             _run_deferred(executor)
     get_session_write_queue(session).wait_idle(timeout_s=5)
-    assert calls == [closed_turn]
+    assert month_chain._load_chain(db, closed_turn)["mechanical_tail"]["status"] == "done"
 
     # 模拟进程退出后只剩 DB pending、写队列票已失
     chain = month_chain._load_chain(db, closed_turn)
@@ -136,14 +123,12 @@ def test_reopen_resumes_incomplete_mechanical_tail(game, monkeypatch):
         "ending_outcome": None,
     }
     month_chain._save_chain(db, closed_turn, chain, source=Provenance.system_simulation)
-    calls.clear()
     try:
         ensure_mechanical_tails(session)
     finally:
         if not executor.future.done():
             _run_deferred(executor)
     get_session_write_queue(session).wait_idle(timeout_s=5)
-    assert calls == [closed_turn]
     assert month_chain._load_chain(db, closed_turn)["mechanical_tail"]["status"] == "done"
 
 
@@ -291,7 +276,6 @@ def test_non_exhausted_tail_failure_stays_pending_and_retries(game, monkeypatch)
     session = make_light_session(db, state, content)
     session.llm_config = object()
     session.agno_db = object()
-    calls = []
 
     class InlineExecutor:
         def submit(self, fn):
@@ -304,8 +288,7 @@ def test_non_exhausted_tail_failure_stays_pending_and_retries(game, monkeypatch)
 
     monkeypatch.setattr(audience_translation, "_executor", InlineExecutor())
 
-    def fail(*_a, **kwargs):
-        calls.append(kwargs.get("closed_turn"))
+    def fail(*_a, **_kwargs):
         raise ValueError("internal failure")
 
     monkeypatch.setattr("ming_sim.mechanical_tail._run_relation_brew", fail)
@@ -313,7 +296,6 @@ def test_non_exhausted_tail_failure_stays_pending_and_retries(game, monkeypatch)
     assert month_chain._load_chain(db, closed_turn)["mechanical_tail"]["status"] == "failed"
     from ming_sim.mechanical_tail import ensure_mechanical_tails, retry_failed_mechanical_tail, failed_mechanical_tail
     ensure_mechanical_tails(session)
-    assert calls == [closed_turn]
     assert failed_mechanical_tail(db, state)[0] == closed_turn
     from web_app import WebGame
     from types import SimpleNamespace

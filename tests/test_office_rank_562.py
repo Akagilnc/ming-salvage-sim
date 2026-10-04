@@ -206,9 +206,7 @@ def test_existing_proposed_appointment_dossier_gets_one_time_break_rank_backfill
 
 
 def test_recognizable_archive_title_survives_blank_or_legacy_office_type(game):
-    from ming_sim.office_rank import _is_substantive_office
-
-    assert _is_substantive_office("翰林院编修", "")
+    """旧档 office_type 待铨/空时，任命案卷仍按历史实职识别破格（公开 break_rank）。"""
     db, state, _content = game
     name = "旧档实职"
     _add(db, state, name, "翰林院编修", "翰林院")

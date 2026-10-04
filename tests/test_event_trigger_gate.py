@@ -842,28 +842,27 @@ def test_mao_event_effect_uses_unified_person_change_key():
     ]
 
 
-def test_auto_trigger_historical_event_to_issue_uses_outer_transaction(game, monkeypatch):
-    """auto-trigger 事务体内转 issue 时不得内部 commit，回滚边界由外层 atomic 统一控制。"""
+def test_auto_trigger_historical_event_to_issue_uses_outer_transaction(game):
+    """auto-trigger 立 issue 后，外层 atomic 回滚须一并撤销（证明未内部 commit）。"""
+    from ming_sim.applier import atomic
+
     db, state, content = game
     issues.bind_content(content)
     event_id = "__test_auto_trigger_atomic__"
     ev = _hist_event(event_id, {})
     ev.auto_trigger = True
-    calls = []
-
-    def fake_event_to_issue(db_arg, state_arg, ev_arg, *, commit=True):
-        calls.append((ev_arg.id, commit))
-        return 999
-
-    monkeypatch.setattr(issues, "event_to_issue", fake_event_to_issue)
     content.events.append(ev)
     try:
-        triggered = issues.auto_trigger_seed_issues(state, db)
+        with pytest.raises(RuntimeError):
+            with atomic(db):
+                triggered = issues.auto_trigger_seed_issues(state, db)
+                hit = next(item for item in triggered if item.get("id") == event_id)
+                assert hit.get("issue_id") is not None
+                assert db.find_any_issue_by_origin("event_pool", event_id) is not None
+                raise RuntimeError("rollback auto-trigger probe")
+        assert db.find_any_issue_by_origin("event_pool", event_id) is None
     finally:
         content.events.remove(ev)
-
-    assert calls == [(event_id, False)]
-    assert {"id": event_id, "title": ev.title, "issue_id": 999} in triggered
 
 
 def test_event_content_rejects_falsy_person_core_subjects(monkeypatch):

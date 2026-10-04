@@ -336,15 +336,8 @@ def test_draft_admission_exhaust_keeps_draft_and_advances(admission_game, monkey
     _finish_month_after_gazette(game, turn)
     assert source_turn < int(game.state.turn)
 
-    # 跨月未入档旨稿进入现役角色材料供料；按结构化 id/正文核对，
-    # 不锁召对提示词。当前回合尚未跨月的草案仍被 carryover 边界排除。
-    from ming_sim.materials import _carryover_drafts
-    assert any(
-        int(d["id"]) == did and d["text"] == row["text"]
-        for d in _carryover_drafts(game.db, game.state)
-    )
-
     # 下月拟诏真实入口：write_decree → 供料含 admission_status=上月未入档
+    # （跨月未入档边界的外部可见契约；不直调私有 _carryover_drafts）
     payloads = _write_decree_capture_payloads(monkeypatch, game)
     assert payloads
     feed_item = next(

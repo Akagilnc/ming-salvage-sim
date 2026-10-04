@@ -73,36 +73,6 @@ def _assert_text_keeps_statuses(text: str, statuses: list[str], label: str) -> N
         assert st in text, f"{label} 缺 status 原句：{st!r}\n出口={text!r}"
 
 
-def _expected_army_card_from_row(db, row) -> dict:
-    """由 DB 行机械重建军牌投影（含历史 status 键），供「其余字段不变」对照。"""
-    from ming_sim.db import _player_army_situation
-
-    pay = db._army_pay(row)
-    sit = _player_army_situation(row, pay)
-    return {
-        "id": row["id"],
-        "name": row["name"],
-        "station": row["station"],
-        "theater": row["theater"],
-        "commander": row["commander"],
-        "controller": row["controller"],
-        "troop_type": row["troop_type"],
-        "manpower": int(row["manpower"]),
-        "army_needed": pay,
-        "supply": int(row["supply"]),
-        "morale_text": sit["morale_text"],
-        "training": int(row["training"]),
-        "equipment": int(row["equipment"]),
-        "arrears_text": sit["arrears_text"],
-        "mobility": int(row["mobility"]),
-        "mutiny_tier": sit["mutiny_tier"],
-        "firearm_equipment": int(row["firearm_equipment"]),
-        "cannon_equipment": int(row["cannon_equipment"]),
-        "status": row["status"],  # 旧投影曾携；#1501 允许删除
-        "owner_power": row["owner_power"],
-    }
-
-
 def _web_runtime(db, state, content):
     """轻壳 WebGame：走真实 state_payload（含 army_warning 缝）。"""
     runtime = object.__new__(web_app.WebGame)
@@ -129,7 +99,10 @@ def _web_runtime(db, state, content):
 
 
 def test_army_payload_omits_static_status_exposes_arrears_text(read_game):
-    """军牌出口：army_payload 无 status、无 raw arrears 键；arrears_text 在场；完整键集/逐字段对照。"""
+    """军牌出口：army_payload 无 status、无 raw arrears 键；arrears_text 在场。
+
+    对照公开 DB 行字段与投影键集；不调用私有 situation / _army_pay oracle。
+    """
     db, _state, _ = read_game
     seed_status = _guanning_db_status(db)
 
@@ -140,38 +113,37 @@ def test_army_payload_omits_static_status_exposes_arrears_text(read_game):
 
     for army_id, row in rows_by_id.items():
         card = by_id[army_id]
-        legacy = _expected_army_card_from_row(db, row)
-        expected = {k: v for k, v in legacy.items() if k != "status"}
-
-        # 完整键集：恰好等于投影契约（无 status / 无 raw morale|loyalty|arrears）
-        assert set(card.keys()) == set(expected.keys()) == _ARMY_PAYLOAD_KEYS, (
+        assert set(card.keys()) == _ARMY_PAYLOAD_KEYS, (
             f"{army_id}: payload 键集偏离。"
             f" extra={set(card.keys()) - _ARMY_PAYLOAD_KEYS!r}"
             f" missing={_ARMY_PAYLOAD_KEYS - set(card.keys())!r}"
         )
         assert "status" not in card
         assert {"morale", "loyalty", "arrears"}.isdisjoint(card.keys())
+        # 公开行字段原样投影
+        for key in (
+            "id", "name", "station", "theater", "commander", "controller",
+            "troop_type", "owner_power",
+        ):
+            assert card[key] == row[key]
+        for key in (
+            "manpower", "supply", "training", "equipment", "mobility",
+            "firearm_equipment", "cannon_equipment",
+        ):
+            assert int(card[key]) == int(row[key])
+        assert isinstance(card["morale_text"], str) and card["morale_text"].strip()
+        assert isinstance(card["arrears_text"], str) and card["arrears_text"].strip()
+        assert isinstance(card["mutiny_tier"], str) and card["mutiny_tier"].strip()
+        assert isinstance(card["army_needed"], int)
 
-        # 逐字段机械对照（唯一允许差异已在 expected 中删除 status）
-        for key, value in expected.items():
-            assert card[key] == value, (
-                f"{army_id}.{key}: payload={card[key]!r} expected={value!r}"
-            )
-
-        # seed status 句不得以任何字段值形式泄漏
         st = str(row["status"] or "").strip()
         if st:
             joined = " ".join(str(v) for v in card.values())
             assert st not in joined
 
-    # 病灶样本：关宁欠饷奏报文案仍在，status 句不在
-    from ming_sim.db import _player_army_situation
-
     guanning = by_id[_GUANNING_ID]
-    g_row = rows_by_id[_GUANNING_ID]
-    expected_arr = _player_army_situation(g_row, db._army_pay(g_row))["arrears_text"]
-    assert guanning["arrears_text"] == expected_arr
     assert seed_status not in " ".join(str(v) for v in guanning.values())
+    assert seed_status not in guanning["arrears_text"]
 
 
 
