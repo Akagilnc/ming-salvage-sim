@@ -7890,7 +7890,7 @@ class GameDB:
                     "item": {"army_id": army_id, "changes": raw_changes},
                 })
                 continue
-            reason = str(raw_changes.get("reason") or raw_changes.get("原因") or event.title).strip()
+            reason = str(raw_changes.get("reason") or raw_changes.get("原因") or event.title)
             # cutover-off 已消费的 owner/D6 兄弟键：禁止通用环再打非法字段
             consumed_pay_source_fields: frozenset[str] = frozenset()
             if self.is_army_pay_source_cutover_enabled():

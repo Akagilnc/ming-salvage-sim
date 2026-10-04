@@ -9110,7 +9110,7 @@ def _apply_score_extraction_body(
                 )
         new_key = db.create_fiscal_item(
             key, account, direction, display, init_value,
-            note=str(create.get("reason") or "")[:120],
+            note=str(create.get("reason") or ""),
             origin_ref=origin_ref,
             turn=state.turn,
             beyond_intent=create.get("beyond_intent"),

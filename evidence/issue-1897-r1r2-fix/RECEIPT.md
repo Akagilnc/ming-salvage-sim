@@ -1,32 +1,28 @@
-# #1897 R1 补清回执（R2 已结清，本轮不改）
+# #1897 R1 续清回执（R2 已结清，本轮不改）
 
 - 分支：`ak-roles/issue-1897-r1-r2-fix`
-- 判词：`~/.ak-roles/books/Ming_LLM/1897/runs/01a107cd-efa4-7e4e-a948-3dc08952f664@fixer/attachments/00-1897-judge-e37942414.json`
-- 用户本轮：R2 结清；R1 遗漏 `db.py` pay_order_override `decree_text[:240]`、grant `note…[:240]`（text=案卷正文须取证）；同类案卷自由字段转运落库扫净；只删简化
+- 用户本轮：现场读 diff——`apply_army_deltas.reason` 已进转运列并删 `[:80]`，仍保留 `.strip()`（db.py 写 `army_logs` 仍改字）；`issues.py` fiscal_creates `note=…[:120]` 虽曾列例外，但是声明→共同 `create_fiscal_item` 写口自由 reason，共同写口已原样入库故上游裁剪须删。只删简化；不扩玩法；不改 R2。
 - 未 push / 未开 PR / 未 amend / 未 stash
 
-## 取证（text / decree_text）
+## 上下游核证
 
-- `_create_grant_fiscal_item(..., text=)` ← `create_decree_dossier` 成案 `text`（≈14303）与顺颁 `str(row["decree_text"])`（≈15567）
-- `_apply_pay_order_override_effect` ← `row["decree_text"]` → `materialize_pay_order_decree(..., reason=)` → `record_fiscal_config_change`
+- `GameDB.apply_army_deltas`：`reason = … .strip()` → 传入 `_apply_army_pay_source_delta` / 各字段分支 → `INSERT INTO army_logs (…, reason, …)` —— 同一自由 reason 入库前改字。
+- `issues._apply_score_extraction_body` fiscal_creates：`note=str(create.get('reason') or '')[:120]` → `GameDB.create_fiscal_item(..., note=)` → `fiscal_config.note` 与 `fiscal_config_creations.reason`（写口本轮已无 `[:240]`）—— 上游裁剪使原样入库无效。
 
-## 本轮生产删裁剪
+## 本轮生产删改字
 
-见 `members-exceptions.txt` §D；含财政写口（create/change/tombstone）与拨饷 economy / 军令 army 共享写口，不按财政字段名排除。
+- `ming_sim/db.py:GameDB.apply_army_deltas` — 删 `reason` 的 `.strip()`
+- `ming_sim/issues.py:_apply_score_extraction_body` — 删 fiscal_creates `note=…[:120]`
 
-## 枚举
-
-```bash
-# 见 enumeration.txt；本轮实跑写出：
-# /tmp/1897-r1r2-candidates-ast.txt
-# py_hits=6685 non_py=18（修前全仓）；postfix slices → /tmp/1897-r1-postfix-slices.txt
-```
+成员表：`members-exceptions.txt` §C 撤财政_creates 误例外；§D 补上两项 MUST_FIX。
 
 ## 聚焦测试
 
-见 `focused-pytest.txt`（本轮重跑；七 BIN=/usr/bin/false；含触及面 pay_order / grant fiscal）。
+见 `focused-pytest-continuation.txt`（仅两文件；七 BIN=/usr/bin/false）。
+
+前次 11 文件证据保留于 `focused-pytest.txt`（445 passed, 1 failed）；**本轮不重跑 11 文件，不伪称新的 445 结果**。
 
 ## 自查二连
 
-- 同类型：全仓 [:N] 案卷自由字段转运落库已扫；成员/例外可核；R2 未动
-- 引入 bug：只删 [:N]，无新机制/护栏/证明性测试；未补 #1873；未改配置
+- 同类型：army 共享写口 strip + fiscal_creates 上游 [:N] 已对齐共同写口原样；R2 未动
+- 引入 bug：只删 `.strip()` / `[:120]`，无新机制/护栏/证明性测试；未补 #1873
