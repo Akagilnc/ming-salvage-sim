@@ -461,7 +461,6 @@ export type GameState = {
   pending_directive_count?: number;  // 对话式拟旨暂存数（pending_actions kind=directive）
   pending_secret_order_count?: number;  // #1376：staged 密令候选数（确认闸门仍在；投影可见）
   pending_non_directive_action_count?: number;  // 可见的非拟旨 pending_actions（不含隐藏新密令候选）
-  failed_secret_order_count?: number;
   pending_decisions?: PendingDecision[];
   /** #657：awaiting + resolve_context + 空 pending desk → 续跑 phase2（空 POST 既有 stream） */
   resume_phase2?: boolean;

@@ -195,7 +195,7 @@ export function App() {
     deleteDirective,
   } = useEdictActions({ setError, setState, beginDurableMutation });
 
-  // 颁诏结算流（useSettlementFlow.ts）：盖玺颁诏/failed-only 退朝/HITL 决策点续裁/失败重拉。
+  // 颁诏结算流（useSettlementFlow.ts）：盖玺颁诏/无旨退朝重试/HITL 决策点续裁/失败重拉。
   // hook 必须在 menu/loading 早退之前调用。
   const {
     settlementGazetteReading,
@@ -784,7 +784,6 @@ export function App() {
             onSaveDirective={saveDirective}
             onDeleteDirective={deleteDirective}
             onIssueDecree={issueDecree}
-            onAdvanceWithoutEdict={() => { setActiveModal("none"); void advanceWithoutEdict(); }}
           />
         </FullscreenModal>
       ) : null}

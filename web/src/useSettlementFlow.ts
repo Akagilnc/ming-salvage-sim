@@ -46,7 +46,7 @@ type SettlementReceipt = {
   reload: () => void;
 };
 
-// 颁诏结算流：盖玺颁诏 / failed-only 退朝 / HITL 决策点续裁 / 失败重拉。
+// 颁诏结算流：盖玺颁诏 / 无旨退朝重试 / HITL 决策点续裁 / 失败重拉。
 // #1852：核账等待面不呈现推演段文/推敲/进度；写成即推进后本面开邸报阅读态，不整页 reload。
 export function useSettlementFlow({
   setBusy,
@@ -455,7 +455,7 @@ export function useSettlementFlow({
   /** #1418 r2：all-decided 续跑——重发 resolve_decisions/stream（空载荷；服务端用已存 choice）。 */
   const resumePhase2 = async () => submitDecisions([]);
 
-  // #1560：failed-only 拟诏台确认后退朝；复用既有 /api/decree/advance_without_edict 接缝。
+  // 退朝重试／无旨推进：复用既有 /api/decree/advance_without_edict 接缝（非 failed-only 呈现）。
   // 真空仍禁用；draft/pending 走 issueDecree，不经此路。
   // #1796：与盖玺同 busy 标——同会话立即收拟诏台 + 切核账期面。
   const advanceWithoutEdict = async () => {

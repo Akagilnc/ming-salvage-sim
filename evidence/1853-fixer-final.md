@@ -1,151 +1,129 @@
-# #1853 修内司交卷（J2–J5）
+# #1853 修内司交卷（J2–J5 复核删简）
 
 - 工作树：`/Users/akagilnc/WorkSpace/Ming_LLM-1853-w5`
-- 分支：`ak-roles/issue-1853-j2-j5-unify`（自 `ak-roles/issue-1853-retired-residue` / `acc7a7c6d` 新开）
-- 授权：本局「apply #1853」施工劳务指令
-- 票面：`gh issue view 1853` / `1812`（`--repo Akagilnc/ming-salvage-sim`）
-- 判词：末份 payloads（`05-1853-judge-acc7a7c6d.json`）未结类别 **J2–J5**；前份仅参考
-- 官方方向：React「Avoid duplication in state / single source of truth」→ https://react.dev/learn/choosing-the-state-structure （旁证；裁决依据仍为仓库法源）
-- **未合入目标分支；不声称关票或家族完成**
+- 分支：`ak-roles/issue-1853-j2-j5-unify`
+- 授权：本局「继续修内司 #1853」施工劳务指令
+- 判词：末份 `05-1853-judge-acc7a7c6d.json` 未结 **J2–J5**；上轮 `60516a6a3` 的 J5 审计过滤被本轮驳回重做
+- **未合入目标分支；不 push / 不开 PR；不 amend**
 
-## 自审（合法性 / 复杂度）
+## 自审
 
-- 未新增同步、轮询、恢复或分类账本；J3 只删无消费者观察链，转译轮询保留。
-- J2 归一夜卷投影，删前端平行数组与缺字段回退。
-- J4 共同异常分流归一，保留拟旨路径的事务包装与内存恢复差异。
-- J5 终态业务拒收不再进系统失败传输／计数；真实未成落库路径与拒收审计保留。
-- 净复杂度下降：删并行权威与死观察链；未造第三层框架。
+- 上轮 J5 新增 `_is_terminal_business_refusal_action`（逐项扫审计 + `OperationalError` pass）属替代过滤，违反失败诚实；且保留 `failedOnly` 全套旧支线，未清退旧呈现。
+- 本轮先全仓枚举 `pending_actions status='failed'` 生产者与真异常传输消费者：真异常留 `pending` 并经原轮/月链 `error_pack` / except 上抛；`failed` 仅终态业务拒收 / 软拒收 / 无效拟旨。
+- 故整类删除 failed 计数、`failedOnly` UI、CLI/结算专属 failed 载荷与本轮审计过滤；不增分类账本或兼容 catch。
+- J4 dispose 恒 True 简化为 `-> None` 直调；J2 夜卷 `reply_retries` 必有，去掉 `||[]` / optional。
+- 净删约 700+ 行；不补核心恢复功能。
 
 ---
 
-## J2「回话重试存在两份前端权威」
+## 全仓枚举：`status='failed'` 生产者
 
-### 根因
-夜卷 `/api/audience/scroll` 已提供 `reply_retries`，但 `useChatActions` 另维一份数组，`chatModal` 又对缺字段兼容并回退到 props——双权威。
-
-### 全仓枚举命令
+命令：
 ```bash
-rg -n --hidden -g '!node_modules' -g '!.git' \
-  'reply_retries|replyRetries|setReplyRetries|ReplyRetry' \
-  web/ ming_sim/ web_app.py tests/
+git grep -n -I -E "pending_actions SET status=['\"]failed['\"]" -- ':!archive'
 ```
 
-### 成员表（施工前）
-| 成员 | 处置 |
-|---|---|
-| `web/src/useChatActions.ts` 状态 `replyRetries` / set 于 history·undo·retry | **删**平行状态 |
-| `web/src/components/chatModal.tsx` `hasOwnProperty` 缺字段兼容 + props 回退 | **删**；只读夜卷 |
-| `web/src/main.tsx` 传 `replyRetries` | **删**传参 |
-| `web_app.py` 夜卷 `reply_retries` | **保留**（唯一投影） |
-| `/api/audience/chat` 仍可返回 `reply_retries` | **保留后端字段**；前端不再消费为平行权威 |
-| 测试夹具把 retries 放在 history | **改**到 scroll mock |
+| 路径 | 符号 | 行 | 类别 | 处置 |
+|---|---|---|---|---|
+| `ming_sim/db.py` | `_dispose_pending_action_apply_exception` | 17615 | 案卷关联业务拒收 → 终态 failed | **保留**生产者；删其系统待办呈现 |
+| `ming_sim/db.py` | `_dispose_pending_action_apply_exception` | 17621 | typed `PendingActionRefusal` / `OfficeAppointmentRejection` → 终态 failed | **保留**生产者与拒收审计 |
+| `ming_sim/db.py` | `commit_pending_actions` | 18118 | 拟旨 `classification=="invalid"` → 终态 failed | **保留**（非真异常传输） |
+| `ming_sim/db.py` | `commit_pending_actions` | 18172 | `_apply_pending_action` 返 False 软拒收 → 终态 failed | **保留**（非未成故障） |
+| `ming_sim/db.py` | `_commit_conversational_draft` | 18264 | 同上软拒收 | **保留** |
 
-### 修复
-- 夜卷始终写入 `replyRetries`；`liveReplyRetries` 只读夜卷。
-- 恢复轮询成功读 history 后 `invalidateAudienceScroll()`，刷新夜卷权威。
-- 重试钮的 `recovery_phase` 由夜卷传入，不再查本地数组。
+真异常路径（对照，不写 failed）：
+| 路径 | 符号 | 行为 |
+|---|---|---|
+| `ming_sim/db.py` | `_dispose_pending_action_apply_exception` 末支 | 留 pending + `raise` |
+| `tests/test_audience_commit_failure_1853.py` | `test_secret_order_commit_code_error_is_not_laundered_into_success` | 实测 status=`pending` + `error_pack_path` + 转译重试 |
 
-### 复扫
+复扫真异常消费者（原轮/月链上抛，非 failed 行）：
 ```bash
-rg -n 'setReplyRetries|hasOwnProperty\.call\(data, "reply_retries"\)' web/src
-# 无匹配；仅剩 night 态 liveReplyRetries 消费
+# 既有入口案（七 false 前缀）
+python -m pytest tests/test_audience_commit_failure_1853.py::test_secret_order_commit_code_error_is_not_laundered_into_success -q
+# → 1 passed；status=pending，非 failed
 ```
-
-### 保留理由
-后端夜卷与 DB 重试投影是失败呈现真源；history API 字段不构成第二前端权威。
-
----
-
-## J3「退役预推恢复链遗留无消费者的轮询支线」
-
-### 根因
-`forecast_inflight` → 夜卷传输 → `chatModal` 并入 `keepPolling`，但无呈现读者；预推只写暂存声明。
-
-### 全仓枚举命令
-```bash
-rg -n --hidden -g '!node_modules' -g '!.git' \
-  'forecast_inflight|forecastInflight|has_open_key_prefix|_forecast_work_inflight' \
-  web/ ming_sim/ web_app.py tests/
-```
-
-### 成员表
-| 成员 | 处置 |
-|---|---|
-| `web_app.py` `_forecast_work_inflight` + 夜卷字段 | **删** |
-| `ming_sim/session_write_queue.py` `has_open_key_prefix` | **删**（仅此消费者） |
-| `chatModal` `forecastInflight` / 轮询或条件 | **删**；保留 `translation_pending` 轮询 |
-| `tests/test_audience_scroll_539.py` 契约键 | **改**去掉 `forecast_inflight` |
-
-### 复扫
-```bash
-rg -n 'forecast_inflight|forecastInflight|has_open_key_prefix' web/ ming_sim/ web_app.py tests/
-# 无匹配
-```
-
-### 保留理由
-转译在飞轮询仍有呈现与整理重试消费者。
-
----
-
-## J4「暂存提交异常分流政策双实现」
-
-### 根因
-`commit_pending_actions` 与 `_commit_conversational_draft` 各抄一份：归属缺口上抛、案卷拒收审计、typed 拒收、failed 落账、真异常上抛。
-
-### 全仓枚举命令
-```bash
-rg -n 'dossier_link_rejection|_is_typed_business_refusal|业务拒收 id=' ming_sim/db.py
-rg -n 'def commit_pending_actions|def _commit_conversational_draft' ming_sim/db.py
-```
-
-### 成员表
-| 成员 | 处置 |
-|---|---|
-| 两段重复 `except` 政策 | **归一**为 `_dispose_pending_action_apply_exception` |
-| 拟旨路径 `atomic` / savepoint / 外层日志 | **保留**必要事务差异 |
-| 普通路径 `restore_office_memory` | **保留**必要内存恢复差异 |
-
-### 复扫
-`业务拒收 id=` 仅出现在共享方法内两处分支（案卷 / typed）；两调用点只调 dispose。
-
-### 保留理由
-输入准备、事务边界、office 内存恢复仍属必要差异，未造第三层框架。
 
 ---
 
 ## J5「业务拒收仍被旧支线呈为未处理系统故障」
 
-### 根因
-终态业务拒收（如 `ineligible_power`）把 `pending_actions` 标 `failed` 后，仍被 `_new_secret_order_failure_payloads*` 与 `failed_secret_order_count` 当成系统待办；edict `failedOnly`、settlement/decision 失败列表、CLI 打印同吃该传输。且 typed 审计 `item_json` 曾缺 `pending_action_id`，无法按审计排除。
+### 根因（上轮处方错误）
+过滤审计 JSON 把拒收从载荷剔除，却保留 `failed_secret_order_count` / `failedOnly` / CLI·结算 `pending_action_failures` 专属传输——旧呈现方向未清退，且 `OperationalError` catch 不诚实。
 
-### 全仓枚举命令
+### 全仓枚举命令（施工前成员）
 ```bash
-rg -n --hidden -g '!node_modules' -g '!.git' \
-  'pending_action_failures|failed_secret_order_count|failedOnly|_new_secret_order_failure_payloads|list_failed_secret_order_actions' \
-  web/ ming_sim/ web_app.py tests/
+git grep -n -I -E \
+  'failed_secret_order_count|failedOnly|_is_terminal_business_refusal|_system_secret_order_failure|_print_pending_action_failures|_new_secret_order_failure_payloads|_failed_secret_order_ids|_capture_settlement_failure' \
+  -- ':!archive' ':!docs'
 ```
 
 ### 成员表
-| 成员 | 处置 |
-|---|---|
-| `_record_typed_business_refusal` 不保证 `pending_action_id` | **修**审计戳记 |
-| `_is_terminal_business_refusal_action` + `_system_secret_order_failure_payloads` | **新增共享过滤**（非新账本，读既有审计） |
-| `web_app` / CLI 载荷建造 | **改**走共享过滤 |
-| `failed_secret_order_count` | **改**排除终态拒收 |
-| `edictModal` `failedOnly` / `decisionModal` / `useSettlementFlow` | **保留**；数据源已干净后不再误呈拒收 |
-| 真实未成落库（非拒收的 `failed`）传输 | **保留** |
+
+| 路径 | 符号 | 处置 |
+|---|---|---|
+| `ming_sim/session.py` | `_is_terminal_business_refusal_action` | **删**（本轮审计过滤） |
+| `ming_sim/session.py` | `_system_secret_order_failure_payloads` / `_pending_action_failure_payload` | **删** |
+| `web_app.py` | `failed_secret_order_count` 投影 | **删** |
+| `web_app.py` | `_failed_secret_order_ids_for_turn` / `_new_secret_order_failure_payloads_for_turn` / `_capture_settlement_failure_snapshot` | **删** |
+| `web_app.py` | advance/issue/stream/resolve 附 `pending_action_failures`（源自 failed 行） | **删**专属传输；异常仍经 HTTP/SSE message·abort·error_pack 上抛 |
+| `ming_sim/cli/terminal.py` | `_failed_secret_order_ids` / `_new_secret_order_failure_payloads` / `_print_pending_action_failures` 及 skip/issue 调用 | **删** |
+| `web/src/components/edictModal.tsx` | `failedOnly` / 退朝确认条 / `onAdvanceWithoutEdict` 页脚支线 | **删** |
+| `web/src/styles/edict.css` | `.edict-footer-confirm*` | **删** |
+| `web/src/types.ts` | `failed_secret_order_count?` | **删** |
+| `ming_sim/db.py` | `_record_typed_business_refusal` 的 setdefault 过滤戳 | **撤**回原「无 item 才写 id」形态（现役审计必要字段保留在 else 分支） |
+| `ming_sim/db.py` | `list_failed_secret_order_actions` / `discard_failed_secret_order_intents` | **保留**（清理/查询，非系统待办呈现） |
+| `ming_sim/decree.py` | `discard_failed_secret_order_intents` 调用 | **保留** |
+| 拒收审计 / 原动作行 / 真异常 raise | — | **保留** |
 
 ### 复扫
-业务拒收案：`_system_secret_order_failure_payloads` 不含该 id；`_is_terminal_business_refusal_action` 为真。无业务拒收的 failed 仍可出载荷。
+```bash
+git grep -n -I -E \
+  'failed_secret_order_count|failedOnly|_is_terminal_business_refusal|_system_secret_order_failure|_print_pending_action_failures|_new_secret_order_failure_payloads|_failed_secret_order_ids|_capture_settlement_failure' \
+  -- ':!archive' ':!docs' ':!evidence'
+# → EMPTY
+```
 
-### 保留理由
-拒收审计、原动作行、真异常上抛路径不动；不删仍承担真实未成故障唯一传输的路径。
+### 合法保留
+- 拒收审计（`rejection_reports` / `decree_dossier_link_rejections`）与原 `pending_actions` 行。
+- 真异常：留 pending + 上抛 + `error_pack` / 转译重试（既有入口案绿）。
+- `advanceWithoutEdict` API 与结算重试入口仍在（非 failed-only 呈现）。
 
 ---
 
-## 测试与变异证据
+## J2「回话重试存在两份前端权威」
 
-环境前缀（全部本机测试）：
+### 枚举
+```bash
+rg -n 'reply_retries|replyRetries|setReplyRetries' web/ ming_sim/ web_app.py tests/
+```
+
+| 路径 | 符号 | 处置 |
+|---|---|---|
+| `web_app.py` | 夜卷 `reply_retries` | **保留**唯一投影（必有） |
+| `web/src/components/chatModal.tsx` | `reply_retries?:` + `\|\| []` | **改**为必有 `reply_retries:`，去掉缺字段兼容 |
+| `web/src/useChatActions.ts` | 平行数组 | 上轮已删；本轮维持 |
+| 测试夜卷 mock | 缺 `reply_retries` | **补** `reply_retries: []`（契约对齐，非新证明案） |
+
+---
+
+## J3「无消费者预推轮询」
+
+上轮已删 `forecast_inflight` / `has_open_key_prefix`；复扫零命中。本轮无复活。
+
+---
+
+## J4「暂存提交异常分流政策双实现」
+
+| 路径 | 符号 | 处置 |
+|---|---|---|
+| `ming_sim/db.py` | `_dispose_pending_action_apply_exception` | **保留**共同政策；返回类型改 `None`（不再恒 True） |
+| `commit_pending_actions` / `_commit_conversational_draft` | `if dispose(...): ok/result=...` | **改**为 `dispose(...)` 直调，保留原 ok/result |
+
+---
+
+## 测试与变异证据（七 false 前缀）
+
 ```bash
 export MING_SIM_AGY_BIN=/usr/bin/false MING_SIM_CODEX_BIN=/usr/bin/false \
   MING_SIM_CLAUDE_BIN=/usr/bin/false MING_SIM_CURSOR_BIN=/usr/bin/false \
@@ -153,38 +131,48 @@ export MING_SIM_AGY_BIN=/usr/bin/false MING_SIM_CODEX_BIN=/usr/bin/false \
   MING_SIM_PI_BIN=/usr/bin/false
 ```
 
-### 聚焦
+### 聚焦（实测）
 ```text
-python3 -m pytest tests/test_audience_commit_failure_1853.py \
+python -m pytest tests/test_audience_commit_failure_1853.py \
   tests/test_audience_scroll_539.py tests/test_decree_forecast_1861.py \
-  tests/test_cli_play_turn.py -q
-→ 56 passed in ~4.0s
+  tests/test_cli_play_turn.py tests/test_qa_b3_409_ux.py \
+  tests/test_dossier_links_559.py tests/test_chat_stream_failpaths_393.py -q
+→ 88 passed, 1 warning in 4.94s
 
-cd web && npx vitest run src/components/modals.test.tsx src/appDurableWiring.test.tsx \
+cd web && vitest run src/components/modals.test.tsx src/appDurableWiring.test.tsx \
   --environment jsdom --no-cache
-→ 120 passed in ~4.3s
+→ 117 passed
 
-npx tsc --noEmit -p tsconfig.json → exit 0
+tsc --noEmit -p tsconfig.json → TSC_EXIT=0
 ```
 
-### 测试改动说明（复用既有行为案，非新增证明夹具）
-| 改动 | 契约 | 成本 |
-|---|---|---|
-| scroll 契约去掉 `forecast_inflight` | 夜卷字段集 | 1 行 |
-| modals / durableWiring：retries 改由 scroll mock 供给 | 夜卷唯一权威 | 夹具对齐 |
-| durableWiring 成功回复后 scroll 失败条件避开 `replied` | 成功后应以夜卷空列表清钮 | 1 条件 |
+### 变异（复用既有入口；临时文件仅系统临时目录）
 
-### 变异红 → 恢复绿
-1. **J5**：临时 monkeypatch 去掉业务拒收过滤 → 真实应允入口后载荷含拒收 id（红断言成立）；恢复后过滤生效、既有 `test_ineligible_*` / `test_dossier_link_*` 绿。
-2. **J4**：临时把 `_dispose_pending_action_apply_exception` 改为直接 `raise` → 同入口业务拒收变系统抛错；恢复后既有分流案绿。
-3. **J3**：临时把 scroll 契约加回 `forecast_inflight` → `test_live_and_closed_night_share_the_real_http_contract` 红；恢复绿。
+**J4** — dispose 在 typed 拒收支改 `raise`：
+```text
+pytest tests/test_audience_commit_failure_1853.py::test_ineligible_secret_order_is_business_refusal -q --tb=line
+红：FAILED … PendingActionRefusal: 皇太极不属大明朝廷…；exit=1
+恢复后：1 passed；exit=0
+```
 
-临时 mutation 文件仅用系统/工作树临时路径，跑完已删。
+**J2** — 夜卷去掉 `reply_retries` 键：
+```text
+pytest tests/test_audience_scroll_539.py::test_live_and_closed_night_share_the_real_http_contract -q --tb=line
+红：AssertionError Extra items in the right set: 'reply_retries'；exit=1
+恢复后：1 passed；exit=0
+```
+
+**J5** — 临时把 `failed_secret_order_count: len(list_failed_secret_order_actions())` 写回 `state_payload`；临时探针复用 ineligible 应允入口（系统临时目录，非仓内测试）：
+```text
+红（投影复活）：PROBE_HAS_COUNT_FIELD True；PROBE_FAILED_N 1；探针 pass（旧呈现可观测）
+恢复后：PROBE_HAS_COUNT_FIELD False；PROBE_FAILED_N 1；探针 pass（failed 终态保留，呈现字段已无）
+复扫呈现符号：EMPTY
+```
 
 ---
 
 ## Commit
 
-- `60516a6a39f8b7b5f1a34621251e7dcfe10f72da`
-- `ak-roles: fix(#1853): unify J2–J5 night-scroll, forecast poll, commit policy, refusal transport`
+- （本轮提交后回填 hash）
+- 前缀：`ak-roles:`
 - 分支：`ak-roles/issue-1853-j2-j5-unify`（未 push、未开 PR）

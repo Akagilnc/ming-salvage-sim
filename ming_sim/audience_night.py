@@ -1073,9 +1073,8 @@ def _commit_night_approved(
     directive_status: str = "draft",
 ) -> List[Dict[str, object]]:
     """收夜提交本夜已应允白名单。沿用 commit_pending_actions 既有 terminal 语义：
-    落得了标 committed、落不了标 failed（都不留 pending，故幂等、可续跑）；失败由既有
-    pending_action_failures 渠道显眼上报，不在此另造「可续跑」的假失败阻断（否则第二次
-    只读 pending 会漏交终态 failed）。"""
+    落得了标 committed；业务拒收/软拒收标 failed；真异常留 pending 并上抛
+    （#1853：原轮/月链 error_pack 与失败路径承接，不另造 failed 专属传输）。"""
     if not hasattr(db, "list_night_approved_pending"):
         return []
     rows: List[Dict[str, object]] = []

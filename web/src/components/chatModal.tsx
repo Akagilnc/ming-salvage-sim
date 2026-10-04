@@ -145,7 +145,7 @@ export function ChatModal({
       characters?: Minister[];
       translation_pending: boolean;
       translation_retries?: TranslationRetry[];
-      reply_retries?: ReplyRetry[];
+      reply_retries: ReplyRetry[];
     }>("/api/audience/scroll")
       .then((data) => {
         if (!alive) return;
@@ -188,7 +188,7 @@ export function ChatModal({
           characters: data.characters || [],
           translationPending: data.translation_pending,
           translationRetries: data.translation_retries || [],
-          replyRetries: data.reply_retries || [],
+          replyRetries: data.reply_retries,
           refreshError: false,
         } : { kind: "none" });
         keepPolling = !!data.translation_pending;

@@ -17594,12 +17594,11 @@ class GameDB:
 
     def _dispose_pending_action_apply_exception(
         self, pa: Dict[str, object], exc: BaseException, *, rejection_collector=None,
-    ) -> bool:
+    ) -> None:
         """暂存提交异常的共同分流政策（#1853 J4）。
 
         调用方已 ROLLBACK TO savepoint（及必要的输入/内存恢复）。
-        返回 True = 业务拒收已终态该项，调用方继续其余项；
-        RejectionCollectorRequired 与真异常一律上抛。
+        业务拒收终态该项后返回；RejectionCollectorRequired 与真异常一律上抛。
         """
         from ming_sim.applier import RejectionCollectorRequired
 
@@ -17615,14 +17614,14 @@ class GameDB:
             self.conn.execute(
                 "UPDATE pending_actions SET status='failed' WHERE id=?", (int(pa["id"]),))
             tlog(f"[pending_actions] 业务拒收 id={pa['id']} {pa['kind']}/{pa['action']}：{exc}")
-            return True
+            return
         if self._is_typed_business_refusal(exc):
             self._record_typed_business_refusal(pa, exc, rejection_collector)
             self.conn.execute(
                 "UPDATE pending_actions SET status='failed' WHERE id=?", (int(pa["id"]),))
             tlog(f"[pending_actions] 业务拒收 id={pa['id']} {pa['kind']}/{pa['action']}：{exc}")
-            return True
-        # #1853：真异常留 pending，停止本批。收夜与颁诏由既有失败行接手。
+            return
+        # #1853：真异常留 pending，停止本批；由原轮/月链 error_pack 与失败路径上抛。
         tlog(f"[pending_actions] 落库失败上抛 id={pa['id']} {pa['kind']}/{pa['action']}：{exc}")
         raise
 
@@ -17634,11 +17633,11 @@ class GameDB:
         from ming_sim.applier import Provenance, RejectedItem
 
         raw_item = getattr(exc, "item", None)
-        item = dict(raw_item) if isinstance(raw_item, dict) else {}
-        # #1853 J5：审计必须带 pending_action_id，系统失败传输据此排除终态拒收。
-        item.setdefault("pending_action_id", int(pa["id"]))
-        item.setdefault("kind", str(pa.get("kind") or ""))
-        item.setdefault("action", str(pa.get("action") or ""))
+        item = dict(raw_item) if isinstance(raw_item, dict) else {
+            "pending_action_id": int(pa["id"]),
+            "kind": str(pa.get("kind") or ""),
+            "action": str(pa.get("action") or ""),
+        }
         rejection_collector.record(
             "pending_actions",
             RejectedItem(
@@ -18174,10 +18173,9 @@ class GameDB:
                 except Exception as exc:
                     self.conn.execute(f"ROLLBACK TO {savepoint}")
                     restore_office_memory()
-                    if self._dispose_pending_action_apply_exception(
+                    self._dispose_pending_action_apply_exception(
                         pa, exc, rejection_collector=rejection_collector,
-                    ):
-                        ok = False
+                    )
                 finally:
                     self.conn.execute(f"RELEASE {savepoint}")
                 if rejection_collector is not None:
@@ -18268,10 +18266,9 @@ class GameDB:
                         )
                 except Exception as exc:
                     self.conn.execute(f"ROLLBACK TO {savepoint}")
-                    if self._dispose_pending_action_apply_exception(
+                    self._dispose_pending_action_apply_exception(
                         pa, exc, rejection_collector=rejection_collector,
-                    ):
-                        result = None
+                    )
                 finally:
                     self.conn.execute(f"RELEASE {savepoint}")
                 if rejection_collector is not None:

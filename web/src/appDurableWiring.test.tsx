@@ -107,7 +107,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
         { kind: "night", turn: 1, year: 1627, period: 10, night_id: 31, title: "乾清宫召对", involved_people: ["王承恩"] },
       ] });
       if (u.pathname.endsWith("/api/history/turn/0")) return jsonResp({ turn: 0, exists: true, report: "月档", directives: [] });
-      if (u.pathname.endsWith("/api/audience/scroll")) return jsonResp({ messages: [
+      if (u.pathname.endsWith("/api/audience/scroll")) return jsonResp({ reply_retries: [], messages: [
         { role: "attendant", speaker: "王承恩", content: "御前低语", audibility: "御前低语" },
       ] });
       return jsonResp({});
@@ -153,7 +153,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
       if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
       if (u.pathname.endsWith("/api/game/state")) return jsonResp(makeState(1, [], [minister("杨嗣昌"), minister("洪承畴")]));
       if (decodeURIComponent(u.pathname).endsWith("/api/audience/chat")) return jsonResp({ campaign_id: "c", night_id: 23, history: [], suggestions: [], can_undo_last_chat: false });
-      if (u.pathname.endsWith("/api/audience/scroll")) return jsonResp({ night_id: 23, messages: [
+      if (u.pathname.endsWith("/api/audience/scroll")) return jsonResp({ reply_retries: [], night_id: 23, messages: [
         { role: "scene", speaker: "洪承畴", content: "入殿", beat: "entrance" },
         { role: "minister", speaker: "洪承畴", content: "臣在。", beat: "dialogue", chat_turn_id: 1 },
         { role: "attendant", speaker: "杨嗣昌", content: "御前低语", audibility: "御前低语", beat: "dialogue" },
@@ -190,7 +190,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
         reopen_landing: "audience",
       });
       if (path.endsWith("/api/audience/chat")) return jsonResp({ campaign_id: "c", night_id: 23, history: [], suggestions: [], can_undo_last_chat: false });
-      if (path.endsWith("/api/audience/scroll")) return jsonResp({ night_id: 23, status: "open", messages: [
+      if (path.endsWith("/api/audience/scroll")) return jsonResp({ reply_retries: [], night_id: 23, status: "open", messages: [
         { role: "minister", speaker: "洪承畴", content: "先轮奏报", beat: "dialogue", chat_turn_id: 1 },
         { role: "minister", speaker: "洪承畴", content: "末轮奏报", beat: "dialogue", chat_turn_id: 2 },
       ] });
@@ -220,7 +220,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
       if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [order] });
       if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
       if (u.pathname.endsWith("/api/game/state")) return jsonResp(makeState(1, [], [minister]));
-      if (u.pathname.endsWith("/api/audience/scroll")) return jsonResp({ night_id: replyStored ? 23 : 0, status: replyStored ? "open" : "closed", messages: replyStored ? [
+      if (u.pathname.endsWith("/api/audience/scroll")) return jsonResp({ reply_retries: [], night_id: replyStored ? 23 : 0, status: replyStored ? "open" : "closed", messages: replyStored ? [
         { role: "minister", speaker: minister.name, content: "臣已入殿", chat_turn_id: 1, beat: "dialogue" },
       ] : [] });
       if (u.pathname.endsWith("/api/audience/chat")) return jsonResp({ campaign_id: "c", night_id: 23, minister, history: [], suggestions: [], can_undo_last_chat: false });
@@ -270,7 +270,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
       if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
       if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
       if (u.pathname.endsWith("/api/game/state")) return jsonResp(makeState(1, [], [minister]));
-      if (u.pathname.endsWith("/api/audience/scroll")) return jsonResp({ night_id: 23, messages: [] });
+      if (u.pathname.endsWith("/api/audience/scroll")) return jsonResp({ reply_retries: [], night_id: 23, messages: [] });
       if (u.pathname.endsWith("/chat/stream")) return sseResp("error", detail);
       if (decodeURIComponent(u.pathname).endsWith("/api/audience/chat")) {
         return jsonResp({ campaign_id: "c", night_id: 23, minister, history: [], suggestions: [], can_undo_last_chat: false });
@@ -416,7 +416,6 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
       pending_directive_count: 0,
       pending_secret_order_count: 0,
       pending_non_directive_action_count: 0,
-      failed_secret_order_count: 0,
     };
     let stateCall = 0;
     let releaseRefresh!: () => void;
@@ -426,7 +425,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
       if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
       if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
       if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
-      if (u.pathname.endsWith("/api/audience/scroll")) return jsonResp({ night_id: 1, messages: [] });
+      if (u.pathname.endsWith("/api/audience/scroll")) return jsonResp({ reply_retries: [], night_id: 1, messages: [] });
       if (u.pathname.endsWith("/api/history/turns")) return jsonResp({ turns: [] });
       if (u.pathname.endsWith("/api/court_layout")) return jsonResp({ layout: "{}" });
       if (u.pathname.endsWith("/api/game/state")) {
@@ -491,7 +490,6 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
       pending_directive_count: 0,
       pending_secret_order_count: 0,
       pending_non_directive_action_count: 0,
-      failed_secret_order_count: 0,
     };
     let stateCall = 0;
     let retryDone = false;
@@ -1817,85 +1815,6 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     });
   });
 
-  it("#1796 无草案退朝失败后从原入口重试，不误走颁诏", async () => {
-    let advancePosts = 0;
-    let releaseAdvance!: (value: Response) => void;
-    const advanceGate = new Promise<Response>((resolve) => { releaseAdvance = resolve; });
-    let liveState: Record<string, unknown> = {
-      ...settlementBaseState("player"),
-      turn: { year: 1627, period: 10, turn: 5, phase: "player", settlement_display: false },
-      previous_summary: "",
-      pending_decisions: [],
-      directives: [],
-      // failed-only 路径：无草案但有失败密令，页脚走退朝确认
-      failed_secret_order_count: 1,
-      pending_directive_count: 0,
-      pending_secret_order_count: 0,
-      pending_non_directive_action_count: 0,
-    };
-    let issuePosts = 0;
-    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
-      const u = new URL(String(url), "http://t.local");
-      if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
-      if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
-      if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
-      if (u.pathname.endsWith("/api/game/state")) return jsonResp(liveState);
-      if (u.pathname.endsWith("/api/history/turns")) return jsonResp({
-        turns: [{ kind: "month", turn: 4, year: 1627, period: 9, has_report: true, has_attendant: false, has_directive: true }],
-      });
-      if (u.pathname.includes("/api/history/turn/")) return jsonResp({
-        turn: 4, year: 1627, period: 9, report: SNAP_GAZETTE, decree: "",
-      });
-      if (u.pathname.endsWith("/api/court_layout")) return jsonResp({ layout: "{}" });
-      if (u.pathname.endsWith("/api/decree/advance_without_edict") && init?.method === "POST") {
-        advancePosts += 1;
-        return advancePosts === 1 ? advanceGate : jsonResp({ state: liveState, awaiting_decision: true, decisions: [validDecision] });
-      }
-      if (u.pathname.endsWith("/api/decree/issue/stream") && init?.method === "POST") issuePosts += 1;
-      return jsonResp({});
-    }));
-
-    const host = await mountApp();
-    await click(edictCommand(host));
-    await act(async () => {
-      await vi.waitFor(() => expect(host.querySelector('[role="dialog"][aria-label="诏书草案"]')).not.toBeNull());
-    });
-    // failed-only：先点退朝打开确认，再确认退朝结束本月
-    const retreat = findButton(host, "退朝结束本月");
-    expect(retreat).toBeTruthy();
-    await click(retreat);
-    await act(async () => {
-      await vi.waitFor(() => expect(host.querySelector('[aria-label="退朝确认"]')).not.toBeNull());
-    });
-    const confirm = Array.from(host.querySelector('[aria-label="退朝确认"]')!.querySelectorAll("button")).find((b) =>
-      (b.textContent || "").includes("退朝结束本月"),
-    );
-    expect(confirm).toBeTruthy();
-    await click(confirm);
-
-    await act(async () => {
-      await vi.waitFor(() => {
-        expect(host.querySelector('[role="dialog"][aria-label="诏书草案"]')).toBeNull();
-        expect(host.querySelector("[data-testid=wang-settlement-slip]")).not.toBeNull();
-      });
-    });
-    expect(host.querySelector("[data-testid=settlement-lock-decor]")).toBeNull();
-
-    await act(async () => {
-      releaseAdvance(new Response(JSON.stringify({ detail: "退朝入口失败" }), { status: 503, headers: { "Content-Type": "application/json" } }));
-      await Promise.resolve();
-    });
-    await act(async () => {
-      await vi.waitFor(() => expect(host.querySelector('[role="alert"] button')).not.toBeNull());
-    });
-    liveState = settlementBaseState("awaiting_decision", { pending_decisions: [validDecision], previous_summary: "" });
-    await click(host.querySelector('[role="alert"] button') as HTMLButtonElement);
-    await act(async () => {
-      await vi.waitFor(() => expect(host.querySelector('[data-testid="decision-modal"]')).not.toBeNull());
-    });
-    expect(advancePosts).toBe(2);
-    expect(issuePosts).toBe(0);
-  });
 
   it("awaiting_decision + 合法 pending：DecisionModal 可点；刷新重挂后仍在", async () => {
     stubSettlementFetch(settlementBaseState("awaiting_decision", {
@@ -2945,7 +2864,6 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
       pending_directive_count: 0,
       pending_secret_order_count: 0,
       pending_non_directive_action_count: 0,
-      failed_secret_order_count: 0,
       previous_summary: "",
       pending_decisions: [],
     };
@@ -3039,7 +2957,6 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
       pending_directive_count: 0,
       pending_secret_order_count: 0,
       pending_non_directive_action_count: 0,
-      failed_secret_order_count: 0,
       previous_summary: "",
       pending_decisions: [],
     };
@@ -3125,7 +3042,6 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
       pending_directive_count: 0,
       pending_secret_order_count: 0,
       pending_non_directive_action_count: 0,
-      failed_secret_order_count: 0,
       previous_summary: "",
       pending_decisions: [],
     };
@@ -3224,7 +3140,6 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
       pending_directive_count: 0,
       pending_secret_order_count: 0,
       pending_non_directive_action_count: 0,
-      failed_secret_order_count: 0,
       previous_summary: "",
       pending_decisions: [],
     };
@@ -3248,7 +3163,7 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
         }
         return jsonResp({ ...baseState, cased_directives: casedDirectives });
       }
-      if (u.pathname.endsWith("/api/audience/scroll")) return jsonResp({ night_id: 1, messages: [] });
+      if (u.pathname.endsWith("/api/audience/scroll")) return jsonResp({ reply_retries: [], night_id: 1, messages: [] });
       if (u.pathname.endsWith("/api/audience/chat/stream") && init?.method === "POST") {
         return new Response(new ReadableStream<Uint8Array>({
           start(controller) { streamController = controller; },
@@ -3364,7 +3279,6 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
       pending_directive_count: 0,
       pending_secret_order_count: 0,
       pending_non_directive_action_count: 0,
-      failed_secret_order_count: 0,
       previous_summary: "",
       pending_decisions: [],
     });
@@ -3410,7 +3324,6 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
       pending_directive_count: 1,
       pending_secret_order_count: 0,
       pending_non_directive_action_count: 0,
-      failed_secret_order_count: 0,
       turn: { year: 1627, period: 10, turn: 5, phase: "player", settlement_display: false },
       previous_summary: "",
       pending_decisions: [],
@@ -3442,77 +3355,6 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     expect(paths.some((path) => path === "POST /api/decree/advance_without_edict")).toBe(false);
   });
 
-  it("#1560/#1732 failed-only：取消就地确认零请求；确认后 POST advance", async () => {
-    const paths: string[] = [];
-    const reload = vi.fn();
-    Object.defineProperty(window, "location", {
-      configurable: true,
-      value: { ...window.location, reload },
-    });
-    const failedOnly = {
-      ...settlementBaseState("player"),
-      directives: [],
-      pending_directive_count: 0,
-      pending_secret_order_count: 0,
-      pending_non_directive_action_count: 0,
-      failed_secret_order_count: 1,
-      turn: { year: 1627, period: 10, turn: 5, phase: "player", settlement_display: false },
-      previous_summary: "",
-      pending_decisions: [],
-    };
-    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
-      const u = new URL(String(url), "http://t.local");
-      paths.push(`${init?.method || "GET"} ${u.pathname}`);
-      if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
-      if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
-      if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
-      if (u.pathname.endsWith("/api/game/state")) return jsonResp(failedOnly);
-      if (u.pathname.endsWith("/api/decree/advance_without_edict")) {
-        return jsonResp({
-          state: { ...failedOnly, turn: { ...failedOnly.turn, turn: 6 } },
-          pending_action_failures: [],
-        });
-      }
-      if (u.pathname.endsWith("/api/decree/issue/stream")) return sseResp("done", { ok: true });
-      if (u.pathname.endsWith("/api/history/turns")) return jsonResp({ turns: [] });
-      if (u.pathname.endsWith("/api/court_layout")) return jsonResp({ layout: "{}" });
-      return jsonResp({});
-    }));
-
-    const host = await mountApp();
-    await click(edictCommand(host));
-    await tick();
-    await act(async () => {
-      await vi.waitFor(() => expect(host.querySelector('[role="dialog"][aria-label="诏书草案"]')).not.toBeNull());
-    });
-    const footer = host.querySelector<HTMLButtonElement>(".desk-footer button");
-    expect(footer?.disabled).toBe(false);
-
-    const settlePostsBefore = paths.filter((p) => p.startsWith("POST /api/decree/")).length;
-    await click(footer);
-    // #1732 B：页脚展开就地确认，取消零请求
-    const confirmPanel = host.querySelector('[aria-label="退朝确认"]');
-    expect(confirmPanel).not.toBeNull();
-    const cancelBtn = Array.from(confirmPanel!.querySelectorAll("button")).find((b) =>
-      (b.textContent || "").includes("取消")
-    );
-    expect(cancelBtn).toBeTruthy();
-    await click(cancelBtn as HTMLButtonElement);
-    expect(paths.filter((p) => p.startsWith("POST /api/decree/")).length).toBe(settlePostsBefore);
-    expect(host.querySelector('[aria-label="退朝确认"]')).toBeNull();
-
-    const footerAgain = host.querySelector<HTMLButtonElement>(".desk-footer button");
-    await click(footerAgain);
-    const confirmAgain = host.querySelector('[aria-label="退朝确认"]');
-    const yesBtn = Array.from(confirmAgain!.querySelectorAll("button")).find((b) =>
-      (b.textContent || "").includes("退朝结束本月")
-    );
-    await click(yesBtn as HTMLButtonElement);
-    await act(async () => {
-      await vi.waitFor(() => expect(paths.some((p) => p === "POST /api/decree/advance_without_edict")).toBe(true));
-    });
-    expect(paths.some((p) => p === "POST /api/decree/issue/stream")).toBe(false);
-  });
 
   it("#1560 真空拟诏主钮禁用，不发结算请求", async () => {
     const paths: string[] = [];
@@ -3522,7 +3364,6 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
       pending_directive_count: 0,
       pending_secret_order_count: 0,
       pending_non_directive_action_count: 0,
-      failed_secret_order_count: 0,
       turn: { year: 1627, period: 10, turn: 5, phase: "player", settlement_display: false },
       previous_summary: "",
       pending_decisions: [],

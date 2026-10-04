@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import List, Optional
+from typing import Optional
 
 from ming_sim.constants import (
     COURT_BREAK_COMMANDS,
@@ -24,7 +24,6 @@ from ming_sim.session import (
     GameSession,
     TurnPhase,
     _is_summonable_court_minister,
-    _system_secret_order_failure_payloads,
 )
 
 logger = logging.getLogger(__name__)
@@ -41,36 +40,6 @@ _STATUS_LABEL = {
 # 皇帝当场对拟旨草稿的回应
 _CONFIRM_WORDS = {"", "可", "准", "准奏", "yes", "y", "确认", "入档"}
 _REJECT_WORDS = {"驳", "不准", "驳回", "no", "n"}
-
-
-def _failed_secret_order_ids(session: GameSession, turn: int) -> set[int]:
-    db = getattr(session, "db", None)
-    if db is None or not hasattr(db, "list_pending_actions"):
-        return set()
-    return {
-        int(action.get("id") or 0)
-        for action in db.list_pending_actions(int(turn), status="failed")
-        if action.get("kind") == "secret_order"
-    }
-
-
-def _new_secret_order_failure_payloads(
-    session: GameSession, turn: int, before_ids: set[int],
-) -> List[dict]:
-    db = getattr(session, "db", None)
-    return _system_secret_order_failure_payloads(db, turn, before_ids)
-
-
-def _print_pending_action_failures(failures: List[dict]) -> None:
-    for failure in failures:
-        message = str(failure.get("message") or "密令落库失败。")
-        raw_failure_id = failure.get("id")
-        try:
-            failure_id = int(raw_failure_id) if raw_failure_id is not None else None
-        except (TypeError, ValueError):
-            failure_id = None
-        suffix = f" #{failure_id}" if failure_id is not None else ""
-        print(f"【密令落库失败{suffix}】{wrap(message)}\n")
 
 
 def _print_header(session: GameSession) -> None:
@@ -479,7 +448,6 @@ def minister_chat(session: GameSession, character: Character, *, selected: bool 
             raise
         print(wrap(result.answer))
         print()
-        _print_pending_action_failures(getattr(result, "pending_action_failures", []) or [])
         if result.proposed_directive is not None:
             _confirm_pending_directive(session, result.proposed_directive, character.name)
         if result.appointed_minister:
@@ -671,7 +639,6 @@ def play_turn(session: GameSession) -> None:
             continue
         if action == "skip":
             turn_before = int(session.state.turn)
-            failed_before = _failed_secret_order_ids(session, turn_before)
             try:
                 # #1353 fold-in r8：颁诏/退朝前挂唯一 write_gate，使 resolve 收夜 drain 同流。
                 _cli_write_gate(session)
@@ -681,14 +648,9 @@ def play_turn(session: GameSession) -> None:
                 # 跳过与颁诏共享可恢复结算语义：失败后留在本回合循环，允许重试。
                 # #1353 fold-in r8：统一重试耗尽的 LLMUnavailable 不退出 CLI。
                 # #1700：空 simulator 的 LLMContractError 同形，不落到 run_cli「程序中止」。
+                # #1853 J5：真异常经本 except 原样上抛呈现；终态业务拒收不再另造失败载荷。
                 print(f"\n{error}")
-                _print_pending_action_failures(
-                    _new_secret_order_failure_payloads(session, turn_before, failed_before)
-                )
                 continue
-            _print_pending_action_failures(
-                _new_secret_order_failure_payloads(session, turn_before, failed_before)
-            )
             if result is not None:
                 print(report)
                 if getattr(session.state, "ended", False):
@@ -701,7 +663,6 @@ def play_turn(session: GameSession) -> None:
             continue
         if action == "issue":
             turn_before = int(session.state.turn)
-            failed_before = _failed_secret_order_ids(session, turn_before)
             try:
                 # #1353 fold-in r8：颁诏/退朝前挂唯一 write_gate，使 resolve 收夜 drain 同流。
                 _cli_write_gate(session)
@@ -710,14 +671,9 @@ def play_turn(session: GameSession) -> None:
             except (ValueError, SettlementAbort, LLMUnavailable, LLMContractError) as error:
                 # 恢复态守门 / 结算中止 / 欠账耗尽（#1353 r8）/ 契约失败（#1700）：打印指引后留在
                 # 本回合交互循环——玩家重按 issue/skip 即重试整段，CLI 不退出。
+                # #1853 J5：真异常经本 except 原样上抛呈现；终态业务拒收不再另造失败载荷。
                 print(f"\n{error}")
-                _print_pending_action_failures(
-                    _new_secret_order_failure_payloads(session, turn_before, failed_before)
-                )
                 continue
-            _print_pending_action_failures(
-                _new_secret_order_failure_payloads(session, turn_before, failed_before)
-            )
             if result is not None:
                 print(report)
                 if getattr(session.state, "ended", False):
