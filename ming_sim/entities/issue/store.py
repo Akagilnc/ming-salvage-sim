@@ -32,6 +32,7 @@ ISSUE_COLUMNS = frozenset({
 })
 
 TURN_DIRECTIVE_COLUMNS = frozenset({
+    "source_pending_action_id",
     "id", "turn", "year", "period", "event_id", "actor", "text", "source",
     "status", "notes", "dossier_payload_json", "created_at", "updated_at",
 })
@@ -267,8 +268,8 @@ class IssueStore:
     def insert_directive(self, params: Any) -> Any:
         return self._conn.execute(
             "INSERT INTO turn_directives "
-            "(turn, year, period, event_id, actor, text, source, status, notes, dossier_payload_json) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", params,
+            "(turn, year, period, event_id, actor, text, source, status, notes, dossier_payload_json, source_pending_action_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", params,
         )
 
     def snapshot_directive_rows(self) -> Any:

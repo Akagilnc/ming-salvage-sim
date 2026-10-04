@@ -269,7 +269,7 @@ def test_national_creates_one_row_idempotent(env):
         commit=True,
     )
     assert len(ids) == 1
-    rows = db.dossiers.list_for_directive(directive_id)
+    rows = db.list_dossiers_for_directive(directive_id)
     assert len(rows) == 1
     assert [r["region_id"] for r in rows] == [""]
     # 点将：主办与 executor_* 同步（#654 named-lead 断根）
@@ -293,7 +293,7 @@ def test_national_creates_one_row_idempotent(env):
         commit=True,
     )
     assert ids2 == ids
-    assert len(db.dossiers.list_for_directive(directive_id)) == 1
+    assert len(db.list_dossiers_for_directive(directive_id)) == 1
 
 
 def test_named_lead_bulk_single_region_syncs_executor(env):
@@ -336,7 +336,7 @@ def test_named_lead_bulk_single_region_syncs_executor(env):
         commit=True,
     )
     assert len(ids) == 1
-    row = db.dossiers.list_for_directive(directive_id)[0]
+    row = db.list_dossiers_for_directive(directive_id)[0]
     assert row["region_id"] == "shaanxi"
     leads = [
         e["character_id"] for e in row["participant_roster"] if e.get("tier") == "主办"
@@ -357,11 +357,11 @@ def test_create_decree_dossier_int_abi_single_row(env):
         payload={"locality_scope": "none", "target_kind": "policy", "target_id": "court-rebuke"},
     )
     assert isinstance(did, int) and did > 0
-    row = db.dossiers.get(did)
+    row = db.get_decree_dossier(did)
     assert row["region_id"] == ""
 
 
-def test_dossier_get_for_directive_existence_sentinel(env):
+def test_get_dossier_for_directive_existence_sentinel(env):
     db, state, _ = env
     payload = {
         "target_kind": "region",
@@ -385,7 +385,7 @@ def test_dossier_get_for_directive_existence_sentinel(env):
     )
     directive_id = int(cur.lastrowid)
     db.conn.commit()
-    assert db.dossiers.get_for_directive(directive_id) is None
+    assert db.get_dossier_for_directive(directive_id) is None
     db.create_decree_dossiers(
         state,
         action_type="policy",
@@ -395,8 +395,8 @@ def test_dossier_get_for_directive_existence_sentinel(env):
         directive_id=directive_id,
         payload=payload,
     )
-    assert db.dossiers.get_for_directive(directive_id) is not None
-    listed = db.dossiers.list_for_directive(directive_id)
+    assert db.get_dossier_for_directive(directive_id) is not None
+    listed = db.list_dossiers_for_directive(directive_id)
     assert len(listed) == 1 and listed[0]["region_id"] == "shaanxi"
 
 
@@ -525,7 +525,7 @@ def test_validate_all_unknown_roster_name_zero_rows_before_insert(env):
         )
     after = db.conn.execute("SELECT COUNT(*) AS n FROM decree_dossiers").fetchone()["n"]
     assert after == before
-    assert db.dossiers.list_for_directive(did) == []
+    assert db.list_dossiers_for_directive(did) == []
 
 
 def test_path2_pending_bad_roster_stays_draft_on_ensure_batch(env):
@@ -550,7 +550,7 @@ def test_path2_pending_bad_roster_stays_draft_on_ensure_batch(env):
         "SELECT status FROM turn_directives WHERE id=?", (did,),
     ).fetchone()
     assert row["status"] == "draft"
-    assert db.dossiers.list_for_directive(did) == []
+    assert db.list_dossiers_for_directive(did) == []
 
     rejections = db.ensure_dossiers_for_draft_directives(state)
     assert any(int(r["directive_id"]) == did for r in rejections)
@@ -558,7 +558,7 @@ def test_path2_pending_bad_roster_stays_draft_on_ensure_batch(env):
         "SELECT status FROM turn_directives WHERE id=?", (did,),
     ).fetchone()
     assert row["status"] == "draft"
-    assert db.dossiers.list_for_directive(did) == []
+    assert db.list_dossiers_for_directive(did) == []
 
 
 def test_path3_locality_fail_keeps_draft_no_text_in_rejection(env):
@@ -592,10 +592,10 @@ def test_path3_locality_fail_keeps_draft_no_text_in_rejection(env):
         "SELECT status FROM turn_directives WHERE id=?", (other_id,),
     ).fetchone()
     assert bad["status"] == "draft"  # 保持 draft
-    assert db.dossiers.list_for_directive(did) == []
+    assert db.list_dossiers_for_directive(did) == []
     # 并列第二旨不受影响
     assert good["status"] == "draft"
-    assert len(db.dossiers.list_for_directive(other_id)) == 1
+    assert len(db.list_dossiers_for_directive(other_id)) == 1
 
     rej = db.conn.execute(
         "SELECT item_json, reason, category FROM rejection_reports "
@@ -651,8 +651,7 @@ def test_path1_conversational_draft_bad_roster_marks_failed(env):
     )
     assert result is None
     st = db.conn.execute(
-        "SELECT status, committed_directive_id FROM pending_actions WHERE id=?",
-        (pa_id,),
+        "SELECT status FROM pending_actions WHERE id=?", (pa_id,),
     ).fetchone()
     assert st["status"] == "failed"
     # 回滚后不应残留 directive 案卷
@@ -829,7 +828,7 @@ def test_revoke_decree_523_producer_durable_oracle_chain(env):
     before = db.conn.execute("SELECT COUNT(*) AS n FROM decree_dossiers").fetchone()["n"]
     db.commit_pending_actions(state, content=content, action_ids=[pending_id])
     revoke_rows = [
-        d for d in db.dossiers.list_dossiers()
+        d for d in db.list_decree_dossiers()
         if int(d.get("pending_action_id") or 0) == int(pending_id)
     ]
     assert len(revoke_rows) == 1
@@ -880,13 +879,15 @@ def test_revoke_decree_523_producer_durable_oracle_chain(env):
 # ── #654 A–H 断根补测 ─────────────────────────────────────────────
 
 
-def test_location_canonical_seed_and_write_seam(env):
-    """G：fresh seed 三人 beizhili；写缝别名归一；未知地点拒收。"""
+def test_location_canonical_seed_and_write_seam(env, tmp_path):
+    """G：fresh seed 三人 beizhili；写缝别名归一；未知 fail-loud；在途保全。"""
+    import shutil
+    from ming_sim.db import GameDB
     from ming_sim.matching import canonical_region_id_exact
     from ming_sim.distance import DistanceMatrix
     from ming_sim.paths import bundled_path
 
-    db, _state, content = env
+    db, state, content = env
     for name in ("乔允升", "许誉卿", "韩一良"):
         loc = db.conn.execute(
             "SELECT location FROM characters WHERE name=?", (name,),
@@ -926,6 +927,42 @@ def test_location_canonical_seed_and_write_seam(env):
     ).fetchone()["location"] == "beizhili"
     with pytest.raises(ValueError):
         db.set_character_transit("毕自严", location="atlantis", commit=True)
+    # 旧档在途保全：独立副本预置别名 + transit → 开档 migrate 后四字段不变
+    clone = tmp_path / "loc_migrate.db"
+    shutil.copyfile(db.path, clone)
+    # 绕过写缝，直接预置旧别名（模拟旧档）
+    import sqlite3
+    conn = sqlite3.connect(clone)
+    conn.execute(
+        "UPDATE characters SET location='beijing', transit_to='shaanxi', "
+        "transit_distance_remaining=2.5, transit_speed_factor=1.0, "
+        "transit_start_turn=3 WHERE name='毕自严'"
+    )
+    conn.commit()
+    conn.close()
+    restored = GameDB(str(clone), content)
+    try:
+        row = restored.conn.execute(
+            "SELECT location, transit_to, transit_distance_remaining, "
+            "transit_speed_factor, transit_start_turn FROM characters "
+            "WHERE name='毕自严'"
+        ).fetchone()
+        assert row["location"] == "beizhili"
+        assert row["transit_to"] == "shaanxi"
+        assert float(row["transit_distance_remaining"]) == 2.5
+        assert float(row["transit_speed_factor"]) == 1.0
+        assert int(row["transit_start_turn"]) == 3
+    finally:
+        restored.close()
+    # 未知非空开档 fail-loud
+    bad = tmp_path / "loc_bad.db"
+    shutil.copyfile(db.path, bad)
+    conn = sqlite3.connect(bad)
+    conn.execute("UPDATE characters SET location='atlantis' WHERE name='毕自严'")
+    conn.commit()
+    conn.close()
+    with pytest.raises(ValueError):
+        GameDB(str(bad), content)
 
 
 def test_authorization_region_gets_single_locality(env):
@@ -1025,7 +1062,7 @@ def test_grant_region_to_character_amendment_clears_single_locality(env):
 
     db.commit_pending_actions(state, content=content, action_ids=[pending_id])
     rows = [
-        d for d in db.dossiers.list_dossiers()
+        d for d in db.list_decree_dossiers()
         if int(d.get("pending_action_id") or 0) == int(pending_id)
     ]
     assert len(rows) == 1
@@ -1083,7 +1120,7 @@ def test_authorization_region_to_character_amendment_clears_single_locality(env)
 
     db.commit_pending_actions(state, content=content, action_ids=[pending_id])
     rows = [
-        d for d in db.dossiers.list_dossiers()
+        d for d in db.list_decree_dossiers()
         if int(d.get("pending_action_id") or 0) == int(pending_id)
     ]
     assert len(rows) == 1

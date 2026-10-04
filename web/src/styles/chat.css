@@ -349,7 +349,6 @@ select {
 }
 
 .primary-action,
-.desk-add-btn,
 .directive-tools button {
   display: inline-flex;
   align-items: center;

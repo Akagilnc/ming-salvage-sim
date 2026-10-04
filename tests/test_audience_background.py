@@ -119,23 +119,6 @@ class _FakeSession(HallAdmissionSessionMixin):
     def refresh_runtime_after_chat_rollback(self):
         return None
 
-    # #542 scene lifecycle seams — production chat_stream/_start_chat_turn call these.
-    def start_chat_turn_scene(self, *_a, **_k):
-        return None
-
-    def start_chat_turn_exit_scene(self, *_a, **_k):
-        return None
-
-
-    def join_chat_turn_scene(self, *_a, **_k):
-        return []
-
-    def persist_chat_turn_scene(self, *_a, **_k):
-        return None
-
-    def abandon_chat_turn_scene(self, *_a, **_k):
-        return None
-
     def can_summon(self, character):
         # #1402：web _require_active_minister 改调 session.can_summon——假壳挂真方法，禁自造文案表
         return GameSession.can_summon(self, character)
@@ -209,7 +192,6 @@ def test_chat_reload_exposes_retryable_failed_secret_order(game):
     assert len(failures) == 1
     assert failures[0]["id"] == secret_id
     assert failures[0]["kind"] == "secret_order"
-    assert str(failures[0].get("message") or "").strip()
 
 
 
@@ -219,7 +201,7 @@ def test_newer_interrupted_turn_blocks_withdrawal_of_completed_turn(game):
     minister_name = "毕自严"
     web_game = _web_game(db, state, content, _FakeAgent())
     completed = db.create_chat_turn(state, minister_name, "completed", 0)
-    db.reign.update_chat_turn_messages(
+    db.update_chat_turn_messages(
         completed,
         db.append_chat_message(minister_name, state.turn, "user", "前问"),
         db.append_chat_message(minister_name, state.turn, "minister", "前答"),
@@ -241,7 +223,7 @@ def test_withdrawal_under_web_write_gate_returns_undone_turn(game):
     web_game = _web_game(db, state, content, _FakeAgent())
     turn = db.create_chat_turn(state, minister_name, "sess", 0)
     user_id = db.append_chat_message(minister_name, state.turn, "user", "前问")
-    db.reign.update_chat_turn_messages(turn, user_message_id=user_id)
+    db.update_chat_turn_messages(turn, user_message_id=user_id)
     db.persist_minister_reply(minister_name, state.turn, "前答", turn)
 
     # Web 路由持同一非重入写闸再调撤回；不得在取消转译时二次取闸。

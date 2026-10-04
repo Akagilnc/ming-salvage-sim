@@ -185,6 +185,120 @@ describe("MenuPage continue SSE stages (#1195)", () => {
     cleanup();
   });
 
+  it("replaces busy label when stage events arrive mid-stream", async () => {
+    const encoder = new TextEncoder();
+    let pull = 0;
+    let resumeRead: (() => void) | null = null;
+    const waitPull = () => new Promise<void>((resolve) => { resumeRead = resolve; });
+    const chunks = [
+      'event: stage\ndata: {"content":"检查模型后端..."}\n\n',
+      'event: stage\ndata: {"content":"重整朝堂名册..."}\n\n',
+      'event: done\ndata: {"state":{}}\n\n',
+    ];
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      body: {
+        getReader() {
+          return {
+            async read() {
+              if (pull >= chunks.length) return { value: undefined, done: true };
+              if (pull > 0) await waitPull();
+              const value = encoder.encode(chunks[pull++]);
+              return { value, done: false };
+            },
+          };
+        },
+      },
+    } as unknown as Response);
+
+    const cleanup = render(
+      <MenuPage
+        status={readyStatus as any}
+        onRefresh={async () => readyStatus as any}
+        onEnterGame={async () => {}}
+        error=""
+        setError={() => {}}
+      />
+    );
+    const continueBtn = Array.from(document.querySelectorAll("button")).find((button) =>
+      button.textContent?.trim() === "继续"
+    );
+    await act(async () => {
+      continueBtn!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      for (let i = 0; i < 8; i++) await Promise.resolve();
+    });
+    expect(document.querySelector(".menu-busy")?.textContent).toContain("检查模型后端");
+
+    await act(async () => {
+      resumeRead?.();
+      for (let i = 0; i < 8; i++) await Promise.resolve();
+    });
+    expect(document.querySelector(".menu-busy")?.textContent).toContain("重整朝堂名册");
+
+    await act(async () => {
+      resumeRead?.();
+      for (let i = 0; i < 8; i++) await Promise.resolve();
+    });
+    cleanup();
+  });
+
+  it("shows initial 载入上次进度 label immediately on click before first chunk", async () => {
+    let release!: (value: Response) => void;
+    const gate = new Promise<Response>((resolve) => {
+      release = resolve;
+    });
+    global.fetch = vi.fn().mockReturnValue(gate);
+
+    const cleanup = render(
+      <MenuPage
+        status={readyStatus as any}
+        onRefresh={async () => readyStatus as any}
+        onEnterGame={async () => {}}
+        error=""
+        setError={() => {}}
+      />
+    );
+
+    const continueBtn = Array.from(document.querySelectorAll("button")).find((button) =>
+      button.textContent?.trim() === "继续"
+    );
+    await act(async () => {
+      continueBtn!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    const busy = document.querySelector(".menu-busy");
+    expect((busy?.textContent || "").trim()).not.toBe("");
+
+    await act(async () => {
+      release(
+        streamResponse([
+          'event: stage\ndata: {"content":"检查模型后端..."}\n\n',
+          'event: done\ndata: {"state":{}}\n\n',
+        ]),
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    cleanup();
+  });
+});
+
+describe("MenuPage subtitle", () => {
+  it("does not show incorrect era year 崇祯元年 in subtitle", () => {
+    const cleanup = render(
+      <MenuPage
+        status={null}
+        onRefresh={async () => { throw new Error("not called"); }}
+        onEnterGame={async () => {}}
+        error=""
+        setError={() => {}}
+      />
+    );
+    const subtitle = document.querySelector(".menu-tagline");
+    expect((subtitle?.textContent || "").trim()).not.toBe("");
+    cleanup();
+  });
 });
 
 describe("ApiSettingsModal reasoning strength", () => {
@@ -240,7 +354,6 @@ describe("ApiSettingsModal reasoning strength", () => {
 
     const select = document.querySelector<HTMLSelectElement>('select[name="reasoning_strength"]');
     expect(select?.disabled).toBe(true);
-
     cleanup();
   });
 
@@ -298,7 +411,8 @@ describe("ApiSettingsModal reasoning strength", () => {
     const strength = document.querySelector<HTMLSelectElement>('select[name="reasoning_strength"]');
     expect(strength?.disabled).toBe(false);
     expect(strength?.value).toBe("off");
-
+    const offOption = Array.from(strength?.options || []).find((option) => option.value === "off");
+    expect(offOption?.textContent).toBe("关（codex 最低=低）");
     cleanup();
   });
 
@@ -367,7 +481,8 @@ describe("ApiSettingsModal reasoning strength", () => {
 
     const strength = document.querySelector<HTMLSelectElement>('select[name="reasoning_strength"]');
     expect(strength?.disabled).toBe(false);
-
+    const offOption = Array.from(strength?.options || []).find((option) => option.value === "off");
+    expect(offOption?.textContent).toBe("关（grok 最低=低）");
     cleanup();
   });
 
@@ -791,7 +906,6 @@ describe("ApiSettingsModal reasoning strength", () => {
 
     const strength = document.querySelector<HTMLSelectElement>('select[name="reasoning_strength"]');
     expect(strength?.disabled).toBe(true);
-
     cleanup();
   });
 
@@ -883,7 +997,6 @@ describe("#1732 MenuPage · 就地消解", () => {
     });
     const card = document.querySelector('[aria-label="覆盖主进度确认"]');
     expect(card).not.toBeNull();
-
     const cancel = Array.from(card!.querySelectorAll("button")).find((b) =>
       (b.textContent || "").includes("取消")
     );

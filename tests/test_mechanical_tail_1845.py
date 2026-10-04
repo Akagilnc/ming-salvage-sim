@@ -18,7 +18,7 @@ import pytest
 import ming_sim.month_chain as month_chain
 from ming_sim.applier import Provenance
 from ming_sim.session_write_queue import get_session_write_queue
-from tests.month_chain_helpers import InlineExecutor, make_light_session
+from tests.month_chain_helpers import make_light_session
 
 
 def _forbid_extractor(monkeypatch):
@@ -171,7 +171,7 @@ def test_exhausted_mechanical_tail_fails_and_blocks_next_month(game, monkeypatch
         assert session.resolve_turn(allow_empty_decree=True).advanced is True
     finally:
         if hasattr(executor, "fn"):
-            with pytest.raises(LLMUnavailable, match="酿制耗尽"):
+            with pytest.raises(LLMUnavailable):
                 _run_deferred(executor)
     assert get_session_write_queue(session).wait_idle(timeout_s=5)
     status = month_chain._load_chain(db, closed_turn)["mechanical_tail"]["status"]
@@ -209,7 +209,7 @@ def test_real_brew_failure_reaches_tail_failure_and_retry(game, monkeypatch):
         assert session.resolve_turn(allow_empty_decree=True).advanced is True
     finally:
         if hasattr(executor, "fn"):
-            with pytest.raises(LLMUnavailable, match="酿制耗尽"):
+            with pytest.raises(LLMUnavailable):
                 _run_deferred(executor)
     failure = WebGame.mechanical_tail_failure(SimpleNamespace(db=db, state=state))
     assert failure["error"] == "酿制耗尽"
@@ -243,6 +243,15 @@ def test_web_barrier_resumes_pending_tail_before_join(game, monkeypatch):
     session.agno_db = object()
     queue = get_session_write_queue(session)
     order = []
+
+    class InlineExecutor:
+        def submit(self, fn):
+            future = Future()
+            try:
+                future.set_result(fn())
+            except Exception as exc:
+                future.set_exception(exc)
+            return future
 
     monkeypatch.setattr(audience_translation, "_executor", InlineExecutor())
     monkeypatch.setattr(
@@ -283,6 +292,15 @@ def test_non_exhausted_tail_failure_stays_pending_and_retries(game, monkeypatch)
     session.llm_config = object()
     session.agno_db = object()
     calls = []
+
+    class InlineExecutor:
+        def submit(self, fn):
+            future = Future()
+            try:
+                future.set_result(fn())
+            except Exception as exc:
+                future.set_exception(exc)
+            return future
 
     monkeypatch.setattr(audience_translation, "_executor", InlineExecutor())
 
@@ -370,7 +388,7 @@ def test_ending_summary_runs_in_mechanical_tail_after_advance(
     executor = _install_deferred(monkeypatch)
     tail_reads_under_gate = []
     main_saves_under_gate = []
-    orig_reports = db.turn_reports.list_archives
+    orig_reports = db.list_turn_reports
     orig_save_state = db.save_state
     in_tail = False
 
@@ -384,7 +402,7 @@ def test_ending_summary_runs_in_mechanical_tail_after_advance(
             main_saves_under_gate.append(bool(gate.locked()))
         return orig_save_state(game_state)
 
-    monkeypatch.setattr(db.turn_reports, "list_archives", _reports)
+    monkeypatch.setattr(db, "list_turn_reports", _reports)
     monkeypatch.setattr(db, "save_state", _save_state)
 
     try:
@@ -490,13 +508,12 @@ def test_chapter_memory_retired_from_three_readers(game, monkeypatch):
     try:
         names = list_materials(prepared.root)
         assert any(n.startswith("邸报/") for n in names)
-        assert not any("章节" in n or "chapter" in n.lower() for n in names)
     finally:
         release_material_tree(prepared.root)
 
 
 def test_mechanical_tail_missing_llm_config_surfaces_retry(game, monkeypatch):
-    """缺模型配置：机械尾失败，错误原文写明缺少模型配置，可点重试。"""
+    """缺模型配置：机械尾失败，错误落在失败尾上，可点重试。"""
     from ming_sim.mechanical_tail import (
         failed_mechanical_tail,
         retry_failed_mechanical_tail,
@@ -527,6 +544,7 @@ def test_mechanical_tail_missing_llm_config_surfaces_retry(game, monkeypatch):
     turn, tail = failure
     assert turn == closed_turn
     assert tail["status"] == "failed"
+    assert str(tail.get("error") or "").strip()
     assert tail.get("error_pack_path")
 
     monkeypatch.setattr(

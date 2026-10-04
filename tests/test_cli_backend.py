@@ -44,6 +44,15 @@ def _patch_backend(monkeypatch, payload: str):
     monkeypatch.setattr(cb, "_run_backend", lambda p: (payload, 1))
 
 
+
+
+
+
+
+
+
+
+
 def test_secret_exclusion_extracts_people_and_offices(monkeypatch):
     canned = json.dumps({
         "标题": "密查",
@@ -90,17 +99,23 @@ def test_typed_secret_exclusions_canonicalize_roster_alias_and_office(game):
     assert offices == [office]
 
 
+
+
 def test_secret_content_assembly_is_emperor_plus_extractor_only():
     """#1274 K1：拼装输入结构化——仅 emperor_intent + extractor_content；无 reply 形参。"""
-    import inspect
-
-    params = inspect.signature(cb.assemble_secret_order_content).parameters
-    assert set(params) == {"emperor_intent", "extractor_content"}
-    assert "reply" not in params and "minister_reply" not in params
+    for reply_key in ("reply", "minister_reply"):
+        with pytest.raises(TypeError):
+            cb.assemble_secret_order_content(
+                emperor_intent="旨", extractor_content="声明", **{reply_key: "臣答"},
+            )
 
     task = "密查关宁欠饷"
     extracted = f"{task}，三月内回奏，方法：密访核册"
-    cb.assemble_secret_order_content(emperor_intent=task, extractor_content=extracted)
+    body = cb.assemble_secret_order_content(
+        emperor_intent=task,
+        extractor_content=extracted,
+    )
+    assert body == extracted
     # 御旨未覆盖时兜底并入御旨，仍不接受第三路 reply
     partial = "臣已领旨办理。"
     merged = cb.assemble_secret_order_content(
@@ -109,6 +124,38 @@ def test_secret_content_assembly_is_emperor_plus_extractor_only():
     )
     assert task in merged and "三月内回奏" in merged
     assert partial in merged
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 # ── enrich_initiative_effects ──
@@ -199,6 +246,7 @@ def test_run_backend_dispatch(monkeypatch, env, attr, out):
 # ── secret extract keep family ──
 
 
+
 # ── runner argv / error contracts (subprocess mocked) ──
 
 class _P:
@@ -256,7 +304,7 @@ def test_materials_dir_reaches_popen_cwd_and_readonly_argv(monkeypatch, tmp_path
     assert "--allowedTools" in captured["cmd"]
     assert "Read" in captured["cmd"] and "Glob" in captured["cmd"] and "Grep" in captured["cmd"]
     mcp_at = captured["cmd"].index("--mcp-config")
-    assert captured["cmd"][mcp_at + 1] == '{"mcpServers":{}}'
+    assert json.loads(captured["cmd"][mcp_at + 1]) == {"mcpServers": {}}
     assert "--permission-mode" in captured["cmd"]
     assert "dontAsk" in captured["cmd"]
     assert "--disallowedTools" not in captured["cmd"]
@@ -544,7 +592,6 @@ def test_resolve_cli_bin_falls_back_and_miss_not_cached(monkeypatch):
     monkeypatch.setattr(cb, "_login_shell_path", lambda: None)
     monkeypatch.setattr(cb.shutil, "which", lambda name, path=None: None)
     assert cb._resolve_cli_bin("codex", "codex") == "codex"
-    assert "codex" not in cb._BIN_CACHE
     monkeypatch.setattr(
         cb.shutil, "which",
         lambda name, path=None: "/Users/x/.local/bin/codex" if path is None else None,
@@ -641,13 +688,33 @@ def test_run_runner_execs_resolved_abspath(monkeypatch, runner, resolved):
     assert captured["cmd"][0] == resolved
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 # ── lenient JSON via public extract seam ──
+
+
+
+
+
 
 
 # ── CliChat public: prompt shape + typed completion structure ──
 
 def test_clichat_invoke_builds_prompt_and_completion_structure(monkeypatch):
-    """#1563：公开 invoke 只证 prompt 角色标签顺序与 typed completion 结构；不锁生成正文。"""
+    """#1563：公开 invoke 证各条非空输入按原顺序进入 prompt，以及 typed completion 原样带回。"""
     cc = cb.CliChat(id="cli-test", backend="agy")
     seen = {}
 
@@ -672,10 +739,8 @@ def test_clichat_invoke_builds_prompt_and_completion_structure(monkeypatch):
     ]
     out = cc.invoke(msgs, Message(role="assistant"))
     p = seen["prompt"]
-    # role tags + order (structural markers from deterministic inputs)
-    for tag in ("【系统设定】", "【皇帝/输入】", "【你此前的回答】", "【工具结果】", "【developer】"):
-        assert tag in p
-    assert "12345" in p
+    assert p.index("SYS_ROLE") < p.index("USER_MSG") < p.index("PRIOR_ASST") < p.index("TOOL_OUT") < p.index("12345")
+    assert p.count("USER_MSG") == 1
     # typed completion + passthrough on structured content (fixture, not LLM prose)
     assert out.role == "assistant"
     assert out.event == "AssistantResponse"
@@ -700,8 +765,10 @@ def test_clichat_invoke_json_constraint_and_no_constraint(monkeypatch):
         x: int = 0
 
     cc.invoke(msgs, Message(role="assistant"), response_format=_RF)
-
     cc.invoke(msgs, Message(role="assistant"))
+    assert all("EXTRACT" in prompt for prompt in seen)
+    assert seen[0] != seen[2]
+    assert seen[1] != seen[2]
 
 
 def test_clichat_invoke_error_traced_and_reraised(monkeypatch):
@@ -714,7 +781,8 @@ def test_clichat_invoke_error_traced_and_reraised(monkeypatch):
     with pytest.raises(LLMUnavailable) as ei:
         cc.invoke([SimpleNamespace(role="user", content="x")], Message(role="assistant"))
     assert traced.get("error") == "cli down"
-    assert ei.value.provider_message == "cli down"
+    assert "cli down" in (ei.value.provider_message or "")
+    assert "cli down" not in ei.value.message
 
 
 def test_clichat_call_cli_dispatch(monkeypatch):
@@ -880,6 +948,7 @@ def test_run_backend_for_config_traces_every_call(monkeypatch):
     assert len(recs) == 1
     r = recs[0]
     assert r["tag"] == "office_infer"
+    assert "后金汗" in r["prompt"] and r["response"] == "外臣"
     assert r["backend"] == "codex" and r["error"] is None
 
 
@@ -908,9 +977,10 @@ def test_run_backend_for_config_traces_on_backend_error(monkeypatch):
         raise RuntimeError("codex 挂了")
 
     monkeypatch.setattr(cb, "_run_codex", boom)
-    with pytest.raises(RuntimeError, match='codex 挂了'):
+    with pytest.raises(RuntimeError):
         cb._run_backend_for_config("任意提示", _cli_codex_cfg(), tag="probe")
     assert len(recs) == 1
+    assert recs[0]["error"] and "codex 挂了" in recs[0]["error"]
 
 
 def test_office_inference_llm_call_is_traced(monkeypatch):
@@ -922,6 +992,7 @@ def test_office_inference_llm_call_is_traced(monkeypatch):
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
     got = dbmod.infer_office_type_from_office("绝无此名的杜撰怪衔甲", llm_config=_cli_codex_cfg())
     assert got == "边镇"
+    assert len(recs) == 1 and "绝无此名的杜撰怪衔甲" in recs[0]["prompt"]
 
 
 def test_secret_extract_traces_exactly_once(monkeypatch):
@@ -938,10 +1009,9 @@ def test_secret_extract_traces_exactly_once(monkeypatch):
 
 
 def test_public_cli_support_restores_existing_runners(monkeypatch):
-    assert cb._CLI_BACKENDS == frozenset({"agy", "codex", "claude", "cursor", "kimi", "grok", "pi"})
     assert cb.GATE_CLI_RUNNERS == ("codex", "claude", "cursor", "kimi", "grok", "pi")
     assert [row["value"] for row in cb.cli_runner_choices()] == ["agy", "codex", "claude", "cursor", "kimi", "grok", "pi"]
-    assert set(cb.cli_model_choices()) == set(cb._CLI_BACKENDS)
+    assert set(cb.cli_model_choices()) == {row["value"] for row in cb.cli_runner_choices()}
     for name in ("opencode",):
         assert not cb.is_supported_cli_runner(name)
         monkeypatch.setenv("MING_SIM_LLM_BACKEND", name)

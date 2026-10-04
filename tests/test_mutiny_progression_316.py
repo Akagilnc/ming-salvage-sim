@@ -1,22 +1,41 @@
 """#316 — 月末真实结算入口持久推进哗变次数、军心上限与察看期。"""
 from __future__ import annotations
-from tests.army_pay_helpers import configure_central_army
 
 import sqlite3
 
 import pytest
 
 from ming_sim.db import GameDB
-from ming_sim.flows import apply_fixed_period_flows, derive_army_mutiny_state
+from ming_sim.army_pay import derive_army_mutiny_state
+from ming_sim.flows import apply_fixed_period_flows
 
 ARMY = "guanning"
 
 
-def _set(db,  *, loyalty: int, arrears: float, latched: int) -> None:
-    central = arrears
+def _configure(db) -> None:
+    value = 1  # active substrate_hub cutover
+    for key in ("__army_pay_source_cutover", "__fiscal_engine"):
+        db.conn.execute(
+            "INSERT INTO fiscal_config(key,value,kind,note) VALUES (?,?,'meta','test') "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (key, value),
+        )
+    db.conn.execute("UPDATE armies SET manpower=0")
     db.conn.execute(
-        'UPDATE armies SET loyalty=?, is_mutinied=?,\n           province_pay_arrears=0, central_pay_arrears=? WHERE id=?',
-        (loyalty, latched, central, ARMY,),
+        """UPDATE armies SET owner_power='ming', is_tusi=0, self_funded_pay=0,
+           manpower=10000, salary_rate=1, province_pay_share=0, central_pay_share=1
+           WHERE id=?""",
+        (ARMY,),
+    )
+    db.conn.commit()
+
+
+def _set(db, *, loyalty: int, arrears: float, latched: int) -> None:
+    central = arrears  # active hub source-split seed
+    db.conn.execute(
+        """UPDATE armies SET loyalty=?, arrears=?, is_mutinied=?,
+           province_pay_arrears=0, central_pay_arrears=? WHERE id=?""",
+        (loyalty, arrears, latched, central, ARMY),
     )
     db.conn.commit()
 
@@ -33,8 +52,8 @@ def _tick(db, state):
 
 def test_repeated_mutiny_persists_count_cap_and_probation(game):
     db, state, _ = game
+    _configure(db)
 
-    configure_central_army(db, ARMY)
     _set(db, loyalty=19, arrears=5, latched=0)
     first = _tick(db, state)
     assert tuple(first[k] for k in ("loyalty", "is_mutinied", "mutiny_count", "mutiny_probation")) == (14, 1, 1, 0)
@@ -84,7 +103,7 @@ def test_repeated_mutiny_persists_count_cap_and_probation(game):
 
 def test_mutiny_count_is_capped_at_three(game):
     db, state, _ = game
-    configure_central_army(db, ARMY)
+    _configure(db)
     db.conn.execute(
         "UPDATE armies SET mutiny_count=3, mutiny_probation=0 WHERE id=?", (ARMY,)
     )
@@ -104,16 +123,27 @@ def test_old_save_migrates_and_mutiny_progress_survives_reopen(game, tmp_path):
     path = str(tmp_path / "old-save.db")
     copied = sqlite3.connect(path)
     db.conn.backup(copied)
-    copied.execute(
+    copied.execute("ALTER TABLE armies DROP COLUMN mutiny_count")
+    copied.execute("ALTER TABLE armies DROP COLUMN mutiny_probation")
+    copied.close()
+
+    migrated = GameDB(path, content)
+    columns = {row["name"] for row in migrated.conn.execute("PRAGMA table_info(armies)")}
+    assert {"mutiny_count", "mutiny_probation"} <= columns
+    defaults = migrated.conn.execute(
+        "SELECT mutiny_count,mutiny_probation FROM armies WHERE id=?", (ARMY,)
+    ).fetchone()
+    assert tuple(defaults) == (0, 0)
+    migrated.conn.execute(
         "UPDATE armies SET loyalty=95,is_mutinied=1,mutiny_count=2,mutiny_probation=2 WHERE id=?",
         (ARMY,),
     )
-    copied.commit()
-    copied.close()
+    migrated.conn.commit()
+    migrated.close()
 
     reopened = GameDB(path, content)
     try:
-        configure_central_army(reopened, ARMY)
+        _configure(reopened)
         _set(reopened, loyalty=95, arrears=0, latched=1)
         restored = _tick(reopened, state)
         assert tuple(restored[k] for k in ("loyalty", "is_mutinied", "mutiny_count", "mutiny_probation")) == (60, 0, 2, 1)

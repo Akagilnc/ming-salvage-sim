@@ -46,7 +46,6 @@ describe("filterScrollForSelectedMinister (#1511 lens)", () => {
     const scroll = hongSecretOrderScroll();
     const lens = filterScrollForSelectedMinister(scroll, "许誉卿");
     expect(lens).toEqual([]);
-
   });
 
   it("切回有记录大臣：该臣语义轮完整（朕问/回话/递话/scene 同进）", () => {

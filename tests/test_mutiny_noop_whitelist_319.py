@@ -5,7 +5,6 @@ seam = apply_army_deltas 内字段效果门（与 #318 owner adapter 同缝）�
      + apply_score_extraction 集成对照（证明无需第二门）。
 """
 from __future__ import annotations
-from tests.army_pay_helpers import configure_central_army
 
 from types import SimpleNamespace
 
@@ -62,9 +61,27 @@ PAY_SOURCE_LEGAL_DELTAS = (
 )
 
 
+def _configure(db) -> None:
+    value = 1  # active substrate_hub cutover
+    for key in ("__army_pay_source_cutover", "__fiscal_engine"):
+        db.conn.execute(
+            "INSERT INTO fiscal_config(key,value,kind,note) VALUES (?,?,'meta','test') "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (key, value),
+        )
+    db.conn.execute("UPDATE armies SET manpower=0")
+    db.conn.execute(
+        """UPDATE armies SET owner_power='ming', is_tusi=0, self_funded_pay=0,
+           manpower=10000, salary_rate=1, province_pay_share=0, central_pay_share=1,
+           pay_source_region='liaodong', province_pay_arrears=0, central_pay_arrears=0
+           WHERE id=?""",
+        (ARMY,),
+    )
+    db.conn.commit()
+
+
 def _set(
     db,
-
     *,
     loyalty: int,
     arrears: float,
@@ -72,10 +89,11 @@ def _set(
     mutiny_count: int | None = None,
     manpower: int | None = None,
 ) -> None:
-    central = arrears
+    central = arrears  # active hub source-split seed
     db.conn.execute(
-        'UPDATE armies SET loyalty=?, is_mutinied=?,\n           province_pay_arrears=0, central_pay_arrears=? WHERE id=?',
-        (loyalty, latched, central, ARMY,),
+        """UPDATE armies SET loyalty=?, arrears=?, is_mutinied=?,
+           province_pay_arrears=0, central_pay_arrears=? WHERE id=?""",
+        (loyalty, arrears, latched, central, ARMY),
     )
     if mutiny_count is not None:
         db.conn.execute(
@@ -106,7 +124,7 @@ def _snapshot(db, fields=DENY_SNAPSHOT_FIELDS):
 
 def test_latched_denies_dispatch_armament_status_and_positive_manpower(game):
     db, state, _ = game
-    configure_central_army(db, ARMY)
+    _configure(db)
     _set(db, loyalty=30, arrears=5, latched=1, mutiny_count=1)
     before = _snapshot(db)
 
@@ -138,9 +156,8 @@ def test_latched_denies_dispatch_armament_status_and_positive_manpower(game):
 
 def test_latched_manpower_strict_negative_applies_zero_and_positive_noop(game):
     db, state, _ = game
-    configure_central_army(db, ARMY)
-    _set(
-        db, loyalty=30, arrears=5, latched=1, mutiny_count=1, manpower=10000
+    _configure(db)
+    _set(db, loyalty=30, arrears=5, latched=1, mutiny_count=1, manpower=10000
     )
 
     db.apply_army_deltas(
@@ -161,8 +178,8 @@ def test_latched_manpower_strict_negative_applies_zero_and_positive_noop(game):
 
 def test_latched_loyalty_positive_applies_negative_noop(game):
     db, state, _ = game
+    _configure(db)
     # mutiny_count=1 → cap=80；从 30 +15 → 45
-    configure_central_army(db, ARMY)
     _set(db, loyalty=30, arrears=5, latched=1, mutiny_count=1)
 
     db.apply_army_deltas(
@@ -179,7 +196,7 @@ def test_latched_loyalty_positive_applies_negative_noop(game):
 def test_latched_loyalty_raw_positive_noop_when_legacy_flips_effect_sign(game):
     """#319 P2：latched loyalty 以 post-modifier 实际方向为准；legacy 将 +20 翻成 -1 不得降。"""
     db, state, _ = game
-    configure_central_army(db, ARMY)
+    _configure(db)
     _set(db, loyalty=30, arrears=5, latched=1, mutiny_count=1)
     # 21 × -5% → net_pct=-105；apply_legacy_pct(+20,-105) → -1
     for i in range(21):
@@ -206,7 +223,7 @@ def test_latched_loyalty_legacy_flip_preflight_rejects_strategic_envelope(game):
     issue_engine.bind_content(content)
     state.year = 1629
     state.period = 11
-    configure_central_army(db, ARMY)
+    _configure(db)
     _set(db, loyalty=30, arrears=5, latched=1, mutiny_count=1)
     for i in range(21):
         db.insert_legacy(
@@ -248,8 +265,8 @@ def test_latched_loyalty_at_mutiny_cap_preflight_rejects_strategic_envelope(game
     issue_engine.bind_content(content)
     state.year = 1629
     state.period = 11
+    _configure(db)
     # mutiny_count=1, redemption_count=0 → cap=80；loyalty 已贴 cap
-    configure_central_army(db, ARMY)
     _set(db, loyalty=80, arrears=5, latched=1, mutiny_count=1)
     db.conn.execute(
         "UPDATE armies SET redemption_count=0 WHERE id=?", (ARMY,)
@@ -284,9 +301,8 @@ def test_latched_loyalty_at_mutiny_cap_preflight_rejects_strategic_envelope(game
 
 def test_latched_mixed_item_allows_and_denies_per_field(game):
     db, state, _ = game
-    configure_central_army(db, ARMY)
-    _set(
-        db, loyalty=30, arrears=5, latched=1, mutiny_count=1, manpower=10000
+    _configure(db)
+    _set(db, loyalty=30, arrears=5, latched=1, mutiny_count=1, manpower=10000
     )
     before = _snapshot(db, ("station", "status", "manpower", "loyalty"))
 
@@ -314,9 +330,8 @@ def test_latched_mixed_item_allows_and_denies_per_field(game):
 
 def test_latched_chinese_aliases_same_rules(game):
     db, state, _ = game
-    configure_central_army(db, ARMY)
-    _set(
-        db, loyalty=30, arrears=5, latched=1, mutiny_count=1, manpower=10000
+    _configure(db)
+    _set(db, loyalty=30, arrears=5, latched=1, mutiny_count=1, manpower=10000
     )
     before = _snapshot(db, ("station", "status", "manpower", "loyalty"))
 
@@ -344,9 +359,8 @@ def test_latched_chinese_aliases_same_rules(game):
 
 def test_non_latched_army_writes_all_legal_fields(game):
     db, state, _ = game
-    configure_central_army(db, ARMY)
-    _set(
-        db, loyalty=70, arrears=0, latched=0, mutiny_count=0, manpower=10000
+    _configure(db)
+    _set(db, loyalty=70, arrears=0, latched=0, mutiny_count=0, manpower=10000
     )
     before = _snapshot(
         db, ("station", "status", "manpower", "loyalty", "equipment", "training")
@@ -382,7 +396,7 @@ def test_non_latched_army_writes_all_legal_fields(game):
 
 def test_pay_clear_via_economy_moves_next_tick_loyalty_plus_5(game):
     db, state, _ = game
-    configure_central_army(db, ARMY)
+    _configure(db)
     _set(db, loyalty=30, arrears=8, latched=1, mutiny_count=1)
     before_loyalty = _row(db, "loyalty")["loyalty"]
     assert float(_row(db, "arrears")["arrears"]) > 0
@@ -418,9 +432,8 @@ def test_pay_clear_via_economy_moves_next_tick_loyalty_plus_5(game):
 
 def test_apply_score_extraction_respects_latched_field_gate(game):
     db, state, content = game
-    configure_central_army(db, ARMY)
-    _set(
-        db, loyalty=30, arrears=5, latched=1, mutiny_count=1, manpower=10000
+    _configure(db)
+    _set(db, loyalty=30, arrears=5, latched=1, mutiny_count=1, manpower=10000
     )
     before = _snapshot(db, ("station", "status", "manpower", "loyalty"))
 
@@ -452,8 +465,8 @@ def test_apply_score_extraction_respects_latched_field_gate(game):
 def test_latched_cutover_denies_pay_source_fields(game, pay_delta):
     """cutover-on：latched 军各组合法饷源输入一律静默 no-op（写缝入口复用 latch 门）。"""
     db, state, _ = game
+    _configure(db)
     # arrears=0：各组输入在无 latch 门时均可真实落库，避免校验假绿
-    configure_central_army(db, ARMY)
     _set(db, loyalty=30, arrears=0, latched=1, mutiny_count=1)
     before = _snapshot(db, PAY_SOURCE_DENY_FIELDS)
 
@@ -468,7 +481,7 @@ def test_latched_cutover_denies_pay_source_fields(game, pay_delta):
 def test_latched_cutover_rejects_invalid_pay_source_share(game):
     """cutover-on + latched：畸形 share 须 invalid_enum 拒收留痕，不得被 latch 静默吞没。"""
     db, state, _ = game
-    configure_central_army(db, ARMY)
+    _configure(db)
     _set(db, loyalty=30, arrears=0, latched=1, mutiny_count=1)
     before = _snapshot(db, PAY_SOURCE_DENY_FIELDS)
     bad = {"province_pay_share": 0.3, "central_pay_share": 0.3}
@@ -488,7 +501,7 @@ def test_latched_cutover_rejects_invalid_pay_source_share(game):
 def test_latched_cutover_rejects_unknown_pay_source_region(game):
     """cutover-on + latched：不存在 region 须 invalid_enum 拒收留痕，快照不变。"""
     db, state, _ = game
-    configure_central_army(db, ARMY)
+    _configure(db)
     _set(db, loyalty=30, arrears=0, latched=1, mutiny_count=1)
     before = _snapshot(db, PAY_SOURCE_DENY_FIELDS)
     bad = {"pay_source_region": "no_such_region_319"}
@@ -509,10 +522,8 @@ def test_latched_cutover_rejects_unknown_pay_source_region(game):
 def test_latched_cutover_mixed_item_pay_source_deny_whitelist_apply(game, pay_delta):
     """混合 item：合法饷源半边不变；manpower 严格负 / loyalty 正仍按白名单落。"""
     db, state, _ = game
-    configure_central_army(db, ARMY)
-    _set(
-        db,
-        loyalty=30,
+    _configure(db)
+    _set(db, loyalty=30,
         arrears=0,
         latched=1,
         mutiny_count=1,
@@ -546,10 +557,8 @@ def test_latched_cutover_mixed_item_pay_source_deny_whitelist_apply(game, pay_de
 def test_non_latched_cutover_pay_source_fields_still_write(game, pay_delta):
     """对照：非 latched + cutover-on 四组合法饷源均可持久落库，防误伤生产路径。"""
     db, state, _ = game
-    configure_central_army(db, ARMY)
-    _set(
-        db,
-        loyalty=70,
+    _configure(db)
+    _set(db, loyalty=70,
         arrears=0,
         latched=0,
         mutiny_count=0,

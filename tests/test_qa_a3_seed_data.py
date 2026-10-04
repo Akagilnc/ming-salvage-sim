@@ -9,7 +9,6 @@ from ming_sim.content import load_character_content
 from ming_sim.db import normalize_office
 from ming_sim.intelligence import OFFICE_SLOTS
 
-
 def test_active_seed_characters_do_not_occupy_office_slots():
     """不变式：active seed 人物 normalize_office 不得等于 OFFICE_SLOTS 任一 title。
 
@@ -106,14 +105,13 @@ def test_zhang_fengyi_office_strips_future_title():
 
 
 def test_qian_qianyi_seed_office_records_bajiu_dismissal():
-    """#1308 残余 + #1889：钱谦益的削籍罢居须在 seed 就成型，不靠 init 清洗。
+    """#1308 残余：钱谦益 seed office 须记削籍罢居（非空）；运行时空 office 是 ADR 0009 清洗。
 
 仓内 raw/minister/portrait 一致：前礼部右侍郎，罢居常熟（天启科场案削籍在野）。
-现任官职因此为空（他无现任），史实归 status/status_reason/historical_office 三处。
 """
     _, characters = load_character_content()
     ch = characters["钱谦益"]
-    assert ch.status == "dismissed", f"钱谦益 seed 状态应为 dismissed：{ch.status!r}"
-    assert ch.reason_code == "获罪削籍", ch.reason_code
-    assert ch.office == "", f"无现任者 office 应为空：{ch.office!r}"
-    assert "礼部" in ch.historical_office and "侍郎" in ch.historical_office, ch.historical_office
+    office = ch.office or ""
+    assert office.strip(), "seed office 不得空——运行时 dismissed 清空是 migration，不是 seed 缺史实"
+    assert "罢居" in office, office
+    assert "礼部" in office and "侍郎" in office, office

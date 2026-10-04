@@ -23,16 +23,16 @@ def test_one_protection_dossier_links_three_older_allocations_both_directions(ga
     targets = [_make_dossier(db, state, name) for name in ("辽东补饷", "宣大补饷", "东江补饷")]
     protection = _make_dossier(db, state, "密令护行三路饷银")
 
-    db.dossiers.add_links(
+    db.add_dossier_links(
         protection,
         [{"target_dossier_id": target, "relation_type": "护卫", "note": "护送该路饷银"}
          for target in targets],
     )
 
-    assert [row["target_dossier_id"] for row in db.dossiers.links(protection)] == targets
-    assert [db.dossiers.links(target, direction="incoming")[0]["source_dossier_id"]
+    assert [row["target_dossier_id"] for row in db.list_dossier_links(protection)] == targets
+    assert [db.list_dossier_links(target, direction="incoming")[0]["source_dossier_id"]
             for target in targets] == [protection] * 3
-    assert all("status" not in row for row in db.dossiers.links(protection))
+    assert all("status" not in row for row in db.list_dossier_links(protection))
 
 
 def test_only_confirmed_narrowed_references_are_persisted(game):
@@ -41,13 +41,13 @@ def test_only_confirmed_narrowed_references_are_persisted(game):
     xuanda = _make_dossier(db, state, "宣大补饷")
     protection = _make_dossier(db, state, "只确认护卫辽东")
 
-    db.dossiers.add_links(
+    db.add_dossier_links(
         protection,
         [{"target_dossier_id": liaodong, "relation_type": "护卫", "note": "确认只护辽东"}],
     )
 
-    assert [row["target_dossier_id"] for row in db.dossiers.links(protection)] == [liaodong]
-    assert db.dossiers.links(xuanda, direction="incoming") == []
+    assert [row["target_dossier_id"] for row in db.list_dossier_links(protection)] == [liaodong]
+    assert db.list_dossier_links(xuanda, direction="incoming") == []
 
 
 
@@ -66,7 +66,7 @@ def test_reference_candidates_hide_other_ministers_secret_dossiers(game):
     public_id = _make_dossier(db, state, "公开饷案")
     db.record_dossier_decision(public_id, "promulgated")
     other_order = create_test_secret_order(db, state, "卢象升", "密查", "不可外泄", [])
-    other_secret = db.dossiers.get_for_secret_order(other_order)
+    other_secret = db.get_dossier_for_secret_order(other_order)
 
     visible = db.list_referenceable_dossiers("孙承宗", state.turn)
 
@@ -84,7 +84,7 @@ def test_reference_candidates_obey_canonical_disclosure_blacklist(game):
 
     db, state, _ = game
     order_id = create_test_secret_order(db, state, "卢象升", "密查辽饷", "不可外泄", [])
-    dossier = db.dossiers.get_for_secret_order(order_id)
+    dossier = db.get_dossier_for_secret_order(order_id)
     source_id = f"secret_order_disclosure:{order_id}:test"
     db.record_public_knowledge_event(
         state, "密查辽饷已披露", source_id=source_id, excluded_names=["孙承宗"])
@@ -115,8 +115,8 @@ def test_confirmed_secret_order_materializes_links_through_pending_commit(game):
 
     assert [row["id"] for row in applied] == [action_id]
     order = db.list_secret_orders(minister_name="孙承宗")[0]
-    dossier = db.dossiers.get_for_secret_order(order["id"])
-    assert [row["target_dossier_id"] for row in db.dossiers.links(dossier["id"])] == targets
+    dossier = db.get_dossier_for_secret_order(order["id"])
+    assert [row["target_dossier_id"] for row in db.list_dossier_links(dossier["id"])] == targets
 
 
 def test_unknown_target_in_pending_commit_is_rolled_back_and_durably_audited(game):
@@ -135,7 +135,7 @@ def test_unknown_target_in_pending_commit_is_rolled_back_and_durably_audited(gam
 
     assert len(db.list_secret_orders()) == before_orders
     assert db.list_pending_actions(state.turn, status="failed")[0]["id"] == action_id
-    audit = db.dossiers.link_rejections(pending_action_id=action_id)
+    audit = db.list_dossier_link_rejections(pending_action_id=action_id)
     assert audit[-1]["target_dossier_id"] == 999999
 
 
@@ -144,13 +144,13 @@ def test_unknown_target_link_is_rejected_and_audited(game):
     source = _make_dossier(db, state, "护行密令")
 
     with pytest.raises(ValueError):
-        db.dossiers.add_links(
+        db.add_dossier_links(
             source,
             [{"target_dossier_id": 999999, "relation_type": "护卫", "note": "护送"}],
         )
 
-    assert db.dossiers.links(source) == []
-    audit = db.dossiers.link_rejections(source)
+    assert db.list_dossier_links(source) == []
+    audit = db.list_dossier_link_rejections(source)
     assert audit[-1]["target_dossier_id"] == 999999
 
 
@@ -163,7 +163,7 @@ def test_force_promulgated_rejected_dossier_is_referenceable(game):
     db.apply_dossier_verdicts(state, [_rejected_verdict(dossier_id)])
     db.apply_dossier_promulgation(state, dossier_id, "force_promulgated")
 
-    dossier = db.dossiers.get(dossier_id)
+    dossier = db.get_decree_dossier(dossier_id)
     assert dossier["promulgation_decision"] == "rejected"
     assert dossier_id in {
         row["id"] for row in db.list_referenceable_dossiers("孙承宗", state.turn)
@@ -188,5 +188,5 @@ def test_pending_rejection_does_not_follow_reused_rolled_back_source_id(game):
     )
     assert db.commit_pending_actions(state, action_ids=[action_id]) == []
     reused_id = _make_dossier(db, state, "后建案卷")
-    assert db.dossiers.link_rejections(reused_id) == []
-    assert db.dossiers.link_rejections(pending_action_id=action_id)
+    assert db.list_dossier_link_rejections(reused_id) == []
+    assert db.list_dossier_link_rejections(pending_action_id=action_id)

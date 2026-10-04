@@ -81,6 +81,7 @@ def test_issue_refusal_stays_in_loop(monkeypatch, capsys, exc):
 
     # 拒绝后不 return：同一次 play_turn 内续到 skip→advance；begin 只跑一次=不重进刷屏。
     assert sess.calls == ["begin", "resolve", "advance"]
+    assert str(exc) in capsys.readouterr().out
 
 
 @pytest.mark.parametrize("action", ["issue", "skip"])
@@ -238,7 +239,7 @@ def test_terminal_minister_chat_removes_user_message_when_session_chat_fails(mon
     monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
     session = Session()
 
-    with pytest.raises(RuntimeError, match='LLM down'):
+    with pytest.raises(RuntimeError, match="LLM down"):
         term.minister_chat(session, SimpleNamespace(name="魏忠贤"))
 
     assert session.db.messages == [
@@ -321,7 +322,7 @@ def test_terminal_minister_chat_preserves_chat_error_when_rollback_fails(monkeyp
     answers = iter(["命洪承畴督办陕西赈灾，东厂暗助护赈银。"])
     monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
 
-    with pytest.raises(RuntimeError, match='LLM down'):
+    with pytest.raises(RuntimeError, match="LLM down"):
         term.minister_chat(Session(), SimpleNamespace(name="魏忠贤"))
 
 
@@ -367,7 +368,7 @@ def test_terminal_minister_chat_reply_persist_failure_keeps_user_message(monkeyp
     monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
     session = Session()
 
-    with pytest.raises(RuntimeError, match='reply persist failed'):
+    with pytest.raises(RuntimeError, match="reply persist failed"):
         term.minister_chat(session, SimpleNamespace(name="魏忠贤"))
 
     assert session.db.deleted is False
@@ -378,10 +379,22 @@ def test_terminal_minister_chat_reply_persist_failure_keeps_user_message(monkeyp
 
 
 
+def test_terminal_failure_printer_preserves_zero_id(capsys):
+    """失败 id 为 0 时也按显式 id 打印，不用 truthiness 掉成无 id 形态。"""
+    term._print_pending_action_failures([{
+        "id": 0,
+        "kind": "secret_order",
+        "action": "新建",
+        "message": "密令落库失败。",
+    }])
+
+    out = capsys.readouterr().out
+    assert "#0" in out
 
 
 @pytest.mark.parametrize("action", ["skip", "issue"])
-def test_play_turn_secret_order_failure_keeps_transition_order(monkeypatch, capsys, action):
+def test_play_turn_reports_default_approval_secret_order_failure(monkeypatch, capsys, action):
+    """#415: 退朝默认提交密令失败时，CLI 也必须给出失败 id。"""
 
     class Db:
         def __init__(self):
@@ -434,6 +447,8 @@ def test_play_turn_secret_order_failure_keeps_transition_order(monkeypatch, caps
 
     term.play_turn(session)
 
+    out = capsys.readouterr().out
+    assert "#42" in out
     if action == "skip":
         assert session.calls == ["begin", "advance"]
     else:
@@ -452,6 +467,7 @@ def test_play_turn_skip_prints_dossier_settlement_report_and_ends_turn(monkeypat
 
     term.play_turn(session)
 
+    assert "留中案卷本月重判月报" in capsys.readouterr().out
     assert session.calls == ["begin", "end"]
 
 
@@ -490,10 +506,12 @@ def test_play_turn_skip_settlement_abort_stays_in_player_loop(monkeypatch, capsy
 
     term.play_turn(session)
 
+    assert str(exc) in capsys.readouterr().out
     assert session.calls == ["begin", "advance", "advance"]
 
 
-def test_play_turn_secret_order_abort_keeps_transition_order(monkeypatch, capsys):
+def test_play_turn_reports_secret_order_failure_when_settlement_aborts(monkeypatch, capsys):
+    """pre_settle 已标 failed 后若后续结算中止，CLI 仍须显示失败 id。"""
 
     class Db:
         def __init__(self):
@@ -539,6 +557,9 @@ def test_play_turn_secret_order_abort_keeps_transition_order(monkeypatch, capsys
 
     term.play_turn(session)
 
+    out = capsys.readouterr().out
+    assert "结算中止" in out
+    assert "#42" in out
     assert session.calls == ["begin", "resolve", "advance"]
 
 
@@ -562,7 +583,7 @@ def test_terminal_minister_chat_accepts_retry_reply_command(game, monkeypatch):
         night_id=night_id, status="generating",
     )
     mid = db.append_chat_message(character.name, state.turn, "user", question)
-    db.reign.update_chat_turn_messages(ct, user_message_id=mid)
+    db.update_chat_turn_messages(ct, user_message_id=mid)
     db.conn.execute("UPDATE chat_turns SET status='interrupted' WHERE id=?", (ct,))
     db.conn.commit()
 
@@ -640,7 +661,7 @@ def test_play_turn_hitl_advancement_ends_turn(game, monkeypatch, action):
 
     db, state, content = game
     turn_before = int(state.turn)
-    db.issues.save_pending_decisions(turn_before, [{
+    db.save_pending_decisions(turn_before, [{
         "title": "急务亲裁",
         "context": "辽东饷银案卷",
         "options": [{"label": "发饷", "hint": "拨银五万两"}],

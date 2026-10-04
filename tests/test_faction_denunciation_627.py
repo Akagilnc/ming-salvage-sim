@@ -14,8 +14,6 @@ from __future__ import annotations
 
 import json
 
-import pytest
-
 from ming_sim.db import GameDB
 from ming_sim.supervision import (
     DENUNCIATION_ALLOWED_COLS,
@@ -106,18 +104,53 @@ def _make_forked(db, state, dossier_id: int, *, token: str = "fork"):
 
 
 def test_world_materials_exclude_secret_fork_from_gazette(game, tmp_path):
+    """公开材料只列入有奏报且与旨外或执行格分叉的案；密令案与未分叉案不入。"""
     import json
     from ming_sim.materials import prepare_world_materials, read_material
 
     db, state, content = game
     owner = next(iter(_chars_by_faction(db).values()))[0]["name"]
-    public_id = _subject_dossier(db, state, owner=owner, token="public")
-    from tests.dossier_test_helpers import create_test_secret_order
+
+    def _report(dossier_id: int, token: str) -> None:
+        db.record_dossier_progress(
+            dossier_id, state.turn, "已竣", f"奏称{token}已完",
+            is_terminal=False, commit=True,
+        )
+
+    def _beyond(dossier_id: int, token: str) -> None:
+        db.record_issue_economy_move(
+            state, "国库", 5, "浮收", f"借旨行私{token}",
+            origin_ref=f"dossier:{dossier_id}", beyond_intent=True, commit=True,
+        )
+
+    def _outcome(dossier_id: int, outcome: str) -> None:
+        db.conn.execute(
+            "UPDATE decree_dossiers SET execution_outcome=? WHERE id=?",
+            (outcome, dossier_id),
+        )
+        db.conn.commit()
+
+    beyond_executing = _subject_dossier(db, state, owner=owner, token="beyond-exec")
+    _report(beyond_executing, "beyond-exec")
+    _beyond(beyond_executing, "beyond-exec")
+    _outcome(beyond_executing, "executing")
+
+    report_transformed = _subject_dossier(db, state, owner=owner, token="report-xf")
+    _report(report_transformed, "report-xf")
+    _outcome(report_transformed, "transformed")
+
+    report_fulfilled = _subject_dossier(db, state, owner=owner, token="report-ok")
+    _report(report_fulfilled, "report-ok")
+    _outcome(report_fulfilled, "fulfilled")
+
+    silent_beyond = _subject_dossier(db, state, owner=owner, token="silent")
+    _beyond(silent_beyond, "silent")
+    _outcome(silent_beyond, "transformed")
+
     order_id = create_test_secret_order(db, state, owner, "密查", "查账", [])
-    secret_id = int(db.dossiers.get_for_secret_order(order_id)["id"])
+    secret_id = int(db.get_dossier_for_secret_order(order_id)["id"])
     db.conn.execute("UPDATE decree_dossiers SET status='executing' WHERE id=?", (secret_id,))
     db.conn.commit()
-    _make_forked(db, state, public_id)
     _make_forked(db, state, secret_id)
 
     prepared = prepare_world_materials(
@@ -125,7 +158,10 @@ def test_world_materials_exclude_secret_fork_from_gazette(game, tmp_path):
         exclude_secret_order_dossiers=True,
     )
     facts = json.loads(read_material(prepared.root, "盘面/派系检举事实.txt"))
-    assert {item["dossier_id"] for item in facts["forked_dossiers"]} == {public_id}
+    assert {item["dossier_id"] for item in facts["forked_dossiers"]} == {
+        beyond_executing,
+        report_transformed,
+    }
 
 
 def _make_transformed_no_fork(db, state, dossier_id: int):
@@ -183,7 +219,6 @@ def test_fork_predicate_pure_and_single_source_expression():
     assert is_reported_actual_fork(
         reported_bands=[], beyond_intent=True, execution_outcome="transformed",
     ) is False
-    assert callable(is_reported_actual_fork)
 
 
 def test_veracity_derivation_mechanical_and_origin_marks():
@@ -197,11 +232,6 @@ def test_veracity_derivation_mechanical_and_origin_marks():
     assert origin_has_mark(o_true, ORIGIN_MARK_DENUNCIATION_TRUE)
     assert origin_has_mark(o_false, ORIGIN_MARK_DENUNCIATION_FALSE)
     assert not origin_has_mark(o_true, ORIGIN_MARK_DENUNCIATION_FALSE)
-
-
-# ── AC1 事实供给 ──────────────────────────────────────────────────
-
-
 
 
 # ── AC2 承接与 clamp ──────────────────────────────────────────────
@@ -232,7 +262,7 @@ def test_ac2_scripted_accept_and_clamp(game):
     assert hit["memorial_text"] == body
     assert origin_has_mark(hit["origin"], ORIGIN_MARK_DENUNCIATION_TRUE)
 
-    rows = db.dossiers.denunciations(turn=state.turn, target_dossier_id=did)
+    rows = db.list_faction_denunciations(turn=state.turn, target_dossier_id=did)
     assert len(rows) == 1
     assert rows[0]["memorial_text"] == body
 
@@ -320,7 +350,7 @@ def test_ac4_dedup_upgrade_closed_and_restore(game, tmp_path, content):
     # 同 turn 同键二次拒（去重由承接查询单源，非 UNIQUE）
     same_turn_dup = db.accept_faction_denunciations(state, [entry], commit=True)
     assert same_turn_dup == []
-    assert len(db.dossiers.denunciations(target_dossier_id=did)) == 1
+    assert len(db.list_faction_denunciations(target_dossier_id=did)) == 1
 
     # 同 turn 案情升级可再落（禁 UNIQUE(turn,...)：否则 IntegrityError）
     _escalate_fork(db, state, did, token="same-turn")
@@ -332,14 +362,14 @@ def test_ac4_dedup_upgrade_closed_and_restore(game, tmp_path, content):
         commit=True,
     )
     assert len(same_turn_up) == 1
-    assert len(db.dossiers.denunciations(target_dossier_id=did)) == 2
+    assert len(db.list_faction_denunciations(target_dossier_id=did)) == 2
 
     # 同人同案同真伪类跨 turn 亦拒（去重键不含 turn）
     state.turn = int(state.turn) + 1
     db.save_state(state)
     second = db.accept_faction_denunciations(state, [entry], commit=True)
     assert second == []
-    assert len(db.dossiers.denunciations(target_dossier_id=did)) == 2
+    assert len(db.list_faction_denunciations(target_dossier_id=did)) == 2
 
     # 跨 turn 案情再升级可再落
     _escalate_fork(db, state, did, token="up")
@@ -351,7 +381,7 @@ def test_ac4_dedup_upgrade_closed_and_restore(game, tmp_path, content):
         commit=True,
     )
     assert len(upgraded) == 1
-    assert len(db.dossiers.denunciations(target_dossier_id=did)) == 3
+    assert len(db.list_faction_denunciations(target_dossier_id=did)) == 3
 
     # closed 案卷拒
     did_closed = _subject_dossier(db, state, owner=subject_name, token="cls")
@@ -370,14 +400,14 @@ def test_ac4_dedup_upgrade_closed_and_restore(game, tmp_path, content):
     assert closed_hits == []
 
     # restore 无损接续
-    expected = db.dossiers.denunciations()
+    expected = db.list_faction_denunciations()
     backup = tmp_path / "restore-627.db"
     db.backup_to(str(backup))
     db.close()
 
     restored = GameDB(str(backup), content=content)
     try:
-        got = restored.dossiers.denunciations()
+        got = restored.list_faction_denunciations()
         assert got == expected
         # restore 后同键重跑不双计
         again = restored.accept_faction_denunciations(
@@ -388,7 +418,7 @@ def test_ac4_dedup_upgrade_closed_and_restore(game, tmp_path, content):
             commit=True,
         )
         assert again == []
-        assert restored.dossiers.denunciations() == expected
+        assert restored.list_faction_denunciations() == expected
     finally:
         restored.close()
 
@@ -407,7 +437,7 @@ def test_ac5_zero_template_exposure_and_622(game):
     _make_forked(db, state, did, token="ban")
 
     fp_before = _world_fingerprint(db)
-    loophole_before = db.dossiers.exposure_rows(did)
+    loophole_before = db.list_loophole_exposures(did)
     knowledge_n_before = db.conn.execute(
         "SELECT COUNT(*) AS n FROM character_knowledge_events"
     ).fetchone()["n"]
@@ -434,7 +464,7 @@ def test_ac5_zero_template_exposure_and_622(game):
 
     # 暴露落条目自身，不写 loophole、不回注知识轨、不改世界状态
     assert hits[0]["payload"].get("fork_exposure", {}).get("fork") is True
-    assert db.dossiers.exposure_rows(did) == loophole_before
+    assert db.list_loophole_exposures(did) == loophole_before
     assert db.conn.execute(
         "SELECT COUNT(*) AS n FROM character_knowledge_events"
     ).fetchone()["n"] == knowledge_n_before
@@ -456,13 +486,16 @@ def test_ac5_zero_template_exposure_and_622(game):
     }
     assert _table_cols(db, DENUNCIATION_TABLE) == DENUNCIATION_ALLOWED_COLS
 
+    # 引擎侧零模板句：产出路径无固定文案常量（正则扫生产源码＝盯文，
+    # 已在 #1901 J3 整类删除；P7 的真实闸案在呈现层 LLM 产出不可篡改）
+
     # #622 读端改调 public fork 单源
     actor = subject_name
     audit_order = create_test_secret_order(db,
         state, actor, "密查清丈", "逐月密奏", ["稽核"], deadline_months=4,
     )
-    audit_dossier = int(db.dossiers.get_for_secret_order(audit_order)["id"])
-    db.dossiers.add_links(
+    audit_dossier = int(db.get_dossier_for_secret_order(audit_order)["id"])
+    db.add_dossier_links(
         audit_dossier,
         [{"target_dossier_id": did, "relation_type": "稽核", "note": "密查"}],
     )

@@ -10,7 +10,6 @@ import copy
 from contextlib import contextmanager
 import os
 import shutil
-import tempfile
 
 import pytest
 
@@ -44,10 +43,15 @@ def _seed_opening_db(path: str, content) -> None:
 
 
 @contextmanager
-def _opening_game(content):
-    """创建并清理一个与生产开局序列同核的临时盘面。"""
-    fd, path = tempfile.mkstemp(suffix=".db")
-    os.close(fd)
+def _opening_game(content, workdir):
+    """创建并清理一个与生产开局序列同核的临时盘面。
+
+    ``workdir`` 由调用方（``read_game``）用 pytest 的 ``tmp_path_factory`` 划给本
+    session：库连同 ``materials/`` 派生树都落其中。放系统共享临时目录会让同父目录
+    多档跨运行互相借用对方遗留的库与材料树（#1888 J6 实测固定名 other.db 残留旧
+    schema，用例开库即报 no such column）。
+    """
+    path = os.path.join(str(workdir), "opening.db")
     db = None
     try:
         _seed_opening_db(path, content)
@@ -57,9 +61,6 @@ def _opening_game(content):
     finally:
         if db is not None:
             db.close()
-        for p in (path, f"{path}_agno.db"):
-            if os.path.exists(p):
-                os.remove(p)
 
 
 def own_session_until_game_teardown(db, owner) -> None:
@@ -117,31 +118,30 @@ def _drain_registered_sessions_before_close(db) -> None:
 
 
 @pytest.fixture(scope="session")
-def _game_template_path(content):
+def _game_template_path(content, tmp_path_factory):
     """Session 级开局模板 DB（只 seed 一次）。供 ``game`` 每案文件拷贝，避免逐案建库。
 
     方案 (c)：模板 DB 一次建 + 每案文件拷贝。不用 (d) 事务回滚——全 suite 大量用例自带
     commit/rollback、跨连接可见性、崩溃恢复与 applier 事务边界（ADR 0008 族），禁区命中。
+
+    落 pytest 管理的 session 临时目录（而非系统共享临时目录）：``_materials_campaign_dir``
+    按 db 所在父目录派生 ``materials/``，共用父目录会让跨运行遗留库/材料树互相借用
+    （#1888 J6）。
     """
-    fd, path = tempfile.mkstemp(suffix=".db")
-    os.close(fd)
-    try:
-        _seed_opening_db(path, content)
-        yield path
-    finally:
-        for p in (path, f"{path}_agno.db"):
-            if os.path.exists(p):
-                os.remove(p)
+    workdir = tmp_path_factory.mktemp("game-template")
+    path = str(workdir / "template.db")
+    _seed_opening_db(path, content)
+    yield path
 
 
 @pytest.fixture(scope="session")
-def read_game(content):
+def read_game(content, tmp_path_factory):
     """返回共享的真实开局盘面，供不改变 DB/state/content 的纯读测试使用。
 
     只 seed 一次，并用 SQLite ``query_only`` 把误写变成响亮失败。任何写库路径、
     会改变 state/content 的路径，或需要验证事务/隔离的测试必须继续使用 ``game``。
     """
-    with _opening_game(content) as opening:
+    with _opening_game(content, tmp_path_factory.mktemp("opening-game")) as opening:
         db, _state, _content = opening
         db.conn.execute("PRAGMA query_only = ON")
         yield opening
@@ -197,7 +197,7 @@ def _transport_retry_interval_instant():
 
 
 @pytest.fixture
-def game(content, _game_template_path, monkeypatch):
+def game(content, _game_template_path, monkeypatch, tmp_path):
     """返回 (db, state, content)：开局同核临时库，用例间隔离。
 
     Setup 形态（#1233 刀1 方案 c）：session 模板 DB 一次 seed，每案 ``shutil.copyfile``
@@ -205,10 +205,17 @@ def game(content, _game_template_path, monkeypatch):
     只把 setup 从 O(seed) 降到 O(copy)。
 
     不依赖 gitignored data/probe.db（#5）：characters 直接来自 content（101 全）。
+
+    库落本用例 ``tmp_path`` 下的独立子目录（pytest 随用例回收），不落系统共享临时目录：
+    ``_materials_campaign_dir`` 按 db 父目录派生 ``materials/``，共用父目录会让跨运行
+    遗留库与材料树互相借用（#1888 J6：固定名 other.db 残留旧 schema，开库即报
+    no such column: office_type）。子目录另隔一层，免得与用例自建的
+    ``tmp_path/materials`` dest_root 撞名。
     """
     del monkeypatch
-    fd, path = tempfile.mkstemp(suffix=".db")
-    os.close(fd)
+    workdir = tmp_path / "game"
+    workdir.mkdir(parents=True, exist_ok=True)
+    path = str(workdir / "game.db")
     db = None
     # 独立 MonkeyPatch：测试内 monkeypatch.undo() 不撤掉尾票登记。
     tail_note = pytest.MonkeyPatch()
@@ -223,15 +230,12 @@ def game(content, _game_template_path, monkeypatch):
             if db is not None:
                 _drain_registered_sessions_before_close(db)
                 db.close()
-            for p in (path, f"{path}_agno.db"):
-                if os.path.exists(p):
-                    os.remove(p)
         finally:
             tail_note.undo()
 
 
 @pytest.fixture
-def saved_game(content):
+def saved_game(content, tmp_path):
     """返回 (db, state, content)：data/probe.db「玩过存档」副本（带历史 issue / 账本流水 / 已退场
     人物 / 到期密令 / 帝国修正等运行时状态），用例间隔离。
 
@@ -239,11 +243,14 @@ def saved_game(content):
     issue、国库余额、帝国修正下的 metric 增量、due secret_order 等），fresh seed 无法复现。暂用
     probe.db 隔离，缺则**明确 skip 并注明原因**（非隐藏假绿，#5）——区别于原 `game` 缺 probe.db
     时静默 skip 掉**全部**盘面用例。后续应逐个 deterministic 化（测试自带 setup 注入所需状态），
-    见 #5 followup。"""
+    见 #5 followup。
+
+    副本落本用例 ``tmp_path`` 独占子目录（pytest 随用例回收），同 `game` 的理由（#1888 J6）。"""
     if not os.path.exists(_SEED_DB) or os.path.getsize(_SEED_DB) == 0:
         pytest.skip("缺玩过存档 data/probe.db（gitignored）；本用例依赖运行时状态，待 deterministic 化（#5 followup）")
-    fd, path = tempfile.mkstemp(suffix=".db")
-    os.close(fd)
+    workdir = tmp_path / "saved-game"
+    workdir.mkdir(parents=True, exist_ok=True)
+    path = str(workdir / "saved.db")
     db = None
     try:
         shutil.copy(_SEED_DB, path)
@@ -255,11 +262,9 @@ def saved_game(content):
         yield db, state, content
     finally:
         # setup（copy/GameDB/load_state）抛错也清 temp（cmr #5 r2 coderabbit）；封装 db.close()（gemini #5）。
+        # 库文件本身由 pytest 随 tmp_path 回收，无需逐个删。
         if db is not None:
             db.close()
-        for p in (path, f"{path}_agno.db"):
-            if os.path.exists(p):
-                os.remove(p)
 
 
 def active_ming_character(db, content) -> str:

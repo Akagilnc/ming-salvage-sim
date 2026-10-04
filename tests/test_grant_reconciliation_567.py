@@ -64,7 +64,7 @@ def _in_transit_grant(db, state, *, amount=ORDERED, text="拨银押解", target_
         },
     )
     db.apply_dossier_promulgation(state, dossier_id, "promulgated")
-    row = db.dossiers.get(dossier_id)
+    row = db.get_decree_dossier(dossier_id)
     assert row["status"] == "executing"
     return dossier_id
 
@@ -75,7 +75,7 @@ def _escort_order(db, state, grant_ids, *, tags=None):
         state, _actor(db), "护行饷银", "沿途按月稽核",
         tags or ["护行"], deadline_months=4,
     )
-    escort_dossier = db.dossiers.get_for_secret_order(order_id)
+    escort_dossier = db.get_dossier_for_secret_order(order_id)
     escort_id = int(escort_dossier["id"])
     # 关联要求新→旧：密令案卷 id 须大于被护拨饷 id
     links = [
@@ -86,7 +86,7 @@ def _escort_order(db, state, grant_ids, *, tags=None):
         }
         for gid in grant_ids
     ]
-    db.dossiers.add_links(escort_id, links)
+    db.add_dossier_links(escort_id, links)
     return order_id, escort_id
 
 
@@ -128,9 +128,9 @@ def test_escorted_arrival_clamp_strictly_beats_bare(game):
         "memorial_text": "护行路按月核验",
     }])
 
-    bare_a = db.dossiers.reconciliations(g_bare_a)[-1]
-    bare_b = db.dossiers.reconciliations(g_bare_b)[-1]
-    escorted = db.dossiers.reconciliations(g_escort)[-1]
+    bare_a = db.list_dossier_reconciliations(g_bare_a)[-1]
+    bare_b = db.list_dossier_reconciliations(g_bare_b)[-1]
+    escorted = db.list_dossier_reconciliations(g_escort)[-1]
     assert bare_a["arrived_amount"] == bare_hi
     assert bare_b["arrived_amount"] == bare_hi
     assert escorted["arrived_amount"] == escort_lo
@@ -159,7 +159,7 @@ def test_clamp_mutation_keeps_every_value_inside_band(game):
     _record_monthly(db, state, reconciliations=[
         {"dossier_id": gid, "arrived_amount": -100},
     ])
-    row = db.dossiers.reconciliations(gid)[-1]
+    row = db.list_dossier_reconciliations(gid)[-1]
     lo, hi = grant_arrival_bounds(ORDERED, escorted=False)
     assert lo <= row["arrived_amount"] <= hi
     assert row["loss_amount"] == ORDERED - row["arrived_amount"]
@@ -183,8 +183,8 @@ def test_per_route_storage_restore_and_escort_split(game):
         "memorial_text": "护行路已核关防，实银可期",
     }])
 
-    bare_rows = db.dossiers.reconciliations(bare)
-    escort_rows = db.dossiers.reconciliations(escorted_grant)
+    bare_rows = db.list_dossier_reconciliations(bare)
+    escort_rows = db.list_dossier_reconciliations(escorted_grant)
     assert len(bare_rows) == 1 and bare_rows[0]["turn"] == turn
     assert len(escort_rows) == 1 and escort_rows[0]["turn"] == turn
     assert bare_rows[0]["escorted"] is False
@@ -196,13 +196,14 @@ def test_per_route_storage_restore_and_escort_split(game):
     assert db.list_dossier_progress(escorted_grant) == []
     progress = db.list_dossier_progress(escort_dossier_id)
     assert len(progress) == 1
+    assert "护行路已核关防" in progress[0]["memorial_text"]
 
     # restore 逐路无损
     path = db.path
     db.close()
     reopened = GameDB(path, content=content)
-    assert reopened.dossiers.reconciliations(bare) == bare_rows
-    assert reopened.dossiers.reconciliations(escorted_grant) == escort_rows
+    assert reopened.list_dossier_reconciliations(bare) == bare_rows
+    assert reopened.list_dossier_reconciliations(escorted_grant) == escort_rows
     assert reopened.list_dossier_progress(escort_dossier_id) == progress
     stored = reopened.conn.execute(
         "SELECT dossier_progress_json FROM secret_orders WHERE id=?", (order_id,),
@@ -236,8 +237,12 @@ def test_close_merges_recon_note_without_second_treasury_debit(game):
         content=content,
     )
     assert result["dossier_executions"] == [{"dossier_id": gid, "outcome": "fulfilled"}]
-    closed = db.dossiers.get(gid)
+    closed = db.get_decree_dossier(gid)
     assert closed["status"] == "closed"
+    note = closed["execution_note"]
+    assert "赈银押解到达" in note
+    recon = db.list_dossier_reconciliations(gid)[-1]
+    assert recon["arrived_amount"] == 16
     # 仍无二次扣库
     assert int(state.metrics["内库"]) == after_grant_inner
     assert db.list_economy_moves_for_dossier(gid) == moves_before
@@ -250,7 +255,7 @@ def test_missing_soft_judge_uses_band_midpoint(game):
     db, state, content = game
     bare = _in_transit_grant(db, state)
     _record_monthly(db, state, reconciliations=[])
-    row = db.dossiers.reconciliations(bare)[-1]
+    row = db.list_dossier_reconciliations(bare)[-1]
     lo, hi = grant_arrival_bounds(ORDERED, escorted=False)
     assert row["arrived_amount"] == (lo + hi) // 2
 
@@ -272,7 +277,7 @@ def test_underfunded_closed_grants_excluded_from_monthly_targets(game):
         },
     )
     db.apply_dossier_promulgation(state, dossier_id, "promulgated")
-    row = db.dossiers.get(dossier_id)
+    row = db.get_decree_dossier(dossier_id)
     assert row["status"] == "closed"
     targets = db.list_monthly_grant_reconciliation_targets()
     assert dossier_id not in {int(t["dossier_id"]) for t in targets}
@@ -311,8 +316,8 @@ def test_recon_section_shape_rejected_other_sections_land(game, monkeypatch, sha
 
     assert int(state.turn) == turn_before + 1
     # 同段已结案，无在途目标可供月末中位对账；execution 好段照常落库。
-    assert db.dossiers.reconciliations(gid) == []
-    assert db.dossiers.get(gid)["status"] == "closed"
+    assert db.list_dossier_reconciliations(gid) == []
+    assert db.get_decree_dossier(gid)["status"] == "closed"
     rej = _recon_rejections(db)
     # 恰一份 canonical 拒收；原 section 归属，非平行假段。
     assert len(rej) == 1
@@ -450,7 +455,7 @@ def test_1745_settle_bad_and_good_recon_same_atomic(game, monkeypatch):
 
     assert int(state.turn) == turn_before + 1
     assert state.turn_phase != TurnPhase.AWAITING_DECISION.value
-    row = db.dossiers.reconciliations(good)[-1]
+    row = db.list_dossier_reconciliations(good)[-1]
     assert row["arrived_amount"] == 16
     rej = _recon_rejections(db)
     assert len(rej) == 2
@@ -488,14 +493,14 @@ def test_1745_legally_closed_target_not_overwritten(game):
     db.record_dossier_execution(
         transit, "fulfilled", "押解已达", int(state.turn), close=True,
     )
-    assert db.dossiers.get(transit)["status"] == "closed"
+    assert db.get_decree_dossier(transit)["status"] == "closed"
     assert db.list_monthly_grant_reconciliation_targets() == []
     reports = _record_recon(
         db, state.turn,
         [{"dossier_id": transit, "arrived_amount": 16}],
     )
     assert reports == []
-    assert db.dossiers.reconciliations(transit) == []
+    assert db.list_dossier_reconciliations(transit) == []
     rej = _recon_rejections(db)
     assert len(rej) == 1
     assert rej[0]["category"] == "missing_ref"

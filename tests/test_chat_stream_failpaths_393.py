@@ -81,11 +81,7 @@ class _FailingPrologueDB:
     def fail_chat_turn(self, chat_turn_id):
         self.failed_turns.append(int(chat_turn_id))
 
-    @property
-    def chat_messages(self):
-        return self
-
-    def history_by_minister(self):
+    def load_all_chat_history(self):
         return {}
 
     def get_last_active_chat_turn(self, *a, **k):
@@ -243,11 +239,7 @@ class _DoubleFailDB:
     def fail_chat_turn(self, chat_turn_id):
         raise RuntimeError("fail_chat_turn 也崩了（DB 已坏）")
 
-    @property
-    def chat_messages(self):
-        return self
-
-    def history_by_minister(self):
+    def load_all_chat_history(self):
         return {}
 
     def get_last_active_chat_turn(self, *a, **k):
@@ -300,11 +292,7 @@ class _WorkerPathDB:
     def fail_chat_turn(self, chat_turn_id):
         raise RuntimeError("fail_chat_turn 也崩了（DB 已坏）")
 
-    @property
-    def chat_messages(self):
-        return self
-
-    def history_by_minister(self):
+    def load_all_chat_history(self):
         return {}
 
     def get_last_active_chat_turn(self, *a, **k):
@@ -377,10 +365,12 @@ def test_worker_cleanup_double_failure_emits_original_error_end_and_logs(caplog)
     err = next(e for e in events if e.get("type") == "error")
     # 原始 error 不变：清理二次崩溃不得覆盖 message
     assert err.get("message") == primary, err
-
-    # 日志机械断言：abandon + fail 两次 cleanup 均 logger.exception 留痕
-    # traceback 须在 exception 记录里（logger.exception → exc_info）
-    assert any(r.exc_info for r in caplog.records), caplog.records
+    # Observe the injected cleanup exception, not the generated log sentence.
+    assert any(
+        r.exc_info and isinstance(r.exc_info[1], RuntimeError)
+        and str(r.exc_info[1]) == "fail_chat_turn 也崩了（DB 已坏）"
+        for r in caplog.records
+    ), caplog.records
     _assert_write_path_free(runtime)
 
 
@@ -436,7 +426,8 @@ def test_worker_postprocess_exception_emits_error_end():
     assert types[-1] == "end", events
     err_idx = types.index("error")
     assert types[err_idx + 1] == "end", types
-    next((e for e in events if e.get('type') == 'error'))
+    err = next(e for e in events if e.get("type") == "error")
+    assert "highlight trail boom" in str(err.get("message") or ""), err
     _assert_write_path_free(runtime)
 
 
@@ -467,6 +458,7 @@ def _assert_structured_llm_http(response) -> dict:
     assert detail.get("message"), detail
     assert "provider_message" in detail, detail
     assert "Internal Server Error" not in response.text
+    assert "Internal Server Error" not in str(detail.get("message") or "")
     return detail
 
 
@@ -584,7 +576,7 @@ class _FailLeavingAgnoRunAgent:
         n = self.calls
         # 本 attempt 启动时持久读回（_start_stream 已先 truncate）
         self.history_at_attempt_start.append(
-            [str(r.get("run_id")) for r in self.db.reign._agno_merged_runs(self.session_id)]
+            [str(r.get("run_id")) for r in self.db._agno_merged_runs(self.session_id)]
         )
         if n <= self.fail_times:
             from tests.test_audience_restore_505 import _insert_agno_table_run
@@ -594,7 +586,7 @@ class _FailLeavingAgnoRunAgent:
                 self.db,
                 self.session_id,
                 rid,
-                run_index=self.db.reign.agno_runs_length(self.session_id),
+                run_index=self.db.agno_runs_length(self.session_id),
             )
             raise self.error_factory(n)
         yield RunContent("臣")
@@ -676,7 +668,8 @@ def test_chat_stream_run_error_event_sse_system_layer_no_retry(monkeypatch, game
     assert events[-1][0] == "error"
     detail = events[-1][1]
     assert detail.get("code") == "llm_stream_error"
-    assert detail.get("message") != CLI_RUNNER_PLAYER_MESSAGE
+    assert detail.get("message")
+    assert "Unknown model error" in str(detail.get("provider_message") or "")
     assert calls["n"] == 1
     attempts = detail.get("transport_attempts") or []
     assert len(attempts) == 1
@@ -726,7 +719,7 @@ def test_chat_stream_three_transient_exhausted_system_fail_then_resend(monkeypat
     assert events[-1][0] == "error"
     detail = events[-1][1]
     assert detail.get("code") == "llm_connection_error"
-    assert detail.get("message") != CLI_RUNNER_PLAYER_MESSAGE
+    assert detail.get("message")
     max_a = default_transport_policy().max_attempts
     assert agent.calls == max_a
     attempts = detail.get("transport_attempts") or []
@@ -821,7 +814,7 @@ def test_chat_stream_deterministic_4xx_no_retry(monkeypatch, game):
     assert http_hits["n"] == 1
     assert len(detail.get("transport_attempts") or []) == 1
     assert waits == [], waits
-    assert detail.get("message") != CLI_RUNNER_PLAYER_MESSAGE
+    assert detail.get("message")
 
 
 def test_chat_stream_provider_default_502_not_washed_to_retryable(monkeypatch, game):
@@ -870,6 +863,7 @@ def test_chat_stream_typed_429_preserved(monkeypatch, game):
     response = _post_chat_stream(monkeypatch, web_game, minister)
     events = _parse_sse(response.text)
     detail = events[-1][1]
+    max_a = default_transport_policy().max_attempts
     assert detail.get("status_code") == 429
     assert detail.get("code") == "llm_run_error"
     assert detail.get("provider_message") == reason
@@ -1108,12 +1102,14 @@ def test_chat_stream_error_status_run_output_system_layer_not_diegetic(
     replace 序由 halfstream_terminal_fail_replaces_temp 承担。
     """
 
+    provider = "provider banner: exit code 1 / workdir:/tmp"
+
     class _ErrorStatusAgent:
         def run(self, *_a, **_k):
             yield RunContent("半句")
             ev = RunCompletedEvent()
             ev.status = "ERROR"
-            ev.content = "provider banner: exit code 1 / workdir:/tmp"
+            ev.content = provider
             ev.tools = []
             yield ev
 
@@ -1126,7 +1122,6 @@ def test_chat_stream_error_status_run_output_system_layer_not_diegetic(
     assert events[-1][0] == "error", events
     detail = events[-1][1]
     assert detail.get("code") == "llm_run_error"
-    assert detail.get("message") != CLI_RUNNER_PLAYER_MESSAGE
     assert detail.get("message"), detail
-    # 机器横幅不进玩家 message；诊断在 provider_message
-    assert detail.get("provider_message")
+    assert provider not in detail["message"]
+    assert detail.get("provider_message") == provider

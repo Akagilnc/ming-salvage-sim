@@ -40,7 +40,8 @@
     "辞让 (execution degraded/failed) path requires full execution Judge after force; this gate primarily locks the promulgation reject+layer arm of P-3 for cabinet.",
     "Force errors are logged and count as failed checks (no silent swallow).",
     "P4 (#1356 r6 / ADR 0143): 唯一机械证明=simulator 输入构造钉；删 LLM 输出措辞扫描式 p4_*_clean。邸报 arm 仍经生产首月结算取落库 turn_report 作真报证据（空不造假、不恢复 seed）。密奏=dossier progress；召对=referenceable brief。",
-    "CLI trace: real first-month settle emits extra simulator/extractor traces; contract pins judge-count == samples and zero errors, not total length."
+    "CLI trace: real first-month settle emits extra simulator/extractor traces; contract pins judge-count == samples and zero errors, not total length.",
+    "#1895 追注（2026-09-30）：raw_cli_trace[0]/[4] 两处 prompt 快照中的「孤直型…反制转打其人（架空/断信息/诬告围攻/明升暗调，程序可另立局势）」为该次验收当时的**历史取证原文**，原样保留不改写；其所描述的「程序硬门另立局势」机制已由 1e5b14f40 随 #1895 退役（见 docs/adr/0077-supervision-dulling-person-conditioned.md 后出修订段）。本文件为历史验收证据，非现行合同。"
   ],
   "samples": [
     {

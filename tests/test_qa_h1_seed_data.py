@@ -8,9 +8,6 @@
 from __future__ import annotations
 
 import json
-import os
-import re
-import tempfile
 from pathlib import Path
 
 from ming_sim.content import load_character_content, load_event_content
@@ -33,11 +30,10 @@ def _army_by_id(aid: str) -> dict:
 
 
 def _bajiu_names(characters: dict) -> set[str]:
-    """非在任（罢居/罢免）人物。#1889：判据是 status，不再是 office 串里的「罢居」标记。"""
     return {
         name
         for name, ch in characters.items()
-        if ch.status in {"offstage", "dismissed"}
+        if "罢居" in (ch.office or "")
     }
 
 
@@ -55,8 +51,7 @@ def test_guanning_commander_not_bajiu_offstage_yuan():
     controller（A-3 已改）与 commander 同落分统名，禁再写袁崇焕。
     """
     _, characters = load_character_content()
-    # #1889：袁崇焕非在任（seed 即 status=offstage），现任 office 因此为空。
-    assert characters["袁崇焕"].status == "offstage", characters["袁崇焕"].status
+    assert "罢居" in (characters["袁崇焕"].office or "")
     army = _army_by_id("guanning")
     commander = army["commander"]
     controller = army["controller"]
@@ -66,12 +61,6 @@ def test_guanning_commander_not_bajiu_offstage_yuan():
     for name in ("祖大寿", "何可纲", "赵率教"):
         assert name in commander, f"commander 缺分统 {name}: {commander!r}"
         assert name in controller, f"controller 缺分统 {name}: {controller!r}"
-    # 若 commander 点到名册人物，不得是罢居串
-    named = set(re.findall(r"[\u4e00-\u9fff]{2,4}", commander)) & set(characters)
-    for name in named:
-        assert characters[name].status == "active", (
-            f"关宁 commander 点名非在任人物 {name}"
-        )
 
 
 def test_dongjiang_commander_is_active_mao_wenlong():
@@ -115,15 +104,14 @@ def test_seed_army_firearms_differentiated_within_p2_caps():
     assert int(nanjing["cannon_equipment"]) < int(guanning["cannon_equipment"])
 
 
-def test_fresh_seed_army_equipment_and_commanders_wire_through(content):
+def test_fresh_seed_army_equipment_and_commanders_wire_through(content, tmp_path):
     """开局贯通：DB 军队火器/炮与统帅名分与 seed 一致；统帅人物卡状态不自相矛盾。
 
     #1426：全量 id 集 + 每军 commander/controller/firearm/cannon 四字段对照 seed，
     禁只抽查关宁/东江而放过其它军误映射。
     """
     seed_by_id = {item["id"]: item for item in _armies_seed()}
-    fd, path = tempfile.mkstemp(suffix=".db")
-    os.close(fd)
+    path = str(tmp_path / "seed.db")
     db = None
     try:
         db = GameDB(path, content)
@@ -170,9 +158,6 @@ def test_fresh_seed_army_equipment_and_commanders_wire_through(content):
     finally:
         if db is not None:
             db.close()
-        for p in (path, f"{path}_agno.db"):
-            if os.path.exists(p):
-                os.remove(p)
 
 
 def test_deficit_stage_text_aligns_with_opening_treasury_and_hubu():

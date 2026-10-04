@@ -117,8 +117,19 @@ def test_empty_ledger_projects_empty(ledger):
 # ---------------------------------------------------------------- 返回形态
 
 
+def test_dto_shape_summary_plus_recent_context_with_backref(ledger):
+    """返回形态＝摘要＋最近原始事件语境/回指（ID-1/ID-11，机器可断言）。"""
+    db, _state = ledger
+    judge_face = project_relation_ledger(db, viewer=None)
+    wei_yang = next(
+        d for d in judge_face
+        if (d["source"], d["target"]) == (EMPEROR_NODE, "杨嗣昌")
+    )
     # summary＝两段式摘要原文（奠基段＋近况段，零改写拼接）。
+    assert "越次一召，擢杨嗣昌于五品郎中。" in wei_yang["summary"]
+    assert "杨嗣昌蒙知遇之恩" in wei_yang["summary"]
     # recent_context＝最近原始事件语境原文＋纪年回指（括注时点）。
+    assert "越次一召，擢杨嗣昌于五品郎中。" in wei_yang["recent_context"]
 
 
 def test_updated_at_period_is_era_label_not_bare_turn(r3_guard):
@@ -155,7 +166,8 @@ def test_judge_face_reads_edges_invisible_to_role_view(ledger):
     jia_pairs = {(d["source"], d["target"]) for d in project_relation_ledger(db, viewer="王绍徽")}
     assert ("钱谦益", "温体仁") not in jia_pairs
     # 有账与无账行为可辨：判官读面含酿制产物原文。
-    next((d for d in judge_face if (d['source'], d['target']) == (EMPEROR_NODE, '杨嗣昌')))
+    wei_yang = next(d for d in judge_face if (d["source"], d["target"]) == (EMPEROR_NODE, "杨嗣昌"))
+    assert "杨嗣昌蒙知遇之恩" in wei_yang["summary"]
 
 
 def test_omniscient_is_superset_same_core(ledger):
@@ -201,6 +213,8 @@ def test_td7_local_marker_negative_assertion(ledger):
     )
     db.conn.commit()
     projection = project_relation_ledger(db, viewer="王绍徽")
+    rendered = json.dumps(projection, ensure_ascii=False)
+    assert MARKER not in rendered
     # 事件类目词本身也不作字段值出现（白名单恒等已保证，这里按票面再咬一口）。
     for dto in projection:
         assert "event_kind" not in dto

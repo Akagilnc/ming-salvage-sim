@@ -852,6 +852,38 @@ def clamp_grant_arrival_amount(
     return max(lo, min(hi, proposed))
 
 
+_FISCAL_ENGINE_KEY = "__fiscal_engine"
+_FISCAL_ENGINE_LEGACY = 0
+_FISCAL_ENGINE_SUBSTRATE_HUB = 1
+
+def _secret_order_kept_body(text: object) -> str:
+    """空白正文记空串；已有字句原样保留，含内部空行。"""
+    raw = str(text or "")
+    return raw if raw.strip() else ""
+
+
+def _secret_order_body_log(row: sqlite3.Row) -> Dict[str, List[Dict[str, object]]]:
+    """Read structured body records.
+
+    ``json.loads`` failures and a non-dict top level propagate. A column that
+    is not a list, or a record whose body is not a string, raises ``TypeError``.
+    A missing column means no records. Stored entries are not filtered and a
+    missing body is not replaced with an empty string.
+    """
+    parsed = json.loads(row["text_log_json"])
+    log: Dict[str, List[Dict[str, object]]] = {}
+    for column in _SECRET_ORDER_BODY_COLUMNS:
+        entries = parsed.get(column, [])
+        if not isinstance(entries, list):
+            raise TypeError(f"密令正文记录 {column} 不是列表")
+        for item in entries:
+            if not isinstance(item, dict):
+                raise TypeError("密令正文记录条目不是对象")
+            _secret_order_record_body(item)
+        log[column] = entries
+    return log
+
+
 class GameDB:
     def __init__(self, path: str, content: Optional[GameContent] = None, llm_config: Any = None):
         self.path = path
@@ -911,6 +943,9 @@ class GameDB:
         # 案卷 store 的 schema 刚随上面脚本建好；此处即构造，后续 init_schema 的
         # 任何回填/校验都走它（ADR 0151：GameDB 侧不留转发 facade）。
         self.dossiers = DossierStore(self.conn)
+        self.ensure_column(
+            "turn_directives", "source_pending_action_id", "INTEGER NOT NULL DEFAULT 0")
+
         from ming_sim.entities.character import CharacterStore
         from ming_sim.entities.region import RegionStore
         from ming_sim.entities.army import ArmyStore
@@ -5286,6 +5321,908 @@ class GameDB:
             (table,),
         ).fetchone()
         return row is not None
+
+    def table_has_rows(self, table: str) -> bool:
+        row = self.conn.execute(f"SELECT 1 FROM {table} LIMIT 1").fetchone()
+        return row is not None
+
+    def get_decree_dossier(self, dossier_id: int):
+        return self.dossiers.get(int(dossier_id))
+
+    def list_decree_dossiers(self, **kwargs):
+        return self.dossiers.list_dossiers(**kwargs)
+
+    def get_dossier_for_secret_order(self, secret_order_id: int):
+        return self.dossiers.get_for_secret_order(int(secret_order_id))
+
+    def get_dossier_for_directive(self, directive_id: int):
+        return self.dossiers.get_for_directive(int(directive_id))
+
+    def list_dossiers_for_directive(self, directive_id: int):
+        return self.dossiers.list_for_directive(int(directive_id))
+
+    def update_decree_dossier_payload(self, dossier_id: int, payload, *, commit: bool = True):
+        return self.dossiers.update_payload(int(dossier_id), payload, commit=commit)
+
+    def record_dossier_actual_progress(self, *args, **kwargs):
+        return self.dossiers.record_actual_progress(*args, **kwargs)
+
+    def dossier_authorizes_effects(self, dossier_id: int) -> bool:
+        return self.dossiers.authorizes_effects(int(dossier_id))
+
+    def transition_decree_dossier(self, *args, **kwargs):
+        return self.dossiers.transition(*args, **kwargs)
+
+    def sum_dossier_actual_progress_units(self, dossier_id: int) -> float:
+        return float(self.dossiers.actual_progress_units(int(dossier_id)))
+
+    def is_substrate_hub_fiscal_engine_enabled(self) -> bool:
+        return self.fiscal_engine() == "substrate_hub"
+
+    def fiscal_engine(self) -> str:
+        row = self.conn.execute(
+            "SELECT value FROM fiscal_config WHERE key = ?",
+            (_FISCAL_ENGINE_KEY,),
+        ).fetchone()
+        value = int(row["value"] or 0) if row is not None else _FISCAL_ENGINE_LEGACY
+        return "substrate_hub" if value == _FISCAL_ENGINE_SUBSTRATE_HUB else "legacy"
+
+    def _mark_substrate_hub_fiscal_engine_enabled(self) -> None:
+        self.conn.execute(
+            """
+            INSERT INTO fiscal_config (key, value, kind, note)
+            VALUES (?, ?, 'meta', 'fiscal_engine=substrate_hub; legacy=0 substrate_hub=1')
+            ON CONFLICT(key) DO UPDATE SET value=excluded.value, kind=excluded.kind, note=excluded.note
+            """,
+            (_FISCAL_ENGINE_KEY, _FISCAL_ENGINE_SUBSTRATE_HUB),
+        )
+
+    def list_supervision_history(
+        self, dossier_id: int, *, as_of_turn: Optional[int] = None,
+    ) -> List[Dict[str, object]]:
+        """读端：在场行 + 连号派生 + 稽核人任期/派系/操守定性（不落钝化分）。"""
+        from ming_sim.supervision import (
+            character_faction_integrity,
+            character_tenure,
+            derive_consecutive_months,
+            faction_relation,
+            integrity_band,
+            resolve_dossier_owner_name,
+        )
+
+        presence = self.list_supervision_presence(
+            int(dossier_id), as_of_turn=as_of_turn,
+        )
+        if not presence:
+            return []
+        subject = self.get_decree_dossier(int(dossier_id)) or {}
+        subject_name = resolve_dossier_owner_name(subject)
+        subject_faction, _subj_integrity = character_faction_integrity(
+            self, subject_name,
+        )
+        # 按稽核人聚合 turn 以派生连续月数
+        turns_by_auditor: Dict[str, List[int]] = {}
+        for row in presence:
+            if not row["present"]:
+                continue
+            turns_by_auditor.setdefault(
+                str(row["auditor_name"]), [],
+            ).append(int(row["turn"]))
+
+        end = int(as_of_turn) if as_of_turn is not None else max(
+            int(r["turn"]) for r in presence
+        )
+        out: List[Dict[str, object]] = []
+        for row in presence:
+            auditor = str(row["auditor_name"] or "")
+            a_faction, a_integrity = character_faction_integrity(self, auditor)
+            months = derive_consecutive_months(
+                turns_by_auditor.get(auditor, []), end_turn=end,
+            )
+            out.append({
+                **row,
+                "consecutive_months": months,
+                "auditor_tenure": character_tenure(self, auditor),
+                "auditor_faction": a_faction,
+                "auditor_integrity_band": integrity_band(a_integrity),
+                "subject_name": subject_name,
+                "subject_faction": subject_faction,
+                "subject_tenure": character_tenure(self, subject_name),
+                "faction_relation": faction_relation(a_faction, subject_faction),
+            })
+        return out
+
+    def list_supervision_presence(
+        self, dossier_id: int, *, as_of_turn: Optional[int] = None,
+    ) -> List[Dict[str, object]]:
+        if as_of_turn is None:
+            rows = self.conn.execute(
+                """
+                SELECT id, dossier_id, turn, auditor_name, audit_dossier_id,
+                       relation_type, present
+                FROM dossier_supervision_presence
+                WHERE dossier_id=?
+                ORDER BY turn, id
+                """,
+                (int(dossier_id),),
+            ).fetchall()
+        else:
+            rows = self.conn.execute(
+                """
+                SELECT id, dossier_id, turn, auditor_name, audit_dossier_id,
+                       relation_type, present
+                FROM dossier_supervision_presence
+                WHERE dossier_id=? AND turn<=?
+                ORDER BY turn, id
+                """,
+                (int(dossier_id), int(as_of_turn)),
+            ).fetchall()
+        return [
+            {
+                "id": int(r["id"]),
+                "dossier_id": int(r["dossier_id"]),
+                "turn": int(r["turn"]),
+                "auditor_name": str(r["auditor_name"] or ""),
+                "audit_dossier_id": int(r["audit_dossier_id"]),
+                "relation_type": str(r["relation_type"] or ""),
+                "present": bool(r["present"]),
+            }
+            for r in rows
+        ]
+
+    def list_pending_decisions(self, turn: int) -> List[Dict[str, object]]:
+        """读本回合决策点（按 idx）——HITL envelope 唯一读取缝。
+
+        #656 A6：谓词收窄到 kind='decision'——persist-then-abort 后落库的
+        rescript_draft 票拟行不再混进亲裁/刷新/all-decided/submit 消费面
+        （急务只经 list_rescript_drafts 读，批红面归 #657）；调用方不再重复过滤。
+        options 反序列化；choice 为已选则带出。
+        #657：补 revision_round / prior_options_json 投影。
+        """
+        rows = self.conn.execute(
+            "SELECT idx, event_id, title, context, rejection_reason, opposition, "
+            "options_json, choice_json, status, kind, actor_name, actor_office, actor_faction, "
+            "turn, revision_round, prior_options_json "
+            "FROM pending_decisions WHERE turn = ? AND kind = 'decision' ORDER BY idx",
+            (int(turn),),
+        ).fetchall()
+        out: List[Dict[str, object]] = []
+        for r in rows:
+            try:
+                options = json.loads(r["options_json"] or "[]")
+            except Exception as exc:
+                tlog(f"[db] options_json 损坏，回空：{exc}")  # #14 surface
+                options = []
+            choice_raw = (r["choice_json"] or "").strip()
+            try:
+                choice = json.loads(choice_raw) if choice_raw else None
+            except Exception as exc:
+                tlog(f"[db] choice_json 损坏，回 None（idx={r['idx']}）：{exc}")  # #14 surface
+                choice = None
+            try:
+                prior = json.loads(r["prior_options_json"] or "[]")
+            except Exception as exc:
+                tlog(f"[db] prior_options_json 损坏，回空：{exc}")  # #14 surface
+                prior = []
+            source_turn = int(r["turn"])
+            idx = int(r["idx"])
+            kind = str(r["kind"] or "decision")
+            out.append({
+                "idx": idx,
+                "decision_key": f"{kind}:{source_turn}:{idx}",
+                "source_turn": source_turn,
+                "turn": source_turn,
+                "event_id": r["event_id"],
+                "title": r["title"],
+                "context": r["context"],
+                "rejection_reason": r["rejection_reason"],
+                "opposition": r["opposition"],
+                "options": options if isinstance(options, list) else [],
+                "choice": choice,
+                "status": r["status"],
+                "kind": kind,
+                "actor_name": r["actor_name"],
+                "actor_office": r["actor_office"],
+                "actor_faction": r["actor_faction"],
+                "revision_round": int(r["revision_round"] or 0),
+                "prior_options_json": prior if isinstance(prior, list) else [],
+            })
+        return out
+
+    def save_pending_decisions(self, turn: int, decisions: List[Dict[str, object]]) -> None:
+        """覆写本回合待裁 decision 行（先清后插），idx 按列表顺序。choice 初始空（待皇帝选）。
+
+        #656 A6/F2 不变式：只清只写 kind='decision'（与 clear_pending_decisions/
+        save_rescript_drafts 同款按 kind 收窄）——'rescript_draft' 票拟行跨月留存，
+        不被 decision 盘面覆写连带清除。
+        """
+        turn = int(turn)
+        # 两种 kind 共用 (turn, idx) 主键。先把保留的 draft 搬到负数暂存区，
+        # 删除旧 decisions 后再按新盘面长度接续重排；draft 的内容与 event_id
+        # 均不改，decision 数量增减也不会与旧 draft idx 相撞。
+        self.conn.execute(
+            "UPDATE pending_decisions SET idx = -idx - 1 "
+            "WHERE turn = ? AND kind = 'rescript_draft'",
+            (turn,),
+        )
+        draft_rows = self.conn.execute(
+            "SELECT idx FROM pending_decisions "
+            "WHERE turn = ? AND kind = 'rescript_draft' ORDER BY idx DESC",
+            (turn,),
+        ).fetchall()
+        self.conn.execute(
+            "DELETE FROM pending_decisions WHERE turn = ? AND kind = 'decision'",
+            (turn,),
+        )
+        for idx, d in enumerate(decisions):
+            self.conn.execute(
+                """INSERT INTO pending_decisions
+                   (turn, idx, event_id, title, context, rejection_reason, opposition,
+                    options_json, choice_json, status, kind)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, '', 'pending', 'decision')""",
+                (
+                    turn, idx,
+                    str(d.get("event_id") or ""),
+                    str(d.get("title") or ""),
+                    str(d.get("context") or ""),
+                    str(d.get("rejection_reason") or ""),
+                    str(d.get("opposition") or ""),
+                    json.dumps(d.get("options") or [], ensure_ascii=False),
+                ),
+            )
+        for offset, row in enumerate(draft_rows):
+            self.conn.execute(
+                "UPDATE pending_decisions SET idx = ? WHERE turn = ? AND idx = ?",
+                (len(decisions) + offset, turn, int(row["idx"])),
+            )
+        self.conn.commit()
+
+    def clear_pending_decisions(self, turn: int) -> None:
+        """#656：按 kind 过滤——只清 'decision' 行（既有生命周期一字不变）；
+        'rescript_draft' 行跨月留存，终态清理归 #657 六动作裁决路径。"""
+        self.conn.execute(
+            "DELETE FROM pending_decisions WHERE turn = ? AND kind = 'decision'",
+            (int(turn),),
+        )
+        self.conn.commit()
+
+    def get_resolve_context(self, turn: int) -> Optional[Dict[str, object]]:
+        """读回本月过月上下文。无则 None。"""
+        row = self.conn.execute(
+            "SELECT decree_text, simulator_payload_json, source, attendant_message "
+            "FROM pending_resolve_context WHERE turn = ?",
+            (int(turn),),
+        ).fetchone()
+        if row is None:
+            return None
+        def _load(text: str, default, label: str):
+            try:
+                return json.loads(text) if text else default
+            except Exception as exc:
+                tlog(f"[db] resolve_context {label} JSON 损坏，回退默认、恢复将丢该段（turn={turn}）：{exc}")  # #14 surface
+                return default
+        attendant_message = str(row["attendant_message"] or "")
+        return {
+            "decree_text": row["decree_text"],
+            "simulator_payload": _load(row["simulator_payload_json"], {}, "simulator_payload"),
+            "source": row["source"] or "system_simulation",
+            "attendant_message": attendant_message,  # #671 王承恩独立递话
+        }
+
+    def close_decree_dossier(
+        self, dossier_id: int, reason: str = "", *, commit: bool = True,
+    ) -> None:
+        row = self.get_decree_dossier(dossier_id)
+        if row is None:
+            raise KeyError(f"案卷不存在：{dossier_id}")
+        if row["status"] == "proposed":
+            raise ValueError("待判案卷不能绕过颁布格直接结案")
+        payload = json.loads(str(row.get("payload_json") or "{}"))
+        immediate = not self._dossier_has_execution_surface(row["action_type"], payload)
+        if row["status"] == "promulgated" and not immediate:
+            raise ValueError("带执行判定面的案卷必须先进入 executing 并填写执行格")
+        if row["status"] == "executing" and not str(row.get("execution_outcome") or ""):
+            raise ValueError("执行中案卷须先填写执行格再结案")
+        if row["status"] != "closed":
+            self.transition_decree_dossier(dossier_id, "closed", commit=False)
+        self.conn.execute(
+            "UPDATE decree_dossiers SET interruption_reason=? WHERE id=?",
+            (str(reason or ""), int(dossier_id)),
+        )
+        self._commit_dossier_write(commit)
+
+    def list_dossier_actual_progress(self, dossier_id: int) -> List[Dict[str, object]]:
+        rows = self.conn.execute(
+            "SELECT * FROM dossier_actual_progress WHERE dossier_id=? ORDER BY turn, id",
+            (int(dossier_id),),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def add_dossier_endorsement(
+        self, dossier_id: int, *, form: str,
+        source_chat_turn_id: int = 0, decision_key: str = "",
+        endorser_id: str = "", imperial: bool = False, commit: bool = True,
+    ) -> int:
+        """Persist one already-spoken ADR 0070 endorsement; never re-judge willingness."""
+        did, cid, dkey, kind, person, is_imperial = self._validate_dossier_endorsement(
+            dossier_id, form=form, source_chat_turn_id=source_chat_turn_id,
+            decision_key=decision_key, endorser_id=endorser_id, imperial=imperial,
+        )
+        self.conn.execute(
+            "INSERT OR IGNORE INTO decree_dossier_endorsements "
+            "(dossier_id,form,endorser_id,imperial,source_chat_turn_id,decision_key) "
+            "VALUES (?,?,?,?,?,?)",
+            (did, kind, person, int(is_imperial), cid, dkey),
+        )
+        row = self.conn.execute(
+            "SELECT id FROM decree_dossier_endorsements WHERE dossier_id=? AND form=? "
+            "AND endorser_id=? AND imperial=? AND source_chat_turn_id=? AND decision_key=?",
+            (did, kind, person, int(is_imperial), cid, dkey),
+        ).fetchone()
+        if commit:
+            self._commit_dossier_write(True)
+        return int(row["id"])
+
+    def list_dossier_endorsements(self, dossier_id: int) -> List[Dict[str, object]]:
+        rows = self.conn.execute(
+            "SELECT id,dossier_id,form,endorser_id,imperial,source_chat_turn_id,decision_key "
+            "FROM decree_dossier_endorsements WHERE dossier_id=? ORDER BY id",
+            (int(dossier_id),),
+        ).fetchall()
+        return [{
+            "id": int(row["id"]), "dossier_id": int(row["dossier_id"]),
+            "form": str(row["form"]), "endorser_id": str(row["endorser_id"]),
+            "imperial": bool(row["imperial"]),
+            "source_chat_turn_id": int(row["source_chat_turn_id"] or 0),
+            "decision_key": str(row["decision_key"] or ""),
+        } for row in rows]
+
+    def list_dossier_links(
+        self, dossier_id: int, *, direction: str = "outgoing",
+    ) -> List[Dict[str, object]]:
+        """从任一端查询同一份单向关联真源。"""
+        if direction not in {"outgoing", "incoming"}:
+            raise ValueError("案卷关联查询方向非法")
+        column = "source_dossier_id" if direction == "outgoing" else "target_dossier_id"
+        rows = self.conn.execute(
+            f"SELECT * FROM decree_dossier_links WHERE {column}=? ORDER BY id",
+            (strict_int(dossier_id, accept_numeric_strings=False),),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def add_dossier_links(
+        self, source_dossier_id: int, links: Iterable[Dict[str, object]], *,
+        commit: bool = True,
+    ) -> None:
+        """把确认后的新→旧案卷关联整批落账；任一坏引用则整批拒收并留痕。"""
+        source_id = strict_int(source_dossier_id, accept_numeric_strings=False)
+        source = self.get_decree_dossier(source_id)
+        if source is None:
+            raise ValueError("关联来源指向不存在案卷")
+        normalized: List[Tuple[int, str, str]] = []
+        rejection: Optional[Tuple[int, str, str, str]] = None
+        for item in links:
+            try:
+                target_id = strict_int(
+                    item.get("target_dossier_id"), accept_numeric_strings=False
+                )
+            except (AttributeError, ValueError):
+                target_id = 0
+            relation = str(item.get("relation_type") or "") if isinstance(item, dict) else ""
+            note = str(item.get("note") or "").strip() if isinstance(item, dict) else ""
+            if self.get_decree_dossier(target_id) is None:
+                rejection = (target_id, relation, note, "关联指向不存在案卷")
+            elif target_id >= source_id:
+                rejection = (target_id, relation, note, "案卷关联只允许新案卷指向旧案卷")
+            elif relation not in DOSSIER_LINK_TYPES:
+                rejection = (target_id, relation, note, "案卷关联类型非法")
+            elif not note:
+                rejection = (target_id, relation, note, "案卷关联说明不能为空")
+            if rejection is not None:
+                break
+            normalized.append((target_id, relation, note))
+        if rejection is not None:
+            target_id, relation, note, reason = rejection
+            self._record_dossier_link_rejection(
+                source_id, target_id, relation, note, reason,
+            )
+            self._commit_dossier_write(commit)
+            exc = ValueError(reason)
+            # commit_pending_actions rolls its business savepoint back.  Carry the
+            # rejected item across that boundary so its outer failure path can
+            # persist the audit without retaining the incomplete secret order.
+            # source_id belongs to the savepoint and may be reused after rollback.
+            exc.dossier_link_rejection = (0, target_id, relation, note, reason)
+            raise exc
+        self.conn.executemany(
+            """INSERT OR IGNORE INTO decree_dossier_links
+               (source_dossier_id,target_dossier_id,relation_type,note)
+               VALUES (?,?,?,?)""",
+            [(source_id, target_id, relation, note)
+             for target_id, relation, note in normalized],
+        )
+        self._commit_dossier_write(commit)
+
+    def list_dossier_reconciliations(
+        self, dossier_id: int,
+    ) -> List[Dict[str, object]]:
+        """被护案卷侧对账真源读缝（逐路×回合，restore 同源）。"""
+        rows = self.conn.execute(
+            """
+            SELECT * FROM decree_dossier_reconciliations
+            WHERE dossier_id=? ORDER BY turn, id
+            """,
+            (int(dossier_id),),
+        ).fetchall()
+        return [
+            {
+                "id": int(row["id"]),
+                "dossier_id": int(row["dossier_id"]),
+                "turn": int(row["turn"]),
+                "ordered_amount": int(row["ordered_amount"]),
+                "arrived_amount": int(row["arrived_amount"]),
+                "loss_amount": int(row["loss_amount"]),
+                "escorted": bool(row["escorted"]),
+                "escort_source_dossier_id": (
+                    int(row["escort_source_dossier_id"])
+                    if row["escort_source_dossier_id"] is not None else None
+                ),
+                "relation_type": str(row["relation_type"] or ""),
+                "note": str(row["note"] or ""),
+            }
+            for row in rows
+        ]
+
+    def executable_decree_dossier_ids(
+        dossiers: List[Dict[str, object]],
+    ) -> set[int]:
+        """Return ids selected by the simulation query's canonical T/T+1 rule."""
+        return {
+            int(row["id"]) for row in dossiers
+            if bool(row.get("executable_this_turn"))
+        }
+
+    def find_deliberation_dossier_by_decision_key(
+        self, decision_key: str,
+    ) -> Optional[Dict[str, object]]:
+        """按批红 decision_key 取廷议案卷（payload.decision_key + deliberation_state）。"""
+        key = str(decision_key or "").strip()
+        if not key:
+            return None
+        row = self.conn.execute(
+            """
+            SELECT * FROM decree_dossiers
+            WHERE json_extract(payload_json, '$.decision_key') = ?
+              AND json_extract(payload_json, '$.deliberation_state') IS NOT NULL
+            ORDER BY id LIMIT 1
+            """,
+            (key,),
+        ).fetchone()
+        if row is None:
+            return None
+        out = self._dossier_row(row)
+        # 读缝附 payload 对象，避免调用方只认 payload 键时踩空
+        try:
+            out["payload"] = json.loads(str(out.get("payload_json") or "{}"))
+        except (TypeError, ValueError):
+            out["payload"] = {}
+        if not isinstance(out["payload"], dict):
+            out["payload"] = {}
+        return out
+
+    def list_endorsed_dossier_candidates(
+        self, current_turn: int,
+    ) -> List[Dict[str, object]]:
+        """Typed backing choices projected from durable named endorsements."""
+        rows = self.conn.execute(
+            """SELECT d.id AS dossier_id, e.endorser_id, d.decree_text AS subject
+               FROM decree_dossier_endorsements e
+               JOIN decree_dossiers d ON d.id=e.dossier_id
+               WHERE e.endorser_id<>'' AND d.created_turn<=?
+               ORDER BY d.id DESC, e.id DESC""",
+            (int(current_turn),),
+        ).fetchall()
+        result: List[Dict[str, object]] = []
+        for row in rows:
+            dossier_id = int(row["dossier_id"])
+            result.append({
+                "dossier_id": dossier_id,
+                "endorser_id": str(row["endorser_id"]),
+                "subject": str(row["subject"] or ""),
+            })
+        return result
+
+    # Central yamen archive identity: offices.json allowed_types minus non-yamen
+    # kinds. Never union characters.office_type (外臣/内臣/宗藩/未仕 would leak).
+    _NON_CENTRAL_ARCHIVE_OFFICE_TYPES = frozenset({
+        "地方", "督抚", "边镇", "内廷", "后宫",
+        "生员", "乡绅", "富商", "布衣", "流寇", "待铨",
+    })
+    _LOCAL_ARCHIVE_OFFICE_TYPES = frozenset({"地方", "督抚", "边镇"})
+
+    def list_decree_dossier_decisions(
+        self, dossier_id: int,
+    ) -> List[Dict[str, object]]:
+        """Production audit/restore read seam for the append-only verdict history."""
+        rows = self.conn.execute(
+            "SELECT * FROM decree_dossier_decisions WHERE dossier_id=? ORDER BY id",
+            (strict_int(dossier_id, accept_numeric_strings=False),),
+        ).fetchall()
+        decisions: List[Dict[str, object]] = []
+        for row in rows:
+            item = dict(row)
+            item["id"] = int(item["id"])
+            item["dossier_id"] = int(item["dossier_id"])
+            item["turn"] = int(item["turn"])
+            item["primary_opponents"] = json.loads(
+                str(item.pop("primary_opponents_json") or "[]")
+            )
+            item["criteria_snapshot"] = json.loads(
+                str(item.pop("criteria_snapshot_json") or "{}")
+            )
+            item["affected_parties"] = json.loads(
+                str(item.pop("affected_parties_json") or "[]")
+            )
+            item["midzhi_unpromulgatable"] = bool(
+                item["midzhi_unpromulgatable"]
+            )
+            decisions.append(item)
+        return decisions
+
+    def list_dossiered_draft_directives(self, state: GameState) -> List[Dict[str, object]]:
+        """Settlement projection: drafts whose dossier creation succeeded."""
+        rows = self.conn.execute(
+            """SELECT td.* FROM turn_directives td
+               WHERE td.turn<=? AND td.status='draft'
+                 AND EXISTS (SELECT 1 FROM decree_dossiers d WHERE d.directive_id=td.id)
+               ORDER BY td.id""",
+            (state.turn,),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def discard_pending_directives(self, turn: int) -> int:
+        """退朝无诏时丢弃本回合尚未落库的对话式拟旨暂存（kind=directive, status=pending）。
+        须在 commit_pending_actions 之前调用，防止 commit 把草案插成孤儿 turn_directives
+        行——退朝路不颁诏，孤儿 draft 永不经 extractor、不可见（codex r5 F2）。
+        返回删除条数。"""
+        rows = self.conn.execute(
+            "SELECT id FROM pending_actions WHERE turn=? AND kind='directive' AND status='pending'",
+            (int(turn),),
+        ).fetchall()
+        for row in rows:
+            self._discard_deleted_directive_forecast(int(row["id"]))
+        cur = self.conn.execute(
+            "DELETE FROM pending_actions WHERE turn=? AND kind='directive' AND status='pending'",
+            (int(turn),),
+        )
+        return cur.rowcount
+
+    def void_pending_actions_for_chat_turn(self, chat_turn_id: int) -> List[int]:
+        """#1890：按来源轮整轮作废该轮的交办暂存，返回被作废的 id。
+
+        这是本票要的「暂存一张表存着，拿到统一的 id 就知道撤回了谁」：判据
+        只有 ``pending_actions.source_chat_turn_id``，不扫
+        ``chat_turn_rollback_items``、不比对前像、也不问是哪句话说的。
+
+        作废而非删行（ADR 0038 2026-09-29 owner 裁定）：行留着当墓碑，
+        迟到的写入或补跑读它只会看到 ``voided``，不会把已撤回的交办复活。
+        仍可应允的 ``pending`` 之外的终态（committed / failed / held_over）
+        一律不动——它们已不是「暂存」，逆转归 ``undo_chat_turn`` 的前像日志。
+
+        不 commit：调用方（撤回事务）持有边界，本方法只在其事务内写。
+        """
+        ctid = int(chat_turn_id or 0)
+        if ctid <= 0:
+            return []
+        # 与 _pending_action_owned_by_turn_in_tx 同一判据（同源轮 + 仍 pending）。
+        rows = self.conn.execute(
+            "SELECT id, kind, version FROM pending_actions "
+            "WHERE source_chat_turn_id = ? AND status = 'pending' ORDER BY id",
+            (ctid,),
+        ).fetchall()
+        voided: List[int] = []
+        for row in rows:
+            action_id = int(row["id"])
+            if str(row["kind"] or "") == "directive":
+                # 该道拟旨的夜里预推产物随交办一起作废（预推生命周期归 #1816，
+                # 但它挂在这一道交办的身份下，不作废就会在过月时复活）。
+                self._discard_pending_decree_forecast(
+                    action_id, int(row["version"] or 1),
+                )
+            if str(row["kind"] or "") == "office":
+                from ming_sim.audience_night import discard_inactive_office_summon
+                discard_inactive_office_summon(self, action_id)
+            self.conn.execute(
+                "UPDATE pending_actions SET status='voided', night_approved=0 "
+                "WHERE id=? AND status='pending'",
+                (action_id,),
+            )
+            voided.append(action_id)
+        return voided
+
+    def resolve_revoke_decree_target_ids(
+        self, payload: object, row: object = None,
+    ) -> tuple[int, int]:
+        """撤令目标解析唯一实现：(dossier_id, issue_id)。
+
+        撤令的三处读者共用本函数——判后物化（#523）、判前供料
+        （materials.revoke_target_facts）。读同一组结构化身份字段
+        ``revoke_target_dossier_id`` / ``revoke_target_issue_id``；两者皆无
+        时才按案卷行 ``target_kind``/``target_id`` 解析（接受 ``dossier:``/
+        ``issue:`` 前缀），issue 再经 ``origin_ref`` 回指案卷。两个字段可同时
+        在场（撤的是某道旨下出的承诺），**不得**读到其一即止。
+
+        无合法案卷来源时响亮拒绝；只读供料方按「无原旨可读」捕获。
+        """
+        from ming_sim.strict_types import strict_int
+
+        source = payload if isinstance(payload, Mapping) else {}
+        fields = row if isinstance(row, Mapping) else {}
+
+        def _id(key: str) -> int:
+            try:
+                return strict_int(source.get(key), accept_numeric_strings=True)
+            except (TypeError, ValueError):
+                return 0
+
+        target_dossier_id = _id("revoke_target_dossier_id")
+        target_issue_id = _id("revoke_target_issue_id")
+
+        if target_dossier_id <= 0 and target_issue_id <= 0:
+            raw = str(
+                source.get("target_id") or fields.get("target_id") or ""
+            ).strip()
+            kind = str(
+                source.get("target_kind") or fields.get("target_kind") or ""
+            ).strip()
+            if raw.startswith("dossier:"):
+                kind, raw = "dossier", raw.split(":", 1)[1].strip()
+            elif raw.startswith("issue:"):
+                kind, raw = "issue", raw.split(":", 1)[1].strip()
+            try:
+                tid = strict_int(raw, accept_numeric_strings=True) if raw else 0
+            except (TypeError, ValueError):
+                tid = 0
+            if tid <= 0:
+                raise ValueError("撤回成命案卷缺少目标")
+            if kind == "issue":
+                target_issue_id = tid
+            else:
+                target_dossier_id = tid
+
+        # issue 目标：经 origin_ref 回指案卷；无合法案卷来源不得免代价终结
+        if target_dossier_id <= 0 and target_issue_id > 0:
+            issue_row = self.conn.execute(
+                "SELECT kind, status, origin_ref FROM issues WHERE id=?",
+                (int(target_issue_id),),
+            ).fetchone()
+            if issue_row is None:
+                raise ValueError("撤回成命目标事项不存在")
+            if str(issue_row["kind"] or "").strip() != "initiative":
+                raise ValueError("撤回成命目标须为承诺/initiative")
+            origin = str(issue_row["origin_ref"] or "").strip()
+            if origin.startswith("dossier:"):
+                try:
+                    target_dossier_id = int(origin.split(":", 1)[1])
+                except (TypeError, ValueError):
+                    target_dossier_id = 0
+
+        if target_dossier_id <= 0:
+            # 删除 standalone issue 免代价旁路（dossier_id=0 仍 cancel_issue）
+            raise ValueError("撤回成命目标无合法案卷来源，不得免代价终结")
+        return int(target_dossier_id), int(target_issue_id)
+
+    def validate_monthly_dossier_progress(
+        self, turn: int, generated: object = None,
+    ) -> None:
+        """只校验新产物覆盖，不写报告。已提交的合法报告不因重试再落一遍。"""
+        self._monthly_dossier_report_supply(int(turn), generated)
+
+    def mark_story_extraction_pending(self, chat_turn_id: int) -> None:
+        """转译失败 → 待补（'' / 'pending' → 'pending'）；不覆盖已 'done'。"""
+        self.conn.execute(
+            "UPDATE chat_turns SET extract_status = 'pending' "
+            "WHERE id = ? AND extract_status IN ('', 'pending')",
+            (int(chat_turn_id),),
+        )
+        self.conn.commit()
+
+    def list_decree_dossiers_for_simulation(self, turn: int) -> List[Dict[str, object]]:
+        """本月新生/重判案卷及所有未结案执行中案卷。
+
+        #658：旧案本回合刚获 pending 颁布 verdict（如 stalled→backed 后顺颁）
+        亦入同一清单，不另建第二可见集。
+        """
+        rows = self.conn.execute(
+            """
+            SELECT d.*,
+                MAX(CASE WHEN
+                       (d.created_turn=? AND d.promulgation_decision='promulgated')
+                    OR (h.turn=? AND h.decision='promulgated')
+                    OR (h.rescript_action='force_promulgated' AND h.turn=? - 1)
+                THEN 1 ELSE 0 END) AS executable_this_turn
+            FROM decree_dossiers d
+            LEFT JOIN decree_dossier_decisions h ON h.dossier_id=d.id
+            WHERE (
+                    d.status='proposed'
+                AND (
+                       (d.created_turn=? AND d.promulgation_decision='')
+                    OR (
+                           d.promulgation_decision='rejected'
+                       AND d.rescript_pending=0
+                       AND d.held_turn > 0
+                       AND ? > d.held_turn
+                    )
+                    OR (
+                           d.promulgation_decision=''
+                       AND EXISTS (
+                               SELECT 1 FROM pending_promulgation_verdicts pv
+                               WHERE pv.turn=? AND pv.dossier_id=d.id
+                           )
+                    )
+                )
+            ) OR (
+                    d.status='executing'
+            ) OR (
+                    d.status='promulgated'
+                AND (
+                       d.created_turn=?
+                    OR (h.turn=? AND h.decision='promulgated')
+                    OR (
+                           h.rescript_action='force_promulgated'
+                       AND h.turn=? - 1
+                    )
+                )
+            )
+            GROUP BY d.id
+            ORDER BY d.id
+            """,
+            (
+                int(turn), int(turn), int(turn),
+                int(turn), int(turn), int(turn),
+                int(turn), int(turn), int(turn),
+            ),
+        ).fetchall()
+        visible = []
+        for row in rows:
+            payload = json.loads(str(row["payload_json"] or "{}"))
+            policy = dossier_action_policy(row["action_type"], payload)
+            # Admission-owned effects never run through the simulator again.
+            # An in-transit dossier remains visible as execution context until
+            # its execution verdict closes it, however.
+            if str(row["action_type"]) == "secret_order":
+                continue
+            if (
+                policy["effect_owner"] != "immediate"
+                or str(row["status"]) == "executing"
+            ):
+                visible.append(self._dossier_row(row))
+        return visible
+
+    def list_dossier_link_rejections(
+        self, source_dossier_id: Optional[int] = None, *,
+        pending_action_id: Optional[int] = None,
+    ) -> List[Dict[str, object]]:
+        if (source_dossier_id is None) == (pending_action_id is None):
+            raise ValueError("须且只能按来源案卷或待确认动作查询拒收记录")
+        if pending_action_id is not None:
+            column, value = "pending_action_id", pending_action_id
+        else:
+            column, value = "source_dossier_id", source_dossier_id
+        rows = self.conn.execute(
+            f"SELECT * FROM decree_dossier_link_rejections WHERE {column}=? ORDER BY id",
+            (strict_int(value, accept_numeric_strings=False),),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def _record_dossier_link_rejection(
+        self, source_id: int, target_id: int, relation: str, note: str,
+        reason: str, *, pending_action_id: Optional[int] = None,
+    ) -> None:
+        self.conn.execute(
+            """INSERT INTO decree_dossier_link_rejections
+               (source_dossier_id,pending_action_id,target_dossier_id,relation_type,note,reason)
+               VALUES (?,?,?,?,?,?)""",
+            (source_id, pending_action_id, target_id, relation, note, reason),
+        )
+
+    def record_event_petition_answer(
+        self,
+        state: GameState,
+        event_id: str,
+        answer: Dict[str, object],
+        presented: Dict[str, object],
+        *,
+        commit: bool = True,
+    ) -> None:
+        """三饷请旨：把「已呈奏疏 + 皇帝原批语」整份 durable 落进事件账（#1892）。
+
+        本方法是请旨答复的**唯一**持久写口，且**只记账、不置结局**：
+
+        - 落 ``choice_json`` 的 ``petition`` 段（呈疏原文、选项、皇帝 label/hint/note），
+          供后续世界段据 :meth:`list_event_petition_records` 取回复呈（#1891 供料契约）。
+        - ``terminal_state`` 恒留空、``terminal_reason`` 恒留空：亲笔准驳的**结局标签由
+          语义转译写口置定**（:func:`ming_sim.issues.apply_petition_event_outcome`），
+          不由这里的原始选项标签旁路代批（ADR 0153:5、#1891 亲裁契约）。
+        - 「留中」是本疏已答而事件未终：不写终态，事件仍留在请旨候选里等下次呈报。
+
+        冲突时**只**补 ``choice_json``，绝不把既有 avoided/expired/obsolete/triggered
+        终态翻动——与 :meth:`record_event_decision_choice` 同款终态不可逆纪律。
+        """
+        eid = str(event_id or "").strip()
+        if not eid:
+            return
+        self._ensure_event_parent(eid)
+        payload = json.dumps(
+            {
+                **{
+                    key: value for key, value in (answer or {}).items()
+                    if isinstance(answer, dict)
+                },
+                "petition": {
+                    "presented_turn": int(state.turn),
+                    "presented_year": int(state.year),
+                    "presented_period": int(state.period),
+                    **{key: value for key, value in (presented or {}).items()},
+                },
+            },
+            ensure_ascii=False,
+        )
+        self.conn.execute(
+            """
+            INSERT INTO event_triggers
+                (event_id, turn, year, period, source, terminal_state, terminal_reason, choice_json)
+            VALUES (?, ?, ?, ?, 'petition', '', '', ?)
+            ON CONFLICT(event_id) DO UPDATE SET
+                -- 请旨账只补 choice_json（已呈奏疏 + 原批语）；终态与来源一律沿用既有行，
+                -- 空终态行也不在此写 terminal_reason：结局标签归语义写口，不归原始选项标签。
+                choice_json = excluded.choice_json
+            """,
+            (eid, state.turn, state.year, state.period, payload),
+        )
+        if commit:
+            self.conn.commit()
+
+    def _load_secret_order_body_row(self, order_id: int, *, active_only: bool) -> Optional[sqlite3.Row]:
+        sql = "SELECT * FROM secret_orders WHERE id = ?"
+        if active_only:
+            sql += " AND status = 'active'"
+        return self.conn.execute(sql, (int(order_id),)).fetchone()
+
+    def _write_secret_order_body(
+        self,
+        order_id: int,
+        column: str,
+        records: Sequence[Mapping[str, object]],
+        *,
+        extra_assignments: str = "",
+        extra_params: Sequence[object] = (),
+    ) -> None:
+        assert column in _SECRET_ORDER_BODY_COLUMNS
+        row = self._load_secret_order_body_row(order_id, active_only=False)
+        if row is None:
+            return
+        log = _secret_order_body_log(row)
+        log[column] = [dict(record) for record in records]
+        params: List[object] = list(extra_params)
+        params.extend((
+            _project_secret_order_bodies(log[column]),
+            json.dumps(log, ensure_ascii=False),
+        ))
+        sets = f"{column} = ?, text_log_json = ?, updated_at = CURRENT_TIMESTAMP"
+        if extra_assignments:
+            sets = f"{extra_assignments}, {sets}"
+        params.append(int(order_id))
+        self.conn.execute(
+            f"UPDATE secret_orders SET {sets} WHERE id = ?",
+            params,
+        )
+
+    def _read_secret_order_body_before_write(self, order_id: int) -> None:
+        """写正文前先读账。读失败在调用方事务内、本写事务外抛出。"""
+        row = self._load_secret_order_body_row(int(order_id), active_only=True)
+        if row is not None:
+            _secret_order_body_log(row)
 
     def _snapshot_table(self, table: str, pk: str) -> Dict[str, Dict[str, Any]]:
         if table in ("secret_orders", "public_sayings"):
@@ -11197,6 +12134,7 @@ class GameDB:
                     state.turn, state.year, state.period, None, actor, text, '大臣拟旨', status,
                     f"由{actor}拟旨入档",
                     json.dumps(payload, ensure_ascii=False),
+                    int(pa["id"] or 0),
                 ),
             )
             did = int(cur.lastrowid)
@@ -11782,7 +12720,8 @@ class GameDB:
             cursor = IssueStore(self.conn).insert_directive(
                 (state.turn, state.year, state.period, event.id if event else None,
                  actor or None, text, source, status, notes,
-                 json.dumps(dossier_payload or {}, ensure_ascii=False)),
+                 json.dumps(dossier_payload or {}, ensure_ascii=False),
+                 0),
             )
             directive_id = int(cursor.lastrowid)
         return directive_id

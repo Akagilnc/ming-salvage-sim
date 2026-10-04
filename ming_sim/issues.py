@@ -11,7 +11,7 @@ from ming_sim.entities.faction.store import FactionStore
 from ming_sim.entities.issue.store import IssueStore
 from ming_sim.entities.power.store import PowerStore
 from ming_sim.entities.region.store import RegionStore
-from ming_sim.entities.reign_state.store import ReignStateStore
+from ming_sim.entities.reign_state.store import POPULATION_UNIT_PERSONS, ReignStateStore
 
 import copy
 import json
@@ -19,10 +19,10 @@ import math
 import re
 import sqlite3
 from contextlib import contextmanager
-from typing import Any, Dict, List, Literal, Mapping, Optional, Tuple
+from typing import Any, Dict, List, Literal, Mapping, Optional, Sequence, Tuple
 
 from ming_sim.entities.dossier import DOSSIER_REPORT_ORIGIN_VERDICT
-from ming_sim.applier import atomic, load_stored_list, load_stored_object
+from ming_sim.applier import atomic, connection_owns_transaction, load_stored_list, load_stored_object
 from ming_sim.appointment_tenure import appointment_tenure_from
 from ming_sim.authority_privileges import AUTHORITY_PRIVILEGE_SET
 from ming_sim.constants import (
@@ -31,12 +31,8 @@ from ming_sim.constants import (
     BUILDING_SCORE_FIELDS, BUILDING_QUANTITY_FIELDS, BUILDING_TEXT_FIELDS,
     POWER_SCORE_FIELDS, POWER_TEXT_FIELDS, CHARACTER_TEXT_FIELDS,
     REGION_FIELD_ALIASES, ARMY_FIELD_ALIASES, POWER_FIELD_ALIASES, GATE_TABLES,
-    LEVY_DISPLACEMENT_RATE,
     BANDIT_ABSORPTION_FIELDS,
     BANDIT_ABSORPTION_PERSONS_PER_STRENGTH,
-    RECOVERY_PERSONS_PER_WAN,
-    RECOVERY_GRANT_ACTIONS,
-    RECOVERY_OUTCOME_FACTORS,
 )
 from ming_sim.content import GameContent
 from ming_sim.context import victory_status
@@ -61,6 +57,10 @@ from ming_sim.decree_vocabulary import (
     terminal_report_facade,
 )
 from ming_sim.exceptions import OfficeAppointmentRejection, SettlementAbort
+from ming_sim.displaced_population import (
+    SETTLE_META_JIAPIAI_KEY,
+    surcharge_population_pool_members,
+)
 from ming_sim.flows import (
     ISSUE_METRIC_KEYS,
     ISSUE_METRIC_LOCK_CAPS,
@@ -679,20 +679,6 @@ def commitment_timed_bar_value(progress: Dict[str, object], row: sqlite3.Row) ->
     return max(0, min(100, int(round(months * 100 / duration))))
 
 
-def _commitment_bar_value(progress: Dict[str, object]) -> Optional[int]:
-    if "remaining_arrears" not in progress:
-        return None
-    paid = max(0, int(progress.get("paid_total") or 0))
-    try:
-        remaining = max(0.0, float(progress.get("remaining_arrears") or 0))
-    except (TypeError, ValueError):
-        remaining = 0.0
-    total = paid + remaining
-    if total <= 0:
-        return 100
-    return max(0, min(100, int(round(paid * 100 / total))))
-
-
 def _commitment_gate_references_arrears(row: sqlite3.Row) -> bool:
     return any(".arrears" in str(key) for key in _commitment_stop_gate(row))
 
@@ -709,40 +695,6 @@ def _commitment_arrears_gate_army_ids(row: sqlite3.Row) -> List[str]:
             if army_id and army_id not in ids:
                 ids.append(army_id)
     return ids
-
-
-def _commitment_ongoing_effects_for_settlement(row: sqlite3.Row, ongoing: Dict[str, object]) -> Dict[str, object]:
-    if not _commitment_gate_references_arrears(row):
-        return ongoing
-    gate_army_ids = _commitment_arrears_gate_army_ids(row)
-    normalized = dict(ongoing)
-    for key in ("economy", "economy_moves"):
-        economy = ongoing.get(key)
-        if not isinstance(economy, list):
-            continue
-        normalized_economy: List[object] = []
-        for move in economy:
-            if not isinstance(move, dict):
-                normalized_economy.append(move)
-                continue
-            item = dict(move)
-            try:
-                delta = _strict_int(item.get("delta"))
-            except (TypeError, ValueError):
-                delta = 0
-            if delta < 0:
-                item["purpose"] = "补饷"
-                if (
-                    len(gate_army_ids) == 1
-                    and not str(item.get("target_id") or "").strip()
-                    and not str(item.get("目标编号") or "").strip()
-                    and not str(item.get("target_kind") or item.get("目标类型") or "").strip()
-                ):
-                    item["target_kind"] = "army"
-                    item["target_id"] = gate_army_ids[0]
-            normalized_economy.append(item)
-        normalized[key] = normalized_economy
-    return normalized
 
 
 def _invalid_monthly_mapping_shape(
@@ -986,6 +938,22 @@ def _monthly_ongoing_effects_has_work(raw: object) -> bool:
     effect = loads_effect_dict(raw)
     if not effect:
         return False
+    # A persisted metric that int() cannot read is still monthly work.
+    # Calling it "no work" skips the consumer's loud int() and lets the
+    # month commit around a corrupt world consequence. Absence, zero,
+    # and bool stay on the shared nonzero check below. Non-finite
+    # numbers fail int() here and take that same consumer path.
+    metrics = effect.get("metrics")
+    if isinstance(metrics, dict):
+        for key, value in metrics.items():
+            if key not in ISSUE_METRIC_KEYS:
+                continue
+            if value in (None, "") or isinstance(value, bool):
+                continue
+            try:
+                int(value)  # type: ignore[arg-type]
+            except (TypeError, ValueError, OverflowError):
+                return True
     checks = (
         effect_dict_has_work({"metrics": effect.get("metrics")}),
         effect_dict_has_work({"economy": effect.get("economy")}),
@@ -998,157 +966,6 @@ def _monthly_ongoing_effects_has_work(raw: object) -> bool:
         bool(_monthly_person_rating_changes(effect)),
     )
     return any(checks)
-
-
-def _apply_monthly_ongoing_entities(
-    db: GameDB,
-    state: GameState,
-    effect: Dict[str, object],
-    label: str,
-    *,
-    content=None,
-    llm_config: Any = None,
-    applied_person_changes: Optional[List[Dict[str, object]]] = None,
-    origin_ref: str = "盘面自发",
-) -> tuple[Dict[str, object], List[Dict[str, object]]]:
-    applied: Dict[str, object] = {}
-    rejections: List[Dict[str, object]] = []
-
-    factions, faction_shape_rejections = _monthly_mapping_effect(effect, "factions", "faction_delta")
-    classes, class_shape_rejections = _monthly_mapping_effect(effect, "classes", "class_delta")
-    region_delta, region_shape_rejections = _monthly_mapping_effect(effect, "region_delta", "regions")
-    army_delta, army_shape_rejections = _monthly_mapping_effect(effect, "army_delta", "armies")
-    power_updates, power_shape_rejections = _monthly_mapping_effect(effect, "power_updates")
-    rejections.extend(
-        faction_shape_rejections
-        + class_shape_rejections
-        + region_shape_rejections
-        + army_shape_rejections
-        + power_shape_rejections
-    )
-
-    if factions:
-        faction_result = _apply_faction_dict(db, factions)
-        if faction_result.applied:
-            applied["factions"] = faction_result.applied
-        rejections.extend(faction_result.rejections)
-
-    if classes:
-        class_result = _apply_class_dict(db, classes)
-        if class_result.applied:
-            applied["class_delta"] = class_result.applied
-        rejections.extend(class_result.rejections)
-
-    if region_delta:
-        region_changes = db.apply_region_deltas(
-            state, _ISSUE_PSEUDO_EVENT, None, label, region_delta, origin_ref=origin_ref
-        )
-        applied_region = [item for item in region_changes if not item.get("rejected")]
-        if applied_region:
-            applied["region_delta"] = applied_region
-        rejections.extend(item for item in region_changes if item.get("rejected"))
-
-    if army_delta:
-        army_changes = db.apply_army_deltas(
-            state, _ISSUE_PSEUDO_EVENT, None, label, army_delta, origin_ref=origin_ref
-        )
-        applied_army = [item for item in army_changes if not item.get("rejected")]
-        if applied_army:
-            applied["army_delta"] = applied_army
-        rejections.extend(item for item in army_changes if item.get("rejected"))
-
-    if power_updates:
-        power_changes = db.apply_power_deltas(state, power_updates, origin_ref=origin_ref)
-        applied_power = [item for item in power_changes if not item.get("rejected")]
-        if applied_power:
-            applied["power_updates"] = applied_power
-        rejections.extend(item for item in power_changes if item.get("rejected"))
-
-    person_changes = _monthly_person_rating_changes(effect)
-    if person_changes:
-        effective_content = content if content is not None else _ctx()
-        results = _apply_person_changes(
-            db,
-            state,
-            person_changes,
-            content=effective_content,
-            llm_config=llm_config,
-            source="system_simulation",
-            derived_from=label,
-            origin_ref=origin_ref,
-        )
-        applied_people = [item for item in results if not item.get("rejected")]
-        if applied_people:
-            applied["人物变更"] = applied_people
-        rejections.extend(item for item in results if item.get("rejected"))
-        if applied_person_changes is not None:
-            applied_person_changes.extend(results)
-
-    return applied, rejections
-
-
-def _resolve_commitment_issue(
-    db: GameDB,
-    state: GameState,
-    row: sqlite3.Row,
-    *,
-    commit: bool = True,
-) -> None:
-    issue_id = int(row["id"])
-    from_value = int(row["bar_value"])
-    progress = commitment_progress_payload(db, state, row) or {}
-    metric_delta = {"commitment_progress": progress} if progress else {}
-    db.issues.update(issue_id, {
-        "bar_value": 100,
-        "phase": db._derive_issue_phase(100),
-        "status": "resolved",
-        "resolution_summary": "承诺停止条件已达成，自动结清。",
-        "closed_turn": state.turn,
-        "last_advance_turn": state.turn,
-    })
-    db.issues.append_advance({
-        "issue_id": issue_id,
-        "turn": state.turn,
-        "trigger_kind": "commitment_resolve",
-        "delta_bar": 100 - from_value,
-        "from_value": from_value,
-        "to_value": 100,
-        "narrative": "承诺停止条件已达成，自动结清。",
-        "metric_delta": json.dumps(metric_delta, ensure_ascii=False),
-    })
-    if commit:
-        db.conn.commit()
-
-
-def _expire_commitment_issue(
-    db: GameDB,
-    state: GameState,
-    row: sqlite3.Row,
-    *,
-    commit: bool = True,
-) -> None:
-    issue_id = int(row["id"])
-    from_value = int(row["bar_value"])
-    progress = commitment_progress_payload(db, state, row) or {}
-    metric_delta = {"commitment_progress": progress} if progress else {}
-    db.issues.update(issue_id, {
-        "status": "dropped",
-        "resolution_summary": "承诺期限已至，停账收尾。",
-        "closed_turn": state.turn,
-        "last_advance_turn": state.turn,
-    })
-    db.issues.append_advance({
-        "issue_id": issue_id,
-        "turn": state.turn,
-        "trigger_kind": "expire",
-        "delta_bar": 0,
-        "from_value": from_value,
-        "to_value": from_value,
-        "narrative": "承诺期限已至，停账收尾。",
-        "metric_delta": json.dumps(metric_delta, ensure_ascii=False),
-    })
-    if commit:
-        db.conn.commit()
 
 
 def _ack_due_commitment_issue(
@@ -1241,9 +1058,7 @@ _SETTLE_META_LIAO_SEED_KEY = "辽饷九厘基线"
 _SETTLE_META_JIAO_SEED_KEY = "剿饷基线"
 _SETTLE_META_LIAN_SEED_KEY = "练饷基线"
 _SETTLE_META_LAND_DENOMINATOR_KEY = "饷率田亩分母基线"
-# #650/0089 明渠：下旨加派逐省累积账（万两/月，负额停征/蠲免、钳 ≥0）。
-# 与 #649 饷率 seed 同址（settle._meta），restore 只读 DB 无损接续（P1）。
-_SETTLE_META_JIAPIAI_KEY = "加派基线"
+# #650/0089 加派基线键名单定义在 displaced_population（写入口与月初消费口共用，#1901）。
 _FISCAL_LEVY_PROVISIONAL_KEYS = {
     _SETTLE_META_BASE_TRANSPORT_KEY,
     _SETTLE_META_LIAO_SEED_KEY,
@@ -1260,23 +1075,6 @@ def _normalize_event_terminal_reason(ev: Event, raw: object) -> str:
         if label == re.sub(r"\s+", "", canonical):
             return canonical
     return ""
-
-
-def _fiscal_levy_default_terminal_reason(ev: Event, state: GameState) -> str:
-    if not getattr(ev, "terminal_reason_labels", None):
-        raise SettlementAbort(
-            f"饷率事件 {ev.id} 缺 terminal_reason_labels 白名单",
-            turn=state.turn,
-            stage="fiscal_levy_config",
-        )
-    label = _normalize_event_terminal_reason(ev, getattr(ev, "default_terminal_reason", ""))
-    if not label:
-        raise SettlementAbort(
-            f"饷率事件 {ev.id} default_terminal_reason 不可归一",
-            turn=state.turn,
-            stage="fiscal_levy_config",
-        )
-    return label
 
 
 def _fiscal_levy_normalized_terminal_reason_or_abort(
@@ -1363,6 +1161,71 @@ def _load_region_fiscal_for_fiscal_levy(region_id: str, raw_fiscal: object) -> d
 
 def _fiscal_levy_event_by_id(event_id: str) -> Optional[Event]:
     return _ctx().event_by_id.get(event_id)
+
+
+def apply_petition_event_outcome(
+    state: GameState,
+    db: GameDB,
+    event_id: str,
+    raw_label: object,
+    *,
+    commit: bool = True,
+) -> Dict[str, object]:
+    """亲裁语义落账的**单一写口**：把转译出的结局标签置成事件终态（#1892 / ADR 0153:5）。
+
+    契约：
+
+    - **事件须在可呈窗口内**：三饷只有到点才上疏（issues._event_window_open），窗口外
+      的事项没有可供皇帝亲裁的既成事实，此时置定结局等于替皇帝凭空批一疏。窗口外
+      响亮拒绝，不静默放过。
+    - 标签只在事件自身声明的封闭集 ``terminal_reason_labels`` 内归一；归一不了就
+      :class:`SettlementAbort` 响亮失败（ADR 0014：绝不兜底写未支撑值），不猜、不兜。
+    - **留中不写终态**：raw_label 为空即「本疏已答而事件未终」，调用方不得以任何形式
+      把它塞进终局标签集——留中不是结局标签。
+    - 已落其它终态（expired/avoided/obsolete）的事件不被翻成 triggered；终态不可逆。
+
+    写口只此一处：批红链路不直接写 ``terminal_reason``，原始选项标签不得旁路代批。
+    """
+    eid = str(event_id or "").strip()
+    event = _fiscal_levy_event_by_id(eid) if eid else None
+    if event is None:
+        raise SettlementAbort(
+            f"亲裁结局事件不存在：{eid}", turn=int(state.turn), stage="fiscal_levy_config",
+        )
+    if not _event_window_open(event, state):
+        raise SettlementAbort(
+            f"亲裁结局事件不在可呈窗口内：{eid}", turn=int(state.turn), stage="fiscal_levy_config",
+        )
+    raw = str(raw_label or "").strip()
+    if not raw:
+        # 留中：本疏已答，事件未终。不写终态，也不另开一条留中账。
+        # 已呈原文与原批语在 record_event_petition_answer 的 choice_json 里。
+        return {"id": eid, "settled": False, "terminal_state": "", "terminal_reason": ""}
+    existing = db.event_terminal_state(eid)
+    if existing == "triggered":
+        # 一事件一裁断（ADR 0115:3 first-wins）：结局已落定即不可翻。
+        return {
+            "id": eid, "settled": False, "terminal_state": "triggered",
+            "terminal_reason": _event_terminal_records(db).get(eid, {}).get("terminal_reason", ""),
+        }
+    if existing:
+        return {
+            "id": eid, "settled": False, "terminal_state": existing,
+            "terminal_reason": _event_terminal_records(db).get(eid, {}).get("terminal_reason", ""),
+        }
+    label = _fiscal_levy_normalized_terminal_reason_or_abort(event, raw, state)
+    # 所有权必须在写入前看。sqlite 对 DML 隐式 BEGIN，写完后再看 in_transaction
+    # 永远为真，默认 commit=True 的独立调用就会报成功却不落盘。
+    owns_transaction = commit and connection_owns_transaction(db.conn)
+    db.mark_event_triggered(
+        state, eid, source="petition_verdict", terminal_reason=label, commit=False,
+    )
+    apply_event_cascading_invalidations(state, db, commit=False)
+    if owns_transaction:
+        db.conn.commit()
+    return {
+        "id": eid, "settled": True, "terminal_state": "triggered", "terminal_reason": label,
+    }
 
 
 def _fiscal_levy_event_approved(
@@ -1555,10 +1418,10 @@ def _apply_fiscal_levy_targets(
         # 明选有明账，公开代价＝钱真被征上来；负额已在落账时钳 ≥0，停征即止收。
         jiapai_base = (
             max(0.0, _as_float(
-                meta[_SETTLE_META_JIAPIAI_KEY],
-                ctx=f"{region_id}.settle._meta.{_SETTLE_META_JIAPIAI_KEY}",
+                meta[SETTLE_META_JIAPIAI_KEY],
+                ctx=f"{region_id}.settle._meta.{SETTLE_META_JIAPIAI_KEY}",
             ))
-            if _SETTLE_META_JIAPIAI_KEY in meta else 0.0
+            if SETTLE_META_JIAPIAI_KEY in meta else 0.0
         )
         target_sanxiang = target_liao + target_jiao + target_lian + jiapai_base
         raw_sanxiang = p.get("三饷应征")
@@ -1613,7 +1476,6 @@ def apply_historical_fiscal_rates(
 
     def run_fiscal_levy_pass() -> None:
         terminal_records = _event_terminal_records(db)
-        pending_choice_records = _event_pending_choice_records(db)
         for ev in c.events:
             if getattr(ev, "category", "") != FISCAL_LEVY_EVENT_CATEGORY:
                 continue
@@ -1624,68 +1486,18 @@ def apply_historical_fiscal_rates(
                     state,
                     db,
                 )
-            elif ev.id in pending_choice_records:
-                if _event_window_expired(ev, state):
-                    pass
-                elif not _event_window_open(ev, state):
-                    continue
-                elif not _gate_passed(ev.trigger_gate, state.metrics, db):
-                    continue
-                else:
-                    record = pending_choice_records[ev.id]
-                    label = _fiscal_levy_normalized_terminal_reason_or_abort(
-                        ev,
-                        record.get("terminal_reason"),
-                        state,
-                    )
-                    db.mark_event_triggered(
-                        state,
-                        ev.id,
-                        source=record.get("source") or "fiscal_levy_shadow",
-                        terminal_reason=label,
-                        commit=False,
-                    )
-                    terminal_records[ev.id] = {
-                        "terminal_state": "triggered",
-                        "terminal_reason": label,
-                    }
-                    applied.append({
-                        "id": ev.id,
-                        "title": ev.title,
-                        "terminal_state": "triggered",
-                        "terminal_reason": label,
-                    })
-            if ev.id not in terminal_records:
-                if _event_window_expired(ev, state):
-                    db.mark_event_expired(state, ev.id, commit=False)
-                    terminal_records[ev.id] = {
-                        "terminal_state": "expired",
-                        "terminal_reason": "过最晚触发时点仍未达成触发门",
-                    }
-                    applied.append({"id": ev.id, "title": ev.title, "terminal_state": "expired"})
-                    continue
-                if not _event_window_open(ev, state):
-                    continue
-                if not _gate_passed(ev.trigger_gate, state.metrics, db):
-                    continue
-                label = _fiscal_levy_default_terminal_reason(ev, state)
-                db.mark_event_triggered(
-                    state,
-                    ev.id,
-                    source="fiscal_levy_shadow",
-                    terminal_reason=label,
-                    commit=False,
-                )
+            # #1892：三饷是皇帝亲裁，结局**不经本通道**从原始选项标签旁路代批。
+            # 终态只由 apply_petition_event_outcome（#1815 单一语义写口）置定；本通道
+            # 只做三件事：归一已落终态的标签、按 settle.p 落征收、过窗口者落过期。
+            # 「留中」不写终态，因此不进 terminal_records，本循环自然不动它——事件
+            # 仍在请旨候选里等下次呈报。
+            if ev.id not in terminal_records and _event_window_expired(ev, state):
+                db.mark_event_expired(state, ev.id, commit=False)
                 terminal_records[ev.id] = {
-                    "terminal_state": "triggered",
-                    "terminal_reason": label,
+                    "terminal_state": "expired",
+                    "terminal_reason": "过最晚触发时点仍未达成触发门",
                 }
-                applied.append({
-                    "id": ev.id,
-                    "title": ev.title,
-                    "terminal_state": "triggered",
-                    "terminal_reason": label,
-                })
+                applied.append({"id": ev.id, "title": ev.title, "terminal_state": "expired"})
         _apply_fiscal_levy_targets(db, state, terminal_records)
 
     if should_commit:
@@ -2357,7 +2169,12 @@ def gather_impeachment_surge_candidates(state: GameState, db: GameDB) -> List[Di
 
 def gather_candidate_events(state: GameState, db: GameDB) -> List[Event]:
     """程序筛选：历史锚定事件按 trigger 时间到点、seed 情势按 trigger_gate 达标，
-    都排除已触发过的。返回的候选清单交推演 agent 因果判定是否真触发。"""
+    都排除已触发过的。返回的候选清单交推演 agent 因果判定是否真触发。
+
+    #1892/#1893 分工：进本清单 = 交模型在月末世界段里挑的人物事件。三饷
+    （``fiscal_levy``）是皇帝亲裁的加派决策，由批红时的圣旨／``record_event_decision_choice``
+    落 ``事件结局``，其加不加不是模型能代批的事，故永不入人物候选（ADR 0020）。
+    """
     c = _ctx()
     spawned = _spawned_event_refs(db)
     candidates: List[Event] = []
@@ -2365,9 +2182,13 @@ def gather_candidate_events(state: GameState, db: GameDB) -> List[Event]:
     for ev in c.events:
         if ev.id in spawned or ev.trigger_year <= 0:
             continue
+        if getattr(ev, "category", "") == FISCAL_LEVY_EVENT_CATEGORY:
+            continue
         if _event_window_expired(ev, state):
             continue
         if ev.auto_trigger:
+            continue
+        if getattr(ev, "category", "") == FISCAL_LEVY_EVENT_CATEGORY:
             continue
         dead_subjects = _dead_person_core_subjects(ev, db)
         if dead_subjects:
@@ -2396,6 +2217,31 @@ def gather_candidate_events(state: GameState, db: GameDB) -> List[Event]:
         if _gate_passed(ev.trigger_gate, state.metrics, db):
             candidates.append(ev)
     return candidates
+
+
+def gather_fiscal_levy_petitions(state: GameState, db: GameDB) -> List[Event]:
+    """#1892 J5：三饷（category=fiscal_levy）到点请旨的候选——交既有世界段成陈情。
+
+    亲裁权在皇帝，故这些事件**不进** gather_candidate_events（那里是交模型代选
+    「是否发生」的人物事件池）。本函数只判「该不该呈皇帝」，判门与人物候选同一
+    真源（窗口/前提门/已落终态）；不写终态、不代批。奏疏由世界段呈上，亲裁准驳
+    当回合经 apply_petition_event_outcome 置定结局。留中不写终态，事项仍在本候选里。
+    征收由下一月 pre_settle 的饷率通道按已落终态重算。
+    """
+    c = _ctx()
+    spawned = _spawned_event_refs(db)
+    petitions: List[Event] = []
+    for ev in c.events:
+        if getattr(ev, "category", "") != FISCAL_LEVY_EVENT_CATEGORY:
+            continue
+        if ev.id in spawned or ev.trigger_year <= 0:
+            continue
+        if _event_window_expired(ev, state) or not _event_window_open(ev, state):
+            continue
+        if not _gate_passed(ev.trigger_gate, state.metrics, db):
+            continue
+        petitions.append(ev)
+    return petitions
 
 
 def apply_event_terminal_states(
@@ -2458,13 +2304,13 @@ def auto_trigger_seed_issues(state: GameState, db: GameDB) -> List[Dict[str, obj
     立 issue，绕过 LLM 因果判定（不进候选池等 extractor 决定）。event_to_issue 自带去重，
     已触发过返回 None 自动跳过。返回本回合硬触发的清单（供日志/邸报告知）。
 
-    放在结算链 simulator 之前调用，使硬立的 issue 当回合即进盘面、被邸报叙述。"""
+    唯一月链消费点在逐旨落账之后、世界段之前，硬立的 issue 当回合即进盘面。"""
     with atomic(db):
         return _auto_trigger_seed_issues_in_atomic(state, db)
 
 
 def _auto_trigger_seed_issues_in_atomic(state: GameState, db: GameDB) -> List[Dict[str, object]]:
-    """auto_trigger_seed_issues 的事务体；由外层函数或 pre_settle 嵌套事务统一提交/回滚。"""
+    """auto_trigger_seed_issues 的事务体；嵌套在月链事务内时由外层统一提交/回滚。"""
     c = _ctx()
     terminal_states = _event_terminal_states(db)
     triggered: List[Dict[str, object]] = []
@@ -2473,7 +2319,9 @@ def _auto_trigger_seed_issues_in_atomic(state: GameState, db: GameDB) -> List[Di
         if not ev.auto_trigger:
             continue
         terminal_state = terminal_states.get(ev.id)
-        if terminal_state and (historical_event or terminal_state == "expired"):
+        # #1892：任何已落终态（已发/避过/过期/作废）都不再重发——结案后复发等于
+        # 同一世界事件被发两次，违「读已落终态不再重发」。
+        if terminal_state:
             continue
         if _event_window_expired(ev, state):
             db.mark_event_expired(state, ev.id, commit=False)
@@ -2504,6 +2352,8 @@ def _auto_trigger_seed_issues_in_atomic(state: GameState, db: GameDB) -> List[Di
         issue_id = event_to_issue(db, state, ev, commit=False)
         created_issue = issue_id is not None
         if historical_event and issue_id is None:
+            # 同源软 issue 已在（存档迁移残留）而事件终态未落：event_to_issue 早退未消费
+            # 核心事实，此处补落一次并记终态（#1892 终态与实况同落、只落一次）。
             row = (
                 db.find_active_issue_by_origin("event_pool", ev.id)
                 if ev.trigger_gate
@@ -2512,7 +2362,6 @@ def _auto_trigger_seed_issues_in_atomic(state: GameState, db: GameDB) -> List[Di
             if row is None:
                 raise RuntimeError(f"历史事件 {ev.id} 未建局势且无法找到同源 issue")
             issue_id = int(row["id"])
-        if historical_event:
             if ev.effect_on_trigger:
                 _apply_issue_entities(
                     db,
@@ -2521,7 +2370,7 @@ def _auto_trigger_seed_issues_in_atomic(state: GameState, db: GameDB) -> List[Di
                     f"事件#{ev.id}触发",
                     content=c,
                 )
-            db.mark_event_triggered(state, ev.id)
+            db.mark_event_triggered(state, ev.id, commit=False)
         if issue_id is not None:
             triggered.append({"id": ev.id, "title": ev.title, "issue_id": issue_id})
             action = "硬立项" if created_issue else "补记"
@@ -2611,42 +2460,16 @@ def event_to_issue(db: GameDB, state: GameState, ev: Event, *, commit: bool = Tr
             return None
     # 初值由 severity 推一个偏中性的 bar
     bar = max(20, min(60, 50 - int(ev.severity / 5)))
-    # 默认 ongoing + inertia 五档（+10/+5/0/-5/-10），按 kind 取
-    ongoing: Dict[str, object] = {}
-    inertia = -5
+    # 默认 ongoing + inertia 五档（+10/+5/0/-5/-10）与终结效果，按 kind 取。
+    # 形状与消费它的每月漂移循环同处 `situation_drift`，此处只取结果落库。
+    from ming_sim.situation_drift import (
+        default_situation_shape,
+        situation_terminal_effects,
+    )
+    ongoing, inertia, polarity = default_situation_shape(ev.kind, ev.title)
     # 终结一锤子永久数值：达成（bar→100）落 effect_on_resolve，崩坏（bar→0 或 LLM 判失败）落
     # effect_on_fail。与 ongoing 过程效果区分——过程是每月漂移，终结是定局后的永久民心/皇威增减。
-    polarity = "neg"  # neg=负面危机（平息回血/崩坏重创）；pos=正面机遇（把握加成/错失轻微）
-    # 5 个原 metric（边防/民变/党争/执行/瞒报）已废除，ongoing_effects 按 kind 改用
-    # 民心/皇威 或留空让 LLM 在推进时自定。结构性影响由 region/army/external/class delta 承担。
-    if ev.kind in ("天灾", "灾情", "饥荒"):
-        ongoing = {"metrics": {"民心": -2}, "economy": [{"account": "国库", "delta": -8, "category": "赈济损耗", "reason": ev.title}]}
-        inertia = -10
-    elif ev.kind in ("人祸", "兵变", "流寇", "民变", "抗税"):
-        ongoing = {"metrics": {"民心": -2}}
-        inertia = -10
-    elif ev.kind in ("外族", "边事"):
-        ongoing = {"metrics": {"皇威": -1}}
-        inertia = -5
-    elif ev.kind in ("党争", "朝议"):
-        ongoing = {}
-        inertia = -5
-    elif ev.kind in ("丰收", "祥瑞", "民和"):
-        ongoing = {"metrics": {"民心": 2}}
-        inertia = +10
-        polarity = "pos"
-    elif ev.kind in ("友邦", "归附", "盟约"):
-        ongoing = {"metrics": {"皇威": 1}}
-        inertia = +5
-        polarity = "pos"
-    elif ev.kind in ("良策", "试点", "献宝", "科技"):
-        inertia = +5
-        polarity = "pos"
-    elif ev.kind in ("战机", "敌乱"):
-        ongoing = {"metrics": {"皇威": 1}}
-        inertia = +10
-        polarity = "pos"
-    effect_resolve, effect_fail = _situation_terminal_effects(ev.kind, int(ev.severity), polarity)
+    effect_resolve, effect_fail = situation_terminal_effects(ev.kind, int(ev.severity), polarity)
     # 精调字段优先：合并自 opening_crises 的手调危机带 bar/ongoing/effect/meaning，直接用其值；
     # 缺省（0/空）则用上面按 severity/kind 推导的默认。
     if ev.bar_value:
@@ -2687,6 +2510,16 @@ def event_to_issue(db: GameDB, state: GameState, ev: Event, *, commit: bool = Tr
         fail_condition=ev.fail_condition,
         commit=False,
     )
+    # #1892：核心物理事实（改国号等）随终态一次落库，不另设日期旁路——事件未触发
+    # 即无核心事实，触发时只此一处消费 effect_on_trigger。
+    if ev.effect_on_trigger:
+        _apply_issue_entities(
+            db,
+            state,
+            _content_population_effect_for_save(db, ev.effect_on_trigger),
+            f"事件#{ev.id}触发",
+            content=_ctx(),
+        )
     db.mark_event_triggered(state, ev.id, source="event_pool", commit=False)
     apply_event_cascading_invalidations(state, db, commit=False)
     if commit:
@@ -3152,40 +2985,6 @@ def _pending_person_changes_block_event_gate(
     return False
 
 
-# 会崩坏的局势：人为可控、有明确「彻底失败」时刻——镇压不住/边镇沦陷/朝局崩坏。
-# 它们 bar 能跌到 0、status 转 failed 终结，落 effect_on_fail 一锤子永久重创。
-# 不在此集合的（天灾/饥荒等不可控天象、正面机遇）无失败态：bar 下限 1、永不 failed、
-# effect_on_fail 留空，伤害全靠 ongoing_effects 持续累积。db.advance_issue 据 effect_on_fail
-# 是否非空来判能否崩坏，故此处「会崩坏」与「非空 fail effect」必须一致。
-_COLLAPSIBLE_KINDS = frozenset({
-    "人祸", "兵变", "流寇", "民变", "抗税", "党争", "朝议", "外族", "边事",
-})
-
-
-def _situation_terminal_effects(kind: str, severity: int, polarity: str):
-    """situation 终结一锤子永久效果。按 severity 推量级（轻 50 / 中 65 / 重 80）。
-    resolve：达成（bar→100）落永久回血/加成，所有 situation 都有。
-    fail：仅「会崩坏」局势（_COLLAPSIBLE_KINDS）有，崩坏（bar→0）落永久重创，幅度重于回血。
-    民心/皇威由 kind 倾向决定（边事/外族偏皇威，灾害/民变偏民心，余者两者兼得）。"""
-    mag = 1 if severity < 55 else (2 if severity < 70 else 3)
-    if kind in ("外族", "边事", "友邦", "归附", "盟约", "战机", "敌乱"):
-        axis = "皇威"
-    elif kind in ("天灾", "灾情", "饥荒", "人祸", "兵变", "流寇", "民变", "抗税", "丰收", "祥瑞", "民和"):
-        axis = "民心"
-    else:
-        axis = "both"
-
-    def _metrics(amount: int) -> Dict[str, int]:
-        if axis == "both":
-            half = max(1, abs(amount) // 2)
-            s = 1 if amount > 0 else -1
-            return {"民心": s * half, "皇威": s * half}
-        return {axis: amount}
-
-    resolve_amt = (3 if polarity == "neg" else 4) * mag
-    effect_resolve = {"metrics": _metrics(resolve_amt)}
-    effect_fail = {"metrics": _metrics(-5 * mag)} if kind in _COLLAPSIBLE_KINDS else {}
-    return effect_resolve, effect_fail
 
 
 def _normalize_cancellable(raw: object) -> str:
@@ -3533,9 +3332,6 @@ _STRATEGIC_FOREIGN_NODE_OUTCOME_TARGETS: Dict[str, Dict[str, frozenset[str]]] = 
         "powers": frozenset({"bandit_li_zicheng"}),
     },
 }
-_STRATEGIC_EVENT_OUTCOME_LABELS: Dict[str, frozenset[str]] = {
-    "jisi_lubian": frozenset({"挡于边墙", "入塞被遏", "长驱直入"}),
-}
 _STRATEGIC_EVENT_OUTCOME_LABEL_ALIASES: Dict[str, Dict[str, str]] = {
     "jisi_lubian": {
         "挡于边墙外": "挡于边墙",
@@ -3554,6 +3350,17 @@ def _is_strategic_foreign_node_event(ev: Event) -> bool:
         getattr(ev, "event_type", "situation") != "situation"
         and getattr(ev, "trigger_class", "") == "strategic_foreign"
     )
+
+
+def strategic_event_outcome_labels(event_id: str) -> frozenset[str]:
+    """某战略事件在既有写口接受的闭合结局标签；空集 = 该事件不收 事件结局。
+
+    供料侧（materials 候选事实）与落库侧共用这一份，读侧不另立标签表（#1893）。
+    """
+    ev = _ctx().event_by_id.get(event_id)
+    if ev is None or not _is_strategic_foreign_node_event(ev):
+        return frozenset()
+    return _closed_outcome_labels(_ctx(), event_id)
 
 
 def _validate_strategic_foreign_node_outcome_targets(content: GameContent) -> None:
@@ -3711,15 +3518,48 @@ def _event_outcome_label(raw_outcomes: object, event_id: str) -> str:
     return str(raw or "").strip()
 
 
-def _normalize_event_outcome_label(event_id: str, label: str) -> str:
-    allowed = _STRATEGIC_EVENT_OUTCOME_LABELS.get(event_id, frozenset())
+def _closed_outcome_labels(content: Optional[GameContent], event_id: str) -> frozenset[str]:
+    """封闭结局集只认事件自身声明；写口与供料共用这一份，不另存枚举。"""
+    ev = content.event_by_id.get(str(event_id or "").strip()) if content is not None else None
+    raw = getattr(ev, "terminal_reason_labels", None) or []
+    return frozenset(str(label).strip() for label in raw if str(label).strip())
+
+
+def _merge_first_event_outcome(
+    current: Dict[str, object], incoming: object, event_id: str,
+) -> list[dict[str, object]]:
+    """信封只写入自己的 event_id。
+
+    空归属、或键不属于本信封的非空结局，不写，并作为未归属声明交调用方拒收。
+    同键首次非空标签胜，后写不覆盖，也不算拒收。
+    """
+    unowned: list[dict[str, object]] = []
+    if not isinstance(incoming, dict):
+        return unowned
+    eid = str(event_id or "").strip()
+    for key, value in incoming.items():
+        key_s = str(key).strip()
+        if not _event_outcome_label({key_s: value}, key_s):
+            continue
+        if not eid or key_s != eid:
+            unowned.append({key_s: value})
+            continue
+        if not isinstance(current, dict) or _event_outcome_label(current, eid):
+            continue
+        current[eid] = value
+    return unowned
+
+
+def _normalize_event_outcome_label(event_id: str, label: str, content: GameContent) -> str:
+    allowed = _closed_outcome_labels(content, event_id)
     compact = re.sub(r"\s+", "", str(label or ""))
     if not compact:
         return ""
     for canonical in allowed:
         if compact == re.sub(r"\s+", "", canonical):
             return canonical
-    return _STRATEGIC_EVENT_OUTCOME_LABEL_ALIASES.get(event_id, {}).get(compact, "")
+    alias = _STRATEGIC_EVENT_OUTCOME_LABEL_ALIASES.get(event_id, {}).get(compact, "")
+    return alias if alias in allowed else ""
 
 
 def _strategic_event_outcome_label_or_error(
@@ -3727,14 +3567,14 @@ def _strategic_event_outcome_label_or_error(
     extracted: Dict[str, object],
     content: GameContent,
 ) -> tuple[str, str]:
-    allowed = _STRATEGIC_EVENT_OUTCOME_LABELS.get(event_id, frozenset())
+    allowed = _closed_outcome_labels(content, event_id)
     if not allowed:
         return "", ""
     label = _event_outcome_label(extracted.get("事件结局") or {}, event_id)
     event_title = content.event_by_id[event_id].title if event_id in content.event_by_id else event_id
     if not label:
         return "", f"战略/外敌事件「{event_title}」缺事件结局标签"
-    normalized = _normalize_event_outcome_label(event_id, label)
+    normalized = _normalize_event_outcome_label(event_id, label, content)
     if not normalized:
         raise ValueError(
             f"战略/外敌事件「{event_title}」事件结局标签无法归一：{label}；"
@@ -4238,6 +4078,30 @@ def preflight_declared_event_effects(
             db._batch_frozen_open_affair_ids = previous_frozen
 
 
+def petition_outcome_is_admissible(
+    state: GameState, db: GameDB, event_id: str, content: Optional[GameContent],
+) -> bool:
+    """该事件是否可由本回合的亲裁答复置定结局（#1892 亲裁语义落账）。
+
+    资格只认事件账里已有的请旨答复（:meth:`list_event_petition_records`），且终态仍空。
+    到期在请旨候选里只说明可以上疏，不是皇帝已经批过。没呈过的事件不接受亲裁结局。
+    """
+    eid = str(event_id or "").strip()
+    if not eid:
+        return False
+    resolved = content if content is not None else _ctx()
+    event = resolved.event_by_id.get(eid) if resolved is not None else None
+    if event is None or getattr(event, "category", "") != FISCAL_LEVY_EVENT_CATEGORY:
+        return False
+    if db.event_terminal_state(eid):
+        return False
+    return any(
+        str(row.get("event_id") or "") == eid
+        and not str(row.get("terminal_state") or "").strip()
+        for row in db.list_event_petition_records()
+    )
+
+
 def _preflight_declared_event_groups(
     db: GameDB, state: GameState, groups: dict[str, list[dict]],
 ) -> dict[str, str]:
@@ -4248,7 +4112,26 @@ def _preflight_declared_event_groups(
                          urgency=0, severity=0, credibility=100, interests=[], audiences=[])
     for event_id, group in groups.items():
         event = content.event_by_id.get(event_id)
-        if event is None or not _is_strategic_foreign_node_event(event):
+        if event is None:
+            rejected[event_id] = f"效果归属的事件不存在：{event_id}"
+            continue
+        # #1892：三饷请旨的亲裁结局与战略节点信封不同路——它不要求世界状态主账结果
+        # （三饷的征收由饷率通道按终局标签核算），只要求标签落在事件自声明的封闭集内，
+        # 且事件账里已有请旨答复、终态仍空。归一失败响亮失败（ADR 0014），不静默丢弃亲裁。
+        if getattr(event, "category", "") == FISCAL_LEVY_EVENT_CATEGORY:
+            if not petition_outcome_is_admissible(state, db, event_id, content):
+                rejected[event_id] = f"三饷事项当前不能由亲裁置定结局：{event_id}"
+                continue
+            outcome: Dict[str, object] = {}
+            for item in group:
+                _merge_first_event_outcome(outcome, item.get("事件结局") or {}, event_id)
+            raw_label = _event_outcome_label(outcome, event_id)
+            if not raw_label:
+                # 留中／未答毕：本疏已答而事件未终，不写终态（合法，不是缺项）。
+                continue
+            _fiscal_levy_normalized_terminal_reason_or_abort(event, raw_label, state)
+            continue
+        if not _is_strategic_foreign_node_event(event):
             rejected[event_id] = f"效果归属的战略事件不存在：{event_id}"
             continue
         if event_id not in candidates or db.event_terminal_state(event_id) or event.auto_trigger:
@@ -4264,7 +4147,7 @@ def _preflight_declared_event_groups(
             continue
         outcome = {}
         for item in group:
-            outcome.update(item.get("事件结局") or {})
+            _merge_first_event_outcome(outcome, item.get("事件结局") or {}, event_id)
         label, error = _strategic_event_outcome_label_or_error(event_id, {"事件结局": outcome}, content)
         if error:
             rejected[event_id] = error
@@ -4833,6 +4716,24 @@ def apply_issue_tracker_output(
                 applied_new.append({"id": ev.id, "title": ev.title, "rejected": False, "reason": f"event_type={ev.event_type} 已记为触发"})
                 continue
             issue_id = event_to_issue(db, state, ev, commit=not external_transaction)
+            if issue_id is not None and ev.effect_on_trigger:
+                # #1893：模型选中即触发——事件自带的核心后果（如 huangtaiji_chengdi 的
+                # 改国号）随这一次写口落定，不另按日期旁路补。situation 类事件的
+                # effect_on_trigger 历来只在 auto_trigger 硬触发路应用（见
+                # _auto_trigger_seed_issues_in_atomic），模型选中路原缺这一步，属改
+                # 触发方式后漏接的既有核心后果。
+                entity_rejections.extend(
+                    _apply_issue_entities(
+                        db,
+                        state,
+                        _content_population_effect_for_save(db, ev.effect_on_trigger),
+                        f"事件#{ev.id}触发",
+                        content=runtime_content,
+                        llm_config=llm_config,
+                        applied_person_changes=issue_person_changes,
+                        commit=commit_now,
+                    )
+                )
             if issue_id is None:
                 # event_to_issue 移除 broad except 后，返回 None 只剩一种语义：同源 issue 已存在的
                 # 幂等去重跳过（在其 insert try 之外 early-return）；insert 的真代码/DB 异常现已上抛、
@@ -4946,12 +4847,15 @@ def apply_issue_tracker_output(
                         + ", ".join(unsupported_ongoing_fields)
                     )
                 from ming_sim.staged_commitment import (
-                    capture_commitment_stages,
                     stages_source_from_issue_item,
+                    stages_to_json,
                 )
-                stages_for_commitment = capture_commitment_stages(
+                # 分段承诺只认显式结构化 stages：走库层严格串行面，非 JSON 散文串
+                # 响亮 ValueError（由本段既有 except 收成 durable 拒收）。引擎不再
+                # 从 stage_text/title 的散文里正则抠年份（ADR 0142 / 御批 2026-09-30）。
+                stages_for_commitment = json.loads(stages_to_json(
                     stages_source_from_issue_item(ni),
-                )
+                ))
                 has_stages = bool(stages_for_commitment)
                 if not ongoing_has_work and end_turn_for_commitment <= 0 and not has_stages:
                     raise ValueError("ongoing_effects、end_turn 或 stages 至少一项必填")
@@ -5116,13 +5020,11 @@ def apply_issue_tracker_output(
                 })
                 continue
         from ming_sim.staged_commitment import (
-            capture_commitment_stages,
             stages_source_from_issue_item,
+            stages_to_json,
         )
         stages_norm = (
-            capture_commitment_stages(
-                stages_source_from_issue_item(ni),
-            )
+            json.loads(stages_to_json(stages_source_from_issue_item(ni)))
             if is_commitment
             else []
         )
@@ -6885,7 +6787,7 @@ def _apply_surcharge_decrees(
     落在 regions.fiscal.settle._meta「加派基线」上（与 #649 饷率 seed 同址，
     钳制 ≥0）。钱面由 _apply_fiscal_levy_targets 把
     基线折入三饷应征/起运定额（明选有明账，公开代价＝真征收）；民面由
-    _apply_levy_driven_transfers 按账机械入池。无旨不入账：段空＝账不动。
+    displaced_population.apply_levy_driven_transfers 按账机械入池。无旨不入账：段空＝账不动。
 
     逐项拒收面（ADR 0015/0008）：非 dict 项；region 未知/非明省/无 settle 基座；
     monthly_amount 非 bool 非有限数值或为 0（无操作不落，同 fiscal_changes 口径）；
@@ -6935,6 +6837,9 @@ def _apply_surcharge_decrees(
                 f"surcharge_decrees {region_id!r} 无 settle 财政基座，逐省累积账无处落",
             )
             continue
+        if db.population_unit != POPULATION_UNIT_PERSONS:
+            _reject("missing_ref", "surcharge_decrees 仅适用于 population_unit='人' 的人口池档")
+            continue
         if _surcharge_population_pool_members(db, region_id) != {"农民", "流民"}:
             _reject("missing_ref", f"surcharge_decrees {region_id!r} 缺农民/流民省级人口池")
             continue
@@ -6969,9 +6874,9 @@ def _apply_surcharge_decrees(
             _reject("invalid_enum", f"surcharge_decrees reason 超 120 字：{reason!r}")
             continue
         meta = dict(settle.get("_meta") or {})
-        old = max(0.0, float(meta.get(_SETTLE_META_JIAPIAI_KEY, 0) or 0))
+        old = max(0.0, float(meta.get(SETTLE_META_JIAPIAI_KEY, 0) or 0))
         new = max(0.0, old + amount)  # 负额停征/蠲免，账面钳 ≥0
-        meta[_SETTLE_META_JIAPIAI_KEY] = new
+        meta[SETTLE_META_JIAPIAI_KEY] = new
         settle["_meta"] = meta
         db.regions.update(region_id, {
             "fiscal": json.dumps(fiscal, ensure_ascii=False),
@@ -7502,6 +7407,7 @@ def apply_score_extraction(
         Dict[str, list[tuple[str, object]]],
         dict[str, list[str]],
     ]]] = None,
+    declared_effect_event_ids: Optional[Sequence[str]] = None,
     defer_disclosure: bool = False,
 ) -> Dict[str, object]:
     """落地结算声明到 state 与 db。
@@ -7563,6 +7469,7 @@ def apply_score_extraction(
             ordered_deltas=ordered_deltas,
             ordered_effect_event_ids=ordered_effect_event_ids,
             effect_sequence=effect_sequence,
+            declared_effect_event_ids=declared_effect_event_ids,
             defer_disclosure=defer_disclosure,
         )
     finally:
@@ -7669,6 +7576,7 @@ def _apply_score_extraction_body(
         Dict[str, list[tuple[str, object]]],
         dict[str, list[str]],
     ]]] = None,
+    declared_effect_event_ids: Optional[Sequence[str]] = None,
     defer_disclosure: bool = False,
 ) -> Dict[str, object]:
     """Bound apply body; batch affair authority is armed by caller."""
@@ -7949,6 +7857,26 @@ def _apply_score_extraction_body(
         _strategic_event_outcome_label_or_error(event_id, extracted, runtime_content)
     strategic_event_delta_ids = set(strategic_event_result_delta_event_ids)
     strategic_event_referenced_ids = strategic_event_pool_ids | strategic_event_delta_ids
+    # #1892：本批声明显式声明归属（event_id）到三饷事项的效果信封——亲裁结局的写口
+    # 候选。集合只由「声明显式 event_id + 该事件确属 fiscal_levy」构成，不含任何
+    # 代码推断的事件。来源是 ordered_effect_event_ids（按字段登记的归属）并上
+    # declared_effect_event_ids（已被接受的效果信封自带的 event_id）——后者必要，
+    # 因为归一器只在信封含列表/字典字段时登记归属，仅声明「事件结局」时前者为空。
+    # 两者同出一份权威声明，不是第二来源。预检已拒收的信封不在这份名单里。
+    petition_declared_ids = {
+        event_id
+        for declared in (ordered_effect_event_ids or {}).values()
+        for event_id in declared
+        if event_id
+    }
+    petition_declared_ids.update(
+        event_id for event_id in (declared_effect_event_ids or ()) if event_id
+    )
+    petition_effect_ids = {
+        event_id for event_id in petition_declared_ids
+        if getattr(runtime_content.event_by_id.get(event_id), "category", "")
+        == FISCAL_LEVY_EVENT_CATEGORY
+    }
 
     def _split_pre_issue_person_changes(changes: List[Dict[str, object]]) -> tuple[List[Dict[str, object]], List[Dict[str, object]]]:
         pre_issue: List[Dict[str, object]] = []
@@ -8543,6 +8471,14 @@ def _apply_score_extraction_body(
         ev = runtime_content.event_by_id.get(event_id)
         _reject_suppressed_strategic_results(event_id, ev.title if ev is not None else event_id)
 
+    # #1892：三饷亲裁语义落账——批红经 #1815 单一语义写口置定事件结局，原始选项标签
+    # 不再旁路代批（ADR 0153:5）。留中／未给标签则不写终态：本疏已答而事件未终。
+    for event_id in sorted(petition_effect_ids):
+        raw_label = _event_outcome_label(extracted.get("事件结局") or {}, event_id)
+        if not raw_label:
+            continue
+        apply_petition_event_outcome(state, db, event_id, raw_label, commit=commit_now)
+
     for new_issue in (issue_summary.get("new_issues") or []):
         if not (
             isinstance(new_issue, dict)
@@ -8996,7 +8932,7 @@ def _apply_score_extraction_body(
         raw_id = item.get("order_id")
         sim_note = str(item.get("sim_note") or item.get("result") or "")
         disclosed = item.get("disclosed") is True
-        if raw_id is None or not sim_note:
+        if raw_id is None or not sim_note.strip():
             applied_secret_orders.append({"order_id": raw_id, "rejected": True,
                                           "category": "invalid_enum",
                                           "reason": "order_id 或 sim_note 缺失"})
@@ -9182,14 +9118,33 @@ def _apply_score_extraction_body(
     return report
 
 
-def _resolve_victory(db: GameDB, state: GameState, extracted: Dict[str, object]) -> Dict[str, object]:
-    """结局判定：叙事型（崇祯退位/自尽，extractor 抽 emperor_fate）优先于数值型（京畿失守）。
-    20 年到期（timeout）在 decree 结局收口判，不在此。"""
-    fate = extracted.get("emperor_fate")
-    if fate in ("abdicate", "suicide"):
-        if fate == "abdicate":
-            return {"status": "emperor_abdicate", "summary": "崇祯帝退位逊国，大明皇统中绝。"}
+def _declared_emperor_ending(fate: object) -> Optional[Dict[str, object]]:
+    """模型声明的皇帝终态走既有终局链。退位／自尽保留原状态号与定调。
+
+    其它非空声明（被废、暴毙，以及声明里的其它终态）同样终局，不再被旧的两值枚举丢掉。
+    不定调新句子：总评仍由结局 agent 据邸报来写。
+    """
+    if not isinstance(fate, str):
+        return None
+    token = fate.strip()
+    if not token or token.lower() in {"null", "none"}:
+        return None
+    if token == "abdicate":
+        return {"status": "emperor_abdicate", "summary": "崇祯帝退位逊国，大明皇统中绝。"}
+    if token == "suicide":
         return {"status": "emperor_suicide", "summary": "崇祯帝自尽殉国，煤山一缢，大明社稷俱亡。"}
+    if token.isascii() and token.replace("_", "").isalnum() and not token[0].isdigit():
+        status = token if token.startswith("emperor_") else f"emperor_{token}"
+        return {"status": status, "summary": ""}
+    return {"status": token, "summary": ""}
+
+
+def _resolve_victory(db: GameDB, state: GameState, extracted: Dict[str, object]) -> Dict[str, object]:
+    """结局判定：模型声明的皇帝终态优先于数值型（京畿失守）。
+    20 年到期（timeout）在 decree 结局收口判，不在此。"""
+    declared = _declared_emperor_ending(extracted.get("emperor_fate"))
+    if declared is not None:
+        return declared
     return victory_status(db, state)
 
 

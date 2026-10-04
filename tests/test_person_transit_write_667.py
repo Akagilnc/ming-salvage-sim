@@ -37,7 +37,6 @@ def test_departure_rejects_nonfinite_distance_before_ledger_write(game, monkeypa
         issues.DistanceMatrix, "from_file", classmethod(lambda cls, path: InvalidMatrix()),
     )
 
-    # 区分度是**被换掉的距离矩阵**（travel_time 返回非法距离），不是报错措辞（#1889）。
     with pytest.raises(ValueError):
         issues.apply_score_extraction(db, state, {"人物变更": [{
             "name": name, "origin_ref": "盘面自发", "动作": "行止",

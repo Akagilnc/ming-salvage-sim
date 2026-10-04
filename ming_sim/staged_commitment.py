@@ -38,7 +38,16 @@ def _loads_stages_array(text: str) -> list:
 
 
 def normalize_commitment_stages(raw: object) -> List[Dict[str, object]]:
-    """Normalize structured capture input; durable reads use the strict reader."""
+    """Normalize structured stages payload → durable list.
+
+    Accepts list/tuple of dicts, or a JSON array string. Non-JSON free text
+    returns [] here (读侧宽容面)；写侧由 ``stages_to_json`` 响亮拒绝。
+
+    分段承诺是机械事实（到期判账），只认显式结构化字段。引擎不得从 LLM 自由
+    散文正则反推语义（ADR 0142 / 锚定宪法「机器只咬契约，不咬呈现」；owner
+    2026-09-30「肯定不能让代码去扣」）。原 ``parse_staged_year_promise`` 的
+    中文数词年诺捕获已随该裁定删除，无任何接缝再从散文抠年份。
+    """
     if raw in (None, "", [], ()):
         return []
     data = raw

@@ -7,6 +7,7 @@ import sqlite3
 import pytest
 
 from tests.conftest import active_ming_character
+from tests.test_declaration_dispatch_1835 import _minister as _character_name
 
 
 @pytest.mark.parametrize("source_cannon,target_cannon,treasury,actual_cannon,source_latched,target_latched", [
@@ -72,7 +73,7 @@ def test_world_segment_rejects_transfer_with_pay_arrears_claim(game):
     from ming_sim.month_translate import dispatch_month_segment
 
     db, state, _ = game
-    db.conn.execute("UPDATE armies SET province_pay_arrears=0, central_pay_arrears=6 WHERE id='jingying'")
+    db.conn.execute("UPDATE armies SET arrears=6, province_pay_arrears=0, central_pay_arrears=6 WHERE id='jingying'")
     state.metrics["国库"], state.metrics["内库"] = 100, 0
     move = {
         "origin_ref": "盘面自发", "account": "国库", "delta": -5,
@@ -97,14 +98,6 @@ def test_world_segment_rejects_transfer_with_pay_arrears_claim(game):
     assert (state.metrics["国库"], state.metrics["内库"]) == (100, 0)
     assert db.conn.execute("SELECT arrears FROM armies WHERE id='jingying'").fetchone()[0] == 6
     assert db.conn.execute("SELECT COUNT(*) FROM economy_ledger WHERE category='调拨'").fetchone()[0] == 0
-
-
-def _character_name(db) -> str:
-    row = db.conn.execute(
-        "SELECT name FROM characters WHERE status='active' ORDER BY name LIMIT 1"
-    ).fetchone()
-    assert row is not None
-    return str(row["name"])
 
 
 def _army_id(db) -> str:

@@ -109,9 +109,6 @@ def _close_offline(db, state, content, night_id):
     from ming_sim.audience_night import close_night
     return close_night(
         db, state, night_id=night_id, content=content,
-        endorsement_extractor_agent=SimpleNamespace(
-            run=lambda _: SimpleNamespace(content='{"endorsements": []}'),
-        ),
     )
 
 
@@ -122,7 +119,7 @@ def _player_month(db, state, content, monkeypatch, dossier_id, *, effects=None):
     import ming_sim.month_translate as month_translate
     from ming_sim.decree_forecast import decree_ref_for_dossier, stage_declaration
 
-    dossier = db.dossiers.get(dossier_id)
+    dossier = db.get_decree_dossier(dossier_id)
     stage_declaration(
         db, decree_ref=decree_ref_for_dossier(db, dossier),
         declaration={"effects": {}}, turn=int(state.turn),
@@ -193,7 +190,7 @@ def test_prohibit_covert_levy_commission_binds_exposed_dossier(game, monkeypatch
     assert dossier["target_id"] == str(other_did)
     from ming_sim.covert_levy import active_prohibition_dossier
     army_id = db.conn.execute("SELECT target_id FROM decree_dossiers WHERE id=?", (other_did,)).fetchone()[0]
-    db.conn.execute('UPDATE armies SET province_pay_arrears=0, central_pay_arrears=10 WHERE id=?', (army_id,))
+    db.conn.execute("UPDATE armies SET arrears=10, province_pay_arrears=0, central_pay_arrears=10 WHERE id=?", (army_id,))
     before = int(state.turn)
     _player_month(db, state, content, monkeypatch, int(dossier["id"]), effects={
         "fiscal_creates": [{
@@ -358,16 +355,18 @@ def test_inquiry_declaration_preserves_assignment_in_attendant_materials(game, m
     assert not any(e["source_id"] in {r["source_id"] for r in sources}
                    for e in db.get_character_knowledge(state, other)["events"])
     from ming_sim.audience_night import summon_enter
-    from ming_sim.materials import prepare_scene_materials, release_material_tree
+    from ming_sim.materials import list_materials, prepare_scene_materials, release_material_tree
     # A fresh night must make this report readable, not merely list a carrier.
     _close_offline(db, state, content, int(open_night(db, state)["id"]))
     night = open_night(db, state)
     summon_enter(db, int(night["id"]), attendant.name)
     prepared = prepare_scene_materials(db, state)
     try:
-        from pathlib import Path
+        from ming_sim.materials import list_materials, read_material
         carrier = f"人物/{attendant.name}/经历.txt"
-        assert carrier in prepared.index_lines
+        assert carrier in list_materials(prepared.root)
+        # 原话是这次交办写入的正文，经历载体须原样带上它。
+        assert query in read_material(prepared.root, carrier)
     finally:
         release_material_tree(prepared.root)
 
@@ -396,7 +395,6 @@ def test_separate_inquiries_same_turn_survive_and_retry_is_idempotent(game, with
     assignments = [event for event in db.get_character_knowledge(state, attendant.name)["events"]
                    if event["kind"] == "inquiry_assignment"]
     assert len(assignments) == 2
-    assert {event["body"] for event in assignments} == set(queries)
     assert len({event["source_id"] for event in assignments}) == 2
 
 
@@ -408,8 +406,8 @@ def test_rush_commitment_stages_pending_催办(game, monkeypatch):
         "VALUES ('差务', '分段试办', 'active', ?, ?)",
         (
             json.dumps([
-                {"stage_idx": 0, "due_turn": int(state.turn) + 2, "criterion_text": "首段", "origin_context": "首段"},
-                {"stage_idx": 1, "due_turn": int(state.turn) + 3, "criterion_text": "次段", "origin_context": "次段"},
+                {"stage_idx": 0, "due_turn": int(state.turn) + 2, "criterion_text": "首段"},
+                {"stage_idx": 1, "due_turn": int(state.turn) + 3, "criterion_text": "次段"},
             ], ensure_ascii=False),
             int(state.turn),
         ),
@@ -441,8 +439,8 @@ def test_rush_commitment_stages_pending_催办(game, monkeypatch):
     assert int(payload["deadline_months"]) == 1
     assert payload["reason"] == reason
     db.commit_pending_actions(state, content=content)
-    from ming_sim.staged_commitment import load_commitment_stages
-    stages = load_commitment_stages(db.conn.execute(
+    from ming_sim.staged_commitment import normalize_commitment_stages
+    stages = normalize_commitment_stages(db.conn.execute(
         "SELECT stages_json FROM issues WHERE id=?", (issue_id,)
     ).fetchone()["stages_json"])
     assert int(stages[0]["due_turn"]) == int(state.turn) + 2

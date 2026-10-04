@@ -71,36 +71,36 @@ def test_endorsement_forms_persist_restore_and_judge_without_roster_join(game):
         target_kind="character", target_id=minister,
     )
     night_id, chat_turn_id, _seq = _night_reply(db, state, minister)
-    before_roster = db.dossiers.get(backing_id)["participant_roster"]
+    before_roster = db.get_decree_dossier(backing_id)["participant_roster"]
 
-    db.dossiers.add_endorsement(
+    db.add_dossier_endorsement(
         cosign_id, form="会签", endorser_id=minister, imperial=False,
         source_chat_turn_id=chat_turn_id,
     )
-    db.dossiers.add_endorsement(
+    db.add_dossier_endorsement(
         backing_id, form="当面站台", endorser_id=minister, imperial=False,
         source_chat_turn_id=chat_turn_id,
     )
-    db.dossiers.add_endorsement(
+    db.add_dossier_endorsement(
         imperial_id, form="御笔手敕", endorser_id="", imperial=True,
         source_chat_turn_id=chat_turn_id,
     )
 
-    cosign = db.dossiers.endorsements(cosign_id)
+    cosign = db.list_dossier_endorsements(cosign_id)
     assert cosign == [{
         "id": 1, "dossier_id": cosign_id, "form": "会签",
         "endorser_id": minister, "imperial": False,
         "source_chat_turn_id": chat_turn_id,
         "decision_key": "",
     }]
-    backing = db.dossiers.endorsements(backing_id)
+    backing = db.list_dossier_endorsements(backing_id)
     assert backing[0]["form"] == "当面站台"
-    assert db.dossiers.get(backing_id)["participant_roster"] == before_roster
+    assert db.get_decree_dossier(backing_id)["participant_roster"] == before_roster
     assert all(item.get("character_id") != minister for item in before_roster)
-    imperial = db.dossiers.endorsements(imperial_id)
+    imperial = db.list_dossier_endorsements(imperial_id)
     assert imperial[0]["form"] == "御笔手敕" and imperial[0]["imperial"] is True
 
-    context = build_promulgation_judge_context(db, state, db.dossiers.list_dossiers())
+    context = build_promulgation_judge_context(db, state, db.list_decree_dossiers())
     by_id = {int(d["id"]): d for d in context["dossiers"]}
     assert by_id[cosign_id]["endorsements"] == cosign
     assert by_id[cosign_id]["criteria_snapshot_source"]["endorsement_entry_ids"] == [1]
@@ -110,9 +110,9 @@ def test_endorsement_forms_persist_restore_and_judge_without_roster_join(game):
     reopened = GameDB(db.path, content=content)
     try:
         restored = reopened.load_state()
-        assert reopened.dossiers.endorsements(cosign_id) == cosign
+        assert reopened.list_dossier_endorsements(cosign_id) == cosign
         restored_ctx = build_promulgation_judge_context(
-            reopened, restored, reopened.dossiers.list_dossiers(),
+            reopened, restored, reopened.list_decree_dossiers(),
         )
         restored_by = {int(d["id"]): d for d in restored_ctx["dossiers"]}
         assert restored_by[cosign_id]["endorsements"] == cosign
@@ -123,10 +123,6 @@ def test_endorsement_forms_persist_restore_and_judge_without_roster_join(game):
 
 
 def test_endorsement_write_boundary_rejects_unknown_or_illegal_forms(game):
-    """背书写口对每种非法输入都必须**整条拒收**。
-
-    契约是行为——抛出 + 一条都没落库；报错措辞不是契约，故不逐条锁字（#1889）。
-    """
     db, state, _content = game
     minister = _minister(db)
     dossier_id = db.create_decree_dossier(
@@ -135,35 +131,42 @@ def test_endorsement_write_boundary_rejects_unknown_or_illegal_forms(game):
     )
     _night_id, chat_turn_id, _seq = _night_reply(db, state, minister)
 
-    illegal = [
-        # 指向不存在的案卷
-        {"dossier_id": 999999, "form": "会签", "endorser_id": minister},
-        # 未定义的背书形式
-        {"dossier_id": dossier_id, "form": "联名", "endorser_id": minister},
-        # 须具名的形式却没具名
-        {"dossier_id": dossier_id, "form": "会签", "endorser_id": ""},
-        {"dossier_id": dossier_id, "form": "当面站台", "endorser_id": ""},
-        # 御笔手敕：必须带御笔标记，且不得具名大臣
-        {"dossier_id": dossier_id, "form": "御笔手敕", "endorser_id": minister,
-         "imperial": True},
-        {"dossier_id": dossier_id, "form": "御笔手敕", "endorser_id": "",
-         "imperial": False},
-        # 背书人不在人物表
-        {"dossier_id": dossier_id, "form": "当面站台", "endorser_id": "不存在的人"},
-    ]
-    # 御笔标记必须是真布尔，字符串/数字/None 一律拒收。
-    illegal += [
-        {"dossier_id": dossier_id, "form": "会签", "endorser_id": minister,
-         "imperial": bad}
-        for bad in ("false", 1, 0, None)
-    ]
-    for case in illegal:
+    with pytest.raises(ValueError):
+        db.add_dossier_endorsement(
+            999999, form="会签", endorser_id=minister,
+            source_chat_turn_id=chat_turn_id,
+        )
+    with pytest.raises(ValueError):
+        db.add_dossier_endorsement(
+            dossier_id, form="联名", endorser_id=minister,
+            source_chat_turn_id=chat_turn_id,
+        )
+    with pytest.raises(ValueError):
+        db.add_dossier_endorsement(
+            dossier_id, form="会签", endorser_id="",
+            source_chat_turn_id=chat_turn_id,
+        )
+    with pytest.raises(ValueError):
+        db.add_dossier_endorsement(
+            dossier_id, form="御笔手敕", endorser_id=minister, imperial=True,
+            source_chat_turn_id=chat_turn_id,
+        )
+    # imperial=False 负例：御笔手敕不得假借非御笔标记。
+    with pytest.raises(ValueError):
+        db.add_dossier_endorsement(
+            dossier_id, form="御笔手敕", endorser_id="", imperial=False,
+            source_chat_turn_id=chat_turn_id,
+        )
+    with pytest.raises(ValueError):
+        db.add_dossier_endorsement(
+            dossier_id, form="当面站台", endorser_id="不存在的人",
+            source_chat_turn_id=chat_turn_id,
+        )
+    for bad_imperial in ("false", 1, 0, None):
         with pytest.raises(ValueError):
-            db.dossiers.add_endorsement(
-                case["dossier_id"],
-                form=case["form"],
-                endorser_id=case["endorser_id"],
-                imperial=case.get("imperial", False),
+            db.add_dossier_endorsement(
+                dossier_id, form="会签", endorser_id=minister,
+                imperial=bad_imperial,  # type: ignore[arg-type]
                 source_chat_turn_id=chat_turn_id,
             )
     assert db.conn.execute("SELECT COUNT(*) FROM decree_dossier_endorsements").fetchone()[0] == 0
@@ -183,20 +186,20 @@ def test_undo_chat_turn_removes_source_bound_endorsements_from_judge(game):
         chat_turn_id=chat_turn_id, night_id=night_id, seq=seq,
         fact={"body": "大臣当殿愿为辽饷旨意会签。", "person_names": [minister], "tags": ["会签"]},
     )["status"] == "done"
-    db.dossiers.add_endorsement(
+    db.add_dossier_endorsement(
         dossier_id, form="会签", endorser_id=minister, imperial=False,
         source_chat_turn_id=chat_turn_id,
     )
-    assert db.dossiers.endorsements(dossier_id)
+    assert db.list_dossier_endorsements(dossier_id)
 
     db.undo_chat_turn(chat_turn_id)
 
-    assert db.dossiers.endorsements(dossier_id) == []
+    assert db.list_dossier_endorsements(dossier_id) == []
     assert db.conn.execute(
         "SELECT COUNT(*) FROM decree_dossier_endorsements WHERE source_chat_turn_id=?",
         (chat_turn_id,),
     ).fetchone()[0] == 0
-    context = build_promulgation_judge_context(db, state, db.dossiers.list_dossiers())
+    context = build_promulgation_judge_context(db, state, db.list_decree_dossiers())
     dossier_ctx = next(item for item in context["dossiers"] if item["id"] == dossier_id)
     assert dossier_ctx["endorsements"] == []
     assert dossier_ctx["criteria_snapshot_source"]["endorsement_entry_ids"] == []

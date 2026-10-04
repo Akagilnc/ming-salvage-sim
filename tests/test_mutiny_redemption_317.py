@@ -1,6 +1,5 @@
-"""#317 — 连续满饷兑换军心上限，且进度跨财政路径与存档持久。"""
+"""#317 — 连续满饷兑换军心上限，且进度跨存档持久。"""
 from __future__ import annotations
-from tests.army_pay_helpers import configure_central_army
 
 import sqlite3
 
@@ -12,11 +11,29 @@ from ming_sim.flows import apply_fixed_period_flows
 ARMY = "guanning"
 
 
-def _set_arrears(db,  arrears: float) -> None:
-    central = arrears
+def _configure(db) -> None:
+    value = 1  # active substrate_hub cutover
+    for key in ("__army_pay_source_cutover", "__fiscal_engine"):
+        db.conn.execute(
+            "INSERT INTO fiscal_config(key,value,kind,note) VALUES (?,?,'meta','test') "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (key, value),
+        )
+    db.conn.execute("UPDATE armies SET manpower=0")
     db.conn.execute(
-        'UPDATE armies SET province_pay_arrears=0,central_pay_arrears=? WHERE id=?',
-        (central, ARMY,),
+        """UPDATE armies SET owner_power='ming', is_tusi=0, self_funded_pay=0,
+           manpower=10000, salary_rate=1, province_pay_share=0, central_pay_share=1
+           WHERE id=?""",
+        (ARMY,),
+    )
+    db.conn.commit()
+
+
+def _set_arrears(db, arrears: float) -> None:
+    central = arrears  # active hub source-split seed
+    db.conn.execute(
+        "UPDATE armies SET arrears=?,province_pay_arrears=0,central_pay_arrears=? WHERE id=?",
+        (arrears, central, ARMY),
     )
     db.conn.commit()
 
@@ -33,7 +50,7 @@ def _tick(db, state):
 
 def test_twelve_consecutive_full_pay_months_redeem_once_and_raise_cap(game):
     db, state, _ = game
-    configure_central_army(db, ARMY)
+    _configure(db)
     db.conn.execute(
         """UPDATE armies SET loyalty=95,mutiny_count=2,mutiny_probation=2,
            full_pay_streak=11,redemption_count=0,is_mutinied=0 WHERE id=?""",
@@ -65,7 +82,7 @@ def test_twelve_consecutive_full_pay_months_redeem_once_and_raise_cap(game):
 
 def test_full_pay_streak_can_be_saved_in_peace_and_partial_pay_resets_it(game):
     db, state, _ = game
-    configure_central_army(db, ARMY)
+    _configure(db)
     db.conn.execute(
         "UPDATE armies SET loyalty=100,mutiny_count=0,full_pay_streak=10,redemption_count=0 WHERE id=?",
         (ARMY,),
@@ -112,16 +129,27 @@ def test_redemption_progress_migrates_and_survives_reopen(game, tmp_path):
     path = str(tmp_path / "old-save.db")
     copied = sqlite3.connect(path)
     db.conn.backup(copied)
-    copied.execute(
+    copied.execute("ALTER TABLE armies DROP COLUMN full_pay_streak")
+    copied.execute("ALTER TABLE armies DROP COLUMN redemption_count")
+    copied.close()
+
+    migrated = GameDB(path, content)
+    columns = {row["name"] for row in migrated.conn.execute("PRAGMA table_info(armies)")}
+    assert {"full_pay_streak", "redemption_count"} <= columns
+    defaults = migrated.conn.execute(
+        "SELECT full_pay_streak,redemption_count FROM armies WHERE id=?", (ARMY,)
+    ).fetchone()
+    assert tuple(defaults) == (0, 0)
+    migrated.conn.execute(
         "UPDATE armies SET full_pay_streak=11,redemption_count=1,mutiny_count=2,loyalty=95 WHERE id=?",
         (ARMY,),
     )
-    copied.commit()
-    copied.close()
+    migrated.conn.commit()
+    migrated.close()
 
     reopened = GameDB(path, content)
     try:
-        configure_central_army(reopened, ARMY)
+        _configure(reopened)
         _set_arrears(reopened, 0)
         restored = _tick(reopened, state)
         assert tuple(restored[k] for k in (
