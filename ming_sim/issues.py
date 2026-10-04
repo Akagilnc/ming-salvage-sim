@@ -1497,7 +1497,7 @@ def apply_historical_fiscal_rates(
     settle.p，保证后续 settle_tick 当月读到目标值且重复运行不叠加。
     """
     c = _ctx()
-    should_commit = commit and not db.conn.in_transaction
+    should_commit = commit and db.owns_transaction()
     applied: List[Dict[str, object]] = []
 
     def run_fiscal_levy_pass() -> None:
@@ -1746,7 +1746,7 @@ def apply_event_cascading_invalidations(
     """
     content = _ctx()
     _validate_event_dependency_graph_acyclic(content, state)
-    should_commit = commit and not db.conn.in_transaction
+    should_commit = commit and db.owns_transaction()
     terminalized: List[Dict[str, object]] = []
     terminal_records = _event_terminal_records(db)
 
@@ -2301,7 +2301,7 @@ def apply_event_terminal_states(
 ) -> List[Dict[str, object]]:
     """Persist deterministic event terminal states from the current board position."""
     c = _ctx()
-    should_commit = commit and not db.conn.in_transaction
+    should_commit = commit and db.owns_transaction()
     terminal_refs = _event_trigger_refs(db)
     terminalized: List[Dict[str, object]] = []
 
@@ -4454,7 +4454,7 @@ def apply_issue_tracker_output(
     issue_person_changes: List[Dict[str, object]] = []
     runtime_content = content if content is not None else _ctx()
     event_by_id = runtime_content.event_by_id
-    external_transaction = db.conn.in_transaction
+    external_transaction = not db.owns_transaction()
     commit_now = not external_transaction
     if external_transaction:
         _register_runtime_rollback_snapshot(db, state, runtime_content)
@@ -6059,7 +6059,7 @@ def _apply_person_changes(
     require_origin: bool = False,
 ) -> List[Dict[str, object]]:
     if external_transaction is None:
-        external_transaction = db.conn.in_transaction
+        external_transaction = not db.owns_transaction()
     commit_person_change = not external_transaction
 
     def rejected(
@@ -7351,7 +7351,7 @@ def apply_person_changes_only(
     #652 recovery / bandit 等结算核。返回形状与 full applier 的 applied_person_changes 对齐。
     """
     runtime_content = content if content is not None else _ctx()
-    caller_transaction = db.conn.in_transaction
+    caller_transaction = not db.owns_transaction()
     if caller_transaction:
         _register_runtime_rollback_snapshot(db, state, runtime_content)
     changes = _canonicalize_person_change_names(
@@ -7457,7 +7457,7 @@ def apply_score_extraction(
     ``effect_sequence``：C0 effects 数组的逐笔 payload；提供时按交代先后交错
     落各笔的普通字段，批次副作用仍只跑一次（#1844）。
     """
-    caller_transaction = db.conn.in_transaction
+    caller_transaction = not db.owns_transaction()
     commit_now = not caller_transaction
     if caller_transaction:
         _register_runtime_rollback_snapshot(db, state, content)
@@ -8022,7 +8022,7 @@ def _apply_score_extraction_body(
             content=content,
             llm_config=llm_config,
             allow_legacy_partial_power=legacy,
-            external_transaction=db.conn.in_transaction,
+            external_transaction=not db.owns_transaction(),
             origin_ref=origin_ref,
             require_origin=require_origin,
         )

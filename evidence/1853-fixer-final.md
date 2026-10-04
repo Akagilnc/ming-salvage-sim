@@ -55,7 +55,7 @@ git grep -n -I 'pending_action_failures\|PendingActionFailure\|decisionFailures\
 | 成功空声明仍可分派 | `test_translate_empty_success_still_dispatches_without_failure` | **保留**（去掉死字段断言） |
 | 原轮/月链 `error_pack` / HTTP/SSE `message` | 结算真异常上抛 | **保留** |
 
-### C. `list_failed_secret_order_actions` / `status='failed'`（保留）
+### C. 失败查询退役与拒收终态保留（末判纠正）
 
 ```bash
 git grep -n -I -E 'list_failed_secret_order_actions|discard_failed_secret_order|SET status=.failed.' -- ming_sim/ tests/ web_app.py
@@ -65,9 +65,9 @@ git grep -n -I -E 'list_failed_secret_order_actions|discard_failed_secret_order|
 |---|---|---|
 | `ming_sim/db.py:17615/17621` | dispose 案卷/typed 拒收 → failed | **保留** |
 | `ming_sim/db.py:18118/18172/18264` | invalid / soft-reject → failed | **保留** |
-| `ming_sim/db.py:17981` | `list_failed_secret_order_actions` | **保留**（清理查询） |
+| `ming_sim/db.py` | `list_failed_secret_order_actions` | **删除**；生产消费者已退役，清理直接 DELETE，此前“清理查询”理由不成立 |
 | `ming_sim/db.py:19016` + `decree.py:1184` | `discard_failed_secret_order_intents` | **保留** |
-| `tests/test_secret_order_isolation_883.py:1201` | 查询契约 | **保留** |
+| `tests/test_secret_order_isolation_883.py` | 旧失败查询断言 | **删除**；同案保密结果断言保留 |
 
 ---
 

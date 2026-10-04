@@ -20,6 +20,7 @@ from datetime import datetime, timezone
 from collections.abc import Mapping
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
+from ming_sim.applier import connection_owns_transaction
 from ming_sim.db import normalize_office
 from ming_sim.error_pack import error_packs_root
 from ming_sim.models import GameState
@@ -1779,11 +1780,7 @@ def discard_inactive_office_summon(db: Any, pending_id: int) -> bool:
     BEGIN/atomic, so outer rollback can restore pending + origin together.
     """
     conn = db.conn
-    owns_transaction = not (
-        bool(getattr(conn, "_commit_suspended", False))
-        or int(getattr(conn, "_atomic_depth", 0) or 0) > 0
-        or conn.in_transaction
-    )
+    owns_transaction = connection_owns_transaction(conn)
     origin = f"office:{int(pending_id)}"
     entry = _ledger_by_origin_ref(db, origin)
     if entry is None:

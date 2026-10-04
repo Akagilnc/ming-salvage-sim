@@ -17644,10 +17644,7 @@ class GameDB:
         返回 True 表示已 committed；软失败返回 False；真异常经既有出口上抛。
         """
         if owns_transaction is None:
-            owns_transaction = not (
-                bool(getattr(self.conn, "_commit_suspended", False))
-                or int(getattr(self.conn, "_atomic_depth", 0) or 0) > 0
-            )
+            owns_transaction = self.owns_transaction()
         cm = atomic(self) if owns_transaction else contextlib.nullcontext()
         ok = False
         with cm:
@@ -18038,33 +18035,6 @@ class GameDB:
             for r in rows
         ]
 
-    def list_failed_secret_order_actions(
-        self, minister_name: Optional[str] = None,
-    ) -> List[Dict[str, object]]:
-        sql = (
-            "SELECT id, turn, kind, action, target_id, minister_name, payload_json, status "
-            "FROM pending_actions WHERE status='failed' AND kind='secret_order'"
-        )
-        params: tuple[object, ...] = ()
-        if minister_name is not None:
-            sql += " AND minister_name=?"
-            params = (str(minister_name),)
-        sql += " ORDER BY turn DESC, id"
-        rows = self.conn.execute(sql, params).fetchall()
-        return [
-            {
-                "id": int(r["id"]),
-                "turn": int(r["turn"]),
-                "kind": r["kind"],
-                "action": r["action"],
-                "target_id": None if r["target_id"] is None else int(r["target_id"]),
-                "minister_name": r["minister_name"],
-                "payload_json": r["payload_json"],
-                "status": r["status"],
-            }
-            for r in rows
-        ]
-
     def _prepare_pending_directive(
         self, state: GameState, pa: Dict[str, object], *, content=None,
         allow_clarification: bool = False,
@@ -18158,10 +18128,7 @@ class GameDB:
         if action_ids is not None:
             allowed_ids = {int(action_id) for action_id in action_ids}
             rows = [r for r in rows if int(r["id"]) in allowed_ids]
-        owns_transaction = not (
-            bool(getattr(self.conn, "_commit_suspended", False))
-            or int(getattr(self.conn, "_atomic_depth", 0) or 0) > 0
-        )
+        owns_transaction = self.owns_transaction()
         for pa in rows:
             if pa["kind"] == "directive" and pa["action"] == "拟旨":
                 prepared = self._prepare_pending_directive(
@@ -18895,11 +18862,7 @@ class GameDB:
         """皇帝复核:撤回本回合一条尚未落库的暂存动作(删 pending 行)。返回是否删了。
         已 committed / 非本回合 / 不存在 → False。
         仍 inactive 的 office:<id> 传召 origin 同步清掉（#672 颁前反悔）。"""
-        owns_transaction = not (
-            bool(getattr(self.conn, "_commit_suspended", False))
-            or int(getattr(self.conn, "_atomic_depth", 0) or 0) > 0
-            or self.conn.in_transaction
-        )
+        owns_transaction = self.owns_transaction()
         row = self.conn.execute(
             "SELECT id, kind, version FROM pending_actions "
             "WHERE id=? AND turn=? AND status='pending'",
@@ -18929,11 +18892,7 @@ class GameDB:
         """#525 留中：点名候选移出 status=pending 活跃集，同表 durable 留中档 (held_over)。
         不删行；commit_pending_actions 只读 pending，故默认提交自然跳过、不成案。
         返回更新条数。action_ids 非空=只留中指定 id（#502 点名粒度）。"""
-        owns_transaction = not (
-            bool(getattr(self.conn, "_commit_suspended", False))
-            or int(getattr(self.conn, "_atomic_depth", 0) or 0) > 0
-            or self.conn.in_transaction
-        )
+        owns_transaction = self.owns_transaction()
         params: List[object] = [int(turn), str(minister_name)]
         where = "turn=? AND minister_name=? AND status='pending'"
         if action_ids is not None:
@@ -18962,11 +18921,7 @@ class GameDB:
         kind_filter_exclude 非空=不删该 kind(召对确认拒绝须放过 directive,BUG 1:拟旨搁置
         是颁诏期语义,不能被召对期拒绝静默删掉玩家草案)。
         仍 inactive 的 office:<id> 传召 origin 随 pending 同步清（#672 颁前拒绝）。"""
-        owns_transaction = not (
-            bool(getattr(self.conn, "_commit_suspended", False))
-            or int(getattr(self.conn, "_atomic_depth", 0) or 0) > 0
-            or self.conn.in_transaction
-        )
+        owns_transaction = self.owns_transaction()
         params: List[object] = [int(turn), str(minister_name)]
         where = "turn=? AND minister_name=? AND status='pending'"
         if action_ids is not None:
@@ -20344,9 +20299,7 @@ class GameDB:
             )
             return issue_id
 
-        outer_owns = bool(
-            getattr(self.conn, "_commit_suspended", False) or self.conn.in_transaction
-        )
+        outer_owns = not self.owns_transaction()
         if outer_owns or not commit:
             return _paired()
         with atomic(self):
@@ -20520,7 +20473,7 @@ class GameDB:
 
     def list_active_legacies(self, state: GameState) -> List[sqlite3.Row]:
         """当前仍生效的帝国修正，顺手把已到期的失活。"""
-        external_transaction = bool(getattr(self.conn, "_commit_suspended", False) or self.conn.in_transaction)
+        external_transaction = not self.owns_transaction()
         self.expire_legacies(state, commit=not external_transaction)
         return self.conn.execute(
             "SELECT * FROM legacies WHERE status='active' ORDER BY id"
@@ -20569,7 +20522,7 @@ class GameDB:
         """
         # expire 可能改变 active 集 → 先跑。若调用方已有外层事务，不能在读修正符时提交；
         # 且该未提交 active 集不可写入缓存，否则 rollback 后会留下脏 cache。
-        cache_allowed = not (getattr(self.conn, "_commit_suspended", False) or self.conn.in_transaction)
+        cache_allowed = self.owns_transaction()
         self.expire_legacies(state, commit=cache_allowed)
         if cache_allowed and self._legacy_mod_cache is not None:
             return self._legacy_mod_cache
