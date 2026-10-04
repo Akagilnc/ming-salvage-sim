@@ -1,11 +1,11 @@
-# #1834 修内司回执 · F16 packaging-KEEP 反例全类修理
+# #1834 修内司回执 · F16 自审修正（删新永久测试 + 退役残段 + 全员 loc）
 
 **工作树**：`/Users/akagilnc/WorkSpace/Ming_LLM-1834-w5`
 **分支**：`ak-roles/1834-f16-f3-f3r-f17-ee3b5da31`
 **基线**：`ee3b5da312c5832720d89aee707fe4c7669c5eb0`
-**父 HEAD（开工）**：`71c0a4868`（stamp after f1635db3a）
-**本轮 commit**：`aa7374f1181f6b06cf98c221cea779131f23cd0d`
-**判词**：`evidence/1834-f16-f3-f3r-f17-fix/continued-ruling.json` + 用户反例（cli_backend 856/859）
+**父 HEAD（自审开工）**：`285c0abb4`（stamp after aa7374f11）
+**本轮 commit**：*(stamp after commit)*
+**判词**：`evidence/1834-f16-f3-f3r-f17-fix/continued-ruling.json` + 用户续判（禁新增永久证明测试；退役残段不得宿主保留；F16 16 组须可核全员 loc）
 **法源**：CLAUDE.md P6 / ADR 0142；判词 F16「自由文本零删改」；stdout 包装改写**不是**合法例外。
 
 **共同测试前缀（七变量，实写）**：
@@ -17,72 +17,52 @@ MING_SIM_KIMI_BIN=/usr/bin/false MING_SIM_GROK_BIN=/usr/bin/false \
 MING_SIM_PI_BIN=/usr/bin/false
 ```
 
-F3 / F17：保持已修；F17 已获允许撤销证明，本轮未新造变异。
+F3 / F17：保持已修；F17 维持合法撤销路线，本轮未新造任何证据/变异机制。
 
 ---
 
-## 反例
+## 自审修正（相对 aa7374f11）
 
-用户实读 `ming_sim/cli_backend.py` 825–910：`_iter_cli_runner_text` 对 `stdout_text.strip()` / `final_text.strip()` yield，`_run_cli_runner` `return text.strip(), 1`。旧 `f16_hand_verify_after_ruling.tsv` 对 856/859 标 KEEP「进程包装不是自由正文」。真实返回是 LLM 正文，经 CliChat.invoke / `_run_backend_for_config` 进入 extract → 拟诏/召对/密令等 supply/write 链。
+### 删除新永久证明测试（五条，不换形新增）
 
----
+| 位置 | 条数 | 处置 |
+| --- | --- | --- |
+| `tests/test_cli_runner_error_typed_1299.py` | 4（+77 行） | **已删**：`test_run_cli_runner_preserves_llm_body_whitespace` / `test_run_cli_runner_whitespace_only_still_empty` / `test_write_decree_with_agno_preserves_whitespace` / `test_require_non_empty_text_preserves_whitespace` |
+| `web/src/components/situation.test.tsx` | 1（+9 行） | **已删**：`preserves padded commitment progress text verbatim` |
 
-## 1. 撤销
+原有独立契约保留（#1299 typed/banner；#671 extract whitespace；situation 既有 progress/fallback 等）。
 
-| 证据 | 处置 |
-| --- | --- |
-| `f16_hand_verify_after_ruling.tsv` | **REVOKED_PACKAGING_KEEP**（误把 stdout 包装当合法例外） |
-| `f16_hand_member_table.tsv` | 仍 **REVOKED_TEMPLATE**；内容 stub，去重复堆叠 |
-| 旧窄枚举 `enum_f16_rewrite_shapes_rerun.txt` 等 | stub；权威枚举改 broad |
+合法保留：`tests/test_cli_backend.py` 既有运输断言已适应 raw（`test_run_codex_stdout_empty_fallback` → `STDOUT_BODY\n`）；既有空输出 negative `test_run_runner_empty_output_is_retryable_typed` 仍在。
 
----
+### 退役残段删除（非宿主 KEEP）
 
-## 2. F16 枚举（完整形状，非四类收窄）
+全仓调用者核查：`_cli_recommendation_call` / `_cli_prompt` / `_cli_stream_safe_prefix` / `_CLI_RECOMMENDATION_*` = **仅定义、零调用**；`ToolFunction` 未导入 → 强行调用 NameError。  
+`dd8c0f072` 已退役，merge `beff66c17` 误带回。本轮随改删除整簇，并收窄 `_fake_completion` 签名（去掉无用 `tool_calls`）。
 
-完整命令与 HIT：`enum_f16_broad_meta.txt` / `f16_disposition_after_counterexample.METHOD.txt`
+### F16 处置表全员映射
 
-```bash
-rg -n --glob 'ming_sim/**/*.py' --glob 'web_app.py' --glob 'web/src/**/*.{ts,tsx}' \
-  '\.strip\(\)|\.lstrip\(\)|\.rstrip\(\)|\.trim\(\)|\.trimStart\(\)|\.trimEnd\(\)|\.replace\(|re\.sub\(|\[:\s*\d+\s*\]|\.split\(|\.join\(|\.substring\(|\.slice\('
-# → enum_f16_rewrite_shapes_broad.txt  HIT_COUNT=2241
-```
+- 权威：`f16_disposition_after_counterexample.tsv`（**16 grouped rows**）
+- 全员 loc：`f16_disposition_member_locs.tsv`（广扫 **2241/2241** 每条映射到一组；无 many/various/otherwise）
+- 方法：`f16_disposition_after_counterexample.METHOD.txt`
+- `CLI_recommendation_envelope_cut`：**DELETED**（非 KEEP）
 
-高信号 return/assign：`enum_f16_return_assign_strip.txt`
-
-权威处置（按真实同一职责归并，成员全列）：`f16_disposition_after_counterexample.tsv`
+生产 FIX（aa7374f11 已落、本轮保留）：CLI runner 终文 / 拟诏 / llm_contract / json_field fallback / `_matched_prefix` / situation·closedIssues·edictModal 展示判空副本。
 
 ---
 
-## 3. 本轮 FIX_APPLIED（生产）
-
-| loc | 实质 |
-| --- | --- |
-| `cli_backend._iter_cli_runner_text` / `_run_cli_runner` | LLM 终文：判空用 strip 副本；yield/return 原文；codex 横幅只切不 strip |
-| `decree.write_decree_with_agno` | 拟诏正文保原文 |
-| `llm_contract.require_non_empty_text` | 判空副本，返回原文 |
-| `action_materialize._parse_json_field` | JSON 判空副本；非 JSON 回落原文 |
-| `cli_backend._matched_prefix` | 只 lstrip 定位前缀；正文 raw |
-| `situation.tsx` commitmentProgressText / barLabel | 展示 trim 只判空 |
-| `closedIssues.tsx` closedBarLabel | 同上 |
-| `edictModal.tsx` sourceLabel | 同上（结构化 source/actor） |
-
-合法 KEEP 类：机器键/枚举；JSON 围栏；局部判空；静态配置；HTTP 错误信道；退役无调用的 recommend 信封残段（未删宿主、未复活 import）。
-
----
-
-## 4. 真实入口观察
-
-`probe_cli_body_preserve.txt`：cli_runner / decree / contract / json_field / matched_prefix 均保边空白。
-
----
-
-## 5. 聚焦测试
+## 聚焦测试
 
 ### pytest
 
-完整输出：`pytest_focus.txt`
+```bash
+MING_SIM_AGY_BIN=/usr/bin/false MING_SIM_CODEX_BIN=/usr/bin/false \
+MING_SIM_CLAUDE_BIN=/usr/bin/false MING_SIM_CURSOR_BIN=/usr/bin/false \
+MING_SIM_KIMI_BIN=/usr/bin/false MING_SIM_GROK_BIN=/usr/bin/false \
+MING_SIM_PI_BIN=/usr/bin/false \
+python3 -m pytest tests/test_cli_runner_error_typed_1299.py tests/test_cli_backend.py tests/test_cli_transport_1465.py -q --tb=line
+```
 
-结果：**121 passed**（`test_cli_runner_error_typed_1299` + `test_cli_backend` + `test_cli_transport_1465`）
+完整输出：`pytest_focus.txt` — **117 passed**
 
 ### vitest
 
@@ -90,15 +70,15 @@ rg -n --glob 'ming_sim/**/*.py' --glob 'web_app.py' --glob 'web/src/**/*.{ts,tsx
 cd web && npx vitest run --environment jsdom src/components/situation.test.tsx
 ```
 
-完整输出：`vitest_focus.txt` — **11 passed**
+完整输出：`vitest_focus.txt` — **10 passed**
 
 ---
 
 ## 未结（诚实）
 
-- 不声称 2241 候选外永无新形状；权威以本轮 disposition 表为准。
-- 退役 `_cli_recommendation_call` 残段未删（宿主机制保留）；不在 live 调用图。
-- F17：仍仅撤销申报，无新旧并排变异。
+- 不声称 2241 候选外永无新形状；权威以本轮 disposition + member_locs 为准。
+- F17：仍仅撤销申报，无新旧并排变异，无新造证据机制。
 - 未跑全量；未 stash/amend/push/PR。
+- 本轮**未新增**永久证明脚本或测试；不为证明修复造测试。
 
-自查二连 done（再读本轮 diff：CLI/拟诏/契约/JSON 回落/前端展示均判空副本+取值 raw；未把 stdout 包装当 KEEP；证据去重 stub 旧表）。
+自查二连 done（再读 diff：五条新测试已删、荐人残段已删、2241 全员 loc 可核、既有 test_cli_backend raw/空输出保留）。

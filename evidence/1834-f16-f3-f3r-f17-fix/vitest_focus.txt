@@ -1,11 +1,9 @@
 
  RUN  v4.1.9 /Users/akagilnc/WorkSpace/Ming_LLM-1834-w5/web
 
-···········
 
  Test Files  1 passed (1)
-      Tests  11 passed (11)
-   Start at  08:29:32
-   Duration  669ms (transform 45ms, setup 0ms, import 97ms, tests 35ms, environment 473ms)
+      Tests  10 passed (10)
+   Start at  08:34:25
+   Duration  580ms (transform 43ms, setup 0ms, import 82ms, tests 30ms, environment 411ms)
 
-CMD: cd web && MING_SIM_*_BIN=/usr/bin/false npx vitest run --environment jsdom src/components/situation.test.tsx
