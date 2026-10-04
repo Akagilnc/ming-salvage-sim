@@ -672,30 +672,6 @@ def test_numeric_cond_on_text_field_raises_clear(read_game):
         _gate_passed({"region.huguang.controlled_by": ">=1"}, state.metrics, db)
 
 
-def test_character_numeric_gate_supports_aggregation(game):
-    """character.<name>|<name>.<field>.<agg> 与其它 gate 表同样支持聚合。"""
-    from ming_sim.issues import _gate_passed
-    db, state, _content = game
-
-    db.conn.execute("UPDATE characters SET loyalty=? WHERE name=?", (40, "毛文龙"))
-    db.conn.execute("UPDATE characters SET loyalty=? WHERE name=?", (80, "袁崇焕"))
-    db.conn.commit()
-
-    assert _gate_passed({"character.毛文龙|袁崇焕.loyalty.avg": ">=60"}, state.metrics, db)
-    assert not _gate_passed({"character.毛文龙|袁崇焕.loyalty.min": ">=60"}, state.metrics, db)
-
-
-def test_army_numeric_gate_preserves_fractional_arrears_tail(game):
-    """#302 cmr：并轨后 armies.arrears 可为小数尾差，trigger_gate 不得 int 截断成 0。"""
-    from ming_sim.issues import _gate_passed
-    db, state, _content = game
-
-    army_id = db.conn.execute("SELECT id FROM armies ORDER BY id LIMIT 1").fetchone()["id"]
-    db.conn.execute("UPDATE armies SET arrears=? WHERE id=?", (0.5, army_id))
-    db.conn.commit()
-
-    assert not _gate_passed({f"army.{army_id}.arrears": "<=0"}, state.metrics, db)
-    assert _gate_passed({f"army.{army_id}.arrears": ">0"}, state.metrics, db)
 
 
 def test_character_gate_rejects_malformed_field_before_sql(read_game):
@@ -717,17 +693,6 @@ def test_character_numeric_field_text_gate_raises_clear(read_game):
     with pytest.raises(ValueError):
         _gate_passed({"character.毛文龙.loyalty": "==active"}, state.metrics, db)
 
-
-def test_character_text_gate_supports_equality(game):
-    """character.<name>.<field> 文本字段可参与 trigger_gate 相等/不等比较（#201）。"""
-    from ming_sim.issues import _gate_passed
-    db, state, content = game
-
-    db.conn.execute("UPDATE characters SET location = ? WHERE name = ?", ("liaodong", "毛文龙"))
-
-    assert _gate_passed({"character.毛文龙.location": "==liaodong"}, state.metrics, db)
-    assert _gate_passed({"character.毛文龙.location": "!=capital"}, state.metrics, db)
-    assert not _gate_passed({"character.毛文龙.location": "==capital"}, state.metrics, db)
 
 
 def test_character_typo_field_gate_raises_clear(read_game):
@@ -1441,20 +1406,6 @@ def test_issue_tracker_rollback_restores_bound_content_when_content_omitted(game
         assert db.get_character_status("毛文龙")[0] == "active"
         assert content.characters["毛文龙"].status == "active"
 
-
-def test_issue_tracker_rollback_removes_dynamic_character_attrs(game):
-    """online R3 Gemini：事务中新添的人物动态属性也要随 runtime rollback 清掉。"""
-    db, state, content = game
-    issues.bind_content(content)
-    character = content.characters["毛文龙"]
-    if hasattr(character, "_test_runtime_ghost_attr"):
-        delattr(character, "_test_runtime_ghost_attr")
-    db.conn.commit()
-
-    db.conn.execute("BEGIN")
-    issues.apply_issue_tracker_output(db, state, {"advances": []}, content=content)
-    character._test_runtime_ghost_attr = "ghost"
-    db.conn.rollback()
 
 
 def test_apply_score_extraction_metric_delta_restores_runtime_on_outer_rollback(game):

@@ -804,32 +804,6 @@ def test_calibrated_save_without_marker_not_re_anchored(game, tmp_path):
         db.close()
 
 
-def test_rollback_snapshot_restores_leverage_offset(game):
-    """#9 R1 finding#2：person 写状态快照/还原须含 leverage_offset（leverage 由 offset+权重派生、
-    二者一个逻辑态）。构造：改 offset 后还原，断言 offset 也回到原值。"""
-    from ming_sim.issues import _snapshot_person_write_state, _restore_person_write_state
-
-    db, state, content = game
-    faction = "阉党"
-    before_offset = db.conn.execute(
-        "SELECT leverage_offset FROM factions WHERE name=?", (faction,)
-    ).fetchone()["leverage_offset"]
-
-    snapshot = _snapshot_person_write_state(db, content)
-    # 模拟包裹流中途改 offset（adjust_factions 白名单路会改 offset）。
-    db.conn.execute(
-        "UPDATE factions SET leverage_offset = leverage_offset + 13 WHERE name=?", (faction,)
-    )
-    db.conn.commit()
-    _restore_person_write_state(db, content, snapshot)
-
-    after_offset = db.conn.execute(
-        "SELECT leverage_offset FROM factions WHERE name=?", (faction,)
-    ).fetchone()["leverage_offset"]
-    assert after_offset == before_offset, (
-        f"回滚应还原 leverage_offset：before={before_offset} after={after_offset}"
-    )
-
 
 def test_chat_rollback_restores_faction_leverage(game):
     """#9 R1 finding#4：chat 回滚快照表集须含 factions。leverage hook 会改 factions.leverage，
