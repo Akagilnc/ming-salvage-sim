@@ -2040,5 +2040,5 @@ for f in auth_files:
 
 ### 交卷 HEAD（本轮）
 
-- tip HEAD（query）：`b11d79e24bacea7ad62b4874ea0b60f67f472ac5`（short `b11d79e24ba`；fix=b11d79e24bacea7ad62b4874ea0b60f67f472ac5）
+- tip HEAD（query）：`0fc75d4adf6dba589d0f092b35f54e8b190061cd`（fix `b11d79e24bacea7ad62b4874ea0b60f67f472ac5`）
 - **未 push / 未 PR / 未 amend / 本轮未 stash**。
