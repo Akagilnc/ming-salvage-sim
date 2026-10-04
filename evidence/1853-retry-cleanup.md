@@ -6,7 +6,7 @@
 - 首轮交卷：`f88af780d0f5e402a9c06a50f5dd88d98488ba5e`（J2-T + 仅三 reply getter 的窄 J8）
 - 扩类交卷：`3c4aca7045eaea539bbaee6ae672a853f9d4f73c`（J8 查询空护栏扩类；表 B 误并查询）
 - already_done 交卷：`55888a1b48cf5e40cdae43010d658f8a64002ebe`（纠正表 B + `already_done` 查询直调）
-- **本轮交卷 commit：待填（三处 web_app 查询护栏直调；E2/E3/_fail SELECT 重归属类）**
+- **本轮交卷 commit：`8b24a73effebfbb444a72ab6481eeefa1d4dcddb`（三处 web_app 查询护栏直调；E2/E3/_fail SELECT 重归属类）**
 - 判词冻结：`07-1853-judge-2e392c224.json` payloads **末份**
 - **用户裁定（本轮）**：同一 J8 复核继续。`_record_persisted_reply_failure` 缺 conn→False、`_fail_chat_turn_and_reload` SELECT `hasattr(conn) else None`、`undo_last_chat` 殿上 hasconn——三者均为查询接缝（状态/问话 id/夜序定 restore vs fail 或殿上路由），**不能因后续写口把前置 SELECT 错归写生命周期**。授权删三处 conn 兼容、直调；保留无 chat_turn_id / 缺行 / 无 night 等真实业务分支。写 mark/set_error_pack 可保留但回执明确写口无查询伪推。不扩其他一般聊天生命周期。不新增证明测试、不追已知红灯。
 - **未合入目标分支；不 push / 不开 PR；不 amend / 不 stash**
@@ -173,4 +173,4 @@ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$PWD" \
 
 ## commit
 
-待填 — `ak-roles: fix(#1853): direct-call reply-fail/undo night query guards`
+`8b24a73effebfbb444a72ab6481eeefa1d4dcddb` — `ak-roles: fix(#1853): direct-call reply-fail/undo night query guards`
