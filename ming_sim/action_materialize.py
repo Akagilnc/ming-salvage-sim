@@ -320,7 +320,7 @@ def stage_pacification_candidate(
         "mode": mode,
     }
     if existing_id:
-        return db.update_directive_candidate(existing_id, staged)
+        return db.update_directive_candidate(existing_id, staged, night_id=night_id, source_chat_turn_id=source_chat_turn_id)
     return db.stage_directive_candidate(
         int(turn), minister_name, payload=staged,
         night_id=night_id,
@@ -515,7 +515,7 @@ def stage_punishment_candidate(
     elif n > 0:
         staged["amount"] = n
     if existing_id:
-        return db.update_directive_candidate(existing_id, staged)
+        return db.update_directive_candidate(existing_id, staged, night_id=night_id, source_chat_turn_id=source_chat_turn_id)
     return db.stage_directive_candidate(
         int(turn), minister_name, payload=staged,
         night_id=night_id,
@@ -699,7 +699,11 @@ def canonicalize_xiexang_army_target(db: Any, raw_target: object) -> str:
 class DecreeMaterializationValidationError(ValueError):
     """Typed rejection raised before a decree candidate can be recorded."""
 
-    def __init__(self, message: str, *, failed_fields: tuple[str, ...] = ()) -> None:
+    def __init__(
+        self, message: str, *, failed_fields: tuple[str, ...] = (),
+        category: str = "invalid_shape",
+    ) -> None:
+        self.category = category
         self.failed_fields = failed_fields
         super().__init__(message)
 
@@ -985,7 +989,7 @@ def stage_grant_allocation_candidate(
             "character_id": lead, "tier": "主办", "role": "", "delegator_id": None,
         }]
     if existing_id:
-        return db.update_directive_candidate(existing_id, staged)
+        return db.update_directive_candidate(existing_id, staged, night_id=night_id, source_chat_turn_id=source_chat_turn_id)
     return db.stage_directive_candidate(
         int(turn), minister_name, payload=staged,
         night_id=night_id,
@@ -1674,7 +1678,7 @@ def stage_assignment_candidate(
             staged["commitment_kind"] = staged.get("commitment_kind") or "until_stop"
             # 段派生 end_turn（max due）不写入候选/DB（#620 勿驱动 expire）
     if existing_id:
-        return db.update_directive_candidate(existing_id, staged)
+        return db.update_directive_candidate(existing_id, staged, night_id=night_id, source_chat_turn_id=source_chat_turn_id)
     return db.stage_directive_candidate(
         int(turn), minister_name, payload=staged,
         night_id=night_id,
@@ -1764,7 +1768,7 @@ def stage_authorization_candidate(
     # 不属三入口 structured_decree 契约；仅缺省补全，非覆盖已给 locality。
     staged["locality_scope"] = write_locality_scope_for_target_kind(kind)
     if existing_id:
-        return db.update_directive_candidate(existing_id, staged)
+        return db.update_directive_candidate(existing_id, staged, night_id=night_id, source_chat_turn_id=source_chat_turn_id)
     return db.stage_directive_candidate(int(turn), minister_name, payload=staged)
 
 
@@ -1875,7 +1879,7 @@ def stage_referral_candidate(
     # #1890：同 stage_assignment_candidate——来源轮只落身份列，不进载荷。
     # 禁个人 owner：显式不写 assignee/assignee_id
     if existing_id:
-        return db.update_directive_candidate(existing_id, staged)
+        return db.update_directive_candidate(existing_id, staged, night_id=night_id, source_chat_turn_id=source_chat_turn_id)
     return db.stage_directive_candidate(
         int(turn), minister_name, payload=staged,
         night_id=night_id,
@@ -1960,7 +1964,7 @@ def stage_revoke_authority_candidate(
         "mode": mode,
     }
     if existing_id:
-        return db.update_directive_candidate(existing_id, staged)
+        return db.update_directive_candidate(existing_id, staged, night_id=night_id, source_chat_turn_id=source_chat_turn_id)
     return db.stage_directive_candidate(int(turn), minister_name, payload=staged)
 
 def stage_revoke_decree_candidate(

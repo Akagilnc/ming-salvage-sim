@@ -2405,11 +2405,16 @@ def _dispatch_promises(
                     rejection = _rc.commit_rejection(int(action_id))
                     # False and explicit domain rejection are terminal failed.
                     # Real faults propagate from commit and keep the original pending row.
+                    # #654 名册等仍可能以裸 ValueError 记拒收——无 .category 时归 invalid_state。
+                    category = (
+                        str(getattr(rejection, "category", "") or "invalid_state")
+                        if rejection is not None else "invalid_state"
+                    )
                     _reject(
                         rejected, item,
                         str(rejection) if rejection is not None
                         else "密令目标状态不容许，该暂存已失败",
-                        rejection.category if rejection is not None else "invalid_state", source,
+                        category, source,
                     )
                     continue
                 if str(entry.get("action") or "") == "新建":

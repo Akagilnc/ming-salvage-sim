@@ -17255,8 +17255,10 @@ class GameDB:
         ``get_open_night`` 返 None 会把补译暂存挂成 night_id=0，随后应允按
         「不属本夜暂存清单」missing_ref——补译交办因此接不上源夜。给出源夜时
         仍走同一条 CLOSING 冻结校验，只是不再取「当前开着的夜」。
-        ``source_chat_turn_id``：迟到转译的源轮，随之放行收夜持闸窗口（判据
-        唯一真源见 :func:`assert_night_accepts_player_input`）。
+        ``source_chat_turn_id``（#1890）：本道交办的来源对话轮——统一身份=
+        本行 id + 这一列；撤回该轮按此列整轮作废。同时用于迟到转译放行收夜
+        持闸窗口（判据唯一真源见 :func:`assert_night_accepts_player_input`）。
+        0 = 非召对来源（过月世界段 / 框架写入），不随任何召对轮撤回。
         """
         payload_data: Dict[str, object] = dict(payload or {})
         # #498：开夜期间 stage 的暂存挂 night_id；收夜只交本夜已应允 id
@@ -17275,14 +17277,15 @@ class GameDB:
         cur = self.conn.execute(
             """INSERT INTO pending_actions
                (turn, kind, action, target_id, minister_name, payload_json, status,
-                night_id, night_approved)
-               VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, 0)""",
+                night_id, night_approved, source_chat_turn_id)
+               VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, 0, ?)""",
             (
                 int(turn), str(kind), str(action),
                 None if target_id is None else int(target_id),
                 str(minister_name or ""),
                 json.dumps(payload_data, ensure_ascii=False),
                 night_id,
+                int(source_chat_turn_id or 0),
             ),
         )
         # 与历史 stage 路径一致：非 suspended/atomic 嵌套时提交。
@@ -18176,7 +18179,8 @@ class GameDB:
                     self.conn.execute(f"ROLLBACK TO {savepoint}")
                     restore_office_memory()
                     # Only explicit domain rejections are terminal. SQLite errors,
-                    # unclassified ValueError and code bugs stop the original chain.
+                    # unclassified ValueError and code bugs stop the original chain
+                    # (#1897：真故障保留 pending 可补跑；#654 名册拒收走 typed 错误)。
                     if not isinstance(exc, (
                         DecreeMaterializationValidationError, OfficeAppointmentRejection,
                     )):
@@ -18282,8 +18286,8 @@ class GameDB:
                             (int(pa["id"]),),
                         )
                 except Exception as exc:
-                    # directive 特路与通用分支同款：领域拒收回滚后标 failed。
-                    # 真实 SQLite 故障不标 failed，交外层原链停住。
+                    # directive 特路与通用分支同款：typed 领域拒收回滚后标 failed。
+                    # 真实 SQLite / 未分类 ValueError 不标 failed，交外层原链停住（#1897 可补跑）。
                     self.conn.execute(f"ROLLBACK TO {savepoint}")
                     if not isinstance(exc, (
                         DecreeMaterializationValidationError, OfficeAppointmentRejection,
@@ -21042,17 +21046,22 @@ class GameDB:
         }
         from ming_sim.participant_roster import is_non_person_participant_name
 
-        def _roster_ref_error(label: str, name: str) -> ValueError:
+        def _roster_ref_error(label: str, name: str):
             # #1380：拒「皇帝」等非人通称时给人话提示，禁裸「参与人物不存在：皇帝」
+            # #654：名册拒收是领域终态 → typed 错误，commit 标 failed；不得用裸 ValueError
+            # 与 #1897 真故障（保留 pending 可补跑）混淆。
+            from ming_sim.action_materialize import DecreeMaterializationValidationError
             if is_non_person_participant_name(name):
-                return ValueError(
+                return DecreeMaterializationValidationError(
                     f"{label}不存在：{name}。"
                     f"人物参与人须为朝堂名册中的大臣姓名，"
-                    f"不可填「{name}」等非人通称或机构名。"
+                    f"不可填「{name}」等非人通称或机构名。",
+                    category="invalid_state",
                 )
-            return ValueError(
+            return DecreeMaterializationValidationError(
                 f"{label}不存在：{name}。"
-                f"请填写朝堂名册中已有的大臣姓名。"
+                f"请填写朝堂名册中已有的大臣姓名。",
+                category="invalid_state",
             )
 
         for item in entries:

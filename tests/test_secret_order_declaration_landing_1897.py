@@ -342,11 +342,9 @@ def _late_revision_and_approval(
         return revision_fut.result(timeout=10)
 
     def _close(on_closing=None):
+        # #1838 reopen：收夜不再接夜级背书 extractor；背书随转译走。
         an.close_night(
             db, state, night_id=night_id, content=content,
-            endorsement_extractor_agent=SimpleNamespace(
-                run=lambda _: SimpleNamespace(content='{"endorsements": []}'),
-            ),
             on_closing=on_closing,
         )
 
