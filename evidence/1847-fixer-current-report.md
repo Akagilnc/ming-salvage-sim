@@ -163,9 +163,9 @@ git branch --show-current
 ```
 
 - branch: `ak-roles/1847-fixer-w7-n6-n11-n13-n14`
-- delivery commit: `b04ea3af3690a96268119bfb6f553b5289816a5c`
-- docs commits after delivery: `4456b365d`, `8195e6a66bef6d6ce3f71e77ea170570dedb9e38`
-- status: working tree clean after stamp fix
+- delivery commit（代码修复）: `b04ea3af3690a96268119bfb6f553b5289816a5c`
+- 含报告的最新 HEAD：以 `git rev-parse HEAD` 为准（本交卷后可能仅有 docs 戳记）
+- status: clean after final report polish commit
 
 ## 剩余事项
 
