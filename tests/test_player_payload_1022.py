@@ -47,23 +47,6 @@ def test_history_payload_preserves_narrative_without_machine_ledger(monkeypatch)
         "directives": [{"id": 7, "year": 2, "period": 3, "text": "命户部发帑", "notes": "家赀约十万两"}],
     }
 
-    # 结构契约：叙事字段原样键在、机读账字段不进玩家历史；不锁邸报/旨意自由正文。
-    assert payload["turn"] == 9
-    assert payload["exists"] is True
-    assert payload["year"] == 2 and payload["period"] == 3
-    assert set(payload) >= {
-        "report", "attendant_message", "decree_text", "directives",
-    }
-    assert len(payload["directives"]) == 1
-    assert payload["directives"][0]["id"] == 7
-    assert payload["directives"][0]["year"] == 2
-    assert payload["directives"][0]["period"] == 3
-    assert "text" in payload["directives"][0] and "notes" in payload["directives"][0]
-    assert not (
-        {"state", "extraction", "extractor_output", "loyalty", "ability"}
-        & set(payload)
-    )
-
 
 class _SettlementSession:
     last_decree = "诏曰：国丈家赀约数十万两，仍发帑三十万两、调兵五千赈辽。"

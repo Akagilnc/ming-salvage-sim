@@ -252,9 +252,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
     });
     expect(calls.some((call) => call.path.includes("/api/ministers/"))).toBe(false);
     expect(calls.some((call) => call.path.endsWith("/api/audience/chat/stream"))).toBe(true);
-    // #1849 contract = same-hall 宣人 via audience stream, not /api/ministers/*.
-    // Post-purge DOM/prose waits were false proof (thinking-excluded selector / free text);
-    // keep call-routing asserts only; release stream so the mock does not hang.
+    // #1849：同殿宣人走 audience stream（非 /api/ministers/*）；mock 流字节「臣已入殿」经 delta/done 透明进 DOM。
     finishStream();
     await act(async () => { await vi.waitFor(() => expect(host.textContent).toContain("臣已入殿")); });
   });
@@ -1208,8 +1206,8 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     expect(dismiss).toBeTruthy();
     await click(dismiss);
     expect(host.querySelector("[data-testid=settlement-gazette-panel]")).toBeNull();
-    // 新月盘面：核账面板已收；半程局势不靠正文子串验收
-    expect(host.querySelector("[data-testid=wang-settlement-slip]")).toBeNull();
+    // 新月盘面可见半程局势（已非核账）
+    expect(host.textContent).toContain(MIDCOURSE_ISSUE);
 
     // 同一状态口在核账未完时重开：殿上夜卷虽仍在，玩家先落核账。
     liveState = {
@@ -2422,6 +2420,7 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     expect(host.textContent).not.toContain(MIDCOURSE_ISSUE);
     expect(host.querySelector(".situation-list")).toBeNull();
     expect(host.querySelector(".situation-closed-list")).not.toBeNull();
+    expect(host.textContent).toContain(SNAP_CLOSED);
     expect(byAria(host, "省份列表")?.getAttribute("aria-disabled")).toBe("true");
     expect(byAria(host, "军队列表")?.getAttribute("aria-disabled")).toBe("true");
     // 点关闭组导航：抽屉不得进入 .open（子树可常挂，以 open 态为准）
@@ -2600,6 +2599,7 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
 
     // closed_issues：只读可达；半程议题零泄漏；不误弹局势了结全屏
     expect(host.querySelector(".situation-closed-list")).not.toBeNull();
+    expect(host.textContent).toContain(SNAP_CLOSED);
     expect(host.textContent).not.toContain(MIDCOURSE_ISSUE);
     expect(host.querySelector('[role="dialog"][aria-label="局势了结"]')).toBeNull();
   });
@@ -2663,10 +2663,12 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     // #671 App 接线：递话可见且位于 .gazette-document 之外
     const attendant = host.querySelector("[data-testid=gazette-attendant]");
     expect(attendant).not.toBeNull();
+    expect(attendant!.textContent).toContain(SNAP_ATTENDANT);
     expect(attendant!.closest(".gazette-document")).toBeNull();
     // 半程议题仍不泄漏；上月已结只读面可同屏
     expect(host.textContent).not.toContain(MIDCOURSE_ISSUE);
     expect(host.querySelector(".situation-closed-list")).not.toBeNull();
+    expect(host.textContent).toContain(SNAP_CLOSED);
   });
 
   it("gazette：仅有 last_attendant_message 时亦不自动弹；木牌可开空卷轴+递话", async () => {

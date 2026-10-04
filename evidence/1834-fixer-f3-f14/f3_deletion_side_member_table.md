@@ -2,7 +2,7 @@
 
 比对基线：`52809cdf3`。每行 source/channel 对照源码；禁止泛称 fixture / 仅写 answer 或 SELECT id。
 
-成员总数：**175**；RESTORE：**166**；KEEP_DELETED：**9**
+成员总数：**175**；RESTORE：**175**；KEEP_DELETED：**0**
 
 | i | 位置 | class | disposition | source | channel | basis |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -98,7 +98,7 @@
 | 089 | `tests/test_pihong_dossier_1490.py:2945` | T_FIXTURE_ARG | RESTORE | round_b labels 发内帑…/特旨慰谕九边 | set(round_b) | 次轮选项 |
 | 090 | `tests/test_pihong_dossier_1490.py:2955` | T_FIXTURE_ARG | RESTORE | midzhi filtered label 责户部清理钱粮亏短 | set(round_midzhi) | 过滤后选项 |
 | 091 | `tests/test_pihong_dossier_1490.py:3013` | T_FIXTURE_ARG | RESTORE | _1778 grant label only | drafts[0].options labels | 草稿选项 |
-| 092 | `tests/test_player_payload_1022.py:40` | T_KEEP_DELETED_PROSE | KEEP_DELETED | old exact payload=={… narrative report …} | history_payload structural keys now | 整包 equality 锁叙事；现行结构断言已覆盖，不恢复散文 equality |
+| 092 | `tests/test_player_payload_1022.py:40` | T_FIXTURE_ARG | RESTORE | _HistoryDB archive/context/directives fixtures (report/decree_text/directives notes) | web_app.api_history_turn(9) → payload exact equality | 夹具叙事字段经历史 API 整包原样透明输送；已删顶替用平行结构断言 |
 | 093 | `tests/test_public_projection_consistency_1830.py:170` | T_DISK_OR_READ | RESTORE | original public saying fixture (陕西赈务) | disk Path.read_text | 磁盘原文 |
 | 094 | `tests/test_public_projection_consistency_1830.py:171` | T_DISK_OR_READ | RESTORE | same original | read_material direct | 直接读口 |
 | 095 | `tests/test_public_projection_consistency_1830.py:172` | T_DISK_OR_READ | RESTORE | same original | tools API read_material | API 读口 |
@@ -127,16 +127,16 @@
 | 118 | `web/src/appDurableWiring.test.tsx:255` | T_FIXTURE_ARG | RESTORE | minister content:"臣已入殿" | waitFor host.textContent | 入殿句进 App 投影 |
 | 119 | `web/src/appDurableWiring.test.tsx:255` | T_FIXTURE_ARG | RESTORE | same "臣已入殿" (dup) | same waitFor | 同 118 |
 | 120 | `web/src/appDurableWiring.test.tsx:347` | T_FIXTURE_ARG | RESTORE | turn-8 fixture containing "边务如何" | [data-audience-turn-id="8"] | 指定 turn 正文 |
-| 121 | `web/src/appDurableWiring.test.tsx:1209` | T_KEEP_DELETED_PROSE | KEEP_DELETED | MIDCOURSE_ISSUE/SNAP_CLOSED/SNAP_ATTENDANT fixture consts in mid-course leak suite | host.textContent mid-course surfaces (now not.toContain / structural null) | 半程泄漏案要证明不可见；正向前缀 toContain 与案意相反，保持删除 |
+| 121 | `web/src/appDurableWiring.test.tsx:1209` | T_FIXTURE_ARG | RESTORE | advancedState.issues title=MIDCOURSE_ISSUE after gazette dismiss (settlement_display=false) | host.textContent after 朕知道了 closes gazette | 旧注「新月盘面可见半程局势（已非核账）」：结算完后半程局势应显示，非核账期负向泄漏案 |
 | 122 | `web/src/appDurableWiring.test.tsx:1910` | T_FIXTURE_ARG | RESTORE | decision issue title "辽东战守" | modal.textContent | 议题 title |
 | 123 | `web/src/appDurableWiring.test.tsx:1922` | T_FIXTURE_ARG | RESTORE | same "辽东战守" | decision-modal after remount | 重挂后 title |
-| 124 | `web/src/appDurableWiring.test.tsx:2422` | T_KEEP_DELETED_PROSE | KEEP_DELETED | MIDCOURSE_ISSUE/SNAP_CLOSED/SNAP_ATTENDANT fixture consts in mid-course leak suite | host.textContent mid-course surfaces (now not.toContain / structural null) | 半程泄漏案要证明不可见；正向前缀 toContain 与案意相反，保持删除 |
-| 125 | `web/src/appDurableWiring.test.tsx:2601` | T_KEEP_DELETED_PROSE | KEEP_DELETED | MIDCOURSE_ISSUE/SNAP_CLOSED/SNAP_ATTENDANT fixture consts in mid-course leak suite | host.textContent mid-course surfaces (now not.toContain / structural null) | 半程泄漏案要证明不可见；正向前缀 toContain 与案意相反，保持删除 |
-| 126 | `web/src/appDurableWiring.test.tsx:2665` | T_KEEP_DELETED_PROSE | KEEP_DELETED | MIDCOURSE_ISSUE/SNAP_CLOSED/SNAP_ATTENDANT fixture consts in mid-course leak suite | host.textContent mid-course surfaces (now not.toContain / structural null) | 半程泄漏案要证明不可见；正向前缀 toContain 与案意相反，保持删除 |
-| 127 | `web/src/appDurableWiring.test.tsx:2670` | T_KEEP_DELETED_PROSE | KEEP_DELETED | MIDCOURSE_ISSUE/SNAP_CLOSED/SNAP_ATTENDANT fixture consts in mid-course leak suite | host.textContent mid-course surfaces (now not.toContain / structural null) | 半程泄漏案要证明不可见；正向前缀 toContain 与案意相反，保持删除 |
-| 128 | `web/src/appDurableWiring.test.tsx:2697` | T_KEEP_DELETED_PROSE | KEEP_DELETED | MIDCOURSE_ISSUE/SNAP_CLOSED/SNAP_ATTENDANT fixture consts in mid-course leak suite | host.textContent mid-course surfaces (now not.toContain / structural null) | 半程泄漏案要证明不可见；正向前缀 toContain 与案意相反，保持删除 |
-| 129 | `web/src/appDurableWiring.test.tsx:2714` | T_KEEP_DELETED_PROSE | KEEP_DELETED | MIDCOURSE_ISSUE/SNAP_CLOSED/SNAP_ATTENDANT fixture consts in mid-course leak suite | host.textContent mid-course surfaces (now not.toContain / structural null) | 半程泄漏案要证明不可见；正向前缀 toContain 与案意相反，保持删除 |
-| 130 | `web/src/appDurableWiring.test.tsx:2716` | T_KEEP_DELETED_PROSE | KEEP_DELETED | MIDCOURSE_ISSUE/SNAP_CLOSED/SNAP_ATTENDANT fixture consts in mid-course leak suite | host.textContent mid-course surfaces (now not.toContain / structural null) | 半程泄漏案要证明不可见；正向前缀 toContain 与案意相反，保持删除 |
+| 124 | `web/src/appDurableWiring.test.tsx:2422` | T_FIXTURE_ARG | RESTORE | settlementBaseState.closed_this_turn title=SNAP_CLOSED | host.textContent while settlement_display=true (readonly closed_issues) | 核账期半程议题不可见，但上月已结 SNAP_CLOSED 只读面应可见 |
+| 125 | `web/src/appDurableWiring.test.tsx:2601` | T_FIXTURE_ARG | RESTORE | settlementBaseState.closed_this_turn title=SNAP_CLOSED | host.textContent at closed_issues end-of-case check | closed_issues 只读可达正向契约；与 not.toContain(MIDCOURSE) 并存，非互相替代 |
+| 126 | `web/src/appDurableWiring.test.tsx:2665` | T_FIXTURE_ARG | RESTORE | last_attendant_message=SNAP_ATTENDANT fixture | [data-testid=gazette-attendant].textContent | 上月固定夹具递话原样展示（#671 App 接线） |
+| 127 | `web/src/appDurableWiring.test.tsx:2670` | T_FIXTURE_ARG | RESTORE | settlementBaseState.closed_this_turn title=SNAP_CLOSED | host.textContent alongside not.toContain(MIDCOURSE) in gazette case | 递话案同屏：半程议题零泄漏 + 上月已结正向可见 |
+| 128 | `web/src/appDurableWiring.test.tsx:2697` | T_FIXTURE_ARG | RESTORE | last_attendant_message=SNAP_ATTENDANT (attendant-only gazette case) | [data-testid=gazette-attendant].textContent | 仅有递话时木牌仍原样展示 SNAP_ATTENDANT；现行源码已含正向 toContain |
+| 129 | `web/src/appDurableWiring.test.tsx:2714` | T_FIXTURE_ARG | RESTORE | settlementBaseState.issues title=MIDCOURSE_ISSUE with settlement_display=false | host.textContent in 月完后 case | 月完后局势半程面重现；现行源码已含正向 toContain |
+| 130 | `web/src/appDurableWiring.test.tsx:2716` | T_FIXTURE_ARG | RESTORE | settlementBaseState.closed_this_turn title=SNAP_CLOSED with settlement_display=false | host.textContent in 月完后 case | 月完后上月已结一并恢复；现行源码已含正向 toContain |
 | 131 | `web/src/components/drawers.test.tsx:163` | T_FIXTURE_ARG | RESTORE | Army props name:"登莱兵与水师" | ArmyDrawer host.textContent | 军名进抽屉 |
 | 132 | `web/src/components/drawers.test.tsx:166` | T_NEG_FIXTURE | RESTORE | arrears_text:"欠饷约60万两，数月军饷" | host.textContent.not.toContain | P7 arrears_text 不直显 |
 | 133 | `web/src/components/drawers.test.tsx:167` | T_NEG_FIXTURE | RESTORE | morale_text:"士气：尚稳" | host.textContent.not.toContain | P7 morale_text 不直显 |
@@ -147,7 +147,7 @@
 | 138 | `web/src/components/map.test.tsx:154` | T_NEG_FIXTURE | RESTORE | map morale_text "士气：不振" | host.textContent.not.toContain | 地图驻军不直显 |
 | 139 | `web/src/components/map.test.tsx:155` | T_NEG_FIXTURE | RESTORE | map arrears_text "欠饷不足十万两，约两月军饷" | host.textContent.not.toContain | 地图不直显 |
 | 140 | `web/src/components/modals.test.tsx:56` | T_FIXTURE_ARG | RESTORE | display concat 朕先问烛花一爆洪承畴后答 | host.textContent.toBe | 有机 markdown 清理后整串 |
-| 141 | `web/src/components/modals.test.tsx:457` | T_NEG_FIXTURE | RESTORE | forbid /臣.*叩见\|恭请圣安/ | stage.textContent.not.toMatch | 禁止叩见套话 |
+| 141 | `web/src/components/modals.test.tsx:457` | T_NEG_FIXTURE | RESTORE | forbid /臣.*叩见|恭请圣安/ | stage.textContent.not.toMatch | 禁止叩见套话 |
 | 142 | `web/src/components/modals.test.tsx:544` | T_FIXTURE_ARG | RESTORE | chat user content "剿抚孰先？" | note.textContent | 用户问话 |
 | 143 | `web/src/components/modals.test.tsx:579` | T_FIXTURE_ARG | RESTORE | scene "殿内 **烛影** 摇曳\n- 夜风入户" |  .chat-message.scene p | markdown 场景 |
 | 144 | `web/src/components/modals.test.tsx:580` | T_FIXTURE_ARG | RESTORE | attendant "**低声**：边报已至。" | .chat-message.attendant p | markdown 低语 |
