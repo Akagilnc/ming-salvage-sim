@@ -1,0 +1,17 @@
+..............................s......................................... [ 20%]
+........................................................................ [ 41%]
+........................................................................ [ 61%]
+........................................................................ [ 82%]
+...............................................................          [100%]
+============================= slowest 10 durations =============================
+0.29s setup    tests/test_fiscal_substrate_bridge.py::test_liaodong_pay_source_rows_add_to_standalone_military_funnel
+0.17s setup    tests/test_fiscal_substrate_bridge.py::test_cutover_structural_sink_rate_zero_uses_settlement_abort_error_pack
+0.14s setup    tests/test_fiscal_substrate_bridge.py::test_fixed_flows_substrate_hub_failure_rolls_back_cutover_writes
+0.13s setup    tests/test_fiscal_substrate_bridge.py::test_zhongyuan_jingshi_settle_province_tick_golden[beizhili-expect0]
+0.12s setup    tests/test_fiscal_substrate_bridge.py::test_economy_pay_arrears_rejects_missing_or_unknown_target_without_repaying_other_armies[move0]
+0.11s setup    tests/test_relation_capture_633.py::test_settlement_interaction_lands_directed_edge_with_origin_round
+0.11s setup    tests/test_fiscal_substrate_bridge.py::test_south_southwest_seeds_have_valid_historical_settle_substrate[yunnan]
+0.11s setup    tests/test_fiscal_substrate_bridge.py::test_south_southwest_seeds_have_valid_historical_settle_substrate[guizhou]
+0.11s setup    tests/test_fiscal_substrate_bridge.py::test_south_southwest_settle_tick_golden_and_bridge_persist[guangdong]
+0.11s setup    tests/test_fiscal_substrate_bridge.py::test_liaodong_primary_source_due_survives_fresh_db_pay_source_reconcile
+350 passed, 1 skipped in 17.31s
