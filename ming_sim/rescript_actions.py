@@ -45,9 +45,6 @@ from ming_sim.settlement_payload import (
 RESCRIPT_DESK_ACTIONS = frozenset({
     "follow_draft", "return_revise", "midzhi", "deliberate", "hold", "summon",
 })
-_TERMINAL_ACTIONS = frozenset({
-    "follow_draft", "midzhi", "deliberate", "hold", "summon",
-})
 
 _DecisionKey = str  # "{kind}:{source_turn}:{idx}"
 

@@ -5,8 +5,6 @@ CODEX=["gpt-5.5","gpt-5.4","gpt-5.4-mini","gpt-5.3-codex-spark"]
 CLAUDE=["sonnet4.6","haiku4.5"]
 ORDER=CODEX+CLAUDE+["agy"]
 NARR=["simulator","minister","decree","chapter_memory"]
-STRUCT=["ext_internal","ext_military","ext_personnel","secret_extract"]
-
 def balanced(raw):
     out=[];d=0;s=None
     for i,c in enumerate(raw):

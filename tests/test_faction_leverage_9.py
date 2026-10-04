@@ -593,19 +593,18 @@ def test_jundadou_deputy_ouster_impact_is_half_of_principal():
 
 def test_xingbu_has_leverage_weight_like_other_ministries():
     """#9 cmr R3 finding#1：六部齐全——刑部尚书(六部堂官)应与礼部/工部同档贡献权重，不漏成 0。
-    COURT_OFFICE_TYPES/MINISTRY_OFFICE_TYPES 明列刑部为正经六部、offices.json 词干表也把
+    COURT_OFFICE_TYPES 明列刑部为正经六部、offices.json 词干表也把
     「刑部尚书→刑部」，但 _OFFICE_LEVERAGE_WEIGHT 修前漏刑部 → 刑部尚书贡献 0、与其余五部不一致。"""
     from ming_sim.db import (
         _OFFICE_LEVERAGE_WEIGHT,
         _member_office_weight,
-        MINISTRY_OFFICE_TYPES,
     )
     # 刑部尚书=刑部域权重 × 堂官档 ×1.0；与礼部/工部同「中层部务」档（=5）。
     assert _member_office_weight("刑部", "刑部尚书") == 5.0, (
         "刑部尚书(六部堂官)应贡献非零权重，与其余五部一致"
     )
     # 防再漏：六部每一部都必须在权重表里。
-    for ministry in MINISTRY_OFFICE_TYPES:
+    for ministry in ("吏部", "户部", "礼部", "兵部", "刑部", "工部"):
         assert ministry in _OFFICE_LEVERAGE_WEIGHT, (
             f"六部之{ministry}缺 _OFFICE_LEVERAGE_WEIGHT 权重（漏配 → 该部堂官贡献 0）"
         )

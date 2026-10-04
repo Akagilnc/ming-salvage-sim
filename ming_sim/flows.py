@@ -32,8 +32,6 @@ from ming_sim.token_stats import tlog
 
 # 皇庄增量租率：没收藩王庄田转皇庄后，每万亩每月增加内库收入（万两）
 # 基准皇庄收入走 fiscal_config.皇庄_base；此常数只用于增量计算
-_HUANG_TIAN_RENT_PER_WAN_MU = 0.57  # ≈ 20万两/月 ÷ 35万亩
-
 _FIXED_FLOW_NUMERIC_FIELDS = ("huang_tian", "liao_xiang", "salt_tax", "commerce_tax", "corruption")
 _CENTRAL_TAICANG_HUMAN_LOSS_RATE = "central_taicang_human_loss_rate"
 _CENTRAL_TAICANG_SINK_LOSS_RATE = "central_taicang_sink_loss_rate"
@@ -182,9 +180,8 @@ def calc_province_fiscal(
 
         # 皇庄 → 内库
         # 基准由 fiscal_config.皇庄_base 统一覆盖（已校准）；
-        # huang_tian 字段用于记录没收藩王庄田后的增量：
-        #   增量月收 = 新增万亩 × _HUANG_TIAN_RENT_PER_WAN_MU
-        # 只有北直隶有 huang_tian > 0，增量=0（开局无新增），后续没收时才>基准
+        # huang_tian 曾记录没收藩王庄田增量亩数；现役开局皇庄收入走 fiscal_config，
+        # 此处不再按旧租率常量重复计收。
         huang_income = 0  # 开局皇庄收入走 fiscal_config，此处不重复计算
 
         province_guo = tian_fu + liao + salt + commerce

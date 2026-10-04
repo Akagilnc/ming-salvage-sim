@@ -610,3 +610,22 @@ def test_play_turn_does_not_auto_submit_awaiting_hitl(game, monkeypatch, action)
     assert int(session.state.turn) == turn_before
     assert session.pending_decisions()
     assert db.load_state().turn_phase == TurnPhase.AWAITING_DECISION.value
+
+    # 真实存储读面：持久批语未作答；无代批写入的事件终局
+    desk_rows = db.list_pending_decisions(turn_before)
+    assert desk_rows
+    assert all(str(row.get("status") or "") == "pending" for row in desk_rows)
+    assert all(not row.get("choice") for row in desk_rows)
+    raw = db.conn.execute(
+        "SELECT choice_json, status FROM pending_decisions "
+        "WHERE turn=? AND kind='decision'",
+        (turn_before,),
+    ).fetchall()
+    assert raw
+    assert all(str(r["status"] or "") == "pending" for r in raw)
+    assert all(not str(r["choice_json"] or "").strip() for r in raw)
+    terminals = db.conn.execute(
+        "SELECT event_id, terminal_reason FROM event_triggers "
+        "WHERE COALESCE(terminal_reason, '') != ''"
+    ).fetchall()
+    assert terminals == []
