@@ -1975,7 +1975,9 @@ class WebGame:
         translation_unstarted: bool, court_action: str = "",
     ) -> bool:
         """持闸调用；以落库相位分流转译补偿与回话后尾随恢复。"""
-        if not chat_turn_id or not hasattr(self.db, "conn"):
+        # #1853 J8：前置 SELECT 定 restore/fail 分流 = 查询接缝；禁缺 conn 洗成 False。
+        # 其后 mark_* / set_error_pack / mark_post_reply_failure 是写口，不借其合理性护栏前置查询。
+        if not chat_turn_id:
             return False
         row = self.db.conn.execute(
             "SELECT status, minister_message_id, extract_status FROM chat_turns WHERE id = ?",
@@ -2015,9 +2017,11 @@ class WebGame:
         if not chat_turn_id:
             return
         self._record_chat_rollback_items(chat_turn_id, before_snapshot)
+        # #1853 J8：SELECT user_message_id 定 restore vs fail；禁缺 conn 伪推 None 错走 fail。
+        # 其后 set_chat_turn_error_pack 是写口，不借其合理性护栏前置查询。
         row = self.db.conn.execute(
             "SELECT user_message_id FROM chat_turns WHERE id = ?", (chat_turn_id,),
-        ).fetchone() if hasattr(self.db, "conn") else None
+        ).fetchone()
         if row is not None and row["user_message_id"]:
             restored_ids = self.db.restore_interrupted_after_failed_retry(chat_turn_id)
             from ming_sim.decree_forecast import schedule_restored_decree_forecasts
@@ -2039,7 +2043,9 @@ class WebGame:
 
     def undo_last_chat(self, minister_name: str, *, gate_held: bool = False) -> Dict[str, Any]:
         from ming_sim.audience_night import SCENE_CHAT_SPEAKER, get_open_night
-        if minister_name == SCENE_CHAT_SPEAKER and hasattr(self.db, "conn"):
+        # #1853 J8：殿上 SCENE 路由靠 get_open_night / list_hall_chat_turns 查询；
+        # 禁缺 conn 跳过夜序解析后落入大臣撤回主链。无 night / 无 active 仍走下方业务分支。
+        if minister_name == SCENE_CHAT_SPEAKER:
             night = get_open_night(self.db)
             if night:
                 turns = self.db.list_hall_chat_turns(int(night["id"]))
