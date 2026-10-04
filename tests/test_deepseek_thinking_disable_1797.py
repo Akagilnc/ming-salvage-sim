@@ -206,6 +206,8 @@ def test_dump_llm_messages_records_reasoning_usage_finish_reason(monkeypatch, tm
     )
     text = dump_path.read_text(encoding="utf-8")
     # reasoning：字段正文（不锁 dump 字数/标签模板）
+    assert "思考过程甲" in text
+    assert "中转 reasoning 正文" in text
     # usage / finish_reason：键值同断
     assert '"reasoning_tokens": 42' in text
     assert "[finish_reason] (缺)" in text

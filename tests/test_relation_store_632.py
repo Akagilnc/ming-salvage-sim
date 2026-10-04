@@ -158,6 +158,7 @@ def test_relation_edges_survive_restore(game, tmp_path):
     try:
         rows = restored.get_relation_edge_events(source="杨嗣昌", target="徐光启")
         assert len(rows) == 1
+        assert rows[0]["context"] == "二人当面相发明。"
         assert rows[0]["origin_round"] == 7
         for key in (
             "source", "target", "event_kind", "context", "origin",

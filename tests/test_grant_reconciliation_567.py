@@ -196,6 +196,7 @@ def test_per_route_storage_restore_and_escort_split(game):
     assert db.list_dossier_progress(escorted_grant) == []
     progress = db.list_dossier_progress(escort_dossier_id)
     assert len(progress) == 1
+    assert "护行路已核关防" in progress[0]["memorial_text"]
 
     # restore 逐路无损
     path = db.path

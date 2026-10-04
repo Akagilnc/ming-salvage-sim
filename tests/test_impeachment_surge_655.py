@@ -159,6 +159,7 @@ def test_apply_accepts_only_current_candidate_closed_target_and_free_text(game):
     row = db.conn.execute("SELECT * FROM issues WHERE id=?", (accepted["issue_id"],)).fetchone()
     assert row["origin_ref"] == f"commitment:{did}:deformation_exposure"
     assert row["title"] == "  自由题名  "
+    assert row["stage_text"] == "原样案情。"
 
     duplicate = apply_issue_tracker_output(db, state, output)["new_issues"][0]
     assert duplicate["rejected"] is True

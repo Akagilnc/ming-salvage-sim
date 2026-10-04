@@ -1574,6 +1574,7 @@ def test_fiscal_levy_held_petition_is_supplied_to_next_world_segment(game, monke
             if path.name != "INDEX.txt"
         )
         assert "边饷急迫，请旨定夺。" in text
+        assert "姑候户部再核" in text
     finally:
         materials_mod.release_material_tree(prepared.root)
 

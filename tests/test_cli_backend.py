@@ -464,6 +464,7 @@ def test_luna_shaped_stream_keeps_content_when_reasoning_deltas_interleave(monke
     )
     assert out == "辽饷缺口甚大。"
     assert texts == ["辽", "饷缺口甚大。"]
+    assert any("辽饷" in t or "账" in t for t in thinks)
 
 
 def test_codex_final_text_handles_item_completed_shape():

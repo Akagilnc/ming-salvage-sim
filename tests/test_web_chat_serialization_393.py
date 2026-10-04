@@ -354,13 +354,14 @@ def test_nonstream_api_chat_keeps_game_state_responsive_while_chat_blocks(monkey
         )
         return chat_result, state_payload
 
-    _chat_result, state_payload = asyncio.run(drive_concurrent_state_probe())
+    chat_result, state_payload = asyncio.run(drive_concurrent_state_probe())
 
     assert events == ["state", "state_done", "chat"], (
         f"event loop 被非流式 chat 冻结（events={events}）；"
         "期望 state 探针在 chat 完成前响应"
     )
     assert state_payload == {"ok": True, "turn": 1}
+    assert chat_result["answer"] == "臣已知悉。"
 
 
 def test_nonstream_chat_rejects_when_session_draining():

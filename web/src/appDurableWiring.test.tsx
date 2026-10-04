@@ -123,6 +123,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
     await act(async () => {
       await vi.waitFor(() => {
         expect(host.querySelector('[role="dialog"][aria-label="邸报"]')).not.toBeNull();
+        expect(host.textContent).toContain("天启七年九月邸报·试重开");
       });
     });
     await click(host.querySelector('[aria-label="关闭弹窗"]'));
@@ -177,6 +178,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
     await act(async () => { await vi.waitFor(() => expect(host.querySelector("textarea")).not.toBeNull()); });
     expect(calls).toContain("GET /api/audience/chat");
     expect(calls.some((call) => call.includes("/api/ministers/"))).toBe(false);
+    expect(host.textContent).toContain("杨嗣昌御前低语");
 
     // 关档后夜仍未收：重挂从状态口进入殿上，卷轴停在已存最后一轮。
     unmountTrackedRoots();
@@ -254,6 +256,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
     // Post-purge DOM/prose waits were false proof (thinking-excluded selector / free text);
     // keep call-routing asserts only; release stream so the mock does not hang.
     finishStream();
+    await act(async () => { await vi.waitFor(() => expect(host.textContent).toContain("臣已入殿")); });
   });
 
   it("typed SSE error 经真实召对链只向玩家呈现结构化 message", async () => {
@@ -343,6 +346,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
     expect(host.querySelector('[data-testid="reply-retry-8"]')).not.toBeNull();
     expect(historyReads).toBeGreaterThan(1);
     expect(host.querySelector("textarea")?.value).toBe("");
+    expect(host.querySelector('[data-audience-turn-id="8"]')?.textContent).toContain("边务如何");
     expect(host.querySelector('[data-audience-turn-id="8"]')).not.toBeNull();
   });
 
@@ -1906,6 +1910,7 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
       await vi.waitFor(() => expect(host.querySelector('[data-testid="decision-modal"]')).not.toBeNull());
     });
     const modal = host.querySelector('[data-testid="decision-modal"]')!;
+    expect(modal.textContent).toContain("辽东战守");
     const action = Array.from(modal.querySelectorAll("button")).find((b) =>
       (b.textContent || "").includes("批") || (b.textContent || "").includes("固守"),
     ) as HTMLButtonElement | undefined;
@@ -1917,6 +1922,7 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     await act(async () => {
       await vi.waitFor(() => expect(host2.querySelector('[data-testid="decision-modal"]')).not.toBeNull());
     });
+    expect(host2.querySelector('[data-testid="decision-modal"]')!.textContent).toContain("辽东战守");
   });
 
   it("settling 恢复：长错误包路径下统一横幅可点；刷新重挂后仍在", async () => {
@@ -2687,6 +2693,7 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     });
     const attendant = host.querySelector("[data-testid=gazette-attendant]");
     expect(attendant).not.toBeNull();
+    expect(attendant!.textContent).toContain(SNAP_ATTENDANT);
   });
 
   it("月完后 settlement_display=false：关闭组入口恢复；递话条收；局势半程面重现", async () => {
@@ -2703,7 +2710,9 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     expect(byAria(host, "军队列表")?.getAttribute("aria-disabled")).toBe("false");
     // 局势（半程）与上月已结一并恢复
     expect(host.querySelector(".situation-panel")).not.toBeNull();
+    expect(host.textContent).toContain(MIDCOURSE_ISSUE);
     expect(host.querySelector(".situation-closed-list")).not.toBeNull();
+    expect(host.textContent).toContain(SNAP_CLOSED);
     // #1366：next_period 完成、月初快照过期后，同一 settled turn 的三项结果才可见
     // （settlementBaseState 默认 budget.settled_army_pay 非 null）。
     await click(byAria(host, "经济面板"));

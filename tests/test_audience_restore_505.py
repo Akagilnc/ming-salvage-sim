@@ -212,7 +212,9 @@ def test_pure_audience_zero_ledger_turn_survives_reopen(restore_env):
     db2, _state2 = _reopen(env.path, content)
     try:
         db2.reconcile_interrupted_chat_turns()
-        db2.build_chat_projection(minister)
+        proj = db2.build_chat_projection(minister)
+        assert "四轮问对之一" in [m["content"] for m in proj if m["role"] == "user"]
+        assert "臣愚见如此。" in [m["content"] for m in proj if m["role"] == "minister"]
     finally:
         db2.close()
 
@@ -285,8 +287,9 @@ def test_retry_regenerates_reply_without_duplicate_question(restore_env):
     db.reconcile_interrupted_chat_turns()
 
     rt = _retry_runtime(db, state, minister)
-    rt.retry_interrupted_reply(minister, ct)
+    payload = rt.retry_interrupted_reply(minister, ct)
 
+    assert payload["answer"] == "臣重奏：剿为先。"
     # 记录无重复句：问话仍只一条，回话新落一条。
     users = db.conn.execute(
         "SELECT content FROM chat_messages WHERE role='user'"
@@ -326,9 +329,13 @@ def test_post_reply_failure_resumes_close_without_regenerating_reply(restore_env
             rt.retry_interrupted_reply(minister, ct)
     rt.session.close_night_after_chat_if_needed = close_once
     rt.pending_directive_count = lambda: 0
-    rt.retry_interrupted_reply(minister, ct)
+    payload = rt.retry_interrupted_reply(minister, ct)
+    assert payload["answer"] == "臣遵旨。"
     assert calls == ["court_break"]
     assert rt.reply_retries(minister) == []
+    assert [r["content"] for r in db.conn.execute(
+        "SELECT content FROM chat_messages WHERE role='minister'"
+    )] == ["臣遵旨。"]
 
 
 
@@ -442,7 +449,8 @@ def test_failed_retry_rolls_back_side_effects_and_keeps_question(restore_env):
 
     # 再重试成功：问话仍只一条、回话新落一条（记录无重复句）。
     rt.session = _RetrySession(db, state, minister)
-    rt.retry_interrupted_reply(minister)
+    payload = rt.retry_interrupted_reply(minister)
+    assert payload["answer"] == "臣重奏：剿为先。"
     assert [
         r["content"] for r in db.conn.execute(
             "SELECT content FROM chat_messages WHERE role='user'"

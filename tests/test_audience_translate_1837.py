@@ -472,7 +472,8 @@ def test_appointment_and_relief_through_scene_chat_then_close_and_settle(game, m
         assert payload["appoint_action"] == "任命", case["label"]
         assert int(pending[0]["night_approved"] or 0) == 0, case["label"]
 
-        _scene_turn(sess, db, state, "准")
+        r2, _ = _scene_turn(sess, db, state, "准")
+        assert r2.answer == "臣等遵旨。", case["label"]
         approved = db.conn.execute(
             "SELECT id, kind, night_approved FROM pending_actions "
             "WHERE id IN ({})".format(",".join(str(p["id"]) for p in pending))
@@ -760,6 +761,7 @@ def test_translate_empty_success_still_dispatches_without_failure(game, monkeypa
         translate_fn=offline_empty_audience_translate,
     )
     result = sess.scene_chat("边事如何？")
+    assert result.answer == "臣在。"
     assert not any(
         f.get("category") == "translate_failed"
         for f in (result.pending_action_failures or [])

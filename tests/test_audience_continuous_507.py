@@ -46,6 +46,8 @@ def test_scene_recap_quotes_public_dialogue_within_presence_interval(game):
     )
 
     recap = an.audience_scene_recap(db, "毕自严", night_id=nid)
+    # 正向：侍立区间内殿上公开对话可被引用（区间取数）
+    assert "徐光启奏：宜用洪承畴督师陕西。" in recap
     # 负向：御前低语不流入侍立者组装输入
     assert "此人跋扈" not in recap
     _ = (heard, whisper)
@@ -67,6 +69,7 @@ def test_scene_recap_excludes_dialogue_before_person_entered(game):
     _public(db, nid, "徐光启", "徐光启方入奏水利。")
 
     recap = an.audience_scene_recap(db, "徐光启", night_id=nid)
+    assert "徐光启方入奏水利" in recap            # 正向：区间内
     assert "毕自严先奏钱粮九边" not in recap       # 负向：入殿前不闻
 
 
@@ -92,7 +95,8 @@ def test_qianqing_continuous_night_skeleton_runs(game):
 
     # 毕自严插话站台：其补话组装可引用侍立时段所闻徐光启奏对
     _public(db, nid, "徐光启", "徐光启奏：陕西糜烂，非洪承畴不可。")
-    an.audience_scene_recap(db, "毕自严", night_id=nid)
+    recap = an.audience_scene_recap(db, "毕自严", night_id=nid)
+    assert "非洪承畴不可" in recap
     _public(db, nid, "毕自严", "毕自严出班为洪承畴站台作保。")
 
     # 宣洪承畴 + 王绍徽同殿——前面诸位皆未退，同殿侍立

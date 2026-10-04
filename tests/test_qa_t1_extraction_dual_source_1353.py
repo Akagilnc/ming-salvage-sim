@@ -586,6 +586,9 @@ def test_stream_post_reply_exception_preserves_phase_and_recovers_original_turn(
     game.retry_interrupted_reply("殿上", chat_turn_id)
     assert calls == ["退朝", "court_break"]
     assert game.reply_retries("殿上") == []
+    assert [r["content"] for r in game.db.conn.execute(
+        "SELECT content FROM chat_messages WHERE role='minister' AND minister_name=?", ("殿上",)
+    )] == ["臣遵旨。"]
 
 
 def test_dispatch_exception_after_persist_retains_reply_recovery(web_game, monkeypatch):

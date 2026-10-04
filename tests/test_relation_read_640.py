@@ -126,6 +126,7 @@ def test_dto_shape_summary_plus_recent_context_with_backref(ledger):
         if (d["source"], d["target"]) == (EMPEROR_NODE, "杨嗣昌")
     )
     # summary＝两段式摘要原文（奠基段＋近况段，零改写拼接）。
+    assert "越次一召，擢杨嗣昌于五品郎中。" in wei_yang["summary"]
     # recent_context＝最近原始事件语境原文＋纪年回指（括注时点）。
     assert wei_yang["recent_context"].startswith("越次一召，擢杨嗣昌于五品郎中。")
     assert wei_yang["recent_context"].endswith("（天启七年十月）")
@@ -166,6 +167,7 @@ def test_judge_face_reads_edges_invisible_to_role_view(ledger):
     assert ("钱谦益", "温体仁") not in jia_pairs
     # 有账与无账行为可辨：判官读面含酿制产物原文。
     wei_yang = next(d for d in judge_face if (d["source"], d["target"]) == (EMPEROR_NODE, "杨嗣昌"))
+    assert "杨嗣昌蒙知遇之恩" in wei_yang["summary"]
 
 
 def test_omniscient_is_superset_same_core(ledger):
@@ -275,6 +277,7 @@ def test_load_relation_history_before_returns_full_stable_prior_stream(game):
     ]
     ids = [int(r["id"]) for r in prior]
     assert ids == sorted(ids)
+    assert prior[2]["context"] == "二人当面言和，暂释前隙。"
 
 
 def test_load_relation_history_before_empty_when_no_older_events(game):

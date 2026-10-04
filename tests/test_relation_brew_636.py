@@ -433,6 +433,7 @@ def test_merge_founding_segment_preserves_bytes_exactly():
     assert merge_founding_segment("甲句。", ["甲句。", "甲句。", "甲句 "]) == "甲句。\n甲句 "
     # 补酿不重复记账只在严格字节全等时成立：整段原样重报（含多行句）逐字全等→跳过。
     merged = merge_founding_segment("", ["甲句。", "乙句。\n乙二句。"])
+    assert merged == "甲句。\n乙句。\n乙二句。"
     assert merge_founding_segment(merged, [merged]) == merged
 
 
@@ -600,6 +601,7 @@ def test_duplicate_json_objects_rejected_not_first_object_picked(game):
     brew_fn.outputs = [_script(foundings=["越次一召，擢杨嗣昌于五品郎中。"], recent="原文一")]
     run_month_end_relation_brew(db, state, brew_fn)
     first = db.get_relation_summary(EMPEROR_NODE, "杨嗣昌")
+    assert first["recent_segment"] == "原文一"
 
     state.turn += 1
     state.period += 1

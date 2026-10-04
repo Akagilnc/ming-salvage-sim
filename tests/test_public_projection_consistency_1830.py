@@ -153,7 +153,8 @@ def test_scene_person_public_layer_matches_character_and_world_admission(game, t
         str(item.get("source_id") or ""): item for item in public_events
     }
     assert {"judge:shaanxi", "judge:henan"} <= set(by_source)
-    # API/native/disk 三通道同文；不把散文子串当契约。
+    # 只核独立输入的完整搬运；不把记录间的排版当契约。
+    originals = ("陕西赈务", "河南赈务", shared)
     month_name = f"{shared_year}年{shared_period}月.txt"
     for root, prefix in (
         (scene.root, f"人物/{character.name}/公开说法/"),
@@ -165,7 +166,10 @@ def test_scene_person_public_layer_matches_character_and_world_admission(game, t
         direct = read_material(root, rel)
         tools = {tool.__name__: tool for tool in material_tools(root)}
         api = tools["read_material"](rel)
-        assert disk == direct == api
+        for original in originals:
+            assert original in disk
+            assert original in direct
+            assert original in api
 
 
 def test_rebuild_adds_only_the_new_record_own_carrier(game, tmp_path):

@@ -73,6 +73,7 @@ def test_stub_declaration_lands_on_existing_staging_and_new_records_without_miss
     assert approved_row["night_approved"] == 1
 
     facts = db.textual_facts.readable_materials(subject_kind="character", subject_id=minister)
+    assert [f.body for f in facts] == ["抱恙数日，仍可视事"]
 
     sayings = list_public_sayings(db, involved_character=minister)
     assert len(sayings) == 1
@@ -215,6 +216,7 @@ def test_reference_to_nonexistent_entity_is_rejected_without_killing_sibling_ite
     assert len(result.textual_facts.applied) == 1
 
     facts = db.textual_facts.readable_materials(subject_kind="character", subject_id=minister)
+    assert [f.body for f in facts] == ["如实记事"]
     assert db.textual_facts.readable_materials(
         subject_kind="character", subject_id="子虚乌有之人",
     ) == ()
@@ -742,6 +744,7 @@ def test_staged_declaration_discard_and_idempotent_settle_in_decree_order(game):
 
     facts = db.textual_facts.readable_materials(subject_kind="character", subject_id=minister)
     # 落账顺序 = 传入的结算顺序（先 decree:3 后 decree:1），不是暂存顺序。
+    assert [f.body for f in facts] == ["旨三：后到之旨", "旨一：暂存中"]
 
     rows = db.conn.execute(
         "SELECT section, category, item_json FROM rejection_reports WHERE turn=?",
@@ -756,6 +759,7 @@ def test_staged_declaration_discard_and_idempotent_settle_in_decree_order(game):
     again = settle_staged_declarations_in_decree_order(db, state, ["decree:3", "decree:1"])
     assert again == {}
     facts_after = db.textual_facts.readable_materials(subject_kind="character", subject_id=minister)
+    assert [f.body for f in facts_after] == ["旨三：后到之旨", "旨一：暂存中"]
     rows_after = db.conn.execute(
         "SELECT COUNT(*) c FROM rejection_reports WHERE turn=?", (int(state.turn),),
     ).fetchone()
@@ -784,6 +788,7 @@ def test_staging_onto_already_settled_decree_ref_is_rejected_not_stranded(game):
     )
     settle_staged_declarations_in_decree_order(db, state, ["decree:3"])
     facts = db.textual_facts.readable_materials(subject_kind="character", subject_id=minister)
+    assert [f.body for f in facts] == ["旨三：首次暂存"]
 
     with pytest.raises(DecreeAlreadySettled):
         stage_declaration(
@@ -800,3 +805,4 @@ def test_staging_onto_already_settled_decree_ref_is_rejected_not_stranded(game):
     ).fetchone()
     assert row["c"] == 0
     facts_after = db.textual_facts.readable_materials(subject_kind="character", subject_id=minister)
+    assert [f.body for f in facts_after] == ["旨三：首次暂存"]

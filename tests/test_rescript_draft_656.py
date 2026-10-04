@@ -145,6 +145,7 @@ def test_save_and_list_rescript_drafts_roundtrip(game):
     assert [d["title"] for d in drafts] == ["陕西告饥", "无局急务"]
     first = drafts[0]
     assert first["event_id"] == "issue:42"          # 权威 issue 回指原样保留
+    assert first["context"] == "秦地赤旱千里，臣愚以为赈济不可缓。"
     assert first["options"] == [{"label": "发帑赈济", "hint": "所安者饥民"}]
     assert first["status"] == "pending"
     assert first["actor_name"] == "测试首辅"
@@ -296,6 +297,7 @@ def test_validate_and_persist_preserve_whitespace_verbatim(game):
     assert drafts[0]["context"] == raw_context
     assert drafts[0]["options"][0]["label"] == raw_label_a
     assert drafts[0]["options"][0]["hint"] == raw_hint_a
+    assert drafts[0]["options"][1]["hint"] == " 所拂者小农 "
     assert drafts[0]["options"][0]["draft_capability"]
     # 落库往返仍逐字无损
     db.save_rescript_drafts(turn, drafts)

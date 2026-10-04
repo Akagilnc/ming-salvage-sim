@@ -140,6 +140,7 @@ describe("#1236 GameHud face gates eat settlement_display", () => {
     expect(host.textContent).not.toContain("半程军饷议题");
     expect(host.querySelector(".situation-list")).toBeNull();
     expect(host.querySelector(".situation-closed-list")).not.toBeNull();
+    expect(host.textContent).toContain("月初已结漕运");
     expect(host.querySelector(".hud2-issue-quad")?.getAttribute("data-settlement-face")).toBe("readonly");
   });
 

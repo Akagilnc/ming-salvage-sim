@@ -571,6 +571,7 @@ def test_world_commit_failure_after_alongside_retries_uncommitted_segment(
     )
     assert (chain.get("call_failure") or {}).get("kind") == "code_exception"
     assert not chain.get("world_committed")
+    assert chain.get("world_text") == "世界段已成文。"
     account = int(db.conn.execute(
         "SELECT balance FROM economy_accounts WHERE account='国库'",
     ).fetchone()["balance"])

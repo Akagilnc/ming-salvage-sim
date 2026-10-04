@@ -209,8 +209,10 @@ def test_world_segment_translates_once_and_persists_repeated_subject_facts_in_or
     army_facts = db.textual_facts.readable_materials(
         subject_kind="army", subject_id=army,
     )
+    assert [fact.body for fact in person_facts] == ["人物先记一事", "人物再记一事"]
 
 
+    assert [fact.body for fact in army_facts] == ["军队先记一事", "军队再记一事"]
 def test_world_segment_applies_domain_effects_and_reports_rejected_effects(game):
     from ming_sim.month_translate import dispatch_month_segment
 
@@ -384,6 +386,9 @@ def test_staged_month_declarations_settle_in_given_order_and_effects_are_idempot
     )
 
     assert list(results) == ["decree:late", "decree:early"]
+    assert [fact.body for fact in db.textual_facts.readable_materials(
+        subject_kind="character", subject_id=person,
+    )] == ["晚旨", "早旨"]
     assert db.conn.execute(
         "SELECT morale FROM armies WHERE id=?", (army,),
     ).fetchone()[0] == army_before + 3
@@ -448,6 +453,7 @@ def test_world_segment_failure_rolls_back_only_current_segment(game):
     facts = db.textual_facts.readable_materials(
         subject_kind="character", subject_id=person,
     )
+    assert [fact.body for fact in facts] == ["前一段已落"]
 
 
 def test_world_segment_effects_use_frozen_visible_affairs(game):
