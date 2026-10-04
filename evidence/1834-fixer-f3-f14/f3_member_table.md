@@ -29,8 +29,8 @@ env \
   ../Ming_LLM/.venv/bin/python evidence/1834-fixer-f3-f14/scripts/context_dispose_needs.py
 ```
 
-全表：`f3_needs_context_disposed.jsonl`  
-共同判据账本：`f3_needs_context_class_ledger.json`  
+全表：`f3_needs_context_disposed.jsonl`
+共同判据账本：`f3_needs_context_class_ledger.json`
 覆盖核：1388 path:line **missing=0**。
 
 ### 按 class_id 映射（成员→共同判据；同根因一类）
