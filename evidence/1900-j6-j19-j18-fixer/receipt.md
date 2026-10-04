@@ -75,4 +75,4 @@ real ~1.6s
 
 ## 8. SHA
 
-（fix commit 后回填）
+（fix commit；working tree clean after docs fill）
