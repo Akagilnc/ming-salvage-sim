@@ -299,9 +299,12 @@ def register_unlisted_person_record(
     for alias in alias_list:
         if _find_existing_minister(content, alias, db) is not None:
             return None
-    faction_value = str(faction or "中立").strip()
-    if faction_value not in content.factions:
+    faction_value = str(faction or "").strip()
+    if not faction_value:
         faction_value = "中立"
+    elif faction_value not in content.factions:
+        # #1847: unknown faction must not silently rewrite to 中立.
+        return None
     seat = str(region_id or "").strip()
     character = Character(
         name=name,

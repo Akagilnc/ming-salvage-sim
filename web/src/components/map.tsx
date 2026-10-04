@@ -691,7 +691,7 @@ export function GrandMap({ nodes, selectedId, onSelect }: { nodes: MapNode[]; se
                       x={pos.svgX}
                       y={pos.svgY}
                     >
-                      {group.name.split(" / ")[0]}
+                      {group.name}
                     </text>
                   );
                 })}
@@ -704,7 +704,7 @@ export function GrandMap({ nodes, selectedId, onSelect }: { nodes: MapNode[]; se
                       x={pos.svgX}
                       y={pos.svgY}
                     >
-                      {region.name.split(" / ")[0]}
+                      {region.name}
                     </text>
                   );
                 })}
@@ -738,7 +738,7 @@ export function GrandMap({ nodes, selectedId, onSelect }: { nodes: MapNode[]; se
                   tabIndex={0}
                 >
                   {node.kind === "theater" ? <Shield size={16} /> : <MapPinned size={15} />}
-                  <span>{node.region?.name.split(" / ")[0] || node.label}</span>
+                  <span>{node.region?.name || node.label}</span>
                 </button>
               );
             })}

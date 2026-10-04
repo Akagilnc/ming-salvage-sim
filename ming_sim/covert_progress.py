@@ -116,26 +116,14 @@ def _identity_keys_for_unit(unit: str, *, effect_sign: int, purpose: object = No
 class CovertContractError(ValueError):
     """确认闸未冻结合同，或后续读端找不到可落库合同。"""
 
-_FIDELITY_ALIASES = {
-    "faithful": "忠实",
-    "fulfilled": "忠实",
-    "discounted": "打折",
-    "degraded": "打折",
-    "surface": "阳奉阴违",
-    "yangfeng": "阳奉阴违",
-    "backlash": "反噬",
-    "transformed": "反噬",
-    "failed": "反噬",
-}
-
-
 def normalize_fidelity_state(raw: object) -> Optional[str]:
+    """Admit only closed Chinese fidelity enum; no synonym rewrite (#1847)."""
     text = str(raw or "").strip()
     if not text:
         return None
     if text in _FIDELITY_INDEX:
         return text
-    return _FIDELITY_ALIASES.get(text.lower())
+    return None
 
 
 def progress_units_for_state(state: object) -> float:

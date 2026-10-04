@@ -322,21 +322,13 @@ def _log(msg: str) -> None:
 
 
 def _infer_tag(prompt: str) -> str:
-    """从 prompt（含 system 段）猜是哪个 agent 在调用，方便复盘。
+    """Trace/log label only.
 
-    兼容无显式 tag 的调用日志；按专属标识推断，避免邸报正文的词污染分类。
+    #1847 / ADR 0142: do not classify caller from free prompt wording
+    (same root as token_stats._guess_caller_tag). Explicit tag at call sites;
+    otherwise unknown.
     """
-    p = prompt
-    if "扮演被皇帝召见" in p or "大臣扮演" in p:
-        return "minister"
-    if "module_allowed_fields" in p or "score_extractor" in p or "本月结算抽取" in p:
-        return "extractor"
-    if "simulator_payload" in p:
-        return "simulator"
-    if "诏书" in p and "拟" in p:
-        return "decree"
-    if "只输出合法 JSON" in p or "整理" in p:
-        return "sanitizer"
+    del prompt
     return "other"
 
 
@@ -1053,7 +1045,7 @@ def _run_backend_for_config(
     直接编程路径（职官分类/各 extractor/国策补全/连通性 verify）的唯一咽喉：
     每次调用 try/finally 写一条 trace，谁调都记，不靠各调用方自觉手写。
     （agno 游戏路径走 CliChat.invoke 自有 trace，与此咽喉不重叠。）
-    tag 空时退回 _infer_tag(prompt)。
+    tag 空时记 other（#1847：禁止从 prompt 自由措辞推断 caller tag）。
 
     #1465 切片③：本入口是结算/拟旨等非 Agent CLI extractor 的**次数入口**——
     在此包一次 run_with_transport，operation 调单次子进程；runner 内禁私有重试。"""
@@ -3219,10 +3211,11 @@ def extract_draft_intent(
     # 单条→补那条（沿用 last-write-wins），**多条不静默新建第三道**→「含糊」交 session 追问哪一道。
     target_raw = str(obj.get("目标草案") or "").strip()
     target_id: Optional[int] = None
-    if target_raw and target_raw != "新":
-        digits = "".join(ch for ch in target_raw if ch.isdigit())
-        if digits and int(digits) in _by_id:
-            target_id = int(digits)
+    # #1847: exact closed candidate only — no digit-scrape from free prose.
+    if target_raw and target_raw != "新" and target_raw.isdigit():
+        cand = int(target_raw)
+        if cand in _by_id:
+            target_id = cand
     if target_raw == "新":
         target = "新"
     elif target_id is not None:

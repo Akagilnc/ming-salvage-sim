@@ -54,12 +54,8 @@ def main() -> None:
         sess, DECREE, notes="催曹化淳呈册",
         probe_id="secret-order-followup",
     )
-    report = sess.resolve_turn(decree=DECREE)
-    # 只打密旨动向章 + 状态，邸报全文太长
-    print("\n========== 密旨动向章（截取） ==========\n")
-    for para in report.split("\n"):
-        if "密旨" in para or "曹化淳" in para or "化淳" in para or "底册" in para or "近臣" in para:
-            print(para.strip())
+    _ = sess.resolve_turn(decree=DECREE)
+    # 只打结构化密令状态；#1847 禁止用邸报自由措辞子串筛段落。
     print("\n========== 密令状态 ==========\n")
     for o in sess.db.list_secret_orders():
         print(f"#{o['id']} status={o['status']} title={o['title']!r}")

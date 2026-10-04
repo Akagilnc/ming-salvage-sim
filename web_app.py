@@ -883,8 +883,13 @@ class WebGame:
         return out
 
     def _safe_save_name(self, name: str) -> str:
-        cleaned = "".join(c for c in name.strip() if c.isalnum() or c in "._-")
-        if not cleaned or cleaned.startswith("."):
+        # #1847: validate allowlist; do not strip/rewrite illegal characters.
+        cleaned = name.strip()
+        if (
+            not cleaned
+            or cleaned.startswith(".")
+            or any(c for c in cleaned if not (c.isalnum() or c in "._-"))
+        ):
             raise HTTPException(status_code=400, detail="存档名非法。仅允许字母/数字/._- ")
         return cleaned
 

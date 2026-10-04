@@ -1178,9 +1178,21 @@ def _apply_economy_list(
         raw_purpose = str(move.get("purpose") or "").strip()
         raw_target_kind = str(move.get("target_kind") or "").strip()
         raw_target_id = str(move.get("target_id") or "").strip()
-        # 校验枚举；非法值退化为"其它"常规扣账
-        purpose = raw_purpose if raw_purpose in ECONOMY_PURPOSES else None
-        target_kind = raw_target_kind if raw_target_kind in ECONOMY_TARGET_KINDS else None
+        # #1847: closed enum only — invalid values reject, never silently degrade.
+        if raw_purpose and raw_purpose not in ECONOMY_PURPOSES:
+            applied.append({
+                "account": account, "rejected": True, "category": "invalid_enum",
+                "reason": f"economy purpose 非法：{raw_purpose}", "item": move,
+            })
+            continue
+        if raw_target_kind and raw_target_kind not in ECONOMY_TARGET_KINDS:
+            applied.append({
+                "account": account, "rejected": True, "category": "invalid_enum",
+                "reason": f"economy target_kind 非法：{raw_target_kind}", "item": move,
+            })
+            continue
+        purpose = raw_purpose or None
+        target_kind = raw_target_kind or None
         if "transfer_to" in move:
             destination = move["transfer_to"]
             if (delta >= 0 or destination not in ("国库", "内库")

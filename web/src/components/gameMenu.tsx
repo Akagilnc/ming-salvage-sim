@@ -379,8 +379,8 @@ export function LLMConfigTab() {
   const [apiKey, setApiKey] = React.useState("");
   const [timeoutSeconds, setTimeoutSeconds] = React.useState("180");
   const normalizeStrength = (value?: string) => {
+    // #1847: closed enum only — no synonym rewrite into off.
     const v = (value || "").trim().toLowerCase();
-    if (v === "minimal" || v === "disabled" || v === "none") return "off";
     return ["", "off", "low", "medium", "high"].includes(v) ? v : "";
   };
   const [apiReasoningStrength, setApiReasoningStrength] = React.useState("");

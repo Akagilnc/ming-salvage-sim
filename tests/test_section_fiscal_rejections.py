@@ -562,9 +562,11 @@ def test_double_suffix_remove_rejected_not_destructive(game):
     assert after == before  # 真科目毫发无损
 
 
-def test_chinese_direction_alias_accepted_at_applier(game):
-    """direction='收' 直接落账同判——同义词归一须在 applier，
-    不能仅在可选 cleaner 层（DELTA_SCHEMA 明言吃中文别名）。"""
+def test_chinese_direction_alias_rejected_at_applier(game):
+    """#1847: direction Chinese synonym rewrite deleted; only closed income/expense.
+
+    Old applier admitted direction='收' via synonym map; that path must now reject.
+    """
     db, state, content = game
     turn = state.turn
 
@@ -574,9 +576,10 @@ def test_chinese_direction_alias_accepted_at_applier(game):
     }, narrative="x", decree_text="y")
 
     assert db.conn.execute(
-        "SELECT COUNT(*) FROM fiscal_config WHERE key='别名测试_base'").fetchone()[0] == 1
+        "SELECT COUNT(*) FROM fiscal_config WHERE key='别名测试_base'").fetchone()[0] == 0
     rows = [r for r in _rejection_rows(db, turn) if r[0] == "fiscal_creates"]
-    assert rows == []
+    assert len(rows) == 1
+    assert rows[0][2] == "invalid_enum"
 
 
 def test_whitespace_only_key_rejected_at_applier(game):
