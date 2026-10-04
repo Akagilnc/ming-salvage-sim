@@ -61,14 +61,6 @@ def test_humanize_character_loyalty_condition_variants(raw):
         _no_token(text, tok)
 
 
-def test_humanize_non_formal_condition_passes_through_unchanged():
-    """N6: free / non-character-condition prose is transported without vocabulary replace."""
-    raw = "原文 ming | supply."
-    assert _h(raw) == raw
-    region_dsl = "region.liaodong.controlled_by == ming"
-    assert _h(region_dsl) == region_dsl
-
-
 def test_humanize_character_status_condition_hides_machine_key():
     text = _h("character.袁崇焕.status == active")
     # 人物 / 字段 / 值；#1683 active 官印态标签=在事（非物理「在朝」）

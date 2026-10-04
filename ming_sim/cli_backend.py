@@ -3864,71 +3864,23 @@ def _split_audience_context(context: str) -> Tuple[str, str]:
 
 
 def _secret_context_task_like(text: str) -> bool:
+    """Non-empty, non-question emperor lines are tasks. No free-prose keyword classify (N10)."""
     compact = re.sub(r"\s+", "", text or "")
     if not compact:
         return False
-    if _secret_context_constraint_like(compact):
-        return True
-    if re.search(r"[?？]$", compact):
+    if compact.endswith("?") or compact.endswith("？"):
         return False
-    return bool(re.search(r"(命|令|着|遣|派|督办|查|暗查|密查|护|封存|截留|赈|再令|另令|须|务必|回奏|月内|日内)", compact))
+    return True
 
 
 def _secret_context_tasks_related(prior: str, later: str) -> bool:
-    later_compact = re.sub(r"\s+", "", later or "")
-    if _secret_context_constraint_like(later_compact):
-        return True
-    if re.search(r"^(再|另|又|并|仍|复)(令|命|着|遣|派)", later_compact):
-        return bool(_secret_context_topic_chars(prior) & _secret_context_topic_chars(later))
-    if re.search(r"(月内|日内|回奏|结案|期限)", later_compact) and not re.search(
-        r"(命|令|着|遣|派|督办|暗查|密查|查|护|封存|截留|赈)", later_compact
-    ):
-        return True
-    return False
-
-
-def _secret_context_constraint_like(text: str) -> bool:
-    compact = re.sub(r"\s+", "", text or "")
-    return bool(re.search(r"(机密|保密|不可泄露|不得泄露|不得外泄|不可外泄|勿泄|秘而不宣|勿使.*知晓|不得.*知晓)", compact))
-
-
-def _secret_context_topic_chars(text: str) -> set:
-    compact = re.sub(r"[^\u4e00-\u9fff]", "", text or "")
-    compact = re.sub(r"^(再|另|又|并|仍|复)?(令|命|着|遣|派)", "", compact)
-    compact = re.sub(
-        r"^[\u4e00-\u9fff]{2,4}(?=(督办|暗查|密查|查|护|封存|截留|加操|操练|密访|补|拨))",
-        "",
-        compact,
-    )
-    compact = re.sub(
-        r"(此事|机密|保密|不可|不得|泄露|外泄|勿泄|秘而不宣|知晓|再|另|又|并|仍|复|令|命|着|遣|派|督办|暗查|密查|查|护|封存|截留|须|务必|回奏|月内|日内|臣|领命|遵旨|谨记|加操|操练)",
-        "",
-        compact,
-    )
-    return set(compact)
+    """Consecutive non-empty emperor lines stay contiguous; no keyword/topic heuristics (N10)."""
+    return bool(re.sub(r"\s+", "", prior or "")) and bool(re.sub(r"\s+", "", later or ""))
 
 
 def _secret_confirmation_material(text: str) -> str:
-    material = (text or "").strip()
-    if not material:
-        return ""
-    atoms = (
-        "准卿所奏", "按你意思", "照你意思", "就这么办", "便如此", "准奏", "照准",
-        "照办", "就按", "就照", "依卿", "依你", "便依", "同意", "卿所奏",
-        "你意思", "所奏", "如此", "这么办", "就办", "可", "准", "好", "是",
-        "善", "行", "办", "吧", "奏",
-    )
-    changed = True
-    while changed:
-        changed = False
-        material = re.sub(r"^[\s，,。.!！?？；;：:、]+", "", material)
-        for atom in atoms:
-            if material.startswith(atom):
-                material = material[len(atom):]
-                changed = True
-                break
-    material = re.sub(r"^[\s，,。.!！?？；;：:、]+", "", material).strip()
-    return material
+    """Transport confirmation line body unchanged; no atom-stripping rewrite (N6)."""
+    return (text or "").strip()
 
 
 def _merge_secret_content(*parts: str) -> str:
@@ -4271,36 +4223,13 @@ def _extract_secret_order(
 
 
 
-# 纯确认短句的原子片段：密令按钮当轮若【整句】只由这些片段拼成（如「可，照办」=可+照办、
-# 「就按你意思办」=就按+你意思+办），说明本轮没有任务正文，须从前文召对取。锚定全匹配而非子串，
-# 避免「可疑之处彻查」这类含确认字的实质命令被误判成纯确认（cmr #354 correctness：旧 exact-set
-# 漏「可，照办」——issue US3 点名的确认句——而子串匹配又会误吞实质命令）。
-_SECRET_CONFIRM_ATOM_RE = re.compile(
-    r"^(?:"
-    r"可|准|好|是|善|行|同意|照办|照准|准奏|准卿所奏|卿所奏|所奏|如此|便如此|就这么办|这么办|"
-    r"就按|就照|按你意思|照你意思|你意思|依卿|依你|便依|就办|办|吧|奏"
-    r")+$"
-)
-
-
 def _secret_prefix_needs_recent_context(secret_intent: str) -> bool:
-    """显式密令按钮后只有确认短句/约束短句时，从前文召对取任务正文。"""
+    """Short/empty secret-button intent pulls prior audience text; length only (N10: no keyword)."""
     text = (secret_intent or "").strip()
     if not text:
         return True
     compact = re.sub(r"[\s，,。.!！?？；;：:、]+", "", text)
-    if re.search(r"(照办|按你意思|照你意思|前议|方才所奏|卿所奏|就按|就照)", compact):
-        return True
-    has_primary_task = bool(re.search(r"(命|令|着|遣|派|督办|暗查|密查|查|护|封存|截留|赈|加操|操练)", compact))
-    has_only_constraint = bool(
-        _secret_context_constraint_like(compact)
-        or re.search(r"(月内|日内|回奏|结案|限期|期限)", compact)
-    ) and not has_primary_task
-    if has_only_constraint:
-        return True
-    if len(compact) > 12:
-        return False
-    return bool(_SECRET_CONFIRM_ATOM_RE.match(compact))
+    return len(compact) <= 12
 
 
 _CLI_RECOMMENDATION_CALL = re.compile(

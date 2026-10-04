@@ -1,0 +1,1 @@
+archive/ static sealed; py/ts/tsx/js files counted=0; excluded from active N6/N10 member tables by sealed-static basis.

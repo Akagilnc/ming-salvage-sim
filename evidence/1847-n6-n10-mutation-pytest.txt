@@ -1,2 +1,1 @@
-...........                                                              [100%]
-11 passed in 0.85s
+251 passed in 14.44s (real 15.06s); TEMP=/tmp/ming1847-n6n10-test.9QfIlC

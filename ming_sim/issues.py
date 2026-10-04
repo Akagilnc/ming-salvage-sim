@@ -809,7 +809,11 @@ def _monthly_economy_items(effect: Dict[str, object]) -> List[Dict[str, object]]
 
 
 def _recurring_funding_label_tokens(*values: object) -> set[str]:
-    """Structured subject stems only (key/display/category/purpose); no free-prose reason, no word-sense stripping."""
+    """ADR0027 科目名 stem：key 去 _base/_rate；无 reason；无词义剥离。
+
+    display/category 是自由标签，仅因 ADR0027 历史双扣「账户+科目名」轴获准作匹配，
+    不因其在结构化 JSON 内便升格为形式身份。purpose（补饷/其它枚举）不是科目名。
+    """
     tokens: set[str] = set()
     for value in values:
         raw = str(value or "").strip()
@@ -830,7 +834,8 @@ def _commitment_fiscal_create_duplicate_reason(
 ) -> str:
     account = str(create.get("account") or "").strip()
     display = str(create.get("display") or "") or (db._stem_of(str(create.get("key") or "")) or str(create.get("key") or ""))
-    # N10: identity = structured account + subject stem; free-text reason is not identity.
+    # N10: identity = account + 科目名(key stem / display ↔ economy.category).
+    # Not identity: free reason; purpose enum (补饷/其它).
     create_tokens = _recurring_funding_label_tokens(
         display,
         create.get("key"),
@@ -848,7 +853,6 @@ def _commitment_fiscal_create_duplicate_reason(
             continue
         item_tokens = _recurring_funding_label_tokens(
             item.get("category"),
-            item.get("purpose"),
         )
         if create_tokens & item_tokens:
             return "同批已有承诺 issue ongoing_effects.economy 承载该经常性拨款，fiscal_create 已去重"

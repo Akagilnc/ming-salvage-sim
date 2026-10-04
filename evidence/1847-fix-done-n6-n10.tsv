@@ -1,6 +1,13 @@
-disposition	class	file	line_or_symbol	note
-FIX_DONE	N6	web_app.py	_humanize_condition	删除未匹配形式语言时对任意条件原文的词表 replace；自由原文原样返回
-FIX_DONE	N6	web_app.py	state projection resolve/fail_condition	仍调用 _humanize_condition；自由原文 byte-equal；形式语言仍解析
-FIX_DONE	N10	web/src/components/situation.tsx	groupIssues	删除 fail_condition 关键词 long/near 分类；单列表
-FIX_DONE	N10	ming_sim/issues.py	_recurring_funding_label_tokens	删除中文词义剥离；仅 structured stem
-FIX_DONE	N10	ming_sim/issues.py	_commitment_fiscal_create_duplicate_reason	reason 不再参与科目身份；保留账户+科目名去重事实
+disposition	file	line	kind	note
+FIX_DONE	web_app.py	232	replace_fallback_deleted	N6 free-prose vocabulary replace fallback removed
+FIX_DONE	web/src/components/situation.tsx	7	presentation_keyword_class	N10 fail_condition keyword buckets removed
+FIX_DONE	ming_sim/issues.py	811	word_sense_strip	N10 Chinese word-sense stripping removed
+FIX_DONE	ming_sim/issues.py	834	fiscal_reason_identity	N10 free reason removed from fiscal identity
+FIX_DONE	ming_sim/issues.py	849	fiscal_purpose_identity	N10 purpose enum removed from fiscal identity
+FIX_DONE	ming_sim/breach_plea.py	1352	purpose_keyword_admission	N10 purpose keywords removed; delta only
+FIX_DONE	ming_sim/breach_plea.py	1376	reason_keyword_admission	N10 reason keywords removed; structured delta only
+FIX_DONE	ming_sim/cli_backend.py	3866	secret_task_keyword	N10 task-like keyword regex deleted
+FIX_DONE	ming_sim/cli_backend.py	3877	secret_related_keyword	N10 relatedness keyword/topic deleted
+FIX_DONE	ming_sim/cli_backend.py	4238	secret_prefix_keyword	N10 prefix atom/keyword classify → length only
+FIX_DONE	ming_sim/cli_backend.py	3866	atom_strip_deleted	N6 confirmation atom-stripping deleted
+FIX_DONE	tests/test_web_issue_condition_display.py	-	assert_deleted	helper free-text equality proving assertion removed

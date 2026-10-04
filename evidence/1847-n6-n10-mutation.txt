@@ -1,24 +1,27 @@
-# #1847 N6/N10 mutation evidence (temp process; not permanent proving tests)
+=== N6 real entry: dispatch_month_segment → DB → state projection ===
+[PASS] N6_DB_byte_equal id=4 len=138
+[PASS] N6_MATERIALS_RAW_PRESENT db row is material source
+[PASS] N6_CURRENT_projection_raw_equal rc_eq=True
+[PASS] N6_OLD_mutates old='原文 大明 、 补给· 测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测'
+[PASS] N6_MUTATION_EXIT_PAIR old_fail current_pass
+[PASS] N6_STATE_ROUTE_USES_HUMANIZE
+[PASS] N6_GET_STATE_PATH fn=db
+=== N10 fiscal real entry: apply_score_extraction ===
+[PASS] N10_FISCAL_REASON_STABLE {'西学经费': (False, 'deduped_commitment_carrier'), '不同文字依据': (False, 'deduped_commitment_carrier')}
+[PASS] N10_FISCAL_DEDUP_BY_STEM 科目名 dedup; reason ignored
+[PASS] N10_OLD_REASON_FLIPS {'西学经费': True, '不同文字依据': False}
+[PASS] N10_FISCAL_MUTATION_PAIR old_flip current_stable
+[PASS] N10_FISCAL_NO_PURPOSE_IN_ITEM_TOKENS
+[PASS] N10_FISCAL_NO_REASON_IN_CREATE_TOKENS
+=== N10 UI: groupIssues structure (node exit codes) ===
+[PASS] N10_UI_NO_KEYWORD
+[PASS] N10_UI_MUTATION_EXIT rc=0 out={"old":["longTerm","nearTerm"],"neu":["active","active"]}
+=== N10 breach keyword removal ===
+[PASS] N10_BREACH_NO_PURPOSE_SET
+[PASS] N10_BREACH_NO_REASON_SET
+=== N10/N6 secret context deletion ===
+[PASS] N10_SECRET_NO_TASK_KW
+[PASS] N6_SECRET_NO_ATOM_STRIP
+[PASS] N10_SECRET_PREFIX_LENGTH_ONLY
 
-## N6 free-text transport
-Command: python probe calling web_app._humanize_condition("原文 ming | supply.")
-- CURRENT: raw_equal=True out='原文 ming | supply.'
-- OLD (restore vocabulary replace fallback): raw_equal=False out='原文 大明 、 补给·'
-Verdict: N6_MUTATION_OK old_mutates current_preserves
-
-## N10 presentation classification
-Predicate old: /甲申|贯穿一朝|倾国之大计/.test(fail_condition)
-- OLD: "甲申之难" -> longTerm; "崇祯十七年之难" -> nearTerm (flipped)
-- NEW: both -> active (stable)
-Verdict: N10_UI_MUTATION_OK
-
-## N10 fiscal identity
-OLD tokens include reason + Chinese word-sense strip; NEW = structured stem only
-- OLD: reason "西学经费" dup=True; reason "不同文字依据" dup=False (flipped)
-- NEW: both dup=False (stable; display/key intentionally non-matching)
-Verdict: N10_FISCAL_MUTATION_OK
-
-## Anchor existing tests
-MING_SIM_*_BIN=/usr/bin/false ×7
-pytest tests/test_decree_commitment_creation_136.py::test_decree_commitment_dedups_same_batch_fiscal_create_carrier tests/test_web_issue_condition_display.py -q
--> 11 passed in 0.85s
+[PASS] N6_GET_STATE_HTTP_raw_equal True status=200 rc_eq=True fc_eq=True

@@ -1348,11 +1348,11 @@ def resolve_breach_pleas_from_extraction(
             delta = int(it.get("delta") or 0)
         except (TypeError, ValueError):
             delta = 0
-        purpose = str(it.get("purpose") or "")
-        if delta != 0 or purpose in {"履行承诺", "续拨", "加拨"}:
+        # N10: funding regret from structured money move only; not free purpose/reason wording.
+        if delta != 0:
             _note_funding_item(it)
 
-    # 反悔：fiscal_creates 加拨/复供本承诺
+    # 反悔：fiscal_creates / fiscal_changes 以结构化额度变化为准（非 reason 措辞）
     for it in extracted.get("fiscal_creates") or []:
         if not isinstance(it, dict):
             continue
@@ -1360,7 +1360,7 @@ def resolve_breach_pleas_from_extraction(
     for it in extracted.get("fiscal_changes") or []:
         if not isinstance(it, dict):
             continue
-        # 加拨：new_value > old_value 或 delta>0
+        # 加拨：new_value > old_value 或 delta>0（结构化；不用自由 reason 词表）
         try:
             delta = int(it.get("delta") or 0)
         except (TypeError, ValueError):
@@ -1373,7 +1373,7 @@ def resolve_breach_pleas_from_extraction(
                     delta = max(delta, int(new_v) - int(old_v))
         except (TypeError, ValueError):
             pass
-        if delta > 0 or str(it.get("reason") or "") in {"加拨", "续拨", "复供"}:
+        if delta > 0:
             _note_funding_item(it)
 
     for todo in pending:
