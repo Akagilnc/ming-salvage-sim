@@ -3,7 +3,7 @@
 - 工作树：`/Users/akagilnc/WorkSpace/Ming_LLM-1897-w5`
 - 分支：`ak-roles/issue-1897-r1-r4-fixer-20261005-053204`
 - 施工前 HEAD：`9dc3823b3cda09e71d2a71286e048752cd0000ff`
-- 本轮施工后 HEAD：`7bef9dcd286b9478ed3fd5ab98a661c6ecfbb824`（代码修：`c8992d3de942b9def0e290f5bc56a00a3bcd442f`）
+- 本轮代码修 HEAD：`c8992d3de942b9def0e290f5bc56a00a3bcd442f`；回执 docs 后续 tip 以 `git rev-parse HEAD` 为准
 - 源卷最新用户 JSON：`~/.ak-roles/books/Ming_LLM/1897/runs/01a1089b-50c9-7dac-ab41-8ba86b05e2c6@fixer/session/session.jsonl` L51（`role=user`，正文即 continue 判词）；同文亦在 `run-state.json` → `currentCourt.summons.instruction`
 - 原修理回执：`artifacts/1897-fixer-r1-r4-report.md`
 - 状态：本轮新独立 `ak-roles:` 提交；**未 push、未开 PR、未 amend、未 stash**
@@ -153,5 +153,5 @@ web：本树无本地 `typescript`/`tsc`；`rg sim_note web/src` → CLEARED。
 
 ## HEAD
 
-- tip：`7bef9dcd286b9478ed3fd5ab98a661c6ecfbb824`
-- fix：`c8992d3de942b9def0e290f5bc56a00a3bcd442f`
+- fix（类 A/B 代码）：`c8992d3de942b9def0e290f5bc56a00a3bcd442f`
+- 回执 tip：以本文件落库后的 branch HEAD 为准（`git rev-parse HEAD`）
