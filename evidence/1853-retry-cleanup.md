@@ -18,7 +18,28 @@
 
 ## 类一：J2-T（首轮已结，本轮未重开）
 
-首轮沿 `translation_retries` 生产者→历史传输→状态→prop→回退清退；夜卷/归档/`retryReadFailure`/重试 POST 保留。详见 git `f88af780d`。本轮复扫历史链仍为零消费者副本。
+首轮沿生产者→历史传输→类型→状态→prop→回退清退；夜卷/归档/`retryReadFailure`/重试 POST 保留。施工证据为 `f88af780d`。
+
+全仓枚举（非仅 reply 符号），最终复扫同命令：
+```bash
+rg -Hn -I 'translation_retries|translationRetries|setTranslationRetries|TranslationRetry|reply_retries|replyRetries|retryReadFailure' . --glob '!evidence/**' --glob '!package-lock.json'
+```
+
+| 成员 | 处置 |
+|---|---|
+| `web_app.py:api_audience_chat_history` 转译重试响应字段 | 删除历史传输 |
+| `useAudienceChat.ts:AudienceHistoryData` 转译重试声明 | 删除旧类型字段 |
+| `useChatActions.ts` 转译重试 state/setter/返回值 | 删除副本维护 |
+| `main.tsx` 解构及 ChatModal prop | 删除接线 |
+| `chatModal.tsx` 转译重试 prop/依赖/非 night 回退 | 删除旧回退，仅取夜卷 |
+| `modals.test.tsx` helper prop；`appDurableWiring.test.tsx` 历史接口重试夹具 | 随旧链删除；保留夜卷夹具及失败场景 |
+| `test_web_audience_night_498.py`、`test_month_loop_tracer_1468.py` 历史字段断言 | 迁至真实夜卷入口；保留失败、恢复、撤回契约 |
+| 夜卷响应、ChatModal 夜态、TranslationRetry/ReplyRetry 类型 | 有现役呈现消费者，保留 |
+| ArchiveModal 转译重试状态 | 归档夜独立消费，保留 |
+| `pending_translation_retries`、reply 查询方法、真实重试 POST、CLI 重试 | 动作/查询能力而非旧副本，保留 |
+| `retryReadFailure` hook/prop/提示 | 真实读取失败事实，保留 |
+
+最终扫描：历史接口无重试响应字段，useChatActions/main 无转译副本；剩余投影均为夜卷或归档消费者。
 
 ---
 
@@ -43,10 +64,13 @@
 ### 机械枚举命令（先全选 guard，再人工分类）
 
 ```bash
-rg -n -I --glob '!evidence/**' --glob '!.git/**' --glob '!**/node_modules/**' \
-  -e 'hasattr\([^)]+,\s*"(conn|list_unextracted_replies|get_story_extract_status|get_interrupted_reply_retries|get_post_reply_retries|list_hall_chat_turns|mark_story_extraction_pending)"\)' \
-  -e 'getattr\([^)]+,\s*["'\'']db["'\'']\s*,\s*None\)' \
-  web_app.py ming_sim/cli/terminal.py ming_sim/audience_translation.py ming_sim/session.py
+# 全仓全部属性兼容与缺DB分支，不以已知 getter 名称限制候选：
+rg -Hn -I '(hasattr\(|getattr\(|\bdb is None\b)' . \
+  --glob '!evidence/**' --glob '!package-lock.json'
+# 辅助索引，非类别边界：
+rg -Hn -I '(hasattr|getattr).*?(retr|translat|hall_chat)|((retr|translat).*?(hasattr|getattr))' . \
+  --glob '!evidence/**' --glob '!package-lock.json'
+# 沿夜卷/CLI回话和转译重试入口反查依赖，再按下表分属类/保留。
 ```
 
 ### 全员表：属类 → 删；不属类 → 保留依据
@@ -150,7 +174,16 @@ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$PWD" \
   -q -p no:cacheprovider --basetemp=<自建>
 ```
 
-输出：`212 passed, 1 skipped, 1 warning in 10.62s`
+输出：`212 passed, 1 skipped, 1 warning in 10.62s`。
+
+角色复核再次运行（同七变量前缀）：
+```bash
+PYTHONDONTWRITEBYTECODE=1 /Users/akagilnc/WorkSpace/Ming_LLM/.venv/bin/python -m pytest \
+  tests/test_audience_scroll_539.py tests/test_cli_play_turn.py -q -p no:cacheprovider
+```
+实测：`41 passed, 1 warning in 1.45s`。首轮 Web 聚焦为 `1 failed | 132 passed`，唯一失败为既存 #1873 连续读失败案，未放松；`tsc --noEmit -p tsconfig.json` 退出 0。本轮后端扩类不改 Web。
+
+机械辅助索引剩余项：`llm_transport.max_retries` 为SDK能力；`session`/`conftest.pending_audience_translation` 为结果字段；CLI `restore_interrupted_after_failed_retry` 为写恢复；测试 executor.fn 为测试设施。均非必备 DB 查询缺失→空投影。
 
 ### 夹具
 
