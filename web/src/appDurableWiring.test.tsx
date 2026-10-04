@@ -2736,8 +2736,8 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
   });
 
   // #1764：真实 App 入口——在飞/成功/失败回填/成案只读；断言结构化 phase，不锁 chip 措辞。
-  
-  
+
+
   it("#1764 退出主菜单清本地失败卡；再入局不残留", async () => {
     vi.stubGlobal("confirm", () => true);
     let releaseSave!: (value: Response) => void;
