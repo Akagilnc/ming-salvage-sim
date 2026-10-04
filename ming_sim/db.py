@@ -13008,9 +13008,8 @@ class GameDB:
                 continue
             if not fork_state["fork"]:
                 continue
-            case_summary = str(row["decree_text"] or "").strip()
-            if len(case_summary) > 48:
-                case_summary = case_summary[:48]
+            # #1897：案卷 decree_text 自由正文原样供料，禁 strip/截断。
+            case_summary = str(row["decree_text"] or "")
             # 物理事实：奏报面 / 执行格 / 旨外——直接复用 fork 读端（类型已保证）
             forked_dossiers.append({
                 "dossier_id": dossier_id,
@@ -16094,7 +16093,8 @@ class GameDB:
             return False
         primary_intensity = self._EXECUTION_OUTCOME_INTENSITY[outcome]
         secondary_intensity = self._INTENSITY_DOWNGRADE[primary_intensity]
-        reason_text = str(reason or "执行连坐").strip() or "执行连坐"
+        # #1897：连坐理由自由正文原样；仅真正空串才回落缺省，禁 strip。
+        reason_text = str(reason or "执行连坐") or "执行连坐"
         identity = self._JOINT_LIABILITY_COST_IDENTITY
         origin = f"dossier:{int(dossier_id)}:{identity}"
 
@@ -16967,7 +16967,8 @@ class GameDB:
                 break
         if not hit:
             return
-        context = str(reason or "").strip() or "处置站台者"
+        # #1897：站台处置理由自由正文原样；仅真正空串才回落缺省。
+        context = str(reason or "") or "处置站台者"
         from ming_sim.credit_events import KIND_BETRAY, write_credit_event
         write_credit_event(
             self, state,
@@ -18485,9 +18486,10 @@ class GameDB:
             ),
         }
         decree_text = str(payload.get("text") or sliced.get("text") or "")
+        # #1897：声明正文原样；仅真正空串才视作缺省，禁 strip 判空改 None。
         return self._materialize_office_appointment_dossier(
             state, office_pa, sliced, content=content,
-            decree_text=decree_text if decree_text.strip() else None,
+            decree_text=decree_text if decree_text else None,
         )
 
     def _materialize_office_appointment_dossier(
@@ -22050,7 +22052,8 @@ class GameDB:
         target_turn = int(state.turn) + months
         old_due = int(row["due_turn"] or 0)
         raw_reason = str(reason or "")
-        why = raw_reason if raw_reason.strip() else "奉旨加急"
+        # #1897：催办理由自由正文原样；仅真正空串才回落缺省，禁 strip 判空。
+        why = raw_reason or "奉旨加急"
         with atomic(self):
             if months <= 0:
                 self.conn.execute(

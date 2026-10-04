@@ -400,24 +400,19 @@ def apply_distortion_to_verdict(
     if band == "不歪":
         return out
 
+    # #1897：可改结构化 outcome；自由 note 原样保留，禁追加固定文案。
     if outcome == "fulfilled":
         if band == "必歪":
             out["outcome"] = "transformed"
-            out["note"] = note + "；催办失真，事已变形"
         elif band in {"易歪", "微歪"}:
             out["outcome"] = "degraded"
-            out["note"] = note + "；催紧之下，实绩打折"
     elif outcome == "degraded":
         if band == "必歪":
             out["outcome"] = "failed" if not has_effects else "transformed"
-            out["note"] = note + "；催之愈急，愈见走样"
         elif band == "易歪" and not has_effects:
             out["outcome"] = "failed"
-            out["note"] = note + "；表报难掩亏空"
-    elif outcome == "failed":
-        # 已是最重终值；附注失真
-        if band in {"易歪", "必歪"}:
-            out["note"] = note + "；催办之下终无实绩"
+    # failed：已是最重终值；不改 note
+    out["note"] = note
     return out
 
 
@@ -537,7 +532,8 @@ def rush_staged_commitment_stage(
         (stages_blob, int(commitment_ref)),
     )
 
-    why = reason if str(reason or "").strip() else "奉旨加急"
+    # #1897：催办理由自由正文原样；仅真正空串才回落缺省，禁 strip 判空。
+    why = str(reason or "") or "奉旨加急"
     if record_history:
         _record_commitment_urge(
             db, state,

@@ -630,7 +630,7 @@ def decide_secret_order_settlement(review_input: Mapping[str, object]) -> Dict[s
     actual = float(review_input.get("actual_units") or 0.0)
     target = float(review_input.get("target_units") or 0.0)
     has_reports = bool(review_input.get("has_reports"))
-    origin = str(review_input.get("origin_context") or "").strip()
+    origin = str(review_input.get("origin_context") or "")
 
     delivered = target > 0.0 and actual + 1e-9 >= target
     if delivered:
@@ -662,7 +662,8 @@ def player_facing_secret_order_close_text(
     reports: Sequence[Mapping[str, object]],
 ) -> str:
     existing = str(order.get("result") or "")
-    if existing.strip():
+    # #1897：仅空白也是奏报原文，不得因 strip 判空而改走兜底。
+    if existing:
         return existing
     from ming_sim.supervision import latest_monthly_memorial
     return latest_monthly_memorial(reports)
@@ -1169,8 +1170,8 @@ def apply_monthly_covert_actual_progress(
             )
         raw_note = str(sel.get("note") or sel.get("备注") or "")
         # 没有推演者给出的正文就不写说明。机器拼的执行态句子会占住同一 note，
-        # 随后的真实正文进不来。空白留给数值写口，已存原文保持不动。
-        note = raw_note if raw_note.strip() else ""
+        # 随后的真实正文进不来。#1897：仅空白也是原文，原样写入，禁 strip 判空改成 ""。
+        note = raw_note
         row = db.record_dossier_actual_progress(
             did,
             turn,

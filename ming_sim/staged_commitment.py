@@ -57,12 +57,13 @@ def normalize_commitment_stages(raw: object) -> List[Dict[str, object]]:
             stage_idx = int(item.get("stage_idx", idx))
         except (TypeError, ValueError):
             stage_idx = idx
+        # #1897 / ADR0142：自由正文原样入载体，禁 strip 规范化。
         criterion = str(
             item.get("criterion_text") or item.get("criterion") or ""
-        ).strip()
+        )
         origin_context = str(
             item.get("origin_context") or item.get("origin") or criterion or ""
-        ).strip()
+        )
         if not criterion and origin_context:
             criterion = origin_context
         if not criterion:
@@ -245,9 +246,10 @@ def list_due_grant_report_dossiers_for_scan(
         # due_turn 单源：有未来 due 且仍 executing 即到期候选（不另滤 cadence/grant_action）
         did = int(row["id"])
         due_turn = int(row["due_turn"] or 0)
-        title = str(payload.get("title") or payload.get("purpose") or "").strip()
-        criterion = str(payload.get("ongoing_effects") or "").strip() or title or "依限奏报"
-        origin = str(row["decree_text"] or payload.get("text") or criterion).strip()
+        # #1897：due 扫描写入待办的自由字段原样透传，禁 strip。
+        title = str(payload.get("title") or payload.get("purpose") or "")
+        criterion = str(payload.get("ongoing_effects") or "") or title or "依限奏报"
+        origin = str(row["decree_text"] or payload.get("text") or criterion)
         due.append({
             "commitment_ref": 0,
             "stage_idx": did,  # UNIQUE(commitment_ref, stage_idx, entry_kind)

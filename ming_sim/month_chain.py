@@ -1388,21 +1388,24 @@ def _question_as_decision(question: Dict[str, object], *, event_id: str) -> Dict
     for opt in options:
         if not isinstance(opt, dict):
             continue
-        label = str(opt.get("label") or "").strip()
-        if not label:
+        # #1897：选项 label/hint 原样；判空用局部副本。
+        label = str(opt.get("label") or "")
+        if not label.strip():
             continue
         cleaned.append({
             "label": label,
-            "hint": str(opt.get("hint") or "").strip(),
+            "hint": str(opt.get("hint") or ""),
             **{
                 key: opt[key] for key in opt
                 if key not in {"label", "hint"} and opt[key] is not None
             },
         })
+    # #1897：请旨 title/context 自由正文原样；仅真正空 title 才回落「请旨」。
+    title = str(question.get("title") or "")
     return {
         "event_id": event_id,
-        "title": str(question.get("title") or "").strip() or "请旨",
-        "context": str(question.get("context") or "").strip(),
+        "title": title or "请旨",
+        "context": str(question.get("context") or ""),
         "options": cleaned,
     }
 

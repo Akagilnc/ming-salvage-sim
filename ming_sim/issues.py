@@ -2440,8 +2440,9 @@ def gather_impeachment_surge_candidates(state: GameState, db: GameDB) -> List[Di
                 "responsible_person_ids": responsible_ids,
                 "responsible_faction_ids": responsible_factions,
                 "dossier_id": did,
-                "decree_text": decree_text if decree_text.strip() else "",
-                "execution_note": execution_note if execution_note.strip() else "",
+                # #1897：案卷自由正文原样供料；仅空白也不得因 strip 改成空串。
+                "decree_text": decree_text,
+                "execution_note": execution_note,
                 "execution_outcome": str(row["execution_outcome"] or "").strip(),
                 "beyond_intent": True,
                 "reported_bands": list(fork_state.get("reported_bands") or []),

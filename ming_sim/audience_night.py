@@ -2274,8 +2274,9 @@ def audience_scene_recap(
         nid = int(open_n["id"])
     bodies: List[str] = []
     for entry in audible_entries_for(db, int(nid), name):
-        body = str(entry.get("body") or "").strip()
-        if body:
+        # #1897：场面正文原样入回顾；判空用局部副本。
+        body = str(entry.get("body") or "")
+        if body.strip():
             bodies.append(body)
     if not bodies:
         return ""

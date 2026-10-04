@@ -32,8 +32,9 @@ def bind_decision_options(options: object) -> Dict[str, Dict[str, object]]:
     for option in options:
         if not isinstance(option, dict):
             continue
-        label = str(option.get("label") or "").strip()
-        if not label or label in bound:
+        # #1897：label 原样作键；判空用局部副本。
+        label = str(option.get("label") or "")
+        if not label.strip() or label in bound:
             raise ValueError(f"decision option label 为空或重复：{label!r}")
         bound[label] = option
     return bound
@@ -55,16 +56,17 @@ def parse_decision_blocks(text: str) -> List[Dict[str, object]]:
             continue
         if not isinstance(obj, dict):
             continue
-        title = str(obj.get("title") or "").strip()
+        # #1897：请旨自由字段原样；判空用局部副本，不把 strip 写回。
+        title = str(obj.get("title") or "")
         raw_opts = obj.get("options")
-        if not title or not isinstance(raw_opts, list):
+        if not title.strip() or not isinstance(raw_opts, list):
             continue
         options: List[Dict[str, object]] = []
         for o in raw_opts:
             if not isinstance(o, dict):
                 continue
-            label = str(o.get("label") or "").strip()
-            if not label:
+            label = str(o.get("label") or "")
+            if not label.strip():
                 continue
             try:
                 action_type = validate_season_option(o)
@@ -73,7 +75,7 @@ def parse_decision_blocks(text: str) -> List[Dict[str, object]]:
                 break
             option: Dict[str, object] = {
                 "label": label,
-                "hint": str(o.get("hint") or "").strip(),
+                "hint": str(o.get("hint") or ""),
             }
             # Deterministic financial options carry their executable payload;
             # label/hint remain presentation only.
@@ -89,7 +91,7 @@ def parse_decision_blocks(text: str) -> List[Dict[str, object]]:
             continue
         decision = {
             "title": title,
-            "context": str(obj.get("context") or "").strip(),
+            "context": str(obj.get("context") or ""),
             "options": options[:3],
         }
         event_id = str(obj.get("event_id") or obj.get("origin_ref") or "").strip()
@@ -180,7 +182,8 @@ def bind_decisions_to_candidate_events(
         if not isinstance(item, dict):
             continue
         event_id = str(item.get("id") or "").strip()
-        title = str(item.get("title") or "").strip()
+        # #1897：候选 title 原样作键；id 仍属结构化引用。
+        title = str(item.get("title") or "")
         if not event_id:
             continue
         candidate_ids.add(event_id)
@@ -201,7 +204,7 @@ def bind_decisions_to_candidate_events(
             bound.append(out)
             continue
         # 缺 id，或回显 id 不在权威候选快照里：以快照唯一标题为准（重）绑，不被 LLM 回显牵着走。
-        title = str(out.get("title") or "").strip()
+        title = str(out.get("title") or "")
         ids = title_to_ids.get(title) or []
         unique_ids = {event_id for event_id in ids if event_id}
         if len(unique_ids) == 1:

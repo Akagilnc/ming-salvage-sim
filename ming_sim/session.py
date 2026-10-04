@@ -1873,7 +1873,8 @@ class GameSession:
             ctx = self.db.get_resolve_context(self.state.turn)
             if ctx is not None:
                 recovered_source = _provenance_from_stored(ctx.get("source"))
-                stored = str(ctx.get("decree_text") or "").strip()
+                # #1897：恢复原诏自由正文原样，禁 strip。
+                stored = str(ctx.get("decree_text") or "")
                 if stored:
                     self.last_decree = stored
                     decree = stored

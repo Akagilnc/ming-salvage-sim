@@ -77,7 +77,8 @@ def build_pending_summaries(db: Any, turn: int, *, night_id: int = 0) -> List[st
             payload = {}
         if not isinstance(payload, dict):
             payload = {}
-        text = str(payload.get("text") or row["action"] or "").strip()
+        # #1897：pending 摘要供料保留 payload 自由正文，禁 strip。
+        text = str(payload.get("text") or row["action"] or "")
         brief = text if text else str(row["kind"] or "")
         approved = "已应允" if int(row["night_approved"] or 0) else "待应允"
         out.append(
@@ -361,9 +362,12 @@ def build_audience_translate_prompt(
     产出契约 = C0 全 section（交办/应允/当场实况/文字事实/公开说法/在场/
     分段/边事件/主角/入册）。不解析自由散文——模型直接给结构化声明。
     """
-    said_block = "\n".join(str(s) for s in night_said if str(s).strip()) or "（无）"
-    pending_block = "；".join(str(s) for s in pending_summaries if str(s).strip()) or "（无）"
-    grounding = str(target_grounding or "").strip()
+    # #1897：供料块保留自由正文空白；判空用局部副本，不把 strip 写回。
+    said_keep = [str(s) for s in night_said if str(s).strip()]
+    pending_keep = [str(s) for s in pending_summaries if str(s).strip()]
+    said_block = "\n".join(said_keep) or "（无）"
+    pending_block = "；".join(pending_keep) or "（无）"
+    grounding = str(target_grounding or "")
     grounding_block = f"{grounding}\n" if grounding else ""
     return (
         "你是召对转译器。读本轮皇帝原话、回话、本场已说的话与本夜暂存清单，"

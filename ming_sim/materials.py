@@ -447,9 +447,10 @@ def _own_affair_lines(
         directory_lines = [*fact_lines, *extra_lines]
         directory_text = "\n".join(directory_lines) if directory_lines else "见目录。"
         if facts:
-            # #1812 P6：raw body 是文字事实自由正文，不得 strip。
+            # #1812 P6 / #1897：raw body 是文字事实自由正文，不得 strip；
+            # 仅空白也是原文，只有真正空串才回落缺省。
             raw_latest = str(facts[-1].body or "")
-            opening_text = raw_latest if raw_latest.strip() else "见目录。"
+            opening_text = raw_latest if raw_latest else "见目录。"
         elif extra_lines:
             opening_text = extra_lines[0]
         else:
@@ -492,14 +493,15 @@ def _character_affair_lines(
             continue
         if _issue_linked_affair_id(db, issue_id):
             continue
-        # #1812 P6：title/stage_text 是自由正文，判空只用局部 stripped 副本。
+        # #1812 P6 / #1897：title/stage_text 是自由正文，判空只用局部副本；
+        # 供料写入仍用原文（仅空白不得换成缺省）。
         title = str(issue.get("title") or "")
         dir_key = f"issue-{issue_id}"
         if not title.strip() or dir_key in seen:
             continue
         seen.add(dir_key)
         raw_situation = str(issue.get("stage_text") or "")
-        situation = raw_situation if raw_situation.strip() else "见目录。"
+        situation = raw_situation if raw_situation else "见目录。"
         lines.append((dir_key, title, situation, situation, False))
     known_ids = {
         str(item.get("source_id") or "")
@@ -516,14 +518,14 @@ def _character_affair_lines(
         match = re.match(r"issue:(\d+)$", str(item.get("source_id") or ""))
         if not match or _issue_linked_affair_id(db, match.group(1)):
             continue
-        # #1812 P6：title/body 是自由正文，判空只用局部 stripped 副本。
+        # #1812 P6 / #1897：title/body 是自由正文，判空只用局部副本；供料用原文。
         title = str(item.get("title") or "")
         dir_key = f"issue-{match.group(1)}"
         if not title.strip() or dir_key in seen:
             continue
         seen.add(dir_key)
         raw_situation = str(item.get("body") or "")
-        situation = raw_situation if raw_situation.strip() else "见目录。"
+        situation = raw_situation if raw_situation else "见目录。"
         lines.append((dir_key, title, situation, situation, False))
     for row in _carryover_drafts(db, state):
         dir_key = f"draft-{int(row['id'])}"
@@ -531,10 +533,10 @@ def _character_affair_lines(
             continue
         seen.add(dir_key)
         title = f"尚未入档旨稿#{int(row['id'])}"
-        # #1812 P6：raw body 是草稿自由正文，判空只用局部 stripped 副本。
+        # #1812 P6 / #1897：raw body 是草稿自由正文；仅空白也是原文。
         # sqlite3.Row / dict 同形：下标读取，禁 .get（Row 无此方法）。
         body = str(row["text"] if "text" in row.keys() else "")
-        text = f"{body}（尚未入档）" if body.strip() else "尚未入档"
+        text = f"{body}（尚未入档）" if body else "尚未入档"
         lines.append((dir_key, title, text, text, True))
     for dir_key, title, directory_text, opening_text, is_handling in _own_affair_lines(
         db, state, character_name, knowledge,
@@ -551,16 +553,18 @@ def _visible_affair_lines(knowledge: dict) -> list[dict[str, object]]:
     lines: list[dict[str, object]] = []
     for issue in knowledge.get("issues") or []:
         issue_id = int(issue.get("id") or 0)
-        title = str(issue.get("title") or "").strip()
-        if issue_id <= 0 or not title:
+        # #1897：自由字段原样供料；判空用局部副本，不把 strip 结果写回。
+        title = str(issue.get("title") or "")
+        if issue_id <= 0 or not title.strip():
             continue
+        stage_text = str(issue.get("stage_text") or "")
         lines.append({
             "id": issue_id,
             "affair_id": int(issue.get("affair_id") or 0),
             "title": title,
-            "situation": str(issue.get("stage_text") or "").strip() or "见目录。",
-            "resolve_condition": str(issue.get("resolve_condition") or "").strip(),
-            "fail_condition": str(issue.get("fail_condition") or "").strip(),
+            "situation": stage_text if stage_text else "见目录。",
+            "resolve_condition": str(issue.get("resolve_condition") or ""),
+            "fail_condition": str(issue.get("fail_condition") or ""),
             "source_id": str(issue.get("source_id") or f"issue:{issue_id}"),
             "audience_names": tuple(issue.get("audience_names") or ()),
             "participant_roster": issue.get("participant_roster") or "[]",
@@ -862,7 +866,9 @@ def _write_textual_fact_files(
         facts = readable(subject_kind=kind, subject_id=subject_id)
         if not facts:
             continue
-        body = "\n".join(str(fact.body or "").strip() for fact in facts if str(fact.body or "").strip())
+        # #1897：文字事实 body 原样拼接；判空用局部副本，不把 strip 写回。
+        kept = [str(fact.body or "") for fact in facts if str(fact.body or "").strip()]
+        body = "\n".join(kept)
         if not body:
             continue
         rel = f"{_FACT_DIR}/{kind}-{_safe_segment(label)}.txt"
@@ -1049,10 +1055,16 @@ def _experience_text(knowledge: dict, audible_entries: Sequence[dict] = ()) -> s
     """
     lines: list[str] = []
     for item in knowledge.get("events") or []:
-        title = str(item.get("title") or "").strip()
-        body = str(item.get("body") or "").strip()
-        if title or body:
-            lines.append(f"{title}：{body}".strip("："))
+        # #1897：经历投影保留自由正文空白，禁 strip 规范化。
+        title = str(item.get("title") or "")
+        body = str(item.get("body") or "")
+        if title.strip() or body.strip():
+            if title and body:
+                lines.append(f"{title}：{body}")
+            elif title:
+                lines.append(title)
+            else:
+                lines.append(body)
     lines.extend(str(item["body"]) for item in audible_entries if item.get("body"))
     return "\n".join(lines) or "（无）"
 
@@ -1161,7 +1173,8 @@ def prepare_character_materials(
     affairs = _handled_affair_lines(db, state, name, issue_materials)
     for row in _carryover_drafts(db, state):
         title = f"尚未入档旨稿#{int(row['id'])}"
-        body = str(row.get("text") or "").strip()
+        # #1897：草稿正文原样；Row 无 .get，与 _character_affair_lines 同形下标读。
+        body = str(row["text"] if "text" in row.keys() else "")
         affairs.append({
             "id": f"draft-{int(row['id'])}", "title": title,
             "situation": f"{body}（尚未入档）" if body else "尚未入档",
