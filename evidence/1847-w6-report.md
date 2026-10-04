@@ -165,7 +165,7 @@ MING_SIM_PI_BIN=/usr/bin/false \
 | RED（内联四元组） | `1 failed` 期望仅民心、实际四项全出 | `/tmp/1847-w6/mutation-n12-web-red.txt` |
 | GREEN2（精确还原） | `1 passed` | `/tmp/1847-w6/mutation-n12-web-green2.txt` |
 
-未新增永久证明测试以外的探针文件；聚焦测 `tests/test_legacy_gate_metric_keys_read_n12.py` 为行为契约（真源变更则读端跟随），非一次性探针。
+自查撤回上述永久测试准入主张：`tests/test_legacy_gate_metric_keys_read_n12.py` 新增了只测内部 helper、mock 常量并锁呈现措辞的证明性测试，违反本票不新增证明性测试及测试契约边界，已随独立纠正提交删除，不换形重造。上述变异与364 passed仅记录删除前的实跑历史；不作为新外部入口契约证明。N11真实 `GameDB.advance_issue` 旧红现绿证明及既有聚焦测试结果保留。
 
 ## 聚焦测试（七前缀 + Web 读取触及面）
 
@@ -196,7 +196,7 @@ web tsc：`cd web && npx tsc --noEmit` → exit 0 → `/tmp/1847-w6/tsc.txt`
 
 - prior code fix (N11 + db/fiscal N12): `e49928cb62df359f2df78fc2f9a2f0712758ed2b`
 - this round code+report (web/models GATE 读端 + 报告自查纠正): see `git rev-parse HEAD` after commit on `ak-roles/1847-fixer-w6-n11-n12`
-- files: `web_app.py`, `ming_sim/models.py`, `tests/test_legacy_gate_metric_keys_read_n12.py`, `evidence/1847-w6-report.md`
+- production files: `web_app.py`, `ming_sim/models.py`；报告 `evidence/1847-w6-report.md`。新增 helper 证明测试已由后续独立自查提交删除，无生产行为变更，未为删除重复跑聚焦批次。
 
 ## 自查二连 done
 
