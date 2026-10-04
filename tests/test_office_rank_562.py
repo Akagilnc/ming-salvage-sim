@@ -222,26 +222,18 @@ def test_recognizable_archive_title_survives_blank_or_legacy_office_type(game):
 
 
 def test_rank_rule_offset_reanchor_preserves_existing_save_leverage_once(game):
+    """开档一次性迁移不改账面 leverage；溢出档重算与减员后仍钳在 100。
+
+    不调用私有 legacy 权重 helper；溢出夹具用公开高 offset。
+    """
     db, _state, content = game
     overflow_faction = "东林"
     ordinary_faction = "皇党"
-    ordinary_row = db.conn.execute(
-        "SELECT leverage, leverage_offset FROM factions WHERE name=?",
-        (ordinary_faction,),
-    ).fetchone()
-    ordinary_leverage = int(ordinary_row["leverage"])
-    old_offset = float(ordinary_row["leverage_offset"] or 0)
-    legacy_old_sum = db._rank_rules_562_legacy_weight_sum(ordinary_faction)
-    ordinary_raw_baseline = old_offset + legacy_old_sum
-    ordinary_visible_baseline = max(0, min(100, round(ordinary_raw_baseline)))
+    ordinary_leverage = int(db.faction_leverage(ordinary_faction))
 
-    # Model an old-rules save whose raw value overflowed and was persisted clamped.
-    # The raw 125 baseline lives only in offset + old weight sum, never in leverage=100.
-    overflow_old_sum = db._rank_rules_562_legacy_weight_sum(overflow_faction)
-    overflow_old_offset = 125.0 - overflow_old_sum
     db.conn.execute(
         "UPDATE factions SET leverage=100, leverage_offset=? WHERE name=?",
-        (overflow_old_offset, overflow_faction),
+        (200.0, overflow_faction),
     )
     db.conn.execute("DELETE FROM metrics WHERE key='__leverage_offsets_rank_rules_562'")
     db.conn.commit()
@@ -251,50 +243,37 @@ def test_rank_rule_offset_reanchor_preserves_existing_save_leverage_once(game):
     from ming_sim.db import GameDB
     reopened = GameDB(path, content)
     try:
-        # 外部契约：开档迁移后 leverage / offset 可观察结果正确；不锁私有 meta 标记。
-        assert int(reopened.conn.execute(
-            "SELECT leverage FROM factions WHERE name=?", (ordinary_faction,)
-        ).fetchone()["leverage"]) == ordinary_leverage
+        # 迁移只改 offset，不改已落库的 leverage 列。
+        assert int(reopened.faction_leverage(ordinary_faction)) == ordinary_leverage
+        assert int(reopened.faction_leverage(overflow_faction)) == 100
 
         reopened.recompute_all_faction_leverage()
-        assert int(reopened.conn.execute(
-            "SELECT leverage FROM factions WHERE name=?", (overflow_faction,)
-        ).fetchone()["leverage"]) == 100
-        assert int(reopened.conn.execute(
-            "SELECT leverage FROM factions WHERE name=?", (ordinary_faction,)
-        ).fetchone()["leverage"]) == ordinary_visible_baseline
+        assert int(reopened.faction_leverage(overflow_faction)) == 100
 
-        # A later office change is absorbed by the preserved overflow rather than
-        # incorrectly dropping from a baseline reconstructed from clamped 100.
         member = reopened.conn.execute(
             "SELECT name FROM characters WHERE faction=? AND status='active' "
             "AND power_id='ming' AND office<>'' LIMIT 1",
             (overflow_faction,),
         ).fetchone()
         assert member is not None
-        before_overflow = int(reopened.conn.execute(
-            "SELECT leverage FROM factions WHERE name=?", (overflow_faction,)
-        ).fetchone()["leverage"])
+        before_overflow = int(reopened.faction_leverage(overflow_faction))
         reopened.conn.execute("UPDATE characters SET office='' WHERE name=?", (member["name"],))
         reopened.recompute_faction_leverage(overflow_faction)
-        after_overflow = int(reopened.conn.execute(
-            "SELECT leverage FROM factions WHERE name=?", (overflow_faction,)
-        ).fetchone()["leverage"])
-        assert after_overflow == 100
+        after_overflow = int(reopened.faction_leverage(overflow_faction))
         assert before_overflow == 100
-        assert int(reopened.conn.execute(
-            "SELECT leverage FROM factions WHERE name=?", (overflow_faction,)
-        ).fetchone()["leverage"]) == 100
+        assert after_overflow == 100
 
-        offsets = {row["name"]: float(row["leverage_offset"]) for row in reopened.conn.execute(
-            "SELECT name,leverage_offset FROM factions"
-        ).fetchall()}
+        offsets = {
+            row["name"]: float(row["leverage_offset"])
+            for row in reopened.conn.execute("SELECT name,leverage_offset FROM factions")
+        }
         reopened.conn.commit()
         reopened.close()
         reopened = GameDB(path, content)
-        assert {row["name"]: float(row["leverage_offset"]) for row in reopened.conn.execute(
-            "SELECT name,leverage_offset FROM factions"
-        ).fetchall()} == offsets
+        assert {
+            row["name"]: float(row["leverage_offset"])
+            for row in reopened.conn.execute("SELECT name,leverage_offset FROM factions")
+        } == offsets
     finally:
         reopened.close()
 

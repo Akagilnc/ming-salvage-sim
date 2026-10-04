@@ -152,7 +152,7 @@ def forecast_snapshot(
         catalog_token = _uncased_grant_catalog_token(db, body, decree_ref)
         if catalog_token and payload_declares_escort(payload):
             grounding = _append_this_decree_escort_grounding(
-                grounding, body, [], catalog_token,
+                grounding, body, catalog_token,
             )
         this_decree = _this_decree_fact(body, decree_text=text, db=db)
         if catalog_token:
@@ -278,24 +278,21 @@ def _uncased_grant_catalog_token(
 
 
 def _append_this_decree_escort_grounding(
-    grounding: str, candidate: Dict[str, Any], sources: list, token: str,
+    grounding: str, candidate: Dict[str, Any], token: str,
 ) -> str:
-    """本旨尚未成案，全局目录没有它的行。目录身份是暂存 decree_ref，不是猜号。"""
+    """本旨尚未成案，全局目录没有它的行。目录身份是暂存 decree_ref，不是猜号。
+
+    #1900 J18：已撤销的暗护双载体 escort_link 目录行不再写入；仅保留本旨自带押解标记。
+    """
     kind = str(candidate.get("target_kind") or "")
     target_id = str(candidate.get("target_id") or "")
     payload = candidate.get("payload") if isinstance(candidate.get("payload"), dict) else {}
     declared = payload_declares_escort(payload)
-    lines = [
+    extra = (
         f"dossier\t{token}\t{kind}:{target_id}\t本旨"
-        + ("\t自带押解" if declared else ""),
-    ]
-    for source in sources:
-        lines.append(
-            f"escort_link\t{int(source['secret_order_dossier_id'])}\t{token}"
-            f"\t{source['relation_type']}"
-        )
+        + ("\t自带押解" if declared else "")
+    )
     body = grounding.rstrip("\n")
-    extra = "\n".join(lines)
     if not body:
         return extra + "\n"
     return body + "\n" + extra + "\n"

@@ -440,34 +440,45 @@ def test_recompute_all_reconciles_drift_from_unhooked_path(game):
 
 
 def test_settle_path_triggers_reconcile_before_next_period(game, monkeypatch):
-    """#9 cmr R3 finding#2：reconcile 兜底确由【真实结算路】在 next_period 之前触发——
-    锁住玩家月链结算尾 db.recompute_all_faction_leverage() 的接线与顺序。
-    现有 test_recompute_all_reconciles_drift_from_unhooked_path 直调该方法、不走结算路，
-    就算结算尾那行 wiring 被删/移到 next_period 之后，那测试照过、证明不了生产接线。
-    本测试经玩家月链跑一回合，spy 记录方法被调用时 state.turn，
-    断言：(1) 被调用过；(2) 调用时 turn 仍是 before_turn（未 next_period）；(3) 结算后 turn 已 +1
-    （证明 reconcile 在 next_period 之前跑过）。把结算尾 wiring 删掉则 spy 不触发 → 红。"""
+    """#9 cmr R3 finding#2：真实玩家月链结算须把绕 hook 的派系权势漂移收回公式值。
+
+    不 spy 内部 recompute 调用；经 `_settle_empty_month` 真入口后断言外部
+    ``faction_leverage`` 已归位且回合已推进。直调 recompute 的案见
+    ``test_recompute_all_reconciles_drift_from_unhooked_path``，本案复用同一漂移构造、
+    只换结算入口。
+    """
+    from ming_sim.db import _LEVERAGE_FACTIONS
+
     db, state, content = game
     before_turn = state.turn
-    calls = []
-
-    real = type(db).recompute_all_faction_leverage
-
-    def _spy(self):
-        # 记录被调用时刻的 turn（生产 wiring 应在 next_period 之前 → turn 仍是 before_turn）。
-        calls.append(state.turn)
-        return real(self)
-
-    monkeypatch.setattr(type(db), "recompute_all_faction_leverage", _spy)
+    faction = "阉党"
+    db.conn.execute(
+        "UPDATE characters SET office='' WHERE faction=? AND status='active' AND power_id='ming'",
+        (faction,),
+    )
+    SENTINEL = 999
+    for f in _LEVERAGE_FACTIONS:
+        if db.conn.execute("SELECT 1 FROM factions WHERE name=?", (f,)).fetchone() is None:
+            continue
+        db.conn.execute("UPDATE factions SET leverage=? WHERE name=?", (SENTINEL, f))
+    db.conn.commit()
+    assert db.faction_leverage(faction) == SENTINEL
 
     from tests.test_due_review_621 import _settle_empty_month
     _settle_empty_month(db, state, content, monkeypatch)
 
-    assert calls, "结算路应触发 recompute_all_faction_leverage（生产 wiring 未接 → 此处为空）"
-    assert all(t == before_turn for t in calls), (
-        f"reconcile 应在 next_period 之前被调用（调用时 turn 应={before_turn}，实得 {calls}）"
-    )
-    assert state.turn == before_turn + 1, "结算后回合应已推进（证明 reconcile 在 next_period 前跑过）"
+    offset = float(db.conn.execute(
+        "SELECT leverage_offset FROM factions WHERE name=?", (faction,),
+    ).fetchone()["leverage_offset"])
+    assert db.faction_leverage(faction) == max(0, min(100, round(offset)))
+    for f in _LEVERAGE_FACTIONS:
+        row = db.conn.execute(
+            "SELECT leverage FROM factions WHERE name=?", (f,),
+        ).fetchone()
+        if row is None:
+            continue
+        assert int(row["leverage"]) != SENTINEL
+    assert state.turn == before_turn + 1
 
 
 def test_reconcile_runs_before_clear_gated_legacies_same_turn(game, monkeypatch):

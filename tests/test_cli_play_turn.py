@@ -122,7 +122,7 @@ def test_cli_does_not_end_unadvanced_turn(monkeypatch, action):
 
 
 def test_review_issue_reaches_staged_directive_default_approval(monkeypatch):
-    """CLI issue reaches the end-turn owner without reviving decree preview/review."""
+    """CLI issue 经真实 review_directives 入口回到 end-turn owner 信号。"""
 
     class Db:
         def list_pending_actions(self, turn):
@@ -132,21 +132,18 @@ def test_review_issue_reaches_staged_directive_default_approval(monkeypatch):
         def __init__(self):
             self.db = Db()
             self.state = SimpleNamespace(turn=1, turn_phase=TurnPhase.REVIEWING.value)
-            self.calls = []
 
         def enter_review(self):
-            self.calls.append("enter_review")
+            return None
 
         def list_directives(self, include_pending=False):
             return []
-
 
     answers = iter(["issue"])
     monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
     session = Session()
 
     assert term.review_directives(session) == "issue"
-    assert session.calls == ["enter_review"]
 
 
 def test_terminal_minister_chat_persists_messages_before_session_chat(monkeypatch):

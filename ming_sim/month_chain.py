@@ -1015,20 +1015,12 @@ def _enrich_eligible_dossiers_for_supply(
     return out
 
 
-def _escort_route_facts(db: Any, dossier_id: int) -> Dict[str, object]:
-    """一道案卷的护送相关投影；专用逐路实况账本已退役（#1900 J18）。"""
-    return {
-        "escort_routes": [],
-        "escort_routes_as_escort_source": [],
-    }
-
-
 def build_secret_orders_supply_feed(
     db: Any, state: Any, chain: Dict[str, Any],
 ) -> Dict[str, Any]:
     """整月密报供料：沿邸报作者本月材料读口，但不滤密令来源；另附密令对象与盘面。
 
-    不拼装「已生效效果」清单，也不另造逐段实际结果账本；专用逐路实况账本已退役。
+    不拼装「已生效效果」清单，也不另造逐段实际结果账本；专用逐路实况账本已退役（#1900 J18）。
     """
     from ming_sim.covert_progress import _is_issuance_turn
     from ming_sim.materials import _world_board_text
@@ -1036,23 +1028,15 @@ def build_secret_orders_supply_feed(
     turn = int(state.turn)
     candidates = db.list_monthly_dossier_progress_nudges(turn)
     eligible = _enrich_eligible_dossiers_for_supply(db, candidates)
-    for row in eligible:
-        row.update(_escort_route_facts(db, int(row.get("dossier_id") or 0)))
     active_orders = [
         dict(o) for o in db.list_secret_orders(status="active")
         if not _is_issuance_turn(o, turn)
     ]
-    for order in active_orders:
-        dossier = db.get_dossier_for_secret_order(int(order["id"]))
-        if dossier is None:
-            continue
-        order.update(_escort_route_facts(db, int(dossier["id"])))
     materials = _month_fact_materials(db, state, chain, include_secret_sources=True)
     return {
         "instruction": (
             "为本月所有在办密令产出密奏和执行态声明。据实况自行判断办理与拒收。"
-            "escort_routes 是各路此趟护送的账本实况（不是密奏），逐路汇总执行状态时"
-            "按它读，别拿整条密令的成败反推。"
+            "逐路汇总执行状态时据案卷关联与核账事实读，别拿整条密令的成败反推。"
         ),
         "turn": turn,
         "eligible_dossiers": eligible,

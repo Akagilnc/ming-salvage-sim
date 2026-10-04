@@ -1,5 +1,18 @@
-# J6 枚举谓词（票面/判词类定义全文，未收窄）：
+# J6 枚举命令（冻结分析，非生产机制）
+# 类定义全文（未收窄，非 named-shapes）：
 # 非契约内部证明、mock替代被测行为、helper专测、退役行为、非契约文字锁、
-# 内部oracle、调用mock；必要闸负向不可盲删。
-rg -n --glob 'tests/**/*.py' --glob '!.baseline/**' \
-  'monkeypatch\.setattr\([^)]*(recompute_|power_band|_has_meta|_require_|_apply_|_backfill_|_restore_|_member_office|_faction_office|_private|__leverage)|assert .*\._[a-zA-Z].*|assert calls|lambda[^:]*: calls\.append|routed:|__leverage_offsets_calibrated|_has_meta_flag'
+# 内部oracle、调用mock；必要闸负向不可盲删；原文无损契约≠拼装材料措辞锁。
+#
+# 保守全集 = tests/**/*.py 全部 test_* 函数 + web/src/**/*.test.* 全部 it/test 块
+# （AST / TypeScript compiler API 声明枚举；分类依据=入口/mock/断言/退役符号结构信号
+#  + 逐成员语义 reason；不发明自由文本正则生产机制。）
+#
+# 产出：
+#   j6-all-members-disposition.json  — 2886 成员逐条 action/reason/sha256
+#   j6-disposition.md                — 直方图 + 逐 reason 完整索引
+
+# 在工作树根执行（脚本仅 /tmp 冻结分析，不入库为生产机制）：
+python3 - <<'PY'
+# 见本轮施工会话 /tmp/1900-j6-full-enum 冻结分析；结果已写入上述两文件。
+print('disposition already written under evidence/1900-j18-j6-retire-fixer/')
+PY

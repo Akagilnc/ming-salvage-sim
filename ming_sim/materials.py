@@ -1489,12 +1489,6 @@ def _world_board_text(
         ("阶级", db.class_report(audience=True)),
     )
     parts = [f"{title}：\n{body}" for title, body in sections if str(body or "").strip()]
-    escort_ledger = (
-        db.escort_route_ledger_text()
-        if hasattr(db, "escort_route_ledger_text") else ""
-    )
-    if str(escort_ledger or "").strip():
-        parts.append(escort_ledger)
     return "\n\n".join(parts) or "（无）"
 
 

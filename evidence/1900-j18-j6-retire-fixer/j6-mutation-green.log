@@ -1,6 +1,2 @@
-cmd: MING_SIM_AGY_BIN=/usr/bin/false MING_SIM_CODEX_BIN=/usr/bin/false MING_SIM_CLAUDE_BIN=/usr/bin/false MING_SIM_CURSOR_BIN=/usr/bin/false MING_SIM_KIMI_BIN=/usr/bin/false MING_SIM_GROK_BIN=/usr/bin/false MING_SIM_PI_BIN=/usr/bin/false python3 -m pytest tests/test_six_sciences_seed_608.py::test_six_sciences_censor_exit_recomputes_its_faction_leverage -q --tb=line -p no:cacheprovider
-exit: 0
-elapsed_s: 1.007
-
 .                                                                        [100%]
-1 passed in 0.72s
+1 passed in 0.91s

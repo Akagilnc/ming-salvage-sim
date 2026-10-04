@@ -1,0 +1,10 @@
+# J18 行为形状复扫（不止旧符号；授权范围：双载体/专用账本/聚合/专用校验/配套供料预推恢复）
+# 命令：
+# rg -n "escort_route_ledger|_escort_route_facts|escort_routes_as_escort|escort_pending_targets|escort_sources|dossier_escort_outcomes|list_escort_link_pairs|record_dossier_escort|_covert_pending|_resolve_covert|_carry_pending_covert|_is_staged_grant|escort_link\\t" ming_sim tests docs/DELTA_SCHEMA.md --glob '!.baseline/**'
+#
+# 命中（施工后）：
+docs/DELTA_SCHEMA.md:398:### ~~`commissions[].secret_order.escort_pending_targets` / `escort_sources` / `escort_links` / `escort_results` / `dossier_escort_outcomes`~~ — 已退役（#1900 J18）
+#
+# 结论：生产+测试行为形状空；仅失效说明标题保留。
+# 本轮另删：materials hasattr escort_route_ledger_text 兼容读口；
+# month_chain _escort_route_facts 空 escort_routes 注入；decree_forecast escort_link 双载体目录行。
