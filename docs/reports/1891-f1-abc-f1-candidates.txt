@@ -1,4 +1,3 @@
-tests/conftest.py::seed_rescript_rows [urgent_fixture_id] L27-41
 tests/test_applier_contract.py::test_ddl_in_open_transaction_rolls_back [sqlite_master_check] L348-370
 tests/test_appointment_tenure_607.py::test_appointment_dossier_and_office_archive_preserve_each_tenure [select_order_limit] L37-55
 tests/test_army_display_173.py::test_army_public_exits_approx_arrears_and_hide_split_accounts [select_order_limit] L31-48
@@ -35,7 +34,6 @@ tests/test_declaration_dispatch_1835.py::test_edge_event_conflicting_affair_poin
 tests/test_decree_commitment_schema_136.py::_table_columns [pragma_table_info] L19-23
 tests/test_decree_commitment_schema_136.py::test_issue_resolution_removes_building_and_keeps_remove_audit_log [select_order_limit] L80-109
 tests/test_decree_dossiers_571.py::_active_people [select_order_limit] L7-15
-tests/test_decree_dossiers_571.py::test_final_decree_edit_path_removed_no_bypass [route_absence] L1021-1046
 tests/test_deformation_dual_rail_622.py::test_ac5_audit_fork_signal_present_only_with_audit_link [select_order_limit] L191-241
 tests/test_deformation_dual_rail_622.py::test_apply_economy_list_directed_pay_arrears_echoes_beyond_intent [select_order_limit] L259-375
 tests/test_dossier_reported_progress_619.py::test_execution_surface_dossier_can_record_and_list_full_history [pragma_table_info] L78-120
@@ -66,12 +64,10 @@ tests/test_fiscal_substrate_bridge.py::test_province_pay_shortfall_reduces_pure_
 tests/test_fiscal_substrate_bridge.py::test_armies_provision_empty_mutiny_status_flag [pragma_table_info] L2107-2121
 tests/test_gazette_author_1862.py::test_author_archives_own_title_and_same_run_advances [select_order_limit] L89-462
 tests/test_highlight_judge_544.py::test_build_chat_projection_includes_minister_highlights [select_order_limit] L109-125
-tests/test_history_decree_text_1843_reopen.py::test_history_turn_reads_decree_text_from_resolve_context [sqlite_master_check] L6-28
 tests/test_issue_entities.py::test_resolve_changes_character_status [select_order_limit] L49-68
 tests/test_junxin_monthly_tick_314.py::test_substrate_hub_path_loyalty_tier [select_order_limit] L68-83
 tests/test_material_directory_1830.py::test_material_tree_contains_only_structurally_related_world_details [select_order_limit] L75-115
 tests/test_material_directory_1830.py::test_matter_carriers_follow_the_real_knowledge_projection [select_order_limit] L118-154
-tests/test_mechanical_tail_1845.py::test_chapter_memory_retired_from_three_readers [sqlite_master_check] L447-512
 tests/test_memorial_inbox_1726.py::test_progress_and_denunciation_project_as_memorials [select_order_limit] L50-98
 tests/test_month_chain_1843.py::test_month_chain_lands_specialized_facts_before_due_and_gazette [select_order_limit] L756-856
 tests/test_month_translate_1840.py::test_world_segment_explicit_stock_transfers_share_actual_amount [select_order_limit] L17-69
@@ -115,9 +111,6 @@ tests/test_relation_capture_633.py::test_authorized_dossier_outside_frozen_batch
 tests/test_relation_capture_633.py::test_unauthorized_dossier_inside_frozen_set_still_rejected [select_order_limit] L364-394
 tests/test_relation_capture_633.py::test_missing_frozen_dossier_set_is_empty_closed_set [select_order_limit] L397-428
 tests/test_rescript_draft_656.py::_add_character [pragma_table_info] L47-61
-tests/test_rescript_draft_656.py::_pending_columns [pragma_table_info] L270-271
-tests/test_rescript_draft_656.py::_ledger_columns [pragma_table_info] L273-274
-tests/test_rescript_draft_656.py::test_657_s1_schema_columns_and_no_banned_fields [pragma_table_info,sqlite_master_check] L276-293
 tests/test_secret_dossier_participants_1252.py::_people [select_order_limit] L16-22
 tests/test_secret_order_payoff_1504.py::_minister [select_order_limit] L80-88
 tests/test_secret_order_payoff_1504.py::_catch_names [select_order_limit] L192-202
@@ -133,10 +126,7 @@ tests/test_staged_assignment_identity_1890.py::test_undo_deletes_only_this_turns
 tests/test_style_temperament_641.py::test_inertia_natural_resolve_applies_temperament_style [select_order_limit] L48-84
 tests/test_style_temperament_641.py::test_apply_score_extraction_writes_temperament_style_and_log [select_order_limit] L87-120
 tests/test_style_temperament_641.py::test_temperament_style_preserves_raw_bytes_through_write_kernel [select_order_limit] L123-172
-tests/test_supervision_625.py::_table_cols [pragma_table_info] L136-140
-tests/test_supervision_625.py::test_ac1_presence_exposure_schema_pragma_and_no_dulling_cols [sqlite_master_check] L146-173
 tests/test_transaction_boundary.py::test_ddl_first_inside_atomic_rolls_back [sqlite_master_check] L414-437
 tests/test_transit_countdown_668.py::test_arrivals_sorted_by_name_stable [select_order_limit] L261-273
-tests/test_web_audience_night_498.py::test_asgi_dossiered_directive_has_no_retired_review_surface [route_absence] L512-546
-tests/test_web_audience_night_498.py::test_legacy_pending_only_advances_to_durable_dossier_without_review_api [route_absence] L583-629
 tests/test_world_materials_1834.py::test_world_materials_include_textual_facts_once_and_gazette_not_duplicated [select_order_limit] L188-257
+TOTAL 131

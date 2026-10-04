@@ -19,21 +19,6 @@ from ming_sim.supervision import (
     SUPERVISION_RELATION,
 )
 
-# 表列负向契约留在测试侧（生产写口用 SQL 字面量；不导出死常量供形状自证）
-_PRESENCE_TABLE = "dossier_supervision_presence"
-_EXPOSURE_TABLE = "dossier_loophole_exposures"
-_PRESENCE_ALLOWED_COLS = frozenset({
-    "id", "dossier_id", "turn", "auditor_name", "audit_dossier_id",
-    "relation_type", "present",
-})
-_EXPOSURE_ALLOWED_COLS = frozenset({
-    "id", "dossier_id", "turn", "action_type", "execution_form",
-})
-_FORBIDDEN_DULLING_COL_FRAGMENTS = (
-    "dull", "dulling", "钝化", "陋规", "supervision_score", "dull_rate",
-)
-
-
 # ── fixtures helpers ──────────────────────────────────────────────
 
 
@@ -133,44 +118,7 @@ def _insert_staged(db, state, content, *, dossier_id: int, due_turn: int):
     return int(created["issue_id"])
 
 
-def _table_cols(db, table: str) -> set[str]:
-    return {
-        str(row["name"])
-        for row in db.conn.execute(f'PRAGMA table_info("{table}")').fetchall()
-    }
-
-
 # ── AC1 事实底 ────────────────────────────────────────────────────
-
-
-def test_ac1_presence_exposure_schema_pragma_and_no_dulling_cols(game):
-    db, state, _content = game
-    assert _PRESENCE_TABLE in {
-        r[0] for r in db.conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table'"
-        ).fetchall()
-    }
-    assert _EXPOSURE_TABLE in {
-        r[0] for r in db.conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table'"
-        ).fetchall()
-    }
-    pcols = _table_cols(db, _PRESENCE_TABLE)
-    ecols = _table_cols(db, _EXPOSURE_TABLE)
-    assert pcols == _PRESENCE_ALLOWED_COLS
-    assert ecols == _EXPOSURE_ALLOWED_COLS
-    # 全库不得长出钝化数值列。
-    tables = [
-        str(r[0])
-        for r in db.conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
-        ).fetchall()
-    ]
-    for table in tables:
-        for col in _table_cols(db, table):
-            low = col.lower()
-            for frag in _FORBIDDEN_DULLING_COL_FRAGMENTS:
-                assert frag.lower() not in low, f"{table}.{col} 命中禁列片段 {frag}"
 
 
 def test_ac1_settle_segment_writes_presence(game, monkeypatch):

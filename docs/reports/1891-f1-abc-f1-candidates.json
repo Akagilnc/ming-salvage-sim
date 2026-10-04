@@ -1,21 +1,11 @@
 [
   {
-    "file": "tests/conftest.py",
-    "member": "seed_rescript_rows",
-    "shapes": [
-      "urgent_fixture_id"
-    ],
-    "lines": "27-41",
-    "asserts": []
-  },
-  {
     "file": "tests/test_applier_contract.py",
     "member": "test_ddl_in_open_transaction_rolls_back",
     "shapes": [
       "sqlite_master_check"
     ],
-    "lines": "348-370",
-    "asserts": []
+    "lines": "348-370"
   },
   {
     "file": "tests/test_appointment_tenure_607.py",
@@ -23,8 +13,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "37-55",
-    "asserts": []
+    "lines": "37-55"
   },
   {
     "file": "tests/test_army_display_173.py",
@@ -32,10 +21,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "31-48",
-    "asserts": [
-      "assert key not in payload"
-    ]
+    "lines": "31-48"
   },
   {
     "file": "tests/test_army_display_173.py",
@@ -43,10 +29,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "51-73",
-    "asserts": [
-      "assert \"arrears\" not in payload[row[\"id\"]]"
-    ]
+    "lines": "51-73"
   },
   {
     "file": "tests/test_army_firearms.py",
@@ -54,8 +37,7 @@
     "shapes": [
       "pragma_table_info"
     ],
-    "lines": "24-25",
-    "asserts": []
+    "lines": "24-25"
   },
   {
     "file": "tests/test_army_maintenance_retire_173.py",
@@ -63,10 +45,7 @@
     "shapes": [
       "pragma_table_info"
     ],
-    "lines": "31-34",
-    "asserts": [
-      "assert \"maintenance_per_turn\" not in cols, \"维护费列应已物理删除\""
-    ]
+    "lines": "31-34"
   },
   {
     "file": "tests/test_army_maintenance_retire_173.py",
@@ -74,11 +53,7 @@
     "shapes": [
       "pragma_table_info"
     ],
-    "lines": "37-47",
-    "asserts": [
-      "assert \"maintenance_per_turn\" in {         r[\"name\"] for r in db.conn.execute(\"PRAGMA table_info(armies)\").fetchall()}, \"前提：列已加回\"",
-      "assert \"maintenance_per_turn\" not in {         r[\"name\"] for r in db.conn.execute(\"PRAGMA table_info(armies)\").fetchall()}, \"drop 后列应消失\""
-    ]
+    "lines": "37-47"
   },
   {
     "file": "tests/test_army_maintenance_retire_173.py",
@@ -86,10 +61,7 @@
     "shapes": [
       "pragma_table_info"
     ],
-    "lines": "50-75",
-    "asserts": [
-      "assert \"maintenance_per_turn\" not in cols, \"现存档重开应在 init_schema 路径 drop 维护费列\""
-    ]
+    "lines": "50-75"
   },
   {
     "file": "tests/test_army_salary_44.py",
@@ -97,8 +69,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "67-87",
-    "asserts": []
+    "lines": "67-87"
   },
   {
     "file": "tests/test_army_salary_44.py",
@@ -106,8 +77,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "169-187",
-    "asserts": []
+    "lines": "169-187"
   },
   {
     "file": "tests/test_audience_night_498.py",
@@ -115,8 +85,7 @@
     "shapes": [
       "pragma_table_info"
     ],
-    "lines": "358-411",
-    "asserts": []
+    "lines": "358-411"
   },
   {
     "file": "tests/test_audience_translate_1837.py",
@@ -124,8 +93,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "80-93",
-    "asserts": []
+    "lines": "80-93"
   },
   {
     "file": "tests/test_audience_translate_1837.py",
@@ -133,8 +101,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "312-344",
-    "asserts": []
+    "lines": "312-344"
   },
   {
     "file": "tests/test_audience_translate_1837.py",
@@ -142,8 +109,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "349-517",
-    "asserts": []
+    "lines": "349-517"
   },
   {
     "file": "tests/test_audience_translate_1837.py",
@@ -151,8 +117,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "520-580",
-    "asserts": []
+    "lines": "520-580"
   },
   {
     "file": "tests/test_audience_translate_1837.py",
@@ -160,8 +125,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "784-913",
-    "asserts": []
+    "lines": "784-913"
   },
   {
     "file": "tests/test_audience_translate_1837.py",
@@ -169,8 +133,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "916-958",
-    "asserts": []
+    "lines": "916-958"
   },
   {
     "file": "tests/test_audience_translate_1837_reopen.py",
@@ -178,8 +141,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "27-35",
-    "asserts": []
+    "lines": "27-35"
   },
   {
     "file": "tests/test_audience_undo_506.py",
@@ -187,11 +149,7 @@
     "shapes": [
       "pragma_table_info"
     ],
-    "lines": "388-413",
-    "asserts": [
-      "assert \"undone_at\" not in {         r[\"name\"] for r in db.conn.execute(\"PRAGMA table_info(chat_turns)\").fetchall()     }",
-      "assert \"undone_at\" in {             r[\"name\"] for r in db2.conn.execute(\"PRAGMA table_info(chat_turns)\").fetchall()         }"
-    ]
+    "lines": "388-413"
   },
   {
     "file": "tests/test_authority_ledger_611.py",
@@ -199,13 +157,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "231-291",
-    "asserts": [
-      "assert bare not in {row[\"id\"] for row in projected}",
-      "assert informed_only not in {row[\"id\"] for row in projected}",
-      "assert \"payload-auth\" not in (         context[\"dossiers\"][0][\"criteria_snapshot_source\"][\"authorization_ids\"]     )",
-      "assert \"payload-list\" not in (         context[\"dossiers\"][0][\"criteria_snapshot_source\"][\"authorization_ids\"]     )"
-    ]
+    "lines": "231-291"
   },
   {
     "file": "tests/test_breach_plea_623.py",
@@ -213,8 +165,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "58-79",
-    "asserts": []
+    "lines": "58-79"
   },
   {
     "file": "tests/test_character_knowledge_489.py",
@@ -222,8 +173,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "217-235",
-    "asserts": []
+    "lines": "217-235"
   },
   {
     "file": "tests/test_character_knowledge_489.py",
@@ -231,10 +181,7 @@
     "shapes": [
       "pragma_table_info"
     ],
-    "lines": "1034-1065",
-    "asserts": [
-      "assert \"restricted:test-late-reader-boundary\" not in visible_ids"
-    ]
+    "lines": "1034-1065"
   },
   {
     "file": "tests/test_character_knowledge_489.py",
@@ -242,11 +189,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "1081-1335",
-    "asserts": [
-      "assert \"region_id\" not in rejected[0][\"item\"]",
-      "assert int(wai_id) not in wai_visible"
-    ]
+    "lines": "1081-1335"
   },
   {
     "file": "tests/test_character_knowledge_489.py",
@@ -254,8 +197,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "1338-1350",
-    "asserts": []
+    "lines": "1338-1350"
   },
   {
     "file": "tests/test_character_knowledge_489.py",
@@ -263,12 +205,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "1497-1567",
-    "asserts": [
-      "assert joint_id not in _referenceable_dossier_ids(db, outsider.name, turn)",
-      "assert joint_id not in _referenceable_dossier_ids(db, case_successor.name, turn)",
-      "assert inner_id not in _referenceable_dossier_ids(db, inner_other.name, turn)"
-    ]
+    "lines": "1497-1567"
   },
   {
     "file": "tests/test_commitment_backlash_626.py",
@@ -276,8 +213,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "149-198",
-    "asserts": []
+    "lines": "149-198"
   },
   {
     "file": "tests/test_declaration_dispatch_1835.py",
@@ -285,8 +221,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "20-25",
-    "asserts": []
+    "lines": "20-25"
   },
   {
     "file": "tests/test_declaration_dispatch_1835.py",
@@ -294,10 +229,7 @@
     "shapes": [
       "sqlite_master_check"
     ],
-    "lines": "173-231",
-    "asserts": [
-      "assert db.conn.execute(         \"SELECT name FROM sqlite_master WHERE type='table' AND name='rejection_reports'\",     ).fetchone() is None"
-    ]
+    "lines": "173-231"
   },
   {
     "file": "tests/test_declaration_dispatch_1835.py",
@@ -305,10 +237,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "337-373",
-    "asserts": [
-      "assert \"affair_attach_error\" not in ok.on_scene_facts.applied[0]"
-    ]
+    "lines": "337-373"
   },
   {
     "file": "tests/test_declaration_dispatch_1835.py",
@@ -316,8 +245,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "533-552",
-    "asserts": []
+    "lines": "533-552"
   },
   {
     "file": "tests/test_declaration_dispatch_1835.py",
@@ -325,8 +253,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "555-579",
-    "asserts": []
+    "lines": "555-579"
   },
   {
     "file": "tests/test_declaration_dispatch_1835.py",
@@ -334,8 +261,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "582-623",
-    "asserts": []
+    "lines": "582-623"
   },
   {
     "file": "tests/test_decree_commitment_schema_136.py",
@@ -343,8 +269,7 @@
     "shapes": [
       "pragma_table_info"
     ],
-    "lines": "19-23",
-    "asserts": []
+    "lines": "19-23"
   },
   {
     "file": "tests/test_decree_commitment_schema_136.py",
@@ -352,8 +277,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "80-109",
-    "asserts": []
+    "lines": "80-109"
   },
   {
     "file": "tests/test_decree_dossiers_571.py",
@@ -361,19 +285,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "7-15",
-    "asserts": []
-  },
-  {
-    "file": "tests/test_decree_dossiers_571.py",
-    "member": "test_final_decree_edit_path_removed_no_bypass",
-    "shapes": [
-      "route_absence"
-    ],
-    "lines": "1021-1046",
-    "asserts": [
-      "assert \"/api/decree\" not in paths or not any(         getattr(r, \"path\", None) == \"/api/decree\"         and \"PATCH\" in (getattr(r, \"methods\", None) or set())         for r in web_a"
-    ]
+    "lines": "7-15"
   },
   {
     "file": "tests/test_deformation_dual_rail_622.py",
@@ -381,10 +293,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "191-241",
-    "asserts": [
-      "assert \"audit_fork_signals\" not in escort_nudge"
-    ]
+    "lines": "191-241"
   },
   {
     "file": "tests/test_deformation_dual_rail_622.py",
@@ -392,8 +301,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "259-375",
-    "asserts": []
+    "lines": "259-375"
   },
   {
     "file": "tests/test_dossier_reported_progress_619.py",
@@ -401,12 +309,7 @@
     "shapes": [
       "pragma_table_info"
     ],
-    "lines": "78-120",
-    "asserts": [
-      "assert \"is_secret\" not in cols",
-      "assert \"secret\" not in cols",
-      "assert \"track\" not in cols"
-    ]
+    "lines": "78-120"
   },
   {
     "file": "tests/test_dossier_reported_progress_619.py",
@@ -414,8 +317,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "123-150",
-    "asserts": []
+    "lines": "123-150"
   },
   {
     "file": "tests/test_dossier_reported_progress_619.py",
@@ -423,8 +325,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "153-172",
-    "asserts": []
+    "lines": "153-172"
   },
   {
     "file": "tests/test_dossier_reported_progress_619.py",
@@ -432,8 +333,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "309-336",
-    "asserts": []
+    "lines": "309-336"
   },
   {
     "file": "tests/test_draft_admission_resubmit_1769.py",
@@ -441,8 +341,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "215-222",
-    "asserts": []
+    "lines": "215-222"
   },
   {
     "file": "tests/test_effect_origin_558.py",
@@ -450,10 +349,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "64-103",
-    "asserts": [
-      "assert db.conn.execute(         \"SELECT origin_ref FROM region_logs WHERE region_id=? ORDER BY id DESC LIMIT 1\",         (region_id,),     ).fetchone()[\"origin_ref\"] == origin"
-    ]
+    "lines": "64-103"
   },
   {
     "file": "tests/test_effect_origin_558.py",
@@ -461,11 +357,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "106-136",
-    "asserts": [
-      "assert db.conn.execute(         \"SELECT origin_ref FROM economy_ledger WHERE category='同月持续支出' ORDER BY id DESC LIMIT 1\"     ).fetchone()[\"origin_ref\"] == origin",
-      "assert db.conn.execute(         \"SELECT origin_ref FROM region_logs WHERE region_id=? ORDER BY id DESC LIMIT 1\",         (region_id,),     ).fetchone()[\"origin_ref\"] == origin"
-    ]
+    "lines": "106-136"
   },
   {
     "file": "tests/test_effect_origin_558.py",
@@ -473,8 +365,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "216-233",
-    "asserts": []
+    "lines": "216-233"
   },
   {
     "file": "tests/test_effect_origin_558.py",
@@ -482,8 +373,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "236-261",
-    "asserts": []
+    "lines": "236-261"
   },
   {
     "file": "tests/test_effect_origin_558.py",
@@ -491,8 +381,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "311-355",
-    "asserts": []
+    "lines": "311-355"
   },
   {
     "file": "tests/test_event_trigger_gate.py",
@@ -500,8 +389,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "717-727",
-    "asserts": []
+    "lines": "717-727"
   },
   {
     "file": "tests/test_event_trigger_gate.py",
@@ -509,10 +397,7 @@
     "shapes": [
       "hasattr_absence"
     ],
-    "lines": "1474-1488",
-    "asserts": [
-      "assert not hasattr(character, \"_test_runtime_ghost_attr\")"
-    ]
+    "lines": "1474-1488"
   },
   {
     "file": "tests/test_event_trigger_gate.py",
@@ -520,10 +405,7 @@
     "shapes": [
       "hasattr_absence"
     ],
-    "lines": "1714-1722",
-    "asserts": [
-      "assert not hasattr(content.characters[\"毛文龙\"], \"ghost_preflight_attr\")"
-    ]
+    "lines": "1714-1722"
   },
   {
     "file": "tests/test_event_trigger_gate.py",
@@ -531,8 +413,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "2973-3008",
-    "asserts": []
+    "lines": "2973-3008"
   },
   {
     "file": "tests/test_event_trigger_gate.py",
@@ -540,8 +421,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "3011-3074",
-    "asserts": []
+    "lines": "3011-3074"
   },
   {
     "file": "tests/test_execution_pressure_654.py",
@@ -549,8 +429,7 @@
     "shapes": [
       "pragma_table_info"
     ],
-    "lines": "217-236",
-    "asserts": []
+    "lines": "217-236"
   },
   {
     "file": "tests/test_execution_pressure_654.py",
@@ -558,12 +437,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "415-463",
-    "asserts": [
-      "assert \"text\" not in hit",
-      "assert \"敕令陕西\" not in raw",
-      "assert \"甲甲\" not in raw"
-    ]
+    "lines": "415-463"
   },
   {
     "file": "tests/test_execution_pressure_654.py",
@@ -571,8 +445,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "619-727",
-    "asserts": []
+    "lines": "619-727"
   },
   {
     "file": "tests/test_executor_routing_721.py",
@@ -580,8 +453,7 @@
     "shapes": [
       "sqlite_master_check"
     ],
-    "lines": "378-410",
-    "asserts": []
+    "lines": "378-410"
   },
   {
     "file": "tests/test_faction_denunciation_627.py",
@@ -589,8 +461,7 @@
     "shapes": [
       "pragma_table_info"
     ],
-    "lines": "189-193",
-    "asserts": []
+    "lines": "189-193"
   },
   {
     "file": "tests/test_faction_leverage_9.py",
@@ -598,8 +469,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "126-179",
-    "asserts": []
+    "lines": "126-179"
   },
   {
     "file": "tests/test_faction_leverage_9.py",
@@ -607,8 +477,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "1016-1038",
-    "asserts": []
+    "lines": "1016-1038"
   },
   {
     "file": "tests/test_family_tail_615.py",
@@ -616,8 +485,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "126-242",
-    "asserts": []
+    "lines": "126-242"
   },
   {
     "file": "tests/test_fiscal_beyond_intent_1260.py",
@@ -625,8 +493,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "179-240",
-    "asserts": []
+    "lines": "179-240"
   },
   {
     "file": "tests/test_fiscal_substrate_bridge.py",
@@ -634,8 +501,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "2015-2103",
-    "asserts": []
+    "lines": "2015-2103"
   },
   {
     "file": "tests/test_fiscal_substrate_bridge.py",
@@ -643,8 +509,7 @@
     "shapes": [
       "pragma_table_info"
     ],
-    "lines": "2107-2121",
-    "asserts": []
+    "lines": "2107-2121"
   },
   {
     "file": "tests/test_gazette_author_1862.py",
@@ -652,13 +517,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "89-462",
-    "asserts": [
-      "assert f\"secret_order_brief:{order_id}\" not in accepted_events",
-      "assert secret_did not in seen[\"opening_dossiers\"]",
-      "assert \"secret_order:9\" not in public_ids",
-      "assert f\"secret_order_brief:{order_id}\" not in public_ids"
-    ]
+    "lines": "89-462"
   },
   {
     "file": "tests/test_highlight_judge_544.py",
@@ -666,17 +525,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "109-125",
-    "asserts": []
-  },
-  {
-    "file": "tests/test_history_decree_text_1843_reopen.py",
-    "member": "test_history_turn_reads_decree_text_from_resolve_context",
-    "shapes": [
-      "sqlite_master_check"
-    ],
-    "lines": "6-28",
-    "asserts": []
+    "lines": "109-125"
   },
   {
     "file": "tests/test_issue_entities.py",
@@ -684,8 +533,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "49-68",
-    "asserts": []
+    "lines": "49-68"
   },
   {
     "file": "tests/test_junxin_monthly_tick_314.py",
@@ -693,8 +541,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "68-83",
-    "asserts": []
+    "lines": "68-83"
   },
   {
     "file": "tests/test_material_directory_1830.py",
@@ -702,8 +549,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "75-115",
-    "asserts": []
+    "lines": "75-115"
   },
   {
     "file": "tests/test_material_directory_1830.py",
@@ -711,24 +557,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "118-154",
-    "asserts": []
-  },
-  {
-    "file": "tests/test_mechanical_tail_1845.py",
-    "member": "test_chapter_memory_retired_from_three_readers",
-    "shapes": [
-      "sqlite_master_check"
-    ],
-    "lines": "447-512",
-    "asserts": [
-      "assert \"event_memories\" not in tables",
-      "assert \"event_memory_sources\" not in tables",
-      "assert \"timeline\" not in seen[\"payload\"]",
-      "assert \"gazette\" not in row",
-      "assert \"decree_brief\" not in row",
-      "assert \"effect_brief\" not in row"
-    ]
+    "lines": "118-154"
   },
   {
     "file": "tests/test_memorial_inbox_1726.py",
@@ -736,10 +565,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "50-98",
-    "asserts": [
-      "assert banned not in prog"
-    ]
+    "lines": "50-98"
   },
   {
     "file": "tests/test_month_chain_1843.py",
@@ -747,8 +573,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "756-856",
-    "asserts": []
+    "lines": "756-856"
   },
   {
     "file": "tests/test_month_translate_1840.py",
@@ -756,8 +581,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "17-69",
-    "asserts": []
+    "lines": "17-69"
   },
   {
     "file": "tests/test_month_translate_1840.py",
@@ -765,8 +589,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "103-106",
-    "asserts": []
+    "lines": "103-106"
   },
   {
     "file": "tests/test_month_translate_1840.py",
@@ -774,8 +597,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "109-112",
-    "asserts": []
+    "lines": "109-112"
   },
   {
     "file": "tests/test_month_translate_1840.py",
@@ -783,8 +605,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "152-276",
-    "asserts": []
+    "lines": "152-276"
   },
   {
     "file": "tests/test_month_translate_1840.py",
@@ -792,8 +613,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "397-514",
-    "asserts": []
+    "lines": "397-514"
   },
   {
     "file": "tests/test_mutiny_actual_residence_659.py",
@@ -801,8 +621,7 @@
     "shapes": [
       "pragma_table_info"
     ],
-    "lines": "101-119",
-    "asserts": []
+    "lines": "101-119"
   },
   {
     "file": "tests/test_mutiny_progression_316.py",
@@ -810,8 +629,7 @@
     "shapes": [
       "pragma_table_info"
     ],
-    "lines": "121-157",
-    "asserts": []
+    "lines": "121-157"
   },
   {
     "file": "tests/test_mutiny_redemption_317.py",
@@ -819,8 +637,7 @@
     "shapes": [
       "pragma_table_info"
     ],
-    "lines": "127-159",
-    "asserts": []
+    "lines": "127-159"
   },
   {
     "file": "tests/test_new_game_smoke.py",
@@ -828,11 +645,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "117-143",
-    "asserts": [
-      "assert reopened.conn.execute(\"PRAGMA foreign_keys\").fetchone()[0] == 1",
-      "assert reopened.conn.execute(\"PRAGMA foreign_key_check\").fetchall() == []"
-    ]
+    "lines": "117-143"
   },
   {
     "file": "tests/test_office_inference.py",
@@ -840,8 +653,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "274-326",
-    "asserts": []
+    "lines": "274-326"
   },
   {
     "file": "tests/test_override_breach_costs_564.py",
@@ -849,8 +661,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "74-100",
-    "asserts": []
+    "lines": "74-100"
   },
   {
     "file": "tests/test_override_breach_costs_564.py",
@@ -858,8 +669,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "288-312",
-    "asserts": []
+    "lines": "288-312"
   },
   {
     "file": "tests/test_pay_order_override_653.py",
@@ -867,11 +677,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "433-482",
-    "asserts": [
-      "assert \"due_priority_军饷@shaanxi\" not in cfg",
-      "assert \"due_priority_军饷@shaanxi_until_turn\" not in cfg"
-    ]
+    "lines": "433-482"
   },
   {
     "file": "tests/test_pay_order_override_653.py",
@@ -879,10 +685,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "720-743",
-    "asserts": [
-      "assert \"due_priority_军饷_until_turn\" not in cfg"
-    ]
+    "lines": "720-743"
   },
   {
     "file": "tests/test_person_archive_schema.py",
@@ -890,8 +693,7 @@
     "shapes": [
       "pragma_table_info"
     ],
-    "lines": "12-13",
-    "asserts": []
+    "lines": "12-13"
   },
   {
     "file": "tests/test_person_archive_schema.py",
@@ -899,8 +701,7 @@
     "shapes": [
       "pragma_table_info"
     ],
-    "lines": "16-17",
-    "asserts": []
+    "lines": "16-17"
   },
   {
     "file": "tests/test_person_archive_schema.py",
@@ -908,8 +709,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "80-104",
-    "asserts": []
+    "lines": "80-104"
   },
   {
     "file": "tests/test_person_delta_adapter.py",
@@ -917,8 +717,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "372-446",
-    "asserts": []
+    "lines": "372-446"
   },
   {
     "file": "tests/test_person_delta_adapter.py",
@@ -926,8 +725,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "789-843",
-    "asserts": []
+    "lines": "789-843"
   },
   {
     "file": "tests/test_person_delta_adapter.py",
@@ -935,8 +733,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "1548-1585",
-    "asserts": []
+    "lines": "1548-1585"
   },
   {
     "file": "tests/test_person_delta_adapter.py",
@@ -944,8 +741,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "2039-2053",
-    "asserts": []
+    "lines": "2039-2053"
   },
   {
     "file": "tests/test_person_delta_adapter.py",
@@ -953,8 +749,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "2583-2613",
-    "asserts": []
+    "lines": "2583-2613"
   },
   {
     "file": "tests/test_person_delta_adapter.py",
@@ -962,8 +757,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "2616-2636",
-    "asserts": []
+    "lines": "2616-2636"
   },
   {
     "file": "tests/test_person_delta_adapter.py",
@@ -971,8 +765,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "2639-2658",
-    "asserts": []
+    "lines": "2639-2658"
   },
   {
     "file": "tests/test_person_delta_adapter.py",
@@ -980,8 +773,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "2661-2686",
-    "asserts": []
+    "lines": "2661-2686"
   },
   {
     "file": "tests/test_pihong_dossier_1490.py",
@@ -989,10 +781,7 @@
     "shapes": [
       "pragma_table_info"
     ],
-    "lines": "673-737",
-    "asserts": [
-      "assert 'consumed_epoch' not in cols"
-    ]
+    "lines": "673-737"
   },
   {
     "file": "tests/test_pihong_dossier_1490.py",
@@ -1001,10 +790,7 @@
       "pragma_table_info",
       "select_order_limit"
     ],
-    "lines": "908-1147",
-    "asserts": [
-      "assert 'rescript_origin' not in cols"
-    ]
+    "lines": "908-1147"
   },
   {
     "file": "tests/test_pihong_dossier_1490.py",
@@ -1012,8 +798,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "1560-1577",
-    "asserts": []
+    "lines": "1560-1577"
   },
   {
     "file": "tests/test_pihong_dossier_1490.py",
@@ -1021,8 +806,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "1695-1705",
-    "asserts": []
+    "lines": "1695-1705"
   },
   {
     "file": "tests/test_pihong_dossier_1490.py",
@@ -1030,8 +814,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "1707-1737",
-    "asserts": []
+    "lines": "1707-1737"
   },
   {
     "file": "tests/test_power_section_rejections.py",
@@ -1039,8 +822,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "239-253",
-    "asserts": []
+    "lines": "239-253"
   },
   {
     "file": "tests/test_promulgation_judge_561.py",
@@ -1048,11 +830,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "21-85",
-    "asserts": [
-      "assert \"satisfaction\" not in encoded",
-      "assert \"满意\" not in encoded"
-    ]
+    "lines": "21-85"
   },
   {
     "file": "tests/test_promulgation_judge_561.py",
@@ -1060,10 +838,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "399-446",
-    "asserts": [
-      "assert \"fresh-authorization\" not in (         fresh_context[\"dossiers\"][0][\"criteria_snapshot_source\"][\"authorization_ids\"]     )"
-    ]
+    "lines": "399-446"
   },
   {
     "file": "tests/test_qa_e1_numeric_presentation.py",
@@ -1071,10 +846,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "87-100",
-    "asserts": [
-      "assert \"arrears\" not in card"
-    ]
+    "lines": "87-100"
   },
   {
     "file": "tests/test_region_citydefense.py",
@@ -1082,8 +854,7 @@
     "shapes": [
       "pragma_table_info"
     ],
-    "lines": "11-12",
-    "asserts": []
+    "lines": "11-12"
   },
   {
     "file": "tests/test_rejection_wiring.py",
@@ -1091,8 +862,7 @@
     "shapes": [
       "pragma_table_info"
     ],
-    "lines": "19-29",
-    "asserts": []
+    "lines": "19-29"
   },
   {
     "file": "tests/test_relation_capture_633.py",
@@ -1100,8 +870,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "290-325",
-    "asserts": []
+    "lines": "290-325"
   },
   {
     "file": "tests/test_relation_capture_633.py",
@@ -1109,8 +878,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "331-361",
-    "asserts": []
+    "lines": "331-361"
   },
   {
     "file": "tests/test_relation_capture_633.py",
@@ -1118,8 +886,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "364-394",
-    "asserts": []
+    "lines": "364-394"
   },
   {
     "file": "tests/test_relation_capture_633.py",
@@ -1127,8 +894,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "397-428",
-    "asserts": []
+    "lines": "397-428"
   },
   {
     "file": "tests/test_rescript_draft_656.py",
@@ -1136,39 +902,7 @@
     "shapes": [
       "pragma_table_info"
     ],
-    "lines": "47-61",
-    "asserts": []
-  },
-  {
-    "file": "tests/test_rescript_draft_656.py",
-    "member": "_pending_columns",
-    "shapes": [
-      "pragma_table_info"
-    ],
-    "lines": "270-271",
-    "asserts": []
-  },
-  {
-    "file": "tests/test_rescript_draft_656.py",
-    "member": "_ledger_columns",
-    "shapes": [
-      "pragma_table_info"
-    ],
-    "lines": "273-274",
-    "asserts": []
-  },
-  {
-    "file": "tests/test_rescript_draft_656.py",
-    "member": "test_657_s1_schema_columns_and_no_banned_fields",
-    "shapes": [
-      "pragma_table_info",
-      "sqlite_master_check"
-    ],
-    "lines": "276-293",
-    "asserts": [
-      "assert \"consumed_epoch\" not in pending_cols",
-      "assert \"rescript_origin\" not in dossier_cols"
-    ]
+    "lines": "47-61"
   },
   {
     "file": "tests/test_secret_dossier_participants_1252.py",
@@ -1176,8 +910,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "16-22",
-    "asserts": []
+    "lines": "16-22"
   },
   {
     "file": "tests/test_secret_order_payoff_1504.py",
@@ -1185,8 +918,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "80-88",
-    "asserts": []
+    "lines": "80-88"
   },
   {
     "file": "tests/test_secret_order_payoff_1504.py",
@@ -1194,8 +926,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "192-202",
-    "asserts": []
+    "lines": "192-202"
   },
   {
     "file": "tests/test_secret_order_payoff_1504.py",
@@ -1203,12 +934,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "797-929",
-    "asserts": [
-      "assert f\"事务/issue-{issue_rows[0]['id']}/当前情况.txt\" not in captured[\"paths\"][target]",
-      "assert f\"事务/issue-{issue_rows[1]['id']}/当前情况.txt\" not in captured[\"paths\"][name]",
-      "assert \"materials\" not in order[side]"
-    ]
+    "lines": "797-929"
   },
   {
     "file": "tests/test_secret_order_payoff_1504.py",
@@ -1216,10 +942,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "2331-2370",
-    "asserts": [
-      "assert \"purpose\" not in frozen[\"delivery\"]"
-    ]
+    "lines": "2331-2370"
   },
   {
     "file": "tests/test_section_fiscal_rejections.py",
@@ -1227,8 +950,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "603-637",
-    "asserts": []
+    "lines": "603-637"
   },
   {
     "file": "tests/test_shared_resource_order_1844.py",
@@ -1236,8 +958,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "15-22",
-    "asserts": []
+    "lines": "15-22"
   },
   {
     "file": "tests/test_shared_resource_order_1844.py",
@@ -1245,8 +966,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "174-221",
-    "asserts": []
+    "lines": "174-221"
   },
   {
     "file": "tests/test_staged_assignment_identity_1890.py",
@@ -1254,8 +974,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "137-151",
-    "asserts": []
+    "lines": "137-151"
   },
   {
     "file": "tests/test_staged_assignment_identity_1890.py",
@@ -1263,8 +982,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "295-330",
-    "asserts": []
+    "lines": "295-330"
   },
   {
     "file": "tests/test_staged_assignment_identity_1890.py",
@@ -1272,8 +990,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "336-399",
-    "asserts": []
+    "lines": "336-399"
   },
   {
     "file": "tests/test_staged_assignment_identity_1890.py",
@@ -1281,8 +998,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "477-523",
-    "asserts": []
+    "lines": "477-523"
   },
   {
     "file": "tests/test_style_temperament_641.py",
@@ -1290,8 +1006,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "48-84",
-    "asserts": []
+    "lines": "48-84"
   },
   {
     "file": "tests/test_style_temperament_641.py",
@@ -1299,8 +1014,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "87-120",
-    "asserts": []
+    "lines": "87-120"
   },
   {
     "file": "tests/test_style_temperament_641.py",
@@ -1308,30 +1022,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "123-172",
-    "asserts": []
-  },
-  {
-    "file": "tests/test_supervision_625.py",
-    "member": "_table_cols",
-    "shapes": [
-      "pragma_table_info"
-    ],
-    "lines": "136-140",
-    "asserts": []
-  },
-  {
-    "file": "tests/test_supervision_625.py",
-    "member": "test_ac1_presence_exposure_schema_pragma_and_no_dulling_cols",
-    "shapes": [
-      "sqlite_master_check"
-    ],
-    "lines": "146-173",
-    "asserts": [
-      "assert _PRESENCE_TABLE in {         r[0] for r in db.conn.execute(             \"SELECT name FROM sqlite_master WHERE type='table'\"         ).fetchall()     }",
-      "assert _EXPOSURE_TABLE in {         r[0] for r in db.conn.execute(             \"SELECT name FROM sqlite_master WHERE type='table'\"         ).fetchall()     }",
-      "assert frag.lower() not in low, f\"{table}.{col} 命中禁列片段 {frag}\""
-    ]
+    "lines": "123-172"
   },
   {
     "file": "tests/test_transaction_boundary.py",
@@ -1339,8 +1030,7 @@
     "shapes": [
       "sqlite_master_check"
     ],
-    "lines": "414-437",
-    "asserts": []
+    "lines": "414-437"
   },
   {
     "file": "tests/test_transit_countdown_668.py",
@@ -1348,33 +1038,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "261-273",
-    "asserts": []
-  },
-  {
-    "file": "tests/test_web_audience_night_498.py",
-    "member": "test_asgi_dossiered_directive_has_no_retired_review_surface",
-    "shapes": [
-      "route_absence"
-    ],
-    "lines": "512-546",
-    "asserts": [
-      "assert \"/api/decree/write\" not in registered_paths",
-      "assert directive_id not in {row[\"id\"] for row in body[\"directives\"]}"
-    ]
-  },
-  {
-    "file": "tests/test_web_audience_night_498.py",
-    "member": "test_legacy_pending_only_advances_to_durable_dossier_without_review_api",
-    "shapes": [
-      "route_absence"
-    ],
-    "lines": "583-629",
-    "asserts": [
-      "assert \"/api/directives/{directive_id}/confirm\" not in registered_paths",
-      "assert \"/api/directives/{directive_id}/reject\" not in registered_paths",
-      "assert dossiered_id not in {row[\"id\"] for row in state_payload[\"directives\"]}"
-    ]
+    "lines": "261-273"
   },
   {
     "file": "tests/test_world_materials_1834.py",
@@ -1382,9 +1046,6 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "188-257",
-    "asserts": [
-      "assert f\"公开说法/{past_year}年{past_period}月.txt\" not in names"
-    ]
+    "lines": "188-257"
   }
 ]

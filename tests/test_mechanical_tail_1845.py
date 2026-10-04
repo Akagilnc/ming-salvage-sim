@@ -445,7 +445,7 @@ def test_ending_summary_runs_in_mechanical_tail_after_advance(
 
 
 def test_chapter_memory_retired_from_three_readers(game, monkeypatch):
-    """大臣知识面 / 结局总评邸报 / 材料目录均不再吃章节记忆；event_memories 表已删。"""
+    """大臣知识面 / 结局总评邸报 / 材料目录均不再吃章节记忆（真读口行为，非表缺席自证）。"""
     from types import SimpleNamespace
 
     from ming_sim.knowledge import build_character_knowledge
@@ -453,12 +453,6 @@ def test_chapter_memory_retired_from_three_readers(game, monkeypatch):
     from ming_sim.mechanical_tail import generate_ending_summary_for_tail
 
     db, state, content = game
-    tables = {
-        r[0]
-        for r in db.conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
-    }
-    assert "event_memories" not in tables
-    assert "event_memory_sources" not in tables
     db.save_turn_report(state, "历月邸报正文")
 
     name = next(iter(content.characters))

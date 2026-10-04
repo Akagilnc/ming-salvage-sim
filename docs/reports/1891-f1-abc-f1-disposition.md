@@ -1,148 +1,188 @@
 # F1 keep/delete disposition from candidate full table
-## DELETE
-- tests/test_decree_dossiers_571.py::test_final_decree_edit_path_removed_no_bypass L1021-1046 :: 整函数：注册名单缺席 + 无编辑尝试的恒等正文，非真实旁路负向
+
+## DELETE (retirement/metadata self-proofs — all rounds)
+
+### Round1 73e02fad5
+
+- tests/test_advance_paths_atomic.py::test_skip_refused_at_front_half_done
+- tests/test_fiscal_substrate_bridge.py::test_turn_army_log_cap_keeps_real_morale_changes_when_zero_fillers_precede
+- tests/test_hitl_quota_delete_1467.py::test_hitl_quota_mechanism_fully_deleted (whole file)
+- tests/test_opening_gazette_delete_1356.py::ROOT
+- tests/test_opening_gazette_delete_1356.py::_seed_text
+- tests/test_opening_gazette_delete_1356.py::_canned_settle
+- tests/test_opening_gazette_delete_1356.py::test_old_save_exact_purge_keeps_real_with_phrase_counterexample
+- tests/test_rescript_draft_656.py::test_rescript_draft_idx_continues_after_decision_rows
+- tests/test_rescript_draft_656.py::test_repeated_overwrite_keeps_stable_synthetic_ids
+- tests/test_rescript_draft_656.py::test_save_and_list_rescript_drafts_roundtrip (urgent:{turn}:1 assertion line only)
+- tests/test_qa_d1_decree_normalize_1274.py::test_patch_decree_and_manual_create_routes_removed_draft_rw_remains (route absence asserts; later renamed then deleted r2)
+- ming_sim/llm_contract.py::fail_if_llm_error
+- ming_sim/llm_model.py::extract_agent_text fail_if_llm_error call
+- ming_sim/llm_model.py::verify_llm_available fail_if_llm_error call
+- ming_sim/session.py::_run_scene_agent_transport fail_if_llm_error call
+- ming_sim/db.py::_known_opening_gazette_seed_text
+- ming_sim/db.py::_purge_fixed_opening_gazette_seed
+- ming_sim/db.py init _purge_fixed_opening_gazette_seed call
+- content/opening_gazette.md
+
+### Round2 eb462fe98
+
+- tests/test_decree_dossiers_571.py::test_final_decree_edit_path_removed_no_bypass
+- tests/test_qa_d1_decree_normalize_1274.py::test_draft_directive_rw_routes_remain
+- tests/test_cli_backend.py::test_run_agy_auth_race_is_retryable_typed_without_private_loop
+- ming_sim/cli_backend.py::_AGY_AUTH_MARKERS
+- ming_sim/cli_backend.py::_iter_cli_runner_text marker match on success path
+- tests/test_chat_stream_failpaths_393.py::_post_chat_stream _require_active_minister monkeypatch
+
+### Round3 this forward
+
+- tests/test_supervision_625.py::_PRESENCE_TABLE/_EXPOSURE_TABLE/_PRESENCE_ALLOWED_COLS/_EXPOSURE_ALLOWED_COLS/_FORBIDDEN_DULLING_COL_FRAGMENTS
+- tests/test_supervision_625.py::_table_cols
+- tests/test_supervision_625.py::test_ac1_presence_exposure_schema_pragma_and_no_dulling_cols
+- tests/test_rescript_draft_656.py::_pending_columns
+- tests/test_rescript_draft_656.py::_ledger_columns
+- tests/test_rescript_draft_656.py::test_657_s1_schema_columns_and_no_banned_fields
+- tests/test_mechanical_tail_1845.py::test_chapter_memory_retired_from_three_readers (event_memories sqlite_master asserts)
+- tests/test_history_decree_text_1843_reopen.py::test_history_turn_reads_decree_text_from_resolve_context (turn_extractions sqlite_master assert)
 
 ## PARTIAL (strip absence asserts)
-- tests/test_web_audience_night_498.py::test_asgi_dossiered_directive_has_no_retired_review_surface L512-546 :: 删注册缺席断言，保留 HTTP/推进真实行为
-- tests/test_web_audience_night_498.py::test_legacy_pending_only_advances_to_durable_dossier_without_review_api L583-629 :: 删注册缺席断言，保留 HTTP/推进真实行为
 
-## KEEP (all pragma/sqlite/order_limit candidates reviewed)
-- tests/conftest.py::seed_rescript_rows L27-41 shapes=['urgent_fixture_id'] :: 夹具输入；仍有真实行为案消费者（非本函数自证）
-- tests/test_event_trigger_gate.py::test_issue_tracker_rollback_removes_dynamic_character_attrs L1474-1488 shapes=['hasattr_absence'] :: 运行时 rollback/restore 清动态属性，非退役符号缺席
-- tests/test_event_trigger_gate.py::test_person_write_state_restore_removes_dynamic_character_attrs L1714-1722 shapes=['hasattr_absence'] :: 运行时 rollback/restore 清动态属性，非退役符号缺席
-- tests/test_applier_contract.py::test_ddl_in_open_transaction_rolls_back L348-370 shapes=['sqlite_master_check'] :: 现役 schema 迁移/写读契约辅助
+- tests/test_web_audience_night_498.py::test_asgi_dossiered_directive_has_no_retired_review_surface :: strip route_absence; keep HTTP 404/409/state
+- tests/test_web_audience_night_498.py::test_legacy_pending_only_advances_to_durable_dossier_without_review_api :: strip confirm/reject route absence; keep advance_without_edict
+- tests/test_mechanical_tail_1845.py::test_chapter_memory_retired_from_three_readers :: strip sqlite; keep knowledge/ending/materials behavior
+- tests/test_history_decree_text_1843_reopen.py::test_history_turn_reads_decree_text_from_resolve_context :: strip turn_extractions absence; keep /api/history decree_text
+
+## KEEP (candidates after loud ast enum; behavior-based)
+
+- tests/test_applier_contract.py::test_ddl_in_open_transaction_rolls_back L348-370 shapes=['sqlite_master_check'] :: 现役 schema/迁移/DDL 回滚或表存在性服务于真实写读断言
 - tests/test_appointment_tenure_607.py::test_appointment_dossier_and_office_archive_preserve_each_tenure L37-55 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
-- tests/test_army_display_173.py::test_army_public_exits_approx_arrears_and_hide_split_accounts L31-48 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
 - tests/test_army_display_173.py::test_army_payload_exposes_approx_arrears_text_not_raw L51-73 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
-- tests/test_army_firearms.py::_cols L24-25 shapes=['pragma_table_info'] :: 现役 schema/迁移辅助读列，非退役行为自证
-- tests/test_army_maintenance_retire_173.py::test_armies_table_has_no_maintenance_column L31-34 shapes=['pragma_table_info'] :: 现役表列存在性契约（非退役 API）；保留并据实标注
-- tests/test_army_maintenance_retire_173.py::test_drop_maintenance_column_removes_and_idempotent L37-47 shapes=['pragma_table_info'] :: 现役 schema 迁移/写读契约辅助
-- tests/test_army_maintenance_retire_173.py::test_existing_save_drops_maintenance_column_on_open L50-75 shapes=['pragma_table_info'] :: 现役 schema 迁移/写读契约辅助
+- tests/test_army_display_173.py::test_army_public_exits_approx_arrears_and_hide_split_accounts L31-48 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
+- tests/test_army_firearms.py::_cols L24-25 shapes=['pragma_table_info'] :: 现役 schema/迁移辅助读列或迁移后列消失断言
+- tests/test_army_maintenance_retire_173.py::test_armies_table_has_no_maintenance_column L31-34 shapes=['pragma_table_info'] :: 现役 schema/迁移辅助读列或迁移后列消失断言
+- tests/test_army_maintenance_retire_173.py::test_drop_maintenance_column_removes_and_idempotent L37-47 shapes=['pragma_table_info'] :: 现役 schema/迁移辅助读列或迁移后列消失断言
+- tests/test_army_maintenance_retire_173.py::test_existing_save_drops_maintenance_column_on_open L50-75 shapes=['pragma_table_info'] :: 现役 schema/迁移辅助读列或迁移后列消失断言
 - tests/test_army_salary_44.py::test_defected_army_to_ming_owes_salary_not_free L67-87 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
 - tests/test_army_salary_44.py::test_manpower_clamp_to_zero_leaves_army_log L169-187 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
-- tests/test_audience_night_498.py::test_old_save_migration_night_id_index_order L358-411 shapes=['pragma_table_info'] :: 现役 schema 迁移/写读契约辅助
+- tests/test_audience_night_498.py::test_old_save_migration_night_id_index_order L358-411 shapes=['pragma_table_info'] :: 现役 schema/迁移辅助读列或迁移后列消失断言
 - tests/test_audience_translate_1837.py::_hong_name L80-93 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
-- tests/test_audience_translate_1837.py::test_summons_translation_does_not_apply_monthly_effects_at_night L312-344 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
 - tests/test_audience_translate_1837.py::test_appointment_and_relief_through_scene_chat_then_close_and_settle L349-517 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
 - tests/test_audience_translate_1837.py::test_emperor_准_via_scene_chat_approves_no_reply_stays_unapproved L520-580 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
-- tests/test_audience_translate_1837.py::test_translation_pending_create_approve_reject_undo_via_real_chat_turn L784-913 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
 - tests/test_audience_translate_1837.py::test_pure_office_dossier_uses_payload_text_not_template L916-958 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
+- tests/test_audience_translate_1837.py::test_summons_translation_does_not_apply_monthly_effects_at_night L312-344 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
+- tests/test_audience_translate_1837.py::test_translation_pending_create_approve_reject_undo_via_real_chat_turn L784-913 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
 - tests/test_audience_translate_1837_reopen.py::_hong L27-35 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
-- tests/test_audience_undo_506.py::test_undo_survives_db_created_before_undone_at_column L388-413 shapes=['pragma_table_info'] :: 现役 schema 迁移/写读契约辅助
+- tests/test_audience_undo_506.py::test_undo_survives_db_created_before_undone_at_column L388-413 shapes=['pragma_table_info'] :: 现役 schema/迁移辅助读列或迁移后列消失断言
 - tests/test_authority_ledger_611.py::test_projection_typed_domain_only_and_ignores_payload_authorization L231-291 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
 - tests/test_breach_plea_623.py::_executing_policy_dossier L58-79 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
-- tests/test_character_knowledge_489.py::test_participation_survives_restore L217-235 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
-- tests/test_character_knowledge_489.py::test_character_added_after_archive_cannot_read_old_participant_source L1034-1065 shapes=['pragma_table_info'] :: 现役 schema 迁移/写读契约辅助
-- tests/test_character_knowledge_489.py::test_structured_person_scope_replaces_role_wide_world_reports L1081-1335 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
 - tests/test_character_knowledge_489.py::test_army_truth_is_exactly_scoped_to_person_command L1338-1350 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
+- tests/test_character_knowledge_489.py::test_character_added_after_archive_cannot_read_old_participant_source L1034-1065 shapes=['pragma_table_info'] :: 现役 schema/迁移辅助读列或迁移后列消失断言
 - tests/test_character_knowledge_489.py::test_multi_lead_typed_archives_reach_only_each_office_successor L1497-1567 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
+- tests/test_character_knowledge_489.py::test_participation_survives_restore L217-235 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
+- tests/test_character_knowledge_489.py::test_structured_person_scope_replaces_role_wide_world_reports L1081-1335 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
 - tests/test_commitment_backlash_626.py::test_ac1_breach_verdict_triggers_commitment_backlash L149-198 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
 - tests/test_declaration_dispatch_1835.py::_minister L20-25 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
-- tests/test_declaration_dispatch_1835.py::test_reference_to_nonexistent_entity_is_rejected_without_killing_sibling_item L173-231 shapes=['sqlite_master_check'] :: 现役表列存在性契约（非退役 API）；保留并据实标注
-- tests/test_declaration_dispatch_1835.py::test_on_scene_fact_attaches_declared_affair_and_rejects_unopened_affair L337-373 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
-- tests/test_declaration_dispatch_1835.py::test_edge_event_lands_and_categorizes_unknown_kind_and_hallucinated_person_differently L533-552 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
 - tests/test_declaration_dispatch_1835.py::test_edge_event_attaches_declared_affair L555-579 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
 - tests/test_declaration_dispatch_1835.py::test_edge_event_conflicting_affair_pointer_is_rejected_first_binding_kept L582-623 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
-- tests/test_decree_commitment_schema_136.py::_table_columns L19-23 shapes=['pragma_table_info'] :: 现役 schema/迁移辅助读列，非退役行为自证
+- tests/test_declaration_dispatch_1835.py::test_edge_event_lands_and_categorizes_unknown_kind_and_hallucinated_person_differently L533-552 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
+- tests/test_declaration_dispatch_1835.py::test_on_scene_fact_attaches_declared_affair_and_rejects_unopened_affair L337-373 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
+- tests/test_declaration_dispatch_1835.py::test_reference_to_nonexistent_entity_is_rejected_without_killing_sibling_item L173-231 shapes=['sqlite_master_check'] :: 现役 schema/迁移/DDL 回滚或表存在性服务于真实写读断言
+- tests/test_decree_commitment_schema_136.py::_table_columns L19-23 shapes=['pragma_table_info'] :: 现役 schema/迁移辅助读列或迁移后列消失断言
 - tests/test_decree_commitment_schema_136.py::test_issue_resolution_removes_building_and_keeps_remove_audit_log L80-109 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
 - tests/test_decree_dossiers_571.py::_active_people L7-15 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
 - tests/test_deformation_dual_rail_622.py::test_ac5_audit_fork_signal_present_only_with_audit_link L191-241 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
 - tests/test_deformation_dual_rail_622.py::test_apply_economy_list_directed_pay_arrears_echoes_beyond_intent L259-375 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
-- tests/test_dossier_reported_progress_619.py::test_execution_surface_dossier_can_record_and_list_full_history L78-120 shapes=['pragma_table_info'] :: 现役 schema 迁移/写读契约辅助
+- tests/test_dossier_reported_progress_619.py::test_execution_surface_dossier_can_record_and_list_full_history L78-120 shapes=['pragma_table_info'] :: 现役 schema/迁移辅助读列或迁移后列消失断言
 - tests/test_dossier_reported_progress_619.py::test_secret_monthly_path_unchanged_and_stays_on_private_rail L123-150 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
 - tests/test_dossier_reported_progress_619.py::test_short_and_one_shot_dossiers_have_no_empty_monthly_shell L153-172 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
 - tests/test_dossier_reported_progress_619.py::test_terminal_surface_dossier_rejects_reported_progress L309-336 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
 - tests/test_draft_admission_resubmit_1769.py::_latest_directive_id L215-222 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
 - tests/test_effect_origin_558.py::test_issue_close_effects_inherit_parent_canonical_origin L64-103 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
-- tests/test_effect_origin_558.py::test_same_issue_row_inertia_and_ongoing_reuse_parent_canonical_origin L106-136 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
 - tests/test_effect_origin_558.py::test_ordinary_entity_log_families_persist_origin_at_write_seam L216-233 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
 - tests/test_effect_origin_558.py::test_power_backlash_from_allegiance_change_inherits_canonical_origin L236-261 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
+- tests/test_effect_origin_558.py::test_same_issue_row_inertia_and_ongoing_reuse_parent_canonical_origin L106-136 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
 - tests/test_effect_origin_558.py::test_zero_manpower_origin_gate_matches_actual_arrears_writeoff L311-355 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
-- tests/test_event_trigger_gate.py::test_army_numeric_gate_preserves_fractional_arrears_tail L717-727 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
 - tests/test_event_trigger_gate.py::test_apply_score_extraction_class_delta_respects_outer_transaction_rollback L2973-3008 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
 - tests/test_event_trigger_gate.py::test_apply_score_extraction_top_level_entity_deltas_respect_outer_transaction_rollback L3011-3074 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
-- tests/test_execution_pressure_654.py::test_region_id_column_and_composite_indexes L217-236 shapes=['pragma_table_info'] :: 现役表列存在性契约（非退役 API）；保留并据实标注
+- tests/test_event_trigger_gate.py::test_army_numeric_gate_preserves_fractional_arrears_tail L717-727 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
+- tests/test_event_trigger_gate.py::test_issue_tracker_rollback_removes_dynamic_character_attrs L1474-1488 shapes=['hasattr_absence'] :: 运行时 rollback/restore 清动态属性，非退役符号缺席
+- tests/test_event_trigger_gate.py::test_person_write_state_restore_removes_dynamic_character_attrs L1714-1722 shapes=['hasattr_absence'] :: 运行时 rollback/restore 清动态属性，非退役符号缺席
 - tests/test_execution_pressure_654.py::test_path3_locality_fail_keeps_draft_no_text_in_rejection L415-463 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
+- tests/test_execution_pressure_654.py::test_region_id_column_and_composite_indexes L217-236 shapes=['pragma_table_info'] :: 现役 schema/迁移辅助读列或迁移后列消失断言
 - tests/test_execution_pressure_654.py::test_revoke_decree_523_producer_durable_oracle_chain L619-727 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
-- tests/test_executor_routing_721.py::test_directive_routing_rejection_rolls_back_with_outer_owner L378-410 shapes=['sqlite_master_check'] :: 现役 schema 迁移/写读契约辅助
-- tests/test_faction_denunciation_627.py::_table_cols L189-193 shapes=['pragma_table_info'] :: 现役 schema/迁移辅助读列，非退役行为自证
-- tests/test_faction_leverage_9.py::test_restore_uses_new_office_weight_not_old L126-179 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
+- tests/test_executor_routing_721.py::test_directive_routing_rejection_rolls_back_with_outer_owner L378-410 shapes=['sqlite_master_check'] :: 现役 schema/迁移/DDL 回滚或表存在性服务于真实写读断言
+- tests/test_faction_denunciation_627.py::_table_cols L189-193 shapes=['pragma_table_info'] :: 现役 schema/迁移辅助读列或迁移后列消失断言
 - tests/test_faction_leverage_9.py::test_power_id_defection_drops_faction_leverage_immediately L1016-1038 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
+- tests/test_faction_leverage_9.py::test_restore_uses_new_office_weight_not_old L126-179 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
 - tests/test_family_tail_615.py::test_break_rank_appointment_rescript_td4_tracer L126-242 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
 - tests/test_fiscal_beyond_intent_1260.py::test_s1_fiscal_changes_beyond_intent_tracer_and_negatives L179-240 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
+- tests/test_fiscal_substrate_bridge.py::test_armies_provision_empty_mutiny_status_flag L2107-2121 shapes=['pragma_table_info'] :: 现役 schema/迁移辅助读列或迁移后列消失断言
 - tests/test_fiscal_substrate_bridge.py::test_province_pay_shortfall_reduces_pure_province_army_morale L2015-2103 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
-- tests/test_fiscal_substrate_bridge.py::test_armies_provision_empty_mutiny_status_flag L2107-2121 shapes=['pragma_table_info'] :: 现役表列存在性契约（非退役 API）；保留并据实标注
 - tests/test_gazette_author_1862.py::test_author_archives_own_title_and_same_run_advances L89-462 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
 - tests/test_highlight_judge_544.py::test_build_chat_projection_includes_minister_highlights L109-125 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
-- tests/test_history_decree_text_1843_reopen.py::test_history_turn_reads_decree_text_from_resolve_context L6-28 shapes=['sqlite_master_check'] :: 现役 schema 迁移/写读契约辅助
 - tests/test_issue_entities.py::test_resolve_changes_character_status L49-68 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
 - tests/test_junxin_monthly_tick_314.py::test_substrate_hub_path_loyalty_tier L68-83 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
 - tests/test_material_directory_1830.py::test_material_tree_contains_only_structurally_related_world_details L75-115 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
 - tests/test_material_directory_1830.py::test_matter_carriers_follow_the_real_knowledge_projection L118-154 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
-- tests/test_mechanical_tail_1845.py::test_chapter_memory_retired_from_three_readers L447-512 shapes=['sqlite_master_check'] :: 现役 schema 迁移/写读契约辅助
 - tests/test_memorial_inbox_1726.py::test_progress_and_denunciation_project_as_memorials L50-98 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
 - tests/test_month_chain_1843.py::test_month_chain_lands_specialized_facts_before_due_and_gazette L756-856 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
-- tests/test_month_translate_1840.py::test_world_segment_explicit_stock_transfers_share_actual_amount L17-69 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
 - tests/test_month_translate_1840.py::_army_id L103-106 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
 - tests/test_month_translate_1840.py::_region_id L109-112 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
 - tests/test_month_translate_1840.py::test_world_segment_applies_domain_effects_and_reports_rejected_effects L152-276 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
+- tests/test_month_translate_1840.py::test_world_segment_explicit_stock_transfers_share_actual_amount L17-69 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
 - tests/test_month_translate_1840.py::test_world_segment_repeated_strategic_results_apply_in_order L397-514 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
-- tests/test_mutiny_actual_residence_659.py::test_fresh_seed_station_region_and_class_slices L101-119 shapes=['pragma_table_info'] :: 现役 schema 迁移/写读契约辅助
-- tests/test_mutiny_progression_316.py::test_old_save_migrates_and_mutiny_progress_survives_reopen L121-157 shapes=['pragma_table_info'] :: 现役 schema 迁移/写读契约辅助
-- tests/test_mutiny_redemption_317.py::test_redemption_progress_migrates_and_survives_reopen L127-159 shapes=['pragma_table_info'] :: 现役 schema 迁移/写读契约辅助
+- tests/test_mutiny_actual_residence_659.py::test_fresh_seed_station_region_and_class_slices L101-119 shapes=['pragma_table_info'] :: 现役 schema/迁移辅助读列或迁移后列消失断言
+- tests/test_mutiny_progression_316.py::test_old_save_migrates_and_mutiny_progress_survives_reopen L121-157 shapes=['pragma_table_info'] :: 现役 schema/迁移辅助读列或迁移后列消失断言
+- tests/test_mutiny_redemption_317.py::test_redemption_progress_migrates_and_survives_reopen L127-159 shapes=['pragma_table_info'] :: 现役 schema/迁移辅助读列或迁移后列消失断言
 - tests/test_new_game_smoke.py::test_existing_office_fk_violation_is_normalized_on_reopen L117-143 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
 - tests/test_office_inference.py::test_appointment_seat_identity_reuses_local_and_strips_central L274-326 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
-- tests/test_override_breach_costs_564.py::test_midzhi_rejection_no_party_fanout_then_force_only_authority L74-100 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
 - tests/test_override_breach_costs_564.py::test_midzhi_apply_omits_guessed_parties_and_keeps_satisfaction L288-312 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
+- tests/test_override_breach_costs_564.py::test_midzhi_rejection_no_party_fanout_then_force_only_authority L74-100 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
 - tests/test_pay_order_override_653.py::test_real_revoke_restores_override_same_month_with_active_commitment L433-482 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
 - tests/test_pay_order_override_653.py::test_stale_until_cleared_by_permanent_overwrite L720-743 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
-- tests/test_person_archive_schema.py::_columns L12-13 shapes=['pragma_table_info'] :: 现役 schema/迁移辅助读列，非退役行为自证
-- tests/test_person_archive_schema.py::_column_info L16-17 shapes=['pragma_table_info'] :: 现役 schema/迁移辅助读列，非退役行为自证
+- tests/test_person_archive_schema.py::_column_info L16-17 shapes=['pragma_table_info'] :: 现役 schema/迁移辅助读列或迁移后列消失断言
+- tests/test_person_archive_schema.py::_columns L12-13 shapes=['pragma_table_info'] :: 现役 schema/迁移辅助读列或迁移后列消失断言
 - tests/test_person_archive_schema.py::test_person_logs_accepts_audit_rows_for_existing_characters L80-104 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
 - tests/test_person_delta_adapter.py::test_apply_person_changes_disposition_does_not_commit_inside_batch L372-446 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
 - tests/test_person_delta_adapter.py::test_apply_score_extraction_materializes_derived_release_before_appointment L789-843 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
 - tests/test_person_delta_adapter.py::test_apply_score_extraction_persists_reason_code_and_person_log L1548-1585 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
-- tests/test_person_delta_adapter.py::test_person_log_normalized_not_truncated L2039-2053 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
 - tests/test_person_delta_adapter.py::test_displaced_holder_transit_to_cleared L2583-2613 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
 - tests/test_person_delta_adapter.py::test_historical_death_tick_sets_reason_code L2616-2636 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
 - tests/test_person_delta_adapter.py::test_historical_death_tick_writes_person_log L2639-2658 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
 - tests/test_person_delta_adapter.py::test_historical_debut_tick_sets_reason_code_and_log L2661-2686 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
-- tests/test_pihong_dossier_1490.py::test_657_five_actions_domain_writes L673-737 shapes=['pragma_table_info'] :: 现役 schema 迁移/写读契约辅助
-- tests/test_pihong_dossier_1490.py::test_657_abi_mapper_matrix_a1_a12 L908-1147 shapes=['pragma_table_info', 'select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
-- tests/test_pihong_dossier_1490.py::test_657_midzhi_verdict_no_party_satisfaction L1560-1577 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
+- tests/test_person_delta_adapter.py::test_person_log_normalized_not_truncated L2039-2053 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
+- tests/test_pihong_dossier_1490.py::test_657_abi_mapper_matrix_a1_a12 L908-1147 shapes=['pragma_table_info', 'select_order_limit'] :: 现役 schema/迁移辅助读列或迁移后列消失断言
 - tests/test_pihong_dossier_1490.py::test_657_appointment_name_target_id_conflict_batch_reject L1695-1705 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
+- tests/test_pihong_dossier_1490.py::test_657_five_actions_domain_writes L673-737 shapes=['pragma_table_info'] :: 现役 schema/迁移辅助读列或迁移后列消失断言
+- tests/test_pihong_dossier_1490.py::test_657_midzhi_verdict_no_party_satisfaction L1560-1577 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
 - tests/test_pihong_dossier_1490.py::test_657_punishment_name_target_id_conflict_zero_writes L1707-1737 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
 - tests/test_power_section_rejections.py::test_all_reason_aliases_consumed_as_reason L239-253 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
-- tests/test_promulgation_judge_561.py::test_promulgation_context_is_deterministic_and_excludes_satisfaction L21-85 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
 - tests/test_promulgation_judge_561.py::test_gate_evidence_reloads_dossier_after_reconsideration_mutation L399-446 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
+- tests/test_promulgation_judge_561.py::test_promulgation_context_is_deterministic_and_excludes_satisfaction L21-85 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
 - tests/test_qa_e1_numeric_presentation.py::test_army_payload_arrears_text_is_approximate_not_raw L87-100 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
-- tests/test_region_citydefense.py::_region_cols L11-12 shapes=['pragma_table_info'] :: 现役 schema/迁移辅助读列，非退役行为自证
-- tests/test_rejection_wiring.py::_rejection_rows L19-29 shapes=['pragma_table_info'] :: 现役 schema/迁移辅助读列，非退役行为自证
+- tests/test_region_citydefense.py::_region_cols L11-12 shapes=['pragma_table_info'] :: 现役 schema/迁移辅助读列或迁移后列消失断言
+- tests/test_rejection_wiring.py::_rejection_rows L19-29 shapes=['pragma_table_info'] :: 现役 schema/迁移辅助读列或迁移后列消失断言
 - tests/test_relation_capture_633.py::test_authorized_dossier_origin_accepted_bound_to_current_turn L290-325 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
 - tests/test_relation_capture_633.py::test_authorized_dossier_outside_frozen_batch_rejected_zero_edges L331-361 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
-- tests/test_relation_capture_633.py::test_unauthorized_dossier_inside_frozen_set_still_rejected L364-394 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
 - tests/test_relation_capture_633.py::test_missing_frozen_dossier_set_is_empty_closed_set L397-428 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
-- tests/test_rescript_draft_656.py::_add_character L47-61 shapes=['pragma_table_info'] :: 现役 schema/迁移辅助读列，非退役行为自证
-- tests/test_rescript_draft_656.py::_pending_columns L270-271 shapes=['pragma_table_info'] :: 现役 schema/迁移辅助读列，非退役行为自证
-- tests/test_rescript_draft_656.py::_ledger_columns L273-274 shapes=['pragma_table_info'] :: 现役 schema/迁移辅助读列，非退役行为自证
-- tests/test_rescript_draft_656.py::test_657_s1_schema_columns_and_no_banned_fields L276-293 shapes=['pragma_table_info', 'sqlite_master_check'] :: 现役表列存在性契约（非退役 API）；保留并据实标注
+- tests/test_relation_capture_633.py::test_unauthorized_dossier_inside_frozen_set_still_rejected L364-394 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
+- tests/test_rescript_draft_656.py::_add_character L47-61 shapes=['pragma_table_info'] :: 现役 schema/迁移辅助读列或迁移后列消失断言
 - tests/test_secret_dossier_participants_1252.py::_people L16-22 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
-- tests/test_secret_order_payoff_1504.py::_minister L80-88 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
 - tests/test_secret_order_payoff_1504.py::_catch_names L192-202 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
-- tests/test_secret_order_payoff_1504.py::test_supply_call_writes_identity_materials_into_its_own_tree L797-929 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
+- tests/test_secret_order_payoff_1504.py::_minister L80-88 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
 - tests/test_secret_order_payoff_1504.py::test_positive_inflow_does_not_freeze_purpose_and_counts L2331-2370 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
+- tests/test_secret_order_payoff_1504.py::test_supply_call_writes_identity_materials_into_its_own_tree L797-929 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
 - tests/test_section_fiscal_rejections.py::test_fiscal_change_reopens_with_value_origin_history_and_scaled_rows L603-637 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
 - tests/test_shared_resource_order_1844.py::_settled_declaration L15-22 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
 - tests/test_shared_resource_order_1844.py::test_player_decrees_sequential_army_station_reads_updated_roster L174-221 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
-- tests/test_staged_assignment_identity_1890.py::test_month_chain_staging_has_no_source_turn L137-151 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
-- tests/test_staged_assignment_identity_1890.py::test_void_discards_that_directive_night_forecast L295-330 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
 - tests/test_staged_assignment_identity_1890.py::test_declared_new_secret_order_lands_and_undo_removes_all_records L336-399 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
+- tests/test_staged_assignment_identity_1890.py::test_month_chain_staging_has_no_source_turn L137-151 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
 - tests/test_staged_assignment_identity_1890.py::test_undo_deletes_only_this_turns_committed_draft_directive L477-523 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
-- tests/test_style_temperament_641.py::test_inertia_natural_resolve_applies_temperament_style L48-84 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
+- tests/test_staged_assignment_identity_1890.py::test_void_discards_that_directive_night_forecast L295-330 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
 - tests/test_style_temperament_641.py::test_apply_score_extraction_writes_temperament_style_and_log L87-120 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
+- tests/test_style_temperament_641.py::test_inertia_natural_resolve_applies_temperament_style L48-84 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
 - tests/test_style_temperament_641.py::test_temperament_style_preserves_raw_bytes_through_write_kernel L123-172 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
-- tests/test_supervision_625.py::_table_cols L136-140 shapes=['pragma_table_info'] :: 现役 schema/迁移辅助读列，非退役行为自证
-- tests/test_supervision_625.py::test_ac1_presence_exposure_schema_pragma_and_no_dulling_cols L146-173 shapes=['sqlite_master_check'] :: 现役表列存在性契约（非退役 API）；保留并据实标注
-- tests/test_transaction_boundary.py::test_ddl_first_inside_atomic_rolls_back L414-437 shapes=['sqlite_master_check'] :: 现役 schema 迁移/写读契约辅助
+- tests/test_transaction_boundary.py::test_ddl_first_inside_atomic_rolls_back L414-437 shapes=['sqlite_master_check'] :: 现役 schema/迁移/DDL 回滚或表存在性服务于真实写读断言
 - tests/test_transit_countdown_668.py::test_arrivals_sorted_by_name_stable L261-273 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
 - tests/test_world_materials_1834.py::test_world_materials_include_textual_facts_once_and_gazette_not_duplicated L188-257 shapes=['select_order_limit'] :: 选行 SQL 服务于现役读写断言；非退役读口搬入
+
+TOTAL_KEEP_CANDIDATES=131
