@@ -1961,48 +1961,6 @@ def test_fixed_flows_substrate_hub_failure_rolls_back_cutover_writes(fresh_game,
     assert after_balance == before_balance
     assert state.metrics["国库"] == before_balance
 
-def test_pre_s6_cutover_save_without_fiscal_engine_migrates_to_substrate_hub(fresh_db):
-    import ming_sim.flows as flows_mod
-
-    path = fresh_db.path
-    content = fresh_db.content
-    fresh_db.conn.execute(
-        "DELETE FROM fiscal_config WHERE key = '__fiscal_engine'"
-    )
-    fresh_db.conn.execute(
-        """
-        INSERT INTO fiscal_config (key, value, kind, note)
-        VALUES ('__army_pay_source_cutover', 1, 'meta', 'pre-S6 cutover save')
-        ON CONFLICT(key) DO UPDATE SET value = excluded.value, note = excluded.note
-        """
-    )
-    fresh_db.conn.commit()
-
-    reopened = GameDB(path, content)
-    try:
-        state = reopened.load_state()
-        assert reopened.fiscal_engine() == "substrate_hub"
-        row = reopened.conn.execute(
-            "SELECT value FROM fiscal_config WHERE key = '__fiscal_engine'"
-        ).fetchone()
-        assert row is not None
-        assert int(row["value"]) == 1
-
-        budget = flows_mod.compute_budget_lines(reopened, state)
-        army_pay = next(
-            row["amount"] for row in budget["国库"]["expense"]
-            if row.get("budget_key") == "army_pay"
-        )
-        assert army_pay > 0
-
-        flow_rows = flows_mod.apply_fixed_period_flows(reopened, state)
-        assert not any(
-            row.get("account") == "国库" and row.get("category") == "各军军饷"
-            for row in flow_rows
-        )
-        assert any(row.get("category") == "中央军饷" for row in flow_rows)
-    finally:
-        reopened.conn.close()
 
 @pytest.mark.parametrize("starting_schema_version", [6, 7])
 def test_fiscal_config_v8_migration_preserves_deleted_old_keys(

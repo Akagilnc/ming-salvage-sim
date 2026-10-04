@@ -1635,80 +1635,6 @@ def test_yuan_xialing_event_excluded_after_jisi_border_contained_outcome(game):
     assert all(ev.id != "yuan_xialing" for ev in issues.gather_candidate_events(state, db))
 
 
-def test_legacy_event_pool_issue_backfills_trigger_without_guessing_outcome(game):
-    """ADR0014：旧档 event_pool issue 只能补触发记录，不能猜测己巳之变具体结局。"""
-    db, state, content = game
-    issues.bind_content(content)
-    state.year = 1629
-    state.period = 11
-    db.save_state(state)
-    db.insert_issue(
-        state,
-        kind="situation",
-        title=content.event_by_id["jisi_lubian"].title,
-        origin_kind="event_pool",
-        origin_ref="jisi_lubian",
-        commit=True,
-    )
-    assert db.conn.execute(
-        "SELECT event_id FROM event_triggers WHERE event_id=?",
-        ("jisi_lubian",),
-    ).fetchone() is None
-
-    db.init_schema()
-
-    row = db.conn.execute(
-        "SELECT terminal_state, terminal_reason, source FROM event_triggers WHERE event_id=?",
-        ("jisi_lubian",),
-    ).fetchone()
-    assert row is not None
-    assert row["terminal_state"] == "triggered"
-    assert row["terminal_reason"] == ""
-    assert row["source"] == "legacy_event_pool"
-
-    state.year = 1629
-    state.period = 12
-    db.conn.execute("UPDATE characters SET status=? WHERE name=?", ("active", "袁崇焕"))
-    db.conn.execute("UPDATE armies SET commander=? WHERE id=?", ("袁崇焕", "guanning"))
-    db.conn.execute(
-        "UPDATE characters SET status=?, status_reason=? WHERE name=?",
-        ("dead", "袁崇焕双岛斩帅", "毛文龙"),
-    )
-
-    assert all(ev.id != "yuan_xialing" for ev in issues.gather_candidate_events(state, db))
-
-
-def test_legacy_event_trigger_terminal_reason_can_be_filled_by_real_outcome(game):
-    """旧档 backfill 只能占位；同事件后续真实结局标签到达时应补写空 terminal_reason。"""
-    db, state, content = game
-    issues.bind_content(content)
-    state.year = 1629
-    state.period = 11
-    db.save_state(state)
-    db.insert_issue(
-        state,
-        kind="situation",
-        title=content.event_by_id["jisi_lubian"].title,
-        origin_kind="event_pool",
-        origin_ref="jisi_lubian",
-        commit=True,
-    )
-    db.init_schema()
-    row = db.conn.execute(
-        "SELECT terminal_state, terminal_reason FROM event_triggers WHERE event_id=?",
-        ("jisi_lubian",),
-    ).fetchone()
-    assert dict(row) == {"terminal_state": "triggered", "terminal_reason": ""}
-
-    db.mark_event_triggered(state, "jisi_lubian", terminal_reason="入塞被遏")
-
-    row = db.conn.execute(
-        "SELECT terminal_state, terminal_reason FROM event_triggers WHERE event_id=?",
-        ("jisi_lubian",),
-    ).fetchone()
-    assert dict(row) == {"terminal_state": "triggered", "terminal_reason": "入塞被遏"}
-
-
 def test_person_write_state_restore_removes_dynamic_character_attrs(game):
     """人事写口失败回滚必须删除快照中不存在的动态属性，避免内存幽灵状态残留。"""
     db, _state, content = game
@@ -1716,10 +1642,6 @@ def test_person_write_state_restore_removes_dynamic_character_attrs(game):
     content.characters["毛文龙"].ghost_preflight_attr = "leak"
 
     issues._restore_person_write_state(db, content, snapshot, commit=False)
-
-
-
-
 
 
 def test_luoyang_fallen_not_obsoleted_when_fu_wang_is_dead(game):

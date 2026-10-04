@@ -31,9 +31,3 @@ def test_seed_splits_li_zicheng_and_zhang_xianzhong_bandit_powers(read_game):
     assert powers["bandit_li_zicheng"]["leader"] == "李自成"
     assert powers["bandit_zhang_xianzhong"]["leader"] == "张献忠"
     assert powers["bandit_li_zicheng"]["military_strength"] != powers["bandit_zhang_xianzhong"]["military_strength"]
-
-
-
-
-
-

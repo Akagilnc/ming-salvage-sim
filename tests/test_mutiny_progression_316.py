@@ -116,5 +116,3 @@ def test_mutiny_count_is_capped_at_three(game):
     # count 已达 3 再进闩：#318 转流寇，不叠第四振
     assert row["owner_power"] == "bandits"
     assert row["is_mutinied"] == 0
-
-
