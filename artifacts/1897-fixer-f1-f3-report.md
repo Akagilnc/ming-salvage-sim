@@ -1400,5 +1400,5 @@ env MING_SIM_AGY_BIN=/usr/bin/false MING_SIM_CODEX_BIN=/usr/bin/false \
 
 ### 交卷 HEAD（本轮）
 
-- 以交卷后 `git rev-parse HEAD` 为准（本段之后独立 `ak-roles:` 提交）。
+- tip HEAD：`5a17149c1bc887950032c9a155d3b60707f21abb`
 - **未 push / 未 PR / 未 amend**；误触 stash 已 pop 恢复。
