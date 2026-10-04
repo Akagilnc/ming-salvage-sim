@@ -362,11 +362,12 @@ _AGY_AUTH_MARKERS = ("Authentication required", "authentication timed out")
 
 @dataclass
 class _CliProcessOutcome:
-    """子进程收尾事实（退出码 / stderr 诊断 / stdin 写错），由增量读循环回填。"""
+    """子进程收尾事实（退出码 / stderr 诊断 / stdin 写错 / 软收尾失败），由增量读循环回填。"""
 
     returncode: Optional[int] = None
     stderr: str = ""
     stdin_error: Optional[BaseException] = None
+    cleanup_error: Optional[BaseException] = None
 
 
 def _cli_idle_seconds() -> float:
@@ -492,6 +493,7 @@ def _iter_cli_process_lines(
         "err": codecs.getincrementaldecoder("utf-8")("replace"),
     }
     pending_out = ""
+    body_err: Optional[BaseException] = None
     try:
         while open_streams > 0:
             try:
@@ -532,15 +534,18 @@ def _iter_cli_process_lines(
                 last_activity_at=last_activity, policy=policy, clock=tick,
             )
             time.sleep(_CLI_POLL_SECONDS)
+    except BaseException as exc:
+        body_err = exc
+        raise
     finally:
         cleanup_err: Optional[BaseException] = None
         try:
             _terminate_cli_process(proc)
         except BaseException as exc:
-            # Soft-stop failure must leave a real trace without covering an
-            # in-flight read/idle failure (raise-from-finally would suppress it).
+            # Soft-stop failure must surface. Never raise-from-finally over an
+            # in-flight body failure; never logger-only when cleanup is sole fail.
             cleanup_err = exc
-            logger.warning("CLI soft terminate failed: %s", exc)
+            result.cleanup_error = exc
         for worker in workers:
             worker.join(timeout=5)
         result.stderr = "".join(stderr_parts)
@@ -549,6 +554,11 @@ def _iter_cli_process_lines(
                 result.stderr + f"\n[soft terminate failed: {cleanup_err}]"
             ).lstrip("\n")
         result.returncode = proc.poll()
+        if cleanup_err is not None:
+            if body_err is not None:
+                body_err.add_note(f"soft terminate also failed: {cleanup_err!r}")
+            else:
+                raise cleanup_err
 
 def _codex_reasoning_effort(reasoning_strength: Optional[str]) -> str:
     if reasoning_strength is None:

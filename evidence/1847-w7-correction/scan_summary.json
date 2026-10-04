@@ -1,0 +1,36 @@
+{
+  "tracked_files": 1361,
+  "scanned_code_files": 418,
+  "exempt": 343,
+  "n6_raw": 2849,
+  "n6_classified": 2849,
+  "n6_buckets": {
+    "POTENTIAL_SLICE_SPLIT": 256,
+    "POTENTIAL_OTHER": 529,
+    "POTENTIAL_TRANSPORT_STRIP": 904,
+    "POTENTIAL_STRIP": 279,
+    "POTENTIAL_EMPTY_LOCAL": 452,
+    "POTENTIAL_REPLACE": 36,
+    "TEST_HIT": 393
+  },
+  "n11_symbols": 223,
+  "n11_dispositions": {
+    "DELETE_TEST_ONLY_ISLAND": 22,
+    "KEEP_LIVE_CONSUMER": 94,
+    "ABSENT": 12,
+    "DELETE_ORPHAN_DEF": 95
+  },
+  "n13_hits": 286,
+  "n13_buckets": {
+    "POTENTIAL_SWALLOW": 30,
+    "POTENTIAL_N13": 247,
+    "POTENTIAL_KILL": 3,
+    "MECHANICAL_DOC": 6
+  },
+  "n14_hits": 439,
+  "n14_buckets": {
+    "POTENTIAL_SAME_VALUE_RECHECK": 298,
+    "POTENTIAL_N14": 110,
+    "POTENTIAL_IDENTITY_SENTINEL": 31
+  }
+}

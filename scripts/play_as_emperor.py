@@ -328,6 +328,7 @@ def run(
     prev_hint = ""            # 上一步命中的 prompt，用于检测卡同界面
     stuck_count = 0           # 同一界面连续重复次数
     STUCK_LIMIT = 6           # 连续卡同界面上限，超则升级退出路径
+    body_err: Optional[BaseException] = None
 
     try:
         while completed_periods < turns:
@@ -510,39 +511,42 @@ def run(
         except (pexpect.TIMEOUT, pexpect.EOF):
             pass
 
+    except BaseException as exc:
+        body_err = exc
+        raise
     finally:
-        # Soft close covers the full PtyProcess lifecycle without SIGKILL.
-        # Official API: close(force=False) → terminate(force=False) only
-        # (https://ptyprocess.readthedocs.io/en/latest/api.html). Default
-        # close()/__del__ uses force=True and can escalate to SIGKILL.
+        # Ecological soft close: pexpect/ptyprocess close(force=False).
+        # Docs: https://ptyprocess.readthedocs.io/en/latest/api.html
+        # close() closes the FD first, then terminate(force); force=False never
+        # reaches SIGKILL. If soft terminate fails it raises before setting
+        # closed=True; PtyProcess.__del__ would then call close()→SIGKILL.
+        # No public detach API exists (verified against installed ptyprocess +
+        # pexpect sources); the only non-kill completion is marking closed after
+        # the official close already shut the FD. No fileobj re-close, no
+        # except:pass around status writes, no raise that covers body_err.
         cleanup_err: Optional[BaseException] = None
         try:
-            if child is not None and not getattr(child, "closed", False):
+            if child is not None and not child.closed:
                 child.close(force=False)
         except BaseException as exc:
             cleanup_err = exc
             log(f"[soft cleanup failed: {exc}]")
-            # Soft close may raise before marking closed; finish FD lifecycle
-            # so PtyProcess.__del__ does not escalate to SIGKILL.
             pty = getattr(child, "ptyproc", None)
-            if pty is not None and not getattr(pty, "closed", True):
-                try:
-                    pty.fileobj.close()
-                except Exception:
-                    pass
+            if pty is not None and not pty.closed:
+                # FD already closed by PtyProcess.close before the raise.
                 pty.fd = -1
                 pty.closed = True
-            try:
-                child.child_fd = -1
-                child.closed = True
-            except Exception:
-                pass
+            child.child_fd = -1
+            child.closed = True
         try:
             log_file.close()
         except Exception:
             pass
         if cleanup_err is not None:
-            raise cleanup_err
+            if body_err is not None:
+                body_err.add_note(f"soft cleanup also failed: {cleanup_err!r}")
+            else:
+                raise cleanup_err
 
     print(f"\n=== 结束。完成 {completed_periods}/{turns} 月。Log: {log_path} ===")
     print("\n### 玩家(qwen) 侧 token：")

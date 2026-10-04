@@ -1,0 +1,440 @@
+file	line	kind	disposition	disposition_reason	snip
+tests/test_applier_contract.py	118	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert count == 0
+tests/test_applier_contract.py	163	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert count == 1  # 只有第一次 flush 的 1 行
+tests/test_applier_contract.py	303	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert count == 1  # 只有 reset 前那次 flush 的 1 行（DB 回滚由事务层负责，非 reset 职责）
+tests/test_applier_contract.py	355	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert count == 1
+tests/test_army_card_status_1501.py	260	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert before == after
+tests/test_army_display_173.py	137	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert keys == sorted(keys)
+tests/test_army_firearms.py	77	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert val == 100
+tests/test_army_firearms.py	89	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert val == 12
+tests/test_army_firearms.py	117	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert val == 12
+tests/test_army_maintenance_retire_173.py	151	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	"    assert after == before - 3, ""拒维护费不应连累同军合法字段（士气）落库"""
+tests/test_army_salary_44.py	45	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	"    assert after == math.ceil(_army_row(db, ""guanning"")[""manpower""] * _army_row(db, ""guanning"")[""salary_rate""] / 10000)"
+tests/test_army_salary_44.py	84	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert needed == math.ceil(manpower * 1.5 / 10000), (
+tests/test_army_salary_44.py	166	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	"    assert total == 72, f""明军总月应发 = sum(ceil)=72 万两（设计 66.5 为小数和），实得 {total}"""
+tests/test_army_salary_44.py	183	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	"    assert after == before + 1, ""0 兵再减(请求非 0 经 clamp 净 0)应留 army_log（不静默）"""
+tests/test_army_salary_44.py	201	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	"    assert after == before, ""真 no-op(delta==0)不留痕"""
+tests/test_army_salary_44.py	231	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	"    assert spent == 0, ""allowed_army_ids=[] 应明确支付 0，不得回落全军池"""
+tests/test_army_salary_44.py	288	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	"        assert needed == math.ceil(5000 * 1.5 / 10000), f""非有限 rate({bad}) 应锚点应发，得 {needed}"""
+tests/test_audience_night_498.py	128	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert seqs == sorted(seqs)
+tests/test_audience_night_498.py	179	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert seqs == sorted(seqs)
+tests/test_audience_night_498.py	306	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert same_id == d_id
+tests/test_audience_restore_505.py	114	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	        assert ledger_after == ledger_before
+tests/test_audience_restore_505.py	188	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	        assert after == before  # 一条问话都不删
+tests/test_audience_restore_505.py	209	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert extracted == 0
+tests/test_audience_scroll_539.py	318	str_contains_identity	FIX_STR_IDENTITY	str(row)/str() identity sentinel	"    assert any(an.TAG_ENTER in ts and ""杨嗣昌"" in str(e.get(""person_names""))"
+tests/test_audience_translate_1837.py	297	str_contains_identity	FIX_STR_IDENTITY	str(row)/str() identity sentinel	"    assert any(""拟旨赈济"" in str(row[""payload_json""]) for row in pending)"
+tests/test_audience_translate_1837.py	531	str_contains_identity	FIX_STR_IDENTITY	str(row)/str() identity sentinel	"        assert ""陕西巡抚"" in str(char[""office""] or """"), case[""label""]"
+tests/test_audience_translate_1837.py	741	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert after == before  # 失败不得当分派成功写库
+tests/test_audience_translate_1837_reopen.py	160	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert grounded == exposed
+tests/test_audience_travel_gating_670.py	229	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	        assert again_id == entry_id
+tests/test_audience_travel_gating_670.py	250	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert again == first
+tests/test_audience_travel_gating_670.py	516	str_contains_identity	FIX_STR_IDENTITY	str(row)/str() identity sentinel	"    assert ""injected continuation applier failure"" in str(excinfo.value.__cause__)"
+tests/test_audience_travel_gating_670.py	620	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert attempts == 2
+tests/test_audience_travel_gating_670.py	1333	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert after_logs == before_logs + 1
+tests/test_audience_undo_506.py	460	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert n2 == n1
+tests/test_audience_undo_506.py	632	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert dropped == 1
+tests/test_breach_plea_623.py	1062	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert t2 == t1  # 并入同一条
+tests/test_breach_plea_623.py	1138	str_contains_identity	FIX_STR_IDENTITY	str(row)/str() identity sentinel	"    assert any(f""issue:{cid}"" in str(e[""origin""] or """") for e in edges)"
+tests/test_breach_plea_623.py	1247	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert t2 == t1
+tests/test_breach_plea_623.py	1338	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert t2 == t1
+tests/test_breach_plea_623.py	1377	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert t2 == t1
+tests/test_character_knowledge_489.py	786	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert source == public_event == title
+tests/test_chat_stream_failpaths_393.py	430	str_contains_identity	FIX_STR_IDENTITY	str(row)/str() identity sentinel	"    assert ""highlight trail boom"" in str(err.get(""message"") or """"), err"
+tests/test_chat_stream_failpaths_393.py	461	str_contains_identity	FIX_STR_IDENTITY	str(row)/str() identity sentinel	"    assert ""Internal Server Error"" not in str(detail.get(""message"") or """")"
+tests/test_chat_stream_failpaths_393.py	672	str_contains_identity	FIX_STR_IDENTITY	str(row)/str() identity sentinel	"    assert ""Unknown model error"" in str(detail.get(""provider_message"") or """")"
+tests/test_chat_stream_failpaths_393.py	781	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert max_a == 3
+tests/test_chat_stream_failpaths_393.py	1049	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert temp == answer
+tests/test_cli_backend.py	173	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert out == body and attempts == 1
+tests/test_cli_backend.py	234	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert out == body and n == 1
+tests/test_cli_backend.py	265	prose_identity_assert	POTENTIAL_PROSE_SENTINEL	prose/note identity — verify structured field	    assert text == final
+tests/test_cli_backend.py	265	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert text == final
+tests/test_cli_backend.py	314	prose_identity_assert	POTENTIAL_PROSE_SENTINEL	prose/note identity — verify structured field	"    assert text == ""ABC"""
+tests/test_cli_backend.py	561	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	"    assert result == cb.os.path.abspath(""./bin/codex"")"
+tests/test_cli_backend.py	906	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert out == body and n == 1
+tests/test_cli_backend.py	920	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert out == body and n == 1
+tests/test_cli_backend.py	933	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert out == body and n == 1
+tests/test_cli_backend.py	949	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert out == body and n == 1
+tests/test_cli_backend.py	994	prose_identity_assert	POTENTIAL_PROSE_SENTINEL	prose/note identity — verify structured field	"    assert text == f""{runner}-ok"" and n == 1"
+tests/test_cli_backend.py	994	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	"    assert text == f""{runner}-ok"" and n == 1"
+tests/test_cli_play_turn.py	84	str_row_identity	FIX_STR_IDENTITY	str(row)/str() identity sentinel	    assert str(exc) in capsys.readouterr().out
+tests/test_cli_play_turn.py	509	str_row_identity	FIX_STR_IDENTITY	str(row)/str() identity sentinel	    assert str(exc) in capsys.readouterr().out
+tests/test_cli_play_turn.py	609	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	        assert chat_turn_id == ct
+tests/test_cli_play_turn.py	610	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	        assert message == question
+tests/test_cli_transport_1465.py	200	str_contains_identity	FIX_STR_IDENTITY	str(row)/str() identity sentinel	"    assert ""Authentication required"" in str(detail.get(""provider_message"") or """"), detail"
+tests/test_cli_transport_1465.py	264	str_contains_identity	FIX_STR_IDENTITY	str(row)/str() identity sentinel	"    assert ""stdin"" in str(detail.get(""provider_message"") or """"), detail"
+tests/test_commitment_backlash_626.py	368	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert minxin_1 == minxin_0
+tests/test_commitment_backlash_626.py	386	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	"    assert minxin_2 == minxin_1 + int(BACKLASH_NAMED_METRICS[""民心""])"
+tests/test_commitment_backlash_626.py	387	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	"    assert huangwei_2 == huangwei_1 + int(BACKLASH_NAMED_METRICS[""皇威""])"
+tests/test_commitment_backlash_626.py	408	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert minxin_after_settle == minxin_2, (
+tests/test_commitment_backlash_626.py	411	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert huangwei_after_settle == huangwei_2, (
+tests/test_credit_events_628.py	164	str_contains_identity	FIX_STR_IDENTITY	str(row)/str() identity sentinel	"    assert any(""breach_plea"" in str(e[""origin""]) for e in edges)"
+tests/test_credit_events_628.py	200	str_contains_identity	FIX_STR_IDENTITY	str(row)/str() identity sentinel	"    assert f""dossier:{did_f}:credit:fulfill"" in str(fe[""origin""])"
+tests/test_credit_events_628.py	228	str_contains_identity	FIX_STR_IDENTITY	str(row)/str() identity sentinel	"        if f""dossier:{did_b}:credit:back"" in str(e[""origin""])"
+tests/test_credit_events_628.py	233	str_contains_identity	FIX_STR_IDENTITY	str(row)/str() identity sentinel	"        f""dossier:{did_b}:credit:fulfill"" in str(e[""origin""])"
+tests/test_credit_events_628.py	283	str_contains_identity	FIX_STR_IDENTITY	str(row)/str() identity sentinel	"        f""dossier:{did_rd}:credit:"" in str(e[""origin""])"
+tests/test_credit_events_628.py	352	str_contains_identity	FIX_STR_IDENTITY	str(row)/str() identity sentinel	"        if f""issue:{cid_g}:credit:grant_grace"" in str(e[""origin""])"
+tests/test_credit_events_628.py	359	str_contains_identity	FIX_STR_IDENTITY	str(row)/str() identity sentinel	"        if f""issue:{cid_rg}:credit:reject_grace"" in str(e[""origin""])"
+tests/test_credit_events_628.py	365	str_contains_identity	FIX_STR_IDENTITY	str(row)/str() identity sentinel	"        if f""issue:{cid_rr}:credit:reject_remonstrance"" in str(e[""origin""])"
+tests/test_credit_events_628.py	399	str_contains_identity	FIX_STR_IDENTITY	str(row)/str() identity sentinel	"    by_target = {e[""target""]: e for e in sg_edges if f""dossier:{did_sg}"" in str(e[""origin""])}"
+tests/test_credit_events_628.py	425	str_contains_identity	FIX_STR_IDENTITY	str(row)/str() identity sentinel	"        if f""dossier:{did_cv}:credit:cover"" in str(e[""origin""])"
+tests/test_credit_events_628.py	456	str_contains_identity	FIX_STR_IDENTITY	str(row)/str() identity sentinel	"        if f""dossier:{did_pr}:credit:"" in str(e[""origin""])"
+tests/test_credit_events_628.py	497	str_contains_identity	FIX_STR_IDENTITY	str(row)/str() identity sentinel	"        if f""dossier:{did_rel}"" in str(e[""origin""])"
+tests/test_credit_events_628.py	537	str_contains_identity	FIX_STR_IDENTITY	str(row)/str() identity sentinel	"            if f""dossier:{did_disp}:credit:cover"" in str(e[""origin""])"
+tests/test_credit_events_628.py	560	str_contains_identity	FIX_STR_IDENTITY	str(row)/str() identity sentinel	"            if f""dossier:{did_disp}:credit:cover"" in str(e[""origin""])"
+tests/test_credit_events_628.py	562	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	"        assert cover_disp == before_back_disp, ""被顶替回声不得写 cover/撑腰边"""
+tests/test_credit_events_628.py	595	str_contains_identity	FIX_STR_IDENTITY	str(row)/str() identity sentinel	"        if f""dossier:{did_a}"" in str(e[""origin""])"
+tests/test_credit_events_628.py	604	str_contains_identity	FIX_STR_IDENTITY	str(row)/str() identity sentinel	"        if f""dossier:{did_a}"" in str(e[""origin""])"
+tests/test_credit_events_628.py	620	str_contains_identity	FIX_STR_IDENTITY	str(row)/str() identity sentinel	"        if f""dossier:{did_b}"" in str(e[""origin""])"
+tests/test_declaration_dispatch_1835.py	477	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert after == before  # 没有孤儿账落进去
+tests/test_declaration_dispatch_1835.py	732	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert discarded == 1
+tests/test_decree_commitment_settlement_229.py	484	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert paid == sorted(paid) and paid[-1] > paid[1]
+tests/test_decree_dossiers_571.py	1011	prose_identity_assert	POTENTIAL_PROSE_SENTINEL	prose/note identity — verify structured field	    assert prompts and directive_text in prompts[0]
+tests/test_decree_dossiers_571.py	1247	prose_identity_assert	POTENTIAL_PROSE_SENTINEL	prose/note identity — verify structured field	    assert revised_text in prompts[0]
+tests/test_decree_forecast_1861.py	292	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert sources_after == sources_before
+tests/test_decree_forecast_1861.py	436	prose_identity_assert	POTENTIAL_PROSE_SENTINEL	prose/note identity — verify structured field	"    for text in (""旧旨甲"", ""旧旨乙""):"
+tests/test_deepseek_thinking_disable_1797.py	26	prose_identity_assert	POTENTIAL_PROSE_SENTINEL	prose/note identity — verify structured field	"    assert model.extra_body == {""reasoning"": {""enabled"": False}}"
+tests/test_deepseek_thinking_disable_1797.py	39	prose_identity_assert	POTENTIAL_PROSE_SENTINEL	prose/note identity — verify structured field	"    assert model.extra_body == {""thinking"": {""type"": ""disabled""}}"
+tests/test_deepseek_thinking_disable_1797.py	52	prose_identity_assert	POTENTIAL_PROSE_SENTINEL	prose/note identity — verify structured field	"    assert model.extra_body == {""enable_thinking"": False}"
+tests/test_deepseek_thinking_disable_1797.py	65	prose_identity_assert	POTENTIAL_PROSE_SENTINEL	prose/note identity — verify structured field	"    assert model.extra_body == {""thinking"": {""type"": ""disabled""}}"
+tests/test_deepseek_thinking_disable_1797.py	113	prose_identity_assert	POTENTIAL_PROSE_SENTINEL	prose/note identity — verify structured field	    assert model.extra_body == expected
+tests/test_deepseek_thinking_disable_1797.py	128	prose_identity_assert	POTENTIAL_PROSE_SENTINEL	prose/note identity — verify structured field	"    assert official.extra_body == {""thinking"": {""type"": ""disabled""}}"
+tests/test_deepseek_thinking_disable_1797.py	138	prose_identity_assert	POTENTIAL_PROSE_SENTINEL	prose/note identity — verify structured field	"    assert relay.extra_body == {""reasoning"": {""enabled"": False}}"
+tests/test_deepseek_thinking_disable_1797.py	152	prose_identity_assert	POTENTIAL_PROSE_SENTINEL	prose/note identity — verify structured field	"    assert model.extra_body == {""enable_thinking"": True, ""thinking_budget"": 10000}"
+tests/test_deepseek_thinking_disable_1797.py	166	prose_identity_assert	POTENTIAL_PROSE_SENTINEL	prose/note identity — verify structured field	"    assert model.extra_body == {""thinking"": {""type"": ""adaptive""}, ""reasoning_split"": True}"
+tests/test_deepseek_thinking_disable_1797.py	185	read_text	POTENTIAL_BYPASS_READ	Path.read_text — verify not bypassing read_material	"        lines = [ln for ln in dump_path.read_text(encoding=""utf-8"").splitlines() if ln.strip()]"
+tests/test_distance_matrix.py	61	read_text	POTENTIAL_BYPASS_READ	Path.read_text — verify not bypassing read_material	"    graph = json.loads((ROOT / ""content/distance_graph.json"").read_text(encoding=""utf-8""))"
+tests/test_distance_matrix.py	62	read_text	POTENTIAL_BYPASS_READ	Path.read_text — verify not bypassing read_material	"    matrix = json.loads((ROOT / ""content/distance_matrix.json"").read_text(encoding=""utf-8""))[""matrix""]"
+tests/test_distance_matrix.py	64	read_text	POTENTIAL_BYPASS_READ	Path.read_text — verify not bypassing read_material	"        row[""id""] for row in json.loads((ROOT / ""content/regions.json"").read_text(encoding=""utf-8""))[""regions""]"
+tests/test_distance_matrix.py	82	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	            assert value == matrix[destination][origin]
+tests/test_dossier_reported_progress_619.py	107	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert general_count == 2
+tests/test_dossier_reported_progress_619.py	111	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert leaked == 0
+tests/test_dossier_reported_progress_619.py	270	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert after == before
+tests/test_dossier_reported_progress_619.py	295	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	        assert rows == expected
+tests/test_draft_admission_resubmit_1769.py	179	read_text	POTENTIAL_BYPASS_READ	Path.read_text — verify not bypassing read_material	"        (Path(pack) / ""manifest.json"").read_text(encoding=""utf-8""),"
+tests/test_draft_admission_resubmit_1769.py	183	read_text	POTENTIAL_BYPASS_READ	Path.read_text — verify not bypassing read_material	"    assert marker in (Path(pack) / ""traceback.txt"").read_text(encoding=""utf-8"")"
+tests/test_due_review_621.py	162	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert n == 0
+tests/test_due_review_621.py	338	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert after_count == before_count
+tests/test_due_review_621.py	381	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert after_count == before_count + 1  # +1 是 origin 那条已存在的
+tests/test_due_review_621.py	423	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert after_ids == before_ids
+tests/test_due_review_621.py	515	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert costs_after == costs
+tests/test_due_review_621.py	794	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert after_moves == before_moves
+tests/test_empire_modifier_income_only_341.py	39	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert actual == expected, (
+tests/test_empire_modifier_income_only_341.py	53	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	"    assert net_pct == 0, f""前置条件失败：清空 legacy 后国库修正应为 0，实为 {net_pct}"""
+tests/test_error_pack.py	30	read_text	POTENTIAL_BYPASS_READ	Path.read_text — verify not bypassing read_material	"    m1 = json.loads((Path(p1) / ""manifest.json"").read_text(encoding=""utf-8""))"
+tests/test_error_pack.py	31	read_text	POTENTIAL_BYPASS_READ	Path.read_text — verify not bypassing read_material	"    m2 = json.loads((Path(p2) / ""manifest.json"").read_text(encoding=""utf-8""))"
+tests/test_error_pack.py	87	read_text	POTENTIAL_BYPASS_READ	Path.read_text — verify not bypassing read_material	"    assert (stale / ""manifest.json"").read_text(encoding=""utf-8"") == '{""sentinel"": ""keep me""}'"
+tests/test_error_pack.py	162	read_text	POTENTIAL_BYPASS_READ	Path.read_text — verify not bypassing read_material	"    m = json.loads((Path(p) / ""manifest.json"").read_text(encoding=""utf-8""))"
+tests/test_error_pack.py	177	read_text	POTENTIAL_BYPASS_READ	Path.read_text — verify not bypassing read_material	"    m = json.loads((Path(p) / ""manifest.json"").read_text(encoding=""utf-8""))"
+tests/test_event_trigger_gate.py	807	read_text	POTENTIAL_BYPASS_READ	Path.read_text — verify not bypassing read_material	"    events = json.loads(events_path.read_text(encoding=""utf-8""))"
+tests/test_event_trigger_gate.py	1401	read_text	POTENTIAL_BYPASS_READ	Path.read_text — verify not bypassing read_material	"    events = json.loads(events_path.read_text(encoding=""utf-8""))"
+tests/test_event_trigger_gate.py	1912	read_text	POTENTIAL_BYPASS_READ	Path.read_text — verify not bypassing read_material	"            (Path(__file__).resolve().parents[1] / ""content"" / ""events.json"").read_text("
+tests/test_event_trigger_gate.py	3910	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert full_character_selects == 1
+tests/test_event_trigger_gate.py	4475	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert calls == 1
+tests/test_execution_joint_liability_565.py	118	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert sat == expected
+tests/test_execution_joint_liability_565.py	159	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert second_edges == first_edges
+tests/test_execution_joint_liability_565.py	400	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	"    assert merged == row[""execution_note""]"
+tests/test_execution_pressure_654.py	224	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert ids2 == ids
+tests/test_execution_pressure_654.py	456	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert after == before
+tests/test_execution_pressure_654.py	679	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert after == before
+tests/test_execution_pressure_654.py	687	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert TARGET_KINDS == frozenset({
+tests/test_execution_pressure_654.py	765	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert after == before + 1
+tests/test_execution_pressure_654.py	979	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert updated == pending_id
+tests/test_execution_pressure_654.py	1037	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert updated == pending_id
+tests/test_execution_tenure_613.py	74	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	        assert current_office == office
+tests/test_execution_tenure_613.py	84	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert ranks == sorted(ranks, reverse=True)
+tests/test_execution_tenure_613.py	86	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert weights == sorted(weights)
+tests/test_executor_routing_721.py	50	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert pending_id == 0
+tests/test_executor_routing_721.py	272	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert pending_id == 0
+tests/test_executor_routing_721.py	348	read_text	POTENTIAL_BYPASS_READ	Path.read_text — verify not bypassing read_material	"    assert json.loads(mirror.read_text(encoding=""utf-8""))[""category""] == ""locality_fanout_failed"""
+tests/test_executor_routing_721.py	373	read_text	POTENTIAL_BYPASS_READ	Path.read_text — verify not bypassing read_material	"    rows = [json.loads(line) for line in mirror.read_text(encoding=""utf-8"").splitlines()]"
+tests/test_faction_class_section_rejections.py	181	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert after == max(0, before - 5)
+tests/test_faction_denunciation_627.py	411	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	        assert got == expected
+tests/test_faction_leverage_9.py	54	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	"    assert restored == base, f""起复+复职应回到原值(base={base} restored={restored})"""
+tests/test_faction_leverage_9.py	78	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	"    assert after == before, ""非白名单派系(宗室) leverage 不按明朝官职联动 recompute"""
+tests/test_faction_leverage_9.py	231	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert after == before, (
+tests/test_faction_leverage_9.py	265	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert after_offset == before_offset, (
+tests/test_faction_leverage_9.py	295	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	"    assert after == 0, f""{faction} 全员退场(未 clamp raw={raw}<0)后 leverage 应恰 clamp 到 0(after={after})"""
+tests/test_faction_leverage_9.py	361	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert weight_sum == 0.0, (
+tests/test_faction_leverage_9.py	408	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert reconciled == expected, (
+tests/test_faction_leverage_9.py	630	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	"    assert drop == 20, f""九千岁退场应按司礼监批红掉 20（非东厂 8）：before={before} after={after} drop={drop}"""
+tests/test_faction_leverage_9.py	645	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert after_apply == before + 8, (
+tests/test_faction_leverage_9.py	652	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert after_reconcile == before + 8, (
+tests/test_faction_leverage_9.py	690	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert after == before + 8, (
+tests/test_faction_leverage_9.py	707	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	"    assert after_apply == before + 6, f""非白名单 +6 应直写 leverage（after_apply={after_apply}）"""
+tests/test_faction_leverage_9.py	711	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert after_reconcile == before + 6, (
+tests/test_faction_leverage_9.py	767	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	        assert offset == baseline - weight_sum, (
+tests/test_faction_leverage_9.py	771	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	        assert lev == max(0, min(100, round(offset + weight_sum))) == baseline, (
+tests/test_faction_leverage_9.py	844	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	            assert offset == baseline - weight_sum, (
+tests/test_faction_leverage_9.py	847	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	            assert lev == max(0, min(100, round(offset + weight_sum))) == baseline, (
+tests/test_faction_leverage_9.py	911	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	            assert got == exp, (
+tests/test_faction_leverage_9.py	945	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert after_offset == before_offset, (
+tests/test_faction_leverage_9.py	974	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert restored == before, (
+tests/test_faction_leverage_9.py	1037	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert lev == baseline, (
+tests/test_faction_leverage_9.py	1084	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	"        assert offset == 75.5, f""旧整数 offset 76 应被迁移成精确 float 75.5（得 {offset}）"""
+tests/test_faction_leverage_9.py	1086	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	"        assert lev == drifted_lev, f""迁移后 leverage 应保持 {drifted_lev}（得 {lev}）"""
+tests/test_family_tail_615.py	196	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	"    assert snap == board[""snapshot""]"
+tests/test_fiscal_levy_effect.py	1564	read_text	POTENTIAL_BYPASS_READ	Path.read_text — verify not bypassing read_material	"            path.read_text(encoding=""utf-8"")"
+tests/test_fiscal_substrate_bridge.py	235	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert inbound_gross == pytest.approx(inbound_booked_net + taicang_loss)
+tests/test_fiscal_substrate_bridge.py	238	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	        assert taicang_human == pytest.approx(expected_human)
+tests/test_fiscal_substrate_bridge.py	239	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	        assert taicang_sink == pytest.approx(expected_sink)
+tests/test_fiscal_substrate_bridge.py	240	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	        assert taicang_loss == pytest.approx(expected_human + expected_sink)
+tests/test_fiscal_substrate_bridge.py	247	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	        assert outbound_debit == pytest.approx(
+tests/test_fiscal_substrate_bridge.py	250	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	"        assert jingyun_loss == pytest.approx(outbound[""transport_loss""])"
+tests/test_fiscal_substrate_bridge.py	253	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	            assert jingyun_human == pytest.approx(expected_human)
+tests/test_fiscal_substrate_bridge.py	254	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	            assert jingyun_sink == pytest.approx(expected_sink)
+tests/test_fiscal_substrate_bridge.py	2042	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert after_balance == before_balance
+tests/test_fiscal_substrate_bridge.py	3898	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert row_after == pytest.approx(expected_row_arrears, abs=1e-6)
+tests/test_fiscal_substrate_bridge.py	4045	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	"        assert got == pytest.approx(value, abs=1e-3), f""{region_id} {key}"""
+tests/test_fiscal_substrate_bridge.py	4197	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	"    assert st_after == st_before, ""港口锁破：FAIL tick 改了 DB"""
+tests/test_fiscal_substrate_bridge.py	4422	read_text	POTENTIAL_BYPASS_READ	Path.read_text — verify not bypassing read_material	"    assert json.loads((pack / ""manifest.json"").read_text(encoding=""utf-8""))[""exception_type""] == type(abort.__cause__).__name__"
+tests/test_fiscal_substrate_bridge.py	4448	read_text	POTENTIAL_BYPASS_READ	Path.read_text — verify not bypassing read_material	"    assert (pack / ""traceback.txt"").read_text(encoding=""utf-8"")"
+tests/test_fiscal_substrate_bridge.py	4527	read_text	POTENTIAL_BYPASS_READ	Path.read_text — verify not bypassing read_material	"    assert json.loads((pack / ""manifest.json"").read_text(encoding=""utf-8""))[""exception_type""] == type(abort.__cause__).__name__"
+tests/test_fiscal_substrate_bridge.py	4549	read_text	POTENTIAL_BYPASS_READ	Path.read_text — verify not bypassing read_material	"    assert (pack / ""traceback.txt"").read_text(encoding=""utf-8"")"
+tests/test_fiscal_substrate_bridge.py	4574	read_text	POTENTIAL_BYPASS_READ	Path.read_text — verify not bypassing read_material	"    manifest = json.loads((pack / ""manifest.json"").read_text(encoding=""utf-8""))"
+tests/test_fiscal_substrate_bridge.py	4599	read_text	POTENTIAL_BYPASS_READ	Path.read_text — verify not bypassing read_material	"    assert (pack / ""traceback.txt"").read_text(encoding=""utf-8"")"
+tests/test_fiscal_substrate_bridge.py	4627	read_text	POTENTIAL_BYPASS_READ	Path.read_text — verify not bypassing read_material	"    assert (pack / ""traceback.txt"").read_text(encoding=""utf-8"")"
+tests/test_fiscal_substrate_bridge.py	4671	read_text	POTENTIAL_BYPASS_READ	Path.read_text — verify not bypassing read_material	"    assert (pack / ""traceback.txt"").read_text(encoding=""utf-8"")"
+tests/test_fiscal_substrate_bridge.py	4703	read_text	POTENTIAL_BYPASS_READ	Path.read_text — verify not bypassing read_material	"    assert (pack / ""traceback.txt"").read_text(encoding=""utf-8"")"
+tests/test_fiscal_substrate_bridge.py	4936	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	        assert arrears == sorted(arrears), \
+tests/test_fiscal_substrate_bridge.py	4982	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert checked == 17
+tests/test_gazette_author_1862.py	493	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert charged == 1
+tests/test_grant_reconciliation_567.py	107	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert bare_lo == 15 and bare_hi == 18
+tests/test_grant_reconciliation_567.py	108	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert escort_lo == 22 and escort_hi == 25
+tests/test_grant_reconciliation_567.py	221	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert after_grant_inner == before_inner - ORDERED
+tests/test_intrigue_concealment_1896.py	35	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	"    assert 魏忠贤 == content.characters[""魏忠贤""].intrigue"
+tests/test_intrigue_concealment_1896.py	36	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	"    assert 许显纯 == content.characters[""许显纯""].intrigue"
+tests/test_intrigue_concealment_1896.py	37	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	"    assert 黄道周 == content.characters[""黄道周""].intrigue"
+tests/test_issue_entities.py	373	str_contains_identity	FIX_STR_IDENTITY	str(row)/str() identity sentinel	"             if ""region_delta_typo"" in str(r.get(""reason""))]"
+tests/test_issue_entities.py	388	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert new == old + 500
+tests/test_issue_entities.py	525	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert cnt == 1                               # 自然结案也建了奖励军
+tests/test_llm_channel_config.py	387	prose_identity_assert	POTENTIAL_PROSE_SENTINEL	prose/note identity — verify structured field	"    assert model.extra_body == {""enable_thinking"": True, ""thinking_budget"": 10000}"
+tests/test_llm_channel_config.py	402	prose_identity_assert	POTENTIAL_PROSE_SENTINEL	prose/note identity — verify structured field	"    assert model.extra_body == {""thinking"": {""type"": ""disabled""}, ""reasoning_split"": True}"
+tests/test_llm_channel_config.py	420	prose_identity_assert	POTENTIAL_PROSE_SENTINEL	prose/note identity — verify structured field	"    assert model.extra_body == {""thinking"": {""type"": ""adaptive""}, ""reasoning_split"": True}"
+tests/test_llm_channel_config.py	801	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	"    assert CLI_REASONING_STRENGTH_RUNNERS == frozenset({""codex"", ""claude"", ""grok"", ""pi""})"
+tests/test_manual_directive_institution_normalize_1279.py	44	prose_identity_assert	POTENTIAL_PROSE_SENTINEL	prose/note identity — verify structured field	    assert prompts and text in prompts[0]
+tests/test_material_directory_1830.py	169	str_contains_identity	FIX_STR_IDENTITY	str(row)/str() identity sentinel	"        assert ""dossier boom"" in str(exc)"
+tests/test_material_directory_1830.py	264	newline_boundary	KEEP_NEWLINE_FIXTURE	CR/CRLF boundary fixture for transport	"        ""逐项核验太仓出纳原簿，先将各月领银的关防、经手人及兑付日期抄录存案。\r\n"""
+tests/test_material_directory_1830.py	265	newline_boundary	KEEP_NEWLINE_FIXTURE	CR/CRLF boundary fixture for transport	"        ""\r\n边镇报领之数与户部拨发之数分列，不因账面相合便认作实付；"""
+tests/test_mechanical_tail_1845.py	339	read_text	POTENTIAL_BYPASS_READ	Path.read_text — verify not bypassing read_material	"    manifest = json.loads((pack / ""manifest.json"").read_text(encoding=""utf-8""))"
+tests/test_mechanical_tail_1845.py	494	prose_identity_assert	POTENTIAL_PROSE_SENTINEL	prose/note identity — verify structured field	"    assert text == ""史评"""
+tests/test_mechanical_tail_1845.py	547	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert turn == closed_turn
+tests/test_menu_lifecycle_drain_396.py	362	str_contains_identity	FIX_STR_IDENTITY	str(row)/str() identity sentinel	"        assert ""disk full"" in str(exc)"
+tests/test_month_call_recovery_1846.py	436	str_contains_identity	FIX_STR_IDENTITY	str(row)/str() identity sentinel	"    assert ""核账期可见原文"" in str(recovery.get(""message"") or """")"
+tests/test_month_call_recovery_1846.py	441	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	"    assert first_pack == recovery[""error_pack_path""]"
+tests/test_month_call_recovery_1846.py	645	str_contains_identity	FIX_STR_IDENTITY	str(row)/str() identity sentinel	"    assert ""edict settle crashed"" in str(caught.value.__cause__)"
+tests/test_month_call_recovery_1846.py	711	str_contains_identity	FIX_STR_IDENTITY	str(row)/str() identity sentinel	"    assert ""edict settle crashed"" in str(failure.get(""message"") or """")"
+tests/test_month_chain_1843.py	207	str_contains_identity	FIX_STR_IDENTITY	str(row)/str() identity sentinel	"    assert ""过月中断"" in str(exc_info.value.__cause__)"
+tests/test_month_chain_1843.py	347	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert outcome == expected
+tests/test_month_chain_1843.py	387	str_contains_identity	FIX_STR_IDENTITY	str(row)/str() identity sentinel	"    assert ""interrupted after decree settlement"" in str(caught.value.__cause__)"
+tests/test_month_chain_1847.py	865	prose_identity_assert	POTENTIAL_PROSE_SENTINEL	prose/note identity — verify structured field	    assert question_context in message
+tests/test_month_chain_1847.py	1483	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert actual_units == 5.0
+tests/test_month_chain_1847.py	1614	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert call_count == 2
+tests/test_month_chain_1847.py	1675	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert call_count == 1
+tests/test_month_chain_1847.py	1685	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert call_count == 1  # Not re-run!
+tests/test_month_chain_1847.py	1824	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert call_count == 2
+tests/test_month_chain_1847.py	1837	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert call_count == 3
+tests/test_month_chain_1847.py	1842	str_contains_identity	FIX_STR_IDENTITY	str(row)/str() identity sentinel	"    assert ""不是行动"" not in str(declared_origin)"
+tests/test_month_chain_1847.py	1915	str_contains_identity	FIX_STR_IDENTITY	str(row)/str() identity sentinel	"        and ""私仓已查封"" in str(item.get(""sim_note"") or """")"
+tests/test_month_chain_1847.py	2022	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert call_count == 1
+tests/test_month_chain_1847.py	2026	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert call_count == 1  # 保留产物，不重跑 supply
+tests/test_month_chain_1847.py	2126	newline_boundary	KEEP_NEWLINE_FIXTURE	CR/CRLF boundary fixture for transport	"    fact_body = ""文字事实正文：边材已动。\r\n同一条事实的第二行。  \r"""
+tests/test_month_chain_1847.py	2245	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	"        assert carrier == fact_body + ""\n"""
+tests/test_month_loop_tracer_1468.py	363	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert turn_after == turn_before + 1, (
+tests/test_month_loop_tracer_1468.py	371	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert count == len(pending_list) == 0, (
+tests/test_month_loop_tracer_1468.py	449	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert count == len(pending_list) >= 1, (
+tests/test_month_open_snapshot_1234.py	76	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert snap == before
+tests/test_month_translate_1840.py	313	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert ledger_deltas == economy_deltas
+tests/test_mutiny_noop_whitelist_319.py	154	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert after == before
+tests/test_mutiny_noop_whitelist_319.py	277	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert before_loyalty == 80
+tests/test_mutiny_noop_whitelist_319.py	478	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert after == before
+tests/test_mutiny_noop_whitelist_319.py	551	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert after_pay == before_pay
+tests/test_mutiny_redemption_317.py	124	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert loyalty == expected_loyalty
+tests/test_mutiny_third_strike_318.py	32	str_contains_identity	FIX_STR_IDENTITY	str(row)/str() identity sentinel	"        if ""关宁"" in str(r.get(""name"", """")) or str(r.get(""id"", """")) == army_id"
+tests/test_new_game_dependency_mismatch_1721.py	32	read_text	POTENTIAL_BYPASS_READ	Path.read_text — verify not bypassing read_material	"        for line in (REPO / ""requirements.txt"").read_text(encoding=""utf-8"").splitlines()"
+tests/test_new_game_write_path_1749.py	265	prose_identity_assert	POTENTIAL_PROSE_SENTINEL	prose/note identity — verify structured field	"    assert d_text in snap[""directive_texts""]"
+tests/test_new_issues_section_rejections.py	197	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert sev == 100  # clamp 到域上界
+tests/test_office_rank_562.py	40	read_text	POTENTIAL_BYPASS_READ	Path.read_text — verify not bypassing read_material	"        (Path(__file__).resolve().parent.parent / ""content"" / ""offices.json"").read_text("
+tests/test_on_scene_immediate_write_1839.py	91	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	"    assert reason == declaration[""on_scene_facts""][0][""reason""]"
+tests/test_on_scene_immediate_write_1839.py	122	prose_identity_assert	POTENTIAL_PROSE_SENTINEL	prose/note identity — verify structured field	    assert facts[0].body == arm_injury
+tests/test_on_scene_immediate_write_1839.py	301	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert after_ledger == before_ledger
+tests/test_on_scene_immediate_write_1839.py	302	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert after_edges == before_edges
+tests/test_on_scene_immediate_write_1839.py	303	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert after_facts == before_facts
+tests/test_on_scene_immediate_write_1839.py	304	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert after_sayings == before_sayings
+tests/test_on_scene_immediate_write_1839.py	341	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert after_pending == before_pending + 1
+tests/test_on_scene_immediate_write_1839.py	356	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert after_directives == before_directives
+tests/test_opening_gazette_delete_1356.py	30	read_text	POTENTIAL_BYPASS_READ	Path.read_text — verify not bypassing read_material	"    return (ROOT / ""content"" / ""opening_gazette.md"").read_text(encoding=""utf-8"").strip()"
+tests/test_opening_gazette_delete_1356.py	115	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert kept == real
+tests/test_override_breach_costs_564.py	361	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	        assert leftover == malformed_payload
+tests/test_pay_order_override_653.py	249	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert last_cell == pytest.approx(1.93)          # 边饷居末只捡残池
+tests/test_pay_order_override_653.py	260	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert eff == 50.0 and exempt == 51.0
+tests/test_pay_order_override_653.py	696	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert e1 == e2  # 纯函数：两次调用逐字节一致
+tests/test_pay_order_override_653.py	1492	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert expected_bz == pytest.approx(11.2)      # 每军 floor 后的免除合计
+tests/test_pay_order_override_653.py	1702	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	        assert after_tsv == before_tsv
+tests/test_pay_order_override_extraction_653.py	43	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	"    assert staged_entries == result[""entries""]"
+tests/test_person_delta_adapter.py	248	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert after == min(100, before + 8)
+tests/test_person_delta_adapter.py	288	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert after == before
+tests/test_person_delta_adapter.py	332	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert after == expected
+tests/test_person_delta_adapter.py	371	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert after == before
+tests/test_person_delta_adapter.py	417	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	        assert after == before
+tests/test_person_delta_adapter.py	418	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	        assert after_logs == before_logs
+tests/test_person_delta_adapter.py	486	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert after_issues == before_issues
+tests/test_person_delta_adapter.py	488	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert after_loyalty == min(100, before_loyalty + 3)
+tests/test_person_delta_adapter.py	646	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert after_leverage == before_leverage
+tests/test_person_delta_adapter.py	2017	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert ok == set()
+tests/test_person_delta_adapter.py	2494	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert now_office == orig_office, \
+tests/test_person_delta_adapter.py	2813	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	"    assert after_office_db == before_office_db, ""拒收项不得改 DB office（payload 兵部尚书 不得落库）"""
+tests/test_person_delta_adapter.py	2972	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	"        assert zhang_strength == 50, ""张献忠股只能吃易主内嵌反噬 -5,不得再叠加顶层剿股 -7"""
+tests/test_person_delta_adapter.py	2973	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	"        assert li_strength == 48, ""招安张献忠不得波及李自成股"""
+tests/test_person_delta_adapter.py	3070	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	"        assert zhang_strength == 55, ""空反噬招安已占用该股,同股顶层剿股不得落账"""
+tests/test_person_delta_adapter.py	3153	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	        assert zhang_strength == 48
+tests/test_person_delta_adapter.py	3245	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	"        assert strength == 46, ""孤儿股只能剿股: 顶层 power_updates 应照落 -9"""
+tests/test_person_delta_adapter.py	3337	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	"        assert li_strength == 48, ""招安张献忠不得削李自成股"""
+tests/test_person_transit_write_667.py	50	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert after_db == before_db
+tests/test_person_transit_write_667.py	97	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert after == before
+tests/test_person_transit_write_667.py	169	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	        assert displaced == name
+tests/test_pihong_dossier_1490.py	400	read_text	POTENTIAL_BYPASS_READ	Path.read_text — verify not bypassing read_material	    mirror_lines = mirror.read_text(encoding='utf-8').splitlines()
+tests/test_player_army_projection_321.py	408	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert after == before
+tests/test_player_payload_1022.py	131	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert event == expected_event
+tests/test_population_transfers_649.py	117	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	"        assert got == want, f""{key}: 期望 {want}，实得 {got}"""
+tests/test_population_transfers_649.py	230	str_contains_identity	FIX_STR_IDENTITY	str(row)/str() identity sentinel	"                 if ""population_transfers"" in str(r.get(""reason""))]"
+tests/test_population_transfers_649.py	236	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert sat_after == sat_before - 2
+tests/test_population_transfers_649.py	295	str_contains_identity	FIX_STR_IDENTITY	str(row)/str() identity sentinel	"                 if ""region_delta_typo"" in str(r.get(""reason""))]"
+tests/test_population_transfers_649.py	357	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	"    assert total_before == total_after, f""守恒破坏：{total_before} → {total_after}"""
+tests/test_population_unit_648.py	190	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	        assert after == before + expect_delta, (
+tests/test_population_unit_648.py	283	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert before == JIANZHOU_OPENING_POP_PERSONS
+tests/test_population_unit_648.py	292	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert after == JIANZHOU_RESTORE_POP_PERSONS
+tests/test_population_unit_648.py	305	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert after == JIANZHOU_RESTORE_POP_WAN
+tests/test_power_section_rejections.py	121	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert after == good_power
+tests/test_power_section_rejections.py	159	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert only_rejected == format_power_changes([])
+tests/test_power_section_rejections.py	238	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert after == before  # 3.7 没有被截断成 3 落库
+tests/test_pre_settle_transaction.py	136	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert on_disk == before_ledger
+tests/test_pre_settle_transaction.py	165	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert on_disk == before_ledger
+tests/test_pre_settle_transaction.py	188	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert t2 == t1 + 1
+tests/test_pre_settle_transaction.py	233	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert rows_final == rows_after_pre
+tests/test_pre_settle_transaction.py	284	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert rows_after == rows_before  # 前半段没有二跑
+tests/test_pre_settle_transaction.py	336	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert rows_after == rows_before
+tests/test_promulgation_judge_561.py	45	prose_identity_assert	POTENTIAL_PROSE_SENTINEL	prose/note identity — verify structured field	    assert context == decree_mod.build_promulgation_judge_context(
+tests/test_promulgation_judge_561.py	45	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert context == decree_mod.build_promulgation_judge_context(
+tests/test_promulgation_judge_561.py	194	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert actual == expected
+tests/test_public_projection_consistency_1830.py	96	newline_boundary	KEEP_NEWLINE_FIXTURE	CR/CRLF boundary fixture for transport	"    shared = ""  赈济已奉准。\r\n原文第二段。  \r"""
+tests/test_public_projection_consistency_1830.py	118	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert scene_by_month == solo_by_month == world_by_month
+tests/test_public_projection_consistency_1830.py	122	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert scene_gazette == solo_gazette
+tests/test_public_projection_consistency_1830.py	207	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert after_gazette == before_gazette
+tests/test_public_sayings_1829.py	54	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert status_after == status_before
+tests/test_public_sayings_1829.py	67	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	        assert restored_status == status_before
+tests/test_qa_b3_409_ux.py	84	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	            assert detail == awaiting
+tests/test_qa_b3_409_ux.py	86	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	            assert detail == other
+tests/test_qa_c2_settlement_display_lifecycle_1343.py	166	str_contains_identity	FIX_STR_IDENTITY	str(row)/str() identity sentinel	"    assert raised is not None and ""clear boom"" in str(raised)"
+tests/test_qa_c2_settlement_display_lifecycle_1343.py	193	str_contains_identity	FIX_STR_IDENTITY	str(row)/str() identity sentinel	"    assert raised is not None and ""exit boom"" in str(raised)"
+tests/test_qa_c2_settlement_display_lifecycle_1343.py	226	str_contains_identity	FIX_STR_IDENTITY	str(row)/str() identity sentinel	"    assert raised is not None and ""orphan clear boom"" in str(raised)"
+tests/test_qa_h1_seed_data.py	21	read_text	POTENTIAL_BYPASS_READ	Path.read_text — verify not bypassing read_material	"    data = json.loads((ROOT / ""content"" / ""armies.json"").read_text(encoding=""utf-8""))"
+tests/test_qa_s2_copy_prompts_1356_1402.py	35	prose_identity_assert	POTENTIAL_PROSE_SENTINEL	prose/note identity — verify structured field	"    assert opening_body == """""
+tests/test_qa_s2_copy_prompts_1356_1402.py	59	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert header == reign_period_label(1627, 12)
+tests/test_qa_s2_copy_prompts_1356_1402.py	153	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert detail == reason.strip()
+tests/test_qa_t1_extraction_dual_source_1353.py	396	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert n == 1
+tests/test_region_cannon_delta.py	32	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert cannon == 40
+tests/test_region_cannon_delta.py	47	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert cannon == 0
+tests/test_rejection_wiring.py	48	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert attempt == 1
+tests/test_rejection_wiring.py	51	read_text	POTENTIAL_BYPASS_READ	Path.read_text — verify not bypassing read_material	"    lines = [json.loads(l) for l in jsonl.read_text(encoding=""utf-8"").splitlines()]"
+tests/test_rejection_wiring.py	291	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert item == raw_item
+tests/test_rejection_wiring.py	327	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert item == raw_item
+tests/test_rejection_wiring.py	358	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert item == raw_item
+tests/test_rejection_wiring.py	396	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	        assert item == raw_item
+tests/test_relation_capture_633.py	144	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert after == before == 0
+tests/test_relation_read_640.py	184	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	            assert dto == judge_map[pair]
+tests/test_relation_read_640.py	278	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert ids == sorted(ids)
+tests/test_relation_seed_638.py	386	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	"    assert events_after == events_before, ""重复导入后流水发生变化"""
+tests/test_relation_seed_638.py	461	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	        assert events_after == events_before
+tests/test_relation_seed_638.py	462	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	        assert summaries_after == summaries_before
+tests/test_release_bundle_assets.py	57	ast_source_proof	POTENTIAL_AST_PROOF	AST source proof — verify necessity	"    tree = ast.parse((repo / ""Ming_LLM.spec"").read_text(encoding=""utf-8""))"
+tests/test_release_bundle_assets.py	57	read_text	POTENTIAL_BYPASS_READ	Path.read_text — verify not bypassing read_material	"    tree = ast.parse((repo / ""Ming_LLM.spec"").read_text(encoding=""utf-8""))"
+tests/test_run_agent_text_transport_1465.py	51	prose_identity_assert	POTENTIAL_PROSE_SENTINEL	prose/note identity — verify structured field	    assert text == good
+tests/test_run_agent_text_transport_1465.py	51	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert text == good
+tests/test_run_agent_text_transport_1465.py	154	prose_identity_assert	POTENTIAL_PROSE_SENTINEL	prose/note identity — verify structured field	    assert text == good
+tests/test_run_agent_text_transport_1465.py	154	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert text == good
+tests/test_runtime_llm_config.py	144	read_text	POTENTIAL_BYPASS_READ	Path.read_text — verify not bypassing read_material	"    saved = json.loads(path.read_text(encoding=""utf-8""))"
+tests/test_runtime_llm_config.py	170	read_text	POTENTIAL_BYPASS_READ	Path.read_text — verify not bypassing read_material	"    saved = json.loads(path.read_text(encoding=""utf-8""))"
+tests/test_runtime_llm_config.py	203	read_text	POTENTIAL_BYPASS_READ	Path.read_text — verify not bypassing read_material	"    saved = json.loads(path.read_text(encoding=""utf-8""))"
+tests/test_runtime_llm_config.py	227	read_text	POTENTIAL_BYPASS_READ	Path.read_text — verify not bypassing read_material	"    saved = json.loads(path.read_text(encoding=""utf-8""))"
+tests/test_runtime_llm_config.py	248	read_text	POTENTIAL_BYPASS_READ	Path.read_text — verify not bypassing read_material	"    saved = json.loads(path.read_text(encoding=""utf-8""))"
+tests/test_runtime_llm_config.py	278	read_text	POTENTIAL_BYPASS_READ	Path.read_text — verify not bypassing read_material	"    saved = json.loads(path.read_text(encoding=""utf-8""))"
+tests/test_runtime_llm_config.py	352	read_text	POTENTIAL_BYPASS_READ	Path.read_text — verify not bypassing read_material	"    saved = json.loads(path.read_text(encoding=""utf-8""))"
+tests/test_runtime_llm_config.py	393	read_text	POTENTIAL_BYPASS_READ	Path.read_text — verify not bypassing read_material	"    saved = json.loads(path.read_text(encoding=""utf-8""))"
+tests/test_runtime_llm_config.py	527	read_text	POTENTIAL_BYPASS_READ	Path.read_text — verify not bypassing read_material	"    saved = json.loads(path.read_text(encoding=""utf-8""))"
+tests/test_runtime_llm_config.py	537	read_text	POTENTIAL_BYPASS_READ	Path.read_text — verify not bypassing read_material	"    saved2 = json.loads(path.read_text(encoding=""utf-8""))"
+tests/test_runtime_llm_config.py	588	read_text	POTENTIAL_BYPASS_READ	Path.read_text — verify not bypassing read_material	"    saved = json.loads(path.read_text(encoding=""utf-8""))"
+tests/test_runtime_llm_config.py	610	read_text	POTENTIAL_BYPASS_READ	Path.read_text — verify not bypassing read_material	"    saved = json.loads(path.read_text(encoding=""utf-8""))"
+tests/test_runtime_llm_config.py	644	read_text	POTENTIAL_BYPASS_READ	Path.read_text — verify not bypassing read_material	"    saved = json.loads(path.read_text(encoding=""utf-8""))"
+tests/test_runtime_llm_config.py	672	read_text	POTENTIAL_BYPASS_READ	Path.read_text — verify not bypassing read_material	"    saved = json.loads(path.read_text(encoding=""utf-8""))"
+tests/test_secret_dossier_participants_1252.py	101	str_row_identity	FIX_STR_IDENTITY	str(row)/str() identity sentinel	"    assert str(auth_id) in side[""authorization_ids""]"
+tests/test_secret_order_isolation_883.py	81	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert source_count == 0
+tests/test_secret_order_isolation_883.py	112	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert count == 0
+tests/test_secret_order_isolation_883.py	170	prose_identity_assert	POTENTIAL_PROSE_SENTINEL	prose/note identity — verify structured field	    assert extracted_body not in chat_origin
+tests/test_secret_order_isolation_883.py	292	prose_identity_assert	POTENTIAL_PROSE_SENTINEL	prose/note identity — verify structured field	    assert marker_body not in paraphrase
+tests/test_secret_order_isolation_883.py	1428	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	"    assert order_left == 0, f""secret_orders survived undo count={order_left}"""
+tests/test_secret_order_isolation_883.py	1429	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	"    assert brief_left == 0, f""secret_order_briefs orphan after undo count={brief_left}"""
+tests/test_secret_order_isolation_883.py	1433	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert msg_u == 0 and msg_m == 0
+tests/test_secret_order_isolation_883.py	1434	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	"    assert msg_b == 1, ""early B public message wrongly deleted"""
+tests/test_secret_order_monthly_progress_566.py	130	prose_identity_assert	POTENTIAL_PROSE_SENTINEL	prose/note identity — verify structured field	"    assert sim_note in disclosure[""body""]"
+tests/test_secret_order_monthly_progress_566.py	364	str_contains_identity	FIX_STR_IDENTITY	str(row)/str() identity sentinel	"            assert ""post-fiscal failure 566"" in str(detail.get(""message"") or detail)"
+tests/test_secret_order_monthly_progress_566.py	366	str_contains_identity	FIX_STR_IDENTITY	str(row)/str() identity sentinel	"            assert ""post-fiscal failure 566"" in str(detail)"
+tests/test_secret_order_payoff_1504.py	304	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert before == 0
+tests/test_secret_order_payoff_1504.py	509	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert ticks == n
+tests/test_secret_order_payoff_1504.py	515	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert due == issued + n
+tests/test_secret_order_payoff_1504.py	684	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert after_loyalty == before_loyalty
+tests/test_secret_order_payoff_1504.py	1538	str_row_identity	FIX_STR_IDENTITY	str(row)/str() identity sentinel	    assert str(edge_id) in live_investigation_fact_keys(db, target)
+tests/test_secret_order_payoff_1504.py	1575	str_row_identity	FIX_STR_IDENTITY	str(row)/str() identity sentinel	    assert str(edge_id) in live_investigation_fact_keys(db, target)
+tests/test_secret_order_payoff_1504.py	1685	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert effort == pytest.approx(0.5)
+tests/test_secret_order_payoff_1504.py	1687	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert effort == pytest.approx(0.5083333333333333)
+tests/test_secret_order_payoff_1504.py	1689	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert effort == pytest.approx(1.0)
+tests/test_secret_order_payoff_1504.py	1699	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert effort == pytest.approx(0.55)
+tests/test_secret_order_payoff_1504.py	2104	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	        assert merged == oid
+tests/test_secret_order_payoff_1504.py	2147	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert again == clean_oid
+tests/test_secret_order_payoff_1504.py	2191	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert merged == oid  # 同目标汇案，不另开
+tests/test_secret_order_payoff_1504.py	2259	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert bogus == oid
+tests/test_secret_order_payoff_1504.py	2348	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert keys == live_investigation_fact_keys(db, guilty)
+tests/test_secret_order_payoff_1504.py	2757	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert after_loyalty == before_loyalty
+tests/test_secret_order_update.py	19	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert oid2 == oid1                               # 同一条，不建重复
+tests/test_section4_rejections.py	150	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert after == before
+tests/test_section4_rejections.py	438	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert after == 12  # clamp 后照落
+tests/test_section4_rejections.py	460	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert after == cap  # clamp 后照落,不超城防上限
+tests/test_section4_rejections.py	479	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert after == 100  # clamp 后照落
+tests/test_section4_rejections.py	506	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert only_rej_r == format_region_changes([])
+tests/test_section4_rejections.py	510	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert only_rej_a == format_army_changes([])
+tests/test_section4_rejections.py	554	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert log == 1
+tests/test_section4_rejections.py	607	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert after == min(100, before + 2)  # 好字段照落
+tests/test_section4_rejections.py	704	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert after == min(100, before + 1)  # 好字段照落
+tests/test_section_fiscal_rejections.py	344	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert new_rate == max(0, old_rate - 50)
+tests/test_section_fiscal_rejections.py	562	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert after == before  # 真科目毫发无损
+tests/test_session_write_queue_1353.py	201	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert n == 1
+tests/test_shared_resource_order_1844.py	256	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert arrears == pytest.approx(expected_arrears)
+tests/test_start_sh_deps_1721.py	62	read_text	POTENTIAL_BYPASS_READ	Path.read_text — verify not bypassing read_material	"    (root / ""start.sh"").write_text(REPO_START.read_text(encoding=""utf-8""), encoding=""utf-8"")"
+tests/test_start_sh_deps_1721.py	100	read_text	POTENTIAL_BYPASS_READ	Path.read_text — verify not bypassing read_material	"    steps = log.read_text(encoding=""utf-8"").splitlines()"
+tests/test_start_sh_deps_1721.py	115	read_text	POTENTIAL_BYPASS_READ	Path.read_text — verify not bypassing read_material	"    steps = log.read_text(encoding=""utf-8"").splitlines()"
+tests/test_start_sh_deps_1721.py	129	read_text	POTENTIAL_BYPASS_READ	Path.read_text — verify not bypassing read_material	"    steps = log.read_text(encoding=""utf-8"").splitlines()"
+tests/test_start_sh_deps_1721.py	151	read_text	POTENTIAL_BYPASS_READ	Path.read_text — verify not bypassing read_material	"    steps = log.read_text(encoding=""utf-8"").splitlines()"
+tests/test_structured_decree_contract_1624.py	327	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert owner_after == owner_before + 1, (owner_before, owner_after)
+tests/test_structured_decree_contract_1624.py	328	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert province_after == province_before + 1, (province_before, province_after)
+tests/test_style_temperament_641.py	69	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert before_db == before_rt
+tests/test_style_temperament_641.py	77	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert after_logs == before_logs + 1
+tests/test_style_temperament_641.py	91	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert before_rt == before
+tests/test_style_temperament_641.py	101	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert after == NEW_STYLE
+tests/test_style_temperament_641.py	341	prose_identity_assert	POTENTIAL_PROSE_SENTINEL	prose/note identity — verify structured field	    assert padded_edge_context in rendered
+tests/test_style_temperament_641.py	388	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert after_temperament_logs == before_temperament_logs
+tests/test_style_temperament_641.py	407	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert after_edges == before_edges
+tests/test_supervision_625.py	165	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert pcols == PRESENCE_ALLOWED_COLS
+tests/test_supervision_625.py	166	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert ecols == EXPOSURE_ALLOWED_COLS
+tests/test_transit_countdown_668.py	39	read_text	POTENTIAL_BYPASS_READ	Path.read_text — verify not bypassing read_material	    raw = json.loads((ROOT / 'content/distance_matrix.json').read_text(encoding='utf-8'))['matrix']
+tests/test_transit_countdown_668.py	272	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert got_names == sorted(got_names)
+tests/test_urge_lever_624.py	365	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert after_issues == before_issues
+tests/test_urge_lever_624.py	498	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	        assert after == before == end_seed
+tests/test_urge_lever_624.py	596	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert end_after == end_before
+tests/test_web_audience_night_498.py	385	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert turns_after_retry == turns_before_retry
+tests/test_web_audience_night_498.py	556	str_contains_identity	FIX_STR_IDENTITY	str(row)/str() identity sentinel	"    assert ""着户部核边饷"" in str(match[""text""])"
+tests/test_web_audience_night_498.py	841	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	"    assert status == 200, f""advance after chat terminal expected 200, got {status}"""
+tests/test_web_court_visibility.py	504	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	"    assert after == before, f""史宪之入仕不得建重档，多出：{after - before}"""
+tests/test_web_court_visibility.py	531	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	"    assert after_p == before_p, f""福王别名不得建重档，多出：{after_p - before_p}"""
+tests/test_world_materials_1834.py	48	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	    assert denunciation == db.build_faction_denunciation_facts()
+tests/test_world_materials_1834.py	178	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	        assert same_db == world_materials_root(db, state)
+tests/test_yuan_arrival_185.py	89	assert_same_name_eq	POTENTIAL_SAME_VALUE	assert a==b — verify not vacuous same-sample recheck	        assert new_arrears == 0, (
