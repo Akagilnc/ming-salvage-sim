@@ -1293,7 +1293,19 @@ def _step_4a_secret_order_supply(
             operation=_call_supply,
         )
         if not isinstance(product, dict):
-            product = {}
+            # #1902 F1：非 dict 供给产物不得洗成 {} 当正常接续。
+            exc = TypeError(
+                f"secret_orders_supply 产物类型非法：{type(product).__name__}"
+            )
+            chain["secret_orders_supply_invalid"] = True
+            _save_chain(db, turn, chain, decree_text=decree_text, source=source)
+            _abort_month_call(
+                db, state, chain,
+                decree_text=decree_text, source=source,
+                step="secret_orders_supply",
+                exc=exc,
+                kind="code_exception",
+            )
         chain["secret_orders_supply_product"] = product
         _save_chain(db, turn, chain, decree_text=decree_text, source=source)
 

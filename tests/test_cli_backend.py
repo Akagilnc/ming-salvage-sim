@@ -850,12 +850,15 @@ def test_secret_extract_traces_exactly_once(monkeypatch):
 
 
 def test_public_cli_support_restores_existing_runners(monkeypatch):
-    assert cb._CLI_BACKENDS == frozenset({"agy", "codex", "claude", "cursor", "kimi", "grok", "pi"})
-    assert cb.GATE_CLI_RUNNERS == ("codex", "claude", "cursor", "kimi", "grok", "pi")
-    assert [row["value"] for row in cb.cli_runner_choices()] == ["agy", "codex", "claude", "cursor", "kimi", "grok", "pi"]
-    assert set(cb.cli_model_choices()) == set(cb._CLI_BACKENDS)
-    for name in ("opencode",):
-        assert not cb.is_supported_cli_runner(name)
+    # #1902 F3：不锁内部 frozenset／字面名单；只钉公开闸与现役 runner 行为。
+    from ming_sim.llm_config import cli_supports_reasoning_strength
+
+    assert cb.is_supported_cli_runner("grok")
+    assert cli_supports_reasoning_strength("grok")
+    values = [row["value"] for row in cb.cli_runner_choices()]
+    assert "grok" in values and "cursor" in values and "kimi" in values
+    assert len(values) == len(set(values))
+    assert not cb.is_supported_cli_runner("opencode")
 
 
 @pytest.mark.parametrize("runner", ["cursor", "kimi", "grok", "pi"])

@@ -144,7 +144,9 @@ def install_token_stats_patch() -> None:
             return
         try:
             from openai.resources.chat.completions import Completions, AsyncCompletions  # type: ignore
-        except Exception:
+        except Exception as exc:
+            # #1902 F1：统计旁路未装上时仍须留痕，不得静默 return。
+            tlog(f"[token_stats] patch install skipped: {type(exc).__name__}: {exc}")
             return
         orig_create = Completions.create
         orig_acreate = AsyncCompletions.create

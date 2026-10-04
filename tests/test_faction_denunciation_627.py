@@ -4,8 +4,8 @@
 禁：烈度门/quota/文字模板（P6/P7）。
 
 Seams:
-- GameDB.read_dossier_fork_state / build_faction_denunciation_facts
-- GameDB.accept_faction_denunciations（结构化承接）
+- GameDB.read_dossier_fork_state / GameDB.accept_faction_denunciations（结构化承接）
+  （build_faction_denunciation_facts 的 prepare 同源案见 test_world_materials_1834）
 """
 
 from __future__ import annotations

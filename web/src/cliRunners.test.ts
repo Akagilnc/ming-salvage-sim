@@ -25,11 +25,14 @@ describe("cliRunnerOptions", () => {
     );
   });
 
-  it("fallback includes grok/cursor/kimi (anchor _CLI_BACKENDS)", () => {
+  it("fallback is non-empty unique options with value/label", () => {
+    // #1902 F3：不锁完整 runner 字面名单；结构与唯一性即可。
     const values = CLI_RUNNER_FALLBACK.map((o) => o.value);
-    expect(values).toContain("grok");
-    expect(values).toContain("cursor");
-    expect(values).toContain("kimi");
-    expect(values).toContain("agy");
+    expect(values.length).toBeGreaterThan(0);
+    expect(new Set(values).size).toBe(values.length);
+    for (const opt of CLI_RUNNER_FALLBACK) {
+      expect(opt.value).toBeTruthy();
+      expect(opt.label).toBeTruthy();
+    }
   });
 });

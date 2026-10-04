@@ -44,6 +44,7 @@ from pydantic import BaseModel
 # CLI runner 默认模型单一真源在 models（L0 叶子），此处 re-export 保留
 # `from ming_sim.cli_backend import CODEX_DEFAULT_MODEL` 既有路径（#60）。
 from ming_sim.models import CODEX_DEFAULT_MODEL, CLAUDE_DEFAULT_MODEL, LLMConfig
+from ming_sim.constants import DOSSIER_LINK_TYPES
 from ming_sim.decree_vocabulary import DIRECTIVE_ACTION_TYPES
 from ming_sim.structured_decree import (
     StructuredDecreeCombinationError,
@@ -3234,10 +3235,8 @@ def project_draft_extract_to_directive_payload(
         classify_directive_structured_kind,
         imperial_push_target_dossier_id,
     )
-    try:
-        pre_kind = classify_directive_structured_kind(payload)
-    except ValueError:
-        pre_kind = "ordinary"
+    # #1902 F1：分类失败不得伪造 ordinary 继续装配；沿用既有 ValueError 收口。
+    pre_kind = classify_directive_structured_kind(payload)
     if pre_kind not in {"push", "empty"} and payload.get("target_kind") not in (None, ""):
         regions_content = getattr(content, "regions", None) if content is not None else None
         conn = getattr(db, "conn", None) if db is not None else None
@@ -3817,15 +3816,16 @@ def confirm_dossier_links(
     )
     try:
         raw, _ = _run_json_extractor_for_config(prompt, llm_config, tag="dossier_link_confirmation")
-        verdict = _loads_lenient(raw) or {}
+        verdict = _loads_lenient(raw)
     except Exception as exc:
+        # #1902 F1：确认抽取失败不得洗成「无关联」正常空表。
         _log(f"案卷关联确认失败：{exc}")
-        return []
+        raise
     if not isinstance(verdict, dict):
-        return []
+        raise ValueError("案卷关联确认产物非法：非对象")
     links = verdict.get("confirmed_links")
     if not isinstance(links, list):
-        return []
+        raise ValueError("案卷关联确认产物非法：confirmed_links 非列表")
     confirmed = set()
     for link in links:
         if not isinstance(link, dict) or type(link.get("target_dossier_id")) is not int:
@@ -3992,15 +3992,24 @@ def _extract_secret_order(
                 (item["target_dossier_id"], item["relation_type"])
                 for item in confirmation_future.result()
             }
+            dossier_links = [
+                item for identity, item in proposals.items() if identity in confirmed
+            ]
+        except Exception as exc:
+            # #1902 F1：确认失败走 extract_failed 收口，不得静默剥光关联当成功。
+            _log(f"案卷关联确认失败：{exc}")
+            extract_failed = True
+            extract_failure_reason = f"案卷关联确认失败：{type(exc).__name__}: {exc}"
+            dossier_links = []
+    else:
+        try:
+            dossier_links = confirm_dossier_links(
+                minister_reply, dossier_candidates, dossier_links, llm_config=llm_config)
         except Exception as exc:
             _log(f"案卷关联确认失败：{exc}")
-            confirmed = set()
-        dossier_links = [
-            item for identity, item in proposals.items() if identity in confirmed
-        ]
-    else:
-        dossier_links = confirm_dossier_links(
-            minister_reply, dossier_candidates, dossier_links, llm_config=llm_config)
+            extract_failed = True
+            extract_failure_reason = f"案卷关联确认失败：{type(exc).__name__}: {exc}"
+            dossier_links = []
     kind = str(obj.get("差务") or obj.get("kind") or "").strip()
     axes = obj.get("价值轴")
     axes = [str(a).strip() for a in axes if str(a).strip()] if isinstance(axes, list) else []

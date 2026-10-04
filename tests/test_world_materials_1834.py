@@ -45,10 +45,8 @@ def test_prepare_writes_typed_tree_with_board_affairs_and_gazette_index(game, tm
     assert "INDEX.txt" in names
     assert "盘面/全局.txt" in names
     denunciation = json.loads(read_material(prepared.root, "盘面/派系检举事实.txt"))
+    # #1902 F3：真实 prepare 链与 DB 同源相等即可；不另锁内部 key 集合。
     assert denunciation == db.build_faction_denunciation_facts()
-    assert set(denunciation) == {
-        "forked_dossiers", "faction_enmities", "faction_situations", "character_personas",
-    }
     assert "人物/朝臣名册.txt" in names
     assert any(p.startswith("人物/") and p.endswith("/经历.txt") for p in names)
     assert any(p.startswith(f"事务/affair-{affair.id}-") for p in names)

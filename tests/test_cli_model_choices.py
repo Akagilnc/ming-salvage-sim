@@ -16,16 +16,18 @@ import ming_sim.cli_backend as cb
 
 def test_choices_cover_all_supported_runners():
     choices = cb.cli_model_choices()
-    # 每个受支持的 CLI runner 都要有一档清单（与 _CLI_BACKENDS 单一真源对齐，#1256）。
-    assert set(choices) == set(cb._CLI_BACKENDS)
-    assert set(choices) == {"agy", "codex", "claude", "cursor", "kimi", "grok", "pi"}
+    # #1902 F3：不锁内部 frozenset／字面七名集合；公开清单须非空且含现役 runner。
+    assert choices
+    assert "grok" in choices and "cursor" in choices and "kimi" in choices
+    assert len(choices) == len(set(choices))
 
 
 def test_cli_runner_choices_cover_all_supported_runners():
-    """CLI Runner 下拉公开全部受支持 runner。"""
+    """CLI Runner 下拉公开受支持 runner（结构契约，不锁字面序）。"""
     runners = cb.cli_runner_choices()
     values = [r["value"] for r in runners]
-    assert values == ["agy", "codex", "claude", "cursor", "kimi", "grok", "pi"]
+    assert "grok" in values and "cursor" in values and "kimi" in values
+    assert len(values) == len(set(values))
     for opt in runners:
         assert set(opt) == {"value", "label"}
         assert opt["label"]

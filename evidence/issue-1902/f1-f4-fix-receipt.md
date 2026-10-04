@@ -1,10 +1,10 @@
-# #1902 修内司 F1–F4 回执（纠举补扫轮）
+# #1902 修内司 F1–F4 回执（纠举补扫·清扫入库扫描器轮）
 
 - 分支：`ak-roles/1902-f1-f4-fix`
-- 上一提交：`0e7d35d5cd2a72ddde58834029c40e6a9c60a81f`（点名修理）
-- 本轮底座起点：`94f5289f1` 判词 F1–F4（`status=continue`）
-- 判词末份：`02-1902-judge-94f5289f1.json` payload F1–F4
-- 自验纠正：末判 F3 明确裁 `test_cli_entry_1902` 落库案内重复正向 `validate_all` 与 `test_llm_channel_config` 内部能力集合锁为 **P3 成立须删**；保留独立参数契约 / 闸负向案 ≠ 保留这两处正向重复。上轮回执误标「保留」已纠正。
+- 上一提交：`0f87eb495`（误把 `scan_*.py` + ~4 万行 JSON 永久入库；分类表套话 retain）
+- 本轮底座判词：`02-1902-judge-94f5289f1.json` payload F1–F4（`status=continue`）
+- **纠正**：删除本轮自建 `evidence/issue-1902/tmp-scans-1902-round/` 与冗余 `f1-f4-classification-table.json`（有清理授权）；扫描器只活在 `/tmp`；完整枚举命令见下
+- **禁止口径已废**：「非本轮 F3 点名失效/重复内部类」——分类表已按全定义重判
 - 官方先行：
   - [pytest monkeypatch](https://docs.pytest.org/en/stable/how-to/monkeypatch.html)
   - [Python Errors and Exceptions](https://docs.python.org/3/tutorial/errors.html)
@@ -19,177 +19,138 @@ MING_SIM_KIMI_BIN=/usr/bin/false MING_SIM_GROK_BIN=/usr/bin/false \
 MING_SIM_PI_BIN=/usr/bin/false
 ```
 
-全仓分类表（不得用路径计数冒充分类）：
-
-- `evidence/issue-1902/f1-f4-classification-table.md`
-- `evidence/issue-1902/f1-f4-classification-table.json`
-- 本轮临时枚举脚本（完整可执行，非永久 CI 扫描器）：`evidence/issue-1902/tmp-scans-1902-round/scan_*.py`
+分类证据（精简）：`evidence/issue-1902/f1-f4-classification-table.md`  
+**无**永久扫描器、**无** classification-table.json 大包。
 
 ---
 
-## 枚举命令（完整可执行）
+## 枚举命令（完整可执行；输出只进 /tmp）
 
 ```bash
 ROOT=/Users/akagilnc/WorkSpace/Ming_LLM-1902-w5
-SCRIPTS=$ROOT/evidence/issue-1902/tmp-scans-1902-round
-mkdir -p /tmp/ming1902-f1f4-rescand
+TMP=/tmp/ming1902-f1f4-round2
+mkdir -p "$TMP"
 
-# F1：全仓 ExceptHandler + wash 候选（ming_sim + web_app；不按函数名预过滤）
-python3 $SCRIPTS/scan_f1_except.py $ROOT
-# F1 补：except 未 return 后继续 + draft_action「无」返回点
-python3 $SCRIPTS/scan_f1_post_except.py $ROOT
+# 临时脚本（勿 git add）：可从本回执重建，或复用上轮已删内容的 git show
+# git show 0f87eb495:evidence/issue-1902/tmp-scans-1902-round/scan_f1_except.py > $TMP/scan_f1_except.py
+# …同理 scan_f1_post_except / scan_f2_config / scan_f3_tests / scan_f4_forward
 
-# F2：全仓配置投影命中
-python3 $SCRIPTS/scan_f2_config.py $ROOT
+# 本轮综合枚举（成员级摘要，不入库）
+python3 $TMP/enum_all.py "$ROOT" | tee $TMP/enum_all.out
 
-# F3：git ls-files 测试路径全集 + 嫌疑旗 / setattr / 能力集合锁 / 散文子串
-python3 $SCRIPTS/scan_f3_tests.py $ROOT
-
-# F4：全仓 AST 纯转发候选（单语句 Return/Call 且实参 ⊆ 形参）
-python3 $SCRIPTS/scan_f4_forward.py $ROOT
+# 语义复读焦点（手工 + explore）：
+# F1：cli_backend 抽取/投影/关联确认；month_chain secret supply；token_stats
+# F2：web_app.api_menu_status vs llm_config_from_runtime；表单槽 vs 生效值
+# F3：git ls-files tests web/src/**/*.test.* → 逐函数/逐 it 语义（非仅子串 flags）
+# F4：AST 单语句 Return(Call) 后再逐项语义（禁「资源适配」套话）
 ```
 
 实测摘要（本轮）：
 
-| 扫描 | 结果 |
+| 项 | 结果 |
 |---|---|
-| F1 except_total / wash_candidates | 840 / 373（再按类定义逐条分类；见 JSON） |
-| F1 post_except_continue / focus | 494 / 145 |
-| F2 config hits | 590 |
-| F3 test_paths | 267（逐案分类见表；≠分类完成的替代） |
-| F4 pure-forward AST | 49（删别名后；按语义保留/已删） |
+| 清理 | `tmp-scans-1902-round/` + `f1-f4-classification-table.json` 已删出工作树 |
+| F3 dead_helper 扫描（/tmp，有假阳性：pytest fixture） | 仅处置**确认零引用**者 |
+| F4 AST 单行候选 | 67 条启发式 → 语义后删 2（别名+死方法）；其余保留写清理由 |
+| 完成范围 | **未**凭候选数量称结清；F3 对话全文 pin（scroll/lens）诚实未整片清 |
 
 ---
 
-## F1 现役抽取失败被降格为正常结果 / 统计旁路静默
+## F1
 
-### 类定义
-1. 现役抽取路径 catch 后把异常/非法产物洗成正常成功结果。
-2. 确证安全的统计旁路可继续，但不得静默抹去原因。
-3. **日志不是继续契约本身**——有 `_log`/`tlog` 不能单独当作「排除出 F1」的理由；须对照既有公开行为契约或类定义外语义。
+### 本轮代码
 
-### 候选成员表（要点；全量表见 classification JSON）
-
-| 成员 | 分类 | 处置 | 理由 |
-|---|---|---|---|
-| `_stalled_deliberation_push_facts` 外层 catch→`""` | **F1** | 已删（0e7d35d） | 点名；DB 失败洗空事实 |
-| `extract_draft_intent` 声明 catch→剥掉成功 | **F1** | 已删 catch，保留 ValueError | 点名 |
-| 缺 `pay_order_override.entries`→「无」 | **F1** | 已 `raise ValueError` | 非法产物洗无 |
-| `token_stats` `except: pass` | **F1** | 已 `tlog` 后继续 | 点名 P3 |
-| 首抽/多旨 LLM except→`_log`→映「无」 | 保留 | 不改 | **既有公开 degrade 契约**（`test_extract_draft_intent_backend_exception_degrades_to_none`）；纠错路上抛。保留依据=行为契约，**不是**「有日志」 |
-| `enrich_initiative_effects` except→空效果 | 保留 | 不改 | 文档化非阻断补全（`test_enrich_backend_error_returns_empty_effects`） |
-| `breach_plea` 逐项 pass | 保留 | 不改 | 逐项脏隔离 |
-| `_run_startup_extraction_catch_up` TicketCancelled | 保留 | 不改 | 取消语义 |
-| 其余 373 wash / 145 post-focus | 保留 | 不改 | 解析归一 / 资源收尾 / rejected 记账 / 控制流哨兵等——见 JSON 逐条 `reason` |
-
-### 变异
-
-```text
-CURRENT_STALLED: raised RuntimeError: mutated_db_list_failed
-RESTORED_WASH_STALLED: returned_normally=True value=''
-CURRENT_ILLEGAL_DECL: raised ValueError: 本阶段不能了结事务
-```
-
----
-
-## F2 菜单仍维护第二套有效运行配置
-
-### 类定义
-有效 channel/runner/model/timeout/reasoning 只许共核 `llm_config_from_runtime`；入口可留原样存盘值供表单。
-
-### 候选成员表
-
-| 成员 | 分类 | 处置 | 理由 |
-|---|---|---|---|
-| `api_menu_status` 平行算生效值 | **F2** | 已改吃共核（0e7d35d） | 点名 |
-| 分槽 `cli_/api_reasoning_strength` 原样 | 保留 | 保留 | 表单存盘值 |
-| POST `normalize_reasoning_strength(request)` | 保留 | 不改 | 入参归一 |
-| `cli_model_from_env` | 保留 | 不改 | 共核内部默认解析 |
-| web/src 读 API 字段 | 保留 | 不改 | UI 消费共核投影 |
-| 其余 590 hits | 保留 | 不改 | 字段名命中≠第二套生效规则；见 JSON |
-
-### 变异（空档 + thinking low + advanced high）
-
-```text
-CORE channel='api' strength='high'
-MENU_STRENGTH='high' aligned_with_core=True
-OLD_PARALLEL_EFFECTIVE=''
-fixes_judge_gap=True
-```
-
----
-
-## F3 测试清退
-
-### 类定义
-失效 mock 缝、与真实入口重复的内部 helper 证明、呈现散文机械、来源弱化、专用死夹具。保留来源契约与闸类负向案。不整删整补、不另造平行测试。
-
-### 本轮纠正 / 同类清退
-
-| 成员 | 分类 | 处置 | 理由 |
-|---|---|---|---|
-| `test_cli_blank_pick_on_urgent…` 内 `validate_all` 正向 | **F3 P3** | **删除** | 末判成立；落库案只留 decided+hold |
-| `test_cli_blank_pick_on_ordinary…` `validate_all` 拒收 | 保留 | 保留 | 独立入口参数负向契约 |
-| `test_cli_reasoning_strength_runners_authoritative_set` | **F3 P3** | **删除** | 末判成立；锁内部 frozenset |
-| `test_cli_supports_reasoning_strength_matrix` | 保留 | 保留 | 闸类谓词行为案 |
-| `test_1271_…` 三端 `set==CLI_REASONING_STRENGTH_RUNNERS` | **F3** | **删除集合等式** | 同类内部能力集合锁；保留 `grok in` + `reasoning_supported` |
-| 死夹具 `_patch_backend` | **F3** | **删除** | 无调用 |
-| secret/enrich setattr `_run_backend` | **F3** | **改钉真缝** `_run_json_extractor_for_config` / `_run_backend_for_config` | 避免错缝假绿 |
-| `test_office_inference` API 负向 setattr `_run_backend` | 保留 | 不改 | 负向探测真缝 |
-| 其余 261 路径 | 保留 | 不改 | 逐案理由见 classification 表 |
-
-### 变异（精确 reason 契约）
-
-```bash
-PYTHONPATH=/tmp/ming1902-f1f4-rescand/mut_plugin:$PYTHONPATH \
-MING_SIM_AGY_BIN=/usr/bin/false MING_SIM_CODEX_BIN=/usr/bin/false \
-MING_SIM_CLAUDE_BIN=/usr/bin/false MING_SIM_CURSOR_BIN=/usr/bin/false \
-MING_SIM_KIMI_BIN=/usr/bin/false MING_SIM_GROK_BIN=/usr/bin/false \
-MING_SIM_PI_BIN=/usr/bin/false \
-python3 -m pytest -q -p no:cacheprovider -p corrupt_reason \
-  --basetemp=/tmp/ming1902-f1f4-rescand/mut-f3 \
-  tests/test_on_scene_immediate_write_1839.py::test_kill_lands_status_and_next_materials_show_it
-# → 1 failed；assert reason == … 得到 CORRUPTED
-
-# 恢复：
-…同七 BIN 前缀… python3 -m pytest -q -p no:cacheprovider \
-  --basetemp=/tmp/ming1902-f1f4-rescand/mut-f3-restore2 \
-  tests/test_on_scene_immediate_write_1839.py::test_kill_lands_status_and_next_materials_show_it \
-  tests/test_cli_entry_1902.py::test_cli_blank_pick_on_urgent_reaches_core_hold \
-  tests/test_llm_channel_config.py::test_cli_supports_reasoning_strength_matrix \
-  tests/test_web_llm_runtime_config.py::test_1271_three_endpoints_grok_reasoning_supported_and_capability_list
-# → 13 passed in 0.91s
-```
-
----
-
-## F4 薄入口无语义纯转发
-
-### 类定义
-入口层无语义、仅同签名转发的包装。全仓 AST 候选后按语义判断。
-
-### 候选成员表（要点）
-
-| 成员 | 分类 | 处置 | 理由 |
-|---|---|---|---|
-| `terminal._review`→`review_directives` | **F4** | 已删（0e7d35d） | 点名 |
-| `ensure_open_night_for_audience`→`open_night` | **F4** | **删除并内联** callers→`open_night` | 同签名无语义别名 |
-| `qualitative_character_attribute`→`qualitative_character_axis` | **F4** | **删除** | 零调用死别名 |
-| `WebGame.write_queue/rebuild/find_character` 等 | 保留 | 不改 | 资源/会话适配 |
-| `api_state` | 保留 | 不改 | HTTP 路由面本身 |
-| 其余 AST 单行候选 | 保留 | 不改 | DB/解析/协议方法有领域语义；见 JSON |
+- `project_draft_extract_to_directive_payload`：去掉 `ValueError→ordinary` 伪造
+- `confirm_dossier_links`：失败 re-raise；非法产物 raise（不洗 `[]`）
+- `_extract_secret_order`：确认失败 → `extract_failed` + reason
+- `month_chain` 非 dict supply → `secret_orders_supply_invalid` + `_abort_month_call`
+- `token_stats` 装补丁 import 失败 → `tlog`
+- 补 `from ming_sim.constants import DOSSIER_LINK_TYPES`（确认路径本就引用）
 
 ### 探针
 
 ```text
-qualitative_character_attribute_removed=True
-ensure_alias_removed / in_module_dict False
+MUTATED_CLASSIFY_CURRENT: raised ValueError: mutated_classify
+OLD_WASH: returned {..., '_washed': True}
+CONFIRM: raised RuntimeError: mutated_confirm_fail
+normalize_ok True
+```
+
+### 保留（非「有日志」）
+首抽映「无」、enrich 空效果、breach 逐项、TicketCancelled——公开契约见分类表。
+
+---
+
+## F2
+
+菜单生效值走 `llm_config_from_runtime`（上轮）；本轮复读：
+
+```text
+MENU_USES_CORE True
+MENU_NO_PARALLEL_EFFECTIVE True
+```
+
+分槽原样强度仅表单。未见第二套生效规则需再改。
+
+---
+
+## F3
+
+### 本轮
+
+- 删/改内部能力集合锁：`test_cli_backend` / `test_cli_model_choices` / `cliRunners.test.ts`
+- 删死夹具：`_cli_schedule_pending_noop`；month_loop 无调用月链/COURT_BREAK 夹具（**保留**跨文件共享 `_post_issue_stream` 等）
+- 删 materials denunciation 冗余 key 集合锁
+- 上轮末判 P3 正向重复 / 错缝 / 精确 reason：维持
+
+### 变异（既有真实入口；七 BIN）
+
+```bash
+MING1902_MUT=reason PYTHONPATH=/tmp/ming1902-f1f4-round2/mut_plugin:$PYTHONPATH \
+MING_SIM_AGY_BIN=/usr/bin/false MING_SIM_CODEX_BIN=/usr/bin/false \
+MING_SIM_CLAUDE_BIN=/usr/bin/false MING_SIM_CURSOR_BIN=/usr/bin/false \
+MING_SIM_KIMI_BIN=/usr/bin/false MING_SIM_GROK_BIN=/usr/bin/false \
+MING_SIM_PI_BIN=/usr/bin/false \
+python3 -m pytest -q -p no:cacheprovider -p corrupt_contracts \
+  --basetemp=/tmp/ming1902-f1f4-round2/mut-reason3 \
+  tests/test_on_scene_immediate_write_1839.py::test_kill_lands_status_and_next_materials_show_it
+# → 1 failed；assert reason == … 得到 CORRUPTED；ELAPSED≈1s
+
+# 恢复：
+…同七 BIN… python3 -m pytest -q -p no:cacheprovider \
+  --basetemp=/tmp/ming1902-f1f4-round2/mut-restore3 \
+  tests/test_on_scene_immediate_write_1839.py::test_kill_lands_status_and_next_materials_show_it \
+  tests/test_cli_entry_1902.py::test_cli_blank_pick_on_urgent_reaches_core_hold \
+  tests/test_cli_backend.py::test_public_cli_support_restores_existing_runners \
+  tests/test_llm_channel_config.py::test_cli_supports_reasoning_strength_matrix \
+  tests/test_web_llm_runtime_config.py::test_1271_three_endpoints_grok_reasoning_supported_and_capability_list
+# → 14 passed in 0.88s
+```
+
+### 保留重判（非法缩窄已去掉）
+army 欠饷 approx 文案 / 内部分账列名隔离 = 呈现契约与 P4 负向，**不是**「非点名故留」。  
+scroll/lens 对话全文 pin：**未声称已清**。
+
+---
+
+## F4
+
+- 维持上轮：`_review` / `ensure_open_night…` / `qualitative_character_attribute` 已除
+- 本轮：`_transaction_categories` 内联；`GameDB.read_credit_events_as_edges` 删除
+- 保留：`GameSession._character`（web_app 消费）、写闸 adapter、`investigation_tip_records` 供料缝——写清语义，不用「资源适配」糊弄
+
+```text
+ensure_alias_removed True
+qual_attr_removed True
+terminal_review_removed True
+transaction_categories_alias_removed True
+read_credit_edges_removed True
 open_night_is_real True
 ```
 
 ---
 
-## 聚焦测试（实测）
+## 聚焦测试（七 BIN）
 
 ```bash
 MING_SIM_AGY_BIN=/usr/bin/false MING_SIM_CODEX_BIN=/usr/bin/false \
@@ -197,46 +158,51 @@ MING_SIM_CLAUDE_BIN=/usr/bin/false MING_SIM_CURSOR_BIN=/usr/bin/false \
 MING_SIM_KIMI_BIN=/usr/bin/false MING_SIM_GROK_BIN=/usr/bin/false \
 MING_SIM_PI_BIN=/usr/bin/false \
 PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -q -p no:cacheprovider \
-  --basetemp=/tmp/ming1902-f1f4-rescand/focus1 \
+  --basetemp=/tmp/ming1902-f1f4-round2/focus-final \
   tests/test_cli_entry_1902.py tests/test_cli_play_turn.py tests/test_web_entry_1902.py \
   tests/test_runtime_llm_config.py tests/test_web_llm_runtime_config.py \
   tests/test_cli_backend.py tests/test_faction_denunciation_627.py \
   tests/test_on_scene_immediate_write_1839.py tests/test_draft_admission_resubmit_1769.py \
   tests/test_llm_channel_config.py tests/test_cli_model_choices.py \
-  tests/test_pay_order_override_extraction_653.py
+  tests/test_pay_order_override_extraction_653.py \
+  tests/test_month_loop_tracer_1468.py tests/test_world_materials_1834.py
 ```
 
 ```text
-293 passed in 5.68s
+302 passed in 8.06s
 ```
 
-召对开夜触及面（F4 内联后）：
+召对触及面：
 
 ```bash
-…同七 BIN 前缀…
+…同七 BIN…
 PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -q -p no:cacheprovider \
-  --basetemp=/tmp/ming1902-f1f4-rescand/focus-audience \
+  --basetemp=/tmp/ming1902-f1f4-round2/focus-extra \
   tests/test_audience_night_498.py tests/test_web_audience_night_498.py \
-  tests/test_audience_travel_gating_670.py
+  tests/test_audience_travel_gating_670.py \
+  tests/test_secret_order_isolation_883.py \
+  tests/test_manual_directive_locality_1685.py
 ```
 
 ```text
-64 passed in 5.41s
+101 passed in 6.80s
 ```
 
-未跑全量。
+```bash
+cd web && npm test -- --run src/cliRunners.test.ts
+# → 3 passed；Duration ~0.63s
+```
+
+未跑全量。未改治理文件 / 宿主配置。未 stash/amend/push/PR。未新增平行测试机制。
 
 ---
 
-## 复扫摘要
+## 完成范围（stdout 须同此诚实）
 
-| 类 | 结论 |
-|---|---|
-| F1 | 全仓 except+post-continue+非法产物返回点已枚举分类；点名洗法已清；首抽映「无」按公开 degrade 契约保留（非因日志） |
-| F2 | 菜单生效值走共核；全仓投影命中已分类 |
-| F3 | 末判两处 P3 正向重复已删；同类内部集合锁与错缝/死夹具已清；267 路径逐案表已存 |
-| F4 | 全仓 AST 候选已分类；无语义别名已删 |
+**已做**：清掉永久扫描器与冗余 JSON；F1 投影伪造/确认洗空/供给非 dict/装补丁静默 + 常量导入；F2 复核共核；F3 同类集合锁与确认死夹具；F4 再删两处纯转发；既有入口 reason 变异红恢复绿；聚焦绿。
+
+**未做 / 不声称结清**：F3 全仓每一条对话全文 pin（scroll/lens 等）未整片改写；F1 全仓每一个 except→return 启发式命中未逐条改生产（压缩保留面见分类表，依据是公开契约/逐项隔离，不是候选计数）。
 
 ## 剩余工作
-- 不在本轮：breach_plea 逐项 pass、家族收尾 #1873、全量 suite。
-- 无 owner 决策缺口；未改治理文件 / 宿主配置 / 永久扫描机制；临时脚本仅证据目录 + `/tmp`。
+- scroll/lens 呈现散文机械（若下轮单独立法）
+- breach_plea 逐项、家族收尾 #1873、全量 suite

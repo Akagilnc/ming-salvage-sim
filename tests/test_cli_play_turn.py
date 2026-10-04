@@ -20,11 +20,6 @@ from ming_sim.session import GameSession, TurnPhase
 from ming_sim import audience_night as an
 
 
-def _cli_schedule_pending_noop(self, result):
-    """#1842：CLI persist 尾必调 schedule_pending_scene_translation；轻壳无 pending 时 no-op。"""
-    return None
-
-
 @contextmanager
 def _noop_atomic(_db):
     yield
