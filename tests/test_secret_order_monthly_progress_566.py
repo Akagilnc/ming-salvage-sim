@@ -407,4 +407,3 @@ def test_emperor_private_payload_preserves_monthly_report(game, monkeypatch):
         assert "dossier_progress" not in read_fields
     finally:
         release_material_tree(prepared.root)
-

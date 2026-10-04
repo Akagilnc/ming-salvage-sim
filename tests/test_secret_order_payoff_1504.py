@@ -2789,5 +2789,3 @@ def test_zero_target_is_not_delivered():
     })
     assert verdict["status"] == "failed"
     assert not verdict["delivered"]
-
-

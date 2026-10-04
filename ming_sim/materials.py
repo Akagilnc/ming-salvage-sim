@@ -2479,6 +2479,3 @@ def inquiry_source_order_id(source_id: object) -> Optional[int]:
 def inquiry_order_source_suffix(order_id: int) -> str:
     """查访见闻指向一条密令的结构化后缀。不用 secret_order: 前缀。"""
     return f":order:{int(order_id)}"
-
-
-
