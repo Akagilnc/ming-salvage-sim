@@ -72,54 +72,8 @@ def _assert_drafted_roster_nailed(db, dossier: dict) -> None:
             "SELECT 1 FROM characters WHERE name=?", (name,),
         ).fetchone() is not None, f"参与人未建档：{name!r}"
 
-def _month_end_ctx() -> dict:
-    return {
-        "active_issues": [],
-        "region_targets": [{"id": "shaanxi", "name": "陕西", "kind": "腹地"}],
-        "army_targets": [
-            {"id": "xuanfu", "name": "宣府"},
-            {"id": "guanning", "name": "关宁军 / 宁锦防线", "station": "辽东 / 宁远锦州"},
-        ],
-    }
 
-def _army_single_bad_item() -> dict:
-    """复验残留样本：辽东欠饷 option 层 army+single（矩阵非法）。"""
-    return {
-        "title": "辽东欠饷",
-        "context": "九边欠饷数月，饥溃可待。",
-        "options": [
-            {
-                "label": "补发关宁军饷",
-                "hint": "边饷急",
-                "action_type": "grant_allocation",
-                "assignee_name": "",
-                "target_kind": "army",
-                "target_id": "guanning",
-                "locality_scope": "single",
-                "region_id": "",
-                "transaction_category": "",
-                "grant_kind": "army_pay",
-                "amount": 300,
-                "account": "国库",
-                "purpose": "补饷",
-                "participant_roster": [dict(item) for item in _OWNER_ROSTER],
-            },
-            {
-                **_OWNER_OPTION,
-                "label": "缓议加派",
-                "hint": "候报",
-            },
-        ],
-    }
 
-def _army_none_legal_item() -> dict:
-    """纠错轮合法：同军目标 + locality_scope=none。"""
-    item = _army_single_bad_item()
-    item["options"][0] = {
-        **item["options"][0],
-        "locality_scope": "none",
-    }
-    return item
 
 def test_shared_validate_rejects_region_id_and_category_holes():
     """共同 assemble/validate 最低可证层：钉原洞 typed 拒绝。

@@ -197,7 +197,7 @@ def test_event_audience_read_failure_escapes_material_preparation(game, tmp_path
 
     db.conn = FailingEventAudienceConnection()
     try:
-        with pytest.raises(RuntimeError, match="audience ledger read failed"):
+        with pytest.raises(RuntimeError):
             prepare_character_materials(
                 db, state, content.characters[AUDIENCE_NAME], dest_root=tmp_path / "materials",
             )

@@ -1,30 +1,14 @@
 """#1356/#1292：删除固定开局邸报（P7）。
 
-钉测只保四个票面行为：
+钉测只保票面行为：
 1. t0 previous_summary 严格空
-2. 旧 seed 精确清且真实报保留（含三短语反例：真报含短语不被删）
-3. 空壳可关闭（前端 vitest）
-4. 首月真报出现
+2. 空壳可关闭（前端 vitest）
+3. 首月真报出现
 """
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
-
-ROOT = Path(__file__).resolve().parents[1]
-
-# 三短语仅作反例材料（真报可含之）；purge 不得靠它们 substring 删行
-_SEED_PHRASES = (
-    "天启七年九月邸报",
-    "待办未解（开局三事）",
-    "信王于乾清宫即皇帝位",
-)
-
-
-def _seed_text() -> str:
-    return (ROOT / "content" / "opening_gazette.md").read_text(encoding="utf-8").strip()
 
 
 def test_new_game_t0_previous_summary_strictly_empty(game):
@@ -56,53 +40,6 @@ def test_new_game_t0_previous_reign_period_label_empty_with_empty_summary(game):
 
 
 
-def test_old_save_exact_purge_keeps_real_with_phrase_counterexample(game):
-    """② 旧档：完整指纹精确 DELETE seed；真报保留——含三短语反例不被删。"""
-    db, state, _content = game
-    seed = _seed_text()
-    assert seed, "fingerprint 源 content/opening_gazette.md 须存在"
-    # 反例：真结算散文含全部三短语，但全文 ≠ seed
-    for phrase in _SEED_PHRASES:
-        assert phrase in seed
-    real = (
-        "天启七年十月邸报\n\n"
-        "一、真结算产物。史官追述：信王于乾清宫即皇帝位已成定局。\n"
-        "二、档案提及「天启七年九月邸报」仅作引用，本月另有边饷核账。\n"
-        "三、待办未解（开局三事）之余波仍在，户部续议——不得被 purge。\n"
-        "——真结算保留标记"
-    )
-    for phrase in _SEED_PHRASES:
-        assert phrase in real, f"反例须含短语 {phrase!r}"
-    assert real != seed
-
-    db.conn.execute(
-        "INSERT OR REPLACE INTO turn_reports (turn, year, period, report) VALUES (?, ?, ?, ?)",
-        (0, 1627, 9, seed),
-    )
-    db.conn.execute(
-        "INSERT OR REPLACE INTO turn_reports (turn, year, period, report) VALUES (?, ?, ?, ?)",
-        (1, 1627, 10, real),
-    )
-    db.conn.commit()
-    assert db.get_turn_report(0) == seed
-    assert db.get_turn_report(1) == real
-
-    db._purge_fixed_opening_gazette_seed()
-    db._purge_fixed_opening_gazette_seed()  # 精确 DELETE 天然幂等
-
-    assert db.get_turn_report(0) == ""
-    assert db.conn.execute("SELECT 1 FROM turn_reports WHERE turn = 0").fetchone() is None
-    kept = db.get_turn_report(1)
-    assert kept == real
-    assert "真结算保留标记" in kept
-    # 无 meta flag 机制
-    assert (
-        db.conn.execute(
-            "SELECT 1 FROM metrics WHERE key = ?",
-            ("__opening_gazette_seed_purged_1356",),
-        ).fetchone()
-        is None
-    )
 
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")

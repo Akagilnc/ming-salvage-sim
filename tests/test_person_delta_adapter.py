@@ -2537,75 +2537,10 @@ def test_new_appointment_falsy_return_restores_snapshot(game, monkeypatch):
 
 
 
-def test_fresh_seed_migrates_legacy_office_pollution(tmp_path):
-    """5b r4（Claude + codex-b concur, P1）：新开档 _migrate_legacy_office_pollution 须在
-    seed 之后跑——init_schema 在空表上 no-op，seed 后若不再迁移，罢居旧臣留 active+污染 office、
-    不进人才池（探针第一年盘面错）。钱谦益（office='…罢居常熟'）∈DISMISSED_OVERRIDE → dismissed/获罪削籍。"""
-    from ming_sim.content import GameContent
-    from ming_sim.db import GameDB
-
-    fresh = GameContent.load()
-    db = GameDB(str(tmp_path / "fresh.db"), fresh)
-    try:
-        db.seed_static_data()
-        row = db.conn.execute(
-            "SELECT status, reason_code, office FROM characters WHERE name=?", ("钱谦益",)
-        ).fetchone()
-    finally:
-        db.conn.close()
-    assert row is not None, "钱谦益 未 seed"
-    assert row["status"] == "dismissed", \
-        f"新开档未迁移：钱谦益 status={row['status']!r} office={row['office']!r}（migration 在 seed 前空表 no-op）"
-    assert row["reason_code"] == "获罪削籍"
-    assert "罢居" not in (row["office"] or ""), f"污染 office 串未清：{row['office']!r}"
 
 
-def test_legacy_office_pollution_migrated_on_load(saved_game):
-    """ADR 决定9/L94 一次性数据清洗（幂等，载入时跑）：pre-0009 老档里塞在 office 串的
-    状态词归位到 status/transit_to，使其正确进人才池。条件触发（office 含污染标记才动），
-    绝不误降已被玩家起复的 active 旧臣。
-    用 saved_game：依赖玩过存档里 pre-0009 污染 office 串的旧档人物，fresh seed 无（#5）。"""
-    db, _, _ = saved_game
-
-    def row(n):
-        return db.conn.execute(
-            "SELECT status, office, reason_code, transit_to FROM characters WHERE name=?", (n,)
-        ).fetchone()
-
-    # 罢居 → offstage（钱龙锡）/ dismissed（钱谦益 科场案削籍，B 口径）
-    qlx = row("钱龙锡")
-    assert qlx["status"] == "offstage", "罢居者应归位 offstage"
-    assert "罢居" not in (qlx["office"] or ""), "office 串污染状态词应清除"
-    qqy = row("钱谦益")
-    assert qqy["status"] == "dismissed", "科场案削籍 → dismissed（→昭雪）"
-    assert qqy["reason_code"] == "获罪削籍"
-    # (在途) 串清除
-    ycc = row("袁崇焕")
-    assert "(在途)" not in (ycc["office"] or ""), "(在途) 串应清除"
-    # 已起复的 active 旧臣不被误降
-    assert row("孙承宗")["status"] == "active", "已起复者不得被误降"
-    assert row("韩爌")["status"] == "active"
-    assert row("袁可立")["status"] == "active"
 
 
-def test_legacy_office_pollution_resolves_transit_to_region_id(game):
-    """5b r6（Gemini high）：在途 office 串迁移须把中文目的地解析成 region_id 落 transit_to。
-    旧码 `mm.group(1) in region_ids`（中文「辽东」vs 英文 region id「liaodong」）恒 False
-    → transit_to 永不落（死分支）；应改用 match_region_id_from_text 解析中文目的地。"""
-    db, _, content = game
-    name = active_ming_character(db, content)
-    db.conn.execute(
-        "UPDATE characters SET office=?, transit_to='', status='active' WHERE name=?",
-        ("兵部尚书督师辽东（在途）", name),
-    )
-    db.conn.commit()
-    db._migrate_legacy_office_pollution()
-    row2 = db.conn.execute(
-        "SELECT office, transit_to FROM characters WHERE name=?", (name,)
-    ).fetchone()
-    assert "在途" not in (row2["office"] or ""), "在途 串应清除"
-    assert row2["transit_to"] == "liaodong", \
-        f"在途辽东 应解析 transit_to=liaodong（中文→region_id），实际 {row2['transit_to']!r}"
 
 
 def test_displaced_holder_transit_to_cleared(game):

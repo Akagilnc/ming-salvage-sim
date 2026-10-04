@@ -152,47 +152,6 @@ def test_reload_restores_complete_transit_ledger_from_db(game):
     ) == ("liaodong", 1.25, 1.5, 7)
 
 
-def test_old_save_schema_is_upgraded_for_person_archive_fields(tmp_path, content):
-    """Opening an old save adds ADR 0009 fields and audit table without reseeding."""
-    path = tmp_path / "old-save.db"
-    conn = sqlite3.connect(path)
-    conn.execute(
-        """
-        CREATE TABLE characters (
-            name TEXT PRIMARY KEY,
-            office TEXT NOT NULL,
-            office_type TEXT NOT NULL,
-            faction TEXT NOT NULL,
-            personal_skills TEXT NOT NULL,
-            loyalty INTEGER NOT NULL,
-            ability INTEGER NOT NULL,
-            integrity INTEGER NOT NULL,
-            courage INTEGER NOT NULL,
-            style TEXT NOT NULL,
-            status TEXT NOT NULL DEFAULT 'active',
-            status_reason TEXT NOT NULL DEFAULT '',
-            status_changed_turn INTEGER NOT NULL DEFAULT 0,
-            power_id TEXT NOT NULL DEFAULT 'ming',
-            location TEXT NOT NULL DEFAULT ''
-        )
-        """
-    )
-    conn.commit()
-    conn.close()
-
-    db = GameDB(str(path), content)
-    try:
-        character_info = _column_info(db, "characters")
-        assert "reason_code" in character_info
-        assert "transit_to" in character_info
-        assert "person_logs" in {
-            row["name"]
-            for row in db.conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table'"
-            ).fetchall()
-        }
-    finally:
-        db.conn.close()
 
 
 def test_north_star_named_figures_are_seeded_with_identity_metadata():

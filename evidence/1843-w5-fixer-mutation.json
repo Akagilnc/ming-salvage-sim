@@ -1,0 +1,32 @@
+[
+  {
+    "label": "B0-baseline",
+    "code": 0,
+    "secs": 1.67,
+    "tail": ".                                                                        [100%]\n1 passed in 1.27s"
+  },
+  {
+    "label": "B1-mutated-trunc-notes",
+    "code": 1,
+    "secs": 1.2,
+    "tail": "tests/test_fiscal_substrate_bridge.py:407: AssertionError\n=========================== short test summary info ============================\nFAILED tests/test_fiscal_substrate_bridge.py::test_region_loader_expands_shared_settle_meta_defaults\n1 failed in 0.77s"
+  },
+  {
+    "label": "B2-restored",
+    "code": 0,
+    "secs": 1.16,
+    "tail": ".                                                                        [100%]\n1 passed in 0.74s"
+  },
+  {
+    "label": "A1-mutated-identity-location",
+    "code": 1,
+    "secs": 1.2,
+    "tail": "tests/test_audience_travel_gating_670.py:803: AssertionError\n=========================== short test summary info ============================\nFAILED tests/test_audience_travel_gating_670.py::test_capital_aliases_admit_in_capital\n1 failed in 0.73s"
+  },
+  {
+    "label": "A2-restored",
+    "code": 0,
+    "secs": 1.15,
+    "tail": ".                                                                        [100%]\n1 passed in 0.74s"
+  }
+]

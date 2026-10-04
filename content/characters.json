@@ -46,7 +46,7 @@
   "characters": [
     {
       "name": "韩爌",
-      "office": "前内阁首辅，罢居蒲州",
+      "office": "内阁首辅",
       "office_type": "内阁",
       "faction": "东林",
       "aliases": [
@@ -75,7 +75,10 @@
         "crime": "无",
         "severity": "无"
       },
-      "location": "beizhili"
+      "location": "beizhili",
+      "status": "offstage",
+      "reason_code": "自请",
+      "status_reason": "前内阁首辅，罢居蒲州"
     },
     {
       "name": "张瑞图",
@@ -408,7 +411,7 @@
     },
     {
       "name": "钱龙锡",
-      "office": "前礼部尚书，罢居松江",
+      "office": "礼部尚书",
       "office_type": "礼部",
       "faction": "东林",
       "aliases": [
@@ -436,7 +439,10 @@
         "crime": "无",
         "severity": "无"
       },
-      "location": "beizhili"
+      "location": "beizhili",
+      "status": "offstage",
+      "reason_code": "自请",
+      "status_reason": "前礼部尚书，罢居松江"
     },
     {
       "name": "刘鸿训",
@@ -472,7 +478,7 @@
     },
     {
       "name": "钱谦益",
-      "office": "前礼部右侍郎，罢居常熟",
+      "office": "礼部右侍郎",
       "office_type": "礼部",
       "faction": "东林",
       "aliases": [
@@ -500,7 +506,10 @@
         "crime": "枚卜之争/钱柄之议中结党营私、植党排异;科场关节(钱千秋舞弊案)之讦——属轻度污点非血债,此刻无重罪可坐",
         "severity": "轻"
       },
-      "location": "beizhili"
+      "location": "beizhili",
+      "status": "dismissed",
+      "reason_code": "获罪削籍",
+      "status_reason": "前礼部右侍郎，罢居常熟"
     },
     {
       "name": "李标",
@@ -536,7 +545,7 @@
     },
     {
       "name": "孙承宗",
-      "office": "前蓟辽督师，罢居高阳",
+      "office": "蓟辽督师",
       "office_type": "兵部",
       "faction": "东林",
       "aliases": [
@@ -566,7 +575,10 @@
         "crime": "无",
         "severity": "无"
       },
-      "location": "beizhili"
+      "location": "beizhili",
+      "status": "offstage",
+      "reason_code": "自请",
+      "status_reason": "前蓟辽督师，罢居高阳"
     },
     {
       "name": "崔呈秀",
@@ -636,7 +648,7 @@
     },
     {
       "name": "徐光启",
-      "office": "前礼部右少卿，罢居上海",
+      "office": "礼部右少卿",
       "office_type": "工部",
       "faction": "西学",
       "aliases": [
@@ -665,7 +677,10 @@
         "crime": "无",
         "severity": "无"
       },
-      "location": "beizhili"
+      "location": "beizhili",
+      "status": "offstage",
+      "reason_code": "自请",
+      "status_reason": "前礼部右少卿，罢居上海"
     },
     {
       "name": "李之藻",
@@ -772,7 +787,7 @@
     },
     {
       "name": "袁可立",
-      "office": "前登莱巡抚，罢居睢州",
+      "office": "登莱巡抚",
       "office_type": "都察院",
       "faction": "东林",
       "aliases": [
@@ -799,7 +814,10 @@
         "crime": "无",
         "severity": "无"
       },
-      "location": "henan"
+      "location": "henan",
+      "status": "offstage",
+      "reason_code": "自请",
+      "status_reason": "前登莱巡抚，罢居睢州"
     },
     {
       "name": "周延儒",
@@ -1164,7 +1182,7 @@
     },
     {
       "name": "袁崇焕",
-      "office": "前辽东巡抚，罢居东莞",
+      "office": "辽东巡抚",
       "office_type": "边镇",
       "faction": "军队",
       "aliases": [
@@ -1192,7 +1210,10 @@
         "crime": "无",
         "severity": "无"
       },
-      "location": "guangdong"
+      "location": "guangdong",
+      "status": "offstage",
+      "reason_code": "自请",
+      "status_reason": "前辽东巡抚，罢居东莞"
     },
     {
       "name": "曹文诏",

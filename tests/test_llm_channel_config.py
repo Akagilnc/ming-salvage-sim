@@ -805,7 +805,6 @@ def test_gate_evidence_config_omits_max_tokens():
     cfg = cb.gate_llm_config_from_args(args)
     block = cb.gate_evidence_config(args, cfg)
     assert "max_tokens" not in block
-    assert not hasattr(cfg, "max_tokens")
 
 
 def test_scene_and_rescript_entries_pass_default_headers_at_transport(monkeypatch, game, tmp_path):

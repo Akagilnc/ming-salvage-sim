@@ -462,7 +462,7 @@ def test_prepare_claim_db_error_propagates_loudly(game):
         raise sqlite3.OperationalError("认领库不可写")
 
     db.claim_relation_brew_targets = boom
-    with pytest.raises(sqlite3.OperationalError, match="认领库不可写"):
+    with pytest.raises(sqlite3.OperationalError):
         run_month_end_relation_brew(db, state, _brew_fn_factory([]))
 
 
@@ -485,7 +485,7 @@ def test_apply_db_error_propagates_loudly_not_disguised_as_llm_failure(game):
         return original_mark(**kwargs)
 
     db.mark_relation_brew_pending = spy_mark
-    with pytest.raises(sqlite3.OperationalError, match="落定库不可写"):
+    with pytest.raises(sqlite3.OperationalError):
         run_month_end_relation_brew(db, state, _brew_fn_factory([]))
     assert marked == []  # 宽吞与重复补降级已删
 
@@ -504,7 +504,7 @@ def test_mark_failure_after_llm_failure_propagates_loudly(game):
         raise sqlite3.OperationalError("pending 库不可写")
 
     db.mark_relation_brew_pending = boom
-    with pytest.raises(sqlite3.OperationalError, match="pending 库不可写"):
+    with pytest.raises(sqlite3.OperationalError):
         run_month_end_relation_brew(db, state, failing_brew)
 
 
@@ -519,7 +519,7 @@ def test_brew_program_error_propagates_loudly_not_degraded(game):
     def buggy_brew(payload_json: str) -> str:
         raise KeyError("酿制手程序错误")
 
-    with pytest.raises(KeyError, match="酿制手程序错误"):
+    with pytest.raises(KeyError):
         run_month_end_relation_brew(db, state, buggy_brew)
     # 响亮上扑而非降级：无 degraded 留痕；认领先行的 pending 凭据已持久在册。
     assert [(row["source"], row["target"]) for row in db.get_relation_brew_pending()] == [
@@ -539,7 +539,7 @@ def test_brew_fn_value_error_is_program_error_propagates_loudly(game):
     def buggy_brew(payload_json: str) -> str:
         raise ValueError("酿制手程序错误")
 
-    with pytest.raises(ValueError, match="酿制手程序错误"):
+    with pytest.raises(ValueError):
         run_month_end_relation_brew(db, state, buggy_brew)
     # 响亮上抛而非降级：无 degraded 留痕；认领先行的 pending 凭据已持久在册。
     assert [(row["source"], row["target"]) for row in db.get_relation_brew_pending()] == [

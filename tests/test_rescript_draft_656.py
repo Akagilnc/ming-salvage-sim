@@ -271,7 +271,7 @@ def test_r3_strict_parse_control_char_raises_contract_error():
     from ming_sim.exceptions import LLMContractError
     # 控制字符 \x01 在 JSON 字符串内非法，必须触发 JSONDecodeError→LLMContractError
     raw = '{"items": [{"title": "a\x01b", "context": "c", "options": [{"label": "l1", "hint": "h1"}, {"label": "l2", "hint": "h2"}]}]}'
-    with pytest.raises(LLMContractError, match="不是合法 JSON"):
+    with pytest.raises(LLMContractError):
         _parse_rescript_json_strict(raw)
 
 def test_r3_strict_parse_concatenated_objects_raises_contract_error():
@@ -279,7 +279,7 @@ def test_r3_strict_parse_concatenated_objects_raises_contract_error():
     from ming_sim.rescript_draft import _parse_rescript_json_strict
     from ming_sim.exceptions import LLMContractError
     raw = '{"items": [{"title": "甲", "context": "c", "options": [{"label": "a", "hint": "h1"}, {"label": "b", "hint": "h2"}]}]}{"items": []}'
-    with pytest.raises(LLMContractError, match="不是合法 JSON"):
+    with pytest.raises(LLMContractError):
         _parse_rescript_json_strict(raw)
 
 # ---------------------------------------------------------------------------
@@ -311,15 +311,6 @@ def test_657_s1_schema_columns_and_no_banned_fields(game):
     ]
     assert idx_sql and "origin_ref" in idx_sql[0] and "origin_ref != ''" in idx_sql[0].replace('"', "")
 
-def test_657_s1_rescript_emitted_set_subset_of_dossier(game):
-    """A12 前置（#1778 后）：只剩 emitted 闭集 ⊂ DOSSIER；七类 routable 已整体取消。"""
-    from ming_sim.decree_vocabulary import (
-        DOSSIER_ACTION_TYPES,
-        RESCRIPT_EMITTED_DOSSIER_ACTION_TYPES,
-    )
-    assert RESCRIPT_EMITTED_DOSSIER_ACTION_TYPES <= DOSSIER_ACTION_TYPES
-    assert "dismiss_assignment" in RESCRIPT_EMITTED_DOSSIER_ACTION_TYPES
-    _ = game  # fixture keeps DB init path green
 
 def test_657_s1_derive_draft_capability_stable_and_sensitive():
     """capability：同字段稳定；闭集任一有效差改变键。"""

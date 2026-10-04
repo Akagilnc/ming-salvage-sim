@@ -1,0 +1,26 @@
+#1843 w5 fixer — 机械枚举命令（F2-R11-1 / F2-R11-2）
+工作树: /Users/akagilnc/WorkSpace/Ming_LLM-1843-w5
+分支: ak-roles/issue-1843-w5-r11-f2
+临时脚本: /tmp/1843-f2-r11/enum_both.py（施工前全仓枚举）
+顾问审视: /tmp/1843-f2-r11/advisor-review.md
+施工前成员: /tmp/1843-f2-r11/class-a-members.tsv /tmp/1843-f2-r11/class-b-members.tsv
+扩大闭包: /tmp/1843-f2-r11/class-a-expanded.json
+复扫成员表: evidence/1843-w5-fixer-class-a-members.tsv
+复扫 B 残留: evidence/1843-w5-fixer-class-b-rescan.tsv
+变异证据: evidence/1843-w5-fixer-mutation.json
+聚焦测试日志: evidence/1843-w5-fixer-pytest.log
+
+环境前缀（全部探针/测试）:
+MING_SIM_AGY_BIN=/usr/bin/false MING_SIM_CODEX_BIN=/usr/bin/false \
+MING_SIM_CLAUDE_BIN=/usr/bin/false MING_SIM_CURSOR_BIN=/usr/bin/false \
+MING_SIM_KIMI_BIN=/usr/bin/false MING_SIM_GROK_BIN=/usr/bin/false \
+MING_SIM_PI_BIN=/usr/bin/false PYTHONDONTWRITEBYTECODE=1
+
+# 施工前枚举
+/Users/akagilnc/WorkSpace/Ming_LLM/.venv/bin/python /tmp/1843-f2-r11/enum_both.py
+
+# 扩大旧档迁移闭包（inventory 标明的 _migrate/_backfill/_purge）
+# 见本局 shell 轨迹 class-a-expanded.json
+
+# 复扫（本文件生成后写入的 Python heredoc，输出到 evidence TSV）
+# 谓词全文见末判 F2-R11-1 / F2-R11-2 boundary+direction；未用固定种子/引用阈值/历史下界/同文件活代码白名单收窄。

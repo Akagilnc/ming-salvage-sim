@@ -2329,8 +2329,6 @@ class GameDB:
         self.ensure_column("characters", "transit_distance_remaining", "REAL")
         self.ensure_column("characters", "transit_speed_factor", "REAL")
         self.ensure_column("characters", "transit_start_turn", "INTEGER NOT NULL DEFAULT 0")
-        # #654 G：location/transit 五列齐备后具名幂等迁移（精确别名→canonical；未知 fail-loud）
-        self._migrate_character_location_aliases()
         self.ensure_column("issues", "resolve_condition", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("issues", "fail_condition", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("issues", "end_turn", "INTEGER NOT NULL DEFAULT 0")
@@ -2357,9 +2355,6 @@ class GameDB:
         self.ensure_column("characters", "aliases", "TEXT NOT NULL DEFAULT '[]'")
         self.ensure_column("characters", "identity", "INTEGER NOT NULL DEFAULT 50")
         self.ensure_column("characters", "seed_guilt", "TEXT NOT NULL DEFAULT ''")
-        self._backfill_person_core_character_static_fields()
-        self._migrate_character_identity_seed()
-        self._backfill_bandit_power_split()
         self.ensure_column("event_triggers", "terminal_state", "TEXT NOT NULL DEFAULT 'triggered'")
         self.ensure_column("event_triggers", "terminal_reason", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("event_triggers", "choice_json", "TEXT NOT NULL DEFAULT ''")
@@ -2482,7 +2477,6 @@ class GameDB:
             "decree_dossier_decisions", "affected_parties_json", "TEXT NOT NULL DEFAULT '[]'")
         self.ensure_column(
             "decree_dossier_decisions", "midzhi_unpromulgatable", "INTEGER NOT NULL DEFAULT 0")
-        self._migrate_legacy_reaction_severity()
         self.ensure_column("decree_dossiers", "executor_kind", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("decree_dossiers", "executor_id", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column(
@@ -2687,14 +2681,12 @@ class GameDB:
         )
         self.affairs = AffairStore(self.conn)
         self.conn.commit()
-        self._migrate_legacy_office_pollution()
         # #9 R1 finding#1 [P1]：老档迁移校准须放在新档 seed 与现存档打开都经过的点。
         # 现存档只 GameDB()（→ init_schema）+ load_state、不调 seed_static_data，故若校准仅在 seed 末尾，
         # 老档的 offset 永远停在默认 0 → leverage=0+权重和（未锚定钦定基线、错值）。
         # 因此：leverage_offset 列**本次刚 ADD**且 factions 表已有行（=老档，characters 此刻亦已持久化、
         # 权重和可算）时，在此立即一次性反推校准（offset_col_added=True 走老档分支：offset=当前 DB
-        # leverage − 权重和）。放在 _migrate_legacy_office_pollution 之后，使权重和按【已清洗】的 office
-        # 算（与 seed 路 _migrate→_calibrate 同序；pre-0009 污染 office 在迁移前会算错权重和）。
+        # leverage − 权重和）。characters 已 seed 后权重和可算。
         # 校准后 flag 被消费置 False（见 _calibrate_faction_offsets），seed 路再调时直接 return、不重锚。
         # fresh 新档此时 factions 表空（行在 seed_static_data 才 INSERT）→ 这里跳过，仍走 seed 末尾的
         # fresh 校准（从 content.factions 取钦定基线）。
@@ -2741,86 +2733,7 @@ class GameDB:
             self.conn.commit()
         self.init_fiscal_config()
         self._migrate_missing_fiscal_engine_from_pay_source_cutover()
-        # #1356：旧档精确 DELETE 已知 seed 全文（不动真实结算产物）
-        self._purge_fixed_opening_gazette_seed()
 
-    def _migrate_legacy_office_pollution(self) -> None:
-        """ADR 0009 决定9/L94 一次性数据清洗（幂等，init 时跑）：pre-0009 存档把状态词塞在
-        office 串里（「前X，罢居Y」「…(在途)」），归位到 status/reason_code/location/transit_to，
-        使其正确进人才池（G1）。**条件触发**（office 含污染标记才动）——不误降已被玩家起复的
-        active 旧臣（其 office 已是真职、无标记，跳过）；幂等（清洗后再跑无标记可清）。"""
-        import re
-        # location 是 region_id；罢居地名（松江/高阳等府名）多非 region_id，只在解析出合法 region_id
-        # 才写 location（同下方在途循环口径，不把府名硬塞进 region_id 列）；罢居地信息留在 status_reason。
-        region_ids = {row["id"] for row in self.conn.execute("SELECT id FROM regions").fetchall()}
-        # 罢居=居家可起复：钱谦益 天启科场案削籍 → dismissed（→昭雪，B 口径）；其余罢居 → offstage（→起复）。
-        DISMISSED_OVERRIDE = {"钱谦益": "获罪削籍"}
-        from ming_sim.office_rank import canonical_office_title
-
-        for r in self.conn.execute(
-            "SELECT name, office FROM characters WHERE office LIKE '%罢居%' AND status='active'"
-        ).fetchall():
-            name = r["name"]
-            office = str(r["office"] or "")
-            m = re.search(r"罢居([^，,]+)", office)
-            loc = m.group(1).strip() if m else ""
-            loc_region = loc if loc in region_ids else ""
-            if name in DISMISSED_OVERRIDE:
-                status, rc = "dismissed", DISMISSED_OVERRIDE[name]
-            else:
-                status, rc = "offstage", "自请"
-            self.conn.execute(
-                "UPDATE characters SET status=?, reason_code=?, status_reason=?, office='', "
-                "location=CASE WHEN COALESCE(location,'')='' THEN ? ELSE location END, transit_to='' "
-                "WHERE name=?",
-                (status, rc, office, loc_region, name),
-            )
-            # #562：character_offices 保留最近实职备档供起复品级读取，去掉「前/罢居」污染尾。
-            historical = canonical_office_title(office)
-            if historical:
-                self.conn.execute(
-                    "UPDATE character_offices SET office_title=? WHERE character_name=?",
-                    (historical, name),
-                )
-        # #562：凡 character_offices 仍带「前/原/革职候勘/罢居」污染的备档一律洗净。
-        # 覆盖 seed 已是 dismissed 的革职候勘者（如胡廷宴），不只 罢居→offstage 那一支。
-        for r in self.conn.execute(
-            "SELECT character_name, office_title FROM character_offices"
-        ).fetchall():
-            raw_title = str(r["office_title"] or "")
-            cleaned = canonical_office_title(raw_title)
-            if cleaned and cleaned != raw_title:
-                self.conn.execute(
-                    "UPDATE character_offices SET office_title=? WHERE character_name=?",
-                    (cleaned, r["character_name"]),
-                )
-        # office 带「(在途)」→ 清串保留 active；transit_to 仅当解析出合法 region_id 才落（保守，不瞎猜目的地）。
-        for r in self.conn.execute(
-            "SELECT name, office FROM characters WHERE office LIKE '%在途%'"
-        ).fetchall():
-            name = r["name"]
-            office = str(r["office"] or "")
-            cleaned = office.replace("（在途）", "").replace("(在途)", "").strip().rstrip(",，")
-            # 目的地是中文地名（辽东/陕西），region_id 是英文（liaodong/shaanxi）——直接
-            # `in region_ids` 恒 False、transit_to 永不落（死分支，5b r6 Gemini high）。用
-            # match_region_id_from_text 把中文解析成 region_id（同 db.py:2626 口径），解析得到才落。
-            dest = ""
-            for kw in ("督师", "镇守", "赴", "之任"):
-                mm = re.search(kw + r"([一-龥]{2,4})", office)
-                if mm:
-                    rid = match_region_id_from_text(mm.group(1), self.content.regions)
-                    if rid:
-                        dest = rid
-                        break
-            if dest:
-                self.conn.execute(
-                    "UPDATE characters SET office=?, transit_to=? WHERE name=?", (cleaned, dest, name)
-                )
-            else:
-                self.conn.execute(
-                    "UPDATE characters SET office=? WHERE name=?", (cleaned, name)
-                )
-        self.conn.commit()
 
     def init_fiscal_config(self) -> None:
         """从 content/fiscal_config.json（self.content.fiscal_items）seed 财政科目目录。
@@ -4024,12 +3937,7 @@ class GameDB:
         # #173：维护费列退役 drop 已上移至 init_schema（每个打开路径都跑，含现存档的纯
         # init_schema 路径，见 cmr drop R1）；此处新档 seed INSERT 后该列本就不存在，无需再 drop。
         self._apply_region_city_levels()  # 新档 region 此时才 INSERT 完，按史实补 city_level
-        # 新档罢居/在途 office 污染清洗：init_schema 路径在空表上 no-op（构造在 seed 前），
-        # 故 seed 后须再跑一次才对新档生效（决定9/L94 一次性清洗；幂等，老档由 init_schema
-        # 路径已处理）。此刻 characters + regions 均已 INSERT，location region_id 校验可用。
-        # 5b r4（Claude + codex-b concur, P1）：漏此调用则新档 7 名罢居旧臣留 active+污染、不进人才池。
-        self._migrate_legacy_office_pollution()
-        # #9：派系势力 offset 校准。此刻 factions + characters 均已 INSERT、office 污染已洗。
+        # #9：派系势力 offset 校准。此刻 factions + characters 均已 INSERT。
         # cmr R3：传 offset 列「本次是否刚 ADD」——老档反推只在迁移那次跑，常规 load 不碰 offset。
         self._calibrate_faction_offsets(
             is_fresh_factions_seed, getattr(self, "_leverage_offset_col_added", False)
@@ -5326,145 +5234,8 @@ class GameDB:
             (ARREARS_UNIT_VERSION,),
         )
 
-    def _backfill_person_core_character_static_fields(self) -> None:
-        mao = self.content.characters.get("毛文龙")
-        if mao and mao.location:
-            self.conn.execute(
-                """
-                UPDATE characters
-                SET location = ?
-                WHERE name = '毛文龙'
-                  AND COALESCE(location, '') = ''
-                  AND COALESCE(transit_to, '') = ''
-                """,
-                (mao.location,),
-            )
-        for name in ("李自成", "张献忠"):
-            ch = self.content.characters.get(name)
-            if not ch or ch.debut_year <= 0:
-                continue
-            self.conn.execute(
-                """
-                UPDATE characters
-                SET debut_year = ?, debut_month = ?
-                WHERE name = ?
-                  AND status = 'offstage'
-                  AND COALESCE(debut_year, 0) = 0
-                  AND COALESCE(debut_month, 0) = 0
-                """,
-                (ch.debut_year, ch.debut_month, name),
-            )
-        self.conn.commit()
 
-    def _migrate_character_identity_seed(self) -> None:
-        """Bring pre-identity saves onto the approved roster without rewriting play."""
-        if not self.table_has_rows("characters"):
-            return
-        for character in self.content.characters.values():
-            office = normalize_office(character.office)
-            office_type = infer_office_type_from_office(office, character.office_type, self.llm_config, use_llm=False)
-            self.conn.execute(
-                """INSERT OR IGNORE INTO characters
-                   (name, office, office_type, faction, aliases, personal_skills, loyalty, ability, integrity, courage, style, identity, intrigue, seed_guilt,
-                    birth_year, historical_death_year, historical_death_month, debut_year, debut_month, status, status_reason, reason_code, status_changed_turn,
-                    portrait_id, power_id, location, transit_to, summary)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)""",
-                (character.name, office, office_type, character.faction,
-                 json.dumps(character.aliases, ensure_ascii=False), json.dumps(character.personal_skills, ensure_ascii=False),
-                 character.loyalty, character.ability, character.integrity, character.courage, character.style,
-                 character.identity, character.intrigue, _seed_guilt_storage_value(character.seed_guilt),
-                 character.birth_year, character.historical_death_year,
-                 character.historical_death_month, character.debut_year, character.debut_month, character.status,
-                 character.status_reason, character.reason_code,
-                 character.portrait_id, character.power_id, character.location, character.transit_to, character.summary),
-            )
-        if not self._has_meta_flag("__identity_seed_v1"):
-            for character in self.content.characters.values():
-                self.conn.execute(
-                    "UPDATE characters SET identity=?, seed_guilt=? WHERE name=? AND identity=50 AND COALESCE(seed_guilt, '')=''",
-                    (character.identity, _seed_guilt_storage_value(character.seed_guilt), character.name),
-                )
-            self._set_meta_flag("__identity_seed_v1")
-        # Retire only the shipped ambiguous alias collision from old saves and
-        # backfill approved static dismissal provenance without rewriting play.
-        for name in ("袁可立", "袁崇焕"):
-            row = self.conn.execute("SELECT aliases FROM characters WHERE name=?", (name,)).fetchone()
-            if row:
-                try:
-                    aliases = json.loads(row["aliases"] or "[]")
-                except (TypeError, ValueError):
-                    aliases = []
-                aliases = [alias for alias in aliases if alias != "袁巡抚"]
-                self.conn.execute("UPDATE characters SET aliases=? WHERE name=?",
-                                  (json.dumps(aliases, ensure_ascii=False), name))
-        hu = self.content.characters.get("胡廷宴")
-        if hu:
-            self.conn.execute(
-                "UPDATE characters SET status_reason=?, reason_code=? WHERE name=? "
-                "AND status='dismissed' AND COALESCE(status_reason,'')=''",
-                (hu.status_reason, hu.reason_code, hu.name),
-            )
-        self.conn.commit()
 
-    def _backfill_bandit_power_split(self) -> None:
-        for power_id in ("bandit_li_zicheng", "bandit_zhang_xianzhong"):
-            power = self.content.powers.get(power_id)
-            if not power:
-                continue
-            self.conn.execute(
-                """
-                INSERT OR IGNORE INTO powers
-                (id, name, kind, leader, stance, leverage, satisfaction, military_strength,
-                 cohesion, supply, agenda, status, last_action, aliases)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    power.id,
-                    power.name,
-                    power.kind,
-                    power.leader,
-                    power.stance,
-                    power.leverage,
-                    power.satisfaction,
-                    power.military_strength,
-                    power.cohesion,
-                    power.supply,
-                    power.agenda,
-                    power.status,
-                    power.last_action,
-                    json.dumps(power.aliases, ensure_ascii=False)
-                    if isinstance(power.aliases, list)
-                    else power.aliases,
-                ),
-            )
-        # Known pre-#522 stock authority: exact legacy leader only → content canonical.
-        bandits = self.content.powers.get("bandits")
-        if bandits and bandits.leader:
-            self.conn.execute(
-                """
-                UPDATE powers
-                SET leader = ?
-                WHERE id = 'bandits'
-                  AND leader = '王嘉胤等'
-                """,
-                (bandits.leader,),
-            )
-        for name in ("李自成", "张献忠"):
-            ch = self.content.characters.get(name)
-            if not ch or not ch.power_id or ch.power_id == "bandits":
-                continue
-            if self.conn.execute("SELECT 1 FROM powers WHERE id=?", (ch.power_id,)).fetchone() is None:
-                continue
-            self.conn.execute(
-                """
-                UPDATE characters
-                SET power_id = ?
-                WHERE name = ?
-                  AND COALESCE(power_id, '') IN ('', 'bandits')
-                """,
-                (ch.power_id, name),
-            )
-        self.conn.commit()
 
     def _backfill_event_triggers_from_event_pool_issues(self) -> None:
         pending_core_effect_ids = {
@@ -5619,36 +5390,13 @@ class GameDB:
             )
         self.conn.commit()
 
-    def _known_opening_gazette_seed_text(self) -> str:
-        """#1356 已知固定开局邸报全文指纹（与历史 seed 写入一致：strip 后入库）。"""
-        try:
-            from pathlib import Path
-            from ming_sim.paths import bundled_path
-            path = Path(bundled_path("content", "opening_gazette.md"))
-            if path.is_file():
-                return path.read_text(encoding="utf-8").strip()
-        except OSError:
-            return ""
-        return ""
 
-    def _purge_fixed_opening_gazette_seed(self) -> None:
-        """#1356：旧档精确 DELETE 已知 seed 全文。
-
-        单条 SQL 等值匹配，天然幂等；不扫表、不写 meta、不按短语 substring。
-        真实结算邸报（哪怕含 seed 短语）因全文不等而不被删。
-        """
-        known = self._known_opening_gazette_seed_text()
-        if not known:
-            return
-        self.conn.execute("DELETE FROM turn_reports WHERE report = ?", (known,))
-        self.conn.commit()
 
     def seed_opening_gazette(self, state: GameState) -> None:
         """开局公共见闻（新君登基/倒魏）。
 
         #1356/#1292：不再写入固定开局邸报文到 turn_reports（P7 禁固定模板直显）。
-        首份玩家可见邸报由第一个正常月末 LLM 结算产生；content/opening_gazette.md
-        仅作旧档 purge 指纹源，不进玩家面。
+        首份玩家可见邸报由第一个正常月末 LLM 结算产生。
         """
         # Keep the two opening facts addressable as public knowledge rather than
         # requiring a character to infer them from an undifferentiated gazette.
@@ -5718,45 +5466,6 @@ class GameDB:
             raise ValueError(f"character location 未知：{text!r}")
         return hit
 
-    def _migrate_character_location_aliases(self) -> None:
-        """#654 G：幂等扫描 characters.location；精确别名→canonical；全字段回传 transit。"""
-        rows = self.conn.execute(
-            "SELECT name, location, transit_to, transit_distance_remaining, "
-            "transit_speed_factor, transit_start_turn FROM characters"
-        ).fetchall()
-        if not rows:
-            return
-        from ming_sim.matching import canonical_region_id_exact
-
-        regions = getattr(self.content, "regions", None) or {}
-        changed = False
-        for row in rows:
-            raw = str(row["location"] or "")
-            if not raw.strip():
-                continue
-            # 已是 canonical id → skip
-            if raw in regions:
-                continue
-            hit = canonical_region_id_exact(raw, regions)
-            if hit is None:
-                raise ValueError(
-                    f"开档 location 未知别名：name={row['name']!r} location={raw!r}"
-                )
-            if hit == raw:
-                continue
-            self.set_character_transit(
-                str(row["name"]),
-                location=hit,
-                transit_to=str(row["transit_to"] or ""),
-                distance_remaining=row["transit_distance_remaining"],
-                speed_factor=row["transit_speed_factor"],
-                start_turn=int(row["transit_start_turn"] or 0),
-                content=self.content,
-                commit=False,
-            )
-            changed = True
-        if changed:
-            self.conn.commit()
 
     def set_character_transit(
         self,
@@ -15475,49 +15184,6 @@ class GameDB:
     }
     _JOINT_LIABILITY_TRIGGERS = frozenset(_EXECUTION_OUTCOME_INTENSITY)
     _INTENSITY_DOWNGRADE = {"strong": "weak", "weak": None}
-
-    @staticmethod
-    def _migrate_reaction_value(value: object) -> tuple[object, bool]:
-        """Translate only the two persisted pre-signed severity spellings."""
-        changed = False
-        if isinstance(value, dict):
-            value = dict(value)
-            severity = value.get("severity")
-            mapped = {"大怒": ("negative", "strong"), "不满": ("negative", "weak")}.get(severity)
-            if mapped is not None:
-                value.pop("severity", None)
-                value["direction"], value["intensity"] = mapped
-                changed = True
-        elif isinstance(value, list):
-            migrated = []
-            for item in value:
-                new_item, item_changed = GameDB._migrate_reaction_value(item)
-                migrated.append(new_item)
-                changed = changed or item_changed
-            value = migrated
-        return value, changed
-
-    def _migrate_legacy_reaction_severity(self) -> None:
-        """Idempotently repair persisted verdict reaction fields, never live payloads."""
-        for row in self.conn.execute(
-            "SELECT id AS migration_id, affected_parties_json AS payload "
-            "FROM decree_dossier_decisions"
-        ).fetchall():
-            try:
-                value = json.loads(str(row["payload"] or ""))
-            except ValueError as exc:
-                logging.getLogger(__name__).warning(
-                    "跳过 decree_dossier_decisions 表迁移行 %s：%s",
-                    row["migration_id"], exc,
-                )
-                continue
-            value, changed = self._migrate_reaction_value(value)
-            if changed:
-                self.conn.execute(
-                    "UPDATE decree_dossier_decisions SET affected_parties_json=? WHERE id=?",
-                    (safe_json_dumps(value, ensure_ascii=False), row["migration_id"]),
-                )
-        self.conn.commit()
 
     def _record_decree_cost(
         self, dossier_id: int, turn: int, cost_kind: str, target_kind: str,

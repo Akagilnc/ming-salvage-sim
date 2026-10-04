@@ -1,0 +1,43 @@
+class	member	disposition	hits	reason
+F2-R11-1	_migrate_legacy_reaction_severity	DELETED_ABSENT		复扫：符号应消失
+F2-R11-1	_migrate_reaction_value	DELETED_ABSENT		复扫：符号应消失
+F2-R11-1	_migrate_legacy_office_pollution	DELETED_ABSENT		复扫：符号应消失
+F2-R11-1	_backfill_person_core_character_static_fields	DELETED_ABSENT		复扫：符号应消失
+F2-R11-1	_migrate_character_identity_seed	DELETED_ABSENT		复扫：符号应消失
+F2-R11-1	_backfill_bandit_power_split	DELETED_ABSENT		复扫：符号应消失
+F2-R11-1	_migrate_character_location_aliases	DELETED_ABSENT		复扫：符号应消失
+F2-R11-1	_purge_fixed_opening_gazette_seed	DELETED_ABSENT		复扫：符号应消失
+F2-R11-1	_known_opening_gazette_seed_text	DELETED_ABSENT		复扫：符号应消失
+F2-R11-1	_month_end_ctx	DELETED_ABSENT		复扫：符号应消失
+F2-R11-1	_army_single_bad_item	DELETED_ABSENT		复扫：符号应消失
+F2-R11-1	_army_none_legal_item	DELETED_ABSENT		复扫：符号应消失
+F2-R11-1	_1778_raw_options	DELETED_ABSENT		复扫：符号应消失
+F2-R11-1	_1778_roster_of	DELETED_ABSENT		复扫：符号应消失
+F2-R11-1	_1778_plant_and_follow	DELETED_ABSENT		复扫：符号应消失
+F2-R11-1	_seed_text	DELETED_ABSENT		复扫：符号应消失
+F2-R11-1	test_legacy_persisted_reaction_severity_migrates_narrowly_and_idempotently	DELETED_ABSENT		复扫：符号应消失
+F2-R11-1	test_old_save_exact_purge_keeps_real_with_phrase_counterexample	DELETED_ABSENT		复扫：符号应消失
+F2-R11-1	test_fresh_seed_migrates_legacy_office_pollution	DELETED_ABSENT		复扫：符号应消失
+F2-R11-1	test_legacy_office_pollution_migrated_on_load	DELETED_ABSENT		复扫：符号应消失
+F2-R11-1	test_legacy_office_pollution_resolves_transit_to_region_id	DELETED_ABSENT		复扫：符号应消失
+F2-R11-1	test_old_save_migration_night_id_index_order	DELETED_ABSENT		复扫：符号应消失
+F2-R11-1	test_non_capital_location_aliases_migrate_on_reopen	DELETED_ABSENT		复扫：符号应消失
+F2-R11-1	test_shuntian_zhili_aliases_migrate_on_reopen	DELETED_ABSENT		复扫：符号应消失
+F2-R11-1	test_old_save_schema_init_backfills_bandit_power_split	DELETED_ABSENT		复扫：符号应消失
+F2-R11-1	test_bandit_power_backfill_serializes_list_aliases	DELETED_ABSENT		复扫：符号应消失
+F2-R11-1	test_bandit_power_split_backfill_preserves_changed_owner	DELETED_ABSENT		复扫：符号应消失
+F2-R11-1	test_old_save_migrates_and_mutiny_progress_survives_reopen	DELETED_ABSENT		复扫：符号应消失
+F2-R11-1	test_old_save_schema_is_upgraded_for_person_archive_fields	DELETED_ABSENT		复扫：符号应消失
+F2-R11-1	test_legacy_person_core_static_fields_backfill_reachability	DELETED_ABSENT		复扫：符号应消失
+F2-R11-1	test_person_core_static_backfill_preserves_relocated_mao	DELETED_ABSENT		复扫：符号应消失
+F2-R11-1	test_existing_save_migrates_seed_identity_and_inserts_missing_roster_member	DELETED_ABSENT		复扫：符号应消失
+F2-R11-1	test_army_pay_morale_formula_clamps_shortfall_and_old_arrears_gate	DELETED_ABSENT		复扫：符号应消失
+F2-R11-1	test_army_pay_morale_delta_tiers	DELETED_ABSENT		复扫：符号应消失
+F2-R11-1	test_657_s1_rescript_emitted_set_subset_of_dossier	DELETED_ABSENT		复扫：符号应消失
+F2-R11-1	ming_sim/db.py::decree_dossier_decisions	RETAIN		现役决策表保留；仅删旧档 severity 迁移
+F2-R11-1	ming_sim/appointment_tenure.py::normalize_appointment_tenure	RETAIN		supervision 现役消费
+F2-R11-1	ming_sim/covert_progress.py::canonical_fields_for_delivery	RETAIN		密令实进度现役消费
+F2-R11-1	tests/test_executor_routing_721.py::test_legacy_character_executor_migrates_without_overriding_roster	RETAIN		create_decree_dossier 现役写口；名含 legacy 但非旧档迁移
+F2-R11-1	tests/test_audience_travel_gating_670.py::test_capital_aliases_admit_in_capital	RETAIN		admit_audience 读时 canonicalize；已去 reopen 写回臂
+F2-R11-1	tests/test_qa_e1_numeric_presentation.py::test_player_budget_payload_strips_engineering_notes	RETAIN		#1471 G1 结清保留
+F2-R11-1	content/characters.json::七罢居人物	RETAIN		seed 洗净 status/office，替代 office pollution 迁移
