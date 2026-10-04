@@ -1013,11 +1013,12 @@ class GameSession:
     @staticmethod
     def _ensure_close_night_confirm_cue(answer: str) -> str:
         """含糊收夜：大臣戏内确认（不出戏），不直接收夜。"""
-        text = (answer or "").strip()
+        # Free prose answer: preserve raw; strip only emptiness (#1834 F16).
+        text = answer or ""
         ask = "陛下是要退朝么？"
         if ask in text:
-            return text or ask
-        if not text:
+            return text if text.strip() else ask
+        if not text.strip():
             return ask
         return text + "\n" + ask
 
@@ -1158,8 +1159,9 @@ class GameSession:
         )
         from ming_sim.llm_model import extract_agent_text
 
-        message_text = str(message or "").strip()
-        if not message_text:
+        # Free prose message: preserve raw; strip only emptiness (#1834 F16).
+        message_text = str(message or "")
+        if not message_text.strip():
             raise ValueError("问话不能为空。")
         from ming_sim.decree_forecast import bind_forecast_owner
         bind_forecast_owner(self)
@@ -2184,10 +2186,11 @@ class GameSession:
             obj = _parse_rescript_json_strict(str(raw or ""))
             if not isinstance(obj, dict):
                 raise ValueError("deliberate LLM 意愿须为 object")
-            title = str(obj.get("title") or "").strip()
-            body = str(obj.get("body") or "").strip()
-            stance = str(obj.get("stance") or "").strip()
-            if not (title and body and stance):
+            # Free prose deliberate title/body/stance: preserve raw; emptiness on copy (#1834 F16).
+            title = str(obj.get("title") or "")
+            body = str(obj.get("body") or "")
+            stance = str(obj.get("stance") or "")
+            if not (title.strip() and body.strip() and stance.strip()):
                 raise ValueError("deliberate LLM 意愿缺 title/body/stance")
             # shape 初检；身份合法性在 apply 事务内再核（整批零写）
             supporters = obj.get("supporter_ids", [])

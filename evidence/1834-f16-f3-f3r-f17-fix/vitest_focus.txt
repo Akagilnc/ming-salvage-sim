@@ -1,5 +1,10 @@
-CMD: cd web && npm test -- src/appDurableWiring.test.tsx src/components/settlementGazettePanel.test.tsx src/components/modals.test.tsx src/components/drawers.test.tsx src/components/decisionModal.test.tsx src/decisionRouting.test.tsx src/components/situation.test.tsx
----
+# focused vitest
+cd web && npm test -- \
+  src/appDurableWiring.test.tsx src/components/settlementGazettePanel.test.tsx \
+  src/components/modals.test.tsx src/components/drawers.test.tsx \
+  src/components/decisionModal.test.tsx src/decisionRouting.test.tsx \
+  src/components/situation.test.tsx
+
 
 > ming-salvage-web@0.1.0 test
 > vitest run --environment jsdom src/appDurableWiring.test.tsx src/components/settlementGazettePanel.test.tsx src/components/modals.test.tsx src/components/drawers.test.tsx src/components/decisionModal.test.tsx src/decisionRouting.test.tsx src/components/situation.test.tsx
@@ -11,6 +16,6 @@ Not implemented: navigation to another Document
 
  Test Files  7 passed (7)
       Tests  190 passed (190)
-   Start at  07:44:07
-   Duration  4.04s (transform 1.26s, setup 0ms, import 1.97s, tests 3.41s, environment 4.72s)
+   Start at  07:52:44
+   Duration  4.49s (transform 1.75s, setup 0ms, import 2.42s, tests 3.92s, environment 5.12s)
 

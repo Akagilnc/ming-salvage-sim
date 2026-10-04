@@ -1474,8 +1474,9 @@ def _grounding_source_text(
     只扫本函数拼出的源。
     """
     parts: List[str] = []
-    text = str(player_message or "").strip()
-    if text:
+    # Free prose player_message: preserve raw; strip only emptiness (#1834 F16).
+    text = str(player_message or "")
+    if text.strip():
         parts.append(text)
     for raw in failed_slot_refs or []:
         ref = str(raw or "").strip()
@@ -2834,7 +2835,8 @@ def extract_draft_intent(
             if not isinstance(value, dict):
                 invalid_batch = True
                 break
-            text = str(value.get("正文") or "").strip()
+            # Free prose 正文: preserve raw; strip only emptiness (#1834 F16).
+            text = str(value.get("正文") or "")
             action = str(value.get("动作类型") or "").strip()
             if action == "grant_allocation":
                 projected = _normalize_grant_transport(value)
@@ -2868,7 +2870,7 @@ def extract_draft_intent(
             except ValueError:
                 invalid_batch = True
                 break
-            if not text or mode is None or text in seen_texts or structured_kind == "empty":
+            if not text.strip() or mode is None or text in seen_texts or structured_kind == "empty":
                 invalid_batch = True
                 break
             seen_texts.add(text)
@@ -3116,7 +3118,8 @@ def extract_draft_intent(
         assert push_dossier_id is not None
         push_out: Dict[str, Any] = {
             "draft_action": "拟旨",
-            "draft_text": (minister_reply or player_message or "").strip(),
+            # Free prose draft body: preserve raw (#1834 F16).
+            "draft_text": minister_reply or player_message or "",
             "target_candidate": "",
             "target_dossier_id": push_dossier_id,
         }
@@ -3378,14 +3381,17 @@ def build_draft_admission_resubmit_feedback(
     结构契约/科目词表已由 extract_draft_intent 主 prompt 注入，不在 correction 再写一份。
     """
     payload_json = json.dumps(dict(bad_payload or {}), ensure_ascii=False, sort_keys=True)
-    reason = str(failure_reason or "").strip() or "（未给出具体拒因）"
-    text = str(decree_text or "").strip()
+    # Free prose failure_reason / decree_text: preserve raw; emptiness on copy (#1834 F16).
+    reason = str(failure_reason or "")
+    if not reason.strip():
+        reason = "（未给出具体拒因）"
+    text = str(decree_text or "")
     parts = [
         "【成案校验失败，请按失败事实与原产物整份重交结构化字段（勿改旨文正文）】\n",
         f"失败事实：{reason}\n",
         f"原产物：{payload_json}\n",
     ]
-    if text:
+    if text.strip():
         parts.append(f"原旨正文（不得改写）：{text}\n")
     return "".join(parts)
 
@@ -3494,8 +3500,9 @@ def resubmit_draft_admission_payload(
     （原抽 + 重写 2 = 总计 3）。与 extract 内 heal_retries（组合/名册）独立——
     内部 heal 不冒充成案补交次数。不在引擎侧改写 LLM 输出（0142）。
     """
-    text = str(decree_text or "").strip()
-    if not text:
+    # Free prose decree_text: preserve raw; strip only emptiness (#1834 F16).
+    text = str(decree_text or "")
+    if not text.strip():
         raise ValueError("补交缺旨文正文")
     feedback = build_draft_admission_resubmit_feedback(
         failure_reason=failure_reason,
@@ -3825,25 +3832,27 @@ def _choose_assignee(
 
 
 def _split_audience_context(context: str) -> Tuple[str, str]:
-    """把召对上下文快照剥成 (皇帝任务文本, "")：去掉「皇帝：/大臣：」角色标签、
-    「【本轮确认】…」只保留期限/约束等实质补充。皇帝行=任务正文（作御旨守门输入+兜底种子）。
+    """把召对上下文快照剥成 (皇帝任务文本, "")：去掉「皇帝：/大臣：」角色标签；
+    「【本轮确认】…」行保留确认后正文（不 regex 删确认原子）。皇帝行=任务正文
+    （作御旨守门输入+兜底种子）。自由正文保原文，strip 只判空（#1834 F16）。
 
     #1274 K1 / ADR 0142：大臣行不再并入 content 拼装——实质补充须由 extractor「内容」字段
     承载；第二返回值恒为空串，保留元组形以免调用点分叉。
     """
     entries: List[Tuple[str, str]] = []  # ("e"=皇帝任务行,)
     for raw in (context or "").splitlines():
+        # Structural prefix match on stripped copy; payload preserve-raw.
         line = raw.strip()
         if not line:
             continue
         if line.startswith("【本轮确认】"):
             material = _secret_confirmation_material(line.removeprefix("【本轮确认】"))
-            if material:
+            if material.strip():
                 entries.append(("e", material))
             continue
         if line.startswith("皇帝："):
-            task = line[len("皇帝："):].strip()
-            if task:
+            task = line[len("皇帝："):]
+            if task.strip():
                 entries.append(("e", task))
         # 大臣行：不入 content 拼装（extractor 读完整上下文自行抽「内容」）
     # 只取最近的任务跨度：排除同回合更早的无关问答，但保留连续多条相关皇帝任务行。
@@ -3916,25 +3925,11 @@ def _secret_context_topic_chars(text: str) -> set:
 
 
 def _secret_confirmation_material(text: str) -> str:
-    material = (text or "").strip()
-    if not material:
+    # Free prose after 【本轮确认】: preserve raw; strip only emptiness (#1834 F16).
+    # Do not regex-delete confirmation atoms / leading punct from body text.
+    material = text or ""
+    if not material.strip():
         return ""
-    atoms = (
-        "准卿所奏", "按你意思", "照你意思", "就这么办", "便如此", "准奏", "照准",
-        "照办", "就按", "就照", "依卿", "依你", "便依", "同意", "卿所奏",
-        "你意思", "所奏", "如此", "这么办", "就办", "可", "准", "好", "是",
-        "善", "行", "办", "吧", "奏",
-    )
-    changed = True
-    while changed:
-        changed = False
-        material = re.sub(r"^[\s，,。.!！?？；;：:、]+", "", material)
-        for atom in atoms:
-            if material.startswith(atom):
-                material = material[len(atom):]
-                changed = True
-                break
-    material = re.sub(r"^[\s，,。.!！?？；;：:、]+", "", material).strip()
     return material
 
 
@@ -3946,8 +3941,9 @@ def _merge_secret_content(*parts: str) -> str:
     merged: List[str] = []
     seen: set = set()
     for p in parts:
-        chunk = (p or "").strip()
-        if not chunk:
+        # Free prose secret chunks: preserve raw; strip only emptiness (#1834 F16).
+        chunk = p or ""
+        if not chunk.strip():
             continue
         key = re.sub(r"\s+", "", chunk)
         if key in seen:
@@ -3994,8 +3990,9 @@ def _normalize_dossier_link_proposals(
             continue
         target = link["target_dossier_id"]
         relation = str(link.get("relation_type") or "").strip()
-        note = str(link.get("note") or "").strip()
-        if target in candidate_ids and relation in DOSSIER_LINK_TYPES and note:
+        # Free prose dossier link note: preserve raw; strip only emptiness (#1834 F16).
+        note = str(link.get("note") or "")
+        if target in candidate_ids and relation in DOSSIER_LINK_TYPES and note.strip():
             proposals[(target, relation)] = {
                 "target_dossier_id": target, "relation_type": relation, "note": note}
     return proposals
@@ -4013,8 +4010,9 @@ def confirm_dossier_links(
     both the reader-visible candidates and the producer's structured proposal.
     A failed/ambiguous verdict authorises nothing.
     """
+    # Free prose titles for LLM supply: preserve raw (#1834 F16).
     candidates = {
-        int(row["id"]): str(row.get("secret_title") or row.get("decree_text") or "").strip()
+        int(row["id"]): str(row.get("secret_title") or row.get("decree_text") or "")
         for row in (dossier_candidates or [])
         if isinstance(row, dict) and type(row.get("id")) is int
     }

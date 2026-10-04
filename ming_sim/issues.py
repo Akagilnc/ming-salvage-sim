@@ -3125,7 +3125,9 @@ def _spawn_legacy_from_effect(
     legacy = effect.get("legacy")
     if not isinstance(legacy, dict):
         return None
-    name = str(legacy.get("name") or "").strip() or f"{issue_title}遗留"
+    # Free prose legacy name: preserve raw; strip only emptiness (#1834 F16).
+    name_raw = str(legacy.get("name") or "")
+    name = name_raw if name_raw.strip() else f"{issue_title}遗留"
     dur_key = str(legacy.get("duration") or "2年").strip()
     duration = _LEGACY_DURATION_MONTHS.get(dur_key)
     if duration is None:

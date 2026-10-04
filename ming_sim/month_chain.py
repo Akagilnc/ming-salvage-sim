@@ -54,8 +54,10 @@ def run_world_segment_text(
 
     prepared = prepare_world_materials(db, state)
     message = "推演本月世界段。"
-    if str(cheat_directive or "").strip():
-        message = str(cheat_directive).strip() + "\n" + message
+    # Free prose cheat_directive: preserve raw; strip only emptiness (#1834 F16).
+    cheat_raw = str(cheat_directive or "")
+    if cheat_raw.strip():
+        message = cheat_raw + "\n" + message
     try:
         agent = create_world_segment_agent(llm_config, prepared)
         return run_agent_text(
@@ -527,8 +529,10 @@ def run_player_month_chain(
         )
 
     try:
-        if str(cheat_directive or "").strip() and not chain.get("cheat_directive"):
-            chain["cheat_directive"] = str(cheat_directive).strip()
+        # Free prose cheat_directive: preserve raw; strip only emptiness (#1834 F16).
+        cheat_raw = str(cheat_directive or "")
+        if cheat_raw.strip() and not chain.get("cheat_directive"):
+            chain["cheat_directive"] = cheat_raw
             _save_chain(db, turn, chain, decree_text=decree_text, source=source)
         _consume_call_failure_for_retry(db, chain, turn, decree_text, source)
     except Exception as exc:

@@ -470,10 +470,11 @@ def validate_all(
 
             event_id = str(row.get("event_id") or "")
             label = str(req.get("label") or "").strip()
-            note = str(req.get("note") or "").strip()
+            # Free prose decision note: preserve raw; strip only emptiness (#1834 F16).
+            note = str(req.get("note") or "")
             if (
                 not label
-                and note
+                and note.strip()
                 and (
                     event_id.startswith(_DECREE_QUESTION_PREFIX)
                     or event_id.startswith(_WORLD_QUESTION_PREFIX)

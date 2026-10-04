@@ -348,15 +348,16 @@ def render_referenceable_dossier_brief(candidates) -> str:
     for row in candidates:
         if not isinstance(row, dict):
             continue
+        # Free prose title / execution_note: preserve raw; strip only emptiness (#1834 F16).
         title = str(
             row.get("secret_title") or row.get("decree_text") or row.get("action_type") or ""
-        ).strip()
+        )
         status_cn = qualitative_dossier_status(row.get("status"))
         decision_cn = qualitative_promulgation_slot(row)
         outcome_cn = qualitative_dossier_outcome(
             row.get("execution_outcome"), status=row.get("status"),
         )
-        note = str(row.get("execution_note") or "").strip()
+        note = str(row.get("execution_note") or "")
         markers = qualitative_midzhi_markers(row)
         facts = []
         if status_cn:
@@ -365,7 +366,7 @@ def render_referenceable_dossier_brief(candidates) -> str:
             facts.append(f"颁布：{decision_cn}")
         if outcome_cn:
             facts.append(f"执行：{outcome_cn}")
-        if note:
+        if note.strip():
             facts.append(f"说明：{note}")
         if markers:
             facts.append("标记：" + "、".join(markers))

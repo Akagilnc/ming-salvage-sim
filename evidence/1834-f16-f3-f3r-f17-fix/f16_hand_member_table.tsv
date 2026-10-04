@@ -211,7 +211,7 @@ KEEP	ming_sim/audience_night.py:2144	STRIP	name	identity lookup key on name: nam
 KEEP	ming_sim/audience_night.py:2163	STRIP	name	identity lookup key on name: name = str(person_name or "").strip()	identity / name lookup; not free-prose body rewrite
 KEEP	ming_sim/audience_night.py:2191	STRIP	name	identity lookup key on name: name = str(person_name or "").strip()	identity / name lookup; not free-prose body rewrite
 KEEP	ming_sim/audience_night.py:2246	STRIP	name	identity lookup key on name: name = str(person_name or "").strip()	identity / name lookup; not free-prose body rewrite
-FIX_REMAINING	ming_sim/audience_night.py:2257	STRIP	body	audible entry body.strip() → person experience materials projection	still rewrites free prose on real supply/write; not yet patched
+FIX_APPLIED	ming_sim/audience_night.py:2257	STRIP	body	audible entry body.strip() → person experience materials projection	FIX_APPLIED this round: preserve-raw / emptiness-on-copy verified in live code
 KEEP	ming_sim/audience_night.py:2262	JOIN	expr	JOIN token/path/prompt/error scaffolding: return SCENE_RECAP_HEADER + "\n" + "\n".join(bodies)	join/split scaffolding; not mutating a stored free-prose field
 KEEP	ming_sim/audience_night.py:2325	STRIP	name	identity lookup key on name: name = str(person_name or "").strip()	identity / name lookup; not free-prose body rewrite
 KEEP	ming_sim/audience_night.py:2369	STRIP	origin	identity lookup key on origin: origin = str(origin or "").strip()	identity / name lookup; not free-prose body rewrite
@@ -334,7 +334,7 @@ KEEP	ming_sim/cli_backend.py:1387	STRIP	name	identity name normalize: name = str
 KEEP	ming_sim/cli_backend.py:1396	JOIN	shown	JOIN token/path/prompt/error scaffolding: shown = "、".join(cleaned) if cleaned else "其人"	join/split scaffolding; not mutating a stored free-prose field
 KEEP	ming_sim/cli_backend.py:1430	STRIP	name	identity name normalize: name = str(match.group(1) or "").strip()	identity / name lookup; not free-prose body rewrite
 KEEP	ming_sim/cli_backend.py:1452	STRIP	cid	identity lookup key on cid: cid = str(item.get(key) or "").strip()	identity / name lookup; not free-prose body rewrite
-FIX_REMAINING	ming_sim/cli_backend.py:1477	STRIP	player_message	strip player_message into draft-admission / failed-slot LLM prompt parts	still rewrites free prose on real supply/write; not yet patched
+FIX_APPLIED	ming_sim/cli_backend.py:1477	STRIP	player_message	strip player_message into draft-admission / failed-slot LLM prompt parts	FIX_APPLIED this round: preserve-raw / emptiness-on-copy verified in live code
 KEEP	ming_sim/cli_backend.py:1481	STRIP	ref	strip/trim not rewriting free prose on supply/write: ref = str(raw or "").strip()	not free-prose supply/write (identity/config/local/compare)
 KEEP	ming_sim/cli_backend.py:1484	JOIN	expr	JOIN token/path/prompt/error scaffolding: return "\n".join(parts)	join/split scaffolding; not mutating a stored free-prose field
 KEEP	ming_sim/cli_backend.py:1490	STRIP	name	identity name normalize: name = str(canon or "").strip()	identity / name lookup; not free-prose body rewrite
@@ -391,7 +391,7 @@ KEEP	ming_sim/cli_backend.py:2689	STRIP	expr	machine-key/enum/config normalize o
 KEEP	ming_sim/cli_backend.py:2692	STRIP	expr	strip/trim not rewriting free prose on supply/write: ).strip()	not free-prose supply/write (identity/config/local/compare)
 KEEP	ming_sim/cli_backend.py:2706	JOIN	expr	JOIN token/path/prompt/error scaffolding: + "\n".join(lines) + "\n"	join/split scaffolding; not mutating a stored free-prose field
 KEEP	ming_sim/cli_backend.py:2743	STRIP	correction_block	strip/trim not rewriting free prose on supply/write: correction_block = str(correction_feedback or "").strip()	not free-prose supply/write (identity/config/local/compare)
-FIX_REMAINING	ming_sim/cli_backend.py:2837	STRIP	正文	strip extractor 正文 before draft/grant projection → directive payload	still rewrites free prose on real supply/write; not yet patched
+FIX_APPLIED	ming_sim/cli_backend.py:2837	STRIP	正文	strip extractor 正文 before draft/grant projection → directive payload	FIX_APPLIED this round: preserve-raw / emptiness-on-copy verified in live code
 KEEP	ming_sim/cli_backend.py:2838	STRIP	action	machine-key/enum/config normalize on action: action = str(value.get("动作类型") or "").strip()	machine key / enum / config normalization
 KEEP	ming_sim/cli_backend.py:2849	STRIP	expr	machine-key/enum/config normalize on expr: ).strip()	machine key / enum / config normalization
 KEEP	ming_sim/cli_backend.py:2852	STRIP	expr	machine-key/enum/config normalize on expr: ).strip()	machine key / enum / config normalization
@@ -402,7 +402,7 @@ KEEP	ming_sim/cli_backend.py:3071	STRIP	_action	machine-key/enum/config normaliz
 KEEP	ming_sim/cli_backend.py:3095	STRIP	_act	machine-key/enum/config normalize on _act: _act = str(obj.get("动作类型") or "").strip()	machine key / enum / config normalization
 KEEP	ming_sim/cli_backend.py:3103	STRIP	expr	machine-key/enum/config normalize on expr: ).strip()	machine key / enum / config normalization
 KEEP	ming_sim/cli_backend.py:3106	STRIP	expr	machine-key/enum/config normalize on expr: ).strip()	machine key / enum / config normalization
-KEEP	ming_sim/cli_backend.py:3119	STRIP	expr	strip/trim not rewriting free prose on supply/write: "draft_text": (minister_reply or player_message or "").strip(),	not free-prose supply/write (identity/config/local/compare)
+FIX_APPLIED	ming_sim/cli_backend.py:3119	STRIP	expr	strip/trim not rewriting free prose on supply/write: "draft_text": (minister_reply or player_message or "").strip(),	FIX_APPLIED this round: preserve-raw / emptiness-on-copy verified in live code
 KEEP	ming_sim/cli_backend.py:3133	STRIP	dossier_action	machine-key/enum/config normalize on dossier_action: dossier_action = str(obj.get("动作类型") or "special_decree").strip()	machine key / enum / config normalization
 KEEP	ming_sim/cli_backend.py:3141	STRIP	expr	machine-key/enum/config normalize on expr: str(_tk_raw or "").strip()	machine key / enum / config normalization
 KEEP	ming_sim/cli_backend.py:3147	STRIP	expr	machine-key/enum/config normalize on expr: ).strip()	machine key / enum / config normalization
@@ -419,11 +419,11 @@ KEEP	ming_sim/cli_backend.py:3301	STRIP	target_kind	machine-key/enum/config norm
 KEEP	ming_sim/cli_backend.py:3302	STRIP	target_id	machine-key/enum/config normalize on target_id: and str(payload.get("target_id") or "").strip() == "manual-directive"	machine key / enum / config normalization
 KEEP	ming_sim/cli_backend.py:3303	STRIP	locality_scope	machine-key/enum/config normalize on locality_scope: and str(payload.get("locality_scope") or "").strip() == "none"	machine key / enum / config normalization
 FIX_APPLIED	ming_sim/cli_backend.py:3321	STRIP	directive_text	capture_manual_directive_payload: directive_text=str(text).strip() before extract/store	FIX_APPLIED this round: preserve-raw / emptiness-on-copy verified in live code
-FIX_REMAINING	ming_sim/cli_backend.py:3378	STRIP	failure_reason	failure_reason.strip() into resubmit feedback LLM prompt	still rewrites free prose on real supply/write; not yet patched
-FIX_REMAINING	ming_sim/cli_backend.py:3379	STRIP	decree_text	decree_text.strip() on unknown-participant / report path	still rewrites free prose on real supply/write; not yet patched
+FIX_APPLIED	ming_sim/cli_backend.py:3378	STRIP	failure_reason	failure_reason.strip() into resubmit feedback LLM prompt	FIX_APPLIED this round: preserve-raw / emptiness-on-copy verified in live code
+FIX_APPLIED	ming_sim/cli_backend.py:3379	STRIP	decree_text	decree_text.strip() on unknown-participant / report path	FIX_APPLIED this round: preserve-raw / emptiness-on-copy verified in live code
 KEEP	ming_sim/cli_backend.py:3387	JOIN	expr	JOIN token/path/prompt/error scaffolding: return "".join(parts)	join/split scaffolding; not mutating a stored free-prose field
 KEEP	ming_sim/cli_backend.py:3441	STRIP	payload["name"]	machine-key/enum/config normalize on payload["name"]: payload["name"] = str(payload.get("target_id") or "").strip()	machine key / enum / config normalization
-FIX_REMAINING	ming_sim/cli_backend.py:3494	STRIP	decree_text	resubmit_draft_admission: decree_text.strip() before re-extract	still rewrites free prose on real supply/write; not yet patched
+FIX_APPLIED	ming_sim/cli_backend.py:3494	STRIP	decree_text	resubmit_draft_admission: decree_text.strip() before re-extract	FIX_APPLIED this round: preserve-raw / emptiness-on-copy verified in live code
 KEEP	ming_sim/cli_backend.py:3545	STRIP	pm	strip/trim not rewriting free prose on supply/write: pm = (message or "").strip()	not free-prose supply/write (identity/config/local/compare)
 KEEP	ming_sim/cli_backend.py:3548	STRIP	expr	strip/trim not rewriting free prose on supply/write: return pm[len(pre):].strip()	not free-prose supply/write (identity/config/local/compare)
 KEEP	ming_sim/cli_backend.py:3576	JOIN	expr	JOIN token/path/prompt/error scaffolding: return "".join(out)	join/split scaffolding; not mutating a stored free-prose field
@@ -440,7 +440,7 @@ KEEP	ming_sim/cli_backend.py:3762	JOIN	expr	JOIN token/path/prompt/error scaffol
 KEEP	ming_sim/cli_backend.py:3793	STRIP	name	identity lookup key on name: name = m.group(1).strip()	identity / name lookup; not free-prose body rewrite
 KEEP	ming_sim/cli_backend.py:3817	STRIP	llm	identity lookup key on llm: llm = (assignee_llm or "").strip()	identity / name lookup; not free-prose body rewrite
 KEEP	ming_sim/cli_backend.py:3832	STRIP	line	strip/trim not rewriting free prose on supply/write: line = raw.strip()	not free-prose supply/write (identity/config/local/compare)
-KEEP	ming_sim/cli_backend.py:3841	STRIP	task	strip/trim not rewriting free prose on supply/write: task = line[len("皇帝："):].strip()	not free-prose supply/write (identity/config/local/compare)
+FIX_APPLIED	ming_sim/cli_backend.py:3841	STRIP	task	strip/trim not rewriting free prose on supply/write: task = line[len("皇帝："):].strip()	FIX_APPLIED this round: preserve-raw / emptiness-on-copy verified in live code
 KEEP	ming_sim/cli_backend.py:3866	JOIN	expr	JOIN token/path/prompt/error scaffolding: return "\n".join(emperor_lines), ""	join/split scaffolding; not mutating a stored free-prose field
 KEEP	ming_sim/cli_backend.py:3870	RE_SUB	compact	re.sub office/match/parse hygiene: compact = re.sub(r"\s+", "", text or "")	machine normalization / match key / parse hygiene
 KEEP	ming_sim/cli_backend.py:3881	RE_SUB	later_compact	re.sub office/match/parse hygiene: later_compact = re.sub(r"\s+", "", later or "")	machine normalization / match key / parse hygiene
@@ -450,18 +450,18 @@ KEEP	ming_sim/cli_backend.py:3900	RE_SUB	compact	re.sub office/match/parse hygie
 KEEP	ming_sim/cli_backend.py:3901	RE_SUB	compact	re.sub office/match/parse hygiene: compact = re.sub(	machine normalization / match key / parse hygiene
 KEEP	ming_sim/cli_backend.py:3906	RE_SUB	compact	re.sub office/match/parse hygiene: compact = re.sub(	machine normalization / match key / parse hygiene
 KEEP	ming_sim/cli_backend.py:3915	STRIP	material	strip/trim not rewriting free prose on supply/write: material = (text or "").strip()	not free-prose supply/write (identity/config/local/compare)
-FIX_REMAINING	ming_sim/cli_backend.py:3927	RE_SUB	material	re.sub strips leading punct from confirmation material before secret assemble	still rewrites free prose on real supply/write; not yet patched
-FIX_REMAINING	ming_sim/cli_backend.py:3933	STRIP	material	re.sub+strip confirmation material before secret content assemble	still rewrites free prose on real supply/write; not yet patched
-FIX_REMAINING	ming_sim/cli_backend.py:3933	RE_SUB	material	re.sub+strip confirmation material before secret content assemble	still rewrites free prose on real supply/write; not yet patched
-FIX_REMAINING	ming_sim/cli_backend.py:3945	STRIP	chunk	_merge_secret_content chunk.strip() before join into secret content	still rewrites free prose on real supply/write; not yet patched
+FIX_APPLIED	ming_sim/cli_backend.py:3927	RE_SUB	material	re.sub strips leading punct from confirmation material before secret assemble	FIX_APPLIED this round: preserve-raw / emptiness-on-copy verified in live code
+FIX_APPLIED	ming_sim/cli_backend.py:3933	STRIP	material	re.sub+strip confirmation material before secret content assemble	FIX_APPLIED this round: preserve-raw / emptiness-on-copy verified in live code
+FIX_APPLIED	ming_sim/cli_backend.py:3933	RE_SUB	material	re.sub+strip confirmation material before secret content assemble	FIX_APPLIED this round: preserve-raw / emptiness-on-copy verified in live code
+FIX_APPLIED	ming_sim/cli_backend.py:3945	STRIP	chunk	_merge_secret_content chunk.strip() before join into secret content	FIX_APPLIED this round: preserve-raw / emptiness-on-copy verified in live code
 KEEP	ming_sim/cli_backend.py:3948	RE_SUB	key	re.sub office/match/parse hygiene: key = re.sub(r"\s+", "", chunk)	machine normalization / match key / parse hygiene
 KEEP	ming_sim/cli_backend.py:3953	JOIN	expr	JOIN token/path/prompt/error scaffolding: return "\n".join(merged)	join/split scaffolding; not mutating a stored free-prose field
 KEEP	ming_sim/cli_backend.py:3960	STRIP	line	strip/trim not rewriting free prose on supply/write: line = raw_line.strip()	not free-prose supply/write (identity/config/local/compare)
 KEEP	ming_sim/cli_backend.py:3965	SPLIT	expr	SPLIT token/path/prompt/error scaffolding: for item in re.split(r"[,，、/;；\s]+", m_tags.group(1)):	join/split scaffolding; not mutating a stored free-prose field
 KEEP	ming_sim/cli_backend.py:3966	STRIP	cleaned	strip/trim not rewriting free prose on supply/write: cleaned = item.strip()	not free-prose supply/write (identity/config/local/compare)
 KEEP	ming_sim/cli_backend.py:3992	STRIP	relation	machine-key/enum/config normalize on relation: relation = str(link.get("relation_type") or "").strip()	machine key / enum / config normalization
-FIX_REMAINING	ming_sim/cli_backend.py:3993	STRIP	note	dossier link note.strip() into proposals before durable store	still rewrites free prose on real supply/write; not yet patched
-KEEP	ming_sim/cli_backend.py:4013	STRIP	secret_title	strip/trim not rewriting free prose on supply/write: int(row["id"]): str(row.get("secret_title") or row.get("decree_text") or "").strip()	not free-prose supply/write (identity/config/local/compare)
+FIX_APPLIED	ming_sim/cli_backend.py:3993	STRIP	note	dossier link note.strip() into proposals before durable store	FIX_APPLIED this round: preserve-raw / emptiness-on-copy verified in live code
+FIX_APPLIED	ming_sim/cli_backend.py:4013	STRIP	secret_title	strip/trim not rewriting free prose on supply/write: int(row["id"]): str(row.get("secret_title") or row.get("decree_text") or "").strip()	FIX_APPLIED this round: preserve-raw / emptiness-on-copy verified in live code
 KEEP	ming_sim/cli_backend.py:4025	JOIN	expr	JOIN token/path/prompt/error scaffolding: "【可选提议】\n" + "\n".join(	join/split scaffolding; not mutating a stored free-prose field
 KEEP	ming_sim/cli_backend.py:4097	JOIN	expr	JOIN token/path/prompt/error scaffolding: "【可引用旧案卷】\n" + "\n".join(	join/split scaffolding; not mutating a stored free-prose field
 FIX_APPLIED	ming_sim/cli_backend.py:4147	STRIP	内容	_content_llm=内容.strip() → assemble_secret_order_content → secret write	FIX_APPLIED this round: preserve-raw / emptiness-on-copy verified in live code
@@ -499,11 +499,11 @@ KEEP	ming_sim/cli_backend.py:4700	STRIP	expr	machine-key/enum/config normalize o
 KEEP	ming_sim/commitment_backlash.py:39	STRIP	kind	machine-key/enum/config normalize on kind: kind = str(source_kind or "").strip()	machine key / enum / config normalization
 KEEP	ming_sim/commitment_backlash.py:52	STRIP	outcome	machine-key/enum/config normalize on outcome: outcome = str(execution_outcome or "").strip()	machine key / enum / config normalization
 KEEP	ming_sim/content.py:103	STRIP	crime_raw	local emptiness/compare on crime_raw: if not crime_raw.strip() and seed_guilt_fields["severity"] != "无":	local emptiness check; does not rewrite stored free prose
-KEEP	ming_sim/content.py:106	STRIP	crime_raw	strip/trim not rewriting free prose on supply/write: "crime": crime_raw.strip(),	not free-prose supply/write (identity/config/local/compare)
+FIX_APPLIED	ming_sim/content.py:106	STRIP	crime_raw	strip/trim not rewriting free prose on supply/write: "crime": crime_raw.strip(),	FIX_APPLIED this round: preserve-raw / emptiness-on-copy verified in live code
 KEEP	ming_sim/content.py:131	STRIP	location	machine-key/enum/config normalize on location: location=str(item.get("location") or "").strip(),	machine key / enum / config normalization
 KEEP	ming_sim/content.py:132	STRIP	office_region	machine-key/enum/config normalize on office_region: office_region=str(item.get("office_region") or "").strip(),	machine key / enum / config normalization
 KEEP	ming_sim/content.py:133	STRIP	transit_to	machine-key/enum/config normalize on transit_to: transit_to=str(item.get("transit_to") or "").strip(),	machine key / enum / config normalization
-FIX_REMAINING	ming_sim/content.py:140	STRIP	status_reason	character status_reason.strip() at content load → Character seed	still rewrites free prose on real supply/write; not yet patched
+FIX_APPLIED	ming_sim/content.py:140	STRIP	status_reason	character status_reason.strip() at content load → Character seed	FIX_APPLIED this round: preserve-raw / emptiness-on-copy verified in live code
 KEEP	ming_sim/content.py:141	STRIP	reason_code	machine-key/enum/config normalize on reason_code: reason_code=str(item.get("reason_code") or "").strip(),	machine key / enum / config normalization
 KEEP	ming_sim/content.py:163	JOIN	expr	JOIN token/path/prompt/error scaffolding: + "、".join(cross_faction_names_or_aliases)	join/split scaffolding; not mutating a stored free-prose field
 KEEP	ming_sim/content.py:177	STRIP	cond	strip/trim not rewriting free prose on supply/write: cond = cond.strip()	not free-prose supply/write (identity/config/local/compare)
@@ -536,7 +536,7 @@ KEEP	ming_sim/content.py:478	STRIP	pay_source_region	strip/trim not rewriting fr
 KEEP	ming_sim/content.py:531	STRIP	region_id	strip/trim not rewriting free prose on supply/write: region_id = str(item.get("region_id") or "").strip()	not free-prose supply/write (identity/config/local/compare)
 KEEP	ming_sim/content.py:569	STRIP	last_action	machine-key/enum/config normalize on last_action: last_action=str(entry.get("last_action") or "尚无新动").strip() or "尚无新动",	machine key / enum / config normalization
 KEEP	ming_sim/content.py:570	JOIN	aliases	JOIN token/path/prompt/error scaffolding: aliases="，".join(string_list(entry.get("aliases", []), "powers.json::powers[item].aliases")),	join/split scaffolding; not mutating a stored free-prose field
-FIX_REMAINING	ming_sim/content.py:593	STRIP	clear_narrative	OpeningLegacy clear_narrative.strip() at load → legacy seed	still rewrites free prose on real supply/write; not yet patched
+FIX_APPLIED	ming_sim/content.py:593	STRIP	clear_narrative	OpeningLegacy clear_narrative.strip() at load → legacy seed	FIX_APPLIED this round: preserve-raw / emptiness-on-copy verified in live code
 KEEP	ming_sim/context.py:166	JOIN	expr	JOIN token/path/prompt/error scaffolding: return "，".join(parts)	join/split scaffolding; not mutating a stored free-prose field
 KEEP	ming_sim/context.py:173	SLICE_DIGITS	raw	console/error/diagnostic only: raise LLMContractError(f"数据库中的数值变化 JSON 已损坏：{raw[:200]}") from error	console-only / exception detail; not materials/DB free-prose rewrite
 KEEP	ming_sim/context.py:175	SLICE_DIGITS	raw	console/error/diagnostic only: raise LLMContractError(f"数据库中的数值变化不是 object：{raw[:200]}")	console-only / exception detail; not materials/DB free-prose rewrite
@@ -574,11 +574,11 @@ KEEP	ming_sim/covert_progress.py:414	STRIP	inv_fact	strip/trim not rewriting fre
 KEEP	ming_sim/covert_progress.py:428	STRIP	purpose_text	machine-key/enum/config normalize on purpose_text: purpose_text = str(purpose or "").strip()	machine key / enum / config normalization
 KEEP	ming_sim/covert_progress.py:435	STRIP	kind_text	machine-key/enum/config normalize on kind_text: kind_text = str(target_kind or "").strip()	machine key / enum / config normalization
 KEEP	ming_sim/covert_progress.py:436	STRIP	id_text	machine-key/enum/config normalize on id_text: id_text = str(target_id or "").strip()	machine key / enum / config normalization
-FIX_REMAINING	ming_sim/covert_progress.py:441	STRIP	category	category.strip() → delivery["category"] covert contract write	still rewrites free prose on real supply/write; not yet patched
+KEEP	ming_sim/covert_progress.py:441	STRIP	category	category.strip() → delivery["category"] covert contract write	KEEP: covert delivery identity field (category/region/region_target); structured contract key, not free-prose body
 KEEP	ming_sim/covert_progress.py:444	STRIP	account_text	machine-key/enum/config normalize on account_text: account_text = str(account or "").strip()	machine key / enum / config normalization
-FIX_REMAINING	ming_sim/covert_progress.py:449	STRIP	region	region.strip() → delivery["region"] covert contract write	still rewrites free prose on real supply/write; not yet patched
+KEEP	ming_sim/covert_progress.py:449	STRIP	region	region.strip() → delivery["region"] covert contract write	KEEP: covert delivery identity field (category/region/region_target); structured contract key, not free-prose body
 KEEP	ming_sim/covert_progress.py:452	STRIP	field_text	strip/trim not rewriting free prose on supply/write: field_text = str(field or "").strip()	not free-prose supply/write (identity/config/local/compare)
-FIX_REMAINING	ming_sim/covert_progress.py:458	STRIP	target	region_target.strip() → delivery["target"] covert contract write	still rewrites free prose on real supply/write; not yet patched
+KEEP	ming_sim/covert_progress.py:458	STRIP	target	region_target.strip() → delivery["target"] covert contract write	KEEP: covert delivery identity field (category/region/region_target); structured contract key, not free-prose body
 KEEP	ming_sim/covert_progress.py:461	STRIP	action_text	machine-key/enum/config normalize on action_text: action_text = str(person_action or "").strip()	machine key / enum / config normalization
 KEEP	ming_sim/covert_progress.py:476	JOIN	expr	JOIN token/path/prompt/error scaffolding: f"密令确认交付 identity 缺少：{','.join(missing_identity)}"	join/split scaffolding; not mutating a stored free-prose field
 KEEP	ming_sim/covert_progress.py:495	STRIP	kind	local emptiness/compare on kind: if not str(raw.get("kind") or "").strip() or not normalize_axes(raw.get("axes")):	local emptiness check; does not rewrite stored free prose
@@ -740,7 +740,7 @@ KEEP	ming_sim/db.py:6058	SPLIT	p	local emptiness/compare on p: for part in (p.st
 FIX_APPLIED	ming_sim/db.py:6124	SLICE_DIGITS	payload_summary	person_logs INSERT payload_summary[:200]	FIX_APPLIED this round: preserve-raw / emptiness-on-copy verified in live code
 FIX_APPLIED	ming_sim/db.py:6125	SLICE_DIGITS	derived_from	person_logs INSERT derived_from[:120]	FIX_APPLIED this round: preserve-raw / emptiness-on-copy verified in live code
 KEEP	ming_sim/db.py:6126	SLICE_DIGITS	expr	identity lookup key on expr: normalized_text,  # 全量存：normalized 是结构化审计 JSON，[:500] 会从中间切断成不可解析（PR #106 CodeRabbit）	identity / name lookup; not free-prose body rewrite
-FIX_REMAINING	ming_sim/db.py:6127	SLICE_DIGITS	source	person_logs INSERT source[:80]	still rewrites free prose on real supply/write; not yet patched
+FIX_APPLIED	ming_sim/db.py:6127	SLICE_DIGITS	source	person_logs INSERT source[:80]	FIX_APPLIED prior round: person_logs source crop removed; live preserve-raw confirmed
 KEEP	ming_sim/db.py:6146	STRIP	wanted	local emptiness/compare on wanted: wanted = [str(name).strip() for name in (names or []) if str(name).strip()]	local emptiness check; does not rewrite stored free prose
 KEEP	ming_sim/db.py:6154	JOIN	expr	JOIN token/path/prompt/error scaffolding: clauses.append(f"name IN ({','.join('?' for _ in wanted)})")	join/split scaffolding; not mutating a stored free-prose field
 KEEP	ming_sim/db.py:6158	JOIN	expr	JOIN token/path/prompt/error scaffolding: f"FROM characters WHERE {' AND '.join(clauses)} ORDER BY name",	join/split scaffolding; not mutating a stored free-prose field
@@ -818,7 +818,7 @@ KEEP	ming_sim/db.py:8916	JOIN	expr	JOIN token/path/prompt/error scaffolding: ret
 KEEP	ming_sim/db.py:8947	STRIP	key	strip/trim not rewriting free prose on supply/write: key = (name_or_id or "").strip()	not free-prose supply/write (identity/config/local/compare)
 KEEP	ming_sim/db.py:9056	JOIN	expr	JOIN token/path/prompt/error scaffolding: return "；".join(parts) + "。"	join/split scaffolding; not mutating a stored free-prose field
 KEEP	ming_sim/db.py:9081	JOIN	expr	JOIN token/path/prompt/error scaffolding: return "\n".join(lines)	join/split scaffolding; not mutating a stored free-prose field
-FIX_REMAINING	ming_sim/db.py:9149	STRIP	highlights	phrase.strip() → chat_messages.highlights_json	still rewrites free prose on real supply/write; not yet patched
+FIX_APPLIED	ming_sim/db.py:9149	STRIP	highlights	phrase.strip() → chat_messages.highlights_json	FIX_APPLIED this round: preserve-raw / emptiness-on-copy verified in live code
 KEEP	ming_sim/db.py:9178	STRIP	item	local emptiness/compare on item: if isinstance(item, str) and item.strip():	local emptiness check; does not rewrite stored free prose
 KEEP	ming_sim/db.py:9179	STRIP	item	strip/trim not rewriting free prose on supply/write: out.append(item.strip())	not free-prose supply/write (identity/config/local/compare)
 KEEP	ming_sim/db.py:9235	JOIN	placeholders	JOIN token/path/prompt/error scaffolding: placeholders = ",".join("?" for _ in message_ids)	join/split scaffolding; not mutating a stored free-prose field
@@ -964,7 +964,7 @@ KEEP	ming_sim/db.py:14785	STRIP	name	machine-key/enum/config normalize on name: 
 KEEP	ming_sim/db.py:14792	STRIP	expr	machine-key/enum/config normalize on expr: return str(row["region_id"] or "").strip() if row is not None else ""	machine key / enum / config normalization
 KEEP	ming_sim/db.py:14814	STRIP	kind	machine-key/enum/config normalize on kind: kind = str(office_type or "").strip()	machine key / enum / config normalization
 KEEP	ming_sim/db.py:14822	STRIP	rid	machine-key/enum/config normalize on rid: rid = str(region_id or "").strip()	machine key / enum / config normalization
-FIX_REMAINING	ming_sim/db.py:14952	STRIP	note	dossier_links note.strip() in link normalize before store/reject	still rewrites free prose on real supply/write; not yet patched
+FIX_APPLIED	ming_sim/db.py:14952	STRIP	note	dossier_links note.strip() in link normalize before store/reject	FIX_APPLIED this round: preserve-raw / emptiness-on-copy verified in live code
 KEEP	ming_sim/db.py:15027	STRIP	supplied	machine-key/enum/config normalize on supplied: supplied = str(supplied_ref or "").strip()	machine key / enum / config normalization
 KEEP	ming_sim/db.py:15030	SPLIT	dossier_id	SPLIT token/path/prompt/error scaffolding: dossier_id = int(supplied.split(":", 1)[1])	join/split scaffolding; not mutating a stored free-prose field
 KEEP	ming_sim/db.py:15075	JOIN	where	JOIN token/path/prompt/error scaffolding: where = f" WHERE {' AND '.join(clauses)}" if clauses else ""	join/split scaffolding; not mutating a stored free-prose field
@@ -1083,13 +1083,13 @@ KEEP	ming_sim/db.py:20090	JOIN	where	JOIN token/path/prompt/error scaffolding: w
 KEEP	ming_sim/db.py:20132	STRIP	new_status	machine-key/enum/config normalize on new_status: new_status = str(status or "").strip()	machine key / enum / config normalization
 KEEP	ming_sim/db.py:20229	STRIP	expr	identity lookup key on expr: str(character_id).strip() for character_id in (target_roster or [])	identity / name lookup; not free-prose body rewrite
 KEEP	ming_sim/db.py:20230	STRIP	expr	local emptiness/compare on expr: if str(character_id).strip()	local emptiness check; does not rewrite stored free prose
-FIX_REMAINING	ming_sim/db.py:20479	SLICE_DIGITS	name	legacies INSERT name[:60]	still rewrites free prose on real supply/write; not yet patched
-FIX_REMAINING	ming_sim/db.py:20484	SLICE_DIGITS	legacy_key	legacies INSERT legacy_key[:60]	still rewrites free prose on real supply/write; not yet patched
+FIX_APPLIED	ming_sim/db.py:20479	SLICE_DIGITS	name	legacies INSERT name[:60]	FIX_APPLIED this round: preserve-raw / emptiness-on-copy verified in live code
+KEEP	ming_sim/db.py:20484	SLICE_DIGITS	legacy_key	legacies INSERT legacy_key[:60]	KEEP: machine identity/config key after type-role evidence (not free-prose body)
 KEEP	ming_sim/db.py:20637	STRIP	text	strip/trim not rewriting free prose on supply/write: text = str(value).strip().lower()	not free-prose supply/write (identity/config/local/compare)
 KEEP	ming_sim/db.py:20879	STRIP	target	strip/trim not rewriting free prose on supply/write: target = str(target_name or "").strip()	not free-prose supply/write (identity/config/local/compare)
 KEEP	ming_sim/db.py:20880	STRIP	key	strip/trim not rewriting free prose on supply/write: key = str(fact_key or "").strip()	not free-prose supply/write (identity/config/local/compare)
 KEEP	ming_sim/db.py:20883	STRIP	eff	strip/trim not rewriting free prose on supply/write: eff = str(effect or "").strip()	not free-prose supply/write (identity/config/local/compare)
-FIX_REMAINING	ming_sim/db.py:20903	SLICE_DIGITS	origin_ref	investigation_spoiled_facts INSERT origin_ref[:120]	still rewrites free prose on real supply/write; not yet patched
+KEEP	ming_sim/db.py:20903	SLICE_DIGITS	origin_ref	investigation_spoiled_facts INSERT origin_ref[:120]	KEEP: machine identity/config key after type-role evidence (not free-prose body)
 KEEP	ming_sim/db.py:20918	STRIP	target	strip/trim not rewriting free prose on supply/write: target = str(target_name or "").strip()	not free-prose supply/write (identity/config/local/compare)
 KEEP	ming_sim/db.py:20995	STRIP	character_id	identity lookup key on character_id: character_id = str(value.get("character_id") or "").strip()	identity / name lookup; not free-prose body rewrite
 KEEP	ming_sim/db.py:20998	STRIP	character_id	identity lookup key on character_id: character_id = str(value.get("character_id") or value.get("name") or "").strip()	identity / name lookup; not free-prose body rewrite
@@ -1230,8 +1230,8 @@ KEEP	ming_sim/decree_vocabulary.py:295	STRIP	source	machine-key/enum/config norm
 KEEP	ming_sim/decree_vocabulary.py:310	STRIP	base	machine-key/enum/config normalize on base: base = str(row.get("promulgation_decision") or "").strip()	machine key / enum / config normalization
 KEEP	ming_sim/decree_vocabulary.py:319	STRIP	mode	machine-key/enum/config normalize on mode: mode = str(row.get("mode") or "").strip()	machine key / enum / config normalization
 KEEP	ming_sim/decree_vocabulary.py:327	STRIP	source	machine-key/enum/config normalize on source: source = str(item.get("source_action") or "").strip()	machine key / enum / config normalization
-FIX_REMAINING	ming_sim/decree_vocabulary.py:353	STRIP	title	render_referenceable_dossier_brief title.strip() → LLM brief supply	still rewrites free prose on real supply/write; not yet patched
-FIX_REMAINING	ming_sim/decree_vocabulary.py:359	STRIP	execution_note	render_referenceable_dossier_brief note.strip() → LLM brief supply	still rewrites free prose on real supply/write; not yet patched
+FIX_APPLIED	ming_sim/decree_vocabulary.py:353	STRIP	title	render_referenceable_dossier_brief title.strip() → LLM brief supply	FIX_APPLIED this round: preserve-raw / emptiness-on-copy verified in live code
+FIX_APPLIED	ming_sim/decree_vocabulary.py:359	STRIP	execution_note	render_referenceable_dossier_brief note.strip() → LLM brief supply	FIX_APPLIED this round: preserve-raw / emptiness-on-copy verified in live code
 KEEP	ming_sim/decree_vocabulary.py:371	JOIN	expr	JOIN token/path/prompt/error scaffolding: facts.append("标记：" + "、".join(markers))	join/split scaffolding; not mutating a stored free-prose field
 KEEP	ming_sim/decree_vocabulary.py:372	JOIN	fact_text	JOIN token/path/prompt/error scaffolding: fact_text = "；".join(facts)	join/split scaffolding; not mutating a stored free-prose field
 KEEP	ming_sim/decree_vocabulary.py:375	JOIN	expr	JOIN token/path/prompt/error scaffolding: return "\n".join(lines)	join/split scaffolding; not mutating a stored free-prose field
@@ -1322,8 +1322,8 @@ KEEP	ming_sim/flows.py:1596	JOIN	expr	JOIN token/path/prompt/error scaffolding: 
 KEEP	ming_sim/flows.py:1603	JOIN	expr	JOIN token/path/prompt/error scaffolding: f"（合法：{'、'.join(f'{a}→{b}' for a, b in sorted(matrix))}）",	join/split scaffolding; not mutating a stored free-prose field
 KEEP	ming_sim/flows.py:1617	STRIP	origin_ref	identity lookup key on origin_ref: origin_ref = str(item.get("origin_ref") or "").strip()	identity / name lookup; not free-prose body rewrite
 KEEP	ming_sim/highlight_judge.py:26	STRIP	text	strip/trim not rewriting free prose on supply/write: text = str(raw or "").strip()	not free-prose supply/write (identity/config/local/compare)
-FIX_REMAINING	ming_sim/highlight_judge.py:44	STRIP	highlights	normalize_highlight_phrases phrase.strip() → set_message_highlights write	still rewrites free prose on real supply/write; not yet patched
-FIX_REMAINING	ming_sim/highlight_judge.py:58	STRIP	minister_reply	minister_reply.strip() before highlight-judge LLM supply	still rewrites free prose on real supply/write; not yet patched
+FIX_APPLIED	ming_sim/highlight_judge.py:44	STRIP	highlights	normalize_highlight_phrases phrase.strip() → set_message_highlights write	FIX_APPLIED this round: preserve-raw / emptiness-on-copy verified in live code
+FIX_APPLIED	ming_sim/highlight_judge.py:58	STRIP	minister_reply	minister_reply.strip() before highlight-judge LLM supply	FIX_APPLIED this round: preserve-raw / emptiness-on-copy verified in live code
 KEEP	ming_sim/issues.py:114	STRIP	op	strip/trim not rewriting free prose on supply/write: op = str(item.get("动作") or item.get("op") or "").strip()	not free-prose supply/write (identity/config/local/compare)
 KEEP	ming_sim/issues.py:119	STRIP	holder_id	machine-key/enum/config normalize on holder_id: holder_id = str(item.get("holder_id") or "").strip()	machine key / enum / config normalization
 KEEP	ming_sim/issues.py:120	STRIP	privilege	machine-key/enum/config normalize on privilege: privilege = str(item.get("privilege") or item.get("权项") or "").strip()	machine key / enum / config normalization
@@ -1745,7 +1745,7 @@ KEEP	ming_sim/materials.py:2276	STRIP	seg	strip/trim not rewriting free prose on
 KEEP	ming_sim/materials.py:2289	STRIP	status_text	machine-key/enum/config normalize on status_text: status_text = str(status or "").strip()	machine key / enum / config normalization
 KEEP	ming_sim/materials.py:2293	STRIP	reason_text	local emptiness/compare on reason_text: if reason_text.strip():	local emptiness check; does not rewrite stored free prose
 KEEP	ming_sim/materials.py:2379	JOIN	expr	JOIN token/path/prompt/error scaffolding: _write_text(tmp / _INDEX_NAME, "\n".join(index) if index else "")	join/split scaffolding; not mutating a stored free-prose field
-FIX_REMAINING	ming_sim/mechanical_tail.py:101	STRIP	body	gazette report/body.strip() into ending_summary LLM gazettes payload	still rewrites free prose on real supply/write; not yet patched
+FIX_APPLIED	ming_sim/mechanical_tail.py:101	STRIP	body	gazette report/body.strip() into ending_summary LLM gazettes payload	FIX_APPLIED this round: preserve-raw / emptiness-on-copy verified in live code
 KEEP	ming_sim/models.py:62	STRIP	raw	strip/trim not rewriting free prose on supply/write: return isinstance(raw, str) and bool(raw.strip())	not free-prose supply/write (identity/config/local/compare)
 KEEP	ming_sim/models.py:77	STRIP	account	machine-key/enum/config normalize on account: account = str(item.get("account") or "").strip()	machine key / enum / config normalization
 KEEP	ming_sim/models.py:127	STRIP	field	strip/trim not rewriting free prose on supply/write: field = aliases.get(str(raw_field).strip(), str(raw_field).strip())	not free-prose supply/write (identity/config/local/compare)
@@ -1757,7 +1757,7 @@ KEEP	ming_sim/models.py:182	STRIP	name	machine-key/enum/config normalize on name
 KEEP	ming_sim/models.py:183	STRIP	action	machine-key/enum/config normalize on action: action = str(item.get("动作") or item.get("action") or "").strip()	machine key / enum / config normalization
 KEEP	ming_sim/models.py:197	STRIP	style	local emptiness/compare on style: if isinstance(style, str) and style.strip():	local emptiness check; does not rewrite stored free prose
 KEEP	ming_sim/month_chain.py:57	STRIP	expr	local emptiness/compare on expr: if str(cheat_directive or "").strip():	local emptiness check; does not rewrite stored free prose
-FIX_REMAINING	ming_sim/month_chain.py:58	STRIP	cheat_directive	cheat_directive.strip() prepended into world-segment LLM message	still rewrites free prose on real supply/write; not yet patched
+FIX_APPLIED	ming_sim/month_chain.py:58	STRIP	cheat_directive	cheat_directive.strip() prepended into world-segment LLM message	FIX_APPLIED this round: preserve-raw / emptiness-on-copy verified in live code
 KEEP	ming_sim/month_chain.py:134	SPLIT	raw	SPLIT token/path/prompt/error scaffolding: raw = str(decree_ref)[len(prefix):].split(":", 1)[0]	join/split scaffolding; not mutating a stored free-prose field
 FIX_APPLIED	ming_sim/month_chain.py:184	STRIP	forecast	forecast.strip() emptiness before use; forecast_text_for preserves raw members	FIX_APPLIED: free-prose rewrite removed this/#1834 rounds; live preserve-raw or emptiness-only confirmed
 KEEP	ming_sim/month_chain.py:354	STRIP	title	local emptiness/compare on title: if not isinstance(title, str) or not title.strip():	local emptiness check; does not rewrite stored free prose
@@ -1766,7 +1766,7 @@ KEEP	ming_sim/month_chain.py:401	STRIP	expr	local emptiness/compare on expr: if 
 KEEP	ming_sim/month_chain.py:404	STRIP	prefix	local emptiness/compare on prefix: if prefix.strip():	local emptiness check; does not rewrite stored free prose
 KEEP	ming_sim/month_chain.py:441	STRIP	prefix	local emptiness/compare on prefix: if not prefix.strip():	local emptiness check; does not rewrite stored free prose
 KEEP	ming_sim/month_chain.py:530	STRIP	cheat_directive	local emptiness/compare on cheat_directive: if str(cheat_directive or "").strip() and not chain.get("cheat_directive"):	local emptiness check; does not rewrite stored free prose
-FIX_REMAINING	ming_sim/month_chain.py:531	STRIP	cheat_directive	chain["cheat_directive"]=strip → durable month chain state	still rewrites free prose on real supply/write; not yet patched
+FIX_APPLIED	ming_sim/month_chain.py:531	STRIP	cheat_directive	chain["cheat_directive"]=strip → durable month chain state	FIX_APPLIED this round: preserve-raw / emptiness-on-copy verified in live code
 KEEP	ming_sim/month_chain.py:602	STRIP	report	local emptiness/compare on report: if archive is None or not str(archive.get("report") or "").strip():	local emptiness check; does not rewrite stored free prose
 KEEP	ming_sim/month_chain.py:618	STRIP	report	local emptiness/compare on report: if archive is None or not str(archive.get("report") or "").strip():	local emptiness check; does not rewrite stored free prose
 KEEP	ming_sim/month_chain.py:1015	STRIP	prefix	local emptiness/compare on prefix: if prefix.strip():	local emptiness check; does not rewrite stored free prose
@@ -1876,7 +1876,7 @@ KEEP	ming_sim/rescript_actions.py:228	STRIP	cap	strip/trim not rewriting free pr
 KEEP	ming_sim/rescript_actions.py:311	STRIP	key	strip/trim not rewriting free prose on supply/write: key = str(raw.get("decision_key") or "").strip()	not free-prose supply/write (identity/config/local/compare)
 KEEP	ming_sim/rescript_actions.py:399	STRIP	action	machine-key/enum/config normalize on action: action = str((req or {}).get("action") or "").strip() if req is not None else ""	machine key / enum / config normalization
 KEEP	ming_sim/rescript_actions.py:472	STRIP	label	strip/trim not rewriting free prose on supply/write: label = str(req.get("label") or "").strip()	not free-prose supply/write (identity/config/local/compare)
-FIX_REMAINING	ming_sim/rescript_actions.py:473	STRIP	note	decision req note.strip() before choice validate/persist	still rewrites free prose on real supply/write; not yet patched
+FIX_APPLIED	ming_sim/rescript_actions.py:473	STRIP	note	decision req note.strip() before choice validate/persist	FIX_APPLIED this round: preserve-raw / emptiness-on-copy verified in live code
 KEEP	ming_sim/rescript_actions.py:519	STRIP	cap	strip/trim not rewriting free prose on supply/write: cap = str(req.get("draft_capability") or "").strip()	not free-prose supply/write (identity/config/local/compare)
 KEEP	ming_sim/rescript_actions.py:531	STRIP	label	local emptiness/compare on label: if not str(stored_raw.get("label") or "").strip():	local emptiness check; does not rewrite stored free prose
 KEEP	ming_sim/rescript_actions.py:544	STRIP	at	machine-key/enum/config normalize on at: at = str(req.get("action_type") or "").strip()	machine key / enum / config normalization
@@ -2004,8 +2004,8 @@ KEEP	ming_sim/session.py:638	STRIP	office_region	machine-key/enum/config normali
 KEEP	ming_sim/session.py:873	STRIP	clean_name	identity lookup key on clean_name: clean_name = str(name_or_text or "").strip()	identity / name lookup; not free-prose body rewrite
 KEEP	ming_sim/session.py:974	STRIP	expr	local emptiness/compare on expr: if not str(origin_id or "").strip():	local emptiness check; does not rewrite stored free prose
 KEEP	ming_sim/session.py:992	STRIP	origin_id	strip/trim not rewriting free prose on supply/write: origin_id=str(origin_id).strip(),	not free-prose supply/write (identity/config/local/compare)
-KEEP	ming_sim/session.py:1016	STRIP	text	strip/trim not rewriting free prose on supply/write: text = (answer or "").strip()	not free-prose supply/write (identity/config/local/compare)
-FIX_REMAINING	ming_sim/session.py:1161	STRIP	message	message_text=str(message).strip() → scene agent_prompt + translation supply	still rewrites free prose on real supply/write; not yet patched
+FIX_APPLIED	ming_sim/session.py:1016	STRIP	text	strip/trim not rewriting free prose on supply/write: text = (answer or "").strip()	FIX_APPLIED this round: preserve-raw / emptiness-on-copy verified in live code
+FIX_APPLIED	ming_sim/session.py:1161	STRIP	message	message_text=str(message).strip() → scene agent_prompt + translation supply	FIX_APPLIED this round: preserve-raw / emptiness-on-copy verified in live code
 KEEP	ming_sim/session.py:1194	STRIP	named	identity lookup key on named: named = str(minister_name or "").strip()	identity / name lookup; not free-prose body rewrite
 KEEP	ming_sim/session.py:1232	STRIP	fragment	identity lookup key on fragment: fragment = str(xuan_fragment).strip()	identity / name lookup; not free-prose body rewrite
 KEEP	ming_sim/session.py:1383	JOIN	answer	JOIN token/path/prompt/error scaffolding: answer = "".join(chunks)	join/split scaffolding; not mutating a stored free-prose field
@@ -2019,9 +2019,9 @@ KEEP	ming_sim/session.py:2079	STRIP	decision_key	strip/trim not rewriting free p
 KEEP	ming_sim/session.py:2080	STRIP	decision_key	strip/trim not rewriting free prose on supply/write: and str(c.get("decision_key") or "").strip() not in desk_keys	not free-prose supply/write (identity/config/local/compare)
 KEEP	ming_sim/session.py:2086	STRIP	raw	strip/trim not rewriting free prose on supply/write: raw = str(name or "").strip()	not free-prose supply/write (identity/config/local/compare)
 KEEP	ming_sim/session.py:2164	STRIP	expr	strip/trim not rewriting free prose on supply/write: str(getattr(characters.get(name), "faction", "") or "").strip()	not free-prose supply/write (identity/config/local/compare)
-FIX_REMAINING	ming_sim/session.py:2187	STRIP	title	deliberate LLM title.strip() → rescript prewrite → apply write	still rewrites free prose on real supply/write; not yet patched
-FIX_REMAINING	ming_sim/session.py:2188	STRIP	body	deliberate LLM body.strip() → rescript prewrite → apply write	still rewrites free prose on real supply/write; not yet patched
-FIX_REMAINING	ming_sim/session.py:2189	STRIP	stance	deliberate LLM stance.strip() → rescript prewrite payload	still rewrites free prose on real supply/write; not yet patched
+FIX_APPLIED	ming_sim/session.py:2187	STRIP	title	deliberate LLM title.strip() → rescript prewrite → apply write	FIX_APPLIED this round: preserve-raw / emptiness-on-copy verified in live code
+FIX_APPLIED	ming_sim/session.py:2188	STRIP	body	deliberate LLM body.strip() → rescript prewrite → apply write	FIX_APPLIED this round: preserve-raw / emptiness-on-copy verified in live code
+FIX_APPLIED	ming_sim/session.py:2189	STRIP	stance	deliberate LLM stance.strip() → rescript prewrite payload	FIX_APPLIED this round: preserve-raw / emptiness-on-copy verified in live code
 KEEP	ming_sim/session.py:2237	STRIP	target	identity lookup key on target: target = str(item.choice.get("summon_target") or "").strip()	identity / name lookup; not free-prose body rewrite
 KEEP	ming_sim/session.py:2304	JOIN	expr	JOIN token/path/prompt/error scaffolding: "召见尚未消费，不得推进 phase2：" + "; ".join(unconsumed)	join/split scaffolding; not mutating a stored free-prose field
 KEEP	ming_sim/session.py:2307	STRIP	expr	local emptiness/compare on expr: if not (self.last_decree or "").strip():	local emptiness check; does not rewrite stored free prose
@@ -2114,7 +2114,7 @@ KEEP	web/src/components/audienceArchiveModal.tsx:100	SLICE_JS	className	UI displ
 KEEP	web/src/components/audienceArchiveModal.tsx:106	JOIN	expr	JOIN token/path/prompt/error scaffolding: <b>{night.title}</b><small>涉及人物：{night.involved_people?.join("、") || "无载"}</small>	join/split scaffolding; not mutating a stored free-prose field
 KEEP	web/src/components/chatModal.tsx:168	SLICE_JS	offset	UI display/format/emptiness: const offset = paragraphs.slice(0, paragraphs.indexOf(paragraph)).reduce(	display-only; not API/DB free-prose write
 KEEP	web/src/components/chatModal.tsx:471	TRIM	className	local emptiness/compare on className: <button className={`primary-action ${!input.trim() ? "is-empty" : ""}`} onClick={handleSend} disabled={!!busy}	local emptiness check; does not rewrite stored free prose
-FIX_REMAINING	web/src/components/cheatConsole.tsx:27	TRIM	cheat_directive	draft.trim() → onCommit cheat mount → settlement	still rewrites free prose on real supply/write; not yet patched
+FIX_APPLIED	web/src/components/cheatConsole.tsx:27	TRIM	cheat_directive	draft.trim() → onCommit cheat mount → settlement	FIX_APPLIED this round: preserve-raw / emptiness-on-copy verified in live code
 KEEP	web/src/components/closedIssues.tsx:22	TRIM	expr	UI display/format/emptiness: return (raw || "").trim();	display-only; not API/DB free-prose write
 KEEP	web/src/components/decisionModal.tsx:81	TRIM	expr	local emptiness/compare on expr: ? !!(pick.summon_target || "").trim()	local emptiness check; does not rewrite stored free prose
 KEEP	web/src/components/decisionModal.tsx:87	TRIM	expr	UI display/format/emptiness: : !!(pick.label || (pick.note || "").trim());	display-only; not API/DB free-prose write
@@ -2207,7 +2207,7 @@ FIX_APPLIED	web/src/useEdictActions.ts:68	TRIM	editingDirectiveText	const text=e
 KEEP	web/src/useEscClose.ts:12	JOIN	opensKey	JOIN token/path/prompt/error scaffolding: const opensKey = layers.map((layer) => (layer.open ? "1" : "0")).join("");	join/split scaffolding; not mutating a stored free-prose field
 KEEP	web/src/useSettlementFlow.ts:300	TRIM	report	local emptiness/compare on report: const report = fromPayload.trim() ? fromPayload : fromState;	local emptiness check; does not rewrite stored free prose
 KEEP	web/src/useSettlementFlow.ts:307	TRIM	report	local emptiness/compare on report: if (report.trim() || String(attendantMessage || "").trim()) {	local emptiness check; does not rewrite stored free prose
-FIX_REMAINING	web/src/useSettlementFlow.ts:329	TRIM	cheat	cheatDirective.trim() → /api/decree/issue/stream body.cheat	still rewrites free prose on real supply/write; not yet patched
+FIX_APPLIED	web/src/useSettlementFlow.ts:329	TRIM	cheat	cheatDirective.trim() → /api/decree/issue/stream body.cheat	FIX_APPLIED this round: preserve-raw / emptiness-on-copy verified in live code
 KEEP	web_app.py:219	REPLACE	value	machine-key/enum/config normalize on value: value = value.replace(src, dst)	machine key / enum / config normalization
 KEEP	web_app.py:244	REPLACE	text	replace machine/template/path/HTML: text = text.replace(src, dst)	machine/template/path replace; not free-prose supply-write
 KEEP	web_app.py:280	SPLIT	parts	SPLIT token/path/prompt/error scaffolding: parts = raw_key.split(".")	join/split scaffolding; not mutating a stored free-prose field

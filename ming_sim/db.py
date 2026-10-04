@@ -9148,8 +9148,9 @@ class GameDB:
         for item in list(phrases or []):
             if not isinstance(item, str):
                 continue
-            phrase = item.strip()
-            if phrase:
+            # Free prose highlight phrases: preserve raw; strip only emptiness (#1834 F16).
+            phrase = item
+            if phrase.strip():
                 clean.append(phrase)
         payload = json.dumps(clean, ensure_ascii=False)
         self.conn.execute(
@@ -14951,14 +14952,15 @@ class GameDB:
             except (AttributeError, ValueError):
                 target_id = 0
             relation = str(item.get("relation_type") or "") if isinstance(item, dict) else ""
-            note = str(item.get("note") or "").strip() if isinstance(item, dict) else ""
+            # Free prose dossier link note: preserve raw; strip only emptiness (#1834 F16).
+            note = str(item.get("note") or "") if isinstance(item, dict) else ""
             if self.get_decree_dossier(target_id) is None:
                 rejection = (target_id, relation, note, "关联指向不存在案卷")
             elif target_id >= source_id:
                 rejection = (target_id, relation, note, "案卷关联只允许新案卷指向旧案卷")
             elif relation not in DOSSIER_LINK_TYPES:
                 rejection = (target_id, relation, note, "案卷关联类型非法")
-            elif not note:
+            elif not note.strip():
                 rejection = (target_id, relation, note, "案卷关联说明不能为空")
             if rejection is not None:
                 break
@@ -20478,7 +20480,9 @@ class GameDB:
                 start_month, duration_months, status, clear_gate, legacy_key)
                VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?)""",
             (
-                str(name)[:60], source_issue_id,
+                # Free prose legacy name: preserve raw (#1834 F16).
+                # legacy_key remains a machine identity key (may clamp length).
+                str(name), source_issue_id,
                 json.dumps(modifiers, ensure_ascii=False),
                 str(narrative_hint),
                 start_month, int(duration_months),

@@ -1,4 +1,9 @@
-CMD: ../Ming_LLM/.venv/bin/python -m pytest \
+# focused pytest (seven MING_SIM_*_BIN=/usr/bin/false)
+MING_SIM_AGY_BIN=/usr/bin/false MING_SIM_CODEX_BIN=/usr/bin/false \
+MING_SIM_CLAUDE_BIN=/usr/bin/false MING_SIM_CURSOR_BIN=/usr/bin/false \
+MING_SIM_KIMI_BIN=/usr/bin/false MING_SIM_GROK_BIN=/usr/bin/false \
+MING_SIM_PI_BIN=/usr/bin/false PYTHONDONTWRITEBYTECODE=1 \
+../Ming_LLM/.venv/bin/python -m pytest \
   tests/test_world_materials_1834.py tests/test_candidate_supply_1893.py \
   tests/test_material_directory_1830.py tests/test_scene_llm_1836.py \
   tests/test_player_payload_1022.py tests/test_cli_runner_error_typed_1299.py \
@@ -10,13 +15,14 @@ CMD: ../Ming_LLM/.venv/bin/python -m pytest \
   tests/test_player_army_projection_321.py tests/test_secret_order_monthly_progress_566.py \
   tests/test_supervision_625.py tests/test_decree_dossiers_571.py \
   tests/test_relation_seed_638.py \
+  tests/test_highlight_judge_544.py tests/test_month_chain_1843.py \
   -q -p no:cacheprovider --tb=line
----
-........................................................................ [ 15%]
-........................................................................ [ 30%]
-........................................................................ [ 45%]
-........................................................................ [ 61%]
-........................................................................ [ 76%]
-........................................................................ [ 91%]
-......................................                                   [100%]
-470 passed in 14.17s
+
+........................................................................ [ 14%]
+........................................................................ [ 28%]
+........................................................................ [ 43%]
+........................................................................ [ 57%]
+........................................................................ [ 72%]
+........................................................................ [ 86%]
+...................................................................      [100%]
+499 passed in 19.10s
