@@ -155,7 +155,12 @@ MING_SIM_PI_BIN=/usr/bin/false \
 
 ## git 事实 / commit
 
-（提交后回填 SHA）
+b04ea3af3690a96268119bfb6f553b5289816a5c
+ak-roles/1847-fixer-w7-n6-n11-n13-n14
+
+- branch: 
+- commit: 
+- status after commit: clean working tree (report stamp may follow)
 
 ## 剩余事项
 
