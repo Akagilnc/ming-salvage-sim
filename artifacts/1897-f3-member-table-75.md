@@ -1,3 +1,10 @@
+# #1897 F3 原 75 候选逐成员表（纠正：P6 测试锁文豁免作废）
+
+- 原表 tip：清 17 / 保留 58（含错误的 P6/朱笔 note·title 保真豁免）
+- **本轮更正**：P6 生产保真 ≠ 允许测试锁文；27/30/38/39/56 自由文本机械断言清退
+- 计数（相对原 75）：**清 22**（原 17 + 本轮 5）/ **保留 53**；#39 整案改名保留独立闸、删保真锁文
+- DB CHECK `form IN ('会签','当面站台','御笔手敕')`：`ming_sim/db.py` 真源闭集 → FORM_ENUM **保留**合法
+
 | # | 成员 | 形状 | 处置 | 理由 |
 |---:|---|---|---|---|
 | 1 | `test_audience_translate_1837.py:238` `test_pending_round_approval_endorsed_before_close_or_after_month_join` | FORM_ENUM | **保留** | 背书 form 闭集（DB CHECK IN 会签/当面站台/御笔手敕） |
@@ -26,10 +33,10 @@
 | 24 | `test_pihong_dossier_1490.py:323` `test_missing_dossier_fields_stay_pending_then_full_retry_decides` | SSE_PROTOCOL | **保留** | SSE 线协议控序（event: done/error），非自由正文盯文 |
 | 25 | `test_pihong_dossier_1490.py:372` `test_due_commitment_shaped_submit_does_not_poison_or_deadlock` | SSE_PROTOCOL | **保留** | SSE 线协议控序（event: done/error），非自由正文盯文 |
 | 26 | `test_pihong_dossier_1490.py:373` `test_due_commitment_shaped_submit_does_not_poison_or_deadlock` | SSE_PROTOCOL | **保留** | SSE 线协议控序（event: done/error），非自由正文盯文 |
-| 27 | `test_pihong_dossier_1490.py:379` `test_due_commitment_shaped_submit_does_not_poison_or_deadlock` | NOTE_EQ | **保留** | P6/朱笔 note 保真（批红 HITL） |
+| 27 | `test_pihong_dossier_1490.py:379` `test_due_commitment_shaped_submit_does_not_poison_or_deadlock` | NOTE_EQ | **清** | 更正：P6 豁免非法；删 note/label 散文等值；保留 decided + 无 dossier_decision |
 | 28 | `test_pihong_dossier_1490.py:397` `test_lying_label_rebuilt_from_server_option` | SSE_PROTOCOL | **保留** | SSE 线协议控序（event: done/error），非自由正文盯文 |
 | 29 | `test_pihong_dossier_1490.py:398` `test_lying_label_rebuilt_from_server_option` | SSE_PROTOCOL | **保留** | SSE 线协议控序（event: done/error），非自由正文盯文 |
-| 30 | `test_pihong_dossier_1490.py:405` `test_lying_label_rebuilt_from_server_option` | NOTE_EQ | **保留** | P6/朱笔 note 保真（批红 HITL） |
+| 30 | `test_pihong_dossier_1490.py:405` `test_lying_label_rebuilt_from_server_option` | NOTE_EQ | **清** | 更正：删 note 等值；label/hint 改 `!=` 客户端撒谎（不锁服务端散文） |
 | 31 | `test_pihong_dossier_1490.py:443` `test_mixed_legal_illegal_options_illegal_choice_stays_pending` | SSE_PROTOCOL | **保留** | SSE 线协议控序（event: done/error），非自由正文盯文 |
 | 32 | `test_pihong_dossier_1490.py:444` `test_mixed_legal_illegal_options_illegal_choice_stays_pending` | SSE_PROTOCOL | **保留** | SSE 线协议控序（event: done/error），非自由正文盯文 |
 | 33 | `test_pihong_dossier_1490.py:454` `test_mixed_legal_illegal_options_illegal_choice_stays_pending` | SSE_PROTOCOL | **保留** | SSE 线协议控序（event: done/error），非自由正文盯文 |
@@ -37,8 +44,8 @@
 | 35 | `test_pihong_dossier_1490.py:463` `test_mixed_legal_illegal_options_illegal_choice_stays_pending` | SSE_PROTOCOL | **保留** | SSE 线协议控序（event: done/error），非自由正文盯文 |
 | 36 | `test_pihong_dossier_1490.py:493` `test_ordinary_event_with_hallucinated_capability_submits` | SSE_PROTOCOL | **保留** | SSE 线协议控序（event: done/error），非自由正文盯文 |
 | 37 | `test_pihong_dossier_1490.py:494` `test_ordinary_event_with_hallucinated_capability_submits` | SSE_PROTOCOL | **保留** | SSE 线协议控序（event: done/error），非自由正文盯文 |
-| 38 | `test_pihong_dossier_1490.py:500` `test_ordinary_event_with_hallucinated_capability_submits` | NOTE_EQ | **保留** | P6/朱笔 note 保真（批红 HITL） |
-| 39 | `test_pihong_dossier_1490.py:574` `test_657_p6_mapper_deliberate_preserve_free_text` | TITLE_LOCK | **保留** | P6 mapper 原文保真（#657） |
+| 38 | `test_pihong_dossier_1490.py:500` `test_ordinary_event_with_hallucinated_capability_submits` | NOTE_EQ | **清** | 更正：P6 豁免非法；删 note/label 散文等值；保留无 dossier_decision |
+| 39 | `test_pihong_dossier_1490.py:574` `test_657_p6_mapper_deliberate_preserve_free_text` | TITLE_LOCK | **清→改闸** | 更正：删保真锁文；改名 `test_657_mapper_title_limit_stop_condition_type_and_layer_a_schema`；保留 title>80 / stop_condition 类型 / layer_a schema / stalled |
 | 40 | `test_pihong_dossier_1490.py:1456` `test_1621_http_follow_draft_uses_catalog_army_id` | SSE_PROTOCOL | **保留** | SSE 线协议控序（event: done/error），非自由正文盯文 |
 | 41 | `test_pihong_dossier_1490.py:1457` `test_1621_http_follow_draft_uses_catalog_army_id` | SSE_PROTOCOL | **保留** | SSE 线协议控序（event: done/error），非自由正文盯文 |
 | 42 | `test_pihong_dossier_1490.py:1603` `test_1589_empty_desk_rejects_nonempty_keyless_choices` | SSE_PROTOCOL | **保留** | SSE 线协议控序（event: done/error），非自由正文盯文 |
@@ -55,7 +62,7 @@
 | 53 | `test_pihong_dossier_1490.py:1850` `test_657_follow_draft_ignores_client_field_overlay` | TITLE_LOCK | **清** | overlay/staged 改 target_id/mode/actor；删 title/text 散文 |
 | 54 | `test_pihong_dossier_1490.py:1851` `test_657_follow_draft_ignores_client_field_overlay` | TITLE_LOCK | **清** | overlay/staged 改 target_id/mode/actor；删 title/text 散文 |
 | 55 | `test_pihong_dossier_1490.py:1934` `test_657_summon_missing_tag_enter_blocks_phase2_then_retry` | SSE_PROTOCOL | **保留** | SSE 线协议控序（event: done/error），非自由正文盯文 |
-| 56 | `test_pihong_dossier_1490.py:2010` `test_657_default_hold_preserves_red_pen_note` | NOTE_EQ | **保留** | P6/朱笔 note 保真（批红 HITL） |
+| 56 | `test_pihong_dossier_1490.py:2010` `test_657_default_hold_preserves_red_pen_note` | NOTE_EQ | **清整案** | 专为朱笔 note 保真；整案删除（default_hold 闸已由 `test_657_default_hold_missing_and_empty_action` 覆盖） |
 | 57 | `test_pihong_dossier_1490.py:2461` `test_658_deliberate_backed_and_stalled_dossier_first` | FORM_ENUM | **保留** | 背书 form 闭集（DB CHECK IN 会签/当面站台/御笔手敕） |
 | 58 | `test_pihong_dossier_1490.py:2624` `test_658_free_decree_capture_target_dossier_real_entry` | FORM_ENUM | **保留** | 背书 form 闭集（DB CHECK IN 会签/当面站台/御笔手敕） |
 | 59 | `test_pihong_dossier_1490.py:2628` `test_658_free_decree_capture_target_dossier_real_entry` | FORM_ENUM | **保留** | 背书 form 闭集（DB CHECK IN 会签/当面站台/御笔手敕） |
@@ -66,12 +73,26 @@
 | 64 | `test_pihong_dossier_1490.py:1346` `test_657_s10_http_five_actions_and_1490_no_regress` | SSE_PROTOCOL | **保留** | SSE 线协议控序（event: done/error），非自由正文盯文 |
 | 65 | `test_pihong_dossier_1490.py:2640` `test_658_free_decree_capture_target_dossier_real_entry` | FORM_ENUM | **保留** | 背书 form 闭集（DB CHECK IN 会签/当面站台/御笔手敕） |
 | 66 | `test_rescript_heal_isolation_1801.py:133` `test_1801_item_utf8_heals_then_drops_only_bad_item` | CROSS_TITLE | **清** | 删标题列表/跨表 title；改 len(drafts)+heal tags |
-| 67 | `test_rescript_heal_isolation_1801.py:138` `test_1801_item_utf8_heals_then_drops_only_bad_item` | TITLE_LOCK | **保留** | heal 失败字段图 schema（title/summary 键） |
+| 67 | `test_rescript_heal_isolation_1801.py:138` `test_1801_item_utf8_heals_then_drops_only_bad_item` | TITLE_LOCK | **保留** | heal 失败字段图 schema（title/summary 键存在，非值锁） |
 | 68 | `test_rescript_heal_isolation_1801.py:153` `test_1801_unknown_top_key_heals_then_ignores_key_keeps_items` | TITLE_LOCK | **清** | 删标题列表/跨表 title；改 len(drafts)+heal tags |
 | 69 | `test_rescript_heal_isolation_1801.py:159` `test_1801_unknown_top_key_heals_then_ignores_key_keeps_items` | KEY_EXIST | **保留** | heal 失败字段图 schema（title/summary 键） |
-| 70 | `test_rescript_heal_isolation_1801.py:163` `test_1801_unknown_top_key_heals_then_ignores_key_keeps_items` | SUMMARY_LOCK | **保留** | heal 失败字段图 schema（title/summary 键） |
+| 70 | `test_rescript_heal_isolation_1801.py:163` `test_1801_unknown_top_key_heals_then_ignores_key_keeps_items` | SUMMARY_LOCK | **保留** | heal 失败字段图 schema（summary 键，非值锁） |
 | 71 | `test_rescript_heal_isolation_1801.py:190` `test_1801_unknown_top_key_heal_items_empty_must_not_wipe_siblings` | TITLE_LOCK | **清** | 删标题列表/跨表 title；改 len(drafts)+heal tags |
 | 72 | `test_rescript_heal_isolation_1801.py:212` `test_1801_unknown_top_key_heal_omit_key_succeeds_keeps_items` | TITLE_LOCK | **清** | 删标题列表/跨表 title；改 len(drafts)+heal tags |
 | 73 | `test_rescript_heal_isolation_1801.py:230` `test_1801_eight_items_all_pass_no_heal_no_trim` | TITLE_LOCK | **清** | 删标题列表/跨表 title；改 len(drafts)+heal tags |
 | 74 | `test_web_chat_serialization_393.py:217` `test_background_stream_completion_waits_for_settlement_gate_and_keeps_acceptance_turn` | WHOLE_OBJ | **清** | 删流式/问话散文锁；改 type=delta 与 user 轮次条数 |
 | 75 | `test_web_chat_serialization_393.py:266` `test_identity_setup_failure_preserves_question_and_releases_pending_owner` | WHOLE_OBJ | **清** | 删流式/问话散文锁；改 type=delta 与 user 轮次条数 |
+
+## 词表扩扫（本轮）新增命中与处置摘要
+
+旧词表缺 `label`/`hint`/`decree_text`/`stage_text`/`stop_condition`/`reason`/`detail`/`message` 等 → 扩扫后授权自由文本 **113**（旧窄词表曾报 58）。
+
+| 类 | 处置 |
+|---|---|
+| 同形 label/note/decree_text 散文等值（pihong + decree_dossiers_571） | **本轮已清** |
+| FORM_ENUM / SSE / GATE_NEG / heal 键 schema / ROSTER | **保留**（闭集或线协议） |
+| `reason` 机器码（`already_revoked` / `commitment_due` / `option_missing_fields_heal_exhausted` 等） | **保留**（非自由散文；闭集/typed code） |
+| `stop_condition` JSON 结构化条件 | **保留**（结构化条件对象，非邸报散文） |
+| events.json #189 软判 title/summary 哨兵 | **保留**（独立内容域） |
+| `test_1778_*` 以 `decree_text` 作文案身份键的 `set(round_*)` | **剩余范围**（重构成本大；未本轮空心替换） |
+| person_delta / fiscal detail / urge / relation 等 CJK `reason`/`detail` 散文 | **剩余范围**（扩扫新见；非本票声明写入盯文主战场，据实不虚报结清） |

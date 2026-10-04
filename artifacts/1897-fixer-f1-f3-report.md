@@ -1196,3 +1196,110 @@ env MING_SIM_AGY_BIN=/usr/bin/false MING_SIM_CODEX_BIN=/usr/bin/false \
 - 报告 tip：`46da84cb676eaa40cbbb2581c5f235c1666b2e4c`；修面=`69c159957e3f42c967de7837cccc5081a9ee4e02`
 - 生产修面仍见 `edb376032`（F1+F2）；本轮为 F3 75 表结清。
 - **未 push / 未 PR / 未 amend / 未 stash**。
+
+---
+
+## 纠正回执（P6 测试锁文豁免作废，本轮）
+
+- 基线 tip（施工前）：`3fa36eb969f2f8e8fffcbf0a44b4c923425d0887`
+- 批评点：75 表将 27/30/38/39/56 以「P6/朱笔 note·title 保真」豁免文字相等；**仍违锚定宪法——测试不得对自由文本机械依赖**。P6 生产保真 ≠ 允许测试锁文。
+- 本轮：**保留上文全部过程史与先前失败痕迹**；不杀 worker、不硬超时、不 amend/stash/push/PR。
+- **未声称已 merge / 关票 / reviewer 放行 / F3 全仓散文锁已结清**
+
+### 顾问（本轮）
+
+| 类 | 正确行为 | 根因（复核） | 最简修法 |
+|---|---|---|---|
+| F1 | 邸报供料不进未披露实况 | 修面已门控；复跑变异仍 GREEN | 不动生产；复证 |
+| F2 | 执行区故障响亮；领域拒收仅校验区 | 宽吞已删；复跑变异仍 GREEN | 不动生产；复证 |
+| F3 | 授权测不机械锁自由文本 | P6 豁免误留 note/title 等值；词表漏 `label`/`hint`/`decree_text` 等 | 清 27/30/38/56；#39 删保真改独立闸；扩词表复扫并记账 |
+
+### 本轮对原 75 表更正
+
+| # | 原错误保留理由 | 本轮处置 |
+|---|---|---|
+| 27 NOTE_EQ | P6/朱笔 note 保真 | **清** note/label 等值；保留 decided + 无 dossier_decision |
+| 30 NOTE_EQ | P6/朱笔 note 保真 | **清** note；label/hint → `!=` 客户端撒谎（不锁服务端散文） |
+| 38 NOTE_EQ | P6/朱笔 note 保真 | **清** note/label 等值；保留无 dossier_decision |
+| 39 TITLE_LOCK | P6 mapper 原文保真 | **清保真**；改名 `test_657_mapper_title_limit_stop_condition_type_and_layer_a_schema`；保留 title>80 / stop_condition 类型 / layer_a / stalled |
+| 56 NOTE_EQ | P6/朱笔 note 保真 | **整案删除**（专为保真；default_hold 闸已有独立案） |
+
+原 75 计数更正：**清 22 / 保留 53**。全表见 `artifacts/1897-f3-member-table-75.md`。
+
+### 其余 53 保留项复核（尤其 FORM）
+
+- **FORM_ENUM**：`ming_sim/db.py` `CHECK(form IN ('会签','当面站台','御笔手敕'))` = **真实闭集** → 保留合法
+- **SSE_PROTOCOL** / **GATE_NEG** / heal **键 schema** / **ROSTER** / events.json #189 独立域：维持保留理由
+- 已撤销「P6/朱笔保真」作为保留例外类别
+
+### 词表扩扫（防字段白名单漏扫）
+
+旧 `TEXT_ATTRS` 缺 `label`/`hint`/`decree_text`/`stage_text`/`stop_condition`/`reason`/`detail`/`message` 等。
+扩扫脚本：`/tmp/1897-f1f3-corr3/enum_f3_full.py`（分析用，不进仓）。
+
+| 指标 | 上轮窄词表 | 本轮扩词表 |
+|---|---|---|
+| 授权相关文件 | 91 | 91 |
+| 自由文本机械依赖（全仓） | 144 | 248 |
+| 其中授权相关 | 58 | **113** |
+| 同名顶层 test_* | none | none |
+
+扩扫同形已清（本轮额外）：
+- `test_decree_dossiers_571` ×3 `decree_text` 散文等值
+- pihong：mixed_legal label；mixed_batch label 整对象；midzhi decree_text；1778 option label 列表；preferred `=='甲'`→首选项投影
+
+扩扫保留（闭集/机器码/结构化）：
+- `reason` typed code（`already_revoked` / `commitment_due` / `option_missing_fields_heal_exhausted`…）
+- `stop_condition` JSON 结构化条件
+- FORM / SSE / heal 键
+
+### 剩余范围（据实，不虚报结清）
+
+- `test_1778_drafted_roster_rides_to_pihong_and_nails_the_dossier` 仍以 `decree_text` 作文案身份键（`set(round_*)` / 字典键）——重构面大，**本轮未动**
+- person_delta / fiscal `detail` / urge / relation / style 等扩扫新见 CJK `reason`/`detail` 散文锁——**剩余**
+- events.json #189 软判哨兵——独立内容域，**保留记账**
+
+### F1/F2/F3 命令脚本与变异复证
+
+七变量前缀齐全（`MING_SIM_{AGY,CODEX,CLAUDE,CURSOR,KIMI,GROK,PI}_BIN=/usr/bin/false`）。
+
+```bash
+env MING_SIM_AGY_BIN=/usr/bin/false MING_SIM_CODEX_BIN=/usr/bin/false \
+  MING_SIM_CLAUDE_BIN=/usr/bin/false MING_SIM_CURSOR_BIN=/usr/bin/false \
+  MING_SIM_KIMI_BIN=/usr/bin/false MING_SIM_GROK_BIN=/usr/bin/false \
+  MING_SIM_PI_BIN=/usr/bin/false PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$PWD" \
+  ../Ming_LLM/.venv/bin/python /tmp/1897-f1f3-corr3/mutate_f1.py
+# verdict=GREEN；world_has=true gazette_has=false old_unconditional_has=true
+
+../Ming_LLM/.venv/bin/python /tmp/1897-f1f3-corr3/mutate_f2.py
+# verdict=GREEN；current_write=ValueError；unknown_has_missing_ref=true
+
+../Ming_LLM/.venv/bin/python /tmp/1897-f1f3-corr3/mutate_f3.py
+# verdict=GREEN；old_title_sentinel_still_green=true；current_tags_contract=['甲·改']
+```
+
+### 聚焦测试
+
+同七变量；聚焦（含本轮触及 pihong/decree 案），**未跑全量**。
+
+**实测**：`613 passed in 27.38s`。
+
+测序事实（预存）：isolation↔revoke monkeypatch 交叉污染仍在；breach 置于 isolation 前；**不以重排冒称无污染**。
+
+`git diff --check`：无输出。
+
+### 自查二连（本轮）
+
+1. **同类型**：撤销 P6 测试锁文豁免；同形 note/label/decree_text 等值清退；未用非空/键存在洗绿；专为保真之 #56 整案删。
+2. **引入面**：聚焦 613；F1/F2/F3 变异 GREEN；扩词表漏扫已记账剩余；未改生产校验；临时目录 `/tmp/1897-f1f3-corr3` 不进仓。
+
+### 顾问式合法性 / 完整性（交卷前）
+
+- 合法性：未借 P6 生产铁律给测试开锁文后门；未空心字段断言顶替；整案删除仅限专为保真案。
+- 完整性：原 75 争议五项已落；FORM 闭集已核；扩词表复扫有数；剩余范围明示；F1/F2 变异与聚焦已复证。
+- 非声称：未声称授权集 113 条全部结清；未 push/PR/关票。
+
+### 交卷 HEAD（本轮）
+
+- 以交卷后 `git rev-parse HEAD` 为准（本段之后独立 `ak-roles:` 提交）。
+- **未 push / 未 PR / 未 amend / 未 stash**。
