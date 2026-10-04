@@ -18,7 +18,7 @@ from types import SimpleNamespace
 from ming_sim.audience_night import (
     AUDIBILITY_PRIVATE,
     AUDIBILITY_PUBLIC,
-    get_night_protagonist,
+    get_night,
     list_ledger,
     open_night,
     person_night_experience,
@@ -220,7 +220,7 @@ def test_protagonist_follows_translation_and_xuan_cut(game, monkeypatch):
     _activate(db, state, "王绍徽", "王承恩")
     night = open_night(db, state, location="乾清宫", time_of_day="戌时")
     nid = int(night["id"])
-    assert get_night_protagonist(db, nid) == ""
+    assert get_night(db, nid)["protagonist_name"] == ""
 
     sess = _scene_session(db, state, content, monkeypatch)
     t1 = _active_chat_turn(db, state, nid)
@@ -228,11 +228,11 @@ def test_protagonist_follows_translation_and_xuan_cut(game, monkeypatch):
     cuts = []
     r_xuan = sess.scene_chat(
         "宣王绍徽", chat_turn_id=t1,
-        on_protagonist_changed=lambda: cuts.append(get_night_protagonist(db, nid)),
+        on_protagonist_changed=lambda: cuts.append(get_night(db, nid)["protagonist_name"]),
     )
     persist_and_schedule_scene(sess, db, r_xuan)
     _drain_scene_owner(sess, db)
-    assert get_night_protagonist(db, nid) == "王绍徽"
+    assert get_night(db, nid)["protagonist_name"] == "王绍徽"
     assert cuts == ["王绍徽"]
     assert db.conn.execute(
         "SELECT protagonist_name FROM chat_turns WHERE id=?", (t1,),
@@ -246,7 +246,7 @@ def test_protagonist_follows_translation_and_xuan_cut(game, monkeypatch):
         night_id=nid, chat_turn_id=ctid,
     )
     assert result.protagonist.validated == {"person_name": "王承恩"}
-    assert get_night_protagonist(db, nid) == "王承恩"
+    assert get_night(db, nid)["protagonist_name"] == "王承恩"
     assert db.conn.execute(
         "SELECT protagonist_name FROM chat_turns WHERE id=?", (ctid,),
     ).fetchone()["protagonist_name"] == "王承恩"
@@ -264,7 +264,7 @@ def test_protagonist_undo_reprojects_night_current(game, monkeypatch):
     r_xuan = sess.scene_chat("宣王绍徽", chat_turn_id=t1)
     persist_and_schedule_scene(sess, db, r_xuan)
     _drain_scene_owner(sess, db)
-    assert get_night_protagonist(db, nid) == "王绍徽"
+    assert get_night(db, nid)["protagonist_name"] == "王绍徽"
     assert db.conn.execute(
         "SELECT protagonist_name FROM chat_turns WHERE id=?", (t1,),
     ).fetchone()["protagonist_name"] == "王绍徽"
@@ -275,15 +275,15 @@ def test_protagonist_undo_reprojects_night_current(game, monkeypatch):
         {"protagonist": {"person_name": "王承恩"}},
         night_id=nid, chat_turn_id=t2,
     )
-    assert get_night_protagonist(db, nid) == "王承恩"
+    assert get_night(db, nid)["protagonist_name"] == "王承恩"
 
     # 全局最后存活轮先撤 t2 → 夜主角回到 t1 的王绍徽
     db.undo_chat_turn(t2)
-    assert get_night_protagonist(db, nid) == "王绍徽"
+    assert get_night(db, nid)["protagonist_name"] == "王绍徽"
 
     # 再撤 t1 → 无存活声明，夜主角回初态空值
     db.undo_chat_turn(t1)
-    assert get_night_protagonist(db, nid) == ""
+    assert get_night(db, nid)["protagonist_name"] == ""
 
 
 def test_retry_older_round_keeps_newer_protagonist(game):
@@ -300,7 +300,7 @@ def test_retry_older_round_keeps_newer_protagonist(game):
         db, state, {"protagonist": {"person_name": "王绍徽"}},
         night_id=nid, chat_turn_id=older,
     )
-    assert get_night_protagonist(db, nid) == "王承恩"
+    assert get_night(db, nid)["protagonist_name"] == "王承恩"
 
 
 def test_edge_event_and_public_saying_attach_affair(game):

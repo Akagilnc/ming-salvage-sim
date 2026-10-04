@@ -76,3 +76,37 @@ git grep -n '/api/admin\|/admin\|ADMIN_TABLES\|api_admin\|admin_check_table\|adm
 - 不锁生成台词/措辞，模型边界替身不冒称真实模型语义验收。没有新增证明性测试。
 - HTTP 五地址 404、专属 DB 成员 []；Ruff F401/F821 与 diff --check 通过，无配置化 Python typecheck，不冒称。
 - 本轮只做授权三类；不宣告两票或家族 converged，不并底座，不 push/PR/amend/stash，不改席位或宿主。
+
+## c953c19ae 后召对闭包残余复修
+
+前轮漏扫成立：`get_night_protagonist` 的唯一生产消费者是已删留侍分支；剩下测试读取不能维持生产访问器。本轮只承办召对残余，不重修已核准的全表编辑和测试归并，不碰 #1899 财政链。
+
+| 完整增量成员 | 处置 |
+| --- | --- |
+| audience_night.get_night_protagonist | 删除零生产消费者读口，无替代访问器、别名或兼容层 |
+| constants.py 含糊收夜封闭集、留侍口令封闭集两行注释 | 删除指向已删集合的说明 |
+| audience_night.py 留侍叙事账标签注释 | 删除指向已删标签的说明 |
+| audience_night.read_night_scroll 的 exit/留侍/其它 scene 口令账注释 | 删除已退役留侍类别，保留现役投影说明 |
+| test_protagonist_follows_translation_and_xuan_cut | 四处读取（含回调）改读既有 get_night 存储结果 protagonist_name；宣召及转译源轮断言不变 |
+| test_protagonist_undo_reprojects_night_current | 四处读取改读同一存储字段；撤回回投及无存活轮空值断言不变 |
+| test_retry_older_round_keeps_newer_protagonist | 一处读取改读存储；较早轮重试不能覆盖新主角断言不变 |
+| tests/test_audience_translation_1838.py import | 接已有现役 get_night，不留专用测试读口 |
+
+`get_night` 现役消费者见 `git grep -n 'get_night(' -- ming_sim web_app.py scripts`：召对、DB、Web 多处使用；实现直接 SELECT audience_nights。没有新造测试 helper、夹具或生产访问器。
+
+全仓复扫命令：
+
+```sh
+git grep -n 'get_night_protagonist\|AMBIGUOUS_CLOSE_COMMANDS\|STAY_ATTEND_COMMANDS\|TAG_STAY_ATTEND\|stay_attend_in_audience\|留侍叙事账标签\|含糊收夜封闭集\|留侍口令封闭集\|exit / 留侍' -- '*.py' '*.ts' '*.tsx' '*.html'
+git grep -n '留侍\|含糊收夜' -- '*.py' '*.ts' '*.tsx' '*.html'
+```
+
+首命令无匹配；第二命令只余 test_audience_continuous_507 的两个北极星场景说明，描述场景经历，不描述已删口令/集合/标签，依法保留。全部 tracked Python AST 353 文件通过；零名字引用声明候选 55 项（43 项 FastAPI 注册、12 项既有标准/SDK 协议），无同根剩余成员，完整枚举输出 `/tmp/1891-r4-audit.log`。这只是候选筛选，不把有名字引用当保留授权。
+
+本轮聚焦命令（此前设置七项 MING_SIM_*_BIN=/usr/bin/false、临时用户数据目录和 PYTHONDONTWRITEBYTECODE=1）：
+
+```sh
+/Users/akagilnc/WorkSpace/Ming_LLM/.venv/bin/python -m pytest tests/test_audience_translation_1838.py tests/test_audience_translate_1837.py::test_scene_chat_cli_and_api_same_translation_shape -q -p no:cacheprovider --basetemp=/tmp/1891-r4-tests --tb=short
+```
+
+结果 `10 passed in 1.02s`，日志 `/tmp/1891-r4-tests.log`。Ruff F401/F821、diff --check 通过。本次仅删除失效生产读口/注释，现有断言不放松，不新增证明性测试，不冒称变异真跑或真实模型验收。

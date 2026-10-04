@@ -134,7 +134,6 @@ def _travel_tone_from_tags(tags: Sequence[Any]) -> str:
     ]
     return max(tones or ["常行"], key=TRAVEL_SPEED_BY_TONE.__getitem__)
 _SUMMON_ORIGIN_PREFIX = "传召源#"
-# #526 / #471 S10：留侍叙事账标签——非进/出，不驱动在场（口径回灌 #500）
 
 # #526 结构化口令判词（引擎只认判词，不重解析散文；非 ACTION_CLUSTERS）
 CMD_CLOSE_NIGHT = "close_night"
@@ -574,7 +573,7 @@ def read_night_scroll(db: Any, night_id: int) -> List[Dict[str, Any]]:
         if not _is_command_entry(entry):
             continue
         # #1838 reopen：入殿/开夜/收夜/交接/场外传召旁白账不再投影；
-        # 只投影有正文的 exit / 留侍 / 其它 scene 口令账。
+        # 只投影有正文的 exit / 其它 scene 口令账。
         if TAG_ENTER in tags:
             continue
         if (
@@ -2036,17 +2035,6 @@ def set_night_protagonist(
     if commit and _should_commit(db):
         db.conn.commit()
     return name
-
-
-def get_night_protagonist(db: Any, night_id: int) -> str:
-    """读本夜当前御前主角；未声明则空串。"""
-    row = db.conn.execute(
-        "SELECT protagonist_name FROM audience_nights WHERE id=?",
-        (int(night_id),),
-    ).fetchone()
-    if row is None:
-        return ""
-    return str(row["protagonist_name"] or "")
 
 
 def reproject_night_protagonist(db: Any, night_id: int) -> str:
