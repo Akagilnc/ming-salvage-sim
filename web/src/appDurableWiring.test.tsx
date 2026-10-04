@@ -658,7 +658,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
       if (path.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
       if (path.endsWith("/api/saves")) return jsonResp({ saves: [] });
       if (path.endsWith("/api/game/state")) return jsonResp(makeState(1, [], [minister]));
-      if (path.endsWith("/api/audience/scroll") && [3, 5].includes(historyReads) && !replied) {
+      if (path.endsWith("/api/audience/scroll") && [3, 5].includes(historyReads)) {
         scrollFailures += 1;
         return new Response(JSON.stringify({ detail: "scroll unavailable" }), { status: 500 });
       }

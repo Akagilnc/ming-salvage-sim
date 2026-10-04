@@ -2053,7 +2053,6 @@ class WebGame:
                         result = self.undo_last_chat(owner, gate_held=gate_held)
                         result["history"] = self.chat_projection(minister_name)
                         result["can_undo_last_chat"] = self.can_undo_last_chat(minister_name)
-                        result["reply_retries"] = self.reply_retries(minister_name)
                         return result
         if self.state.turn_phase not in (TurnPhase.SUMMONING.value, TurnPhase.REVIEWING.value):
             raise HTTPException(status_code=409, detail="本回合已经进入颁诏结算，不能撤回召对。")
@@ -2115,7 +2114,6 @@ class WebGame:
             "pending_directive_count": self.pending_directive_count(),
             "secret_orders": project_secret_orders_for_player(self.db.list_secret_orders()),
             "can_undo_last_chat": self.can_undo_last_chat(minister_name),
-            "reply_retries": self.reply_retries(minister_name),
         }
 
     def _chat_payload(
@@ -5290,7 +5288,6 @@ async def api_audience_chat_history() -> Dict[str, Any]:
         "night_id": int(open_night["id"]) if open_night else 0,
         "history": game.chat_projection(SCENE_CHAT_SPEAKER),
         "can_undo_last_chat": game.can_undo_last_chat(SCENE_CHAT_SPEAKER),
-        "reply_retries": game.reply_retries(SCENE_CHAT_SPEAKER),
         "generating_turn_ids": [int(r["id"]) for r in game.db.list_in_flight_chat_turns(
             night_id=int(open_night["id"]) if open_night else None,
             minister_name=SCENE_CHAT_SPEAKER,

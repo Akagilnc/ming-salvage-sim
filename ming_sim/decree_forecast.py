@@ -433,14 +433,9 @@ def _submit_snapshot_job(
                 else:
                     with write_lock:
                         snapshot = queue.run(ticket, snapshot_fn)
-            except Exception as exc:
-                if _call_exhausted(exc):
+                if snapshot is None:
                     return
-                raise
-            if snapshot is None:
-                return
-            snapshot["ticket"] = ticket
-            try:
+                snapshot["ticket"] = ticket
                 _forecast(session, snapshot, write_lock=write_lock)
             except Exception as exc:
                 if _call_exhausted(exc):

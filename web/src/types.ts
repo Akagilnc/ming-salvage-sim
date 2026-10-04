@@ -701,7 +701,6 @@ export type ChatUndoResponse = {
   pending_directive_count?: number;
   secret_orders: SecretOrder[];
   can_undo_last_chat: boolean;
-  reply_retries?: ReplyRetry[];
 };
 
 export type ApiErrorDetail = {
