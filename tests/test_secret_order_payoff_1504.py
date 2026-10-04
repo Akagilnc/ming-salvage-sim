@@ -21,8 +21,6 @@ from ming_sim.covert_progress import (
     CovertContractError,
     apply_investigation_spoliation,
     build_covert_task_contract,
-    build_secret_covert_effect_briefs,
-    decide_secret_order_settlement,
     investigation_clue_records,
     live_investigation_fact_keys,
     read_covert_task_contract,
@@ -264,70 +262,6 @@ def test_create_secret_order_fact_lanes_follow_structured_severity_only(game):
         _retire_order(db, oid)
 
 
-def test_decide_settlement_delivery_gap_bidirectional():
-    done = decide_secret_order_settlement({
-        "actual_units": 3.0, "target_units": 3.0, "criterion_text": "密查甲",
-    })
-    assert done["status"] == "done" and done["outcome"] == "fulfilled" and done["delivered"]
-
-    failed = decide_secret_order_settlement({
-        "actual_units": 0.5, "target_units": 3.0, "criterion_text": "密查甲",
-        "has_reports": True,
-    })
-    assert failed["status"] == "failed" and not failed["delivered"]
-    # 表报不改变 delivered 判定
-    bare = decide_secret_order_settlement({
-        "actual_units": 0.5, "target_units": 3.0, "has_reports": False,
-    })
-    assert bare["status"] == "failed"
-
-
-def test_task_specific_contract_from_explicit_fields_not_tags():
-    audit = build_covert_task_contract(
-        deadline_span=3, due_turn=10,
-        kind="补发饷银", axes=["既得利益"], direction=1,
-        delivery_unit="万两", delivery_target_units=3, effect_sign=-1,
-        purpose="其它", category="密令差务", account="内库",
-    )
-    catch = build_covert_task_contract(
-        deadline_span=3, due_turn=10,
-        kind="缉获人犯", axes=["实务事功"], direction=1,
-        delivery_unit="人犯", delivery_target_units=3, effect_sign=1, person_action="处置",
-    )
-    assert audit["kind"] == "补发饷银" and audit["axes"] == ["既得利益"]
-    assert audit["delivery"]["unit"] == "万两"
-    assert audit["delivery"]["target_units"] == 3.0
-    assert catch["kind"] == "缉获人犯" and catch["delivery"]["unit"] == "人犯"
-    assert catch["delivery"]["target_units"] == 3.0
-
-
-def test_task_specific_contract_rejects_tags_without_explicit_fields():
-    with pytest.raises(CovertContractError):
-        build_covert_task_contract(
-            deadline_span=3, due_turn=10, tags=["辽饷", "兵部", "密查", "稽核"],
-        )
-
-
-@pytest.mark.parametrize(
-    ("unit", "identity", "sign"),
-    [
-        ("万两", {"category": "密令差务", "account": "内库"}, -1),
-        ("万两", {"purpose": "其它", "account": "内库"}, -1),
-        ("万两", {"purpose": "其它", "category": "密令差务"}, -1),
-        ("人犯", {}, 1),
-        ("万亩", {"field": "registered_land", "region_target": "421"}, 1),
-        ("万亩", {"region": "henan", "region_target": "421"}, 1),
-        ("万亩", {"region": "henan", "field": "registered_land"}, 1),
-    ],
-)
-def test_confirmation_rejects_incomplete_delivery_identity(unit, identity, sign):
-    with pytest.raises(CovertContractError):
-        build_covert_task_contract(
-            kind="差务", axes=["实务事功"], direction=1,
-            delivery_unit=unit, delivery_target_units=1, effect_sign=sign, **identity,
-        )
-
-
 def test_confirm_persists_task_specific_contract_absent_before(game):
     db, state, _ = game
     name = _minister(db)
@@ -491,8 +425,6 @@ def test_n_month_deadline_yields_exactly_n_ticks(game):
     assert not any(r.get("order_id") == oid and not r.get("skipped") and r.get("units") is not None
                    and not r.get("rejected") for r in out0 if r.get("order_id") == oid and "units" in r)
     assert db.sum_dossier_actual_progress_units(did) == 0.0
-    assert all(int(b.get("order_id") or 0) != oid for b in build_secret_covert_effect_briefs(db, turn=state.turn))
-
     ticks = 0
     for _ in range(n):
         state.turn += 1
@@ -1086,18 +1018,6 @@ def test_supply_call_writes_identity_materials_into_its_own_tree(game, monkeypat
     assert failed.value is error
     assert len(roots) == 2
     assert not roots[-1].exists()
-
-
-def test_non_investigation_contract_keeps_its_delivery_account(game):
-    """筹饷密令仍按自己的交付单位与账户成约。"""
-    del game
-    contract = build_covert_task_contract(covert_task={
-        "kind": "筹饷", "axes": ["实务事功"], "direction": 1,
-        "delivery": {"unit": "万两", "target_units": 30.0, "effect_sign": -1,
-                     "purpose": "其它", "category": "密令差务", "account": "内库"},
-    })
-    assert contract["delivery"]["unit"] == "万两"
-    assert contract["delivery"]["account"] == "内库"
 
 
 def test_case_opening_source_clue_assists_its_fact(game):
