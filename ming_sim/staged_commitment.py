@@ -70,8 +70,8 @@ def normalize_commitment_stages(raw: object) -> List[Dict[str, object]]:
         out.append({
             "stage_idx": stage_idx,
             "due_turn": due_turn,
-            "criterion_text": criterion[:200],
-            "origin_context": (origin_context or criterion)[:240],
+            "criterion_text": criterion,
+            "origin_context": origin_context or criterion,
         })
     out.sort(key=lambda s: (int(s["stage_idx"]), int(s["due_turn"])))
     return out
@@ -252,9 +252,9 @@ def list_due_grant_report_dossiers_for_scan(
             "commitment_ref": 0,
             "stage_idx": did,  # UNIQUE(commitment_ref, stage_idx, entry_kind)
             "due_turn": due_turn,
-            "criterion_text": criterion[:120],
-            "origin_context": origin[:120],
-            "title": title or criterion[:40],
+            "criterion_text": criterion,
+            "origin_context": origin,
+            "title": title or criterion,
             "origin_ref": f"dossier:{did}",
             "payload_json": {
                 "dossier_id": did,

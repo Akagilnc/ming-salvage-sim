@@ -167,7 +167,7 @@ def build_due_review_input(db: Any, todo: Dict[str, object]) -> Dict[str, object
     # 案卷 due 直挂：title/criterion 已在 todo；无 issue 段表 → 末段
     if commitment_ref <= 0 and not meta.get("title"):
         meta = dict(meta)
-        meta["title"] = str(todo.get("criterion_text") or "")[:40]
+        meta["title"] = str(todo.get("criterion_text") or "")
     stages = meta["stages"]
     origin_ref = _todo_origin_ref(todo, str(meta.get("origin_ref") or ""))
     branch = resolve_due_review_branch(db, origin_ref)

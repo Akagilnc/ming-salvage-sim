@@ -16021,22 +16021,18 @@ class GameDB:
         """下游说明片段合并写口（#565；S12/#567 消费方）。
 
         初写仍由 record_dossier_execution 落 judge note；本接口只做增补合并。
+        #1897：不按正文拆条或文字身份去重，只追加。
         """
         fragment_raw = str(fragment or "")
-        fragment_key = fragment_raw.strip()
-        if not fragment_key:
+        if not fragment_raw.strip():
             raise ValueError("说明片段不能为空")
         row = self.get_decree_dossier(dossier_id)
         if row is None:
             raise KeyError(f"案卷不存在：{dossier_id}")
         existing_raw = str(row.get("execution_note") or "")
-        existing_keys = [part.strip() for part in existing_raw.split("；")]
-        if fragment_key in existing_keys:
-            merged = existing_raw
-        elif existing_raw:
-            merged = f"{existing_raw}；{fragment_raw}"
-        else:
-            merged = fragment_raw
+        merged = (
+            f"{existing_raw}；{fragment_raw}" if existing_raw else fragment_raw
+        )
         if merged != existing_raw:
             self.conn.execute(
                 """

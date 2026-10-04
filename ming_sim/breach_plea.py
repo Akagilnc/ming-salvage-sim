@@ -309,14 +309,13 @@ def _merge_plea_kind_into_todo(
             todo.get("commitment_ref"), todo.get("id"), primary, kind,
         )
     meta["absorbed_breach_kinds"] = absorbed_list
-    # 保留首类 primary；补充理由/案卷
+    # 保留首类 primary；补充理由/案卷（#1897：不按正文身份去重，只追加）
     if reason and not str(meta.get("reason") or "").strip():
-        meta["reason"] = str(reason)[:400]
+        meta["reason"] = str(reason)
     elif reason:
         prev = str(meta.get("reason") or "")
-        add = str(reason)[:200]
-        if add and add not in prev:
-            meta["reason"] = f"{prev}；{add}"[:400]
+        add = str(reason)
+        meta["reason"] = f"{prev}；{add}" if prev else add
     if int(target_dossier_id or 0) > 0 and int(meta.get("target_dossier_id") or 0) <= 0:
         meta["target_dossier_id"] = int(target_dossier_id)
     if extra:
@@ -377,16 +376,16 @@ def write_breach_plea_todo(
         return _merge_plea_kind_into_todo(
             db, existing,
             breach_kind=kind,
-            reason=str(reason or label)[:400],
+            reason=str(reason or label),
             target_dossier_id=int(target_dossier_id or 0),
             extra=extra,
         )
 
     meta: Dict[str, object] = {
         "breach_kind": kind,
-        "reason": str(reason or label)[:400],
+        "reason": str(reason or label),
         "target_dossier_id": int(target_dossier_id or 0),
-        "commitment_title": title[:120],
+        "commitment_title": title,
         "absorbed_breach_kinds": [],
     }
     if extra:
@@ -411,7 +410,7 @@ def write_breach_plea_todo(
             return _merge_plea_kind_into_todo(
                 db, existing,
                 breach_kind=kind,
-                reason=str(reason or label)[:400],
+                reason=str(reason or label),
                 target_dossier_id=int(target_dossier_id or 0),
                 extra=extra,
             )
@@ -564,7 +563,7 @@ def _apply_halfway_national_setback(
                 trigger_ref=origin_ref or f"breach:{title}",
                 delta_bar=0,
                 stage_text="国势倒退",
-                narrative=str(reason or "办到一半撤诺，沉没投入化为负累")[:400],
+                narrative=str(reason or "办到一半撤诺，沉没投入化为负累"),
                 metric_delta={},
                 commit=False,
             )
@@ -769,7 +768,7 @@ def finalize_persist(
     #   实写同人去重（tail.guofu_from_0056；origin 前缀 dossier:{id}:breach）。
     #   跨承诺/跨案卷同人边各落各账，UNIQUE 键含 origin 本就允许。
     kinds = plea_kind_set(meta)
-    reason = str(meta.get("reason") or todo.get("criterion_text") or "坚持撤诺")[:400]
+    reason = str(meta.get("reason") or todo.get("criterion_text") or "坚持撤诺")
     commitment_ref = int(todo["commitment_ref"])
     row = _issue_row(db, commitment_ref)
     title = str(row["title"] if row is not None else meta.get("commitment_title") or "")
@@ -1348,7 +1347,7 @@ def try_defer_revoke_to_breach_plea(
             db, state,
             commitment_ref=cid,
             breach_kind=BREACH_KIND_POLICY_REVERSAL,
-            reason=str(reason or "撤回成命")[:400],
+            reason=str(reason or "撤回成命"),
             target_dossier_id=int(target_dossier_id or 0),
             extra={
                 "deferred_revoke": True,

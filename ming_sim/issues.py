@@ -4688,8 +4688,8 @@ def apply_issue_tracker_output(
                 "item": adv,
             })
             continue
-        stage_text = str(adv.get("stage_text") or "")[:120]
-        narrative = str(adv.get("narrative") or "")[:400]
+        stage_text = str(adv.get("stage_text") or "")
+        narrative = str(adv.get("narrative") or "")
         # 先验 issue 存在且 active（与 db.advance_issue 的 None 条件 row is None / status!=active 一致）：
         # 未找到/已非 active → missing_ref 逐项拒收留痕（陈旧/幻觉引用，同 close_issues None 归类，#63），
         # 不裸 continue 静默丢。**必须先验、再应用 metric**：原序先 _apply_metric_dict（就地 mutate
@@ -5280,14 +5280,14 @@ def apply_issue_tracker_output(
         # issue+affair 成对写由 GameDB 拥有（ADR 0150-D3）；本段不自包事务生命周期。
         _issue_fields = dict(
             kind=kind,
-            title=title[:60] or "无名事项",
+            title=title or "无名事项",
             origin_kind="decree",
             origin_ref=origin_ref,
             bar_value=bar_value,
             bar_good_meaning=str(ni.get("bar_good_meaning") or "已成"),
             bar_bad_meaning=str(ni.get("bar_bad_meaning") or "废止"),
             inertia=inertia,
-            stage_text=str(ni.get("stage_text") or "")[:120],
+            stage_text=str(ni.get("stage_text") or ""),
             severity=severity,
             region_hint=str(ni.get("region_hint") or ""),
             faction_hint=str(ni.get("faction_hint") or ""),
@@ -5301,8 +5301,8 @@ def apply_issue_tracker_output(
             cancel_cost=cancel_cost,
             effect_on_resolve=resolve_eff,
             effect_on_fail=fail_eff,
-            resolve_condition=resolve_condition[:300],
-            fail_condition=str(ni.get("fail_condition") or "")[:300],
+            resolve_condition=resolve_condition,
+            fail_condition=str(ni.get("fail_condition") or ""),
             end_turn=end_turn,
             stop_condition=stop_condition,
             commitment_kind=commitment_kind,
@@ -5361,7 +5361,7 @@ def apply_issue_tracker_output(
                 "item": cl,
             })
             continue
-        narrative = str(cl.get("narrative") or "")[:400]
+        narrative = str(cl.get("narrative") or "")
         chk = db.conn.execute(
             "SELECT * FROM issues WHERE id=?", (issue_id,)
         ).fetchone()
@@ -5520,7 +5520,7 @@ def apply_issue_tracker_output(
                 trigger_kind="decree",
                 delta_bar=0,
                 stage_text=row["stage_text"],
-                narrative=str(cn.get("narrative") or "陛下欲罢，然此事非诏可消。")[:400],
+                narrative=str(cn.get("narrative") or "陛下欲罢，然此事非诏可消。"),
                 metric_delta={"皇威": -2},
                 commit=not external_transaction,
             )
@@ -5565,7 +5565,7 @@ def apply_issue_tracker_output(
                 db, state,
                 commitment_ref=issue_id,
                 breach_kind=BREACH_KIND_POLICY_REVERSAL,
-                reason=str(cn.get("narrative") or "撤回成命")[:400],
+                reason=str(cn.get("narrative") or "撤回成命"),
                 target_dossier_id=int(parse_dossier_id(origin_ref_c) or 0),
             )
             applied_cancels.append({
@@ -5596,7 +5596,7 @@ def apply_issue_tracker_output(
         if deterministic_breach:
             db.breach_decree_dossier(
                 state, int(linked_dossier["id"]),
-                reason=str(cn.get("narrative") or "撤回成命")[:400], commit=False,
+                reason=str(cn.get("narrative") or "撤回成命"), commit=False,
             )
         cost = {} if deterministic_breach else (cn.get("applied_cost") or {})
         if isinstance(cost, dict):
@@ -5609,7 +5609,7 @@ def apply_issue_tracker_output(
             entity_rejections.extend(_apply_faction_dict(db, cost.get("factions") or {}, commit=commit_now).rejections)  # 派系拒收不蒸发（#14/#63 cmr r2）
         db.cancel_issue(
             state, issue_id,
-            narrative=str(cn.get("narrative") or "")[:400],
+            narrative=str(cn.get("narrative") or ""),
             applied_cost=cost if isinstance(cost, dict) else {},
             commit=not external_transaction,
         )
