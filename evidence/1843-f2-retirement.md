@@ -136,6 +136,15 @@ F2 删除符号 defs/refs=NONE；级联 format_metric_delta／first_character �
 
 同类型清退旧结算／simulator／board／ready-delta；未动现役写口；仅 F2；F1/F3 只归类；未 amend/stash/push/PR；不冒称 #1856 总核收敛。
 
+## Commit 与 git 状态（R3）
+
+- 施工前 HEAD：`9d4152542c226bc890dd5d231fdacc947d4381c2`
+- R3 清退：`ea297e120e090c68a86b6cd2885f611497988b69`
+- 标题：`ak-roles: fix(#1843) exhaust F2 ≤1-ref retirement after enum false-negatives`
+- diffstat：`8 files changed, 152 insertions(+), 281 deletions(-)`
+- `git diff 9d4152542..ea297e120 --check`：干净
+- 含 `evidence/1843-returned-finding.json` 原文重交
+
 ## 剩余范围
 
 F1／F3／分类器／收夜邻接零引用仍非本票；#1856 总核与全量 CI 留最终待合并。
