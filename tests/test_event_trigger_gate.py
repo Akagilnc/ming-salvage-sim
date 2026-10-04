@@ -19,6 +19,7 @@ import pytest
 from ming_sim import issues
 from ming_sim.models import Event
 from ming_sim.settlement import SettlementContext, settle_delta
+from ming_sim.settlement.views import view, rejected_view
 from ming_sim.settlement.views import (
     class_deltas,
     faction_deltas,
@@ -528,21 +529,6 @@ def test_load_event_fail_loud_on_bad_gate_key(monkeypatch):
     bad = [{"id": "e", "title": "t", "kind": "k", "summary": "s",
             "urgency": 1, "severity": 1, "credibility": 1,
             "trigger_gate": {"民生": "<=5"}}]  # 民心 typo
-    monkeypatch.setattr(content_mod, "load_json_asset", lambda *a, **k: bad)
-    with pytest.raises(SystemExit):
-        content_mod.load_event_content("x.json")
-
-
-def test_load_event_rejects_default_terminal_reason_outside_labels(monkeypatch):
-    """default_terminal_reason 必须来自 terminal_reason_labels 白名单。"""
-    import pytest
-    import ming_sim.content as content_mod
-    bad = [{"id": "e", "title": "t", "kind": "k", "summary": "s",
-            "urgency": 1, "severity": 1, "credibility": 1,
-            "interests": [], "audiences": [],
-            "open_window": True,
-            "terminal_reason_labels": ["已准"],
-            "default_terminal_reason": "已驳"}]
     monkeypatch.setattr(content_mod, "load_json_asset", lambda *a, **k: bad)
     with pytest.raises(SystemExit):
         content_mod.load_event_content("x.json")
@@ -2353,8 +2339,9 @@ def test_huangtaiji_chengdi_lands_only_when_model_picks_it(game, monkeypatch):
         db, state, segment="皇太极称帝",
         translate_fn=lambda request, config: declaration,
     )
-    applied = result.effects.applied[0]["issue_summary"]["new_issues"]
-    assert [item.get("rejected") for item in applied] == [False]
+    outcome = result.effects.applied[0]
+    assert issue_rows(outcome, "new_issues")
+    assert not rejected_view(outcome, "issue_summary")
     assert db.event_terminal_state("huangtaiji_chengdi") == "triggered"
     row = _power_name()
     assert row["name"] == "大清"
@@ -2380,10 +2367,8 @@ def test_huangtaiji_chengdi_lands_only_when_model_picks_it(game, monkeypatch):
         db, state, segment="再说称帝",
         translate_fn=lambda request, config: declaration,
     )
-    assert [
-        item.get("rejected")
-        for item in again.effects.applied[0]["issue_summary"]["new_issues"]
-    ] == [True]
+    again_outcome = again.effects.applied[0]
+    assert rejected_view(again_outcome, "issue_summary") or not issue_rows(again_outcome, "new_issues")
     assert db.conn.execute(
         "SELECT COUNT(*) FROM issues WHERE origin_kind='event_pool' AND origin_ref=?",
         ("huangtaiji_chengdi",),

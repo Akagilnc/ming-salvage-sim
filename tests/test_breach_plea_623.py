@@ -1073,13 +1073,14 @@ def test_policy_reversal_revoke_model_verdict_lands_same_month(game):
     db.apply_dossier_verdicts(
         state, [{"dossier_id": revoke_id, "decision": "promulgated"}], content=content,
     )
-    out = apply_score_extraction(db, state, {"dossier_executions": [{
+    out = settle_delta(state, db, {"dossier_executions": [{
         "dossier_id": did, "outcome": "degraded",
         "note": "半途而止，已花之帑难回",
-    }]}, content=content)
-    assert not any(
-        row.get("rejected") for row in out.get("dossier_executions") or []
-    ), out.get("dossier_executions")
+    }]}, SettlementContext(content=content))
+    applied = list(out.dossier_executions.applied)
+    rejected = list(out.dossier_executions.rejected)
+    assert not rejected, rejected
+    assert applied
     settled = db.get_decree_dossier(did)
     assert str(settled["status"]) == "closed"
     assert str(settled["execution_outcome"]) == "degraded"

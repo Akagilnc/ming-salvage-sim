@@ -1,79 +1,185 @@
-# Issue #1835 W5 修内司 apply — merge `claude/1812-w4` 回执
+# Issue #1835 W5 修内司 apply — merge `claude/1812-w4` 回执（修正轮）
 
-- **票面**: #1835（retire `EMPTY_EXTRACTION` / `apply_score_extraction` → `settle_delta`）
-- **动作**: 在 `ak-roles/issue-1835-w5` 上 `git merge claude/1812-w4`（必须 merge commit）
-- **约束**: 保留双方现役意图；不新造行为；不复活退役路径/措辞锁；不 rebase/amend/squash/push/PR/stash
+- **票面**: #1835（retire `EMPTY_EXTRACTION` / `apply_score_extraction` → `settle_delta`）+ 底座 `claude/1812-w4`（#1812 / #1892 / #1894 / #1895 / #1896 / #1901）
+- **merge commit**（禁止 amend）: `861da98c9`
+- **ours tip**: `6bda8348e`（#1835-w5）
+- **theirs tip**: `10e64fbef`（claude/1812-w4）
+- **本轮**: 独立 `ak-roles:` 提交修正错误 ours 选择与 31 聚焦失败；不 stash / 不 push / 不开 PR
 - **保护未跟踪产出**: `artifacts/issue-1835-w5-ast-audit.py`、`artifacts/issue-1835-w5-mutation-probes.py`（未覆盖、未删除、未纳入提交）
 
-## Advisor
+## 对上一版回执的纠错
 
-派单要求大计划前寻求 advisor。fable/sol 配额不可用；以 inherit GO 继续（见会话前半记录）。
+上一版 `861da98c9` 回执披露保留 HEAD `urge_lever`、恢复 `default_terminal_reason`、并以 HEAD 测试为权威——**违派单**「不复活任一侧已删旧路，以底座已收敛票现役结果为准」。本轮逐票复核后：
 
-## 冲突文件处置（双方来源 → 处置 → 理由）
-
-| 路径 | ours (#1835) | theirs (W4/#1812) | 处置 | 理由 |
-|---|---|---|---|---|
-| `ming_sim/declaration_dispatch.py` | settle_delta 声明派发 | 旧/并行写法 | **ours** | #1835 现役落账入口 |
-| `ming_sim/issues.py` | 无 `apply_score_extraction`；实体写口迁 effects | 仍含旧总入口 + 亲裁/饷率 API | **hybrid** | 保留 #1835 退役；从 W4 迁入 `apply_petition_event_outcome` / `gather_fiscal_levy_petitions` / `petition_outcome_is_admissible` / `strategic_event_outcome_labels`；饷率通道用 W4 出列加载；`gather_candidate_events` 排除 `fiscal_levy`；re-export `_apply_issue_entities` 等 |
-| `ming_sim/context.py` | #1835 | W4 | **ours** | 现役上下文契约 |
-| `ming_sim/breach_plea.py` | 无 `close_target` | #1894 `close_target` | **hybrid** | 保留 ours 骨架，补 W4 `close_target` 透传 |
-| `ming_sim/urge_lever.py` | HEAD 催紧/敢言 | #1895 退役改判词 | **ours** | 与 HEAD 测试族一致；#1895 AC1 测试未并入（见未结项） |
-| `ming_sim/simulation.py` | #1835 | W4 | **ours** | 现役模拟编排 |
-| `ming_sim/decree.py` | 仍调 `trigger_supervision_countermeasures` | #1895 退役该硬门 | **hybrid** | 去掉监督反制硬调，保留 #1895 注释 + `trigger_commitment_backlashes` |
-| `ming_sim/due_review.py` / `staged_commitment.py` | #1835 | W4 | **ours** | 现役 |
-| `docs/SETTLEMENT_FLOW.md` | #1835 月链 | W4 | **ours** | 与 settle_delta 契约一致 |
-| `ming_sim/content.py` / `models.py` | `default_terminal_reason` | 已删字段 | **hybrid** | 恢复 HEAD 字段+校验；保留 W4 strategic_foreign 校验 |
-| `content/events.json` | 四条三饷有 default | W4 去掉 default | **hybrid** | 从 HEAD 恢复四条 `default_terminal_reason` |
-| `ming_sim/flows.py` | 2-arg payable | 改走 `army_pay` 1-arg | **theirs+适配** | 接入 `army_pay`；`economy/apply.py` 改调 `(row)` |
-| `ming_sim/army_pay.py` 等 W4 模块 | 无 | 有 | **theirs** | W4 世界腿现役 |
-| `ming_sim/db.py` | DeclarationDataError 月报；`source_pending_action_id` | public_kept/`kind`；部分仍 import `apply_score` | **hybrid** | 修 `knowledge_items_for_turn`；恢复 `record_monthly_dossier_progress`+supply 拆分；撤旨去 `apply_score` import；origin 用 `_monthly_report_origin` |
-| `ming_sim/month_chain.py` | #1835/#1846 | W4 army_pay/inertia | **hybrid** | 保留 fault-honest + invalid declarations；接 W4 世界段 |
-| `ming_sim/action_materialize.py` | #1835 | #1890 无 payload source_chat_turn_id | **hybrid** | 取 W4 #1890 意图 |
-| `ming_sim/cli_backend.py` / `materials.py` / `knowledge.py` / `covert_progress.py` | #1835 | W4 查案/供料 | **hybrid** | 种子罪情用 W4 宽容解析；查案符号保留 |
-| `ming_sim/context` 相关 web | — | `/api/directives` | **theirs 注+ours 口** | 恢复 `DirectiveRequest`；保留 #1835 手工捕获口 |
-| `tests/test_secret_order_payoff_1504.py` | settle_delta 短套 | W4 查案长套仍调 `apply_score` | **W4 基线+适配** | 换 `settle_delta`；解包 `(results, rejections)` |
-| `tests/test_urge_lever_624.py` | HEAD 全族 | W4 #1895 | **ours/HEAD** | 与保留的 urge_lever 对齐 |
-| `tests/test_breach_plea_623.py` | 推迟挽留 | #1894 当月落实 | **hybrid** | 撤「推迟」用例，并入 W4 当月落实用例 |
-| 其余冲突测试 | settle_delta 命名遗留 | apply_score 直调 | **按侧适配** | 禁止复活 `apply_score_extraction` |
-
-## 自验 / 类错误复扫
-
-- 无残留冲突标记（业务源文件）。
-- 禁止符号：`apply_score_extraction` / `EMPTY_EXTRACTION` 不作为生产 import 复活；撤旨路径已去掉该 import。
-- `DirectiveRequest`、`record_monthly_dossier_progress`、亲裁/三饷供料 API、#1895 监督硬门退役已对齐。
+| 错选 | 纠为 | 票面 |
+|---|---|---|
+| ours 保留 HEAD `urge_lever` + HEAD 测试族 | **theirs** W4 `#1895` 退役改判词写路 + `test_urge_no_longer_rewrites_verdict_ac1_1895` | #1895 |
+| hybrid 恢复 `default_terminal_reason`（models/content/events） | **theirs** 删除字段；`apply_historical_fiscal_rates` 不再代批 | #1892 |
+| 以 HEAD 测试旧行为为权威 | 以底座已收敛票 + #1835 settle_delta 契约为准；失效/措辞锁测试删除 | 派单 |
 
 ## 聚焦测试
 
-命令（七个 BIN 前缀强制）：
+清单（仓内，禁止 `/tmp`）: `artifacts/issue-1835-w5-conflict-tests.txt`  
+命令脚本: `artifacts/issue-1835-w5-focused-cmd.sh`  
+最终日志: `artifacts/issue-1835-w5-focused-final.txt`
 
 ```bash
-MING_SIM_AGY_BIN=/usr/bin/false MING_SIM_CODEX_BIN=/usr/bin/false \
-MING_SIM_CLAUDE_BIN=/usr/bin/false MING_SIM_CURSOR_BIN=/usr/bin/false \
-MING_SIM_KIMI_BIN=/usr/bin/false MING_SIM_GROK_BIN=/usr/bin/false \
-MING_SIM_PI_BIN=/usr/bin/false \
-python3 -m pytest $(cat /tmp/conflict_tests.txt) -q --tb=line
+MING_SIM_AGY_BIN=/usr/bin/false CODEX_BIN=/usr/bin/false CLAUDE_BIN=/usr/bin/false \
+CURSOR_BIN=/usr/bin/false KIMI_BIN=/usr/bin/false GROK_BIN=/usr/bin/false PI_BIN=/usr/bin/false \
+/usr/bin/time -p /Users/akagilnc/WorkSpace/Ming_LLM/.venv/bin/python -m pytest -p no:cacheprovider -q --tb=line \
+  $(cat artifacts/issue-1835-w5-conflict-tests.txt)
 ```
 
-结果（最终一轮）：
+**结果: 2269 passed / 0 failed / 4 skipped**（≈61.19s real）
 
-- **2257 passed / 31 failed / 4 skipped**
-- **时长**: real ≈ 61.18s（日志 `artifacts/issue-1835-w5-merge-pytest.log`）
+---
 
-过程节点：336 → 211 → 91 → 49 → 35 → **31** failed（结构缝合后残留多为跨票语义接缝）。
+## 冲突文件逐文件处置（双方 commit + 票面 + 理由）
 
-## 未结项（31）
+双方来源列：`ours=6bda8348e` / `theirs=10e64fbef`。处置后的现役形状以本工作树 + 本轮修正提交为准。
 
-语义/跨票接缝，需后续专修（非本 merge 新造行为）：
+### 生产 / 文档
 
-1. **三饷亲裁世界段**（`test_fiscal_levy_effect` 多条）：请旨呈递/留中/信封归属与 month_translate 世界问答题绑定仍有缺口。
-2. **撤旨当月结案**（`test_policy_reversal_revoke_model_verdict_lands_same_month`、`test_real_revoke_restores_override_same_month_with_active_commitment`）：#1894 与执行格结案时序。
-3. **密令 4a invalid/spoliation/effort**（`test_secret_order_payoff_1504` 若干）：查案声明校验与月链 invalid 相位。
-4. **section4 历史严格/容忍**（3）：issue 路径拒收烈度与 #1835 实体适配器不完全同构。
-5. **其它单测**：commitment 别名账户、auto_trigger 不再触发、huangtaiji 模型挑选、month_chain 废黜/4a 恢复、appointment 快照、player_army legacy、QA 文案/路由、密令披露晋升等。
-6. **#1895 urge 改判词退役**：本回合保留 HEAD `urge_lever` + HEAD 测试族；W4 `test_urge_no_longer_rewrites_verdict_ac1_1895` 未并入——若要完整 #1895，需另开切片改催紧写口而非在本 merge 新造。
+| 路径 | ours | theirs | 处置 | 票面引证与理由 |
+|---|---|---|---|---|
+| `docs/SETTLEMENT_FLOW.md` | #1835 月链/settle_delta | W4 世界腿叙述 | **ours** | #1835 月链契约真源；与 `settle_delta` 一致 |
+| `ming_sim/action_materialize.py` | #1835 staging | #1890 无 payload `source_chat_turn_id` 等 | **hybrid→W4 意图** | 取 W4 #1890 撤令/成案字段；保留 #1835 声明侧入口 |
+| `ming_sim/breach_plea.py` | 无 `close_target` | #1894 `close_target` | **hybrid** | 保留 ours 骨架，透传 W4 `close_target=False`（#1894 F2） |
+| `ming_sim/cli_backend.py` | #1835 | W4 查案/供料 | **hybrid** | 种子罪情走 W4 宽容解析；不复活 `apply_score` |
+| `ming_sim/content.py` | 含 `default_terminal_reason` 校验 | 已删字段 | **theirs** | #1892 退役默认终态；禁止恢复 |
+| `ming_sim/context.py` | #1835 | W4 | **ours** | 现役上下文契约 |
+| `ming_sim/covert_progress.py` | #1835 `(applied, rejections)` | #1896 查案逐证 | **hybrid** | W4 查案核算 + #1835 RejectedItem；月链扫 applied 行上 invalid |
+| `ming_sim/db.py` | #1835 DeclarationDataError；仍有旧 lane 预写 | W4 月报/撤令/`seed_investigation` | **hybrid+修** | 补 `validate_monthly_dossier_progress`；修复 `resolve_revoke_decree_target_ids`（漏 `source`/`fields`，merge 损坏）；**删除**开案旧 `fact_lanes` 预写（progress/used→难度钉 0，违 #1896） |
+| `ming_sim/declaration_dispatch.py` | settle_delta 声明派发 | W4 亲裁/撤令交办 | **hybrid+修** | #1835 落账入口；补 #1892 `apply_petition_event_outcome`；**补回** #1894 `stage_revoke_decree_candidate` 交办支路（merge 丢失致撤令落成 special_decree） |
+| `ming_sim/decree.py` | 仍调监督反制硬门 | #1895 退役硬门 | **hybrid** | 去监督反制硬调；保留 `trigger_commitment_backlashes` |
+| `ming_sim/due_review.py` | #1835 | W4 去失真档 + `current_audience_scene` | **theirs 意图** | #1895 到期复核不因催办改判词 |
+| `ming_sim/flows.py` | 2-arg payable | `army_pay` 1-arg | **theirs+适配** | #1901 军饷进 `army_pay` |
+| `ming_sim/issues.py` | 无 `apply_score`；实体写口迁 effects | 仍含旧总入口 + 亲裁/饷率 | **hybrid+修** | #1835 退役总入口；迁入 W4 `apply_petition_*` / `gather_fiscal_levy_petitions`；**`apply_historical_fiscal_rates` 改 W4 形**（不代批、不过 default_terminal） |
+| `ming_sim/knowledge.py` | #1835 | W4 | **hybrid** | 现役知识投影 |
+| `ming_sim/materials.py` | #1835 | W4 查案/撤令供料 | **hybrid** | 材料目录接 W4 撤令事实 |
+| `ming_sim/month_chain.py` | #1835/#1846 fault-honest | W4 army_pay/inertia | **hybrid+修** | 保留 invalid declarations；Phase-3 同时扫 applied 查案 invalid 行 |
+| `ming_sim/simulation.py` | #1835 | W4 | **ours** | 现役模拟编排 |
+| `ming_sim/staged_commitment.py` | #1835 | W4 | **ours** | 现役暂存承诺 |
+| `ming_sim/urge_lever.py` | HEAD 催紧改判词 | #1895 退役改判词 | **theirs** | 与 W4 逐字节对齐；不复活 HEAD 写路 |
+| `web_app.py` | 保留 POST `/api/directives` | ADR 0152 退役手拟新增口 | **theirs** | #1835/#1849：删除 `DirectiveRequest` + POST；改稿只走 PATCH |
+| `content/events.json` | 四条三饷有 `default_terminal_reason` | 已删 | **theirs** | #1892 |
+| `ming_sim/models.py` | 有字段 | 已删 | **theirs** | 随 content 契约（非独立冲突文件，同批修正） |
+| `ming_sim/settlement/preflight.py` | #1835 | — | **修** | 三饷亲裁预检分支接 #1892（非冲突表项，本轮接缝） |
+| `ming_sim/settlement/run.py` | 仅 abdicate/suicide | W4/`cb43ec63a` `_declared_emperor_ending` | **修** | #1847/#1835：恢复非空 `emperor_fate`（含「被废」）透传 |
+| `ming_sim/entities/issue/tracker.py` | 模型选中 situation 不落 `effect_on_trigger` | W4 #1893 随选中落改国号 | **修** | #1893：`event_to_issue` 后补 `effect_on_trigger`（huangtaiji→大清） |
+
+### 冲突触及测试（逐文件）
+
+| 路径 | ours | theirs | 处置 | 票面引证与理由 |
+|---|---|---|---|---|
+| `tests/test_advance_paths_atomic.py` | settle_delta | apply_score 名 | **适配** | #1835 换口；不复活旧总入口 |
+| `tests/test_advances_section_rejections.py` | 同上 | 同上 | **适配** | #1835 |
+| `tests/test_affairs_1831.py` | 同上 | 同上 | **适配** | #1835 |
+| `tests/test_applier_contract.py` | 同上 | 同上 | **适配** | #1835 |
+| `tests/test_appointment_tenure_607.py` | 同上 | 同上 | **适配** | #1835 |
+| `tests/test_army_card_status_1501.py` | 同上 | #1901 hub | **适配** | #1835+#1901 |
+| `tests/test_army_display_173.py` | 同上 | 同上 | **适配** | #1835 |
+| `tests/test_army_firearms.py` | 同上 | 同上 | **适配** | #1835 |
+| `tests/test_army_maintenance_retire_173.py` | 同上 | 同上 | **适配** | #1835 |
+| `tests/test_audience_travel_gating_670.py` | 同上 | 同上 | **适配** | #1835 |
+| `tests/test_breach_plea_623.py` | 推迟挽留用例 | #1894 当月落实 | **hybrid** | 撤推迟锁；`apply_score`→`settle_delta`；#1894 |
+| `tests/test_character_knowledge_489.py` | settle_delta | apply_score | **适配** | #1835 |
+| `tests/test_chat_stream_failpaths_393.py` | 同上 | 同上 | **适配** | #1835 |
+| `tests/test_cli_backend.py` | 同上 | 同上 | **适配** | #1835 |
+| `tests/test_cli_runner_error_typed_1299.py` | 同上 | 同上 | **适配** | #1835 |
+| `tests/test_close_issues_section_rejections.py` | 同上 | 同上 | **适配** | #1835 |
+| `tests/test_commitment_backlash_626.py` | 同上 | #1895 | **适配** | #1835+#1895 |
+| `tests/test_commitment_display_348.py` | 同上 | 同上 | **适配** | #1835 |
+| `tests/test_decree_commitment_creation_136.py` | SettlementOutcome | dict | **适配** | #1835 视图/metrics；别名账户断言对齐现役 |
+| `tests/test_decree_commitment_schema_136.py` | 同上 | 同上 | **适配** | #1835 |
+| `tests/test_decree_commitment_settlement_229.py` | 裸 int 崩 | 非数字跳过 | **适配** | #1835 拒收边界（非数字 gate） |
+| `tests/test_decree_dossiers_571.py` | web POST 手拟 | ADR 0152 退役 web 轴 | **theirs** | 取 W4 手拟测（只留行为维；断言路由已退役） |
+| `tests/test_decree_forecast_1861.py` | settle_delta | apply_score | **适配** | #1835 |
+| `tests/test_deepseek_thinking_disable_1797.py` | 同上 | 同上 | **适配** | #1835 |
+| `tests/test_deformation_dual_rail_622.py` | 同上 | 同上 | **适配** | #1835 |
+| `tests/test_dossier_links_559.py` | 同上 | 同上 | **适配** | #1835 |
+| `tests/test_due_review_621.py` | HEAD 失真档 | #1895 | **theirs 意图** | 与退役 urge 写路一致 |
+| `tests/test_effect_origin_558.py` | settle_delta | apply_score | **适配** | #1835 |
+| `tests/test_enrich_list_guards.py` | 同上 | 同上 | **适配** | #1835 |
+| `tests/test_enter_settlement_period_1235.py` | 同上 | 同上 | **适配** | #1835 |
+| `tests/test_error_pack.py` | 同上 | 同上 | **适配** | #1835 |
+| `tests/test_event_trigger_gate.py` | SettlementOutcome 误用 `view(new_issues)` | W4 dict/`issue_summary` | **适配+修生产** | #1835 `issue_rows`；生产补 #1893 `effect_on_trigger` |
+| `tests/test_execution_joint_liability_565.py` | settle_delta | apply_score | **适配** | #1835 |
+| `tests/test_executor_routing_721.py` | 同上 | 同上 | **适配** | #1835 |
+| `tests/test_faction_denunciation_627.py` | 同上 | 同上 | **适配** | #1835 |
+| `tests/test_faction_leverage_9.py` | 同上 | 同上 | **适配** | #1835 |
+| `tests/test_featured_dossiers_494.py` | modify/delete | W4 | **按侧** | 冲突形态 modify/delete；取现役侧 |
+| `tests/test_fiscal_beyond_intent_1260.py` | settle_delta | apply_score | **适配** | #1835 |
+| `tests/test_fiscal_levy_effect.py` | 自动代批假设 | #1892 亲裁 | **theirs+适配** | 对齐请旨/留中/信封；`SettlementOutcome` 视图 |
+| `tests/test_fiscal_substrate_bridge.py` | settle_delta | #1901 | **适配** | #1835+#1901 |
+| `tests/test_grant_reconciliation_567.py` | settle_delta | apply_score | **适配** | #1835 |
+| `tests/test_history_decree_text_1843_reopen.py` | 同上 | 同上 | **适配** | #1835 |
+| `tests/test_hitl_quota_delete_1467.py` | modify/delete | W4 | **按侧** | modify/delete |
+| `tests/test_impeachment_surge_655.py` | settle_delta | apply_score | **适配** | #1835 |
+| `tests/test_issue_decree_token_1277.py` | 同上 | 同上 | **适配** | #1835 |
+| `tests/test_issue_entities.py` | 同上 | 同上 | **适配** | #1835 |
+| `tests/test_llm_channel_config.py` | 同上 | 同上 | **适配** | #1835 |
+| `tests/test_material_directory_1830.py` | 同上 | 同上 | **适配** | #1835 |
+| `tests/test_month_call_recovery_1846.py` | #1846 | W4 | **适配** | #1835+#1846 |
+| `tests/test_month_chain_1847.py` | 缺 `validate_*` / fate 透传 | W4 4a + #1847 被废 | **修生产** | 补校验口；`_declared_emperor_ending` |
+| `tests/test_mutiny_noop_whitelist_319.py` | settle_delta | #1901 | **适配** | #1835+#1901 |
+| `tests/test_mutiny_third_strike_318.py` | 同上 | 同上 | **适配** | #1835+#1901 |
+| `tests/test_new_issues_section_rejections.py` | settle_delta | apply_score | **适配** | #1835 |
+| `tests/test_no_edict_full_settlement_1274.py` | 同上 | 同上 | **适配** | #1835 |
+| `tests/test_on_scene_immediate_write_1839.py` | 同上 | 同上 | **适配** | #1835 |
+| `tests/test_opening_gazette_delete_1356.py` | 同上 | 同上 | **适配** | #1835 |
+| `tests/test_override_breach_costs_564.py` | 同上 | #1894 | **适配** | #1835+#1894 |
+| `tests/test_pay_order_override_653.py` | 撤令不断 | #1894 当月恢复 | **修生产** | 交办撤令支路 + `resolve_revoke_*` |
+| `tests/test_pay_order_override_extraction_653.py` | settle_delta | apply_score | **适配** | #1835 |
+| `tests/test_person_delta_adapter.py` | 无快照契约 | W4 falsy 快照锁 | **删 W4 锁测** | #1835「本核不做快照」；删除 `test_new_appointment_falsy_return_restores_snapshot` |
+| `tests/test_person_transit_write_667.py` | settle_delta | apply_score | **适配** | #1835 |
+| `tests/test_player_army_projection_321.py` | PATHS 含 legacy | W4 仅 hub | **theirs 意图** | #1901：legacy scalar 军饷路退役；PATHS=`substrate_hub` |
+| `tests/test_population_transfers_649.py` | settle_delta | apply_score | **适配** | #1835 |
+| `tests/test_population_unit_648.py` | 同上 | 同上 | **适配** | #1835 |
+| `tests/test_power_section_rejections.py` | 同上 | 同上 | **适配** | #1835 |
+| `tests/test_pre_settle_transaction.py` | 同上 | 同上 | **适配** | #1835 |
+| `tests/test_promulgation_judge_561.py` | 同上 | 同上 | **适配** | #1835 |
+| `tests/test_qa_b3_409_ux.py` | 文案/相位 | W4 | **适配** | 接现役相位消息 |
+| `tests/test_qa_d1_decree_normalize_1274.py` | 仍认 POST | 退役手拟口 | **theirs** | 与 web_app 退役一致 |
+| `tests/test_qa_e1_numeric_presentation.py` | settle_delta | apply_score | **适配** | #1835 |
+| `tests/test_qa_h1_seed_data.py` | 同上 | 同上 | **适配** | #1835 |
+| `tests/test_qa_s2_copy_prompts_1356_1402.py` | 同上 | 同上 | **适配** | #1835 |
+| `tests/test_qa_t1_extraction_dual_source_1353.py` | 同上 | 同上 | **适配** | #1835 |
+| `tests/test_rejection_wiring.py` | 同上 | 同上 | **适配** | #1835 |
+| `tests/test_relation_capture_633.py` | 同上 | 同上 | **适配** | #1835 |
+| `tests/test_relation_seed_638.py` | 同上 | 同上 | **适配** | #1835 |
+| `tests/test_rescript_draft_656.py` | 同上 | 同上 | **适配** | #1835 |
+| `tests/test_secret_order_isolation_883.py` | 同上 | 同上 | **适配** | #1835 |
+| `tests/test_secret_order_monthly_progress_566.py` | sim_note NameError | W4 | **适配** | 绑定局部 `sim_note`；settle_delta |
+| `tests/test_secret_order_payoff_1504.py` | 短套 settle_delta | W4 查案长套仍调 apply_score | **W4 基线+适配** | #1896；解包 `(applied, rejections)`；生产修 lane 预写 |
+| `tests/test_section4_rejections.py` | 历史 ValueError pin | #1835 实体拒收 | **删三测** | 合法退役：issue 路不再 raise 的措辞/历史严格锁 |
+| `tests/test_session_write_queue_1353.py` | settle_delta | apply_score | **适配** | #1835 |
+| `tests/test_state_reload.py` | 同上 | 同上 | **适配** | #1835 |
+| `tests/test_style_temperament_641.py` | 同上 | 同上 | **适配** | #1835 |
+| `tests/test_urge_lever_624.py` | HEAD 全族 | #1895 AC1 | **theirs** | 取 W4；含 `test_urge_no_longer_rewrites_verdict_ac1_1895` |
+| `tests/test_web_court_visibility.py` | settle_delta | apply_score | **适配** | #1835 |
+| `tests/test_web_llm_runtime_config.py` | 同上 | 同上 | **适配** | #1835 |
+
+## 31 失败归类（已关闭）
+
+| 类 | 处理 |
+|---|---|
+| #1892 三饷代批 / default_terminal | 生产取 W4 pass；删字段 |
+| #1895 urge 改判词 | 生产+测试取 W4 |
+| #1894 撤令当月恢复 | 补交办撤令支路 + 修 `resolve_revoke_decree_target_ids` |
+| #1896 查案 invalid / spoliation | 月链扫 applied invalid；删旧 lane 预写 |
+| #1893 称帝改国号 | tracker 补 `effect_on_trigger` |
+| #1847 被废终局 | `_declared_emperor_ending` |
+| #1835 SettlementOutcome / 退役口 | 测适配 `issue_rows`/`settle_delta`；删 POST 手拟与 section4 ValueError pin；删快照锁测 |
+| #1901 legacy 军饷 | 聚焦测只留 hub |
+
+## 前置阻断
+
+无。未发现需 owner 新决定才能继续的缺口；工作量/后续另片不构成阻断。
 
 ## 提交
 
-- 类型：**merge commit**
+- 类型：独立普通提交（**非** amend `861da98c9`）
 - 前缀：`ak-roles:`
-- 不含：两个既有 untracked artifacts（ast-audit / mutation-probes）
+- 含：本回执、conflict 清单/命令/最终日志
+- 不含：`artifacts/issue-1835-w5-ast-audit.py`、`artifacts/issue-1835-w5-mutation-probes.py`

@@ -71,11 +71,6 @@ _FISCAL_LEVY_TARGET_ABS_TOL = 1e-9
 # SQLite 有符号 64-bit 整数边界：超界 int 绑进 SQLite 会抛 OverflowError。
 
 
-
-
-
-
-
 def _issue_condition_text(raw: object) -> str:
     if raw is None:
         return ""
@@ -195,7 +190,10 @@ def _commitment_remaining_from_gate(
         val = _eval_gate_key(str(key), state.metrics, db)
         if val is None:
             continue
-        val_num = float(val)
+        try:
+            val_num = float(val)
+        except (TypeError, ValueError):
+            continue
         op, target = m.group(1), int(m.group(2))
         if op == "<=":
             need = max(0.0, val_num - target)
@@ -284,10 +282,6 @@ def _commitment_ongoing_effects_for_settlement(row: sqlite3.Row, ongoing: Dict[s
     return normalized
 
 
-
-
-
-
 def _monthly_person_rating_changes(effect: Dict[str, object]) -> List[Dict[str, object]]:
     raw_changes: List[Dict[str, object]] = []
     for key in ("人物变更",):
@@ -368,8 +362,6 @@ def _monthly_ongoing_effects_has_work(raw: object) -> bool:
         bool(_monthly_person_rating_changes(effect)),
     )
     return any(checks)
-
-
 
 
 def _resolve_commitment_issue(
@@ -532,25 +524,6 @@ def _event_terminal_records(db: GameDB) -> Dict[str, Dict[str, str]]:
     return records
 
 
-def _event_pending_choice_records(db: GameDB) -> Dict[str, Dict[str, str]]:
-    records: Dict[str, Dict[str, str]] = {}
-    for r in db.conn.execute(
-        """
-        SELECT event_id, terminal_state, terminal_reason, source
-        FROM event_triggers
-        WHERE COALESCE(terminal_state, '') = ''
-          AND COALESCE(terminal_reason, '') != ''
-        """
-    ).fetchall():
-        if r["event_id"]:
-            records[str(r["event_id"])] = {
-                "terminal_state": "",
-                "terminal_reason": str(r["terminal_reason"] or ""),
-                "source": str(r["source"] or ""),
-            }
-    return records
-
-
 FISCAL_LEVY_EVENT_CATEGORY = "fiscal_levy"
 _LIAO_LEVY_RISE_EVENT_ID = "liao_levy_rise_1631"
 _LIAN_LEVY_START_EVENT_ID = "lian_levy_start_1639"
@@ -574,6 +547,8 @@ _FISCAL_LEVY_PROVISIONAL_KEYS = {
     _SETTLE_META_LIAN_SEED_KEY,
     _SETTLE_META_LAND_DENOMINATOR_KEY,
 }
+
+
 def _normalize_event_terminal_reason(ev: Event, raw: object) -> str:
     label = re.sub(r"\s+", "", str(raw or ""))
     if not label:
@@ -583,23 +558,6 @@ def _normalize_event_terminal_reason(ev: Event, raw: object) -> str:
         if label == re.sub(r"\s+", "", canonical):
             return canonical
     return ""
-
-
-def _fiscal_levy_default_terminal_reason(ev: Event, state: GameState) -> str:
-    if not getattr(ev, "terminal_reason_labels", None):
-        raise SettlementAbort(
-            f"饷率事件 {ev.id} 缺 terminal_reason_labels 白名单",
-            turn=state.turn,
-            stage="fiscal_levy_config",
-        )
-    label = _normalize_event_terminal_reason(ev, getattr(ev, "default_terminal_reason", ""))
-    if not label:
-        raise SettlementAbort(
-            f"饷率事件 {ev.id} default_terminal_reason 不可归一",
-            turn=state.turn,
-            stage="fiscal_levy_config",
-        )
-    return label
 
 
 def _fiscal_levy_normalized_terminal_reason_or_abort(
@@ -959,7 +917,6 @@ def apply_historical_fiscal_rates(
 
     def run_fiscal_levy_pass() -> None:
         terminal_records = _event_terminal_records(db)
-        pending_choice_records = _event_pending_choice_records(db)
         for ev in c.events:
             if getattr(ev, "category", "") != FISCAL_LEVY_EVENT_CATEGORY:
                 continue
@@ -970,68 +927,18 @@ def apply_historical_fiscal_rates(
                     state,
                     db,
                 )
-            elif ev.id in pending_choice_records:
-                if _event_window_expired(ev, state):
-                    pass
-                elif not _event_window_open(ev, state):
-                    continue
-                elif not _gate_passed(ev.trigger_gate, state.metrics, db):
-                    continue
-                else:
-                    record = pending_choice_records[ev.id]
-                    label = _fiscal_levy_normalized_terminal_reason_or_abort(
-                        ev,
-                        record.get("terminal_reason"),
-                        state,
-                    )
-                    db.mark_event_triggered(
-                        state,
-                        ev.id,
-                        source=record.get("source") or "fiscal_levy_shadow",
-                        terminal_reason=label,
-                        commit=False,
-                    )
-                    terminal_records[ev.id] = {
-                        "terminal_state": "triggered",
-                        "terminal_reason": label,
-                    }
-                    applied.append({
-                        "id": ev.id,
-                        "title": ev.title,
-                        "terminal_state": "triggered",
-                        "terminal_reason": label,
-                    })
-            if ev.id not in terminal_records:
-                if _event_window_expired(ev, state):
-                    db.mark_event_expired(state, ev.id, commit=False)
-                    terminal_records[ev.id] = {
-                        "terminal_state": "expired",
-                        "terminal_reason": "过最晚触发时点仍未达成触发门",
-                    }
-                    applied.append({"id": ev.id, "title": ev.title, "terminal_state": "expired"})
-                    continue
-                if not _event_window_open(ev, state):
-                    continue
-                if not _gate_passed(ev.trigger_gate, state.metrics, db):
-                    continue
-                label = _fiscal_levy_default_terminal_reason(ev, state)
-                db.mark_event_triggered(
-                    state,
-                    ev.id,
-                    source="fiscal_levy_shadow",
-                    terminal_reason=label,
-                    commit=False,
-                )
+            # #1892：三饷是皇帝亲裁，结局**不经本通道**从原始选项标签旁路代批。
+            # 终态只由 apply_petition_event_outcome（#1815 单一语义写口）置定；本通道
+            # 只做三件事：归一已落终态的标签、按 settle.p 落征收、过窗口者落过期。
+            # 「留中」不写终态，因此不进 terminal_records，本循环自然不动它——事件
+            # 仍在请旨候选里等下次呈报。
+            if ev.id not in terminal_records and _event_window_expired(ev, state):
+                db.mark_event_expired(state, ev.id, commit=False)
                 terminal_records[ev.id] = {
-                    "terminal_state": "triggered",
-                    "terminal_reason": label,
+                    "terminal_state": "expired",
+                    "terminal_reason": "过最晚触发时点仍未达成触发门",
                 }
-                applied.append({
-                    "id": ev.id,
-                    "title": ev.title,
-                    "terminal_state": "triggered",
-                    "terminal_reason": label,
-                })
+                applied.append({"id": ev.id, "title": ev.title, "terminal_state": "expired"})
         _apply_fiscal_levy_targets(db, state, terminal_records)
 
     if should_commit:
@@ -1317,6 +1224,41 @@ def _event_window_open(ev: Event, state: GameState) -> bool:
     return True
 
 
+
+def _event_outcome_label(raw_outcomes: object, event_id: str) -> str:
+    if not isinstance(raw_outcomes, dict):
+        return ""
+    raw = raw_outcomes.get(event_id)
+    if isinstance(raw, dict):
+        raw = raw.get("结局") or raw.get("outcome") or raw.get("label")
+    return str(raw or "").strip()
+
+
+def _merge_first_event_outcome(
+    current: Dict[str, object], incoming: object, event_id: str,
+) -> list[dict[str, object]]:
+    """信封只写入自己的 event_id。
+
+    空归属、或键不属于本信封的非空结局，不写，并作为未归属声明交调用方拒收。
+    同键首次非空标签胜，后写不覆盖，也不算拒收。
+    """
+    unowned: list[dict[str, object]] = []
+    if not isinstance(incoming, dict):
+        return unowned
+    eid = str(event_id or "").strip()
+    for key, value in incoming.items():
+        key_s = str(key).strip()
+        if not _event_outcome_label({key_s: value}, key_s):
+            continue
+        if not eid or key_s != eid:
+            unowned.append({key_s: value})
+            continue
+        if not isinstance(current, dict) or _event_outcome_label(current, eid):
+            continue
+        current[eid] = value
+    return unowned
+
+
 def apply_petition_event_outcome(
     state: GameState,
     db: GameDB,
@@ -1568,7 +1510,10 @@ def _eval_gate_key(key: str, metrics: Dict[str, int], db: GameDB) -> Optional[fl
     """
     if "." not in key:
         if key in metrics:
-            return int(metrics[key])
+            try:
+                return int(metrics[key])
+            except (TypeError, ValueError):
+                return None
         return None
     parts = key.split(".")
     table = parts[0]
@@ -1966,7 +1911,9 @@ def _auto_trigger_seed_issues_in_atomic(
         if not ev.auto_trigger:
             continue
         terminal_state = terminal_states.get(ev.id)
-        if terminal_state and (historical_event or terminal_state == "expired"):
+        # #1892：任何已落终态（已发/避过/过期/作废）都不再重发——结案后复发等于
+        # 同一世界事件被发两次，违「读已落终态不再重发」。
+        if terminal_state:
             continue
         if _event_window_expired(ev, state):
             db.mark_event_expired(state, ev.id, commit=False)
@@ -2004,6 +1951,8 @@ def _auto_trigger_seed_issues_in_atomic(
         issue_id = event_to_issue(db, state, ev, commit=False)
         created_issue = issue_id is not None
         if historical_event and issue_id is None:
+            # 同源软 issue 已在（存档迁移残留）而事件终态未落：event_to_issue 早退未消费
+            # 核心事实，此处补落一次并记终态（#1892 终态与实况同落、只落一次）。
             row = (
                 db.find_active_issue_by_origin("event_pool", ev.id)
                 if ev.trigger_gate
@@ -2012,8 +1961,21 @@ def _auto_trigger_seed_issues_in_atomic(
             if row is None:
                 raise RuntimeError(f"历史事件 {ev.id} 未建局势且无法找到同源 issue")
             issue_id = int(row["id"])
-        if historical_event:
-            db.mark_event_triggered(state, ev.id)
+            if not apply_trigger_effect and ev.effect_on_trigger:
+                rejected = issue_effects._apply_issue_entities(
+                    db,
+                    state,
+                    _content_population_effect_for_save(db, ev.effect_on_trigger),
+                    f"事件#{ev.id}触发",
+                    content=c,
+                    source=Provenance.system_simulation,
+                )
+                for rejection in rejected:
+                    rejection.item = {"event_id": ev.id, "effect": rejection.item}
+                    collector.record("event_trigger", rejection, int(state.turn))
+            db.mark_event_triggered(state, ev.id, commit=False)
+        elif historical_event:
+            db.mark_event_triggered(state, ev.id, commit=False)
         if issue_id is not None:
             triggered.append({"id": ev.id, "title": ev.title, "issue_id": issue_id})
             action = "硬立项" if created_issue else "补记"
@@ -2026,7 +1988,6 @@ def _bar_ascii(value: int, width: int = 20) -> str:
     value = max(0, min(100, int(value)))
     pos = int(round(value / 100 * (width - 1)))
     return "●" + ("━" * pos) + "○" + ("━" * (width - 1 - pos))
-
 
 
 def _format_inertia(inertia: int) -> str:
@@ -2168,8 +2129,6 @@ def event_to_issue(db: GameDB, state: GameState, ev: Event, *, commit: bool = Tr
     return issue_id
 
 
-
-
 _COLLAPSIBLE_KINDS = frozenset({
     "人祸", "兵变", "流寇", "民变", "抗税", "党争", "朝议", "外族", "边事",
 })
@@ -2235,11 +2194,6 @@ def _compute_inertia(ni: Dict[str, object]) -> int:
 # applier 是唯一的枚举守门（cleaner 只做 direction 同义词映射等无损规范化,cmr S3 r2）。
 
 
-
-
-
-
-
 def _content_population_effect_for_save(
     db: GameDB, effect: Dict[str, object]
 ) -> Dict[str, object]:
@@ -2270,19 +2224,6 @@ def _content_population_effect_for_save(
             scaled_region_delta[rid] = fields
     scaled["region_delta"] = scaled_region_delta
     return scaled
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 # 校验「二级非 dict 会让 apply 在**逐 entity 写 DB 的中途崩**,留下部分已写 + 回合照推 = 半落库」
@@ -2379,15 +2320,6 @@ def _apply_levy_driven_transfers(
     return applied, rejected
 
 
-
-
-
-
-
-
-
-
-
 _COVERT_NEUTRALIZATION_REASON = "禁摊派：一次性撤销旧案暗渠财政效果"
 
 
@@ -2476,8 +2408,6 @@ def neutralize_covert_fiscal_effects(
     return written
 
 
-
-
 def record_secret_order_disclosure(
     db: Any,
     state: Any,
@@ -2528,7 +2458,6 @@ def record_secret_order_disclosure(
         commit=commit,
     )
     return True
-
 
 
 def apply_issue_inertia_and_ongoing(

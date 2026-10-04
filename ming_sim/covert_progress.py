@@ -1812,12 +1812,20 @@ def apply_monthly_covert_actual_progress(
         sel = by_sel.get(oid) or {}
         inv_target = _investigation_target_of(contract)
         if inv_target:
-            applied.append(
-                _apply_investigation_selection(
-                    db, state, order=order, dossier=dossier, sel=sel,
-                    target=inv_target, investigator=minister, turn=turn,
-                )
+            result = _apply_investigation_selection(
+                db, state, order=order, dossier=dossier, sel=sel,
+                target=inv_target, investigator=minister, turn=turn,
             )
+            # #1896：查案无效声明以 applied 行上的 rejected/invalid 标记呈现；
+            # 月链同时扫 applied 与 RejectedItem 列表（见 month_chain Phase-3）。
+            if isinstance(result, dict) and result.get("rejected"):
+                rejections.append(RejectedItem(
+                    item=result.get("item") or sel or {"order_id": oid},
+                    reason=str(result.get("reason") or f"密令 {oid} 查案声明无效"),
+                    category=str(result.get("category") or "invalid_enum"),
+                    source=source,
+                ))
+            applied.append(result)
             continue
         selected = sel.get("fidelity", sel.get("执行态", sel.get("state")))
         fidelity = normalize_fidelity_state(selected)

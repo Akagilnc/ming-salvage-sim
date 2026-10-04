@@ -20,7 +20,7 @@ from ming_sim.army_pay import derive_army_mutiny_state
 from ming_sim.flows import apply_fixed_period_flows
 
 ARMY = "guanning"
-PATHS = ("legacy", "substrate_hub")
+PATHS = ("substrate_hub",)  # #1901：军饷/哗变 tick 走 hub；legacy scalar 路已退役
 
 _RAW_KEYS = frozenset({"morale", "loyalty", "arrears"})
 _SIT_KEYS = frozenset({"mutiny_tier", "morale_text", "arrears_text"})

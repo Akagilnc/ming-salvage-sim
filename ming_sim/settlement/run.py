@@ -438,21 +438,37 @@ def _run_effect_sequence(run) -> None:
     run.current_event_ids = run.ordered_effect_event_ids
 
 
+def _declared_emperor_ending(fate: object) -> Optional[Dict[str, object]]:
+    """模型声明的皇帝终态走既有终局链。退位／自尽保留原状态号与定调。
+
+    其它非空声明（被废、暴毙，以及声明里的其它终态）同样终局，不再被旧的两值枚举丢掉。
+    不定调新句子：总评仍由结局 agent 据邸报来写。
+
+    #1847：emperor_fate 是 extractor 契约结构化字段值，原样透传为终态号；
+    不是从自由散文推断分类（ADR 0142 不授权丢弃已声明非空终态）。
+    """
+    if not isinstance(fate, str):
+        return None
+    token = fate.strip()
+    if not token or token.lower() in {"null", "none"}:
+        return None
+    if token == "abdicate":
+        return {"status": "emperor_abdicate", "summary": "崇祯帝退位逊国，大明皇统中绝。"}
+    if token == "suicide":
+        return {"status": "emperor_suicide", "summary": "崇祯帝自尽殉国，煤山一缢，大明社稷俱亡。"}
+    if token.isascii() and token.replace("_", "").isalnum() and not token[0].isdigit():
+        status = token if token.startswith("emperor_") else f"emperor_{token}"
+        return {"status": status, "summary": ""}
+    return {"status": token, "summary": ""}
+
+
 def _resolve_victory(run) -> Optional[Dict[str, object]]:
-    """结局判定：叙事型（退位/自尽）优先于数值型（京畿失守）。"""
+    """结局判定：模型声明的皇帝终态优先于数值型（京畿失守）。"""
     from ming_sim.context import victory_status
 
-    fate = run.current_extracted.get("emperor_fate")
-    if fate in ("abdicate", "suicide"):
-        if fate == "abdicate":
-            return {
-                "status": "emperor_abdicate",
-                "summary": "崇祯帝退位逊国，大明皇统中绝。",
-            }
-        return {
-            "status": "emperor_suicide",
-            "summary": "崇祯帝自尽殉国，煤山一缢，大明社稷俱亡。",
-        }
+    declared = _declared_emperor_ending(run.current_extracted.get("emperor_fate"))
+    if declared is not None:
+        return declared
     return victory_status(run.db, run.state)
 
 

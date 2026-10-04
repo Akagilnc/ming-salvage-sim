@@ -362,25 +362,35 @@ def _merge_effect_field(
 def _effect_extraction_from_clean(
     clean: Mapping[str, object],
     event_id: str,
-) -> tuple[dict[str, object], dict[str, list[tuple[str, object]]], dict[str, list[str]]]:
+) -> tuple[dict[str, object], dict[str, list[tuple[str, object]]], dict[str, list[str]], list[dict[str, object]]]:
     """从一条已 sanitize 的效果 envelope 取出本笔载荷与其字段级事件归属。
 
     只取声明实际带来的字段；未知字段已由 :func:`sanitize_delta_shape` 按 ADR 0015
     逐段拒收留痕，此处不再静默丢弃。
     """
+    from ming_sim.issues import _merge_first_event_outcome
+
     extraction: dict[str, object] = {}
     ordered_deltas: dict[str, list[tuple[str, object]]] = {field: [] for field in _ORDERED_DELTA_FIELDS}
     ordered_effect_event_ids: dict[str, list[str]] = {}
+    unowned_outcomes: list[dict[str, object]] = []
     for field, value in clean.items():
         if value is None:
             continue
-        _merge_effect_field(extraction, field, value)
+        if field == "事件结局" and isinstance(value, dict):
+            current = extraction.setdefault("事件结局", {})
+            if not isinstance(current, dict):
+                current = {}
+                extraction["事件结局"] = current
+            unowned_outcomes.extend(_merge_first_event_outcome(current, value, event_id))
+        else:
+            _merge_effect_field(extraction, field, value)
         if isinstance(value, list):
             ordered_effect_event_ids.setdefault(field, []).extend([event_id] * len(value))
         elif isinstance(value, dict) and field in ordered_deltas:
             ordered_deltas[field].extend(value.items())
             ordered_effect_event_ids.setdefault(field, []).extend([event_id] * len(value))
-    return extraction, ordered_deltas, ordered_effect_event_ids
+    return extraction, ordered_deltas, ordered_effect_event_ids, unowned_outcomes
 
 
 def _persist_specialized_extraction(
@@ -492,6 +502,13 @@ def _dispatch_effects(
     ordered_effect_event_ids: dict[str, list[str]] = {}
     effect_sequence: list[tuple[dict[str, object], dict[str, list[tuple[str, object]]], dict[str, list[str]]]] = []
     accepted_effect = False
+    accepted_event_ids: list[str] = []
+    from ming_sim.issues import (
+        FISCAL_LEVY_EVENT_CATEGORY,
+        _event_outcome_label,
+        _merge_first_event_outcome,
+        apply_petition_event_outcome,
+    )
     for item, event_id, clean in clean_items:
         if event_id in rejected_events:
             rejected.append(RejectedItem(
@@ -500,11 +517,25 @@ def _dispatch_effects(
             ))
             continue
         accepted_effect = True
-        step_extraction, step_ordered, step_event_ids = _effect_extraction_from_clean(
-            clean, event_id,
+        if event_id:
+            accepted_event_ids.append(event_id)
+        step_extraction, step_ordered, step_event_ids, unowned_outcomes = (
+            _effect_extraction_from_clean(clean, event_id)
         )
+        for stray in unowned_outcomes:
+            rejected.append(RejectedItem(
+                item={"event_id": event_id, "事件结局": stray},
+                reason="事件结局不属于本效果信封，未写入",
+                category="invalid_state",
+                source=source,
+            ))
         effect_sequence.append((step_extraction, step_ordered, step_event_ids))
         for field, value in step_extraction.items():
+            if field == "事件结局" and isinstance(value, dict):
+                current = extraction.setdefault("事件结局", {})
+                if isinstance(current, dict):
+                    _merge_first_event_outcome(current, value, event_id)
+                    continue
             _merge_effect_field(extraction, field, value)
         for field, pairs in step_ordered.items():
             ordered_deltas[field].extend(pairs)
@@ -527,6 +558,18 @@ def _dispatch_effects(
         prior_shape_rejections=shape_rejections,
         effect_sequence=effect_sequence if isinstance(raw, list) else None,
     )
+    # #1892：三饷亲裁语义落账——批红经 #1815 单一语义写口置定事件结局。
+    # 事件身份只来自已被接受的信封 event_id；预检拒收信封不得再交亲裁写口。
+    outcomes = extraction.get("事件结局") or {}
+    content = db.content
+    for event_id in accepted_event_ids:
+        ev = content.event_by_id.get(event_id) if content is not None else None
+        if ev is None or getattr(ev, "category", "") != FISCAL_LEVY_EVENT_CATEGORY:
+            continue
+        raw_label = _event_outcome_label(outcomes, event_id)
+        if not raw_label:
+            continue
+        apply_petition_event_outcome(state, db, event_id, raw_label, commit=False)
     # #670：续启赴京成功后结清 in_transit 传召，与本段落账同事务。
     from ming_sim.audience_night import settle_applied_arrived_summons
     settle_applied_arrived_summons(db, outcome)
@@ -1364,6 +1407,50 @@ def _dispatch_commissions(
                 applied.append({"id": row_id, "kind": "directive"})
             else:
                 _reject(rejected, item, "责成交办未通过现有准入", "invalid_state", source)
+            continue
+
+        # #1894：明确撤一道已发旨的交办载荷。与 grant/appointment/punishment/
+        # pacification/assignment 同形：独立 typed 对象 + 正文，禁与其它载荷混填。
+        revoke = item.get("revoke")
+        if revoke is not None:
+            if not isinstance(revoke, Mapping) or any(
+                item.get(key) for key in
+                ("grant", "appointment", "punishment", "pacification", "assignment",
+                 "secret_order", "secret_order_progress", "secret_order_update",
+                 "strategy_selection")
+            ):
+                _reject(rejected, item, "撤令交办载荷须为独立对象", "invalid_shape", source)
+                continue
+            body = _declared_prose(item.get("text"))
+            if body is None:
+                _reject(rejected, item, "撤令交办缺正文", "invalid_shape", source)
+                continue
+            from ming_sim.action_materialize import stage_revoke_decree_candidate
+            actor = str(minister_name or "").strip() or _commission_fallback_actor(db)
+            # 与其它交办载荷同缝：原旨与撤令沿同一事务关联（ADR 0154）。
+            payload: Dict[str, Any] = {}
+            if not _attach_commission_affair(
+                db, item, payload, rejected=rejected, source=source,
+            ):
+                continue
+            row_id = stage_revoke_decree_candidate(
+                db, int(state.turn), actor,
+                text=body,
+                target_id=revoke.get("target_id", ""),
+                target_kind=revoke.get("target_kind", ""),
+                target_candidate=revoke.get("target_candidate"),
+                extracted_mode=revoke.get("mode", item.get("mode")),
+                affair_declaration=payload.get("affair_declaration"),
+            )
+            if row_id:
+                applied.append({"id": row_id, "kind": "directive"})
+            else:
+                # 目标不是可撤的承诺/旨意（含「撤回最近一轮召对」等非撤令）→
+                # 既有准入零变化，逐项拒收留痕（ADR 0008）。
+                _reject(
+                    rejected, item, "撤令目标不是可撤的已颁承诺/旨意",
+                    "invalid_state", source,
+                )
             continue
 
         punishment = item.get("punishment")

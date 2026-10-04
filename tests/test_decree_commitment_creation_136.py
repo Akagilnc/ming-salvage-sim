@@ -70,15 +70,13 @@ def test_decree_commitment_does_not_dedup_same_name_income_fiscal_create(game, m
     ).fetchone()[0] >= 1
 
 
-@pytest.mark.parametrize("account", ["国库", "内库"])
-def test_decree_commitment_same_account_alias_miss_keeps_distinct_fiscal_item(game, monkeypatch, account):
-    """Unmatched expense lands; only same-account alias misses are observable."""
+def test_decree_commitment_same_account_alias_miss_emits_residual_signal(game, monkeypatch, capsys):
+    """ADR0027 残留观测：同批、同账户、有 decree 承诺却**异名**未匹配上的 fiscal_create
+    照常落账，但必须打日志当试玩信号（便于发现异名漏匹规律，#340 US8）。"""
     db, state, content = game
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
-    logs = []
-    monkeypatch.setattr(I, "tlog", logs.append)
 
-    out = settle_delta(state, db, {'new_issues': [{'origin_kind': 'decree', 'origin_ref': _promulgated_commitment_origin(db, state, 'xixue-monthly'), 'kind': 'initiative', 'title': '每月拨西学经费', 'stage_text': '太仓每月拨银五十万两办西学。', 'ongoing_effects': {'economy': [{'account': '国库', 'delta': -50, 'category': '西学经费', 'reason': '每月拨西学经费'}]}, 'commitment_kind': 'until_stop'}], 'fiscal_creates': [{'key': 'xuguangqi_gongfei_base', 'account': account, 'direction': 'expense', 'init_value': 50, 'display': '徐光启三务公费', 'reason': '月支', 'origin_ref': '盘面自发'}]}, SettlementContext(content=content))
+    out = settle_delta(state, db, {'new_issues': [{'origin_kind': 'decree', 'origin_ref': _promulgated_commitment_origin(db, state, 'xixue-monthly'), 'kind': 'initiative', 'title': '每月拨西学经费', 'stage_text': '太仓每月拨银五十万两办西学。', 'ongoing_effects': {'economy': [{'account': '国库', 'delta': -50, 'category': '西学经费', 'reason': '每月拨西学经费'}]}, 'commitment_kind': 'until_stop'}], 'fiscal_creates': [{'key': 'xuguangqi_gongfei_base', 'account': '国库', 'direction': 'expense', 'init_value': 50, 'display': '徐光启三务公费', 'reason': '月支', 'origin_ref': '盘面自发'}]}, SettlementContext(content=content))
 
     # 异名 → 未去重，fiscal_create 照常落账（不被拒）
     assert rejected_view(out, "fiscal_creates") == []
@@ -87,17 +85,23 @@ def test_decree_commitment_same_account_alias_miss_keeps_distinct_fiscal_item(ga
         "SELECT COUNT(*) FROM fiscal_config WHERE key IN "
         "('xuguangqi_gongfei_base', 'xuguangqi_gongfei_rate')"
     ).fetchone()[0] >= 1
-    assert any("徐光启三务公费" in entry for entry in logs) == (account == "国库")
+    # 但必须留下 ADR0027 残留观测信号（试玩可见 = 能发现异名漏匹规律）
+    captured = capsys.readouterr()
+    combined = captured.out + captured.err
+    assert "ADR0027 残留观测" in combined
+    assert "徐光启三务公费" in combined
 
 
-def test_decree_commitment_unrelated_account_keeps_fiscal_item(game, monkeypatch):
-    """An authorized item in another account must not be deduplicated."""
+def test_decree_commitment_unrelated_account_no_residual_signal(game, monkeypatch, capsys):
+    """残留观测只在【同账户】触发：不同账户的无关 fiscal_create 不应误报信号。"""
     db, state, content = game
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
 
     settle_delta(state, db, {'new_issues': [{'origin_kind': 'decree', 'origin_ref': _promulgated_commitment_origin(db, state, 'xixue-monthly'), 'kind': 'initiative', 'title': '每月拨西学经费', 'stage_text': '太仓每月拨银五十万两办西学。', 'ongoing_effects': {'economy': [{'account': '国库', 'delta': -50, 'category': '西学经费', 'reason': '每月拨西学经费'}]}, 'commitment_kind': 'until_stop'}], 'fiscal_creates': [{'key': 'neiku_dujiang_base', 'account': '内库', 'direction': 'expense', 'init_value': 10, 'display': '督江差役', 'reason': '月支'}]}, SettlementContext(content=content))
 
-    assert db.get_fiscal_config()["neiku_dujiang_base"] == 10
+    captured = capsys.readouterr()
+    assert "ADR0027 残留观测" not in (captured.out + captured.err)
+
 
 
 def test_until_stop_commitment_shape_rejects_without_explicit_marker(read_game, monkeypatch):

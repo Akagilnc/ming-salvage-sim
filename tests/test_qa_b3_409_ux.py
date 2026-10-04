@@ -69,6 +69,8 @@ def _front_half_detail(phase: str) -> str:
             pass
     assert ei.value.status_code == 409
     detail = str(ei.value.detail)
+    assert detail
+    return detail
 
 
 def test_serialized_web_write_settling_keeps_settlement_in_progress_copy():

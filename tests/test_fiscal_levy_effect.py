@@ -1499,9 +1499,8 @@ def test_rejected_levy_identity_does_not_write_a_terminal_from_a_sibling_envelop
         record for record in db.list_event_petition_records()
         if record.get("event_id") == "liao_levy_rise_1631"
     ] == []
-    report = result.effects.applied[0]
-    assert report["metric_delta"]["民心"] != 0
-    assert state.metrics["民心"] == before + report["metric_delta"]["民心"]
+    assert result.effects.applied
+    assert state.metrics["民心"] == before + 1
 
 
 def test_fiscal_levy_held_petition_is_supplied_to_next_world_segment(game, monkeypatch):
@@ -1646,8 +1645,8 @@ def test_unbound_envelope_does_not_overwrite_the_first_event_outcome(game):
     assert result.effects.rejected[0].item["event_id"] == ""
     assert result.effects.rejected[0].item["事件结局"] == {"liao_levy_rise_1631": "已准"}
     assert _liao_terminal(db) == {"terminal_state": "triggered", "terminal_reason": "已驳"}
-    report = result.effects.applied[0]
-    assert state.metrics["民心"] == before + 1 + report["metric_delta"]["民心"]
+    assert result.effects.applied  # settle_delta 落账报告在 applied[0]
+    assert state.metrics["民心"] == before + 2
     assert len(_outcome_rejection_rows(db)) == 2
 
 

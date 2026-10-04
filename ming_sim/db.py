@@ -12039,6 +12039,12 @@ class GameDB:
             raise DeclarationDataError("合资格长差案卷月报未完整覆盖")
         return supplied
 
+    def validate_monthly_dossier_progress(
+        self, turn: int, generated: object = None,
+    ) -> None:
+        """只校验新产物覆盖，不写报告。已提交的合法报告不因重试再落一遍。"""
+        self._monthly_dossier_report_supply(int(turn), generated)
+
     def record_monthly_dossier_progress(
         self, turn: int, generated: object = None,
     ) -> List[Dict[str, object]]:
@@ -16256,16 +16262,17 @@ class GameDB:
         """
         from ming_sim.strict_types import strict_int
 
-        raw_tdid = payload.get("revoke_target_dossier_id")
-        target_dossier_id = (
-            0 if raw_tdid in (None, "")
-            else strict_int(raw_tdid, accept_numeric_strings=True)
-        )
-        raw_tiid = payload.get("revoke_target_issue_id")
-        target_issue_id = (
-            0 if raw_tiid in (None, "")
-            else strict_int(raw_tiid, accept_numeric_strings=True)
-        )
+        source = payload if isinstance(payload, Mapping) else {}
+        fields = row if isinstance(row, Mapping) else {}
+
+        def _id(key: str) -> int:
+            try:
+                return strict_int(source.get(key), accept_numeric_strings=True)
+            except (TypeError, ValueError):
+                return 0
+
+        target_dossier_id = _id("revoke_target_dossier_id")
+        target_issue_id = _id("revoke_target_issue_id")
 
         if target_dossier_id <= 0 and target_issue_id <= 0:
             raw = str(
@@ -16277,11 +16284,11 @@ class GameDB:
             if raw.startswith("dossier:"):
                 kind, raw = "dossier", raw.split(":", 1)[1].strip()
             elif raw.startswith("issue:"):
-                kind = "issue"
-                raw = raw.split(":", 1)[1].strip()
-            if not raw:
-                raise ValueError("撤回成命案卷缺少目标")
-            tid = strict_int(raw, accept_numeric_strings=True)
+                kind, raw = "issue", raw.split(":", 1)[1].strip()
+            try:
+                tid = strict_int(raw, accept_numeric_strings=True) if raw else 0
+            except (TypeError, ValueError):
+                tid = 0
             if tid <= 0:
                 raise ValueError("撤回成命案卷缺少目标")
             if kind == "issue":
@@ -16301,8 +16308,10 @@ class GameDB:
                 raise ValueError("撤回成命目标须为承诺/initiative")
             origin = str(issue_row["origin_ref"] or "").strip()
             if origin.startswith("dossier:"):
-                suffix = origin.split(":", 1)[1]
-                target_dossier_id = int(suffix or 0)
+                try:
+                    target_dossier_id = int(origin.split(":", 1)[1])
+                except (TypeError, ValueError):
+                    target_dossier_id = 0
 
         if target_dossier_id <= 0:
             # 删除 standalone issue 免代价旁路（dossier_id=0 仍 cancel_issue）
@@ -21512,15 +21521,9 @@ class GameDB:
             if affair_declaration is not None:
                 # 事务归属由成案核 _resolve_affair_id_from_payload 消费并落 pointer。
                 payload["affair_declaration"] = dict(affair_declaration)
-            from ming_sim.covert_progress import (
-                live_investigation_fact_keys,
-                FACT_LANES_KEY,
-            )
-            if inv_target:
-                payload[FACT_LANES_KEY] = [
-                    {"fact_key": key, "progress": 0.0, "used": False}
-                    for key in live_investigation_fact_keys(self, inv_target)
-                ]
+            # #1896：开案 lane 只由下方 seed_investigation_fact_lanes 写一次并冻结
+            # 难度；禁在此预写旧 progress/used 形状（缺 difficulty → 读口填 0 →
+            # seed 见 seen 跳过，难度永久钉死为 0）。
             dossier_id = self.create_decree_dossier(
                 state,
                 action_type="secret_order",

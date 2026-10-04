@@ -114,7 +114,8 @@ def test_disclosure_promotes_monthly_report_to_public_event_only_after_disclosur
         for item in db._character_knowledge_events("")
     )
 
-    settle_delta(state, db, {'secret_order_updates': [{'order_id': order_id, 'sim_note': '该案已经明发廷议', 'disclosed': True}]}, SettlementContext(content=content))
+    sim_note = "该案已经明发廷议"
+    settle_delta(state, db, {'secret_order_updates': [{'order_id': order_id, 'sim_note': sim_note, 'disclosed': True}]}, SettlementContext(content=content))
     public = db._character_knowledge_events("")
     disclosure = next(
         item for item in public

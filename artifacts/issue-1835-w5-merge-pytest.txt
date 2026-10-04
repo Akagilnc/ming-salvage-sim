@@ -1,0 +1,366 @@
+........................................................................ [  3%]
+............s........................................................... [  6%]
+.................F...................................................... [  9%]
+........................................................................ [ 12%]
+........................................................................ [ 15%]
+.............F.F........................................................ [ 18%]
+..........F............................................................. [ 21%]
+........................................................................ [ 25%]
+........................................................................ [ 28%]
+........................................................................ [ 31%]
+........................................................................ [ 34%]
+...............F....F................................................... [ 37%]
+........................................................................ [ 40%]
+................................F.....................FFFFFFFF.......... [ 43%]
+........................................................................ [ 47%]
+........................................................................ [ 50%]
+........................................................................ [ 53%]
+........................................................................ [ 56%]
+.......................................F......F......................... [ 59%]
+........................................................................ [ 62%]
+........................................................................ [ 65%]
+.F...................................................................... [ 69%]
+............................................................s........... [ 72%]
+...............F.....................................F.................. [ 75%]
+...............s.........s.............................................. [ 78%]
+...........F..............F............................................. [ 81%]
+........................................................................ [ 84%]
+........................................................................ [ 87%]
+.................F..........................................F..........F [ 91%]
+....FFF..........................................................FFF.... [ 94%]
+........................................................................ [ 97%]
+............................................................             [100%]
+=================================== FAILURES ===================================
+E   NameError: name 'apply_score_extraction' is not defined
+/Users/akagilnc/WorkSpace/Ming_LLM-1835-w5/tests/test_breach_plea_623.py:1076: NameError: name 'apply_score_extraction' is not defined
+E   AssertionError: assert False == ('\u56fd\u5e93' == '\u56fd\u5e93'
+     +  where False = any(<generator object test_decree_commitment_same_account_alias_miss_keeps_distinct_fiscal_item.<locals>.<genexpr> at 0x10c390ba0>)
+      
+        国库)
+----------------------------- Captured stdout call -----------------------------
+[05:22:04.710] [commitment-dedup] ADR0027 残留观测：同批国库已有 decree 承诺月支，但 fiscal_create「徐光启三务公费」未按科目名匹配上、照常落账——疑似异名漏匹，试玩留意。
+/Users/akagilnc/WorkSpace/Ming_LLM-1835-w5/tests/test_decree_commitment_creation_136.py:90: AssertionError: assert False == ('\u56fd\u5e93' == '\u56fd\u5e93'
+E   KeyError: 'neiku_dujiang_base'
+/Users/akagilnc/WorkSpace/Ming_LLM-1835-w5/tests/test_decree_commitment_creation_136.py:100: KeyError: 'neiku_dujiang_base'
+E   ValueError: invalid literal for int() with base 10: '非数字'
+/Users/akagilnc/WorkSpace/Ming_LLM-1835-w5/ming_sim/issues.py:1571: ValueError: invalid literal for int() with base 10: '非数字'
+E   assert False
+     +  where False = all(<generator object test_gated_auto_trigger_seed_event_does_not_refire_after_issue_resolved.<locals>.<genexpr> at 0x10c49c2b0>)
+----------------------------- Captured stdout call -----------------------------
+[AUTO-TRIGGER] gate 达标硬立项 #4 测试门控历史事件（{'民心': '<=5'}）
+[AUTO-TRIGGER] gate 达标硬立项 #5 测试门控历史事件（{'民心': '<=5'}）
+/Users/akagilnc/WorkSpace/Ming_LLM-1835-w5/tests/test_event_trigger_gate.py:2176: assert False
+E   TypeError: 'SettlementOutcome' object is not subscriptable
+----------------------------- Captured stdout call -----------------------------
+[05:22:14.398] [接档] begin_turn 读档+历史 tick+人物同步+奏报 0.0s
+[05:22:14.399] [fiscal-levy] 本回合饷率事件前置落账 1 条：[('liao_levy_rise_1631', '已准')]
+[05:22:14.399] 结算 1/4 固定月度财政 tick
+[05:22:14.405] [fiscal-substrate] beizhili 推进：实征6.2/起运6.2/火耗入截留1.0；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠3（hub，待入国库）
+[05:22:14.406] [fiscal-substrate] dongjiang_area 推进：实征0.0/起运0.0/火耗入截留0.0；末态欠账 军饷欠34/官俸欠0/宗禄欠0/民欠0（hub，待入国库）
+[05:22:14.406] [fiscal-substrate] fujian 推进：实征2.5/起运2.1/火耗入截留0.4；末态欠账 军饷欠7/官俸欠1/宗禄欠0/民欠1（hub，待入国库）
+[05:22:14.406] [fiscal-substrate] guangdong 推进：实征3.4/起运3.4/火耗入截留0.5；末态欠账 军饷欠6/官俸欠1/宗禄欠0/民欠1（hub，待入国库）
+[05:22:14.406] [fiscal-substrate] guangxi 推进：实征0.9/起运0.9/火耗入截留0.2；末态欠账 军饷欠0/官俸欠0/宗禄欠1/民欠1（hub，待入国库）
+[05:22:14.406] [fiscal-substrate] guizhou 推进：实征0.1/起运0.1/火耗入截留0.0；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠0（hub，待入国库）
+[05:22:14.406] [fiscal-substrate] henan 推进：实征14.0/起运14.0/火耗入截留2.5；末态欠账 军饷欠0/官俸欠0/宗禄欠16/民欠9（hub，待入国库）
+[05:22:14.406] [fiscal-substrate] huguang 推进：实征43.8/起运24.1/火耗入截留6.1；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠12（hub，待入国库）
+[05:22:14.406] [fiscal-substrate] jiangxi 推进：实征19.5/起运8.7/火耗入截留2.9；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠7（hub，待入国库）
+[05:22:14.406] [fiscal-substrate] liaodong 推进：实征0.0/起运0.0/火耗入截留0.0；末态欠账 军饷欠83/官俸欠0/宗禄欠0/民欠0（hub，待入国库）
+[05:22:14.406] [fiscal-substrate] nanzhili 推进：实征31.1/起运16.7/火耗入截留4.4；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠7（hub，待入国库）
+[05:22:14.406] [fiscal-substrate] shaanxi 推进：实征4.4/起运2.9/火耗入截留0.8；末态欠账 军饷欠16/官俸欠1/宗禄欠4/民欠4（hub，待入国库）
+[05:22:14.406] [fiscal-substrate] shandong 推进：实征14.9/起运9.4/火耗入截留2.4；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠8（hub，待入国库）
+[05:22:14.406] [fiscal-substrate] shanxi 推进：实征13.9/起运10.6/火耗入截留2.4；末态欠账 军饷欠16/官俸欠0/宗禄欠8/民欠7（hub，待入国库）
+[05:22:14.406] [fiscal-substrate] sichuan 推进：实征2.2/起运2.2/火耗入截留0.4；末态欠账 军饷欠0/官俸欠1/宗禄欠1/民欠1（hub，待入国库）
+[05:22:14.406] [fiscal-substrate] yunnan 推进：实征0.3/起运0.2/火耗入截留0.0；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠0（hub，待入国库）
+[05:22:14.406] [fiscal-substrate] zhejiang 推进：实征22.1/起运8.2/火耗入截留2.9；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠6（hub，待入国库）
+[05:22:14.408] [event_terminal] 本回合事件终态落账 3 条：[('yuan_xialing', 'avoided'), ('korea_envoy', 'expired'), ('fengshou', 'expired')]
+[AUTO-TRIGGER] gate 达标硬立项 #4 华北大疫起（{}）
+[05:22:14.409] [AUTO-TRIGGER] 本回合程序硬立项 1 条：['华北大疫起']
+/Users/akagilnc/WorkSpace/Ming_LLM-1835-w5/tests/test_event_trigger_gate.py:2356: TypeError: 'SettlementOutcome' object is not subscriptable
+E   AssertionError: assert <sqlite3.Row object at 0x10be4fd30> is None
+     +  where <sqlite3.Row object at 0x10be4fd30> = <built-in method fetchone of sqlite3.Cursor object at 0x10c5acac0>()
+     +    where <built-in method fetchone of sqlite3.Cursor object at 0x10c5acac0> = <sqlite3.Cursor object at 0x10c5acac0>.fetchone
+     +      where <sqlite3.Cursor object at 0x10c5acac0> = <built-in method execute of _SuspendableConnection object at 0x10d1a9250>('SELECT 1 FROM event_triggers WHERE event_id=?', ('liao_levy_rise_1631',))
+     +        where <built-in method execute of _SuspendableConnection object at 0x10d1a9250> = <ming_sim.applier._SuspendableConnection object at 0x10d1a9250>.execute
+     +          where <ming_sim.applier._SuspendableConnection object at 0x10d1a9250> = <ming_sim.db.GameDB object at 0x10bb4fc50>.conn
+/Users/akagilnc/WorkSpace/Ming_LLM-1835-w5/tests/test_fiscal_levy_effect.py:534: AssertionError: assert <sqlite3.Row object at 0x10be4fd30> is None
+E   KeyError: 'world-question:1:0'
+----------------------------- Captured stdout call -----------------------------
+[05:22:18.223] [fiscal-levy] 本回合饷率事件前置落账 1 条：[('liao_levy_rise_1631', '已准')]
+[05:22:18.223] 结算 1/4 固定月度财政 tick
+[05:22:18.229] [fiscal-substrate] beizhili 推进：实征6.2/起运6.2/火耗入截留1.0；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠3（hub，待入国库）
+[05:22:18.229] [fiscal-substrate] dongjiang_area 推进：实征0.0/起运0.0/火耗入截留0.0；末态欠账 军饷欠34/官俸欠0/宗禄欠0/民欠0（hub，待入国库）
+[05:22:18.229] [fiscal-substrate] fujian 推进：实征2.5/起运2.1/火耗入截留0.4；末态欠账 军饷欠7/官俸欠1/宗禄欠0/民欠1（hub，待入国库）
+[05:22:18.229] [fiscal-substrate] guangdong 推进：实征3.4/起运3.4/火耗入截留0.5；末态欠账 军饷欠6/官俸欠1/宗禄欠0/民欠1（hub，待入国库）
+[05:22:18.229] [fiscal-substrate] guangxi 推进：实征0.9/起运0.9/火耗入截留0.2；末态欠账 军饷欠0/官俸欠0/宗禄欠1/民欠1（hub，待入国库）
+[05:22:18.229] [fiscal-substrate] guizhou 推进：实征0.1/起运0.1/火耗入截留0.0；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠0（hub，待入国库）
+[05:22:18.229] [fiscal-substrate] henan 推进：实征14.0/起运14.0/火耗入截留2.5；末态欠账 军饷欠0/官俸欠0/宗禄欠16/民欠9（hub，待入国库）
+[05:22:18.229] [fiscal-substrate] huguang 推进：实征43.8/起运24.1/火耗入截留6.1；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠12（hub，待入国库）
+[05:22:18.229] [fiscal-substrate] jiangxi 推进：实征19.5/起运8.7/火耗入截留2.9；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠7（hub，待入国库）
+[05:22:18.229] [fiscal-substrate] liaodong 推进：实征0.0/起运0.0/火耗入截留0.0；末态欠账 军饷欠83/官俸欠0/宗禄欠0/民欠0（hub，待入国库）
+[05:22:18.229] [fiscal-substrate] nanzhili 推进：实征31.1/起运16.7/火耗入截留4.4；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠7（hub，待入国库）
+[05:22:18.229] [fiscal-substrate] shaanxi 推进：实征4.4/起运2.9/火耗入截留0.8；末态欠账 军饷欠16/官俸欠1/宗禄欠4/民欠4（hub，待入国库）
+[05:22:18.229] [fiscal-substrate] shandong 推进：实征14.9/起运9.4/火耗入截留2.4；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠8（hub，待入国库）
+[05:22:18.229] [fiscal-substrate] shanxi 推进：实征13.9/起运10.6/火耗入截留2.4；末态欠账 军饷欠16/官俸欠0/宗禄欠8/民欠7（hub，待入国库）
+[05:22:18.229] [fiscal-substrate] sichuan 推进：实征2.2/起运2.2/火耗入截留0.4；末态欠账 军饷欠0/官俸欠1/宗禄欠1/民欠1（hub，待入国库）
+[05:22:18.229] [fiscal-substrate] yunnan 推进：实征0.3/起运0.2/火耗入截留0.0；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠0（hub，待入国库）
+[05:22:18.229] [fiscal-substrate] zhejiang 推进：实征22.1/起运8.2/火耗入截留2.9；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠6（hub，待入国库）
+[05:22:18.231] [event_terminal] 本回合事件终态落账 3 条：[('yuan_xialing', 'avoided'), ('korea_envoy', 'expired'), ('fengshou', 'expired')]
+/Users/akagilnc/WorkSpace/Ming_LLM-1835-w5/tests/test_fiscal_levy_effect.py:1363: KeyError: 'world-question:1:0'
+E   AssertionError: assert not 'triggered'
+     +  where 'triggered' = event_terminal_state('liao_levy_rise_1631')
+     +    where event_terminal_state = <ming_sim.db.GameDB object at 0x10bb4ff50>.event_terminal_state
+----------------------------- Captured stdout call -----------------------------
+[05:22:18.297] [fiscal-levy] 本回合饷率事件前置落账 1 条：[('liao_levy_rise_1631', '已准')]
+[05:22:18.297] 结算 1/4 固定月度财政 tick
+[05:22:18.302] [fiscal-substrate] beizhili 推进：实征6.2/起运6.2/火耗入截留1.0；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠3（hub，待入国库）
+[05:22:18.302] [fiscal-substrate] dongjiang_area 推进：实征0.0/起运0.0/火耗入截留0.0；末态欠账 军饷欠34/官俸欠0/宗禄欠0/民欠0（hub，待入国库）
+[05:22:18.302] [fiscal-substrate] fujian 推进：实征2.5/起运2.1/火耗入截留0.4；末态欠账 军饷欠7/官俸欠1/宗禄欠0/民欠1（hub，待入国库）
+[05:22:18.302] [fiscal-substrate] guangdong 推进：实征3.4/起运3.4/火耗入截留0.5；末态欠账 军饷欠6/官俸欠1/宗禄欠0/民欠1（hub，待入国库）
+[05:22:18.302] [fiscal-substrate] guangxi 推进：实征0.9/起运0.9/火耗入截留0.2；末态欠账 军饷欠0/官俸欠0/宗禄欠1/民欠1（hub，待入国库）
+[05:22:18.302] [fiscal-substrate] guizhou 推进：实征0.1/起运0.1/火耗入截留0.0；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠0（hub，待入国库）
+[05:22:18.302] [fiscal-substrate] henan 推进：实征14.0/起运14.0/火耗入截留2.5；末态欠账 军饷欠0/官俸欠0/宗禄欠16/民欠9（hub，待入国库）
+[05:22:18.302] [fiscal-substrate] huguang 推进：实征43.8/起运24.1/火耗入截留6.1；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠12（hub，待入国库）
+[05:22:18.302] [fiscal-substrate] jiangxi 推进：实征19.5/起运8.7/火耗入截留2.9；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠7（hub，待入国库）
+[05:22:18.302] [fiscal-substrate] liaodong 推进：实征0.0/起运0.0/火耗入截留0.0；末态欠账 军饷欠83/官俸欠0/宗禄欠0/民欠0（hub，待入国库）
+[05:22:18.302] [fiscal-substrate] nanzhili 推进：实征31.1/起运16.7/火耗入截留4.4；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠7（hub，待入国库）
+[05:22:18.302] [fiscal-substrate] shaanxi 推进：实征4.4/起运2.9/火耗入截留0.8；末态欠账 军饷欠16/官俸欠1/宗禄欠4/民欠4（hub，待入国库）
+[05:22:18.302] [fiscal-substrate] shandong 推进：实征14.9/起运9.4/火耗入截留2.4；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠8（hub，待入国库）
+[05:22:18.302] [fiscal-substrate] shanxi 推进：实征13.9/起运10.6/火耗入截留2.4；末态欠账 军饷欠16/官俸欠0/宗禄欠8/民欠7（hub，待入国库）
+[05:22:18.302] [fiscal-substrate] sichuan 推进：实征2.2/起运2.2/火耗入截留0.4；末态欠账 军饷欠0/官俸欠1/宗禄欠1/民欠1（hub，待入国库）
+[05:22:18.302] [fiscal-substrate] yunnan 推进：实征0.3/起运0.2/火耗入截留0.0；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠0（hub，待入国库）
+[05:22:18.302] [fiscal-substrate] zhejiang 推进：实征22.1/起运8.2/火耗入截留2.9；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠6（hub，待入国库）
+[05:22:18.304] [event_terminal] 本回合事件终态落账 3 条：[('yuan_xialing', 'avoided'), ('korea_envoy', 'expired'), ('fengshou', 'expired')]
+/Users/akagilnc/WorkSpace/Ming_LLM-1835-w5/tests/test_fiscal_levy_effect.py:1420: AssertionError: assert not 'triggered'
+E   AssertionError: assert 'triggered' is None
+     +  where 'triggered' = event_terminal_state('liao_levy_rise_1631')
+     +    where event_terminal_state = <ming_sim.db.GameDB object at 0x10bb4c890>.event_terminal_state
+----------------------------- Captured stdout call -----------------------------
+[05:22:18.324] [fiscal-levy] 本回合饷率事件前置落账 1 条：[('liao_levy_rise_1631', '已准')]
+[05:22:18.324] 结算 1/4 固定月度财政 tick
+[05:22:18.329] [fiscal-substrate] beizhili 推进：实征6.2/起运6.2/火耗入截留1.0；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠3（hub，待入国库）
+[05:22:18.329] [fiscal-substrate] dongjiang_area 推进：实征0.0/起运0.0/火耗入截留0.0；末态欠账 军饷欠34/官俸欠0/宗禄欠0/民欠0（hub，待入国库）
+[05:22:18.329] [fiscal-substrate] fujian 推进：实征2.5/起运2.1/火耗入截留0.4；末态欠账 军饷欠7/官俸欠1/宗禄欠0/民欠1（hub，待入国库）
+[05:22:18.329] [fiscal-substrate] guangdong 推进：实征3.4/起运3.4/火耗入截留0.5；末态欠账 军饷欠6/官俸欠1/宗禄欠0/民欠1（hub，待入国库）
+[05:22:18.329] [fiscal-substrate] guangxi 推进：实征0.9/起运0.9/火耗入截留0.2；末态欠账 军饷欠0/官俸欠0/宗禄欠1/民欠1（hub，待入国库）
+[05:22:18.329] [fiscal-substrate] guizhou 推进：实征0.1/起运0.1/火耗入截留0.0；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠0（hub，待入国库）
+[05:22:18.329] [fiscal-substrate] henan 推进：实征14.0/起运14.0/火耗入截留2.5；末态欠账 军饷欠0/官俸欠0/宗禄欠16/民欠9（hub，待入国库）
+[05:22:18.329] [fiscal-substrate] huguang 推进：实征43.8/起运24.1/火耗入截留6.1；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠12（hub，待入国库）
+[05:22:18.329] [fiscal-substrate] jiangxi 推进：实征19.5/起运8.7/火耗入截留2.9；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠7（hub，待入国库）
+[05:22:18.329] [fiscal-substrate] liaodong 推进：实征0.0/起运0.0/火耗入截留0.0；末态欠账 军饷欠83/官俸欠0/宗禄欠0/民欠0（hub，待入国库）
+[05:22:18.329] [fiscal-substrate] nanzhili 推进：实征31.1/起运16.7/火耗入截留4.4；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠7（hub，待入国库）
+[05:22:18.329] [fiscal-substrate] shaanxi 推进：实征4.4/起运2.9/火耗入截留0.8；末态欠账 军饷欠16/官俸欠1/宗禄欠4/民欠4（hub，待入国库）
+[05:22:18.329] [fiscal-substrate] shandong 推进：实征14.9/起运9.4/火耗入截留2.4；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠8（hub，待入国库）
+[05:22:18.329] [fiscal-substrate] shanxi 推进：实征13.9/起运10.6/火耗入截留2.4；末态欠账 军饷欠16/官俸欠0/宗禄欠8/民欠7（hub，待入国库）
+[05:22:18.329] [fiscal-substrate] sichuan 推进：实征2.2/起运2.2/火耗入截留0.4；末态欠账 军饷欠0/官俸欠1/宗禄欠1/民欠1（hub，待入国库）
+[05:22:18.329] [fiscal-substrate] yunnan 推进：实征0.3/起运0.2/火耗入截留0.0；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠0（hub，待入国库）
+[05:22:18.329] [fiscal-substrate] zhejiang 推进：实征22.1/起运8.2/火耗入截留2.9；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠6（hub，待入国库）
+[05:22:18.331] [event_terminal] 本回合事件终态落账 3 条：[('yuan_xialing', 'avoided'), ('korea_envoy', 'expired'), ('fengshou', 'expired')]
+/Users/akagilnc/WorkSpace/Ming_LLM-1835-w5/tests/test_fiscal_levy_effect.py:1466: AssertionError: assert 'triggered' is None
+E   TypeError: 'SettlementOutcome' object is not subscriptable
+/Users/akagilnc/WorkSpace/Ming_LLM-1835-w5/tests/test_fiscal_levy_effect.py:1503: TypeError: 'SettlementOutcome' object is not subscriptable
+E   AssertionError: assert 'triggered' == ''
+      
+      + triggered
+----------------------------- Captured stdout call -----------------------------
+[05:22:18.376] [fiscal-levy] 本回合饷率事件前置落账 1 条：[('liao_levy_rise_1631', '已准')]
+[05:22:18.376] 结算 1/4 固定月度财政 tick
+[05:22:18.380] [fiscal-substrate] beizhili 推进：实征6.2/起运6.2/火耗入截留1.0；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠3（hub，待入国库）
+[05:22:18.380] [fiscal-substrate] dongjiang_area 推进：实征0.0/起运0.0/火耗入截留0.0；末态欠账 军饷欠34/官俸欠0/宗禄欠0/民欠0（hub，待入国库）
+[05:22:18.380] [fiscal-substrate] fujian 推进：实征2.5/起运2.1/火耗入截留0.4；末态欠账 军饷欠7/官俸欠1/宗禄欠0/民欠1（hub，待入国库）
+[05:22:18.380] [fiscal-substrate] guangdong 推进：实征3.4/起运3.4/火耗入截留0.5；末态欠账 军饷欠6/官俸欠1/宗禄欠0/民欠1（hub，待入国库）
+[05:22:18.380] [fiscal-substrate] guangxi 推进：实征0.9/起运0.9/火耗入截留0.2；末态欠账 军饷欠0/官俸欠0/宗禄欠1/民欠1（hub，待入国库）
+[05:22:18.380] [fiscal-substrate] guizhou 推进：实征0.1/起运0.1/火耗入截留0.0；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠0（hub，待入国库）
+[05:22:18.380] [fiscal-substrate] henan 推进：实征14.0/起运14.0/火耗入截留2.5；末态欠账 军饷欠0/官俸欠0/宗禄欠16/民欠9（hub，待入国库）
+[05:22:18.380] [fiscal-substrate] huguang 推进：实征43.8/起运24.1/火耗入截留6.1；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠12（hub，待入国库）
+[05:22:18.380] [fiscal-substrate] jiangxi 推进：实征19.5/起运8.7/火耗入截留2.9；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠7（hub，待入国库）
+[05:22:18.380] [fiscal-substrate] liaodong 推进：实征0.0/起运0.0/火耗入截留0.0；末态欠账 军饷欠83/官俸欠0/宗禄欠0/民欠0（hub，待入国库）
+[05:22:18.380] [fiscal-substrate] nanzhili 推进：实征31.1/起运16.7/火耗入截留4.4；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠7（hub，待入国库）
+[05:22:18.381] [fiscal-substrate] shaanxi 推进：实征4.4/起运2.9/火耗入截留0.8；末态欠账 军饷欠16/官俸欠1/宗禄欠4/民欠4（hub，待入国库）
+[05:22:18.381] [fiscal-substrate] shandong 推进：实征14.9/起运9.4/火耗入截留2.4；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠8（hub，待入国库）
+[05:22:18.381] [fiscal-substrate] shanxi 推进：实征13.9/起运10.6/火耗入截留2.4；末态欠账 军饷欠16/官俸欠0/宗禄欠8/民欠7（hub，待入国库）
+[05:22:18.381] [fiscal-substrate] sichuan 推进：实征2.2/起运2.2/火耗入截留0.4；末态欠账 军饷欠0/官俸欠1/宗禄欠1/民欠1（hub，待入国库）
+[05:22:18.381] [fiscal-substrate] yunnan 推进：实征0.3/起运0.2/火耗入截留0.0；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠0（hub，待入国库）
+[05:22:18.381] [fiscal-substrate] zhejiang 推进：实征22.1/起运8.2/火耗入截留2.9；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠6（hub，待入国库）
+[05:22:18.382] [event_terminal] 本回合事件终态落账 3 条：[('yuan_xialing', 'avoided'), ('korea_envoy', 'expired'), ('fengshou', 'expired')]
+/Users/akagilnc/WorkSpace/Ming_LLM-1835-w5/tests/test_fiscal_levy_effect.py:1546: AssertionError: assert 'triggered' == ''
+E   AssertionError: assert [RejectedItem...simulation'>)] == []
+      
+      Left contains 2 more items, first extra item: RejectedItem(item={'event_id': 'liao_levy_rise_1631', '事件结局': {'liao_levy_rise_1631': '已驳'}}, reason='效果归属的战略事件不存在：liao_levy_rise_1631', category='event_rejected', source=<Provenance.system_simulation: 'system_simulation'>)
+      Use -v to get more diff
+/Users/akagilnc/WorkSpace/Ming_LLM-1835-w5/tests/test_fiscal_levy_effect.py:1596: AssertionError: assert [RejectedItem...simulation'>)] == []
+E   AssertionError: assert 'event_rejected' == 'invalid_state'
+      
+      - invalid_state
+      + event_rejected
+/Users/akagilnc/WorkSpace/Ming_LLM-1835-w5/tests/test_fiscal_levy_effect.py:1626: AssertionError: assert 'event_rejected' == 'invalid_state'
+E   AssertionError: assert [RejectedItem...simulation'>)] == []
+      
+      Left contains 2 more items, first extra item: RejectedItem(item={'event_id': 'liao_levy_rise_1631', '事件结局': {'liao_levy_rise_1631': '已驳'}}, reason='效果归属的战略事件不存在：liao_levy_rise_1631', category='event_rejected', source=<Provenance.system_simulation: 'system_simulation'>)
+      Use -v to get more diff
+/Users/akagilnc/WorkSpace/Ming_LLM-1835-w5/tests/test_fiscal_levy_effect.py:1671: AssertionError: assert [RejectedItem...simulation'>)] == []
+E   KeyError: 'declaration_outcome'
+----------------------------- Captured stdout call -----------------------------
+[05:22:38.025] 结算 1/4 固定月度财政 tick
+[05:22:38.030] [fiscal-substrate] beizhili 推进：实征5.4/起运5.4/火耗入截留0.9；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠2（hub，待入国库）
+[05:22:38.030] [fiscal-substrate] dongjiang_area 推进：实征0.0/起运0.0/火耗入截留0.0；末态欠账 军饷欠34/官俸欠0/宗禄欠0/民欠0（hub，待入国库）
+[05:22:38.030] [fiscal-substrate] fujian 推进：实征2.2/起运1.8/火耗入截留0.4；末态欠账 军饷欠7/官俸欠1/宗禄欠0/民欠1（hub，待入国库）
+[05:22:38.030] [fiscal-substrate] guangdong 推进：实征2.9/起运2.8/火耗入截留0.5；末态欠账 军饷欠6/官俸欠1/宗禄欠0/民欠1（hub，待入国库）
+[05:22:38.030] [fiscal-substrate] guangxi 推进：实征0.7/起运0.7/火耗入截留0.1；末态欠账 军饷欠0/官俸欠0/宗禄欠1/民欠1（hub，待入国库）
+[05:22:38.030] [fiscal-substrate] guizhou 推进：实征0.1/起运0.0/火耗入截留0.0；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠0（hub，待入国库）
+[05:22:38.030] [fiscal-substrate] henan 推进：实征12.9/起运12.9/火耗入截留2.3；末态欠账 军饷欠0/官俸欠0/宗禄欠16/民欠9（hub，待入国库）
+[05:22:38.030] [fiscal-substrate] huguang 推进：实征39.5/起运18.5/火耗入截留5.5；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠11（hub，待入国库）
+[05:22:38.030] [fiscal-substrate] jiangxi 推进：实征18.8/起运7.7/火耗入截留2.8；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠6（hub，待入国库）
+[05:22:38.030] [fiscal-substrate] liaodong 推进：实征0.0/起运0.0/火耗入截留0.0；末态欠账 军饷欠83/官俸欠0/宗禄欠0/民欠0（hub，待入国库）
+[05:22:38.030] [fiscal-substrate] nanzhili 推进：实征29.5/起运14.7/火耗入截留4.1；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠6（hub，待入国库）
+[05:22:38.030] [fiscal-substrate] shaanxi 推进：实征4.0/起运2.2/火耗入截留0.7；末态欠账 军饷欠16/官俸欠1/宗禄欠4/民欠3（hub，待入国库）
+[05:22:38.030] [fiscal-substrate] shandong 推进：实征14.1/起运8.2/火耗入截留2.3；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠8（hub，待入国库）
+[05:22:38.030] [fiscal-substrate] shanxi 推进：实征13.3/起运9.7/火耗入截留2.3；末态欠账 军饷欠16/官俸欠0/宗禄欠8/民欠7（hub，待入国库）
+[05:22:38.030] [fiscal-substrate] sichuan 推进：实征2.0/起运1.9/火耗入截留0.3；末态欠账 军饷欠0/官俸欠1/宗禄欠1/民欠1（hub，待入国库）
+[05:22:38.030] [fiscal-substrate] yunnan 推进：实征0.2/起运0.1/火耗入截留0.0；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠0（hub，待入国库）
+[05:22:38.030] [fiscal-substrate] zhejiang 推进：实征21.2/起运7.0/火耗入截留2.8；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠5（hub，待入国库）
+/Users/akagilnc/WorkSpace/Ming_LLM-1835-w5/tests/test_month_chain_1847.py:1117: KeyError: 'declaration_outcome'
+E   AttributeError: 'GameDB' object has no attribute 'validate_monthly_dossier_progress'. Did you mean: 'record_monthly_dossier_progress'?
+
+The above exception was the direct cause of the following exception:
+E   ming_sim.exceptions.SettlementAbort: 本月结算失败，进度已保存，可重试。
+    错误包已生成：/private/var/folders/nb/ml2z6k013psg7rdtt0t6g91m0000gn/T/pytest-of-akagilnc/pytest-1596/test_step_4a_crash_recovery_re0/user_data/error_packs/turn1_attempt2
+    请把该文件夹发给作者，以便排查。
+----------------------------- Captured stdout call -----------------------------
+[05:22:38.252] [secret_order] create id=1 minister=张瑞图 title=密令
+[05:22:38.253] 结算 1/4 固定月度财政 tick
+[05:22:38.258] [fiscal-substrate] beizhili 推进：实征5.4/起运5.4/火耗入截留0.9；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠2（hub，待入国库）
+[05:22:38.258] [fiscal-substrate] dongjiang_area 推进：实征0.0/起运0.0/火耗入截留0.0；末态欠账 军饷欠34/官俸欠0/宗禄欠0/民欠0（hub，待入国库）
+[05:22:38.258] [fiscal-substrate] fujian 推进：实征2.2/起运1.8/火耗入截留0.4；末态欠账 军饷欠7/官俸欠1/宗禄欠0/民欠1（hub，待入国库）
+[05:22:38.258] [fiscal-substrate] guangdong 推进：实征2.9/起运2.8/火耗入截留0.5；末态欠账 军饷欠6/官俸欠1/宗禄欠0/民欠1（hub，待入国库）
+[05:22:38.258] [fiscal-substrate] guangxi 推进：实征0.7/起运0.7/火耗入截留0.1；末态欠账 军饷欠0/官俸欠0/宗禄欠1/民欠1（hub，待入国库）
+[05:22:38.258] [fiscal-substrate] guizhou 推进：实征0.1/起运0.0/火耗入截留0.0；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠0（hub，待入国库）
+[05:22:38.258] [fiscal-substrate] henan 推进：实征12.9/起运12.9/火耗入截留2.3；末态欠账 军饷欠0/官俸欠0/宗禄欠16/民欠9（hub，待入国库）
+[05:22:38.258] [fiscal-substrate] huguang 推进：实征39.5/起运18.5/火耗入截留5.5；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠11（hub，待入国库）
+[05:22:38.258] [fiscal-substrate] jiangxi 推进：实征18.8/起运7.7/火耗入截留2.8；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠6（hub，待入国库）
+[05:22:38.258] [fiscal-substrate] liaodong 推进：实征0.0/起运0.0/火耗入截留0.0；末态欠账 军饷欠83/官俸欠0/宗禄欠0/民欠0（hub，待入国库）
+[05:22:38.258] [fiscal-substrate] nanzhili 推进：实征29.5/起运14.7/火耗入截留4.1；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠6（hub，待入国库）
+[05:22:38.258] [fiscal-substrate] shaanxi 推进：实征4.0/起运2.2/火耗入截留0.7；末态欠账 军饷欠16/官俸欠1/宗禄欠4/民欠3（hub，待入国库）
+[05:22:38.258] [fiscal-substrate] shandong 推进：实征14.1/起运8.2/火耗入截留2.3；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠8（hub，待入国库）
+[05:22:38.258] [fiscal-substrate] shanxi 推进：实征13.3/起运9.7/火耗入截留2.3；末态欠账 军饷欠16/官俸欠0/宗禄欠8/民欠7（hub，待入国库）
+[05:22:38.258] [fiscal-substrate] sichuan 推进：实征2.0/起运1.9/火耗入截留0.3；末态欠账 军饷欠0/官俸欠1/宗禄欠1/民欠1（hub，待入国库）
+[05:22:38.258] [fiscal-substrate] yunnan 推进：实征0.2/起运0.1/火耗入截留0.0；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠0（hub，待入国库）
+[05:22:38.258] [fiscal-substrate] zhejiang 推进：实征21.2/起运7.0/火耗入截留2.8；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠5（hub，待入国库）
+/Users/akagilnc/WorkSpace/Ming_LLM-1835-w5/ming_sim/month_chain.py:738: ming_sim.exceptions.SettlementAbort: 本月结算失败，进度已保存，可重试。
+E   AssertionError: assert 'due_priority_军饷@shaanxi' not in {'田赋_rate': 68, '辽饷_base': 43, '辽饷_rate': 100, '盐税_base': 23, ...}
+/Users/akagilnc/WorkSpace/Ming_LLM-1835-w5/tests/test_pay_order_override_653.py:564: AssertionError: assert 'due_priority_军饷@shaanxi' not in {'田赋_rate': 68, '辽饷_base': 43, '辽饷_rate': 100, '盐税_base': 23, ...}
+E   AssertionError: falsy-return 后半落库未回滚：victim office='脏半落库' 期望 '内阁大学士'
+    assert '脏半落库' == '内阁大学士'
+      
+      - 内阁大学士
+      + 脏半落库
+/Users/akagilnc/WorkSpace/Ming_LLM-1835-w5/tests/test_person_delta_adapter.py:2787: AssertionError: falsy-return 后半落库未回滚：victim office='脏半落库' 期望 '内阁大学士'
+E   assert 95 == 70
+     +  where 95 = int(95)
+----------------------------- Captured stdout call -----------------------------
+[05:22:43.008] [fiscal-substrate] beizhili 推进：实征5.4/起运5.4/火耗入截留0.9；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠2（shadow，未入国库）
+[05:22:43.008] [fiscal-substrate] dongjiang_area 推进：实征0.0/起运0.0/火耗入截留0.0；末态欠账 军饷欠34/官俸欠0/宗禄欠0/民欠0（shadow，未入国库）
+[05:22:43.008] [fiscal-substrate] fujian 推进：实征2.2/起运1.8/火耗入截留0.4；末态欠账 军饷欠7/官俸欠1/宗禄欠0/民欠1（shadow，未入国库）
+[05:22:43.008] [fiscal-substrate] guangdong 推进：实征2.9/起运2.8/火耗入截留0.5；末态欠账 军饷欠6/官俸欠1/宗禄欠0/民欠1（shadow，未入国库）
+[05:22:43.008] [fiscal-substrate] guangxi 推进：实征0.7/起运0.7/火耗入截留0.1；末态欠账 军饷欠0/官俸欠0/宗禄欠1/民欠1（shadow，未入国库）
+[05:22:43.008] [fiscal-substrate] guizhou 推进：实征0.1/起运0.0/火耗入截留0.0；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠0（shadow，未入国库）
+[05:22:43.008] [fiscal-substrate] henan 推进：实征12.9/起运12.9/火耗入截留2.3；末态欠账 军饷欠0/官俸欠0/宗禄欠16/民欠9（shadow，未入国库）
+[05:22:43.008] [fiscal-substrate] huguang 推进：实征39.5/起运18.5/火耗入截留5.5；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠11（shadow，未入国库）
+[05:22:43.008] [fiscal-substrate] jiangxi 推进：实征18.8/起运7.7/火耗入截留2.8；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠6（shadow，未入国库）
+[05:22:43.008] [fiscal-substrate] liaodong 推进：实征0.0/起运0.0/火耗入截留0.0；末态欠账 军饷欠83/官俸欠0/宗禄欠0/民欠0（shadow，未入国库）
+[05:22:43.008] [fiscal-substrate] nanzhili 推进：实征29.5/起运14.7/火耗入截留4.1；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠6（shadow，未入国库）
+[05:22:43.008] [fiscal-substrate] shaanxi 推进：实征4.0/起运2.2/火耗入截留0.7；末态欠账 军饷欠16/官俸欠1/宗禄欠4/民欠3（shadow，未入国库）
+[05:22:43.008] [fiscal-substrate] shandong 推进：实征14.1/起运8.2/火耗入截留2.3；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠8（shadow，未入国库）
+[05:22:43.008] [fiscal-substrate] shanxi 推进：实征13.3/起运9.7/火耗入截留2.3；末态欠账 军饷欠16/官俸欠0/宗禄欠7/民欠7（shadow，未入国库）
+[05:22:43.008] [fiscal-substrate] sichuan 推进：实征2.0/起运1.9/火耗入截留0.3；末态欠账 军饷欠0/官俸欠1/宗禄欠1/民欠1（shadow，未入国库）
+[05:22:43.008] [fiscal-substrate] yunnan 推进：实征0.2/起运0.1/火耗入截留0.0；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠0（shadow，未入国库）
+[05:22:43.008] [fiscal-substrate] zhejiang 推进：实征21.2/起运7.0/火耗入截留2.8；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠5（shadow，未入国库）
+/Users/akagilnc/WorkSpace/Ming_LLM-1835-w5/tests/test_player_army_projection_321.py:344: assert 95 == 70
+E   assert None != None
+/Users/akagilnc/WorkSpace/Ming_LLM-1835-w5/tests/test_qa_b3_409_ux.py:90: assert None != None
+E   AssertionError: 独立手拟新增口必须已退役
+    assert [APIRoute(pat...ods=['POST'])] == []
+      
+      Left contains one more item: APIRoute(path='/api/directives', name='api_create_directive', methods=['POST'])
+      Use -v to get more diff
+/Users/akagilnc/WorkSpace/Ming_LLM-1835-w5/tests/test_qa_d1_decree_normalize_1274.py:161: AssertionError: 独立手拟新增口必须已退役
+E   NameError: name 'sim_note' is not defined
+----------------------------- Captured stdout call -----------------------------
+[05:22:52.049] [secret_order] create id=1 minister=乔允升 title=稽核辽饷
+[05:22:52.050] [secret_order] sim_note id=1 note='该案已经明发廷议'
+[secret_order] 推演副作用 id=1 note='该案已经明发廷议'
+/Users/akagilnc/WorkSpace/Ming_LLM-1835-w5/tests/test_secret_order_monthly_progress_566.py:126: NameError: name 'sim_note' is not defined
+E   AssertionError: NaN
+    assert None is True
+     +  where None = <built-in method get of dict object at 0x10ba24ac0>('secret_orders_supply_invalid')
+     +    where <built-in method get of dict object at 0x10ba24ac0> = {'secret_orders_supply_product': {'dossier_progress_reports': [{'dossier_id': 1, 'progress_band': '持平', 'memorial_text...NaN'}]}, 'secret_orders_reports_done': True, 'secret_orders_disclosures_done': True, 'covert_progress_done': True, ...}.get
+----------------------------- Captured stdout call -----------------------------
+[05:22:52.606] [secret_order] create id=1 minister=乔允升 title=查核
+/Users/akagilnc/WorkSpace/Ming_LLM-1835-w5/tests/test_secret_order_payoff_1504.py:837: AssertionError: NaN
+E   assert 1.5750000000000002 == 0.0 ± 1.0e-12
+      
+      comparison failed
+      Obtained: 1.5750000000000002
+      Expected: 0.0 ± 1.0e-12
+----------------------------- Captured stdout call -----------------------------
+[05:22:53.454] [secret_order] create id=1 minister=乔允升 title=查核待毁
+/Users/akagilnc/WorkSpace/Ming_LLM-1835-w5/tests/test_secret_order_payoff_1504.py:1428: assert 1.5750000000000002 == 0.0 ± 1.0e-12
+E   AssertionError: assert True is not True
+     +  where True = <built-in method get of dict object at 0x10cdbdd40>('covert_progress_done')
+     +    where <built-in method get of dict object at 0x10cdbdd40> = {'secret_orders_supply_product': {'dossier_progress_reports': [{'dossier_id': 1, 'progress_band': '持平', 'memorial_text...': 1}]}, 'secret_orders_reports_done': True, 'secret_orders_disclosures_done': True, 'covert_progress_done': True, ...}.get
+----------------------------- Captured stdout call -----------------------------
+[05:22:53.623] [secret_order] create id=1 minister=乔允升 title=查核
+/Users/akagilnc/WorkSpace/Ming_LLM-1835-w5/tests/test_secret_order_payoff_1504.py:2012: AssertionError: assert True is not True
+E   AssertionError: assert True is not True
+     +  where True = <built-in method get of dict object at 0x10ce39200>('covert_progress_done')
+     +    where <built-in method get of dict object at 0x10ce39200> = {'secret_orders_supply_product': {'dossier_progress_reports': [{'dossier_id': 1, 'progress_band': '持平', 'memorial_text...'尽力'}]}, 'secret_orders_reports_done': True, 'secret_orders_disclosures_done': True, 'covert_progress_done': True, ...}.get
+----------------------------- Captured stdout call -----------------------------
+[05:22:53.639] [secret_order] create id=1 minister=乔允升 title=查核
+/Users/akagilnc/WorkSpace/Ming_LLM-1835-w5/tests/test_secret_order_payoff_1504.py:2012: AssertionError: assert True is not True
+E   AssertionError: assert True is not True
+     +  where True = <built-in method get of dict object at 0x10ce386c0>('covert_progress_done')
+     +    where <built-in method get of dict object at 0x10ce386c0> = {'secret_orders_supply_product': {'dossier_progress_reports': [{'dossier_id': 1, 'progress_band': '持平', 'memorial_text...'忠实'}]}, 'secret_orders_reports_done': True, 'secret_orders_disclosures_done': True, 'covert_progress_done': True, ...}.get
+----------------------------- Captured stdout call -----------------------------
+[05:22:53.655] [secret_order] create id=1 minister=乔允升 title=查核
+/Users/akagilnc/WorkSpace/Ming_LLM-1835-w5/tests/test_secret_order_payoff_1504.py:2012: AssertionError: assert True is not True
+E   Failed: DID NOT RAISE ValueError
+/Users/akagilnc/WorkSpace/Ming_LLM-1835-w5/tests/test_section4_rejections.py:688: Failed: DID NOT RAISE ValueError
+E   Failed: DID NOT RAISE ValueError
+/Users/akagilnc/WorkSpace/Ming_LLM-1835-w5/tests/test_section4_rejections.py:710: Failed: DID NOT RAISE ValueError
+E   Failed: DID NOT RAISE ValueError
+/Users/akagilnc/WorkSpace/Ming_LLM-1835-w5/tests/test_section4_rejections.py:730: Failed: DID NOT RAISE ValueError
+=========================== short test summary info ============================
+FAILED tests/test_breach_plea_623.py::test_policy_reversal_revoke_model_verdict_lands_same_month
+FAILED tests/test_decree_commitment_creation_136.py::test_decree_commitment_same_account_alias_miss_keeps_distinct_fiscal_item[\u56fd\u5e93]
+FAILED tests/test_decree_commitment_creation_136.py::test_decree_commitment_unrelated_account_keeps_fiscal_item
+FAILED tests/test_decree_commitment_settlement_229.py::test_commitment_progress_skips_non_numeric_gate_values
+FAILED tests/test_event_trigger_gate.py::test_gated_auto_trigger_seed_event_does_not_refire_after_issue_resolved
+FAILED tests/test_event_trigger_gate.py::test_huangtaiji_chengdi_lands_only_when_model_picks_it
+FAILED tests/test_fiscal_levy_effect.py::test_fiscal_levy_is_not_auto_approved_without_emperor_decision
+FAILED tests/test_fiscal_levy_effect.py::test_fiscal_levy_petition_reaches_emperor_desk_and_lands_only_after_choice
+FAILED tests/test_fiscal_levy_effect.py::test_unpresented_fiscal_levy_declaration_leaves_terminal_empty
+FAILED tests/test_fiscal_levy_effect.py::test_non_event_world_question_is_not_bound_to_the_only_due_levy
+FAILED tests/test_fiscal_levy_effect.py::test_rejected_levy_identity_does_not_write_a_terminal_from_a_sibling_envelope
+FAILED tests/test_fiscal_levy_effect.py::test_fiscal_levy_held_petition_is_supplied_to_next_world_segment
+FAILED tests/test_fiscal_levy_effect.py::test_same_batch_keeps_the_first_event_outcome
+FAILED tests/test_fiscal_levy_effect.py::test_unbound_envelope_does_not_overwrite_the_first_event_outcome
+FAILED tests/test_fiscal_levy_effect.py::test_later_illegal_outcome_does_not_discard_the_first_ruling
+FAILED tests/test_month_chain_1847.py::test_declared_deposal_ends_on_the_existing_chain
+FAILED tests/test_month_chain_1847.py::test_step_4a_crash_recovery_resumes_without_re_running_supply
+FAILED tests/test_pay_order_override_653.py::test_real_revoke_restores_override_same_month_with_active_commitment
+FAILED tests/test_person_delta_adapter.py::test_new_appointment_falsy_return_restores_snapshot
+FAILED tests/test_player_army_projection_321.py::test_restore_five_columns_and_player_tier_across_paths[legacy]
+FAILED tests/test_qa_b3_409_ux.py::test_serialized_web_write_phase_messages_cover_front_half_done
+FAILED tests/test_qa_d1_decree_normalize_1274.py::test_patch_decree_and_manual_create_routes_removed_draft_rw_remains
+FAILED tests/test_secret_order_monthly_progress_566.py::test_disclosure_promotes_monthly_report_to_public_event_only_after_disclosure
+FAILED tests/test_secret_order_payoff_1504.py::test_non_finite_effort_is_invalid_not_full_investment
+FAILED tests/test_secret_order_payoff_1504.py::test_spoliation_makes_fact_harder_and_survives_case_reopen
+FAILED tests/test_secret_order_payoff_1504.py::test_invalid_declaration_stops_month_chain_and_marks_invalid[bad0]
+FAILED tests/test_secret_order_payoff_1504.py::test_invalid_declaration_stops_month_chain_and_marks_invalid[bad1]
+FAILED tests/test_secret_order_payoff_1504.py::test_invalid_declaration_stops_month_chain_and_marks_invalid[bad2]
+FAILED tests/test_section4_rejections.py::test_issue_path_still_strict_for_historically_fatal
+FAILED tests/test_section4_rejections.py::test_float_bool_army_delta_tolerated_on_issue_path
+FAILED tests/test_section4_rejections.py::test_required_field_historical_strictness_on_issue_path
+31 failed, 2257 passed, 4 skipped in 60.46s (0:01:00)
+real 61.18
+user 34.44
+sys 19.87

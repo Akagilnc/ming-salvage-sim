@@ -1256,9 +1256,35 @@ def _preflight_declared_event_groups(
     rejected: dict[str, str] = {}
     pseudo_event = Event(id="season", title="月末整体推演", kind="月末", summary="",
                          urgency=0, severity=0, credibility=100, interests=[], audiences=[])
+    from ming_sim.issues import (
+        FISCAL_LEVY_EVENT_CATEGORY,
+        _event_outcome_label,
+        _fiscal_levy_normalized_terminal_reason_or_abort,
+        _merge_first_event_outcome,
+        petition_outcome_is_admissible,
+    )
     for event_id, group in groups.items():
         event = content.event_by_id.get(event_id)
-        if event is None or not _is_strategic_foreign_node_event(event):
+        if event is None:
+            rejected[event_id] = f"效果归属的事件不存在：{event_id}"
+            continue
+        # #1892：三饷请旨的亲裁结局与战略节点信封不同路——它不要求世界状态主账结果
+        # （三饷的征收由饷率通道按终局标签核算），只要求标签落在事件自声明的封闭集内，
+        # 且事件账里已有请旨答复、终态仍空。归一失败响亮失败（ADR 0014），不静默丢弃亲裁。
+        if getattr(event, "category", "") == FISCAL_LEVY_EVENT_CATEGORY:
+            if not petition_outcome_is_admissible(state, db, event_id, content):
+                rejected[event_id] = f"三饷事项当前不能由亲裁置定结局：{event_id}"
+                continue
+            outcome: dict[str, object] = {}
+            for item in group:
+                _merge_first_event_outcome(outcome, item.get("事件结局") or {}, event_id)
+            raw_label = _event_outcome_label(outcome, event_id)
+            if not raw_label:
+                # 留中／未答毕：本疏已答而事件未终，不写终态（合法，不是缺项）。
+                continue
+            _fiscal_levy_normalized_terminal_reason_or_abort(event, raw_label, state)
+            continue
+        if not _is_strategic_foreign_node_event(event):
             rejected[event_id] = f"效果归属的战略事件不存在：{event_id}"
             continue
         if event_id not in candidates or db.event_terminal_state(event_id) or event.auto_trigger:

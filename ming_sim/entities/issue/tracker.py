@@ -355,6 +355,23 @@ def apply_issue_tracker_output(
                 applied_new.append({"id": ev.id, "title": ev.title, "reason": f"event_type={ev.event_type} 已记为触发"})
                 continue
             issue_id = issues.event_to_issue(db, state, ev, commit=False)
+            if issue_id is not None and ev.effect_on_trigger:
+                # #1893：模型选中即触发——事件自带的核心后果（如 huangtaiji_chengdi 的
+                # 改国号）随这一次写口落定，不另按日期旁路补。situation 类事件的
+                # effect_on_trigger 历来只在 auto_trigger 硬触发路应用；模型选中路
+                # 原缺这一步，属改触发方式后漏接的既有核心后果。
+                entity_rejections.extend(
+                    issue_effects._apply_issue_entities(
+                        db,
+                        state,
+                        issues._content_population_effect_for_save(db, ev.effect_on_trigger),
+                        f"事件#{ev.id}触发",
+                        content=runtime_content,
+                        llm_config=llm_config,
+                        applied_person_changes=issue_person_changes,
+                        source=source,
+                    )
+                )
             if issue_id is None:
                 # event_to_issue 移除 broad except 后，返回 None 只剩一种语义：同源 issue 已存在的
                 # 幂等去重跳过（在其 insert try 之外 early-return）；insert 的真代码/DB 异常现已上抛、

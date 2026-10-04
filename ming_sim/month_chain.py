@@ -1355,14 +1355,21 @@ def _step_4a_secret_order_supply(
                 rows, rows_rejections = apply_monthly_covert_actual_progress(
                     db, state, selections=selections, only_supplied=False, commit=False,
                     source=source)
-                rejections = rows_rejections
+                rejections = list(rows_rejections)
+                # 查案无效声明也可能仍以 applied 行上的 invalid 标记出现（#1896）。
+                rejections.extend(
+                    r for r in rows
+                    if isinstance(r, dict) and r.get("rejected")
+                )
                 invalid_declarations = any(
-                    getattr(item, "category", None) == "invalid_enum"
-                    or (
-                        isinstance(item, dict)
-                        and (
-                            bool(item.get("invalid"))
-                            or item.get("category") == "invalid_enum"
+                    (
+                        getattr(item, "category", None) == "invalid_enum"
+                        or (
+                            isinstance(item, dict)
+                            and (
+                                bool(item.get("invalid"))
+                                or item.get("category") == "invalid_enum"
+                            )
                         )
                     )
                     for item in rejections
