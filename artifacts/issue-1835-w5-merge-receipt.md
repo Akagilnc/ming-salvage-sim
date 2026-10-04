@@ -199,3 +199,67 @@ MING_SIM_PI_BIN=/usr/bin/false \
 - 前缀：`ak-roles:`
 - 含：修正后的 `focused-cmd.sh`、更新后的本回执与聚焦最终日志
 - 不含：`artifacts/issue-1835-w5-ast-audit.py`、`artifacts/issue-1835-w5-mutation-probes.py`（保留为未跟踪）
+
+---
+
+## 本轮封驳：`merge-seam-retired-symbol-import`（独立新提交）
+
+### 承认前序聚焦缺口
+
+前序聚焦清单只覆盖**冲突文件**（`artifacts/issue-1835-w5-conflict-tests.txt`），漏掉底座 W4 自动并入的**非冲突新增**测试。  
+实证：`tests/test_staged_assignment_identity_1890.py` 仍 `import apply_score_extraction`，全仓 `pytest --collect-only` 收集中断。
+
+### 按类扫描
+
+- 报告：`artifacts/issue-1835-w5-retired-symbol-scan.md` + `.json`
+- 范围：W4 新增 ∪ W4/merge 修改的全部 `tests/`（universe=162），AST 扫 `apply_score_extraction` / `EMPTY_EXTRACTION` / `default_terminal_reason` / `MODULE_FIELDS` 的 import/Call
+- 收集级命中（修复前）：仅 `tests/test_staged_assignment_identity_1890.py`
+- 同类运行时命中（聚焦扩充后暴露）：`tests/test_candidate_supply_1893.py` 仍按旧 dict 下标读 `SettlementOutcome`
+
+### 处置
+
+| 文件 | 处置 |
+|---|---|
+| `tests/test_staged_assignment_identity_1890.py` | 两条 `new_issues` → `settle_delta` + `issue_rows` / `rejected_view`；散文年诺拒收、结构化 stages 落段 |
+| `tests/test_candidate_supply_1893.py` | `result.effects.applied[0]` 改读 `issue_rows` / `rejected_view`（对齐 `test_event_trigger_gate`） |
+| `ming_sim/declaration_dispatch.py` | 复核同文件其余用例：补回 `_dispatch_commissions` 各支路丢失的 `source_chat_turn_id=`（#1890） |
+| `ming_sim/action_materialize.py` | 责成 stages 改回 `stages_to_json` 严格面（散文串 durable 拒收，#1890/ADR 0142） |
+
+不恢复 `apply_score_extraction` / `EMPTY_EXTRACTION` / 兼容壳。
+
+### 扩充聚焦清单
+
+- 新清单：`artifacts/issue-1835-w5-focused-tests.txt` = 原冲突清单 ∪ W4 非冲突新增 ∪ 按类扫描受影响文件（93 路径）
+- 命令：`artifacts/issue-1835-w5-focused-cmd.sh`（完整七名 `MING_SIM_*_BIN`）
+
+### 本轮验证
+
+**聚焦**（七名前缀）:
+
+```bash
+./artifacts/issue-1835-w5-focused-cmd.sh
+```
+
+结果：**2303 passed / 0 failed / 4 skipped**（≈61.37s real；exit 0）  
+日志：`artifacts/issue-1835-w5-focused-final.txt`（同步 `.log`）
+
+**全仓收集**（用户明确要求；收集而非全量执行；七名前缀）:
+
+```bash
+MING_SIM_AGY_BIN=/usr/bin/false \
+MING_SIM_CODEX_BIN=/usr/bin/false \
+MING_SIM_CLAUDE_BIN=/usr/bin/false \
+MING_SIM_CURSOR_BIN=/usr/bin/false \
+MING_SIM_KIMI_BIN=/usr/bin/false \
+MING_SIM_GROK_BIN=/usr/bin/false \
+MING_SIM_PI_BIN=/usr/bin/false \
+/usr/bin/time -p .../python -m pytest -p no:cacheprovider --collect-only -q
+```
+
+结果：**3707 tests collected / 0 collection errors**（≈5.43s real；exit 0）  
+日志：`artifacts/issue-1835-w5-collect-only.txt`
+
+### 本轮提交约束
+
+- 独立 `ak-roles:` 新提交；禁止 amend / rewrite / rebase / stash / push / PR
+- 保护未跟踪：`artifacts/issue-1835-w5-ast-audit.py`、`artifacts/issue-1835-w5-mutation-probes.py`

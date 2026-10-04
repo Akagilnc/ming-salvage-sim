@@ -1215,6 +1215,7 @@ def _dispatch_commissions(
             }
             row_id = db.stage_pending_action(
                 int(state.turn), "directive", "拟旨", actor, payload,
+                source_chat_turn_id=source_chat_turn_id,
             )
             applied.append({"id": row_id, "payload": payload, "kind": "directive"})
             continue
@@ -1245,6 +1246,7 @@ def _dispatch_commissions(
             row_id = db.stage_pending_action(
                 int(state.turn), kind="secret_order", action="记进展",
                 minister_name=actor, target_id=order_id, payload={"note": note},
+                source_chat_turn_id=source_chat_turn_id,
             )
             applied.append({"id": row_id, "kind": "secret_order"})
             continue
@@ -1286,7 +1288,7 @@ def _dispatch_commissions(
             }
             row_id = db.stage_pending_action(
                 int(state.turn), "secret_order", "更新", actor, payload,
-                target_id=order_id,
+                target_id=order_id, source_chat_turn_id=source_chat_turn_id,
             )
             applied.append({"id": row_id, "kind": "secret_order"})
             continue
@@ -1359,6 +1361,7 @@ def _dispatch_commissions(
                     covert_task=dict(secret["covert_task"]),
                     affair_declaration=secret_payload.get("affair_declaration"),
                 ),
+                source_chat_turn_id=source_chat_turn_id,
             )
             applied.append({"id": row_id, "kind": "secret_order"})
             continue
@@ -1400,7 +1403,7 @@ def _dispatch_commissions(
                     transaction_category=assignment.get("transaction_category", ""),
                     source_chat_turn_id=source_chat_turn_id,
                 )
-            except DecreeMaterializationValidationError as exc:
+            except (DecreeMaterializationValidationError, TypeError, ValueError) as exc:
                 _reject(rejected, item, str(exc), "invalid_shape", source)
                 continue
             if row_id:
@@ -1476,6 +1479,7 @@ def _dispatch_commissions(
                     backing_dossier_id=punishment.get("backing_dossier_id"),
                     issue_id=punishment.get("issue_id"),
                     issue_disposition=punishment.get("issue_disposition"),
+                    source_chat_turn_id=source_chat_turn_id,
                 )
             except DecreeMaterializationValidationError as exc:
                 _reject(rejected, item, str(exc), "invalid_shape", source)
@@ -1512,6 +1516,7 @@ def _dispatch_commissions(
             row_id = stage_pacification_candidate(
                 db, int(state.turn), actor, text=body,
                 target_id=canonical, extracted_mode=pacification.get("mode"),
+                source_chat_turn_id=source_chat_turn_id,
             )
             applied.append({"id": row_id, "kind": "directive"})
             continue
@@ -1679,6 +1684,7 @@ def _dispatch_commissions(
                 str(office_payload["appoint_action"]),
                 minister_name,
                 office_payload,
+                source_chat_turn_id=source_chat_turn_id,
             )
             return {"id": oid, "payload": office_payload, "kind": "office"}
 
@@ -1699,6 +1705,7 @@ def _dispatch_commissions(
             payload["actor"] = actor
         row_id = db.stage_pending_action(
             int(state.turn), "directive", "拟旨", actor, payload,
+            source_chat_turn_id=source_chat_turn_id,
         )
         applied.append({"id": row_id, "payload": payload, "kind": "directive"})
     return SectionResult(applied=applied, rejected=rejected)

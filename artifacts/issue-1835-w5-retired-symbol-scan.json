@@ -1,0 +1,440 @@
+{
+  "scan_class": "merge-seam-retired-symbol-import",
+  "symbols": [
+    "EMPTY_EXTRACTION",
+    "MODULE_FIELDS",
+    "apply_score_extraction",
+    "default_terminal_reason"
+  ],
+  "universe_count": 162,
+  "universe": [
+    "tests/conftest.py",
+    "tests/directive_seed_helpers.py",
+    "tests/month_chain_helpers.py",
+    "tests/test_advance_paths_atomic.py",
+    "tests/test_advances_section_rejections.py",
+    "tests/test_affairs_1831.py",
+    "tests/test_applier_contract.py",
+    "tests/test_appointment_tenure_607.py",
+    "tests/test_army_card_status_1501.py",
+    "tests/test_army_display_173.py",
+    "tests/test_army_firearms.py",
+    "tests/test_army_maintenance_retire_173.py",
+    "tests/test_army_salary_44.py",
+    "tests/test_audience_background.py",
+    "tests/test_audience_draft_grant_once_1777.py",
+    "tests/test_audience_night_498.py",
+    "tests/test_audience_restore_505.py",
+    "tests/test_audience_scroll_539.py",
+    "tests/test_audience_translate_1837.py",
+    "tests/test_audience_translate_1837_reopen.py",
+    "tests/test_audience_translation_1838.py",
+    "tests/test_audience_translation_once_1898.py",
+    "tests/test_audience_travel_gating_670.py",
+    "tests/test_audience_undo_506.py",
+    "tests/test_authority_ledger_611.py",
+    "tests/test_breach_plea_623.py",
+    "tests/test_candidate_supply_1893.py",
+    "tests/test_character_knowledge_489.py",
+    "tests/test_chat_stream_failpaths_393.py",
+    "tests/test_cli_backend.py",
+    "tests/test_cli_play_turn.py",
+    "tests/test_cli_runner_error_typed_1299.py",
+    "tests/test_close_issues_section_rejections.py",
+    "tests/test_commitment_backlash_626.py",
+    "tests/test_commitment_display_348.py",
+    "tests/test_covert_levy_651.py",
+    "tests/test_credit_events_628.py",
+    "tests/test_db_broad_except_surface.py",
+    "tests/test_decree_commitment_creation_136.py",
+    "tests/test_decree_commitment_schema_136.py",
+    "tests/test_decree_commitment_settlement_229.py",
+    "tests/test_decree_dossiers_571.py",
+    "tests/test_decree_forecast_1861.py",
+    "tests/test_deepseek_thinking_disable_1797.py",
+    "tests/test_deformation_dual_rail_622.py",
+    "tests/test_dossier_endorsements_612.py",
+    "tests/test_dossier_links_559.py",
+    "tests/test_dossier_reported_progress_619.py",
+    "tests/test_draft_admission_resubmit_1769.py",
+    "tests/test_due_review_621.py",
+    "tests/test_effect_origin_558.py",
+    "tests/test_enrich_list_guards.py",
+    "tests/test_enter_settlement_period_1235.py",
+    "tests/test_error_pack.py",
+    "tests/test_event_chain_cascade.py",
+    "tests/test_event_trigger_gate.py",
+    "tests/test_execution_joint_liability_565.py",
+    "tests/test_execution_pressure_654.py",
+    "tests/test_executor_routing_721.py",
+    "tests/test_faction_brew_637.py",
+    "tests/test_faction_denunciation_627.py",
+    "tests/test_faction_leverage_9.py",
+    "tests/test_featured_dossiers_494.py",
+    "tests/test_fiscal_beyond_intent_1260.py",
+    "tests/test_fiscal_levy_effect.py",
+    "tests/test_fiscal_substrate_bridge.py",
+    "tests/test_fiscal_tick.py",
+    "tests/test_gazette_author_1862.py",
+    "tests/test_grant_reconciliation_567.py",
+    "tests/test_highlight_judge_544.py",
+    "tests/test_history_decree_text_1843_reopen.py",
+    "tests/test_hitl_quota_delete_1467.py",
+    "tests/test_identity_seed_488.py",
+    "tests/test_impeachment_surge_655.py",
+    "tests/test_intrigue_concealment_1896.py",
+    "tests/test_issue_decree_token_1277.py",
+    "tests/test_issue_entities.py",
+    "tests/test_junxin_monthly_tick_314.py",
+    "tests/test_llm_channel_config.py",
+    "tests/test_manual_directive_institution_normalize_1279.py",
+    "tests/test_manual_directive_locality_1685.py",
+    "tests/test_material_directory_1830.py",
+    "tests/test_mechanical_tail_1845.py",
+    "tests/test_menu_continue_stream_1195.py",
+    "tests/test_menu_lifecycle_drain_396.py",
+    "tests/test_month_call_recovery_1846.py",
+    "tests/test_month_chain_1843.py",
+    "tests/test_month_chain_1847.py",
+    "tests/test_month_loop_tracer_1468.py",
+    "tests/test_month_open_snapshot_1234.py",
+    "tests/test_month_translate_1840.py",
+    "tests/test_mutiny_latch_315.py",
+    "tests/test_mutiny_noop_whitelist_319.py",
+    "tests/test_mutiny_progression_316.py",
+    "tests/test_mutiny_redemption_317.py",
+    "tests/test_mutiny_third_strike_318.py",
+    "tests/test_named_characters_seed_484.py",
+    "tests/test_new_game_smoke.py",
+    "tests/test_new_game_write_path_1749.py",
+    "tests/test_new_issues_section_rejections.py",
+    "tests/test_no_edict_full_settlement_1274.py",
+    "tests/test_office_inference.py",
+    "tests/test_on_scene_immediate_write_1839.py",
+    "tests/test_opening_gazette_delete_1356.py",
+    "tests/test_override_breach_costs_564.py",
+    "tests/test_pay_order_override_653.py",
+    "tests/test_pay_order_override_extraction_653.py",
+    "tests/test_person_delta_adapter.py",
+    "tests/test_person_transit_write_667.py",
+    "tests/test_pihong_dossier_1490.py",
+    "tests/test_player_army_projection_321.py",
+    "tests/test_population_transfers_649.py",
+    "tests/test_population_unit_648.py",
+    "tests/test_power_section_rejections.py",
+    "tests/test_pre_settle_transaction.py",
+    "tests/test_promulgation_judge_561.py",
+    "tests/test_promulgation_seam_560.py",
+    "tests/test_public_projection_consistency_1830.py",
+    "tests/test_public_sayings_1829.py",
+    "tests/test_qa_1281_issue_audience_case_facts.py",
+    "tests/test_qa_a3_seed_data.py",
+    "tests/test_qa_b3_409_ux.py",
+    "tests/test_qa_d1_decree_normalize_1274.py",
+    "tests/test_qa_e1_numeric_presentation.py",
+    "tests/test_qa_h1_seed_data.py",
+    "tests/test_qa_s2_copy_prompts_1356_1402.py",
+    "tests/test_qa_t1_extraction_dual_source_1353.py",
+    "tests/test_region_cannon_delta.py",
+    "tests/test_rejection_wiring.py",
+    "tests/test_relation_brew_636.py",
+    "tests/test_relation_capture_633.py",
+    "tests/test_relation_read_640.py",
+    "tests/test_relation_seed_638.py",
+    "tests/test_relation_store_632.py",
+    "tests/test_release_bundle_assets.py",
+    "tests/test_rescript_choices_563.py",
+    "tests/test_rescript_draft_656.py",
+    "tests/test_scene_llm_1836.py",
+    "tests/test_secret_order_isolation_883.py",
+    "tests/test_secret_order_monthly_progress_566.py",
+    "tests/test_secret_order_payoff_1504.py",
+    "tests/test_secret_order_update.py",
+    "tests/test_section4_rejections.py",
+    "tests/test_session_write_queue_1353.py",
+    "tests/test_settle_core.py",
+    "tests/test_settlement_write_guard_393.py",
+    "tests/test_six_sciences_seed_608.py",
+    "tests/test_staged_assignment_identity_1890.py",
+    "tests/test_state_reload.py",
+    "tests/test_structured_decree_contract_1624.py",
+    "tests/test_style_temperament_641.py",
+    "tests/test_supervision_625.py",
+    "tests/test_surcharge_causal_chain_650.py",
+    "tests/test_transaction_boundary.py",
+    "tests/test_transit_aging_346.py",
+    "tests/test_transit_countdown_668.py",
+    "tests/test_urge_lever_624.py",
+    "tests/test_web_audience_night_498.py",
+    "tests/test_web_chat_serialization_393.py",
+    "tests/test_web_court_visibility.py",
+    "tests/test_web_llm_runtime_config.py",
+    "tests/test_world_materials_1834.py"
+  ],
+  "w4_added_vs_merge_base": [
+    "tests/directive_seed_helpers.py",
+    "tests/test_audience_translation_once_1898.py",
+    "tests/test_candidate_supply_1893.py",
+    "tests/test_intrigue_concealment_1896.py",
+    "tests/test_public_projection_consistency_1830.py",
+    "tests/test_staged_assignment_identity_1890.py"
+  ],
+  "w4_added_into_HEAD_vs_ours": [
+    "tests/directive_seed_helpers.py",
+    "tests/test_audience_translation_once_1898.py",
+    "tests/test_candidate_supply_1893.py",
+    "tests/test_featured_dossiers_494.py",
+    "tests/test_hitl_quota_delete_1467.py",
+    "tests/test_intrigue_concealment_1896.py",
+    "tests/test_public_projection_consistency_1830.py",
+    "tests/test_staged_assignment_identity_1890.py"
+  ],
+  "w4_nonconflict_added_vs_prior_focused": [
+    "tests/directive_seed_helpers.py",
+    "tests/test_audience_translation_once_1898.py",
+    "tests/test_candidate_supply_1893.py",
+    "tests/test_intrigue_concealment_1896.py",
+    "tests/test_public_projection_consistency_1830.py",
+    "tests/test_staged_assignment_identity_1890.py"
+  ],
+  "prior_focused_conflict_only": true,
+  "prior_focused_missed": [
+    "tests/directive_seed_helpers.py",
+    "tests/test_audience_translation_once_1898.py",
+    "tests/test_candidate_supply_1893.py",
+    "tests/test_intrigue_concealment_1896.py",
+    "tests/test_public_projection_consistency_1830.py",
+    "tests/test_staged_assignment_identity_1890.py"
+  ],
+  "code_hits_before_fix_note": "pre-fix hits recorded in this scan after fix should be empty for imports; see post-fix re-scan",
+  "doc_or_name_mentions_only_sample": [
+    {
+      "file": "tests/test_event_trigger_gate.py",
+      "line": 1527,
+      "symbol": "apply_score_extraction",
+      "text": "def test_apply_score_extraction_metric_delta_restores_runtime_on_outer_rollback(game):"
+    },
+    {
+      "file": "tests/test_event_trigger_gate.py",
+      "line": 2979,
+      "symbol": "apply_score_extraction",
+      "text": "def test_apply_score_extraction_top_level_economy_respects_outer_transaction_rollback(game):"
+    },
+    {
+      "file": "tests/test_event_trigger_gate.py",
+      "line": 3001,
+      "symbol": "apply_score_extraction",
+      "text": "def test_apply_score_extraction_fiscal_changes_respect_outer_transaction_rollback(game):"
+    },
+    {
+      "file": "tests/test_event_trigger_gate.py",
+      "line": 3020,
+      "symbol": "apply_score_extraction",
+      "text": "def test_apply_score_extraction_class_delta_respects_outer_transaction_rollback(game):"
+    },
+    {
+      "file": "tests/test_event_trigger_gate.py",
+      "line": 3058,
+      "symbol": "apply_score_extraction",
+      "text": "def test_apply_score_extraction_top_level_entity_deltas_respect_outer_transaction_rollback(game):"
+    },
+    {
+      "file": "tests/test_event_trigger_gate.py",
+      "line": 3130,
+      "symbol": "apply_score_extraction",
+      "text": "def test_apply_score_extraction_fiscal_create_and_remove_respect_outer_transaction_rollback(game):"
+    },
+    {
+      "file": "tests/test_event_trigger_gate.py",
+      "line": 3655,
+      "symbol": "apply_score_extraction",
+      "text": "def test_apply_score_extraction_appointment_rolls_back_with_outer_transaction(game):"
+    },
+    {
+      "file": "tests/test_faction_leverage_9.py",
+      "line": 696,
+      "symbol": "apply_score_extraction",
+      "text": "玩家月链（pre_settle → 世界段转译 → apply_score_extraction → adjust_factions 注 offset"
+    },
+    {
+      "file": "tests/test_faction_leverage_9.py",
+      "line": 708,
+      "symbol": "apply_score_extraction",
+      "text": "# 经玩家世界段转译 → apply_score_extraction(faction_delta) → _apply_faction_dict"
+    },
+    {
+      "file": "tests/test_issue_entities.py",
+      "line": 359,
+      "symbol": "apply_score_extraction",
+      "text": "def test_apply_score_extraction_splits_bad_nested_entity(game):"
+    },
+    {
+      "file": "tests/test_issue_entities.py",
+      "line": 369,
+      "symbol": "apply_score_extraction",
+      "text": "def test_apply_score_extraction_accepts_flat_faction_scalar(game):"
+    },
+    {
+      "file": "tests/test_issue_entities.py",
+      "line": 378,
+      "symbol": "apply_score_extraction",
+      "text": "def test_apply_score_extraction_rejects_nondict_power_second_level_per_entity(game):"
+    },
+    {
+      "file": "tests/test_issue_entities.py",
+      "line": 385,
+      "symbol": "apply_score_extraction",
+      "text": "def test_apply_score_extraction_rejects_nondict_list_item_per_item(read_game):"
+    },
+    {
+      "file": "tests/test_issue_entities.py",
+      "line": 392,
+      "symbol": "apply_score_extraction",
+      "text": "def test_apply_score_extraction_tolerates_null_field(read_game):"
+    },
+    {
+      "file": "tests/test_issue_entities.py",
+      "line": 404,
+      "symbol": "apply_score_extraction",
+      "text": "def test_apply_score_extraction_rejects_unknown_top_level_key(game):"
+    },
+    {
+      "file": "tests/test_mutiny_noop_whitelist_319.py",
+      "line": 5,
+      "symbol": "apply_score_extraction",
+      "text": "+ apply_score_extraction 集成对照（证明无需第二门）。"
+    },
+    {
+      "file": "tests/test_mutiny_noop_whitelist_319.py",
+      "line": 436,
+      "symbol": "apply_score_extraction",
+      "text": "def test_apply_score_extraction_respects_latched_field_gate(game):"
+    },
+    {
+      "file": "tests/test_pay_order_override_653.py",
+      "line": 1124,
+      "symbol": "apply_score_extraction",
+      "text": "def test_apply_score_extraction_accepts_llm_direction_with_fiscal_loss(game):"
+    },
+    {
+      "file": "tests/test_person_delta_adapter.py",
+      "line": 105,
+      "symbol": "apply_score_extraction",
+      "text": "def test_apply_score_extraction_reports_no_legacy_person_response_keys(game):"
+    },
+    {
+      "file": "tests/test_person_delta_adapter.py",
+      "line": 111,
+      "symbol": "apply_score_extraction",
+      "text": "def test_apply_score_extraction_rejects_person_change_power_move_without_way(read_game):"
+    },
+    {
+      "file": "tests/test_person_delta_adapter.py",
+      "line": 128,
+      "symbol": "apply_score_extraction",
+      "text": "def test_apply_score_extraction_records_mao_appeasement_commitment_and_loyalty_delta(game):"
+    },
+    {
+      "file": "tests/test_person_delta_adapter.py",
+      "line": 198,
+      "symbol": "apply_score_extraction",
+      "text": "def test_apply_score_extraction_rejects_invalid_loyalty_assessment(game, item, category, reason):"
+    },
+    {
+      "file": "tests/test_person_delta_adapter.py",
+      "line": 224,
+      "symbol": "apply_score_extraction",
+      "text": "def test_apply_score_extraction_clamps_loyalty_assessment_delta(game, start, delta, expected):"
+    },
+    {
+      "file": "tests/test_person_delta_adapter.py",
+      "line": 249,
+      "symbol": "apply_score_extraction",
+      "text": "def test_apply_score_extraction_loyalty_assessment_does_not_commit_inside_batch(game):"
+    },
+    {
+      "file": "tests/test_person_delta_adapter.py",
+      "line": 356,
+      "symbol": "apply_score_extraction",
+      "text": "def test_apply_score_extraction_one_time_grant_and_assessment_do_not_create_commitment_issue(game):"
+    },
+    {
+      "file": "tests/test_person_delta_adapter.py",
+      "line": 374,
+      "symbol": "apply_score_extraction",
+      "text": "def test_apply_score_extraction_rejects_malformed_power_move_backlash_before_writing(game):"
+    },
+    {
+      "file": "tests/test_person_delta_adapter.py",
+      "line": 410,
+      "symbol": "apply_score_extraction",
+      "text": "def test_apply_score_extraction_rejects_forged_legacy_partial_power_way(game):"
+    },
+    {
+      "file": "tests/test_person_delta_adapter.py",
+      "line": 426,
+      "symbol": "apply_score_extraction",
+      "text": "def test_apply_score_extraction_rejects_power_move_without_backlash_side_effect(game):"
+    },
+    {
+      "file": "tests/test_person_delta_adapter.py",
+      "line": 440,
+      "symbol": "apply_score_extraction",
+      "text": "def test_apply_score_extraction_applies_person_change_office_action(game):"
+    },
+    {
+      "file": "tests/test_person_delta_adapter.py",
+      "line": 465,
+      "symbol": "apply_score_extraction",
+      "text": "def test_apply_score_extraction_rejects_unknown_person_change_new_appointment(read_game):"
+    }
+  ],
+  "doc_mentions_count": 60,
+  "code_hits": [],
+  "affected_files": [],
+  "expanded_focused_count": 93,
+  "expanded_focused_path": "artifacts/issue-1835-w5-focused-tests.txt",
+  "code_hits_before_fix": [
+    {
+      "file": "tests/test_staged_assignment_identity_1890.py",
+      "kind": "import",
+      "name": "apply_score_extraction",
+      "line": 25,
+      "module": "ming_sim.issues"
+    },
+    {
+      "file": "tests/test_staged_assignment_identity_1890.py",
+      "kind": "call",
+      "name": "apply_score_extraction",
+      "line": 693
+    },
+    {
+      "file": "tests/test_staged_assignment_identity_1890.py",
+      "kind": "call",
+      "name": "apply_score_extraction",
+      "line": 720
+    }
+  ],
+  "affected_files_before_fix": [
+    "tests/test_staged_assignment_identity_1890.py"
+  ],
+  "code_hits_after_fix": [],
+  "remaining_code_refs_whole_tests": [],
+  "note": "Prior focused list was conflict-only and missed W4 non-conflict additions; expanded focused list written to issue-1835-w5-focused-tests.txt",
+  "same_class_runtime_adaptations": [
+    {
+      "file": "tests/test_candidate_supply_1893.py",
+      "kind": "SettlementOutcome-as-dict subscript",
+      "fix": "issue_rows / rejected_view via result.effects.applied[0]"
+    },
+    {
+      "file": "tests/test_staged_assignment_identity_1890.py",
+      "kind": "import/call apply_score_extraction",
+      "fix": "settle_delta + issue_rows / rejected_view"
+    }
+  ],
+  "production_seam_restored_for_file_review": [
+    "ming_sim/declaration_dispatch.py:_dispatch_commissions source_chat_turn_id kwargs",
+    "ming_sim/action_materialize.py:stage_assignment_candidate stages_to_json strict reject"
+  ]
+}

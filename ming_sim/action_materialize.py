@@ -1579,15 +1579,12 @@ def stage_assignment_candidate(
     has_ongoing = isinstance(parsed_ongoing, dict) and bool(parsed_ongoing)
     if kind_raw == "until_stop":
         staged["commitment_kind"] = "until_stop"
-    # #620 AC2：生产捕获——仅结构化 stages / JSON 串 → 绝对 due 段表
-    # 分层：召对入口对分类器坏形 stages 容错；库层 capture/stages_to_json 仍响亮 ValueError
-    # #1890 / ADR 0142：全仓已无任何接缝从散文正则反推年诺。
-    from ming_sim.staged_commitment import capture_commitment_stages
-    stages_raw = stages if stages not in (None, "") else None
-    try:
-        stages_norm = capture_commitment_stages(stages_raw)
-    except ValueError:
-        stages_norm = capture_commitment_stages(None)
+    # #620 AC2 / #1890 / ADR 0142：分段里程碑是机械事实（到期判账），只承接
+    # **显式结构化** stages——JSON 数组串或已结构化列表，一律走库层
+    # stages_to_json 的严格串行面：非 JSON 字符串响亮 ValueError（由交办分派
+    # 的既有 except 收成 durable 拒收）。全仓已无任何接缝从散文正则反推年诺。
+    from ming_sim.staged_commitment import stages_to_json
+    stages_norm = json.loads(stages_to_json(stages))
     if kind_raw == "until_stop" or has_stop or absolute_end > 0 or has_ongoing or stages_norm:
         if has_stop:
             staged["stop_condition"] = parsed_stop

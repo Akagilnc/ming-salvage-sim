@@ -22,7 +22,8 @@ from __future__ import annotations
 import json
 
 from ming_sim.declaration_dispatch import dispatch_declaration
-from ming_sim.issues import apply_score_extraction
+from ming_sim.settlement import SettlementContext, settle_delta
+from ming_sim.settlement.views import issue_rows, rejected_view
 from ming_sim.staged_commitment import normalize_commitment_stages
 from tests.conftest import active_ming_character, open_hall_turn
 from tests.dossier_test_helpers import TYPED_COVERT_TASK
@@ -683,15 +684,15 @@ def test_assignment_structured_stages_land_through_full_chain(game):
 def test_new_issues_prose_year_promise_does_not_become_commitment_stages(game):
     """邸报 / ``new_issues`` 接缝同样不从散文反推年诺（ADR 0142 全仓口径）。
 
-    交办接缝那条走的是顺颁物化；这里钉另一端：真实 ``apply_score_extraction``
+    交办接缝那条走的是顺颁物化；这里钉另一端：现役 ``settle_delta``
     收到只有「三年/五年」正文、无任何结构化期限的承诺项时，不得凭空把它当成
-    机械事实。判据取既有契约口与库层零行，不盯拒收措辞。
+    机械事实。判据取 SettlementOutcome.issue_rows / 拒收段与库层零行，不盯拒收措辞。
     """
     db, state, content = game
     origin_ref = _promulgated_policy_origin(db, state, token="prose-1890")
 
-    out = apply_score_extraction(
-        db, state,
+    out = settle_delta(
+        state, db,
         {"new_issues": [{
             "origin_kind": "decree",
             "origin_ref": origin_ref,
@@ -700,12 +701,13 @@ def test_new_issues_prose_year_promise_does_not_become_commitment_stages(game):
             "stage_text": "三年火器见眉目，五年新历成。",
             "commitment_kind": "until_stop",
         }]},
-        content=content,
+        SettlementContext(content=content),
     )
 
-    created = out["issue_summary"]["new_issues"][0]
-    assert created.get("rejected") is True, created
-    assert str(created.get("category")) == "invalid_enum"
+    assert issue_rows(out, "new_issues") == []
+    rejected = rejected_view(out, "issue_summary")
+    assert rejected, rejected
+    assert rejected[0].category == "invalid_enum"
     # 库层没有因此长出承诺行（更没有带 due_turn 的段表）。
     assert db.conn.execute(
         "SELECT COUNT(*) c FROM issues WHERE origin_ref=?", (origin_ref,),
@@ -717,8 +719,8 @@ def test_new_issues_structured_stages_still_land(game):
     db, state, content = game
     origin_ref = _promulgated_policy_origin(db, state, token="structured-1890")
 
-    out = apply_score_extraction(
-        db, state,
+    out = settle_delta(
+        state, db,
         {"new_issues": [{
             "origin_kind": "decree",
             "origin_ref": origin_ref,
@@ -732,11 +734,10 @@ def test_new_issues_structured_stages_still_land(game):
                 {"stage_idx": 1, "due_turn": 70, "criterion_text": "新历成"},
             ],
         }]},
-        content=content,
+        SettlementContext(content=content),
     )
 
-    created = out["issue_summary"]["new_issues"][0]
-    assert created.get("rejected") is False, created
+    created = issue_rows(out, "new_issues")[0]
     stages = normalize_commitment_stages(db.conn.execute(
         "SELECT stages_json FROM issues WHERE id=?", (int(created["issue_id"]),),
     ).fetchone()["stages_json"])

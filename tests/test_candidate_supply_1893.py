@@ -26,6 +26,7 @@ from ming_sim.materials import (
     prepare_world_materials,
     read_material,
 )
+from ming_sim.settlement.views import issue_rows, rejected_view
 
 CANDIDATE_REL = _CANDIDATE_REL
 
@@ -264,8 +265,9 @@ def test_selected_event_lands_once_via_existing_new_issues_write(game, content):
         result = dispatch_month_segment(
             db, state, segment="探针段文", translate_fn=lambda rq, cfg: declaration,
         )
-        applied = result.effects.applied[0]["issue_summary"]["new_issues"]
-        assert [item.get("rejected") for item in applied] == [False]
+        outcome = result.effects.applied[0]
+        assert issue_rows(outcome, "new_issues")
+        assert not rejected_view(outcome, "issue_summary")
         assert db.conn.execute(
             "SELECT COUNT(*) FROM issues WHERE origin_kind='event_pool' AND origin_ref=?",
             (ev.id,),
@@ -275,10 +277,10 @@ def test_selected_event_lands_once_via_existing_new_issues_write(game, content):
         again = dispatch_month_segment(
             db, state, segment="探针段文", translate_fn=lambda rq, cfg: declaration,
         )
-        assert [
-            item.get("rejected")
-            for item in again.effects.applied[0]["issue_summary"]["new_issues"]
-        ] == [True]
+        again_outcome = again.effects.applied[0]
+        assert rejected_view(again_outcome, "issue_summary") or not issue_rows(
+            again_outcome, "new_issues"
+        )
         assert db.conn.execute(
             "SELECT COUNT(*) FROM issues WHERE origin_kind='event_pool' AND origin_ref=?",
             (ev.id,),
@@ -321,10 +323,9 @@ def test_non_strategic_candidate_effects_land_without_event_id_binding(game, con
         result = dispatch_month_segment(
             db, state, segment="探针段文", translate_fn=lambda rq, cfg: declaration,
         )
-        assert [
-            item.get("rejected")
-            for item in result.effects.applied[0]["issue_summary"]["new_issues"]
-        ] == [False]
+        outcome = result.effects.applied[0]
+        assert issue_rows(outcome, "new_issues")
+        assert not rejected_view(outcome, "issue_summary")
         assert int(state.metrics["民心"]) == before - 3
     finally:
         _drop_event(content, ev)
@@ -398,8 +399,9 @@ def test_impeachment_surge_lands_only_when_faction_actually_impeaches(game):
     result = dispatch_month_segment(
         db, state, segment="派系发难", translate_fn=lambda rq, cfg: declaration,
     )
-    applied = result.effects.applied[0]["issue_summary"]["new_issues"]
-    assert [item.get("rejected") for item in applied] == [False]
+    outcome = result.effects.applied[0]
+    assert issue_rows(outcome, "new_issues")
+    assert not rejected_view(outcome, "issue_summary")
     row = db.conn.execute(
         "SELECT origin_ref,faction_hint,target_roster FROM issues WHERE origin_kind='impeachment_surge'"
     ).fetchone()
