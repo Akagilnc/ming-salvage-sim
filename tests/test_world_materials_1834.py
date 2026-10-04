@@ -3,7 +3,7 @@
 Seam: prepare_world_materials (directory + opening min set), reusing
 list_materials/read_material (#1830 API, generic over any root).
 
-大理寺 01a08e3a 裁定：本文件只留结构化契约（目录路径、INDEX 一致性、无裸
+大理寺 01a08e3a 裁定：本文件只留结构化契约（目录路径、可读载体、无裸
 副本）；对盘面/事务/opening/经历/邸报等人读渲染文本的措辞或固定片段机械
 断言（含哨兵）已整类删除，不得换形复造——`read_material` 越目录契约已由
 tests/test_material_directory_1830.py 的同一泛化入口覆盖，不在此重复。
@@ -54,27 +54,10 @@ def test_prepare_writes_typed_tree_with_board_affairs_and_gazette_index(game, tm
     assert any(p.startswith(f"事务/affair-{affair.id}-") for p in names)
     assert any(p.startswith("邸报/") for p in names)
 
-    index = read_material(prepared.root, "INDEX.txt")
-    listed = set(names)
-    for line in index.splitlines():
-        stripped = line.strip()
-        if not stripped:
-            continue
-        assert stripped in listed or any(
-            stripped.startswith(rel + " ") for rel in listed
-        )
-    for rel in listed:
-        if rel != "INDEX.txt":
-            assert read_material(prepared.root, rel)
-    from ming_sim.models import reign_period_label
-    gazette_rel = f"邸报/{past_year}年{past_period}月.txt"
-    gazette_line = next(
-        line for line in index.splitlines()
-        if line.strip() == gazette_rel or line.strip().startswith(gazette_rel + " ")
-    )
-    assert reign_period_label(past_year, past_period) in gazette_line.split()
-    assert "辽东告急" in gazette_line.split()
-    assert "历月邸报正文" not in gazette_line
+    for rel in names:
+        assert read_material(prepared.root, rel)
+    # 独立入档标题原文搬运，不解析 INDEX 的路径、日期或排版。
+    assert "辽东告急" in read_material(prepared.root, "INDEX.txt")
 
     # 无裸副本：不得直接倒出世界库/JSON。
     assert not any(n.lower().endswith((".db", ".sqlite", ".sqlite3", ".json")) for n in names)
@@ -205,7 +188,7 @@ def test_world_materials_isolate_invocations_and_databases(game, tmp_path, monke
 def test_world_materials_include_textual_facts_once_and_gazette_not_duplicated(game, tmp_path):
     """世界目录直读权威文字事实与独立公开说法；邸报只走 邸报/ 载体。
 
-    契约只落结构化路径 / INDEX / typed store 可达关系，不盯人读正文。
+    契约只落列目录的结构化路径 / typed store 可达关系，不解析人读 INDEX。
     """
     db, state, content = game
     name = next(iter(content.characters))
@@ -250,13 +233,9 @@ def test_world_materials_include_textual_facts_once_and_gazette_not_duplicated(g
 
     prepared = prepare_world_materials(db, state, dest_root=tmp_path / "world-facts")
     names = list_materials(prepared.root)
-    index_lines = {
-        line.strip() for line in read_material(prepared.root, "INDEX.txt").splitlines() if line.strip()
-    }
     fact_paths = [p for p in names if p.startswith("事实/")]
     assert any(p.startswith("事实/character-") for p in fact_paths)
     assert any(p.startswith("事实/region-") for p in fact_paths)
-    assert set(fact_paths) <= index_lines
     # typed store still reachable for the written subjects
     assert db.textual_facts.readable_materials(subject_kind="character", subject_id=name)
     assert db.textual_facts.readable_materials(
@@ -266,13 +245,10 @@ def test_world_materials_include_textual_facts_once_and_gazette_not_duplicated(g
     assert not any(p.startswith("事实/affair-") for p in names)
     affair_paths = [p for p in names if p.startswith(f"事务/affair-{affair.id}-")]
     assert len([p for p in affair_paths if p.endswith("/当前情况.txt")]) == 1
-    assert set(affair_paths) <= index_lines
 
     gazette_paths = [p for p in names if p.startswith("邸报/")]
     assert gazette_paths
-    assert set(gazette_paths) <= index_lines
     assert expected_public_rel in names
-    assert expected_public_rel in index_lines
     # 邸报 stays a top-level carrier; public layer does not grow gazette path twins.
     assert not any(p.startswith("公开说法/邸报/") for p in names)
     # _is_gazette_public_event 必须把 turn_report 挡出 公开说法/：gate 在场时
@@ -303,16 +279,8 @@ def test_world_materials_carry_eligible_person_event_candidates(game, tmp_path):
         if p.startswith("候选事件/") and p.endswith(".txt") and not p.endswith("/INDEX.txt")
     ]
     assert candidate_paths
-    # 目录读口契约：INDEX 每一条都指向真实存在的文件（#1892 J3 曾按原始 id 写
-    # INDEX、写盘却用安全名，整目录索引不可读）。结构化断言，不拼正文。
-    index_lines = [
-        line.strip()
-        for line in read_material(prepared.root, "候选事件/INDEX.txt").splitlines()
-        if line.strip()
-    ]
-    listed = {p.split("/", 1)[1] for p in candidate_paths}
-    assert index_lines, "候选 INDEX 不得为空"
-    assert set(index_lines) == listed, (index_lines, candidate_paths)
+    # 人读索引可读；实际取阅路径只从列目录取得，不解析索引排版。
+    assert read_material(prepared.root, "候选事件/INDEX.txt").strip()
     for rel in candidate_paths:
         assert read_material(prepared.root, rel)
     # 候选集合＝权威快照逐条可达；快照为空则本例无意义，故先钉非空。
@@ -334,7 +302,7 @@ def test_world_materials_carry_eligible_person_event_candidates(game, tmp_path):
 def test_world_materials_carry_due_fiscal_levy_petitions(game, tmp_path):
     """#1892 J5：三饷到点须皇帝亲裁，故走「请旨事项」目录交世界段上疏。
 
-    契约＝目录读口（INDEX 每条指向真实文件）与权威快照一致；不盯人读正文。
+    契约＝实际列目录、可读载体与权威快照一致；不解析人读 INDEX。
     """
     from ming_sim import issues
 
@@ -348,17 +316,14 @@ def test_world_materials_carry_due_fiscal_levy_petitions(game, tmp_path):
     assert "liao_levy_rise_1631" in due
 
     prepared = prepare_world_materials(db, state, dest_root=tmp_path / "levy")
-    index_lines = [
-        line.strip()
-        for line in read_material(prepared.root, "请旨事项/INDEX.txt").splitlines()
-        if line.strip()
-    ]
+    assert read_material(prepared.root, "请旨事项/INDEX.txt").strip()
     paths = [
         p for p in list_materials(prepared.root)
         if p.startswith("请旨事项/") and p.endswith(".txt") and not p.endswith("/INDEX.txt")
     ]
     assert paths
-    assert {p.split("/", 1)[1] for p in paths} == set(index_lines)
+    from ming_sim.materials import _safe_segment
+    assert set(paths) == {f"请旨事项/{_safe_segment(event_id)}.txt" for event_id in due}
     for rel in paths:
         assert read_material(prepared.root, rel)
 

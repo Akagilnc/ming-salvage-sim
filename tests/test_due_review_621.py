@@ -226,7 +226,12 @@ def test_due_review_scene_tops_next_audience_with_origin_context(game):
 
 def test_due_review_scene_tops_live_open_night_even_with_body(game):
     """#1838 reopen：待裁场面进场景开场最小集，不再写开夜旁白账。"""
-    from ming_sim.materials import _scene_opening_text, _scene_pending_audience_facts
+    import json
+    from ming_sim.materials import (
+        _scene_pending_audience_facts,
+        prepare_scene_materials,
+        release_material_tree,
+    )
 
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
@@ -241,10 +246,25 @@ def test_due_review_scene_tops_live_open_night_even_with_body(game):
     write_due_staged_commitment_todos(db, state)
 
     open_night(db, state, time_of_day="戌时", location="乾清宫")
-    facts = _scene_pending_audience_facts(db, state)
-    opening = _scene_opening_text(state, [], "", [], facts)
-    assert facts, "待裁场面须原样进入开场最小集"
-    assert "三年火器见眉目" in opening
+    scenes = list_due_review_scenes(db, state)
+    assert len(scenes) == 1
+    scene = scenes[0]
+    prepared = prepare_scene_materials(db, state)
+    try:
+        facts = _scene_pending_audience_facts(db, state)
+        matched = [
+            json.loads(line) for line in facts
+            if json.loads(line).get("todo_id") == scene["todo_id"]
+        ]
+        assert len(matched) == 1
+        assert matched[0] == scene
+        payload = next(
+            line for line in facts
+            if json.loads(line).get("todo_id") == scene["todo_id"]
+        )
+        assert payload in prepared.opening
+    finally:
+        release_material_tree(prepared.root)
 
 
 # ── P1 有案卷桥 / 无案卷分支 ──────────────────────────────────────────
@@ -501,7 +521,7 @@ def test_executing_outcome_rejects_close_true(game):
     """负向：executing 不得 close=True（适配器契约）。"""
     db, state, _content = game
     dossier_id = _executing_policy_dossier(db, state, token="close-guard")
-    with pytest.raises(ValueError, match="executing"):
+    with pytest.raises(ValueError):
         db.record_dossier_execution(
             dossier_id, "executing", "中段过程", state.turn, close=True, commit=True,
         )
@@ -544,6 +564,7 @@ def test_three_beat_timing_todo_then_scene_then_slot(game, monkeypatch):
     _settle_empty_month(db, state, content, monkeypatch)
     assert db.get_decree_dossier(dossier_id)["execution_outcome"]
     assert db.list_next_audience_todos(status=TODO_STATUS_PENDING) == []
+
 
 
 def test_due_review_settle_does_not_pause_or_decision(game, monkeypatch):

@@ -389,7 +389,7 @@ def test_terminal_failure_printer_preserves_zero_id(capsys):
     }])
 
     out = capsys.readouterr().out
-    assert "【密令落库失败 #0】" in out
+    assert "#0" in out
 
 
 @pytest.mark.parametrize("action", ["skip", "issue"])
@@ -448,7 +448,7 @@ def test_play_turn_reports_default_approval_secret_order_failure(monkeypatch, ca
     term.play_turn(session)
 
     out = capsys.readouterr().out
-    assert "【密令落库失败 #42】" in out
+    assert "#42" in out
     if action == "skip":
         assert session.calls == ["begin", "advance"]
     else:
@@ -559,7 +559,7 @@ def test_play_turn_reports_secret_order_failure_when_settlement_aborts(monkeypat
 
     out = capsys.readouterr().out
     assert "结算中止" in out
-    assert "【密令落库失败 #42】" in out
+    assert "#42" in out
     assert session.calls == ["begin", "resolve", "advance"]
 
 

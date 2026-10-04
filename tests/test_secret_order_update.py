@@ -97,10 +97,13 @@ def test_update_by_id_persists_assignee_brief_after_restore(game):
         "SELECT title, body FROM secret_order_briefs WHERE order_id=?", (oid,)
     ).fetchone()
     assert dict(source) == {"title": "新标题", "body": "新内容"}
-    assert any(
-        item["title"] == "新标题" and item["body"] == "新内容"
-        for item in knowledge["events"]
-    )
+    projected = [
+        item for item in knowledge["events"]
+        if item.get("source_id") == f"secret_order_brief:{oid}"
+    ]
+    assert len(projected) == 1
+    assert projected[0]["title"] == source["title"]
+    assert projected[0]["body"] == source["body"]
     restored.close()
 
 

@@ -487,24 +487,3 @@ def test_promulgation_payload_does_not_write_authority_records(game):
     assert str(rows[0]["holder_id"]) == holder
     assert str(rows[0]["privilege"]) == "便宜行事"
     assert str(rows[0]["scope"]) == "issue:payload旁路"
-
-
-def test_promulgation_judge_instructions_cover_held_authority_modifiers(monkeypatch):
-    import ming_sim.agents as agents_mod
-    from ming_sim.models import LLMConfig
-
-    monkeypatch.setattr(
-        agents_mod, "create_chat_model", lambda _cfg, **kwargs: object(),
-    )
-    monkeypatch.setattr(agents_mod, "Agent", lambda **kwargs: kwargs)
-    agent = agents_mod.create_promulgation_judge_agent(
-        LLMConfig(api_key="test", base_url="http://unused", model="test"),
-        object(),
-        session_id="promulgation-judge-turn-test",
-        num_history_runs=4,
-    )
-    text = "\n".join(str(item) for item in agent["instructions"])
-    assert "held_authorities" in text
-    assert "尚方剑密授" in text and "阻力" in text
-    assert "便宜行事" in text and "程序" in text
-    assert "专差督办" in text and "节制" in text

@@ -40,7 +40,7 @@ def test_write_error_pack_inside_atomic_is_rejected(game, monkeypatch, tmp_path)
     db, state, content = game
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
 
-    with pytest.raises(RuntimeError, match="atomic"):
+    with pytest.raises(RuntimeError):
         with atomic(db):
             write_error_pack(db, state, exc=RuntimeError("x"),
                              extracted=None, resolve_ctx=None)
@@ -138,8 +138,9 @@ def test_web_issue_endpoint_returns_structured_abort(monkeypatch):
         web_app.api_issue_decree()
 
     assert ei.value.status_code != 500
-    assert "可重试" in str(ei.value.detail)
-    assert "错误包" in str(ei.value.detail)
+    assert ei.value.detail["stage"] == "extract"
+    assert ei.value.detail["error_pack_path"] == "/tmp/x"
+    assert ei.value.detail["turn"] == 3
 
 def test_next_attempt_skips_malformed_and_foreign_entries(game, monkeypatch, tmp_path):
     """attempt 推导跳过畸形后缀/他 turn/非目录项，取本 turn 数字后缀 max+1

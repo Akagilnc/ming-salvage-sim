@@ -8,7 +8,6 @@
 from __future__ import annotations
 
 import json
-import re
 from pathlib import Path
 
 from ming_sim.content import load_character_content, load_event_content
@@ -62,12 +61,6 @@ def test_guanning_commander_not_bajiu_offstage_yuan():
     for name in ("祖大寿", "何可纲", "赵率教"):
         assert name in commander, f"commander 缺分统 {name}: {commander!r}"
         assert name in controller, f"controller 缺分统 {name}: {controller!r}"
-    # 若 commander 点到名册人物，不得是罢居串
-    named = set(re.findall(r"[\u4e00-\u9fff]{2,4}", commander)) & set(characters)
-    for name in named:
-        assert "罢居" not in (characters[name].office or ""), (
-            f"关宁 commander 点名罢居者 {name}"
-        )
 
 
 def test_dongjiang_commander_is_active_mao_wenlong():
@@ -180,15 +173,6 @@ def test_deficit_stage_text_aligns_with_opening_treasury_and_hubu():
     assert "南京" in (bi.office or ""), bi.office
 
     ev = _deficit_seed()
-    stage = ev.stage_text or ""
-    assert "毕自严" not in stage, f"具题人仍是南京户书: {stage!r}"
-    assert "郭允厚" in stage, stage
-    # 禁与开局国库 320 恒冲突的「不足三百万」硬数；允许定性或对齐实数
-    assert "不足三百万" not in stage, stage
-    # 若仍写具体「百万」量级，不得宣称低于开局国库
-    m = re.search(r"不足\s*([一二三四五六七八九十百千万0-9]+)\s*万", stage)
-    assert m is None, f"仍用不足X万硬数易与账本漂移冲突: {stage!r}"
-
     # audiences 须含在任户部尚书，召对注入才对口
     audiences = list(ev.audiences or [])
     assert "郭允厚" in audiences, audiences

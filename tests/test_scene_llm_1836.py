@@ -36,8 +36,6 @@ def _sess(db, state, content, *, llm_config=None):
     sess.llm_config = llm_config or SimpleNamespace(channel="api")
     sess.temporary_characters = {}
     sess.agno_db = None
-    sess._beat_generator = None
-    sess._scene_registry = None
     sess._write_queue = SessionWriteQueue()
     sess._write_gate = sess._write_queue.write_gate
     return sess
@@ -185,10 +183,14 @@ def test_remote_xuan_feeds_summon_facts_to_scene(game, monkeypatch):
     monkeypatch.setattr("ming_sim.session.create_scene_agent", scene_agent)
     sess.scene_chat(f"宣{target}")
     assert list_unsettled_summons(db)
-    facts = [json.loads(line) for line in _scene_pending_audience_facts(db, state)]
+    raw_facts = _scene_pending_audience_facts(db, state)
+    facts = [json.loads(line) for line in raw_facts]
     assert any(fact.get("person_name") == target and fact.get("kind") == "fresh" for fact in facts)
-    assert any(json.dumps(fact, ensure_ascii=False, sort_keys=True) in openings[0]
-               for fact in facts if fact.get("person_name") == target)
+    assert any(
+        line in openings[0]
+        for line, fact in zip(raw_facts, facts)
+        if fact.get("person_name") == target
+    )
 
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")

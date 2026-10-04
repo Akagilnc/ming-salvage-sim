@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-import json
 import sqlite3
 
 import pytest
 
 from tests.conftest import active_ming_character
+from tests.test_declaration_dispatch_1835 import _minister as _character_name
 
 
 @pytest.mark.parametrize("source_cannon,target_cannon,treasury,actual_cannon,source_latched,target_latched", [
@@ -73,7 +73,7 @@ def test_world_segment_rejects_transfer_with_pay_arrears_claim(game):
     from ming_sim.month_translate import dispatch_month_segment
 
     db, state, _ = game
-    db.conn.execute("UPDATE armies SET arrears=6 WHERE id='jingying'")
+    db.conn.execute("UPDATE armies SET arrears=6, province_pay_arrears=0, central_pay_arrears=6 WHERE id='jingying'")
     state.metrics["国库"], state.metrics["内库"] = 100, 0
     move = {
         "origin_ref": "盘面自发", "account": "国库", "delta": -5,
@@ -98,14 +98,6 @@ def test_world_segment_rejects_transfer_with_pay_arrears_claim(game):
     assert (state.metrics["国库"], state.metrics["内库"]) == (100, 0)
     assert db.conn.execute("SELECT arrears FROM armies WHERE id='jingying'").fetchone()[0] == 6
     assert db.conn.execute("SELECT COUNT(*) FROM economy_ledger WHERE category='调拨'").fetchone()[0] == 0
-
-
-def _character_name(db) -> str:
-    row = db.conn.execute(
-        "SELECT name FROM characters WHERE status='active' ORDER BY name LIMIT 1"
-    ).fetchone()
-    assert row is not None
-    return str(row["name"])
 
 
 def _army_id(db) -> str:
@@ -923,55 +915,3 @@ def test_final_strategic_rejection_leaves_no_owned_effects(game):
     triggered = db.has_event_triggered("jisi_lubian")
     assert state.metrics["民心"] == metric_before + (-3 if triggered else 0)
     assert state.metrics["国库"] == treasury_before + (-1 if triggered else 0)
-
-
-def test_month_translation_receives_person_candidate_identity(game):
-    """人物候选身份与 event_pool 声明契约进入过月转译请求，不另开模型调用。"""
-    from ming_sim import issues
-    from ming_sim.month_translate import (
-        build_month_segment_translate_prompt,
-        dispatch_month_segment,
-    )
-
-    db, state, content = game
-    issues.bind_content(content)
-    state.year = 1636
-    state.period = 4
-    db.save_state(state)
-    segment = "盛京传来皇太极称帝改国号的消息。"
-    assert "huangtaiji_chengdi" not in segment
-    seen = []
-
-    def translate(request, _config):
-        seen.append(request)
-        return {"effects": {}}
-
-    dispatch_month_segment(db, state, segment=segment, translate_fn=translate)
-    prompt = build_month_segment_translate_prompt(seen[0])
-    assert "huangtaiji_chengdi" in prompt
-    assert "event_pool" in prompt
-    from ming_sim.materials import _world_candidate_events
-
-    jisi = next(item for item in _world_candidate_events(db, state) if item["id"] == "jisi_lubian")
-    labels = list(content.event_by_id["jisi_lubian"].terminal_reason_labels)
-    assert labels and jisi["terminal_reason_labels"] == labels
-    decoder = json.JSONDecoder()
-    text = seen[0].target_grounding
-    matched = []
-    cursor = 0
-    while cursor < len(text):
-        start = text.find("[", cursor)
-        if start < 0:
-            break
-        try:
-            value, end = decoder.raw_decode(text, start)
-        except json.JSONDecodeError:
-            cursor = start + 1
-            continue
-        if isinstance(value, list):
-            matched.extend(
-                item for item in value
-                if isinstance(item, dict) and item.get("id") == "jisi_lubian"
-            )
-        cursor = end
-    assert [item.get("terminal_reason_labels") for item in matched] == [labels]

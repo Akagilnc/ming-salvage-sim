@@ -241,8 +241,8 @@ def test_close_merges_recon_note_without_second_treasury_debit(game):
     assert closed["status"] == "closed"
     note = closed["execution_note"]
     assert "赈银押解到达" in note
-    assert "应解30两" in note
-    assert "实抵16两" in note
+    recon = db.list_dossier_reconciliations(gid)[-1]
+    assert recon["arrived_amount"] == 16
     # 仍无二次扣库
     assert int(state.metrics["内库"]) == after_grant_inner
     assert db.list_economy_moves_for_dossier(gid) == moves_before

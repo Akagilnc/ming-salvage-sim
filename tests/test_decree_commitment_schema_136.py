@@ -48,9 +48,11 @@ def test_issues_schema_has_commitment_deadline_columns(read_game):
         {"metrics": {}},
         {"metrics": {"民心": 0}},
         {"metrics": {"民心": 0}, "note": "无月度动作"},
+        {"人物变更": [{"origin_ref": "盘面自发", "name": "毛文龙", "动作": "评定", "loyalty": "2"}]},
+        {"character": [{"name": "毛文龙", "loyalty": "2", "reason": "每月安抚"}]},
     ],
 )
-def test_effect_dict_has_work_ignores_metadata_only_payloads(payload):
+def test_effect_dict_has_work_ignores_empty_or_invalid_payloads(payload):
     assert effect_dict_has_work(payload) is False
 
 
@@ -105,17 +107,6 @@ def test_issue_resolution_removes_building_and_keeps_remove_audit_log(game):
     ).fetchone()
     assert dict(log) == {"old_value": building["name"], "field": "remove"}
     assert result["closes"][0]["building_ops"][0]["removed"] is True
-
-
-@pytest.mark.parametrize(
-    "payload",
-    [
-        {"人物变更": [{"origin_ref": "盘面自发", "name": "毛文龙", "动作": "评定", "loyalty": "2"}]},
-        {"character": [{"name": "毛文龙", "loyalty": "2", "reason": "每月安抚"}]},
-    ],
-)
-def test_effect_dict_has_work_ignores_malformed_person_loyalty(payload):
-    assert effect_dict_has_work(payload) is False
 
 
 def test_insert_issue_persists_commitment_deadline_columns(game):
@@ -206,7 +197,7 @@ def test_decree_commitment_shape_with_string_stop_condition_requires_marker(read
 
     rejected = [item for item in out["new_issues"] if item.get("rejected")]
     assert len(rejected) == 1, out
-    assert "commitment_kind 必填" in rejected[0]["reason"]
+    assert rejected[0]["category"] == "invalid_enum"
     row = db.conn.execute(
         "SELECT id FROM issues WHERE title=?", ("安抚毛文龙直到效顺",)
     ).fetchone()

@@ -47,14 +47,6 @@ def test_rejected_item_fields():
     assert ri.source is Provenance.system_simulation
 
 
-def test_rejected_item_constructs_with_fields():
-    """四字段按名构造可读（非 frozen，可变性不在契约内）。"""
-    ri = RejectedItem(
-        item={}, reason="test", category="invalid_enum", source=Provenance.unknown
-    )
-    assert ri.category == "invalid_enum"
-
-
 # ---------------------------------------------------------------------------
 # SectionResult
 # ---------------------------------------------------------------------------

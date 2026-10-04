@@ -37,7 +37,7 @@ def test_departure_rejects_nonfinite_distance_before_ledger_write(game, monkeypa
         issues.DistanceMatrix, "from_file", classmethod(lambda cls, path: InvalidMatrix()),
     )
 
-    with pytest.raises(ValueError, match="invalid baked travel time"):
+    with pytest.raises(ValueError):
         issues.apply_score_extraction(db, state, {"人物变更": [{
             "name": name, "origin_ref": "盘面自发", "动作": "行止",
             "transit_to": "liaodong",

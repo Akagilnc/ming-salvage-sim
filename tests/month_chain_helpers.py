@@ -24,8 +24,6 @@ def make_light_session(db, state, content):
     session.debuts_this_turn = []
     session.last_decree = ""
     session._decree_draft_fingerprint = ()
-    session._scene_registry = None
-    session._beat_generator = None
     session._write_gate = get_session_write_queue(session).write_gate
     session.auto_save = lambda *a, **k: None
     bind_forecast_owner(session)

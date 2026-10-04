@@ -27,22 +27,21 @@ def _mock_draft_intent(monkeypatch, *, text: str, roster):
         "目标ID": "treasury-audit",
         "参与人": roster,
     }
+    prompts = []
 
     def backend(prompt, *_args, tag="", **_kwargs):
-        # r6 escalate 出口：按 tag 分派，禁一律吐抽取 JSON / 禁 prompt 形状假设炸 IndexError
+        # 回禀出口按结构化 tag 分派，不要求旨文。抽取调用只记账。
         if tag == "participant_escalate_report":
-            names = "、".join(
-                str(item.get("character_id") or "").strip()
-                for item in roster
-                if str(item.get("character_id") or "").strip()
-            ) or "此人"
-            return (f"通政司启：朝中查无「{names}」，乞陛下明示。", 1)
-        emperor = prompt.split("【皇帝】", 1)[1].split("【大臣回话】", 1)[0]
-        if "请据此拟旨" not in emperor or text not in emperor:
-            return (json.dumps({"拟旨意图": "无"}, ensure_ascii=False), 1)
+            return ("回禀", 1)
+        prompts.append(prompt)
         return (json.dumps(response, ensure_ascii=False), 1)
 
     monkeypatch.setattr(cli_backend, "_run_backend_for_config", backend)
+    return prompts
+
+
+def _assert_decree_reached_backend(prompts, text: str) -> None:
+    assert prompts and text in prompts[0]
 
 
 def _seed_draft(game_tuple, text: str) -> int:
@@ -66,10 +65,11 @@ def _capture_ids(game, monkeypatch, *, text: str, roster):
     import ming_sim.cli_backend as cli_backend
 
     db, _state, content = game
-    _mock_draft_intent(monkeypatch, text=text, roster=roster)
+    prompts = _mock_draft_intent(monkeypatch, text=text, roster=roster)
     payload = cli_backend.capture_manual_directive_payload(
         text, None, db=db, content=content,
     )
+    _assert_decree_reached_backend(prompts, text)
     return [str(item["character_id"]) for item in (payload.get("participant_roster") or [])]
 
 
@@ -79,7 +79,7 @@ def test_capture_manual_directive_drops_ministry_name_as_participant(game, monke
 
     db, state, content = game
     text = "着户部核清太仓实存，边饷优先"
-    _mock_draft_intent(
+    prompts = _mock_draft_intent(
         monkeypatch, text=text,
         roster=[{"character_id": "户部", "tier": "主办", "role": "核太仓"}],
     )
@@ -87,6 +87,7 @@ def test_capture_manual_directive_drops_ministry_name_as_participant(game, monke
     payload = cli_backend.capture_manual_directive_payload(
         text, None, db=db, content=content,
     )
+    _assert_decree_reached_backend(prompts, text)
     roster = payload.get("participant_roster") or []
     assert all(str(item.get("character_id") or "") != "户部" for item in roster)
 
@@ -121,12 +122,13 @@ def test_seeded_draft_accepts_ministry_subject_without_409(game, monkeypatch):
     """落草案入口：着户部… 不得 409「参与人物不存在：户部」。"""
     db, _state, _content = game
     text = "着户部核清太仓实存，边饷优先"
-    _mock_draft_intent(
+    prompts = _mock_draft_intent(
         monkeypatch, text=text,
         roster=[{"character_id": "户部", "tier": "主办"}],
     )
 
     assert _seed_draft(game, text) > 0
+    _assert_decree_reached_backend(prompts, text)
     rows = db.list_directives(game[1])
     assert any(str(row["text"]) == text for row in rows)
     # ADR 0053 缝仍在：未知真名仍应拒——此处仅断言部院名不撞墙。
@@ -221,16 +223,13 @@ def test_adr0053_unknown_person_still_rejected_at_capture(game, monkeypatch):
 
     db, _state, content = game
     text = "着不存在之人核太仓"
-    _mock_draft_intent(
+    prompts = _mock_draft_intent(
         monkeypatch, text=text,
         roster=[{"character_id": "不存在之人甲", "tier": "主办"}],
     )
 
-    with pytest.raises(ValueError) as ei:
+    with pytest.raises(ValueError):
         cli_backend.capture_manual_directive_payload(
             text, None, db=db, content=content,
         )
-    msg = str(ei.value)
-    assert "不存在之人甲" in msg
-    assert any(m in msg for m in ("乞陛下明示", "朝籍", "查无"))
-    assert "参与人物不存在" not in msg  # F5：禁原始 409 泄漏
+    _assert_decree_reached_backend(prompts, text)

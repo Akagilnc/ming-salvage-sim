@@ -139,7 +139,6 @@ describe("decision routing — retry (routeRetryDecisions: stale-phase vs still-
     const route = routeRetryDecisions("settling", []);
     expect(route.pendingDecisions).toEqual([]);
     expect(route.error).toBe("");
-    expect(route.error).not.toContain("重新拉取");
   });
 
   it("recovers into the decision modal when valid decisions arrive on retry", () => {

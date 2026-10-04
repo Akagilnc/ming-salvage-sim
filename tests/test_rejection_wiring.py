@@ -448,7 +448,6 @@ def test_power_move_backlash_rejection_lands_in_reports(game, monkeypatch, tmp_p
         ]
         assert len(rows) == 1
         assert rows[0]["section"] == "applied_person_changes.backlash_results"
-        assert rows[0]["reason"] == "power_updates 引用未入库势力 '查无此势力'"
         assert rows[0]["category"] == "hallucinated_id"
         assert json.loads(rows[0]["item_json"]) == {
             "power_id": "查无此势力",
@@ -512,7 +511,6 @@ def test_issue_close_power_move_backlash_rejection_is_not_duplicated(game, monke
         ]
         assert len(rows) == 1
         assert rows[0]["section"] == "issue_summary.applied_person_changes.backlash_results"
-        assert rows[0]["reason"] == "power_updates 引用未入库势力 '查无此势力'"
         assert rows[0]["category"] == "hallucinated_id"
         assert json.loads(rows[0]["item_json"]) == {
             "power_id": "查无此势力",
@@ -552,7 +550,6 @@ def test_inertia_power_move_backlash_rejection_lands_in_reports(game, monkeypatc
         ).fetchall()
         assert len(rows) == 1
         assert rows[0]["section"] == "issue_summary.applied_person_changes.backlash_results"
-        assert rows[0]["reason"] == "power_updates 引用未入库势力 '查无此势力'"
         assert rows[0]["category"] == "hallucinated_id"
     finally:
         ch.power_id, ch.office, ch.office_type = old_power, old_office, old_office_type

@@ -337,7 +337,8 @@ def build_fiscal_fact_brief(db: Any) -> List[Dict[str, Any]]:
     只产**本回合分量**（受损>0/受益<0），不把长期存量当本回合受损——长期存量是
     多回合累积净值，喂给 F3.2 符号域会把无关回合的旧账钳成本回合归因（上轮既禁）。
     """
-    from ming_sim.flows import _central_dues_with_haircut, army_needed
+    from ming_sim.army_pay import army_needed
+    from ming_sim.flows import _central_dues_with_haircut
     from ming_sim.pay_order import (
         haircut_due,
         resolve_haircut_winning_key,

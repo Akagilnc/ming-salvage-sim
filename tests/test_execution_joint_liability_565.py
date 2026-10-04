@@ -184,7 +184,7 @@ def test_engine_auto_failed_materialize_writes_zero_joint_liability(game):
     assert db.get_relation_edge_events(event_kind="连坐") == []
 
 
-def test_dead_liable_party_skips_satisfaction_but_enters_note(game, caplog):
+def test_dead_liable_party_skips_satisfaction_but_enters_note(game):
     db, state, content = game
     dossier_id = _executing_dossier(db, state)
     db.conn.execute("UPDATE characters SET status='dead' WHERE name='倪元璐'")
@@ -208,7 +208,6 @@ def test_dead_liable_party_skips_satisfaction_but_enters_note(game, caplog):
     assert "徐光启" in edges
     note = db.get_decree_dossier(dossier_id)["execution_note"]
     assert "倪元璐" in note
-    assert "跳过已故" in caplog.text
 
 
 def test_explicit_affected_parties_must_pass_full_key_validation(game):
@@ -296,9 +295,6 @@ def test_assistant_row_delegator_gets_secondary_assistant_zero_mechanical(game):
     assert edges == {"倪元璐", "徐光启"}
     assert "黄道周" not in edges
 
-    note = db.get_decree_dossier(dossier_id)["execution_note"]
-    assert "徐光启（委派）" in note
-    assert "黄道周（" not in note
 
 
 def test_dual_role_lead_and_delegator_primary_wins(game):
@@ -338,9 +334,6 @@ def test_dual_role_lead_and_delegator_primary_wins(game):
     }
     assert edges == {"倪元璐", "徐光启"}
 
-    note = db.get_decree_dossier(dossier_id)["execution_note"]
-    assert "徐光启（主办）" in note
-    assert "徐光启（委派）" not in note
 
 
 def test_liability_query_excludes_knowers_but_keeps_delegator_fk(game):

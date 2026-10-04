@@ -46,13 +46,6 @@ from ming_sim.faction_brew import VIEW_FACTION_STANCE
 from ming_sim.flows import apply_fixed_period_flows, raise_fixed_period_flow_abort_if_needed
 from ming_sim.issues import (
     apply_historical_fiscal_rates,
-    apply_issue_inertia_and_ongoing,
-    apply_score_extraction,
-    _apply_levy_driven_transfers,
-    clear_gated_legacies,
-    gather_impeachment_surge_candidates,
-    sanitize_delta_shape,
-    validate_delta_shape,
 )
 from ming_sim.llm_model import extract_agent_text, llm_unavailable_from_error
 from ming_sim.models import FRONT_HALF_DONE_PHASES, GameState, LLMConfig, TurnPhase

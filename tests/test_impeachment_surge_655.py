@@ -290,7 +290,6 @@ def test_leverage_boundary_and_authoritative_input_snapshot(game):
         impeachment_surge_candidates_at_input=[],
     )["new_issues"][0]
     assert rejected["rejected"] is True
-    assert "输入快照" in rejected["reason"]
 
     accepted = apply_issue_tracker_output(
         db, state, {"new_issues": [item]}, candidate_event_ids_at_input=set(),

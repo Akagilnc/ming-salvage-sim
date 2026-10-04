@@ -192,7 +192,7 @@ def test_prohibit_covert_levy_commission_binds_exposed_dossier(game, monkeypatch
     assert dossier["target_id"] == str(other_did)
     from ming_sim.covert_levy import active_prohibition_dossier
     army_id = db.conn.execute("SELECT target_id FROM decree_dossiers WHERE id=?", (other_did,)).fetchone()[0]
-    db.conn.execute("UPDATE armies SET arrears=10 WHERE id=?", (army_id,))
+    db.conn.execute("UPDATE armies SET arrears=10, province_pay_arrears=0, central_pay_arrears=10 WHERE id=?", (army_id,))
     before = int(state.turn)
     _player_month(db, state, content, monkeypatch, int(dossier["id"]), effects={
         "fiscal_creates": [{
@@ -357,18 +357,18 @@ def test_inquiry_declaration_preserves_assignment_in_attendant_materials(game, m
     assert not any(e["source_id"] in {r["source_id"] for r in sources}
                    for e in db.get_character_knowledge(state, other)["events"])
     from ming_sim.audience_night import summon_enter
-    from ming_sim.materials import prepare_scene_materials, release_material_tree
+    from ming_sim.materials import list_materials, prepare_scene_materials, release_material_tree
     # A fresh night must make this report readable, not merely list a carrier.
     _close_offline(db, state, content, int(open_night(db, state)["id"]))
     night = open_night(db, state)
     summon_enter(db, int(night["id"]), attendant.name)
     prepared = prepare_scene_materials(db, state)
     try:
-        from pathlib import Path
+        from ming_sim.materials import list_materials, read_material
         carrier = f"人物/{attendant.name}/经历.txt"
-        assert carrier in prepared.index_lines
-        experience = (Path(prepared.root) / carrier).read_text(encoding="utf-8")
-        assert all(event["body"] in experience for event in report_events)
+        assert carrier in list_materials(prepared.root)
+        # 原话是这次交办写入的正文，经历载体须原样带上它。
+        assert query in read_material(prepared.root, carrier)
     finally:
         release_material_tree(prepared.root)
 
@@ -397,7 +397,6 @@ def test_separate_inquiries_same_turn_survive_and_retry_is_idempotent(game, with
     assignments = [event for event in db.get_character_knowledge(state, attendant.name)["events"]
                    if event["kind"] == "inquiry_assignment"]
     assert len(assignments) == 2
-    assert {event["body"] for event in assignments} == set(queries)
     assert len({event["source_id"] for event in assignments}) == 2
 
 
