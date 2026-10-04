@@ -3,8 +3,9 @@
 工作树：`/Users/akagilnc/WorkSpace/Ming_LLM-1843-w5`
 分支：`ak-roles/issue-1843-w5-r5-f2`（自 `ak-roles/issue-1843-w5` @ `77c00eadc`）
 底座：`claude/1812-w4` 是 HEAD 祖先
-派单：`~/.ak-roles/books/Ming_LLM/unbound/runs/01a10837-1305-7258-8ea9-a0150c437f00@fixer/fix-packet.md`
-判词附件：`.../attachments/00-1843-judge-77c00eadc.json`（F2 成立、未结；整类承接）
+派单（全文）：`/Users/akagilnc/.ak-roles/books/Ming_LLM/unbound/runs/01a10837-1305-7258-8ea9-a0150c437f00@fixer/fix-packet.md`
+判词原文（全文）：`/Users/akagilnc/.ak-roles/books/Ming_LLM/unbound/runs/01a10837-1305-7258-8ea9-a0150c437f00@fixer/attachments/00-1843-judge-77c00eadc.json`（F2 成立、未结；整类承接）
+施工基线：`ae4a2a3e6c60afd8a09f03252e692632d8c6bee6`
 
 ## 轮次
 
@@ -14,22 +15,212 @@
 | R2 | `d3a3688f2` | 旧文本流／季提示／军队投影 → `44f87c4c5` |
 | R3 | `9d4152542` | ≤1-ref 穷尽删一批 → `ea297e120`；成员表聚合被封驳 |
 | R4 | `79661de14` | AST0∪词边界≤1 联合表；删 3；误把测试引用当保留 → `66d8d86d0`；庭审 `77c00eadc` |
-| R5 | `77c00eadc` | 删一批测试独占／死树；**回执谓词误收窄 same_file_prod==0；成员表聚合；枚举命令仅注释** → `7a96584ab` |
-| R6 | `7a96584ab` | 纠正：全闭包（含同文件互引）+ 逐名表 + 真跑命令 + EOF + 漏退役级联 |
+| R5 | `77c00eadc` | 删一批测试独占／死树；**回执谓词误收窄 same_file_prod==0** → `7a96584ab` |
+| R6 | `7a96584ab` | 闭包补删常量／`_current_game_turn`；**谓词仍错：固定样本种子＋整文件 live 白名单** → `6a232bee5` |
+| R7 | `6a232bee5` | **纠正范围**：`ae4a2a3e6..HEAD` 机械枚举全部已删／变更消费者；按删除前函数体追支持；现役按真实入口核实 |
 
-## Advisor 前置判断（R6；不冒充庭审）
+## Advisor 前置判断（R7；不冒充庭审）
 
-- 授权：派单 F2 全类；判词方向「沿被删除消费者的历史承接向下追、从现役入口反向核用途，一并处理测试独占及死树内部互引」。
-- R5 失败点（主角色复核）：
-  1. 谓词限定 `same_file_prod==0` → **排除死树互引**，违判词；
-  2. 枚举命令块多为注释，缺可运行原文与结果；
-  3. `command_power_rank 等`／`exclusive heal helpers（19）` 聚合，未逐名；
-  4. 复扫 23 名未逐项证明；
-  5. `git diff HEAD^ HEAD --check` EOF 多空行（rescript_draft／llm_channel／pihong）。
-- R6 谓词（不收窄）：在父提交 `77c00eadc`（R5 删前）建 AST 定义／引用／函数体引用图；种子＝判词样本＋历史被删消费者；**支持闭包向下追（含同文件／跨文件互引）**；与现役根（`month_chain`／`session`／`supervision`／`decree`／`rescript_actions`／`declaration_dispatch`／`materials`／`cli_backend` 等）前向可达求交——闭包内且不可达现役者＝F2 删；可达现役者＝保留并逐项证据。测试独占与零消费者一并纳入。不落库扫描机制、不造证明性测试。
-- 原始扫描落盘：`evidence/1843-f2-r6-full-closure-pre.txt`、`evidence/1843-f2-r6-remaining-vs-deleted.txt`、`evidence/1843-f2-r6-per-name-absence.txt`、`evidence/1843-f2-r6-mutation-rescan.txt`、`evidence/1843-f2-r6-git-log-S-members.txt`。
+- 授权：派单 F2 全类；判词方向「沿被删除消费者的历史承接向下追、从现役入口反向核用途，一并处理测试独占及死树内部互引」。实例不是施工白名单。
+- R6 失败点（主角色复核，必须保留）：
+  1. `HIST_DELETED_CONSUMERS` 是固定样本集，不是 `ae4a2a3e6..HEAD` 机械全集；
+  2. `build_period_report`／`execution_side_read_fields` 在 `77c00eadc` 已不存在，循环 `name not in defs: continue` **跳过种子**，其删除前函数体支持未被追到；
+  3. `previous_turn_summary` 被误列入「已删消费者」——它在 HEAD 仍存活，且由 `GameSession.begin_turn` 真实消费（开局邸报），不是 F2 删除目标；
+  4. `LIVE_ROOT_FILES` 整文件白名单把文件内任意引用自动扩成 live，可能误判保留。
+- R7 谓词（纠正，不收窄类定义）：
+  1. 以票完整施工基线 `ae4a2a3e6` → 当前 HEAD 的 git AST diff，机械枚举 `ming_sim/` 全部已删除定义（含类方法／嵌套／UPPER 常量）及变更类容器；
+  2. 对每个已删消费者读取 **BASE 删除前函数体** `body_names`，向下追仍存活支持；不因种子在某一中间提交缺席而跳过；
+  3. 现役保留：只认真实入口／历史分类（如 `begin_turn`→`previous_turn_summary`、`supervision`→`normalize_appointment_tenure`、改票→`normalize_rescript_layer_a_option`／`create_rescript_revise_agent`），**不**把整文件所有引用当 live；
+  4. 代码删除须事实核对（定义缺席＋无生产消费者）；AST 候选只作线索；
+  5. 全仓扫描曾引用已删符号的专用测试：已删文件或现文件不再提及；
+  6. F1／F3 邻接零引用（`compose_*`／`night_dossiers_ready`／选妃 stub／fiscal hub helper 等）按判词「不因引用少自动归入本票」—不上呈本票施工。
+- 结论：**无新 F2 缺口**。已删 108 quals 全 GONE；已删消费者的仍存活直接支持 91 名均有真实生产消费者（SUSPECTS=0）；零／仅测试残留且出现在已删函数体中的支持 COUNT=0。
+- 原始扫描落盘：`evidence/1843-f2-r7-deleted-changed-defs.txt`、`evidence/1843-f2-r7-deleted-quals.json`、`evidence/1843-f2-r7-member-table.txt`、`evidence/1843-f2-r7-seed-still-support-detail.txt`、`evidence/1843-f2-r7-tight-closure-verify.txt`、`evidence/1843-f2-r7-per-name-absence.txt`、`evidence/1843-f2-r7-live-retain-evidence.txt`（R6 落盘保留作失败史）。
 
-## R6 枚举命令（实际执行；临时 `/tmp/1843-f2-r6`，不进仓机制）
+## R7 枚举命令（实际执行；临时 `/tmp/1843-f2-r7`，不进仓机制）
+
+```bash
+cd /Users/akagilnc/WorkSpace/Ming_LLM-1843-w5
+git rev-parse HEAD   # 施工前 6a232bee546067809cfb0b44635dcaca72dcac05
+mkdir -p /tmp/1843-f2-r7
+
+# 1) ae4a2a3e6..HEAD：顶层已删／变更 defs
+#    实测：DELETED_DEFS=90 CHANGED_DEFS=4（RejectionCollector/GameDB/_apply_return_revise/GameSession）
+#    落盘：evidence/1843-f2-r7-deleted-changed-defs.txt
+# 2) 含类方法／嵌套：DELETED_QUALS=108
+#    落盘：evidence/1843-f2-r7-deleted-quals.json / evidence/1843-f2-r7-member-table.txt
+# 3) 按 BASE 删除前函数体追仍存活支持 + 事实分类
+#    实测：DIRECT_SUPPORT_STILL_AT_HEAD=91 SUSPECTS=0 HOP2_SUSPECTS=0
+#    零／仅测试且出现在已删函数体：COUNT=0
+#    落盘：evidence/1843-f2-r7-tight-closure-verify.txt / evidence/1843-f2-r7-seed-still-support-detail.txt
+# 4) 逐名缺席：108 quals 中 107 GONE；1 条 BAD 为同文件 RescriptOptionMissingFieldsError.__init__ 名碰撞（qual 已消失）
+#    落盘：evidence/1843-f2-r7-per-name-absence.txt
+# 5) 现役反向：evidence/1843-f2-r7-live-retain-evidence.txt
+
+python3 <<'PY'
+import ast, subprocess, re, json
+from pathlib import Path
+BASE, HEAD = 'ae4a2a3e6', subprocess.check_output(['git','rev-parse','HEAD'], text=True).strip()
+def ls_py(rev, prefix=None):
+    files=[f for f in subprocess.check_output(['git','ls-tree','-r','--name-only',rev], text=True).splitlines()
+           if f.endswith('.py') and not f.startswith('docs/raw/')]
+    return [f for f in files if (not prefix or f.startswith(prefix))]
+def blob(rev, rel):
+    try: return subprocess.check_output(['git','show',f'{rev}:{rel}'], text=True, errors='replace')
+    except subprocess.CalledProcessError: return None
+def collect_defs(src, rel):
+    if not src: return []
+    try: tree=ast.parse(src)
+    except SyntaxError: return []
+    items=[]
+    def body_names(node):
+        names=set()
+        for sub in ast.walk(node):
+            if isinstance(sub, ast.Name): names.add(sub.id)
+            elif isinstance(sub, ast.Attribute): names.add(sub.attr)
+        return names
+    def walk(body, parent):
+        for node in body:
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                end=getattr(node,'end_lineno',node.lineno) or node.lineno
+                items.append({'file':rel,'name':node.name,'qual':f'{parent}.{node.name}' if parent else node.name,
+                    'kind':type(node).__name__,'lineno':node.lineno,'end':end,'body_names':sorted(body_names(node)),'parent':parent})
+                walk(node.body, f'{parent}.{node.name}' if parent else node.name)
+            elif isinstance(node, ast.Assign):
+                for t in node.targets:
+                    if isinstance(t, ast.Name) and re.match(r'^[A-Z_][A-Z0-9_]*$', t.id):
+                        end=getattr(node,'end_lineno',node.lineno) or node.lineno
+                        items.append({'file':rel,'name':t.id,'qual':f'{parent}.{t.id}' if parent else t.id,
+                            'kind':'Const','lineno':node.lineno,'end':end,'body_names':sorted(body_names(node)),'parent':parent})
+            elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+                t=node.target
+                if re.match(r'^[A-Z_][A-Z0-9_]*$', t.id):
+                    end=getattr(node,'end_lineno',node.lineno) or node.lineno
+                    items.append({'file':rel,'name':t.id,'qual':f'{parent}.{t.id}' if parent else t.id,
+                        'kind':'AnnConst','lineno':node.lineno,'end':end,'body_names':sorted(body_names(node)),'parent':parent})
+    walk(tree.body, None); return items
+base_items=[]; head_items=[]
+for rel in ls_py(BASE,'ming_sim/'): base_items.extend(collect_defs(blob(BASE,rel),rel))
+for rel in ls_py(HEAD,'ming_sim/'): head_items.extend(collect_defs(blob(HEAD,rel),rel))
+bq={it['qual']:it for it in base_items}; hq={it['qual']:it for it in head_items}
+deleted=sorted(set(bq)-set(hq))
+print('BASE', BASE); print('HEAD', HEAD); print('DELETED_QUALS', len(deleted))
+Path('/tmp/1843-f2-r7/deleted_quals.json').write_text(json.dumps([bq[q] for q in deleted], indent=2))
+for q in deleted:
+    it=bq[q]; print(f"{it['file']}\t{q}\t{it['kind']}\tL{it['lineno']}")
+PY
+
+# 现役入口反向（非整文件白名单）
+rg -n -w 'previous_turn_summary' ming_sim/session.py ming_sim/db.py
+rg -n -w 'normalize_appointment_tenure|appointment_tenure_from' ming_sim --glob '*.py'
+rg -n -w 'normalize_rescript_layer_a_option|create_rescript_revise_agent|save_rescript_drafts|canonical_fields_for_delivery' ming_sim --glob '*.py'
+```
+
+## 成员表（R7：`ae4a2a3e6..HEAD` 已删全集；逐名）
+
+全文 TSV：`evidence/1843-f2-r7-member-table.txt`（108 行，含删除提交）。摘要：
+
+| 删除提交 | 代表 |
+|---|---|
+| `b85cb3f16`（R1） | `execution_side_read_fields`、`fiscal_fact_brief.*`、`bind_decisions_to_candidate_events` |
+| `44f87c4c5`（R2） | `run_agent_stream_text`、`season_option_contract_prompt`、`record_stream_metrics` |
+| `ea297e120`（R3） | `build_period_report`、`historical_anchor_for_month`、`mean_aligned_stance`、部分 turn_* |
+| `66d8d86d0`（R4） | `record_economy_moves`、`executable_decree_dossier_ids`、`list_open_grant_reconciliations` |
+| `7a96584ab`（R5） | `generate_rescript_draft`、`format_*_changes`、`command_power_rank`、`faction_report`… |
+| `6a232bee5`（R6） | `RESCRIPT_OPTION_FIELD_HEAL_RETRIES`、exhaust／scope 常量、Batch、`_current_game_turn` |
+
+判词点名种子（纠正宣称）：
+
+| 符号 | R7 事实 | 处置 |
+|---|---|---|
+| `build_period_report` | BASE 有、HEAD 无（`ea297e120`）；仍存活支持均为共用 | 已删；无新缺口 |
+| `execution_side_read_fields` | BASE 有、HEAD 无（`b85cb3f16`）；号令力支持已随 R5 删 | 已删；无新缺口 |
+| `previous_turn_summary` | **仍在** `ming_sim/db.py:8863`；`session.begin_turn:768` 生产调用 | **保留（现役开局邸报）**；R6 列入 HIST_DELETED 为误宣称 |
+| phase2／heal／格式器／号令力／briefs／`has_player_visible_rejection`／`faction_report` | HEAD 无 | 已删 |
+
+专用测试：`test_execution_tenure_613`／`test_rescript_heal_isolation_1801`／`test_rescript_option_field_heal_1746`／`test_decision_event_binding_389` 已删；其余触及文件不再提及已删符号。
+
+## 成员表（R7 保留：真实入口证据；非整文件 live）
+
+| 符号 | 现役入口证据 | 为何非 F2 |
+|---|---|---|
+| `previous_turn_summary` | `ming_sim/session.py:768` `begin_turn` | 开局／接档读上月邸报 |
+| `normalize_appointment_tenure`／`appointment_tenure_from` | `supervision.py`／`issues.py`／`db.py` | 判词明示勿整删任别模块 |
+| `canonical_fields_for_delivery` | `covert_progress` 交付对账 | 判词明示保留 |
+| `normalize_rescript_layer_a_option`／`create_rescript_revise_agent`／`save_rescript_drafts` | `session` 改票／`rescript_actions`／desk 写口 | 现役改票，非 phase2 票拟 |
+| `faction_axis_stance`／`normalize_axes`／`_loaded` | `axis_collision_stances`／密令轴 | value matrix 共用；`mean_aligned_stance` 已删 |
+| `RejectionCollector` 其余方法 | 现役落账拒收 | 不因删 `has_player_visible_rejection` 整退役 |
+
+## 原类复扫（R7）
+
+- `evidence/1843-f2-r7-per-name-absence.txt`：已删 quals 定义缺席。
+- `evidence/1843-f2-r7-seed-still-support-detail.txt`：关键种子仍存活支持逐项 `ok`（均有 prod_via）。
+- `evidence/1843-f2-r7-tight-closure-verify.txt`：`SUSPECTS=0`。
+
+## 聚焦测试（R7；完整可复现命令）
+
+```bash
+cd /Users/akagilnc/WorkSpace/Ming_LLM-1843-w5
+MING_SIM_AGY_BIN=/usr/bin/false \
+MING_SIM_CODEX_BIN=/usr/bin/false \
+MING_SIM_CLAUDE_BIN=/usr/bin/false \
+MING_SIM_CURSOR_BIN=/usr/bin/false \
+MING_SIM_KIMI_BIN=/usr/bin/false \
+MING_SIM_GROK_BIN=/usr/bin/false \
+MING_SIM_PI_BIN=/usr/bin/false \
+/Users/akagilnc/WorkSpace/Ming_LLM/.venv/bin/python -m pytest \
+  tests/test_grant_reconciliation_567.py \
+  tests/test_month_chain_1843.py \
+  tests/test_value_matrix_691.py \
+  tests/test_secret_order_monthly_progress_566.py \
+  tests/test_secret_order_isolation_883.py \
+  tests/test_covert_levy_651.py \
+  tests/test_rescript_draft_656.py \
+  tests/test_rescript_choices_563.py \
+  tests/test_character_knowledge_489.py \
+  tests/test_pay_order_override_653.py \
+  tests/test_economy_section_rejections.py \
+  tests/test_section_fiscal_rejections.py \
+  tests/test_secret_dossier_participants_1252.py \
+  tests/test_secret_order_section_rejections.py \
+  tests/test_cli_backend.py \
+  tests/test_llm_channel_config.py \
+  tests/test_mutiny_actual_residence_659.py \
+  tests/test_mutiny_third_strike_318.py \
+  tests/test_pihong_dossier_1490.py \
+  tests/test_section4_rejections.py \
+  tests/test_power_section_rejections.py \
+  tests/test_secret_order_payoff_1504.py \
+  tests/test_structured_decree_contract_1624.py \
+  tests/test_appointment_tenure_607.py \
+  tests/test_supervision_625.py \
+  tests/test_fiscal_substrate_bridge.py::test_province_pay_shortfall_reduces_pure_province_army_morale \
+  tests/test_opening_gazette_delete_1356.py \
+  tests/test_qa_s2_copy_prompts_1356_1402.py \
+  -q -p no:cacheprovider --durations=8
+```
+
+实测：`752 passed, 2 skipped in 42.48s`（`evidence/1843-f2-r7-pytest.log`）。相对 R6 追加开局邸报两测，钉 `previous_turn_summary` 现役保留。未跑全量。
+
+## 自查质量／合法性（advisor，非审官）
+
+同类型：纠正 R6 种子／live 谓词与 `previous_turn_summary` 误宣称；证明历史删全集无新 F2 残留；未动月链／改票／F1／F3；未新增扫描机制或证明性测试；未 amend/stash/push/PR。自查二连 done。
+
+## Commit 与 git 状态（R7）
+
+- 施工前 HEAD：`6a232bee546067809cfb0b44635dcaca72dcac05`
+- 标题：`ak-roles: docs(#1843) correct F2 R7 historical-closure retirement receipt`
+
+## 剩余范围
+
+F1／F3／分类器／收夜邻接仍非本票；#1856 总核与全量 CI 留最终待合并。
+
+---
+
+<details>
+<summary>R6 及更早历史回执（保留失败经过；现行宣称以 R7 为准）</summary>
+
+## R6 枚举命令（历史；谓词已由 R7 纠正；临时 `/tmp/1843-f2-r6`）
 
 ```bash
 cd /Users/akagilnc/WorkSpace/Ming_LLM-1843-w5
@@ -1161,6 +1352,9 @@ R2 stamp：`641201cde`（既有）
 - F1 边界 CLI 信封三符号：仍 ORPHAN，归属非本票。
 - #1856 总核验：本回执不冒称总核收敛。
 - 全量 CI / Web 构建：留最终待合并状态。
+
+
+</details>
 
 
 </details>
