@@ -185,4 +185,6 @@ npx tsc --noEmit -p tsconfig.json → exit 0
 
 ## Commit
 
-见本分支最新 `ak-roles:` 提交（交卷时 `git rev-parse HEAD`）。
+- `60516a6a39f8b7b5f1a34621251e7dcfe10f72da`
+- `ak-roles: fix(#1853): unify J2–J5 night-scroll, forecast poll, commit policy, refusal transport`
+- 分支：`ak-roles/issue-1853-j2-j5-unify`（未 push、未开 PR）
