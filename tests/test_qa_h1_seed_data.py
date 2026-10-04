@@ -29,12 +29,13 @@ def _army_by_id(aid: str) -> dict:
     raise AssertionError(f"armies.json 缺 id={aid}")
 
 
-def _bajiu_names(characters: dict) -> set[str]:
-    """#1889：罢居归位后看 status_reason（及遗留 office 污染），不要求 office 含罢居。"""
+def _offstage_or_dismissed_empty_office(characters: dict) -> set[str]:
+    """#1889：归位后以结构化 status + 空 office 识别在野旧臣，不锁自由文案。"""
     return {
         name
         for name, ch in characters.items()
-        if "罢居" in (ch.status_reason or "") or "罢居" in (ch.office or "")
+        if (ch.status or "") in {"offstage", "dismissed"}
+        and not (ch.office or "").strip()
     }
 
 
@@ -46,17 +47,18 @@ def _deficit_seed():
 
 
 def test_guanning_commander_not_bajiu_offstage_yuan():
-    """#1359/#1889：关宁 commander 不得是罢居袁崇焕；须与 opening_gazette 分统口径一致。
+    """#1359/#1889：关宁 commander 不得是 offstage 袁崇焕；须与 opening_gazette 分统口径一致。
 
     gazette：「关外无主帅。关宁军由祖大寿、何可纲、赵率教分统」。
     controller（A-3 已改）与 commander 同落分统名，禁再写袁崇焕。
-    袁崇焕罢居史实在 status/status_reason，不要求 office 污染串。
+    袁崇焕以结构化 status/reason_code 归位；不锁 status_reason 自由文案。
     """
     _, characters = load_character_content()
     yuan = characters["袁崇焕"]
     assert yuan.status == "offstage"
-    assert "罢居" in (yuan.status_reason or ""), yuan.status_reason
+    assert yuan.reason_code == "自请"
     assert not (yuan.office or "").strip()
+    assert "袁崇焕" in _offstage_or_dismissed_empty_office(characters)
     army = _army_by_id("guanning")
     commander = army["commander"]
     controller = army["controller"]

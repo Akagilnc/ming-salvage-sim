@@ -4298,4 +4298,3 @@ def test_huangtaiji_chengdi_lands_only_when_model_picks_it(game, monkeypatch):
         "SELECT COUNT(*) FROM issues WHERE origin_kind='event_pool' AND origin_ref=?",
         ("huangtaiji_chengdi",),
     ).fetchone()[0] == 1
-

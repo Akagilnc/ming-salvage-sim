@@ -214,13 +214,9 @@ def seed_opening_world(db: Any) -> None:
                 "created_turn": 0,
             })
     db._initialize_army_pay_source_spine(is_fresh_armies_seed)
-    # #173：维护费列退役 drop 已上移至 init_schema（每个打开路径都跑，含现存档的纯
-    # init_schema 路径，见 cmr drop R1）；此处新档 seed INSERT 后该列本就不存在，无需再 drop。
+    # #173/#1889：维护费列已不在 schema CREATE；新档无该列，无需 drop/ALTER。
     db._apply_region_city_levels()  # 新档 region 此时才 INSERT 完，按史实补 city_level
-    # #9：派系势力 offset 校准。此刻 factions + characters 均已 INSERT。
-    # cmr R3：传 offset 列「本次是否刚 ADD」——首次校准只在建库那次跑，常规 load 不碰 offset。
-    db._migrate_legacy_office_pollution()
-    db._calibrate_faction_offsets(
-        is_fresh_factions_seed, getattr(db, "_leverage_offset_col_added", False),
-    )
+    # #9/#1889：派系势力 offset 校准。此刻 factions + characters 均已 INSERT。
+    # 仅 fresh seed 校准一次；常规 load 不碰 offset。
+    db._calibrate_faction_offsets(is_fresh_factions_seed)
     db.conn.commit()

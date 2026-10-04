@@ -14,7 +14,6 @@ from ming_sim.flows import (
     _apply_metric_dict,
 )
 
-
 def test_enrich_buildings_non_list_no_crash(monkeypatch):
     """enrich_initiative_effects 的 buildings 被 LLM 给成真值非 list（true/数字/字符串）不抛 TypeError。"""
     for bad in ("true", "5", '"oops"'):
@@ -25,13 +24,11 @@ def test_enrich_buildings_non_list_no_crash(monkeypatch):
         assert isinstance(out["effect_on_resolve"], dict)  # 不崩、结构正常
         assert out["effect_on_resolve"].get("buildings") == []  # 脏非 list 值被源头清成 []（gemini PR#127）
 
-
 def test_apply_economy_list_non_list_no_crash(read_game):
     """_apply_economy_list 的 economy 被给成真值非 list（含 dict）时不抛，返回空 applied（#117）。"""
     db, state, _content = read_game
     for bad in (True, 5, "oops", {"account": "国库", "delta": -10}):
         assert _apply_economy_list(db, state, bad) == []
-
 
 def test_apply_economy_list_valid_still_works(game):
     """守卫不误伤正常 list：合法 economy 项确实落账（断内容，非仅 isinstance——codex）。"""
@@ -40,9 +37,9 @@ def test_apply_economy_list_valid_still_works(game):
     assert len(out) == 1, f"合法 economy 项被守卫误吞：{out}"
     assert out[0].get("account") == "国库"
 
-
 def test_inertia_ongoing_non_dict_no_crash(game):
-    """Persisted non-object effects must not crash monthly situation drift (#117)."""
+    """#117/#1889：脏 ongoing_effects 不得被吞成空对象蒙混过月；须响亮失败。"""
+    import pytest
     from ming_sim.situation_drift import apply_situation_monthly_drift
 
     db, state, _content = game
@@ -50,18 +47,23 @@ def test_inertia_ongoing_non_dict_no_crash(game):
     for bad in ('"oops"', "5", "true", "[1,2]"):
         db.conn.execute("UPDATE issues SET ongoing_effects=? WHERE id=?", (bad, iid))
         db.conn.commit()
-        apply_situation_monthly_drift(db, state)
-
+        with pytest.raises(ValueError):
+            apply_situation_monthly_drift(db, state)
 
 def test_loads_effect_dict_coerces_non_dict():
-    """loads_effect_dict：effect_on_resolve/fail/ongoing_effects 列读取单一守门——合法 dict 原样，
-    真值非 dict / 解析失败 / 空 → {}（#117 R3：集中所有 effect-列读取于此，止 coverage-drift）。"""
-    from ming_sim.models import loads_effect_dict  # 单一 home 在 models（leaf），各模块从此取
-    assert loads_effect_dict('{"metrics": {"民心": 1}}') == {"metrics": {"民心": 1}}
-    assert loads_effect_dict({"already": "parsed"}) == {"already": "parsed"}  # 已解析 dict 原样（codex R4）
-    for bad in ('"oops"', "5", "true", "[1,2]", "null", "", None, "不是合法json", 5, [1, 2], True):
-        assert loads_effect_dict(bad) == {}, f"{bad!r} 未归 {{}}"
+    """#117/#1889：loads_effect_dict 对坏 effect-JSON 响亮拒收；空值视为无效果。
 
+    禁吞成 {} 洗绿脏库（#1812 无历史包袱；权威=load_stored_object）。
+    """
+    import pytest
+    from ming_sim.models import loads_effect_dict
+    assert loads_effect_dict('{"metrics": {"民心": 1}}') == {"metrics": {"民心": 1}}
+    assert loads_effect_dict({"already": "parsed"}) == {"already": "parsed"}
+    assert loads_effect_dict('') == {}
+    assert loads_effect_dict(None) == {}
+    for bad in ('"oops"', '5', 'true', '[1,2]', 'null', '不是合法json', 5, [1, 2], True):
+        with pytest.raises(ValueError):
+            loads_effect_dict(bad)
 
 def test_apply_economy_list_skips_non_dict_items(game):
     """list 内混非 dict 项不崩，跳过非 dict、只落合法项（#117 codex 逐项守）。"""
@@ -69,7 +71,6 @@ def test_apply_economy_list_skips_non_dict_items(game):
     out = _apply_economy_list(db, state, [1, "x", None, {"account": "国库", "delta": -3, "reason": "t"}])
     assert len(out) == 1, f"非 dict 项未被跳过/合法项未保留：{out}"
     assert out[0].get("account") == "国库"  # 只落合法那一项
-
 
 def test_apply_metric_faction_class_dict_non_dict_no_crash(read_game):
     """metrics/factions/class 被给成真值非 dict（issue-effect 未验证路径）时不抛、返回空（#117 同类）。

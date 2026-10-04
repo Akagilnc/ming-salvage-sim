@@ -4,9 +4,7 @@ import sqlite3
 from ming_sim import issues as issue_engine
 from ming_sim.db import GameDB
 
-
 SPONTANEOUS = "盘面自发"
-
 
 def _promulgated_policy(db, state):
     dossier_id = db.create_decree_dossier(
@@ -16,7 +14,6 @@ def _promulgated_policy(db, state):
     db.record_dossier_decision(dossier_id, "promulgated")
     db.dossiers.transition(dossier_id, "executing")
     return dossier_id
-
 
 def test_decree_driven_effect_without_any_origin_is_rejected(game):
     db, state, content = game
@@ -31,7 +28,6 @@ def test_decree_driven_effect_without_any_origin_is_rejected(game):
 
     assert state.metrics["国库"] == before
     assert result["economy_moves_rejections"][0]["category"] == "missing_origin_ref"
-
 
 def test_effect_origins_round_trip_and_missing_origin_is_rejected(game):
     db, state, content = game
@@ -59,7 +55,6 @@ def test_effect_origins_round_trip_and_missing_origin_is_rejected(game):
     assert {row["key"] for row in fiscal} == {"河工月费_base", "河工月费_rate"}
     assert {row["origin_ref"] for row in fiscal} == {f"dossier:{dossier_id}"}
     assert all(row["dossier_id"] is None for row in db.list_economy_moves_for_dossier(dossier_id))
-
 
 def test_issue_close_effects_inherit_parent_canonical_origin(game):
     db, state, content = game
@@ -102,7 +97,6 @@ def test_issue_close_effects_inherit_parent_canonical_origin(game):
         (region_id,),
     ).fetchone()["origin_ref"] == origin
 
-
 def test_same_issue_row_inertia_and_ongoing_reuse_parent_canonical_origin(game):
     db, state, content = game
     dossier_id = _promulgated_policy(db, state)
@@ -135,7 +129,6 @@ def test_same_issue_row_inertia_and_ongoing_reuse_parent_canonical_origin(game):
         (region_id,),
     ).fetchone()["origin_ref"] == origin
 
-
 def test_fiscal_remove_keeps_durable_origin_tombstone(game):
     db, state, content = game
     dossier_id = _promulgated_policy(db, state)
@@ -158,40 +151,6 @@ def test_fiscal_remove_keeps_durable_origin_tombstone(game):
         ("待裁月费_rate", origin, "奉旨裁撤"),
     ]
 
-
-def test_legacy_economy_ledger_origin_backfill_uses_real_dossier_only(game, tmp_path):
-    db, state, content = game
-    valid_id = _promulgated_policy(db, state)
-    legacy_path = tmp_path / "legacy-origin.db"
-    db.conn.commit()
-    shutil.copy2(db.path, legacy_path)
-    conn = sqlite3.connect(legacy_path)
-    conn.execute("ALTER TABLE economy_ledger DROP COLUMN origin_ref")
-    conn.execute(
-        "INSERT INTO economy_ledger (turn,year,period,account,delta,balance_after,category,reason,dossier_id) "
-        "VALUES (?,?,?,?,?,?,?,?,?)",
-        (state.turn, state.year, state.period, "国库", -1, 0, "旧账", "有效案卷", valid_id),
-    )
-    conn.execute(
-        "INSERT INTO economy_ledger (turn,year,period,account,delta,balance_after,category,reason,dossier_id) "
-        "VALUES (?,?,?,?,?,?,?,?,?)",
-        (state.turn, state.year, state.period, "国库", -1, 0, "旧账", "悬空案卷", valid_id + 9999),
-    )
-    conn.commit()
-    conn.close()
-
-    migrated = GameDB(str(legacy_path), content)
-    try:
-        rows = migrated.conn.execute(
-            "SELECT reason, origin_ref FROM economy_ledger WHERE reason IN ('有效案卷','悬空案卷') ORDER BY reason"
-        ).fetchall()
-        assert {r["reason"]: r["origin_ref"] for r in rows} == {
-            "有效案卷": f"dossier:{valid_id}", "悬空案卷": "",
-        }
-    finally:
-        migrated.close()
-
-
 def test_fabricated_origin_is_rejected_even_without_a_dossier(game):
     db, state, content = game
     before = state.metrics["国库"]
@@ -212,7 +171,6 @@ def test_fabricated_origin_is_rejected_even_without_a_dossier(game):
     assert result["fiscal_creates"][0]["category"] == "invalid_origin_ref"
     assert db.conn.execute("SELECT 1 FROM fiscal_config WHERE key LIKE '伪科目%'").fetchone() is None
 
-
 def test_ordinary_entity_log_families_persist_origin_at_write_seam(game):
     db, state, content = game
     region_id = db.conn.execute("SELECT id FROM regions LIMIT 1").fetchone()[0]
@@ -231,7 +189,6 @@ def test_ordinary_entity_log_families_persist_origin_at_write_seam(game):
     for table in ("region_logs", "army_logs", "power_logs", "person_logs"):
         row = db.conn.execute(f"SELECT origin_ref FROM {table} ORDER BY id DESC LIMIT 1").fetchone()
         assert row is not None and row["origin_ref"] == SPONTANEOUS
-
 
 def test_power_backlash_from_allegiance_change_inherits_canonical_origin(game):
     db, state, content = game
@@ -260,7 +217,6 @@ def test_power_backlash_from_allegiance_change_inherits_canonical_origin(game):
     assert power_log is not None
     assert power_log["origin_ref"] == origin_ref
 
-
 def test_missing_origins_are_rejected_at_entity_write_seams_without_logs(game):
     db, state, content = game
     region = db.conn.execute("SELECT id FROM regions LIMIT 1").fetchone()[0]
@@ -286,7 +242,6 @@ def test_missing_origins_are_rejected_at_entity_write_seams_without_logs(game):
     for table, count in before.items():
         assert db.conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] == count
 
-
 def test_entity_origin_gate_does_not_replace_reference_shape_or_noop_classification(game):
     db, state, content = game
     region_id = db.conn.execute("SELECT id FROM regions LIMIT 1").fetchone()[0]
@@ -306,7 +261,6 @@ def test_entity_origin_gate_does_not_replace_reference_shape_or_noop_classificat
     assert result["region_changes"][0]["category"] == "missing_ref"
     assert result["created_armies"][0]["category"] == "invalid_enum"
     assert db.conn.execute("SELECT COUNT(*) FROM region_logs").fetchone()[0] == before_logs
-
 
 def test_zero_manpower_origin_gate_matches_actual_arrears_writeoff(game):
     db, state, content = game
@@ -353,7 +307,6 @@ def test_zero_manpower_origin_gate_matches_actual_arrears_writeoff(game):
         (army_id,),
     ).fetchone()
     assert tuple(log) == ("5.0", "0.0", SPONTANEOUS)
-
 
 def test_army_pay_source_classifies_before_origin_gate_and_never_writes_without_origin(game):
     db, state, content = game

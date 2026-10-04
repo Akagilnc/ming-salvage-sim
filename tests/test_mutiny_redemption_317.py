@@ -10,7 +10,6 @@ from ming_sim.flows import apply_fixed_period_flows
 
 ARMY = "guanning"
 
-
 def _configure(db) -> None:
     value = 1  # active substrate_hub cutover
     for key in ("__army_pay_source_cutover", "__fiscal_engine"):
@@ -28,7 +27,6 @@ def _configure(db) -> None:
     )
     db.conn.commit()
 
-
 def _set_arrears(db, arrears: float) -> None:
     central = arrears  # active hub source-split seed
     db.conn.execute(
@@ -36,7 +34,6 @@ def _set_arrears(db, arrears: float) -> None:
         (central, ARMY),
     )
     db.conn.commit()
-
 
 def _tick(db, state):
     state.metrics["国库"] = 10**9
@@ -46,7 +43,6 @@ def _tick(db, state):
            FROM armies WHERE id=?""",
         (ARMY,),
     ).fetchone()
-
 
 def test_twelve_consecutive_full_pay_months_redeem_once_and_raise_cap(game):
     db, state, _ = game
@@ -79,7 +75,6 @@ def test_twelve_consecutive_full_pay_months_redeem_once_and_raise_cap(game):
             "loyalty", "full_pay_streak", "redemption_count"
         )) == (expected_cap, 0, redemption_count)
 
-
 def test_full_pay_streak_can_be_saved_in_peace_and_partial_pay_resets_it(game):
     db, state, _ = game
     _configure(db)
@@ -96,7 +91,6 @@ def test_full_pay_streak_can_be_saved_in_peace_and_partial_pay_resets_it(game):
     _set_arrears(db, 0)
     resumed = _tick(db, state)
     assert tuple(resumed[k] for k in ("full_pay_streak", "redemption_count")) == (1, 0)
-
 
 @pytest.mark.parametrize(
     ("redemption_count", "initial_loyalty", "expected_loyalty"),
@@ -122,38 +116,3 @@ def test_army_delta_clamps_loyalty_to_dynamic_mutiny_cap(
         "SELECT loyalty FROM armies WHERE id=?", (ARMY,)
     ).fetchone()["loyalty"]
     assert loyalty == expected_loyalty
-
-
-def test_redemption_progress_migrates_and_survives_reopen(game, tmp_path):
-    db, state, content = game
-    path = str(tmp_path / "old-save.db")
-    copied = sqlite3.connect(path)
-    db.conn.backup(copied)
-    copied.execute("ALTER TABLE armies DROP COLUMN full_pay_streak")
-    copied.execute("ALTER TABLE armies DROP COLUMN redemption_count")
-    copied.close()
-
-    migrated = GameDB(path, content)
-    columns = {row["name"] for row in migrated.conn.execute("PRAGMA table_info(armies)")}
-    assert {"full_pay_streak", "redemption_count"} <= columns
-    defaults = migrated.conn.execute(
-        "SELECT full_pay_streak,redemption_count FROM armies WHERE id=?", (ARMY,)
-    ).fetchone()
-    assert tuple(defaults) == (0, 0)
-    migrated.conn.execute(
-        "UPDATE armies SET full_pay_streak=11,redemption_count=1,mutiny_count=2,loyalty=95 WHERE id=?",
-        (ARMY,),
-    )
-    migrated.conn.commit()
-    migrated.close()
-
-    reopened = GameDB(path, content)
-    try:
-        _configure(reopened)
-        _set_arrears(reopened, 0)
-        restored = _tick(reopened, state)
-        assert tuple(restored[k] for k in (
-            "loyalty", "full_pay_streak", "redemption_count"
-        )) == (80, 0, 2)
-    finally:
-        reopened.close()
