@@ -847,7 +847,6 @@ def test_agent_factories_omit_max_tokens_on_param_surface(monkeypatch):
     fake_ctx = SimpleNamespace(
         game_world_prompt="gw",
         decree_writer_prompt="dw",
-        season_simulator_prompt="ss",
         ending_summary_prompt="es",
     )
     monkeypatch.setattr(agents_mod, "_ctx", lambda: fake_ctx)

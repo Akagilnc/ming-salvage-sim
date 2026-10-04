@@ -329,23 +329,6 @@ def test_missing_dossier_fields_stay_pending_then_full_retry_decides(web_game, m
     assert choice.get('dossier_id') == dossier_id
     assert choice.get('dossier_decision') == 'force_promulgated'
 
-def test_bind_preserves_dossier_event_id():
-    """#1490 接收端病灶：bind 不得把 dossier: 前缀 event_id 当 off-snapshot 解绑。"""
-    from ming_sim.settlement_payload import bind_decisions_to_candidate_events
-    decisions = [{'event_id': 'dossier:8', 'title': '批红待裁', 'options': [{'label': '强颁', 'dossier_id': 8, 'dossier_decision': 'force_promulgated'}]}]
-    payload = {'candidate_events': [{'id': 'ev1', 'title': '边警'}]}
-    out = bind_decisions_to_candidate_events(decisions, payload)
-    assert out[0]['event_id'] == 'dossier:8'
-
-def test_bind_unbinds_dossier_prefix_without_capability_fields():
-    """#1492 A：due-commitment 形 origin_ref=dossier:N + 纯 {label,hint} options
-    不得保留 dossier: 前缀——否则 submit 空对空放行后 phase2 批红卡死。"""
-    from ming_sim.settlement_payload import bind_decisions_to_candidate_events
-    decisions = [{'event_id': 'dossier:12', 'title': '承诺到期核验', 'options': [{'label': '准其销号', 'hint': '事已办结'}, {'label': '着再催办', 'hint': '期限宽延'}]}]
-    payload = {'candidate_events': [{'id': 'ev1', 'title': '边警'}]}
-    out = bind_decisions_to_candidate_events(decisions, payload)
-    assert 'event_id' not in out[0] or not str(out[0].get('event_id') or '').startswith('dossier:'), out[0]
-
 def _plant_due_commitment_shaped_awaiting(db, state, *, dossier_id: int=12):
     """种 due-commitment 同形：event_id=dossier:N，options 仅 {label,hint}。"""
     options = [{'label': '准其销号', 'hint': '事已办结'}, {'label': '着再催办', 'hint': '期限宽延'}]

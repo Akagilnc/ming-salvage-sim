@@ -57,13 +57,6 @@ from ming_sim.issues import (
 from ming_sim.llm_model import extract_agent_text, llm_unavailable_from_error
 from ming_sim.models import FRONT_HALF_DONE_PHASES, GameState, LLMConfig, TurnPhase
 from ming_sim.qualitative import imperial_authority_band, power_band, qualitative_character_axis
-from ming_sim.appointment_tenure import (
-    DEFAULT_APPOINTMENT_TENURE,
-    command_power_rank,
-    execution_distortion_weight,
-    normalize_appointment_tenure,
-)
-from ming_sim.participant_roster import resolve_dossier_owner_name
 from ming_sim.decree_vocabulary import (
     dossier_action_policy,
 )
@@ -82,7 +75,6 @@ TIMEOUT_TURN = 240
 from ming_sim.settlement_payload import (  # noqa: E402
     _DECISION_RE,
     bind_decision_options,
-    bind_decisions_to_candidate_events,
     parse_decision_blocks,
 )
 
@@ -167,57 +159,6 @@ def stub_promulgation_verdicts(
     ]
 
 
-def _collect_compliant_promulgation_items(
-    batch: object,
-    db: GameDB,
-    *,
-    proposed_modes: Dict[int, str],
-    prepared_context: Optional[Dict[str, object]],
-    reviewed_dossier_ids: Optional[set[int]],
-) -> List[Dict[str, object]]:
-    """从不合规整批中收集单项已过闸的判决（证据保留，不落判、不伪造缺案）。"""
-    if not isinstance(batch, list):
-        return []
-    good: List[Dict[str, object]] = []
-    seen: set[int] = set()
-    for candidate in batch:
-        try:
-            valid = _validate_promulgation_verdict_item(
-                candidate, db,
-                proposed_modes=proposed_modes,
-                prepared_context=prepared_context,
-            )
-        except LLMContractError:
-            continue
-        dossier_id = int(valid["dossier_id"])
-        if reviewed_dossier_ids is not None and dossier_id not in reviewed_dossier_ids:
-            continue
-        if dossier_id in seen:
-            continue
-        seen.add(dossier_id)
-        good.append(valid)
-    return good
-
-
-def _merge_compliant_promulgation_items(
-    accumulated: List[Dict[str, object]],
-    fresh: Sequence[Dict[str, object]],
-) -> List[Dict[str, object]]:
-    """跨补交轮次并集保留已合规判决：先到先留，后轮不得冲掉前轮好判（#1753）。
-
-    输入仅来自 _collect_compliant_promulgation_items 已过闸项，不再二次类型过滤。
-    """
-    by_id: Dict[int, Dict[str, object]] = {}
-    order: List[int] = []
-    for row in list(accumulated) + list(fresh):
-        dossier_id = int(row["dossier_id"])
-        if dossier_id in by_id:
-            continue
-        by_id[dossier_id] = row
-        order.append(dossier_id)
-    return [by_id[item] for item in order]
-
-
 def _dossier_payload_dict(row: Mapping[str, object] | Dict[str, object]) -> Dict[str, object]:
     payload = row.get("payload")
     if isinstance(payload, dict):
@@ -232,55 +173,6 @@ def _dossier_payload_dict(row: Mapping[str, object] | Dict[str, object]) -> Dict
 def _is_stalled_deliberation(dossier: Mapping[str, object] | Dict[str, object]) -> bool:
     """#658：stalled 廷议不进颁布集合（判官/stub/校验/消费共用）。"""
     return str(_dossier_payload_dict(dossier).get("deliberation_state") or "") == "stalled"
-
-
-def _promulgable_proposed_dossiers(
-    proposed_dossiers: Sequence[Dict[str, object]],
-) -> List[Dict[str, object]]:
-    """本轮可颁布 proposed = 非 stalled 廷议的 proposed 案卷。"""
-    return [row for row in proposed_dossiers if not _is_stalled_deliberation(row)]
-
-
-def resolve_executor_appointment_tenure(
-    db: GameDB, dossier: Mapping[str, object] | Dict[str, object],
-) -> str:
-    """#613：承办人现职任别——归属人单源后查 character_offices；缺档按真除。
-
-    身份选定与档案取值分离：resolve_dossier_owner_name（#613/#625 共调）
-    只定唯一承办人后查该人任别；缺行不得试下一候选换人（禁静默继承他人任别）。
-    与 court_roster COALESCE(...,'真除') 及 DELTA_SCHEMA 缺省真除同构。
-    """
-    name = resolve_dossier_owner_name(dossier)
-    if not name:
-        return DEFAULT_APPOINTMENT_TENURE
-    row = db.conn.execute(
-        "SELECT appointment_tenure FROM character_offices WHERE character_name=?",
-        (name,),
-    ).fetchone()
-    if row is None:
-        return DEFAULT_APPOINTMENT_TENURE
-    return normalize_appointment_tenure(row["appointment_tenure"])
-
-
-def execution_side_read_fields(
-    db: GameDB,
-    state: GameState,
-    dossier: Mapping[str, object] | Dict[str, object],
-) -> Dict[str, object]:
-    """#613 执行格/推演共用读端字段：任别 + #611 唯一授权投影 + 号令力权重。
-
-    authorization_ids 只来自 project_applicable_authorities，禁止 payload 旁路。
-    """
-    tenure = resolve_executor_appointment_tenure(db, dossier)
-    held_authorities = db.project_applicable_authorities(state.turn, dossier)
-    authorization_ids = [str(item["id"]) for item in held_authorities]
-    return {
-        "appointment_tenure": tenure,
-        "held_authorities": held_authorities,
-        "authorization_ids": authorization_ids,
-        "command_power_rank": command_power_rank(tenure),
-        "distortion_weight": execution_distortion_weight(tenure, held_authorities),
-    }
 
 
 def build_promulgation_judge_context(
@@ -706,39 +598,6 @@ def _rescript_decisions(
             ],
         })
     return decisions
-
-
-def _dossier_ids_from_simulator_payload(simulator_payload: object) -> set[int]:
-    if not isinstance(simulator_payload, dict):
-        return set()
-    raw = simulator_payload.get("decree_dossiers")
-    if not isinstance(raw, list):
-        return set()
-    return {
-        int(item["id"])
-        for item in raw
-        if isinstance(item, dict) and str(item.get("id") or "").isdigit()
-    }
-
-
-def _open_affair_ids_from_payload(payload: object) -> set[int]:
-    from ming_sim.entities.affair import parse_positive_affair_id
-
-    if not isinstance(payload, dict):
-        return set()
-    raw = payload.get("open_affairs")
-    if not isinstance(raw, list):
-        return set()
-    ids: set[int] = set()
-    for item in raw:
-        if not isinstance(item, dict):
-            continue
-        try:
-            ids.add(parse_positive_affair_id(item.get("id")))
-        except (TypeError, ValueError):
-            continue
-    return ids
-
 
 
 def write_decree_with_agno(

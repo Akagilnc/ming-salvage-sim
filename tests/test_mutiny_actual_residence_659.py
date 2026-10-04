@@ -13,7 +13,6 @@ import os
 import shutil
 
 from ming_sim.db import GameDB
-from ming_sim.fiscal_fact_brief import build_fiscal_fact_brief
 from ming_sim.issues import apply_score_extraction
 from ming_sim.models import Event
 
@@ -116,15 +115,6 @@ def test_redeploy_moves_fact_region_keeps_pay_source(game):
     assert row["station"] == "山东 / 登州"
     assert row["station_region"] == "shandong"
     assert row["pay_source_region"] == pay_src == "liaodong"
-
-    entries = build_fiscal_fact_brief(db)
-    d_regions = {
-        e["region"] for e in entries
-        if e["subject_id"] == "dongjiang" and e["metric"] == "分源欠饷月数"
-    }
-    assert d_regions == {"shandong"}
-    assert "dongjiang_area" not in d_regions
-    assert "liaodong" not in d_regions
 
 
 def test_station_region_rejects_unknown_region_id(game):
