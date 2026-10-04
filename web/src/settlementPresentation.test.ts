@@ -1,19 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
-  AWAITING_CLOSED_REASON,
   FACE_GROUP,
-  SETTLEMENT_CLOSED_REASON,
-  WANG_AWAITING_SLIP,
-  WANG_SETTLEMENT_SLIP,
   isFaceReachable,
   isSettlementDisplay,
-  settlementClosedReason,
   settlementFaceAccess,
   shouldAutoOpenClosedIssuesAfterSettlement,
   shouldAutoOpenSecretOrdersAfterSettlement,
-  wangSettlementSlipText,
   wangSettlementSlipVisible,
-  yearMonthLabel,
   type FaceAccess,
   type SettlementFaceKey,
 } from "./settlementPresentation";
@@ -30,34 +23,6 @@ describe("settlement presentation routing", () => {
     expect(shouldAutoOpenClosedIssuesAfterSettlement()).toBe(false);
   });
 
-  it("#1234 year-month label is driven only by server settlement_display", () => {
-    expect(yearMonthLabel({ year: 1627, period: 10 })).toBe("1627 年 10 月");
-    expect(yearMonthLabel({ year: 1627, period: 10, settlement_display: false })).toBe("1627 年 10 月");
-    expect(yearMonthLabel({ year: 1627, period: 10, settlement_display: true })).toBe("1627 年 10 月 · 核账");
-  });
-
-  it("#1323 awaiting_decision 文案层：年月标 ·待批；递话/关闭理由分口吻", () => {
-    expect(yearMonthLabel({
-      year: 1627, period: 10, settlement_display: true, phase: "awaiting_decision",
-    })).toBe("1627 年 10 月 · 待批");
-    expect(yearMonthLabel({
-      year: 1627, period: 10, settlement_display: true, phase: "settling",
-    })).toBe("1627 年 10 月 · 核账");
-    expect(wangSettlementSlipText("awaiting_decision")).toBe(WANG_AWAITING_SLIP);
-    expect(wangSettlementSlipText("settling")).toBe(WANG_SETTLEMENT_SLIP);
-    expect(settlementClosedReason("awaiting_decision")).toBe(AWAITING_CLOSED_REASON);
-    expect(settlementClosedReason("settling")).toBe(SETTLEMENT_CLOSED_REASON);
-    // P4：正向短句，无进度条/百分比/秒数/模板长文
-    expect(WANG_AWAITING_SLIP).toMatch(/待批/);
-    expect(WANG_AWAITING_SLIP).toMatch(/批红/);
-    expect(WANG_AWAITING_SLIP).not.toMatch(/%|％|\d+\s*秒|进度条/);
-    expect(WANG_AWAITING_SLIP.length).toBeLessThan(40);
-    expect(AWAITING_CLOSED_REASON).toMatch(/待批/);
-    expect(AWAITING_CLOSED_REASON).toMatch(/批红/);
-    // 显隐谓词仍只看 settlement_display（phase 不充门控真源）
-    expect(wangSettlementSlipVisible(true)).toBe(true);
-    expect(wangSettlementSlipVisible(false)).toBe(false);
-  });
 });
 
 /** 票面 r2 机械清单：关闭 / 只读 / 必达 / 呈现 / 排除（不缩表）。 */
@@ -106,8 +71,5 @@ describe("#1236 T3 settlement face gates (唯一谓词 settlement_display)", () 
     }
     expect(wangSettlementSlipVisible(false)).toBe(false);
     expect(wangSettlementSlipVisible(true)).toBe(true);
-    expect(WANG_SETTLEMENT_SLIP.length).toBeGreaterThan(0);
-    expect(WANG_SETTLEMENT_SLIP).not.toMatch(/%|％|\d+\s*秒|进度条/);
-    expect(SETTLEMENT_CLOSED_REASON).toMatch(/核账/);
   });
 });

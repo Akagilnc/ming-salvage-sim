@@ -77,9 +77,10 @@ agno Agent.run()
 | 来源 | 路径 | 内容 |
 |---|---|---|
 | **结构化 trace**(默认开) | `scripts/runs/cli_trace_<pid>.jsonl` | 每次 LLM 调用一行:序号 / **agent 标签**(大臣/写诏/推演/extractor/章节记忆,已验证标对) / 耗时 / 重试 / prompt 全文 / 响应全文 |
+| **LLM dump**（`MING_SIM_DUMP_LLM=1`） | `scripts/runs/llm_dump_<pid>.jsonl` | 每次调用一行 JSON：tag / messages（含 reasoning）/ usage / finish_reason |
 | 游戏 stdout | 需 `tee` | 确定性结算细节:实际落库 delta、事项推进、结局判定、数值变化 |
 
-开关:`MING_SIM_TRACE=0` 关 trace、`MING_SIM_TRACE_PATH=...` 改路径、`MING_SIM_LLM_DEBUG=1` 调用摘要打屏、`MING_SIM_DUMP_LLM=1` 额外 dump 原始 agno messages。
+开关:`MING_SIM_TRACE=0` 关 trace、`MING_SIM_TRACE_PATH=...` 改路径、`MING_SIM_LLM_DEBUG=1` 调用摘要打屏、`MING_SIM_DUMP_LLM=1` 开上表 JSONL dump。
 
 ---
 

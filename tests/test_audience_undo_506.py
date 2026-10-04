@@ -422,7 +422,7 @@ def test_undo_landed_secret_decree_removes_all_structured_records(game):
         "SELECT title, due_turn, tags, excluded_names, excluded_targets "
         "FROM secret_orders WHERE id = ?", (order_id,)
     ).fetchone()
-    assert row["title"] and row["excluded_names"] != "[]" and row["excluded_targets"] != "{}"
+    assert row["title"] and json.loads(row["excluded_names"]) and json.loads(row["excluded_targets"])
     assert db.conn.execute(
         "SELECT COUNT(*) FROM secret_order_briefs WHERE order_id = ?", (order_id,)
     ).fetchone()[0] == 1

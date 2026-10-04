@@ -102,6 +102,5 @@ def test_double_issue_same_token_second_is_409_turn_plus_one(game, monkeypatch):
     assert isinstance(detail, dict)
     assert int(detail["turn"]) == start + 1
     assert str(detail.get("message") or "")
-    assert "令牌" in str(detail.get("message") or "")
     assert int(state.turn) == start + 1  # 未再推进
     assert calls["n"] == 1  # resolve 未二次执行

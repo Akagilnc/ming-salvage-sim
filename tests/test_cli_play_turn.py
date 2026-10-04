@@ -380,8 +380,6 @@ def test_terminal_minister_chat_reply_persist_failure_keeps_user_message(monkeyp
 
 
 
-
-
 def test_play_turn_skip_prints_dossier_settlement_report_and_ends_turn(monkeypatch, capsys):
     session = _Sess(RuntimeError("unused"))
     session.current_phase = lambda: TurnPhase.REVIEWING
@@ -435,7 +433,6 @@ def test_play_turn_skip_settlement_abort_stays_in_player_loop(monkeypatch, capsy
 
     assert str(exc) in capsys.readouterr().out
     assert session.calls == ["begin", "advance", "advance"]
-
 
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")

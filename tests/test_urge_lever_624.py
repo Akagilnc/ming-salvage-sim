@@ -11,9 +11,11 @@ Seams:
 
 from __future__ import annotations
 
+from functools import partial
 
 import pytest
 
+from tests.test_due_review_621 import _insert_staged_commitment as _due_review_commitment
 from ming_sim.due_review import (
     apply_due_review_for_todo,
     apply_pending_due_reviews,
@@ -44,22 +46,6 @@ from ming_sim.urge_lever import (
 # ── fixtures ──────────────────────────────────────────────────────────
 
 
-def _promulgated_origin(db, state, token: str) -> str:
-    # 起源夹具只需可颁布案卷 id。用 policy（非 multi_month 覆盖域）避免
-    # #1778：assignment 无点将时代码不配人；主办来自旨意自带名单，不牵撤人边。
-    dossier_id = db.create_decree_dossier(
-        state,
-        action_type="policy",
-        decree_text=f"分段承诺：{token}",
-        target_kind="issue",
-        target_id=token,
-        payload={"token": token},
-    )
-    assert dossier_id > 0
-    db.record_dossier_decision(dossier_id, "promulgated")
-    return f"dossier:{dossier_id}"
-
-
 def _executing_policy_dossier(db, state, *, token: str = "urge-624", host: str = "倪元璐"):
     dossier_id = db.create_decree_dossier(
         state,
@@ -77,32 +63,7 @@ def _executing_policy_dossier(db, state, *, token: str = "urge-624", host: str =
     return dossier_id
 
 
-def _insert_staged_commitment(
-    db, state, content, *, stages, title="催办分段之诺", origin_ref: str = "",
-):
-    origin = origin_ref or _promulgated_origin(db, state, title)
-    out = apply_score_extraction(
-        db,
-        state,
-        {
-            "new_issues": [
-                {
-                    "origin_kind": "decree",
-                    "origin_ref": origin,
-                    "kind": "initiative",
-                    "title": title,
-                    "stage_text": "三年火器见眉目，五年新历成。",
-                    "commitment_kind": "until_stop",
-                    "ongoing_effects": {},
-                    "stages": stages,
-                }
-            ]
-        },
-        content=content,
-    )
-    created = out["issue_summary"]["new_issues"][0]
-    assert created.get("rejected") is False, created
-    return int(created["issue_id"]), origin
+_insert_staged_commitment = partial(_due_review_commitment, title="催办分段之诺")
 
 
 def _set_integrity(db, name: str, integrity: int, *, courage: int | None = None):
