@@ -9,33 +9,33 @@ monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10c7b0750>
     @pytest.mark.usefixtures("_offline_scene_beat_generator")
     def test_cli_selection_uses_scene_turn_as_admission_origin(game, monkeypatch):
         from ming_sim.cli.terminal import minister_chat
-    
+
         db, state, content = game
         character = content.characters["王绍徽"]
         sess = _sess(db, state, content, llm_config=SimpleNamespace(channel=""))
         sess.schedule_pending_scene_translation = lambda result: None
         calls = []
         readings = []
-    
+
         class FakeAgent:
             tools = []
-    
+
             def run(self, message):
                 calls.append(message)
                 return SimpleNamespace(content="臣在。", tools=[])
-    
+
         def scene_agent(_config, prepared, **_kwargs):
             readings.append(prepared.opening)
             return FakeAgent()
-    
+
         monkeypatch.setattr("ming_sim.session.create_scene_agent", scene_agent)
         answers = iter(["边饷如何？", "done"])
         monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
-    
+
         assert minister_chat(sess, character, selected=True) == "dismiss"
 >       assert calls == [f"宣{character.name}", "边饷如何？"]
 E       AssertionError: assert ['宣王绍徽', '边饷错了？'] == ['宣王绍徽', '边饷如何？']
-E         
+E
 E         At index 1 diff: '边饷错了？' != '边饷如何？'
 E         Use -v to get more diff
 
@@ -86,7 +86,7 @@ tmp_path = PosixPath('/private/tmp/1834-fixer-f3-f14-mut/pytest-mut2/test_read_m
         assert spaced_rel in listing.splitlines()
 >       assert tools["read_material"](spaced_rel) == "经历正文\n"
 E       AssertionError: assert '' == '经历正文\n'
-E         
+E
 E         - 经历正文
 
 tests/test_material_directory_1830.py:191: AssertionError
