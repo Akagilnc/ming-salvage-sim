@@ -1,8 +1,0 @@
-# FILE: tests/test_fiscal_tick.py
-# NAME: test_fiscal_golden
-# LINE: 90-91
-# FLAGS: helper_or_private_call
-# KIND: py
-
-def test_fiscal_golden(name, st, p, actions, expect):
-    _assert_end(st, p, actions, expect)

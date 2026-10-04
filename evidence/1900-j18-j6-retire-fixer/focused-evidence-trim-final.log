@@ -1,0 +1,516 @@
+=== git diff 27cf62a32 HEAD -- tests selection (explicit) ===
+tests/test_advance_paths_atomic.py
+tests/test_advances_section_rejections.py
+tests/test_affairs_1831.py
+tests/test_appointment_tenure_607.py
+tests/test_army_card_status_1501.py
+tests/test_army_salary_44.py
+tests/test_audience_background.py
+tests/test_audience_night_498.py
+tests/test_audience_presence_500.py
+tests/test_audience_restore_505.py
+tests/test_audience_scroll_539.py
+tests/test_audience_translate_1837.py
+tests/test_audience_translate_1837_reopen.py
+tests/test_audience_travel_gating_670.py
+tests/test_centrifuge_ledger_690.py
+tests/test_character_knowledge_489.py
+tests/test_chat_stream_failpaths_393.py
+tests/test_cli_play_turn.py
+tests/test_cli_runner_error_typed_1299.py
+tests/test_close_issues_section_rejections.py
+tests/test_commitment_backlash_626.py
+tests/test_declaration_dispatch_1835.py
+tests/test_decree_commitment_settlement_229.py
+tests/test_decree_dossiers_571.py
+tests/test_decree_forecast_1861.py
+tests/test_draft_admission_resubmit_1769.py
+tests/test_due_review_621.py
+tests/test_empire_modifier_income_only_341.py
+tests/test_enter_settlement_period_1235.py
+tests/test_error_pack.py
+tests/test_escort_route_1900.py
+tests/test_event_chain_cascade.py
+tests/test_event_trigger_gate.py
+tests/test_execution_tenure_613.py
+tests/test_executor_routing_721.py
+tests/test_faction_brew_637.py
+tests/test_faction_leverage_9.py
+tests/test_fiscal_beyond_intent_1260.py
+tests/test_fiscal_levy_effect.py
+tests/test_fiscal_substrate_bridge.py
+tests/test_fiscal_tick.py
+tests/test_gazette_author_1862.py
+tests/test_grant_reconciliation_567.py
+tests/test_identity_seed_488.py
+tests/test_issue_decree_token_1277.py
+tests/test_llm_channel_config.py
+tests/test_manual_directive_locality_1685.py
+tests/test_material_directory_1830.py
+tests/test_mechanical_tail_1845.py
+tests/test_menu_lifecycle_drain_396.py
+tests/test_month_call_recovery_1846.py
+tests/test_month_chain_1843.py
+tests/test_month_chain_1847.py
+tests/test_month_open_snapshot_1234.py
+tests/test_mutiny_latch_315.py
+tests/test_mutiny_progression_316.py
+tests/test_new_game_write_path_1749.py
+tests/test_new_issues_section_rejections.py
+tests/test_no_edict_full_settlement_1274.py
+tests/test_office_rank_562.py
+tests/test_on_scene_immediate_write_1839.py
+tests/test_opening_gazette_delete_1356.py
+tests/test_override_breach_costs_564.py
+tests/test_pay_order_override_653.py
+tests/test_person_delta_adapter.py
+tests/test_pihong_dossier_1490.py
+tests/test_player_army_projection_321.py
+tests/test_power_section_rejections.py
+tests/test_pre_settle_transaction.py
+tests/test_promulgation_judge_561.py
+tests/test_qa_1281_issue_audience_case_facts.py
+tests/test_qa_c2_phase_settlement_mask_1374.py
+tests/test_qa_c2_settlement_display_lifecycle_1343.py
+tests/test_qa_t1_extraction_dual_source_1353.py
+tests/test_qa_u2_liaodong_buildings.py
+tests/test_refugee_loop_652.py
+tests/test_rejection_wiring.py
+tests/test_relation_brew_636.py
+tests/test_relation_seed_638.py
+tests/test_release_bundle_assets.py
+tests/test_rescript_draft_656.py
+tests/test_scene_llm_1836.py
+tests/test_secret_order_isolation_883.py
+tests/test_secret_order_monthly_progress_566.py
+tests/test_section4_rejections.py
+tests/test_session_write_queue_1353.py
+tests/test_settlement_write_guard_393.py
+tests/test_six_sciences_seed_608.py
+tests/test_state_reload.py
+tests/test_surcharge_causal_chain_650.py
+tests/test_transaction_boundary.py
+tests/test_transit_countdown_668.py
+tests/test_verify_llm_clocks_884.py
+tests/test_web_chat_serialization_393.py
+tests/test_web_llm_runtime_config.py
+web/src/useSettlementFlow.test.tsx
+=== focused existing py count ===
+      95 /tmp/1900-focus-py-existing.txt
+=== focused existing web count ===
+       1 /tmp/1900-focus-web-existing.txt
+=== file list ===
+tests/test_advance_paths_atomic.py
+tests/test_advances_section_rejections.py
+tests/test_affairs_1831.py
+tests/test_appointment_tenure_607.py
+tests/test_army_card_status_1501.py
+tests/test_army_salary_44.py
+tests/test_audience_background.py
+tests/test_audience_night_498.py
+tests/test_audience_presence_500.py
+tests/test_audience_restore_505.py
+tests/test_audience_scroll_539.py
+tests/test_audience_translate_1837.py
+tests/test_audience_translate_1837_reopen.py
+tests/test_audience_travel_gating_670.py
+tests/test_centrifuge_ledger_690.py
+tests/test_character_knowledge_489.py
+tests/test_chat_stream_failpaths_393.py
+tests/test_cli_play_turn.py
+tests/test_cli_runner_error_typed_1299.py
+tests/test_close_issues_section_rejections.py
+tests/test_commitment_backlash_626.py
+tests/test_declaration_dispatch_1835.py
+tests/test_decree_commitment_settlement_229.py
+tests/test_decree_dossiers_571.py
+tests/test_decree_forecast_1861.py
+tests/test_draft_admission_resubmit_1769.py
+tests/test_due_review_621.py
+tests/test_empire_modifier_income_only_341.py
+tests/test_enter_settlement_period_1235.py
+tests/test_error_pack.py
+tests/test_escort_route_1900.py
+tests/test_event_chain_cascade.py
+tests/test_event_trigger_gate.py
+tests/test_execution_tenure_613.py
+tests/test_executor_routing_721.py
+tests/test_faction_brew_637.py
+tests/test_faction_leverage_9.py
+tests/test_fiscal_beyond_intent_1260.py
+tests/test_fiscal_levy_effect.py
+tests/test_fiscal_substrate_bridge.py
+tests/test_fiscal_tick.py
+tests/test_gazette_author_1862.py
+tests/test_grant_reconciliation_567.py
+tests/test_identity_seed_488.py
+tests/test_issue_decree_token_1277.py
+tests/test_llm_channel_config.py
+tests/test_manual_directive_locality_1685.py
+tests/test_material_directory_1830.py
+tests/test_mechanical_tail_1845.py
+tests/test_menu_lifecycle_drain_396.py
+tests/test_month_call_recovery_1846.py
+tests/test_month_chain_1843.py
+tests/test_month_chain_1847.py
+tests/test_month_open_snapshot_1234.py
+tests/test_mutiny_latch_315.py
+tests/test_mutiny_progression_316.py
+tests/test_new_game_write_path_1749.py
+tests/test_new_issues_section_rejections.py
+tests/test_no_edict_full_settlement_1274.py
+tests/test_office_rank_562.py
+tests/test_on_scene_immediate_write_1839.py
+tests/test_opening_gazette_delete_1356.py
+tests/test_override_breach_costs_564.py
+tests/test_pay_order_override_653.py
+tests/test_person_delta_adapter.py
+tests/test_pihong_dossier_1490.py
+tests/test_player_army_projection_321.py
+tests/test_power_section_rejections.py
+tests/test_pre_settle_transaction.py
+tests/test_promulgation_judge_561.py
+tests/test_qa_1281_issue_audience_case_facts.py
+tests/test_qa_c2_phase_settlement_mask_1374.py
+tests/test_qa_c2_settlement_display_lifecycle_1343.py
+tests/test_qa_t1_extraction_dual_source_1353.py
+tests/test_qa_u2_liaodong_buildings.py
+tests/test_refugee_loop_652.py
+tests/test_rejection_wiring.py
+tests/test_relation_brew_636.py
+tests/test_relation_seed_638.py
+tests/test_release_bundle_assets.py
+tests/test_rescript_draft_656.py
+tests/test_scene_llm_1836.py
+tests/test_secret_order_isolation_883.py
+tests/test_secret_order_monthly_progress_566.py
+tests/test_section4_rejections.py
+tests/test_session_write_queue_1353.py
+tests/test_settlement_write_guard_393.py
+tests/test_six_sciences_seed_608.py
+tests/test_state_reload.py
+tests/test_surcharge_causal_chain_650.py
+tests/test_transaction_boundary.py
+tests/test_transit_countdown_668.py
+tests/test_verify_llm_clocks_884.py
+tests/test_web_chat_serialization_393.py
+tests/test_web_llm_runtime_config.py
+web/src/useSettlementFlow.test.tsx
+=== diffcheck 27cf62a32 HEAD (pre-commit; deletion pending) ===
+evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1896_test_release_bundle_assets__test_spec_datas_puts_requirements_at_bundle_root.txt:6: new blank line at EOF.
+=== diffcheck working tree ===
+=== pytest focused (7 BIN=/usr/bin/false) ===
+CMD: MING_SIM_{AGY,CODEX,CLAUDE,CURSOR,KIMI,GROK,PI}_BIN=/usr/bin/false python3 -m pytest $(git diff --name-only 27cf62a32 HEAD -- tests | grep '\.py$' | while read f; do [ -f "$f" ] && echo "$f"; done) -q --tb=line -p no:cacheprovider
+........................................................................ [  3%]
+........................................................................ [  6%]
+........................................................................ [ 10%]
+........................................................................ [ 13%]
+........................................................................ [ 16%]
+........................................................................ [ 20%]
+........................................................................ [ 23%]
+........................................................................ [ 27%]
+........................................................................ [ 30%]
+........................................................................ [ 33%]
+........................................................................ [ 37%]
+........................................................................ [ 40%]
+........................................................................ [ 44%]
+........................................................................ [ 47%]
+........................................................................ [ 50%]
+........................................................................ [ 54%]
+........................................................................ [ 57%]
+........................................................................ [ 60%]
+........................................................................ [ 64%]
+........................................................................ [ 67%]
+........................................................................ [ 71%]
+........................................................................ [ 74%]
+...............................................................s........ [ 77%]
+........................................................................ [ 81%]
+........................................................................ [ 84%]
+........................................................................ [ 88%]
+........................................................................ [ 91%]
+........................................................................ [ 94%]
+........................................................................ [ 98%]
+.......................................                                  [100%]
+2126 passed, 1 skipped in 103.91s (0:01:43)
+real 104.77
+user 63.69
+sys 32.06
+=== web vitest focused ===
+
+ RUN  v4.1.9 /Users/akagilnc/WorkSpace/Ming_LLM-1900-w5/web
+
+ ❯ src/useSettlementFlow.test.tsx (18 tests | 18 failed) 9ms
+     × throttles inflight reloads and converges to the visible phase returned after waiting 4ms
+     × opens with a pending summary and shows it when the tail lands 1ms
+     × shows a failed ending without a fabricated summary and retains retry 0ms
+     × refreshes a non-ending month while the tail runs, then stops on persisted failure 0ms
+     × POST 携 state.turn 为 expected_turn 0ms
+     × 409 且服务端 turn>expected 时按已推进 reload，不设 error 条 0ms
+     × 409 且服务端 turn<=expected 时仍报错条、不 reload 0ms
+     × #1808 B pending failure remains a loud phase-1 error without a recovery panel 0ms
+     × advance 回 awaiting_decision 时消费 decisions + loadState，不 reload 0ms
+     × POST 携 state.turn 为 expected_turn；409 且 serverTurn>expected → reload 不设 error 0ms
+     × decisions 分支 await loadState：·待批出现（#1323）+ 四键为月初值，且不 reload 0ms
+     × issueDecree 留在账本核账态而非按完成 reload 0ms
+     × submitDecisions 留在账本核账态而非按完成 reload 0ms
+     × advanceWithoutEdict 留在账本核账态而非按完成 reload 0ms
+     × issueDecree advanced 终包：loadState + 阅读态，朕知道了只关阅读 0ms
+     × submitDecisions advanced 终包：loadState + 阅读态，朕知道了只关阅读 0ms
+     × advanceWithoutEdict advanced：从 state 投影开阅读态，不 reload 1ms
+     × 退局后迟到的新月刷新不得重挂上一局邸报 0ms
+
+⎯⎯⎯⎯⎯⎯ Failed Tests 18 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/useSettlementFlow.test.tsx > #1625 useSettlementFlow — observation refresh convergence > throttles inflight reloads and converges to the visible phase returned after waiting
+ReferenceError: document is not defined
+ ❯ mountHarness src/useSettlementFlow.test.tsx:144:16
+    142|   }
+    143|
+    144|   const host = document.createElement("div");
+       |                ^
+    145|   document.body.appendChild(host);
+    146|   const root = createRoot(host);
+ ❯ src/useSettlementFlow.test.tsx:192:31
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/36]⎯
+
+ FAIL  src/useSettlementFlow.test.tsx > #1625 useSettlementFlow — observation refresh convergence > throttles inflight reloads and converges to the visible phase returned after waiting
+ FAIL  src/useSettlementFlow.test.tsx > #1845 ending summary stays background and becomes visible > opens with a pending summary and shows it when the tail lands
+ FAIL  src/useSettlementFlow.test.tsx > #1845 background tail failure observation > shows a failed ending without a fabricated summary and retains retry
+ FAIL  src/useSettlementFlow.test.tsx > #1845 background tail failure observation > refreshes a non-ending month while the tail runs, then stops on persisted failure
+ FAIL  src/useSettlementFlow.test.tsx > #1351/#1560 useSettlementFlow — advanceWithoutEdict 令牌与 409 幂等 > POST 携 state.turn 为 expected_turn
+ FAIL  src/useSettlementFlow.test.tsx > #1351/#1560 useSettlementFlow — advanceWithoutEdict 令牌与 409 幂等 > 409 且服务端 turn>expected 时按已推进 reload，不设 error 条
+ FAIL  src/useSettlementFlow.test.tsx > #1351/#1560 useSettlementFlow — advanceWithoutEdict 令牌与 409 幂等 > 409 且服务端 turn<=expected 时仍报错条、不 reload
+ FAIL  src/useSettlementFlow.test.tsx > #1351/#1560 useSettlementFlow — advanceWithoutEdict 令牌与 409 幂等 > #1808 B pending failure remains a loud phase-1 error without a recovery panel
+ FAIL  src/useSettlementFlow.test.tsx > #1433 useSettlementFlow — 退朝 awaiting 消费面（禁盲 reload hop） > advance 回 awaiting_decision 时消费 decisions + loadState，不 reload
+ FAIL  src/useSettlementFlow.test.tsx > #1277 useSettlementFlow — issueDecree 令牌与 409 幂等 > POST 携 state.turn 为 expected_turn；409 且 serverTurn>expected → reload 不设 error
+ FAIL  src/useSettlementFlow.test.tsx > #1234 useSettlementFlow — 同会话 awaiting 停窗消费状态口 > decisions 分支 await loadState：·待批出现（#1323）+ 四键为月初值，且不 reload
+ FAIL  src/useSettlementFlow.test.tsx > #1843 未推进的过月终包 > issueDecree 留在账本核账态而非按完成 reload
+ FAIL  src/useSettlementFlow.test.tsx > #1843 未推进的过月终包 > submitDecisions 留在账本核账态而非按完成 reload
+ FAIL  src/useSettlementFlow.test.tsx > #1843 未推进的过月终包 > advanceWithoutEdict 留在账本核账态而非按完成 reload
+ FAIL  src/useSettlementFlow.test.tsx > #1852 写成即推进：本面邸报阅读态，不整页 reload > issueDecree advanced 终包：loadState + 阅读态，朕知道了只关阅读
+ FAIL  src/useSettlementFlow.test.tsx > #1852 写成即推进：本面邸报阅读态，不整页 reload > submitDecisions advanced 终包：loadState + 阅读态，朕知道了只关阅读
+ FAIL  src/useSettlementFlow.test.tsx > #1852 写成即推进：本面邸报阅读态，不整页 reload > advanceWithoutEdict advanced：从 state 投影开阅读态，不 reload
+ FAIL  src/useSettlementFlow.test.tsx > #1852 写成即推进：本面邸报阅读态，不整页 reload > 退局后迟到的新月刷新不得重挂上一局邸报
+ReferenceError: document is not defined
+ ❯ src/useSettlementFlow.test.tsx:165:3
+    163|   vi.unstubAllGlobals();
+    164|   vi.restoreAllMocks();
+    165|   document.body.innerHTML = "";
+       |   ^
+    166| });
+    167|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/36]⎯
+
+ FAIL  src/useSettlementFlow.test.tsx > #1845 ending summary stays background and becomes visible > opens with a pending summary and shows it when the tail lands
+ReferenceError: document is not defined
+ ❯ mountHarness src/useSettlementFlow.test.tsx:144:16
+    142|   }
+    143|
+    144|   const host = document.createElement("div");
+       |                ^
+    145|   document.body.appendChild(host);
+    146|   const root = createRoot(host);
+ ❯ src/useSettlementFlow.test.tsx:247:31
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/36]⎯
+
+ FAIL  src/useSettlementFlow.test.tsx > #1845 background tail failure observation > shows a failed ending without a fabricated summary and retains retry
+ReferenceError: document is not defined
+ ❯ mountHarness src/useSettlementFlow.test.tsx:144:16
+    142|   }
+    143|
+    144|   const host = document.createElement("div");
+       |                ^
+    145|   document.body.appendChild(host);
+    146|   const root = createRoot(host);
+ ❯ src/useSettlementFlow.test.tsx:279:31
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/36]⎯
+
+ FAIL  src/useSettlementFlow.test.tsx > #1845 background tail failure observation > refreshes a non-ending month while the tail runs, then stops on persisted failure
+ReferenceError: document is not defined
+ ❯ mountHarness src/useSettlementFlow.test.tsx:144:16
+    142|   }
+    143|
+    144|   const host = document.createElement("div");
+       |                ^
+    145|   document.body.appendChild(host);
+    146|   const root = createRoot(host);
+ ❯ src/useSettlementFlow.test.tsx:297:31
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/36]⎯
+
+ FAIL  src/useSettlementFlow.test.tsx > #1351/#1560 useSettlementFlow — advanceWithoutEdict 令牌与 409 幂等 > POST 携 state.turn 为 expected_turn
+ReferenceError: window is not defined
+ ❯ src/useSettlementFlow.test.tsx:319:27
+    317|     vi.stubGlobal("fetch", fetchMock);
+    318|     const reload = vi.fn();
+    319|     Object.defineProperty(window, "location", {
+       |                           ^
+    320|       configurable: true,
+    321|       value: { ...window.location, reload },
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/36]⎯
+
+ FAIL  src/useSettlementFlow.test.tsx > #1351/#1560 useSettlementFlow — advanceWithoutEdict 令牌与 409 幂等 > 409 且服务端 turn>expected 时按已推进 reload，不设 error 条
+ReferenceError: window is not defined
+ ❯ src/useSettlementFlow.test.tsx:356:27
+    354|     vi.stubGlobal("fetch", fetchMock);
+    355|     const reload = vi.fn();
+    356|     Object.defineProperty(window, "location", {
+       |                           ^
+    357|       configurable: true,
+    358|       value: { ...window.location, reload },
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/36]⎯
+
+ FAIL  src/useSettlementFlow.test.tsx > #1351/#1560 useSettlementFlow — advanceWithoutEdict 令牌与 409 幂等 > 409 且服务端 turn<=expected 时仍报错条、不 reload
+ReferenceError: window is not defined
+ ❯ src/useSettlementFlow.test.tsx:386:27
+    384|     vi.stubGlobal("fetch", fetchMock);
+    385|     const reload = vi.fn();
+    386|     Object.defineProperty(window, "location", {
+       |                           ^
+    387|       configurable: true,
+    388|       value: { ...window.location, reload },
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/36]⎯
+
+ FAIL  src/useSettlementFlow.test.tsx > #1351/#1560 useSettlementFlow — advanceWithoutEdict 令牌与 409 幂等 > #1808 B pending failure remains a loud phase-1 error without a recovery panel
+ReferenceError: document is not defined
+ ❯ mountHarness src/useSettlementFlow.test.tsx:144:16
+    142|   }
+    143|
+    144|   const host = document.createElement("div");
+       |                ^
+    145|   document.body.appendChild(host);
+    146|   const root = createRoot(host);
+ ❯ src/useSettlementFlow.test.tsx:423:40
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[9/36]⎯
+
+ FAIL  src/useSettlementFlow.test.tsx > #1433 useSettlementFlow — 退朝 awaiting 消费面（禁盲 reload hop） > advance 回 awaiting_decision 时消费 decisions + loadState，不 reload
+ReferenceError: window is not defined
+ ❯ src/useSettlementFlow.test.tsx:443:27
+    441|     const loadState = vi.fn(async () => awaitingState);
+    442|     const reload = vi.fn();
+    443|     Object.defineProperty(window, "location", {
+       |                           ^
+    444|       configurable: true,
+    445|       value: { ...window.location, reload },
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[10/36]⎯
+
+ FAIL  src/useSettlementFlow.test.tsx > #1277 useSettlementFlow — issueDecree 令牌与 409 幂等 > POST 携 state.turn 为 expected_turn；409 且 serverTurn>expected → reload 不设 error
+ReferenceError: window is not defined
+ ❯ src/useSettlementFlow.test.tsx:529:27
+    527|     vi.stubGlobal("fetch", fetchMock);
+    528|     const reload = vi.fn();
+    529|     Object.defineProperty(window, "location", {
+       |                           ^
+    530|       configurable: true,
+    531|       value: { ...window.location, reload },
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[11/36]⎯
+
+ FAIL  src/useSettlementFlow.test.tsx > #1234 useSettlementFlow — 同会话 awaiting 停窗消费状态口 > decisions 分支 await loadState：·待批出现（#1323）+ 四键为月初值，且不 reload
+ReferenceError: window is not defined
+ ❯ src/useSettlementFlow.test.tsx:556:27
+    554|     const loadState = vi.fn(async () => awaitingState);
+    555|     const reload = vi.fn();
+    556|     Object.defineProperty(window, "location", {
+       |                           ^
+    557|       configurable: true,
+    558|       value: { ...window.location, reload },
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[12/36]⎯
+
+ FAIL  src/useSettlementFlow.test.tsx > #1843 未推进的过月终包 > issueDecree 留在账本核账态而非按完成 reload
+ FAIL  src/useSettlementFlow.test.tsx > #1843 未推进的过月终包 > submitDecisions 留在账本核账态而非按完成 reload
+ FAIL  src/useSettlementFlow.test.tsx > #1843 未推进的过月终包 > advanceWithoutEdict 留在账本核账态而非按完成 reload
+ReferenceError: window is not defined
+ ❯ src/useSettlementFlow.test.tsx:601:27
+    599|   ] as const)("%s 留在账本核账态而非按完成 reload", async (action, path) => {
+    600|     const reload = vi.fn();
+    601|     Object.defineProperty(window, "location", {
+       |                           ^
+    602|       configurable: true,
+    603|       value: { ...window.location, reload },
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[13/36]⎯
+
+ FAIL  src/useSettlementFlow.test.tsx > #1852 写成即推进：本面邸报阅读态，不整页 reload > issueDecree advanced 终包：loadState + 阅读态，朕知道了只关阅读
+ FAIL  src/useSettlementFlow.test.tsx > #1852 写成即推进：本面邸报阅读态，不整页 reload > submitDecisions advanced 终包：loadState + 阅读态，朕知道了只关阅读
+ReferenceError: window is not defined
+ ❯ src/useSettlementFlow.test.tsx:641:27
+    639|   ] as const)("%s advanced 终包：loadState + 阅读态，朕知道了只关阅读", async (action…
+    640|     const reload = vi.fn();
+    641|     Object.defineProperty(window, "location", {
+       |                           ^
+    642|       configurable: true,
+    643|       value: { ...window.location, reload },
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[14/36]⎯
+
+ FAIL  src/useSettlementFlow.test.tsx > #1852 写成即推进：本面邸报阅读态，不整页 reload > advanceWithoutEdict advanced：从 state 投影开阅读态，不 reload
+ReferenceError: window is not defined
+ ❯ src/useSettlementFlow.test.tsx:678:27
+    676|   it("advanceWithoutEdict advanced：从 state 投影开阅读态，不 reload", async () …
+    677|     const reload = vi.fn();
+    678|     Object.defineProperty(window, "location", {
+       |                           ^
+    679|       configurable: true,
+    680|       value: { ...window.location, reload },
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[15/36]⎯
+
+ FAIL  src/useSettlementFlow.test.tsx > #1852 写成即推进：本面邸报阅读态，不整页 reload > 退局后迟到的新月刷新不得重挂上一局邸报
+ReferenceError: document is not defined
+ ❯ mountHarness src/useSettlementFlow.test.tsx:144:16
+    142|   }
+    143|
+    144|   const host = document.createElement("div");
+       |                ^
+    145|   document.body.appendChild(host);
+    146|   const root = createRoot(host);
+ ❯ src/useSettlementFlow.test.tsx:706:34
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[16/36]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  18 failed (18)
+   Start at  04:19:57
+   Duration  273ms (transform 84ms, setup 0ms, import 176ms, tests 9ms, environment 0ms)
+
+real 0.80
+user 0.73
+sys 0.15
+=== web vitest focused (jsdom; corrected after bare vitest miss) ===
+=== web vitest focused with jsdom ===
+CMD: cd web && npm test -- --run src/useSettlementFlow.test.tsx
+selection from: git diff --name-only 27cf62a32 HEAD -- web | grep test
+web/src/useSettlementFlow.test.tsx
+
+> ming-salvage-web@0.1.0 test
+> vitest run --environment jsdom --run src/useSettlementFlow.test.tsx
+
+
+ RUN  v4.1.9 /Users/akagilnc/WorkSpace/Ming_LLM-1900-w5/web
+
+
+ Test Files  1 passed (1)
+      Tests  18 passed (18)
+   Start at  04:20:08
+   Duration  788ms (transform 89ms, setup 0ms, import 179ms, tests 60ms, environment 481ms)
+
+real 1.02
+user 1.10
+sys 0.17
+DONE_WEB
+=== SUMMARY ===
+pytest: 2126 passed, 1 skipped; real 104.77s; 95 files
+vitest: 18 passed; real 1.02s; 1 file (useSettlementFlow.test.tsx)
+DONE_TESTS_ALL

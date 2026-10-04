@@ -1,9 +1,0 @@
-# FILE: tests/test_cli_backend.py
-# NAME: test_backend_env
-# LINE: 175-177
-# FLAGS: assert_text_compare_or_match
-# KIND: py
-
-def test_backend_env(monkeypatch, runner):
-    monkeypatch.setenv("MING_SIM_LLM_BACKEND", runner)
-    assert cb.cli_backend_from_env() == (None if runner == "bogus" else runner)

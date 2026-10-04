@@ -13,9 +13,12 @@
 | **`j6-wide-candidate-disposition.jsonl`** | **唯一当前权威完整处置表**（每项含 entry / result / mock_boundary / text_oracle_helper_necessity / reason / disposition_basis） |
 | `j6-wide-disposition-summary.json` | 计数摘要 |
 | `j6-semantic-members.jsonl` / `j6-class-members-wide-round.jsonl` / `j6-clear-residuals.jsonl` | 历史落地删改记录（不替代权威表） |
-| `semantic-review-queue/advisor-shards/advisor-*-disposition.jsonl` | 顾问源头审阅产出（已并入权威表） |
+| `semantic-review-queue/advisor-shards/advisor-*-disposition.jsonl` | 顾问源头审阅决策引用（多数已并入权威表；未汇入条目保留，不乱删） |
+| `semantic-review-queue/migrate-shard-*.result.jsonl` + `APPLIED_MIGRATE.log` | migrate 落地回执（非原文源段） |
 
 已删简误导表：`j6-wide-disposition-batch{1,2,3,prio}.*`、`j6-disposition-private-helper.*`、以及以 `wide_flag_no_high_confidence_member_rule` 充当 retain 的旧权威副本。历史提交不 rewrite。
+
+交卷删简（本轮）：`semantic-source-segments/`、`j6-candidate-segments/`、`semantic-review-queue` 原文源段与平行中间表（`SOURCE_*`、`file-*`、`shard-*`、顾问 brief、`needs-manual-*` 等）。
 
 ## 处置规则
 

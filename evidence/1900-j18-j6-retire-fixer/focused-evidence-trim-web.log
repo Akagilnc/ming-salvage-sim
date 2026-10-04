@@ -1,0 +1,21 @@
+=== web vitest focused with jsdom ===
+CMD: cd web && npm test -- --run src/useSettlementFlow.test.tsx
+selection from: git diff --name-only 27cf62a32 HEAD -- web | grep test
+web/src/useSettlementFlow.test.tsx
+
+> ming-salvage-web@0.1.0 test
+> vitest run --environment jsdom --run src/useSettlementFlow.test.tsx
+
+
+ RUN  v4.1.9 /Users/akagilnc/WorkSpace/Ming_LLM-1900-w5/web
+
+
+ Test Files  1 passed (1)
+      Tests  18 passed (18)
+   Start at  04:20:08
+   Duration  788ms (transform 89ms, setup 0ms, import 179ms, tests 60ms, environment 481ms)
+
+real 1.02
+user 1.10
+sys 0.17
+DONE_WEB

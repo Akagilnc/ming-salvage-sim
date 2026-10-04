@@ -1,9 +1,0 @@
-# FILE: tests/test_rescript_draft_656.py
-# NAME: test_validate_items_rejects_illegal_top_level
-# LINE: 789-791
-# FLAGS: assert_text_compare_or_match
-# KIND: py
-
-def test_validate_items_rejects_illegal_top_level(draft_ingress):
-    assert draft_ingress({'nope': []}, set()) is None
-    assert draft_ingress('不是 JSON object', set()) is None
