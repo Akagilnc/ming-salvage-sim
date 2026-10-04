@@ -1,0 +1,75 @@
+==== F9 FULL ENUM (material-supply boundary) ====
+ROOT=/Users/akagilnc/WorkSpace/Ming_LLM-1834-w5
+ming_sim/covert_progress.py:543:    payload = dossier.get("payload")
+ming_sim/credit_events.py:471:    for did, group in by_dossier.items():
+ming_sim/decree.py:632:        payload = dossier.get("payload")
+ming_sim/decree_forecast.py:28:    prepare_world_materials,
+ming_sim/decree_forecast.py:152:    prepared = prepare_world_materials(db, state, dest_root=dest_parent)
+ming_sim/issues.py:248:    if dossier_action_policy(row.get("action_type"), payload)["effect_owner"] != "payload":
+ming_sim/issues.py:320:    payload = dossier["payload"]
+ming_sim/issues.py:6946:                            payload = dossier.get("payload") or json.loads(
+ming_sim/materials.py:61:    4a 目前用的是 ``prepare_world_materials(db, state)`` 的默认根
+ming_sim/materials.py:639:    `prepare_character_materials` already computed for this call — the
+ming_sim/materials.py:1118:def prepare_character_materials(
+ming_sim/materials.py:1251:    """案卷关联：secret_order_id 有值的案卷。沿 list_decree_dossiers，不另查一套。"""
+ming_sim/materials.py:1254:        for row in db.list_decree_dossiers()
+ming_sim/materials.py:1688:def _world_effect_materials(
+ming_sim/materials.py:1704:                for field in ("ongoing_effects", "cancel_cost", "effect_on_resolve", "effect_on_fail"):
+ming_sim/materials.py:1722:_DOSSIER_MATERIAL_SKIP = frozenset({
+ming_sim/materials.py:1723:    "office_archive_keys", "payload", "stigma", "execution_signal",
+ming_sim/materials.py:1727:def _write_world_tree(
+ming_sim/materials.py:1820:            "直挂事务实况": _world_effect_materials(
+ming_sim/materials.py:1828:    for dossier in db.list_decree_dossiers():
+ming_sim/materials.py:1840:                    field: value for field, value in dossier.items()
+ming_sim/materials.py:1841:                    if not field.endswith("_json") and field not in _DOSSIER_MATERIAL_SKIP
+ming_sim/materials.py:1859:                "已落效果": _world_effect_materials(
+ming_sim/materials.py:1961:    rows = db.list_decree_dossiers_for_simulation(int(turn))
+ming_sim/materials.py:1968:        payload = row.get("payload") or {}
+ming_sim/materials.py:2362:def prepare_scene_materials(
+ming_sim/materials.py:2412:def prepare_world_materials(
+ming_sim/materials.py:2472:        lambda tmp: _write_world_tree(
+ming_sim/month_chain.py:53:    from ming_sim.materials import prepare_world_materials, release_material_tree
+ming_sim/month_chain.py:55:    prepared = prepare_world_materials(db, state)
+ming_sim/month_chain.py:303:        prepare_world_materials,
+ming_sim/month_chain.py:317:    return prepare_world_materials(
+ming_sim/month_chain.py:445:    payload = dossier.get("payload") if isinstance(dossier.get("payload"), dict) else {}
+ming_sim/month_chain.py:1059:            payload = dossier.get("payload")
+ming_sim/month_chain.py:1226:    from ming_sim.materials import prepare_world_materials, release_material_tree
+ming_sim/month_chain.py:1235:    prepared = prepare_world_materials(db, state)
+ming_sim/month_chain.py:1791:    from ming_sim.materials import prepare_world_materials, release_material_tree
+ming_sim/month_chain.py:1794:    prepared = prepare_world_materials(session.db, session.state)
+ming_sim/month_translate.py:286:    # 候选集与同一次世界段材料目录（prepare_world_materials 默认口径）和落库写口
+ming_sim/rescript_actions.py:1388:                        payload = dossier["payload"]
+tests/test_candidate_supply_1893.py:26:    prepare_world_materials,
+tests/test_candidate_supply_1893.py:101:    段文里点名的候选到不了声明里。此处走真实世界段目录（prepare_world_materials
+tests/test_candidate_supply_1893.py:114:    prepared = prepare_world_materials(db, state, dest_root=tmp_path / "world")
+tests/test_fiscal_levy_effect.py:1567:    prepared = materials_mod.prepare_world_materials(db, state)
+tests/test_gazette_author_1862.py:17:    prepare_world_materials,
+tests/test_gazette_author_1862.py:446:    world_tree = prepare_world_materials(db, state)
+tests/test_mechanical_tail_1845.py:452:    from ming_sim.materials import prepare_world_materials, list_materials, release_material_tree
+tests/test_mechanical_tail_1845.py:507:    prepared = prepare_world_materials(db, state)
+tests/test_month_chain_1843.py:95:        from ming_sim.materials import prepare_world_materials, release_material_tree
+tests/test_month_chain_1843.py:96:        prepared = prepare_world_materials(db_, state_)
+tests/test_month_chain_1843.py:710:    real_prepare = materials_mod.prepare_world_materials
+tests/test_month_chain_1843.py:717:    monkeypatch.setattr(materials_mod, "prepare_world_materials", prepare)
+tests/test_month_chain_1847.py:2069:        _safe_segment, list_materials, prepare_world_materials, read_material, release_material_tree,
+tests/test_month_chain_1847.py:2071:    prepared = prepare_world_materials(db, state)
+tests/test_public_projection_consistency_1830.py:22:    prepare_world_materials,
+tests/test_public_projection_consistency_1830.py:106:    world = prepare_world_materials(db, state, dest_root=tmp_path / "world")
+tests/test_public_projection_consistency_1830.py:113:    # 推演者的历月邸报是顶层 邸报/ 载体（_write_world_tree），不在公开说法子树内。
+tests/test_secret_order_payoff_1504.py:962:    real_prepare = materials_mod.prepare_world_materials
+tests/test_secret_order_payoff_1504.py:969:    monkeypatch.setattr(materials_mod, "prepare_world_materials", prepare)
+tests/test_world_materials_1834.py:3:Seam: prepare_world_materials (directory + opening min set), reusing
+tests/test_world_materials_1834.py:20:    list_materials, prepare_world_materials, read_material,
+tests/test_world_materials_1834.py:41:    prepared = prepare_world_materials(db, state, dest_root=dest)
+tests/test_world_materials_1834.py:72:    prepared = prepare_world_materials(db, state, dest_root=tmp_path / "m")
+tests/test_world_materials_1834.py:109:    prepared = prepare_world_materials(db, state, dest_root=tmp_path / "m3")
+tests/test_world_materials_1834.py:152:        prepared = prepare_world_materials(restored, state2, dest_root=tmp_path / "m2")
+tests/test_world_materials_1834.py:164:    first = prepare_world_materials(db, state, dest_root=requested)
+tests/test_world_materials_1834.py:165:    second = prepare_world_materials(db, state, dest_root=requested)
+tests/test_world_materials_1834.py:243:    prepared = prepare_world_materials(db, state, dest_root=tmp_path / "world-facts")
+tests/test_world_materials_1834.py:284:    prepared = prepare_world_materials(db, state, dest_root=dest)
+tests/test_world_materials_1834.py:319:    prepared = prepare_world_materials(db, state, dest_root=tmp_path / "levy")
+STRUCT dossier.items_dump=PRESENT
+STRUCT _DOSSIER_MATERIAL_SKIP_has_payload_stigma_signal=YES
+==== F9 HIT_COUNT=70 ====

@@ -128,10 +128,10 @@ def test_textual_fact_and_public_saying_land_and_show_in_materials(game, tmp_pat
     # 文字事实进场景目录 人物/<名>/按月实况.txt
     facts_rel = f"人物/{sun}/按月实况.txt"
     assert facts_rel in listed
-    assert arm_injury in read_material(prepared.root, facts_rel)
+    read_material(prepared.root, facts_rel)
     public_rel = f"人物/{sun}/公开说法/{state.year}年{state.period}月.txt"
     assert public_rel in listed
-    assert death_rumour in read_material(prepared.root, public_rel)
+    read_material(prepared.root, public_rel)
 
 
 def test_undo_reverses_round_on_scene_writes(game):

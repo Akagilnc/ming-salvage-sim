@@ -1,29 +1,31 @@
-==== F9 enum ====
-1722:_DOSSIER_MATERIAL_SKIP = frozenset({
-1840:                    field: value for field, value in dossier.items()
-1841:                    if not field.endswith("_json") and field not in _DOSSIER_MATERIAL_SKIP
-==== F12 enum ====
-ming_sim/materials.py:1688:def _world_effect_materials(
-ming_sim/materials.py:1695:    history = db.list_world_effect_history(origin)
-ming_sim/materials.py:1820:            "直挂事务实况": _world_effect_materials(
-ming_sim/materials.py:1859:                "已落效果": _world_effect_materials(
-ming_sim/db.py:2604:        for table in ("region_logs", "army_logs", "power_logs", "person_logs", "building_logs"):
-ming_sim/db.py:3281:        双累加器＋army_logs 留痕，0023）；零流量不写行。本方法只写 conn，提交归调用方
-ming_sim/db.py:3644:            FROM building_logs;
-ming_sim/db.py:20714:    def list_world_effect_history(
-ming_sim/db.py:20719:        Dossier callers retain the existing actual rail. Audit log / person_logs
-==== F3 rescan python material ====
-tests/test_gazette_author_1862.py:363:    assert not any(path.startswith("密令/") for path in seen["author_files"])
-tests/test_gazette_author_1862.py:375:    assert fact_rel in seen["author_files"]
-tests/test_gazette_author_1862.py:377:    assert experience_rel in seen["author_files"]
-==== F3 rescan web positive prose ====
-web/src/components/modals.test.tsx:654:    expect(ministerMessages[ministerMessages.length - 1]?.textContent).toContain("杨嗣昌");
-web/src/components/modals.test.tsx:1794:    expect(mastSept).not.toContain("天启七年十月");
-web/src/appDurableWiring.test.tsx:1805:    expect(host.textContent).not.toContain(MIDCOURSE_ISSUE);
-web/src/appDurableWiring.test.tsx:2418:    expect(host.textContent).not.toContain(MIDCOURSE_ISSUE);
-web/src/appDurableWiring.test.tsx:2512:    expect(memorialsDialog.textContent).not.toContain(MIDCOURSE_ISSUE);
-web/src/appDurableWiring.test.tsx:2599:    expect(host.textContent).not.toContain(MIDCOURSE_ISSUE);
-web/src/appDurableWiring.test.tsx:2657:    expect(masthead).not.toContain("天启七年十月");
-web/src/appDurableWiring.test.tsx:2663:    expect(host.textContent).not.toContain(MIDCOURSE_ISSUE);
-web/src/appDurableWiring.test.tsx:2781:    expect(memorialsDialog.textContent).not.toContain(MIDCOURSE_ISSUE);
-web/src/appDurableWiring.test.tsx:2782:    expect(memorialsDialog.textContent).toContain("杨嗣昌");
+==== F9 STRUCT ====
+STRUCT dossier.items_dump=PRESENT
+STRUCT _DOSSIER_MATERIAL_SKIP_has_payload_stigma_signal=YES
+==== F9 HIT_COUNT=70 ====
+==== F12 STRUCT ====
+STRUCT list_world_effect_history_audit_dump_loop=ABSENT
+STRUCT keeps=实况轨,issues,characters,relation_edge_events
+==== F12 HIT_COUNT=142 ====
+==== F3 summary ====
+==== F3 FULL ENUM (free-text mechanical asserts) ====
+==== F3 MATERIAL_BODY_POSITIVE_COUNT=0 ====
+==== F3 HIT_COUNT=1178 ====
+---- material_body* ----
+(none)
+---- path_member* ----
+tests/test_gazette_author_1862.py:375:path_member_named:fact_rel in seen['author_files']
+tests/test_gazette_author_1862.py:377:path_member_named:experience_rel in seen['author_files']
+tests/test_month_chain_1847.py:2074:path_member_named:rel in list_materials(prepared.root)
+---- assert_truthy_paths ----
+tests/test_fiscal_levy_effect.py:1574:assert_truthy_paths:petition_paths
+---- kinds ----
+  481 assert_eq_prose
+  301 assert_in_prose
+  137 vitest_neg
+   95 vitest_pos_prose_gazetteish
+   78 vitest_pos
+   54 structured_field_eq_prose
+   23 vitest_pos_prose
+    5 assert_truthy_body
+    3 path_member_named
+    1 assert_truthy_paths
