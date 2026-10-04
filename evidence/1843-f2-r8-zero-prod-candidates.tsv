@@ -1,55 +1,55 @@
 file	qual	name	kind	lineno	test_only	dead	test_files
-ming_sim/action_clusters.py	cluster_effect	cluster_effect	FunctionDef	215	0	1	
-ming_sim/action_materialize.py	minister_speaker_role	minister_speaker_role	FunctionDef	29	0	1	
+ming_sim/action_clusters.py	cluster_effect	cluster_effect	FunctionDef	215	0	1
+ming_sim/action_materialize.py	minister_speaker_role	minister_speaker_role	FunctionDef	29	0	1
 ming_sim/action_materialize.py	stage_grant_allocation_candidate	stage_grant_allocation_candidate	FunctionDef	771	1	0	tests/test_execution_pressure_654.py
 ming_sim/action_materialize.py	stage_authorization_candidate	stage_authorization_candidate	FunctionDef	1616	1	0	tests/test_execution_pressure_654.py
-ming_sim/action_materialize.py	stage_referral_candidate	stage_referral_candidate	FunctionDef	1703	0	1	
-ming_sim/action_materialize.py	stage_revoke_authority_candidate	stage_revoke_authority_candidate	FunctionDef	1815	0	1	
+ming_sim/action_materialize.py	stage_referral_candidate	stage_referral_candidate	FunctionDef	1703	0	1
+ming_sim/action_materialize.py	stage_revoke_authority_candidate	stage_revoke_authority_candidate	FunctionDef	1815	0	1
 ming_sim/applier.py	ApplyContext	ApplyContext	ClassDef	273	1	0	tests/test_applier_contract.py
-ming_sim/audience_night.py	CLOSE_STEPS	CLOSE_STEPS	Const	176	0	1	
-ming_sim/audience_night.py	night_dossiers_ready	night_dossiers_ready	FunctionDef	345	0	1	
+ming_sim/audience_night.py	CLOSE_STEPS	CLOSE_STEPS	Const	176	0	1
+ming_sim/audience_night.py	night_dossiers_ready	night_dossiers_ready	FunctionDef	345	0	1
 ming_sim/audience_night.py	list_night_timeline	list_night_timeline	FunctionDef	458	1	0	tests/test_audience_night_498.py
 ming_sim/audience_night.py	audit_night_direct_writes	audit_night_direct_writes	FunctionDef	673	1	0	tests/test_audience_undo_506.py,tests/test_on_scene_immediate_write_1839.py
 ming_sim/audience_night.py	list_arrived_unsettled_summons	list_arrived_unsettled_summons	FunctionDef	1503	1	0	tests/test_audience_travel_gating_670.py
 ming_sim/audience_night.py	persons_entered_tonight	persons_entered_tonight	FunctionDef	2278	1	0	tests/test_cli_play_turn.py,tests/test_month_loop_tracer_1468.py
 ming_sim/audience_night.py	persons_present_tonight	persons_present_tonight	FunctionDef	2286	1	0	tests/test_audience_continuous_507.py,tests/test_audience_undo_506.py,tests/test_cli_play_turn.py,tests/test_month_loop_tracer_1468.py
-ming_sim/audience_night.py	find_prior_speaker_still_present	find_prior_speaker_still_present	FunctionDef	2463	0	1	
-ming_sim/audience_translate.py	run_audience_turn_translation	run_audience_turn_translation	FunctionDef	551	0	1	
+ming_sim/audience_night.py	find_prior_speaker_still_present	find_prior_speaker_still_present	FunctionDef	2463	0	1
+ming_sim/audience_translate.py	run_audience_turn_translation	run_audience_turn_translation	FunctionDef	551	0	1
 ming_sim/centrifuge_ledger.py	STIGMA_REASON_CODES	STIGMA_REASON_CODES	AnnConst	43	1	0	tests/test_centrifuge_ledger_690.py
 ming_sim/centrifuge_ledger.py	accrue_blood_debt	accrue_blood_debt	FunctionDef	115	1	0	tests/test_centrifuge_ledger_690.py
 ming_sim/centrifuge_ledger.py	accrue_detection_wariness	accrue_detection_wariness	FunctionDef	161	1	0	tests/test_centrifuge_ledger_690.py
 ming_sim/centrifuge_ledger.py	rebuild_centrifuge_cache	rebuild_centrifuge_cache	FunctionDef	193	1	0	tests/test_centrifuge_ledger_690.py
-ming_sim/cli/terminal.py	_CONFIRM_WORDS	_CONFIRM_WORDS	Const	42	0	1	
-ming_sim/cli/terminal.py	_REJECT_WORDS	_REJECT_WORDS	Const	43	0	1	
-ming_sim/cli/terminal.py	_fail_cli_chat_turn_scene	_fail_cli_chat_turn_scene	FunctionDef	156	0	1	
+ming_sim/cli/terminal.py	_CONFIRM_WORDS	_CONFIRM_WORDS	Const	42	0	1
+ming_sim/cli/terminal.py	_REJECT_WORDS	_REJECT_WORDS	Const	43	0	1
+ming_sim/cli/terminal.py	_fail_cli_chat_turn_scene	_fail_cli_chat_turn_scene	FunctionDef	156	0	1
 ming_sim/cli/terminal.py	run_cli	run_cli	FunctionDef	797	1	0	main.py
-ming_sim/cli_backend.py	_DRAFT_PREFIXES	_DRAFT_PREFIXES	Const	1261	0	1	
-ming_sim/cli_backend.py	_SECRET_PREFIXES	_SECRET_PREFIXES	Const	1262	0	1	
-ming_sim/cli_backend.py	compose_decree_validation_recovery	compose_decree_validation_recovery	FunctionDef	1915	0	1	
-ming_sim/cli_backend.py	compose_secret_order_landing_recovery	compose_secret_order_landing_recovery	FunctionDef	2002	0	1	
-ming_sim/cli_backend.py	_matched_prefix	_matched_prefix	FunctionDef	3543	0	1	
+ming_sim/cli_backend.py	_DRAFT_PREFIXES	_DRAFT_PREFIXES	Const	1261	0	1
+ming_sim/cli_backend.py	_SECRET_PREFIXES	_SECRET_PREFIXES	Const	1262	0	1
+ming_sim/cli_backend.py	compose_decree_validation_recovery	compose_decree_validation_recovery	FunctionDef	1915	0	1
+ming_sim/cli_backend.py	compose_secret_order_landing_recovery	compose_secret_order_landing_recovery	FunctionDef	2002	0	1
+ming_sim/cli_backend.py	_matched_prefix	_matched_prefix	FunctionDef	3543	0	1
 ming_sim/cli_backend.py	_extract_secret_order	_extract_secret_order	FunctionDef	4052	1	0	tests/test_cli_backend.py
-ming_sim/cli_backend.py	_secret_prefix_needs_recent_context	_secret_prefix_needs_recent_context	FunctionDef	4290	0	1	
-ming_sim/cli_backend.py	_cli_prompt	_cli_prompt	FunctionDef	4316	0	1	
-ming_sim/cli_backend.py	_cli_stream_safe_prefix	_cli_stream_safe_prefix	FunctionDef	4336	0	1	
-ming_sim/cli_backend.py	_cli_recommendation_call	_cli_recommendation_call	FunctionDef	4348	0	1	
-ming_sim/cli_backend.py	CliChat.ainvoke	ainvoke	AsyncFunctionDef	4466	0	1	
-ming_sim/cli_backend.py	CliChat.ainvoke_stream	ainvoke_stream	AsyncFunctionDef	4528	0	1	
-ming_sim/constants.py	MINISTER_DISMISS_COMMANDS	MINISTER_DISMISS_COMMANDS	Const	259	0	1	
-ming_sim/content.py	dict_of_string_lists	dict_of_string_lists	FunctionDef	600	0	1	
-ming_sim/content.py	dict_of_strings	dict_of_strings	FunctionDef	605	0	1	
+ming_sim/cli_backend.py	_secret_prefix_needs_recent_context	_secret_prefix_needs_recent_context	FunctionDef	4290	0	1
+ming_sim/cli_backend.py	_cli_prompt	_cli_prompt	FunctionDef	4316	0	1
+ming_sim/cli_backend.py	_cli_stream_safe_prefix	_cli_stream_safe_prefix	FunctionDef	4336	0	1
+ming_sim/cli_backend.py	_cli_recommendation_call	_cli_recommendation_call	FunctionDef	4348	0	1
+ming_sim/cli_backend.py	CliChat.ainvoke	ainvoke	AsyncFunctionDef	4466	0	1
+ming_sim/cli_backend.py	CliChat.ainvoke_stream	ainvoke_stream	AsyncFunctionDef	4528	0	1
+ming_sim/constants.py	MINISTER_DISMISS_COMMANDS	MINISTER_DISMISS_COMMANDS	Const	259	0	1
+ming_sim/content.py	dict_of_string_lists	dict_of_string_lists	FunctionDef	600	0	1
+ming_sim/content.py	dict_of_strings	dict_of_strings	FunctionDef	605	0	1
 ming_sim/db.py	MINISTRY_OFFICE_TYPES	MINISTRY_OFFICE_TYPES	Const	713	1	0	tests/test_faction_leverage_9.py
 ming_sim/db.py	GameDB.settle_province_tick	settle_province_tick	FunctionDef	3142	1	0	tests/test_fiscal_substrate_bridge.py,tests/test_pay_order_override_653.py
-ming_sim/db.py	GameDB.list_office_vacancies	list_office_vacancies	FunctionDef	4046	0	1	
-ming_sim/db.py	GameDB._primary_source_only_army_pay_container_total	_primary_source_only_army_pay_container_total	FunctionDef	4381	0	1	
+ming_sim/db.py	GameDB.list_office_vacancies	list_office_vacancies	FunctionDef	4046	0	1
+ming_sim/db.py	GameDB._primary_source_only_army_pay_container_total	_primary_source_only_army_pay_container_total	FunctionDef	4381	0	1
 ming_sim/db.py	GameDB.army_detail	army_detail	FunctionDef	7712	1	0	tests/test_army_card_status_1501.py,tests/test_army_display_173.py,tests/test_army_firearms.py,tests/test_player_army_projection_321.py
-ming_sim/db.py	GameDB.building_detail	building_detail	FunctionDef	8777	0	1	
+ming_sim/db.py	GameDB.building_detail	building_detail	FunctionDef	8777	0	1
 ming_sim/db.py	GameDB.get_message_highlights	get_message_highlights	FunctionDef	8939	1	0	tests/test_highlight_judge_544.py
-ming_sim/db.py	GameDB.complete_rescript_summon_scaffold_turn	complete_rescript_summon_scaffold_turn	FunctionDef	9148	0	1	
-ming_sim/db.py	GameDB.mark_chat_turn_failed	mark_chat_turn_failed	FunctionDef	9480	0	1	
+ming_sim/db.py	GameDB.complete_rescript_summon_scaffold_turn	complete_rescript_summon_scaffold_turn	FunctionDef	9148	0	1
+ming_sim/db.py	GameDB.mark_chat_turn_failed	mark_chat_turn_failed	FunctionDef	9480	0	1
 ming_sim/db.py	GameDB.clear_pending_decisions	clear_pending_decisions	FunctionDef	10837	1	0	tests/test_advance_paths_atomic.py,tests/test_pihong_dossier_1490.py,tests/test_rescript_draft_656.py
 ming_sim/db.py	GameDB.save_rescript_drafts	save_rescript_drafts	FunctionDef	10846	1	0	tests/test_pihong_dossier_1490.py,tests/test_rescript_choices_563.py,tests/test_rescript_draft_656.py,tests/test_structured_decree_contract_1624.py
-ming_sim/db.py	GameDB.attach_secret_oral_pin	attach_secret_oral_pin	FunctionDef	11099	0	1	
+ming_sim/db.py	GameDB.attach_secret_oral_pin	attach_secret_oral_pin	FunctionDef	11099	0	1
 ming_sim/db.py	GameDB.record_monthly_supervision_facts	record_monthly_supervision_facts	FunctionDef	12436	1	0	tests/test_supervision_625.py
 ming_sim/db.py	GameDB.unread_memorial_count	unread_memorial_count	FunctionDef	12771	1	0	tests/test_memorial_inbox_1726.py
 ming_sim/db.py	GameDB.list_dossiers_for_directive	list_dossiers_for_directive	FunctionDef	14425	1	0	tests/test_execution_pressure_654.py
@@ -58,71 +58,71 @@ ming_sim/db.py	GameDB.list_dossier_link_rejections	list_dossier_link_rejections	
 ming_sim/db.py	GameDB.list_execution_liability_parties	list_execution_liability_parties	FunctionDef	15818	1	0	tests/test_execution_joint_liability_565.py
 ming_sim/db.py	GameDB.save_pending_promulgation_verdicts	save_pending_promulgation_verdicts	FunctionDef	15983	1	0	tests/test_pihong_dossier_1490.py,tests/test_promulgation_judge_561.py,tests/test_promulgation_seam_560.py
 ming_sim/db.py	GameDB.upsert_pending_directive	upsert_pending_directive	FunctionDef	17231	1	0	tests/test_audience_night_498.py,tests/test_web_audience_night_498.py
-ming_sim/db.py	GameDB.clear_directive_needs_clarification	clear_directive_needs_clarification	FunctionDef	17461	0	1	
-ming_sim/db.py	GameDB.list_night_promulgated_directives	list_night_promulgated_directives	FunctionDef	17489	0	1	
-ming_sim/db.py	GameDB.list_promulgated_directives	list_promulgated_directives	FunctionDef	17525	0	1	
-ming_sim/db.py	GameDB.flag_directive_needs_clarification	flag_directive_needs_clarification	FunctionDef	17620	0	1	
+ming_sim/db.py	GameDB.clear_directive_needs_clarification	clear_directive_needs_clarification	FunctionDef	17461	0	1
+ming_sim/db.py	GameDB.list_night_promulgated_directives	list_night_promulgated_directives	FunctionDef	17489	0	1
+ming_sim/db.py	GameDB.list_promulgated_directives	list_promulgated_directives	FunctionDef	17525	0	1
+ming_sim/db.py	GameDB.flag_directive_needs_clarification	flag_directive_needs_clarification	FunctionDef	17620	0	1
 ming_sim/db.py	GameDB.drop_pending_actions_for_minister	drop_pending_actions_for_minister	FunctionDef	18651	1	0	tests/test_audience_undo_506.py,tests/test_secret_order_isolation_883.py
-ming_sim/db.py	GameDB.discard_pending_directives	discard_pending_directives	FunctionDef	18706	0	1	
+ming_sim/db.py	GameDB.discard_pending_directives	discard_pending_directives	FunctionDef	18706	0	1
 ming_sim/db.py	GameDB.clear_resolve_context	clear_resolve_context	FunctionDef	18790	1	0	tests/test_advance_paths_atomic.py,tests/test_pre_settle_transaction.py
 ming_sim/db.py	GameDB.list_office_effects_for_dossier	list_office_effects_for_dossier	FunctionDef	18957	1	0	tests/test_decree_dossiers_571.py
 ming_sim/db.py	GameDB.reject_directive	reject_directive	FunctionDef	19249	1	0	tests/test_decree_dossiers_571.py
 ming_sim/db.py	GameDB.count_active_initiatives	count_active_initiatives	FunctionDef	19373	1	0	tests/test_structured_decree_contract_1624.py
 ming_sim/db.py	GameDB.list_dossier_actual_rail	list_dossier_actual_rail	FunctionDef	20601	1	0	tests/test_secret_order_payoff_1504.py
-ming_sim/db.py	GameDB._is_audience_chat_shared_channel	_is_audience_chat_shared_channel	FunctionDef	21004	0	1	
+ming_sim/db.py	GameDB._is_audience_chat_shared_channel	_is_audience_chat_shared_channel	FunctionDef	21004	0	1
 ming_sim/db.py	GameDB._is_active_secret_order_assignee	_is_active_secret_order_assignee	FunctionDef	21008	1	0	tests/test_secret_order_isolation_883.py
 ming_sim/db.py	GameDB.upsert_secret_order	upsert_secret_order	FunctionDef	21651	1	0	tests/test_secret_order_update.py
-ming_sim/db.py	GameDB.read_credit_events_as_edges	read_credit_events_as_edges	FunctionDef	22381	0	1	
+ming_sim/db.py	GameDB.read_credit_events_as_edges	read_credit_events_as_edges	FunctionDef	22381	0	1
 ming_sim/db.py	GameDB.get_faction_stance_summary	get_faction_stance_summary	FunctionDef	22577	1	0	tests/test_faction_brew_637.py
-ming_sim/due_review.py	DUE_REVIEW_ENTRY_KIND_WHITELIST	DUE_REVIEW_ENTRY_KIND_WHITELIST	Const	45	0	1	
-ming_sim/due_review.py	current_audience_scene	current_audience_scene	FunctionDef	313	0	1	
-ming_sim/entities/affair/store.py	AffairStore.point_dossier	point_dossier	FunctionDef	284	0	1	
-ming_sim/entities/affair/store.py	AffairStore.point_issue	point_issue	FunctionDef	316	0	1	
-ming_sim/entities/affair/store.py	AffairStore.experiences	experiences	FunctionDef	429	0	1	
-ming_sim/entities/staged_declaration/store.py	_STATUS_STAGED	_STATUS_STAGED	Const	19	0	1	
-ming_sim/entities/staged_declaration/store.py	_STATUS_DISCARDED	_STATUS_DISCARDED	Const	20	0	1	
-ming_sim/entities/staged_declaration/store.py	_STATUS_SETTLED	_STATUS_SETTLED	Const	21	0	1	
-ming_sim/entities/textual_fact/store.py	TextualFactStore.pointing_at	pointing_at	FunctionDef	113	0	1	
-ming_sim/flows.py	_HUANG_TIAN_RENT_PER_WAN_MU	_HUANG_TIAN_RENT_PER_WAN_MU	Const	24	0	1	
-ming_sim/flows.py	_province_transport_ratio	_province_transport_ratio	FunctionDef	54	0	1	
-ming_sim/flows.py	_province_collection_rate	_province_collection_rate	FunctionDef	59	0	1	
-ming_sim/flows.py	_fiscal_container_value	_fiscal_container_value	FunctionDef	285	0	1	
-ming_sim/issues.py	validate_delta_shape	validate_delta_shape	FunctionDef	6094	0	1	
+ming_sim/due_review.py	DUE_REVIEW_ENTRY_KIND_WHITELIST	DUE_REVIEW_ENTRY_KIND_WHITELIST	Const	45	0	1
+ming_sim/due_review.py	current_audience_scene	current_audience_scene	FunctionDef	313	0	1
+ming_sim/entities/affair/store.py	AffairStore.point_dossier	point_dossier	FunctionDef	284	0	1
+ming_sim/entities/affair/store.py	AffairStore.point_issue	point_issue	FunctionDef	316	0	1
+ming_sim/entities/affair/store.py	AffairStore.experiences	experiences	FunctionDef	429	0	1
+ming_sim/entities/staged_declaration/store.py	_STATUS_STAGED	_STATUS_STAGED	Const	19	0	1
+ming_sim/entities/staged_declaration/store.py	_STATUS_DISCARDED	_STATUS_DISCARDED	Const	20	0	1
+ming_sim/entities/staged_declaration/store.py	_STATUS_SETTLED	_STATUS_SETTLED	Const	21	0	1
+ming_sim/entities/textual_fact/store.py	TextualFactStore.pointing_at	pointing_at	FunctionDef	113	0	1
+ming_sim/flows.py	_HUANG_TIAN_RENT_PER_WAN_MU	_HUANG_TIAN_RENT_PER_WAN_MU	Const	24	0	1
+ming_sim/flows.py	_province_transport_ratio	_province_transport_ratio	FunctionDef	54	0	1
+ming_sim/flows.py	_province_collection_rate	_province_collection_rate	FunctionDef	59	0	1
+ming_sim/flows.py	_fiscal_container_value	_fiscal_container_value	FunctionDef	285	0	1
+ming_sim/issues.py	validate_delta_shape	validate_delta_shape	FunctionDef	6094	0	1
 ming_sim/llm_config.py	for_role	for_role	FunctionDef	397	1	0	tests/test_llm_channel_config.py,tests/test_runtime_llm_config.py
-ming_sim/llm_contract.py	require_non_empty_text	require_non_empty_text	FunctionDef	18	0	1	
-ming_sim/llm_contract.py	require_int_range	require_int_range	FunctionDef	24	0	1	
-ming_sim/llm_contract.py	require_bool	require_bool	FunctionDef	41	0	1	
-ming_sim/materials.py	MaterialsRoot	MaterialsRoot	ClassDef	159	0	1	
-ming_sim/materials.py	release_previous_material_tree	release_previous_material_tree	FunctionDef	227	0	1	
+ming_sim/llm_contract.py	require_non_empty_text	require_non_empty_text	FunctionDef	18	0	1
+ming_sim/llm_contract.py	require_int_range	require_int_range	FunctionDef	24	0	1
+ming_sim/llm_contract.py	require_bool	require_bool	FunctionDef	41	0	1
+ming_sim/materials.py	MaterialsRoot	MaterialsRoot	ClassDef	159	0	1
+ming_sim/materials.py	release_previous_material_tree	release_previous_material_tree	FunctionDef	227	0	1
 ming_sim/materials.py	prepare_character_materials	prepare_character_materials	FunctionDef	1119	1	0	tests/test_army_card_status_1501.py,tests/test_character_knowledge_489.py,tests/test_gazette_author_1862.py,tests/test_material_directory_1830.py,tests/test_person_delta_adapter.py
-ming_sim/models.py	ChatResult	ChatResult	ClassDef	339	0	1	
-ming_sim/models.py	CourtContext	CourtContext	ClassDef	684	0	1	
+ming_sim/models.py	ChatResult	ChatResult	ClassDef	339	0	1
+ming_sim/models.py	CourtContext	CourtContext	ClassDef	684	0	1
 ming_sim/month_open_snapshot.py	MONTH_OPEN_KEYS	MONTH_OPEN_KEYS	Const	20	1	0	tests/test_enter_settlement_period_1235.py,tests/test_month_open_snapshot_1234.py,tests/test_qa_c2_phase_settlement_mask_1374.py,tests/test_qa_c2_settlement_display_lifecycle_1343.py
 ming_sim/month_translate.py	stage_month_segment	stage_month_segment	FunctionDef	240	1	0	tests/test_breach_plea_623.py,tests/test_month_translate_1840.py
 ming_sim/pay_order.py	revoke_pay_order_decree	revoke_pay_order_decree	FunctionDef	472	1	0	tests/test_pay_order_override_653.py
-ming_sim/person_archive_contract.py	PERSON_LEGAL_REASON_CODES	PERSON_LEGAL_REASON_CODES	Const	51	0	1	
-ming_sim/person_archive_contract.py	PERSON_LEGACY_ALLEGIANCE_CHANGE_WAYS	PERSON_LEGACY_ALLEGIANCE_CHANGE_WAYS	Const	59	0	1	
-ming_sim/person_archive_contract.py	ACCEPTANCE_SCENARIOS	ACCEPTANCE_SCENARIOS	Const	203	0	1	
-ming_sim/person_write_inventory.py	discover_character_write_sql_locations	discover_character_write_sql_locations	FunctionDef	112	0	1	
-ming_sim/person_write_inventory.py	person_write_locations_by_disposition	person_write_locations_by_disposition	FunctionDef	157	0	1	
-ming_sim/qualitative.py	qualitative_character_attribute	qualitative_character_attribute	FunctionDef	53	0	1	
+ming_sim/person_archive_contract.py	PERSON_LEGAL_REASON_CODES	PERSON_LEGAL_REASON_CODES	Const	51	0	1
+ming_sim/person_archive_contract.py	PERSON_LEGACY_ALLEGIANCE_CHANGE_WAYS	PERSON_LEGACY_ALLEGIANCE_CHANGE_WAYS	Const	59	0	1
+ming_sim/person_archive_contract.py	ACCEPTANCE_SCENARIOS	ACCEPTANCE_SCENARIOS	Const	203	0	1
+ming_sim/person_write_inventory.py	discover_character_write_sql_locations	discover_character_write_sql_locations	FunctionDef	112	0	1
+ming_sim/person_write_inventory.py	person_write_locations_by_disposition	person_write_locations_by_disposition	FunctionDef	157	0	1
+ming_sim/qualitative.py	qualitative_character_attribute	qualitative_character_attribute	FunctionDef	53	0	1
 ming_sim/relation_brew.py	run_month_end_relation_brew	run_month_end_relation_brew	FunctionDef	438	1	0	tests/test_faction_brew_637.py,tests/test_relation_brew_636.py
-ming_sim/rescript_actions.py	_TERMINAL_ACTIONS	_TERMINAL_ACTIONS	Const	51	0	1	
-ming_sim/session.py	_target_active_officeholder	_target_active_officeholder	FunctionDef	409	0	1	
+ming_sim/rescript_actions.py	_TERMINAL_ACTIONS	_TERMINAL_ACTIONS	Const	51	0	1
+ming_sim/session.py	_target_active_officeholder	_target_active_officeholder	FunctionDef	409	0	1
 ming_sim/session.py	GameSession.list_ministers	list_ministers	FunctionDef	843	1	0	tests/test_person_delta_adapter.py,tests/test_web_court_visibility.py
 ming_sim/session.py	GameSession.schedule_close_night_after_chat_if_needed	schedule_close_night_after_chat_if_needed	FunctionDef	1079	1	0	tests/test_audience_presence_500.py,tests/test_scene_llm_1836.py
 ming_sim/session.py	GameSession.write_decree	write_decree	FunctionDef	1562	1	0	tests/test_advance_paths_atomic.py,tests/test_audience_night_498.py,tests/test_draft_admission_resubmit_1769.py,tests/test_pre_settle_transaction.py
-ming_sim/session_write_queue.py	ClassifiedWriteGate.holder_kind	holder_kind	FunctionDef	110	0	1	
+ming_sim/session_write_queue.py	ClassifiedWriteGate.holder_kind	holder_kind	FunctionDef	110	0	1
 ming_sim/session_write_queue.py	SessionWriteQueue.is_sealed	is_sealed	FunctionDef	262	1	0	tests/test_menu_lifecycle_drain_396.py,tests/test_new_game_write_path_1749.py
 ming_sim/session_write_queue.py	SessionWriteQueue.vacate	vacate	FunctionDef	336	1	0	tests/test_session_write_queue_1353.py
 ming_sim/session_write_queue.py	SessionWriteQueue.run_exclusive	run_exclusive	FunctionDef	520	1	0	tests/test_audience_travel_gating_670.py,tests/test_pihong_dossier_1490.py,tests/test_session_write_queue_1353.py
-ming_sim/supervision.py	SUPERVISION_SURFACE_KEYS	SUPERVISION_SURFACE_KEYS	Const	29	0	1	
+ming_sim/supervision.py	SUPERVISION_SURFACE_KEYS	SUPERVISION_SURFACE_KEYS	Const	29	0	1
 ming_sim/supervision.py	DENUNCIATION_TABLE	DENUNCIATION_TABLE	Const	71	1	0	tests/test_faction_denunciation_627.py
 ming_sim/supervision.py	DENUNCIATION_ALLOWED_COLS	DENUNCIATION_ALLOWED_COLS	Const	72	1	0	tests/test_faction_denunciation_627.py
 ming_sim/supervision.py	PRESENCE_TABLE	PRESENCE_TABLE	Const	79	1	0	tests/test_supervision_625.py
 ming_sim/supervision.py	EXPOSURE_TABLE	EXPOSURE_TABLE	Const	80	1	0	tests/test_supervision_625.py
-ming_sim/supervision.py	PRESENCE_ALLOWED_COLS	PRESENCE_ALLOWED_COLS	Const	81	0	1	
-ming_sim/supervision.py	EXPOSURE_ALLOWED_COLS	EXPOSURE_ALLOWED_COLS	Const	85	0	1	
+ming_sim/supervision.py	PRESENCE_ALLOWED_COLS	PRESENCE_ALLOWED_COLS	Const	81	0	1
+ming_sim/supervision.py	EXPOSURE_ALLOWED_COLS	EXPOSURE_ALLOWED_COLS	Const	85	0	1
 ming_sim/supervision.py	FORBIDDEN_DULLING_COL_FRAGMENTS	FORBIDDEN_DULLING_COL_FRAGMENTS	Const	89	1	0	tests/test_supervision_625.py
 ming_sim/value_matrix.py	value_axes	value_axes	FunctionDef	46	1	0	tests/test_value_matrix_691.py
 ming_sim/value_matrix.py	axis_collision_stances	axis_collision_stances	FunctionDef	100	1	0	tests/test_value_matrix_691.py
