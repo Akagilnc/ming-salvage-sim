@@ -8136,12 +8136,9 @@ def _write_fiscal_config_change(
         origin_ref=origin_ref, reason=reason, beyond_intent=beyond_intent,
     )
     stem = db._stem_of(key)
-    if stem in db._DYNAMIC_REGION_FIELD or stem == "田赋":
+    if stem in db._SIDE_CHANNEL_REGION_FIELD:
         ratio = (new_value / old_value) if old_value > 0 else (1.0 if new_value == 0 else 0.0)
-        if stem == "田赋":
-            db.scale_tian_fu(ratio, commit=False)
-        else:
-            db.apply_dynamic_fiscal_scale(stem, ratio, commit=False)
+        db.apply_dynamic_fiscal_scale(stem, ratio, commit=False)
 
 
 def neutralize_covert_fiscal_effects(

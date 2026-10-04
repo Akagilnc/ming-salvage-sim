@@ -3101,30 +3101,23 @@ class GameDB:
                 (int(turn), rate_key, 100, "rate", origin_ref, note, beyond_flag),
             ],
         )
-        # #1899：重立 dynamic 赋税必须同时恢复**省级收入源**，与 `remove_fiscal_item`
-        # 罢征时的 `apply_dynamic_fiscal_scale(stem, 0.0)` 读写对称。盐税／商税的实收
-        # 走 `regions.fiscal.salt_tax` / `commerce_tax`（flows 的盐商旁路直接汇总该字段），
-        # 目录行只是系数：只重立目录而省份字段仍为 0，复征被接收却实收恒 0——同一道
-        # 已落账的复征白写。辽饷／田赋另有饷率通道按 seed 重算 settle.p，但它们的省份
-        # 字段同样被罢征清零过，一并恢复才与罢征对称（`scale_tian_fu` 的三税残差口径
-        # 依赖这些字段非零）。
-        # 省级实收按 round(seed 分布 × 声明额度 / seed 定额) 摊回。
-        # seed 定额缺失时不臆造。
-        if budget_role == "dynamic" and stem in self._DYNAMIC_REGION_FIELD:
+        # Only salt/commerce have live region-field side-channel consumers.
+        # Tian/liao assessments are derived from the catalogue by the levy applier.
+        if budget_role == "dynamic" and stem in self._SIDE_CHANNEL_REGION_FIELD:
             self._restore_dynamic_region_field(stem, max(0, int(init_value)))
         if commit:
             self.conn.commit()
         return base_key
 
     def _restore_dynamic_region_field(self, stem: str, declared_base: int) -> int:
-        """按声明额度摊回 dynamic 税的省级实收（`create_fiscal_item` 的对称侧）。
+        """按声明额度摊回盐税／商税现役旁路实收。
 
         省字段是盐税／商税旁路的实收，目录 base 是系数。份额沿用 seed 各省分布：
         `province = round(seed_province × declared_base / seed_base)`。声明等于
         seed 定额时 round 回原值，声明 0 得 0。seed 本身为 0 的省份保持 0。
         seed 定额缺失或非正时不写。
         """
-        field = self._DYNAMIC_REGION_FIELD.get(stem)
+        field = self._SIDE_CHANNEL_REGION_FIELD.get(stem)
         if field is None:
             return 0
         seed_base = self._seeded_fiscal_config_value(f"{stem}_base")
@@ -3151,13 +3144,9 @@ class GameDB:
             touched += 1
         return touched
 
-    # dynamic 税科目 → regions.fiscal 子字段映射。dynamic 税实收走 calc_province_fiscal
-    # 读 region.fiscal（不读 fiscal_config 的 base），故对这些 key 做裁撤/调额必须同步改
-    # 各省 fiscal 字段才真生效——否则只动目录不动钱（账目与叙事脱节）。
-    #   田赋无独立字段（=tax_per_turn 减其余三税的残差），裁撤走 tax_per_turn 压低；
-    #   皇庄收入真读 fiscal_config.皇庄_base，裁撤/调额改 config 即生效，不在本表。
-    _DYNAMIC_REGION_FIELD = {
-        "辽饷": "liao_xiang", "盐税": "salt_tax", "商税": "commerce_tax",
+    # Live substrate-hub side channels read these region fields directly.
+    _SIDE_CHANNEL_REGION_FIELD = {
+        "盐税": "salt_tax", "商税": "commerce_tax",
     }
 
     def _stem_of(self, key: str) -> str:
@@ -3217,12 +3206,8 @@ class GameDB:
         return cache.get(str(key))
 
     def apply_dynamic_fiscal_scale(self, stem: str, ratio: float, commit: bool = True) -> int:
-        """按 ratio 缩放所有省 regions.fiscal 中该 dynamic 税字段（辽饷/盐税/商税）。
-
-        ratio=0 即彻底罢废（字段归零）；0<ratio<1 即按比例削减。田赋走 _scale_tian_fu。
-        返回被改动的省数。皇庄不在此（走 fiscal_config）。命中映射外的 stem 返回 0。
-        """
-        field = self._DYNAMIC_REGION_FIELD.get(stem)
+        """Scale live salt/commerce side-channel income; return changed province count."""
+        field = self._SIDE_CHANNEL_REGION_FIELD.get(stem)
         if field is None:
             return 0
         touched = 0
@@ -3403,32 +3388,6 @@ class GameDB:
                     ),
                 )
 
-    def scale_tian_fu(self, ratio: float, commit: bool = True) -> int:
-        """田赋无独立字段（=tax_per_turn 减辽饷/盐税/商税的残差）。按 ratio 缩放田赋部分：
-        新 tax_per_turn = 三税之和 + 田赋残差×ratio。ratio=0 即罢田赋（仅留三税基）。
-        返回被改动的省数。"""
-        touched = 0
-        for row in self.conn.execute(
-            "SELECT id, tax_per_turn, fiscal FROM regions"
-        ).fetchall():
-            fiscal: dict = json.loads(str(row["fiscal"] or "{}"))
-            others = (int(fiscal.get("liao_xiang", 0) or 0)
-                      + int(fiscal.get("salt_tax", 0) or 0)
-                      + int(fiscal.get("commerce_tax", 0) or 0))
-            tax = int(row["tax_per_turn"])
-            tian_fu = max(0, tax - others)
-            new_tax = others + max(0, round(tian_fu * ratio))
-            if new_tax == tax:
-                continue
-            self.conn.execute(
-                "UPDATE regions SET tax_per_turn = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-                (new_tax, str(row["id"])),
-            )
-            touched += 1
-        if touched and commit:
-            self.conn.commit()
-        return touched
-
     def remove_fiscal_item(
         self, key: str, commit: bool = True, *, origin_ref: str = "",
         reason: str = "", turn: int = 0, beyond_intent: object = 0,
@@ -3437,9 +3396,8 @@ class GameDB:
 
         完全放开——含 dynamic（田赋/辽饷/盐税/商税/皇庄），后果玩家自负。
         - fixed 项：删目录条目即停止逐月落账。
-        - dynamic 税（辽饷/盐税/商税）：实收走 region.fiscal，故同步把各省该字段归零；
-          田赋走 tax_per_turn 压到仅留三税基；皇庄收入读 fiscal_config，删 config 即停。
-          这样「永久罢辽饷」当真停收，不再只动目录不动钱。
+        - 田赋／辽饷由现役饷率 applier 读目录推进省级 tick；皇庄也直接读目录。
+        - 盐税／商税仍由现役旁路读取省字段，裁撤须将其归零。
         删不存在的项返回 None。返回被删的 base key（按 stem 归一）。
         """
         stem = self._stem_of(key)
@@ -3475,11 +3433,9 @@ class GameDB:
         self.conn.execute(
             "DELETE FROM fiscal_config WHERE key IN (?, ?)", (base_key, rate_key)
         )
-        # dynamic 税：同步罢废各省实收字段（皇庄走 config 不在此）。
-        if stem in self._DYNAMIC_REGION_FIELD:
+        # Only the live salt/commerce side channels need region-field writes.
+        if stem in self._SIDE_CHANNEL_REGION_FIELD:
             self.apply_dynamic_fiscal_scale(stem, 0.0, commit=commit)
-        elif stem == "田赋":
-            self.scale_tian_fu(0.0, commit=commit)
         if commit:
             self.conn.commit()
         return base_key

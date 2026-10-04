@@ -62,29 +62,6 @@ def test_remove_unknown_fiscal_key_rejected_good_removal_lands(game):
         "SELECT 1 FROM fiscal_config WHERE key=?", (good,)).fetchone() is None
 
 
-def test_remove_dynamic_tax_still_zeroes_region_field(game):
-    """好路 pin:裁撤 dynamic 税(辽饷)→ base/rate 行删除 + 各省实收字段归零
-    (db.remove_fiscal_item 的 dynamic 联动语义不被本切片破坏)。"""
-    db, state, content = game
-    # 先确保至少一省有辽饷实收
-    db.conn.execute(
-        "UPDATE regions SET fiscal=json_set(COALESCE(NULLIF(fiscal,''),'{}'),'$.liao_xiang',500)"
-        " WHERE id=(SELECT id FROM regions LIMIT 1)")
-    db.conn.commit()
-    rid = db.conn.execute("SELECT id FROM regions LIMIT 1").fetchone()[0]
-
-    run_settle(db, state, content, {
-        "fiscal_removes": [{"key": "辽饷", "reason": "永罢辽饷"}],
-    }, narrative="x", decree_text="y")
-
-    assert db.conn.execute(
-        "SELECT 1 FROM fiscal_config WHERE key='辽饷_base'").fetchone() is None
-    import json as _json
-    fiscal = _json.loads(db.conn.execute(
-        "SELECT fiscal FROM regions WHERE id=?", (rid,)).fetchone()[0] or "{}")
-    assert int(fiscal.get("liao_xiang", 0) or 0) == 0  # dynamic 联动归零
-
-
 def test_remove_structural_sink_loss_rate_rejected(game):
     """中央自然损耗率是结构地板，不能被 fiscal_removes 裁撤成 0。"""
     db, state, content = game
@@ -325,30 +302,6 @@ def test_change_empty_key_rejected(game):
     assert rows[0][1]
 
 
-def test_change_dynamic_tax_rate_scales_region_field(game):
-    """好路 pin:调 dynamic 税(辽饷)系数 → fiscal_config 改 + 各省实收按比例缩放
-    (db dynamic 联动缩放语义不被本切片破坏)。"""
-    db, state, content = game
-    db.conn.execute(
-        "UPDATE regions SET fiscal=json_set(COALESCE(NULLIF(fiscal,''),'{}'),'$.liao_xiang',400)"
-        " WHERE id=(SELECT id FROM regions LIMIT 1)")
-    db.conn.commit()
-    rid = db.conn.execute("SELECT id FROM regions LIMIT 1").fetchone()[0]
-    old_rate = db.get_fiscal_config()["辽饷_rate"]
-
-    run_settle(db, state, content, {
-        "fiscal_changes": [{"key": "辽饷_rate", "delta": -50, "reason": "减辽饷"}],
-    }, narrative="x", decree_text="y")
-
-    new_rate = db.get_fiscal_config()["辽饷_rate"]
-    assert new_rate == max(0, old_rate - 50)
-    import json as _json
-    fiscal = _json.loads(db.conn.execute(
-        "SELECT fiscal FROM regions WHERE id=?", (rid,)).fetchone()[0] or "{}")
-    # 按 new/old 比例缩放后实收 < 400(联动当真生效)
-    assert 0 <= int(fiscal.get("liao_xiang", 0) or 0) < 400
-
-
 def test_change_structural_sink_loss_rate_below_floor_rejected(game):
     """中央自然损耗率可调但不可清零；低于结构地板的 change 逐项拒收。"""
     db, state, content = game
@@ -543,7 +496,7 @@ def test_double_suffix_key_rejected_no_phantom(game, bad_key):
 
 def test_double_suffix_remove_rejected_not_destructive(game):
     """remove 路对多重后缀垃圾 key(辽饷_base_base)必须拒收——循环剥后缀会把它
-    归一成 辽饷 命中真行,垃圾 key 触发不可逆删科目+清零各省辽饷
+    归一成 辽饷 命中真行,垃圾 key 触发不可逆删科目
     (cmr S3 r5 claude medium:与 create 路同形输入须同判)。"""
     db, state, content = game
     turn = state.turn
