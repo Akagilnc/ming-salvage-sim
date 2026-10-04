@@ -34,8 +34,8 @@
   4. 代码删除须事实核对（定义缺席＋无生产消费者）；AST 候选只作线索；
   5. 全仓扫描曾引用已删符号的专用测试：已删文件或现文件不再提及；
   6. F1／F3 邻接零引用（`compose_*`／`night_dossiers_ready`／选妃 stub／fiscal hub helper 等）按判词「不因引用少自动归入本票」—不上呈本票施工。
-- 结论：**无新 F2 缺口**。已删 108 quals 全 GONE；已删消费者的仍存活直接支持 91 名均有真实生产消费者（SUSPECTS=0）；零／仅测试残留且出现在已删函数体中的支持 COUNT=0。
-- 原始扫描落盘：`evidence/1843-f2-r7-deleted-changed-defs.txt`、`evidence/1843-f2-r7-deleted-quals.json`、`evidence/1843-f2-r7-member-table.txt`、`evidence/1843-f2-r7-seed-still-support-detail.txt`、`evidence/1843-f2-r7-tight-closure-verify.txt`、`evidence/1843-f2-r7-per-name-absence.txt`、`evidence/1843-f2-r7-live-retain-evidence.txt`（R6 落盘保留作失败史）。
+- 结论：**无新 F2 缺口**。逐名缺席原始结果为 `SUMMARY gone=107 bad=1`（**禁止**偷改原结果报「108 全 GONE」／`BAD=0`）：唯一 BAD 是未限定名 `__init__` 与现役 `RescriptOptionMissingFieldsError.__init__` 同名碰撞，行内已记 `qual_gone=True`；qualified-name AST 确认已删 `RescriptOptionMissingFieldsBatch.__init__` 不存在，而 Error 类由改票层 A（`normalize_rescript_layer_a_option`／`session`／`rescript_actions`）真实消费。已删消费者的仍存活直接支持 91 名均有真实生产消费者（SUSPECTS=0）；零／仅测试残留且出现在已删函数体中的支持 COUNT=0。
+- 原始扫描落盘：`evidence/1843-f2-r7-deleted-changed-defs.txt`、`evidence/1843-f2-r7-deleted-quals.json`、`evidence/1843-f2-r7-member-table.txt`、`evidence/1843-f2-r7-seed-still-support-detail.txt`、`evidence/1843-f2-r7-tight-closure-verify.txt`、`evidence/1843-f2-r7-per-name-absence.txt`（含 HYGIENE_AST_CONFIRM；保留 BAD=1 原结果）、`evidence/1843-f2-r7-live-retain-evidence.txt`（R6 落盘保留作失败史）。
 
 ## R7 枚举命令（实际执行；临时 `/tmp/1843-f2-r7`，不进仓机制）
 
@@ -153,8 +153,8 @@ rg -n -w 'normalize_rescript_layer_a_option|create_rescript_revise_agent|save_re
 
 ## 原类复扫（R7）
 
-- `evidence/1843-f2-r7-per-name-absence.txt`：已删 quals 定义缺席。
-- `evidence/1843-f2-r7-seed-still-support-detail.txt`：关键种子仍存活支持逐项 `ok`（均有 prod_via）。
+- `evidence/1843-f2-r7-per-name-absence.txt`：`SUMMARY gone=107 bad=1`（原始结果保留；HYGIENE_AST_CONFIRM 补 qualified-name：Batch 方法缺席、Error 现役；**不得**把 BAD 偷改成 0）。
+- `evidence/1843-f2-r7-seed-still-support-detail.txt`：关键种子仍存活支持逐项 `ok`（均有 prod_via）；含 `RescriptOptionMissingFieldsError` prod_via。
 - `evidence/1843-f2-r7-tight-closure-verify.txt`：`SUSPECTS=0`。
 
 ## 聚焦测试（R7；完整可复现命令）
@@ -210,6 +210,7 @@ MING_SIM_PI_BIN=/usr/bin/false \
 
 - 施工前 HEAD：`6a232bee546067809cfb0b44635dcaca72dcac05`
 - 标题：`ak-roles: docs(#1843) correct F2 R7 historical-closure retirement receipt`
+- 证据卫生（独立提交，禁止 amend）：清理 `1843-f2-r7-per-name-absence.txt` 行尾 tab；补 HYGIENE_AST_CONFIRM（Batch qual 缺席／Error 现役）；回执纠正「108 全 GONE」误宣称，**保留**原始 `gone=107 bad=1`。
 
 ## 剩余范围
 
