@@ -26,17 +26,6 @@ def tlog(msg: str) -> None:
     print(f"[{ts()}] {msg}", flush=True)
 
 
-def _guess_caller_tag(kwargs: Dict[str, object]) -> str:
-    """Token log label only.
-
-    #1847 / ADR 0142: do not classify caller from free-text system prompt wording.
-    Explicit structured tag only; otherwise unknown.
-    """
-    raw = kwargs.get("ming_sim_caller_tag")
-    tag = str(raw or "").strip()
-    return tag or "?"
-
-
 def _record_usage(model_id: str, usage: object, caller_tag: str = "?") -> None:
     if usage is None:
         return
@@ -162,26 +151,24 @@ def install_token_stats_patch() -> None:
 
         def patched_create(self, *args, **kwargs):
             base_url = _get_client_base_url(self)
-            caller_tag = _guess_caller_tag(kwargs)
             if is_dashscope_base_url(base_url):
                 _inject_dashscope_cache_mark(kwargs)
             resp = orig_create(self, *args, **kwargs)
             try:
                 model_id = getattr(resp, "model", kwargs.get("model", "unknown"))
-                _record_usage(model_id, getattr(resp, "usage", None), caller_tag)
+                _record_usage(model_id, getattr(resp, "usage", None), "?")
             except Exception:
                 pass
             return resp
 
         async def patched_acreate(self, *args, **kwargs):
             base_url = _get_client_base_url(self)
-            caller_tag = _guess_caller_tag(kwargs)
             if is_dashscope_base_url(base_url):
                 _inject_dashscope_cache_mark(kwargs)
             resp = await orig_acreate(self, *args, **kwargs)
             try:
                 model_id = getattr(resp, "model", kwargs.get("model", "unknown"))
-                _record_usage(model_id, getattr(resp, "usage", None), caller_tag)
+                _record_usage(model_id, getattr(resp, "usage", None), "?")
             except Exception:
                 pass
             return resp

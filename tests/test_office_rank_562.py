@@ -327,26 +327,6 @@ def test_recognizable_archive_title_survives_blank_or_legacy_office_type(game):
     assert payload["break_rank"]["is_break_rank"] is True
 
 
-def test_rank_rule_legacy_stem_reanchor_marker_only_on_reload(game):
-    """#1847: legacy stem-weight reanchor deleted; reload only stamps the meta flag.
-
-    Deletion of `_rank_rules_562_legacy_weight_sum` /
-    `_reanchor_offsets_for_rank_rules_562` is covered by
-    evidence/1847-mutation-probes.py (N10_NO_LEGACY_RANK_STEM_REANCHOR).
-    """
-    db, _state, content = game
-    db.conn.execute("DELETE FROM metrics WHERE key='__leverage_offsets_rank_rules_562'")
-    db.conn.commit()
-    path = db.path
-    db.close()
-    from ming_sim.db import GameDB
-    reopened = GameDB(path, content)
-    try:
-        assert reopened._has_meta_flag("__leverage_offsets_rank_rules_562")
-    finally:
-        reopened.close()
-
-
 def test_dismissed_minister_reads_archive_via_status_enum_not_title_pollution(game):
     """#1847: history gate is closed status enum; no office-string 前/罢居/革职 peel."""
     db, _state, _content = game

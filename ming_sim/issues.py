@@ -4528,7 +4528,6 @@ def apply_issue_tracker_output(
     # same-batch new_issues births from later carriers (close / durable origin).
     touched_ids: set = set()
     applied_advances: List[Dict[str, object]] = []
-    pairing_warnings: List[str] = []  # #45/#46 国策结案实体后果强制配对告警（warn-only）
     applied_new: List[Dict[str, object]] = []
     applied_cancels: List[Dict[str, object]] = []
     # issue 实体后果的容忍拒收项（issue_strict=False）——挂进返回 summary,
@@ -5106,9 +5105,7 @@ def apply_issue_tracker_output(
             # 不进 except 拒收路。
             # tags 严格化（cmr ni r8 codex medium，与上方 int 字段同一字段校验 class）：缺省/null/
             # 空串 → []；present 必须是 list/tuple 且元素全为 str。原 `list(ni.get("tags") or [])`
-            # 把标量串拆字（list("募营")=['募','营']）——既污染 DB tags，又让 _initiative_resolve_
-            # pairing_warnings 的整词子串匹配（"募营" in blob）失配 → bypass #45/#46 new_armies 配对
-            # 守门；非串元素（list([5])=[5]）也静默落库。脏值落 except 拒整项。
+            # 把标量串拆字（list("募营")=['募','营']）污染 DB tags；非串元素亦静默落库。脏值落 except 拒整项。
             _tags_raw = ni.get("tags")
             if _tags_raw is None or _tags_raw == "":
                 tags = []
@@ -5571,7 +5568,6 @@ def apply_issue_tracker_output(
         "entity_rejections": entity_rejections,
         "applied_person_changes": issue_person_changes,
         "touched_ids": sorted(touched_ids),
-        "pairing_warnings": pairing_warnings,
     }
 
 
@@ -9303,8 +9299,7 @@ def _apply_score_extraction_body(
 
     state.clamp()
     # 实际应用结果契约（ADR 0157 步骤 4／4a）：只报已落账事实与拒收段。
-    # 抽取输入回声（world_advance / person_changes）与 warn-only 辅助
-    # （pairing_warnings）不入此契约；ongoing 结局读数亦非本段已提交效果。
+    # 抽取输入回声（world_advance / person_changes）不入此契约；ongoing 结局读数亦非本段已提交效果。
     report: Dict[str, object] = {
         "metric_delta": applied_metric,
         "validate_shape_rejections": validate_rejection_items,

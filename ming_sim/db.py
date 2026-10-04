@@ -2733,13 +2733,6 @@ class GameDB:
             self._migrate_offsets_to_float_precision()
             self._set_meta_flag("__leverage_offsets_float_v2")
             self.conn.commit()
-        # #1847 / #1812: delete legacy office-stem reanchor migration. Marker only.
-        if (
-            self.table_has_rows("factions")
-            and not self._has_meta_flag("__leverage_offsets_rank_rules_562")
-        ):
-            self._set_meta_flag("__leverage_offsets_rank_rules_562")
-            self.conn.commit()
         self.init_fiscal_config()
         self._migrate_missing_fiscal_engine_from_pay_source_cutover()
         # #1356：旧档精确 DELETE 已知 seed 全文（不动真实结算产物）
@@ -5896,9 +5889,6 @@ class GameDB:
         # #177 R1 finding#1（codex P2）：当前校准已存精确 float offset → 同时落 v2 标记，
         # 使 init_schema 的 v2 迁移跳过（免对已正确存 float 的档重复扫）。
         self._set_meta_flag("__leverage_offsets_float_v2")
-        # Fresh/current-rule calibration already uses the expanded #562 table;
-        # do not mistake it for an old save that needs the one-time re-anchor.
-        self._set_meta_flag("__leverage_offsets_rank_rules_562")
 
     def _migrate_offsets_to_float_precision(self) -> None:
         """#177 R1 finding#1（codex P2）：一次性 v2 迁移——旧版 #9 校准 round 了 offset（存整数），

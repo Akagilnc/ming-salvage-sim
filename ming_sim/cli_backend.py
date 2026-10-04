@@ -321,17 +321,6 @@ def _log(msg: str) -> None:
         print(f"[cli_backend] {msg}", flush=True)
 
 
-def _infer_tag(prompt: str) -> str:
-    """Trace/log label only.
-
-    #1847 / ADR 0142: do not classify caller from free prompt wording
-    (same root as token_stats._guess_caller_tag). Explicit tag at call sites;
-    otherwise unknown.
-    """
-    del prompt
-    return "other"
-
-
 def _trace(record: Dict[str, Any]) -> None:
     if _TRACE_DISABLED:
         return
@@ -402,16 +391,12 @@ def _cli_idle_seconds() -> float:
 
 
 def _terminate_cli_process(proc: Any) -> None:
-    """收尾子进程：已退时 terminate 是 no-op；否则 terminate→kill 兜底，防泄漏。"""
+    """收尾子进程：SIGTERM only. Never escalate to SIGKILL (shared #9 / #1847 N13)."""
     try:
         proc.terminate()
         proc.wait(timeout=5)
     except Exception:
-        try:
-            proc.kill()
-            proc.wait(timeout=5)
-        except Exception:
-            pass
+        pass
 
 
 def _iter_cli_process_lines(
@@ -1080,7 +1065,7 @@ def _run_backend_for_config(
     finally:
         _trace({
             "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "seq": -1, "tag": tag or _infer_tag(prompt),
+            "seq": -1, "tag": tag or "other",
             "backend": _backend_label(llm_config), "model_id": model_id,
             "dur_s": round(time.monotonic() - t0, 1), "attempts": attempts,
             "wants_json": False,
@@ -4236,7 +4221,7 @@ class CliChat(OpenAIChat):
         with _TRACE_LOCK:  # 原子自增，防并发丢增量/seq 重复（#83）
             _seq += 1
             seq = _seq
-        tag = _infer_tag(prompt)
+        tag = "other"
         t0 = time.monotonic()
         error = None
         text = ""

@@ -469,12 +469,7 @@ def run(
                 child.sendline("exit")
                 break
 
-            # 超长单行输入(尤其『指令内容：』界面 agent 整篇诏书)会卡死 CLI/pexpect → 截断。
-            # 诏书细节由 LLM 拟诏/结算补全，这里只需一句能立项的指令文本。
-            if len(action) > 200:
-                log(f"[输入截断 step {step}：{len(action)} 字 → 200 字，防 CLI 卡]")
-                action = action[:200]
-
+            # pexpect.sendline 原样发送（官方不截输入）；不在此裁自由正文。
             log(f"[崇祯] reasoning: {reasoning}")
             log(f"[崇祯] input: {action!r}")
             state.history.append({"step": step, "prompt": prompt_hint.strip(), "reasoning": reasoning, "input": action})
@@ -510,8 +505,9 @@ def run(
             pass
 
     finally:
+        # Soft stop only (SIGHUP/SIGINT). Never escalate to SIGKILL (shared #9).
         if child.isalive():
-            child.terminate(force=True)
+            child.terminate(force=False)
         log_file.close()
 
     print(f"\n=== 结束。完成 {completed_periods}/{turns} 月。Log: {log_path} ===")

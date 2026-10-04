@@ -1,7 +1,7 @@
 import type { Minister } from "../types";
 
-/** Formal office_type enum order only — no free-text office title vocabulary. */
-const COURT_OFFICE_TYPE_ORDER = [
+/** Formal office_type enum order — single source for court/ministry lists. */
+export const COURT_OFFICE_TYPE_ORDER = [
   "内阁",
   "吏部",
   "户部",
@@ -11,14 +11,9 @@ const COURT_OFFICE_TYPE_ORDER = [
   "工部",
 ] as const;
 
-const MINISTRY_OFFICE_TYPES = new Set<string>([
-  "吏部",
-  "户部",
-  "礼部",
-  "兵部",
-  "刑部",
-  "工部",
-]);
+const MINISTRY_OFFICE_TYPES = new Set<string>(
+  COURT_OFFICE_TYPE_ORDER.filter((officeType) => officeType !== "内阁"),
+);
 
 function officeTypeRank(officeType: string): number {
   const index = (COURT_OFFICE_TYPE_ORDER as readonly string[]).indexOf(officeType);
