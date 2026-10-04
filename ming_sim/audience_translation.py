@@ -129,10 +129,7 @@ def _bind_round_after_dispatch(
             set_night_protagonist(db, night_id, name, reason="translation", commit=False)
         return
     if name:
-        db.conn.execute(
-            "UPDATE chat_turns SET protagonist_name=? WHERE id=?",
-            (name, int(chat_turn_id)),
-        )
+        db.reign.set_chat_turn_protagonist(int(chat_turn_id), name)
         # The night value is only a projection of the latest live declaration.
         # A retry may commit an older round after a newer round (or a xuan cut).
         reproject_night_protagonist(db, night_id)
@@ -147,11 +144,7 @@ def mark_turn_translation_done(
     ctid = int(chat_turn_id or 0)
     if ctid <= 0 or not hasattr(db, "conn"):
         return
-    db.conn.execute(
-        "UPDATE chat_turns SET extract_status='done' "
-        "WHERE id=? AND status NOT IN ('failed','undone')",
-        (ctid,),
-    )
+    db.reign.mark_extract_status_done(ctid)
     if not commit:
         return
     if (
@@ -206,11 +199,11 @@ def _observe_finished_future(
 
 def _mark_translation_pending(db: Any, chat_turn_id: int, write_gate: Any) -> None:
     ctid = int(chat_turn_id or 0)
-    if ctid <= 0 or not hasattr(db, "mark_story_extraction_pending"):
+    if ctid <= 0 or not hasattr(getattr(db, "reign", None), "mark_story_extraction_pending"):
         return
     # 失败路径短持：与 job 内读写同属转译持闸类（ClassifiedWriteGate kind）。
     with _translation_write_cm(write_gate):
-        db.mark_story_extraction_pending(ctid)
+        db.reign.mark_story_extraction_pending(ctid)
 
 
 def list_pending_translations(
@@ -278,10 +271,7 @@ def run_turn_translation_job(
     already_done = False
     if ctid > 0 and hasattr(db, "conn"):
         with _gate_cm():
-            row = db.conn.execute(
-                "SELECT status, minister_message_id FROM chat_turns WHERE id=?",
-                (ctid,),
-            ).fetchone()
+            row = db.reign.chat_turn_status_and_minister_message(ctid)
             if row is not None and str(row["status"] or "") in {"failed", "undone"}:
                 raise AudienceTranslateError(f"源轮已死：chat_turn_id={ctid}")
             status = str(row["status"] or "") if row is not None else ""
@@ -296,11 +286,11 @@ def run_turn_translation_job(
                     f"源轮回话未落定：chat_turn_id={ctid} status={status}"
                 )
             already_done = (
-                hasattr(db, "get_story_extract_status")
-                and db.get_story_extract_status(ctid) == "done"
+                hasattr(getattr(db, "reign", None), "get_story_extract_status")
+                and db.reign.get_story_extract_status(ctid) == "done"
             )
-            if not already_done and hasattr(db, "mark_story_extraction_pending"):
-                db.mark_story_extraction_pending(ctid)
+            if not already_done and hasattr(getattr(db, "reign", None), "mark_story_extraction_pending"):
+                db.reign.mark_story_extraction_pending(ctid)
         if already_done:
             from ming_sim.applier import SectionResult
             from ming_sim.declaration_dispatch import ProtagonistResult
@@ -353,9 +343,7 @@ def run_turn_translation_job(
         with _gate_cm():
             # 落账临界区复查源轮仍存活（ADR 0038：后台写入前须校验目标轮仍存活）。
             if ctid > 0 and hasattr(db, "conn"):
-                live = db.conn.execute(
-                    "SELECT status FROM chat_turns WHERE id=?", (ctid,),
-                ).fetchone()
+                live = db.reign.chat_turn_status(ctid)
                 if live is None or str(live["status"] or "") in {"failed", "undone"}:
                     from ming_sim.audience_translate import AudienceTranslateError
                     raise AudienceTranslateError(
@@ -368,7 +356,7 @@ def run_turn_translation_job(
             )
     except Exception as exc:
         _mark_translation_pending(db, ctid, write_gate)
-        if ctid > 0 and hasattr(db, "set_chat_turn_error_pack"):
+        if ctid > 0 and hasattr(getattr(db, "reign", None), "set_chat_turn_error_pack"):
             from ming_sim.exceptions import LLMUnavailable
             if not isinstance(exc, LLMUnavailable):
                 from ming_sim.audience_night import write_audience_error_pack
@@ -378,7 +366,7 @@ def run_turn_translation_job(
                         detail={"chat_turn_id": ctid, "night_id": nid},
                         db=db, exc=exc,
                     )
-                    db.set_chat_turn_error_pack(ctid, pack)
+                    db.reign.set_chat_turn_error_pack(ctid, pack)
         raise
 
 
@@ -540,9 +528,7 @@ def _load_emperor_message_for_turn(
     if ctid <= 0 or not hasattr(db, "conn"):
         return ""
     with _translation_write_cm(write_gate):
-        trow = db.conn.execute(
-            "SELECT user_message_id FROM chat_turns WHERE id=?", (ctid,),
-        ).fetchone()
+        trow = db.reign.chat_turn_user_message_id(ctid)
         if trow is None:
             return ""
         uid = trow["user_message_id"]

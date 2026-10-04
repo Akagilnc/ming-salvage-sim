@@ -350,7 +350,7 @@ def test_resolve_turn_idempotent_at_awaiting(game, monkeypatch):
     db, state, content = game
     state.turn_phase = "awaiting_decision"
     db.save_state(state)
-    db.save_pending_decisions(state.turn, [{
+    db.issues.save_pending_decisions(state.turn, [{
         "title": "辽东战和", "context": "皇太极请款",
         "options": [{"label": "战", "hint": ""}, {"label": "和", "hint": ""}],
     }])

@@ -1210,10 +1210,7 @@ class GameSession:
                     )
                     xuan_ctid = int(chat_turn_id or 0)
                     if xuan_ctid > 0:
-                        self.db.conn.execute(
-                            "UPDATE chat_turns SET protagonist_name=? WHERE id=?",
-                            (target.name, xuan_ctid),
-                        )
+                        self.db.reign.set_chat_turn_protagonist(xuan_ctid, target.name)
                         if (
                             not bool(getattr(self.db.conn, "_commit_suspended", False))
                             and int(getattr(self.db.conn, "_atomic_depth", 0) or 0) == 0
@@ -1977,7 +1974,7 @@ class GameSession:
         from ming_sim.rescript_actions import row_is_applied_return_revise
 
         return [
-            row for row in self.db.list_rescript_desk(int(self.state.turn))
+            row for row in self.db.issues.list_rescript_desk(int(self.state.turn))
             if not row_is_applied_return_revise(row)
         ]
 
@@ -2001,7 +1998,7 @@ class GameSession:
         )
 
         self._assert_awaiting_decision_submit()
-        desk = list(self.db.list_rescript_desk(int(self.state.turn)))
+        desk = list(self.db.issues.list_rescript_desk(int(self.state.turn)))
         ctx = self.db.resolve_contexts.get(self.state.turn)
         # #389：event_id 缺失/回显越权（越出本回合候选快照）时以候选快照重绑——
         # 迁自旧 submit_decisions 的绑定步（与 choices[idx] 位置写协议无关，非
@@ -2030,7 +2027,7 @@ class GameSession:
             and str(c.get("decision_key") or "").strip() not in desk_keys
         ]
         if missing_keys:
-            desk.extend(self.db.get_rescript_desk_rows_by_keys(missing_keys))
+            desk.extend(self.db.issues.get_rescript_desk_rows_by_keys(missing_keys))
         def _rescript_can_summon(name: str):
             """validate_all 唯一资格出口：str→Character→can_summon；成功回 canonical。"""
             raw = str(name or "").strip()
@@ -2302,7 +2299,7 @@ class GameSession:
         )
 
         out: List[Dict[str, object]] = []
-        for draft in self.db.list_rescript_drafts():
+        for draft in self.db.issues.list_rescript_drafts():
             if str(draft.get("status") or "") != "decided":
                 continue
             choice = draft.get("choice")
@@ -2358,7 +2355,7 @@ class GameSession:
         from ming_sim.rescript_actions import row_is_applied_return_revise
 
         desk = [
-            row for row in self.db.list_rescript_desk(int(self.state.turn))
+            row for row in self.db.issues.list_rescript_desk(int(self.state.turn))
             if not row_is_applied_return_revise(row)
         ]
         if desk or choices:
@@ -2442,10 +2439,10 @@ class GameSession:
             import os as _os
             saves_dir = user_data_path("saves", "_keep")  # 确保父目录建好
             saves_dir = _os.path.dirname(saves_dir)
-            campaign_id = (self.db.kv_get("campaign_id") or "").strip()
+            campaign_id = (self.db.reign.kv_get("campaign_id") or "").strip()
             if not campaign_id:
                 campaign_id = uuid.uuid4().hex[:12]
-                self.db.kv_set("campaign_id", campaign_id)
+                self.db.reign.kv_set("campaign_id", campaign_id)
             fname = (
                 f"{AUTO_SAVE_PREFIX}{campaign_id}_{self.state.year:04d}_"
                 f"{self.state.period:02d}_t{self.state.turn:04d}_{tag}.db"

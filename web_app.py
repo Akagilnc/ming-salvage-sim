@@ -836,15 +836,15 @@ class WebGame:
             for name, msgs in self.db.chat_messages.history_by_minister().items():
                 self.chat_history.setdefault(name, []).extend(msgs)
             _DEFAULT_FAVORITES = {"王承恩", "曹化淳", "李若琏", "魏忠贤", "田尔耕"}
-            _fav_raw = self.db.kv_get("favorites")
+            _fav_raw = self.db.reign.kv_get("favorites")
             self.favorites: set = set(json.loads(_fav_raw)) if _fav_raw else set(_DEFAULT_FAVORITES)
             if not _fav_raw:
-                self.db.kv_set("favorites", json.dumps(sorted(self.favorites)))
+                self.db.reign.kv_set("favorites", json.dumps(sorted(self.favorites)))
             # #505：重开对账——上一进程崩溃遗留的在飞回话轮终态化（问话保留 + 可重试，永不删账）。
             # 解除在飞判定，使续问/收夜不被崩溃孤儿轮永久挡死（ADR 0036）。同步、先于后台补跑。
             if hasattr(self.db, "conn"):
                 self.db.reconcile_interrupted_chat_turns()
-                self.db.reconcile_post_reply_recovery()
+                self.db.reign.reconcile_post_reply_recovery()
             # #501：重开后补跑崩溃窗口里丢的叙事抽取账（后台、从不锁档）。
             self._spawn_startup_extraction_catch_up()
         except Exception as init_exc:
@@ -871,7 +871,7 @@ class WebGame:
 
     def list_saves(self) -> List[Dict[str, Any]]:
         out: List[Dict[str, Any]] = []
-        campaign_id = (self.db.kv_get("campaign_id") or "").strip()
+        campaign_id = (self.db.reign.kv_get("campaign_id") or "").strip()
         for fname in sorted(os.listdir(self.saves_dir())):
             if not fname.endswith(".db"):
                 continue
@@ -1054,13 +1054,13 @@ class WebGame:
             for name, msgs in candidate.db.chat_messages.history_by_minister().items():
                 chat_history.setdefault(name, []).extend(msgs)
             default_favorites = {"王承恩", "曹化淳", "李若琏", "魏忠贤", "田尔耕"}
-            fav_raw = candidate.db.kv_get("favorites")
+            fav_raw = candidate.db.reign.kv_get("favorites")
             favorites = set(json.loads(fav_raw)) if fav_raw else set(default_favorites)
             if not fav_raw:
-                candidate.db.kv_set("favorites", json.dumps(sorted(favorites)))
+                candidate.db.reign.kv_set("favorites", json.dumps(sorted(favorites)))
             if hasattr(candidate.db, "conn"):
                 candidate.db.reconcile_interrupted_chat_turns()
-                candidate.db.reconcile_post_reply_recovery()
+                candidate.db.reign.reconcile_post_reply_recovery()
         except Exception as rebuild_exc:
             residual = candidate or getattr(rebuild_exc, "residual_session", None)
             if residual is not None:
@@ -1918,10 +1918,10 @@ class WebGame:
         if minister_name == SCENE_CHAT_SPEAKER and hasattr(self.db, "conn"):
             night = get_open_night(self.db)
             if night:
-                turns = self.db.list_hall_chat_turns(int(night["id"]))
+                turns = self.db.reign.list_hall_chat_turns(int(night["id"]))
                 active = next((row for row in reversed(turns) if row["status"] == "active"), None)
                 return bool(active and active["user_message_id"] and active["minister_message_id"]
-                            and self.db.is_global_last_active_chat_turn(int(active["id"])))
+                            and self.db.reign.is_global_last_active_chat_turn(int(active["id"])))
         return self.db.can_undo_last_chat_turn(minister_name, self.state.turn)
 
     def _audience_turn_in_flight(self, minister_name: str) -> bool:
@@ -2010,16 +2010,16 @@ class WebGame:
         from ming_sim.audience_night import write_audience_error_pack
         translation_pending = translation_unstarted and row["extract_status"] != "done"
         if translation_pending:
-            self.db.mark_story_extraction_pending(chat_turn_id)
+            self.db.reign.mark_story_extraction_pending(chat_turn_id)
         pack = write_audience_error_pack(
             kind="translation" if translation_pending else "reply",
             message=str(error), detail={"chat_turn_id": chat_turn_id, "phase": "post_reply"},
             db=self.db, exc=error,
         )
         if translation_pending:
-            self.db.set_chat_turn_error_pack(chat_turn_id, pack)
+            self.db.reign.set_chat_turn_error_pack(chat_turn_id, pack)
         else:
-            self.db.mark_post_reply_failure(
+            self.db.reign.mark_post_reply_failure(
                 chat_turn_id,
                 "court_break" if court_action == "court_break" else "after_reply", pack,
             )
@@ -2052,7 +2052,7 @@ class WebGame:
                     kind="reply", message=str(error),
                     detail={"chat_turn_id": chat_turn_id}, db=self.db, exc=error,
                 )
-                self.db.set_chat_turn_error_pack(chat_turn_id, pack)
+                self.db.reign.set_chat_turn_error_pack(chat_turn_id, pack)
         else:
             restored_ids = self.db.fail_chat_turn(chat_turn_id)
             from ming_sim.decree_forecast import schedule_restored_decree_forecasts
@@ -2066,7 +2066,7 @@ class WebGame:
         if minister_name == SCENE_CHAT_SPEAKER and hasattr(self.db, "conn"):
             night = get_open_night(self.db)
             if night:
-                turns = self.db.list_hall_chat_turns(int(night["id"]))
+                turns = self.db.reign.list_hall_chat_turns(int(night["id"]))
                 active = next((row for row in reversed(turns) if row["status"] == "active"), None)
                 if active:
                     owner = str(active["minister_name"])
@@ -2083,7 +2083,7 @@ class WebGame:
         row = self.db.get_last_active_chat_turn(minister_name, self.state.turn)
         if row is None:
             raise HTTPException(status_code=404, detail="本回合没有可撤回的召对。")
-        if not self.db.is_global_last_active_chat_turn(int(row["id"])):
+        if not self.db.reign.is_global_last_active_chat_turn(int(row["id"])):
             raise HTTPException(status_code=409, detail="只能撤回全局最后一轮召对。")
         if not row.get("user_message_id") or not row.get("minister_message_id"):
             raise HTTPException(status_code=409, detail="该召对尚未完整完成，不能撤回。")
@@ -2128,7 +2128,7 @@ class WebGame:
         character = None if minister_name == "殿上" else self.session._character(minister_name)
         return {
             "minister": minister_name,
-            "campaign_id": str(self.db.kv_get("campaign_id") or ""),
+            "campaign_id": str(self.db.reign.kv_get("campaign_id") or ""),
             "night_id": int(row.get("night_id") or 0),
             "undone_chat_turn_id": int(undone["id"]),
             # #499 同一 turn-identified 投影：撤回后剩余轮的读心仍按轮归位
@@ -2192,7 +2192,7 @@ class WebGame:
             "answer": answer,
             # Persisted identity travels with the real player response; the web client
             # never infers night ownership from cross-night personal chat history.
-            "campaign_id": str(self.db.kv_get("campaign_id") or "") if hasattr(self.db, "kv_get") else "",
+            "campaign_id": str(self.db.reign.kv_get("campaign_id") or "") if hasattr(self.db, "reign") else "",
             "night_id": int(open_night["id"]) if open_night else 0,
             # #499 单一投影：user/minister 带 chat_turn_id、既存读心记录按轮归位；
             # 前端 setChat 不再抹掉历史读心记录。
@@ -2256,7 +2256,7 @@ class WebGame:
         if minister_name == SCENE_CHAT_SPEAKER and hasattr(self.db, "conn"):
             night = get_open_night(self.db)
             if night:
-                turns = self.db.list_hall_chat_turns(int(night["id"]))
+                turns = self.db.reign.list_hall_chat_turns(int(night["id"]))
                 speakers = dict.fromkeys(str(row["minister_name"]) for row in turns)
                 ids = {int(row["id"]) for row in turns}
                 return sorted([retry for speaker in speakers
@@ -2273,7 +2273,7 @@ class WebGame:
         chat_turn_id = int(target["chat_turn_id"])
         phase = str(target["recovery_phase"])
         with self._runtime_write_gate():
-            if not self.db.claim_post_reply_recovery(chat_turn_id, phase):
+            if not self.db.reign.claim_post_reply_recovery(chat_turn_id, phase):
                 raise HTTPException(status_code=409, detail="本轮后续处理已在恢复，请稍候。")
         try:
             if phase == "court_break":
@@ -2286,10 +2286,10 @@ class WebGame:
                     chat_turn_id=chat_turn_id,
                 )
             with self._runtime_write_gate():
-                self.db.clear_post_reply_failure(chat_turn_id)
+                self.db.reign.clear_post_reply_failure(chat_turn_id)
         except BaseException:
             with self._runtime_write_gate():
-                self.db.release_post_reply_recovery(chat_turn_id, phase)
+                self.db.reign.release_post_reply_recovery(chat_turn_id, phase)
             raise
         return {
             "answer": str(target["answer"]), "chat_turn_id": chat_turn_id,
@@ -2372,7 +2372,7 @@ class WebGame:
                             status_code=409, detail="本夜上一轮回奏仍在进行，请稍候再问。")
                     # #505 finding3：reopen 是 CAS（interrupted→generating）。未赢（并发/双击重试
                     # 已被别的调用翻走）→ 响亮 409，绝不 generate/persist 出第二条大臣回话。
-                    if not self.db.reopen_interrupted_chat_turn_for_retry(chat_turn_id):
+                    if not self.db.reign.reopen_interrupted_chat_turn_for_retry(chat_turn_id):
                         raise HTTPException(
                             status_code=409, detail=f"{minister_name}上一轮回奏仍在进行，请稍候再问。")
                     # #505 finding1：与 chat 同 snapshot→record rollback 缝。
@@ -2450,7 +2450,7 @@ class WebGame:
                                 detail={"chat_turn_id": chat_turn_id},
                                 db=self.db, exc=error,
                             )
-                            self.db.set_chat_turn_error_pack(chat_turn_id, pack)
+                            self.db.reign.set_chat_turn_error_pack(chat_turn_id, pack)
                 except Exception:
                     logger.exception(
                         "retry cleanup: restore_interrupted failed chat_turn_id=%s",
@@ -2754,7 +2754,7 @@ class WebGame:
             self.db, chat_turn_id=ctid, write_queue=self._runtime_write_queue(),
         )
         status = (
-            self.db.get_story_extract_status(ctid)
+            self.db.reign.get_story_extract_status(ctid)
             if hasattr(self.db, "get_story_extract_status")
             else ("pending" if still else "done")
         )
@@ -2848,7 +2848,7 @@ class WebGame:
             self.chat_history.setdefault(minister_name, []).append({"role": "user", "content": text})
             message_id = self.db.append_chat_message(minister_name, accepted_turn, "user", text)
             if chat_turn_id:
-                self.db.update_chat_turn_messages(chat_turn_id, user_message_id=message_id)
+                self.db.reign.update_chat_turn_messages(chat_turn_id, user_message_id=message_id)
         except Exception as error:
             # Release gate before scene drain — prologue may have already started futures.
             if gate_held:
@@ -2883,8 +2883,8 @@ class WebGame:
         # must close the durable turn and pending owner through the same terminal path as a
         # worker failure, rather than escaping this SSE generator.
         try:
-            if hasattr(self.db, "kv_get"):
-                identity["campaign_id"] = str(self.db.kv_get("campaign_id") or "")
+            if hasattr(self.db, "reign"):
+                identity["campaign_id"] = str(self.db.reign.kv_get("campaign_id") or "")
             if chat_turn_id and hasattr(self.db, "conn"):
                 from ming_sim.audience_night import get_open_night
                 open_night = get_open_night(self.db)
@@ -5257,7 +5257,7 @@ async def api_add_favorite(minister_name: str) -> Dict[str, Any]:
         raise HTTPException(status_code=404, detail=f"未找到：{minister_name}")
     with _serialized_web_write(game):
         game.favorites.add(minister_name)
-        game.db.kv_set("favorites", json.dumps(sorted(game.favorites)))
+        game.db.reign.kv_set("favorites", json.dumps(sorted(game.favorites)))
     return {"favorites": sorted(game.favorites)}
 
 
@@ -5266,7 +5266,7 @@ async def api_remove_favorite(minister_name: str) -> Dict[str, Any]:
     game = get_game()
     with _serialized_web_write(game):
         game.favorites.discard(minister_name)
-        game.db.kv_set("favorites", json.dumps(sorted(game.favorites)))
+        game.db.reign.kv_set("favorites", json.dumps(sorted(game.favorites)))
     return {"favorites": sorted(game.favorites)}
 
 
@@ -5338,7 +5338,7 @@ async def api_audience_chat_history() -> Dict[str, Any]:
             "faction": "", "style": "", "status": "active", "status_label": "在殿",
             "summary": "", "favorite": False,
         },
-        "campaign_id": str(game.db.kv_get("campaign_id") or ""),
+        "campaign_id": str(game.db.reign.kv_get("campaign_id") or ""),
         "night_id": int(open_night["id"]) if open_night else 0,
         "history": game.chat_projection(SCENE_CHAT_SPEAKER),
         "can_undo_last_chat": game.can_undo_last_chat(SCENE_CHAT_SPEAKER),
@@ -6295,7 +6295,7 @@ async def api_delete_portrait(name: str) -> Dict[str, Any]:
 
 @app.get("/api/court_layout")
 async def api_get_court_layout() -> Dict[str, Any]:
-    val = get_game().db.kv_get("court_layout")
+    val = get_game().db.reign.kv_get("court_layout")
     return {"layout": val or "{}"}
 
 
@@ -6303,7 +6303,7 @@ async def api_get_court_layout() -> Dict[str, Any]:
 async def api_set_court_layout(body: Dict[str, Any]) -> Dict[str, Any]:
     game = get_game()
     with _serialized_web_write(game):
-        game.db.kv_set("court_layout", body.get("layout", "{}"))
+        game.db.reign.kv_set("court_layout", body.get("layout", "{}"))
     return {"ok": True}
 
 

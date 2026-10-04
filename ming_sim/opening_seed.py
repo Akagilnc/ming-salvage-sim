@@ -112,7 +112,7 @@ def seed_opening_world(db: Any) -> None:
             )
     if not ClassStore(db.conn).has_any():
         # 人口一律「人」。classes 首次 seed 落持久标；已有行不重 seed。
-        db._mark_population_unit_persons()
+        db.reign._mark_population_unit_persons()
         for cls in db.content.classes.values():
             db.classes.insert(
                 name=cls.name,

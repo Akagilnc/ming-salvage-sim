@@ -51,7 +51,7 @@ def _run_round_with_declaration(db, state, minister: str, declaration: dict, *, 
         (minister, state.turn, "臣遵旨。"),
     ).lastrowid
     db.conn.commit()
-    db.update_chat_turn_messages(
+    db.reign.update_chat_turn_messages(
         int(chat_id), user_message_id=int(uid), minister_message_id=int(mid),
     )
     # 前像由 dispatch_declaration 公开入口自记，helper 不再代行生产机制。

@@ -64,7 +64,7 @@ def _run_round(
         (minister, state.turn, reply),
     ).lastrowid
     db.conn.commit()
-    db.update_chat_turn_messages(
+    db.reign.update_chat_turn_messages(
         int(chat_id), user_message_id=int(uid), minister_message_id=int(mid)
     )
     if writes is not None:
@@ -272,7 +272,7 @@ def test_undo_pending_translation_leaves_no_orphan_retry(game):
 
     # 垃圾 shape → 待补（extract_status='pending'），轮未抽落账
     def _mark_pending(night_id: int, chat_id: int) -> None:
-        db.mark_story_extraction_pending(int(chat_id))
+        db.reign.mark_story_extraction_pending(int(chat_id))
     night_id, chat_id = _run_round(db, state, m, writes=_mark_pending)
     # 注意 _run_round 无 facts 分支会把水位推到 done——此处显式改回 pending 建待补态
     db.conn.execute("UPDATE chat_turns SET extract_status = 'pending' WHERE id = ?", (chat_id,))

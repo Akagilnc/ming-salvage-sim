@@ -842,7 +842,7 @@ def test_question_note_only_is_kept_and_other_decisions_still_require_label(
 
     state.turn_phase = TurnPhase.AWAITING_DECISION.value
     db.save_state(state)
-    db.save_pending_decisions(int(state.turn), [{
+    db.issues.save_pending_decisions(int(state.turn), [{
         "event_id": "season:1",
         "title": "旧抉择",
         "context": "非请旨",

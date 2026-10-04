@@ -63,7 +63,7 @@ def test_submit_event_decision_persists_choice_after_pending_cleanup(game, monke
     db, state, content = game
     turn = state.turn
     event_id = "mao_wenlong"
-    db.save_pending_decisions(turn, [{
+    db.issues.save_pending_decisions(turn, [{
         "event_id": event_id,
         "title": "毛文龙裁断",
         "context": "东江事急，须御前亲裁。",
@@ -76,7 +76,7 @@ def test_submit_event_decision_persists_choice_after_pending_cleanup(game, monke
     db.save_state(state)
 
     def _phase2(_state, _db, *_args, **_kwargs):
-        _db.clear_pending_decisions(turn)
+        _db.issues.clear_pending_decisions(turn)
         return "ok"
 
     monkeypatch.setattr(session_mod, "resolve_decisions_phase2", _phase2)
@@ -89,7 +89,7 @@ def test_submit_event_decision_persists_choice_after_pending_cleanup(game, monke
     sess.content = content
     sess.registry = None
 
-    d_key = db.list_rescript_desk(turn)[0]["decision_key"]
+    d_key = db.issues.list_rescript_desk(turn)[0]["decision_key"]
     sess.submit_hitl_choices(
         [{
             "decision_key": d_key, "action": "follow_draft",
@@ -98,7 +98,7 @@ def test_submit_event_decision_persists_choice_after_pending_cleanup(game, monke
         write_gate=get_session_write_queue(sess).write_gate,
     )
 
-    assert db.list_pending_decisions(turn) == []
+    assert db.issues.list_pending_decisions(turn) == []
     row = db.conn.execute(
         "SELECT terminal_state, source, choice_json FROM event_triggers WHERE event_id=?",
         (event_id,),
@@ -132,7 +132,7 @@ def test_submit_event_decision_binds_from_candidate_snapshot_without_event_id(ga
         "测试诏书",
         {"candidate_events": [{"id": event_id, "title": "毛文龙裁断"}]},
     )
-    db.save_pending_decisions(turn, [{
+    db.issues.save_pending_decisions(turn, [{
         "title": "毛文龙裁断",
         "context": "东江事急，须御前亲裁。",
         "options": [
@@ -144,7 +144,7 @@ def test_submit_event_decision_binds_from_candidate_snapshot_without_event_id(ga
     db.save_state(state)
 
     def _phase2(_state, _db, *_args, **_kwargs):
-        _db.clear_pending_decisions(turn)
+        _db.issues.clear_pending_decisions(turn)
         return "ok"
 
     monkeypatch.setattr(session_mod, "resolve_decisions_phase2", _phase2)
@@ -159,13 +159,13 @@ def test_submit_event_decision_binds_from_candidate_snapshot_without_event_id(ga
 
     # #1589：绑定发生在 desk 读出口（prepare_rescript_prewrite），键仍取绑定前
     # 的 decision:{turn}:0 投影——event_id 是否已绑定不改变 decision_key 形状。
-    d_key = db.list_rescript_desk(turn)[0]["decision_key"]
+    d_key = db.issues.list_rescript_desk(turn)[0]["decision_key"]
     sess.submit_hitl_choices(
         [{"decision_key": d_key, "label": "留", "hint": "暂稳东江", "note": "姑留观后效"}],
         write_gate=get_session_write_queue(sess).write_gate,
     )
 
-    assert db.list_pending_decisions(turn) == []
+    assert db.issues.list_pending_decisions(turn) == []
     row = db.conn.execute(
         "SELECT terminal_state, source, choice_json FROM event_triggers WHERE event_id=?",
         (event_id,),
@@ -204,7 +204,7 @@ def test_submit_decisions_does_not_overwrite_already_decided_rows(game, monkeypa
     )
     ctx = db.resolve_contexts.get(turn)
     assert ctx is not None
-    db.save_pending_decisions(turn, [{
+    db.issues.save_pending_decisions(turn, [{
         "title": "毛文龙裁断", "context": "c",
         "options": [{"label": "斩", "hint": ""}, {"label": "留", "hint": ""}],
     }])
@@ -220,7 +220,7 @@ def test_submit_decisions_does_not_overwrite_already_decided_rows(game, monkeypa
     seen = []
 
     def _phase2(_state, _db, *_args, **_kwargs):
-        rows = _db.list_pending_decisions(turn)
+        rows = _db.issues.list_pending_decisions(turn)
         assert rows and rows[0]["status"] == "decided"
         assert rows[0]["choice"] == original, "phase2 读到的须是原 choice"
         seen.append(dict(rows[0]["choice"] or {}))
@@ -240,7 +240,7 @@ def test_submit_decisions_does_not_overwrite_already_decided_rows(game, monkeypa
 
     # ① 空载荷续跑不得清空
     assert sess.submit_hitl_choices([], write_gate=get_session_write_queue(sess).write_gate) == "ok"
-    assert db.list_pending_decisions(turn)[0]["choice"] == original
+    assert db.issues.list_pending_decisions(turn)[0]["choice"] == original
 
     # 复位 awaiting 再试异载荷（模拟 phase2 再次失败后的续跑）
     state.turn_phase = "awaiting_decision"
@@ -250,7 +250,7 @@ def test_submit_decisions_does_not_overwrite_already_decided_rows(game, monkeypa
         sess.submit_hitl_choices(
             [{"label": "留", "note": "改裁"}], write_gate=get_session_write_queue(sess).write_gate,
         )
-    assert db.list_pending_decisions(turn)[0]["choice"] == original, \
+    assert db.issues.list_pending_decisions(turn)[0]["choice"] == original, \
         "已 decided 行不得被异载荷覆写"
     assert seen == [original]
 
@@ -270,7 +270,7 @@ def test_submit_dossier_rescript_does_not_create_event_trigger(game, monkeypatch
         "dossier_id": dossier_id,
         "dossier_decision": "withdrawn",
     }
-    db.save_pending_decisions(state.turn, [{
+    db.issues.save_pending_decisions(state.turn, [{
         "event_id": f"dossier:{dossier_id}", "title": "批红待裁",
         "context": "清核河工", "options": [option],
     }])
@@ -289,7 +289,7 @@ def test_submit_dossier_rescript_does_not_create_event_trigger(game, monkeypatch
     sess.content = content
     sess.registry = None
 
-    d_key = db.list_rescript_desk(state.turn)[0]["decision_key"]
+    d_key = db.issues.list_rescript_desk(state.turn)[0]["decision_key"]
     assert sess.submit_hitl_choices(
         [{**option, "decision_key": d_key}], write_gate=get_session_write_queue(sess).write_gate,
     ) == "ok"
@@ -297,7 +297,7 @@ def test_submit_dossier_rescript_does_not_create_event_trigger(game, monkeypatch
         "SELECT 1 FROM event_triggers WHERE event_id=?",
         (f"dossier:{dossier_id}",),
     ).fetchone() is None
-    stored = db.list_pending_decisions(state.turn)[0]
+    stored = db.issues.list_pending_decisions(state.turn)[0]
     assert stored["status"] == "decided"
     assert stored["choice"] == {
         "decision_key": d_key,

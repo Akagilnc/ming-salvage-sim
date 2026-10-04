@@ -567,8 +567,8 @@ def test_due_review_settle_does_not_pause_or_decision(game, monkeypatch):
     result2 = _settle_empty_month(db, state, content, monkeypatch)
     assert result2.awaiting is False
     assert state.turn_phase == TurnPhase.ISSUED.value
-    assert db.list_pending_decisions(state.turn) == []
-    assert db.list_pending_decisions(state.turn - 1) == []
+    assert db.issues.list_pending_decisions(state.turn) == []
+    assert db.issues.list_pending_decisions(state.turn - 1) == []
 
 
 def test_input_closed_set_degrades_when_sources_missing(game):

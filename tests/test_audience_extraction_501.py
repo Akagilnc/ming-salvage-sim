@@ -50,7 +50,7 @@ def test_engine_close_night_drains_pending_success(game, monkeypatch):
     )
     assert result["closed"] is True
     assert an.get_night(db, nid)["status"] == an.NIGHT_STATUS_CLOSED
-    assert db.get_story_extract_status(ctid) == "done"
+    assert db.reign.get_story_extract_status(ctid) == "done"
     assert db.conn.execute(
         "SELECT COUNT(*) AS c FROM story_ledger_entries "
         "WHERE night_id=? AND source_chat_turn_id=?",
@@ -70,4 +70,4 @@ def test_engine_close_night_without_deps_keeps_pending_no_fail_closed(
 
     assert len(db.list_unextracted_replies(night_id=nid)) >= 1
 
-    assert str(db.get_story_extract_status(ctid) or "") in ("", "pending")
+    assert str(db.reign.get_story_extract_status(ctid) or "") in ("", "pending")

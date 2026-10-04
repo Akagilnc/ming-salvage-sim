@@ -171,7 +171,7 @@ def test_scroll_exposes_translation_pending_until_late_declaration_lands(game, m
     db, state, _ = game
     night_id = open_audience_night(db, state)
     turn, _ = append_night_chat(db, state, night_id, "王绍徽", "请奏", "臣在", 20)
-    db.mark_story_extraction_pending(turn)
+    db.reign.mark_story_extraction_pending(turn)
     monkeypatch.setattr(web_app, "get_game", lambda: _scroll_game(db))
     client = TestClient(web_app.app)
 

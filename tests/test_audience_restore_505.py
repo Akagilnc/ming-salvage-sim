@@ -70,7 +70,7 @@ def _start_generating_turn(db, state, minister, question):
         db, state, minister, agno_session_id="sess", agno_runs_before=0,
     )
     mid = db.append_chat_message(minister, state.turn, "user", question)
-    db.update_chat_turn_messages(ct, user_message_id=mid)
+    db.reign.update_chat_turn_messages(ct, user_message_id=mid)
     return ct
 
 
@@ -80,9 +80,9 @@ def _land_full_turn(db, state, minister, question, answer):
         db, state, minister, agno_session_id="sess", agno_runs_before=0,
     )
     uid = db.append_chat_message(minister, state.turn, "user", question)
-    db.update_chat_turn_messages(ct, user_message_id=uid)
+    db.reign.update_chat_turn_messages(ct, user_message_id=uid)
     mid = db.append_chat_message(minister, state.turn, "minister", answer)
-    db.update_chat_turn_messages(ct, minister_message_id=mid)
+    db.reign.update_chat_turn_messages(ct, minister_message_id=mid)
     db.conn.execute("UPDATE chat_turns SET extract_status='done' WHERE id=?", (ct,))
     db.conn.commit()
     return ct
@@ -316,7 +316,7 @@ def test_post_reply_failure_resumes_close_without_regenerating_reply(restore_env
     minister = _active_minister(db, content)
     an.open_night(db, state, location="乾清宫", time_of_day="戌时")
     ct = _land_full_turn(db, state, minister, "退朝", "臣遵旨。")
-    db.mark_post_reply_failure(ct, "court_break", "/tmp/post-reply-pack")
+    db.reign.mark_post_reply_failure(ct, "court_break", "/tmp/post-reply-pack")
     rt = _retry_runtime(db, state, minister)
     assert [(r["chat_turn_id"], r["error_pack_path"]) for r in rt.reply_retries(minister)] == [
         (ct, "/tmp/post-reply-pack")]
@@ -469,7 +469,7 @@ def test_lost_reopen_cas_rejects_without_second_reply(restore_env, monkeypatch):
     db.reconcile_interrupted_chat_turns()
     rt = _retry_runtime(db, state, minister)
     # 模拟并发重试抢先翻走 CAS：本次 reopen 未赢（rowcount=0 → False）。
-    monkeypatch.setattr(db, "reopen_interrupted_chat_turn_for_retry", lambda cid: False)
+    monkeypatch.setattr(db.reign, "reopen_interrupted_chat_turn_for_retry", lambda cid: False)
     with pytest.raises(HTTPException):
         rt.retry_interrupted_reply(minister)
     assert db.conn.execute(
@@ -578,7 +578,7 @@ def test_reconcile_truncates_agno_runs_to_turn_start(restore_env):
         db, state, minister, agno_session_id="sess", agno_runs_before=1,
     )
     mid = db.append_chat_message(minister, state.turn, "user", "剿抚孰先？")
-    db.update_chat_turn_messages(ct, user_message_id=mid)
+    db.reign.update_chat_turn_messages(ct, user_message_id=mid)
     assert db.agno_runs_length("sess") == 2
 
     db.reconcile_interrupted_chat_turns()
@@ -695,7 +695,7 @@ def test_reconcile_blob_baseline_drops_table_only_new_run(restore_env):
         db, state, minister, agno_session_id="sess", agno_runs_before=2,
     )
     mid = db.append_chat_message(minister, state.turn, "user", "剿抚孰先？")
-    db.update_chat_turn_messages(ct, user_message_id=mid)
+    db.reign.update_chat_turn_messages(ct, user_message_id=mid)
 
     db.reconcile_interrupted_chat_turns()
     assert db.agno_runs_length("sess") == 2

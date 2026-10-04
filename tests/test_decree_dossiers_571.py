@@ -359,7 +359,7 @@ def test_secret_pending_action_carries_chat_turn_and_pending_provenance(game):
         (minister, state.turn),
     ).lastrowid
     db.conn.commit()
-    db.update_chat_turn_messages(chat_turn_id, user_message_id=int(message_id))
+    db.reign.update_chat_turn_messages(chat_turn_id, user_message_id=int(message_id))
 
     pending_id = db.stage_pending_action(
         state.turn,
@@ -1353,7 +1353,7 @@ def test_secret_order_progress_undo_restores_order_and_dossier_axes(game):
         state, actor, "密查仓储", "核清仓储", [],
     )
     chat_turn_id = db.create_chat_turn(state, actor, "dossier-undo", 0)
-    db.update_chat_turn_messages(
+    db.reign.update_chat_turn_messages(
         chat_turn_id,
         db.append_chat_message(actor, state.turn, "user", "继续查办"),
         db.append_chat_message(actor, state.turn, "minister", "臣遵旨"),

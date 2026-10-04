@@ -178,10 +178,7 @@ def _fail_cli_chat_turn_scene(
         # fail_chat_turn also drops origin-bound rows; explicit entry_id covers
         # doubles whose fail path is thinner than production GameDB.
         if entry_id and hasattr(session.db, "conn") and getattr(session.db, "conn", None):
-            session.db.conn.execute(
-                "DELETE FROM story_ledger_entries WHERE id = ?",
-                (int(entry_id),),
-            )
+            session.db.reign.delete_ledger_entry(int(entry_id))
             session.db.conn.commit()
         restored_ids = session.db.fail_chat_turn(int(chat_turn_id))
         from ming_sim.decree_forecast import schedule_restored_decree_forecasts
@@ -189,10 +186,7 @@ def _fail_cli_chat_turn_scene(
         return
     if entry_id:
         # Prior Q&A turn must stay intact; only drop the failed exit placeholder.
-        session.db.conn.execute(
-            "DELETE FROM story_ledger_entries WHERE id = ?",
-            (int(entry_id),),
-        )
+        session.db.reign.delete_ledger_entry(int(entry_id))
         session.db.conn.commit()
 
 
@@ -307,7 +301,7 @@ def _retry_interrupted_reply_cli(session: GameSession, minister_name: str) -> Op
         db.capture_chat_rollback_snapshot()
         if hasattr(db, "capture_chat_rollback_snapshot") else {}
     )
-    if not db.reopen_interrupted_chat_turn_for_retry(chat_turn_id):
+    if not db.reign.reopen_interrupted_chat_turn_for_retry(chat_turn_id):
         print(f"{minister_name}上一轮回奏仍在进行，请稍候再问。\n")
         return
     try:
@@ -320,7 +314,7 @@ def _retry_interrupted_reply_cli(session: GameSession, minister_name: str) -> Op
             db.persist_minister_reply(minister_name, accepted_turn, answer, chat_turn_id)
         else:
             mid = db.append_chat_message(minister_name, accepted_turn, "minister", answer)
-            db.update_chat_turn_messages(chat_turn_id, minister_message_id=int(mid))
+            db.reign.update_chat_turn_messages(chat_turn_id, minister_message_id=int(mid))
         # #1842：回话落定后起后台转译（ADR 0155 / 0036）。
         session.schedule_pending_scene_translation(result)
         if hasattr(db, "record_chat_turn_rollback_diffs") and before_snapshot is not None:
@@ -447,10 +441,13 @@ def minister_chat(session: GameSession, character: Character, *, selected: bool 
         chat_turn_id = 0
         rollback_snapshot = None
         result = None
-        lifecycle_supported = all(hasattr(session.db, name) for name in (
-            "capture_chat_rollback_snapshot", "create_chat_turn",
-            "update_chat_turn_messages", "record_chat_turn_rollback_diffs", "fail_chat_turn",
-        ))
+        lifecycle_supported = (
+            all(hasattr(session.db, name) for name in (
+                "capture_chat_rollback_snapshot", "create_chat_turn",
+                "record_chat_turn_rollback_diffs", "fail_chat_turn",
+            ))
+            and hasattr(getattr(session.db, "reign", None), "update_chat_turn_messages")
+        )
         try:
             # #1849 reopen：CLI 也不再分密令/场外 route；前缀原文随问话进 scene 转译。
             if persistent_chat:
@@ -485,7 +482,7 @@ def minister_chat(session: GameSession, character: Character, *, selected: bool 
                     character.name, accepted_turn, "user", question,
                 )
                 if chat_turn_id:
-                    session.db.update_chat_turn_messages(
+                    session.db.reign.update_chat_turn_messages(
                         chat_turn_id, user_message_id=user_message_id,
                     )
             # #1842：殿上走 scene_chat；显式密令仍走 session.chat（与 Web 同核）。

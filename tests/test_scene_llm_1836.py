@@ -214,7 +214,7 @@ def test_retire_via_scene_chat_closes_night_and_keeps_last_turn(game, monkeypatc
     ctid = db.create_chat_turn(
         state, "殿上", "scene-sess", 0, night_id=night_id, status="generating",
     )
-    db.update_chat_turn_messages(ctid, user_message_id=user_mid, minister_message_id=minister_mid)
+    db.reign.update_chat_turn_messages(ctid, user_message_id=user_mid, minister_message_id=minister_mid)
     # 场景入口不跑故事抽取（转译 C1 接上）；标 done 以免收夜走旧抽取耗尽。
     db.conn.execute(
         "UPDATE chat_turns SET extract_status='done' WHERE id=?", (ctid,),

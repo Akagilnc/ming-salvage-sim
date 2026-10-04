@@ -225,7 +225,7 @@ def test_record_relation_edge_event_respects_caller_owned_transaction(game):
     # 抛错回滚:入口的 INSERT 与 kv 半成品一并消失
     db.conn.rollback()
     assert not db.conn.in_transaction
-    assert db.kv_get("s1_rel_open") is None
+    assert db.reign.kv_get("s1_rel_open") is None
     assert db.conn.execute(
         "SELECT id FROM relation_edge_events WHERE source='甲' AND target='乙'"
     ).fetchone() is None

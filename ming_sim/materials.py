@@ -968,7 +968,7 @@ def _person_audience_experience(db: Any, name: str) -> list[dict]:
         return []
     from ming_sim.audience_night import person_night_experience
 
-    nights = db.conn.execute("SELECT id FROM audience_nights ORDER BY id").fetchall()
+    nights = db.reign.list_night_ids()
     return [entry for night in nights
             for entry in person_night_experience(db, int(night["id"]), name)]
 
@@ -978,14 +978,9 @@ def _secret_order_chat_turn_ids(db: Any) -> set[int]:
     message_ids = list(db._secret_origin_message_protection())
     if not message_ids:
         return set()
-    placeholders = ",".join("?" for _ in message_ids)
     return {
         int(row["id"])
-        for row in db.conn.execute(
-            f"SELECT id FROM chat_turns WHERE user_message_id IN ({placeholders}) "
-            f"OR minister_message_id IN ({placeholders})",
-            [*message_ids, *message_ids],
-        )
+        for row in db.reign.chat_turn_ids_for_message_ids(list(message_ids))
     }
 
 

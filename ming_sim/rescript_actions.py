@@ -1296,35 +1296,30 @@ def _apply_return_revise(
         prior = []
     prior = list(prior) + [old_options]
     # CAS 含旧 revision_round
-    cur = db.conn.execute(
-        "UPDATE pending_decisions SET revision_round = ?, options_json = ?, "
-        "prior_options_json = ?, choice_json = ?, status = 'pending' "
-        "WHERE turn = ? AND idx = ? AND kind = ? AND revision_round = ? "
-        "AND status = 'pending'",
-        (
-            old_round + 1,
-            json.dumps(stamped, ensure_ascii=False),
-            json.dumps(prior, ensure_ascii=False),
-            json.dumps(item.choice, ensure_ascii=False),
-            item.source_turn,
-            item.idx,
-            item.kind,
-            old_round,
-        ),
+    rowcount = db.issues.cas_revise_pending_decision(
+        revision_round=old_round + 1,
+        options_json=json.dumps(stamped, ensure_ascii=False),
+        prior_options_json=json.dumps(prior, ensure_ascii=False),
+        choice_json=json.dumps(item.choice, ensure_ascii=False),
+        turn=item.source_turn,
+        idx=item.idx,
+        kind=item.kind,
+        expected_round=old_round,
     )
-    if cur.rowcount != 1:
+    if rowcount != 1:
         raise ValueError(f"return_revise CAS 失败：{item.decision_key}")
 
 
 def _cas_decided(db: Any, item: ValidatedItem) -> None:
     choice_json = json.dumps(item.choice, ensure_ascii=False)
     # 行级 CAS：pending → decided，且 choice 仍空或可被本事务首写
-    cur = db.conn.execute(
-        "UPDATE pending_decisions SET choice_json = ?, status = 'decided' "
-        "WHERE turn = ? AND idx = ? AND kind = ? AND status = 'pending'",
-        (choice_json, item.source_turn, item.idx, item.kind),
+    rowcount = db.issues.cas_decide_pending_decision(
+        choice_json=choice_json,
+        turn=item.source_turn,
+        idx=item.idx,
+        kind=item.kind,
     )
-    if cur.rowcount != 1:
+    if rowcount != 1:
         # 可能已 decided 且精确匹配——由 already_applied 路径处理；此处响亮失败
         raise ValueError(f"行级 CAS 失败（非 pending）：{item.decision_key}")
 
@@ -1503,18 +1498,9 @@ def clear_return_revise_choice_anchors(
     if applied_revise_keys is not None:
         for key in applied_revise_keys:
             kind, turn, idx = _parse_decision_key(key)
-            db.conn.execute(
-                "UPDATE pending_decisions SET choice_json = '{}' "
-                "WHERE turn = ? AND idx = ? AND kind = ? AND status = 'pending'",
-                (turn, idx, kind),
-            )
+            db.issues.clear_pending_choice_json(turn=turn, idx=idx, kind=kind)
         return
-    rows = db.conn.execute(
-        "SELECT turn, idx, kind, status, choice_json, revision_round "
-        "FROM pending_decisions "
-        "WHERE status = 'pending' AND kind = 'rescript_draft' "
-        "AND choice_json IS NOT NULL AND TRIM(choice_json) NOT IN ('', '{}')"
-    ).fetchall()
+    rows = db.issues.list_pending_drafts_with_choice()
     for r in rows:
         raw = r["choice_json"]
         try:
@@ -1534,8 +1520,6 @@ def clear_return_revise_choice_anchors(
             "revision_round": r["revision_round"],
         }
         if _is_applied_revise_anchor(row, choice):
-            db.conn.execute(
-                "UPDATE pending_decisions SET choice_json = '{}' "
-                "WHERE turn = ? AND idx = ? AND kind = ? AND status = 'pending'",
-                (int(r["turn"]), int(r["idx"]), str(r["kind"])),
+            db.issues.clear_pending_choice_json(
+                turn=int(r["turn"]), idx=int(r["idx"]), kind=str(r["kind"]),
             )

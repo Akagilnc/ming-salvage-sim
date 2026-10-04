@@ -218,7 +218,7 @@ def _month_fact_materials(
                 })
     answers: List[Dict[str, Any]] = []
     if hasattr(db, "list_pending_decisions"):
-        for row in db.list_pending_decisions(turn):
+        for row in db.issues.list_pending_decisions(turn):
             if str(row.get("status") or "") != "decided":
                 continue
             choice = row.get("choice") if isinstance(row.get("choice"), dict) else {}
@@ -1336,13 +1336,13 @@ def _materialize_rescript_desk(
             question, event_id=f"{_WORLD_QUESTION_PREFIX}{turn}:{idx}",
         ))
     if decisions:
-        db.save_pending_decisions(turn, decisions)
+        db.issues.save_pending_decisions(turn, decisions)
     # 已应用 return_revise 仍 pending，但是本批已办，不是新待裁。
     # 清锚仍只走推进事务里的 clear_return_revise_choice_anchors。
     from ming_sim.rescript_actions import row_is_applied_return_revise
 
     desk = [
-        row for row in db.list_rescript_desk(turn)
+        row for row in db.issues.list_rescript_desk(turn)
         if not row_is_applied_return_revise(row)
     ]
     if not desk:
@@ -1386,7 +1386,7 @@ def _consume_rescript_answers(
     """
     db, state = session.db, session.state
     turn = int(state.turn)
-    rows = db.list_pending_decisions(turn)
+    rows = db.issues.list_pending_decisions(turn)
     decided = [r for r in rows if str(r.get("status") or "") == "decided"]
     if not decided:
         return

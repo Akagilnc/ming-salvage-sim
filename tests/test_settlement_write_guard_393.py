@@ -25,6 +25,10 @@ class _RecordingDB:
     def __init__(self):
         self.writes: list[str] = []
         self.conn = SimpleNamespace(execute=lambda *a, **k: SimpleNamespace(fetchone=lambda: None))
+        self.reign = SimpleNamespace(
+            kv_get=lambda key: None,
+            kv_set=lambda key, value: self.writes.append(f"kv_set:{key}"),
+        )
 
     def create_secret_order(self, *a, **k):
         self.writes.append("create_secret_order")
@@ -412,5 +416,5 @@ def test_direct_db_write_succeeds_when_free(monkeypatch):
     game = _FakeGame(TurnPhase.SUMMONING.value)
     monkeypatch.setattr(web_app, "get_game", lambda: game)
     _invoke(web_app.api_set_court_layout({"layout": "{\"a\":1}"}))
-    assert game.db.writes == ["kv_set"]
+    assert game.db.writes == ["kv_set:court_layout"]
     assert not game._write_gate.locked()

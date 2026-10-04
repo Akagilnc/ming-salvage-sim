@@ -562,7 +562,7 @@ def test_terminal_minister_chat_accepts_retry_reply_command(game, monkeypatch):
         night_id=night_id, status="generating",
     )
     mid = db.append_chat_message(character.name, state.turn, "user", question)
-    db.update_chat_turn_messages(ct, user_message_id=mid)
+    db.reign.update_chat_turn_messages(ct, user_message_id=mid)
     db.conn.execute("UPDATE chat_turns SET status='interrupted' WHERE id=?", (ct,))
     db.conn.commit()
 
@@ -640,7 +640,7 @@ def test_play_turn_hitl_advancement_ends_turn(game, monkeypatch, action):
 
     db, state, content = game
     turn_before = int(state.turn)
-    db.save_pending_decisions(turn_before, [{
+    db.issues.save_pending_decisions(turn_before, [{
         "title": "急务亲裁",
         "context": "辽东饷银案卷",
         "options": [{"label": "发饷", "hint": "拨银五万两"}],

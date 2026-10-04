@@ -5,9 +5,19 @@
 
 from __future__ import annotations
 
-from typing import Any, Mapping
+import json
+from typing import Any, Dict, List, Mapping, Sequence, Tuple
 
+from ming_sim.applier import load_stored_json, load_stored_list
 from ming_sim.entities.column_write import bind_affair_once, checked_columns
+
+
+def _decision_json_fields(row: Any) -> Tuple[list, object, list]:
+    """pending_decisions 三列 JSON。空白是空名单 / 未选；在场损坏即拒。"""
+    options = load_stored_list(row["options_json"], label="options_json")
+    prior = load_stored_list(row["prior_options_json"], label="prior_options_json")
+    choice = load_stored_json(row["choice_json"], label="choice_json", blank=None)
+    return options, choice, prior
 
 
 ISSUE_COLUMNS = frozenset({
@@ -374,3 +384,312 @@ class IssueStore:
 {reason_fill}                    ELSE event_triggers.terminal_reason
                 END
         """
+
+    # --- pending_decisions / rescript desk moved from GameDB (#1889 J1) ---
+    def save_pending_decisions(self, turn: int, decisions: List[Dict[str, object]]) -> None:
+        """覆写本回合待裁 decision 行（先清后插），idx 按列表顺序。choice 初始空（待皇帝选）。
+
+        #656 A6/F2 不变式：只清只写 kind='decision'（与 clear_pending_decisions/
+        save_rescript_drafts 同款按 kind 收窄）——'rescript_draft' 票拟行跨月留存，
+        不被 decision 盘面覆写连带清除。
+        """
+        turn = int(turn)
+        # 两种 kind 共用 (turn, idx) 主键。先把保留的 draft 搬到负数暂存区，
+        # 删除旧 decisions 后再按新盘面长度接续重排；draft 的内容与 event_id
+        # 均不改，decision 数量增减也不会与旧 draft idx 相撞。
+        self._conn.execute(
+            "UPDATE pending_decisions SET idx = -idx - 1 "
+            "WHERE turn = ? AND kind = 'rescript_draft'",
+            (turn,),
+        )
+        draft_rows = self._conn.execute(
+            "SELECT idx FROM pending_decisions "
+            "WHERE turn = ? AND kind = 'rescript_draft' ORDER BY idx DESC",
+            (turn,),
+        ).fetchall()
+        self._conn.execute(
+            "DELETE FROM pending_decisions WHERE turn = ? AND kind = 'decision'",
+            (turn,),
+        )
+        for idx, d in enumerate(decisions):
+            self._conn.execute(
+                """INSERT INTO pending_decisions
+                   (turn, idx, event_id, title, context, rejection_reason, opposition,
+                    options_json, choice_json, status, kind)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, '', 'pending', 'decision')""",
+                (
+                    turn, idx,
+                    str(d.get("event_id") or ""),
+                    str(d.get("title") or ""),
+                    str(d.get("context") or ""),
+                    str(d.get("rejection_reason") or ""),
+                    str(d.get("opposition") or ""),
+                    json.dumps(d.get("options") or [], ensure_ascii=False),
+                ),
+            )
+        for offset, row in enumerate(draft_rows):
+            self._conn.execute(
+                "UPDATE pending_decisions SET idx = ? WHERE turn = ? AND idx = ?",
+                (len(decisions) + offset, turn, int(row["idx"])),
+            )
+        self._conn.commit()
+
+    def list_pending_decisions(self, turn: int) -> List[Dict[str, object]]:
+        """读本回合决策点（按 idx）——HITL envelope 唯一读取缝。
+
+        #656 A6：谓词收窄到 kind='decision'——persist-then-abort 后落库的
+        rescript_draft 票拟行不再混进亲裁/刷新/all-decided/submit 消费面
+        （急务只经 list_rescript_drafts 读，批红面归 #657）；调用方不再重复过滤。
+        options 反序列化；choice 为已选则带出。
+        #657：补 revision_round / prior_options_json 投影。
+        """
+        rows = self._conn.execute(
+            "SELECT idx, event_id, title, context, rejection_reason, opposition, "
+            "options_json, choice_json, status, kind, actor_name, actor_office, actor_faction, "
+            "turn, revision_round, prior_options_json "
+            "FROM pending_decisions WHERE turn = ? AND kind = 'decision' ORDER BY idx",
+            (int(turn),),
+        ).fetchall()
+        out: List[Dict[str, object]] = []
+        for r in rows:
+            options, choice, prior = _decision_json_fields(r)
+            source_turn = int(r["turn"])
+            idx = int(r["idx"])
+            kind = str(r["kind"] or "decision")
+            out.append({
+                "idx": idx,
+                "decision_key": f"{kind}:{source_turn}:{idx}",
+                "source_turn": source_turn,
+                "turn": source_turn,
+                "event_id": r["event_id"],
+                "title": r["title"],
+                "context": r["context"],
+                "rejection_reason": r["rejection_reason"],
+                "opposition": r["opposition"],
+                "options": options,
+                "choice": choice,
+                "status": r["status"],
+                "kind": kind,
+                "actor_name": r["actor_name"],
+                "actor_office": r["actor_office"],
+                "actor_faction": r["actor_faction"],
+                "revision_round": int(r["revision_round"] or 0),
+                "prior_options_json": prior,
+            })
+        return out
+
+    def clear_pending_decisions(self, turn: int) -> None:
+        """#656：按 kind 过滤——只清 'decision' 行（既有生命周期一字不变）；
+        'rescript_draft' 行跨月留存，终态清理归 #657 六动作裁决路径。"""
+        self._conn.execute(
+            "DELETE FROM pending_decisions WHERE turn = ? AND kind = 'decision'",
+            (int(turn),),
+        )
+        self._conn.commit()
+
+    def _insert_rescript_draft_rows(
+        self, turn: int, drafts: List[Dict[str, object]],
+    ) -> None:
+        row = self._conn.execute(
+            "SELECT COALESCE(MAX(idx) + 1, 0) FROM pending_decisions WHERE turn = ?",
+            (int(turn),),
+        ).fetchone()
+        idx = int(row[0] or 0)
+        for d in drafts:
+            actor_name = str(d.get("actor_name") or "")
+            actor_office = str(d.get("actor_office") or "")
+            actor_faction = str(d.get("actor_faction") or "")
+            event_id = str(d.get("event_id") or "").strip()
+            if not event_id:
+                event_id = f"urgent:{int(turn)}:{idx}"
+            self._conn.execute(
+                """INSERT INTO pending_decisions
+                   (turn, idx, event_id, title, context, options_json, choice_json,
+                    status, kind, actor_name, actor_office, actor_faction)
+                   VALUES (?, ?, ?, ?, ?, ?, '', 'pending', 'rescript_draft', ?, ?, ?)""",
+                (
+                    int(turn), idx,
+                    event_id,
+                    str(d.get("title") or ""),
+                    str(d.get("context") or ""),
+                    json.dumps(d.get("options") or [], ensure_ascii=False),
+                    actor_name, actor_office, actor_faction,
+                ),
+            )
+            idx += 1
+
+    def list_rescript_drafts(self) -> List[Dict[str, object]]:
+        """#656：全部急务票拟行（kind='rescript_draft'），跨月留存待 #657 批红面消费。
+
+        #657：补 choice / revision_round / prior_options_json 投影（list 面保留）。
+        """
+        rows = self._conn.execute(
+            "SELECT turn, idx, event_id, title, context, options_json, choice_json, status, "
+            "actor_name, actor_office, actor_faction, revision_round, prior_options_json "
+            "FROM pending_decisions WHERE kind = 'rescript_draft' ORDER BY turn, idx"
+        ).fetchall()
+        out: List[Dict[str, object]] = []
+        for r in rows:
+            options, choice, prior = _decision_json_fields(r)
+            out.append({
+                "turn": int(r["turn"]),
+                "idx": int(r["idx"]),
+                "event_id": r["event_id"],
+                "title": r["title"],
+                "context": r["context"],
+                "options": options,
+                "choice": choice,
+                "status": r["status"],
+                "actor_name": r["actor_name"],
+                "actor_office": r["actor_office"],
+                "actor_faction": r["actor_faction"],
+                "revision_round": int(r["revision_round"] or 0),
+                "prior_options_json": prior,
+            })
+        return out
+
+    def save_rescript_drafts(self, turn: int, drafts: List[Dict[str, object]]) -> None:
+        """#656 / ADR 0093：急务票拟行覆写本回合（只清同 kind）。不 commit。"""
+        self._conn.execute(
+            "DELETE FROM pending_decisions WHERE turn = ? AND kind = 'rescript_draft'",
+            (int(turn),),
+        )
+        self._insert_rescript_draft_rows(int(turn), drafts)
+
+    def _project_rescript_desk_row(self, r: Any) -> Dict[str, object]:
+        """pending_decisions 行 → desk 投影（pending/decided 共用）。"""
+        kind = str(r["kind"] or "decision")
+        source_turn = int(r["turn"])
+        idx = int(r["idx"])
+        options, choice, prior = _decision_json_fields(r)
+        return {
+            "decision_key": f"{kind}:{source_turn}:{idx}",
+            "kind": kind,
+            "source_turn": source_turn,
+            "turn": source_turn,
+            "idx": idx,
+            "event_id": r["event_id"],
+            "title": r["title"],
+            "context": r["context"],
+            "rejection_reason": r["rejection_reason"] if "rejection_reason" in r.keys() else "",
+            "opposition": r["opposition"] if "opposition" in r.keys() else "",
+            "options": options,
+            "choice": choice,
+            "status": r["status"],
+            "actor_name": r["actor_name"],
+            "actor_office": r["actor_office"],
+            "actor_faction": r["actor_faction"],
+            "revision_round": int(r["revision_round"] or 0),
+            "prior_options_json": prior,
+        }
+
+    def list_rescript_desk(self, turn: int) -> List[Dict[str, object]]:
+        """#657 批红案头唯一合并读出口。"""
+        turn = int(turn)
+        rows = self._conn.execute(
+            """
+            SELECT turn, idx, event_id, title, context, rejection_reason, opposition,
+                   options_json, choice_json, status, kind,
+                   actor_name, actor_office, actor_faction,
+                   revision_round, prior_options_json
+            FROM pending_decisions
+            WHERE status = 'pending'
+              AND (
+                    kind = 'rescript_draft'
+                    OR (kind = 'decision' AND turn = ?)
+                  )
+            ORDER BY
+              CASE kind WHEN 'rescript_draft' THEN 0 ELSE 1 END,
+              turn, idx
+            """,
+            (turn,),
+        ).fetchall()
+        return [self._project_rescript_desk_row(r) for r in rows]
+
+    def get_rescript_desk_rows_by_keys(
+        self, keys: Sequence[str],
+    ) -> List[Dict[str, object]]:
+        """按 decision_key 取 desk 行（含 decided）。"""
+        out: List[Dict[str, object]] = []
+        seen: set[str] = set()
+        for raw in keys:
+            key = str(raw or "").strip()
+            if not key or key in seen:
+                continue
+            parts = key.split(":")
+            if len(parts) != 3:
+                continue
+            kind, turn_s, idx_s = parts
+            try:
+                turn_i, idx_i = int(turn_s), int(idx_s)
+            except (TypeError, ValueError):
+                continue
+            if kind not in {"rescript_draft", "decision"}:
+                continue
+            r = self._conn.execute(
+                """
+                SELECT turn, idx, event_id, title, context, rejection_reason, opposition,
+                       options_json, choice_json, status, kind,
+                       actor_name, actor_office, actor_faction,
+                       revision_round, prior_options_json
+                FROM pending_decisions
+                WHERE turn = ? AND idx = ? AND kind = ?
+                """,
+                (turn_i, idx_i, kind),
+            ).fetchone()
+            if r is None:
+                continue
+            seen.add(key)
+            out.append(self._project_rescript_desk_row(r))
+        return out
+
+    def cas_revise_pending_decision(
+        self,
+        *,
+        revision_round: int,
+        options_json: str,
+        prior_options_json: str,
+        choice_json: str,
+        turn: int,
+        idx: int,
+        kind: str,
+        expected_round: int,
+    ) -> int:
+        cur = self._conn.execute(
+            "UPDATE pending_decisions SET revision_round = ?, options_json = ?, "
+            "prior_options_json = ?, choice_json = ?, status = 'pending' "
+            "WHERE turn = ? AND idx = ? AND kind = ? AND revision_round = ? "
+            "AND status = 'pending'",
+            (
+                int(revision_round), options_json, prior_options_json, choice_json,
+                int(turn), int(idx), kind, int(expected_round),
+            ),
+        )
+        return int(cur.rowcount)
+
+    def cas_decide_pending_decision(
+        self, *, choice_json: str, turn: int, idx: int, kind: str,
+    ) -> int:
+        cur = self._conn.execute(
+            "UPDATE pending_decisions SET choice_json = ?, status = 'decided' "
+            "WHERE turn = ? AND idx = ? AND kind = ? AND status = 'pending'",
+            (choice_json, int(turn), int(idx), kind),
+        )
+        return int(cur.rowcount)
+
+    def clear_pending_choice_json(
+        self, *, turn: int, idx: int, kind: str,
+    ) -> None:
+        self._conn.execute(
+            "UPDATE pending_decisions SET choice_json = '{}' "
+            "WHERE turn = ? AND idx = ? AND kind = ? AND status = 'pending'",
+            (int(turn), int(idx), kind),
+        )
+
+    def list_pending_drafts_with_choice(self) -> Any:
+        return self._conn.execute(
+            "SELECT turn, idx, kind, status, choice_json, revision_round "
+            "FROM pending_decisions "
+            "WHERE status = 'pending' AND kind = 'rescript_draft' "
+            "AND choice_json IS NOT NULL AND TRIM(choice_json) NOT IN ('', '{}')"
+        ).fetchall()

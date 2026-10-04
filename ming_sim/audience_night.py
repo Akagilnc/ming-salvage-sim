@@ -327,11 +327,7 @@ def resolve_standing_roster(db: Any) -> List[str]:
 
 
 def get_open_night(db: Any) -> Optional[Dict[str, Any]]:
-    row = db.conn.execute(
-        "SELECT * FROM audience_nights "
-        "WHERE status IN (?, ?) ORDER BY id DESC LIMIT 1",
-        (NIGHT_STATUS_OPEN, NIGHT_STATUS_CLOSING),
-    ).fetchone()
+    row = db.reign.open_or_closing_night()
     return _hydrate_night(_row_dict(row)) if row is not None else None
 
 
@@ -370,10 +366,7 @@ def assert_night_accepts_player_input(
 
 
 def get_night(db: Any, night_id: int) -> Optional[Dict[str, Any]]:
-    row = db.conn.execute(
-        "SELECT * FROM audience_nights WHERE id = ?",
-        (int(night_id),),
-    ).fetchone()
+    row = db.reign.night_by_id(int(night_id))
     return _hydrate_night(_row_dict(row)) if row is not None else None
 
 
@@ -407,11 +400,7 @@ def _entry_order_key(raw: Dict[str, Any]) -> float:
 def list_ledger(db: Any, night_id: int) -> List[Dict[str, Any]]:
     # 时序键排序（#501 AC11）：COALESCE(order_key, seq) 使补跑的抽取账落回源轮原位、
     # 不因补跑执行时刻排到后续轮之后；同键内 id 稳定次序。
-    rows = db.conn.execute(
-        "SELECT * FROM story_ledger_entries WHERE night_id = ? "
-        "ORDER BY COALESCE(order_key, seq) ASC, id ASC",
-        (int(night_id),),
-    ).fetchall()
+    rows = db.reign.list_ledger_ordered_for_night(int(night_id))
     out: List[Dict[str, Any]] = []
     for row in rows:
         raw = _row_dict(row)
@@ -438,12 +427,7 @@ def list_ledger(db: Any, night_id: int) -> List[Dict[str, Any]]:
 def list_chat_turns_for_night(db: Any, night_id: int) -> List[Dict[str, Any]]:
     # 撤回的轮（status='undone'）从「按夜取数」隐去——与「该轮未发生」等价（#506）。
     # failed 半场轮 / consumed 空问话召见 scaffold 同样不计入夜时间线。
-    rows = db.conn.execute(
-        "SELECT * FROM chat_turns WHERE night_id = ? "
-        "AND status NOT IN ('undone', 'failed', 'consumed') "
-        "ORDER BY night_seq ASC, id ASC",
-        (int(night_id),),
-    ).fetchall()
+    rows = db.reign.list_alive_night_chat_turns(int(night_id))
     return [_row_dict(r) for r in rows]
 
 
@@ -670,15 +654,7 @@ def audit_night_direct_writes(db: Any, night_id: int) -> set[str]:
     返回观测到的白名单操作名集（合法夜用于确认授权项确经白名单落地）。
     """
     allowed = _night_direct_write_allowed_tables()
-    rows = db.conn.execute(
-        """
-        SELECT DISTINCT i.target_table
-        FROM chat_turn_rollback_items i
-        JOIN chat_turns t ON t.id = i.chat_turn_id
-        WHERE t.night_id = ? AND t.status NOT IN ('undone', 'failed', 'consumed')
-        """,
-        (int(night_id),),
-    ).fetchall()
+    rows = db.reign.night_direct_write_tables(int(night_id))
     observed_ops: set[str] = set()
     violations: List[str] = []
     for row in rows:
@@ -712,7 +688,7 @@ def audit_night_direct_writes(db: Any, night_id: int) -> set[str]:
 
 
 def _allocate_seq(db: Any, night_id: int) -> int:
-    return int(db.allocate_night_seq(int(night_id)))
+    return int(db.reign.allocate_night_seq(int(night_id)))
 
 
 def _character_status(db: Any, name: str) -> str:
@@ -831,31 +807,22 @@ def append_ledger_entry(
         raise AudienceNightError("封夜后仅可补记引擎明发账", code="night_closed")
     seq = _allocate_seq(db, night_id)
     origin = str(origin_ref or "").strip()
-    cur = db.conn.execute(
-        """
-        INSERT INTO story_ledger_entries
-            (night_id, seq, person_names, audibility, body, tags,
-             source_chat_turn_id, presence_effect, order_key, origin_chat_turn_id,
-             origin_ref)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            int(night_id),
-            seq,
-            json.dumps(persons, ensure_ascii=False),
-            audibility,
-            body or "",
-            json.dumps(tag_list, ensure_ascii=False),
-            int(source_chat_turn_id or 0),
-            presence_effect or "",
-            None if order_key is None else float(order_key),
-            int(origin_chat_turn_id or 0),
-            origin,
-        ),
+    entry_id = db.reign.insert_story_ledger_entry_row(
+        night_id=int(night_id),
+        seq=seq,
+        person_names=json.dumps(persons, ensure_ascii=False),
+        audibility=audibility,
+        body=body or "",
+        tags=json.dumps(tag_list, ensure_ascii=False),
+        source_chat_turn_id=int(source_chat_turn_id or 0),
+        presence_effect=presence_effect or "",
+        order_key=None if order_key is None else float(order_key),
+        origin_chat_turn_id=int(origin_chat_turn_id or 0),
+        origin_ref=origin,
     )
     if commit and _should_commit(db):
         db.conn.commit()
-    return int(cur.lastrowid)
+    return int(entry_id)
 
 
 def open_night(
@@ -893,13 +860,10 @@ def open_night(
     sp = f"open_night_{int(state.turn)}_{id(state)}"
     db.conn.execute(f"SAVEPOINT {sp}")
     try:
-        cur = db.conn.execute(
-            """
-            INSERT INTO audience_nights
-                (turn, year, period, time_of_day, location, status,
-                 close_commit_cursor, next_event_seq)
-            VALUES (?, ?, ?, ?, ?, ?, 0, 0)
-            """,
+        night_id = db.reign.insert_night(
+            "(turn, year, period, time_of_day, location, status, "
+            "close_commit_cursor, next_event_seq)",
+            "(?, ?, ?, ?, ?, ?, 0, 0)",
             (
                 int(state.turn),
                 int(state.year),
@@ -909,7 +873,6 @@ def open_night(
                 NIGHT_STATUS_OPEN,
             ),
         )
-        night_id = int(cur.lastrowid)
         for name in roster:
             # 常在员额入殿账 body 恒空——只驱动在场，不写旁白。
             append_ledger_entry(
@@ -978,21 +941,7 @@ def summon_enter(
 
 
 def list_in_flight_chat_turns(db: Any, night_id: int) -> List[Dict[str, Any]]:
-    if hasattr(db, "list_in_flight_chat_turns"):
-        return db.list_in_flight_chat_turns(night_id=int(night_id))
-    rows = db.conn.execute(
-        """
-        SELECT * FROM chat_turns
-        WHERE night_id = ?
-          AND (
-            status = 'generating'
-            OR (status = 'active' AND (minister_message_id IS NULL OR minister_message_id = 0))
-          )
-        ORDER BY id ASC
-        """,
-        (int(night_id),),
-    ).fetchall()
-    return [_row_dict(r) for r in rows]
+    return db.list_in_flight_chat_turns(night_id=int(night_id))
 
 
 def wait_in_flight_clear(
@@ -1023,11 +972,7 @@ def _set_night_fields(db: Any, night_id: int, **fields: Any) -> None:
     if not fields:
         return
     assignments = ", ".join(f"{k} = ?" for k in fields)
-    params = list(fields.values()) + [int(night_id)]
-    db.conn.execute(
-        f"UPDATE audience_nights SET {assignments} WHERE id = ?",
-        params,
-    )
+    db.reign.update_night(assignments, int(night_id), tuple(fields.values()))
     _commit_if_owns(db)
 
 
@@ -1381,9 +1326,7 @@ def _project_unsettled_summon_kind(
 
 def list_unsettled_summons(db: Any) -> List[Dict[str, Any]]:
     """从故事账确定性投影未结传召；不解析自由叙事正文。"""
-    rows = db.conn.execute(
-        "SELECT id, night_id, person_names, tags FROM story_ledger_entries ORDER BY id"
-    ).fetchall()
+    rows = db.reign.list_ledger_summon_rows()
     projected: List[Dict[str, Any]] = []
     for row in rows:
         tags = load_stored_list(row["tags"], label='tags')
@@ -1516,9 +1459,7 @@ def settle_applied_arrived_summons(
 
 
 def ledger_tags(db: Any, entry_id: int) -> Any:
-    return db.conn.execute(
-        "SELECT tags FROM story_ledger_entries WHERE id=?", (int(entry_id),),
-    ).fetchone()
+    return db.reign.ledger_tags(int(entry_id))
 
 
 def _mark_summon_entries_in_transit(db: Any, items: Sequence[Dict[str, Any]]) -> None:
@@ -1532,10 +1473,7 @@ def _mark_summon_entries_in_transit(db: Any, items: Sequence[Dict[str, Any]]) ->
         if TAG_IN_TRANSIT in tags:
             continue
         tags.append(TAG_IN_TRANSIT)
-        db.conn.execute(
-            "UPDATE story_ledger_entries SET tags=? WHERE id=?",
-            (json.dumps(tags, ensure_ascii=False), entry_id),
-        )
+        db.reign.set_ledger_tags(entry_id, json.dumps(tags, ensure_ascii=False))
     if _should_commit(db):
         db.conn.commit()
 
@@ -1560,10 +1498,7 @@ def settle_summon_origin(
         tags = load_stored_list(row["tags"], label='tags')
         tags = [tag for tag in tags if tag != TAG_SUMMON_UNSETTLED]
         tags.append(TAG_SUMMON_SETTLED)
-        db.conn.execute(
-            "UPDATE story_ledger_entries SET tags=? WHERE id=?",
-            (json.dumps(tags, ensure_ascii=False), item["entry_id"]),
-        )
+        db.reign.set_ledger_tags(item["entry_id"], json.dumps(tags, ensure_ascii=False))
     if commit and _should_commit(db):
         db.conn.commit()
     return True
@@ -1665,10 +1600,7 @@ def update_summon_travel_tone(
             continue
         if item.get("person_name") != name:
             continue
-        row = db.conn.execute(
-            "SELECT origin_chat_turn_id FROM story_ledger_entries WHERE id=?",
-            (int(item["entry_id"]),),
-        ).fetchone()
+        row = db.reign.ledger_origin_chat_turn_id(int(item["entry_id"]))
         if row is None or int(row["origin_chat_turn_id"] or 0) != int(origin_chat_turn_id):
             continue
         target = item
@@ -1682,10 +1614,7 @@ def update_summon_travel_tone(
     tags = [str(t) for t in load_stored_list(row["tags"], label='tags')]
     tags = [t for t in tags if not str(t).startswith(_SUMMON_TRAVEL_TONE_PREFIX)]
     tags.append(_travel_tone_tag(tone))
-    db.conn.execute(
-        "UPDATE story_ledger_entries SET tags=? WHERE id=?",
-        (json.dumps(tags, ensure_ascii=False), entry_id),
-    )
+    db.reign.set_ledger_tags(entry_id, json.dumps(tags, ensure_ascii=False))
     if (
         not bool(getattr(db.conn, "_commit_suspended", False))
         and int(getattr(db.conn, "_atomic_depth", 0) or 0) == 0
@@ -1736,10 +1665,7 @@ def discard_inactive_office_summon(db: Any, pending_id: int) -> bool:
     # Activated / in-transit / settled rows are post-promulgation history — keep.
     if TAG_SUMMON_UNSETTLED in tags or TAG_IN_TRANSIT in tags or TAG_SUMMON_SETTLED in tags:
         return False
-    conn.execute(
-        "DELETE FROM story_ledger_entries WHERE id=?",
-        (int(entry["id"]),),
-    )
+    db.reign.delete_ledger_entry(int(entry["id"]))
     if owns_transaction:
         conn.commit()
     return True
@@ -1754,10 +1680,7 @@ def activate_office_summon(db: Any, pending_id: int) -> Optional[Dict[str, Any]]
     tags = list(entry["tags"])
     if TAG_SUMMON_UNSETTLED not in tags:
         tags.append(TAG_SUMMON_UNSETTLED)
-        db.conn.execute(
-            "UPDATE story_ledger_entries SET tags=? WHERE id=?",
-            (json.dumps(tags, ensure_ascii=False), int(entry["id"])),
-        )
+        db.reign.set_ledger_tags(int(entry["id"]), json.dumps(tags, ensure_ascii=False))
     return {**entry, "tags": tags}
 
 
@@ -2135,10 +2058,7 @@ def set_night_protagonist(
     night = get_night(db, nid)
     if night is None:
         raise AudienceNightError(f"夜不存在：{nid}", code="night_not_found")
-    db.conn.execute(
-        "UPDATE audience_nights SET protagonist_name=? WHERE id=?",
-        (name, nid),
-    )
+    db.reign.set_night_protagonist(nid, name)
     if commit and _should_commit(db):
         db.conn.commit()
     return name
@@ -2146,10 +2066,7 @@ def set_night_protagonist(
 
 def get_night_protagonist(db: Any, night_id: int) -> str:
     """读本夜当前御前主角；未声明则空串。"""
-    row = db.conn.execute(
-        "SELECT protagonist_name FROM audience_nights WHERE id=?",
-        (int(night_id),),
-    ).fetchone()
+    row = db.reign.get_night_protagonist(int(night_id))
     if row is None:
         return ""
     return str(row["protagonist_name"] or "")
@@ -2157,17 +2074,9 @@ def get_night_protagonist(db: Any, night_id: int) -> str:
 
 def reproject_night_protagonist(db: Any, night_id: int) -> str:
     """按存活源轮时序重投影夜当前主角；调用方负责事务提交。"""
-    row = db.conn.execute(
-        "SELECT protagonist_name FROM chat_turns WHERE night_id=? "
-        "AND status NOT IN ('undone','failed') AND protagonist_name != '' "
-        "ORDER BY id DESC LIMIT 1",
-        (int(night_id),),
-    ).fetchone()
+    row = db.reign.latest_alive_protagonist_for_night(int(night_id))
     name = str(row["protagonist_name"] or "") if row is not None else ""
-    db.conn.execute(
-        "UPDATE audience_nights SET protagonist_name=? WHERE id=?",
-        (name, int(night_id)),
-    )
+    db.reign.set_night_protagonist(int(night_id), name)
     return name
 
 
@@ -2306,10 +2215,7 @@ def _ledger_by_origin_ref(db: Any, origin: str) -> Optional[Dict[str, Any]]:
     origin = str(origin or "").strip()
     if not origin:
         return None
-    row = db.conn.execute(
-        "SELECT * FROM story_ledger_entries WHERE origin_ref = ? LIMIT 1",
-        (origin,),
-    ).fetchone()
+    row = db.reign.ledger_by_origin_ref(origin)
     if row is None:
         return None
     raw = _row_dict(row)

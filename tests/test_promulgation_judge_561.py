@@ -587,7 +587,7 @@ def test_choose_rescripts_keeps_authority_edge_off_force_promulgated(game):
         {"event_id": f"dossier:{authority_edge}", "title": "批红", "context": "e",
          "options": ordinary_opts},
     ]
-    db.save_pending_decisions(state.turn, decisions)
+    db.issues.save_pending_decisions(state.turn, decisions)
     chosen = _choose_rescripts(
         db, state.turn, hostile, vital, appointment,
     )

@@ -145,7 +145,7 @@ def test_scene_chat_approval_forecasts_each_decree_without_visible_effect(game, 
     assert stored[0].verdict["decision"] == "promulgated"
     assert stored[0].questions and stored[0].questions[0]["title"] == "请旨"
     assert isinstance(stored[0].forecast_text, str)
-    assert db.list_pending_decisions(state.turn) == []
+    assert db.issues.list_pending_decisions(state.turn) == []
     assert policies and policies[0].retry_429 is False and policies[0].max_attempts == 3
     assert judge_policies and all(
         item is not None and item.retry_429 is False and item.max_attempts == 3
@@ -243,7 +243,7 @@ def test_scene_chat_rejection_is_staged_for_later_rescript_not_shown_at_night(
     assert stored[0].questions is None
     assert stored[0].forecast_text is None
     assert stored[0].declaration == {}
-    assert db.list_pending_decisions(state.turn) == []
+    assert db.issues.list_pending_decisions(state.turn) == []
     assert db.conn.execute(
         "SELECT 1 FROM decree_dossiers WHERE pending_action_id=?", (pending_id,),
     ).fetchone() is None

@@ -77,7 +77,7 @@ def _land_reply(db, state, minister: str, chat_id: int, text: str = "臣遵旨�
         (minister, state.turn, text),
     ).lastrowid
     db.conn.commit()
-    db.update_chat_turn_messages(chat_id, minister_message_id=int(mid))
+    db.reign.update_chat_turn_messages(chat_id, minister_message_id=int(mid))
     # #501：production 里回话落库后由尾随/收夜前 drain 抽取落账，收夜时无待补。本 #498
     # 时序/隔离用例不涉抽取，直接把水位推到 done 以反映合法收夜前态（否则引擎收夜 drain
     # 闸对未抽回话 fail-closed）。

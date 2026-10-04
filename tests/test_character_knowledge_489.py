@@ -213,7 +213,7 @@ def test_undo_chat_turn_removes_chat_derived_knowledge_from_context(game):
     db.release_held_audience_knowledge()
     after = db.capture_chat_rollback_snapshot()
     db.record_chat_turn_rollback_diffs(chat_turn_id, before, after)
-    db.update_chat_turn_messages(chat_turn_id, user_message_id=message_id)
+    db.reign.update_chat_turn_messages(chat_turn_id, user_message_id=message_id)
 
     assert any(item["source_id"] == f"chat_message:{message_id}" for item in db.get_character_knowledge(state, minister.name)["events"])
 

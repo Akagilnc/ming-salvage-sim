@@ -1099,17 +1099,11 @@ def _dispatch_commissions(
             if not body or not actor or not isinstance(target_id, str) or not target_id.strip() or origin_id <= 0:
                 _reject(rejected, item, "点策交办须有正文、目标和陈策源轮", "invalid_shape", source)
                 continue
-            origin = db.conn.execute(
-                "SELECT 1 FROM chat_turns earlier JOIN chat_turns current "
-                "ON earlier.night_id=current.night_id AND earlier.turn=current.turn "
-                "WHERE earlier.id=? AND current.id=? AND earlier.id<current.id "
-                "AND earlier.minister_name=? AND current.minister_name=? "
-                "AND earlier.minister_message_id IS NOT NULL "
-                "AND earlier.status='active' AND current.status='active' "
-                "AND earlier.undone_at IS NULL AND current.undone_at IS NULL",
-                (origin_id, int(source_chat_turn_id or 0), actor, actor),
-            ).fetchone()
-            if origin is None:
+            if not db.reign.active_prior_chat_turn_exists(
+                earlier_id=origin_id,
+                current_id=int(source_chat_turn_id or 0),
+                actor=actor,
+            ):
                 _reject(rejected, item, "点策陈策轮不属本夜前序有效召对", "missing_ref", source)
                 continue
             payload = {
@@ -1175,11 +1169,11 @@ def _dispatch_commissions(
             if target is None or order_id <= 0 or not isinstance(content_text, str) or not content_text.strip():
                 _reject(rejected, item, "密令修改须指向承办人的有效密令并提供正文", "invalid_state", source)
                 continue
-            source_turn = db.conn.execute(
-                "SELECT user_message_id FROM chat_turns "
-                "WHERE id=? AND minister_name=? AND turn=? AND status='active'",
-                (int(source_chat_turn_id), actor, int(state.turn)),
-            ).fetchone()
+            source_turn = db.reign.active_chat_turn_user_message_id(
+                chat_turn_id=int(source_chat_turn_id),
+                minister_name=actor,
+                turn=int(state.turn),
+            )
             if source_turn is None or source_turn["user_message_id"] is None:
                 _reject(rejected, item, "密令修改缺本轮口谕源轮", "missing_ref", source)
                 continue
@@ -1210,11 +1204,10 @@ def _dispatch_commissions(
                 _reject(rejected, item, "密令缺标题、内容或冻结任务契约", "invalid_shape", source)
                 continue
             out: Dict[str, Any] = {}
-            source_turn = db.conn.execute(
-                "SELECT minister_name, user_message_id FROM chat_turns "
-                "WHERE id=? AND turn=? AND status='active'",
-                (int(source_chat_turn_id), int(state.turn)),
-            ).fetchone()
+            source_turn = db.reign.active_chat_turn_actor_and_user_message(
+                chat_turn_id=int(source_chat_turn_id),
+                turn=int(state.turn),
+            )
             if source_turn is None or source_turn["user_message_id"] is None:
                 _reject(rejected, item, "密令缺本轮口谕源轮", "missing_ref", source)
                 continue
@@ -2357,9 +2350,7 @@ def _resolve_night_source_chat_turn(
         return ctid, None
     if ctid <= 0:
         return 0, "召对夜上下文的当场实况须带正源轮 chat_turn_id"
-    row = db.conn.execute(
-        "SELECT night_id FROM chat_turns WHERE id=?", (ctid,),
-    ).fetchone()
+    row = db.reign.chat_turn_night_id(ctid)
     if row is None or int(row["night_id"] or 0) != nid:
         return 0, f"源轮不属于本夜：chat_turn_id={ctid}"
     return ctid, None

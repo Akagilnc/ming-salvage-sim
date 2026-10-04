@@ -96,9 +96,7 @@ def build_night_said_so_far(
     cutoff_id = int(until_chat_turn_id or 0)
     cutoff_seq: Optional[int] = None
     if cutoff_id > 0:
-        crow = db.conn.execute(
-            "SELECT night_seq FROM chat_turns WHERE id=?", (cutoff_id,),
-        ).fetchone()
+        crow = db.reign.chat_turn_night_seq(cutoff_id)
         if crow is not None:
             cutoff_seq = int(crow["night_seq"] or 0)
 

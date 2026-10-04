@@ -735,7 +735,7 @@ def test_translate_call_failure_is_not_empty_success_dispatch(game, monkeypatch)
     ).fetchone()["c"]
     assert after == before  # 失败不得当分派成功写库
     # 后台失败 → 待补水位，不洗成成功空声明
-    assert db.get_story_extract_status(ctid) == "pending"
+    assert db.reign.get_story_extract_status(ctid) == "pending"
 
 
 def test_translate_empty_success_still_dispatches_without_failure(game, monkeypatch):

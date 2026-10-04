@@ -102,7 +102,7 @@ def test_drain_fail_concurrent_heal_asks_retry_no_dual_source(
 
     _close_with_gate(db, state, night_id=nid, translate_fn=boom_translate)
     # 外部可见：转译待补仍在；水位未标 done
-    assert db.get_story_extract_status(ctid) in ("", "pending")
+    assert db.reign.get_story_extract_status(ctid) in ("", "pending")
     assert int(_pending_api(db)["count"]) >= 1
     assert any(
         int(p["chat_turn_id"]) == ctid for p in (_pending_api(db).get("pending") or [])

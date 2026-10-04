@@ -828,7 +828,7 @@ def test_chat_rollback_restores_faction_leverage(game):
 
     chat_turn_id = db.create_chat_turn(state, name, "sess-x", 0)
     db.record_chat_turn_rollback_diffs(chat_turn_id, before_snap, after_snap)
-    db.update_chat_turn_messages(chat_turn_id, user_message_id=1, minister_message_id=2)
+    db.reign.update_chat_turn_messages(chat_turn_id, user_message_id=1, minister_message_id=2)
     db.undo_chat_turn(chat_turn_id)
 
     restored = db.faction_leverage(faction)

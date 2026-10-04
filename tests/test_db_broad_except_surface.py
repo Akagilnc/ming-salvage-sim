@@ -27,7 +27,7 @@ def test_pending_decisions_corrupt_options_json_refuses(game):
     db.conn.commit()
 
     with pytest.raises(ValueError):
-        db.list_pending_decisions(999)
+        db.issues.list_pending_decisions(999)
 
 def test_pending_decisions_corrupt_choice_json_refuses(game):
     db, _state, _content = game
@@ -40,7 +40,7 @@ def test_pending_decisions_corrupt_choice_json_refuses(game):
     db.conn.commit()
 
     with pytest.raises(ValueError):
-        db.list_pending_decisions(998)
+        db.issues.list_pending_decisions(998)
 
 def test_resolve_context_corrupt_payload_refuses_restore(game, monkeypatch):
     """恢复材料读不出来就必须拒绝恢复，不许回退空对象继续（#1889 / 失败诚实宪法）。

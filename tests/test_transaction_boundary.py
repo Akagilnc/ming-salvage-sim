@@ -85,10 +85,10 @@ def test_atomic_suspends_internal_method_commit(game):
 
     with pytest.raises(RuntimeError, match='boom'):
         with atomic(db):
-            db.kv_set("s1_method", "via_method")  # 内部有 self.conn.commit()
+            db.reign.kv_set("s1_method", "via_method")  # 内部有 self.conn.commit()
             raise RuntimeError("boom")
 
-    assert db.kv_get("s1_method") is None  # kv_set 的写入随回滚消失
+    assert db.reign.kv_get("s1_method") is None  # kv_set 的写入随回滚消失
 
 
 def test_nested_atomic_inner_commit_held_outer_rolls_back(game):
@@ -102,13 +102,13 @@ def test_nested_atomic_inner_commit_held_outer_rolls_back(game):
         with atomic(db):
             db.conn.execute("INSERT INTO kv_store(key,value) VALUES('s1_outer','o')")
             with atomic(db):
-                db.kv_set("s1_inner", "i")  # 内层正常退出，但不该提前 commit
+                db.reign.kv_set("s1_inner", "i")  # 内层正常退出，但不该提前 commit
             # 内层退出后外层仍在事务内，未落定
             assert db.conn.in_transaction
             raise RuntimeError("boom")
 
-    assert db.kv_get("s1_inner") is None
-    assert db.kv_get("s1_outer") is None
+    assert db.reign.kv_get("s1_inner") is None
+    assert db.reign.kv_get("s1_outer") is None
 
 
 def test_nested_atomic_both_succeed_commits_once(game):
@@ -149,7 +149,7 @@ def test_rollback_still_works_during_suspension(game):
             "SELECT value FROM kv_store WHERE key='s1_rb'"
         ).fetchone() is None
 
-    assert db.kv_get("s1_rb") is None
+    assert db.reign.kv_get("s1_rb") is None
 
 
 def test_outside_atomic_commit_is_real(game):
@@ -158,7 +158,7 @@ def test_outside_atomic_commit_is_real(game):
     db.conn.execute("DELETE FROM kv_store WHERE key='s1_plain'")
     db.conn.commit()
 
-    db.kv_set("s1_plain", "committed")  # atomic 外，内部 commit 应真生效
+    db.reign.kv_set("s1_plain", "committed")  # atomic 外，内部 commit 应真生效
 
     other = sqlite3.connect(db.path)
     try:
@@ -225,7 +225,7 @@ def test_atomic_reraises_original_exception(game):
             raise sentinel
     assert ei.value is sentinel
     # 回滚后写入不留
-    assert db.kv_get("s1_exc") is None
+    assert db.reign.kv_get("s1_exc") is None
     # 异常后连接干净，无悬挂事务
     assert not db.conn.in_transaction
 
@@ -244,13 +244,13 @@ def test_nested_atomic_inner_error_rolls_back_at_outer(game):
                 db.conn.execute("INSERT INTO kv_store(key,value) VALUES('s1_ie_inner','i')")
                 raise RuntimeError("inner boom")
 
-    assert db.kv_get("s1_ie_outer") is None
-    assert db.kv_get("s1_ie_inner") is None
+    assert db.reign.kv_get("s1_ie_outer") is None
+    assert db.reign.kv_get("s1_ie_inner") is None
     # 暂停标志已在最外层解除，深度归零，连接可正常续用
     assert db.conn._commit_suspended is False
     assert db.conn._atomic_depth == 0
-    db.kv_set("s1_ie_after", "ok")
-    assert db.kv_get("s1_ie_after") == "ok"
+    db.reign.kv_set("s1_ie_after", "ok")
+    assert db.reign.kv_get("s1_ie_after") == "ok"
     db.conn.execute("DELETE FROM kv_store WHERE key='s1_ie_after'")
     db.conn.commit()
 
@@ -275,7 +275,7 @@ def test_connection_context_inside_atomic_rolls_back(game):
                 db.conn.execute("INSERT INTO kv_store(key,value) VALUES('s1_ctx','x')")
             raise RuntimeError("boom after conn-context")
 
-    assert db.kv_get("s1_ctx") is None  # 外层回滚必须救回
+    assert db.reign.kv_get("s1_ctx") is None  # 外层回滚必须救回
 
 
 def test_connection_context_outside_atomic_still_commits(game):
@@ -285,7 +285,7 @@ def test_connection_context_outside_atomic_still_commits(game):
     db.conn.commit()
     with db.conn:
         db.conn.execute("INSERT INTO kv_store(key,value) VALUES('s1_ctx_out','y')")
-    assert db.kv_get("s1_ctx_out") == "y"
+    assert db.reign.kv_get("s1_ctx_out") == "y"
     db.conn.execute("DELETE FROM kv_store WHERE key='s1_ctx_out'"); db.conn.commit()
 
 
@@ -306,12 +306,12 @@ def test_swallowed_inner_exception_forces_outer_rollback(game):
             except ValueError:
                 pass  # 中间层吞掉——flat 语义下这是禁手
 
-    assert db.kv_get("s1_swallow") is None
+    assert db.reign.kv_get("s1_swallow") is None
     # 标志复位，连接可续用
     assert db.conn._commit_suspended is False
     assert db.conn._atomic_depth == 0
-    db.kv_set("s1_swallow_after", "ok")
-    assert db.kv_get("s1_swallow_after") == "ok"
+    db.reign.kv_set("s1_swallow_after", "ok")
+    assert db.reign.kv_get("s1_swallow_after") == "ok"
     db.conn.execute("DELETE FROM kv_store WHERE key='s1_swallow_after'"); db.conn.commit()
 
 
@@ -409,8 +409,8 @@ def test_swallowed_conn_context_exception_forces_outer_rollback(game):
                 pass  # 吞
             db.conn.execute("INSERT INTO kv_store(key,value) VALUES('s1r2_w2','W2')")
 
-    assert db.kv_get("s1r2_w1") is None
-    assert db.kv_get("s1r2_w2") is None
+    assert db.reign.kv_get("s1r2_w1") is None
+    assert db.reign.kv_get("s1r2_w2") is None
     assert db.conn._commit_suspended is False
     assert db.conn._atomic_depth == 0
 
@@ -459,7 +459,7 @@ def test_commit_failure_in_conn_context_rolls_back(game, monkeypatch):
             db.conn.execute("INSERT INTO kv_store(key,value) VALUES('s1r2_cf','x')")
 
     assert not db.conn.in_transaction  # 已回滚，不留开事务
-    assert db.kv_get("s1r2_cf") is None
+    assert db.reign.kv_get("s1r2_cf") is None
 
 
 def test_commit_failure_at_atomic_exit_rolls_back(game, monkeypatch):
@@ -484,7 +484,7 @@ def test_commit_failure_at_atomic_exit_rolls_back(game, monkeypatch):
             db.conn.execute("INSERT INTO kv_store(key,value) VALUES('s1r2_acf','x')")
 
     assert not db.conn.in_transaction
-    assert db.kv_get("s1r2_acf") is None
+    assert db.reign.kv_get("s1r2_acf") is None
     assert db.conn._commit_suspended is False
     assert db.conn._atomic_depth == 0
 
@@ -556,7 +556,7 @@ def test_ddl_after_explicit_midatomic_rollback_does_not_escape(game):
             raise RuntimeError("boom")
 
     assert not _rejection_table_exists(db)
-    assert db.kv_get("s1r3_x") is None
+    assert db.reign.kv_get("s1r3_x") is None
 
 
 def test_begin_failure_at_entry_restores_flags(game, monkeypatch):
@@ -579,7 +579,7 @@ def test_begin_failure_at_entry_restores_flags(game, monkeypatch):
     assert db.conn._commit_suspended is False
     assert db.conn._atomic_depth == 0
     # 标志未泄漏：后续写照常真提交
-    db.kv_set("s1r3_after_begin_fail", "ok")
-    assert db.kv_get("s1r3_after_begin_fail") == "ok"
+    db.reign.kv_set("s1r3_after_begin_fail", "ok")
+    assert db.reign.kv_get("s1r3_after_begin_fail") == "ok"
     db.conn.execute("DELETE FROM kv_store WHERE key='s1r3_after_begin_fail'")
     db.conn.commit()

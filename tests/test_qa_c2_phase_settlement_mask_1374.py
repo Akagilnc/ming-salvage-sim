@@ -42,7 +42,7 @@ def _runtime(db, state):
         last_decree="诏曰测试",
         last_report="",
         pending_count=lambda: 0,
-        pending_decisions=lambda: db.list_pending_decisions(int(state.turn)),
+        pending_decisions=lambda: db.issues.list_pending_decisions(int(state.turn)),
         victory=lambda: {"status": "ongoing", "summary": ""},
         current_phase=lambda: TurnPhase(state.turn_phase),
         await_translations_before_month=lambda after_drain=None: after_drain() if after_drain else None,
@@ -82,7 +82,7 @@ def test_resolve_stream_uses_settlement_period_entry(game, monkeypatch):
     db.capture_month_open_snapshot(state)
     state.turn_phase = TurnPhase.AWAITING_DECISION.value
     db.save_state(state)
-    db.save_pending_decisions(int(state.turn), [{
+    db.issues.save_pending_decisions(int(state.turn), [{
         "event_id": "evt-1",
         "title": "饷银",
         "context": "是否发帑",
@@ -213,7 +213,7 @@ def test_resolve_stream_clear_throw_emits_error_not_done(game, monkeypatch):
     state.turn_phase = TurnPhase.AWAITING_DECISION.value
     db.save_state(state)
     db.capture_month_open_snapshot(state)
-    db.save_pending_decisions(int(state.turn), [{
+    db.issues.save_pending_decisions(int(state.turn), [{
         "event_id": "evt-1",
         "title": "饷银",
         "context": "是否发帑",

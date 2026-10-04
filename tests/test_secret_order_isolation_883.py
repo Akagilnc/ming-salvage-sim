@@ -410,20 +410,20 @@ def test_976_secret_chat_turn_withholds_both_sides_but_public_turn_survives(game
 
     secret_turn = db.create_chat_turn(state, assignee.name, "secret-turn-976", 0)
     mid_origin = db.append_chat_message(assignee.name, state.turn, "user", origin)
-    db.update_chat_turn_messages(
+    db.reign.update_chat_turn_messages(
         secret_turn, user_message_id=mid_origin,
     )
     oid = create_test_secret_order(db, state, assignee.name, "密查国丈", extracted, [])
     assert oid > 0
     mid_ack = db.append_chat_message(assignee.name, state.turn, "minister", ack)
-    db.update_chat_turn_messages(secret_turn, minister_message_id=mid_ack)
+    db.reign.update_chat_turn_messages(secret_turn, minister_message_id=mid_ack)
 
     public_turn = db.create_chat_turn(state, assignee.name, "public-turn-976", 0)
     mid_public_q = db.append_chat_message(assignee.name, state.turn, "user", public_q)
     mid_public_reply = db.append_chat_message(
         assignee.name, state.turn, "minister", public_reply,
     )
-    db.update_chat_turn_messages(
+    db.reign.update_chat_turn_messages(
         public_turn,
         user_message_id=mid_public_q,
         minister_message_id=mid_public_reply,
@@ -1068,7 +1068,7 @@ def test_976_pending_secret_pin_survives_partial_commit_same_minister(game):
         assignee.name, state.turn, "minister", reply_a,
     )
     chat_turn_a = db.create_chat_turn(state, assignee.name, "pending-secret-a", 0)
-    db.update_chat_turn_messages(
+    db.reign.update_chat_turn_messages(
         chat_turn_a, user_message_id=mid_a, minister_message_id=mid_a_reply,
     )
     mid_b, pending_b = _stage_new_secret(db, state, assignee.name, marker_b)
@@ -1284,7 +1284,7 @@ def test_976_rt04_undo_chat_turn_secret_order_brief_consistent(game):
     ctid_early = db.create_chat_turn(state, b.name, "sess-early-976", 0)
     snap0 = db.capture_chat_rollback_snapshot()
     mid_b_pub = db.append_chat_message(b.name, state.turn, "minister", public_early)
-    db.update_chat_turn_messages(ctid_early, minister_message_id=mid_b_pub)
+    db.reign.update_chat_turn_messages(ctid_early, minister_message_id=mid_b_pub)
     db.record_chat_turn_rollback_diffs(
         ctid_early, snap0, db.capture_chat_rollback_snapshot(),
     )
@@ -1298,7 +1298,7 @@ def test_976_rt04_undo_chat_turn_secret_order_brief_consistent(game):
     mid_m = db.append_chat_message(
         a.name, state.turn, "minister", "臣领密旨，即查火器局。",
     )
-    db.update_chat_turn_messages(ctid, user_message_id=mid_u, minister_message_id=mid_m)
+    db.reign.update_chat_turn_messages(ctid, user_message_id=mid_u, minister_message_id=mid_m)
     oid = create_test_secret_order(db, state, a.name, "密查火器局", marker, [])
     after = db.capture_chat_rollback_snapshot()
     db.record_chat_turn_rollback_diffs(ctid, before, after)
@@ -1366,7 +1366,7 @@ def test_1026_secret_order_update_rollback_restores_existing_brief(game, rollbac
     minister_message_id = db.append_chat_message(
         minister.name, state.turn, "minister", "臣领修改后的密旨。",
     )
-    db.update_chat_turn_messages(
+    db.reign.update_chat_turn_messages(
         chat_turn_id,
         user_message_id=user_message_id,
         minister_message_id=minister_message_id,

@@ -637,9 +637,8 @@ class DossierStore:
         ).fetchone() is not None
 
     def source_chat_turn_exists(self, chat_turn_id: int) -> bool:
-        return self._conn.execute(
-            "SELECT 1 FROM chat_turns WHERE id=?", (int(chat_turn_id),),
-        ).fetchone() is not None
+        from ming_sim.entities.reign_state.store import ReignStateStore
+        return ReignStateStore(self._conn).chat_turn_exists(int(chat_turn_id))
 
     def update_payload(
         self, dossier_id: int, payload: Mapping[str, object], *, commit: bool = True,
