@@ -1,72 +1,24 @@
 {
-  "scope": "evidence/** + scripts/** ; suffixes .py/.txt/.md/.sh ; exclude disposition/enum/f14 jsonl dumps to avoid self-feedback",
-  "scoped_file_count": 58,
-  "hit_count": 70,
-  "actions": {
-    "STAGE_LABEL_OK": 44,
-    "CORRECT_LIVE_LABEL": 14,
-    "NEW_EVIDENCE_MENTION_CLOSED": 8,
+  "scope": "FULL REPO git ls-files; tokens include CLOSED/closed/close/关闭/关库/恢复/开放/declare_closed/affair_status=closed/OPEN_*/CLOSED_*/CALENDAR_ADVANCED_*/RESTORE_* — NOT limited to eight sample labels or evidence/scripts",
+  "prior_narrow_scope_superseded": "evidence/** + scripts/** eight-label whitelist (hit_count=70) — violated owner predicate",
+  "full_candidate_file": "f14_full_candidates.jsonl",
+  "full_candidate_hits": 2323,
+  "actions_full": {
+    "GENERIC_CLOSE_TOKEN": 1232,
+    "RESTORE_OR_OPEN_PROSE_MENTION": 753,
+    "CLOSE_DECLARATION_OR_STATUS_QUERY": 269,
+    "STAGE_OPEN_OR_RESTORE_LABEL": 40,
+    "LIVE_CALENDAR_ADVANCED_LABEL": 18,
+    "F14_TOKEN_HIT": 7,
     "HISTORICAL_OUTPUT_UNCHANGED": 4
   },
-  "live_script_CLOSED": 0
+  "stage_label_subset_hits": 68,
+  "live_script_CLOSED_WORLD_PUBLIC": 0,
+  "historical_CLOSED_WORLD_PUBLIC_outputs": 4,
+  "historical_paths_unchanged": [
+    "evidence/1834-fixer-f9-f12-f3/probe.txt",
+    "evidence/1834-fixer-f9-f12-f3/probe-current.txt"
+  ],
+  "live_calendar_advanced_script": "evidence/1834-fixer-f9-f12-f3/scripts/probe_f9_f12_structural.py",
+  "note": "GENERIC_close noise expected under widened predicate; disposition uses lane+token. Do not rewrite historical probe stdout."
 }
-
-files:
-evidence/1830-index-contract-followup.md
-evidence/1830-w4merge-boundary-followup.md
-evidence/1830-w4merge-contract-followup.md
-evidence/1830-w4merge-fixer-class-followup.md
-evidence/1830-w4merge-fixer-receipt.md
-evidence/1830-w4merge-fixer-scope-correction.md
-evidence/1830-w5-fixer-followup.md
-evidence/1830-w5-fixer-presentation-followup.md
-evidence/1830-w5-fixer-receipt.md
-evidence/1834-fixer-f3-f14/empty_shell_delete_plan.txt
-evidence/1834-fixer-f3-f14/f3_member_table.md
-evidence/1834-fixer-f3-f14/focused-pytest.txt
-evidence/1834-fixer-f3-f14/focused-vitest.txt
-evidence/1834-fixer-f3-f14/mutation-proof.txt
-evidence/1834-fixer-f3-f14/probe-current.txt
-evidence/1834-fixer-f3-f14/report.md
-evidence/1834-fixer-f3-f14/rescan-empty-shells.txt
-evidence/1834-fixer-f9-f12-f3/f3_fix_list.txt
-evidence/1834-fixer-f9-f12-f3/focused-files.txt
-evidence/1834-fixer-f9-f12-f3/focused-pytest.txt
-evidence/1834-fixer-f9-f12-f3/focused-vitest.txt
-evidence/1834-fixer-f9-f12-f3/pollution-pair.txt
-evidence/1834-fixer-f9-f12-f3/probe-current.txt
-evidence/1834-fixer-f9-f12-f3/probe-old-f12.txt
-evidence/1834-fixer-f9-f12-f3/probe-old.txt
-evidence/1834-fixer-f9-f12-f3/probe.txt
-evidence/1834-fixer-f9-f12-f3/report.md
-evidence/1834-fixer-f9-f12-f3/rescan.txt
-evidence/1834-fixer-f9-f12-f3/scripts/enum_f12_history_dump.py
-evidence/1834-fixer-f9-f12-f3/scripts/enum_f3_free_text_asserts.py
-evidence/1834-fixer-f9-f12-f3/scripts/enum_f9_material_payload.py
-evidence/1834-fixer-f9-f12-f3/scripts/probe_f9_f12_structural.py
-evidence/1834-history-input-fixer-receipt.md
-evidence/1834-w5-f6-receipt.md
-evidence/1834-w5-f7-receipt.md
-evidence/1834-w5-fixer-receipt.md
-scripts/agy_turn_probe.py
-scripts/bake_distance_matrix.py
-scripts/break_rank_judge_gate_562.py
-scripts/build_release.sh
-scripts/compress_portraits.py
-scripts/cut_command_icons.py
-scripts/direct_decree_probe.py
-scripts/family_tail_acceptance_570.py
-scripts/gen_portraits.py
-scripts/jisi_army_dispatch_probe.py
-scripts/make_steam_assets.py
-scripts/make_steam_library_assets.py
-scripts/midzhi_spiral_judge_gate_570.py
-scripts/military_flow_probe.py
-scripts/play_as_emperor.py
-scripts/portrait_status.py
-scripts/postprocess_portraits.py
-scripts/probe_directive_contract.py
-scripts/promulgation_gate_561.py
-scripts/rembg_portraits.py
-scripts/secret_order_probe2.py
-scripts/sum_token_log.py

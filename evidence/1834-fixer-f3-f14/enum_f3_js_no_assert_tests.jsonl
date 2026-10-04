@@ -1,0 +1,8 @@
+{"path": "web/src/components/decisionModal.test.tsx", "line": 381, "kind": "js_test_no_assert", "detail": "/\\.decision-option:focus(?!-visible)/.test(rule.selectorText)", "lane": "TEST_CURRENT"}
+{"path": "web/src/components/modals.test.tsx", "line": 18, "kind": "js_test_no_assert", "detail": "// leak a mounted React root into the next test (gemini cmr r1).", "lane": "TEST_CURRENT"}
+{"path": "web/src/components/modals.test.tsx", "line": 267, "kind": "js_test_no_assert", "detail": "// Unmount every root rendered this test (whether the body passed or threw).", "lane": "TEST_CURRENT"}
+{"path": "web/src/styles.test.ts", "line": 110, "kind": "js_test_no_assert", "detail": "it(\"单行 minmax(0,1fr) 只挂 .modal-layout-bare；裸 modal-bg-chat.fullscreen-modal 不得单行\", () => {", "lane": "TEST_CURRENT"}
+{"path": "web/src/styles.test.ts", "line": 114, "kind": "js_test_no_assert", "detail": ".filter((b) => /grid-template-rows/.test(b));", "lane": "TEST_CURRENT"}
+{"path": "web/src/styles.test.ts", "line": 115, "kind": "js_test_no_assert", "detail": "const bareOk = bare.some((b) => /grid-template-rows:\\s*minmax\\(\\s*0\\s*,\\s*1fr\\s*\\)\\s*;/.test(b)", "lane": "TEST_CURRENT"}
+{"path": "web/src/styles.test.ts", "line": 128, "kind": "js_test_no_assert", "detail": "it(\"基础 .fullscreen-modal 正向钉两行网格 auto + minmax(0,1fr)\", () => {", "lane": "TEST_CURRENT"}
+{"path": "web/src/styles.test.ts", "line": 134, "kind": "js_test_no_assert", "detail": ".filter((b) => /grid-template-rows/.test(b));", "lane": "TEST_CURRENT"}

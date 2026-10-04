@@ -1,0 +1,40 @@
+{
+  "root": "/Users/akagilnc/WorkSpace/Ming_LLM-1834-w5",
+  "py_files_scanned": 364,
+  "py_ast_Assert_count": 13564,
+  "py_ast_Assert_by_lane": {
+    "PROD_OR_DOCS": 20,
+    "TEST_CURRENT": 13543,
+    "OTHER": 1
+  },
+  "py_no_assert_tests": 7,
+  "js_files_scanned": 26,
+  "js_expect_assert_check": 1602,
+  "js_by_kind": {
+    "js_expect": 1602
+  },
+  "js_no_assert_tests": 8,
+  "f14_candidate_hits": 2323,
+  "f14_by_action": {
+    "RESTORE_OR_OPEN_PROSE_MENTION": 753,
+    "CLOSE_DECLARATION_OR_STATUS_QUERY": 269,
+    "GENERIC_CLOSE_TOKEN": 1232,
+    "STAGE_OPEN_OR_RESTORE_LABEL": 40,
+    "LIVE_CALENDAR_ADVANCED_LABEL": 18,
+    "F14_TOKEN_HIT": 7,
+    "HISTORICAL_OUTPUT_UNCHANGED": 4
+  },
+  "f14_by_lane": {
+    "OTHER": 326,
+    "PROD_OR_DOCS": 823,
+    "EVIDENCE_DOC": 163,
+    "CURRENT_EVIDENCE_LIVE_LABEL": 7,
+    "HISTORICAL_OR_PRIOR_ROUND_OUTPUT": 12,
+    "EVIDENCE_SCRIPT_LIVE": 14,
+    "REPO_SCRIPT": 14,
+    "TEST_CURRENT": 783,
+    "WEB_CURRENT": 181
+  },
+  "note": "Mechanical candidates only; no is_prose/length/CJK/filename filter on Assert list. Disposition is separate.",
+  "predicate_violation_fixed": "old enum_f3_free_text_asserts.py used is_prose+tests/web only; this scan uses git ls-files all *.py Assert + JS/TS test/probe expect/assert/check"
+}

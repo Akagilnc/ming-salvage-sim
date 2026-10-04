@@ -1,0 +1,8 @@
+SUPERSEDED_FOR_SCOPE_CLAIMS=evidence/1834-fixer-f9-f12-f3/scripts/enum_f3_free_text_asserts.py
+REASON=is_prose length/CJK/filename filter + tests/web only — violates owner predicate (must not narrow)
+REPLACEMENT_SCRIPT=evidence/1834-fixer-f3-f14/scripts/enum_full_candidates.py
+REPLACEMENT_TMP_WORKING_COPY=tmp/1834-fixer-f3-f14-enum-expand/ (gitignored)
+REPLACEMENT_OUTPUTS=enum_f3_all_py_asserts.jsonl enum_f3_js_expect_assert_check.jsonl enum_f3_*_no_assert_tests.jsonl f14_full_candidates.jsonl
+OLD_NARROW_HIT_COUNT=1923
+NEW_PY_ASSERT_COUNT=13564
+NEW_JS_EXPECT_COUNT=1602

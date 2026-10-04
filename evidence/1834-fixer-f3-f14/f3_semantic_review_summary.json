@@ -1,0 +1,46 @@
+{
+  "old_keep": 1911,
+  "old_fix": 68,
+  "keep_action_counts": {
+    "KEEP_SEMANTIC_OK": 376,
+    "KEEP_FLAGGED_RECHECK": 144,
+    "KEEP_NEEDS_CONTEXT_NOT_AUTO": 1388,
+    "KEEP_MISSING_INVESTIGATE": 3
+  },
+  "keep_semantic_counts": {
+    "STRUCTURED_FIELD_OR_IDENTITY": 60,
+    "ERROR_CODE_OR_FIXED_IDENTIFIER": 166,
+    "GENERATED_OR_FIXTURE_PROSE_RISK": 38,
+    "UNCLASSIFIED_NEEDS_CONTEXT": 851,
+    "FIXED_UI_CHROME": 89,
+    "PATH_OR_DIRECTORY_STRUCTURE": 4,
+    "LENGTH_OR_TRUTHY_SUBSTITUTE": 3,
+    "DETERMINISTIC_CALL_INPUT": 21,
+    "PERMISSION_OR_NEGATIVE_CONTRACT": 142,
+    "WEB_MATCHER_NEEDS_CONTEXT": 537
+  },
+  "keep_flag_counts": {
+    "PROSE_RISK_RECHECK": 38,
+    "MISMATCH_OLD_BASIS": 147,
+    "NEEDS_CONTEXT": 1388,
+    "MISSING_BUT_WAS_KEEP": 3,
+    "LEN_OR_TRUTHY_SUBSTITUTE": 3
+  },
+  "keep_presence_counts": {
+    "LINE_STILL_ASSERT_DETAIL_DRIFTED": 646,
+    "PRESENT_AT_LINE": 962,
+    "PRESENT_ELSEWHERE_OR_SHIFTED": 300,
+    "MISSING": 3
+  },
+  "fix_action_counts": {
+    "KEEP_DELETED_FREE_PROSE_OK": 47,
+    "OLD_FIX_STILL_PRESENT_RECHECK": 19,
+    "RECLASS_RESTORE_VERIFIED_PRESENT": 2
+  },
+  "restored_ok": 12,
+  "restored_missing": 0,
+  "shells_gone": 7,
+  "shells_still": 0,
+  "honesty": "shape-heuristic semantic pass over all KEEP rows; not claiming human line-by-line reading",
+  "rejects_prior_method": "prior OLD_KEEP_BIDIR KEEP_CONFIRMED/STILL_PRESENT copying old_basis is insufficient"
+}
