@@ -18,10 +18,9 @@ from __future__ import annotations
 from ming_sim.entities.issue.store import IssueStore
 from ming_sim.entities.person_log.store import PersonLogStore
 
-import re
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
-from ming_sim.breach_plea import _extract_ref_ids
+from ming_sim.breach_plea import _extract_ref_ids, parse_dossier_id, parse_issue_id
 from ming_sim.participant_roster import project_execution_liability_parties
 from ming_sim.relations import CREDIT_DIRECTION, CREDIT_EDGE_KINDS, EMPEROR_NODE
 from ming_sim.staged_commitment import (
@@ -55,8 +54,6 @@ _ORIGIN_CREDIT = "credit"
 _PUNISH_STATUSES = frozenset({
     "dismissed", "imprisoned", "exiled", "dead", "retired", "offstage",
 })
-_DOSSIER_REF_RE = re.compile(r"^dossier:([1-9][0-9]*)$")
-_ISSUE_REF_RE = re.compile(r"^issue:([1-9][0-9]*)$")
 
 def scapegoat_actor_kind_from_origin(origin: object) -> Optional[str]:
     """方案 b 消费侧契约：由 origin 类型机械派生施弃方∈{皇帝,党魁}。
@@ -74,16 +71,6 @@ def scapegoat_actor_kind_from_origin(origin: object) -> Optional[str]:
     if base.startswith("faction:") or base.startswith("party:"):
         return "党魁"
     return None
-
-
-def _parse_dossier_ref(ref: object) -> Optional[int]:
-    m = _DOSSIER_REF_RE.match(str(ref or "").strip())
-    return int(m.group(1)) if m else None
-
-
-def _parse_issue_ref(ref: object) -> Optional[int]:
-    m = _ISSUE_REF_RE.match(str(ref or "").strip())
-    return int(m.group(1)) if m else None
 
 
 def _credit_origin(scope: str, scope_id: int, *parts: str) -> str:
@@ -307,7 +294,7 @@ def _person_change_items(extracted: Dict[str, object]) -> List[Dict[str, object]
 
 def _item_dossier_id(item: Dict[str, object]) -> Optional[int]:
     for key in ("origin_ref", "来源引用"):
-        did = _parse_dossier_ref(item.get(key))
+        did = parse_dossier_id(item.get(key))
         if did is not None:
             return did
     raw = item.get("dossier_id")
@@ -531,14 +518,11 @@ def _issue_refs_strict(item: Dict[str, object]) -> Set[int]:
             out.add(int(raw))
         except (TypeError, ValueError):
             continue
-    tid = str(item.get("target_id") or "").strip()
-    if tid.startswith("issue:"):
-        try:
-            out.add(int(tid.split(":", 1)[1]))
-        except (TypeError, ValueError):
-            pass
+    tid = parse_issue_id(item.get("target_id"))
+    if tid is not None:
+        out.add(tid)
     for key in ("origin_ref", "来源引用"):
-        iid = _parse_issue_ref(item.get(key))
+        iid = parse_issue_id(item.get(key))
         if iid is not None:
             out.add(iid)
     return out
@@ -590,7 +574,7 @@ def _host_person_for_commitment(db: Any, cid: int) -> str:
     host = resolve_host_character(db, commitment_ref=cid, dossier_id=None)
     row = IssueStore(db.conn).read_rush_staged_commitment_stage_origin_ref((cid,))
     if row is not None:
-        did = _parse_dossier_ref(row["origin_ref"])
+        did = parse_dossier_id(row["origin_ref"])
         if did is not None:
             host = resolve_host_character(
                 db, commitment_ref=cid, dossier_id=did,

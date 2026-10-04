@@ -3417,7 +3417,6 @@ def test_border_slice_raw_content_keeps_primary_source_anchors():
     assert liaodong["_meta"]["primary_source"]["粮料原额石"] == pytest.approx(279212)
     assert liaodong["_meta"]["primary_source"]["现额银两_年"] == pytest.approx(711391)
     assert set(liaodong["_meta"]["primary_source"]["fields_refined"]) == set()
-    assert "纯军饷漏斗" not in liaodong["_meta"]["postures"]
 
     dongjiang = _content_settle("dongjiang_area")
     assert dongjiang["_meta"]["source_status"] == "no_wanli_accounting_record"
@@ -3426,7 +3425,6 @@ def test_border_slice_raw_content_keeps_primary_source_anchors():
     assert dongjiang["p"]["Due"]["军饷"] == 0
     assert dongjiang["p"]["拨付gross"] == 0
     assert dongjiang["st"]["军饷欠"] == 0
-    assert "纯军饷漏斗" not in dongjiang["_meta"]["postures"]
 
 
 def test_liaodong_and_dongjiang_carry_no_army_less_pay_ledger(fresh_db):

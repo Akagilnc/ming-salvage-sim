@@ -14,7 +14,7 @@ import sqlite3
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 
 from ming_sim.applier import load_stored_json, load_stored_list, load_stored_object
-from ming_sim.entities.column_write import checked_columns, upsert_by_pk
+from ming_sim.entities.column_write import checked_columns
 
 # Population unit marker (shared with GameDB seed path; single string constants).
 POPULATION_UNIT_PERSONS = "人"
@@ -93,18 +93,6 @@ class ReignStateStore:
     def ensure_schema(conn: Any) -> None:
         ensure_schema(conn)
 
-    def header_rows(self) -> Any:
-        return self._conn.execute("SELECT * FROM game_state ORDER BY id").fetchall()
-
-    def metric_rows(self) -> Any:
-        return self._conn.execute("SELECT * FROM metrics ORDER BY key").fetchall()
-
-    def header_row(self, row_id: object) -> Any:
-        return self._conn.execute("SELECT * FROM game_state WHERE id=?", (row_id,)).fetchone()
-
-    def metric_row(self, key: str) -> Any:
-        return self._conn.execute("SELECT * FROM metrics WHERE key=?", (key,)).fetchone()
-
     def exists(self) -> bool:
         return self._conn.execute("SELECT 1 FROM game_state WHERE id = 1").fetchone() is not None
 
@@ -176,24 +164,6 @@ class ReignStateStore:
             "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
             (str(key), int(value)),
         )
-
-    def delete_metric(self, key: str) -> int:
-        cursor = self._conn.execute("DELETE FROM metrics WHERE key=?", (key,))
-        return int(cursor.rowcount or 0)
-
-    def upsert_header(self, row: Mapping[str, object]) -> None:
-        """Debug replace of the reign header. Caller commits."""
-        upsert_by_pk(
-            self._conn, "game_state", row, pk="id",
-            allowed=frozenset({
-                "id", "year", "period", "turn", "turn_phase", "ended", "ending_status",
-            }),
-            what="game_state",
-        )
-
-    def delete_header(self, row_id: object) -> int:
-        cursor = self._conn.execute("DELETE FROM game_state WHERE id=?", (row_id,))
-        return int(cursor.rowcount or 0)
 
     def insert_ledger(self, row: Mapping[str, object]) -> None:
         """Append one economy_ledger row. Optional columns default in the table."""
@@ -586,15 +556,6 @@ class ReignStateStore:
             "DELETE FROM chat_turn_rollback_items WHERE chat_turn_id = ?",
             (int(chat_turn_id),),
         )
-
-    def rollback_chat_turn_ids_for_messages(self, message_ids: list[int]) -> Any:
-        if not message_ids:
-            return []
-        ph = ",".join("?" for _ in message_ids)
-        return self._conn.execute(
-            f"SELECT chat_turn_id FROM chat_turn_rollback_items WHERE chat_turn_id IN ({ph})",
-            tuple(int(x) for x in message_ids),
-        ).fetchall()
 
     def chat_turn_exists(self, chat_turn_id: int) -> bool:
         return self._conn.execute(

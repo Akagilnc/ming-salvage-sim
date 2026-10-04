@@ -1,146 +1,131 @@
-# #1889 修内司回执：K1 / K2（全量枚举纠正）
+# #1889 修内司回执：K1 / K2（删简复用，非加诊断框架）
 
 派单：`~/.ak-roles/books/Ming_LLM/unbound/runs/01a10813-895f-7b5f-a223-2e7879189496@fixer/fix-packet.md`  
 判词附件（payloads **末份**为准）：`attachments/01-1889-judge-11da7ae74.json`  
-上轮施工 commit：`2c4e6ae07`；本轮纠正枚举起点 HEAD 见 git。  
+上轮：`7c25c5cae`（枚举白名单化）/ `2c4e6ae07`（首清碎片）；本轮独立纠正后 HEAD 见 git。  
 本文件是施工证据，不另立 authority。
 
 官方方向（删简 / 复用，不造轮）：
-- [Vulture](https://github.com/jendrikseipp/vulture)：静态未引用只是线索；隐式调用会产生误报，不能不经消费者/职责复核一概删。
+- [Vulture](https://github.com/jendrikseipp/vulture)：静态未引用只是线索；须按消费者/职责逐项复核。
 - [pytest Anatomy of a test](https://docs.pytest.org/en/stable/explanation/anatomy.html)：断言行为结果，不锁实现内部形状。
 
 未结类（末份原文）：
-1. **K1**「已退役入口的持久碎片与重复定义未随删简清退」— 成立。阻断的是具体残留职责与重复实现；尚待家族接线但仍对应票面职责的未调用接口，不因静态未引用一概删。
-2. **K2**「测试仍锁定退役实现及内部退役形状」— 成立。清理无必要行为价值的测试成本；保留现役可见边界/拒收/失败负向；不以红灯要求补功能。
+1. **K1**「已退役入口的持久碎片与重复定义未随删简清退」— 成立。
+2. **K2**「测试仍锁定退役实现及内部退役形状」— 成立。
 
 ---
 
-## 缺陷纠正（相对上轮回执）
+## 本轮相对上轮回执的纠正
 
-上轮回执的 `SHAPE` / `RETIRED_HOOKS` / `standalone` 两行谓词是**点名符号白名单**，不足以满足全类枚举；「其它静态未引用 API 多处」也不是逐成员表。
+| 上轮问题 | 本轮处置 |
+|---|---|
+| `_DOSSIER_REF_RE` / `_ISSUE_REF_RE` 凭「各模块自有真源」保留完全相同定义 | **合并**：dossier 复用 `entities.affair.parse_origin_ref`；issue 只留 `breach_plea.parse_issue_id`；`credit_events`/`due_review` 删本地 RE |
+| `scripts/1889_k1_k2_enumerate.py` ~1198 行诊断框架（`_NOISE_SYMBOLS`/自动 suggested/模型类） | **压缩**为 ~393 行直接 AST/csv/git 枚举；不新增机制；`suggested` 仅粗标，去留在回执人工表 |
+| K2 谓词硬编码 standalone `_meta` | **扩枚举** hasattr / bytecode·getsource / `_meta` absence / standalone assert / patch|call 已删入口；人工逐项去留 |
+| 17 unref + 2 GameDB 一律「may be pending wiring」留 | **逐项职责核查**；无消费者且无票面写读口 → 删；有真实接线职责 → 留并写证据 |
 
-本轮替换为可重跑诊断脚本（**仅诊断**，不新增生产机制、不加证明性测试）：
+---
+
+## 枚举命令与全集
 
 ```sh
 python3 scripts/1889_k1_k2_enumerate.py --write
 ```
 
-全集：`git ls-files`（prod `ming_sim/**` + `web_app.py` + `tests/**`）。  
-删除入口：`fa0175a26..HEAD` 与 `ddf53881f..HEAD` 的 `git diff -U0` 提取 `-def`；**持久消费者子集** = 删除行落在 `ming_sim/db.py` 或 `ming_sim/entities/**/store.py`；**真正已删** = 持久子集且 HEAD 无同名 GameDB/Store 定义（排除改写重挂假阳性）。
+全集：`git ls-files` 全部 `*.py`（含 `main.py`/`launcher.py`/`web_app.py`/`server/`/`scripts/`/`spike_settle_tick.py`）+ 测试 `tests/**`；另登记 tracked web vitest `*.{test,spec}.{ts,tsx}`（26，本票非持久职责，仅宇宙覆盖）。  
+删除入口：`fa0175a26..HEAD` ∪ `ddf53881f..HEAD` 的 `-def`；持久消费者 = `ming_sim/db.py` 或 `ming_sim/entities/**/store.py`；真正已删 = 持久子集且 HEAD 无同名定义。
 
-落盘（回执引用，勿手抄全表）：
+落盘：
 
 | 文件 | 内容 |
 |---|---|
-| `docs/1889-k1-k2-deleted-entries.tsv` | 两基线删除 def 全集 + `persistence_consumer` 旗 |
-| `docs/1889-k1-k2-members.tsv` | 全 Store/GameDB 方法 + SQL 旧布局 + 重复体/常量 逐成员 |
-| `docs/1889-k1-k2-k2-hits.tsv` | 测试交叉（patch/call/assert/hasattr/源码探针/现役负向） |
+| `docs/1889-k1-k2-deleted-entries.tsv` | 删除 def 全集 |
+| `docs/1889-k1-k2-members.tsv` | Store/GameDB + SQL DROP +（ming_sim 内）同形常量 |
+| `docs/1889-k1-k2-k2-hits.tsv` | 测试交叉（call/patch/hasattr/meta/bytecode/web） |
 
----
-
-## 本轮复扫计数（脚本 stdout）
+### 复扫计数（本轮）
 
 | 项 | 值 |
 |---|---|
-| git-tracked 全集 | 1270（py prod=121 tests=229） |
-| Store 方法 | 837 |
-| GameDB 方法 | 394 |
-| 删除 def 名 fa0175a26→HEAD | 3460 |
-| 删除 def 名 ddf53881f→HEAD | 142 |
-| 删除 union | 3488 |
-| 持久消费者删除名 | 271 |
-| **真正已删**（HEAD 无定义） | **175** |
-| K1 member 行 | 1242（delete=0 / review=13 / keep=1229） |
-| retired_fragment_unref | **0**（清退后） |
-| unref_public_store（政策保留） | 17 |
-| dup_body 可删孪生 | 0 |
-| SQL DROP 无 CREATE peer | 0 |
-| 多文件 UPPER 常量 | 5（review→收据判留） |
-| K2 hits | 21（deleteish=0；#1873 标注=13；现役负向 keep=6；hasattr review=2） |
+| git-tracked py | 383（tests=229；web_tests=26） |
+| Store/GameDB 方法 | 1209 |
+| 删除 union 名 | 3546 |
+| 真正已删持久名 | 176 |
+| K1 members | 1209（unref_store=1 / unref_gamedb=1 / dup_const=0） |
+| `_DOSSIER_REF_RE`/`_ISSUE_REF_RE` 同形 | **0** |
+| K2 hits | 60（call_deleted 等；见下表） |
 
 ---
 
-## 本轮实际修动
+## K1 本轮实际修动
+
+### 重复引用规则（已授权类）
 
 | 成员 | 处置 | 理由 |
 |---|---|---|
-| `IssueStore.read_list_recent_issue_advances` | **删** | 全量枚举新命中：消费者 `GameDB.list_recent_issue_advances` 已删（ddf→HEAD）；全仓零引用；SQL 碎片无其它接线 |
-| `test_get_dossier_for_directive_existence_sentinel` | **改名** → `test_dossier_get_for_directive_existence_sentinel` | 用例名锁已删 `get_dossier_for_directive`；体已走现役 `dossiers.get_for_directive`，只去名成本 |
-| 上轮已清 K1/K2 样本（faction_report 碎片、standalone `_meta`、population 双真源、DROP dossier_progress_reports 等） | 复扫确认仍清 | 见上轮 `2c4e6ae07`；本轮谓词不再靠白名单宣称 |
+| `_DOSSIER_REF_RE`×3（breach/credit/due） | **删本地；复用** `parse_origin_ref` | 结构化 effect-ref 真源已在 `ming_sim/entities/affair/store.py`；`breach_plea.parse_dossier_id` 为其薄包装 |
+| `_ISSUE_REF_RE`×2（breach/credit） | **只留** `breach_plea.parse_issue_id` | 同形 kind:id；credit 改 import；不新造解析框架 |
+| `_LOG_COLUMNS` / `_MUTABLE_COLUMNS` / `_SCHEMA_SQL` | **留** | 同名不同表 schema；AST dump 不同，非同一规则两份真源 |
 
----
+### 退役碎片 / 无消费者 API（删）
 
-## K1 逐成员去留（摘要；全表见 TSV）
-
-### 建议 delete（本轮/复扫）
-
-施工后 `suggested=delete` = **0**。  
-施工中唯一新命中见上表（已删）。
-
-### 静态未引用公共 Store（17）— 一律 **留**
-
-政策：不因静态未引用一概删（Vulture / 判词）。完整名单见 TSV `class=unref_public_store`，包括但不限于：
-
-- `ReignStateStore.list_closed_nights` — 待接线对应已删 `list_closed_night_archives` 读口；**保留真实待接线职责**
-- `CharacterKnowledgeStore.public_events_for_turn` / `sources_for_turn`
-- `PersonLogStore.for_person`、`TextualFactStore.pointing_at`、`AffairStore.point_issue`
-- `DossierStore.cost_events` / pending-directive 系列
-- `ReignStateStore` header/metric CRUD 若干
-
-### 名似退役但仍有引用 — **留**
-
-- `CharacterStore.read_knowledge_items_for_turn`：`opening_seed.py` 仍调用；SQL 是人物名册字段，与已删 GameDB `knowledge_items_for_turn`（知识投影）不同物，不能当无主碎片删。
-
-### 重复方法体 / 常量 — **留**（无删授权）
-
-- `ensure_schema` / `append_log` 等同体：各实体自有 schema/log 表，同形薄包装；两边均有引用或同角色对称 → TSV `duplicate_body_both_live_or_both_dead`
-- `_LOG_COLUMNS` / `_MUTABLE_COLUMNS` / `_SCHEMA_SQL` / `_DOSSIER_REF_RE` / `_ISSUE_REF_RE`：按实体或模块各自真源，非「同一单位两份真源」类（上轮已合并的 `POPULATION_UNIT_*` 不在此列）
-
-### SQL 旧布局
-
-- `DROP … IF EXISTS` 无 CREATE peer：**0**（上轮已删 `dossier_progress_reports` DROP）
-- `scripts/huangtaiji_rename_qing.sql` ALTER：**review/留**（运维脚本，非运行时旧布局处置）
-
----
-
-## K2 逐成员去留（摘要；全表见 TSV）
-
-### 授权清退（deleteish）
-
-复扫 **0**。上轮已清：`faction_report` monkeypatch、`_meta`/`standalone` 退役键断言、`turn_region_summary_*` 名锁等。
-
-### 本轮改名
-
-- `test_dossier_get_for_directive_existence_sentinel`（见上）
-
-### 现役负向契约 — **留**（6）
-
-`test_character_knowledge_489.py` 内 `personnel`/`military`/`treasury`/`court` not in `world` — 公私可见边界，非退役形状证明。
-
-### hasattr 探针 — **留**（2）
-
-`test_event_trigger_gate.py` 对 `_test_runtime_ghost_attr` / `ghost_preflight_attr` 的 `assert not hasattr` — 污染护栏，不是退役 API absence 证明。
-
-### 测试调用真正已删入口且生产仍自呼 — **不删测试 / 不恢复入口**（13）
-
-标注 `keep_escalate_1873`（末份 J7/J9 → #1873，本轮不送修）：
-
-| 缺失入口 | 测试侧 | 生产仍调用 |
+| 成员 | 处置 | 理由（真实调用/职责） |
 |---|---|---|
-| `list_closed_night_archives` | scroll/p4/qa_d1 | `ming_sim/db.py:5805` |
-| `knowledge_items_for_turn` | character_knowledge_489 ×4 | `db.py:5646` 等 |
-| `list_supervision_history` | supervision_625 ×5 | `db.py:6954` 等 |
+| `AffairStore.point_issue` | **删** | 零 Attribute 调用；生产走 `point_issue_row`/`attach_pointer` |
+| `AffairStore.experiences` / `origin_refs` | **删** | 全仓零调用；输入面用 `input_brief`+`textual_facts.readable_materials` |
+| `GameDB.army_detail` | **删** | tools 调用方已删（fa0175 有、现无）；materials 明确改定性名册，禁裸值渲染 |
+| `ArmyStore.read_army_detail` | **删** | 唯一消费者即已删 `army_detail` |
+| `GameDB.list_night_promulgated_directives` | **删** | 零调用；原测试调用已不在 HEAD |
+| `IssueStore.directives_by_ids` | **删** | 唯一消费者即已删 list_night… |
+| `ReignStateStore.header_rows/metric_rows/header_row/metric_row` | **删** | 现役读写是 `read`/`read_metrics`/`save`/`exists`；原 GameDB debug 表 API 已删 |
+| `ReignStateStore.upsert_header/delete_header/delete_metric` | **删** | 同上，debug CRUD 孤儿 |
+| `ReignStateStore.rollback_chat_turn_ids_for_messages` | **删** | 零调用；现役用 `rollback_chat_turn_id_for_pending_action` |
+| `DossierStore.pending_directive_ids_for_turn` / `delete_pending_directives_for_turn` | **删** | 零调用；其它 pending_directive_* 仍经 GameDB 使用 |
+| `CharacterKnowledgeStore.public_events_for_turn` / `sources_for_turn` | **删** | 零调用；现役 `events_for` / `all_sources` / `sources_upto_turn` |
+| `PersonLogStore.for_person` / `by_origin` | **删** | 零调用；现役 `append` + `count_by_origin`（covert_progress） |
+| `TextualFactStore.pointing_at` | **删** | 零调用；现役 `readable_materials` / materials 写口 |
 
-这不是「只锁内部退役形状」的测试成本；删测试会抹掉行为覆盖，补方法越权。收据仅机械登记。
+### 静态未引用但仍留（逐项职责，非「pending wiring」套话）
+
+| 成员 | 处置 | 理由 |
+|---|---|---|
+| `ReignStateStore.list_closed_nights` | **留** | `db.py` 仍调用已删 `list_closed_night_archives`（#1873 缺口）；本方法是 Store 侧已就位的 closed-night 读口，删之会抹掉接线落点 |
+| `GameDB.flag_directive_needs_clarification` | **留** | #502 AC5 / #612 含糊准驳写口；fa0175 `session.py` 曾调，现接线缺口归 #1873；payload 键 `_needs_clarification` 仍被测试/消费路径识别，删写口越权补洞 |
+| `DossierStore.cost_events` | **留** | `scripts/family_tail_acceptance_570.py:87` 真实调用；案卷代价账读口 |
+
+（上轮 17 unref 中其余已按上表删除。）
 
 ---
 
-## 复扫命令与结果
+## K2 逐成员去留（人工表）
 
-```sh
-python3 scripts/1889_k1_k2_enumerate.py --write
-# → K1 suggested=delete (none); K2 deleteish (none); retired_fragment_unref=0
-```
+枚举谓词覆盖：`assert not hasattr`、`__code__`/`co_names`/`getsource`、`_meta`+`not in`/`not any`、`standalone`+assert、对真正已删持久名的 patch/call、tracked web 测试文件登记。
+
+### 本轮删除（无必要行为价值 / 退役形状）
+
+| 成员 | 处置 | 理由 |
+|---|---|---|
+| `test_border_slice…` 内 `assert "纯军饷漏斗" not in …["_meta"]["postures"]` ×2 | **删断言** | 内部退役姿势证明；同测已有 Due/拨付/军饷欠==0 外部行为 |
+
+### 保留（现役边界 / 拒收 / 失败负向）
+
+| 成员 | 处置 | 理由 |
+|---|---|---|
+| `test_character_knowledge_489` world 负向 ×6 | **留** | 现役公私可见边界 |
+| `test_event_trigger_gate` hasattr ghost ×2 | **留** | 污染护栏，非退役 API absence |
+| `assert "_meta_defaults" not in loaded` | **留** | 加载器展开行为（defaults 须被吃掉） |
+| provisional 内「官民田/起运定额/正赋应征」not in ×3 | **留** | 现役 seed 精炼完成态，非退役键 |
+| surcharge `_meta`/`加派基线` before 态 | **留** | 加派前基线缺席的行为契约 |
+| bytecode/getsource | **0 命中** | — |
+| standalone assert（退役证明） | **0 命中** | 上轮已清；本轮复扫仍清 |
+
+### 测试调用真正已删入口（不删测试 / 不恢复入口）
+
+`call_deleted` 等（`list_closed_night_archives` / `knowledge_items_for_turn` / `list_supervision_history` 等）→ **#1873**；本轮不送修。due_review/breach 全文件 settle 路径亦踩 `knowledge_items_for_turn` 红灯，同属 #1873，非本轮引入。
+
+### web 测试
+
+26 个 tracked `*.{test,spec}.{ts,tsx}` 仅登记宇宙；本票不改前端测试（非持久职责）。
 
 ---
 
@@ -156,6 +141,9 @@ env \
   MING_SIM_GROK_BIN=/usr/bin/false \
   MING_SIM_PI_BIN=/usr/bin/false \
   python3 -m pytest -q \
+    tests/test_credit_events_628.py \
+    tests/test_effect_origin_558.py \
+    tests/test_fiscal_substrate_bridge.py::test_border_slice_raw_content_keeps_primary_source_anchors \
     tests/test_execution_pressure_654.py::test_dossier_get_for_directive_existence_sentinel \
     tests/test_character_knowledge_489.py::test_inner_court_materials_exclude_court_world_slice \
     tests/test_character_knowledge_489.py::test_office_slice_does_not_read_unrelated_sensitive_reports \
@@ -163,8 +151,8 @@ env \
     tests/test_qa_a3_seed_data.py -k 'vacancy or office or seed or opening'
 ```
 
-实测：`12 passed, 7 deselected in 1.85s`。  
-复扫：`retired_fragment_unref=0`；`K2 deleteish=0`；`IssueStore.read_list_recent_issue_advances` 已不存在。
+实测：`credit/effect/border/smoke/knowledge` → **26 passed**；`qa_a3 -k …` → **8 passed**。  
+复扫：`CONST_DUP:_DOSSIER_REF_RE/_ISSUE_REF_RE` = 0；`纯军饷漏斗` postures 断言已不在。
 
 未跑全量（派单禁止）。未 amend / stash / push / PR。未动存档与真配置。
 
@@ -173,6 +161,5 @@ env \
 ## 真实未结项
 
 - 本切片未宣称 #1889 / #1812 merge 或关票。
-- 功能缺口与测试红灯仍归 **#1873**（末份 J7/J9）；上表 13 条 call_deleted 已机械登记，不在本轮清 K2 形状成本。
-- 17 个 unref_public_store 保留待家族接线，不扩删。
+- `list_closed_night_archives` / `knowledge_items_for_turn` / `list_supervision_history` 及 session→`flag_directive_needs_clarification` 接线缺口仍归 **#1873**。
 - 家族收尾整体复杂度对比仍呈 owner（#1812 验收第 2 条）。

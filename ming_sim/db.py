@@ -4192,33 +4192,6 @@ class GameDB:
             f"{TURN_UNIT}名义应发军饷合计{format_money(monthly_amount(total_pay))}。"
         )
 
-    def army_detail(self, raw_name: str) -> str:
-        # 先按 DB id/name 直查（含动态 new_armies 建出的、不在静态 content.armies 的军队），
-        # 再退回静态别名模糊匹配（如「关宁军」→ guanning）。SELECT * 渲染含火器/随军大炮，
-        # 故新军详情 read 也闭合（CMR codexB/C：army render 收敛到此单一真源，杀 read 侧 whack-a-mole）。
-        row = ArmyStore(self.conn).read_army_detail((raw_name, raw_name))
-        if row is None:
-            army_id = match_army_id_from_text(raw_name, self.content.armies)
-            if army_id is not None:
-                row = self.armies.row(army_id)
-        if row is None:
-            raise ValueError(f"未找到军队：{raw_name}")
-        pay = self._army_pay(row)  # #173：月饷取引擎实扣应发
-        sit = _player_army_situation(row, pay)
-        return (
-            f"{row['name']}：驻扎地{row['station']}，统帅{row['commander']}，"
-            f"兵种{row['troop_type']}，人数{row['manpower']}人，"
-            f"月应发军饷{format_money(monthly_amount(pay))} /{TURN_UNIT}，"
-            f"{_qualitative_army_stat('supply', row['supply'])}，"
-            f"{sit['morale_text']}，"
-            f"{_qualitative_army_stat('training', row['training'])}，"
-            f"{_qualitative_army_stat('equipment', row['equipment'])}，"
-            f"火器{row['firearm_equipment']}，随军大炮{row['cannon_equipment']}门，"
-            f"{sit['arrears_text']}，{_qualitative_army_stat('mobility', row['mobility'])}，"
-            f"军心：{sit['mutiny_tier']}。"
-            f"状态：{row['status']}"
-        )
-
     def army_roster(
         self,
         filter_names: Optional[List[str]] = None,
@@ -10754,32 +10727,6 @@ class GameDB:
         if requested and normalized.get("dossier_action_type") != requested:
             raise ValueError("旨稿机械载荷不完整或非法，拒绝改草")
         return normalized
-
-    def list_night_promulgated_directives(self, night_id: int) -> List[Dict[str, object]]:
-        """按夜取数（#502 AC6 / #612）：本夜已落公开层明发账的旨。
-
-        只认唯一 exact engine-command publication-fact seam（口令账上的精确
-        明发#directive_id），不以 pending_actions committed 等同已明发，也不认
-        抽取账开放 tags 或畸形后缀。收夜可先落 draft 前提，抽取失败时那些
-        committed 行仍非公开明发投影。机器辨识、零自由文本解析。"""
-        from ming_sim.audience_night import (
-            engine_command_mingfa_publication_ids,
-            list_ledger,
-        )
-        ids = sorted(
-            engine_command_mingfa_publication_ids(list_ledger(self, int(night_id)))
-        )
-        if not ids:
-            return []
-        rows = IssueStore(self.conn).directives_by_ids(ids)
-        return [
-            {
-                "directive_id": int(r["directive_id"]), "turn": int(r["turn"]),
-                "year": int(r["year"]), "period": int(r["period"]),
-                "actor": r["actor"] or "", "text": r["text"] or "", "status": r["status"] or "",
-            }
-            for r in rows
-        ]
 
     def flag_directive_needs_clarification(self, candidate_id: int) -> int:
         """含糊准驳（#502 AC5）：给 pending directive 候选打「待澄清」标，使其**不被**颁诏/过回合

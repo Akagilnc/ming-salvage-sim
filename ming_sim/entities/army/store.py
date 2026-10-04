@@ -139,9 +139,6 @@ class ArmyStore:
     def read_army_report(self, params: Any = ()) -> Any:
         return self._conn.execute('SELECT SUM(manpower) AS total FROM armies', params).fetchone()
 
-    def read_army_detail(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT * FROM armies WHERE id = ? OR name = ?', params).fetchone()
-
     def read_army_roster(self, params: Any = ()) -> Any:
         return self._conn.execute("SELECT * FROM armies ORDER BY owner_power='ming' DESC, theater, name", params).fetchall()
 

@@ -12,13 +12,13 @@
 from __future__ import annotations
 from ming_sim.entities.issue.store import IssueStore
 
-import re
 from typing import Any, Dict, List, Optional
 
 from ming_sim.entities.dossier import DOSSIER_REPORT_ORIGIN_VERDICT
 from ming_sim.db import GameDB
 from ming_sim.breach_plea import (
     ENTRY_KIND_BREACH_PLEA,
+    parse_dossier_id,
     project_breach_plea_scene,
 )
 from ming_sim.decree_vocabulary import terminal_report_facade
@@ -70,17 +70,7 @@ def is_due_review_entry_kind(entry_kind: object) -> bool:
     """#624 四缝：仅 staged 可投影/apply/占接管窗为到期复核。"""
     return audience_todo_lane(entry_kind) == _AUDIENCE_LANE_STAGED
 
-_DOSSIER_REF_RE = re.compile(r"^dossier:([1-9][0-9]*)$")
-
 _TERMINAL_OUTCOMES = frozenset({"fulfilled", "degraded", "failed", "transformed"})
-
-
-def parse_dossier_id_from_origin(origin_ref: object) -> Optional[int]:
-    text = str(origin_ref or "").strip()
-    match = _DOSSIER_REF_RE.match(text)
-    if not match:
-        return None
-    return int(match.group(1))
 
 
 def _issue_meta(db: Any, commitment_ref: int) -> Dict[str, object]:
@@ -114,7 +104,7 @@ def resolve_due_review_branch(
     db: Any, origin_ref: object,
 ) -> Dict[str, object]:
     """P1 桥：有 executing 案卷 → dossier；否则 no_dossier（不伪造）。"""
-    dossier_id = parse_dossier_id_from_origin(origin_ref)
+    dossier_id = parse_dossier_id(origin_ref)
     if dossier_id is None:
         return {"branch": "no_dossier", "dossier_id": None, "dossier": None}
     dossier = db.dossiers.get(int(dossier_id))

@@ -372,28 +372,6 @@ class CharacterKnowledgeStore:
             ).fetchall()
         ]
 
-    def public_events_for_turn(self, turn: int) -> List[Dict[str, object]]:
-        """The public lane for one month, oldest first."""
-        return [
-            dict(row) for row in self._conn.execute(
-                "SELECT turn, year, period, title, body, source_id, excluded_names "
-                "FROM character_knowledge_events WHERE character_name='' AND turn=? "
-                "ORDER BY id",
-                (int(turn),),
-            ).fetchall()
-        ]
-
-    def sources_for_turn(self, turn: int) -> List[Dict[str, object]]:
-        """Shared sources registered in one month, oldest first."""
-        return [
-            dict(row) for row in self._conn.execute(
-                "SELECT turn, year, period, title, body, source_id, "
-                "participant_roster, excluded_names, excluded_targets "
-                "FROM character_knowledge_sources WHERE turn=? ORDER BY id",
-                (int(turn),),
-            ).fetchall()
-        ]
-
     def public_kind_for_source(self, source_id: str) -> Optional[str]:
         """The public-lane kind already recorded for this source, if any."""
         row = self._conn.execute(

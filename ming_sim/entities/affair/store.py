@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Any, Mapping
 
 from ming_sim.applier import (
-    connection_owns_transaction, load_stored_list, sanitize_sqlite_text,
+    connection_owns_transaction, sanitize_sqlite_text,
 )
 from ming_sim.entities.character import CharacterStore
 from ming_sim.entities.dossier import DossierStore
@@ -325,9 +325,6 @@ class AffairStore:
             for row in rows
         )
 
-    def point_issue(self, issue_id: int, affair_id: int) -> None:
-        self.attach_pointer("issues", issue_id, affair_id)
-
     def assert_origin_matches_declaration(
         self, origin_ref: str, declaration: Mapping[str, object]
     ) -> None:
@@ -360,12 +357,6 @@ class AffairStore:
     @staticmethod
     def origin_ref(affair_id: int) -> str:
         return f"{_ORIGIN_AFFAIR}:{int(affair_id)}"
-
-    def origin_refs(self, affair_id: int) -> tuple[str, ...]:
-        self.get(affair_id)
-        refs = [self.origin_ref(affair_id)]
-        refs.extend(f"{_ORIGIN_DOSSIER}:{int(row['id'])}" for row in self.dossiers(affair_id))
-        return tuple(refs)
 
     def affair_id_for_issue(self, issue_id: int) -> int:
         return IssueStore(self._conn).affair_id_of(int(issue_id))
@@ -429,33 +420,6 @@ class AffairStore:
         if authorized_ids is not None:
             authorized_ids.add(int(affair_id))
         return self.origin_ref(affair_id)
-
-    def experiences(self, affair_id: int) -> tuple[dict[str, object], ...]:
-        """Read-time projection: story-ledger rows whose origin_ref points at this affair."""
-        self.get(affair_id)
-        refs = self.origin_refs(affair_id)
-        affair_ref = self.origin_ref(affair_id)
-        placeholders = ",".join("?" for _ in refs)
-        rows = self._conn.execute(
-            "SELECT id, person_names, tags, body, origin_ref "
-            "FROM story_ledger_entries WHERE origin_ref IN ("
-            + placeholders
-            + ") OR origin_ref LIKE ? ORDER BY id",
-            (*refs, f"{affair_ref}/%"),
-        ).fetchall()
-        out: list[dict[str, object]] = []
-        for row in rows:
-            origin = str(row["origin_ref"] or "").strip()
-            tags = load_stored_list(row["tags"], label="tags")
-            people = load_stored_list(row["person_names"], label="person_names")
-            out.append({
-                "id": int(row["id"]),
-                "body": str(row["body"] or ""),
-                "origin_ref": origin,
-                "person_names": [str(name) for name in people if str(name).strip()],
-                "tags": [str(tag) for tag in tags if str(tag).strip()],
-            })
-        return tuple(out)
 
 
 def parse_positive_affair_id(raw: object) -> int:

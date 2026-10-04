@@ -319,13 +319,6 @@ class IssueStore:
     def delete_draft_directive(self, directive_id: int) -> None:
         self._conn.execute("DELETE FROM turn_directives WHERE id=? AND status='draft'", (directive_id,))
 
-    def directives_by_ids(self, ids: Any) -> Any:
-        placeholders = ','.join('?' for _ in ids)
-        return self._conn.execute(
-            "SELECT td.id AS directive_id, td.turn, td.year, td.period, td.actor, td.text, td.status "
-            f"FROM turn_directives td WHERE td.id IN ({placeholders}) ORDER BY td.id", ids,
-        ).fetchall()
-
     def directive_archive_months(self) -> Any:
         return self._conn.execute("SELECT turn, year, period FROM turn_directives WHERE status='issued'").fetchall()
 
