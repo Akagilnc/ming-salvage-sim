@@ -1,0 +1,30 @@
+# FILE: tests/test_issue_entities.py
+# NAME: test_resolve_rejects_bad_entities_at_tracker_entry
+# LINE: 88-111
+# FLAGS: assert_text_compare_or_match,mock_or_patch_present,helper_or_private_call,retired_or_meta_marker
+# KIND: py
+
+def test_resolve_rejects_bad_entities_at_tracker_entry(game, monkeypatch, case):
+    db, state, content = game
+    name = active_ming_character(db, content)
+    effects = {
+        "dead_transition": {"character_status_changes": [{"name": name, "status": "dismissed", "reason": "旧键误写"}]},
+        "person_missing": {"人物变更": [{"name": "不存在的人", "动作": "行止", "transit_to": "liaodong"}]},
+        "person_shape": {"人物变更": "bad"},
+        "person_item": {"人物变更": ["bad"]},
+        "army_missing_fields": {"new_armies": [{"id": "broken", "name": "残军", "owner_power": "ming"}]},
+        "army_owner": {"new_armies": [{"id": "x", "name": "野军", "owner_power": "不存在的势力", "manpower": 1000, "maintenance_per_turn": 1}]},
+        "legacy_person_missing": {"character_status_changes": [{"name": "查无此人张三", "status": "dead"}]},
+        "legacy_status": {"character_status_changes": [{"name": name, "status": "升仙"}]},
+        "army_missing": {"army_delta": {"查无此军": {"manpower": 100}}},
+        "legacy_item": {"character_status_changes": ["not-a-dict"]},
+    }
+    if case == "dead_transition":
+        monkeypatch.setattr(content.characters[name], "status", "dead")
+        db.set_character_status(state, name, "dead", "前置死亡")
+    issue_id = db.insert_issue(state, kind="initiative", title="非法实体结案", origin_kind="decree",
+        origin_ref=_decree_origin(db, state), effect_on_resolve=effects[case])
+    with pytest.raises(ValueError):
+        I.apply_issue_tracker_output(db, state, {"close_issues": [{"issue_id": issue_id, "reason": "resolved"}]}, content=content)
+    if case == "dead_transition":
+        assert db.get_character_status(name)[0] == content.characters[name].status == "dead"

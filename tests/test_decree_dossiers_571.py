@@ -1196,12 +1196,12 @@ def test_final_decree_edit_path_removed_no_bypass(game):
         },
     )
 
-    paths = {getattr(r, "path", None) for r in web_app.app.routes}
-    assert "/api/decree" not in paths or not any(
-        getattr(r, "path", None) == "/api/decree"
-        and "PATCH" in (getattr(r, "methods", None) or set())
-        for r in web_app.app.routes
-    )
+    from fastapi.testclient import TestClient
+
+    resp = TestClient(web_app.app).patch("/api/decree", json={"text": "旁路改旨"})
+    assert resp.status_code == 404
+    with pytest.raises(AttributeError):
+        web_app.set_decree  # type: ignore[attr-defined]
     # 草案正文未被旁路改写
     assert db.get_dossier_for_directive(directive_id) is None
     assert db.list_directives(state)[0]["text"] == "拨十两赈济"

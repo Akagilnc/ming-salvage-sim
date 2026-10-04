@@ -1,0 +1,58 @@
+# FILE: tests/test_pay_order_override_653.py
+# NAME: test_fact_brief_attributes_arrears_order_displacement_to_dossier
+# LINE: 745-796
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_fact_brief_attributes_arrears_order_displacement_to_dossier(game):
+    """Codex-12：旧欠序让位反事实——只报因 arrears_priority 让位新增受损与案卷。"""
+    import json as _json
+
+    db, state, _content = game
+    # 切断陕西军省源份额：Due.军饷/军饷欠 由 army 派生归零，瀑布只在官俸欠/宗禄欠间争 surplus。
+    db.conn.execute(
+        "UPDATE armies SET province_pay_share=0, province_pay_arrears=0, "
+        "arrears=central_pay_arrears WHERE pay_source_region='shaanxi'"
+    )
+    # 省内可支≈实征10；Due=官俸3+宗禄4.07+赈济1=8.07 → surplus≈1.93
+    # 默认旧欠序（军饷欠=0）先还官俸欠；旨把宗禄欠提到最前 → 官俸欠让位。
+    st = {
+        "省库库银": 0.0, "C_地方截留": 0.0, "C_中饱": 0.0, "C_漂没": 0.0,
+        "C_eff损耗": 0.0, "民欠旧赋": 0.0, "军饷欠": 0.0, "官俸欠": 5.0,
+        "宗禄欠": 5.0, "官民田": 100.0, "隐田": 50.0,
+    }
+    p = {
+        "正赋应征": 8.0, "三饷应征": 2.0, "火耗率": 0.1, "逋赋率": 0.0,
+        "起运定额": 0.0, "漂没率": 0.0, "中饱率": 0.0, "拨付gross": 0.0,
+        "Due": {"军饷": 0.0, "官俸": 3.0, "宗禄": 4.07, "赈济": 1.0},
+    }
+    row = db.conn.execute("SELECT fiscal FROM regions WHERE id='shaanxi'").fetchone()
+    fiscal = _json.loads(row["fiscal"])
+    fiscal["settle"]["st"] = st
+    fiscal["settle"]["p"] = p
+    db.conn.execute(
+        "UPDATE regions SET fiscal=? WHERE id='shaanxi'",
+        (_json.dumps(fiscal, ensure_ascii=False),),
+    )
+    db.conn.commit()
+    did = _override_dossier(
+        db, state, [{"key": "arrears_priority_宗禄欠@shaanxi", "value": 5}],
+        text="旧欠先偿宗禄",
+    )
+    db.apply_dossier_promulgation(state, did, "promulgated")
+    result = db.settle_province_tick("shaanxi")
+    repaid = result.breakdown["Repaid"]
+    assert repaid["宗禄欠"] == pytest.approx(1.93)
+    assert repaid["官俸欠"] == pytest.approx(0.0)
+    assert repaid["军饷欠"] == pytest.approx(0.0)
+    displaced = [
+        e for e in build_fiscal_fact_brief(db) if e["detail"].startswith("旧欠序让位_")
+    ]
+    assert [(e["detail"], e["affected_class"], e["value"], e["origin_ref"])
+            for e in displaced] == [
+        ("旧欠序让位_官俸欠", "官僚", pytest.approx(1.93), f"dossier:{did}"),
+    ]
+    # 无 due_order 改动时不得混入旨序让位条目
+    assert not [
+        e for e in build_fiscal_fact_brief(db) if e["detail"].startswith("旨序让位_")
+    ]

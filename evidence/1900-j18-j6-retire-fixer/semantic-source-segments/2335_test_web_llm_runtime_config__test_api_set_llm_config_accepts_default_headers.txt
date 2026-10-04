@@ -1,0 +1,38 @@
+# FILE: tests/test_web_llm_runtime_config.py
+# NAME: test_api_set_llm_config_accepts_default_headers
+# LINE: 678-709
+# FLAGS: assert_text_compare_or_match,mock_or_patch_present
+# KIND: py
+
+def test_api_set_llm_config_accepts_default_headers(monkeypatch):
+    """#1794：局内 /api/llm/config 真入口带头表传给 build 并回读。"""
+    built = {}
+
+    def fake_build(*a, **k):
+        built.update(k)
+        return LLMConfig(
+            api_key="sk-test",
+            base_url="https://api.example.com/v1",
+            model="gpt-api",
+            channel="api",
+            default_headers=k.get("default_headers") or {},
+        )
+
+    committed = []
+    game = SimpleNamespace(
+        _write_gate=threading.Lock(),
+        build_llm_config=fake_build,
+        commit_llm_config=lambda c: committed.append(c) or c,
+    )
+    monkeypatch.setattr(web_app, "get_game", lambda: game)
+    monkeypatch.setattr(web_app, "_verify_llm_configs_or_raise", lambda c: None)
+
+    result = asyncio.run(web_app.api_set_llm_config(web_app.LLMConfigRequest(
+        base_url="https://api.example.com/v1",
+        model="gpt-api",
+        api_key="sk-test",
+        default_headers={"X-From-UI": "ok"},
+    )))
+    assert built.get("default_headers") == {"X-From-UI": "ok"}
+    assert result["default_headers"] == {"X-From-UI": "ok"}
+    assert committed and committed[0].default_headers == {"X-From-UI": "ok"}

@@ -1,0 +1,21 @@
+# FILE: tests/test_power_section_rejections.py
+# NAME: test_illegal_power_field_rejected
+# LINE: 61-75
+# FLAGS: assert_count,helper_or_private_call
+# KIND: py
+
+def test_illegal_power_field_rejected(game):
+    """power_updates 字段超出白名单(只许 威望/实力/经济)→ 逐项拒收留痕,
+    同势力的合法字段照落(ADR 决定 1 逐项拒收)。"""
+    db, state, content = game
+    turn = state.turn
+    good = _valid_power_id(db)
+
+    run_settle(db, state, content, {
+        "power_updates": {good: {"leverage": 4, "城防": 9}},  # 城防 非白名单
+    }, narrative="x", decree_text="y")
+
+    rows = [r for r in _rejection_rows(db, turn)
+            if r[0] == "power_changes" and r[2] == "invalid_enum"]
+    assert len(rows) == 1
+    assert rows[0][1]  # reason 非空

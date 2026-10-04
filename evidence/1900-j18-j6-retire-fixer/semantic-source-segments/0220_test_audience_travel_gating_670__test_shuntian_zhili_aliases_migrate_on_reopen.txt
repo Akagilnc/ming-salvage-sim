@@ -1,0 +1,31 @@
+# FILE: tests/test_audience_travel_gating_670.py
+# NAME: test_shuntian_zhili_aliases_migrate_on_reopen
+# LINE: 1201-1225
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_shuntian_zhili_aliases_migrate_on_reopen(game):
+    """#654 G / #670 merge B：顺天/直隶 匹配为在京，重开写回 beizhili。"""
+    from ming_sim.matching import is_capital_location
+
+    # 匹配/在京判断仍认顺天/直隶（REGION_SPECIAL_ALIASES 保留）。
+    assert is_capital_location("顺天") is True
+    assert is_capital_location("直隶") is True
+
+    db, _state, content = game
+    samples = {"洪承畴": "顺天", "孙传庭": "直隶"}
+    for name, alias in samples.items():
+        _set_place(game, name, location=alias)
+
+    path = db.path
+    db.close()
+    restored = GameDB(path, content)
+    try:
+        for name, _alias in samples.items():
+            row = restored.conn.execute(
+                "SELECT location FROM characters WHERE name=?", (name,)
+            ).fetchone()
+            assert row["location"] == "beizhili", name
+            assert content.characters[name].location == "beizhili", name
+    finally:
+        restored.close()

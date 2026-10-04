@@ -1,0 +1,27 @@
+# FILE: tests/test_rescript_option_field_heal_1746.py
+# NAME: test_missing_target_kind_only_heals_not_combo_batch
+# LINE: 347-367
+# FLAGS: assert_text_compare_or_match,assert_count,mock_or_patch_present,helper_or_private_call
+# KIND: py
+
+def test_missing_target_kind_only_heals_not_combo_batch(monkeypatch, tmp_path):
+    """仅缺 target_kind → heal；不得虚填 region 变组合整批 None。"""
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    bad = _army_pay()
+    bad.pop("target_kind")
+    first = _items_json([{"title": "u", "context": "c", "options": [bad, _hold()]}])
+    healed = _heals_json([("0:0", {"target_kind": "army"})])
+    tags: list[str] = []
+    n = {"i": 0}
+
+    def _llm(_a, _p, tag="", prior_messages=None):
+        tags.append(tag)
+        n["i"] += 1
+        return first if n["i"] == 1 else healed
+
+    monkeypatch.setattr(rescript_mod, "run_agent_text", _llm)
+    drafts = generate_rescript_draft(object(), _ctx(), turn=41)
+    assert drafts is not None
+    assert "rescript-draft-heal" in tags
+    grant = next(o for o in drafts[0]["options"] if o.get("grant_action") == "协饷")
+    assert grant["target_kind"] == "army" and grant["amount"] == 300

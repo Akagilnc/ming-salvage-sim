@@ -1,0 +1,58 @@
+# FILE: tests/test_cli_transport_1465.py
+# NAME: test_cli_process_idle_over_budget_dies_then_retry_succeeds
+# LINE: 305-356
+# FLAGS: assert_text_compare_or_match,assert_count,mock_or_patch_present,helper_or_private_call
+# KIND: py
+
+def test_cli_process_idle_over_budget_dies_then_retry_succeeds(
+    monkeypatch, tmp_path, game,
+):
+    """⑤静默超阈值判死并重试；每 attempt 独立整份 idle 预算（受控时钟）。
+
+    对照：完全无字节超 idle 仍判死可重试；无换行字节持续到达（间隔 < idle、
+    累计 > idle）不算静默，不被杀。间隔必须经读循环 Empty→check_idle 注入，
+    泵钩子自累不得当判据。
+    """
+    idle = 30.0
+    _pin_transport_policy(monkeypatch, tmp_path, idle_timeout_seconds=idle)
+    clock = {"t": 500.0}
+    monkeypatch.setattr(cb, "_cli_process_clock", lambda: clock["t"])
+    silence, silence_state = _install_read_loop_silence_clock(monkeypatch, clock)
+
+    def _advance_while_silent() -> None:
+        # 首 attempt 一个字节都不出：受控时钟持续推进 → 静默超预算判死
+        clock["t"] += 5.0
+
+    # 无换行块之间插入主环可观测静默：间隔 0.4*idle < idle，三窗累计 1.2*idle > idle
+    gap = idle * 0.4
+    no_nl_chunks = (
+        "臣已核",
+        silence(gap),
+        "辽饷，",
+        silence(gap),
+        "又续报，",
+        silence(gap),
+        "谨复奏。\n",
+    )
+
+    script = install_fake_cli_runner(monkeypatch, [
+        {"stdout": (SilentUntilKilled(on_tick=_advance_while_silent),), "returncode": 0},
+        {"stdout": no_nl_chunks, "returncode": 0},
+    ])
+    web_game, minister = _cli_web_game(game, monkeypatch)
+
+    response = _post_chat_stream(monkeypatch, web_game, minister)
+    assert response.status_code == 200, response.text
+    events = _parse_sse(response.text)
+    assert "done" in [e[0] for e in events], events
+    done = next(e[1] for e in events if e[0] == "done")
+    attempts = done.get("transport_attempts") or []
+    assert [a.get("outcome") for a in attempts] == ["retryable_fail", "ok"], attempts
+    assert attempts[0].get("code") == "llm_idle_timeout", attempts
+    assert script.calls == 2
+    # 首 attempt 的子进程确实被 kill（不留孤儿）
+    assert script.processes[0].killed.is_set()
+    # 判别力：attempt2 静默窗经主环 check_idle 注入，累计 > idle（非钩子自累）
+    assert int(silence_state["checks"]) >= 3, silence_state
+    assert float(silence_state["injected_total"]) > idle, silence_state
+    assert int(done.get("minister_message_id") or 0) > 0

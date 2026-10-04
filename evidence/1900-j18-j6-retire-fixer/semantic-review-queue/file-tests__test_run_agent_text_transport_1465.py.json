@@ -1,0 +1,36 @@
+{
+  "source_path": "tests/test_run_agent_text_transport_1465.py",
+  "member_count": 2,
+  "members": [
+    {
+      "idx": 1974,
+      "file": "tests/test_run_agent_text_transport_1465.py",
+      "name": "test_run_agent_text_final_text_from_terminal_not_chunk_join",
+      "line": 36,
+      "end": 52,
+      "flags": [
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1974_test_run_agent_text_transport_1465__test_run_agent_text_final_text_from_terminal_not_chunk_join.txt",
+      "source_path": "tests/test_run_agent_text_transport_1465.py"
+    },
+    {
+      "idx": 1975,
+      "file": "tests/test_run_agent_text_transport_1465.py",
+      "name": "test_run_agent_text_history_backed_drops_empty_completed_before_retry",
+      "line": 82,
+      "end": 167,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1975_test_run_agent_text_transport_1465__test_run_agent_text_history_backed_drops_empty_completed_before_retry.txt",
+      "source_path": "tests/test_run_agent_text_transport_1465.py"
+    }
+  ]
+}

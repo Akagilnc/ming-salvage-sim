@@ -1,0 +1,14 @@
+# FILE: web/src/components/decisionModal.test.tsx
+# NAME: "DecisionModal" / "keeps the selected memorial's label and hint in the existing resolve payload"
+# LINE: 211-218
+# FLAGS: web_mock_spy_or_calls
+# KIND: web
+
+  it("keeps the selected memorial's label and hint in the existing resolve payload", () => {
+    const onResolve = vi.fn();
+    const cleanup = render(<DecisionModal decisions={[decisions[0]]} onResolve={onResolve} />);
+    act(() => document.querySelector<HTMLButtonElement>(".decision-option")!.click());
+    act(() => document.querySelector<HTMLButtonElement>(".decision-confirm")!.click());
+    expect(onResolve).toHaveBeenCalledWith([{ label: "拨帑速发", hint: "先解燃眉之急。" }]);
+    cleanup();
+  });

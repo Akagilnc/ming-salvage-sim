@@ -1,0 +1,29 @@
+# FILE: tests/test_surcharge_causal_chain_650.py
+# NAME: test_surcharge_origin_requires_effect_eligible_materialized_dossier
+# LINE: 151-173
+# FLAGS: assert_count,helper_or_private_call
+# KIND: py
+
+def test_surcharge_origin_requires_effect_eligible_materialized_dossier(game):
+    db, state, content = game
+    proposed = db.create_decree_dossier(
+        state, action_type="policy", decree_text="拟加派", target_kind="region",
+        target_id="shaanxi",
+    )
+    promulgated = db.create_decree_dossier(
+        state, action_type="policy", decree_text="准加派", target_kind="region",
+        target_id="shaanxi",
+    )
+    db.record_dossier_decision(promulgated, "promulgated")
+    items = [
+        _decree(db, state, monthly_amount=2.0, origin_ref=f"dossier:{promulgated}"),
+        _decree(db, state, monthly_amount=7.0, origin_ref=f"dossier:{proposed}"),
+        _decree(db, state, monthly_amount=7.0, origin_ref="dossier:999999"),
+        _decree(db, state, monthly_amount=7.0, origin_ref="event:1"),
+        _decree(db, state, monthly_amount=7.0, origin_ref=""),
+        _decree(db, state, monthly_amount=7.0, origin_ref="盘面自发"),
+    ]
+    applied = apply_score_extraction(db, state, {"surcharge_decrees": items}, content, None)
+    assert len(applied["surcharge_decrees"]) == 1
+    assert len(applied["surcharge_decrees_rejections"]) == 5
+    assert _settle_payload(db, "shaanxi")["_meta"]["加派基线"] == pytest.approx(2.0)

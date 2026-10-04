@@ -1,0 +1,10 @@
+# FILE: tests/test_issue_entities.py
+# NAME: test_apply_score_extraction_splits_bad_nested_entity
+# LINE: 114-117
+# FLAGS: assert_text_compare_or_match
+# KIND: py
+
+def test_apply_score_extraction_splits_bad_nested_entity(game):
+    db, state, _ = game
+    applied = I.apply_score_extraction(db, state, {"region_delta": {"shanxi": "not-a-dict", "henan": {"unrest": 1}}})
+    assert applied["validate_shape_rejections"][0]["item"] == {"entity_id": "shanxi", "raw_value": "not-a-dict"}

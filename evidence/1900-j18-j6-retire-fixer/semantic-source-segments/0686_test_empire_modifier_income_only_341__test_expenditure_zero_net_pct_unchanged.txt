@@ -1,0 +1,20 @@
+# FILE: tests/test_empire_modifier_income_only_341.py
+# NAME: test_expenditure_zero_net_pct_unchanged
+# LINE: 44-57
+# FLAGS: assert_text_compare_or_match,assert_count,retired_or_meta_marker
+# KIND: py
+
+def test_expenditure_zero_net_pct_unchanged(game):
+    """无帝国修正（net_pct=0）时支出原值落账（回归：不因代码路径改动误伤 net=0 情形）。"""
+    db, state, content = game
+    # 清空所有 active legacies 使 国库 修正归零
+    db.conn.execute("UPDATE legacies SET status='expired' WHERE status='active'")
+    db.conn.commit()
+    db._legacy_mod_cache = None
+
+    net_pct = int(db.legacy_modifiers(state).get("国库", 0) or 0)
+    assert net_pct == 0, f"前置条件失败：清空 legacy 后国库修正应为 0，实为 {net_pct}"
+
+    state.metrics["国库"] = 100
+    actual = db.record_issue_economy_move(state, "国库", -30, "测试", "零修正支出 #341")
+    assert actual == -30, f"无修正时支出 30 应原值 -30 落账，实得 {actual}"

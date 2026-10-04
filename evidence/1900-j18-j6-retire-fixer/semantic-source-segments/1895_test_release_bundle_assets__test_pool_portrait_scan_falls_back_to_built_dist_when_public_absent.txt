@@ -1,0 +1,20 @@
+# FILE: tests/test_release_bundle_assets.py
+# NAME: test_pool_portrait_scan_falls_back_to_built_dist_when_public_absent
+# LINE: 20-33
+# FLAGS: assert_text_compare_or_match,mock_or_patch_present
+# KIND: py
+
+    root = tmp_path / "bundle"
+    portraits = root / "web" / "dist" / "portraits"
+    portraits.mkdir(parents=True)
+    (portraits / "release_pool_3.png").write_bytes(b"png")
+    assert not (root / "web" / "public" / "portraits").exists()
+
+    monkeypatch.setattr(paths, "bundled_path", lambda *parts: str(root.joinpath(*parts)))
+
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.execute("CREATE TABLE characters (portrait_id TEXT)")
+    db = MinimalGameDB(conn)
+
+    assert db.next_pool_portrait_id(prefix="release_pool_") == "release_pool_3"

@@ -1,0 +1,46 @@
+# FILE: tests/test_rescript_draft_656.py
+# NAME: test_persist_then_abort_draft_never_enters_hitl_envelope
+# LINE: 899-938
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_persist_then_abort_draft_never_enters_hitl_envelope(game):
+    """A6+#657：list_pending_decisions 仍只回 decision；批红案头 desk 合并投影含急务。
+
+    #656：decision list 缝不混 draft。
+    #657：session.pending_decisions → list_rescript_desk 同页两类；
+    仅 decision 行标 decided 时 draft 仍 pending（CAS 按 kind）。
+    """
+    from ming_sim.session import GameSession
+
+    db, state, _content = game
+    turn = state.turn
+    db.save_pending_decisions(turn, [
+        {"title": "抉择", "context": "c", "options": [
+            {"label": "a", "hint": ""}, {"label": "b", "hint": ""}]},
+    ])
+    _ready_with_drafts(db, state, _draft_rows("急务"))
+    # 本月上下文 + decision 与 draft 同回合并存
+
+    rows = db.list_pending_decisions(turn)
+    assert [r["kind"] for r in rows] == ["decision"]
+    assert [d["title"] for d in db.list_rescript_drafts()] == ["急务"]
+
+    # #657 批红案头：web 投影合并急务 + decision
+    sess = GameSession.__new__(GameSession)
+    sess.db = db
+    sess.state = state
+    projected = sess.pending_decisions()
+    titles = [d["title"] for d in projected]
+    assert "急务" in titles and "抉择" in titles
+
+    # 仅 decision 行标 decided——draft 不在 list_pending_decisions 中被误标
+    for r in db.list_pending_decisions(turn):
+        db.conn.execute(
+            "UPDATE pending_decisions SET choice_json=?, status='decided' "
+            "WHERE turn=? AND idx=? AND kind='decision'",
+            ('{"label":"a"}', turn, r["idx"]),
+        )
+    db.conn.commit()
+    drafts = {d["title"]: d["status"] for d in db.list_rescript_drafts()}
+    assert drafts["急务"] == "pending"   # 票拟不被误标 decided

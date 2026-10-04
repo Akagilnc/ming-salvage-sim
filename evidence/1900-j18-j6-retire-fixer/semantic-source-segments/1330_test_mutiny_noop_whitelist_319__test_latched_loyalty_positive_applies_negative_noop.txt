@@ -1,0 +1,21 @@
+# FILE: tests/test_mutiny_noop_whitelist_319.py
+# NAME: test_latched_loyalty_positive_applies_negative_noop
+# LINE: 182-196
+# FLAGS: assert_count,helper_or_private_call
+# KIND: py
+
+def test_latched_loyalty_positive_applies_negative_noop(game):
+    db, state, _ = game
+    _configure(db, "legacy")
+    # mutiny_count=1 → cap=80；从 30 +15 → 45
+    _set(db, "legacy", loyalty=30, arrears=5, latched=1, mutiny_count=1)
+
+    db.apply_army_deltas(
+        state, _event(), None, "测试", {ARMY: {"loyalty": 15}}
+    )
+    assert _row(db, "loyalty")["loyalty"] == 45
+
+    db.apply_army_deltas(
+        state, _event(), None, "测试", {ARMY: {"loyalty": -10}}
+    )
+    assert _row(db, "loyalty")["loyalty"] == 45

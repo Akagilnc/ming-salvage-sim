@@ -1,0 +1,12 @@
+# FILE: tests/test_web_chat_serialization_393.py
+# NAME: test_lightweight_stream_seam_reaches_done_without_durable_identity_or_night_signature
+# LINE: 268-273
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_lightweight_stream_seam_reaches_done_without_durable_identity_or_night_signature():
+    runtime, minister_name, allow_finish, _settlement_attempting, _settlement = _runtime_for_stream_race()
+    stream = runtime.chat_stream("殿上", "请奏")
+    assert next(stream)["type"] == "delta"
+    allow_finish.set()
+    assert next(stream)["type"] == "done"

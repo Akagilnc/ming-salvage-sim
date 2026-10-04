@@ -1,0 +1,29 @@
+# FILE: tests/test_draft_admission_resubmit_1769.py
+# NAME: test_draft_admission_resubmit_code_fault_aborts_with_error_pack
+# LINE: 436-458
+# FLAGS: assert_text_compare_or_match,mock_or_patch_present,helper_or_private_call
+# KIND: py
+
+def test_draft_admission_resubmit_code_fault_aborts_with_error_pack(
+    admission_game, monkeypatch,
+):
+    """补交环真代码故障不得洗成耗尽：SSE error + 错误包 + 月不推进。"""
+    game = admission_game
+    _queue_backend(monkeypatch, [_BAD_PAY_ORDER])
+    client = TestClient(web_app.app)
+    turn = int(game.state.turn)
+
+    _post_directive(client, _DECREE_TEXT)
+    wait_pending_writes(game)
+
+    def boom(*_a, **_k):
+        raise RuntimeError(_RESUBMIT_FAULT_MARK)
+
+    monkeypatch.setattr(cb, "resubmit_draft_admission_payload", boom)
+    body = _post_issue_stream(
+        client, expected_turn=turn, step="1769 resubmit-code-fault",
+        allow_error=True,
+    )
+    assert body.get("_event") == "error"
+    assert int(game.state.turn) == turn
+    _assert_error_pack_from(game, turn, _RESUBMIT_FAULT_MARK)

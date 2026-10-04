@@ -1,0 +1,20 @@
+# FILE: tests/test_promulgation_judge_561.py
+# NAME: test_rejected_verdict_still_requires_full_rejection_contract
+# LINE: 286-299
+# FLAGS: helper_or_private_call
+# KIND: py
+
+def test_rejected_verdict_still_requires_full_rejection_contract(game):
+    """#1397 负向边界：打回契约不因顺颁容错而放松。"""
+    db, state, _content = game
+    dossier_id = _dossier(db, state)
+    dossiers = db.list_decree_dossiers(status="proposed")
+    context = decree_mod.build_promulgation_judge_context(db, state, dossiers)
+
+    with pytest.raises(
+        decree_mod.LLMContractError,
+    ):
+        decree_mod.validate_promulgation_verdicts(
+            [{"dossier_id": dossier_id, "decision": "rejected", "reason": "仅有缘由"}],
+            dossiers, db, prepared_context=context,
+        )

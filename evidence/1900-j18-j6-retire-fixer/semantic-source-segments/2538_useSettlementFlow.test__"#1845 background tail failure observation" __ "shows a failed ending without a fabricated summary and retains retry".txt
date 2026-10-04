@@ -1,0 +1,22 @@
+# FILE: web/src/useSettlementFlow.test.tsx
+# NAME: "#1845 background tail failure observation" / "shows a failed ending without a fabricated summary and retains retry"
+# LINE: 272-287
+# FLAGS: web_mock_spy_or_calls,web_text_assert,web_count_assert
+# KIND: web
+
+  it("shows a failed ending without a fabricated summary and retains retry", () => {
+    const failed = {
+      ...preClickState,
+      ending: { status: "collapse", label: "社稷倾覆", summary: "", timeline: [], summary_pending: false },
+      mechanical_tail_failure: { error: "模型调用耗尽", error_pack_path: "/tmp/pack.json" },
+    } as GameState;
+    const onRetry = vi.fn();
+    const { host, cleanup } = mountHarness({ initial: failed, loadState: async () => failed, onRetry });
+
+    expect(host.querySelector(".ending-summary-text")?.textContent).toBe("");
+    const alert = host.querySelector('[role="alert"]');
+    expect(alert?.textContent).toContain("模型调用耗尽");
+    act(() => { alert?.querySelector("button")?.click(); });
+    expect(onRetry).toHaveBeenCalledTimes(1);
+    cleanup();
+  });

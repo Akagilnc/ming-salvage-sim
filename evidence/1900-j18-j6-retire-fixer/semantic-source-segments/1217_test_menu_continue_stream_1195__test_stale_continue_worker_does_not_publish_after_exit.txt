@@ -1,0 +1,56 @@
+# FILE: tests/test_menu_continue_stream_1195.py
+# NAME: test_stale_continue_worker_does_not_publish_after_exit
+# LINE: 108-157
+# FLAGS: assert_text_compare_or_match,assert_count,mock_or_patch_present,helper_or_private_call
+# KIND: py
+
+def test_stale_continue_worker_does_not_publish_after_exit(monkeypatch):
+    """#1195：continue 构造中途 exit bump → 对号失败，不发布（构造内取消窗口）。"""
+    import asyncio
+    import threading
+
+    started = threading.Event()
+    release = threading.Event()
+    closed: list[str] = []
+    results: dict = {}
+
+    class SlowWebGame:
+        def __init__(self, fresh: bool = False, on_stage=None, **_kw) -> None:
+            assert fresh is False
+            started.set()
+            release.wait()
+            self._state = {"from": "stale-continue"}
+            self._write_gate = ClassifiedWriteGate()
+            self.session = SimpleNamespace(close=lambda: closed.append("stale"))
+
+        def state_payload(self) -> dict:
+            return self._state
+
+    _reset_path_leases()
+    monkeypatch.setattr(web_app, "_has_main_db", lambda: True)
+    monkeypatch.setattr(web_app, "_get_main_db_path", lambda: "/tmp/continue-stale-exit.db")
+    monkeypatch.setattr(web_app, "WebGame", SlowWebGame)
+    monkeypatch.setattr(web_app, "web_game", None)
+
+    def run_continue() -> None:
+        response = TestClient(web_app.app).post("/api/menu/continue")
+        results["status"] = response.status_code
+        results["events"] = _parse_sse(response.text)
+
+    thread = threading.Thread(target=run_continue, daemon=True)
+    thread.start()
+    started.wait()
+
+    exit_result = asyncio.run(web_app.api_menu_exit())
+    assert exit_result == {"ok": True}
+    assert web_app.web_game is None
+
+    release.set()
+    thread.join()
+    assert not thread.is_alive(), "continue stream thread hung"
+    assert results.get("status") == 200
+    events = results["events"]
+    assert events and events[-1][0] == "error"
+    assert web_app.web_game is None, "stale continue must not publish over exit"
+    wait_until(lambda: closed == ["stale"])
+    assert closed == ["stale"]

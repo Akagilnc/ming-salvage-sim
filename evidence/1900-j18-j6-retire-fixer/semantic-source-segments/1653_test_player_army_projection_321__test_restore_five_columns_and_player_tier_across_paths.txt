@@ -1,0 +1,81 @@
+# FILE: tests/test_player_army_projection_321.py
+# NAME: test_restore_five_columns_and_player_tier_across_paths
+# LINE: 258-332
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_restore_five_columns_and_player_tier_across_paths(game, tmp_path, fiscal_path):
+    """AC6–9：五持久列跨 reopen；仅凭 DB load_state 接续 tick；tick 后逐字段 oracle。"""
+    db, _state, content = game
+    path = str(tmp_path / f"restore-321-{fiscal_path}.db")
+    copied = sqlite3.connect(path)
+    db.conn.backup(copied)
+    copied.close()
+
+    opened = GameDB(path, content)
+    try:
+        _configure(opened, fiscal_path)
+        # 票面 literal：count=2 redemption=1 → cap=70；streak=7 → tick 后 8；probation 2→1
+        _write_mutiny_fixture(
+            opened,
+            fiscal_path,
+            loyalty=95,
+            arrears=0,
+            is_mutinied=1,
+            mutiny_count=2,
+            mutiny_probation=2,
+            full_pay_streak=7,
+            redemption_count=1,
+            morale=60,
+        )
+    finally:
+        opened.close()
+
+    reopened = GameDB(path, content)
+    try:
+        row = reopened.conn.execute(
+            "SELECT * FROM armies WHERE id=?", (ARMY,)
+        ).fetchone()
+        assert tuple(
+            row[k]
+            for k in (
+                "is_mutinied",
+                "mutiny_count",
+                "mutiny_probation",
+                "full_pay_streak",
+                "redemption_count",
+            )
+        ) == (1, 2, 2, 7, 1)
+        assert int(row["loyalty"]) == 95
+        assert float(row["arrears"]) == pytest.approx(0)
+        assert int(row["manpower"]) == 10000
+        assert mutiny_loyalty_cap(2, redemption_count=1) == 70
+        assert derive_army_mutiny_state(row) == "哗变"
+        pay = reopened._army_pay(row)
+        sit_before = _player_army_situation(row, pay)
+        assert sit_before["mutiny_tier"] == "哗变"
+        card_before = _payload_by_id(reopened)[ARMY]
+        assert card_before["mutiny_tier"] == "哗变"
+
+        # P1：仅凭 DB 重建恢复态，再在恢复态上设测用国库并 tick
+        restored_state = reopened.load_state()
+        restored_state.metrics["国库"] = 10**9
+        apply_fixed_period_flows(reopened, restored_state)
+        after = reopened.conn.execute(
+            "SELECT * FROM armies WHERE id=?", (ARMY,)
+        ).fetchone()
+        assert int(after["loyalty"]) == 70
+        assert int(after["is_mutinied"]) == 0
+        assert int(after["mutiny_count"]) == 2
+        assert int(after["mutiny_probation"]) == 1
+        assert int(after["full_pay_streak"]) == 8
+        assert int(after["redemption_count"]) == 1
+        assert float(after["arrears"]) == pytest.approx(0)
+        assert int(after["manpower"]) == 10000
+        assert mutiny_loyalty_cap(2, redemption_count=1) == 70
+        assert derive_army_mutiny_state(after) == "不满"
+        sit_after = _player_army_situation(after, reopened._army_pay(after))
+        assert sit_after["mutiny_tier"] == "不满"
+        assert _payload_by_id(reopened)[ARMY]["mutiny_tier"] == "不满"
+    finally:
+        reopened.close()

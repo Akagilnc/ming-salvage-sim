@@ -1,0 +1,24 @@
+# FILE: tests/test_event_chain_cascade.py
+# NAME: test_positive_outcome_dependency_waits_for_frozen_outcome_label
+# LINE: 117-134
+# FLAGS: helper_or_private_call
+# KIND: py
+
+def test_positive_outcome_dependency_waits_for_frozen_outcome_label(game):
+    db, state, content = game
+    issues.bind_content(content)
+    upstream = _hist_event("__chain_upstream_no_outcome_yet__")
+    downstream = _hist_event("__chain_downstream_waits_outcome__", {
+        "event.__chain_upstream_no_outcome_yet__.terminal_state": "==triggered",
+        "event.__chain_upstream_no_outcome_yet__.terminal_reason": "==目标结局",
+    })
+    with _TempEvents(content, upstream, downstream):
+        db.mark_event_triggered(state, upstream.id)
+
+        terminalized = issues.apply_event_cascading_invalidations(state, db)
+
+        assert all(item["id"] != downstream.id for item in terminalized)
+        assert db.conn.execute(
+            "SELECT 1 FROM event_triggers WHERE event_id=?",
+            (downstream.id,),
+        ).fetchone() is None

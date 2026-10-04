@@ -1,0 +1,43 @@
+# FILE: tests/test_promulgation_judge_561.py
+# NAME: test_default_promulgation_judge_uses_one_batch_and_existing_validator
+# LINE: 398-434
+# FLAGS: assert_text_compare_or_match,assert_count,mock_or_patch_present,helper_or_private_call
+# KIND: py
+
+def test_default_promulgation_judge_uses_one_batch_and_existing_validator(game, monkeypatch):
+    """一批判官一次调用，再走既有校验。入口是 llm_promulgation_verdicts。"""
+    db, state, content = game
+    del content
+    first = _dossier(db, state)
+    second = db.create_decree_dossier(
+        state, action_type="appointment", decree_text="擢任某官",
+        target_kind="character", target_id="candidate",
+    )
+    calls = []
+
+    monkeypatch.setattr(decree_mod, "create_promulgation_judge_agent", lambda *a, **k: object())
+
+    def canned(_agent, prompt, tag, **_k):
+        calls.append((json.loads(prompt), tag))
+        return json.dumps({"verdicts": [
+            {"dossier_id": first, "decision": "promulgated"},
+            {"dossier_id": second, "decision": "promulgated"},
+        ]})
+
+    monkeypatch.setattr(decree_mod, "run_agent_text", canned)
+    dossiers = db.list_decree_dossiers(status="proposed")
+    context = decree_mod.build_promulgation_judge_context(db, state, dossiers)
+    raw = decree_mod.llm_promulgation_verdicts(
+        dossiers, state, db=db, agno_db=None, llm_config=object(),
+        prepared_context=context,
+    )
+
+    assert decree_mod.validate_promulgation_verdicts(
+        raw, dossiers, db, prepared_context=context,
+    ) == [
+        {"dossier_id": first, "decision": "promulgated"},
+        {"dossier_id": second, "decision": "promulgated"},
+    ]
+    assert len(calls) == 1
+    assert calls[0][1] == "promulgation-judge"
+    assert [row["id"] for row in calls[0][0]["dossiers"]] == [first, second]

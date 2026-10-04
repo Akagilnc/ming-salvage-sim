@@ -1,0 +1,10 @@
+# FILE: tests/test_runtime_llm_config.py
+# NAME: test_load_runtime_llm_missing_file_keeps_empty_dict_contract
+# LINE: 8-11
+# FLAGS: mock_or_patch_present
+# KIND: py
+
+def test_load_runtime_llm_missing_file_keeps_empty_dict_contract(tmp_path, monkeypatch):
+    monkeypatch.setattr(llm_config, "RUNTIME_LLM_PATH", str(tmp_path / "missing.json"))
+
+    assert llm_config.load_runtime_llm() == {}

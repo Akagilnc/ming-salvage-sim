@@ -1,0 +1,20 @@
+# FILE: tests/test_fiscal_substrate_bridge.py
+# NAME: test_substrate_hub_debit_fails_loud_when_required_debit_not_booked
+# LINE: 1744-1757
+# FLAGS: assert_text_compare_or_match,assert_count,mock_or_patch_present
+# KIND: py
+
+def test_substrate_hub_debit_fails_loud_when_required_debit_not_booked(fresh_game, monkeypatch):
+    from ming_sim.flows import apply_fixed_period_flows
+
+    db, state = fresh_game
+    state.metrics["国库"] = 100
+    db.save_state(state)
+    before = db.conn.execute("SELECT COUNT(*) FROM economy_ledger").fetchone()[0]
+    monkeypatch.setattr(db, "record_issue_economy_move", lambda *_args, **_kwargs: None)
+    with pytest.raises(SettlementAbort) as failure:
+        apply_fixed_period_flows(db, state)
+    assert failure.value.stage == "fixed_fiscal"
+    assert failure.value.turn == state.turn
+    assert db.conn.execute("SELECT COUNT(*) FROM economy_ledger").fetchone()[0] == before
+    assert state.metrics["国库"] == 100

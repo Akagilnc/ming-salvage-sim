@@ -1,0 +1,57 @@
+# FILE: tests/test_decree_commitment_creation_136.py
+# NAME: test_decree_commitment_dedups_same_batch_fiscal_create_carrier
+# LINE: 81-131
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_decree_commitment_dedups_same_batch_fiscal_create_carrier(game, monkeypatch):
+    db, state, content = game
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+
+    out = I.apply_score_extraction(
+        db,
+        state,
+        {
+            "new_issues": [
+                {
+                    "origin_kind": "decree",
+                    "origin_ref": _promulgated_commitment_origin(db, state, "xixue-monthly"),
+                    "kind": "initiative",
+                    "title": "每月拨西学经费",
+                    "stage_text": "太仓每月拨银五十万两办西学。",
+                    "ongoing_effects": {
+                        "economy": [
+                            {
+                                "account": "国库",
+                                "delta": -50,
+                                "category": "西学经费",
+                                "reason": "每月拨西学经费",
+                            }
+                        ]
+                    },
+                    "commitment_kind": "until_stop",
+                }
+            ],
+            "fiscal_creates": [
+                {
+                    "key": "西学经费_base",
+                    "account": "国库",
+                    "direction": "expense",
+                    "init_value": 50,
+                    "display": "西学经费",
+                    "reason": "同批 extractor 误产的重复月支",
+                    "origin_ref": "盘面自发",
+                }
+            ],
+        },
+        content=content,
+    )
+
+    assert out["issue_summary"]["new_issues"][0]["rejected"] is False
+    assert _issue_by_title(db, "每月拨西学经费") is not None
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM fiscal_config WHERE key IN ('西学经费_base', '西学经费_rate')"
+    ).fetchone()[0] == 0
+    fiscal_result = out["fiscal_creates"][0]
+    assert fiscal_result["rejected"] is True
+    assert fiscal_result["category"] == "deduped_commitment_carrier"

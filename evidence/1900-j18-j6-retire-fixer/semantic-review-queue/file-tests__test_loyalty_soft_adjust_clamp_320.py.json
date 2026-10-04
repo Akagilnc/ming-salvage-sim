@@ -1,0 +1,146 @@
+{
+  "source_path": "tests/test_loyalty_soft_adjust_clamp_320.py",
+  "member_count": 10,
+  "members": [
+    {
+      "idx": 1177,
+      "file": "tests/test_loyalty_soft_adjust_clamp_320.py",
+      "name": "test_positive_large_delta_clamped_to_plus_15",
+      "line": 49,
+      "end": 60,
+      "flags": [
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1177_test_loyalty_soft_adjust_clamp_320__test_positive_large_delta_clamped_to_plus_15.txt",
+      "source_path": "tests/test_loyalty_soft_adjust_clamp_320.py"
+    },
+    {
+      "idx": 1178,
+      "file": "tests/test_loyalty_soft_adjust_clamp_320.py",
+      "name": "test_negative_large_delta_clamped_to_minus_15",
+      "line": 63,
+      "end": 70,
+      "flags": [
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1178_test_loyalty_soft_adjust_clamp_320__test_negative_large_delta_clamped_to_minus_15.txt",
+      "source_path": "tests/test_loyalty_soft_adjust_clamp_320.py"
+    },
+    {
+      "idx": 1179,
+      "file": "tests/test_loyalty_soft_adjust_clamp_320.py",
+      "name": "test_negative_delta_floors_at_zero",
+      "line": 73,
+      "end": 80,
+      "flags": [
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1179_test_loyalty_soft_adjust_clamp_320__test_negative_delta_floors_at_zero.txt",
+      "source_path": "tests/test_loyalty_soft_adjust_clamp_320.py"
+    },
+    {
+      "idx": 1180,
+      "file": "tests/test_loyalty_soft_adjust_clamp_320.py",
+      "name": "test_dynamic_mutiny_cap_still_hard_ceiling_after_soft_clamp",
+      "line": 83,
+      "end": 90,
+      "flags": [
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1180_test_loyalty_soft_adjust_clamp_320__test_dynamic_mutiny_cap_still_hard_ceiling_after_soft_clamp.txt",
+      "source_path": "tests/test_loyalty_soft_adjust_clamp_320.py"
+    },
+    {
+      "idx": 1181,
+      "file": "tests/test_loyalty_soft_adjust_clamp_320.py",
+      "name": "test_deterministic_tick_plus_five_unaffected_by_soft_clamp",
+      "line": 93,
+      "end": 112,
+      "flags": [
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1181_test_loyalty_soft_adjust_clamp_320__test_deterministic_tick_plus_five_unaffected_by_soft_clamp.txt",
+      "source_path": "tests/test_loyalty_soft_adjust_clamp_320.py"
+    },
+    {
+      "idx": 1182,
+      "file": "tests/test_loyalty_soft_adjust_clamp_320.py",
+      "name": "test_single_narrative_cannot_max_out_loyalty",
+      "line": 115,
+      "end": 123,
+      "flags": [
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1182_test_loyalty_soft_adjust_clamp_320__test_single_narrative_cannot_max_out_loyalty.txt",
+      "source_path": "tests/test_loyalty_soft_adjust_clamp_320.py"
+    },
+    {
+      "idx": 1183,
+      "file": "tests/test_loyalty_soft_adjust_clamp_320.py",
+      "name": "test_fake_exemption_markers_do_not_bypass_soft_clamp",
+      "line": 143,
+      "end": 156,
+      "flags": [
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1183_test_loyalty_soft_adjust_clamp_320__test_fake_exemption_markers_do_not_bypass_soft_clamp.txt",
+      "source_path": "tests/test_loyalty_soft_adjust_clamp_320.py"
+    },
+    {
+      "idx": 1184,
+      "file": "tests/test_loyalty_soft_adjust_clamp_320.py",
+      "name": "test_junxin_alias_also_soft_clamped",
+      "line": 159,
+      "end": 166,
+      "flags": [
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1184_test_loyalty_soft_adjust_clamp_320__test_junxin_alias_also_soft_clamped.txt",
+      "source_path": "tests/test_loyalty_soft_adjust_clamp_320.py"
+    },
+    {
+      "idx": 1185,
+      "file": "tests/test_loyalty_soft_adjust_clamp_320.py",
+      "name": "test_canonical_and_alias_same_event_do_not_double_count_positive",
+      "line": 169,
+      "end": 182,
+      "flags": [
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1185_test_loyalty_soft_adjust_clamp_320__test_canonical_and_alias_same_event_do_not_double_count_positive.txt",
+      "source_path": "tests/test_loyalty_soft_adjust_clamp_320.py"
+    },
+    {
+      "idx": 1186,
+      "file": "tests/test_loyalty_soft_adjust_clamp_320.py",
+      "name": "test_canonical_and_alias_same_event_do_not_double_count_negative",
+      "line": 185,
+      "end": 198,
+      "flags": [
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1186_test_loyalty_soft_adjust_clamp_320__test_canonical_and_alias_same_event_do_not_double_count_negative.txt",
+      "source_path": "tests/test_loyalty_soft_adjust_clamp_320.py"
+    }
+  ]
+}

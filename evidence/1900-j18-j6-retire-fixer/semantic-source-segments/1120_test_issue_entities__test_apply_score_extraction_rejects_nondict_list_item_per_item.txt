@@ -1,0 +1,10 @@
+# FILE: tests/test_issue_entities.py
+# NAME: test_apply_score_extraction_rejects_nondict_list_item_per_item
+# LINE: 135-138
+# FLAGS: assert_text_compare_or_match
+# KIND: py
+
+def test_apply_score_extraction_rejects_nondict_list_item_per_item(game):
+    db, state, _ = game
+    applied = I.apply_score_extraction(db, state, {"fiscal_creates": [{"key": "x"}, "bad-scalar"]})
+    assert applied["validate_shape_rejections"][0]["item"] == {"raw_value": "bad-scalar"}

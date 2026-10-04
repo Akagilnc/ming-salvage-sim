@@ -1,0 +1,19 @@
+{
+  "source_path": "web/src/components/electronLayout.medium.test.tsx",
+  "member_count": 1,
+  "members": [
+    {
+      "idx": 2421,
+      "file": "web/src/components/electronLayout.medium.test.tsx",
+      "name": "\"medium: shared Electron geometry\" / \"keeps DecisionModal confirmation within the first viewport\"",
+      "line": 32,
+      "end": 45,
+      "flags": [
+        "web_mock_spy_or_calls"
+      ],
+      "kind": "web",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2421_electronLayout.medium.test__\"medium: shared Electron geometry\" __ \"keeps DecisionModal confirmation within the first viewport\".txt",
+      "source_path": "web/src/components/electronLayout.medium.test.tsx"
+    }
+  ]
+}

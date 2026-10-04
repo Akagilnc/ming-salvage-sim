@@ -1,0 +1,35 @@
+# FILE: tests/test_fiscal_substrate_bridge.py
+# NAME: test_shaanxi_seed_is_relabelled_to_historical_shadow_scale
+# LINE: 3604-3632
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_shaanxi_seed_is_relabelled_to_historical_shadow_scale(fresh_db):
+    settle = _read_settle(fresh_db)
+    p = settle["p"]
+    assert p["正赋应征"] == pytest.approx(5.0563, abs=1e-4)
+    assert p["三饷应征"] == pytest.approx(2.1969011325)
+    assert p["火耗率"] == pytest.approx(0.18)
+    assert p["逋赋率"] == pytest.approx(0.45)
+    assert p["起运定额"] == pytest.approx(2.1969011325)
+    assert p["拨付gross"] == pytest.approx(4)
+    assert p["Due"]["军饷"] == pytest.approx(_province_pay_due(fresh_db, "shaanxi"))
+    assert {k: p["Due"][k] for k in ("官俸", "宗禄", "赈济")} == {"官俸": 3, "宗禄": 4.07, "赈济": 0}
+    assert settle["st"]["省库库银"] == 0
+    assert settle["st"]["官民田"] == pytest.approx(2929.20151)
+    assert settle["st"]["隐田"] == pytest.approx(1536.6303, abs=1e-4)
+
+    meta = settle["_meta"]
+    assert "宗禄" not in meta["provisional"]
+    assert "起运定额" not in meta["provisional"]
+    assert "官民田" not in meta["provisional"]
+    assert "隐田" in meta["provisional"]
+    assert meta["levies"]["seeded"] == ["辽饷"]
+    assert "剿饷" in meta["levies"]["not_seeded"]
+    assert "练饷" in meta["levies"]["not_seeded"]
+    assert meta["辽饷九厘基线"] == pytest.approx(2.1969011325)
+    assert meta["正赋起运基线"] == pytest.approx(0)
+    primary = meta["primary_sources"]["万历会计录卷九陕西布政司田赋"]
+    assert isinstance(primary.get("registered_land_raw"), str) and primary["registered_land_raw"].strip()
+    assert primary["regular_tax_raw"]["實徵麥石"] == pytest.approx(688647.2416)
+    assert primary["regular_tax_raw"]["實徵米石"] == pytest.approx(1044943.1241)

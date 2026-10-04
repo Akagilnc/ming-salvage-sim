@@ -1,0 +1,71 @@
+# FILE: tests/test_urge_lever_624.py
+# NAME: test_remonstrance_not_projected_applied_or_takeover
+# LINE: 497-561
+# FLAGS: helper_or_private_call
+# KIND: py
+
+def test_remonstrance_not_projected_applied_or_takeover(game):
+    db, state, content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.commit()
+    dossier_id = _executing_policy_dossier(db, state)
+    stages = [{
+        "stage_idx": 0,
+        "due_turn": state.turn + 12,
+        "criterion_text": "火器见眉目",
+        "origin_context": "三年火器见眉目",
+    }]
+    issue_id, _ = _insert_staged_commitment(
+        db, state, content, stages=stages, origin_ref=f"dossier:{dossier_id}",
+    )
+    # 手工插入谏/宽限 pending（模拟已写出）
+    db.insert_next_audience_todo(
+        commitment_ref=issue_id,
+        stage_idx=0,
+        due_turn=state.turn,
+        criterion_text="期限过急",
+        origin_context="着即赶办",
+        status=TODO_STATUS_PENDING,
+        entry_kind=ENTRY_KIND_RUSH_REMONSTRANCE,
+        created_turn=state.turn - 1,
+        payload_json={"truth": "genuine", "grace_fake": False},
+    )
+    db.insert_next_audience_todo(
+        commitment_ref=issue_id,
+        stage_idx=0,
+        due_turn=state.turn,
+        criterion_text="求宽限",
+        origin_context="着即赶办",
+        status=TODO_STATUS_PENDING,
+        entry_kind=ENTRY_KIND_GRACE_PLEA,
+        created_turn=state.turn - 1,
+        payload_json={"truth": "pretextual", "grace_fake": True},
+    )
+
+    # 1) 不投影为 due-review 场面
+    assert list_due_review_scenes(db, state) == []
+
+    # 2) 不占接管窗
+    owned = dossiers_with_pending_due_review(db, state)
+    assert dossier_id not in owned
+
+    # 3) apply 不消费、不落格、不连坐
+    before_outcome = db.get_decree_dossier(dossier_id)["execution_outcome"]
+    results = apply_pending_due_reviews(db, state, commit=True)
+    assert results == []
+    assert db.get_decree_dossier(dossier_id)["execution_outcome"] == before_outcome
+    still = db.list_next_audience_todos(status=TODO_STATUS_PENDING)
+    kinds = {t["entry_kind"] for t in still}
+    assert ENTRY_KIND_RUSH_REMONSTRANCE in kinds
+    assert ENTRY_KIND_GRACE_PLEA in kinds
+
+    # 4) apply_due_review_for_todo 单条亦拒
+    rem = [t for t in still if t["entry_kind"] == ENTRY_KIND_RUSH_REMONSTRANCE][0]
+    one = apply_due_review_for_todo(db, state, rem, commit=True)
+    assert one.get("rejected") is True
+    assert db.list_next_audience_todos(status=TODO_STATUS_PENDING)
+    # 仍 pending，未被 failed/连坐吞
+    costs = list(db.conn.execute(
+        "SELECT * FROM decree_cost_events WHERE dossier_id=?", (dossier_id,),
+    ).fetchall())
+    assert costs == []

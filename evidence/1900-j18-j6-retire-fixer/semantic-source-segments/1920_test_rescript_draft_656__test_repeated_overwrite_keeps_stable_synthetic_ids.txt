@@ -1,0 +1,37 @@
+# FILE: tests/test_rescript_draft_656.py
+# NAME: test_repeated_overwrite_keeps_stable_synthetic_ids
+# LINE: 258-288
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_repeated_overwrite_keeps_stable_synthetic_ids(game):
+    """A3 判词：先删后算 idx——相同 decision 盘面重复覆写得到相同 idx 与
+    `urgent:{turn}:{idx}` 合成身份，不随被删旧行漂移；无 UUID/映射账。"""
+    db, state, _content = game
+    turn = state.turn
+    db.save_pending_decisions(turn, [
+        {"title": "抉择一", "context": "c", "options": [
+            {"label": "a", "hint": ""}, {"label": "b", "hint": ""}]},
+        {"title": "抉择二", "context": "c", "options": [
+            {"label": "a", "hint": ""}, {"label": "b", "hint": ""}]},
+    ])
+
+    def _drafts(title_a: str, title_b: str) -> list:
+        return [
+            {"title": title_a, "context": "导语甲", "options": [
+                {"label": "甲", "hint": ""}, {"label": "乙", "hint": ""}]},
+            {"title": title_b, "context": "导语乙", "options": [
+                {"label": "甲", "hint": ""}, {"label": "乙", "hint": ""}]},
+        ]
+
+    db.save_rescript_drafts(turn, _drafts("急务甲", "急务乙"))
+    first = db.list_rescript_drafts()
+    assert [d["event_id"] for d in first] == [f"urgent:{turn}:2", f"urgent:{turn}:3"]
+    # 同盘面覆写：行被替换、合成身份不变
+    db.save_rescript_drafts(turn, _drafts("改拟甲", "改拟乙"))
+    second = db.list_rescript_drafts()
+    assert [d["title"] for d in second] == ["改拟甲", "改拟乙"]  # 确证替换发生
+    assert [d["event_id"] for d in second] == [f"urgent:{turn}:2", f"urgent:{turn}:3"]
+    # decision 行 idx 不受影响
+    decisions = db.list_pending_decisions(turn)
+    assert [d["idx"] for d in decisions] == [0, 1]

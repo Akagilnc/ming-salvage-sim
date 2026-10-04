@@ -1,0 +1,19 @@
+# FILE: tests/test_llm_channel_config.py
+# NAME: test_create_chat_model_off_reasoning_keeps_minimal_for_legacy_o1
+# LINE: 144-156
+# FLAGS: assert_text_compare_or_match,retired_or_meta_marker
+# KIND: py
+
+def test_create_chat_model_off_reasoning_keeps_minimal_for_legacy_o1(monkeypatch):
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    cfg = LLMConfig(
+        api_key="sk-test",
+        base_url="https://api.example.com/v1",
+        model="o1-mini",
+        channel="api",
+        reasoning_strength="off",
+    )
+
+    model = create_chat_model(cfg)
+
+    assert model.reasoning_effort == "minimal"

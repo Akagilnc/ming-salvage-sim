@@ -1,0 +1,43 @@
+# FILE: tests/test_month_chain_1847.py
+# NAME: test_prior_month_answered_rescript_does_not_block_or_reappear
+# LINE: 112-148
+# FLAGS: assert_text_compare_or_match,mock_or_patch_present,helper_or_private_call
+# KIND: py
+
+def test_prior_month_answered_rescript_does_not_block_or_reappear(game, monkeypatch):
+    db, state, content = game
+    minister = next(iter(content.characters.values())).name
+    # 上月已答打回件：仍可能残留历史案卷，但不得进本月案头、不得挡过月。
+    old_id = db.create_decree_dossier(
+        state, action_type="policy", decree_text="旧打回已答",
+        target_kind="issue", target_id="old-rejected",
+    )
+    db.conn.execute(
+        "UPDATE decree_dossiers SET created_turn=?, status='proposed', "
+        "promulgation_decision='rejected', rescript_pending=1 WHERE id=?",
+        (int(state.turn) - 1, old_id),
+    )
+    db.conn.execute(
+        "INSERT INTO decree_dossier_decisions "
+        "(dossier_id, turn, decision, blocked_layer, rescript_action, reason, "
+        "legal_reason_code, primary_opponents_json, gatekeeper_id, criteria_snapshot_json) "
+        "VALUES (?, ?, 'rejected', 'cabinet_drafting', 'hold', '', '', '[]', NULL, '{}')",
+        (old_id, int(state.turn) - 1),
+    )
+    db.conn.commit()
+
+    _forbid_extractor(monkeypatch)
+    monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
+    monkeypatch.setattr(
+        month_translate, "translate_month_segment", lambda *a, **k: {"effects": {}},
+    )
+    session = make_light_session(db, state, content)
+    result = session.resolve_turn(allow_empty_decree=True)
+
+    assert result.awaiting is False
+    assert result.stage == "gazette"
+    assert all(
+        f"dossier:{old_id}" != str(row.get("event_id") or "")
+        for row in session.pending_decisions()
+    )
+    del minister

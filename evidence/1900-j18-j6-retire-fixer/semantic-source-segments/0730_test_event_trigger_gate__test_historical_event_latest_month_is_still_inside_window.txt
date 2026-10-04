@@ -1,0 +1,30 @@
+# FILE: tests/test_event_trigger_gate.py
+# NAME: test_historical_event_latest_month_is_still_inside_window
+# LINE: 185-208
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_historical_event_latest_month_is_still_inside_window(game):
+    db, state, content = game
+    issues.bind_content(content)
+    ev = _hist_event("__test_latest_month_hist__", {"民心": "<=5"})
+    ev.trigger_year = 1629
+    ev.trigger_month = 1
+    ev.trigger_end_year = 1629
+    ev.trigger_end_month = 2
+    content.events.append(ev)
+    try:
+        state.year = 1629
+        state.period = 2
+        state.metrics["民心"] = 3
+
+        cands = issues.gather_candidate_events(state, db)
+
+        assert any(c.id == "__test_latest_month_hist__" for c in cands)
+        row = db.conn.execute(
+            "SELECT terminal_state FROM event_triggers WHERE event_id=?",
+            ("__test_latest_month_hist__",),
+        ).fetchone()
+        assert row is None
+    finally:
+        content.events.remove(ev)

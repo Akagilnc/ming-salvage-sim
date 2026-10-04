@@ -1,0 +1,16 @@
+# FILE: tests/test_surcharge_causal_chain_650.py
+# NAME: test_repeated_delta_apply_does_not_consume_levy_ledger
+# LINE: 211-220
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_repeated_delta_apply_does_not_consume_levy_ledger(game):
+    db, state, content = game
+    apply_score_extraction(db, state, {
+        "surcharge_decrees": [_decree(db, state, monthly_amount=10.0)],
+    }, content, None)
+    before = _pop(db, "流民", "shaanxi")
+    for delta in ({}, {}, {"metric_delta": {"皇威": 1}}):
+        applied = apply_score_extraction(db, state, delta, content, None)
+        assert not [r for r in applied["population_transfers"] if r.get("reason") == "加派"]
+    assert _pop(db, "流民", "shaanxi") == before

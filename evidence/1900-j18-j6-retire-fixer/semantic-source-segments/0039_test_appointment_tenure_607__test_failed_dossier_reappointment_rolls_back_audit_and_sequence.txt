@@ -1,0 +1,76 @@
+# FILE: tests/test_appointment_tenure_607.py
+# NAME: test_failed_dossier_reappointment_rolls_back_audit_and_sequence
+# LINE: 106-175
+# FLAGS: assert_text_compare_or_match,mock_or_patch_present,helper_or_private_call
+# KIND: py
+
+def test_failed_dossier_reappointment_rolls_back_audit_and_sequence(game, monkeypatch):
+    db, state, content = game
+    name = _active_minister(db)
+    _promulgate_appointment(db, state, content, name, "失败回滚原官", "署理")
+
+    pending_id = db.stage_pending_action(
+        state.turn, kind="office", action="任命",
+        minister_name=_active_minister(db), target_id=None,
+        payload={"text": "测试任免原文", "name": name, "office": "失败回滚新官", "任别": "兼署"},
+    )
+    db.commit_pending_actions(state, content=content)
+    dossier = next(
+        row for row in db.list_decree_dossiers()
+        if row["pending_action_id"] == pending_id
+    )
+    dossier_id = dossier["id"]
+    before_office = dict(db.conn.execute(
+        "SELECT * FROM character_offices WHERE character_name=?", (name,)
+    ).fetchone())
+    before_records = [
+        dict(row) for row in db.conn.execute(
+            "SELECT * FROM office_change_records ORDER BY id"
+        ).fetchall()
+    ]
+    before_sequence = dict(db.conn.execute(
+        "SELECT * FROM sqlite_sequence WHERE name='office_change_records'"
+    ).fetchone())
+    before_dossier = dict(db.get_decree_dossier(dossier_id))
+
+    def fail_after_office_write(*_args, **_kwargs):
+        raise RuntimeError("simulated post-office-write failure")
+
+    monkeypatch.setattr(
+        issue_engine, "_displace_duplicate_offices", fail_after_office_write
+    )
+    try:
+        db.apply_dossier_promulgation(
+            state, dossier_id, "promulgated", content=content,
+        )
+    except ValueError as exc:
+        assert str(exc) == "任免案卷载荷物化失败"
+    else:
+        raise AssertionError("dossier materialization failure did not propagate")
+
+    assert dict(db.conn.execute(
+        "SELECT * FROM character_offices WHERE character_name=?", (name,)
+    ).fetchone()) == before_office
+    assert [
+        dict(row) for row in db.conn.execute(
+            "SELECT * FROM office_change_records ORDER BY id"
+        ).fetchall()
+    ] == before_records
+    assert dict(db.conn.execute(
+        "SELECT * FROM sqlite_sequence WHERE name='office_change_records'"
+    ).fetchone()) == before_sequence
+    assert dict(db.get_decree_dossier(dossier_id)) == before_dossier
+
+    monkeypatch.undo()
+    db.apply_dossier_promulgation(
+        state, dossier_id, "promulgated", content=content,
+    )
+    audit = db.conn.execute(
+        "SELECT * FROM office_change_records WHERE dossier_id=?", (dossier_id,)
+    ).fetchone()
+    assert audit["id"] == before_sequence["seq"] + 1
+    assert audit["appointment_tenure"] == "兼署"
+    assert db.conn.execute(
+        "SELECT appointment_tenure FROM character_offices WHERE character_name=?",
+        (name,),
+    ).fetchone()["appointment_tenure"] == "兼署"

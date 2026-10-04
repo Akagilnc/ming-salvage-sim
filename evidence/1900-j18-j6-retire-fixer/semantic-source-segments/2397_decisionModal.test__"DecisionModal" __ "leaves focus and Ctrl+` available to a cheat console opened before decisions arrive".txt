@@ -1,0 +1,31 @@
+# FILE: web/src/components/decisionModal.test.tsx
+# NAME: "DecisionModal" / "leaves focus and Ctrl+` available to a cheat console opened before decisions arrive"
+# LINE: 115-139
+# FLAGS: web_mock_spy_or_calls
+# KIND: web
+
+  it("leaves focus and Ctrl+` available to a cheat console opened before decisions arrive", () => {
+    const cheatConsole = document.createElement("div");
+    cheatConsole.className = "cheat-console";
+    const cheatInput = document.createElement("textarea");
+    cheatConsole.appendChild(cheatInput);
+    document.body.appendChild(cheatConsole);
+    cheatInput.focus();
+
+    const closeCheatConsole = vi.fn();
+    const shortcut = (event: KeyboardEvent) => {
+      if (event.ctrlKey && event.key === "`") closeCheatConsole();
+    };
+    window.addEventListener("keydown", shortcut);
+
+    const cleanup = render(<DecisionModal decisions={[decisions[0]]} onResolve={vi.fn()} />);
+    expect(document.activeElement).toBe(cheatInput);
+
+    const event = new KeyboardEvent("keydown", { key: "`", ctrlKey: true, bubbles: true, cancelable: true });
+    act(() => cheatInput.dispatchEvent(event));
+    expect(event.defaultPrevented).toBe(false);
+    expect(closeCheatConsole).toHaveBeenCalledOnce();
+
+    window.removeEventListener("keydown", shortcut);
+    cleanup();
+  });

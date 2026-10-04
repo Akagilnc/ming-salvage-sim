@@ -1,0 +1,11 @@
+# FILE: web/src/decisionRouting.test.tsx
+# NAME: "decision routing — retry (routeRetryDecisions: stale-phase vs still-corrupted)" / "clears the error banner when the turn has already advanced (not a failure)"
+# LINE: 125-129
+# FLAGS: web_text_assert
+# KIND: web
+
+  it("clears the error banner when the turn has already advanced (not a failure)", () => {
+    const route = routeRetryDecisions("issued", []);
+    expect(route.pendingDecisions).toEqual([]);
+    expect(route.error).toBe("");
+  });

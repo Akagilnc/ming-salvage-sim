@@ -1,0 +1,33 @@
+# FILE: tests/test_fiscal_levy_effect.py
+# NAME: test_fiscal_levy_gate_waits_until_1631_and_generic_terminal_pass_skips_it
+# LINE: 1092-1118
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_fiscal_levy_gate_waits_until_1631_and_generic_terminal_pass_skips_it(game):
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1630
+    state.period = 12
+    db.save_state(state)
+
+    before = _settle_payload(db, "shaanxi")
+    apply_historical_fiscal_rates(state, db)
+    assert db.conn.execute(
+        "SELECT 1 FROM event_triggers WHERE event_id=?",
+        ("liao_levy_rise_1631",),
+    ).fetchone() is None
+    assert _settle_payload(db, "shaanxi")["p"] == before["p"]
+
+    state.year = 1631
+    state.period = 1
+    db.save_state(state)
+    applied = apply_historical_fiscal_rates(state, db)
+    assert [item["id"] for item in applied] == ["liao_levy_rise_1631"]
+
+    terminalized = issues.apply_event_terminal_states(state, db)
+    assert all(item["id"] != "liao_levy_rise_1631" for item in terminalized)
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM event_triggers WHERE event_id=?",
+        ("liao_levy_rise_1631",),
+    ).fetchone()[0] == 1

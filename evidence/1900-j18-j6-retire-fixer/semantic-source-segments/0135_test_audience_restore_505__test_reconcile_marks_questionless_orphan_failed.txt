@@ -1,0 +1,29 @@
+# FILE: tests/test_audience_restore_505.py
+# NAME: test_reconcile_marks_questionless_orphan_failed
+# LINE: 762-784
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_reconcile_marks_questionless_orphan_failed(restore_env):
+    """负向：连问话都没落的极窄崩溃孤儿 → 'failed'（无可保留/重试），只解阻塞、不入待重试。"""
+    env = restore_env
+    db, state, content = env.db, env.state, env.content
+    minister = _active_minister(db, content)
+    night = an.open_night(db, state, location="乾清宫", time_of_day="戌时")
+    _nid, ct = open_hall_turn(
+        db, state, minister, agno_session_id="sess", agno_runs_before=0,
+    )
+    # 不 append 问话、不 link user_message_id：generating 且无 user_message。
+    db.close()
+
+    db2, _state2 = _reopen(env.path, content)
+    try:
+        interrupted = db2.reconcile_interrupted_chat_turns()
+        assert all(int(r["chat_turn_id"]) != ct for r in interrupted)
+        assert an.list_in_flight_chat_turns(db2, night["id"]) == []
+        assert db2.conn.execute(
+            "SELECT status FROM chat_turns WHERE id=?", (ct,)
+        ).fetchone()["status"] == "failed"
+        assert db2.get_interrupted_reply_retries(minister) == []
+    finally:
+        db2.close()

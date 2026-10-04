@@ -1,0 +1,20 @@
+# FILE: tests/test_relation_capture_633.py
+# NAME: test_replayed_delta_does_not_double_write
+# LINE: 109-122
+# FLAGS: assert_count,helper_or_private_call
+# KIND: py
+
+def test_replayed_delta_does_not_double_write(game):
+    """结算重放（恢复/重试）幂等：UNIQUE(source,target,kind,context,origin) 吸收重复。"""
+    db, state, content = game
+    delta = {
+        "relation_edge_events": [{
+            "施动者": "杨嗣昌", "受动者": ["孙元化"], "类目": "协作",
+            "语境": "杨嗣昌与孙元化当面相发炮术历法。",
+            "来源引用": "盘面自发",
+        }],
+    }
+    apply_score_extraction(db, state, json.loads(json.dumps(delta)), content=content)
+    apply_score_extraction(db, state, json.loads(json.dumps(delta)), content=content)
+    rows = [r for r in _edge_rows(db) if r["event_kind"] == "协作"]
+    assert len(rows) == 1

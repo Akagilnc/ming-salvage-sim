@@ -1,0 +1,33 @@
+# FILE: tests/test_cli_transport_1465.py
+# NAME: test_cli_chat_stream_two_transient_then_success_three_attempts
+# LINE: 130-156
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_cli_chat_stream_two_transient_then_success_three_attempts(
+    monkeypatch, tmp_path, game,
+):
+    """①瞬断两次后第三次成功：CLI runner 与 API 同一 transport 次数账。
+
+    注入 = 前两次子进程 rc=0 空输出（可重试 typed 空输出），第三次正常出文。
+    """
+    _pin_transport_policy(monkeypatch, tmp_path)
+    script = install_fake_cli_runner(monkeypatch, [
+        {"stdout": (), "returncode": 0},
+        {"stdout": (), "returncode": 0},
+        {"stdout": (_OK_REPLY,), "returncode": 0},
+    ])
+    web_game, minister = _cli_web_game(game, monkeypatch)
+
+    response = _post_chat_stream(monkeypatch, web_game, minister)
+    assert response.status_code == 200, response.text
+    events = _parse_sse(response.text)
+    assert "done" in [e[0] for e in events], events
+    done = next(e[1] for e in events if e[0] == "done")
+    assert done.get("answer")
+    attempts = done.get("transport_attempts") or []
+    assert [a.get("outcome") for a in attempts] == [
+        "retryable_fail", "retryable_fail", "ok",
+    ], attempts
+    assert script.calls == 3
+    assert int(done.get("minister_message_id") or 0) > 0

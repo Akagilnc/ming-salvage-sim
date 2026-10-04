@@ -1,0 +1,442 @@
+{
+  "source_path": "tests/test_month_chain_1847.py",
+  "member_count": 29,
+  "members": [
+    {
+      "idx": 1262,
+      "file": "tests/test_month_chain_1847.py",
+      "name": "test_world_question_opens_rescript_desk_and_awaits",
+      "line": 66,
+      "end": 89,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1262_test_month_chain_1847__test_world_question_opens_rescript_desk_and_awaits.txt",
+      "source_path": "tests/test_month_chain_1847.py"
+    },
+    {
+      "idx": 1263,
+      "file": "tests/test_month_chain_1847.py",
+      "name": "test_world_segment_multiple_questions_share_one_desk",
+      "line": 92,
+      "end": 109,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1263_test_month_chain_1847__test_world_segment_multiple_questions_share_one_desk.txt",
+      "source_path": "tests/test_month_chain_1847.py"
+    },
+    {
+      "idx": 1264,
+      "file": "tests/test_month_chain_1847.py",
+      "name": "test_prior_month_answered_rescript_does_not_block_or_reappear",
+      "line": 112,
+      "end": 148,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1264_test_month_chain_1847__test_prior_month_answered_rescript_does_not_block_or_reappear.txt",
+      "source_path": "tests/test_month_chain_1847.py"
+    },
+    {
+      "idx": 1265,
+      "file": "tests/test_month_chain_1847.py",
+      "name": "test_this_turn_rejection_opens_triad_on_same_desk",
+      "line": 151,
+      "end": 175,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1265_test_month_chain_1847__test_this_turn_rejection_opens_triad_on_same_desk.txt",
+      "source_path": "tests/test_month_chain_1847.py"
+    },
+    {
+      "idx": 1266,
+      "file": "tests/test_month_chain_1847.py",
+      "name": "test_answering_triad_applies_and_releases_rescript_gate",
+      "line": 182,
+      "end": 217,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1266_test_month_chain_1847__test_answering_triad_applies_and_releases_rescript_gate.txt",
+      "source_path": "tests/test_month_chain_1847.py"
+    },
+    {
+      "idx": 1267,
+      "file": "tests/test_month_chain_1847.py",
+      "name": "test_answering_world_question_resumes_suffix_then_gazette",
+      "line": 220,
+      "end": 277,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1267_test_month_chain_1847__test_answering_world_question_resumes_suffix_then_gazette.txt",
+      "source_path": "tests/test_month_chain_1847.py"
+    },
+    {
+      "idx": 1268,
+      "file": "tests/test_month_chain_1847.py",
+      "name": "test_decree_question_continuation_idempotent_on_same_turn_reentry",
+      "line": 280,
+      "end": 350,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1268_test_month_chain_1847__test_decree_question_continuation_idempotent_on_same_turn_reentry.txt",
+      "source_path": "tests/test_month_chain_1847.py"
+    },
+    {
+      "idx": 1269,
+      "file": "tests/test_month_chain_1847.py",
+      "name": "test_decree_continuation_survives_llm_exhaustion_then_retries",
+      "line": 353,
+      "end": 436,
+      "flags": [
+        "assert_count",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1269_test_month_chain_1847__test_decree_continuation_survives_llm_exhaustion_then_retries.txt",
+      "source_path": "tests/test_month_chain_1847.py"
+    },
+    {
+      "idx": 1270,
+      "file": "tests/test_month_chain_1847.py",
+      "name": "test_decree_question_and_world_question_share_one_desk",
+      "line": 439,
+      "end": 472,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1270_test_month_chain_1847__test_decree_question_and_world_question_share_one_desk.txt",
+      "source_path": "tests/test_month_chain_1847.py"
+    },
+    {
+      "idx": 1271,
+      "file": "tests/test_month_chain_1847.py",
+      "name": "test_missing_model_keeps_decree_question_until_retry",
+      "line": 484,
+      "end": 538,
+      "flags": [
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1271_test_month_chain_1847__test_missing_model_keeps_decree_question_until_retry.txt",
+      "source_path": "tests/test_month_chain_1847.py"
+    },
+    {
+      "idx": 1272,
+      "file": "tests/test_month_chain_1847.py",
+      "name": "test_missing_model_does_not_mark_world_continued",
+      "line": 541,
+      "end": 577,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1272_test_month_chain_1847__test_missing_model_does_not_mark_world_continued.txt",
+      "source_path": "tests/test_month_chain_1847.py"
+    },
+    {
+      "idx": 1273,
+      "file": "tests/test_month_chain_1847.py",
+      "name": "test_cross_month_pending_draft_opens_rescript_desk",
+      "line": 580,
+      "end": 617,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1273_test_month_chain_1847__test_cross_month_pending_draft_opens_rescript_desk.txt",
+      "source_path": "tests/test_month_chain_1847.py"
+    },
+    {
+      "idx": 1274,
+      "file": "tests/test_month_chain_1847.py",
+      "name": "test_decree_continuation_keeps_forecast_and_lands_affair_effect",
+      "line": 620,
+      "end": 726,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1274_test_month_chain_1847__test_decree_continuation_keeps_forecast_and_lands_affair_effect.txt",
+      "source_path": "tests/test_month_chain_1847.py"
+    },
+    {
+      "idx": 1275,
+      "file": "tests/test_month_chain_1847.py",
+      "name": "test_decree_forecast_keeps_every_question_and_translates_prefix_once",
+      "line": 729,
+      "end": 777,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1275_test_month_chain_1847__test_decree_forecast_keeps_every_question_and_translates_prefix_once.txt",
+      "source_path": "tests/test_month_chain_1847.py"
+    },
+    {
+      "idx": 1276,
+      "file": "tests/test_month_chain_1847.py",
+      "name": "test_question_note_only_is_kept_and_other_decisions_still_require_label",
+      "line": 780,
+      "end": 867,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1276_test_month_chain_1847__test_question_note_only_is_kept_and_other_decisions_still_require_label.txt",
+      "source_path": "tests/test_month_chain_1847.py"
+    },
+    {
+      "idx": 1277,
+      "file": "tests/test_month_chain_1847.py",
+      "name": "test_fatal_midzhi_rejection_hides_force_option",
+      "line": 944,
+      "end": 965,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1277_test_month_chain_1847__test_fatal_midzhi_rejection_hides_force_option.txt",
+      "source_path": "tests/test_month_chain_1847.py"
+    },
+    {
+      "idx": 1278,
+      "file": "tests/test_month_chain_1847.py",
+      "name": "test_midzhi_promulgation_records_authority_cost_once",
+      "line": 968,
+      "end": 1002,
+      "flags": [
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1278_test_month_chain_1847__test_midzhi_promulgation_records_authority_cost_once.txt",
+      "source_path": "tests/test_month_chain_1847.py"
+    },
+    {
+      "idx": 1279,
+      "file": "tests/test_month_chain_1847.py",
+      "name": "test_midzhi_verdict_and_metadata_roll_back_together",
+      "line": 1005,
+      "end": 1034,
+      "flags": [
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1279_test_month_chain_1847__test_midzhi_verdict_and_metadata_roll_back_together.txt",
+      "source_path": "tests/test_month_chain_1847.py"
+    },
+    {
+      "idx": 1280,
+      "file": "tests/test_month_chain_1847.py",
+      "name": "test_decree_continuation_ending_ends_the_month",
+      "line": 1037,
+      "end": 1081,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1280_test_month_chain_1847__test_decree_continuation_ending_ends_the_month.txt",
+      "source_path": "tests/test_month_chain_1847.py"
+    },
+    {
+      "idx": 1281,
+      "file": "tests/test_month_chain_1847.py",
+      "name": "test_drift_sees_effects_landed_after_answers",
+      "line": 1084,
+      "end": 1130,
+      "flags": [
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1281_test_month_chain_1847__test_drift_sees_effects_landed_after_answers.txt",
+      "source_path": "tests/test_month_chain_1847.py"
+    },
+    {
+      "idx": 1282,
+      "file": "tests/test_month_chain_1847.py",
+      "name": "test_step_4a_no_eligible_objects_skips_run_and_completes",
+      "line": 1133,
+      "end": 1150,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1282_test_month_chain_1847__test_step_4a_no_eligible_objects_skips_run_and_completes.txt",
+      "source_path": "tests/test_month_chain_1847.py"
+    },
+    {
+      "idx": 1283,
+      "file": "tests/test_month_chain_1847.py",
+      "name": "test_step_4a_rescript_continuation_feeds_supply_run_input",
+      "line": 1153,
+      "end": 1254,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1283_test_month_chain_1847__test_step_4a_rescript_continuation_feeds_supply_run_input.txt",
+      "source_path": "tests/test_month_chain_1847.py"
+    },
+    {
+      "idx": 1284,
+      "file": "tests/test_month_chain_1847.py",
+      "name": "test_step_4a_deferred_disclosure_sees_fresh_0058_progress",
+      "line": 1257,
+      "end": 1316,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1284_test_month_chain_1847__test_step_4a_deferred_disclosure_sees_fresh_0058_progress.txt",
+      "source_path": "tests/test_month_chain_1847.py"
+    },
+    {
+      "idx": 1285,
+      "file": "tests/test_month_chain_1847.py",
+      "name": "test_step_4a_missing_covert_fidelity_records_inline_rejection",
+      "line": 1465,
+      "end": 1507,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1285_test_month_chain_1847__test_step_4a_missing_covert_fidelity_records_inline_rejection.txt",
+      "source_path": "tests/test_month_chain_1847.py"
+    },
+    {
+      "idx": 1286,
+      "file": "tests/test_month_chain_1847.py",
+      "name": "test_settle_edicts_persists_pending_disclosures_in_same_transaction",
+      "line": 1510,
+      "end": 1621,
+      "flags": [
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1286_test_month_chain_1847__test_settle_edicts_persists_pending_disclosures_in_same_transaction.txt",
+      "source_path": "tests/test_month_chain_1847.py"
+    },
+    {
+      "idx": 1287,
+      "file": "tests/test_month_chain_1847.py",
+      "name": "test_step_4a_settles_due_secret_order",
+      "line": 1682,
+      "end": 1745,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1287_test_month_chain_1847__test_step_4a_settles_due_secret_order.txt",
+      "source_path": "tests/test_month_chain_1847.py"
+    },
+    {
+      "idx": 1288,
+      "file": "tests/test_month_chain_1847.py",
+      "name": "test_build_secret_orders_supply_feed_uses_fact_materials_not_assembled_effects",
+      "line": 1748,
+      "end": 1896,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1288_test_month_chain_1847__test_build_secret_orders_supply_feed_uses_fact_materials_not_assembled_effects.txt",
+      "source_path": "tests/test_month_chain_1847.py"
+    },
+    {
+      "idx": 1289,
+      "file": "tests/test_month_chain_1847.py",
+      "name": "test_step_4a_rescript_path_feeds_landed_not_assembled_effects",
+      "line": 1899,
+      "end": 1990,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1289_test_month_chain_1847__test_step_4a_rescript_path_feeds_landed_not_assembled_effects.txt",
+      "source_path": "tests/test_month_chain_1847.py"
+    },
+    {
+      "idx": 1290,
+      "file": "tests/test_month_chain_1847.py",
+      "name": "test_pending_disclosures_share_commit_boundary_with_effects",
+      "line": 1993,
+      "end": 2070,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1290_test_month_chain_1847__test_pending_disclosures_share_commit_boundary_with_effects.txt",
+      "source_path": "tests/test_month_chain_1847.py"
+    }
+  ]
+}

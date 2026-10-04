@@ -1,0 +1,11 @@
+# FILE: tests/test_pay_order_override_653.py
+# NAME: test_due_order_bad_shapes_raise
+# LINE: 550-554
+# FLAGS: helper_or_private_call
+# KIND: py
+
+def test_due_order_bad_shapes_raise(bad):
+    st, p = _board()
+    p["due_order"] = bad
+    with pytest.raises(ValueError):
+        settle_tick(st, p, [])

@@ -1,0 +1,21 @@
+# FILE: tests/test_character_knowledge_489.py
+# NAME: test_participant_roster_is_discovered_from_persistent_record_without_adapter
+# LINE: 558-572
+# FLAGS: assert_text_compare_or_match
+# KIND: py
+
+def test_participant_roster_is_discovered_from_persistent_record_without_adapter(game):
+    db, state, content = game
+    minister = next(c for c in content.characters.values() if c.office_type == "礼部")
+    db.conn.execute(
+        """INSERT INTO issues
+           (kind, title, origin_turn, stage_text, participants, participant_roster)
+           VALUES (?, ?, ?, ?, ?, ?)""",
+        ("initiative", "未经适配的新案卷", state.turn, "案卷正文",
+         "[]", '[{"character_id": "' + minister.name + '"}]'),
+    )
+    db.conn.commit()
+
+    view = db.get_character_knowledge(state, minister.name)
+
+    assert any(item["title"] == "未经适配的新案卷" for item in view["events"])

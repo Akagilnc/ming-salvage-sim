@@ -1,0 +1,56 @@
+# FILE: tests/test_deformation_dual_rail_622.py
+# NAME: test_commitment_pooled_pay_arrears_inherits_beyond_intent
+# LINE: 321-370
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_commitment_pooled_pay_arrears_inherits_beyond_intent(game):
+    """池化补饷：承诺月拨带 beyond_intent，拆分落库每行均继承（走 issues 结算 choke）。"""
+    db, state, _content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.execute("UPDATE legacies SET status='cleared' WHERE status='active'")
+    db.conn.execute("UPDATE armies SET arrears=0 WHERE owner_power='ming'")
+    _seed_army_arrears(db, "guanning", 40)
+    _seed_army_arrears(db, "xuan_da", 30)
+    state.metrics["国库"] = 500
+    db.save_state(state)
+
+    ledger_before = db.conn.execute("SELECT COUNT(*) FROM economy_ledger").fetchone()[0]
+    db.insert_issue(
+        state,
+        kind="initiative",
+        title="边军月饷旨外",
+        origin_kind="decree",
+        origin_ref="decree:turn-1:beyond-pool-622",
+        bar_value=0,
+        inertia=0,
+        stage_text="户部每月拨银补边军旧欠。",
+        ongoing_effects={
+            "economy": [{
+                "account": "国库",
+                "delta": -50,
+                "category": "补饷承诺",
+                "reason": "边军月饷旨外",
+                "beyond_intent": 1,
+            }]
+        },
+        stop_condition=json.dumps(
+            {"army.guanning|xuan_da.arrears.sum": "<=0"}, ensure_ascii=False,
+        ),
+        commitment_kind="until_stop",
+        cancellable="decree",
+    )
+
+    apply_issue_inertia_and_ongoing(db, state)
+
+    rows = db.conn.execute(
+        "SELECT beyond_intent, purpose, target_kind, target_id, delta "
+        "FROM economy_ledger WHERE id > ? AND purpose='补饷' ORDER BY id",
+        (ledger_before,),
+    ).fetchall()
+    assert rows, "池化补饷须落至少一笔 ledger"
+    assert len(rows) >= 2, [dict(r) for r in rows]  # 多军拆分
+    assert all(int(r["beyond_intent"]) == 1 for r in rows), [dict(r) for r in rows]
+    assert all(r["target_kind"] == "army" for r in rows)
+    assert {r["target_id"] for r in rows} <= {"guanning", "xuan_da"}
+    assert sum(int(r["delta"]) for r in rows) == -50

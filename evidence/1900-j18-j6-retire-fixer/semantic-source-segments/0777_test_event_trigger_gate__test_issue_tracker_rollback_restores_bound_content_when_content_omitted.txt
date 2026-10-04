@@ -1,0 +1,30 @@
+# FILE: tests/test_event_trigger_gate.py
+# NAME: test_issue_tracker_rollback_restores_bound_content_when_content_omitted
+# LINE: 1462-1485
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_issue_tracker_rollback_restores_bound_content_when_content_omitted(game):
+    """review R3：content 省略时也要 snapshot bind_content() 的人物内存。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1629
+    state.period = 6
+    db.conn.execute("UPDATE characters SET loyalty = ?, status = ? WHERE name = ?", (44, "active", "毛文龙"))
+    content.characters["毛文龙"].status = "active"
+
+    with _restore_yuan_as_guanning_commander(db, content):
+        db.conn.commit()
+
+        db.conn.execute("BEGIN")
+        out = issues.apply_issue_tracker_output(
+            db,
+            state,
+            {"new_issues": [{"origin_kind": "event_pool", "id": "mao_wenlong"}]},
+        )
+        assert out["new_issues"][0]["rejected"] is False
+        assert content.characters["毛文龙"].status == "dead"
+        db.conn.rollback()
+
+        assert db.get_character_status("毛文龙")[0] == "active"
+        assert content.characters["毛文龙"].status == "active"

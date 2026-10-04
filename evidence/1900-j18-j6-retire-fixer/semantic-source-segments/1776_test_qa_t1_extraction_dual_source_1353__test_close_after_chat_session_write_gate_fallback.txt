@@ -1,0 +1,40 @@
+# FILE: tests/test_qa_t1_extraction_dual_source_1353.py
+# NAME: test_close_after_chat_session_write_gate_fallback
+# LINE: 224-257
+# FLAGS: mock_or_patch_present,helper_or_private_call
+# KIND: py
+
+def test_close_after_chat_session_write_gate_fallback(game, tmp_path, monkeypatch):
+    """session._write_gate 回落：未显式传 write_gate 时仍穿既有锁。"""
+    db, state, content = game
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
+    minister = _minister(db, content)
+    _open_night_with_persisted_reply(db, state, minister)
+
+    from ming_sim.session import GameSession
+
+    q = SessionWriteQueue()
+    gate = q.write_gate
+    seen: dict = {}
+    real_close = an.close_night
+
+    def track_close(*a, **k):
+        seen["write_gate"] = k.get("write_gate")
+        k = dict(k)
+        k.setdefault("write_queue", q)
+        return real_close(*a, **k)
+
+    monkeypatch.setattr(an, "close_night", track_close)
+
+    sess = object.__new__(GameSession)
+    sess.db = db
+    sess.state = state
+    sess.content = content
+    sess.registry = None
+    sess.llm_config = object()
+    sess._write_queue = q
+    sess._scene_registry = None
+    sess._write_gate = gate
+
+    sess.close_night_after_chat_if_needed("court_break")
+    assert seen.get("write_gate") is gate

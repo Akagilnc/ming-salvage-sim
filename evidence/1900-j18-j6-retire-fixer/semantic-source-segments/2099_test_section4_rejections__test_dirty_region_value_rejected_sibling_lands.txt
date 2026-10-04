@@ -1,0 +1,28 @@
+# FILE: tests/test_section4_rejections.py
+# NAME: test_dirty_region_value_rejected_sibling_lands
+# LINE: 104-125
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_dirty_region_value_rejected_sibling_lands(game, bad_value):
+    """region_delta 白名单字段的脏叶子值(null/字符串/float/bool)= LLM 脏数据,
+    裸 int(value) 会让一个脏值崩整月——改为逐项拒收(invalid_enum)。bool 是 int
+    子类、float 静默截断,都不是 prompt 要的整数 delta,显式拒(对称 S1)。
+    兄弟好字段照落。"""
+    db, state, content = game
+    turn = state.turn
+    good = _a_region(db)
+    before = db.conn.execute(
+        "SELECT unrest FROM regions WHERE id=?", (good,)).fetchone()[0]
+
+    run_settle(db, state, content, {
+        "region_delta": {good: {"public_support": bad_value, "unrest": 2}},
+    }, narrative="x", decree_text="y")  # 不抛 = 没崩整月
+
+    rows = _rejection_rows(db, turn, "region_changes")
+    assert len(rows) == 1
+    assert rows[0][2] == "invalid_enum"
+    assert rows[0][1]
+    after = db.conn.execute(
+        "SELECT unrest FROM regions WHERE id=?", (good,)).fetchone()[0]
+    assert after != before  # 兄弟好字段照落

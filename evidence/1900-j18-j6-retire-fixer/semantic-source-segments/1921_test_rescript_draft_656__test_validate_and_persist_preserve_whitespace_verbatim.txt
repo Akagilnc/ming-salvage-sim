@@ -1,0 +1,37 @@
+# FILE: tests/test_rescript_draft_656.py
+# NAME: test_validate_and_persist_preserve_whitespace_verbatim
+# LINE: 294-324
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_validate_and_persist_preserve_whitespace_verbatim(game):
+    """原样不变式（CLAUDE.md P6 / F3.3）：首尾空白逐字段往返零删改——strip 只作判空
+    临时值，绝不把 strip 后文本写回落库。"""
+    db, state, _content = game
+    turn = state.turn
+    raw_title = " 陕西告饥  "
+    raw_context = "\n秦地赤旱千里，臣愚以为赈济不可缓。\t"
+    raw_label_a = " 发帑赈济 "
+    raw_hint_a = "\n所安者饥民\n"
+    data = {"items": [{
+        "title": raw_title, "context": raw_context,
+        "options": [
+            _layer_a_opt(label=raw_label_a, hint=raw_hint_a),
+            _layer_a_opt(label="缓议加派", hint=" 所拂者小农 "),
+        ],
+    }]}
+    drafts = validate_rescript_draft_items(data, set())
+    assert len(drafts) == 1  # 首尾空白不构成「非法」，照常通过
+    # validator 出口已逐字原样
+    assert drafts[0]["title"] == raw_title
+    assert drafts[0]["context"] == raw_context
+    assert drafts[0]["options"][0]["label"] == raw_label_a
+    assert drafts[0]["options"][0]["hint"] == raw_hint_a
+    assert drafts[0]["options"][1]["hint"] == " 所拂者小农 "
+    assert drafts[0]["options"][0]["draft_capability"]
+    # 落库往返仍逐字无损
+    db.save_rescript_drafts(turn, drafts)
+    row = db.list_rescript_drafts()[0]
+    assert row["title"] == raw_title
+    assert row["context"] == raw_context
+    assert row["options"] == drafts[0]["options"]

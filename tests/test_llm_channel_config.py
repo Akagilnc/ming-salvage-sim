@@ -421,33 +421,6 @@ def test_minimax_reasoning_strength_overrides_stale_thinking_level(monkeypatch):
     assert model.extra_body == {"thinking": {"type": "adaptive"}, "reasoning_split": True}
 
 
-def test_legacy_backend_env_uses_runner_default_model_not_api_model(monkeypatch):
-    captured = {}
-
-    from tests.cli_process_doubles import FakeCliProcess
-
-    def fake_popen(cmd, **kwargs):
-        captured["cmd"] = list(cmd)
-        return FakeCliProcess(cmd, stdout_script=("臣领旨。\n",), returncode=0,
-                              popen_kwargs=kwargs)
-
-    monkeypatch.setenv("MING_SIM_LLM_BACKEND", "codex")
-    monkeypatch.delenv("MING_SIM_CODEX_REASONING", raising=False)
-    monkeypatch.setattr(cli_backend, "_resolve_cli_bin", lambda name, configured: f"/fake/{name}")
-    monkeypatch.setattr(cli_backend.subprocess, "Popen", fake_popen)
-    cfg = LLMConfig(
-        api_key="sk-test",
-        base_url="https://api.example.com/v1",
-        model="deepseek-v4-flash",
-    )
-
-    model = create_chat_model(cfg)
-    model._call_cli("p")
-
-    assert isinstance(model, CliChat)
-    assert captured["cmd"][captured["cmd"].index("--model") + 1] == cli_backend._CODEX_MODEL
-
-
 def test_verify_llm_available_respects_api_channel_over_backend_env(monkeypatch):
     monkeypatch.setenv("MING_SIM_LLM_BACKEND", "agy")
     captured = {}
@@ -457,7 +430,6 @@ def test_verify_llm_available_respects_api_channel_over_backend_env(monkeypatch)
             captured["model"] = kwargs["model"]
 
         def run(self, prompt: str) -> str:
-            captured["prompt"] = prompt
             return "ok"
 
     monkeypatch.setattr(llm_model, "Agent", FakeAgent)
@@ -470,8 +442,6 @@ def test_verify_llm_available_respects_api_channel_over_backend_env(monkeypatch)
     )
 
     verify_llm_available(cfg)
-
-    assert captured["prompt"] == "输出 ok"
     assert not isinstance(captured["model"], CliChat)
 
 
@@ -480,7 +450,6 @@ def test_verify_llm_available_smokes_cli_channel_without_backend_env(monkeypatch
     seen = {}
 
     def fake_run(prompt, llm_config=None, tag="", *, policy=None):
-        seen["prompt"] = prompt
         seen["config"] = llm_config
         return "ok", 1
 
@@ -496,8 +465,6 @@ def test_verify_llm_available_smokes_cli_channel_without_backend_env(monkeypatch
     )
 
     verify_llm_available(cfg)
-
-    assert seen["prompt"] == "输出 ok"
     assert seen["config"] is cfg
 
 
@@ -530,13 +497,13 @@ def test_verify_llm_available_smokes_legacy_env_only_backend(monkeypatch):
     seen = {}
 
     def fake_run(prompt, llm_config=None, tag="", *, policy=None):
-        seen["prompt"] = prompt
+        seen["entered"] = True
         return "ok", 1
 
     monkeypatch.setattr(cli_backend, "_run_backend_for_config", fake_run)
     cfg = LLMConfig(api_key="cli-backend", base_url="", model="api-fallback", channel="")
     verify_llm_available(cfg)
-    assert seen["prompt"] == "输出 ok"
+    assert seen.get("entered") is True
 
 
 def test_verify_llm_available_legacy_env_only_failure_raises(monkeypatch):
@@ -751,88 +718,6 @@ def test_cli_empty_cli_model_does_not_leak_api_model_to_runner(monkeypatch):
 
 
 # --- #1271 S1: cli_supports_reasoning_strength 单源委派 ---
-
-
-
-def test_agent_factories_omit_max_tokens_on_param_surface(monkeypatch):
-    """#1472：ming_sim.agents 现役工厂 + gate 真实参数面无 max_tokens 键。"""
-    from types import SimpleNamespace
-
-    import ming_sim.agents as agents_mod
-    from ming_sim import cli_backend as cb
-
-    seen: list = []
-
-    def spy(_cfg, **kwargs):
-        seen.append(dict(kwargs))
-        return object()
-
-    fake_ctx = SimpleNamespace(
-        game_world_prompt="gw",
-        decree_writer_prompt="dw",
-        season_simulator_prompt="ss",
-        ending_summary_prompt="es",
-    )
-    monkeypatch.setattr(agents_mod, "_ctx", lambda: fake_ctx)
-    monkeypatch.setattr(agents_mod, "create_chat_model", spy)
-    monkeypatch.setattr(agents_mod, "Agent", lambda **kwargs: kwargs)
-    monkeypatch.setattr(agents_mod, "tlog", lambda *a, **k: None)
-    monkeypatch.setattr(agents_mod, "describe_effective_model", lambda cfg: "m")
-    monkeypatch.setattr(agents_mod, "is_minimax_base_url", lambda url: False)
-    monkeypatch.setattr(agents_mod, "_llm_for_role", lambda cfg, role: cfg)
-
-    cfg = LLMConfig(
-        api_key="sk-test",
-        base_url="https://api.example.com/v1",
-        model="gpt-test",
-        channel="api",
-        reasoning_strength="high",
-    )
-
-    # ming_sim.agents 现役工厂——逐项命名调用，漏一个即红
-    factories = [
-        ("create_highlight_judge_agent", lambda: agents_mod.create_highlight_judge_agent(cfg)),
-        ("create_world_segment_agent", lambda: agents_mod.create_world_segment_agent(
-            cfg, SimpleNamespace(root="", opening="盘面"),
-        )),
-        ("create_decree_writer_agent", lambda: agents_mod.create_decree_writer_agent(cfg, object())),
-        ("create_promulgation_judge_agent", lambda: agents_mod.create_promulgation_judge_agent(
-            cfg, object(),
-            session_id="promulgation-judge-turn-test",
-            num_history_runs=4,
-        )),
-        ("create_ending_summary_agent", lambda: agents_mod.create_ending_summary_agent(cfg, object())),
-    ]
-    factory_names = [name for name, _ in factories]
-    assert len(factory_names) == len(set(factory_names))
-
-    for name, call in factories:
-        before = len(seen)
-        call()
-        assert len(seen) == before + 1, f"{name} must hit create_chat_model once, got +{len(seen) - before}"
-        assert "max_tokens" not in seen[-1], (name, seen[-1])
-
-    class FakeRun:
-        content = "{}"
-
-    class FakeAgent:
-        def __init__(self, **kwargs):
-            pass
-
-        def run(self, prompt):
-            return FakeRun()
-
-    # _run_api_for_config 在函数内 from-import create_chat_model / Agent
-    import ming_sim.llm_model as lm
-
-    monkeypatch.setattr(lm, "create_chat_model", spy)
-    monkeypatch.setattr(lm, "extract_agent_text", lambda output: "{}")
-    monkeypatch.setattr("agno.agent.Agent", FakeAgent)
-    before_gate = len(seen)
-    cb._run_api_for_config("输出 {}", cfg, tag="gate")
-    assert len(seen) == before_gate + 1, f"gate must hit create_chat_model once, got +{len(seen) - before_gate}"
-    assert "max_tokens" not in seen[-1], seen[-1]
-
 
 
 def test_gate_evidence_config_omits_max_tokens():

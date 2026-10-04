@@ -1,0 +1,19 @@
+# FILE: tests/test_start_sh_deps_1721.py
+# NAME: test_start_sh_pip_failure_does_not_start_uvicorn
+# LINE: 142-154
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_start_sh_pip_failure_does_not_start_uvicorn(tmp_path):
+    root = _prepare_root(tmp_path)
+    log = tmp_path / "steps.log"
+    env = os.environ.copy()
+    env["START_STEP_LOG"] = str(log)
+    env["PIP_EXIT"] = "1"
+    proc = _run_start(root, env)
+    assert proc.returncode != 0
+    assert log.exists()
+    steps = log.read_text(encoding="utf-8").splitlines()
+    assert any(s.startswith("pip ") for s in steps)
+    assert not any(s.startswith("uvicorn ") for s in steps)
+    assert proc.stderr.strip() != ""

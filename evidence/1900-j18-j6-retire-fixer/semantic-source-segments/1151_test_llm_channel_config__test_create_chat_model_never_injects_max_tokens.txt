@@ -1,0 +1,32 @@
+# FILE: tests/test_llm_channel_config.py
+# NAME: test_create_chat_model_never_injects_max_tokens
+# LINE: 207-232
+# FLAGS: assert_text_compare_or_match,assert_count,mock_or_patch_present
+# KIND: py
+
+def test_create_chat_model_never_injects_max_tokens(monkeypatch):
+    """#1472：create_chat_model 构造 kwargs 永不含 max_tokens（官方上限）。"""
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    captured: list = []
+    real = llm_model.OpenAIChat
+
+    def spy(*args, **kwargs):
+        captured.append(kwargs)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(llm_model, "OpenAIChat", spy)
+    cfg = LLMConfig(
+        api_key="sk-test",
+        base_url="https://api.example.com/v1",
+        model="gpt-test",
+        channel="api",
+        reasoning_strength="high",
+    )
+
+    create_chat_model(cfg)
+    create_chat_model(cfg, temperature=0.2, enable_thinking=True)
+    create_chat_model(cfg, temperature=0, force_json_output=True)
+
+    assert len(captured) == 3
+    for kwargs in captured:
+        assert "max_tokens" not in kwargs

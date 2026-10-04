@@ -1,0 +1,29 @@
+# FILE: tests/test_person_delta_adapter.py
+# NAME: test_apply_score_extraction_rejects_banish_from_imprisoned
+# LINE: 1440-1462
+# FLAGS: assert_text_compare_or_match
+# KIND: py
+
+def test_apply_score_extraction_rejects_banish_from_imprisoned(game):
+    db, state, content = game
+    name = active_ming_character(db, content)
+    old_status = content.characters[name].status
+    old_office = content.characters[name].office
+
+    try:
+        db.set_character_status(state, name, "imprisoned", "候审")
+        content.characters[name].status = "imprisoned"
+
+        applied = issues.apply_score_extraction(
+            db,
+            state,
+            {"人物变更": [{"name": name, "origin_ref": "盘面自发", "动作": "罢黜", "reason": "狱中追夺"}]},
+            content=content,
+        )
+
+        assert db.get_character_status(name)[0] == "imprisoned"
+        assert applied["applied_person_changes"][0]["rejected"] is True
+        assert applied["applied_person_changes"][0]["category"] == "invalid_transition"
+    finally:
+        content.characters[name].status = old_status
+        content.characters[name].office = old_office

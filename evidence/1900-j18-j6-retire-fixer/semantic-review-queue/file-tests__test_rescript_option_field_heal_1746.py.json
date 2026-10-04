@@ -1,0 +1,238 @@
+{
+  "source_path": "tests/test_rescript_option_field_heal_1746.py",
+  "member_count": 15,
+  "members": [
+    {
+      "idx": 1959,
+      "file": "tests/test_rescript_option_field_heal_1746.py",
+      "name": "test_run_agent_text_prior_messages_sent_as_message_list",
+      "line": 178,
+      "end": 208,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1959_test_rescript_option_field_heal_1746__test_run_agent_text_prior_messages_sent_as_message_list.txt",
+      "source_path": "tests/test_rescript_option_field_heal_1746.py"
+    },
+    {
+      "idx": 1960,
+      "file": "tests/test_rescript_option_field_heal_1746.py",
+      "name": "test_run_agent_text_without_prior_passes_plain_prompt",
+      "line": 211,
+      "end": 227,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1960_test_rescript_option_field_heal_1746__test_run_agent_text_without_prior_passes_plain_prompt.txt",
+      "source_path": "tests/test_rescript_option_field_heal_1746.py"
+    },
+    {
+      "idx": 1961,
+      "file": "tests/test_rescript_option_field_heal_1746.py",
+      "name": "test_contract_failure_heals_not_batch_reject",
+      "line": 292,
+      "end": 328,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1961_test_rescript_option_field_heal_1746__test_contract_failure_heals_not_batch_reject.txt",
+      "source_path": "tests/test_rescript_option_field_heal_1746.py"
+    },
+    {
+      "idx": 1962,
+      "file": "tests/test_rescript_option_field_heal_1746.py",
+      "name": "test_amount_numeric_string_accepted_via_grant_shape",
+      "line": 331,
+      "end": 344,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1962_test_rescript_option_field_heal_1746__test_amount_numeric_string_accepted_via_grant_shape.txt",
+      "source_path": "tests/test_rescript_option_field_heal_1746.py"
+    },
+    {
+      "idx": 1963,
+      "file": "tests/test_rescript_option_field_heal_1746.py",
+      "name": "test_missing_target_kind_only_heals_not_combo_batch",
+      "line": 347,
+      "end": 367,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1963_test_rescript_option_field_heal_1746__test_missing_target_kind_only_heals_not_combo_batch.txt",
+      "source_path": "tests/test_rescript_option_field_heal_1746.py"
+    },
+    {
+      "idx": 1964,
+      "file": "tests/test_rescript_option_field_heal_1746.py",
+      "name": "test_army_single_combo_heals_not_batch_redraw",
+      "line": 370,
+      "end": 399,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1964_test_rescript_option_field_heal_1746__test_army_single_combo_heals_not_batch_redraw.txt",
+      "source_path": "tests/test_rescript_option_field_heal_1746.py"
+    },
+    {
+      "idx": 1965,
+      "file": "tests/test_rescript_option_field_heal_1746.py",
+      "name": "test_dual_missing_discriminator_heals_grant_action",
+      "line": 402,
+      "end": 423,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1965_test_rescript_option_field_heal_1746__test_dual_missing_discriminator_heals_grant_action.txt",
+      "source_path": "tests/test_rescript_option_field_heal_1746.py"
+    },
+    {
+      "idx": 1966,
+      "file": "tests/test_rescript_option_field_heal_1746.py",
+      "name": "test_typed_illegal_also_heals",
+      "line": 447,
+      "end": 471,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1966_test_rescript_option_field_heal_1746__test_typed_illegal_also_heals.txt",
+      "source_path": "tests/test_rescript_option_field_heal_1746.py"
+    },
+    {
+      "idx": 1967,
+      "file": "tests/test_rescript_option_field_heal_1746.py",
+      "name": "test_overflow_json_number_heals_not_batch",
+      "line": 516,
+      "end": 568,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1967_test_rescript_option_field_heal_1746__test_overflow_json_number_heals_not_batch.txt",
+      "source_path": "tests/test_rescript_option_field_heal_1746.py"
+    },
+    {
+      "idx": 1968,
+      "file": "tests/test_rescript_option_field_heal_1746.py",
+      "name": "test_overflow_json_number_exhaust_drops_only_bad",
+      "line": 572,
+      "end": 606,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1968_test_rescript_option_field_heal_1746__test_overflow_json_number_exhaust_drops_only_bad.txt",
+      "source_path": "tests/test_rescript_option_field_heal_1746.py"
+    },
+    {
+      "idx": 1969,
+      "file": "tests/test_rescript_option_field_heal_1746.py",
+      "name": "test_option_shape_failures_heal_not_batch",
+      "line": 633,
+      "end": 676,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1969_test_rescript_option_field_heal_1746__test_option_shape_failures_heal_not_batch.txt",
+      "source_path": "tests/test_rescript_option_field_heal_1746.py"
+    },
+    {
+      "idx": 1970,
+      "file": "tests/test_rescript_option_field_heal_1746.py",
+      "name": "test_provider_still_whole_batch_item_missing_heals_and_drops",
+      "line": 681,
+      "end": 705,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1970_test_rescript_option_field_heal_1746__test_provider_still_whole_batch_item_missing_heals_and_drops.txt",
+      "source_path": "tests/test_rescript_option_field_heal_1746.py"
+    },
+    {
+      "idx": 1971,
+      "file": "tests/test_rescript_option_field_heal_1746.py",
+      "name": "test_heal_response_contract_failure_consumes_attempt_keeps_siblings",
+      "line": 727,
+      "end": 845,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1971_test_rescript_option_field_heal_1746__test_heal_response_contract_failure_consumes_attempt_keeps_siblings.txt",
+      "source_path": "tests/test_rescript_option_field_heal_1746.py"
+    },
+    {
+      "idx": 1972,
+      "file": "tests/test_rescript_option_field_heal_1746.py",
+      "name": "test_first_draw_parse_failure_heals_then_degrades",
+      "line": 848,
+      "end": 867,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1972_test_rescript_option_field_heal_1746__test_first_draw_parse_failure_heals_then_degrades.txt",
+      "source_path": "tests/test_rescript_option_field_heal_1746.py"
+    },
+    {
+      "idx": 1973,
+      "file": "tests/test_rescript_option_field_heal_1746.py",
+      "name": "test_heal_bad_identity_refuses_merge_then_drops",
+      "line": 889,
+      "end": 905,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1973_test_rescript_option_field_heal_1746__test_heal_bad_identity_refuses_merge_then_drops.txt",
+      "source_path": "tests/test_rescript_option_field_heal_1746.py"
+    }
+  ]
+}

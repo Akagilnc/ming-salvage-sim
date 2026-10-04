@@ -1,0 +1,55 @@
+# FILE: tests/test_fiscal_beyond_intent_1260.py
+# NAME: test_s1_fiscal_removes_beyond_intent_tracer_and_negatives
+# LINE: 241-289
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_s1_fiscal_removes_beyond_intent_tracer_and_negatives(game, content):
+    """fiscal_removes 写端：肯定→tombstones 显式常量 True；缺省/畸形/否定→False。"""
+    db, state, _ = game
+    did = _executing_policy(db, state, token="rm-1260")
+    origin = f"dossier:{did}"
+
+    # Create four disposable subjects: one positive + three negatives
+    subjects = [
+        ("旨外罢税", {"beyond_intent": True}, True),
+        ("缺省罢税", {}, False),
+        ("畸形罢税", {"beyond_intent": ["x"]}, False),
+        ("否定罢税", {"beyond_intent": 0}, False),
+    ]
+    for stem, _flag, _exp in subjects:
+        created = db.create_fiscal_item(
+            stem, "国库", "expense", stem, 5,
+            origin_ref=origin, turn=state.turn, commit=True,
+            # creations themselves not under test here
+        )
+        assert created, stem
+
+    for stem, flag, expected in subjects:
+        out = apply_score_extraction(
+            db, state,
+            {
+                "fiscal_removes": [{
+                    "key": stem,
+                    "reason": f"裁撤{stem}",
+                    "origin_ref": origin,
+                    **flag,
+                }],
+            },
+            content=content,
+        )
+        assert out["fiscal_removes"] and not out["fiscal_removes"][0].get("rejected"), out
+        tomb = [
+            r for r in db.list_fiscal_effects_for_dossier(did)
+            if r.get("effect_kind") == "remove" and str(r.get("key") or "").startswith(stem)
+        ]
+        assert tomb, stem
+        assert all(r["beyond_intent"] is expected for r in tomb), (stem, tomb)
+
+    # Ban SELECT * residue: tombstone INSERT must carry explicit beyond_intent column
+    # (verified by presence of the column value, not by grepping source)
+    raw = db.conn.execute(
+        "SELECT beyond_intent FROM fiscal_config_tombstones WHERE origin_ref=?",
+        (origin,),
+    ).fetchall()
+    assert raw and all("beyond_intent" in dict(r) for r in raw)

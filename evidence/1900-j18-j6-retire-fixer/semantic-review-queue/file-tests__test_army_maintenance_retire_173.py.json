@@ -1,0 +1,116 @@
+{
+  "source_path": "tests/test_army_maintenance_retire_173.py",
+  "member_count": 8,
+  "members": [
+    {
+      "idx": 57,
+      "file": "tests/test_army_maintenance_retire_173.py",
+      "name": "test_existing_save_drops_maintenance_column_on_open",
+      "line": 46,
+      "end": 69,
+      "flags": [
+        "helper_or_private_call",
+        "retired_or_meta_marker"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0057_test_army_maintenance_retire_173__test_existing_save_drops_maintenance_column_on_open.txt",
+      "source_path": "tests/test_army_maintenance_retire_173.py"
+    },
+    {
+      "idx": 58,
+      "file": "tests/test_army_maintenance_retire_173.py",
+      "name": "test_legacy_new_army_needs_only_manpower",
+      "line": 74,
+      "end": 81,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call",
+        "retired_or_meta_marker"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0058_test_army_maintenance_retire_173__test_legacy_new_army_needs_only_manpower.txt",
+      "source_path": "tests/test_army_maintenance_retire_173.py"
+    },
+    {
+      "idx": 59,
+      "file": "tests/test_army_maintenance_retire_173.py",
+      "name": "test_new_army_maintenance_key_ignored",
+      "line": 84,
+      "end": 92,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0059_test_army_maintenance_retire_173__test_new_army_maintenance_key_ignored.txt",
+      "source_path": "tests/test_army_maintenance_retire_173.py"
+    },
+    {
+      "idx": 60,
+      "file": "tests/test_army_maintenance_retire_173.py",
+      "name": "test_new_army_still_requires_manpower",
+      "line": 95,
+      "end": 101,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0060_test_army_maintenance_retire_173__test_new_army_still_requires_manpower.txt",
+      "source_path": "tests/test_army_maintenance_retire_173.py"
+    },
+    {
+      "idx": 61,
+      "file": "tests/test_army_maintenance_retire_173.py",
+      "name": "test_new_army_inf_manpower_rejected_not_crash",
+      "line": 104,
+      "end": 112,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0061_test_army_maintenance_retire_173__test_new_army_inf_manpower_rejected_not_crash.txt",
+      "source_path": "tests/test_army_maintenance_retire_173.py"
+    },
+    {
+      "idx": 62,
+      "file": "tests/test_army_maintenance_retire_173.py",
+      "name": "test_pay_derives_from_manpower",
+      "line": 117,
+      "end": 126,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0062_test_army_maintenance_retire_173__test_pay_derives_from_manpower.txt",
+      "source_path": "tests/test_army_maintenance_retire_173.py"
+    },
+    {
+      "idx": 63,
+      "file": "tests/test_army_maintenance_retire_173.py",
+      "name": "test_army_delta_maintenance_rejected_as_invalid_field",
+      "line": 132,
+      "end": 141,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0063_test_army_maintenance_retire_173__test_army_delta_maintenance_rejected_as_invalid_field.txt",
+      "source_path": "tests/test_army_maintenance_retire_173.py"
+    },
+    {
+      "idx": 64,
+      "file": "tests/test_army_maintenance_retire_173.py",
+      "name": "test_army_delta_other_fields_still_apply",
+      "line": 144,
+      "end": 155,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0064_test_army_maintenance_retire_173__test_army_delta_other_fields_still_apply.txt",
+      "source_path": "tests/test_army_maintenance_retire_173.py"
+    }
+  ]
+}

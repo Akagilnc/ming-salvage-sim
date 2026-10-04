@@ -1,0 +1,21 @@
+# FILE: tests/test_population_transfers_649.py
+# NAME: test_origin_ref_required_and_validated
+# LINE: 180-194
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_origin_ref_required_and_validated(game):
+    """origin_ref 必填：缺失/伪前缀/未颁案卷逐项拒收；盘面自发与已颁 dossier 合法。"""
+    db, state, content = game
+    bad_items = [
+        {"source": "农民@shaanxi", "target": "流民@shaanxi", "amount": 10, "reason": "加派"},
+        _transfer(source="农民@shaanxi", target="流民@shaanxi", amount=10, reason="加派", origin_ref="dossier:"),
+        _transfer(source="农民@shaanxi", target="流民@shaanxi", amount=10, reason="加派", origin_ref="dossier:999999"),
+        _transfer(source="农民@shaanxi", target="流民@shaanxi", amount=10, reason="加派", origin_ref="诏书"),
+    ]
+    applied = apply_score_extraction(db, state, {"population_transfers": bad_items}, content, None)
+    cats = {r["category"] for r in applied["population_transfers_rejections"]}
+    assert len(applied["population_transfers_rejections"]) == len(bad_items)
+    assert "missing_origin_ref" in cats
+    assert "invalid_origin_ref" in cats
+    assert _pop(db, "流民", "shaanxi") == DISPLACED_SHAANXI

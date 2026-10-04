@@ -1,0 +1,26 @@
+# FILE: tests/test_rescript_option_field_heal_1746.py
+# NAME: test_first_draw_parse_failure_heals_then_degrades
+# LINE: 848-867
+# FLAGS: assert_text_compare_or_match,mock_or_patch_present,helper_or_private_call
+# KIND: py
+
+def test_first_draw_parse_failure_heals_then_degrades(monkeypatch, tmp_path):
+    """#1801 ①a：首抽未成形 → 同一 heal 回路重试；耗尽本月无票拟且响亮留痕。"""
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    tags: list[str] = []
+    prompts: list[str] = []
+
+    def _llm(_a, prompt, tag="", prior_messages=None):
+        tags.append(tag)
+        prompts.append(prompt)
+        return "not-json {"
+
+    monkeypatch.setattr(rescript_mod, "run_agent_text", _llm)
+    assert generate_rescript_draft(object(), _ctx(), turn=62) is None
+    assert tags == ["rescript-draft"] + ["rescript-draft-heal"] * RESCRIPT_OPTION_FIELD_HEAL_RETRIES
+    req = _parse_heal_request(prompts[1])
+    assert req["failures"] and req["failures"][0].get("scope") == "top"
+    ff = _field_failure_map(req["failures"][0])
+    assert "items" in ff
+    note = tmp_path / "error_packs" / "rescript_draft_degraded" / "turn62.json"
+    assert note.is_file()

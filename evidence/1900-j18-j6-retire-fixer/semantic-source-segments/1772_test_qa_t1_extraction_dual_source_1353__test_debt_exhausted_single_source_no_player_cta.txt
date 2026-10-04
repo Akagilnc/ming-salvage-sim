@@ -1,0 +1,21 @@
+# FILE: tests/test_qa_t1_extraction_dual_source_1353.py
+# NAME: test_debt_exhausted_single_source_no_player_cta
+# LINE: 108-122
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_debt_exhausted_single_source_no_player_cta(game, tmp_path, monkeypatch):
+    """#1842：欠账耗尽不挡收夜；诊断 pending 可查；无玩家补写 CTA 面。"""
+    db, state, content = game
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
+    minister = _minister(db, content)
+    nid, ctid = _open_night_with_persisted_reply(db, state, minister)
+
+    def boom_translate(prompt, llm_config):
+        raise RuntimeError("translate exhausted")
+
+    _close_with_gate(db, state, night_id=nid, translate_fn=boom_translate)
+    payload = _pending_api(db)
+    assert int(payload["count"]) >= 1
+    assert any(int(p["chat_turn_id"]) == ctid for p in payload["pending"])
+    assert not payload.get("player_hint")

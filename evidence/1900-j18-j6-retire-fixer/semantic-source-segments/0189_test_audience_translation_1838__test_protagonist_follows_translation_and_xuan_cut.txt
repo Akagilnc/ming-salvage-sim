@@ -1,0 +1,42 @@
+# FILE: tests/test_audience_translation_1838.py
+# NAME: test_protagonist_follows_translation_and_xuan_cut
+# LINE: 215-250
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_protagonist_follows_translation_and_xuan_cut(game, monkeypatch):
+    """AC3：御前主角随转译声明变化；宣 X 经 scene_chat 真入口当场先切并绑源轮。"""
+    db, state, content = game
+    _activate(db, state, "王绍徽", "王承恩")
+    night = open_night(db, state, location="乾清宫", time_of_day="戌时")
+    nid = int(night["id"])
+    assert get_night_protagonist(db, nid) == ""
+
+    sess = _scene_session(db, state, content, monkeypatch)
+    t1 = _active_chat_turn(db, state, nid)
+    # 真入口：scene_chat("宣王绍徽", chat_turn_id=t1) 当场先切并绑源轮
+    cuts = []
+    r_xuan = sess.scene_chat(
+        "宣王绍徽", chat_turn_id=t1,
+        on_protagonist_changed=lambda: cuts.append(get_night_protagonist(db, nid)),
+    )
+    persist_and_schedule_scene(sess, db, r_xuan)
+    _drain_scene_owner(sess, db)
+    assert get_night_protagonist(db, nid) == "王绍徽"
+    assert cuts == ["王绍徽"]
+    assert db.conn.execute(
+        "SELECT protagonist_name FROM chat_turns WHERE id=?", (t1,),
+    ).fetchone()["protagonist_name"] == "王绍徽"
+
+    # 王承恩独自回奏一轮 → 转译声明主角是他
+    ctid = _active_chat_turn(db, state, nid)
+    result = apply_audience_round_translation(
+        db, state,
+        {"protagonist": {"person_name": "王承恩"}},
+        night_id=nid, chat_turn_id=ctid,
+    )
+    assert result.protagonist.validated == {"person_name": "王承恩"}
+    assert get_night_protagonist(db, nid) == "王承恩"
+    assert db.conn.execute(
+        "SELECT protagonist_name FROM chat_turns WHERE id=?", (ctid,),
+    ).fetchone()["protagonist_name"] == "王承恩"

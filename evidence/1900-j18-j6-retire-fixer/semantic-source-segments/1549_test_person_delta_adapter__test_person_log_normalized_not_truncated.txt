@@ -1,0 +1,21 @@
+# FILE: tests/test_person_delta_adapter.py
+# NAME: test_person_log_normalized_not_truncated
+# LINE: 2021-2035
+# FLAGS: assert_text_compare_or_match
+# KIND: py
+
+def test_person_log_normalized_not_truncated(game):
+    """5b r1 PR#106（CodeRabbit Major）：person_logs.normalized 是结构化审计 JSON，须全量存可解析——
+    旧码 normalized_text[:500] 会从 JSON 中间切断成不可解析。"""
+    import json as _json
+    db, state, content = game
+    person_name = active_ming_character(db, content)
+    big = {"name": "甲" * 300, "origin_ref": "盘面自发", "动作": "处置", "status": "dismissed",
+           "reason": "乙" * 300, "extra": list(range(40))}
+    db.record_person_log(state, person_name, "处置", payload_summary="s", normalized=big)
+    row = db.conn.execute(
+        "SELECT normalized FROM person_logs WHERE person_name=? ORDER BY id DESC LIMIT 1",
+        (person_name,),
+    ).fetchone()
+    parsed = _json.loads(row["normalized"])
+    assert parsed["name"] == "甲" * 300 and parsed["动作"] == "处置"

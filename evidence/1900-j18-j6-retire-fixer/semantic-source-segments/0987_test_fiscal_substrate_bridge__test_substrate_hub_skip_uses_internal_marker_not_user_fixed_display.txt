@@ -1,0 +1,56 @@
+# FILE: tests/test_fiscal_substrate_bridge.py
+# NAME: test_substrate_hub_skip_uses_internal_marker_not_user_fixed_display
+# LINE: 1494-1543
+# FLAGS: assert_text_compare_or_match,retired_or_meta_marker
+# KIND: py
+
+def test_substrate_hub_skip_uses_internal_marker_not_user_fixed_display(fresh_game):
+    import ming_sim.flows as flows_mod
+
+    db, state = fresh_game
+    db.conn.execute("UPDATE buildings SET output_amount = 0, maintenance = 0")
+    db.conn.execute(
+        """
+        UPDATE armies
+        SET self_funded_pay = 1, is_tusi = 1, province_pay_share = 0,
+            central_pay_share = 0, pay_source_region = '',
+            province_pay_arrears = 0, central_pay_arrears = 0, arrears = 0
+        """
+    )
+    db.conn.execute(
+        """
+        UPDATE regions
+        SET controlled_by = 'houjin',
+            fiscal = json_set(fiscal, '$.salt_tax', 0, '$.commerce_tax', 0)
+        """
+    )
+    db.create_fiscal_item(
+        "巡盐加派_base",
+        "国库",
+        "income",
+        "盐税",
+        7,
+        note="display intentionally collides with substrate hub salt tax",
+        commit=False,
+    )
+    db.conn.commit()
+
+    budget = flows_mod.compute_budget_lines(db, state)
+    salt_lines = [row for row in budget["国库"]["income"] if row["name"] == "盐税"]
+    assert any(row.get("internal") == "substrate_hub" for row in salt_lines)
+    assert any(row.get("internal") != "substrate_hub" for row in salt_lines)
+
+    flows_mod.apply_fixed_period_flows(db, state)
+
+    net_pct = int(db.legacy_modifiers(state).get("国库", 0) or 0)
+    expected = db.apply_legacy_pct(7, net_pct) if net_pct else 7
+    rows = db.conn.execute(
+        """
+        SELECT delta, reason
+        FROM economy_ledger
+        WHERE account = '国库' AND category = '盐税'
+        ORDER BY id
+        """
+    ).fetchall()
+    assert [int(row["delta"]) for row in rows] == [expected]
+    assert all(str(row["reason"] or "").strip() for row in rows)

@@ -1,0 +1,19 @@
+# FILE: tests/test_escort_route_1900.py
+# NAME: test_commission_without_escort_declares_none
+# LINE: 132-144
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_commission_without_escort_declares_none(game):
+    """没写押解的拨银交办不夹带押解（代码不猜）。"""
+    db, state, _content = game
+    state.metrics["内库"] = max(int(state.metrics.get("内库") or 0), ORDERED * 3 + 50)
+    result = _declare(db, state, {"commissions": [{
+        "text": "拨银三十万两往陕西赈灾。",
+        "grant": {
+            "grant_action": "赈灾", "amount": ORDERED, "account": "内库",
+            "target_kind": "region", "target_id": "shaanxi",
+        },
+    }]})
+    assert result.commissions.rejected == []
+    assert "escort" not in result.commissions.applied[0]["payload"]

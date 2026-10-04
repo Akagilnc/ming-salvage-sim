@@ -1,0 +1,11 @@
+# FILE: tests/test_mutiny_latch_315.py
+# NAME: test_mutiny_exits_at_40_only_when_arrears_have_retired
+# LINE: 99-103
+# FLAGS: assert_text_compare_or_match,helper_or_private_call,retired_or_meta_marker
+# KIND: py
+
+def test_mutiny_exits_at_40_only_when_arrears_have_retired(game, fiscal_path):
+    db, state, _ = game
+    _setup(db, fiscal_path, loyalty=35, arrears=0, latched=1)
+
+    assert _tick(db, state)[:3] == (40, 0, "不满")

@@ -1,0 +1,9 @@
+# FILE: tests/test_army_salary_44.py
+# NAME: test_army_needed_derives_from_manpower_rate
+# LINE: 42-44
+# FLAGS: helper_or_private_call
+# KIND: py
+
+def test_army_needed_derives_from_manpower_rate(read_game, army_id, expected):
+    db, state, _ = read_game
+    assert army_needed(_army_row(db, army_id)) == expected

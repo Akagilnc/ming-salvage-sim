@@ -1,0 +1,26 @@
+# FILE: tests/test_office_inference.py
+# NAME: test_sync_preserves_persisted_court_office_type_on_table_miss
+# LINE: 203-222
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_sync_preserves_persisted_court_office_type_on_table_miss(tmp_path):
+    """cmr R2 回归（codex high, cross-section）：_sync_offices_from_db_impl 每回合 begin_turn 都跑，
+    不得把 DB 里已持久化的朝堂类 office_type 在 office 文本表查不中时降级成 待铨——否则动态任命
+    （use_llm=True 路径）落库的 礼部/兵部 等会在下一回合 sync 时被悄悄降级，内存与 DB 不一致且每回合复发。"""
+    from ming_sim.decree import reload_state_from_db
+
+    content = GameContent.load()
+    bind_content(content)
+    issues_mod.bind_content(content)
+    db = GameDB(str(tmp_path / "sync.db"), content=content, llm_config=_cli_cfg())
+    db.seed_static_data()
+    # 模拟一次动态任命：DB 里某人 office=生造朝堂官名(表查不中) + office_type=礼部(持久化真相)
+    db.conn.execute(
+        "UPDATE characters SET office=?, office_type=? WHERE name=?",
+        ("册封朝鲜使归途", "礼部", "刘鸿训"),
+    )
+    db.conn.commit()
+    reload_state_from_db(db, db.load_state(), content=content)
+    assert content.characters["刘鸿训"].office_type == "礼部", \
+        "sync 不得把 DB 持久化的朝堂类 office_type 在表查不中时降级成待铨"

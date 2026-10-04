@@ -1,0 +1,18 @@
+# FILE: tests/test_executor_routing_721.py
+# NAME: test_production_assignee_is_named_route
+# LINE: 146-157
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_production_assignee_is_named_route(env, payload):
+    db, state, _ = env
+    dossier_id = _create(db, state, category=None, payload=payload)
+    dossier = db.get_decree_dossier(dossier_id)
+    leads = [
+        e["character_id"] for e in dossier["participant_roster"]
+        if e["tier"] == "主办"
+    ]
+    assert leads == ["陈新甲"]
+    persisted_payload = json.loads(dossier["payload_json"])
+    assert persisted_payload["assignee_id"] == "陈新甲"
+    assert "assignee" not in persisted_payload

@@ -136,14 +136,14 @@ def test_roster_rejects_duplicate_canonical_name(monkeypatch):
 
 
 @pytest.mark.parametrize(
-    "field,value,match",
+    "field,value",
     [
-        ("identity", 101, "identity"),
-        ("seed_guilt", {"crime": "", "severity": "轻"}, "crime"),
-        ("seed_guilt", {"crime": "无", "severity": "未知"}, "severity"),
+        ("identity", 101),
+        ("seed_guilt", {"crime": "", "severity": "轻"}),
+        ("seed_guilt", {"crime": "无", "severity": "未知"}),
     ],
 )
-def test_seed_schema_rejects_invalid_values(monkeypatch, field, value, match):
+def test_seed_schema_rejects_invalid_values(monkeypatch, field, value):
     data = load_json_asset("characters.json")
     data["characters"][0][field] = value
     monkeypatch.setattr(content_module, "load_json_asset", lambda _: data)

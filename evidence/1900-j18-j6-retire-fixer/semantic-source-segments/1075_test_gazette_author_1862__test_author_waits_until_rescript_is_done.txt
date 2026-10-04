@@ -1,0 +1,31 @@
+# FILE: tests/test_gazette_author_1862.py
+# NAME: test_author_waits_until_rescript_is_done
+# LINE: 60-84
+# FLAGS: assert_text_compare_or_match,mock_or_patch_present,helper_or_private_call
+# KIND: py
+
+def test_author_waits_until_rescript_is_done(game, monkeypatch):
+    db, state, content = game
+    minister = next(iter(content.characters.values())).name
+    affair = db.affairs.open(
+        name="请旨挡邸报", origin="旨意", year=state.year, period=state.period, turn=state.turn,
+    )
+    _pending, ref = _stage_edict(db, state, minister, "陕西赈灾", "陕西赈灾", -1, affair.id)
+    db.conn.execute(
+        "UPDATE staged_declarations SET questions_json=? WHERE decree_ref=?",
+        (
+            '[{"title":"是否加赈","context":"c","options":[{"label":"加","hint":"h1"},{"label":"否","hint":"h2"}]}]',
+            ref,
+        ),
+    )
+    db.conn.commit()
+    monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *_a, **_k: "")
+    # 外部 LLM 边界：挡邸报作者；可见结果是请旨台阶段，不锁调用次数。
+    monkeypatch.setattr(
+        month_chain, "run_gazette_text",
+        lambda *_a, **_k: (_TITLE, _REPORT),
+    )
+    session = _session(db, state, content, monkeypatch)
+    held = session.resolve_turn(allow_empty_decree=True)
+    assert held.stage == "rescript"
+    assert held.advanced is False

@@ -1,0 +1,25 @@
+# FILE: tests/test_applier_contract.py
+# NAME: test_reset_discards_pending_and_flushed
+# LINE: 241-259
+# FLAGS: assert_count
+# KIND: py
+
+def test_reset_discards_pending_and_flushed(clean_rejections, tmp_path):
+    """reset()（回滚路径）丢弃缓冲与已 flush 快照，之后 flush/mirror 均无输出。"""
+    db, state, content = clean_rejections
+    rc = RejectionCollector()
+    ri = RejectedItem(item={}, reason="r", category="invalid_enum", source=Provenance.unknown)
+    rc.record("metric_delta", ri, turn=1)
+    rc.flush_to_db(db)
+    rc.record("army_delta", ri, turn=1)
+
+    rc.reset()
+
+    rc.flush_to_db(db)  # 缓冲已空，不再写行
+    count = db.conn.execute("SELECT COUNT(*) FROM rejection_reports").fetchone()[0]
+    assert count == 1  # 只有 reset 前那次 flush 的 1 行（DB 回滚由事务层负责，非 reset 职责）
+
+    out = str(tmp_path / "rejections.jsonl")
+    rc.mirror_to_jsonl(out)
+    import os
+    assert not os.path.exists(out)

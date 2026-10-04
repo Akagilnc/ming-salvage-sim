@@ -1,0 +1,170 @@
+{
+  "source_path": "tests/test_army_salary_44.py",
+  "member_count": 12,
+  "members": [
+    {
+      "idx": 66,
+      "file": "tests/test_army_salary_44.py",
+      "name": "test_army_needed_derives_from_manpower_rate",
+      "line": 42,
+      "end": 44,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0066_test_army_salary_44__test_army_needed_derives_from_manpower_rate.txt",
+      "source_path": "tests/test_army_salary_44.py"
+    },
+    {
+      "idx": 67,
+      "file": "tests/test_army_salary_44.py",
+      "name": "test_army_needed_zero_manpower_zero_pay",
+      "line": 47,
+      "end": 52,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0067_test_army_salary_44__test_army_needed_zero_manpower_zero_pay.txt",
+      "source_path": "tests/test_army_salary_44.py"
+    },
+    {
+      "idx": 68,
+      "file": "tests/test_army_salary_44.py",
+      "name": "test_army_needed_scales_with_manpower",
+      "line": 55,
+      "end": 63,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0068_test_army_salary_44__test_army_needed_scales_with_manpower.txt",
+      "source_path": "tests/test_army_salary_44.py"
+    },
+    {
+      "idx": 69,
+      "file": "tests/test_army_salary_44.py",
+      "name": "test_army_needed_shrink_lowers_pay",
+      "line": 66,
+      "end": 72,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0069_test_army_salary_44__test_army_needed_shrink_lowers_pay.txt",
+      "source_path": "tests/test_army_salary_44.py"
+    },
+    {
+      "idx": 70,
+      "file": "tests/test_army_salary_44.py",
+      "name": "test_army_needed_non_ming_no_pay",
+      "line": 75,
+      "end": 82,
+      "flags": [
+        "assert_count"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0070_test_army_salary_44__test_army_needed_non_ming_no_pay.txt",
+      "source_path": "tests/test_army_salary_44.py"
+    },
+    {
+      "idx": 71,
+      "file": "tests/test_army_salary_44.py",
+      "name": "test_backfill_dynamic_army_falls_to_anchor",
+      "line": 120,
+      "end": 133,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0071_test_army_salary_44__test_backfill_dynamic_army_falls_to_anchor.txt",
+      "source_path": "tests/test_army_salary_44.py"
+    },
+    {
+      "idx": 72,
+      "file": "tests/test_army_salary_44.py",
+      "name": "test_backfill_reverse_fills_from_maintenance_on_direct_upgrade",
+      "line": 136,
+      "end": 152,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0072_test_army_salary_44__test_backfill_reverse_fills_from_maintenance_on_direct_upgrade.txt",
+      "source_path": "tests/test_army_salary_44.py"
+    },
+    {
+      "idx": 73,
+      "file": "tests/test_army_salary_44.py",
+      "name": "test_backfill_anchor_when_column_present_but_data_unusable",
+      "line": 159,
+      "end": 174,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0073_test_army_salary_44__test_backfill_anchor_when_column_present_but_data_unusable.txt",
+      "source_path": "tests/test_army_salary_44.py"
+    },
+    {
+      "idx": 74,
+      "file": "tests/test_army_salary_44.py",
+      "name": "test_total_ming_salary_is_72_ceil_sum",
+      "line": 177,
+      "end": 184,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0074_test_army_salary_44__test_total_ming_salary_is_72_ceil_sum.txt",
+      "source_path": "tests/test_army_salary_44.py"
+    },
+    {
+      "idx": 75,
+      "file": "tests/test_army_salary_44.py",
+      "name": "test_manpower_clamp_to_zero_leaves_army_log",
+      "line": 187,
+      "end": 205,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0075_test_army_salary_44__test_manpower_clamp_to_zero_leaves_army_log.txt",
+      "source_path": "tests/test_army_salary_44.py"
+    },
+    {
+      "idx": 76,
+      "file": "tests/test_army_salary_44.py",
+      "name": "test_manpower_true_noop_no_log",
+      "line": 208,
+      "end": 219,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0076_test_army_salary_44__test_manpower_true_noop_no_log.txt",
+      "source_path": "tests/test_army_salary_44.py"
+    },
+    {
+      "idx": 77,
+      "file": "tests/test_army_salary_44.py",
+      "name": "test_legacy_salary_tick_preserves_fractional_opening_arrears",
+      "line": 222,
+      "end": 255,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call",
+        "retired_or_meta_marker"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0077_test_army_salary_44__test_legacy_salary_tick_preserves_fractional_opening_arrears.txt",
+      "source_path": "tests/test_army_salary_44.py"
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+# FILE: tests/test_person_delta_adapter.py
+# NAME: test_pending_dismiss_rejects_vassal_prince
+# LINE: 2009-2018
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_pending_dismiss_rejects_vassal_prince(game):
+    db, state, content = game
+    name = _materialize_active_prince(db, state, content)
+    dossier_id = db.create_decree_dossier(
+        state, action_type="dismiss_assignment", decree_text="宗藩罢免", target_kind="character", target_id=name,
+        payload={"name": name, "_office_action": "罢免"},
+    )
+    with pytest.raises(ValueError):
+        db.apply_dossier_promulgation(state, dossier_id, "promulgated", content=content)
+    assert db.get_character_status(name)[0] == "active"

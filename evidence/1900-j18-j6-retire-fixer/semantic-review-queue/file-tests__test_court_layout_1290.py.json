@@ -1,0 +1,36 @@
+{
+  "source_path": "tests/test_court_layout_1290.py",
+  "member_count": 2,
+  "members": [
+    {
+      "idx": 414,
+      "file": "tests/test_court_layout_1290.py",
+      "name": "test_new_game_court_layout_empty_is_legal",
+      "line": 46,
+      "end": 52,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0414_test_court_layout_1290__test_new_game_court_layout_empty_is_legal.txt",
+      "source_path": "tests/test_court_layout_1290.py"
+    },
+    {
+      "idx": 415,
+      "file": "tests/test_court_layout_1290.py",
+      "name": "test_court_layout_roundtrip_player_override",
+      "line": 55,
+      "end": 66,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0415_test_court_layout_1290__test_court_layout_roundtrip_player_override.txt",
+      "source_path": "tests/test_court_layout_1290.py"
+    }
+  ]
+}

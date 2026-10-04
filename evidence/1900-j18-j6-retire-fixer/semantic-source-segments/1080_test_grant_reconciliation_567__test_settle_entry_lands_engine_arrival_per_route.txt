@@ -1,0 +1,32 @@
+# FILE: tests/test_grant_reconciliation_567.py
+# NAME: test_settle_entry_lands_engine_arrival_per_route
+# LINE: 265-290
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_settle_entry_lands_engine_arrival_per_route(game, monkeypatch):
+    """settle 真入口：引擎逐路给实抵落账、月份推进、无假 awaiting、无拒收噪声。
+
+    #1900 后本口不接提案，断的是「引擎沿途损耗 → 逐路对账行」这条真链。
+    """
+    from ming_sim.db import grant_arrival_bounds
+    from tests.test_month_chain_1843 import _prepare_player_month
+
+    db, state, content = game
+    good = _in_transit_grant(db, state, text="陕西赈银", target_id="shaanxi")
+    turn_before = int(state.turn)
+    session = _prepare_player_month(
+        db, state, content, monkeypatch, world=lambda *_a, **_k: "世界段",
+        translate=lambda *_a, **_k: {"effects": {}},
+    )
+    session.resolve_turn(allow_empty_decree=True)
+    db.save_turn_report(state, "邸报", public_body="邸报")
+    session.resolve_turn(allow_empty_decree=True)
+
+    assert int(state.turn) == turn_before + 1
+    assert state.turn_phase != TurnPhase.AWAITING_DECISION.value
+    row = db.list_dossier_reconciliations(good)[-1]
+    lo, hi = grant_arrival_bounds(ORDERED, escorted=False)
+    assert row["arrived_amount"] == (lo + hi) // 2
+    assert row["loss_amount"] == ORDERED - row["arrived_amount"]
+    assert _recon_rejections(db) == []

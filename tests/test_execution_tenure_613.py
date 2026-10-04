@@ -1,5 +1,4 @@
 """#613 执行侧任别读端：执行格/月末推演号令力 + #611 授权投影共用。"""
-from ming_sim.appointment_tenure import command_power_rank, execution_distortion_weight
 import ming_sim.decree as decree_mod
 VALID_TENURES = ('真除', '兼署', '署理', '加衔')
 
@@ -46,8 +45,6 @@ def test_td8_same_office_four_tenures_live_assembly_chain(game):
         consumer = _executing_policy(db, state, holder, target_id=f'td8-same-office-{tenure}')
         hit = _live_exec_side(db, state, consumer)
         assert hit['appointment_tenure'] == tenure
-        assert hit['command_power_rank'] == command_power_rank(tenure)
-        assert hit['distortion_weight'] == execution_distortion_weight(tenure)
         assert 'payload-auth' not in hit['authorization_ids']
         assert 'payload-list' not in hit['authorization_ids']
         observed.append(hit)

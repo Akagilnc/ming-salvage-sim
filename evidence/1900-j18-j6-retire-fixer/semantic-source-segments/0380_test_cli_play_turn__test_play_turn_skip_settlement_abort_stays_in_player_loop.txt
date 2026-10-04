@@ -1,0 +1,38 @@
+# FILE: tests/test_cli_play_turn.py
+# NAME: test_play_turn_skip_settlement_abort_stays_in_player_loop
+# LINE: 464-495
+# FLAGS: assert_text_compare_or_match,mock_or_patch_present,helper_or_private_call
+# KIND: py
+
+def test_play_turn_skip_settlement_abort_stays_in_player_loop(monkeypatch, capsys, exc):
+    class Session:
+        previous_summary = ""
+
+        def __init__(self):
+            self.db = SimpleNamespace(list_pending_actions=lambda *a, **k: [])
+            self.state = SimpleNamespace(turn=7)
+            self.calls = []
+
+        def begin_turn(self):
+            self.calls.append("begin")
+            return _Snap()
+
+        def current_phase(self):
+            return TurnPhase.REVIEWING
+
+        def advance_without_decree(self):
+            self.calls.append("advance")
+            if self.calls.count("advance") == 1:
+                raise exc
+            return None
+
+    actions = iter(["skip", "skip"])
+    monkeypatch.setattr(term, "review_directives", lambda s: next(actions))
+    monkeypatch.setattr(term, "_print_header", lambda s: None)
+    monkeypatch.setattr(issues_mod, "show_active_issues", lambda db: None)
+    session = Session()
+
+    term.play_turn(session)
+
+    assert str(exc) in capsys.readouterr().out
+    assert session.calls == ["begin", "advance", "advance"]

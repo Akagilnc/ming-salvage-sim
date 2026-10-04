@@ -1,0 +1,32 @@
+# FILE: tests/test_person_transit_write_667.py
+# NAME: test_office_appointment_keeps_status_reason_mirrored
+# LINE: 199-224
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_office_appointment_keeps_status_reason_mirrored(
+    game, starting_status, appointment_reason, expected_reason,
+):
+    db, state, content = game
+    name = _active(db)
+    character = content.characters[name]
+    db.conn.execute(
+        "UPDATE characters SET status=?, status_reason='旧缘由', reason_code='旧代码' WHERE name=?",
+        (starting_status, name),
+    )
+    character.status = starting_status
+    character.status_reason = "旧缘由"
+    character.reason_code = "旧代码"
+
+    result = apply_office_appointment(
+        db, state, content, name, "兵部尚书", reason=appointment_reason,
+    )
+
+    assert not result.get("rejected")
+    row = db.conn.execute(
+        "SELECT status, status_reason, reason_code FROM characters WHERE name=?", (name,),
+    ).fetchone()
+    assert tuple(row) == ("active", expected_reason, "")
+    assert (character.status, character.status_reason, character.reason_code) == (
+        "active", expected_reason, "",
+    )

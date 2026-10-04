@@ -1,0 +1,37 @@
+# FILE: tests/test_pihong_dossier_1490.py
+# NAME: test_657_punishment_name_target_id_conflict_zero_writes
+# LINE: 1926-1956
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_657_punishment_name_target_id_conflict_zero_writes(web_game, monkeypatch):
+    """punishment name≠target_id → 整批拒；真 HTTP 零 dossier/character 写。"""
+    from ming_sim import rescript_actions as ra
+    from ming_sim.models import TurnPhase
+    from ming_sim.rescript_draft import normalize_rescript_layer_a_option
+    db, state = (web_game.db, web_game.state)
+    rows = db.conn.execute("SELECT name FROM characters WHERE status='active' AND power_id='ming' ORDER BY name LIMIT 2").fetchall()
+    assert len(rows) >= 2
+    n1, n2 = (str(rows[0]['name']), str(rows[1]['name']))
+    with pytest.raises(ValueError):
+        ra.map_rescript_option_or_choice({'action_type': 'punishment', 'punish_action': '廷杖', 'name': n1, 'target_kind': 'character', 'target_id': n2, 'label': '责', 'locality_scope': 'none'}, db=db, content=web_game.content, state=state)
+    ok = ra.map_rescript_option_or_choice({'action_type': 'punishment', 'punish_action': '廷杖', 'name': n1, 'target_kind': 'character', 'target_id': n1, 'label': '责', 'locality_scope': 'none'}, db=db, content=web_game.content, state=state)
+    assert ok['name'] == n1 and ok['target_id'] == n1
+    ok_one = ra.map_rescript_option_or_choice({'action_type': 'punishment', 'punish_action': '廷杖', 'target_kind': 'character', 'target_id': n1, 'label': '责', 'locality_scope': 'none'}, db=db, content=web_game.content, state=state)
+    assert ok_one['name'] == n1 and ok_one['target_id'] == n1
+    opt_base = normalize_rescript_layer_a_option({'label': '责', 'hint': 'h', 'action_type': 'punishment', 'assignee_name': '', 'target_kind': 'character', 'target_id': n1, 'name': n1, 'punish_action': '廷杖', 'locality_scope': 'none', 'region_id': '', 'transaction_category': ''})
+    _657_plant_awaiting_web(web_game, drafts=[{'title': '惩处冲突', 'context': 'c', 'options': [opt_base, {'label': 'x', 'hint': 'h', 'draft_capability': 'z'}], 'actor_name': n1, 'actor_office': 'o', 'actor_faction': 'f'}])
+    desk = db.list_rescript_desk(int(state.turn))
+    key = desk[0]['decision_key']
+    before_status = db.get_character_status(n1)[0]
+    before_dossiers = db.conn.execute('SELECT COUNT(*) AS c FROM decree_dossiers').fetchone()['c']
+    body = [{'decision_key': key, 'action': 'midzhi', 'label': '责', 'action_type': 'punishment', 'punish_action': '廷杖', 'name': n1, 'target_kind': 'character', 'target_id': n2, 'locality_scope': 'none'}]
+    r = asyncio.run(_post_resolve(body))
+    assert r.status_code == 200
+    assert db.get_character_status(n1)[0] == before_status
+    after_dossiers = db.conn.execute('SELECT COUNT(*) AS c FROM decree_dossiers').fetchone()['c']
+    assert after_dossiers == before_dossiers
+    assert web_game.state.turn_phase != TurnPhase.ISSUED.value
+    hit = next((row for row in db.list_rescript_drafts() if row['title'] == '惩处冲突'))
+    assert hit['status'] == 'pending'
+    assert hit.get('choice') in (None, {})

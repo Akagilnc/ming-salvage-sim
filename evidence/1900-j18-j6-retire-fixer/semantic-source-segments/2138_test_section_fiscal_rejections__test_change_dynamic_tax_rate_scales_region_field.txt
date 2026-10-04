@@ -1,0 +1,28 @@
+# FILE: tests/test_section_fiscal_rejections.py
+# NAME: test_change_dynamic_tax_rate_scales_region_field
+# LINE: 328-349
+# FLAGS: assert_text_compare_or_match
+# KIND: py
+
+def test_change_dynamic_tax_rate_scales_region_field(game):
+    """好路 pin:调 dynamic 税(辽饷)系数 → fiscal_config 改 + 各省实收按比例缩放
+    (db dynamic 联动缩放语义不被本切片破坏)。"""
+    db, state, content = game
+    db.conn.execute(
+        "UPDATE regions SET fiscal=json_set(COALESCE(NULLIF(fiscal,''),'{}'),'$.liao_xiang',400)"
+        " WHERE id=(SELECT id FROM regions LIMIT 1)")
+    db.conn.commit()
+    rid = db.conn.execute("SELECT id FROM regions LIMIT 1").fetchone()[0]
+    old_rate = db.get_fiscal_config()["辽饷_rate"]
+
+    run_settle(db, state, content, {
+        "fiscal_changes": [{"key": "辽饷_rate", "delta": -50, "reason": "减辽饷"}],
+    }, narrative="x", decree_text="y")
+
+    new_rate = db.get_fiscal_config()["辽饷_rate"]
+    assert new_rate == max(0, old_rate - 50)
+    import json as _json
+    fiscal = _json.loads(db.conn.execute(
+        "SELECT fiscal FROM regions WHERE id=?", (rid,)).fetchone()[0] or "{}")
+    # 按 new/old 比例缩放后实收 < 400(联动当真生效)
+    assert 0 <= int(fiscal.get("liao_xiang", 0) or 0) < 400

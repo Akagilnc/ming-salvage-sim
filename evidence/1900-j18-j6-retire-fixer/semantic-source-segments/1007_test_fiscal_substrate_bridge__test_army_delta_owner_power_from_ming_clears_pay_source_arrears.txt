@@ -1,0 +1,64 @@
+# FILE: tests/test_fiscal_substrate_bridge.py
+# NAME: test_army_delta_owner_power_from_ming_clears_pay_source_arrears
+# LINE: 2601-2658
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_army_delta_owner_power_from_ming_clears_pay_source_arrears(fresh_db):
+    state = fresh_db.load_state()
+    event = SimpleNamespace(id="test", title="陷没")
+    before = _read_settle(fresh_db, "shaanxi")["st"]["军饷欠"]
+    before_due = _read_settle(fresh_db, "shaanxi")["p"]["Due"]["军饷"]
+    assert before > 0
+    assert before_due > 0
+
+    changes = fresh_db.apply_army_deltas(
+        state, event, None, "测试", {"shaanxi_army": {"owner_power": "houjin"}},
+        commit=False,
+    )
+
+    row = fresh_db.conn.execute("SELECT * FROM armies WHERE id = 'shaanxi_army'").fetchone()
+    assert not any(c.get("rejected") for c in changes)
+    assert row["owner_power"] == "houjin"
+    assert row["pay_source_region"] == ""
+    assert row["province_pay_share"] == pytest.approx(0)
+    assert row["central_pay_share"] == pytest.approx(0)
+    assert row["province_pay_arrears"] == pytest.approx(0)
+    assert row["central_pay_arrears"] == pytest.approx(0)
+    assert row["arrears"] == pytest.approx(0)
+    assert fresh_db.get_central_army_pay_arrears_container() == pytest.approx(
+        _non_self_funded_pay_arrears(fresh_db)[1], abs=1e-6
+    )
+    logs = fresh_db.conn.execute(
+        """
+        SELECT id, field, old_value, new_value, delta, reason
+        FROM army_logs
+        WHERE army_id = 'shaanxi_army'
+          AND field IN ('arrears', 'owner_power')
+        ORDER BY id DESC
+        LIMIT 6
+        """
+    ).fetchall()
+    writeoff = next(
+        (
+            log for log in logs
+            if log["field"] == "arrears"
+            and float(log["new_value"]) == pytest.approx(0)
+            and float(log["delta"]) < 0
+        ),
+        None,
+    )
+    owner_log = next((log for log in logs if log["field"] == "owner_power"), None)
+    assert writeoff is not None
+    assert owner_log is not None
+    assert writeoff["id"] < owner_log["id"]
+    assert float(writeoff["old_value"]) > 0
+    assert float(writeoff["new_value"]) == pytest.approx(0)
+    assert writeoff["delta"] < 0
+    settle = _read_settle(fresh_db, "shaanxi")
+    assert settle["st"]["军饷欠"] == pytest.approx(
+        _province_pay_arrears(fresh_db, "shaanxi"), abs=1e-6
+    )
+    assert settle["st"]["军饷欠"] < before
+    assert settle["p"]["Due"]["军饷"] == pytest.approx(_province_pay_due(fresh_db, "shaanxi"))
+    assert settle["p"]["Due"]["军饷"] < before_due

@@ -24,7 +24,6 @@ from ming_sim.audience_night import (
     list_ledger,
     open_night,
 )
-from ming_sim.audience_translate import normalize_audience_declaration
 from ming_sim.declaration_dispatch import dispatch_declaration
 from ming_sim.session import GameSession
 from ming_sim.session_write_queue import get_session_write_queue
@@ -250,14 +249,6 @@ def test_translation_entry_preserves_unknown_rejection_and_source_cutoff(
     _persist_night_chat(db, state, night_id, "第一问", "第一答")
     source = _persist_night_chat(db, state, night_id, "本轮问", "本轮答")
     _persist_night_chat(db, state, night_id, "后轮问", "后轮答")
-    captured: dict[str, object] = {}
-    real_build_prompt = audience_translate.build_audience_translate_prompt
-
-    def capture_prompt(**kwargs):
-        captured["night_said"] = tuple(kwargs["night_said"])
-        return real_build_prompt(**kwargs)
-
-    monkeypatch.setattr(audience_translate, "build_audience_translate_prompt", capture_prompt)
     declaration = {
         "commissions": [{"text": "拟旨赈济"}],
         "commisssions": [{"text": "拼错交办"}],
@@ -283,10 +274,6 @@ def test_translation_entry_preserves_unknown_rejection_and_source_cutoff(
         minister_name=_hong_name(db, content),
     )
 
-    said = captured["night_said"]
-    assert isinstance(said, tuple)
-    # 每轮两条消息；源轮与后轮若越过严格截止，条数会从 2 增至 4/6。
-    assert len(said) == 2
     pending = db.conn.execute(
         "SELECT payload_json FROM pending_actions WHERE status='pending' ORDER BY id"
     ).fetchall()
@@ -303,6 +290,15 @@ def test_translation_entry_preserves_unknown_rejection_and_source_cutoff(
         "SELECT COUNT(*) FROM story_ledger_entries WHERE night_id=? AND body=?",
         (night_id, "提及未在册者"),
     ).fetchone()[0] == 1
+    later_bodies = [
+        str(row["body"] or "")
+        for row in db.conn.execute(
+            "SELECT body FROM story_ledger_entries WHERE night_id=?",
+            (night_id,),
+        ).fetchall()
+    ]
+    later_payloads = [str(row["payload_json"] or "") for row in pending]
+    assert all("后轮问" not in text for text in later_bodies + later_payloads)
     malformed = dispatch_declaration(
         db, state,
         {"scene_facts": [{"body": "坏形状", "role": ["scene"], "person_names": []}]},
@@ -627,10 +623,9 @@ def test_scene_chat_cli_and_api_same_translation_shape(game, monkeypatch):
     monkeypatch.setattr(
         "ming_sim.session.create_scene_agent", lambda *a, **k: FakeAgent(),
     )
-    shapes = []
+    payloads = []
     for channel in ("api", "cli"):
         def translate_fn(prompt, llm_config, _decl=declaration):
-            shapes.append(normalize_audience_declaration(_decl))
             return {**offline_empty_audience_translate(prompt, llm_config), **_decl}
 
         sess = _sess(
@@ -638,6 +633,9 @@ def test_scene_chat_cli_and_api_same_translation_shape(game, monkeypatch):
             llm_config=SimpleNamespace(channel=channel),
             translate_fn=translate_fn,
         )
+        before_id = db.conn.execute(
+            "SELECT COALESCE(MAX(id), 0) AS mid FROM pending_actions"
+        ).fetchone()["mid"]
         before = db.conn.execute(
             "SELECT COUNT(*) c FROM pending_actions WHERE status='pending'"
         ).fetchone()["c"]
@@ -646,11 +644,17 @@ def test_scene_chat_cli_and_api_same_translation_shape(game, monkeypatch):
             "SELECT COUNT(*) c FROM pending_actions WHERE status='pending'"
         ).fetchone()["c"]
         assert after > before
+        payloads.append([
+            row["payload_json"]
+            for row in db.conn.execute(
+                "SELECT payload_json FROM pending_actions "
+                "WHERE status='pending' AND id > ? ORDER BY id",
+                (before_id,),
+            ).fetchall()
+        ])
 
-    assert len(shapes) == 2
-    assert shapes[0] == shapes[1]
-    assert "commissions" in shapes[0] and "promises" in shapes[0]
-    assert "noise" not in shapes[0]
+    assert len(payloads) == 2
+    assert payloads[0] == payloads[1]
 
 
 

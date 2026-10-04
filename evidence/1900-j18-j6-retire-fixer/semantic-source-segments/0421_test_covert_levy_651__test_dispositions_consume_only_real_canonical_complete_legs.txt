@@ -1,0 +1,55 @@
+# FILE: tests/test_covert_levy_651.py
+# NAME: test_dispositions_consume_only_real_canonical_complete_legs
+# LINE: 154-202
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_dispositions_consume_only_real_canonical_complete_legs(game, monkeypatch):
+    """#1843 reopen：查办经真实 dispatch 逐段入口落到待办 consumed（两腿齐备）。"""
+    from ming_sim.applier import Provenance
+    from ming_sim.declaration_dispatch import dispatch_declaration
+
+    db, state, content = game
+    did, _, army_id, executor = _bound_case(db, state)
+    _exposed_todo(db, state, monkeypatch, did)
+    origin = f"dossier:{did}"
+    other = db.conn.execute(
+        "SELECT name FROM characters WHERE status='active' AND name<>? LIMIT 1", (executor,)
+    ).fetchone()[0]
+    todo_id = int(db.list_next_audience_todos(status="pending")[0]["id"])
+
+    # 查办：关系代价单独成功仍不结算。
+    dispatch_declaration(
+        db, state,
+        {"effects": {"relation_edge_events": [{
+            "来源引用": origin, "施动者": executor, "受动者": [other],
+            "类目": "结怨", "语境": "查办暗渠触动同僚",
+        }]}},
+        source=Provenance.player_decree,
+        visible_refs={"dossiers": {did}},
+    )
+    assert any(int(t["id"]) == todo_id for t in db.list_next_audience_todos(status="pending"))
+
+    # 两腿同段齐备 → 经 dispatch 后待办 consumed。
+    dispatch_declaration(
+        db, state,
+        {"effects": {
+            "relation_edge_events": [{
+                "来源引用": origin, "施动者": executor, "受动者": [other],
+                "类目": "结怨", "语境": "查办暗渠触动同僚",
+            }],
+            "人物变更": [{
+                "origin_ref": origin, "name": executor, "动作": "处置", "status": "dismissed",
+            }],
+        }},
+        source=Provenance.player_decree,
+        visible_refs={"dossiers": {did}},
+    )
+    pending_ids = {int(t["id"]) for t in db.list_next_audience_todos(status="pending")}
+    assert todo_id not in pending_ids
+    consumed = db.conn.execute(
+        "SELECT status, payload_json FROM next_audience_todos WHERE id=?", (todo_id,),
+    ).fetchone()
+    assert consumed["status"] == "consumed"
+    payload = json.loads(consumed["payload_json"] or "{}")
+    assert payload.get("decision") == "查办"

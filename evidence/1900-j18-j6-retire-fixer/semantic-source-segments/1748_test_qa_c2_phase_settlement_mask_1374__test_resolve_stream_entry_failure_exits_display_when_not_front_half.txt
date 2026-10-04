@@ -1,0 +1,28 @@
+# FILE: tests/test_qa_c2_phase_settlement_mask_1374.py
+# NAME: test_resolve_stream_entry_failure_exits_display_when_not_front_half
+# LINE: 185-206
+# FLAGS: assert_text_compare_or_match,mock_or_patch_present,helper_or_private_call
+# KIND: py
+
+def test_resolve_stream_entry_failure_exits_display_when_not_front_half(game, monkeypatch):
+    """异常路径走受理样板 finally：非常态前半段时清展示态。"""
+    db, state, _content = game
+    runtime = _runtime(db, state)
+    # 非 awaiting：accept 会新建快照；submit 拒 → 失败 exit 须清。
+    # gate 须为真锁：exit 路径 gate.acquire，禁 null cm 替身。
+    state.turn_phase = TurnPhase.SUMMONING.value
+    db.save_state(state)
+
+    def _boom(*_a, **_k):
+        raise ValueError("当前不在待裁决策阶段，无法提交亲裁。")
+
+    runtime.session.submit_hitl_choices = _boom
+    monkeypatch.setattr(web_app, "get_game", lambda: runtime)
+    monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", lambda *_a, **_k: None)
+    monkeypatch.setattr(web_app, "_failed_secret_order_ids_for_turn", lambda *_a, **_k: set())
+    monkeypatch.setattr(web_app, "_new_secret_order_failure_payloads_for_turn", lambda *_a, **_k: [])
+
+    serialized = asyncio.run(_drain_resolve_sse([{"label": "发"}]))
+    assert "event: error" in serialized
+    assert db.get_month_open_snapshot(int(state.turn)) is None
+    assert runtime.state_payload()["turn"]["settlement_display"] is False

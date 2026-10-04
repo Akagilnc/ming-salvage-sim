@@ -1,0 +1,34 @@
+# FILE: tests/test_mutiny_noop_whitelist_319.py
+# NAME: test_latched_mixed_item_allows_and_denies_per_field
+# LINE: 305-332
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_latched_mixed_item_allows_and_denies_per_field(game):
+    db, state, _ = game
+    _configure(db, "legacy")
+    _set(
+        db, "legacy", loyalty=30, arrears=5, latched=1, mutiny_count=1, manpower=10000
+    )
+    before = _snapshot(db, ("station", "status", "manpower", "loyalty"))
+
+    db.apply_army_deltas(
+        state,
+        _event(),
+        None,
+        "测试",
+        {
+            ARMY: {
+                "manpower": -100,
+                "station": "新驻地",
+                "status": "已整编",
+                "loyalty": 5,
+            }
+        },
+    )
+
+    after = _row(db, "station", "status", "manpower", "loyalty")
+    assert after["manpower"] == before["manpower"] - 100
+    assert after["loyalty"] == before["loyalty"] + 5
+    assert after["station"] == before["station"]
+    assert after["status"] == before["status"]

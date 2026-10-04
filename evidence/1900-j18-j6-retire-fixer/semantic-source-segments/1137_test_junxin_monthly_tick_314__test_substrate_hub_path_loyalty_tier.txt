@@ -1,0 +1,26 @@
+# FILE: tests/test_junxin_monthly_tick_314.py
+# NAME: test_substrate_hub_path_loyalty_tier
+# LINE: 215-234
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_substrate_hub_path_loyalty_tier(game):
+    # substrate_hub 路：SELECT 已滤 ming+非土司+非自养；欠 ≥3 月结算后 -5，
+    # 且同事务写 army_logs loyalty 行。hub 路京运克扣/运损使足饷 +5 不可精确隔离，
+    # 满饷档已由 oracle 单元 + legacy 轨迹覆盖，此处只钉 hub 路接线。
+    db, state, _ = game
+    _silence_other_armies(db)
+    # 全额中央份额，绕开省级饷源噪声；needed=1 万两/月。
+    db.conn.execute(
+        "UPDATE armies SET province_pay_share=0, central_pay_share=1.0, "
+        "province_pay_arrears=0, central_pay_arrears=0 WHERE id=?", (KEG,))
+    _setup_army(db, KEG, loyalty=50)
+    # hub 路结算后 arrears 由饷源列重算（province/central_pay_arrears），种子须落中央欠列。
+    db.conn.execute("UPDATE armies SET central_pay_arrears=3.0 WHERE id=?", (KEG,))
+    db.conn.commit()
+    _run_months(db, state, 1)
+    assert _loyalty_of(db, KEG) == 45, "hub 路欠 3 月 → -5"
+    log = db.conn.execute(
+        "SELECT delta FROM army_logs WHERE army_id=? AND field='loyalty' "
+        "ORDER BY id DESC LIMIT 1", (KEG,)).fetchone()
+    assert log is not None and int(log["delta"]) == -5, "hub 路同事务写 loyalty 日志"

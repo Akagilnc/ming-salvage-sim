@@ -1,0 +1,14 @@
+# FILE: tests/test_enrich_list_guards.py
+# NAME: test_enrich_buildings_non_list_no_crash
+# LINE: 10-17
+# FLAGS: assert_text_compare_or_match,mock_or_patch_present
+# KIND: py
+
+def test_enrich_buildings_non_list_no_crash(monkeypatch):
+    for bad in ("true", "5", '"oops"'):
+        raw = ('{"effect_on_resolve": {"buildings": ' + bad +
+               ', "metrics": {"民心": 1}}, "ongoing_effects": {}, "effect_on_fail": {}}')
+        monkeypatch.setattr(cb, "_run_backend_for_config", lambda *a, **k: (raw, 1))
+        out = cb.enrich_initiative_effects("练新军", "现状", llm_config=None)
+        assert isinstance(out["effect_on_resolve"], dict)
+        assert out["effect_on_resolve"].get("buildings") == []

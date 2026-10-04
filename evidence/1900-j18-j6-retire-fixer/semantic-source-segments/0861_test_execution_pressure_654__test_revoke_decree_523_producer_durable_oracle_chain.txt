@@ -1,0 +1,75 @@
+# FILE: tests/test_execution_pressure_654.py
+# NAME: test_revoke_decree_523_producer_durable_oracle_chain
+# LINE: 586-654
+# FLAGS: assert_text_compare_or_match,assert_count
+# KIND: py
+
+def test_revoke_decree_523_producer_durable_oracle_chain(env):
+    """#523 producer→durable→oracle：dossier 目标恰落一条 region_id='' 案卷。
+
+    owner A：八值成员、dossier 三格、unknown 拒绝、revoke identity 保留。
+    """
+    import ming_sim.action_materialize  # noqa: F401 -- installs package catalog
+    from ming_sim.action_materialize import stage_revoke_decree_candidate
+
+    db, state, content = env
+    holder = str(db.conn.execute(
+        "SELECT name FROM characters WHERE status='active' AND power_id='ming' "
+        "ORDER BY name LIMIT 1"
+    ).fetchone()["name"])
+
+    # 已颁可撤成命（目标身份）
+    target_id = db.create_decree_dossier(
+        state,
+        action_type="policy",
+        decree_text="河工成命",
+        target_kind="issue",
+        target_id="河工成命",
+        executor_kind="character",
+        executor_id=holder,
+        participants=[{"character_id": holder, "tier": "主办", "role": "承办"}],
+        payload={
+            "mode": "ordinary", "text": "河工成命",
+            "target_kind": "issue", "target_id": "河工成命",
+            "locality_scope": "none",
+        },
+    )
+    db.apply_dossier_promulgation(state, target_id, "promulgated")
+
+    # 1) #523 真实 producer
+    pending_id = stage_revoke_decree_candidate(
+        db,
+        state.turn,
+        holder,
+        text=f"前旨作废，撤回案卷{target_id}。",
+        target_id=str(target_id),
+        target_kind="dossier",
+    )
+    assert pending_id
+    pending_row = db.conn.execute(
+        "SELECT payload_json FROM pending_actions WHERE id=?", (pending_id,),
+    ).fetchone()
+    pending = json.loads(pending_row["payload_json"])
+    assert pending["dossier_action_type"] == "revoke_decree"
+    assert pending["target_kind"] == "dossier"
+    assert int(pending["revoke_target_dossier_id"]) == int(target_id)
+    assert pending["target_kind"] in TARGET_KINDS
+
+    # 3) 真实收夜成案入口（commit_pending_actions → normalize → create_decree_dossiers）
+    before = db.conn.execute("SELECT COUNT(*) AS n FROM decree_dossiers").fetchone()["n"]
+    db.commit_pending_actions(state, content=content, action_ids=[pending_id])
+    revoke_rows = [
+        d for d in db.list_decree_dossiers()
+        if int(d.get("pending_action_id") or 0) == int(pending_id)
+    ]
+    assert len(revoke_rows) == 1
+    after = db.conn.execute("SELECT COUNT(*) AS n FROM decree_dossiers").fetchone()["n"]
+    assert after == before + 1
+    row = revoke_rows[0]
+    assert row["region_id"] == ""
+    assert row["action_type"] == "revoke_decree"
+    assert row["target_kind"] == "dossier"
+    assert str(row["target_id"]) == str(target_id)
+    stored = json.loads(str(row.get("payload_json") or "{}"))
+    assert int(stored.get("revoke_target_dossier_id") or 0) == int(target_id)
+    assert stored.get("target_kind") == "dossier"

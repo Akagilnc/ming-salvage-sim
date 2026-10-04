@@ -1,0 +1,54 @@
+# FILE: tests/test_fiscal_levy_effect.py
+# NAME: test_fiscal_levy_incomplete_first_pass_does_not_freeze_zero_share_seed
+# LINE: 379-426
+# FLAGS: assert_text_compare_or_match,mock_or_patch_present,helper_or_private_call
+# KIND: py
+
+def test_fiscal_levy_incomplete_first_pass_does_not_freeze_zero_share_seed(
+    game, monkeypatch, bad_shape
+):
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1637
+    state.period = 1
+    db.save_state(state)
+
+    total_land = _settle_land_sum(db)
+    huguang_before = _settle_payload(db, "huguang")
+    expected_jiao = _expected_land_share_levy(huguang_before, JIAO_NATIONAL_MONTHLY, total_land)
+    expected_liao = huguang_before["p"]["三饷应征"] * 4.0 / 3.0
+    original_shaanxi_fiscal = str(
+        db.conn.execute("SELECT fiscal FROM regions WHERE id = ?", ("shaanxi",)).fetchone()["fiscal"]
+    )
+    fiscal = json.loads(original_shaanxi_fiscal)
+    if bad_shape == "land":
+        fiscal["settle"]["st"]["官民田"] = []
+    elif bad_shape == "p":
+        fiscal["settle"]["p"] = []
+    elif bad_shape == "st":
+        fiscal["settle"]["st"] = []
+    else:
+        fiscal["settle"] = []
+    monkeypatch.setattr(issues, "tlog", lambda msg: None)
+    db.conn.execute(
+        "UPDATE regions SET fiscal = ? WHERE id = ?",
+        (json.dumps(fiscal, ensure_ascii=False), "shaanxi"),
+    )
+    db.conn.commit()
+
+    apply_historical_fiscal_rates(state, db)
+
+    incomplete = _settle_payload(db, "huguang")
+    assert "剿饷基线" not in incomplete["_meta"]
+    assert math.isclose(incomplete["p"]["三饷应征"], expected_liao, rel_tol=1e-9, abs_tol=1e-9)
+
+    db.conn.execute(
+        "UPDATE regions SET fiscal = ? WHERE id = ?",
+        (original_shaanxi_fiscal, "shaanxi"),
+    )
+    db.conn.commit()
+    apply_historical_fiscal_rates(state, db)
+
+    restored = _settle_payload(db, "huguang")
+    assert math.isclose(restored["_meta"]["剿饷基线"], expected_jiao, rel_tol=1e-9, abs_tol=1e-9)
+    assert math.isclose(restored["p"]["三饷应征"], expected_liao + expected_jiao, rel_tol=1e-9, abs_tol=1e-9)

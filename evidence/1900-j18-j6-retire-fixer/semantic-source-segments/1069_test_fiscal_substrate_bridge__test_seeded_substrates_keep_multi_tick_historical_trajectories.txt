@@ -1,0 +1,37 @@
+# FILE: tests/test_fiscal_substrate_bridge.py
+# NAME: test_seeded_substrates_keep_multi_tick_historical_trajectories
+# LINE: 4722-4752
+# FLAGS: helper_or_private_call
+# KIND: py
+
+def test_seeded_substrates_keep_multi_tick_historical_trajectories(fresh_db):
+    """#70 capstone：用真实 content seed 跑多 tick 轨迹，而非只测首 tick golden。"""
+    jiangnan = ("nanzhili", "zhejiang", "jiangxi", "huguang")
+    border = ("shaanxi", "shanxi", "liaodong", "dongjiang_area")
+
+    for region_id in jiangnan:
+        settle = _read_settle(fresh_db, region_id)
+        st = settle["st"]
+        remittances = []
+        for _ in range(3):
+            res = settle_tick(st, settle["p"], [])
+            remittances.append(res.breakdown["起运到京"])
+            st = res.new_st
+        assert all(value > 0 for value in remittances), \
+            f"{region_id} 江南财赋核心应多 tick 保持正起运: {remittances}"
+
+    for region_id in border:
+        settle = _read_settle(fresh_db, region_id)
+        st = settle["st"]
+        arrears = []
+        for _ in range(3):
+            res = settle_tick(st, settle["p"], [])
+            arrears.append(res.new_st["军饷欠"])
+            st = res.new_st
+        assert all(value >= 0 for value in arrears), \
+            f"{region_id} 边镇军饷容器不得为负: {arrears}"
+        assert arrears == sorted(arrears), \
+            f"{region_id} 边镇军饷缺口在拨付不足时不得回落: {arrears}"
+        if settle["p"]["Due"]["军饷"] > settle["p"]["拨付gross"]:
+            assert arrears[-1] > 0, \
+                f"{region_id} 拨付不足时边镇军饷缺口应持续存在: {arrears}"

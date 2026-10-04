@@ -1,0 +1,55 @@
+# FILE: tests/test_due_review_621.py
+# NAME: test_final_stage_terminal_close_joint_liability_at_most_once
+# LINE: 426-474
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_final_stage_terminal_close_joint_liability_at_most_once(game):
+    db, state, content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.commit()
+    dossier_id = _executing_policy_dossier(db, state, token="final")
+    stages = [{
+        "stage_idx": 0,
+        "due_turn": state.turn,
+        "criterion_text": "火器见眉目",
+        "origin_context": "三年火器见眉目",
+    }]
+    _insert_staged_commitment(
+        db, state, content, stages=stages, origin_ref=f"dossier:{dossier_id}",
+    )
+    write_due_staged_commitment_todos(db, state)
+    db.conn.execute(
+        "UPDATE next_audience_todos SET created_turn=?",
+        (state.turn - 1,),
+    )
+    db.conn.commit()
+    apply_pending_due_reviews(db, state, commit=True)
+
+    dossier = db.get_decree_dossier(dossier_id)
+    assert dossier["execution_outcome"] in {"fulfilled", "degraded", "failed", "transformed"}
+    assert dossier["status"] == "closed"
+    # 无实账无表报 → failed ∈ 连坐触发集；整笔幂等门闩 cost_kind=liability 恰一行
+    costs = _cost_events(db, dossier_id)
+    liability_gates = [c for c in costs if c.get("cost_kind") == "liability"]
+    assert len(liability_gates) == 1
+
+    # 幂等腿：恢复 todo pending + created_turn < turn，并回退案卷 executing
+    # （resolve 仅对 executing 走 dossier 枝），使二次真正再入 _apply_dossier_verdict/连坐
+    db.conn.execute(
+        "UPDATE decree_dossiers SET status='executing' WHERE id=?",
+        (int(dossier_id),),
+    )
+    db.conn.execute(
+        "UPDATE next_audience_todos SET status=?, created_turn=?",
+        (TODO_STATUS_PENDING, state.turn - 1),
+    )
+    db.conn.commit()
+    second = apply_pending_due_reviews(db, state, commit=True)
+    assert second, "幂等腿须真正再入正式复核"
+    assert second[0].get("branch") == "dossier", second
+    assert (second[0].get("execution") or {}).get("rejected") is not True, second
+    costs_after = _cost_events(db, dossier_id)
+    assert costs_after == costs
+    liability_after = [c for c in costs_after if c.get("cost_kind") == "liability"]
+    assert len(liability_after) == 1

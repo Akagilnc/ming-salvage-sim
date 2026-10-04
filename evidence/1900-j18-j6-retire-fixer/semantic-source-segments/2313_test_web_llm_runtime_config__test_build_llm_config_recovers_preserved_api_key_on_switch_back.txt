@@ -1,0 +1,18 @@
+# FILE: tests/test_web_llm_runtime_config.py
+# NAME: test_build_llm_config_recovers_preserved_api_key_on_switch_back
+# LINE: 105-116
+# FLAGS: assert_text_compare_or_match,mock_or_patch_present
+# KIND: py
+
+def test_build_llm_config_recovers_preserved_api_key_on_switch_back(monkeypatch):
+    """Gemini R1:从 cli 显式切回 api、表单 key 留空时,从 runtime_llm.json 的 api 槽回收被保留的
+    真实 key(cur.api_key 在 cli 模式已归一为空),免得切回 api 还得重输。"""
+    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {"api": {"api_key": "sk-preserved"}})
+    current = LLMConfig(api_key="", base_url="https://x/v1", model="m", channel="cli",
+                        cli_runner="codex", cli_model="gpt-5.5")
+    fake = SimpleNamespace(_write_gate=threading.Lock(), session=SimpleNamespace(llm_config=current, begin_turn=lambda: None))
+
+    cfg = web_app.WebGame.build_llm_config(fake, "", "", "", channel="api")
+
+    assert cfg.channel == "api"
+    assert cfg.api_key == "sk-preserved"

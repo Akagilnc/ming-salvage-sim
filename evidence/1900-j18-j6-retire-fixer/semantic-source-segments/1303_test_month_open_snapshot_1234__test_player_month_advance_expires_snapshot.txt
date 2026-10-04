@@ -1,0 +1,19 @@
+# FILE: tests/test_month_open_snapshot_1234.py
+# NAME: test_player_month_advance_expires_snapshot
+# LINE: 301-313
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_player_month_advance_expires_snapshot(game, monkeypatch):
+    """邸报完成后的真实月推进清除本月快照。"""
+    from tests.test_due_review_621 import _settle_empty_month
+
+    db, state, content = game
+    turn = int(state.turn)
+    db.capture_month_open_snapshot(state)
+    _settle_empty_month(db, state, content, monkeypatch)
+    assert db.get_month_open_snapshot(turn) is None
+    assert state.turn == turn + 1
+    payload = _runtime(db, state).state_payload()
+    assert payload["turn"]["settlement_display"] is False
+    assert payload["metrics"]["国库"] == state.metrics["国库"]

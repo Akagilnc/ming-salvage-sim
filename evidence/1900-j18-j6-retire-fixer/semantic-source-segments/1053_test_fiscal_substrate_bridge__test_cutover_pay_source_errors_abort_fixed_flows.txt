@@ -1,0 +1,30 @@
+# FILE: tests/test_fiscal_substrate_bridge.py
+# NAME: test_cutover_pay_source_errors_abort_fixed_flows
+# LINE: 4252-4275
+# FLAGS: assert_text_compare_or_match,mock_or_patch_present
+# KIND: py
+
+def test_cutover_pay_source_errors_abort_fixed_flows(fresh_game, monkeypatch, tmp_path):
+    import ming_sim.error_pack as error_pack_mod
+    import ming_sim.flows as flows_mod
+
+    db, state = fresh_game
+    monkeypatch.setattr(error_pack_mod, "user_data_dir", lambda: tmp_path)
+    db.conn.execute(
+        """
+        UPDATE armies
+        SET province_pay_share = 0.7, central_pay_share = 0.2
+        WHERE id = 'shaanxi_army'
+        """
+    )
+    db.conn.commit()
+
+    with pytest.raises(SettlementAbort) as exc_info:
+        flows_mod.apply_fixed_period_flows(db, state)
+
+    abort = exc_info.value
+    assert abort.stage == "fixed_fiscal"
+    assert abort.error_pack_path
+    pack = Path(abort.error_pack_path)
+    assert pack.exists()
+    assert (pack / "traceback.txt").read_text(encoding="utf-8").strip()

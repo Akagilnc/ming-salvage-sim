@@ -1,0 +1,40 @@
+# FILE: tests/test_pihong_dossier_1490.py
+# NAME: test_1620_http_follow_draft_office_token_routes_to_person
+# LINE: 1632-1665
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_1620_http_follow_draft_office_token_routes_to_person(web_game, monkeypatch):
+    """#1620 A：真 HTTP follow 职司 token → 真人 executor；真 phase2 可推月。"""
+    from ming_sim.models import TurnPhase
+    db, state = (web_game.db, web_game.state)
+    db.conn.execute("UPDATE characters SET location='shaanxi' WHERE status='active' AND power_id='ming' AND office_type='户部'")
+    db.conn.commit()
+    token = '陕西巡抚'
+    _657_install_real_phase2_llm_boundary(monkeypatch)
+    db.conn.execute('DELETE FROM pending_decisions')
+    db.conn.commit()
+    opt = _layer_a_option(label=f'责成{token}', assignee_name=token, transaction_category='督赈')
+    urgent, _ = _plant_urgent_desk(db, state, options=[opt, _layer_a_option(label='备')])
+    db.save_resolve_context(int(state.turn), '诏', {'candidate_events': [], 'transit_semantics': []})
+    db.save_turn_report(state, '邸报')
+    state.turn_phase = TurnPhase.AWAITING_DECISION.value
+    db.save_state(state)
+    before = len(db.list_decree_dossiers())
+    turn_before = int(web_game.state.turn)
+    r = asyncio.run(_post_resolve([{'decision_key': urgent['decision_key'], 'action': 'follow_draft', 'draft_capability': opt['draft_capability'], 'label': opt['label']}]))
+    assert r.status_code == 200, r.text
+    assert 'event: error' not in r.text, r.text
+    assert 'event: done' in r.text, r.text
+    after = db.list_decree_dossiers()
+    assert len(after) == before + 1, token
+    created = after[-1]
+    executor = str(created.get('executor_id') or '')
+    assert executor, f'{token}: 须落到真实人物 executor'
+    assert token not in executor, f'{token} 不得作 executor'
+    roster = created.get('participant_roster') or []
+    ids = [str(e.get('character_id') or '') for e in roster if isinstance(e, dict)]
+    assert token not in ids, f'{token} 不得入 roster：{ids}'
+    payload = json.loads(str(created.get('payload_json') or '{}'))
+    assert token not in str(payload.get('assignee_id') or '')
+    assert int(web_game.state.turn) == turn_before + 1

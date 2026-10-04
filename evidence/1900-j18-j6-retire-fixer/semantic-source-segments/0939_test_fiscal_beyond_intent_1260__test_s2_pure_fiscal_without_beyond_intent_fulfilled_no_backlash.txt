@@ -1,0 +1,71 @@
+# FILE: tests/test_fiscal_beyond_intent_1260.py
+# NAME: test_s2_pure_fiscal_without_beyond_intent_fulfilled_no_backlash
+# LINE: 392-456
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_s2_pure_fiscal_without_beyond_intent_fulfilled_no_backlash(game, content):
+    """无旨外 fiscal 效果 → 终裁 fulfilled；transformed 无 beyond → 不立案。"""
+    db, state, _ = game
+    did = _executing_policy(db, state, token="s2-neg")
+    origin = f"dossier:{did}"
+
+    applied = apply_score_extraction(
+        db, state,
+        {
+            "fiscal_creates": [{
+                "key": "正额新税",
+                "account": "国库",
+                "direction": "income",
+                "init_value": 10,
+                "reason": "奉旨正额",
+                "origin_ref": origin,
+                # no beyond_intent
+            }],
+        },
+        content=content,
+    )
+    assert applied["fiscal_creates"] and not applied["fiscal_creates"][0].get("rejected")
+    assert db.dossier_has_beyond_intent(did) is False
+
+    result = _prime_and_apply_due_review(
+        db, state, content, dossier_id=did, title="正额新税之诺",
+    )
+    assert result["verdict"]["outcome"] == "fulfilled", result
+
+    # Separate dossier: transformed text without beyond → no backlash
+    did2 = _executing_policy(db, state, token="s2-neg2")
+    origin2 = f"dossier:{did2}"
+    db.record_issue_economy_move(
+        state, "国库", -25, "投入", "半途根基2",
+        origin_ref=origin2, beyond_intent=0, commit=True,
+    )
+    # fiscal effect present but no beyond flag
+    apply_score_extraction(
+        db, state,
+        {
+            "fiscal_creates": [{
+                "key": "无旗税目",
+                "account": "国库",
+                "direction": "income",
+                "init_value": 5,
+                "reason": "无旗",
+                "origin_ref": origin2,
+            }],
+        },
+        content=content,
+    )
+    cid = _insert_commitment(
+        db, state, title="无分叉变形诺", origin_ref=origin2, bar_value=45,
+    )
+    db.record_dossier_execution(
+        did2, "transformed", "名实已乖（无旨外账）", int(state.turn),
+        close=True, commit=True,
+    )
+    state.turn = int(state.turn) + 1
+    hits = db.trigger_commitment_backlashes(state, commit=True)
+    assert not any(
+        h.get("source_kind") == SOURCE_DEFORMATION_EXPOSURE
+        and h.get("trigger_ref") == f"issue:{cid}"
+        for h in hits
+    ), hits

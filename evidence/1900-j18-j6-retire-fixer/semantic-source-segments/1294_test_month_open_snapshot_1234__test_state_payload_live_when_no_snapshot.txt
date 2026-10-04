@@ -1,0 +1,13 @@
+# FILE: tests/test_month_open_snapshot_1234.py
+# NAME: test_state_payload_live_when_no_snapshot
+# LINE: 99-105
+# FLAGS: helper_or_private_call
+# KIND: py
+
+def test_state_payload_live_when_no_snapshot(game):
+    db, state, _content = game
+    live = _click_before_metrics(state)
+    payload = _runtime(db, state).state_payload()
+    assert payload["turn"]["settlement_display"] is False
+    for key in MONTH_OPEN_KEYS:
+        assert payload["metrics"][key] == live[key]

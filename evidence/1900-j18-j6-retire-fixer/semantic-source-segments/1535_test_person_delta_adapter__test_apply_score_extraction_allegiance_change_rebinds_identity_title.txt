@@ -1,0 +1,49 @@
+# FILE: tests/test_person_delta_adapter.py
+# NAME: test_apply_score_extraction_allegiance_change_rebinds_identity_title
+# LINE: 1532-1574
+# FLAGS: assert_text_compare_or_match
+# KIND: py
+
+def test_apply_score_extraction_allegiance_change_rebinds_identity_title(game):
+    db, state, content = game
+    name = active_ming_character(db, content)
+    old_office = content.characters[name].office
+    old_office_type = content.characters[name].office_type
+    old_power = content.characters[name].power_id
+
+    try:
+        db.set_character_office(name, "兵部尚书", "兵部")
+        content.characters[name].office = "兵部尚书"
+        content.characters[name].office_type = "兵部"
+        assert content.characters[name].office
+        applied = issues.apply_score_extraction(
+            db,
+            state,
+            {
+                "人物变更": [
+                    {
+                        "name": name,
+                        "origin_ref": "盘面自发", "动作": "易主",
+                        "方式": "主动投敌",
+                        "new_power": "houjin",
+                        "new_title": "降臣",
+                        "反噬": {},
+                        "reason": "阵前倒戈",
+                    }
+                ]
+            },
+            content=content,
+        )
+
+        row = db.conn.execute(
+            "SELECT power_id, office, office_type FROM characters WHERE name=?", (name,)
+        ).fetchone()
+        assert dict(row) == {"power_id": "houjin", "office": "降臣", "office_type": "身名分"}
+        assert content.characters[name].power_id == "houjin"
+        assert content.characters[name].office == "降臣"
+        assert content.characters[name].office_type == "身名分"
+        assert applied["applied_person_changes"][0]["new_title"] == "降臣"
+    finally:
+        content.characters[name].office = old_office
+        content.characters[name].office_type = old_office_type
+        content.characters[name].power_id = old_power

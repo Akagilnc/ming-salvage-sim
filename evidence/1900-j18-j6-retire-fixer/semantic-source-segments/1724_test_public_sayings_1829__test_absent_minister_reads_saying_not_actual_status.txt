@@ -1,0 +1,35 @@
+# FILE: tests/test_public_sayings_1829.py
+# NAME: test_absent_minister_reads_saying_not_actual_status
+# LINE: 79-107
+# FLAGS: assert_text_compare_or_match
+# KIND: py
+
+def test_absent_minister_reads_saying_not_actual_status(game):
+    db, state, content = game
+    reader = _礼部大臣(content)
+    assert reader.name != "袁崇焕"
+
+    record_public_saying(
+        db,
+        state,
+        "袁崇焕已死于宁远",
+        involved_characters=["袁崇焕"],
+    )
+
+    view = db.get_character_knowledge(state, reader.name)
+    public = view["public_events"]
+    saying = next(
+        item for item in public
+        if str(item.get("source_id") or "").startswith("public_saying:")
+    )
+    assert saying["title"] == "有此说法"
+    assert saying["body"] == "袁崇焕已死于宁远"
+
+    status, _ = db.get_character_status("袁崇焕")
+    assert status != "dead"
+    # 公开层是说法，不是把实况改成死讯。
+    known_items = list(view.get("events") or []) + list(public)
+    assert not any(
+        item.get("kind") == "character_status" and "死" in str(item.get("body") or "")
+        for item in known_items
+    )

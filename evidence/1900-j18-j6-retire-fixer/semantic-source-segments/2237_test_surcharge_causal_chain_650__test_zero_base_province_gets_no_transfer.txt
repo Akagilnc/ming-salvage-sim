@@ -1,0 +1,14 @@
+# FILE: tests/test_surcharge_causal_chain_650.py
+# NAME: test_zero_base_province_gets_no_transfer
+# LINE: 320-327
+# FLAGS: helper_or_private_call
+# KIND: py
+
+def test_zero_base_province_gets_no_transfer(game):
+    """无账（基线 0）省份零入池——停征后入池止的机制面。"""
+    db, state, content = game
+    pool_before = _pop(db, "流民", "henan")
+    applied = apply_score_extraction(db, state, {}, content, None)
+    henan = [r for r in applied["population_transfers"] if r.get("region_id") == "henan"]
+    assert henan == []
+    assert _pop(db, "流民", "henan") == pool_before

@@ -1,0 +1,17 @@
+# FILE: tests/test_rescript_choices_563.py
+# NAME: test_manual_mode_uses_typed_extractor_judgment
+# LINE: 32-42
+# FLAGS: mock_or_patch_present
+# KIND: py
+
+def test_manual_mode_uses_typed_extractor_judgment(
+    monkeypatch, emperor_text, extracted_mode, expected,
+):
+    extracted = json.dumps({
+        "拟旨意图": "拟旨", "动作类型": "policy", "目标类型": "issue",
+        "目标ID": "granary", "颁布方式": extracted_mode,
+    }, ensure_ascii=False)
+    monkeypatch.setattr(
+        cli_backend, "_run_backend_for_config", lambda *_args, **_kwargs: (extracted, {}),
+    )
+    assert cli_backend.capture_manual_directive_payload(emperor_text)["mode"] == expected

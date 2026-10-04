@@ -1,0 +1,40 @@
+# FILE: tests/test_event_trigger_gate.py
+# NAME: test_issue_tracker_close_respects_outer_transaction_rollback
+# LINE: 2639-2672
+# FLAGS: assert_text_compare_or_match
+# KIND: py
+
+def test_issue_tracker_close_respects_outer_transaction_rollback(game):
+    """post-merge CMR R4：close_issues 段不得由 db.close_issue 提前提交外层事务。"""
+    db, state, _content = game
+    issue_id = db.insert_issue(
+        state,
+        kind="situation",
+        title="测试·结案事务",
+        origin_kind="decree",
+        bar_value=40,
+        stage_text="结案前",
+        effect_on_resolve={"metrics": {"民心": 1}},
+        effect_on_fail={"metrics": {"民心": -1}},
+    )
+    before_advances = db.conn.execute(
+        "SELECT COUNT(*) FROM issue_advances WHERE issue_id=?",
+        (issue_id,),
+    ).fetchone()[0]
+    db.conn.commit()
+
+    db.conn.execute("BEGIN")
+    out = issues.apply_issue_tracker_output(
+        db,
+        state,
+        {"close_issues": [{"issue_id": issue_id, "reason": "resolved", "narrative": "结案"}]},
+    )
+    assert out["closes"][0]["reason"] == "resolved"
+    db.conn.rollback()
+
+    row = db.conn.execute("SELECT bar_value, stage_text, status FROM issues WHERE id=?", (issue_id,)).fetchone()
+    assert dict(row) == {"bar_value": 40, "stage_text": "结案前", "status": "active"}
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM issue_advances WHERE issue_id=?",
+        (issue_id,),
+    ).fetchone()[0] == before_advances

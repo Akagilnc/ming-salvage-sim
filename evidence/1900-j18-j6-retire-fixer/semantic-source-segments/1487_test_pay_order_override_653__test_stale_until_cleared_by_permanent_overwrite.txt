@@ -1,0 +1,35 @@
+# FILE: tests/test_pay_order_override_653.py
+# NAME: test_stale_until_cleared_by_permanent_overwrite
+# LINE: 1074-1102
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_stale_until_cleared_by_permanent_overwrite(game):
+    """F1.4：有期限旨被后来的永久旨覆盖 → 遗留 _until_turn 清除，新旨不再到期。"""
+    db, state, _content = game
+    turn = db._current_settle_turn()
+    d1 = _override_dossier(db, state, [
+        {"key": "due_priority_军饷", "value": 40, "until_turn": turn + 1},
+    ])
+    db.apply_dossier_promulgation(state, d1, "promulgated")
+    assert "due_priority_军饷_until_turn" in db.get_fiscal_config()
+    d2 = _override_dossier(db, state, [{"key": "due_priority_军饷", "value": 30}])
+    db.apply_dossier_promulgation(state, d2, "promulgated")   # 永久旨覆写
+    cfg = db.get_fiscal_config()
+    assert "due_priority_军饷_until_turn" not in cfg       # stale until 已清
+    assert cfg["due_priority_军饷"] == 30                  # 新永久旨在位
+    # tombstone append-only 审计在案（复用既有表，不增表）
+    tomb = db.conn.execute(
+        "SELECT key, value, origin_ref FROM fiscal_config_tombstones "
+        "WHERE key='due_priority_军饷_until_turn' ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    assert tomb is not None and tomb["origin_ref"] == f"dossier:{d2}"
+    # 跨过旧期限后新旨仍生效（修复前：旧 until 使新旨过期回落默认）
+    db.conn.execute("UPDATE game_state SET turn=? WHERE id=1", (turn + 2,))
+    opening = _opening_settle(db, "shaanxi")
+    params = copy.deepcopy(opening["p"])
+    params["due_order"] = ["官俸", "军饷", "宗禄", "赈济"]
+    expected = settle_tick(copy.deepcopy(opening["st"]), params, [])
+    actual = db.settle_province_tick("shaanxi")
+    assert actual.new_st == expected.new_st
+    assert actual.breakdown["实付分账"] == expected.breakdown["实付分账"]

@@ -1,0 +1,47 @@
+# FILE: tests/test_recommendation_batch_snapshot_1583.py
+# NAME: test_stale_recommendation_snapshot_still_rejected_outside_mutating_batch
+# LINE: 120-160
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_stale_recommendation_snapshot_still_rejected_outside_mutating_batch(game, monkeypatch):
+    """批外真实陈旧快照仍按既有契约拒绝——不得为点绿放松校验。"""
+    db, state, content = game
+    recommender = _pick_recommender(content)
+    row = next(
+        r for r in db.list_recommendation_candidates(state, recommender.name)
+        if r["status"] != "dismissed" and r["name"] != recommender.name
+    )
+    action_id = _stage_recommendation(
+        db, state, recommender.name, row, "巡盐御史", "边才可用",
+    )
+    # 批外盘面先变：快照相对当前盘面已陈旧。
+    db.conn.execute(
+        "UPDATE characters SET status='dismissed', office='', reason_code='获罪削籍' "
+        "WHERE name=?",
+        (row["name"],),
+    )
+    db.conn.commit()
+
+    result = db.commit_pending_actions(
+        state, content=content, action_ids=[action_id],
+    )
+    assert result and result[0]["id"] == action_id
+
+    did = _proposed_appointment_dossier_id(db, action_id)
+    ref = decree_ref_for_dossier(db, db.get_decree_dossier(did))
+    db.staged_declarations.stage(
+        decree_ref=ref, declaration={}, turn=int(state.turn),
+        verdict={"decision": "promulgated"}, forecast_text="",
+    )
+    session = _prepare_player_month(db, state, content, monkeypatch)
+    with pytest.raises(SettlementAbort):
+        session.resolve_turn(allow_empty_decree=True)
+    assert db.get_decree_dossier(did)["status"] == "proposed"
+
+    assert db.list_recommendation_events(state, recommender.name) == []
+    char = db.conn.execute(
+        "SELECT office, status FROM characters WHERE name=?", (row["name"],),
+    ).fetchone()
+    assert char["status"] == "dismissed"
+    assert char["office"] != "巡盐御史"

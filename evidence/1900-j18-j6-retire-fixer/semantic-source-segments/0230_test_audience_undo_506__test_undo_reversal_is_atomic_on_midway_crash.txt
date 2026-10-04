@@ -1,0 +1,31 @@
+# FILE: tests/test_audience_undo_506.py
+# NAME: test_undo_reversal_is_atomic_on_midway_crash
+# LINE: 295-319
+# FLAGS: assert_count,mock_or_patch_present,helper_or_private_call
+# KIND: py
+
+def test_undo_reversal_is_atomic_on_midway_crash(game, monkeypatch):
+    db, state, content = game
+    m = _active_minister(db, content)
+
+    def _land_secret(night_id: int, chat_id: int) -> None:
+        create_test_secret_order(db, state, m, "密查漕运", "密查漕运折耗", ["漕运"])
+    night_id, chat_id = _run_round(
+        db, state, m, writes=_land_secret,
+        declaration=_minister_declaration(m, "领旨。"),
+    )
+
+    # 注入撤回逆转事务内的崩溃（末步 agno 截断处）
+    def _boom(*_a, **_k):
+        raise RuntimeError("注入：撤回中途崩溃")
+    monkeypatch.setattr(db, "_truncate_agno_runs_in_tx", _boom)
+
+    with pytest.raises(RuntimeError):
+        db.undo_chat_turn(chat_id)
+
+    # 全有或全无：崩溃 → 原样未撤（账/密令/轮状态一律不变，无半撤回脏档）
+    assert db.conn.execute("SELECT COUNT(*) FROM secret_orders").fetchone()[0] == 1
+    assert any(e["source_chat_turn_id"] == chat_id for e in an.list_ledger(db, night_id))
+    assert db.conn.execute(
+        "SELECT status FROM chat_turns WHERE id = ?", (chat_id,)
+    ).fetchone()["status"] == "active"

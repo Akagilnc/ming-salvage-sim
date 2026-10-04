@@ -1,0 +1,49 @@
+# FILE: tests/test_month_chain_1847.py
+# NAME: test_step_4a_missing_covert_fidelity_records_inline_rejection
+# LINE: 1465-1507
+# FLAGS: assert_text_compare_or_match,assert_count,mock_or_patch_present,helper_or_private_call
+# KIND: py
+
+def test_step_4a_missing_covert_fidelity_records_inline_rejection(game, monkeypatch):
+    """步骤 4a：密令缺少有效执行态时按 0073 记入 inline rejection，不静默吞掉。"""
+    db, state, content = game
+    turn = int(state.turn)
+    minister = db.conn.execute(
+        "SELECT name FROM characters WHERE status='active' AND power_id='ming' LIMIT 1"
+    ).fetchone()[0]
+    order_id = create_test_secret_order(
+        db, state, minister, "密令执行态缺失", "差务", [], deadline_months=2,
+    )
+    db.conn.execute("UPDATE secret_orders SET turn_issued=? WHERE id=?", (turn - 1, order_id))
+    dossier_id = int(db.get_dossier_for_secret_order(order_id)["id"])
+    db.conn.commit()
+
+    # Supply run provides 0058 report, but omits covert_exec_selections!
+    def supply_run(*_a, **_k):
+        return {
+            "dossier_progress_reports": [{
+                "dossier_id": dossier_id,
+                "progress_band": "持平",
+                "memorial_text": "按期奏报",
+            }],
+            "covert_exec_selections": [],
+        }
+
+    _forbid_extractor(monkeypatch)
+    monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "边事暂宁。")
+    monkeypatch.setattr(month_translate, "translate_month_segment", lambda *a, **k: {"effects": {}})
+    monkeypatch.setattr(month_chain, "run_secret_orders_supply", supply_run)
+
+    session = make_light_session(db, state, content)
+
+    result = session.resolve_turn(allow_empty_decree=True)
+    assert result.stage == "gazette"
+
+    # Inline rejection：断言机读 category，不读人读 prose（ADR 0142 / 0073）
+    rejections = db.conn.execute(
+        "SELECT section, category, reason FROM rejection_reports "
+        "WHERE turn=? AND section='covert_exec_selections'",
+        (turn,),
+    ).fetchall()
+    assert len(rejections) == 1
+    assert rejections[0]["category"] == "invalid_enum"

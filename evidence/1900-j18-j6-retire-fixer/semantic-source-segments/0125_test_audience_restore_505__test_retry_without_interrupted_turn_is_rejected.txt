@@ -1,0 +1,14 @@
+# FILE: tests/test_audience_restore_505.py
+# NAME: test_retry_without_interrupted_turn_is_rejected
+# LINE: 341-348
+# FLAGS: helper_or_private_call
+# KIND: py
+
+def test_retry_without_interrupted_turn_is_rejected(restore_env):
+    """负向：无待重试轮时重试响亮拒绝，不静默造轮。"""
+    env = restore_env
+    db, state, content = env.db, env.state, env.content
+    minister = _active_minister(db, content)
+    rt = _retry_runtime(db, state, minister)
+    with pytest.raises(HTTPException):
+        rt.retry_interrupted_reply(minister)

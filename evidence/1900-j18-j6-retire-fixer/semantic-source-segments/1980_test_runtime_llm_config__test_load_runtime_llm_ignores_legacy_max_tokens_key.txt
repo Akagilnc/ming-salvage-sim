@@ -1,0 +1,27 @@
+# FILE: tests/test_runtime_llm_config.py
+# NAME: test_load_runtime_llm_ignores_legacy_max_tokens_key
+# LINE: 53-73
+# FLAGS: assert_text_compare_or_match,assert_count,mock_or_patch_present,retired_or_meta_marker
+# KIND: py
+
+def test_load_runtime_llm_ignores_legacy_max_tokens_key(tmp_path, monkeypatch):
+    """#1472：旧 runtime_llm.json 带 max_tokens 键载入不炸、键被自然忽略（勿写迁移）。"""
+    path = tmp_path / "runtime_llm.json"
+    path.write_text(json.dumps({
+        "channel": "api",
+        "api": {
+            "base_url": "https://x/v1",
+            "model": "m",
+            "api_key": "sk-x",
+            "max_tokens": 6000,
+            "timeout_seconds": 120,
+        },
+        "max_tokens": 8000,
+    }, ensure_ascii=False), encoding="utf-8")
+    monkeypatch.setattr(llm_config, "RUNTIME_LLM_PATH", str(path))
+    out = llm_config.load_runtime_llm()
+    assert out["channel"] == "api"
+    assert out["api"]["model"] == "m"
+    assert out["api"]["timeout_seconds"] == 120
+    assert "max_tokens" not in out["api"]
+    assert "max_tokens" not in out

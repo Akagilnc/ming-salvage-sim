@@ -1,0 +1,54 @@
+# FILE: tests/test_faction_denunciation_627.py
+# NAME: test_ac2_scripted_accept_and_clamp
+# LINE: 166-213
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_ac2_scripted_accept_and_clamp(game):
+    db, state, _content = game
+    subject, _ = _pair_enemy(db)
+    subject_name = str(subject["name"])
+    subject_faction = str(subject["faction"])
+    accuser = _enemy_accuser(db, subject_faction)
+
+    did = _subject_dossier(db, state, owner=subject_name, token="acc")
+    _make_forked(db, state, did, token="acc")
+
+    body = f"{accuser}奏：{subject_name}清丈有私，请皇上按问。"
+    hits = db.accept_faction_denunciations(
+        state,
+        [_scripted_entry(
+            accuser=accuser, subject=subject_name, dossier_id=did, body=body,
+        )],
+        commit=True,
+    )
+    assert len(hits) == 1
+    hit = hits[0]
+    assert hit["accuser_name"] == accuser
+    assert int(hit["target_dossier_id"]) == did
+    assert hit["memorial_text"] == body
+    assert origin_has_mark(hit["origin"], ORIGIN_MARK_DENUNCIATION_TRUE)
+
+    rows = db.list_faction_denunciations(turn=state.turn, target_dossier_id=did)
+    assert len(rows) == 1
+    assert rows[0]["memorial_text"] == body
+
+    # 所指案卷不存在 → 拒
+    missing = db.accept_faction_denunciations(
+        state,
+        [_scripted_entry(
+            accuser=accuser, subject=subject_name, dossier_id=9_999_999,
+        )],
+        commit=True,
+    )
+    assert missing == []
+
+    # 检举人不在场 → 拒
+    ghost = db.accept_faction_denunciations(
+        state,
+        [_scripted_entry(
+            accuser="不存在之人甲乙丙", subject=subject_name, dossier_id=did,
+        )],
+        commit=True,
+    )
+    assert ghost == []

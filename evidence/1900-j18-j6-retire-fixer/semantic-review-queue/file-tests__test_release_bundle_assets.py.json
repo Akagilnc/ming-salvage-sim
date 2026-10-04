@@ -1,0 +1,34 @@
+{
+  "source_path": "tests/test_release_bundle_assets.py",
+  "member_count": 2,
+  "members": [
+    {
+      "idx": 1895,
+      "file": "tests/test_release_bundle_assets.py",
+      "name": "test_pool_portrait_scan_falls_back_to_built_dist_when_public_absent",
+      "line": 20,
+      "end": 33,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1895_test_release_bundle_assets__test_pool_portrait_scan_falls_back_to_built_dist_when_public_absent.txt",
+      "source_path": "tests/test_release_bundle_assets.py"
+    },
+    {
+      "idx": 1896,
+      "file": "tests/test_release_bundle_assets.py",
+      "name": "test_spec_datas_puts_requirements_at_bundle_root",
+      "line": 37,
+      "end": 33,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1896_test_release_bundle_assets__test_spec_datas_puts_requirements_at_bundle_root.txt",
+      "source_path": "tests/test_release_bundle_assets.py"
+    }
+  ]
+}

@@ -1,0 +1,37 @@
+# FILE: tests/test_rejection_wiring.py
+# NAME: test_inertia_power_move_backlash_rejection_lands_in_reports
+# LINE: 486-516
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_inertia_power_move_backlash_rejection_lands_in_reports(game, monkeypatch, tmp_path):
+    """Natural issue resolution must persist nested person backlash rejections."""
+    from tests.test_due_review_621 import _settle_empty_month
+
+    db, state, content = game
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    turn = state.turn
+    name = active_ming_character(db, content)
+    ch = content.characters[name]
+    old_power, old_office, old_office_type = ch.power_id, ch.office, ch.office_type
+    db.insert_issue(
+        state, kind="situation", title="惯性反噬留痕测试", bar_value=99, inertia=1,
+        effect_on_resolve={"人物变更": [{
+            "origin_ref": "盘面自发", "name": name, "动作": "易主",
+            "new_power": "houjin", "方式": "主动投敌",
+            "反噬": {"查无此势力": {"leverage": 5}}, "reason": "测试惯性反噬拒收",
+        }]},
+    )
+    db.conn.commit()
+    try:
+        _settle_empty_month(db, state, content, monkeypatch)
+        rows = db.conn.execute(
+            "SELECT section, reason, category FROM rejection_reports WHERE turn=? ORDER BY id",
+            (turn,),
+        ).fetchall()
+        assert len(rows) == 1
+        assert rows[0]["section"] == "issue_summary.applied_person_changes.backlash_results"
+        assert rows[0]["reason"]
+        assert rows[0]["category"] == "hallucinated_id"
+    finally:
+        ch.power_id, ch.office, ch.office_type = old_power, old_office, old_office_type

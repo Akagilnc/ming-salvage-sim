@@ -1,0 +1,38 @@
+# FILE: tests/test_audience_undo_506.py
+# NAME: test_undo_removes_unlisted_person_registration
+# LINE: 195-226
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_undo_removes_unlisted_person_registration(game):
+    db, state, content = game
+    from ming_sim.models import Character
+
+    caller = _active_minister(db, content)
+    newcomer = "临时借调_算学郎中"  # 未在册者
+
+    def _register(night_id: int, chat_id: int) -> None:
+        # 白名单②「未在册人物入册」：被宣召的未在册者须即时建档才能开口。
+        db.add_character(state, Character(
+            name=newcomer, office="翰林院侍读", office_type="翰林院", faction="",
+            aliases=[], personal_skills=[], loyalty=60, ability=70,
+            integrity=60, courage=50, style="谨饬", power_id="ming",
+        ), source="宣召入册")
+        an.ensure_summon_enter(db, night_id, newcomer, origin_chat_turn_id=chat_id)
+
+    night_id, chat_id = _run_round(db, state, caller, writes=_register)
+
+    assert db.get_character_status(newcomer)[0] == "active"
+    assert newcomer in an.persons_present_tonight(db, night_id)
+
+    db.undo_chat_turn(chat_id)
+
+    # 档案（characters/character_offices）消失
+    assert db.conn.execute(
+        "SELECT 1 FROM characters WHERE name = ?", (newcomer,)
+    ).fetchone() is None
+    assert db.conn.execute(
+        "SELECT 1 FROM character_offices WHERE character_name = ?", (newcomer,)
+    ).fetchone() is None
+    # 入殿账消失 → 在场推导里像没登场过
+    assert newcomer not in an.persons_present_tonight(db, night_id)

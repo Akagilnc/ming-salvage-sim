@@ -1,0 +1,210 @@
+{
+  "source_path": "tests/test_cli_backend.py",
+  "member_count": 15,
+  "members": [
+    {
+      "idx": 349,
+      "file": "tests/test_cli_backend.py",
+      "name": "test_material_runner_uses_cwd_and_read_only_tool_surface",
+      "line": 43,
+      "end": 73,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0349_test_cli_backend__test_material_runner_uses_cwd_and_read_only_tool_surface.txt",
+      "source_path": "tests/test_cli_backend.py"
+    },
+    {
+      "idx": 350,
+      "file": "tests/test_cli_backend.py",
+      "name": "test_run_runner_fail_loud_on_bad_exit",
+      "line": 78,
+      "end": 84,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0350_test_cli_backend__test_run_runner_fail_loud_on_bad_exit.txt",
+      "source_path": "tests/test_cli_backend.py"
+    },
+    {
+      "idx": 351,
+      "file": "tests/test_cli_backend.py",
+      "name": "test_run_agy_auth_race_is_retryable_typed_without_private_loop",
+      "line": 88,
+      "end": 95,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0351_test_cli_backend__test_run_agy_auth_race_is_retryable_typed_without_private_loop.txt",
+      "source_path": "tests/test_cli_backend.py"
+    },
+    {
+      "idx": 352,
+      "file": "tests/test_cli_backend.py",
+      "name": "test_kimi_material_file_is_removed_on_start_failure",
+      "line": 98,
+      "end": 118,
+      "flags": [
+        "mock_or_patch_present"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0352_test_cli_backend__test_kimi_material_file_is_removed_on_start_failure.txt",
+      "source_path": "tests/test_cli_backend.py"
+    },
+    {
+      "idx": 353,
+      "file": "tests/test_cli_backend.py",
+      "name": "test_clichat_codex_response_stream_passes_reasoning_strength",
+      "line": 121,
+      "end": 129,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0353_test_cli_backend__test_clichat_codex_response_stream_passes_reasoning_strength.txt",
+      "source_path": "tests/test_cli_backend.py"
+    },
+    {
+      "idx": 354,
+      "file": "tests/test_cli_backend.py",
+      "name": "test_clichat_call_cli_unknown_backend_raises",
+      "line": 132,
+      "end": 137,
+      "flags": [
+        "mock_or_patch_present"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0354_test_cli_backend__test_clichat_call_cli_unknown_backend_raises.txt",
+      "source_path": "tests/test_cli_backend.py"
+    },
+    {
+      "idx": 355,
+      "file": "tests/test_cli_backend.py",
+      "name": "test_enrich_army_parsed_and_normalized",
+      "line": 140,
+      "end": 149,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "mock_or_patch_present"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0355_test_cli_backend__test_enrich_army_parsed_and_normalized.txt",
+      "source_path": "tests/test_cli_backend.py"
+    },
+    {
+      "idx": 356,
+      "file": "tests/test_cli_backend.py",
+      "name": "test_enrich_building_region_floor",
+      "line": 152,
+      "end": 157,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0356_test_cli_backend__test_enrich_building_region_floor.txt",
+      "source_path": "tests/test_cli_backend.py"
+    },
+    {
+      "idx": 357,
+      "file": "tests/test_cli_backend.py",
+      "name": "test_enrich_backend_error_returns_empty_effects",
+      "line": 161,
+      "end": 171,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0357_test_cli_backend__test_enrich_backend_error_returns_empty_effects.txt",
+      "source_path": "tests/test_cli_backend.py"
+    },
+    {
+      "idx": 358,
+      "file": "tests/test_cli_backend.py",
+      "name": "test_backend_env",
+      "line": 175,
+      "end": 177,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0358_test_cli_backend__test_backend_env.txt",
+      "source_path": "tests/test_cli_backend.py"
+    },
+    {
+      "idx": 359,
+      "file": "tests/test_cli_backend.py",
+      "name": "test_gate_llm_config_cli_channel",
+      "line": 180,
+      "end": 185,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0359_test_cli_backend__test_gate_llm_config_cli_channel.txt",
+      "source_path": "tests/test_cli_backend.py"
+    },
+    {
+      "idx": 360,
+      "file": "tests/test_cli_backend.py",
+      "name": "test_gate_llm_config_api_from_args_not_persisted_shape",
+      "line": 188,
+      "end": 196,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0360_test_cli_backend__test_gate_llm_config_api_from_args_not_persisted_shape.txt",
+      "source_path": "tests/test_cli_backend.py"
+    },
+    {
+      "idx": 361,
+      "file": "tests/test_cli_backend.py",
+      "name": "test_gate_llm_config_api_from_env",
+      "line": 199,
+      "end": 203,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0361_test_cli_backend__test_gate_llm_config_api_from_env.txt",
+      "source_path": "tests/test_cli_backend.py"
+    },
+    {
+      "idx": 362,
+      "file": "tests/test_cli_backend.py",
+      "name": "test_gate_evidence_config_honest_cli_and_api",
+      "line": 222,
+      "end": 228,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0362_test_cli_backend__test_gate_evidence_config_honest_cli_and_api.txt",
+      "source_path": "tests/test_cli_backend.py"
+    },
+    {
+      "idx": 363,
+      "file": "tests/test_cli_backend.py",
+      "name": "test_add_gate_llm_args_uses_gate_cli_runners",
+      "line": 231,
+      "end": 237,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0363_test_cli_backend__test_add_gate_llm_args_uses_gate_cli_runners.txt",
+      "source_path": "tests/test_cli_backend.py"
+    }
+  ]
+}

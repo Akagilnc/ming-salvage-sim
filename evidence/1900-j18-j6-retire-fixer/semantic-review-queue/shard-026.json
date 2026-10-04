@@ -1,0 +1,979 @@
+{
+  "shard": 26,
+  "files": [
+    "tests/test_secret_order_isolation_883.py",
+    "tests/test_secret_order_monthly_progress_566.py",
+    "tests/test_secret_order_payoff_1504.py",
+    "tests/test_secret_order_section_rejections.py"
+  ],
+  "count": 79,
+  "items": [
+    {
+      "file": "tests/test_secret_order_isolation_883.py",
+      "name": "test_883_two_turn_probe_secret_never_enters_shared_archives",
+      "line": 44,
+      "end": 83,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_secret_order_isolation_883.py",
+      "name": "test_883_shared_summary_write_seam_rejects_secret_order_source",
+      "line": 86,
+      "end": 111,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_secret_order_isolation_883.py",
+      "name": "test_883_audience_chat_path_does_not_leave_secret_in_shared_sources",
+      "line": 114,
+      "end": 159,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_secret_order_isolation_883.py",
+      "name": "test_883_audience_chat_paraphrase_does_not_leave_origin_in_shared_sources",
+      "line": 162,
+      "end": 228,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_secret_order_isolation_883.py",
+      "name": "test_883_shared_write_seam_keeps_public_assignee_audience",
+      "line": 231,
+      "end": 248,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_secret_order_isolation_883.py",
+      "name": "test_883_public_audience_same_turn_survives_secret_classification",
+      "line": 251,
+      "end": 308,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_secret_order_isolation_883.py",
+      "name": "test_883_post_brief_public_audience_enters_shared_sources",
+      "line": 311,
+      "end": 338,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_secret_order_isolation_883.py",
+      "name": "test_883_cross_turn_chat_origin_withheld_on_late_secret_create",
+      "line": 343,
+      "end": 373,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_secret_order_isolation_883.py",
+      "name": "test_883_zero_overlap_semantic_rewrite_withholds_prior_audience_origin",
+      "line": 376,
+      "end": 413,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_secret_order_isolation_883.py",
+      "name": "test_883_thematic_public_audience_survives_secret_create",
+      "line": 416,
+      "end": 466,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_secret_order_isolation_883.py",
+      "name": "test_976_minister_reply_not_shared_before_classification",
+      "line": 469,
+      "end": 484,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_secret_order_isolation_883.py",
+      "name": "test_976_pure_public_minister_reply_released_after_settle",
+      "line": 487,
+      "end": 503,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_secret_order_isolation_883.py",
+      "name": "test_976_secret_chat_turn_withholds_both_sides_but_public_turn_survives",
+      "line": 506,
+      "end": 565,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_secret_order_isolation_883.py",
+      "name": "test_976_withhold_does_not_yank_old_released_public_user",
+      "line": 568,
+      "end": 609,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_secret_order_isolation_883.py",
+      "name": "test_976_release_stamps_original_message_date",
+      "line": 612,
+      "end": 642,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_secret_order_isolation_883.py",
+      "name": "test_883_shared_archive_bypass_positive_and_negative",
+      "line": 645,
+      "end": 666,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_secret_order_isolation_883.py",
+      "name": "test_976_held_user_chat_released_when_never_classified_as_secret",
+      "line": 669,
+      "end": 693,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_secret_order_isolation_883.py",
+      "name": "test_883_only_explicit_leak_conclusion_promotes_secret_order_to_public",
+      "line": 696,
+      "end": 726,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_secret_order_isolation_883.py",
+      "name": "test_883_cross_turn_repeat_disclosed_does_not_mint_duplicate_public_event",
+      "line": 729,
+      "end": 767,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_secret_order_isolation_883.py",
+      "name": "test_976_cross_person_speaker_user_origin_withheld_not_shared",
+      "line": 772,
+      "end": 810,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_secret_order_isolation_883.py",
+      "name": "test_976_same_window_pure_public_user_survives_secret_classification",
+      "line": 813,
+      "end": 867,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_secret_order_isolation_883.py",
+      "name": "test_976_stage_confirm_pin_provenance_not_max_held_user",
+      "line": 870,
+      "end": 946,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_secret_order_isolation_883.py",
+      "name": "test_976_non_create_stage_commit_update_withholds_oral_pin",
+      "line": 973,
+      "end": 1034,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_secret_order_isolation_883.py",
+      "name": "test_976_non_create_stage_commit_rush_withholds_oral_pin",
+      "line": 1037,
+      "end": 1084,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_secret_order_isolation_883.py",
+      "name": "test_976_non_create_stage_commit_progress_and_review_withhold_oral_pin",
+      "line": 1087,
+      "end": 1136,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_secret_order_isolation_883.py",
+      "name": "test_976_non_create_pure_public_not_auto_pinned_as_secret_origin",
+      "line": 1139,
+      "end": 1205,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_secret_order_isolation_883.py",
+      "name": "test_976_pending_secret_pin_survives_partial_commit_same_minister",
+      "line": 1253,
+      "end": 1292,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_secret_order_isolation_883.py",
+      "name": "test_976_retryable_failed_secret_pin_stays_withheld_during_other_commit",
+      "line": 1295,
+      "end": 1328,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_secret_order_isolation_883.py",
+      "name": "test_976_rt01_two_secret_orders_different_assignees_no_cross_track",
+      "line": 1331,
+      "end": 1391,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_secret_order_isolation_883.py",
+      "name": "test_976_rt02_misassigned_provenance_follows_origin_message",
+      "line": 1394,
+      "end": 1451,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_secret_order_isolation_883.py",
+      "name": "test_976_rt03_late_chat_after_create_same_turn",
+      "line": 1454,
+      "end": 1489,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_secret_order_isolation_883.py",
+      "name": "test_976_rt04_undo_chat_turn_secret_order_brief_consistent",
+      "line": 1492,
+      "end": 1561,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_secret_order_isolation_883.py",
+      "name": "test_1026_secret_order_update_rollback_restores_existing_brief",
+      "line": 1565,
+      "end": 1612,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_secret_order_isolation_883.py",
+      "name": "test_976_rt05_save_restore_between_hold_and_release",
+      "line": 1615,
+      "end": 1689,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_secret_order_isolation_883.py",
+      "name": "test_976_message_level_origin_persisted_on_brief",
+      "line": 1692,
+      "end": 1714,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_secret_order_monthly_progress_566.py",
+      "name": "test_only_emperor_private_payload_shows_monthly_report",
+      "line": 63,
+      "end": 85,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_secret_order_monthly_progress_566.py",
+      "name": "test_disclosure_promotes_monthly_report_to_public_event_only_after_disclosure",
+      "line": 88,
+      "end": 110,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_secret_order_monthly_progress_566.py",
+      "name": "test_titles_do_not_classify_and_all_active_secret_orders_are_candidates",
+      "line": 113,
+      "end": 132,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_secret_order_monthly_progress_566.py",
+      "name": "test_only_an_existing_monthly_chain_gets_terminal_progress",
+      "line": 135,
+      "end": 151,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_secret_order_monthly_progress_566.py",
+      "name": "test_character_terminal_status_closes_secret_orders_through_canonical_progress_rail",
+      "line": 154,
+      "end": 194,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_secret_order_monthly_progress_566.py",
+      "name": "test_current_secret_order_deadline_controls_monthly_eligibility",
+      "line": 197,
+      "end": 211,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_secret_order_monthly_progress_566.py",
+      "name": "test_real_no_edict_entries_roll_back_every_external_state_after_fiscal_write",
+      "line": 275,
+      "end": 359,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_secret_order_monthly_progress_566.py",
+      "name": "test_missing_bad_unknown_and_duplicate_reports_are_rejected",
+      "line": 362,
+      "end": 384,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_secret_order_payoff_1504.py",
+      "name": "test_task_specific_contract_from_explicit_fields_not_tags",
+      "line": 155,
+      "end": 162,
+      "flags": [
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_secret_order_payoff_1504.py",
+      "name": "test_confirmation_rejects_incomplete_delivery_identity",
+      "line": 177,
+      "end": 187,
+      "flags": [
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_secret_order_payoff_1504.py",
+      "name": "test_confirm_persists_task_specific_contract_absent_before",
+      "line": 192,
+      "end": 216,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_secret_order_payoff_1504.py",
+      "name": "test_actual_progress_container_separate_from_reported_rail",
+      "line": 219,
+      "end": 248,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_secret_order_payoff_1504.py",
+      "name": "test_settle_due_reads_actual_rail_only_report_does_not_flip_verdict",
+      "line": 251,
+      "end": 277,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_secret_order_payoff_1504.py",
+      "name": "test_settle_due_keeps_existing_progress_result_over_memorial",
+      "line": 280,
+      "end": 305,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_secret_order_payoff_1504.py",
+      "name": "test_monthly_actual_then_delivered_done",
+      "line": 311,
+      "end": 339,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_secret_order_payoff_1504.py",
+      "name": "test_gap_after_months_failed",
+      "line": 342,
+      "end": 363,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_secret_order_payoff_1504.py",
+      "name": "test_n_month_deadline_yields_exactly_n_ticks",
+      "line": 366,
+      "end": 405,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_secret_order_payoff_1504.py",
+      "name": "test_offstage_minister_no_progress_no_world_effects",
+      "line": 412,
+      "end": 438,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_secret_order_payoff_1504.py",
+      "name": "test_missing_minister_row_no_progress",
+      "line": 441,
+      "end": 459,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_secret_order_payoff_1504.py",
+      "name": "test_mid_month_restore_preserves_actual_progress",
+      "line": 462,
+      "end": 490,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_secret_order_payoff_1504.py",
+      "name": "test_secret_order_closes_field_is_ignored",
+      "line": 493,
+      "end": 507,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_secret_order_payoff_1504.py",
+      "name": "test_auto_submit_due_no_longer_flips_pending_review",
+      "line": 510,
+      "end": 527,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_secret_order_payoff_1504.py",
+      "name": "test_monthly_actual_progress_preserves_selected_fidelity_in_sqlite",
+      "line": 530,
+      "end": 546,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_secret_order_payoff_1504.py",
+      "name": "test_monthly_actual_does_not_invent_generic_world_package",
+      "line": 549,
+      "end": 575,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_secret_order_payoff_1504.py",
+      "name": "test_zero_target_is_not_delivered",
+      "line": 578,
+      "end": 582,
+      "flags": [
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_secret_order_payoff_1504.py",
+      "name": "test_submit_unlimited_keeps_frozen_target",
+      "line": 585,
+      "end": 611,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_secret_order_payoff_1504.py",
+      "name": "test_rush_preserves_frozen_contract",
+      "line": 614,
+      "end": 627,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_secret_order_payoff_1504.py",
+      "name": "test_unlimited_investigation_due_now_uses_one_month_quota",
+      "line": 631,
+      "end": 668,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_secret_order_payoff_1504.py",
+      "name": "test_1376_candidate_confirm_freezes_explicit_typed_contract",
+      "line": 671,
+      "end": 696,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_secret_order_payoff_1504.py",
+      "name": "test_investigation_lane_progress_emits_reason_before_used",
+      "line": 699,
+      "end": 755,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_secret_order_payoff_1504.py",
+      "name": "test_closed_case_blocks_same_fact_on_later_case_and_due",
+      "line": 758,
+      "end": 820,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_secret_order_payoff_1504.py",
+      "name": "test_fiscal_quantity_tracer_same_unit_done_and_gap",
+      "line": 823,
+      "end": 868,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_secret_order_payoff_1504.py",
+      "name": "test_region_quantity_ignores_same_origin_turn_with_mismatched_identity",
+      "line": 872,
+      "end": 893,
+      "flags": [
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_secret_order_payoff_1504.py",
+      "name": "test_catch_quantity_tracer_same_unit_done_and_mismatch_ignored",
+      "line": 896,
+      "end": 923,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_secret_order_payoff_1504.py",
+      "name": "test_create_secret_order_rejects_missing_contract",
+      "line": 927,
+      "end": 934,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_secret_order_payoff_1504.py",
+      "name": "test_purpose_liaoxiang_canonicalizes_to_other_and_counts",
+      "line": 937,
+      "end": 968,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_secret_order_payoff_1504.py",
+      "name": "test_region_monthly_progress_sums_increments_without_final_value_gate",
+      "line": 971,
+      "end": 1003,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_secret_order_payoff_1504.py",
+      "name": "test_positive_inflow_does_not_freeze_purpose_and_counts",
+      "line": 1008,
+      "end": 1047,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_secret_order_payoff_1504.py",
+      "name": "test_topic_investigation_backlash_fails_without_world_package",
+      "line": 1054,
+      "end": 1087,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_secret_order_section_rejections.py",
+      "name": "test_update_nonint_order_id_invalid_enum",
+      "line": 22,
+      "end": 35,
+      "flags": [
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_secret_order_section_rejections.py",
+      "name": "test_update_unknown_order_id_missing_ref",
+      "line": 38,
+      "end": 52,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_secret_order_section_rejections.py",
+      "name": "test_update_valid_active_order_applies_no_reject",
+      "line": 55,
+      "end": 74,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_secret_order_section_rejections.py",
+      "name": "test_apply_score_extraction_secret_order_update_respects_outer_transaction_rollback",
+      "line": 77,
+      "end": 98,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_secret_order_section_rejections.py",
+      "name": "test_oversized_order_id_rejected_not_crash",
+      "line": 101,
+      "end": 113,
+      "flags": [
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    }
+  ]
+}

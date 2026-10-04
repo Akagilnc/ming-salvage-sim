@@ -1,0 +1,66 @@
+# FILE: tests/test_audience_translate_1837.py
+# NAME: test_emperor_准_via_scene_chat_approves_no_reply_stays_unapproved
+# LINE: 538-597
+# FLAGS: assert_text_compare_or_match,assert_count,mock_or_patch_present,helper_or_private_call
+# KIND: py
+
+def test_emperor_准_via_scene_chat_approves_no_reply_stays_unapproved(game, monkeypatch):
+    """AC2：经 scene_chat 转译，「准」应允；不声明 promises 则默认不应允。"""
+    db, state, content = game
+    open_night(db, state, location="乾清宫", time_of_day="夜")
+    staged = dispatch_declaration(
+        db, state,
+        {"commissions": [{"text": "着户部备赈灾银"}]},
+        minister_name="", night_id=int(
+            db.conn.execute(
+                "SELECT id FROM audience_nights WHERE status='open' ORDER BY id DESC LIMIT 1"
+            ).fetchone()["id"]
+        ),
+    )
+    staged_id = int(staged.commissions.applied[0]["id"])
+
+    class FakeAgent:
+        def run(self, message):
+            return SimpleNamespace(content="臣在。", tools=[])
+
+    monkeypatch.setattr(
+        "ming_sim.session.create_scene_agent", lambda *a, **k: FakeAgent(),
+    )
+
+    # 不表态：空 promises
+    sess = _sess(
+        db, state, content, monkeypatch,
+        translate_fn=offline_empty_audience_translate,
+    )
+    _scene_turn(sess, db, state, "边事如何？")
+    row = db.conn.execute(
+        "SELECT night_approved FROM pending_actions WHERE id=?", (staged_id,),
+    ).fetchone()
+    assert int(row["night_approved"] or 0) == 0
+
+    # 「准」
+    def approve_fn(prompt, cfg):
+        return {
+            **offline_empty_audience_translate(prompt, cfg),
+            "commissions": [],
+            "promises": [{"action_id": staged_id, "decision": "应允"}],
+        }
+
+    stub_audience_translate(monkeypatch, approve_fn)
+    _scene_turn(sess, db, state, "准")
+    row = db.conn.execute(
+        "SELECT night_approved FROM pending_actions WHERE id=?", (staged_id,),
+    ).fetchone()
+    assert int(row["night_approved"] or 0) == 1
+
+    close_night(
+        db, state, content=content,
+        write_gate=sess._write_gate, write_queue=sess._write_queue,
+        llm_config=sess.llm_config,
+    )
+    pa = db.conn.execute(
+        "SELECT status, committed_directive_id FROM pending_actions WHERE id=?",
+        (staged_id,),
+    ).fetchone()
+    assert pa["status"] == "committed"
+    assert int(pa["committed_directive_id"] or 0) > 0

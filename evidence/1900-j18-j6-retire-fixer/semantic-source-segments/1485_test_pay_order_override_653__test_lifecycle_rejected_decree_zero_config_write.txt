@@ -1,0 +1,22 @@
+# FILE: tests/test_pay_order_override_653.py
+# NAME: test_lifecycle_rejected_decree_zero_config_write
+# LINE: 1043-1058
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_lifecycle_rejected_decree_zero_config_write(game):
+    """⑥打回：效果跟判决走——零 config 写入、零 provenance、结算照默认序。"""
+    from dossier_test_helpers import rejected_verdict
+
+    db, state, _content = game
+    did = _override_dossier(db, state, [{"key": "due_priority_军饷", "value": 40}])
+    before_cfg = db.get_fiscal_config()
+    before_rows = db.conn.execute(
+        "SELECT COUNT(*) c FROM fiscal_config_changes"
+    ).fetchone()["c"]
+    db.apply_dossier_verdicts(state, [rejected_verdict(did)])
+    assert db.get_fiscal_config() == before_cfg          # 零写入
+    assert db.conn.execute(
+        "SELECT COUNT(*) c FROM fiscal_config_changes"
+    ).fetchone()["c"] == before_rows                      # 零 provenance
+    assert db.get_decree_dossier(did)["status"] == "proposed"  # 打回持有态

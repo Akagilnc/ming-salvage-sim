@@ -1,0 +1,27 @@
+# FILE: tests/test_audience_scroll_539.py
+# NAME: test_same_departure_facts_emit_one_divider_but_later_departure_survives
+# LINE: 395-415
+# FLAGS: assert_count
+# KIND: py
+
+def test_same_departure_facts_emit_one_divider_but_later_departure_survives(game):
+    db, state, _ = game
+    night_id = open_audience_night(db, state)
+    first_turn, _ = append_night_chat(db, state, night_id, "杨嗣昌", "退下。", "臣告退。", 10)
+    an.append_ledger_entry(
+        db, night_id, tags=[an.TAG_EXIT],
+        person_names=["杨嗣昌"], order_key=10, body="杨嗣昌告退。",
+    )
+    an.append_ledger_entry(
+        db, night_id, tags=[], person_names=["杨嗣昌"],
+        presence_effect=an.PRESENCE_EXIT, source_chat_turn_id=first_turn, order_key=10,
+        body="杨嗣昌再退。",
+    )
+    an.append_ledger_entry(
+        db, night_id, tags=[an.TAG_EXIT],
+        person_names=["杨嗣昌"], order_key=20, body="杨嗣昌三退。",
+    )
+
+    dividers = [message for message in an.read_night_scroll(db, night_id) if message["beat"] == "divider"]
+
+    assert len(dividers) >= 2

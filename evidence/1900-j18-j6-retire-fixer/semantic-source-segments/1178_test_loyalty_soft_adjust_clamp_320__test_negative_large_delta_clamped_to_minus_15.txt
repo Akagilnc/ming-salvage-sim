@@ -1,0 +1,14 @@
+# FILE: tests/test_loyalty_soft_adjust_clamp_320.py
+# NAME: test_negative_large_delta_clamped_to_minus_15
+# LINE: 63-70
+# FLAGS: assert_count,helper_or_private_call
+# KIND: py
+
+def test_negative_large_delta_clamped_to_minus_15(game):
+    """①b generic 软调 -50 → 净 -15。"""
+    db, state, _ = game
+    _set_loyalty(db, loyalty=40)
+
+    _apply(db, state, {"loyalty": -50})
+
+    assert _loyalty(db) == 25

@@ -1,0 +1,40 @@
+# FILE: tests/test_scene_llm_1836.py
+# NAME: test_scene_chat_one_call_returns_multi_person_script
+# LINE: 47-80
+# FLAGS: assert_text_compare_or_match,assert_count,mock_or_patch_present,helper_or_private_call
+# KIND: py
+
+def test_scene_chat_one_call_returns_multi_person_script(game, monkeypatch):
+    """AC1：一轮戏文（可含多人）出自同一次场景调用。"""
+    db, state, content = game
+    open_night(db, state, location="乾清宫", time_of_day="夜")
+    night_id = int(get_open_night(db)["id"])
+    for name in ("王绍徽", "毕自严"):
+        if name not in present_names_at(db, night_id):
+            summon_enter(db, night_id, name)
+
+    script = (
+        "王绍徽出列奏道：臣以为洪承畴可当一面。\n"
+        "毕自严侧身插话：户部库藏尚可挪移三十万两。\n"
+        "王承恩欠身低语：皇爷，此人可用。"
+    )
+    calls: list[str] = []
+
+    class FakeAgent:
+        tools = []
+
+        def run(self, message):
+            calls.append(message)
+            return SimpleNamespace(content=script, tools=[])
+
+    monkeypatch.setattr("ming_sim.session.create_scene_agent", lambda *a, **k: FakeAgent())
+    # #1842：ctid=0 同步转译走 conftest 离线空声明缝，不另造平行 fixture。
+    sess = _sess(db, state, content, llm_config=SimpleNamespace(channel=""))
+    emperor = "洪承畴可堪大任？"
+    result = sess.scene_chat(emperor)
+
+    assert len(calls) == 1, "整段戏文必须出自同一次场景调用"
+    # #1842：opening 已在 create_scene_agent instructions；run 输入不得再拼一份。
+    assert calls[0] == emperor
+    assert result.answer == script
+    assert result.court_action == ""

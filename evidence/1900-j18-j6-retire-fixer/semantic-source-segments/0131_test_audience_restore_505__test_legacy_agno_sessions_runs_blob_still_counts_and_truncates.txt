@@ -1,0 +1,20 @@
+# FILE: tests/test_audience_restore_505.py
+# NAME: test_legacy_agno_sessions_runs_blob_still_counts_and_truncates
+# LINE: 601-614
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call,retired_or_meta_marker
+# KIND: py
+
+def test_legacy_agno_sessions_runs_blob_still_counts_and_truncates(restore_env):
+    """Old Agno 2 archives: sessions.runs blob path remains readable/writable."""
+    env = restore_env
+    db = env.db
+    _seed_agno_legacy_blob(db, "legacy", ["r1", "r2", "r3"], with_table=False)
+    assert db.agno_runs_length("legacy") == 3
+    db.truncate_agno_session_runs("legacy", 1)
+    assert db.agno_runs_length("legacy") == 1
+    runs, _ = db._decode_agno_runs(
+        db.conn.execute(
+            "SELECT runs FROM agno_sessions WHERE session_id=?", ("legacy",)
+        ).fetchone()["runs"]
+    )
+    assert [r["run_id"] for r in runs] == ["r1"]

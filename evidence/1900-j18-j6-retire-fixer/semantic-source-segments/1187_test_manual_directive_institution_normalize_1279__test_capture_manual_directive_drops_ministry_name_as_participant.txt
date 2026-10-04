@@ -1,0 +1,48 @@
+# FILE: tests/test_manual_directive_institution_normalize_1279.py
+# NAME: test_capture_manual_directive_drops_ministry_name_as_participant
+# LINE: 85-126
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_capture_manual_directive_drops_ministry_name_as_participant(game, monkeypatch):
+    """着户部… 不得把「户部」当人物参与人拒收；成案零 409。"""
+    import ming_sim.cli_backend as cli_backend
+
+    db, state, content = game
+    text = "着户部核清太仓实存，边饷优先"
+    _mock_draft_intent(
+        monkeypatch, text=text,
+        roster=[{"character_id": "户部", "tier": "主办", "role": "核太仓"}],
+    )
+
+    payload = cli_backend.capture_manual_directive_payload(
+        text, None, db=db, content=content,
+    )
+    roster = payload.get("participant_roster") or []
+    assert all(str(item.get("character_id") or "") != "户部" for item in roster)
+
+    from ming_sim.session import GameSession
+    session = GameSession.__new__(GameSession)
+    session.db = db
+    session.state = state
+    session.llm_config = None
+    session.content = content
+    dv = session.add_directive(text, dossier_payload=payload)
+    assert dv.id > 0
+    assert db.list_directives(state)
+    payload["assignee"] = "户部"
+    db.conn.execute(
+        "UPDATE turn_directives SET dossier_payload_json=? WHERE id=?",
+        (json.dumps(payload, ensure_ascii=False), int(dv.id)),
+    )
+    db.conn.commit()
+    db.ensure_dossiers_for_draft_directives(state)
+    rows = db.list_decree_dossiers()
+    assert rows
+    for row in rows:
+        roster = row.get("participant_roster") or []
+        ids = [
+            str(e.get("character_id") or "")
+            for e in roster if isinstance(e, dict)
+        ]
+        assert "户部" not in ids

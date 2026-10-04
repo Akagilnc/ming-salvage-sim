@@ -1,0 +1,15 @@
+# FILE: tests/test_person_delta_adapter.py
+# NAME: test_list_ministers_excludes_active_prince
+# LINE: 1893-1901
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_list_ministers_excludes_active_prince(read_game):
+    """召见阶段名册 GameSession.list_ministers 与各 roster 同口径排除 active 宗藩（cmr R5）。"""
+    from ming_sim.session import GameSession
+    db, state, content = read_game
+    name = _materialize_active_prince(db, state, content)
+    sess = GameSession.__new__(GameSession)
+    sess.db = db
+    sess.content = content
+    assert name not in [v.name for v in sess.list_ministers()], f"宗藩 {name} 漏进 list_ministers"

@@ -1,0 +1,36 @@
+# FILE: web/src/components/modals.test.tsx
+# NAME: "#1732 ChatModal · 撤回就地确认" / "取消零调用；确认后 onUndo"
+# LINE: 344-373
+# FLAGS: web_mock_spy_or_calls
+# KIND: web
+
+  it("取消零调用；确认后 onUndo", () => {
+    const onUndo = vi.fn();
+    const confirm = vi.spyOn(window, "confirm");
+    const host = renderModal({
+      minister: MINISTER_MOCK,
+      portraitPrefix: "minister_",
+      canUndoLastChat: true,
+      onUndo,
+    });
+    const undo = Array.from(host.querySelectorAll("button")).find((b) =>
+      (b.textContent || "").includes("撤回本轮")
+    ) as HTMLButtonElement;
+    act(() => undo.click());
+    expect(confirm).not.toHaveBeenCalled();
+    expect(onUndo).not.toHaveBeenCalled();
+    const panel = host.querySelector('[aria-label="撤回召对确认"]');
+    expect(panel).not.toBeNull();
+    const cancel = Array.from(panel!.querySelectorAll("button")).find((b) =>
+      (b.textContent || "").includes("取消")
+    );
+    act(() => cancel?.click());
+    expect(onUndo).not.toHaveBeenCalled();
+
+    act(() => undo.click());
+    const yes = Array.from(host.querySelector('[aria-label="撤回召对确认"]')!.querySelectorAll("button")).find((b) =>
+      (b.textContent || "").includes("继续撤回")
+    );
+    act(() => yes?.click());
+    expect(onUndo).toHaveBeenCalledWith("周延儒");
+  });

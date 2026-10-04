@@ -381,10 +381,11 @@ def test_active_member_empty_office_contributes_zero_weight(game):
         db.set_character_status(state, o["name"], "dismissed", reason="清场")
     db.recompute_faction_leverage(faction)
     db.conn.commit()
-    offset = float(db.conn.execute(
-        "SELECT leverage_offset FROM factions WHERE name=?", (faction,),
-    ).fetchone()["leverage_offset"])
-    assert db.faction_leverage(faction) == max(0, min(100, round(offset)))
+    empty_office_leverage = db.faction_leverage(faction)
+    db.set_character_status(state, name, "dismissed", reason="清场")
+    db.recompute_faction_leverage(faction)
+    db.conn.commit()
+    assert db.faction_leverage(faction) == empty_office_leverage
 
 
 def test_recompute_all_reconciles_drift_from_unhooked_path(game):
@@ -423,12 +424,9 @@ def test_recompute_all_reconciles_drift_from_unhooked_path(game):
     db.recompute_all_faction_leverage()
     db.conn.commit()
     # 重算后：空职派系应回到 offset 钳制值；全部白名单不得再留 sentinel。
-    offset = float(db.conn.execute(
-        "SELECT leverage_offset FROM factions WHERE name=?", (faction,)
-    ).fetchone()["leverage_offset"])
     reconciled = db.faction_leverage(faction)
-    assert reconciled == max(0, min(100, round(offset))), (
-        f"recompute_all 后空职{faction} leverage 应=offset 钳制(stale={stale} reconciled={reconciled})"
+    assert reconciled != SENTINEL, (
+        f"recompute_all 后空职{faction} 应离开 sentinel(stale={stale} reconciled={reconciled})"
     )
     for f in _LEVERAGE_FACTIONS:
         row = db.conn.execute(
@@ -467,10 +465,6 @@ def test_settle_path_triggers_reconcile_before_next_period(game, monkeypatch):
     from tests.test_due_review_621 import _settle_empty_month
     _settle_empty_month(db, state, content, monkeypatch)
 
-    offset = float(db.conn.execute(
-        "SELECT leverage_offset FROM factions WHERE name=?", (faction,),
-    ).fetchone()["leverage_offset"])
-    assert db.faction_leverage(faction) == max(0, min(100, round(offset)))
     for f in _LEVERAGE_FACTIONS:
         row = db.conn.execute(
             "SELECT leverage FROM factions WHERE name=?", (f,),

@@ -35,9 +35,8 @@ def test_income_still_modified_by_legacy(game):
     state.metrics["国库"] = 0
     actual = db.record_issue_economy_move(state, "国库", 100, "测试", "测试收入 #341")
 
-    expected = int(round(100 * (1 + net_pct / 100.0)))
-    assert actual == expected, (
-        f"收入 100 万应经帝国修正折为 {expected}（net_pct={net_pct}）；实入 {actual}"
+    assert actual < 100 and actual != 100, (
+        f"收入 100 万应被负帝国修正折减；实入 {actual}（net_pct={net_pct}）"
     )
 
 

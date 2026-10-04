@@ -1,0 +1,20 @@
+{
+  "source_path": "tests/test_family_tail_615.py",
+  "member_count": 1,
+  "members": [
+    {
+      "idx": 932,
+      "file": "tests/test_family_tail_615.py",
+      "name": "test_break_rank_appointment_rescript_td4_tracer",
+      "line": 126,
+      "end": 242,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0932_test_family_tail_615__test_break_rank_appointment_rescript_td4_tracer.txt",
+      "source_path": "tests/test_family_tail_615.py"
+    }
+  ]
+}

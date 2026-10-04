@@ -1,0 +1,113 @@
+# FILE: tests/test_person_delta_adapter.py
+# NAME: test_bandit_amnesty_rejects_same_power_top_level_suppression
+# LINE: 2966-3072
+# FLAGS: assert_text_compare_or_match,assert_count
+# KIND: py
+
+def test_bandit_amnesty_rejects_same_power_top_level_suppression(game):
+    """#190：招安同一流寇股时,削股只能作为易主内嵌反噬落一处账。
+
+    顶层 power_updates 同时再剿同一股 = 同一时段招安/剿股并行,须拒收,防双减;
+    其它流寇股不应被波及。
+    """
+    db, state, content = game
+    zhang = "张献忠"
+    li = "李自成"
+    zhang_power = "bandit_zhang_xianzhong_test"
+    li_power = "bandit_li_zicheng_test"
+    for power_id, name, leader, strength in (
+        (zhang_power, "张献忠双减测试股", zhang, 55),
+        (li_power, "李自成双减测试股", li, 48),
+    ):
+        db.conn.execute(
+            """
+            INSERT INTO powers
+            (id, name, kind, leader, stance, leverage, satisfaction, military_strength,
+             cohesion, supply, agenda, status, last_action, aliases)
+            VALUES (?, ?, '内乱', ?, '敌对', 25, 20, ?, 30, 22,
+                    '流寇分股测试', '小股啸聚', '', '[]')
+            """,
+            (power_id, name, leader, strength),
+        )
+    old_rows = {
+        name: dict(db.conn.execute(
+            "SELECT power_id, status, office, office_type FROM characters WHERE name=?",
+            (name,),
+        ).fetchone())
+        for name in (zhang, li)
+    }
+    old_content = {
+        name: (
+            content.characters[name].power_id,
+            content.characters[name].status,
+            content.characters[name].office,
+            content.characters[name].office_type,
+        )
+        for name in (zhang, li)
+    }
+    try:
+        for name, power_id in ((zhang, zhang_power), (li, li_power)):
+            db.conn.execute(
+                "UPDATE characters SET power_id=?, status='active', office=?, office_type='外臣' WHERE name=?",
+                (power_id, f"{name}流寇首领", name),
+            )
+            content.characters[name].power_id = power_id
+            content.characters[name].status = "active"
+            content.characters[name].office = f"{name}流寇首领"
+            content.characters[name].office_type = "外臣"
+        db.conn.commit()
+
+        applied = issues.apply_score_extraction(
+            db,
+            state,
+            {
+                "power_updates": {
+                    zhang_power: {"military_strength": -7, "reason": "同股剿股误混"},
+                },
+                "人物变更": [
+                    {
+                        "name": zhang,
+                        "origin_ref": "盘面自发", "动作": "易主",
+                        "new_power": "ming",
+                        "方式": "主动归附",
+                        "反噬": {zhang_power: {"military_strength": -5, "reason": "谷城就抚拆散其股"}},
+                        "reason": "谷城受抚归明",
+                    },
+                    {"name": zhang, "origin_ref": "盘面自发", "动作": "任命", "office": "游击将军", "office_type": "边镇", "region_id": "huguang", "reason": "授武将名分"},
+                ],
+            },
+            content=content,
+        )
+
+        zhang_strength = db.conn.execute(
+            "SELECT military_strength FROM powers WHERE id=?", (zhang_power,)
+        ).fetchone()["military_strength"]
+        li_strength = db.conn.execute(
+            "SELECT military_strength FROM powers WHERE id=?", (li_power,)
+        ).fetchone()["military_strength"]
+        log_deltas = [
+            row["delta"]
+            for row in db.conn.execute(
+                "SELECT delta FROM power_logs WHERE power_id=? AND field='military_strength' ORDER BY id",
+                (zhang_power,),
+            ).fetchall()
+        ]
+        assert zhang_strength == 50, "张献忠股只能吃易主内嵌反噬 -5,不得再叠加顶层剿股 -7"
+        assert li_strength == 48, "招安张献忠不得波及李自成股"
+        assert log_deltas == [-5], "削股须一处落账,不得同股双写 power_logs"
+        assert any(
+            item.get("rejected") and item.get("power_id") == zhang_power
+            for item in applied["power_changes"]
+        ), f"同股顶层剿股应显式拒收,实得 {applied['power_changes']}"
+    finally:
+        for name, row in old_rows.items():
+            db.conn.execute(
+                "UPDATE characters SET power_id=?, status=?, office=?, office_type=? WHERE name=?",
+                (row["power_id"], row["status"], row["office"], row["office_type"], name),
+            )
+        for name, values in old_content.items():
+            ch = content.characters[name]
+            ch.power_id, ch.status, ch.office, ch.office_type = values
+        db.conn.execute("DELETE FROM power_logs WHERE power_id IN (?, ?)", (zhang_power, li_power))
+        db.conn.execute("DELETE FROM powers WHERE id IN (?, ?)", (zhang_power, li_power))
+        db.conn.commit()

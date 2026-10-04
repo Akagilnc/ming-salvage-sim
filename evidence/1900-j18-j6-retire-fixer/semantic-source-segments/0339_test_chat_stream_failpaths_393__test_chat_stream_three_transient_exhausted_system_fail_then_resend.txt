@@ -1,0 +1,86 @@
+# FILE: tests/test_chat_stream_failpaths_393.py
+# NAME: test_chat_stream_three_transient_exhausted_system_fail_then_resend
+# LINE: 673-752
+# FLAGS: assert_text_compare_or_match,assert_count,mock_or_patch_present,helper_or_private_call
+# KIND: py
+
+def test_chat_stream_three_transient_exhausted_system_fail_then_resend(monkeypatch, game):
+    """#1465 ① / #1792：三次瞬断耗尽 → 系统层终失败文案与现行一致、夜不封；
+    总耗时含两段 retry_interval（受控时钟）；随后可重发并读回夜/轮状态。
+    """
+    import ming_sim.llm_transport as transport_mod
+    from ming_sim import audience_night as an
+    from ming_sim.models import TRANSPORT_DEFAULT_RETRY_INTERVAL_SECONDS
+
+    def _conn_err(_n):
+        return LLMUnavailable(
+            "连接失败",
+            code="llm_connection_error",
+            provider_message="connection reset",
+        )
+
+    clock = {"t": 2000.0}
+    waits: list[float] = []
+
+    def _wait(seconds: float) -> None:
+        waits.append(float(seconds))
+        clock["t"] += float(seconds)
+
+    monkeypatch.setattr(transport_mod, "_sleep_retry_interval", _wait)
+
+    agent = _CountingFailAgent(fail_times=99, error_factory=_conn_err)
+    web_game, minister = _transport_web_game(game, agent, monkeypatch)
+    db = web_game.db
+    night_closed = {"n": 0}
+
+    def _close(*_a, **_k):
+        night_closed["n"] += 1
+
+    web_game.session.close_night_after_chat_if_needed = _close
+
+    t0 = clock["t"]
+    response = _post_chat_stream(monkeypatch, web_game, minister)
+    assert response.status_code == 200, response.text
+    events = _parse_sse(response.text)
+    assert events[-1][0] == "error"
+    detail = events[-1][1]
+    assert detail.get("code") == "llm_connection_error"
+    max_a = default_transport_policy().max_attempts
+    assert agent.calls == max_a
+    attempts = detail.get("transport_attempts") or []
+    assert len(attempts) == max_a
+    assert [a.get("outcome") for a in attempts[:-1]] == ["retryable_fail"] * (max_a - 1)
+    assert attempts[-1].get("outcome") == "terminal_fail"
+    interval = TRANSPORT_DEFAULT_RETRY_INTERVAL_SECONDS
+    assert waits == [interval, interval], waits
+    assert clock["t"] - t0 >= 2 * interval, (t0, clock["t"], waits)
+    assert night_closed["n"] == 0
+    failed_turn = int(detail.get("chat_turn_id") or 0)
+    assert failed_turn > 0
+    # 夜仍开（不因 transport 终失败封夜）
+    open_night = an.get_open_night(db)
+    assert open_night is not None
+    fail_row = db.conn.execute(
+        "SELECT status FROM chat_turns WHERE id=?", (failed_turn,),
+    ).fetchone()
+    assert fail_row is not None
+    assert str(fail_row["status"]) == "interrupted"
+    assert web_game.interrupted_reply_retries("殿上")[-1]["chat_turn_id"] == failed_turn
+
+    # 实际重发：换可成功 agent（#1842：经 create_scene_agent 工厂缝）
+    ok_agent = _CountingFailAgent(fail_times=0, error_factory=_conn_err)
+    web_game.session._fake_scene_agent = ok_agent
+    stub_scene_agent(monkeypatch, ok_agent)
+    response2 = _post_chat_stream(monkeypatch, web_game, minister, message="再问边饷。")
+    events2 = _parse_sse(response2.text)
+    assert "done" in [e[0] for e in events2], events2
+    done2 = next(e[1] for e in events2 if e[0] == "done")
+    new_turn = int(done2.get("chat_turn_id") or 0)
+    assert new_turn > 0 and new_turn != failed_turn
+    assert int(done2.get("minister_message_id") or 0) > 0
+    assert an.get_open_night(db) is not None
+    ok_row = db.conn.execute(
+        "SELECT status FROM chat_turns WHERE id=?", (new_turn,),
+    ).fetchone()
+    assert ok_row is not None
+    assert str(ok_row["status"]) != "failed"

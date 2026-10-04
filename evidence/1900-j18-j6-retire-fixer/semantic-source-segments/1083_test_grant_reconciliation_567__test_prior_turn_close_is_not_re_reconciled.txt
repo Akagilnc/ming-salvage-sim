@@ -1,0 +1,19 @@
+# FILE: tests/test_grant_reconciliation_567.py
+# NAME: test_prior_turn_close_is_not_re_reconciled
+# LINE: 322-334
+# FLAGS: assert_count,helper_or_private_call
+# KIND: py
+
+def test_prior_turn_close_is_not_re_reconciled(game):
+    """只补本回合那笔核账，不翻历史结案（不重开全部历史案卷）。"""
+    db, state, _content = game
+    transit = _in_transit_grant(db, state, text="上月押解到达", target_id="shaanxi")
+    db.record_dossier_execution(
+        transit, "fulfilled", "押解已达", int(state.turn), close=True,
+    )
+    assert _record_recon(db, int(state.turn))          # 本回合该核的核了
+    state.turn = int(state.turn) + 1
+    assert _record_recon(db, int(state.turn)) == []      # 次月不回头重核
+    assert len(db.list_dossier_reconciliations(transit)) == 1
+    # 供料读侧（不带 turn）只看在途，不翻历史结案
+    assert db.list_monthly_grant_reconciliation_targets() == []

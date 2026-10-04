@@ -1,0 +1,24 @@
+# FILE: tests/test_character_knowledge_489.py
+# NAME: test_public_disclosure_drops_private_roster_but_keeps_event_exclusion
+# LINE: 447-464
+# FLAGS: assert_text_compare_or_match
+# KIND: py
+
+def test_public_disclosure_drops_private_roster_but_keeps_event_exclusion(game):
+    db, state, content = game
+    people = [c for c in content.characters.values() if c.office_type not in ("后宫", "宗藩")]
+    participant, allowed, excluded = people[:3]
+    source_id = "restricted:public-disclosure-roster"
+    db.register_character_knowledge_source(
+        state, [{"character_id": participant.name}], "private_matter", "密查", "旧密令",
+        source_id=source_id,
+    )
+    db.record_public_knowledge_event(
+        state, "奉明公开", "公开案情", source_id=source_id,
+        excluded_names=[excluded.name],
+    )
+
+    allowed_view = db.get_character_knowledge(state, allowed.name)
+    excluded_view = db.get_character_knowledge(state, excluded.name)
+    assert any(item["body"] == "公开案情" for item in allowed_view["public_events"])
+    assert not any(item["body"] == "公开案情" for item in excluded_view["public_events"])

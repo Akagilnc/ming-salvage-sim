@@ -1,0 +1,30 @@
+# FILE: tests/test_pihong_dossier_1490.py
+# NAME: test_657_resume_phase2_signal_empty_desk_http
+# LINE: 2225-2248
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_657_resume_phase2_signal_empty_desk_http(web_game, monkeypatch):
+    """crash 后 desk 空 pending：state_payload.resume_phase2；空 POST stream 完成 phase2。"""
+    from ming_sim.models import TurnPhase
+    from ming_sim.rescript_draft import normalize_rescript_layer_a_option
+    db, state = (web_game.db, web_game.state)
+    opt = normalize_rescript_layer_a_option({'label': '备', 'hint': 'h', 'action_type': 'assignment', 'assignee_name': '', 'target_kind': 'region', 'target_id': 'shaanxi', 'locality_scope': 'single', 'region_id': 'shaanxi', 'transaction_category': '督赈'})
+    desk = _657_plant_awaiting_web(web_game, drafts=[{'title': '续跑信号', 'context': 'c', 'options': [opt, {'label': 'x', 'hint': 'h', 'draft_capability': 'z'}], 'actor_name': '杨嗣昌', 'actor_office': 'o', 'actor_faction': 'f'}])
+    key = desk[0]['decision_key']
+    choice = {'decision_key': key, 'action': 'follow_draft', 'label': '备'}
+    kind, turn_s, idx_s = key.split(':')
+    db.conn.execute("UPDATE pending_decisions SET status='decided', choice_json=? WHERE kind=? AND turn=? AND idx=?", (json.dumps(choice, ensure_ascii=False), kind, int(turn_s), int(idx_s)))
+    state.turn_phase = TurnPhase.AWAITING_DECISION.value
+    db.save_state(state)
+    web_game.state.turn_phase = TurnPhase.AWAITING_DECISION.value
+    web_game.session.state.turn_phase = TurnPhase.AWAITING_DECISION.value
+    db.conn.commit()
+    payload = web_game.state_payload()
+    assert payload.get('resume_phase2') is True
+    assert payload.get('pending_decisions') == []
+    _657_install_real_phase2_llm_boundary(monkeypatch)
+    turn_before = int(state.turn)
+    r = asyncio.run(_post_resolve([]))
+    assert r.status_code == 200
+    assert int(web_game.state.turn) == turn_before + 1

@@ -1,0 +1,25 @@
+# FILE: tests/test_transit_aging_346.py
+# NAME: test_行止_payload_cannot_write_arrival
+# LINE: 73-91
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_行止_payload_cannot_write_arrival(game):
+    """抵达是引擎倒数 tick 独占的事实，人物变更不得平行落位。"""
+    db, state, content = game
+    name = active_ming_character(db, content)
+    _set_full_transit(db, content, name, dest=DEST, start_turn=99)
+
+    result = issues.apply_score_extraction(
+        db,
+        state,
+        {"人物变更": [{"origin_ref": "盘面自发", "name": name, "动作": "行止", "location": DEST, "transit_to": ""}]},
+        content=content,
+    )
+
+    row = db.conn.execute(
+        "SELECT transit_to, transit_start_turn FROM characters WHERE name=?", (name,)
+    ).fetchone()
+    assert row["transit_to"] == DEST
+    assert row["transit_start_turn"] == 99
+    assert result["applied_person_changes"][0]["category"] == "invalid_transition"

@@ -1,0 +1,44 @@
+# FILE: tests/test_decree_dossiers_571.py
+# NAME: test_inner_treasury_admission_uses_actual_once_and_preserves_surface
+# LINE: 2022-2059
+# FLAGS: assert_text_compare_or_match,assert_count
+# KIND: py
+
+def test_inner_treasury_admission_uses_actual_once_and_preserves_surface(
+    game, balance, expected_actual, status, outcome,
+):
+    db, state, _content = game
+    state.metrics["内库"] = balance
+    dossier_id = db.create_decree_dossier(
+        state,
+        action_type="grant_allocation",
+        decree_text="内帑拨银押解赈济",
+        target_kind="issue", target_id="relief",
+        payload={
+            "account": "内库", "amount": 10,
+            "execution_surface": "in_transit",
+        },
+    )
+
+    assert state.metrics["内库"] == max(0, balance - 10)
+    assert [row["delta"] for row in db.list_economy_moves_for_dossier(dossier_id)] == (
+        [] if expected_actual == 0 else [expected_actual]
+    )
+    db.apply_dossier_promulgation(state, dossier_id, "promulgated")
+
+    dossier = db.get_decree_dossier(dossier_id)
+    assert dossier["status"] == status
+    assert dossier["execution_outcome"] == outcome
+    assert state.metrics["内库"] == max(0, balance - 10)
+    assert len(db.list_economy_moves_for_dossier(dossier_id)) == int(expected_actual != 0)
+    if outcome == "failed":
+        pass
+    else:
+        assert status == "executing"
+        assert dossier_id in {
+            row["id"] for row in db.list_decree_dossiers_for_simulation(state.turn)
+        }
+        db.record_dossier_execution(
+            dossier_id, "fulfilled", "赈银押解到达", state.turn,
+        )
+        assert db.get_decree_dossier(dossier_id)["status"] == "closed"

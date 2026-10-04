@@ -1,0 +1,52 @@
+# FILE: tests/test_web_audience_night_498.py
+# NAME: test_sync_advance_endpoint_does_not_stall_event_loop
+# LINE: 797-842
+# FLAGS: assert_text_compare_or_match,assert_count,mock_or_patch_present,helper_or_private_call
+# KIND: py
+
+def test_sync_advance_endpoint_does_not_stall_event_loop(web_game, monkeypatch):
+    game = web_game
+    minister = _active_minister(game)
+    _fake_settlement_llm(monkeypatch)
+    # 在飞挂起：退朝经队列屏障等 chat 票（#1353 K10a 不造 409）
+    monkeypatch.setattr("ming_sim.audience_night.DEFAULT_IN_FLIGHT_POLL_S", 0.02)
+
+    async def scenario():
+        ticks = 0
+
+        async def ticker():
+            nonlocal ticks
+            while True:
+                await asyncio.sleep(0.01)
+                ticks += 1
+
+        async with _client() as chat_client, _client() as adv_client:
+            # 取得 chat 所有权后即进入释放责任区间；sibling 尚未创建时按实际存在收尾。
+            chat_task, allow = await _start_hanging_chat(game, chat_client, minister, monkeypatch)
+            t = None
+            adv_task = None
+            try:
+                t = asyncio.create_task(ticker())
+                adv_task = asyncio.create_task(
+                    adv_client.post("/api/decree/advance_without_edict")
+                )
+                # 等待期间 event loop 须继续跑 ticker（端点已 offload）
+                while ticks < 5:
+                    await asyncio.sleep(0)
+                mid_ticks = ticks
+                allow.set()
+                await chat_task
+                resp = await adv_task
+                return mid_ticks, ticks, resp.status_code
+            finally:
+                # 持有 chat allow：先释放，再排空已创建 sibling；收尾不抛，保留主体原错。
+                allow.set()
+                if t is not None:
+                    t.cancel()
+                await _drain_tasks(chat_task, adv_task, t)
+
+    mid_ticks, ticks, status = asyncio.run(scenario())
+    assert mid_ticks >= 5, f"event loop 被同步端点冻结（mid_ticks={mid_ticks}）"
+    assert ticks >= mid_ticks
+    # #1353 K10a：工人终态后继续，不按在飞 elapsed 造 409
+    assert status == 200, f"advance after chat terminal expected 200, got {status}"

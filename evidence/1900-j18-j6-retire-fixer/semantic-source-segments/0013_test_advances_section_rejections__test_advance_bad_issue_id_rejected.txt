@@ -1,0 +1,14 @@
+# FILE: tests/test_advances_section_rejections.py
+# NAME: test_advance_bad_issue_id_rejected
+# LINE: 43-50
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_advance_bad_issue_id_rejected(read_game, bad_id):
+    db, state, _ = read_game
+    # _parse_sqlite_id 拒非整数/bool/float/超 64-bit → 逐项拒收留痕，不裸 continue 静默丢、不逃逸。
+    out = I.apply_issue_tracker_output(db, state, {"advances": [{"issue_id": bad_id, "delta_bar": 5}]})
+    rej = _rejected(out)
+    assert len(rej) == 1, out
+    assert rej[0]["category"] == "invalid_enum"
+    assert rej[0]["reason"]

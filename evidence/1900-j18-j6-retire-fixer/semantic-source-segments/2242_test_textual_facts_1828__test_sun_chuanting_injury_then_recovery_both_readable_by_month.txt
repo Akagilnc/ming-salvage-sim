@@ -1,0 +1,31 @@
+# FILE: tests/test_textual_facts_1828.py
+# NAME: test_sun_chuanting_injury_then_recovery_both_readable_by_month
+# LINE: 13-37
+# FLAGS: assert_count
+# KIND: py
+
+def test_sun_chuanting_injury_then_recovery_both_readable_by_month(game):
+    db, state, _ = game
+    assert state.year == 1627 and state.period == 10
+
+    db.textual_facts.append(
+        subject_kind="character",
+        subject_id="孙传庭",
+        body=INJURY,
+        year=state.year,
+        period=state.period,
+        turn=state.turn,
+    )
+    db.textual_facts.append(
+        subject_kind="character",
+        subject_id="孙传庭",
+        body=RECOVERY,
+        year=state.year,
+        period=state.period + 1,
+        turn=state.turn + 1,
+    )
+
+    materials = db.textual_facts.readable_materials(
+        subject_kind="character", subject_id="孙传庭",
+    )
+    assert [fact.body for fact in materials] == [INJURY, RECOVERY]

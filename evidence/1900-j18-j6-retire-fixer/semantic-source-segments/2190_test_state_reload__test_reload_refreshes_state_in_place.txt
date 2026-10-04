@@ -1,0 +1,26 @@
+# FILE: tests/test_state_reload.py
+# NAME: test_reload_refreshes_state_in_place
+# LINE: 38-57
+# FLAGS: assert_text_compare_or_match,assert_count
+# KIND: py
+
+def test_reload_refreshes_state_in_place(game):
+    """DB 改值后调 reload → state 字段被刷成 DB 值，且仍是同一对象（id 不变）。"""
+    db, state, content = game
+    state_id_before = id(state)
+
+    # 制造内存/DB 分歧：直接改 DB 的相位与某 metric，不动内存 state。
+    db.conn.execute("UPDATE game_state SET turn_phase='reviewing' WHERE id=1")
+    db.conn.execute("UPDATE metrics SET value=7 WHERE key='皇威'")
+    db.conn.commit()
+    # 内存仍是旧值
+    assert state.turn_phase != "reviewing"
+    assert state.metrics["皇威"] != 7
+
+    returned = reload_state_from_db(db, state)
+
+    # 原地刷新：同一对象、字段已是 DB 值。
+    assert id(state) == state_id_before
+    assert returned is state
+    assert state.turn_phase == "reviewing"
+    assert state.metrics["皇威"] == 7

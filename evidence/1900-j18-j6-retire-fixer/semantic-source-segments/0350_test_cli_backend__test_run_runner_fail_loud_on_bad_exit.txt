@@ -1,0 +1,13 @@
+# FILE: tests/test_cli_backend.py
+# NAME: test_run_runner_fail_loud_on_bad_exit
+# LINE: 78-84
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_run_runner_fail_loud_on_bad_exit(monkeypatch, runner, stdout, returncode):
+    captured = _capture_run(monkeypatch, stdout=stdout, returncode=returncode)
+    chat = cb.CliChat(id="m", backend=runner)
+    with pytest.raises(LLMUnavailable) as failure:
+        chat.invoke([Message(role="user", content="request")], Message(role="assistant"))
+    assert failure.value.code == ("llm_empty_output" if returncode == 0 else f"llm_cli_{runner}")
+    assert captured["cmd"]

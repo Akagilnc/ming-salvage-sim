@@ -1,0 +1,26 @@
+# FILE: tests/test_applier_contract.py
+# NAME: test_mirror_to_jsonl_writes_lines
+# LINE: 136-155
+# FLAGS: assert_text_compare_or_match,assert_count
+# KIND: py
+
+def test_mirror_to_jsonl_writes_lines(game, tmp_path):
+    """flush 后 mirror_to_jsonl 把已落库行 append 为 jsonl 行。"""
+    db, state, content = game
+    rc = RejectionCollector()
+    ri = RejectedItem(
+        item={"id": "ghost"}, reason="不存在", category="hallucinated_id", source=Provenance.unknown
+    )
+    rc.record("army_delta", ri, turn=5)
+    rc.flush_to_db(db)
+
+    out = str(tmp_path / "rejections.jsonl")
+    rc.mirror_to_jsonl(out)
+
+    lines = open(out, encoding="utf-8").readlines()
+    assert len(lines) == 1
+    row = json.loads(lines[0])
+    assert row["section"] == "army_delta"
+    assert row["turn"] == 5
+    assert row["category"] == "hallucinated_id"
+    assert json.loads(row["item_json"]) == {"id": "ghost"}

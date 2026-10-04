@@ -1,0 +1,16 @@
+# FILE: tests/test_decree_dossiers_571.py
+# NAME: test_rejection_runtime_contract_rejects_each_missing_field
+# LINE: 2257-2266
+# FLAGS: helper_or_private_call
+# KIND: py
+
+def test_rejection_runtime_contract_rejects_each_missing_field(game, missing):
+    db, state, _content = game
+    dossier_id = db.create_decree_dossier(
+        state, action_type="policy", decree_text="清核河工",
+        target_kind="issue", target_id="river-works",
+    )
+    verdict = _rejected_verdict(dossier_id)
+    verdict.pop(missing)
+    with pytest.raises(ValueError):
+        db.apply_dossier_verdicts(state, [verdict])

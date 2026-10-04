@@ -1,0 +1,33 @@
+# FILE: tests/test_person_delta_adapter.py
+# NAME: test_new_appointment_falsy_return_restores_snapshot
+# LINE: 2464-2490
+# FLAGS: mock_or_patch_present,helper_or_private_call
+# KIND: py
+
+def test_new_appointment_falsy_return_restores_snapshot(game, monkeypatch):
+    """5b（PR#106 R3 gemini high，防御 P1）：新建档分支若 apply_appointment 改库后返回假值（非抛错），
+    须 _restore_person_write_state 还原快照、免半落库（第一铁律）。现 apply_appointment 的假值返回均
+    在改库前早退故无活 bug，本测试锁防御契约：mutate-then-falsy 也不留半落库。"""
+    from ming_sim import session as _session
+    db, state, content = game
+    victim = active_ming_character(db, content)
+    orig_office = db.conn.execute(
+        "SELECT office FROM characters WHERE name=?", (victim,)
+    ).fetchone()["office"]
+
+    def mutate_then_falsy(*_a, **_k):
+        db.conn.execute("UPDATE characters SET office='脏半落库' WHERE name=?", (victim,))
+        db.conn.commit()
+        return ("", "")
+    monkeypatch.setattr(_session, "apply_appointment", mutate_then_falsy)
+
+    res = issues.apply_office_appointment(
+        db, state, content, "不在册新人甲", "陕西总督",
+        reason="新任", new_office_type="地方", region_id="shaanxi",
+    )
+    assert res.get("rejected"), f"falsy-return 应兜成 rejected：{res}"
+    now_office = db.conn.execute(
+        "SELECT office FROM characters WHERE name=?", (victim,)
+    ).fetchone()["office"]
+    assert now_office == orig_office, \
+        f"falsy-return 后半落库未回滚：victim office={now_office!r} 期望 {orig_office!r}"

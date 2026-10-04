@@ -1,0 +1,208 @@
+{
+  "source_path": "tests/test_cli_play_turn.py",
+  "member_count": 14,
+  "members": [
+    {
+      "idx": 370,
+      "file": "tests/test_cli_play_turn.py",
+      "name": "test_issue_refusal_stays_in_loop",
+      "line": 73,
+      "end": 84,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0370_test_cli_play_turn__test_issue_refusal_stays_in_loop.txt",
+      "source_path": "tests/test_cli_play_turn.py"
+    },
+    {
+      "idx": 371,
+      "file": "tests/test_cli_play_turn.py",
+      "name": "test_cli_does_not_end_unadvanced_turn",
+      "line": 88,
+      "end": 121,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0371_test_cli_play_turn__test_cli_does_not_end_unadvanced_turn.txt",
+      "source_path": "tests/test_cli_play_turn.py"
+    },
+    {
+      "idx": 372,
+      "file": "tests/test_cli_play_turn.py",
+      "name": "test_review_issue_reaches_staged_directive_default_approval",
+      "line": 124,
+      "end": 146,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0372_test_cli_play_turn__test_review_issue_reaches_staged_directive_default_approval.txt",
+      "source_path": "tests/test_cli_play_turn.py"
+    },
+    {
+      "idx": 373,
+      "file": "tests/test_cli_play_turn.py",
+      "name": "test_terminal_minister_chat_persists_messages_before_session_chat",
+      "line": 149,
+      "end": 195,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0373_test_cli_play_turn__test_terminal_minister_chat_persists_messages_before_session_chat.txt",
+      "source_path": "tests/test_cli_play_turn.py"
+    },
+    {
+      "idx": 374,
+      "file": "tests/test_cli_play_turn.py",
+      "name": "test_terminal_minister_chat_removes_user_message_when_session_chat_fails",
+      "line": 198,
+      "end": 244,
+      "flags": [
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0374_test_cli_play_turn__test_terminal_minister_chat_removes_user_message_when_session_chat_fails.txt",
+      "source_path": "tests/test_cli_play_turn.py"
+    },
+    {
+      "idx": 375,
+      "file": "tests/test_cli_play_turn.py",
+      "name": "test_terminal_minister_chat_removes_user_message_when_session_chat_interrupted",
+      "line": 247,
+      "end": 293,
+      "flags": [
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0375_test_cli_play_turn__test_terminal_minister_chat_removes_user_message_when_session_chat_interrupted.txt",
+      "source_path": "tests/test_cli_play_turn.py"
+    },
+    {
+      "idx": 376,
+      "file": "tests/test_cli_play_turn.py",
+      "name": "test_terminal_minister_chat_preserves_chat_error_when_rollback_fails",
+      "line": 296,
+      "end": 323,
+      "flags": [
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0376_test_cli_play_turn__test_terminal_minister_chat_preserves_chat_error_when_rollback_fails.txt",
+      "source_path": "tests/test_cli_play_turn.py"
+    },
+    {
+      "idx": 377,
+      "file": "tests/test_cli_play_turn.py",
+      "name": "test_terminal_minister_chat_reply_persist_failure_keeps_user_message",
+      "line": 326,
+      "end": 374,
+      "flags": [
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0377_test_cli_play_turn__test_terminal_minister_chat_reply_persist_failure_keeps_user_message.txt",
+      "source_path": "tests/test_cli_play_turn.py"
+    },
+    {
+      "idx": 378,
+      "file": "tests/test_cli_play_turn.py",
+      "name": "test_play_turn_reports_default_approval_secret_order_failure",
+      "line": 380,
+      "end": 440,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0378_test_cli_play_turn__test_play_turn_reports_default_approval_secret_order_failure.txt",
+      "source_path": "tests/test_cli_play_turn.py"
+    },
+    {
+      "idx": 379,
+      "file": "tests/test_cli_play_turn.py",
+      "name": "test_play_turn_skip_prints_dossier_settlement_report_and_ends_turn",
+      "line": 443,
+      "end": 456,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0379_test_cli_play_turn__test_play_turn_skip_prints_dossier_settlement_report_and_ends_turn.txt",
+      "source_path": "tests/test_cli_play_turn.py"
+    },
+    {
+      "idx": 380,
+      "file": "tests/test_cli_play_turn.py",
+      "name": "test_play_turn_skip_settlement_abort_stays_in_player_loop",
+      "line": 464,
+      "end": 495,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0380_test_cli_play_turn__test_play_turn_skip_settlement_abort_stays_in_player_loop.txt",
+      "source_path": "tests/test_cli_play_turn.py"
+    },
+    {
+      "idx": 381,
+      "file": "tests/test_cli_play_turn.py",
+      "name": "test_play_turn_reports_secret_order_failure_when_settlement_aborts",
+      "line": 498,
+      "end": 548,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0381_test_cli_play_turn__test_play_turn_reports_secret_order_failure_when_settlement_aborts.txt",
+      "source_path": "tests/test_cli_play_turn.py"
+    },
+    {
+      "idx": 382,
+      "file": "tests/test_cli_play_turn.py",
+      "name": "test_terminal_minister_chat_accepts_retry_reply_command",
+      "line": 553,
+      "end": 627,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0382_test_cli_play_turn__test_terminal_minister_chat_accepts_retry_reply_command.txt",
+      "source_path": "tests/test_cli_play_turn.py"
+    },
+    {
+      "idx": 383,
+      "file": "tests/test_cli_play_turn.py",
+      "name": "test_play_turn_hitl_advancement_ends_turn",
+      "line": 633,
+      "end": 669,
+      "flags": [
+        "mock_or_patch_present"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0383_test_cli_play_turn__test_play_turn_hitl_advancement_ends_turn.txt",
+      "source_path": "tests/test_cli_play_turn.py"
+    }
+  ]
+}

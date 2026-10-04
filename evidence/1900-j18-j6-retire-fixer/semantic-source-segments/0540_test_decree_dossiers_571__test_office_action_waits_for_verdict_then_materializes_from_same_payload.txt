@@ -1,0 +1,40 @@
+# FILE: tests/test_decree_dossiers_571.py
+# NAME: test_office_action_waits_for_verdict_then_materializes_from_same_payload
+# LINE: 407-440
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_office_action_waits_for_verdict_then_materializes_from_same_payload(game):
+    db, state, content = game
+    minister = _active_minister(db)
+    pending_id = db.stage_pending_action(
+        state.turn,
+        kind="office",
+        action="任命",
+        minister_name=minister,
+        target_id=None,
+        payload={"text": "测试任免原文", "name": minister, "office": "兵部主事"},
+    )
+
+    before = db.conn.execute(
+        "SELECT office FROM characters WHERE name=?", (minister,)
+    ).fetchone()["office"]
+    db.commit_pending_actions(state, content=content)
+
+    dossier = next(
+        row for row in db.list_decree_dossiers(target_kind="character", target_id=minister)
+        if row["pending_action_id"] == pending_id
+    )
+    assert dossier["status"] == "proposed"
+    assert db.conn.execute(
+        "SELECT office FROM characters WHERE name=?", (minister,)
+    ).fetchone()["office"] == before
+
+    db.apply_dossier_promulgation(
+        state, dossier["id"], "promulgated", content=content
+    )
+    dossier = db.get_decree_dossier(dossier["id"])
+    assert dossier["status"] == "executing"
+    assert db.conn.execute(
+        "SELECT office FROM characters WHERE name=?", (minister,)
+    ).fetchone()["office"] == "兵部主事"

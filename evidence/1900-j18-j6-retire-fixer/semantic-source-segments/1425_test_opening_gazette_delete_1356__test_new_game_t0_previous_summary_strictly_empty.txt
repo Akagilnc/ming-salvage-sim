@@ -1,0 +1,17 @@
+# FILE: tests/test_opening_gazette_delete_1356.py
+# NAME: test_new_game_t0_previous_summary_strictly_empty
+# LINE: 50-60
+# FLAGS: assert_text_compare_or_match,assert_count
+# KIND: py
+
+def test_new_game_t0_previous_summary_strictly_empty(game):
+    """① t0：previous_summary 严格空串；turn_reports 无 seed 行。"""
+    db, state, _content = game
+    assert state.turn == 1
+    assert (state.year, state.period) == (1627, 10)
+
+    assert db.get_turn_report(0) == ""
+    assert db.conn.execute("SELECT report FROM turn_reports WHERE turn = 0").fetchone() is None
+
+    summary = db.previous_turn_summary(state)
+    assert summary == ""

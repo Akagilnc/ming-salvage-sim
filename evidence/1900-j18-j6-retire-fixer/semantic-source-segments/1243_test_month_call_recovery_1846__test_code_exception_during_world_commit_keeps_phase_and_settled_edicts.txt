@@ -1,0 +1,49 @@
+# FILE: tests/test_month_call_recovery_1846.py
+# NAME: test_code_exception_during_world_commit_keeps_phase_and_settled_edicts
+# LINE: 460-502
+# FLAGS: assert_text_compare_or_match,assert_count,mock_or_patch_present,helper_or_private_call
+# KIND: py
+
+def test_code_exception_during_world_commit_keeps_phase_and_settled_edicts(
+    game, monkeypatch, tmp_path,
+):
+    """代码异常响亮中止+错误包；已落旨与已存段文保留，按相位续而非强行重调模型。"""
+    import ming_sim.month_chain as month_chain
+    import ming_sim.month_translate as month_translate
+
+    db, state, content = game
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    minister = next(iter(content.characters.values())).name
+    state.metrics["国库"] = 300_000
+    db.save_state(state)
+    ref = _stage_settled_ready_edict(db, state, minister, delta=-4)
+    turn = int(state.turn)
+    _forbid_extractor(monkeypatch)
+
+    monkeypatch.setattr(
+        month_chain, "run_world_segment_text", lambda *_a, **_k: "段文已存",
+    )
+
+    def boom_commit(*_a, **_k):
+        raise RuntimeError("injected commit bug")
+
+    monkeypatch.setattr(month_translate, "dispatch_month_segment", boom_commit)
+    session = make_light_session(db, state, content)
+    session.llm_config = SimpleNamespace(model="m", advanced_model="m")
+
+    with pytest.raises(SettlementAbort) as caught:
+        session.resolve_turn(allow_empty_decree=True)
+
+    assert caught.value.error_pack_path
+    assert state.turn_phase == TurnPhase.SETTLING.value
+    assert int(state.turn) == turn
+    assert db.staged_declarations.is_settled(ref)
+    assert len(_ningyuan_ledger_rows(db)) == 1
+    chain = (db.get_resolve_context(turn) or {}).get("simulator_payload", {}).get(
+        "month_chain", {},
+    )
+    failure = chain.get("call_failure") or {}
+    assert failure.get("kind") == "code_exception"
+    assert chain.get("world_text_ready") is True
+    assert chain.get("world_text") == "段文已存"
+    assert not chain.get("world_committed")

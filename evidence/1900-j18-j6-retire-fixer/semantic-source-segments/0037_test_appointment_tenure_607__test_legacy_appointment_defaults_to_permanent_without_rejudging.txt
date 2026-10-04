@@ -1,0 +1,17 @@
+# FILE: tests/test_appointment_tenure_607.py
+# NAME: test_legacy_appointment_defaults_to_permanent_without_rejudging
+# LINE: 58-68
+# FLAGS: assert_text_compare_or_match,helper_or_private_call,retired_or_meta_marker
+# KIND: py
+
+def test_legacy_appointment_defaults_to_permanent_without_rejudging(game):
+    db, state, content = game
+    name = _active_minister(db)
+
+    dossier = _promulgate_appointment(db, state, content, name, "旧档兜底官")
+
+    assert json.loads(dossier["payload_json"])["任别"] == "真除"
+    row = db.conn.execute(
+        "SELECT appointment_tenure FROM character_offices WHERE character_name=?", (name,)
+    ).fetchone()
+    assert row["appointment_tenure"] == "真除"

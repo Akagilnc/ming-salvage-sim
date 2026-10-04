@@ -1,0 +1,30 @@
+# FILE: tests/test_authority_ledger_611.py
+# NAME: test_same_dossier_grant_replay_is_idempotent
+# LINE: 293-316
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_same_dossier_grant_replay_is_idempotent(game):
+    """同源案卷重放按 dossier origin 幂等，不插第二行。"""
+    db, state, content = game
+    holder = _minister(db)
+    dossier = _eligible_dossier(db, state, holder, target_id="replay")
+    payload = {
+        "authority_changes": [{
+            "动作": "授予",
+            "holder_id": holder,
+            "privilege": "便宜行事",
+            "scope": "issue:replay",
+            "dossier_id": dossier["id"],
+        }],
+    }
+    first = issue_engine.apply_score_extraction(db, state, payload, content=content)
+    assert first["authority_changes"][0].get("rejected") is not True
+    authority_id = int(first["authority_changes"][0]["authority_id"])
+
+    second = issue_engine.apply_score_extraction(db, state, payload, content=content)
+    assert second["authority_changes"][0].get("rejected") is not True
+    assert int(second["authority_changes"][0]["authority_id"]) == authority_id
+    assert db.conn.execute(
+        "SELECT COUNT(*) AS n FROM authority_records"
+    ).fetchone()["n"] == 1

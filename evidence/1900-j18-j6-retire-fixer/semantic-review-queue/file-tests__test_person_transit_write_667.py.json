@@ -1,0 +1,132 @@
+{
+  "source_path": "tests/test_person_transit_write_667.py",
+  "member_count": 9,
+  "members": [
+    {
+      "idx": 1589,
+      "file": "tests/test_person_transit_write_667.py",
+      "name": "test_departure_rejects_nonfinite_distance_before_ledger_write",
+      "line": 17,
+      "end": 51,
+      "flags": [
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1589_test_person_transit_write_667__test_departure_rejects_nonfinite_distance_before_ledger_write.txt",
+      "source_path": "tests/test_person_transit_write_667.py"
+    },
+    {
+      "idx": 1590,
+      "file": "tests/test_person_transit_write_667.py",
+      "name": "test_departure_reads_matrix_from_frozen_bundle_outside_cwd",
+      "line": 54,
+      "end": 74,
+      "flags": [
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1590_test_person_transit_write_667__test_departure_reads_matrix_from_frozen_bundle_outside_cwd.txt",
+      "source_path": "tests/test_person_transit_write_667.py"
+    },
+    {
+      "idx": 1591,
+      "file": "tests/test_person_transit_write_667.py",
+      "name": "test_departure_rejects_location_shapes_without_mutation",
+      "line": 81,
+      "end": 98,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1591_test_person_transit_write_667__test_departure_rejects_location_shapes_without_mutation.txt",
+      "source_path": "tests/test_person_transit_write_667.py"
+    },
+    {
+      "idx": 1592,
+      "file": "tests/test_person_transit_write_667.py",
+      "name": "test_departure_persists_matrix_distance_and_urgent_factor",
+      "line": 101,
+      "end": 121,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1592_test_person_transit_write_667__test_departure_persists_matrix_distance_and_urgent_factor.txt",
+      "source_path": "tests/test_person_transit_write_667.py"
+    },
+    {
+      "idx": 1593,
+      "file": "tests/test_person_transit_write_667.py",
+      "name": "test_noncanonical_origin_is_narrative_only_noop",
+      "line": 125,
+      "end": 147,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1593_test_person_transit_write_667__test_noncanonical_origin_is_narrative_only_noop.txt",
+      "source_path": "tests/test_person_transit_write_667.py"
+    },
+    {
+      "idx": 1594,
+      "file": "tests/test_person_transit_write_667.py",
+      "name": "test_status_exit_clears_complete_transit_ledger",
+      "line": 151,
+      "end": 189,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1594_test_person_transit_write_667__test_status_exit_clears_complete_transit_ledger.txt",
+      "source_path": "tests/test_person_transit_write_667.py"
+    },
+    {
+      "idx": 1595,
+      "file": "tests/test_person_transit_write_667.py",
+      "name": "test_office_appointment_keeps_status_reason_mirrored",
+      "line": 199,
+      "end": 224,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1595_test_person_transit_write_667__test_office_appointment_keeps_status_reason_mirrored.txt",
+      "source_path": "tests/test_person_transit_write_667.py"
+    },
+    {
+      "idx": 1596,
+      "file": "tests/test_person_transit_write_667.py",
+      "name": "test_invalid_tone_is_rejected_before_same_destination_idempotence",
+      "line": 228,
+      "end": 240,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1596_test_person_transit_write_667__test_invalid_tone_is_rejected_before_same_destination_idempotence.txt",
+      "source_path": "tests/test_person_transit_write_667.py"
+    },
+    {
+      "idx": 1597,
+      "file": "tests/test_person_transit_write_667.py",
+      "name": "test_same_destination_is_idempotent",
+      "line": 243,
+      "end": 253,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1597_test_person_transit_write_667__test_same_destination_is_idempotent.txt",
+      "source_path": "tests/test_person_transit_write_667.py"
+    }
+  ]
+}

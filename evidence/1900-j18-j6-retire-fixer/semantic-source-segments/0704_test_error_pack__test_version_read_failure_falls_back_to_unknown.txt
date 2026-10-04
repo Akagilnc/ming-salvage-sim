@@ -1,0 +1,20 @@
+# FILE: tests/test_error_pack.py
+# NAME: test_version_read_failure_falls_back_to_unknown
+# LINE: 183-196
+# FLAGS: assert_text_compare_or_match,mock_or_patch_present
+# KIND: py
+
+def test_version_read_failure_falls_back_to_unknown(game, monkeypatch, tmp_path):
+    """VERSION 缺失/读失败 → manifest.version='unknown'，写包不失败
+    （PR #90 R3 sourcery：钉 _read_version 防御分支）。"""
+    import ming_sim.error_pack as ep
+    db, state, content = game
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(ep, "bundled_path",
+                        lambda name: str(tmp_path / "no-such-dir" / name))
+
+    p = ep.write_error_pack(db, state, exc=RuntimeError("boom"),
+                            extracted=None, resolve_ctx=None)
+
+    m = json.loads((Path(p) / "manifest.json").read_text(encoding="utf-8"))
+    assert m["version"] == "unknown"

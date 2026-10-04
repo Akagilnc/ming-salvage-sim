@@ -1,0 +1,26 @@
+# FILE: tests/test_transit_countdown_668.py
+# NAME: test_pre_settle_tick_before_event_terminal_reads_new_location
+# LINE: 79-98
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_pre_settle_tick_before_event_terminal_reads_new_location(game):
+    db, state, content = game
+    import ming_sim.issues as issues
+    issues.bind_content(content)
+    name = active_ming_character(db, content)
+    t0 = state.turn
+    r0 = _put_in_transit(db, content, name, origin='henan', dest='beizhili', speed_factor=1.0, start_turn=t0)
+    assert r0 <= 1.0
+    ev = Event(id='__test_transit_gate_668__', title='测试在途门控', kind='situation', summary='x', urgency=50, severity=50, credibility=50, interests=[], audiences=[], trigger_year=1, trigger_month=0, trigger_gate={f'character.{name}.location': '==beizhili', f'character.{name}.status': '==active'}, person_core_subjects=[name])
+    content.events.append(ev)
+    try:
+        state.turn = t0 + 1
+        state.turn_phase = TurnPhase.REVIEWING.value
+        db.save_state(state)
+        pre_settle(state, db, content=content)
+        row = _ledger(db, name)
+        assert row['location'] == 'beizhili' and row['transit_to'] == ''
+        assert not db.has_event_terminal_state('__test_transit_gate_668__', 'avoided')
+    finally:
+        content.events.remove(ev)

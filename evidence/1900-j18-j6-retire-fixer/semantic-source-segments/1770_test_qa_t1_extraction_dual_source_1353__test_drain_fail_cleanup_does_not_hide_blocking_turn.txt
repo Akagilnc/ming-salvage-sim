@@ -1,0 +1,25 @@
+# FILE: tests/test_qa_t1_extraction_dual_source_1353.py
+# NAME: test_drain_fail_cleanup_does_not_hide_blocking_turn
+# LINE: 64-82
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_drain_fail_cleanup_does_not_hide_blocking_turn(game, tmp_path, monkeypatch):
+    """#1353 负向：收夜不得 fail 掉挡夜的回话 turn（待补保留，轮仍 active）。"""
+    db, state, content = game
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
+    minister = _minister(db, content)
+    nid, ctid = _open_night_with_persisted_reply(db, state, minister)
+
+    def boom_translate(prompt, llm_config):
+        raise RuntimeError("translate exhausted")
+
+    _close_with_gate(db, state, night_id=nid, translate_fn=boom_translate)
+    row = db.conn.execute(
+        "SELECT status, extract_status, minister_message_id FROM chat_turns WHERE id=?",
+        (ctid,),
+    ).fetchone()
+    assert row["status"] == "active"
+    assert row["minister_message_id"]
+    assert str(row["extract_status"] or "") in ("", "pending")
+    assert int(_pending_api(db)["count"]) >= 1

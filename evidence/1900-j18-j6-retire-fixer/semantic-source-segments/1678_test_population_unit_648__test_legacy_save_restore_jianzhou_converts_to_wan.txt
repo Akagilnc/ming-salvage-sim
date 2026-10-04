@@ -1,0 +1,16 @@
+# FILE: tests/test_population_unit_648.py
+# NAME: test_legacy_save_restore_jianzhou_converts_to_wan
+# LINE: 297-306
+# FLAGS: helper_or_private_call,retired_or_meta_marker
+# KIND: py
+
+def test_legacy_save_restore_jianzhou_converts_to_wan(game, legacy_game):
+    """无标旧档收复建州：content→档唯一接缝无损换回万人口径，不混刻度。"""
+    old_db, old_state = legacy_game
+    _settle_region_delta(old_db, old_state, game[2], {
+        "region_delta": {"jianzhou": {"controlled_by": "ming"}},
+    })
+    after = old_db.conn.execute(
+        "SELECT population FROM regions WHERE id='jianzhou'"
+    ).fetchone()[0]
+    assert after == JIANZHOU_RESTORE_POP_WAN

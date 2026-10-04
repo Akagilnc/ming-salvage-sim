@@ -1,0 +1,24 @@
+# FILE: tests/test_llm_channel_config.py
+# NAME: test_for_role_preserves_cli_channel_fields_for_advanced_roles
+# LINE: 675-692
+# FLAGS: assert_text_compare_or_match,assert_count
+# KIND: py
+
+def test_for_role_preserves_cli_channel_fields_for_advanced_roles():
+    cfg = LLMConfig(
+        api_key="cli-backend",
+        base_url="https://api.example.com/v1",
+        model="api-model",
+        advanced_model="api-advanced",
+        channel="cli",
+        cli_runner="codex",
+        cli_model="gpt-5.5",
+        cli_timeout_seconds=240,
+    )
+
+    derived = for_role(cfg, "simulator")
+
+    assert derived.channel == "cli"
+    assert derived.cli_runner == "codex"
+    assert derived.cli_model == "gpt-5.5"
+    assert derived.cli_timeout_seconds == 240

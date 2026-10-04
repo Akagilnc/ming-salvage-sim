@@ -1,0 +1,37 @@
+# FILE: tests/test_authority_ledger_611.py
+# NAME: test_duplicate_active_authority_is_rejected_across_dossiers
+# LINE: 355-385
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_duplicate_active_authority_is_rejected_across_dossiers(game):
+    """不同案卷对同一在持三元组重复授予 → duplicate_active_authority。"""
+    db, state, content = game
+    holder = _minister(db)
+    first_dossier = _eligible_dossier(db, state, holder, target_id="dup-a")
+    second_dossier = _eligible_dossier(db, state, holder, target_id="dup-b")
+    first = issue_engine.apply_score_extraction(db, state, {
+        "authority_changes": [{
+            "动作": "授予",
+            "holder_id": holder,
+            "privilege": "便宜行事",
+            "scope": "issue:dup",
+            "dossier_id": first_dossier["id"],
+        }],
+    }, content=content)
+    assert first["authority_changes"][0].get("rejected") is not True
+
+    second = issue_engine.apply_score_extraction(db, state, {
+        "authority_changes": [{
+            "动作": "授予",
+            "holder_id": holder,
+            "privilege": "便宜行事",
+            "scope": "issue:dup",
+            "dossier_id": second_dossier["id"],
+        }],
+    }, content=content)
+    assert second["authority_changes"][0]["rejected"] is True
+    assert second["authority_changes"][0]["reason"] == "duplicate_active_authority"
+    assert db.conn.execute(
+        "SELECT COUNT(*) AS n FROM authority_records"
+    ).fetchone()["n"] == 1

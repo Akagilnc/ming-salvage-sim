@@ -1,0 +1,27 @@
+# FILE: tests/test_override_breach_costs_564.py
+# NAME: test_costs_are_idempotent_and_survive_restore
+# LINE: 141-161
+# FLAGS: assert_count,helper_or_private_call
+# KIND: py
+
+def test_costs_are_idempotent_and_survive_restore(game):
+    """ordinary 强颁代价落库后 restore 仍在；同案不双记。"""
+    db, state, content = game
+    dossier_id = _dossier(db, state, mode="ordinary")
+    verdict = _verdict(dossier_id)
+    db.apply_dossier_verdicts(state, [verdict])
+    db.apply_dossier_promulgation(state, dossier_id, "force_promulgated")
+    first_count = len(_cost_events(db, dossier_id))
+    assert first_count >= 2  # authority + satisfaction
+    # 再 force 应被状态闸拒，流水不膨胀
+    with pytest.raises(ValueError):
+        db.apply_dossier_promulgation(state, dossier_id, "force_promulgated")
+    assert len(_cost_events(db, dossier_id)) == first_count
+    path = db.path
+    db.close()
+    from ming_sim.db import GameDB
+    restored = GameDB(path, content)
+    try:
+        assert len(_cost_events(restored, dossier_id)) == first_count
+    finally:
+        restored.close()

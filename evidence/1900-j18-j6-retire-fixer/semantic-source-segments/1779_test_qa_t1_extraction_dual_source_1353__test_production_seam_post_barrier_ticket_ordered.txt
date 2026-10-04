@@ -1,0 +1,60 @@
+# FILE: tests/test_qa_t1_extraction_dual_source_1353.py
+# NAME: test_production_seam_post_barrier_ticket_ordered
+# LINE: 355-408
+# FLAGS: assert_text_compare_or_match,mock_or_patch_present,helper_or_private_call
+# KIND: py
+
+def test_production_seam_post_barrier_ticket_ordered(web_game, monkeypatch):
+    """生产接缝：屏障已领后再领票，后票写不得越过屏障（经 ticketed gate）。"""
+    game = web_game
+    game._runtime_write_queue()
+    order: list[str] = []
+    barrier_in = threading.Event()
+    release_barrier = threading.Event()
+    late_claimed = threading.Event()
+    late_done = threading.Event()
+
+    def track_auto_close(_g, **_k):
+        barrier_in.set()
+        late_claimed.wait()
+        order.append("barrier")
+        release_barrier.wait()
+
+    monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", track_auto_close)
+    monkeypatch.setattr(web_app, "_accept_settlement_period", lambda _g: False)
+
+    entry_done = threading.Event()
+
+    def run_entry() -> None:
+        with web_app._settlement_period_entry(game, write_cm=web_app._game_write_gate):
+            order.append("body")
+        entry_done.set()
+
+    et = threading.Thread(target=run_entry, daemon=True)
+    et.start()
+    barrier_in.wait()
+
+    late = game._mark_pending_write(key=("turn", 77))
+    assert late is not None
+    late_claimed.set()
+
+    def late_write() -> None:
+        gate = game._ticketed_write_gate(late)
+        with gate:
+            order.append("late")
+        game._complete_pending_write(late)
+        late_done.set()
+
+    lt = threading.Thread(target=late_write, daemon=True)
+    lt.start()
+    assert "late" not in order
+    assert not late_done.is_set()
+
+    release_barrier.set()
+    entry_done.wait()
+    late_done.wait()
+    et.join()
+    lt.join()
+    # barrier 写（auto_close）先于后票；body 在 barrier 返回后
+    assert order.index("barrier") < order.index("late")
+    assert order.index("barrier") < order.index("body")

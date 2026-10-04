@@ -1,0 +1,20 @@
+# FILE: tests/test_event_chain_cascade.py
+# NAME: test_transitive_cascade_invalidates_downstream_closure
+# LINE: 342-355
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_transitive_cascade_invalidates_downstream_closure(game):
+    db, state, content = game
+    issues.bind_content(content)
+    a = _hist_event("__chain_a__")
+    b = _hist_event("__chain_b__", {"event.__chain_a__.terminal_state": "==triggered"})
+    c = _hist_event("__chain_c__", {"event.__chain_b__.terminal_state": "==triggered"})
+    with _TempEvents(content, a, b, c):
+        db.mark_event_expired(state, a.id)
+
+        terminalized = issues.apply_event_cascading_invalidations(state, db)
+
+        assert [item["id"] for item in terminalized] == [b.id, c.id]
+        assert _terminal_state(db, b.id)[0] == "obsolete"
+        assert _terminal_state(db, c.id)[0] == "obsolete"

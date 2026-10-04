@@ -1,0 +1,60 @@
+# FILE: tests/test_enter_settlement_period_1235.py
+# NAME: test_true_failure_pending_translation_exits_display
+# LINE: 223-276
+# FLAGS: assert_text_compare_or_match,assert_count,mock_or_patch_present,helper_or_private_call,retired_or_meta_marker
+# KIND: py
+
+def test_true_failure_pending_translation_exits_display(web_game, monkeypatch, tmp_path):
+    """AC2 / #1353 fold-in：drain 真失败 → 失败单源 + settlement_display 退出（≠ 未了在办）。"""
+    from ming_sim.exceptions import LLMUnavailable
+    from ming_sim.llm_model import CLI_RUNNER_PLAYER_MESSAGE
+
+    game = web_game
+    minister = _active_minister(game)
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
+    # #1842：收夜 catch-up 认转译水位；真失败注入转译缝（旧抽取 drain 已退役）。
+    def _boom_translate(prompt, llm_config):
+        del prompt, llm_config
+        raise LLMUnavailable(CLI_RUNNER_PLAYER_MESSAGE, code="llm_error")
+
+    stub_audience_translate(monkeypatch, _boom_translate)
+    turn = int(game.state.turn)
+    nid, ctid = _open_night_with_unextracted_reply(game, minister)
+
+    # 观测：await 通过后 close 前应已 capture
+    saw_capture = {}
+
+    real_close = web_app._auto_close_open_night_gate_free
+
+    def _close_observing(g, **kw):
+        saw_capture["snap"] = g.db.get_month_open_snapshot(int(g.state.turn))
+        return real_close(g, **kw)
+
+    monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", _close_observing)
+
+    async def go():
+        async with _client() as client:
+            return await client.post("/api/decree/advance_without_edict")
+
+    resp = asyncio.run(go())
+    # #1842：转译单轮失败标 pending；过月耗尽 → SettlementAbort（HTTP 409 + typed stage）。
+    assert resp.status_code == 409, resp.text
+    detail = resp.json()["detail"]
+    assert isinstance(detail, dict), detail
+    assert detail.get("stage") == "audience_translation_exhausted", detail
+    pack = detail.get("error_pack_path")
+    assert pack, detail
+    # join-before-close：耗尽在 auto_close 前 → close 钩未跑
+    assert saw_capture == {}, saw_capture
+    # 真失败另形：展示态退出（点即入曾发生后 exit）
+    assert game.db.get_month_open_snapshot(turn) is None
+    payload = game.state_payload()
+    assert payload["turn"]["settlement_display"] is False
+    for k in MONTH_OPEN_KEYS:
+        assert payload["metrics"][k] == int(game.state.metrics[k])  # 活值，非冻快照
+    # 夜保持开（0036 原意），可重按过月
+    assert an.get_night(game.db, nid)["status"] == an.NIGHT_STATUS_OPEN
+
+    assert len(game.db.list_unextracted_replies(night_id=nid)) >= 1
+
+    assert game.db.get_story_extract_status(ctid) in ("", "pending")

@@ -1,0 +1,44 @@
+# FILE: tests/test_promulgation_judge_561.py
+# NAME: test_promulgated_verdict_strips_rejection_only_noise
+# LINE: 197-234
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_promulgated_verdict_strips_rejection_only_noise(game):
+    """#1397：顺颁夹带打回专属字段 → 剥离后过闸，不卡 settling。
+
+    r6 三局 rejection_reports 实证：LLM 在 decision=promulgated 上塞
+    reason/gatekeeper_id/primary_opponents/criteria_snapshot/affected_parties。
+    """
+    db, state, _content = game
+    dossier_id = _dossier(db, state)
+    dossiers = db.list_decree_dossiers(status="proposed")
+    context = decree_mod.build_promulgation_judge_context(db, state, dossiers)
+    noisy = {
+        "dossier_id": dossier_id,
+        "decision": "promulgated",
+        "gatekeeper_id": "许誉卿",
+        "primary_opponents": [{"kind": "faction", "key": "阉党"}],
+        "reason": "有御笔手敕背书；该案未见越制破格条款。",
+        "criteria_snapshot": {
+            "imperial_authority_band": context["imperial_authority_band"],
+            "appointment_tenure": "",
+            "authorization_ids": [],
+            "endorsement_entry_ids": [],
+        },
+        "affected_parties": [
+            {"kind": "faction", "key": "阉党", "direction": "negative", "intensity": "strong"},
+        ],
+        "blocked_layer": "six_offices",
+        "legal_reason_code": "",
+        "midzhi_unpromulgatable": False,
+    }
+    original_keys = set(noisy)
+
+    cleaned = decree_mod.validate_promulgation_verdicts(
+        [noisy], dossiers, db, prepared_context=context,
+    )
+
+    assert cleaned == [{"dossier_id": dossier_id, "decision": "promulgated"}]
+    # 调用方输入不被原地改写（error-pack / rejection 审计仍见原文）。
+    assert set(noisy) == original_keys

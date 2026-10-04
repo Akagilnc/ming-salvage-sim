@@ -1,0 +1,138 @@
+{
+  "source_path": "tests/test_office_rank_562.py",
+  "member_count": 9,
+  "members": [
+    {
+      "idx": 1411,
+      "file": "tests/test_office_rank_562.py",
+      "name": "test_white_body_high_appointment_is_marked_but_regular_first_office_is_not",
+      "line": 34,
+      "end": 53,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1411_test_office_rank_562__test_white_body_high_appointment_is_marked_but_regular_first_office_is_not.txt",
+      "source_path": "tests/test_office_rank_562.py"
+    },
+    {
+      "idx": 1412,
+      "file": "tests/test_office_rank_562.py",
+      "name": "test_appointment_dossier_uses_declared_type_for_uncommon_target_title",
+      "line": 56,
+      "end": 75,
+      "flags": [
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1412_test_office_rank_562__test_appointment_dossier_uses_declared_type_for_uncommon_target_title.txt",
+      "source_path": "tests/test_office_rank_562.py"
+    },
+    {
+      "idx": 1413,
+      "file": "tests/test_office_rank_562.py",
+      "name": "test_same_rank_demotion_and_two_band_promotion_follow_upward_formula",
+      "line": 78,
+      "end": 95,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1413_test_office_rank_562__test_same_rank_demotion_and_two_band_promotion_follow_upward_formula.txt",
+      "source_path": "tests/test_office_rank_562.py"
+    },
+    {
+      "idx": 1414,
+      "file": "tests/test_office_rank_562.py",
+      "name": "test_restoration_and_displaced_third_state_use_latest_historical_office",
+      "line": 98,
+      "end": 140,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call",
+        "retired_or_meta_marker"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1414_test_office_rank_562__test_restoration_and_displaced_third_state_use_latest_historical_office.txt",
+      "source_path": "tests/test_office_rank_562.py"
+    },
+    {
+      "idx": 1415,
+      "file": "tests/test_office_rank_562.py",
+      "name": "test_unofficed_and_offstage_degree_labels_are_genuine_first_appointments",
+      "line": 153,
+      "end": 165,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1415_test_office_rank_562__test_unofficed_and_offstage_degree_labels_are_genuine_first_appointments.txt",
+      "source_path": "tests/test_office_rank_562.py"
+    },
+    {
+      "idx": 1416,
+      "file": "tests/test_office_rank_562.py",
+      "name": "test_existing_proposed_appointment_dossier_gets_one_time_break_rank_backfill",
+      "line": 174,
+      "end": 205,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1416_test_office_rank_562__test_existing_proposed_appointment_dossier_gets_one_time_break_rank_backfill.txt",
+      "source_path": "tests/test_office_rank_562.py"
+    },
+    {
+      "idx": 1417,
+      "file": "tests/test_office_rank_562.py",
+      "name": "test_recognizable_archive_title_survives_blank_or_legacy_office_type",
+      "line": 208,
+      "end": 219,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call",
+        "retired_or_meta_marker"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1417_test_office_rank_562__test_recognizable_archive_title_survives_blank_or_legacy_office_type.txt",
+      "source_path": "tests/test_office_rank_562.py"
+    },
+    {
+      "idx": 1418,
+      "file": "tests/test_office_rank_562.py",
+      "name": "test_rank_rule_offset_reanchor_preserves_existing_save_leverage_once",
+      "line": 222,
+      "end": 276,
+      "flags": [
+        "assert_count",
+        "internal_formula_oracle",
+        "retired_or_meta_marker"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1418_test_office_rank_562__test_rank_rule_offset_reanchor_preserves_existing_save_leverage_once.txt",
+      "source_path": "tests/test_office_rank_562.py"
+    },
+    {
+      "idx": 1419,
+      "file": "tests/test_office_rank_562.py",
+      "name": "test_seed_archives_clean_historical_office_for_dismissed_ministers",
+      "line": 279,
+      "end": 305,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1419_test_office_rank_562__test_seed_archives_clean_historical_office_for_dismissed_ministers.txt",
+      "source_path": "tests/test_office_rank_562.py"
+    }
+  ]
+}

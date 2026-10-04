@@ -1,0 +1,73 @@
+# FILE: tests/test_faction_denunciation_627.py
+# NAME: test_ac5_zero_template_exposure_and_622
+# LINE: 355-421
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_ac5_zero_template_exposure_and_622(game):
+    db, state, _content = game
+    subject, _ = _pair_enemy(db)
+    subject_name = str(subject["name"])
+    subject_faction = str(subject["faction"])
+    accuser = _enemy_accuser(db, subject_faction)
+
+    did = _subject_dossier(db, state, owner=subject_name, token="ban")
+    _make_forked(db, state, did, token="ban")
+
+    fp_before = _world_fingerprint(db)
+    loophole_before = db.list_loophole_exposures(did)
+    knowledge_n_before = db.conn.execute(
+        "SELECT COUNT(*) AS n FROM character_knowledge_events"
+    ).fetchone()["n"]
+    inv_before = db.conn.execute(
+        "SELECT COUNT(*) AS n FROM decree_dossiers "
+        "WHERE action_type IN ('investigation','密查','查访')"
+    ).fetchone()["n"]
+    dossier_n_before = db.conn.execute(
+        "SELECT COUNT(*) AS n FROM decree_dossiers"
+    ).fetchone()["n"]
+
+    body = f"{accuser}疏称{subject_name}清丈借旨行私，请按问以肃官箴。"
+    hits = db.accept_faction_denunciations(
+        state,
+        [_scripted_entry(
+            accuser=accuser, subject=subject_name, dossier_id=did, body=body,
+        )],
+        commit=True,
+    )
+    assert hits
+    for h in hits:
+        # 正文即 LLM/scripted 原文，非引擎模板壳
+        assert h["memorial_text"] == body
+
+    # 暴露落条目自身，不写 loophole、不回注知识轨、不改世界状态
+    assert hits[0]["payload"].get("fork_exposure", {}).get("fork") is True
+    assert db.list_loophole_exposures(did) == loophole_before
+    assert db.conn.execute(
+        "SELECT COUNT(*) AS n FROM character_knowledge_events"
+    ).fetchone()["n"] == knowledge_n_before
+    assert db.conn.execute(
+        "SELECT COUNT(*) AS n FROM decree_dossiers "
+        "WHERE action_type IN ('investigation','密查','查访')"
+    ).fetchone()["n"] == inv_before
+    assert db.conn.execute(
+        "SELECT COUNT(*) AS n FROM decree_dossiers"
+    ).fetchone()["n"] == dossier_n_before
+    assert _world_fingerprint(db) == fp_before
+
+    # #622 读端改调 public fork 单源
+    actor = subject_name
+    audit_order = create_test_secret_order(db,
+        state, actor, "密查清丈", "逐月密奏", ["稽核"], deadline_months=4,
+    )
+    audit_dossier = int(db.get_dossier_for_secret_order(audit_order)["id"])
+    db.add_dossier_links(
+        audit_dossier,
+        [{"target_dossier_id": did, "relation_type": "稽核", "note": "密查"}],
+    )
+    nudges = db.list_monthly_dossier_progress_nudges()
+    audit_nudge = next(n for n in nudges if int(n["dossier_id"]) == audit_dossier)
+    signals = audit_nudge["audit_fork_signals"]
+    hit = next(s for s in signals if int(s["target_dossier_id"]) == did)
+    assert hit["fork"] is True
+    assert hit["fork"] == db.read_dossier_fork_state(did)["fork"]

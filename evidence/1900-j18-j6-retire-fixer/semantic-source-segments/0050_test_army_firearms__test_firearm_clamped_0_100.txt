@@ -1,0 +1,15 @@
+# FILE: tests/test_army_firearms.py
+# NAME: test_firearm_clamped_0_100
+# LINE: 60-68
+# FLAGS: assert_count
+# KIND: py
+
+def test_firearm_clamped_0_100(game):
+    db, state, _ = game
+    aid = db.conn.execute("SELECT id FROM armies LIMIT 1").fetchone()["id"]
+    pseudo = type("E", (), {"id": "test", "title": "x"})()
+    db.apply_army_deltas(state, pseudo, None, "测试", {aid: {"firearm_equipment": 999}})
+    val = db.conn.execute(
+        "SELECT firearm_equipment FROM armies WHERE id=?", (aid,)
+    ).fetchone()[0]
+    assert val == 100

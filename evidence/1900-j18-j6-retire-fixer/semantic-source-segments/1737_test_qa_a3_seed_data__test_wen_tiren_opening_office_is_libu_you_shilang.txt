@@ -1,0 +1,11 @@
+# FILE: tests/test_qa_a3_seed_data.py
+# NAME: test_wen_tiren_opening_office_is_libu_you_shilang
+# LINE: 70-74
+# FLAGS: assert_text_compare_or_match
+# KIND: py
+
+def test_wen_tiren_opening_office_is_libu_you_shilang():
+    """#1284：1627.10 温体仁史实=礼部右侍郎（崇祯元年方迁尚书；升迁走游戏内任免，无 timeline）。"""
+    _, characters = load_character_content()
+    wen = characters["温体仁"]
+    assert (wen.office or "") == "礼部右侍郎", wen.office

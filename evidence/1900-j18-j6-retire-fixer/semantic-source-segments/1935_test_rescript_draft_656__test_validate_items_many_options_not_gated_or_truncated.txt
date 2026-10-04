@@ -1,0 +1,16 @@
+# FILE: tests/test_rescript_draft_656.py
+# NAME: test_validate_items_many_options_not_gated_or_truncated
+# LINE: 747-756
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_validate_items_many_options_not_gated_or_truncated(draft_ingress):
+    """#1801：多项不拦——5 个 option 照常呈上、不截断、不报错。"""
+    item = _valid_item(0)
+    base = item["options"][0]
+    item["options"] = [
+        {**base, "label": f"拟{i}", "hint": f"h{i}"} for i in range(5)
+    ]
+    drafts = draft_ingress({"items": [item]}, set())
+    assert len(drafts) == 1
+    assert [o["label"] for o in drafts[0]["options"]] == [f"拟{i}" for i in range(5)]

@@ -1,0 +1,46 @@
+# FILE: tests/test_enter_settlement_period_1235.py
+# NAME: test_awaiting_decision_still_emits_pending
+# LINE: 350-389
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_awaiting_decision_still_emits_pending(game):
+    """AC3：awaiting_decision 下 pending_decisions 照常下发 + 核账展示态在。"""
+    db, state, _content = game
+    before = _click_before(state)
+    db.capture_month_open_snapshot(state)
+    state.turn_phase = TurnPhase.AWAITING_DECISION.value
+    db.save_state(state)
+    decisions = [{"title": "测", "context": "x", "idx": 0, "options": [{"label": "a"}]}]
+
+    runtime = object.__new__(web_app.WebGame)
+    runtime.session = SimpleNamespace(
+        db=db,
+        state=state,
+        content=SimpleNamespace(characters={}),
+        previous_summary="",
+        last_decree="",
+        last_report="",
+        pending_count=lambda: 0,
+        pending_decisions=lambda: list(decisions),
+        victory=lambda: {"status": "ongoing", "summary": ""},
+    )
+    runtime.directive_rows = lambda: []
+    runtime.issue_payloads = lambda: []
+    runtime.legacies_payload = lambda: []
+    runtime.closed_this_turn_payloads = lambda: []
+    runtime.map_nodes = lambda: []
+    runtime.ending_payload = lambda: None
+    runtime.public_character = lambda c: {"name": getattr(c, "name", "")}
+    runtime.character_power_id = lambda c: "ming"
+
+    payload = runtime.state_payload()
+    assert payload["turn"]["settlement_display"] is True
+    assert payload["turn"]["phase"] == "awaiting_decision"
+    assert payload["pending_decisions"] == decisions
+    for k in MONTH_OPEN_KEYS:
+        assert payload["metrics"][k] == before[k]
+
+    from ming_sim.month_open_snapshot import exit_settlement_display_on_failure
+    assert exit_settlement_display_on_failure(db, state) is False
+    assert db.get_month_open_snapshot(int(state.turn)) == before

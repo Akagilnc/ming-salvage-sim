@@ -1,0 +1,14 @@
+# FILE: tests/test_rescript_choices_563.py
+# NAME: test_missing_dossier_mode_defaults_to_ordinary
+# LINE: 71-78
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_missing_dossier_mode_defaults_to_ordinary(game):
+    db, state, _content = game
+    dossier_id = _make_midzhi_dossier(db, state)
+    db.conn.execute(
+        "UPDATE decree_dossiers SET payload_json='{}' WHERE id=?", (dossier_id,)
+    )
+
+    assert db.get_decree_dossier(dossier_id)["mode"] == "ordinary"

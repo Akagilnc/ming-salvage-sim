@@ -1,0 +1,25 @@
+# FILE: tests/test_army_salary_44.py
+# NAME: test_manpower_clamp_to_zero_leaves_army_log
+# LINE: 187-205
+# FLAGS: assert_text_compare_or_match,assert_count
+# KIND: py
+
+def test_manpower_clamp_to_zero_leaves_army_log(game):
+    # #44 顺手：0 兵再减 → clamp 仍 0、净 delta==0，但请求非 0 → 留 army_log delta=0（不静默吞，#14/#44）。
+    # cmr r4 codex：起点必须先置 0 才命中 clamp 分支——正 manpower 减大数 → 净 delta 为负、走正常路。
+    db, state, _ = game
+    aid = db.conn.execute(
+        "SELECT id FROM armies WHERE owner_power='ming' LIMIT 1").fetchone()["id"]
+    db.conn.execute("UPDATE armies SET manpower=0 WHERE id=?", (aid,))  # 起点 0 兵，命中 clamp 净 0 分支
+    db.conn.commit()
+    pseudo = type("E", (), {"id": "test", "title": "裁军"})()
+    before = db.conn.execute(
+        "SELECT COUNT(*) FROM army_logs WHERE army_id=? AND field='manpower'", (aid,)).fetchone()[0]
+    db.apply_army_deltas(state, pseudo, None, "裁撤", {aid: {"manpower": -5}})  # 0 再减 → clamp 0、请求非 0
+    after = db.conn.execute(
+        "SELECT COUNT(*) FROM army_logs WHERE army_id=? AND field='manpower'", (aid,)).fetchone()[0]
+    assert after == before + 1, "0 兵再减(请求非 0 经 clamp 净 0)应留 army_log（不静默）"
+    last = db.conn.execute(
+        "SELECT delta FROM army_logs WHERE army_id=? AND field='manpower' ORDER BY id DESC LIMIT 1",
+        (aid,)).fetchone()
+    assert last["delta"] == 0, "clamp 净 0 的 army_log delta 应为 0"

@@ -1,0 +1,22 @@
+# FILE: tests/test_section4_rejections.py
+# NAME: test_duplicate_army_without_manpower_rejected
+# LINE: 354-369
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_duplicate_army_without_manpower_rejected(game):
+    """new_armies 命中已有 id/name 但无 manpower 增量 → 原 print 静默跳,改为逐项
+    拒收留痕(invalid_enum,扩军无量=无意义项)(ADR 决定 1)。"""
+    db, state, content = game
+    turn = state.turn
+    dup_id, dup_name = db.conn.execute(
+        "SELECT id, name FROM armies LIMIT 1").fetchone()
+
+    run_settle(db, state, content, {
+        "new_armies": [{"id": dup_id, "name": dup_name, "owner_power": "ming"}],
+    }, narrative="x", decree_text="y")
+
+    rows = _rejection_rows(db, turn, "created_armies")
+    assert len(rows) == 1
+    assert rows[0][2] == "invalid_enum"
+    assert rows[0][1]

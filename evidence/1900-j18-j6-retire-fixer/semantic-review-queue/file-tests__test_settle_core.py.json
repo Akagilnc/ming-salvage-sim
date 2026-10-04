@@ -1,0 +1,19 @@
+{
+  "source_path": "tests/test_settle_core.py",
+  "member_count": 1,
+  "members": [
+    {
+      "idx": 2170,
+      "file": "tests/test_settle_core.py",
+      "name": "test_pre_settle_persists_event_terminal_states_in_write_path",
+      "line": 31,
+      "end": 71,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2170_test_settle_core__test_pre_settle_persists_event_terminal_states_in_write_path.txt",
+      "source_path": "tests/test_settle_core.py"
+    }
+  ]
+}

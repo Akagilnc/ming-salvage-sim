@@ -1,0 +1,44 @@
+# FILE: tests/test_pay_order_override_653.py
+# NAME: test_fact_brief_per_source_windows_and_region_attribution
+# LINE: 1221-1258
+# FLAGS: assert_text_compare_or_match,assert_count
+# KIND: py
+
+def test_fact_brief_per_source_windows_and_region_attribution(game):
+    """分源欠饷月数＝ceil(分源现欠/月需)，province/central 各自独立成窗；
+    army 级事实带属地 region（=station_region，#659）；零分母短路不计。"""
+    from ming_sim.flows import army_needed
+
+    db, _state, _content = game
+    # xuan_da：need=ceil(65000×1.5/10000)=10；两源现欠钉成不同值 → 窗口必然不同
+    db.conn.execute(
+        "UPDATE armies SET province_pay_arrears=25.0, central_pay_arrears=12.0,"
+        " arrears=37.0 WHERE id='xuan_da'"
+    )
+    # 零分母：manpower=0 → need=0，即便残留欠额也不计（0023 D6/D11）
+    db.conn.execute(
+        "UPDATE armies SET manpower=0, province_pay_arrears=5.0, arrears=5.0"
+        " WHERE id='southwest_tusi'"
+    )
+    db.conn.commit()
+    entries = build_fiscal_fact_brief(db)
+    xuan = {
+        e["detail"]: e for e in entries
+        if e["subject_id"] == "xuan_da" and e["metric"] == "分源欠饷月数"
+    }
+    assert set(xuan) == {"province", "central"}
+    assert xuan["province"]["window_turns"] == 3   # ceil(25/10)
+    assert xuan["central"]["window_turns"] == 2    # ceil(12/10)
+    assert xuan["province"]["value"] == pytest.approx(25.0)
+    assert xuan["central"]["value"] == pytest.approx(12.0)
+    for e in xuan.values():
+        assert e["region"] == "shanxi"             # 属地随 station_region 归因（#659；宣大 seed 同省）
+        assert e["affected_class"] == "军户"
+    # 零分母军不出窗
+    assert not any(
+        e["subject_id"] == "southwest_tusi" and e["metric"] == "分源欠饷月数"
+        for e in entries
+    )
+    assert army_needed(db.conn.execute(
+        "SELECT owner_power, manpower, salary_rate FROM armies WHERE id='southwest_tusi'"
+    ).fetchone()) == 0

@@ -1,0 +1,167 @@
+{
+  "source_path": "tests/test_rescript_choices_563.py",
+  "member_count": 12,
+  "members": [
+    {
+      "idx": 1897,
+      "file": "tests/test_rescript_choices_563.py",
+      "name": "test_manual_mode_uses_typed_extractor_judgment",
+      "line": 32,
+      "end": 42,
+      "flags": [
+        "mock_or_patch_present"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1897_test_rescript_choices_563__test_manual_mode_uses_typed_extractor_judgment.txt",
+      "source_path": "tests/test_rescript_choices_563.py"
+    },
+    {
+      "idx": 1898,
+      "file": "tests/test_rescript_choices_563.py",
+      "name": "test_manual_edit_preserves_existing_mode_when_text_and_extractor_are_silent",
+      "line": 45,
+      "end": 58,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1898_test_rescript_choices_563__test_manual_edit_preserves_existing_mode_when_text_and_extractor_are_silent.txt",
+      "source_path": "tests/test_rescript_choices_563.py"
+    },
+    {
+      "idx": 1899,
+      "file": "tests/test_rescript_choices_563.py",
+      "name": "test_predeclared_midzhi_promulgation_persists_stigma",
+      "line": 61,
+      "end": 68,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1899_test_rescript_choices_563__test_predeclared_midzhi_promulgation_persists_stigma.txt",
+      "source_path": "tests/test_rescript_choices_563.py"
+    },
+    {
+      "idx": 1900,
+      "file": "tests/test_rescript_choices_563.py",
+      "name": "test_missing_dossier_mode_defaults_to_ordinary",
+      "line": 71,
+      "end": 78,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1900_test_rescript_choices_563__test_missing_dossier_mode_defaults_to_ordinary.txt",
+      "source_path": "tests/test_rescript_choices_563.py"
+    },
+    {
+      "idx": 1901,
+      "file": "tests/test_rescript_choices_563.py",
+      "name": "test_declared_staging_uses_typed_mode_not_minister_text",
+      "line": 87,
+      "end": 102,
+      "flags": [
+        "assert_count"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1901_test_rescript_choices_563__test_declared_staging_uses_typed_mode_not_minister_text.txt",
+      "source_path": "tests/test_rescript_choices_563.py"
+    },
+    {
+      "idx": 1902,
+      "file": "tests/test_rescript_choices_563.py",
+      "name": "test_presence_aware_mode_preserves_draft_until_explicit_override",
+      "line": 105,
+      "end": 130,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1902_test_rescript_choices_563__test_presence_aware_mode_preserves_draft_until_explicit_override.txt",
+      "source_path": "tests/test_rescript_choices_563.py"
+    },
+    {
+      "idx": 1903,
+      "file": "tests/test_rescript_choices_563.py",
+      "name": "test_held_dossier_rejection_stigma_is_idempotent_across_months",
+      "line": 133,
+      "end": 159,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1903_test_rescript_choices_563__test_held_dossier_rejection_stigma_is_idempotent_across_months.txt",
+      "source_path": "tests/test_rescript_choices_563.py"
+    },
+    {
+      "idx": 1904,
+      "file": "tests/test_rescript_choices_563.py",
+      "name": "test_rejected_midzhi_and_force_promulgation_are_idempotent",
+      "line": 162,
+      "end": 176,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1904_test_rescript_choices_563__test_rejected_midzhi_and_force_promulgation_are_idempotent.txt",
+      "source_path": "tests/test_rescript_choices_563.py"
+    },
+    {
+      "idx": 1905,
+      "file": "tests/test_rescript_choices_563.py",
+      "name": "test_rejected_ordinary_force_promulgation_adds_rescript_stigma",
+      "line": 179,
+      "end": 191,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1905_test_rescript_choices_563__test_rejected_ordinary_force_promulgation_adds_rescript_stigma.txt",
+      "source_path": "tests/test_rescript_choices_563.py"
+    },
+    {
+      "idx": 1906,
+      "file": "tests/test_rescript_choices_563.py",
+      "name": "test_financial_decision_uses_stored_option_not_client_payload",
+      "line": 201,
+      "end": 252,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1906_test_rescript_choices_563__test_financial_decision_uses_stored_option_not_client_payload.txt",
+      "source_path": "tests/test_rescript_choices_563.py"
+    },
+    {
+      "idx": 1907,
+      "file": "tests/test_rescript_choices_563.py",
+      "name": "test_decision_parser_rejects_unknown_typed_action_and_keeps_sibling",
+      "line": 255,
+      "end": 351,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1907_test_rescript_choices_563__test_decision_parser_rejects_unknown_typed_action_and_keeps_sibling.txt",
+      "source_path": "tests/test_rescript_choices_563.py"
+    },
+    {
+      "idx": 1908,
+      "file": "tests/test_rescript_choices_563.py",
+      "name": "test_657_capability_revalidate_on_follow",
+      "line": 367,
+      "end": 402,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1908_test_rescript_choices_563__test_657_capability_revalidate_on_follow.txt",
+      "source_path": "tests/test_rescript_choices_563.py"
+    }
+  ]
+}

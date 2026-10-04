@@ -1,0 +1,54 @@
+# FILE: web/src/components/gameMenu.test.tsx
+# NAME: "#1732 GameMenu · 就地消解" / "加载存档：取消就地确认零请求；确认后 POST load"
+# LINE: 764-811
+# FLAGS: web_mock_spy_or_calls
+# KIND: web
+
+  it("加载存档：取消就地确认零请求；确认后 POST load", async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    global.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      if (String(url) === "/api/saves" && !init?.method) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ saves: [{ name: "slot_a", mtime: 1, size: 2048 }] }),
+        } as Response);
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) } as Response);
+    });
+    const onAfterLoad = vi.fn();
+    const { cleanup } = render(<LoadTab onAfterLoad={onAfterLoad} />);
+    await act(async () => {});
+
+    const loadBtn = Array.from(document.querySelectorAll("button")).find((b) =>
+      (b.textContent || "").trim() === "加载" || (b.textContent || "").includes("加载")
+    );
+    expect(loadBtn).toBeTruthy();
+    await act(async () => {
+      loadBtn!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    const panel = document.querySelector('[aria-label="确认加载 slot_a"]');
+    expect(panel).not.toBeNull();
+    const cancel = Array.from(panel!.querySelectorAll("button")).find((b) =>
+      (b.textContent || "").includes("取消")
+    );
+    await act(async () => {
+      cancel!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(calls.some((c) => String(c.url).includes("/load"))).toBe(false);
+
+    await act(async () => {
+      loadBtn!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    const panel2 = document.querySelector('[aria-label="确认加载 slot_a"]');
+    const yes = Array.from(panel2!.querySelectorAll("button")).find((b) =>
+      (b.textContent || "").includes("加载")
+    );
+    await act(async () => {
+      yes!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+    });
+    expect(calls.some((c) => String(c.url).includes("/api/saves/slot_a/load") && c.init?.method === "POST")).toBe(true);
+    expect(onAfterLoad).toHaveBeenCalled();
+    cleanup();
+  });

@@ -1,0 +1,57 @@
+# FILE: tests/test_fiscal_substrate_bridge.py
+# NAME: test_tusi_self_funded_army_skips_pay_morale_channel
+# LINE: 2244-2294
+# FLAGS: assert_count,helper_or_private_call
+# KIND: py
+
+def test_tusi_self_funded_army_skips_pay_morale_channel(fresh_db):
+    _write_settle(
+        fresh_db,
+        "shaanxi",
+        {
+            "st": {
+                "省库库银": 0,
+                "C_地方截留": 0,
+                "C_中饱": 0,
+                "C_漂没": 0,
+                "C_eff损耗": 0,
+                "民欠旧赋": 0,
+                "军饷欠": 0,
+                "官俸欠": 0,
+                "宗禄欠": 0,
+                "官民田": 0,
+                "隐田": 0,
+            },
+            "p": {
+                "正赋应征": 0,
+                "三饷应征": 0,
+                "火耗率": 0,
+                "逋赋率": 0,
+                "起运定额": 0,
+                "拨付gross": 0,
+                "中饱率": 0,
+                "漂没率": 0,
+                "Due": {"军饷": 999, "官俸": 0, "宗禄": 0, "赈济": 0},
+            },
+        },
+    )
+    fresh_db.conn.execute(
+        """
+        UPDATE armies
+        SET self_funded_pay = 1, is_tusi = 1, owner_power = 'ming',
+            pay_source_region = '', province_pay_share = 0,
+            central_pay_share = 0, province_pay_arrears = 0,
+            central_pay_arrears = 0, arrears = 0, morale = 80,
+            manpower = 24000, salary_rate = 10
+        WHERE id = 'southwest_tusi'
+        """
+    )
+    fresh_db.conn.commit()
+
+    fresh_db.settle_province_tick("shaanxi")
+
+    row = fresh_db.conn.execute(
+        "SELECT morale, arrears FROM armies WHERE id = 'southwest_tusi'"
+    ).fetchone()
+    assert row["arrears"] == pytest.approx(0)
+    assert row["morale"] == 80

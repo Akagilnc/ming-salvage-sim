@@ -1,0 +1,48 @@
+# FILE: tests/test_pay_order_override_653.py
+# NAME: test_golden5_expiry_and_revoke_restore_byte_identical_default
+# LINE: 258-299
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_golden5_expiry_and_revoke_restore_byte_identical_default(game):
+    """⑤期限届满月／撤销旨：全序与系数恢复默认，与无旨基线逐字节一致。"""
+    db, state, _content = game
+    turn = db._current_settle_turn()
+    d21 = _override_dossier(db, state, [
+        {"key": "due_priority_军饷@shaanxi", "value": 40, "until_turn": turn},
+        {"key": "due_haircut_bp_宗禄@shaanxi", "value": 5000, "until_turn": turn},
+    ])
+    db.apply_dossier_promulgation(state, d21, "promulgated")   # 判后物化缝（带期限）
+    # 当回合仍在位：override 生效（结果偏离基线）
+    active = db.settle_province_tick("shaanxi")
+    assert active.breakdown["haircut_宗禄"] > 0
+
+    # 届满月：turn > until → 全部回落默认，与同输入无旨基线逐字节一致
+    db.conn.execute("UPDATE game_state SET turn = ? WHERE id = 1", (turn + 1,))
+    cur = _opening_settle(db, "shaanxi")  # active 月已推进后的开账
+    expected_default = settle_tick(
+        copy.deepcopy(cur["st"]), copy.deepcopy(cur["p"]), [],
+    )
+    expired = db.settle_province_tick("shaanxi")
+    assert expired.new_st == expected_default.new_st
+    assert expired.breakdown == expected_default.breakdown
+    # 键与 provenance 保留不删
+    assert "due_priority_军饷@shaanxi_until_turn" in db.get_fiscal_config()
+
+    # 撤销旨路径：在位永久旨撤销＝写回默认值的新旨（r2：old/new provenance 链即审计账）
+    db.conn.execute("UPDATE game_state SET turn = ? WHERE id = 1", (turn,))
+    d22 = _override_dossier(
+        db, state, [{"key": "due_priority_官俸@shaanxi", "value": 10}],
+        text="官俸优先旨",
+    )
+    db.apply_dossier_promulgation(state, d22, "promulgated")
+    d23 = _override_dossier(
+        db, state, [{"key": "due_priority_官俸@shaanxi", "value": DEFAULT_DUE_PRIORITY["官俸"]}],
+        text="撤回前旨",
+    )
+    db.apply_dossier_promulgation(state, d23, "promulgated")   # 撤销旨本身先过颁布门
+    revoke_pay_order_decree(
+        db, turn=db._current_settle_turn(),
+        keys=["due_priority_官俸@shaanxi"], origin_ref=f"dossier:{d23}", commit=True,
+    )
+    assert db.get_fiscal_config()["due_priority_官俸@shaanxi"] == DEFAULT_DUE_PRIORITY["官俸"]

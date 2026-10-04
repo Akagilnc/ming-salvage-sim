@@ -1,0 +1,46 @@
+# FILE: tests/test_person_delta_adapter.py
+# NAME: test_apply_score_extraction_applies_person_change_office_action
+# LINE: 585-624
+# FLAGS: assert_text_compare_or_match
+# KIND: py
+
+def test_apply_score_extraction_applies_person_change_office_action(game):
+    db, state, content = game
+    name = active_ming_character(db, content)
+    old_status = content.characters[name].status
+    old_office = content.characters[name].office
+    old_office_type = content.characters[name].office_type
+
+    try:
+        applied = issues.apply_score_extraction(
+            db,
+            state,
+            {
+                "人物变更": [
+                    {
+                        "name": name,
+                        "origin_ref": "盘面自发", "动作": "调任",
+                        "office": "测试巡抚",
+                        "office_type": "督抚",
+                        "region_id": "shaanxi",
+                        "reason": "移镇测试",
+                    }
+                ]
+            },
+            content=content,
+        )
+
+        row = db.conn.execute(
+            "SELECT status, office, office_type FROM characters WHERE name=?", (name,)
+        ).fetchone()
+        assert row["status"] == "active"
+        assert row["office"] == "测试巡抚"
+        assert row["office_type"] == content.characters[name].office_type
+        assert content.characters[name].office == "测试巡抚"
+        assert applied["applied_person_changes"][0]["动作"] == "调任"
+        assert applied["applied_person_changes"][0]["new_office"] == "测试巡抚"
+        assert not applied["applied_person_changes"][0].get("rejected")
+    finally:
+        content.characters[name].status = old_status
+        content.characters[name].office = old_office
+        content.characters[name].office_type = old_office_type

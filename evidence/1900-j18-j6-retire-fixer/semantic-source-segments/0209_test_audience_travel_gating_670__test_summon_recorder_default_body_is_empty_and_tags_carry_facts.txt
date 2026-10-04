@@ -1,0 +1,21 @@
+# FILE: tests/test_audience_travel_gating_670.py
+# NAME: test_summon_recorder_default_body_is_empty_and_tags_carry_facts
+# LINE: 743-757
+# FLAGS: assert_text_compare_or_match
+# KIND: py
+
+def test_summon_recorder_default_body_is_empty_and_tags_carry_facts(game):
+    """#670 P7：传召账默认无固定玩家文案；机器事实只在 tags。"""
+    db, state, _content = game
+    night_id = int(an.open_night(db, state)["id"])
+    fresh_id = an.record_summon_fresh(
+        db, night_id, "洪承畴", origin_id="command:body-fresh",
+    )
+    transit_id = an.record_summon_in_transit(
+        db, night_id, "孙传庭", origin_id="command:body-transit",
+    )
+    by_id = {int(e["id"]): e for e in an.list_ledger(db, night_id)}
+    assert by_id[fresh_id]["body"] == ""
+    assert by_id[transit_id]["body"] == ""
+    assert an.TAG_SUMMON_UNSETTLED in by_id[fresh_id]["tags"]
+    assert an.TAG_IN_TRANSIT in by_id[transit_id]["tags"]

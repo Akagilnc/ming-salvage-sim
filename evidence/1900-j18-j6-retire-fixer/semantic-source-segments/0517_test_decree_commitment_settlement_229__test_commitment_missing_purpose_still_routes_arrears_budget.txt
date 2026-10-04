@@ -1,0 +1,46 @@
+# FILE: tests/test_decree_commitment_settlement_229.py
+# NAME: test_commitment_missing_purpose_still_routes_arrears_budget
+# LINE: 937-976
+# FLAGS: helper_or_private_call
+# KIND: py
+
+def test_commitment_missing_purpose_still_routes_arrears_budget(game):
+    db, state, content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.execute("UPDATE legacies SET status='cleared' WHERE status='active'")
+    db.conn.execute("UPDATE armies SET arrears=0 WHERE owner_power='ming'")
+    db.conn.execute("UPDATE armies SET arrears=100 WHERE id='guanning'")
+    state.metrics["国库"] = 500
+    db.save_state(state)
+
+    result = apply_score_extraction(
+        db,
+        state,
+        {
+            "new_issues": [
+                {
+                    "origin_kind": "decree",
+                    "origin_ref": _promulgated_commitment_origin(db, state, "missing-purpose"),
+                    "kind": "initiative",
+                    "title": "每月补关宁欠饷直到补齐",
+                    "ongoing_effects": {
+                        "economy": [
+                            {"account": "国库", "delta": -50, "reason": "每月补关宁欠饷"}
+                        ]
+                    },
+                    "stop_condition": {"army.guanning.arrears": "<=0"},
+                    "commitment_kind": "until_stop",
+                }
+            ]
+        },
+        content=content,
+    )
+    created = result["issue_summary"]["new_issues"][0]
+    assert not created.get("rejected")
+
+    _advance_player_month(db, state, content)
+
+    assert db.conn.execute(
+        "SELECT COALESCE(SUM(delta),0) FROM economy_ledger "
+        "WHERE purpose='补饷' AND target_kind='army'"
+    ).fetchone()[0] == -50

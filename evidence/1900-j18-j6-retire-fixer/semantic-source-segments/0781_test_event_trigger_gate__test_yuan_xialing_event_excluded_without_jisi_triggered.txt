@@ -1,0 +1,22 @@
+# FILE: tests/test_event_trigger_gate.py
+# NAME: test_yuan_xialing_event_excluded_without_jisi_triggered
+# LINE: 1619-1634
+# FLAGS: assert_text_compare_or_match
+# KIND: py
+
+def test_yuan_xialing_event_excluded_without_jisi_triggered(game):
+    """#191 CMR：袁下狱依赖己巳之变已发生，不能与上游事件同月凭其它事实一起候选。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1629
+    state.period = 12
+    db.conn.execute("UPDATE characters SET status=? WHERE name=?", ("active", "袁崇焕"))
+    db.conn.execute("UPDATE armies SET commander=? WHERE id=?", ("袁崇焕", "guanning"))
+    db.conn.execute(
+        "UPDATE characters SET status=?, status_reason=? WHERE name=?",
+        ("dead", "袁崇焕双岛斩帅", "毛文龙"),
+    )
+
+    cands = issues.gather_candidate_events(state, db)
+
+    assert all(ev.id != "yuan_xialing" for ev in cands)

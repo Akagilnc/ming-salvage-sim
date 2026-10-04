@@ -1,0 +1,17 @@
+# FILE: tests/test_chat_stream_failpaths_393.py
+# NAME: test_prologue_cleanup_failure_still_releases_gate_and_counter
+# LINE: 252-262
+# FLAGS: helper_or_private_call
+# KIND: py
+
+def test_prologue_cleanup_failure_still_releases_gate_and_counter():
+    """R3 self-check: prologue 崩 → _fail_chat_turn_and_reload 自身也崩（DB 已坏）→
+    写路径与 pending ownership 仍须释放，否则 drain 永久挂起、所有写入被永久挡。"""
+    db = _DoubleFailDB()
+    runtime, minister = _base_runtime(db)
+
+    gen = runtime.chat_stream("殿上", "辽东军情如何？")
+    with pytest.raises(RuntimeError):
+        next(gen)
+
+    _assert_write_path_free(runtime)

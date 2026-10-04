@@ -1,0 +1,20 @@
+{
+  "source_path": "tests/test_army_pay_source_prompt_contract.py",
+  "member_count": 1,
+  "members": [
+    {
+      "idx": 65,
+      "file": "tests/test_army_pay_source_prompt_contract.py",
+      "name": "test_prompt_compatible_ming_new_army_pay_source_aliases_land",
+      "line": 4,
+      "end": 45,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0065_test_army_pay_source_prompt_contract__test_prompt_compatible_ming_new_army_pay_source_aliases_land.txt",
+      "source_path": "tests/test_army_pay_source_prompt_contract.py"
+    }
+  ]
+}

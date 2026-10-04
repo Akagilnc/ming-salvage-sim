@@ -1,0 +1,35 @@
+# FILE: web/src/components/modals.test.tsx
+# NAME: "ChatModal — single night-scroll authority (#539)" / "retires the whole old-night snapshot when the persisted player-entry identity changes before refresh fails"
+# LINE: 633-661
+# FLAGS: web_mock_spy_or_calls,web_text_assert
+# KIND: web
+
+  it("retires the whole old-night snapshot when the persisted player-entry identity changes before refresh fails", async () => {
+    let rejectRefresh!: (reason?: unknown) => void;
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ night_id: 23, protagonist: "", roster: [], translation_pending: false, messages: [
+        { role: "user", speaker: "朕", content: "旧夜问话", chat_turn_id: 1 },
+        { role: "minister", speaker: MINISTER_MOCK.name, content: "旧夜答复", chat_turn_id: 1 },
+        { role: "minister", speaker: "洪承畴", content: "同夜他臣", chat_turn_id: 2 },
+        { role: "attendant", speaker: "王承恩", content: "旧轮迟到递话", chat_turn_id: 1, record_id: 91 },
+      ] }) })
+      .mockReturnValueOnce(new Promise((_resolve, reject) => { rejectRefresh = reject; }));
+    vi.stubGlobal("fetch", fetchMock);
+    let updateNight!: (nightId: number) => void;
+    renderModal({ minister: MINISTER_MOCK, portraitPrefix: "minister_", currentNightId: 23,
+      chat: [{ role: "user", content: "旧夜问话", chatTurnId: 1 }],
+      registerNightUpdate: (update) => { updateNight = update; } });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    // #1511: other minister's turn is lens-filtered out of this window immediately.
+    expect(document.body.textContent).toContain("同夜他臣");
+    expect(document.body.textContent).toContain("旧轮迟到递话");
+
+    await act(async () => { updateNight(24); await Promise.resolve(); });
+    expect(document.body.textContent).not.toContain("旧夜问话");
+    expect(document.body.textContent).not.toContain("旧夜答复");
+    expect(document.body.textContent).not.toContain("同夜他臣");
+    expect(document.body.textContent).not.toContain("旧轮迟到递话");
+
+    await act(async () => { rejectRefresh(new Error("refresh failed")); await Promise.resolve(); });
+    expect(document.body.textContent).not.toContain("旧夜问话");
+  });

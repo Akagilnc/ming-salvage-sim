@@ -1,0 +1,174 @@
+{
+  "source_path": "tests/test_enter_settlement_period_1235.py",
+  "member_count": 11,
+  "members": [
+    {
+      "idx": 689,
+      "file": "tests/test_enter_settlement_period_1235.py",
+      "name": "test_web_entry_captures_before_await_close",
+      "line": 174,
+      "end": 217,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0689_test_enter_settlement_period_1235__test_web_entry_captures_before_await_close.txt",
+      "source_path": "tests/test_enter_settlement_period_1235.py"
+    },
+    {
+      "idx": 690,
+      "file": "tests/test_enter_settlement_period_1235.py",
+      "name": "test_true_failure_pending_translation_exits_display",
+      "line": 223,
+      "end": 276,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "mock_or_patch_present",
+        "helper_or_private_call",
+        "retired_or_meta_marker"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0690_test_enter_settlement_period_1235__test_true_failure_pending_translation_exits_display.txt",
+      "source_path": "tests/test_enter_settlement_period_1235.py"
+    },
+    {
+      "idx": 691,
+      "file": "tests/test_enter_settlement_period_1235.py",
+      "name": "test_true_failure_issue_exits_display",
+      "line": 279,
+      "end": 327,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "mock_or_patch_present",
+        "helper_or_private_call",
+        "retired_or_meta_marker"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0691_test_enter_settlement_period_1235__test_true_failure_issue_exits_display.txt",
+      "source_path": "tests/test_enter_settlement_period_1235.py"
+    },
+    {
+      "idx": 692,
+      "file": "tests/test_enter_settlement_period_1235.py",
+      "name": "test_settling_keeps_display_for_recovery",
+      "line": 333,
+      "end": 347,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0692_test_enter_settlement_period_1235__test_settling_keeps_display_for_recovery.txt",
+      "source_path": "tests/test_enter_settlement_period_1235.py"
+    },
+    {
+      "idx": 693,
+      "file": "tests/test_enter_settlement_period_1235.py",
+      "name": "test_awaiting_decision_still_emits_pending",
+      "line": 350,
+      "end": 389,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0693_test_enter_settlement_period_1235__test_awaiting_decision_still_emits_pending.txt",
+      "source_path": "tests/test_enter_settlement_period_1235.py"
+    },
+    {
+      "idx": 694,
+      "file": "tests/test_enter_settlement_period_1235.py",
+      "name": "test_accept_creator_atomic_only_one_true",
+      "line": 392,
+      "end": 412,
+      "flags": [
+        "mock_or_patch_present"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0694_test_enter_settlement_period_1235__test_accept_creator_atomic_only_one_true.txt",
+      "source_path": "tests/test_enter_settlement_period_1235.py"
+    },
+    {
+      "idx": 695,
+      "file": "tests/test_enter_settlement_period_1235.py",
+      "name": "test_advance_http_reject_after_accept_exits_display",
+      "line": 418,
+      "end": 459,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0695_test_enter_settlement_period_1235__test_advance_http_reject_after_accept_exits_display.txt",
+      "source_path": "tests/test_enter_settlement_period_1235.py"
+    },
+    {
+      "idx": 696,
+      "file": "tests/test_enter_settlement_period_1235.py",
+      "name": "test_concurrent_advance_noncreator_must_not_clear_owner_snapshot",
+      "line": 462,
+      "end": 499,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0696_test_enter_settlement_period_1235__test_concurrent_advance_noncreator_must_not_clear_owner_snapshot.txt",
+      "source_path": "tests/test_enter_settlement_period_1235.py"
+    },
+    {
+      "idx": 697,
+      "file": "tests/test_enter_settlement_period_1235.py",
+      "name": "test_exit_settlement_display_acquires_write_gate",
+      "line": 502,
+      "end": 548,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0697_test_enter_settlement_period_1235__test_exit_settlement_display_acquires_write_gate.txt",
+      "source_path": "tests/test_enter_settlement_period_1235.py"
+    },
+    {
+      "idx": 698,
+      "file": "tests/test_enter_settlement_period_1235.py",
+      "name": "test_session_reaccept_orphan_exits_after_owner_release",
+      "line": 555,
+      "end": 656,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0698_test_enter_settlement_period_1235__test_session_reaccept_orphan_exits_after_owner_release.txt",
+      "source_path": "tests/test_enter_settlement_period_1235.py"
+    },
+    {
+      "idx": 699,
+      "file": "tests/test_enter_settlement_period_1235.py",
+      "name": "test_noncreator_exit_must_not_clear_owner_during_gatefree",
+      "line": 659,
+      "end": 755,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0699_test_enter_settlement_period_1235__test_noncreator_exit_must_not_clear_owner_during_gatefree.txt",
+      "source_path": "tests/test_enter_settlement_period_1235.py"
+    }
+  ]
+}

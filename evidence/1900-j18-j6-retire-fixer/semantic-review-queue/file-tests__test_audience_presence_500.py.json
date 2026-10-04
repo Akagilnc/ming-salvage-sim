@@ -1,0 +1,145 @@
+{
+  "source_path": "tests/test_audience_presence_500.py",
+  "member_count": 10,
+  "members": [
+    {
+      "idx": 109,
+      "file": "tests/test_audience_presence_500.py",
+      "name": "test_dismiss_command_updates_roster_immediately",
+      "line": 43,
+      "end": 61,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0109_test_audience_presence_500__test_dismiss_command_updates_roster_immediately.txt",
+      "source_path": "tests/test_audience_presence_500.py"
+    },
+    {
+      "idx": 110,
+      "file": "tests/test_audience_presence_500.py",
+      "name": "test_dismiss_noop_when_not_present",
+      "line": 64,
+      "end": 80,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0110_test_audience_presence_500__test_dismiss_noop_when_not_present.txt",
+      "source_path": "tests/test_audience_presence_500.py"
+    },
+    {
+      "idx": 111,
+      "file": "tests/test_audience_presence_500.py",
+      "name": "test_dismiss_via_cli_command_writes_exit_ledger",
+      "line": 118,
+      "end": 133,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0111_test_audience_presence_500__test_dismiss_via_cli_command_writes_exit_ledger.txt",
+      "source_path": "tests/test_audience_presence_500.py"
+    },
+    {
+      "idx": 112,
+      "file": "tests/test_audience_presence_500.py",
+      "name": "test_court_break_writes_no_exit_ledger",
+      "line": 136,
+      "end": 171,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0112_test_audience_presence_500__test_court_break_writes_no_exit_ledger.txt",
+      "source_path": "tests/test_audience_presence_500.py"
+    },
+    {
+      "idx": 113,
+      "file": "tests/test_audience_presence_500.py",
+      "name": "test_reenter_after_exit_reappears_in_roster",
+      "line": 215,
+      "end": 237,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0113_test_audience_presence_500__test_reenter_after_exit_reappears_in_roster.txt",
+      "source_path": "tests/test_audience_presence_500.py"
+    },
+    {
+      "idx": 114,
+      "file": "tests/test_audience_presence_500.py",
+      "name": "test_transit_rejects_bad_method",
+      "line": 243,
+      "end": 255,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0114_test_audience_presence_500__test_transit_rejects_bad_method.txt",
+      "source_path": "tests/test_audience_presence_500.py"
+    },
+    {
+      "idx": 115,
+      "file": "tests/test_audience_presence_500.py",
+      "name": "test_present_names_at_table",
+      "line": 303,
+      "end": 309,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0115_test_audience_presence_500__test_present_names_at_table.txt",
+      "source_path": "tests/test_audience_presence_500.py"
+    },
+    {
+      "idx": 116,
+      "file": "tests/test_audience_presence_500.py",
+      "name": "test_present_names_at_uses_timeline_key_not_raw_seq",
+      "line": 312,
+      "end": 330,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0116_test_audience_presence_500__test_present_names_at_uses_timeline_key_not_raw_seq.txt",
+      "source_path": "tests/test_audience_presence_500.py"
+    },
+    {
+      "idx": 117,
+      "file": "tests/test_audience_presence_500.py",
+      "name": "test_standing_roster_present_throughout",
+      "line": 333,
+      "end": 348,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0117_test_audience_presence_500__test_standing_roster_present_throughout.txt",
+      "source_path": "tests/test_audience_presence_500.py"
+    },
+    {
+      "idx": 118,
+      "file": "tests/test_audience_presence_500.py",
+      "name": "test_audible_interval_public_only",
+      "line": 354,
+      "end": 385,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0118_test_audience_presence_500__test_audible_interval_public_only.txt",
+      "source_path": "tests/test_audience_presence_500.py"
+    }
+  ]
+}

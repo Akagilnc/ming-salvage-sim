@@ -1,0 +1,19 @@
+{
+  "source_path": "tests/test_promulgation_seam_560.py",
+  "member_count": 1,
+  "members": [
+    {
+      "idx": 1720,
+      "file": "tests/test_promulgation_seam_560.py",
+      "name": "test_turn_batch_replacement_rolls_back_atomically_on_partial_bad_row",
+      "line": 37,
+      "end": 48,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1720_test_promulgation_seam_560__test_turn_batch_replacement_rolls_back_atomically_on_partial_bad_row.txt",
+      "source_path": "tests/test_promulgation_seam_560.py"
+    }
+  ]
+}

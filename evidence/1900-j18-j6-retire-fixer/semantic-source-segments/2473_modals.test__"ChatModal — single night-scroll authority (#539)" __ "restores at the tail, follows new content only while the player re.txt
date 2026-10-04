@@ -1,0 +1,41 @@
+# FILE: web/src/components/modals.test.tsx
+# NAME: "ChatModal — single night-scroll authority (#539)" / "restores at the tail, follows new content only while the player remains at the tail"
+# LINE: 723-757
+# FLAGS: web_mock_spy_or_calls,web_count_assert
+# KIND: web
+
+  it("restores at the tail, follows new content only while the player remains at the tail", async () => {
+    let resolveScroll!: (value: unknown) => void;
+    const fetchMock = vi.fn().mockReturnValue(new Promise((resolve) => { resolveScroll = resolve; }));
+    vi.stubGlobal("fetch", fetchMock);
+    let updateChat!: (chat: ChatMessage[]) => void;
+    const host = renderModal({
+      minister: MINISTER_MOCK,
+      portraitPrefix: "minister_",
+      chat: [{ role: "user", content: "初问" }],
+      registerChatUpdate: (update) => { updateChat = update; },
+    });
+    const log = host.querySelector(".chat-log") as HTMLDivElement;
+    let scrollHeight = 600;
+    Object.defineProperties(log, {
+      scrollHeight: { get: () => scrollHeight },
+      clientHeight: { get: () => 200 },
+    });
+
+    await act(async () => {
+      resolveScroll({ ok: true, json: async () => ({ night_id: 17, protagonist: "", roster: [], translation_pending: false, messages: [{ role: "user", content: "卷首" }] }) });
+      await Promise.resolve(); await Promise.resolve();
+    });
+    expect(log.scrollTop).toBe(600);
+
+    scrollHeight = 700;
+    await act(async () => { updateChat([{ role: "user", content: "完成一轮" }]); await Promise.resolve(); });
+    expect(log.scrollTop).toBe(700);
+
+    log.scrollTop = 100;
+    act(() => log.dispatchEvent(new Event("scroll", { bubbles: true })));
+    scrollHeight = 800;
+    await act(async () => { updateChat([{ role: "user", content: "完成二轮" }]); await Promise.resolve(); });
+    expect(log.scrollTop).toBe(100);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });

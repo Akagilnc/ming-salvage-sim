@@ -1,0 +1,61 @@
+# FILE: tests/test_event_trigger_gate.py
+# NAME: test_event_pool_pending_rejected_vassal_appointment_does_not_block_gate
+# LINE: 3764-3818
+# FLAGS: assert_text_compare_or_match
+# KIND: py
+
+def test_event_pool_pending_rejected_vassal_appointment_does_not_block_gate(game):
+    """post-merge CMR R9：宗藩任命会被真实写口拒收，pending 闸门不得按成功授官误挡。"""
+    db, state, content = game
+    issues.bind_content(content)
+    db.conn.execute(
+        "UPDATE characters SET status=?, power_id=?, office=?, office_type=? WHERE name=?",
+        ("active", "ming", "福王,就藩洛阳", "宗藩", "朱常洵"),
+    )
+    if "朱常洵" in content.characters:
+        ch = content.characters["朱常洵"]
+        ch.status = "active"
+        ch.power_id = "ming"
+        ch.office = "福王,就藩洛阳"
+        ch.office_type = "宗藩"
+    ev = Event(
+        id="__test_vassal_appointment_pending__",
+        title="测试·宗藩拒任不阻断",
+        kind="朝议",
+        summary="福王仍为宗藩时才可触发。",
+        urgency=10,
+        severity=10,
+        credibility=100,
+        interests=[],
+        audiences=[],
+        event_type="situation",
+        trigger_gate={"character.朱常洵.office": "== 福王,就藩洛阳"},
+    )
+    content.seed_events.append(ev)
+    content.event_by_id[ev.id] = ev
+    try:
+        out = issues.apply_score_extraction(
+            db,
+            state,
+            {
+                "new_issues": [{"origin_kind": "event_pool", "id": ev.id}],
+                "人物变更": [{"origin_ref": "盘面自发", "name": "朱常洵", "动作": "任命", "office": "兵部尚书"}],
+            },
+            content=content,
+        )
+
+        assert out["issue_summary"]["new_issues"][0]["rejected"] is False
+        assert out["applied_person_changes"][0]["rejected"] is True
+        row = db.conn.execute(
+            "SELECT office, office_type FROM characters WHERE name=?",
+            ("朱常洵",),
+        ).fetchone()
+        assert row["office"] == "福王,就藩洛阳"
+        assert row["office_type"] == "宗藩"
+        assert db.conn.execute(
+            "SELECT id FROM issues WHERE origin_kind='event_pool' AND origin_ref=?",
+            (ev.id,),
+        ).fetchone() is not None
+    finally:
+        content.seed_events.remove(ev)
+        content.event_by_id.pop(ev.id, None)

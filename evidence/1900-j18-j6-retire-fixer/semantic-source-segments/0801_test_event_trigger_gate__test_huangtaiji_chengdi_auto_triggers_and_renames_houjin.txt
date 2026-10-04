@@ -1,0 +1,27 @@
+# FILE: tests/test_event_trigger_gate.py
+# NAME: test_huangtaiji_chengdi_auto_triggers_and_renames_houjin
+# LINE: 2240-2260
+# FLAGS: assert_text_compare_or_match
+# KIND: py
+
+def test_huangtaiji_chengdi_auto_triggers_and_renames_houjin(game):
+    """#192：皇太极称帝核心事实确定性落库，后金稳定 id 展示为大清。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1636
+    state.period = 4
+
+    triggered = issues.auto_trigger_seed_issues(state, db)
+
+    assert any(item["id"] == "huangtaiji_chengdi" for item in triggered)
+    assert db.has_event_triggered("huangtaiji_chengdi")
+    assert all(ev.id != "huangtaiji_chengdi" for ev in issues.gather_candidate_events(state, db))
+    row = db.conn.execute(
+        "SELECT name, aliases, status, last_action FROM powers WHERE id=?",
+        ("houjin",),
+    ).fetchone()
+    assert row["name"] == "大清"
+    assert "后金" in row["aliases"]
+    assert "大清" in row["aliases"]
+    assert "称帝" in row["status"]
+    assert row["last_action"] == "皇太极称帝改国号大清"

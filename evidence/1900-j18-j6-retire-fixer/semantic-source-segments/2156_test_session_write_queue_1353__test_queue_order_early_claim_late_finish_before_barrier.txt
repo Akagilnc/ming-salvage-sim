@@ -1,0 +1,61 @@
+# FILE: tests/test_session_write_queue_1353.py
+# NAME: test_queue_order_early_claim_late_finish_before_barrier
+# LINE: 39-93
+# FLAGS: assert_text_compare_or_match,assert_count
+# KIND: py
+
+def test_queue_order_early_claim_late_finish_before_barrier():
+    """队列序钉：早领票、晚完成的写仍先于屏障落库（完整事件握手）。"""
+    q = SessionWriteQueue()
+    order: list[str] = []
+    trail_ready = threading.Event()  # trail 已进入、持票等待放行
+    release_trail = threading.Event()
+    barrier_may_start = threading.Event()  # 测试主线程确认 barrier 已阻塞后再放 trail
+    barrier_entered = threading.Event()
+    barrier_done = threading.Event()
+
+    t_trail = q.claim(key=("extract", 1))
+    assert t_trail is not None
+
+    def trail() -> None:
+        trail_ready.set()
+        release_trail.wait()
+        # 生产 seam：按票序写
+        q.run(t_trail, lambda: order.append("trail_write"))
+        q.complete(t_trail)
+
+    th = threading.Thread(target=trail, name="trail-late", daemon=True)
+    th.start()
+    trail_ready.wait()
+
+    def barrier_body() -> str:
+        barrier_entered.set()
+        order.append("barrier")
+        return "ok"
+
+    result_box: dict = {}
+
+    def run_barrier() -> None:
+        barrier_may_start.wait()
+        result_box["r"] = q.barrier(barrier_body)
+        barrier_done.set()
+
+    bt = threading.Thread(target=run_barrier, name="barrier", daemon=True)
+    bt.start()
+    # 主线程：先确认 trail 在飞、再放 barrier 线程去 claim——barrier 必见 open prior。
+    barrier_may_start.set()
+    # barrier 在 trail 完成前不得进入 body：用「barrier_done 未置且 order 无 barrier」
+    # 的握手——等 trail 仍 open 时 barrier 应阻塞在 wait_prior。
+    assert q.inflight_count() >= 1
+    # 确定性：在放行 trail 前 barrier body 不得跑。
+    assert not barrier_entered.is_set()
+    assert "barrier" not in order
+
+    release_trail.set()
+    barrier_done.wait()
+    bt.join()
+    th.join()
+    assert not bt.is_alive() and not th.is_alive()
+    assert result_box.get("r") == "ok"
+    assert order == ["trail_write", "barrier"], order
+    assert q.inflight_count() == 0

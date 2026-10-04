@@ -1,0 +1,25 @@
+# FILE: tests/test_web_chat_serialization_393.py
+# NAME: test_nonstream_chat_rejects_when_session_draining
+# LINE: 363-381
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_nonstream_chat_rejects_when_session_draining():
+    """drain 已开始时非流式 chat 不得再登记 pending——对齐 stream 拒绝路，HTTP 503。"""
+
+    character = SimpleNamespace(name="测试大臣")
+    state = SimpleNamespace(turn=1, year=1628, period=1, turn_phase="summoning")
+    db = _RecordingDB(threading.Event())
+    runtime = object.__new__(web_app.WebGame)
+    runtime.session = _FakeSession(character, _FakeAgent(threading.Event()), state, db)
+    runtime.chat_history = {character.name: [], "殿上": []}
+    runtime._write_queue = SessionWriteQueue()
+    runtime._write_queue.seal()
+    runtime._write_gate = runtime._write_queue.write_gate
+    runtime._runtime_write_queue = lambda: runtime._write_queue  # type: ignore
+    runtime._mark_pending_write = lambda key=None: runtime._write_queue.claim(key=key or ("pending",))  # type: ignore
+    runtime._complete_pending_write = lambda ticket=None: runtime._write_queue.complete(ticket)  # type: ignore
+
+    events = list(runtime.chat_stream("殿上", "边饷如何？"))
+    assert events and events[0].get("type") == "error"
+    assert runtime._pending_writes_count == 0

@@ -1,0 +1,26 @@
+# FILE: tests/test_event_chain_cascade.py
+# NAME: test_positive_dependency_invalidates_when_upstream_expires
+# LINE: 61-80
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_positive_dependency_invalidates_when_upstream_expires(game):
+    db, state, content = game
+    issues.bind_content(content)
+    upstream = _hist_event("__chain_upstream_expired__")
+    upstream.open_window = False
+    upstream.trigger_year = 1629
+    upstream.trigger_end_year = 1629
+    upstream.trigger_end_month = 2
+    downstream = _hist_event("__chain_downstream_positive__", {
+        "event.__chain_upstream_expired__.terminal_state": "==triggered",
+        "event.__chain_upstream_expired__.terminal_reason": "==胜利",
+    })
+    with _TempEvents(content, upstream, downstream):
+        state.year = 1629
+        state.period = 3
+
+        terminalized = issues.apply_event_terminal_states(state, db)
+
+        assert any(item["id"] == upstream.id and item["terminal_state"] == "expired" for item in terminalized)
+        assert _terminal_state(db, downstream.id)[0] == "obsolete"

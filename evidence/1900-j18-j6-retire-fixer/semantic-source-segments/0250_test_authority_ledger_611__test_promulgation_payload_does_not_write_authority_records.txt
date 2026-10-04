@@ -1,0 +1,38 @@
+# FILE: tests/test_authority_ledger_611.py
+# NAME: test_promulgation_payload_does_not_write_authority_records
+# LINE: 457-488
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_promulgation_payload_does_not_write_authority_records(game):
+    """授权案卷不得平行直写 authority_records；#528 仅经 authority_changes 授予。
+
+    完整 privilege/scope/holder 的公开委任顺颁后落一条授权档（单一入口）。
+    """
+    db, state, _content = game
+    holder = _minister(db)
+    dossier_id = db.create_decree_dossier(
+        state,
+        action_type="authorization",
+        decree_text="授以便宜",
+        target_kind="issue",
+        target_id="payload旁路",
+        executor_kind="character",
+        executor_id=holder,
+        payload={
+            "character_id": holder,
+            "holder_id": holder,
+            "privilege": "便宜行事",
+            "scope": "issue:payload旁路",
+            "mode": "ordinary",
+        },
+    )
+    db.apply_dossier_promulgation(state, dossier_id, "promulgated")
+    rows = db.conn.execute(
+        "SELECT * FROM authority_records WHERE dossier_id=?",
+        (int(dossier_id),),
+    ).fetchall()
+    assert len(rows) == 1
+    assert str(rows[0]["holder_id"]) == holder
+    assert str(rows[0]["privilege"]) == "便宜行事"
+    assert str(rows[0]["scope"]) == "issue:payload旁路"

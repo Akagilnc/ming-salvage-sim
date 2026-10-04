@@ -1,0 +1,28 @@
+# FILE: tests/test_chat_stream_failpaths_393.py
+# NAME: test_chat_stream_provider_default_502_not_washed_to_retryable
+# LINE: 810-831
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_chat_stream_provider_default_502_not_washed_to_retryable(monkeypatch, game):
+    """#1780：ModelProviderError 默认 502（无提供方 HTTP typed status）不得洗成 5xx。
+
+    连接层断 → 事件界无 typed status → 一次 terminal，不成 llm_http_502、不重试。
+    """
+    http_hits = {"n": 0}
+    agent = _provider_http_error_agent(
+        None, "connection refused", http_hits=http_hits,
+    )
+    web_game, minister = _transport_web_game(game, agent, monkeypatch)
+
+    response = _post_chat_stream(monkeypatch, web_game, minister)
+    assert response.status_code == 200, response.text
+    events = _parse_sse(response.text)
+    assert events[-1][0] == "error"
+    detail = events[-1][1]
+    assert detail.get("code") == "llm_stream_error"
+    assert detail.get("status_code") is None
+    assert http_hits["n"] == 1
+    attempts = detail.get("transport_attempts") or []
+    assert len(attempts) == 1
+    assert attempts[0].get("outcome") == "terminal_fail"

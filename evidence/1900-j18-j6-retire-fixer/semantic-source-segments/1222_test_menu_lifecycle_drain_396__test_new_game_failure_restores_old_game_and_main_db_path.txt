@@ -1,0 +1,54 @@
+# FILE: tests/test_menu_lifecycle_drain_396.py
+# NAME: test_new_game_failure_restores_old_game_and_main_db_path
+# LINE: 112-159
+# FLAGS: assert_count,mock_or_patch_present,helper_or_private_call
+# KIND: py
+
+def test_new_game_failure_restores_old_game_and_main_db_path(monkeypatch, tmp_path):
+    """#402 R1（Codex/CodeRabbit）：新局初始化失败时，不退休旧局、不丢旧主库指针。"""
+    old_db_path = str(tmp_path / "old_main.db")
+    os.makedirs(tmp_path, exist_ok=True)
+    with open(old_db_path, "w", encoding="utf-8") as f:
+        f.write("old")
+    monkeypatch.setattr(web_app, "user_data_path", lambda *parts: str(tmp_path.joinpath(*parts)))
+    monkeypatch.setenv("MING_SIM_DB", old_db_path)
+    with open(web_app._active_db_path_file(), "w", encoding="utf-8") as f:
+        f.write(old_db_path)
+
+    queue = SessionWriteQueue()
+    old_game = SimpleNamespace(
+        _write_queue=queue,
+        _write_gate=queue.write_gate,
+        db_path=old_db_path,
+        session=SimpleNamespace(close=lambda: None),
+    )
+    monkeypatch.setattr(web_app, "web_game", old_game)
+
+    # 失败路径不得 spawn drain；勿替换 threading.Thread——new_game 经 run_in_executor，
+    # 空 start 会卡死默认线程池。
+    drain_spawns: list[object] = []
+    real_spawn = web_app._spawn_drain_close
+
+    def _capture_spawn(*a, **k):
+        drain_spawns.append(1)
+        return real_spawn(*a, **k)
+
+    monkeypatch.setattr(web_app, "_spawn_drain_close", _capture_spawn)
+
+    def fail_new_game(*_args, **_kwargs):
+        raise web_app.LLMUnavailable("missing llm")
+
+    monkeypatch.setattr(web_app, "WebGame", fail_new_game)
+
+    try:
+        asyncio.run(web_app.api_menu_new_game())
+    except web_app.HTTPException as exc:
+        assert exc.status_code == 412
+    else:
+        raise AssertionError("new_game should surface LLMUnavailable as HTTP 412")
+
+    assert web_app.web_game is old_game
+    assert os.environ["MING_SIM_DB"] == old_db_path
+    with open(web_app._active_db_path_file(), "r", encoding="utf-8") as f:
+        assert f.read().strip() == old_db_path
+    assert drain_spawns == []

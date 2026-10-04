@@ -1,0 +1,35 @@
+# FILE: tests/test_style_temperament_641.py
+# NAME: test_apply_score_extraction_rejects_invalid_temperament
+# LINE: 241-269
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_apply_score_extraction_rejects_invalid_temperament(game, item, category, reason):
+    db, state, content = game
+    before = _style_row(db)
+    before_rt = content.characters[PERSON].style if PERSON in content.characters else None
+    before_logs = db.conn.execute("SELECT COUNT(*) FROM person_logs").fetchone()[0]
+
+    applied = issues.apply_score_extraction(
+        db,
+        state,
+        {"人物变更": [item]},
+        content=content,
+    )
+
+    assert _style_row(db) == before
+    if before_rt is not None:
+        assert content.characters[PERSON].style == before_rt
+    assert db.conn.execute("SELECT COUNT(*) FROM person_logs").fetchone()[0] == before_logs
+    assert applied["applied_person_changes"] == [
+        {
+            "name": item["name"],
+            "origin_ref": "盘面自发",
+            "动作": "性情",
+            "rejected": True,
+            "reason": ANY,
+            "category": category,
+            "item": item,
+        }
+    ]
+    assert isinstance(applied['applied_person_changes'][0]['reason'], str) and applied['applied_person_changes'][0]['reason']

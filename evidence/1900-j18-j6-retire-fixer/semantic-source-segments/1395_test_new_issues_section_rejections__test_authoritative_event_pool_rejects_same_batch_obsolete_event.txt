@@ -1,0 +1,39 @@
+# FILE: tests/test_new_issues_section_rejections.py
+# NAME: test_authoritative_event_pool_rejects_same_batch_obsolete_event
+# LINE: 413-445
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_authoritative_event_pool_rejects_same_batch_obsolete_event(game):
+    db, state, content = game
+    I.bind_content(content)
+    state.year = 1
+    state.period = 1
+    upstream = _hist_event("__authoritative_upstream_triggers__")
+    downstream = _hist_event(
+        "__authoritative_downstream_obsolete__",
+        {"event.__authoritative_upstream_triggers__.triggered": "<1"},
+    )
+    with _TempEvents(content, upstream, downstream):
+        snapshot = {candidate.id for candidate in I.gather_candidate_events(state, db)}
+        assert {upstream.id, downstream.id} <= snapshot
+
+        out = I.apply_issue_tracker_output(
+            db,
+            state,
+            {
+                "new_issues": [
+                    {"origin_kind": "event_pool", "id": upstream.id},
+                    {"origin_kind": "event_pool", "id": downstream.id},
+                ],
+            },
+            candidate_event_ids_at_input=snapshot,
+            candidate_event_ids_authoritative=True,
+        )
+
+    created = [item for item in _new(out) if item.get("issue_id")]
+    rejected = [item for item in _rejected(out) if item.get("id") == downstream.id]
+    assert [item["id"] for item in created] == [upstream.id], out
+    assert len(rejected) == 1, out
+    assert rejected[0]["reason"]
+    assert db.find_any_issue_by_origin("event_pool", downstream.id) is None

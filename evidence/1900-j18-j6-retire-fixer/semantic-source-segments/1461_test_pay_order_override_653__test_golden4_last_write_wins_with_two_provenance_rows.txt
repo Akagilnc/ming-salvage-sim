@@ -1,0 +1,28 @@
+# FILE: tests/test_pay_order_override_653.py
+# NAME: test_golden4_last_write_wins_with_two_provenance_rows
+# LINE: 234-255
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_golden4_last_write_wins_with_two_provenance_rows(game):
+    """④连下两道同维相冲旨：后旨生效；fiscal_config_changes 两行 provenance 可查。"""
+    db, state, _content = game
+    d1 = _override_dossier(
+        db, state, [{"key": "due_priority_军饷", "value": 40}],
+        text="首道：边饷居末",
+    )
+    db.apply_dossier_promulgation(state, d1, "promulgated")   # 判后物化缝
+    d2 = _override_dossier(
+        db, state, [{"key": "due_priority_军饷", "value": 10}],
+        text="次道：边饷复先",
+    )
+    db.apply_dossier_promulgation(state, d2, "promulgated")
+    assert db.get_fiscal_config()["due_priority_军饷"] == 10  # last-write-wins
+    rows = db.conn.execute(
+        "SELECT old_value, new_value, origin_ref FROM fiscal_config_changes "
+        "WHERE key='due_priority_军饷' ORDER BY id"
+    ).fetchall()
+    assert len(rows) == 2
+    assert [r["origin_ref"] for r in rows] == [f"dossier:{d1}", f"dossier:{d2}"]
+    assert (rows[0]["old_value"], rows[0]["new_value"]) == (10, 40)
+    assert (rows[1]["old_value"], rows[1]["new_value"]) == (40, 10)

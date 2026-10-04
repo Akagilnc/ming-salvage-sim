@@ -1,0 +1,35 @@
+{
+  "source_path": "tests/test_recommendation_batch_snapshot_1583.py",
+  "member_count": 2,
+  "members": [
+    {
+      "idx": 1791,
+      "file": "tests/test_recommendation_batch_snapshot_1583.py",
+      "name": "test_same_batch_consecutive_appointments_keep_prebatch_recommendation_snapshot",
+      "line": 59,
+      "end": 117,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1791_test_recommendation_batch_snapshot_1583__test_same_batch_consecutive_appointments_keep_prebatch_recommendation_snapshot.txt",
+      "source_path": "tests/test_recommendation_batch_snapshot_1583.py"
+    },
+    {
+      "idx": 1792,
+      "file": "tests/test_recommendation_batch_snapshot_1583.py",
+      "name": "test_stale_recommendation_snapshot_still_rejected_outside_mutating_batch",
+      "line": 120,
+      "end": 160,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1792_test_recommendation_batch_snapshot_1583__test_stale_recommendation_snapshot_still_rejected_outside_mutating_batch.txt",
+      "source_path": "tests/test_recommendation_batch_snapshot_1583.py"
+    }
+  ]
+}

@@ -1,0 +1,57 @@
+# FILE: tests/test_player_army_projection_321.py
+# NAME: test_army_state_and_map_payloads_project_situation
+# LINE: 204-254
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_army_state_and_map_payloads_project_situation(game):
+    """真实军队、状态与地图 API 投影同一军队状态，不约束呈现措辞。"""
+    # 代表：latch=0, L=55, p=0 → 不满；arrears>0（精确小数 12.5）
+    is_mutinied, loyalty, probation, expected = 0, 55, 0, "不满"
+    db, state, content = game
+    _configure(db, "legacy")
+    arrears = 12.5
+    _write_mutiny_fixture(
+        db,
+        "legacy",
+        loyalty=loyalty,
+        arrears=arrears,
+        is_mutinied=is_mutinied,
+        mutiny_count=0,
+        mutiny_probation=probation,
+        full_pay_streak=0,
+        redemption_count=0,
+        morale=52,
+    )
+    # 压低他军 danger、抬高关宁短板，确保 limit 窗口（warning/header/list）必含目标军；
+    # 不改 loyalty/latch/probation（档位输入）。
+    db.conn.execute(
+        """UPDATE armies SET supply=100, training=100, morale=100, loyalty=100,
+           arrears=0, province_pay_arrears=0, central_pay_arrears=0,
+           is_mutinied=0, mutiny_probation=0
+           WHERE id != ?""",
+        (ARMY,),
+    )
+    db.conn.execute(
+        "UPDATE armies SET supply=1, training=1 WHERE id=?",
+        (ARMY,),
+    )
+    db.conn.commit()
+    row = db.conn.execute("SELECT * FROM armies WHERE id=?", (ARMY,)).fetchone()
+    sit = _player_army_situation(row, db._army_pay(row))
+    assert sit["mutiny_tier"] == expected
+
+    # 链1：army_payload / state_payload.armies / map_nodes（结构 ABI 三键，非 DOM 直显）
+    card = _payload_by_id(db)[ARMY]
+    _assert_structured_situation(card, sit, "army_payload")
+
+    runtime = _web_runtime(db, state, content)
+    payload = web_app.WebGame.state_payload(runtime)
+    armies = {a["id"]: a for a in (payload.get("armies") or [])}
+    assert ARMY in armies
+    _assert_structured_situation(armies[ARMY], sit, "state_payload.armies")
+    map_army = _find_army_in_map_nodes(payload.get("map_nodes") or [])
+    _assert_structured_situation(map_army, sit, "map_nodes.armies")
+    # 直接 map_nodes 缝（非仅 state_payload 内嵌）
+    map_army2 = _find_army_in_map_nodes(runtime.map_nodes())
+    _assert_structured_situation(map_army2, sit, "WebGame.map_nodes")

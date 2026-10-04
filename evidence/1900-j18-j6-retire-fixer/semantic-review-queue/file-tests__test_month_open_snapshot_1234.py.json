@@ -1,0 +1,216 @@
+{
+  "source_path": "tests/test_month_open_snapshot_1234.py",
+  "member_count": 15,
+  "members": [
+    {
+      "idx": 1292,
+      "file": "tests/test_month_open_snapshot_1234.py",
+      "name": "test_capture_is_idempotent_and_turn_bound",
+      "line": 66,
+      "end": 77,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1292_test_month_open_snapshot_1234__test_capture_is_idempotent_and_turn_bound.txt",
+      "source_path": "tests/test_month_open_snapshot_1234.py"
+    },
+    {
+      "idx": 1293,
+      "file": "tests/test_month_open_snapshot_1234.py",
+      "name": "test_state_payload_overlays_snapshot_when_present",
+      "line": 80,
+      "end": 96,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1293_test_month_open_snapshot_1234__test_state_payload_overlays_snapshot_when_present.txt",
+      "source_path": "tests/test_month_open_snapshot_1234.py"
+    },
+    {
+      "idx": 1294,
+      "file": "tests/test_month_open_snapshot_1234.py",
+      "name": "test_state_payload_live_when_no_snapshot",
+      "line": 99,
+      "end": 105,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1294_test_month_open_snapshot_1234__test_state_payload_live_when_no_snapshot.txt",
+      "source_path": "tests/test_month_open_snapshot_1234.py"
+    },
+    {
+      "idx": 1295,
+      "file": "tests/test_month_open_snapshot_1234.py",
+      "name": "test_awaiting_decision_keeps_month_open_money_and_pending",
+      "line": 108,
+      "end": 130,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1295_test_month_open_snapshot_1234__test_awaiting_decision_keeps_month_open_money_and_pending.txt",
+      "source_path": "tests/test_month_open_snapshot_1234.py"
+    },
+    {
+      "idx": 1296,
+      "file": "tests/test_month_open_snapshot_1234.py",
+      "name": "test_fresh_connection_same_face",
+      "line": 133,
+      "end": 145,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1296_test_month_open_snapshot_1234__test_fresh_connection_same_face.txt",
+      "source_path": "tests/test_month_open_snapshot_1234.py"
+    },
+    {
+      "idx": 1297,
+      "file": "tests/test_month_open_snapshot_1234.py",
+      "name": "test_clear_on_month_complete_returns_live_values",
+      "line": 148,
+      "end": 163,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1297_test_month_open_snapshot_1234__test_clear_on_month_complete_returns_live_values.txt",
+      "source_path": "tests/test_month_open_snapshot_1234.py"
+    },
+    {
+      "idx": 1298,
+      "file": "tests/test_month_open_snapshot_1234.py",
+      "name": "test_cross_month_snapshot_does_not_bleed",
+      "line": 166,
+      "end": 177,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1298_test_month_open_snapshot_1234__test_cross_month_snapshot_does_not_bleed.txt",
+      "source_path": "tests/test_month_open_snapshot_1234.py"
+    },
+    {
+      "idx": 1299,
+      "file": "tests/test_month_open_snapshot_1234.py",
+      "name": "test_oracle_normal_phase_clears_via_startup_hook",
+      "line": 180,
+      "end": 202,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1299_test_month_open_snapshot_1234__test_oracle_normal_phase_clears_via_startup_hook.txt",
+      "source_path": "tests/test_month_open_snapshot_1234.py"
+    },
+    {
+      "idx": 1300,
+      "file": "tests/test_month_open_snapshot_1234.py",
+      "name": "test_oracle_settling_phase_keeps_display_for_recovery",
+      "line": 205,
+      "end": 220,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1300_test_month_open_snapshot_1234__test_oracle_settling_phase_keeps_display_for_recovery.txt",
+      "source_path": "tests/test_month_open_snapshot_1234.py"
+    },
+    {
+      "idx": 1301,
+      "file": "tests/test_month_open_snapshot_1234.py",
+      "name": "test_capture_before_mutation_on_resolve_turn_entry",
+      "line": 223,
+      "end": 263,
+      "flags": [
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1301_test_month_open_snapshot_1234__test_capture_before_mutation_on_resolve_turn_entry.txt",
+      "source_path": "tests/test_month_open_snapshot_1234.py"
+    },
+    {
+      "idx": 1302,
+      "file": "tests/test_month_open_snapshot_1234.py",
+      "name": "test_capture_before_mutation_on_advance_without_edict",
+      "line": 266,
+      "end": 298,
+      "flags": [
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1302_test_month_open_snapshot_1234__test_capture_before_mutation_on_advance_without_edict.txt",
+      "source_path": "tests/test_month_open_snapshot_1234.py"
+    },
+    {
+      "idx": 1303,
+      "file": "tests/test_month_open_snapshot_1234.py",
+      "name": "test_player_month_advance_expires_snapshot",
+      "line": 301,
+      "end": 313,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1303_test_month_open_snapshot_1234__test_player_month_advance_expires_snapshot.txt",
+      "source_path": "tests/test_month_open_snapshot_1234.py"
+    },
+    {
+      "idx": 1304,
+      "file": "tests/test_month_open_snapshot_1234.py",
+      "name": "test_web_issue_entry_exposes_settlement_display",
+      "line": 318,
+      "end": 352,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1304_test_month_open_snapshot_1234__test_web_issue_entry_exposes_settlement_display.txt",
+      "source_path": "tests/test_month_open_snapshot_1234.py"
+    },
+    {
+      "idx": 1305,
+      "file": "tests/test_month_open_snapshot_1234.py",
+      "name": "test_web_advance_entry_exposes_settlement_display",
+      "line": 355,
+      "end": 399,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1305_test_month_open_snapshot_1234__test_web_advance_entry_exposes_settlement_display.txt",
+      "source_path": "tests/test_month_open_snapshot_1234.py"
+    },
+    {
+      "idx": 1306,
+      "file": "tests/test_month_open_snapshot_1234.py",
+      "name": "test_web_advance_entry_awaiting_keeps_phase_and_decisions",
+      "line": 402,
+      "end": 460,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1306_test_month_open_snapshot_1234__test_web_advance_entry_awaiting_keeps_phase_and_decisions.txt",
+      "source_path": "tests/test_month_open_snapshot_1234.py"
+    }
+  ]
+}

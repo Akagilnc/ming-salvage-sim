@@ -1,0 +1,38 @@
+# FILE: tests/test_rescript_draft_656.py
+# NAME: test_657_validate_layer_a_roundtrip_capability
+# LINE: 996-1027
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_657_validate_layer_a_roundtrip_capability(game):
+    """合法七类 option 整链 validate→persist→读回全字段+capability。"""
+    db, state, _content = game
+    data = {"items": [{
+        "title": "陕西告饥", "context": "秦地赤旱。",
+        "options": [
+            _layer_a_opt(
+                label="发帑赈济", hint="所安者饥民",
+                action_type="assignment", transaction_category="督赈",
+                deadline_months=2,
+            ),
+            _layer_a_opt(
+                label="赏赉", hint="恩赏",
+                action_type="grant_allocation", grant_action="赏赉",
+                amount=100, target_kind="character", target_id="杨嗣昌",
+                name="杨嗣昌", locality_scope="none", region_id="",
+                transaction_category="",
+            ),
+        ],
+    }]}
+    drafts = validate_rescript_draft_items(data, set())
+    assert len(drafts) == 1
+    opts = drafts[0]["options"]
+    assert opts[0]["action_type"] == "assignment"
+    assert opts[0]["draft_capability"]
+    assert opts[1]["action_type"] == "grant_allocation"
+    assert opts[1]["grant_action"] == "赏赉"
+    assert opts[1]["amount"] == 100
+    db.save_rescript_drafts(int(state.turn), drafts)
+    row = db.list_rescript_drafts()[0]
+    assert row["options"][0]["draft_capability"] == opts[0]["draft_capability"]
+    assert row["options"][1]["amount"] == 100

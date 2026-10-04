@@ -1,0 +1,14 @@
+# FILE: tests/test_issue_entities.py
+# NAME: test_apply_score_extraction_rejects_unknown_top_level_key
+# LINE: 147-154
+# FLAGS: assert_text_compare_or_match,assert_count
+# KIND: py
+
+def test_apply_score_extraction_rejects_unknown_top_level_key(game):
+    db, state, _ = game
+    applied = I.apply_score_extraction(db, state, {"region_delta_typo": {"shanxi": {"unrest": 5}}, "metric_delta": {"民心": 1}})
+    shape = applied["validate_shape_rejections"]
+    assert len(shape) == 1
+    assert shape[0]["rejected"] is True
+    assert shape[0]["item"] == {"raw_value": {"shanxi": {"unrest": 5}}}
+    assert applied["metric_delta"].get("民心") == 1

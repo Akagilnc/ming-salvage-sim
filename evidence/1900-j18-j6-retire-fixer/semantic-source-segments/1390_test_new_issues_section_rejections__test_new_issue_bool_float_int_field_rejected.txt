@@ -1,0 +1,15 @@
+# FILE: tests/test_new_issues_section_rejections.py
+# NAME: test_new_issue_bool_float_int_field_rejected
+# LINE: 287-295
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_new_issue_bool_float_int_field_rejected(read_game, field, bad):
+    db, state, _ = read_game
+    # 整数字段用 _strict_int：bool/float 拒整项（与 region/army/faction 段一致，cmr ni r6 codex），
+    # 不再 int(3.7)=3 / int(True)=1 静默强转落库。
+    ni = {"origin_kind": "decree", "kind": "situation", "title": "测试·bool/float", field: bad}
+    out = I.apply_issue_tracker_output(db, state, {"new_issues": [ni]})
+    rej = _rejected(out)
+    assert len(rej) == 1, out
+    assert rej[0]["category"] == "invalid_enum"

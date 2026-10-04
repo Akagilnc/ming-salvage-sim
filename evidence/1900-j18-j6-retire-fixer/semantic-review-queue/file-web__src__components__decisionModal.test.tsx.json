@@ -1,0 +1,222 @@
+{
+  "source_path": "web/src/components/decisionModal.test.tsx",
+  "member_count": 16,
+  "members": [
+    {
+      "idx": 2394,
+      "file": "web/src/components/decisionModal.test.tsx",
+      "name": "\"DecisionModal\" / \"uses a non-main full-screen container inside the app landmark\"",
+      "line": 41,
+      "end": 47,
+      "flags": [
+        "web_mock_spy_or_calls"
+      ],
+      "kind": "web",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2394_decisionModal.test__\"DecisionModal\" __ \"uses a non-main full-screen container inside the app landmark\".txt",
+      "source_path": "web/src/components/decisionModal.test.tsx"
+    },
+    {
+      "idx": 2395,
+      "file": "web/src/components/decisionModal.test.tsx",
+      "name": "\"DecisionModal\" / \"exposes a modal dialog and keeps keyboard focus inside the red-seal page\"",
+      "line": 49,
+      "end": 90,
+      "flags": [
+        "web_mock_spy_or_calls"
+      ],
+      "kind": "web",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2395_decisionModal.test__\"DecisionModal\" __ \"exposes a modal dialog and keeps keyboard focus inside the red-seal page\".txt",
+      "source_path": "web/src/components/decisionModal.test.tsx"
+    },
+    {
+      "idx": 2396,
+      "file": "web/src/components/decisionModal.test.tsx",
+      "name": "\"DecisionModal\" / \"blocks background focus and shortcuts while the red-seal page is open\"",
+      "line": 92,
+      "end": 113,
+      "flags": [
+        "web_mock_spy_or_calls"
+      ],
+      "kind": "web",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2396_decisionModal.test__\"DecisionModal\" __ \"blocks background focus and shortcuts while the red-seal page is open\".txt",
+      "source_path": "web/src/components/decisionModal.test.tsx"
+    },
+    {
+      "idx": 2397,
+      "file": "web/src/components/decisionModal.test.tsx",
+      "name": "\"DecisionModal\" / \"leaves focus and Ctrl+` available to a cheat console opened before decisions arrive\"",
+      "line": 115,
+      "end": 139,
+      "flags": [
+        "web_mock_spy_or_calls"
+      ],
+      "kind": "web",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2397_decisionModal.test__\"DecisionModal\" __ \"leaves focus and Ctrl+` available to a cheat console opened before decisions arrive\".txt",
+      "source_path": "web/src/components/decisionModal.test.tsx"
+    },
+    {
+      "idx": 2398,
+      "file": "web/src/components/decisionModal.test.tsx",
+      "name": "\"DecisionModal\" / \"moves focus to the next memorial when continuing to the next decision\"",
+      "line": 141,
+      "end": 152,
+      "flags": [
+        "web_mock_spy_or_calls"
+      ],
+      "kind": "web",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2398_decisionModal.test__\"DecisionModal\" __ \"moves focus to the next memorial when continuing to the next decision\".txt",
+      "source_path": "web/src/components/decisionModal.test.tsx"
+    },
+    {
+      "idx": 2399,
+      "file": "web/src/components/decisionModal.test.tsx",
+      "name": "\"DecisionModal\" / \"renders no page for a month with no decisions\"",
+      "line": 154,
+      "end": 158,
+      "flags": [
+        "web_mock_spy_or_calls"
+      ],
+      "kind": "web",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2399_decisionModal.test__\"DecisionModal\" __ \"renders no page for a month with no decisions\".txt",
+      "source_path": "web/src/components/decisionModal.test.tsx"
+    },
+    {
+      "idx": 2400,
+      "file": "web/src/components/decisionModal.test.tsx",
+      "name": "\"DecisionModal\" / \"requires a listed rescript action for dossier memorials\"",
+      "line": 160,
+      "end": 195,
+      "flags": [
+        "web_mock_spy_or_calls"
+      ],
+      "kind": "web",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2400_decisionModal.test__\"DecisionModal\" __ \"requires a listed rescript action for dossier memorials\".txt",
+      "source_path": "web/src/components/decisionModal.test.tsx"
+    },
+    {
+      "idx": 2401,
+      "file": "web/src/components/decisionModal.test.tsx",
+      "name": "\"DecisionModal\" / \"keeps the handwritten reply in the existing resolve payload\"",
+      "line": 197,
+      "end": 209,
+      "flags": [
+        "web_mock_spy_or_calls"
+      ],
+      "kind": "web",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2401_decisionModal.test__\"DecisionModal\" __ \"keeps the handwritten reply in the existing resolve payload\".txt",
+      "source_path": "web/src/components/decisionModal.test.tsx"
+    },
+    {
+      "idx": 2402,
+      "file": "web/src/components/decisionModal.test.tsx",
+      "name": "\"DecisionModal\" / \"keeps the selected memorial's label and hint in the existing resolve payload\"",
+      "line": 211,
+      "end": 218,
+      "flags": [
+        "web_mock_spy_or_calls"
+      ],
+      "kind": "web",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2402_decisionModal.test__\"DecisionModal\" __ \"keeps the selected memorial's label and hint in the existing resolve payload\".txt",
+      "source_path": "web/src/components/decisionModal.test.tsx"
+    },
+    {
+      "idx": 2403,
+      "file": "web/src/components/decisionModal.test.tsx",
+      "name": "\"DecisionModal\" / \"rejects the whole batch when any item is not a valid PendingDecision (reject-whole-batch guard)\"",
+      "line": 220,
+      "end": 230,
+      "flags": [
+        "web_mock_spy_or_calls"
+      ],
+      "kind": "web",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2403_decisionModal.test__\"DecisionModal\" __ \"rejects the whole batch when any item is not a valid PendingDecision (reject-whole-batch guard)\".txt",
+      "source_path": "web/src/components/decisionModal.test.tsx"
+    },
+    {
+      "idx": 2404,
+      "file": "web/src/components/decisionModal.test.tsx",
+      "name": "\"DecisionModal #1202 seal-is-confirm first screen + pick affordance\" / \"disables the seal only when no pick and handwritten note is empty; either path enables\"",
+      "line": 234,
+      "end": 260,
+      "flags": [
+        "web_mock_spy_or_calls",
+        "web_count_assert"
+      ],
+      "kind": "web",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2404_decisionModal.test__\"DecisionModal #1202 seal-is-confirm first screen + pick affordance\" __ \"disables the seal only when no pick and handwrit.txt",
+      "source_path": "web/src/components/decisionModal.test.tsx"
+    },
+    {
+      "idx": 2405,
+      "file": "web/src/components/decisionModal.test.tsx",
+      "name": "\"DecisionModal #1202 seal-is-confirm first screen + pick affordance\" / \"submits via the existing decision-confirm handler path with zero payload drift\"",
+      "line": 262,
+      "end": 282,
+      "flags": [
+        "web_mock_spy_or_calls"
+      ],
+      "kind": "web",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2405_decisionModal.test__\"DecisionModal #1202 seal-is-confirm first screen + pick affordance\" __ \"submits via the existing decision-confirm handle.txt",
+      "source_path": "web/src/components/decisionModal.test.tsx"
+    },
+    {
+      "idx": 2406,
+      "file": "web/src/components/decisionModal.test.tsx",
+      "name": "\"DecisionModal #1202 seal-is-confirm first screen + pick affordance\" / \"keeps the three-state invariant for listed picks without sealing the handwritten-only path\"",
+      "line": 285,
+      "end": 335,
+      "flags": [
+        "web_mock_spy_or_calls",
+        "web_count_assert"
+      ],
+      "kind": "web",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2406_decisionModal.test__\"DecisionModal #1202 seal-is-confirm first screen + pick affordance\" __ \"keeps the three-state invariant for listed picks.txt",
+      "source_path": "web/src/components/decisionModal.test.tsx"
+    },
+    {
+      "idx": 2407,
+      "file": "web/src/components/decisionModal.test.tsx",
+      "name": "\"DecisionModal #1202 seal-is-confirm first screen + pick affordance\" / \"#657 同页两类 + 六动作可点 + 留中默认\"",
+      "line": 337,
+      "end": 418,
+      "flags": [
+        "web_mock_spy_or_calls",
+        "web_text_assert",
+        "web_count_assert"
+      ],
+      "kind": "web",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2407_decisionModal.test__\"DecisionModal #1202 seal-is-confirm first screen + pick affordance\" __ \"#657 同页两类 + 六动作可点 + 留中默认\".txt",
+      "source_path": "web/src/components/decisionModal.test.tsx"
+    },
+    {
+      "idx": 2408,
+      "file": "web/src/components/decisionModal.test.tsx",
+      "name": "\"DecisionModal #1202 seal-is-confirm first screen + pick affordance\" / \"#657 跨月 draft idx=2 首行可点，submit 携带 decision_key（禁 idx===position 拒收）\"",
+      "line": 420,
+      "end": 454,
+      "flags": [
+        "web_mock_spy_or_calls",
+        "web_text_assert",
+        "web_count_assert"
+      ],
+      "kind": "web",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2408_decisionModal.test__\"DecisionModal #1202 seal-is-confirm first screen + pick affordance\" __ \"#657 跨月 draft idx=2 首行可点，submit 携带 decision_key（.txt",
+      "source_path": "web/src/components/decisionModal.test.tsx"
+    },
+    {
+      "idx": 2409,
+      "file": "web/src/components/decisionModal.test.tsx",
+      "name": "\"DecisionModal #1202 seal-is-confirm first screen + pick affordance\" / \"#657 midzhi projects non-assignment §C.4 closed-set keys from selected option\"",
+      "line": 456,
+      "end": 518,
+      "flags": [
+        "web_mock_spy_or_calls",
+        "web_text_assert",
+        "web_count_assert"
+      ],
+      "kind": "web",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2409_decisionModal.test__\"DecisionModal #1202 seal-is-confirm first screen + pick affordance\" __ \"#657 midzhi projects non-assignment §C.4 closed-.txt",
+      "source_path": "web/src/components/decisionModal.test.tsx"
+    }
+  ]
+}

@@ -1,0 +1,47 @@
+# FILE: tests/test_audience_translate_1837_reopen.py
+# NAME: test_inquiry_declaration_preserves_assignment_in_attendant_materials
+# LINE: 334-374
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_inquiry_declaration_preserves_assignment_in_attendant_materials(game, monkeypatch):
+    db, state, content = game
+    attendant = _active_minister(db, content)
+    db.conn.execute(
+        "UPDATE characters SET office='御前近臣' WHERE name=?", (attendant.name,)
+    )
+    query = "去查那件未见于词表的事，原话留档。"
+    result = _scene_declaration(db, state, content, monkeypatch, query, {
+        "inquiries": [{"attendant": attendant.name, "query": query}],
+    })
+    assert result.inquiries.rejected == []
+    assert len(result.inquiries.applied) == 1
+    sources = db.conn.execute(
+        "SELECT source_id FROM character_knowledge_sources "
+        "WHERE kind='inquiry_assignment'"
+    ).fetchall()
+    assert sources
+    known = db.get_character_knowledge(state, attendant.name)
+    report_events = [event for event in known["events"]
+                     if event["source_id"] in {r["source_id"] for r in sources}]
+    assert len(report_events) == 1
+    assert report_events[0]["body"] == query
+    assert report_events[0]["kind"] == "inquiry_assignment"
+    other = next(c.name for c in content.characters.values() if c.name != attendant.name)
+    assert not any(e["source_id"] in {r["source_id"] for r in sources}
+                   for e in db.get_character_knowledge(state, other)["events"])
+    from ming_sim.audience_night import summon_enter
+    from ming_sim.materials import prepare_scene_materials, release_material_tree
+    # A fresh night must make this report readable, not merely list a carrier.
+    _close_offline(db, state, content, int(open_night(db, state)["id"]))
+    night = open_night(db, state)
+    summon_enter(db, int(night["id"]), attendant.name)
+    prepared = prepare_scene_materials(db, state)
+    try:
+        from pathlib import Path
+        carrier = f"人物/{attendant.name}/经历.txt"
+        assert carrier in prepared.index_lines
+        experience = (Path(prepared.root) / carrier).read_text(encoding="utf-8")
+        assert all(event["body"] in experience for event in report_events)
+    finally:
+        release_material_tree(prepared.root)

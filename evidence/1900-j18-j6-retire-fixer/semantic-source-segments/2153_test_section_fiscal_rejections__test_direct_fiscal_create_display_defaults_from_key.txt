@@ -1,0 +1,18 @@
+# FILE: tests/test_section_fiscal_rejections.py
+# NAME: test_direct_fiscal_create_display_defaults_from_key
+# LINE: 617-628
+# FLAGS: assert_text_compare_or_match
+# KIND: py
+
+def test_direct_fiscal_create_display_defaults_from_key(game):
+    """display 缺省=key 去 _base 后缀；直接落账不能依赖 cleaner 补默认值。"""
+    db, state, content = game
+
+    run_settle(db, state, content, {
+        "fiscal_creates": [{"origin_ref": "盘面自发", "key": "显名测试_base", "account": "国库",
+                            "direction": "income", "init_value": 1}],
+    }, narrative="x", decree_text="y")
+
+    row = db.conn.execute(
+        "SELECT display FROM fiscal_config WHERE key='显名测试_base'").fetchone()
+    assert row is not None and row[0] == "显名测试"

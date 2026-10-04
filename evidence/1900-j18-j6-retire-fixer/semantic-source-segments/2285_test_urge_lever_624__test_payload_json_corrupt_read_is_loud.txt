@@ -1,0 +1,20 @@
+# FILE: tests/test_urge_lever_624.py
+# NAME: test_payload_json_corrupt_read_is_loud
+# LINE: 764-777
+# FLAGS: assert_text_compare_or_match
+# KIND: py
+
+def test_payload_json_corrupt_read_is_loud(game):
+    """腐坏 payload 读路响亮，禁静默等同空底。"""
+    from ming_sim.db import GameDB
+    with pytest.raises(ValueError):
+        GameDB.parse_engine_payload_json(
+            "{not-json", surface="test.payload_json",
+        )
+    with pytest.raises(ValueError):
+        GameDB.parse_engine_payload_json(
+            "[1,2]", surface="test.payload_json",
+        )
+    assert GameDB.parse_engine_payload_json(None) == {}
+    assert GameDB.parse_engine_payload_json("{}") == {}
+    assert GameDB.parse_engine_payload_json("") == {}

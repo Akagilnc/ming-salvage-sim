@@ -1,0 +1,46 @@
+{
+  "source_path": "tests/test_mutiny_redemption_317.py",
+  "member_count": 3,
+  "members": [
+    {
+      "idx": 1347,
+      "file": "tests/test_mutiny_redemption_317.py",
+      "name": "test_twelve_consecutive_full_pay_months_redeem_once_and_raise_cap",
+      "line": 53,
+      "end": 82,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1347_test_mutiny_redemption_317__test_twelve_consecutive_full_pay_months_redeem_once_and_raise_cap.txt",
+      "source_path": "tests/test_mutiny_redemption_317.py"
+    },
+    {
+      "idx": 1348,
+      "file": "tests/test_mutiny_redemption_317.py",
+      "name": "test_full_pay_streak_can_be_saved_in_peace_and_partial_pay_resets_it",
+      "line": 86,
+      "end": 101,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1348_test_mutiny_redemption_317__test_full_pay_streak_can_be_saved_in_peace_and_partial_pay_resets_it.txt",
+      "source_path": "tests/test_mutiny_redemption_317.py"
+    },
+    {
+      "idx": 1349,
+      "file": "tests/test_mutiny_redemption_317.py",
+      "name": "test_redemption_progress_migrates_and_survives_reopen",
+      "line": 131,
+      "end": 161,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1349_test_mutiny_redemption_317__test_redemption_progress_migrates_and_survives_reopen.txt",
+      "source_path": "tests/test_mutiny_redemption_317.py"
+    }
+  ]
+}

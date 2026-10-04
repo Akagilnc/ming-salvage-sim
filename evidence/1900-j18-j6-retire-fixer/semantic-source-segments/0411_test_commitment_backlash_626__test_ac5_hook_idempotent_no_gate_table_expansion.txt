@@ -1,0 +1,37 @@
+# FILE: tests/test_commitment_backlash_626.py
+# NAME: test_ac5_hook_idempotent_no_gate_table_expansion
+# LINE: 751-781
+# FLAGS: assert_count,helper_or_private_call
+# KIND: py
+
+def test_ac5_hook_idempotent_no_gate_table_expansion(game):
+    """硬门挂邸报前既有挂点；幂等；调用侧无第二扫描；GATE_TABLES 不动。"""
+    db, state, content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.commit()
+
+    did, holder = _executing_policy_dossier(db, state, token="idemp")
+    bar = _seed_halfway(db, state, did=did)
+    _insert_commitment(
+        db, state, title="幂等之诺", origin_ref=f"dossier:{did}",
+        bar_value=bar,
+        participants=[{"character_id": holder, "tier": "主办", "role": "承办"}],
+    )
+    db.record_dossier_execution(
+        did, "failed", "期限已过，诸事不济", int(state.turn),
+        close=True, commit=True,
+    )
+    state.turn = int(state.turn) + 1
+    first = db.trigger_commitment_backlashes(state, commit=True)
+    assert len(first) == 1
+    second = db.trigger_commitment_backlashes(state, commit=True)
+    assert second == []
+    assert len(_backlash_issues(db)) == 1
+
+    # pre_settle 路径也只产一条（相位可跑）
+    _set_phase_runnable(state, db)
+    # 已幂等，pre_settle 再跑不应新立
+    auto = pre_settle(state, db, content=content)
+    bl = [a for a in (auto or []) if a.get("source") == "commitment_backlash"]
+    assert bl == []
+    assert len(_backlash_issues(db)) == 1

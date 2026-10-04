@@ -1,0 +1,64 @@
+# FILE: tests/test_qa_h1_seed_data.py
+# NAME: test_fresh_seed_army_equipment_and_commanders_wire_through
+# LINE: 93-150
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_fresh_seed_army_equipment_and_commanders_wire_through(content):
+    """开局贯通：DB 军队火器/炮与统帅名分与 seed 一致；统帅人物卡状态不自相矛盾。
+
+    #1426：全量 id 集 + 每军 commander/controller/firearm/cannon 四字段对照 seed，
+    禁只抽查关宁/东江而放过其它军误映射。
+    """
+    seed_by_id = {item["id"]: item for item in _armies_seed()}
+    fd, path = tempfile.mkstemp(suffix=".db")
+    os.close(fd)
+    db = None
+    try:
+        db = GameDB(path, content)
+        db.seed_static_data()
+        rows = {
+            r["id"]: dict(r)
+            for r in db.conn.execute(
+                "SELECT id, commander, controller, firearm_equipment, cannon_equipment "
+                "FROM armies"
+            ).fetchall()
+        }
+        assert set(rows) == set(seed_by_id), (
+            f"army id 集不一致 missing={set(seed_by_id)-set(rows)} "
+            f"extra={set(rows)-set(seed_by_id)}"
+        )
+        for aid, seed in seed_by_id.items():
+            row = rows[aid]
+            assert row["commander"] == seed.get("commander", ""), aid
+            assert row["controller"] == seed.get("controller", ""), aid
+            assert int(row["firearm_equipment"]) == int(seed.get("firearm_equipment", 0)), aid
+            assert int(row["cannon_equipment"]) == int(seed.get("cannon_equipment", 0)), aid
+        g = rows["guanning"]
+        assert "袁崇焕" not in g["commander"]
+        assert int(g["cannon_equipment"]) >= 4
+        assert int(g["firearm_equipment"]) >= 55
+        d = rows["dongjiang"]
+        assert d["commander"] == "毛文龙"
+        # 人物卡：毛文龙 active；袁崇焕不得仍是 commander
+        mao = db.conn.execute(
+            "SELECT status, office FROM characters WHERE name='毛文龙'"
+        ).fetchone()
+        assert mao["status"] == "active"
+        yuan = db.conn.execute(
+            "SELECT status FROM characters WHERE name='袁崇焕'"
+        ).fetchone()
+        assert yuan["status"] == "offstage"
+        # P2 上限贯通
+        for r in rows.values():
+            assert 0 <= int(r["firearm_equipment"]) <= 100
+            assert 0 <= int(r["cannon_equipment"]) <= 12
+        # 非全军同一数
+        assert len({int(r["firearm_equipment"]) for r in rows.values()}) >= 4
+        assert any(int(r["cannon_equipment"]) > 0 for r in rows.values())
+    finally:
+        if db is not None:
+            db.close()
+        for p in (path, f"{path}_agno.db"):
+            if os.path.exists(p):
+                os.remove(p)

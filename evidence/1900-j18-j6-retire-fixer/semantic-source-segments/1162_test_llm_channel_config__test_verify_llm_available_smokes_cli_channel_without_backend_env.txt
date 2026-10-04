@@ -1,0 +1,30 @@
+# FILE: tests/test_llm_channel_config.py
+# NAME: test_verify_llm_available_smokes_cli_channel_without_backend_env
+# LINE: 478-501
+# FLAGS: assert_text_compare_or_match,mock_or_patch_present
+# KIND: py
+
+def test_verify_llm_available_smokes_cli_channel_without_backend_env(monkeypatch):
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    seen = {}
+
+    def fake_run(prompt, llm_config=None, tag="", *, policy=None):
+        seen["prompt"] = prompt
+        seen["config"] = llm_config
+        return "ok", 1
+
+    monkeypatch.setattr(cli_backend, "_run_backend_for_config", fake_run)
+    cfg = LLMConfig(
+        api_key="cli-backend",
+        base_url="",
+        model="api-fallback",
+        channel="cli",
+        cli_runner="codex",
+        cli_model="gpt-5.5",
+        cli_timeout_seconds=240,
+    )
+
+    verify_llm_available(cfg)
+
+    assert seen["prompt"] == "输出 ok"
+    assert seen["config"] is cfg

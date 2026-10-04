@@ -1,0 +1,30 @@
+# FILE: tests/test_pre_settle_transaction.py
+# NAME: test_pre_settle_rolls_back_on_seed_issue_failure
+# LINE: 116-139
+# FLAGS: assert_text_compare_or_match,mock_or_patch_present,helper_or_private_call
+# KIND: py
+
+def test_pre_settle_rolls_back_on_seed_issue_failure(game, monkeypatch):
+    """pre_settle 内部崩溃时财政回滚，结算相位不推进。"""
+    import ming_sim.decree as dm
+    db, state, content = game
+    turn = state.turn
+    before_phase = state.turn_phase
+    before_ledger = _ledger_count(db, turn)
+
+    def _boom(*a, **k):
+        raise RuntimeError("pre_settle boom")
+    monkeypatch.setattr(dm, "auto_trigger_seed_issues", _boom)
+
+    with pytest.raises(RuntimeError):
+        pre_settle(state, db)
+
+    other = sqlite3.connect(db.path)
+    try:
+        on_disk = other.execute(
+            "SELECT COUNT(*) FROM economy_ledger WHERE turn=?", (turn,)).fetchone()[0]
+    finally:
+        other.close()
+    assert on_disk == before_ledger
+    assert state.turn_phase == before_phase != "settling"
+    assert not db.conn.in_transaction

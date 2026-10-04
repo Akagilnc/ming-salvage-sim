@@ -1,0 +1,63 @@
+# FILE: tests/test_audience_travel_gating_670.py
+# NAME: test_in_transit_summon_origin_is_idempotent_and_restorable
+# LINE: 176-232
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_in_transit_summon_origin_is_idempotent_and_restorable(game):
+    """#670 T-B：在途 admission 不改道/不重置；关库重开投影一致；同 origin 仍幂等。"""
+    db, state, content = game
+    sess = _session(game)
+    sess.state = state
+    person = _set_place(
+        game, "洪承畴", location="shaanxi", transit_to="henan", transit_start_turn=3,
+    )
+    before_travel = _travel_row(db, person.name)
+    origin = "command:42"
+    open_before = an.get_open_night(db)
+    expected_night_id = int(open_before["id"]) if open_before is not None else None
+
+    first = sess.consume_audience_admission(person, origin_id=origin, state=state)
+    again = sess.consume_audience_admission(person, origin_id=origin, state=state)
+    assert first.result is AudienceAdmission.SUMMON_IN_TRANSIT
+    assert again.result is AudienceAdmission.SUMMON_IN_TRANSIT
+    assert _travel_row(db, person.name) == before_travel
+
+    night = an.get_open_night(db)
+    assert night is not None
+    if expected_night_id is None:
+        expected_night_id = int(night["id"])
+    else:
+        assert int(night["id"]) == expected_night_id
+
+    unsettled = an.list_unsettled_summons(db)
+    assert len(unsettled) == 1
+    assert unsettled[0] == {
+        "entry_id": unsettled[0]["entry_id"],
+        "night_id": expected_night_id,
+        "person_name": person.name,
+        "origin_id": origin,
+        "kind": "in_transit",
+    }
+    entry_id = int(unsettled[0]["entry_id"])
+    before_close = list(unsettled)
+
+    path = db.path
+    db.close()
+    restored = GameDB(path, content)
+    try:
+        assert an.list_unsettled_summons(restored) == before_close
+        assert _travel_row(restored, person.name) == before_travel
+
+        night = an.get_open_night(restored) or an.open_night(restored, state)
+        again_id = an.record_summon_in_transit(
+            restored, int(night["id"]), person.name, origin_id=origin,
+        )
+        assert again_id == entry_id
+        assert an.list_unsettled_summons(restored) == before_close
+
+        assert an.settle_summon_origin(restored, origin) is True
+        assert an.settle_summon_origin(restored, origin) is False
+        assert an.list_unsettled_summons(restored) == []
+    finally:
+        restored.close()

@@ -1,0 +1,23 @@
+# FILE: tests/test_character_knowledge_489.py
+# NAME: test_decree_dossier_participant_reads_frozen_metadata_and_text
+# LINE: 676-692
+# FLAGS: assert_text_compare_or_match
+# KIND: py
+
+def test_decree_dossier_participant_reads_frozen_metadata_and_text(game):
+    db, state, content = game
+    minister = next(c for c in content.characters.values() if c.office_type == "礼部")
+    dossier_id = db.create_decree_dossier(
+        state, action_type="assignment", decree_text="着礼部核定历书正文。",
+        target_kind="issue", target_id="calendar-copy",
+        participants=[{"character_id": minister.name, "tier": "主办"}],
+    )
+
+    item = next(
+        item for item in db.get_character_knowledge(state, minister.name)["events"]
+        if item["source_id"] == f"decree_dossier:{dossier_id}"
+    )
+    assert (item["turn"], item["year"], item["period"]) == (
+        state.turn, state.year, state.period,
+    )
+    assert item["body"] == "着礼部核定历书正文。"

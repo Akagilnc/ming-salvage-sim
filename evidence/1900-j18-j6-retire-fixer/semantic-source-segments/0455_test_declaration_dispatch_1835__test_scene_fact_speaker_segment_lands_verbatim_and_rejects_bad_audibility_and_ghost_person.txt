@@ -1,0 +1,44 @@
+# FILE: tests/test_declaration_dispatch_1835.py
+# NAME: test_scene_fact_speaker_segment_lands_verbatim_and_rejects_bad_audibility_and_ghost_person
+# LINE: 493-530
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_scene_fact_speaker_segment_lands_verbatim_and_rejects_bad_audibility_and_ghost_person(game):
+    db, state, _ = game
+    minister = _minister(db)
+    from ming_sim.audience_night import open_night
+
+    night = open_night(db, state)
+    night_id = int(night["id"])
+    chat_turn_id = db.create_chat_turn(state, minister, "t1835:scene", 0, night_id=night_id)
+
+    # 首项首尾刻意带空白：证明落账是原字符串本身，不是先 .strip() 再落账
+    declaration = {
+        "scene_facts": [
+            {"body": "  臣领旨。  \n", "audibility": "殿上公开", "person_names": [minister]},
+            {"body": "臣提及未在册者。", "role": "minister", "audibility": "殿上公开", "person_names": [minister, "未在册者"]},
+            {"body": "低声私语", "audibility": "非法可闻性"},
+            {"body": "凭空捏造之人插话。", "audibility": "殿上公开", "person_names": ["子虚乌有之人"]},
+        ],
+    }
+    before = db.conn.execute(
+        "SELECT COUNT(*) c FROM story_ledger_entries WHERE night_id=?", (night_id,),
+    ).fetchone()["c"]
+    result = dispatch_declaration(
+        db, state, declaration, night_id=night_id, chat_turn_id=chat_turn_id,
+    )
+    after = db.conn.execute(
+        "SELECT COUNT(*) c FROM story_ledger_entries WHERE night_id=?", (night_id,),
+    ).fetchone()["c"]
+
+    assert len(result.scene_facts.applied) == 2
+    assert after - before == 2  # 只有合法项真落账，坏项不留孤儿账
+    categories = {r.category for r in result.scene_facts.rejected}
+    assert categories == {"invalid_shape", "hallucinated_id"}
+
+    row = db.conn.execute(
+        "SELECT body FROM story_ledger_entries WHERE id=?",
+        (result.scene_facts.applied[0]["id"],),
+    ).fetchone()
+    assert row["body"] == "  臣领旨。  \n"  # 含首尾空白，未被 strip 篡改

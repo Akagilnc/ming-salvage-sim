@@ -1,0 +1,45 @@
+# FILE: tests/test_person_transit_write_667.py
+# NAME: test_status_exit_clears_complete_transit_ledger
+# LINE: 151-189
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_status_exit_clears_complete_transit_ledger(game, exit_path):
+    db, state, content = game
+    name = _active(db)
+    db.set_character_transit(
+        name,
+        transit_to="liaodong",
+        distance_remaining=2.1,
+        speed_factor=1.5,
+        start_turn=1,
+        content=content,
+    )
+
+    if exit_path == "appointment_replacement":
+        appointed, displaced = apply_appointment(
+            db, state, content,
+            {"name": "新任测试官", "office": "兵部尚书", "replaces": name},
+        )
+        assert appointed == "新任测试官"
+        assert displaced == name
+    else:
+        dossier_id = db.create_decree_dossier(
+            state, action_type="dismiss_assignment", decree_text="罢免", target_kind="character", target_id=name,
+            payload={"name": name, "_office_action": "罢免"},
+        )
+        db.apply_dossier_promulgation(state, dossier_id, "promulgated", content=content)
+
+    row = db.conn.execute(
+        "SELECT status, transit_to, transit_distance_remaining, transit_speed_factor, transit_start_turn "
+        "FROM characters WHERE name=?", (name,),
+    ).fetchone()
+    assert tuple(row) == ("dismissed", "", None, None, 0)
+    character = content.characters[name]
+    assert (
+        character.status,
+        character.transit_to,
+        character.transit_distance_remaining,
+        character.transit_speed_factor,
+        character.transit_start_turn,
+    ) == ("dismissed", "", None, None, 0)

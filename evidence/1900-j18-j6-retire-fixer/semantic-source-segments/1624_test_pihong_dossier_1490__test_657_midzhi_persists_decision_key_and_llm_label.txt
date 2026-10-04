@@ -1,0 +1,25 @@
+# FILE: tests/test_pihong_dossier_1490.py
+# NAME: test_657_midzhi_persists_decision_key_and_llm_label
+# LINE: 1759-1777
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_657_midzhi_persists_decision_key_and_llm_label(game):
+    """Spec2 + P7：midzhi payload 带 decision_key；decree_text 用 LLM label 非固定钮文。"""
+    from ming_sim import rescript_actions as ra
+    db, state, content = game
+    llm_label = '着户部立发秦地赈银'
+    urgent, _ = _plant_urgent_desk(db, state)
+    key = urgent['decision_key']
+    choice = {'decision_key': key, 'action': 'midzhi', 'label': llm_label, 'action_type': 'assignment', 'target_kind': 'region', 'target_id': 'shaanxi', 'locality_scope': 'single', 'region_id': 'shaanxi', 'transaction_category': '督赈', 'deadline_months': 2, 'participant_roster': _roster(_ROSTER_LEAD)}
+    batch = ra.validate_all([urgent], [choice])
+    ra.apply_rescript_batch(db, state, batch, ra.PrewriteResults(), content=content)
+    mids = [d for d in db.list_decree_dossiers() if d.get('mode') == 'midzhi']
+    assert mids
+    hit = mids[-1]
+    payload = json.loads(str(hit.get('payload_json') or '{}'))
+    assert payload.get('decision_key') == key
+    assert str(hit.get('decree_text') or '') == llm_label
+    assert '另旨·中旨' not in str(hit.get('decree_text') or '')
+    with pytest.raises(ValueError):
+        ra.map_rescript_option_or_choice({k: v for k, v in choice.items() if k != 'decision_key'}, mode='midzhi', db=db, content=content, state=state)

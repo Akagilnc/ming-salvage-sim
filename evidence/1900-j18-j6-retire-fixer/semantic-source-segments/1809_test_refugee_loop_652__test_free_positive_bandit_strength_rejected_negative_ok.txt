@@ -1,0 +1,25 @@
+# FILE: tests/test_refugee_loop_652.py
+# NAME: test_free_positive_bandit_strength_rejected_negative_ok
+# LINE: 238-256
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_free_positive_bandit_strength_rejected_negative_ok(game):
+    db, state, content = game
+    pid = "bandit_li_zicheng"
+    before, houjin_before = _strength(db, pid), _strength(db, "houjin")
+    applied = apply_score_extraction(db, state, {
+        "power_updates": {
+            pid: {"military_strength": 5, "origin_ref": "盘面自发"},
+            "houjin": {"military_strength": 2, "origin_ref": "盘面自发"},
+        },
+    }, content, None)
+    assert any(c.get("rejected") and c.get("power_id") == pid for c in applied["power_changes"])
+    assert _strength(db, pid) == before
+    assert _strength(db, "houjin") == min(100, houjin_before + 2)
+
+    before2 = _strength(db, pid)
+    apply_score_extraction(db, state, {
+        "power_updates": {pid: {"military_strength": -3, "origin_ref": "盘面自发"}},
+    }, content, None)
+    assert _strength(db, pid) == max(0, before2 - 3)

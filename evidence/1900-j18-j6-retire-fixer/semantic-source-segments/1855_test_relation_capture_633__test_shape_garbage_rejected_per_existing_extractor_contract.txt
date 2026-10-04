@@ -1,0 +1,42 @@
+# FILE: tests/test_relation_capture_633.py
+# NAME: test_shape_garbage_rejected_per_existing_extractor_contract
+# LINE: 146-181
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_shape_garbage_rejected_per_existing_extractor_contract(game):
+    db, state, content = game
+    out = apply_score_extraction(
+        db, state,
+        {
+            "relation_edge_events": [
+                "不是对象",  # 非 dict item → sanitize 层逐项拒收
+                {"施动者": "毕自严", "受动者": "王绍徽", "类目": "擅自发明", "语境": "x", "来源引用": "盘面自发"},  # 未知类目
+                {"施动者": "毕自严", "受动者": "王绍徽", "类目": "结怨", "语境": "   ", "来源引用": "盘面自发"},  # 空语境
+                {"受动者": "王绍徽", "类目": "结怨", "语境": "缺施动者", "来源引用": "盘面自发"},  # 缺施动者
+                {"施动者": "毕自严", "受动者": "王绍徽", "类目": "兑现所托", "语境": "君臣类目不归本口", "来源引用": "盘面自发"},
+            ],
+        },
+        content=content,
+    )
+    # 非 dict item 由既有 sanitize_delta_shape 列表逐项拒收（ADR 0015 形，raw_value 载荷）
+    validate_rejections = out["validate_shape_rejections"]
+    assert any(
+        isinstance(r.get("item"), dict) and r["item"].get("raw_value") == "不是对象"
+        for r in validate_rejections
+    )
+    # 内容级坏项由适配器逐条拒收留痕，不阻塞其它项；未入名册端点也是拒收理由之一
+    res = out["relation_edge_event_resolutions"]
+    rejected = [r for r in res if r.get("rejected")]
+    assert len(rejected) == 4
+    assert all(r["category"] == "invalid_relation_event" for r in rejected)
+    items = [r.get("item") for r in rejected]
+    assert any(isinstance(item, dict) and item.get("类目") == "擅自发明" for item in items)
+    assert any(
+        isinstance(item, dict) and not str(item.get("语境") or "").strip()
+        for item in items
+    )
+    assert any(isinstance(item, dict) and "施动者" not in item for item in items)
+    assert any(isinstance(item, dict) and item.get("类目") == "兑现所托" for item in items)
+    # 全部拒收：库里零写入
+    assert _edge_rows(db) == []

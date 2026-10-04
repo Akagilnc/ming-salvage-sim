@@ -1,0 +1,24 @@
+# FILE: tests/test_llm_channel_config.py
+# NAME: test_verify_llm_available_api_empty_content_passes
+# LINE: 590-607
+# FLAGS: mock_or_patch_present,helper_or_private_call
+# KIND: py
+
+def test_verify_llm_available_api_empty_content_passes(monkeypatch):
+    """推理模型思考耗尽回空 content：调用成功即过，空文不作失败。"""
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+
+    class EmptyOutput:
+        content = ""
+        status = None
+
+    class FakeAgent:
+        def __init__(self, **kwargs):
+            pass
+
+        def run(self, prompt: str) -> EmptyOutput:
+            return EmptyOutput()
+
+    monkeypatch.setattr(llm_model, "Agent", FakeAgent)
+    # 走真实 extract_agent_text：空 content 不得误杀
+    verify_llm_available(_api_cfg())

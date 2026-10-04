@@ -1,0 +1,981 @@
+{
+  "shard": 8,
+  "files": [
+    "tests/test_decree_dossiers_571.py",
+    "tests/test_decree_forecast_1861.py",
+    "tests/test_deepseek_thinking_disable_1797.py"
+  ],
+  "count": 82,
+  "items": [
+    {
+      "file": "tests/test_decree_dossiers_571.py",
+      "name": "test_dossier_roster_preserves_multiple_leads_support_roles_and_knowers",
+      "line": 23,
+      "end": 43,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_decree_dossiers_571.py",
+      "name": "test_dossier_roster_rejects_unknown_character_references_at_write_boundary",
+      "line": 64,
+      "end": 87,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_decree_dossiers_571.py",
+      "name": "test_dossier_roster_write_boundary_rejects_invalid_delegator",
+      "line": 92,
+      "end": 118,
+      "flags": [
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_decree_dossiers_571.py",
+      "name": "test_dossier_roster_append_keeps_existing_entries_and_delegator",
+      "line": 120,
+      "end": 142,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_decree_dossiers_571.py",
+      "name": "test_dossier_append_is_idempotent_only_for_identical_character_entry",
+      "line": 144,
+      "end": 168,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_decree_dossiers_571.py",
+      "name": "test_month_end_extractor_appends_self_dispatched_participant",
+      "line": 170,
+      "end": 195,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_decree_dossiers_571.py",
+      "name": "test_month_end_participant_batch_rejects_each_malformed_item",
+      "line": 203,
+      "end": 224,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_decree_dossiers_571.py",
+      "name": "test_extractor_never_reconstructs_missing_dossier_authority_from_live_db",
+      "line": 234,
+      "end": 254,
+      "flags": [
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_decree_dossiers_571.py",
+      "name": "test_committing_each_directive_creates_independent_restoreable_dossier",
+      "line": 256,
+      "end": 283,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_decree_dossiers_571.py",
+      "name": "test_pending_directive_only_enters_settlement_after_final_approval",
+      "line": 285,
+      "end": 346,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_decree_dossiers_571.py",
+      "name": "test_secret_pending_action_carries_chat_turn_and_pending_provenance",
+      "line": 348,
+      "end": 387,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_decree_dossiers_571.py",
+      "name": "test_terminal_target_does_not_interrupt_another_executor",
+      "line": 389,
+      "end": 405,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_decree_dossiers_571.py",
+      "name": "test_office_action_waits_for_verdict_then_materializes_from_same_payload",
+      "line": 407,
+      "end": 440,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_decree_dossiers_571.py",
+      "name": "test_secret_order_and_dossier_roll_back_as_one_unit",
+      "line": 452,
+      "end": 462,
+      "flags": [
+        "assert_count",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_decree_dossiers_571.py",
+      "name": "test_character_terminal_state_closes_secret_order_and_execution_slot",
+      "line": 464,
+      "end": 479,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_decree_dossiers_571.py",
+      "name": "test_commitments_bind_explicitly_when_multiple_dossiers_share_a_turn",
+      "line": 481,
+      "end": 515,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_decree_dossiers_571.py",
+      "name": "test_allocation_rejected_is_zero_effect_and_force_promulgation_keeps_rejection",
+      "line": 517,
+      "end": 548,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_decree_dossiers_571.py",
+      "name": "test_assignment_promulgation_tracks_executor_until_terminal_state",
+      "line": 550,
+      "end": 576,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_decree_dossiers_571.py",
+      "name": "test_directive_assignee_projects_to_executor_only_for_executable_types",
+      "line": 585,
+      "end": 651,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_decree_dossiers_571.py",
+      "name": "test_dossier_execution_rejects_non_sqlite_integer_ids",
+      "line": 654,
+      "end": 670,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_decree_dossiers_571.py",
+      "name": "test_dossier_execution_accepts_sqlite_integer_id",
+      "line": 672,
+      "end": 690,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_decree_dossiers_571.py",
+      "name": "test_structured_dossier_origin_deduplicates_extractor_but_narrative_applies",
+      "line": 692,
+      "end": 736,
+      "flags": [
+        "assert_count"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_decree_dossiers_571.py",
+      "name": "test_payload_owned_appointment_dedup_uses_prior_item_runtime_office_type",
+      "line": 768,
+      "end": 809,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_decree_dossiers_571.py",
+      "name": "test_payload_owned_appointment_dedup_preserves_same_person_different_effect",
+      "line": 811,
+      "end": 841,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_decree_dossiers_571.py",
+      "name": "test_executing_execution_record_never_closes_or_stamps_closed_turn",
+      "line": 843,
+      "end": 861,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_decree_dossiers_571.py",
+      "name": "test_force_promulgated_dossier_authorizes_same_batch_effect_after_execution_close",
+      "line": 863,
+      "end": 886,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_decree_dossiers_571.py",
+      "name": "test_extractor_accepts_transformed_execution_outcome",
+      "line": 888,
+      "end": 910,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_decree_dossiers_571.py",
+      "name": "test_appointment_alias_uses_canonical_dossier_identity",
+      "line": 912,
+      "end": 945,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_decree_dossiers_571.py",
+      "name": "test_manual_directive_capture_reaches_structured_dossier",
+      "line": 969,
+      "end": 1061,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_decree_dossiers_571.py",
+      "name": "test_manual_directive_capture_rejects_malformed_roster",
+      "line": 1068,
+      "end": 1119,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "mock_or_patch_present"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_decree_dossiers_571.py",
+      "name": "test_manual_directive_capture_rejects_missing_empty_or_invalid_tier_without_writes",
+      "line": 1126,
+      "end": 1181,
+      "flags": [
+        "assert_count",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_decree_dossiers_571.py",
+      "name": "test_final_decree_edit_path_removed_no_bypass",
+      "line": 1183,
+      "end": 1207,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_decree_dossiers_571.py",
+      "name": "test_cli_dossiered_directive_is_not_listed_editable_or_deletable",
+      "line": 1209,
+      "end": 1235,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_decree_dossiers_571.py",
+      "name": "test_cli_edit_replaces_text_and_mechanics_before_promulgation",
+      "line": 1270,
+      "end": 1333,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "mock_or_patch_present"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_decree_dossiers_571.py",
+      "name": "test_secret_order_progress_persists_executing_until_terminal",
+      "line": 1335,
+      "end": 1357,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_decree_dossiers_571.py",
+      "name": "test_secret_order_progress_undo_restores_order_and_dossier_axes",
+      "line": 1359,
+      "end": 1384,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_decree_dossiers_571.py",
+      "name": "test_secret_order_close_failure_rolls_back_only_its_two_axes",
+      "line": 1386,
+      "end": 1413,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_decree_dossiers_571.py",
+      "name": "test_secret_order_progress_rolls_back_both_axes_in_outer_atomic",
+      "line": 1415,
+      "end": 1430,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_decree_dossiers_571.py",
+      "name": "test_create_secret_order_has_resumable_dossier",
+      "line": 1449,
+      "end": 1457,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_decree_dossiers_571.py",
+      "name": "test_held_dossier_reenters_only_for_next_month_rejudgment",
+      "line": 1459,
+      "end": 1488,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_decree_dossiers_571.py",
+      "name": "test_session_manual_directive_keeps_structured_action_at_submission",
+      "line": 1502,
+      "end": 1548,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_decree_dossiers_571.py",
+      "name": "test_probe_directive_shared_entry_creates_and_settles_structured_dossier",
+      "line": 1551,
+      "end": 1584,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_decree_dossiers_571.py",
+      "name": "test_directive_edit_replaces_mechanical_payload_before_submission",
+      "line": 1609,
+      "end": 1632,
+      "flags": [
+        "assert_count"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_decree_dossiers_571.py",
+      "name": "test_allocation_rejects_unknown_economy_account_before_dossier_birth",
+      "line": 1634,
+      "end": 1655,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_decree_dossiers_571.py",
+      "name": "test_underfunded_in_transit_allocation_closes_from_execution_state",
+      "line": 1657,
+      "end": 1680,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_decree_dossiers_571.py",
+      "name": "test_underfunded_immediate_allocation_is_not_recorded_as_fulfilled",
+      "line": 1682,
+      "end": 1702,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_decree_dossiers_571.py",
+      "name": "test_incomplete_mechanical_directive_is_rejected_instead_of_retyped",
+      "line": 1717,
+      "end": 1734,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_decree_dossiers_571.py",
+      "name": "test_mechanical_directive_missing_target_fails_loudly_at_real_entry",
+      "line": 1736,
+      "end": 1757,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_decree_dossiers_571.py",
+      "name": "test_secret_order_commitment_origin_maps_to_its_own_dossier",
+      "line": 1759,
+      "end": 1768,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_decree_dossiers_571.py",
+      "name": "test_military_directive_projects_normalized_due_turn_to_dossier",
+      "line": 1770,
+      "end": 1787,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_decree_dossiers_571.py",
+      "name": "test_draft_extraction_does_not_capture_acting_appointment",
+      "line": 1790,
+      "end": 1822,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_decree_dossiers_571.py",
+      "name": "test_batch_draft_extraction_preserves_each_mechanical_payload",
+      "line": 1824,
+      "end": 1865,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "mock_or_patch_present"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_decree_dossiers_571.py",
+      "name": "test_executing_dossier_stays_visible_and_extractor_can_close_it",
+      "line": 1867,
+      "end": 1902,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_decree_dossiers_571.py",
+      "name": "test_malformed_dossier_origin_is_rejected_fail_closed",
+      "line": 1907,
+      "end": 1921,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_decree_dossiers_571.py",
+      "name": "test_withdrawn_rescript_records_closed_turn",
+      "line": 1923,
+      "end": 1941,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_decree_dossiers_571.py",
+      "name": "test_secret_order_target_survives_restore_and_is_queryable",
+      "line": 1943,
+      "end": 1957,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_decree_dossiers_571.py",
+      "name": "test_allocation_candidate_edit_preserves_mechanical_payload",
+      "line": 1959,
+      "end": 1989,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_decree_dossiers_571.py",
+      "name": "test_immediate_terminal_payload_cannot_bypass_execution_surface",
+      "line": 1991,
+      "end": 2015,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_decree_dossiers_571.py",
+      "name": "test_inner_treasury_admission_uses_actual_once_and_preserves_surface",
+      "line": 2022,
+      "end": 2059,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_decree_dossiers_571.py",
+      "name": "test_secret_authorization_dossier_does_not_map_payload_to_skill_grant",
+      "line": 2085,
+      "end": 2113,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_decree_dossiers_571.py",
+      "name": "test_secret_authorization_rejects_missing_assignee_without_grant",
+      "line": 2115,
+      "end": 2136,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_decree_dossiers_571.py",
+      "name": "test_in_transit_allocation_requires_execution_verdict",
+      "line": 2138,
+      "end": 2166,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_decree_dossiers_571.py",
+      "name": "test_durable_allocation_rejects_non_integer_amount_without_downgrade",
+      "line": 2169,
+      "end": 2190,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_decree_dossiers_571.py",
+      "name": "test_durable_military_order_without_assignee_fails_loudly",
+      "line": 2192,
+      "end": 2213,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_decree_dossiers_571.py",
+      "name": "test_complete_rejection_verdict_is_restoreable_audit_record",
+      "line": 2215,
+      "end": 2238,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_decree_dossiers_571.py",
+      "name": "test_rejection_verdict_defaults_omitted_midzhi_marker_to_false",
+      "line": 2240,
+      "end": 2252,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_decree_dossiers_571.py",
+      "name": "test_rejection_runtime_contract_rejects_each_missing_field",
+      "line": 2257,
+      "end": 2266,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_decree_dossiers_571.py",
+      "name": "test_rejection_runtime_contract_rejects_unknown_references",
+      "line": 2274,
+      "end": 2283,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_decree_dossiers_571.py",
+      "name": "test_rejection_snapshot_rejects_malformed_typed_values",
+      "line": 2292,
+      "end": 2301,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_decree_dossiers_571.py",
+      "name": "test_rejection_contract_rejects_numeric_contamination_without_history",
+      "line": 2311,
+      "end": 2326,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_decree_forecast_1861.py",
+      "name": "test_scene_chat_approval_forecasts_each_decree_without_visible_effect",
+      "line": 45,
+      "end": 187,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_decree_forecast_1861.py",
+      "name": "test_scene_chat_rejection_is_staged_for_later_rescript_not_shown_at_night",
+      "line": 190,
+      "end": 249,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_decree_forecast_1861.py",
+      "name": "test_restored_directive_forecast_uses_its_approved_night",
+      "line": 298,
+      "end": 320,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_decree_forecast_1861.py",
+      "name": "test_held_rejudgments_overlap_instead_of_waiting_in_one_worker",
+      "line": 323,
+      "end": 424,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_decree_forecast_1861.py",
+      "name": "test_same_local_ids_on_two_saves_both_stage",
+      "line": 427,
+      "end": 493,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_deepseek_thinking_disable_1797.py",
+      "name": "test_create_chat_model_deepseek_on_hermes_emits_reasoning_disable",
+      "line": 15,
+      "end": 25,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_deepseek_thinking_disable_1797.py",
+      "name": "test_create_chat_model_deepseek_on_official_keeps_thinking_disabled",
+      "line": 28,
+      "end": 38,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_deepseek_thinking_disable_1797.py",
+      "name": "test_create_chat_model_deepseek_on_dashscope_uses_enable_thinking",
+      "line": 41,
+      "end": 51,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_deepseek_thinking_disable_1797.py",
+      "name": "test_create_chat_model_deepseek_on_minimax_uses_endpoint_key",
+      "line": 54,
+      "end": 64,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_deepseek_thinking_disable_1797.py",
+      "name": "test_create_chat_model_deepseek_enable_thinking_still_disables",
+      "line": 115,
+      "end": 137,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_deepseek_thinking_disable_1797.py",
+      "name": "test_create_chat_model_non_deepseek_dashscope_strength_unchanged",
+      "line": 140,
+      "end": 151,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_deepseek_thinking_disable_1797.py",
+      "name": "test_create_chat_model_non_deepseek_minimax_strength_unchanged",
+      "line": 154,
+      "end": 165,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    }
+  ]
+}

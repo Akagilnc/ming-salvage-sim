@@ -1,0 +1,46 @@
+# FILE: tests/test_audience_travel_gating_670.py
+# NAME: test_waiting_active_departure_settles_and_does_not_revive
+# LINE: 913-952
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_waiting_active_departure_settles_and_does_not_revive(game):
+    """#670：候见中 canonical 行止离京 → origin 结清；抵非京不再续赴京。"""
+    from ming_sim.issues import apply_person_changes_only
+
+    db, state, content = game
+    person = _set_place(game, "洪承畴", location="beizhili")
+    night_id = int(an.open_night(db, state)["id"])
+    origin = "command:waiting-leave-1"
+    entry_id = an.record_summon_in_transit(
+        db, night_id, person.name, origin_id=origin,
+    )
+    assert an.list_unsettled_summons(db) == [{
+        "entry_id": entry_id,
+        "night_id": night_id,
+        "person_name": person.name,
+        "origin_id": origin,
+        "kind": "waiting",
+    }]
+
+    results = apply_person_changes_only(
+        db, state,
+        [{
+            "name": person.name, "动作": "行止", "transit_to": "shaanxi",
+            "origin_ref": "盘面自发",
+        }],
+        content=content,
+    )["applied_person_changes"]
+    assert results and not results[0].get("rejected")
+    assert _travel_row(db, person.name)["transit_to"] == "shaanxi"
+    assert an.list_unsettled_summons(db) == []
+    assert an.list_waiting_audience_summons(db) == []
+
+    # 抵非京后不得复活「续赴京」
+    db.conn.execute(
+        "UPDATE characters SET location=?, transit_to='', transit_distance_remaining=NULL, "
+        "transit_speed_factor=NULL WHERE name=?",
+        ("shaanxi", person.name),
+    )
+    db.conn.commit()
+    assert an.list_arrived_unsettled_summons(db) == []

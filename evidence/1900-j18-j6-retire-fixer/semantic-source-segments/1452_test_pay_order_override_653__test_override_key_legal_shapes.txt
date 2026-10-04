@@ -1,0 +1,10 @@
+# FILE: tests/test_pay_order_override_653.py
+# NAME: test_override_key_legal_shapes
+# LINE: 68-71
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_override_key_legal_shapes(game, key):
+    db, state, _content = game
+    dossier_id = _override_dossier(db, state, [{"key": key, "value": 5000}])
+    assert db.get_decree_dossier(dossier_id)["status"] == "proposed"

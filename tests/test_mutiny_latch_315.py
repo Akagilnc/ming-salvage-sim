@@ -1,17 +1,14 @@
 """#315 — 四档哗变状态派生与 latch 滞回（ADR 0025 D3/D4）。
 
 seam = 月末确定性结算 tick（apply_fixed_period_flows）。
-oracle 逐月断言 (loyalty, is_mutinied, derive_army_mutiny_state)。
+oracle 逐月断言 loyalty / is_mutinied / arrears 列。
 """
 from __future__ import annotations
 
 
 import pytest
 
-from ming_sim.flows import (
-    apply_fixed_period_flows,
-    derive_army_mutiny_state,
-)
+from ming_sim.flows import apply_fixed_period_flows
 ARMY = "guanning"
 PATHS = ("legacy", "substrate_hub")
 
@@ -71,7 +68,7 @@ def _tick(db, state):
     row = db.conn.execute(
         "SELECT loyalty, is_mutinied, arrears FROM armies WHERE id=?", (ARMY,)
     ).fetchone()
-    return int(row["loyalty"]), int(row["is_mutinied"]), derive_army_mutiny_state(row)
+    return int(row["loyalty"]), int(row["is_mutinied"]), float(row["arrears"])
 
 
 @pytest.mark.parametrize("fiscal_path", PATHS)
@@ -79,9 +76,11 @@ def test_arrears_spiral_enters_mutiny_only_after_both_conditions(game, fiscal_pa
     db, state, _ = game
     _setup(db, fiscal_path, loyalty=22, arrears=3)
 
-    assert _tick(db, state)[:3] == (17, 0, "鼓噪")  # <20 alone, only 3 months owed
+    loyalty, latched, _arrears = _tick(db, state)
+    assert (loyalty, latched) == (17, 0)  # <20 alone, only 3 months owed
     _set_arrears(db, fiscal_path, 5)
-    assert _tick(db, state)[:3] == (12, 1, "哗变")
+    loyalty, latched, _arrears = _tick(db, state)
+    assert (loyalty, latched) == (12, 1)
 
 
 @pytest.mark.parametrize("fiscal_path", PATHS)
@@ -89,10 +88,8 @@ def test_mutiny_stays_latched_while_loyalty_recovers_below_40(game, fiscal_path)
     db, state, _ = game
     _setup(db, fiscal_path, loyalty=20, arrears=0, latched=1)
 
-    trajectory = [_tick(db, state) for _ in range(3)]
-    assert trajectory == [
-        (25, 1, "哗变"), (30, 1, "哗变"), (35, 1, "哗变")
-    ]
+    trajectory = [_tick(db, state)[:2] for _ in range(3)]
+    assert trajectory == [(25, 1), (30, 1), (35, 1)]
 
 
 @pytest.mark.parametrize("fiscal_path", PATHS)
@@ -100,7 +97,9 @@ def test_mutiny_exits_at_40_only_when_arrears_have_retired(game, fiscal_path):
     db, state, _ = game
     _setup(db, fiscal_path, loyalty=35, arrears=0, latched=1)
 
-    assert _tick(db, state)[:3] == (40, 0, "不满")
+    loyalty, latched, arrears = _tick(db, state)
+    assert (loyalty, latched) == (40, 0)
+    assert arrears == 0
 
 
 @pytest.mark.parametrize("fiscal_path", PATHS)
@@ -108,7 +107,9 @@ def test_raised_loyalty_alone_does_not_release_latch(game, fiscal_path):
     db, state, _ = game
     _setup(db, fiscal_path, loyalty=45, arrears=5, latched=1)
 
-    assert _tick(db, state)[:3] == (40, 1, "哗变")
+    loyalty, latched, arrears = _tick(db, state)
+    assert (loyalty, latched) == (40, 1)
+    assert arrears > 0
 
 
 

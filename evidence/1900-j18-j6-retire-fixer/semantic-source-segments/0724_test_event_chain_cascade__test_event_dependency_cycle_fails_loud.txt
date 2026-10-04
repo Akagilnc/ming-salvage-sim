@@ -1,0 +1,17 @@
+# FILE: tests/test_event_chain_cascade.py
+# NAME: test_event_dependency_cycle_fails_loud
+# LINE: 358-368
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_event_dependency_cycle_fails_loud(game):
+    db, state, content = game
+    issues.bind_content(content)
+    a = _hist_event("__chain_cycle_a__", {"event.__chain_cycle_b__.terminal_state": "==triggered"})
+    b = _hist_event("__chain_cycle_b__", {"event.__chain_cycle_a__.terminal_state": "==triggered"})
+    with _TempEvents(content, a, b):
+        with pytest.raises(SettlementAbort) as exc_info:
+            issues.apply_event_cascading_invalidations(state, db)
+        assert exc_info.value.stage == "event_chain_config"
+        assert "__chain_cycle_a__" in str(exc_info.value)
+        assert "__chain_cycle_b__" in str(exc_info.value)

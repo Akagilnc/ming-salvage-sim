@@ -1,0 +1,18 @@
+# FILE: tests/test_fiscal_substrate_bridge.py
+# NAME: test_settle_province_tick_persists_shaanxi_historical_shadow_golden
+# LINE: 3993-4004
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_settle_province_tick_persists_shaanxi_historical_shadow_golden(fresh_db):
+    res = fresh_db.settle_province_tick("shaanxi", [])
+    fresh_db.conn.commit()
+    after = _read_settle(fresh_db)["st"]
+    assert after["C_地方截留"] == pytest.approx(0.7181, abs=1e-3)
+    assert after["民欠旧赋"] == pytest.approx(3.2639, abs=1e-3)
+    assert after["军饷欠"] == pytest.approx(_province_pay_arrears(fresh_db, "shaanxi"), abs=1e-6)
+    # 落库逐键 == settle_tick 的 new_st（桥不篡改）
+    for k, v in res.new_st.items():
+        if k == "军饷欠":
+            continue
+        assert abs(after[k] - v) < 1e-6, f"{k}：落库 {after[k]} ≠ new_st {v}"

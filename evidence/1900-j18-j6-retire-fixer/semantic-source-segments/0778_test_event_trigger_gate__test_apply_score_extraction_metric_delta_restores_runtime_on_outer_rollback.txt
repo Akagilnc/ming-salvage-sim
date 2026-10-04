@@ -1,0 +1,24 @@
+# FILE: tests/test_event_trigger_gate.py
+# NAME: test_apply_score_extraction_metric_delta_restores_runtime_on_outer_rollback
+# LINE: 1505-1522
+# FLAGS: assert_count
+# KIND: py
+
+def test_apply_score_extraction_metric_delta_restores_runtime_on_outer_rollback(game):
+    """post-merge CMR R9：外层事务 rollback 后，state.metrics 内存也必须回到事务前。"""
+    db, state, content = game
+    state.metrics["民心"] = 50
+    db.conn.commit()
+
+    db.conn.execute("BEGIN")
+    out = issues.apply_score_extraction(
+        db,
+        state,
+        {"metric_delta": {"民心": -7}},
+        content=content,
+    )
+    assert out["metric_delta"]["民心"] == -7
+    assert state.metrics["民心"] == 43
+    db.conn.rollback()
+
+    assert state.metrics["民心"] == 50

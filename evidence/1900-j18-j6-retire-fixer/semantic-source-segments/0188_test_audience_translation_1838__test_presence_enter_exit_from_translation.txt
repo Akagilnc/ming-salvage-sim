@@ -1,0 +1,43 @@
+# FILE: tests/test_audience_translation_1838.py
+# NAME: test_presence_enter_exit_from_translation
+# LINE: 130-166
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_presence_enter_exit_from_translation(game):
+    """AC2：王绍徽入见 / 告退经转译记入在场进出。"""
+    db, state, _ = game
+    _activate(db, state, "王绍徽")
+    night = open_night(db, state, location="乾清宫", time_of_day="戌时")
+    nid = int(night["id"])
+    ctid = db.create_chat_turn(state, "殿上", "s", 0, night_id=nid)
+
+    enter_body = "王绍徽奉宣入见。"
+    exit_body = "王绍徽叩首告退。"
+    result = apply_audience_round_translation(
+        db, state,
+        {
+            "presence": [
+                {"person_name": "王绍徽", "effect": "enter", "body": enter_body},
+                {"person_name": "王绍徽", "effect": "exit", "body": exit_body},
+            ],
+        },
+        night_id=nid, chat_turn_id=ctid,
+    )
+
+    assert len(result.presence.applied) == 2
+    assert result.presence.rejected == []
+    # 先入后出，夜末不在场
+    assert "王绍徽" not in present_names_at(db, nid)
+
+    rows = db.conn.execute(
+        "SELECT body, presence_effect, source_chat_turn_id FROM story_ledger_entries "
+        "WHERE night_id=? AND presence_effect IN ('enter','exit') "
+        "ORDER BY seq",
+        (nid,),
+    ).fetchall()
+    presence_rows = [r for r in rows if r["source_chat_turn_id"] == ctid]
+    assert [(r["body"], r["presence_effect"]) for r in presence_rows] == [
+        (enter_body, "enter"),
+        (exit_body, "exit"),
+    ]

@@ -1,0 +1,25 @@
+# FILE: tests/test_fiscal_substrate_bridge.py
+# NAME: test_all_15_regular_provinces_first_tick_golden
+# LINE: 3347-3365
+# FLAGS: assert_count,helper_or_private_call
+# KIND: py
+
+def test_all_15_regular_provinces_first_tick_golden(region_id, expected, fresh_db):
+    """#585 capstone: 全 15 布政司一手核 seed 的首 tick 末态硬锚。"""
+    assert len(REGULAR_PROVINCE_FIRST_TICK_GOLDEN) == 15
+    settle = _read_settle(fresh_db, region_id)
+
+    result = settle_tick(settle["st"], settle["p"], [])
+
+    for key, want in expected.items():
+        got = (
+            result.breakdown[key]
+            if key in {"实征", "起运到京", "火耗实收"}
+            else result.new_st[key]
+        )
+        assert math.isclose(
+            got,
+            want,
+            rel_tol=0,
+            abs_tol=1e-3,
+        ), f"{region_id} {key}: {got} != {want}"

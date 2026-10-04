@@ -1,0 +1,41 @@
+# FILE: tests/test_due_review_621.py
+# NAME: test_unconsumed_todo_rolls_across_settles_and_restore
+# LINE: 167-201
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_unconsumed_todo_rolls_across_settles_and_restore(game):
+    db, state, content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.commit()
+    stages = [{
+        "stage_idx": 0,
+        "due_turn": state.turn,
+        "criterion_text": "火器见眉目",
+        "origin_context": "三年火器见眉目",
+    }]
+    _insert_staged_commitment(db, state, content, stages=stages)
+    # 只写 todo，不走 apply_pending（直接写端）——滚存面
+    write_due_staged_commitment_todos(db, state)
+    pending = db.list_next_audience_todos(status=TODO_STATUS_PENDING)
+    assert len(pending) == 1
+    origin_context = pending[0]["origin_context"]
+
+    # 再结算一拍（apply 会消费；此处用手工保持 pending 测滚存读端）
+    # 先把 apply 路径旁路：直接推进并断言 list 仍可读
+    state.turn += 1
+    db.save_state(state)
+    still = db.list_next_audience_todos(status=TODO_STATUS_PENDING)
+    assert len(still) == 1
+    assert still[0]["origin_context"] == origin_context
+
+    # restore 只读 DB
+    from ming_sim.db import GameDB
+    path = db.path
+    db.conn.close()
+    db2 = GameDB(path)
+    state2 = db2.load_state()
+    todos2 = db2.list_next_audience_todos(status=TODO_STATUS_PENDING)
+    assert len(todos2) == 1
+    assert todos2[0]["origin_context"] == origin_context
+    assert int(state2.turn) == int(state.turn)

@@ -1,0 +1,44 @@
+# FILE: tests/test_new_game_write_path_1749.py
+# NAME: test_new_game_construct_failure_keeps_old_writable
+# LINE: 406-443
+# FLAGS: assert_text_compare_or_match,assert_count,mock_or_patch_present,helper_or_private_call
+# KIND: py
+
+def test_new_game_construct_failure_keeps_old_writable(tracer_client, monkeypatch):
+    """真实 new_game 入口：构造失败恢复旧指针与主库路径，旧局仍可写。"""
+    client = tracer_client
+    _install_canned_minister_factory(monkeypatch)
+
+    seed = client.post("/api/menu/new_game")
+    assert seed.status_code == 200
+    g0 = web_app.web_game
+    assert g0 is not None
+    p0 = g0.db_path
+    c0 = _campaign(g0)
+    _directive(client, "着户部清核辽饷（pre-fail）。")
+    _wait_pending_writes(g0)
+    main_before = web_app._get_main_db_path()
+
+    real_begin = GameSession.begin_turn
+    boom_on = {"armed": True}
+
+    def _boom_begin(self, *a, **k):
+        if boom_on["armed"]:
+            boom_on["armed"] = False
+            raise RuntimeError("begin_turn boom")
+        return real_begin(self, *a, **k)
+
+    monkeypatch.setattr(GameSession, "begin_turn", _boom_begin)
+    # TestClient 默认 raise_server_exceptions：构造失败原样上抛，仍须恢复旧局。
+    with pytest.raises(RuntimeError):
+        client.post("/api/menu/new_game")
+    assert web_app.web_game is g0
+    assert web_app._same_db_path(web_app._get_main_db_path(), main_before)
+    assert web_app._same_db_path(g0.db_path, p0)
+    assert _campaign(g0) == c0
+    after = "着户部清核辽饷（after-fail）。"
+    _directive(client, after)
+    _wait_pending_writes(g0)
+    snap = _db_snapshot(p0)
+    assert snap["campaign_id"] == c0
+    assert after in snap["directive_texts"]

@@ -1,0 +1,145 @@
+{
+  "shard_id": 9,
+  "member_count": 193,
+  "file_count": 17,
+  "source_paths": [
+    "tests/test_region_cannon_delta.py",
+    "tests/test_region_citydefense.py",
+    "tests/test_rejection_wiring.py",
+    "tests/test_relation_brew_636.py",
+    "tests/test_relation_capture_633.py",
+    "tests/test_relation_read_640.py",
+    "tests/test_relation_seed_638.py",
+    "tests/test_relation_store_632.py",
+    "tests/test_release_bundle_assets.py",
+    "tests/test_rescript_choices_563.py",
+    "tests/test_rescript_draft_656.py",
+    "tests/test_rescript_heal_isolation_1801.py",
+    "tests/test_rescript_option_field_heal_1746.py",
+    "tests/test_run_agent_text_transport_1465.py",
+    "tests/test_runtime_llm_config.py",
+    "tests/test_scene_llm_1836.py",
+    "tests/test_secret_dossier_participants_1252.py"
+  ],
+  "files": [
+    {
+      "source_path": "tests/test_region_cannon_delta.py",
+      "count": 5,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_region_cannon_delta.py.json"
+    },
+    {
+      "source_path": "tests/test_region_citydefense.py",
+      "count": 3,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_region_citydefense.py.json"
+    },
+    {
+      "source_path": "tests/test_rejection_wiring.py",
+      "count": 15,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_rejection_wiring.py.json"
+    },
+    {
+      "source_path": "tests/test_relation_brew_636.py",
+      "count": 10,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_relation_brew_636.py.json"
+    },
+    {
+      "source_path": "tests/test_relation_capture_633.py",
+      "count": 25,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_relation_capture_633.py.json"
+    },
+    {
+      "source_path": "tests/test_relation_read_640.py",
+      "count": 4,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_relation_read_640.py.json"
+    },
+    {
+      "source_path": "tests/test_relation_seed_638.py",
+      "count": 11,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_relation_seed_638.py.json"
+    },
+    {
+      "source_path": "tests/test_relation_store_632.py",
+      "count": 4,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_relation_store_632.py.json"
+    },
+    {
+      "source_path": "tests/test_release_bundle_assets.py",
+      "count": 2,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_release_bundle_assets.py.json"
+    },
+    {
+      "source_path": "tests/test_rescript_choices_563.py",
+      "count": 12,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_rescript_choices_563.py.json"
+    },
+    {
+      "source_path": "tests/test_rescript_draft_656.py",
+      "count": 44,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_rescript_draft_656.py.json"
+    },
+    {
+      "source_path": "tests/test_rescript_heal_isolation_1801.py",
+      "count": 6,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_rescript_heal_isolation_1801.py.json"
+    },
+    {
+      "source_path": "tests/test_rescript_option_field_heal_1746.py",
+      "count": 15,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_rescript_option_field_heal_1746.py.json"
+    },
+    {
+      "source_path": "tests/test_run_agent_text_transport_1465.py",
+      "count": 2,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_run_agent_text_transport_1465.py.json"
+    },
+    {
+      "source_path": "tests/test_runtime_llm_config.py",
+      "count": 25,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_runtime_llm_config.py.json"
+    },
+    {
+      "source_path": "tests/test_scene_llm_1836.py",
+      "count": 4,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_scene_llm_1836.py.json"
+    },
+    {
+      "source_path": "tests/test_secret_dossier_participants_1252.py",
+      "count": 6,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_secret_dossier_participants_1252.py.json"
+    }
+  ],
+  "output_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/advisor-shards/advisor-09-disposition.jsonl",
+  "instructions": {
+    "schema_keys": [
+      "file",
+      "name",
+      "line",
+      "action",
+      "member",
+      "entry",
+      "result",
+      "mock_boundary",
+      "text_oracle_helper_necessity",
+      "reason",
+      "spec_cite",
+      "disposition_basis"
+    ],
+    "actions": [
+      "retain",
+      "migrate",
+      "delete"
+    ],
+    "rules": [
+      "Read ORIGINAL source_path files; do not use summaries as substitute",
+      "entry = real public entry called",
+      "result = actual observable contract asserted",
+      "mock_boundary = what is mocked and why (LLM/IO/clock only) or none",
+      "text_oracle_helper_necessity = per flagged text/oracle/helper: necessary why OR delete/migrate",
+      "Cannot use wide_flag_no_high_confidence_member_rule or boilerplate like 公开入口+可观察结果",
+      "Confirmation-class (calls-only mock of SUT, private helper专测, wording lock, internal oracle): delete or migrate",
+      "Necessary negative real entry+result: retain with specific reason",
+      "Do not edit production or tests; disposition only",
+      "Do not destroy existing worker evidence files outside this output_path"
+    ]
+  }
+}

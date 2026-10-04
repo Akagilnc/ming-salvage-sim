@@ -1,0 +1,19 @@
+# FILE: tests/test_office_rank_562.py
+# NAME: test_unofficed_and_offstage_degree_labels_are_genuine_first_appointments
+# LINE: 153-165
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_unofficed_and_offstage_degree_labels_are_genuine_first_appointments(game):
+    db, state, _content = game
+    for index, (office, office_type, status) in enumerate((
+        ("贡生", "生员", "active"),
+        ("诸生（应天府学）", "未仕", "offstage"),
+        ("泉州童子（郑芝龙子）", "未仕", "offstage"),
+    )):
+        name = f"初仕{index}"
+        _add(db, state, name, office, office_type)
+        db.conn.execute("UPDATE characters SET status=? WHERE name=?", (status, name))
+        _dossier_id, payload = _appointment_dossier(db, state, name, "翰林院编修")
+        assert payload["break_rank"]["basis"] == "first_appointment_regular"
+        assert payload["break_rank"]["is_break_rank"] is False

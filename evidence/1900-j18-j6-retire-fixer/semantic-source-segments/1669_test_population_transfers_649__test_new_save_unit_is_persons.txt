@@ -1,0 +1,14 @@
+# FILE: tests/test_population_transfers_649.py
+# NAME: test_new_save_unit_is_persons
+# LINE: 319-326
+# FLAGS: helper_or_private_call
+# KIND: py
+
+def test_new_save_unit_is_persons(game):
+    db, state, content = game
+    applied = apply_score_extraction(db, state, {
+        "population_transfers": [
+            _transfer(source="农民@shaanxi", target="流民@shaanxi", amount=1, reason="灾害"),
+        ],
+    }, content, None)
+    assert applied["population_transfers"][0]["population_unit"] == POPULATION_UNIT_PERSONS

@@ -1,0 +1,20 @@
+# FILE: tests/test_pay_order_override_653.py
+# NAME: test_r4_no_phantom_region_materialization_is_all_or_nothing
+# LINE: 114-127
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_r4_no_phantom_region_materialization_is_all_or_nothing(game):
+    """r4：不新增 alias、不造虚拟 region——@SX 幻影 region fail-loud 拒**整道旨**
+    （成案点先验拒入案卷；物化点与成案点共 prepare_pay_order_entries 同一验形）。"""
+    db, state, _content = game
+    entries = [
+        {"key": "due_haircut_bp_军饷@shaanxi#province", "value": 8000},
+        {"key": "due_haircut_bp_军饷@SX#province", "value": 9000},  # 幻影 region
+    ]
+    with pytest.raises(ValueError):
+        _override_dossier(db, state, entries)
+    # 非法旨不得物化 config：整批零写入
+    cfg = db.get_fiscal_config()
+    assert "due_haircut_bp_军饷@shaanxi#province" not in cfg
+    assert db.conn.execute("SELECT COUNT(*) c FROM fiscal_config_changes").fetchone()["c"] == 0

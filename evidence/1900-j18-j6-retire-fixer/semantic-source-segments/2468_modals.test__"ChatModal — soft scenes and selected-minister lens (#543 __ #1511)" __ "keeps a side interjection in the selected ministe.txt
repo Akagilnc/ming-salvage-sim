@@ -1,0 +1,58 @@
+# FILE: web/src/components/modals.test.tsx
+# NAME: "ChatModal — soft scenes and selected-minister lens (#543 / #1511)" / "keeps a side interjection in the selected minister segment without window bleed"
+# LINE: 578-629
+# FLAGS: web_mock_spy_or_calls,web_text_assert,web_count_assert
+# KIND: web
+
+  it("keeps a side interjection in the selected minister segment without window bleed", async () => {
+    const send = vi.fn();
+    const undo = vi.fn();
+    const retryReply = vi.fn();
+    const yang = { ...MINISTER_MOCK, id: "yang", name: "杨嗣昌", summary: "兵部旧臣", favorite: false };
+    const hong = { ...MINISTER_MOCK, id: "hong", name: "洪承畴", office: "三边总督", summary: "边臣", favorite: true };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ night_id: 23, protagonist: "洪承畴", roster: [{ name: "洪承畴", present: true }], container: { time_of_day: "戌时", location: "乾清宫", audience_type: "越次召对" }, translation_retries: [{ chat_turn_id: 1, night_id: 23, minister_name: "洪承畴", kind: "translation_pending", retryable: true, error_pack_path: "/tmp/audience-turn-1" }], messages: [
+      { role: "scene", speaker: "洪承畴", content: "", beat: "divider", soft_boundary: true, container: { audience_type: "越次召对" } },
+      { role: "scene", speaker: "洪承畴", content: "洪承畴趋入殿中。", beat: "entrance", container: { audience_type: "越次召对" } },
+      { role: "minister", speaker: "洪承畴", content: "臣自三边来。", beat: "dialogue", container: { audience_type: "越次召对" }, chat_turn_id: 1 },
+      { role: "minister", speaker: "杨嗣昌", content: "殿侧容臣插一句。", beat: "dialogue", container: { audience_type: "越次召对" } },
+      { role: "user", speaker: "朕", content: "辽饷何解？", beat: "dialogue", container: { audience_type: "越次召对" }, chat_turn_id: 12 },
+      { role: "scene", speaker: "", content: "", beat: "divider", soft_boundary: true, container: { audience_type: "越次召对" } },
+    ] }) }));
+
+    // #1511 lens key = selected minister (洪), not a mismatched modal entry.
+    const host = renderModal({
+      minister: hong,
+      ministers: [yang, hong],
+      portraitPrefix: "minister_",
+      currentNightId: 23,
+      onSend: send,
+      onUndo: undo,
+      canUndoLastChat: true,
+      replyRetries: [{ chat_turn_id: 12, question: "辽饷何解？" }],
+      onRetryReply: retryReply,
+      onRetryTranslation: vi.fn(),
+    });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+
+    expect(host.querySelector(".minister-profile")).toBeNull();
+    expect(host.querySelector(".chat-portrait-wrap img")?.getAttribute("src")).toBe("/portraits/minister_hong.png");
+    expect(host.querySelector(".chat-secret-orders")).toBeNull();
+    const ministerMessages = host.querySelectorAll(".chat-message.minister");
+    expect(ministerMessages[ministerMessages.length - 1]?.textContent).toContain("杨嗣昌");
+    const clickButton = (text: string) => act(() => Array.from(host.querySelectorAll("button")).find((button) => button.textContent?.includes(text))?.click());
+    // #1732 B：撤回就地确认
+    clickButton("撤回本轮");
+    clickButton("继续撤回");
+    act(() => host.querySelector<HTMLButtonElement>('[data-testid="reply-retry-12"] button')?.click());
+    expect(undo).toHaveBeenCalledWith("洪承畴");
+    expect(retryReply).toHaveBeenCalledWith("殿上", 12);
+    const replyFailure = host.querySelector('[data-testid="reply-retry-12"]');
+    expect(replyFailure?.closest('[data-audience-turn-id="12"]')).not.toBeNull();
+    const translationFailure = host.querySelector('[data-testid="translation-retry-1"]');
+    expect(translationFailure?.closest('[data-audience-turn-id="1"]')).not.toBeNull();
+    expect(translationFailure?.textContent).toContain("/tmp/audience-turn-1");
+    const divisions = Array.from(host.querySelectorAll(".beat-divider"));
+    expect(divisions).toHaveLength(2);
+    expect(divisions[0]?.textContent).toContain("洪承畴");
+    expect(divisions[1]?.textContent).not.toMatch(/杨嗣昌|洪承畴/);
+  });

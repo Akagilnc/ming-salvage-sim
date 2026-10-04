@@ -1,0 +1,415 @@
+{
+  "source_path": "tests/test_decree_commitment_creation_136.py",
+  "member_count": 29,
+  "members": [
+    {
+      "idx": 464,
+      "file": "tests/test_decree_commitment_creation_136.py",
+      "name": "test_until_stop_commitment_issue_is_created_with_carrier_fields",
+      "line": 27,
+      "end": 78,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0464_test_decree_commitment_creation_136__test_until_stop_commitment_issue_is_created_with_carrier_fields.txt",
+      "source_path": "tests/test_decree_commitment_creation_136.py"
+    },
+    {
+      "idx": 465,
+      "file": "tests/test_decree_commitment_creation_136.py",
+      "name": "test_decree_commitment_dedups_same_batch_fiscal_create_carrier",
+      "line": 81,
+      "end": 131,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0465_test_decree_commitment_creation_136__test_decree_commitment_dedups_same_batch_fiscal_create_carrier.txt",
+      "source_path": "tests/test_decree_commitment_creation_136.py"
+    },
+    {
+      "idx": 466,
+      "file": "tests/test_decree_commitment_creation_136.py",
+      "name": "test_decree_commitment_does_not_dedup_same_name_income_fiscal_create",
+      "line": 134,
+      "end": 181,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0466_test_decree_commitment_creation_136__test_decree_commitment_does_not_dedup_same_name_income_fiscal_create.txt",
+      "source_path": "tests/test_decree_commitment_creation_136.py"
+    },
+    {
+      "idx": 467,
+      "file": "tests/test_decree_commitment_creation_136.py",
+      "name": "test_decree_commitment_same_account_distinct_key_create_lands",
+      "line": 184,
+      "end": 236,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0467_test_decree_commitment_creation_136__test_decree_commitment_same_account_distinct_key_create_lands.txt",
+      "source_path": "tests/test_decree_commitment_creation_136.py"
+    },
+    {
+      "idx": 468,
+      "file": "tests/test_decree_commitment_creation_136.py",
+      "name": "test_until_stop_commitment_shape_rejects_without_explicit_marker",
+      "line": 239,
+      "end": 274,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0468_test_decree_commitment_creation_136__test_until_stop_commitment_shape_rejects_without_explicit_marker.txt",
+      "source_path": "tests/test_decree_commitment_creation_136.py"
+    },
+    {
+      "idx": 469,
+      "file": "tests/test_decree_commitment_creation_136.py",
+      "name": "test_limited_duration_commitment_shape_rejects_without_explicit_marker",
+      "line": 277,
+      "end": 312,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0469_test_decree_commitment_creation_136__test_limited_duration_commitment_shape_rejects_without_explicit_marker.txt",
+      "source_path": "tests/test_decree_commitment_creation_136.py"
+    },
+    {
+      "idx": 470,
+      "file": "tests/test_decree_commitment_creation_136.py",
+      "name": "test_limited_duration_ongoing_commitment_rejects_current_turn_end_turn",
+      "line": 315,
+      "end": 352,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0470_test_decree_commitment_creation_136__test_limited_duration_ongoing_commitment_rejects_current_turn_end_turn.txt",
+      "source_path": "tests/test_decree_commitment_creation_136.py"
+    },
+    {
+      "idx": 471,
+      "file": "tests/test_decree_commitment_creation_136.py",
+      "name": "test_limited_duration_ongoing_commitment_rejects_past_end_turn",
+      "line": 355,
+      "end": 394,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0471_test_decree_commitment_creation_136__test_limited_duration_ongoing_commitment_rejects_past_end_turn.txt",
+      "source_path": "tests/test_decree_commitment_creation_136.py"
+    },
+    {
+      "idx": 472,
+      "file": "tests/test_decree_commitment_creation_136.py",
+      "name": "test_future_one_shot_commitment_issue_is_created_with_deadline_only",
+      "line": 397,
+      "end": 429,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0472_test_decree_commitment_creation_136__test_future_one_shot_commitment_issue_is_created_with_deadline_only.txt",
+      "source_path": "tests/test_decree_commitment_creation_136.py"
+    },
+    {
+      "idx": 473,
+      "file": "tests/test_decree_commitment_creation_136.py",
+      "name": "test_open_ended_ongoing_commitment_issue_is_created_with_explicit_marker",
+      "line": 432,
+      "end": 463,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0473_test_decree_commitment_creation_136__test_open_ended_ongoing_commitment_issue_is_created_with_explicit_marker.txt",
+      "source_path": "tests/test_decree_commitment_creation_136.py"
+    },
+    {
+      "idx": 474,
+      "file": "tests/test_decree_commitment_creation_136.py",
+      "name": "test_open_ended_ongoing_commitment_shape_rejects_without_explicit_marker",
+      "line": 466,
+      "end": 491,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0474_test_decree_commitment_creation_136__test_open_ended_ongoing_commitment_shape_rejects_without_explicit_marker.txt",
+      "source_path": "tests/test_decree_commitment_creation_136.py"
+    },
+    {
+      "idx": 475,
+      "file": "tests/test_decree_commitment_creation_136.py",
+      "name": "test_future_one_shot_commitment_shape_rejects_without_explicit_marker",
+      "line": 494,
+      "end": 519,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0475_test_decree_commitment_creation_136__test_future_one_shot_commitment_shape_rejects_without_explicit_marker.txt",
+      "source_path": "tests/test_decree_commitment_creation_136.py"
+    },
+    {
+      "idx": 476,
+      "file": "tests/test_decree_commitment_creation_136.py",
+      "name": "test_stop_condition_only_commitment_shape_rejects_without_explicit_marker",
+      "line": 522,
+      "end": 547,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0476_test_decree_commitment_creation_136__test_stop_condition_only_commitment_shape_rejects_without_explicit_marker.txt",
+      "source_path": "tests/test_decree_commitment_creation_136.py"
+    },
+    {
+      "idx": 477,
+      "file": "tests/test_decree_commitment_creation_136.py",
+      "name": "test_string_stop_condition_only_with_origin_ref_rejects_without_explicit_marker",
+      "line": 550,
+      "end": 575,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0477_test_decree_commitment_creation_136__test_string_stop_condition_only_with_origin_ref_rejects_without_explicit_marker.txt",
+      "source_path": "tests/test_decree_commitment_creation_136.py"
+    },
+    {
+      "idx": 478,
+      "file": "tests/test_decree_commitment_creation_136.py",
+      "name": "test_legacy_resolve_condition_person_commitment_rejects_without_marker",
+      "line": 578,
+      "end": 612,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call",
+        "retired_or_meta_marker"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0478_test_decree_commitment_creation_136__test_legacy_resolve_condition_person_commitment_rejects_without_marker.txt",
+      "source_path": "tests/test_decree_commitment_creation_136.py"
+    },
+    {
+      "idx": 479,
+      "file": "tests/test_decree_commitment_creation_136.py",
+      "name": "test_until_stop_commitment_requires_initiative_kind",
+      "line": 615,
+      "end": 641,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0479_test_decree_commitment_creation_136__test_until_stop_commitment_requires_initiative_kind.txt",
+      "source_path": "tests/test_decree_commitment_creation_136.py"
+    },
+    {
+      "idx": 480,
+      "file": "tests/test_decree_commitment_creation_136.py",
+      "name": "test_until_stop_commitment_supports_character_loyalty_condition",
+      "line": 644,
+      "end": 670,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0480_test_decree_commitment_creation_136__test_until_stop_commitment_supports_character_loyalty_condition.txt",
+      "source_path": "tests/test_decree_commitment_creation_136.py"
+    },
+    {
+      "idx": 481,
+      "file": "tests/test_decree_commitment_creation_136.py",
+      "name": "test_commitment_rejects_string_numeric_person_loyalty_ongoing_effect",
+      "line": 673,
+      "end": 709,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0481_test_decree_commitment_creation_136__test_commitment_rejects_string_numeric_person_loyalty_ongoing_effect.txt",
+      "source_path": "tests/test_decree_commitment_creation_136.py"
+    },
+    {
+      "idx": 482,
+      "file": "tests/test_decree_commitment_creation_136.py",
+      "name": "test_until_stop_commitment_rejects_non_dict_stop_condition",
+      "line": 712,
+      "end": 738,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0482_test_decree_commitment_creation_136__test_until_stop_commitment_rejects_non_dict_stop_condition.txt",
+      "source_path": "tests/test_decree_commitment_creation_136.py"
+    },
+    {
+      "idx": 483,
+      "file": "tests/test_decree_commitment_creation_136.py",
+      "name": "test_until_stop_commitment_rejects_stop_condition_without_table_prefix",
+      "line": 741,
+      "end": 767,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0483_test_decree_commitment_creation_136__test_until_stop_commitment_rejects_stop_condition_without_table_prefix.txt",
+      "source_path": "tests/test_decree_commitment_creation_136.py"
+    },
+    {
+      "idx": 484,
+      "file": "tests/test_decree_commitment_creation_136.py",
+      "name": "test_until_stop_commitment_requires_origin_ref",
+      "line": 770,
+      "end": 795,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0484_test_decree_commitment_creation_136__test_until_stop_commitment_requires_origin_ref.txt",
+      "source_path": "tests/test_decree_commitment_creation_136.py"
+    },
+    {
+      "idx": 485,
+      "file": "tests/test_decree_commitment_creation_136.py",
+      "name": "test_until_stop_commitment_requires_ongoing_effects",
+      "line": 798,
+      "end": 823,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0485_test_decree_commitment_creation_136__test_until_stop_commitment_requires_ongoing_effects.txt",
+      "source_path": "tests/test_decree_commitment_creation_136.py"
+    },
+    {
+      "idx": 486,
+      "file": "tests/test_decree_commitment_creation_136.py",
+      "name": "test_until_stop_commitment_rejects_semantically_empty_ongoing_effects",
+      "line": 826,
+      "end": 852,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0486_test_decree_commitment_creation_136__test_until_stop_commitment_rejects_semantically_empty_ongoing_effects.txt",
+      "source_path": "tests/test_decree_commitment_creation_136.py"
+    },
+    {
+      "idx": 487,
+      "file": "tests/test_decree_commitment_creation_136.py",
+      "name": "test_until_stop_commitment_rejects_one_shot_entity_creation_as_monthly_work",
+      "line": 855,
+      "end": 886,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0487_test_decree_commitment_creation_136__test_until_stop_commitment_rejects_one_shot_entity_creation_as_monthly_work.txt",
+      "source_path": "tests/test_decree_commitment_creation_136.py"
+    },
+    {
+      "idx": 488,
+      "file": "tests/test_decree_commitment_creation_136.py",
+      "name": "test_until_stop_commitment_rejects_direct_resolved_close",
+      "line": 889,
+      "end": 923,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0488_test_decree_commitment_creation_136__test_until_stop_commitment_rejects_direct_resolved_close.txt",
+      "source_path": "tests/test_decree_commitment_creation_136.py"
+    },
+    {
+      "idx": 489,
+      "file": "tests/test_decree_commitment_creation_136.py",
+      "name": "test_until_stop_commitment_rejects_direct_failed_close_without_effects",
+      "line": 926,
+      "end": 967,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0489_test_decree_commitment_creation_136__test_until_stop_commitment_rejects_direct_failed_close_without_effects.txt",
+      "source_path": "tests/test_decree_commitment_creation_136.py"
+    },
+    {
+      "idx": 490,
+      "file": "tests/test_decree_commitment_creation_136.py",
+      "name": "test_until_stop_commitment_advance_to_full_stays_active",
+      "line": 970,
+      "end": 1005,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0490_test_decree_commitment_creation_136__test_until_stop_commitment_advance_to_full_stays_active.txt",
+      "source_path": "tests/test_decree_commitment_creation_136.py"
+    },
+    {
+      "idx": 491,
+      "file": "tests/test_decree_commitment_creation_136.py",
+      "name": "test_stop_condition_without_commitment_kind_advance_to_full_stays_active",
+      "line": 1008,
+      "end": 1032,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0491_test_decree_commitment_creation_136__test_stop_condition_without_commitment_kind_advance_to_full_stays_active.txt",
+      "source_path": "tests/test_decree_commitment_creation_136.py"
+    },
+    {
+      "idx": 492,
+      "file": "tests/test_decree_commitment_creation_136.py",
+      "name": "test_empty_json_stop_condition_allows_advance_to_resolved",
+      "line": 1037,
+      "end": 1060,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0492_test_decree_commitment_creation_136__test_empty_json_stop_condition_allows_advance_to_resolved.txt",
+      "source_path": "tests/test_decree_commitment_creation_136.py"
+    }
+  ]
+}

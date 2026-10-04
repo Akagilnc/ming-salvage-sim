@@ -1,0 +1,17 @@
+# FILE: tests/test_region_cannon_delta.py
+# NAME: test_city_cannon_lower_bound_clamp_audited_not_as_cap
+# LINE: 54-64
+# FLAGS: assert_text_compare_or_match,assert_count
+# KIND: py
+
+def test_city_cannon_lower_bound_clamp_audited_not_as_cap(game):
+    """请求减炮但已无炮可减（下限 0 钳制）也留一条 delta=0 的 region_log。"""
+    db, state, content = game
+    before_turn = state.turn
+    run_settle(db, state, content, {"region_delta": {"dongjiang_area": {"origin_ref": "盘面自发", "城防炮": -5}}})
+    rows = db.conn.execute(
+        "SELECT delta, reason FROM region_logs "
+        "WHERE region_id='dongjiang_area' AND field='cannon' AND turn=?", (before_turn,)
+    ).fetchall()
+    assert len(rows) == 1, "请求减炮被下限 clamp 成 no-op 也须留痕"
+    assert int(rows[0]["delta"]) == 0

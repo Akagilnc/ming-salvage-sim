@@ -1,0 +1,25 @@
+# FILE: tests/test_due_review_621.py
+# NAME: test_input_closed_set_degrades_when_sources_missing
+# LINE: 552-570
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_input_closed_set_degrades_when_sources_missing(game):
+    db, state, content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.commit()
+    stages = [{
+        "stage_idx": 0,
+        "due_turn": state.turn,
+        "criterion_text": "火器见眉目",
+        "origin_context": "三年火器见眉目",
+    }]
+    _insert_staged_commitment(db, state, content, stages=stages)
+    write_due_staged_commitment_todos(db, state)
+    todo = db.list_next_audience_todos(status=TODO_STATUS_PENDING)[0]
+    inp = build_due_review_input(db, todo)
+    # 缺源降级：催办空列表不崩；监督史无在场行时亦为空（#625 建轨后仍可空）
+    assert inp["urge_history"] == []
+    assert inp["supervision_history"] == []  # 本夹具未挂稽核链
+    assert inp["progress_reports"] == []
+    assert inp.get("transformation_tendency_facts", {}).get("exposure_count", 0) == 0

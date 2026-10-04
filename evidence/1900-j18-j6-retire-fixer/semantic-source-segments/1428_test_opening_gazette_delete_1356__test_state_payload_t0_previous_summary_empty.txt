@@ -1,0 +1,37 @@
+# FILE: tests/test_opening_gazette_delete_1356.py
+# NAME: test_state_payload_t0_previous_summary_empty
+# LINE: 129-159
+# FLAGS: assert_text_compare_or_match
+# KIND: py
+
+def test_state_payload_t0_previous_summary_empty(game):
+    """Web state_payload 开局 previous_summary 严格空。"""
+    import web_app
+    from types import SimpleNamespace
+
+    db, state, content = game
+    runtime = object.__new__(web_app.WebGame)
+    runtime.session = SimpleNamespace(
+        db=db,
+        state=state,
+        content=content,
+        pending_count=lambda: 0,
+        pending_decisions=lambda: [],
+        victory=lambda: {"status": "ongoing", "summary": ""},
+        previous_summary=db.previous_turn_summary(state),
+        last_decree="",
+        last_report="",
+    )
+    runtime.directive_rows = lambda: []
+    runtime.issue_payloads = lambda: []
+    runtime.legacies_payload = lambda: []
+    runtime.closed_this_turn_payloads = lambda: []
+    runtime.map_nodes = lambda: []
+    runtime.ending_payload = lambda: None
+    runtime.public_character = lambda c: {"name": getattr(c, "name", "")}
+    runtime.character_power_id = lambda c: "ming"
+
+    payload = web_app.WebGame.state_payload(runtime)
+    assert payload.get("previous_summary") == ""
+    assert (payload["turn"]["year"], payload["turn"]["period"]) == (1627, 10)
+    assert payload.get("previous_reign_period_label") in ("", None)

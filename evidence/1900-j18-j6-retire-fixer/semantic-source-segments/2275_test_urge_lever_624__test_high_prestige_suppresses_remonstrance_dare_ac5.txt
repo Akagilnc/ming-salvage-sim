@@ -1,0 +1,30 @@
+# FILE: tests/test_urge_lever_624.py
+# NAME: test_high_prestige_suppresses_remonstrance_dare_ac5
+# LINE: 327-350
+# FLAGS: helper_or_private_call
+# KIND: py
+
+def test_high_prestige_suppresses_remonstrance_dare_ac5(game):
+    db, state, content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.commit()
+    state.metrics["皇威"] = 95
+    db.conn.execute("UPDATE metrics SET value=? WHERE key='皇威'", (95,))
+    db.conn.commit()
+    dossier_id = _executing_policy_dossier(db, state, host="倪元璐")
+    _set_integrity(db, "倪元璐", 85, courage=50)
+    stages = _seed_stages(state)
+    issue_id, _ = _insert_staged_commitment(
+        db, state, content, stages=stages, origin_ref=f"dossier:{dossier_id}",
+        title="高皇威不敢谏",
+    )
+    r = rush_staged_commitment_stage(
+        db, state, commitment_ref=issue_id, stage_idx=0,
+        deadline_months=1, reason="着一月内了结",
+    )
+    assert r.get("remonstrance_written") is False
+    rem = [
+        t for t in db.list_next_audience_todos(commitment_ref=issue_id)
+        if t["entry_kind"] == ENTRY_KIND_RUSH_REMONSTRANCE
+    ]
+    assert rem == []

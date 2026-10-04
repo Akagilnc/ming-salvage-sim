@@ -1,0 +1,56 @@
+# FILE: tests/test_faction_leverage_9.py
+# NAME: test_recompute_all_reconciles_drift_from_unhooked_path
+# LINE: 390-439
+# FLAGS: assert_text_compare_or_match,helper_or_private_call,internal_formula_oracle
+# KIND: py
+
+def test_recompute_all_reconciles_drift_from_unhooked_path(game):
+    """#9 cmr R2 finding#1（集中化兜底）：绕过所有 hook 的裸 UPDATE 改了 faction 成员 office_type 后，
+    recompute_all_faction_leverage() 把全部白名单派系重算回公式值（结算尾兜底层等价直测）。"""
+    db, state, content = game
+    from ming_sim.db import _LEVERAGE_FACTIONS
+
+    faction = "阉党"
+    # 裸 UPDATE 把阉党所有在朝成员 office 清空（绕过 set_character_office/status 钩子）→ leverage 残留旧值。
+    db.conn.execute(
+        "UPDATE characters SET office='' WHERE faction=? AND status='active' AND power_id='ming'",
+        (faction,),
+    )
+    db.conn.commit()
+    # cmr R7：仅对阉党制造 drift，其余白名单派系开局校准本就 == 公式值 → 对它们的断言是空验
+    # （recompute_all 就算没碰它们、值也碰巧对）。这里把【每个】存在的白名单派系 leverage 列脏写成
+    # 出格 sentinel(999)，逼 recompute_all 必须真把每一个都重算回各自公式值才能过——证明它重算的
+    # 是全部白名单派系、不只阉党。
+    SENTINEL = 999
+    dirtied = []
+    for f in _LEVERAGE_FACTIONS:
+        cur = db.conn.execute("SELECT 1 FROM factions WHERE name=?", (f,)).fetchone()
+        if cur is None:
+            continue
+        db.conn.execute("UPDATE factions SET leverage=? WHERE name=?", (SENTINEL, f))
+        dirtied.append(f)
+    db.conn.commit()
+    assert dirtied, "白名单派系应至少有一个在 factions 表（数据前提）"
+    # 脏写已生效：每个被脏写的派系此刻读到的就是 sentinel（确证 recompute_all 之后的归位非假绿）。
+    for f in dirtied:
+        assert db.faction_leverage(f) == SENTINEL, f"{f} sentinel 脏写应已落库"
+    # 此刻 leverage 是脏 sentinel（阉党还叠了 unhooked office 清空的 drift）。
+    stale = db.faction_leverage(faction)
+    # 兜底重算全部白名单派系。
+    db.recompute_all_faction_leverage()
+    db.conn.commit()
+    # 重算后：空职派系应回到 offset 钳制值；全部白名单不得再留 sentinel。
+    offset = float(db.conn.execute(
+        "SELECT leverage_offset FROM factions WHERE name=?", (faction,)
+    ).fetchone()["leverage_offset"])
+    reconciled = db.faction_leverage(faction)
+    assert reconciled == max(0, min(100, round(offset))), (
+        f"recompute_all 后空职{faction} leverage 应=offset 钳制(stale={stale} reconciled={reconciled})"
+    )
+    for f in _LEVERAGE_FACTIONS:
+        row = db.conn.execute(
+            "SELECT leverage FROM factions WHERE name=?", (f,)
+        ).fetchone()
+        if row is None:
+            continue
+        assert int(row["leverage"]) != SENTINEL, f"{f} 应被 recompute_all 清掉 sentinel"

@@ -1,0 +1,33 @@
+{
+  "source_path": "tests/test_public_character_place_1683.py",
+  "member_count": 2,
+  "members": [
+    {
+      "idx": 1721,
+      "file": "tests/test_public_character_place_1683.py",
+      "name": "test_yuan_keli_init_db_location_henan",
+      "line": 14,
+      "end": 23,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1721_test_public_character_place_1683__test_yuan_keli_init_db_location_henan.txt",
+      "source_path": "tests/test_public_character_place_1683.py"
+    },
+    {
+      "idx": 1722,
+      "file": "tests/test_public_character_place_1683.py",
+      "name": "test_public_character_projects_transit",
+      "line": 33,
+      "end": 55,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1722_test_public_character_place_1683__test_public_character_projects_transit.txt",
+      "source_path": "tests/test_public_character_place_1683.py"
+    }
+  ]
+}

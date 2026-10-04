@@ -1,0 +1,15 @@
+# FILE: tests/test_grant_reconciliation_567.py
+# NAME: test_empty_targets_no_recon_rows
+# LINE: 293-301
+# FLAGS: helper_or_private_call
+# KIND: py
+
+def test_empty_targets_no_recon_rows(game):
+    """无在途目标 → 零对账行（不落假账）。"""
+    db, state, _content = game
+    assert db.list_monthly_grant_reconciliation_targets() == []
+    assert _record_recon(db, state.turn) == []
+    assert db.conn.execute(
+        "SELECT COUNT(*) AS n FROM decree_dossier_reconciliations"
+    ).fetchone()["n"] == 0
+    assert _recon_rejections(db) == []

@@ -1,0 +1,77 @@
+# FILE: tests/test_pihong_dossier_1490.py
+# NAME: test_658_typed_target_and_backing_reject_bad_shapes
+# LINE: 2551-2621
+# FLAGS: assert_text_compare_or_match,assert_count,mock_or_patch_present,helper_or_private_call
+# KIND: py
+
+def test_658_typed_target_and_backing_reject_bad_shapes(game, monkeypatch):
+    """#658：typed 解析边界表驱动 + 一条外部入口零写（不跨裸值/双别名/session 全排列）。"""
+    from ming_sim.db import imperial_push_target_dossier_id, parse_backing_dossier_id
+    import ming_sim.cli_backend as cli_backend
+    db, state, content = game
+    stalled, _ = _658_plant_stalled_deliberation(db, state, content, title='南迁')
+    did = int(stalled['id'])
+    bind_did = db.create_decree_dossier(state, action_type='policy', decree_text='南迁绑定', target_kind='issue', target_id='river-works', payload={'deliberation_state': 'stalled', 'mode': 'ordinary'})
+    db.insert_issue(state, kind='situation', title='南迁绑定', origin_kind='decree', origin_ref=f'dossier:{bind_did}')
+    bind_affair = db.affairs.open(name='南迁事务', origin='下部议', year=state.year, period=state.period, turn=state.turn)
+    push_declaration = {'attach': 'existing', 'affair_id': int(bind_affair.id)}
+    before_dossiers = len(db.list_decree_dossiers())
+    before_ends = len(db.list_dossier_endorsements(did))
+    before_dirs = db.conn.execute('SELECT COUNT(*) AS c FROM turn_directives').fetchone()['c']
+    bad_shapes = (True, False, 1.9, 1.0, '1', '12', 0, -1)
+    for bad in bad_shapes:
+        with pytest.raises(ValueError):
+            imperial_push_target_dossier_id(bad)
+        with pytest.raises(ValueError):
+            parse_backing_dossier_id(bad)
+    sample_bad = True
+    with pytest.raises(ValueError):
+        imperial_push_target_dossier_id({'target_dossier_id': sample_bad})
+    with pytest.raises(ValueError):
+        imperial_push_target_dossier_id({'目标案卷ID': sample_bad})
+    assert imperial_push_target_dossier_id(did) == did
+    assert imperial_push_target_dossier_id({'target_dossier_id': did}) == did
+    assert imperial_push_target_dossier_id({'目标案卷ID': did}) == did
+    assert imperial_push_target_dossier_id({}) is None
+    assert imperial_push_target_dossier_id({'target_dossier_id': None}) is None
+    assert parse_backing_dossier_id(None) is None
+    assert parse_backing_dossier_id('') is None
+    assert parse_backing_dossier_id(did) == did
+    endorsers = [_summonable_name(db, content)]
+    endorsers.append(next((n for n in content.characters if n != endorsers[0])))
+    for index, endorser in enumerate(endorsers):
+        db.add_dossier_endorsement(did, form='会签', endorser_id=endorser, decision_key=f'test:658:typed:{index}')
+    projected = db.list_endorsed_dossier_candidates(state.turn)
+    assert [c['endorser_id'] for c in projected if c['dossier_id'] == did] == list(reversed(endorsers))
+
+    def backend_multi(prompt, *_a, **_k):
+        return (json.dumps({'成品旨稿': [{'正文': '御笔强推', '目标案卷ID': bind_did, '颁布方式': '中旨直发'}, {'正文': '清核河工', '动作类型': 'policy', '目标类型': 'issue', '目标ID': 'river-works', '颁布方式': '普通', '施行范围': '无'}], '事务声明': push_declaration}, ensure_ascii=False), 1)
+    monkeypatch.setattr(cli_backend, '_run_backend_for_config', backend_multi)
+    multi = cli_backend.extract_draft_intent('分拟两旨', '臣已拟成', draft_count=2, db=db)
+    assert multi['drafts'][0]['target_dossier_id'] == bind_did
+    assert multi['drafts'][1]['target_id'] == 'river-works'
+    push_payload = cli_backend.project_draft_extract_to_directive_payload(multi['drafts'][0], decree_text='御笔强推', db=db, content=content)
+    assert push_payload.get('affair_declaration')
+    push_dir = int(db.add_directive(state, None, '御笔强推', 'test-658-push-bind', dossier_payload=push_payload))
+    db.ensure_dossiers_for_draft_directives(state)
+    assert int(db.get_decree_dossier(bind_did)['affair_id'] or 0) == int(bind_affair.id)
+    assert db.get_dossier_for_directive(push_dir) is not None
+    assert int(db.get_dossier_for_directive(push_dir)['id']) == bind_did
+    bad_directive = int(db.add_directive(state, None, '处分不存在之人', 'test-658-ensure', dossier_payload={'dossier_action_type': 'punishment', 'target_kind': 'character', 'target_id': '不存在的大臣XYZ', 'mode': 'ordinary'}))
+    db.ensure_dossiers_for_draft_directives(state)
+    status = db.conn.execute('SELECT status FROM turn_directives WHERE id=?', (bad_directive,)).fetchone()['status']
+    assert status == 'draft'
+    assert all((int(row['id']) != bad_directive for row in db.list_dossiered_draft_directives(state)))
+    db.mark_directives_issued(state)
+    status = db.conn.execute('SELECT status FROM turn_directives WHERE id=?', (bad_directive,)).fetchone()['status']
+    assert status == 'draft'
+
+    def backend_bad(prompt, *_a, **_k):
+        return (json.dumps({'拟旨意图': '拟旨', '目标案卷ID': True}, ensure_ascii=False), 1)
+    monkeypatch.setattr(cli_backend, '_run_backend_for_config', backend_bad)
+    with pytest.raises(ValueError):
+        cli_backend.capture_manual_directive_payload(f'着即强推南迁（案卷{did}）', None, db=db, content=content)
+    assert len(db.list_decree_dossiers()) == before_dossiers
+    assert len(db.list_dossier_endorsements(did)) == before_ends + 2
+    assert db.conn.execute('SELECT COUNT(*) AS c FROM turn_directives').fetchone()['c'] == before_dirs + 2
+    assert _dossier_payload(db.get_decree_dossier(did)).get('deliberation_state') == 'stalled'

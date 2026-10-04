@@ -1,0 +1,257 @@
+{
+  "source_path": "tests/test_covert_levy_651.py",
+  "member_count": 17,
+  "members": [
+    {
+      "idx": 416,
+      "file": "tests/test_covert_levy_651.py",
+      "name": "test_exposure_uses_single_dispatcher_and_projects_exact_case",
+      "line": 31,
+      "end": 49,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0416_test_covert_levy_651__test_exposure_uses_single_dispatcher_and_projects_exact_case.txt",
+      "source_path": "tests/test_covert_levy_651.py"
+    },
+    {
+      "idx": 417,
+      "file": "tests/test_covert_levy_651.py",
+      "name": "test_same_segment_denunciation_creates_exposure_todo",
+      "line": 52,
+      "end": 76,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0417_test_covert_levy_651__test_same_segment_denunciation_creates_exposure_todo.txt",
+      "source_path": "tests/test_covert_levy_651.py"
+    },
+    {
+      "idx": 418,
+      "file": "tests/test_covert_levy_651.py",
+      "name": "test_empty_effect_month_rechecks_persisted_exposure",
+      "line": 79,
+      "end": 95,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0418_test_covert_levy_651__test_empty_effect_month_rechecks_persisted_exposure.txt",
+      "source_path": "tests/test_covert_levy_651.py"
+    },
+    {
+      "idx": 419,
+      "file": "tests/test_covert_levy_651.py",
+      "name": "test_rejected_canonical_results_neither_consume_nor_create_channel",
+      "line": 100,
+      "end": 121,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0419_test_covert_levy_651__test_rejected_canonical_results_neither_consume_nor_create_channel.txt",
+      "source_path": "tests/test_covert_levy_651.py"
+    },
+    {
+      "idx": 420,
+      "file": "tests/test_covert_levy_651.py",
+      "name": "test_covert_consumer_requires_real_beyond_intent_effect_without_narrowing_generic_fork",
+      "line": 124,
+      "end": 134,
+      "flags": [
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0420_test_covert_levy_651__test_covert_consumer_requires_real_beyond_intent_effect_without_narrowing_generic_fork.txt",
+      "source_path": "tests/test_covert_levy_651.py"
+    },
+    {
+      "idx": 421,
+      "file": "tests/test_covert_levy_651.py",
+      "name": "test_dispositions_consume_only_real_canonical_complete_legs",
+      "line": 154,
+      "end": 202,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0421_test_covert_levy_651__test_dispositions_consume_only_real_canonical_complete_legs.txt",
+      "source_path": "tests/test_covert_levy_651.py"
+    },
+    {
+      "idx": 422,
+      "file": "tests/test_covert_levy_651.py",
+      "name": "test_tacit_and_prohibition_use_real_canonical_identity_and_are_idempotent",
+      "line": 218,
+      "end": 279,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0422_test_covert_levy_651__test_tacit_and_prohibition_use_real_canonical_identity_and_are_idempotent.txt",
+      "source_path": "tests/test_covert_levy_651.py"
+    },
+    {
+      "idx": 423,
+      "file": "tests/test_covert_levy_651.py",
+      "name": "test_prohibition_consumes_immediately_when_arrears_are_already_zero",
+      "line": 282,
+      "end": 290,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0423_test_covert_levy_651__test_prohibition_consumes_immediately_when_arrears_are_already_zero.txt",
+      "source_path": "tests/test_covert_levy_651.py"
+    },
+    {
+      "idx": 424,
+      "file": "tests/test_covert_levy_651.py",
+      "name": "test_prohibition_reminder_is_consumed_after_later_payoff",
+      "line": 293,
+      "end": 303,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0424_test_covert_levy_651__test_prohibition_reminder_is_consumed_after_later_payoff.txt",
+      "source_path": "tests/test_covert_levy_651.py"
+    },
+    {
+      "idx": 425,
+      "file": "tests/test_covert_levy_651.py",
+      "name": "test_prohibition_blocks_every_covert_write_but_preserves_ordinary_legs",
+      "line": 306,
+      "end": 377,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0425_test_covert_levy_651__test_prohibition_blocks_every_covert_write_but_preserves_ordinary_legs.txt",
+      "source_path": "tests/test_covert_levy_651.py"
+    },
+    {
+      "idx": 426,
+      "file": "tests/test_covert_levy_651.py",
+      "name": "test_prohibition_neutralizes_once_with_zero_receipt_and_partial_clamp",
+      "line": 380,
+      "end": 426,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0426_test_covert_levy_651__test_prohibition_neutralizes_once_with_zero_receipt_and_partial_clamp.txt",
+      "source_path": "tests/test_covert_levy_651.py"
+    },
+    {
+      "idx": 427,
+      "file": "tests/test_covert_levy_651.py",
+      "name": "test_prohibition_uses_only_current_canonical_incarnation",
+      "line": 429,
+      "end": 456,
+      "flags": [
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0427_test_covert_levy_651__test_prohibition_uses_only_current_canonical_incarnation.txt",
+      "source_path": "tests/test_covert_levy_651.py"
+    },
+    {
+      "idx": 428,
+      "file": "tests/test_covert_levy_651.py",
+      "name": "test_prohibition_removes_live_covert_creation_without_rewriting_history",
+      "line": 459,
+      "end": 478,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0428_test_covert_levy_651__test_prohibition_removes_live_covert_creation_without_rewriting_history.txt",
+      "source_path": "tests/test_covert_levy_651.py"
+    },
+    {
+      "idx": 429,
+      "file": "tests/test_covert_levy_651.py",
+      "name": "test_zero_pay_receipts_are_not_durable_tacit_effects",
+      "line": 481,
+      "end": 498,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0429_test_covert_levy_651__test_zero_pay_receipts_are_not_durable_tacit_effects.txt",
+      "source_path": "tests/test_covert_levy_651.py"
+    },
+    {
+      "idx": 430,
+      "file": "tests/test_covert_levy_651.py",
+      "name": "test_force_promulgated_history_is_the_canonical_prohibition_authority",
+      "line": 501,
+      "end": 520,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0430_test_covert_levy_651__test_force_promulgated_history_is_the_canonical_prohibition_authority.txt",
+      "source_path": "tests/test_covert_levy_651.py"
+    },
+    {
+      "idx": 431,
+      "file": "tests/test_covert_levy_651.py",
+      "name": "test_false_denunciation_is_not_retroactively_made_true_by_current_fork",
+      "line": 523,
+      "end": 544,
+      "flags": [
+        "assert_count",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0431_test_covert_levy_651__test_false_denunciation_is_not_retroactively_made_true_by_current_fork.txt",
+      "source_path": "tests/test_covert_levy_651.py"
+    },
+    {
+      "idx": 432,
+      "file": "tests/test_covert_levy_651.py",
+      "name": "test_population_transfer_is_the_self_grown_unrest_channel",
+      "line": 549,
+      "end": 568,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0432_test_covert_levy_651__test_population_transfer_is_the_self_grown_unrest_channel.txt",
+      "source_path": "tests/test_covert_levy_651.py"
+    }
+  ]
+}

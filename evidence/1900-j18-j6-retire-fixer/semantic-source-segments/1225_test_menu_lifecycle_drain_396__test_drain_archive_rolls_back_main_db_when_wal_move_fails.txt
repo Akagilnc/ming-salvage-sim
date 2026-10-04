@@ -1,0 +1,39 @@
+# FILE: tests/test_menu_lifecycle_drain_396.py
+# NAME: test_drain_archive_rolls_back_main_db_when_wal_move_fails
+# LINE: 229-261
+# FLAGS: mock_or_patch_present,helper_or_private_call
+# KIND: py
+
+def test_drain_archive_rolls_back_main_db_when_wal_move_fails(monkeypatch, tmp_path):
+    """#402 R3（CodeRabbit）：WAL 归档失败时，主库也要回滚回旧路径，避免存档缺 WAL。"""
+    db_path = str(tmp_path / "ming_sim.db")
+    wal_path = db_path + "-wal"
+    for path, content in ((db_path, "db"), (wal_path, "wal")):
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(content)
+
+    closed: list[int] = []
+    queue = SessionWriteQueue()
+    game = SimpleNamespace(
+        _write_queue=queue,
+        _write_gate=queue.write_gate,
+        db_path=db_path,
+        session=SimpleNamespace(close=lambda: closed.append(1)),
+    )
+    real_move = web_app.shutil.move
+
+    def fail_wal_move(src, dst):
+        if src == wal_path:
+            raise OSError("wal locked")
+        return real_move(src, dst)
+
+    monkeypatch.setattr(web_app, "user_data_path", lambda *parts: str(tmp_path.joinpath(*parts)))
+    monkeypatch.setattr(web_app.shutil, "move", fail_wal_move)
+
+    _reset_path_leases()
+    _drain_then_archive(game, db_path)
+
+    assert closed == [1]
+    assert os.path.exists(db_path)
+    assert os.path.exists(wal_path)
+    assert list((tmp_path / "saves").glob("*.db")) == []

@@ -1,0 +1,24 @@
+# FILE: tests/test_session_write_queue_1353.py
+# NAME: test_cancel_key_vacates_and_blocks_run
+# LINE: 194-211
+# FLAGS: assert_count
+# KIND: py
+
+def test_cancel_key_vacates_and_blocks_run():
+    """撤回钉：按 key 取消在飞票据；run 见取消不写库。"""
+    q = SessionWriteQueue()
+    t = q.claim(key=("turn", 42))
+    assert t is not None
+    n = q.cancel_key(("turn", 42))
+    assert n == 1
+    assert t.cancelled is True
+    assert q.inflight_count() == 0
+
+    wrote = {"n": 0}
+
+    def write() -> None:
+        wrote["n"] += 1
+
+    with pytest.raises(TicketCancelled):
+        q.run(t, write)
+    assert wrote["n"] == 0

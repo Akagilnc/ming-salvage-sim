@@ -1,0 +1,40 @@
+# FILE: tests/test_audience_restore_505.py
+# NAME: test_657_rescript_summon_writes_enter_fact_and_is_idempotent
+# LINE: 870-903
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_657_rescript_summon_writes_enter_fact_and_is_idempotent(game):
+    """#1838 reopen：批红召见只落入殿事实账；已消费=origin+TAG_ENTER；幂等复用。"""
+    from ming_sim.audience_night import (
+        TAG_ENTER,
+        prepare_rescript_summon_scaffold,
+        rescript_summon_origin_consumed,
+        rescript_summon_origin_ref,
+        _ledger_by_origin_ref,
+    )
+
+    db, state, content = game
+    minister = _657_active_minister(db, content)
+    origin = rescript_summon_origin_ref(int(state.turn), 50, 0)
+
+    sc = prepare_rescript_summon_scaffold(
+        db, state, person_name=minister, origin_ref=origin,
+    )
+    assert sc["consumed"] is True
+    entry = _ledger_by_origin_ref(db, origin)
+    assert entry is not None
+    assert rescript_summon_origin_consumed(entry)
+    assert TAG_ENTER in entry["tags"]
+    assert str(entry.get("body") or "") == ""
+    assert int(sc["entry_id"]) == int(entry["id"])
+
+    again = prepare_rescript_summon_scaffold(
+        db, state, person_name=minister, origin_ref=origin,
+    )
+    assert again["consumed"] is True
+    assert int(again["entry_id"]) == int(sc["entry_id"])
+    assert db.conn.execute(
+        "SELECT COUNT(*) AS c FROM story_ledger_entries WHERE origin_ref=?",
+        (origin,),
+    ).fetchone()["c"] == 1

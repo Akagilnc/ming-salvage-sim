@@ -1,0 +1,17 @@
+# FILE: web/src/components/gameMenu.test.tsx
+# NAME: "#1732 GameMenu · 就地消解" / "不再提供「重开新局」页签"
+# LINE: 721-731
+# FLAGS: web_mock_spy_or_calls
+# KIND: web
+
+  it("不再提供「重开新局」页签", async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ saves: [] }),
+    } as Response);
+    const { cleanup } = render(
+      <GameMenuModal onClose={() => {}} onAfterLoad={() => {}} onExitToMenu={() => {}} />
+    );
+    await act(async () => {});
+    cleanup();
+  });

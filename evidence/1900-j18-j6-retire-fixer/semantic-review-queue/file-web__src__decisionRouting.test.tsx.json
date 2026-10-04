@@ -1,0 +1,71 @@
+{
+  "source_path": "web/src/decisionRouting.test.tsx",
+  "member_count": 5,
+  "members": [
+    {
+      "idx": 2519,
+      "file": "web/src/decisionRouting.test.tsx",
+      "name": "\"decision routing — issueDecree entry (routeIssueDecisions)\" / \"#657 乱序 idx [1,0] 仍按结构校验受理（禁 idx===position 整表拒收）\"",
+      "line": 32,
+      "end": 40,
+      "flags": [
+        "web_text_assert"
+      ],
+      "kind": "web",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2519_decisionRouting.test__\"decision routing — issueDecree entry (routeIssueDecisions)\" __ \"#657 乱序 idx [1,0] 仍按结构校验受理（禁 idx===position 整表拒收）\".txt",
+      "source_path": "web/src/decisionRouting.test.tsx"
+    },
+    {
+      "idx": 2520,
+      "file": "web/src/decisionRouting.test.tsx",
+      "name": "\"decision routing — issueDecree entry (routeIssueDecisions)\" / \"accepts the entire batch when all decisions are structurally valid\"",
+      "line": 42,
+      "end": 46,
+      "flags": [
+        "web_text_assert"
+      ],
+      "kind": "web",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2520_decisionRouting.test__\"decision routing — issueDecree entry (routeIssueDecisions)\" __ \"accepts the entire batch when all decisions are structur.txt",
+      "source_path": "web/src/decisionRouting.test.tsx"
+    },
+    {
+      "idx": 2521,
+      "file": "web/src/decisionRouting.test.tsx",
+      "name": "\"decision routing — retry (routeRetryDecisions: stale-phase vs still-corrupted)\" / \"clears the error banner when the turn has already advanced (not a failure)\"",
+      "line": 125,
+      "end": 129,
+      "flags": [
+        "web_text_assert"
+      ],
+      "kind": "web",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2521_decisionRouting.test__\"decision routing — retry (routeRetryDecisions: stale-phase vs still-corrupted)\" __ \"clears the error banner when the tur.txt",
+      "source_path": "web/src/decisionRouting.test.tsx"
+    },
+    {
+      "idx": 2522,
+      "file": "web/src/decisionRouting.test.tsx",
+      "name": "\"decision routing — retry (routeRetryDecisions: stale-phase vs still-corrupted)\" / \"#1307 settling retry keeps quiet intermediate — empty pending is not 重新拉取 error\"",
+      "line": 131,
+      "end": 136,
+      "flags": [
+        "web_text_assert"
+      ],
+      "kind": "web",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2522_decisionRouting.test__\"decision routing — retry (routeRetryDecisions: stale-phase vs still-corrupted)\" __ \"#1307 settling retry keeps quiet int.txt",
+      "source_path": "web/src/decisionRouting.test.tsx"
+    },
+    {
+      "idx": 2523,
+      "file": "web/src/decisionRouting.test.tsx",
+      "name": "\"decision routing — retry (routeRetryDecisions: stale-phase vs still-corrupted)\" / \"recovers into the decision modal when valid decisions arrive on retry\"",
+      "line": 138,
+      "end": 142,
+      "flags": [
+        "web_text_assert"
+      ],
+      "kind": "web",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2523_decisionRouting.test__\"decision routing — retry (routeRetryDecisions: stale-phase vs still-corrupted)\" __ \"recovers into the decision modal whe.txt",
+      "source_path": "web/src/decisionRouting.test.tsx"
+    }
+  ]
+}

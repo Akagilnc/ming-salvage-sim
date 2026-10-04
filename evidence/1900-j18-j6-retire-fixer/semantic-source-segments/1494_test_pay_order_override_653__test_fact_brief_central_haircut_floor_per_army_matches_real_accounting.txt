@@ -1,0 +1,25 @@
+# FILE: tests/test_pay_order_override_653.py
+# NAME: test_fact_brief_central_haircut_floor_per_army_matches_real_accounting
+# LINE: 1299-1317
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_fact_brief_central_haircut_floor_per_army_matches_real_accounting(game):
+    """多军同省中央折发：投影复用 flows._central_dues_with_haircut 唯一读端——每军各自
+    floor（账实同舍入），禁先聚省再舍入。beizhili 三军 raw=9.0/4.0/7.2、bp=5000：
+    每军 floor 免除合计=5.0+2.0+4.2=11.2 ≠ 聚省后 floor 的 20.2×0.5→免除 10.1。"""
+
+    db, state, _content = game
+    did = _override_dossier(
+        db, state, [{"key": "due_haircut_bp_军饷#central", "value": 5000}],
+    )
+    db.apply_dossier_promulgation(state, did, "promulgated")
+    entries = build_fiscal_fact_brief(db)
+    cut = [
+        e for e in entries
+        if e["subject_id"] == "beizhili" and e["detail"] == "折发_军饷#central"
+    ]
+    assert len(cut) == 1
+    assert cut[0]["value"] == pytest.approx(11.2)
+    assert cut[0]["value"] != pytest.approx(10.1)  # 聚省再舍入的伪重建值必不相同
+    assert cut[0]["origin_ref"] == f"dossier:{did}"

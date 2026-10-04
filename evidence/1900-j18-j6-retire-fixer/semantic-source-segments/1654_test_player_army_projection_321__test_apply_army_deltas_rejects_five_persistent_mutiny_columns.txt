@@ -1,0 +1,23 @@
+# FILE: tests/test_player_army_projection_321.py
+# NAME: test_apply_army_deltas_rejects_five_persistent_mutiny_columns
+# LINE: 339-355
+# FLAGS: assert_text_compare_or_match
+# KIND: py
+
+def test_apply_army_deltas_rejects_five_persistent_mutiny_columns(game, field):
+    """AC10：五持久列对 extractor 唯一 allowlist 拒收，不新守门。"""
+    db, state, _ = game
+    before = db.conn.execute(
+        f"SELECT {field} FROM armies WHERE id=?", (ARMY,)
+    ).fetchone()[field]
+    event = SimpleNamespace(id="test-321", title="非法写哗变列")
+    changes = db.apply_army_deltas(
+        state, event, None, "测试", {ARMY: {field: 1, "reason": "probe"}}
+    )
+    rejected = [c for c in changes if c.get("rejected")]
+    assert rejected, f"{field} 应被拒收"
+    assert all(c.get("category") == "invalid_enum" for c in rejected)
+    after = db.conn.execute(
+        f"SELECT {field} FROM armies WHERE id=?", (ARMY,)
+    ).fetchone()[field]
+    assert after == before

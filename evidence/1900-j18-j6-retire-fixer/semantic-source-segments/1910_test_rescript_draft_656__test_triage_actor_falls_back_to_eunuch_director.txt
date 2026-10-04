@@ -1,0 +1,12 @@
+# FILE: tests/test_rescript_draft_656.py
+# NAME: test_triage_actor_falls_back_to_eunuch_director
+# LINE: 101-106
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_triage_actor_falls_back_to_eunuch_director(game):
+    db, _state, _content = game
+    _retire_existing_actors(db)
+    _add_character(db, "测试掌印", "司礼监掌印太监", "阉党", office_type="内廷")
+    actor = select_triage_actor(db)
+    assert actor is not None and actor["name"] == "测试掌印"

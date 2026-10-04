@@ -1,0 +1,19 @@
+# FILE: tests/test_power_section_rejections.py
+# NAME: test_reason_carrier_aliases_not_recorded_as_rejection
+# LINE: 224-236
+# FLAGS: helper_or_private_call
+# KIND: py
+
+def test_reason_carrier_aliases_not_recorded_as_rejection(game):
+    """last_action/近动 是函数自己消费的 reason 载体键——不得同时被记成
+    invalid_enum 拒收(假阳行污染分析账本,cmr S1 r2 claude)。"""
+    db, state, content = game
+    turn = state.turn
+    good = _valid_power_id(db)
+
+    run_settle(db, state, content, {
+        "power_updates": {good: {"leverage": 3, "近动": "联姻蒙古", "last_action": "遣使"}},
+    }, narrative="x", decree_text="y")
+
+    rows = [r for r in _rejection_rows(db, turn) if r[0] == "power_changes"]
+    assert rows == []  # 零假阳

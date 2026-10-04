@@ -266,21 +266,26 @@ def test_rollback_restores_existing_character_attributes(game, monkeypatch):
     assert refreshed.office == office_before
 
 
-def test_reload_passes_llm_config_to_content_rebuild(game, monkeypatch):
+def test_reload_passes_llm_config_to_content_rebuild(game):
     """content 重建走 restore 同参：llm_config 必传（cmr S5 r3，缺省会降级「待铨」）。"""
-    import ming_sim.session as session_mod
     from ming_sim.decree import reload_state_from_db
-    db, state, content = game
-    db.llm_config = object()  # 哨兵
+    from ming_sim.models import LLMConfig
 
-    seen = {}
-    def _spy(content_arg, db_arg, llm_config=None):
-        seen["llm_config"] = llm_config
-    monkeypatch.setattr(session_mod, "_sync_offices_from_db_impl", _spy)
+    db, state, content = game
+    name = "刘鸿训"
+    db.conn.execute(
+        "UPDATE characters SET office=?, office_type=? WHERE name=?",
+        ("册封朝鲜使归途", "礼部", name),
+    )
+    db.conn.commit()
+    db.llm_config = LLMConfig(
+        api_key="test", base_url="https://example.invalid/v1", model="test-model",
+    )
+    content.characters[name].office_type = "待铨"
 
     reload_state_from_db(db, state, content=content)
 
-    assert seen["llm_config"] is db.llm_config
+    assert content.characters[name].office_type == "礼部"
 
 
 # ── atomic_and_reload helper（S4：六处 try/atomic/except-reload-reraise 公共内核） ──

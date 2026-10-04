@@ -7,7 +7,6 @@ return 会退出 play_turn，外层主循环重进时重印回合引导/在册�
 
 from __future__ import annotations
 
-from contextlib import contextmanager
 from types import SimpleNamespace
 
 import pytest
@@ -18,535 +17,372 @@ from ming_sim.exceptions import LLMContractError, LLMUnavailable, SettlementAbor
 from ming_sim.llm_model import CLI_RUNNER_PLAYER_MESSAGE
 from ming_sim.session import GameSession, TurnPhase
 from ming_sim import audience_night as an
+from tests.dossier_test_helpers import TYPED_COVERT_TASK
+from tests.month_chain_helpers import make_light_session
 
 
-def _cli_schedule_pending_noop(self, result):
-    """#1842：CLI persist 尾必调 schedule_pending_scene_translation；轻壳无 pending 时 no-op。"""
-    return None
+def _prepare_play_turn(game, monkeypatch):
+    db, state, content = game
+    session = make_light_session(db, state, content)
+    session.previous_summary = ""
+    monkeypatch.setattr(term, "_print_header", lambda s: None)
+    monkeypatch.setattr(issues_mod, "show_active_issues", lambda _db: None)
+    monkeypatch.setattr("ming_sim.month_chain.run_world_segment_text", lambda *a, **k: "")
+    monkeypatch.setattr(
+        "ming_sim.month_translate.translate_month_segment",
+        lambda *a, **k: {"effects": {}},
+    )
+    return session, db, state, content
 
 
-@contextmanager
-def _noop_atomic(_db):
-    yield
+def _hitl_ready(db, state):
+    turn = int(state.turn)
+    db.save_pending_decisions(turn, [{
+        "title": "急务亲裁",
+        "context": "辽东饷银案卷",
+        "options": [{"label": "发饷", "hint": "拨银五万两"}],
+    }])
+    state.turn_phase = TurnPhase.AWAITING_DECISION.value
+    db.save_state(state)
+    db.save_resolve_context(
+        turn, "测试诏书",
+        {"candidate_events": [], "transit_semantics": []},
+    )
+    db.save_turn_report(state, "邸报已成")
+    return turn
 
 
-class _Snap:
-    deaths_this_turn = []
+def _chat_rows(db):
+    return list(db.conn.execute(
+        "SELECT id, minister_name, turn, role, content FROM chat_messages ORDER BY id"
+    ))
 
 
-class _Sess:
-    """play_turn 所需最小协作面：begin/phase/resolve/advance/end + 调用录音。"""
-    previous_summary = ""
-
-    def __init__(self, fail_exc):
-        self.calls = []
-        self._fail = fail_exc
-        self.db = None
-        self.state = SimpleNamespace(turn=1)
-
-    def begin_turn(self):
-        self.calls.append("begin")
-        return _Snap()
-
-    def current_phase(self):
-        return TurnPhase.SETTLING  # 非 SUMMONING → 直接走 review_directives
-
-    def resolve_turn(self):
-        self.calls.append("resolve")
-        raise self._fail
-
-    def advance_without_decree(self):
-        self.calls.append("advance")
-
-    def end_turn(self):
-        self.calls.append("end")
+def _light_minister_session(db, state, content):
+    sess = GameSession.__new__(GameSession)
+    sess.db = db
+    sess.state = state
+    sess.content = content
+    sess.llm_config = SimpleNamespace(channel="api")
+    sess.previous_summary = ""
+    sess.schedule_pending_scene_translation = lambda result: None
+    return sess
 
 
 @pytest.mark.parametrize("exc", [
     ValueError("有 pending 拟旨待处理，请先处理再颁诏。"),
     SettlementAbort("本月结算失败，进度已保存，可重试。", turn=1, stage="extract"),
-    # 现役 LLM 通路的失败与结算中止同形——留本回合可重按。
     LLMUnavailable(CLI_RUNNER_PLAYER_MESSAGE, code="llm_error"),
-    # #1700：空 simulator 的 LLMContractError 同形，issue catch 扩员后留本回合。
     LLMContractError("simulator 流式无内容且无终结事件"),
 ])
-def test_issue_refusal_stays_in_loop(monkeypatch, capsys, exc):
-    sess = _Sess(exc)
+def test_issue_refusal_stays_in_loop(game, monkeypatch, exc):
+    session, db, state, _content = _prepare_play_turn(game, monkeypatch)
+    turn_before = _hitl_ready(db, state)
+    real_resolve = session.resolve_turn
+
+    def boom_then_real(*args, **kwargs):
+        if boom_then_real.armed:
+            boom_then_real.armed = False
+            raise exc
+        return real_resolve(*args, **kwargs)
+
+    boom_then_real.armed = True
+    session.resolve_turn = boom_then_real
     actions = iter(["issue", "skip"])
-    monkeypatch.setattr(term, "review_directives", lambda s: next(actions))
-    monkeypatch.setattr(term, "_print_header", lambda s: None)
-    monkeypatch.setattr(issues_mod, "show_active_issues", lambda db: None)
+    monkeypatch.setattr(term, "review_directives", lambda _s: next(actions))
 
-    term.play_turn(sess)
+    term.play_turn(session)
 
-    # 拒绝后不 return：同一次 play_turn 内续到 skip→advance；begin 只跑一次=不重进刷屏。
-    assert sess.calls == ["begin", "resolve", "advance"]
-    assert str(exc) in capsys.readouterr().out
+    assert int(session.state.turn) == turn_before + 1
+    assert session.current_phase() == TurnPhase.SUMMONING
+    assert db.load_state().turn_phase == TurnPhase.SUMMONING.value
 
 
 @pytest.mark.parametrize("action", ["issue", "skip"])
-def test_cli_does_not_end_unadvanced_turn(monkeypatch, action):
-    class Session(_Sess):
-        def __init__(self):
-            super().__init__(None)
-            self.step = 0
+def test_cli_does_not_end_unadvanced_turn(game, monkeypatch, action):
+    session, db, state, _content = _prepare_play_turn(game, monkeypatch)
+    turn_before = _hitl_ready(db, state)
+    target = "resolve_turn" if action == "issue" else "advance_without_decree"
+    real = getattr(session, target)
 
-        def resolve_turn(self):
-            self.calls.append("resolve")
-            advanced = self.step > 0
-            self.step += 1
-            if advanced:
-                self.state.turn += 1
-            return SimpleNamespace(advanced=advanced)
+    def first_unadvanced(*args, **kwargs):
+        if first_unadvanced.armed:
+            first_unadvanced.armed = False
+            return SimpleNamespace(awaiting=False, advanced=False, decisions=[], report="")
+        return real(*args, **kwargs)
 
-        def advance_without_decree(self):
-            self.calls.append("advance")
-            advanced = self.step > 0
-            self.step += 1
-            if advanced:
-                self.state.turn += 1
-            return SimpleNamespace(advanced=advanced)
-
-    sess = Session()
+    first_unadvanced.armed = True
+    setattr(session, target, first_unadvanced)
     actions = iter([action, action])
     monkeypatch.setattr(term, "review_directives", lambda _s: next(actions))
-    monkeypatch.setattr(term, "_print_header", lambda _s: None)
-    monkeypatch.setattr(issues_mod, "show_active_issues", lambda _db: None)
-    monkeypatch.setattr(term, "_submit_first_cli_decisions", lambda *_a: "")
 
-    term.play_turn(sess)
+    term.play_turn(session)
 
-    call_name = "resolve" if action == "issue" else "advance"
-    # 未推进时留在本回合交互循环不调 end_turn，再次推进后才调 end_turn 退出
-    assert sess.calls == ["begin", call_name, call_name, "end"]
+    assert int(session.state.turn) == turn_before + 1
+    assert session.current_phase() == TurnPhase.SUMMONING
+    assert db.load_state().turn_phase == TurnPhase.SUMMONING.value
 
 
-def test_review_issue_reaches_staged_directive_default_approval(monkeypatch):
+def test_review_issue_reaches_staged_directive_default_approval(game, monkeypatch):
     """CLI issue 经真实 review_directives 入口回到 end-turn owner 信号。"""
-
-    class Db:
-        def list_pending_actions(self, turn):
-            return [{"kind": "directive", "status": "pending"}]
-
-    class Session:
-        def __init__(self):
-            self.db = Db()
-            self.state = SimpleNamespace(turn=1, turn_phase=TurnPhase.REVIEWING.value)
-
-        def enter_review(self):
-            return None
-
-        def list_directives(self, include_pending=False):
-            return []
-
+    session, db, state, content = _prepare_play_turn(game, monkeypatch)
+    minister = next(iter(content.characters.values())).name
+    pending_id = db.stage_pending_action(
+        state.turn, kind="directive", action="拟旨", minister_name=minister,
+        payload={
+            "dossier_action_type": "policy", "target_kind": "issue",
+            "target_id": "cli-review", "actor": minister, "mode": "ordinary",
+            "text": "陕西赈灾",
+        },
+    )
+    state.turn_phase = TurnPhase.REVIEWING.value
+    db.save_state(state)
     answers = iter(["issue"])
     monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
-    session = Session()
 
     assert term.review_directives(session) == "issue"
+    pending = [
+        row for row in db.list_pending_actions(state.turn)
+        if int(row.get("id") or 0) == pending_id
+    ]
+    assert pending
+    assert pending[0]["status"] == "pending"
 
 
-def test_terminal_minister_chat_persists_messages_before_session_chat(monkeypatch):
+def test_terminal_minister_chat_persists_messages_before_session_chat(game, monkeypatch):
     """#407: CLI terminal 召对也要落 chat_messages。
 
     #1842：殿上走 scene_chat；user 行必须在调用前已落库，minister 行在回话后补上。
     """
+    db, state, content = game
+    character = next(c for c in content.characters.values() if c.status == "active")
+    session = _light_minister_session(db, state, content)
+    saw_user_before_reply = {}
 
-    class Db:
-        def __init__(self):
-            self.messages = []
+    def scene_chat(question, *, chat_turn_id=0, stream_emit=None, minister_name=""):
+        rows = _chat_rows(db)
+        saw_user_before_reply["user"] = [row for row in rows if row["role"] == "user"]
+        saw_user_before_reply["minister"] = [row for row in rows if row["role"] == "minister"]
+        return SimpleNamespace(
+            answer="臣领密旨，当令东厂暗中护送赈银。",
+            proposed_directive=None,
+            appointed_minister="",
+            registered_minister="",
+            displaced_minister="",
+            court_action="",
+            next_minister="",
+        )
 
-        def append_chat_message(self, minister_name, turn, role, content):
-            self.messages.append((minister_name, turn, role, content))
-            return len(self.messages)
-
-    class Session:
-        def __init__(self):
-            self.db = Db()
-            self.state = SimpleNamespace(turn=7)
-            self.content = SimpleNamespace(characters={"魏忠贤": object(), "韩爌": object()})
-
-
-        def scene_chat(self, question, *, chat_turn_id=0, stream_emit=None, minister_name=""):
-            assert self.db.messages == [
-                ("魏忠贤", 7, "user", "交给洪承畴督办陕西赈灾，东厂暗助护赈银。")
-            ]
-            return SimpleNamespace(
-                answer="臣领密旨，当令东厂暗中护送赈银。",
-                proposed_directive=None,
-                appointed_minister="",
-                registered_minister="",
-                displaced_minister="",
-                court_action="",
-                next_minister="",
-            )
-
-        def schedule_pending_scene_translation(self, result):
-            return _cli_schedule_pending_noop(self, result)
-
+    session.scene_chat = scene_chat
     answers = iter(["交给洪承畴督办陕西赈灾，东厂暗助护赈银。", "done"])
     monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
-    session = Session()
 
-    assert term.minister_chat(session, SimpleNamespace(name="魏忠贤")) == "dismiss"
-    assert session.db.messages == [
-        ("魏忠贤", 7, "user", "交给洪承畴督办陕西赈灾，东厂暗助护赈银。"),
-        ("魏忠贤", 7, "minister", "臣领密旨，当令东厂暗中护送赈银。"),
-    ]
+    assert term.minister_chat(session, character) == "dismiss"
+    assert saw_user_before_reply["user"]
+    assert not saw_user_before_reply["minister"]
+    rows = _chat_rows(db)
+    assert any(row["role"] == "user" for row in rows)
+    assert any(row["role"] == "minister" for row in rows)
 
 
-def test_terminal_minister_chat_removes_user_message_when_session_chat_fails(monkeypatch):
+def test_terminal_minister_chat_removes_user_message_when_session_chat_fails(game, monkeypatch):
     """失败的 CLI 召对只回滚本轮 user-only 半轮，不清历史。"""
+    db, state, content = game
+    character = next(c for c in content.characters.values() if c.status == "active")
+    prior_id = db.append_chat_message(
+        character.name, int(state.turn), "user", "前一轮召对内容",
+    )
+    session = _light_minister_session(db, state, content)
 
-    class Db:
-        def __init__(self):
-            self.messages = [
-                ("魏忠贤", 6, "user", "前一轮召对内容"),
-            ]
+    def scene_chat(question, *, chat_turn_id=0, stream_emit=None, minister_name=""):
+        raise RuntimeError("LLM down")
 
-        def append_chat_message(self, minister_name, turn, role, content):
-            self.messages.append((minister_name, turn, role, content))
-            return len(self.messages)
-
-        def delete_chat_messages(self, message_ids):
-            doomed = {int(mid) for mid in message_ids}
-            self.messages = [
-                msg for idx, msg in enumerate(self.messages, 1)
-                if idx not in doomed
-            ]
-
-    class Session:
-        def __init__(self):
-            self.db = Db()
-            self.state = SimpleNamespace(turn=7)
-            self.content = SimpleNamespace(characters={"魏忠贤": object(), "韩爌": object()})
-
-
-        def scene_chat(self, question, *, chat_turn_id=0, stream_emit=None, minister_name=""):
-            assert self.db.messages == [
-                ("魏忠贤", 6, "user", "前一轮召对内容"),
-                ("魏忠贤", 7, "user", "命洪承畴督办陕西赈灾，东厂暗助护赈银。"),
-            ]
-            raise RuntimeError("LLM down")
-
-        def schedule_pending_scene_translation(self, result):
-            return _cli_schedule_pending_noop(self, result)
-
+    session.scene_chat = scene_chat
     answers = iter(["命洪承畴督办陕西赈灾，东厂暗助护赈银。"])
     monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
-    session = Session()
 
     with pytest.raises(RuntimeError):
-        term.minister_chat(session, SimpleNamespace(name="魏忠贤"))
+        term.minister_chat(session, character)
 
-    assert session.db.messages == [
-        ("魏忠贤", 6, "user", "前一轮召对内容"),
-    ]
+    rows = _chat_rows(db)
+    assert [int(row["id"]) for row in rows] == [prior_id]
 
 
-def test_terminal_minister_chat_removes_user_message_when_session_chat_interrupted(monkeypatch):
+def test_terminal_minister_chat_removes_user_message_when_session_chat_interrupted(game, monkeypatch):
     """Ctrl-C 中断中的 CLI 召对也不能留下 user-only 半轮。"""
+    db, state, content = game
+    character = next(c for c in content.characters.values() if c.status == "active")
+    prior_id = db.append_chat_message(
+        character.name, int(state.turn), "user", "前一轮召对内容",
+    )
+    session = _light_minister_session(db, state, content)
 
-    class Db:
-        def __init__(self):
-            self.messages = [
-                ("魏忠贤", 6, "user", "前一轮召对内容"),
-            ]
+    def scene_chat(question, *, chat_turn_id=0, stream_emit=None, minister_name=""):
+        raise KeyboardInterrupt()
 
-        def append_chat_message(self, minister_name, turn, role, content):
-            self.messages.append((minister_name, turn, role, content))
-            return len(self.messages)
-
-        def delete_chat_messages(self, message_ids):
-            doomed = {int(mid) for mid in message_ids}
-            self.messages = [
-                msg for idx, msg in enumerate(self.messages, 1)
-                if idx not in doomed
-            ]
-
-    class Session:
-        def __init__(self):
-            self.db = Db()
-            self.state = SimpleNamespace(turn=7)
-            self.content = SimpleNamespace(characters={"魏忠贤": object(), "韩爌": object()})
-
-
-        def scene_chat(self, question, *, chat_turn_id=0, stream_emit=None, minister_name=""):
-            assert self.db.messages == [
-                ("魏忠贤", 6, "user", "前一轮召对内容"),
-                ("魏忠贤", 7, "user", "命洪承畴督办陕西赈灾，东厂暗助护赈银。"),
-            ]
-            raise KeyboardInterrupt()
-
-        def schedule_pending_scene_translation(self, result):
-            return _cli_schedule_pending_noop(self, result)
-
+    session.scene_chat = scene_chat
     answers = iter(["命洪承畴督办陕西赈灾，东厂暗助护赈银。"])
     monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
-    session = Session()
 
     with pytest.raises(KeyboardInterrupt):
-        term.minister_chat(session, SimpleNamespace(name="魏忠贤"))
+        term.minister_chat(session, character)
 
-    assert session.db.messages == [
-        ("魏忠贤", 6, "user", "前一轮召对内容"),
-    ]
+    rows = _chat_rows(db)
+    assert [int(row["id"]) for row in rows] == [prior_id]
 
 
-def test_terminal_minister_chat_preserves_chat_error_when_rollback_fails(monkeypatch):
+def test_terminal_minister_chat_preserves_chat_error_when_rollback_fails(game, monkeypatch):
     """回滚删除失败不能盖掉原始 scene_chat/chat 异常。"""
+    db, state, content = game
+    character = next(c for c in content.characters.values() if c.status == "active")
+    session = _light_minister_session(db, state, content)
 
-    class Db:
-        def append_chat_message(self, minister_name, turn, role, content):
-            return 1
+    def scene_chat(question, *, chat_turn_id=0, stream_emit=None, minister_name=""):
+        raise RuntimeError("LLM down")
 
-        def delete_chat_messages(self, message_ids):
-            raise RuntimeError("rollback failed")
+    session.scene_chat = scene_chat
 
-    class Session:
-        def __init__(self):
-            self.db = Db()
-            self.state = SimpleNamespace(turn=7)
-            self.content = SimpleNamespace(characters={"魏忠贤": object(), "韩爌": object()})
+    def boom_fail(chat_turn_id):
+        raise RuntimeError("rollback failed")
 
-
-        def scene_chat(self, question, *, chat_turn_id=0, stream_emit=None, minister_name=""):
-            raise RuntimeError("LLM down")
-
-        def schedule_pending_scene_translation(self, result):
-            return _cli_schedule_pending_noop(self, result)
-
+    db.fail_chat_turn = boom_fail
     answers = iter(["命洪承畴督办陕西赈灾，东厂暗助护赈银。"])
     monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
 
-    with pytest.raises(RuntimeError):
-        term.minister_chat(Session(), SimpleNamespace(name="魏忠贤"))
+    with pytest.raises(RuntimeError) as caught:
+        term.minister_chat(session, character)
+    assert str(caught.value) == "LLM down"
 
 
-def test_terminal_minister_chat_reply_persist_failure_keeps_user_message(monkeypatch):
+def test_terminal_minister_chat_reply_persist_failure_keeps_user_message(game, monkeypatch):
     """大臣已回话后，minister 行落库失败不误删已落 user 行。"""
+    db, state, content = game
+    character = next(c for c in content.characters.values() if c.status == "active")
+    session = _light_minister_session(db, state, content)
 
-    class Db:
-        def __init__(self):
-            self.messages = []
-            self.deleted = False
+    def scene_chat(question, *, chat_turn_id=0, stream_emit=None, minister_name=""):
+        return SimpleNamespace(
+            answer="臣领密旨，当令东厂暗中护送赈银。",
+            proposed_directive=None,
+            appointed_minister="",
+            registered_minister="",
+            displaced_minister="",
+            court_action="",
+            next_minister="",
+        )
 
-        def append_chat_message(self, minister_name, turn, role, content):
-            if role == "minister":
-                raise RuntimeError("reply persist failed")
-            self.messages.append((minister_name, turn, role, content))
-            return len(self.messages)
+    session.scene_chat = scene_chat
 
-        def delete_chat_messages(self, message_ids):
-            self.deleted = True
+    def boom_persist(*_a, **_k):
+        raise RuntimeError("reply persist failed")
 
-    class Session:
-        def __init__(self):
-            self.db = Db()
-            self.state = SimpleNamespace(turn=7)
-            self.content = SimpleNamespace(characters={"魏忠贤": object(), "韩爌": object()})
-
-
-        def scene_chat(self, question, *, chat_turn_id=0, stream_emit=None, minister_name=""):
-            return SimpleNamespace(
-                answer="臣领密旨，当令东厂暗中护送赈银。",
-                proposed_directive=None,
-                appointed_minister="",
-                registered_minister="",
-                displaced_minister="",
-                court_action="",
-                next_minister="",
-            )
-
-        def schedule_pending_scene_translation(self, result):
-            return _cli_schedule_pending_noop(self, result)
-
+    db.persist_minister_reply = boom_persist
+    db.fail_chat_turn = lambda *_a, **_k: []
     answers = iter(["命洪承畴督办陕西赈灾，东厂暗助护赈银。"])
     monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
-    session = Session()
 
     with pytest.raises(RuntimeError):
-        term.minister_chat(session, SimpleNamespace(name="魏忠贤"))
+        term.minister_chat(session, character)
 
-    assert session.db.deleted is False
-    assert session.db.messages == [
-        ("魏忠贤", 7, "user", "命洪承畴督办陕西赈灾，东厂暗助护赈银。"),
-    ]
+    rows = _chat_rows(db)
+    assert any(row["role"] == "user" for row in rows)
+    assert not any(row["role"] == "minister" for row in rows)
 
 
+def _stage_failed_secret_order(db, state, content):
+    minister = next(iter(content.characters.values())).name
+    action_id = db.stage_pending_action(
+        state.turn, "secret_order", "新建", minister,
+        {"title": "护行密令", "content": "护送旧案", "assignee": minister,
+         "covert_task": TYPED_COVERT_TASK,
+         "dossier_links": [
+             {"target_dossier_id": 999999, "relation_type": "护卫", "note": "护送"}
+         ]},
+    )
+    assert db.commit_pending_actions(state, action_ids=[action_id]) == []
+    failed = db.list_pending_actions(state.turn, status="failed")
+    assert any(int(row["id"]) == action_id and row.get("kind") == "secret_order" for row in failed)
+    return action_id
 
 
 @pytest.mark.parametrize("action", ["skip", "issue"])
-def test_play_turn_reports_default_approval_secret_order_failure(monkeypatch, capsys, action):
+def test_play_turn_reports_default_approval_secret_order_failure(game, monkeypatch, action):
     """#415: 退朝默认提交密令失败时，CLI 也必须给出失败 id。"""
-
-    class Db:
-        def __init__(self):
-            self.actions = []
-
-        def list_pending_actions(self, turn, status=None):
-            if status == "failed":
-                return list(self.actions)
-            return []
-
-    class Session:
-        previous_summary = ""
-
-        def __init__(self):
-            self.db = Db()
-            self.state = SimpleNamespace(turn=7)
-            self.calls = []
-
-        def begin_turn(self):
-            self.calls.append("begin")
-            return _Snap()
-
-        def current_phase(self):
-            return TurnPhase.REVIEWING
-
-        def advance_without_decree(self):
-            self.calls.append("advance")
-            self.db.actions.append({
-                "id": 42,
-                "kind": "secret_order",
-                "action": "新建",
-            })
-
-        def resolve_turn(self):
-            self.calls.append("resolve")
-            self.db.actions.append({
-                "id": 42,
-                "kind": "secret_order",
-                "action": "新建",
-            })
-            return SimpleNamespace(awaiting=False, advanced=True, report="月报")
-
-        def end_turn(self):
-            self.calls.append("end")
-
-    monkeypatch.setattr(term, "review_directives", lambda s: action)
-    monkeypatch.setattr(term, "_print_header", lambda s: None)
-    monkeypatch.setattr(issues_mod, "show_active_issues", lambda db: None)
-    session = Session()
+    session, db, state, content = _prepare_play_turn(game, monkeypatch)
+    action_id = _stage_failed_secret_order(db, state, content)
+    turn_before = _hitl_ready(db, state)
+    monkeypatch.setattr(term, "review_directives", lambda _s: action)
 
     term.play_turn(session)
 
-    assert session.db.list_pending_actions(7, status="failed") == [{
-        "id": 42, "kind": "secret_order", "action": "新建",
-    }]
-    if action == "skip":
-        assert session.calls == ["begin", "advance"]
-    else:
-        assert session.calls == ["begin", "resolve", "end"]
+    failed = db.list_pending_actions(turn_before, status="failed")
+    assert any(int(row["id"]) == action_id and row.get("kind") == "secret_order" for row in failed)
+    assert int(session.state.turn) == turn_before + 1
+    assert session.current_phase() == TurnPhase.SUMMONING
 
 
-def test_play_turn_skip_prints_dossier_settlement_report_and_ends_turn(monkeypatch, capsys):
-    session = _Sess(RuntimeError("unused"))
-    session.current_phase = lambda: TurnPhase.REVIEWING
-    session.advance_without_decree = lambda: SimpleNamespace(
-        awaiting=False, advanced=True, report="留中案卷本月重判月报",
-    )
+def test_play_turn_skip_prints_dossier_settlement_report_and_ends_turn(game, monkeypatch):
+    session, db, state, _content = _prepare_play_turn(game, monkeypatch)
+    turn_before = _hitl_ready(db, state)
     monkeypatch.setattr(term, "review_directives", lambda _s: "skip")
-    monkeypatch.setattr(term, "_print_header", lambda _s: None)
-    monkeypatch.setattr(issues_mod, "show_active_issues", lambda _db: None)
 
     term.play_turn(session)
 
-    assert "留中案卷本月重判月报" in capsys.readouterr().out
-    assert session.calls == ["begin", "end"]
+    assert int(session.state.turn) == turn_before + 1
+    assert session.current_phase() == TurnPhase.SUMMONING
+    assert db.load_state().turn_phase == TurnPhase.SUMMONING.value
 
 
 @pytest.mark.parametrize("exc", [
     SettlementAbort("退朝结算中止，可重试。", turn=7, stage="settle"),
-    # #1700：skip catch 同形纳入 LLMContractError；同 turn 再 skip 成功。
     LLMContractError("simulator 流式无内容且无终结事件"),
 ])
-def test_play_turn_skip_settlement_abort_stays_in_player_loop(monkeypatch, capsys, exc):
-    class Session:
-        previous_summary = ""
+def test_play_turn_skip_settlement_abort_stays_in_player_loop(game, monkeypatch, exc):
+    session, db, state, _content = _prepare_play_turn(game, monkeypatch)
+    turn_before = _hitl_ready(db, state)
+    real_advance = session.advance_without_decree
 
-        def __init__(self):
-            self.db = SimpleNamespace(list_pending_actions=lambda *a, **k: [])
-            self.state = SimpleNamespace(turn=7)
-            self.calls = []
+    def boom_then_real(*args, **kwargs):
+        if boom_then_real.armed:
+            boom_then_real.armed = False
+            raise exc
+        return real_advance(*args, **kwargs)
 
-        def begin_turn(self):
-            self.calls.append("begin")
-            return _Snap()
-
-        def current_phase(self):
-            return TurnPhase.REVIEWING
-
-        def advance_without_decree(self):
-            self.calls.append("advance")
-            if self.calls.count("advance") == 1:
-                raise exc
-            return None
-
+    boom_then_real.armed = True
+    session.advance_without_decree = boom_then_real
     actions = iter(["skip", "skip"])
-    monkeypatch.setattr(term, "review_directives", lambda s: next(actions))
-    monkeypatch.setattr(term, "_print_header", lambda s: None)
-    monkeypatch.setattr(issues_mod, "show_active_issues", lambda db: None)
-    session = Session()
+    monkeypatch.setattr(term, "review_directives", lambda _s: next(actions))
 
     term.play_turn(session)
 
-    assert str(exc) in capsys.readouterr().out
-    assert session.calls == ["begin", "advance", "advance"]
+    assert int(session.state.turn) == turn_before + 1
+    assert session.current_phase() == TurnPhase.SUMMONING
 
 
-def test_play_turn_reports_secret_order_failure_when_settlement_aborts(monkeypatch, capsys):
+def test_play_turn_reports_secret_order_failure_when_settlement_aborts(game, monkeypatch):
     """pre_settle 已标 failed 后若后续结算中止，CLI 仍须显示失败 id。"""
+    session, db, state, content = _prepare_play_turn(game, monkeypatch)
+    action_id = _stage_failed_secret_order(db, state, content)
+    turn_before = _hitl_ready(db, state)
+    real_resolve = session.resolve_turn
 
-    class Db:
-        def __init__(self):
-            self.actions = []
+    def boom_then_real(*args, **kwargs):
+        if boom_then_real.armed:
+            boom_then_real.armed = False
+            raise SettlementAbort("结算中止，可重试。", turn=int(state.turn), stage="extract")
+        return real_resolve(*args, **kwargs)
 
-        def list_pending_actions(self, turn, status=None):
-            if status == "failed":
-                return list(self.actions)
-            return []
-
-    class Session:
-        previous_summary = ""
-
-        def __init__(self):
-            self.db = Db()
-            self.state = SimpleNamespace(turn=7)
-            self.calls = []
-
-        def begin_turn(self):
-            self.calls.append("begin")
-            return _Snap()
-
-        def current_phase(self):
-            return TurnPhase.REVIEWING
-
-        def resolve_turn(self):
-            self.calls.append("resolve")
-            self.db.actions.append({
-                "id": 42,
-                "kind": "secret_order",
-                "action": "新建",
-            })
-            raise SettlementAbort("结算中止，可重试。", turn=7, stage="extract")
-
-        def advance_without_decree(self):
-            self.calls.append("advance")
-
+    boom_then_real.armed = True
+    session.resolve_turn = boom_then_real
     actions = iter(["issue", "skip"])
-    monkeypatch.setattr(term, "review_directives", lambda s: next(actions))
-    monkeypatch.setattr(term, "_print_header", lambda s: None)
-    monkeypatch.setattr(issues_mod, "show_active_issues", lambda db: None)
-    session = Session()
+    monkeypatch.setattr(term, "review_directives", lambda _s: next(actions))
 
     term.play_turn(session)
 
-    assert session.db.list_pending_actions(7, status="failed") == [{
-        "id": 42, "kind": "secret_order", "action": "新建",
-    }]
-    assert session.calls == ["begin", "resolve", "advance"]
-
+    failed = db.list_pending_actions(turn_before, status="failed")
+    assert any(int(row["id"]) == action_id and row.get("kind") == "secret_order" for row in failed)
+    assert int(session.state.turn) == turn_before + 1
+    assert session.current_phase() == TurnPhase.SUMMONING
 
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")

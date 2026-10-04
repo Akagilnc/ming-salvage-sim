@@ -1,0 +1,20 @@
+{
+  "source_path": "tests/test_execution_tenure_613.py",
+  "member_count": 1,
+  "members": [
+    {
+      "idx": 866,
+      "file": "tests/test_execution_tenure_613.py",
+      "name": "test_td8_same_office_four_tenures_live_assembly_chain",
+      "line": 37,
+      "end": 61,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0866_test_execution_tenure_613__test_td8_same_office_four_tenures_live_assembly_chain.txt",
+      "source_path": "tests/test_execution_tenure_613.py"
+    }
+  ]
+}

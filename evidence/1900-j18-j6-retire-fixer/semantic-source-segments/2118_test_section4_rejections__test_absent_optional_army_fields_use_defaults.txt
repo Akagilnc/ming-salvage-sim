@@ -1,0 +1,19 @@
+# FILE: tests/test_section4_rejections.py
+# NAME: test_absent_optional_army_fields_use_defaults
+# LINE: 544-556
+# FLAGS: assert_count,helper_or_private_call
+# KIND: py
+
+def test_absent_optional_army_fields_use_defaults(game):
+    """缺省可选字段照走默认(50/0)——「在场即须合法」不影响缺省路(pin)。"""
+    db, state, content = game
+
+    run_settle(db, state, content, {
+        "new_armies": [{"id": "default_army_ok", "name": "默认军", "owner_power": "ming",
+                        "manpower": 5000, "maintenance_per_turn": 2, **_pay_source()}],
+    }, narrative="x", decree_text="y")
+
+    row = db.conn.execute(
+        "SELECT morale, cannon_equipment FROM armies WHERE id='default_army_ok'").fetchone()
+    assert row is not None
+    assert row[0] == 50 and row[1] == 0

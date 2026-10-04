@@ -157,41 +157,6 @@ def test_cli_selection_uses_scene_turn_as_admission_origin(game, monkeypatch):
 
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
-def test_remote_xuan_feeds_summon_facts_to_scene(game, monkeypatch):
-    import json
-    from ming_sim.audience_night import list_unsettled_summons
-    from ming_sim.materials import _scene_pending_audience_facts
-
-    db, state, content = game
-    target = "洪承畴"
-    db.conn.execute("UPDATE characters SET location=? WHERE name=?", ("shaanxi", target))
-    db.conn.commit()
-    character = content.characters[target]
-    character.location = "shaanxi"
-    sess = _sess(db, state, content, llm_config=SimpleNamespace(channel=""))
-
-    openings = []
-
-    class FakeAgent:
-        tools = []
-
-        def run(self, message):
-            return SimpleNamespace(content="传召已发。", tools=[])
-
-    def scene_agent(_config, prepared, **_kwargs):
-        openings.append(prepared.opening)
-        return FakeAgent()
-
-    monkeypatch.setattr("ming_sim.session.create_scene_agent", scene_agent)
-    sess.scene_chat(f"宣{target}")
-    assert list_unsettled_summons(db)
-    facts = [json.loads(line) for line in _scene_pending_audience_facts(db, state)]
-    assert any(fact.get("person_name") == target and fact.get("kind") == "fresh" for fact in facts)
-    assert any(json.dumps(fact, ensure_ascii=False, sort_keys=True) in openings[0]
-               for fact in facts if fact.get("person_name") == target)
-
-
-@pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_retire_via_scene_chat_closes_night_and_keeps_last_turn(game, monkeypatch):
     """AC3：scene_chat('退朝') 真入口收夜；同库重读最后一条持久化对话轮仍在。"""
     db, state, content = game

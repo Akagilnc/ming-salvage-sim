@@ -1,0 +1,32 @@
+# FILE: tests/test_event_trigger_gate.py
+# NAME: test_person_core_event_obsoletes_when_named_subject_is_dead
+# LINE: 1591-1616
+# FLAGS: assert_text_compare_or_match
+# KIND: py
+
+def test_person_core_event_obsoletes_when_named_subject_is_dead(game):
+    """#191：人物核心事件的点名主体永久死亡时，应 durable 作废并退出候选池。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1629
+    state.period = 12
+    db.set_character_status(state, "袁崇焕", "dead", reason="测试：提前身故")
+
+    cands = issues.gather_candidate_events(state, db)
+
+    assert all(ev.id != "yuan_xialing" for ev in cands)
+    issues.apply_event_terminal_states(state, db)
+    row = db.conn.execute(
+        "SELECT terminal_state, source FROM event_triggers WHERE event_id=?",
+        ("yuan_xialing",),
+    ).fetchone()
+    assert row is not None
+    assert row["terminal_state"] == "obsolete"
+    assert row["source"] == "person_core_dead"
+
+    cands_again = issues.gather_candidate_events(state, db)
+    assert all(ev.id != "yuan_xialing" for ev in cands_again)
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM event_triggers WHERE event_id=?",
+        ("yuan_xialing",),
+    ).fetchone()[0] == 1

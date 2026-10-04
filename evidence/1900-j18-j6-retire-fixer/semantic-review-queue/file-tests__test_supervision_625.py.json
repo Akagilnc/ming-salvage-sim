@@ -1,0 +1,109 @@
+{
+  "source_path": "tests/test_supervision_625.py",
+  "member_count": 7,
+  "members": [
+    {
+      "idx": 2218,
+      "file": "tests/test_supervision_625.py",
+      "name": "test_ac1_monthly_write_idempotent_readable_and_restore",
+      "line": 156,
+      "end": 213,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2218_test_supervision_625__test_ac1_monthly_write_idempotent_readable_and_restore.txt",
+      "source_path": "tests/test_supervision_625.py"
+    },
+    {
+      "idx": 2219,
+      "file": "tests/test_supervision_625.py",
+      "name": "test_ac1_settle_segment_writes_presence",
+      "line": 216,
+      "end": 231,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2219_test_supervision_625__test_ac1_settle_segment_writes_presence.txt",
+      "source_path": "tests/test_supervision_625.py"
+    },
+    {
+      "idx": 2220,
+      "file": "tests/test_supervision_625.py",
+      "name": "test_ac2_paired_observation_slots_and_countermeasure_hard_gate",
+      "line": 237,
+      "end": 308,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2220_test_supervision_625__test_ac2_paired_observation_slots_and_countermeasure_hard_gate.txt",
+      "source_path": "tests/test_supervision_625.py"
+    },
+    {
+      "idx": 2221,
+      "file": "tests/test_supervision_625.py",
+      "name": "test_ac3_same_vs_enemy_origin_marks_on_reported_progress",
+      "line": 314,
+      "end": 356,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2221_test_supervision_625__test_ac3_same_vs_enemy_origin_marks_on_reported_progress.txt",
+      "source_path": "tests/test_supervision_625.py"
+    },
+    {
+      "idx": 2222,
+      "file": "tests/test_supervision_625.py",
+      "name": "test_ac4_exposure_history_delta_on_tendency_surface",
+      "line": 362,
+      "end": 378,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2222_test_supervision_625__test_ac4_exposure_history_delta_on_tendency_surface.txt",
+      "source_path": "tests/test_supervision_625.py"
+    },
+    {
+      "idx": 2223,
+      "file": "tests/test_supervision_625.py",
+      "name": "test_ac4_unified_presence_gate_on_terminal_and_recon_paths",
+      "line": 381,
+      "end": 453,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2223_test_supervision_625__test_ac4_unified_presence_gate_on_terminal_and_recon_paths.txt",
+      "source_path": "tests/test_supervision_625.py"
+    },
+    {
+      "idx": 2224,
+      "file": "tests/test_supervision_625.py",
+      "name": "test_due_review_supervision_history_no_longer_hardcoded_empty",
+      "line": 470,
+      "end": 484,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2224_test_supervision_625__test_due_review_supervision_history_no_longer_hardcoded_empty.txt",
+      "source_path": "tests/test_supervision_625.py"
+    }
+  ]
+}

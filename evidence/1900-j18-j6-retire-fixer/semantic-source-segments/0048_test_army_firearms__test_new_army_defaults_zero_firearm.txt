@@ -1,0 +1,18 @@
+# FILE: tests/test_army_firearms.py
+# NAME: test_new_army_defaults_zero_firearm
+# LINE: 29-40
+# FLAGS: assert_count,helper_or_private_call
+# KIND: py
+
+def test_new_army_defaults_zero_firearm(game):
+    """新建军未指定火器/大炮时默认 0（列默认值 + 落库兜底）。"""
+    db, state, _ = game
+    db.create_armies_from_extraction(state, [{
+        "id": "plain_army_test", "name": "白杆兵测试", "owner_power": "ming",
+        "manpower": 3000, "maintenance_per_turn": 1, **_pay_source(),
+    }], actor="测试")
+    row = db.conn.execute(
+        "SELECT firearm_equipment, cannon_equipment FROM armies WHERE id='plain_army_test'"
+    ).fetchone()
+    assert row["firearm_equipment"] == 0
+    assert row["cannon_equipment"] == 0

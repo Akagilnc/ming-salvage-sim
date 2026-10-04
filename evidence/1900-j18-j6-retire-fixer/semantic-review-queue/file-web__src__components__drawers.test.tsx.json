@@ -1,0 +1,155 @@
+{
+  "source_path": "web/src/components/drawers.test.tsx",
+  "member_count": 11,
+  "members": [
+    {
+      "idx": 2410,
+      "file": "web/src/components/drawers.test.tsx",
+      "name": "\"朝堂空 layout 合法态（#1290/#1332）\" / \"GET layout={} 时殿上仍按默认朝班落座（非 hidden）\"",
+      "line": 141,
+      "end": 164,
+      "flags": [
+        "web_text_assert"
+      ],
+      "kind": "web",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2410_drawers.test__\"朝堂空 layout 合法态（#1290__#1332）\" __ \"GET layout={} 时殿上仍按默认朝班落座（非 hidden）\".txt",
+      "source_path": "web/src/components/drawers.test.tsx"
+    },
+    {
+      "idx": 2411,
+      "file": "web/src/components/drawers.test.tsx",
+      "name": "\"朝堂空 layout 合法态（#1290/#1332）\" / \"layout fetch 未完成时也先默认落座，不堵首屏\"",
+      "line": 166,
+      "end": 263,
+      "flags": [
+        "web_mock_spy_or_calls"
+      ],
+      "kind": "web",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2411_drawers.test__\"朝堂空 layout 合法态（#1290__#1332）\" __ \"layout fetch 未完成时也先默认落座，不堵首屏\".txt",
+      "source_path": "web/src/components/drawers.test.tsx"
+    },
+    {
+      "idx": 2412,
+      "file": "web/src/components/drawers.test.tsx",
+      "name": "\"朝堂空 layout 合法态（#1290/#1332）\" / \"#1463 慢载期间早拖：GET 回包合并脏键，不丢未拖大臣的服务端位，且 POST 不灌默认布局\"",
+      "line": 265,
+      "end": 371,
+      "flags": [
+        "web_mock_spy_or_calls"
+      ],
+      "kind": "web",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2412_drawers.test__\"朝堂空 layout 合法态（#1290__#1332）\" __ \"#1463 慢载期间早拖：GET 回包合并脏键，不丢未拖大臣的服务端位，且 POST 不灌默认布局\".txt",
+      "source_path": "web/src/components/drawers.test.tsx"
+    },
+    {
+      "idx": 2413,
+      "file": "web/src/components/drawers.test.tsx",
+      "name": "\"朝堂空 layout 合法态（#1290/#1332）\" / \"#1463 早拖后、GET 回前 list 变化：加载不被取消，合并后 POST 一次\"",
+      "line": 373,
+      "end": 509,
+      "flags": [
+        "web_mock_spy_or_calls",
+        "web_count_assert"
+      ],
+      "kind": "web",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2413_drawers.test__\"朝堂空 layout 合法态（#1290__#1332）\" __ \"#1463 早拖后、GET 回前 list 变化：加载不被取消，合并后 POST 一次\".txt",
+      "source_path": "web/src/components/drawers.test.tsx"
+    },
+    {
+      "idx": 2414,
+      "file": "web/src/components/drawers.test.tsx",
+      "name": "\"朝堂同衔分座（#1196 呈现层去冲突）\" / \"#1499-F1 StrictMode 松手：吸附副作用在 updater 外，POST 恰一次\"",
+      "line": 559,
+      "end": 634,
+      "flags": [
+        "web_mock_spy_or_calls",
+        "web_count_assert"
+      ],
+      "kind": "web",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2414_drawers.test__\"朝堂同衔分座（#1196 呈现层去冲突）\" __ \"#1499-F1 StrictMode 松手：吸附副作用在 updater 外，POST 恰一次\".txt",
+      "source_path": "web/src/components/drawers.test.tsx"
+    },
+    {
+      "idx": 2415,
+      "file": "web/src/components/drawers.test.tsx",
+      "name": "\"朝堂同衔分座（#1196 呈现层去冲突）\" / \"同衔两张 minister-card 依次点击均委派 onOpenChat\"",
+      "line": 636,
+      "end": 659,
+      "flags": [
+        "web_mock_spy_or_calls",
+        "web_count_assert"
+      ],
+      "kind": "web",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2415_drawers.test__\"朝堂同衔分座（#1196 呈现层去冲突）\" __ \"同衔两张 minister-card 依次点击均委派 onOpenChat\".txt",
+      "source_path": "web/src/components/drawers.test.tsx"
+    },
+    {
+      "idx": 2416,
+      "file": "web/src/components/drawers.test.tsx",
+      "name": "\"朝堂同衔分座（#1196 呈现层去冲突）\" / \"#1402 offstage 卡：网格与朝班同形——主体非 button、reason 位、起复委派 onOpenEdict\"",
+      "line": 661,
+      "end": 756,
+      "flags": [
+        "web_mock_spy_or_calls",
+        "web_count_assert"
+      ],
+      "kind": "web",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2416_drawers.test__\"朝堂同衔分座（#1196 呈现层去冲突）\" __ \"#1402 offstage 卡：网格与朝班同形——主体非 button、reason 位、起复委派 onOpenEdict\".txt",
+      "source_path": "web/src/components/drawers.test.tsx"
+    },
+    {
+      "idx": 2417,
+      "file": "web/src/components/drawers.test.tsx",
+      "name": "\"#1683 MinisterCardList place ⊥ office DOM\" / \"shows transit destination and keeps office when transit_to is set\"",
+      "line": 780,
+      "end": 797,
+      "flags": [
+        "web_text_assert",
+        "web_count_assert"
+      ],
+      "kind": "web",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2417_drawers.test__\"#1683 MinisterCardList place ⊥ office DOM\" __ \"shows transit destination and keeps office when transit_to is set\".txt",
+      "source_path": "web/src/components/drawers.test.tsx"
+    },
+    {
+      "idx": 2418,
+      "file": "web/src/components/drawers.test.tsx",
+      "name": "\"#1683 MinisterCardList place ⊥ office DOM\" / \"shows location and keeps office when only location is set\"",
+      "line": 799,
+      "end": 814,
+      "flags": [
+        "web_text_assert"
+      ],
+      "kind": "web",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2418_drawers.test__\"#1683 MinisterCardList place ⊥ office DOM\" __ \"shows location and keeps office when only location is set\".txt",
+      "source_path": "web/src/components/drawers.test.tsx"
+    },
+    {
+      "idx": 2419,
+      "file": "web/src/components/drawers.test.tsx",
+      "name": "\"#1683 MinisterCardList place ⊥ office DOM\" / \"courtMode=true shows transit destination and keeps office\"",
+      "line": 816,
+      "end": 833,
+      "flags": [
+        "web_text_assert",
+        "web_count_assert"
+      ],
+      "kind": "web",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2419_drawers.test__\"#1683 MinisterCardList place ⊥ office DOM\" __ \"courtMode=true shows transit destination and keeps office\".txt",
+      "source_path": "web/src/components/drawers.test.tsx"
+    },
+    {
+      "idx": 2420,
+      "file": "web/src/components/drawers.test.tsx",
+      "name": "\"#1732 T2 上传失败告警条挂载点\" / \"告警条不在 .minister-card 子树内（portal 出 transform 卡）\"",
+      "line": 837,
+      "end": 870,
+      "flags": [
+        "web_mock_spy_or_calls"
+      ],
+      "kind": "web",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2420_drawers.test__\"#1732 T2 上传失败告警条挂载点\" __ \"告警条不在 .minister-card 子树内（portal 出 transform 卡）\".txt",
+      "source_path": "web/src/components/drawers.test.tsx"
+    }
+  ]
+}

@@ -1,0 +1,34 @@
+# FILE: tests/test_population_transfers_649.py
+# NAME: test_legacy_wan_unit_transfer_caps_to_stock_without_unit_conversion
+# LINE: 289-316
+# FLAGS: assert_count,helper_or_private_call,retired_or_meta_marker
+# KIND: py
+
+def test_legacy_wan_unit_transfer_caps_to_stock_without_unit_conversion(legacy_game):
+    """legacy 档 amount 按「万」读写：±3（万）精确落账；超源请求按万口径封顶。"""
+    db, state, content, _path = legacy_game
+    assert db.population_unit == POPULATION_UNIT_WAN
+    applied = apply_score_extraction(db, state, {
+        "population_transfers": [
+            _transfer(source="农民@shaanxi", target="流民@shaanxi", amount=3, reason="灾害"),
+        ],
+    }, content, None)
+    assert not applied["population_transfers_rejections"]
+    rec = applied["population_transfers"][0]
+    assert rec["population_unit"] == POPULATION_UNIT_WAN
+    assert _pop(db, "农民", "shaanxi") == LEGACY_FARMER_SHAANXI - 3
+    assert _pop(db, "流民", "shaanxi") == LEGACY_DISPLACED_SHAANXI + 3
+
+    source_before = _pop(db, "农民", "shaanxi")
+    displaced_before = _pop(db, "流民", "shaanxi")
+    applied2 = apply_score_extraction(db, state, {
+        "population_transfers": [
+            _transfer(source="农民@shaanxi", target="流民@shaanxi", amount=3000, reason="灾害"),
+        ],
+    }, content, None)
+    assert not applied2["population_transfers_rejections"]
+    capped = applied2["population_transfers"][0]
+    assert capped["amount"] == source_before
+    assert capped["population_unit"] == POPULATION_UNIT_WAN
+    assert _pop(db, "农民", "shaanxi") == 0
+    assert _pop(db, "流民", "shaanxi") == displaced_before + source_before

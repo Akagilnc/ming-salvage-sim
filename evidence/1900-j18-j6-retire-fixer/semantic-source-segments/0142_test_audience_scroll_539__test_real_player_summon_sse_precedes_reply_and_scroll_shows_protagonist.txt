@@ -1,0 +1,31 @@
+# FILE: tests/test_audience_scroll_539.py
+# NAME: test_real_player_summon_sse_precedes_reply_and_scroll_shows_protagonist
+# LINE: 60-84
+# FLAGS: assert_text_compare_or_match,assert_count,mock_or_patch_present,helper_or_private_call
+# KIND: py
+
+def test_real_player_summon_sse_precedes_reply_and_scroll_shows_protagonist(game, monkeypatch):
+    import json
+    import web_app
+    from tests.test_audience_background import _FakeAgent, _web_game
+
+    db, state, content = game
+    runtime = _web_game(db, state, content, _FakeAgent(), monkeypatch)
+    runtime.favorites = set()
+    monkeypatch.setattr(web_app, "get_game", lambda: runtime)
+    client = TestClient(web_app.app)
+
+    response = client.post(
+        "/api/audience/chat/stream",
+        json={"message": "宣王绍徽"},
+    )
+    events = [
+        (block.splitlines()[0].removeprefix("event: "), json.loads(block.splitlines()[1].removeprefix("data: ")))
+        for block in response.text.strip().split("\n\n")
+    ]
+    kinds = [kind for kind, _ in events]
+    assert response.status_code == 200
+    assert kinds.index("accepted") < kinds.index("protagonist_changed") < kinds.index("done")
+    scroll = client.get("/api/audience/scroll").json()
+    assert scroll["protagonist"] == "王绍徽"
+    assert any(person["name"] == "王绍徽" and person["portrait_id"] == content.characters["王绍徽"].portrait_id for person in scroll["characters"])

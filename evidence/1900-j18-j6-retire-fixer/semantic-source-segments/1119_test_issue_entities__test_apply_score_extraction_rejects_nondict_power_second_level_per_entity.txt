@@ -1,0 +1,10 @@
+# FILE: tests/test_issue_entities.py
+# NAME: test_apply_score_extraction_rejects_nondict_power_second_level_per_entity
+# LINE: 129-132
+# FLAGS: assert_text_compare_or_match
+# KIND: py
+
+def test_apply_score_extraction_rejects_nondict_power_second_level_per_entity(game):
+    db, state, _ = game
+    applied = I.apply_score_extraction(db, state, {"power_updates": {"houjin": {"leverage": 1}, "mongol": "bad"}})
+    assert applied["validate_shape_rejections"][0]["item"] == {"entity_id": "mongol", "raw_value": "bad"}

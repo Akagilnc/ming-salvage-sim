@@ -1,0 +1,38 @@
+# FILE: tests/test_pihong_dossier_1490.py
+# NAME: test_658_stage_rejects_bad_backing_zero_write
+# LINE: 2399-2430
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_658_stage_rejects_bad_backing_zero_write(game):
+    """#658：stage 首写接缝拒坏 shape / 不存在 id；pending/案卷/信用零写。"""
+    from ming_sim.action_materialize import stage_punishment_candidate
+    from ming_sim.credit_events import KIND_BETRAY
+    db, state, content = game
+    from ming_sim import rescript_actions as ra
+    names = ra.list_deliberation_candidate_ids(db, content)
+    actor, target = (names[0], names[1])
+
+    def snapshot() -> tuple[int, int, int]:
+        pending = int(db.conn.execute("SELECT COUNT(*) AS c FROM pending_actions WHERE status='pending'").fetchone()['c'])
+        dossiers = len(db.list_decree_dossiers())
+        edges = int(db.conn.execute('SELECT COUNT(*) AS c FROM relation_edge_events WHERE event_kind=?', (KIND_BETRAY,)).fetchone()['c'])
+        return (pending, dossiers, edges)
+    before = snapshot()
+    for bad in (True, 999999):
+        with pytest.raises(ValueError):
+            stage_punishment_candidate(db, state.turn, actor, text=f'着罚{target}俸。', target_id=target, punish_action='罚俸', amount=10, backing_dossier_id=bad)
+    assert snapshot() == before
+    from ming_sim import rescript_actions as ra
+    urgent, _ = _plant_urgent_desk(db, state)
+    key = urgent['decision_key']
+    batch = ra.validate_all([urgent], [{'decision_key': key, 'action': 'deliberate', 'label': '下部议'}])
+    ra.apply_rescript_batch(db, state, batch, ra.PrewriteResults(deliberate_by_key={key: {'title': '清', 'body': 'b', 'stance': 's', 'supporter_ids': [actor]}}), content=content)
+    bid = int(db.find_deliberation_dossier_by_decision_key(key)['id'])
+    pid = stage_punishment_candidate(db, state.turn, actor, text=f'着罚{target}俸。', target_id=target, punish_action='罚俸', amount=10, backing_dossier_id=bid)
+    assert pid > 0
+    staged = json.loads(db.conn.execute('SELECT payload_json FROM pending_actions WHERE id=?', (int(pid),)).fetchone()['payload_json'])
+    assert int(staged.get('backing_dossier_id') or 0) == bid
+    stage_punishment_candidate(db, state.turn, actor, text=f'着罚{target}俸（改）。', target_id=target, punish_action='罚俸', amount=10)
+    staged2 = json.loads(db.conn.execute('SELECT payload_json FROM pending_actions WHERE id=?', (int(pid),)).fetchone()['payload_json'])
+    assert staged2.get('backing_dossier_id') in (None, '')

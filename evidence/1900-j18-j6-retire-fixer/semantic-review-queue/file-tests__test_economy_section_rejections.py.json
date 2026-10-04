@@ -1,0 +1,116 @@
+{
+  "source_path": "tests/test_economy_section_rejections.py",
+  "member_count": 8,
+  "members": [
+    {
+      "idx": 663,
+      "file": "tests/test_economy_section_rejections.py",
+      "name": "test_top_level_bad_account_rejected_good_lands",
+      "line": 31,
+      "end": 46,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0663_test_economy_section_rejections__test_top_level_bad_account_rejected_good_lands.txt",
+      "source_path": "tests/test_economy_section_rejections.py"
+    },
+    {
+      "idx": 664,
+      "file": "tests/test_economy_section_rejections.py",
+      "name": "test_top_level_nonint_delta_rejected",
+      "line": 49,
+      "end": 59,
+      "flags": [
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0664_test_economy_section_rejections__test_top_level_nonint_delta_rejected.txt",
+      "source_path": "tests/test_economy_section_rejections.py"
+    },
+    {
+      "idx": 665,
+      "file": "tests/test_economy_section_rejections.py",
+      "name": "test_valid_economy_still_applies_no_reject",
+      "line": 62,
+      "end": 74,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0665_test_economy_section_rejections__test_valid_economy_still_applies_no_reject.txt",
+      "source_path": "tests/test_economy_section_rejections.py"
+    },
+    {
+      "idx": 666,
+      "file": "tests/test_economy_section_rejections.py",
+      "name": "test_zero_delta_economy_no_reject_no_apply",
+      "line": 77,
+      "end": 86,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0666_test_economy_section_rejections__test_zero_delta_economy_no_reject_no_apply.txt",
+      "source_path": "tests/test_economy_section_rejections.py"
+    },
+    {
+      "idx": 667,
+      "file": "tests/test_economy_section_rejections.py",
+      "name": "test_issue_effect_bad_account_economy_reaches_reports",
+      "line": 89,
+      "end": 111,
+      "flags": [
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0667_test_economy_section_rejections__test_issue_effect_bad_account_economy_reaches_reports.txt",
+      "source_path": "tests/test_economy_section_rejections.py"
+    },
+    {
+      "idx": 668,
+      "file": "tests/test_economy_section_rejections.py",
+      "name": "test_float_and_bool_delta_rejected",
+      "line": 114,
+      "end": 128,
+      "flags": [
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0668_test_economy_section_rejections__test_float_and_bool_delta_rejected.txt",
+      "source_path": "tests/test_economy_section_rejections.py"
+    },
+    {
+      "idx": 669,
+      "file": "tests/test_economy_section_rejections.py",
+      "name": "test_noop_bad_account_skipped_not_rejected",
+      "line": 131,
+      "end": 144,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0669_test_economy_section_rejections__test_noop_bad_account_skipped_not_rejected.txt",
+      "source_path": "tests/test_economy_section_rejections.py"
+    },
+    {
+      "idx": 670,
+      "file": "tests/test_economy_section_rejections.py",
+      "name": "test_issue_effect_cancel_economy_reaches_reports",
+      "line": 147,
+      "end": 169,
+      "flags": [
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0670_test_economy_section_rejections__test_issue_effect_cancel_economy_reaches_reports.txt",
+      "source_path": "tests/test_economy_section_rejections.py"
+    }
+  ]
+}

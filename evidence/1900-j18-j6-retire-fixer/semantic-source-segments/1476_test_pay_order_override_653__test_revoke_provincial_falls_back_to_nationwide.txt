@@ -1,0 +1,28 @@
+# FILE: tests/test_pay_order_override_653.py
+# NAME: test_revoke_provincial_falls_back_to_nationwide
+# LINE: 721-742
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_revoke_provincial_falls_back_to_nationwide(game):
+    """Codex-11/revoke_shape_exit②：全国+省域并存时撤省域后该省回落全国键。"""
+    db, state, _content = game
+    nation = _override_dossier(
+        db, state, [{"key": "due_priority_军饷", "value": 35}],
+        text="全国边饷居后",
+    )
+    db.apply_dossier_promulgation(state, nation, "promulgated")
+    local = _override_dossier(
+        db, state, [{"key": "due_priority_军饷@shaanxi", "value": 50}],
+        text="陕西边饷居末",
+    )
+    db.apply_dossier_promulgation(state, local, "promulgated")
+    revoke = db.create_decree_dossier(
+        state, action_type="revoke_decree", decree_text="撤陕西旨",
+        target_kind="dossier", target_id=str(local),
+        payload={"revoke_target_dossier_id": local},
+    )
+    db.apply_dossier_promulgation(state, revoke, "promulgated")
+    cfg = db.get_fiscal_config()
+    assert "due_priority_军饷@shaanxi" not in cfg  # 省域形状退出，禁留 live 默认
+    assert cfg["due_priority_军饷"] == 35  # 全国键仍在位

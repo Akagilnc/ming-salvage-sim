@@ -1,0 +1,14 @@
+# FILE: web/src/components/modals.test.tsx
+# NAME: "ReportModal — narrative settlement bulletin" / "renders narrative without an account page"
+# LINE: 1711-1718
+# FLAGS: web_text_assert
+# KIND: web
+
+  it("renders narrative without an account page", () => {
+    renderReportModal({
+      report: "**辽东军情**\n- 军前缺饷",
+    });
+
+    expect(document.body.textContent).toContain("辽东军情");
+    expect(document.body.textContent).toContain("军前缺饷");
+  });

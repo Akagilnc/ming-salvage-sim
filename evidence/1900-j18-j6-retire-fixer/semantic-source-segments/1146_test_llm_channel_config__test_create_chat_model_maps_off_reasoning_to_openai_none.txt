@@ -1,0 +1,20 @@
+# FILE: tests/test_llm_channel_config.py
+# NAME: test_create_chat_model_maps_off_reasoning_to_openai_none
+# LINE: 112-125
+# FLAGS: assert_text_compare_or_match
+# KIND: py
+
+def test_create_chat_model_maps_off_reasoning_to_openai_none(monkeypatch):
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    cfg = LLMConfig(
+        api_key="sk-test",
+        base_url="https://api.example.com/v1",
+        model="gpt-5.5",
+        channel="api",
+        thinking_level="high",
+        reasoning_strength="off",
+    )
+
+    model = create_chat_model(cfg)
+
+    assert model.reasoning_effort == "none"

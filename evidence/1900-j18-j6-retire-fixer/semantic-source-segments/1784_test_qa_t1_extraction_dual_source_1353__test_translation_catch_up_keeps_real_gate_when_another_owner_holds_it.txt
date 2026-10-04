@@ -1,0 +1,35 @@
+# FILE: tests/test_qa_t1_extraction_dual_source_1353.py
+# NAME: test_translation_catch_up_keeps_real_gate_when_another_owner_holds_it
+# LINE: 576-604
+# FLAGS: mock_or_patch_present
+# KIND: py
+
+def test_translation_catch_up_keeps_real_gate_when_another_owner_holds_it(
+    game, monkeypatch,
+):
+    """#1842：忙闸只说明他者持有，不能据此把 SQLite 补账降级成无锁。"""
+    from ming_sim.session import GameSession
+    from ming_sim.session_write_queue import SessionWriteQueue
+
+    db, state, _content = game
+    queue = SessionWriteQueue()
+    sess = object.__new__(GameSession)
+    sess.db = db
+    sess.state = state
+    sess.llm_config = object()
+    sess._write_queue = queue
+    sess._write_gate = queue.write_gate
+    seen = {}
+
+    def observe_catch_up(*_a, **kwargs):
+        seen["write_gate"] = kwargs.get("write_gate")
+
+    monkeypatch.setattr(audience_translation, "catch_up_pending_translations", observe_catch_up)
+    monkeypatch.setattr(audience_translation, "list_pending_translations", lambda *_a: [])
+
+    assert queue.write_gate.acquire(blocking=False)
+    try:
+        sess.await_translations_before_month()
+    finally:
+        queue.write_gate.release()
+    assert seen["write_gate"] is queue.write_gate

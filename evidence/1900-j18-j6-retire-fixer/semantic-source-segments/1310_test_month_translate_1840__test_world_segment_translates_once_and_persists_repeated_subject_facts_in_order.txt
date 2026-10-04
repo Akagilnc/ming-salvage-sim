@@ -1,0 +1,41 @@
+# FILE: tests/test_month_translate_1840.py
+# NAME: test_world_segment_translates_once_and_persists_repeated_subject_facts_in_order
+# LINE: 178-212
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_world_segment_translates_once_and_persists_repeated_subject_facts_in_order(game):
+    from ming_sim.month_translate import dispatch_month_segment
+
+    db, state, _ = game
+    person, army = _character_name(db), _army_id(db)
+    declaration = {
+        "textual_facts": [
+            {"subject_kind": "character", "subject_id": person, "body": "人物先记一事"},
+            {"subject_kind": "character", "subject_id": person, "body": "人物再记一事"},
+            {"subject_kind": "army", "subject_id": army, "body": "军队先记一事"},
+            {"subject_kind": "army", "subject_id": army, "body": "军队再记一事"},
+        ],
+    }
+    calls = []
+
+    def translate(prompt, llm_config):
+        calls.append((prompt, llm_config))
+        return declaration
+
+    dispatch_month_segment(
+        db,
+        state,
+        segment="完整世界段",
+        translate_fn=translate,
+    )
+
+    assert len(calls) == 1
+    person_facts = db.textual_facts.readable_materials(
+        subject_kind="character", subject_id=person,
+    )
+    army_facts = db.textual_facts.readable_materials(
+        subject_kind="army", subject_id=army,
+    )
+    assert [fact.body for fact in person_facts] == ["人物先记一事", "人物再记一事"]
+    assert [fact.body for fact in army_facts] == ["军队先记一事", "军队再记一事"]

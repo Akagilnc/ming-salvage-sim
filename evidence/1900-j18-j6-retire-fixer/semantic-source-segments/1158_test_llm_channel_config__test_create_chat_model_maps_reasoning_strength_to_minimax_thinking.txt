@@ -1,0 +1,19 @@
+# FILE: tests/test_llm_channel_config.py
+# NAME: test_create_chat_model_maps_reasoning_strength_to_minimax_thinking
+# LINE: 391-403
+# FLAGS: assert_text_compare_or_match
+# KIND: py
+
+def test_create_chat_model_maps_reasoning_strength_to_minimax_thinking(monkeypatch):
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    cfg = LLMConfig(
+        api_key="sk-test",
+        base_url="https://api.minimaxi.com/v1",
+        model="minimax-test",
+        channel="api",
+        reasoning_strength="off",
+    )
+
+    model = create_chat_model(cfg, enable_thinking=True)
+
+    assert model.extra_body == {"thinking": {"type": "disabled"}, "reasoning_split": True}

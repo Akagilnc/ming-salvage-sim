@@ -1,0 +1,35 @@
+# FILE: tests/test_audience_night_498.py
+# NAME: test_open_summon_close_chain_readable_by_night
+# LINE: 106-134
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_open_summon_close_chain_readable_by_night(game):
+    db, state, content = game
+    minister = _active_minister(db, content)
+
+    night = an.open_night(
+        db, state, time_of_day="戌时", location="乾清宫",
+    )
+    an.summon_enter(db, night["id"], minister, method=METHOD_XUANRU)
+    an.close_night(db, state, night_id=night["id"])
+
+    loaded = an.get_night(db, night["id"])
+    assert loaded["status"] == "closed"
+    assert loaded["time_of_day"] == "戌时"
+    assert loaded["location"] == "乾清宫"
+
+    entries = an.list_ledger(db, night["id"])
+    for e in entries:
+        assert isinstance(e["seq"], int)
+        assert isinstance(e["person_names"], list)
+        assert e["audibility"] in {AUDIBILITY_PUBLIC, an.AUDIBILITY_PRIVATE}
+        assert isinstance(e["body"], str)
+        assert isinstance(e["tags"], list)
+    seqs = [e["seq"] for e in entries]
+    assert seqs == sorted(seqs)
+
+    # #1838 reopen：无开夜/收夜旁白账；入殿事实账仍在。
+    enter_e = _find_entries(entries, TAG_ENTER, METHOD_XUANRU)
+    assert any(minister in e["person_names"] for e in enter_e)
+    assert an.get_night(db, night["id"])["status"] == "closed"

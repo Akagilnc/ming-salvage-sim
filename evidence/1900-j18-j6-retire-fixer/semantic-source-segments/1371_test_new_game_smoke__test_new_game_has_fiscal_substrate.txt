@@ -1,0 +1,12 @@
+# FILE: tests/test_new_game_smoke.py
+# NAME: test_new_game_has_fiscal_substrate
+# LINE: 67-72
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_new_game_has_fiscal_substrate(fresh_game_dir):
+    sess, _dbp, _content = fresh_game_dir
+    settle = _shaanxi_settle(sess.db)
+    assert isinstance(settle, dict) and "st" in settle and "p" in settle, \
+        "新档陕西应带 #66 省级财政基座"
+    assert settle["st"]["军饷欠"] == pytest.approx(_shaanxi_source_arrears(sess.db))

@@ -1,0 +1,96 @@
+# FILE: tests/test_centrifuge_ledger_690.py
+# NAME: test_t11_rebuild_clears_dirty_and_write_path_rolls_back
+# LINE: 652-741
+# FLAGS: assert_text_compare_or_match,assert_count,mock_or_patch_present,helper_or_private_call
+# KIND: py
+
+def test_t11_rebuild_clears_dirty_and_write_path_rolls_back(game, monkeypatch):
+    from ming_sim.centrifuge_ledger import (
+        accrue_blood_debt,
+        rebuild_centrifuge_cache,
+    )
+
+    db, state, _content = game
+    # 先落一笔真账
+    accrue_blood_debt(
+        db=db,
+        turn=state.turn,
+        target=_TARGET_EUNUCH,
+        axis=_AXIS,
+        penalty_type="抄家",
+        crime_weight=70,
+        idem_base="t11|seed",
+    )
+    log_before = [dict(r) for r in _log_rows(db)]
+    faction = _faction_of(db, _TARGET_EUNUCH)
+    other = "东林"
+    assert other != faction
+
+    # 脏 cache 行（无对应 log group）+ 脏 overdraw
+    db.conn.execute(
+        "INSERT INTO faction_axis_debt(faction, axis, blood_debt, wariness) "
+        "VALUES (?,?,?,?)",
+        (other, "民本恤民", 99, 88),
+    )
+    db.conn.execute(
+        "UPDATE factions SET edict_overdraw = 7 WHERE name=?", (other,)
+    )
+    db.conn.commit()
+    assert any(r["faction"] == other for r in _cache_rows(db))
+    assert _overdraw_map(db)[other] == 7
+
+    rebuild_centrifuge_cache(db)
+    assert not any(r["faction"] == other for r in _cache_rows(db))
+    assert _overdraw_map(db)[other] == 0
+    assert [dict(r) for r in _log_rows(db)] == log_before
+    # 真账 cache 仍在
+    eunuch_cache = [
+        r for r in _cache_rows(db) if r["faction"] == faction and r["axis"] == _AXIS
+    ]
+    assert eunuch_cache and int(eunuch_cache[0]["blood_debt"]) > 0
+
+    # 写途 monkeypatch：INSERT centrifuge_log 时抛错 → 全快照回滚
+    before_fail = _snapshot(db)
+    real_execute = db.conn.execute
+
+    def boom_on_log(sql, parameters=()):
+        text = sql if isinstance(sql, str) else str(sql)
+        if "INSERT INTO centrifuge_log" in text.replace("\n", " "):
+            raise sqlite3.OperationalError("simulated write failure")
+        return real_execute(sql, parameters)
+
+    monkeypatch.setattr(db.conn, "execute", boom_on_log)
+    with pytest.raises(sqlite3.OperationalError):
+        accrue_blood_debt(
+            db=db,
+            turn=state.turn,
+            target=_TARGET_ARMY,
+            axis=_AXIS,
+            penalty_type="抄家",
+            crime_weight=70,
+            idem_base="t11|boom",
+        )
+    monkeypatch.setattr(db.conn, "execute", real_execute)
+    assert _snapshot(db) == before_fail
+
+    # rebuild 中途失败亦整原子回滚
+    real_execute2 = db.conn.execute
+    calls = {"n": 0}
+
+    def boom_on_rebuild(sql, parameters=()):
+        text = sql if isinstance(sql, str) else str(sql)
+        if "DELETE FROM faction_axis_debt" in text:
+            calls["n"] += 1
+            if calls["n"] >= 1:
+                # let delete happen then fail on next write
+                pass
+        if "UPDATE factions SET edict_overdraw" in text.replace("\n", " "):
+            raise sqlite3.OperationalError("simulated rebuild failure")
+        return real_execute2(sql, parameters)
+
+    before_rebuild = _snapshot(db)
+    monkeypatch.setattr(db.conn, "execute", boom_on_rebuild)
+    with pytest.raises(sqlite3.OperationalError):
+        rebuild_centrifuge_cache(db)
+    monkeypatch.setattr(db.conn, "execute", real_execute2)
+    assert _snapshot(db) == before_rebuild

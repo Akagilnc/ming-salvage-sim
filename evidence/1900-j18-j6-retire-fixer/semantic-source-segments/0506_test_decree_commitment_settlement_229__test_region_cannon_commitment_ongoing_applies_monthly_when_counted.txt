@@ -1,0 +1,44 @@
+# FILE: tests/test_decree_commitment_settlement_229.py
+# NAME: test_region_cannon_commitment_ongoing_applies_monthly_when_counted
+# LINE: 408-445
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_region_cannon_commitment_ongoing_applies_monthly_when_counted(game):
+    db, state, content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.execute("UPDATE legacies SET status='cleared' WHERE status='active'")
+    db.conn.execute("UPDATE regions SET city_level=5, cannon=1 WHERE id='beizhili'")
+    db.conn.commit()
+
+    issue_id = db.insert_issue(
+        state,
+        kind="initiative",
+        title="京师城防炮月度加设承诺",
+        origin_kind="decree",
+        origin_ref="decree:turn-1:capital-cannon",
+        bar_value=0,
+        inertia=0,
+        ongoing_effects={
+            "region_delta": {
+                "beizhili": {
+                    "cannon": 2,
+                    "reason": "每月增设京师城防炮",
+                }
+            }
+        },
+        end_turn=state.turn + 2,
+        commitment_kind="until_stop",
+        cancellable="decree",
+    )
+
+    _advance_player_month(db, state, content)
+
+    assert _region_cannon(db, "beizhili") == 3
+    advances = db.conn.execute(
+        "SELECT trigger_kind, metric_delta FROM issue_advances WHERE issue_id=?",
+        (issue_id,),
+    ).fetchall()
+    assert [row["trigger_kind"] for row in advances] == ["ongoing"]
+    payload = json.loads(advances[0]["metric_delta"])
+    assert payload["commitment_progress"]["months_elapsed"] == 1

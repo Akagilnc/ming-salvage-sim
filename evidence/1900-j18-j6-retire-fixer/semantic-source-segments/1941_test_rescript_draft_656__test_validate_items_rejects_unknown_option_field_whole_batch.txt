@@ -1,0 +1,13 @@
+# FILE: tests/test_rescript_draft_656.py
+# NAME: test_validate_items_rejects_unknown_option_field_whole_batch
+# LINE: 805-811
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_validate_items_rejects_unknown_option_field_whole_batch(draft_ingress):
+    item = _legal_item()
+    item["options"][0]["extra_option"] = "原件输入"
+    drafts = draft_ingress({"items": [item]})
+    assert drafts is not None
+    assert len(drafts[0]["options"]) == 1
+    assert drafts[0]["options"][0]["label"] == item["options"][1]["label"]

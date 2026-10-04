@@ -1,0 +1,26 @@
+# FILE: tests/test_event_trigger_gate.py
+# NAME: test_army_numeric_gate_preserves_fractional_arrears_tail
+# LINE: 722-741
+# FLAGS: helper_or_private_call
+# KIND: py
+
+def test_army_numeric_gate_preserves_fractional_arrears_tail(game):
+    """#302 cmr：并轨后 armies.arrears 可为小数尾差，trigger_gate 不得 int 截断成 0。"""
+    db, state, _content = game
+
+    army_id = db.conn.execute("SELECT id FROM armies ORDER BY id LIMIT 1").fetchone()["id"]
+    db.conn.execute("UPDATE armies SET arrears=? WHERE id=?", (0.5, army_id))
+    db.conn.commit()
+
+    for gate, expected in [
+        ({f'army.{army_id}.arrears': '<=0'}, False),
+        ({f'army.{army_id}.arrears': '>0'}, True),
+    ]:
+        event = _hist_event("__runtime_gate__", gate)
+        _content.events.append(event)
+        try:
+            issues.bind_content(_content)
+            candidates = issues.gather_candidate_events(state, db)
+            assert (event.id in {candidate.id for candidate in candidates}) is expected
+        finally:
+            _content.events.remove(event)

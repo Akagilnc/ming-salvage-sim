@@ -1,0 +1,170 @@
+{
+  "source_path": "tests/test_mutiny_third_strike_318.py",
+  "member_count": 11,
+  "members": [
+    {
+      "idx": 1350,
+      "file": "tests/test_mutiny_third_strike_318.py",
+      "name": "test_third_strike_transfers_to_bandit_via_adapter",
+      "line": 110,
+      "end": 178,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1350_test_mutiny_third_strike_318__test_third_strike_transfers_to_bandit_via_adapter.txt",
+      "source_path": "tests/test_mutiny_third_strike_318.py"
+    },
+    {
+      "idx": 1351,
+      "file": "tests/test_mutiny_third_strike_318.py",
+      "name": "test_third_strike_does_not_repeat_while_already_bandit",
+      "line": 182,
+      "end": 200,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1351_test_mutiny_third_strike_318__test_third_strike_does_not_repeat_while_already_bandit.txt",
+      "source_path": "tests/test_mutiny_third_strike_318.py"
+    },
+    {
+      "idx": 1352,
+      "file": "tests/test_mutiny_third_strike_318.py",
+      "name": "test_zero_manpower_latched_clears_before_continue_no_third_strike",
+      "line": 204,
+      "end": 223,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1352_test_mutiny_third_strike_318__test_zero_manpower_latched_clears_before_continue_no_third_strike.txt",
+      "source_path": "tests/test_mutiny_third_strike_318.py"
+    },
+    {
+      "idx": 1353,
+      "file": "tests/test_mutiny_third_strike_318.py",
+      "name": "test_empty_source_delta_cannot_defect_latched_first_or_second_strike",
+      "line": 228,
+      "end": 275,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1353_test_mutiny_third_strike_318__test_empty_source_delta_cannot_defect_latched_first_or_second_strike.txt",
+      "source_path": "tests/test_mutiny_third_strike_318.py"
+    },
+    {
+      "idx": 1354,
+      "file": "tests/test_mutiny_third_strike_318.py",
+      "name": "test_non_latched_generic_owner_change_still_works_via_adapter",
+      "line": 278,
+      "end": 321,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1354_test_mutiny_third_strike_318__test_non_latched_generic_owner_change_still_works_via_adapter.txt",
+      "source_path": "tests/test_mutiny_third_strike_318.py"
+    },
+    {
+      "idx": 1355,
+      "file": "tests/test_mutiny_third_strike_318.py",
+      "name": "test_transfer_to_ming_rejects_mutiny_count_ge_3",
+      "line": 325,
+      "end": 364,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1355_test_mutiny_third_strike_318__test_transfer_to_ming_rejects_mutiny_count_ge_3.txt",
+      "source_path": "tests/test_mutiny_third_strike_318.py"
+    },
+    {
+      "idx": 1356,
+      "file": "tests/test_mutiny_third_strike_318.py",
+      "name": "test_transfer_to_ming_requires_d6_pay_source",
+      "line": 368,
+      "end": 423,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1356_test_mutiny_third_strike_318__test_transfer_to_ming_requires_d6_pay_source.txt",
+      "source_path": "tests/test_mutiny_third_strike_318.py"
+    },
+    {
+      "idx": 1357,
+      "file": "tests/test_mutiny_third_strike_318.py",
+      "name": "test_hub_excluded_zero_manpower_latched_clears_once",
+      "line": 437,
+      "end": 466,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1357_test_mutiny_third_strike_318__test_hub_excluded_zero_manpower_latched_clears_once.txt",
+      "source_path": "tests/test_mutiny_third_strike_318.py"
+    },
+    {
+      "idx": 1358,
+      "file": "tests/test_mutiny_third_strike_318.py",
+      "name": "test_persisted_third_strike_defects_next_tick_once",
+      "line": 470,
+      "end": 496,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1358_test_mutiny_third_strike_318__test_persisted_third_strike_defects_next_tick_once.txt",
+      "source_path": "tests/test_mutiny_third_strike_318.py"
+    },
+    {
+      "idx": 1359,
+      "file": "tests/test_mutiny_third_strike_318.py",
+      "name": "test_persisted_third_strike_defects_on_recovery_boundary",
+      "line": 500,
+      "end": 525,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1359_test_mutiny_third_strike_318__test_persisted_third_strike_defects_on_recovery_boundary.txt",
+      "source_path": "tests/test_mutiny_third_strike_318.py"
+    },
+    {
+      "idx": 1360,
+      "file": "tests/test_mutiny_third_strike_318.py",
+      "name": "test_hub_excluded_persisted_third_strike_defects_once",
+      "line": 536,
+      "end": 567,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1360_test_mutiny_third_strike_318__test_hub_excluded_persisted_third_strike_defects_once.txt",
+      "source_path": "tests/test_mutiny_third_strike_318.py"
+    }
+  ]
+}

@@ -1,0 +1,329 @@
+{
+  "source_path": "tests/test_declaration_dispatch_1835.py",
+  "member_count": 22,
+  "members": [
+    {
+      "idx": 442,
+      "file": "tests/test_declaration_dispatch_1835.py",
+      "name": "test_stub_declaration_lands_on_existing_staging_and_new_records_without_missing_items",
+      "line": 34,
+      "end": 80,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0442_test_declaration_dispatch_1835__test_stub_declaration_lands_on_existing_staging_and_new_records_without_missing_items.txt",
+      "source_path": "tests/test_declaration_dispatch_1835.py"
+    },
+    {
+      "idx": 443,
+      "file": "tests/test_declaration_dispatch_1835.py",
+      "name": "test_commission_with_draft_and_grant_for_same_money_is_one_payload_one_row",
+      "line": 83,
+      "end": 115,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0443_test_declaration_dispatch_1835__test_commission_with_draft_and_grant_for_same_money_is_one_payload_one_row.txt",
+      "source_path": "tests/test_declaration_dispatch_1835.py"
+    },
+    {
+      "idx": 444,
+      "file": "tests/test_declaration_dispatch_1835.py",
+      "name": "test_commission_with_appointment_and_grant_is_one_combined_payload_one_row",
+      "line": 118,
+      "end": 170,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0444_test_declaration_dispatch_1835__test_commission_with_appointment_and_grant_is_one_combined_payload_one_row.txt",
+      "source_path": "tests/test_declaration_dispatch_1835.py"
+    },
+    {
+      "idx": 445,
+      "file": "tests/test_declaration_dispatch_1835.py",
+      "name": "test_reference_to_nonexistent_entity_is_rejected_without_killing_sibling_item",
+      "line": 173,
+      "end": 231,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0445_test_declaration_dispatch_1835__test_reference_to_nonexistent_entity_is_rejected_without_killing_sibling_item.txt",
+      "source_path": "tests/test_declaration_dispatch_1835.py"
+    },
+    {
+      "idx": 446,
+      "file": "tests/test_declaration_dispatch_1835.py",
+      "name": "test_unknown_top_level_section_is_rejected_durably_without_dropping_sibling",
+      "line": 234,
+      "end": 257,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0446_test_declaration_dispatch_1835__test_unknown_top_level_section_is_rejected_durably_without_dropping_sibling.txt",
+      "source_path": "tests/test_declaration_dispatch_1835.py"
+    },
+    {
+      "idx": 447,
+      "file": "tests/test_declaration_dispatch_1835.py",
+      "name": "test_promise_refuse_withdraws_staged_action_and_missing_action_id_is_rejected",
+      "line": 260,
+      "end": 287,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0447_test_declaration_dispatch_1835__test_promise_refuse_withdraws_staged_action_and_missing_action_id_is_rejected.txt",
+      "source_path": "tests/test_declaration_dispatch_1835.py"
+    },
+    {
+      "idx": 448,
+      "file": "tests/test_declaration_dispatch_1835.py",
+      "name": "test_promise_referencing_action_id_belonging_to_another_night_is_rejected",
+      "line": 290,
+      "end": 316,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0448_test_declaration_dispatch_1835__test_promise_referencing_action_id_belonging_to_another_night_is_rejected.txt",
+      "source_path": "tests/test_declaration_dispatch_1835.py"
+    },
+    {
+      "idx": 449,
+      "file": "tests/test_declaration_dispatch_1835.py",
+      "name": "test_on_scene_person_status_change_lands_and_rejects_nonexistent_person",
+      "line": 319,
+      "end": 334,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0449_test_declaration_dispatch_1835__test_on_scene_person_status_change_lands_and_rejects_nonexistent_person.txt",
+      "source_path": "tests/test_declaration_dispatch_1835.py"
+    },
+    {
+      "idx": 450,
+      "file": "tests/test_declaration_dispatch_1835.py",
+      "name": "test_on_scene_fact_attaches_declared_affair_and_rejects_unopened_affair",
+      "line": 337,
+      "end": 373,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0450_test_declaration_dispatch_1835__test_on_scene_fact_attaches_declared_affair_and_rejects_unopened_affair.txt",
+      "source_path": "tests/test_declaration_dispatch_1835.py"
+    },
+    {
+      "idx": 451,
+      "file": "tests/test_declaration_dispatch_1835.py",
+      "name": "test_on_scene_fact_conflicting_affair_pointer_rolls_back_the_person_change_too",
+      "line": 376,
+      "end": 420,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0451_test_declaration_dispatch_1835__test_on_scene_fact_conflicting_affair_pointer_rolls_back_the_person_change_too.txt",
+      "source_path": "tests/test_declaration_dispatch_1835.py"
+    },
+    {
+      "idx": 452,
+      "file": "tests/test_declaration_dispatch_1835.py",
+      "name": "test_presence_lands_with_declared_body_verbatim_no_synthesized_text",
+      "line": 423,
+      "end": 448,
+      "flags": [
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0452_test_declaration_dispatch_1835__test_presence_lands_with_declared_body_verbatim_no_synthesized_text.txt",
+      "source_path": "tests/test_declaration_dispatch_1835.py"
+    },
+    {
+      "idx": 453,
+      "file": "tests/test_declaration_dispatch_1835.py",
+      "name": "test_presence_rejects_nonexistent_person_without_polluting_ledger",
+      "line": 451,
+      "end": 477,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0453_test_declaration_dispatch_1835__test_presence_rejects_nonexistent_person_without_polluting_ledger.txt",
+      "source_path": "tests/test_declaration_dispatch_1835.py"
+    },
+    {
+      "idx": 454,
+      "file": "tests/test_declaration_dispatch_1835.py",
+      "name": "test_presence_with_no_night_context_is_rejected_as_missing_ref",
+      "line": 480,
+      "end": 490,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0454_test_declaration_dispatch_1835__test_presence_with_no_night_context_is_rejected_as_missing_ref.txt",
+      "source_path": "tests/test_declaration_dispatch_1835.py"
+    },
+    {
+      "idx": 455,
+      "file": "tests/test_declaration_dispatch_1835.py",
+      "name": "test_scene_fact_speaker_segment_lands_verbatim_and_rejects_bad_audibility_and_ghost_person",
+      "line": 493,
+      "end": 530,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0455_test_declaration_dispatch_1835__test_scene_fact_speaker_segment_lands_verbatim_and_rejects_bad_audibility_and_ghost_person.txt",
+      "source_path": "tests/test_declaration_dispatch_1835.py"
+    },
+    {
+      "idx": 456,
+      "file": "tests/test_declaration_dispatch_1835.py",
+      "name": "test_edge_event_lands_and_categorizes_unknown_kind_and_hallucinated_person_differently",
+      "line": 533,
+      "end": 552,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0456_test_declaration_dispatch_1835__test_edge_event_lands_and_categorizes_unknown_kind_and_hallucinated_person_differently.txt",
+      "source_path": "tests/test_declaration_dispatch_1835.py"
+    },
+    {
+      "idx": 457,
+      "file": "tests/test_declaration_dispatch_1835.py",
+      "name": "test_edge_event_attaches_declared_affair",
+      "line": 555,
+      "end": 579,
+      "flags": [
+        "assert_count"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0457_test_declaration_dispatch_1835__test_edge_event_attaches_declared_affair.txt",
+      "source_path": "tests/test_declaration_dispatch_1835.py"
+    },
+    {
+      "idx": 458,
+      "file": "tests/test_declaration_dispatch_1835.py",
+      "name": "test_edge_event_conflicting_affair_pointer_is_rejected_first_binding_kept",
+      "line": 582,
+      "end": 623,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0458_test_declaration_dispatch_1835__test_edge_event_conflicting_affair_pointer_is_rejected_first_binding_kept.txt",
+      "source_path": "tests/test_declaration_dispatch_1835.py"
+    },
+    {
+      "idx": 459,
+      "file": "tests/test_declaration_dispatch_1835.py",
+      "name": "test_protagonist_lands_and_rejects_nonexistent_person",
+      "line": 626,
+      "end": 638,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0459_test_declaration_dispatch_1835__test_protagonist_lands_and_rejects_nonexistent_person.txt",
+      "source_path": "tests/test_declaration_dispatch_1835.py"
+    },
+    {
+      "idx": 460,
+      "file": "tests/test_declaration_dispatch_1835.py",
+      "name": "test_registration_adds_new_person_to_roster_and_rejects_existing_name",
+      "line": 641,
+      "end": 664,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0460_test_declaration_dispatch_1835__test_registration_adds_new_person_to_roster_and_rejects_existing_name.txt",
+      "source_path": "tests/test_declaration_dispatch_1835.py"
+    },
+    {
+      "idx": 461,
+      "file": "tests/test_declaration_dispatch_1835.py",
+      "name": "test_registration_attaches_declared_affair",
+      "line": 667,
+      "end": 684,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0461_test_declaration_dispatch_1835__test_registration_attaches_declared_affair.txt",
+      "source_path": "tests/test_declaration_dispatch_1835.py"
+    },
+    {
+      "idx": 462,
+      "file": "tests/test_declaration_dispatch_1835.py",
+      "name": "test_staged_declaration_discard_and_idempotent_settle_in_decree_order",
+      "line": 687,
+      "end": 766,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0462_test_declaration_dispatch_1835__test_staged_declaration_discard_and_idempotent_settle_in_decree_order.txt",
+      "source_path": "tests/test_declaration_dispatch_1835.py"
+    },
+    {
+      "idx": 463,
+      "file": "tests/test_declaration_dispatch_1835.py",
+      "name": "test_staging_onto_already_settled_decree_ref_is_rejected_not_stranded",
+      "line": 769,
+      "end": 808,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0463_test_declaration_dispatch_1835__test_staging_onto_already_settled_decree_ref_is_rejected_not_stranded.txt",
+      "source_path": "tests/test_declaration_dispatch_1835.py"
+    }
+  ]
+}

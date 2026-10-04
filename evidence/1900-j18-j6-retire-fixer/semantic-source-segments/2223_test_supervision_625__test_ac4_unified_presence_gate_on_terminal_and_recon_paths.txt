@@ -1,0 +1,79 @@
+# FILE: tests/test_supervision_625.py
+# NAME: test_ac4_unified_presence_gate_on_terminal_and_recon_paths
+# LINE: 381-453
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_ac4_unified_presence_gate_on_terminal_and_recon_paths(game):
+    """⑤统一在场门：终值路/对账路均须本 turn 稽核在场才写暴露；AC4 差分仍立。"""
+    db, state, _content = game
+    owner, auditor_row = _pair_same_faction(db)
+    turn = int(state.turn)
+
+    # 无人盯：终值变形不落暴露
+    bare_id = _subject_dossier(db, state, owner=str(owner["name"]), token="bare")
+    db.conn.execute(
+        "UPDATE decree_dossiers SET status='executing' WHERE id=?", (bare_id,),
+    )
+    db.conn.commit()
+    db.record_dossier_execution(
+        bare_id, "transformed", "无人盯走样", turn, close=True, commit=True,
+    )
+    assert db.list_loophole_exposures(bare_id) == []
+
+    # 被盯紧：终值变形落暴露 → 读入面差分
+    watched_id = _subject_dossier(db, state, owner=str(owner["name"]), token="watch")
+    _audit_dossier(
+        db, state, auditor=str(auditor_row["name"]), subject_id=watched_id, token="watch",
+    )
+    db.record_monthly_supervision_presence(turn, commit=True)
+    assert db.dossier_has_supervision_presence(watched_id, turn)
+    before = db.build_supervision_judge_surface(watched_id)
+    assert before["transformation_tendency_facts"]["exposure_count"] == 0
+
+    db.conn.execute(
+        "UPDATE decree_dossiers SET status='executing' WHERE id=?", (watched_id,),
+    )
+    db.conn.commit()
+    db.record_dossier_execution(
+        watched_id, "transformed", "被盯紧走样", turn, close=True, commit=True,
+    )
+    after = db.build_supervision_judge_surface(watched_id)
+    assert after["transformation_tendency_facts"]["exposure_count"] == 1
+    assert "policy+transformed" in after["transformation_tendency_facts"]["exposure_classes"]
+    assert after["loophole_exposures"] != before["loophole_exposures"]
+
+    # 对账路：同门——无在场不写，有在场才写
+    recon_bare = _subject_dossier(db, state, owner=str(owner["name"]), token="rb")
+    db.conn.execute(
+        """
+        INSERT INTO decree_dossier_reconciliations
+            (dossier_id, turn, ordered_amount, arrived_amount, loss_amount)
+        VALUES (?, ?, 100, 40, 60)
+        """,
+        (recon_bare, turn),
+    )
+    db.conn.commit()
+    out_bare = db.record_monthly_loophole_exposures_from_reconciliations(turn, commit=True)
+    assert int(out_bare["exposure_written"]) == 0
+    assert db.list_loophole_exposures(recon_bare) == []
+
+    recon_watched = _subject_dossier(db, state, owner=str(owner["name"]), token="rw")
+    _audit_dossier(
+        db, state, auditor=str(auditor_row["name"]),
+        subject_id=recon_watched, token="rw",
+    )
+    db.record_monthly_supervision_presence(turn, commit=True)
+    db.conn.execute(
+        """
+        INSERT INTO decree_dossier_reconciliations
+            (dossier_id, turn, ordered_amount, arrived_amount, loss_amount)
+        VALUES (?, ?, 100, 40, 60)
+        """,
+        (recon_watched, turn),
+    )
+    db.conn.commit()
+    out_w = db.record_monthly_loophole_exposures_from_reconciliations(turn, commit=True)
+    assert int(out_w["exposure_written"]) >= 1
+    exps = db.list_loophole_exposures(recon_watched)
+    assert any(r["execution_form"] == "degraded" for r in exps)

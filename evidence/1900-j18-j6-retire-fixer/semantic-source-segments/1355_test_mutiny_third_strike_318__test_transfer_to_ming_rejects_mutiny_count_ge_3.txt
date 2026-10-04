@@ -1,0 +1,46 @@
+# FILE: tests/test_mutiny_third_strike_318.py
+# NAME: test_transfer_to_ming_rejects_mutiny_count_ge_3
+# LINE: 325-364
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_transfer_to_ming_rejects_mutiny_count_ge_3(game, cutover):
+    db, state, _ = game
+    _configure(db, "substrate_hub")
+    db.conn.execute(
+        "INSERT INTO fiscal_config(key,value,kind,note) VALUES "
+        "('__army_pay_source_cutover',?,'meta','test') "
+        "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+        (cutover,),
+    )
+    db.conn.execute(
+        """UPDATE armies SET owner_power='bandits', mutiny_count=3, is_mutinied=0,
+           pay_source_region='', province_pay_share=0, central_pay_share=0,
+           province_pay_arrears=0, central_pay_arrears=0, arrears=0 WHERE id=?""",
+        (ARMY,),
+    )
+    db.conn.commit()
+
+    changes = db.apply_army_deltas(
+        state,
+        SimpleNamespace(id="season", title="招安"),
+        None,
+        "测试",
+        {
+            ARMY: {
+                "owner_power": "ming",
+                "pay_source_region": "liaodong",
+                "province_pay_share": 0.0,
+                "central_pay_share": 1.0,
+                "reason": "招安回明",
+            }
+        },
+        commit=False,
+    )
+
+    row = db.conn.execute(
+        "SELECT owner_power,mutiny_count FROM armies WHERE id=?", (ARMY,)
+    ).fetchone()
+    assert row["owner_power"] == "bandits"
+    assert row["mutiny_count"] == 3
+    assert any(c.get("rejected") for c in changes)

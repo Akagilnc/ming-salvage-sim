@@ -1,0 +1,17 @@
+# FILE: tests/test_cli_backend.py
+# NAME: test_enrich_backend_error_returns_empty_effects
+# LINE: 161-171
+# FLAGS: assert_text_compare_or_match,mock_or_patch_present
+# KIND: py
+
+def test_enrich_backend_error_returns_empty_effects(monkeypatch, reply):
+    def backend(prompt):
+        if reply is None:
+            raise RuntimeError("backend down")
+        return reply, 1
+
+    monkeypatch.setattr(cb, "_run_backend", backend)
+    monkeypatch.setattr(cb, "_trace", lambda rec: None)
+    assert cb.enrich_initiative_effects("设局", "") == {
+        "effect_on_resolve": {}, "ongoing_effects": {}, "effect_on_fail": {},
+    }

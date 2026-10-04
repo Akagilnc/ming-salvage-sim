@@ -1,0 +1,23 @@
+# FILE: tests/test_web_llm_runtime_config.py
+# NAME: test_game_llm_config_uses_advanced_model_for_api_reasoning_capability
+# LINE: 832-848
+# FLAGS: assert_text_compare_or_match,mock_or_patch_present
+# KIND: py
+
+def test_game_llm_config_uses_advanced_model_for_api_reasoning_capability(monkeypatch):
+    cfg = LLMConfig(
+        api_key="sk-test",
+        base_url="https://api.deepseek.com/v1",
+        model="deepseek-chat",
+        channel="api",
+        advanced_base_url="https://api.example.com/v1",
+        advanced_model="gpt-5",
+    )
+    monkeypatch.setattr(web_app, "web_game", SimpleNamespace(
+        session=SimpleNamespace(llm_config=cfg),
+    ))
+    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {"cli": {}})
+
+    result = asyncio.run(web_app.api_get_llm_config())
+
+    assert result["reasoning_supported"] is True

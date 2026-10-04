@@ -1,0 +1,87 @@
+{
+  "source_path": "tests/test_manual_directive_institution_normalize_1279.py",
+  "member_count": 6,
+  "members": [
+    {
+      "idx": 1187,
+      "file": "tests/test_manual_directive_institution_normalize_1279.py",
+      "name": "test_capture_manual_directive_drops_ministry_name_as_participant",
+      "line": 85,
+      "end": 126,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1187_test_manual_directive_institution_normalize_1279__test_capture_manual_directive_drops_ministry_name_as_participant.txt",
+      "source_path": "tests/test_manual_directive_institution_normalize_1279.py"
+    },
+    {
+      "idx": 1188,
+      "file": "tests/test_manual_directive_institution_normalize_1279.py",
+      "name": "test_web_create_directive_accepts_ministry_subject_without_409",
+      "line": 129,
+      "end": 142,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1188_test_manual_directive_institution_normalize_1279__test_web_create_directive_accepts_ministry_subject_without_409.txt",
+      "source_path": "tests/test_manual_directive_institution_normalize_1279.py"
+    },
+    {
+      "idx": 1189,
+      "file": "tests/test_manual_directive_institution_normalize_1279.py",
+      "name": "test_capture_manual_directive_keeps_real_person_participant",
+      "line": 145,
+      "end": 152,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1189_test_manual_directive_institution_normalize_1279__test_capture_manual_directive_keeps_real_person_participant.txt",
+      "source_path": "tests/test_manual_directive_institution_normalize_1279.py"
+    },
+    {
+      "idx": 1190,
+      "file": "tests/test_manual_directive_institution_normalize_1279.py",
+      "name": "test_capture_manual_directive_keeps_surname_title_aliases",
+      "line": 165,
+      "end": 174,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1190_test_manual_directive_institution_normalize_1279__test_capture_manual_directive_keeps_surname_title_aliases.txt",
+      "source_path": "tests/test_manual_directive_institution_normalize_1279.py"
+    },
+    {
+      "idx": 1191,
+      "file": "tests/test_manual_directive_institution_normalize_1279.py",
+      "name": "test_capture_manual_directive_drops_collective_and_institution_names",
+      "line": 191,
+      "end": 207,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1191_test_manual_directive_institution_normalize_1279__test_capture_manual_directive_drops_collective_and_institution_names.txt",
+      "source_path": "tests/test_manual_directive_institution_normalize_1279.py"
+    },
+    {
+      "idx": 1192,
+      "file": "tests/test_manual_directive_institution_normalize_1279.py",
+      "name": "test_adr0053_unknown_person_still_rejected_at_capture",
+      "line": 212,
+      "end": 226,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1192_test_manual_directive_institution_normalize_1279__test_adr0053_unknown_person_still_rejected_at_capture.txt",
+      "source_path": "tests/test_manual_directive_institution_normalize_1279.py"
+    }
+  ]
+}

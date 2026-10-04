@@ -1,0 +1,33 @@
+# FILE: tests/test_impeachment_surge_655.py
+# NAME: test_knower_departure_does_not_veto_active_responsible_dossier
+# LINE: 115-141
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_knower_departure_does_not_veto_active_responsible_dossier(game):
+    """知情离场/无派系只从闭集剔除，不得否决责任人仍在朝的卷。"""
+    db, state = game[:2]
+    chars = db.conn.execute(
+        "SELECT name,faction FROM characters WHERE status='active' AND COALESCE(faction,'')<>'' ORDER BY name"
+    ).fetchall()
+    owner = next(row for row in chars if row["faction"])
+    knower, _ = _active_pair(db, str(owner["name"]))
+    did, owner_name, _ = _candidate_world(
+        db,
+        state,
+        participants=[
+            {"character_id": owner["name"], "tier": "主办"},
+            {"character_id": knower, "tier": "知情"},
+        ],
+    )
+    db.conn.execute("UPDATE characters SET status='dead' WHERE name=?", (knower,))
+    db.conn.commit()
+
+    candidates = gather_impeachment_surge_candidates(state, db)
+    assert candidates
+    item = candidates[0]
+    assert item["dossier_id"] == did
+    assert owner_name in item["eligible_target_ids"]
+    assert knower not in item["eligible_target_ids"]
+    assert knower in item["participant_ids"]
+    assert knower not in item["responsible_person_ids"]

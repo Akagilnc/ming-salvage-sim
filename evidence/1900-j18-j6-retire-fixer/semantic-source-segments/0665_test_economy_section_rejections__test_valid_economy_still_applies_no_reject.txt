@@ -1,0 +1,19 @@
+# FILE: tests/test_economy_section_rejections.py
+# NAME: test_valid_economy_still_applies_no_reject
+# LINE: 62-74
+# FLAGS: helper_or_private_call
+# KIND: py
+
+def test_valid_economy_still_applies_no_reject(saved_game):
+    """合法 economy 照常落账、零拒收（不误伤）。
+    用 saved_game：断言依赖玩过存档的国库余额基线，fresh seed 不复现（#5）。"""
+    db, state, content = saved_game
+    turn = state.turn
+    before = _guoku(db)
+
+    run_settle(db, state, content, {
+        "economy_moves": [{"origin_ref": "盘面自发", "account": "国库", "delta": -7, "reason": "正常"}],
+    }, narrative="x", decree_text="y")
+
+    assert _rejection_rows(db, turn, ECO_REJ) == []
+    assert _guoku(db) < before  # 确实扣账

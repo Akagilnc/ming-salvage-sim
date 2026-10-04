@@ -1,0 +1,34 @@
+# FILE: web/src/mindreadingDelivery.test.tsx
+# NAME: "召对投递（#499 经真实 useAudienceChat 生产控制器）" / "accepted 后普通流中断会移除未持久化的半段回话"
+# LINE: 183-210
+# FLAGS: web_mock_spy_or_calls
+# KIND: web
+
+  it("accepted 后普通流中断会移除未持久化的半段回话", async () => {
+    let scrollCalls = 0;
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      if (String(url).includes("/api/audience/scroll")) {
+        scrollCalls += 1;
+        return jsonResp({ night_id: 24, protagonist: "", roster: [], translation_pending: false, messages: scrollCalls > 1
+          ? [{ role: "user", speaker: "朕", content: "请奏", chat_turn_id: 8 }]
+          : [] });
+      }
+      return sse([
+        { event: "accepted", data: { campaign_id: "c1", night_id: 24, chat_turn_id: 8 } },
+        { event: "delta", data: { content: "未完成回话" } },
+      ]);
+    }));
+    const { hookRef, rows } = mount(true);
+    await tick();
+
+    let failedTurn: unknown;
+    await act(async () => { await hookRef.current!.sendChat("温体仁", "请奏", {
+      ...noCbs, onError: (_error, identity) => { failedTurn = identity; },
+    }); });
+    await tick();
+
+    expect(hookRef.current!.failedIdentity).toEqual({ campaign_id: "c1", night_id: 24, chat_turn_id: 8 });
+    expect(failedTurn).toEqual({ campaign_id: "c1", night_id: 24, chat_turn_id: 8 });
+    expect(rows()).toContain("user:请奏");
+    expect(rows()).not.toContain(":未完成回话");
+  });

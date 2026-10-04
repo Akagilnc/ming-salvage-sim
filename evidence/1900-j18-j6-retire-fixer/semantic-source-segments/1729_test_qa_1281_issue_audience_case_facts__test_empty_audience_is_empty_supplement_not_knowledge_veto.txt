@@ -1,0 +1,26 @@
+# FILE: tests/test_qa_1281_issue_audience_case_facts.py
+# NAME: test_empty_audience_is_empty_supplement_not_knowledge_veto
+# LINE: 64-83
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_empty_audience_is_empty_supplement_not_knowledge_veto(game, tmp_path):
+    db, state, content = game
+    row = _issue_row(db)
+    issue_id = int(row["id"])
+    db.conn.execute(
+        "UPDATE events SET audiences=? WHERE id=?", ("[]", row["origin_ref"]),
+    )
+
+    knowledge = db.get_character_knowledge(state, AUDIENCE_NAME)
+    assert any(int(item["id"]) == issue_id for item in knowledge.get("issues") or [])
+    projected = next(
+        item for item in project_issue_materials(db, AUDIENCE_NAME, knowledge)
+        if item["id"] == issue_id
+    )
+    assert projected["audience_names"] == ()
+
+    prepared = prepare_character_materials(
+        db, state, content.characters[AUDIENCE_NAME], dest_root=tmp_path / "materials",
+    )
+    assert _issue_paths(prepared, issue_id) == {f"事务/issue-{issue_id}/当前情况.txt"}

@@ -1,0 +1,31 @@
+# FILE: tests/test_audience_night_498.py
+# NAME: test_close_night_only_commits_this_night_approved
+# LINE: 416-440
+# FLAGS: helper_or_private_call
+# KIND: py
+
+def test_close_night_only_commits_this_night_approved(game):
+    """收夜只交本夜已应允白名单；他夜/未应允项不被串走。"""
+    db, state, content = game
+    minister = _active_minister(db, content)
+    night = an.open_night(db, state)
+    approved = db.stage_pending_action(
+        state.turn, kind="office", action="任命", minister_name=minister,
+        payload={"text": "测试任免原文", "name": minister, "office": "兵部郎中", "office_type": "六部",
+                 "faction": "中立", "reason": "测试"},
+    )
+    db.mark_pending_night_approved([approved], night_id=night["id"])
+    # 未应允项（同回合、另一夜语义）
+    unapproved = db.stage_pending_action(
+        state.turn, kind="office", action="任命", minister_name=minister,
+        payload={"text": "测试任免原文", "name": minister, "office": "不该落的官", "office_type": "六部"},
+    )
+    db.conn.execute(
+        "UPDATE pending_actions SET night_id=0, night_approved=0 WHERE id=?", (unapproved,))
+    db.conn.commit()
+
+    an.close_night(db, state, night_id=night["id"], content=content)
+    assert db.conn.execute(
+        "SELECT status FROM pending_actions WHERE id=?", (approved,)).fetchone()["status"] == "committed"
+    assert db.conn.execute(
+        "SELECT status FROM pending_actions WHERE id=?", (unapproved,)).fetchone()["status"] == "pending"

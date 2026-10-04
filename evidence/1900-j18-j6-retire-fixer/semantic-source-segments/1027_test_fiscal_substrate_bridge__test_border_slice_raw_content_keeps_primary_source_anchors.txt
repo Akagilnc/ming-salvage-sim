@@ -1,0 +1,33 @@
+# FILE: tests/test_fiscal_substrate_bridge.py
+# NAME: test_border_slice_raw_content_keeps_primary_source_anchors
+# LINE: 3661-3687
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_border_slice_raw_content_keeps_primary_source_anchors():
+    shanxi = _content_settle("shanxi")
+    assert shanxi["p"]["正赋应征"] == pytest.approx(2118341.95 / 10000 / 12)
+    assert shanxi["_meta"]["正赋起运基线"] == pytest.approx(828835.62 / 10000 / 12)
+    assert shanxi["p"]["起运定额"] == pytest.approx(
+        shanxi["_meta"]["正赋起运基线"] + shanxi["p"]["三饷应征"]
+    )
+    assert shanxi["st"]["官民田"] == pytest.approx(3680.13, abs=1e-2)
+    assert "官民田" not in shanxi["_meta"]["provisional"]
+    assert "起运定额" not in shanxi["_meta"]["provisional"]
+    assert "正赋应征" not in shanxi["_meta"]["provisional"]
+    assert set(shanxi["_meta"]["primary_source"]["fields_refined"]) >= {"官民田", "起运定额", "正赋应征"}
+    assert shanxi["_meta"]["primary_source"]["田赋折银两_年"] == pytest.approx(2118341.95)
+    assert shanxi["_meta"]["primary_source"]["起运米石"] == pytest.approx(640350)
+
+    liaodong = _content_settle("liaodong")
+    assert liaodong["p"]["Due"]["军饷"] == pytest.approx(711391 / 10000 / 12)
+    assert liaodong["p"]["拨付gross"] == pytest.approx(409984 / 10000 / 12)
+    assert liaodong["_meta"]["primary_source"]["粮料原额石"] == pytest.approx(279212)
+    assert "军饷" not in liaodong["_meta"]["provisional"]
+    assert "拨付gross" not in liaodong["_meta"]["provisional"]
+
+    dongjiang = _content_settle("dongjiang_area")
+    assert dongjiang["_meta"]["source_status"] == "no_wanli_accounting_record"
+    coverage = dongjiang["_meta"]["notes"]["史料覆盖"]
+    assert isinstance(coverage, str) and coverage.strip()
+    assert set(dongjiang["_meta"]["provisional"]) >= {"军饷", "拨付gross", "军饷欠", "起运定额"}

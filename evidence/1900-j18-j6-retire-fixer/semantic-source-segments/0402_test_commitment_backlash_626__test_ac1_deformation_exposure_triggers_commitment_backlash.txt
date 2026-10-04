@@ -1,0 +1,60 @@
+# FILE: tests/test_commitment_backlash_626.py
+# NAME: test_ac1_deformation_exposure_triggers_commitment_backlash
+# LINE: 240-293
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_ac1_deformation_exposure_triggers_commitment_backlash(game):
+    """变形暴露（#622 transformed + beyond_intent 分叉）→ 反噬。"""
+    db, state, content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.commit()
+
+    did, holder = _executing_policy_dossier(db, state, token="xf")
+    bar = _seed_halfway(db, state, did=did)
+    cid = _insert_commitment(
+        db, state, title="变形清丈之诺", origin_ref=f"dossier:{did}",
+        bar_value=bar,
+        participants=[{"character_id": holder, "tier": "主办", "role": "承办"}],
+    )
+    # #622 分叉读端：奏报假象 + 旨外实况
+    db.record_dossier_progress(
+        did, state.turn, "在办", "田亩清丈已十之八九",
+        is_terminal=False, commit=True,
+    )
+    applied = apply_score_extraction(
+        db, state,
+        {
+            "economy_moves": [{
+                "account": "国库",
+                "delta": 8,
+                "category": "地方浮收",
+                "reason": "借清丈之名额外加派",
+                "origin_ref": f"dossier:{did}",
+                "beyond_intent": True,
+            }],
+        },
+        content=content,
+    )
+    assert applied.get("economy_moves")
+    moves = db.list_economy_moves_for_dossier(did)
+    # _seed_halfway 先落投入行；#622 分叉读端看 beyond_intent 实况行（非首行）
+    assert moves and any(bool(m.get("beyond_intent")) for m in moves)
+
+    db.record_dossier_execution(
+        did, "transformed", "名实已乖，旨外受益", int(state.turn),
+        close=True, commit=True,
+    )
+    assert db.get_decree_dossier(did)["execution_outcome"] == "transformed"
+
+    assert db.trigger_commitment_backlashes(state, commit=True) == []
+
+    state.turn = int(state.turn) + 1
+    hits = db.trigger_commitment_backlashes(state, commit=True)
+    assert hits
+    assert hits[0]["source_kind"] == SOURCE_DEFORMATION_EXPOSURE
+    assert hits[0]["trigger_ref"] == f"issue:{cid}"
+    issue = db.find_any_issue_by_origin(
+        BACKLASH_ORIGIN_KIND, backlash_origin_ref(cid, SOURCE_DEFORMATION_EXPOSURE),
+    )
+    assert issue is not None

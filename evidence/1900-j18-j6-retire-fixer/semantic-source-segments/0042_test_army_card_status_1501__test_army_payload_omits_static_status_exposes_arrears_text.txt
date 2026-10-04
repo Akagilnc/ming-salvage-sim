@@ -1,0 +1,52 @@
+# FILE: tests/test_army_card_status_1501.py
+# NAME: test_army_payload_omits_static_status_exposes_arrears_text
+# LINE: 101-146
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_army_payload_omits_static_status_exposes_arrears_text(read_game):
+    """军牌出口：army_payload 无 status、无 raw arrears 键；arrears_text 在场。
+
+    对照公开 DB 行字段与投影键集；不调用私有 situation / _army_pay oracle。
+    """
+    db, _state, _ = read_game
+    seed_status = _guanning_db_status(db)
+
+    rows_by_id = {row["id"]: row for row in db.army_rows()}
+    payload = db.army_payload()
+    assert len(payload) == len(rows_by_id)
+    by_id = {p["id"]: p for p in payload}
+
+    for army_id, row in rows_by_id.items():
+        card = by_id[army_id]
+        assert set(card.keys()) == _ARMY_PAYLOAD_KEYS, (
+            f"{army_id}: payload 键集偏离。"
+            f" extra={set(card.keys()) - _ARMY_PAYLOAD_KEYS!r}"
+            f" missing={_ARMY_PAYLOAD_KEYS - set(card.keys())!r}"
+        )
+        assert "status" not in card
+        assert {"morale", "loyalty", "arrears"}.isdisjoint(card.keys())
+        # 公开行字段原样投影
+        for key in (
+            "id", "name", "station", "theater", "commander", "controller",
+            "troop_type", "owner_power",
+        ):
+            assert card[key] == row[key]
+        for key in (
+            "manpower", "supply", "training", "equipment", "mobility",
+            "firearm_equipment", "cannon_equipment",
+        ):
+            assert int(card[key]) == int(row[key])
+        assert isinstance(card["morale_text"], str) and card["morale_text"].strip()
+        assert isinstance(card["arrears_text"], str) and card["arrears_text"].strip()
+        assert isinstance(card["mutiny_tier"], str) and card["mutiny_tier"].strip()
+        assert isinstance(card["army_needed"], int)
+
+        st = str(row["status"] or "").strip()
+        if st:
+            joined = " ".join(str(v) for v in card.values())
+            assert st not in joined
+
+    guanning = by_id[_GUANNING_ID]
+    assert seed_status not in " ".join(str(v) for v in guanning.values())
+    assert seed_status not in guanning["arrears_text"]

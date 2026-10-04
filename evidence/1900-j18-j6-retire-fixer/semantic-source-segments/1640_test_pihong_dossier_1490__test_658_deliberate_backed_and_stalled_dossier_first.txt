@@ -1,0 +1,56 @@
+# FILE: tests/test_pihong_dossier_1490.py
+# NAME: test_658_deliberate_backed_and_stalled_dossier_first
+# LINE: 2347-2396
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_658_deliberate_backed_and_stalled_dossier_first(game):
+    """#658：有站台 → backed+当面站台背书；无人 → stalled+dossier: issue；非法身份零写。"""
+    from ming_sim import rescript_actions as ra
+    from ming_sim.db import GameDB
+    db, state, content = game
+    minister = _summonable_name(db, content)
+    urgent, _ = _plant_urgent_desk(db, state)
+    key = urgent['decision_key']
+    before_issues = db.conn.execute('SELECT COUNT(*) AS c FROM issues').fetchone()['c']
+    batch = ra.validate_all([urgent], [{'decision_key': key, 'action': 'deliberate', 'label': '下部议'}])
+    ra.apply_rescript_batch(db, state, batch, ra.PrewriteResults(deliberate_by_key={key: {'title': '南迁之议', 'body': '臣请集议南迁。', 'stance': '可议', 'supporter_ids': [minister]}}), content=content)
+    drow = db.find_deliberation_dossier_by_decision_key(key)
+    assert drow is not None and drow['status'] == 'proposed'
+    assert _dossier_payload(drow).get('deliberation_state') == 'backed'
+    ends = db.list_dossier_endorsements(int(drow['id']))
+    assert len(ends) == 1
+    assert ends[0]['form'] == '当面站台'
+    assert ends[0]['endorser_id'] == minister
+    assert ends[0]['decision_key'] == key
+    assert int(ends[0]['source_chat_turn_id'] or 0) == 0
+    assert db.conn.execute('SELECT COUNT(*) AS c FROM issues WHERE origin_ref=?', (f"dossier:{int(drow['id'])}",)).fetchone()['c'] == 0
+    assert db.conn.execute('SELECT COUNT(*) AS c FROM issues').fetchone()['c'] == before_issues
+    reopened = GameDB(db.path, content=content)
+    try:
+        restored = reopened.find_deliberation_dossier_by_decision_key(key)
+        assert restored is not None
+        assert _dossier_payload(restored).get('deliberation_state') == 'backed'
+        assert reopened.list_dossier_endorsements(int(restored['id']))[0]['decision_key'] == key
+    finally:
+        reopened.close()
+    state.turn = int(state.turn) + 1
+    db.save_state(state)
+    db.conn.execute("DELETE FROM pending_decisions WHERE kind='rescript_draft'")
+    stalled, key2 = _658_plant_stalled_deliberation(db, state, content, title='议而不决')
+    assert key2 != key
+    assert _dossier_payload(stalled).get('deliberation_state') == 'stalled'
+    assert db.list_dossier_endorsements(int(stalled['id'])) == []
+    issue = db.conn.execute('SELECT status FROM issues WHERE origin_ref=?', (f"dossier:{int(stalled['id'])}",)).fetchone()
+    assert issue is not None and str(issue['status']) == 'active'
+    state.turn = int(state.turn) + 1
+    db.save_state(state)
+    db.conn.execute("DELETE FROM pending_decisions WHERE kind='rescript_draft'")
+    urgent3, _ = _plant_urgent_desk(db, state)
+    key3 = urgent3['decision_key']
+    dossiers_before = len(db.list_decree_dossiers())
+    batch3 = ra.validate_all([urgent3], [{'decision_key': key3, 'action': 'deliberate', 'label': '下部议'}])
+    with pytest.raises(ValueError):
+        ra.apply_rescript_batch(db, state, batch3, ra.PrewriteResults(deliberate_by_key={key3: {'title': 't', 'body': 'b', 'stance': 's', 'supporter_ids': ['不存在的大臣XYZ']}}), content=content)
+    assert len(db.list_decree_dossiers()) == dossiers_before
+    assert db.find_deliberation_dossier_by_decision_key(key3) is None

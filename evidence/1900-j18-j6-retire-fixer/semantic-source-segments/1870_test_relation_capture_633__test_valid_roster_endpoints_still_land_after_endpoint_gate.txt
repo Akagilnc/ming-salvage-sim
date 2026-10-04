@@ -1,0 +1,20 @@
+# FILE: tests/test_relation_capture_633.py
+# NAME: test_valid_roster_endpoints_still_land_after_endpoint_gate
+# LINE: 655-668
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_valid_roster_endpoints_still_land_after_endpoint_gate(game):
+    """两个合格在朝大臣的合法边照常落库（端点守门不误伤）。"""
+    db, state, content = game
+    out = apply_score_extraction(
+        db, state,
+        {"relation_edge_events": [{
+            "施动者": "孙传庭", "受动者": ["洪承畴"], "类目": "恩义",
+            "语境": "合格名册双端点。", "来源引用": "盘面自发",
+        }]},
+        content=content,
+    )
+    res = out["relation_edge_event_resolutions"]
+    assert not any(r.get("rejected") for r in res), res
+    assert _triplets(_edge_rows(db)) == {("孙传庭", "洪承畴", "恩义")}

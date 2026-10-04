@@ -1,0 +1,25 @@
+# FILE: tests/test_qa_t1_extraction_dual_source_1353.py
+# NAME: test_drain_fail_concurrent_heal_asks_retry_no_dual_source
+# LINE: 85-103
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_drain_fail_concurrent_heal_asks_retry_no_dual_source(
+    game, tmp_path, monkeypatch,
+):
+    """#1842：转译 catch-up 失败后收夜不 fail-closed；待补水位仍可查。"""
+    db, state, content = game
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
+    minister = _minister(db, content)
+    nid, ctid = _open_night_with_persisted_reply(db, state, minister)
+
+    def boom_translate(prompt, llm_config):
+        raise RuntimeError("translate exhausted")
+
+    _close_with_gate(db, state, night_id=nid, translate_fn=boom_translate)
+    # 外部可见：转译待补仍在；水位未标 done
+    assert db.get_story_extract_status(ctid) in ("", "pending")
+    assert int(_pending_api(db)["count"]) >= 1
+    assert any(
+        int(p["chat_turn_id"]) == ctid for p in (_pending_api(db).get("pending") or [])
+    )

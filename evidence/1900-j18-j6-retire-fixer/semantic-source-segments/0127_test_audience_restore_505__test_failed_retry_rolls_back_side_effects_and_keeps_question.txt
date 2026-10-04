@@ -1,0 +1,57 @@
+# FILE: tests/test_audience_restore_505.py
+# NAME: test_failed_retry_rolls_back_side_effects_and_keeps_question
+# LINE: 407-457
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_failed_retry_rolls_back_side_effects_and_keeps_question(restore_env):
+    env = restore_env
+    db, state, content = env.db, env.state, env.content
+    minister = _active_minister(db, content)
+    an.open_night(db, state, location="乾清宫", time_of_day="戌时")
+    ct = _start_generating_turn(db, state, minister, "剿抚孰先？")
+    db.reconcile_interrupted_chat_turns()
+    loyalty0 = db.conn.execute(
+        "SELECT loyalty FROM characters WHERE name=?", (minister,)
+    ).fetchone()["loyalty"]
+
+    rt = _retry_runtime(db, state, minister)
+    rt.session = _FailingRetrySession(db, state, minister)
+    with pytest.raises(RuntimeError):
+        rt.retry_interrupted_reply(minister)
+
+    # 本次重试落下的副作用回滚（loyalty 复原）——不留双 stage / 粘滞。
+    assert db.conn.execute(
+        "SELECT loyalty FROM characters WHERE name=?", (minister,)
+    ).fetchone()["loyalty"] == loyalty0
+    # 问话保留、无回话、翻回 interrupted 保持可再重试（恢复路径永不删账）。
+    row = db.conn.execute(
+        "SELECT status, minister_message_id FROM chat_turns WHERE id=?", (ct,)
+    ).fetchone()
+    assert row["status"] == "interrupted"
+    assert not row["minister_message_id"]
+    pack = Path(db.conn.execute(
+        "SELECT error_pack_path FROM chat_turns WHERE id=?", (ct,),
+    ).fetchone()["error_pack_path"])
+    assert (pack / "traceback.txt").is_file()
+    assert (pack / "save_backup.db").is_file()
+    assert [r["question"] for r in db.get_interrupted_reply_retries(minister)] == ["剿抚孰先？"]
+    assert [
+        r["content"] for r in db.conn.execute(
+            "SELECT content FROM chat_messages WHERE role='user'"
+        ).fetchall()
+    ] == ["剿抚孰先？"]
+    # 消费后无残留 rollback_items（否则将来重试成功→撤回会双还原）。
+    assert db.conn.execute(
+        "SELECT COUNT(*) c FROM chat_turn_rollback_items WHERE chat_turn_id=?", (ct,)
+    ).fetchone()["c"] == 0
+
+    # 再重试成功：问话仍只一条、回话新落一条（记录无重复句）。
+    rt.session = _RetrySession(db, state, minister)
+    payload = rt.retry_interrupted_reply(minister)
+    assert payload["answer"] == "臣重奏：剿为先。"
+    assert [
+        r["content"] for r in db.conn.execute(
+            "SELECT content FROM chat_messages WHERE role='user'"
+        ).fetchall()
+    ] == ["剿抚孰先？"]

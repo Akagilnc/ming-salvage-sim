@@ -1,0 +1,43 @@
+# FILE: tests/test_session_write_queue_1353.py
+# NAME: test_write_turn_still_blocks_on_open_barrier
+# LINE: 436-472
+# FLAGS: assert_text_compare_or_match
+# KIND: py
+
+def test_write_turn_still_blocks_on_open_barrier():
+    """写段序仍尊重开放屏障：后票 ticketed gate 不得越过 barrier body。"""
+    q = SessionWriteQueue()
+    order: list[str] = []
+    barrier_in = threading.Event()
+    release_barrier = threading.Event()
+    late_done = threading.Event()
+
+    def barrier_body() -> None:
+        barrier_in.set()
+        order.append("barrier")
+        release_barrier.wait()
+
+    bt = threading.Thread(
+        target=lambda: q.barrier(barrier_body), name="barrier", daemon=True,
+    )
+    bt.start()
+    barrier_in.wait()
+
+    late = q.claim(key=("turn", 9))
+    assert late is not None
+
+    def late_writer() -> None:
+        with q.ticketed_gate(late):
+            order.append("late")
+        q.complete(late)
+        late_done.set()
+
+    lt = threading.Thread(target=late_writer, daemon=True)
+    lt.start()
+    assert "late" not in order
+    assert not late_done.is_set()
+    release_barrier.set()
+    late_done.wait()
+    bt.join()
+    lt.join()
+    assert order == ["barrier", "late"], order

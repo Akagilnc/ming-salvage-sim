@@ -1,0 +1,61 @@
+{
+  "source_path": "tests/test_relation_store_632.py",
+  "member_count": 4,
+  "members": [
+    {
+      "idx": 1891,
+      "file": "tests/test_relation_store_632.py",
+      "name": "test_directed_edge_events_are_stored_and_queryable",
+      "line": 10,
+      "end": 34,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1891_test_relation_store_632__test_directed_edge_events_are_stored_and_queryable.txt",
+      "source_path": "tests/test_relation_store_632.py"
+    },
+    {
+      "idx": 1892,
+      "file": "tests/test_relation_store_632.py",
+      "name": "test_edge_event_kind_and_evidence_are_fail_closed",
+      "line": 37,
+      "end": 73,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1892_test_relation_store_632__test_edge_event_kind_and_evidence_are_fail_closed.txt",
+      "source_path": "tests/test_relation_store_632.py"
+    },
+    {
+      "idx": 1893,
+      "file": "tests/test_relation_store_632.py",
+      "name": "test_relation_edges_survive_restore",
+      "line": 78,
+      "end": 119,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1893_test_relation_store_632__test_relation_edges_survive_restore.txt",
+      "source_path": "tests/test_relation_store_632.py"
+    },
+    {
+      "idx": 1894,
+      "file": "tests/test_relation_store_632.py",
+      "name": "test_distinct_pipe_origins_are_never_merged",
+      "line": 122,
+      "end": 142,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1894_test_relation_store_632__test_distinct_pipe_origins_are_never_merged.txt",
+      "source_path": "tests/test_relation_store_632.py"
+    }
+  ]
+}

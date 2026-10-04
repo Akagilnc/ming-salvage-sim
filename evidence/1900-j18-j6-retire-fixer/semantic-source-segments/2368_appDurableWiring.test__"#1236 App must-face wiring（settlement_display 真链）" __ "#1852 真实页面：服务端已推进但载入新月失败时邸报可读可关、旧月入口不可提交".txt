@@ -1,0 +1,117 @@
+# FILE: web/src/appDurableWiring.test.tsx
+# NAME: "#1236 App must-face wiring（settlement_display 真链）" / "#1852 真实页面：服务端已推进但载入新月失败时邸报可读可关、旧月入口不可提交"
+# LINE: 1332-1442
+# FLAGS: web_mock_spy_or_calls
+# KIND: web
+
+  it("#1852 真实页面：服务端已推进但载入新月失败时邸报可读可关、旧月入口不可提交", async () => {
+    let streamController!: ReadableStreamDefaultController<Uint8Array>;
+    const encoder = new TextEncoder();
+    let stateGets = 0;
+    let failPostAdvanceRefresh = false;
+    const liveState: Record<string, unknown> = {
+      ...settlementBaseState("player"),
+      turn: { year: 1627, period: 10, turn: 5, phase: "player", settlement_display: false },
+      previous_summary: "",
+      pending_decisions: [],
+      directives: [{ id: 1, text: "拨辽饷", status: "draft" }],
+    };
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      const u = new URL(String(url), "http://t.local");
+      if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
+      if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
+      if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
+      if (u.pathname.endsWith("/api/game/state")) {
+        stateGets += 1;
+        if (failPostAdvanceRefresh) {
+          return new Response(JSON.stringify({ detail: { message: "账本刷新失败（页面）" } }), {
+            status: 503,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        return jsonResp(liveState);
+      }
+      if (u.pathname.endsWith("/api/history/turns")) return jsonResp({ turns: [] });
+      if (u.pathname.endsWith("/api/court_layout")) return jsonResp({ layout: "{}" });
+      if (u.pathname.endsWith("/api/decree/issue/stream") && init?.method === "POST") {
+        return new Response(new ReadableStream<Uint8Array>({
+          start(controller) { streamController = controller; },
+        }), { status: 200, headers: { "Content-Type": "text/event-stream" } });
+      }
+      return jsonResp({});
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const host = await mountApp();
+    expect(host.querySelector(".hud2-stage")).not.toBeNull();
+    expect(edictCommand(host)).toBeTruthy();
+    await click(edictCommand(host));
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector('[role="dialog"][aria-label="诏书草案"]')).not.toBeNull());
+    });
+    await click(findButton(host, "盖玺颁诏过月"));
+    await act(async () => {
+      await vi.waitFor(() => expect(streamController).toBeTruthy());
+    });
+
+    failPostAdvanceRefresh = true;
+    const getsBeforeDone = stateGets;
+    await act(async () => {
+      streamController.enqueue(encoder.encode(
+        `event: done\ndata: ${JSON.stringify({ advanced: true, report: "十月邸报·刷新失败仍可读" })}\n\n`,
+      ));
+      streamController.close();
+    });
+
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector("[data-testid=settlement-gazette-panel]")).not.toBeNull());
+    });
+    expect(stateGets).toBeGreaterThan(getsBeforeDone);
+    expect(host.querySelector("[data-testid=settlement-gazette-panel]")!.textContent).toContain("十月邸报·刷新失败仍可读");
+    // 主界面仍挂着，但旧月内容不可见、不可交互；提示与阅读独立可达。
+    const staleFace = host.querySelector("main > div[inert]");
+    expect(staleFace?.getAttribute("aria-hidden")).toBe("true");
+    expect((staleFace as HTMLElement | null)?.style.visibility).toBe("hidden");
+    expect(staleFace?.querySelector(".hud2-stage")).not.toBeNull();
+    const retry = findButton(host, "重试");
+    expect(retry).toBeTruthy();
+
+    const streamPosts = () => fetchMock.mock.calls.filter(([url, init]) => {
+      const path = new URL(String(url), "http://t.local").pathname;
+      return path.endsWith("/api/decree/issue/stream") && init?.method === "POST";
+    }).length;
+    const streamPostsBeforeDismiss = streamPosts();
+    // 阅读中同一钮先试一次：载入仍失败，邸报保持可读且不重新过月。
+    const getsBeforeReadingRetry = stateGets;
+    await click(retry);
+    await act(async () => {
+      await vi.waitFor(() => expect(stateGets).toBeGreaterThan(getsBeforeReadingRetry));
+      await Promise.resolve();
+    });
+    expect(host.querySelector("[data-testid=settlement-gazette-panel]")?.textContent).toContain("十月邸报·刷新失败仍可读");
+    expect(streamPosts()).toBe(streamPostsBeforeDismiss);
+    const getsBeforeDismiss = stateGets;
+    const dismiss = Array.from(host.querySelectorAll("button")).find((b) =>
+      (b.textContent || "").includes("朕知道了"),
+    );
+    expect(dismiss).toBeTruthy();
+    await click(dismiss);
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector("[data-testid=settlement-gazette-panel]")).toBeNull());
+    });
+    // 关闭阅读不触发重试或推进；旧月入口仍不可提交。
+    expect(stateGets).toBe(getsBeforeDismiss);
+    expect(streamPosts()).toBe(streamPostsBeforeDismiss);
+    expect(host.querySelector("main > div[inert]")).not.toBeNull();
+    expect(findButton(host, "重试")).toBeTruthy();
+    failPostAdvanceRefresh = false;
+    liveState.turn = { year: 1627, period: 11, turn: 6, phase: "player", settlement_display: false };
+    const getsBeforeRetry = stateGets;
+    await click(findButton(host, "重试"));
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector("main > div[inert]")).toBeNull());
+    });
+    expect(stateGets).toBeGreaterThan(getsBeforeRetry);
+    expect(streamPosts()).toBe(streamPostsBeforeDismiss);
+    expect(host.querySelector("[data-testid=settlement-gazette-panel]")).toBeNull();
+  });

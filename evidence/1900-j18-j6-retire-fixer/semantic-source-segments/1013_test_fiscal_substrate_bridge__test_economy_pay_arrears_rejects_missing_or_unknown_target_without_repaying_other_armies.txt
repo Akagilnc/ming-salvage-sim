@@ -1,0 +1,47 @@
+# FILE: tests/test_fiscal_substrate_bridge.py
+# NAME: test_economy_pay_arrears_rejects_missing_or_unknown_target_without_repaying_other_armies
+# LINE: 2930-2970
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_economy_pay_arrears_rejects_missing_or_unknown_target_without_repaying_other_armies(
+    fresh_db, move
+):
+    from ming_sim.issues import apply_score_extraction
+
+    state = fresh_db.load_state()
+    before_treasury = state.metrics["国库"]
+    before_army = fresh_db.conn.execute(
+        """
+        SELECT arrears, province_pay_arrears, central_pay_arrears
+        FROM armies
+        WHERE id = 'shaanxi_army'
+        """
+    ).fetchone()
+    before_province = _province_pay_arrears(fresh_db, "shaanxi")
+
+    applied = apply_score_extraction(fresh_db, state, {"economy_moves": [
+        {**move, "origin_ref": "盘面自发"},
+    ]})["economy_moves_rejections"]
+
+    after_army = fresh_db.conn.execute(
+        """
+        SELECT arrears, province_pay_arrears, central_pay_arrears
+        FROM armies
+        WHERE id = 'shaanxi_army'
+        """
+    ).fetchone()
+    ledger_row = fresh_db.conn.execute(
+        """
+        SELECT 1 FROM economy_ledger
+        WHERE purpose = '补饷'
+        ORDER BY id DESC
+        LIMIT 1
+        """
+    ).fetchone()
+    assert applied and applied[0]["rejected"] is True
+    assert applied[0]["category"] == "missing_ref"
+    assert state.metrics["国库"] == before_treasury
+    assert ledger_row is None
+    assert dict(after_army) == dict(before_army)
+    assert _province_pay_arrears(fresh_db, "shaanxi") == pytest.approx(before_province)

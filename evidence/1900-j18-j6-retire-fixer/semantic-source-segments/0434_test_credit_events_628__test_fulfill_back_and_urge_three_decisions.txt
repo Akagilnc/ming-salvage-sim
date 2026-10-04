@@ -1,0 +1,199 @@
+# FILE: tests/test_credit_events_628.py
+# NAME: test_fulfill_back_and_urge_three_decisions
+# LINE: 175-367
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_fulfill_back_and_urge_three_decisions(game):
+    """兑付→兑现所托；撑完→撑腰；准宽限撑腰 / 拒宽限·斥退辜负；被拒 fulfilled/任命不落。"""
+    db, state, content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.commit()
+
+    # ── 兑付 ──
+    did_f = _executing_dossier(
+        db, state, token="fulfill-628",
+        roster=[{"character_id": "倪元璐", "tier": "主办", "role": "承办"}],
+    )
+    note_f = "依限办结"
+    out_f = apply_score_extraction(
+        db, state,
+        {"dossier_executions": [{
+            "dossier_id": did_f, "outcome": "fulfilled",
+            "note": note_f,
+        }]},
+        content=content,
+    )
+    assert out_f.get("credit_event_resolutions", {}).get("fulfillment")
+    fulfill_edges = _credit_edges(db, event_kind=KIND_FULFILL, source="倪元璐")
+    assert fulfill_edges, "兑付须写兑现所托"
+    fe = fulfill_edges[-1]
+    assert fe["target"] == "皇帝"
+    assert fe["context"] == note_f  # 承接 extraction 真叙事
+    assert f"dossier:{did_f}:credit:fulfill" in str(fe["origin"])
+    assert fe["context"].strip()
+
+    # ── 撑完承诺（承催压后兑付）──
+    did_b = _executing_dossier(
+        db, state, token="back-628",
+        roster=[{"character_id": "毕自严", "tier": "主办", "role": "承办"}],
+    )
+    cid_b = _insert_commitment(
+        db, state, title="撑完之诺", origin_ref=f"dossier:{did_b}", host="毕自严",
+    )
+    _record_commitment_urge(
+        db, state,
+        commitment_ref=cid_b, stage_idx=0,
+        old_due=state.turn + 12, new_due=state.turn + 2,
+        deadline_months=2, reason="着速办",
+    )
+    db.conn.commit()
+    note_b = "顶住办结"
+    apply_score_extraction(
+        db, state,
+        {"dossier_executions": [{
+            "dossier_id": did_b, "outcome": "fulfilled", "note": note_b,
+        }]},
+        content=content,
+    )
+    back_edges = [
+        e for e in _credit_edges(db, event_kind=KIND_BACK, target="毕自严")
+        if f"dossier:{did_b}:credit:back" in str(e["origin"])
+    ]
+    assert back_edges, "撑完承诺须写撑腰"
+    assert back_edges[-1]["context"] == note_b
+    assert any(
+        f"dossier:{did_b}:credit:fulfill" in str(e["origin"])
+        for e in _credit_edges(db, event_kind=KIND_FULFILL, source="毕自严")
+    )
+
+    # ── C1 负向：缺 note 的 fulfilled 被 applier 拒 → 不得落兑现所托 ──
+    # 夹具=真 executing 案卷 + outcome=fulfilled + 缺 note（issues.py:7103 必拒，
+    # 拒项带 item=源对象）。DB 预置 execution_outcome=fulfilled（close=False 保持
+    # executing）：漏 minus-rejections 闸时 resolve 见 DB 终值必落兑现边——反空壳
+    # （旧夹具幽灵 dossier_id=10**9 且自带 note，双闸全拆仍绿）。
+    did_rej_f = _executing_dossier(
+        db, state, token="rej-ful-628",
+        roster=[{"character_id": "刘鸿训", "tier": "主办", "role": "承办"}],
+    )
+    db.record_dossier_execution(
+        did_rej_f, "fulfilled", "预置终值语境", int(state.turn),
+        close=False, commit=True,
+    )
+    before_fake = len(_credit_edges(db, event_kind=KIND_FULFILL))
+    out_rej_f = apply_score_extraction(
+        db, state,
+        {"dossier_executions": [{
+            "dossier_id": did_rej_f, "outcome": "fulfilled",
+        }]},
+        content=content,
+    )
+    assert any(
+        isinstance(r, dict) and r.get("rejected")
+        for r in (out_rej_f.get("dossier_executions") or [])
+    )
+    assert len(_credit_edges(db, event_kind=KIND_FULFILL)) == before_fake
+
+    # ── C1 负向：人物变更被拒 → 不得落信用边（包庇/弃卒等）──
+    # 夹具=任命+缺 office（必拒 missing_field）；_is_cover_change 对任命无条件命中，
+    # 漏 rejected 闸即落包庇撑腰边——反空壳（旧夹具处置+非法 status 不可归类，拆闸仍绿）。
+    did_rd = _transformed_dossier(
+        db, state, token="rej-appt-628",
+        roster=[{"character_id": "孙承宗", "tier": "主办", "role": "承办"}],
+    )
+    before_rd = len(_credit_edges(db))
+    out_rd = apply_score_extraction(
+        db, state,
+        {"人物变更": [{
+            "name": "孙承宗", "动作": "任命",
+            "reason": "包庇伪装应拒", "origin_ref": f"dossier:{did_rd}",
+        }]},
+        content=content,
+    )
+    pcs_rd = out_rd.get("applied_person_changes") or []
+    assert any(isinstance(r, dict) and r.get("rejected") for r in pcs_rd)
+    assert not any(
+        f"dossier:{did_rd}:credit:" in str(e["origin"])
+        for e in _credit_edges(db)
+    )
+    assert len(_credit_edges(db)) == before_rd
+
+    # ── 谏处置三型（案卷主办=谏者，resolve_host 读案卷面）──
+    def _host_roster(name: str):
+        return [{"character_id": name, "tier": "主办", "role": "承办"}]
+
+    # 准宽限
+    did_g = _executing_dossier(
+        db, state, token="grace-628", roster=_host_roster("倪元璐"),
+    )
+    cid_g = _insert_commitment(
+        db, state, title="乞宽限案", origin_ref=f"dossier:{did_g}", host="倪元璐",
+    )
+    db.insert_next_audience_todo(
+        commitment_ref=cid_g, stage_idx=0, due_turn=state.turn + 2,
+        criterion_text="乞恩宽限", origin_context="催紧",
+        entry_kind=ENTRY_KIND_GRACE_PLEA, created_turn=state.turn - 1,
+        payload_json={"kind": "grace_plea"}, commit=True,
+    )
+    # 拒宽限
+    did_rg = _executing_dossier(
+        db, state, token="rej-grace-628", roster=_host_roster("徐光启"),
+    )
+    cid_rg = _insert_commitment(
+        db, state, title="拒宽限案", origin_ref=f"dossier:{did_rg}", host="徐光启",
+    )
+    db.insert_next_audience_todo(
+        commitment_ref=cid_rg, stage_idx=0, due_turn=state.turn + 2,
+        criterion_text="乞恩宽限", origin_context="再催",
+        entry_kind=ENTRY_KIND_GRACE_PLEA, created_turn=state.turn - 1,
+        payload_json={"kind": "grace_plea"}, commit=True,
+    )
+    # 斥退顶谏
+    did_rr = _executing_dossier(
+        db, state, token="rej-rem-628", roster=_host_roster("黄道周"),
+    )
+    cid_rr = _insert_commitment(
+        db, state, title="斥退谏案", origin_ref=f"dossier:{did_rr}", host="黄道周",
+    )
+    db.insert_next_audience_todo(
+        commitment_ref=cid_rr, stage_idx=0, due_turn=state.turn + 1,
+        criterion_text="期限过急，恐难如期", origin_context="急催",
+        entry_kind=ENTRY_KIND_RUSH_REMONSTRANCE, created_turn=state.turn - 1,
+        payload_json={"kind": "rush_remonstrance"}, commit=True,
+    )
+
+    grace_purpose = "准宽限加拨"
+    apply_score_extraction(
+        db, state,
+        {
+            "economy_moves": [{
+                # 非负 delta + 显式宽限叙事；合法 origin 须落格（C1/C2）
+                "account": "国库", "delta": 5, "category": "军费",
+                "purpose": grace_purpose, "reason": "准宽限",
+                "origin_ref": "盘面自发",
+                "issue_id": cid_g,
+            }],
+            "cancels": [
+                {"issue_id": cid_rg},
+                {"issue_id": cid_rr},
+            ],
+        },
+        content=content,
+    )
+    g_edges = [
+        e for e in _credit_edges(db, event_kind=KIND_BACK, target="倪元璐")
+        if f"issue:{cid_g}:credit:grant_grace" in str(e["origin"])
+    ]
+    assert g_edges, "准宽限须写撑腰"
+
+    rg_edges = [
+        e for e in _credit_edges(db, event_kind=KIND_BETRAY, target="徐光启")
+        if f"issue:{cid_rg}:credit:reject_grace" in str(e["origin"])
+    ]
+    assert rg_edges
+
+    rr_edges = [
+        e for e in _credit_edges(db, event_kind=KIND_BETRAY, target="黄道周")
+        if f"issue:{cid_rr}:credit:reject_remonstrance" in str(e["origin"])
+    ]
+    assert rr_edges

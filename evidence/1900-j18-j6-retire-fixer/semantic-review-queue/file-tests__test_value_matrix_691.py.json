@@ -1,0 +1,19 @@
+{
+  "source_path": "tests/test_value_matrix_691.py",
+  "member_count": 1,
+  "members": [
+    {
+      "idx": 2286,
+      "file": "tests/test_value_matrix_691.py",
+      "name": "test_value_matrix_fails_closed_when_the_42_cell_closed_set_is_corrupt",
+      "line": 27,
+      "end": 51,
+      "flags": [
+        "mock_or_patch_present"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2286_test_value_matrix_691__test_value_matrix_fails_closed_when_the_42_cell_closed_set_is_corrupt.txt",
+      "source_path": "tests/test_value_matrix_691.py"
+    }
+  ]
+}

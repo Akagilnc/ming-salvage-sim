@@ -1,0 +1,23 @@
+# FILE: tests/test_section_fiscal_rejections.py
+# NAME: test_lossless_int_string_same_verdict_both_paths
+# LINE: 598-614
+# FLAGS: helper_or_private_call
+# KIND: py
+
+def test_lossless_int_string_same_verdict_both_paths(game):
+    """无损整数串("5"/"300")在 applier 归一接受，不能只依赖可选 cleaner。"""
+    db, state, content = game
+    turn = state.turn
+    key = next(iter(db.get_fiscal_config()))
+    before = db.get_fiscal_config()[key]
+
+    run_settle(db, state, content, {
+        "fiscal_changes": [{"key": key, "delta": "5"}],
+        "fiscal_creates": [{"origin_ref": "盘面自发", "key": "整串测试_base", "account": "国库",
+                            "direction": "income", "init_value": "300"}],
+    }, narrative="x", decree_text="y")
+
+    assert [r for r in _rejection_rows(db, turn)] == []  # 两项都不拒
+    assert db.get_fiscal_config()[key] == before + 5
+    assert db.conn.execute(
+        "SELECT value FROM fiscal_config WHERE key='整串测试_base'").fetchone()[0] == 300

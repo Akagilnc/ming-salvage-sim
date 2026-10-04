@@ -1,0 +1,17 @@
+# FILE: tests/test_rescript_draft_656.py
+# NAME: test_validate_items_non_list_options_drops_item_keeps_siblings
+# LINE: 772-782
+# FLAGS: assert_text_compare_or_match,assert_count,mock_or_patch_present,helper_or_private_call
+# KIND: py
+
+def test_validate_items_non_list_options_drops_item_keeps_siblings(monkeypatch, draft_ingress):
+    """#1801：非 list options 该条目消失；其它条目仍呈上；日志响亮；不整批判死。"""
+    logs: list[str] = []
+    monkeypatch.setattr(rescript_mod, "tlog", logs.append)
+    good = _valid_item(0)
+    bad = _valid_item(1)
+    bad["options"] = "not-a-list"
+    drafts = draft_ingress({"items": [good, bad]}, set())
+    assert len(drafts) == 1
+    assert drafts[0]["title"] == good["title"]
+    assert logs, "非 list options 条目消失须响亮留痕"

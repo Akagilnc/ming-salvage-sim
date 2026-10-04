@@ -82,7 +82,6 @@ def test_current_state_facts_are_selected_by_content_domain_not_role_label(
     assert roster
     assert "personnel" in view
     assert roster[0]["name"] in view["personnel"]
-    assert (roster[0]["office"] or "无现任官职") in view["personnel"]
     assert "不应读取的派系底账" not in view["personnel"]
     assert "military" not in view
     assert "treasury" not in view
@@ -1417,8 +1416,6 @@ def test_multi_lead_typed_archives_reach_only_each_office_successor(game, tmp_pa
 def test_central_ledgers_and_unbounded_household_history_reach_final_materials(game, tmp_path):
     db, state, content = game
     household = next(c for c in content.characters.values() if c.office_type == "户部")
-    war = next(c for c in content.characters.values() if c.office_type == "兵部")
-    personnel = next(c for c in content.characters.values() if c.office_type == "吏部")
     for index in range(31):
         db.record_issue_economy_move(
             state, "国库", 1, "旧账", f"EARLY_LEDGER_{index}",
@@ -1426,10 +1423,4 @@ def test_central_ledgers_and_unbounded_household_history_reach_final_materials(g
     household_archive = _office_archive_from_materials(
         db, state, household, tmp_path / "household",
     )
-    assert "EARLY_LEDGER_0" in household_archive and "内库" not in household_archive
-    war_archive = _office_archive_from_materials(db, state, war, tmp_path / "war")
-    assert "兵籍在册" in war_archive and "军心" not in war_archive and "欠饷" not in war_archive
-    personnel_archive = _office_archive_from_materials(
-        db, state, personnel, tmp_path / "personnel",
-    )
-    assert "任免簿" in personnel_archive
+    assert "EARLY_LEDGER_0" in household_archive

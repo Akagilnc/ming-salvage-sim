@@ -1,0 +1,48 @@
+# FILE: tests/test_fiscal_substrate_bridge.py
+# NAME: test_budget_lines_read_persisted_substrate_hub_income_source
+# LINE: 1450-1491
+# FLAGS: assert_text_compare_or_match,assert_count
+# KIND: py
+
+def test_budget_lines_read_persisted_substrate_hub_income_source(fresh_game):
+    import ming_sim.flows as flows_mod
+
+    db, state = fresh_game
+    db.conn.executemany(
+        """
+        INSERT INTO fiscal_containers (key, value, note)
+        VALUES (?, ?, 'test persisted hub source')
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value, note = excluded.note
+        """,
+        [
+            ("hub_省级起运到京", 11),
+            ("hub_盐税解京", 3),
+            ("hub_商税解京", 4),
+            ("hub_太仓亏空", 3),
+            ("C_太仓挪用", 2),
+            ("C_太仓纯亏空", 1),
+        ],
+    )
+    db.conn.execute(
+        """
+        UPDATE regions
+        SET fiscal = json_set(
+            fiscal,
+            '$.settle.p.正赋应征', 999,
+            '$.settle.p.起运定额', 999,
+            '$.salt_tax', 999,
+            '$.commerce_tax', 999
+        )
+        """
+    )
+    db.conn.commit()
+
+    budget = flows_mod.compute_budget_lines(db, state)
+
+    income = {row["name"]: row["amount"] for row in budget["国库"]["income"]}
+    expenses = {row["name"]: row["amount"] for row in budget["国库"]["expense"]}
+    assert income["起运"] == 11
+    assert income["盐税"] == 3
+    assert income["商税"] == 4
+    assert "田赋辽饷盐商" not in income
+    assert expenses["太仓亏空"] == 3

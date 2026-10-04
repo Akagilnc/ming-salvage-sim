@@ -1,0 +1,11 @@
+# FILE: tests/test_rescript_draft_656.py
+# NAME: test_generate_unknown_item_field_drops_the_item
+# LINE: 799-803
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_generate_unknown_item_field_drops_the_item(draft_ingress):
+    """补交耗尽后只剔非法条目。"""
+    item = _legal_item()
+    item["extra"] = "模型多写的合法自由文本"
+    assert draft_ingress({'items': [item]}, set()) == []

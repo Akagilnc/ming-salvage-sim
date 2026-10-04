@@ -1,0 +1,99 @@
+{
+  "source_path": "tests/test_rescript_heal_isolation_1801.py",
+  "member_count": 6,
+  "members": [
+    {
+      "idx": 1953,
+      "file": "tests/test_rescript_heal_isolation_1801.py",
+      "name": "test_1801_top_unformed_heals_then_no_drafts",
+      "line": 105,
+      "end": 117,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1953_test_rescript_heal_isolation_1801__test_1801_top_unformed_heals_then_no_drafts.txt",
+      "source_path": "tests/test_rescript_heal_isolation_1801.py"
+    },
+    {
+      "idx": 1954,
+      "file": "tests/test_rescript_heal_isolation_1801.py",
+      "name": "test_1801_item_utf8_heals_then_drops_only_bad_item",
+      "line": 124,
+      "end": 138,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1954_test_rescript_heal_isolation_1801__test_1801_item_utf8_heals_then_drops_only_bad_item.txt",
+      "source_path": "tests/test_rescript_heal_isolation_1801.py"
+    },
+    {
+      "idx": 1955,
+      "file": "tests/test_rescript_heal_isolation_1801.py",
+      "name": "test_1801_unknown_top_key_heals_then_ignores_key_keeps_items",
+      "line": 145,
+      "end": 167,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1955_test_rescript_heal_isolation_1801__test_1801_unknown_top_key_heals_then_ignores_key_keeps_items.txt",
+      "source_path": "tests/test_rescript_heal_isolation_1801.py"
+    },
+    {
+      "idx": 1956,
+      "file": "tests/test_rescript_heal_isolation_1801.py",
+      "name": "test_1801_unknown_top_key_heal_items_empty_must_not_wipe_siblings",
+      "line": 170,
+      "end": 191,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1956_test_rescript_heal_isolation_1801__test_1801_unknown_top_key_heal_items_empty_must_not_wipe_siblings.txt",
+      "source_path": "tests/test_rescript_heal_isolation_1801.py"
+    },
+    {
+      "idx": 1957,
+      "file": "tests/test_rescript_heal_isolation_1801.py",
+      "name": "test_1801_unknown_top_key_heal_omit_key_succeeds_keeps_items",
+      "line": 194,
+      "end": 213,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1957_test_rescript_heal_isolation_1801__test_1801_unknown_top_key_heal_omit_key_succeeds_keeps_items.txt",
+      "source_path": "tests/test_rescript_heal_isolation_1801.py"
+    },
+    {
+      "idx": 1958,
+      "file": "tests/test_rescript_heal_isolation_1801.py",
+      "name": "test_1801_eight_items_all_pass_no_heal_no_trim",
+      "line": 220,
+      "end": 234,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1958_test_rescript_heal_isolation_1801__test_1801_eight_items_all_pass_no_heal_no_trim.txt",
+      "source_path": "tests/test_rescript_heal_isolation_1801.py"
+    }
+  ]
+}

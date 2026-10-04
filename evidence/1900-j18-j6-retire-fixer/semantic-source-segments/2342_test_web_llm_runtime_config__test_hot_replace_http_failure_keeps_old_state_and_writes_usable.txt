@@ -1,0 +1,55 @@
+# FILE: tests/test_web_llm_runtime_config.py
+# NAME: test_hot_replace_http_failure_keeps_old_state_and_writes_usable
+# LINE: 1127-1175
+# FLAGS: assert_count,mock_or_patch_present
+# KIND: py
+
+def test_hot_replace_http_failure_keeps_old_state_and_writes_usable(
+    tmp_path, monkeypatch, failure,
+):
+    """#1732：热替换失败路径只覆盖 load_save（局内 reset 已删）。"""
+    db_path = tmp_path / "ming.db"
+    monkeypatch.setenv("MING_SIM_DB", str(db_path))
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
+    runtime = web_app.WebGame(fresh=True)
+    monkeypatch.setattr(web_app, "get_game", lambda: runtime)
+    saved_marker, live_marker, write_minister = list(runtime.content.characters)[:3]
+    runtime.favorites = {saved_marker}
+    runtime.db.kv_set("favorites", json.dumps(sorted(runtime.favorites), ensure_ascii=False))
+    runtime.save_to("before")
+    runtime.favorites = {live_marker}
+    runtime.db.kv_set("favorites", json.dumps(sorted(runtime.favorites), ensure_ascii=False))
+    old_turn = runtime.state.turn
+
+    if failure == "candidate":
+        real_session = web_app.GameSession
+        attempts = 0
+
+        def fail_first_candidate(*args, **kwargs):
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise RuntimeError("candidate sentinel")
+            return real_session(*args, **kwargs)
+
+        monkeypatch.setattr(web_app, "GameSession", fail_first_candidate)
+    else:
+        monkeypatch.setattr(
+            runtime.db, "backup_to",
+            lambda _path: (_ for _ in ()).throw(RuntimeError("backup sentinel")),
+        )
+
+    response = TestClient(web_app.app).post("/api/saves/before/load")
+    assert response.status_code == 500
+    state = TestClient(web_app.app).get("/api/game/state")
+    assert state.status_code == 200
+    assert state.json()["turn"]["turn"] == old_turn
+    write = TestClient(web_app.app).post(f"/api/favorites/{write_minister}")
+    assert write.status_code == 200
+    favorites = write.json()["favorites"]
+    assert live_marker in favorites
+    assert saved_marker not in favorites
+    assert write_minister in favorites
+    runtime.session.close()

@@ -1,0 +1,17 @@
+# FILE: tests/test_deepseek_thinking_disable_1797.py
+# NAME: test_create_chat_model_deepseek_on_official_keeps_thinking_disabled
+# LINE: 28-38
+# FLAGS: assert_text_compare_or_match
+# KIND: py
+
+def test_create_chat_model_deepseek_on_official_keeps_thinking_disabled(monkeypatch):
+    """DeepSeek 系 + 官方 deepseek.com → 既有 thinking.disabled。"""
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    cfg = LLMConfig(
+        api_key="sk-test",
+        base_url="https://api.deepseek.com/v1",
+        model="deepseek-v4-flash-0731",
+        channel="api",
+    )
+    model = create_chat_model(cfg, enable_thinking=False)
+    assert model.extra_body == {"thinking": {"type": "disabled"}}

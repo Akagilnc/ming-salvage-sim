@@ -1,0 +1,13 @@
+# FILE: tests/test_audience_presence_500.py
+# NAME: test_present_names_at_table
+# LINE: 303-309
+# FLAGS: helper_or_private_call
+# KIND: py
+
+def test_present_names_at_table(game, label, at_key, expected_present, expected_absent):
+    db, state, content = game
+    nid, seqs = _build_presence_night(db, state)
+    at_seq = None if at_key is None else seqs[at_key]
+    present = an.present_names_at(db, nid, at_seq=at_seq)
+    assert expected_present <= present, f"{label}: 缺 {expected_present - present}"
+    assert not (expected_absent & present), f"{label}: 误含 {expected_absent & present}"

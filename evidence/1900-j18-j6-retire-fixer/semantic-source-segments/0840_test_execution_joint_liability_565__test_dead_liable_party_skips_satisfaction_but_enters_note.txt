@@ -1,0 +1,28 @@
+# FILE: tests/test_execution_joint_liability_565.py
+# NAME: test_dead_liable_party_skips_satisfaction_but_enters_note
+# LINE: 184-205
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_dead_liable_party_skips_satisfaction_but_enters_note(game):
+    db, state, content = game
+    dossier_id = _executing_dossier(db, state)
+    db.conn.execute("UPDATE characters SET status='dead' WHERE name='倪元璐'")
+    db.conn.commit()
+    before_donglin = _sat(db, "东林")
+    before_xixue = _sat(db, "西学")
+
+    _close_via_adapter(db, state, content, dossier_id, "failed", note="主事已故仍须叙明")
+
+    assert _sat(db, "东林") == before_donglin
+    assert not any(
+        row["target_id"] == "东林" for row in _sat_events(db, dossier_id)
+    )
+    # 委派人在世，failed→次责 weak 仍落
+    assert _sat(db, "西学") == max(0, before_xixue - 4)
+    edges = {
+        e["target"] for e in db.get_relation_edge_events(event_kind="连坐")
+        if e["origin"].startswith(f"dossier:{dossier_id}:")
+    }
+    assert "倪元璐" not in edges
+    assert "徐光启" in edges

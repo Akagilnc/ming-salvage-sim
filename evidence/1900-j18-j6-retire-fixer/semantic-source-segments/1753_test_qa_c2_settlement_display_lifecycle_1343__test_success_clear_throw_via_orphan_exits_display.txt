@@ -1,0 +1,39 @@
+# FILE: tests/test_qa_c2_settlement_display_lifecycle_1343.py
+# NAME: test_success_clear_throw_via_orphan_exits_display
+# LINE: 197-229
+# FLAGS: assert_count,mock_or_patch_present,helper_or_private_call
+# KIND: py
+
+def test_success_clear_throw_via_orphan_exits_display(game, monkeypatch):
+    """负向：clear_orphan 抛错后 settled_ok 仍假 → 失败 exit 清常态死遮罩。
+
+    与 boom db.clear 不同：此处只炸 orphan 包装，exit 走真 clear 可清快照。
+    """
+    db, state, content = game
+    runtime = _shell(db, state, content)
+    state.turn_phase = TurnPhase.SUMMONING.value
+    db.save_state(state)
+    db.capture_month_open_snapshot(state)
+    assert runtime.state_payload()["turn"]["settlement_display"] is True
+
+    monkeypatch.setattr(web_app, "_accept_settlement_period", lambda _g: True)
+    monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", lambda _g, **_k: None)
+
+    import ming_sim.month_open_snapshot as mos
+
+    def _boom_orphan(_db, _state):
+        raise RuntimeError("orphan clear boom")
+
+    monkeypatch.setattr(mos, "clear_orphan_month_open_snapshot", _boom_orphan)
+
+    raised = None
+    try:
+        with web_app._settlement_period_entry(runtime, write_cm=_blocking_gate):
+            pass
+    except RuntimeError as exc:
+        raised = exc
+
+    assert raised is not None and "orphan clear boom" in str(raised)
+    assert web_app._settlement_entry_inflight(runtime) == 0
+    assert db.get_month_open_snapshot(int(state.turn)) is None
+    assert runtime.state_payload()["turn"]["settlement_display"] is False

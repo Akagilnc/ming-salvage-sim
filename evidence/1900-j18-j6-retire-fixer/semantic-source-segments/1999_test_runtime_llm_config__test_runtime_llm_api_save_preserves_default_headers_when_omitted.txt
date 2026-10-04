@@ -1,0 +1,28 @@
+# FILE: tests/test_runtime_llm_config.py
+# NAME: test_runtime_llm_api_save_preserves_default_headers_when_omitted
+# LINE: 625-646
+# FLAGS: assert_text_compare_or_match,mock_or_patch_present
+# KIND: py
+
+def test_runtime_llm_api_save_preserves_default_headers_when_omitted(tmp_path, monkeypatch):
+    """#1794：设置保存重写 API 槽但未带头表时须保留文件中的头（不改 UI 的并存后果）。"""
+    path = tmp_path / "runtime_llm.json"
+    path.write_text(json.dumps({
+        "channel": "api",
+        "api": {
+            "base_url": "https://old.example.com/v1",
+            "model": "old",
+            "api_key": "sk-old",
+            "default_headers": {"X-Keep": "yes", "User-Agent": "ming-qa/1.0"},
+        },
+        "cli": {"runner": "codex", "model": "gpt-5.5", "timeout_seconds": 240},
+    }, ensure_ascii=False), encoding="utf-8")
+    monkeypatch.setattr(llm_config, "RUNTIME_LLM_PATH", str(path))
+
+    llm_config.save_runtime_llm(
+        "https://new.example.com/v1", "new-model", "sk-new", channel="api",
+    )
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    assert saved["api"]["model"] == "new-model"
+    assert saved["api"]["default_headers"] == {"X-Keep": "yes", "User-Agent": "ming-qa/1.0"}
+    assert saved["cli"]["runner"] == "codex"  # ADR 0001：API 保存不擦 CLI

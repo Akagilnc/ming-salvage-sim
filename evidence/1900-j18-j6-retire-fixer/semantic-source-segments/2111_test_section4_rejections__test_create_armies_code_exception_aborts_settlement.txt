@@ -1,0 +1,20 @@
+# FILE: tests/test_section4_rejections.py
+# NAME: test_create_armies_code_exception_aborts_settlement
+# LINE: 404-417
+# FLAGS: mock_or_patch_present,helper_or_private_call
+# KIND: py
+
+def test_create_armies_code_exception_aborts_settlement(game, monkeypatch):
+    """create_armies_from_extraction 内代码异常原样上抛，原子分派回滚整批。"""
+    db, state, content = game
+    good_owner = _valid_power_id(db)
+
+    def _boom(self, *a, **k):
+        raise AttributeError("code bug in create_armies_from_extraction")
+    monkeypatch.setattr(type(db), "create_armies_from_extraction", _boom)
+
+    with pytest.raises(AttributeError):
+        run_settle(db, state, content, {
+            "new_armies": [{"id": "x_corps", "owner_power": good_owner,
+                            "manpower": 1000, "maintenance_per_turn": 1}],
+        }, narrative="x", decree_text="y")

@@ -1,0 +1,52 @@
+# FILE: tests/test_audience_restore_505.py
+# NAME: test_logical_history_matches_agno_merge_with_duplicate_legacy_ids
+# LINE: 633-678
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call,retired_or_meta_marker
+# KIND: py
+
+def test_logical_history_matches_agno_merge_with_duplicate_legacy_ids(restore_env):
+    """Agno keeps legacy duplicate run_ids; local count/truncate must match get_session."""
+    env = restore_env
+    db = env.db
+    # blob carries duplicate r0 then r1; table has the same ids (migrated overlap).
+    db.conn.execute("DROP TABLE IF EXISTS agno_runs")
+    db.conn.execute("DROP TABLE IF EXISTS agno_sessions")
+    db.conn.execute(
+        "CREATE TABLE agno_sessions ("
+        "session_id TEXT PRIMARY KEY, session_type TEXT NOT NULL, "
+        "agent_id TEXT, team_id TEXT, workflow_id TEXT, user_id TEXT, "
+        "session_data TEXT, agent_data TEXT, team_data TEXT, workflow_data TEXT, "
+        "metadata TEXT, summary TEXT, runs TEXT, "
+        "created_at INTEGER NOT NULL, updated_at INTEGER)"
+    )
+    _ensure_agno_runs_table(db)
+    blob = [{"run_id": "r0"}, {"run_id": "r0"}, {"run_id": "r1"}]
+    db.conn.execute(
+        "INSERT INTO agno_sessions "
+        "(session_id, session_type, runs, created_at, updated_at) VALUES (?, 'agent', ?, 0, 0)",
+        ("sess", json.dumps(blob)),
+    )
+    for i, rid in enumerate(("r0", "r1")):
+        db.conn.execute(
+            "INSERT INTO agno_runs "
+            "(run_id, session_id, run_type, status, run_index, run_data, created_at) "
+            "VALUES (?, 'sess', 'agent', 'COMPLETED', ?, ?, ?)",
+            (rid, i, json.dumps({"run_id": rid}), i + 1),
+        )
+    db.conn.commit()
+
+    # Agno merge walks every legacy slot: length 3, not unique-2.
+    assert db.agno_runs_length("sess") == 3
+    assert _agno_public_run_ids(env.path, "sess") == ["r0", "r0", "r1"]
+
+    db.truncate_agno_session_runs("sess", 1)
+    assert db.agno_runs_length("sess") == 1
+    assert _agno_public_run_ids(env.path, "sess") == ["r0"]
+    table_ids = [
+        r["run_id"]
+        for r in db.conn.execute(
+            "SELECT run_id FROM agno_runs WHERE session_id=? ORDER BY run_index",
+            ("sess",),
+        ).fetchall()
+    ]
+    assert table_ids == ["r0"]

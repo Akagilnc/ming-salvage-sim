@@ -1,0 +1,65 @@
+# FILE: tests/test_commitment_backlash_626.py
+# NAME: test_ac3_regret_then_resolve_no_breach_verdict_hammer
+# LINE: 483-541
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_ac3_regret_then_resolve_no_breach_verdict_hammer(game):
+    """I2a：finalize_regret → resolve 结清 → 后续 pre_settle 不立 breach_verdict、metrics 不动。"""
+    db, state, content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.commit()
+
+    did, holder = _executing_policy_dossier(db, state, token="rg-rs")
+    bar = _seed_halfway(db, state, did=did)
+    cid = _insert_commitment(
+        db, state, title="反悔后结清之诺", origin_ref=f"dossier:{did}",
+        bar_value=bar,
+        participants=[{"character_id": holder, "tier": "主办", "role": "承办"}],
+    )
+    assert assess_foundation_tier(db, cid) == FOUNDATION_HALFWAY
+
+    todo_id = write_breach_plea_todo(
+        db, state, commitment_ref=cid,
+        breach_kind=BREACH_KIND_POLICY_REVERSAL,
+        reason="反悔·结清", target_dossier_id=did, commit=True,
+    )
+    todo = next(t for t in _pending_pleas(db) if int(t["id"]) == todo_id)
+    result = finalize_regret(db, state, todo, commit=True)
+    assert result["decision"] == "regret"
+    assert result["commitment_continues"] is True
+    stamped = next(
+        t for t in db.list_next_audience_todos(status="consumed")
+        if int(t["id"]) == todo_id
+    )
+    assert stamped["payload_json"].get(PLEA_VERDICT_KEY) == PLEA_VERDICT_REGRET
+
+    # 承诺仍续跑后自然结清（resolved）
+    row = db.conn.execute("SELECT * FROM issues WHERE id=?", (cid,)).fetchone()
+    assert str(row["status"]) == "active"
+    _resolve_commitment_issue(db, state, row, commit=True)
+    closed = db.conn.execute(
+        "SELECT status, closed_turn, bar_value FROM issues WHERE id=?", (cid,),
+    ).fetchone()
+    assert str(closed["status"]) == "resolved"
+    assert int(closed["closed_turn"]) == int(state.turn)
+
+    state.turn = int(state.turn) + 1
+    _set_phase_runnable(state, db)
+    # 硬门本身：metrics 一锤子不得落（与 pre_settle 财政噪声隔离）
+    minxin_0 = int(state.metrics.get("民心", 0) or 0)
+    huangwei_0 = int(state.metrics.get("皇威", 0) or 0)
+    hits = db.trigger_commitment_backlashes(state, commit=True)
+    assert hits == []
+    assert int(state.metrics.get("民心", 0) or 0) == minxin_0
+    assert int(state.metrics.get("皇威", 0) or 0) == huangwei_0
+
+    # 同缝 pre_settle 亦不立 breach_verdict（幂等守门前复位相位）
+    _set_phase_runnable(state, db)
+    auto = pre_settle(state, db, content=content)
+    bl = [a for a in (auto or []) if a.get("source") == "commitment_backlash"]
+    assert bl == []
+    assert db.find_any_issue_by_origin(
+        BACKLASH_ORIGIN_KIND, backlash_origin_ref(cid, SOURCE_BREACH_VERDICT),
+    ) is None
+    assert _backlash_issues(db) == []

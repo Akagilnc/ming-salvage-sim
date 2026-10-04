@@ -1,0 +1,30 @@
+# FILE: tests/test_transaction_boundary.py
+# NAME: test_begin_failure_at_entry_restores_flags
+# LINE: 558-581
+# FLAGS: assert_text_compare_or_match,assert_count,mock_or_patch_present,helper_or_private_call
+# KIND: py
+
+def test_begin_failure_at_entry_restores_flags(game, monkeypatch):
+    """入口 BEGIN 抛错不得泄漏暂停标志（cmr S1 r3 F2，泄漏=79 处 commit 全静默失效）。"""
+    db, state, content = game
+    from ming_sim.applier import _SuspendableConnection
+
+    real_execute = _SuspendableConnection.execute
+    def failing_execute(self, sql, *args, **kwargs):
+        if isinstance(sql, str) and sql.strip().upper() == "BEGIN":
+            raise sqlite3.OperationalError("simulated BEGIN failure")
+        return real_execute(self, sql, *args, **kwargs)
+    monkeypatch.setattr(_SuspendableConnection, "execute", failing_execute)
+
+    with pytest.raises(sqlite3.OperationalError):
+        with atomic(db):
+            pass  # 不应到达
+
+    monkeypatch.setattr(_SuspendableConnection, "execute", real_execute)
+    assert db.conn._commit_suspended is False
+    assert db.conn._atomic_depth == 0
+    # 标志未泄漏：后续写照常真提交
+    db.kv_set("s1r3_after_begin_fail", "ok")
+    assert db.kv_get("s1r3_after_begin_fail") == "ok"
+    db.conn.execute("DELETE FROM kv_store WHERE key='s1r3_after_begin_fail'")
+    db.conn.commit()

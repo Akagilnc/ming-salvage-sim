@@ -1,0 +1,43 @@
+# FILE: tests/test_shared_resource_order_1844.py
+# NAME: test_world_segment_cross_category_order_by_declaration
+# LINE: 231-267
+# FLAGS: assert_count
+# KIND: py
+
+def test_world_segment_cross_category_order_by_declaration(game, order, expected_arrears):
+    """先加欠饷再拨款清欠按交代先后；对调先后时按当时存量，不因类别段序颠倒。"""
+    db, state, _ = game
+    db.conn.execute("UPDATE armies SET arrears=0, province_pay_arrears=0, central_pay_arrears=0 WHERE id='jingying'")
+    db.conn.commit()
+    state.metrics["国库"] = 100
+    arrears_effect = {"army_delta": {"jingying": {
+        "origin_ref": "盘面自发", "arrears": 10, "reason": "京营加欠",
+    }}}
+    pay_effect = {"economy_moves": [{
+        "origin_ref": "盘面自发", "account": "国库", "delta": -10,
+        "category": "补饷", "reason": "清欠拨款",
+        "purpose": "补饷", "target_kind": "army", "target_id": "jingying",
+    }]}
+    effects = (
+        [arrears_effect, pay_effect] if order == "arrears_then_pay"
+        else [pay_effect, arrears_effect]
+    )
+    dispatch_month_segment(
+        db, state, segment="跨类欠饷与拨款",
+        translate_fn=lambda _request, _config: {"effects": effects},
+    )
+    arrears = float(db.conn.execute(
+        "SELECT arrears FROM armies WHERE id='jingying'"
+    ).fetchone()[0])
+    assert arrears == pytest.approx(expected_arrears)
+    if order == "arrears_then_pay":
+        assert state.metrics["国库"] == 90
+        paid = db.conn.execute(
+            "SELECT SUM(delta) FROM economy_ledger WHERE reason='清欠拨款'"
+        ).fetchone()[0]
+        assert paid == -10
+    else:
+        assert state.metrics["国库"] == 100
+        assert db.conn.execute(
+            "SELECT COUNT(*) FROM economy_ledger WHERE reason='清欠拨款' AND delta != 0"
+        ).fetchone()[0] == 0

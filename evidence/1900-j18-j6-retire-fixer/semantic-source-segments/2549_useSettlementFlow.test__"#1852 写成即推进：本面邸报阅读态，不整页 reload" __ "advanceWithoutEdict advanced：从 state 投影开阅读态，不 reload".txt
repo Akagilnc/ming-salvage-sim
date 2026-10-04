@@ -1,0 +1,31 @@
+# FILE: web/src/useSettlementFlow.test.tsx
+# NAME: "#1852 写成即推进：本面邸报阅读态，不整页 reload" / "advanceWithoutEdict advanced：从 state 投影开阅读态，不 reload"
+# LINE: 676-700
+# FLAGS: web_mock_spy_or_calls,web_text_assert
+# KIND: web
+
+  it("advanceWithoutEdict advanced：从 state 投影开阅读态，不 reload", async () => {
+    const reload = vi.fn();
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: { ...window.location, reload },
+    });
+    const loadState = vi.fn(async () => advancedMonthState);
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      if (url !== "/api/decree/advance_without_edict") throw new Error(`unexpected fetch: ${url}`);
+      return new Response(JSON.stringify({
+        advanced: true,
+        state: advancedMonthState,
+      }));
+    }));
+    const { hookRef, cleanup } = mountHarness({ loadState, initial: preClickState });
+
+    await act(async () => {
+      await hookRef.current!.advanceWithoutEdict();
+    });
+
+    expect(reload).not.toHaveBeenCalled();
+    expect(loadState).toHaveBeenCalled();
+    expect(hookRef.current!.settlementGazetteReading?.report).toBe("十月邸报·已归档");
+    cleanup();
+  });

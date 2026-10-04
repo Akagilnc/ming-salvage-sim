@@ -1,0 +1,35 @@
+# FILE: tests/test_web_llm_runtime_config.py
+# NAME: test_menu_save_llm_accepts_default_headers_from_request
+# LINE: 607-635
+# FLAGS: mock_or_patch_present
+# KIND: py
+
+def test_menu_save_llm_accepts_default_headers_from_request(monkeypatch):
+    """#1794 决定 5：设置页同一保存动作带头表；verify 与落盘用同一张。"""
+    headers = {"X-Session": "from-ui", "User-Agent": "ming-qa/1.0"}
+    seen = []
+    saved = []
+    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {
+        "channel": "api",
+        "api": {
+            "base_url": "https://old.example.com/v1",
+            "model": "old-model",
+            "api_key": "sk-old",
+            "default_headers": {"X-Old": "drop-me"},
+        },
+        "default_headers": {"X-Old": "drop-me"},
+    })
+    monkeypatch.setattr(web_app, "_verify_llm_configs_or_raise", lambda cfg: seen.append(cfg))
+    monkeypatch.setattr(web_app, "save_runtime_llm", lambda *args, **kwargs: saved.append((args, kwargs)))
+
+    result = asyncio.run(web_app.api_menu_save_llm(web_app.LlmSetupRequest(
+        base_url="https://api.example.com",
+        model="gpt-api",
+        api_key="sk-test",
+        default_headers=headers,
+    )))
+
+    assert result["ok"] is True
+    assert seen and seen[0].default_headers == headers
+    assert saved and saved[0][1].get("default_headers") == headers
+    assert result["llm"]["default_headers"] == headers

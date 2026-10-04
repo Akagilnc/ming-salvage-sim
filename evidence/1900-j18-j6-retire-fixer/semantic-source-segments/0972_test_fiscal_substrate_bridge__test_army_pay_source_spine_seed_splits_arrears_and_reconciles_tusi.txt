@@ -1,0 +1,76 @@
+# FILE: tests/test_fiscal_substrate_bridge.py
+# NAME: test_army_pay_source_spine_seed_splits_arrears_and_reconciles_tusi
+# LINE: 430-499
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_army_pay_source_spine_seed_splits_arrears_and_reconciles_tusi(fresh_db):
+    assert fresh_db.is_army_pay_source_cutover_enabled()
+
+    row = fresh_db.conn.execute(
+        """
+        SELECT arrears, province_pay_arrears, central_pay_arrears,
+               pay_source_region, province_pay_share, central_pay_share,
+               is_tusi, self_funded_pay
+        FROM armies WHERE id = 'shaanxi_army'
+        """
+    ).fetchone()
+    assert row["pay_source_region"] == "shaanxi"
+    assert row["province_pay_share"] == pytest.approx(0.65)
+    assert row["central_pay_share"] == pytest.approx(0.35)
+    assert row["province_pay_arrears"] == pytest.approx(16.25)
+    assert row["central_pay_arrears"] == pytest.approx(8.75)
+    assert row["arrears"] == pytest.approx(
+        row["province_pay_arrears"] + row["central_pay_arrears"]
+    )
+
+    pure = fresh_db.conn.execute(
+        """
+        SELECT arrears, province_pay_arrears, central_pay_arrears,
+               pay_source_region, province_pay_share, central_pay_share
+        FROM armies WHERE id = 'fujian_navy'
+        """
+    ).fetchone()
+    assert pure["pay_source_region"] == "fujian"
+    assert pure["province_pay_share"] == pytest.approx(1.0)
+    assert pure["central_pay_share"] == pytest.approx(0.0)
+    assert pure["province_pay_arrears"] == pytest.approx(pure["arrears"])
+    assert pure["central_pay_arrears"] == pytest.approx(0.0)
+
+    tusi = fresh_db.conn.execute(
+        """
+        SELECT arrears, province_pay_arrears, central_pay_arrears,
+               province_pay_share, central_pay_share, is_tusi, self_funded_pay
+        FROM armies WHERE id = 'southwest_tusi'
+        """
+    ).fetchone()
+    assert tusi["is_tusi"] == 1
+    assert tusi["self_funded_pay"] == 1
+    assert tusi["province_pay_share"] == pytest.approx(0.0)
+    assert tusi["central_pay_share"] == pytest.approx(0.0)
+    assert tusi["province_pay_arrears"] == pytest.approx(0.0)
+    assert tusi["central_pay_arrears"] == pytest.approx(0.0)
+    assert tusi["arrears"] == pytest.approx(0.0)
+    assert fresh_db.get_central_army_pay_arrears_container() == pytest.approx(
+        _non_self_funded_pay_arrears(fresh_db)[1], abs=1e-6
+    )
+
+    log = fresh_db.conn.execute(
+        """
+        SELECT turn, year, period, army_id, field, old_value, new_value, delta, reason,
+               event_id, edict_id, actor
+        FROM army_logs
+        WHERE army_id = 'southwest_tusi' AND field = 'arrears'
+        """
+    ).fetchone()
+    assert log is not None
+    assert log["turn"] == 1
+    assert log["year"] == 1627
+    assert log["period"] == 10
+    assert log["old_value"] == "4.0"
+    assert log["new_value"] == "0.0"
+    assert log["delta"] == -4
+    assert isinstance(log["reason"], str) and log["reason"].strip()
+    assert log["event_id"] is None
+    assert log["edict_id"] is None
+    assert log["actor"] == "system"

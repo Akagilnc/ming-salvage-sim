@@ -1,0 +1,118 @@
+# FILE: tests/test_month_chain_1847.py
+# NAME: test_settle_edicts_persists_pending_disclosures_in_same_transaction
+# LINE: 1510-1621
+# FLAGS: mock_or_patch_present,helper_or_private_call
+# KIND: py
+
+def test_settle_edicts_persists_pending_disclosures_in_same_transaction(game, monkeypatch):
+    """_settle_edicts.persist_result：disclosed 暂缓项须与旨意结算同事务写入月链。"""
+    from types import SimpleNamespace
+
+    from ming_sim.decree_forecast import pending_action_decree_ref, stage_declaration
+    from ming_sim.month_chain import _load_chain, _settle_edicts
+
+    db, state, content = game
+    turn = int(state.turn)
+    minister = db.conn.execute(
+        "SELECT name FROM characters WHERE status='active' AND power_id='ming' LIMIT 1"
+    ).fetchone()[0]
+    order_id = create_test_secret_order(
+        db, state, minister, "披露暂缓密令", "差务", [], deadline_months=2,
+    )
+    db.conn.execute("UPDATE secret_orders SET turn_issued=? WHERE id=?", (turn - 1, order_id))
+    pending_id = db.stage_pending_action(
+        state.turn, kind="directive", action="拟旨", minister_name=minister,
+        payload={
+            "dossier_action_type": "policy", "target_kind": "issue",
+            "target_id": "disclosure-pending", "actor": minister, "mode": "ordinary",
+            "text": "查抄并明发",
+        },
+    )
+    dossier_id = db.create_decree_dossier(
+        state, action_type="policy", decree_text="查抄并明发",
+        target_kind="issue", target_id="disclosure-pending",
+        pending_action_id=pending_id,
+        payload={"text": "查抄并明发"},
+    )
+    db.conn.execute(
+        "UPDATE decree_dossiers SET status='promulgated', promulgation_decision='promulgated' "
+        "WHERE id=?",
+        (dossier_id,),
+    )
+    ref = pending_action_decree_ref(pending_id, 1)
+    stage_declaration(
+        db, decree_ref=ref, turn=turn,
+        declaration={"effects": {"secret_order_updates": [{
+            "order_id": order_id,
+            "sim_note": "私仓已查封，案情明发",
+            "disclosed": True,
+        }]}},
+        verdict={"decision": "promulgated"},
+        visible_refs={"secret_orders": [order_id], "issues": [], "affairs": []},
+    )
+    db.conn.commit()
+
+    sess = SimpleNamespace(
+        db=db, state=state, llm_config=None, agno_db=None, content=content,
+    )
+    chain: dict = {}
+    _settle_edicts(sess, chain=chain)
+
+    assert db.staged_declarations.is_settled(ref)
+    reloaded = _load_chain(db, turn)
+    pending = reloaded.get("pending_disclosures") or []
+    assert any(
+        int(item.get("order_id") or 0) == order_id
+        and "私仓已查封" in str(item.get("sim_note") or "")
+        for item in pending
+    ), f"pending_disclosures missing after settle: {pending!r}"
+
+    # 同事务：alongside 内 _save_chain 失败须回滚结算标记
+    order_2 = create_test_secret_order(
+        db, state, minister, "原子回滚密令", "差务二", [], deadline_months=2,
+    )
+    db.conn.execute("UPDATE secret_orders SET turn_issued=? WHERE id=?", (turn - 1, order_2))
+    pending_2 = db.stage_pending_action(
+        state.turn, kind="directive", action="拟旨", minister_name=minister,
+        payload={
+            "dossier_action_type": "policy", "target_kind": "issue",
+            "target_id": "disclosure-atomic", "actor": minister, "mode": "ordinary",
+            "text": "第二道披露旨",
+        },
+    )
+    dossier_2 = db.create_decree_dossier(
+        state, action_type="policy", decree_text="第二道披露旨",
+        target_kind="issue", target_id="disclosure-atomic",
+        pending_action_id=pending_2,
+        payload={"text": "第二道披露旨"},
+    )
+    db.conn.execute(
+        "UPDATE decree_dossiers SET status='promulgated', promulgation_decision='promulgated' "
+        "WHERE id=?",
+        (dossier_2,),
+    )
+    ref_2 = pending_action_decree_ref(pending_2, 1)
+    stage_declaration(
+        db, decree_ref=ref_2, turn=turn,
+        declaration={"effects": {"secret_order_updates": [{
+            "order_id": order_2,
+            "sim_note": "第二道应暂缓",
+            "disclosed": True,
+        }]}},
+        verdict={"decision": "promulgated"},
+        visible_refs={"secret_orders": [order_2], "issues": [], "affairs": []},
+    )
+    db.conn.commit()
+
+    real_save = month_chain._save_chain
+
+    def boom_save(db_, turn_, chain_, **kwargs):
+        pending_now = chain_.get("pending_disclosures") or []
+        if any(int(item.get("order_id") or 0) == order_2 for item in pending_now):
+            raise RuntimeError("injected chain save failure")
+        return real_save(db_, turn_, chain_, **kwargs)
+
+    monkeypatch.setattr(month_chain, "_save_chain", boom_save)
+    with pytest.raises(RuntimeError):
+        _settle_edicts(sess, chain=chain)
+    assert not db.staged_declarations.is_settled(ref_2)

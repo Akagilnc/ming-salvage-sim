@@ -1,0 +1,18 @@
+# FILE: tests/test_person_delta_adapter.py
+# NAME: test_set_character_status_clears_office_for_offstage
+# LINE: 2165-2176
+# FLAGS: assert_text_compare_or_match
+# KIND: py
+
+def test_set_character_status_clears_office_for_offstage(game):
+    db, state, content = game
+    name = active_ming_character(db, content)
+
+    db.set_character_status(state, name, "offstage", "出宫居家")
+
+    row = db.conn.execute(
+        "SELECT status, office, transit_to FROM characters WHERE name=?", (name,)
+    ).fetchone()
+    assert row["status"] == "offstage"
+    assert row["office"] == ""
+    assert row["transit_to"] == ""

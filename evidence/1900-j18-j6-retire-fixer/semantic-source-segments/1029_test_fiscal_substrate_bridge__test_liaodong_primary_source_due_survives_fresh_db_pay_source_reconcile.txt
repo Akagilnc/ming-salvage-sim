@@ -1,0 +1,23 @@
+# FILE: tests/test_fiscal_substrate_bridge.py
+# NAME: test_liaodong_primary_source_due_survives_fresh_db_pay_source_reconcile
+# LINE: 3713-3729
+# FLAGS: helper_or_private_call
+# KIND: py
+
+def test_liaodong_primary_source_due_survives_fresh_db_pay_source_reconcile(fresh_db):
+    settle = _read_settle(fresh_db, "liaodong")
+    opening_arrears = settle["st"]["军饷欠"]
+    expected_due = 711391 / 10000 / 12
+    expected_grant = 409984 / 10000 / 12
+
+    assert settle["p"]["Due"]["军饷"] == pytest.approx(expected_due)
+
+    fresh_db.settle_province_tick("liaodong", [])
+    fresh_db.conn.commit()
+
+    after = _read_settle(fresh_db, "liaodong")
+    assert after["p"]["Due"]["军饷"] == pytest.approx(expected_due)
+    assert after["st"]["军饷欠"] == pytest.approx(
+        max(0, opening_arrears + expected_due - expected_grant),
+        abs=1e-6,
+    )

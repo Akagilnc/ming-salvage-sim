@@ -1,0 +1,55 @@
+# FILE: tests/test_enter_settlement_period_1235.py
+# NAME: test_true_failure_issue_exits_display
+# LINE: 279-327
+# FLAGS: assert_text_compare_or_match,assert_count,mock_or_patch_present,helper_or_private_call,retired_or_meta_marker
+# KIND: py
+
+def test_true_failure_issue_exits_display(web_game, monkeypatch, tmp_path):
+    """AC2 颁布入口同形。"""
+    from ming_sim.exceptions import LLMUnavailable
+    from ming_sim.llm_model import CLI_RUNNER_PLAYER_MESSAGE
+
+    game = web_game
+    minister = _active_minister(game)
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
+    # #1842：真失败注入转译缝（旧抽取 drain 已退役）。
+    def _boom_translate(prompt, llm_config):
+        del prompt, llm_config
+        raise LLMUnavailable(CLI_RUNNER_PLAYER_MESSAGE, code="llm_error")
+
+    stub_audience_translate(monkeypatch, _boom_translate)
+    turn = int(game.state.turn)
+    _open_night_with_unextracted_reply(game, minister)
+    game.db.add_directive(
+        game.state, None, "着户部核边饷", "t1235-fail", actor=minister,
+        status="draft",
+        dossier_payload={
+            "dossier_action_type": "policy",
+            "target_kind": "issue",
+            "target_id": "border-pay-fail",
+        },
+    )
+    saw = {}
+    real_close = web_app._auto_close_open_night_gate_free
+
+    def _close_observing(g, **kw):
+        saw["snap"] = g.db.get_month_open_snapshot(int(g.state.turn))
+        return real_close(g, **kw)
+
+    monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", _close_observing)
+
+    async def go():
+        async with _client() as client:
+            return await client.post("/api/decree/issue", json={})
+
+    resp = asyncio.run(go())
+    # #1842：转译耗尽 → SettlementAbort（HTTP 409 + typed stage）；issue 与 advance 同形。
+    assert resp.status_code == 409, resp.text
+    detail = resp.json().get("detail")
+    assert isinstance(detail, dict), detail
+    assert detail.get("stage") == "audience_translation_exhausted", detail
+    assert detail.get("error_pack_path"), detail
+    # join-before-close：close 钩未跑
+    assert saw == {}, saw
+    assert game.db.get_month_open_snapshot(turn) is None
+    assert game.state_payload()["turn"]["settlement_display"] is False

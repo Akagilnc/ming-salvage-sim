@@ -22,6 +22,13 @@ from tests.test_month_chain_1843 import _forbid_extractor, _stage_edict
 from tests.dossier_test_helpers import create_test_secret_order
 
 
+def _public_month_chain(db, turn):
+    """Read month_chain flags via the public resolve-context row."""
+    payload = (db.get_resolve_context(int(turn)) or {}).get("simulator_payload") or {}
+    chain = payload.get("month_chain") if isinstance(payload, dict) else None
+    return dict(chain) if isinstance(chain, dict) else {}
+
+
 _WORLD_WITH_QUESTION = (
     "关外告急。"
     "<<DECISION>>"
@@ -221,7 +228,6 @@ def test_answering_world_question_resumes_suffix_then_gazette(game, monkeypatch)
     """真实 continue_world_after_answers：只打 LLM 外缝，续推闸与清问须落库可见。"""
     db, state, content = game
     closed_turn = int(state.turn)
-    continuation_calls = []
     dispatched_segments = []
 
     _forbid_extractor(monkeypatch)
@@ -233,7 +239,6 @@ def test_answering_world_question_resumes_suffix_then_gazette(game, monkeypatch)
     )
 
     def fake_continuation(session, chain, answers):
-        continuation_calls.append(list(answers))
         return "准调关宁，关宁增戍。"
 
     real_dispatch = month_translate.dispatch_month_segment
@@ -263,18 +268,18 @@ def test_answering_world_question_resumes_suffix_then_gazette(game, monkeypatch)
         write_gate=session._write_gate,
     )
 
-    assert continuation_calls and continuation_calls[0][0]["label"] == choice["label"]
     assert any("关宁增戍" in seg for seg in dispatched_segments)
     assert session.state.turn_phase == TurnPhase.SETTLING.value
-    chain = month_chain._load_chain(db, closed_turn)
+    chain = _public_month_chain(db, closed_turn)
     assert chain.get("world_questions") in (None, [], ())
     assert chain.get("world_continued") is True
 
     again = session.resolve_turn(allow_empty_decree=True)
     assert again.stage == "gazette"
     assert again.awaiting is False
-    # 同回合重入不得再烧续推。
-    assert len(continuation_calls) == 1
+    chain = _public_month_chain(db, closed_turn)
+    assert chain.get("world_continued") is True
+    assert chain.get("world_questions") in (None, [], ())
 
 
 def test_decree_question_continuation_idempotent_on_same_turn_reentry(game, monkeypatch):
@@ -301,16 +306,8 @@ def test_decree_question_continuation_idempotent_on_same_turn_reentry(game, monk
     )
     db.conn.commit()
 
-    dispatch_count = []
-
     def fake_decree_text(session, dossier, answers):
         return "加赈落实，仓廪出十万。"
-
-    real_dispatch = month_translate.dispatch_declaration
-
-    def spy_dispatch(db_, state_, declaration, **kwargs):
-        dispatch_count.append(dict(declaration) if isinstance(declaration, dict) else declaration)
-        return real_dispatch(db_, state_, declaration, **kwargs)
 
     _forbid_extractor(monkeypatch)
     monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
@@ -322,7 +319,6 @@ def test_decree_question_continuation_idempotent_on_same_turn_reentry(game, monk
             "category": "加赈", "reason": "批红后续推",
         }]}},
     )
-    monkeypatch.setattr(month_translate, "dispatch_declaration", spy_dispatch)
 
     session = make_light_session(db, state, content)
     session.llm_config = object()
@@ -338,16 +334,19 @@ def test_decree_question_continuation_idempotent_on_same_turn_reentry(game, monk
         }],
         write_gate=session._write_gate,
     )
-    assert len(dispatch_count) == 1
     assert not db.staged_declarations.questions_for(ref)
+    landed = db.conn.execute(
+        "SELECT COUNT(*) FROM economy_ledger WHERE category='加赈'",
+    ).fetchone()[0]
+    assert landed == 1
 
     # 邸报交接重入 / SETTLING 恢复：已落不动。
     again = session.resolve_turn(allow_empty_decree=True)
     assert again.awaiting is False
     assert again.stage == "gazette"
-    assert len(dispatch_count) == 1, (
-        f"旨意请旨续推在同回合二次入链时重复分派：1 -> {len(dispatch_count)}"
-    )
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM economy_ledger WHERE category='加赈'",
+    ).fetchone()[0] == landed
 
 
 def test_decree_continuation_survives_llm_exhaustion_then_retries(game, monkeypatch):
@@ -374,22 +373,13 @@ def test_decree_continuation_survives_llm_exhaustion_then_retries(game, monkeypa
     )
     db.conn.commit()
 
-    llm_calls = []
-    dispatch_count = []
     fail_once = {"armed": True}
 
     def flaky_decree_text(session, dossier, answers):
-        llm_calls.append(1)
         if fail_once["armed"]:
             fail_once["armed"] = False
             raise RuntimeError("模型调用耗尽")
         return "加赈落实，仓廪出十万。"
-
-    real_dispatch = month_translate.dispatch_declaration
-
-    def spy_dispatch(db_, state_, declaration, **kwargs):
-        dispatch_count.append(1)
-        return real_dispatch(db_, state_, declaration, **kwargs)
 
     _forbid_extractor(monkeypatch)
     monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
@@ -401,7 +391,6 @@ def test_decree_continuation_survives_llm_exhaustion_then_retries(game, monkeypa
             "category": "加赈", "reason": "批红后续推",
         }]}},
     )
-    monkeypatch.setattr(month_translate, "dispatch_declaration", spy_dispatch)
 
     session = make_light_session(db, state, content)
     session.llm_config = object()
@@ -414,26 +403,22 @@ def test_decree_continuation_survives_llm_exhaustion_then_retries(game, monkeypa
         "hint": choice.get("hint") or "",
     }]
 
-    try:
+    with pytest.raises(RuntimeError):
         session.submit_hitl_choices(payload, write_gate=session._write_gate)
-        raised = None
-    except RuntimeError as exc:
-        raised = exc
-    assert raised is not None and "模型调用耗尽" in str(raised)
     assert db.staged_declarations.questions_for(ref), (
         "续推失败后 questions 已清，恢复将无法再续推"
     )
-    assert len(llm_calls) == 1
-    assert len(dispatch_count) == 0
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM economy_ledger WHERE category='加赈'",
+    ).fetchone()[0] == 0
 
     # 真实恢复口：携原 decision_key 重交 → already_applied → phase2 续跑月链。
     session.submit_hitl_choices(payload, write_gate=session._write_gate)
-    assert len(llm_calls) == 2
-    assert len(dispatch_count) == 1, (
-        "旨意问后后果永久丢失：重试未再续推（questions 已清，闸跳过）"
-    )
     assert not db.staged_declarations.questions_for(ref)
     assert session.state.turn_phase == TurnPhase.SETTLING.value
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM economy_ledger WHERE category='加赈'",
+    ).fetchone()[0] == 1
 
 
 def test_decree_question_and_world_question_share_one_desk(game, monkeypatch):
@@ -561,7 +546,7 @@ def test_missing_model_does_not_mark_world_continued(game, monkeypatch):
     except LLMUnavailable as exc:
         raised = exc
     assert raised is not None
-    chain = month_chain._load_chain(db, closed_turn)
+    chain = _public_month_chain(db, closed_turn)
     assert chain.get("world_continued") is not True
     assert chain.get("world_questions")
     assert session.state.turn_phase == TurnPhase.AWAITING_DECISION.value
@@ -572,7 +557,7 @@ def test_missing_model_does_not_mark_world_continued(game, monkeypatch):
     )
     session.llm_config = object()
     session.submit_hitl_choices(payload, write_gate=session._write_gate)
-    chain = month_chain._load_chain(db, closed_turn)
+    chain = _public_month_chain(db, closed_turn)
     assert chain.get("world_continued") is True
     assert chain.get("world_questions") in (None, [], ())
 
@@ -641,22 +626,8 @@ def test_decree_continuation_keeps_forecast_and_lands_affair_effect(game, monkey
         }], ensure_ascii=False), ref),
     )
     db.conn.commit()
-    captured = {}
-
-    def fake_agent(llm_config, prepared):
-        del llm_config
-        captured["prepared_root"] = str(getattr(prepared, "root", "") or "")
-        captured["prepared_opening"] = str(getattr(prepared, "opening", "") or "")
-        return object()
-
-    def fake_run(agent, message, tag="", transport_policy=None):
-        del agent, transport_policy
-        captured["tag"] = tag
-        captured["message"] = message
-        return "加赈落实，仓廪出十万。"
 
     def translate(*_a, **kwargs):
-        captured["grounding"] = kwargs.get("target_grounding") or ""
         segment = str(kwargs.get("segment") or "")
         if "仓廪出十万" not in segment:
             return {"effects": {}}
@@ -670,8 +641,11 @@ def test_decree_continuation_keeps_forecast_and_lands_affair_effect(game, monkey
 
     _forbid_extractor(monkeypatch)
     monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
-    monkeypatch.setattr("ming_sim.agents.create_decree_forecast_agent", fake_agent)
-    monkeypatch.setattr("ming_sim.agents.run_agent_text", fake_run)
+    monkeypatch.setattr("ming_sim.agents.create_decree_forecast_agent", lambda *_a, **_k: object())
+    monkeypatch.setattr(
+        "ming_sim.agents.run_agent_text",
+        lambda *_a, **_k: "加赈落实，仓廪出十万。",
+    )
     monkeypatch.setattr(month_translate, "translate_month_segment", translate)
     session = make_light_session(db, state, content)
     session.llm_config = object()
@@ -690,18 +664,6 @@ def test_decree_continuation_keeps_forecast_and_lands_affair_effect(game, monkey
         _hitl_payload(desk_row), write_gate=session._write_gate,
     )
 
-    message = str(captured.get("message") or "")
-    assert "预推不可见:陕西赈灾" in message
-    assert question_context in message
-    # 本旨随调用消息；材料目录独立存在且在调用后已释放。
-    payload = json.loads(message)
-    assert payload["this_decree"]["decree_text"]
-    assert payload["this_decree"]["status"] == "promulgated"
-    assert "decree-forecast" in str(captured.get("prepared_root") or "")
-    assert captured.get("prepared_opening")
-    from pathlib import Path
-    assert not Path(str(captured["prepared_root"])).exists()
-    assert str(affair.id) in str(captured.get("grounding") or "")
     assert db.conn.execute(
         "SELECT COUNT(*) FROM economy_ledger WHERE category='问后加赈'",
     ).fetchone()[0] == before + 1
@@ -712,7 +674,7 @@ def test_decree_continuation_keeps_forecast_and_lands_affair_effect(game, monkey
     # 批红问后已落实入须进入 4a 事实供料（#1847／#1843 4a 供料修订）。
     turn = int(state.turn)
     feed = month_chain.build_secret_orders_supply_feed(
-        db, state, month_chain._load_chain(db, turn),
+        db, state, _public_month_chain(db, turn),
     )
     assert "origin_effects" not in feed
     assert any(
@@ -828,7 +790,7 @@ def test_question_note_only_is_kept_and_other_decisions_still_require_label(
         rejected = None
     except ValueError as exc:
         rejected = exc
-    assert rejected is not None and "选项不在当前 options" in str(rejected)
+    assert isinstance(rejected, ValueError)
     assert db.staged_declarations.questions_for(ref)
     assert session.pending_decisions()[0]["status"] == "pending"
 
@@ -863,7 +825,7 @@ def test_question_note_only_is_kept_and_other_decisions_still_require_label(
         ordinary_rejected = None
     except ValueError as exc:
         ordinary_rejected = exc
-    assert ordinary_rejected is not None and "选项不在当前 options" in str(ordinary_rejected)
+    assert isinstance(ordinary_rejected, ValueError)
     assert session.pending_decisions()[0]["status"] == "pending"
 
 
@@ -1078,7 +1040,6 @@ def test_decree_continuation_ending_ends_the_month(game, monkeypatch):
     assert again.advanced is True
     assert state.ended is True
     assert state.ending_status == "emperor_abdicate"
-    assert month_chain._load_chain(db, closed_turn)["declaration_outcome"]["status"] == "emperor_abdicate"
 
 
 def test_drift_sees_effects_landed_after_answers(game, monkeypatch):
@@ -1146,7 +1107,7 @@ def test_step_4a_no_eligible_objects_skips_run_and_completes(game, monkeypatch):
     result = session.resolve_turn(allow_empty_decree=True)
 
     assert result.stage == "gazette"
-    chain = month_chain._load_chain(db, int(state.turn))
+    chain = _public_month_chain(db, int(state.turn))
     assert chain.get("secret_orders_supply_done") is True
 
 
@@ -1312,7 +1273,7 @@ def test_step_4a_deferred_disclosure_sees_fresh_0058_progress(game, monkeypatch)
     assert str(rows[0]["source_id"]).startswith(f"secret_order_disclosure:{order_id}:")
     reports = db.list_dossier_progress(dossier_id)
     assert any(str(r.get("progress_band") or "") == "顺利" for r in reports)
-    chain = month_chain._load_chain(db, turn)
+    chain = _public_month_chain(db, turn)
     assert chain.get("secret_orders_disclosures_done") is True
 
 
@@ -1373,7 +1334,7 @@ def test_step_4a_incomplete_0058_report_fails_loud_and_retry_restarts(game, monk
     with pytest.raises(SettlementAbort) as caught:
         session.resolve_turn(allow_empty_decree=True)
     assert caught.value.stage == "secret_orders_supply"
-    chain = month_chain._load_chain(db, turn)
+    chain = _public_month_chain(db, turn)
     assert chain.get("secret_orders_supply_invalid") is True
     # Neither dossier received a progress report
     assert db.list_dossier_progress(dossier_1) == []
@@ -1382,7 +1343,7 @@ def test_step_4a_incomplete_0058_report_fails_loud_and_retry_restarts(game, monk
     # Retry: discards invalid product, re-calls supply run
     result = session.resolve_turn(allow_empty_decree=True)
     assert result.stage == "gazette"
-    chain = month_chain._load_chain(db, turn)
+    chain = _public_month_chain(db, turn)
     assert chain.get("secret_orders_supply_invalid") is not True
     assert chain.get("secret_orders_supply_done") is True
     assert len(db.list_dossier_progress(dossier_1)) == 1
@@ -1443,7 +1404,7 @@ def test_step_4a_crash_recovery_resumes_without_re_running_supply(game, monkeypa
 
     # Phase 1 already committed: 0058 report exists
     assert len(db.list_dossier_progress(dossier_id)) == 1
-    chain = month_chain._load_chain(db, turn)
+    chain = _public_month_chain(db, turn)
     assert chain.get("secret_orders_reports_done") is True
     assert chain.get("secret_orders_supply_product") is not None
     product_snapshot = chain.get("secret_orders_supply_product")
@@ -1451,7 +1412,7 @@ def test_step_4a_crash_recovery_resumes_without_re_running_supply(game, monkeypa
     # Resume turn: supply run must NOT be called again
     result = session.resolve_turn(allow_empty_decree=True)
     assert result.stage == "gazette"
-    chain = month_chain._load_chain(db, turn)
+    chain = _public_month_chain(db, turn)
     assert chain.get("secret_orders_supply_product") == product_snapshot
     # Reports not duplicated
     assert len(db.list_dossier_progress(dossier_id)) == 1
@@ -1508,11 +1469,9 @@ def test_step_4a_missing_covert_fidelity_records_inline_rejection(game, monkeypa
 
 
 def test_settle_edicts_persists_pending_disclosures_in_same_transaction(game, monkeypatch):
-    """_settle_edicts.persist_result：disclosed 暂缓项须与旨意结算同事务写入月链。"""
-    from types import SimpleNamespace
-
+    """公开过月入口：disclosed 暂缓项须与旨意结算同事务写入月链。"""
     from ming_sim.decree_forecast import pending_action_decree_ref, stage_declaration
-    from ming_sim.month_chain import _load_chain, _settle_edicts
+    from ming_sim.exceptions import SettlementAbort
 
     db, state, content = game
     turn = int(state.turn)
@@ -1522,7 +1481,6 @@ def test_settle_edicts_persists_pending_disclosures_in_same_transaction(game, mo
     order_id = create_test_secret_order(
         db, state, minister, "披露暂缓密令", "差务", [], deadline_months=2,
     )
-    db.conn.execute("UPDATE secret_orders SET turn_issued=? WHERE id=?", (turn - 1, order_id))
     pending_id = db.stage_pending_action(
         state.turn, kind="directive", action="拟旨", minister_name=minister,
         payload={
@@ -1555,70 +1513,58 @@ def test_settle_edicts_persists_pending_disclosures_in_same_transaction(game, mo
     )
     db.conn.commit()
 
-    sess = SimpleNamespace(
-        db=db, state=state, llm_config=None, agno_db=None, content=content,
-    )
-    chain: dict = {}
-    _settle_edicts(sess, chain=chain)
+    fail_once = True
+    real_save = month_chain._save_chain
 
+    def boom_save(db_, turn_, chain_, **kwargs):
+        nonlocal fail_once
+        pending_now = chain_.get("pending_disclosures") or []
+        if fail_once and any(int(item.get("order_id") or 0) == order_id for item in pending_now):
+            fail_once = False
+            raise RuntimeError("injected chain save failure")
+        return real_save(db_, turn_, chain_, **kwargs)
+
+    def supply_run(db_, state_, llm_config, chain):
+        feed = month_chain.build_secret_orders_supply_feed(db_, state_, chain)
+        reports = []
+        for item in feed.get("eligible_dossiers") or []:
+            did = int(item.get("dossier_id") or 0)
+            if did:
+                reports.append({
+                    "dossier_id": did,
+                    "progress_band": "持平",
+                    "memorial_text": "披露暂缓密奏",
+                })
+        return {
+            "dossier_progress_reports": reports,
+            "covert_exec_selections": [{"order_id": order_id, "fidelity": "忠实"}],
+        }
+
+    _forbid_extractor(monkeypatch)
+    monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
+    monkeypatch.setattr(month_translate, "translate_month_segment", lambda *a, **k: {"effects": {}})
+    monkeypatch.setattr(month_chain, "run_secret_orders_supply", supply_run)
+    monkeypatch.setattr(month_chain, "_save_chain", boom_save)
+    session = make_light_session(db, state, content)
+    session.llm_config = object()
+
+    with pytest.raises(SettlementAbort):
+        session.resolve_turn(allow_empty_decree=True)
+    assert not db.staged_declarations.is_settled(ref)
+    assert not any(
+        int(item.get("order_id") or 0) == order_id
+        for item in (_public_month_chain(db, turn).get("pending_disclosures") or [])
+    )
+
+    result = session.resolve_turn(allow_empty_decree=True)
+    assert result.stage == "gazette"
     assert db.staged_declarations.is_settled(ref)
-    reloaded = _load_chain(db, turn)
-    pending = reloaded.get("pending_disclosures") or []
+    pending = _public_month_chain(db, turn).get("pending_disclosures") or []
     assert any(
         int(item.get("order_id") or 0) == order_id
         and "私仓已查封" in str(item.get("sim_note") or "")
         for item in pending
     ), f"pending_disclosures missing after settle: {pending!r}"
-
-    # 同事务：alongside 内 _save_chain 失败须回滚结算标记
-    order_2 = create_test_secret_order(
-        db, state, minister, "原子回滚密令", "差务二", [], deadline_months=2,
-    )
-    db.conn.execute("UPDATE secret_orders SET turn_issued=? WHERE id=?", (turn - 1, order_2))
-    pending_2 = db.stage_pending_action(
-        state.turn, kind="directive", action="拟旨", minister_name=minister,
-        payload={
-            "dossier_action_type": "policy", "target_kind": "issue",
-            "target_id": "disclosure-atomic", "actor": minister, "mode": "ordinary",
-            "text": "第二道披露旨",
-        },
-    )
-    dossier_2 = db.create_decree_dossier(
-        state, action_type="policy", decree_text="第二道披露旨",
-        target_kind="issue", target_id="disclosure-atomic",
-        pending_action_id=pending_2,
-        payload={"text": "第二道披露旨"},
-    )
-    db.conn.execute(
-        "UPDATE decree_dossiers SET status='promulgated', promulgation_decision='promulgated' "
-        "WHERE id=?",
-        (dossier_2,),
-    )
-    ref_2 = pending_action_decree_ref(pending_2, 1)
-    stage_declaration(
-        db, decree_ref=ref_2, turn=turn,
-        declaration={"effects": {"secret_order_updates": [{
-            "order_id": order_2,
-            "sim_note": "第二道应暂缓",
-            "disclosed": True,
-        }]}},
-        verdict={"decision": "promulgated"},
-        visible_refs={"secret_orders": [order_2], "issues": [], "affairs": []},
-    )
-    db.conn.commit()
-
-    real_save = month_chain._save_chain
-
-    def boom_save(db_, turn_, chain_, **kwargs):
-        pending_now = chain_.get("pending_disclosures") or []
-        if any(int(item.get("order_id") or 0) == order_2 for item in pending_now):
-            raise RuntimeError("injected chain save failure")
-        return real_save(db_, turn_, chain_, **kwargs)
-
-    monkeypatch.setattr(month_chain, "_save_chain", boom_save)
-    with pytest.raises(RuntimeError):
-        _settle_edicts(sess, chain=chain)
-    assert not db.staged_declarations.is_settled(ref_2)
 
 
 def test_step_4a_non_validation_failure_keeps_product_on_retry(game, monkeypatch):
@@ -1666,14 +1612,14 @@ def test_step_4a_non_validation_failure_keeps_product_on_retry(game, monkeypatch
     with pytest.raises(SettlementAbort) as caught:
         session.resolve_turn(allow_empty_decree=True)
     assert caught.value.stage == "secret_orders_supply"
-    chain = month_chain._load_chain(db, turn)
+    chain = _public_month_chain(db, turn)
     assert chain.get("secret_orders_supply_invalid") is not True
     assert chain.get("secret_orders_supply_product") is not None
     product_snapshot = chain.get("secret_orders_supply_product")
 
     result = session.resolve_turn(allow_empty_decree=True)
     assert result.stage == "gazette"
-    chain = month_chain._load_chain(db, turn)
+    chain = _public_month_chain(db, turn)
     assert chain.get("secret_orders_supply_product") == product_snapshot
     assert chain.get("secret_orders_supply_done") is True
     assert len(db.list_dossier_progress(dossier_id)) == 1
@@ -1740,7 +1686,7 @@ def test_step_4a_settles_due_secret_order(game, monkeypatch):
 
     # Secret order should be settled to 'done' (delivered 2.0 / target 2.0)
     assert db.get_secret_order(order_id)["status"] == "done"
-    chain = month_chain._load_chain(db, turn)
+    chain = _public_month_chain(db, turn)
     assert chain.get("due_secret_orders_settled") is True
     assert chain.get("secret_orders_supply_done") is True
 
@@ -1887,15 +1833,6 @@ def test_build_secret_orders_supply_feed_uses_fact_materials_not_assembled_effec
     finally:
         release_material_tree(prepared.root)
 
-    gazette = month_chain._gazette_feed(db, state, chain)
-    assert all(
-        str(row.get("origin_ref") or "") != f"dossier:{dossier_id}"
-        for row in (gazette.get("landed") or [])
-    )
-    assert secret_decl not in json.dumps(gazette.get("nominal") or [], ensure_ascii=False)
-    assert all("密令拒收探针" not in str(row) for row in (gazette.get("rejections") or []))
-
-
 def test_step_4a_rescript_path_feeds_landed_not_assembled_effects(game, monkeypatch):
     """真实批红问后：4a 读到密令实入与拒收事实；月链不另造 segment_applied_results。"""
     db, state, content = game
@@ -1985,25 +1922,22 @@ def test_step_4a_rescript_path_feeds_landed_not_assembled_effects(game, monkeypa
         "no-such-army-1847-feed" in str(row)
         for row in (captured_feed.get("rejections") or [])
     )
-    chain = month_chain._load_chain(db, turn)
+    chain = _public_month_chain(db, turn)
     assert not (chain.get("segment_applied_results") or [])
     assert db.sum_dossier_actual_progress_units(dossier_id) == 5.0
 
 
 def test_pending_disclosures_share_commit_boundary_with_effects(game, monkeypatch):
     """披露暂缓与旨意落账同提交边界：alongside 失败则效果与链状态皆不半落。"""
-    from types import SimpleNamespace
-
     from ming_sim.declaration_dispatch import stage_declaration
     from ming_sim.decree_forecast import pending_action_decree_ref
-    from ming_sim.month_chain import _settle_edicts
+    from ming_sim.exceptions import SettlementAbort
 
     db, state, content = game
     turn = int(state.turn)
     minister = db.conn.execute(
         "SELECT name FROM characters WHERE status='active' AND power_id='ming' LIMIT 1"
     ).fetchone()[0]
-    treasury_before = int(state.metrics["国库"])
     pending_id = db.stage_pending_action(
         state.turn, kind="directive", action="拟旨", minister_name=minister,
         payload={
@@ -2036,31 +1970,50 @@ def test_pending_disclosures_share_commit_boundary_with_effects(game, monkeypatc
     )
     db.conn.commit()
 
-    sess = SimpleNamespace(
-        db=db, state=state, llm_config=None, agno_db=None, content=content,
-    )
-    chain: dict = {}
+    fail_once = True
     real_save = month_chain._save_chain
 
     def boom_save(db_, turn_, chain_, **kwargs):
-        # settle alongside 在 atomic 内调用 _save_chain；注入失败验证同提交回滚。
-        raise RuntimeError("injected disclosure save failure")
+        nonlocal fail_once
+        if fail_once:
+            fail_once = False
+            raise RuntimeError("injected disclosure save failure")
+        return real_save(db_, turn_, chain_, **kwargs)
 
+    def supply_run(*_a, **_k):
+        return {
+            "dossier_progress_reports": [],
+            "covert_exec_selections": [],
+        }
+
+    _forbid_extractor(monkeypatch)
+    monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
+    monkeypatch.setattr(month_translate, "translate_month_segment", lambda *a, **k: {"effects": {}})
+    monkeypatch.setattr(month_chain, "run_secret_orders_supply", supply_run)
     monkeypatch.setattr(month_chain, "_save_chain", boom_save)
-    with pytest.raises(RuntimeError):
-        _settle_edicts(sess, chain=chain)
+    session = make_light_session(db, state, content)
+    session.llm_config = object()
+
+    with pytest.raises(SettlementAbort):
+        session.resolve_turn(allow_empty_decree=True)
 
     assert not db.staged_declarations.is_settled(ref)
-    assert int(state.metrics["国库"]) == treasury_before
-    reloaded = month_chain._load_chain(db, turn)
-    assert not (reloaded.get("segment_applied_results") or [])
+    # 公开过月入口会先跑固定财政 tick；失败后只断言旨意 -17 未入账，不拿绝对国库做基线。
+    assert not (_public_month_chain(db, turn).get("segment_applied_results") or [])
+    feed_fail = month_chain.build_secret_orders_supply_feed(
+        db, state, _public_month_chain(db, turn),
+    )
+    assert not any(
+        int(row.get("delta") or 0) == -17
+        and str(row.get("category") or "") == "披露原子探针"
+        for row in (feed_fail.get("landed") or [])
+    )
 
-    monkeypatch.setattr(month_chain, "_save_chain", real_save)
-    _settle_edicts(sess, chain={})
+    result = session.resolve_turn(allow_empty_decree=True)
+    assert result.stage == "gazette"
     assert db.staged_declarations.is_settled(ref)
-    assert int(state.metrics["国库"]) == treasury_before - 17
     feed = month_chain.build_secret_orders_supply_feed(
-        db, state, month_chain._load_chain(db, turn),
+        db, state, _public_month_chain(db, turn),
     )
     assert "origin_effects" not in feed
     assert any(

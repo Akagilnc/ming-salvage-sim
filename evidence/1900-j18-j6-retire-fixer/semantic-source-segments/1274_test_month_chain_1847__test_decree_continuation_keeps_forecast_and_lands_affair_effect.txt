@@ -1,0 +1,113 @@
+# FILE: tests/test_month_chain_1847.py
+# NAME: test_decree_continuation_keeps_forecast_and_lands_affair_effect
+# LINE: 620-726
+# FLAGS: assert_text_compare_or_match,mock_or_patch_present,helper_or_private_call
+# KIND: py
+
+def test_decree_continuation_keeps_forecast_and_lands_affair_effect(game, monkeypatch):
+    """问后续推读已存问前段与请旨语境，并以冻结引用落下 affair 来源效果。"""
+    db, state, content = game
+    minister = next(iter(content.characters.values())).name
+    affair = db.affairs.open(
+        name="问后落账", origin="旨意", year=state.year, period=state.period,
+        turn=state.turn,
+    )
+    _pending_id, ref = _stage_edict(
+        db, state, minister, "陕西赈灾", "陕西赈灾", -1, affair.id,
+    )
+    question_context = "灾民待哺于关中，短选项不足以自明"
+    db.conn.execute(
+        "UPDATE staged_declarations SET questions_json=? WHERE decree_ref=?",
+        (json.dumps([{
+            "title": "是否加赈",
+            "context": question_context,
+            "options": [
+                {"label": "准", "hint": "出仓"},
+                {"label": "驳", "hint": "缓"},
+            ],
+        }], ensure_ascii=False), ref),
+    )
+    db.conn.commit()
+    captured = {}
+
+    def fake_agent(llm_config, prepared):
+        del llm_config
+        captured["prepared_root"] = str(getattr(prepared, "root", "") or "")
+        captured["prepared_opening"] = str(getattr(prepared, "opening", "") or "")
+        return object()
+
+    def fake_run(agent, message, tag="", transport_policy=None):
+        del agent, transport_policy
+        captured["tag"] = tag
+        captured["message"] = message
+        return "加赈落实，仓廪出十万。"
+
+    def translate(*_a, **kwargs):
+        captured["grounding"] = kwargs.get("target_grounding") or ""
+        segment = str(kwargs.get("segment") or "")
+        if "仓廪出十万" not in segment:
+            return {"effects": {}}
+        return {"effects": {"economy_moves": [{
+            "origin_ref": f"affair:{affair.id}",
+            "account": "国库",
+            "delta": -10,
+            "category": "问后加赈",
+            "reason": "批红后续推",
+        }]}}
+
+    _forbid_extractor(monkeypatch)
+    monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
+    monkeypatch.setattr("ming_sim.agents.create_decree_forecast_agent", fake_agent)
+    monkeypatch.setattr("ming_sim.agents.run_agent_text", fake_run)
+    monkeypatch.setattr(month_translate, "translate_month_segment", translate)
+    session = make_light_session(db, state, content)
+    session.llm_config = object()
+    session.resolve_turn(allow_empty_decree=True)
+    before = db.conn.execute(
+        "SELECT COUNT(*) FROM economy_ledger WHERE category='问后加赈'",
+    ).fetchone()[0]
+    pre_rows = db.conn.execute(
+        "SELECT COUNT(*) FROM economy_ledger WHERE category='陕西赈灾'",
+    ).fetchone()[0]
+    desk_row = next(
+        row for row in session.pending_decisions() if row["title"] == "是否加赈"
+    )
+
+    session.submit_hitl_choices(
+        _hitl_payload(desk_row), write_gate=session._write_gate,
+    )
+
+    message = str(captured.get("message") or "")
+    assert "预推不可见:陕西赈灾" in message
+    assert question_context in message
+    # 本旨随调用消息；材料目录独立存在且在调用后已释放。
+    payload = json.loads(message)
+    assert payload["this_decree"]["decree_text"]
+    assert payload["this_decree"]["status"] == "promulgated"
+    assert "decree-forecast" in str(captured.get("prepared_root") or "")
+    assert captured.get("prepared_opening")
+    from pathlib import Path
+    assert not Path(str(captured["prepared_root"])).exists()
+    assert str(affair.id) in str(captured.get("grounding") or "")
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM economy_ledger WHERE category='问后加赈'",
+    ).fetchone()[0] == before + 1
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM economy_ledger WHERE category='陕西赈灾'",
+    ).fetchone()[0] == pre_rows
+    assert not db.staged_declarations.questions_for(ref)
+    # 批红问后已落实入须进入 4a 事实供料（#1847／#1843 4a 供料修订）。
+    turn = int(state.turn)
+    feed = month_chain.build_secret_orders_supply_feed(
+        db, state, month_chain._load_chain(db, turn),
+    )
+    assert "origin_effects" not in feed
+    assert any(
+        int(row.get("delta") or 0) == -10
+        for row in (feed.get("landed") or [])
+    )
+
+    session.resolve_turn(allow_empty_decree=True)
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM economy_ledger WHERE category='问后加赈'",
+    ).fetchone()[0] == before + 1

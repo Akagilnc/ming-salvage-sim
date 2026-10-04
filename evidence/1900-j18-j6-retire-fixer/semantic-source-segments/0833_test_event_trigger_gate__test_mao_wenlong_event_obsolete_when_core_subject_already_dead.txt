@@ -1,0 +1,38 @@
+# FILE: tests/test_event_trigger_gate.py
+# NAME: test_mao_wenlong_event_obsolete_when_core_subject_already_dead
+# LINE: 4196-4227
+# FLAGS: assert_text_compare_or_match
+# KIND: py
+
+def test_mao_wenlong_event_obsolete_when_core_subject_already_dead(game):
+    """#191：毛文龙已永久死亡时，斩毛人物核心事件应作废而非只当回合空判。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1629
+    state.period = 6
+    db.conn.execute(
+        "UPDATE characters SET loyalty = ?, status = ? WHERE name = ?",
+        (44, "dead", "毛文龙"),
+    )
+
+    cands = issues.gather_candidate_events(state, db)
+    assert all(ev.id != "mao_wenlong" for ev in cands)
+
+    issues.apply_event_terminal_states(state, db)
+
+    out = issues.apply_issue_tracker_output(
+        db,
+        state,
+        {"new_issues": [{"origin_kind": "event_pool", "id": "mao_wenlong"}]},
+        content=content,
+    )
+
+    assert out["new_issues"][0]["rejected"] is True
+    assert db.get_character_status("毛文龙")[0] == "dead"
+    row = db.conn.execute(
+        "SELECT terminal_state, source FROM event_triggers WHERE event_id=?",
+        ("mao_wenlong",),
+    ).fetchone()
+    assert row is not None
+    assert row["terminal_state"] == "obsolete"
+    assert row["source"] == "person_core_dead"

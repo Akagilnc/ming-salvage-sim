@@ -1,0 +1,41 @@
+# FILE: tests/test_fiscal_levy_effect.py
+# NAME: test_fiscal_levy_pending_choice_waits_for_event_window
+# LINE: 684-718
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_fiscal_levy_pending_choice_waits_for_event_window(game):
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1638
+    state.period = 12
+    db.save_state(state)
+    before = _settle_payload(db, "shaanxi")
+    db.record_event_decision_choice(
+        state,
+        "lian_levy_start_1639",
+        {"label": "已准"},
+    )
+
+    apply_historical_fiscal_rates(state, db)
+
+    row = db.conn.execute(
+        "SELECT terminal_state, terminal_reason FROM event_triggers WHERE event_id=?",
+        ("lian_levy_start_1639",),
+    ).fetchone()
+    assert dict(row) == {"terminal_state": "", "terminal_reason": "已准"}
+    after = _settle_payload(db, "shaanxi")
+    expected_sanxiang = after["_meta"]["辽饷九厘基线"] * 4.0 / 3.0 + after["_meta"]["剿饷基线"]
+    assert math.isclose(after["p"]["三饷应征"], expected_sanxiang, rel_tol=1e-9, abs_tol=1e-9)
+    assert before["p"]["三饷应征"] != after["p"]["三饷应征"]
+
+    state.year = 1639
+    state.period = 1
+    db.save_state(state)
+    apply_historical_fiscal_rates(state, db)
+
+    row = db.conn.execute(
+        "SELECT terminal_state, terminal_reason FROM event_triggers WHERE event_id=?",
+        ("lian_levy_start_1639",),
+    ).fetchone()
+    assert dict(row) == {"terminal_state": "triggered", "terminal_reason": "已准"}

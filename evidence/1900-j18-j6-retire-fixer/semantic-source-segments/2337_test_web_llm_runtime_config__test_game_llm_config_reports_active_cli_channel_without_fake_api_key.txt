@@ -1,0 +1,61 @@
+# FILE: tests/test_web_llm_runtime_config.py
+# NAME: test_game_llm_config_reports_active_cli_channel_without_fake_api_key
+# LINE: 742-796
+# FLAGS: assert_text_compare_or_match,assert_count,mock_or_patch_present
+# KIND: py
+
+def test_game_llm_config_reports_active_cli_channel_without_fake_api_key(monkeypatch):
+    cfg = LLMConfig(
+        api_key="cli-backend",
+        base_url="https://api.example.com/v1",
+        model="api-fallback",
+        timeout_seconds=180,
+        reasoning_strength="medium",
+        channel="cli",
+        cli_runner="codex",
+        cli_model="gpt-5.5",
+        cli_timeout_seconds=240,
+    )
+    monkeypatch.setattr(web_app, "web_game", SimpleNamespace(
+        session=SimpleNamespace(llm_config=cfg),
+    ))
+    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {
+        "channel": "cli",
+        "api": {
+            "base_url": "https://api.example.com/v1",
+            "model": "api-fallback",
+            "api_key": "",
+            "timeout_seconds": "180",
+            "thinking_level": "",
+            "advanced_model": "",
+            "advanced_base_url": "",
+            "advanced_api_key": "",
+            "advanced_thinking_level": "",
+            "reasoning_strength": "medium",
+        },
+        "cli": {"runner": "codex", "model": "gpt-5.5", "timeout_seconds": "240", "reasoning_strength": "medium"},
+        "base_url": "https://api.example.com/v1",
+        "model": "api-fallback",
+        "api_key": "",
+        "timeout_seconds": "180",
+        "thinking_level": "",
+        "advanced_model": "",
+        "advanced_base_url": "",
+        "advanced_api_key": "",
+        "advanced_thinking_level": "",
+        "reasoning_strength": "medium",
+    })
+
+    result = asyncio.run(web_app.api_get_llm_config())
+
+    assert result["channel"] == "cli"
+    assert result["cli_runner"] == "codex"
+    assert result["cli_model"] == "gpt-5.5"
+    assert result["cli_timeout_seconds"] == 240
+    assert result["reasoning_strength"] == "medium"
+    assert result["has_api_key"] is False
+    assert result["persisted"]["channel"] == "cli"
+    assert result["persisted"]["cli_runner"] == "codex"
+    assert result["persisted"]["cli_model"] == "gpt-5.5"
+    assert result["persisted"]["cli_timeout_seconds"] == 240
+    assert result["persisted"]["reasoning_strength"] == "medium"

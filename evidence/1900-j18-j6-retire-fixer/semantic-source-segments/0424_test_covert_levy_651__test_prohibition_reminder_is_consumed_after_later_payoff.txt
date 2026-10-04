@@ -1,0 +1,17 @@
+# FILE: tests/test_covert_levy_651.py
+# NAME: test_prohibition_reminder_is_consumed_after_later_payoff
+# LINE: 293-303
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_prohibition_reminder_is_consumed_after_later_payoff(game, monkeypatch):
+    db, state, _ = game
+    did, _, army_id, _ = _bound_case(db, state)
+    _exposed_todo(db, state, monkeypatch, did)
+    db.conn.execute("UPDATE armies SET arrears=6 WHERE id=?", (army_id,))
+    _promulgated_prohibition(db, state, did)
+
+    assert settle_exposure_from_canonical_actions(db, state, {}) == 1
+    db.conn.execute("UPDATE armies SET arrears=0 WHERE id=?", (army_id,))
+    assert settle_exposure_from_canonical_actions(db, state, {}) == 1
+    assert db.list_next_audience_todos(status="pending") == []

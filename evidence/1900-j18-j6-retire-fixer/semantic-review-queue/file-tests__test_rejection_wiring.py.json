@@ -1,0 +1,214 @@
+{
+  "source_path": "tests/test_rejection_wiring.py",
+  "member_count": 15,
+  "members": [
+    {
+      "idx": 1826,
+      "file": "tests/test_rejection_wiring.py",
+      "name": "test_rejected_item_lands_in_reports_and_jsonl",
+      "line": 32,
+      "end": 54,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1826_test_rejection_wiring__test_rejected_item_lands_in_reports_and_jsonl.txt",
+      "source_path": "tests/test_rejection_wiring.py"
+    },
+    {
+      "idx": 1827,
+      "file": "tests/test_rejection_wiring.py",
+      "name": "test_rollback_leaves_no_rows_and_no_jsonl",
+      "line": 57,
+      "end": 84,
+      "flags": [
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1827_test_rejection_wiring__test_rollback_leaves_no_rows_and_no_jsonl.txt",
+      "source_path": "tests/test_rejection_wiring.py"
+    },
+    {
+      "idx": 1828,
+      "file": "tests/test_rejection_wiring.py",
+      "name": "test_issue_summary_nested_rejections_are_collected",
+      "line": 87,
+      "end": 102,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1828_test_rejection_wiring__test_issue_summary_nested_rejections_are_collected.txt",
+      "source_path": "tests/test_rejection_wiring.py"
+    },
+    {
+      "idx": 1829,
+      "file": "tests/test_rejection_wiring.py",
+      "name": "test_nested_atomic_success_path_does_not_orphan_jsonl",
+      "line": 105,
+      "end": 123,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1829_test_rejection_wiring__test_nested_atomic_success_path_does_not_orphan_jsonl.txt",
+      "source_path": "tests/test_rejection_wiring.py"
+    },
+    {
+      "idx": 1830,
+      "file": "tests/test_rejection_wiring.py",
+      "name": "test_attempt_derivation_failure_does_not_abort_settlement",
+      "line": 126,
+      "end": 146,
+      "flags": [
+        "assert_count",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1830_test_rejection_wiring__test_attempt_derivation_failure_does_not_abort_settlement.txt",
+      "source_path": "tests/test_rejection_wiring.py"
+    },
+    {
+      "idx": 1831,
+      "file": "tests/test_rejection_wiring.py",
+      "name": "test_noncancellable_cancel_rejection_carries_reason",
+      "line": 149,
+      "end": 169,
+      "flags": [
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1831_test_rejection_wiring__test_noncancellable_cancel_rejection_carries_reason.txt",
+      "source_path": "tests/test_rejection_wiring.py"
+    },
+    {
+      "idx": 1832,
+      "file": "tests/test_rejection_wiring.py",
+      "name": "test_inertia_tolerated_rejections_reach_reports",
+      "line": 174,
+      "end": 198,
+      "flags": [
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1832_test_rejection_wiring__test_inertia_tolerated_rejections_reach_reports.txt",
+      "source_path": "tests/test_rejection_wiring.py"
+    },
+    {
+      "idx": 1833,
+      "file": "tests/test_rejection_wiring.py",
+      "name": "test_item_json_is_original_delta_item_when_producer_carries_it",
+      "line": 201,
+      "end": 221,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1833_test_rejection_wiring__test_item_json_is_original_delta_item_when_producer_carries_it.txt",
+      "source_path": "tests/test_rejection_wiring.py"
+    },
+    {
+      "idx": 1834,
+      "file": "tests/test_rejection_wiring.py",
+      "name": "test_person_change_rejection_item_json_keeps_original_delta_item",
+      "line": 224,
+      "end": 249,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1834_test_rejection_wiring__test_person_change_rejection_item_json_keeps_original_delta_item.txt",
+      "source_path": "tests/test_rejection_wiring.py"
+    },
+    {
+      "idx": 1835,
+      "file": "tests/test_rejection_wiring.py",
+      "name": "test_power_move_rejection_item_json_keeps_original_person_delta_item",
+      "line": 252,
+      "end": 285,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1835_test_rejection_wiring__test_power_move_rejection_item_json_keeps_original_person_delta_item.txt",
+      "source_path": "tests/test_rejection_wiring.py"
+    },
+    {
+      "idx": 1836,
+      "file": "tests/test_rejection_wiring.py",
+      "name": "test_office_change_rejection_item_json_keeps_original_person_delta_item",
+      "line": 288,
+      "end": 316,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1836_test_rejection_wiring__test_office_change_rejection_item_json_keeps_original_person_delta_item.txt",
+      "source_path": "tests/test_rejection_wiring.py"
+    },
+    {
+      "idx": 1837,
+      "file": "tests/test_rejection_wiring.py",
+      "name": "test_non_ming_appointment_rejection_keeps_original_person_delta_item",
+      "line": 319,
+      "end": 358,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1837_test_rejection_wiring__test_non_ming_appointment_rejection_keeps_original_person_delta_item.txt",
+      "source_path": "tests/test_rejection_wiring.py"
+    },
+    {
+      "idx": 1838,
+      "file": "tests/test_rejection_wiring.py",
+      "name": "test_power_move_backlash_rejection_lands_in_reports",
+      "line": 361,
+      "end": 418,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1838_test_rejection_wiring__test_power_move_backlash_rejection_lands_in_reports.txt",
+      "source_path": "tests/test_rejection_wiring.py"
+    },
+    {
+      "idx": 1839,
+      "file": "tests/test_rejection_wiring.py",
+      "name": "test_issue_close_power_move_backlash_rejection_is_not_duplicated",
+      "line": 421,
+      "end": 482,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1839_test_rejection_wiring__test_issue_close_power_move_backlash_rejection_is_not_duplicated.txt",
+      "source_path": "tests/test_rejection_wiring.py"
+    },
+    {
+      "idx": 1840,
+      "file": "tests/test_rejection_wiring.py",
+      "name": "test_inertia_power_move_backlash_rejection_lands_in_reports",
+      "line": 486,
+      "end": 516,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1840_test_rejection_wiring__test_inertia_power_move_backlash_rejection_lands_in_reports.txt",
+      "source_path": "tests/test_rejection_wiring.py"
+    }
+  ]
+}

@@ -1,0 +1,33 @@
+# FILE: tests/test_new_game_smoke.py
+# NAME: test_existing_office_fk_violation_is_normalized_on_reopen
+# LINE: 117-143
+# FLAGS: assert_text_compare_or_match,assert_count
+# KIND: py
+
+def test_existing_office_fk_violation_is_normalized_on_reopen(fresh_game_dir):
+    sess, dbp, content = fresh_game_dir
+    character = sess.db.conn.execute(
+        "SELECT name, office_type FROM characters ORDER BY name LIMIT 1"
+    ).fetchone()
+    sess.close()
+    raw = sqlite3.connect(dbp)
+    raw.execute("PRAGMA foreign_keys=OFF")
+    raw.execute(
+        "UPDATE character_offices SET office_type='__stale_office_1026__' "
+        "WHERE character_name=?",
+        (character["name"],),
+    )
+    raw.commit()
+    raw.close()
+
+    reopened = GameDB(dbp, content=content)
+    try:
+        office = reopened.conn.execute(
+            "SELECT office_type FROM character_offices WHERE character_name=?",
+            (character["name"],),
+        ).fetchone()
+        assert office["office_type"] == character["office_type"]
+        assert reopened.conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
+        assert reopened.conn.execute("PRAGMA foreign_key_check").fetchall() == []
+    finally:
+        reopened.close()

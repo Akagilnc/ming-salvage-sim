@@ -1,0 +1,45 @@
+{
+  "source_path": "tests/test_region_citydefense.py",
+  "member_count": 3,
+  "members": [
+    {
+      "idx": 1823,
+      "file": "tests/test_region_citydefense.py",
+      "name": "test_city_level_tiers_by_history",
+      "line": 15,
+      "end": 30,
+      "flags": [
+        "assert_count"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1823_test_region_citydefense__test_city_level_tiers_by_history.txt",
+      "source_path": "tests/test_region_citydefense.py"
+    },
+    {
+      "idx": 1824,
+      "file": "tests/test_region_citydefense.py",
+      "name": "test_region_cannon_cap_by_city_level",
+      "line": 33,
+      "end": 39,
+      "flags": [
+        "assert_count"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1824_test_region_citydefense__test_region_cannon_cap_by_city_level.txt",
+      "source_path": "tests/test_region_citydefense.py"
+    },
+    {
+      "idx": 1825,
+      "file": "tests/test_region_citydefense.py",
+      "name": "test_region_cannon_level0_caps_zero",
+      "line": 42,
+      "end": 46,
+      "flags": [
+        "assert_count"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1825_test_region_citydefense__test_region_cannon_level0_caps_zero.txt",
+      "source_path": "tests/test_region_citydefense.py"
+    }
+  ]
+}

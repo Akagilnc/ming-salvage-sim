@@ -1,0 +1,24 @@
+# FILE: tests/test_impeachment_surge_655.py
+# NAME: test_dynamic_apply_rejects_non_text_free_fields_without_coercion
+# LINE: 254-271
+# FLAGS: helper_or_private_call
+# KIND: py
+
+def test_dynamic_apply_rejects_non_text_free_fields_without_coercion(game):
+    db, state = game[:2]
+    _, owner, _ = _candidate_world(db, state)
+    candidate = gather_impeachment_surge_candidates(state, db)[0]
+    base = {"origin_kind": "impeachment_surge", "candidate_id": candidate["id"],
+            "faction_hint": candidate["faction_id"],
+            "target_roster": [owner],
+            "title": "题", "stage_text": "情"}
+
+    result = apply_issue_tracker_output(db, state, {"new_issues": [
+        dict(base, title={"bad": "shape"}),
+        dict(base, stage_text=["bad"]),
+    ]})["new_issues"]
+
+    assert all(item["rejected"] for item in result)
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM issues WHERE origin_kind='impeachment_surge'"
+    ).fetchone()[0] == 0

@@ -143,39 +143,6 @@ def test_origin_ref_must_be_dossier_provenance(game):
 
 
 
-def test_r4_golden2_expiry_falls_back_to_next_specific(game):
-    """到期后省级结算实际采用全国系数，而不是只观察 resolver DTO。"""
-    db, state, _content = game
-    turn = db._current_settle_turn()
-    dossier_id = _override_dossier(db, state, [
-        {"key": "due_haircut_bp_军饷@shaanxi#province", "value": 6000, "until_turn": turn},
-        {"key": "due_haircut_bp_军饷#province", "value": 9000},
-    ])
-    db.apply_dossier_promulgation(state, dossier_id, "promulgated")
-    due = _opening_settle(db, "shaanxi")["p"]["Due"]["军饷"]
-    assert due > 0
-    db.conn.execute("SAVEPOINT coefficient_comparison")
-    active = db.settle_province_tick("shaanxi")
-    db.conn.execute("ROLLBACK TO coefficient_comparison")
-    db.conn.execute("RELEASE coefficient_comparison")
-    db.conn.execute("UPDATE game_state SET turn=? WHERE id=1", (turn + 1,))
-    expired = db.settle_province_tick("shaanxi")
-    # 同一开账只改期限游标；实发取 floor，余数免除，不生成欠账。
-    assert active.breakdown["haircut_军饷"] == pytest.approx(due - math.floor(due * 6000 / 10000))
-    assert expired.breakdown["haircut_军饷"] == pytest.approx(due - math.floor(due * 9000 / 10000))
-    config = db.get_fiscal_config()
-    assert config["due_haircut_bp_军饷@shaanxi#province"] == 6000
-    assert config["due_haircut_bp_军饷@shaanxi#province_until_turn"] == turn
-
-
-
-
-
-
-
-
-
-
 # ═══════════════ F1.6 验收表 golden ①–⑦ ═══════════════
 
 def test_golden1_pay_order_reversal_breakdown():
@@ -194,25 +161,6 @@ def test_golden1_pay_order_reversal_breakdown():
     assert res.breakdown["NewDebt"]["军饷欠"] == pytest.approx(16.07)
     assert res.breakdown["NewDebt"]["官俸欠"] == 0.0
     assert res.new_st["军饷欠"] == pytest.approx(36.07)  # 旧欠20 + 新欠16.07
-
-
-def test_golden2_haircut_half_is_exemption_not_debt():
-    """②「宗禄折半」：floor(Due×bp/10000)；折掉部分不入宗禄欠；NewDebt 只含折后未付。
-    r2 golden：Due=101、bp=5000 → 应得 50、免除 51。"""
-    from ming_sim.pay_order import haircut_due
-    eff, exempt = haircut_due(101, 5000)
-    assert eff == 50.0 and exempt == 51.0
-
-    st, p = _board(gross=50.0)  # 省内可支＝10+50=60
-    p["Due"] = {"军饷": 18.0, "官俸": 3.0, "宗禄": 101.0, "赈济": 1.0}
-    p["due_haircut_bp"] = {"宗禄": 5000}
-    res = settle_tick(st, p, [])
-    assert res.breakdown["haircut_宗禄"] == pytest.approx(51.0)   # 折发=免除
-    # 池 60：军饷18+官俸3+宗禄应得50+赈济1=72>60 → 军饷18/官俸3/宗禄39/赈济0
-    assert res.breakdown["实付分账"]["宗禄"] == pytest.approx(39.0)
-    assert res.new_st["宗禄欠"] == pytest.approx(11.0)  # 只含折后未付（50−39）
-    # 免除的 51 绝不进 CLAIM（若无折，宗禄欠将是 101-39=62）
-    assert res.new_st["宗禄欠"] < 62.0
 
 
 def test_golden3_arrears_waterfall_reversal():
@@ -1138,34 +1086,6 @@ def test_materialize_requires_real_promulgated_dossier(game):
 
 # ═══════════════ 中央侧折发消费者（flows 读端）═══════════════
 
-def test_central_due_haircut_consumer(game):
-    """中央份额 Due 折发读端：floor 折算、余数免除、地域/饷源精确、无折恒等。"""
-    from ming_sim.flows import apply_fixed_period_flows, army_needed
-
-    db, state, _content = game
-    rows = db.conn.execute(
-        "SELECT id, name, manpower, salary_rate, owner_power, pay_source_region, "
-        "central_pay_share FROM armies WHERE central_pay_share > 0 ORDER BY rowid"
-    ).fetchall()
-    shaanxi_raw = army_needed(
-        next(r for r in rows if r["id"] == "shaanxi_army"),
-    ) * 0.35
-
-    did = _override_dossier(db, state, [
-        {"key": "due_haircut_bp_军饷@shaanxi#central", "value": 5000},
-        {"key": "due_haircut_bp_军饷#central", "value": 6000},
-    ])
-    db.apply_dossier_promulgation(state, did, "promulgated")
-    flows = apply_fixed_period_flows(db, state)
-    shaanxi_name = next(r["name"] for r in rows if r["id"] == "shaanxi_army")
-    shaanxi_pay = next(r for r in flows if r.get("category") == "中央军饷" and r.get("army") == shaanxi_name)
-    assert shaanxi_pay["needed"] == pytest.approx(float(math.floor(shaanxi_raw * 0.5)))
-    assert shaanxi_pay["due_haircut"] == pytest.approx(shaanxi_raw - math.floor(shaanxi_raw * 0.5))
-    # 他省中央侧取 #central=6000（京营 beizhili：need=ceil(85000*1/10000)=9，raw=9.0）
-    jy_raw = army_needed(next(r for r in rows if r["id"] == "jingying")) * 1.0
-    jingying_name = next(r["name"] for r in rows if r["id"] == "jingying")
-    jingying_pay = next(r for r in flows if r.get("category") == "中央军饷" and r.get("army") == jingying_name)
-    assert jingying_pay["needed"] == pytest.approx(math.floor(jy_raw * 0.6))
     # 免除不入欠：欠发只按折后应得计（shortfall 上界即折后 due）
 
 

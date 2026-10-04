@@ -1,0 +1,36 @@
+# FILE: tests/test_event_trigger_gate.py
+# NAME: test_mao_wenlong_event_trigger_respects_outer_transaction_rollback
+# LINE: 1430-1459
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_mao_wenlong_event_trigger_respects_outer_transaction_rollback(game):
+    """post-merge CMR：event trigger 写入不得提前提交外层普通事务。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1629
+    state.period = 6
+    db.conn.execute("UPDATE characters SET loyalty = ?, status = ? WHERE name = ?", (44, "active", "毛文龙"))
+
+    with _restore_yuan_as_guanning_commander(db, content):
+        db.conn.commit()
+        before_logs = db.conn.execute(
+            "SELECT COUNT(*) FROM person_logs WHERE person_name=?", ("毛文龙",)
+        ).fetchone()[0]
+
+        db.conn.execute("BEGIN")
+        out = issues.apply_issue_tracker_output(
+            db,
+            state,
+            {"new_issues": [{"origin_kind": "event_pool", "id": "mao_wenlong"}]},
+            content=content,
+        )
+        assert out["new_issues"][0]["rejected"] is False
+        db.conn.rollback()
+
+        assert db.get_character_status("毛文龙")[0] == "active"
+        assert content.characters["毛文龙"].status == "active"
+        assert not db.has_event_triggered("mao_wenlong")
+        assert db.conn.execute(
+            "SELECT COUNT(*) FROM person_logs WHERE person_name=?", ("毛文龙",)
+        ).fetchone()[0] == before_logs

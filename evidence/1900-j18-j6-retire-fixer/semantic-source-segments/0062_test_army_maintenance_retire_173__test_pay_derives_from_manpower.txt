@@ -1,0 +1,16 @@
+# FILE: tests/test_army_maintenance_retire_173.py
+# NAME: test_pay_derives_from_manpower
+# LINE: 117-126
+# FLAGS: helper_or_private_call
+# KIND: py
+
+def test_pay_derives_from_manpower(game):
+    # 两军缺省 salary_rate 落同一锚点，兵力多者 army_needed 严格更大 → 月饷由兵力派生（非维护费）。
+    db, state, _ = game
+    db.create_armies_from_extraction(state, [
+        {"id": "pay_lo", "name": "少兵营", "owner_power": "ming", "manpower": 10000, **_pay_source()},
+        {"id": "pay_hi", "name": "多兵营", "owner_power": "ming", "manpower": 40000, **_pay_source()},
+    ])
+    lo = db.conn.execute("SELECT * FROM armies WHERE id='pay_lo'").fetchone()
+    hi = db.conn.execute("SELECT * FROM armies WHERE id='pay_hi'").fetchone()
+    assert army_needed(hi) > army_needed(lo) > 0, "兵力多者月饷应更大（月饷随兵力派生）"

@@ -1,0 +1,34 @@
+# FILE: tests/test_player_payload_1022.py
+# NAME: test_settlement_sse_routes_serialize_only_player_narrative
+# LINE: 123-150
+# FLAGS: assert_text_compare_or_match,mock_or_patch_present,helper_or_private_call
+# KIND: py
+
+def test_settlement_sse_routes_serialize_only_player_narrative(
+    monkeypatch, route_name, expected_event,
+):
+    game = _SettlementGame()
+    monkeypatch.setattr(web_app, "get_game", lambda: game)
+
+    event, payload = asyncio.run(_serialized_terminal_event(route_name))
+
+    assert event == expected_event
+    assert payload["decree"] == "诏曰：国丈家赀约数十万两，仍发帑三十万两、调兵五千赈辽。"
+    if expected_event == "decisions":
+        assert payload["decisions"] == [{"title": "辽饷", "context": "家赀约十万两，是否发帑"}]
+    else:
+        assert payload["report"] == "邸报：国丈家赀约数十万两，三十万两帑银与五千援军已抵辽东。"
+        assert payload["advanced"] is False
+    structured_keys: set[str] = set()
+    pending = [payload]
+    while pending:
+        value = pending.pop()
+        if isinstance(value, dict):
+            structured_keys.update(value)
+            pending.extend(value.values())
+        elif isinstance(value, list):
+            pending.extend(value)
+    assert not (
+        {"state", "extraction", "extractor_output", "character", "loyalty", "ability", "integrity", "courage"}
+        & structured_keys
+    )

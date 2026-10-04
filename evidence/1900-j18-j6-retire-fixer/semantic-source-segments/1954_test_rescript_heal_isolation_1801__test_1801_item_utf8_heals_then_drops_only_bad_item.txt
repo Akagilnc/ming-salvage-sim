@@ -1,0 +1,21 @@
+# FILE: tests/test_rescript_heal_isolation_1801.py
+# NAME: test_1801_item_utf8_heals_then_drops_only_bad_item
+# LINE: 124-138
+# FLAGS: assert_text_compare_or_match,assert_count,mock_or_patch_present,helper_or_private_call
+# KIND: py
+
+def test_1801_item_utf8_heals_then_drops_only_bad_item(monkeypatch, tmp_path):
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    good = _item("陕西告饥")
+    bad = _item("\ud800", context="坏 title")
+    raw = _items_json([good, bad])
+    llm, tags, prompts = _never_fix_llm(raw)
+    monkeypatch.setattr(rescript_mod, "run_agent_text", llm)
+    drafts = generate_rescript_draft(object(), _ctx(), turn=102)
+    assert drafts is not None
+    assert len(drafts) == 1 and drafts[0]["title"] == good["title"]
+    assert "rescript-draft-heal" in tags
+    req = _parse_heal(prompts[1])
+    assert req["failures"][0]["scope"] == "item"
+    assert req["failures"][0]["exhaust"] == "drop_item"
+    assert "title" in _field_map(req["failures"][0])

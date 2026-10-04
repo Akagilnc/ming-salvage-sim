@@ -1,0 +1,48 @@
+# FILE: tests/test_declaration_dispatch_1835.py
+# NAME: test_edge_event_conflicting_affair_pointer_is_rejected_first_binding_kept
+# LINE: 582-623
+# FLAGS: assert_text_compare_or_match,assert_count
+# KIND: py
+
+def test_edge_event_conflicting_affair_pointer_is_rejected_first_binding_kept(game):
+    """同一条边事件（去重键相同）第二次声明指向不同事务：指针冲突时该项整块
+    回滚、不误报为 applied，也不改动第一次已绑的事务指针（写事件与绑指针在
+    同一 atomic 块内）。"""
+    db, state, _ = game
+    ministers = db.conn.execute(
+        "SELECT name FROM characters WHERE status='active' ORDER BY name LIMIT 2"
+    ).fetchall()
+    a, b = str(ministers[0]["name"]), str(ministers[1]["name"])
+    affair_a = db.affairs.open(
+        name="宁远护送", origin="拨银、调将、派兵去宁远",
+        year=state.year, period=state.period, turn=state.turn,
+    )
+    affair_b = db.affairs.open(
+        name="蓟镇募兵", origin="募兵备边",
+        year=state.year, period=state.period, turn=state.turn,
+    )
+    same_event = {"source": a, "target": b, "event_kind": "撑腰", "context": "当殿举荐"}
+
+    first = dispatch_declaration(db, state, {
+        "edge_events": [{
+            **same_event,
+            "affair_declaration": {"attach": "existing", "affair_id": affair_a.id},
+        }],
+    })
+    assert len(first.edge_events.applied) == 1
+    event_id = first.edge_events.applied[0]["id"]
+
+    second = dispatch_declaration(db, state, {
+        "edge_events": [{
+            **same_event,
+            "affair_declaration": {"attach": "existing", "affair_id": affair_b.id},
+        }],
+    })
+    assert second.edge_events.applied == []
+    assert len(second.edge_events.rejected) == 1
+    assert second.edge_events.rejected[0].category == "invalid_state"
+
+    row = db.conn.execute(
+        "SELECT affair_id FROM relation_edge_events WHERE id=?", (event_id,),
+    ).fetchone()
+    assert row["affair_id"] == affair_a.id

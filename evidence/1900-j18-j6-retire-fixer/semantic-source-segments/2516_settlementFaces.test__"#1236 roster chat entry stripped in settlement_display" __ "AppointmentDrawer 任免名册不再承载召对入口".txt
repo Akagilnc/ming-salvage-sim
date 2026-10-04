@@ -1,0 +1,18 @@
+# FILE: web/src/components/settlementFaces.test.tsx
+# NAME: "#1236 roster chat entry stripped in settlement_display" / "AppointmentDrawer 任免名册不再承载召对入口"
+# LINE: 256-267
+# FLAGS: web_text_assert
+# KIND: web
+
+  it("AppointmentDrawer 任免名册不再承载召对入口", () => {
+    const host = mount(
+      <AppointmentDrawer
+        ministers={[minister("温体仁")]}
+        open={true}
+        onClose={() => {}}
+      />,
+    );
+    expect(host.textContent).toContain("温体仁");
+    expect(host.querySelector("button.right-drawer-row-minister")).toBeNull();
+    expect(host.querySelector(".right-drawer-row-minister")?.tagName).toBe("DIV");
+  });

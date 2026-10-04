@@ -1,0 +1,23 @@
+# FILE: tests/test_surcharge_causal_chain_650.py
+# NAME: test_e2e_surcharge_and_stop_share_month_open_snapshot
+# LINE: 449-465
+# FLAGS: helper_or_private_call
+# KIND: py
+
+def test_e2e_surcharge_and_stop_share_month_open_snapshot(game, monkeypatch):
+    db, state, content = game
+    want = _expected_inflow_persons(10.0, SHAANXI_SUPPORT)
+
+    turn = state.turn
+    _settle_month(state, db, {"surcharge_decrees": [_decree(db, state, monthly_amount=10.0)]},
+                  before_turn=turn, content=content, monkeypatch=monkeypatch)
+    assert _pop(db, "流民", "shaanxi") == DISPLACED_SHAANXI
+
+    turn = state.turn
+    _settle_month(state, db, {"surcharge_decrees": [_decree(db, state, monthly_amount=-10.0)]},
+                  before_turn=turn, content=content, monkeypatch=monkeypatch)
+    assert _pop(db, "流民", "shaanxi") == DISPLACED_SHAANXI + want
+
+    turn = state.turn
+    _settle_month(state, db, {}, before_turn=turn, content=content, monkeypatch=monkeypatch)
+    assert _pop(db, "流民", "shaanxi") == DISPLACED_SHAANXI + want

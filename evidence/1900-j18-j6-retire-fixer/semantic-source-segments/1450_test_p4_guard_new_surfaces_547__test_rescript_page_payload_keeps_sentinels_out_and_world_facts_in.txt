@@ -1,0 +1,64 @@
+# FILE: tests/test_p4_guard_new_surfaces_547.py
+# NAME: test_rescript_page_payload_keeps_sentinels_out_and_world_facts_in
+# LINE: 146-203
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_rescript_page_payload_keeps_sentinels_out_and_world_facts_in(game):
+    """批红页：真 state_payload 信封（AWAITING_DECISION + pending_decisions）。"""
+    db, state, content = game
+    minister = active_ming_character(db, content)
+    plant_character_axis_sentinels(db, content, minister)
+    facts = _world_facts(db, state)
+
+    dossier_id = db.create_decree_dossier(
+        state,
+        action_type="policy",
+        decree_text=(
+            f"发{facts['treasury']}万两饷银，调{facts['army_name']}"
+            f"{facts['manpower']}人清核河工"
+        ),
+        target_kind="issue",
+        target_id="river-works",
+        payload={"mode": "ordinary"},
+    )
+    dossier = next(
+        row for row in db.list_decree_dossiers() if int(row["id"]) == dossier_id
+    )
+    verdict = {
+        "dossier_id": dossier_id,
+        "decision": "rejected",
+        "reason": (
+            f"科臣以{facts['year']}年{facts['period']}月饷额与"
+            f"兵{facts['manpower']}未核为由封驳。"
+        ),
+        "primary_opponents": [{"kind": "faction", "key": "东林"}],
+        "midzhi_unpromulgatable": False,
+    }
+    decisions = _rescript_decisions([verdict], [dossier])
+    assert decisions and decisions[0]["title"] == "批红待裁"
+    db.save_pending_decisions(state.turn, decisions)
+    stored = db.list_pending_decisions(state.turn)
+
+    state.turn_phase = TurnPhase.AWAITING_DECISION.value
+    db.save_state(state)
+
+    runtime = _state_payload_runtime(db, state, content, pending_decisions=stored)
+    page = runtime.state_payload()
+
+    assert page["pending_decisions"]
+    assert "rescript_decisions" not in page
+    assert "ministers" in page and "consorts" in page and "talent_pool" in page
+
+    # 批红玩家面切片：pending_decisions + 同封 public_character 名册。
+    # 不扫整封 state_payload 键面——armies.loyalty 等是军务域字段，非人物抽象轴。
+    rescript_face = {
+        "pending_decisions": page["pending_decisions"],
+        "ministers": page["ministers"],
+        "consorts": page["consorts"],
+        "talent_pool": page["talent_pool"],
+    }
+    _assert_no_character_axis_keys(rescript_face, where="state_payload 批红信封")
+
+    assert page["pending_decisions"][0]["rejection_reason"]
+    assert page["pending_decisions"][0]["opposition"] == "东林"

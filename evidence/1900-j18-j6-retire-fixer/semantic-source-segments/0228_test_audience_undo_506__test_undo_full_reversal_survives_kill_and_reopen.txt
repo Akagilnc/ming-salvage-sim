@@ -1,0 +1,29 @@
+# FILE: tests/test_audience_undo_506.py
+# NAME: test_undo_full_reversal_survives_kill_and_reopen
+# LINE: 232-254
+# FLAGS: assert_count,helper_or_private_call
+# KIND: py
+
+def test_undo_full_reversal_survives_kill_and_reopen(game):
+    db, state, content = game
+    m = _active_minister(db, content)
+
+    def _land_secret(night_id: int, chat_id: int) -> None:
+        create_test_secret_order(db, state, m, "密查军资", "密查蓟镇军资挪用", ["军务"])
+    night_id, chat_id = _run_round(
+        db, state, m, writes=_land_secret,
+        declaration=_minister_declaration(m, "领旨。"),
+    )
+    assert db.conn.execute("SELECT COUNT(*) FROM secret_orders").fetchone()[0] == 1
+
+    db2 = _reopen(db, content)
+    try:
+        # 重开后撤销日志仍在 → 撤回照样完整逆转
+        db2.undo_chat_turn(chat_id)
+        assert db2.conn.execute("SELECT COUNT(*) FROM secret_orders").fetchone()[0] == 0
+        assert not any(
+            e["source_chat_turn_id"] == chat_id for e in an.list_ledger(db2, night_id)
+        )
+        assert m not in an.persons_present_tonight(db2, night_id)
+    finally:
+        db2.close()

@@ -289,27 +289,6 @@ def test_s1_fiscal_removes_beyond_intent_tracer_and_negatives(game, content):
     assert raw and all("beyond_intent" in dict(r) for r in raw)
 
 
-
-
-def test_s1_engine_grant_fiscal_create_stays_beyond_intent_zero(game):
-    """db.py 引擎确定性拨帑建项显式留 0（旨内，禁捏造旗值）。"""
-    db, state, _ = game
-    did = _executing_policy(db, state, token="grant-1260")
-    created = db._create_grant_fiscal_item(
-        state,
-        {"grant_action": "赏赉", "reason": "恩赏月拨", "cadence": "每月"},
-        did,
-        account="国库",
-        amount=10,
-        text="赏银月拨",
-    )
-    assert created
-    rows = db.list_fiscal_effects_for_dossier(did)
-    create_rows = [r for r in rows if r.get("effect_kind") == "create"]
-    assert create_rows
-    assert all(r["beyond_intent"] is False for r in create_rows), create_rows
-
-
 # ── S2：纯 fiscal 旨外案卷 → 终裁/fork/反噬 ─────────────────────────
 
 

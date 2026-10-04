@@ -1,0 +1,140 @@
+{
+  "source_path": "tests/test_advances_section_rejections.py",
+  "member_count": 9,
+  "members": [
+    {
+      "idx": 12,
+      "file": "tests/test_advances_section_rejections.py",
+      "name": "test_advance_non_dict_item_rejected_not_crash",
+      "line": 32,
+      "end": 39,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0012_test_advances_section_rejections__test_advance_non_dict_item_rejected_not_crash.txt",
+      "source_path": "tests/test_advances_section_rejections.py"
+    },
+    {
+      "idx": 13,
+      "file": "tests/test_advances_section_rejections.py",
+      "name": "test_advance_bad_issue_id_rejected",
+      "line": 43,
+      "end": 50,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0013_test_advances_section_rejections__test_advance_bad_issue_id_rejected.txt",
+      "source_path": "tests/test_advances_section_rejections.py"
+    },
+    {
+      "idx": 14,
+      "file": "tests/test_advances_section_rejections.py",
+      "name": "test_advance_dirty_int_field_rejected",
+      "line": 61,
+      "end": 69,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0014_test_advances_section_rejections__test_advance_dirty_int_field_rejected.txt",
+      "source_path": "tests/test_advances_section_rejections.py"
+    },
+    {
+      "idx": 15,
+      "file": "tests/test_advances_section_rejections.py",
+      "name": "test_advance_missing_issue_rejected",
+      "line": 72,
+      "end": 78,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0015_test_advances_section_rejections__test_advance_missing_issue_rejected.txt",
+      "source_path": "tests/test_advances_section_rejections.py"
+    },
+    {
+      "idx": 16,
+      "file": "tests/test_advances_section_rejections.py",
+      "name": "test_advance_non_active_issue_rejected",
+      "line": 81,
+      "end": 89,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0016_test_advances_section_rejections__test_advance_non_active_issue_rejected.txt",
+      "source_path": "tests/test_advances_section_rejections.py"
+    },
+    {
+      "idx": 17,
+      "file": "tests/test_advances_section_rejections.py",
+      "name": "test_advance_valid_still_advances",
+      "line": 92,
+      "end": 100,
+      "flags": [
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0017_test_advances_section_rejections__test_advance_valid_still_advances.txt",
+      "source_path": "tests/test_advances_section_rejections.py"
+    },
+    {
+      "idx": 18,
+      "file": "tests/test_advances_section_rejections.py",
+      "name": "test_advance_missing_issue_no_metric_leak",
+      "line": 120,
+      "end": 128,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0018_test_advances_section_rejections__test_advance_missing_issue_no_metric_leak.txt",
+      "source_path": "tests/test_advances_section_rejections.py"
+    },
+    {
+      "idx": 19,
+      "file": "tests/test_advances_section_rejections.py",
+      "name": "test_advance_non_active_issue_no_metric_leak",
+      "line": 131,
+      "end": 141,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0019_test_advances_section_rejections__test_advance_non_active_issue_no_metric_leak.txt",
+      "source_path": "tests/test_advances_section_rejections.py"
+    },
+    {
+      "idx": 20,
+      "file": "tests/test_advances_section_rejections.py",
+      "name": "test_advance_non_dict_metric_delta_tolerated",
+      "line": 145,
+      "end": 156,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0020_test_advances_section_rejections__test_advance_non_dict_metric_delta_tolerated.txt",
+      "source_path": "tests/test_advances_section_rejections.py"
+    }
+  ]
+}

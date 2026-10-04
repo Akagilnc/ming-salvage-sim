@@ -1,0 +1,20 @@
+# FILE: tests/test_qa_e1_numeric_presentation.py
+# NAME: test_army_payload_omits_raw_arrears
+# LINE: 99-112
+# FLAGS: assert_text_compare_or_match
+# KIND: py
+
+def test_army_payload_omits_raw_arrears(game):
+    db, _state, _ = game
+    row = db.conn.execute(
+        "SELECT id FROM armies WHERE owner_power='ming' ORDER BY id LIMIT 1"
+    ).fetchone()
+    army_id = row["id"]
+    raw = 1.2000000000000002
+    db.conn.execute(
+        "UPDATE armies SET arrears=?, province_pay_arrears=?, central_pay_arrears=0 WHERE id=?",
+        (raw, raw, army_id),
+    )
+    db.conn.commit()
+    card = {army["id"]: army for army in db.army_payload()}[army_id]
+    assert "arrears" not in card

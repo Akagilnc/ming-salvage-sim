@@ -1,0 +1,36 @@
+# FILE: tests/test_fiscal_levy_effect.py
+# NAME: test_fiscal_levy_pending_stop_choice_keeps_jiao_in_force_same_tick
+# LINE: 652-681
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_fiscal_levy_pending_stop_choice_keeps_jiao_in_force_same_tick(game):
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1640
+    state.period = 1
+    db.save_state(state)
+    db.mark_event_triggered(state, "jiao_levy_start_1637", source="test", terminal_reason="已准")
+    db.record_event_decision_choice(
+        state,
+        "jiao_levy_stop_1640",
+        {"label": "仍征"},
+    )
+
+    apply_historical_fiscal_rates(state, db)
+
+    row = db.conn.execute(
+        "SELECT terminal_state, terminal_reason FROM event_triggers WHERE event_id=?",
+        ("jiao_levy_stop_1640",),
+    ).fetchone()
+    assert dict(row) == {"terminal_state": "triggered", "terminal_reason": "仍征"}
+    settle = _settle_payload(db, "shaanxi")
+    expected_liao = settle["_meta"]["辽饷九厘基线"] * 4.0 / 3.0
+    expected_jiao = settle["_meta"]["剿饷基线"]
+    expected_lian = settle["_meta"]["练饷基线"]
+    assert math.isclose(
+        settle["p"]["三饷应征"],
+        expected_liao + expected_jiao + expected_lian,
+        rel_tol=1e-9,
+        abs_tol=1e-9,
+    )

@@ -1,0 +1,62 @@
+# FILE: tests/test_decree_commitment_schema_136.py
+# NAME: test_existing_issues_table_gets_commitment_columns_idempotently
+# LINE: 157-212
+# FLAGS: assert_text_compare_or_match
+# KIND: py
+
+def test_existing_issues_table_gets_commitment_columns_idempotently(tmp_path, content):
+    path = tmp_path / "legacy.db"
+    conn = sqlite3.connect(path)
+    conn.execute(
+        """
+        CREATE TABLE issues (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            kind TEXT NOT NULL,
+            title TEXT NOT NULL,
+            origin_kind TEXT NOT NULL DEFAULT '',
+            origin_ref TEXT NOT NULL DEFAULT '',
+            origin_turn INTEGER NOT NULL,
+            bar_value INTEGER NOT NULL DEFAULT 40,
+            bar_good_meaning TEXT NOT NULL DEFAULT '已平',
+            bar_bad_meaning TEXT NOT NULL DEFAULT '失控',
+            inertia INTEGER NOT NULL DEFAULT 0,
+            phase TEXT NOT NULL DEFAULT '起',
+            stage_text TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'active',
+            severity INTEGER NOT NULL DEFAULT 50,
+            region_hint TEXT NOT NULL DEFAULT '',
+            faction_hint TEXT NOT NULL DEFAULT '',
+            tags TEXT NOT NULL DEFAULT '[]',
+            ongoing_effects TEXT NOT NULL DEFAULT '{}',
+            cancellable TEXT NOT NULL DEFAULT 'never',
+            cancel_cost TEXT NOT NULL DEFAULT '{}',
+            effect_on_resolve TEXT NOT NULL DEFAULT '{}',
+            effect_on_fail TEXT NOT NULL DEFAULT '{}',
+            resolve_condition TEXT NOT NULL DEFAULT '',
+            fail_condition TEXT NOT NULL DEFAULT '',
+            resolution_summary TEXT NOT NULL DEFAULT '',
+            last_advance_turn INTEGER NOT NULL DEFAULT 0,
+            closed_turn INTEGER,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            -- #1831 起 CREATE 基线含 affair_id；本测只缺 commitment 列，不模拟缺 affair 旧档
+            -- （#1812 Out of Scope：缺 affair_id 时 CREATE INDEX 须响亮失败，不得静默迁移）
+            affair_id INTEGER NOT NULL DEFAULT 0
+        )
+        """
+    )
+    conn.commit()
+    conn.close()
+
+    db = GameDB(str(path), content)
+    db.close()
+    db = GameDB(str(path), content)
+    try:
+        state = db.load_state()
+        issue_id = db.insert_issue(state, kind="initiative", title="迁移后议题")
+        row = db.conn.execute(
+            "SELECT end_turn, stop_condition, commitment_kind FROM issues WHERE id=?", (issue_id,),
+        ).fetchone()
+        assert dict(row) == {"end_turn": 0, "stop_condition": "", "commitment_kind": ""}
+    finally:
+        db.close()

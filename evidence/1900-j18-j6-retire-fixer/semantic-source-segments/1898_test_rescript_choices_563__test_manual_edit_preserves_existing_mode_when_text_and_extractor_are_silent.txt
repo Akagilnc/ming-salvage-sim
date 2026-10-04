@@ -1,0 +1,20 @@
+# FILE: tests/test_rescript_choices_563.py
+# NAME: test_manual_edit_preserves_existing_mode_when_text_and_extractor_are_silent
+# LINE: 45-58
+# FLAGS: assert_text_compare_or_match,mock_or_patch_present
+# KIND: py
+
+def test_manual_edit_preserves_existing_mode_when_text_and_extractor_are_silent(monkeypatch):
+    extracted = json.dumps({
+        "拟旨意图": "拟旨", "动作类型": "policy", "目标类型": "issue",
+        "目标ID": "granary",
+    }, ensure_ascii=False)
+    monkeypatch.setattr(
+        cli_backend, "_run_backend_for_config", lambda *_args, **_kwargs: (extracted, {}),
+    )
+
+    payload = cli_backend.capture_manual_directive_payload(
+        "增列核验期限", existing_mode="midzhi",
+    )
+
+    assert payload["mode"] == "midzhi"

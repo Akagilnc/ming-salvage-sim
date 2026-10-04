@@ -1,0 +1,19 @@
+# FILE: tests/test_execution_pressure_654.py
+# NAME: test_create_decree_dossier_int_abi_single_row
+# LINE: 201-213
+# FLAGS: assert_text_compare_or_match
+# KIND: py
+
+def test_create_decree_dossier_int_abi_single_row(env):
+    db, state, _ = env
+    did = db.create_decree_dossier(
+        state,
+        action_type="policy",
+        decree_text="京内申饬",
+        target_kind="policy",
+        target_id="court-rebuke",
+        payload={"locality_scope": "none", "target_kind": "policy", "target_id": "court-rebuke"},
+    )
+    assert isinstance(did, int) and did > 0
+    row = db.get_decree_dossier(did)
+    assert row["region_id"] == ""

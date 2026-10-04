@@ -1,0 +1,15 @@
+# FILE: tests/test_army_maintenance_retire_173.py
+# NAME: test_new_army_maintenance_key_ignored
+# LINE: 84-92
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_new_army_maintenance_key_ignored(game):
+    # LLM 若仍塞维护费/军费（别名已删）→ 当未知键忽略，不入库、不报错、建军照成。
+    db, state, _ = game
+    created = db.create_armies_from_extraction(state, [{
+        "id": "qin_army_y", "name": "秦军乙", "owner_power": "ming",
+        "manpower": 5000, "maintenance_per_turn": 99, "维护费": 99, **_pay_source(),
+    }])
+    assert not created[0].get("rejected"), f"塞维护费键不应拒整军：{created[0]}"
+    assert db.conn.execute("SELECT id FROM armies WHERE id='qin_army_y'").fetchone() is not None

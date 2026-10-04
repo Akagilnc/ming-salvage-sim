@@ -1,0 +1,23 @@
+# FILE: tests/test_section4_rejections.py
+# NAME: test_all_score_fields_guarded_on_creation
+# LINE: 570-586
+# FLAGS: assert_count,helper_or_private_call
+# KIND: py
+
+def test_all_score_fields_guarded_on_creation(game, field, bad):
+    """守门集从 ARMY_SCORE_FIELDS 派生——硬列 6 字段漏 equipment/mobility/loyalty,
+    脏值仍静默 50(cmr S2 r2,2/2;集中化:字段表变了守门自动跟)。"""
+    db, state, content = game
+    turn = state.turn
+
+    run_settle(db, state, content, {
+        "new_armies": [{"id": f"guard_{field}_army", "name": f"守门{field}军",
+                        "owner_power": "ming", "manpower": 5000,
+                        "maintenance_per_turn": 2, field: bad}],
+    }, narrative="x", decree_text="y")
+
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM armies WHERE id=?", (f"guard_{field}_army",)
+    ).fetchone()[0] == 0
+    rows = _rejection_rows(db, turn, "created_armies")
+    assert len(rows) == 1

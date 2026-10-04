@@ -1,0 +1,25 @@
+# FILE: web/src/components/modals.test.tsx
+# NAME: "ReportModal — narrative settlement bulletin" / "#1398 朕知道了视口常显：不埋在长文滚底"
+# LINE: 1768-1786
+# FLAGS: web_mock_spy_or_calls
+# KIND: web
+
+  it("#1398 朕知道了视口常显：不埋在长文滚底", () => {
+    const onClose = vi.fn();
+    const longReport = Array.from({ length: 48 }, (_, i) =>
+      `第${i + 1}段·边报钱粮探子回报——${"详文".repeat(24)}`,
+    ).join("\n\n");
+    const host = renderReportModal({ report: longReport, onClose });
+    const scroll = host.querySelector(".gazette-document") as HTMLElement | null;
+    const dismissWrap = host.querySelector(".gazette-dismiss") as HTMLElement | null;
+    const dismissBtn = Array.from(host.querySelectorAll("button")).find((b) =>
+      (b.textContent || "").includes("朕知道了"),
+    ) as HTMLButtonElement | undefined;
+    expect(scroll).not.toBeNull();
+    expect(dismissWrap).not.toBeNull();
+    expect(dismissBtn).toBeTruthy();
+    // 吸底/视口常显：dismiss 不得是滚容器后代（长文滚底才见）
+    expect(scroll!.contains(dismissWrap)).toBe(false);
+    act(() => dismissBtn!.click());
+    expect(onClose).toHaveBeenCalledOnce();
+  });

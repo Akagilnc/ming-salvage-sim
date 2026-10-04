@@ -1,0 +1,29 @@
+# FILE: tests/test_breach_plea_623.py
+# NAME: test_merged_persist_via_extraction_settles
+# LINE: 969-991
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_merged_persist_via_extraction_settles(game):
+    """㈠ extraction 路：merged 改弦 absorbed → resolve 真入口坚持撤结账。"""
+    db, state, content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.commit()
+    cid, did, holder, todo_id = _merge_funding_then_reversal(
+        db, state, token="ext-mrg",
+    )
+    out = apply_score_extraction(
+        db, state,
+        {"cancels": [{"issue_id": cid, "narrative": "朕意已决，仍撤此诺"}]},
+        content=content,
+    )
+    resolutions = out.get("breach_plea_resolutions") or []
+    assert resolutions, "extraction 须 resolve merged 条"
+    assert resolutions[0]["decision"] == "persist"
+    assert int(resolutions[0].get("todo_id") or 0) == todo_id
+    assert _pending_pleas(db) == []
+    iss = db.conn.execute(
+        "SELECT status FROM issues WHERE id=?", (cid,),
+    ).fetchone()
+    assert iss is not None and str(iss["status"]) != "active"
+    assert _cost_events(db, did, identity="breach")

@@ -1,0 +1,21 @@
+# FILE: tests/test_llm_channel_config.py
+# NAME: test_verify_llm_available_smokes_legacy_env_only_backend
+# LINE: 525-539
+# FLAGS: assert_text_compare_or_match,mock_or_patch_present,retired_or_meta_marker
+# KIND: py
+
+def test_verify_llm_available_smokes_legacy_env_only_backend(monkeypatch):
+    """legacy env-only 路径（无显式 channel + MING_SIM_LLM_BACKEND 设置）现在也真实 smoke
+    （旧版直接 return 跳过）：触发 _run_backend_for_config，失败抛 LLMUnavailable，
+    避免 fresh-start 在 runner 缺失时先删主库。"""
+    monkeypatch.setenv("MING_SIM_LLM_BACKEND", "agy")
+    seen = {}
+
+    def fake_run(prompt, llm_config=None, tag="", *, policy=None):
+        seen["prompt"] = prompt
+        return "ok", 1
+
+    monkeypatch.setattr(cli_backend, "_run_backend_for_config", fake_run)
+    cfg = LLMConfig(api_key="cli-backend", base_url="", model="api-fallback", channel="")
+    verify_llm_available(cfg)
+    assert seen["prompt"] == "输出 ok"

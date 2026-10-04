@@ -1,0 +1,48 @@
+# FILE: tests/test_execution_joint_liability_565.py
+# NAME: test_terminal_outcomes_charge_lead_and_downgraded_delegator
+# LINE: 90-131
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_terminal_outcomes_charge_lead_and_downgraded_delegator(
+    game, outcome, lead_delta, delegator_delta,
+):
+    db, state, content = game
+    dossier_id = _executing_dossier(db, state)
+    before_donglin = _sat(db, "东林")
+    before_xixue = _sat(db, "西学")
+    before_huang = _sat(db, "皇党")
+
+    result = _close_via_adapter(
+        db, state, content, dossier_id, outcome, note="门生办砸，走样",
+    )
+
+    assert result["dossier_executions"] == [{"dossier_id": dossier_id, "outcome": outcome}]
+    assert _sat(db, "东林") == max(0, before_donglin + lead_delta)
+    if delegator_delta is None:
+        assert _sat(db, "西学") == before_xixue
+    else:
+        assert _sat(db, "西学") == max(0, before_xixue + delegator_delta)
+    assert _sat(db, "皇党") == before_huang
+
+    sat = {
+        (row["target_kind"], row["target_id"], row["delta"])
+        for row in _sat_events(db, dossier_id)
+    }
+    expected = {("faction", "东林", lead_delta)}
+    if delegator_delta is not None:
+        expected.add(("faction", "西学", delegator_delta))
+    assert sat == expected
+
+    edges = [
+        e for e in db.get_relation_edge_events(event_kind="连坐")
+        if e["origin"].startswith(f"dossier:{dossier_id}:")
+    ]
+    targets = {e["target"] for e in edges}
+    assert "倪元璐" in targets
+    if delegator_delta is None:
+        # degraded：委派人零机械边，但仍进走样说明
+        assert "徐光启" not in targets
+    else:
+        assert "徐光启" in targets
+    assert not {"黄道周", "王承恩"} & targets

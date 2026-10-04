@@ -1,0 +1,32 @@
+# FILE: web/src/components/gameMenu.test.tsx
+# NAME: "LLMConfigTab — channel-gated field rendering" / "labels codex off reasoning as the codex low floor"
+# LINE: 160-185
+# FLAGS: web_text_assert
+# KIND: web
+
+  it("labels codex off reasoning as the codex low floor", async () => {
+    mockFetch({
+      ...BASE_LLM_RESPONSE,
+      channel: "cli",
+      cli_runner: "codex",
+      reasoning_strength: "off",
+      reasoning_supported: true,
+      persisted: {
+        ...BASE_LLM_RESPONSE.persisted,
+        channel: "cli",
+        cli_runner: "codex",
+        cli_model: "gpt-5.5",
+        cli_timeout_seconds: 240,
+        cli_reasoning_strength: "off",
+      },
+    });
+    const { cleanup } = render(<LLMConfigTab />);
+    await act(async () => {});
+
+    const strength = document.querySelector<HTMLSelectElement>('select[name="reasoning_strength"]');
+    expect(strength?.disabled).toBe(false);
+    expect(strength?.value).toBe("off");
+    const offOption = Array.from(strength?.options || []).find((option) => option.value === "off");
+    expect(offOption?.value).toBe("off");
+    cleanup();
+  });

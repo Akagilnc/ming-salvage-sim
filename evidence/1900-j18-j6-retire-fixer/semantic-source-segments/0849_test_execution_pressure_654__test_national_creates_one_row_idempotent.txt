@@ -1,0 +1,74 @@
+# FILE: tests/test_execution_pressure_654.py
+# NAME: test_national_creates_one_row_idempotent
+# LINE: 81-148
+# FLAGS: assert_text_compare_or_match,assert_count
+# KIND: py
+
+def test_national_creates_one_row_idempotent(env):
+    """#1778 决定 4：全国政令成一份案卷（region_id 空），重交不增行。"""
+    db, state, content = env
+    # 点将路径：assignee 落主办
+    payload = {
+        "target_kind": "policy",
+        "target_id": "清丈天下田亩",
+        "locality_scope": "national",
+        "dossier_action_type": "policy",
+        "assignee_id": "毕自严",
+        "transaction_category": "清丈",
+        "participant_roster": [
+            {"character_id": "毕自严", "tier": "主办", "role": "", "delegator_id": None},
+        ],
+    }
+    # 需 directive 行以挂复合键
+    cur = db.conn.execute(
+        """
+        INSERT INTO turn_directives
+        (turn, year, period, event_id, actor, text, source, status,
+         notes, dossier_payload_json)
+        VALUES (?,?,?,?,?,?,?,?,?,?)
+        """,
+        (
+            state.turn, state.year, state.period, None, "毕自严",
+            "清丈天下田亩", "test", "draft", "",
+            json.dumps(payload, ensure_ascii=False),
+        ),
+    )
+    directive_id = int(cur.lastrowid)
+    db.conn.commit()
+
+    ids = db.create_decree_dossiers(
+        state,
+        action_type="policy",
+        decree_text="清丈天下田亩",
+        target_kind="policy",
+        target_id="清丈天下田亩",
+        directive_id=directive_id,
+        payload=payload,
+        commit=True,
+    )
+    assert len(ids) == 1
+    rows = db.list_dossiers_for_directive(directive_id)
+    assert len(rows) == 1
+    assert [r["region_id"] for r in rows] == [""]
+    # 点将：主办与 executor_* 同步（#654 named-lead 断根）
+    for r in rows:
+        leads = [
+            e["character_id"] for e in r["participant_roster"] if e.get("tier") == "主办"
+        ]
+        assert leads == ["毕自严"]
+        assert r["executor_kind"] == "character"
+        assert r["executor_id"] == "毕自严"
+
+    # 幂等重放
+    ids2 = db.create_decree_dossiers(
+        state,
+        action_type="policy",
+        decree_text="清丈天下田亩",
+        target_kind="policy",
+        target_id="清丈天下田亩",
+        directive_id=directive_id,
+        payload=payload,
+        commit=True,
+    )
+    assert ids2 == ids
+    assert len(db.list_dossiers_for_directive(directive_id)) == 1

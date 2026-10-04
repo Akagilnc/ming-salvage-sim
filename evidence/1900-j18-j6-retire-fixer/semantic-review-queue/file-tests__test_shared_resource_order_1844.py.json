@@ -1,0 +1,89 @@
+{
+  "source_path": "tests/test_shared_resource_order_1844.py",
+  "member_count": 6,
+  "members": [
+    {
+      "idx": 2179,
+      "file": "tests/test_shared_resource_order_1844.py",
+      "name": "test_player_decrees_soft_cap_shared_treasury_in_order",
+      "line": 96,
+      "end": 133,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2179_test_shared_resource_order_1844__test_player_decrees_soft_cap_shared_treasury_in_order.txt",
+      "source_path": "tests/test_shared_resource_order_1844.py"
+    },
+    {
+      "idx": 2180,
+      "file": "tests/test_shared_resource_order_1844.py",
+      "name": "test_player_decree_missing_entity_rejection_persists_for_feed",
+      "line": 136,
+      "end": 171,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2180_test_shared_resource_order_1844__test_player_decree_missing_entity_rejection_persists_for_feed.txt",
+      "source_path": "tests/test_shared_resource_order_1844.py"
+    },
+    {
+      "idx": 2181,
+      "file": "tests/test_shared_resource_order_1844.py",
+      "name": "test_player_decrees_sequential_army_station_reads_updated_roster",
+      "line": 174,
+      "end": 221,
+      "flags": [
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2181_test_shared_resource_order_1844__test_player_decrees_sequential_army_station_reads_updated_roster.txt",
+      "source_path": "tests/test_shared_resource_order_1844.py"
+    },
+    {
+      "idx": 2182,
+      "file": "tests/test_shared_resource_order_1844.py",
+      "name": "test_world_segment_cross_category_order_by_declaration",
+      "line": 231,
+      "end": 267,
+      "flags": [
+        "assert_count"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2182_test_shared_resource_order_1844__test_world_segment_cross_category_order_by_declaration.txt",
+      "source_path": "tests/test_shared_resource_order_1844.py"
+    },
+    {
+      "idx": 2183,
+      "file": "tests/test_shared_resource_order_1844.py",
+      "name": "test_world_segment_cross_category_order_survives_reopen",
+      "line": 270,
+      "end": 315,
+      "flags": [
+        "assert_count"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2183_test_shared_resource_order_1844__test_world_segment_cross_category_order_survives_reopen.txt",
+      "source_path": "tests/test_shared_resource_order_1844.py"
+    },
+    {
+      "idx": 2184,
+      "file": "tests/test_shared_resource_order_1844.py",
+      "name": "test_world_segment_stamps_each_shared_item_once",
+      "line": 332,
+      "end": 378,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2184_test_shared_resource_order_1844__test_world_segment_stamps_each_shared_item_once.txt",
+      "source_path": "tests/test_shared_resource_order_1844.py"
+    }
+  ]
+}

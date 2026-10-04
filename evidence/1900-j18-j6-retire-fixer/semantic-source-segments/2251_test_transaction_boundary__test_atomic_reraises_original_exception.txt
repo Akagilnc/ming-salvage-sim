@@ -1,0 +1,23 @@
+# FILE: tests/test_transaction_boundary.py
+# NAME: test_atomic_reraises_original_exception
+# LINE: 214-230
+# FLAGS: helper_or_private_call
+# KIND: py
+
+def test_atomic_reraises_original_exception(game):
+    """异常类型透传：atomic 不吞、不包裹，原异常对象原样冒出（ADR 0005 fail-loud）。"""
+    db, state, content = game
+
+    class _MyErr(Exception):
+        pass
+
+    sentinel = _MyErr("specific")
+    with pytest.raises(_MyErr) as ei:
+        with atomic(db):
+            db.conn.execute("INSERT INTO kv_store(key,value) VALUES('s1_exc','x')")
+            raise sentinel
+    assert ei.value is sentinel
+    # 回滚后写入不留
+    assert db.kv_get("s1_exc") is None
+    # 异常后连接干净，无悬挂事务
+    assert not db.conn.in_transaction

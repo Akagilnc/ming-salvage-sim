@@ -1,0 +1,139 @@
+# FILE: tests/test_deformation_dual_rail_622.py
+# NAME: test_ac1_ac2_transformed_vs_degraded_dual_rail_tracer
+# LINE: 108-240
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_ac1_ac2_transformed_vs_degraded_dual_rail_tracer(game, tmp_path, content):
+    """同场景仅旨外标记不同 → transformed vs degraded；双口径三面；假进度零入 apply；restore 溯源。"""
+    db, state, _content = game
+
+    # ── transformed 支：实况效果带 beyond_intent + 奏报假象 ──
+    xf_id = _executing_policy(db, state, token="xf-622")
+    before_fp = _world_fingerprint(db)
+
+    # 承办人先挂过程奏报（假象：报已成）
+    db.record_dossier_progress(
+        xf_id, state.turn, "在办", "田亩清丈已十之八九，即可全竣",
+        is_terminal=False, commit=True,
+    )
+    # 月末 extractor 落旨外恶果（浮收翻倍样例）——同 origin 载体
+    applied = apply_score_extraction(
+        db, state,
+        {
+            "economy_moves": [{
+                "account": "国库",
+                "delta": 12,
+                "category": "地方浮收",
+                "reason": "借清丈之名额外加派入私",
+                "origin_ref": f"dossier:{xf_id}",
+                "beyond_intent": True,
+            }],
+        },
+        content=content,
+    )
+    assert applied["economy_moves"], applied
+    moves = db.list_economy_moves_for_dossier(xf_id)
+    assert moves and moves[0]["beyond_intent"] is True
+    assert moves[0]["origin_ref"] == f"dossier:{xf_id}"
+
+    # 假进度奏报本身不改世界——对照 fingerprint 只允许实况 economy 那一笔
+    after_real = _world_fingerprint(db)
+    assert after_real != before_fp  # 实况入 apply
+    # 再挂一条纯假进度，世界不得再变
+    mid_fp = _world_fingerprint(db)
+    db.record_dossier_progress(
+        xf_id, state.turn, "已全完", "田亩尽数清丈、国库应增百万",
+        is_terminal=False, commit=True,
+    )
+    assert _world_fingerprint(db) == mid_fp  # AC2/AC3：假进度零入 apply
+
+    result_xf = _prime_and_apply_due_review(
+        db, state, content, dossier_id=xf_id, title="变形对照·清丈",
+    )
+    xf_dossier = db.get_decree_dossier(xf_id)
+    assert xf_dossier["execution_outcome"] == "transformed"
+    assert xf_dossier["status"] == "closed"
+    assert result_xf["verdict"]["outcome"] == "transformed"
+    # 连坐走既有挂载点
+    assert len(_cost_liability(db, xf_id)) == 1
+
+    # 双口径三面：奏报说兑现 × 执行格记变形 × 实况效果在库
+    xf_progress = db.list_dossier_progress(xf_id)
+    terminal_rows = [r for r in xf_progress if r.get("is_terminal")]
+    assert terminal_rows, xf_progress
+    term = terminal_rows[-1]
+    assert term["progress_band"] not in {
+        "transformed", "degraded", "fulfilled", "failed", "executing", "变形",
+    }
+    assert xf_dossier["execution_outcome"] == "transformed"
+    assert db.list_economy_moves_for_dossier(xf_id)
+    # 机械分叉：list_dossier_progress band 面 ≠ 英文执行格原串
+    bands = {r["progress_band"] for r in xf_progress}
+    assert "transformed" not in bands
+
+    # AC4：restore 后旨外效果可溯源
+    backup = tmp_path / "restore-622.db"
+    db.backup_to(str(backup))
+    restored = GameDB(str(backup), content=content)
+    try:
+        r_moves = restored.list_economy_moves_for_dossier(xf_id)
+        assert r_moves and r_moves[0]["beyond_intent"] is True
+        assert r_moves[0]["origin_ref"] == f"dossier:{xf_id}"
+        assert restored.get_decree_dossier(xf_id)["execution_outcome"] == "transformed"
+    finally:
+        restored.close()
+
+    # ── degraded 对照：同场景无旨外标记、仅表报 → degraded ──
+    deg_id = _executing_policy(db, state, token="deg-622")
+    db.record_dossier_progress(
+        deg_id, state.turn, "在办", "田亩清丈已十之八九，即可全竣",
+        is_terminal=False, commit=True,
+    )
+    # 无 durable beyond_intent 效果——仅表报
+    assert db.list_economy_moves_for_dossier(deg_id) == []
+
+    # 单元对照：decide_due_review_verdict 仅标记不同
+    base_input = {
+        "mid_stage": False,
+        "criterion_text": "清丈见成数",
+        "origin_context": "清丈畿辅田亩",
+        "progress_reports": [{"progress_band": "在办", "memorial_text": "已办十之八九"}],
+        "durable_effects": [{
+            "origin_ref": "dossier:0",
+            "delta": 12,
+            "beyond_intent": False,
+        }],
+    }
+    # 有实况无旨外 → fulfilled（对照树完整性）
+    assert decide_due_review_verdict(base_input)["outcome"] == "fulfilled"
+    marked = dict(base_input)
+    marked["durable_effects"] = [{
+        "origin_ref": "dossier:0",
+        "delta": 12,
+        "beyond_intent": True,
+    }]
+    assert decide_due_review_verdict(marked)["outcome"] == "transformed"
+    # 无实况有表报 → degraded（与 transformed 对照）
+    no_effects = dict(base_input)
+    no_effects["durable_effects"] = []
+    assert decide_due_review_verdict(no_effects)["outcome"] == "degraded"
+
+    result_deg = _prime_and_apply_due_review(
+        db, state, content, dossier_id=deg_id, title="打折对照·清丈",
+    )
+    deg_dossier = db.get_decree_dossier(deg_id)
+    assert deg_dossier["execution_outcome"] == "degraded"
+    assert result_deg["verdict"]["outcome"] == "degraded"
+    deg_progress = db.list_dossier_progress(deg_id)
+    deg_term = [r for r in deg_progress if r.get("is_terminal")][-1]
+    assert deg_term["progress_band"] not in {
+        "degraded", "transformed", "fulfilled", "failed", "executing",
+    }
+    # 假进度尾部：再写奏报，世界 fingerprint 不变
+    fp_before_fake = _world_fingerprint(db)
+    db.record_dossier_progress(
+        deg_id, state.turn + 1, "已竣", "奏称完结而库银未动",
+        is_terminal=False, commit=True,
+    )
+    assert _world_fingerprint(db) == fp_before_fake

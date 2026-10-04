@@ -1,0 +1,20 @@
+# FILE: tests/test_power_section_rejections.py
+# NAME: test_power_deltas_code_exception_aborts_settlement
+# LINE: 78-91
+# FLAGS: mock_or_patch_present,helper_or_private_call
+# KIND: py
+
+def test_power_deltas_code_exception_aborts_settlement(game, monkeypatch):
+    """apply_power_deltas 内代码异常原样上抛，原子分派回滚整批。"""
+
+    db, state, content = game
+    good = _valid_power_id(db)
+
+    def _boom(self, *a, **k):
+        raise AttributeError("code bug in apply_power_deltas")
+    monkeypatch.setattr(type(db), "apply_power_deltas", _boom)
+
+    with pytest.raises(AttributeError):
+        run_settle(db, state, content, {
+            "power_updates": {good: {"leverage": 3}},
+        }, narrative="x", decree_text="y")

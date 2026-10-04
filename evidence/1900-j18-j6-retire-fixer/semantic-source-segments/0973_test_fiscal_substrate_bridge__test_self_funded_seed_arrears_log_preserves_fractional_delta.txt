@@ -1,0 +1,32 @@
+# FILE: tests/test_fiscal_substrate_bridge.py
+# NAME: test_self_funded_seed_arrears_log_preserves_fractional_delta
+# LINE: 502-527
+# FLAGS: assert_text_compare_or_match
+# KIND: py
+
+def test_self_funded_seed_arrears_log_preserves_fractional_delta(tmp_path):
+    content = GameContent.load()
+    content.armies["southwest_tusi"] = replace(
+        content.armies["southwest_tusi"],
+        arrears=4.5,
+    )
+    bind_content(content)
+    db = GameDB(str(tmp_path / "fractional-tusi.db"), content)
+    db.seed_static_data()
+    try:
+        log = db.conn.execute(
+            """
+            SELECT old_value, new_value, delta
+            FROM army_logs
+            WHERE army_id = 'southwest_tusi' AND field = 'arrears'
+            ORDER BY id DESC
+            LIMIT 1
+            """
+        ).fetchone()
+        assert log is not None
+        assert log["old_value"] == "4.5"
+        assert log["new_value"] == "0.0"
+        assert log["delta"] == pytest.approx(-4.5)
+    finally:
+        db.conn.close()
+        bind_content(GameContent.load())

@@ -1,0 +1,27 @@
+# FILE: tests/test_due_review_621.py
+# NAME: test_mark_todo_pending_to_consumed_is_idempotent
+# LINE: 123-143
+# FLAGS: assert_count,helper_or_private_call
+# KIND: py
+
+def test_mark_todo_pending_to_consumed_is_idempotent(game):
+    db, state, content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.commit()
+    stages = [{
+        "stage_idx": 0,
+        "due_turn": state.turn,
+        "criterion_text": "火器见眉目",
+        "origin_context": "三年火器见眉目",
+    }]
+    _insert_staged_commitment(db, state, content, stages=stages)
+    write_due_staged_commitment_todos(db, state)
+    todos = db.list_next_audience_todos(status=TODO_STATUS_PENDING)
+    assert len(todos) == 1
+    todo_id = int(todos[0]["id"])
+
+    assert db.mark_next_audience_todo_status(todo_id, TODO_STATUS_CONSUMED) is True
+    assert db.mark_next_audience_todo_status(todo_id, TODO_STATUS_CONSUMED) is False
+    row = db.list_next_audience_todos(commitment_ref=int(todos[0]["commitment_ref"]))[0]
+    assert row["status"] == TODO_STATUS_CONSUMED
+    assert db.list_next_audience_todos(status=TODO_STATUS_PENDING) == []

@@ -1,0 +1,25 @@
+# FILE: tests/test_audience_scroll_539.py
+# NAME: test_closed_night_archive_batches_each_metadata_store_once
+# LINE: 467-485
+# FLAGS: assert_count
+# KIND: py
+
+def test_closed_night_archive_batches_each_metadata_store_once(game):
+    db, state, _ = game
+    for minister in ("杨嗣昌", "洪承畴", "孙传庭"):
+        night_id = open_audience_night(db, state)
+        an.summon_enter(db, night_id, minister, method=an.METHOD_YUECI)
+        append_night_chat(db, state, night_id, minister, "问话", "答复", 10)
+        db.conn.execute("UPDATE audience_nights SET status='closed' WHERE id=?", (night_id,))
+    db.conn.commit()
+    statements = []
+    db.conn.set_trace_callback(statements.append)
+
+    entries = db.list_closed_night_archives()
+
+    db.conn.set_trace_callback(None)
+    selects = [" ".join(statement.lower().split()) for statement in statements if statement.lstrip().lower().startswith("select")]
+    assert len(entries) == 3
+    assert sum(" from audience_nights " in statement for statement in selects) == 1
+    assert sum(" from story_ledger_entries " in statement for statement in selects) == 1
+    assert sum(" from chat_turns " in statement for statement in selects) == 1

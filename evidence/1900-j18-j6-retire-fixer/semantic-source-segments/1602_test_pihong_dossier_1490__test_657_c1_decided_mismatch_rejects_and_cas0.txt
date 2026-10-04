@@ -1,0 +1,23 @@
+# FILE: tests/test_pihong_dossier_1490.py
+# NAME: test_657_c1_decided_mismatch_rejects_and_cas0
+# LINE: 516-532
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_657_c1_decided_mismatch_rejects_and_cas0(game):
+    """C1.3/C1.4：decided 不匹配 / 空 choice → 整批拒。"""
+    from ming_sim import rescript_actions as ra
+    db, state, _content = game
+    urgent, opts = _plant_urgent_desk(db, state)
+    key = urgent['decision_key']
+    batch = ra.validate_all([urgent], [{'decision_key': key, 'action': 'hold', 'label': '留中'}])
+    ra.apply_rescript_batch(db, state, batch, ra.PrewriteResults(), content=_content)
+    row = db.list_rescript_drafts()
+    hit = next((r for r in row if r['title'] == '陕西告饥'))
+    assert hit['status'] == 'decided'
+    decided_row = {**urgent, 'status': 'decided', 'choice': hit['choice']}
+    with pytest.raises(ValueError):
+        ra.validate_all([decided_row], [{'decision_key': key, 'action': 'hold', 'label': '另留'}])
+    empty_decided = {**urgent, 'status': 'decided', 'choice': None}
+    with pytest.raises(ValueError):
+        ra.validate_all([empty_decided], [{'decision_key': key, 'action': 'hold', 'label': '留中'}])

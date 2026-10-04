@@ -1,20 +1,17 @@
 {
-  "wide_candidates": 2609,
+  "wide_candidates_auth_table": 2568,
+  "structural_rescan_count": 2477,
+  "structural_fully_disposed": true,
   "by_action": {
-    "retain": 2584,
-    "migrate": 25
+    "retain": 2382,
+    "migrate": 124,
+    "delete": 62
   },
-  "by_basis": {
-    "wide_flag_no_high_confidence_member_rule": 2551,
-    "confirmed_applied_or_listed": 25,
-    "manual_calls_side_evidence": 3,
-    "segment_calls_with_result": 21,
-    "manual_not_material_lock": 1,
-    "spec_cited_contract": 1,
-    "manual_llm_boundary": 5,
-    "manual_callback_order_contract": 2
-  },
-  "semantic_members": 25,
-  "outstanding_high_confidence_in_tree": 0,
-  "note": "All 2609 wide candidates disposed. High-confidence outstanding in-tree now 0 after manual reclassification of LLM-boundary/callback-order false positives. wide_flag_no_high_confidence_member_rule retains are NOT a class-clean proof; continued source reading may still find members. Applied deletes/migrates are in class-members-wide-round + clear-residuals."
+  "semantic_members": 186,
+  "wide_flag_left": 0,
+  "needs_manual": 0,
+  "migrate_outstanding_in_tree": 0,
+  "deleted_applied": 62,
+  "migrate_applied": 124,
+  "note": "Auth disposition covers current structural rescan; deleted members retained as delete rows; wide_flag=0; migrate outstanding=0."
 }

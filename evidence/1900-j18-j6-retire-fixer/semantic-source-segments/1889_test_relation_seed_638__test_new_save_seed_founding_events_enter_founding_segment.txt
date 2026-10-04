@@ -1,0 +1,20 @@
+# FILE: tests/test_relation_seed_638.py
+# NAME: test_new_save_seed_founding_events_enter_founding_segment
+# LINE: 403-416
+# FLAGS: assert_text_compare_or_match,assert_count
+# KIND: py
+
+def test_new_save_seed_founding_events_enter_founding_segment(fresh_session):
+    """新开档导入样例 seed：奠基事件入摘要奠基段（验收条①后半）。"""
+    sess, _content = fresh_session
+    summaries = {
+        (row["source"], row["target"]): row for row in sess.db.get_relation_summaries()
+    }
+    # 样例 seed 自带可选初始摘要（皇帝→王承恩 信邸君臣边）；奠基段必须非空。
+    assert ("皇帝", "王承恩") in summaries, "样例 seed 初始摘要未入摘要层"
+    row = summaries[("皇帝", "王承恩")]
+    assert row["dimension"] == "君臣"
+    founding = str(row["founding_segment"])
+    assert founding.strip(), "奠基段为空：可选初始摘要未落"
+    assert str(row["recent_segment"]) == "", "seed 导入不得写近况段（近况段归月末酿制）"
+    assert int(row["last_event_id"]) == 0, "seed 导入不得推进水位（同一套酿制判据）"

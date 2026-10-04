@@ -1,0 +1,29 @@
+# FILE: tests/test_session_write_queue_1353.py
+# NAME: test_barrier_proceeds_after_worker_fail_vacate
+# LINE: 316-338
+# FLAGS: assert_text_compare_or_match
+# KIND: py
+
+def test_barrier_proceeds_after_worker_fail_vacate():
+    """可控失败终态：工人 vacate 后屏障放行（无 elapsed 伪失败）。"""
+    q = SessionWriteQueue()
+    t = q.claim(key=("turn", 2))
+    assert t is not None
+    order: list[str] = []
+    started = threading.Event()
+    done = threading.Event()
+
+    def failing_worker() -> None:
+        started.set()
+        order.append("fail_vacate")
+        q.vacate(t)  # 失败空放行
+
+    def run_barrier() -> None:
+        started.wait()
+        q.barrier(lambda: order.append("barrier") or None)
+        done.set()
+
+    threading.Thread(target=failing_worker, daemon=True).start()
+    threading.Thread(target=run_barrier, daemon=True).start()
+    done.wait()
+    assert order == ["fail_vacate", "barrier"], order

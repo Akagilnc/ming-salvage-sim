@@ -1,0 +1,31 @@
+# FILE: tests/test_event_trigger_gate.py
+# NAME: test_invalid_pending_person_change_does_not_block_event_gate
+# LINE: 4169-4193
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_invalid_pending_person_change_does_not_block_event_gate(game):
+    """post-merge CMR R4：未被人物 applier 接受的同回合处置，不得提前阻断事件 gate。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1629
+    state.period = 6
+    db.conn.execute("UPDATE characters SET loyalty = ?, status = ? WHERE name = ?", (44, "active", "毛文龙"))
+
+    with _restore_yuan_as_guanning_commander(db, content):
+        out = issues.apply_score_extraction(
+            db,
+            state,
+            {
+                "new_issues": [{"origin_kind": "event_pool", "id": "mao_wenlong"}],
+                "人物变更": [{"origin_ref": "盘面自发", "name": "袁崇焕", "动作": "处置", "status": "active", "reason": "处置不能恢复在职"}],
+            },
+            content=content,
+        )
+
+        assert out["issue_summary"]["new_issues"][0]["rejected"] is False
+        assert db.has_event_triggered("mao_wenlong")
+        assert db.get_character_status("毛文龙")[0] == "dead"
+        assert db.get_character_status("袁崇焕")[0] == "active"
+        assert out["applied_person_changes"][0]["rejected"] is True
+        assert out["applied_person_changes"][0]["category"] == "invalid_transition"

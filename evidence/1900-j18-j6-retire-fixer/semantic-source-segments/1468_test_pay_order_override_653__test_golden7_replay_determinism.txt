@@ -1,0 +1,14 @@
+# FILE: tests/test_pay_order_override_653.py
+# NAME: test_golden7_replay_determinism
+# LINE: 502-509
+# FLAGS: helper_or_private_call
+# KIND: py
+
+def test_golden7_replay_determinism(game):
+    """⑦restore 后任意月重放结果一致；纯函数同输入同输出。"""
+    db, state, _content = game
+    settle = _opening_settle(db, "shaanxi")
+    a = settle_tick(settle["st"], settle["p"], [])
+    b = settle_tick(settle["st"], settle["p"], [])
+    assert a.new_st == b.new_st
+    assert a.breakdown == b.breakdown

@@ -1,0 +1,92 @@
+{
+  "source_path": "tests/test_appointment_tenure_607.py",
+  "member_count": 6,
+  "members": [
+    {
+      "idx": 36,
+      "file": "tests/test_appointment_tenure_607.py",
+      "name": "test_appointment_dossier_and_office_archive_preserve_each_tenure",
+      "line": 37,
+      "end": 55,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0036_test_appointment_tenure_607__test_appointment_dossier_and_office_archive_preserve_each_tenure.txt",
+      "source_path": "tests/test_appointment_tenure_607.py"
+    },
+    {
+      "idx": 37,
+      "file": "tests/test_appointment_tenure_607.py",
+      "name": "test_legacy_appointment_defaults_to_permanent_without_rejudging",
+      "line": 58,
+      "end": 68,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call",
+        "retired_or_meta_marker"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0037_test_appointment_tenure_607__test_legacy_appointment_defaults_to_permanent_without_rejudging.txt",
+      "source_path": "tests/test_appointment_tenure_607.py"
+    },
+    {
+      "idx": 38,
+      "file": "tests/test_appointment_tenure_607.py",
+      "name": "test_person_delta_rejects_invalid_appointment_tenure_without_mutation",
+      "line": 81,
+      "end": 103,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0038_test_appointment_tenure_607__test_person_delta_rejects_invalid_appointment_tenure_without_mutation.txt",
+      "source_path": "tests/test_appointment_tenure_607.py"
+    },
+    {
+      "idx": 39,
+      "file": "tests/test_appointment_tenure_607.py",
+      "name": "test_failed_dossier_reappointment_rolls_back_audit_and_sequence",
+      "line": 106,
+      "end": 175,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0039_test_appointment_tenure_607__test_failed_dossier_reappointment_rolls_back_audit_and_sequence.txt",
+      "source_path": "tests/test_appointment_tenure_607.py"
+    },
+    {
+      "idx": 40,
+      "file": "tests/test_appointment_tenure_607.py",
+      "name": "test_appointment_tenure_survives_restore",
+      "line": 178,
+      "end": 195,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0040_test_appointment_tenure_607__test_appointment_tenure_survives_restore.txt",
+      "source_path": "tests/test_appointment_tenure_607.py"
+    },
+    {
+      "idx": 41,
+      "file": "tests/test_appointment_tenure_607.py",
+      "name": "test_acting_appointment_can_be_reappointed_permanent_on_same_path",
+      "line": 198,
+      "end": 208,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0041_test_appointment_tenure_607__test_acting_appointment_can_be_reappointed_permanent_on_same_path.txt",
+      "source_path": "tests/test_appointment_tenure_607.py"
+    }
+  ]
+}

@@ -276,7 +276,6 @@ def test_current_unissued_draft_is_not_character_carryover(game, tmp_path):
         for path in list_materials(prepared.root)
     )
     assert draft_text not in joined
-    assert "尚未入档旨稿" not in prepared.opening
 
 
 

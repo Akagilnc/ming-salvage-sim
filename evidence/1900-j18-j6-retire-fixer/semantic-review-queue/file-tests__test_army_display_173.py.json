@@ -1,0 +1,58 @@
+{
+  "source_path": "tests/test_army_display_173.py",
+  "member_count": 4,
+  "members": [
+    {
+      "idx": 44,
+      "file": "tests/test_army_display_173.py",
+      "name": "test_army_payload_exposes_army_needed",
+      "line": 18,
+      "end": 29,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0044_test_army_display_173__test_army_payload_exposes_army_needed.txt",
+      "source_path": "tests/test_army_display_173.py"
+    },
+    {
+      "idx": 45,
+      "file": "tests/test_army_display_173.py",
+      "name": "test_danger_order_uses_army_needed_for_arrears_months",
+      "line": 42,
+      "end": 61,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0045_test_army_display_173__test_danger_order_uses_army_needed_for_arrears_months.txt",
+      "source_path": "tests/test_army_display_173.py"
+    },
+    {
+      "idx": 46,
+      "file": "tests/test_army_display_173.py",
+      "name": "test_danger_order_preserves_fractional_arrears",
+      "line": 64,
+      "end": 91,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0046_test_army_display_173__test_danger_order_preserves_fractional_arrears.txt",
+      "source_path": "tests/test_army_display_173.py"
+    },
+    {
+      "idx": 47,
+      "file": "tests/test_army_display_173.py",
+      "name": "test_army_rows_non_danger_sorted_by_theater_name",
+      "line": 94,
+      "end": 102,
+      "flags": [
+        "assert_count"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0047_test_army_display_173__test_army_rows_non_danger_sorted_by_theater_name.txt",
+      "source_path": "tests/test_army_display_173.py"
+    }
+  ]
+}

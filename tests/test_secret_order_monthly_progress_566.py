@@ -87,6 +87,7 @@ def test_only_emperor_private_payload_shows_monthly_report(game):
 
 def test_disclosure_promotes_monthly_report_to_public_event_only_after_disclosure(game):
     from ming_sim.issues import apply_score_extraction
+    from ming_sim.knowledge import build_character_knowledge
 
     db, state, content = game
     order_id, dossier_id = _order(db, state, title="稽核辽饷", tags=["稽核"])
@@ -95,12 +96,15 @@ def test_disclosure_promotes_monthly_report_to_public_event_only_after_disclosur
         "dossier_id": dossier_id, "progress_band": "核账",
         "memorial_text": marker,
     })
-    assert marker not in str(db._character_knowledge_events(""))
+    order = next(item for item in db.list_secret_orders() if item["id"] == order_id)
+    minister = order["minister_name"]
+    before = build_character_knowledge(db, state, minister).get("public_events") or []
+    assert marker not in str(before)
 
     apply_score_extraction(db, state, {"secret_order_updates": [{
         "order_id": order_id, "sim_note": "该案已经明发廷议", "disclosed": True,
     }]}, content=content)
-    public = db._character_knowledge_events("")
+    public = build_character_knowledge(db, state, minister).get("public_events") or []
     disclosure = next(
         item for item in public
         if str(item.get("source_id") or "").startswith(

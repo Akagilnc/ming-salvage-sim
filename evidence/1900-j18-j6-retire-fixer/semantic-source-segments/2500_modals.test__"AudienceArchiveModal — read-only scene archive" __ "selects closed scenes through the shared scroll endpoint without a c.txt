@@ -1,0 +1,74 @@
+# FILE: web/src/components/modals.test.tsx
+# NAME: "AudienceArchiveModal — read-only scene archive" / "selects closed scenes through the shared scroll endpoint without a composer"
+# LINE: 1428-1495
+# FLAGS: web_mock_spy_or_calls,web_text_assert,web_count_assert
+# KIND: web
+
+  it("selects closed scenes through the shared scroll endpoint without a composer", async () => {
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (url === "/api/history/turns") return Promise.resolve({ ok: true, json: async () => ({ turns: [
+        { kind: "month", turn: 7, year: 1, period: 11, has_report: true, has_attendant: false, has_directive: false },
+        { kind: "night", turn: 7, year: 1, period: 11, night_id: 31, title: "1年11月 · 戌时乾清宫 · 越次召对 · 第1场", involved_people: ["杨嗣昌"] },
+        { kind: "night", turn: 7, year: 1, period: 11, night_id: 32, title: "1年11月 · 戌时乾清宫 · 召对 · 第2场", involved_people: ["洪承畴", "王绍徽", "许誉卿", "杨嗣昌"] },
+      ] }) });
+      const id = url.endsWith("31") ? 31 : 32;
+      return Promise.resolve({ ok: true, json: async () => ({ characters: id === 32 ? [{ ...MINISTER_MOCK, id: "former-attendant", name: "退场近臣", portrait_id: "portrait_court_03" }] : [], messages: id === 32 ? [
+        { role: "user", speaker: "朕", content: `场次${id}`, beat: "dialogue", chat_turn_id: 8 },
+        { role: "minister", speaker: "殿上", content: "群臣奏对", beat: "dialogue", chat_turn_id: 8 },
+        { role: "attendant", speaker: "退场近臣", content: "旧臣御前低语", beat: "aside", chat_turn_id: 8, audibility: "御前低语" },
+        { role: "user", speaker: "朕", content: "边务如何？", beat: "dialogue", chat_turn_id: 9 },
+        { role: "minister", speaker: "洪承畴", content: "臣自三边来。", beat: "dialogue", chat_turn_id: 9 },
+        { role: "attendant", speaker: "王承恩", content: "臣亦有虑。", beat: "aside", chat_turn_id: 9 },
+        { role: "user", speaker: "朕", content: "卿有何见？", beat: "dialogue", chat_turn_id: 10 },
+        { role: "minister", speaker: "王绍徽", content: "臣请核账。", beat: "dialogue", chat_turn_id: 10 },
+        { role: "user", speaker: "朕", content: "无主问话", beat: "dialogue", chat_turn_id: 11 },
+        { role: "attendant", speaker: "王承恩", content: "无主递话", beat: "aside", chat_turn_id: 11 },
+        { role: "scene", speaker: "洪承畴", content: "", beat: "divider", soft_boundary: true },
+        { role: "scene", speaker: "", content: "趋入殿中。", beat: "scene" },
+        { role: "user", speaker: "朕", content: "剿抚孰先？", beat: "dialogue", chat_turn_id: 12 },
+        { role: "minister", speaker: "洪承畴", content: "臣请先抚。", beat: "dialogue", chat_turn_id: 12 },
+        { role: "minister", speaker: "杨嗣昌", content: "殿侧容臣插一句。", beat: "dialogue" },
+        { role: "user", speaker: "朕", content: "钱粮如何？", beat: "dialogue", chat_turn_id: 13 },
+        { role: "minister", speaker: "王绍徽", content: "臣请详查。", beat: "dialogue", chat_turn_id: 13 },
+        { role: "attendant", speaker: "王承恩", content: "已闻其议。", beat: "aside", chat_turn_id: 13 },
+        { role: "scene", speaker: "", content: "", beat: "divider", soft_boundary: true },
+        { role: "user", speaker: "朕", content: "诸卿同议。", beat: "dialogue", chat_turn_id: 14 },
+        { role: "minister", speaker: "洪承畴", content: "臣有一议。", beat: "dialogue", chat_turn_id: 14 },
+        { role: "minister", speaker: "许誉卿", content: "臣愿附议。", beat: "dialogue", chat_turn_id: 14 },
+      ] : [{ role: "user", content: `场次${id}` }] }) });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const host = document.createElement("div"); document.body.appendChild(host);
+    const root = createRoot(host); mountedRoots.push({ root, host });
+    await act(async () => { root.render(<AudienceArchiveModal ministers={[]} onClose={() => {}} />); await Promise.resolve(); await Promise.resolve(); });
+    await act(async () => { host.querySelector<HTMLButtonElement>(".history-turn-item.active")?.click(); });
+    const filter = host.querySelector<HTMLSelectElement>('select[aria-label="按臣过滤"]')!;
+    await act(async () => {
+      filter.value = "洪承畴";
+      filter.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    expect(host.textContent).toContain("群臣奏对");
+    expect(host.querySelector("textarea, input, .chat-composer")).toBeNull();
+    const archivedAvatar = host.querySelector<HTMLImageElement>(".aside-avatar");
+    expect(archivedAvatar?.getAttribute("src")).toBe("/portraits/minister_former-attendant.png");
+    const visibleTurnIds = () => [...new Set(Array.from(
+      host.querySelectorAll<HTMLElement>("[data-audience-turn-id]"),
+      (node) => node.dataset.audienceTurnId,
+    ).filter(Boolean))].sort();
+    expect(visibleTurnIds()).toEqual(["12", "14", "8", "9"]);
+    expect(host.querySelectorAll('[data-audience-turn-id="9"] .turn-segment.user')).toHaveLength(1);
+    expect(host.querySelectorAll('[data-audience-turn-id="9"] .turn-segment.attendant')).toHaveLength(1);
+    for (const [name, ids] of [
+      ["王绍徽", ["10", "13", "8"]], ["许誉卿", ["14", "8"]], ["杨嗣昌", ["8"]],
+    ] as const) {
+      await act(async () => {
+        filter.value = name;
+        filter.dispatchEvent(new Event("change", { bubbles: true }));
+      });
+      expect(visibleTurnIds()).toEqual(ids);
+    }
+    const buttons = Array.from(host.querySelectorAll(".history-turn-item")) as HTMLButtonElement[];
+    await act(async () => { buttons[1].click(); await Promise.resolve(); await Promise.resolve(); });
+    expect(fetchMock).toHaveBeenCalledWith("/api/audience/scroll?night_id=31");
+    expect(host.querySelector<HTMLSelectElement>('select[aria-label="按臣过滤"]')?.value).toBe("");
+  });

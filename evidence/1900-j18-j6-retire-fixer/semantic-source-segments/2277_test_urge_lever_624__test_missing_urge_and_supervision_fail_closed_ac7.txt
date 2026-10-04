@@ -1,0 +1,33 @@
+# FILE: tests/test_urge_lever_624.py
+# NAME: test_missing_urge_and_supervision_fail_closed_ac7
+# LINE: 430-456
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_missing_urge_and_supervision_fail_closed_ac7(game):
+    db, state, content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.commit()
+    stages = [{
+        "stage_idx": 0,
+        "due_turn": state.turn,
+        "criterion_text": "火器见眉目",
+        "origin_context": "三年火器见眉目",
+    }]
+    issue_id, _ = _insert_staged_commitment(db, state, content, stages=stages)
+    tid = db.insert_next_audience_todo(
+        commitment_ref=issue_id,
+        stage_idx=0,
+        due_turn=state.turn,
+        criterion_text="火器见眉目",
+        origin_context="三年火器见眉目",
+        status=TODO_STATUS_PENDING,
+        entry_kind=ENTRY_KIND_STAGED,
+        created_turn=state.turn,
+    )
+    todo = [t for t in db.list_next_audience_todos() if int(t["id"]) == tid][0]
+    inp = build_due_review_input(db, todo)
+    assert inp["urge_history"] == []
+    assert inp["supervision_history"] == []
+    # 不 fail-open 成「有催/有监督」
+    assert inp["distortion_tendency"]["band"] == "不歪"

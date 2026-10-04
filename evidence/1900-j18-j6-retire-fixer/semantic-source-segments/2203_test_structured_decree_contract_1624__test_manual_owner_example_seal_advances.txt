@@ -1,0 +1,47 @@
+# FILE: tests/test_structured_decree_contract_1624.py
+# NAME: test_manual_owner_example_seal_advances
+# LINE: 347-387
+# FLAGS: assert_text_compare_or_match,assert_count,mock_or_patch_present,helper_or_private_call
+# KIND: py
+
+def test_manual_owner_example_seal_advances(tracer_client, monkeypatch):  # noqa: F811 — imported pytest fixture
+    """真实 Web 手工拟诏：Owner 例 → 盖玺；持久化 canonical + 大臣所拟名单。"""
+    import ming_sim.cli_backend as cli_backend
+    import web_app
+
+    new = tracer_client.post("/api/menu/new_game")
+    assert new.status_code == 200
+    game = web_app.web_game
+    assert game is not None
+
+    def backend(*_a, **_k):
+        return _owner_manual_backend_json(), 1
+
+    monkeypatch.setattr(cli_backend, "capture_manual_directive_payload", _real_capture)
+    monkeypatch.setattr(cli_backend, "_run_backend_for_config", backend)
+    response = tracer_client.post(
+        "/api/directives",
+        json={"text": "着户部继续核查陕西赈务，按月具报。", "notes": ""},
+    )
+    assert response.status_code == 200, response.text
+    turn_before = game.state.turn
+    _post_issue_stream(
+        tracer_client, expected_turn=turn_before, step="#1624 owner seal",
+    )
+    assert game.state.turn == turn_before + 1
+    dossiers = [dict(d) for d in game.db.list_decree_dossiers()]
+    matched = [
+        d for d in dossiers
+        if str(json.loads(d.get("payload_json") or "{}").get("target_id") or "")
+        == "shaanxi"
+        and str(json.loads(d.get("payload_json") or "{}").get("transaction_category") or "")
+        == "督赈"
+    ]
+    assert matched, f"expected shaanxi 督赈 dossier, got={dossiers!r}"
+    payload = json.loads(matched[0]["payload_json"])
+    assert payload.get("target_kind") == "region"
+    assert payload.get("locality_scope") == "single"
+    assert not str(payload.get("assignee_id") or payload.get("assignee") or "").strip()
+    # assignment 不得跨动作透传执行面（#1624）；与 multi-aim military 同契：字段缺失或空。
+    assert str(payload.get("execution_surface") or "").strip() == ""
+    _assert_drafted_roster_nailed(game.db, matched[0])

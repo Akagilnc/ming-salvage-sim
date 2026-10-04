@@ -1,0 +1,28 @@
+# FILE: tests/test_decree_dossiers_571.py
+# NAME: test_durable_military_order_without_assignee_fails_loudly
+# LINE: 2192-2213
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_durable_military_order_without_assignee_fails_loudly(game):
+    db, state, _content = game
+    minister = _active_minister(db)
+    candidate_id = db.stage_directive_candidate(state.turn, minister, {
+        "text": "三月内整军。", "actor": minister,
+        "dossier_action_type": "military_order",
+        "target_kind": "army", "target_id": "capital-army",
+        "deadline_months": 3, "assignee": "",
+    })
+
+    db.commit_pending_actions(
+        state, kind_filter="directive", action_ids=[candidate_id],
+        directive_status="draft",
+    )
+
+    pending = db.conn.execute(
+        "SELECT status FROM pending_actions WHERE id=?", (candidate_id,)
+    ).fetchone()
+    assert pending["status"] == "failed"
+    assert not any(
+        row["pending_action_id"] == candidate_id for row in db.list_decree_dossiers()
+    )

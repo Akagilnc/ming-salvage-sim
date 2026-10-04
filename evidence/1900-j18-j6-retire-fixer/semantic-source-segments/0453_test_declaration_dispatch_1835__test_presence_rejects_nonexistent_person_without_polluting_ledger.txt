@@ -1,0 +1,33 @@
+# FILE: tests/test_declaration_dispatch_1835.py
+# NAME: test_presence_rejects_nonexistent_person_without_polluting_ledger
+# LINE: 451-477
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_presence_rejects_nonexistent_person_without_polluting_ledger(game):
+    """AC3：有效夜下引用不存在的人物一样要逐项拒收，不能真落进 story_ledger_entries。"""
+    db, state, _ = game
+    minister = _minister(db)
+    from ming_sim.audience_night import open_night
+
+    night = open_night(db, state)
+    night_id = int(night["id"])
+    chat_turn_id = db.create_chat_turn(state, minister, "t1835:ghost", 0, night_id=night_id)
+    before = db.conn.execute(
+        "SELECT COUNT(*) c FROM story_ledger_entries WHERE night_id=?", (night_id,),
+    ).fetchone()["c"]
+
+    declaration = {
+        "presence": [{"person_name": "子虚乌有之人", "effect": "enter", "body": "凭空捏造之人入殿。"}],
+    }
+    result = dispatch_declaration(
+        db, state, declaration, night_id=night_id, chat_turn_id=chat_turn_id,
+    )
+
+    assert result.presence.applied == []
+    assert len(result.presence.rejected) == 1
+    assert result.presence.rejected[0].category == "hallucinated_id"
+    after = db.conn.execute(
+        "SELECT COUNT(*) c FROM story_ledger_entries WHERE night_id=?", (night_id,),
+    ).fetchone()["c"]
+    assert after == before  # 没有孤儿账落进去

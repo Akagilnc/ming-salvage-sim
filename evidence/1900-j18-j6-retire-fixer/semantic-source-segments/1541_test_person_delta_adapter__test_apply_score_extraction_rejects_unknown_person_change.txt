@@ -1,0 +1,29 @@
+# FILE: tests/test_person_delta_adapter.py
+# NAME: test_apply_score_extraction_rejects_unknown_person_change
+# LINE: 1783-1805
+# FLAGS: assert_text_compare_or_match
+# KIND: py
+
+def test_apply_score_extraction_rejects_unknown_person_change(read_game, with_content):
+    db, state, content = read_game
+    item = {"name": "不存在的人", "origin_ref": "盘面自发", "动作": "处置", "status": "dismissed"}
+
+    applied = issues.apply_score_extraction(
+        db,
+        state,
+        {"人物变更": [item]},
+        content=content if with_content else None,
+    )
+
+    assert applied["applied_person_changes"] == [
+        {
+            "name": "不存在的人",
+            "origin_ref": "盘面自发", "动作": "处置",
+            "status": "dismissed",
+            "rejected": True,
+            "reason": ANY,
+            "category": "hallucinated_id",
+            "item": item,
+        }
+    ]
+    assert isinstance(applied['applied_person_changes'][0]['reason'], str) and applied['applied_person_changes'][0]['reason']

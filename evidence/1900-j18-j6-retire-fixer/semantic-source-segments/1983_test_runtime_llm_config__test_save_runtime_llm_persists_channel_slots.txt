@@ -1,0 +1,35 @@
+# FILE: tests/test_runtime_llm_config.py
+# NAME: test_save_runtime_llm_persists_channel_slots
+# LINE: 127-155
+# FLAGS: assert_text_compare_or_match,mock_or_patch_present
+# KIND: py
+
+def test_save_runtime_llm_persists_channel_slots(tmp_path, monkeypatch):
+    path = tmp_path / "runtime_llm.json"
+    monkeypatch.setattr(llm_config, "RUNTIME_LLM_PATH", str(path))
+
+    llm_config.save_runtime_llm(
+        "https://api.example.com/v1",
+        "gpt-test",
+        "sk-test",
+        timeout_seconds=150,
+        thinking_level="minimal",
+        channel="cli",
+        cli_runner="codex",
+        cli_model="gpt-5.5",
+        cli_timeout_seconds=240,
+        reasoning_strength="low",
+    )
+
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    assert saved["channel"] == "cli"
+    assert saved["api"]["model"] == "gpt-test"
+    assert saved["api"]["api_key"] == "sk-test"
+    assert "max_tokens" not in saved["api"]
+    assert "max_tokens" not in saved
+    assert saved["cli"] == {
+        "runner": "codex",
+        "model": "gpt-5.5",
+        "timeout_seconds": 240,
+        "reasoning_strength": "low",
+    }

@@ -1,0 +1,39 @@
+# FILE: tests/test_fiscal_substrate_bridge.py
+# NAME: test_substrate_hub_cutover_runs_multi_tick_treasury_trajectory
+# LINE: 768-800
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call,internal_formula_oracle
+# KIND: py
+
+def test_substrate_hub_cutover_runs_multi_tick_treasury_trajectory(fresh_game):
+    import ming_sim.flows as flows_mod
+
+    db, state = fresh_game
+    db.conn.execute("UPDATE buildings SET output_amount = 0, maintenance = 0")
+    db.conn.commit()
+
+    balances = []
+    taicang_loss_months = []
+    taicang_loss_stocks = []
+    for _ in range(3):
+        turn = state.turn
+        flow_rows = flows_mod.apply_fixed_period_flows(db, state)
+        balances.append(state.metrics["国库"])
+        container_snapshot = _hub_container_snapshot(db)
+        taicang_loss_months.append(container_snapshot["hub_太仓亏空"])
+        taicang_loss_stocks.append(
+            container_snapshot["C_太仓挪用"] + container_snapshot["C_太仓纯亏空"]
+        )
+
+        assert any(row.get("category") == "起运" for row in flow_rows)
+        _assert_hub_conservation_oracle(
+            _hub_ledger_snapshot(db, turn=turn),
+            container_snapshot,
+        )
+
+        state.turn += 1
+        db.save_state(state)
+
+    assert len(set(balances)) > 1
+    assert balances[-1] == db.load_state().metrics["国库"]
+    assert taicang_loss_stocks[-1] == pytest.approx(sum(taicang_loss_months))
+    assert taicang_loss_stocks[-1] > taicang_loss_months[-1]

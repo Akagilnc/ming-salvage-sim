@@ -1,0 +1,33 @@
+# FILE: tests/test_office_rank_562.py
+# NAME: test_seed_archives_clean_historical_office_for_dismissed_ministers
+# LINE: 279-305
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_seed_archives_clean_historical_office_for_dismissed_ministers(game):
+    db, _state, _content = game
+    yuan = db.conn.execute(
+        "SELECT office_title FROM character_offices WHERE character_name=?",
+        ("袁可立",),
+    ).fetchone()
+    assert yuan is not None
+    assert "巡抚" in yuan["office_title"]
+    assert "罢居" not in yuan["office_title"]
+
+    _dossier_id, payload = _appointment_dossier(db, _state, "袁可立", "陕西巡抚")
+    assert payload["break_rank"]["basis"] == "historical_office"
+    assert payload["break_rank"]["is_break_rank"] is False
+    assert payload["break_rank"]["current_rank_band"] == 3
+
+    # 革职候勘 / 原任 污染也须在 seed 备档洗净，供起复读最近实职带。
+    hu = db.conn.execute(
+        "SELECT office_title FROM character_offices WHERE character_name=?",
+        ("胡廷宴",),
+    ).fetchone()
+    assert hu is not None
+    assert hu["office_title"] == "三边总督"
+    assert "革职" not in hu["office_title"]
+    _hid, hu_payload = _appointment_dossier(db, _state, "胡廷宴", "三边总督")
+    assert hu_payload["break_rank"]["basis"] == "historical_office"
+    assert hu_payload["break_rank"]["is_break_rank"] is False
+    assert hu_payload["break_rank"]["current_rank_band"] == 3

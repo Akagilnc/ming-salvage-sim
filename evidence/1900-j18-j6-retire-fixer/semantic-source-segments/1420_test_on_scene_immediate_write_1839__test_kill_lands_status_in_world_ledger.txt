@@ -1,0 +1,29 @@
+# FILE: tests/test_on_scene_immediate_write_1839.py
+# NAME: test_kill_lands_status_in_world_ledger
+# LINE: 69-91
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_kill_lands_status_in_world_ledger(game):
+    """AC1：当场处置通过分派入口落世界账本。"""
+    db, state, _ = game
+    victim = _active_minister(db)
+    witness = _active_minister(db, exclude={victim})
+    night = an.open_night(db, state, location="乾清宫", time_of_day="夜")
+    night_id = int(night["id"])
+    an.summon_enter(db, night_id, victim)
+    an.summon_enter(db, night_id, witness)
+
+    declaration = {
+        "on_scene_facts": [{
+            "name": victim, "动作": "处置", "status": "dead",
+            "reason": "陛下率领内侍当场斩杀",
+        }],
+    }
+    _run_round_with_declaration(
+        db, state, witness, declaration, night_id=night_id,
+    )
+
+    status, reason = db.get_character_status(victim)
+    assert status == "dead"
+    assert reason

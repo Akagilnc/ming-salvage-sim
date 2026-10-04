@@ -1,0 +1,9 @@
+# FILE: tests/test_rescript_draft_656.py
+# NAME: test_validate_items_empty_list_is_legal_headless_month
+# LINE: 785-787
+# FLAGS: assert_text_compare_or_match
+# KIND: py
+
+def test_validate_items_empty_list_is_legal_headless_month(draft_ingress):
+    """合法 items=[] 仍是「本月确无急务」（F2.3 不凑数）。"""
+    assert draft_ingress({"items": []}, set()) == []

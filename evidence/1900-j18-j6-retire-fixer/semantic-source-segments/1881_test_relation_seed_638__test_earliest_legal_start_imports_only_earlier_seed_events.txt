@@ -1,0 +1,32 @@
+# FILE: tests/test_relation_seed_638.py
+# NAME: test_earliest_legal_start_imports_only_earlier_seed_events
+# LINE: 82-107
+# FLAGS: assert_text_compare_or_match,mock_or_patch_present
+# KIND: py
+
+def test_earliest_legal_start_imports_only_earlier_seed_events(tmp_path, monkeypatch):
+    """db.py 接受的最早开局也必须能完成真实新档初始化。"""
+    import ming_sim.cli_backend as cli_backend
+    import ming_sim.llm_model as llm_mod
+
+    monkeypatch.setattr(
+        llm_mod, "verify_llm_available",
+        lambda cfg: (_ for _ in ()).throw(AssertionError("新档构造不得验证 LLM")),
+    )
+    monkeypatch.setattr(
+        cli_backend, "_run_backend_for_config",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("新档构造不得调用 LLM")),
+    )
+    content = GameContent.load()
+    cfg = LLMConfig(api_key="", base_url="http://unused", model="unused")
+    sess = GameSession(
+        db_path=str(tmp_path / "earliest.db"), llm_config=cfg,
+        content=content, start_ym="1627.01",
+    )
+    try:
+        assert (int(sess.state.year), int(sess.state.period)) == (1627, 1)
+        events = sess.db.get_relation_edge_events()
+        assert events
+        assert all((int(row["year"]), int(row["period"])) < (1627, 1) for row in events)
+    finally:
+        sess.close()

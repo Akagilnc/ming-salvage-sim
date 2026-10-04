@@ -1,0 +1,87 @@
+# FILE: tests/test_fiscal_substrate_bridge.py
+# NAME: test_fixed_flows_cutover_uses_total_source_shortfall_for_mixed_army_morale
+# LINE: 2299-2379
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_fixed_flows_cutover_uses_total_source_shortfall_for_mixed_army_morale(fresh_game):
+    import ming_sim.flows as flows_mod
+
+    db, state = fresh_game
+    state.metrics["国库"] = 0
+    db.save_state(state)
+    db.conn.execute("UPDATE buildings SET output_amount = 0, maintenance = 0")
+    _zero_non_meta_fiscal_config(db)
+    db.conn.execute(
+        """
+        UPDATE regions
+        SET tax_per_turn = 0,
+            fiscal = json_set(
+                fiscal, '$.huang_tian', 0, '$.liao_xiang', 0,
+                '$.salt_tax', 0, '$.commerce_tax', 0
+            )
+        """
+    )
+    _write_settle(
+        db,
+        "shaanxi",
+        {
+            "st": {
+                "省库库银": 0,
+                "C_地方截留": 0,
+                "C_中饱": 0,
+                "C_漂没": 0,
+                "C_eff损耗": 0,
+                "民欠旧赋": 0,
+                "军饷欠": 0,
+                "官俸欠": 0,
+                "宗禄欠": 0,
+                "官民田": 0,
+                "隐田": 0,
+            },
+            "p": {
+                "正赋应征": 0,
+                "三饷应征": 0,
+                "火耗率": 0,
+                "逋赋率": 0,
+                "起运定额": 0,
+                "拨付gross": 0,
+                "中饱率": 0,
+                "漂没率": 0,
+                "Due": {"军饷": 999, "官俸": 0, "宗禄": 0, "赈济": 0},
+            },
+        },
+    )
+    db.conn.execute(
+        """
+        UPDATE armies
+        SET self_funded_pay = 1, is_tusi = 1, province_pay_share = 0,
+            central_pay_share = 0, pay_source_region = '',
+            province_pay_arrears = 0, central_pay_arrears = 0, arrears = 0
+        """
+    )
+    db.conn.execute(
+        """
+        UPDATE armies
+        SET self_funded_pay = 0, is_tusi = 0, owner_power = 'ming',
+            pay_source_region = 'shaanxi', province_pay_share = 0.65,
+            central_pay_share = 0.35, province_pay_arrears = 0,
+            central_pay_arrears = 0, arrears = 0, morale = 80,
+            manpower = 10000, salary_rate = 10
+        WHERE id = 'shaanxi_army'
+        """
+    )
+    db.conn.commit()
+
+    flows_mod.apply_fixed_period_flows(db, state)
+
+    row = db.conn.execute(
+        """
+        SELECT morale, arrears, province_pay_arrears, central_pay_arrears
+        FROM armies WHERE id = 'shaanxi_army'
+        """
+    ).fetchone()
+    assert row["province_pay_arrears"] == pytest.approx(6.5)
+    assert row["central_pay_arrears"] == pytest.approx(3.5)
+    assert row["arrears"] == pytest.approx(10)
+    assert row["morale"] == 72

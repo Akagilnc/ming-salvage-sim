@@ -1,0 +1,86 @@
+# FILE: tests/test_declaration_dispatch_1835.py
+# NAME: test_staged_declaration_discard_and_idempotent_settle_in_decree_order
+# LINE: 687-766
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_staged_declaration_discard_and_idempotent_settle_in_decree_order(game):
+    """ADR 0157 步骤 1-2：暂存不落账，作废后不结算，按给定顺序（不是暂存顺序）
+    逐旨一提交且幂等；J6：decree:1/decree:3 均存活且刻意用与暂存相反的结算
+    顺序，断言落账顺序服从传入的 `decree_refs_in_order`——若结算把迭代顺序
+    反了，facts 顺序会翻转、本测试变红（变异真跑）。decree:2 覆盖作废分支。
+    J1：decree:3 里混一条引用不存在人物的项，断言其拒收在暂存/结算路径下
+    同样落进 durable 的 rejection_reports（重新查库而非只看返回值），幂等
+    重结算不重复落库。"""
+    from ming_sim.declaration_dispatch import (
+        discard_staged_declaration,
+        settle_staged_declarations_in_decree_order,
+        stage_declaration,
+    )
+
+    db, state, _ = game
+    minister = _minister(db)
+
+    stage_declaration(
+        db, decree_ref="decree:1",
+        declaration={"textual_facts": [{
+            "subject_kind": "character", "subject_id": minister, "body": "旨一：暂存中",
+        }]},
+        turn=int(state.turn),
+    )
+    stage_declaration(
+        db, decree_ref="decree:2",
+        declaration={"textual_facts": [{
+            "subject_kind": "character", "subject_id": minister, "body": "旨二：即将作废",
+        }]},
+        turn=int(state.turn),
+    )
+    stage_declaration(
+        db, decree_ref="decree:3",
+        declaration={"textual_facts": [
+            {"subject_kind": "character", "subject_id": minister, "body": "旨三：后到之旨"},
+            {"subject_kind": "character", "subject_id": "子虚乌有之人", "body": "旨三：凭空捏造"},
+        ]},
+        turn=int(state.turn),
+    )
+    # 暂存不落账。
+    assert db.textual_facts.readable_materials(
+        subject_kind="character", subject_id=minister,
+    ) == ()
+
+    discarded = discard_staged_declaration(db, "decree:2")
+    assert discarded == 1
+
+    # 刻意把 decree:3 排在 decree:1 之前——与暂存先后（1→2→3）相反，用来断言
+    # 结算真的服从传入顺序，而不是暂存插入顺序。
+    results = settle_staged_declarations_in_decree_order(
+        db, state, ["decree:3", "decree:1"],
+    )
+    assert "decree:2" not in results  # 全部作废，静默跳过
+    assert len(results["decree:3"].textual_facts.applied) == 1
+    assert len(results["decree:3"].textual_facts.rejected) == 1
+    assert results["decree:3"].textual_facts.rejected[0].category == "hallucinated_id"
+    assert len(results["decree:1"].textual_facts.applied) == 1
+
+    facts = db.textual_facts.readable_materials(subject_kind="character", subject_id=minister)
+    # 落账顺序 = 传入的结算顺序（先 decree:3 后 decree:1），不是暂存顺序。
+    assert [f.body for f in facts] == ["旨三：后到之旨", "旨一：暂存中"]
+
+    rows = db.conn.execute(
+        "SELECT section, category, item_json FROM rejection_reports WHERE turn=?",
+        (int(state.turn),),
+    ).fetchall()
+    assert len(rows) == 1
+    assert rows[0]["section"] == "textual_facts"
+    assert rows[0]["category"] == "hallucinated_id"
+    assert "子虚乌有之人" in rows[0]["item_json"]
+
+    # 幂等：再结算一次不重复落账、不重复拒收。
+    again = settle_staged_declarations_in_decree_order(db, state, ["decree:3", "decree:1"])
+    assert again == {}
+    facts_after = db.textual_facts.readable_materials(subject_kind="character", subject_id=minister)
+    assert [f.body for f in facts_after] == ["旨三：后到之旨", "旨一：暂存中"]
+    rows_after = db.conn.execute(
+        "SELECT COUNT(*) c FROM rejection_reports WHERE turn=?", (int(state.turn),),
+    ).fetchone()
+    assert rows_after["c"] == 1

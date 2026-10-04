@@ -1,0 +1,75 @@
+# FILE: tests/test_urge_lever_624.py
+# NAME: test_grace_plea_payload_truth_hidden_from_player_ac6
+# LINE: 356-424
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_grace_plea_payload_truth_hidden_from_player_ac6(game):
+    db, state, content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.commit()
+    state.metrics["皇威"] = 40
+    db.conn.execute("UPDATE metrics SET value=? WHERE key='皇威'", (40,))
+    db.conn.commit()
+    dossier_id = _executing_policy_dossier(db, state, host="倪元璐")
+    _set_integrity(db, "倪元璐", 25, courage=40)
+    stages = _seed_stages(state)
+    issue_id, _ = _insert_staged_commitment(
+        db, state, content, stages=stages, origin_ref=f"dossier:{dossier_id}",
+        title="宽限真伪之诺",
+    )
+    r = rush_staged_commitment_stage(
+        db, state, commitment_ref=issue_id, stage_idx=0,
+        deadline_months=6, reason="稍加催促",
+    )
+    assert r.get("grace_written") is True
+    grace = [
+        t for t in db.list_next_audience_todos(commitment_ref=issue_id)
+        if t["entry_kind"] == ENTRY_KIND_GRACE_PLEA
+    ]
+    assert len(grace) == 1
+    payload = grace[0].get("payload_json")
+    assert isinstance(payload, dict)
+    assert payload.get("truth") in {"genuine", "pretextual"}
+    assert "grace_fake" in payload
+
+    # The structured payload is not projected; supplied prose passes through unchanged.
+    urge_scenes = list_urge_audience_scenes(db, state)
+    assert urge_scenes, "grace pending 必须顶出召对面"
+    assert all("payload_json" not in item for item in urge_scenes)
+    grace_scene = project_urge_audience_scene(grace[0])
+    assert "payload_json" not in grace_scene
+    marked = dict(grace[0], origin_context="上奏 grace_fake 待议", criterion_text="求宽限 truth")
+    projected = project_urge_audience_scene(marked)
+    assert projected["origin_context"] == marked["origin_context"]
+    assert projected["criterion_text"] == marked["criterion_text"]
+
+    # 最坏形态：带真伪底 payload 的 staged 条走真实 due-review 投影，断言零泄漏
+    tid = db.insert_next_audience_todo(
+        commitment_ref=issue_id,
+        stage_idx=0,
+        due_turn=state.turn,
+        criterion_text="火器见眉目",
+        origin_context="三年火器见眉目",
+        status=TODO_STATUS_PENDING,
+        entry_kind=ENTRY_KIND_STAGED,
+        created_turn=state.turn,
+        payload_json={
+            "truth": "pretextual",
+            "grace_fake": True,
+            "genuine": False,
+            "distortion_band": "必歪",
+            "urge_tightness": 99,
+        },
+    )
+    assert tid > 0
+    staged_todo = [
+        t for t in db.list_next_audience_todos(commitment_ref=issue_id)
+        if int(t["id"]) == tid
+    ][0]
+    assert staged_todo["payload_json"]["grace_fake"] is True
+    scene = project_due_review_scene(db, staged_todo)
+    assert "payload_json" not in scene
+    # list_due_review_scenes also omits the structured payload.
+    scenes = list_due_review_scenes(db, state)
+    assert all("payload_json" not in item for item in scenes)

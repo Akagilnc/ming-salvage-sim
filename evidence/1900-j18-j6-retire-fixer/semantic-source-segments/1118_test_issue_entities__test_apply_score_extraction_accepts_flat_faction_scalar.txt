@@ -1,0 +1,13 @@
+# FILE: tests/test_issue_entities.py
+# NAME: test_apply_score_extraction_accepts_flat_faction_scalar
+# LINE: 120-126
+# FLAGS: assert_text_compare_or_match,assert_count
+# KIND: py
+
+def test_apply_score_extraction_accepts_flat_faction_scalar(game):
+    db, state, _ = game
+    applied = I.apply_score_extraction(db, state, {"faction_delta": {"阉党": -10}, "class_delta": {"农民": 0}})
+    assert applied["faction_delta"] == {"阉党": -10}
+    assert applied["class_delta"] == {}
+    assert len(applied["class_delta_rejections"]) == 1
+    assert applied["class_delta_rejections"][0]["category"] == "invalid_enum"

@@ -1,0 +1,31 @@
+# FILE: tests/test_rescript_option_field_heal_1746.py
+# NAME: test_typed_illegal_also_heals
+# LINE: 447-471
+# FLAGS: assert_text_compare_or_match,mock_or_patch_present,helper_or_private_call
+# KIND: py
+
+def test_typed_illegal_also_heals(bad_factory, heal_fix, must_fields, monkeypatch, tmp_path):
+    """错类型/不可解析值同样走补交，不整批拒。"""
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    bad = bad_factory()
+    sibling = _hold(label="兄弟")
+    first = _items_json([{"title": "u", "context": "c", "options": [bad, sibling]}])
+    healed = _heals_json([("0:0", dict(heal_fix))])
+    tags: list[str] = []
+    prompts: list[str] = []
+    n = {"i": 0}
+
+    def _llm(_a, prompt, tag="", prior_messages=None):
+        tags.append(tag)
+        prompts.append(prompt)
+        n["i"] += 1
+        return first if n["i"] == 1 else healed
+
+    monkeypatch.setattr(rescript_mod, "run_agent_text", _llm)
+    drafts = generate_rescript_draft(object(), _ctx(), turn=45)
+    assert drafts is not None and "rescript-draft-heal" in tags
+    heal_prompt = next(p for t, p in zip(tags, prompts) if t == "rescript-draft-heal")
+    ff = _field_failure_map(_parse_heal_request(heal_prompt)["failures"][0])
+    for name in must_fields:
+        assert name in ff
+    assert any(o.get("label") == sibling["label"] for o in drafts[0]["options"])

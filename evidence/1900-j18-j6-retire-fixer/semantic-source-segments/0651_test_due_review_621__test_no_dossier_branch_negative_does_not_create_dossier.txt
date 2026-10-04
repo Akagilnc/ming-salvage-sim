@@ -1,0 +1,43 @@
+# FILE: tests/test_due_review_621.py
+# NAME: test_no_dossier_branch_negative_does_not_create_dossier
+# LINE: 344-380
+# FLAGS: helper_or_private_call
+# KIND: py
+
+def test_no_dossier_branch_negative_does_not_create_dossier(game):
+    """负向：无案卷分支禁止 create_decree_dossier。"""
+    db, state, content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.commit()
+    stages = [{
+        "stage_idx": 0,
+        "due_turn": state.turn,
+        "criterion_text": "农政见效",
+        "origin_context": "七八年农政见效",
+    }]
+    origin = _promulgated_origin(db, state, "neg-no-dossier")
+    did = int(origin.split(":")[1])
+    db.conn.execute(
+        "UPDATE decree_dossiers SET status='closed', execution_outcome='fulfilled' WHERE id=?",
+        (did,),
+    )
+    db.conn.commit()
+    before_ids = {
+        int(r["id"])
+        for r in db.conn.execute("SELECT id FROM decree_dossiers").fetchall()
+    }
+    _insert_staged_commitment(
+        db, state, content, stages=stages, origin_ref=origin, title="负向无案卷",
+    )
+    write_due_staged_commitment_todos(db, state)
+    db.conn.execute(
+        "UPDATE next_audience_todos SET created_turn=?",
+        (state.turn - 1,),
+    )
+    db.conn.commit()
+    apply_pending_due_reviews(db, state, commit=True)
+    after_ids = {
+        int(r["id"])
+        for r in db.conn.execute("SELECT id FROM decree_dossiers").fetchall()
+    }
+    assert after_ids == before_ids

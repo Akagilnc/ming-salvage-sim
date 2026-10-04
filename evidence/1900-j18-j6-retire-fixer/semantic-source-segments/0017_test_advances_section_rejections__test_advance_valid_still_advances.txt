@@ -1,0 +1,15 @@
+# FILE: tests/test_advances_section_rejections.py
+# NAME: test_advance_valid_still_advances
+# LINE: 92-100
+# FLAGS: assert_count,helper_or_private_call
+# KIND: py
+
+def test_advance_valid_still_advances(game):
+    db, state, _ = game
+    # 正常 advance（存在 active issue + 合法字段）仍正常推进、不被误拒。
+    iid = _make_active_issue(db, state)
+    out = I.apply_issue_tracker_output(
+        db, state, {"advances": [{"issue_id": iid, "delta_bar": 10, "narrative": "推进局势"}]}
+    )
+    done = [a for a in _adv(out) if not a.get("rejected") and a.get("issue_id") == iid]
+    assert len(done) == 1, out

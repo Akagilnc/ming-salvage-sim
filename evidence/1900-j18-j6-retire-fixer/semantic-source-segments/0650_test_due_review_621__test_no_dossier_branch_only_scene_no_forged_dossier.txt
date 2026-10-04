@@ -1,0 +1,49 @@
+# FILE: tests/test_due_review_621.py
+# NAME: test_no_dossier_branch_only_scene_no_forged_dossier
+# LINE: 299-341
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_no_dossier_branch_only_scene_no_forged_dossier(game):
+    db, state, content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.commit()
+    before_count = db.conn.execute("SELECT COUNT(*) AS c FROM decree_dossiers").fetchone()["c"]
+    stages = [{
+        "stage_idx": 0,
+        "due_turn": state.turn,
+        "criterion_text": "火器见眉目",
+        "origin_context": "三年火器见眉目",
+    }]
+    # origin 指向已颁但非 executing 的 assignment 案卷（或空执行面）——走无执行面案卷分支
+    # 用无 origin_ref 的承诺：insert 仍需合法 origin；用已 close 的案卷模拟无执行桥
+    origin = _promulgated_origin(db, state, "no-exec-surface")
+    # promulgated assignment without executing transition stays promulgated if terminal?
+    # assignment 有执行面；改为直接空 origin_ref 不可。用已 closed 案卷：
+    did = int(origin.split(":")[1])
+    db.conn.execute(
+        "UPDATE decree_dossiers SET status='closed', execution_outcome='fulfilled' WHERE id=?",
+        (did,),
+    )
+    db.conn.commit()
+    _insert_staged_commitment(
+        db, state, content, stages=stages, origin_ref=origin, title="无案卷桥之诺",
+    )
+    write_due_staged_commitment_todos(db, state)
+    db.conn.execute(
+        "UPDATE next_audience_todos SET created_turn=?",
+        (state.turn - 1,),
+    )
+    db.conn.commit()
+    scenes_before = list_due_review_scenes(db, state)
+    assert scenes_before
+
+    results = apply_pending_due_reviews(db, state, commit=True)
+    assert results
+    assert all(r.get("branch") == "no_dossier" for r in results)
+    after_count = db.conn.execute("SELECT COUNT(*) AS c FROM decree_dossiers").fetchone()["c"]
+    # 不新建案卷
+    assert after_count == before_count + 1  # +1 是 origin 那条已存在的
+    # 不改已结案卷执行格为第二真源
+    assert db.get_decree_dossier(did)["status"] == "closed"
+    assert db.list_next_audience_todos(status=TODO_STATUS_PENDING) == []

@@ -1,0 +1,75 @@
+# FILE: tests/test_web_audience_night_498.py
+# NAME: test_asgi_hanging_chat_issue_waits_for_worker_terminal
+# LINE: 726-794
+# FLAGS: assert_text_compare_or_match,mock_or_patch_present,helper_or_private_call
+# KIND: py
+
+def test_asgi_hanging_chat_issue_waits_for_worker_terminal(web_game, monkeypatch):
+    """#1353 K10a：在飞回话挂起时颁诏等待工人终态，不按墙钟伪造 in_flight 409。
+
+    顺序：挂起 chat → 起 issue（阻塞等在飞）→ 放行 chat → issue 消费终态续跑。
+    """
+    game = web_game
+    minister = _active_minister(game)
+    _fake_settlement_llm(monkeypatch)
+    monkeypatch.setattr("ming_sim.audience_night.DEFAULT_IN_FLIGHT_POLL_S", 0.02)
+    turn_before = int(game.state.turn)
+
+    # 观测：issue 真进屏障并见到 chat 票后，才断言「未伪造成 elapsed 409」。
+    observed_ticket_inflight = threading.Event()
+    q = game._runtime_write_queue()
+    real_wait_prior = q.wait_prior
+
+    def observe_wait_prior(ticket):
+        if q.inflight_count() > 1:  # barrier 票 + chat 票
+            observed_ticket_inflight.set()
+        return real_wait_prior(ticket)
+
+    monkeypatch.setattr(q, "wait_prior", observe_wait_prior)
+
+    async def scenario():
+        async with _client() as chat_client, _client() as issue_client:
+            # 取得 chat 所有权后即进入释放责任区间——观察/断言均在 try 内。
+            chat_task, allow = await _start_hanging_chat(game, chat_client, minister, monkeypatch)
+            issue_task = None
+            try:
+                night = an.get_open_night(game.db)
+                assert game.db.conn.execute(
+                    "SELECT status FROM chat_turns WHERE night_id=?",
+                    (night["id"],),
+                ).fetchone()["status"] == "generating"
+                # 预置 draft（与 AC10 成功案同缝）：工人终态后须能真实续跑到 done，
+                # 不得靠「任意 error」冒充非伪造 in-flight。
+                game.db.upsert_pending_directive(
+                    game.state.turn, minister, payload={
+                        "text": "着户部核边饷", "actor": minister,
+                        "dossier_action_type": "policy",
+                        "target_kind": "issue", "target_id": "border-pay",
+                    })
+                game.db.commit_pending_actions(game.state, kind_filter="directive")
+
+                issue_task = asyncio.create_task(
+                    issue_client.post("/api/decree/issue/stream", json={})
+                )
+                await _await_event_or_task(observed_ticket_inflight, issue_task)
+                assert not issue_task.done(), (
+                    "issue must wait for chat ticket, not forge elapsed 409"
+                )
+
+                allow.set()
+                chat_resp = await chat_task
+                issue_resp = await issue_task
+                return night, _parse_sse(issue_resp.text), _parse_sse(chat_resp.text)
+            finally:
+                # 持有 chat allow：先释放，再排空已创建 sibling；收尾不抛，保留主体原错。
+                allow.set()
+                await _drain_tasks(chat_task, issue_task)
+
+    night, issue_events, chat_events = asyncio.run(scenario())
+    assert night is not None
+    assert chat_events[-1]["event"] == "end"
+    # 非伪造 in-flight：等待期间 issue 未完成（scenario 内）；工人终态后续跑成功。
+    assert issue_events[-1]["event"] == "done", issue_events
+    assert an.get_night(game.db, night["id"])["status"] == "closed"
+    assert int(game.state.turn) == turn_before + 1
+    assert int(game.db.load_state().turn) == turn_before + 1

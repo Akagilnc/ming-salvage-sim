@@ -1,0 +1,25 @@
+# FILE: web/src/chatFailures.test.ts
+# NAME: "streamChat typed error projection" / "shows the payload message while preserving diagnostic fields"
+# LINE: 36-54
+# FLAGS: web_mock_spy_or_calls
+# KIND: web
+
+  it("shows the payload message while preserving diagnostic fields", async () => {
+    const detail = {
+      code: "llm_run_error",
+      message: "通传未达，请稍后再召。",
+      provider_message: "provider stack trace",
+    };
+    const body = `event: error\ndata: ${JSON.stringify(detail)}\n\n`;
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(body, {
+      status: 200,
+      headers: { "Content-Type": "text/event-stream" },
+    })));
+
+    const error = await streamChat("洪承畴", "传来。", () => {}).catch((reason) => reason);
+
+    expect(error).toBeInstanceOf(ApiRequestError);
+    expect(error.message).toBe(detail.message);
+    expect(error.detail.code).toBe(detail.code);
+    expect(error.detail.provider_message).toBe(detail.provider_message);
+  });

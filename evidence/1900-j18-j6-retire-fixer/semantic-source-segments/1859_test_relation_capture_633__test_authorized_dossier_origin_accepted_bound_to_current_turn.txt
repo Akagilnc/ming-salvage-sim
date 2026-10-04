@@ -1,0 +1,43 @@
+# FILE: tests/test_relation_capture_633.py
+# NAME: test_authorized_dossier_origin_accepted_bound_to_current_turn
+# LINE: 291-327
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_authorized_dossier_origin_accepted_bound_to_current_turn(game):
+    """冻结闭集内且已颁授权的 dossier 引用照常落边，origin_round 由当前回合绑定。"""
+    db, state, content = game
+    holder = db.conn.execute(
+        "SELECT name FROM characters WHERE status='active' ORDER BY name LIMIT 1"
+    ).fetchone()["name"]
+    did = _promulgated_dossier(db, state, holder, "relation-origin-633")
+    db.conn.commit()
+    out = apply_score_extraction(
+        db, state,
+        {
+            "relation_edge_events": [{
+                "施动者": "毕自严", "受动者": "王绍徽", "类目": "把柄",
+                "语境": "案卷授权的互动。", "来源引用": f"dossier:{did}",
+            }, {
+                # 空白包裹的 dossier 引用：非 canonical，逐项拒收不搭救
+                "施动者": "毕自严", "受动者": "王绍徽", "类目": "结怨",
+                "语境": "空白包裹的案卷引用。", "来源引用": f" dossier:{did} ",
+            }],
+        },
+        content=content,
+        dossier_ids_at_input={did},
+    )
+    res = out["relation_edge_event_resolutions"]
+    padded = next(
+        r for r in res if (r.get("item") or {}).get("语境") == "空白包裹的案卷引用。"
+    )
+    assert padded.get("rejected") and padded["category"] == "invalid_relation_event"
+    assert padded["item"]["来源引用"] == f" dossier:{did} "
+    assert not any(r.get("rejected") for r in res if r is not padded), res
+    # 恰一行合法边落库；无归一后的 dossier origin 变体
+    rows = _edge_rows(db)
+    assert len(rows) == 1
+    assert rows[0]["origin"] == f"dossier:{did}:relation:把柄|round:{state.turn}"
+    row = _edge_rows(db, source="毕自严", target="王绍徽")[0]
+    assert row["origin"] == f"dossier:{did}:relation:把柄|round:{state.turn}"
+    assert row["origin_round"] == state.turn

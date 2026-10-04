@@ -1,0 +1,29 @@
+# FILE: tests/test_fiscal_substrate_bridge.py
+# NAME: test_shanxi_seed_stacks_frontier_pay_and_jin_vassal_dues
+# LINE: 3636-3658
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_shanxi_seed_stacks_frontier_pay_and_jin_vassal_dues(fresh_db):
+    settle = _read_settle(fresh_db, "shanxi")
+    p = settle["p"]
+    assert p["正赋应征"] == pytest.approx(17.652849583333335)
+    assert p["三饷应征"] == pytest.approx(2.7600975)
+    assert p["起运定额"] == pytest.approx(9.667061)
+    assert p["拨付gross"] == pytest.approx(10)
+    assert p["Due"]["军饷"] == pytest.approx(_province_pay_due(fresh_db, "shanxi"))
+    assert {k: p["Due"][k] for k in ("官俸", "宗禄", "赈济")} == {"官俸": 4, "宗禄": 10.99, "赈济": 0}
+    assert settle["st"]["官民田"] == pytest.approx(3680.13, abs=1e-2)
+
+    meta = settle["_meta"]
+    assert "边镇军饷" in meta["postures"]
+    assert "晋藩宗禄" in meta["postures"]
+    assert "宗禄" not in meta["provisional"]
+    assert "官民田" not in meta["provisional"]
+    assert "起运定额" not in meta["provisional"]
+    assert meta["levies"]["seeded"] == ["辽饷"]
+    assert meta["primary_source"]["田赋折银两_年"] == pytest.approx(2118341.95)
+    assert meta["primary_source"]["起运折银两_年"] == pytest.approx(828835.62)
+    assert meta["正赋起运基线"] == pytest.approx(828835.62 / 10000 / 12)
+    assert meta["primary_source"]["粟米原额石"] == pytest.approx(1722851.38)
+    assert set(meta["primary_source"]["fields_refined"]) >= {"官民田", "起运定额", "正赋应征"}

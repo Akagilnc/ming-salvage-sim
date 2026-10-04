@@ -1,0 +1,236 @@
+{
+  "source_path": "tests/test_promulgation_judge_561.py",
+  "member_count": 17,
+  "members": [
+    {
+      "idx": 1703,
+      "file": "tests/test_promulgation_judge_561.py",
+      "name": "test_promulgation_context_is_deterministic_and_excludes_satisfaction",
+      "line": 21,
+      "end": 85,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1703_test_promulgation_judge_561__test_promulgation_context_is_deterministic_and_excludes_satisfaction.txt",
+      "source_path": "tests/test_promulgation_judge_561.py"
+    },
+    {
+      "idx": 1704,
+      "file": "tests/test_promulgation_judge_561.py",
+      "name": "test_promulgation_context_projects_faction_leverage_as_qualitative_band",
+      "line": 88,
+      "end": 119,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1704_test_promulgation_judge_561__test_promulgation_context_projects_faction_leverage_as_qualitative_band.txt",
+      "source_path": "tests/test_promulgation_judge_561.py"
+    },
+    {
+      "idx": 1705,
+      "file": "tests/test_promulgation_judge_561.py",
+      "name": "test_promulgation_history_only_projects_forced_and_midzhi_markers",
+      "line": 137,
+      "end": 167,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1705_test_promulgation_judge_561__test_promulgation_history_only_projects_forced_and_midzhi_markers.txt",
+      "source_path": "tests/test_promulgation_judge_561.py"
+    },
+    {
+      "idx": 1706,
+      "file": "tests/test_promulgation_judge_561.py",
+      "name": "test_promulgation_verdict_rejects_unknown_fields",
+      "line": 179,
+      "end": 194,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1706_test_promulgation_judge_561__test_promulgation_verdict_rejects_unknown_fields.txt",
+      "source_path": "tests/test_promulgation_judge_561.py"
+    },
+    {
+      "idx": 1707,
+      "file": "tests/test_promulgation_judge_561.py",
+      "name": "test_promulgated_verdict_strips_rejection_only_noise",
+      "line": 197,
+      "end": 234,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1707_test_promulgation_judge_561__test_promulgated_verdict_strips_rejection_only_noise.txt",
+      "source_path": "tests/test_promulgation_judge_561.py"
+    },
+    {
+      "idx": 1708,
+      "file": "tests/test_promulgation_judge_561.py",
+      "name": "test_promulgated_midzhi_strips_affected_parties_with_rejection_noise",
+      "line": 237,
+      "end": 270,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1708_test_promulgation_judge_561__test_promulgated_midzhi_strips_affected_parties_with_rejection_noise.txt",
+      "source_path": "tests/test_promulgation_judge_561.py"
+    },
+    {
+      "idx": 1709,
+      "file": "tests/test_promulgation_judge_561.py",
+      "name": "test_promulgated_true_path_clean_verdict_passes",
+      "line": 273,
+      "end": 283,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1709_test_promulgation_judge_561__test_promulgated_true_path_clean_verdict_passes.txt",
+      "source_path": "tests/test_promulgation_judge_561.py"
+    },
+    {
+      "idx": 1710,
+      "file": "tests/test_promulgation_judge_561.py",
+      "name": "test_rejected_verdict_still_requires_full_rejection_contract",
+      "line": 286,
+      "end": 299,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1710_test_promulgation_judge_561__test_rejected_verdict_still_requires_full_rejection_contract.txt",
+      "source_path": "tests/test_promulgation_judge_561.py"
+    },
+    {
+      "idx": 1711,
+      "file": "tests/test_promulgation_judge_561.py",
+      "name": "test_promulgation_judge_omits_max_tokens",
+      "line": 324,
+      "end": 337,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1711_test_promulgation_judge_561__test_promulgation_judge_omits_max_tokens.txt",
+      "source_path": "tests/test_promulgation_judge_561.py"
+    },
+    {
+      "idx": 1712,
+      "file": "tests/test_promulgation_judge_561.py",
+      "name": "test_promulgation_verdict_accepts_exact_keys_for_each_mode",
+      "line": 353,
+      "end": 375,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1712_test_promulgation_judge_561__test_promulgation_verdict_accepts_exact_keys_for_each_mode.txt",
+      "source_path": "tests/test_promulgation_judge_561.py"
+    },
+    {
+      "idx": 1713,
+      "file": "tests/test_promulgation_judge_561.py",
+      "name": "test_rejected_exact_keys_accept_only_empty_legal_reason_slot",
+      "line": 378,
+      "end": 395,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1713_test_promulgation_judge_561__test_rejected_exact_keys_accept_only_empty_legal_reason_slot.txt",
+      "source_path": "tests/test_promulgation_judge_561.py"
+    },
+    {
+      "idx": 1714,
+      "file": "tests/test_promulgation_judge_561.py",
+      "name": "test_default_promulgation_judge_uses_one_batch_and_existing_validator",
+      "line": 398,
+      "end": 434,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1714_test_promulgation_judge_561__test_default_promulgation_judge_uses_one_batch_and_existing_validator.txt",
+      "source_path": "tests/test_promulgation_judge_561.py"
+    },
+    {
+      "idx": 1715,
+      "file": "tests/test_promulgation_judge_561.py",
+      "name": "test_rejected_snapshot_must_equal_the_prepared_judge_input",
+      "line": 446,
+      "end": 459,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1715_test_promulgation_judge_561__test_rejected_snapshot_must_equal_the_prepared_judge_input.txt",
+      "source_path": "tests/test_promulgation_judge_561.py"
+    },
+    {
+      "idx": 1716,
+      "file": "tests/test_promulgation_judge_561.py",
+      "name": "test_appointment_tenure_is_the_rejection_snapshot_value",
+      "line": 462,
+      "end": 474,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1716_test_promulgation_judge_561__test_appointment_tenure_is_the_rejection_snapshot_value.txt",
+      "source_path": "tests/test_promulgation_judge_561.py"
+    },
+    {
+      "idx": 1717,
+      "file": "tests/test_promulgation_judge_561.py",
+      "name": "test_non_gatekeeper_character_cannot_be_named_as_gatekeeper",
+      "line": 477,
+      "end": 493,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1717_test_promulgation_judge_561__test_non_gatekeeper_character_cannot_be_named_as_gatekeeper.txt",
+      "source_path": "tests/test_promulgation_judge_561.py"
+    },
+    {
+      "idx": 1718,
+      "file": "tests/test_promulgation_judge_561.py",
+      "name": "test_ordinary_rejection_cannot_claim_midzhi_unpromulgatable",
+      "line": 496,
+      "end": 508,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1718_test_promulgation_judge_561__test_ordinary_rejection_cannot_claim_midzhi_unpromulgatable.txt",
+      "source_path": "tests/test_promulgation_judge_561.py"
+    },
+    {
+      "idx": 1719,
+      "file": "tests/test_promulgation_judge_561.py",
+      "name": "test_review_exempt_actions_auto_promulgate_without_judge_contract_abort",
+      "line": 522,
+      "end": 554,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1719_test_promulgation_judge_561__test_review_exempt_actions_auto_promulgate_without_judge_contract_abort.txt",
+      "source_path": "tests/test_promulgation_judge_561.py"
+    }
+  ]
+}

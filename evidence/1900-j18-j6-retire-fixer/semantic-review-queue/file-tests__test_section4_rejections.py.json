@@ -1,0 +1,409 @@
+{
+  "source_path": "tests/test_section4_rejections.py",
+  "member_count": 28,
+  "members": [
+    {
+      "idx": 2097,
+      "file": "tests/test_section4_rejections.py",
+      "name": "test_unknown_region_rejected_good_item_lands",
+      "line": 55,
+      "end": 78,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2097_test_section4_rejections__test_unknown_region_rejected_good_item_lands.txt",
+      "source_path": "tests/test_section4_rejections.py"
+    },
+    {
+      "idx": 2098,
+      "file": "tests/test_section4_rejections.py",
+      "name": "test_illegal_region_field_rejected_sibling_lands",
+      "line": 81,
+      "end": 100,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2098_test_section4_rejections__test_illegal_region_field_rejected_sibling_lands.txt",
+      "source_path": "tests/test_section4_rejections.py"
+    },
+    {
+      "idx": 2099,
+      "file": "tests/test_section4_rejections.py",
+      "name": "test_dirty_region_value_rejected_sibling_lands",
+      "line": 104,
+      "end": 125,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2099_test_section4_rejections__test_dirty_region_value_rejected_sibling_lands.txt",
+      "source_path": "tests/test_section4_rejections.py"
+    },
+    {
+      "idx": 2100,
+      "file": "tests/test_section4_rejections.py",
+      "name": "test_region_controlled_by_rejects_non_power_id_and_preserves_region",
+      "line": 129,
+      "end": 151,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2100_test_section4_rejections__test_region_controlled_by_rejects_non_power_id_and_preserves_region.txt",
+      "source_path": "tests/test_section4_rejections.py"
+    },
+    {
+      "idx": 2101,
+      "file": "tests/test_section4_rejections.py",
+      "name": "test_region_controlled_by_accepts_existing_power_ids_and_restore_hook",
+      "line": 154,
+      "end": 181,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2101_test_section4_rejections__test_region_controlled_by_accepts_existing_power_ids_and_restore_hook.txt",
+      "source_path": "tests/test_section4_rejections.py"
+    },
+    {
+      "idx": 2102,
+      "file": "tests/test_section4_rejections.py",
+      "name": "test_region_controlled_by_mixed_invalid_and_valid_siblings_apply",
+      "line": 184,
+      "end": 213,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2102_test_section4_rejections__test_region_controlled_by_mixed_invalid_and_valid_siblings_apply.txt",
+      "source_path": "tests/test_section4_rejections.py"
+    },
+    {
+      "idx": 2103,
+      "file": "tests/test_section4_rejections.py",
+      "name": "test_unknown_army_rejected_good_item_lands",
+      "line": 218,
+      "end": 241,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2103_test_section4_rejections__test_unknown_army_rejected_good_item_lands.txt",
+      "source_path": "tests/test_section4_rejections.py"
+    },
+    {
+      "idx": 2104,
+      "file": "tests/test_section4_rejections.py",
+      "name": "test_illegal_army_field_rejected_sibling_lands",
+      "line": 244,
+      "end": 263,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2104_test_section4_rejections__test_illegal_army_field_rejected_sibling_lands.txt",
+      "source_path": "tests/test_section4_rejections.py"
+    },
+    {
+      "idx": 2105,
+      "file": "tests/test_section4_rejections.py",
+      "name": "test_dirty_army_value_rejected_sibling_lands",
+      "line": 267,
+      "end": 286,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2105_test_section4_rejections__test_dirty_army_value_rejected_sibling_lands.txt",
+      "source_path": "tests/test_section4_rejections.py"
+    },
+    {
+      "idx": 2106,
+      "file": "tests/test_section4_rejections.py",
+      "name": "test_unknown_owner_power_army_rejected_good_builds",
+      "line": 298,
+      "end": 325,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2106_test_section4_rejections__test_unknown_owner_power_army_rejected_good_builds.txt",
+      "source_path": "tests/test_section4_rejections.py"
+    },
+    {
+      "idx": 2107,
+      "file": "tests/test_section4_rejections.py",
+      "name": "test_army_missing_manpower_rejected_good_builds",
+      "line": 328,
+      "end": 351,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call",
+        "retired_or_meta_marker"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2107_test_section4_rejections__test_army_missing_manpower_rejected_good_builds.txt",
+      "source_path": "tests/test_section4_rejections.py"
+    },
+    {
+      "idx": 2108,
+      "file": "tests/test_section4_rejections.py",
+      "name": "test_duplicate_army_without_manpower_rejected",
+      "line": 354,
+      "end": 369,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2108_test_section4_rejections__test_duplicate_army_without_manpower_rejected.txt",
+      "source_path": "tests/test_section4_rejections.py"
+    },
+    {
+      "idx": 2109,
+      "file": "tests/test_section4_rejections.py",
+      "name": "test_region_deltas_code_exception_aborts_settlement",
+      "line": 374,
+      "end": 386,
+      "flags": [
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2109_test_section4_rejections__test_region_deltas_code_exception_aborts_settlement.txt",
+      "source_path": "tests/test_section4_rejections.py"
+    },
+    {
+      "idx": 2110,
+      "file": "tests/test_section4_rejections.py",
+      "name": "test_army_deltas_code_exception_aborts_settlement",
+      "line": 389,
+      "end": 401,
+      "flags": [
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2110_test_section4_rejections__test_army_deltas_code_exception_aborts_settlement.txt",
+      "source_path": "tests/test_section4_rejections.py"
+    },
+    {
+      "idx": 2111,
+      "file": "tests/test_section4_rejections.py",
+      "name": "test_create_armies_code_exception_aborts_settlement",
+      "line": 404,
+      "end": 417,
+      "flags": [
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2111_test_section4_rejections__test_create_armies_code_exception_aborts_settlement.txt",
+      "source_path": "tests/test_section4_rejections.py"
+    },
+    {
+      "idx": 2112,
+      "file": "tests/test_section4_rejections.py",
+      "name": "test_army_cannon_over_cap_clamps_not_rejected",
+      "line": 422,
+      "end": 439,
+      "flags": [
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2112_test_section4_rejections__test_army_cannon_over_cap_clamps_not_rejected.txt",
+      "source_path": "tests/test_section4_rejections.py"
+    },
+    {
+      "idx": 2113,
+      "file": "tests/test_section4_rejections.py",
+      "name": "test_region_cannon_over_cap_clamps_not_rejected",
+      "line": 442,
+      "end": 461,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2113_test_section4_rejections__test_region_cannon_over_cap_clamps_not_rejected.txt",
+      "source_path": "tests/test_section4_rejections.py"
+    },
+    {
+      "idx": 2114,
+      "file": "tests/test_section4_rejections.py",
+      "name": "test_army_firearm_over_100_clamps_not_rejected",
+      "line": 464,
+      "end": 480,
+      "flags": [
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2114_test_section4_rejections__test_army_firearm_over_100_clamps_not_rejected.txt",
+      "source_path": "tests/test_section4_rejections.py"
+    },
+    {
+      "idx": 2115,
+      "file": "tests/test_section4_rejections.py",
+      "name": "test_duplicate_army_noninteger_manpower_rejected",
+      "line": 483,
+      "end": 499,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2115_test_section4_rejections__test_duplicate_army_noninteger_manpower_rejected.txt",
+      "source_path": "tests/test_section4_rejections.py"
+    },
+    {
+      "idx": 2116,
+      "file": "tests/test_section4_rejections.py",
+      "name": "test_dirty_region_cannon_value_rejected_not_abort",
+      "line": 505,
+      "end": 523,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2116_test_section4_rejections__test_dirty_region_cannon_value_rejected_not_abort.txt",
+      "source_path": "tests/test_section4_rejections.py"
+    },
+    {
+      "idx": 2117,
+      "file": "tests/test_section4_rejections.py",
+      "name": "test_dirty_optional_army_field_rejects_item",
+      "line": 526,
+      "end": 541,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2117_test_section4_rejections__test_dirty_optional_army_field_rejects_item.txt",
+      "source_path": "tests/test_section4_rejections.py"
+    },
+    {
+      "idx": 2118,
+      "file": "tests/test_section4_rejections.py",
+      "name": "test_absent_optional_army_fields_use_defaults",
+      "line": 544,
+      "end": 556,
+      "flags": [
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2118_test_section4_rejections__test_absent_optional_army_fields_use_defaults.txt",
+      "source_path": "tests/test_section4_rejections.py"
+    },
+    {
+      "idx": 2119,
+      "file": "tests/test_section4_rejections.py",
+      "name": "test_nondict_new_army_item_recorded_not_silent",
+      "line": 559,
+      "end": 566,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2119_test_section4_rejections__test_nondict_new_army_item_recorded_not_silent.txt",
+      "source_path": "tests/test_section4_rejections.py"
+    },
+    {
+      "idx": 2120,
+      "file": "tests/test_section4_rejections.py",
+      "name": "test_all_score_fields_guarded_on_creation",
+      "line": 570,
+      "end": 586,
+      "flags": [
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2120_test_section4_rejections__test_all_score_fields_guarded_on_creation.txt",
+      "source_path": "tests/test_section4_rejections.py"
+    },
+    {
+      "idx": 2121,
+      "file": "tests/test_section4_rejections.py",
+      "name": "test_issue_path_tolerated_rejections_reach_reports",
+      "line": 589,
+      "end": 616,
+      "flags": [
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2121_test_section4_rejections__test_issue_path_tolerated_rejections_reach_reports.txt",
+      "source_path": "tests/test_section4_rejections.py"
+    },
+    {
+      "idx": 2122,
+      "file": "tests/test_section4_rejections.py",
+      "name": "test_inertia_natural_resolution_tolerated_rejection_no_crash",
+      "line": 619,
+      "end": 643,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2122_test_section4_rejections__test_inertia_natural_resolution_tolerated_rejection_no_crash.txt",
+      "source_path": "tests/test_section4_rejections.py"
+    },
+    {
+      "idx": 2123,
+      "file": "tests/test_section4_rejections.py",
+      "name": "test_float_bool_army_delta_tolerated_on_issue_path",
+      "line": 647,
+      "end": 663,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2123_test_section4_rejections__test_float_bool_army_delta_tolerated_on_issue_path.txt",
+      "source_path": "tests/test_section4_rejections.py"
+    },
+    {
+      "idx": 2124,
+      "file": "tests/test_section4_rejections.py",
+      "name": "test_required_field_historical_strictness_on_issue_path",
+      "line": 670,
+      "end": 684,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2124_test_section4_rejections__test_required_field_historical_strictness_on_issue_path.txt",
+      "source_path": "tests/test_section4_rejections.py"
+    }
+  ]
+}

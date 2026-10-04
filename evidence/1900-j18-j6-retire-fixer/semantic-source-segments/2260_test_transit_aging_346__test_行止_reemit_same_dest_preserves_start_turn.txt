@@ -1,0 +1,37 @@
+# FILE: tests/test_transit_aging_346.py
+# NAME: test_行止_reemit_same_dest_preserves_start_turn
+# LINE: 94-124
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_行止_reemit_same_dest_preserves_start_turn(game):
+    """同一 transit_to 被逐月 re-emit 时，transit_start_turn / remaining 不应被刷新。"""
+    db, state, content = game
+    name = active_ming_character(db, content)
+    _set_departure_origin(db, content, name)
+
+    state.turn = 3
+    issues.apply_score_extraction(
+        db, state,
+        {"人物变更": [{"origin_ref": "盘面自发", "name": name, "动作": "行止", "transit_to": DEST}]},
+        content=content,
+    )
+    before = db.conn.execute(
+        "SELECT transit_start_turn, transit_distance_remaining, transit_speed_factor "
+        "FROM characters WHERE name=?", (name,),
+    ).fetchone()
+    assert before["transit_start_turn"] == 3
+
+    state.turn = 4
+    issues.apply_score_extraction(
+        db, state,
+        {"人物变更": [{"origin_ref": "盘面自发", "name": name, "动作": "行止", "transit_to": DEST}]},
+        content=content,
+    )
+    row = db.conn.execute(
+        "SELECT transit_start_turn, transit_distance_remaining, transit_speed_factor "
+        "FROM characters WHERE name=?", (name,),
+    ).fetchone()
+    assert row["transit_start_turn"] == 3
+    assert row["transit_distance_remaining"] == before["transit_distance_remaining"]
+    assert row["transit_speed_factor"] == before["transit_speed_factor"]

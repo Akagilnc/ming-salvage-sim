@@ -1,0 +1,78 @@
+# FILE: tests/test_audience_translate_1837_reopen.py
+# NAME: test_travel_tone_updates_this_round_summon_ledger
+# LINE: 493-564
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_travel_tone_updates_this_round_summon_ledger(game, monkeypatch):
+    from tests.conftest import persist_and_schedule_scene, stub_audience_translate, stub_scene_agent
+    from tests.test_audience_translation_1838 import _scene_session
+
+    db, state, content = game
+    night = open_night(db, state)
+    person = _hong(db, content)
+    db.conn.execute(
+        "UPDATE characters SET location='shaanxi', transit_to='' WHERE name=?", (person,)
+    )
+    if db.get_character_status(person)[0] != "active":
+        db.set_character_status(state, person, "active")
+
+    class SceneAgent:
+        tools = []
+
+        def run(self, message):
+            return SimpleNamespace(content="殿上回奏。", tools=[])
+
+    sess = _scene_session(db, state, content, monkeypatch)
+    stub_scene_agent(monkeypatch, SceneAgent())
+    stub_audience_translate(monkeypatch, lambda prompt, config: {
+        "scene_facts": [{"body": "殿上回奏。", "role": "scene",
+                         "audibility": "殿上公开", "person_names": []}],
+        "travel_tones": [{"person_name": person, "tone": "星夜兼程"}],
+    })
+    old_id = record_summon_fresh(
+        db, int(night["id"]), person, origin_id="earlier-summon",
+        origin_chat_turn_id=0,
+    )
+    ctid = db.create_chat_turn(state, "殿上", "s", 0, night_id=int(night["id"]), status="active")
+    reply = sess.scene_chat(f"星夜宣{person}来京", chat_turn_id=ctid)
+    future = persist_and_schedule_scene(sess, db, reply)
+    assert future is not None
+    future.result()
+    matched = [item for item in list_unsettled_summons(db) if item["person_name"] == person]
+    assert matched and matched[-1].get("travel_tone") == "星夜兼程"
+    assert db.conn.execute(
+        "SELECT origin_chat_turn_id FROM story_ledger_entries WHERE id=?",
+        (matched[-1]["entry_id"],),
+    ).fetchone()[0] == ctid
+    assert matched[0]["entry_id"] == old_id
+    assert matched[0]["travel_tone"] == "常行"
+    from ming_sim.audience_night import commit_fresh_summons_for_night
+    ordinary = "毕自严"
+    db.conn.execute(
+        "UPDATE characters SET location='shaanxi', transit_to='' WHERE name=?", (ordinary,)
+    )
+    record_summon_fresh(db, int(night["id"]), ordinary, origin_id="ordinary-comparison")
+    commit_fresh_summons_for_night(db, state, int(night["id"]), content=content)
+    trip = db.conn.execute(
+        "SELECT transit_to, transit_speed_factor, transit_distance_remaining "
+        "FROM characters WHERE name=?", (person,)
+    ).fetchone()
+    assert trip["transit_to"] == "beizhili"
+    assert trip["transit_distance_remaining"] > 0
+    ordinary_trip = db.conn.execute(
+        "SELECT transit_to, transit_speed_factor, transit_distance_remaining "
+        "FROM characters WHERE name=?", (ordinary,)
+    ).fetchone()
+    assert ordinary_trip["transit_to"] == "beizhili"
+    assert trip["transit_distance_remaining"] == ordinary_trip["transit_distance_remaining"]
+    assert trip["transit_speed_factor"] > ordinary_trip["transit_speed_factor"]
+    from ming_sim.decree import tick_transit_arrivals
+    from math import ceil
+    arrival_turns = {}
+    for turn in range(int(state.turn) + 1, int(state.turn) + ceil(ordinary_trip["transit_distance_remaining"]) + 2):
+        state.turn = turn
+        for arrived in tick_transit_arrivals(db, state, content):
+            if arrived["name"] in (person, ordinary):
+                arrival_turns[arrived["name"]] = turn
+    assert arrival_turns[person] < arrival_turns[ordinary]

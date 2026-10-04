@@ -1,0 +1,54 @@
+# FILE: tests/test_runtime_llm_config.py
+# NAME: test_save_runtime_llm_preserves_existing_api_slot_when_saving_cli
+# LINE: 362-409
+# FLAGS: assert_text_compare_or_match,assert_count,mock_or_patch_present
+# KIND: py
+
+def test_save_runtime_llm_preserves_existing_api_slot_when_saving_cli(tmp_path, monkeypatch):
+    path = tmp_path / "runtime_llm.json"
+    path.write_text(
+        json.dumps(
+            {
+                "channel": "api",
+                "api": {
+                    "base_url": "https://api.example.com/v1",
+                    "model": "gpt-api",
+                    "api_key": "sk-api",
+                    "timeout_seconds": 150,
+                    "thinking_level": "minimal",
+                },
+                "cli": {"runner": "", "model": "", "timeout_seconds": ""},
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(llm_config, "RUNTIME_LLM_PATH", str(path))
+
+    llm_config.save_runtime_llm(
+        "",
+        "",
+        "",
+        channel="cli",
+        cli_runner="codex",
+        cli_model="gpt-5.5",
+        cli_timeout_seconds=240,
+    )
+
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    assert saved["channel"] == "cli"
+    assert saved["api"]["base_url"] == "https://api.example.com/v1"
+    assert saved["api"]["model"] == "gpt-api"
+    assert saved["api"]["api_key"] == "sk-api"
+    # #53:preserve 路径与 fresh 路径产出同一 JSON 形态——数值字段保持数值,不被 stringify。
+    # #1472：max_tokens 不再写入；旧档残留也不再 preserve。
+    assert "max_tokens" not in saved["api"]
+    assert saved["api"]["timeout_seconds"] == 150
+    assert isinstance(saved["api"]["timeout_seconds"], (int, float))
+    assert not isinstance(saved["api"]["timeout_seconds"], str)
+    assert saved["api"]["thinking_level"] == "minimal"
+    assert saved["cli"] == {
+        "runner": "codex",
+        "model": "gpt-5.5",
+        "timeout_seconds": 240,
+    }

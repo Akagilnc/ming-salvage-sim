@@ -1,0 +1,105 @@
+{
+  "source_path": "tests/test_recommendation_edges_635.py",
+  "member_count": 7,
+  "members": [
+    {
+      "idx": 1793,
+      "file": "tests/test_recommendation_edges_635.py",
+      "name": "test_approved_recommendation_writes_both_edges_atomically",
+      "line": 48,
+      "end": 91,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1793_test_recommendation_edges_635__test_approved_recommendation_writes_both_edges_atomically.txt",
+      "source_path": "tests/test_recommendation_edges_635.py"
+    },
+    {
+      "idx": 1794,
+      "file": "tests/test_recommendation_edges_635.py",
+      "name": "test_unapproved_appointment_writes_zero_edges",
+      "line": 94,
+      "end": 108,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1794_test_recommendation_edges_635__test_unapproved_appointment_writes_zero_edges.txt",
+      "source_path": "tests/test_recommendation_edges_635.py"
+    },
+    {
+      "idx": 1795,
+      "file": "tests/test_recommendation_edges_635.py",
+      "name": "test_empty_reason_fails_loud_and_rolls_back_everything",
+      "line": 111,
+      "end": 125,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1795_test_recommendation_edges_635__test_empty_reason_fails_loud_and_rolls_back_everything.txt",
+      "source_path": "tests/test_recommendation_edges_635.py"
+    },
+    {
+      "idx": 1796,
+      "file": "tests/test_recommendation_edges_635.py",
+      "name": "test_second_leg_failure_rolls_back_everything",
+      "line": 128,
+      "end": 151,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1796_test_recommendation_edges_635__test_second_leg_failure_rolls_back_everything.txt",
+      "source_path": "tests/test_recommendation_edges_635.py"
+    },
+    {
+      "idx": 1797,
+      "file": "tests/test_recommendation_edges_635.py",
+      "name": "test_real_entry_persists_raw_reason_verbatim",
+      "line": 154,
+      "end": 170,
+      "flags": [
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1797_test_recommendation_edges_635__test_real_entry_persists_raw_reason_verbatim.txt",
+      "source_path": "tests/test_recommendation_edges_635.py"
+    },
+    {
+      "idx": 1798,
+      "file": "tests/test_recommendation_edges_635.py",
+      "name": "test_replay_same_event_with_changed_reason_stays_two_rows",
+      "line": 173,
+      "end": 197,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1798_test_recommendation_edges_635__test_replay_same_event_with_changed_reason_stays_two_rows.txt",
+      "source_path": "tests/test_recommendation_edges_635.py"
+    },
+    {
+      "idx": 1799,
+      "file": "tests/test_recommendation_edges_635.py",
+      "name": "test_appointment_without_recommendation_writes_no_edges",
+      "line": 200,
+      "end": 219,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1799_test_recommendation_edges_635__test_appointment_without_recommendation_writes_no_edges.txt",
+      "source_path": "tests/test_recommendation_edges_635.py"
+    }
+  ]
+}

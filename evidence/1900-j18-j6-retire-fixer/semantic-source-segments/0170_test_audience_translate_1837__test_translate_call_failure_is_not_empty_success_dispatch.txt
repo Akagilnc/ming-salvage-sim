@@ -1,0 +1,42 @@
+# FILE: tests/test_audience_translate_1837.py
+# NAME: test_translate_call_failure_is_not_empty_success_dispatch
+# LINE: 703-738
+# FLAGS: assert_text_compare_or_match,mock_or_patch_present,helper_or_private_call
+# KIND: py
+
+def test_translate_call_failure_is_not_empty_success_dispatch(game, monkeypatch):
+    """转译调用失败 ≠ 成功空声明：不进分派、真因经 pending_action_failures 回场。"""
+    db, state, content = game
+    open_night(db, state, location="乾清宫", time_of_day="夜")
+    before = db.conn.execute(
+        "SELECT COUNT(*) c FROM pending_actions WHERE status='pending'"
+    ).fetchone()["c"]
+
+    def boom(prompt, llm_config):
+        raise RuntimeError("simulated translate transport failure")
+
+    class FakeAgent:
+        def run(self, message):
+            return SimpleNamespace(content="臣在。", tools=[])
+
+    monkeypatch.setattr(
+        "ming_sim.session.create_scene_agent", lambda *a, **k: FakeAgent(),
+    )
+    sess = _sess(db, state, content, monkeypatch, translate_fn=boom)
+    ctid = int(db.create_chat_turn(state, "殿上", "test-sess", 0, night_id=None))
+    # 开夜由 scene_chat 内部 ensure
+    result = sess.scene_chat("边饷如何？", chat_turn_id=ctid)
+    fut = persist_and_schedule_scene(sess, db, result)
+    assert fut is not None
+    try:
+        fut.result(timeout=30)
+        raise AssertionError("expected translation failure")
+    except Exception:
+        pass
+    assert result.answer == "臣在。"
+    after = db.conn.execute(
+        "SELECT COUNT(*) c FROM pending_actions WHERE status='pending'"
+    ).fetchone()["c"]
+    assert after == before  # 失败不得当分派成功写库
+    # 后台失败 → 待补水位，不洗成成功空声明
+    assert db.get_story_extract_status(ctid) == "pending"

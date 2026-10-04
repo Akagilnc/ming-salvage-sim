@@ -1,0 +1,23 @@
+# FILE: tests/test_character_knowledge_489.py
+# NAME: test_inner_court_materials_do_not_read_faction_report
+# LINE: 49-65
+# FLAGS: assert_text_compare_or_match,mock_or_patch_present
+# KIND: py
+
+def test_inner_court_materials_do_not_read_faction_report(game, tmp_path, monkeypatch):
+    db, state, content = game
+
+    def forbidden(*_a, **_k):
+        raise AssertionError("unauthorised faction_report")
+
+    monkeypatch.setattr(db, "faction_report", forbidden)
+    previous = content.characters["王承恩"]
+    messenger = content.characters["曹化淳"]
+    db.set_character_office(previous.name, "内廷随侍", "内廷")
+    db.set_character_office(messenger.name, "御前近臣", "内廷")
+    for person in (previous, messenger):
+        world = db.get_character_knowledge(state, person.name)["world"]
+        assert "court" not in world
+        prepare_character_materials(
+            db, state, person, dest_root=tmp_path / person.name,
+        )

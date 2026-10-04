@@ -1,0 +1,14 @@
+# FILE: tests/test_settlement_write_guard_393.py
+# NAME: test_direct_db_write_refused_by_phase
+# LINE: 247-254
+# FLAGS: assert_text_compare_or_match,assert_count,mock_or_patch_present,helper_or_private_call
+# KIND: py
+
+def test_direct_db_write_refused_by_phase(monkeypatch, phase, name, call):
+    """相位分支：FRONT_HALF_DONE 期间（含 settling 落定后 + awaiting_decision 暂停）→ 409、不写。"""
+    game = _FakeGame(phase)
+    monkeypatch.setattr(web_app, "get_game", lambda: game)
+    with pytest.raises(HTTPException) as ei:
+        _invoke(call())
+    assert ei.value.status_code == 409
+    assert game.db.writes == [], f"{name} wrote DB during settlement: {game.db.writes}"

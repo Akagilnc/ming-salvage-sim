@@ -1,0 +1,18 @@
+# FILE: tests/test_audience_travel_gating_670.py
+# NAME: test_audience_admission_distinguishes_capital_fresh_and_existing_transit
+# LINE: 71-82
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_audience_admission_distinguishes_capital_fresh_and_existing_transit(game):
+    sess = _session(game)
+    capital = _set_place(game, "毕自严", location="beizhili")
+    fresh = _set_place(game, "洪承畴", location="shaanxi")
+    moving = _set_place(game, "孙传庭", location="shaanxi", transit_to="henan")
+
+    assert sess.admit_audience(capital).result is AudienceAdmission.IN_CAPITAL
+    assert sess.admit_audience(fresh).result is AudienceAdmission.SUMMON_FRESH
+    admitted = sess.admit_audience(moving)
+    assert admitted.result is AudienceAdmission.SUMMON_IN_TRANSIT
+    assert admitted.location == "shaanxi"
+    assert admitted.transit_to == "henan"

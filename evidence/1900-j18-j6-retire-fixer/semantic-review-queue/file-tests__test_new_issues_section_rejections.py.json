@@ -1,0 +1,331 @@
+{
+  "source_path": "tests/test_new_issues_section_rejections.py",
+  "member_count": 22,
+  "members": [
+    {
+      "idx": 1379,
+      "file": "tests/test_new_issues_section_rejections.py",
+      "name": "test_temp_events_replaces_same_id_and_restores_original",
+      "line": 113,
+      "end": 133,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1379_test_new_issues_section_rejections__test_temp_events_replaces_same_id_and_restores_original.txt",
+      "source_path": "tests/test_new_issues_section_rejections.py"
+    },
+    {
+      "idx": 1380,
+      "file": "tests/test_new_issues_section_rejections.py",
+      "name": "test_new_issue_non_dict_item_rejected_not_crash",
+      "line": 137,
+      "end": 143,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1380_test_new_issues_section_rejections__test_new_issue_non_dict_item_rejected_not_crash.txt",
+      "source_path": "tests/test_new_issues_section_rejections.py"
+    },
+    {
+      "idx": 1381,
+      "file": "tests/test_new_issues_section_rejections.py",
+      "name": "test_new_issue_dirty_coercion_field_rejected",
+      "line": 153,
+      "end": 160,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1381_test_new_issues_section_rejections__test_new_issue_dirty_coercion_field_rejected.txt",
+      "source_path": "tests/test_new_issues_section_rejections.py"
+    },
+    {
+      "idx": 1382,
+      "file": "tests/test_new_issues_section_rejections.py",
+      "name": "test_new_issue_bad_kind_rejected",
+      "line": 164,
+      "end": 173,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1382_test_new_issues_section_rejections__test_new_issue_bad_kind_rejected.txt",
+      "source_path": "tests/test_new_issues_section_rejections.py"
+    },
+    {
+      "idx": 1383,
+      "file": "tests/test_new_issues_section_rejections.py",
+      "name": "test_new_issue_dirty_inertia_rejected",
+      "line": 176,
+      "end": 185,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1383_test_new_issues_section_rejections__test_new_issue_dirty_inertia_rejected.txt",
+      "source_path": "tests/test_new_issues_section_rejections.py"
+    },
+    {
+      "idx": 1384,
+      "file": "tests/test_new_issues_section_rejections.py",
+      "name": "test_new_issue_oversized_severity_clamped_not_abort",
+      "line": 188,
+      "end": 201,
+      "flags": [
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1384_test_new_issues_section_rejections__test_new_issue_oversized_severity_clamped_not_abort.txt",
+      "source_path": "tests/test_new_issues_section_rejections.py"
+    },
+    {
+      "idx": 1385,
+      "file": "tests/test_new_issues_section_rejections.py",
+      "name": "test_new_issue_whitespace_resolve_condition_falls_back_to_stop_condition",
+      "line": 204,
+      "end": 230,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1385_test_new_issues_section_rejections__test_new_issue_whitespace_resolve_condition_falls_back_to_stop_condition.txt",
+      "source_path": "tests/test_new_issues_section_rejections.py"
+    },
+    {
+      "idx": 1386,
+      "file": "tests/test_new_issues_section_rejections.py",
+      "name": "test_new_issue_infinity_field_rejected_not_abort",
+      "line": 233,
+      "end": 242,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1386_test_new_issues_section_rejections__test_new_issue_infinity_field_rejected_not_abort.txt",
+      "source_path": "tests/test_new_issues_section_rejections.py"
+    },
+    {
+      "idx": 1387,
+      "file": "tests/test_new_issues_section_rejections.py",
+      "name": "test_new_issue_infinity_expected_months_rejected_not_abort",
+      "line": 245,
+      "end": 253,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1387_test_new_issues_section_rejections__test_new_issue_infinity_expected_months_rejected_not_abort.txt",
+      "source_path": "tests/test_new_issues_section_rejections.py"
+    },
+    {
+      "idx": 1388,
+      "file": "tests/test_new_issues_section_rejections.py",
+      "name": "test_new_issue_severity_zero_preserved",
+      "line": 256,
+      "end": 266,
+      "flags": [
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1388_test_new_issues_section_rejections__test_new_issue_severity_zero_preserved.txt",
+      "source_path": "tests/test_new_issues_section_rejections.py"
+    },
+    {
+      "idx": 1389,
+      "file": "tests/test_new_issues_section_rejections.py",
+      "name": "test_new_issue_garbage_severity_rejected",
+      "line": 269,
+      "end": 277,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1389_test_new_issues_section_rejections__test_new_issue_garbage_severity_rejected.txt",
+      "source_path": "tests/test_new_issues_section_rejections.py"
+    },
+    {
+      "idx": 1390,
+      "file": "tests/test_new_issues_section_rejections.py",
+      "name": "test_new_issue_bool_float_int_field_rejected",
+      "line": 287,
+      "end": 295,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1390_test_new_issues_section_rejections__test_new_issue_bool_float_int_field_rejected.txt",
+      "source_path": "tests/test_new_issues_section_rejections.py"
+    },
+    {
+      "idx": 1391,
+      "file": "tests/test_new_issues_section_rejections.py",
+      "name": "test_new_issue_falsy_nonstring_kind_rejected",
+      "line": 299,
+      "end": 308,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1391_test_new_issues_section_rejections__test_new_issue_falsy_nonstring_kind_rejected.txt",
+      "source_path": "tests/test_new_issues_section_rejections.py"
+    },
+    {
+      "idx": 1392,
+      "file": "tests/test_new_issues_section_rejections.py",
+      "name": "test_new_issue_valid_decree_still_creates",
+      "line": 324,
+      "end": 339,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1392_test_new_issues_section_rejections__test_new_issue_valid_decree_still_creates.txt",
+      "source_path": "tests/test_new_issues_section_rejections.py"
+    },
+    {
+      "idx": 1393,
+      "file": "tests/test_new_issues_section_rejections.py",
+      "name": "test_event_to_issue_duplicate_returns_none_not_raise",
+      "line": 385,
+      "end": 394,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1393_test_new_issues_section_rejections__test_event_to_issue_duplicate_returns_none_not_raise.txt",
+      "source_path": "tests/test_new_issues_section_rejections.py"
+    },
+    {
+      "idx": 1394,
+      "file": "tests/test_new_issues_section_rejections.py",
+      "name": "test_new_issue_event_pool_rejects_expired_event",
+      "line": 397,
+      "end": 410,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1394_test_new_issues_section_rejections__test_new_issue_event_pool_rejects_expired_event.txt",
+      "source_path": "tests/test_new_issues_section_rejections.py"
+    },
+    {
+      "idx": 1395,
+      "file": "tests/test_new_issues_section_rejections.py",
+      "name": "test_authoritative_event_pool_rejects_same_batch_obsolete_event",
+      "line": 413,
+      "end": 445,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1395_test_new_issues_section_rejections__test_authoritative_event_pool_rejects_same_batch_obsolete_event.txt",
+      "source_path": "tests/test_new_issues_section_rejections.py"
+    },
+    {
+      "idx": 1396,
+      "file": "tests/test_new_issues_section_rejections.py",
+      "name": "test_new_issue_scalar_string_tags_rejected",
+      "line": 456,
+      "end": 463,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1396_test_new_issues_section_rejections__test_new_issue_scalar_string_tags_rejected.txt",
+      "source_path": "tests/test_new_issues_section_rejections.py"
+    },
+    {
+      "idx": 1397,
+      "file": "tests/test_new_issues_section_rejections.py",
+      "name": "test_new_issue_non_string_tag_element_rejected",
+      "line": 466,
+      "end": 473,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1397_test_new_issues_section_rejections__test_new_issue_non_string_tag_element_rejected.txt",
+      "source_path": "tests/test_new_issues_section_rejections.py"
+    },
+    {
+      "idx": 1398,
+      "file": "tests/test_new_issues_section_rejections.py",
+      "name": "test_new_issue_valid_list_tags_preserved",
+      "line": 476,
+      "end": 485,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1398_test_new_issues_section_rejections__test_new_issue_valid_list_tags_preserved.txt",
+      "source_path": "tests/test_new_issues_section_rejections.py"
+    },
+    {
+      "idx": 1399,
+      "file": "tests/test_new_issues_section_rejections.py",
+      "name": "test_new_issue_non_dict_cancel_cost_tolerated",
+      "line": 495,
+      "end": 503,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1399_test_new_issues_section_rejections__test_new_issue_non_dict_cancel_cost_tolerated.txt",
+      "source_path": "tests/test_new_issues_section_rejections.py"
+    },
+    {
+      "idx": 1400,
+      "file": "tests/test_new_issues_section_rejections.py",
+      "name": "test_new_issue_valid_cancel_cost_preserved",
+      "line": 506,
+      "end": 516,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1400_test_new_issues_section_rejections__test_new_issue_valid_cancel_cost_preserved.txt",
+      "source_path": "tests/test_new_issues_section_rejections.py"
+    }
+  ]
+}

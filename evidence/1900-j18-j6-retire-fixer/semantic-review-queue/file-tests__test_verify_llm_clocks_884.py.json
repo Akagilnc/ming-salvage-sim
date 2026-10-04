@@ -1,0 +1,83 @@
+{
+  "source_path": "tests/test_verify_llm_clocks_884.py",
+  "member_count": 5,
+  "members": [
+    {
+      "idx": 2287,
+      "file": "tests/test_verify_llm_clocks_884.py",
+      "name": "test_api_verify_hang_retries_then_exhausts_with_stage",
+      "line": 65,
+      "end": 89,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2287_test_verify_llm_clocks_884__test_api_verify_hang_retries_then_exhausts_with_stage.txt",
+      "source_path": "tests/test_verify_llm_clocks_884.py"
+    },
+    {
+      "idx": 2288,
+      "file": "tests/test_verify_llm_clocks_884.py",
+      "name": "test_api_verify_401_does_not_retry",
+      "line": 92,
+      "end": 120,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2288_test_verify_llm_clocks_884__test_api_verify_401_does_not_retry.txt",
+      "source_path": "tests/test_verify_llm_clocks_884.py"
+    },
+    {
+      "idx": 2289,
+      "file": "tests/test_verify_llm_clocks_884.py",
+      "name": "test_api_verify_installs_sdk_attempt_clock",
+      "line": 123,
+      "end": 141,
+      "flags": [
+        "assert_count",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2289_test_verify_llm_clocks_884__test_api_verify_installs_sdk_attempt_clock.txt",
+      "source_path": "tests/test_verify_llm_clocks_884.py"
+    },
+    {
+      "idx": 2290,
+      "file": "tests/test_verify_llm_clocks_884.py",
+      "name": "test_verify_http_detail_carries_stage",
+      "line": 144,
+      "end": 161,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2290_test_verify_llm_clocks_884__test_verify_http_detail_carries_stage.txt",
+      "source_path": "tests/test_verify_llm_clocks_884.py"
+    },
+    {
+      "idx": 2291,
+      "file": "tests/test_verify_llm_clocks_884.py",
+      "name": "test_cli_channel_does_not_smoke_retained_api_advanced_slot",
+      "line": 164,
+      "end": 190,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2291_test_verify_llm_clocks_884__test_cli_channel_does_not_smoke_retained_api_advanced_slot.txt",
+      "source_path": "tests/test_verify_llm_clocks_884.py"
+    }
+  ]
+}

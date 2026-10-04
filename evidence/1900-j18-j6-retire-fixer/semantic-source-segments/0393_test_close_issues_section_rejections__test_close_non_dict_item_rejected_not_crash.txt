@@ -1,0 +1,15 @@
+# FILE: tests/test_close_issues_section_rejections.py
+# NAME: test_close_non_dict_item_rejected_not_crash
+# LINE: 43-51
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_close_non_dict_item_rejected_not_crash(read_game, bad_item):
+    db, state, _ = read_game
+    # 非 dict close 项（close_issues:[null]/标量，_sanitize 不清列表项可达）：必须逐项拒收，
+    # 不能 cl.get 抛 AttributeError 崩整月（codex r4）。
+    out = I.apply_issue_tracker_output(db, state, {"close_issues": [bad_item]})
+    rej = _rejected(out)
+    assert len(rej) == 1
+    assert rej[0]["category"] == "invalid_enum"
+    assert rej[0]["reason"]

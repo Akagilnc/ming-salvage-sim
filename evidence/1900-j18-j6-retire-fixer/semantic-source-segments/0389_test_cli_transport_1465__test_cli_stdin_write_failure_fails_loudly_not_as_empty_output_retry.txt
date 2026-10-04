@@ -1,0 +1,30 @@
+# FILE: tests/test_cli_transport_1465.py
+# NAME: test_cli_stdin_write_failure_fails_loudly_not_as_empty_output_retry
+# LINE: 241-264
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_cli_stdin_write_failure_fails_loudly_not_as_empty_output_retry(
+    monkeypatch, tmp_path, game, stdout,
+):
+    """prompt 没写进 stdin = IO 错，须响亮确定性失败一次，不洗成空输出瞬断重试。
+
+    ADR 0005：代码/IO 侧的错必须响亮；宽吞会让「子进程压根没被问」冒充
+    llm_empty_output，白烧三次子进程还给玩家一个假瞬断。有 stdout 字同样终止。
+    """
+    _pin_transport_policy(monkeypatch, tmp_path)
+    script = install_fake_cli_runner(monkeypatch, [{
+        "stdout": stdout, "returncode": 0,
+        "stdin_error": BrokenPipeError("stdin 已关闭"),
+    }])
+    web_game, minister = _cli_web_game(game, monkeypatch)
+
+    response = _post_chat_stream(monkeypatch, web_game, minister)
+    assert response.status_code == 200, response.text
+    events = _parse_sse(response.text)
+    assert events[-1][0] == "error", events
+    detail = events[-1][1]
+    attempts = detail.get("transport_attempts") or []
+    assert [a.get("outcome") for a in attempts] == ["terminal_fail"], attempts
+    assert script.calls == 1
+    assert "stdin" in str(detail.get("provider_message") or ""), detail

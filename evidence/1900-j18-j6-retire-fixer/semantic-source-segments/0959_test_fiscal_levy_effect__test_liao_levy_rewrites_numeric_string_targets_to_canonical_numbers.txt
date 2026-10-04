@@ -1,0 +1,45 @@
+# FILE: tests/test_fiscal_levy_effect.py
+# NAME: test_liao_levy_rewrites_numeric_string_targets_to_canonical_numbers
+# LINE: 762-800
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_liao_levy_rewrites_numeric_string_targets_to_canonical_numbers(game):
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1631
+    state.period = 1
+    db.save_state(state)
+
+    apply_historical_fiscal_rates(state, db)
+    stale = _settle_payload(db, "shaanxi")
+    expected_sanxiang = stale["p"]["三饷应征"]
+    expected_transport = stale["p"]["起运定额"]
+    stale["p"]["三饷应征"] = str(expected_sanxiang)
+    stale["p"]["起运定额"] = str(expected_transport)
+    row = db.conn.execute("SELECT fiscal FROM regions WHERE id = ?", ("shaanxi",)).fetchone()
+    fiscal = json.loads(str(row["fiscal"] or "{}"))
+    fiscal["settle"] = stale
+    db.conn.execute(
+        "UPDATE regions SET fiscal = ? WHERE id = ?",
+        (json.dumps(fiscal, ensure_ascii=False), "shaanxi"),
+    )
+    db.conn.commit()
+
+    apply_historical_fiscal_rates(state, db)
+
+    after = _settle_payload(db, "shaanxi")
+    assert isinstance(after["p"]["三饷应征"], float)
+    assert isinstance(after["p"]["起运定额"], float)
+    assert math.isclose(
+        after["p"]["三饷应征"],
+        expected_sanxiang,
+        rel_tol=1e-9,
+        abs_tol=1e-9,
+    )
+    assert math.isclose(
+        after["p"]["起运定额"],
+        expected_transport,
+        rel_tol=1e-9,
+        abs_tol=1e-9,
+    )

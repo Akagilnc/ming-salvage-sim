@@ -1,0 +1,45 @@
+# FILE: tests/test_decree_commitment_settlement_229.py
+# NAME: test_arrears_commitment_preserves_explicit_monthly_payment_target
+# LINE: 629-667
+# FLAGS: helper_or_private_call
+# KIND: py
+
+def test_arrears_commitment_preserves_explicit_monthly_payment_target(game):
+    db, state, content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.execute("UPDATE legacies SET status='cleared' WHERE status='active'")
+    db.conn.execute("UPDATE armies SET arrears=0 WHERE owner_power='ming'")
+    _seed_central_army_arrears(db, {"guanning": 70, "xuan_da": 40})
+    state.metrics["国库"] = 500
+    db.save_state(state)
+
+    db.insert_issue(
+        state,
+        kind="initiative",
+        title="宣大定向补饷承诺",
+        origin_kind="decree",
+        origin_ref="decree:turn-1:xuanda-targeted-pay",
+        bar_value=0,
+        inertia=0,
+        ongoing_effects={
+            "economy": [
+                {
+                    "account": "国库",
+                    "delta": -30,
+                    "reason": "每月定向补宣大旧欠",
+                    "purpose": "补饷",
+                    "target_kind": "army",
+                    "target_id": "xuan_da",
+                }
+            ]
+        },
+        stop_condition=json.dumps({"army.xuan_da.arrears": "<=0"}, ensure_ascii=False),
+        commitment_kind="until_stop",
+    )
+
+    _advance_player_month(db, state, content)
+
+    assert [tuple(row) for row in db.conn.execute(
+        "SELECT target_id, delta FROM economy_ledger "
+        "WHERE purpose='补饷' AND target_kind='army' ORDER BY id"
+    )] == [("xuan_da", -30)]

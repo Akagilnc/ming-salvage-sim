@@ -1,0 +1,21 @@
+# FILE: tests/test_audience_scroll_539.py
+# NAME: test_read_night_scroll_reads_each_metadata_store_once
+# LINE: 488-502
+# FLAGS: assert_text_compare_or_match,assert_count
+# KIND: py
+
+def test_read_night_scroll_reads_each_metadata_store_once(game):
+    db, state, _ = game
+    night_id = open_audience_night(db, state)
+    an.summon_enter(db, night_id, "杨嗣昌", method=an.METHOD_YUECI)
+    append_night_chat(db, state, night_id, "杨嗣昌", "问话", "答复", 10)
+    statements = []
+    db.conn.set_trace_callback(statements.append)
+
+    scroll = an.read_night_scroll(db, night_id)
+
+    db.conn.set_trace_callback(None)
+    selects = [" ".join(statement.lower().split()) for statement in statements if statement.lstrip().lower().startswith("select")]
+    assert scroll[0]["container"]["audience_type"] == "越次召对"
+    assert sum(" from story_ledger_entries " in statement for statement in selects) == 1
+    assert sum(" from chat_turns " in statement for statement in selects) == 1

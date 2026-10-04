@@ -1,0 +1,29 @@
+# FILE: tests/test_qa_d1_decree_normalize_1274.py
+# NAME: test_capture_unknown_person_still_409
+# LINE: 61-83
+# FLAGS: mock_or_patch_present
+# KIND: py
+
+def test_capture_unknown_person_still_409(game, monkeypatch):
+    """#1391 负向：纠错耗尽后真正不存在之人仍拒收（ADR 0053 缝不松；#1274 V-1 人话）。"""
+    import ming_sim.cli_backend as cli_backend
+
+    db, _state, content = game
+    text = "着不存在之人甲核太仓"
+    response = {
+        "拟旨意图": "拟旨",
+        "动作类型": "policy",
+        "目标类型": "issue",
+        "目标ID": "x",
+        "参与人": [{"character_id": "不存在之人甲", "tier": "主办"}],
+    }
+    def backend(prompt, *_a, tag="", **_k):
+        if tag == "participant_escalate_report":
+            return ("通政司启：朝中查无「不存在之人甲」，乞陛下明示。", 1)
+        return (json.dumps(response, ensure_ascii=False), 1)
+
+    monkeypatch.setattr(cli_backend, "_run_backend_for_config", backend)
+    with pytest.raises(ValueError):
+        cli_backend.capture_manual_directive_payload(
+            text, None, db=db, content=content,
+        )

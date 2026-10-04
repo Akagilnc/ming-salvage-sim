@@ -1,0 +1,54 @@
+# FILE: tests/test_event_trigger_gate.py
+# NAME: test_event_pool_rechecks_after_advances_close_gate
+# LINE: 2414-2461
+# FLAGS: assert_count
+# KIND: py
+
+def test_event_pool_rechecks_after_advances_close_gate(game):
+    """post-merge CMR R4：同一 payload 的 advances 关掉 gate 后，不得沿用旧候选触发事件。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.metrics["民心"] = 20
+    issue_id = db.insert_issue(
+        state,
+        kind="situation",
+        title="测试·推进关闭候选",
+        origin_kind="decree",
+        bar_value=40,
+        stage_text="尚未触发",
+        effect_on_resolve={"metrics": {"民心": 1}},
+    )
+    ev = Event(
+        id="__test_advances_close_gate__",
+        title="测试·推进关闭候选",
+        kind="朝议",
+        summary="只用于验证 advances 后重验候选池。",
+        urgency=10,
+        severity=10,
+        credibility=100,
+        interests=[],
+        audiences=[],
+        event_type="node",
+        trigger_gate={"民心": ">=10"},
+    )
+    content.seed_events.append(ev)
+    content.event_by_id[ev.id] = ev
+    try:
+        assert any(c.id == ev.id for c in issues.gather_candidate_events(state, db))
+
+        out = issues.apply_issue_tracker_output(
+            db,
+            state,
+            {
+                "advances": [{"issue_id": issue_id, "delta_bar": 1, "metric_delta": {"民心": -15}}],
+                "new_issues": [{"origin_kind": "event_pool", "id": ev.id}],
+            },
+            content=content,
+        )
+
+        assert state.metrics["民心"] == 5
+        assert out["new_issues"][0]["rejected"] is True
+        assert not db.has_event_triggered(ev.id)
+    finally:
+        content.seed_events.remove(ev)
+        content.event_by_id.pop(ev.id, None)

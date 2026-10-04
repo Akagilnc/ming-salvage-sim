@@ -1,0 +1,33 @@
+# FILE: tests/test_relation_seed_638.py
+# NAME: test_missing_bundled_seed_fails_new_save_and_retry_imports
+# LINE: 110-136
+# FLAGS: assert_count,mock_or_patch_present
+# KIND: py
+
+def test_missing_bundled_seed_fails_new_save_and_retry_imports(tmp_path, monkeypatch):
+    """必需 bundled seed 缺失时新档响亮失败，恢复后同 DB 可重试。"""
+    import ming_sim.cli_backend as cli_backend
+    import ming_sim.llm_model as llm_mod
+    import ming_sim.relation_seed as seed_mod
+
+    monkeypatch.setattr(llm_mod, "verify_llm_available", lambda cfg: None)
+    monkeypatch.setattr(cli_backend, "_run_backend_for_config", lambda *args, **kwargs: "")
+    original_bundled_path = seed_mod.bundled_path
+    missing_seed_path = tmp_path / "missing" / "relation_seed.json"
+    monkeypatch.setattr(seed_mod, "bundled_path", lambda *parts: str(missing_seed_path))
+    db_path = str(tmp_path / "missing-seed.db")
+    content = GameContent.load()
+    cfg = LLMConfig(api_key="", base_url="http://unused", model="unused")
+
+    with pytest.raises(FileNotFoundError):
+        GameSession(db_path=db_path, llm_config=cfg, content=content)
+    with sqlite3.connect(db_path) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM game_state").fetchone()[0] == 0
+
+    monkeypatch.setattr(seed_mod, "bundled_path", original_bundled_path)
+    sess = GameSession(db_path=db_path, llm_config=cfg, content=content)
+    try:
+        assert sess.db.has_state() is True
+        assert sess.db.get_relation_edge_events()
+    finally:
+        sess.close()

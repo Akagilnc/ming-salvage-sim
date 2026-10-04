@@ -1,0 +1,36 @@
+# FILE: tests/test_rescript_option_field_heal_1746.py
+# NAME: test_army_single_combo_heals_not_batch_redraw
+# LINE: 370-399
+# FLAGS: assert_text_compare_or_match,mock_or_patch_present,helper_or_private_call
+# KIND: py
+
+def test_army_single_combo_heals_not_batch_redraw(monkeypatch, tmp_path):
+    """army+single 组合矛盾 → 同一 option heal；不整批组合重抽。"""
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    bad = _army_pay(locality_scope="single", target_id="")
+    first = _items_json([{"title": "u", "context": "c", "options": [bad, _hold()]}])
+    healed = _heals_json([("0:0", {"locality_scope": "none", "target_id": "guanning"})])
+    tags: list[str] = []
+    prompts: list[str] = []
+    n = {"i": 0}
+
+    def _llm(_a, prompt, tag="", prior_messages=None):
+        tags.append(tag)
+        prompts.append(prompt)
+        n["i"] += 1
+        return first if n["i"] == 1 else healed
+
+    monkeypatch.setattr(rescript_mod, "run_agent_text", _llm)
+    drafts = generate_rescript_draft(object(), _ctx(), turn=47)
+    assert drafts is not None
+    assert tags == ["rescript-draft", "rescript-draft-heal"]
+    req = _parse_heal_request(prompts[1])
+    ff = _field_failure_map(req["failures"][0])
+    assert "locality_scope" in ff
+    assert ff["locality_scope"]["current"] == "single"
+    assert "none" in (ff["locality_scope"]["expected"] or [])
+    # 缺 target_id 同时 army+single：权威一次给出完整事实
+    assert "target_id" in ff
+    grant = next(o for o in drafts[0]["options"] if o.get("grant_action") == "协饷")
+    assert grant["locality_scope"] == "none"
+    assert any(o.get("label") == "缓议候报" for o in drafts[0]["options"])

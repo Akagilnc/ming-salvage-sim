@@ -1,0 +1,31 @@
+# FILE: tests/test_runtime_llm_config.py
+# NAME: test_load_runtime_llm_exposes_api_aliases_when_cli_is_active
+# LINE: 283-307
+# FLAGS: assert_text_compare_or_match,mock_or_patch_present
+# KIND: py
+
+def test_load_runtime_llm_exposes_api_aliases_when_cli_is_active(tmp_path, monkeypatch):
+    path = tmp_path / "runtime_llm.json"
+    path.write_text(
+        json.dumps(
+            {
+                "channel": "cli",
+                "api": {
+                    "base_url": "https://api.example.com/v1",
+                    "model": "gpt-test",
+                    "api_key": "sk-test",
+                },
+                "cli": {"runner": "codex", "model": "gpt-5.5", "timeout_seconds": 240},
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(llm_config, "RUNTIME_LLM_PATH", str(path))
+
+    runtime = llm_config.load_runtime_llm()
+
+    assert runtime["channel"] == "cli"
+    assert runtime["base_url"] == "https://api.example.com/v1"
+    assert runtime["model"] == "gpt-test"
+    assert runtime["api_key"] == "sk-test"

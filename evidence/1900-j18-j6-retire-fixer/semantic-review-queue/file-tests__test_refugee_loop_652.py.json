@@ -1,0 +1,202 @@
+{
+  "source_path": "tests/test_refugee_loop_652.py",
+  "member_count": 14,
+  "members": [
+    {
+      "idx": 1804,
+      "file": "tests/test_refugee_loop_652.py",
+      "name": "test_standalone_absorption_is_durable_to_second_connection",
+      "line": 90,
+      "end": 103,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1804_test_refugee_loop_652__test_standalone_absorption_is_durable_to_second_connection.txt",
+      "source_path": "tests/test_refugee_loop_652.py"
+    },
+    {
+      "idx": 1805,
+      "file": "tests/test_refugee_loop_652.py",
+      "name": "test_standalone_surcharge_is_durable_to_second_connection",
+      "line": 106,
+      "end": 124,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1805_test_refugee_loop_652__test_standalone_surcharge_is_durable_to_second_connection.txt",
+      "source_path": "tests/test_refugee_loop_652.py"
+    },
+    {
+      "idx": 1806,
+      "file": "tests/test_refugee_loop_652.py",
+      "name": "test_outer_atomic_rolls_back_surcharge_and_absorption",
+      "line": 127,
+      "end": 154,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1806_test_refugee_loop_652__test_outer_atomic_rolls_back_surcharge_and_absorption.txt",
+      "source_path": "tests/test_refugee_loop_652.py"
+    },
+    {
+      "idx": 1807,
+      "file": "tests/test_refugee_loop_652.py",
+      "name": "test_bandit_absorption_clamps_pool_strength_and_ceiling",
+      "line": 159,
+      "end": 203,
+      "flags": [
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1807_test_refugee_loop_652__test_bandit_absorption_clamps_pool_strength_and_ceiling.txt",
+      "source_path": "tests/test_refugee_loop_652.py"
+    },
+    {
+      "idx": 1808,
+      "file": "tests/test_refugee_loop_652.py",
+      "name": "test_bandit_absorption_rejects_unknown_fields_keeps_clean_sibling",
+      "line": 206,
+      "end": 235,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1808_test_refugee_loop_652__test_bandit_absorption_rejects_unknown_fields_keeps_clean_sibling.txt",
+      "source_path": "tests/test_refugee_loop_652.py"
+    },
+    {
+      "idx": 1809,
+      "file": "tests/test_refugee_loop_652.py",
+      "name": "test_free_positive_bandit_strength_rejected_negative_ok",
+      "line": 238,
+      "end": 256,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1809_test_refugee_loop_652__test_free_positive_bandit_strength_rejected_negative_ok.txt",
+      "source_path": "tests/test_refugee_loop_652.py"
+    },
+    {
+      "idx": 1810,
+      "file": "tests/test_refugee_loop_652.py",
+      "name": "test_llm_free_回流_rejected",
+      "line": 261,
+      "end": 271,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1810_test_refugee_loop_652__test_llm_free_回流_rejected.txt",
+      "source_path": "tests/test_refugee_loop_652.py"
+    },
+    {
+      "idx": 1811,
+      "file": "tests/test_refugee_loop_652.py",
+      "name": "test_non_recovery_grant_no_回流",
+      "line": 290,
+      "end": 306,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1811_test_refugee_loop_652__test_non_recovery_grant_no_回流.txt",
+      "source_path": "tests/test_refugee_loop_652.py"
+    },
+    {
+      "idx": 1812,
+      "file": "tests/test_refugee_loop_652.py",
+      "name": "test_recovery_without_paid_evidence_produces_nothing",
+      "line": 310,
+      "end": 323,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1812_test_refugee_loop_652__test_recovery_without_paid_evidence_produces_nothing.txt",
+      "source_path": "tests/test_refugee_loop_652.py"
+    },
+    {
+      "idx": 1813,
+      "file": "tests/test_refugee_loop_652.py",
+      "name": "test_recovery_shared_pool_advances_once_after_empty_effect_month",
+      "line": 432,
+      "end": 473,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1813_test_refugee_loop_652__test_recovery_shared_pool_advances_once_after_empty_effect_month.txt",
+      "source_path": "tests/test_refugee_loop_652.py"
+    },
+    {
+      "idx": 1814,
+      "file": "tests/test_refugee_loop_652.py",
+      "name": "test_monthly_recovery_follows_each_month_actual_payment",
+      "line": 477,
+      "end": 502,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1814_test_refugee_loop_652__test_monthly_recovery_follows_each_month_actual_payment.txt",
+      "source_path": "tests/test_refugee_loop_652.py"
+    },
+    {
+      "idx": 1815,
+      "file": "tests/test_refugee_loop_652.py",
+      "name": "test_in_transit_relief_stays_executing_before_gazette",
+      "line": 506,
+      "end": 596,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1815_test_refugee_loop_652__test_in_transit_relief_stays_executing_before_gazette.txt",
+      "source_path": "tests/test_refugee_loop_652.py"
+    },
+    {
+      "idx": 1816,
+      "file": "tests/test_refugee_loop_652.py",
+      "name": "test_month_settle_with_disaster_and_executing_relief",
+      "line": 600,
+      "end": 620,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1816_test_refugee_loop_652__test_month_settle_with_disaster_and_executing_relief.txt",
+      "source_path": "tests/test_refugee_loop_652.py"
+    },
+    {
+      "idx": 1817,
+      "file": "tests/test_refugee_loop_652.py",
+      "name": "test_legacy_population_unit_skips_absorption_and_recovery",
+      "line": 626,
+      "end": 643,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call",
+        "retired_or_meta_marker"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1817_test_refugee_loop_652__test_legacy_population_unit_skips_absorption_and_recovery.txt",
+      "source_path": "tests/test_refugee_loop_652.py"
+    }
+  ]
+}

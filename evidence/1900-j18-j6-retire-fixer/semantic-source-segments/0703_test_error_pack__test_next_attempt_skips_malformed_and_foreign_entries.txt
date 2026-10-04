@@ -1,0 +1,25 @@
+# FILE: tests/test_error_pack.py
+# NAME: test_next_attempt_skips_malformed_and_foreign_entries
+# LINE: 163-181
+# FLAGS: assert_count
+# KIND: py
+
+def test_next_attempt_skips_malformed_and_foreign_entries(game, monkeypatch, tmp_path):
+    """attempt 推导跳过畸形后缀/他 turn/非目录项，取本 turn 数字后缀 max+1
+    （PR #90 R3 sourcery：钉 _next_attempt 防御分支）。"""
+    from ming_sim.error_pack import error_packs_root, write_error_pack
+    db, state, content = game
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    turn = state.turn
+    root = error_packs_root()
+    root.mkdir(parents=True, exist_ok=True)
+    (root / f"turn{turn}_attempt7").mkdir()        # 有效：进 max
+    (root / f"turn{turn}_attemptX").mkdir()        # 畸形后缀：忽略
+    (root / f"turn{turn + 1}_attempt99").mkdir()   # 他 turn：不串号
+    (root / f"turn{turn}_attempt9").write_text("")  # 同名文件非目录：忽略
+
+    p = write_error_pack(db, state, exc=RuntimeError("boom"),
+                         extracted=None, resolve_ctx=None)
+
+    m = json.loads((Path(p) / "manifest.json").read_text(encoding="utf-8"))
+    assert m["attempt"] == 8  # 7+1，不被 X/99/文件项带偏

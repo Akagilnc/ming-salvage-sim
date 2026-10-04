@@ -1,0 +1,12 @@
+# FILE: tests/test_named_characters_seed_484.py
+# NAME: test_r5_loader_preserves_zero_identity
+# LINE: 171-176
+# FLAGS: assert_count,helper_or_private_call
+# KIND: py
+
+def test_r5_loader_preserves_zero_identity(monkeypatch):
+    _patch_single_character(monkeypatch, _minimal_character_with_seed_guilt({"crime": "", "severity": "无"}, identity=0))
+
+    _factions, characters = content_module.load_character_content()
+
+    assert characters["测试人物"].identity == 0

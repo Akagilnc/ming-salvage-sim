@@ -1,0 +1,1483 @@
+{
+  "source_path": "tests/test_event_trigger_gate.py",
+  "member_count": 111,
+  "members": [
+    {
+      "idx": 725,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_gated_historical_event_excluded_when_unsatisfied",
+      "line": 84,
+      "end": 95,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0725_test_event_trigger_gate__test_gated_historical_event_excluded_when_unsatisfied.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 726,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_gated_historical_event_included_when_satisfied",
+      "line": 98,
+      "end": 109,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0726_test_event_trigger_gate__test_gated_historical_event_included_when_satisfied.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 727,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_ungated_historical_event_unchanged",
+      "line": 112,
+      "end": 123,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0727_test_event_trigger_gate__test_ungated_historical_event_unchanged.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 728,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_historical_event_expires_after_latest_window_when_gate_unsatisfied",
+      "line": 126,
+      "end": 166,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0728_test_event_trigger_gate__test_historical_event_expires_after_latest_window_when_gate_unsatisfied.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 729,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_historical_event_gate_can_read_event_triggered_record",
+      "line": 169,
+      "end": 182,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0729_test_event_trigger_gate__test_historical_event_gate_can_read_event_triggered_record.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 730,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_historical_event_latest_month_is_still_inside_window",
+      "line": 185,
+      "end": 208,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0730_test_event_trigger_gate__test_historical_event_latest_month_is_still_inside_window.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 731,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_historical_event_triggered_gate_ignores_obsolete_terminal",
+      "line": 211,
+      "end": 222,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0731_test_event_trigger_gate__test_historical_event_triggered_gate_ignores_obsolete_terminal.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 732,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_open_window_historical_event_never_expires",
+      "line": 225,
+      "end": 249,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0732_test_event_trigger_gate__test_open_window_historical_event_never_expires.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 733,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_open_window_historical_event_still_waits_for_earliest_time",
+      "line": 252,
+      "end": 268,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0733_test_event_trigger_gate__test_open_window_historical_event_still_waits_for_earliest_time.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 734,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_seed_event_expires_after_latest_window_when_gate_unsatisfied",
+      "line": 271,
+      "end": 302,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0734_test_event_trigger_gate__test_seed_event_expires_after_latest_window_when_gate_unsatisfied.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 735,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_auto_trigger_seed_event_expires_after_latest_window_when_gate_unsatisfied",
+      "line": 305,
+      "end": 335,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0735_test_event_trigger_gate__test_auto_trigger_seed_event_expires_after_latest_window_when_gate_unsatisfied.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 736,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_gather_candidate_events_filters_expired_auto_trigger_seed_without_writing",
+      "line": 338,
+      "end": 370,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0736_test_event_trigger_gate__test_gather_candidate_events_filters_expired_auto_trigger_seed_without_writing.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 737,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_event_pool_apply_uses_pushed_candidate_snapshot_not_fresh_recompute",
+      "line": 373,
+      "end": 403,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0737_test_event_trigger_gate__test_event_pool_apply_uses_pushed_candidate_snapshot_not_fresh_recompute.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 738,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_apply_event_terminal_states_does_not_commit_existing_transaction",
+      "line": 406,
+      "end": 433,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0738_test_event_trigger_gate__test_apply_event_terminal_states_does_not_commit_existing_transaction.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 739,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_historical_event_none_gate_no_crash",
+      "line": 440,
+      "end": 450,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0739_test_event_trigger_gate__test_historical_event_none_gate_no_crash.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 740,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_load_event_gate_grammar",
+      "line": 500,
+      "end": 512,
+      "flags": [
+        "mock_or_patch_present"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0740_test_event_trigger_gate__test_load_event_gate_grammar.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 741,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_load_event_rejects_default_terminal_reason_outside_labels",
+      "line": 515,
+      "end": 527,
+      "flags": [
+        "mock_or_patch_present"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0741_test_event_trigger_gate__test_load_event_rejects_default_terminal_reason_outside_labels.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 742,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_load_event_requires_latest_or_open_window",
+      "line": 530,
+      "end": 541,
+      "flags": [
+        "mock_or_patch_present"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0742_test_event_trigger_gate__test_load_event_requires_latest_or_open_window.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 743,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_load_event_rejects_non_boolean_open_window",
+      "line": 544,
+      "end": 556,
+      "flags": [
+        "mock_or_patch_present"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0743_test_event_trigger_gate__test_load_event_rejects_non_boolean_open_window.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 744,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_load_event_rejects_strategic_foreign_situation",
+      "line": 559,
+      "end": 570,
+      "flags": [
+        "mock_or_patch_present"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0744_test_event_trigger_gate__test_load_event_rejects_strategic_foreign_situation.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 745,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_load_event_rejects_latest_before_earliest",
+      "line": 573,
+      "end": 585,
+      "flags": [
+        "mock_or_patch_present"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0745_test_event_trigger_gate__test_load_event_rejects_latest_before_earliest.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 746,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_load_event_rejects_month_out_of_range",
+      "line": 594,
+      "end": 606,
+      "flags": [
+        "mock_or_patch_present"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0746_test_event_trigger_gate__test_load_event_rejects_month_out_of_range.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 747,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_typo_field_gate_raises_clear_not_operationalerror",
+      "line": 609,
+      "end": 621,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0747_test_event_trigger_gate__test_typo_field_gate_raises_clear_not_operationalerror.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 748,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_typo_field_text_gate_raises_clear",
+      "line": 628,
+      "end": 640,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0748_test_event_trigger_gate__test_typo_field_text_gate_raises_clear.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 749,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_load_fail_loud_on_text_cond_multi_id_key",
+      "line": 647,
+      "end": 656,
+      "flags": [
+        "mock_or_patch_present"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0749_test_event_trigger_gate__test_load_fail_loud_on_text_cond_multi_id_key.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 750,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_numeric_cond_on_text_field_raises_clear",
+      "line": 663,
+      "end": 676,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0750_test_event_trigger_gate__test_numeric_cond_on_text_field_raises_clear.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 751,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_character_numeric_gate_supports_comparison",
+      "line": 679,
+      "end": 697,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0751_test_event_trigger_gate__test_character_numeric_gate_supports_comparison.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 752,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_character_numeric_gate_supports_aggregation",
+      "line": 700,
+      "end": 719,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0752_test_event_trigger_gate__test_character_numeric_gate_supports_aggregation.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 753,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_army_numeric_gate_preserves_fractional_arrears_tail",
+      "line": 722,
+      "end": 741,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0753_test_event_trigger_gate__test_army_numeric_gate_preserves_fractional_arrears_tail.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 754,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_character_gate_rejects_malformed_field_before_sql",
+      "line": 744,
+      "end": 756,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0754_test_event_trigger_gate__test_character_gate_rejects_malformed_field_before_sql.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 755,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_character_numeric_field_text_gate_raises_clear",
+      "line": 759,
+      "end": 771,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0755_test_event_trigger_gate__test_character_numeric_field_text_gate_raises_clear.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 756,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_character_text_gate_supports_equality",
+      "line": 774,
+      "end": 792,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0756_test_event_trigger_gate__test_character_text_gate_supports_equality.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 757,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_character_typo_field_gate_raises_clear",
+      "line": 795,
+      "end": 807,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0757_test_event_trigger_gate__test_character_typo_field_gate_raises_clear.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 758,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_character_text_typo_field_gate_raises_clear",
+      "line": 810,
+      "end": 822,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0758_test_event_trigger_gate__test_character_text_typo_field_gate_raises_clear.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 759,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_mao_event_effect_uses_unified_person_change_key",
+      "line": 831,
+      "end": 842,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0759_test_event_trigger_gate__test_mao_event_effect_uses_unified_person_change_key.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 760,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_auto_trigger_historical_event_to_issue_uses_outer_transaction",
+      "line": 845,
+      "end": 865,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0760_test_event_trigger_gate__test_auto_trigger_historical_event_to_issue_uses_outer_transaction.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 761,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_event_content_rejects_falsy_person_core_subjects",
+      "line": 868,
+      "end": 892,
+      "flags": [
+        "mock_or_patch_present"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0761_test_event_trigger_gate__test_event_content_rejects_falsy_person_core_subjects.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 762,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_mao_wenlong_event_excluded_after_appeasement",
+      "line": 895,
+      "end": 905,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0762_test_event_trigger_gate__test_mao_wenlong_event_excluded_after_appeasement.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 763,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_mao_wenlong_event_remains_candidate_while_player_departure_is_in_transit",
+      "line": 908,
+      "end": 939,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0763_test_event_trigger_gate__test_mao_wenlong_event_remains_candidate_while_player_departure_is_in_transit.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 764,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_mao_wenlong_event_excluded_after_player_reassigns_yuan",
+      "line": 942,
+      "end": 957,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0764_test_event_trigger_gate__test_mao_wenlong_event_excluded_after_player_reassigns_yuan.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 765,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_mao_wenlong_event_trigger_lands_character_status",
+      "line": 960,
+      "end": 985,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0765_test_event_trigger_gate__test_mao_wenlong_event_trigger_lands_character_status.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 766,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_ordinary_jinzhou_preparedness_delta_is_not_rejected_as_songshan_outcome",
+      "line": 988,
+      "end": 1007,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0766_test_event_trigger_gate__test_ordinary_jinzhou_preparedness_delta_is_not_rejected_as_songshan_outcome.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 767,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_strategic_foreign_event_rejects_trigger_without_world_state_delta",
+      "line": 1010,
+      "end": 1027,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0767_test_event_trigger_gate__test_strategic_foreign_event_rejects_trigger_without_world_state_delta.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 768,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_direct_issue_tracker_rejects_strategic_event_without_world_state_delta",
+      "line": 1030,
+      "end": 1047,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0768_test_event_trigger_gate__test_direct_issue_tracker_rejects_strategic_event_without_world_state_delta.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 769,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_ordinary_army_station_delta_with_strategic_place_anchor_is_not_rejected",
+      "line": 1050,
+      "end": 1070,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0769_test_event_trigger_gate__test_ordinary_army_station_delta_with_strategic_place_anchor_is_not_rejected.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 770,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_lindan_xiqian_does_not_capture_untriggered_beizhili_border_policy_delta",
+      "line": 1073,
+      "end": 1099,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0770_test_event_trigger_gate__test_lindan_xiqian_does_not_capture_untriggered_beizhili_border_policy_delta.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 771,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_unrelated_person_delta_does_not_satisfy_strategic_event_result_gate",
+      "line": 1219,
+      "end": 1240,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0771_test_event_trigger_gate__test_unrelated_person_delta_does_not_satisfy_strategic_event_result_gate.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 772,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_unrelated_person_delta_with_event_anchor_does_not_satisfy_strategic_event_result_gate",
+      "line": 1243,
+      "end": 1264,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0772_test_event_trigger_gate__test_unrelated_person_delta_with_event_anchor_does_not_satisfy_strategic_event_result_gate.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 773,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_target_person_delta_without_event_anchor_does_not_satisfy_strategic_event_result_gate",
+      "line": 1267,
+      "end": 1288,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0773_test_event_trigger_gate__test_target_person_delta_without_event_anchor_does_not_satisfy_strategic_event_result_gate.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 774,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_rejected_strategic_event_preserves_unrelated_person_delta",
+      "line": 1342,
+      "end": 1363,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0774_test_event_trigger_gate__test_rejected_strategic_event_preserves_unrelated_person_delta.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 775,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_rejected_strategic_event_does_not_land_substitute_commander_person_delta",
+      "line": 1366,
+      "end": 1401,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0775_test_event_trigger_gate__test_rejected_strategic_event_does_not_land_substitute_commander_person_delta.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 776,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_mao_wenlong_event_trigger_respects_outer_transaction_rollback",
+      "line": 1430,
+      "end": 1459,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0776_test_event_trigger_gate__test_mao_wenlong_event_trigger_respects_outer_transaction_rollback.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 777,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_issue_tracker_rollback_restores_bound_content_when_content_omitted",
+      "line": 1462,
+      "end": 1485,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0777_test_event_trigger_gate__test_issue_tracker_rollback_restores_bound_content_when_content_omitted.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 778,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_apply_score_extraction_metric_delta_restores_runtime_on_outer_rollback",
+      "line": 1505,
+      "end": 1522,
+      "flags": [
+        "assert_count"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0778_test_event_trigger_gate__test_apply_score_extraction_metric_delta_restores_runtime_on_outer_rollback.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 779,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_mao_wenlong_event_pool_rechecks_gate_before_effect",
+      "line": 1566,
+      "end": 1588,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0779_test_event_trigger_gate__test_mao_wenlong_event_pool_rechecks_gate_before_effect.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 780,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_person_core_event_obsoletes_when_named_subject_is_dead",
+      "line": 1591,
+      "end": 1616,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0780_test_event_trigger_gate__test_person_core_event_obsoletes_when_named_subject_is_dead.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 781,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_yuan_xialing_event_excluded_without_jisi_triggered",
+      "line": 1619,
+      "end": 1634,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0781_test_event_trigger_gate__test_yuan_xialing_event_excluded_without_jisi_triggered.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 782,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_yuan_xialing_event_excluded_after_jisi_border_contained_outcome",
+      "line": 1637,
+      "end": 1651,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0782_test_event_trigger_gate__test_yuan_xialing_event_excluded_after_jisi_border_contained_outcome.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 783,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_legacy_event_pool_issue_backfills_trigger_without_guessing_outcome",
+      "line": 1654,
+      "end": 1694,
+      "flags": [
+        "assert_text_compare_or_match",
+        "retired_or_meta_marker"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0783_test_event_trigger_gate__test_legacy_event_pool_issue_backfills_trigger_without_guessing_outcome.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 784,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_legacy_event_trigger_terminal_reason_can_be_filled_by_real_outcome",
+      "line": 1697,
+      "end": 1725,
+      "flags": [
+        "assert_text_compare_or_match",
+        "retired_or_meta_marker"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0784_test_event_trigger_gate__test_legacy_event_trigger_terminal_reason_can_be_filled_by_real_outcome.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 785,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_legacy_person_core_static_fields_backfill_reachability",
+      "line": 1728,
+      "end": 1785,
+      "flags": [
+        "assert_text_compare_or_match",
+        "retired_or_meta_marker"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0785_test_event_trigger_gate__test_legacy_person_core_static_fields_backfill_reachability.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 786,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_person_core_static_backfill_preserves_relocated_mao",
+      "line": 1788,
+      "end": 1804,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0786_test_event_trigger_gate__test_person_core_static_backfill_preserves_relocated_mao.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 787,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_luoyang_fallen_not_obsoleted_when_fu_wang_is_dead",
+      "line": 1807,
+      "end": 1824,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0787_test_event_trigger_gate__test_luoyang_fallen_not_obsoleted_when_fu_wang_is_dead.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 788,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_li_chenghai_event_opens_after_li_zicheng_historical_debut",
+      "line": 1827,
+      "end": 1840,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0788_test_event_trigger_gate__test_li_chenghai_event_opens_after_li_zicheng_historical_debut.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 789,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_zhangxianzhong_event_opens_after_historical_debut_and_surrender_path",
+      "line": 1843,
+      "end": 1863,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0789_test_event_trigger_gate__test_zhangxianzhong_event_opens_after_historical_debut_and_surrender_path.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 790,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_issue_194_strategic_foreign_events_are_explicitly_classified_and_gated",
+      "line": 1910,
+      "end": 1974,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0790_test_event_trigger_gate__test_issue_194_strategic_foreign_events_are_explicitly_classified_and_gated.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 791,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_strategic_foreign_classification_requires_outcome_targets",
+      "line": 1977,
+      "end": 1984,
+      "flags": [
+        "mock_or_patch_present"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0791_test_event_trigger_gate__test_strategic_foreign_classification_requires_outcome_targets.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 792,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_issue_194_dead_named_general_does_not_obsolete_strategic_foreign_event",
+      "line": 1987,
+      "end": 2004,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0792_test_event_trigger_gate__test_issue_194_dead_named_general_does_not_obsolete_strategic_foreign_event.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 793,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_huabei_plague_auto_triggers_with_deterministic_core_effect",
+      "line": 2007,
+      "end": 2028,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0793_test_event_trigger_gate__test_huabei_plague_auto_triggers_with_deterministic_core_effect.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 794,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_historical_auto_trigger_core_effect_is_applied_once",
+      "line": 2031,
+      "end": 2055,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0794_test_event_trigger_gate__test_historical_auto_trigger_core_effect_is_applied_once.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 795,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_auto_trigger_historical_events_use_preloaded_terminal_refs",
+      "line": 2058,
+      "end": 2072,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0795_test_event_trigger_gate__test_auto_trigger_historical_events_use_preloaded_terminal_refs.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 796,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_historical_auto_trigger_event_expires_after_latest_window",
+      "line": 2075,
+      "end": 2097,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0796_test_event_trigger_gate__test_historical_auto_trigger_event_expires_after_latest_window.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 797,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_gated_auto_trigger_seed_event_can_recur_after_previous_issue_resolved",
+      "line": 2100,
+      "end": 2123,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0797_test_event_trigger_gate__test_gated_auto_trigger_seed_event_can_recur_after_previous_issue_resolved.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 798,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_historical_situation_auto_trigger_rolls_back_soft_issue_when_core_effect_fails",
+      "line": 2149,
+      "end": 2170,
+      "flags": [
+        "mock_or_patch_present"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0798_test_event_trigger_gate__test_historical_situation_auto_trigger_rolls_back_soft_issue_when_core_effect_fails.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 799,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_historical_situation_auto_trigger_backfills_core_effect_for_existing_soft_issue",
+      "line": 2173,
+      "end": 2213,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0799_test_event_trigger_gate__test_historical_situation_auto_trigger_backfills_core_effect_for_existing_soft_issue.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 800,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_jingshi_plague_auto_triggers_and_weakens_capital_garrison",
+      "line": 2216,
+      "end": 2237,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0800_test_event_trigger_gate__test_jingshi_plague_auto_triggers_and_weakens_capital_garrison.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 801,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_huangtaiji_chengdi_auto_triggers_and_renames_houjin",
+      "line": 2240,
+      "end": 2260,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0801_test_event_trigger_gate__test_huangtaiji_chengdi_auto_triggers_and_renames_houjin.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 802,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_historical_power_rename_tick_reads_huangtaiji_event_effect",
+      "line": 2286,
+      "end": 2320,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0802_test_event_trigger_gate__test_historical_power_rename_tick_reads_huangtaiji_event_effect.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 803,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_mao_wenlong_event_pool_uses_candidate_snapshot_before_advances",
+      "line": 2323,
+      "end": 2370,
+      "flags": [
+        "assert_count"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0803_test_event_trigger_gate__test_mao_wenlong_event_pool_uses_candidate_snapshot_before_advances.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 804,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_event_pool_uses_candidate_snapshot_before_top_level_metric_delta",
+      "line": 2373,
+      "end": 2411,
+      "flags": [
+        "assert_count"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0804_test_event_trigger_gate__test_event_pool_uses_candidate_snapshot_before_top_level_metric_delta.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 805,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_event_pool_rechecks_after_advances_close_gate",
+      "line": 2414,
+      "end": 2461,
+      "flags": [
+        "assert_count"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0805_test_event_trigger_gate__test_event_pool_rechecks_after_advances_close_gate.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 806,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_event_pool_rechecks_after_prior_event_effect_closes_gate",
+      "line": 2464,
+      "end": 2530,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0806_test_event_trigger_gate__test_event_pool_rechecks_after_prior_event_effect_closes_gate.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 807,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_issue_tracker_decree_new_issue_respects_outer_transaction_rollback",
+      "line": 2533,
+      "end": 2561,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0807_test_event_trigger_gate__test_issue_tracker_decree_new_issue_respects_outer_transaction_rollback.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 808,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_issue_tracker_advance_respects_outer_transaction_rollback",
+      "line": 2564,
+      "end": 2596,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0808_test_event_trigger_gate__test_issue_tracker_advance_respects_outer_transaction_rollback.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 809,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_issue_tracker_advance_effects_respect_outer_transaction_rollback",
+      "line": 2599,
+      "end": 2636,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0809_test_event_trigger_gate__test_issue_tracker_advance_effects_respect_outer_transaction_rollback.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 810,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_issue_tracker_close_respects_outer_transaction_rollback",
+      "line": 2639,
+      "end": 2672,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0810_test_event_trigger_gate__test_issue_tracker_close_respects_outer_transaction_rollback.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 811,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_issue_tracker_close_effects_respect_outer_transaction_rollback",
+      "line": 2675,
+      "end": 2729,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0811_test_event_trigger_gate__test_issue_tracker_close_effects_respect_outer_transaction_rollback.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 812,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_issue_tracker_close_entity_effects_respect_outer_transaction_rollback",
+      "line": 2732,
+      "end": 2775,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0812_test_event_trigger_gate__test_issue_tracker_close_entity_effects_respect_outer_transaction_rollback.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 813,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_issue_tracker_close_legacy_expiry_respects_outer_transaction_rollback",
+      "line": 2778,
+      "end": 2818,
+      "flags": [
+        "assert_text_compare_or_match",
+        "retired_or_meta_marker"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0813_test_event_trigger_gate__test_issue_tracker_close_legacy_expiry_respects_outer_transaction_rollback.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 814,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_issue_close_person_changes_respect_outer_rollback",
+      "line": 2821,
+      "end": 2842,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0814_test_event_trigger_gate__test_issue_close_person_changes_respect_outer_rollback.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 815,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_apply_score_extraction_fiscal_create_and_remove_respect_outer_transaction_rollback",
+      "line": 2990,
+      "end": 3025,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0815_test_event_trigger_gate__test_apply_score_extraction_fiscal_create_and_remove_respect_outer_transaction_rollback.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 816,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_event_pool_pending_invalid_location_does_not_block_gate",
+      "line": 3028,
+      "end": 3082,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0816_test_event_trigger_gate__test_event_pool_pending_invalid_location_does_not_block_gate.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 817,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_event_pool_pending_invalid_location_does_not_clear_transit_gate",
+      "line": 3230,
+      "end": 3285,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0817_test_event_trigger_gate__test_event_pool_pending_invalid_location_does_not_clear_transit_gate.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 818,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_event_pool_pending_rejected_legacy_gate_change_does_not_block",
+      "line": 3288,
+      "end": 3328,
+      "flags": [
+        "retired_or_meta_marker"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0818_test_event_trigger_gate__test_event_pool_pending_rejected_legacy_gate_change_does_not_block.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 819,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_event_pool_pending_legacy_power_change_blocks_gate",
+      "line": 3331,
+      "end": 3385,
+      "flags": [
+        "retired_or_meta_marker"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0819_test_event_trigger_gate__test_event_pool_pending_legacy_power_change_blocks_gate.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 820,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_event_pool_pending_same_power_allegiance_noop_does_not_block_gate",
+      "line": 3388,
+      "end": 3450,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0820_test_event_trigger_gate__test_event_pool_pending_same_power_allegiance_noop_does_not_block_gate.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 821,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_event_pool_pending_person_changes_are_simulated_sequentially",
+      "line": 3520,
+      "end": 3551,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0821_test_event_trigger_gate__test_event_pool_pending_person_changes_are_simulated_sequentially.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 822,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_apply_score_extraction_appointment_rolls_back_with_outer_transaction",
+      "line": 3554,
+      "end": 3587,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0822_test_event_trigger_gate__test_apply_score_extraction_appointment_rolls_back_with_outer_transaction.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 823,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_event_pool_pending_alias_appointment_blocks_canonical_gate",
+      "line": 3590,
+      "end": 3642,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0823_test_event_trigger_gate__test_event_pool_pending_alias_appointment_blocks_canonical_gate.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 824,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_event_pool_pending_alias_disposition_blocks_canonical_gate",
+      "line": 3645,
+      "end": 3701,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0824_test_event_trigger_gate__test_event_pool_pending_alias_disposition_blocks_canonical_gate.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 825,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_event_pool_pending_disposition_blocks_each_new_issue",
+      "line": 3704,
+      "end": 3761,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0825_test_event_trigger_gate__test_event_pool_pending_disposition_blocks_each_new_issue.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 826,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_event_pool_pending_rejected_vassal_appointment_does_not_block_gate",
+      "line": 3764,
+      "end": 3818,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0826_test_event_trigger_gate__test_event_pool_pending_rejected_vassal_appointment_does_not_block_gate.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 827,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_event_pool_pending_appointment_clears_reason_gate",
+      "line": 3885,
+      "end": 3937,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0827_test_event_trigger_gate__test_event_pool_pending_appointment_clears_reason_gate.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 828,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_issue_tracker_cancel_respects_outer_transaction_rollback",
+      "line": 4040,
+      "end": 4073,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0828_test_event_trigger_gate__test_issue_tracker_cancel_respects_outer_transaction_rollback.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 829,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_issue_tracker_cancel_cost_respects_outer_transaction_rollback",
+      "line": 4076,
+      "end": 4116,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0829_test_event_trigger_gate__test_issue_tracker_cancel_cost_respects_outer_transaction_rollback.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 830,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_mao_wenlong_event_pool_rechecks_after_same_turn_loyalty_assessment",
+      "line": 4119,
+      "end": 4141,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0830_test_event_trigger_gate__test_mao_wenlong_event_pool_rechecks_after_same_turn_loyalty_assessment.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 831,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_mao_wenlong_event_pool_rechecks_after_same_turn_yuan_dismissal",
+      "line": 4144,
+      "end": 4166,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0831_test_event_trigger_gate__test_mao_wenlong_event_pool_rechecks_after_same_turn_yuan_dismissal.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 832,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_invalid_pending_person_change_does_not_block_event_gate",
+      "line": 4169,
+      "end": 4193,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0832_test_event_trigger_gate__test_invalid_pending_person_change_does_not_block_event_gate.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 833,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_mao_wenlong_event_obsolete_when_core_subject_already_dead",
+      "line": 4196,
+      "end": 4227,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0833_test_event_trigger_gate__test_mao_wenlong_event_obsolete_when_core_subject_already_dead.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 834,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_mao_wenlong_event_excluded_when_yuan_unavailable",
+      "line": 4230,
+      "end": 4266,
+      "flags": [
+        "assert_text_compare_or_match",
+        "retired_or_meta_marker"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0834_test_event_trigger_gate__test_mao_wenlong_event_excluded_when_yuan_unavailable.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    },
+    {
+      "idx": 835,
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_mao_wenlong_event_pool_duplicate_emit_is_idempotent",
+      "line": 4331,
+      "end": 4359,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0835_test_event_trigger_gate__test_mao_wenlong_event_pool_duplicate_emit_is_idempotent.txt",
+      "source_path": "tests/test_event_trigger_gate.py"
+    }
+  ]
+}

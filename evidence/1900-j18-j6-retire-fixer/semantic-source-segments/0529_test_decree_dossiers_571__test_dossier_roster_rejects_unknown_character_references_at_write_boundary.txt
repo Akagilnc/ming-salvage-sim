@@ -1,0 +1,30 @@
+# FILE: tests/test_decree_dossiers_571.py
+# NAME: test_dossier_roster_rejects_unknown_character_references_at_write_boundary
+# LINE: 64-87
+# FLAGS: helper_or_private_call
+# KIND: py
+
+def test_dossier_roster_rejects_unknown_character_references_at_write_boundary(game):
+    db, state, _content = game
+    person = _active_minister(db)
+
+    with pytest.raises(ValueError):
+        db.create_decree_dossier(
+            state, action_type="assignment", decree_text="命查仓储。",
+            target_kind="issue", target_id="granary",
+            participants=[{"character_id": "不存在的人", "tier": "主办"}],
+        )
+    assert db.list_decree_dossiers() == []
+
+    dossier_id = db.create_decree_dossier(
+        state, action_type="assignment", decree_text="命查仓储。",
+        target_kind="issue", target_id="granary",
+        participants=[{"character_id": person, "tier": "主办"}],
+    )
+    with pytest.raises(ValueError):
+        db.append_decree_dossier_participants(dossier_id, [{
+            "character_id": person, "tier": "协办", "delegator_id": "不存在的委派人",
+        }])
+    assert db.get_decree_dossier(dossier_id)["participant_roster"] == [{
+        "character_id": person, "tier": "主办", "role": "", "delegator_id": None,
+    }]

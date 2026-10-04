@@ -1,0 +1,202 @@
+{
+  "source_path": "tests/test_urge_lever_624.py",
+  "member_count": 14,
+  "members": [
+    {
+      "idx": 2272,
+      "file": "tests/test_urge_lever_624.py",
+      "name": "test_rush_staged_commitment_advances_due_and_fills_urge_history",
+      "line": 161,
+      "end": 222,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2272_test_urge_lever_624__test_rush_staged_commitment_advances_due_and_fills_urge_history.txt",
+      "source_path": "tests/test_urge_lever_624.py"
+    },
+    {
+      "idx": 2273,
+      "file": "tests/test_urge_lever_624.py",
+      "name": "test_urge_raises_distortion_and_shifts_verdict_ac1",
+      "line": 225,
+      "end": 285,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2273_test_urge_lever_624__test_urge_raises_distortion_and_shifts_verdict_ac1.txt",
+      "source_path": "tests/test_urge_lever_624.py"
+    },
+    {
+      "idx": 2274,
+      "file": "tests/test_urge_lever_624.py",
+      "name": "test_rush_remonstrance_first_unreasonable_idempotent_ac5",
+      "line": 291,
+      "end": 324,
+      "flags": [
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2274_test_urge_lever_624__test_rush_remonstrance_first_unreasonable_idempotent_ac5.txt",
+      "source_path": "tests/test_urge_lever_624.py"
+    },
+    {
+      "idx": 2275,
+      "file": "tests/test_urge_lever_624.py",
+      "name": "test_high_prestige_suppresses_remonstrance_dare_ac5",
+      "line": 327,
+      "end": 350,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2275_test_urge_lever_624__test_high_prestige_suppresses_remonstrance_dare_ac5.txt",
+      "source_path": "tests/test_urge_lever_624.py"
+    },
+    {
+      "idx": 2276,
+      "file": "tests/test_urge_lever_624.py",
+      "name": "test_grace_plea_payload_truth_hidden_from_player_ac6",
+      "line": 356,
+      "end": 424,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2276_test_urge_lever_624__test_grace_plea_payload_truth_hidden_from_player_ac6.txt",
+      "source_path": "tests/test_urge_lever_624.py"
+    },
+    {
+      "idx": 2277,
+      "file": "tests/test_urge_lever_624.py",
+      "name": "test_missing_urge_and_supervision_fail_closed_ac7",
+      "line": 430,
+      "end": 456,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2277_test_urge_lever_624__test_missing_urge_and_supervision_fail_closed_ac7.txt",
+      "source_path": "tests/test_urge_lever_624.py"
+    },
+    {
+      "idx": 2278,
+      "file": "tests/test_urge_lever_624.py",
+      "name": "test_urge_history_restore_from_committed_pending_ac7",
+      "line": 459,
+      "end": 475,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2278_test_urge_lever_624__test_urge_history_restore_from_committed_pending_ac7.txt",
+      "source_path": "tests/test_urge_lever_624.py"
+    },
+    {
+      "idx": 2279,
+      "file": "tests/test_urge_lever_624.py",
+      "name": "test_remonstrance_not_projected_applied_or_takeover",
+      "line": 497,
+      "end": 561,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2279_test_urge_lever_624__test_remonstrance_not_projected_applied_or_takeover.txt",
+      "source_path": "tests/test_urge_lever_624.py"
+    },
+    {
+      "idx": 2280,
+      "file": "tests/test_urge_lever_624.py",
+      "name": "test_payload_json_roundtrip_insert_list_restore",
+      "line": 564,
+      "end": 594,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2280_test_urge_lever_624__test_payload_json_roundtrip_insert_list_restore.txt",
+      "source_path": "tests/test_urge_lever_624.py"
+    },
+    {
+      "idx": 2281,
+      "file": "tests/test_urge_lever_624.py",
+      "name": "test_rush_does_not_side_write_end_turn",
+      "line": 597,
+      "end": 624,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2281_test_urge_lever_624__test_rush_does_not_side_write_end_turn.txt",
+      "source_path": "tests/test_urge_lever_624.py"
+    },
+    {
+      "idx": 2282,
+      "file": "tests/test_urge_lever_624.py",
+      "name": "test_grace_not_written_for_gudu_reasonable_long_deadline",
+      "line": 627,
+      "end": 659,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2282_test_urge_lever_624__test_grace_not_written_for_gudu_reasonable_long_deadline.txt",
+      "source_path": "tests/test_urge_lever_624.py"
+    },
+    {
+      "idx": 2283,
+      "file": "tests/test_urge_lever_624.py",
+      "name": "test_urge_audience_project_and_consume_path",
+      "line": 662,
+      "end": 699,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2283_test_urge_lever_624__test_urge_audience_project_and_consume_path.txt",
+      "source_path": "tests/test_urge_lever_624.py"
+    },
+    {
+      "idx": 2284,
+      "file": "tests/test_urge_lever_624.py",
+      "name": "test_commitment_rush_via_pending_actions_gate",
+      "line": 702,
+      "end": 761,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2284_test_urge_lever_624__test_commitment_rush_via_pending_actions_gate.txt",
+      "source_path": "tests/test_urge_lever_624.py"
+    },
+    {
+      "idx": 2285,
+      "file": "tests/test_urge_lever_624.py",
+      "name": "test_payload_json_corrupt_read_is_loud",
+      "line": 764,
+      "end": 777,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2285_test_urge_lever_624__test_payload_json_corrupt_read_is_loud.txt",
+      "source_path": "tests/test_urge_lever_624.py"
+    }
+  ]
+}

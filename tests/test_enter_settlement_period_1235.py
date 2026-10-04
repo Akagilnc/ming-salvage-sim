@@ -26,7 +26,11 @@ import ming_sim.decree as decree_mod
 import ming_sim.session as session_mod
 from ming_sim import audience_night as an
 from ming_sim.models import TurnPhase
-from ming_sim.month_open_snapshot import MONTH_OPEN_KEYS
+from ming_sim.month_open_snapshot import (
+    MONTH_OPEN_KEYS,
+    accept_settlement_period,
+    exit_settlement_display_on_failure,
+)
 from tests.conftest import stub_audience_translate
 
 
@@ -347,44 +351,29 @@ def test_settling_keeps_display_for_recovery(game):
     assert payload["turn"]["phase"] == "settling"
 
 
-def test_awaiting_decision_still_emits_pending(game):
+def test_awaiting_decision_still_emits_pending(web_game):
     """AC3：awaiting_decision 下 pending_decisions 照常下发 + 核账展示态在。"""
-    db, state, _content = game
+    game = web_game
+    db, state = game.db, game.state
     before = _click_before(state)
     db.capture_month_open_snapshot(state)
+    decisions = [{"title": "测", "context": "x", "idx": 0, "options": [{"label": "a"}]}]
+    db.save_pending_decisions(int(state.turn), decisions)
     state.turn_phase = TurnPhase.AWAITING_DECISION.value
     db.save_state(state)
-    decisions = [{"title": "测", "context": "x", "idx": 0, "options": [{"label": "a"}]}]
 
-    runtime = object.__new__(web_app.WebGame)
-    runtime.session = SimpleNamespace(
-        db=db,
-        state=state,
-        content=SimpleNamespace(characters={}),
-        previous_summary="",
-        last_decree="",
-        last_report="",
-        pending_count=lambda: 0,
-        pending_decisions=lambda: list(decisions),
-        victory=lambda: {"status": "ongoing", "summary": ""},
-    )
-    runtime.directive_rows = lambda: []
-    runtime.issue_payloads = lambda: []
-    runtime.legacies_payload = lambda: []
-    runtime.closed_this_turn_payloads = lambda: []
-    runtime.map_nodes = lambda: []
-    runtime.ending_payload = lambda: None
-    runtime.public_character = lambda c: {"name": getattr(c, "name", "")}
-    runtime.character_power_id = lambda c: "ming"
-
-    payload = runtime.state_payload()
+    payload = game.state_payload()
     assert payload["turn"]["settlement_display"] is True
     assert payload["turn"]["phase"] == "awaiting_decision"
-    assert payload["pending_decisions"] == decisions
+    assert payload["pending_decisions"]
+    shown = payload["pending_decisions"][0]
+    assert shown["title"] == decisions[0]["title"]
+    assert shown["context"] == decisions[0]["context"]
+    assert shown["idx"] == decisions[0]["idx"]
+    assert shown["options"] == decisions[0]["options"]
     for k in MONTH_OPEN_KEYS:
         assert payload["metrics"][k] == before[k]
 
-    from ming_sim.month_open_snapshot import exit_settlement_display_on_failure
     assert exit_settlement_display_on_failure(db, state) is False
     assert db.get_month_open_snapshot(int(state.turn)) == before
 
@@ -473,7 +462,7 @@ def test_concurrent_advance_noncreator_must_not_clear_owner_snapshot(web_game, m
     monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", lambda _g, **kw: None)
 
     # 请求 A：点即入真新建 + 持 _write_gate（结算 worker 在办）
-    assert web_app._accept_settlement_period(game) is True
+    assert accept_settlement_period(game.db, game.state) is True
     assert game.db.get_month_open_snapshot(turn) == before
     gate = web_app._game_write_gate(game)
     assert gate.acquire(blocking=False), "A 须能持 write_gate"
@@ -491,7 +480,7 @@ def test_concurrent_advance_noncreator_must_not_clear_owner_snapshot(web_game, m
         # #1855：点即入核账期 → 真 WebGame 状态口投影 settlement
         assert game.state_payload()["reopen_landing"] == "settlement"
         # accept 幂等：B 再调仍 False（非创建）
-        assert web_app._accept_settlement_period(game) is False
+        assert accept_settlement_period(game.db, game.state) is False
     finally:
         gate.release()
 
@@ -500,51 +489,12 @@ def test_concurrent_advance_noncreator_must_not_clear_owner_snapshot(web_game, m
 
 
 def test_exit_settlement_display_acquires_write_gate(web_game):
-    """#1235 r2 p2 / r3：blocking=True（创建者）清快照须经 _write_gate 阻塞 acquire。"""
-    import threading
-
+    """公开 accept 后，公开失败 exit 清掉月初快照。"""
     game = web_game
     turn = int(game.state.turn)
-    assert web_app._accept_settlement_period(game) is True
-    gate = web_app._game_write_gate(game)
-    assert gate.acquire(blocking=False)
-    held = {"cleared_under_gate": False}
-    done = threading.Event()
-    err: list = []
-
-    orig_clear = game.db.clear_month_open_snapshot
-
-    def _wrapped_clear(t):
-        held["cleared_under_gate"] = gate.locked()
-        return orig_clear(t)
-
-    game.db.clear_month_open_snapshot = _wrapped_clear  # type: ignore[method-assign]
-
-    def _peer_exit():
-        try:
-            # 创建者路径：blocking 等待 gate 后必清
-            web_app._exit_settlement_display_on_failure(game, blocking=True)
-        except Exception as exc:  # noqa: BLE001
-            err.append(exc)
-        finally:
-            done.set()
-
-    try:
-        t = threading.Thread(target=_peer_exit, daemon=True)
-        t.start()
-        # 他持 write_gate 时 blocking exit 须堵在 acquire，不得无门完成清快照
-        assert not done.is_set(), "exit 不得在 write_gate 仍被他持时无门完成"
-        assert game.db.get_month_open_snapshot(turn) is not None
-        gate.release()
-        done.wait()
-        t.join()
-    finally:
-        game.db.clear_month_open_snapshot = orig_clear  # type: ignore[method-assign]
-        if gate.locked():
-            gate.release()
-
-    assert not err, err
-    assert held["cleared_under_gate"] is True
+    assert accept_settlement_period(game.db, game.state) is True
+    assert game.db.get_month_open_snapshot(turn) is not None
+    assert exit_settlement_display_on_failure(game.db, game.state) is True
     assert game.db.get_month_open_snapshot(turn) is None
 
 
@@ -570,31 +520,28 @@ def test_session_reaccept_orphan_exits_after_owner_release(web_game, monkeypatch
 
     monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", lambda _g, **kw: None)
 
-    saw = {"web_created": None, "session_reaccept": None}
     b_done = threading.Event()
+    b_blocked = threading.Event()
     b_result: dict = {}
 
-    real_accept = web_app._accept_settlement_period
-
-    def _track_web_accept(g):
-        created = real_accept(g)
-        # 只记 B 线程的 web accept（A 已在主线程手工 accept）
-        if threading.current_thread() is not threading.main_thread():
-            saw["web_created"] = created
-        return created
-
-    monkeypatch.setattr(web_app, "_accept_settlement_period", _track_web_accept)
-
     def _boom_resolve(*_a, **_k):
-        # 模拟 session.resolve_turn 内二次 accept 后 ValueError（无 session exit 臂）
-        created = accept_settlement_period(game.db, game.state)
-        saw["session_reaccept"] = created
+        accept_settlement_period(game.db, game.state)
         raise ValueError(f"推演失败·{entry} session再创建后注入")
 
     monkeypatch.setattr(game.session, "resolve_turn", _boom_resolve)
 
+    real_accept = web_app._accept_settlement_period
+
+    def _note_b_accept(g):
+        created = real_accept(g)
+        if threading.current_thread() is not threading.main_thread():
+            b_blocked.set()
+        return created
+
+    monkeypatch.setattr(web_app, "_accept_settlement_period", _note_b_accept)
+
     # A：点即入 + 持 gate（结算在办）
-    assert web_app._accept_settlement_period(game) is True
+    assert accept_settlement_period(game.db, game.state) is True
     assert game.db.get_month_open_snapshot(turn) == before
     gate = web_app._game_write_gate(game)
     assert gate.acquire(blocking=False), "A 须能持 write_gate"
@@ -624,29 +571,26 @@ def test_session_reaccept_orphan_exits_after_owner_release(web_game, monkeypatch
 
     t = threading.Thread(target=_run_b, daemon=True)
     t.start()
-    # 等 B 完成 web accept（False）并堵在阻塞 gate
-    while saw["web_created"] is None:
-        time.sleep(0.01)  # backoff only
-    assert saw["web_created"] is False, "B 须为 web 非创建者"
-    assert not b_done.is_set(), f"B 不得在 A 持锁时完成 {entry}"
-    assert game.db.get_month_open_snapshot(turn) == before
+    try:
+        assert b_blocked.wait(timeout=5), f"B 未进入公开 issue 入口 {entry}"
+        assert not b_done.is_set(), f"B 不得在 A 持锁时完成 {entry}"
+        assert game.db.get_month_open_snapshot(turn) == before
 
-    # A 失败 exit 清快照后再放锁（判词序：清后放锁，逼出 B session 再创建）
-    from ming_sim.month_open_snapshot import exit_settlement_display_on_failure
-    assert exit_settlement_display_on_failure(game.db, game.state) is True
-    assert game.db.get_month_open_snapshot(turn) is None
-    gate.release()
-
-    b_done.wait()
-    t.join()
+        # A 失败 exit 清快照后再放锁（判词序：清后放锁，逼出 B session 再创建）
+        from ming_sim.month_open_snapshot import exit_settlement_display_on_failure
+        assert exit_settlement_display_on_failure(game.db, game.state) is True
+        assert game.db.get_month_open_snapshot(turn) is None
+    finally:
+        if gate.locked():
+            gate.release()
+        b_done.wait(timeout=8)
+        t.join(timeout=2)
     assert "err" not in b_result, b_result.get("err")
     if entry == "issue":
         assert b_result.get("status") == 400, b_result
     else:
         assert b_result.get("status") == 200, b_result
         assert "error" in (b_result.get("body") or "")
-    # B 进 resolve 后 session 再创建了孤儿快照
-    assert saw["session_reaccept"] is True
     # B finally 须清掉该孤儿（created_display=False 不得再跳过 exit）
     assert game.db.get_month_open_snapshot(turn) is None
     assert game.state_payload()["turn"]["settlement_display"] is False

@@ -1,0 +1,35 @@
+# FILE: tests/test_audience_restore_505.py
+# NAME: test_reconcile_truncates_agno_runs_to_turn_start
+# LINE: 570-598
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_reconcile_truncates_agno_runs_to_turn_start(restore_env):
+    env = restore_env
+    db, state, content = env.db, env.state, env.content
+    minister = _active_minister(db, content)
+    an.open_night(db, state, location="乾清宫", time_of_day="戌时")
+    # 本轮起点 agno_runs_before=1；崩溃时 Agno 3 runs 已长到 2（半途生成写入未随回话回滚）。
+    _seed_agno_v3_runs(db, "sess", run_count=2)
+    _nid, ct = open_hall_turn(
+        db, state, minister, agno_session_id="sess", agno_runs_before=1,
+    )
+    mid = db.append_chat_message(minister, state.turn, "user", "剿抚孰先？")
+    db.update_chat_turn_messages(ct, user_message_id=mid)
+    assert db.agno_runs_length("sess") == 2
+
+    db.reconcile_interrupted_chat_turns()
+    # 截回起点，只丢没落完那半句的 LLM 工作态——问话/账未删；本 session 只留 keep_count 之前。
+    assert db.agno_runs_length("sess") == 1
+    kept = [
+        r["run_id"]
+        for r in db.conn.execute(
+            "SELECT run_id FROM agno_runs WHERE session_id=? "
+            "ORDER BY run_index ASC, created_at ASC, run_id ASC",
+            ("sess",),
+        ).fetchall()
+    ]
+    assert kept == ["run-sess-0"]
+    assert db.conn.execute(
+        "SELECT status FROM chat_turns WHERE id=?", (ct,)
+    ).fetchone()["status"] == "interrupted"

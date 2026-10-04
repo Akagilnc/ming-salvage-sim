@@ -1,0 +1,23 @@
+# FILE: tests/test_person_delta_adapter.py
+# NAME: test_registry_and_tools_court_roster_exclude_active_prince
+# LINE: 1860-1876
+# FLAGS: helper_or_private_call
+# KIND: py
+
+def test_registry_and_tools_court_roster_exclude_active_prince(read_game):
+    """材料目录与 simulator/web 同口径排除 active 宗藩。"""
+    from ming_sim.materials import list_materials, prepare_character_materials, read_material
+    db, state, content = read_game
+    name = _materialize_active_prince(db, state, content)
+    minister_name = next(
+        n for n, c in content.characters.items()
+        if getattr(c, "power_id", "ming") == "ming"
+        and getattr(c, "office_type", "") not in ("后宫", "宗藩")
+        and db.get_character_status(n)[0] == "active"
+    )
+    prepared = prepare_character_materials(db, state, content.characters[minister_name])
+    blob = "\n".join(
+        read_material(prepared.root, path)
+        for path in list_materials(prepared.root) if path != "INDEX.txt"
+    )
+    assert name not in blob

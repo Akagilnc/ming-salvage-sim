@@ -1,0 +1,38 @@
+# FILE: tests/test_person_delta_adapter.py
+# NAME: test_s8_demotion_release_then_lower_appointment_derives_qifu
+# LINE: 3437-3468
+# FLAGS: assert_text_compare_or_match
+# KIND: py
+
+def test_s8_demotion_release_then_lower_appointment_derives_qifu(game):
+    """S8 官降三级（放出某官贬三级任用）：imprisoned 受 处置(放归→offstage) + 任命(低阶) →
+    任命从 offstage 派生 起复，多条按序落库，末态 active + 低阶官。"""
+    db, state, content = game
+    name = active_ming_character(db, content)
+    _ch = content.characters[name]
+    _saved = (_ch.status, _ch.office, _ch.office_type, getattr(_ch, "status_reason", ""), getattr(_ch, "reason_code", ""))
+    try:
+        db.set_character_status(state, name, "imprisoned", "旧案在押")
+        _ch.status = "imprisoned"
+        applied = issues.apply_score_extraction(
+            db, state,
+            {"人物变更": [
+                {"name": name, "origin_ref": "盘面自发", "动作": "处置", "status": "offstage", "reason": "查明释放"},
+                {"name": name, "origin_ref": "盘面自发", "动作": "任命", "office": "知县", "office_type": "地方", "region_id": "henan", "reason": "贬三级任用"},
+            ]},
+            content=content,
+        )
+        pcs = [r for r in applied["applied_person_changes"] if r.get("name") == name]
+        # 末态：active + 低阶官；任命从 offstage 派生 起复。契约 require 'sequence'：派生的 处置(起复)
+        # 须落在 任命 之前（release 先于 appoint），用索引锁顺序、不止 any()（Claude PR R1：
+        # any 抓不住顺序回归）。robust 对前导 declared 处置 + 可能的 S5 顶替行。
+        row = db.conn.execute("SELECT status, office FROM characters WHERE name=?", (name,)).fetchone()
+        assert row["status"] == "active"
+        assert row["office"] == "知县"
+        appoint_idx = next(i for i, r in enumerate(pcs)
+                           if r.get("动作") == "任命" and not r.get("rejected"))
+        release_idx = next(i for i, r in enumerate(pcs)
+                           if r.get("动作") == "处置" and r.get("derived_from") == "起复")
+        assert release_idx < appoint_idx, f"派生 处置(起复) 须按序落在 任命 之前：{pcs}"
+    finally:
+        _ch.status, _ch.office, _ch.office_type, _ch.status_reason, _ch.reason_code = _saved

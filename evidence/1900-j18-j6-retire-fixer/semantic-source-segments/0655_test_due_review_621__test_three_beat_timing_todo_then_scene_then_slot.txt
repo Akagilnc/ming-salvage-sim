@@ -1,0 +1,40 @@
+# FILE: tests/test_due_review_621.py
+# NAME: test_three_beat_timing_todo_then_scene_then_slot
+# LINE: 490-523
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_three_beat_timing_todo_then_scene_then_slot(game, monkeypatch):
+    db, state, content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.commit()
+    dossier_id = _executing_policy_dossier(db, state, token="three-beat")
+    stages = [{
+        "stage_idx": 0,
+        "due_turn": state.turn + 1,
+        "criterion_text": "火器见眉目",
+        "origin_context": "三年火器见眉目",
+    }]
+    _insert_staged_commitment(
+        db, state, content, stages=stages, origin_ref=f"dossier:{dossier_id}",
+    )
+
+    # beat0: 未到期
+    _settle_empty_month(db, state, content, monkeypatch)
+    assert db.list_next_audience_todos() == []
+    assert not list_due_review_scenes(db, state)
+
+    # beat1: 过月写 todo
+    _settle_empty_month(db, state, content, monkeypatch)
+    todos = db.list_next_audience_todos(status=TODO_STATUS_PENDING)
+    assert len(todos) == 1
+    # 落格尚未发生
+    assert db.get_decree_dossier(dossier_id)["execution_outcome"] in ("", None)
+    # beat2: 召对场面可读
+    scenes = list_due_review_scenes(db, state)
+    assert len(scenes) == 1
+
+    # beat3: 下一过月落格 + 消费
+    _settle_empty_month(db, state, content, monkeypatch)
+    assert db.get_decree_dossier(dossier_id)["execution_outcome"]
+    assert db.list_next_audience_todos(status=TODO_STATUS_PENDING) == []

@@ -1,0 +1,40 @@
+# FILE: web/src/components/menuPage.test.tsx
+# NAME: "MenuPage continue SSE stages (#1195)" / "surfaces SSE error message without entering game"
+# LINE: 153-186
+# FLAGS: web_mock_spy_or_calls
+# KIND: web
+
+  it("surfaces SSE error message without entering game", async () => {
+    const enterGame = vi.fn(async () => {});
+    const setError = vi.fn();
+    global.fetch = vi.fn().mockResolvedValue(
+      streamResponse([
+        'event: stage\ndata: {"content":"检查模型后端..."}\n\n',
+        'event: error\ndata: {"message":"未配 API key，请先到设置页填写。"}\n\n',
+      ]),
+    );
+
+    const cleanup = render(
+      <MenuPage
+        status={readyStatus as any}
+        onRefresh={async () => readyStatus as any}
+        onEnterGame={enterGame}
+        error=""
+        setError={setError}
+      />
+    );
+
+    const continueBtn = Array.from(document.querySelectorAll("button")).find((button) =>
+      button.textContent?.trim() === "继续"
+    );
+    await act(async () => {
+      continueBtn!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      // 等 reader 抽完 stage+error 并 throw→guard catch
+      for (let i = 0; i < 10; i++) await Promise.resolve();
+    });
+
+    expect(enterGame).not.toHaveBeenCalled();
+    const errMsg = setError.mock.calls.map((c) => String(c[0] || "")).find((m) => m.includes("未配 API key"));
+    expect(errMsg).toBeTruthy();
+    cleanup();
+  });

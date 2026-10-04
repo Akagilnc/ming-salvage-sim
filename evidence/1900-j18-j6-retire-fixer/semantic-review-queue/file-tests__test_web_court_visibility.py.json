@@ -1,0 +1,33 @@
+{
+  "source_path": "tests/test_web_court_visibility.py",
+  "member_count": 2,
+  "members": [
+    {
+      "idx": 2308,
+      "file": "tests/test_web_court_visibility.py",
+      "name": "test_state_payload_projects_court_and_talent_rosters",
+      "line": 10,
+      "end": 73,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2308_test_web_court_visibility__test_state_payload_projects_court_and_talent_rosters.txt",
+      "source_path": "tests/test_web_court_visibility.py"
+    },
+    {
+      "idx": 2309,
+      "file": "tests/test_web_court_visibility.py",
+      "name": "test_alias_appointment_reuses_identity_and_rejects_vassal",
+      "line": 77,
+      "end": 88,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2309_test_web_court_visibility__test_alias_appointment_reuses_identity_and_rejects_vassal.txt",
+      "source_path": "tests/test_web_court_visibility.py"
+    }
+  ]
+}

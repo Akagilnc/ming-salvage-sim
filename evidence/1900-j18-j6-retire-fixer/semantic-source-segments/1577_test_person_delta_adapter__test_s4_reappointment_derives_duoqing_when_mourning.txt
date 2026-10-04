@@ -1,0 +1,29 @@
+# FILE: tests/test_person_delta_adapter.py
+# NAME: test_s4_reappointment_derives_duoqing_when_mourning
+# LINE: 2851-2873
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_s4_reappointment_derives_duoqing_when_mourning(game):
+    """S4 夺情（杨嗣昌丁忧夺情入阁）：offstage+reason_code=丁忧 受任命 → 派生 处置(夺情)，
+    reason_code=丁忧 专项规则优先于 offstage→起复 通则（决定5 派生选择规则）。"""
+    db, state, content = game
+    name = active_ming_character(db, content)
+    _ch = content.characters[name]
+    # 全量捕获本测试会经 set_character_status/apply 改动的内存字段，finally 完整还原（autouse
+    # _restore_content_characters 已兜底深还原，此为防 smell 的显式补全，gemini PR#138 R1）。
+    _saved = (_ch.status, _ch.office, _ch.office_type, getattr(_ch, "status_reason", ""), getattr(_ch, "reason_code", ""))
+    try:
+        db.set_character_status(state, name, "offstage", "丁内艰守制", reason_code="丁忧")
+        content.characters[name].status = "offstage"
+        applied = _appoint(db, state, content, name, "礼部尚书兼东阁大学士", "夺情起复入阁")
+        row = db.conn.execute("SELECT status, office FROM characters WHERE name=?", (name,)).fetchone()
+        assert row["status"] == "active"
+        assert row["office"] == "礼部尚书,东阁大学士", "夺情任命须真授官（office 规范化兼→,），否则 status=active 但 office 漏写也漏抓（codex R1）"
+        pcs = applied["applied_person_changes"]
+        # 丁忧 优先于 offstage→起复：派生须是 夺情 而非 起复
+        assert pcs[0]["动作"] == "处置" and pcs[0]["derived_from"] == "夺情"
+        assert pcs[1]["动作"] == "任命" and pcs[1]["derived_from"] == "夺情"
+        assert pcs[1].get("rejected") is not True, "夺情任命不应被拒"
+    finally:
+        _ch.status, _ch.office, _ch.office_type, _ch.status_reason, _ch.reason_code = _saved

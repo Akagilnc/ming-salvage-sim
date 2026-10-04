@@ -1,0 +1,38 @@
+# FILE: tests/test_pay_order_override_653.py
+# NAME: test_revoke_later_same_dim_decree_not_stomped
+# LINE: 687-718
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_revoke_later_same_dim_decree_not_stomped(game):
+    """Codex-11/revoke_shape_exit①：同维后旨在位时撤前旨，不改该键。"""
+    db, state, _content = game
+    first = _override_dossier(
+        db, state, [{"key": "due_priority_军饷@shaanxi", "value": 40}],
+        text="前旨边饷居末",
+    )
+    db.apply_dossier_promulgation(state, first, "promulgated")
+    second = _override_dossier(
+        db, state, [{"key": "due_priority_军饷@shaanxi", "value": 5}],
+        text="后旨边饷最前",
+    )
+    db.apply_dossier_promulgation(state, second, "promulgated")
+    assert db.get_fiscal_config()["due_priority_军饷@shaanxi"] == 5
+    revoke = db.create_decree_dossier(
+        state, action_type="revoke_decree", decree_text="撤回前旨",
+        target_kind="dossier", target_id=str(first),
+        payload={"revoke_target_dossier_id": first},
+    )
+    db.apply_dossier_promulgation(state, revoke, "promulgated")
+    cfg = db.get_fiscal_config()
+    assert cfg["due_priority_军饷@shaanxi"] == 5  # 后旨 last-write 保全
+    row = db.conn.execute(
+        "SELECT origin_ref FROM fiscal_config WHERE key='due_priority_军饷@shaanxi'"
+    ).fetchone()
+    assert row["origin_ref"] == f"dossier:{second}"
+    # 撤销未写任何该键 change
+    stomps = db.conn.execute(
+        "SELECT 1 FROM fiscal_config_changes WHERE origin_ref=? AND key='due_priority_军饷@shaanxi'",
+        (f"dossier:{revoke}",),
+    ).fetchone()
+    assert stomps is None

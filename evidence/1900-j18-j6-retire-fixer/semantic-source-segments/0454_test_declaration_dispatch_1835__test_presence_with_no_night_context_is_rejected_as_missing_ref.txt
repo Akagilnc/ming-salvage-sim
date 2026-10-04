@@ -1,0 +1,17 @@
+# FILE: tests/test_declaration_dispatch_1835.py
+# NAME: test_presence_with_no_night_context_is_rejected_as_missing_ref
+# LINE: 480-490
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_presence_with_no_night_context_is_rejected_as_missing_ref(game):
+    db, state, _ = game
+    minister = _minister(db)
+
+    declaration = {
+        "presence": [{"person_name": minister, "effect": "enter", "body": "入殿。"}],
+    }
+    result = dispatch_declaration(db, state, declaration, night_id=0)
+    assert result.presence.applied == []
+    assert len(result.presence.rejected) == 1
+    assert result.presence.rejected[0].category == "missing_ref"

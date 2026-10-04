@@ -1,0 +1,63 @@
+# FILE: web/src/components/menuPage.test.tsx
+# NAME: "MenuPage continue SSE stages (#1195)" / "replaces busy label when stage events arrive mid-stream"
+# LINE: 188-244
+# FLAGS: web_mock_spy_or_calls
+# KIND: web
+
+  it("replaces busy label when stage events arrive mid-stream", async () => {
+    const encoder = new TextEncoder();
+    let pull = 0;
+    let resumeRead: (() => void) | null = null;
+    const waitPull = () => new Promise<void>((resolve) => { resumeRead = resolve; });
+    const chunks = [
+      'event: stage\ndata: {"content":"检查模型后端..."}\n\n',
+      'event: stage\ndata: {"content":"重整朝堂名册..."}\n\n',
+      'event: done\ndata: {"state":{}}\n\n',
+    ];
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      body: {
+        getReader() {
+          return {
+            async read() {
+              if (pull >= chunks.length) return { value: undefined, done: true };
+              if (pull > 0) await waitPull();
+              const value = encoder.encode(chunks[pull++]);
+              return { value, done: false };
+            },
+          };
+        },
+      },
+    } as unknown as Response);
+
+    const cleanup = render(
+      <MenuPage
+        status={readyStatus as any}
+        onRefresh={async () => readyStatus as any}
+        onEnterGame={async () => {}}
+        error=""
+        setError={() => {}}
+      />
+    );
+    const continueBtn = Array.from(document.querySelectorAll("button")).find((button) =>
+      button.textContent?.trim() === "继续"
+    );
+    await act(async () => {
+      continueBtn!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      for (let i = 0; i < 8; i++) await Promise.resolve();
+    });
+    expect(document.querySelector(".menu-busy")).not.toBeNull();
+
+    await act(async () => {
+      resumeRead?.();
+      for (let i = 0; i < 8; i++) await Promise.resolve();
+    });
+    expect(document.querySelector(".menu-busy")).not.toBeNull();
+
+    await act(async () => {
+      resumeRead?.();
+      for (let i = 0; i < 8; i++) await Promise.resolve();
+    });
+    cleanup();
+  });

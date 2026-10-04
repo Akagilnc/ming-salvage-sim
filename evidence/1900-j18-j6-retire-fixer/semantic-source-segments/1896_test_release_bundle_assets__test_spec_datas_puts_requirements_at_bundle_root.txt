@@ -1,0 +1,6 @@
+# FILE: tests/test_release_bundle_assets.py
+# NAME: test_spec_datas_puts_requirements_at_bundle_root
+# LINE: 37-33
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+

@@ -1,0 +1,23 @@
+# FILE: tests/test_six_sciences_seed_608.py
+# NAME: test_six_sciences_censor_exit_recomputes_its_faction_leverage
+# LINE: 41-57
+# FLAGS: assert_text_compare_or_match
+# KIND: py
+
+def test_six_sciences_censor_exit_recomputes_its_faction_leverage(game):
+    """TD-6：给事中退场经真实入口改人物状态，派系权势外部可见下降。"""
+    db, state, _content = game
+    censor = db.conn.execute(
+        "SELECT name, faction FROM characters WHERE name=?",
+        ("许誉卿",),
+    ).fetchone()
+    assert censor is not None
+    faction = str(censor["faction"])
+    before = db.faction_leverage(faction)
+
+    db.set_character_status(state, censor["name"], "dismissed", reason="测试退场")
+    db.conn.commit()
+
+    assert db.get_character_status(censor["name"])[0] == "dismissed"
+    after = db.faction_leverage(faction)
+    assert after < before

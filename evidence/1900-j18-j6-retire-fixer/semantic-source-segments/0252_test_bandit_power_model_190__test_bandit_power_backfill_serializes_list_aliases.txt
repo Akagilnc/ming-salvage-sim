@@ -1,0 +1,19 @@
+# FILE: tests/test_bandit_power_model_190.py
+# NAME: test_bandit_power_backfill_serializes_list_aliases
+# LINE: 75-87
+# FLAGS: assert_text_compare_or_match
+# KIND: py
+
+def test_bandit_power_backfill_serializes_list_aliases(game):
+    """旧档补流寇股时，即使 content power aliases 仍是 list，也必须写成 TEXT 不崩。"""
+    db, _state, content = game
+    content.powers["bandit_li_zicheng"].aliases = ["李自成部", "闯军"]
+    db.conn.execute("DELETE FROM powers WHERE id='bandit_li_zicheng'")
+    db.conn.commit()
+
+    db.init_schema()
+
+    aliases = db.conn.execute(
+        "SELECT aliases FROM powers WHERE id='bandit_li_zicheng'"
+    ).fetchone()["aliases"]
+    assert json.loads(aliases) == ["李自成部", "闯军"]

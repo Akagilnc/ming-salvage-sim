@@ -1,0 +1,17 @@
+# FILE: tests/test_person_transit_write_667.py
+# NAME: test_same_destination_is_idempotent
+# LINE: 243-253
+# FLAGS: helper_or_private_call
+# KIND: py
+
+def test_same_destination_is_idempotent(game):
+    db, state, content = game
+    name = _active(db)
+    db.conn.execute("UPDATE characters SET location='beizhili' WHERE name=?", (name,))
+    content.characters[name].location = "beizhili"
+    base = {"name": name, "origin_ref": "盘面自发", "动作": "行止", "transit_to": "liaodong"}
+    issues.apply_score_extraction(db, state, {"人物变更": [base]}, content=content)
+    db.conn.execute("UPDATE characters SET transit_distance_remaining=1.25 WHERE name=?", (name,))
+    issues.apply_score_extraction(db, state, {"人物变更": [{**base, "行程语气": "星夜兼程"}]}, content=content)
+    row = db.conn.execute("SELECT transit_distance_remaining, transit_speed_factor FROM characters WHERE name=?", (name,)).fetchone()
+    assert tuple(row) == (1.25, 1.0)

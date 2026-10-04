@@ -1,0 +1,37 @@
+# FILE: tests/test_urge_lever_624.py
+# NAME: test_payload_json_roundtrip_insert_list_restore
+# LINE: 564-594
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_payload_json_roundtrip_insert_list_restore(game):
+    db, state, content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.commit()
+    stages = [{
+        "stage_idx": 0,
+        "due_turn": state.turn + 5,
+        "criterion_text": "火器见眉目",
+        "origin_context": "三年火器见眉目",
+    }]
+    issue_id, _ = _insert_staged_commitment(db, state, content, stages=stages)
+    payload = {"truth": "genuine", "grace_fake": False, "note": "引擎知底"}
+    tid = db.insert_next_audience_todo(
+        commitment_ref=issue_id,
+        stage_idx=0,
+        due_turn=state.turn,
+        criterion_text="求宽限",
+        origin_context="稍催",
+        entry_kind=ENTRY_KIND_GRACE_PLEA,
+        created_turn=state.turn,
+        payload_json=payload,
+    )
+    assert tid > 0
+    row = [t for t in db.list_next_audience_todos(commitment_ref=issue_id) if int(t["id"]) == tid][0]
+    assert row["payload_json"]["truth"] == "genuine"
+    path = db.path
+    db.conn.close()
+    from ming_sim.db import GameDB
+    db2 = GameDB(path)
+    row2 = [t for t in db2.list_next_audience_todos(commitment_ref=issue_id) if int(t["id"]) == tid][0]
+    assert row2["payload_json"]["grace_fake"] is False

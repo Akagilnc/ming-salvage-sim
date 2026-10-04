@@ -1,0 +1,34 @@
+# FILE: tests/test_population_transfers_649.py
+# NAME: test_all_inflow_reasons_positive_cases_land
+# LINE: 88-115
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_all_inflow_reasons_positive_cases_land(game):
+    """入池五因（加派/摊派/灾害/兵灾/逃亡）各 ≥1 正例经 apply_score_extraction 落账。
+
+    #652：`回流` 不再由 extractor 受理，出池落账由 test_refugee_loop_652 经
+    #652 的回流出池由独立过月案验证，本测不平行私核直落。
+    """
+    db, state, content = game
+    items = [
+        _transfer(source="农民@shaanxi", target="流民@shaanxi", amount=100, reason="加派"),
+        _transfer(source="农民@henan", target="流民@henan", amount=100, reason="摊派"),
+        _transfer(source="农民@shanxi", target="流民@shanxi", amount=100, reason="灾害"),
+        _transfer(source="军户@shandong", target="流民@shandong", amount=100, reason="兵灾"),
+        _transfer(source="军户@beizhili", target="流民@beizhili", amount=100, reason="逃亡"),
+    ]
+    keys = {tuple(item[key].split("@")) for item in items for key in ("source", "target")}
+    before = {(n, r): _pop(db, n, r) for n, r in keys}
+    applied = apply_score_extraction(db, state, {"population_transfers": items}, content, None)
+    assert not applied["population_transfers_rejections"]
+    assert len(applied["population_transfers"]) == len(items)
+    expected = dict(before)
+    for item in items:
+        src = tuple(item["source"].split("@"))
+        dst = tuple(item["target"].split("@"))
+        expected[src] -= int(item["amount"])
+        expected[dst] += int(item["amount"])
+    for key, want in expected.items():
+        got = _pop(db, key[0], key[1])
+        assert got == want, f"{key}: 期望 {want}，实得 {got}"

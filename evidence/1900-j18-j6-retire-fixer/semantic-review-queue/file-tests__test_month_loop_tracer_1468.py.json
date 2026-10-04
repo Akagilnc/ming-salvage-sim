@@ -1,0 +1,21 @@
+{
+  "source_path": "tests/test_month_loop_tracer_1468.py",
+  "member_count": 1,
+  "members": [
+    {
+      "idx": 1291,
+      "file": "tests/test_month_loop_tracer_1468.py",
+      "name": "test_issue_extraction_llm_dead_single_source_not_cta",
+      "line": 405,
+      "end": 458,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1291_test_month_loop_tracer_1468__test_issue_extraction_llm_dead_single_source_not_cta.txt",
+      "source_path": "tests/test_month_loop_tracer_1468.py"
+    }
+  ]
+}

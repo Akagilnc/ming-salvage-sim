@@ -1,0 +1,28 @@
+# FILE: tests/test_covert_levy_651.py
+# NAME: test_false_denunciation_is_not_retroactively_made_true_by_current_fork
+# LINE: 523-544
+# FLAGS: assert_count,mock_or_patch_present,helper_or_private_call
+# KIND: py
+
+def test_false_denunciation_is_not_retroactively_made_true_by_current_fork(game, monkeypatch):
+    from ming_sim.supervision import compose_denunciation_origin
+
+    db, state, _ = game
+    did, _, _, _ = _bound_case(db, state)
+    monkeypatch.setattr(db, "read_dossier_fork_state", lambda dossier_id: {
+        "dossier_id": dossier_id, "fork": True, "reported_bands": ["有成"],
+        "execution_outcome": "transformed", "actual_effect_count": 1, "beyond_intent": True,
+    })
+    values = (state.turn, "甲", "阉党", "乙", "东林", did, compose_denunciation_origin(is_true=False), "{}", "诬告")
+    db.conn.execute(
+        "INSERT INTO faction_denunciations(turn,accuser_name,accuser_faction,subject_name,"
+        "subject_faction,target_dossier_id,origin,payload_json,memorial_text) VALUES (?,?,?,?,?,?,?,?,?)",
+        values,
+    )
+    assert write_exposure_todos(db, state) == 0
+    db.conn.execute(
+        "INSERT INTO faction_denunciations(turn,accuser_name,accuser_faction,subject_name,"
+        "subject_faction,target_dossier_id,origin,payload_json,memorial_text) VALUES (?,?,?,?,?,?,?,?,?)",
+        (*values[:6], compose_denunciation_origin(is_true=True), "{}", "真举"),
+    )
+    assert write_exposure_todos(db, state) == 1

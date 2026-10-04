@@ -1,0 +1,14 @@
+# FILE: tests/test_new_issues_section_rejections.py
+# NAME: test_new_issue_non_string_tag_element_rejected
+# LINE: 466-473
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_new_issue_non_string_tag_element_rejected(read_game):
+    db, state, _ = read_game
+    ni = {"origin_kind": "decree", "kind": "situation", "title": "测试·脏tag元素", "tags": [5, "正常"]}
+    out = I.apply_issue_tracker_output(db, state, {"new_issues": [ni]})
+    rej = _rejected(out)
+    assert len(rej) == 1, out
+    assert rej[0]["category"] == "invalid_enum"
+    assert rej[0]["reason"]

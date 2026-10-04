@@ -1,0 +1,38 @@
+# FILE: tests/test_audience_translation_1838.py
+# NAME: test_protagonist_undo_reprojects_night_current
+# LINE: 253-284
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_protagonist_undo_reprojects_night_current(game, monkeypatch):
+    """御前主角夜当前值：宣 X → 转译覆盖 → undo 真入口按存活最近轮重投影。"""
+    db, state, content = game
+    _activate(db, state, "王绍徽", "王承恩")
+    night = open_night(db, state, location="乾清宫", time_of_day="戌时")
+    nid = int(night["id"])
+    sess = _scene_session(db, state, content, monkeypatch)
+
+    t1 = _active_chat_turn(db, state, nid)
+    r_xuan = sess.scene_chat("宣王绍徽", chat_turn_id=t1)
+    persist_and_schedule_scene(sess, db, r_xuan)
+    _drain_scene_owner(sess, db)
+    assert get_night_protagonist(db, nid) == "王绍徽"
+    assert db.conn.execute(
+        "SELECT protagonist_name FROM chat_turns WHERE id=?", (t1,),
+    ).fetchone()["protagonist_name"] == "王绍徽"
+
+    t2 = _active_chat_turn(db, state, nid)
+    apply_audience_round_translation(
+        db, state,
+        {"protagonist": {"person_name": "王承恩"}},
+        night_id=nid, chat_turn_id=t2,
+    )
+    assert get_night_protagonist(db, nid) == "王承恩"
+
+    # 全局最后存活轮先撤 t2 → 夜主角回到 t1 的王绍徽
+    db.undo_chat_turn(t2)
+    assert get_night_protagonist(db, nid) == "王绍徽"
+
+    # 再撤 t1 → 无存活声明，夜主角回初态空值
+    db.undo_chat_turn(t1)
+    assert get_night_protagonist(db, nid) == ""

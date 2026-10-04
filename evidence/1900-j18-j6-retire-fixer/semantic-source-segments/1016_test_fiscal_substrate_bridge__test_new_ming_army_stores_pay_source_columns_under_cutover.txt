@@ -1,0 +1,40 @@
+# FILE: tests/test_fiscal_substrate_bridge.py
+# NAME: test_new_ming_army_stores_pay_source_columns_under_cutover
+# LINE: 3120-3153
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_new_ming_army_stores_pay_source_columns_under_cutover(fresh_db):
+    state = fresh_db.load_state()
+    before_due = _read_settle(fresh_db, "shaanxi")["p"]["Due"]["军饷"]
+
+    created = fresh_db.create_armies_from_extraction(state, [{
+        "id": "valid_pay_source",
+        "name": "有饷源新军",
+        "manpower": 1000,
+        "owner_power": "ming",
+        "pay_source_region": "shaanxi",
+        "province_pay_share": 0.65,
+        "central_pay_share": 0.35,
+    }], commit=False)
+
+    assert created and created[0].get("created") is True
+    row = fresh_db.conn.execute(
+        """
+        SELECT arrears, province_pay_arrears, central_pay_arrears,
+               pay_source_region, province_pay_share, central_pay_share
+        FROM armies WHERE id = 'valid_pay_source'
+        """
+    ).fetchone()
+    assert row["pay_source_region"] == "shaanxi"
+    assert row["province_pay_share"] == pytest.approx(0.65)
+    assert row["central_pay_share"] == pytest.approx(0.35)
+    assert row["province_pay_arrears"] == pytest.approx(0)
+    assert row["central_pay_arrears"] == pytest.approx(0)
+    assert row["arrears"] == pytest.approx(0)
+    settle = _read_settle(fresh_db, "shaanxi")
+    assert settle["st"]["军饷欠"] == pytest.approx(
+        _province_pay_arrears(fresh_db, "shaanxi"), abs=1e-6
+    )
+    assert settle["p"]["Due"]["军饷"] == pytest.approx(_province_pay_due(fresh_db, "shaanxi"))
+    assert settle["p"]["Due"]["军饷"] > before_due

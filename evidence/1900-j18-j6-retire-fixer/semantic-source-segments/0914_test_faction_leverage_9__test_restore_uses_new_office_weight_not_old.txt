@@ -1,0 +1,60 @@
+# FILE: tests/test_faction_leverage_9.py
+# NAME: test_restore_uses_new_office_weight_not_old
+# LINE: 126-179
+# FLAGS: assert_text_compare_or_match
+# KIND: py
+
+def test_restore_uses_new_office_weight_not_old(game):
+    """#9 finding#3 时序：先把人 dismissed(低职/无职)，再经 apply_office_appointment 起复到不同权官，
+    leverage 加的是**新职**权重——起复到内阁(高权)后比起复到地方(低权)后更高。"""
+    db, state, content = game
+    # 取一个阉党在朝成员，先退场，再分别试起复到内阁 vs 地方，比末值。
+    # 用两份独立的人各跑一边，避免相互污染（同一 faction、同一回合两次起复会叠加）。
+    # #9 R1 finding#6：LIMIT 须配 ORDER BY，否则取哪两人顺序依赖、跨 SQLite 版本/页布局 flake。
+    cands = db.conn.execute(
+        "SELECT name FROM characters WHERE faction='阉党' AND status='active' "
+        "AND office_type NOT IN ('后宫','宗藩','未仕','') ORDER BY name LIMIT 2"
+    ).fetchall()
+    if len(cands) < 2:
+        pytest.skip("阉党在朝握官成员不足 2（数据依赖）")
+    name_hi, name_lo = cands[0]["name"], cands[1]["name"]
+
+    # 两人都退场（清各自权重），记基准
+    db.set_character_status(state, name_hi, "dismissed", reason="清算")
+    db.set_character_status(state, name_lo, "dismissed", reason="清算")
+    base_after_both_out = db.faction_leverage("阉党")
+
+    # name_lo 起复到地方(低权)
+    result_lo = apply_office_appointment(
+        db, state, content, name_lo, "某府知府",
+        reason="起复地方", faction="阉党", region_id="henan",
+    )
+    after_low = db.faction_leverage("阉党")
+
+    # name_hi 起复到内阁(高权)
+    result_hi = apply_office_appointment(
+        db, state, content, name_hi, "内阁大学士", reason="起复内阁", faction="阉党"
+    )
+    after_high = db.faction_leverage("阉党")
+
+    # cmr R3 finding#3 防假绿：两次任命都必须真落库（未被拒）——若低职任命被拒(inc_low=0)，
+    # 高职任命成功仍满足 inc_high>inc_low，本测试会假绿（没真验「加的是新职权重」）。
+    assert not result_lo.get("rejected"), f"起复到地方不应被拒：{result_lo}"
+    assert not result_hi.get("rejected"), f"起复到内阁不应被拒：{result_hi}"
+    # 低职起复后该人应 active 且 office 含目标低职（新职权重确被计入，而非任命形同未发生）。
+    assert db.get_character_status(name_lo)[0] == "active", "低职起复后该人应 active"
+    lo_office = db.conn.execute(
+        "SELECT office FROM characters WHERE name=?", (name_lo,)
+    ).fetchone()["office"]
+    assert "知府" in (lo_office or ""), "低职起复后 office 应含目标低职"
+
+    inc_low = after_low - base_after_both_out
+    inc_high = after_high - after_low
+    # 低职新权重确被计入（>0），不是被拒后的 0——这是与「加的是新职权重」相对的硬下界。
+    assert inc_low > 0, (
+        f"起复到地方(低权)应使 leverage 上升(新职权重确被计入)：inc_low={inc_low}"
+    )
+    # name_hi 起复(内阁)的增量 应大于 name_lo 起复(地方)的增量
+    assert inc_high > inc_low, (
+        f"起复到内阁(高权)的 leverage 增量应大于起复到地方(低权)：内阁+{inc_high} vs 地方+{inc_low}"
+    )

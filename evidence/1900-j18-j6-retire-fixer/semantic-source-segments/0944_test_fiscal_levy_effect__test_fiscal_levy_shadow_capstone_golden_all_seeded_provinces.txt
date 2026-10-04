@@ -1,0 +1,56 @@
+# FILE: tests/test_fiscal_levy_effect.py
+# NAME: test_fiscal_levy_shadow_capstone_golden_all_seeded_provinces
+# LINE: 191-240
+# FLAGS: assert_count,helper_or_private_call
+# KIND: py
+
+def test_fiscal_levy_shadow_capstone_golden_all_seeded_provinces(
+    game, year, expected_event_ids, expect_jiao_in_force, expect_lian_in_force
+):
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = year
+    state.period = 1
+    db.save_state(state)
+    region_ids = _settled_region_ids(db)
+    assert len(region_ids) == 17
+
+    pre_settle(state, db, content=content)
+
+    triggered_ids = {
+        str(row["event_id"])
+        for row in db.conn.execute(
+            "SELECT event_id FROM event_triggers WHERE turn=? AND terminal_state='triggered'",
+            (state.turn,),
+        ).fetchall()
+    }
+    assert expected_event_ids <= triggered_ids
+    if year == 1640:
+        assert db.conn.execute(
+            "SELECT terminal_reason FROM event_triggers WHERE event_id=?",
+            ("jiao_levy_stop_1640",),
+        ).fetchone()["terminal_reason"] == "已停"
+
+    for region_id in region_ids:
+        settle = _settle_payload(db, region_id)
+        meta = settle["_meta"]
+        seed_liao = meta["辽饷九厘基线"]
+        expected_sanxiang = seed_liao * 4.0 / 3.0
+        if expect_jiao_in_force:
+            expected_sanxiang += meta["剿饷基线"]
+        if expect_lian_in_force:
+            expected_sanxiang += meta["练饷基线"]
+        assert math.isclose(
+            settle["p"]["三饷应征"],
+            expected_sanxiang,
+            rel_tol=1e-9,
+            abs_tol=1e-9,
+        ), region_id
+        assert math.isclose(
+            settle["p"]["起运定额"],
+            meta["正赋起运基线"] + expected_sanxiang,
+            rel_tol=1e-9,
+            abs_tol=1e-9,
+        ), region_id
+        assert settle["p"]["起运定额"] >= settle["p"]["三饷应征"]
+        assert settle["p"]["起运定额"] >= 0

@@ -1,0 +1,40 @@
+# FILE: tests/test_audience_translate_1837.py
+# NAME: test_scene_chat_translation_can_approve_staged_action
+# LINE: 1001-1034
+# FLAGS: assert_text_compare_or_match,assert_count,mock_or_patch_present,helper_or_private_call
+# KIND: py
+
+def test_scene_chat_translation_can_approve_staged_action(game, monkeypatch):
+    db, state, content = game
+    night = open_night(db, state, location="乾清宫", time_of_day="夜")
+    night_id = int(night["id"])
+    _persist_night_chat(db, state, night_id, "昨夜已问边饷", "臣已回奏。")
+    staged = dispatch_declaration(
+        db, state,
+        {"commissions": [{"text": "旧暂存旨正文独特标记XYZ"}]},
+        minister_name="", night_id=night_id,
+    )
+    staged_id = int(staged.commissions.applied[0]["id"])
+
+    def translate_fn(prompt, llm_config):
+        return {
+            **offline_empty_audience_translate(prompt, llm_config),
+            "commissions": [],
+            "promises": [{"action_id": staged_id, "decision": "应允"}],
+        }
+
+    class FakeAgent:
+        def run(self, message):
+            return SimpleNamespace(content="臣领旨。", tools=[])
+
+    monkeypatch.setattr(
+        "ming_sim.session.create_scene_agent", lambda *a, **k: FakeAgent(),
+    )
+    sess = _sess(db, state, content, monkeypatch, translate_fn=translate_fn)
+    # 用不会与规则段「准」混淆的皇帝原话
+    _scene_turn(sess, db, state, "着即照办")
+
+    row = db.conn.execute(
+        "SELECT night_approved FROM pending_actions WHERE id=?", (staged_id,),
+    ).fetchone()
+    assert int(row["night_approved"] or 0) == 1

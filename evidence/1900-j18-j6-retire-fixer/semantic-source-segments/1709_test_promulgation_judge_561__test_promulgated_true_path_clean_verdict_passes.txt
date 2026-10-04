@@ -1,0 +1,17 @@
+# FILE: tests/test_promulgation_judge_561.py
+# NAME: test_promulgated_true_path_clean_verdict_passes
+# LINE: 273-283
+# FLAGS: helper_or_private_call
+# KIND: py
+
+def test_promulgated_true_path_clean_verdict_passes(game):
+    """#1397 钉测：干净顺颁真路径（仅 dossier_id+decision）过闸。"""
+    db, state, _content = game
+    dossier_id = _dossier(db, state)
+    dossiers = db.list_decree_dossiers(status="proposed")
+    context = decree_mod.build_promulgation_judge_context(db, state, dossiers)
+
+    assert decree_mod.validate_promulgation_verdicts(
+        [{"dossier_id": dossier_id, "decision": "promulgated"}],
+        dossiers, db, prepared_context=context,
+    ) == [{"dossier_id": dossier_id, "decision": "promulgated"}]

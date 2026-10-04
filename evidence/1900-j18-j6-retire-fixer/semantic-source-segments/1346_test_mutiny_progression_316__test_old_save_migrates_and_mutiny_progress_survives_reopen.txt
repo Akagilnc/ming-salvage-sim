@@ -1,0 +1,41 @@
+# FILE: tests/test_mutiny_progression_316.py
+# NAME: test_old_save_migrates_and_mutiny_progress_survives_reopen
+# LINE: 124-158
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_old_save_migrates_and_mutiny_progress_survives_reopen(game, tmp_path, fiscal_path):
+    db, state, content = game
+    path = str(tmp_path / "old-save.db")
+    copied = sqlite3.connect(path)
+    db.conn.backup(copied)
+    copied.execute("ALTER TABLE armies DROP COLUMN mutiny_count")
+    copied.execute("ALTER TABLE armies DROP COLUMN mutiny_probation")
+    copied.close()
+
+    migrated = GameDB(path, content)
+    defaults = migrated.conn.execute(
+        "SELECT mutiny_count,mutiny_probation FROM armies WHERE id=?", (ARMY,)
+    ).fetchone()
+    assert tuple(defaults) == (0, 0)
+    migrated.conn.execute(
+        "UPDATE armies SET loyalty=95,is_mutinied=1,mutiny_count=2,mutiny_probation=2 WHERE id=?",
+        (ARMY,),
+    )
+    migrated.conn.commit()
+    migrated.close()
+
+    reopened = GameDB(path, content)
+    try:
+        _configure(reopened, fiscal_path)
+        _set(reopened, fiscal_path, loyalty=95, arrears=0, latched=1)
+        restored = _tick(reopened, state)
+        assert tuple(restored[k] for k in ("loyalty", "is_mutinied", "mutiny_count", "mutiny_probation")) == (60, 0, 2, 1)
+        assert derive_army_mutiny_state(restored) == "不满"
+
+        _set(reopened, fiscal_path, loyalty=55, arrears=0, latched=0)
+        recovered = _tick(reopened, state)
+        assert tuple(recovered[k] for k in ("loyalty", "is_mutinied", "mutiny_count", "mutiny_probation")) == (60, 0, 2, 0)
+        assert derive_army_mutiny_state(recovered) == "正常"
+    finally:
+        reopened.close()

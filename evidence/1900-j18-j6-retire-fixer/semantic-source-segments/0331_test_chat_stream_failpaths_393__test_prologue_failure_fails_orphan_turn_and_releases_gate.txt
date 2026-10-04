@@ -1,0 +1,16 @@
+# FILE: tests/test_chat_stream_failpaths_393.py
+# NAME: test_prologue_failure_fails_orphan_turn_and_releases_gate
+# LINE: 155-164
+# FLAGS: helper_or_private_call
+# KIND: py
+
+def test_prologue_failure_fails_orphan_turn_and_releases_gate():
+    db = _FailingPrologueDB()
+    runtime, minister = _base_runtime(db)
+    gen = runtime.chat_stream("殿上", "辽东军情如何？")
+    with pytest.raises(RuntimeError):
+        next(gen)  # prologue 在 append_chat_message 崩 → 重新抛出
+    # 孤儿轮被失败掉（不留 active 无回复轮挡住该大臣）
+    assert db.failed_turns == [7]
+    # 写路径已释放：后续串行写与 drain 不阻塞
+    _assert_write_path_free(runtime)

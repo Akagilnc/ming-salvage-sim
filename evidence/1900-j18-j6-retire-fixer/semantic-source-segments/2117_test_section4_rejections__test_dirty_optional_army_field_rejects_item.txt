@@ -1,0 +1,22 @@
+# FILE: tests/test_section4_rejections.py
+# NAME: test_dirty_optional_army_field_rejects_item
+# LINE: 526-541
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_dirty_optional_army_field_rejects_item(game):
+    """new_armies 可选数值字段在场但脏(morale '高'→静默 50)= 伪造军备——
+    在场即须合法,拒该项留痕;缺省才走默认(cmr S2 r1 codex P1)。"""
+    db, state, content = game
+    turn = state.turn
+
+    run_settle(db, state, content, {
+        "new_armies": [{"id": "dirty_morale_army", "name": "脏士气军", "owner_power": "ming",
+                        "manpower": 5000, "maintenance_per_turn": 2, "morale": "高"}],
+    }, narrative="x", decree_text="y")
+
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM armies WHERE id='dirty_morale_army'").fetchone()[0] == 0
+    rows = [r for r in _rejection_rows(db, turn) if r[0] == "created_armies"]
+    assert len(rows) == 1
+    assert rows[0][2] == "invalid_enum"

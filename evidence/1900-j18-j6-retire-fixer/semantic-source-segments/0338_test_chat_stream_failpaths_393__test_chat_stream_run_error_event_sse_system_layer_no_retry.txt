@@ -1,0 +1,33 @@
+# FILE: tests/test_chat_stream_failpaths_393.py
+# NAME: test_chat_stream_run_error_event_sse_system_layer_no_retry
+# LINE: 642-668
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_chat_stream_run_error_event_sse_system_layer_no_retry(monkeypatch, game):
+    """#1452 B / #1465：真实 web 流入口——无 typed status 的 RunErrorEvent
+    → 一次不重试、系统层 typed 终失败、provider_message 保真。"""
+    agent = _RunErrorAgent()
+    web_game, minister = _transport_web_game(game, agent, monkeypatch)
+    calls = {"n": 0}
+    real_run = agent.run
+
+    def _count_run(*a, **k):
+        calls["n"] += 1
+        return real_run(*a, **k)
+
+    agent.run = _count_run  # type: ignore[method-assign]
+
+    response = _post_chat_stream(monkeypatch, web_game, minister)
+    assert response.status_code == 200, response.text
+    assert response.headers["content-type"].startswith("text/event-stream")
+    events = _parse_sse(response.text)
+    assert events, response.text
+    assert events[-1][0] == "error"
+    detail = events[-1][1]
+    assert detail.get("code") == "llm_stream_error"
+    assert "Unknown model error" in str(detail.get("provider_message") or "")
+    assert calls["n"] == 1
+    attempts = detail.get("transport_attempts") or []
+    assert len(attempts) == 1
+    assert attempts[0].get("outcome") == "terminal_fail"

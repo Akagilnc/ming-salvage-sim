@@ -1,0 +1,117 @@
+{
+  "source_path": "tests/test_transit_countdown_668.py",
+  "member_count": 8,
+  "members": [
+    {
+      "idx": 2264,
+      "file": "tests/test_transit_countdown_668.py",
+      "name": "test_henan_beizhili_matrix_special_case_le_one_and_symmetric",
+      "line": 28,
+      "end": 31,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2264_test_transit_countdown_668__test_henan_beizhili_matrix_special_case_le_one_and_symmetric.txt",
+      "source_path": "tests/test_transit_countdown_668.py"
+    },
+    {
+      "idx": 2265,
+      "file": "tests/test_transit_countdown_668.py",
+      "name": "test_henan_normal_speed_arrives_next_month",
+      "line": 33,
+      "end": 49,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2265_test_transit_countdown_668__test_henan_normal_speed_arrives_next_month.txt",
+      "source_path": "tests/test_transit_countdown_668.py"
+    },
+    {
+      "idx": 2266,
+      "file": "tests/test_transit_countdown_668.py",
+      "name": "test_speed_factors_progress_and_arrive_on_differentiated_route",
+      "line": 52,
+      "end": 77,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2266_test_transit_countdown_668__test_speed_factors_progress_and_arrive_on_differentiated_route.txt",
+      "source_path": "tests/test_transit_countdown_668.py"
+    },
+    {
+      "idx": 2267,
+      "file": "tests/test_transit_countdown_668.py",
+      "name": "test_pre_settle_tick_before_event_terminal_reads_new_location",
+      "line": 79,
+      "end": 98,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2267_test_transit_countdown_668__test_pre_settle_tick_before_event_terminal_reads_new_location.txt",
+      "source_path": "tests/test_transit_countdown_668.py"
+    },
+    {
+      "idx": 2268,
+      "file": "tests/test_transit_countdown_668.py",
+      "name": "test_pre_settle_tick_before_seed_auto_trigger_reads_new_location",
+      "line": 100,
+      "end": 122,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2268_test_transit_countdown_668__test_pre_settle_tick_before_seed_auto_trigger_reads_new_location.txt",
+      "source_path": "tests/test_transit_countdown_668.py"
+    },
+    {
+      "idx": 2269,
+      "file": "tests/test_transit_countdown_668.py",
+      "name": "test_ousted_in_transit_stops_countdown_and_never_arrives",
+      "line": 124,
+      "end": 139,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2269_test_transit_countdown_668__test_ousted_in_transit_stops_countdown_and_never_arrives.txt",
+      "source_path": "tests/test_transit_countdown_668.py"
+    },
+    {
+      "idx": 2270,
+      "file": "tests/test_transit_countdown_668.py",
+      "name": "test_mid_countdown_save_reopen_continues_identically",
+      "line": 159,
+      "end": 218,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2270_test_transit_countdown_668__test_mid_countdown_save_reopen_continues_identically.txt",
+      "source_path": "tests/test_transit_countdown_668.py"
+    },
+    {
+      "idx": 2271,
+      "file": "tests/test_transit_countdown_668.py",
+      "name": "test_arrivals_sorted_by_name_stable",
+      "line": 236,
+      "end": 248,
+      "flags": [
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2271_test_transit_countdown_668__test_arrivals_sorted_by_name_stable.txt",
+      "source_path": "tests/test_transit_countdown_668.py"
+    }
+  ]
+}

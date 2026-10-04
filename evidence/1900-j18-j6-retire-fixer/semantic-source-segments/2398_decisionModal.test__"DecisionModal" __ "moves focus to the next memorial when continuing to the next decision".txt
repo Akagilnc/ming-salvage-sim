@@ -1,0 +1,18 @@
+# FILE: web/src/components/decisionModal.test.tsx
+# NAME: "DecisionModal" / "moves focus to the next memorial when continuing to the next decision"
+# LINE: 141-152
+# FLAGS: web_mock_spy_or_calls
+# KIND: web
+
+  it("moves focus to the next memorial when continuing to the next decision", () => {
+    const cleanup = render(<DecisionModal decisions={decisions} onResolve={vi.fn()} />);
+    const options = document.querySelectorAll<HTMLButtonElement>(".decision-option");
+    const confirm = document.querySelector<HTMLButtonElement>(".decision-confirm");
+
+    act(() => options[0].click());
+    act(() => confirm!.click());
+
+    expect(document.querySelector(".decision-document-section h3")?.textContent).toBe("河工修治");
+    expect(document.activeElement).toBe(document.querySelector<HTMLButtonElement>(".decision-option"));
+    cleanup();
+  });

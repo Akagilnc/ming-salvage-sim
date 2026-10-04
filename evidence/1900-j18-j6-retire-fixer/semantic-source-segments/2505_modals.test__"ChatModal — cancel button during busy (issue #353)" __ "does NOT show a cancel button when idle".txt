@@ -1,0 +1,16 @@
+# FILE: web/src/components/modals.test.tsx
+# NAME: "ChatModal — cancel button during busy (issue #353)" / "does NOT show a cancel button when idle"
+# LINE: 1675-1684
+# FLAGS: web_mock_spy_or_calls
+# KIND: web
+
+  it("does NOT show a cancel button when idle", () => {
+    renderModal({
+      minister: MINISTER_MOCK,
+      portraitPrefix: "minister_",
+      busy: "",
+      onCancel: vi.fn(),
+    });
+    const cancelBtn = document.querySelector(".composer-cancel");
+    expect(cancelBtn).toBeNull();
+  });

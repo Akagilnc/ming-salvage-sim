@@ -1,0 +1,19 @@
+# FILE: tests/test_pay_order_override_653.py
+# NAME: test_staging_rejects_illegal_entries_fail_loud
+# LINE: 1105-1117
+# FLAGS: helper_or_private_call
+# KIND: py
+
+def test_staging_rejects_illegal_entries_fail_loud(game):
+    """成案点先验：非法键形/幻影 region 收夜即响亮拒，不入案卷。"""
+    db, state, _content = game
+    with pytest.raises(ValueError):
+        _override_dossier(db, state, [{"key": "due_priority_盐课", "value": 10}])
+    with pytest.raises(ValueError):
+        _override_dossier(db, state, [
+            {"key": "due_haircut_bp_军饷@SX#province", "value": 5000},
+        ])
+    with pytest.raises(ValueError):
+        _override_dossier(db, state, [{"key": "due_haircut_bp_宗禄", "value": 20000}])
+    with pytest.raises(ValueError):
+        _override_dossier(db, state, [])

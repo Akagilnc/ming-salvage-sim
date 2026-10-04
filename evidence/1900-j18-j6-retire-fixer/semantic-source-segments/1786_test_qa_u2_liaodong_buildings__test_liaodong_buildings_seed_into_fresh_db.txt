@@ -1,0 +1,16 @@
+# FILE: tests/test_qa_u2_liaodong_buildings.py
+# NAME: test_liaodong_buildings_seed_into_fresh_db
+# LINE: 44-53
+# FLAGS: assert_text_compare_or_match
+# KIND: py
+
+def test_liaodong_buildings_seed_into_fresh_db(game):
+    """新档 seed：liaodong region 建筑非空（只对新档生效）。"""
+    db, _state, _content = game
+    rows = db.conn.execute(
+        "SELECT id, name, category, maintenance FROM buildings WHERE region_id = ?",
+        ("liaodong",),
+    ).fetchall()
+    assert rows, "新档 buildings 表 liaodong 不得为空"
+    ids = {r["id"] for r in rows}
+    assert not (_CHEAT_BUILDING_IDS & ids)

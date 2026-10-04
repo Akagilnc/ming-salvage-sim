@@ -1,0 +1,49 @@
+# FILE: tests/test_fiscal_substrate_bridge.py
+# NAME: test_economy_pay_arrears_from_central_account_can_repay_pure_province_source_army
+# LINE: 2764-2806
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_economy_pay_arrears_from_central_account_can_repay_pure_province_source_army(fresh_db):
+    from ming_sim.issues import apply_score_extraction
+
+    state = fresh_db.load_state()
+    before_province = _province_pay_arrears(fresh_db, "fujian")
+    before_army = fresh_db.conn.execute(
+        """
+        SELECT arrears, province_pay_arrears, central_pay_arrears
+        FROM armies
+        WHERE id = 'fujian_navy'
+        """
+    ).fetchone()
+    assert before_army["province_pay_arrears"] > 3
+    assert before_army["central_pay_arrears"] == pytest.approx(0)
+
+    applied = apply_score_extraction(fresh_db, state, {"economy_moves": [{
+        "account": "国库", "delta": -3, "category": "补饷", "reason": "测试纯省源补饷",
+        "purpose": "补饷", "target_kind": "army", "target_id": "fujian_navy",
+        "origin_ref": "盘面自发",
+    }]})["economy_moves"]
+
+    after_army = fresh_db.conn.execute(
+        """
+        SELECT arrears, province_pay_arrears, central_pay_arrears
+        FROM armies
+        WHERE id = 'fujian_navy'
+        """
+    ).fetchone()
+
+    assert len(applied) == 1
+    assert applied[0]["delta"] == -3
+    assert applied[0]["applied"] is True
+    assert after_army["province_pay_arrears"] == pytest.approx(
+        before_army["province_pay_arrears"] - 3, abs=1e-6
+    )
+    assert after_army["central_pay_arrears"] == pytest.approx(0)
+    assert after_army["arrears"] == pytest.approx(before_army["arrears"] - 3, abs=1e-6)
+    assert _read_settle(fresh_db, "fujian")["st"]["军饷欠"] == pytest.approx(
+        _province_pay_arrears(fresh_db, "fujian"), abs=1e-6
+    )
+    assert _province_pay_arrears(fresh_db, "fujian") == pytest.approx(
+        before_province - 3, abs=1e-6
+    )

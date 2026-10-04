@@ -1,0 +1,15 @@
+# FILE: tests/test_transaction_boundary.py
+# NAME: test_connection_context_outside_atomic_still_commits
+# LINE: 281-289
+# FLAGS: assert_text_compare_or_match
+# KIND: py
+
+def test_connection_context_outside_atomic_still_commits(game):
+    """atomic 外 `with db.conn:` 保持原生语义：成功退出真提交。"""
+    db, state, content = game
+    db.conn.execute("DELETE FROM kv_store WHERE key='s1_ctx_out'")
+    db.conn.commit()
+    with db.conn:
+        db.conn.execute("INSERT INTO kv_store(key,value) VALUES('s1_ctx_out','y')")
+    assert db.kv_get("s1_ctx_out") == "y"
+    db.conn.execute("DELETE FROM kv_store WHERE key='s1_ctx_out'"); db.conn.commit()

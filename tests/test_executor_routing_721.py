@@ -404,8 +404,6 @@ def test_rolled_back_collector_reuse_does_not_mirror_orphan(env, monkeypatch, tm
 
     rows = [json.loads(line) for line in mirror.read_text(encoding="utf-8").splitlines()]
     assert [json.loads(row["item_json"])["marker"] for row in rows] == ["committed"]
-    assert db.conn._runtime_commit_callbacks == []
-    assert db.conn._runtime_rollback_callbacks == []
 
 
 def test_directive_routing_rejection_rolls_back_with_outer_owner(

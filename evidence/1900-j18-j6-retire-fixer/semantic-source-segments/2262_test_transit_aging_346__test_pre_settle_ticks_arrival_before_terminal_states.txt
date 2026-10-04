@@ -1,0 +1,52 @@
+# FILE: tests/test_transit_aging_346.py
+# NAME: test_pre_settle_ticks_arrival_before_terminal_states
+# LINE: 157-202
+# FLAGS: assert_text_compare_or_match
+# KIND: py
+
+def test_pre_settle_ticks_arrival_before_terminal_states(game):
+    """tick_transit_arrivals 必须在 apply_event_terminal_states 之前跑。"""
+    db, state, content = game
+    issues.bind_content(content)
+    name = active_ming_character(db, content)
+
+    ev = Event(
+        id="__test_transit_gate__", title="测试在途门控", kind="situation",
+        summary="x", urgency=50, severity=50, credibility=50,
+        interests=[], audiences=[],
+        trigger_year=1, trigger_month=0,
+        trigger_gate={
+            f"character.{name}.location": "==liaodong",
+            f"character.{name}.status": "==active",
+        },
+        person_core_subjects=[name],
+    )
+    content.events.append(ev)
+    try:
+        # 构造本 tick 必抵达：remaining 很小，且 start_turn < 当前 turn（次月起才减）
+        state.turn = 5
+        state.turn_phase = TurnPhase.REVIEWING.value
+        db.set_character_transit(
+            name,
+            location="beizhili",
+            transit_to="liaodong",
+            distance_remaining=0.5,
+            speed_factor=1.0,
+            start_turn=4,
+            content=content,
+        )
+        db.save_state(state)
+
+        pre_settle(state, db, content=content)
+
+        row = db.conn.execute(
+            "SELECT location, transit_to FROM characters WHERE name=?", (name,),
+        ).fetchone()
+        assert row["location"] == "liaodong" and row["transit_to"] == "", (
+            "倒数 tick 应已引擎抵达"
+        )
+        assert not db.has_event_terminal_state("__test_transit_gate__", "avoided"), (
+            "在途赴门控地者抵达月事件不应在 tick 前被误判 avoided"
+        )
+    finally:
+        content.events.remove(ev)

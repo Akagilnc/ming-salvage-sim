@@ -15,7 +15,6 @@ from tests.dossier_test_helpers import create_test_secret_order
 
 from ming_sim.materials import (
     MaterialsRoot,
-    _safe_segment,
     list_materials,
     material_tools,
     prepare_character_materials,
@@ -162,13 +161,13 @@ def test_read_material_stays_inside_directory(game, tmp_path):
         pass
     tools = {tool.__name__: tool for tool in material_tools(prepared.root)}
     assert tools["list_materials"]("../outside") == tools["read_material"]("../outside")
-    spaced_rel = f"人物/{_safe_segment('John Doe')}/经历.txt"
-    spaced_path = prepared.root / spaced_rel
-    spaced_path.parent.mkdir(parents=True, exist_ok=True)
-    spaced_path.write_text("经历正文\n", encoding="utf-8")
+    known_rel = "人物/已知路径/经历.txt"
+    known_path = prepared.root / known_rel
+    known_path.parent.mkdir(parents=True, exist_ok=True)
+    known_path.write_text("经历正文\n", encoding="utf-8")
     listing = tools["list_materials"]("")
-    assert spaced_rel in listing.splitlines()
-    assert tools["read_material"](spaced_rel) == "经历正文\n"
+    assert known_rel in listing.splitlines()
+    assert tools["read_material"](known_rel) == "经历正文\n"
     gazette_rel = "邸报/1627年9月.txt"
     gazette_path = prepared.root / gazette_rel
     gazette_path.parent.mkdir(parents=True, exist_ok=True)

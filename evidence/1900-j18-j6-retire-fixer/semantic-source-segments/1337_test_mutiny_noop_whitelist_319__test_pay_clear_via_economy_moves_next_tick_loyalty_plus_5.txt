@@ -1,0 +1,30 @@
+# FILE: tests/test_mutiny_noop_whitelist_319.py
+# NAME: test_pay_clear_via_economy_moves_next_tick_loyalty_plus_5
+# LINE: 404-427
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_pay_clear_via_economy_moves_next_tick_loyalty_plus_5(game, fiscal_path):
+    db, state, _ = game
+    _configure(db, fiscal_path)
+    _set(db, fiscal_path, loyalty=30, arrears=8, latched=1, mutiny_count=1)
+    before_loyalty = _row(db, "loyalty")["loyalty"]
+    assert float(_row(db, "arrears")["arrears"]) > 0
+
+    state.metrics["国库"] = 10**9
+    applied = issue_engine.apply_score_extraction(db, state, {"economy_moves": [{
+        "account": "国库", "delta": -8, "category": "补饷", "reason": "诏拨清欠",
+        "purpose": "补饷", "target_kind": "army", "target_id": ARMY, "origin_ref": SPONTANEOUS,
+    }]})["economy_moves"]
+    assert any(m.get("applied") for m in applied if isinstance(m, dict))
+
+    mid = _row(db, "arrears", "loyalty", "is_mutinied")
+    assert float(mid["arrears"]) == pytest.approx(0)
+    assert mid["loyalty"] == before_loyalty  # 补饷当次不得即时改 loyalty
+    assert mid["is_mutinied"] == 1
+
+    state.metrics["国库"] = 10**9
+    apply_fixed_period_flows(db, state)
+    after = _row(db, "loyalty", "arrears")
+    assert float(after["arrears"]) == pytest.approx(0)
+    assert after["loyalty"] == before_loyalty + 5

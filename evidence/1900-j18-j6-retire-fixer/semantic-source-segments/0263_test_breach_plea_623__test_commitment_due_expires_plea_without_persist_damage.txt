@@ -1,0 +1,33 @@
+# FILE: tests/test_breach_plea_623.py
+# NAME: test_commitment_due_expires_plea_without_persist_damage
+# LINE: 539-565
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_commitment_due_expires_plea_without_persist_damage(game):
+    db, state, content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.commit()
+    did, _ = _executing_policy_dossier(db, state, token="expire")
+    due = state.turn  # 已到期
+    cid, _ = _insert_commitment(
+        db, state, title="到期失效之诺", origin_ref=f"dossier:{did}",
+        bar_value=20, end_turn=due,
+    )
+    write_breach_plea_todo(
+        db, state, commitment_ref=cid,
+        breach_kind=BREACH_KIND_POLICY_REVERSAL, reason="欲撤",
+        target_dossier_id=did, commit=True,
+    )
+    auth_before = int(state.metrics.get("皇威", 0) or 0)
+    expired = expire_breach_pleas_on_due(db, state, commit=True)
+    assert expired
+    assert expired[0]["reason"] == "commitment_due"
+    assert _pending_pleas(db) == []
+    # 不补 0056 / 事轴倒退
+    assert _cost_events(db, did) == []
+    assert int(state.metrics.get("皇威", 0) or 0) == auth_before
+    # 承诺本身仍 active（#621 到期终局另管；此处只关挽留条）
+    assert db.conn.execute(
+        "SELECT status FROM issues WHERE id=?", (cid,),
+    ).fetchone()["status"] == "active"

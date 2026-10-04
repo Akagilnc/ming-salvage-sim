@@ -1,0 +1,68 @@
+# FILE: tests/test_urge_lever_624.py
+# NAME: test_rush_staged_commitment_advances_due_and_fills_urge_history
+# LINE: 161-222
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_rush_staged_commitment_advances_due_and_fills_urge_history(game):
+    db, state, content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.commit()
+    dossier_id = _executing_policy_dossier(db, state, host="倪元璐")
+    _set_integrity(db, "倪元璐", 30)
+    stages = _seed_stages(state)
+    issue_id, _ = _insert_staged_commitment(
+        db, state, content, stages=stages, origin_ref=f"dossier:{dossier_id}",
+    )
+    before_row = db.conn.execute(
+        "SELECT stages_json, end_turn FROM issues WHERE id=?", (issue_id,),
+    ).fetchone()
+    before = normalize_commitment_stages(before_row["stages_json"])
+    old_due = int(before[0]["due_turn"])
+    end_turn_before = int(before_row["end_turn"] or 0)
+
+    result = rush_staged_commitment_stage(
+        db, state,
+        commitment_ref=issue_id,
+        stage_idx=0,
+        deadline_months=3,
+        reason="着即赶办",
+    )
+    assert result["due_turn"] < old_due
+    assert int(result["due_turn"]) == state.turn + 3
+
+    after_row = db.conn.execute(
+        "SELECT stages_json, end_turn FROM issues WHERE id=?", (issue_id,),
+    ).fetchone()
+    after = normalize_commitment_stages(after_row["stages_json"])
+    assert int(after[0]["due_turn"]) == state.turn + 3
+    # 宪法级：催办唯一写口=stages_json；issues.end_turn 逐位不变
+    assert int(after_row["end_turn"] or 0) == end_turn_before
+    # 真源唯一：stages_json；不写 decree_dossiers.due_turn 作第二源
+    dossier = db.get_decree_dossier(dossier_id)
+    assert int(dossier.get("due_turn") or 0) == 0 or int(dossier.get("due_turn") or 0) != int(after[0]["due_turn"])
+
+    hist = collect_urge_history(db, commitment_ref=issue_id, dossier_id=dossier_id)
+    assert len(hist) >= 1
+    assert hist[-1]["old_due"] == old_due
+    assert hist[-1]["new_due"] == state.turn + 3
+
+    # build_due_review_input 唯一填充点
+    write_due_staged_commitment_todos(db, state)  # may be 0 if due not yet
+    # force a staged todo row for input build
+    tid = db.insert_next_audience_todo(
+        commitment_ref=issue_id,
+        stage_idx=0,
+        due_turn=int(after[0]["due_turn"]),
+        criterion_text="火器见眉目",
+        origin_context="三年火器见眉目",
+        status=TODO_STATUS_PENDING,
+        entry_kind=ENTRY_KIND_STAGED,
+        created_turn=state.turn,
+    )
+    assert tid > 0
+    todo = db.list_next_audience_todos(commitment_ref=issue_id)[0]
+    inp = build_due_review_input(db, todo)
+    assert inp["urge_history"]
+    assert inp["distortion_tendency"]["band"] in {"微歪", "易歪", "必歪", "不歪"}
+    assert inp["distortion_tendency"]["archetype"] == "附势"

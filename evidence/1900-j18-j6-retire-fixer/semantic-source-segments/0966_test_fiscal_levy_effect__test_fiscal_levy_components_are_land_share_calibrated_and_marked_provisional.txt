@@ -1,0 +1,33 @@
+# FILE: tests/test_fiscal_levy_effect.py
+# NAME: test_fiscal_levy_components_are_land_share_calibrated_and_marked_provisional
+# LINE: 967-993
+# FLAGS: helper_or_private_call
+# KIND: py
+
+def test_fiscal_levy_components_are_land_share_calibrated_and_marked_provisional(game):
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1639
+    state.period = 1
+    db.save_state(state)
+    total_land = _settle_land_sum(db)
+
+    apply_historical_fiscal_rates(state, db)
+
+    required_provisional = {"辽饷九厘基线", "剿饷基线", "练饷基线", "正赋起运基线"}
+    for region_id in _settled_region_ids(db):
+        settle = _settle_payload(db, region_id)
+        meta = settle["_meta"]
+        assert math.isclose(
+            meta["剿饷基线"],
+            _expected_land_share_levy(settle, JIAO_NATIONAL_MONTHLY, total_land),
+            rel_tol=1e-9,
+            abs_tol=1e-9,
+        ), region_id
+        assert math.isclose(
+            meta["练饷基线"],
+            _expected_land_share_levy(settle, LIAN_NATIONAL_MONTHLY, total_land),
+            rel_tol=1e-9,
+            abs_tol=1e-9,
+        ), region_id
+        assert required_provisional <= set(meta.get("provisional", [])), region_id

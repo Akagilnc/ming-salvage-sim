@@ -1,0 +1,11 @@
+# FILE: tests/test_relation_read_640.py
+# NAME: test_role_view_cuts_by_either_end_participation
+# LINE: 78-82
+# FLAGS: assert_text_compare_or_match
+# KIND: py
+
+def test_role_view_cuts_by_either_end_participation(ledger):
+    """边的任一端参与即知：乙端视角同样读到该边。"""
+    db, _ = ledger
+    cui_view = project_relation_ledger(db, viewer="崔呈秀")
+    assert [(d["source"], d["target"]) for d in cui_view] == [("王绍徽", "崔呈秀")]

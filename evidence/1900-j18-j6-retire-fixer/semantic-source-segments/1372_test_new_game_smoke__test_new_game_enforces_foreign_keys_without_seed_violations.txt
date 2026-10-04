@@ -1,0 +1,10 @@
+# FILE: tests/test_new_game_smoke.py
+# NAME: test_new_game_enforces_foreign_keys_without_seed_violations
+# LINE: 75-78
+# FLAGS: assert_count
+# KIND: py
+
+def test_new_game_enforces_foreign_keys_without_seed_violations(fresh_game_dir):
+    sess, _dbp, _content = fresh_game_dir
+    assert sess.db.conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
+    assert sess.db.conn.execute("PRAGMA foreign_key_check").fetchall() == []

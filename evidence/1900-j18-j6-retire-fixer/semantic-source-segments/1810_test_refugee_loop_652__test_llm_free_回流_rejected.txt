@@ -1,0 +1,17 @@
+# FILE: tests/test_refugee_loop_652.py
+# NAME: test_llm_free_回流_rejected
+# LINE: 261-271
+# FLAGS: helper_or_private_call
+# KIND: py
+
+def test_llm_free_回流_rejected(game):
+    db, state, content = game
+    free = apply_score_extraction(db, state, {
+        "population_transfers": [{
+            "source": "流民@shaanxi", "target": "农民@shaanxi",
+            "amount": 1000, "reason": "回流", "origin_ref": "盘面自发",
+        }],
+    }, content, None)
+    assert free["population_transfers"] == []
+    assert free["population_transfers_rejections"]
+    assert _pop(db, "流民", "shaanxi") == DISPLACED_SHAANXI

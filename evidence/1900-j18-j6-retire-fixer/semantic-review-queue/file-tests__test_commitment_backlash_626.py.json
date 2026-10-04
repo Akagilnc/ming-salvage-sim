@@ -1,0 +1,174 @@
+{
+  "source_path": "tests/test_commitment_backlash_626.py",
+  "member_count": 12,
+  "members": [
+    {
+      "idx": 400,
+      "file": "tests/test_commitment_backlash_626.py",
+      "name": "test_ac1_breach_verdict_triggers_commitment_backlash",
+      "line": 147,
+      "end": 194,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0400_test_commitment_backlash_626__test_ac1_breach_verdict_triggers_commitment_backlash.txt",
+      "source_path": "tests/test_commitment_backlash_626.py"
+    },
+    {
+      "idx": 401,
+      "file": "tests/test_commitment_backlash_626.py",
+      "name": "test_ac1_failed_terminal_triggers_commitment_backlash",
+      "line": 197,
+      "end": 237,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0401_test_commitment_backlash_626__test_ac1_failed_terminal_triggers_commitment_backlash.txt",
+      "source_path": "tests/test_commitment_backlash_626.py"
+    },
+    {
+      "idx": 402,
+      "file": "tests/test_commitment_backlash_626.py",
+      "name": "test_ac1_deformation_exposure_triggers_commitment_backlash",
+      "line": 240,
+      "end": 293,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0402_test_commitment_backlash_626__test_ac1_deformation_exposure_triggers_commitment_backlash.txt",
+      "source_path": "tests/test_commitment_backlash_626.py"
+    },
+    {
+      "idx": 403,
+      "file": "tests/test_commitment_backlash_626.py",
+      "name": "test_ac1_transformed_without_beyond_intent_does_not_trigger",
+      "line": 296,
+      "end": 324,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0403_test_commitment_backlash_626__test_ac1_transformed_without_beyond_intent_does_not_trigger.txt",
+      "source_path": "tests/test_commitment_backlash_626.py"
+    },
+    {
+      "idx": 404,
+      "file": "tests/test_commitment_backlash_626.py",
+      "name": "test_ac2_halfway_persist_one_national_plus_one_commitment_no_double_metrics",
+      "line": 330,
+      "end": 425,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0404_test_commitment_backlash_626__test_ac2_halfway_persist_one_national_plus_one_commitment_no_double_metrics.txt",
+      "source_path": "tests/test_commitment_backlash_626.py"
+    },
+    {
+      "idx": 405,
+      "file": "tests/test_commitment_backlash_626.py",
+      "name": "test_ac3_just_started_and_rooted_do_not_trigger",
+      "line": 431,
+      "end": 480,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0405_test_commitment_backlash_626__test_ac3_just_started_and_rooted_do_not_trigger.txt",
+      "source_path": "tests/test_commitment_backlash_626.py"
+    },
+    {
+      "idx": 406,
+      "file": "tests/test_commitment_backlash_626.py",
+      "name": "test_ac3_regret_then_resolve_no_breach_verdict_hammer",
+      "line": 483,
+      "end": 541,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0406_test_commitment_backlash_626__test_ac3_regret_then_resolve_no_breach_verdict_hammer.txt",
+      "source_path": "tests/test_commitment_backlash_626.py"
+    },
+    {
+      "idx": 407,
+      "file": "tests/test_commitment_backlash_626.py",
+      "name": "test_ac3_regret_then_expire_dropped_no_hammer",
+      "line": 544,
+      "end": 590,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0407_test_commitment_backlash_626__test_ac3_regret_then_expire_dropped_no_hammer.txt",
+      "source_path": "tests/test_commitment_backlash_626.py"
+    },
+    {
+      "idx": 408,
+      "file": "tests/test_commitment_backlash_626.py",
+      "name": "test_ac3_plea_due_expire_then_commitment_expire_no_hammer",
+      "line": 593,
+      "end": 645,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0408_test_commitment_backlash_626__test_ac3_plea_due_expire_then_commitment_expire_no_hammer.txt",
+      "source_path": "tests/test_commitment_backlash_626.py"
+    },
+    {
+      "idx": 409,
+      "file": "tests/test_commitment_backlash_626.py",
+      "name": "test_ac3_persist_stamps_verdict_and_still_triggers",
+      "line": 648,
+      "end": 678,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0409_test_commitment_backlash_626__test_ac3_persist_stamps_verdict_and_still_triggers.txt",
+      "source_path": "tests/test_commitment_backlash_626.py"
+    },
+    {
+      "idx": 410,
+      "file": "tests/test_commitment_backlash_626.py",
+      "name": "test_ac4_backlash_survives_restore_both_states",
+      "line": 684,
+      "end": 745,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0410_test_commitment_backlash_626__test_ac4_backlash_survives_restore_both_states.txt",
+      "source_path": "tests/test_commitment_backlash_626.py"
+    },
+    {
+      "idx": 411,
+      "file": "tests/test_commitment_backlash_626.py",
+      "name": "test_ac5_hook_idempotent_no_gate_table_expansion",
+      "line": 751,
+      "end": 781,
+      "flags": [
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0411_test_commitment_backlash_626__test_ac5_hook_idempotent_no_gate_table_expansion.txt",
+      "source_path": "tests/test_commitment_backlash_626.py"
+    }
+  ]
+}

@@ -1,0 +1,15 @@
+# FILE: tests/test_advances_section_rejections.py
+# NAME: test_advance_non_active_issue_rejected
+# LINE: 81-89
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_advance_non_active_issue_rejected(game):
+    db, state, _ = game
+    # 已结案 issue（非 active）→ advance_issue 回 None → missing_ref 留痕（陈旧引用）。
+    iid = _make_active_issue(db, state)
+    db.close_issue(state, iid, reason="resolved", narrative="先结案")
+    out = I.apply_issue_tracker_output(db, state, {"advances": [{"issue_id": iid, "delta_bar": 5}]})
+    rej = _rejected(out)
+    assert len(rej) == 1, out
+    assert rej[0]["category"] == "missing_ref"

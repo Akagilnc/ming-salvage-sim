@@ -1,0 +1,45 @@
+# FILE: tests/test_affairs_1831.py
+# NAME: test_typed_affair_new_issues_share_provenance_and_close_final_state
+# LINE: 155-193
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_typed_affair_new_issues_share_provenance_and_close_final_state(game):
+    db, state, content = game
+    existing = db.affairs.open(
+        name=NINGYUAN, origin=ORIGIN,
+        year=state.year, period=state.period, turn=state.turn,
+    )
+    result = apply_score_extraction(
+        db, state,
+        {
+            "affair_declarations": [
+                _declaration(attach="close", affair_id=existing.id),
+            ],
+            "new_issues": [
+                {
+                    "origin_kind": "decree", "kind": "situation",
+                    "title": "护送仍在途中",
+                    "affair_declaration": _declaration(
+                        attach="existing", affair_id=existing.id,
+                    ),
+                },
+                {
+                    "origin_kind": "decree", "kind": "situation",
+                    "title": "推演另起风波",
+                    "affair_declaration": _declaration(identity="new-storm"),
+                },
+            ],
+        },
+        content=content, open_affair_ids_at_input={existing.id},
+    )
+    created = result["issue_summary"]["new_issues"]
+    assert [item["rejected"] for item in created] == [False, False]
+    assert db.affairs.affair_id_for_issue(created[0]["issue_id"]) == existing.id
+    assert db.affairs.affair_id_for_issue(created[1]["issue_id"]) != existing.id
+    assert db.affairs.get(existing.id).status == "open"
+    assert any(
+        row["report_section"] == "affair_declarations"
+        and row["category"] == "invalid_shape"
+        for row in result["validate_shape_rejections"]
+    )

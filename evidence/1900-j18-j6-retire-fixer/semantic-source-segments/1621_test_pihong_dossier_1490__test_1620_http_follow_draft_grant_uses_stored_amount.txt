@@ -1,0 +1,37 @@
+# FILE: tests/test_pihong_dossier_1490.py
+# NAME: test_1620_http_follow_draft_grant_uses_stored_amount
+# LINE: 1667-1697
+# FLAGS: assert_text_compare_or_match,assert_count,mock_or_patch_present,helper_or_private_call
+# KIND: py
+
+def test_1620_http_follow_draft_grant_uses_stored_amount(web_game, monkeypatch):
+    """#1620 B：完整 grant option + 浏览器精简 follow（无 amount/account）真 HTTP 成案。"""
+    from ming_sim.models import TurnPhase
+    from ming_sim.rescript_draft import normalize_rescript_layer_a_option
+    db, state = (web_game.db, web_game.state)
+    mrow = db.conn.execute("SELECT name FROM characters WHERE status='active' AND power_id='ming' LIMIT 1").fetchone()
+    mname = str(mrow['name'])
+    grant_opt = normalize_rescript_layer_a_option({'label': '赏银', 'hint': '赏功', 'action_type': 'grant_allocation', 'assignee_name': '', 'target_kind': 'character', 'target_id': mname, 'locality_scope': 'none', 'region_id': '', 'transaction_category': '', 'grant_action': '赏赉', 'amount': 500, 'name': mname})
+    assert int(grant_opt['amount']) == 500
+    urgent, _ = _plant_urgent_desk(db, state, options=[grant_opt, _layer_a_option(label='备')])
+    stored = next((o for o in urgent['options'] or [] if isinstance(o, dict) and o.get('draft_capability') == grant_opt['draft_capability']))
+    assert int(stored.get('amount') or 0) == 500, 'option 持久化须含 amount'
+
+    def _phase2(_state, _db, *_a, **_k):
+        return '邸报：赏已落。'
+    monkeypatch.setattr(session_mod, 'resolve_decisions_phase2', _phase2)
+    db.save_resolve_context(int(state.turn), '诏', {'candidate_events': [], 'transit_semantics': []})
+    state.turn_phase = TurnPhase.AWAITING_DECISION.value
+    db.save_state(state)
+    before = len(db.list_decree_dossiers())
+    r = asyncio.run(_post_resolve([{'decision_key': urgent['decision_key'], 'action': 'follow_draft', 'draft_capability': grant_opt['draft_capability'], 'label': grant_opt['label']}]))
+    assert r.status_code == 200, r.text
+    assert 'event: error' not in r.text, r.text
+    assert 'event: done' in r.text, r.text
+    after = db.list_decree_dossiers()
+    assert len(after) == before + 1
+    created = after[-1]
+    assert str(created.get('action_type') or '') == 'grant_allocation'
+    payload = json.loads(str(created.get('payload_json') or '{}'))
+    assert int(payload.get('amount') or 0) == 500
+    assert str(payload.get('grant_action') or '') == '赏赉'

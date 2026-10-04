@@ -1,0 +1,22 @@
+# FILE: tests/test_month_open_snapshot_1234.py
+# NAME: test_oracle_settling_phase_keeps_display_for_recovery
+# LINE: 205-220
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_oracle_settling_phase_keeps_display_for_recovery(game):
+    """故障注入 settling 路：启动位后核账态仍在，交既有恢复通道。"""
+    db, state, _content = game
+    before = _click_before_metrics(state)
+    db.capture_month_open_snapshot(state)
+    state.metrics["国库"] = before["国库"] + 50
+    state.turn_phase = TurnPhase.SETTLING.value
+    db.save_state(state)
+
+    cleared = clear_orphan_month_open_snapshot(db, state)
+    assert cleared is False
+    assert db.get_month_open_snapshot(int(state.turn)) == before
+
+    payload = _runtime(db, state).state_payload()
+    assert payload["turn"]["settlement_display"] is True
+    assert payload["metrics"]["国库"] == before["国库"]

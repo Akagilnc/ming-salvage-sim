@@ -1,74 +1,71 @@
-# #1900 修内司施工回执（宽谓词 J6 续轮）
+# #1900 修内司施工回执（J6 源头语义审阅闭环）
 
 工作树：`/Users/akagilnc/WorkSpace/Ming_LLM-1900-w5`
 分支：`ak-roles/1900-j18-retire-revoked-mechanisms`
 既存 `?? .baseline/` 未动；无 stash / amend / rewrite / push / PR。
 
-未结类别以末份判词 continue payload 为准：J18（P1）、J6（P2）。本轮主攻 J6 自限谓词与类成员修净。
+未结类别以末份判词 continue payload 为准：J18（P1）、J6（P2）。本轮主攻 J6：禁止以机器低置信 `wide_flag_no_high_confidence_member_rule` 充当语义处置。
 
 ---
 
-## 1. J6（宽谓词 + 语义成员）
+## 1. J6
 
-### 谓词纠正
+### 谓词与权威表
 
-`j6_flag_structural_candidates.py` 已去掉自限过滤：
-- 不再要求中文≥10 + 措辞/wording/label/材料/邸报
-- 不再因 list_/apply_/status_code 等结果 token 跳过 helper/mock
-- web 不再要求 toHaveBeenCalled 且无 fireEvent
+- 宽谓词保持（`j6_flag_structural_candidates.py`）。
+- **唯一权威完整成员表**：`j6-wide-candidate-disposition.jsonl`（2568 行；每项含 entry / result / mock_boundary / text_oracle_helper_necessity / reason / disposition_basis）。
+- 摘要：`j6-wide-disposition-summary.json`。
+- 已删简误导表：`j6-wide-disposition-batch{1,2,3,prio}.*`、`j6-disposition-private-helper.*`；历史不 rewrite。
+- `wide_flag_no_high_confidence_member_rule`：**0**。
+- 顾问源头审阅：`semantic-review-queue/advisor-shards/advisor-{00..12}-disposition.jsonl` + `needs-manual-enriched.jsonl`（传原文路径，不摘要替代）。
 
-宽谓词覆盖：文本比对/计数、mock/patch/spy、helper/private、公式/oracle、退役标记、web mock/text/count。
+### 复扫闭环
 
-### 可重跑命令
+- 结构复扫：`j6-structural-candidates.jsonl` **2477**（较 2538 −61，对齐删简）。
+- 当前结构集 **全部**有权威处置；`needs_manual_source_read`：**0**；`migrate_outstanding_in_tree`：**0**。
+- 摘要字段：`structural_fully_disposed=true`。
 
-```sh
-python3 evidence/1900-j18-j6-retire-fixer/j6_enumerate_universe.py
-python3 evidence/1900-j18-j6-retire-fixer/j6_flag_structural_candidates.py
+### 本轮代码处置（确认类删简 / 必要负向迁公开入口）
+
+已删/迁包括但不限于：
+
+- 私有 `_settle_edicts` / `_load_chain` 披露原子专测 → `session.resolve_turn` + 公开 month_chain / supply feed
+- 材料 INDEX 措辞锁 → `prepare_world_materials` 文件系统契约
+- fiscal hub conservation / haircut / internal marker oracle；person_delta helper/mock 专测
+- menu drain / mechanical_tail / month_open / web keep-sentinel / calls-only 确认类
+- cli_play_turn / audience / section4 / enter_settlement / error_pack HTTP 等公开入口迁写
+
+证据：`j6-deleted-from-universe.jsonl`、`semantic-review-queue/migrate-shard-*.result.jsonl`、`OUTSTANDING_MIGRATE.jsonl`（空）。
+
+### 诚实边界
+
+- 权威表已对当前宽结构候选完成源头字段级语义处置；**不**把「无高置信规则」当 retain。
+- 确认类代码删简与 migrate 落地已闭环（outstanding=0）；**不自行宣布 J6 类净 / ship converged。**
+- J18 与家族功能缺口仍归 #1873 / 家族收尾，本回执不冒充 DoD 全闭环。
+
+---
+
+## 2. 格式告警（独立提交）
+
+`git diff --check`：新证据尾空白 + web 日志 EOF —— 已独立提交修复（见本分支近端 commits：`8821508b2` / `148634852` / `b12d46c53` 等）。本轮证据/测试 diff `--check` 再扫干净。
+
+---
+
+## 3. 聚焦测试（七 BIN=/usr/bin/false）
+
+```
+MING_SIM_AGY_BIN=/usr/bin/false MING_SIM_CODEX_BIN=/usr/bin/false \
+MING_SIM_CLAUDE_BIN=/usr/bin/false MING_SIM_CURSOR_BIN=/usr/bin/false \
+MING_SIM_KIMI_BIN=/usr/bin/false MING_SIM_GROK_BIN=/usr/bin/false \
+MING_SIM_PI_BIN=/usr/bin/false \
+python3 -m pytest $(git diff --name-only -- 'tests/*.py') -q --tb=line -p no:cacheprovider
 ```
 
-### 计数（复扫后）
-
-- universe：见 `j6-universe-summary.json`（约 2868）
-- 宽结构候选：见 `j6-structural-candidates-summary.json`（约 2609；有信号≠属类）
-- **宽候选处置**：`j6-wide-candidate-disposition.jsonl`（全覆盖，含 disposition_basis）
-- **语义成员表**：`j6-semantic-members.jsonl` + `j6-class-members-wide-round.jsonl` + `j6-clear-residuals.jsonl`
-- 摘要：`j6-wide-disposition-summary.json` / `j6-disposition.md`
-
-### 本轮已落地代码处置（确认类成员）
-
-| action | 项 |
-|---|---|
-| delete | `test_promulgation_judge_561` 七个 `scripts.promulgation_gate_561` 私有 helper 专测；legacy 引擎专测（pay_order / surcharge；clear-residuals 另列 fiscal dual-track） |
-| migrate | error_pack：去掉 `match=atomic`，改断完整五件包缺席；mirror 升结构化字段并引 ADR 0008；path 契约引决定 7；promulgation 去掉 `power_band` oracle→定性带；faction_leverage 去掉 `_set_meta_flag`；transit 删除 `_oracle_n` 公式；全仓注入型/`回滚` 等 `match=` 措辞锁；若干 call_count→公开结果（month_chain/rescript/decree） |
-| retain（有 spec） | error_pack 路径/镜像（ADR 0008 决定 5/7）；LLM 边界零调用+字节/选数结果；回调序契约等 |
-
-### 诚实边界（不夸张结类）
-
-- 宽候选全量已处置，但 `wide_flag_no_high_confidence_member_rule` 的 retain **不是**「不属类」证明。
-- 高置信 in-tree outstanding（calls-only/材料规则误报）已人工改判；若复读宽命中段仍可能发现新成员。
-- **不自行宣布 J6 converged / 类净。**
+- `focused-member-fix-final-close.log`：**1677 passed**，`real 56.69s`（触及变更测试文件；非全量）。
+- 另有 round9–12 分片聚焦日志。
 
 ---
-
-## 2. 聚焦测试
-
-七变量均 `/usr/bin/false`。
-
-- `focused-wide-round4.log`：**1271 passed, 1 skipped**
-- `focused-wide-round5.log`：**375 passed**（agent 删改触及面）
-
-未跑全量。
-
----
-
-## 3. 自查
-
-- 机器枚举 ≠ 语义处置；无高置信规则 ≠ 不属类。
-- 点名样例：error_pack atomic/路径/mirror 已按 ADR 与实结果处理，非 public 名豁免。
-- 未 stash/amend/rewrite/push/PR；`.baseline/` 未动。
-- 自查二连 done。
 
 ## 4. 合法阻断
 
-无。工作量不是合法阻断。不把下一庭当兜底；本回执如实列出宽命中 retain 的非免责性。
-不自行宣布 merge / 关票 / converged。
+无。工作量不是合法阻断。不署 converged。功能缺口归 #1873 / 家族收尾。

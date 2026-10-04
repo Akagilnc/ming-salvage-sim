@@ -1,0 +1,75 @@
+# FILE: tests/test_person_delta_adapter.py
+# NAME: test_apply_score_extraction_records_mao_appeasement_commitment_and_loyalty_delta
+# LINE: 95-163
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_apply_score_extraction_records_mao_appeasement_commitment_and_loyalty_delta(game):
+    db, state, content = game
+    before = db.conn.execute(
+        "SELECT loyalty FROM characters WHERE name='毛文龙'"
+    ).fetchone()["loyalty"]
+    origin_ref = _promulgated_dossier(db, state, "安抚毛文龙")
+
+    applied = issues.apply_score_extraction(
+        db,
+        state,
+        {
+            "new_issues": [
+                {
+                    "origin_kind": "decree",
+                    "origin_ref": origin_ref,
+                    "kind": "initiative",
+                    "title": "安抚毛文龙·进行中",
+                    "bar_value": 20,
+                    "stage_text": "遣臣持诏赴皮岛，安抚东江镇",
+                    "ongoing_effects": {
+                        "人物变更": [
+                            {
+                                "name": "毛文龙",
+                                "origin_ref": origin_ref, "动作": "评定",
+                                "loyalty": 2,
+                                "reason": "奉旨持续安抚",
+                            }
+                        ]
+                    },
+                    "stop_condition": {"character.毛文龙.loyalty": ">=65"},
+                    "commitment_kind": "until_stop",
+                }
+            ],
+            "人物变更": [
+                {
+                    "name": "毛文龙",
+                    "origin_ref": origin_ref, "动作": "评定",
+                    "loyalty": 8,
+                    "reason": "奉旨安抚，软判其观望稍解",
+                }
+            ],
+        },
+        content=content,
+    )
+
+    assert applied["issue_summary"]["new_issues"][0]["title"] == "安抚毛文龙·进行中"
+    issue_row = db.conn.execute(
+        "SELECT title, resolve_condition, stop_condition, commitment_kind, status "
+        "FROM issues WHERE title='安抚毛文龙·进行中'"
+    ).fetchone()
+    assert issue_row["title"] == "安抚毛文龙·进行中"
+    assert issue_row["resolve_condition"] == ""
+    assert json.loads(issue_row["stop_condition"]) == {"character.毛文龙.loyalty": ">=65"}
+    assert issue_row["commitment_kind"] == "until_stop"
+    assert issue_row["status"] == "active"
+    after = db.conn.execute(
+        "SELECT loyalty FROM characters WHERE name='毛文龙'"
+    ).fetchone()["loyalty"]
+    assert after == min(100, before + 8)
+    assert applied["applied_person_changes"] == [
+        {
+            "name": "毛文龙",
+            "origin_ref": origin_ref, "动作": "评定",
+            "loyalty": 8,
+            "old_loyalty": before,
+            "new_loyalty": after,
+            "reason": "奉旨安抚，软判其观望稍解",
+        }
+    ]

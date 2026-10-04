@@ -1,0 +1,17 @@
+# FILE: tests/test_junxin_monthly_tick_314.py
+# NAME: test_self_funded_army_untouched
+# LINE: 202-212
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call,retired_or_meta_marker
+# KIND: py
+
+def test_self_funded_army_untouched(game):
+    # 边界：self_funded_pay=1 的明控军不吃国库饷 → loyalty 不被 tick 动（legacy 路）。
+    db, state, _ = game
+    _use_legacy_fiscal_engine(db)
+    _silence_other_armies(db, keep=(KEG,))
+    db.conn.execute(
+        "UPDATE armies SET owner_power='ming', is_tusi=0, self_funded_pay=1, "
+        "manpower=10000, salary_rate=1.0, loyalty=50, arrears=10.0 WHERE id=?", (KEG,))
+    db.conn.commit()
+    _run_months(db, state, 1)
+    assert _loyalty_of(db, KEG) == 50, "自养军 loyalty 不得被 tick 动"

@@ -1,0 +1,27 @@
+# FILE: web/src/components/modals.test.tsx
+# NAME: "AudienceArchiveModal — read-only scene archive" / "hides the previous night's retry while the selected night is still loading"
+# LINE: 1310-1330
+# FLAGS: web_mock_spy_or_calls
+# KIND: web
+
+  it("hides the previous night's retry while the selected night is still loading", async () => {
+    let releaseScroll: (() => void) | undefined;
+    const pendingScroll = new Promise<void>((resolve) => { releaseScroll = resolve; });
+    vi.stubGlobal("fetch", vi.fn().mockImplementation((url: string) => {
+      if (url === "/api/history/turns") return Promise.resolve({ ok: true, json: async () => ({ turns: [
+        { kind: "night", night_id: 32, title: "乙夜", involved_people: [] },
+        { kind: "night", night_id: 31, title: "甲夜", involved_people: [] },
+      ] }) });
+      if (url.endsWith("32")) return pendingScroll.then(() => ({ ok: true, json: async () => ({ messages: [] }) }));
+      return Promise.resolve({ ok: true, json: async () => ({ messages: [
+        { role: "minister", content: "甲夜奏对", chat_turn_id: 8 },
+      ], translation_retries: [{ chat_turn_id: 8, night_id: 31, retryable: true }] }) });
+    }));
+    const host = document.createElement("div"); document.body.appendChild(host);
+    const root = createRoot(host); mountedRoots.push({ root, host });
+    await act(async () => { root.render(<AudienceArchiveModal ministers={[]} onClose={() => {}} />); await Promise.resolve(); await Promise.resolve(); });
+    expect(host.querySelector('[data-testid="archive-translation-retry-8"]')).not.toBeNull();
+    await act(async () => { host.querySelector<HTMLButtonElement>(".history-turn-item:not(.active)")?.click(); });
+    expect(host.querySelector('[data-testid="archive-translation-retry-8"]')).toBeNull();
+    releaseScroll?.();
+  });

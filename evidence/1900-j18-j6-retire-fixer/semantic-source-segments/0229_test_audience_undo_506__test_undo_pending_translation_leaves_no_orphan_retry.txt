@@ -1,0 +1,36 @@
+# FILE: tests/test_audience_undo_506.py
+# NAME: test_undo_pending_translation_leaves_no_orphan_retry
+# LINE: 260-289
+# FLAGS: assert_count,helper_or_private_call
+# KIND: py
+
+def test_undo_pending_translation_leaves_no_orphan_retry(game):
+    db, state, content = game
+    m = _active_minister(db, content)
+
+    # 垃圾 shape → 待补（extract_status='pending'），轮未抽落账
+    def _mark_pending(night_id: int, chat_id: int) -> None:
+        db.mark_story_extraction_pending(int(chat_id))
+    night_id, chat_id = _run_round(db, state, m, writes=_mark_pending)
+    # 注意 _run_round 无 facts 分支会把水位推到 done——此处显式改回 pending 建待补态
+    db.conn.execute("UPDATE chat_turns SET extract_status = 'pending' WHERE id = ?", (chat_id,))
+    db.conn.commit()
+
+    assert len(db.list_unextracted_replies(night_id=night_id)) == 1
+
+
+    db.undo_chat_turn(chat_id)
+
+    # 撤回后：该轮不再是待补重试真源（无孤儿重试入口），补跑不复活该轮账
+
+    assert len(db.list_unextracted_replies(night_id=night_id)) == 0
+
+    assert db.list_unextracted_replies(night_id=night_id) == []
+    # kill+重开后仍无重试入口（撤销持久）
+    db2 = _reopen(db, content)
+    try:
+
+        assert len(db2.list_unextracted_replies(night_id=night_id)) == 0
+
+    finally:
+        db2.close()

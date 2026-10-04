@@ -1,0 +1,21 @@
+# FILE: tests/test_event_chain_cascade.py
+# NAME: test_terminal_state_in_expired_or_obsolete_invalidates_when_upstream_triggered
+# LINE: 154-168
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_terminal_state_in_expired_or_obsolete_invalidates_when_upstream_triggered(game):
+    db, state, content = game
+    issues.bind_content(content)
+    upstream = _hist_event("__chain_upstream_triggered_for_nontriggered__")
+    downstream = _hist_event("__chain_downstream_requires_nontriggered_terminal__", {
+        "event.__chain_upstream_triggered_for_nontriggered__.terminal_state": "in=expired|obsolete",
+    })
+    with _TempEvents(content, upstream, downstream):
+        db.mark_event_triggered(state, upstream.id)
+
+        terminalized = issues.apply_event_cascading_invalidations(state, db)
+
+        assert any(item["id"] == downstream.id and item["terminal_state"] == "obsolete" for item in terminalized)
+        state_name, reason = _terminal_state(db, downstream.id)
+        assert state_name == "obsolete"

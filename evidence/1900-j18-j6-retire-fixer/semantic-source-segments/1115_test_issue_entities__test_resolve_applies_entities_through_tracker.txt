@@ -1,0 +1,71 @@
+# FILE: tests/test_issue_entities.py
+# NAME: test_resolve_applies_entities_through_tracker
+# LINE: 20-84
+# FLAGS: assert_text_compare_or_match,mock_or_patch_present,helper_or_private_call
+# KIND: py
+
+def test_resolve_applies_entities_through_tracker(game, monkeypatch, scenario):
+    db, state, content = game
+    name = active_ming_character(db, content)
+    person = content.characters[name]
+    for field in ("status", "office", "office_type", "location", "transit_to", "reason_code", "transit_distance_remaining", "transit_speed_factor", "transit_start_turn"):
+        if hasattr(person, field):
+            monkeypatch.setattr(person, field, getattr(person, field))
+    before_count = db.conn.execute("SELECT COUNT(*) FROM armies").fetchone()[0]
+    before_manpower = db.conn.execute("SELECT manpower FROM armies WHERE id='jingying'").fetchone()[0]
+    effects = {
+        "new_army": {"new_armies": [{"id": "tianxiongjun_test", "name": "天雄军测试", "owner_power": "ming", "manpower": 18000,
+            "maintenance_per_turn": 3, "commander": "卢象升", "station": "大名", "troop_type": "步",
+            "pay_source_region": "shaanxi", "province_pay_share": 1, "central_pay_share": 0}]},
+        "reinforce": {"army_delta": {"jingying": {"manpower": 500, "reason": "国策募兵"}}},
+        "exile": {"character_status_changes": [{"name": name, "status": "exiled", "reason": "国策清算"}]},
+        "death_in_prison": {"character_status_changes": [{"name": name, "status": "dead", "reason": "结案赐死"}]},
+        "exit_transit": {"character_status_changes": [{"name": name, "status": "dismissed", "reason": "局势问责"}]},
+        "departure": {"人物变更": [{"name": name, "动作": "行止", "transit_to": "liaodong"}]},
+        "appointment_shadows_legacy": {
+            "character_status_changes": [{"name": name, "status": "imprisoned", "reason_code": "陷虏"}],
+            "人物变更": [{"name": name, "动作": "任命", "office": "陕西总督", "office_type": "地方", "region_id": "shaanxi", "reason": "新键任官"}],
+        },
+        "metrics_only": {"metrics": {"民心": 5}},
+    }
+    if scenario == "death_in_prison":
+        db.set_character_status(state, name, "imprisoned", "前置下狱")
+        person.status, person.office, person.transit_to = "imprisoned", "", ""
+    elif scenario in ("exit_transit", "departure"):
+        db.conn.execute("UPDATE characters SET location='beizhili' WHERE name=?", (name,))
+        person.location = "beizhili"
+        if scenario == "exit_transit":
+            I.apply_person_changes_only(db, state, [{"name": name, "动作": "行止", "transit_to": "liaodong"}], content=content)
+    issue_id = db.insert_issue(state, kind="initiative", title="实体结案", origin_kind="decree",
+        origin_ref=_decree_origin(db, state), effect_on_resolve=effects[scenario])
+    result = I.apply_issue_tracker_output(db, state, {"close_issues": [{"issue_id": issue_id, "reason": "resolved"}]}, content=content)
+    assert result["closes"]
+    assert result["entity_rejections"] == []
+    if scenario == "new_army":
+        assert db.conn.execute("SELECT COUNT(*) FROM armies").fetchone()[0] == before_count + 1
+        row = db.conn.execute("SELECT manpower,commander FROM armies WHERE id='tianxiongjun_test'").fetchone()
+        assert dict(row) == {"manpower": 18000, "commander": "卢象升"}
+    elif scenario == "reinforce":
+        assert db.conn.execute("SELECT manpower FROM armies WHERE id='jingying'").fetchone()[0] == before_manpower + 500
+        assert db.conn.execute("SELECT COUNT(*) FROM armies").fetchone()[0] == before_count
+    elif scenario == "metrics_only":
+        assert db.conn.execute("SELECT COUNT(*) FROM armies").fetchone()[0] == before_count
+    else:
+        row = db.conn.execute("SELECT status,office,transit_to,reason_code FROM characters WHERE name=?", (name,)).fetchone()
+        if scenario == "departure":
+            assert row["transit_to"] == person.transit_to == "liaodong"
+        elif scenario == "appointment_shadows_legacy":
+            assert row["status"] == "active"
+            assert row["office"] == person.office == "陕西总督"
+            assert row["reason_code"] == ""
+            changes = result["applied_person_changes"]
+            assert all(item.get("status") != "imprisoned" for item in changes)
+            assert any(item.get("new_office") == "陕西总督" for item in changes)
+        else:
+            expected = {"exile": "exiled", "death_in_prison": "dead", "exit_transit": "dismissed"}[scenario]
+            assert row["status"] == person.status == expected
+            assert row["office"] == person.office == ""
+            assert row["transit_to"] == person.transit_to == ""
+        logs = db.conn.execute("SELECT action,person_name,origin_ref FROM person_logs WHERE person_name=? ORDER BY id DESC LIMIT 1", (name,)).fetchone()
+        assert logs["person_name"] == name
+        assert logs["origin_ref"].startswith("dossier:")

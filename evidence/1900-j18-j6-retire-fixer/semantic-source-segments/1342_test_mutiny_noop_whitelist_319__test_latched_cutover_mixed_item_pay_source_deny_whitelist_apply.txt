@@ -1,0 +1,41 @@
+# FILE: tests/test_mutiny_noop_whitelist_319.py
+# NAME: test_latched_cutover_mixed_item_pay_source_deny_whitelist_apply
+# LINE: 532-566
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_latched_cutover_mixed_item_pay_source_deny_whitelist_apply(game, pay_delta):
+    """混合 item：合法饷源半边不变；manpower 严格负 / loyalty 正仍按白名单落。"""
+    db, state, _ = game
+    _configure(db, "substrate_hub")
+    _set(
+        db,
+        "substrate_hub",
+        loyalty=30,
+        arrears=0,
+        latched=1,
+        mutiny_count=1,
+        manpower=10000,
+    )
+    before_pay = _snapshot(db, PAY_SOURCE_DENY_FIELDS)
+    before_mp = _row(db, "manpower", "loyalty")
+
+    db.apply_army_deltas(
+        state,
+        _event(),
+        None,
+        "测试",
+        {
+            ARMY: {
+                **pay_delta,
+                "manpower": -100,
+                "loyalty": 5,
+            }
+        },
+    )
+
+    after_pay = _snapshot(db, PAY_SOURCE_DENY_FIELDS)
+    after_mp = _row(db, "manpower", "loyalty")
+    assert after_pay == before_pay
+    assert after_mp["manpower"] == before_mp["manpower"] - 100
+    assert after_mp["loyalty"] == before_mp["loyalty"] + 5

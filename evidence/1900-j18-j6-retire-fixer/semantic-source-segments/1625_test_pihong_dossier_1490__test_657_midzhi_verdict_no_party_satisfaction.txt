@@ -1,0 +1,24 @@
+# FILE: tests/test_pihong_dossier_1490.py
+# NAME: test_657_midzhi_verdict_no_party_satisfaction
+# LINE: 1779-1796
+# FLAGS: helper_or_private_call
+# KIND: py
+
+def test_657_midzhi_verdict_no_party_satisfaction(game):
+    """Spec3/§C.8：midzhi 判决不写派系 satisfaction，且不落库猜派。"""
+    from tests.dossier_test_helpers import _sat
+    db, state, content = game
+    from ming_sim import rescript_actions as ra
+    urgent, _ = _plant_urgent_desk(db, state)
+    key = urgent['decision_key']
+    batch = ra.validate_all([urgent], [{'decision_key': key, 'action': 'midzhi', 'label': '中旨赈陕', 'action_type': 'assignment', 'target_kind': 'region', 'target_id': 'shaanxi', 'locality_scope': 'single', 'region_id': 'shaanxi', 'transaction_category': '督赈', 'deadline_months': 1, 'participant_roster': _roster(_ROSTER_LEAD)}])
+    ra.apply_rescript_batch(db, state, batch, ra.PrewriteResults(), content=content)
+    mid = next((d for d in db.list_decree_dossiers() if d.get('mode') == 'midzhi'))
+    before_f = _sat(db, 'factions', '东林')
+    before_c = _sat(db, 'classes', '士绅')
+    db.apply_dossier_verdicts(state, [{'dossier_id': int(mid['id']), 'decision': 'promulgated', 'affected_parties': [{'kind': 'faction', 'key': '东林', 'direction': 'negative', 'intensity': 'strong'}, {'kind': 'class', 'key': '士绅', 'direction': 'negative', 'intensity': 'strong'}]}], content=content)
+    assert _sat(db, 'factions', '东林') == before_f
+    assert _sat(db, 'classes', '士绅') == before_c
+    stored = db.conn.execute('SELECT affected_parties_json FROM decree_dossier_decisions WHERE dossier_id=? ORDER BY id DESC LIMIT 1', (int(mid['id']),)).fetchone()
+    parties = json.loads(str(stored['affected_parties_json'] or '[]'))
+    assert parties == []

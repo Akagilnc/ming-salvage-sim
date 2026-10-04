@@ -1,0 +1,10 @@
+# FILE: tests/test_transit_countdown_668.py
+# NAME: test_henan_beizhili_matrix_special_case_le_one_and_symmetric
+# LINE: 28-31
+# FLAGS: assert_text_compare_or_match
+# KIND: py
+
+def test_henan_beizhili_matrix_special_case_le_one_and_symmetric():
+    raw = json.loads((ROOT / 'content/distance_matrix.json').read_text(encoding='utf-8'))['matrix']
+    assert raw['henan']['beizhili'] <= 1.0
+    assert raw['beizhili']['henan'] == raw['henan']['beizhili']

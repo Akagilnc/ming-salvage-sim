@@ -1,0 +1,19 @@
+{
+  "source_path": "tests/test_decision_event_binding_389.py",
+  "member_count": 1,
+  "members": [
+    {
+      "idx": 441,
+      "file": "tests/test_decision_event_binding_389.py",
+      "name": "test_candidate_binding_at_player_prewrite",
+      "line": 16,
+      "end": 36,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0441_test_decision_event_binding_389__test_candidate_binding_at_player_prewrite.txt",
+      "source_path": "tests/test_decision_event_binding_389.py"
+    }
+  ]
+}

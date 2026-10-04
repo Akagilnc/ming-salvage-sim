@@ -1,0 +1,45 @@
+# FILE: tests/test_pihong_dossier_1490.py
+# NAME: test_1589_pure_decision_keyless_rejected_then_keyed_same_choice_passes
+# LINE: 1448-1486
+# FLAGS: assert_text_compare_or_match,assert_count
+# KIND: py
+
+def test_1589_pure_decision_keyless_rejected_then_keyed_same_choice_passes(web_game):
+    """#1589：纯 decision 无急务时，无键合法 choice 修前经 submit_decisions 位置匹配受理；
+    修后整批拒——decision 仍 pending、choice 未写、事件/案卷零写；显式 key 的同一选择正常通过。"""
+    from ming_sim.content import GameContent
+    from ming_sim.db import GameDB
+    db_path = _657_db_path_of(web_game)
+    _657_plant_awaiting_web(web_game, decisions=[{'title': '科参驳还', 'context': '科臣封驳', 'options': [{'label': '打回', 'hint': '驳'}, {'label': '准', 'hint': ''}], 'event_id': ''}])
+    desk = web_game.db.list_rescript_desk(int(web_game.state.turn))
+    d_key = str(desk[0]['decision_key'])
+    turn_before = int(web_game.state.turn)
+    dossiers_before = len(web_game.db.list_decree_dossiers())
+    web_game.session.close()
+    baseline_game = web_app.WebGame(fresh=False)
+    events_before = baseline_game.db.conn.execute('SELECT COUNT(*) AS c FROM event_triggers').fetchone()['c']
+    baseline_game.session.close()
+    keyless = [{'label': '打回', 'hint': '驳'}]
+    r1 = _657_subprocess_resolve(db_path, keyless)
+    assert r1.get('error') is True, r1
+    assert r1.get('done') is not True, r1
+    probe = GameDB(db_path, GameContent.load())
+    try:
+        assert int(probe.load_state().turn) == turn_before
+        decs = probe.list_pending_decisions(turn_before)
+        assert decs and all((str(d.get('status')) == 'pending' for d in decs)), decs
+        assert all((not d.get('choice') for d in decs)), decs
+        assert len(probe.list_decree_dossiers()) == dossiers_before
+        events_after = probe.conn.execute('SELECT COUNT(*) AS c FROM event_triggers').fetchone()['c']
+        assert events_after == events_before, (events_before, events_after)
+    finally:
+        probe.close()
+    keyed = [{'decision_key': d_key, 'label': '打回', 'hint': '驳', 'action': 'decision'}]
+    r2 = _657_subprocess_resolve(db_path, keyed)
+    assert r2.get('done') is True, r2
+    probe = GameDB(db_path, GameContent.load())
+    try:
+        decs = probe.list_pending_decisions(turn_before)
+        assert not decs or all((d.get('status') == 'decided' for d in decs)), decs
+    finally:
+        probe.close()

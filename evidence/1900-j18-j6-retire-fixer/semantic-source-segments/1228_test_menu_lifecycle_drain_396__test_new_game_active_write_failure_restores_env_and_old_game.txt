@@ -1,0 +1,30 @@
+# FILE: tests/test_menu_lifecycle_drain_396.py
+# NAME: test_new_game_active_write_failure_restores_env_and_old_game
+# LINE: 316-339
+# FLAGS: assert_text_compare_or_match,mock_or_patch_present
+# KIND: py
+
+def test_new_game_active_write_failure_restores_env_and_old_game(monkeypatch, tmp_path):
+    """#402 R2（CodeRabbit）：active_db.txt 写失败也必须回滚已改的 MING_SIM_DB。"""
+    old_db_path = str(tmp_path / "old_main.db")
+    queue = SessionWriteQueue()
+    old_game = SimpleNamespace(
+        _write_queue=queue,
+        _write_gate=queue.write_gate,
+        db_path=old_db_path,
+        session=SimpleNamespace(close=lambda: None),
+    )
+    monkeypatch.setattr(web_app, "web_game", old_game)
+    monkeypatch.setattr(web_app, "user_data_path", lambda *parts: str(tmp_path.joinpath(*parts)))
+    monkeypatch.setenv("MING_SIM_DB", old_db_path)
+    monkeypatch.setattr(web_app, "_write_active_db_path", lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("disk full")))
+
+    try:
+        asyncio.run(web_app.api_menu_new_game())
+    except OSError as exc:
+        assert "disk full" in str(exc)
+    else:
+        raise AssertionError("active_db.txt write failure should surface")
+
+    assert os.environ["MING_SIM_DB"] == old_db_path
+    assert web_app.web_game is old_game

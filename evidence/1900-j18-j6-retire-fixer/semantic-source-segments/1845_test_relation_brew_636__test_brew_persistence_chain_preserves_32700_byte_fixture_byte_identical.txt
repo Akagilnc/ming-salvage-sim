@@ -1,0 +1,37 @@
+# FILE: tests/test_relation_brew_636.py
+# NAME: test_brew_persistence_chain_preserves_32700_byte_fixture_byte_identical
+# LINE: 281-311
+# FLAGS: assert_count,helper_or_private_call
+# KIND: py
+
+def test_brew_persistence_chain_preserves_32700_byte_fixture_byte_identical(game):
+    # r4 冻结公式：B（UTF-8 75 字节）× 436 ＝ 32,700 字节，sha256 冻结。
+    block = "崇祯边事关系账超长验收样文-Chongzhen-relation-brew-0123456789-".encode("utf-8")
+    assert len(block) == 75
+    fixture = block * 436
+    assert len(fixture) == 32700
+    assert hashlib.sha256(fixture).hexdigest() == (
+        "8241a513648a4a99d6690f0a2cc942ee9523702301e6db12a9333c458c032240"
+    )
+    fixture_text = fixture.decode("utf-8")
+
+    db, state, _ = game
+    _add_edge(db, state, source=EMPEROR_NODE, target="杨嗣昌", kind="知遇",
+              context="越次一召。", origin="audience:turn-1")
+
+    def fixture_brew(payload_json: str) -> str:
+        return json.dumps(
+            {FOUNDINGS_KEY: [], RECENT_KEY: fixture_text}, ensure_ascii=False
+        )
+
+    # 经真实酿制持久化链路（run_month_end_relation_brew → apply_relation_brew_result）
+    # 写入→读回：字节原样，全链无截断无删改。
+    report = run_month_end_relation_brew(db, state, fixture_brew)
+    assert len(report["brewed"]) == 1
+
+    stored = db.get_relation_summary(EMPEROR_NODE, "杨嗣昌")["recent_segment"]
+    stored_bytes = stored.encode("utf-8")
+    assert len(stored_bytes) == 32700
+    assert hashlib.sha256(stored_bytes).hexdigest() == (
+        "8241a513648a4a99d6690f0a2cc942ee9523702301e6db12a9333c458c032240"
+    )

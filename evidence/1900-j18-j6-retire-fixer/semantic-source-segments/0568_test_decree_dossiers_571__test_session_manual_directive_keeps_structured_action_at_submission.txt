@@ -1,0 +1,53 @@
+# FILE: tests/test_decree_dossiers_571.py
+# NAME: test_session_manual_directive_keeps_structured_action_at_submission
+# LINE: 1502-1548
+# FLAGS: assert_text_compare_or_match,mock_or_patch_present,helper_or_private_call
+# KIND: py
+
+def test_session_manual_directive_keeps_structured_action_at_submission(
+    game, monkeypatch,
+):
+    from ming_sim.db import GameDB
+    from ming_sim.models import LLMConfig
+    from ming_sim.session import GameSession
+    import ming_sim.cli_backend as cli_backend
+
+    db, state, content = game
+    monkeypatch.setattr(
+        cli_backend, "_run_backend_for_config",
+        lambda *_a, **_k: (_ for _ in ()).throw(
+            AssertionError("add_directive 不得触发 backend")
+        ),
+    )
+    session = GameSession(
+        db.path,
+        LLMConfig(
+            api_key="", base_url="http://unused", model="unused", channel="api",
+        ),
+        content=content,
+    )
+    try:
+        directive = session.add_directive(
+            "着查河南河工",
+            dossier_payload={
+                "dossier_action_type": "assignment",
+                "target_kind": "region",
+                "target_id": "河南",
+                "locality_scope": "single",
+                "assignee": _active_minister(session.db),
+            },
+        )
+        assert session.db.get_dossier_for_directive(directive.id) is None
+
+        session.db.ensure_dossiers_for_draft_directives(session.state)
+        reopened = GameDB(db.path, content=content)
+        try:
+            dossier = reopened.get_dossier_for_directive(directive.id)
+            assert dossier["action_type"] == "assignment"
+            assert dossier["target_kind"] == "region"
+            assert dossier["target_id"] == "河南"
+            assert dossier["directive_id"] == directive.id
+        finally:
+            reopened.close()
+    finally:
+        session.db.close()

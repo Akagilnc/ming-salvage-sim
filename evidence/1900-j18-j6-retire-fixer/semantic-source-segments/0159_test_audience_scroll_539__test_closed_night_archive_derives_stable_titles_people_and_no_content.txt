@@ -1,0 +1,29 @@
+# FILE: tests/test_audience_scroll_539.py
+# NAME: test_closed_night_archive_derives_stable_titles_people_and_no_content
+# LINE: 442-464
+# FLAGS: assert_text_compare_or_match
+# KIND: py
+
+def test_closed_night_archive_derives_stable_titles_people_and_no_content(game):
+    db, state, _ = game
+    first = open_audience_night(db, state)
+    an.summon_enter(db, first, "杨嗣昌", method=an.METHOD_YUECI)
+    an.append_ledger_entry(db, first, tags=["军务"], person_names=["洪承畴", "杨嗣昌"])
+    append_night_chat(db, state, first, "孙传庭", "边饷如何？", "尚可支应。", 10)
+    db.conn.execute("UPDATE audience_nights SET status='closed' WHERE id=?", (first,))
+    second = open_audience_night(db, state)
+    append_night_chat(db, state, second, "洪承畴", "再议。", "臣遵旨。", 10)
+    db.conn.execute("UPDATE audience_nights SET status='closed' WHERE id=?", (second,))
+    db.conn.commit()
+
+    entries = db.list_closed_night_archives()
+
+    assert [item["night_id"] for item in entries] == [first, second]
+    assert [item["title"] for item in entries] == [
+        f"{state.year}年{state.period}月 · 戌时乾清宫 · 越次召对 · 第1场",
+        f"{state.year}年{state.period}月 · 戌时乾清宫 · 召对 · 第2场",
+    ]
+    assert entries[0]["audience_type"] == "越次召对"
+    assert entries[0]["involved_people"] == ["王承恩", "杨嗣昌", "洪承畴", "孙传庭"]
+    assert entries[1]["involved_people"] == ["王承恩", "洪承畴"]
+    assert all("messages" not in item and "content" not in item for item in entries)

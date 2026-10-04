@@ -1,0 +1,33 @@
+# FILE: web/src/components/modals.test.tsx
+# NAME: "ChatModal — one-night audience scroll (#1849)" / "removes an unpersisted streamed turn when its request fails"
+# LINE: 1205-1231
+# FLAGS: web_mock_spy_or_calls
+# KIND: web
+
+  it("removes an unpersisted streamed turn when its request fails", async () => {
+    let updateStreaming!: (message: string) => void;
+    let updatePendingIdentity!: (identity: { campaign_id: string; night_id: number; chat_turn_id: number } | null) => void;
+    let updateFailedIdentity!: (identity: { campaign_id: string; night_id: number; chat_turn_id: number } | null) => void;
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ night_id: 23, protagonist: "", roster: [], translation_pending: false, messages: [] }) }));
+    renderModal({
+      minister: hong,
+      ministers: [hong, xu],
+      portraitPrefix: "minister_",
+      currentNightId: 23,
+      pendingIdentity: { campaign_id: "test-campaign", night_id: 23, chat_turn_id: 11 },
+      streamingMinisterMessage: "未落卷回话",
+      registerStreamingUpdate: (update) => { updateStreaming = update; },
+      registerPendingIdentityUpdate: (update) => { updatePendingIdentity = update; },
+      registerFailedIdentityUpdate: (update) => { updateFailedIdentity = update; },
+    });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    expect(document.querySelector('[data-audience-turn-id="11"]')).not.toBeNull();
+
+    await act(async () => {
+      updateStreaming("");
+      updatePendingIdentity(null);
+      updateFailedIdentity({ campaign_id: "test-campaign", night_id: 23, chat_turn_id: 11 });
+      await Promise.resolve();
+    });
+    expect(document.querySelector('[data-audience-turn-id="11"]')).toBeNull();
+  });

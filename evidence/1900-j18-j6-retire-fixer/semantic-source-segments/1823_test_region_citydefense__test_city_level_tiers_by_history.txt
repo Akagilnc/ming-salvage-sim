@@ -1,0 +1,22 @@
+# FILE: tests/test_region_citydefense.py
+# NAME: test_city_level_tiers_by_history
+# LINE: 15-30
+# FLAGS: assert_count
+# KIND: py
+
+def test_city_level_tiers_by_history(read_game):
+    db, _, _ = read_game
+
+    def lv(rid):
+        return db.conn.execute("SELECT city_level FROM regions WHERE id=?", (rid,)).fetchone()[0]
+
+    assert lv("beizhili") == 5            # 京师
+    assert lv("nanzhili") == 4            # 陪都/江南
+    assert lv("zhejiang") == 4            # 江南
+    assert lv("shenyang_liaoyang") == 4   # 后金盛京
+    assert lv("huguang") == 3             # 汉口(四聚)
+    assert lv("shaanxi") == 2             # 西安,旱灾衰(不是1也不是3)
+    assert lv("liaodong") == 2            # 宁锦设防
+    assert lv("yunnan") == 1              # 边远
+    assert lv("dongjiang_area") == 0      # 皮岛孤悬
+    assert lv("mongol_chahar") == 0       # 游牧

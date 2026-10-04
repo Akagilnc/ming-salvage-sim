@@ -1,0 +1,36 @@
+# FILE: tests/test_chat_stream_failpaths_393.py
+# NAME: test_chat_stream_typed_429_preserved
+# LINE: 834-863
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_chat_stream_typed_429_preserved(monkeypatch, game):
+    """#1465 ① / #1750 phase0 §3：typed 429 经统一层保真 status/code/原因/次数。
+
+    复用边界：本片验证召对 HTTP SSE 入口的 typed 字段透传（_llm_error_detail 键）。
+    extractor 结算入口与 tracer_client 属切片② / #1750；不在此声称 extractor xfail 转绿。
+    """
+    reason = "model_concurrency_rate_limit_exceeded"
+
+    def _rate_limit(_n):
+        return LLMUnavailable(
+            "限流",
+            code="llm_run_error",
+            provider_message=reason,
+            status_code=429,
+        )
+
+    agent = _CountingFailAgent(fail_times=99, error_factory=_rate_limit)
+    web_game, minister = _transport_web_game(game, agent, monkeypatch)
+
+    response = _post_chat_stream(monkeypatch, web_game, minister)
+    events = _parse_sse(response.text)
+    detail = events[-1][1]
+    assert detail.get("status_code") == 429
+    assert detail.get("code") == "llm_run_error"
+    assert detail.get("provider_message") == reason
+    assert agent.calls == 1
+    attempts = detail.get("transport_attempts") or []
+    assert len(attempts) == 1
+    assert attempts[0].get("status_code") == 429
+    assert attempts[0].get("outcome") == "terminal_fail"

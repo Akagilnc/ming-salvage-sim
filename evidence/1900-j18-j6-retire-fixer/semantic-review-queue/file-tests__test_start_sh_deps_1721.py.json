@@ -1,0 +1,50 @@
+{
+  "source_path": "tests/test_start_sh_deps_1721.py",
+  "member_count": 3,
+  "members": [
+    {
+      "idx": 2187,
+      "file": "tests/test_start_sh_deps_1721.py",
+      "name": "test_start_sh_syncs_requirements_before_uvicorn",
+      "line": 92,
+      "end": 118,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2187_test_start_sh_deps_1721__test_start_sh_syncs_requirements_before_uvicorn.txt",
+      "source_path": "tests/test_start_sh_deps_1721.py"
+    },
+    {
+      "idx": 2188,
+      "file": "tests/test_start_sh_deps_1721.py",
+      "name": "test_start_sh_default_path_runs_pip_frontend_and_uvicorn_in_order",
+      "line": 121,
+      "end": 139,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2188_test_start_sh_deps_1721__test_start_sh_default_path_runs_pip_frontend_and_uvicorn_in_order.txt",
+      "source_path": "tests/test_start_sh_deps_1721.py"
+    },
+    {
+      "idx": 2189,
+      "file": "tests/test_start_sh_deps_1721.py",
+      "name": "test_start_sh_pip_failure_does_not_start_uvicorn",
+      "line": 142,
+      "end": 154,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2189_test_start_sh_deps_1721__test_start_sh_pip_failure_does_not_start_uvicorn.txt",
+      "source_path": "tests/test_start_sh_deps_1721.py"
+    }
+  ]
+}

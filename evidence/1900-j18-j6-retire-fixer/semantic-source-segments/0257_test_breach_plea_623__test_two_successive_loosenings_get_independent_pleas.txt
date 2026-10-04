@@ -1,0 +1,38 @@
+# FILE: tests/test_breach_plea_623.py
+# NAME: test_two_successive_loosenings_get_independent_pleas
+# LINE: 284-315
+# FLAGS: assert_count,helper_or_private_call
+# KIND: py
+
+def test_two_successive_loosenings_get_independent_pleas(game):
+    db, state, content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.commit()
+    did, _ = _executing_policy_dossier(db, state, token="twice")
+    origin = f"dossier:{did}"
+    db.record_issue_economy_move(
+        state, "国库", -3, "月供", "历史供拨", origin_ref=origin, commit=True,
+    )
+    cid, _ = _insert_commitment(
+        db, state, title="两度松手之诺", origin_ref=origin,
+        ongoing_effects={}, bar_value=20, end_turn=state.turn + 40,
+    )
+    # 第一次：断供
+    t1 = write_breach_plea_todo(
+        db, state, commitment_ref=cid, breach_kind=BREACH_KIND_FUNDING,
+        reason="断供", target_dossier_id=did, commit=True,
+    )
+    assert t1 > 0
+    # 推进一回合后第二次：改弦
+    state.turn += 1
+    db.save_state(state)
+    t2 = write_breach_plea_todo(
+        db, state, commitment_ref=cid, breach_kind=BREACH_KIND_POLICY_REVERSAL,
+        reason="改弦", target_dossier_id=did, commit=True,
+    )
+    assert t2 > 0
+    assert t2 != t1
+    pleas = _pending_pleas(db)
+    assert len(pleas) == 2
+    stage_idxs = sorted(int(p["stage_idx"]) for p in pleas)
+    assert stage_idxs[0] != stage_idxs[1]

@@ -1,0 +1,11 @@
+# FILE: tests/test_cli_backend.py
+# NAME: test_gate_llm_config_api_from_env
+# LINE: 199-203
+# FLAGS: assert_text_compare_or_match
+# KIND: py
+
+def test_gate_llm_config_api_from_env(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-env")
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://example.test/v1")
+    cfg = cb.gate_llm_config_from_args(SimpleNamespace(channel="api", runner="", model="m", api_key="", base_url=""))
+    assert cfg.api_key == "sk-env" and cfg.base_url == "https://example.test/v1"

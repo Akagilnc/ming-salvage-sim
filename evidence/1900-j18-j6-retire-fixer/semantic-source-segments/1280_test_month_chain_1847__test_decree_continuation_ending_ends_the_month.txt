@@ -1,0 +1,51 @@
+# FILE: tests/test_month_chain_1847.py
+# NAME: test_decree_continuation_ending_ends_the_month
+# LINE: 1037-1081
+# FLAGS: assert_text_compare_or_match,mock_or_patch_present,helper_or_private_call
+# KIND: py
+
+def test_decree_continuation_ending_ends_the_month(game, monkeypatch):
+    """旨意问后续推的退位结局写入月链，推进不得当成 ongoing。"""
+    from ming_sim.models import LLMConfig
+
+    db, state, content = game
+    closed_turn = int(state.turn)
+    minister = next(iter(content.characters.values())).name
+    affair = db.affairs.open(
+        name="问后结局", origin="旨意", year=state.year, period=state.period, turn=state.turn,
+    )
+    _pending_id, ref = _stage_edict(db, state, minister, "逊国", "逊国", -1, affair.id)
+    db.conn.execute(
+        "UPDATE staged_declarations SET questions_json=? WHERE decree_ref=?",
+        (json.dumps([{
+            "title": "是否逊国", "context": "国势已去",
+            "options": [{"label": "逊", "hint": "退位"}, {"label": "守", "hint": "不退"}],
+        }], ensure_ascii=False), ref),
+    )
+    db.conn.commit()
+
+    def translate(*_a, **kwargs):
+        if "煤山" not in str(kwargs.get("segment") or ""):
+            return {"effects": {}}
+        return {"effects": {"emperor_fate": "abdicate"}}
+
+    _forbid_extractor(monkeypatch)
+    monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
+    monkeypatch.setattr(month_chain, "_run_decree_continuation_text", lambda *a, **k: "煤山已定。")
+    monkeypatch.setattr(month_translate, "translate_month_segment", translate)
+    monkeypatch.setattr(month_chain, "run_gazette_text", lambda *a, **k: ("邸报", "逊国已闻"))
+    monkeypatch.setattr("ming_sim.mechanical_tail._run_tail_body", lambda *a, **k: "done")
+    session = make_light_session(db, state, content)
+    session.llm_config = LLMConfig(
+        api_key="sk-test", base_url="https://example.invalid", model="test",
+    )
+    session.resolve_turn(allow_empty_decree=True)
+    question = session.pending_decisions()[0]
+    session.submit_hitl_choices([_choice(question)], write_gate=session._write_gate)
+
+    again = session.resolve_turn(allow_empty_decree=True)
+
+    assert again.advanced is True
+    assert state.ended is True
+    assert state.ending_status == "emperor_abdicate"
+    assert month_chain._load_chain(db, closed_turn)["declaration_outcome"]["status"] == "emperor_abdicate"

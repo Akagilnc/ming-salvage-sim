@@ -1,0 +1,51 @@
+# FILE: tests/test_fiscal_levy_effect.py
+# NAME: test_liao_levy_rise_triggers_on_no_edict_advance_before_fiscal_tick
+# LINE: 125-169
+# FLAGS: mock_or_patch_present,helper_or_private_call
+# KIND: py
+
+def test_liao_levy_rise_triggers_on_no_edict_advance_before_fiscal_tick(game, monkeypatch):
+    """#1274：无旨完整结算 pre_settle 内历史饷率事件仍在 fiscal tick 前触发。"""
+    import ming_sim.month_chain as month_chain
+    from ming_sim.session import GameSession
+
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1631
+    state.period = 1
+    db.save_state(state)
+    before = _settle_payload(db, "shaanxi")
+    seed_liao = before["p"]["三饷应征"]
+    target_liao = seed_liao * 4.0 / 3.0
+
+    monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
+
+    sess = GameSession.__new__(GameSession)
+    sess.db, sess.state, sess.content = db, state, content
+    sess.registry = sess.llm_config = sess.agno_db = None
+    sess.deaths_this_turn, sess.debuts_this_turn = [], []
+    sess.last_decree = sess.last_report = ""
+    sess._decree_draft_fingerprint = ()
+    sess._scene_registry = sess._beat_generator = None
+    sess.auto_save = lambda *a, **k: None
+    sess.advance_without_decree()
+
+    row = db.conn.execute(
+        "SELECT terminal_state, terminal_reason, source FROM event_triggers WHERE event_id=?",
+        ("liao_levy_rise_1631",),
+    ).fetchone()
+    assert dict(row) == {
+        "terminal_state": "triggered",
+        "terminal_reason": "已准",
+        "source": "fiscal_levy_shadow",
+    }
+    after = _settle_payload(db, "shaanxi")
+    assert math.isclose(after["p"]["三饷应征"], target_liao, rel_tol=1e-9, abs_tol=1e-9)
+    assert math.isclose(
+        after["st"]["C_地方截留"],
+        (after["p"]["正赋应征"] + target_liao)
+        * after["p"]["火耗率"]
+        * (1 - after["p"]["逋赋率"]),
+        rel_tol=1e-9,
+        abs_tol=1e-9,
+    )

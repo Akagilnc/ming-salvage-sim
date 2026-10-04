@@ -1,0 +1,40 @@
+# FILE: tests/test_month_chain_1847.py
+# NAME: test_decree_question_and_world_question_share_one_desk
+# LINE: 439-472
+# FLAGS: assert_text_compare_or_match,mock_or_patch_present,helper_or_private_call
+# KIND: py
+
+def test_decree_question_and_world_question_share_one_desk(game, monkeypatch):
+    db, state, content = game
+    minister = next(iter(content.characters.values())).name
+    affair = db.affairs.open(
+        name="同页请旨", origin="旨意", year=state.year, period=state.period, turn=state.turn,
+    )
+    _pending_id, ref = _stage_edict(db, state, minister, "陕西赈灾", "陕西赈灾", -1, affair.id)
+    db.conn.execute(
+        "UPDATE staged_declarations SET questions_json=? WHERE decree_ref=?",
+        (json.dumps([{
+            "title": "是否加赈",
+            "context": "灾民待哺",
+            "options": [
+                {"label": "加赈十万", "hint": "国库吃紧"},
+                {"label": "照旧", "hint": "勉力支撑"},
+            ],
+        }], ensure_ascii=False), ref),
+    )
+    db.conn.commit()
+    _forbid_extractor(monkeypatch)
+    monkeypatch.setattr(
+        month_chain, "run_world_segment_text",
+        lambda *a, **k: "边警。" + _decision_block("是否增援宁远", "准调", "暂缓"),
+    )
+    monkeypatch.setattr(
+        month_translate, "translate_month_segment", lambda *a, **k: {"effects": {}},
+    )
+    session = make_light_session(db, state, content)
+
+    result = session.resolve_turn(allow_empty_decree=True)
+
+    assert result.awaiting is True
+    titles = {row["title"] for row in session.pending_decisions()}
+    assert titles == {"是否加赈", "是否增援宁远"}

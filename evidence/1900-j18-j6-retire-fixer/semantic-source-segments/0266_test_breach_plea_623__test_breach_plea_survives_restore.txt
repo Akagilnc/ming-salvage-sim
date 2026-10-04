@@ -1,0 +1,33 @@
+# FILE: tests/test_breach_plea_623.py
+# NAME: test_breach_plea_survives_restore
+# LINE: 643-669
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_breach_plea_survives_restore(game):
+    db, state, content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.commit()
+    did, _ = _executing_policy_dossier(db, state, token="restore")
+    cid, _ = _insert_commitment(
+        db, state, title="restore挽留", origin_ref=f"dossier:{did}",
+        bar_value=20, end_turn=state.turn + 20,
+    )
+    write_breach_plea_todo(
+        db, state, commitment_ref=cid,
+        breach_kind=BREACH_KIND_MISAPPROPRIATION, reason="挪",
+        target_dossier_id=did, commit=True,
+    )
+    path = db.path
+    db.conn.close()
+    from ming_sim.db import GameDB
+    db2 = GameDB(path)
+    state2 = db2.load_state()
+    pleas = [
+        t for t in db2.list_next_audience_todos(status=TODO_STATUS_PENDING)
+        if t.get("entry_kind") == ENTRY_KIND_BREACH_PLEA
+    ]
+    assert len(pleas) == 1
+    scenes = list_due_review_scenes(db2, state2)
+    assert any(s.get("kind") == "breach_plea" for s in scenes)
+    db2.close()

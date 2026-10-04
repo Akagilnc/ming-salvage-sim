@@ -1,0 +1,32 @@
+# FILE: tests/test_executor_routing_721.py
+# NAME: test_existing_delegated_lead_is_preserved_not_demoted
+# LINE: 114-139
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_existing_delegated_lead_is_preserved_not_demoted(env):
+    """委派主办照钉、不降档；#1778：仅委派主办不算点将（须另有无委派主办）。"""
+    db, state, _ = env
+    # 仅委派主办 → multi_month unassigned 响亮（与 bulk named_leads 同口径）
+    with pytest.raises(ValueError):
+        _create(
+            db, state, category="清丈",
+            participants=[
+                {"character_id": "毕自严", "tier": "协办"},
+                {"character_id": "陈新甲", "tier": "主办", "delegator_id": "毕自严"},
+            ],
+        )
+    # 有无委派主办时，委派主办仍照钉、代码不另塞职司人
+    dossier_id = _create(
+        db, state, category="清丈",
+        participants=[
+            {"character_id": "毕自严", "tier": "主办"},
+            {"character_id": "陈新甲", "tier": "主办", "delegator_id": "毕自严"},
+        ],
+    )
+    persisted = db.get_decree_dossier(dossier_id)["participant_roster"]
+    by_name = {e["character_id"]: e for e in persisted}
+    assert by_name["毕自严"]["tier"] == "主办"
+    assert not str(by_name["毕自严"].get("delegator_id") or "").strip()
+    assert by_name["陈新甲"]["tier"] == "主办"
+    assert by_name["陈新甲"].get("delegator_id") == "毕自严"

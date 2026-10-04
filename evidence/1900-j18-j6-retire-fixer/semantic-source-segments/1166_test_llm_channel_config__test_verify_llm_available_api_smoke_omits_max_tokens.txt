@@ -1,0 +1,28 @@
+# FILE: tests/test_llm_channel_config.py
+# NAME: test_verify_llm_available_api_smoke_omits_max_tokens
+# LINE: 566-587
+# FLAGS: assert_text_compare_or_match,mock_or_patch_present,helper_or_private_call
+# KIND: py
+
+def test_verify_llm_available_api_smoke_omits_max_tokens(monkeypatch):
+    """#1472：API 烟测不发 max_tokens，取官方上限（避免小预算饿死推理族）。"""
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    captured = {}
+    real = llm_model.OpenAIChat
+
+    def spy(*args, **kwargs):
+        captured["kwargs"] = kwargs
+        return real(*args, **kwargs)
+
+    class FakeAgent:
+        def __init__(self, **kwargs):
+            captured["model"] = kwargs["model"]
+
+        def run(self, prompt: str) -> str:
+            return "ok"
+
+    monkeypatch.setattr(llm_model, "OpenAIChat", spy)
+    monkeypatch.setattr(llm_model, "Agent", FakeAgent)
+    monkeypatch.setattr(llm_model, "extract_agent_text", lambda output: output)
+    verify_llm_available(_api_cfg())
+    assert "max_tokens" not in captured["kwargs"]

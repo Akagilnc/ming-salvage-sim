@@ -1,0 +1,31 @@
+# FILE: tests/test_decree_dossiers_571.py
+# NAME: test_dossier_append_is_idempotent_only_for_identical_character_entry
+# LINE: 144-168
+# FLAGS: helper_or_private_call
+# KIND: py
+
+def test_dossier_append_is_idempotent_only_for_identical_character_entry(game):
+    db, state, _content = game
+    lead = _active_minister(db)
+    original = {"character_id": lead, "tier": "主办", "role": "总理"}
+    dossier_id = db.create_decree_dossier(
+        state, action_type="assignment", decree_text="命修历。",
+        target_kind="issue", target_id="calendar", participants=[original],
+    )
+
+    assert db.append_decree_dossier_participants(dossier_id, [original]) == []
+    with pytest.raises(ValueError):
+        db.append_decree_dossier_participants(
+            dossier_id, [{**original, "tier": "协办"}],
+        )
+    with pytest.raises(ValueError):
+        db.append_decree_dossier_participants(
+            dossier_id, [
+                {"character_id": lead, "tier": "主办", "role": "另职"},
+                original,
+            ],
+        )
+
+    assert db.get_decree_dossier(dossier_id)["participant_roster"] == [{
+        **original, "delegator_id": None,
+    }]

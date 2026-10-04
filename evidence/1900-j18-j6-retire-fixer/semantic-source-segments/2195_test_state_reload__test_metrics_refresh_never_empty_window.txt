@@ -1,0 +1,20 @@
+# FILE: tests/test_state_reload.py
+# NAME: test_metrics_refresh_never_empty_window
+# LINE: 220-233
+# FLAGS: assert_text_compare_or_match
+# KIND: py
+
+def test_metrics_refresh_never_empty_window(game):
+    """metrics 刷新无空窗口：同一 dict 对象、键集与 DB 一致（cmr S5 r1 F3）。"""
+    from ming_sim.decree import reload_state_from_db
+    db, state, content = game
+    before_id = id(state.metrics)
+    state.metrics["国库"] = 999999  # 脏值
+    state.metrics["幽灵指标"] = 1   # DB 没有的 key
+
+    reload_state_from_db(db, state)
+
+    assert id(state.metrics) == before_id
+    assert "幽灵指标" not in state.metrics
+    fresh = db.load_state()
+    assert state.metrics == fresh.metrics

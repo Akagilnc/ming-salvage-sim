@@ -1,0 +1,29 @@
+# FILE: tests/test_audience_scroll_539.py
+# NAME: test_live_and_closed_night_share_the_real_http_contract
+# LINE: 87-109
+# FLAGS: assert_text_compare_or_match,mock_or_patch_present,helper_or_private_call
+# KIND: py
+
+def test_live_and_closed_night_share_the_real_http_contract(game, monkeypatch):
+    import web_app
+
+    db, state, _ = game
+    night_id = open_audience_night(db, state)
+    append_night_chat(db, state, night_id, "杨嗣昌", "辽饷如何？", "臣请据实核账。", 20)
+    monkeypatch.setattr(web_app, "get_game", lambda: _scroll_game(db))
+    client = TestClient(web_app.app)
+
+    live = client.get("/api/audience/scroll").json()
+    db.conn.execute("UPDATE audience_nights SET status='closed', closed_at=CURRENT_TIMESTAMP WHERE id=?", (night_id,))
+    db.conn.commit()
+    closed = client.get(f"/api/audience/scroll?night_id={night_id}").json()
+
+    assert live["night_id"] == closed["night_id"] == night_id
+    assert [set(message) for message in live["messages"]] == [set(message) for message in closed["messages"]]
+    assert [message["content"] for message in live["messages"]] == [message["content"] for message in closed["messages"]]
+    assert set(live) == set(closed) == {
+        "night_id", "status", "messages", "protagonist", "roster", "characters",
+        "translation_pending", "translation_retries", "pending_translation_turn_ids", "container",
+    }
+    assert live["status"] == "open"
+    assert closed["status"] == "closed"

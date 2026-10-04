@@ -1,0 +1,52 @@
+# FILE: tests/test_minister_chat_timeout.py
+# NAME: test_minister_chat_idle_death_time_follows_settings_threshold
+# LINE: 53-98
+# FLAGS: assert_text_compare_or_match,assert_count,mock_or_patch_present,helper_or_private_call
+# KIND: py
+
+def test_minister_chat_idle_death_time_follows_settings_threshold(
+    monkeypatch, tmp_path, game, idle_seconds,
+):
+    """设置页写下的静默阈值就是召对判死的时点：改这一格，判死时点随之变。
+
+    注入 = 大臣的 CLI 子进程一个字都不出。观察面 = 相邻两次子进程起跑的时钟差
+    （= 上一次熬到判死用掉的静默时长）+ 玩家侧结构化 error。时钟每被读一次推进
+    阈值的 1/4，判死时点确定，不跑真墙钟。
+    """
+    idle = _save_idle_threshold_via_settings_api(monkeypatch, tmp_path, idle_seconds)
+    step = idle / _CHECKS_TO_DEATH
+    clock = {"t": 1000.0}
+
+    def _advancing_clock() -> float:
+        clock["t"] += step
+        return clock["t"]
+
+    monkeypatch.setattr(cb, "_cli_process_clock", _advancing_clock)
+    script = install_fake_cli_runner(monkeypatch, [
+        {"stdout": (SilentUntilKilled(),), "returncode": 0},
+    ])
+    starts: list[float] = []
+    scripted_popen = cb.subprocess.Popen
+
+    def _recording_popen(cmd, **kwargs):
+        starts.append(clock["t"])  # 只读，不推进
+        return scripted_popen(cmd, **kwargs)
+
+    monkeypatch.setattr(cb.subprocess, "Popen", _recording_popen)
+    web_game, minister = _cli_web_game(game, monkeypatch)
+
+    response = _post_chat_stream(monkeypatch, web_game, minister)
+    assert response.status_code == 200, response.text
+    events = _parse_sse(response.text)
+    assert events[-1][0] == "error", events
+    detail = events[-1][1]
+    attempts = detail.get("transport_attempts") or []
+    assert attempts, detail
+    assert [a.get("code") for a in attempts] == ["llm_idle_timeout"] * len(attempts), attempts
+    assert script.calls == len(attempts) >= 2
+
+    # 每一次都熬满设置页写下的阈值才判死（上界 = 一次核查的粒度）
+    spans = [b - a for a, b in zip(starts, starts[1:])]
+    assert spans, starts
+    for span in spans:
+        assert idle <= span <= idle + 2 * step, (idle, spans)

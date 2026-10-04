@@ -1,0 +1,16 @@
+# FILE: tests/test_state_reload.py
+# NAME: test_reload_content_no_crash
+# LINE: 75-84
+# FLAGS: assert_text_compare_or_match
+# KIND: py
+
+def test_reload_content_no_crash(game):
+    """content 非 None 时重建 characters，state 仍刷新。"""
+    db, state, content = game
+    db.conn.execute("UPDATE game_state SET turn_phase='reviewing' WHERE id=1")
+    db.conn.commit()
+
+    returned = reload_state_from_db(db, state, content=content)
+
+    assert returned is state
+    assert state.turn_phase == "reviewing"

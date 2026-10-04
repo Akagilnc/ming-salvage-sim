@@ -1,0 +1,24 @@
+# FILE: tests/test_pay_order_override_653.py
+# NAME: test_bridge_applies_due_order_and_haircut_end_to_end
+# LINE: 514-531
+# FLAGS: helper_or_private_call
+# KIND: py
+
+def test_bridge_applies_due_order_and_haircut_end_to_end(game):
+    db, state, _content = game
+    settle_before = _opening_settle(db, "shaanxi")
+    baseline = settle_tick(
+        copy.deepcopy(settle_before["st"]), copy.deepcopy(settle_before["p"]), [],
+    )
+    did = _override_dossier(db, state, [
+        {"key": "due_priority_军饷@shaanxi", "value": 40},
+        {"key": "due_priority_官俸@shaanxi", "value": 10},
+        {"key": "due_haircut_bp_军饷@shaanxi", "value": 5000},
+    ])
+    # 全生命周期：顺颁判决 → 判后物化（ADR 0055 缝）→ 结算读端
+    db.apply_dossier_promulgation(state, did, "promulgated")
+    res = db.settle_province_tick("shaanxi")
+    assert res.breakdown["实付分账"]["官俸"] > 0          # 官俸优先足付
+    assert res.breakdown["NewDebt"]["军饷欠"] > 0         # 边饷居末积欠
+    assert res.breakdown["haircut_军饷"] > 0              # 折发免除额入分解
+    assert res.new_st != baseline.new_st                  # 偏离基线

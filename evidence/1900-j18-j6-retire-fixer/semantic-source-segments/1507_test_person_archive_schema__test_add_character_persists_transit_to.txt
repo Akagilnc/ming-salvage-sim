@@ -1,0 +1,32 @@
+# FILE: tests/test_person_archive_schema.py
+# NAME: test_add_character_persists_transit_to
+# LINE: 48-73
+# FLAGS: assert_text_compare_or_match
+# KIND: py
+
+def test_add_character_persists_transit_to(game):
+    """Runtime-created characters preserve ADR 0009 travel state."""
+    db, state, _ = game
+    character = Character(
+        name="测试在途人物",
+        office="听用",
+        office_type="待铨",
+        faction="中立",
+        aliases=[],
+        personal_skills=[],
+        loyalty=50,
+        ability=50,
+        integrity=50,
+        courage=50,
+        style="测试人物",
+        power_id="ming",
+        location="beizhili",
+        transit_to="liaodong",
+    )
+
+    db.add_character(state, character)
+
+    row = db.conn.execute(
+        "SELECT location, transit_to FROM characters WHERE name=?", (character.name,)
+    ).fetchone()
+    assert dict(row) == {"location": "beizhili", "transit_to": "liaodong"}

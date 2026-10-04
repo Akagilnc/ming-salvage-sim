@@ -1,0 +1,72 @@
+# FILE: tests/test_fiscal_substrate_bridge.py
+# NAME: test_south_southwest_seeds_have_valid_historical_settle_substrate
+# LINE: 3515-3580
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_south_southwest_seeds_have_valid_historical_settle_substrate(fresh_db, region_id, expected):
+    settle = _read_settle(fresh_db, region_id)
+    assert isinstance(settle, dict), f"{expected['zh']} fiscal 缺 settle 基座"
+    assert isinstance(settle.get("st"), dict) and isinstance(settle.get("p"), dict), \
+        f"{expected['zh']} settle 基座须含 st + p"
+
+    st = settle["st"]
+    assert st["官民田"] == pytest.approx(expected["官民田"])
+    p = settle["p"]
+    assert p["正赋应征"] == pytest.approx(expected["正赋应征"])
+    assert p["三饷应征"] == pytest.approx(expected["三饷应征"])
+    assert p["三饷应征"] == pytest.approx(st["官民田"] * 0.009 / 12)
+    assert p["起运定额"] == pytest.approx(expected["起运定额"])
+    assert p["Due"]["军饷"] == pytest.approx(_province_pay_due(fresh_db, region_id))
+    assert p["Due"]["宗禄"] == pytest.approx(expected["宗禄"])
+    assert p["Due"]["赈济"] == 0
+    assert p["三饷应征"] > 0, f"{expected['zh']} 开局须 seed 辽饷"
+    assert p["起运定额"] >= p["三饷应征"], f"{expected['zh']} 辽饷应可全额起运"
+    assert "salt_tax" not in p and "commerce_tax" not in p, "盐税/商税不进 settle substrate"
+
+    meta = settle["_meta"]
+    assert "辽饷" in meta["levies"]["seeded"]
+    assert "剿饷" in meta["levies"]["not_seeded"]
+    assert "练饷" in meta["levies"]["not_seeded"]
+    assert "salt_tax" in meta["excluded_from_settle"]
+    assert "commerce_tax" in meta["excluded_from_settle"]
+    assert meta["正赋起运基线"] == pytest.approx(expected["正赋起运基线"])
+    assert p["起运定额"] == pytest.approx(meta["正赋起运基线"] + p["三饷应征"])
+    source_grain = meta["source_grain"]
+    for key, value in expected["source_grain"].items():
+        if isinstance(value, (int, float)):
+            assert source_grain[key] == pytest.approx(value)
+        else:
+            assert source_grain[key] == value
+    assert settle["st"]["官民田"] == pytest.approx(
+        source_grain["taxable_land_qing"] / 100,
+        abs=1e-9,
+    )
+    assert source_grain["scan_checked"] is True
+    assert isinstance(source_grain.get("ocr_status"), str) and source_grain["ocr_status"].strip()
+    conversion = source_grain["conversion"]
+    assert "official_anchor" in conversion
+    assert conversion["assessed_formula"] == (
+        "assessed_grain_shi * assessed_silver_liang_per_stone / 10000 / 12"
+    )
+    assert conversion["transport_formula"] == (
+        "transport_grain_shi * transport_silver_liang_per_stone / 10000 / 12"
+    )
+    assert p["正赋应征"] == pytest.approx(
+        source_grain["assessed_grain_shi"]
+        * conversion["assessed_silver_liang_per_stone"]
+        / 10000
+        / 12,
+        abs=0.0001,
+    )
+    assert meta["正赋起运基线"] == pytest.approx(
+        source_grain["transport_grain_shi"]
+        * conversion["transport_silver_liang_per_stone"]
+        / 10000
+        / 12,
+        abs=0.0001,
+    )
+    assert "官民田" not in meta["provisional"]
+    assert "起运定额" not in meta["provisional"]
+    res = settle_tick(settle["st"], p, [])
+    assert res.new_st["省库库银"] is not None

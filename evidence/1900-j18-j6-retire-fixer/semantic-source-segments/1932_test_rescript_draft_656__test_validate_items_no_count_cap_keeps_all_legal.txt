@@ -1,0 +1,13 @@
+# FILE: tests/test_rescript_draft_656.py
+# NAME: test_validate_items_no_count_cap_keeps_all_legal
+# LINE: 707-713
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_validate_items_no_count_cap_keeps_all_legal(draft_ingress):
+    six_legal = [_valid_item(i) for i in range(6)]
+    drafts = draft_ingress({"items": six_legal})
+    assert [d["title"] for d in drafts] == [item["title"] for item in six_legal]
+    sixth_illegal = [_valid_item(i) for i in range(5)] + [{**_valid_item(5), "context": ""}]
+    admitted = draft_ingress({"items": sixth_illegal})
+    assert [item["title"] for item in admitted] == [item["title"] for item in sixth_illegal[:5]]

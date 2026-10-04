@@ -1,0 +1,32 @@
+# FILE: tests/test_pre_settle_transaction.py
+# NAME: test_settling_survives_begin_turn_phase_whitelist
+# LINE: 58-83
+# FLAGS: mock_or_patch_present
+# KIND: py
+
+def test_settling_survives_begin_turn_phase_whitelist(game, monkeypatch):
+    """phase=settling 重载走 begin_turn → 保活不被重置回 summoning（白名单生效，
+    ADR 0008 S4；白名单外的相位重载即被重置，守门失效）。"""
+    from ming_sim.session import GameSession, TurnPhase
+    import ming_sim.session as session_mod
+
+    db, state, content = game
+    state.turn_phase = TurnPhase.SETTLING.value
+    db.save_state(state)
+
+    # 用 __new__ 跳过重型 __init__（agno/registry/LLM），只装 begin_turn 需要的协作者；
+    # 重型协作者打桩（registry 建 agent / auto_save / office 同步均与白名单无关）。
+    monkeypatch.setattr(session_mod, "_sync_offices_from_db_impl", lambda *a, **k: None)
+    sess = GameSession.__new__(GameSession)
+    sess.db = db
+    sess.content = content
+    sess.llm_config = None
+    sess.agno_db = None
+    monkeypatch.setattr(GameSession, "auto_save", lambda self, tag: None)
+
+    snap = sess.begin_turn()
+
+    assert snap.phase == TurnPhase.SETTLING.value
+    assert sess.state.turn_phase == TurnPhase.SETTLING.value
+    # 落盘也仍是 settling（未被重置写回 summoning）
+    assert db.load_state().turn_phase == TurnPhase.SETTLING.value

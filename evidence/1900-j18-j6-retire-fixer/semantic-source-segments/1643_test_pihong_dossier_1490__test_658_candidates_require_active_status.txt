@@ -1,0 +1,21 @@
+# FILE: tests/test_pihong_dossier_1490.py
+# NAME: test_658_candidates_require_active_status
+# LINE: 2450-2464
+# FLAGS: assert_count,helper_or_private_call
+# KIND: py
+
+def test_658_candidates_require_active_status(game):
+    """#658：罢黜等非 active 不得入廷议站台候选。"""
+    from ming_sim import rescript_actions as ra
+    db, state, content = game
+    name = _summonable_name(db, content)
+    assert name in ra.list_deliberation_candidate_ids(db, content)
+    db.set_character_status(state, name, 'dismissed', '658-candidate')
+    assert name not in ra.list_deliberation_candidate_ids(db, content)
+    urgent, _ = _plant_urgent_desk(db, state)
+    key = urgent['decision_key']
+    before = len(db.list_decree_dossiers())
+    batch = ra.validate_all([urgent], [{'decision_key': key, 'action': 'deliberate', 'label': '下部议'}])
+    with pytest.raises(ValueError):
+        ra.apply_rescript_batch(db, state, batch, ra.PrewriteResults(deliberate_by_key={key: {'title': 't', 'body': 'b', 'stance': 's', 'supporter_ids': [name]}}), content=content)
+    assert len(db.list_decree_dossiers()) == before

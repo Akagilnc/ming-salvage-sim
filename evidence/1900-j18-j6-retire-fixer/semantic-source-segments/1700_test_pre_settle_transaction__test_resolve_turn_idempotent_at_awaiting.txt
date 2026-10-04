@@ -1,0 +1,33 @@
+# FILE: tests/test_pre_settle_transaction.py
+# NAME: test_resolve_turn_idempotent_at_awaiting
+# LINE: 343-369
+# FLAGS: mock_or_patch_present,helper_or_private_call
+# KIND: py
+
+def test_resolve_turn_idempotent_at_awaiting(game, monkeypatch):
+    """resolve_turn 在 awaiting 态幂等返回已存决策，不二跑 simulator（cmr S4 r3 F3）。
+
+    二跑会覆盖 pending_decisions 或绕过亲裁直接结算。
+    """
+    import ming_sim.session as session_mod
+    from ming_sim.session import GameSession
+    db, state, content = game
+    state.turn_phase = "awaiting_decision"
+    db.save_state(state)
+    db.save_pending_decisions(state.turn, [{
+        "title": "辽东战和", "context": "皇太极请款",
+        "options": [{"label": "战", "hint": ""}, {"label": "和", "hint": ""}],
+    }])
+
+    def _must_not_run(*a, **k):
+        raise AssertionError("resolve_directives 不应被调")
+    monkeypatch.setattr(session_mod, "resolve_directives", _must_not_run)
+
+    sess = GameSession.__new__(GameSession)
+    sess.db = db
+    sess.state = state
+
+    res = sess.resolve_turn()
+    assert res.awaiting is True
+    assert res.decisions
+    db.clear_resolve_context(state.turn)

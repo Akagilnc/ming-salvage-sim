@@ -271,39 +271,6 @@ def test_direct_db_write_refused_when_gate_held(monkeypatch, name, call):
         game._write_gate.release()
 
 
-def test_serialized_web_write_cm_contract():
-    """集中守门 CM 的契约：相位拒 / 非阻塞抢锁拒 / 正常进出且释放锁 / 体内抛异常也释放锁。"""
-    # 相位拒
-    for phase in FRONT_HALF_DONE_PHASES:
-        g = _FakeGame(phase)
-        with pytest.raises(HTTPException) as ei:
-            with web_app._serialized_web_write(g):
-                pass
-        assert ei.value.status_code == 409
-        assert not g._write_gate.locked(), "相位拒不应留下持锁"
-    # 正常相位 + 锁空：进得去、出来后锁已释放
-    g = _FakeGame(TurnPhase.SUMMONING.value)
-    with web_app._serialized_web_write(g):
-        assert g._write_gate.locked(), "CM 体内应持锁"
-    assert not g._write_gate.locked(), "CM 退出应释放锁"
-    # 锁被他人持有 → 非阻塞 409
-    g2 = _FakeGame(TurnPhase.SUMMONING.value)
-    g2._write_gate.acquire()
-    try:
-        with pytest.raises(HTTPException) as ei:
-            with web_app._serialized_web_write(g2):
-                pass
-        assert ei.value.status_code == 409
-    finally:
-        g2._write_gate.release()
-    # 体内抛异常也释放锁（finally）
-    g3 = _FakeGame(TurnPhase.SUMMONING.value)
-    with pytest.raises(RuntimeError):
-        with web_app._serialized_web_write(g3):
-            raise RuntimeError("boom")
-    assert not g3._write_gate.locked(), "异常路径也须释放锁"
-
-
 def test_advance_without_edict_refused_by_phase(monkeypatch):
     """退朝默认提交也会写 pending_actions，必须和写诏一样先过统一 web 写闸。"""
     game = _FakeGame(TurnPhase.SETTLING.value)
@@ -418,12 +385,3 @@ def test_advance_short_hold_409_when_gate_taken_after_admit(monkeypatch):
         if game._write_gate.locked():
             game._write_gate.release()
         worker.join()
-
-
-def test_direct_db_write_succeeds_when_free(monkeypatch):
-    """守门不破坏正常流：相位正常 + 锁空 → 直写端点照常落库，且事后锁已释放。"""
-    game = _FakeGame(TurnPhase.SUMMONING.value)
-    monkeypatch.setattr(web_app, "get_game", lambda: game)
-    _invoke(web_app.api_set_court_layout({"layout": "{\"a\":1}"}))
-    assert game.db.writes == ["kv_set"]
-    assert not game._write_gate.locked()

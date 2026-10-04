@@ -1,0 +1,34 @@
+# FILE: tests/test_section4_rejections.py
+# NAME: test_region_controlled_by_accepts_existing_power_ids_and_restore_hook
+# LINE: 154-181
+# FLAGS: assert_text_compare_or_match
+# KIND: py
+
+def test_region_controlled_by_accepts_existing_power_ids_and_restore_hook(game):
+    """合法 powers.id 仍可落库；非 ming→ming 收复时原 on_restore 覆盖逻辑仍触发。"""
+    db, state, content = game
+    rid = "jianzhou"
+    region = db.conn.execute(
+        "SELECT id, public_support FROM regions WHERE id=?", (rid,)
+    ).fetchone()
+    assert region is not None
+    before_support = int(region["public_support"])
+    turn = state.turn
+
+    run_settle(db, state, content, {
+        "region_delta": {rid: {"controlled_by": "ming"}},
+    }, narrative="x", decree_text="y")
+
+    row = db.conn.execute(
+        "SELECT controlled_by, public_support FROM regions WHERE id=?", (rid,)
+    ).fetchone()
+    assert row["controlled_by"] == "ming"
+    assert int(row["public_support"]) != before_support  # on_restore 覆盖仍生效
+    log_fields = [
+        r[0] for r in db.conn.execute(
+            "SELECT field FROM region_logs WHERE turn=? AND region_id=? ORDER BY id",
+            (turn, rid),
+        ).fetchall()
+    ]
+    assert "controlled_by" in log_fields
+    assert "public_support" in log_fields

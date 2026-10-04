@@ -1,0 +1,46 @@
+# FILE: web/src/components/gameMenu.test.tsx
+# NAME: "#1732 GameMenu · 就地消解" / "删除存档：行下展开；取消零请求；确认后 DELETE"
+# LINE: 813-852
+# FLAGS: web_mock_spy_or_calls
+# KIND: web
+
+  it("删除存档：行下展开；取消零请求；确认后 DELETE", async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    global.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      return Promise.resolve({ ok: true, json: async () => ({}) } as Response);
+    });
+    const onRefresh = vi.fn();
+    const { cleanup } = render(
+      <SavesList saves={[{ name: "keep", mtime: 1, size: 1024 }]} onRefresh={onRefresh} />
+    );
+    const del = Array.from(document.querySelectorAll("button")).find((b) =>
+      (b.textContent || "").includes("删")
+    );
+    await act(async () => {
+      del!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    const panel = document.querySelector('[aria-label="确认删除 keep"]');
+    expect(panel).not.toBeNull();
+    const cancel = Array.from(panel!.querySelectorAll("button")).find((b) =>
+      (b.textContent || "").includes("取消")
+    );
+    await act(async () => {
+      cancel!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(calls.some((c) => c.init?.method === "DELETE")).toBe(false);
+
+    await act(async () => {
+      del!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    const yes = Array.from(document.querySelector('[aria-label="确认删除 keep"]')!.querySelectorAll("button")).find((b) =>
+      (b.textContent || "").includes("删除")
+    );
+    await act(async () => {
+      yes!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+    });
+    expect(calls.some((c) => String(c.url).includes("/api/saves/keep") && c.init?.method === "DELETE")).toBe(true);
+    expect(onRefresh).toHaveBeenCalled();
+    cleanup();
+  });

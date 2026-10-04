@@ -1,0 +1,16 @@
+# FILE: tests/test_pay_order_override_extraction_653.py
+# NAME: test_single_pay_order_capture_rejects_missing_entries
+# LINE: 68-77
+# FLAGS: assert_text_compare_or_match,mock_or_patch_present
+# KIND: py
+
+def test_single_pay_order_capture_rejects_missing_entries(monkeypatch):
+    monkeypatch.setattr(
+        cli_backend, "_run_backend_for_config",
+        lambda *_args, **_kwargs: (json.dumps({
+            "拟旨意图": "拟旨", "动作类型": "pay_order_override",
+            "目标类型": "account", "目标ID": "pay_order", "颁布方式": "普通",
+        }, ensure_ascii=False), {}),
+    )
+    result = cli_backend.extract_draft_intent("拟旨改饷序", "臣已拟妥")
+    assert result["draft_action"] == "无"

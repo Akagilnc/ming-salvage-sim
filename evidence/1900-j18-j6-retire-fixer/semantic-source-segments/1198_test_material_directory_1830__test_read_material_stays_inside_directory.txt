@@ -1,0 +1,36 @@
+# FILE: tests/test_material_directory_1830.py
+# NAME: test_read_material_stays_inside_directory
+# LINE: 152-181
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_read_material_stays_inside_directory(game, tmp_path):
+    db, state, content = game
+    character = _active_minister(db, content)
+    prepared = prepare_character_materials(
+        db, state, character, dest_root=tmp_path / "m",
+    )
+    try:
+        read_material(prepared.root, "../outside.txt")
+        raise AssertionError("expected path confinement")
+    except ValueError:
+        pass
+    tools = {tool.__name__: tool for tool in material_tools(prepared.root)}
+    assert tools["list_materials"]("../outside") == tools["read_material"]("../outside")
+    spaced_rel = f"人物/{_safe_segment('John Doe')}/经历.txt"
+    spaced_path = prepared.root / spaced_rel
+    spaced_path.parent.mkdir(parents=True, exist_ok=True)
+    spaced_path.write_text("经历正文\n", encoding="utf-8")
+    listing = tools["list_materials"]("")
+    assert spaced_rel in listing.splitlines()
+    assert tools["read_material"](spaced_rel) == "经历正文\n"
+    gazette_rel = "邸报/1627年9月.txt"
+    gazette_path = prepared.root / gazette_rel
+    gazette_path.parent.mkdir(parents=True, exist_ok=True)
+    gazette_path.write_text("本月邸报\n", encoding="utf-8")
+    display = f"{gazette_rel} 任意非路径后缀"
+    assert tools["read_material"](gazette_rel) == "本月邸报\n"
+    with pytest.raises(FileNotFoundError):
+        read_material(prepared.root, display)
+    miss = tools["read_material"](display)
+    assert "本月邸报" not in miss

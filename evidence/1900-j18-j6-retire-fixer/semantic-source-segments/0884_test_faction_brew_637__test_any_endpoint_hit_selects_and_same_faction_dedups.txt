@@ -1,0 +1,22 @@
+# FILE: tests/test_faction_brew_637.py
+# NAME: test_any_endpoint_hit_selects_and_same_faction_dedups
+# LINE: 102-117
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_any_endpoint_hit_selects_and_same_faction_dedups(game):
+    """任一端命中则入选；两端同派去重为一份派系工作项。"""
+    db, state, _ = game
+    # 温体仁×周延儒均皇党 → 恰一个派系目标＋一条关系目标。
+    _add_edge(db, state, source="温体仁", target="周延儒", kind="结怨",
+              context="温体仁当殿讦周延儒。", origin="audience:turn-1")
+    targets = select_faction_brew_targets(
+        db, year=int(state.year), period=int(state.period),
+    )
+    assert [row["faction"] for row in targets] == ["皇党"]
+
+    calls: list = []
+    report = run_month_end_relation_brew(db, state, _dual_brew_fn_factory(calls))
+    # 同批：1 条关系工作项＋1 条派系工作项。
+    assert report["selected"] == 2
+    assert len(report["brewed"]) == 2

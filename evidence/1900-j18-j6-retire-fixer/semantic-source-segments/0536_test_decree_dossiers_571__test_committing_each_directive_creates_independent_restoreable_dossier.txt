@@ -1,0 +1,34 @@
+# FILE: tests/test_decree_dossiers_571.py
+# NAME: test_committing_each_directive_creates_independent_restoreable_dossier
+# LINE: 256-283
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_committing_each_directive_creates_independent_restoreable_dossier(game):
+    db, state, _content = game
+    minister = _active_minister(db)
+    ids = [
+        db.stage_directive_candidate(
+            state.turn, minister, {
+                "text": text, "actor": minister,
+                "dossier_action_type": "policy",
+                "target_kind": "issue", "target_id": target,
+            }
+        )
+        for text, target in (
+            ("着户部清核辽饷。", "liao-pay"),
+            ("着兵部点验军械。", "arsenal"),
+        )
+    ]
+
+    db.commit_pending_actions(
+        state, kind_filter="directive", action_ids=ids, directive_status="draft"
+    )
+
+    dossiers = db.list_decree_dossiers(status="proposed")
+    assert [row["decree_text"] for row in dossiers[-2:]] == [
+        "着户部清核辽饷。",
+        "着兵部点验军械。",
+    ]
+    assert len({row["id"] for row in dossiers[-2:]}) == 2
+    assert all(row["pending_action_id"] in ids for row in dossiers[-2:])

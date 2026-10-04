@@ -1,0 +1,85 @@
+{
+  "source_path": "tests/test_decree_forecast_1861.py",
+  "member_count": 5,
+  "members": [
+    {
+      "idx": 598,
+      "file": "tests/test_decree_forecast_1861.py",
+      "name": "test_scene_chat_approval_forecasts_each_decree_without_visible_effect",
+      "line": 45,
+      "end": 187,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0598_test_decree_forecast_1861__test_scene_chat_approval_forecasts_each_decree_without_visible_effect.txt",
+      "source_path": "tests/test_decree_forecast_1861.py"
+    },
+    {
+      "idx": 599,
+      "file": "tests/test_decree_forecast_1861.py",
+      "name": "test_scene_chat_rejection_is_staged_for_later_rescript_not_shown_at_night",
+      "line": 190,
+      "end": 249,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0599_test_decree_forecast_1861__test_scene_chat_rejection_is_staged_for_later_rescript_not_shown_at_night.txt",
+      "source_path": "tests/test_decree_forecast_1861.py"
+    },
+    {
+      "idx": 600,
+      "file": "tests/test_decree_forecast_1861.py",
+      "name": "test_restored_directive_forecast_uses_its_approved_night",
+      "line": 298,
+      "end": 320,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0600_test_decree_forecast_1861__test_restored_directive_forecast_uses_its_approved_night.txt",
+      "source_path": "tests/test_decree_forecast_1861.py"
+    },
+    {
+      "idx": 601,
+      "file": "tests/test_decree_forecast_1861.py",
+      "name": "test_held_rejudgments_overlap_instead_of_waiting_in_one_worker",
+      "line": 323,
+      "end": 424,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0601_test_decree_forecast_1861__test_held_rejudgments_overlap_instead_of_waiting_in_one_worker.txt",
+      "source_path": "tests/test_decree_forecast_1861.py"
+    },
+    {
+      "idx": 602,
+      "file": "tests/test_decree_forecast_1861.py",
+      "name": "test_same_local_ids_on_two_saves_both_stage",
+      "line": 427,
+      "end": 493,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0602_test_decree_forecast_1861__test_same_local_ids_on_two_saves_both_stage.txt",
+      "source_path": "tests/test_decree_forecast_1861.py"
+    }
+  ]
+}

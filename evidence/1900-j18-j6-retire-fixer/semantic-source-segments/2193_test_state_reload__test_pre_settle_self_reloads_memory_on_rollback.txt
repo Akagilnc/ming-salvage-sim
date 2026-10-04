@@ -1,0 +1,38 @@
+# FILE: tests/test_state_reload.py
+# NAME: test_pre_settle_self_reloads_memory_on_rollback
+# LINE: 110-141
+# FLAGS: assert_text_compare_or_match,mock_or_patch_present,helper_or_private_call
+# KIND: py
+
+def test_pre_settle_self_reloads_memory_on_rollback(game, monkeypatch):
+    """pre_settle 内任一步抛错 → atomic 回滚后 pre_settle 自己 reload 刷净内存（调用方不必手动 reload）
+    → 异常仍透传 → 再调 pre_settle 能完整跑（不被脏相位守门跳过）。脏读防线钉死（ADR 0008 决定 3 第三条）。"""
+    db, state, content = game
+    turn = state.turn
+    before_phase = state.turn_phase
+    before_metrics = dict(state.metrics)
+    before_ledger = _ledger_count(db, turn)
+
+    # save_state 抛错：此时内存 phase 已被赋成 settling、apply_fixed_period_flows 已直改 state.metrics。
+    def _boom_save(st):
+        raise RuntimeError("save boom")
+
+    monkeypatch.setattr(db, "save_state", _boom_save)
+
+    with pytest.raises(RuntimeError):
+        pre_settle(state, db)
+
+    # pre_settle 已在回滚后自我 reload：内存与 DB 同源（phase 非 settling、metrics 回到回滚态）。
+    assert state.turn_phase == before_phase != "settling"
+    on_disk_phase = sqlite3.connect(db.path).execute(
+        "SELECT turn_phase FROM game_state WHERE id=1").fetchone()[0]
+    assert state.turn_phase == on_disk_phase
+    # metrics 与 DB 同源：财政副作用随回滚消失，内存被刷回。
+    assert state.metrics == before_metrics
+    assert _ledger_count(db, turn) == before_ledger
+
+    # 再调 pre_settle（恢复 save_state）能完整跑、不被脏相位跳过。
+    monkeypatch.setattr(db, "save_state", db.__class__.save_state.__get__(db))
+    pre_settle(state, db)
+    assert state.turn_phase == "settling"
+    assert _ledger_count(db, turn) > before_ledger

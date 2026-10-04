@@ -1,0 +1,40 @@
+# FILE: tests/test_promulgation_judge_561.py
+# NAME: test_promulgated_midzhi_strips_affected_parties_with_rejection_noise
+# LINE: 237-270
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_promulgated_midzhi_strips_affected_parties_with_rejection_noise(game):
+    """#657 §C.8：中旨顺颁剥离打回噪声与猜派 affected_parties。"""
+    db, state, _content = game
+    dossier_id = _dossier(db, state, mode="midzhi")
+    dossiers = db.list_decree_dossiers(status="proposed")
+    context = decree_mod.build_promulgation_judge_context(db, state, dossiers)
+    parties = [
+        {"kind": "faction", "key": "东林", "direction": "negative", "intensity": "weak"},
+    ]
+    noisy = {
+        "dossier_id": dossier_id,
+        "decision": "promulgated",
+        "affected_parties": parties,
+        "reason": "中旨行政旨照过",
+        "gatekeeper_id": "黄立极",
+        "primary_opponents": [{"kind": "faction", "key": "东林"}],
+        "blocked_layer": "six_offices",
+        "criteria_snapshot": {
+            "imperial_authority_band": context["imperial_authority_band"],
+            "appointment_tenure": "",
+            "authorization_ids": [],
+            "endorsement_entry_ids": [],
+        },
+    }
+
+    cleaned = decree_mod.validate_promulgation_verdicts(
+        [noisy], dossiers, db, prepared_context=context,
+    )
+
+    assert cleaned == [{
+        "dossier_id": dossier_id,
+        "decision": "promulgated",
+    }]
+    assert "affected_parties" not in cleaned[0]

@@ -1,0 +1,22 @@
+# FILE: tests/test_fiscal_substrate_bridge.py
+# NAME: test_advance_province_fiscal_substrate_rolls_back_inside_outer_atomic
+# LINE: 4662-4677
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_advance_province_fiscal_substrate_rolls_back_inside_outer_atomic(fresh_game):
+    import ming_sim.flows as flows_mod
+
+    db, state = fresh_game
+    before = _read_settle(db, "shaanxi")["st"]
+
+    with pytest.raises(RuntimeError):
+        with atomic(db):
+            flows_mod.apply_fixed_period_flows(db, state)
+            in_transaction = _read_settle(db, "shaanxi")["st"]
+            assert in_transaction["民欠旧赋"] != pytest.approx(before["民欠旧赋"])
+            raise RuntimeError("rollback probe")
+
+    after = _read_settle(db, "shaanxi")["st"]
+    assert after["民欠旧赋"] == pytest.approx(before["民欠旧赋"])
+    assert after["C_地方截留"] == pytest.approx(before["C_地方截留"])

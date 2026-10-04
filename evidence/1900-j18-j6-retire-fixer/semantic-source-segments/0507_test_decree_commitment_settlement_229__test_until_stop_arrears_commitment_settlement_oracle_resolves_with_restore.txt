@@ -1,0 +1,89 @@
+# FILE: tests/test_decree_commitment_settlement_229.py
+# NAME: test_until_stop_arrears_commitment_settlement_oracle_resolves_with_restore
+# LINE: 448-530
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_until_stop_arrears_commitment_settlement_oracle_resolves_with_restore(game):
+    db, state, content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.execute("UPDATE legacies SET status='cleared' WHERE status='active'")
+    db.conn.execute("UPDATE armies SET arrears=0 WHERE owner_power='ming'")
+    _seed_central_army_arrears(db, {"guanning": 70, "xuan_da": 40})
+    state.metrics["国库"] = 500
+    db.save_state(state)
+
+    issue_id = db.insert_issue(
+        state,
+        kind="initiative",
+        title="边军月饷",
+        origin_kind="decree",
+        origin_ref="decree:turn-1:border-arrears",
+        bar_value=0,
+        inertia=0,
+        stage_text="户部每月拨银五十万补边军旧欠，直到补齐。",
+        ongoing_effects={
+            "economy": [
+                {
+                    "account": "国库",
+                    "delta": -50,
+                    "category": "补饷承诺",
+                    "reason": "边军月饷每月补旧欠",
+                    "purpose": "补饷",
+                }
+            ]
+        },
+        stop_condition=json.dumps({"army.guanning|xuan_da.arrears.sum": "<=0"}, ensure_ascii=False),
+        commitment_kind="until_stop",
+        cancellable="decree",
+    )
+    open_issue_id = db.insert_issue(
+        state,
+        kind="initiative",
+        title="开放式承诺不应空门收尾",
+        origin_kind="decree",
+        origin_ref="decree:turn-1:open",
+        bar_value=10,
+        inertia=0,
+        ongoing_effects={"metrics": {"民心": 1}},
+        stop_condition="",
+        commitment_kind="until_stop",
+        cancellable="decree",
+    )
+
+    _advance_player_month(db, state, content)
+    first = _issue_row(db, issue_id)
+    assert first["status"] == "active"
+    assert first["bar_value"] == 45
+    assert _issue_row(db, open_issue_id)["status"] == "active"
+    assert db.conn.execute(
+        "SELECT COALESCE(SUM(delta),0) FROM economy_ledger "
+        "WHERE account='国库' AND purpose='补饷' AND target_kind='army'"
+    ).fetchone()[0] == -50
+
+    reloaded_state = db.load_state()
+    _advance_player_month(db, reloaded_state, content)
+    second = _issue_row(db, issue_id)
+    assert second["status"] == "active"
+    assert first["bar_value"] < second["bar_value"] < 100
+
+    _advance_player_month(db, reloaded_state, content)
+    assert _issue_row(db, issue_id)["status"] == "active"
+    _advance_player_month(db, reloaded_state, content)
+    done = _issue_row(db, issue_id)
+    assert done["status"] == "resolved"
+    assert done["bar_value"] == 100
+    assert done["closed_turn"] == reloaded_state.turn - 1
+    assert _issue_row(db, open_issue_id)["status"] == "active"
+    assert reloaded_state.turn == state.turn + 3
+
+    advances = db.conn.execute(
+        "SELECT trigger_kind, metric_delta FROM issue_advances WHERE issue_id=? ORDER BY id",
+        (issue_id,),
+    ).fetchall()
+    assert [row["trigger_kind"] for row in advances] == ["ongoing"] * 4 + ["commitment_resolve"]
+    payloads = [json.loads(row["metric_delta"]) for row in advances[:4]]
+    paid = [payload["commitment_progress"]["paid_total"] for payload in payloads]
+    assert paid[:2] == [50, 100]
+    assert paid == sorted(paid) and paid[-1] > paid[1]
+    assert payloads[-1]["commitment_progress"]["remaining_arrears"] == 0

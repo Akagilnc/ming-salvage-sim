@@ -1,0 +1,81 @@
+# FILE: tests/test_person_archive_contract_index.py
+# NAME: test_active_title_kind_normalizes_appointment_via_person_delta
+# LINE: 70-144
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_active_title_kind_normalizes_appointment_via_person_delta(game):
+    """职名分 active 任命 → 调任；身名分 active 任命 stays 任命；
+    身名分 active 调任 → 任命（含候铨入仕邻态）。"""
+    db, state, content = game
+    name_job, name_body, name_body_xfer, name_awaiting = _active_names(db, content)[:4]
+    row = db.conn.execute(
+        "SELECT office, office_type FROM characters WHERE name=?", (name_job,)
+    ).fetchone()
+    assert row["office"] and row["office_type"] != "身名分"
+
+    applied = issues.apply_score_extraction(
+        db, state,
+        {"人物变更": [{
+            "name": name_job, "origin_ref": "盘面自发", "动作": "任命",
+            "office": "陕西总督", "office_type": "地方", "region_id": "shaanxi",
+            "reason": "职名分改授",
+        }]},
+        content=content,
+    )
+    assert applied["applied_person_changes"][0]["动作"] == "调任"
+    assert applied["applied_person_changes"][0].get("normalized") == "任命->调任"
+    assert db.conn.execute(
+        "SELECT office FROM characters WHERE name=?", (name_job,)
+    ).fetchone()["office"] == "陕西总督"
+
+    db.set_character_office(name_body, "降臣", "身名分")
+    content.characters[name_body].office = "降臣"
+    content.characters[name_body].office_type = "身名分"
+    applied2 = issues.apply_score_extraction(
+        db, state,
+        {"人物变更": [{
+            "name": name_body, "origin_ref": "盘面自发", "动作": "任命",
+            "office": "兵部尚书", "reason": "身名分收叙",
+        }]},
+        content=content,
+    )
+    assert applied2["applied_person_changes"][0]["动作"] == "任命"
+    assert "normalized" not in applied2["applied_person_changes"][0]
+
+    # active 身名分 调任 → 任命（基线 title-kind 守护经 applier 补回）
+    db.set_character_office(name_body_xfer, "降臣", "身名分")
+    content.characters[name_body_xfer].office = "降臣"
+    content.characters[name_body_xfer].office_type = "身名分"
+    applied3 = issues.apply_score_extraction(
+        db, state,
+        {"人物变更": [{
+            "name": name_body_xfer, "origin_ref": "盘面自发", "动作": "调任",
+            "office": "工部尚书", "reason": "身名分改授",
+        }]},
+        content=content,
+    )
+    assert applied3["applied_person_changes"][0]["动作"] == "任命"
+    assert applied3["applied_person_changes"][0].get("normalized") == "调任->任命"
+    assert db.conn.execute(
+        "SELECT office FROM characters WHERE name=?", (name_body_xfer,)
+    ).fetchone()["office"] == "工部尚书"
+
+    # active 身名分（听用候铨，职名分空）调任 → 任命
+    # ADR 0009 决定1：身名分→职名分 = 任命（候铨入仕）；不变式1② 禁 active+无名分
+    db.set_character_office(name_awaiting, "听用候铨", "身名分")
+    content.characters[name_awaiting].office = "听用候铨"
+    content.characters[name_awaiting].office_type = "身名分"
+    applied4 = issues.apply_score_extraction(
+        db, state,
+        {"人物变更": [{
+            "name": name_awaiting, "origin_ref": "盘面自发", "动作": "调任",
+            "office": "礼部尚书", "reason": "候铨起授",
+        }]},
+        content=content,
+    )
+    assert applied4["applied_person_changes"][0]["动作"] == "任命"
+    assert applied4["applied_person_changes"][0].get("normalized") == "调任->任命"
+    assert db.conn.execute(
+        "SELECT office FROM characters WHERE name=?", (name_awaiting,)
+    ).fetchone()["office"] == "礼部尚书"

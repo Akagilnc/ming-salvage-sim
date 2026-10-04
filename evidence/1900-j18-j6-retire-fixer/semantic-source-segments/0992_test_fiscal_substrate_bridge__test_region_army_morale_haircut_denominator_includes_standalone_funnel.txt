@@ -1,0 +1,68 @@
+# FILE: tests/test_fiscal_substrate_bridge.py
+# NAME: test_region_army_morale_haircut_denominator_includes_standalone_funnel
+# LINE: 1858-1919
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_region_army_morale_haircut_denominator_includes_standalone_funnel(fresh_game):
+    import ming_sim.flows as flows_mod
+
+    db, state = fresh_game
+    state.metrics["国库"] = 2
+    db.save_state(state)
+    _set_all_settle_grants(db, 0)
+    _write_settle(
+        db, "liaodong", {
+            "_meta": {
+                "postures": ["纯军饷漏斗"],
+                "standalone_military_pay_due": 10,
+            },
+            "st": {
+                "省库库银": 0, "C_地方截留": 0, "C_中饱": 0,
+                "C_漂没": 0, "C_eff损耗": 0, "民欠旧赋": 0,
+                "军饷欠": 0, "官俸欠": 0, "宗禄欠": 0,
+                "官民田": 0, "隐田": 0,
+            },
+            "p": {
+                "正赋应征": 0, "三饷应征": 0, "火耗率": 0,
+                "逋赋率": 0, "起运定额": 0, "拨付gross": 0,
+                "中饱率": 0, "漂没率": 0,
+                "Due": {"军饷": 14, "官俸": 0, "宗禄": 0, "赈济": 0},
+            },
+        },
+    )
+    db.conn.execute("UPDATE buildings SET output_amount=0, maintenance=0")
+    _zero_non_meta_fiscal_config(db)
+    _set_fiscal_config_value(db, "due_haircut_bp_军饷@liaodong#province", 5000)
+    _set_fiscal_config_value(db, "due_haircut_bp_军饷@liaodong#central", 5000)
+    db.conn.execute(
+        "UPDATE regions SET tax_per_turn=0, fiscal=json_set(fiscal, "
+        "'$.huang_tian',0,'$.liao_xiang',0,'$.salt_tax',0,'$.commerce_tax',0)"
+    )
+    db.conn.execute(
+        "UPDATE armies SET self_funded_pay=1, is_tusi=1, province_pay_share=0, "
+        "central_pay_share=0, pay_source_region='', province_pay_arrears=0, "
+        "central_pay_arrears=0, arrears=0, morale=80"
+    )
+    db.conn.execute(
+        "UPDATE armies SET self_funded_pay=0, is_tusi=0, owner_power='ming', "
+        "pay_source_region='liaodong', province_pay_share=.4, central_pay_share=.6, "
+        "province_pay_arrears=0, central_pay_arrears=0, arrears=0, morale=80, "
+        "manpower=10000, salary_rate=10 WHERE id='guanning'"
+    )
+    db.conn.commit()
+
+    flow_rows = flows_mod.apply_fixed_period_flows(db, state)
+
+    central = next(row for row in flow_rows if row.get("category") == "中央军饷")
+    army = db.conn.execute(
+        "SELECT morale, province_pay_arrears, central_pay_arrears "
+        "FROM armies WHERE id='guanning'"
+    ).fetchone()
+    settle = _read_settle(db, "liaodong")
+    assert settle["st"]["军饷欠"] == pytest.approx(7)
+    assert army["province_pay_arrears"] == pytest.approx(2)
+    assert central["needed"] == pytest.approx(3)
+    assert central["shortfall"] == pytest.approx(1)
+    assert army["central_pay_arrears"] == pytest.approx(1)
+    assert army["morale"] == 75

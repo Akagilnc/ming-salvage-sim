@@ -1,0 +1,30 @@
+# FILE: tests/test_decree_commitment_settlement_229.py
+# NAME: test_commitment_progress_keeps_strict_stop_gate_semantics
+# LINE: 1162-1185
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_commitment_progress_keeps_strict_stop_gate_semantics(game):
+    db, state, _content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.execute("UPDATE legacies SET status='cleared' WHERE status='active'")
+    db.conn.execute("UPDATE armies SET arrears=0 WHERE owner_power='ming'")
+    db.save_state(state)
+
+    issue_id = db.insert_issue(
+        state,
+        kind="initiative",
+        title="严格门槛补饷承诺",
+        origin_kind="decree",
+        origin_ref="decree:turn-1:strict-gate",
+        bar_value=0,
+        inertia=0,
+        ongoing_effects={"economy": []},
+        stop_condition=json.dumps({"army.guanning.arrears": "<0"}, ensure_ascii=False),
+        commitment_kind="until_stop",
+    )
+
+    progress = commitment_progress_payload(db, state, _issue_row(db, issue_id))
+
+    assert progress is not None
+    assert progress["remaining_arrears"] == 1

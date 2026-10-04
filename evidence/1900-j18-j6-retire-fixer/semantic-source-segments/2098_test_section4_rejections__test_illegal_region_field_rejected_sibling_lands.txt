@@ -1,0 +1,26 @@
+# FILE: tests/test_section4_rejections.py
+# NAME: test_illegal_region_field_rejected_sibling_lands
+# LINE: 81-100
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_illegal_region_field_rejected_sibling_lands(game):
+    """region_delta 字段超出白名单 → 原 raise LLMContractError 崩整月,改为逐项
+    拒收留痕(invalid_enum),同地区的合法字段照落(ADR 决定 1)。"""
+    db, state, content = game
+    turn = state.turn
+    good = _a_region(db)
+    before = db.conn.execute(
+        "SELECT public_support FROM regions WHERE id=?", (good,)).fetchone()[0]
+
+    run_settle(db, state, content, {
+        "region_delta": {good: {"public_support": 2, "查无此字段": 9}},
+    }, narrative="x", decree_text="y")  # 不抛 = 没崩整月
+
+    rows = _rejection_rows(db, turn, "region_changes")
+    assert len(rows) == 1
+    assert rows[0][2] == "invalid_enum"
+    assert rows[0][1]  # reason 非空
+    after = db.conn.execute(
+        "SELECT public_support FROM regions WHERE id=?", (good,)).fetchone()[0]
+    assert after != before  # 兄弟好字段照落

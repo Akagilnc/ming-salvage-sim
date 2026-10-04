@@ -1,0 +1,14 @@
+# FILE: tests/test_relation_read_640.py
+# NAME: test_participant_sees_own_edge_non_participant_default_invisible
+# LINE: 68-75
+# FLAGS: assert_text_compare_or_match
+# KIND: py
+
+def test_participant_sees_own_edge_non_participant_default_invisible(ledger):
+    """参与者即知自己的边；非参与者默认不可见（ID-11）。"""
+    db, _ = ledger
+    jia_view = project_relation_ledger(db, viewer="王绍徽")
+    assert [(d["source"], d["target"]) for d in jia_view] == [("王绍徽", "崔呈秀")]
+    # 非参与者（丙）看不见甲乙的边。
+    qian_view = project_relation_ledger(db, viewer="钱谦益")
+    assert [(d["source"], d["target"]) for d in qian_view] == [("钱谦益", "温体仁")]

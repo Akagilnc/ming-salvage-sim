@@ -1,0 +1,43 @@
+# FILE: tests/test_breach_plea_623.py
+# NAME: test_persist_reclaims_bundled_authority
+# LINE: 749-785
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_persist_reclaims_bundled_authority(game):
+    """坚持落地=立即 revoke 路径：捆带授权收回 fail-loud。"""
+    db, state, content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.commit()
+    did, holder = _executing_policy_dossier(db, state, token="auth-bundle")
+    origin = f"dossier:{did}"
+    # 目标案卷授予一条授权
+    db.conn.execute(
+        "INSERT INTO authority_records "
+        "(holder_id, privilege, scope, effective_turn, expires_turn, dossier_id, revoked) "
+        "VALUES (?, ?, ?, ?, NULL, ?, 0)",
+        (holder, "便宜行事", f"region:shaanxi", int(state.turn), int(did)),
+    )
+    db.conn.commit()
+    auth_id = int(db.conn.execute(
+        "SELECT id FROM authority_records WHERE dossier_id=? AND revoked=0",
+        (did,),
+    ).fetchone()["id"])
+    cid, _ = _insert_commitment(
+        db, state, title="捆带授权之诺", origin_ref=origin,
+        bar_value=15, end_turn=state.turn + 20,
+        participants=[{"character_id": holder, "tier": "主办", "role": "承办"}],
+    )
+    todo_id = write_breach_plea_todo(
+        db, state, commitment_ref=cid,
+        breach_kind=BREACH_KIND_POLICY_REVERSAL,
+        reason="坚持撤·捆带", target_dossier_id=did, commit=True,
+    )
+    todo = next(t for t in _pending_pleas(db) if int(t["id"]) == todo_id)
+    result = finalize_persist(db, state, todo, commit=True)
+    assert result["breach_0056"] is True
+    row = db.conn.execute(
+        "SELECT revoked FROM authority_records WHERE id=?", (auth_id,),
+    ).fetchone()
+    assert row is not None and int(row["revoked"] or 0) == 1
+    assert result.get("authority_reclaims")

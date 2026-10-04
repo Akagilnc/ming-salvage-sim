@@ -1,0 +1,58 @@
+# FILE: tests/test_decree_dossiers_571.py
+# NAME: test_manual_directive_capture_rejects_malformed_roster
+# LINE: 1068-1119
+# FLAGS: assert_text_compare_or_match,assert_count,mock_or_patch_present
+# KIND: py
+
+def test_manual_directive_capture_rejects_malformed_roster(
+    game, monkeypatch, capsys, entry, bad_roster,
+):
+    import ming_sim.cli_backend as cli_backend
+    from ming_sim.session import GameSession
+
+    db, state, content = game
+    response = {
+        "拟旨意图": "拟旨", "动作类型": "assignment",
+        "目标类型": "issue", "目标ID": "granary-audit",
+        # #1624：组合契约先过；本测专咬参与人，补事务类别以免挡在组合闸
+        "事务类别": "钱粮", "施行范围": "无",
+        "参与人": bad_roster,
+    }
+    monkeypatch.setattr(
+        cli_backend, "_run_backend_for_config",
+        lambda *_a, **_k: (json.dumps(response, ensure_ascii=False), 1),
+    )
+    session = GameSession.__new__(GameSession)
+    session.db = db
+    session.state = state
+    session.llm_config = None
+    session.content = content
+
+    if entry == "web":
+        import web_app
+        from fastapi import HTTPException
+
+        web_game = types.SimpleNamespace(
+            _write_gate=threading.Lock(),
+            db=db, state=state, content=content, session=session,
+            directive_rows=lambda: db.list_directives(
+                state, statuses=("pending", "draft"),
+            ),
+            directive_payload=lambda row: dict(row),
+        )
+        monkeypatch.setattr(web_app, "get_game", lambda: web_game)
+        with pytest.raises(HTTPException) as exc_info:
+            asyncio.run(web_app.api_create_directive(
+                web_app.DirectiveRequest(text="手工旨意"),
+            ))
+        assert exc_info.value.status_code == 409
+    else:
+        import ming_sim.cli.terminal as terminal
+
+        answers = iter(["add", "手工旨意", "back"])
+        monkeypatch.setattr("builtins.input", lambda _prompt="": next(answers))
+        assert terminal.review_directives(session) == "back"
+
+    assert db.list_pending_actions(state.turn) == []
+    assert db.list_directives(state) == []
+    assert db.list_decree_dossiers() == []

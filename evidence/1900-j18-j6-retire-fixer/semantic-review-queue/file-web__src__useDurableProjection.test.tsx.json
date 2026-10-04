@@ -1,0 +1,32 @@
+{
+  "source_path": "web/src/useDurableProjection.test.tsx",
+  "member_count": 2,
+  "members": [
+    {
+      "idx": 2534,
+      "file": "web/src/useDurableProjection.test.tsx",
+      "name": "\"持久刷新协调器（#499 App 消费的 useDurableProjection）\" / \"撤回后旧 done 的 state / 密令响应迟到被弃写；新一代（撤回）胜出\"",
+      "line": 34,
+      "end": 82,
+      "flags": [
+        "web_mock_spy_or_calls"
+      ],
+      "kind": "web",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2534_useDurableProjection.test__\"持久刷新协调器（#499 App 消费的 useDurableProjection）\" __ \"撤回后旧 done 的 state __ 密令响应迟到被弃写；新一代（撤回）胜出\".txt",
+      "source_path": "web/src/useDurableProjection.test.tsx"
+    },
+    {
+      "idx": 2535,
+      "file": "web/src/useDurableProjection.test.tsx",
+      "name": "\"持久刷新协调器（#499 App 消费的 useDurableProjection）\" / \"beginMutation 推进代次：作废在飞的旧刷新（返 null、不落陈旧 state），直接变更结果不被覆盖\"",
+      "line": 84,
+      "end": 105,
+      "flags": [
+        "web_mock_spy_or_calls"
+      ],
+      "kind": "web",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2535_useDurableProjection.test__\"持久刷新协调器（#499 App 消费的 useDurableProjection）\" __ \"beginMutation 推进代次：作废在飞的旧刷新（返 null、不落陈旧 state），直接变更结果不被覆盖\".txt",
+      "source_path": "web/src/useDurableProjection.test.tsx"
+    }
+  ]
+}

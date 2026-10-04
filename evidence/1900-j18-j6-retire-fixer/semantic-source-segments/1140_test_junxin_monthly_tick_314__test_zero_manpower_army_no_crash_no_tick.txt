@@ -1,0 +1,15 @@
+# FILE: tests/test_junxin_monthly_tick_314.py
+# NAME: test_zero_manpower_army_no_crash_no_tick
+# LINE: 307-315
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call,retired_or_meta_marker
+# KIND: py
+
+def test_zero_manpower_army_no_crash_no_tick(game):
+    # ⑦ 零兵残军 needed<=0 → continue 短路：不除零、loyalty 不动。
+    db, state, _ = game
+    _use_legacy_fiscal_engine(db)
+    _silence_other_armies(db, keep=(KEG,))
+    _setup_army(db, KEG, manpower=0, arrears=10.0, loyalty=30)
+    db.conn.commit()
+    _run_months(db, state, 2)
+    assert _loyalty_of(db, KEG) == 30, "零兵残军 loyalty 不得被 tick 动"

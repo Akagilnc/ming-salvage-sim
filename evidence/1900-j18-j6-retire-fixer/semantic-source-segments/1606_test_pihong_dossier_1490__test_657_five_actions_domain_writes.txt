@@ -1,0 +1,69 @@
+# FILE: tests/test_pihong_dossier_1490.py
+# NAME: test_657_five_actions_domain_writes
+# LINE: 658-720
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_657_five_actions_domain_writes(game):
+    """五动作至少各一领域断言；summon 只 CAS decided。"""
+    from ming_sim import rescript_actions as ra
+    from ming_sim.decree_vocabulary import derive_draft_capability
+    db, state, content = game
+    urgent, _opts = _plant_urgent_desk(db, state, actor_name='杨嗣昌')
+    key = urgent['decision_key']
+    batch = ra.validate_all([urgent], [{'decision_key': key, 'action': 'hold', 'label': '留中'}])
+    ra.apply_rescript_batch(db, state, batch, ra.PrewriteResults(), content=content)
+    hit = next((r for r in db.list_rescript_drafts() if r['title'] == '陕西告饥'))
+    assert hit['status'] == 'decided'
+    assert (hit['choice'] or {}).get('action') == 'hold'
+    edges = db.conn.execute('SELECT event_kind FROM relation_edge_events WHERE target=? AND event_kind=?', ('杨嗣昌', '辜负')).fetchall()
+    assert edges, 'hold 须写辜负信用事件'
+    db.conn.execute("DELETE FROM pending_decisions WHERE kind='rescript_draft'")
+    opt = _layer_a_option(assignee_name='')
+    urgent, _ = _plant_urgent_desk(db, state, options=[opt, _layer_a_option(label='备', hint='b')])
+    key = urgent['decision_key']
+    before = len(db.list_decree_dossiers())
+    batch = ra.validate_all([urgent], [{'decision_key': key, 'action': 'follow_draft', 'draft_capability': opt['draft_capability'], 'label': opt['label']}])
+    ra.apply_rescript_batch(db, state, batch, ra.PrewriteResults(), content=content)
+    after = db.list_decree_dossiers()
+    assert len(after) > before
+    created = after[-1]
+    assert created['action_type'] == 'assignment'
+    assert created['status'] in {'proposed', 'promulgated', 'executing'} or created['status']
+    db.conn.execute("DELETE FROM pending_decisions WHERE kind='rescript_draft'")
+    urgent, _ = _plant_urgent_desk(db, state)
+    key = urgent['decision_key']
+    before = len(db.list_decree_dossiers())
+    midzhi_choice = {'decision_key': key, 'action': 'midzhi', 'label': '中旨赈济', 'action_type': 'assignment', 'target_kind': 'region', 'target_id': 'shaanxi', 'locality_scope': 'single', 'region_id': 'shaanxi', 'transaction_category': '督赈', 'title': '中旨赈陕', 'deadline_months': 2, 'participant_roster': _roster(_ROSTER_LEAD)}
+    batch = ra.validate_all([urgent], [midzhi_choice])
+    ra.apply_rescript_batch(db, state, batch, ra.PrewriteResults(), content=content)
+    mids = [d for d in db.list_decree_dossiers() if d.get('mode') == 'midzhi']
+    assert mids, 'midzhi 须落 mode=midzhi 案卷'
+    assert mids[-1]['status'] == 'proposed'
+    mid_payload = json.loads(str(mids[-1].get('payload_json') or '{}'))
+    assert mid_payload.get('decision_key') == key
+    assert mid_payload.get('mode') == 'midzhi'
+    db.conn.execute("DELETE FROM pending_decisions WHERE kind='rescript_draft'")
+    urgent, _ = _plant_urgent_desk(db, state)
+    key = urgent['decision_key']
+    batch = ra.validate_all([urgent], [{'decision_key': key, 'action': 'deliberate', 'label': '下部议'}])
+    pre = ra.PrewriteResults(deliberate_by_key={key: {'title': '廷议陕西赈济', 'body': '臣请集议赈策。', 'stance': '主赈', 'supporter_ids': []}})
+    ra.apply_rescript_batch(db, state, batch, pre, content=content)
+    drow = db.find_deliberation_dossier_by_decision_key(key)
+    assert drow is not None
+    assert _dossier_payload(drow).get('deliberation_state') == 'stalled'
+    issue = db.conn.execute('SELECT title, origin_ref FROM issues WHERE origin_ref=?', (f"dossier:{int(drow['id'])}",)).fetchone()
+    assert issue is not None and str(issue['origin_ref'] or '') == f"dossier:{int(drow['id'])}"
+    db.conn.execute("DELETE FROM pending_decisions WHERE kind='rescript_draft'")
+    urgent, _ = _plant_urgent_desk(db, state)
+    key = urgent['decision_key']
+    batch = ra.validate_all([urgent], [{'decision_key': key, 'action': 'summon', 'label': '召见', 'summon_target': '杨嗣昌'}])
+    ledger_before = db.conn.execute('SELECT COUNT(*) AS c FROM story_ledger_entries').fetchone()['c']
+    result = ra.apply_rescript_batch(db, state, batch, ra.PrewriteResults(), content=content)
+    assert key in result.summon_keys
+    hit = next((r for r in db.list_rescript_drafts() if r['title'] == '陕西告饥'))
+    assert hit['status'] == 'decided'
+    assert (hit['choice'] or {}).get('action') == 'summon'
+    ledger_after = db.conn.execute('SELECT COUNT(*) AS c FROM story_ledger_entries').fetchone()['c']
+    assert ledger_after == ledger_before
+    _ = derive_draft_capability

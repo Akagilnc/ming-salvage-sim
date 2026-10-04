@@ -1,0 +1,29 @@
+# FILE: tests/test_deepseek_thinking_disable_1797.py
+# NAME: test_create_chat_model_deepseek_enable_thinking_still_disables
+# LINE: 115-137
+# FLAGS: assert_text_compare_or_match
+# KIND: py
+
+def test_create_chat_model_deepseek_enable_thinking_still_disables(monkeypatch):
+    """DeepSeek 系 × enable_thinking=True 亦不得清掉关闭键（含官方/中转）。"""
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    official = create_chat_model(
+        LLMConfig(
+            api_key="sk-test",
+            base_url="https://api.deepseek.com/v1",
+            model="deepseek-v4-flash-0731",
+            channel="api",
+        ),
+        enable_thinking=True,
+    )
+    assert official.extra_body == {"thinking": {"type": "disabled"}}
+    relay = create_chat_model(
+        LLMConfig(
+            api_key="sk-test",
+            base_url="http://127.0.0.1:8645/v1",
+            model="deepseek/deepseek-v4-flash-0731",
+            channel="api",
+        ),
+        enable_thinking=True,
+    )
+    assert relay.extra_body == {"reasoning": {"enabled": False}}

@@ -1,0 +1,23 @@
+# FILE: tests/test_settlement_write_guard_393.py
+# NAME: test_advance_without_edict_refused_by_phase
+# LINE: 307-323
+# FLAGS: assert_count,mock_or_patch_present,helper_or_private_call
+# KIND: py
+
+def test_advance_without_edict_refused_by_phase(monkeypatch):
+    """退朝默认提交也会写 pending_actions，必须和写诏一样先过统一 web 写闸。"""
+    game = _FakeGame(TurnPhase.SETTLING.value)
+    game.directive_rows = lambda: []  # 无草案 → advance_without_decree 路径
+
+    def _should_not_run(**_k):
+        game.db.writes.append("advance_without_decree")
+        return None
+
+    game.session.advance_without_decree = _should_not_run
+    monkeypatch.setattr(web_app, "get_game", lambda: game)
+
+    with pytest.raises(HTTPException) as ei:
+        web_app.api_advance_without_edict()
+
+    assert ei.value.status_code == 409
+    assert game.db.writes == []

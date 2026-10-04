@@ -1,0 +1,48 @@
+# FILE: tests/test_decree_dossiers_571.py
+# NAME: test_batch_draft_extraction_preserves_each_mechanical_payload
+# LINE: 1824-1865
+# FLAGS: assert_text_compare_or_match,assert_count,mock_or_patch_present
+# KIND: py
+
+def test_batch_draft_extraction_preserves_each_mechanical_payload(monkeypatch):
+    import ming_sim.cli_backend as cli_backend
+
+    raw = json.dumps({
+        "成品旨稿": [
+            {
+                "正文": "拨国库银一万两赈陕",
+                "动作类型": "grant_allocation",
+                "目标类型": "region",
+                "目标": "shaanxi",
+                "金额": 10000,
+                "账户": "国库",
+                "执行面": "in_transit",
+                "颁布方式": "ordinary",
+            },
+            {
+                "正文": "命洪承畴三月出师",
+                "动作类型": "military_order",
+                "目标类型": "army",
+                "目标ID": "guanning",
+                "承办人": "洪承畴",
+                "期限月数": 3,
+                "颁布方式": "中旨直发",
+            },
+        ],
+    }, ensure_ascii=False)
+    monkeypatch.setattr(
+        cli_backend, "_run_backend_for_config",
+        lambda *_args, **_kwargs: (raw, {}),
+    )
+    result = cli_backend.extract_draft_intent(
+        "分别拟旨拨款、出师", "臣已拟妥", draft_count=2,
+    )
+    assert result["drafts"][0]["amount"] == 10000
+    assert result["drafts"][0]["dossier_action_type"] == "grant_allocation"
+    assert result["drafts"][0]["mode"] == "ordinary"
+    # #1624：grant 经 cluster 投影保留 in_transit；military 不携带执行面。
+    assert result["drafts"][0].get("execution_surface") == "in_transit"
+    assert result["drafts"][1]["deadline_months"] == 3
+    assert result["drafts"][1]["dossier_action_type"] == "military_order"
+    assert result["drafts"][1]["mode"] == "midzhi"
+    assert str(result["drafts"][1].get("execution_surface") or "").strip() == ""

@@ -1,0 +1,105 @@
+{
+  "source_path": "tests/test_dossier_reported_progress_619.py",
+  "member_count": 7,
+  "members": [
+    {
+      "idx": 627,
+      "file": "tests/test_dossier_reported_progress_619.py",
+      "name": "test_execution_surface_dossier_can_record_and_list_full_history",
+      "line": 78,
+      "end": 111,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0627_test_dossier_reported_progress_619__test_execution_surface_dossier_can_record_and_list_full_history.txt",
+      "source_path": "tests/test_dossier_reported_progress_619.py"
+    },
+    {
+      "idx": 628,
+      "file": "tests/test_dossier_reported_progress_619.py",
+      "name": "test_secret_monthly_path_unchanged_and_stays_on_private_rail",
+      "line": 116,
+      "end": 143,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0628_test_dossier_reported_progress_619__test_secret_monthly_path_unchanged_and_stays_on_private_rail.txt",
+      "source_path": "tests/test_dossier_reported_progress_619.py"
+    },
+    {
+      "idx": 629,
+      "file": "tests/test_dossier_reported_progress_619.py",
+      "name": "test_short_and_one_shot_dossiers_have_no_empty_monthly_shell",
+      "line": 146,
+      "end": 165,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0629_test_dossier_reported_progress_619__test_short_and_one_shot_dossiers_have_no_empty_monthly_shell.txt",
+      "source_path": "tests/test_dossier_reported_progress_619.py"
+    },
+    {
+      "idx": 630,
+      "file": "tests/test_dossier_reported_progress_619.py",
+      "name": "test_origin_namespace_minimum_closed_set_and_open_append",
+      "line": 168,
+      "end": 200,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0630_test_dossier_reported_progress_619__test_origin_namespace_minimum_closed_set_and_open_append.txt",
+      "source_path": "tests/test_dossier_reported_progress_619.py"
+    },
+    {
+      "idx": 631,
+      "file": "tests/test_dossier_reported_progress_619.py",
+      "name": "test_production_terminal_sidepath_records_degraded_transformed_only",
+      "line": 203,
+      "end": 243,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0631_test_dossier_reported_progress_619__test_production_terminal_sidepath_records_degraded_transformed_only.txt",
+      "source_path": "tests/test_dossier_reported_progress_619.py"
+    },
+    {
+      "idx": 632,
+      "file": "tests/test_dossier_reported_progress_619.py",
+      "name": "test_fake_progress_report_does_not_change_world_state",
+      "line": 247,
+      "end": 265,
+      "flags": [
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0632_test_dossier_reported_progress_619__test_fake_progress_report_does_not_change_world_state.txt",
+      "source_path": "tests/test_dossier_reported_progress_619.py"
+    },
+    {
+      "idx": 633,
+      "file": "tests/test_dossier_reported_progress_619.py",
+      "name": "test_restore_preserves_report_history",
+      "line": 268,
+      "end": 300,
+      "flags": [
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0633_test_dossier_reported_progress_619__test_restore_preserves_report_history.txt",
+      "source_path": "tests/test_dossier_reported_progress_619.py"
+    }
+  ]
+}

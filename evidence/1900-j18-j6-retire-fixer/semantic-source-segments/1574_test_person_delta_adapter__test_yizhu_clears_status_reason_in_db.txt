@@ -1,0 +1,34 @@
+# FILE: tests/test_person_delta_adapter.py
+# NAME: test_yizhu_clears_status_reason_in_db
+# LINE: 2758-2785
+# FLAGS: assert_text_compare_or_match
+# KIND: py
+
+def test_yizhu_clears_status_reason_in_db(game):
+    """5b F2：陷虏者易主投敌后，DB status_reason 须清（不能滞留『松山兵败被执』），
+    status_changed_turn 记本回合——否则 active 者带着旧下狱缘由，DB 自相矛盾。"""
+    db, state, content = game
+    name = active_ming_character(db, content)
+    db.set_character_status(state, name, "imprisoned", "松山兵败被执", reason_code="陷虏")
+    if name in content.characters:
+        content.characters[name].status = "imprisoned"
+
+    # 下狱发生在更早回合；推进一回合再易主，status_changed_turn 才能证伪「沿用下狱回合残值」
+    # （若同回合两写则 status_changed_turn 恒等 state.turn，断言无牙、抓不住 F2 回归）。
+    state.turn += 1
+
+    issues.apply_score_extraction(
+        db, state,
+        {"人物变更": [{"name": name, "origin_ref": "盘面自发", "动作": "易主", "new_power": "houjin",
+                      "方式": "被俘而降", "反噬": {}, "reason": "剃发降清"}]},
+        content=content,
+    )
+
+    row = db.conn.execute(
+        "SELECT status, status_reason, status_changed_turn, reason_code FROM characters WHERE name=?", (name,)
+    ).fetchone()
+    assert row["status"] == "active"
+    assert row["status_reason"] != "松山兵败被执", "易主后 DB 仍滞留旧下狱缘由"
+    assert row["status_reason"] == "剃发降清", "易主须把 status_reason 换成本次易主缘由（非任意非空残值即过）"
+    assert row["status_changed_turn"] == state.turn, "易主即状态变更，status_changed_turn 须记本回合（docstring 称验却漏断言=F2 半漏）"
+    assert row["reason_code"] == ""

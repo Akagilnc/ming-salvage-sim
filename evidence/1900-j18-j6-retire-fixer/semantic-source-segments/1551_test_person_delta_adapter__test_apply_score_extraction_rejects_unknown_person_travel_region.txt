@@ -1,0 +1,32 @@
+# FILE: tests/test_person_delta_adapter.py
+# NAME: test_apply_score_extraction_rejects_unknown_person_travel_region
+# LINE: 2077-2102
+# FLAGS: assert_text_compare_or_match
+# KIND: py
+
+def test_apply_score_extraction_rejects_unknown_person_travel_region(read_game):
+    db, state, content = read_game
+    name = active_ming_character(db, content)
+
+    applied = issues.apply_score_extraction(
+        db,
+        state,
+        {
+            "人物变更": [
+                {"name": name, "origin_ref": "盘面自发", "动作": "行止", "transit_to": "not_a_region"},
+            ]
+        },
+        content=content,
+    )
+
+    assert applied["applied_person_changes"] == [
+        {
+            "name": name,
+            "origin_ref": "盘面自发", "动作": "行止",
+            "rejected": True,
+            "reason": ANY,
+            "category": "missing_ref",
+            "item": {"name": name, "origin_ref": "盘面自发", "动作": "行止", "transit_to": "not_a_region"},
+        }
+    ]
+    assert isinstance(applied['applied_person_changes'][0]['reason'], str) and applied['applied_person_changes'][0]['reason']

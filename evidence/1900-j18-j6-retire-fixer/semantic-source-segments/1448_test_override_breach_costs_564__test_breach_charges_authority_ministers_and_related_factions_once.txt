@@ -1,0 +1,28 @@
+# FILE: tests/test_override_breach_costs_564.py
+# NAME: test_breach_charges_authority_ministers_and_related_factions_once
+# LINE: 504-525
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_breach_charges_authority_ministers_and_related_factions_once(game):
+    db, state, _ = game
+    roster = [
+        {"character_id": "徐光启", "tier": "主办", "role": "总理"},
+        {"character_id": "毕自严", "tier": "协办", "role": "核账"},
+        {"character_id": "倪元璐", "tier": "主办", "role": "清丈", "delegator_id": "徐光启"},
+        {"character_id": "黄道周", "tier": "协办", "role": "清丈", "delegator_id": "毕自严"},
+        {"character_id": "王承恩", "tier": "知情", "role": "知情"},
+    ]
+    dossier_id = _dossier(db, state, roster=roster)
+    db.apply_dossier_promulgation(state, dossier_id, "promulgated")
+    authority = state.metrics["皇威"]
+    assert db.breach_decree_dossier(state, dossier_id, reason="撤回成命") is True
+    assert db.breach_decree_dossier(state, dossier_id, reason="重复撤回") is False
+    assert state.metrics["皇威"] == max(0, authority - 5)
+    edges = db.get_relation_edge_events(event_kind="辜负")
+    assert {e["target"] for e in edges if e["origin"].startswith(f"dossier:{dossier_id}:breach")} == {
+        "倪元璐", "徐光启", "毕自严",
+    }
+    assert not {"黄道周", "王承恩", "曹化淳"} & {e["target"] for e in edges}
+    faction_targets = {e["target_id"] for e in _cost_events(db, dossier_id) if e["target_kind"] == "faction"}
+    assert faction_targets == {"东林", "皇党", "西学"}

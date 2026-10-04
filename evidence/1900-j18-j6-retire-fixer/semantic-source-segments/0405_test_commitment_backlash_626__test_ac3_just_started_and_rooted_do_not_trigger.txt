@@ -1,0 +1,56 @@
+# FILE: tests/test_commitment_backlash_626.py
+# NAME: test_ac3_just_started_and_rooted_do_not_trigger
+# LINE: 431-480
+# FLAGS: helper_or_private_call
+# KIND: py
+
+def test_ac3_just_started_and_rooted_do_not_trigger(game):
+    """刚起头撤 / 根基已成撤 → 不触发（分档重算，断言只落定性产物）。"""
+    db, state, content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.commit()
+
+    # 刚起头
+    did_j, holder = _executing_policy_dossier(db, state, token="js")
+    cid_j = _insert_commitment(
+        db, state, title="刚起头之诺", origin_ref=f"dossier:{did_j}",
+        bar_value=10,
+        participants=[{"character_id": holder, "tier": "主办", "role": "承办"}],
+    )
+    assert assess_foundation_tier(db, cid_j) == FOUNDATION_JUST_STARTED
+    todo_j = write_breach_plea_todo(
+        db, state, commitment_ref=cid_j,
+        breach_kind=BREACH_KIND_POLICY_REVERSAL,
+        reason="刚起头撤", target_dossier_id=did_j, commit=True,
+    )
+    todo = next(t for t in _pending_pleas(db) if int(t["id"]) == todo_j)
+    finalize_persist(db, state, todo, commit=True)
+    # 无 setback（#623 也不落）
+    # 根基已成
+    did_r, _ = _executing_policy_dossier(db, state, token="rt")
+    db.record_issue_economy_move(
+        state, "国库", -10, "投入", "生根投入",
+        origin_ref=f"dossier:{did_r}", commit=True,
+    )
+    db.record_dossier_progress(
+        did_r, state.turn, "告成", "已生根", is_terminal=False, commit=True,
+    )
+    cid_r = _insert_commitment(
+        db, state, title="根基已成之诺", origin_ref=f"dossier:{did_r}",
+        bar_value=80,
+        participants=[{"character_id": holder, "tier": "主办", "role": "承办"}],
+    )
+    assert assess_foundation_tier(db, cid_r) == FOUNDATION_ROOTED
+    todo_r = write_breach_plea_todo(
+        db, state, commitment_ref=cid_r,
+        breach_kind=BREACH_KIND_POLICY_REVERSAL,
+        reason="根基已成撤", target_dossier_id=did_r, commit=True,
+    )
+    todo2 = next(t for t in _pending_pleas(db) if int(t["id"]) == todo_r)
+    finalize_persist(db, state, todo2, commit=True)
+
+    state.turn = int(state.turn) + 1
+    hits = db.trigger_commitment_backlashes(state, commit=True)
+    # 定性：无 commitment_backlash issue
+    assert hits == []
+    assert _backlash_issues(db) == []

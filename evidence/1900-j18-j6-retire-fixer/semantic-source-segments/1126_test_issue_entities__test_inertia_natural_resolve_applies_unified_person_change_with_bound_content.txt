@@ -1,0 +1,16 @@
+# FILE: tests/test_issue_entities.py
+# NAME: test_inertia_natural_resolve_applies_unified_person_change_with_bound_content
+# LINE: 211-220
+# FLAGS: assert_text_compare_or_match,mock_or_patch_present
+# KIND: py
+
+def test_inertia_natural_resolve_applies_unified_person_change_with_bound_content(game, monkeypatch):
+    db, state, content = game
+    name = active_ming_character(db, content)
+    person = content.characters[name]
+    for field in ("office", "office_type", "status", "transit_to"):
+        monkeypatch.setattr(person, field, getattr(person, field))
+    db.insert_issue(state, kind="situation", title="自然结案人事", bar_value=99, inertia=1,
+        effect_on_resolve={"人物变更": [{"name": name, "动作": "调任", "office": "陕西总督", "office_type": "督抚", "region_id": "shaanxi", "reason": "自然结案调任"}]})
+    I.apply_issue_inertia_and_ongoing(db, state)
+    assert db.conn.execute("SELECT office FROM characters WHERE name=?", (name,)).fetchone()[0] == person.office == "陕西总督"

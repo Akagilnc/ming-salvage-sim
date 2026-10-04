@@ -1,0 +1,51 @@
+# FILE: tests/test_p4_guard_new_surfaces_547.py
+# NAME: test_audience_archive_qiju_keeps_sentinels_out_and_world_facts_in
+# LINE: 206-250
+# FLAGS: assert_text_compare_or_match,mock_or_patch_present,helper_or_private_call
+# KIND: py
+
+def test_audience_archive_qiju_keeps_sentinels_out_and_world_facts_in(game, monkeypatch):
+    """起居注：场档列表 + 退朝后同源卷轴只读面。"""
+    import web_app
+
+    db, state, content = game
+    minister = active_ming_character(db, content)
+    plant_character_axis_sentinels(db, content, minister)
+    facts = _world_facts(db, state)
+
+    night_id = open_audience_night(db, state)
+    an.summon_enter(db, night_id, minister, method=an.METHOD_YUECI)
+    scene_body = (
+        f"{facts['year']}年{facts['period']}月密议，"
+        f"库银{facts['treasury']}，边军{facts['manpower']}。"
+    )
+    an.append_ledger_entry(
+        db, night_id, body=scene_body, tags=["军务"], person_names=[minister],
+    )
+    _turn_id, mid = append_night_chat(
+        db, state, night_id, minister,
+        "边饷如何？",
+        f"边军约{facts['manpower']}可支。",
+        10,
+    )
+    db.set_message_highlights(mid, [f"{facts['manpower']}可支"])
+    db.conn.execute(
+        "UPDATE audience_nights SET status='closed', closed_at=CURRENT_TIMESTAMP WHERE id=?",
+        (night_id,),
+    )
+    db.conn.commit()
+
+    archives = db.list_closed_night_archives()
+    archived_scroll = an.read_night_scroll(db, night_id)
+    monkeypatch.setattr(web_app, "get_game", lambda: _scroll_game(db))
+    client = TestClient(web_app.app)
+    history = client.get("/api/history/turns").json()
+    scroll_http = client.get(f"/api/audience/scroll?night_id={night_id}").json()
+
+    assert archives
+    assert any(item.get("kind") == "night" for item in history["turns"])
+
+    _assert_no_character_axis_keys(archives, where="list_closed_night_archives")
+    _assert_no_character_axis_keys(history, where="api_history_turns")
+    _assert_no_character_axis_keys(archived_scroll, where="archived read_night_scroll")
+    _assert_no_character_axis_keys(scroll_http, where="archived api_audience_scroll")

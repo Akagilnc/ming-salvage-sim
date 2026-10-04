@@ -1,0 +1,32 @@
+# FILE: tests/test_decree_commitment_creation_136.py
+# NAME: test_future_one_shot_commitment_shape_rejects_without_explicit_marker
+# LINE: 494-519
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_future_one_shot_commitment_shape_rejects_without_explicit_marker(game, monkeypatch):
+    db, state, content = game
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+
+    out = I.apply_score_extraction(
+        db,
+        state,
+        {
+            "new_issues": [
+                {
+                    "origin_kind": "decree",
+                    "origin_ref": _promulgated_commitment_origin(db, state, 'sunchengzong-review-without-marker'),
+                    "kind": "initiative",
+                    "title": "三月后复核孙承宗但缺承诺标记",
+                    "stage_text": "孙承宗暂听候政，三月后复核。",
+                    "end_turn": state.turn + 3,
+                }
+            ]
+        },
+        content=content,
+    )
+
+    created = out["issue_summary"]["new_issues"][0]
+    assert created["rejected"] is True
+    assert created["category"] == "invalid_enum"
+    assert _issue_by_title(db, "三月后复核孙承宗但缺承诺标记") is None

@@ -1,0 +1,49 @@
+# FILE: tests/test_structured_decree_contract_1624.py
+# NAME: test_rescript_follow_draft_nails_drafted_roster
+# LINE: 302-344
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_rescript_follow_draft_nails_drafted_roster(game):
+    """真实批红 follow_draft：Owner 例未点将 → 主办来自票拟名单，成案钉进案卷。"""
+    import ming_sim.rescript_actions as ra
+    from ming_sim.rescript_draft import normalize_rescript_layer_a_option
+
+    db, state, content = game
+
+    opt = normalize_rescript_layer_a_option(dict(_OWNER_OPTION))
+    alt = normalize_rescript_layer_a_option({
+        **_OWNER_OPTION, "label": "缓征", "hint": "b", "transaction_category": "钱粮",
+    })
+    db.save_rescript_drafts(int(state.turn), [{
+        "title": "陕西告饥",
+        "context": "秦地赤旱",
+        "options": [opt, alt],
+        "actor_name": "杨嗣昌",
+        "actor_office": "兵部尚书",
+        "actor_faction": "东林",
+    }])
+    db.conn.commit()
+    urgent = next(
+        r for r in db.list_rescript_desk(int(state.turn))
+        if r.get("kind") == "rescript_draft" and r.get("title") == "陕西告饥"
+    )
+    before = len(db.list_decree_dossiers())
+    batch = ra.validate_all([urgent], [{
+        "decision_key": urgent["decision_key"],
+        "action": "follow_draft",
+        "draft_capability": opt["draft_capability"],
+        "label": opt["label"],
+    }])
+    ra.apply_rescript_batch(db, state, batch, ra.PrewriteResults(), content=content)
+    after = db.list_decree_dossiers()
+    assert len(after) > before
+    created = after[-1]
+    payload = json.loads(created.get("payload_json") or "{}")
+    assert payload.get("target_kind") == "region"
+    assert payload.get("target_id") == "shaanxi"
+    assert payload.get("region_id") == "shaanxi"
+    assert payload.get("locality_scope") == "single"
+    assert payload.get("transaction_category") == "督赈"
+    assert not str(payload.get("assignee_id") or payload.get("assignee") or "").strip()
+    _assert_drafted_roster_nailed(db, created)

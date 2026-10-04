@@ -1,0 +1,53 @@
+# FILE: tests/test_month_chain_1847.py
+# NAME: test_drift_sees_effects_landed_after_answers
+# LINE: 1084-1130
+# FLAGS: mock_or_patch_present,helper_or_private_call
+# KIND: py
+
+def test_drift_sees_effects_landed_after_answers(game, monkeypatch):
+    """问后续推落下的局面，当月惯性才看得到；未答完不得先跑惯性。"""
+    db, state, content = game
+    db.conn.execute(
+        "INSERT INTO issues (kind, title, origin_turn, inertia, bar_value, status) "
+        "VALUES ('situation', '边警自走', ?, 5, 40, 'active')",
+        (int(state.turn),),
+    )
+    issue_id = int(db.conn.execute("SELECT last_insert_rowid()").fetchone()[0])
+    db.conn.commit()
+
+    def translate(*_a, **kwargs):
+        if "问后结案" not in str(kwargs.get("segment") or ""):
+            return {"effects": {}}
+        return {"effects": {"close_issues": [{
+            "issue_id": issue_id, "reason": "resolved",
+        }]}}
+
+    _forbid_extractor(monkeypatch)
+    monkeypatch.setattr(
+        month_chain, "run_world_segment_text", lambda *a, **k: _WORLD_WITH_QUESTION,
+    )
+    monkeypatch.setattr(
+        month_chain, "_run_world_continuation_text", lambda *a, **k: "问后结案。",
+    )
+    monkeypatch.setattr(month_translate, "translate_month_segment", translate)
+    session = make_light_session(db, state, content)
+    session.llm_config = object()
+    paused = session.resolve_turn(allow_empty_decree=True)
+    assert paused.awaiting is True
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM issue_advances WHERE issue_id=? AND trigger_kind='inertia'",
+        (issue_id,),
+    ).fetchone()[0] == 0
+    session.submit_hitl_choices(
+        [_choice(session.pending_decisions()[0])], write_gate=session._write_gate,
+    )
+
+    session.resolve_turn(allow_empty_decree=True)
+
+    assert db.conn.execute(
+        "SELECT status FROM issues WHERE id=?", (issue_id,),
+    ).fetchone()["status"] != "active"
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM issue_advances WHERE issue_id=? AND trigger_kind='inertia'",
+        (issue_id,),
+    ).fetchone()[0] == 0

@@ -1,0 +1,30 @@
+# FILE: tests/test_mutiny_noop_whitelist_319.py
+# NAME: test_latched_cutover_rejects_unknown_pay_source_region
+# LINE: 505-528
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_latched_cutover_rejects_unknown_pay_source_region(game):
+    """cutover-on + latched：不存在 region 须 invalid_enum 拒收留痕，快照不变。"""
+    db, state, _ = game
+    _configure(db, "substrate_hub")
+    _set(db, "substrate_hub", loyalty=30, arrears=0, latched=1, mutiny_count=1)
+    before = _snapshot(db, PAY_SOURCE_DENY_FIELDS)
+    bad = {"pay_source_region": "no_such_region_319"}
+
+    changes = db.apply_army_deltas(
+        state, _event(), None, "测试", {ARMY: dict(bad)}
+    )
+
+    rejected = [
+        c for c in changes
+        if c.get("rejected") and c.get("category") == "invalid_enum"
+    ]
+    assert rejected, f"不存在 region 应 invalid_enum 拒收：{changes}"
+    assert any(
+        c.get("field") == "pay_source"
+        and isinstance(c.get("item"), dict)
+        and (c["item"].get("changes") or {}).get("pay_source_region") == "no_such_region_319"
+        for c in rejected
+    ), rejected
+    assert _snapshot(db, PAY_SOURCE_DENY_FIELDS) == before

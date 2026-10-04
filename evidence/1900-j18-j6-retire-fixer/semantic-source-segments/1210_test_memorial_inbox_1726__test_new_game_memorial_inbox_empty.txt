@@ -1,0 +1,13 @@
+# FILE: tests/test_memorial_inbox_1726.py
+# NAME: test_new_game_memorial_inbox_empty
+# LINE: 41-47
+# FLAGS: assert_count
+# KIND: py
+
+def test_new_game_memorial_inbox_empty(game):
+    """新局首月无奏报 → 0 件；不得拿局势条数充数。"""
+    db, state, _content = game
+    assert db.list_player_memorials() == []
+    assert db.unread_memorial_count() == 0
+    # 开局常有局势，但奏疏计数必须与之脱钩
+    assert len(db.list_active_issues()) >= 1

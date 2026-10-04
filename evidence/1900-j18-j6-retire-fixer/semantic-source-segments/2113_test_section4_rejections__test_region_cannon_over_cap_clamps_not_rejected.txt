@@ -1,0 +1,26 @@
+# FILE: tests/test_section4_rejections.py
+# NAME: test_region_cannon_over_cap_clamps_not_rejected
+# LINE: 442-461
+# FLAGS: helper_or_private_call
+# KIND: py
+
+def test_region_cannon_over_cap_clamps_not_rejected(game):
+    """region cannon 超 cap city_level×8 → clamp 后照落,不算拒收(P2 铁律保持)。"""
+    db, state, content = game
+    turn = state.turn
+    row = db.conn.execute(
+        "SELECT id, city_level FROM regions WHERE city_level >= 1 LIMIT 1").fetchone()
+    rid, city_level = row[0], row[1]
+    cap = city_level * 8
+    db.conn.execute("UPDATE regions SET cannon=0 WHERE id=?", (rid,))
+    db.conn.commit()
+
+    run_settle(db, state, content, {
+        "region_delta": {rid: {"cannon": cap + 50}},  # 远超 cap
+    }, narrative="x", decree_text="y")
+
+    rows = _rejection_rows(db, turn, "region_changes")
+    assert rows == []
+    after = db.conn.execute(
+        "SELECT cannon FROM regions WHERE id=?", (rid,)).fetchone()[0]
+    assert after == cap  # clamp 后照落,不超城防上限

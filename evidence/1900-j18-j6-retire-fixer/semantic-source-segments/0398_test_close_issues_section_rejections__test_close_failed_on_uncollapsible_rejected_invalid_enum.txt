@@ -1,0 +1,19 @@
+# FILE: tests/test_close_issues_section_rejections.py
+# NAME: test_close_failed_on_uncollapsible_rejected_invalid_enum
+# LINE: 103-115
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_close_failed_on_uncollapsible_rejected_invalid_enum(game):
+    db, state, _ = game
+    # 不可崩坏局势：active 但无 effect_on_fail。reason=failed → close_issue 回 None（保持 active）。
+    # 这是「找到且 active 却被拒」的第三种 None——应归 invalid_enum（语义误判），非 missing_ref。
+    iid = db.insert_issue(state, kind="situation", title="测试·不可崩坏天灾",
+                          effect_on_resolve={"metrics": {"民心": 1}}, effect_on_fail={})
+    out = I.apply_issue_tracker_output(db, state, {"close_issues": [{"issue_id": iid, "reason": "failed"}]})
+    rej = _rejected(out)
+    assert len(rej) == 1
+    assert rej[0]["category"] == "invalid_enum"
+    assert rej[0]["reason"]
+    # 行为：issue 仍 active（拒结案，不被误标 missing_ref 也未被结案）。
+    assert db.conn.execute("SELECT status FROM issues WHERE id=?", (iid,)).fetchone()["status"] == "active"

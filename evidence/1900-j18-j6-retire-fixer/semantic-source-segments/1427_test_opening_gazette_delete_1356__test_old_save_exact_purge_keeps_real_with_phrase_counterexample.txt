@@ -1,0 +1,53 @@
+# FILE: tests/test_opening_gazette_delete_1356.py
+# NAME: test_old_save_exact_purge_keeps_real_with_phrase_counterexample
+# LINE: 79-125
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_old_save_exact_purge_keeps_real_with_phrase_counterexample(game):
+    """② 旧档：完整指纹精确 DELETE seed；真报保留——含三短语反例不被删。"""
+    db, state, _content = game
+    seed = _seed_text()
+    assert seed, "fingerprint 源 content/opening_gazette.md 须存在"
+    # 反例：真结算散文含全部三短语，但全文 ≠ seed
+    for phrase in _SEED_PHRASES:
+        assert phrase in seed
+    real = (
+        "天启七年十月邸报\n\n"
+        "一、真结算产物。史官追述：信王于乾清宫即皇帝位已成定局。\n"
+        "二、档案提及「天启七年九月邸报」仅作引用，本月另有边饷核账。\n"
+        "三、待办未解（开局三事）之余波仍在，户部续议——不得被 purge。\n"
+        "——真结算保留标记"
+    )
+    for phrase in _SEED_PHRASES:
+        assert phrase in real, f"反例须含短语 {phrase!r}"
+    assert real != seed
+
+    db.conn.execute(
+        "INSERT OR REPLACE INTO turn_reports (turn, year, period, report) VALUES (?, ?, ?, ?)",
+        (0, 1627, 9, seed),
+    )
+    db.conn.execute(
+        "INSERT OR REPLACE INTO turn_reports (turn, year, period, report) VALUES (?, ?, ?, ?)",
+        (1, 1627, 10, real),
+    )
+    db.conn.commit()
+    assert db.get_turn_report(0) == seed
+    assert db.get_turn_report(1) == real
+
+    db._purge_fixed_opening_gazette_seed()
+    db._purge_fixed_opening_gazette_seed()  # 精确 DELETE 天然幂等
+
+    assert db.get_turn_report(0) == ""
+    assert db.conn.execute("SELECT 1 FROM turn_reports WHERE turn = 0").fetchone() is None
+    kept = db.get_turn_report(1)
+    assert kept == real
+    assert "真结算保留标记" in kept
+    # 无 meta flag 机制
+    assert (
+        db.conn.execute(
+            "SELECT 1 FROM metrics WHERE key = ?",
+            ("__opening_gazette_seed_purged_1356",),
+        ).fetchone()
+        is None
+    )

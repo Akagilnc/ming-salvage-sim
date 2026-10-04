@@ -1,0 +1,13 @@
+# FILE: tests/test_court_layout_1290.py
+# NAME: test_new_game_court_layout_empty_is_legal
+# LINE: 46-52
+# FLAGS: assert_text_compare_or_match,mock_or_patch_present,helper_or_private_call
+# KIND: py
+
+def test_new_game_court_layout_empty_is_legal(monkeypatch):
+    """未拖拽前 GET 恒为 layout=\"{}\"——合法空态，不是缺 seed 病。"""
+    game = _Game()
+    monkeypatch.setattr(web_app, "get_game", lambda: game)
+
+    got = _invoke(web_app.api_get_court_layout())
+    assert got == {"layout": "{}"}

@@ -1,0 +1,22 @@
+# FILE: tests/test_promulgation_judge_561.py
+# NAME: test_promulgation_verdict_rejects_unknown_fields
+# LINE: 179-194
+# FLAGS: helper_or_private_call
+# KIND: py
+
+def test_promulgation_verdict_rejects_unknown_fields(game, decision):
+    db, state, _content = game
+    dossier_id = _dossier(db, state)
+    dossiers = db.list_decree_dossiers(status="proposed")
+    context = decree_mod.build_promulgation_judge_context(db, state, dossiers)
+    verdict = (
+        {"dossier_id": dossier_id, "decision": "promulgated"}
+        if decision == "promulgated"
+        else _rejected_verdict(dossier_id, context["imperial_authority_band"])
+    )
+    verdict["foo"] = "bar"
+
+    with pytest.raises(decree_mod.LLMContractError):
+        decree_mod.validate_promulgation_verdicts(
+            [verdict], dossiers, db, prepared_context=context,
+        )

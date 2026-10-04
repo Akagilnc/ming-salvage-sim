@@ -1,0 +1,116 @@
+{
+  "source_path": "tests/test_named_characters_seed_484.py",
+  "member_count": 8,
+  "members": [
+    {
+      "idx": 1361,
+      "file": "tests/test_named_characters_seed_484.py",
+      "name": "test_r3_named_characters_load_legal_guilt_and_historical_offices",
+      "line": 14,
+      "end": 37,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1361_test_named_characters_seed_484__test_r3_named_characters_load_legal_guilt_and_historical_offices.txt",
+      "source_path": "tests/test_named_characters_seed_484.py"
+    },
+    {
+      "idx": 1362,
+      "file": "tests/test_named_characters_seed_484.py",
+      "name": "test_r4_hu_tingyan_loader_and_db_preserve_non_holder_seed",
+      "line": 40,
+      "end": 51,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1362_test_named_characters_seed_484__test_r4_hu_tingyan_loader_and_db_preserve_non_holder_seed.txt",
+      "source_path": "tests/test_named_characters_seed_484.py"
+    },
+    {
+      "idx": 1363,
+      "file": "tests/test_named_characters_seed_484.py",
+      "name": "test_r4_named_characters_debut_in_historical_order",
+      "line": 54,
+      "end": 87,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1363_test_named_characters_seed_484__test_r4_named_characters_debut_in_historical_order.txt",
+      "source_path": "tests/test_named_characters_seed_484.py"
+    },
+    {
+      "idx": 1364,
+      "file": "tests/test_named_characters_seed_484.py",
+      "name": "test_r6_xu_yingqiu_uses_verified_ministry_line_and_opening_status",
+      "line": 90,
+      "end": 98,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1364_test_named_characters_seed_484__test_r6_xu_yingqiu_uses_verified_ministry_line_and_opening_status.txt",
+      "source_path": "tests/test_named_characters_seed_484.py"
+    },
+    {
+      "idx": 1365,
+      "file": "tests/test_named_characters_seed_484.py",
+      "name": "test_r4_loader_rejects_seed_guilt_list",
+      "line": 101,
+      "end": 125,
+      "flags": [
+        "mock_or_patch_present"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1365_test_named_characters_seed_484__test_r4_loader_rejects_seed_guilt_list.txt",
+      "source_path": "tests/test_named_characters_seed_484.py"
+    },
+    {
+      "idx": 1366,
+      "file": "tests/test_named_characters_seed_484.py",
+      "name": "test_r5_loader_rejects_nested_seed_guilt_crime_list",
+      "line": 157,
+      "end": 161,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1366_test_named_characters_seed_484__test_r5_loader_rejects_nested_seed_guilt_crime_list.txt",
+      "source_path": "tests/test_named_characters_seed_484.py"
+    },
+    {
+      "idx": 1367,
+      "file": "tests/test_named_characters_seed_484.py",
+      "name": "test_r5_loader_rejects_nested_seed_guilt_severity_object",
+      "line": 164,
+      "end": 168,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1367_test_named_characters_seed_484__test_r5_loader_rejects_nested_seed_guilt_severity_object.txt",
+      "source_path": "tests/test_named_characters_seed_484.py"
+    },
+    {
+      "idx": 1368,
+      "file": "tests/test_named_characters_seed_484.py",
+      "name": "test_r5_loader_preserves_zero_identity",
+      "line": 171,
+      "end": 176,
+      "flags": [
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1368_test_named_characters_seed_484__test_r5_loader_preserves_zero_identity.txt",
+      "source_path": "tests/test_named_characters_seed_484.py"
+    }
+  ]
+}

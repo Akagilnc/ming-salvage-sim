@@ -1,0 +1,19 @@
+{
+  "source_path": "web/src/components/situation.test.tsx",
+  "member_count": 1,
+  "members": [
+    {
+      "idx": 2518,
+      "file": "web/src/components/situation.test.tsx",
+      "name": "\"#1726 StateModal 奏疏收件箱\" / \"呈真实奏疏正文与上疏人；不借局势 issues；不渲染结构化字段\"",
+      "line": 151,
+      "end": 178,
+      "flags": [
+        "web_text_assert"
+      ],
+      "kind": "web",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2518_situation.test__\"#1726 StateModal 奏疏收件箱\" __ \"呈真实奏疏正文与上疏人；不借局势 issues；不渲染结构化字段\".txt",
+      "source_path": "web/src/components/situation.test.tsx"
+    }
+  ]
+}

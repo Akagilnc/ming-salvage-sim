@@ -1,0 +1,22 @@
+# FILE: tests/test_fiscal_substrate_bridge.py
+# NAME: test_apply_fixed_period_flows_commits_shadow_substrate_when_standalone
+# LINE: 4644-4659
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_apply_fixed_period_flows_commits_shadow_substrate_when_standalone(fresh_game):
+    import ming_sim.flows as flows_mod
+
+    db, state = fresh_game
+    flows_mod.apply_fixed_period_flows(db, state)
+    in_memory = _read_settle(db, "shaanxi")["st"]
+
+    other = sqlite3.connect(db.path)
+    try:
+        row = other.execute("SELECT fiscal FROM regions WHERE id='shaanxi'").fetchone()
+    finally:
+        other.close()
+    on_disk = json.loads(str(row[0] or "{}"))["settle"]["st"]
+
+    assert on_disk["军饷欠"] == pytest.approx(in_memory["军饷欠"], abs=1e-3)
+    assert on_disk["军饷欠"] == pytest.approx(_province_pay_arrears(db, "shaanxi"), abs=1e-6)

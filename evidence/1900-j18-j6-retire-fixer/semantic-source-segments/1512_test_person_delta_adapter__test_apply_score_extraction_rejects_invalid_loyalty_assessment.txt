@@ -1,0 +1,34 @@
+# FILE: tests/test_person_delta_adapter.py
+# NAME: test_apply_score_extraction_rejects_invalid_loyalty_assessment
+# LINE: 201-228
+# FLAGS: assert_text_compare_or_match
+# KIND: py
+
+def test_apply_score_extraction_rejects_invalid_loyalty_assessment(game, item, category, reason):
+    db, state, content = game
+    before = db.conn.execute(
+        "SELECT loyalty FROM characters WHERE name='毛文龙'"
+    ).fetchone()["loyalty"]
+
+    applied = issues.apply_score_extraction(
+        db,
+        state,
+        {"人物变更": [item]},
+        content=content,
+    )
+
+    after = db.conn.execute(
+        "SELECT loyalty FROM characters WHERE name='毛文龙'"
+    ).fetchone()["loyalty"]
+    assert after == before
+    assert applied["applied_person_changes"] == [
+        {
+            "name": item["name"],
+            "origin_ref": "盘面自发", "动作": "评定",
+            "rejected": True,
+            "reason": ANY,
+            "category": category,
+            "item": item,
+        }
+    ]
+    assert isinstance(applied['applied_person_changes'][0]['reason'], str) and applied['applied_person_changes'][0]['reason']

@@ -1,0 +1,28 @@
+# FILE: tests/test_section_fiscal_rejections.py
+# NAME: test_remove_unknown_fiscal_key_rejected_good_removal_lands
+# LINE: 41-62
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_remove_unknown_fiscal_key_rejected_good_removal_lands(game):
+    """fiscal_removes 引用不存在的 key → 原 print 静默跳,改为逐项拒收留痕(missing_ref),
+    同信封里真实存在的 key 照样裁撤——坏一项不带走整批(ADR 决定 1)。"""
+    db, state, content = game
+    turn = state.turn
+    good = _a_fiscal_key(db)
+
+    run_settle(db, state, content, {
+        "fiscal_removes": [
+            {"key": "查无此税项", "reason": "罢废"},
+            {"key": good, "reason": "裁撤"},
+        ],
+    }, narrative="x", decree_text="y")  # 不抛 = 没崩整月
+
+    rows = _rejection_rows(db, turn, "fiscal_removes")
+    assert len(rows) == 1
+    _, reason, category, _ = rows[0]
+    assert reason  # 人读原因非空
+    assert category == "missing_ref"
+    # 好项照落:base key 被删
+    assert db.conn.execute(
+        "SELECT 1 FROM fiscal_config WHERE key=?", (good,)).fetchone() is None

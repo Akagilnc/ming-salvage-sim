@@ -1,0 +1,82 @@
+# FILE: tests/test_rescript_draft_656.py
+# NAME: test_657_s1_list_rescript_desk_merges_cross_month_and_decisions
+# LINE: 1116-1191
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_657_s1_list_rescript_desk_merges_cross_month_and_decisions(game):
+    """desk：旧急务 ORDER BY turn,idx → 本月 decision；decision_key 与新列投影。"""
+    db, state, _content = game
+    turn = int(state.turn)
+    prior = turn - 1 if turn > 0 else 0
+    # 跨月急务（prior turn）
+    db.conn.execute(
+        "INSERT INTO pending_decisions\n"
+        " (turn, idx, event_id, title, context, options_json, choice_json,\n"
+        "  status, kind, actor_name, actor_office, actor_faction,\n"
+        "  revision_round, prior_options_json)\n"
+        " VALUES (?, 0, 'urgent:old:0', '旧急务甲', '跨月', ?, '',\n"
+        "  'pending', 'rescript_draft', '首辅', '内阁首辅', '东林', 2, ?)",
+        (
+            prior,
+            json.dumps(_two_opts("甲", "h1", "乙", "h2"), ensure_ascii=False),
+            json.dumps([[{"label": "旧甲", "hint": "oh"}]], ensure_ascii=False),
+        ),
+    )
+    db.save_rescript_drafts(turn, [{
+        "title": "本月急务",
+        "context": "当月",
+        "options": _two_opts("丙", "h3", "丁", "h4"),
+        "actor_name": "次辅", "actor_office": "内阁次辅", "actor_faction": "阉党",
+    }])
+    db.save_pending_decisions(turn, [{
+        "title": "本月抉择",
+        "context": "decision",
+        "options": _two_opts("准", "", "驳", ""),
+        "event_id": "ev-1",
+    }])
+    # 已 decided 的急务不得入 desk
+    db.conn.execute(
+        "INSERT INTO pending_decisions\n"
+        " (turn, idx, event_id, title, context, options_json, choice_json,\n"
+        "  status, kind, revision_round, prior_options_json)\n"
+        " VALUES (?, 99, 'urgent:done', '已决急务', '', '[]', '{}',\n"
+        "  'decided', 'rescript_draft', 0, '[]')",
+        (prior,),
+    )
+    db.conn.commit()
+
+    desk = db.list_rescript_desk(turn)
+    titles = [row["title"] for row in desk]
+    assert "已决急务" not in titles
+    # 旧急务在前，本月 decision 在急务之后（合并序）
+    assert titles[0] == "旧急务甲"
+    assert "本月急务" in titles
+    assert titles[-1] == "本月抉择" or "本月抉择" in titles
+    # 旧急务 → 本月急务 → 本月 decision
+    assert titles.index("旧急务甲") < titles.index("本月急务") < titles.index("本月抉择")
+
+    old = next(r for r in desk if r["title"] == "旧急务甲")
+    assert old["decision_key"] == f"rescript_draft:{prior}:0"
+    assert old["revision_round"] == 2
+    assert old["status"] == "pending"
+    assert old["actor_name"] == "首辅"
+    assert isinstance(old["prior_options_json"], list)
+    assert old["choice"] is None or old["choice"] == {} or old["choice"] == ""
+
+    dec = next(r for r in desk if r["title"] == "本月抉择")
+    assert dec["decision_key"] == f"decision:{turn}:{dec['idx']}"
+    assert dec["kind"] == "decision"
+
+    # list 补列：list_rescript_drafts / list_pending_decisions 带出新列
+    drafts = db.list_rescript_drafts()
+    hit = next(d for d in drafts if d["title"] == "旧急务甲")
+    assert hit["revision_round"] == 2
+    assert "prior_options_json" in hit
+    decisions = db.list_pending_decisions(turn)
+    assert all("revision_round" in d for d in decisions)
+
+    # #656 不变式：clear/save decision 不碰 rescript_draft
+    db.clear_pending_decisions(turn)
+    assert any(d["title"] == "本月急务" for d in db.list_rescript_drafts())
+    assert any(d["title"] == "旧急务甲" for d in db.list_rescript_desk(turn))

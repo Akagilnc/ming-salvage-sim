@@ -1,0 +1,37 @@
+# FILE: tests/test_applier_contract.py
+# NAME: test_rejection_collector_flush_writes_rows
+# LINE: 72-102
+# FLAGS: assert_text_compare_or_match,assert_count
+# KIND: py
+
+def test_rejection_collector_flush_writes_rows(clean_rejections):
+    """record 两项后 flush_to_db，DB 落 2 行，字段内容正确。"""
+    db, state, content = clean_rejections
+    rc = RejectionCollector()
+
+    ri1 = RejectedItem(
+        item={"id": "ghost_army"},
+        reason="军队 id 不存在",
+        category="hallucinated_id",
+        source=Provenance.system_simulation,
+    )
+    ri2 = RejectedItem(
+        item={"faction": "???"},
+        reason="派系枚举非法",
+        category="invalid_enum",
+        source=Provenance.player_decree,
+    )
+    rc.record("army_delta", ri1, turn=state.turn)
+    rc.record("faction_delta", ri2, turn=state.turn)
+    rc.flush_to_db(db)
+
+    rows = db.conn.execute(
+        "SELECT section, reason, category, source FROM rejection_reports ORDER BY rowid"
+    ).fetchall()
+    assert len(rows) == 2
+    assert rows[0][0] == "army_delta"
+    assert rows[0][1] == "军队 id 不存在"
+    assert rows[0][2] == "hallucinated_id"
+    assert rows[0][3] == "system_simulation"
+    assert rows[1][0] == "faction_delta"
+    assert rows[1][2] == "invalid_enum"

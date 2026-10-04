@@ -1,0 +1,40 @@
+# FILE: tests/test_authority_ledger_611.py
+# NAME: test_same_dossier_grant_replay_returns_terminal_origin_without_regrant
+# LINE: 320-353
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_same_dossier_grant_replay_returns_terminal_origin_without_regrant(
+    game, terminal_state,
+):
+    db, state, content = game
+    holder = _minister(db)
+    target = f"{terminal_state}-replay"
+    dossier = _eligible_dossier(db, state, holder, target_id=target)
+    item = {
+        "动作": "授予", "holder_id": holder, "privilege": "便宜行事",
+        "scope": f"issue:{target}", "dossier_id": dossier["id"],
+    }
+    if terminal_state == "expired":
+        item["expires_turn"] = state.turn
+    payload = {"authority_changes": [item]}
+    first = issue_engine.apply_score_extraction(db, state, payload, content=content)
+    authority_id = int(first["authority_changes"][0]["authority_id"])
+    if terminal_state == "revoked":
+        revoke_dossier = _eligible_dossier(db, state, holder, target_id="replay-revoke")
+        _revoke(db, state, content, authority_id, revoke_dossier)
+    else:
+        state.turn += 1
+
+    replay = issue_engine.apply_score_extraction(db, state, payload, content=content)
+
+    assert replay["authority_changes"][0]["authority_id"] == authority_id
+    assert replay["authority_changes"][0]["reason"] == "same_dossier_replay"
+    record = db.get_authority(authority_id)
+    if terminal_state == "revoked":
+        assert record["revoked"] is True
+    else:
+        assert record["expires_turn"] == state.turn - 1
+    assert db.conn.execute(
+        "SELECT COUNT(*) AS n FROM authority_records"
+    ).fetchone()["n"] == 1

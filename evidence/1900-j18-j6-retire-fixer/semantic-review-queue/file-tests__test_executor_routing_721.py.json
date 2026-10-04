@@ -1,0 +1,225 @@
+{
+  "source_path": "tests/test_executor_routing_721.py",
+  "member_count": 16,
+  "members": [
+    {
+      "idx": 867,
+      "file": "tests/test_executor_routing_721.py",
+      "name": "test_excluded_action_has_no_leads",
+      "line": 71,
+      "end": 76,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0867_test_executor_routing_721__test_excluded_action_has_no_leads.txt",
+      "source_path": "tests/test_executor_routing_721.py"
+    },
+    {
+      "idx": 868,
+      "file": "tests/test_executor_routing_721.py",
+      "name": "test_unnamed_assignment_gets_no_lead_from_code",
+      "line": 79,
+      "end": 90,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0868_test_executor_routing_721__test_unnamed_assignment_gets_no_lead_from_code.txt",
+      "source_path": "tests/test_executor_routing_721.py"
+    },
+    {
+      "idx": 869,
+      "file": "tests/test_executor_routing_721.py",
+      "name": "test_create_dossier_nails_roster_lead_in_canonical_insert_and_restore",
+      "line": 93,
+      "end": 111,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0869_test_executor_routing_721__test_create_dossier_nails_roster_lead_in_canonical_insert_and_restore.txt",
+      "source_path": "tests/test_executor_routing_721.py"
+    },
+    {
+      "idx": 870,
+      "file": "tests/test_executor_routing_721.py",
+      "name": "test_existing_delegated_lead_is_preserved_not_demoted",
+      "line": 114,
+      "end": 139,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0870_test_executor_routing_721__test_existing_delegated_lead_is_preserved_not_demoted.txt",
+      "source_path": "tests/test_executor_routing_721.py"
+    },
+    {
+      "idx": 871,
+      "file": "tests/test_executor_routing_721.py",
+      "name": "test_production_assignee_is_named_route",
+      "line": 146,
+      "end": 157,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0871_test_executor_routing_721__test_production_assignee_is_named_route.txt",
+      "source_path": "tests/test_executor_routing_721.py"
+    },
+    {
+      "idx": 872,
+      "file": "tests/test_executor_routing_721.py",
+      "name": "test_legacy_character_executor_migrates_without_overriding_roster",
+      "line": 161,
+      "end": 181,
+      "flags": [
+        "retired_or_meta_marker"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0872_test_executor_routing_721__test_legacy_character_executor_migrates_without_overriding_roster.txt",
+      "source_path": "tests/test_executor_routing_721.py"
+    },
+    {
+      "idx": 873,
+      "file": "tests/test_executor_routing_721.py",
+      "name": "test_appointment_routes_to_appointee_at_creation",
+      "line": 186,
+      "end": 190,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0873_test_executor_routing_721__test_appointment_routes_to_appointee_at_creation.txt",
+      "source_path": "tests/test_executor_routing_721.py"
+    },
+    {
+      "idx": 874,
+      "file": "tests/test_executor_routing_721.py",
+      "name": "test_unknown_appointee_normalizes_unrecognized_faction",
+      "line": 228,
+      "end": 240,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0874_test_executor_routing_721__test_unknown_appointee_normalizes_unrecognized_faction.txt",
+      "source_path": "tests/test_executor_routing_721.py"
+    },
+    {
+      "idx": 875,
+      "file": "tests/test_executor_routing_721.py",
+      "name": "test_real_assignment_stage_lead_comes_from_extract_not_summoned_minister",
+      "line": 243,
+      "end": 280,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0875_test_executor_routing_721__test_real_assignment_stage_lead_comes_from_extract_not_summoned_minister.txt",
+      "source_path": "tests/test_executor_routing_721.py"
+    },
+    {
+      "idx": 876,
+      "file": "tests/test_executor_routing_721.py",
+      "name": "test_real_punishment_stage_preserves_category",
+      "line": 283,
+      "end": 293,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0876_test_executor_routing_721__test_real_punishment_stage_preserves_category.txt",
+      "source_path": "tests/test_executor_routing_721.py"
+    },
+    {
+      "idx": 877,
+      "file": "tests/test_executor_routing_721.py",
+      "name": "test_punishment_stage_rejects_unmapped_category_before_pending_or_dossier",
+      "line": 296,
+      "end": 306,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0877_test_executor_routing_721__test_punishment_stage_rejects_unmapped_category_before_pending_or_dossier.txt",
+      "source_path": "tests/test_executor_routing_721.py"
+    },
+    {
+      "idx": 878,
+      "file": "tests/test_executor_routing_721.py",
+      "name": "test_pending_routing_rejection_lands_on_ensure_batch_seam",
+      "line": 333,
+      "end": 380,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0878_test_executor_routing_721__test_pending_routing_rejection_lands_on_ensure_batch_seam.txt",
+      "source_path": "tests/test_executor_routing_721.py"
+    },
+    {
+      "idx": 879,
+      "file": "tests/test_executor_routing_721.py",
+      "name": "test_rolled_back_collector_reuse_does_not_mirror_orphan",
+      "line": 383,
+      "end": 408,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0879_test_executor_routing_721__test_rolled_back_collector_reuse_does_not_mirror_orphan.txt",
+      "source_path": "tests/test_executor_routing_721.py"
+    },
+    {
+      "idx": 880,
+      "file": "tests/test_executor_routing_721.py",
+      "name": "test_directive_routing_rejection_rolls_back_with_outer_owner",
+      "line": 411,
+      "end": 443,
+      "flags": [
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0880_test_executor_routing_721__test_directive_routing_rejection_rolls_back_with_outer_owner.txt",
+      "source_path": "tests/test_executor_routing_721.py"
+    },
+    {
+      "idx": 881,
+      "file": "tests/test_executor_routing_721.py",
+      "name": "test_restore_malformed_durable_json_fails_loud",
+      "line": 452,
+      "end": 457,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0881_test_executor_routing_721__test_restore_malformed_durable_json_fails_loud.txt",
+      "source_path": "tests/test_executor_routing_721.py"
+    },
+    {
+      "idx": 882,
+      "file": "tests/test_executor_routing_721.py",
+      "name": "test_national_policy_is_one_dossier_without_province_routing",
+      "line": 460,
+      "end": 493,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0882_test_executor_routing_721__test_national_policy_is_one_dossier_without_province_routing.txt",
+      "source_path": "tests/test_executor_routing_721.py"
+    }
+  ]
+}

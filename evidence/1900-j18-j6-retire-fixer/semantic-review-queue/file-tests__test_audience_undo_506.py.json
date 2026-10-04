@@ -1,0 +1,246 @@
+{
+  "source_path": "tests/test_audience_undo_506.py",
+  "member_count": 17,
+  "members": [
+    {
+      "idx": 224,
+      "file": "tests/test_audience_undo_506.py",
+      "name": "test_undo_erases_round_from_night_ledger_and_presence",
+      "line": 104,
+      "end": 129,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0224_test_audience_undo_506__test_undo_erases_round_from_night_ledger_and_presence.txt",
+      "source_path": "tests/test_audience_undo_506.py"
+    },
+    {
+      "idx": 225,
+      "file": "tests/test_audience_undo_506.py",
+      "name": "test_undo_rejected_after_night_closed",
+      "line": 135,
+      "end": 147,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0225_test_audience_undo_506__test_undo_rejected_after_night_closed.txt",
+      "source_path": "tests/test_audience_undo_506.py"
+    },
+    {
+      "idx": 226,
+      "file": "tests/test_audience_undo_506.py",
+      "name": "test_audit_passes_whitelisted_and_catches_unwhitelisted_night_write",
+      "line": 158,
+      "end": 189,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0226_test_audience_undo_506__test_audit_passes_whitelisted_and_catches_unwhitelisted_night_write.txt",
+      "source_path": "tests/test_audience_undo_506.py"
+    },
+    {
+      "idx": 227,
+      "file": "tests/test_audience_undo_506.py",
+      "name": "test_undo_removes_unlisted_person_registration",
+      "line": 195,
+      "end": 226,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0227_test_audience_undo_506__test_undo_removes_unlisted_person_registration.txt",
+      "source_path": "tests/test_audience_undo_506.py"
+    },
+    {
+      "idx": 228,
+      "file": "tests/test_audience_undo_506.py",
+      "name": "test_undo_full_reversal_survives_kill_and_reopen",
+      "line": 232,
+      "end": 254,
+      "flags": [
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0228_test_audience_undo_506__test_undo_full_reversal_survives_kill_and_reopen.txt",
+      "source_path": "tests/test_audience_undo_506.py"
+    },
+    {
+      "idx": 229,
+      "file": "tests/test_audience_undo_506.py",
+      "name": "test_undo_pending_translation_leaves_no_orphan_retry",
+      "line": 260,
+      "end": 289,
+      "flags": [
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0229_test_audience_undo_506__test_undo_pending_translation_leaves_no_orphan_retry.txt",
+      "source_path": "tests/test_audience_undo_506.py"
+    },
+    {
+      "idx": 230,
+      "file": "tests/test_audience_undo_506.py",
+      "name": "test_undo_reversal_is_atomic_on_midway_crash",
+      "line": 295,
+      "end": 319,
+      "flags": [
+        "assert_count",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0230_test_audience_undo_506__test_undo_reversal_is_atomic_on_midway_crash.txt",
+      "source_path": "tests/test_audience_undo_506.py"
+    },
+    {
+      "idx": 231,
+      "file": "tests/test_audience_undo_506.py",
+      "name": "test_undo_confirm_round_reverts_pending_to_unapproved",
+      "line": 325,
+      "end": 355,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0231_test_audience_undo_506__test_undo_confirm_round_reverts_pending_to_unapproved.txt",
+      "source_path": "tests/test_audience_undo_506.py"
+    },
+    {
+      "idx": 232,
+      "file": "tests/test_audience_undo_506.py",
+      "name": "test_undo_restores_staging_row_deleted_by_verbal_reject",
+      "line": 361,
+      "end": 389,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0232_test_audience_undo_506__test_undo_restores_staging_row_deleted_by_verbal_reject.txt",
+      "source_path": "tests/test_audience_undo_506.py"
+    },
+    {
+      "idx": 233,
+      "file": "tests/test_audience_undo_506.py",
+      "name": "test_undo_landed_secret_decree_removes_all_structured_records",
+      "line": 395,
+      "end": 429,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0233_test_audience_undo_506__test_undo_landed_secret_decree_removes_all_structured_records.txt",
+      "source_path": "tests/test_audience_undo_506.py"
+    },
+    {
+      "idx": 234,
+      "file": "tests/test_audience_undo_506.py",
+      "name": "test_undo_dismiss_round_removes_exit_ledger_and_restores_presence",
+      "line": 437,
+      "end": 463,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0234_test_audience_undo_506__test_undo_dismiss_round_removes_exit_ledger_and_restores_presence.txt",
+      "source_path": "tests/test_audience_undo_506.py"
+    },
+    {
+      "idx": 235,
+      "file": "tests/test_audience_undo_506.py",
+      "name": "test_undo_single_round_enter_and_dismiss_equals_not_happened",
+      "line": 466,
+      "end": 486,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0235_test_audience_undo_506__test_undo_single_round_enter_and_dismiss_equals_not_happened.txt",
+      "source_path": "tests/test_audience_undo_506.py"
+    },
+    {
+      "idx": 236,
+      "file": "tests/test_audience_undo_506.py",
+      "name": "test_attach_origin_bind_atomic_no_orphan_enter_on_midway_crash",
+      "line": 494,
+      "end": 517,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0236_test_audience_undo_506__test_attach_origin_bind_atomic_no_orphan_enter_on_midway_crash.txt",
+      "source_path": "tests/test_audience_undo_506.py"
+    },
+    {
+      "idx": 237,
+      "file": "tests/test_audience_undo_506.py",
+      "name": "test_attach_origin_bind_atomic_normal_path_binds_and_undo_deletes",
+      "line": 520,
+      "end": 533,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0237_test_audience_undo_506__test_attach_origin_bind_atomic_normal_path_binds_and_undo_deletes.txt",
+      "source_path": "tests/test_audience_undo_506.py"
+    },
+    {
+      "idx": 238,
+      "file": "tests/test_audience_undo_506.py",
+      "name": "test_undo_survives_db_created_before_undone_at_column",
+      "line": 541,
+      "end": 560,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0238_test_audience_undo_506__test_undo_survives_db_created_before_undone_at_column.txt",
+      "source_path": "tests/test_audience_undo_506.py"
+    },
+    {
+      "idx": 239,
+      "file": "tests/test_audience_undo_506.py",
+      "name": "test_undo_erases_inactive_office_summon_origin_bound_to_chat_turn",
+      "line": 563,
+      "end": 593,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0239_test_audience_undo_506__test_undo_erases_inactive_office_summon_origin_bound_to_chat_turn.txt",
+      "source_path": "tests/test_audience_undo_506.py"
+    },
+    {
+      "idx": 240,
+      "file": "tests/test_audience_undo_506.py",
+      "name": "test_reject_pending_discards_inactive_office_summon_origin",
+      "line": 596,
+      "end": 620,
+      "flags": [
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0240_test_audience_undo_506__test_reject_pending_discards_inactive_office_summon_origin.txt",
+      "source_path": "tests/test_audience_undo_506.py"
+    }
+  ]
+}

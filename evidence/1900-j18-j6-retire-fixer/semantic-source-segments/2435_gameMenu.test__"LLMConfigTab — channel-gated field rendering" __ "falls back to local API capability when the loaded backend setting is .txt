@@ -1,0 +1,33 @@
+# FILE: web/src/components/gameMenu.test.tsx
+# NAME: "LLMConfigTab — channel-gated field rendering" / "falls back to local API capability when the loaded backend setting is edited"
+# LINE: 691-717
+# FLAGS: web_mock_spy_or_calls
+# KIND: web
+
+  it("falls back to local API capability when the loaded backend setting is edited", async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        ...BASE_LLM_RESPONSE,
+        base_url: "https://api.deepseek.com/v1",
+        model: "deepseek-chat",
+        reasoning_supported: false,
+      }),
+    } as Response);
+    const { cleanup } = render(<LLMConfigTab />);
+    await act(async () => {});
+
+    const strength = document.querySelector<HTMLSelectElement>('select[name="reasoning_strength"]');
+    expect(strength?.disabled).toBe(true);
+    const baseUrlInput = document.querySelector<HTMLInputElement>('input[placeholder="https://api.openai.com/v1"]');
+    const modelInput = document.querySelector<HTMLInputElement>('input[placeholder="gpt-4o-mini"]');
+    expect(baseUrlInput).toBeTruthy();
+    expect(modelInput).toBeTruthy();
+    act(() => {
+      changeInput(baseUrlInput!, "https://api.example.com/v1");
+      changeInput(modelInput!, "gpt-5");
+    });
+
+    expect(strength?.disabled).toBe(false);
+    cleanup();
+  });

@@ -1,0 +1,29 @@
+# FILE: tests/test_event_trigger_gate.py
+# NAME: test_historical_auto_trigger_event_expires_after_latest_window
+# LINE: 2075-2097
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_historical_auto_trigger_event_expires_after_latest_window(game):
+    """#188：历史 auto_trigger 也须尊重最晚窗口，过期后不能硬触发。"""
+    db, state, content = game
+    issues.bind_content(content)
+    ev = _hist_event("__test_expiring_historical_auto__", {"民心": "<=5"})
+    ev.trigger_year = 1629
+    ev.trigger_month = 1
+    ev.trigger_end_year = 1629
+    ev.trigger_end_month = 2
+    ev.auto_trigger = True
+    content.events.append(ev)
+    try:
+        state.year = 1629
+        state.period = 3
+        state.metrics["民心"] = 3
+
+        triggered = issues.auto_trigger_seed_issues(state, db)
+
+        assert all(item["id"] != "__test_expiring_historical_auto__" for item in triggered)
+        assert db.event_terminal_state("__test_expiring_historical_auto__") == "expired"
+        assert db.find_any_issue_by_origin("event_pool", "__test_expiring_historical_auto__") is None
+    finally:
+        content.events.remove(ev)

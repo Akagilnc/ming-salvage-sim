@@ -1,0 +1,32 @@
+# FILE: tests/test_mutiny_third_strike_318.py
+# NAME: test_persisted_third_strike_defects_on_recovery_boundary
+# LINE: 500-525
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_persisted_third_strike_defects_on_recovery_boundary(game, fiscal_path):
+    """恢复边界：loyalty=35+满饷会解闩，须在 advance 前转出，不得逃过第三振。"""
+    db, state, _ = game
+    _configure(db, fiscal_path)
+    _set(
+        db, fiscal_path, loyalty=35, arrears=0, latched=1,
+        mutiny_count=3, mutiny_probation=0, manpower=10000,
+    )
+
+    first = _tick(db, state)
+    assert first["owner_power"] in BANDIT_POWERS
+    assert first["is_mutinied"] == 0
+    assert first["mutiny_count"] == 3
+    owner_logs = [
+        log for log in _logs(db, ("owner_power",)) if log["field"] == "owner_power"
+    ]
+    assert len(owner_logs) == 1
+    owner_after = first["owner_power"]
+
+    second = _tick(db, state)
+    assert second["owner_power"] == owner_after
+    assert second["mutiny_count"] == 3
+    owner_logs2 = [
+        log for log in _logs(db, ("owner_power",)) if log["field"] == "owner_power"
+    ]
+    assert len(owner_logs2) == 1

@@ -1,0 +1,30 @@
+# FILE: tests/test_qa_t1_extraction_dual_source_1353.py
+# NAME: test_partial_heal_single_source_pending_only_fresh
+# LINE: 125-148
+# FLAGS: helper_or_private_call
+# KIND: py
+
+def test_partial_heal_single_source_pending_only_fresh(
+    game, tmp_path, monkeypatch,
+):
+    """部分已 done、部分 pending → 诊断 pending 只含鲜集（不 fail-closed）。"""
+    db, state, content = game
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
+    minister = _minister(db, content)
+    nid, ctid_stale = _open_night_with_persisted_reply(db, state, minister, reply="甲。")
+    ctid_fresh = db.create_chat_turn(state, minister, "sess", 0, night_id=nid)
+    db.persist_minister_reply(minister, int(state.turn), "乙。", ctid_fresh)
+    db.conn.execute(
+        "UPDATE chat_turns SET extract_status = 'done' WHERE id = ?",
+        (ctid_stale,),
+    )
+    db.conn.commit()
+
+    def boom_translate(prompt, llm_config):
+        raise RuntimeError("translate exhausted")
+
+    _close_with_gate(db, state, night_id=nid, translate_fn=boom_translate)
+    payload = _pending_api(db)
+    api_ids = {int(p["chat_turn_id"]) for p in payload.get("pending") or []}
+    assert api_ids == {ctid_fresh}, api_ids
+    assert ctid_stale not in api_ids

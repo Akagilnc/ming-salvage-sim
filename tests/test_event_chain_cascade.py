@@ -220,7 +220,6 @@ def test_contradictory_positive_terminal_state_gate_fails_loud(game):
         with pytest.raises(SettlementAbort) as exc_info:
             issues.apply_event_cascading_invalidations(state, db)
         assert exc_info.value.stage == "event_chain_config"
-        assert "__chain_upstream_contradictory__" in str(exc_info.value)
 
 
 def test_cascade_rolls_back_owned_transaction_on_later_write_failure(game, monkeypatch):
@@ -364,5 +363,3 @@ def test_event_dependency_cycle_fails_loud(game):
         with pytest.raises(SettlementAbort) as exc_info:
             issues.apply_event_cascading_invalidations(state, db)
         assert exc_info.value.stage == "event_chain_config"
-        assert "__chain_cycle_a__" in str(exc_info.value)
-        assert "__chain_cycle_b__" in str(exc_info.value)

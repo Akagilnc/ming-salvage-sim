@@ -1,0 +1,115 @@
+# FILE: tests/test_audience_translate_1837.py
+# NAME: test_pending_round_approval_endorsed_before_close_or_after_month_join
+# LINE: 132-240
+# FLAGS: assert_text_compare_or_match,assert_count,mock_or_patch_present,helper_or_private_call
+# KIND: py
+
+def test_pending_round_approval_endorsed_before_close_or_after_month_join(
+    game, monkeypatch, timing,
+):
+    """#1842：应允+背书由转译声明；撤回、收夜成案或迟到直写案卷。"""
+    from ming_sim.session_write_queue import SessionWriteQueue
+
+    db, state, content = game
+    night = open_night(db, state, location="乾清宫", time_of_day="夜")
+    nid = int(night["id"])
+    action = dispatch_declaration(
+        db, state, {"commissions": [{"text": "着户部备赈济"}]},
+        minister_name="", night_id=nid,
+    )
+    aid = int(action.commissions.applied[0]["id"])
+    if timing != "after_close":
+        class FakeAgent:
+            def run(self, message):
+                return SimpleNamespace(content="臣愿为此旨会签。", tools=[])
+
+        monkeypatch.setattr(
+            "ming_sim.session.create_scene_agent", lambda *a, **k: FakeAgent(),
+        )
+
+        def declared_translation(prompt, llm_config):
+            return {
+                **offline_empty_audience_translate(prompt, llm_config),
+                "promises": [{"action_id": aid, "decision": "应允"}],
+                "endorsements": [{
+                    "action_id": aid, "form": "御笔手敕", "endorser_id": "",
+                }],
+            }
+
+        sess = _sess(db, state, content, monkeypatch, translate_fn=declared_translation)
+        _, ctid = _scene_turn(sess, db, state, "朕亲笔担此旨")
+        if timing == "undo":
+            payload = json.loads(db.conn.execute(
+                "SELECT payload_json FROM pending_actions WHERE id=?", (aid,),
+            ).fetchone()["payload_json"])
+            assert len(payload["endorsements"]) == 1
+            db.undo_chat_turn(ctid)
+            restored = db.conn.execute(
+                "SELECT payload_json, night_approved FROM pending_actions WHERE id=?", (aid,),
+            ).fetchone()
+            assert not json.loads(restored["payload_json"]).get("endorsements")
+            assert not restored["night_approved"]
+            close_night(db, state, content=content)
+            assert db.conn.execute(
+                "SELECT COUNT(*) FROM decree_dossiers WHERE pending_action_id=?", (aid,),
+            ).fetchone()[0] == 0
+            return
+    else:
+        def failed_translation(prompt, llm_config):
+            raise RuntimeError("translation unavailable")
+
+        class FakeAgent:
+            def run(self, message):
+                return SimpleNamespace(content="臣领旨。", tools=[])
+
+        monkeypatch.setattr(
+            "ming_sim.session.create_scene_agent", lambda *a, **k: FakeAgent(),
+        )
+        sess = _sess(db, state, content, monkeypatch, translate_fn=failed_translation)
+        # 真召对入口：回话先落库、后台转译失败，留下待补轮。
+        ctid = int(db.create_chat_turn(state, "殿上", "test-sess", 0, night_id=nid))
+        result = sess.scene_chat("准", chat_turn_id=ctid)
+        future = persist_and_schedule_scene(sess, db, result)
+        assert future is not None
+        with pytest.raises(RuntimeError):
+            future.result(timeout=30)
+
+    write_queue = SessionWriteQueue()
+    close_kwargs = dict(
+        content=content, llm_config=object(),
+        write_gate=write_queue.write_gate, write_queue=write_queue,
+    )
+    if timing == "before_close":
+        close_night(db, state, **close_kwargs)
+    else:
+        # 回话已持久化而转译失败；收夜补跑也失败，过月入口才补齐。
+        close_night(db, state, **close_kwargs)
+
+        def recovered_translation(prompt, llm_config):
+            return {
+                **offline_empty_audience_translate(prompt, llm_config),
+                "promises": [{"action_id": aid, "decision": "应允"}],
+                "endorsements": [{
+                    "action_id": aid, "form": "御笔手敕", "endorser_id": "",
+                }],
+            }
+
+        stub_audience_translate(monkeypatch, recovered_translation)
+        sess = _sess(db, state, content, monkeypatch, translate_fn=recovered_translation)
+        sess.await_translations_before_month()
+
+    row = db.conn.execute(
+        "SELECT status, night_approved, committed_directive_id "
+        "FROM pending_actions WHERE id=?", (aid,),
+    ).fetchone()
+    assert row["status"] == "committed"
+    assert int(row["night_approved"] or 0) == 1
+    did = int(db.conn.execute(
+        "SELECT id FROM decree_dossiers WHERE pending_action_id=?", (aid,),
+    ).fetchone()["id"])
+    ends = db.list_dossier_endorsements(did)
+    assert len(ends) == 1
+    assert ends[0]["form"] == "御笔手敕"
+    assert ends[0]["source_chat_turn_id"] == ctid
+    pubs = engine_command_mingfa_publication_ids(list_ledger(db, nid))
+    assert int(row["committed_directive_id"]) in pubs

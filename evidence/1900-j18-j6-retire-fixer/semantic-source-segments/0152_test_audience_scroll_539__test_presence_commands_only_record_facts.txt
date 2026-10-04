@@ -1,0 +1,20 @@
+# FILE: tests/test_audience_scroll_539.py
+# NAME: test_presence_commands_only_record_facts
+# LINE: 307-320
+# FLAGS: assert_text_compare_or_match
+# KIND: py
+
+def test_presence_commands_only_record_facts(game):
+    """入殿/告退只记事实账，戏文由场景 LLM 写。"""
+    db, state, _ = game
+    night_id = open_audience_night(db, state)
+    an.summon_enter(db, night_id, "杨嗣昌")
+    an.dismiss_from_audience(db, "杨嗣昌", night_id=night_id)
+
+    scroll = an.read_night_scroll(db, night_id)
+    assert not any(m.get("beat") == "entrance" for m in scroll)
+    assert not any(m.get("beat") == "exit" for m in scroll)
+    # 事实账仍在
+    tags_sets = [set(e.get("tags") or []) for e in an.list_ledger(db, night_id)]
+    assert any(an.TAG_ENTER in ts and "杨嗣昌" in str(e.get("person_names"))
+               for e, ts in zip(an.list_ledger(db, night_id), tags_sets))

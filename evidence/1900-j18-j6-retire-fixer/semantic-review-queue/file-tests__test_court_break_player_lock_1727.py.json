@@ -1,0 +1,22 @@
+{
+  "source_path": "tests/test_court_break_player_lock_1727.py",
+  "member_count": 1,
+  "members": [
+    {
+      "idx": 413,
+      "file": "tests/test_court_break_player_lock_1727.py",
+      "name": "test_court_break_locks_player_writes_and_closes_night",
+      "line": 95,
+      "end": 178,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0413_test_court_break_player_lock_1727__test_court_break_locks_player_writes_and_closes_night.txt",
+      "source_path": "tests/test_court_break_player_lock_1727.py"
+    }
+  ]
+}

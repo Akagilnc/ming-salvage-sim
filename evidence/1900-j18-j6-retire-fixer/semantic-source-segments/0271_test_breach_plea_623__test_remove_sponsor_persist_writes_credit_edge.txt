@@ -1,0 +1,33 @@
+# FILE: tests/test_breach_plea_623.py
+# NAME: test_remove_sponsor_persist_writes_credit_edge
+# LINE: 788-814
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_remove_sponsor_persist_writes_credit_edge(game):
+    """0079：撤人坚持撤有案卷时仍写辜负边（0056 不触发，不重复）。"""
+    db, state, content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.commit()
+    did, holder = _executing_policy_dossier(db, state, token="credit-rm")
+    origin = f"dossier:{did}"
+    cid, _ = _insert_commitment(
+        db, state, title="撤人信用边", origin_ref=origin,
+        bar_value=12, end_turn=state.turn + 12,
+        participants=[{"character_id": holder, "tier": "主办", "role": "承办"}],
+    )
+    todo_id = write_breach_plea_todo(
+        db, state, commitment_ref=cid,
+        breach_kind=BREACH_KIND_REMOVE_SPONSOR,
+        reason="罢主办", target_dossier_id=did, commit=True,
+    )
+    todo = next(t for t in _pending_pleas(db) if int(t["id"]) == todo_id)
+    result = finalize_persist(db, state, todo, commit=True)
+    assert result["breach_0056"] is False
+    edges = list(db.conn.execute(
+        "SELECT event_kind, target, origin FROM relation_edge_events "
+        "WHERE target=? AND event_kind='辜负' ORDER BY id",
+        (holder,),
+    ).fetchall())
+    assert edges, "撤人坚持须写 0079 辜负边"
+    assert any(f"issue:{cid}" in str(e["origin"] or "") for e in edges)

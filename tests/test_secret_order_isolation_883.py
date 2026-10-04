@@ -13,6 +13,7 @@ from __future__ import annotations
 import pytest
 
 from ming_sim import issues
+from ming_sim.knowledge import build_character_knowledge
 from tests.test_due_review_621 import _settle_empty_month
 from tests.test_month_chain_1843 import _prepare_player_month
 from tests.dossier_test_helpers import TYPED_COVERT_TASK, create_test_secret_order
@@ -705,9 +706,10 @@ def test_883_only_explicit_leak_conclusion_promotes_secret_order_to_public(game)
         content=content,
     )
     assert hidden["secret_order_updates"][0]["disclosed"] is False
+    hidden_public = build_character_knowledge(db, state, assignee.name).get("public_events") or []
     assert not any(
         str(item.get("source_id") or "").startswith("secret_order_disclosure:")
-        for item in db._character_knowledge_events("")
+        for item in hidden_public
     )
 
     shown = issues.apply_score_extraction(
@@ -718,7 +720,7 @@ def test_883_only_explicit_leak_conclusion_promotes_secret_order_to_public(game)
         content=content,
     )
     assert shown["secret_order_updates"][0]["disclosed"] is True
-    public_events = db._character_knowledge_events("")
+    public_events = build_character_knowledge(db, state, assignee.name).get("public_events") or []
     assert any(
         str(item.get("source_id") or "").startswith("secret_order_disclosure:")
         and "密事已公开883" in (item.get("body") or "")
@@ -742,7 +744,7 @@ def test_883_cross_turn_repeat_disclosed_does_not_mint_duplicate_public_event(ga
     assert first["secret_order_updates"][0]["disclosed"] is True
     prefix = f"secret_order_disclosure:{oid}:"
     after_first = [
-        item for item in db._character_knowledge_events("")
+        item for item in (build_character_knowledge(db, state, assignee.name).get("public_events") or [])
         if str(item.get("source_id") or "").startswith(prefix)
     ]
     assert len(after_first) == 1
@@ -759,7 +761,7 @@ def test_883_cross_turn_repeat_disclosed_does_not_mint_duplicate_public_event(ga
     )
     assert second["secret_order_updates"][0]["disclosed"] is True
     after_second = [
-        item for item in db._character_knowledge_events("")
+        item for item in (build_character_knowledge(db, state, assignee.name).get("public_events") or [])
         if str(item.get("source_id") or "").startswith(prefix)
     ]
     assert len(after_second) == 1

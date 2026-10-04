@@ -1,0 +1,32 @@
+# FILE: tests/test_effect_origin_558.py
+# NAME: test_army_pay_source_classifies_before_origin_gate_and_never_writes_without_origin
+# LINE: 365-390
+# FLAGS: assert_text_compare_or_match
+# KIND: py
+
+def test_army_pay_source_classifies_before_origin_gate_and_never_writes_without_origin(game):
+    db, state, content = game
+    row = db.conn.execute(
+        "SELECT * FROM armies WHERE owner_power='ming' AND is_tusi=0 AND self_funded_pay=0 LIMIT 1"
+    ).fetchone()
+    assert row is not None
+    before = dict(row)
+    before_logs = db.conn.execute("SELECT COUNT(*) FROM army_logs").fetchone()[0]
+
+    invalid = issue_engine.apply_score_extraction(db, state, {
+        "army_delta": {row["id"]: {"pay_source_region": "not-a-region"}},
+    }, content=content)
+    assert invalid["army_changes"][0]["category"] == "invalid_enum"
+
+    proposed_province = 0.6 if float(row["province_pay_share"]) != 0.6 else 0.7
+    missing = issue_engine.apply_score_extraction(db, state, {
+        "army_delta": {row["id"]: {
+            "province_pay_share": proposed_province,
+            "central_pay_share": 1 - proposed_province,
+        }},
+    }, content=content)
+    assert missing["army_changes"][0]["category"] == "missing_origin_ref"
+    after = db.conn.execute("SELECT * FROM armies WHERE id=?", (row["id"],)).fetchone()
+    for field in ("pay_source_region", "province_pay_share", "central_pay_share"):
+        assert after[field] == before[field]
+    assert db.conn.execute("SELECT COUNT(*) FROM army_logs").fetchone()[0] == before_logs

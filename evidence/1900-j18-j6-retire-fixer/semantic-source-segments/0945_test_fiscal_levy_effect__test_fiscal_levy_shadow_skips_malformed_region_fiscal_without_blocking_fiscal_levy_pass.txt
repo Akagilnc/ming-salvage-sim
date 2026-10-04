@@ -1,0 +1,23 @@
+# FILE: tests/test_fiscal_levy_effect.py
+# NAME: test_fiscal_levy_shadow_skips_malformed_region_fiscal_without_blocking_fiscal_levy_pass
+# LINE: 249-265
+# FLAGS: mock_or_patch_present,helper_or_private_call
+# KIND: py
+
+def test_fiscal_levy_shadow_skips_malformed_region_fiscal_without_blocking_fiscal_levy_pass(game, monkeypatch):
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1631
+    state.period = 1
+    db.save_state(state)
+    before_huguang = _settle_payload(db, "huguang")["p"]["三饷应征"]
+    msgs = []
+    monkeypatch.setattr(issues, "tlog", lambda msg: msgs.append(msg))
+    db.conn.execute("UPDATE regions SET fiscal = ? WHERE id = ?", ("{bad", "shaanxi"))
+    db.conn.commit()
+
+    apply_historical_fiscal_rates(state, db)
+
+    assert msgs
+    huguang = _settle_payload(db, "huguang")
+    assert huguang["p"]["三饷应征"] > before_huguang

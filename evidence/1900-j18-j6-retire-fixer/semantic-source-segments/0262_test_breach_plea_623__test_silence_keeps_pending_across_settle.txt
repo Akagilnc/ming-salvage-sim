@@ -1,0 +1,38 @@
+# FILE: tests/test_breach_plea_623.py
+# NAME: test_silence_keeps_pending_across_settle
+# LINE: 505-536
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_silence_keeps_pending_across_settle(game, monkeypatch):
+    db, state, content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.commit()
+    did, _ = _executing_policy_dossier(db, state, token="silence")
+    cid, _ = _insert_commitment(
+        db, state, title="沉默滚存之诺", origin_ref=f"dossier:{did}",
+        bar_value=20, end_turn=state.turn + 30,
+    )
+    write_breach_plea_todo(
+        db, state, commitment_ref=cid,
+        breach_kind=BREACH_KIND_FUNDING, reason="断供",
+        target_dossier_id=did, commit=True,
+    )
+    # 把 created_turn 调旧，使 apply 会扫到
+    db.conn.execute(
+        "UPDATE next_audience_todos SET created_turn=? WHERE entry_kind=?",
+        (state.turn - 1, ENTRY_KIND_BREACH_PLEA),
+    )
+    db.conn.commit()
+    results = apply_pending_due_reviews(db, state, commit=True)
+    # 哭谏被 skip 保留
+    skipped = [r for r in results if r.get("skipped") and r.get("entry_kind") == ENTRY_KIND_BREACH_PLEA]
+    assert skipped
+    assert _pending_pleas(db)
+    assert db.get_decree_dossier(did)["status"] == "executing"
+
+    # 再过月一拍仍 pending 可顶出
+    _settle_empty_month(db, state, content, monkeypatch)
+    assert _pending_pleas(db)
+    scenes = list_due_review_scenes(db, state)
+    assert any(s.get("kind") == "breach_plea" for s in scenes)

@@ -1,0 +1,44 @@
+# FILE: tests/test_due_review_621.py
+# NAME: test_mid_stage_no_close_no_joint_liability
+# LINE: 386-423
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_mid_stage_no_close_no_joint_liability(game):
+    db, state, content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.commit()
+    dossier_id = _executing_policy_dossier(db, state, token="mid")
+    stages = [
+        {
+            "stage_idx": 0,
+            "due_turn": state.turn,
+            "criterion_text": "火器见眉目",
+            "origin_context": "三年火器见眉目",
+        },
+        {
+            "stage_idx": 1,
+            "due_turn": state.turn + 12,
+            "criterion_text": "新历成",
+            "origin_context": "五年新历成",
+        },
+    ]
+    _insert_staged_commitment(
+        db, state, content, stages=stages, origin_ref=f"dossier:{dossier_id}",
+    )
+    write_due_staged_commitment_todos(db, state)
+    db.conn.execute(
+        "UPDATE next_audience_todos SET created_turn=?",
+        (state.turn - 1,),
+    )
+    db.conn.commit()
+    apply_pending_due_reviews(db, state, commit=True)
+
+    dossier = db.get_decree_dossier(dossier_id)
+    assert dossier["execution_outcome"] == "executing"
+    assert dossier["status"] == "executing"
+    assert _cost_events(db, dossier_id) == []
+    # 过程奏报 is_terminal=False
+    progress = db.list_dossier_progress(dossier_id)
+    assert progress
+    assert all(not p.get("is_terminal") for p in progress)

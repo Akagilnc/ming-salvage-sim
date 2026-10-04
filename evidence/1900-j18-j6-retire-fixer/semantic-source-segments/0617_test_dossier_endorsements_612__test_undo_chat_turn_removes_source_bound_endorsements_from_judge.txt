@@ -1,0 +1,37 @@
+# FILE: tests/test_dossier_endorsements_612.py
+# NAME: test_undo_chat_turn_removes_source_bound_endorsements_from_judge
+# LINE: 173-203
+# FLAGS: helper_or_private_call
+# KIND: py
+
+def test_undo_chat_turn_removes_source_bound_endorsements_from_judge(game):
+    """撤回已说出口的会签后，背书条目须一并撤销；判官不得再读到已撤销对话的背书。"""
+    db, state, _content = game
+    minister = _minister(db)
+    dossier_id = db.create_decree_dossier(
+        state, action_type="policy", decree_text="清核辽饷",
+        target_kind="issue", target_id="liao-pay-undo",
+    )
+    night_id, chat_turn_id, seq = _night_reply(db, state, minister)
+    assert _extract(
+        db, minister=minister, reply="臣愿会签此旨。",
+        chat_turn_id=chat_turn_id, night_id=night_id, seq=seq,
+        fact={"body": "大臣当殿愿为辽饷旨意会签。", "person_names": [minister], "tags": ["会签"]},
+    )["status"] == "done"
+    db.add_dossier_endorsement(
+        dossier_id, form="会签", endorser_id=minister, imperial=False,
+        source_chat_turn_id=chat_turn_id,
+    )
+    assert db.list_dossier_endorsements(dossier_id)
+
+    db.undo_chat_turn(chat_turn_id)
+
+    assert db.list_dossier_endorsements(dossier_id) == []
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM decree_dossier_endorsements WHERE source_chat_turn_id=?",
+        (chat_turn_id,),
+    ).fetchone()[0] == 0
+    context = build_promulgation_judge_context(db, state, db.list_decree_dossiers())
+    dossier_ctx = next(item for item in context["dossiers"] if item["id"] == dossier_id)
+    assert dossier_ctx["endorsements"] == []
+    assert dossier_ctx["criteria_snapshot_source"]["endorsement_entry_ids"] == []

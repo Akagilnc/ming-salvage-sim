@@ -1,0 +1,14 @@
+# FILE: tests/test_state_reload.py
+# NAME: test_atomic_and_reload_commits_on_success
+# LINE: 288-295
+# FLAGS: assert_text_compare_or_match,assert_count
+# KIND: py
+
+def test_atomic_and_reload_commits_on_success(game):
+    """正常退出：body 写入照常提交（与裸 with atomic 同语义）。"""
+    from ming_sim.decree import atomic_and_reload
+    db, state, content = game
+    with atomic_and_reload(db, state, content=content):
+        db.conn.execute("UPDATE metrics SET value = 12345 WHERE key = '国库'")
+    row = db.conn.execute("SELECT value FROM metrics WHERE key = '国库'").fetchone()
+    assert int(row["value"]) == 12345

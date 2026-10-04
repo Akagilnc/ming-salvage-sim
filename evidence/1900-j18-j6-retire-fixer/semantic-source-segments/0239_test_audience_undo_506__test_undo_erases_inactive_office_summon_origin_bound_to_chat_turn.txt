@@ -1,0 +1,37 @@
+# FILE: tests/test_audience_undo_506.py
+# NAME: test_undo_erases_inactive_office_summon_origin_bound_to_chat_turn
+# LINE: 563-593
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_undo_erases_inactive_office_summon_origin_bound_to_chat_turn(game):
+    """#672：ensure inactive office origin 绑 chat-turn；undo 按 typed source 清。"""
+    db, state, content = game
+    m = _active_minister(db, content)
+    night = an.open_night(db, state)
+    night_id = int(night["id"])
+
+    def _writes(_nid: int, chat_id: int) -> None:
+        pending_id = db.stage_pending_action(
+            int(state.turn), "office", "任命", m,
+            {"text": "测试任免原文", "name": "袁崇焕", "office": "辽东巡抚", "summon_after": "是"},
+        )
+        an.ensure_inactive_office_summon(
+            db, int(pending_id), "袁崇焕",
+            night_id=night_id, origin_chat_turn_id=int(chat_id),
+        )
+
+    _nid, chat_id = _run_round(db, state, m, writes=_writes)
+    origin_rows = db.conn.execute(
+        "SELECT id, origin_ref, origin_chat_turn_id, tags FROM story_ledger_entries "
+        "WHERE origin_ref LIKE 'office:%'",
+    ).fetchall()
+    assert len(origin_rows) == 1
+    assert int(origin_rows[0]["origin_chat_turn_id"]) == int(chat_id)
+    assert "传召未结" not in json.loads(origin_rows[0]["tags"] or "[]")
+    entry_id = int(origin_rows[0]["id"])
+
+    db.undo_chat_turn(int(chat_id))
+    assert db.conn.execute(
+        "SELECT count(*) FROM story_ledger_entries WHERE id=?", (entry_id,),
+    ).fetchone()[0] == 0

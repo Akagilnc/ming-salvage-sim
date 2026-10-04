@@ -1,0 +1,67 @@
+# FILE: tests/test_urge_lever_624.py
+# NAME: test_urge_raises_distortion_and_shifts_verdict_ac1
+# LINE: 225-285
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_urge_raises_distortion_and_shifts_verdict_ac1(game):
+    """同承诺：无催 vs 催紧 → 失真档升高且确定性判词可观察差分。"""
+    db, state, content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.commit()
+    dossier_id = _executing_policy_dossier(db, state, host="倪元璐")
+    _set_integrity(db, "倪元璐", 25)
+    # 单段末段终裁面（多段会走 mid_stage=executing，遮住失真调制）
+    stages = [{
+        "stage_idx": 0,
+        "due_turn": state.turn + 24,
+        "criterion_text": "火器见眉目",
+        "origin_context": "三年火器见眉目",
+    }]
+    issue_id, _ = _insert_staged_commitment(
+        db, state, content, stages=stages, origin_ref=f"dossier:{dossier_id}",
+        title="失真对照之诺",
+    )
+    # 有表报无实账 → 基线 degraded；催紧 + 附势 可推到更重
+    db.record_dossier_progress(
+        dossier_id, state.turn, "在办", "表报已陈，实绩未充",
+        is_terminal=False, commit=True,
+    )
+
+    tid = db.insert_next_audience_todo(
+        commitment_ref=issue_id,
+        stage_idx=0,
+        due_turn=state.turn,
+        criterion_text="火器见眉目",
+        origin_context="三年火器见眉目",
+        status=TODO_STATUS_PENDING,
+        entry_kind=ENTRY_KIND_STAGED,
+        created_turn=state.turn - 1,
+    )
+    todo = [t for t in db.list_next_audience_todos() if int(t["id"]) == tid][0]
+    base_inp = build_due_review_input(db, todo)
+    base_verdict = decide_due_review_verdict(base_inp)
+
+    rush_staged_commitment_stage(
+        db, state, commitment_ref=issue_id, stage_idx=0,
+        deadline_months=1, reason="即日复命",
+    )
+    # second rush for higher urge_count
+    rush_staged_commitment_stage(
+        db, state, commitment_ref=issue_id, stage_idx=0,
+        deadline_months=0, reason="再催",
+    )
+    rushed_inp = build_due_review_input(db, todo)
+    rushed_verdict = decide_due_review_verdict(rushed_inp)
+
+    rank = {"不歪": 0, "微歪": 1, "易歪": 2, "必歪": 3}
+    assert rank[rushed_inp["distortion_tendency"]["band"]] > rank[
+        base_inp["distortion_tendency"]["band"]
+    ]
+    # 可观察：失真升高后判词至少不更宽；附势重催可将 degraded→failed/transformed
+    order = {"fulfilled": 0, "executing": 1, "degraded": 2, "transformed": 3, "failed": 4}
+    assert order[str(rushed_verdict["outcome"])] >= order[str(base_verdict["outcome"])]
+    assert rushed_verdict["outcome"] in {"degraded", "transformed", "failed"}
+    assert rushed_inp["distortion_tendency"]["band"] in {"易歪", "必歪"}
+    assert base_verdict["outcome"] == "degraded"
+    assert rushed_verdict["outcome"] in {"failed", "transformed"}

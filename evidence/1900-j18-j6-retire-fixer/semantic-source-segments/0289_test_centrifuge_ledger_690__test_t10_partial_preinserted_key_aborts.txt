@@ -1,0 +1,44 @@
+# FILE: tests/test_centrifuge_ledger_690.py
+# NAME: test_t10_partial_preinserted_key_aborts
+# LINE: 607-644
+# FLAGS: helper_or_private_call
+# KIND: py
+
+def test_t10_partial_preinserted_key_aborts(game):
+    from ming_sim.centrifuge_ledger import accrue_blood_debt
+
+    db, state, _content = game
+    faction = _faction_of(db, _TARGET_EUNUCH)
+    # 只预插 direct，公开调用会计划 multi-kind → 集合不等
+    db.conn.execute(
+        "INSERT INTO centrifuge_log("
+        "turn, faction, axis, kind, base, legitimacy_pct, amount, "
+        "source_name, reason_code, source, idem_key"
+        ") VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        (
+            state.turn,
+            faction,
+            _AXIS,
+            "direct",
+            70,
+            10,
+            7,
+            _TARGET_EUNUCH,
+            None,
+            None,
+            "t10|partial|direct",
+        ),
+    )
+    db.conn.commit()
+    before = _snapshot(db)
+    with pytest.raises(SettlementAbort):
+        accrue_blood_debt(
+            db=db,
+            turn=state.turn,
+            target=_TARGET_EUNUCH,
+            axis=_AXIS,
+            penalty_type="抄家",
+            crime_weight=70,
+            idem_base="t10|partial",
+        )
+    assert _snapshot(db) == before

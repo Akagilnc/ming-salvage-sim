@@ -1,0 +1,68 @@
+# FILE: tests/test_advance_paths_atomic.py
+# NAME: test_submit_event_decision_binds_from_candidate_snapshot_without_event_id
+# LINE: 115-176
+# FLAGS: assert_text_compare_or_match,mock_or_patch_present,helper_or_private_call
+# KIND: py
+
+def test_submit_event_decision_binds_from_candidate_snapshot_without_event_id(game, monkeypatch):
+    """#389：simulator 漏写 event_id 时，事件亲裁仍从权威候选快照确定性绑定并持久化。"""
+    import json
+    import ming_sim.session as session_mod
+    from ming_sim.session import GameSession
+
+    db, state, content = game
+    turn = state.turn
+    event_id = "mao_wenlong"
+    db.save_resolve_context(
+        turn,
+        "测试诏书",
+        {"candidate_events": [{"id": event_id, "title": "毛文龙裁断"}]},
+    )
+    db.save_pending_decisions(turn, [{
+        "title": "毛文龙裁断",
+        "context": "东江事急，须御前亲裁。",
+        "options": [
+            {"label": "斩", "hint": "严肃军纪"},
+            {"label": "留", "hint": "暂稳东江"},
+        ],
+    }])
+    state.turn_phase = "awaiting_decision"
+    db.save_state(state)
+
+    def _phase2(_state, _db, *_args, **_kwargs):
+        _db.clear_pending_decisions(turn)
+        return "ok"
+
+    monkeypatch.setattr(session_mod, "resolve_decisions_phase2", _phase2)
+    sess = GameSession.__new__(GameSession)
+    sess.db = db
+    sess.state = state
+    sess.last_decree = "测试诏书"
+    sess.agno_db = None
+    sess.llm_config = None
+    sess.content = content
+    sess.registry = None
+
+    # #1589：绑定发生在 desk 读出口（prepare_rescript_prewrite），键仍取绑定前
+    # 的 decision:{turn}:0 投影——event_id 是否已绑定不改变 decision_key 形状。
+    d_key = db.list_rescript_desk(turn)[0]["decision_key"]
+    sess.submit_hitl_choices(
+        [{"decision_key": d_key, "label": "留", "hint": "暂稳东江", "note": "姑留观后效"}],
+        write_gate=get_session_write_queue(sess).write_gate,
+    )
+
+    assert db.list_pending_decisions(turn) == []
+    row = db.conn.execute(
+        "SELECT terminal_state, source, choice_json FROM event_triggers WHERE event_id=?",
+        (event_id,),
+    ).fetchone()
+    assert row is not None
+    assert row["terminal_state"] == ""
+    assert row["source"] == "hitl_decision"
+    assert json.loads(row["choice_json"]) == {
+        "decision_key": d_key,
+        "action": "decision",
+        "label": "留",
+        "hint": "暂稳东江",
+        "note": "姑留观后效",
+    }

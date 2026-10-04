@@ -1,0 +1,16 @@
+# FILE: tests/test_public_character_place_1683.py
+# NAME: test_yuan_keli_init_db_location_henan
+# LINE: 14-23
+# FLAGS: assert_text_compare_or_match
+# KIND: py
+
+def test_yuan_keli_init_db_location_henan(game):
+    db, _state, content = game
+    assert content.characters["袁可立"].location == "henan"
+    row = db.conn.execute(
+        "SELECT location, status FROM characters WHERE name=?", ("袁可立",)
+    ).fetchone()
+    assert row is not None
+    assert row["location"] == "henan"
+    # 罢居污染清洗后 offstage，不靠改 active 消矛盾
+    assert row["status"] == "offstage"

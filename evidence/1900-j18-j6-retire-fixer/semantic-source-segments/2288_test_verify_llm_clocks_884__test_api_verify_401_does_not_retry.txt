@@ -1,0 +1,35 @@
+# FILE: tests/test_verify_llm_clocks_884.py
+# NAME: test_api_verify_401_does_not_retry
+# LINE: 92-120
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_api_verify_401_does_not_retry(monkeypatch):
+    """负：确定性 4xx 立即降级，不走瞬断重试。
+
+    入口 = 真实 verify_llm_available → 真实 agno Agent → 真实 OpenAIChat.invoke；
+    只在 http client 回 401 → SDK APIStatusError → ModelProviderError。
+    """
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    calls = {"n": 0}
+
+    def unauthorized(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            401,
+            json={"error": {"message": "Invalid API key", "code": "invalid_api_key"}},
+            request=request,
+        )
+
+    _patch_openai_chat_provider(monkeypatch, unauthorized, calls)
+    with pytest.raises(LLMUnavailable) as ei:
+        verify_llm_available(_api_cfg())
+    err = ei.value
+    assert err.status_code == 401
+    assert err.code == "llm_http_401"
+    assert getattr(err, "stage", None) == "smoke-main"
+    assert calls["n"] == 1
+    attempts = err.transport_attempts or []
+    assert len(attempts) == 1
+    assert attempts[0]["outcome"] == "terminal_fail"
+    assert attempts[0].get("status_code") == 401
+    assert attempts[0].get("code") == "llm_http_401"

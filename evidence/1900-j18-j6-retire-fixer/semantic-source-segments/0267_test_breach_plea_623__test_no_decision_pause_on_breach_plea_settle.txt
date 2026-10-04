@@ -1,0 +1,21 @@
+# FILE: tests/test_breach_plea_623.py
+# NAME: test_no_decision_pause_on_breach_plea_settle
+# LINE: 672-686
+# FLAGS: helper_or_private_call
+# KIND: py
+
+def test_no_decision_pause_on_breach_plea_settle(game, monkeypatch):
+    db, state, content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.commit()
+    did, _ = _executing_policy_dossier(db, state, token="no-dec")
+    db.record_issue_economy_move(
+        state, "国库", -2, "月供", "史", origin_ref=f"dossier:{did}", commit=True,
+    )
+    _insert_commitment(
+        db, state, title="不停轮", origin_ref=f"dossier:{did}",
+        ongoing_effects={}, bar_value=15, end_turn=state.turn + 24,
+    )
+    result = _settle_empty_month(db, state, content, monkeypatch)
+    assert result.awaiting is False
+    assert state.turn_phase != TurnPhase.AWAITING_DECISION.value

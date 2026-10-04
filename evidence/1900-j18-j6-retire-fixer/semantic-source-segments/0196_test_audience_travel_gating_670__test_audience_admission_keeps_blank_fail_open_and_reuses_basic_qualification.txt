@@ -1,0 +1,17 @@
+# FILE: tests/test_audience_travel_gating_670.py
+# NAME: test_audience_admission_keeps_blank_fail_open_and_reuses_basic_qualification
+# LINE: 85-95
+# FLAGS: helper_or_private_call
+# KIND: py
+
+def test_audience_admission_keeps_blank_fail_open_and_reuses_basic_qualification(game):
+    blank = _set_place(game, "毕自严", location="")
+    sess = _session(game)
+    assert sess.admit_audience(blank).result is AudienceAdmission.IN_CAPITAL
+
+    dead = _set_place(game, "洪承畴", location="shaanxi")
+    db, state, _content = game
+    db.set_character_status(state, dead.name, "dead", reason="测试")
+    decision = sess.admit_audience(dead)
+    assert decision.result is None
+    assert str(decision.reason or "").strip()

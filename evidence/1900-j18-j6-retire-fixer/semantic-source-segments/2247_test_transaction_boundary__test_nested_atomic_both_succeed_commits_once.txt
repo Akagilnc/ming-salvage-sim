@@ -1,0 +1,28 @@
+# FILE: tests/test_transaction_boundary.py
+# NAME: test_nested_atomic_both_succeed_commits_once
+# LINE: 114-135
+# FLAGS: assert_text_compare_or_match
+# KIND: py
+
+def test_nested_atomic_both_succeed_commits_once(game):
+    """嵌套：内外层都正常退出 → 只在最外层落定一次，写入全部已提交。"""
+    db, state, content = game
+    for k in ("s1_n_inner", "s1_n_outer"):
+        db.conn.execute("DELETE FROM kv_store WHERE key=?", (k,))
+    db.conn.commit()
+
+    with atomic(db):
+        db.conn.execute("INSERT INTO kv_store(key,value) VALUES('s1_n_outer','o')")
+        with atomic(db):
+            db.conn.execute("INSERT INTO kv_store(key,value) VALUES('s1_n_inner','i')")
+            # 内层退出前仍在外层事务中
+        assert db.conn.in_transaction  # 内层退出未落定，外层接着写
+
+    other = sqlite3.connect(db.path)
+    try:
+        rows = dict(other.execute(
+            "SELECT key,value FROM kv_store WHERE key IN ('s1_n_inner','s1_n_outer')"
+        ).fetchall())
+    finally:
+        other.close()
+    assert rows == {"s1_n_inner": "i", "s1_n_outer": "o"}

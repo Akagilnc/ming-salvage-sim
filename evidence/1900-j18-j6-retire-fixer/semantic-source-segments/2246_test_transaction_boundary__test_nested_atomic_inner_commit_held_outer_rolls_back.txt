@@ -1,0 +1,24 @@
+# FILE: tests/test_transaction_boundary.py
+# NAME: test_nested_atomic_inner_commit_held_outer_rolls_back
+# LINE: 94-111
+# FLAGS: assert_text_compare_or_match
+# KIND: py
+
+def test_nested_atomic_inner_commit_held_outer_rolls_back(game):
+    """嵌套：内层正常退出不提交，外层抛错 → 内外写入全回滚（flat 语义）。"""
+    db, state, content = game
+    for k in ("s1_inner", "s1_outer"):
+        db.conn.execute("DELETE FROM kv_store WHERE key=?", (k,))
+    db.conn.commit()
+
+    with pytest.raises(RuntimeError):
+        with atomic(db):
+            db.conn.execute("INSERT INTO kv_store(key,value) VALUES('s1_outer','o')")
+            with atomic(db):
+                db.kv_set("s1_inner", "i")  # 内层正常退出，但不该提前 commit
+            # 内层退出后外层仍在事务内，未落定
+            assert db.conn.in_transaction
+            raise RuntimeError("boom")
+
+    assert db.kv_get("s1_inner") is None
+    assert db.kv_get("s1_outer") is None

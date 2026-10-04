@@ -1,0 +1,29 @@
+# FILE: tests/test_fiscal_substrate_bridge.py
+# NAME: test_apply_fixed_period_flows_malformed_fiscal_container_isolated
+# LINE: 4557-4579
+# FLAGS: assert_text_compare_or_match,mock_or_patch_present,helper_or_private_call
+# KIND: py
+
+def test_apply_fixed_period_flows_malformed_fiscal_container_isolated(fresh_game, monkeypatch, bad_container):
+    # Public entry contract: fixed fiscal must not crash before shadow substrate isolation can log.
+    import ming_sim.flows as flows_mod
+
+    db, state = fresh_game
+    _disable_army_pay_source_cutover(db)
+    _, _, before_details = flows_mod.calc_province_fiscal(state, db)
+    expected_tax = sum(
+        int(d["province_total"]) for d in before_details if d["region_id"] != "shaanxi"
+    )
+    db.conn.execute("UPDATE regions SET fiscal=? WHERE id='shaanxi'", (bad_container,))
+    db.conn.commit()
+
+    msgs: list[str] = []
+    monkeypatch.setattr(flows_mod, "tlog", lambda msg: msgs.append(msg))
+
+    flow_rows = flows_mod.apply_fixed_period_flows(db, state)
+
+    assert isinstance(flow_rows, list) and flow_rows, "坏 fiscal 容器不该掀翻固定财政"
+    assert db.conn.execute("SELECT fiscal FROM regions WHERE id='shaanxi'").fetchone()["fiscal"] == bad_container
+    tax_flow = next(f for f in flow_rows if f.get("category") == "田赋辽饷盐商")
+    assert tax_flow["amount"] == expected_tax, "坏 fiscal 省当月固定税收应出列，不能按默认 fiscal 造钱"
+    assert msgs

@@ -1,0 +1,30 @@
+# FILE: tests/test_audience_restore_505.py
+# NAME: test_pure_audience_zero_ledger_turn_survives_reopen
+# LINE: 196-219
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_pure_audience_zero_ledger_turn_survives_reopen(restore_env):
+    """完成轮不产任何账目（纯奏对），重开后逐字稿仍在——锚点=最后持久化对话轮，非最后账。"""
+    env = restore_env
+    db, state, content = env.db, env.state, env.content
+    minister = _active_minister(db, content)
+    night = an.open_night(db, state, location="乾清宫", time_of_day="戌时")
+    ledger_marker = len(an.list_ledger(db, night["id"]))
+    _land_full_turn(db, state, minister, "四轮问对之一", "臣愚见如此。")
+    # 纯奏对：该轮不产任何叙事抽取账（source_chat_turn_id>0 的账为 0 条）——锚点非「最后一笔账」。
+    _ = ledger_marker
+    extracted = db.conn.execute(
+        "SELECT COUNT(*) c FROM story_ledger_entries WHERE source_chat_turn_id>0"
+    ).fetchone()["c"]
+    assert extracted == 0
+    db.close()
+
+    db2, _state2 = _reopen(env.path, content)
+    try:
+        db2.reconcile_interrupted_chat_turns()
+        proj = db2.build_chat_projection(minister)
+        assert "四轮问对之一" in [m["content"] for m in proj if m["role"] == "user"]
+        assert "臣愚见如此。" in [m["content"] for m in proj if m["role"] == "minister"]
+    finally:
+        db2.close()

@@ -1,0 +1,29 @@
+# FILE: tests/test_transit_aging_346.py
+# NAME: test_行止_sets_transit_start_turn
+# LINE: 48-70
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_行止_sets_transit_start_turn(game):
+    """apply_score_extraction 处理 行止 时，写入 transit_to 同时记录 transit_start_turn=当前回合。"""
+    db, state, content = game
+    name = active_ming_character(db, content)
+    _set_departure_origin(db, content, name)
+
+    issues.apply_score_extraction(
+        db,
+        state,
+        {"人物变更": [{"origin_ref": "盘面自发", "name": name, "动作": "行止", "transit_to": DEST}]},
+        content=content,
+    )
+
+    row = db.conn.execute(
+        "SELECT transit_to, transit_start_turn, transit_distance_remaining, transit_speed_factor "
+        "FROM characters WHERE name=?", (name,)
+    ).fetchone()
+    assert row["transit_to"] == DEST, "行止 后 transit_to 应被设置"
+    assert row["transit_start_turn"] == state.turn, (
+        f"行止 后 transit_start_turn 应等于当前回合 {state.turn}，实测 {row['transit_start_turn']}"
+    )
+    assert row["transit_distance_remaining"] == MATRIX.travel_time("beizhili", DEST)
+    assert row["transit_speed_factor"] == 1.0

@@ -1,0 +1,15 @@
+# FILE: tests/test_named_characters_seed_484.py
+# NAME: test_r6_xu_yingqiu_uses_verified_ministry_line_and_opening_status
+# LINE: 90-98
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_r6_xu_yingqiu_uses_verified_ministry_line_and_opening_status():
+    character = _by_name()["徐应秋"]
+
+    assert character.office == "礼部仪制司主事"
+    assert character.office_type == "礼部"
+    assert character.status == "active"
+    assert character.debut_year == 1627
+    assert character.debut_month == 0
+    assert character.location == "beizhili"

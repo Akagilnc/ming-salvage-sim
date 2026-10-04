@@ -1,0 +1,2290 @@
+{
+  "count": 87,
+  "by_cat": {
+    "needs_human_read": 2464,
+    "private_helper_suspect": 12,
+    "oracle_suspect": 15,
+    "mock_plus_calls": 41,
+    "meta_marker_suspect": 10,
+    "match_wording_suspect": 2,
+    "calls_only_suspect": 10
+  },
+  "items": [
+    {
+      "file": "tests/test_audience_continuous_507.py",
+      "name": "test_scene_recap_excludes_dialogue_before_person_entered",
+      "line": 59,
+      "end": 73,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "mock_targets": [],
+      "signals": {
+        "call_assert": false,
+        "result_assert": false,
+        "private_call": true,
+        "match_kw": false,
+        "mock": false,
+        "oracle": false,
+        "meta": false
+      },
+      "draft_cats": [
+        "private_helper_suspect"
+      ],
+      "body_chars": 635
+    },
+    {
+      "file": "tests/test_centrifuge_ledger_690.py",
+      "name": "test_t2_kinship_uses_unrounded_formula",
+      "line": 129,
+      "end": 152,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "mock_targets": [],
+      "signals": {
+        "call_assert": false,
+        "result_assert": true,
+        "private_call": true,
+        "match_kw": false,
+        "mock": false,
+        "oracle": true,
+        "meta": false
+      },
+      "draft_cats": [
+        "oracle_suspect"
+      ],
+      "body_chars": 800
+    },
+    {
+      "file": "tests/test_chat_stream_failpaths_393.py",
+      "name": "test_chat_stream_three_transient_exhausted_system_fail_then_resend",
+      "line": 673,
+      "end": 752,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "mock_targets": [
+        "transport_mod._sleep_retry_interval"
+      ],
+      "signals": {
+        "call_assert": true,
+        "result_assert": true,
+        "private_call": true,
+        "match_kw": false,
+        "mock": true,
+        "oracle": false,
+        "meta": false
+      },
+      "draft_cats": [
+        "mock_plus_calls"
+      ],
+      "body_chars": 3246
+    },
+    {
+      "file": "tests/test_chat_stream_failpaths_393.py",
+      "name": "test_chat_stream_config_max_attempts_override",
+      "line": 866,
+      "end": 899,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "mock_targets": [
+        "llm_config_mod.RUNTIME_LLM_PATH"
+      ],
+      "signals": {
+        "call_assert": true,
+        "result_assert": true,
+        "private_call": true,
+        "match_kw": false,
+        "mock": true,
+        "oracle": false,
+        "meta": false
+      },
+      "draft_cats": [
+        "mock_plus_calls"
+      ],
+      "body_chars": 1328
+    },
+    {
+      "file": "tests/test_cli_play_turn.py",
+      "name": "test_issue_refusal_stays_in_loop",
+      "line": 73,
+      "end": 84,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "mock_targets": [
+        "term.review_directives",
+        "term._print_header",
+        "issues_mod.show_active_issues"
+      ],
+      "signals": {
+        "call_assert": true,
+        "result_assert": true,
+        "private_call": true,
+        "match_kw": false,
+        "mock": true,
+        "oracle": false,
+        "meta": false
+      },
+      "draft_cats": [
+        "mock_plus_calls"
+      ],
+      "body_chars": 535
+    },
+    {
+      "file": "tests/test_cli_play_turn.py",
+      "name": "test_cli_does_not_end_unadvanced_turn",
+      "line": 88,
+      "end": 121,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present"
+      ],
+      "mock_targets": [
+        "term.review_directives",
+        "term._print_header",
+        "issues_mod.show_active_issues",
+        "term._submit_first_cli_decisions"
+      ],
+      "signals": {
+        "call_assert": true,
+        "result_assert": true,
+        "private_call": false,
+        "match_kw": false,
+        "mock": true,
+        "oracle": false,
+        "meta": false
+      },
+      "draft_cats": [
+        "mock_plus_calls"
+      ],
+      "body_chars": 1253
+    },
+    {
+      "file": "tests/test_cli_play_turn.py",
+      "name": "test_play_turn_reports_default_approval_secret_order_failure",
+      "line": 380,
+      "end": 440,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "mock_targets": [
+        "term.review_directives",
+        "term._print_header",
+        "issues_mod.show_active_issues"
+      ],
+      "signals": {
+        "call_assert": true,
+        "result_assert": true,
+        "private_call": true,
+        "match_kw": false,
+        "mock": true,
+        "oracle": false,
+        "meta": false
+      },
+      "draft_cats": [
+        "mock_plus_calls"
+      ],
+      "body_chars": 1870
+    },
+    {
+      "file": "tests/test_cli_play_turn.py",
+      "name": "test_play_turn_skip_prints_dossier_settlement_report_and_ends_turn",
+      "line": 443,
+      "end": 456,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "mock_targets": [
+        "term.review_directives",
+        "term._print_header",
+        "issues_mod.show_active_issues"
+      ],
+      "signals": {
+        "call_assert": true,
+        "result_assert": true,
+        "private_call": true,
+        "match_kw": false,
+        "mock": true,
+        "oracle": false,
+        "meta": false
+      },
+      "draft_cats": [
+        "mock_plus_calls"
+      ],
+      "body_chars": 656
+    },
+    {
+      "file": "tests/test_cli_play_turn.py",
+      "name": "test_play_turn_skip_settlement_abort_stays_in_player_loop",
+      "line": 464,
+      "end": 495,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "mock_targets": [
+        "term.review_directives",
+        "term._print_header",
+        "issues_mod.show_active_issues"
+      ],
+      "signals": {
+        "call_assert": true,
+        "result_assert": true,
+        "private_call": true,
+        "match_kw": false,
+        "mock": true,
+        "oracle": false,
+        "meta": false
+      },
+      "draft_cats": [
+        "mock_plus_calls"
+      ],
+      "body_chars": 1088
+    },
+    {
+      "file": "tests/test_cli_play_turn.py",
+      "name": "test_play_turn_reports_secret_order_failure_when_settlement_aborts",
+      "line": 498,
+      "end": 548,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "mock_targets": [
+        "term.review_directives",
+        "term._print_header",
+        "issues_mod.show_active_issues"
+      ],
+      "signals": {
+        "call_assert": true,
+        "result_assert": true,
+        "private_call": true,
+        "match_kw": false,
+        "mock": true,
+        "oracle": false,
+        "meta": false
+      },
+      "draft_cats": [
+        "mock_plus_calls"
+      ],
+      "body_chars": 1613
+    },
+    {
+      "file": "tests/test_cli_transport_1465.py",
+      "name": "test_cli_process_keeps_streaming_past_old_300s_wall",
+      "line": 267,
+      "end": 302,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "mock_targets": [
+        "cb._cli_process_clock"
+      ],
+      "signals": {
+        "call_assert": true,
+        "result_assert": true,
+        "private_call": true,
+        "match_kw": false,
+        "mock": true,
+        "oracle": false,
+        "meta": false
+      },
+      "draft_cats": [
+        "mock_plus_calls"
+      ],
+      "body_chars": 1491
+    },
+    {
+      "file": "tests/test_cli_transport_1465.py",
+      "name": "test_cli_process_idle_over_budget_dies_then_retry_succeeds",
+      "line": 305,
+      "end": 356,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "mock_targets": [
+        "cb._cli_process_clock"
+      ],
+      "signals": {
+        "call_assert": true,
+        "result_assert": true,
+        "private_call": true,
+        "match_kw": false,
+        "mock": true,
+        "oracle": false,
+        "meta": false
+      },
+      "draft_cats": [
+        "mock_plus_calls"
+      ],
+      "body_chars": 1987
+    },
+    {
+      "file": "tests/test_decree_commitment_settlement_229.py",
+      "name": "test_until_stop_arrears_commitment_settlement_oracle_resolves_with_restore",
+      "line": 448,
+      "end": 530,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "mock_targets": [],
+      "signals": {
+        "call_assert": false,
+        "result_assert": true,
+        "private_call": true,
+        "match_kw": false,
+        "mock": false,
+        "oracle": true,
+        "meta": false
+      },
+      "draft_cats": [
+        "oracle_suspect"
+      ],
+      "body_chars": 3249
+    },
+    {
+      "file": "tests/test_distance_matrix.py",
+      "name": "test_bake_uses_half_endpoint_weights_and_zero_diagonal",
+      "line": 12,
+      "end": 23,
+      "flags": [
+        "assert_count"
+      ],
+      "mock_targets": [],
+      "signals": {
+        "call_assert": false,
+        "result_assert": true,
+        "private_call": false,
+        "match_kw": false,
+        "mock": false,
+        "oracle": true,
+        "meta": false
+      },
+      "draft_cats": [
+        "oracle_suspect"
+      ],
+      "body_chars": 411
+    },
+    {
+      "file": "tests/test_draft_admission_resubmit_1769.py",
+      "name": "test_draft_admission_exhaust_keeps_draft_and_advances",
+      "line": 305,
+      "end": 369,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "mock_targets": [
+        "web_app.web_game"
+      ],
+      "signals": {
+        "call_assert": true,
+        "result_assert": true,
+        "private_call": true,
+        "match_kw": false,
+        "mock": true,
+        "oracle": false,
+        "meta": false
+      },
+      "draft_cats": [
+        "mock_plus_calls"
+      ],
+      "body_chars": 2561
+    },
+    {
+      "file": "tests/test_draft_admission_resubmit_1769.py",
+      "name": "test_exhaust_zero_dossier_system_simulation_no_steam_decree",
+      "line": 553,
+      "end": 607,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "mock_targets": [
+        "session_mod.resolve_directives"
+      ],
+      "signals": {
+        "call_assert": true,
+        "result_assert": true,
+        "private_call": true,
+        "match_kw": false,
+        "mock": true,
+        "oracle": false,
+        "meta": false
+      },
+      "draft_cats": [
+        "mock_plus_calls"
+      ],
+      "body_chars": 2138
+    },
+    {
+      "file": "tests/test_empire_modifier_income_only_341.py",
+      "name": "test_income_still_modified_by_legacy",
+      "line": 29,
+      "end": 41,
+      "flags": [
+        "retired_or_meta_marker"
+      ],
+      "mock_targets": [],
+      "signals": {
+        "call_assert": false,
+        "result_assert": true,
+        "private_call": false,
+        "match_kw": false,
+        "mock": false,
+        "oracle": true,
+        "meta": false
+      },
+      "draft_cats": [
+        "oracle_suspect"
+      ],
+      "body_chars": 543
+    },
+    {
+      "file": "tests/test_event_trigger_gate.py",
+      "name": "test_mao_wenlong_event_excluded_when_yuan_unavailable",
+      "line": 4230,
+      "end": 4266,
+      "flags": [
+        "assert_text_compare_or_match",
+        "retired_or_meta_marker"
+      ],
+      "mock_targets": [],
+      "signals": {
+        "call_assert": false,
+        "result_assert": true,
+        "private_call": false,
+        "match_kw": false,
+        "mock": false,
+        "oracle": false,
+        "meta": true
+      },
+      "draft_cats": [
+        "meta_marker_suspect"
+      ],
+      "body_chars": 1455
+    },
+    {
+      "file": "tests/test_execution_pressure_654.py",
+      "name": "test_revoke_decree_523_producer_durable_oracle_chain",
+      "line": 586,
+      "end": 654,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count"
+      ],
+      "mock_targets": [],
+      "signals": {
+        "call_assert": false,
+        "result_assert": true,
+        "private_call": false,
+        "match_kw": false,
+        "mock": false,
+        "oracle": true,
+        "meta": false
+      },
+      "draft_cats": [
+        "oracle_suspect"
+      ],
+      "body_chars": 2730
+    },
+    {
+      "file": "tests/test_faction_leverage_9.py",
+      "name": "test_half_weight_odd_baseline_no_round_drift",
+      "line": 918,
+      "end": 947,
+      "flags": [
+        "internal_formula_oracle"
+      ],
+      "mock_targets": [],
+      "signals": {
+        "call_assert": false,
+        "result_assert": true,
+        "private_call": false,
+        "match_kw": false,
+        "mock": false,
+        "oracle": true,
+        "meta": false
+      },
+      "draft_cats": [
+        "oracle_suspect"
+      ],
+      "body_chars": 1326
+    },
+    {
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_substrate_hub_cutover_runs_multi_tick_treasury_trajectory",
+      "line": 768,
+      "end": 800,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call",
+        "internal_formula_oracle"
+      ],
+      "mock_targets": [],
+      "signals": {
+        "call_assert": false,
+        "result_assert": true,
+        "private_call": true,
+        "match_kw": false,
+        "mock": false,
+        "oracle": true,
+        "meta": false
+      },
+      "draft_cats": [
+        "oracle_suspect"
+      ],
+      "body_chars": 1213
+    },
+    {
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_settling_context_retry_does_not_recompute_substrate_hub_pre_settle",
+      "line": 803,
+      "end": 826,
+      "flags": [
+        "helper_or_private_call",
+        "internal_formula_oracle"
+      ],
+      "mock_targets": [],
+      "signals": {
+        "call_assert": false,
+        "result_assert": true,
+        "private_call": true,
+        "match_kw": false,
+        "mock": false,
+        "oracle": true,
+        "meta": false
+      },
+      "draft_cats": [
+        "oracle_suspect"
+      ],
+      "body_chars": 757
+    },
+    {
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_fixed_flows_substrate_hub_central_pay_shares_hub_tier_with_jingyun_grants",
+      "line": 894,
+      "end": 1061,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call",
+        "internal_formula_oracle"
+      ],
+      "mock_targets": [],
+      "signals": {
+        "call_assert": false,
+        "result_assert": true,
+        "private_call": true,
+        "match_kw": false,
+        "mock": false,
+        "oracle": true,
+        "meta": false
+      },
+      "draft_cats": [
+        "oracle_suspect"
+      ],
+      "body_chars": 5897
+    },
+    {
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_fixed_flows_substrate_hub_central_pay_carries_transport_loss_without_jingyun",
+      "line": 1064,
+      "end": 1231,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call",
+        "internal_formula_oracle"
+      ],
+      "mock_targets": [],
+      "signals": {
+        "call_assert": false,
+        "result_assert": true,
+        "private_call": true,
+        "match_kw": false,
+        "mock": false,
+        "oracle": true,
+        "meta": false
+      },
+      "draft_cats": [
+        "oracle_suspect"
+      ],
+      "body_chars": 6279
+    },
+    {
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_fixed_flows_substrate_hub_books_split_treasury_income_and_central_losses",
+      "line": 1234,
+      "end": 1400,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call",
+        "internal_formula_oracle",
+        "retired_or_meta_marker"
+      ],
+      "mock_targets": [],
+      "signals": {
+        "call_assert": false,
+        "result_assert": true,
+        "private_call": true,
+        "match_kw": false,
+        "mock": false,
+        "oracle": true,
+        "meta": false
+      },
+      "draft_cats": [
+        "oracle_suspect"
+      ],
+      "body_chars": 5644
+    },
+    {
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_south_southwest_seeds_have_valid_historical_settle_substrate",
+      "line": 3515,
+      "end": 3580,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "mock_targets": [],
+      "signals": {
+        "call_assert": false,
+        "result_assert": true,
+        "private_call": true,
+        "match_kw": false,
+        "mock": false,
+        "oracle": true,
+        "meta": false
+      },
+      "draft_cats": [
+        "oracle_suspect"
+      ],
+      "body_chars": 2923
+    },
+    {
+      "file": "tests/test_fiscal_tick.py",
+      "name": "test_fiscal_golden",
+      "line": 90,
+      "end": 91,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "mock_targets": [],
+      "signals": {
+        "call_assert": false,
+        "result_assert": false,
+        "private_call": true,
+        "match_kw": false,
+        "mock": false,
+        "oracle": false,
+        "meta": false
+      },
+      "draft_cats": [
+        "private_helper_suspect"
+      ],
+      "body_chars": 93
+    },
+    {
+      "file": "tests/test_fiscal_tick.py",
+      "name": "test_fiscal_g9_three_tick_death_spiral",
+      "line": 152,
+      "end": 162,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "mock_targets": [],
+      "signals": {
+        "call_assert": false,
+        "result_assert": false,
+        "private_call": true,
+        "match_kw": false,
+        "mock": false,
+        "oracle": false,
+        "meta": false
+      },
+      "draft_cats": [
+        "private_helper_suspect"
+      ],
+      "body_chars": 517
+    },
+    {
+      "file": "tests/test_highlight_judge_544.py",
+      "name": "test_run_highlight_judge_timeout_and_exception_degrade_silently",
+      "line": 30,
+      "end": 58,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "mock_targets": [],
+      "signals": {
+        "call_assert": false,
+        "result_assert": false,
+        "private_call": true,
+        "match_kw": false,
+        "mock": false,
+        "oracle": false,
+        "meta": false
+      },
+      "draft_cats": [
+        "private_helper_suspect"
+      ],
+      "body_chars": 764
+    },
+    {
+      "file": "tests/test_highlight_judge_544.py",
+      "name": "test_run_highlight_judge_success_returns_phrases",
+      "line": 69,
+      "end": 79,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "mock_targets": [],
+      "signals": {
+        "call_assert": false,
+        "result_assert": false,
+        "private_call": true,
+        "match_kw": false,
+        "mock": false,
+        "oracle": false,
+        "meta": false
+      },
+      "draft_cats": [
+        "private_helper_suspect"
+      ],
+      "body_chars": 334
+    },
+    {
+      "file": "tests/test_llm_channel_config.py",
+      "name": "test_verify_llm_available_api_smoke_omits_max_tokens",
+      "line": 566,
+      "end": 587,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "mock_targets": [
+        "llm_model.OpenAIChat",
+        "llm_model.Agent",
+        "llm_model.extract_agent_text"
+      ],
+      "signals": {
+        "call_assert": false,
+        "result_assert": false,
+        "private_call": true,
+        "match_kw": false,
+        "mock": true,
+        "oracle": false,
+        "meta": false
+      },
+      "draft_cats": [
+        "private_helper_suspect"
+      ],
+      "body_chars": 794
+    },
+    {
+      "file": "tests/test_llm_channel_config.py",
+      "name": "test_verify_llm_available_api_empty_content_passes",
+      "line": 590,
+      "end": 607,
+      "flags": [
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "mock_targets": [
+        "llm_model.Agent"
+      ],
+      "signals": {
+        "call_assert": false,
+        "result_assert": false,
+        "private_call": true,
+        "match_kw": false,
+        "mock": true,
+        "oracle": false,
+        "meta": false
+      },
+      "draft_cats": [
+        "private_helper_suspect"
+      ],
+      "body_chars": 540
+    },
+    {
+      "file": "tests/test_llm_channel_config.py",
+      "name": "test_verify_llm_available_api_empty_content_none_passes",
+      "line": 610,
+      "end": 626,
+      "flags": [
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "mock_targets": [
+        "llm_model.Agent"
+      ],
+      "signals": {
+        "call_assert": false,
+        "result_assert": false,
+        "private_call": true,
+        "match_kw": false,
+        "mock": true,
+        "oracle": false,
+        "meta": false
+      },
+      "draft_cats": [
+        "private_helper_suspect"
+      ],
+      "body_chars": 497
+    },
+    {
+      "file": "tests/test_manual_directive_locality_1685.py",
+      "name": "test_manual_directive_region_assembly_writes_single_and_advances",
+      "line": 25,
+      "end": 60,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "mock_targets": [
+        "cli_backend.capture_manual_directive_payload",
+        "cli_backend._run_backend_for_config"
+      ],
+      "signals": {
+        "call_assert": true,
+        "result_assert": true,
+        "private_call": true,
+        "match_kw": false,
+        "mock": true,
+        "oracle": false,
+        "meta": false
+      },
+      "draft_cats": [
+        "mock_plus_calls"
+      ],
+      "body_chars": 1359
+    },
+    {
+      "file": "tests/test_material_directory_1830.py",
+      "name": "test_character_materials_exclude_legacy_raw_turn_report_and_keep_public_gazettes",
+      "line": 184,
+      "end": 243,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call",
+        "retired_or_meta_marker"
+      ],
+      "mock_targets": [],
+      "signals": {
+        "call_assert": false,
+        "result_assert": true,
+        "private_call": true,
+        "match_kw": false,
+        "mock": false,
+        "oracle": false,
+        "meta": true
+      },
+      "draft_cats": [
+        "meta_marker_suspect"
+      ],
+      "body_chars": 2406
+    },
+    {
+      "file": "tests/test_mechanical_tail_1845.py",
+      "name": "test_chapter_memory_retired_from_three_readers",
+      "line": 445,
+      "end": 505,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present",
+        "helper_or_private_call",
+        "retired_or_meta_marker"
+      ],
+      "mock_targets": [],
+      "signals": {
+        "call_assert": false,
+        "result_assert": true,
+        "private_call": true,
+        "match_kw": false,
+        "mock": true,
+        "oracle": false,
+        "meta": true
+      },
+      "draft_cats": [
+        "meta_marker_suspect"
+      ],
+      "body_chars": 2230
+    },
+    {
+      "file": "tests/test_minister_chat_timeout.py",
+      "name": "test_minister_chat_idle_death_time_follows_settings_threshold",
+      "line": 53,
+      "end": 98,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "mock_targets": [
+        "cb._cli_process_clock",
+        "cb.subprocess.Popen"
+      ],
+      "signals": {
+        "call_assert": true,
+        "result_assert": true,
+        "private_call": true,
+        "match_kw": false,
+        "mock": true,
+        "oracle": false,
+        "meta": false
+      },
+      "draft_cats": [
+        "mock_plus_calls"
+      ],
+      "body_chars": 1698
+    },
+    {
+      "file": "tests/test_month_call_recovery_1846.py",
+      "name": "test_month_entry_world_push_follows_audience_transport_policy",
+      "line": 82,
+      "end": 143,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "mock_targets": [
+        "Agent.run"
+      ],
+      "signals": {
+        "call_assert": true,
+        "result_assert": true,
+        "private_call": true,
+        "match_kw": false,
+        "mock": true,
+        "oracle": false,
+        "meta": false
+      },
+      "draft_cats": [
+        "mock_plus_calls"
+      ],
+      "body_chars": 2163
+    },
+    {
+      "file": "tests/test_month_call_recovery_1846.py",
+      "name": "test_escape_hatch_discards_world_segment_only_on_second_player_retry",
+      "line": 320,
+      "end": 391,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "mock_targets": [
+        "month_chain.run_world_segment_text",
+        "month_translate.translate_month_segment"
+      ],
+      "signals": {
+        "call_assert": true,
+        "result_assert": true,
+        "private_call": true,
+        "match_kw": false,
+        "mock": true,
+        "oracle": false,
+        "meta": false
+      },
+      "draft_cats": [
+        "mock_plus_calls"
+      ],
+      "body_chars": 2683
+    },
+    {
+      "file": "tests/test_month_call_recovery_1846.py",
+      "name": "test_world_commit_failure_after_alongside_retries_uncommitted_segment",
+      "line": 505,
+      "end": 590,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "mock_targets": [
+        "month_chain.run_world_segment_text",
+        "month_translate.translate_month_segment",
+        "db.conn.commit"
+      ],
+      "signals": {
+        "call_assert": true,
+        "result_assert": true,
+        "private_call": true,
+        "match_kw": false,
+        "mock": true,
+        "oracle": false,
+        "meta": false
+      },
+      "draft_cats": [
+        "mock_plus_calls"
+      ],
+      "body_chars": 3438
+    },
+    {
+      "file": "tests/test_month_call_recovery_1846.py",
+      "name": "test_edict_settle_code_exception_stops_at_month_entry_and_retries_once",
+      "line": 599,
+      "end": 652,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "mock_targets": [
+        "month_chain.run_world_segment_text",
+        "month_translate.translate_month_segment",
+        "declaration_dispatch.settle_staged_declarations_in_decree_order"
+      ],
+      "signals": {
+        "call_assert": true,
+        "result_assert": true,
+        "private_call": true,
+        "match_kw": false,
+        "mock": true,
+        "oracle": false,
+        "meta": false
+      },
+      "draft_cats": [
+        "mock_plus_calls"
+      ],
+      "body_chars": 2285
+    },
+    {
+      "file": "tests/test_month_call_recovery_1846.py",
+      "name": "test_error_pack_failure_keeps_original_fault_and_retry_phase",
+      "line": 655,
+      "end": 713,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "mock_targets": [
+        "month_chain.run_world_segment_text",
+        "month_translate.translate_month_segment",
+        "declaration_dispatch.settle_staged_declarations_in_decree_order",
+        "error_pack.write_error_pack"
+      ],
+      "signals": {
+        "call_assert": true,
+        "result_assert": true,
+        "private_call": true,
+        "match_kw": false,
+        "mock": true,
+        "oracle": false,
+        "meta": false
+      },
+      "draft_cats": [
+        "mock_plus_calls"
+      ],
+      "body_chars": 2414
+    },
+    {
+      "file": "tests/test_month_chain_1847.py",
+      "name": "test_answering_world_question_resumes_suffix_then_gazette",
+      "line": 220,
+      "end": 277,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "mock_targets": [
+        "month_chain.run_world_segment_text",
+        "month_translate.translate_month_segment",
+        "month_chain._run_world_continuation_text",
+        "month_translate.dispatch_month_segment"
+      ],
+      "signals": {
+        "call_assert": true,
+        "result_assert": true,
+        "private_call": true,
+        "match_kw": false,
+        "mock": true,
+        "oracle": false,
+        "meta": false
+      },
+      "draft_cats": [
+        "mock_plus_calls"
+      ],
+      "body_chars": 2203
+    },
+    {
+      "file": "tests/test_month_chain_1847.py",
+      "name": "test_decree_continuation_survives_llm_exhaustion_then_retries",
+      "line": 353,
+      "end": 436,
+      "flags": [
+        "assert_count",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "mock_targets": [
+        "month_chain.run_world_segment_text",
+        "month_chain._run_decree_continuation_text",
+        "month_translate.translate_month_segment",
+        "month_translate.dispatch_declaration"
+      ],
+      "signals": {
+        "call_assert": true,
+        "result_assert": true,
+        "private_call": true,
+        "match_kw": false,
+        "mock": true,
+        "oracle": false,
+        "meta": false
+      },
+      "draft_cats": [
+        "mock_plus_calls"
+      ],
+      "body_chars": 3080
+    },
+    {
+      "file": "tests/test_month_chain_1847.py",
+      "name": "test_missing_model_keeps_decree_question_until_retry",
+      "line": 484,
+      "end": 538,
+      "flags": [
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "mock_targets": [
+        "month_chain.run_world_segment_text",
+        "month_translate.translate_month_segment",
+        "month_chain._run_decree_continuation_text"
+      ],
+      "signals": {
+        "call_assert": true,
+        "result_assert": true,
+        "private_call": true,
+        "match_kw": false,
+        "mock": true,
+        "oracle": false,
+        "meta": false
+      },
+      "draft_cats": [
+        "mock_plus_calls"
+      ],
+      "body_chars": 2035
+    },
+    {
+      "file": "tests/test_month_open_snapshot_1234.py",
+      "name": "test_oracle_normal_phase_clears_via_startup_hook",
+      "line": 180,
+      "end": 202,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "mock_targets": [],
+      "signals": {
+        "call_assert": false,
+        "result_assert": true,
+        "private_call": true,
+        "match_kw": false,
+        "mock": false,
+        "oracle": true,
+        "meta": false
+      },
+      "draft_cats": [
+        "oracle_suspect"
+      ],
+      "body_chars": 870
+    },
+    {
+      "file": "tests/test_month_open_snapshot_1234.py",
+      "name": "test_oracle_settling_phase_keeps_display_for_recovery",
+      "line": 205,
+      "end": 220,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "mock_targets": [],
+      "signals": {
+        "call_assert": false,
+        "result_assert": true,
+        "private_call": true,
+        "match_kw": false,
+        "mock": false,
+        "oracle": true,
+        "meta": false
+      },
+      "draft_cats": [
+        "oracle_suspect"
+      ],
+      "body_chars": 653
+    },
+    {
+      "file": "tests/test_mutiny_latch_315.py",
+      "name": "test_mutiny_exits_at_40_only_when_arrears_have_retired",
+      "line": 99,
+      "end": 103,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call",
+        "retired_or_meta_marker"
+      ],
+      "mock_targets": [],
+      "signals": {
+        "call_assert": false,
+        "result_assert": true,
+        "private_call": true,
+        "match_kw": false,
+        "mock": false,
+        "oracle": false,
+        "meta": true
+      },
+      "draft_cats": [
+        "meta_marker_suspect"
+      ],
+      "body_chars": 214
+    },
+    {
+      "file": "tests/test_new_issues_section_rejections.py",
+      "name": "test_event_to_issue_duplicate_returns_none_not_raise",
+      "line": 385,
+      "end": 394,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "mock_targets": [],
+      "signals": {
+        "call_assert": false,
+        "result_assert": false,
+        "private_call": true,
+        "match_kw": false,
+        "mock": false,
+        "oracle": false,
+        "meta": false
+      },
+      "draft_cats": [
+        "private_helper_suspect"
+      ],
+      "body_chars": 460
+    },
+    {
+      "file": "tests/test_no_edict_full_settlement_1274.py",
+      "name": "test_with_edict_resolve_turn_still_full_settlement",
+      "line": 117,
+      "end": 146,
+      "flags": [
+        "assert_count",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "mock_targets": [],
+      "signals": {
+        "call_assert": true,
+        "result_assert": true,
+        "private_call": true,
+        "match_kw": false,
+        "mock": true,
+        "oracle": false,
+        "meta": false
+      },
+      "draft_cats": [
+        "mock_plus_calls"
+      ],
+      "body_chars": 955
+    },
+    {
+      "file": "tests/test_no_edict_full_settlement_1274.py",
+      "name": "test_web_no_edict_endpoint_routes_to_full_settlement",
+      "line": 150,
+      "end": 188,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "mock_targets": [
+        "web_app.get_game",
+        "web_app._auto_close_open_night_gate_free",
+        "web_app._serialized_web_write"
+      ],
+      "signals": {
+        "call_assert": true,
+        "result_assert": true,
+        "private_call": true,
+        "match_kw": false,
+        "mock": true,
+        "oracle": false,
+        "meta": false
+      },
+      "draft_cats": [
+        "mock_plus_calls"
+      ],
+      "body_chars": 1348
+    },
+    {
+      "file": "tests/test_office_rank_562.py",
+      "name": "test_same_rank_demotion_and_two_band_promotion_follow_upward_formula",
+      "line": 78,
+      "end": 95,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "mock_targets": [],
+      "signals": {
+        "call_assert": false,
+        "result_assert": true,
+        "private_call": true,
+        "match_kw": false,
+        "mock": false,
+        "oracle": true,
+        "meta": false
+      },
+      "draft_cats": [
+        "oracle_suspect"
+      ],
+      "body_chars": 961
+    },
+    {
+      "file": "tests/test_office_rank_562.py",
+      "name": "test_restoration_and_displaced_third_state_use_latest_historical_office",
+      "line": 98,
+      "end": 140,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call",
+        "retired_or_meta_marker"
+      ],
+      "mock_targets": [],
+      "signals": {
+        "call_assert": false,
+        "result_assert": true,
+        "private_call": true,
+        "match_kw": false,
+        "mock": false,
+        "oracle": false,
+        "meta": true
+      },
+      "draft_cats": [
+        "meta_marker_suspect"
+      ],
+      "body_chars": 2223
+    },
+    {
+      "file": "tests/test_office_rank_562.py",
+      "name": "test_recognizable_archive_title_survives_blank_or_legacy_office_type",
+      "line": 208,
+      "end": 219,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call",
+        "retired_or_meta_marker"
+      ],
+      "mock_targets": [],
+      "signals": {
+        "call_assert": false,
+        "result_assert": true,
+        "private_call": true,
+        "match_kw": false,
+        "mock": false,
+        "oracle": false,
+        "meta": true
+      },
+      "draft_cats": [
+        "meta_marker_suspect"
+      ],
+      "body_chars": 601
+    },
+    {
+      "file": "tests/test_person_delta_adapter.py",
+      "name": "test_list_ministers_excludes_active_prince",
+      "line": 1893,
+      "end": 1901,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "mock_targets": [],
+      "signals": {
+        "call_assert": false,
+        "result_assert": false,
+        "private_call": true,
+        "match_kw": false,
+        "mock": false,
+        "oracle": false,
+        "meta": false
+      },
+      "draft_cats": [
+        "private_helper_suspect"
+      ],
+      "body_chars": 458
+    },
+    {
+      "file": "tests/test_person_delta_adapter.py",
+      "name": "test_s2_reappointment_derives_qifu_from_retired",
+      "line": 2803,
+      "end": 2824,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call",
+        "retired_or_meta_marker"
+      ],
+      "mock_targets": [],
+      "signals": {
+        "call_assert": false,
+        "result_assert": true,
+        "private_call": true,
+        "match_kw": false,
+        "mock": false,
+        "oracle": false,
+        "meta": true
+      },
+      "draft_cats": [
+        "meta_marker_suspect"
+      ],
+      "body_chars": 1365
+    },
+    {
+      "file": "tests/test_pihong_dossier_1490.py",
+      "name": "test_due_commitment_shaped_submit_does_not_poison_or_deadlock",
+      "line": 339,
+      "end": 363,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "mock_targets": [
+        "session_mod.resolve_decisions_phase2"
+      ],
+      "signals": {
+        "call_assert": true,
+        "result_assert": true,
+        "private_call": true,
+        "match_kw": false,
+        "mock": true,
+        "oracle": false,
+        "meta": false
+      },
+      "draft_cats": [
+        "mock_plus_calls"
+      ],
+      "body_chars": 1269
+    },
+    {
+      "file": "tests/test_pihong_dossier_1490.py",
+      "name": "test_lying_label_rebuilt_from_server_option",
+      "line": 365,
+      "end": 388,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "mock_targets": [
+        "session_mod.resolve_decisions_phase2"
+      ],
+      "signals": {
+        "call_assert": true,
+        "result_assert": true,
+        "private_call": true,
+        "match_kw": false,
+        "mock": true,
+        "oracle": false,
+        "meta": false
+      },
+      "draft_cats": [
+        "mock_plus_calls"
+      ],
+      "body_chars": 1290
+    },
+    {
+      "file": "tests/test_pihong_dossier_1490.py",
+      "name": "test_ordinary_event_with_hallucinated_capability_submits",
+      "line": 441,
+      "end": 472,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "mock_targets": [
+        "session_mod.resolve_decisions_phase2"
+      ],
+      "signals": {
+        "call_assert": true,
+        "result_assert": true,
+        "private_call": true,
+        "match_kw": false,
+        "mock": true,
+        "oracle": false,
+        "meta": false
+      },
+      "draft_cats": [
+        "mock_plus_calls"
+      ],
+      "body_chars": 1655
+    },
+    {
+      "file": "tests/test_pihong_dossier_1490.py",
+      "name": "test_657_summon_missing_tag_enter_blocks_phase2_then_retry",
+      "line": 1799,
+      "end": 1848,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "mock_targets": [
+        "session_mod.resolve_decisions_phase2"
+      ],
+      "signals": {
+        "call_assert": true,
+        "result_assert": true,
+        "private_call": true,
+        "match_kw": false,
+        "mock": true,
+        "oracle": false,
+        "meta": false
+      },
+      "draft_cats": [
+        "mock_plus_calls"
+      ],
+      "body_chars": 1997
+    },
+    {
+      "file": "tests/test_promulgation_judge_561.py",
+      "name": "test_default_promulgation_judge_uses_one_batch_and_existing_validator",
+      "line": 398,
+      "end": 434,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "mock_targets": [
+        "decree_mod.create_promulgation_judge_agent",
+        "decree_mod.run_agent_text"
+      ],
+      "signals": {
+        "call_assert": true,
+        "result_assert": true,
+        "private_call": true,
+        "match_kw": false,
+        "mock": true,
+        "oracle": false,
+        "meta": false
+      },
+      "draft_cats": [
+        "mock_plus_calls"
+      ],
+      "body_chars": 1522
+    },
+    {
+      "file": "tests/test_qa_c2_settlement_display_lifecycle_1343.py",
+      "name": "test_success_clear_throw_still_ends_inflight",
+      "line": 130,
+      "end": 168,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "mock_targets": [
+        "web_app._accept_settlement_period",
+        "web_app._auto_close_open_night_gate_free",
+        "web_app._exit_settlement_display_on_failure"
+      ],
+      "signals": {
+        "call_assert": true,
+        "result_assert": true,
+        "private_call": true,
+        "match_kw": false,
+        "mock": true,
+        "oracle": false,
+        "meta": false
+      },
+      "draft_cats": [
+        "mock_plus_calls"
+      ],
+      "body_chars": 1413
+    },
+    {
+      "file": "tests/test_qa_t1_extraction_dual_source_1353.py",
+      "name": "test_seal_rejects_new_claim_after_lifecycle",
+      "line": 515,
+      "end": 524,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "mock_targets": [],
+      "signals": {
+        "call_assert": false,
+        "result_assert": false,
+        "private_call": true,
+        "match_kw": false,
+        "mock": false,
+        "oracle": false,
+        "meta": false
+      },
+      "draft_cats": [
+        "private_helper_suspect"
+      ],
+      "body_chars": 328
+    },
+    {
+      "file": "tests/test_relation_brew_636.py",
+      "name": "test_prepare_attaches_prior_events_only_via_history_seam",
+      "line": 221,
+      "end": 276,
+      "flags": [
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "mock_targets": [
+        "brew_mod.load_relation_history_before"
+      ],
+      "signals": {
+        "call_assert": true,
+        "result_assert": true,
+        "private_call": true,
+        "match_kw": false,
+        "mock": true,
+        "oracle": false,
+        "meta": false
+      },
+      "draft_cats": [
+        "mock_plus_calls"
+      ],
+      "body_chars": 2319
+    },
+    {
+      "file": "tests/test_relation_seed_638.py",
+      "name": "test_seeded_pair_flows_into_month_end_brew_selection",
+      "line": 50,
+      "end": 79,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count"
+      ],
+      "mock_targets": [],
+      "signals": {
+        "call_assert": false,
+        "result_assert": true,
+        "private_call": false,
+        "match_kw": true,
+        "mock": false,
+        "oracle": false,
+        "meta": false
+      },
+      "draft_cats": [
+        "match_wording_suspect"
+      ],
+      "body_chars": 1256
+    },
+    {
+      "file": "tests/test_rescript_draft_656.py",
+      "name": "test_triage_actor_follows_reappointment",
+      "line": 129,
+      "end": 140,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call",
+        "retired_or_meta_marker"
+      ],
+      "mock_targets": [],
+      "signals": {
+        "call_assert": false,
+        "result_assert": true,
+        "private_call": true,
+        "match_kw": false,
+        "mock": false,
+        "oracle": false,
+        "meta": true
+      },
+      "draft_cats": [
+        "meta_marker_suspect"
+      ],
+      "body_chars": 497
+    },
+    {
+      "file": "tests/test_rescript_option_field_heal_1746.py",
+      "name": "test_overflow_json_number_heals_not_batch",
+      "line": 516,
+      "end": 568,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "mock_targets": [
+        "rescript_mod.run_agent_text"
+      ],
+      "signals": {
+        "call_assert": true,
+        "result_assert": true,
+        "private_call": true,
+        "match_kw": false,
+        "mock": true,
+        "oracle": false,
+        "meta": false
+      },
+      "draft_cats": [
+        "mock_plus_calls"
+      ],
+      "body_chars": 2109
+    },
+    {
+      "file": "tests/test_rescript_option_field_heal_1746.py",
+      "name": "test_heal_response_contract_failure_consumes_attempt_keeps_siblings",
+      "line": 727,
+      "end": 845,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "mock_targets": [
+        "rescript_mod.run_agent_text"
+      ],
+      "signals": {
+        "call_assert": true,
+        "result_assert": true,
+        "private_call": true,
+        "match_kw": false,
+        "mock": true,
+        "oracle": false,
+        "meta": false
+      },
+      "draft_cats": [
+        "mock_plus_calls"
+      ],
+      "body_chars": 4653
+    },
+    {
+      "file": "tests/test_run_agent_text_transport_1465.py",
+      "name": "test_run_agent_text_history_backed_drops_empty_completed_before_retry",
+      "line": 82,
+      "end": 167,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "mock_targets": [
+        "agents_mod._dump_llm_messages"
+      ],
+      "signals": {
+        "call_assert": true,
+        "result_assert": true,
+        "private_call": true,
+        "match_kw": false,
+        "mock": true,
+        "oracle": false,
+        "meta": false
+      },
+      "draft_cats": [
+        "mock_plus_calls"
+      ],
+      "body_chars": 3214
+    },
+    {
+      "file": "tests/test_scene_llm_1836.py",
+      "name": "test_scene_chat_one_call_returns_multi_person_script",
+      "line": 47,
+      "end": 80,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "mock_targets": [],
+      "signals": {
+        "call_assert": true,
+        "result_assert": true,
+        "private_call": true,
+        "match_kw": false,
+        "mock": true,
+        "oracle": false,
+        "meta": false
+      },
+      "draft_cats": [
+        "mock_plus_calls"
+      ],
+      "body_chars": 1195
+    },
+    {
+      "file": "tests/test_session_write_queue_1353.py",
+      "name": "test_get_session_write_queue_wiring_fail_loud_no_broad_swallow",
+      "line": 475,
+      "end": 494,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "mock_targets": [],
+      "signals": {
+        "call_assert": false,
+        "result_assert": false,
+        "private_call": true,
+        "match_kw": false,
+        "mock": false,
+        "oracle": false,
+        "meta": false
+      },
+      "draft_cats": [
+        "private_helper_suspect"
+      ],
+      "body_chars": 651
+    },
+    {
+      "file": "tests/test_web_audience_night_498.py",
+      "name": "test_asgi_dossiered_directive_has_no_retired_review_surface",
+      "line": 523,
+      "end": 557,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "mock_or_patch_present",
+        "helper_or_private_call",
+        "retired_or_meta_marker"
+      ],
+      "mock_targets": [],
+      "signals": {
+        "call_assert": false,
+        "result_assert": true,
+        "private_call": true,
+        "match_kw": true,
+        "mock": true,
+        "oracle": false,
+        "meta": true
+      },
+      "draft_cats": [
+        "match_wording_suspect",
+        "meta_marker_suspect"
+      ],
+      "body_chars": 1404
+    },
+    {
+      "file": "tests/test_web_audience_night_498.py",
+      "name": "test_legacy_pending_only_advances_to_durable_dossier_without_review_api",
+      "line": 677,
+      "end": 723,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call",
+        "retired_or_meta_marker"
+      ],
+      "mock_targets": [],
+      "signals": {
+        "call_assert": false,
+        "result_assert": true,
+        "private_call": true,
+        "match_kw": false,
+        "mock": false,
+        "oracle": false,
+        "meta": true
+      },
+      "draft_cats": [
+        "meta_marker_suspect"
+      ],
+      "body_chars": 2233
+    },
+    {
+      "file": "web/src/appDurableWiring.test.tsx",
+      "name": "\"App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer）\" / \"#1716 retry 即时加 pending_directive_count、undo 即时减，拟诏台不待 refresh/reload\"",
+      "line": 474,
+      "end": 636,
+      "flags": [
+        "web_mock_spy_or_calls",
+        "web_text_assert",
+        "web_count_assert"
+      ],
+      "mock_targets": [],
+      "signals": {
+        "call_assert": true,
+        "result_assert": true,
+        "private_call": false,
+        "match_kw": false,
+        "mock": true,
+        "oracle": false,
+        "meta": false
+      },
+      "draft_cats": [
+        "mock_plus_calls"
+      ],
+      "body_chars": 8567
+    },
+    {
+      "file": "web/src/components/gameMenu.test.tsx",
+      "name": "\"#1732 GameMenu · 就地消解\" / \"回到主菜单：面板直通，不调 window.confirm\"",
+      "line": 733,
+      "end": 747,
+      "flags": [
+        "web_mock_spy_or_calls",
+        "web_count_assert"
+      ],
+      "mock_targets": [
+        "spy:window.confirm"
+      ],
+      "signals": {
+        "call_assert": true,
+        "result_assert": false,
+        "private_call": false,
+        "match_kw": false,
+        "mock": true,
+        "oracle": false,
+        "meta": false
+      },
+      "draft_cats": [
+        "calls_only_suspect",
+        "mock_plus_calls"
+      ],
+      "body_chars": 583
+    },
+    {
+      "file": "web/src/components/gameMenu.test.tsx",
+      "name": "\"#1732 GameMenu · 就地消解\" / \"退出游戏：面板直通，不调 window.confirm\"",
+      "line": 749,
+      "end": 762,
+      "flags": [
+        "web_mock_spy_or_calls"
+      ],
+      "mock_targets": [
+        "spy:window.confirm"
+      ],
+      "signals": {
+        "call_assert": true,
+        "result_assert": true,
+        "private_call": false,
+        "match_kw": false,
+        "mock": true,
+        "oracle": false,
+        "meta": false
+      },
+      "draft_cats": [
+        "mock_plus_calls"
+      ],
+      "body_chars": 607
+    },
+    {
+      "file": "web/src/components/menuPage.test.tsx",
+      "name": "\"#1732 MenuPage · 就地消解\" / \"删除存档：行下展开；取消零请求；确认后调用 onDelete\"",
+      "line": 1022,
+      "end": 1063,
+      "flags": [
+        "web_mock_spy_or_calls"
+      ],
+      "mock_targets": [],
+      "signals": {
+        "call_assert": true,
+        "result_assert": false,
+        "private_call": false,
+        "match_kw": false,
+        "mock": false,
+        "oracle": false,
+        "meta": false
+      },
+      "draft_cats": [
+        "calls_only_suspect"
+      ],
+      "body_chars": 1499
+    },
+    {
+      "file": "web/src/components/modals.test.tsx",
+      "name": "\"EdictModal — decree desk behavior\" / \"#1732 failed-only：页脚就地确认；取消零调用；确认后退朝\"",
+      "line": 305,
+      "end": 340,
+      "flags": [
+        "web_mock_spy_or_calls",
+        "web_text_assert",
+        "web_count_assert"
+      ],
+      "mock_targets": [
+        "spy:window.confirm"
+      ],
+      "signals": {
+        "call_assert": true,
+        "result_assert": true,
+        "private_call": false,
+        "match_kw": false,
+        "mock": true,
+        "oracle": false,
+        "meta": false
+      },
+      "draft_cats": [
+        "mock_plus_calls"
+      ],
+      "body_chars": 1470
+    },
+    {
+      "file": "web/src/components/modals.test.tsx",
+      "name": "\"#1732 ChatModal · 撤回就地确认\" / \"取消零调用；确认后 onUndo\"",
+      "line": 344,
+      "end": 373,
+      "flags": [
+        "web_mock_spy_or_calls"
+      ],
+      "mock_targets": [
+        "spy:window.confirm"
+      ],
+      "signals": {
+        "call_assert": true,
+        "result_assert": false,
+        "private_call": false,
+        "match_kw": false,
+        "mock": true,
+        "oracle": false,
+        "meta": false
+      },
+      "draft_cats": [
+        "calls_only_suspect",
+        "mock_plus_calls"
+      ],
+      "body_chars": 1095
+    },
+    {
+      "file": "web/src/components/modals.test.tsx",
+      "name": "\"#1732 ChatModal · 撤回就地确认\" / \"#1732 T3 开着确认条发送后确认条关闭\"",
+      "line": 375,
+      "end": 402,
+      "flags": [
+        "web_mock_spy_or_calls"
+      ],
+      "mock_targets": [],
+      "signals": {
+        "call_assert": true,
+        "result_assert": false,
+        "private_call": false,
+        "match_kw": false,
+        "mock": false,
+        "oracle": false,
+        "meta": false
+      },
+      "draft_cats": [
+        "calls_only_suspect"
+      ],
+      "body_chars": 1070
+    },
+    {
+      "file": "web/src/components/modals.test.tsx",
+      "name": "\"#1732 ChatModal · 撤回就地确认\" / \"#1732 T3 开着确认条点散夜后确认条关闭\"",
+      "line": 404,
+      "end": 425,
+      "flags": [
+        "web_mock_spy_or_calls"
+      ],
+      "mock_targets": [],
+      "signals": {
+        "call_assert": true,
+        "result_assert": false,
+        "private_call": false,
+        "match_kw": false,
+        "mock": false,
+        "oracle": false,
+        "meta": false
+      },
+      "draft_cats": [
+        "calls_only_suspect"
+      ],
+      "body_chars": 771
+    },
+    {
+      "file": "web/src/components/modals.test.tsx",
+      "name": "\"ChatModal — #545 final composer contract\" / \"#1278 召对收夜钮称散夜，仍走 chat 口令「退朝」seam，不与拟诏台退朝撞名\"",
+      "line": 447,
+      "end": 464,
+      "flags": [
+        "web_mock_spy_or_calls"
+      ],
+      "mock_targets": [],
+      "signals": {
+        "call_assert": true,
+        "result_assert": false,
+        "private_call": false,
+        "match_kw": false,
+        "mock": false,
+        "oracle": false,
+        "meta": false
+      },
+      "draft_cats": [
+        "calls_only_suspect"
+      ],
+      "body_chars": 812
+    },
+    {
+      "file": "web/src/components/modals.test.tsx",
+      "name": "\"ChatModal — one-night audience scroll (#1849)\" / \"uses roster clicks as summon commands without changing panels\"",
+      "line": 995,
+      "end": 1004,
+      "flags": [
+        "web_mock_spy_or_calls"
+      ],
+      "mock_targets": [],
+      "signals": {
+        "call_assert": true,
+        "result_assert": false,
+        "private_call": false,
+        "match_kw": false,
+        "mock": false,
+        "oracle": false,
+        "meta": false
+      },
+      "draft_cats": [
+        "calls_only_suspect"
+      ],
+      "body_chars": 791
+    },
+    {
+      "file": "web/src/components/modals.test.tsx",
+      "name": "\"ChatModal — cancel button during busy (issue #353)\" / \"calls onCancel when cancel button is clicked\"",
+      "line": 1686,
+      "end": 1697,
+      "flags": [
+        "web_mock_spy_or_calls"
+      ],
+      "mock_targets": [],
+      "signals": {
+        "call_assert": true,
+        "result_assert": false,
+        "private_call": false,
+        "match_kw": false,
+        "mock": false,
+        "oracle": false,
+        "meta": false
+      },
+      "draft_cats": [
+        "calls_only_suspect"
+      ],
+      "body_chars": 391
+    },
+    {
+      "file": "web/src/components/modals.test.tsx",
+      "name": "\"ReportModal — narrative settlement bulletin\" / \"#1387 底部有朕知道了主按钮可达关闭，不靠右上小 X\"",
+      "line": 1720,
+      "end": 1734,
+      "flags": [
+        "web_mock_spy_or_calls"
+      ],
+      "mock_targets": [],
+      "signals": {
+        "call_assert": true,
+        "result_assert": false,
+        "private_call": false,
+        "match_kw": false,
+        "mock": false,
+        "oracle": false,
+        "meta": false
+      },
+      "draft_cats": [
+        "calls_only_suspect"
+      ],
+      "body_chars": 635
+    },
+    {
+      "file": "web/src/components/modals.test.tsx",
+      "name": "\"ReportModal — narrative settlement bulletin\" / \"#1356 空邸报态不崩：卷轴壳复用 pre + 朕知道了可关闭（无固定空注）\"",
+      "line": 1753,
+      "end": 1766,
+      "flags": [
+        "web_mock_spy_or_calls"
+      ],
+      "mock_targets": [],
+      "signals": {
+        "call_assert": true,
+        "result_assert": false,
+        "private_call": false,
+        "match_kw": false,
+        "mock": false,
+        "oracle": false,
+        "meta": false
+      },
+      "draft_cats": [
+        "calls_only_suspect"
+      ],
+      "body_chars": 655
+    },
+    {
+      "file": "web/src/useSettlementFlow.test.tsx",
+      "name": "\"#1625 useSettlementFlow — observation refresh convergence\" / \"throttles inflight reloads and converges to the visible phase returned after waiting\"",
+      "line": 169,
+      "end": 222,
+      "flags": [
+        "web_mock_spy_or_calls",
+        "web_count_assert"
+      ],
+      "mock_targets": [
+        "spy:console.warn"
+      ],
+      "signals": {
+        "call_assert": true,
+        "result_assert": true,
+        "private_call": false,
+        "match_kw": false,
+        "mock": true,
+        "oracle": false,
+        "meta": false
+      },
+      "draft_cats": [
+        "mock_plus_calls"
+      ],
+      "body_chars": 2338
+    }
+  ]
+}

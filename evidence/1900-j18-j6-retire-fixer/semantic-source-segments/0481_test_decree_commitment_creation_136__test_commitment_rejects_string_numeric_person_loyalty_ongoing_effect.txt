@@ -1,0 +1,43 @@
+# FILE: tests/test_decree_commitment_creation_136.py
+# NAME: test_commitment_rejects_string_numeric_person_loyalty_ongoing_effect
+# LINE: 673-709
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_commitment_rejects_string_numeric_person_loyalty_ongoing_effect(game, monkeypatch):
+    db, state, content = game
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+
+    out = I.apply_score_extraction(
+        db,
+        state,
+        {
+            "new_issues": [
+                {
+                    "origin_kind": "decree",
+                    "origin_ref": _promulgated_commitment_origin(db, state, 'string-loyalty-appease'),
+                    "kind": "initiative",
+                    "title": "字符串忠诚安抚承诺",
+                    "stage_text": "每月安抚毛文龙，但 loyalty 错写成字符串。",
+                    "ongoing_effects": {
+                        "人物变更": [
+                            {
+                                "name": "毛文龙",
+                                "动作": "评定",
+                                "loyalty": "2",
+                                "reason": "奉旨持续安抚",
+                            }
+                        ]
+                    },
+                    "end_turn": state.turn + 2,
+                    "commitment_kind": "until_stop",
+                }
+            ]
+        },
+        content=content,
+    )
+
+    rejected = out["issue_summary"]["new_issues"][0]
+    assert rejected["rejected"] is True
+    assert rejected["category"] == "invalid_enum"
+    assert _issue_by_title(db, "字符串忠诚安抚承诺") is None

@@ -1,0 +1,50 @@
+# FILE: tests/test_qa_t1_extraction_dual_source_1353.py
+# NAME: test_wait_in_flight_releases_on_worker_terminal
+# LINE: 411-454
+# FLAGS: mock_or_patch_present,helper_or_private_call
+# KIND: py
+
+def test_wait_in_flight_releases_on_worker_terminal(game, tmp_path, monkeypatch):
+    """K10a：wait_in_flight 只依工人终态放行，不按 elapsed 伪造 409。"""
+    db, state, content = game
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
+    minister = _minister(db, content)
+    nid, ctid = _open_night_with_persisted_reply(db, state, minister)
+    db.conn.execute(
+        "UPDATE chat_turns SET status='generating' WHERE id=?", (ctid,)
+    )
+    db.conn.commit()
+    monkeypatch.setattr(an, "DEFAULT_IN_FLIGHT_POLL_S", 0.01)
+
+    # 确定性握手：主线程入轮询 → worker 发终态 → 主线程因终态返回
+    # （禁 sleep 毫秒窗；禁把 SUT 包进 waiter 线程 try/finally 吞异常假绿）
+    waiter_polling = threading.Event()
+    worker_published = threading.Event()
+    real_list = an.list_in_flight_chat_turns
+
+    def _list_tracking(db_arg, night_id_arg):
+        rows = real_list(db_arg, night_id_arg)
+        waiter_polling.set()
+        return rows
+
+    monkeypatch.setattr(an, "list_in_flight_chat_turns", _list_tracking)
+
+    def _worker_terminal() -> None:
+        waiter_polling.wait()
+        db.conn.execute(
+            "UPDATE chat_turns SET status='active' WHERE id=?", (ctid,)
+        )
+        db.conn.commit()
+        worker_published.set()
+
+    wt = threading.Thread(
+        target=_worker_terminal, name="worker-terminal-1353", daemon=True,
+    )
+    wt.start()
+    # 主测试线程直调 SUT；pytest 原生捕获被测异常（禁 waiter 包装线程）
+    # 不传短 timeout 墙钟；工人终态后必须返回（禁 elapsed 伪失败）
+    an.wait_in_flight_clear(db, nid)
+    worker_published.wait()
+    wt.join()
+    assert not wt.is_alive()
+    assert an.list_in_flight_chat_turns(db, nid) == []

@@ -1,0 +1,12 @@
+# FILE: web/src/decisionRouting.test.tsx
+# NAME: "decision routing — retry (routeRetryDecisions: stale-phase vs still-corrupted)" / "#1307 settling retry keeps quiet intermediate — empty pending is not 重新拉取 error"
+# LINE: 131-136
+# FLAGS: web_text_assert
+# KIND: web
+
+  it("#1307 settling retry keeps quiet intermediate — empty pending is not 重新拉取 error", () => {
+    const route = routeRetryDecisions("settling", []);
+    expect(route.pendingDecisions).toEqual([]);
+    expect(route.error).toBe("");
+
+  });

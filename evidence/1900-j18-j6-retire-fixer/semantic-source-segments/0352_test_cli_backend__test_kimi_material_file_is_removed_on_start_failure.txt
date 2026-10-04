@@ -1,0 +1,27 @@
+# FILE: tests/test_cli_backend.py
+# NAME: test_kimi_material_file_is_removed_on_start_failure
+# LINE: 98-118
+# FLAGS: mock_or_patch_present
+# KIND: py
+
+def test_kimi_material_file_is_removed_on_start_failure(monkeypatch, tmp_path):
+    created = []
+    real_temp = cb.tempfile.NamedTemporaryFile
+
+    def tracked_temp(*args, **kwargs):
+        handle = real_temp(*args, **kwargs)
+        created.append(handle.name)
+        return handle
+
+    def fail_start(*args, **kwargs):
+        raise FileNotFoundError("provider unavailable")
+
+    monkeypatch.setattr(cb.tempfile, "NamedTemporaryFile", tracked_temp)
+    monkeypatch.setattr(cb.subprocess, "Popen", fail_start)
+    monkeypatch.setattr(cb, "_trace", lambda rec: None)
+    with pytest.raises(LLMUnavailable):
+        cb.CliChat(id="kimi-k2", backend="kimi", materials_dir=str(tmp_path)).invoke(
+            [Message(role="user", content="request")], Message(role="assistant"),
+        )
+    assert created
+    assert all(not os.path.exists(path) for path in created)

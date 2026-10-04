@@ -1,0 +1,55 @@
+# FILE: tests/test_month_chain_1847.py
+# NAME: test_decree_forecast_keeps_every_question_and_translates_prefix_once
+# LINE: 729-777
+# FLAGS: assert_text_compare_or_match,mock_or_patch_present,helper_or_private_call
+# KIND: py
+
+def test_decree_forecast_keeps_every_question_and_translates_prefix_once(
+    game, monkeypatch,
+):
+    """同一旨的合法请旨全部上案头；只转译、暂存首问前的段文。"""
+    db, state, content = game
+    dossier_id = db.create_decree_dossier(
+        state, action_type="secret_authorization", decree_text="密旨两问",
+        target_kind="issue", target_id="two-questions",
+        payload={"mode": "ordinary"},
+    )
+    narrative = (
+        "问前事实。"
+        + _decision_block("问一", "准", "驳")
+        + "中段。"
+        + _decision_block("问二", "甲", "乙")
+        + "问后不入预推。"
+    )
+    segments = []
+
+    def translate(*_a, **kwargs):
+        segments.append(str(kwargs.get("segment") or ""))
+        return {"effects": {}}
+
+    _forbid_extractor(monkeypatch)
+    monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
+    monkeypatch.setattr(
+        "ming_sim.decree_forecast.agents.create_decree_forecast_agent",
+        lambda *a, **k: object(),
+    )
+    monkeypatch.setattr(
+        "ming_sim.decree_forecast.agents.run_agent_text",
+        lambda *a, **k: narrative,
+    )
+    monkeypatch.setattr(
+        "ming_sim.decree_forecast.translate_month_segment", translate,
+    )
+    session = make_light_session(db, state, content)
+    session.llm_config = object()
+
+    result = session.resolve_turn(allow_empty_decree=True)
+
+    assert result.awaiting is True
+    assert [row["title"] for row in result.decisions] == ["问一", "问二"]
+    assert segments == ["问前事实。"]
+    from ming_sim.decree_forecast import decree_ref_for_dossier
+    ref = decree_ref_for_dossier(db, db.get_decree_dossier(dossier_id))
+    stored = db.staged_declarations.questions_for(ref)
+    assert [item["title"] for item in stored] == ["问一", "问二"]
+    assert db.staged_declarations.forecast_text_for(ref) == "问前事实。"

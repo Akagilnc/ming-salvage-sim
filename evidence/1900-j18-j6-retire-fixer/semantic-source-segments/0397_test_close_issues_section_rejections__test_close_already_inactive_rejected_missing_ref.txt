@@ -1,0 +1,18 @@
+# FILE: tests/test_close_issues_section_rejections.py
+# NAME: test_close_already_inactive_rejected_missing_ref
+# LINE: 89-100
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_close_already_inactive_rejected_missing_ref(game):
+    db, state, _ = game
+    iid = db.insert_issue(state, kind="situation", title="测试·先结再结",
+                          effect_on_resolve={"metrics": {"民心": 1}})
+    # 先合法结案一次（resolved），issue → status!=active。
+    I.apply_issue_tracker_output(db, state, {"close_issues": [{"issue_id": iid, "reason": "resolved"}]})
+    # 再结一次：已非 active → missing_ref（不是「未找到」，但归陈旧引用类）。
+    out = I.apply_issue_tracker_output(db, state, {"close_issues": [{"issue_id": iid, "reason": "resolved"}]})
+    rej = _rejected(out)
+    assert len(rej) == 1
+    assert rej[0]["category"] == "missing_ref"
+    assert rej[0]["reason"]

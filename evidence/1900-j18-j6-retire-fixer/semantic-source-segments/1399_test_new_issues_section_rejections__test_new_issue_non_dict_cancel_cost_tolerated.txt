@@ -1,0 +1,15 @@
+# FILE: tests/test_new_issues_section_rejections.py
+# NAME: test_new_issue_non_dict_cancel_cost_tolerated
+# LINE: 495-503
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_new_issue_non_dict_cancel_cost_tolerated(game, bad_cancel):
+    db, state, _ = game
+    ni = {"origin_kind": "decree", "origin_ref": _decree_origin(db, state), "kind": "situation", "title": "测试·脏cancel", "cancel_cost": bad_cancel}
+    out = I.apply_issue_tracker_output(db, state, {"new_issues": [ni]})
+    created = [n for n in _new(out) if not n.get("rejected") and n.get("issue_id")]
+    assert len(created) == 1, out  # issue 仍立（不因次要字段脏拒整项）
+    iid = int(created[0]["issue_id"])
+    row = db.conn.execute("SELECT cancel_cost FROM issues WHERE id=?", (iid,)).fetchone()
+    assert json.loads(row["cancel_cost"]) == {}, "非 dict cancel_cost 须容忍归空 {}，不得 garble"

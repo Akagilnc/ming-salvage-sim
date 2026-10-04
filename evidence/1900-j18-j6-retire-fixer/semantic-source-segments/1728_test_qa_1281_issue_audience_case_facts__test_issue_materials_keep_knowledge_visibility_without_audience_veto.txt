@@ -1,0 +1,34 @@
+# FILE: tests/test_qa_1281_issue_audience_case_facts.py
+# NAME: test_issue_materials_keep_knowledge_visibility_without_audience_veto
+# LINE: 34-61
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_issue_materials_keep_knowledge_visibility_without_audience_veto(game, tmp_path):
+    db, state, content = game
+    issue_id = int(_issue_row(db)["id"])
+    audience_knowledge = db.get_character_knowledge(state, AUDIENCE_NAME)
+    outsider_knowledge = db.get_character_knowledge(state, NON_AUDIENCE_NAME)
+    assert any(int(row["id"]) == issue_id for row in audience_knowledge.get("issues") or [])
+    assert any(int(row["id"]) == issue_id for row in outsider_knowledge.get("issues") or [])
+
+    audience_projection = project_issue_materials(db, AUDIENCE_NAME, audience_knowledge)
+    outsider_projection = project_issue_materials(db, NON_AUDIENCE_NAME, outsider_knowledge)
+    audience_row = next(row for row in audience_projection if row["id"] == issue_id)
+    outsider_row = next(row for row in outsider_projection if row["id"] == issue_id)
+
+    assert audience_row["source_id"] == f"issue:{issue_id}"
+    assert outsider_row["source_id"] == f"issue:{issue_id}"
+    assert AUDIENCE_NAME in audience_row["audience_names"]
+    assert NON_AUDIENCE_NAME not in outsider_row["audience_names"]
+
+    audience = prepare_character_materials(
+        db, state, content.characters[AUDIENCE_NAME], dest_root=tmp_path / "audience",
+    )
+    outsider = prepare_character_materials(
+        db, state, content.characters[NON_AUDIENCE_NAME], dest_root=tmp_path / "outsider",
+    )
+    assert _issue_paths(audience, issue_id) == {f"事务/issue-{issue_id}/当前情况.txt"}
+    assert _issue_paths(outsider, issue_id) == {f"事务/issue-{issue_id}/当前情况.txt"}
+    assert f"事务/issue-{issue_id}/当前情况.txt" in audience.index_lines
+    assert f"事务/issue-{issue_id}/当前情况.txt" in outsider.index_lines

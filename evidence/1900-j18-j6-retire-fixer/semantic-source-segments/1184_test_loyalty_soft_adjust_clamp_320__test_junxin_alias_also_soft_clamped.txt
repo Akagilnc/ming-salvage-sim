@@ -1,0 +1,14 @@
+# FILE: tests/test_loyalty_soft_adjust_clamp_320.py
+# NAME: test_junxin_alias_also_soft_clamped
+# LINE: 159-166
+# FLAGS: assert_count,helper_or_private_call
+# KIND: py
+
+def test_junxin_alias_also_soft_clamped(game):
+    """可选薄覆盖：中文「军心」别名走同一 loyalty 分支，同受 ±15。"""
+    db, state, _ = game
+    _set_loyalty(db, loyalty=40)
+
+    _apply(db, state, {"军心": 50})
+
+    assert _loyalty(db) == 55

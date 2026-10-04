@@ -1,0 +1,17 @@
+# FILE: tests/test_audience_scroll_539.py
+# NAME: test_scroll_without_next_entrance_has_unnamed_boundary
+# LINE: 382-392
+# FLAGS: assert_text_compare_or_match
+# KIND: py
+
+def test_scroll_without_next_entrance_has_unnamed_boundary(game):
+    db, state, _ = game
+    night_id = open_audience_night(db, state)
+    an.append_ledger_entry(
+        db, night_id, tags=[an.TAG_EXIT], person_names=["杨嗣昌"], body="杨嗣昌告退。",
+    )
+
+    scroll = an.read_night_scroll(db, night_id)
+
+    divider = next(m for m in scroll if m["beat"] == "divider")
+    assert divider["speaker"] == ""

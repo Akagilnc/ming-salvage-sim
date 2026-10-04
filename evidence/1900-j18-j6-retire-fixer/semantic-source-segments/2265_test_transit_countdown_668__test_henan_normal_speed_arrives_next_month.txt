@@ -1,0 +1,23 @@
+# FILE: tests/test_transit_countdown_668.py
+# NAME: test_henan_normal_speed_arrives_next_month
+# LINE: 33-49
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_henan_normal_speed_arrives_next_month(game):
+    db, state, content = game
+    name = active_ming_character(db, content)
+    t0 = state.turn
+    r0 = _put_in_transit(db, content, name, origin='henan', dest='beizhili', speed_factor=1.0, start_turn=t0)
+    assert r0 <= 1.0
+    assert tick_transit_arrivals(db, state, content) == []
+    row = _ledger(db, name)
+    assert row['transit_to'] == 'beizhili'
+    assert row['location'] == 'henan'
+    state.turn = t0 + 1
+    arrivals = tick_transit_arrivals(db, state, content)
+    assert arrivals == [{'name': name, 'location': 'beizhili'}]
+    row = _ledger(db, name)
+    assert tuple(row) == ('beizhili', '', None, None, 0)
+    ch = content.characters[name]
+    assert (ch.location, ch.transit_to, ch.transit_distance_remaining, ch.transit_speed_factor, ch.transit_start_turn) == ('beizhili', '', None, None, 0)

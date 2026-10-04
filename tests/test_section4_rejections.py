@@ -390,6 +390,9 @@ def test_army_deltas_code_exception_aborts_settlement(game, monkeypatch):
     """apply_army_deltas 内代码异常原样上抛，原子分派回滚整批。"""
     db, state, content = game
     good = _an_army(db)
+    before = db.conn.execute(
+        "SELECT morale FROM armies WHERE id=?", (good,),
+    ).fetchone()[0]
 
     def _boom(self, *a, **k):
         raise KeyError("code bug in apply_army_deltas")
@@ -399,6 +402,10 @@ def test_army_deltas_code_exception_aborts_settlement(game, monkeypatch):
         run_settle(db, state, content, {
             "army_delta": {good: {"morale": 2}},
         }, narrative="x", decree_text="y")
+
+    assert db.conn.execute(
+        "SELECT morale FROM armies WHERE id=?", (good,),
+    ).fetchone()[0] == before
 
 
 def test_create_armies_code_exception_aborts_settlement(game, monkeypatch):
@@ -415,6 +422,10 @@ def test_create_armies_code_exception_aborts_settlement(game, monkeypatch):
             "new_armies": [{"id": "x_corps", "owner_power": good_owner,
                             "manpower": 1000, "maintenance_per_turn": 1}],
         }, narrative="x", decree_text="y")
+
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM armies WHERE id='x_corps'",
+    ).fetchone()[0] == 0
 
 
 # ---- clamp 语义(P2 铁律):clamp 不是拒收,clamp 后照落 ----

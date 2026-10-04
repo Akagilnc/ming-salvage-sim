@@ -147,18 +147,11 @@ def test_prohibit_covert_levy_commission_binds_exposed_dossier(game, monkeypatch
     did, actor = _bound_exposure(db, state, monkeypatch)
     other_did, _ = _bound_exposure(db, state, monkeypatch)
     from ming_sim.due_review import list_due_review_scenes
-    from ming_sim.audience_translate import build_translation_target_grounding
     exposed = {
         scene["dossier_id"] for scene in list_due_review_scenes(db, state)
         if scene.get("kind") == "covert_levy_exposure"
     }
     assert exposed == {did, other_did}
-    grounded = {
-        json.loads(line.removeprefix("scene\t"))["dossier_id"]
-        for line in build_translation_target_grounding(db, state).splitlines()
-        if line.startswith("scene\t")
-    }
-    assert grounded == exposed
     rejected = dispatch_declaration(db, state, {"commissions": [{
         "text": "禁绝摊派", "dossier_action_type": PROHIBITION_ACTION,
         "target_id": max(exposed) + 1,

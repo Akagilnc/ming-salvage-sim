@@ -1,0 +1,11 @@
+# FILE: web/src/components/decisionModal.test.tsx
+# NAME: "DecisionModal" / "renders no page for a month with no decisions"
+# LINE: 154-158
+# FLAGS: web_mock_spy_or_calls
+# KIND: web
+
+  it("renders no page for a month with no decisions", () => {
+    const cleanup = render(<DecisionModal decisions={[]} onResolve={vi.fn()} />);
+    expect(document.querySelector(".decision-page")).toBeNull();
+    cleanup();
+  });

@@ -1,0 +1,23 @@
+# FILE: tests/test_decree_dossiers_571.py
+# NAME: test_dossier_execution_rejects_non_sqlite_integer_ids
+# LINE: 654-670
+# FLAGS: assert_text_compare_or_match
+# KIND: py
+
+def test_dossier_execution_rejects_non_sqlite_integer_ids(game, invalid_id):
+    db, state, content = game
+    dossier_id = db.create_decree_dossier(
+        state, action_type="policy", decree_text="奉旨办理",
+        target_kind="issue", target_id="strict-execution-id",
+    )
+    db.record_dossier_decision(dossier_id, "promulgated")
+    db.transition_decree_dossier(dossier_id, "executing")
+
+    result = issue_engine.apply_score_extraction(db, state, {
+        "dossier_executions": [{
+            "dossier_id": invalid_id, "outcome": "fulfilled", "note": "办理完毕",
+        }],
+    }, content=content)
+
+    assert result["dossier_executions"][0]["rejected"] is True
+    assert db.get_decree_dossier(dossier_id)["status"] == "executing"

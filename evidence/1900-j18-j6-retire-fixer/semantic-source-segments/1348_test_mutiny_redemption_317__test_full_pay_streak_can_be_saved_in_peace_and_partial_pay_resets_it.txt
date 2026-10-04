@@ -1,0 +1,22 @@
+# FILE: tests/test_mutiny_redemption_317.py
+# NAME: test_full_pay_streak_can_be_saved_in_peace_and_partial_pay_resets_it
+# LINE: 86-101
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_full_pay_streak_can_be_saved_in_peace_and_partial_pay_resets_it(game, fiscal_path):
+    db, state, _ = game
+    _configure(db, fiscal_path)
+    db.conn.execute(
+        "UPDATE armies SET loyalty=100,mutiny_count=0,full_pay_streak=10,redemption_count=0 WHERE id=?",
+        (ARMY,),
+    )
+    db.conn.commit()
+
+    _set_arrears(db, fiscal_path, 1)
+    interrupted = _tick(db, state)
+    assert tuple(interrupted[k] for k in ("full_pay_streak", "redemption_count")) == (0, 0)
+
+    _set_arrears(db, fiscal_path, 0)
+    resumed = _tick(db, state)
+    assert tuple(resumed[k] for k in ("full_pay_streak", "redemption_count")) == (1, 0)

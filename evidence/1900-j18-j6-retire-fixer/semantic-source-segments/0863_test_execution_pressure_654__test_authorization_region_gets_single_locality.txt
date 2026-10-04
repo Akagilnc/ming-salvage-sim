@@ -1,0 +1,45 @@
+# FILE: tests/test_execution_pressure_654.py
+# NAME: test_authorization_region_gets_single_locality
+# LINE: 739-777
+# FLAGS: assert_text_compare_or_match
+# KIND: py
+
+def test_authorization_region_gets_single_locality(env):
+    """D：authorization region 目标 producer 写 locality_scope=single。"""
+    import ming_sim.action_materialize  # noqa: F401
+    from ming_sim.action_materialize import stage_authorization_candidate
+
+    db, state, _ = env
+    holder = "毕自严"
+    pending_id = stage_authorization_candidate(
+        db,
+        state.turn,
+        holder,
+        text="准其便宜行事于陕西。",
+        privilege="便宜行事",
+        target_id="shaanxi",
+        target_kind="region",
+    )
+    assert pending_id
+    row = db.conn.execute(
+        "SELECT payload_json FROM pending_actions WHERE id=?", (pending_id,),
+    ).fetchone()
+    payload = json.loads(row["payload_json"])
+    assert payload["target_kind"] == "region"
+    assert payload["locality_scope"] == "single"
+    # 新建非 region 路径每次显式 none
+    pending2 = stage_authorization_candidate(
+        db,
+        state.turn,
+        holder,
+        text="准其便宜行事。",
+        privilege="便宜行事",
+        target_id=holder,
+        target_kind="character",
+    )
+    assert pending2
+    row2 = db.conn.execute(
+        "SELECT payload_json FROM pending_actions WHERE id=?", (pending2,),
+    ).fetchone()
+    payload2 = json.loads(row2["payload_json"])
+    assert payload2["locality_scope"] == "none"

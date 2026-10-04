@@ -1,0 +1,32 @@
+# FILE: tests/test_due_review_621.py
+# NAME: test_takeover_guard_fail_closed_on_ownership_error
+# LINE: 689-714
+# FLAGS: assert_text_compare_or_match,mock_or_patch_present,helper_or_private_call
+# KIND: py
+
+def test_takeover_guard_fail_closed_on_ownership_error(game, monkeypatch):
+    """C3：所有权查询抛错不得 fail-open 放行 extractor 终值。"""
+    db, state, content = game
+    dossier_id = _executing_policy_dossier(db, state, token="fail-closed")
+
+    def _boom(*_a, **_k):
+        raise RuntimeError("ownership lookup boom")
+
+    monkeypatch.setattr(
+        "ming_sim.due_review.dossiers_with_pending_due_review", _boom,
+    )
+    with pytest.raises(RuntimeError):
+        issue_engine.apply_score_extraction(
+            db, state,
+            {
+                "dossier_executions": [{
+                    "dossier_id": dossier_id,
+                    "outcome": "failed",
+                    "note": "应被守卫响亮挡住",
+                }]
+            },
+            content=content,
+        )
+    dossier = db.get_decree_dossier(dossier_id)
+    assert dossier["status"] == "executing"
+    assert dossier["execution_outcome"] in ("", None)

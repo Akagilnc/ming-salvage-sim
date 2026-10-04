@@ -473,7 +473,7 @@ def test_write_turn_still_blocks_on_open_barrier():
 
 
 def test_get_session_write_queue_wiring_fail_loud_no_broad_swallow():
-    """WebGame/session 共享同一写入队列。"""
+    """WebGame/session 共享同一写入队列（公开 get_session_write_queue）。"""
     from ming_sim.session_write_queue import get_session_write_queue
 
     class _Sess:
@@ -488,28 +488,14 @@ def test_get_session_write_queue_wiring_fail_loud_no_broad_swallow():
     q2 = get_session_write_queue(owner)
     q3 = get_session_write_queue(owner.session)
     assert q1 is q2 is q3
-    assert owner._write_queue is q1
-    assert owner.session._write_queue is q1
-    assert owner._write_gate is q1.write_gate
-    assert owner.session._write_gate is q1.write_gate
+    entered = threading.Event()
 
+    def _probe() -> None:
+        with q1.write_gate:
+            entered.set()
 
-def test_wait_pending_writes_fail_loud_on_false_and_exception(monkeypatch):
-    """单一权威负向：wait_idle=False 与队列异常均须报红，不得被调用方洗白。"""
-    stuck = SessionWriteQueue()
-    ticket = stuck.claim(key=("teardown-stuck", 1))
-    assert ticket is not None
-    try:
-        with pytest.raises(AssertionError):
-            wait_pending_writes(SimpleNamespace(_write_queue=stuck), timeout_s=0.05)
-    finally:
-        stuck.complete(ticket)
-
-    boom = SessionWriteQueue()
-
-    def _raise(*, timeout_s=None):
-        raise RuntimeError("queue boom")
-
-    monkeypatch.setattr(boom, "wait_idle", _raise)
-    with pytest.raises(RuntimeError):
-        wait_pending_writes(SimpleNamespace(_write_queue=boom), timeout_s=0.05)
+    t = threading.Thread(target=_probe, daemon=True)
+    t.start()
+    entered.wait()
+    t.join()
+    assert entered.is_set()

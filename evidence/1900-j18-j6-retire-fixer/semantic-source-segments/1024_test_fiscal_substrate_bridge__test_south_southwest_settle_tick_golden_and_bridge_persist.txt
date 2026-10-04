@@ -1,0 +1,23 @@
+# FILE: tests/test_fiscal_substrate_bridge.py
+# NAME: test_south_southwest_settle_tick_golden_and_bridge_persist
+# LINE: 3584-3600
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_south_southwest_settle_tick_golden_and_bridge_persist(fresh_db, region_id, expected):
+    settle = _read_settle(fresh_db, region_id)
+    pure = settle_tick(settle["st"], settle["p"], [])
+    bridged = fresh_db.settle_province_tick(region_id, [])
+    fresh_db.conn.commit()
+    after = _read_settle(fresh_db, region_id)["st"]
+
+    for k, v in expected["first_tick"].items():
+        if k in ("省库库银", "军饷欠", "官俸欠", "宗禄欠"):
+            continue
+        assert pure.new_st[k] == pytest.approx(v, abs=1e-4), f"{region_id} pure {k}"
+        assert after[k] == pytest.approx(v, abs=1e-4), f"{region_id} DB {k}"
+    assert after["军饷欠"] == pytest.approx(_province_pay_arrears(fresh_db, region_id), abs=1e-6)
+    for k, v in bridged.new_st.items():
+        if k == "军饷欠":
+            continue
+        assert after[k] == pytest.approx(v, abs=1e-6), f"{region_id} 桥落库 {k} ≠ new_st"

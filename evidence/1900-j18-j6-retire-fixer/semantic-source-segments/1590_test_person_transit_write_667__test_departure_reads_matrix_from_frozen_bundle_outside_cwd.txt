@@ -1,0 +1,27 @@
+# FILE: tests/test_person_transit_write_667.py
+# NAME: test_departure_reads_matrix_from_frozen_bundle_outside_cwd
+# LINE: 54-74
+# FLAGS: mock_or_patch_present,helper_or_private_call
+# KIND: py
+
+def test_departure_reads_matrix_from_frozen_bundle_outside_cwd(game, monkeypatch, tmp_path):
+    db, state, content = game
+    name = _active(db)
+    db.conn.execute("UPDATE characters SET location='beizhili' WHERE name=?", (name,))
+    content.characters[name].location = "beizhili"
+    bundle = tmp_path / "bundle"
+    (bundle / "content").mkdir(parents=True)
+    shutil.copy("content/distance_matrix.json", bundle / "content" / "distance_matrix.json")
+    elsewhere = tmp_path / "cwd"
+    elsewhere.mkdir()
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "_MEIPASS", str(bundle), raising=False)
+    monkeypatch.chdir(elsewhere)
+
+    issues.apply_score_extraction(db, state, {"人物变更": [{
+        "name": name, "origin_ref": "盘面自发", "动作": "行止", "transit_to": "liaodong",
+    }]}, content=content)
+
+    assert db.conn.execute(
+        "SELECT transit_to FROM characters WHERE name=?", (name,)
+    ).fetchone()["transit_to"] == "liaodong"

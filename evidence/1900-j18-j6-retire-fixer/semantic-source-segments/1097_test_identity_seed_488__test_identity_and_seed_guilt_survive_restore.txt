@@ -1,0 +1,22 @@
+# FILE: tests/test_identity_seed_488.py
+# NAME: test_identity_and_seed_guilt_survive_restore
+# LINE: 32-47
+# FLAGS: assert_text_compare_or_match
+# KIND: py
+
+def test_identity_and_seed_guilt_survive_restore(game):
+    db, state, content = game
+    before = db.conn.execute(
+        "SELECT identity, seed_guilt FROM characters WHERE name=?", ("魏忠贤",)
+    ).fetchone()
+    content.characters["魏忠贤"].identity = 0
+    content.characters["魏忠贤"].seed_guilt = {}
+    reload_state_from_db(db, state, content=content)
+    after = db.conn.execute(
+        "SELECT identity, seed_guilt FROM characters WHERE name=?", ("魏忠贤",)
+    ).fetchone()
+    assert dict(after) == dict(before)
+    guilt = json.loads(after["seed_guilt"])
+    assert guilt["severity"] == "重"
+    assert content.characters["魏忠贤"].identity == before["identity"]
+    assert content.characters["魏忠贤"].seed_guilt == guilt

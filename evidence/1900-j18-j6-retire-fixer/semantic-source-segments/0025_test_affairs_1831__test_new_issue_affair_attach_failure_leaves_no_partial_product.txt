@@ -1,0 +1,33 @@
+# FILE: tests/test_affairs_1831.py
+# NAME: test_new_issue_affair_attach_failure_leaves_no_partial_product
+# LINE: 255-281
+# FLAGS: mock_or_patch_present,helper_or_private_call
+# KIND: py
+
+def test_new_issue_affair_attach_failure_leaves_no_partial_product(game, monkeypatch):
+    db, state, _ = game
+    issues_before = db.conn.execute("SELECT COUNT(*) AS n FROM issues").fetchone()["n"]
+    affairs_before = db.conn.execute("SELECT COUNT(*) AS n FROM affairs").fetchone()["n"]
+    pointers_before = db.conn.execute(
+        "SELECT COUNT(*) AS n FROM issues WHERE affair_id > 0",
+    ).fetchone()["n"]
+
+    def boom(*_a, **_k):
+        raise RuntimeError("attach boom")
+
+    monkeypatch.setattr(db.affairs, "attach_from_declaration", boom)
+    with pytest.raises(RuntimeError):
+        apply_issue_tracker_output(
+            db, state,
+            {"new_issues": [{
+                "origin_kind": "decree",
+                "kind": "situation",
+                "title": "原子落库",
+                "affair_declaration": _declaration(identity="atomic-issue"),
+            }]},
+        )
+    assert db.conn.execute("SELECT COUNT(*) AS n FROM issues").fetchone()["n"] == issues_before
+    assert db.conn.execute("SELECT COUNT(*) AS n FROM affairs").fetchone()["n"] == affairs_before
+    assert db.conn.execute(
+        "SELECT COUNT(*) AS n FROM issues WHERE affair_id > 0",
+    ).fetchone()["n"] == pointers_before

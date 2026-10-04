@@ -1,0 +1,425 @@
+{
+  "source_path": "tests/test_audience_travel_gating_670.py",
+  "member_count": 29,
+  "members": [
+    {
+      "idx": 195,
+      "file": "tests/test_audience_travel_gating_670.py",
+      "name": "test_audience_admission_distinguishes_capital_fresh_and_existing_transit",
+      "line": 71,
+      "end": 82,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0195_test_audience_travel_gating_670__test_audience_admission_distinguishes_capital_fresh_and_existing_transit.txt",
+      "source_path": "tests/test_audience_travel_gating_670.py"
+    },
+    {
+      "idx": 196,
+      "file": "tests/test_audience_travel_gating_670.py",
+      "name": "test_audience_admission_keeps_blank_fail_open_and_reuses_basic_qualification",
+      "line": 85,
+      "end": 95,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0196_test_audience_travel_gating_670__test_audience_admission_keeps_blank_fail_open_and_reuses_basic_qualification.txt",
+      "source_path": "tests/test_audience_travel_gating_670.py"
+    },
+    {
+      "idx": 197,
+      "file": "tests/test_audience_travel_gating_670.py",
+      "name": "test_audience_admission_records_offsite_summon_before_allowing_audience",
+      "line": 98,
+      "end": 113,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0197_test_audience_travel_gating_670__test_audience_admission_records_offsite_summon_before_allowing_audience.txt",
+      "source_path": "tests/test_audience_travel_gating_670.py"
+    },
+    {
+      "idx": 198,
+      "file": "tests/test_audience_travel_gating_670.py",
+      "name": "test_audience_admission_records_nothing_for_capital_or_disqualified_person",
+      "line": 116,
+      "end": 129,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0198_test_audience_travel_gating_670__test_audience_admission_records_nothing_for_capital_or_disqualified_person.txt",
+      "source_path": "tests/test_audience_travel_gating_670.py"
+    },
+    {
+      "idx": 199,
+      "file": "tests/test_audience_travel_gating_670.py",
+      "name": "test_cli_initial_selection_records_remote_summon_without_returning_minister",
+      "line": 132,
+      "end": 147,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0199_test_audience_travel_gating_670__test_cli_initial_selection_records_remote_summon_without_returning_minister.txt",
+      "source_path": "tests/test_audience_travel_gating_670.py"
+    },
+    {
+      "idx": 200,
+      "file": "tests/test_audience_travel_gating_670.py",
+      "name": "test_cli_initial_selection_rejects_unknown_unregistered_person",
+      "line": 150,
+      "end": 173,
+      "flags": [
+        "assert_count",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0200_test_audience_travel_gating_670__test_cli_initial_selection_rejects_unknown_unregistered_person.txt",
+      "source_path": "tests/test_audience_travel_gating_670.py"
+    },
+    {
+      "idx": 201,
+      "file": "tests/test_audience_travel_gating_670.py",
+      "name": "test_in_transit_summon_origin_is_idempotent_and_restorable",
+      "line": 176,
+      "end": 232,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0201_test_audience_travel_gating_670__test_in_transit_summon_origin_is_idempotent_and_restorable.txt",
+      "source_path": "tests/test_audience_travel_gating_670.py"
+    },
+    {
+      "idx": 202,
+      "file": "tests/test_audience_travel_gating_670.py",
+      "name": "test_multi_origin_same_person_dedupes_consumer_projections_not_ledger",
+      "line": 257,
+      "end": 362,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0202_test_audience_travel_gating_670__test_multi_origin_same_person_dedupes_consumer_projections_not_ledger.txt",
+      "source_path": "tests/test_audience_travel_gating_670.py"
+    },
+    {
+      "idx": 203,
+      "file": "tests/test_audience_travel_gating_670.py",
+      "name": "test_fresh_summon_departs_via_canonical_applier_only_when_night_closes",
+      "line": 365,
+      "end": 397,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0203_test_audience_travel_gating_670__test_fresh_summon_departs_via_canonical_applier_only_when_night_closes.txt",
+      "source_path": "tests/test_audience_travel_gating_670.py"
+    },
+    {
+      "idx": 204,
+      "file": "tests/test_audience_travel_gating_670.py",
+      "name": "test_fresh_summon_applier_failure_rolls_back_and_close_retry_is_safe",
+      "line": 400,
+      "end": 442,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0204_test_audience_travel_gating_670__test_fresh_summon_applier_failure_rolls_back_and_close_retry_is_safe.txt",
+      "source_path": "tests/test_audience_travel_gating_670.py"
+    },
+    {
+      "idx": 205,
+      "file": "tests/test_audience_travel_gating_670.py",
+      "name": "test_arrived_summon_continuation_survives_failed_apply_across_months",
+      "line": 445,
+      "end": 518,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0205_test_audience_travel_gating_670__test_arrived_summon_continuation_survives_failed_apply_across_months.txt",
+      "source_path": "tests/test_audience_travel_gating_670.py"
+    },
+    {
+      "idx": 206,
+      "file": "tests/test_audience_travel_gating_670.py",
+      "name": "test_multi_origin_fresh_closes_once_per_person_and_retries",
+      "line": 542,
+      "end": 602,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0206_test_audience_travel_gating_670__test_multi_origin_fresh_closes_once_per_person_and_retries.txt",
+      "source_path": "tests/test_audience_travel_gating_670.py"
+    },
+    {
+      "idx": 207,
+      "file": "tests/test_audience_travel_gating_670.py",
+      "name": "test_cli_midflow_summon_consumes_admission_without_entering",
+      "line": 674,
+      "end": 693,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0207_test_audience_travel_gating_670__test_cli_midflow_summon_consumes_admission_without_entering.txt",
+      "source_path": "tests/test_audience_travel_gating_670.py"
+    },
+    {
+      "idx": 208,
+      "file": "tests/test_audience_travel_gating_670.py",
+      "name": "test_cli_midflow_summon_rejects_unknown_unregistered_person",
+      "line": 696,
+      "end": 720,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0208_test_audience_travel_gating_670__test_cli_midflow_summon_rejects_unknown_unregistered_person.txt",
+      "source_path": "tests/test_audience_travel_gating_670.py"
+    },
+    {
+      "idx": 209,
+      "file": "tests/test_audience_travel_gating_670.py",
+      "name": "test_summon_recorder_default_body_is_empty_and_tags_carry_facts",
+      "line": 743,
+      "end": 757,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0209_test_audience_travel_gating_670__test_summon_recorder_default_body_is_empty_and_tags_carry_facts.txt",
+      "source_path": "tests/test_audience_travel_gating_670.py"
+    },
+    {
+      "idx": 210,
+      "file": "tests/test_audience_travel_gating_670.py",
+      "name": "test_consume_open_night_and_recorder_share_one_transaction",
+      "line": 760,
+      "end": 796,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0210_test_audience_travel_gating_670__test_consume_open_night_and_recorder_share_one_transaction.txt",
+      "source_path": "tests/test_audience_travel_gating_670.py"
+    },
+    {
+      "idx": 211,
+      "file": "tests/test_audience_travel_gating_670.py",
+      "name": "test_legacy_capital_aliases_admit_in_capital_and_migrate_on_reopen",
+      "line": 799,
+      "end": 831,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call",
+        "retired_or_meta_marker"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0211_test_audience_travel_gating_670__test_legacy_capital_aliases_admit_in_capital_and_migrate_on_reopen.txt",
+      "source_path": "tests/test_audience_travel_gating_670.py"
+    },
+    {
+      "idx": 212,
+      "file": "tests/test_audience_travel_gating_670.py",
+      "name": "test_continuation_arrival_settles_origin_without_waiting",
+      "line": 838,
+      "end": 888,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0212_test_audience_travel_gating_670__test_continuation_arrival_settles_origin_without_waiting.txt",
+      "source_path": "tests/test_audience_travel_gating_670.py"
+    },
+    {
+      "idx": 213,
+      "file": "tests/test_audience_travel_gating_670.py",
+      "name": "test_waiting_inactive_retires_on_month",
+      "line": 891,
+      "end": 910,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0213_test_audience_travel_gating_670__test_waiting_inactive_retires_on_month.txt",
+      "source_path": "tests/test_audience_travel_gating_670.py"
+    },
+    {
+      "idx": 214,
+      "file": "tests/test_audience_travel_gating_670.py",
+      "name": "test_waiting_active_departure_settles_and_does_not_revive",
+      "line": 913,
+      "end": 952,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0214_test_audience_travel_gating_670__test_waiting_active_departure_settles_and_does_not_revive.txt",
+      "source_path": "tests/test_audience_travel_gating_670.py"
+    },
+    {
+      "idx": 215,
+      "file": "tests/test_audience_travel_gating_670.py",
+      "name": "test_waiting_active_departure_settle_failure_rolls_back_all_four_sides",
+      "line": 954,
+      "end": 1029,
+      "flags": [
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0215_test_audience_travel_gating_670__test_waiting_active_departure_settle_failure_rolls_back_all_four_sides.txt",
+      "source_path": "tests/test_audience_travel_gating_670.py"
+    },
+    {
+      "idx": 216,
+      "file": "tests/test_audience_travel_gating_670.py",
+      "name": "test_waiting_active_departure_commits_transit_log_settle_and_mirror",
+      "line": 1032,
+      "end": 1085,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0216_test_audience_travel_gating_670__test_waiting_active_departure_commits_transit_log_settle_and_mirror.txt",
+      "source_path": "tests/test_audience_travel_gating_670.py"
+    },
+    {
+      "idx": 217,
+      "file": "tests/test_audience_travel_gating_670.py",
+      "name": "test_waiting_active_departure_respects_strategic_preflight_savepoint",
+      "line": 1088,
+      "end": 1134,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0217_test_audience_travel_gating_670__test_waiting_active_departure_respects_strategic_preflight_savepoint.txt",
+      "source_path": "tests/test_audience_travel_gating_670.py"
+    },
+    {
+      "idx": 218,
+      "file": "tests/test_audience_travel_gating_670.py",
+      "name": "test_waiting_active_departure_external_rollback_reverts_transit_and_settle",
+      "line": 1137,
+      "end": 1167,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0218_test_audience_travel_gating_670__test_waiting_active_departure_external_rollback_reverts_transit_and_settle.txt",
+      "source_path": "tests/test_audience_travel_gating_670.py"
+    },
+    {
+      "idx": 219,
+      "file": "tests/test_audience_travel_gating_670.py",
+      "name": "test_non_capital_location_aliases_migrate_on_reopen",
+      "line": 1172,
+      "end": 1198,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0219_test_audience_travel_gating_670__test_non_capital_location_aliases_migrate_on_reopen.txt",
+      "source_path": "tests/test_audience_travel_gating_670.py"
+    },
+    {
+      "idx": 220,
+      "file": "tests/test_audience_travel_gating_670.py",
+      "name": "test_shuntian_zhili_aliases_migrate_on_reopen",
+      "line": 1201,
+      "end": 1225,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0220_test_audience_travel_gating_670__test_shuntian_zhili_aliases_migrate_on_reopen.txt",
+      "source_path": "tests/test_audience_travel_gating_670.py"
+    },
+    {
+      "idx": 221,
+      "file": "tests/test_audience_travel_gating_670.py",
+      "name": "test_inactive_person_skips_continuation_and_retires_on_month",
+      "line": 1228,
+      "end": 1249,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call",
+        "retired_or_meta_marker"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0221_test_audience_travel_gating_670__test_inactive_person_skips_continuation_and_retires_on_month.txt",
+      "source_path": "tests/test_audience_travel_gating_670.py"
+    },
+    {
+      "idx": 222,
+      "file": "tests/test_audience_travel_gating_670.py",
+      "name": "test_fresh_summon_same_beizhili_journey_attaches_origin_without_reapply",
+      "line": 1254,
+      "end": 1321,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0222_test_audience_travel_gating_670__test_fresh_summon_same_beizhili_journey_attaches_origin_without_reapply.txt",
+      "source_path": "tests/test_audience_travel_gating_670.py"
+    },
+    {
+      "idx": 223,
+      "file": "tests/test_audience_travel_gating_670.py",
+      "name": "test_fresh_summon_omitted_content_syncs_db_and_rolls_back_together",
+      "line": 1324,
+      "end": 1385,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0223_test_audience_travel_gating_670__test_fresh_summon_omitted_content_syncs_db_and_rolls_back_together.txt",
+      "source_path": "tests/test_audience_travel_gating_670.py"
+    }
+  ]
+}

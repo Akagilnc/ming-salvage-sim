@@ -1,0 +1,23 @@
+# FILE: tests/test_population_unit_648.py
+# NAME: test_new_save_restore_jianzhou_keeps_persons_unit
+# LINE: 278-294
+# FLAGS: helper_or_private_call
+# KIND: py
+
+def test_new_save_restore_jianzhou_keeps_persons_unit(game):
+    """判词反例：新档收复建州不得从 1,200,000 人重置为 90——on_restore 预置按「人」落库。"""
+    db, state, content = game
+    before = db.conn.execute(
+        "SELECT population FROM regions WHERE id='jianzhou'"
+    ).fetchone()[0]
+    assert before == JIANZHOU_OPENING_POP_PERSONS
+
+    _settle_region_delta(db, state, content, {
+        "region_delta": {"jianzhou": {"controlled_by": "ming"}},
+    })
+
+    after = db.conn.execute(
+        "SELECT population FROM regions WHERE id='jianzhou'"
+    ).fetchone()[0]
+    assert after == JIANZHOU_RESTORE_POP_PERSONS
+    assert after != 90  # 漏迁/漏换算任一即 FAIL（×10⁴ mutation 咬点）

@@ -1,0 +1,111 @@
+{
+  "source_path": "tests/test_identity_seed_488.py",
+  "member_count": 8,
+  "members": [
+    {
+      "idx": 1096,
+      "file": "tests/test_identity_seed_488.py",
+      "name": "test_identity_and_seed_guilt_are_loaded_from_roster_and_seeded",
+      "line": 11,
+      "end": 29,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1096_test_identity_seed_488__test_identity_and_seed_guilt_are_loaded_from_roster_and_seeded.txt",
+      "source_path": "tests/test_identity_seed_488.py"
+    },
+    {
+      "idx": 1097,
+      "file": "tests/test_identity_seed_488.py",
+      "name": "test_identity_and_seed_guilt_survive_restore",
+      "line": 32,
+      "end": 47,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1097_test_identity_seed_488__test_identity_and_seed_guilt_survive_restore.txt",
+      "source_path": "tests/test_identity_seed_488.py"
+    },
+    {
+      "idx": 1098,
+      "file": "tests/test_identity_seed_488.py",
+      "name": "test_existing_save_migrates_seed_identity_and_inserts_missing_roster_member",
+      "line": 50,
+      "end": 75,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1098_test_identity_seed_488__test_existing_save_migrates_seed_identity_and_inserts_missing_roster_member.txt",
+      "source_path": "tests/test_identity_seed_488.py"
+    },
+    {
+      "idx": 1099,
+      "file": "tests/test_identity_seed_488.py",
+      "name": "test_required_dig_7_seed_roster_entries_are_persisted",
+      "line": 92,
+      "end": 107,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1099_test_identity_seed_488__test_required_dig_7_seed_roster_entries_are_persisted.txt",
+      "source_path": "tests/test_identity_seed_488.py"
+    },
+    {
+      "idx": 1100,
+      "file": "tests/test_identity_seed_488.py",
+      "name": "test_roster_has_no_cross_faction_aliases",
+      "line": 112,
+      "end": 118,
+      "flags": [
+        "assert_count"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1100_test_identity_seed_488__test_roster_has_no_cross_faction_aliases.txt",
+      "source_path": "tests/test_identity_seed_488.py"
+    },
+    {
+      "idx": 1101,
+      "file": "tests/test_identity_seed_488.py",
+      "name": "test_roster_rejects_alias_colliding_with_other_faction_name",
+      "line": 121,
+      "end": 126,
+      "flags": [
+        "mock_or_patch_present"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1101_test_identity_seed_488__test_roster_rejects_alias_colliding_with_other_faction_name.txt",
+      "source_path": "tests/test_identity_seed_488.py"
+    },
+    {
+      "idx": 1102,
+      "file": "tests/test_identity_seed_488.py",
+      "name": "test_roster_rejects_duplicate_canonical_name",
+      "line": 129,
+      "end": 135,
+      "flags": [
+        "mock_or_patch_present"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1102_test_identity_seed_488__test_roster_rejects_duplicate_canonical_name.txt",
+      "source_path": "tests/test_identity_seed_488.py"
+    },
+    {
+      "idx": 1103,
+      "file": "tests/test_identity_seed_488.py",
+      "name": "test_seed_schema_rejects_invalid_values",
+      "line": 146,
+      "end": 151,
+      "flags": [
+        "mock_or_patch_present"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1103_test_identity_seed_488__test_seed_schema_rejects_invalid_values.txt",
+      "source_path": "tests/test_identity_seed_488.py"
+    }
+  ]
+}

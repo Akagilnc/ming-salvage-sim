@@ -8,6 +8,7 @@ from agno.models.message import Message
 
 import ming_sim.cli_backend as cb
 from ming_sim.exceptions import LLMUnavailable
+from tests.cli_process_doubles import FakeCliProcess
 
 
 _RUNNER_BANNER = (
@@ -19,13 +20,32 @@ _RUNNER_BANNER = (
 )
 
 
-def test_clichat_runner_exit_raises_typed_llm_unavailable(monkeypatch):
-    cc = cb.CliChat(id="cli-test", backend="codex")
-    monkeypatch.setattr(
-        cc, "_call_cli",
-        lambda p: (_ for _ in ()).throw(RuntimeError(_RUNNER_BANNER)),
-    )
+def _popen_with(monkeypatch, *, stdout="", stderr="", returncode=0):
+    def fake_popen(cmd, **kw):
+        return FakeCliProcess(
+            cmd,
+            stdout_script=((stdout,) if stdout else ()),
+            stderr_script=((stderr,) if stderr else ()),
+            returncode=returncode,
+            popen_kwargs=kw,
+        )
+
+    monkeypatch.setattr(cb.subprocess, "Popen", fake_popen)
     monkeypatch.setattr(cb, "_trace", lambda rec: None)
+
+
+def test_clichat_runner_exit_raises_typed_llm_unavailable(monkeypatch):
+    _popen_with(
+        monkeypatch,
+        stderr=(
+            "OpenAI Codex v0.50.0\n"
+            "workdir: /tmp/ming-sandbox\n"
+            "model: gpt-5.5\n"
+            "sandbox: workspace-write"
+        ),
+        returncode=1,
+    )
+    cc = cb.CliChat(id="cli-test", backend="codex")
     with pytest.raises(LLMUnavailable) as ei:
         cc.invoke(
             [SimpleNamespace(role="user", content="宣袁崇焕")],
@@ -36,10 +56,9 @@ def test_clichat_runner_exit_raises_typed_llm_unavailable(monkeypatch):
 
 
 def test_clichat_normal_reply_still_returns(monkeypatch):
+    raw = "臣遵旨，边事容臣细奏。"
+    _popen_with(monkeypatch, stdout=raw)
     cc = cb.CliChat(id="cli-test", backend="agy")
-    raw = "  臣遵旨，边事容臣细奏。\n"
-    monkeypatch.setattr(cc, "_call_cli", lambda p: (raw, 1))
-    monkeypatch.setattr(cb, "_trace", lambda rec: None)
     response = cc.invoke(
         [SimpleNamespace(role="user", content="边事如何")],
         Message(role="assistant"),

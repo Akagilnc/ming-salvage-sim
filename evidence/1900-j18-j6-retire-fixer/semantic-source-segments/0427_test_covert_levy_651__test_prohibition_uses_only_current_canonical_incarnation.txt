@@ -1,0 +1,34 @@
+# FILE: tests/test_covert_levy_651.py
+# NAME: test_prohibition_uses_only_current_canonical_incarnation
+# LINE: 429-456
+# FLAGS: assert_count,helper_or_private_call
+# KIND: py
+
+def test_prohibition_uses_only_current_canonical_incarnation(game, monkeypatch):
+    db, state, content = game
+    did, _, _, _ = _bound_case(db, state)
+    other, _, _, _ = _bound_case(db, state)
+    _exposed_todo(db, state, monkeypatch, did)
+    origin, other_origin = f"dossier:{did}", f"dossier:{other}"
+    key = "转世税_base"
+    apply_score_extraction(db, state, {"fiscal_creates": [{
+        "key": key, "account": "国库", "direction": "income", "init_value": 3,
+        "origin_ref": other_origin,
+    }], "fiscal_changes": [{
+        "key": key, "delta": 4, "origin_ref": origin, "beyond_intent": True,
+    }]}, content, None, dossier_ids_at_input={did, other})
+    state.turn += 1  # the old incarnation predates the canonical replacement batch
+    # Production's canonical order is remove -> create -> change in one extraction.
+    apply_score_extraction(db, state, {
+        "fiscal_removes": [{"key": key, "origin_ref": other_origin}],
+        "fiscal_creates": [{
+            "key": key, "account": "国库", "direction": "income", "init_value": 10,
+            "origin_ref": other_origin,
+        }],
+        "fiscal_changes": [{
+            "key": key, "delta": 2, "origin_ref": origin, "beyond_intent": True,
+        }],
+    }, content, None, dossier_ids_at_input={did, other})
+    _promulgated_prohibition(db, state, did)
+    assert settle_exposure_from_canonical_actions(db, state, {}) == 1
+    assert db.get_fiscal_config()[key] == 10

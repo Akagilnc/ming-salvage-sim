@@ -1,0 +1,35 @@
+# FILE: tests/test_commitment_backlash_626.py
+# NAME: test_ac1_transformed_without_beyond_intent_does_not_trigger
+# LINE: 296-324
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_ac1_transformed_without_beyond_intent_does_not_trigger(game):
+    """仅 transformed / 无 #622 分叉 beyond_intent → 不立反噬（AC1 负向成对）。"""
+    db, state, content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.commit()
+
+    did, holder = _executing_policy_dossier(db, state, token="xf-neg")
+    bar = _seed_halfway(db, state, did=did)
+    cid = _insert_commitment(
+        db, state, title="无分叉变形之诺", origin_ref=f"dossier:{did}",
+        bar_value=bar,
+        participants=[{"character_id": holder, "tier": "主办", "role": "承办"}],
+    )
+    # 仅落 transformed 终值，不种 beyond_intent 实况行
+    db.record_dossier_execution(
+        did, "transformed", "名实已乖（无旨外账）", int(state.turn),
+        close=True, commit=True,
+    )
+    assert db.get_decree_dossier(did)["execution_outcome"] == "transformed"
+    moves = db.list_economy_moves_for_dossier(did)
+    assert not any(bool(m.get("beyond_intent")) for m in moves)
+
+    state.turn = int(state.turn) + 1
+    hits = db.trigger_commitment_backlashes(state, commit=True)
+    assert hits == []
+    assert db.find_any_issue_by_origin(
+        BACKLASH_ORIGIN_KIND, backlash_origin_ref(cid, SOURCE_DEFORMATION_EXPOSURE),
+    ) is None
+    assert _backlash_issues(db) == []

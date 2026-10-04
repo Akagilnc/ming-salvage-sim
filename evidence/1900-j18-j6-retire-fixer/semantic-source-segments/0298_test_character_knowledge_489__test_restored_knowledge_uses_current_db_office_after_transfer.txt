@@ -1,0 +1,43 @@
+# FILE: tests/test_character_knowledge_489.py
+# NAME: test_restored_knowledge_uses_current_db_office_after_transfer
+# LINE: 106-142
+# FLAGS: assert_text_compare_or_match
+# KIND: py
+
+def test_restored_knowledge_uses_current_db_office_after_transfer(tmp_path, content):
+    from ming_sim.db import GameDB
+
+    path = tmp_path / "knowledge-transfer.db"
+    db = GameDB(str(path), content)
+    db.seed_static_data()
+    state = db.load_state()
+    minister = next(c for c in content.characters.values() if c.office_type == "礼部")
+
+    # Simulate a persisted transfer followed by restore while the original
+    # content roster is still resident in memory.  The DB row is the durable
+    # current-world source; a stale content object must not keep the old rail.
+    db.conn.execute(
+        "UPDATE characters SET office = ?, office_type = ? WHERE name = ?",
+        ("户部尚书", "户部", minister.name),
+    )
+    db.record_public_knowledge_event(
+        state, "转任后公开事项", "户部新任须核验太仓账目",
+        source_id="public:post-transfer",
+    )
+    db.conn.commit()
+    db.close()
+
+    restored_db = GameDB(str(path), content)
+    try:
+        restored = restored_db.load_state()
+        view = restored_db.get_character_knowledge(restored, minister.name)
+
+        assert view["office_type"] == "户部"
+        assert "treasury" in view["world"]
+        assert "personnel" not in view["world"]
+        assert any(
+            item["source_id"] == "public:post-transfer"
+            for item in view["public_events"]
+        )
+    finally:
+        restored_db.close()

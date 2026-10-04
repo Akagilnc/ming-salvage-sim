@@ -1,0 +1,43 @@
+# FILE: tests/test_breach_plea_623.py
+# NAME: test_merged_funding_primary_remove_sponsor_absorbed_accounts
+# LINE: 994-1030
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_merged_funding_primary_remove_sponsor_absorbed_accounts(game):
+    """㈡ primary=funding + absorbed=[remove_sponsor]：0056 落一次、撤人辜负边在且不重复。"""
+    db, state, content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.commit()
+    did, holder = _executing_policy_dossier(db, state, token="f+rm")
+    origin = f"dossier:{did}"
+    cid, _ = _insert_commitment(
+        db, state, title="断供主+撤人并", origin_ref=origin,
+        bar_value=12, end_turn=state.turn + 12,
+        participants=[{"character_id": holder, "tier": "主办", "role": "承办"}],
+    )
+    t1 = write_breach_plea_todo(
+        db, state, commitment_ref=cid, breach_kind=BREACH_KIND_FUNDING,
+        reason="断供", target_dossier_id=did, commit=True,
+    )
+    t2 = write_breach_plea_todo(
+        db, state, commitment_ref=cid, breach_kind=BREACH_KIND_REMOVE_SPONSOR,
+        reason="撤人", target_dossier_id=did, commit=True,
+    )
+    assert t2 == t1
+    todo = next(t for t in _pending_pleas(db) if int(t["id"]) == t1)
+    meta = decode_plea_meta(todo["origin_context"])
+    assert meta.get("breach_kind") == BREACH_KIND_FUNDING
+    assert BREACH_KIND_REMOVE_SPONSOR in (meta.get("absorbed_breach_kinds") or [])
+
+    result = finalize_persist(db, state, todo, commit=True)
+    assert result["breach_0056"] is True
+    assert _cost_events(db, did, identity="breach")
+    edges = list(db.conn.execute(
+        "SELECT event_kind, target, origin FROM relation_edge_events "
+        "WHERE target=? AND event_kind='辜负' AND turn=? ORDER BY id",
+        (holder, int(state.turn)),
+    ).fetchall())
+    assert edges, "撤人/0056 须落辜负边"
+    # 同人同回合不重复（0056 已写则 0079 跳过）
+    assert len(edges) == 1

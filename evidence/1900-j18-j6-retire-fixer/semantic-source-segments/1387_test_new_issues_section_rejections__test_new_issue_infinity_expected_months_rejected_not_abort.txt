@@ -1,0 +1,15 @@
+# FILE: tests/test_new_issues_section_rejections.py
+# NAME: test_new_issue_infinity_expected_months_rejected_not_abort
+# LINE: 245-253
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_new_issue_infinity_expected_months_rejected_not_abort(read_game):
+    db, state, _ = read_game
+    # expected_months=inf 经严格化的 _compute_inertia（_strict_int 拒 float/inf，cmr ni r6）→
+    # 拒整项（与 bar_value=inf 一致），不逃逸 abort。
+    ni = {"origin_kind": "decree", "kind": "situation", "title": "测试·inf月数", "expected_months": 1e309}
+    out = I.apply_issue_tracker_output(db, state, {"new_issues": [ni]})
+    rej = _rejected(out)
+    assert len(rej) == 1, out
+    assert rej[0]["category"] == "invalid_enum"

@@ -1,0 +1,34 @@
+# FILE: tests/test_execution_pressure_654.py
+# NAME: test_ensure_directive_dossier_returns_list
+# LINE: 255-282
+# FLAGS: assert_text_compare_or_match,assert_count
+# KIND: py
+
+def test_ensure_directive_dossier_returns_list(env):
+    db, state, _ = env
+    payload = {
+        "dossier_action_type": "policy",
+        "target_kind": "region",
+        "target_id": "henan",
+        "locality_scope": "single",
+        "assignee_id": "毕自严",
+        "mode": "ordinary",
+    }
+    cur = db.conn.execute(
+        """
+        INSERT INTO turn_directives
+        (turn, year, period, event_id, actor, text, source, status,
+         notes, dossier_payload_json)
+        VALUES (?,?,?,?,?,?,?,?,?,?)
+        """,
+        (
+            state.turn, state.year, state.period, None, "毕自严",
+            "河南清丈", "test", "draft", "",
+            json.dumps(payload, ensure_ascii=False),
+        ),
+    )
+    directive_id = int(cur.lastrowid)
+    db.conn.commit()
+    db.ensure_dossiers_for_draft_directives(state)
+    rows = db.list_dossiers_for_directive(directive_id)
+    assert len(rows) == 1 and rows[0]["region_id"] == "henan"

@@ -1,0 +1,12 @@
+# FILE: tests/test_pay_order_override_653.py
+# NAME: test_manual_override_capture_stages_without_premature_materialization
+# LINE: 1453-1458
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_manual_override_capture_stages_without_premature_materialization(game, monkeypatch):
+    db, _state, _content = game
+    entries = [{"key": "due_priority_军饷@shaanxi", "value": 40}]
+    did = _capture_override_decree(game, monkeypatch, "今岁边饷居末", entries)
+    assert db.get_decree_dossier(did)["status"] == "proposed"
+    assert "due_priority_军饷@shaanxi" not in db.get_fiscal_config()

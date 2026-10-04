@@ -1,0 +1,34 @@
+# FILE: tests/test_pay_order_override_653.py
+# NAME: test_central_due_haircut_consumer
+# LINE: 1141-1168
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_central_due_haircut_consumer(game):
+    """中央份额 Due 折发读端：floor 折算、余数免除、地域/饷源精确、无折恒等。"""
+    from ming_sim.flows import apply_fixed_period_flows, army_needed
+
+    db, state, _content = game
+    rows = db.conn.execute(
+        "SELECT id, name, manpower, salary_rate, owner_power, pay_source_region, "
+        "central_pay_share FROM armies WHERE central_pay_share > 0 ORDER BY rowid"
+    ).fetchall()
+    shaanxi_raw = army_needed(
+        next(r for r in rows if r["id"] == "shaanxi_army"),
+    ) * 0.35
+
+    did = _override_dossier(db, state, [
+        {"key": "due_haircut_bp_军饷@shaanxi#central", "value": 5000},
+        {"key": "due_haircut_bp_军饷#central", "value": 6000},
+    ])
+    db.apply_dossier_promulgation(state, did, "promulgated")
+    flows = apply_fixed_period_flows(db, state)
+    shaanxi_name = next(r["name"] for r in rows if r["id"] == "shaanxi_army")
+    shaanxi_pay = next(r for r in flows if r.get("category") == "中央军饷" and r.get("army") == shaanxi_name)
+    assert shaanxi_pay["needed"] == pytest.approx(float(math.floor(shaanxi_raw * 0.5)))
+    assert shaanxi_pay["due_haircut"] == pytest.approx(shaanxi_raw - math.floor(shaanxi_raw * 0.5))
+    # 他省中央侧取 #central=6000（京营 beizhili：need=ceil(85000*1/10000)=9，raw=9.0）
+    jy_raw = army_needed(next(r for r in rows if r["id"] == "jingying")) * 1.0
+    jingying_name = next(r["name"] for r in rows if r["id"] == "jingying")
+    jingying_pay = next(r for r in flows if r.get("category") == "中央军饷" and r.get("army") == jingying_name)
+    assert jingying_pay["needed"] == pytest.approx(math.floor(jy_raw * 0.6))

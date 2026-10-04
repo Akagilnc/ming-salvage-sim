@@ -1,0 +1,31 @@
+# FILE: tests/test_llm_channel_config.py
+# NAME: test_legacy_backend_env_uses_runner_default_model_not_api_model
+# LINE: 424-448
+# FLAGS: assert_text_compare_or_match,mock_or_patch_present,helper_or_private_call,retired_or_meta_marker
+# KIND: py
+
+def test_legacy_backend_env_uses_runner_default_model_not_api_model(monkeypatch):
+    captured = {}
+
+    from tests.cli_process_doubles import FakeCliProcess
+
+    def fake_popen(cmd, **kwargs):
+        captured["cmd"] = list(cmd)
+        return FakeCliProcess(cmd, stdout_script=("臣领旨。\n",), returncode=0,
+                              popen_kwargs=kwargs)
+
+    monkeypatch.setenv("MING_SIM_LLM_BACKEND", "codex")
+    monkeypatch.delenv("MING_SIM_CODEX_REASONING", raising=False)
+    monkeypatch.setattr(cli_backend, "_resolve_cli_bin", lambda name, configured: f"/fake/{name}")
+    monkeypatch.setattr(cli_backend.subprocess, "Popen", fake_popen)
+    cfg = LLMConfig(
+        api_key="sk-test",
+        base_url="https://api.example.com/v1",
+        model="deepseek-v4-flash",
+    )
+
+    model = create_chat_model(cfg)
+    model._call_cli("p")
+
+    assert isinstance(model, CliChat)
+    assert captured["cmd"][captured["cmd"].index("--model") + 1] == cli_backend._CODEX_MODEL

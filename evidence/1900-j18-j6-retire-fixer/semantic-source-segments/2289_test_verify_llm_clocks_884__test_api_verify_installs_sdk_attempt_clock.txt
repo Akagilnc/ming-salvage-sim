@@ -1,0 +1,25 @@
+# FILE: tests/test_verify_llm_clocks_884.py
+# NAME: test_api_verify_installs_sdk_attempt_clock
+# LINE: 123-141
+# FLAGS: assert_count,mock_or_patch_present,helper_or_private_call
+# KIND: py
+
+def test_api_verify_installs_sdk_attempt_clock(monkeypatch):
+    """API 烟必须把 SDK timeout 绑到 attempt 钟，不得沿用未迁移的 180s 墙。"""
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    seen = {}
+
+    class FakeAgent:
+        def __init__(self, **kwargs):
+            self.model = kwargs["model"]
+
+        def run(self, prompt: str) -> str:
+            seen["timeout"] = getattr(self.model, "timeout", None)
+            seen["max_retries"] = getattr(self.model, "max_retries", None)
+            return "ok"
+
+    monkeypatch.setattr(llm_model, "Agent", FakeAgent)
+    monkeypatch.setattr(llm_model, "extract_agent_text", lambda output: output)
+    verify_llm_available(_api_cfg())
+    assert seen["timeout"] == TRANSPORT_DEFAULT_ATTEMPT_TIMEOUT_SECONDS
+    assert seen["max_retries"] == 0

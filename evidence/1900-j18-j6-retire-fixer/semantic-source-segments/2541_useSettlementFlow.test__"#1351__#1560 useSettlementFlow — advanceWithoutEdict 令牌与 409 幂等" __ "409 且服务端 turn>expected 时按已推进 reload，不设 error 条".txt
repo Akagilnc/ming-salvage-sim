@@ -1,0 +1,35 @@
+# FILE: web/src/useSettlementFlow.test.tsx
+# NAME: "#1351/#1560 useSettlementFlow — advanceWithoutEdict 令牌与 409 幂等" / "409 且服务端 turn>expected 时按已推进 reload，不设 error 条"
+# LINE: 345-373
+# FLAGS: web_mock_spy_or_calls,web_count_assert
+# KIND: web
+
+  it("409 且服务端 turn>expected 时按已推进 reload，不设 error 条", async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: false,
+      status: 409,
+      statusText: "Conflict",
+      json: async () => ({
+        detail: { message: "月份已变更（当前第 6 月），与退朝令牌不符，请刷新后再试。", turn: 6 },
+      }),
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    const reload = vi.fn();
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: { ...window.location, reload },
+    });
+
+    const { host, hookRef, cleanup } = mountHarness({
+      loadState: async () => preClickState,
+      initial: preClickState,
+    });
+
+    await act(async () => {
+      await hookRef.current!.advanceWithoutEdict();
+    });
+
+    expect(reload).toHaveBeenCalledTimes(1);
+    expect(host.querySelector("[data-testid=error]")?.textContent).toBe("");
+    cleanup();
+  });

@@ -32,56 +32,6 @@ def _use_legacy_fiscal_engine(db):
     db.conn.commit()
 
 
-@pytest.mark.parametrize("army_id,expected", [
-    ("guanning", 15),   # 72000 × 2.0 / 10000 = 14.4 → ceil 15
-    ("jingying", 9),    # 85000 × 1.0 / 10000 = 8.5 → ceil 9
-    ("xuan_da", 10),    # 65000 × 1.5 / 10000 = 9.75 → ceil 10
-    ("jizhen", 9),      # 52000 × 1.55 / 10000 = 8.06 → ceil 9
-    ("southwest_tusi", 2),  # 24000 × 0.8 / 10000 = 1.92 → ceil 2
-])
-def test_army_needed_derives_from_manpower_rate(read_game, army_id, expected):
-    db, state, _ = read_game
-    assert army_needed(_army_row(db, army_id)) == expected
-
-
-def test_army_needed_zero_manpower_zero_pay(game):
-    # 0 兵 → 应发 0（白嫖扩军上界 + 零兵吃饷下界一并消解，无需 #22 撤番）。
-    db, state, _ = game
-    db.conn.execute("UPDATE armies SET manpower=0 WHERE id='guanning'")
-    db.conn.commit()
-    assert army_needed(_army_row(db, "guanning")) == 0
-
-
-def test_army_needed_scales_with_manpower(game):
-    # 扩军（manpower 涨）→ 应发随之涨（不再「兵涨饷不涨」白嫖）。
-    db, state, _ = game
-    before = army_needed(_army_row(db, "guanning"))
-    db.conn.execute("UPDATE armies SET manpower=manpower*2 WHERE id='guanning'")
-    db.conn.commit()
-    after = army_needed(_army_row(db, "guanning"))
-    assert after > before
-    assert after == math.ceil(_army_row(db, "guanning")["manpower"] * _army_row(db, "guanning")["salary_rate"] / 10000)
-
-
-def test_army_needed_shrink_lowers_pay(game):
-    # 裁军（manpower 负 delta）→ 应发降。
-    db, state, _ = game
-    before = army_needed(_army_row(db, "xuan_da"))
-    db.conn.execute("UPDATE armies SET manpower=manpower/2 WHERE id='xuan_da'")
-    db.conn.commit()
-    assert army_needed(_army_row(db, "xuan_da")) < before
-
-
-def test_army_needed_non_ming_no_pay(read_game):
-    # 非明军（owner_power != ming）不强加饷需（叛军/外族不吃明国库）。
-    db, state, _ = read_game
-    row = db.conn.execute(
-        "SELECT * FROM armies WHERE owner_power!='ming' LIMIT 1").fetchone()
-    if row is None:
-        pytest.skip("无非明军")
-    assert army_needed(row) == 0
-
-
 def test_defected_army_to_ming_owes_salary_not_free(read_game):
     """#44 ship-pre cmr R1（codex high）：原非明军经 owner_power 翻成 ming（倒戈/招安，军务 extractor
     prompt 明确要求写归属）后，salary_rate<=0（非明军 content 默认 0）不得让 army_needed 返 0 =
@@ -172,16 +122,6 @@ def test_backfill_anchor_when_column_present_but_data_unusable(game, manpower, m
     assert row["salary_rate"] == pytest.approx(SALARY_RATE_ANCHOR), (
         f"维护费列在但 maint={maint}/manpower={manpower} 应落锚点（②反推兜底），得 {row['salary_rate']}"
     )
-
-
-def test_total_ming_salary_is_72_ceil_sum(read_game):
-    # 实际总月应发 = sum(ceil(每军))=72 万两。设计「66.5」是 sum(小数月应发)；army_needed 每军 ceil
-    # （万两整数、不少发），ceil 累积使总额 72 > 66.5（cmr r1 codex/claude 实测）。开局 vs 旧 65 = +10.8%
-    # （非设计表述的 +2.4%）——ceil 公式 vs「66.5 零冲击」是设计内部不一致，ceil 公式经 ratify，此处锁实际值。
-    db, state, _ = read_game
-    rows = db.conn.execute("SELECT * FROM armies WHERE owner_power='ming'").fetchall()
-    total = sum(army_needed(r) for r in rows)
-    assert total == 72, f"明军总月应发 = sum(ceil)=72 万两（设计 66.5 为小数和），实得 {total}"
 
 
 def test_manpower_clamp_to_zero_leaves_army_log(game):

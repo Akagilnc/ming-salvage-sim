@@ -1,0 +1,88 @@
+# FILE: tests/test_structured_decree_contract_1624.py
+# NAME: test_combo_correction_preserves_first_draw_roster
+# LINE: 519-600
+# FLAGS: assert_text_compare_or_match,assert_count,mock_or_patch_present,helper_or_private_call
+# KIND: py
+
+def test_combo_correction_preserves_first_draw_roster(game, monkeypatch):
+    """组合纠错：失败字段（含 target_kind 身份束）采纳；未失败动作/名册/类别/旨文冻结。
+
+    样本：office/户部+single → region/shaanxi+single（#1624 owner 归正）；
+    纠错轮同时漂移动作/人物/类别/正文。真实 wrapper，仅 mock backend。
+    """
+    import ming_sim.cli_backend as cb
+
+    db, _state, content = game
+    first = "毕自严"
+    assert first in content.characters
+    second = next(
+        name for name, ch in content.characters.items()
+        if name != first
+        and getattr(ch, "office_type", "") not in ("后宫", "宗藩")
+        and db.resolve_power_id(ch) == "ming"
+        and db.get_character_status(name)[0] == "active"
+        and str(getattr(ch, "office", "") or "").strip()
+    )
+
+    def _first_payload() -> dict:
+        return {
+            "拟旨意图": "拟旨",
+            "动作类型": "assignment",
+            "目标类型": "office",
+            "目标ID": "户部",
+            "地区ID": "",
+            "施行范围": "单省",
+            "事务类别": "督赈",
+            "承办人": "",
+            "颁布方式": "普通",
+            "正文": f"着户部继续核查陕西赈务，{first}会同。",
+            "参与人": [{
+                "character_id": first, "tier": "主办", "role": "督赈",
+            }],
+        }
+
+    def _drift_payload() -> dict:
+        # 纠错给出正确身份束，同时漂移动作/人物/类别/正文
+        return {
+            "拟旨意图": "拟旨",
+            "动作类型": "punishment",
+            "目标类型": "region",
+            "目标ID": "shaanxi",
+            "地区ID": "shaanxi",
+            "施行范围": "单省",
+            "事务类别": "",
+            "承办人": "",
+            "颁布方式": "普通",
+            "正文": f"着惩处{second}。",
+            "参与人": [{
+                "character_id": second, "tier": "主办", "role": "惩",
+            }],
+        }
+
+    n = {"c": 0}
+
+    def backend(prompt, *_a, tag="", **_k):
+        n["c"] += 1
+        if n["c"] == 1:
+            return (json.dumps(_first_payload(), ensure_ascii=False), 1)
+        return (json.dumps(_drift_payload(), ensure_ascii=False), 1)
+
+    monkeypatch.setattr(cb, "_run_backend_for_config", backend)
+    result = cb.extract_draft_intent_with_roster_heal(
+        "着户部继续核查陕西赈务，按月具报。", "臣遵拟。",
+        db=db, content=content,
+    )
+    ids = [
+        str(i.get("character_id") or "")
+        for i in (result.get("participant_roster") or [])
+    ]
+    assert ids == [first], f"roster drifted to {ids!r}, expected {[first]!r}"
+    assert result.get("locality_scope") == "single"
+    assert result.get("dossier_action_type") == "assignment"
+    assert result.get("target_kind") == "region"
+    assert result.get("target_id") == "shaanxi"
+    assert result.get("region_id") == "shaanxi"
+    assert result.get("transaction_category") == "督赈"
+    # 单条路径 draft_text=大臣回话；纠错轮正文漂移不得改写会话正文真源
+    assert result.get("draft_text") == "臣遵拟。"
+    assert n["c"] == 2

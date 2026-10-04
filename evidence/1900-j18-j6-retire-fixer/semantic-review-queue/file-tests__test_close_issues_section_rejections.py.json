@@ -1,0 +1,125 @@
+{
+  "source_path": "tests/test_close_issues_section_rejections.py",
+  "member_count": 8,
+  "members": [
+    {
+      "idx": 392,
+      "file": "tests/test_close_issues_section_rejections.py",
+      "name": "test_close_bad_issue_id_rejected",
+      "line": 30,
+      "end": 39,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0392_test_close_issues_section_rejections__test_close_bad_issue_id_rejected.txt",
+      "source_path": "tests/test_close_issues_section_rejections.py"
+    },
+    {
+      "idx": 393,
+      "file": "tests/test_close_issues_section_rejections.py",
+      "name": "test_close_non_dict_item_rejected_not_crash",
+      "line": 43,
+      "end": 51,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0393_test_close_issues_section_rejections__test_close_non_dict_item_rejected_not_crash.txt",
+      "source_path": "tests/test_close_issues_section_rejections.py"
+    },
+    {
+      "idx": 394,
+      "file": "tests/test_close_issues_section_rejections.py",
+      "name": "test_close_bad_reason_rejected",
+      "line": 54,
+      "end": 63,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0394_test_close_issues_section_rejections__test_close_bad_reason_rejected.txt",
+      "source_path": "tests/test_close_issues_section_rejections.py"
+    },
+    {
+      "idx": 395,
+      "file": "tests/test_close_issues_section_rejections.py",
+      "name": "test_close_unknown_issue_rejected_missing_ref",
+      "line": 66,
+      "end": 74,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0395_test_close_issues_section_rejections__test_close_unknown_issue_rejected_missing_ref.txt",
+      "source_path": "tests/test_close_issues_section_rejections.py"
+    },
+    {
+      "idx": 396,
+      "file": "tests/test_close_issues_section_rejections.py",
+      "name": "test_close_overflow_issue_id_rejected",
+      "line": 77,
+      "end": 86,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0396_test_close_issues_section_rejections__test_close_overflow_issue_id_rejected.txt",
+      "source_path": "tests/test_close_issues_section_rejections.py"
+    },
+    {
+      "idx": 397,
+      "file": "tests/test_close_issues_section_rejections.py",
+      "name": "test_close_already_inactive_rejected_missing_ref",
+      "line": 89,
+      "end": 100,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0397_test_close_issues_section_rejections__test_close_already_inactive_rejected_missing_ref.txt",
+      "source_path": "tests/test_close_issues_section_rejections.py"
+    },
+    {
+      "idx": 398,
+      "file": "tests/test_close_issues_section_rejections.py",
+      "name": "test_close_failed_on_uncollapsible_rejected_invalid_enum",
+      "line": 103,
+      "end": 115,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0398_test_close_issues_section_rejections__test_close_failed_on_uncollapsible_rejected_invalid_enum.txt",
+      "source_path": "tests/test_close_issues_section_rejections.py"
+    },
+    {
+      "idx": 399,
+      "file": "tests/test_close_issues_section_rejections.py",
+      "name": "test_close_valid_issue_still_succeeds",
+      "line": 175,
+      "end": 186,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0399_test_close_issues_section_rejections__test_close_valid_issue_still_succeeds.txt",
+      "source_path": "tests/test_close_issues_section_rejections.py"
+    }
+  ]
+}

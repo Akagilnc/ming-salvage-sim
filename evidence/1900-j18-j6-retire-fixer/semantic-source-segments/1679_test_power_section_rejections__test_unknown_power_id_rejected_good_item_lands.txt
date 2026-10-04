@@ -1,0 +1,31 @@
+# FILE: tests/test_power_section_rejections.py
+# NAME: test_unknown_power_id_rejected_good_item_lands
+# LINE: 34-58
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_unknown_power_id_rejected_good_item_lands(game):
+    """power_updates 引用未入库势力 → 该项逐项拒收留痕(不再 print 静默跳),
+    同信封里合法势力的改动照常落库——坏一项不带走整批(ADR 决定 1)。"""
+    db, state, content = game
+    turn = state.turn
+    good = _valid_power_id(db)
+    before = db.conn.execute(
+        "SELECT leverage FROM powers WHERE id=?", (good,)).fetchone()[0]
+
+    run_settle(db, state, content, {
+        "power_updates": {
+            "查无此势力": {"leverage": 5},
+            good: {"leverage": 3},
+        },
+    }, narrative="x", decree_text="y")
+
+    rows = [r for r in _rejection_rows(db, turn) if r[0] == "power_changes"]
+    assert len(rows) == 1
+    section, reason, category, source = rows[0]
+    assert reason  # 人读原因非空
+    assert category == "hallucinated_id"
+    # 好项照落:坏项被拒不带走整批
+    after = db.conn.execute(
+        "SELECT leverage FROM powers WHERE id=?", (good,)).fetchone()[0]
+    assert after != before

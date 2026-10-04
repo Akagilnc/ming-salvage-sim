@@ -1,0 +1,24 @@
+# FILE: tests/test_decree_dossiers_571.py
+# NAME: test_incomplete_mechanical_directive_is_rejected_instead_of_retyped
+# LINE: 1717-1734
+# FLAGS: assert_text_compare_or_match
+# KIND: py
+
+def test_incomplete_mechanical_directive_is_rejected_instead_of_retyped(
+    game, payload,
+):
+    db, state, _content = game
+    directive_id = db.add_directive(
+        state, None, "不完整机械旨意", "手动新增", dossier_payload=payload,
+    )
+    # #654 路3：校验失败不抛穿；零行 + draft/rejection
+    db.ensure_dossiers_for_draft_directives(state)
+    assert db.get_dossier_for_directive(directive_id) is None
+    status = db.conn.execute(
+        "SELECT status FROM turn_directives WHERE id=?", (directive_id,),
+    ).fetchone()["status"]
+    assert status == "draft"
+    assert db.conn.execute(
+        "SELECT COUNT(*) AS n FROM rejection_reports "
+        "WHERE section='directive_locality'",
+    ).fetchone()["n"] >= 1

@@ -1,0 +1,68 @@
+# FILE: tests/test_decree_commitment_settlement_229.py
+# NAME: test_due_one_shot_commitment_ack_closes_review_loop_without_effects
+# LINE: 1364-1425
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_due_one_shot_commitment_ack_closes_review_loop_without_effects(game):
+    db, state, content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.execute("UPDATE legacies SET status='cleared' WHERE status='active'")
+    db.conn.commit()
+    starting_turn = state.turn
+
+    issue_id = db.insert_issue(
+        state,
+        kind="initiative",
+        title="孙承宗三月后复试收尾",
+        origin_kind="decree",
+        origin_ref="decree:turn-1:sun-review-ack",
+        bar_value=0,
+        inertia=0,
+        stage_text="孙承宗暂听候政，三月后复试。",
+        ongoing_effects={},
+        effect_on_resolve={"metrics": {"民心": 9}},
+        effect_on_fail={"metrics": {"民心": -7}},
+        stop_condition="",
+        end_turn=starting_turn + 1,
+        commitment_kind="until_stop",
+        cancellable="decree",
+    )
+
+    _advance_player_month(db, state, content)
+
+    popular_support_at_ack = int(state.metrics["民心"])
+    out = apply_score_extraction(
+        db,
+        state,
+        {
+            "close_issues": [
+                {
+                    "issue_id": issue_id,
+                    "reason": "acknowledged",
+                    "narrative": "皇帝已复试孙承宗，此承诺已由圣裁处理。",
+                }
+            ]
+        },
+        content=content,
+    )
+
+    close = out["issue_summary"]["closes"][0]
+    assert close["rejected"] is False
+    row = _issue_row(db, issue_id)
+    assert row["status"] == "dropped"
+    assert row["closed_turn"] == state.turn
+    assert int(state.metrics["民心"]) == popular_support_at_ack
+    advances = db.conn.execute(
+        "SELECT trigger_kind, metric_delta FROM issue_advances WHERE issue_id=? ORDER BY id",
+        (issue_id,),
+    ).fetchall()
+    assert [(row["trigger_kind"], json.loads(row["metric_delta"])) for row in advances] == [
+        ("commitment_ack", {}),
+    ]
+
+    _settle_empty_month(db, state, content)
+    assert _issue_row(db, issue_id)["status"] == "dropped"
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM issue_advances WHERE issue_id=?", (issue_id,),
+    ).fetchone()[0] == len(advances)

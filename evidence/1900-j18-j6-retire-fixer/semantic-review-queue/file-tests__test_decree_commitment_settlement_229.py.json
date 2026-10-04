@@ -1,0 +1,435 @@
+{
+  "source_path": "tests/test_decree_commitment_settlement_229.py",
+  "member_count": 30,
+  "members": [
+    {
+      "idx": 498,
+      "file": "tests/test_decree_commitment_settlement_229.py",
+      "name": "test_created_future_limited_duration_commitment_applies_first_month",
+      "line": 81,
+      "end": 124,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0498_test_decree_commitment_settlement_229__test_created_future_limited_duration_commitment_applies_first_month.txt",
+      "source_path": "tests/test_decree_commitment_settlement_229.py"
+    },
+    {
+      "idx": 499,
+      "file": "tests/test_decree_commitment_settlement_229.py",
+      "name": "test_character_loyalty_commitment_ongoing_applies_monthly_and_records_progress",
+      "line": 127,
+      "end": 171,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0499_test_decree_commitment_settlement_229__test_character_loyalty_commitment_ongoing_applies_monthly_and_records_progress.txt",
+      "source_path": "tests/test_decree_commitment_settlement_229.py"
+    },
+    {
+      "idx": 500,
+      "file": "tests/test_decree_commitment_settlement_229.py",
+      "name": "test_legacy_character_resolve_condition_commitment_settles_when_threshold_reached",
+      "line": 174,
+      "end": 215,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call",
+        "retired_or_meta_marker"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0500_test_decree_commitment_settlement_229__test_legacy_character_resolve_condition_commitment_settles_when_threshold_reached.txt",
+      "source_path": "tests/test_decree_commitment_settlement_229.py"
+    },
+    {
+      "idx": 501,
+      "file": "tests/test_decree_commitment_settlement_229.py",
+      "name": "test_faction_class_commitment_ongoing_applies_monthly_when_counted",
+      "line": 218,
+      "end": 253,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0501_test_decree_commitment_settlement_229__test_faction_class_commitment_ongoing_applies_monthly_when_counted.txt",
+      "source_path": "tests/test_decree_commitment_settlement_229.py"
+    },
+    {
+      "idx": 502,
+      "file": "tests/test_decree_commitment_settlement_229.py",
+      "name": "test_commitment_ongoing_malformed_entity_payloads_are_rejected_without_crashing",
+      "line": 256,
+      "end": 295,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0502_test_decree_commitment_settlement_229__test_commitment_ongoing_malformed_entity_payloads_are_rejected_without_crashing.txt",
+      "source_path": "tests/test_decree_commitment_settlement_229.py"
+    },
+    {
+      "idx": 503,
+      "file": "tests/test_decree_commitment_settlement_229.py",
+      "name": "test_commitment_stop_gate_resolve_respects_outer_transaction_rollback",
+      "line": 298,
+      "end": 326,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0503_test_decree_commitment_settlement_229__test_commitment_stop_gate_resolve_respects_outer_transaction_rollback.txt",
+      "source_path": "tests/test_decree_commitment_settlement_229.py"
+    },
+    {
+      "idx": 504,
+      "file": "tests/test_decree_commitment_settlement_229.py",
+      "name": "test_commitment_expiry_respects_outer_transaction_rollback",
+      "line": 329,
+      "end": 356,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0504_test_decree_commitment_settlement_229__test_commitment_expiry_respects_outer_transaction_rollback.txt",
+      "source_path": "tests/test_decree_commitment_settlement_229.py"
+    },
+    {
+      "idx": 505,
+      "file": "tests/test_decree_commitment_settlement_229.py",
+      "name": "test_commitment_progress_skips_non_numeric_gate_values",
+      "line": 386,
+      "end": 405,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0505_test_decree_commitment_settlement_229__test_commitment_progress_skips_non_numeric_gate_values.txt",
+      "source_path": "tests/test_decree_commitment_settlement_229.py"
+    },
+    {
+      "idx": 506,
+      "file": "tests/test_decree_commitment_settlement_229.py",
+      "name": "test_region_cannon_commitment_ongoing_applies_monthly_when_counted",
+      "line": 408,
+      "end": 445,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0506_test_decree_commitment_settlement_229__test_region_cannon_commitment_ongoing_applies_monthly_when_counted.txt",
+      "source_path": "tests/test_decree_commitment_settlement_229.py"
+    },
+    {
+      "idx": 507,
+      "file": "tests/test_decree_commitment_settlement_229.py",
+      "name": "test_until_stop_arrears_commitment_settlement_oracle_resolves_with_restore",
+      "line": 448,
+      "end": 530,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0507_test_decree_commitment_settlement_229__test_until_stop_arrears_commitment_settlement_oracle_resolves_with_restore.txt",
+      "source_path": "tests/test_decree_commitment_settlement_229.py"
+    },
+    {
+      "idx": 508,
+      "file": "tests/test_decree_commitment_settlement_229.py",
+      "name": "test_commitment_progress_fractional_strict_gate_can_be_satisfied",
+      "line": 533,
+      "end": 592,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0508_test_decree_commitment_settlement_229__test_commitment_progress_fractional_strict_gate_can_be_satisfied.txt",
+      "source_path": "tests/test_decree_commitment_settlement_229.py"
+    },
+    {
+      "idx": 509,
+      "file": "tests/test_decree_commitment_settlement_229.py",
+      "name": "test_commitment_ongoing_economy_not_scaled_by_bar_discount",
+      "line": 595,
+      "end": 626,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0509_test_decree_commitment_settlement_229__test_commitment_ongoing_economy_not_scaled_by_bar_discount.txt",
+      "source_path": "tests/test_decree_commitment_settlement_229.py"
+    },
+    {
+      "idx": 510,
+      "file": "tests/test_decree_commitment_settlement_229.py",
+      "name": "test_arrears_commitment_preserves_explicit_monthly_payment_target",
+      "line": 629,
+      "end": 667,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0510_test_decree_commitment_settlement_229__test_arrears_commitment_preserves_explicit_monthly_payment_target.txt",
+      "source_path": "tests/test_decree_commitment_settlement_229.py"
+    },
+    {
+      "idx": 511,
+      "file": "tests/test_decree_commitment_settlement_229.py",
+      "name": "test_high_bar_metric_only_commitment_applies_and_records_monthly_progress",
+      "line": 670,
+      "end": 702,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0511_test_decree_commitment_settlement_229__test_high_bar_metric_only_commitment_applies_and_records_monthly_progress.txt",
+      "source_path": "tests/test_decree_commitment_settlement_229.py"
+    },
+    {
+      "idx": 512,
+      "file": "tests/test_decree_commitment_settlement_229.py",
+      "name": "test_metric_commitment_records_progress_when_monthly_cap_blocks_effect",
+      "line": 705,
+      "end": 746,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0512_test_decree_commitment_settlement_229__test_metric_commitment_records_progress_when_monthly_cap_blocks_effect.txt",
+      "source_path": "tests/test_decree_commitment_settlement_229.py"
+    },
+    {
+      "idx": 513,
+      "file": "tests/test_decree_commitment_settlement_229.py",
+      "name": "test_commitment_end_turn_expires_without_resolve_effects",
+      "line": 749,
+      "end": 789,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0513_test_decree_commitment_settlement_229__test_commitment_end_turn_expires_without_resolve_effects.txt",
+      "source_path": "tests/test_decree_commitment_settlement_229.py"
+    },
+    {
+      "idx": 514,
+      "file": "tests/test_decree_commitment_settlement_229.py",
+      "name": "test_limited_duration_commitment_ticks_until_end_turn_then_expires",
+      "line": 792,
+      "end": 845,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0514_test_decree_commitment_settlement_229__test_limited_duration_commitment_ticks_until_end_turn_then_expires.txt",
+      "source_path": "tests/test_decree_commitment_settlement_229.py"
+    },
+    {
+      "idx": 515,
+      "file": "tests/test_decree_commitment_settlement_229.py",
+      "name": "test_until_stop_condition_beats_later_end_turn_for_stacked_commitment",
+      "line": 848,
+      "end": 885,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0515_test_decree_commitment_settlement_229__test_until_stop_condition_beats_later_end_turn_for_stacked_commitment.txt",
+      "source_path": "tests/test_decree_commitment_settlement_229.py"
+    },
+    {
+      "idx": 516,
+      "file": "tests/test_decree_commitment_settlement_229.py",
+      "name": "test_cancelled_commitment_is_distinct_from_expired_commitment",
+      "line": 888,
+      "end": 934,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0516_test_decree_commitment_settlement_229__test_cancelled_commitment_is_distinct_from_expired_commitment.txt",
+      "source_path": "tests/test_decree_commitment_settlement_229.py"
+    },
+    {
+      "idx": 517,
+      "file": "tests/test_decree_commitment_settlement_229.py",
+      "name": "test_commitment_missing_purpose_still_routes_arrears_budget",
+      "line": 937,
+      "end": 976,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0517_test_decree_commitment_settlement_229__test_commitment_missing_purpose_still_routes_arrears_budget.txt",
+      "source_path": "tests/test_decree_commitment_settlement_229.py"
+    },
+    {
+      "idx": 518,
+      "file": "tests/test_decree_commitment_settlement_229.py",
+      "name": "test_commitment_targeted_pay_uses_explicit_arrears_target",
+      "line": 979,
+      "end": 1017,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0518_test_decree_commitment_settlement_229__test_commitment_targeted_pay_uses_explicit_arrears_target.txt",
+      "source_path": "tests/test_decree_commitment_settlement_229.py"
+    },
+    {
+      "idx": 519,
+      "file": "tests/test_decree_commitment_settlement_229.py",
+      "name": "test_commitment_malformed_pay_target_does_not_fall_back_to_priority_pool",
+      "line": 1020,
+      "end": 1065,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0519_test_decree_commitment_settlement_229__test_commitment_malformed_pay_target_does_not_fall_back_to_priority_pool.txt",
+      "source_path": "tests/test_decree_commitment_settlement_229.py"
+    },
+    {
+      "idx": 520,
+      "file": "tests/test_decree_commitment_settlement_229.py",
+      "name": "test_non_arrears_commitment_missing_pay_target_does_not_open_priority_pool",
+      "line": 1068,
+      "end": 1113,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0520_test_decree_commitment_settlement_229__test_non_arrears_commitment_missing_pay_target_does_not_open_priority_pool.txt",
+      "source_path": "tests/test_decree_commitment_settlement_229.py"
+    },
+    {
+      "idx": 521,
+      "file": "tests/test_decree_commitment_settlement_229.py",
+      "name": "test_commitment_pay_pool_is_scoped_to_arrears_stop_gate_armies",
+      "line": 1116,
+      "end": 1159,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0521_test_decree_commitment_settlement_229__test_commitment_pay_pool_is_scoped_to_arrears_stop_gate_armies.txt",
+      "source_path": "tests/test_decree_commitment_settlement_229.py"
+    },
+    {
+      "idx": 522,
+      "file": "tests/test_decree_commitment_settlement_229.py",
+      "name": "test_commitment_progress_keeps_strict_stop_gate_semantics",
+      "line": 1162,
+      "end": 1185,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0522_test_decree_commitment_settlement_229__test_commitment_progress_keeps_strict_stop_gate_semantics.txt",
+      "source_path": "tests/test_decree_commitment_settlement_229.py"
+    },
+    {
+      "idx": 523,
+      "file": "tests/test_decree_commitment_settlement_229.py",
+      "name": "test_end_turn_without_ongoing_is_not_expired_by_settlement_tick",
+      "line": 1188,
+      "end": 1224,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0523_test_decree_commitment_settlement_229__test_end_turn_without_ongoing_is_not_expired_by_settlement_tick.txt",
+      "source_path": "tests/test_decree_commitment_settlement_229.py"
+    },
+    {
+      "idx": 524,
+      "file": "tests/test_decree_commitment_settlement_229.py",
+      "name": "test_one_shot_end_turn_commitment_stays_active_after_month",
+      "line": 1227,
+      "end": 1256,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0524_test_decree_commitment_settlement_229__test_one_shot_end_turn_commitment_stays_active_after_month.txt",
+      "source_path": "tests/test_decree_commitment_settlement_229.py"
+    },
+    {
+      "idx": 525,
+      "file": "tests/test_decree_commitment_settlement_229.py",
+      "name": "test_semantically_empty_one_shot_commitment_acks_once",
+      "line": 1259,
+      "end": 1308,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0525_test_decree_commitment_settlement_229__test_semantically_empty_one_shot_commitment_acks_once.txt",
+      "source_path": "tests/test_decree_commitment_settlement_229.py"
+    },
+    {
+      "idx": 526,
+      "file": "tests/test_decree_commitment_settlement_229.py",
+      "name": "test_metadata_only_one_shot_commitment_acks_once",
+      "line": 1311,
+      "end": 1361,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0526_test_decree_commitment_settlement_229__test_metadata_only_one_shot_commitment_acks_once.txt",
+      "source_path": "tests/test_decree_commitment_settlement_229.py"
+    },
+    {
+      "idx": 527,
+      "file": "tests/test_decree_commitment_settlement_229.py",
+      "name": "test_due_one_shot_commitment_ack_closes_review_loop_without_effects",
+      "line": 1364,
+      "end": 1425,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0527_test_decree_commitment_settlement_229__test_due_one_shot_commitment_ack_closes_review_loop_without_effects.txt",
+      "source_path": "tests/test_decree_commitment_settlement_229.py"
+    }
+  ]
+}

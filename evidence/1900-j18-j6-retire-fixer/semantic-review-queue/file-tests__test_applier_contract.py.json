@@ -1,0 +1,139 @@
+{
+  "source_path": "tests/test_applier_contract.py",
+  "member_count": 10,
+  "members": [
+    {
+      "idx": 26,
+      "file": "tests/test_applier_contract.py",
+      "name": "test_rejection_collector_flush_before_record_leaves_db_empty",
+      "line": 63,
+      "end": 69,
+      "flags": [
+        "assert_count"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0026_test_applier_contract__test_rejection_collector_flush_before_record_leaves_db_empty.txt",
+      "source_path": "tests/test_applier_contract.py"
+    },
+    {
+      "idx": 27,
+      "file": "tests/test_applier_contract.py",
+      "name": "test_rejection_collector_flush_writes_rows",
+      "line": 72,
+      "end": 102,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0027_test_applier_contract__test_rejection_collector_flush_writes_rows.txt",
+      "source_path": "tests/test_applier_contract.py"
+    },
+    {
+      "idx": 28,
+      "file": "tests/test_applier_contract.py",
+      "name": "test_rejection_collector_flush_clears_buffer",
+      "line": 105,
+      "end": 114,
+      "flags": [
+        "assert_count"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0028_test_applier_contract__test_rejection_collector_flush_clears_buffer.txt",
+      "source_path": "tests/test_applier_contract.py"
+    },
+    {
+      "idx": 29,
+      "file": "tests/test_applier_contract.py",
+      "name": "test_mirror_to_jsonl_writes_lines",
+      "line": 136,
+      "end": 155,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0029_test_applier_contract__test_mirror_to_jsonl_writes_lines.txt",
+      "source_path": "tests/test_applier_contract.py"
+    },
+    {
+      "idx": 30,
+      "file": "tests/test_applier_contract.py",
+      "name": "test_mirror_to_jsonl_appends_on_multiple_calls",
+      "line": 158,
+      "end": 170,
+      "flags": [
+        "assert_count"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0030_test_applier_contract__test_mirror_to_jsonl_appends_on_multiple_calls.txt",
+      "source_path": "tests/test_applier_contract.py"
+    },
+    {
+      "idx": 31,
+      "file": "tests/test_applier_contract.py",
+      "name": "test_flush_then_mirror_writes_jsonl",
+      "line": 187,
+      "end": 209,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0031_test_applier_contract__test_flush_then_mirror_writes_jsonl.txt",
+      "source_path": "tests/test_applier_contract.py"
+    },
+    {
+      "idx": 32,
+      "file": "tests/test_applier_contract.py",
+      "name": "test_mirror_idempotent_after_flush",
+      "line": 212,
+      "end": 225,
+      "flags": [
+        "assert_count"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0032_test_applier_contract__test_mirror_idempotent_after_flush.txt",
+      "source_path": "tests/test_applier_contract.py"
+    },
+    {
+      "idx": 33,
+      "file": "tests/test_applier_contract.py",
+      "name": "test_reset_discards_pending_and_flushed",
+      "line": 241,
+      "end": 259,
+      "flags": [
+        "assert_count"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0033_test_applier_contract__test_reset_discards_pending_and_flushed.txt",
+      "source_path": "tests/test_applier_contract.py"
+    },
+    {
+      "idx": 34,
+      "file": "tests/test_applier_contract.py",
+      "name": "test_record_accepts_plain_string_source",
+      "line": 262,
+      "end": 273,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0034_test_applier_contract__test_record_accepts_plain_string_source.txt",
+      "source_path": "tests/test_applier_contract.py"
+    },
+    {
+      "idx": 35,
+      "file": "tests/test_applier_contract.py",
+      "name": "test_collector_counts_deterministic_on_polluted_save",
+      "line": 288,
+      "end": 306,
+      "flags": [
+        "assert_count"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0035_test_applier_contract__test_collector_counts_deterministic_on_polluted_save.txt",
+      "source_path": "tests/test_applier_contract.py"
+    }
+  ]
+}

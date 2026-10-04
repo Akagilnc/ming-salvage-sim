@@ -1,0 +1,44 @@
+# FILE: tests/test_credit_events_628.py
+# NAME: test_ac1_breach_plea_guofu_not_reimplemented
+# LINE: 132-169
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_ac1_breach_plea_guofu_not_reimplemented(game):
+    """挽留回绝→辜负仍由 #623 finalize_persist 写出；本片 resolve 不重写该 origin。"""
+    db, state, _content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.commit()
+    did = _executing_dossier(db, state, token="ac1-623")
+    holder = "倪元璐"
+    cid = _insert_commitment(
+        db, state, title="撤人信用既有", origin_ref=f"dossier:{did}", host=holder,
+    )
+    # 同步案卷主办
+    db.conn.execute(
+        "UPDATE decree_dossiers SET participant_roster=? WHERE id=?",
+        (
+            '[{"character_id":"倪元璐","tier":"主办","role":"承办"}]',
+            did,
+        ),
+    )
+    db.conn.commit()
+    todo_id = write_breach_plea_todo(
+        db, state, commitment_ref=cid,
+        breach_kind=BREACH_KIND_REMOVE_SPONSOR,
+        reason="罢主办试既有", target_dossier_id=did, commit=True,
+    )
+    todo = next(
+        t for t in db.list_next_audience_todos(status="pending")
+        if int(t["id"]) == todo_id
+    )
+    before = len(_credit_edges(db, event_kind="辜负", target=holder))
+    result = finalize_persist(db, state, todo, commit=True)
+    assert result["decision"] == "persist"
+    edges = _credit_edges(db, event_kind="辜负", target=holder)
+    assert len(edges) == before + 1
+    assert any("breach_plea" in str(e["origin"]) for e in edges)
+    # 本片 resolve 不吞、不重写该 origin
+    resolve_credit_events_from_extraction(db, state, {}, commit=True)
+    edges2 = _credit_edges(db, event_kind="辜负", target=holder)
+    assert len(edges2) == len(edges)

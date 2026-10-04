@@ -1,0 +1,36 @@
+# FILE: tests/test_decree_commitment_settlement_229.py
+# NAME: test_one_shot_end_turn_commitment_stays_active_after_month
+# LINE: 1227-1256
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_one_shot_end_turn_commitment_stays_active_after_month(game):
+    db, state, content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.execute("UPDATE legacies SET status='cleared' WHERE status='active'")
+    db.conn.commit()
+
+    issue_id = db.insert_issue(
+        state,
+        kind="initiative",
+        title="孙承宗三月后复试",
+        origin_kind="decree",
+        origin_ref="decree:turn-1:sun-review",
+        bar_value=0,
+        inertia=0,
+        stage_text="孙承宗暂听候政，三月后复试。",
+        ongoing_effects={},
+        stop_condition="",
+        end_turn=state.turn,
+        commitment_kind="until_stop",
+        cancellable="decree",
+    )
+
+    _advance_player_month(db, state, content)
+    row = _issue_row(db, issue_id)
+    assert row["status"] == "active"
+    assert row["closed_turn"] is None
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM issue_advances WHERE issue_id=? AND trigger_kind='expire'",
+        (issue_id,),
+    ).fetchone()[0] == 0

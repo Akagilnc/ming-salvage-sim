@@ -1,0 +1,27 @@
+# FILE: tests/test_person_transit_write_667.py
+# NAME: test_departure_persists_matrix_distance_and_urgent_factor
+# LINE: 101-121
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_departure_persists_matrix_distance_and_urgent_factor(game):
+    db, state, content = game
+    name = _active(db)
+    db.conn.execute("UPDATE characters SET location='beizhili' WHERE name=?", (name,))
+    content.characters[name].location = "beizhili"
+
+    issues.apply_score_extraction(db, state, {"人物变更": [{
+        "name": name, "origin_ref": "盘面自发", "动作": "行止",
+        "transit_to": "liaodong", "行程语气": "加急",
+    }]}, content=content)
+
+    row = db.conn.execute("SELECT transit_to, transit_distance_remaining, transit_speed_factor FROM characters WHERE name=?", (name,)).fetchone()
+    assert dict(row) == {"transit_to": "liaodong", "transit_distance_remaining": 2.1, "transit_speed_factor": 1.5}
+    assert content.characters[name].transit_distance_remaining == 2.1
+    assert content.characters[name].transit_speed_factor == 1.5
+
+    content.characters[name].transit_distance_remaining = None
+    content.characters[name].transit_speed_factor = None
+    reload_state_from_db(db, state, content=content)
+    assert content.characters[name].transit_distance_remaining == 2.1
+    assert content.characters[name].transit_speed_factor == 1.5

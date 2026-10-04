@@ -1,0 +1,38 @@
+# FILE: tests/test_scene_llm_1836.py
+# NAME: test_xuan_lands_enter_then_present_on_next_prepare
+# LINE: 84-115
+# FLAGS: assert_text_compare_or_match,mock_or_patch_present,helper_or_private_call
+# KIND: py
+
+def test_xuan_lands_enter_then_present_on_next_prepare(game, monkeypatch, tmp_path):
+    """AC2：「宣 X」后入殿账落下，下一次场景材料准备他在场。"""
+    db, state, content = game
+    open_night(db, state, location="乾清宫", time_of_day="夜")
+    target = "王绍徽"
+    night_id = int(get_open_night(db)["id"])
+    # 王绍徽非常在员额，开夜后不应在场。
+    assert target not in present_names_at(db, night_id)
+
+    class FakeAgent:
+        tools = []
+
+        def run(self, message):
+            return SimpleNamespace(content=f"{target}入殿叩见。", tools=[])
+
+    monkeypatch.setattr("ming_sim.session.create_scene_agent", lambda *a, **k: FakeAgent())
+    sess = _sess(db, state, content, llm_config=SimpleNamespace(channel=""))
+    result = sess.scene_chat(f"宣{target}")
+
+    # 本次宣入必须新落一条 TAG_ENTER（非常在员额开夜账）。
+    enters = [
+        e for e in list_ledger(db, night_id)
+        if TAG_ENTER in (e.get("tags") or [])
+        and target in (e.get("person_names") or [])
+        and "常在员额" not in (e.get("tags") or [])
+    ]
+    assert enters, f"宣{target} must land a non-roster TAG_ENTER ledger entry"
+    assert target in present_names_at(db, night_id)
+
+    prepared = prepare_scene_materials(db, state, dest_root=tmp_path / "after-xuan")
+    assert any(p.startswith(f"人物/{target}/") for p in list_materials(prepared.root))
+    assert result.answer  # 宣后仍起一次场景调用

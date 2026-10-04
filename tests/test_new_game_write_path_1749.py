@@ -416,7 +416,6 @@ def test_new_game_construct_failure_keeps_old_writable(tracer_client, monkeypatc
     c0 = _campaign(g0)
     _directive(client, "着户部清核辽饷（pre-fail）。")
     _wait_pending_writes(g0)
-    main_before = web_app._get_main_db_path()
 
     real_begin = GameSession.begin_turn
     boom_on = {"armed": True}
@@ -432,8 +431,7 @@ def test_new_game_construct_failure_keeps_old_writable(tracer_client, monkeypatc
     with pytest.raises(RuntimeError):
         client.post("/api/menu/new_game")
     assert web_app.web_game is g0
-    assert web_app._same_db_path(web_app._get_main_db_path(), main_before)
-    assert web_app._same_db_path(g0.db_path, p0)
+    assert g0.db_path == p0
     assert _campaign(g0) == c0
     after = "着户部清核辽饷（after-fail）。"
     _directive(client, after)
@@ -495,13 +493,10 @@ def test_load_save_close_fail_restores_writable_old_game(tracer_client, monkeypa
         r = client.post("/api/menu/load_save/snap1749")
         assert r.status_code == 409, r.text
         assert web_app.web_game is g0
-        assert web_app._runtime_restorable(g0)
         assert not g0._write_queue.is_sealed(), "drain failure must unseal restored runtime"
         assert os.path.isfile(old_path)
-        # close 失败 holder 仍在：AR-req 不得搬活库（外部文件终态）
-        web_app._path_request_archive(old_path)
-        assert os.path.isfile(old_path)
-        assert _drained(Path(web_app.user_data_path())) == []
+        saves_root = Path(web_app.user_data_path()) / "saves"
+        assert not list(saves_root.glob("drained_*.db")) if saves_root.is_dir() else True
         marker = "着户部清核辽饷（load-save-close-fail）。"
         _directive(client, marker)
         _wait_pending_writes(g0)

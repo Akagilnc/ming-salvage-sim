@@ -1,0 +1,74 @@
+# FILE: web/src/components/menuPage.test.tsx
+# NAME: "MenuPage continue SSE stages (#1195)" / "updates busy label from stage events then enters game"
+# LINE: 84-151
+# FLAGS: web_mock_spy_or_calls,web_count_assert
+# KIND: web
+
+  it("updates busy label from stage events then enters game", async () => {
+    const enterGame = vi.fn(async () => {});
+    const setError = vi.fn();
+    // 分块推送：第一读只给首条 stage，便于断言 busy 已更新；再推后续。
+    const encoder = new TextEncoder();
+    let pull = 0;
+    const chunks = [
+      'event: stage\ndata: {"content":"检查模型后端..."}\n\n',
+      'event: stage\ndata: {"content":"载入上次进度..."}\n\n',
+      'event: stage\ndata: {"content":"重整朝堂名册..."}\n\n',
+      'event: done\ndata: {"state":{"ok":true}}\n\n',
+    ];
+    global.fetch = vi.fn().mockImplementation((url: string) => {
+      if (url !== "/api/menu/continue") {
+        return Promise.reject(new Error(`unexpected fetch ${url}`));
+      }
+      const body = {
+        getReader() {
+          return {
+            async read() {
+              if (pull >= chunks.length) return { value: undefined, done: true };
+              const value = encoder.encode(chunks[pull++]);
+              return { value, done: false };
+            },
+          };
+        },
+      };
+      return Promise.resolve({ ok: true, status: 200, body } as unknown as Response);
+    });
+
+    const cleanup = render(
+      <MenuPage
+        status={readyStatus as any}
+        onRefresh={async () => readyStatus as any}
+        onEnterGame={enterGame}
+        error=""
+        setError={setError}
+      />
+    );
+
+    const continueBtn = Array.from(document.querySelectorAll("button")).find((button) =>
+      button.textContent?.trim() === "继续"
+    );
+    expect(continueBtn).toBeTruthy();
+    expect(continueBtn?.disabled).toBe(false);
+
+    await act(async () => {
+      continueBtn!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      // 让微任务跑完首条 stage 的 setBusy
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    // 流消费完成后应进游戏；busy 区在 finally 清空
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(global.fetch).toHaveBeenCalledWith("/api/menu/continue", { method: "POST" });
+    expect(enterGame).toHaveBeenCalledTimes(1);
+    // guard 开头会 setError("") 清旧错；成功路径不应再写入非空错误
+    const errorPayloads = setError.mock.calls.map((c) => c[0]).filter((m) => m);
+    expect(errorPayloads).toEqual([]);
+    // 终态 busy 已清（进 HUD 由 onEnterGame 负责）
+    expect(document.querySelector(".menu-busy")).toBeNull();
+    cleanup();
+  });

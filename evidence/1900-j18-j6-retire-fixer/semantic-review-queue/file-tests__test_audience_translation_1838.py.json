@@ -1,0 +1,122 @@
+{
+  "source_path": "tests/test_audience_translation_1838.py",
+  "member_count": 8,
+  "members": [
+    {
+      "idx": 187,
+      "file": "tests/test_audience_translation_1838.py",
+      "name": "test_three_speaker_segments_private_whisper_reaches_only_participant",
+      "line": 41,
+      "end": 127,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0187_test_audience_translation_1838__test_three_speaker_segments_private_whisper_reaches_only_participant.txt",
+      "source_path": "tests/test_audience_translation_1838.py"
+    },
+    {
+      "idx": 188,
+      "file": "tests/test_audience_translation_1838.py",
+      "name": "test_presence_enter_exit_from_translation",
+      "line": 130,
+      "end": 166,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0188_test_audience_translation_1838__test_presence_enter_exit_from_translation.txt",
+      "source_path": "tests/test_audience_translation_1838.py"
+    },
+    {
+      "idx": 189,
+      "file": "tests/test_audience_translation_1838.py",
+      "name": "test_protagonist_follows_translation_and_xuan_cut",
+      "line": 215,
+      "end": 250,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0189_test_audience_translation_1838__test_protagonist_follows_translation_and_xuan_cut.txt",
+      "source_path": "tests/test_audience_translation_1838.py"
+    },
+    {
+      "idx": 190,
+      "file": "tests/test_audience_translation_1838.py",
+      "name": "test_protagonist_undo_reprojects_night_current",
+      "line": 253,
+      "end": 284,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0190_test_audience_translation_1838__test_protagonist_undo_reprojects_night_current.txt",
+      "source_path": "tests/test_audience_translation_1838.py"
+    },
+    {
+      "idx": 191,
+      "file": "tests/test_audience_translation_1838.py",
+      "name": "test_retry_older_round_keeps_newer_protagonist",
+      "line": 287,
+      "end": 301,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0191_test_audience_translation_1838__test_retry_older_round_keeps_newer_protagonist.txt",
+      "source_path": "tests/test_audience_translation_1838.py"
+    },
+    {
+      "idx": 192,
+      "file": "tests/test_audience_translation_1838.py",
+      "name": "test_edge_event_and_public_saying_attach_affair",
+      "line": 304,
+      "end": 352,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0192_test_audience_translation_1838__test_edge_event_and_public_saying_attach_affair.txt",
+      "source_path": "tests/test_audience_translation_1838.py"
+    },
+    {
+      "idx": 193,
+      "file": "tests/test_audience_translation_1838.py",
+      "name": "test_edge_event_undo_deletes_via_source_turn",
+      "line": 355,
+      "end": 384,
+      "flags": [
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0193_test_audience_translation_1838__test_edge_event_undo_deletes_via_source_turn.txt",
+      "source_path": "tests/test_audience_translation_1838.py"
+    },
+    {
+      "idx": 194,
+      "file": "tests/test_audience_translation_1838.py",
+      "name": "test_on_scene_fact_undo_via_translation_entry",
+      "line": 387,
+      "end": 417,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0194_test_audience_translation_1838__test_on_scene_fact_undo_via_translation_entry.txt",
+      "source_path": "tests/test_audience_translation_1838.py"
+    }
+  ]
+}

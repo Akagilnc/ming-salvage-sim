@@ -1,0 +1,39 @@
+# FILE: tests/test_advance_paths_atomic.py
+# NAME: test_terminal_markers_upgrade_pending_choice_row
+# LINE: 382-414
+# FLAGS: assert_text_compare_or_match
+# KIND: py
+
+def test_terminal_markers_upgrade_pending_choice_row(game, marker, terminal_state, source, reason):
+    """确定性终态须覆盖空终态 HITL choice 行，保留亲裁选择，并刷新终态时刻。"""
+    import json
+    db, state, content = game
+    eid = content.events[0].id
+    db.record_event_decision_choice(state, eid, {"label": "留"})
+    terminal_turn = state.turn + 1
+    terminal_year = state.year + 1
+    terminal_period = 7
+    state.turn = terminal_turn
+    state.year = terminal_year
+    state.period = terminal_period
+
+    if marker == "expired":
+        db.mark_event_expired(state, eid)
+    elif marker == "avoided":
+        db.mark_event_avoided(state, eid, reason)
+    elif marker == "obsolete":
+        db.mark_event_obsolete(state, eid, reason)
+    else:
+        raise AssertionError(marker)
+
+    row = db.conn.execute(
+        "SELECT turn, year, period, terminal_state, source, terminal_reason, choice_json FROM event_triggers WHERE event_id=?",
+        (eid,),
+    ).fetchone()
+    assert row["turn"] == terminal_turn
+    assert row["year"] == terminal_year
+    assert row["period"] == terminal_period
+    assert row["terminal_state"] == terminal_state
+    assert row["source"] == source
+    assert row["terminal_reason"] == "留"
+    assert json.loads(row["choice_json"]) == {"label": "留"}

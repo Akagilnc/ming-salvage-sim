@@ -1,0 +1,39 @@
+# FILE: tests/test_fiscal_levy_effect.py
+# NAME: test_lian_levy_gate_waits_until_1639_and_needs_no_stop_event
+# LINE: 1057-1089
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_lian_levy_gate_waits_until_1639_and_needs_no_stop_event(game):
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1638
+    state.period = 12
+    db.save_state(state)
+
+    apply_historical_fiscal_rates(state, db)
+    assert db.conn.execute(
+        "SELECT 1 FROM event_triggers WHERE event_id=?",
+        ("lian_levy_start_1639",),
+    ).fetchone() is None
+    after = _settle_payload(db, "shaanxi")
+    expected_sanxiang = after["_meta"]["辽饷九厘基线"] * 4.0 / 3.0 + after["_meta"]["剿饷基线"]
+    assert math.isclose(
+        after["p"]["三饷应征"],
+        expected_sanxiang,
+        rel_tol=1e-9,
+        abs_tol=1e-9,
+    )
+
+    state.year = 1639
+    state.period = 1
+    db.save_state(state)
+    applied = apply_historical_fiscal_rates(state, db)
+    assert [item["id"] for item in applied] == ["lian_levy_start_1639"]
+
+    terminalized = issues.apply_event_terminal_states(state, db)
+    assert all(item["id"] != "lian_levy_start_1639" for item in terminalized)
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM event_triggers WHERE event_id=?",
+        ("lian_levy_start_1639",),
+    ).fetchone()[0] == 1

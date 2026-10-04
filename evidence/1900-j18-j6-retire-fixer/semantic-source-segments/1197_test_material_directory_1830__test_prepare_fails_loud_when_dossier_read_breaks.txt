@@ -1,0 +1,19 @@
+# FILE: tests/test_material_directory_1830.py
+# NAME: test_prepare_fails_loud_when_dossier_read_breaks
+# LINE: 137-149
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_prepare_fails_loud_when_dossier_read_breaks(game, tmp_path):
+    db, state, content = game
+    character = _active_minister(db, content)
+
+    def boom(*_a, **_k):
+        raise RuntimeError("dossier boom")
+
+    db.list_referenceable_dossiers = boom
+    try:
+        prepare_character_materials(db, state, character, dest_root=tmp_path / "m")
+        raise AssertionError("expected fail loud")
+    except RuntimeError as exc:
+        assert "dossier boom" in str(exc)

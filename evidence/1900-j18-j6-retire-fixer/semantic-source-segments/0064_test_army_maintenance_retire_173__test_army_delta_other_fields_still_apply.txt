@@ -1,0 +1,18 @@
+# FILE: tests/test_army_maintenance_retire_173.py
+# NAME: test_army_delta_other_fields_still_apply
+# LINE: 144-155
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_army_delta_other_fields_still_apply(game):
+    # 拒维护费不误伤同信封其它合法字段（士气照落）。
+    db, state, _ = game
+    aid = str(db.conn.execute(
+        "SELECT id FROM armies WHERE owner_power='ming' LIMIT 1").fetchone()["id"])
+    before = db.conn.execute(
+        "SELECT morale FROM armies WHERE id=?", (aid,)).fetchone()["morale"]
+    db.apply_army_deltas(
+        state, _pseudo("整饬"), None, "兵部", {aid: {"维护费": 5, "士气": -3, "reason": "整饬"}})
+    after = db.conn.execute(
+        "SELECT morale FROM armies WHERE id=?", (aid,)).fetchone()["morale"]
+    assert after == before - 3, "拒维护费不应连累同军合法字段（士气）落库"

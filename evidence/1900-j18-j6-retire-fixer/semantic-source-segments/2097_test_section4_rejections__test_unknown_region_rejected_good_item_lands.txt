@@ -1,0 +1,30 @@
+# FILE: tests/test_section4_rejections.py
+# NAME: test_unknown_region_rejected_good_item_lands
+# LINE: 55-78
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_unknown_region_rejected_good_item_lands(game):
+    """region_delta 引用未入库地区 → 该项逐项拒收留痕(不再 print 静默跳),
+    同信封里合法地区的改动照常落库——坏一项不带走整批(ADR 决定 1)。"""
+    db, state, content = game
+    turn = state.turn
+    good = _a_region(db)
+    before = db.conn.execute(
+        "SELECT public_support FROM regions WHERE id=?", (good,)).fetchone()[0]
+
+    run_settle(db, state, content, {
+        "region_delta": {
+            "查无此地郡": {"public_support": 3},
+            good: {"public_support": 2},
+        },
+    }, narrative="x", decree_text="y")
+
+    rows = _rejection_rows(db, turn, "region_changes")
+    assert len(rows) == 1
+    _, reason, category, _ = rows[0]
+    assert reason  # 人读原因非空
+    assert category == "missing_ref"
+    after = db.conn.execute(
+        "SELECT public_support FROM regions WHERE id=?", (good,)).fetchone()[0]
+    assert after != before  # 好项照落

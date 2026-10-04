@@ -1,0 +1,38 @@
+# FILE: tests/test_person_delta_adapter.py
+# NAME: test_displaced_holder_transit_to_cleared
+# LINE: 2546-2577
+# FLAGS: assert_text_compare_or_match
+# KIND: py
+
+def test_displaced_holder_transit_to_cleared(game):
+    """5b r7（codex-b R1）：顶替全腾缺时，被挤下来的旧任若正在赴任途中，transit_to 须清——
+    否则人才池里「听用候铨」的他还挂着去老职位的路线（三面同步 stale）。"""
+    db, state, content = game
+    names = [
+        r["name"] for r in db.conn.execute(
+            "SELECT name FROM characters WHERE status='active' AND power_id='ming' "
+            "AND office_type!='后宫' ORDER BY rowid LIMIT 2"
+        ).fetchall()
+    ]
+    old, new_holder = names[0], names[1]
+    db.set_character_office(old, "蓟辽总督", "地方", region_id="liaodong")
+    db.conn.execute("UPDATE characters SET transit_to='liaodong' WHERE name=?", (old,))
+    db.conn.commit()
+    if old in content.characters:
+        content.characters[old].office = "蓟辽总督"
+        content.characters[old].office_type = "地方"
+        content.characters[old].office_region = "liaodong"
+        content.characters[old].transit_to = "liaodong"
+
+    result = issues.apply_office_appointment(
+        db, state, content, new_holder, "蓟辽总督", new_office_type="地方", region_id="liaodong",
+    )
+    assert not result.get("rejected")
+
+    row = db.conn.execute(
+        "SELECT office, transit_to FROM characters WHERE name=?", (old,)
+    ).fetchone()
+    assert row["office"] == "听用候铨", "全腾缺旧任应落听用候铨"
+    assert (row["transit_to"] or "") == "", f"被顶替者 transit_to 须清，实际 {row['transit_to']!r}"
+    if old in content.characters:
+        assert getattr(content.characters[old], "transit_to", "") == "", "内存 transit_to 也须清"

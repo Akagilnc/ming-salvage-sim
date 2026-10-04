@@ -1,0 +1,77 @@
+{
+  "source_path": "tests/test_faction_denunciation_627.py",
+  "member_count": 5,
+  "members": [
+    {
+      "idx": 905,
+      "file": "tests/test_faction_denunciation_627.py",
+      "name": "test_world_materials_exclude_secret_fork_from_gazette",
+      "line": 100,
+      "end": 120,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0905_test_faction_denunciation_627__test_world_materials_exclude_secret_fork_from_gazette.txt",
+      "source_path": "tests/test_faction_denunciation_627.py"
+    },
+    {
+      "idx": 906,
+      "file": "tests/test_faction_denunciation_627.py",
+      "name": "test_ac2_scripted_accept_and_clamp",
+      "line": 166,
+      "end": 213,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0906_test_faction_denunciation_627__test_ac2_scripted_accept_and_clamp.txt",
+      "source_path": "tests/test_faction_denunciation_627.py"
+    },
+    {
+      "idx": 907,
+      "file": "tests/test_faction_denunciation_627.py",
+      "name": "test_ac3_veracity_true_and_false_from_fork",
+      "line": 219,
+      "end": 254,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0907_test_faction_denunciation_627__test_ac3_veracity_true_and_false_from_fork.txt",
+      "source_path": "tests/test_faction_denunciation_627.py"
+    },
+    {
+      "idx": 908,
+      "file": "tests/test_faction_denunciation_627.py",
+      "name": "test_ac4_dedup_upgrade_closed_and_restore",
+      "line": 260,
+      "end": 349,
+      "flags": [
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0908_test_faction_denunciation_627__test_ac4_dedup_upgrade_closed_and_restore.txt",
+      "source_path": "tests/test_faction_denunciation_627.py"
+    },
+    {
+      "idx": 909,
+      "file": "tests/test_faction_denunciation_627.py",
+      "name": "test_ac5_zero_template_exposure_and_622",
+      "line": 355,
+      "end": 421,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0909_test_faction_denunciation_627__test_ac5_zero_template_exposure_and_622.txt",
+      "source_path": "tests/test_faction_denunciation_627.py"
+    }
+  ]
+}

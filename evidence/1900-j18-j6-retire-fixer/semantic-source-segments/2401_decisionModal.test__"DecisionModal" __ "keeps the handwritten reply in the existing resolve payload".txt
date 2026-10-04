@@ -1,0 +1,19 @@
+# FILE: web/src/components/decisionModal.test.tsx
+# NAME: "DecisionModal" / "keeps the handwritten reply in the existing resolve payload"
+# LINE: 197-209
+# FLAGS: web_mock_spy_or_calls
+# KIND: web
+
+  it("keeps the handwritten reply in the existing resolve payload", () => {
+    const onResolve = vi.fn();
+    const cleanup = render(<DecisionModal decisions={[decisions[0]]} onResolve={onResolve} />);
+    const note = document.querySelector<HTMLTextAreaElement>("textarea");
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(note, "着即办理，不得有误。");
+      (note as HTMLTextAreaElement & { _valueTracker?: { setValue: (value: string) => void } })._valueTracker?.setValue("");
+      note!.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    act(() => document.querySelector<HTMLButtonElement>(".decision-confirm")!.click());
+    expect(onResolve).toHaveBeenCalledWith([{ note: "着即办理，不得有误。" }]);
+    cleanup();
+  });

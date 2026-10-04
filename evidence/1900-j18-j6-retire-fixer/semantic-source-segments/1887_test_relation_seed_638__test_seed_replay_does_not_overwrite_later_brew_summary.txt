@@ -1,0 +1,33 @@
+# FILE: tests/test_relation_seed_638.py
+# NAME: test_seed_replay_does_not_overwrite_later_brew_summary
+# LINE: 335-361
+# FLAGS: assert_text_compare_or_match,assert_count
+# KIND: py
+
+def test_seed_replay_does_not_overwrite_later_brew_summary(fresh_session):
+    """已有摘要即 no-op：brew 追加后的全部摘要字段不得被 seed 重放改回。"""
+    from ming_sim.relation_seed import import_relationship_seed
+
+    sess, _content = fresh_session
+    source, target = "皇帝", "王承恩"
+    old = sess.db.get_relation_summary(source, target)
+    sess.db.apply_relation_brew_result(
+        source=source, target=target, dimension=old["dimension"],
+        founding_segment=str(old["founding_segment"]) + "\n后添奠基。",
+        recent_segment="后来近况。", last_event_id=17,
+        turn=8, year=1628, period=5,
+    )
+    before = sess.db.get_relation_summary(source, target)
+    doc = {
+        "events": [{
+            "source": source, "target": target, "event_kind": "恩义", "context": "信邸旧事。",
+            "origin": "seed:replay-check", "evidence": True, "year": 1626, "period": 2,
+        }],
+        "summaries": [{"source": source, "target": target, "founding_lines": ["信邸旧事。"]}],
+    }
+    first = import_relationship_seed(sess.db, doc, opening_year=1627, opening_period=10)
+    events_after_first = len(sess.db.get_relation_edge_events())
+    second = import_relationship_seed(sess.db, doc, opening_year=1627, opening_period=10)
+    assert first["summaries_written"] == second["summaries_written"] == 0
+    assert len(sess.db.get_relation_edge_events()) == events_after_first
+    assert sess.db.get_relation_summary(source, target) == before

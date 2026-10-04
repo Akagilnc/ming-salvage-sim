@@ -1,0 +1,20 @@
+# FILE: tests/test_pay_order_override_653.py
+# NAME: test_fact_brief_levy_uses_civil_arrears_breakdown_relation
+# LINE: 620-633
+# FLAGS: assert_text_compare_or_match
+# KIND: py
+
+def test_fact_brief_levy_uses_civil_arrears_breakdown_relation(game):
+    """正赋非零时，加派量=三饷应征−民欠新增，区别于三饷×(1−逋赋率)捷径。"""
+    import json
+
+    db, _state, _content = game
+    row = db.conn.execute("SELECT fiscal FROM regions WHERE id='shaanxi'").fetchone()
+    fiscal = json.loads(row["fiscal"])
+    fiscal["settle"]["p"].update({"正赋应征": 8.0, "三饷应征": 20.0, "逋赋率": 0.25})
+    db.conn.execute("UPDATE regions SET fiscal=? WHERE id='shaanxi'", (json.dumps(fiscal, ensure_ascii=False),))
+    levy = next(e for e in build_fiscal_fact_brief(db)
+                if e["metric"] == "加派量" and e["subject_id"] == "shaanxi")
+    assert levy["value"] == pytest.approx(13.0)  # 20 - (8+20)*.25
+    assert levy["value"] != pytest.approx(15.0)  # 被废止的 20*(1-.25)
+    assert levy["detail"] == "三饷加派净额"

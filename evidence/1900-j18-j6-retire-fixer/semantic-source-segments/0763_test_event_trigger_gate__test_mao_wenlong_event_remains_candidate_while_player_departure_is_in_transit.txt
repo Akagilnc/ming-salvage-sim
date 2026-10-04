@@ -1,0 +1,38 @@
+# FILE: tests/test_event_trigger_gate.py
+# NAME: test_mao_wenlong_event_remains_candidate_while_player_departure_is_in_transit
+# LINE: 908-939
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_mao_wenlong_event_remains_candidate_while_player_departure_is_in_transit(game):
+    """#667：行止只启程；抵达前 location gate 仍读取原地点。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1629
+    state.period = 6
+    db.conn.execute(
+        "UPDATE characters SET loyalty=?, status=?, location=?, transit_to='' WHERE name=?",
+        (44, "active", "dongjiang_area", "毛文龙"),
+    )
+    content.characters["毛文龙"].loyalty = 44
+    content.characters["毛文龙"].status = "active"
+    content.characters["毛文龙"].location = "dongjiang_area"
+    content.characters["毛文龙"].transit_to = ""
+
+    with _restore_yuan_as_guanning_commander(db, content):
+        assert any(ev.id == "mao_wenlong" for ev in issues.gather_candidate_events(state, db))
+
+        applied = issues.apply_score_extraction(
+            db,
+            state,
+            {"人物变更": [{"origin_ref": "盘面自发", "name": "毛文龙", "动作": "行止", "transit_to": "shaanxi", "reason": "启程赴陕西剿抚"}]},
+            content=content,
+        )
+
+        assert not applied["applied_person_changes"][0].get("rejected", False)
+        row = db.conn.execute(
+            "SELECT location, transit_to FROM characters WHERE name=?",
+            ("毛文龙",),
+        ).fetchone()
+        assert dict(row) == {"location": "dongjiang_area", "transit_to": "shaanxi"}
+        assert any(ev.id == "mao_wenlong" for ev in issues.gather_candidate_events(state, db))

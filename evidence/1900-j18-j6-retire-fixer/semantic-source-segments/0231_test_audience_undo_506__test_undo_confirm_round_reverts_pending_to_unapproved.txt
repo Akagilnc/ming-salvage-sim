@@ -1,0 +1,37 @@
+# FILE: tests/test_audience_undo_506.py
+# NAME: test_undo_confirm_round_reverts_pending_to_unapproved
+# LINE: 325-355
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_undo_confirm_round_reverts_pending_to_unapproved(game):
+    db, state, content = game
+    m = _active_minister(db, content)
+
+    # 轮1：暂存一条任免动作（night_approved=0，待确认）
+    staged: Dict[str, int] = {}
+
+    def _stage(night_id: int, chat_id: int) -> None:
+        staged["id"] = db.stage_pending_action(
+            int(state.turn), "office", "任命", m, {"text": "测试任免原文", "office": "兵部尚书"},
+        )
+    _run_round(db, state, m, writes=_stage)
+    action_id = staged["id"]
+    assert db.conn.execute(
+        "SELECT night_approved FROM pending_actions WHERE id = ?", (action_id,)
+    ).fetchone()["night_approved"] == 0
+
+    # 轮2：确认该暂存（应允 → night_approved=1，收夜将提交）
+    def _confirm(night_id: int, chat_id: int) -> None:
+        db.mark_pending_night_approved([action_id], night_id=night_id)
+    _, confirm_chat = _run_round(db, state, m, writes=_confirm)
+    assert db.conn.execute(
+        "SELECT night_approved FROM pending_actions WHERE id = ?", (action_id,)
+    ).fetchone()["night_approved"] == 1
+
+    # 撤回确认轮 → 暂存回到待确认（night_approved=0，不再随颁诏提交），暂存行本身仍在
+    db.undo_chat_turn(confirm_chat)
+    row = db.conn.execute(
+        "SELECT status, night_approved FROM pending_actions WHERE id = ?", (action_id,)
+    ).fetchone()
+    assert row is not None and row["status"] == "pending" and row["night_approved"] == 0

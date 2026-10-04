@@ -1,0 +1,17 @@
+# FILE: tests/test_pay_order_override_653.py
+# NAME: test_lifecycle_force_promulgation_after_rejection
+# LINE: 1061-1071
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_lifecycle_force_promulgation_after_rejection(game):
+    """强颁：中旨标记＋代价照 0055/0056 落，config 自下一次结算生效。"""
+    from dossier_test_helpers import rejected_verdict
+
+    db, state, _content = game
+    did = _override_dossier(db, state, [{"key": "due_haircut_bp_宗禄", "value": 5000}])
+    db.apply_dossier_verdicts(state, [rejected_verdict(did)])
+    assert "due_haircut_bp_宗禄" not in db.get_fiscal_config()   # 打回零写
+    db.apply_dossier_promulgation(state, did, "force_promulgated")
+    assert db.get_fiscal_config()["due_haircut_bp_宗禄"] == 5000  # 强颁物化
+    assert db.dossier_authorizes_effects(did)

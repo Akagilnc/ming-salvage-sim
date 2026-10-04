@@ -1,0 +1,61 @@
+{
+  "source_path": "tests/test_pay_order_override_extraction_653.py",
+  "member_count": 4,
+  "members": [
+    {
+      "idx": 1500,
+      "file": "tests/test_pay_order_override_extraction_653.py",
+      "name": "test_single_pay_order_capture_grounds_relative_deadline_at_current_turn",
+      "line": 8,
+      "end": 46,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1500_test_pay_order_override_extraction_653__test_single_pay_order_capture_grounds_relative_deadline_at_current_turn.txt",
+      "source_path": "tests/test_pay_order_override_extraction_653.py"
+    },
+    {
+      "idx": 1501,
+      "file": "tests/test_pay_order_override_extraction_653.py",
+      "name": "test_relative_deadline_cannot_stage_llm_computed_expired_turn",
+      "line": 50,
+      "end": 65,
+      "flags": [
+        "mock_or_patch_present"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1501_test_pay_order_override_extraction_653__test_relative_deadline_cannot_stage_llm_computed_expired_turn.txt",
+      "source_path": "tests/test_pay_order_override_extraction_653.py"
+    },
+    {
+      "idx": 1502,
+      "file": "tests/test_pay_order_override_extraction_653.py",
+      "name": "test_single_pay_order_capture_rejects_missing_entries",
+      "line": 68,
+      "end": 77,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1502_test_pay_order_override_extraction_653__test_single_pay_order_capture_rejects_missing_entries.txt",
+      "source_path": "tests/test_pay_order_override_extraction_653.py"
+    },
+    {
+      "idx": 1503,
+      "file": "tests/test_pay_order_override_extraction_653.py",
+      "name": "test_multi_pay_order_capture_preserves_reverse_non_tied_priorities",
+      "line": 80,
+      "end": 98,
+      "flags": [
+        "assert_count",
+        "mock_or_patch_present"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1503_test_pay_order_override_extraction_653__test_multi_pay_order_capture_preserves_reverse_non_tied_priorities.txt",
+      "source_path": "tests/test_pay_order_override_extraction_653.py"
+    }
+  ]
+}

@@ -1,0 +1,20 @@
+# FILE: tests/test_dossier_links_559.py
+# NAME: test_unknown_target_link_is_rejected_and_audited
+# LINE: 143-156
+# FLAGS: assert_count,helper_or_private_call
+# KIND: py
+
+def test_unknown_target_link_is_rejected_and_audited(game):
+    db, state, _ = game
+    source = _make_dossier(db, state, "护行密令")
+
+    with pytest.raises(ValueError):
+        db.add_dossier_links(
+            source,
+            [{"target_dossier_id": 999999, "relation_type": "护卫", "note": "护送"}],
+        )
+
+    assert db.list_dossier_links(source) == []
+    audit = db.list_dossier_link_rejections(source)
+    assert audit[-1]["target_dossier_id"] == 999999
+    assert str(audit[-1]["reason"] or "").strip()

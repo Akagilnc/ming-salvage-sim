@@ -1,0 +1,25 @@
+# FILE: tests/test_llm_channel_config.py
+# NAME: test_create_chat_model_strips_top_p_for_openai_reasoning_family
+# LINE: 325-343
+# FLAGS: assert_text_compare_or_match,assert_count
+# KIND: py
+
+def test_create_chat_model_strips_top_p_for_openai_reasoning_family(monkeypatch):
+    """#1452：luna/gpt-5 推理族拒 top_p（HTTP 400 空 assistant → agno Unknown model error）。
+    召对 registry 固定传 top_p=0.9，工厂必须剥离，temperature 可保留。"""
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    cfg = LLMConfig(
+        api_key="sk-test",
+        base_url="https://opencode.ai/zen/go/v1",
+        model="gpt-5.6-luna",
+        channel="api",
+    )
+
+    model = create_chat_model(cfg, temperature=0.6, top_p=0.9)
+
+    assert model.temperature == 0.6
+    assert getattr(model, "top_p", None) is None
+    # request 层同样不得带 top_p
+    params = model.get_request_params()
+    assert "top_p" not in params
+    assert params.get("temperature") == 0.6

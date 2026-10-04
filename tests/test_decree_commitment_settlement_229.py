@@ -6,7 +6,6 @@ from tests.test_due_review_621 import _settle_empty_month as _player_month
 from ming_sim.issues import (
     apply_issue_inertia_and_ongoing,
     apply_score_extraction,
-    commitment_progress_payload,
 )
 
 
@@ -394,15 +393,21 @@ def test_commitment_progress_skips_non_numeric_gate_values(game):
         origin_ref="decree:turn-1:bad-progress-value",
         bar_value=0,
         inertia=0,
-        ongoing_effects={"metrics": {"皇威": 1}},
+        ongoing_effects={"economy": []},
         stop_condition=json.dumps({"皇威": ">=10"}, ensure_ascii=False),
         commitment_kind="until_stop",
     )
     state.metrics["皇威"] = "非数字"
 
-    progress = commitment_progress_payload(db, state, _issue_row(db, issue_id))
+    with pytest.raises(TypeError):
+        apply_issue_inertia_and_ongoing(db, state)
 
-    assert progress == {"months_elapsed": 0, "paid_total": 0}
+    row = _issue_row(db, issue_id)
+    assert row["status"] == "active"
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM issue_advances WHERE issue_id=?",
+        (issue_id,),
+    ).fetchone()[0] == 0
 
 
 def test_region_cannon_commitment_ongoing_applies_monthly_when_counted(game):
@@ -532,7 +537,7 @@ def test_until_stop_arrears_commitment_settlement_oracle_resolves_with_restore(g
 
 def test_commitment_progress_fractional_strict_gate_can_be_satisfied(game):
     """strict < gates use real-valued comparison once arrears can be fractional."""
-    db, state, _content = game
+    db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
     db.conn.execute("UPDATE legacies SET status='cleared' WHERE status='active'")
     db.conn.execute("UPDATE armies SET arrears=0 WHERE owner_power='ming'")
@@ -551,9 +556,9 @@ def test_commitment_progress_fractional_strict_gate_can_be_satisfied(game):
         commitment_kind="until_stop",
     )
 
-    progress = commitment_progress_payload(db, state, _issue_row(db, issue_id))
-
-    assert progress["remaining_arrears"] == 0
+    apply_issue_inertia_and_ongoing(db, state)
+    db.conn.commit()
+    assert _issue_row(db, issue_id)["status"] == "resolved"
 
     db.conn.execute("UPDATE armies SET arrears=1.5 WHERE id='guanning'")
     short_issue_id = db.insert_issue(
@@ -569,9 +574,9 @@ def test_commitment_progress_fractional_strict_gate_can_be_satisfied(game):
         commitment_kind="until_stop",
     )
 
-    short_progress = commitment_progress_payload(db, state, _issue_row(db, short_issue_id))
-
-    assert short_progress["remaining_arrears"] == 1
+    apply_issue_inertia_and_ongoing(db, state)
+    db.conn.commit()
+    assert _issue_row(db, short_issue_id)["status"] == "active"
 
     db.conn.execute("UPDATE armies SET arrears=1.5 WHERE id='guanning'")
     greater_issue_id = db.insert_issue(
@@ -587,9 +592,9 @@ def test_commitment_progress_fractional_strict_gate_can_be_satisfied(game):
         commitment_kind="until_stop",
     )
 
-    greater_progress = commitment_progress_payload(db, state, _issue_row(db, greater_issue_id))
-
-    assert greater_progress["remaining_arrears"] == 0
+    apply_issue_inertia_and_ongoing(db, state)
+    db.conn.commit()
+    assert _issue_row(db, greater_issue_id)["status"] == "resolved"
 
 
 def test_commitment_ongoing_economy_not_scaled_by_bar_discount(game):
@@ -1160,7 +1165,7 @@ def test_commitment_pay_pool_is_scoped_to_arrears_stop_gate_armies(game):
 
 
 def test_commitment_progress_keeps_strict_stop_gate_semantics(game):
-    db, state, _content = game
+    db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
     db.conn.execute("UPDATE legacies SET status='cleared' WHERE status='active'")
     db.conn.execute("UPDATE armies SET arrears=0 WHERE owner_power='ming'")
@@ -1179,10 +1184,9 @@ def test_commitment_progress_keeps_strict_stop_gate_semantics(game):
         commitment_kind="until_stop",
     )
 
-    progress = commitment_progress_payload(db, state, _issue_row(db, issue_id))
-
-    assert progress is not None
-    assert progress["remaining_arrears"] == 1
+    apply_issue_inertia_and_ongoing(db, state)
+    db.conn.commit()
+    assert _issue_row(db, issue_id)["status"] == "active"
 
 
 def test_end_turn_without_ongoing_is_not_expired_by_settlement_tick(game):

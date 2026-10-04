@@ -1,0 +1,311 @@
+{
+  "source_path": "tests/test_faction_leverage_9.py",
+  "member_count": 22,
+  "members": [
+    {
+      "idx": 910,
+      "file": "tests/test_faction_leverage_9.py",
+      "name": "test_faction_leverage_drops_when_core_minister_ousted",
+      "line": 29,
+      "end": 37,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0910_test_faction_leverage_9__test_faction_leverage_drops_when_core_minister_ousted.txt",
+      "source_path": "tests/test_faction_leverage_9.py"
+    },
+    {
+      "idx": 911,
+      "file": "tests/test_faction_leverage_9.py",
+      "name": "test_faction_leverage_rises_back_when_minister_restored",
+      "line": 40,
+      "end": 54,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0911_test_faction_leverage_9__test_faction_leverage_rises_back_when_minister_restored.txt",
+      "source_path": "tests/test_faction_leverage_9.py"
+    },
+    {
+      "idx": 912,
+      "file": "tests/test_faction_leverage_9.py",
+      "name": "test_non_whitelist_faction_row_leverage_not_recomputed",
+      "line": 57,
+      "end": 78,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0912_test_faction_leverage_9__test_non_whitelist_faction_row_leverage_not_recomputed.txt",
+      "source_path": "tests/test_faction_leverage_9.py"
+    },
+    {
+      "idx": 913,
+      "file": "tests/test_faction_leverage_9.py",
+      "name": "test_rank_tier_modulates_impact",
+      "line": 95,
+      "end": 123,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0913_test_faction_leverage_9__test_rank_tier_modulates_impact.txt",
+      "source_path": "tests/test_faction_leverage_9.py"
+    },
+    {
+      "idx": 914,
+      "file": "tests/test_faction_leverage_9.py",
+      "name": "test_restore_uses_new_office_weight_not_old",
+      "line": 126,
+      "end": 179,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0914_test_faction_leverage_9__test_restore_uses_new_office_weight_not_old.txt",
+      "source_path": "tests/test_faction_leverage_9.py"
+    },
+    {
+      "idx": 915,
+      "file": "tests/test_faction_leverage_9.py",
+      "name": "test_failed_appointment_rolls_back_faction_leverage",
+      "line": 200,
+      "end": 235,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0915_test_faction_leverage_9__test_failed_appointment_rolls_back_faction_leverage.txt",
+      "source_path": "tests/test_faction_leverage_9.py"
+    },
+    {
+      "idx": 916,
+      "file": "tests/test_faction_leverage_9.py",
+      "name": "test_displaced_minister_faction_leverage_recomputed",
+      "line": 238,
+      "end": 268,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0916_test_faction_leverage_9__test_displaced_minister_faction_leverage_recomputed.txt",
+      "source_path": "tests/test_faction_leverage_9.py"
+    },
+    {
+      "idx": 917,
+      "file": "tests/test_faction_leverage_9.py",
+      "name": "test_leverage_clamps_at_zero_no_negative",
+      "line": 303,
+      "end": 329,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0917_test_faction_leverage_9__test_leverage_clamps_at_zero_no_negative.txt",
+      "source_path": "tests/test_faction_leverage_9.py"
+    },
+    {
+      "idx": 918,
+      "file": "tests/test_faction_leverage_9.py",
+      "name": "test_add_character_appointment_lifts_faction_leverage",
+      "line": 332,
+      "end": 353,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0918_test_faction_leverage_9__test_add_character_appointment_lifts_faction_leverage.txt",
+      "source_path": "tests/test_faction_leverage_9.py"
+    },
+    {
+      "idx": 919,
+      "file": "tests/test_faction_leverage_9.py",
+      "name": "test_active_member_empty_office_contributes_zero_weight",
+      "line": 356,
+      "end": 387,
+      "flags": [
+        "internal_formula_oracle"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0919_test_faction_leverage_9__test_active_member_empty_office_contributes_zero_weight.txt",
+      "source_path": "tests/test_faction_leverage_9.py"
+    },
+    {
+      "idx": 920,
+      "file": "tests/test_faction_leverage_9.py",
+      "name": "test_recompute_all_reconciles_drift_from_unhooked_path",
+      "line": 390,
+      "end": 439,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call",
+        "internal_formula_oracle"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0920_test_faction_leverage_9__test_recompute_all_reconciles_drift_from_unhooked_path.txt",
+      "source_path": "tests/test_faction_leverage_9.py"
+    },
+    {
+      "idx": 921,
+      "file": "tests/test_faction_leverage_9.py",
+      "name": "test_settle_path_triggers_reconcile_before_next_period",
+      "line": 442,
+      "end": 481,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0921_test_faction_leverage_9__test_settle_path_triggers_reconcile_before_next_period.txt",
+      "source_path": "tests/test_faction_leverage_9.py"
+    },
+    {
+      "idx": 922,
+      "file": "tests/test_faction_leverage_9.py",
+      "name": "test_reconcile_runs_before_clear_gated_legacies_same_turn",
+      "line": 484,
+      "end": 523,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call",
+        "internal_formula_oracle",
+        "retired_or_meta_marker"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0922_test_faction_leverage_9__test_reconcile_runs_before_clear_gated_legacies_same_turn.txt",
+      "source_path": "tests/test_faction_leverage_9.py"
+    },
+    {
+      "idx": 923,
+      "file": "tests/test_faction_leverage_9.py",
+      "name": "test_weizhongxian_ouster_drops_yandang_by_sili_weight",
+      "line": 540,
+      "end": 554,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0923_test_faction_leverage_9__test_weizhongxian_ouster_drops_yandang_by_sili_weight.txt",
+      "source_path": "tests/test_faction_leverage_9.py"
+    },
+    {
+      "idx": 924,
+      "file": "tests/test_faction_leverage_9.py",
+      "name": "test_whitelist_faction_delta_routes_to_offset_survives_reconcile",
+      "line": 557,
+      "end": 579,
+      "flags": [
+        "internal_formula_oracle"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0924_test_faction_leverage_9__test_whitelist_faction_delta_routes_to_offset_survives_reconcile.txt",
+      "source_path": "tests/test_faction_leverage_9.py"
+    },
+    {
+      "idx": 925,
+      "file": "tests/test_faction_leverage_9.py",
+      "name": "test_whitelist_faction_delta_survives_full_settlement",
+      "line": 582,
+      "end": 617,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0925_test_faction_leverage_9__test_whitelist_faction_delta_survives_full_settlement.txt",
+      "source_path": "tests/test_faction_leverage_9.py"
+    },
+    {
+      "idx": 926,
+      "file": "tests/test_faction_leverage_9.py",
+      "name": "test_non_whitelist_faction_delta_direct_leverage_survives_reconcile",
+      "line": 620,
+      "end": 637,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call",
+        "internal_formula_oracle"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0926_test_faction_leverage_9__test_non_whitelist_faction_delta_direct_leverage_survives_reconcile.txt",
+      "source_path": "tests/test_faction_leverage_9.py"
+    },
+    {
+      "idx": 927,
+      "file": "tests/test_faction_leverage_9.py",
+      "name": "test_legacy_save_calibrates_offset_on_open",
+      "line": 672,
+      "end": 699,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call",
+        "retired_or_meta_marker"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0927_test_faction_leverage_9__test_legacy_save_calibrates_offset_on_open.txt",
+      "source_path": "tests/test_faction_leverage_9.py"
+    },
+    {
+      "idx": 928,
+      "file": "tests/test_faction_leverage_9.py",
+      "name": "test_col_added_uncalibrated_save_recalibrates_on_open",
+      "line": 735,
+      "end": 776,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call",
+        "retired_or_meta_marker"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0928_test_faction_leverage_9__test_col_added_uncalibrated_save_recalibrates_on_open.txt",
+      "source_path": "tests/test_faction_leverage_9.py"
+    },
+    {
+      "idx": 929,
+      "file": "tests/test_faction_leverage_9.py",
+      "name": "test_calibrated_save_without_marker_not_re_anchored",
+      "line": 814,
+      "end": 856,
+      "flags": [
+        "helper_or_private_call",
+        "retired_or_meta_marker"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0929_test_faction_leverage_9__test_calibrated_save_without_marker_not_re_anchored.txt",
+      "source_path": "tests/test_faction_leverage_9.py"
+    },
+    {
+      "idx": 930,
+      "file": "tests/test_faction_leverage_9.py",
+      "name": "test_power_id_defection_drops_faction_leverage_immediately",
+      "line": 893,
+      "end": 915,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0930_test_faction_leverage_9__test_power_id_defection_drops_faction_leverage_immediately.txt",
+      "source_path": "tests/test_faction_leverage_9.py"
+    },
+    {
+      "idx": 931,
+      "file": "tests/test_faction_leverage_9.py",
+      "name": "test_half_weight_odd_baseline_no_round_drift",
+      "line": 918,
+      "end": 947,
+      "flags": [
+        "internal_formula_oracle"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0931_test_faction_leverage_9__test_half_weight_odd_baseline_no_round_drift.txt",
+      "source_path": "tests/test_faction_leverage_9.py"
+    }
+  ]
+}

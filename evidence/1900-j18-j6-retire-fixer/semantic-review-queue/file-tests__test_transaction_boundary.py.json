@@ -1,0 +1,182 @@
+{
+  "source_path": "tests/test_transaction_boundary.py",
+  "member_count": 13,
+  "members": [
+    {
+      "idx": 2245,
+      "file": "tests/test_transaction_boundary.py",
+      "name": "test_atomic_normal_exit_commits_to_disk",
+      "line": 62,
+      "end": 76,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2245_test_transaction_boundary__test_atomic_normal_exit_commits_to_disk.txt",
+      "source_path": "tests/test_transaction_boundary.py"
+    },
+    {
+      "idx": 2246,
+      "file": "tests/test_transaction_boundary.py",
+      "name": "test_nested_atomic_inner_commit_held_outer_rolls_back",
+      "line": 94,
+      "end": 111,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2246_test_transaction_boundary__test_nested_atomic_inner_commit_held_outer_rolls_back.txt",
+      "source_path": "tests/test_transaction_boundary.py"
+    },
+    {
+      "idx": 2247,
+      "file": "tests/test_transaction_boundary.py",
+      "name": "test_nested_atomic_both_succeed_commits_once",
+      "line": 114,
+      "end": 135,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2247_test_transaction_boundary__test_nested_atomic_both_succeed_commits_once.txt",
+      "source_path": "tests/test_transaction_boundary.py"
+    },
+    {
+      "idx": 2248,
+      "file": "tests/test_transaction_boundary.py",
+      "name": "test_outside_atomic_commit_is_real",
+      "line": 155,
+      "end": 168,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2248_test_transaction_boundary__test_outside_atomic_commit_is_real.txt",
+      "source_path": "tests/test_transaction_boundary.py"
+    },
+    {
+      "idx": 2249,
+      "file": "tests/test_transaction_boundary.py",
+      "name": "test_set_fiscal_config_respects_caller_owned_transaction",
+      "line": 171,
+      "end": 186,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2249_test_transaction_boundary__test_set_fiscal_config_respects_caller_owned_transaction.txt",
+      "source_path": "tests/test_transaction_boundary.py"
+    },
+    {
+      "idx": 2250,
+      "file": "tests/test_transaction_boundary.py",
+      "name": "test_set_fiscal_config_batch_respects_caller_owned_transaction",
+      "line": 189,
+      "end": 211,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2250_test_transaction_boundary__test_set_fiscal_config_batch_respects_caller_owned_transaction.txt",
+      "source_path": "tests/test_transaction_boundary.py"
+    },
+    {
+      "idx": 2251,
+      "file": "tests/test_transaction_boundary.py",
+      "name": "test_atomic_reraises_original_exception",
+      "line": 214,
+      "end": 230,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2251_test_transaction_boundary__test_atomic_reraises_original_exception.txt",
+      "source_path": "tests/test_transaction_boundary.py"
+    },
+    {
+      "idx": 2252,
+      "file": "tests/test_transaction_boundary.py",
+      "name": "test_nested_atomic_inner_error_rolls_back_at_outer",
+      "line": 233,
+      "end": 255,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2252_test_transaction_boundary__test_nested_atomic_inner_error_rolls_back_at_outer.txt",
+      "source_path": "tests/test_transaction_boundary.py"
+    },
+    {
+      "idx": 2253,
+      "file": "tests/test_transaction_boundary.py",
+      "name": "test_connection_context_outside_atomic_still_commits",
+      "line": 281,
+      "end": 289,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2253_test_transaction_boundary__test_connection_context_outside_atomic_still_commits.txt",
+      "source_path": "tests/test_transaction_boundary.py"
+    },
+    {
+      "idx": 2254,
+      "file": "tests/test_transaction_boundary.py",
+      "name": "test_commit_failure_in_conn_context_rolls_back",
+      "line": 440,
+      "end": 458,
+      "flags": [
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2254_test_transaction_boundary__test_commit_failure_in_conn_context_rolls_back.txt",
+      "source_path": "tests/test_transaction_boundary.py"
+    },
+    {
+      "idx": 2255,
+      "file": "tests/test_transaction_boundary.py",
+      "name": "test_commit_failure_at_atomic_exit_rolls_back",
+      "line": 461,
+      "end": 485,
+      "flags": [
+        "assert_count",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2255_test_transaction_boundary__test_commit_failure_at_atomic_exit_rolls_back.txt",
+      "source_path": "tests/test_transaction_boundary.py"
+    },
+    {
+      "idx": 2256,
+      "file": "tests/test_transaction_boundary.py",
+      "name": "test_ddl_after_explicit_midatomic_rollback_does_not_escape",
+      "line": 536,
+      "end": 555,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2256_test_transaction_boundary__test_ddl_after_explicit_midatomic_rollback_does_not_escape.txt",
+      "source_path": "tests/test_transaction_boundary.py"
+    },
+    {
+      "idx": 2257,
+      "file": "tests/test_transaction_boundary.py",
+      "name": "test_begin_failure_at_entry_restores_flags",
+      "line": 558,
+      "end": 581,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2257_test_transaction_boundary__test_begin_failure_at_entry_restores_flags.txt",
+      "source_path": "tests/test_transaction_boundary.py"
+    }
+  ]
+}

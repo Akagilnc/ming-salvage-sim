@@ -1,0 +1,28 @@
+# FILE: tests/test_decree_dossiers_571.py
+# NAME: test_mechanical_directive_missing_target_fails_loudly_at_real_entry
+# LINE: 1736-1757
+# FLAGS: assert_text_compare_or_match
+# KIND: py
+
+def test_mechanical_directive_missing_target_fails_loudly_at_real_entry(game):
+    db, state, _content = game
+    directive_id = db.add_directive(
+        state, None, "拨银十两但未指明去处", "手动新增",
+        dossier_payload={
+            "dossier_action_type": "grant_allocation",
+            "target_kind": "issue",
+            "account": "国库",
+            "amount": 10,
+            "execution_surface": "immediate",
+        },
+    )
+    # #654 路3：缺 canonical target → rejection，不抛穿
+    db.ensure_dossiers_for_draft_directives(state)
+    assert db.get_dossier_for_directive(directive_id) is None
+    status = db.conn.execute(
+        "SELECT status FROM turn_directives WHERE id=?", (directive_id,),
+    ).fetchone()["status"]
+    assert status == "draft"
+    assert db.conn.execute(
+        "SELECT id FROM rejection_reports WHERE section='directive_locality'",
+    ).fetchone() is not None

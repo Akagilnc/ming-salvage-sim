@@ -1,0 +1,31 @@
+# FILE: tests/test_breach_plea_623.py
+# NAME: test_remove_sponsor_writes_plea
+# LINE: 208-232
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_remove_sponsor_writes_plea(game):
+    db, state, content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.commit()
+    did, holder = _executing_policy_dossier(db, state, token="rm-sponsor")
+    origin = f"dossier:{did}"
+    cid, _ = _insert_commitment(
+        db, state, title="人存政举之诺", origin_ref=origin,
+        participants=[{"character_id": holder, "tier": "主办", "role": "承办"}],
+        bar_value=20, end_turn=state.turn + 18,
+    )
+    # 罢主办
+    db.conn.execute(
+        "UPDATE characters SET status='dismissed' WHERE name=?", (holder,),
+    )
+    db.conn.commit()
+    written = scan_and_write_breach_pleas(db, state, commit=True)
+    assert written
+    pleas = _pending_pleas(db)
+    assert any(p["criterion_text"] == "撤人" for p in pleas)
+    # 当回合承诺仍 active；0056 不落（撤人）
+    assert db.conn.execute(
+        "SELECT status FROM issues WHERE id=?", (cid,),
+    ).fetchone()["status"] == "active"
+    assert _cost_events(db, did) == []

@@ -1,0 +1,38 @@
+# FILE: tests/test_audience_presence_500.py
+# NAME: test_audible_interval_public_only
+# LINE: 354-385
+# FLAGS: helper_or_private_call
+# KIND: py
+
+def test_audible_interval_public_only(game):
+    db, state, content = game
+    _activate(db, state, "毕自严", "王绍徽")
+    night = an.open_night(db, state, location="乾清宫")
+    nid = int(night["id"])
+    an.summon_enter(db, nid, "毕自严")
+    # 王绍徽入殿前的公开对话：不在其侍立区间，不该流入
+    before_id = an.append_ledger_entry(
+        db, nid, person_names=["毕自严"],
+        audibility=AUDIBILITY_PUBLIC,
+    )
+    an.summon_enter(db, nid, "王绍徽")  # 王绍徽侍立区间起点
+    # 区间内御前低语：私账不流入
+    whisper_id = an.append_ledger_entry(
+        db, nid, person_names=[STANDING],
+        audibility=AUDIBILITY_PRIVATE,
+    )
+    # 区间内公开条目：应流入
+    public_id = an.append_ledger_entry(
+        db, nid, person_names=["王绍徽"],
+        audibility=AUDIBILITY_PUBLIC,
+    )
+
+    audible = an.audible_entries_for(db, nid, "王绍徽")
+    ids = {int(e["id"]) for e in audible}
+    assert public_id in ids  # 正向：区间内公开条目流入
+    assert whisper_id not in ids  # 负向：御前低语不流入
+    assert before_id not in ids  # 负向：侍立区间之前的条目不流入
+    assert all(e["audibility"] == AUDIBILITY_PUBLIC for e in audible)
+
+    # 不在场者取数为空
+    assert an.audible_entries_for(db, nid, "洪承畴") == []

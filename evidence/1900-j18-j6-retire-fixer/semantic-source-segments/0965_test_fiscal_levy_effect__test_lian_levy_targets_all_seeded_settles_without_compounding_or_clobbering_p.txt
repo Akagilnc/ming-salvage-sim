@@ -1,0 +1,43 @@
+# FILE: tests/test_fiscal_levy_effect.py
+# NAME: test_lian_levy_targets_all_seeded_settles_without_compounding_or_clobbering_p
+# LINE: 928-964
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_lian_levy_targets_all_seeded_settles_without_compounding_or_clobbering_p(game):
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1639
+    state.period = 1
+    db.save_state(state)
+
+    before_by_region = {}
+    for row in db.conn.execute("SELECT id, fiscal FROM regions ORDER BY id").fetchall():
+        fiscal = json.loads(str(row["fiscal"] or "{}"))
+        settle = fiscal.get("settle") if isinstance(fiscal, dict) else None
+        if isinstance(settle, dict) and isinstance(settle.get("p"), dict):
+            before_by_region[str(row["id"])] = dict(settle["p"])
+    assert len(before_by_region) >= 17
+
+    applied = apply_historical_fiscal_rates(state, db)
+    assert "lian_levy_start_1639" in [item["id"] for item in applied]
+    first_by_region = {}
+    for region_id, before_p in before_by_region.items():
+        after = _settle_payload(db, region_id)
+        first_by_region[region_id] = dict(after["p"])
+        meta = after["_meta"]
+        seed_liao = meta["辽饷九厘基线"]
+        expected_sanxiang = seed_liao * 4.0 / 3.0 + meta["剿饷基线"] + meta["练饷基线"]
+        expected_transport = meta["正赋起运基线"] + expected_sanxiang
+        assert math.isclose(after["p"]["三饷应征"], expected_sanxiang, rel_tol=1e-9, abs_tol=1e-9)
+        assert math.isclose(after["p"]["起运定额"], expected_transport, rel_tol=1e-9, abs_tol=1e-9)
+        assert after["p"]["起运定额"] >= after["p"]["三饷应征"]
+        assert after["p"]["起运定额"] >= 0
+
+        preserved_keys = set(before_p) - {"三饷应征", "起运定额"}
+        for key in preserved_keys:
+            assert after["p"][key] == before_p[key]
+
+    apply_historical_fiscal_rates(state, db)
+    for region_id, first_p in first_by_region.items():
+        assert _settle_payload(db, region_id)["p"] == first_p

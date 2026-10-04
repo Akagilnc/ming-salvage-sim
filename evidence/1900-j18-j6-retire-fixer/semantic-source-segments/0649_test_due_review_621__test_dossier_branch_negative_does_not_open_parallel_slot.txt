@@ -1,0 +1,33 @@
+# FILE: tests/test_due_review_621.py
+# NAME: test_dossier_branch_negative_does_not_open_parallel_slot
+# LINE: 270-296
+# FLAGS: helper_or_private_call
+# KIND: py
+
+def test_dossier_branch_negative_does_not_open_parallel_slot(game):
+    """负向：有案卷桥不得另建第二执行格/平行案卷。"""
+    db, state, content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.commit()
+    dossier_id = _executing_policy_dossier(db, state)
+    before_count = db.conn.execute("SELECT COUNT(*) AS c FROM decree_dossiers").fetchone()["c"]
+    stages = [{
+        "stage_idx": 0,
+        "due_turn": state.turn,
+        "criterion_text": "火器见眉目",
+        "origin_context": "三年火器见眉目",
+    }]
+    _insert_staged_commitment(
+        db, state, content, stages=stages, origin_ref=f"dossier:{dossier_id}",
+    )
+    write_due_staged_commitment_todos(db, state)
+    # 人为把 created_turn 调旧，使本 settle 可消费
+    db.conn.execute(
+        "UPDATE next_audience_todos SET created_turn=?",
+        (state.turn - 1,),
+    )
+    db.conn.commit()
+    apply_pending_due_reviews(db, state, commit=True)
+    after_count = db.conn.execute("SELECT COUNT(*) AS c FROM decree_dossiers").fetchone()["c"]
+    assert after_count == before_count
+    assert db.get_decree_dossier(dossier_id)["id"] == dossier_id

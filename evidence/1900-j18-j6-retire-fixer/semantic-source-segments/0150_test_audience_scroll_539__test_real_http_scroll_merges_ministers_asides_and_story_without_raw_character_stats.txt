@@ -1,0 +1,53 @@
+# FILE: tests/test_audience_scroll_539.py
+# NAME: test_real_http_scroll_merges_ministers_asides_and_story_without_raw_character_stats
+# LINE: 241-287
+# FLAGS: assert_text_compare_or_match,mock_or_patch_present,helper_or_private_call
+# KIND: py
+
+def test_real_http_scroll_merges_ministers_asides_and_story_without_raw_character_stats(game, monkeypatch):
+    import web_app
+
+    db, state, _ = game
+    night_id = open_audience_night(db, state)
+    first_turn, _ = append_night_chat(db, state, night_id, "杨嗣昌", "辽饷如何？", "臣请据实核账。", 10)
+    an.append_ledger_entry(
+        db, night_id, tags=["站台", "作保"],
+        person_names=["杨嗣昌"], source_chat_turn_id=first_turn, order_key=10,
+    )
+    an.append_ledger_entry(
+        db, night_id, tags=["天气"],
+        person_names=[], source_chat_turn_id=first_turn, order_key=10,
+    )
+    append_night_chat(db, state, night_id, "洪承畴", "边情如何？", "边关尚稳。", 20)
+    monkeypatch.setattr(web_app, "get_game", lambda: _scroll_game(db))
+
+    payload = TestClient(web_app.app).get("/api/audience/scroll").json()
+    messages = payload["messages"]
+    contents = [message["content"] for message in messages]
+
+    assert [content for content in contents if content in {
+        "辽饷如何？", "臣请据实核账。", "边情如何？", "边关尚稳。",
+    }] == ["辽饷如何？", "臣请据实核账。", "边情如何？", "边关尚稳。"]
+    assert "杨嗣昌以身家作保。" not in contents
+    # #1293a：抽取派生（含非对话复述的故事事实）不上 live 卷轴
+    assert "帘外忽起雨声。" not in contents
+    assert [message["content"] for message in messages if message["role"] == "scene" and message.get("chat_turn_id")] == ["臣请据实核账。", "边关尚稳。"]
+
+    allowed_message_fields = {
+        "role", "speaker", "audibility", "time", "content",
+        "soft_boundary", "beat", "highlights", "container",
+        "chat_turn_id", "record_id",
+    }
+    forbidden_character_stats = {"loyalty", "ability", "importance", "influence", "power", "favor"}
+    assert messages
+    base_message_fields = allowed_message_fields - {"chat_turn_id", "record_id"}
+    dialogue_contents = {"辽饷如何？", "臣请据实核账。", "边情如何？", "边关尚稳。"}
+    for message in messages:
+        expected_fields = set(base_message_fields)
+        if message["content"] in dialogue_contents:
+            expected_fields.add("chat_turn_id")
+            assert message["chat_turn_id"] > 0
+        assert set(message) == expected_fields
+        assert forbidden_character_stats.isdisjoint(message)
+        assert forbidden_character_stats.isdisjoint(message["container"])
+        assert set(message["container"]) == {"time_of_day", "location", "audience_type"}

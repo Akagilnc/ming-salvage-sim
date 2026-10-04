@@ -1,0 +1,28 @@
+# FILE: web/src/useDurableProjection.test.tsx
+# NAME: "持久刷新协调器（#499 App 消费的 useDurableProjection）" / "beginMutation 推进代次：作废在飞的旧刷新（返 null、不落陈旧 state），直接变更结果不被覆盖"
+# LINE: 84-105
+# FLAGS: web_mock_spy_or_calls
+# KIND: web
+
+  it("beginMutation 推进代次：作废在飞的旧刷新（返 null、不落陈旧 state），直接变更结果不被覆盖", async () => {
+    const states: string[] = [];
+    const orders: string[] = [];
+    const hookRef = mount(states, orders);
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      const u = new URL(String(url), "http://t.local");
+      if (u.pathname.endsWith("/game/state")) { await gate; return jsonResp({ marker: "old", map_nodes: [] }); }
+      return jsonResp({});
+    }));
+
+    let pOld!: Promise<GameState | null>;
+    act(() => { pOld = hookRef.current!.refresh(); });   // 旧刷新在飞
+    await tick();
+    act(() => { hookRef.current!.beginMutation(); });     // 直接变更（草案增/删等）应用响应前推进代次
+    release();
+    let ret: GameState | null = null;
+    await act(async () => { ret = await pOld; });
+    expect(ret).toBeNull();        // 旧刷新被作废、返 null
+    expect(states).toEqual([]);    // 未落陈旧 state（本变更结果不被覆盖）
+  });

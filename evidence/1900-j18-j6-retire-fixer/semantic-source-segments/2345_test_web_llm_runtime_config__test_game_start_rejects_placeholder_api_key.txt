@@ -1,0 +1,16 @@
+# FILE: tests/test_web_llm_runtime_config.py
+# NAME: test_game_start_rejects_placeholder_api_key
+# LINE: 1219-1228
+# FLAGS: mock_or_patch_present
+# KIND: py
+
+def test_game_start_rejects_placeholder_api_key(monkeypatch, tmp_path):
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    monkeypatch.setenv("OPENAI_API_KEY", "cli-backend")
+    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {"channel": ""})
+    path = tmp_path / "placeholder.db"
+
+    with pytest.raises(web_app.LLMUnavailable):
+        web_app.WebGame(db_path=str(path))
+
+    assert not path.exists()

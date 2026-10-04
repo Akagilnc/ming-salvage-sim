@@ -1,0 +1,108 @@
+# FILE: tests/test_person_delta_adapter.py
+# NAME: test_apply_score_extraction_materializes_displaced_holder_as_talent_pool_change
+# LINE: 827-928
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_apply_score_extraction_materializes_displaced_holder_as_talent_pool_change(game):
+    db, state, content = game
+    names = [
+        name
+        for name, ch in content.characters.items()
+        if getattr(ch, "power_id", "ming") == "ming"
+        and getattr(ch, "office_type", "") != "后宫"
+        and db.get_character_status(name)[0] == "active"
+    ]
+    new_holder, old_holder = names[0], names[1]
+    old_new = (
+        content.characters[new_holder].status,
+        content.characters[new_holder].office,
+        content.characters[new_holder].office_type,
+    )
+    old_old = (
+        content.characters[old_holder].status,
+        content.characters[old_holder].office,
+        content.characters[old_holder].office_type,
+    )
+    target_office = "测试总督"
+    before_logs = db.conn.execute("SELECT COUNT(*) FROM person_logs").fetchone()[0]
+
+    try:
+        # 新正形：地方在任须有 character_offices.region_id，不得靠空任所 wildcard 互挤。
+        db.conn.execute(
+            "UPDATE characters SET office=?, office_type=? WHERE name=?",
+            (target_office, "地方", old_holder),
+        )
+        db._record_character_office(
+            old_holder, target_office, "地方", "test-fixture", region_id="shaanxi",
+        )
+        db.conn.commit()
+        content.characters[old_holder].office = target_office
+        content.characters[old_holder].office_type = "地方"
+        content.characters[old_holder].office_region = "shaanxi"
+
+        applied = issues.apply_score_extraction(
+            db,
+            state,
+            {
+                "人物变更": [
+                    {
+                        "name": new_holder,
+                        "origin_ref": "盘面自发", "动作": "调任",
+                        "office": target_office,
+                        "office_type": "地方",
+                        "region_id": "shaanxi",
+                        "reason": "顶替旧任",
+                    }
+                ]
+            },
+            content=content,
+        )
+
+        old_row = db.conn.execute(
+            "SELECT status, office, office_type, reason_code FROM characters WHERE name=?",
+            (old_holder,),
+        ).fetchone()
+        assert dict(old_row) == {
+            "status": "active",
+            "office": "听用候铨",
+            "office_type": "身名分",
+            "reason_code": "被顶替",
+        }
+        assert content.characters[old_holder].office == "听用候铨"
+        assert content.characters[old_holder].office_type == "身名分"
+        assert applied["applied_person_changes"] == [
+            {
+                "origin_ref": "盘面自发", "动作": "调任",
+                "name": new_holder,
+                "old_status": "active",
+                "old_office": old_new[1],
+                "new_office": target_office,
+                "kind": "transfer",
+                "reason": "顶替旧任",
+                "displaced": [f"{old_holder}:{target_office}"],
+            },
+            {
+                "name": old_holder,
+                "origin_ref": "盘面自发", "动作": "处置",
+                "status": "active",
+                "reason": "被顶替",
+                "reason_code": "被顶替",
+                "office": "听用候铨",
+                "office_type": "身名分",
+                "derived_from": "被顶替",
+                "cascade_echo": True,
+            },
+        ]
+        assert db.conn.execute("SELECT COUNT(*) FROM person_logs").fetchone()[0] == before_logs + 2
+    finally:
+        (
+            content.characters[new_holder].status,
+            content.characters[new_holder].office,
+            content.characters[new_holder].office_type,
+        ) = old_new
+        (
+            content.characters[old_holder].status,
+            content.characters[old_holder].office,
+            content.characters[old_holder].office_type,
+        ) = old_old

@@ -1,0 +1,22 @@
+# FILE: tests/test_decree_commitment_schema_136.py
+# NAME: test_insert_issue_serializes_structured_stop_condition_as_json
+# LINE: 82-97
+# FLAGS: assert_text_compare_or_match
+# KIND: py
+
+def test_insert_issue_serializes_structured_stop_condition_as_json(game):
+    db, state, _ = game
+
+    issue_id = db.insert_issue(
+        state,
+        kind="initiative",
+        title="补饷结构化停止条件",
+        origin_kind="decree",
+        stop_condition={"army.guanning.arrears": "<=0"},
+        commitment_kind="until_stop",
+    )
+
+    row = db.conn.execute(
+        "SELECT stop_condition FROM issues WHERE id=?", (issue_id,)
+    ).fetchone()
+    assert row["stop_condition"] == '{"army.guanning.arrears":"<=0"}'

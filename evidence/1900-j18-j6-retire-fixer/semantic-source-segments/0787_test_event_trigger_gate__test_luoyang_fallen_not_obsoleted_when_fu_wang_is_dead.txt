@@ -1,0 +1,24 @@
+# FILE: tests/test_event_trigger_gate.py
+# NAME: test_luoyang_fallen_not_obsoleted_when_fu_wang_is_dead
+# LINE: 1807-1824
+# FLAGS: assert_text_compare_or_match
+# KIND: py
+
+def test_luoyang_fallen_not_obsoleted_when_fu_wang_is_dead(game):
+    """#191 CMR：洛阳陷落是城市/流寇压力事件，福王已死不应让事件进入人物核心作废终态。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1641
+    state.period = 1
+    db.conn.execute("UPDATE regions SET controlled_by=?, unrest=? WHERE id=?", ("ming", 80, "henan"))
+    db.conn.execute("UPDATE powers SET military_strength=? WHERE id=?", (20, "bandits"))
+    db.conn.execute("UPDATE powers SET military_strength=? WHERE id=?", (70, "bandit_li_zicheng"))
+    db.set_character_status(state, "朱常洵", "dead", reason="测试：此前身故")
+
+    cands = issues.gather_candidate_events(state, db)
+
+    assert any(ev.id == "luoyang_fallen" for ev in cands)
+    assert db.conn.execute(
+        "SELECT event_id FROM event_triggers WHERE event_id=?",
+        ("luoyang_fallen",),
+    ).fetchone() is None

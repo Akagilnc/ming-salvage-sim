@@ -1,0 +1,32 @@
+# FILE: tests/test_surcharge_causal_chain_650.py
+# NAME: test_province_without_population_pool_rejects_surcharge_and_old_ledger_exits
+# LINE: 276-301
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_province_without_population_pool_rejects_surcharge_and_old_ledger_exits(game, monkeypatch):
+    """辽东无完整农民/流民加派池（#659 仅军户/流民）：新旨不落账，历史毒账也不得 soft-lock。"""
+    db, state, content = game
+    applied = apply_score_extraction(db, state, {
+        "surcharge_decrees": [_decree(db, state, region_id="liaodong", monthly_amount=10.0)],
+    }, content, None)
+    assert not applied["surcharge_decrees"]
+    assert applied["surcharge_decrees_rejections"][0]["category"] == "missing_ref"
+
+    fiscal = json.loads(db.conn.execute(
+        "SELECT fiscal FROM regions WHERE id='liaodong'"
+    ).fetchone()[0])
+    fiscal["settle"].setdefault("_meta", {})["加派基线"] = 10.0
+    db.conn.execute("UPDATE regions SET fiscal=? WHERE id='liaodong'",
+                    (json.dumps(fiscal, ensure_ascii=False),))
+    db.conn.commit()
+    before_turn = state.turn
+    farmer_before = _pop(db, "农民", "liaodong")
+    displaced_before = _pop(db, "流民", "liaodong")
+
+    from tests.test_due_review_621 import _settle_empty_month
+    _settle_empty_month(db, state, content, monkeypatch)
+
+    assert state.turn == before_turn + 1
+    assert _pop(db, "农民", "liaodong") == farmer_before
+    assert _pop(db, "流民", "liaodong") == displaced_before

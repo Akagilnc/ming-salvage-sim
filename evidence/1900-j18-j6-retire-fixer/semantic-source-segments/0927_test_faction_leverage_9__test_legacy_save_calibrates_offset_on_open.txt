@@ -1,0 +1,34 @@
+# FILE: tests/test_faction_leverage_9.py
+# NAME: test_legacy_save_calibrates_offset_on_open
+# LINE: 672-699
+# FLAGS: assert_text_compare_or_match,helper_or_private_call,retired_or_meta_marker
+# KIND: py
+
+def test_legacy_save_calibrates_offset_on_open(game):
+    """#9 R1 finding#1 [P1]：老档经 GameDB() 打开（仅 init_schema，不 seed_static_data）
+    时，leverage_offset 列刚 ADD 后必须立即一次性校准（offset = 当前 DB leverage − 权重和），
+    使 leverage == clamp(offset+权重和) == 钦定基线，而非 0+权重和（未锚定基线的错值）。"""
+    from ming_sim.db import GameDB
+
+    _, _, content = game
+    path = _make_legacy_save_without_offset_col(content)
+    try:
+        # 直接打开现存档：只 GameDB()（init_schema 内迁移校准），不 seed_static_data。
+        db = GameDB(path, content)
+        try:
+            db.load_state()
+            faction = "阉党"
+            baseline = int(content.factions[faction].leverage)
+            offset = float(db.conn.execute(
+                "SELECT leverage_offset FROM factions WHERE name=?", (faction,)
+            ).fetchone()["leverage_offset"])
+            lev = db.faction_leverage(faction)
+            assert offset != 0.0, f"老档应校准出非零 offset，得 {offset}"
+            assert lev == baseline, (
+                f"老档 leverage 应=钦定基线 {baseline}，得 {lev}（offset={offset}）"
+            )
+        finally:
+            db.close()
+    finally:
+        import os
+        os.remove(path)

@@ -1,0 +1,29 @@
+# FILE: tests/test_faction_brew_637.py
+# NAME: test_new_event_fields_are_pure_data_no_prose_composition
+# LINE: 483-505
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_new_event_fields_are_pure_data_no_prose_composition(game):
+    """(c) 新增字段为纯数据、无任何拼接散文（ADR 0142：给数据不给话术）。"""
+    db, state, _ = game
+    _add_edge(db, state, source="温体仁", target=EMPEROR_NODE, kind="结怨",
+              context="收权·罢差·便宜行事·issue:清丈田亩", origin="audience:turn-1")
+    targets = select_faction_brew_targets(
+        db, year=int(state.year), period=int(state.period),
+    )
+    assert targets
+    events = collect_new_edge_events_for_faction(
+        db, faction=targets[0]["faction"], watermark=targets[0]["watermark"],
+    )
+    payload = build_faction_brew_input(
+        faction=targets[0]["faction"], year=int(state.year),
+        period=int(state.period), summary=targets[0]["summary"],
+        new_events=events, has_pending=targets[0]["has_pending"],
+    )
+    for item in payload["new_events"]:
+        # 新增字段值必须与 DB 列逐字节相同——非任何 "{source}（{faction}）与{target}…" 式拼接串。
+        row = next(r for r in events if r["origin"] == item["origin"])
+        assert item["source"] == row["source"]
+        assert item["target"] == row["target"]
+        assert isinstance(item["source"], str) and isinstance(item["target"], str)

@@ -1,0 +1,17 @@
+# FILE: web/src/components/modals.test.tsx
+# NAME: "ScrollMessages — frozen ledger order" / "groups only adjacent rows of a turn without moving an interleaved scene row"
+# LINE: 48-58
+# FLAGS: web_text_assert,web_count_assert
+# KIND: web
+
+  it("groups only adjacent rows of a turn without moving an interleaved scene row", () => {
+    const host = document.createElement("div"); document.body.appendChild(host);
+    const root = createRoot(host); mountedRoots.push({ root, host });
+    act(() => { root.render(<ScrollMessages ministerName="" ministers={[]} messages={[
+      { role: "user", speaker: "朕", content: "先问", beat: "dialogue", chat_turn_id: 7, audibility: "", time: null, soft_boundary: false, highlights: [], container: { time_of_day: "", location: "", audience_type: "" } },
+      { role: "scene", speaker: "", content: "烛花一爆", beat: "scene", audibility: "", time: null, soft_boundary: false, highlights: [], container: { time_of_day: "", location: "", audience_type: "" } },
+      { role: "minister", speaker: "洪承畴", content: "后答", beat: "dialogue", chat_turn_id: 7, audibility: "", time: null, soft_boundary: false, highlights: [], container: { time_of_day: "", location: "", audience_type: "" } },
+    ]} />); });
+    expect(host.textContent).toBe("朕先问烛花一爆洪承畴后答");
+    expect(host.querySelectorAll('[data-audience-turn-id="7"]')).toHaveLength(2);
+  });

@@ -1,0 +1,17 @@
+# FILE: tests/test_material_directory_1830.py
+# NAME: test_same_requested_root_creates_independent_material_invocations
+# LINE: 79-89
+# FLAGS: helper_or_private_call
+# KIND: py
+
+def test_same_requested_root_creates_independent_material_invocations(game, tmp_path):
+    db, state, content = game
+    character = _active_minister(db, content)
+    requested = tmp_path / "materials"
+
+    first = prepare_character_materials(db, state, character, dest_root=requested)
+    second = prepare_character_materials(db, state, character, dest_root=requested)
+
+    assert first.root != second.root
+    assert read_material(first.root, "INDEX.txt")
+    assert read_material(second.root, "INDEX.txt")

@@ -1,0 +1,17 @@
+# FILE: tests/test_fiscal_substrate_bridge.py
+# NAME: test_apply_fixed_period_flows_advances_shaanxi_substrate
+# LINE: 4099-4109
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_apply_fixed_period_flows_advances_shaanxi_substrate(fresh_game):
+    # 月末固定财政相位推进省级基座：陕西史实量级 seed 空 action 一 tick → 欠账螺旋累积
+    from ming_sim.flows import apply_fixed_period_flows
+    db, state = fresh_game
+    assert _read_settle(db)["st"]["军饷欠"] == pytest.approx(_province_pay_arrears(db, "shaanxi"))
+    apply_fixed_period_flows(db, state)
+    after = _read_settle(db)["st"]
+    assert after["军饷欠"] == pytest.approx(_province_pay_arrears(db, "shaanxi"), abs=1e-6)
+    assert after["省库库银"] == pytest.approx(0, abs=1e-3)
+    assert after["C_地方截留"] == pytest.approx(0.7181, abs=1e-3)
+    assert after["民欠旧赋"] == pytest.approx(3.2639, abs=1e-3)

@@ -1,0 +1,34 @@
+# FILE: tests/test_person_delta_adapter.py
+# NAME: test_s9_consort_leaves_palace_clears_office
+# LINE: 2901-2928
+# FLAGS: assert_text_compare_or_match
+# KIND: py
+
+def test_s9_consort_leaves_palace_clears_office(game):
+    """S9 出宫（客氏案 #11）：active 后宫 受 处置(→offstage, reason_code=出宫) → status=offstage、
+    office 清空（不变式 offstage_clears_office）、reason_code=出宫。了结 #11「出宫但 status 仍 active」。"""
+    db, state, content = game
+    name = "测试出宫宫人"
+    consort = Character(
+        name=name, office="尚宫局司饰", office_type="后宫", faction="后宫",
+        aliases=[], personal_skills=[], loyalty=60, ability=55, integrity=60,
+        courage=50, style="测试出宫", power_id="ming", status="active",
+    )
+    try:
+        content.characters[name] = consort
+        db.add_character(state, consort)
+        db.set_character_status(state, name, "active", "在宫")
+        applied = issues.apply_score_extraction(
+            db, state,
+            {"人物变更": [{"name": name, "origin_ref": "盘面自发", "动作": "处置", "status": "offstage",
+                          "reason_code": "出宫", "reason": "出宫居家"}]},
+            content=content,
+        )
+        item = next(r for r in applied["applied_person_changes"] if r.get("name") == name)
+        assert not item.get("rejected"), f"出宫应被接受，实得 {item}"
+        row = db.conn.execute("SELECT status, office, reason_code FROM characters WHERE name=?", (name,)).fetchone()
+        assert row["status"] == "offstage"
+        assert row["reason_code"] == "出宫"
+        assert (row["office"] or "") == "", "出宫(迁出 active)须清空名分，不留幽灵官职（#11）"
+    finally:
+        content.characters.pop(name, None)

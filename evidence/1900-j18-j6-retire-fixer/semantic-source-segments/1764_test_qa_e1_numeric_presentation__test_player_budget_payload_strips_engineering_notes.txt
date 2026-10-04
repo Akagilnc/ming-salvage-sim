@@ -1,0 +1,16 @@
+# FILE: tests/test_qa_e1_numeric_presentation.py
+# NAME: test_player_budget_payload_strips_engineering_notes
+# LINE: 87-96
+# FLAGS: assert_text_compare_or_match
+# KIND: py
+
+def test_player_budget_payload_strips_engineering_notes(read_game):
+    """API 玩家定额行只投影 name/amount，不下发工程字段。"""
+    db, state, _ = read_game
+    runtime = object.__new__(web_app.WebGame)
+    runtime.session = SimpleNamespace(db=db, state=state)
+    payload = runtime.budget_payload()
+    for account_name in ("国库", "内库"):
+        for direction in ("income", "expense"):
+            for item in payload[account_name][direction]:
+                assert set(item) == {"name", "amount"}

@@ -1,0 +1,34 @@
+# FILE: web/src/components/settlementFaces.test.tsx
+# NAME: "#1236 GameHud face gates eat settlement_display" / "关闭组点击触发戏内理由回调"
+# LINE: 165-192
+# FLAGS: web_count_assert
+# KIND: web
+
+  it("关闭组点击触发戏内理由回调", () => {
+    const attempts: string[] = [];
+    const state = makeState(true);
+    const host = mount(
+      <GameHud
+        stageRef={() => {}}
+        ready={true}
+        state={state}
+        mapNodes={[]}
+        mapSelectedId=""
+        onSelectMapNode={() => {}}
+        activeDrawerKey=""
+        navHandlers={{
+          court: () => {}, harem: () => {}, army: () => {}, region: () => {},
+          building: () => {}, economy: () => {}, appointment: () => {},
+        }}
+        secretOrderActiveCount={0}
+        unreadMemorialCount={resolveUnreadMemorialCount(state)}
+        onOpenModal={() => {}}
+        onClosedFaceAttempt={(r) => attempts.push(r)}
+        settlementFace={true}
+      />,
+    );
+    const regionBtn = Array.from(host.querySelectorAll("button")).find((b) => b.getAttribute("aria-label") === "省份列表")!;
+    act(() => { regionBtn.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    expect(attempts).toHaveLength(1);
+    expect(attempts[0]).toBeTruthy();
+  });

@@ -1,0 +1,17 @@
+# FILE: tests/test_appointment_tenure_607.py
+# NAME: test_acting_appointment_can_be_reappointed_permanent_on_same_path
+# LINE: 198-208
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_acting_appointment_can_be_reappointed_permanent_on_same_path(game):
+    db, state, content = game
+    name = _active_minister(db)
+
+    _promulgate_appointment(db, state, content, name, "转正验收官", "署理")
+    _promulgate_appointment(db, state, content, name, "转正验收官", "真除")
+
+    row = db.conn.execute(
+        "SELECT appointment_tenure FROM character_offices WHERE character_name=?", (name,)
+    ).fetchone()
+    assert row["appointment_tenure"] == "真除"

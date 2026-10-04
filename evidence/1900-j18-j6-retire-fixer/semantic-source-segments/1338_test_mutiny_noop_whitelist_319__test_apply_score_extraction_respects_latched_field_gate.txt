@@ -1,0 +1,36 @@
+# FILE: tests/test_mutiny_noop_whitelist_319.py
+# NAME: test_apply_score_extraction_respects_latched_field_gate
+# LINE: 430-459
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_apply_score_extraction_respects_latched_field_gate(game):
+    db, state, content = game
+    _configure(db, "legacy")
+    _set(
+        db, "legacy", loyalty=30, arrears=5, latched=1, mutiny_count=1, manpower=10000
+    )
+    before = _snapshot(db, ("station", "status", "manpower", "loyalty"))
+
+    issue_engine.apply_score_extraction(
+        db,
+        state,
+        {
+            "army_delta": {
+                ARMY: {
+                    "manpower": -100,
+                    "station": "新驻地",
+                    "status": "已整编",
+                    "loyalty": 5,
+                    "origin_ref": SPONTANEOUS,
+                }
+            }
+        },
+        content=content,
+    )
+
+    after = _row(db, "station", "status", "manpower", "loyalty")
+    assert after["manpower"] == before["manpower"] - 100
+    assert after["loyalty"] == before["loyalty"] + 5
+    assert after["station"] == before["station"]
+    assert after["status"] == before["status"]

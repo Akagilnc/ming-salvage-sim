@@ -1,0 +1,27 @@
+# FILE: tests/test_junxin_alias_loyalty_313.py
+# NAME: test_shiqi_alias_still_maps_to_morale
+# LINE: 54-74
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_shiqi_alias_still_maps_to_morale(game):
+    """别名回归快照：「士气」仍指 morale，不受 军心 改指影响。"""
+    db, state, _ = game
+    aid = _seed_army(db, state, army_id="shiqi_alias_army")
+    before = db.conn.execute(
+        "SELECT morale, loyalty FROM armies WHERE id=?", (aid,)
+    ).fetchone()
+    assert before["morale"] == 50
+    assert before["loyalty"] == 50
+
+    pseudo = type("E", (), {"id": "test", "title": "鼓舞士气"})()
+    db.apply_army_deltas(
+        state, pseudo, None, "测试",
+        {aid: {"士气": 7}},
+    )
+
+    after = db.conn.execute(
+        "SELECT morale, loyalty FROM armies WHERE id=?", (aid,)
+    ).fetchone()
+    assert after["morale"] == 57, "士气 must still map to morale"
+    assert after["loyalty"] == 50, "士气 must not touch loyalty"

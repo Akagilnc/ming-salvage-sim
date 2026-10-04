@@ -1,0 +1,39 @@
+# FILE: tests/test_decree_commitment_creation_136.py
+# NAME: test_future_one_shot_commitment_issue_is_created_with_deadline_only
+# LINE: 397-429
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_future_one_shot_commitment_issue_is_created_with_deadline_only(game, monkeypatch):
+    db, state, content = game
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+
+    out = I.apply_score_extraction(
+        db,
+        state,
+        {
+            "new_issues": [
+                {
+                    "origin_kind": "decree",
+                    "origin_ref": _promulgated_commitment_origin(db, state, "sunchengzong-review"),
+                    "kind": "initiative",
+                    "title": "三月后复试孙承宗",
+                    "stage_text": "孙承宗暂听候政，三月后复试军国大计。",
+                    "end_turn": state.turn + 3,
+                    "commitment_kind": "until_stop",
+                }
+            ]
+        },
+        content=content,
+    )
+
+    created = out["issue_summary"]["new_issues"][0]
+    assert created["rejected"] is False
+    row = _issue_by_title(db, "三月后复试孙承宗")
+    assert row is not None
+    assert row["commitment_kind"] == "until_stop"
+    assert row["end_turn"] == state.turn + 3
+    assert row["stop_condition"] == ""
+    assert json.loads(row["ongoing_effects"]) == {}
+    assert row["inertia"] == 0
+    assert row["cancellable"] == "decree"

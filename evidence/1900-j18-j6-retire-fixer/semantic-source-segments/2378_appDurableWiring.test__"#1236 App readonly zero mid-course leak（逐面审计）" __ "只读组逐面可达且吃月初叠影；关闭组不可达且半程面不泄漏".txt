@@ -1,0 +1,211 @@
+# FILE: web/src/appDurableWiring.test.tsx
+# NAME: "#1236 App readonly zero mid-course leak（逐面审计）" / "只读组逐面可达且吃月初叠影；关闭组不可达且半程面不泄漏"
+# LINE: 2213-2417
+# FLAGS: web_text_assert,web_count_assert
+# KIND: web
+
+  it("只读组逐面可达且吃月初叠影；关闭组不可达且半程面不泄漏", async () => {
+    // phase=settling：续跑小条不挡 HUD；settlement_display 叠影照常
+    // #1366：核账期（settling/awaiting_decision）不得下发半程已结算三项——只给结算前
+    // 事实（全军名义应发），settled_army_pay 由后端置 null，与顶栏月初快照同一展示边界。
+    let releaseFirstLoad!: (response: Response) => void;
+    const firstLoad = new Promise<Response>((resolve) => { releaseFirstLoad = resolve; });
+    const loadRequests: Array<{ path: string; method: string }> = [];
+    stubSettlementFetch({
+      ...settlementBaseState("settling"),
+      budget: { ...settlementBaseState("settling").budget, settled_army_pay: null },
+    }, [{ name: "auto_begin", mtime: 1, size: 1024 }], (url, init) => {
+      loadRequests.push({ path: url.pathname, method: String(init?.method || "GET") });
+      if (loadRequests.length === 1) return firstLoad;
+      return jsonResp({ turn: { year: 1627, period: 10, turn: 5 } });
+    });
+    const host = await mountApp();
+
+    // 顶栏快照四键 + 核账标（legacies / economy 同源叠影）
+
+
+    expect(host.querySelector('[data-testid="settle-resume"]')).not.toBeNull();
+
+    // 关闭组：半程局势不渲染；只读 closed_issues 仍可达（上月已结入口不关死）
+    expect(host.textContent).not.toContain(MIDCOURSE_ISSUE);
+    expect(host.querySelector(".situation-list")).toBeNull();
+    expect(host.querySelector(".situation-closed-list")).not.toBeNull();
+    expect(host.textContent).toContain(SNAP_CLOSED);
+    expect(byAria(host, "省份列表")?.getAttribute("aria-disabled")).toBe("true");
+    expect(byAria(host, "军队列表")?.getAttribute("aria-disabled")).toBe("true");
+    // 点关闭组导航：抽屉不得进入 .open（子树可常挂，以 open 态为准）
+    await click(byAria(host, "省份列表"));
+    await tick();
+    expect(host.querySelector(".right-drawer-region.open")).toBeNull();
+    await click(byAria(host, "军队列表"));
+    await tick();
+    expect(host.querySelector(".right-drawer-army.open")).toBeNull();
+
+    // 密令/拟诏关闭
+    await click(cmdByCaption(host, "密令"));
+    await tick();
+    expect(host.querySelector('[role="dialog"][aria-label="密令进度"]')).toBeNull();
+    await click(edictCommand(host));
+    await tick();
+    expect(host.querySelector('[role="dialog"][aria-label="诏书草案"]')).toBeNull();
+
+    // legacies：顶栏帝国修正可开，内容=月初标记
+    const legacyBtn = byAria(host, "现行帝国修正");
+    expect(legacyBtn).not.toBeNull();
+    await click(legacyBtn);
+    await tick();
+    expect(document.body.textContent).toContain(SNAP_LEGACY);
+    await closeOpenOverlay(host);
+
+    // economy：户部抽屉可开，余额=月初
+    await click(byAria(host, "经济面板"));
+    await tick();
+    const economyOpen = host.querySelector(".right-drawer-economy.open");
+    expect(economyOpen).not.toBeNull();
+
+    // #1366：结算前只见事实（全军名义应发）；核账期半程结果（国库实拨/实际到达/途中损耗）
+    // 不下发不渲染——待整月推进完成才见同一 settled_turn 的三项结果（见下方独立用例）。
+
+
+    await closeOpenOverlay(host);
+    expect(host.querySelector(".right-drawer-economy.open")).toBeNull();
+
+    // building：工部建筑可开，吃月初名
+    await click(byAria(host, "建筑列表"));
+    await tick();
+    const buildingOpen = host.querySelector(".right-drawer-building.open");
+    expect(buildingOpen).not.toBeNull();
+    expect(buildingOpen!.textContent).toContain(SNAP_BUILDING);
+    // 半程省/兵抽屉仍不得被连带打开
+    expect(host.querySelector(".right-drawer-region.open")).toBeNull();
+    expect(host.querySelector(".right-drawer-army.open")).toBeNull();
+    await closeOpenOverlay(host);
+
+    // court roster：名册可读、召对写入口拔除
+    await click(byAria(host, "朝堂·召见大臣"));
+    await tick();
+    expect(host.querySelector(".court-drawer.open")).not.toBeNull();
+    expect(host.querySelector(".court-drawer.open")!.textContent).toContain(SNAP_MINISTER);
+    await closeOpenOverlay(host);
+
+    // appointment roster
+    await click(byAria(host, "官员任免"));
+    await tick();
+    const apptOpen = host.querySelector(".right-drawer-appointment.open");
+    expect(apptOpen).not.toBeNull();
+    expect(apptOpen!.textContent).toContain(SNAP_MINISTER);
+    const apptRow = apptOpen!.querySelector(".right-drawer-row-minister");
+    expect(apptRow?.tagName).toBe("DIV");
+    await closeOpenOverlay(host);
+
+    // harem roster
+    await click(byAria(host, "后宫"));
+    await tick();
+    const haremOpen = host.querySelector(".harem-drawer.open");
+    expect(haremOpen).not.toBeNull();
+    expect(haremOpen!.textContent).toContain(SNAP_CONSORT);
+    // #1849 reopen：后宫卡与朝臣同形只读，不再是可点开面板的 button。
+    const haremCard = Array.from(haremOpen!.querySelectorAll(".minister-card")).find((el) =>
+      (el.textContent || "").includes(SNAP_CONSORT),
+    );
+    expect(haremCard).toBeTruthy();
+    expect(haremCard!.tagName.toLowerCase()).not.toBe("button");
+    await closeOpenOverlay(host);
+
+    // memorials：只读可达；与局势脱钩——核账期仍可读收件箱，不得泄漏半程议题（#1726）
+    await click(cmdByCaption(host, "奏疏"));
+    await tick();
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector('[role="dialog"][aria-label="奏疏"]')).not.toBeNull());
+    });
+    const memorialsDialog = host.querySelector('[role="dialog"][aria-label="奏疏"]')!;
+    expect(memorialsDialog.textContent).not.toContain(MIDCOURSE_ISSUE);
+    expect(memorialsDialog.querySelector(".situation-list")).toBeNull();
+    expect(memorialsDialog.querySelector(".situation-panel")).toBeNull();
+
+
+    expect(memorialsDialog.textContent).not.toContain(SNAP_MEMORIAL);
+    await closeOpenOverlay(host);
+
+    // history：史册可开，月档列表来自状态口同源只读 API
+    await click(cmdByCaption(host, "史册"));
+    await tick();
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector('[role="dialog"][aria-label="史册：历代奏报、诏书与递话"]')).not.toBeNull());
+    });
+    await closeOpenOverlay(host);
+
+    // audience_archive：史册头起居注另入口可开
+    await click(cmdByCaption(host, "史册"));
+    await tick();
+    await act(async () => {
+      await vi.waitFor(() => expect(findButton(host, "起居注")).toBeTruthy());
+    });
+    await click(findButton(host, "起居注"));
+    await tick();
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector('[role="dialog"][aria-label="起居注：召对记录"]')).not.toBeNull());
+    });
+    await closeOpenOverlay(host);
+
+    // menu：#1702/#1732 B 就地确认门控 + 409 可见且同一行恢复重试（不锁确认文案措辞）。
+    await click(byAria(host, "游戏菜单"));
+    await tick();
+    await act(async () => {
+      await vi.waitFor(() => expect(findButton(host, "加载存档")).toBeTruthy());
+    });
+    await click(findButton(host, "加载存档"));
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector(".saves-row .menu-btn.primary")).not.toBeNull());
+    });
+    const loadButton = host.querySelector(".saves-row .menu-btn.primary") as HTMLButtonElement;
+    // 展开后取消 → 零 /load POST
+    await click(loadButton);
+    await tick();
+    const loadConfirm = host.querySelector('[aria-label="确认加载 auto_begin"]');
+    expect(loadConfirm).not.toBeNull();
+    const cancelLoad = Array.from(loadConfirm!.querySelectorAll("button")).find((b) =>
+      (b.textContent || "").includes("取消")
+    );
+    await click(cancelLoad as HTMLButtonElement);
+    await tick();
+    expect(loadRequests).toEqual([]);
+    // 确认 → POST；409 可见；同行重试第二次 POST
+    await click(loadButton);
+    await tick();
+    const yesLoad = Array.from(host.querySelector('[aria-label="确认加载 auto_begin"]')!.querySelectorAll("button")).find((b) =>
+      (b.textContent || "").includes("加载")
+    );
+    await click(yesLoad as HTMLButtonElement);
+    expect(loadRequests).toEqual([{ path: "/api/saves/auto_begin/load", method: "POST" }]);
+    expect(loadButton.disabled).toBe(true);
+    await act(async () => {
+      releaseFirstLoad({
+        ok: false,
+        status: 409,
+        statusText: "Conflict",
+        json: async () => ({ detail: { code: "write_busy", message: "busy" } }),
+      } as Response);
+    });
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector(".menu-error")).not.toBeNull());
+    });
+    expect(loadButton.disabled).toBe(false);
+    await click(loadButton);
+    await tick();
+    const yesLoadAgain = Array.from(host.querySelector('[aria-label="确认加载 auto_begin"]')!.querySelectorAll("button")).find((b) =>
+      (b.textContent || "").includes("加载")
+    );
+    await click(yesLoadAgain as HTMLButtonElement);
+    await act(async () => {
+      await vi.waitFor(() => expect(loadRequests).toHaveLength(2));
+    });
+    expect(loadRequests[1]).toEqual({ path: "/api/saves/auto_begin/load", method: "POST" });
+    await closeOpenOverlay(host);
+
+    // closed_issues：只读可达；半程议题零泄漏；不误弹局势了结全屏
+    expect(host.querySelector(".situation-closed-list")).not.toBeNull();
+    expect(host.textContent).toContain(SNAP_CLOSED);
+    expect(host.textContent).not.toContain(MIDCOURSE_ISSUE);
+    expect(host.querySelector('[role="dialog"][aria-label="局势了结"]')).toBeNull();
+  });

@@ -1,0 +1,26 @@
+# FILE: tests/test_covert_levy_651.py
+# NAME: test_population_transfer_is_the_self_grown_unrest_channel
+# LINE: 549-568
+# FLAGS: assert_text_compare_or_match,assert_count,mock_or_patch_present,helper_or_private_call
+# KIND: py
+
+def test_population_transfer_is_the_self_grown_unrest_channel(game, monkeypatch):
+    db, state, content = game
+    did, _, _, _ = _bound_case(db, state)
+    monkeypatch.setattr(db, "read_dossier_fork_state", lambda dossier_id: {
+        "dossier_id": dossier_id, "fork": True, "reported_bands": ["有成"],
+        "execution_outcome": "transformed", "actual_effect_count": 1, "beyond_intent": True,
+    })
+    db.conn.execute("UPDATE classes SET population=0 WHERE name='农民' AND region_id='shaanxi'")
+    extracted = {"population_transfers": [{
+        "origin_ref": f"dossier:{did}", "reason": "摊派", "source": "农民@shaanxi",
+        "target": "流民@shaanxi", "amount": 1,
+    }]}
+    zero = apply_score_extraction(db, state, extracted, content, None, dossier_ids_at_input={did})
+    assert zero["population_transfers"][0]["amount"] == 0
+    assert write_exposure_todos(db, state, zero) == 0
+    db.conn.execute("UPDATE classes SET population=1 WHERE name='农民' AND region_id='shaanxi'")
+    real = apply_score_extraction(db, state, extracted, content, None, dossier_ids_at_input={did})
+    assert write_exposure_todos(db, state, real) == 1
+    todo = db.list_next_audience_todos(status="pending")[0]
+    assert todo["payload_json"]["channels"] == ["民变自长"]

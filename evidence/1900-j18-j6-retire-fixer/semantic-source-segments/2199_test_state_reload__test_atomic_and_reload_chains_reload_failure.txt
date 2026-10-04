@@ -1,0 +1,20 @@
+# FILE: tests/test_state_reload.py
+# NAME: test_atomic_and_reload_chains_reload_failure
+# LINE: 337-350
+# FLAGS: mock_or_patch_present,helper_or_private_call
+# KIND: py
+
+def test_atomic_and_reload_chains_reload_failure(game, monkeypatch):
+    """reload 自身再炸：原异常不被顶替，reload 异常链上抛（raise exc from reload_exc）。"""
+    import ming_sim.decree as decree_mod
+    from ming_sim.decree import atomic_and_reload
+    db, state, content = game
+
+    def _boom_reload(*a, **k):
+        raise ValueError("reload failed")
+    monkeypatch.setattr(decree_mod, "reload_state_from_db", _boom_reload)
+
+    with pytest.raises(RuntimeError) as ei:
+        with atomic_and_reload(db, state, content=content):
+            raise RuntimeError("orig")
+    assert isinstance(ei.value.__cause__, ValueError)  # 链：orig from reload failed

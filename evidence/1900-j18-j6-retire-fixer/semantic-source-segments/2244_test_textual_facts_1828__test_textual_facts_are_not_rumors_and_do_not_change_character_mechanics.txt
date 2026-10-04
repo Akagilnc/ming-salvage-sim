@@ -1,0 +1,34 @@
+# FILE: tests/test_textual_facts_1828.py
+# NAME: test_textual_facts_are_not_rumors_and_do_not_change_character_mechanics
+# LINE: 82-109
+# FLAGS: assert_text_compare_or_match
+# KIND: py
+
+def test_textual_facts_are_not_rumors_and_do_not_change_character_mechanics(game):
+    db, state, _ = game
+    before_status, before_reason = db.get_character_status("孙传庭")
+    before_row = db.conn.execute(
+        "SELECT loyalty, ability, status FROM characters WHERE name=?",
+        ("孙传庭",),
+    ).fetchone()
+    before_knowledge = db.get_character_knowledge(state, "孙传庭")
+
+    db.textual_facts.append(
+        subject_kind="character",
+        subject_id="孙传庭",
+        body=INJURY,
+        year=state.year,
+        period=state.period,
+        turn=state.turn,
+    )
+
+    after_status, after_reason = db.get_character_status("孙传庭")
+    after_row = db.conn.execute(
+        "SELECT loyalty, ability, status FROM characters WHERE name=?",
+        ("孙传庭",),
+    ).fetchone()
+    after_knowledge = db.get_character_knowledge(state, "孙传庭")
+    assert (after_status, after_reason) == (before_status, before_reason)
+    assert tuple(after_row) == tuple(before_row)
+    assert after_knowledge["events"] == before_knowledge["events"]
+    assert after_knowledge["public_events"] == before_knowledge["public_events"]

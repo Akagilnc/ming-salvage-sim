@@ -1,0 +1,34 @@
+# FILE: tests/test_rejection_wiring.py
+# NAME: test_rollback_leaves_no_rows_and_no_jsonl
+# LINE: 57-84
+# FLAGS: mock_or_patch_present,helper_or_private_call
+# KIND: py
+
+def test_rollback_leaves_no_rows_and_no_jsonl(game, monkeypatch, tmp_path):
+    """原子声明在 flush 之后崩 → 事务回滚:rejection_reports 无行、jsonl 无镜像
+    （#1745：后 flush tracer，不重建 flush 前副本）。
+
+    镜像只在 commit 成功后写,否则留「DB 没有、文件却有」的孤立行。
+    """
+    from ming_sim.applier import RejectionCollector
+
+    db, state, content = game
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    turn = state.turn
+
+    real_flush = RejectionCollector.flush_to_db
+
+    def _boom(self, db_):
+        real_flush(self, db_)
+        raise RuntimeError("crash after flush")
+
+    monkeypatch.setattr(RejectionCollector, "flush_to_db", _boom)
+
+    with pytest.raises(RuntimeError):
+        run_settle(db, state, content, {
+            "character_status_changes": [{"name": "查无此人乙", "status": "dead", "reason": "测试"}],
+            }, narrative="x", decree_text="y")
+
+    monkeypatch.setattr(RejectionCollector, "flush_to_db", real_flush)
+    assert _rejection_rows(db, turn) == []
+    assert not (tmp_path / "error_packs" / "rejections.jsonl").exists()

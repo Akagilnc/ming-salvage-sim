@@ -1,0 +1,22 @@
+# FILE: web/src/useSettlementFlow.test.tsx
+# NAME: "#1845 background tail failure observation" / "refreshes a non-ending month while the tail runs, then stops on persisted failure"
+# LINE: 289-304
+# FLAGS: web_mock_spy_or_calls,web_count_assert
+# KIND: web
+
+  it("refreshes a non-ending month while the tail runs, then stops on persisted failure", async () => {
+    vi.useFakeTimers();
+    const running = { ...preClickState, mechanical_tail_pending: true } as GameState;
+    const failed = {
+      ...running, mechanical_tail_pending: false,
+      mechanical_tail_failure: { error: "模型调用耗尽", error_pack_path: "/tmp/tail-error" },
+    } as GameState;
+    const loadState = vi.fn<() => Promise<GameState | null>>().mockResolvedValue(failed);
+    const { host, cleanup } = mountHarness({ initial: running, loadState });
+    await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+    expect(loadState).toHaveBeenCalledTimes(1);
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain("模型调用耗尽");
+    await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+    expect(loadState).toHaveBeenCalledTimes(1);
+    cleanup();
+  });

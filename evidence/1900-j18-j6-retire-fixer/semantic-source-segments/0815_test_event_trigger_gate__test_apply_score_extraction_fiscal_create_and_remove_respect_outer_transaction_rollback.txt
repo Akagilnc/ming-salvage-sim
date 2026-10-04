@@ -1,0 +1,42 @@
+# FILE: tests/test_event_trigger_gate.py
+# NAME: test_apply_score_extraction_fiscal_create_and_remove_respect_outer_transaction_rollback
+# LINE: 2990-3025
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_apply_score_extraction_fiscal_create_and_remove_respect_outer_transaction_rollback(game):
+    """post-merge CMR R7：顶层 fiscal_creates/removes 不得由财政 helper 提前提交。"""
+    db, state, content = game
+    remove_key = next(iter(db.get_fiscal_config()))
+    created_key = "__test_fiscal_txn_r7_base"
+    created_rate_key = "__test_fiscal_txn_r7_rate"
+    db.conn.commit()
+
+    db.conn.execute("BEGIN")
+    out = issues.apply_score_extraction(
+        db,
+        state,
+        {
+            "fiscal_removes": [{"origin_ref": "盘面自发", "key": remove_key, "reason": "测试顶层财政裁撤事务R7"}],
+            "fiscal_creates": [
+                {
+                    "origin_ref": "盘面自发", "key": created_key,
+                    "account": "国库",
+                    "direction": "income",
+                    "display": "测试顶层财政",
+                    "init_value": 1,
+                    "reason": "测试顶层财政新立事务R7",
+                }
+            ],
+        },
+        content=content,
+    )
+    assert out["fiscal_removes"][0]["key"] == f"{db._stem_of(remove_key)}_base"
+    assert out["fiscal_creates"][0]["key"] == created_key
+    db.conn.rollback()
+
+    assert remove_key in db.get_fiscal_config()
+    assert db.conn.execute(
+        "SELECT key FROM fiscal_config WHERE key IN (?, ?)",
+        (created_key, created_rate_key),
+    ).fetchall() == []

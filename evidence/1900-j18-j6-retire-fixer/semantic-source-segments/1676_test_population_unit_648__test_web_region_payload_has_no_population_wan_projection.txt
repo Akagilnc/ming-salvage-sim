@@ -1,0 +1,27 @@
+# FILE: tests/test_population_unit_648.py
+# NAME: test_web_region_payload_has_no_population_wan_projection
+# LINE: 238-258
+# FLAGS: assert_text_compare_or_match
+# KIND: py
+
+def test_web_region_payload_has_no_population_wan_projection(game):
+    """W1（P7）：web 地区载荷不再有 population_wan 直显投影——玩家面人口
+    呈现走 simulator seam featured input + LLM 长出叙事，UI 无固定模板；
+    地图节点与地区载荷同源 db.region_payload()（机面 population 原样）。"""
+    from types import SimpleNamespace
+
+    import web_app
+
+    new_db, new_state, content = game
+    runtime = object.__new__(web_app.WebGame)
+    runtime.session = SimpleNamespace(db=new_db, state=new_state, content=content)
+
+    regions = runtime.db.region_payload()
+    assert all("population_wan" not in row for row in regions)
+    bz = next(r for r in regions if r["id"] == "beizhili")
+    assert bz["population"] == BEIZHILI_POP_PERSONS  # 机面单一真源，不動
+
+    nodes = {n["id"]: n for n in runtime.map_nodes()}
+    node_bz = nodes["beizhili"]["region"]
+    assert "population_wan" not in node_bz
+    assert node_bz["population"] == BEIZHILI_POP_PERSONS

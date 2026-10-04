@@ -1,0 +1,42 @@
+# FILE: tests/test_person_delta_adapter.py
+# NAME: test_apply_score_extraction_rejects_trapped_prisoner_appointment
+# LINE: 655-690
+# FLAGS: assert_text_compare_or_match
+# KIND: py
+
+def test_apply_score_extraction_rejects_trapped_prisoner_appointment(game):
+    db, state, content = game
+    name = active_ming_character(db, content)
+    old_status = content.characters[name].status
+    old_office = content.characters[name].office
+    old_transit_to = content.characters[name].transit_to
+
+    try:
+        db.set_character_status(state, name, "imprisoned", "兵败被执")
+        db.conn.execute("UPDATE characters SET reason_code='陷虏' WHERE name=?", (name,))
+        db.conn.commit()
+        content.characters[name].status = "imprisoned"
+
+        applied = issues.apply_score_extraction(
+            db,
+            state,
+            {
+                "人物变更": [
+                    {"name": name, "origin_ref": "盘面自发", "动作": "任命", "office": "陕西总督", "office_type": "地方", "region_id": "shaanxi", "reason": "狱中拜将"}
+                ]
+            },
+            content=content,
+        )
+
+        row = db.conn.execute(
+            "SELECT status, office, reason_code FROM characters WHERE name=?", (name,)
+        ).fetchone()
+        assert row["status"] == "imprisoned"
+        assert row["office"] == ""
+        assert row["reason_code"] == "陷虏"
+        assert applied["applied_person_changes"][0]["rejected"] is True
+        assert applied["applied_person_changes"][0]["category"] == "invalid_transition"
+    finally:
+        content.characters[name].status = old_status
+        content.characters[name].office = old_office
+        content.characters[name].transit_to = old_transit_to

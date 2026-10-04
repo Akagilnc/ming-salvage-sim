@@ -1,0 +1,29 @@
+# FILE: tests/test_decree_forecast_1861.py
+# NAME: test_restored_directive_forecast_uses_its_approved_night
+# LINE: 298-320
+# FLAGS: assert_text_compare_or_match,mock_or_patch_present,helper_or_private_call
+# KIND: py
+
+def test_restored_directive_forecast_uses_its_approved_night(game, monkeypatch):
+    db, state, content = game
+    night = open_night(db, state)
+    minister = next(iter(content.characters.values()))
+    pending_id = db.stage_pending_action(
+        state.turn, kind="directive", action="拟旨", minister_name=minister.name,
+        payload={"text": "回滚后续推"},
+    )
+    db.conn.execute(
+        "UPDATE pending_actions SET night_approved=1, night_id=? WHERE id=?",
+        (int(night["id"]), pending_id),
+    )
+    db.conn.commit()
+    scheduled = []
+    monkeypatch.setattr(
+        forecast_mod, "schedule_pending_decree_forecast",
+        lambda session, action_id, *, night_id: scheduled.append((action_id, night_id)),
+    )
+
+    session = _sess(db, state, content, monkeypatch, lambda *_a, **_k: {})
+    forecast_mod.schedule_restored_decree_forecasts(session, [pending_id])
+
+    assert scheduled == [(pending_id, int(night["id"]))]

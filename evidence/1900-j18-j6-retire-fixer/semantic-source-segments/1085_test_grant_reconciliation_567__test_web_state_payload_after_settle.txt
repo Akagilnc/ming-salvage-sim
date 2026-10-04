@@ -1,0 +1,52 @@
+# FILE: tests/test_grant_reconciliation_567.py
+# NAME: test_web_state_payload_after_settle
+# LINE: 357-402
+# FLAGS: assert_text_compare_or_match,mock_or_patch_present,helper_or_private_call
+# KIND: py
+
+def test_web_state_payload_after_settle(
+    tmp_path, monkeypatch, content, _offline_scene_beat_generator,
+):
+    """全链 canned 结算入口后的 WebGame.state_payload 结构化玩家态。
+
+    自有 WebGame；只咬 phase / pending_decisions / resume_phase2 / settlement_recovery。
+    """
+    import web_app
+
+    monkeypatch.setenv("MING_SIM_DB", str(tmp_path / "ming.db"))
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
+    monkeypatch.setattr(web_app, "run_highlight_judge", lambda **_k: [])
+    game_web = web_app.WebGame(fresh=True)
+    monkeypatch.setattr(web_app, "web_game", game_web)
+    try:
+        db, state = game_web.db, game_web.state
+        from tests.test_month_chain_1843 import _prepare_player_month
+
+        turn_before = int(state.turn)
+        session = _prepare_player_month(
+            db, state, content, monkeypatch, world=lambda *_a, **_k: "世界段",
+            translate=lambda *_a, **_k: {"effects": {}},
+        )
+        session.resolve_turn(allow_empty_decree=True)
+        db.save_turn_report(state, "邸报", public_body="邸报")
+        session.resolve_turn(allow_empty_decree=True)
+
+        payload = game_web.state_payload()
+        turn_blk = payload.get("turn") or {}
+        assert int(turn_blk.get("turn") or 0) == turn_before + 1
+        assert turn_blk.get("phase") != TurnPhase.AWAITING_DECISION.value
+        assert payload.get("pending_decisions") in (None, [])
+        assert payload.get("resume_phase2") in (False, None)
+        recovery = payload.get("settlement_recovery")
+        assert recovery in (None, {}) or isinstance(recovery, dict)
+        # 结构化投影：不把拒收明细键塞进 state_payload（P4）；只断键存在性
+        assert "rejection_reports" not in payload
+        assert db.conn.execute(
+            "SELECT COUNT(*) AS n FROM decree_dossier_reconciliations"
+        ).fetchone()["n"] == 0
+    finally:
+        game_web.session.close()
+        web_app.web_game = None

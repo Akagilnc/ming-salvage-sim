@@ -1,0 +1,61 @@
+# FILE: tests/test_style_temperament_641.py
+# NAME: test_context_passes_raw_style_and_ledger_prose_without_rewrite
+# LINE: 313-367
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_context_passes_raw_style_and_ledger_prose_without_rewrite(game):
+    """读面装配：style/summary/recent_context 存在性用 strip，正文传原串。"""
+    db, state, content = game
+    person = content.characters[PERSON]
+    other = next(
+        c for c in content.characters.values()
+        if c.name != person.name
+        and c.office_type not in ("后宫", "宗藩", "未仕")
+        and db.get_character_status(c.name)[0] == "active"
+        and getattr(c, "power_id", "ming") == "ming"
+    )
+    padded_summary_founding = "  旧谊未断，朝堂仍有声气。  "
+    padded_summary_recent = "  近因边事互为援引。\n未改旧约。  "
+    padded_edge_context = "  两人在朝上声气相通。\n仍留余地。  "
+
+    issues.apply_score_extraction(
+        db,
+        state,
+        {"人物变更": [_temperament_item(style=PADDED_STYLE)]},
+        content=content,
+    )
+    db.apply_relation_brew_result(
+        source=person.name,
+        target=other.name,
+        dimension="大臣",
+        founding_segment=padded_summary_founding,
+        recent_segment=padded_summary_recent,
+        last_event_id=1,
+        turn=int(state.turn),
+        year=int(state.year),
+        period=int(state.period),
+    )
+    db.record_relation_edge_event(
+        source=person.name,
+        target=other.name,
+        event_kind="协作",
+        context=padded_edge_context,
+        origin="audience:turn-1",
+        turn=int(state.turn),
+        year=int(state.year),
+        period=int(state.period),
+    )
+
+    dto = project_relation_ledger(db, viewer=person.name)[0]
+    assert PADDED_STYLE in minister_dossier(person)
+    rendered = character_context_with_db(person, db)
+
+    # 原串（含空白/换行）须完整出现；不得只剩 strip 后子串作为唯一形态。
+    assert PADDED_STYLE in rendered
+    assert dto["summary"] in rendered
+    assert dto["recent_context"] in rendered
+    assert padded_summary_founding in rendered
+    assert padded_edge_context in rendered
+    assert PADDED_STYLE.strip() != PADDED_STYLE
+    assert dto["summary"] != dto["summary"].strip()

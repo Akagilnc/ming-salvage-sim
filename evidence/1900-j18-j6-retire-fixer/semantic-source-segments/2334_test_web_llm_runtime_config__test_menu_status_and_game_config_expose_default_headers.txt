@@ -1,0 +1,44 @@
+# FILE: tests/test_web_llm_runtime_config.py
+# NAME: test_menu_status_and_game_config_expose_default_headers
+# LINE: 638-675
+# FLAGS: mock_or_patch_present
+# KIND: py
+
+def test_menu_status_and_game_config_expose_default_headers(monkeypatch):
+    """#1794：设置页读回入口（menu/status、llm/config）露出 default_headers。"""
+    headers = {"X-Session": "read-me", "User-Agent": "ming-qa/1.0"}
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    monkeypatch.setattr(web_app, "_has_main_db", lambda: False)
+    monkeypatch.setattr(web_app, "_scan_saves", lambda: [])
+    monkeypatch.setattr(web_app, "_scan_campaigns", lambda: [])
+    monkeypatch.setattr(web_app, "_main_db_campaign_id", lambda: "")
+    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {
+        "channel": "api",
+        "api": {
+            "base_url": "https://api.example.com/v1",
+            "model": "gpt-api",
+            "api_key": "sk-test",
+            "default_headers": headers,
+        },
+        "default_headers": headers,
+        "base_url": "https://api.example.com/v1",
+        "model": "gpt-api",
+        "api_key": "sk-test",
+    })
+    cfg = LLMConfig(
+        api_key="sk-test",
+        base_url="https://api.example.com/v1",
+        model="gpt-api",
+        channel="api",
+        default_headers=headers,
+    )
+    monkeypatch.setattr(web_app, "web_game", SimpleNamespace(
+        session=SimpleNamespace(llm_config=cfg),
+    ))
+
+    status = asyncio.run(web_app.api_menu_status())
+    assert status["llm"]["default_headers"] == headers
+
+    game_cfg = asyncio.run(web_app.api_get_llm_config())
+    assert game_cfg["default_headers"] == headers

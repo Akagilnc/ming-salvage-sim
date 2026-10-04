@@ -1,0 +1,50 @@
+{
+  "source_path": "tests/test_deformation_dual_rail_622.py",
+  "member_count": 3,
+  "members": [
+    {
+      "idx": 610,
+      "file": "tests/test_deformation_dual_rail_622.py",
+      "name": "test_ac1_ac2_transformed_vs_degraded_dual_rail_tracer",
+      "line": 108,
+      "end": 240,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0610_test_deformation_dual_rail_622__test_ac1_ac2_transformed_vs_degraded_dual_rail_tracer.txt",
+      "source_path": "tests/test_deformation_dual_rail_622.py"
+    },
+    {
+      "idx": 611,
+      "file": "tests/test_deformation_dual_rail_622.py",
+      "name": "test_ac5_audit_fork_signal_present_only_with_audit_link",
+      "line": 246,
+      "end": 296,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0611_test_deformation_dual_rail_622__test_ac5_audit_fork_signal_present_only_with_audit_link.txt",
+      "source_path": "tests/test_deformation_dual_rail_622.py"
+    },
+    {
+      "idx": 612,
+      "file": "tests/test_deformation_dual_rail_622.py",
+      "name": "test_commitment_pooled_pay_arrears_inherits_beyond_intent",
+      "line": 321,
+      "end": 370,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0612_test_deformation_dual_rail_622__test_commitment_pooled_pay_arrears_inherits_beyond_intent.txt",
+      "source_path": "tests/test_deformation_dual_rail_622.py"
+    }
+  ]
+}

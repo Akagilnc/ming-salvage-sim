@@ -1,0 +1,27 @@
+# FILE: tests/test_event_trigger_gate.py
+# NAME: test_ordinary_army_station_delta_with_strategic_place_anchor_is_not_rejected
+# LINE: 1050-1070
+# FLAGS: helper_or_private_call
+# KIND: py
+
+def test_ordinary_army_station_delta_with_strategic_place_anchor_is_not_rejected(game):
+    """ship-pre CMR：普通调防只含战略地名，不得被误当成未触发战役战果。"""
+    db, state, content = game
+    issues.bind_content(content)
+    origin_ref = _promulgated_dossier(db, state, "移镇锦州前屯")
+
+    out = issues.apply_score_extraction(
+        db,
+        state,
+        {
+            "army_delta": {
+                "guanning": {"origin_ref": origin_ref, "驻扎地": "锦州前屯", "reason": "奉旨移镇锦州前屯"}
+            }
+        },
+        content=content,
+    )
+
+    assert db.conn.execute(
+        "SELECT station FROM armies WHERE id = ?", ("guanning",)
+    ).fetchone()["station"] == "锦州前屯"
+    assert out["army_changes"][0].get("rejected") is not True

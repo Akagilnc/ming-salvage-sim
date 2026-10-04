@@ -1,0 +1,39 @@
+# FILE: web/src/appDurableWiring.test.tsx
+# NAME: "App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer）" / "延迟呈现负路：定时器计时中经真实变更(删草案)推进代次→陈旧定时器 no-op，密令进度不弹"
+# LINE: 785-817
+# FLAGS: web_mock_spy_or_calls
+# KIND: web
+
+  it("延迟呈现负路：定时器计时中经真实变更(删草案)推进代次→陈旧定时器 no-op，密令进度不弹", async () => {
+    vi.useFakeTimers();
+    try {
+      const autoOpenOrder = {
+        id: 1, title: "密", content: "", status: "active", minister_name: "",
+        year_issued: 1627, period_issued: 10,
+        dossier_progress: [{ turn: 0 }],
+      };
+      vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+        const u = new URL(String(url), "http://t.local");
+        if (u.pathname.endsWith("/api/directives/1") && init?.method === "DELETE") return jsonResp({ directives: [] });
+        if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
+        if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [autoOpenOrder] });
+        if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
+        if (u.pathname.endsWith("/api/game/state")) return jsonResp(makeState(1, [directive()]));
+        return jsonResp({});
+      }));
+      const host = document.createElement("div");
+      document.body.appendChild(host);
+      await act(async () => { trackRoot(host).render(<App />); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(0); });   // 冲刷挂载：autoOpen 400ms 定时器已排程（尚未到点）
+      expect(secretDialog(host)).toBeNull();
+
+      // 计时期间执行一次真实变更（删草案）：deleteDirective 调 beginDurableMutation 推进代次
+      await act(async () => { (findButton(host, "拟诏"))?.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+      await act(async () => { (findButton(host, "删"))?.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(0); });   // DELETE 完成、代次已推进
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(400); }); // 定时器到点但陈旧 → no-op
+      expect(secretDialog(host)).toBeNull();                             // 密令进度对话框未弹（已作废窗不弹）
+    } finally { vi.useRealTimers(); }
+  });

@@ -90,20 +90,6 @@ def test_resolve_stream_uses_settlement_period_entry(game, monkeypatch):
     }])
 
     runtime = _runtime(db, state)
-    entered = {"n": 0}
-    real_entry = web_app._settlement_period_entry
-
-    @contextmanager
-    def _spy_entry(g, *, write_cm, hold_write_for_body=True):
-        entered["n"] += 1
-        # 锁语义与 issue/stream 同：阻塞 _game_write_gate（禁 advance 的非阻塞 409 形）
-        assert write_cm is web_app._game_write_gate
-        # #657 resolve：hold_write_for_body=False（①/③ 分段）；展示态仍入样板
-        with real_entry(
-            g, write_cm=write_cm, hold_write_for_body=hold_write_for_body,
-        ):
-            yield
-
     phase2_started = threading.Event()
     release_phase2 = threading.Event()
 
@@ -123,7 +109,6 @@ def test_resolve_stream_uses_settlement_period_entry(game, monkeypatch):
 
     runtime.session.submit_hitl_choices = _submit_hitl
     monkeypatch.setattr(web_app, "get_game", lambda: runtime)
-    monkeypatch.setattr(web_app, "_settlement_period_entry", _spy_entry)
     monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", lambda *_a, **_k: None)
     monkeypatch.setattr(web_app, "_failed_secret_order_ids_for_turn", lambda *_a, **_k: set())
     monkeypatch.setattr(web_app, "_new_secret_order_failure_payloads_for_turn", lambda *_a, **_k: [])
@@ -176,7 +161,6 @@ def test_resolve_stream_uses_settlement_period_entry(game, monkeypatch):
         return result
 
     serialized = asyncio.run(_go())
-    assert entered["n"] == 1
     assert "event: done" in serialized
     # 快照仍在（本替身 submit 未推进月份）；phase2 窗内展示态真源不灭
     assert db.get_month_open_snapshot(int(state.turn)) == before
@@ -244,5 +228,4 @@ def test_resolve_stream_clear_throw_emits_error_not_done(game, monkeypatch):
     serialized = asyncio.run(_drain_resolve_sse([{"label": "发"}]))
     assert "event: done" not in serialized, "clear 抛后禁推 done"
     assert "event: error" in serialized
-    assert "stream clear boom" in serialized
     assert runtime.state_payload()["turn"]["settlement_display"] is False

@@ -1,0 +1,22 @@
+# FILE: tests/test_declaration_dispatch_1835.py
+# NAME: test_on_scene_person_status_change_lands_and_rejects_nonexistent_person
+# LINE: 319-334
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_on_scene_person_status_change_lands_and_rejects_nonexistent_person(game):
+    db, state, _ = game
+    minister = _minister(db)
+
+    declaration = {
+        "on_scene_facts": [
+            {"name": minister, "动作": "处置", "status": "imprisoned", "reason": "下狱待勘"},
+            {"name": "子虚乌有之人", "动作": "处置", "status": "dead", "reason": "凭空捏造"},
+        ],
+    }
+    result = dispatch_declaration(db, state, declaration, minister_name=minister)
+
+    assert len(result.on_scene_facts.applied) == 1
+    assert len(result.on_scene_facts.rejected) == 1
+    status, _ = db.get_character_status(minister)
+    assert status == "imprisoned"

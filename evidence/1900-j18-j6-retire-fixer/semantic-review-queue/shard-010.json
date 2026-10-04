@@ -1,0 +1,451 @@
+{
+  "shard": 10,
+  "files": [
+    "tests/test_enter_settlement_period_1235.py",
+    "tests/test_error_pack.py",
+    "tests/test_escort_route_1900.py",
+    "tests/test_event_chain_cascade.py"
+  ],
+  "count": 36,
+  "items": [
+    {
+      "file": "tests/test_enter_settlement_period_1235.py",
+      "name": "test_web_entry_captures_before_await_close",
+      "line": 174,
+      "end": 217,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_enter_settlement_period_1235.py",
+      "name": "test_true_failure_pending_translation_exits_display",
+      "line": 223,
+      "end": 276,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "mock_or_patch_present",
+        "helper_or_private_call",
+        "retired_or_meta_marker"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_enter_settlement_period_1235.py",
+      "name": "test_true_failure_issue_exits_display",
+      "line": 279,
+      "end": 327,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "mock_or_patch_present",
+        "helper_or_private_call",
+        "retired_or_meta_marker"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_enter_settlement_period_1235.py",
+      "name": "test_settling_keeps_display_for_recovery",
+      "line": 333,
+      "end": 347,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_enter_settlement_period_1235.py",
+      "name": "test_awaiting_decision_still_emits_pending",
+      "line": 350,
+      "end": 389,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_enter_settlement_period_1235.py",
+      "name": "test_accept_creator_atomic_only_one_true",
+      "line": 392,
+      "end": 412,
+      "flags": [
+        "mock_or_patch_present"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_enter_settlement_period_1235.py",
+      "name": "test_advance_http_reject_after_accept_exits_display",
+      "line": 418,
+      "end": 459,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_enter_settlement_period_1235.py",
+      "name": "test_concurrent_advance_noncreator_must_not_clear_owner_snapshot",
+      "line": 462,
+      "end": 499,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_enter_settlement_period_1235.py",
+      "name": "test_exit_settlement_display_acquires_write_gate",
+      "line": 502,
+      "end": 548,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_enter_settlement_period_1235.py",
+      "name": "test_session_reaccept_orphan_exits_after_owner_release",
+      "line": 555,
+      "end": 656,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_enter_settlement_period_1235.py",
+      "name": "test_noncreator_exit_must_not_clear_owner_during_gatefree",
+      "line": 659,
+      "end": 755,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_error_pack.py",
+      "name": "test_attempt_derived_from_existing_dirs",
+      "line": 20,
+      "end": 34,
+      "flags": [
+        "assert_count"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_error_pack.py",
+      "name": "test_attempt_never_overwrites_existing_pack",
+      "line": 86,
+      "end": 103,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_error_pack.py",
+      "name": "test_web_issue_endpoint_returns_structured_abort",
+      "line": 127,
+      "end": 161,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_error_pack.py",
+      "name": "test_next_attempt_skips_malformed_and_foreign_entries",
+      "line": 163,
+      "end": 181,
+      "flags": [
+        "assert_count"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_error_pack.py",
+      "name": "test_version_read_failure_falls_back_to_unknown",
+      "line": 183,
+      "end": 196,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_escort_route_1900.py",
+      "name": "test_commission_declares_escort_inside_same_grant_decree",
+      "line": 34,
+      "end": 85,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_escort_route_1900.py",
+      "name": "test_commission_malformed_escort_is_rejected_not_dropped",
+      "line": 88,
+      "end": 110,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_escort_route_1900.py",
+      "name": "test_commission_escort_names_must_exist",
+      "line": 113,
+      "end": 129,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_escort_route_1900.py",
+      "name": "test_commission_without_escort_declares_none",
+      "line": 132,
+      "end": 144,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_event_chain_cascade.py",
+      "name": "test_positive_dependency_invalidates_when_upstream_expires",
+      "line": 61,
+      "end": 80,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_event_chain_cascade.py",
+      "name": "test_numeric_triggered_gt_zero_dependency_invalidates_when_upstream_expires",
+      "line": 83,
+      "end": 97,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_event_chain_cascade.py",
+      "name": "test_numeric_triggered_lt_one_dependency_invalidates_when_upstream_triggers",
+      "line": 100,
+      "end": 114,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_event_chain_cascade.py",
+      "name": "test_positive_outcome_dependency_waits_for_frozen_outcome_label",
+      "line": 117,
+      "end": 134,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_event_chain_cascade.py",
+      "name": "test_terminal_state_expired_dependency_invalidates_when_upstream_obsolete",
+      "line": 137,
+      "end": 151,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_event_chain_cascade.py",
+      "name": "test_terminal_state_in_expired_or_obsolete_invalidates_when_upstream_triggered",
+      "line": 154,
+      "end": 168,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_event_chain_cascade.py",
+      "name": "test_terminal_state_including_triggered_preserves_expired_alternative",
+      "line": 171,
+      "end": 188,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_event_chain_cascade.py",
+      "name": "test_conjunctive_positive_terminal_state_predicates_are_intersected",
+      "line": 191,
+      "end": 206,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_event_chain_cascade.py",
+      "name": "test_contradictory_positive_terminal_state_gate_fails_loud",
+      "line": 209,
+      "end": 223,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_event_chain_cascade.py",
+      "name": "test_cascade_rolls_back_owned_transaction_on_later_write_failure",
+      "line": 226,
+      "end": 255,
+      "flags": [
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_event_chain_cascade.py",
+      "name": "test_negative_dependency_is_satisfied_by_upstream_expiry_not_invalidated",
+      "line": 258,
+      "end": 279,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_event_chain_cascade.py",
+      "name": "test_negative_dependency_invalidates_when_upstream_fired_forbidden_outcome",
+      "line": 282,
+      "end": 296,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_event_chain_cascade.py",
+      "name": "test_negative_dependency_is_satisfied_by_upstream_avoidance_not_invalidated",
+      "line": 299,
+      "end": 316,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_event_chain_cascade.py",
+      "name": "test_soft_gate_failure_does_not_invalidate_chain_candidate",
+      "line": 319,
+      "end": 339,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_event_chain_cascade.py",
+      "name": "test_transitive_cascade_invalidates_downstream_closure",
+      "line": 342,
+      "end": 355,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_event_chain_cascade.py",
+      "name": "test_event_dependency_cycle_fails_loud",
+      "line": 358,
+      "end": 368,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    }
+  ]
+}

@@ -1,0 +1,369 @@
+{
+  "source_path": "tests/test_relation_capture_633.py",
+  "member_count": 25,
+  "members": [
+    {
+      "idx": 1851,
+      "file": "tests/test_relation_capture_633.py",
+      "name": "test_settlement_interaction_lands_directed_edge_with_origin_round",
+      "line": 41,
+      "end": 69,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1851_test_relation_capture_633__test_settlement_interaction_lands_directed_edge_with_origin_round.txt",
+      "source_path": "tests/test_relation_capture_633.py"
+    },
+    {
+      "idx": 1852,
+      "file": "tests/test_relation_capture_633.py",
+      "name": "test_three_way_joint_memorial_expands_lead_to_each_cosigner_only",
+      "line": 75,
+      "end": 106,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1852_test_relation_capture_633__test_three_way_joint_memorial_expands_lead_to_each_cosigner_only.txt",
+      "source_path": "tests/test_relation_capture_633.py"
+    },
+    {
+      "idx": 1853,
+      "file": "tests/test_relation_capture_633.py",
+      "name": "test_replayed_delta_does_not_double_write",
+      "line": 109,
+      "end": 122,
+      "flags": [
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1853_test_relation_capture_633__test_replayed_delta_does_not_double_write.txt",
+      "source_path": "tests/test_relation_capture_633.py"
+    },
+    {
+      "idx": 1854,
+      "file": "tests/test_relation_capture_633.py",
+      "name": "test_empty_capture_writes_nothing",
+      "line": 128,
+      "end": 140,
+      "flags": [
+        "assert_count"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1854_test_relation_capture_633__test_empty_capture_writes_nothing.txt",
+      "source_path": "tests/test_relation_capture_633.py"
+    },
+    {
+      "idx": 1855,
+      "file": "tests/test_relation_capture_633.py",
+      "name": "test_shape_garbage_rejected_per_existing_extractor_contract",
+      "line": 146,
+      "end": 181,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1855_test_relation_capture_633__test_shape_garbage_rejected_per_existing_extractor_contract.txt",
+      "source_path": "tests/test_relation_capture_633.py"
+    },
+    {
+      "idx": 1856,
+      "file": "tests/test_relation_capture_633.py",
+      "name": "test_non_string_actor_target_context_shapes_rejected",
+      "line": 184,
+      "end": 214,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1856_test_relation_capture_633__test_non_string_actor_target_context_shapes_rejected.txt",
+      "source_path": "tests/test_relation_capture_633.py"
+    },
+    {
+      "idx": 1857,
+      "file": "tests/test_relation_capture_633.py",
+      "name": "test_missing_or_forged_provenance_rejected_with_trace_no_edges",
+      "line": 217,
+      "end": 250,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1857_test_relation_capture_633__test_missing_or_forged_provenance_rejected_with_trace_no_edges.txt",
+      "source_path": "tests/test_relation_capture_633.py"
+    },
+    {
+      "idx": 1858,
+      "file": "tests/test_relation_capture_633.py",
+      "name": "test_whitespace_padded_noncanonical_origins_rejected_no_strip_rescue",
+      "line": 253,
+      "end": 272,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1858_test_relation_capture_633__test_whitespace_padded_noncanonical_origins_rejected_no_strip_rescue.txt",
+      "source_path": "tests/test_relation_capture_633.py"
+    },
+    {
+      "idx": 1859,
+      "file": "tests/test_relation_capture_633.py",
+      "name": "test_authorized_dossier_origin_accepted_bound_to_current_turn",
+      "line": 291,
+      "end": 327,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1859_test_relation_capture_633__test_authorized_dossier_origin_accepted_bound_to_current_turn.txt",
+      "source_path": "tests/test_relation_capture_633.py"
+    },
+    {
+      "idx": 1860,
+      "file": "tests/test_relation_capture_633.py",
+      "name": "test_authorized_dossier_outside_frozen_batch_rejected_zero_edges",
+      "line": 333,
+      "end": 363,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1860_test_relation_capture_633__test_authorized_dossier_outside_frozen_batch_rejected_zero_edges.txt",
+      "source_path": "tests/test_relation_capture_633.py"
+    },
+    {
+      "idx": 1861,
+      "file": "tests/test_relation_capture_633.py",
+      "name": "test_unauthorized_dossier_inside_frozen_set_still_rejected",
+      "line": 366,
+      "end": 397,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1861_test_relation_capture_633__test_unauthorized_dossier_inside_frozen_set_still_rejected.txt",
+      "source_path": "tests/test_relation_capture_633.py"
+    },
+    {
+      "idx": 1862,
+      "file": "tests/test_relation_capture_633.py",
+      "name": "test_missing_frozen_dossier_set_is_empty_closed_set",
+      "line": 400,
+      "end": 432,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1862_test_relation_capture_633__test_missing_frozen_dossier_set_is_empty_closed_set.txt",
+      "source_path": "tests/test_relation_capture_633.py"
+    },
+    {
+      "idx": 1863,
+      "file": "tests/test_relation_capture_633.py",
+      "name": "test_context_stored_byte_identical_through_full_chain",
+      "line": 440,
+      "end": 453,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1863_test_relation_capture_633__test_context_stored_byte_identical_through_full_chain.txt",
+      "source_path": "tests/test_relation_capture_633.py"
+    },
+    {
+      "idx": 1864,
+      "file": "tests/test_relation_capture_633.py",
+      "name": "test_writer_stores_whitespace_context_byte_identical",
+      "line": 456,
+      "end": 474,
+      "flags": [
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1864_test_relation_capture_633__test_writer_stores_whitespace_context_byte_identical.txt",
+      "source_path": "tests/test_relation_capture_633.py"
+    },
+    {
+      "idx": 1865,
+      "file": "tests/test_relation_capture_633.py",
+      "name": "test_writer_rejects_non_string_context",
+      "line": 477,
+      "end": 489,
+      "flags": [
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1865_test_relation_capture_633__test_writer_rejects_non_string_context.txt",
+      "source_path": "tests/test_relation_capture_633.py"
+    },
+    {
+      "idx": 1866,
+      "file": "tests/test_relation_capture_633.py",
+      "name": "test_hallucinated_and_emperor_endpoints_rejected_per_item_zero_edges",
+      "line": 513,
+      "end": 553,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1866_test_relation_capture_633__test_hallucinated_and_emperor_endpoints_rejected_per_item_zero_edges.txt",
+      "source_path": "tests/test_relation_capture_633.py"
+    },
+    {
+      "idx": 1867,
+      "file": "tests/test_relation_capture_633.py",
+      "name": "test_multi_target_with_one_bad_endpoint_writes_zero_edges_for_item",
+      "line": 556,
+      "end": 578,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1867_test_relation_capture_633__test_multi_target_with_one_bad_endpoint_writes_zero_edges_for_item.txt",
+      "source_path": "tests/test_relation_capture_633.py"
+    },
+    {
+      "idx": 1868,
+      "file": "tests/test_relation_capture_633.py",
+      "name": "test_multi_target_with_blank_or_self_member_rejects_whole_item_zero_edges",
+      "line": 588,
+      "end": 614,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1868_test_relation_capture_633__test_multi_target_with_blank_or_self_member_rejects_whole_item_zero_edges.txt",
+      "source_path": "tests/test_relation_capture_633.py"
+    },
+    {
+      "idx": 1869,
+      "file": "tests/test_relation_capture_633.py",
+      "name": "test_empty_or_all_invalid_targets_reject_whole_item_zero_edges",
+      "line": 624,
+      "end": 652,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1869_test_relation_capture_633__test_empty_or_all_invalid_targets_reject_whole_item_zero_edges.txt",
+      "source_path": "tests/test_relation_capture_633.py"
+    },
+    {
+      "idx": 1870,
+      "file": "tests/test_relation_capture_633.py",
+      "name": "test_valid_roster_endpoints_still_land_after_endpoint_gate",
+      "line": 655,
+      "end": 668,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1870_test_relation_capture_633__test_valid_roster_endpoints_still_land_after_endpoint_gate.txt",
+      "source_path": "tests/test_relation_capture_633.py"
+    },
+    {
+      "idx": 1871,
+      "file": "tests/test_relation_capture_633.py",
+      "name": "test_interaction_then_same_batch_dismissal_still_lands",
+      "line": 674,
+      "end": 701,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1871_test_relation_capture_633__test_interaction_then_same_batch_dismissal_still_lands.txt",
+      "source_path": "tests/test_relation_capture_633.py"
+    },
+    {
+      "idx": 1872,
+      "file": "tests/test_relation_capture_633.py",
+      "name": "test_reinstatement_then_interaction_in_same_batch_still_lands",
+      "line": 704,
+      "end": 730,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1872_test_relation_capture_633__test_reinstatement_then_interaction_in_same_batch_still_lands.txt",
+      "source_path": "tests/test_relation_capture_633.py"
+    },
+    {
+      "idx": 1873,
+      "file": "tests/test_relation_capture_633.py",
+      "name": "test_never_qualified_endpoints_still_rejected_in_mutating_batch",
+      "line": 733,
+      "end": 767,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1873_test_relation_capture_633__test_never_qualified_endpoints_still_rejected_in_mutating_batch.txt",
+      "source_path": "tests/test_relation_capture_633.py"
+    },
+    {
+      "idx": 1874,
+      "file": "tests/test_relation_capture_633.py",
+      "name": "test_live_roster_cannot_rescue_endpoint_outside_passed_union",
+      "line": 773,
+      "end": 790,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1874_test_relation_capture_633__test_live_roster_cannot_rescue_endpoint_outside_passed_union.txt",
+      "source_path": "tests/test_relation_capture_633.py"
+    },
+    {
+      "idx": 1875,
+      "file": "tests/test_relation_capture_633.py",
+      "name": "test_missing_endpoint_qualification_set_fails_loud",
+      "line": 793,
+      "end": 805,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1875_test_relation_capture_633__test_missing_endpoint_qualification_set_fails_loud.txt",
+      "source_path": "tests/test_relation_capture_633.py"
+    }
+  ]
+}

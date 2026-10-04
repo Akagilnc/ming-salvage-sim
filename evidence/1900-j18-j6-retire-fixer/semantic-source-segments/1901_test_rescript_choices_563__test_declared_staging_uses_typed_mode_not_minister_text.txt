@@ -1,0 +1,22 @@
+# FILE: tests/test_rescript_choices_563.py
+# NAME: test_declared_staging_uses_typed_mode_not_minister_text
+# LINE: 87-102
+# FLAGS: assert_count
+# KIND: py
+
+def test_declared_staging_uses_typed_mode_not_minister_text(
+    game, caller_mode, minister_text, expected,
+):
+    db, state, _content = game
+    candidate_id = db.stage_directive_candidate(
+        state.turn, "温体仁", {"text": minister_text, "actor": "温体仁",
+                             "mode": cli_backend.resolve_directive_mode(extracted=caller_mode),
+                             "dossier_action_type": "special_decree", "target_kind": "policy",
+                             "target_id": "river-works"},
+    )
+    db.commit_pending_actions(state, action_ids={candidate_id})
+    db.ensure_dossiers_for_draft_directives(state)
+
+    dossiers = db.list_decree_dossiers()
+    assert len(dossiers) == 1
+    assert dossiers[0]["mode"] == expected

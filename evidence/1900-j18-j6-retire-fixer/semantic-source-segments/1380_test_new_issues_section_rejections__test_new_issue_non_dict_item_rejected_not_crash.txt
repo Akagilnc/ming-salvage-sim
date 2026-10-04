@@ -1,0 +1,13 @@
+# FILE: tests/test_new_issues_section_rejections.py
+# NAME: test_new_issue_non_dict_item_rejected_not_crash
+# LINE: 137-143
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_new_issue_non_dict_item_rejected_not_crash(read_game, bad_item):
+    db, state, _ = read_game
+    out = I.apply_issue_tracker_output(db, state, {"new_issues": [bad_item]})
+    rej = _rejected(out)
+    assert len(rej) == 1
+    assert rej[0]["category"] == "invalid_enum"
+    assert rej[0]["reason"]

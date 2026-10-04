@@ -1,0 +1,19 @@
+# FILE: tests/test_audience_presence_500.py
+# NAME: test_transit_rejects_bad_method
+# LINE: 243-255
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_transit_rejects_bad_method(game):
+    db, state, content = game
+    _activate(db, state, "洪承畴")
+    night = an.open_night(db, state, location="乾清宫")
+    nid = int(night["id"])
+    seq_before = _last_seq(db, nid)
+    with pytest.raises(AudienceNightError) as ei:
+        an.record_summon_in_transit(db, nid, "洪承畴", method="密召")
+    assert ei.value.code == "bad_summon_method"
+    assert _last_seq(db, nid) == seq_before  # 非法召法不落账
+    # 正向：合法召法入账，在途者不在场
+    eid = an.record_summon_in_transit(db, nid, "洪承畴", method=an.METHOD_CHUANZHAO)
+    assert eid and "洪承畴" not in an.present_names_at(db, nid)

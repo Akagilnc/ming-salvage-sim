@@ -1,0 +1,12 @@
+# FILE: tests/test_qa_a3_seed_data.py
+# NAME: test_lai_zongdao_remains_opening_libu_shangshu
+# LINE: 62-67
+# FLAGS: assert_text_compare_or_match
+# KIND: py
+
+def test_lai_zongdao_remains_opening_libu_shangshu():
+    """#1284：1627.10 史实礼部尚书=来宗道（兼东阁），保留不改。"""
+    _, characters = load_character_content()
+    lai = characters["来宗道"]
+    assert "礼部尚书" in (lai.office or ""), lai.office
+    assert "东阁大学士" in (lai.office or ""), lai.office

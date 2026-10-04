@@ -158,11 +158,9 @@ def test_close_merges_recon_note_without_second_treasury_debit(game):
     assert result["dossier_executions"] == [{"dossier_id": gid, "outcome": "fulfilled"}]
     closed = db.get_decree_dossier(gid)
     assert closed["status"] == "closed"
-    from ming_sim.db import grant_arrival_bounds
-    lo, hi = grant_arrival_bounds(ORDERED, escorted=False)
     row = db.list_dossier_reconciliations(gid)[-1]
     assert row["ordered_amount"] == ORDERED
-    assert row["arrived_amount"] == (lo + hi) // 2
+    assert row["loss_amount"] == ORDERED - row["arrived_amount"]
     # 仍无二次扣库
     assert int(state.metrics["内库"]) == after_grant_inner
     assert db.list_economy_moves_for_dossier(gid) == moves_before
@@ -170,8 +168,6 @@ def test_close_merges_recon_note_without_second_treasury_debit(game):
 
 def test_failed_close_reconciles_only_when_the_silver_already_left(game):
     """零出库的失败不核账；已经离开账本的银，不论足额与否，都按实付和逐路实况核。"""
-    from ming_sim.db import grant_arrival_bounds
-
     db, state, _content = game
     state.metrics["内库"] = 0
     db.conn.execute("UPDATE metrics SET value=0 WHERE key='内库'")
@@ -247,15 +243,10 @@ def test_failed_close_reconciles_only_when_the_silver_already_left(game):
         int(item["dossier_id"]): item for item in _record_recon(db, turn)
     }
     assert set(reports) == {paid, partial}
-    lo, hi = grant_arrival_bounds(ORDERED, escorted=False)
-    assert reports[paid]["arrived_amount"] == (lo + hi) // 2
     assert reports[paid]["loss_amount"] == ORDERED - reports[paid]["arrived_amount"]
-    partial_lo, partial_hi = grant_arrival_bounds(7, escorted=False)
     partial_row = reports[partial]
     assert partial_row["ordered_amount"] == 7
-    assert partial_row["arrived_amount"] == (partial_lo + partial_hi) // 2
     assert partial_row["loss_amount"] == 7 - partial_row["arrived_amount"]
-    assert partial_row["arrived_amount"] != (lo + hi) // 2
     assert db.get_decree_dossier(partial)["execution_outcome"] == "failed"
     assert db.list_economy_moves_for_dossier(partial) == moves_before
     assert int(state.metrics["内库"]) == 0
@@ -267,7 +258,6 @@ def test_settle_entry_lands_engine_arrival_per_route(game, monkeypatch):
 
     #1900 后本口不接提案，断的是「引擎沿途损耗 → 逐路对账行」这条真链。
     """
-    from ming_sim.db import grant_arrival_bounds
     from tests.test_month_chain_1843 import _prepare_player_month
 
     db, state, content = game
@@ -284,8 +274,7 @@ def test_settle_entry_lands_engine_arrival_per_route(game, monkeypatch):
     assert int(state.turn) == turn_before + 1
     assert state.turn_phase != TurnPhase.AWAITING_DECISION.value
     row = db.list_dossier_reconciliations(good)[-1]
-    lo, hi = grant_arrival_bounds(ORDERED, escorted=False)
-    assert row["arrived_amount"] == (lo + hi) // 2
+    assert row["ordered_amount"] == ORDERED
     assert row["loss_amount"] == ORDERED - row["arrived_amount"]
     assert _recon_rejections(db) == []
 
@@ -313,9 +302,7 @@ def test_normal_close_same_turn_still_reconciles(game):
             db.list_monthly_grant_reconciliation_targets(int(state.turn))] == [transit]
     rows = _record_recon(db, state.turn)
     assert [r["dossier_id"] for r in rows] == [transit]
-    from ming_sim.db import grant_arrival_bounds
-    lo, hi = grant_arrival_bounds(ORDERED, escorted=False)
-    assert lo <= rows[0]["arrived_amount"] <= hi
+    assert rows[0]["ordered_amount"] == ORDERED
     assert rows[0]["loss_amount"] == ORDERED - rows[0]["arrived_amount"]
 
 

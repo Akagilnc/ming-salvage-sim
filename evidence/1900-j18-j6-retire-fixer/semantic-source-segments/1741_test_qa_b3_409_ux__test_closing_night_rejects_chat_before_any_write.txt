@@ -1,0 +1,29 @@
+# FILE: tests/test_qa_b3_409_ux.py
+# NAME: test_closing_night_rejects_chat_before_any_write
+# LINE: 24-46
+# FLAGS: helper_or_private_call
+# KIND: py
+
+def test_closing_night_rejects_chat_before_any_write(game):
+    from tests.test_chat_stream_failpaths_393 import _base_runtime
+
+    db, state, _content = game
+    night = an.open_night(db, state)
+    db.conn.execute(
+        "UPDATE audience_nights SET status=? WHERE id=?",
+        (an.NIGHT_STATUS_CLOSING, night["id"]),
+    )
+    db.conn.commit()
+    before = an.get_night(db, night["id"])
+    counts = {
+        table: db.conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+        for table in ("chat_turns", "chat_messages")
+    }
+    runtime, _minister = _base_runtime(db)
+    events = list(runtime.chat_stream(an.SCENE_CHAT_SPEAKER, "辽东军情如何？"))
+    assert [(event["type"], event.get("code")) for event in events] == [
+        ("error", "night_closing"),
+    ]
+    assert an.get_night(db, night["id"]) == before
+    for table, count in counts.items():
+        assert db.conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] == count

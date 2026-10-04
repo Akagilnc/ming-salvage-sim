@@ -1,0 +1,14 @@
+# FILE: tests/test_rescript_draft_656.py
+# NAME: test_triage_actor_duplicate_hits_deterministic_order
+# LINE: 115-122
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_triage_actor_duplicate_hits_deterministic_order(game):
+    db, _state, _content = game
+    _retire_existing_actors(db)
+    _add_character(db, "B辅臣", "内阁首辅", "东林")
+    _add_character(db, "A辅臣", "内阁首辅", "阉党")
+    actor = select_triage_actor(db)
+    # ORDER BY office_type,office,name（gatekeeper 先例同款确定性序）→ A辅臣 在前
+    assert actor is not None and actor["name"] == "A辅臣"

@@ -1,0 +1,129 @@
+# FILE: tests/test_audience_translate_1837.py
+# NAME: test_translation_pending_create_approve_reject_undo_via_real_chat_turn
+# LINE: 797-919
+# FLAGS: assert_text_compare_or_match,assert_count,mock_or_patch_present,helper_or_private_call
+# KIND: py
+
+def test_translation_pending_create_approve_reject_undo_via_real_chat_turn(
+    game, monkeypatch,
+):
+    """源轮贯穿 scene_chat→转译链：pending 新增/应允/拒绝三向真 undo 可逆。
+
+    不另造平行快照；ctid 下传 dispatch_declaration 入口自记前像（#1839 C2）。
+    """
+    db, state, content = game
+    night = open_night(db, state, location="乾清宫", time_of_day="夜")
+    night_id = int(night["id"])
+
+    class FakeAgent:
+        def run(self, message):
+            return SimpleNamespace(content="臣等遵旨。", tools=[])
+
+    monkeypatch.setattr(
+        "ming_sim.session.create_scene_agent", lambda *a, **k: FakeAgent(),
+    )
+
+    # ── 1) 新增：转译落 pending → undo 删行 ──
+    ctid_create = _active_chat_turn(db, state, night_id)
+    create_text = "着户部备陕西赈灾银UNIQUE-CREATE"
+    sess = _sess(
+        db, state, content, monkeypatch,
+        translate_fn=lambda p, c: {
+            **offline_empty_audience_translate(p, c),
+            "commissions": [{"text": create_text}],
+            "promises": [],
+        },
+    )
+    r = sess.scene_chat("拟赈灾", chat_turn_id=ctid_create)
+    assert r.pending_action_id == 0  # #1842：前台不等后台转译
+    persist_and_schedule_scene(sess, db, r)
+    sess._write_queue.barrier(lambda: None)
+    created = db.conn.execute(
+        "SELECT id FROM pending_actions WHERE payload_json LIKE ? ORDER BY id DESC LIMIT 1",
+        (f"%{create_text}%",),
+    ).fetchone()
+    assert created is not None
+    created_id = int(created["id"])
+    assert db.conn.execute(
+        "SELECT COUNT(*) n FROM pending_actions WHERE id=? AND status='pending'",
+        (created_id,),
+    ).fetchone()["n"] == 1
+    assert db.conn.execute(
+        "SELECT COUNT(*) n FROM chat_turn_rollback_items WHERE chat_turn_id=?",
+        (ctid_create,),
+    ).fetchone()["n"] > 0
+    db.undo_chat_turn(ctid_create)
+    assert db.conn.execute(
+        "SELECT COUNT(*) n FROM pending_actions WHERE id=?",
+        (created_id,),
+    ).fetchone()["n"] == 0
+
+    # ── 2) 应允：night_approved 0→1 → undo 回 0 ──
+    baseline = dispatch_declaration(
+        db, state,
+        {"commissions": [{"text": "旧暂存待应允UNIQUE-APPROVE"}]},
+        minister_name="", night_id=night_id,
+    )
+    approve_id = int(baseline.commissions.applied[0]["id"])
+    assert int(db.conn.execute(
+        "SELECT night_approved FROM pending_actions WHERE id=?", (approve_id,),
+    ).fetchone()["night_approved"] or 0) == 0
+
+    ctid_approve = _active_chat_turn(db, state, night_id)
+    sess = _sess(
+        db, state, content, monkeypatch,
+        translate_fn=lambda p, c: {
+            **offline_empty_audience_translate(p, c),
+            "commissions": [],
+            "promises": [{"action_id": approve_id, "decision": "应允"}],
+        },
+    )
+    r_approve = sess.scene_chat("准", chat_turn_id=ctid_approve)
+    persist_and_schedule_scene(sess, db, r_approve)
+    sess._write_queue.barrier(lambda: None)
+    assert int(db.conn.execute(
+        "SELECT night_approved FROM pending_actions WHERE id=?", (approve_id,),
+    ).fetchone()["night_approved"] or 0) == 1
+    db.undo_chat_turn(ctid_approve)
+    assert int(db.conn.execute(
+        "SELECT night_approved FROM pending_actions WHERE id=?", (approve_id,),
+    ).fetchone()["night_approved"] or 0) == 0
+
+    # ── 3) 拒绝：删 pending 行 → undo 复原 ──
+    reject_base = dispatch_declaration(
+        db, state,
+        {"commissions": [{"text": "旧暂存待拒绝UNIQUE-REJECT"}]},
+        minister_name="", night_id=night_id,
+    )
+    reject_id = int(reject_base.commissions.applied[0]["id"])
+    before_payload = db.conn.execute(
+        "SELECT payload_json, kind, action, status FROM pending_actions WHERE id=?",
+        (reject_id,),
+    ).fetchone()
+    assert before_payload is not None
+
+    ctid_reject = _active_chat_turn(db, state, night_id)
+    sess = _sess(
+        db, state, content, monkeypatch,
+        translate_fn=lambda p, c: {
+            **offline_empty_audience_translate(p, c),
+            "commissions": [],
+            "promises": [{"action_id": reject_id, "decision": "拒绝"}],
+        },
+    )
+    r_reject = sess.scene_chat("不准", chat_turn_id=ctid_reject)
+    persist_and_schedule_scene(sess, db, r_reject)
+    sess._write_queue.barrier(lambda: None)
+    assert db.conn.execute(
+        "SELECT COUNT(*) n FROM pending_actions WHERE id=?", (reject_id,),
+    ).fetchone()["n"] == 0
+    db.undo_chat_turn(ctid_reject)
+    restored = db.conn.execute(
+        "SELECT payload_json, kind, action, status FROM pending_actions WHERE id=?",
+        (reject_id,),
+    ).fetchone()
+    assert restored is not None
+    assert restored["status"] == before_payload["status"]
+    assert restored["kind"] == before_payload["kind"]
+    assert restored["action"] == before_payload["action"]
+    assert restored["payload_json"] == before_payload["payload_json"]

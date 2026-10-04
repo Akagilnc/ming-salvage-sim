@@ -1,0 +1,59 @@
+# FILE: tests/test_rescript_option_field_heal_1746.py
+# NAME: test_overflow_json_number_heals_not_batch
+# LINE: 516-568
+# FLAGS: assert_text_compare_or_match,mock_or_patch_present,helper_or_private_call
+# KIND: py
+
+def test_overflow_json_number_heals_not_batch(
+    case_id, bad_factory, number_lit, heal_fix, must_fields,
+    expected_type, monkeypatch, tmp_path,
+):
+    """合法 JSON 超范围数字（±1e309→±inf）→ 同一补交；字段/现值/期望入 LLM；兄弟保留。"""
+    del case_id
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    bad = bad_factory()
+    sibling = _hold(label="兄弟")
+    sibling_frozen = dict(sibling)
+    first = _items_json_num(
+        [{"title": "u", "context": "c", "options": [bad, sibling]}],
+        number_lit,
+    )
+    healed = _heals_json([("0:0", dict(heal_fix))])
+    calls: list[dict] = []
+    n = {"i": 0}
+
+    def _llm(_a, prompt, tag="", prior_messages=None):
+        n["i"] += 1
+        calls.append({
+            "tag": tag,
+            "prompt": prompt,
+            "roles": _prior_roles(prior_messages),
+            "contents": _prior_contents(prior_messages),
+            "response": first if n["i"] == 1 else healed,
+        })
+        return calls[-1]["response"]
+
+    monkeypatch.setattr(rescript_mod, "run_agent_text", _llm)
+    drafts = generate_rescript_draft(object(), _ctx(), turn=52)
+    assert drafts is not None
+    assert [c["tag"] for c in calls] == ["rescript-draft", "rescript-draft-heal"]
+    _assert_call_history(calls)
+    # 同会话：补交 prior 含首抽 user+assistant
+    assert calls[1]["roles"] == ["user", "assistant"]
+    assert calls[1]["contents"][1] == first
+    req = _parse_heal_request(calls[1]["prompt"])
+    ff = _field_failure_map(req["failures"][0])
+    for name in must_fields:
+        assert name in ff
+        assert "current" in ff[name] and "expected" in ff[name]
+        assert ff[name]["expected"] == expected_type
+        # ±inf 经 JSON 运输（Infinity）loads 后仍为非有限浮点
+        cur = ff[name]["current"]
+        assert isinstance(cur, float) and abs(cur) == float("inf")
+    opts = drafts[0]["options"]
+    hold = next(o for o in opts if o.get("label") == sibling_frozen["label"])
+    for k, v in sibling_frozen.items():
+        assert hold.get(k) == v
+    fixed = next(o for o in opts if o.get("label") == "坏项")
+    for k, v in heal_fix.items():
+        assert fixed.get(k) == v

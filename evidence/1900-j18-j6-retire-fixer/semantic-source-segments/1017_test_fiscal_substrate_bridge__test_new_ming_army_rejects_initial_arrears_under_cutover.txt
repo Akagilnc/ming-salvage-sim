@@ -1,0 +1,25 @@
+# FILE: tests/test_fiscal_substrate_bridge.py
+# NAME: test_new_ming_army_rejects_initial_arrears_under_cutover
+# LINE: 3156-3174
+# FLAGS: assert_text_compare_or_match
+# KIND: py
+
+def test_new_ming_army_rejects_initial_arrears_under_cutover(fresh_db):
+    state = fresh_db.load_state()
+
+    rejected = fresh_db.create_armies_from_extraction(state, [{
+        "id": "arrears_new_army",
+        "name": "带欠饷新军",
+        "manpower": 1000,
+        "owner_power": "ming",
+        "pay_source_region": "shaanxi",
+        "province_pay_share": 0.65,
+        "central_pay_share": 0.35,
+        "arrears": 10,
+    }], commit=False)
+
+    assert rejected and rejected[0]["rejected"] is True
+    assert rejected[0].get("category") == "invalid_enum"
+    assert fresh_db.conn.execute(
+        "SELECT 1 FROM armies WHERE id = 'arrears_new_army'"
+    ).fetchone() is None

@@ -1,0 +1,26 @@
+# FILE: tests/test_office_rank_562.py
+# NAME: test_white_body_high_appointment_is_marked_but_regular_first_office_is_not
+# LINE: 34-53
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_white_body_high_appointment_is_marked_but_regular_first_office_is_not(game):
+    db, state, _content = game
+    _add(db, state, "白身甲", "白身", "布衣")
+    high_id, high = _appointment_dossier(db, state, "白身甲", "陕西巡抚")
+    assert high["break_rank"] == {
+        "is_break_rank": True, "basis": "first_appointment_high_office",
+        "new_rank_band": 3, "threshold_band": 4,
+    }
+
+    _add(db, state, "新科乙", "进士", "生员")
+    _regular_id, regular = _appointment_dossier(db, state, "新科乙", "翰林院编修")
+    assert regular["break_rank"]["is_break_rank"] is False
+    assert regular["break_rank"]["basis"] == "first_appointment_regular"
+
+    from ming_sim.decree import build_promulgation_judge_context
+
+    context = build_promulgation_judge_context(
+        db, state, [dict(db.conn.execute("SELECT * FROM decree_dossiers WHERE id=?", (high_id,)).fetchone())]
+    )
+    assert context["dossiers"][0]["break_rank"]["is_break_rank"] is True

@@ -1,0 +1,22 @@
+# FILE: web/src/components/modals.test.tsx
+# NAME: "EdictModal — decree desk behavior" / "issues an approved conversational draft without a second review gate"
+# LINE: 288-303
+# FLAGS: web_mock_spy_or_calls,web_count_assert
+# KIND: web
+
+  it("issues an approved conversational draft without a second review gate", () => {
+    const onIssue = vi.fn();
+    const { host } = renderEdictModal({
+      state: baseGameState({ directives: [{ id: 8, event_id: "", event_title: "", actor: "", text: "发饷辽东", source: "chat", status: "pending", notes: "", authority: "" }] }),
+      onIssueDecree: onIssue,
+    });
+    const item = host.querySelector(".directive-item");
+    const tools = item?.querySelectorAll(".directive-tools button");
+    const button = host.querySelector<HTMLButtonElement>(".desk-footer button");
+
+    expect(item).not.toBeNull();
+    expect(tools).toHaveLength(2);
+    expect(button?.disabled).toBe(false);
+    act(() => button?.click());
+    expect(onIssue).toHaveBeenCalledTimes(1);
+  });

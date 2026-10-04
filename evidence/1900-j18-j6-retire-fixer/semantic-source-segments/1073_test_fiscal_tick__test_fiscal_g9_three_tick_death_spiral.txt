@@ -1,0 +1,17 @@
+# FILE: tests/test_fiscal_tick.py
+# NAME: test_fiscal_g9_three_tick_death_spiral
+# LINE: 152-162
+# FLAGS: helper_or_private_call
+# KIND: py
+
+def test_fiscal_g9_three_tick_death_spiral():
+    st = S(省库库银=10, 军饷欠=30)
+    g9exp = [
+        {"省库库银": 0, "C_地方截留": 9.8, "民欠旧赋": 21, "军饷欠": 61, "官俸欠": 8, "宗禄欠": 4},
+        {"省库库银": 0, "C_地方截留": 19.6, "民欠旧赋": 42, "军饷欠": 97, "官俸欠": 16, "宗禄欠": 8},
+        {"省库库银": 0, "C_地方截留": 29.4, "民欠旧赋": 63, "军饷欠": 133, "官俸欠": 24, "宗禄欠": 12},
+    ]
+    for i in range(3):
+        duep = dict(base, Due=dict(军饷=45, 官俸=8, 宗禄=4, 赈济=0))
+        res = _assert_end(st, duep, [dict(type="营建", cost=5)], g9exp[i])
+        st = res.new_st

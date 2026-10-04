@@ -1,0 +1,22 @@
+# FILE: tests/test_faction_class_section_rejections.py
+# NAME: test_float_and_bool_class_values_rejected
+# LINE: 124-139
+# FLAGS: assert_count,helper_or_private_call
+# KIND: py
+
+def test_float_and_bool_class_values_rejected(game):
+    """class_delta satisfaction/leverage 为 float/bool → 两条 invalid_enum 拒收，不落库
+    （对称 faction，cmr 线上 r1 sourcery）。"""
+    db, state, content = game
+    turn = state.turn
+    good = _valid_class_key(db)
+    before = _class_satisfaction(db, good)
+
+    run_settle(db, state, content, {
+        "class_delta": {good: {"satisfaction": 3.7, "leverage": True}},
+    }, narrative="x", decree_text="y")
+
+    rows = [r for r in _rejection_rows(db, turn, CLASS_REJ_SECTION)
+            if r[2] == "invalid_enum"]
+    assert len(rows) == 2, rows
+    assert _class_satisfaction(db, good) == before

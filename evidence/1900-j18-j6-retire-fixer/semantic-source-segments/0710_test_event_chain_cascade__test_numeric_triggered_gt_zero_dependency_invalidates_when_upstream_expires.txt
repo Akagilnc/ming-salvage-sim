@@ -1,0 +1,21 @@
+# FILE: tests/test_event_chain_cascade.py
+# NAME: test_numeric_triggered_gt_zero_dependency_invalidates_when_upstream_expires
+# LINE: 83-97
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_numeric_triggered_gt_zero_dependency_invalidates_when_upstream_expires(game):
+    db, state, content = game
+    issues.bind_content(content)
+    upstream = _hist_event("__chain_upstream_numeric_gt0_expired__")
+    downstream = _hist_event("__chain_downstream_numeric_gt0__", {
+        "event.__chain_upstream_numeric_gt0_expired__.triggered": ">0",
+    })
+    with _TempEvents(content, upstream, downstream):
+        db.mark_event_expired(state, upstream.id)
+
+        terminalized = issues.apply_event_cascading_invalidations(state, db)
+
+        assert any(item["id"] == downstream.id and item["terminal_state"] == "obsolete" for item in terminalized)
+        state_name, reason = _terminal_state(db, downstream.id)
+        assert state_name == "obsolete"

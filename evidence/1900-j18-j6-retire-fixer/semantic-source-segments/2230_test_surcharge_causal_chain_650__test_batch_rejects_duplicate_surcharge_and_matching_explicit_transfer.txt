@@ -1,0 +1,21 @@
+# FILE: tests/test_surcharge_causal_chain_650.py
+# NAME: test_batch_rejects_duplicate_surcharge_and_matching_explicit_transfer
+# LINE: 176-190
+# FLAGS: assert_count,helper_or_private_call
+# KIND: py
+
+def test_batch_rejects_duplicate_surcharge_and_matching_explicit_transfer(game):
+    db, state, content = game
+    decree = _decree(db, state, monthly_amount=3.0)
+    transfer = {
+        "source": "农民@shaanxi", "target": "流民@shaanxi", "amount": 1,
+        "reason": "加派", "origin_ref": decree["origin_ref"],
+    }
+    applied = apply_score_extraction(db, state, {
+        "surcharge_decrees": [decree, dict(decree)],
+        "population_transfers": [transfer],
+    }, content, None)
+    assert len(applied["surcharge_decrees"]) == 1
+    assert len(applied["surcharge_decrees_rejections"]) == 1
+    assert not applied["population_transfers"]
+    assert len(applied["population_transfers_rejections"]) == 1

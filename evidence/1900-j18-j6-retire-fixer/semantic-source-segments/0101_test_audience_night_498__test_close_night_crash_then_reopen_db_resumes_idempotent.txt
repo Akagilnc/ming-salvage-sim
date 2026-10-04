@@ -1,0 +1,100 @@
+# FILE: tests/test_audience_night_498.py
+# NAME: test_close_night_crash_then_reopen_db_resumes_idempotent
+# LINE: 320-413
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_close_night_crash_then_reopen_db_resumes_idempotent(content):
+    """AC9：合法任免已 commit、候选转档前 crash → 关 GameDB、重开续跑收齐；
+    真实任免落盘、候选真实转档、单条收夜账、幂等无重复、无半提交终态。"""
+    fd, path = tempfile.mkstemp(suffix=".db")
+    os.close(fd)
+    try:
+        db = GameDB(path, content)
+        db.seed_static_data()
+        state = db.load_state()
+        minister = _active_minister(db, content)
+        old_office = db.conn.execute(
+            "SELECT office FROM characters WHERE name=?", (minister,),
+        ).fetchone()["office"]
+        night = an.open_night(db, state)
+
+        new_office = "兵部郎中"
+        pa_id = db.stage_pending_action(
+            state.turn, kind="office", action="任命",
+            minister_name=minister,
+            payload={"text": "测试任免原文",
+                "name": minister, "office": new_office, "office_type": "六部",
+                "faction": "中立", "reason": "测试任免",
+            },
+        )
+        db.mark_pending_night_approved([pa_id], night_id=night["id"])
+        dir_id = db.upsert_pending_directive(
+            state.turn, minister, payload={**_POLICY_FIELDS, "text": "着户部清查边饷", "actor": minister},
+        )
+        db.mark_pending_night_approved([dir_id], night_id=night["id"])
+
+        # crash：任免已 commit（step1）、候选转档（step2）前崩
+        with pytest.raises(AudienceNightError) as ei:
+            an.close_night(
+                db, state, night_id=night["id"], content=content,
+                crash_after_step=CLOSE_STEP_COMMIT_OFFICE,
+            )
+        assert ei.value.code == "close_crash"
+        assert db.conn.execute(
+            "SELECT office FROM characters WHERE name=?", (minister,),
+        ).fetchone()["office"] == old_office
+        assert db.list_decree_dossiers(
+            status="proposed", target_kind="character", target_id=minister
+        )
+        db.close()  # 进程崩溃：关库
+
+        # 重开 GameDB / state，从游标续跑（跨进程恢复）
+        db2 = GameDB(path, content)
+        state2 = db2.load_state()
+        mid = an.get_night(db2, night["id"])
+        assert mid["status"] == "closing"
+        assert int(mid["close_commit_cursor"]) == CLOSE_STEP_COMMIT_OFFICE
+
+        result = an.close_night(db2, state2, night_id=night["id"], content=content)
+        assert result["closed"] is True
+        final = an.get_night(db2, night["id"])
+        assert final["status"] == "closed"
+        assert int(final["close_commit_cursor"]) == an.CLOSE_STEP_FINALIZE
+        # 任免案卷仍在（不因重开丢失）且判决前不改盘 + 候选真实转档
+        assert db2.conn.execute(
+            "SELECT office FROM characters WHERE name=?", (minister,),
+        ).fetchone()["office"] == old_office
+        assert db2.list_decree_dossiers(
+            status="proposed", target_kind="character", target_id=minister
+        )
+        assert db2.conn.execute(
+            "SELECT status FROM pending_actions WHERE id=?", (dir_id,),
+        ).fetchone()["status"] == "committed"
+        drafts = db2.conn.execute(
+            "SELECT text FROM turn_directives WHERE turn=? AND status='draft'",
+            (state2.turn,),
+        ).fetchall()
+        assert any("清查边饷" in (r["text"] or "") for r in drafts)
+        # #1838 reopen：无收夜旁白账；再收幂等看夜 status
+        again = an.close_night(db2, state2, night_id=night["id"], content=content)
+        assert again.get("already") is True
+        assert an.get_night(db2, night["id"])["status"] == "closed"
+
+        # 真实收夜只负责成案；结算判决入口消费结构化 verdict 后才物化任免。
+        dossier = db2.list_decree_dossiers(
+            status="proposed", target_kind="character", target_id=minister
+        )[0]
+        db2.apply_dossier_verdicts(
+            state2,
+            [{"dossier_id": dossier["id"], "decision": "promulgated"}],
+            content=content,
+        )
+        assert db2.conn.execute(
+            "SELECT office FROM characters WHERE name=?", (minister,),
+        ).fetchone()["office"] == new_office
+        db2.close()
+    finally:
+        for p in (path, f"{path}_agno.db"):
+            if os.path.exists(p):
+                os.remove(p)

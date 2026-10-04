@@ -1,0 +1,32 @@
+# FILE: tests/test_runtime_llm_config.py
+# NAME: test_runtime_llm_cli_save_preserves_api_default_headers
+# LINE: 649-674
+# FLAGS: assert_text_compare_or_match,mock_or_patch_present
+# KIND: py
+
+def test_runtime_llm_cli_save_preserves_api_default_headers(tmp_path, monkeypatch):
+    """#1794 / ADR 0001：保存 CLI 槽保留 API 槽附加头。"""
+    path = tmp_path / "runtime_llm.json"
+    path.write_text(json.dumps({
+        "channel": "api",
+        "api": {
+            "base_url": "https://api.example.com/v1",
+            "model": "gpt-api",
+            "api_key": "sk-api",
+            "default_headers": {"X-Session": "keep-me"},
+        },
+        "cli": {"runner": "", "model": "", "timeout_seconds": ""},
+    }, ensure_ascii=False), encoding="utf-8")
+    monkeypatch.setattr(llm_config, "RUNTIME_LLM_PATH", str(path))
+
+    llm_config.save_runtime_llm(
+        "", "", "",
+        channel="cli",
+        cli_runner="codex",
+        cli_model="gpt-5.5",
+        cli_timeout_seconds=240,
+    )
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    assert saved["channel"] == "cli"
+    assert saved["api"]["default_headers"] == {"X-Session": "keep-me"}
+    assert saved["api"]["api_key"] == "sk-api"

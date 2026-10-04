@@ -1,0 +1,64 @@
+# FILE: tests/test_draft_admission_resubmit_1769.py
+# NAME: test_draft_admission_resubmit_success_advances_month
+# LINE: 245-302
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_draft_admission_resubmit_success_advances_month(admission_game, monkeypatch):
+    """补交路：原抽坏 → 第一次重写仍坏 → 第二次重写成案 → 月推进。
+
+    投影承重=第二次重写模型返回，非偿还序偷换。总计 3（原抽+重写2）。
+    """
+    game = admission_game
+    # 原抽 + 重写1 仍坏；重写2 才成案（owner：总计 3）
+    _queue_backend(monkeypatch, [_BAD_PAY_ORDER, _BAD_PAY_ORDER, _GOOD_XIEANG])
+    resubmit_calls = _spy_resubmit_kwargs(monkeypatch)
+    client = TestClient(web_app.app)
+    turn = int(game.state.turn)
+
+    _post_directive(client, _DECREE_TEXT)
+    wait_pending_writes(game)
+    draft_id = _latest_directive_id(game)
+    first_row = game.db.get_directive(draft_id)
+    first = game.db.read_directive_dossier_payload(first_row)
+    assert first.get("dossier_action_type") == "pay_order_override"
+    assert any(
+        isinstance(e, dict) and e.get("key") == "arrears_priority_军饷"
+        for e in (first.get("entries") or [])
+    )
+
+    _post_issue_stream(client, expected_turn=turn, step="1769 resubmit")
+    assert _turn_of(_get_state(client)) == turn + 1
+
+    # 两次 LLM 重写；入参含失败事实 + 原产物（结构化字段，不扫 prompt）
+    assert len(resubmit_calls) == 2
+    assert resubmit_calls[0]["failure_reason"]
+    assert resubmit_calls[0]["bad_payload"].get("dossier_action_type") == "pay_order_override"
+    assert any(
+        isinstance(e, dict) and e.get("key") == "arrears_priority_军饷"
+        for e in (resubmit_calls[0]["bad_payload"].get("entries") or [])
+    )
+    assert resubmit_calls[0]["decree_text"] == _DECREE_TEXT
+    assert resubmit_calls[1]["failure_reason"]
+    assert resubmit_calls[1]["decree_text"] == _DECREE_TEXT
+
+    dossier = game.db.get_dossier_for_directive(draft_id)
+    assert dossier is not None
+    assert dossier["action_type"] == "grant_allocation"
+    projected = json.loads(dossier["payload_json"])
+    # 第二次重写返回（模型边界 _GOOD_XIEANG）vs 投影承重
+    assert projected.get("grant_action") == _GOOD_XIEANG["恩赏拨帑"] == "协饷"
+    assert projected.get("amount") == _GOOD_XIEANG["金额"] == 15
+    assert projected.get("account") == _GOOD_XIEANG["账户"] == "国库"
+    assert projected.get("purpose") == _GOOD_XIEANG["用途"]
+    assert projected.get("target_kind") == "army"
+    assert projected.get("target_id") == "guanning"
+    assert projected.get("dossier_action_type", dossier["action_type"]) != "pay_order_override"
+    assert projected.get("entries") in (None, [], ())
+    # 颁布格等既有承重载荷字段同样按第二次重写返回投影，不得在补交路上漂移
+    assert projected.get("mode") == _GOOD_XIEANG["颁布方式"] == "ordinary"
+    assert dossier["executor_id"] == _GOOD_XIEANG["承办人"] == "郭允厚"
+    assert not _rejection_rows(game, draft_id)
+    _finish_month_after_gazette(game, turn)
+    row = game.db.get_directive(draft_id)
+    assert row is not None and str(row["status"]) == "issued"

@@ -1,0 +1,44 @@
+# FILE: tests/test_person_delta_adapter.py
+# NAME: test_apply_score_extraction_treats_active_identity_title_as_unappointed
+# LINE: 1577-1614
+# FLAGS: assert_text_compare_or_match
+# KIND: py
+
+def test_apply_score_extraction_treats_active_identity_title_as_unappointed(game):
+    db, state, content = game
+    name = active_ming_character(db, content)
+    old_office = content.characters[name].office
+    old_office_type = content.characters[name].office_type
+
+    try:
+        db.set_character_office(name, "降臣", "身名分")
+        content.characters[name].office = "降臣"
+        content.characters[name].office_type = "身名分"
+
+        applied = issues.apply_score_extraction(
+            db,
+            state,
+            {
+                "人物变更": [
+                    {
+                        "name": name,
+                        "origin_ref": "盘面自发", "动作": "任命",
+                        "office": "陕西总督",
+                        "office_type": "督抚",
+                        "region_id": "shaanxi",
+                        "reason": "收叙任用",
+                    }
+                ]
+            },
+            content=content,
+        )
+
+        row = db.conn.execute(
+            "SELECT office, office_type FROM characters WHERE name=?", (name,)
+        ).fetchone()
+        assert row["office"] == "陕西总督"
+        assert applied["applied_person_changes"][0]["动作"] == "任命"
+        assert "normalized" not in applied["applied_person_changes"][0]
+    finally:
+        content.characters[name].office = old_office
+        content.characters[name].office_type = old_office_type

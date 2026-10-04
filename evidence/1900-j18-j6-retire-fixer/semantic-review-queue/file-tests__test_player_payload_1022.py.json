@@ -1,0 +1,51 @@
+{
+  "source_path": "tests/test_player_payload_1022.py",
+  "member_count": 3,
+  "members": [
+    {
+      "idx": 1655,
+      "file": "tests/test_player_payload_1022.py",
+      "name": "test_history_payload_preserves_narrative_without_machine_ledger",
+      "line": 35,
+      "end": 49,
+      "flags": [
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1655_test_player_payload_1022__test_history_payload_preserves_narrative_without_machine_ledger.txt",
+      "source_path": "tests/test_player_payload_1022.py"
+    },
+    {
+      "idx": 1656,
+      "file": "tests/test_player_payload_1022.py",
+      "name": "test_settlement_sse_routes_serialize_only_player_narrative",
+      "line": 123,
+      "end": 150,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1656_test_player_payload_1022__test_settlement_sse_routes_serialize_only_player_narrative.txt",
+      "source_path": "tests/test_player_payload_1022.py"
+    },
+    {
+      "idx": 1657,
+      "file": "tests/test_player_payload_1022.py",
+      "name": "test_issue_terminals_keep_unadvanced_month_visible",
+      "line": 153,
+      "end": 167,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1657_test_player_payload_1022__test_issue_terminals_keep_unadvanced_month_visible.txt",
+      "source_path": "tests/test_player_payload_1022.py"
+    }
+  ]
+}

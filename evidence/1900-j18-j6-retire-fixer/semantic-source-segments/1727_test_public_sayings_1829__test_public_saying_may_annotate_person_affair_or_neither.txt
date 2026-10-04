@@ -1,0 +1,37 @@
+# FILE: tests/test_public_sayings_1829.py
+# NAME: test_public_saying_may_annotate_person_affair_or_neither
+# LINE: 222-252
+# FLAGS: assert_text_compare_or_match
+# KIND: py
+
+def test_public_saying_may_annotate_person_affair_or_neither(game):
+    db, state, _content = game
+
+    rumor_id = record_public_saying(db, state, "宫中有人夜见彗星")
+    person_id = record_public_saying(
+        db,
+        state,
+        "袁崇焕已死于宁远",
+        involved_characters=["袁崇焕"],
+    )
+    affair_id = record_public_saying(
+        db,
+        state,
+        "宁远兵变已平",
+        involved_characters=["袁崇焕"],
+        affair_ref="affair:ningyuan-mutiny",
+    )
+
+    rumor = next(row for row in list_public_sayings(db) if row["id"] == rumor_id)
+    person = next(row for row in list_public_sayings(db) if row["id"] == person_id)
+    affair = next(row for row in list_public_sayings(db) if row["id"] == affair_id)
+
+    assert rumor["involved_characters"] == []
+    assert rumor["affair_ref"] == ""
+    assert person["involved_characters"] == ["袁崇焕"]
+    assert person["affair_ref"] == ""
+    assert affair["involved_characters"] == ["袁崇焕"]
+    assert affair["affair_ref"] == "affair:ningyuan-mutiny"
+    assert list_public_sayings(db, involved_character="袁崇焕") == [person, affair]
+    assert list_public_sayings(db, affair_ref="affair:ningyuan-mutiny") == [affair]
+    assert list_public_sayings(db, affair_ref="") == [rumor, person]

@@ -1,0 +1,93 @@
+# FILE: tests/test_qa_u3_map_nodes_1401.py
+# NAME: test_map_nodes_province_garrison_co_node
+# LINE: 43-129
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_map_nodes_province_garrison_co_node(game):
+    """#1505：typed station_region 单归属——province nodes carry tax + garrison。
+
+    纯 theater 针（dongjiang/xuan_da/shanhaiguan）不再 emit；军挂在其
+    station_region 对应节点上。dongjiang_area 与 liaodong 同为带 region 的合并 pin。
+    """
+    db, _state, _content = game
+
+    # station 文本似省但 typed 驻地为空时，不得猜挂。
+    db.conn.execute(
+        "INSERT INTO armies ("
+        " id, name, station, station_region, theater, commander, controller,"
+        " troop_type, manpower, supply, morale, training, equipment, arrears,"
+        " mobility, loyalty, status, owner_power"
+        ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            "temp_boundary_army", "临时驻防探针", "山西 / 临时驻防", "",
+            "西南", "驻军", "兵部", "边军、步卒", 4000, 50, 50, 50, 50, 0,
+            40, 50, "边界探针：typed station_region 为空不挂点", "ming",
+        ),
+    )
+    db.conn.commit()
+
+    nodes = _map_nodes(db)
+    by_id = {str(n["id"]): n for n in nodes}
+
+    assert not any(
+        str(a["id"]) == "temp_boundary_army"
+        for n in nodes for a in (n.get("armies") or [])
+    ), "station_region='' 的探针军（station 含省名）不应挂在任何地图节点"
+
+    # dongjiang army → dongjiang_area 同 id 合并 pin（NOT 旧 dongjiang 纯 theater）
+    assert "dongjiang" not in by_id, "旧 dongjiang 纯 theater 针不得复活"
+    assert "dongjiang_area" in by_id, "dongjiang_area merged pin missing"
+    dj = by_id["dongjiang_area"]
+    assert dj.get("kind") == "theater", (
+        f"dongjiang_area 须为可点击合并 theater pin，got kind={dj.get('kind')!r}"
+    )
+    assert str(dj.get("label") or "").strip(), "dongjiang_area merged pin missing label"
+    dongjiang_armies = [str(a["id"]) for a in (dj.get("armies") or [])]
+    assert "dongjiang" in dongjiang_armies, (
+        f"dongjiang army not on dongjiang_area node; armies={dongjiang_armies}"
+    )
+    # 节点同时携带 region tax payload
+    assert isinstance(dj.get("region"), dict) and dj["region"].get("name"), (
+        "dongjiang_area node must carry region tax payload"
+    )
+
+    # xuan_da army → shanxi province node
+    assert "shanxi" in by_id, "shanxi province node missing"
+    xuan_da_armies = [str(a["id"]) for a in (by_id["shanxi"].get("armies") or [])]
+    assert "xuan_da" in xuan_da_armies, (
+        f"xuan_da army not on shanxi node; armies={xuan_da_armies}"
+    )
+    assert isinstance(by_id["shanxi"].get("region"), dict) and by_id["shanxi"]["region"].get("name"), (
+        "shanxi node must carry region tax payload"
+    )
+
+    # shanhaiguan army → beizhili province node
+    assert "beizhili" in by_id, "beizhili province node missing"
+    shanhaiguan_armies = [str(a["id"]) for a in (by_id["beizhili"].get("armies") or [])]
+    assert "shanhaiguan" in shanhaiguan_armies, (
+        f"shanhaiguan army not on beizhili node; armies={shanhaiguan_armies}"
+    )
+    assert isinstance(by_id["beizhili"].get("region"), dict) and by_id["beizhili"]["region"].get("name"), (
+        "beizhili node must carry region tax payload"
+    )
+
+    # liaodong 合并 theater+region 节点仍收关宁
+    assert any(str(a["id"]) == "guanning" for a in (by_id["liaodong"].get("armies") or [])), (
+        "guanning not on liaodong merged node"
+    )
+
+    # 外线军不得被吞进 liaodong；各归其 province region
+    liaodong_army_ids = {str(a["id"]) for a in (by_id["liaodong"].get("armies") or [])}
+    assert "manchu_banners_main" not in liaodong_army_ids
+    assert "han_liaoren_corps" not in liaodong_army_ids
+    assert "jianzhou" in by_id
+    assert "shenyang_liaoyang" in by_id
+    jianzhou_army_ids = {str(a["id"]) for a in (by_id["jianzhou"].get("armies") or [])}
+    shenyang_army_ids = {str(a["id"]) for a in (by_id["shenyang_liaoyang"].get("armies") or [])}
+    assert "manchu_banners_main" in jianzhou_army_ids, (
+        f"manchu_banners_main not on jianzhou; armies={sorted(jianzhou_army_ids)}"
+    )
+    assert "han_liaoren_corps" in shenyang_army_ids, (
+        f"han_liaoren_corps not on shenyang_liaoyang; armies={sorted(shenyang_army_ids)}"
+    )

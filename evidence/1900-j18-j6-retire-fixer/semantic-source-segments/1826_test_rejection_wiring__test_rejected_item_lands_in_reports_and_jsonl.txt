@@ -1,0 +1,29 @@
+# FILE: tests/test_rejection_wiring.py
+# NAME: test_rejected_item_lands_in_reports_and_jsonl
+# LINE: 32-54
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_rejected_item_lands_in_reports_and_jsonl(game, monkeypatch, tmp_path):
+    """坏 delta 项(查无此人的人物状态变化)经结算后:rejection_reports 落行 +
+    commit 后镜像 jsonl——「哪个 section 最常被喂脏」从此可聚合(决定 5)。"""
+    db, state, content = game
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    turn = state.turn
+
+    run_settle(db, state, content, {
+        "character_status_changes": [{"name": "查无此人甲", "status": "dead", "reason": "测试"}],
+    }, narrative="x", decree_text="y")
+
+    rows = _rejection_rows(db, turn)
+    assert len(rows) == 1
+    section, reason, category, source, attempt = rows[0]
+    assert section == "applied_person_changes"
+    assert reason  # 人读原因非空
+    assert attempt == 1
+    jsonl = tmp_path / "error_packs" / "rejections.jsonl"
+    assert jsonl.exists()
+    lines = [json.loads(l) for l in jsonl.read_text(encoding="utf-8").splitlines()]
+    assert len(lines) == 1
+    assert lines[0]["section"] == "applied_person_changes"
+    assert lines[0]["turn"] == turn

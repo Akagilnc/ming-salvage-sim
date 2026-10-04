@@ -1,0 +1,174 @@
+{
+  "source_path": "tests/test_execution_joint_liability_565.py",
+  "member_count": 12,
+  "members": [
+    {
+      "idx": 836,
+      "file": "tests/test_execution_joint_liability_565.py",
+      "name": "test_fulfilled_writes_zero_joint_liability_rows",
+      "line": 67,
+      "end": 79,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0836_test_execution_joint_liability_565__test_fulfilled_writes_zero_joint_liability_rows.txt",
+      "source_path": "tests/test_execution_joint_liability_565.py"
+    },
+    {
+      "idx": 837,
+      "file": "tests/test_execution_joint_liability_565.py",
+      "name": "test_terminal_outcomes_charge_lead_and_downgraded_delegator",
+      "line": 90,
+      "end": 131,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0837_test_execution_joint_liability_565__test_terminal_outcomes_charge_lead_and_downgraded_delegator.txt",
+      "source_path": "tests/test_execution_joint_liability_565.py"
+    },
+    {
+      "idx": 838,
+      "file": "tests/test_execution_joint_liability_565.py",
+      "name": "test_adapter_replay_is_idempotent_on_joint_liability_rows",
+      "line": 134,
+      "end": 156,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0838_test_execution_joint_liability_565__test_adapter_replay_is_idempotent_on_joint_liability_rows.txt",
+      "source_path": "tests/test_execution_joint_liability_565.py"
+    },
+    {
+      "idx": 839,
+      "file": "tests/test_execution_joint_liability_565.py",
+      "name": "test_engine_auto_failed_materialize_writes_zero_joint_liability",
+      "line": 159,
+      "end": 181,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0839_test_execution_joint_liability_565__test_engine_auto_failed_materialize_writes_zero_joint_liability.txt",
+      "source_path": "tests/test_execution_joint_liability_565.py"
+    },
+    {
+      "idx": 840,
+      "file": "tests/test_execution_joint_liability_565.py",
+      "name": "test_dead_liable_party_skips_satisfaction_but_enters_note",
+      "line": 184,
+      "end": 205,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0840_test_execution_joint_liability_565__test_dead_liable_party_skips_satisfaction_but_enters_note.txt",
+      "source_path": "tests/test_execution_joint_liability_565.py"
+    },
+    {
+      "idx": 841,
+      "file": "tests/test_execution_joint_liability_565.py",
+      "name": "test_explicit_affected_parties_must_pass_full_key_validation",
+      "line": 208,
+      "end": 248,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0841_test_execution_joint_liability_565__test_explicit_affected_parties_must_pass_full_key_validation.txt",
+      "source_path": "tests/test_execution_joint_liability_565.py"
+    },
+    {
+      "idx": 842,
+      "file": "tests/test_execution_joint_liability_565.py",
+      "name": "test_assistant_row_delegator_gets_secondary_assistant_zero_mechanical",
+      "line": 251,
+      "end": 291,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0842_test_execution_joint_liability_565__test_assistant_row_delegator_gets_secondary_assistant_zero_mechanical.txt",
+      "source_path": "tests/test_execution_joint_liability_565.py"
+    },
+    {
+      "idx": 843,
+      "file": "tests/test_execution_joint_liability_565.py",
+      "name": "test_dual_role_lead_and_delegator_primary_wins",
+      "line": 294,
+      "end": 329,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0843_test_execution_joint_liability_565__test_dual_role_lead_and_delegator_primary_wins.txt",
+      "source_path": "tests/test_execution_joint_liability_565.py"
+    },
+    {
+      "idx": 844,
+      "file": "tests/test_execution_joint_liability_565.py",
+      "name": "test_liability_query_excludes_knowers_but_keeps_delegator_fk",
+      "line": 332,
+      "end": 363,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0844_test_execution_joint_liability_565__test_liability_query_excludes_knowers_but_keeps_delegator_fk.txt",
+      "source_path": "tests/test_execution_joint_liability_565.py"
+    },
+    {
+      "idx": 845,
+      "file": "tests/test_execution_joint_liability_565.py",
+      "name": "test_living_offstage_delegator_still_charged",
+      "line": 366,
+      "end": 379,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0845_test_execution_joint_liability_565__test_living_offstage_delegator_still_charged.txt",
+      "source_path": "tests/test_execution_joint_liability_565.py"
+    },
+    {
+      "idx": 846,
+      "file": "tests/test_execution_joint_liability_565.py",
+      "name": "test_execution_note_merge_interface_and_restore",
+      "line": 382,
+      "end": 407,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0846_test_execution_joint_liability_565__test_execution_note_merge_interface_and_restore.txt",
+      "source_path": "tests/test_execution_joint_liability_565.py"
+    },
+    {
+      "idx": 847,
+      "file": "tests/test_execution_joint_liability_565.py",
+      "name": "test_direct_record_dossier_execution_does_not_trigger_joint_liability",
+      "line": 410,
+      "end": 418,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0847_test_execution_joint_liability_565__test_direct_record_dossier_execution_does_not_trigger_joint_liability.txt",
+      "source_path": "tests/test_execution_joint_liability_565.py"
+    }
+  ]
+}

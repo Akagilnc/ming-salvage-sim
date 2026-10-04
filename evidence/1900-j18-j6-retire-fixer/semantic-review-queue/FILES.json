@@ -1,0 +1,1141 @@
+{
+  "total_members": 2551,
+  "total_files": 227,
+  "files": [
+    {
+      "source_path": "tests/test_adr0015_per_item_rejection.py",
+      "count": 2,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_adr0015_per_item_rejection.py.json"
+    },
+    {
+      "source_path": "tests/test_advance_paths_atomic.py",
+      "count": 10,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_advance_paths_atomic.py.json"
+    },
+    {
+      "source_path": "tests/test_advances_section_rejections.py",
+      "count": 9,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_advances_section_rejections.py.json"
+    },
+    {
+      "source_path": "tests/test_affairs_1831.py",
+      "count": 5,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_affairs_1831.py.json"
+    },
+    {
+      "source_path": "tests/test_applier_contract.py",
+      "count": 10,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_applier_contract.py.json"
+    },
+    {
+      "source_path": "tests/test_appointment_tenure_607.py",
+      "count": 6,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_appointment_tenure_607.py.json"
+    },
+    {
+      "source_path": "tests/test_army_card_status_1501.py",
+      "count": 2,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_army_card_status_1501.py.json"
+    },
+    {
+      "source_path": "tests/test_army_display_173.py",
+      "count": 4,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_army_display_173.py.json"
+    },
+    {
+      "source_path": "tests/test_army_firearms.py",
+      "count": 9,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_army_firearms.py.json"
+    },
+    {
+      "source_path": "tests/test_army_maintenance_retire_173.py",
+      "count": 8,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_army_maintenance_retire_173.py.json"
+    },
+    {
+      "source_path": "tests/test_army_pay_source_prompt_contract.py",
+      "count": 1,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_army_pay_source_prompt_contract.py.json"
+    },
+    {
+      "source_path": "tests/test_army_salary_44.py",
+      "count": 12,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_army_salary_44.py.json"
+    },
+    {
+      "source_path": "tests/test_audience_background.py",
+      "count": 5,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_audience_background.py.json"
+    },
+    {
+      "source_path": "tests/test_audience_continuous_507.py",
+      "count": 5,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_audience_continuous_507.py.json"
+    },
+    {
+      "source_path": "tests/test_audience_draft_grant_once_1777.py",
+      "count": 1,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_audience_draft_grant_once_1777.py.json"
+    },
+    {
+      "source_path": "tests/test_audience_extraction_501.py",
+      "count": 2,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_audience_extraction_501.py.json"
+    },
+    {
+      "source_path": "tests/test_audience_night_498.py",
+      "count": 18,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_audience_night_498.py.json"
+    },
+    {
+      "source_path": "tests/test_audience_presence_500.py",
+      "count": 10,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_audience_presence_500.py.json"
+    },
+    {
+      "source_path": "tests/test_audience_restore_505.py",
+      "count": 22,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_audience_restore_505.py.json"
+    },
+    {
+      "source_path": "tests/test_audience_scroll_539.py",
+      "count": 22,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_audience_scroll_539.py.json"
+    },
+    {
+      "source_path": "tests/test_audience_translate_1837.py",
+      "count": 14,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_audience_translate_1837.py.json"
+    },
+    {
+      "source_path": "tests/test_audience_translate_1837_reopen.py",
+      "count": 10,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_audience_translate_1837_reopen.py.json"
+    },
+    {
+      "source_path": "tests/test_audience_translation_1838.py",
+      "count": 8,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_audience_translation_1838.py.json"
+    },
+    {
+      "source_path": "tests/test_audience_travel_gating_670.py",
+      "count": 29,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_audience_travel_gating_670.py.json"
+    },
+    {
+      "source_path": "tests/test_audience_undo_506.py",
+      "count": 17,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_audience_undo_506.py.json"
+    },
+    {
+      "source_path": "tests/test_authority_ledger_611.py",
+      "count": 10,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_authority_ledger_611.py.json"
+    },
+    {
+      "source_path": "tests/test_bandit_power_model_190.py",
+      "count": 2,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_bandit_power_model_190.py.json"
+    },
+    {
+      "source_path": "tests/test_breach_plea_623.py",
+      "count": 25,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_breach_plea_623.py.json"
+    },
+    {
+      "source_path": "tests/test_centrifuge_ledger_690.py",
+      "count": 15,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_centrifuge_ledger_690.py.json"
+    },
+    {
+      "source_path": "tests/test_character_knowledge_489.py",
+      "count": 38,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_character_knowledge_489.py.json"
+    },
+    {
+      "source_path": "tests/test_chat_stream_failpaths_393.py",
+      "count": 18,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_chat_stream_failpaths_393.py.json"
+    },
+    {
+      "source_path": "tests/test_cli_backend.py",
+      "count": 15,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_cli_backend.py.json"
+    },
+    {
+      "source_path": "tests/test_cli_model_choices.py",
+      "count": 6,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_cli_model_choices.py.json"
+    },
+    {
+      "source_path": "tests/test_cli_play_turn.py",
+      "count": 14,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_cli_play_turn.py.json"
+    },
+    {
+      "source_path": "tests/test_cli_runner_error_typed_1299.py",
+      "count": 2,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_cli_runner_error_typed_1299.py.json"
+    },
+    {
+      "source_path": "tests/test_cli_transport_1465.py",
+      "count": 6,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_cli_transport_1465.py.json"
+    },
+    {
+      "source_path": "tests/test_close_issues_section_rejections.py",
+      "count": 8,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_close_issues_section_rejections.py.json"
+    },
+    {
+      "source_path": "tests/test_commitment_backlash_626.py",
+      "count": 12,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_commitment_backlash_626.py.json"
+    },
+    {
+      "source_path": "tests/test_commitment_display_348.py",
+      "count": 1,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_commitment_display_348.py.json"
+    },
+    {
+      "source_path": "tests/test_court_break_player_lock_1727.py",
+      "count": 1,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_court_break_player_lock_1727.py.json"
+    },
+    {
+      "source_path": "tests/test_court_layout_1290.py",
+      "count": 2,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_court_layout_1290.py.json"
+    },
+    {
+      "source_path": "tests/test_covert_levy_651.py",
+      "count": 17,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_covert_levy_651.py.json"
+    },
+    {
+      "source_path": "tests/test_credit_events_628.py",
+      "count": 4,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_credit_events_628.py.json"
+    },
+    {
+      "source_path": "tests/test_db_broad_except_surface.py",
+      "count": 4,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_db_broad_except_surface.py.json"
+    },
+    {
+      "source_path": "tests/test_decision_event_binding_389.py",
+      "count": 1,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_decision_event_binding_389.py.json"
+    },
+    {
+      "source_path": "tests/test_declaration_dispatch_1835.py",
+      "count": 22,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_declaration_dispatch_1835.py.json"
+    },
+    {
+      "source_path": "tests/test_decree_commitment_creation_136.py",
+      "count": 29,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_decree_commitment_creation_136.py.json"
+    },
+    {
+      "source_path": "tests/test_decree_commitment_schema_136.py",
+      "count": 5,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_decree_commitment_schema_136.py.json"
+    },
+    {
+      "source_path": "tests/test_decree_commitment_settlement_229.py",
+      "count": 30,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_decree_commitment_settlement_229.py.json"
+    },
+    {
+      "source_path": "tests/test_decree_dossiers_571.py",
+      "count": 70,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_decree_dossiers_571.py.json"
+    },
+    {
+      "source_path": "tests/test_decree_forecast_1861.py",
+      "count": 5,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_decree_forecast_1861.py.json"
+    },
+    {
+      "source_path": "tests/test_deepseek_thinking_disable_1797.py",
+      "count": 7,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_deepseek_thinking_disable_1797.py.json"
+    },
+    {
+      "source_path": "tests/test_deformation_dual_rail_622.py",
+      "count": 3,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_deformation_dual_rail_622.py.json"
+    },
+    {
+      "source_path": "tests/test_distance_matrix.py",
+      "count": 2,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_distance_matrix.py.json"
+    },
+    {
+      "source_path": "tests/test_dossier_endorsements_612.py",
+      "count": 3,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_dossier_endorsements_612.py.json"
+    },
+    {
+      "source_path": "tests/test_dossier_links_559.py",
+      "count": 9,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_dossier_links_559.py.json"
+    },
+    {
+      "source_path": "tests/test_dossier_reported_progress_619.py",
+      "count": 7,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_dossier_reported_progress_619.py.json"
+    },
+    {
+      "source_path": "tests/test_draft_admission_resubmit_1769.py",
+      "count": 10,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_draft_admission_resubmit_1769.py.json"
+    },
+    {
+      "source_path": "tests/test_due_review_621.py",
+      "count": 19,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_due_review_621.py.json"
+    },
+    {
+      "source_path": "tests/test_economy_section_rejections.py",
+      "count": 8,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_economy_section_rejections.py.json"
+    },
+    {
+      "source_path": "tests/test_effect_origin_558.py",
+      "count": 13,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_effect_origin_558.py.json"
+    },
+    {
+      "source_path": "tests/test_empire_modifier_income_only_341.py",
+      "count": 3,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_empire_modifier_income_only_341.py.json"
+    },
+    {
+      "source_path": "tests/test_enrich_list_guards.py",
+      "count": 2,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_enrich_list_guards.py.json"
+    },
+    {
+      "source_path": "tests/test_enter_settlement_period_1235.py",
+      "count": 11,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_enter_settlement_period_1235.py.json"
+    },
+    {
+      "source_path": "tests/test_error_pack.py",
+      "count": 5,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_error_pack.py.json"
+    },
+    {
+      "source_path": "tests/test_escort_route_1900.py",
+      "count": 4,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_escort_route_1900.py.json"
+    },
+    {
+      "source_path": "tests/test_event_chain_cascade.py",
+      "count": 16,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_event_chain_cascade.py.json"
+    },
+    {
+      "source_path": "tests/test_event_trigger_gate.py",
+      "count": 111,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_event_trigger_gate.py.json"
+    },
+    {
+      "source_path": "tests/test_execution_joint_liability_565.py",
+      "count": 12,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_execution_joint_liability_565.py.json"
+    },
+    {
+      "source_path": "tests/test_execution_pressure_654.py",
+      "count": 18,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_execution_pressure_654.py.json"
+    },
+    {
+      "source_path": "tests/test_execution_tenure_613.py",
+      "count": 1,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_execution_tenure_613.py.json"
+    },
+    {
+      "source_path": "tests/test_executor_routing_721.py",
+      "count": 16,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_executor_routing_721.py.json"
+    },
+    {
+      "source_path": "tests/test_faction_brew_637.py",
+      "count": 12,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_faction_brew_637.py.json"
+    },
+    {
+      "source_path": "tests/test_faction_class_section_rejections.py",
+      "count": 10,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_faction_class_section_rejections.py.json"
+    },
+    {
+      "source_path": "tests/test_faction_denunciation_627.py",
+      "count": 5,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_faction_denunciation_627.py.json"
+    },
+    {
+      "source_path": "tests/test_faction_leverage_9.py",
+      "count": 22,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_faction_leverage_9.py.json"
+    },
+    {
+      "source_path": "tests/test_family_tail_615.py",
+      "count": 1,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_family_tail_615.py.json"
+    },
+    {
+      "source_path": "tests/test_family_tail_restore_570.py",
+      "count": 1,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_family_tail_restore_570.py.json"
+    },
+    {
+      "source_path": "tests/test_fiscal_beyond_intent_1260.py",
+      "count": 7,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_fiscal_beyond_intent_1260.py.json"
+    },
+    {
+      "source_path": "tests/test_fiscal_levy_effect.py",
+      "count": 29,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_fiscal_levy_effect.py.json"
+    },
+    {
+      "source_path": "tests/test_fiscal_substrate_bridge.py",
+      "count": 102,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_fiscal_substrate_bridge.py.json"
+    },
+    {
+      "source_path": "tests/test_fiscal_tick.py",
+      "count": 3,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_fiscal_tick.py.json"
+    },
+    {
+      "source_path": "tests/test_gazette_author_1862.py",
+      "count": 2,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_gazette_author_1862.py.json"
+    },
+    {
+      "source_path": "tests/test_grant_reconciliation_567.py",
+      "count": 9,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_grant_reconciliation_567.py.json"
+    },
+    {
+      "source_path": "tests/test_highlight_judge_544.py",
+      "count": 9,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_highlight_judge_544.py.json"
+    },
+    {
+      "source_path": "tests/test_history_decree_text_1843_reopen.py",
+      "count": 1,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_history_decree_text_1843_reopen.py.json"
+    },
+    {
+      "source_path": "tests/test_identity_seed_488.py",
+      "count": 8,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_identity_seed_488.py.json"
+    },
+    {
+      "source_path": "tests/test_impeachment_surge_655.py",
+      "count": 10,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_impeachment_surge_655.py.json"
+    },
+    {
+      "source_path": "tests/test_issue_decree_token_1277.py",
+      "count": 1,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_issue_decree_token_1277.py.json"
+    },
+    {
+      "source_path": "tests/test_issue_entities.py",
+      "count": 12,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_issue_entities.py.json"
+    },
+    {
+      "source_path": "tests/test_junxin_alias_loyalty_313.py",
+      "count": 3,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_junxin_alias_loyalty_313.py.json"
+    },
+    {
+      "source_path": "tests/test_junxin_monthly_tick_314.py",
+      "count": 11,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_junxin_monthly_tick_314.py.json"
+    },
+    {
+      "source_path": "tests/test_llm_channel_config.py",
+      "count": 36,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_llm_channel_config.py.json"
+    },
+    {
+      "source_path": "tests/test_loyalty_soft_adjust_clamp_320.py",
+      "count": 10,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_loyalty_soft_adjust_clamp_320.py.json"
+    },
+    {
+      "source_path": "tests/test_manual_directive_institution_normalize_1279.py",
+      "count": 6,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_manual_directive_institution_normalize_1279.py.json"
+    },
+    {
+      "source_path": "tests/test_manual_directive_locality_1685.py",
+      "count": 1,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_manual_directive_locality_1685.py.json"
+    },
+    {
+      "source_path": "tests/test_material_directory_1830.py",
+      "count": 7,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_material_directory_1830.py.json"
+    },
+    {
+      "source_path": "tests/test_mechanical_tail_1845.py",
+      "count": 9,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_mechanical_tail_1845.py.json"
+    },
+    {
+      "source_path": "tests/test_memorial_inbox_1726.py",
+      "count": 4,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_memorial_inbox_1726.py.json"
+    },
+    {
+      "source_path": "tests/test_menu_continue_stream_1195.py",
+      "count": 5,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_menu_continue_stream_1195.py.json"
+    },
+    {
+      "source_path": "tests/test_menu_lifecycle_drain_396.py",
+      "count": 17,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_menu_lifecycle_drain_396.py.json"
+    },
+    {
+      "source_path": "tests/test_minister_chat_timeout.py",
+      "count": 1,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_minister_chat_timeout.py.json"
+    },
+    {
+      "source_path": "tests/test_month_call_recovery_1846.py",
+      "count": 10,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_month_call_recovery_1846.py.json"
+    },
+    {
+      "source_path": "tests/test_month_chain_1843.py",
+      "count": 15,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_month_chain_1843.py.json"
+    },
+    {
+      "source_path": "tests/test_month_chain_1847.py",
+      "count": 29,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_month_chain_1847.py.json"
+    },
+    {
+      "source_path": "tests/test_month_loop_tracer_1468.py",
+      "count": 1,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_month_loop_tracer_1468.py.json"
+    },
+    {
+      "source_path": "tests/test_month_open_snapshot_1234.py",
+      "count": 15,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_month_open_snapshot_1234.py.json"
+    },
+    {
+      "source_path": "tests/test_month_translate_1840.py",
+      "count": 13,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_month_translate_1840.py.json"
+    },
+    {
+      "source_path": "tests/test_mutiny_actual_residence_659.py",
+      "count": 3,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_mutiny_actual_residence_659.py.json"
+    },
+    {
+      "source_path": "tests/test_mutiny_latch_315.py",
+      "count": 5,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_mutiny_latch_315.py.json"
+    },
+    {
+      "source_path": "tests/test_mutiny_noop_whitelist_319.py",
+      "count": 16,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_mutiny_noop_whitelist_319.py.json"
+    },
+    {
+      "source_path": "tests/test_mutiny_progression_316.py",
+      "count": 3,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_mutiny_progression_316.py.json"
+    },
+    {
+      "source_path": "tests/test_mutiny_redemption_317.py",
+      "count": 3,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_mutiny_redemption_317.py.json"
+    },
+    {
+      "source_path": "tests/test_mutiny_third_strike_318.py",
+      "count": 11,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_mutiny_third_strike_318.py.json"
+    },
+    {
+      "source_path": "tests/test_named_characters_seed_484.py",
+      "count": 8,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_named_characters_seed_484.py.json"
+    },
+    {
+      "source_path": "tests/test_new_game_dependency_mismatch_1721.py",
+      "count": 2,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_new_game_dependency_mismatch_1721.py.json"
+    },
+    {
+      "source_path": "tests/test_new_game_smoke.py",
+      "count": 3,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_new_game_smoke.py.json"
+    },
+    {
+      "source_path": "tests/test_new_game_write_path_1749.py",
+      "count": 5,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_new_game_write_path_1749.py.json"
+    },
+    {
+      "source_path": "tests/test_new_issues_section_rejections.py",
+      "count": 22,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_new_issues_section_rejections.py.json"
+    },
+    {
+      "source_path": "tests/test_no_edict_full_settlement_1274.py",
+      "count": 5,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_no_edict_full_settlement_1274.py.json"
+    },
+    {
+      "source_path": "tests/test_office_inference.py",
+      "count": 5,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_office_inference.py.json"
+    },
+    {
+      "source_path": "tests/test_office_rank_562.py",
+      "count": 9,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_office_rank_562.py.json"
+    },
+    {
+      "source_path": "tests/test_on_scene_immediate_write_1839.py",
+      "count": 5,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_on_scene_immediate_write_1839.py.json"
+    },
+    {
+      "source_path": "tests/test_opening_gazette_delete_1356.py",
+      "count": 4,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_opening_gazette_delete_1356.py.json"
+    },
+    {
+      "source_path": "tests/test_override_breach_costs_564.py",
+      "count": 20,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_override_breach_costs_564.py.json"
+    },
+    {
+      "source_path": "tests/test_p4_guard_new_surfaces_547.py",
+      "count": 3,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_p4_guard_new_surfaces_547.py.json"
+    },
+    {
+      "source_path": "tests/test_pay_order_override_653.py",
+      "count": 48,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_pay_order_override_653.py.json"
+    },
+    {
+      "source_path": "tests/test_pay_order_override_extraction_653.py",
+      "count": 4,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_pay_order_override_extraction_653.py.json"
+    },
+    {
+      "source_path": "tests/test_person_archive_contract_index.py",
+      "count": 3,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_person_archive_contract_index.py.json"
+    },
+    {
+      "source_path": "tests/test_person_archive_schema.py",
+      "count": 2,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_person_archive_schema.py.json"
+    },
+    {
+      "source_path": "tests/test_person_delta_adapter.py",
+      "count": 80,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_person_delta_adapter.py.json"
+    },
+    {
+      "source_path": "tests/test_person_transit_write_667.py",
+      "count": 9,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_person_transit_write_667.py.json"
+    },
+    {
+      "source_path": "tests/test_pihong_dossier_1490.py",
+      "count": 54,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_pihong_dossier_1490.py.json"
+    },
+    {
+      "source_path": "tests/test_player_army_projection_321.py",
+      "count": 3,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_player_army_projection_321.py.json"
+    },
+    {
+      "source_path": "tests/test_player_payload_1022.py",
+      "count": 3,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_player_payload_1022.py.json"
+    },
+    {
+      "source_path": "tests/test_population_transfers_649.py",
+      "count": 12,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_population_transfers_649.py.json"
+    },
+    {
+      "source_path": "tests/test_population_transfers_662.py",
+      "count": 2,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_population_transfers_662.py.json"
+    },
+    {
+      "source_path": "tests/test_population_unit_648.py",
+      "count": 7,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_population_unit_648.py.json"
+    },
+    {
+      "source_path": "tests/test_power_section_rejections.py",
+      "count": 11,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_power_section_rejections.py.json"
+    },
+    {
+      "source_path": "tests/test_pre_settle_transaction.py",
+      "count": 13,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_pre_settle_transaction.py.json"
+    },
+    {
+      "source_path": "tests/test_promulgation_judge_561.py",
+      "count": 17,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_promulgation_judge_561.py.json"
+    },
+    {
+      "source_path": "tests/test_promulgation_seam_560.py",
+      "count": 1,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_promulgation_seam_560.py.json"
+    },
+    {
+      "source_path": "tests/test_public_character_place_1683.py",
+      "count": 2,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_public_character_place_1683.py.json"
+    },
+    {
+      "source_path": "tests/test_public_sayings_1829.py",
+      "count": 5,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_public_sayings_1829.py.json"
+    },
+    {
+      "source_path": "tests/test_qa_1281_issue_audience_case_facts.py",
+      "count": 6,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_qa_1281_issue_audience_case_facts.py.json"
+    },
+    {
+      "source_path": "tests/test_qa_a3_seed_data.py",
+      "count": 7,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_qa_a3_seed_data.py.json"
+    },
+    {
+      "source_path": "tests/test_qa_b3_409_ux.py",
+      "count": 6,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_qa_b3_409_ux.py.json"
+    },
+    {
+      "source_path": "tests/test_qa_c2_phase_settlement_mask_1374.py",
+      "count": 3,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_qa_c2_phase_settlement_mask_1374.py.json"
+    },
+    {
+      "source_path": "tests/test_qa_c2_settlement_display_lifecycle_1343.py",
+      "count": 5,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_qa_c2_settlement_display_lifecycle_1343.py.json"
+    },
+    {
+      "source_path": "tests/test_qa_c3_secret_order_path_1357_1376.py",
+      "count": 2,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_qa_c3_secret_order_path_1357_1376.py.json"
+    },
+    {
+      "source_path": "tests/test_qa_d1_decree_normalize_1274.py",
+      "count": 5,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_qa_d1_decree_normalize_1274.py.json"
+    },
+    {
+      "source_path": "tests/test_qa_e1_numeric_presentation.py",
+      "count": 4,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_qa_e1_numeric_presentation.py.json"
+    },
+    {
+      "source_path": "tests/test_qa_h1_seed_data.py",
+      "count": 4,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_qa_h1_seed_data.py.json"
+    },
+    {
+      "source_path": "tests/test_qa_t1_extraction_dual_source_1353.py",
+      "count": 15,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_qa_t1_extraction_dual_source_1353.py.json"
+    },
+    {
+      "source_path": "tests/test_qa_u2_liaodong_buildings.py",
+      "count": 3,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_qa_u2_liaodong_buildings.py.json"
+    },
+    {
+      "source_path": "tests/test_qa_u3_map_nodes_1401.py",
+      "count": 3,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_qa_u3_map_nodes_1401.py.json"
+    },
+    {
+      "source_path": "tests/test_recommendation_batch_snapshot_1583.py",
+      "count": 2,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_recommendation_batch_snapshot_1583.py.json"
+    },
+    {
+      "source_path": "tests/test_recommendation_edges_635.py",
+      "count": 7,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_recommendation_edges_635.py.json"
+    },
+    {
+      "source_path": "tests/test_recommendations.py",
+      "count": 4,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_recommendations.py.json"
+    },
+    {
+      "source_path": "tests/test_refugee_loop_652.py",
+      "count": 14,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_refugee_loop_652.py.json"
+    },
+    {
+      "source_path": "tests/test_region_cannon_delta.py",
+      "count": 5,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_region_cannon_delta.py.json"
+    },
+    {
+      "source_path": "tests/test_region_citydefense.py",
+      "count": 3,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_region_citydefense.py.json"
+    },
+    {
+      "source_path": "tests/test_rejection_wiring.py",
+      "count": 15,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_rejection_wiring.py.json"
+    },
+    {
+      "source_path": "tests/test_relation_brew_636.py",
+      "count": 10,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_relation_brew_636.py.json"
+    },
+    {
+      "source_path": "tests/test_relation_capture_633.py",
+      "count": 25,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_relation_capture_633.py.json"
+    },
+    {
+      "source_path": "tests/test_relation_read_640.py",
+      "count": 4,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_relation_read_640.py.json"
+    },
+    {
+      "source_path": "tests/test_relation_seed_638.py",
+      "count": 11,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_relation_seed_638.py.json"
+    },
+    {
+      "source_path": "tests/test_relation_store_632.py",
+      "count": 4,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_relation_store_632.py.json"
+    },
+    {
+      "source_path": "tests/test_release_bundle_assets.py",
+      "count": 2,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_release_bundle_assets.py.json"
+    },
+    {
+      "source_path": "tests/test_rescript_choices_563.py",
+      "count": 12,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_rescript_choices_563.py.json"
+    },
+    {
+      "source_path": "tests/test_rescript_draft_656.py",
+      "count": 44,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_rescript_draft_656.py.json"
+    },
+    {
+      "source_path": "tests/test_rescript_heal_isolation_1801.py",
+      "count": 6,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_rescript_heal_isolation_1801.py.json"
+    },
+    {
+      "source_path": "tests/test_rescript_option_field_heal_1746.py",
+      "count": 15,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_rescript_option_field_heal_1746.py.json"
+    },
+    {
+      "source_path": "tests/test_run_agent_text_transport_1465.py",
+      "count": 2,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_run_agent_text_transport_1465.py.json"
+    },
+    {
+      "source_path": "tests/test_runtime_llm_config.py",
+      "count": 25,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_runtime_llm_config.py.json"
+    },
+    {
+      "source_path": "tests/test_scene_llm_1836.py",
+      "count": 4,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_scene_llm_1836.py.json"
+    },
+    {
+      "source_path": "tests/test_secret_dossier_participants_1252.py",
+      "count": 6,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_secret_dossier_participants_1252.py.json"
+    },
+    {
+      "source_path": "tests/test_secret_order_isolation_883.py",
+      "count": 35,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_secret_order_isolation_883.py.json"
+    },
+    {
+      "source_path": "tests/test_secret_order_monthly_progress_566.py",
+      "count": 8,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_secret_order_monthly_progress_566.py.json"
+    },
+    {
+      "source_path": "tests/test_secret_order_payoff_1504.py",
+      "count": 31,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_secret_order_payoff_1504.py.json"
+    },
+    {
+      "source_path": "tests/test_secret_order_section_rejections.py",
+      "count": 5,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_secret_order_section_rejections.py.json"
+    },
+    {
+      "source_path": "tests/test_secret_order_update.py",
+      "count": 7,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_secret_order_update.py.json"
+    },
+    {
+      "source_path": "tests/test_section4_rejections.py",
+      "count": 28,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_section4_rejections.py.json"
+    },
+    {
+      "source_path": "tests/test_section_fiscal_rejections.py",
+      "count": 31,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_section_fiscal_rejections.py.json"
+    },
+    {
+      "source_path": "tests/test_session_write_queue_1353.py",
+      "count": 14,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_session_write_queue_1353.py.json"
+    },
+    {
+      "source_path": "tests/test_settle_core.py",
+      "count": 1,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_settle_core.py.json"
+    },
+    {
+      "source_path": "tests/test_settlement_write_guard_393.py",
+      "count": 8,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_settlement_write_guard_393.py.json"
+    },
+    {
+      "source_path": "tests/test_shared_resource_order_1844.py",
+      "count": 6,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_shared_resource_order_1844.py.json"
+    },
+    {
+      "source_path": "tests/test_six_sciences_seed_608.py",
+      "count": 2,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_six_sciences_seed_608.py.json"
+    },
+    {
+      "source_path": "tests/test_start_sh_deps_1721.py",
+      "count": 3,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_start_sh_deps_1721.py.json"
+    },
+    {
+      "source_path": "tests/test_state_reload.py",
+      "count": 11,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_state_reload.py.json"
+    },
+    {
+      "source_path": "tests/test_structured_decree_contract_1624.py",
+      "count": 7,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_structured_decree_contract_1624.py.json"
+    },
+    {
+      "source_path": "tests/test_style_temperament_641.py",
+      "count": 10,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_style_temperament_641.py.json"
+    },
+    {
+      "source_path": "tests/test_supervision_625.py",
+      "count": 7,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_supervision_625.py.json"
+    },
+    {
+      "source_path": "tests/test_surcharge_causal_chain_650.py",
+      "count": 17,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_surcharge_causal_chain_650.py.json"
+    },
+    {
+      "source_path": "tests/test_textual_facts_1828.py",
+      "count": 3,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_textual_facts_1828.py.json"
+    },
+    {
+      "source_path": "tests/test_transaction_boundary.py",
+      "count": 13,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_transaction_boundary.py.json"
+    },
+    {
+      "source_path": "tests/test_transit_aging_346.py",
+      "count": 6,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_transit_aging_346.py.json"
+    },
+    {
+      "source_path": "tests/test_transit_countdown_668.py",
+      "count": 8,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_transit_countdown_668.py.json"
+    },
+    {
+      "source_path": "tests/test_urge_lever_624.py",
+      "count": 14,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_urge_lever_624.py.json"
+    },
+    {
+      "source_path": "tests/test_value_matrix_691.py",
+      "count": 1,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_value_matrix_691.py.json"
+    },
+    {
+      "source_path": "tests/test_verify_llm_clocks_884.py",
+      "count": 5,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_verify_llm_clocks_884.py.json"
+    },
+    {
+      "source_path": "tests/test_web_audience_night_498.py",
+      "count": 9,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_web_audience_night_498.py.json"
+    },
+    {
+      "source_path": "tests/test_web_budget_payload.py",
+      "count": 1,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_web_budget_payload.py.json"
+    },
+    {
+      "source_path": "tests/test_web_chat_serialization_393.py",
+      "count": 6,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_web_chat_serialization_393.py.json"
+    },
+    {
+      "source_path": "tests/test_web_court_visibility.py",
+      "count": 2,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_web_court_visibility.py.json"
+    },
+    {
+      "source_path": "tests/test_web_llm_runtime_config.py",
+      "count": 36,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_web_llm_runtime_config.py.json"
+    },
+    {
+      "source_path": "tests/test_world_materials_1834.py",
+      "count": 4,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_world_materials_1834.py.json"
+    },
+    {
+      "source_path": "tests/test_yuan_arrival_185.py",
+      "count": 2,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_yuan_arrival_185.py.json"
+    },
+    {
+      "source_path": "web/src/appDurableWiring.test.tsx",
+      "count": 37,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-web__src__appDurableWiring.test.tsx.json"
+    },
+    {
+      "source_path": "web/src/chatFailures.test.ts",
+      "count": 3,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-web__src__chatFailures.test.ts.json"
+    },
+    {
+      "source_path": "web/src/components/cliRunnerDropdown.consistency.test.tsx",
+      "count": 2,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-web__src__components__cliRunnerDropdown.consistency.test.tsx.json"
+    },
+    {
+      "source_path": "web/src/components/decisionModal.test.tsx",
+      "count": 16,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-web__src__components__decisionModal.test.tsx.json"
+    },
+    {
+      "source_path": "web/src/components/drawers.test.tsx",
+      "count": 11,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-web__src__components__drawers.test.tsx.json"
+    },
+    {
+      "source_path": "web/src/components/electronLayout.medium.test.tsx",
+      "count": 1,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-web__src__components__electronLayout.medium.test.tsx.json"
+    },
+    {
+      "source_path": "web/src/components/gameMenu.test.tsx",
+      "count": 20,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-web__src__components__gameMenu.test.tsx.json"
+    },
+    {
+      "source_path": "web/src/components/map.test.tsx",
+      "count": 1,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-web__src__components__map.test.tsx.json"
+    },
+    {
+      "source_path": "web/src/components/menuPage.test.tsx",
+      "count": 13,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-web__src__components__menuPage.test.tsx.json"
+    },
+    {
+      "source_path": "web/src/components/modals.test.tsx",
+      "count": 56,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-web__src__components__modals.test.tsx.json"
+    },
+    {
+      "source_path": "web/src/components/settlementFaces.test.tsx",
+      "count": 5,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-web__src__components__settlementFaces.test.tsx.json"
+    },
+    {
+      "source_path": "web/src/components/settlementGazettePanel.test.tsx",
+      "count": 1,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-web__src__components__settlementGazettePanel.test.tsx.json"
+    },
+    {
+      "source_path": "web/src/components/situation.test.tsx",
+      "count": 1,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-web__src__components__situation.test.tsx.json"
+    },
+    {
+      "source_path": "web/src/decisionRouting.test.tsx",
+      "count": 5,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-web__src__decisionRouting.test.tsx.json"
+    },
+    {
+      "source_path": "web/src/escClose.test.tsx",
+      "count": 3,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-web__src__escClose.test.tsx.json"
+    },
+    {
+      "source_path": "web/src/mindreadingDelivery.test.tsx",
+      "count": 7,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-web__src__mindreadingDelivery.test.tsx.json"
+    },
+    {
+      "source_path": "web/src/useDurableProjection.test.tsx",
+      "count": 2,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-web__src__useDurableProjection.test.tsx.json"
+    },
+    {
+      "source_path": "web/src/useSettlementFlow.test.tsx",
+      "count": 15,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-web__src__useSettlementFlow.test.tsx.json"
+    }
+  ]
+}

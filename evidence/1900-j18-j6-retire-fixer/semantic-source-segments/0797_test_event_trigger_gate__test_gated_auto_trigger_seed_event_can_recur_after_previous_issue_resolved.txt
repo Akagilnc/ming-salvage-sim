@@ -1,0 +1,30 @@
+# FILE: tests/test_event_trigger_gate.py
+# NAME: test_gated_auto_trigger_seed_event_can_recur_after_previous_issue_resolved
+# LINE: 2100-2123
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_gated_auto_trigger_seed_event_can_recur_after_previous_issue_resolved(game):
+    """PR review：seed auto_trigger 带 gate 时，旧 resolved issue 不应永久压住再触发。"""
+    db, state, content = game
+    issues.bind_content(content)
+    ev = _hist_event("__test_recurring_auto_seed__", {"民心": "<=5"})
+    ev.auto_trigger = True
+    ev.event_type = "situation"
+    content.seed_events.append(ev)
+    try:
+        state.metrics["民心"] = 3
+        first = issues.auto_trigger_seed_issues(state, db)
+        first_item = next(item for item in first if item["id"] == "__test_recurring_auto_seed__")
+        db.conn.execute(
+            "UPDATE issues SET status='resolved' WHERE id=?",
+            (first_item["issue_id"],),
+        )
+        db.conn.commit()
+
+        second = issues.auto_trigger_seed_issues(state, db)
+
+        second_item = next(item for item in second if item["id"] == "__test_recurring_auto_seed__")
+        assert second_item["issue_id"] != first_item["issue_id"]
+    finally:
+        content.seed_events.remove(ev)

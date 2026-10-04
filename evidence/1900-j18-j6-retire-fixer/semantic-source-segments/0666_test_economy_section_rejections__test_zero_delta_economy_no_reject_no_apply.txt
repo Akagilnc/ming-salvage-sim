@@ -1,0 +1,16 @@
+# FILE: tests/test_economy_section_rejections.py
+# NAME: test_zero_delta_economy_no_reject_no_apply
+# LINE: 77-86
+# FLAGS: helper_or_private_call
+# KIND: py
+
+def test_zero_delta_economy_no_reject_no_apply(game):
+    """delta==0 是 no-op，不拒收也不落账（不误报）。"""
+    db, state, content = game
+    turn = state.turn
+
+    run_settle(db, state, content, {
+        "economy_moves": [{"origin_ref": "盘面自发", "account": "国库", "delta": 0, "reason": "空动作"}],
+    }, narrative="x", decree_text="y")
+
+    assert _rejection_rows(db, turn, ECO_REJ) == []

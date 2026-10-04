@@ -1,0 +1,22 @@
+# FILE: tests/test_pay_order_override_653.py
+# NAME: test_golden1_pay_order_reversal_breakdown
+# LINE: 181-196
+# FLAGS: assert_count,helper_or_private_call
+# KIND: py
+
+def test_golden1_pay_order_reversal_breakdown():
+    """①「边饷居末、官俸优先」：省内池不足时军饷先欠、官俸足付。"""
+    st, p = _board(gross=0.0)  # 省内可支＝实征 10，祖制序下全被军饷吃光
+    base = settle_tick(copy.deepcopy(st), copy.deepcopy(p), [])
+    assert base.breakdown["实付分账"]["军饷"] == pytest.approx(10.0)
+    assert base.breakdown["NewDebt"]["军饷欠"] == pytest.approx(8.0)
+    assert base.breakdown["NewDebt"]["官俸欠"] == pytest.approx(3.0)
+
+    p2 = dict(p)
+    p2["due_order"] = ["官俸", "宗禄", "赈济", "军饷"]
+    res = settle_tick(st, p2, [])
+    assert res.breakdown["实付分账"]["官俸"] == pytest.approx(3.0)
+    assert res.breakdown["实付分账"]["军饷"] == pytest.approx(1.93)
+    assert res.breakdown["NewDebt"]["军饷欠"] == pytest.approx(16.07)
+    assert res.breakdown["NewDebt"]["官俸欠"] == 0.0
+    assert res.new_st["军饷欠"] == pytest.approx(36.07)  # 旧欠20 + 新欠16.07

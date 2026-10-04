@@ -1,0 +1,50 @@
+# FILE: tests/test_event_trigger_gate.py
+# NAME: test_issue_tracker_close_entity_effects_respect_outer_transaction_rollback
+# LINE: 2732-2775
+# FLAGS: assert_text_compare_or_match
+# KIND: py
+
+def test_issue_tracker_close_entity_effects_respect_outer_transaction_rollback(game):
+    """post-merge CMR R5：close 终结实体后果建军也必须跟外层事务回滚。"""
+    db, state, _content = game
+    army_id = "__test_close_entity_txn_army__"
+    issue_id = db.insert_issue(
+        state,
+        kind="initiative",
+        title="测试·结案实体事务",
+        origin_kind="decree",
+        bar_value=40,
+        stage_text="结案前",
+        effect_on_resolve={
+            "new_armies": [
+                {
+                    "origin_ref": "盘面自发", "id": army_id,
+                    "name": "测试事务营",
+                    "manpower": 1200,
+                    "owner_power": "ming",
+                    "pay_source_region": "shaanxi",
+                    "province_pay_share": 1.0,
+                    "central_pay_share": 0.0,
+                    "reason": "测试建军事务",
+                }
+            ]
+        },
+    )
+    db.conn.commit()
+
+    db.conn.execute("BEGIN")
+    out = issues.apply_issue_tracker_output(
+        db,
+        state,
+        {"close_issues": [{"issue_id": issue_id, "reason": "resolved", "narrative": "结案"}]},
+    )
+    assert out["closes"][0]["reason"] == "resolved"
+    db.conn.rollback()
+
+    issue_row = db.conn.execute("SELECT status, bar_value FROM issues WHERE id=?", (issue_id,)).fetchone()
+    assert dict(issue_row) == {"status": "active", "bar_value": 40}
+    assert db.conn.execute("SELECT id FROM armies WHERE id=?", (army_id,)).fetchone() is None
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM army_logs WHERE army_id=?",
+        (army_id,),
+    ).fetchone()[0] == 0

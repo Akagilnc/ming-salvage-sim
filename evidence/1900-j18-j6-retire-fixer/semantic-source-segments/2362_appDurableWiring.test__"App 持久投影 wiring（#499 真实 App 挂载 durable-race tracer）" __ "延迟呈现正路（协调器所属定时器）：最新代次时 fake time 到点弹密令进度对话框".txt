@@ -1,0 +1,32 @@
+# FILE: web/src/appDurableWiring.test.tsx
+# NAME: "App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer）" / "延迟呈现正路（协调器所属定时器）：最新代次时 fake time 到点弹密令进度对话框"
+# LINE: 758-783
+# FLAGS: web_mock_spy_or_calls
+# KIND: web
+
+  it("延迟呈现正路（协调器所属定时器）：最新代次时 fake time 到点弹密令进度对话框", async () => {
+    vi.useFakeTimers();
+    try {
+      // makeState(1) → currentTurn=1；真实谓词认 turn-1 的 dossier_progress。
+      const autoOpenOrder = {
+        id: 1, title: "密", content: "", status: "active", minister_name: "",
+        year_issued: 1627, period_issued: 10,
+        dossier_progress: [{ turn: 0 }],
+      };
+      vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+        const u = new URL(String(url), "http://t.local");
+        if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
+        if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [autoOpenOrder] });
+        if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
+        if (u.pathname.endsWith("/api/game/state")) return jsonResp(makeState(1));
+        return jsonResp({});
+      }));
+      const host = document.createElement("div");
+      document.body.appendChild(host);
+      await act(async () => { trackRoot(host).render(<App />); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(0); });   // 冲刷挂载 fetch，换回合 effect 起 autoOpen 定时器
+      expect(secretDialog(host)).toBeNull();                             // 未到点：真实对话框未开
+      await act(async () => { await vi.advanceTimersByTimeAsync(400); }); // 400ms 到点、仍最新代次 → open()
+      expect(secretDialog(host)).not.toBeNull();                         // 密令进度对话框已弹（协调器定时器 fire）
+    } finally { vi.useRealTimers(); }
+  });

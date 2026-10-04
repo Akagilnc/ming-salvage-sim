@@ -1,0 +1,26 @@
+# FILE: tests/test_pay_order_override_653.py
+# NAME: test_fact_brief_province_auto_repaied_is_beneficiary_fact
+# LINE: 1343-1362
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_fact_brief_province_auto_repaied_is_beneficiary_fact(game):
+    """省池自动偿还（surplus waterfall）＝army_logs 当月负 delta → 军户受益事实（<0）。"""
+    db, state, _content = game
+    turn = db._current_settle_turn()
+    db.conn.execute(
+        "INSERT INTO army_logs (turn, year, period, army_id, field, old_value,"
+        " new_value, delta, reason, actor)"
+        " VALUES (?, 1, 1, 'shaanxi_army', 'province_pay_arrears', '16.25',"
+        " '10.25', -6.0, '按省份额欠余额占比偿还', '户部')",
+        (turn,),
+    )
+    db.conn.commit()
+    entries = build_fiscal_fact_brief(db)
+    repaid = [
+        e for e in entries
+        if e["subject_id"] == "shaanxi_army" and e["detail"] == "省源偿欠"
+    ]
+    assert repaid and repaid[0]["value"] == pytest.approx(-6.0)
+    assert repaid[0]["region"] == "shaanxi"
+    assert repaid[0]["origin_ref"].startswith("army_logs:")

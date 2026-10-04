@@ -1,0 +1,33 @@
+# FILE: web/src/components/settlementFaces.test.tsx
+# NAME: "#1236 roster chat entry stripped in settlement_display" / "MinisterCardList disables onOpenChat when chatEntryEnabled=false"
+# LINE: 227-253
+# FLAGS: web_mock_spy_or_calls,web_text_assert
+# KIND: web
+
+  it("MinisterCardList disables onOpenChat when chatEntryEnabled=false", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json: async () => ({ layout: "{}" }) } as Response)));
+    const opened: string[] = [];
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    mounted.push({ root, host });
+    await act(async () => {
+      root.render(
+        <MinisterCardList
+          list={[minister()]}
+          portraitPrefix="minister_"
+          selectedMinister=""
+          emptyNote=""
+          onOpenChat={(m) => opened.push(m.name)}
+          chatEntryEnabled={false}
+          phase="settling"
+        />,
+      );
+    });
+    const card = host.querySelector("button.minister-card") as HTMLButtonElement;
+    expect(card.disabled).toBe(true);
+
+    act(() => { card.click(); });
+    expect(opened).toEqual([]);
+    expect(host.textContent).toContain("周延儒"); // 名册仍在
+  });

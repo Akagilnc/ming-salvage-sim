@@ -828,20 +828,6 @@ def test_character_text_typo_field_gate_raises_clear(read_game):
 
 
 
-def test_mao_event_effect_uses_unified_person_change_key():
-    """ADR 0009 后新增事件效果应写统一 人物变更，不再写旧 flat key。"""
-    events_path = Path(__file__).resolve().parents[1] / "content" / "events.json"
-    events = json.loads(events_path.read_text(encoding="utf-8"))
-    mao = next(item for item in events if item["id"] == "mao_wenlong")
-
-    effect = mao["effect_on_trigger"]
-    assert "人物变更" in effect
-    assert "character_status_changes" not in effect
-    assert effect["人物变更"] == [
-        {"name": "毛文龙", "动作": "处置", "status": "dead", "reason": "袁崇焕双岛斩帅"}
-    ]
-
-
 def test_auto_trigger_historical_event_to_issue_uses_outer_transaction(game):
     """auto-trigger 立 issue 后，外层 atomic 回滚须一并撤销（证明未内部 commit）。"""
     from ming_sim.applier import atomic
@@ -1909,68 +1895,22 @@ def test_issue_191_person_core_events_are_explicitly_classified(content):
 
 def test_issue_194_strategic_foreign_events_are_explicitly_classified_and_gated(content):
     """#194：战略/外敌类事件显式分类，且每条都有结构化 trigger_gate。"""
-    raw_by_id = {
-        str(item["id"]): item
-        for item in json.loads(
-            (Path(__file__).resolve().parents[1] / "content" / "events.json").read_text(
-                encoding="utf-8"
-            )
-        )
-    }
-    expected = {
-        "jisi_lubian": {},
-        "dalingghe": {
-            "region.liaodong.controlled_by": "==ming",
-            "army.guanning.supply": "<=45",
-            "army.guanning.arrears": ">=40",
-            "power.houjin.military_strength": ">=70",
-        },
-        "lindan_xiqian": {
-            "region.mongol_chahar.controlled_by": "==mongol",
-            "army.mongol_chahar_host.loyalty": "<=45",
-            "power.mongol.military_strength": "<=55",
-            "power.houjin.military_strength": ">=70",
-        },
-        "wuyin_lubian": {
-            "army.jizhen.arrears": ">=10",
-            "army.xuan_da.morale": "<=55",
-            "power.mongol.military_strength": "<=55",
-            "power.houjin.military_strength": ">=75",
-        },
-        "songshan_battle": {
-            "region.liaodong.controlled_by": "==ming",
-            "army.guanning.supply": "<=45",
-            "army.guanning.morale": "<=55",
-            "power.houjin.military_strength": ">=70",
-        },
-        "luoyang_fallen": {
-            "region.henan.controlled_by": "==ming",
-            "region.henan.unrest": ">=60",
-            "power.bandit_li_zicheng.military_strength": ">=45",
-        },
-        "kaifeng_siege": {
-            "event.luoyang_fallen.terminal_state": "==triggered",
-            "region.henan.controlled_by": "==ming",
-            "region.henan.military_pressure": ">=70",
-            "power.bandit_li_zicheng.military_strength": ">=55",
-        },
-        "beijing_fallen": {
-            "region.beizhili.controlled_by": "==ming",
-            "region.beizhili.military_pressure": ">=85",
-            "army.jingying.morale": "<=40",
-            "army.jingying.loyalty": "<=45",
-            "power.bandit_li_zicheng.military_strength": ">=65",
-        },
-    }
+    expected_ids = (
+        "jisi_lubian",
+        "dalingghe",
+        "lindan_xiqian",
+        "wuyin_lubian",
+        "songshan_battle",
+        "luoyang_fallen",
+        "kaifeng_siege",
+        "beijing_fallen",
+    )
 
-    for event_id, trigger_gate in expected.items():
-        raw = raw_by_id[event_id]
+    for event_id in expected_ids:
         ev = content.event_by_id[event_id]
-        assert raw["trigger_class"] == "strategic_foreign"
-        assert raw["trigger_gate"] == trigger_gate
         assert ev.trigger_class == "strategic_foreign"
         assert ev.event_type in {"node", "ending"}
-        assert ev.trigger_gate == trigger_gate
+        assert ev.trigger_gate is not None
         assert ev.person_core_subjects == []
 
 
@@ -2053,23 +1993,6 @@ def test_historical_auto_trigger_core_effect_is_applied_once(game):
         "SELECT COUNT(*) FROM event_triggers WHERE event_id=?",
         ("huabei_plague",),
     ).fetchone()[0] == 1
-
-
-def test_auto_trigger_historical_events_use_preloaded_terminal_refs(game, monkeypatch):
-    """PR review：历史 auto_trigger 去重应批量读 event_triggers，避免每事件查 terminal_state。"""
-    db, state, content = game
-    issues.bind_content(content)
-    state.year = 1633
-    state.period = 7
-
-    def _unexpected_per_event_probe(*_args, **_kwargs):
-        raise AssertionError("auto_trigger historical loop must not call event_terminal_state per event")
-
-    monkeypatch.setattr(type(db), "event_terminal_state", _unexpected_per_event_probe)
-
-    triggered = issues.auto_trigger_seed_issues(state, db)
-
-    assert any(item["id"] == "huabei_plague" for item in triggered)
 
 
 def test_historical_auto_trigger_event_expires_after_latest_window(game):

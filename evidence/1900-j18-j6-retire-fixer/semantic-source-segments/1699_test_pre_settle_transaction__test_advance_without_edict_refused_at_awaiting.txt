@@ -1,0 +1,35 @@
+# FILE: tests/test_pre_settle_transaction.py
+# NAME: test_advance_without_edict_refused_at_awaiting
+# LINE: 312-340
+# FLAGS: assert_text_compare_or_match
+# KIND: py
+
+def test_advance_without_edict_refused_at_awaiting(game):
+    """awaiting 由 session 真入口幂等返回决策。"""
+    from ming_sim.decree import pre_settle
+    from ming_sim.session import GameSession
+
+    db, state, content = game
+    turn = state.turn
+    pre_settle(state, db)  # 真落财政 + settling
+    state.turn_phase = "awaiting_decision"  # HITL 暂停后的相位
+    db.save_state(state)
+    rows_before = db.conn.execute(
+        "SELECT COUNT(*) FROM economy_ledger WHERE turn=?", (turn,)).fetchone()[0]
+
+    sess = GameSession.__new__(GameSession)
+    sess.db, sess.state, sess.content = db, state, content
+    sess.registry = sess.llm_config = sess.agno_db = None
+    sess.deaths_this_turn, sess.debuts_this_turn = [], []
+    sess.last_decree = sess.last_report = ""
+    sess._decree_draft_fingerprint = ()
+    sess._scene_registry = sess._beat_generator = None
+    sess.auto_save = lambda *a, **k: None
+    result = sess.advance_without_decree()
+    assert result is not None and result.awaiting is True
+
+    rows_after = db.conn.execute(
+        "SELECT COUNT(*) FROM economy_ledger WHERE turn=?", (turn,)).fetchone()[0]
+    assert rows_after == rows_before
+    assert state.turn == turn
+    assert state.turn_phase == "awaiting_decision"

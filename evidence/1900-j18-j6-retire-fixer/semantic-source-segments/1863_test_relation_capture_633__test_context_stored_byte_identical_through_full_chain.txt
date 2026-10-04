@@ -1,0 +1,20 @@
+# FILE: tests/test_relation_capture_633.py
+# NAME: test_context_stored_byte_identical_through_full_chain
+# LINE: 440-453
+# FLAGS: helper_or_private_call
+# KIND: py
+
+def test_context_stored_byte_identical_through_full_chain(game):
+    """含首尾空白+换行的 context 经 extractor JSON → apply → DB 字节相等。"""
+    db, state, content = game
+    raw_context = "  毕自严当面替王绍徽担名。\n\t"
+    payload = {
+        "relation_edge_events": [{
+            "施动者": "毕自严", "受动者": ["王绍徽"], "类目": "站台",
+            "语境": raw_context, "来源引用": "盘面自发",
+        }],
+    }
+    extracted = json.loads(json.dumps(payload, ensure_ascii=False))
+    apply_score_extraction(db, state, extracted, content=content)
+    row = _edge_rows(db, source="毕自严", target="王绍徽")[0]
+    assert row["context"] == raw_context  # 字节相等，无 strip/裁剪/归一

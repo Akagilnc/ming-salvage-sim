@@ -1,0 +1,47 @@
+# FILE: tests/test_event_trigger_gate.py
+# NAME: test_issue_tracker_close_legacy_expiry_respects_outer_transaction_rollback
+# LINE: 2778-2818
+# FLAGS: assert_text_compare_or_match,retired_or_meta_marker
+# KIND: py
+
+def test_issue_tracker_close_legacy_expiry_respects_outer_transaction_rollback(game):
+    """post-merge CMR R6：终结效果读 legacy_modifiers 时过期清理不得提前提交外层事务。"""
+    db, state, _content = game
+    reason = "测试遗产过期事务R6"
+    issue_id = db.insert_issue(
+        state,
+        kind="situation",
+        title="测试·遗产过期事务",
+        origin_kind="decree",
+        bar_value=40,
+        stage_text="结案前",
+        effect_on_resolve={
+            "economy": [{"account": "国库", "delta": -1, "category": "测试", "reason": reason}]
+        },
+    )
+    legacy_id = db.insert_legacy(
+        state,
+        name="测试过期遗产R6",
+        modifiers={"国库": 1},
+        duration_months=0,
+        source_issue_id=issue_id,
+    )
+    db.conn.commit()
+
+    db.conn.execute("BEGIN")
+    out = issues.apply_issue_tracker_output(
+        db,
+        state,
+        {"close_issues": [{"issue_id": issue_id, "reason": "resolved", "narrative": "结案"}]},
+    )
+    assert out["closes"][0]["reason"] == "resolved"
+    db.conn.rollback()
+
+    issue_row = db.conn.execute("SELECT status, bar_value FROM issues WHERE id=?", (issue_id,)).fetchone()
+    legacy_row = db.conn.execute("SELECT status FROM legacies WHERE id=?", (legacy_id,)).fetchone()
+    assert dict(issue_row) == {"status": "active", "bar_value": 40}
+    assert legacy_row["status"] == "active"
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM economy_ledger WHERE reason=?",
+        (reason,),
+    ).fetchone()[0] == 0

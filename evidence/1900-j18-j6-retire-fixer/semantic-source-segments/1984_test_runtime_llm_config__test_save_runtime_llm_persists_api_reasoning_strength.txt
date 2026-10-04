@@ -1,0 +1,20 @@
+# FILE: tests/test_runtime_llm_config.py
+# NAME: test_save_runtime_llm_persists_api_reasoning_strength
+# LINE: 158-171
+# FLAGS: assert_text_compare_or_match,mock_or_patch_present
+# KIND: py
+
+def test_save_runtime_llm_persists_api_reasoning_strength(tmp_path, monkeypatch):
+    path = tmp_path / "runtime_llm.json"
+    monkeypatch.setattr(llm_config, "RUNTIME_LLM_PATH", str(path))
+
+    llm_config.save_runtime_llm(
+        "https://api.example.com/v1",
+        "gpt-5",
+        "sk-test",
+        channel="api",
+        reasoning_strength="high",
+    )
+
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    assert saved["reasoning_strength"] == "high"

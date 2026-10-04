@@ -1,0 +1,28 @@
+# FILE: tests/test_section_fiscal_rejections.py
+# NAME: test_change_unknown_key_rejected_good_change_lands
+# LINE: 251-272
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_change_unknown_key_rejected_good_change_lands(game):
+    """fiscal_changes 引用未知 key → 原 print 静默跳,改为逐项拒收留痕(missing_ref);
+    同信封里真实 key 的调率照落(ADR 决定 1)。"""
+    db, state, content = game
+    turn = state.turn
+    good = _a_fiscal_key(db)
+    before = db.get_fiscal_config()[good]
+
+    run_settle(db, state, content, {
+        "fiscal_changes": [
+            {"key": "查无此配置项", "delta": 10, "reason": "未知"},
+            {"key": good, "delta": 5, "reason": "调增"},
+        ],
+    }, narrative="x", decree_text="y")  # 不抛
+
+    rows = _rejection_rows(db, turn, "fiscal_changes")
+    assert len(rows) == 1
+    _, reason, category, _ = rows[0]
+    assert reason
+    assert category == "missing_ref"
+    # 好项照落
+    assert db.get_fiscal_config()[good] == max(0, before + 5)

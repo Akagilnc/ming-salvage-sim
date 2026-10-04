@@ -1,0 +1,48 @@
+# FILE: web/src/components/menuPage.test.tsx
+# NAME: "#1732 MenuPage · 就地消解" / "删除存档：行下展开；取消零请求；确认后调用 onDelete"
+# LINE: 1022-1063
+# FLAGS: web_mock_spy_or_calls
+# KIND: web
+
+  it("删除存档：行下展开；取消零请求；确认后调用 onDelete", async () => {
+    const onDelete = vi.fn(async () => {});
+    const cleanup = render(
+      <SaveListModal
+        campaigns={[{
+          campaign_id: "c1",
+          kind: "manual",
+          current: false,
+          saves: [{ name: "辽饷吃紧", label: "辽饷吃紧", mtime: 1, size: 10 }],
+        }] as any}
+        onClose={() => {}}
+        onLoad={async () => {}}
+        onDelete={onDelete}
+      />
+    );
+    const del = document.querySelector(".menu-save-del") as HTMLButtonElement;
+    await act(async () => {
+      del.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    const panel = document.querySelector('[aria-label="确认删除存档 辽饷吃紧"]');
+    expect(panel).not.toBeNull();
+    const cancel = Array.from(panel!.querySelectorAll("button")).find((b) =>
+      (b.textContent || "").includes("取消")
+    );
+    await act(async () => {
+      cancel!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(onDelete).not.toHaveBeenCalled();
+
+    await act(async () => {
+      del.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    const yes = Array.from(document.querySelector('[aria-label="确认删除存档 辽饷吃紧"]')!.querySelectorAll("button")).find((b) =>
+      (b.textContent || "").includes("删除")
+    );
+    await act(async () => {
+      yes!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+    });
+    expect(onDelete).toHaveBeenCalledWith("辽饷吃紧");
+    cleanup();
+  });

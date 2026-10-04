@@ -1,0 +1,28 @@
+# FILE: tests/test_due_review_621.py
+# NAME: test_due_review_settle_does_not_pause_or_decision
+# LINE: 528-549
+# FLAGS: helper_or_private_call
+# KIND: py
+
+def test_due_review_settle_does_not_pause_or_decision(game, monkeypatch):
+    db, state, content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.commit()
+    dossier_id = _executing_policy_dossier(db, state, token="no-decision")
+    stages = [{
+        "stage_idx": 0,
+        "due_turn": state.turn,
+        "criterion_text": "火器见眉目",
+        "origin_context": "三年火器见眉目",
+    }]
+    _insert_staged_commitment(
+        db, state, content, stages=stages, origin_ref=f"dossier:{dossier_id}",
+    )
+    result1 = _settle_empty_month(db, state, content, monkeypatch)
+    assert result1.awaiting is False
+    assert state.turn_phase != TurnPhase.AWAITING_DECISION.value
+    result2 = _settle_empty_month(db, state, content, monkeypatch)
+    assert result2.awaiting is False
+    assert state.turn_phase == TurnPhase.ISSUED.value
+    assert db.list_pending_decisions(state.turn) == []
+    assert db.list_pending_decisions(state.turn - 1) == []

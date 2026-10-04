@@ -1,0 +1,12 @@
+# FILE: tests/test_cli_backend.py
+# NAME: test_gate_llm_config_cli_channel
+# LINE: 180-185
+# FLAGS: assert_text_compare_or_match
+# KIND: py
+
+def test_gate_llm_config_cli_channel():
+    args = SimpleNamespace(channel="cli", runner="codex", model="gpt-test", api_key="", base_url="")
+    cfg = cb.gate_llm_config_from_args(args)
+    assert cfg.channel == "cli"
+    assert cfg.cli_runner == "codex" and cfg.cli_model == "gpt-test"
+    assert cfg.api_key == "" and cfg.base_url == ""

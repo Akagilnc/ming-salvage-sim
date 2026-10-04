@@ -1,0 +1,18 @@
+# FILE: tests/test_web_court_visibility.py
+# NAME: test_alias_appointment_reuses_identity_and_rejects_vassal
+# LINE: 77-88
+# FLAGS: assert_text_compare_or_match
+# KIND: py
+
+def test_alias_appointment_reuses_identity_and_rejects_vassal(game, name, rejected):
+    db, state, content = game
+    before = {row[0] for row in db.conn.execute("SELECT name FROM characters")}
+    result = apply_office_appointment(
+        db, state, content, name, "兵部职方司主事", new_office_type="兵部", reason="alias appointment",
+    )
+    assert bool(result.get("rejected")) is rejected
+    assert {row[0] for row in db.conn.execute("SELECT name FROM characters")} == before
+    if not rejected:
+        assert result["name"] == "史可法"
+        assert db.get_character_status("史可法")[0] == "active"
+        assert db.conn.execute("SELECT office FROM characters WHERE name='史可法'").fetchone()[0] == "兵部职方司主事"

@@ -1,0 +1,18 @@
+# FILE: tests/test_court_layout_1290.py
+# NAME: test_court_layout_roundtrip_player_override
+# LINE: 55-66
+# FLAGS: assert_text_compare_or_match,mock_or_patch_present,helper_or_private_call
+# KIND: py
+
+def test_court_layout_roundtrip_player_override(monkeypatch):
+    """写入端=玩家覆盖：POST 后 GET 回显同一 layout 字符串。"""
+    game = _Game()
+    monkeypatch.setattr(web_app, "get_game", lambda: game)
+
+    payload = '{"黄立极":{"px":0.077,"py":0.532},"毕自严":{"px":0.862,"py":0.532}}'
+    ok = _invoke(web_app.api_set_court_layout({"layout": payload}))
+    assert ok == {"ok": True}
+    assert game.db.store.get("court_layout") == payload
+
+    got = _invoke(web_app.api_get_court_layout())
+    assert got == {"layout": payload}

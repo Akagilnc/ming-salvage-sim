@@ -1,0 +1,29 @@
+# FILE: web/src/components/modals.test.tsx
+# NAME: "ChatModal — reply recovery controls" / "shows #505 system-layer reply retry control when replyRetry is set"
+# LINE: 491-513
+# FLAGS: web_mock_spy_or_calls,web_text_assert,web_count_assert
+# KIND: web
+
+  it("shows #505 system-layer reply retry control when replyRetry is set", () => {
+    const retry = vi.fn();
+    renderModal({
+      minister: MINISTER_MOCK,
+      portraitPrefix: "minister_",
+      chat: [{ role: "user", content: "剿抚孰先？" }],
+      replyRetries: [
+        { chat_turn_id: 12, question: "剿抚孰先？" },
+        { chat_turn_id: 13, question: "退朝", recovery_phase: "court_break", error_pack_path: "/tmp/post-reply-pack" },
+      ],
+      onRetryReply: retry,
+    });
+    const note = document.querySelector('[data-testid="reply-retry-12"]');
+    expect(note?.textContent).toContain("剿抚孰先？");
+    expect(document.querySelector('[data-testid="reply-retry-13"]')?.textContent).toContain("/tmp/post-reply-pack");
+    const button = Array.from(document.querySelectorAll("button")).find(
+      (node) => node.textContent === "重试",
+    );
+    expect(button).toBeTruthy();
+    act(() => button?.click());
+    expect(retry).toHaveBeenCalledTimes(1);
+    expect(retry).toHaveBeenCalledWith("殿上", 12);
+  });

@@ -1,0 +1,169 @@
+# FILE: web/src/appDurableWiring.test.tsx
+# NAME: "App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer）" / "#1716 retry 即时加 pending_directive_count、undo 即时减，拟诏台不待 refresh/reload"
+# LINE: 474-636
+# FLAGS: web_mock_spy_or_calls,web_text_assert,web_count_assert
+# KIND: web
+
+  it("#1716 retry 即时加 pending_directive_count、undo 即时减，拟诏台不待 refresh/reload", async () => {
+    const minister = {
+      name: "郭允厚", office: "户部尚书", office_type: "户部", faction: "",
+      style: "", status: "active", status_label: "在朝", summary: "", favorite: false,
+    };
+    const vacuum = {
+      ...makeState(1, [], [minister]),
+      pending_directive_count: 0,
+      pending_secret_order_count: 0,
+      pending_non_directive_action_count: 0,
+      failed_secret_order_count: 0,
+    };
+    let stateCall = 0;
+    let retryDone = false;
+    let translationDone = false;
+    let translationAttempts = 0;
+    let replyAttempts = 0;
+    let statePhase: "init" | "afterRetry" | "afterUndo" = "init";
+    let releaseRefresh!: () => void;
+    const refreshGate = new Promise<void>((r) => { releaseRefresh = r; });
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      const u = new URL(String(url), "http://t.local");
+      if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
+      if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
+      if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
+      if (u.pathname.endsWith("/api/audience/scroll")) return jsonResp({
+        night_id: 1,
+        translation_retries: translationDone ? [] : [{ chat_turn_id: 8, retryable: true }],
+        messages: [
+          { role: "user", speaker: "朕", content: "拟旨赈济", chat_turn_id: 7, beat: "dialogue", highlights: [], container: {} },
+          { role: "scene", speaker: "郭允厚", content: "臣请核实。", chat_turn_id: 8, beat: "dialogue", highlights: [], container: {} },
+          { role: "user", speaker: "朕", content: "续问赈济", chat_turn_id: 9, beat: "dialogue", highlights: [], container: {} },
+        ],
+      });
+      if (u.pathname.endsWith("/api/history/turns")) return jsonResp({ turns: [] });
+      if (u.pathname.endsWith("/api/court_layout")) return jsonResp({ layout: "{}" });
+      if (u.pathname.endsWith("/api/game/state")) {
+        stateCall += 1;
+        if (statePhase === "init") {
+          statePhase = "afterRetry";
+          return jsonResp(vacuum);
+        }
+        if (statePhase === "afterRetry") {
+          await refreshGate;
+          return jsonResp(vacuum);
+        }
+        return new Response(JSON.stringify({ detail: "reload failed" }), { status: 500 });
+      }
+      if (u.pathname.endsWith("/api/audience/chat") && init?.method !== "POST") {
+        return jsonResp({
+          minister, history: [], suggestions: [], campaign_id: "c1", night_id: 1,
+          can_undo_last_chat: retryDone,
+          reply_retries: retryDone ? [{ chat_turn_id: 9, minister_name: "殿上", turn: 1, question: "续问赈济" }] : [
+            { chat_turn_id: 7, minister_name: "殿上", turn: 1, question: "拟旨赈济" },
+            { chat_turn_id: 9, minister_name: "殿上", turn: 1, question: "续问赈济" },
+          ],
+          translation_retries: translationDone ? [] : [{ chat_turn_id: 8, retryable: true }],
+        });
+      }
+      if (u.pathname.endsWith("/api/audience/translation/retry") && init?.method === "POST") {
+        translationAttempts += 1;
+        if (translationAttempts === 1) return new Response(JSON.stringify({ detail: "retry failed" }), { status: 500 });
+        translationDone = true;
+        return jsonResp({ status: "completed", retryable: false });
+      }
+      if (u.pathname.endsWith("/reply/retry") && init?.method === "POST") {
+        replyAttempts += 1;
+        if (replyAttempts === 1) return new Response(JSON.stringify({ detail: "retry failed" }), { status: 500 });
+        retryDone = true;
+        return jsonResp({
+          answer: "臣已拟旨。", history: [], directives: [],
+          pending_count: 1, pending_directive_count: 1,
+          suggestions: [], can_undo_last_chat: true,
+        });
+      }
+      if (u.pathname.endsWith("/chat/undo") && init?.method === "POST") {
+        return jsonResp({
+          campaign_id: "c1", night_id: 1, undone_chat_turn_id: 7,
+          history: [], suggestions: [], directives: [],
+          pending_count: 0, pending_directive_count: 0,
+          secret_orders: [], can_undo_last_chat: false,
+        });
+      }
+      return jsonResp({});
+    }));
+    vi.stubGlobal("confirm", () => true);
+
+    const host = document.createElement("div"); document.body.appendChild(host);
+    await act(async () => { trackRoot(host).render(<App />); });
+    await tick();
+    await click(host.querySelector('[aria-label="朝堂·召见大臣"]'));
+    await tick();
+    await click(host.querySelector(".court-drawer.open .primary-action"));
+    const replyButton = () => host.querySelector('[data-testid="reply-retry-7"] button');
+    const translationButton = () => host.querySelector('[data-testid="translation-retry-8"] button');
+    await act(async () => { await vi.waitFor(() => expect(replyButton()).toBeTruthy()); });
+    expect(host.querySelector('[data-testid="reply-retry-7"]')?.closest('[data-audience-turn-id="7"]')).not.toBeNull();
+    expect(host.querySelector('[data-testid="reply-retry-9"]')?.closest('[data-audience-turn-id="9"]')).not.toBeNull();
+    await act(async () => { await vi.waitFor(() => expect(translationButton()).toBeTruthy()); });
+    await click(translationButton());
+    await act(async () => { await vi.waitFor(() => expect(translationButton()).toBeTruthy()); });
+    expect(translationAttempts).toBe(1);
+    expect(host.querySelector('[data-testid="translation-retry-8"][role="alert"]')?.textContent?.trim()).toBeTruthy();
+    expect(host.querySelectorAll('[data-testid="chat-stage"] > [role="alert"]')).toHaveLength(0);
+    await click(translationButton());
+    await act(async () => { await vi.waitFor(() => expect(translationButton()).toBeFalsy()); });
+    await click(replyButton());
+    await act(async () => { await vi.waitFor(() => expect(replyButton()).toBeTruthy()); });
+    expect(replyAttempts).toBe(1);
+    expect(host.querySelector('[data-testid="reply-retry-7"][role="alert"]')?.textContent?.trim()).toBeTruthy();
+    expect(host.querySelectorAll('[data-testid="chat-stage"] > [role="alert"]')).toHaveLength(0);
+    await click(replyButton());
+    await act(async () => {
+      await vi.waitFor(() => expect(replyButton()).toBeFalsy());
+    });
+    await act(async () => {
+      await vi.waitFor(() => expect(stateCall).toBeGreaterThanOrEqual(2));
+    });
+    const retryCalls = vi.mocked(fetch).mock.calls.filter(([, init]) => init?.method === "POST")
+      .map(([url]) => new URL(String(url), "http://t.local").pathname);
+    expect(retryCalls).toContain("/api/audience/reply/retry");
+    const targetedRetry = vi.mocked(fetch).mock.calls.find(([url, init]) =>
+      new URL(String(url), "http://t.local").pathname === "/api/audience/reply/retry" && init?.method === "POST");
+    expect(JSON.parse(String(targetedRetry?.[1]?.body))).toEqual({ chat_turn_id: 7 });
+    expect(host.querySelector('[data-testid="reply-retry-9"]')).not.toBeNull();
+    expect(retryCalls).toContain("/api/audience/translation/retry");
+    expect(retryCalls).not.toContain("/api/ministers/%E9%83%AD%E5%85%81%E5%8E%9A/reply/retry");
+
+    await click(host.querySelector(".composer-exit"));
+    await tick();
+    await click(edictCommand(host));
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector('[role="dialog"][aria-label="诏书草案"]')).not.toBeNull());
+    });
+    expect(host.querySelector<HTMLButtonElement>(".desk-footer button")?.disabled).toBe(false);
+    statePhase = "afterUndo";
+
+    await click(host.querySelector('[aria-label="关闭弹窗"]'));
+    await tick();
+    await click(host.querySelector('[aria-label="朝堂·召见大臣"]'));
+    await tick();
+    await click(host.querySelector(".court-drawer.open .primary-action"));
+    await act(async () => { await vi.waitFor(() => expect(findButton(host, "撤回本轮")).toBeTruthy()); });
+    // #1732 B：撤回就地确认条，确认后才 POST undo
+    await click(findButton(host, "撤回本轮"));
+    await act(async () => {
+      await vi.waitFor(() => expect(findButton(host, "继续撤回")).toBeTruthy());
+    });
+    await click(findButton(host, "继续撤回"));
+    await act(async () => {
+      await vi.waitFor(() => expect(stateCall).toBeGreaterThanOrEqual(3));
+    });
+
+    await click(host.querySelector(".composer-exit"));
+    await tick();
+    await click(edictCommand(host));
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector('[role="dialog"][aria-label="诏书草案"]')).not.toBeNull());
+    });
+    expect(host.querySelector<HTMLButtonElement>(".desk-footer button")?.disabled).toBe(true);
+    releaseRefresh();
+    await tick();
+  });

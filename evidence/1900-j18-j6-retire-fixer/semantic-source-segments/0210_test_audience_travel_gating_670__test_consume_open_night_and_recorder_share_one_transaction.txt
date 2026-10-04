@@ -1,0 +1,43 @@
+# FILE: tests/test_audience_travel_gating_670.py
+# NAME: test_consume_open_night_and_recorder_share_one_transaction
+# LINE: 760-796
+# FLAGS: assert_text_compare_or_match,assert_count,mock_or_patch_present,helper_or_private_call
+# KIND: py
+
+def test_consume_open_night_and_recorder_share_one_transaction(game, monkeypatch):
+    """#670：recorder 失败不得留下空 OPEN 夜或未结传召。"""
+    db, state, _content = game
+    sess = _session(game)
+    sess.state = state
+    remote = _set_place(game, "洪承畴", location="shaanxi")
+    before_nights = int(
+        db.conn.execute("SELECT COUNT(*) AS n FROM audience_nights").fetchone()["n"]
+    )
+    real_fresh = an.record_summon_fresh
+
+    def boom(*_a, **_k):
+        raise RuntimeError("injected summon recorder failure")
+
+    monkeypatch.setattr(an, "record_summon_fresh", boom)
+    with pytest.raises(RuntimeError):
+        sess.consume_audience_admission(
+            remote, origin_id="web:atomic-1", state=state,
+        )
+    assert int(
+        db.conn.execute("SELECT COUNT(*) AS n FROM audience_nights").fetchone()["n"]
+    ) == before_nights
+    assert an.list_unsettled_summons(db) == []
+    assert an.get_open_night(db) is None
+
+    # 成功路径：一夜一账
+    monkeypatch.setattr(an, "record_summon_fresh", real_fresh)
+    decision = sess.consume_audience_admission(
+        remote, origin_id="web:atomic-ok", state=state,
+    )
+    assert decision.result is AudienceAdmission.SUMMON_FRESH
+    night = an.get_open_night(db)
+    assert night is not None
+    unsettled = an.list_unsettled_summons(db)
+    assert len(unsettled) == 1
+    assert unsettled[0]["night_id"] == int(night["id"])
+    assert unsettled[0]["origin_id"] == "web:atomic-ok"

@@ -1,0 +1,38 @@
+# FILE: tests/test_web_audience_night_498.py
+# NAME: test_night_approved_directive_closes_into_month_end_without_second_review
+# LINE: 642-673
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_night_approved_directive_closes_into_month_end_without_second_review(web_game, monkeypatch):
+    game = web_game
+    minister = _active_minister(game)
+    _fake_settlement_llm(monkeypatch)
+    turn_before = int(game.state.turn)
+    text = "着户部核边饷，限三月完报"
+
+    # #502 的真实「对话内已应允」持久态：候选仍 pending，但归属本夜且 night_approved=1；
+    # 本 tracer 从该依赖交付态起，经玩家真实收夜/月末入口验证后半链，不直接 commit。
+    night = an.open_night(game.db, game.state, location="乾清宫", time_of_day="夜")
+    directive_id = game.db.stage_directive_candidate(
+        game.state.turn, minister,
+        payload={**_POLICY_FIELDS, "text": text, "actor": minister},
+    )
+    assert an.mark_actions_night_approved(game.db, [directive_id], night_id=int(night["id"])) == 1
+
+    async def scenario():
+        async with _client() as client:
+            return _parse_sse((await client.post("/api/decree/issue/stream", json={})).text)
+
+    events = asyncio.run(scenario())
+
+    assert events[-1]["event"] == "done"
+    assert not ({"confirm", "reject", "pending_review"} & {event["event"] for event in events})
+    assert an.get_night(game.db, int(night["id"]))["status"] == "closed"
+    assert int(game.state.turn) == turn_before + 1
+    assert not game.db.list_night_approved_pending(int(night["id"]), kind="directive")
+    rows = game.db.conn.execute(
+        "SELECT status, text FROM turn_directives WHERE turn=?",
+        (turn_before,),
+    ).fetchall()
+    assert any(str(row["text"] or "") == text for row in rows), rows

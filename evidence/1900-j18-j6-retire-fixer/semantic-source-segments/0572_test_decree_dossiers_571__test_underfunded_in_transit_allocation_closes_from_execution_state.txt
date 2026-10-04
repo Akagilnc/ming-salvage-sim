@@ -1,0 +1,30 @@
+# FILE: tests/test_decree_dossiers_571.py
+# NAME: test_underfunded_in_transit_allocation_closes_from_execution_state
+# LINE: 1657-1680
+# FLAGS: assert_text_compare_or_match,assert_count
+# KIND: py
+
+def test_underfunded_in_transit_allocation_closes_from_execution_state(game):
+    db, state, _content = game
+    state.metrics["国库"] = 5
+    dossier_id = db.create_decree_dossier(
+        state,
+        action_type="grant_allocation",
+        decree_text="拨银十两押解赴陕",
+        target_kind="region",
+        target_id="shaanxi",
+        payload={
+            "account": "国库", "amount": 10,
+            "execution_surface": "in_transit",
+            "locality_scope": "single",
+            "target_kind": "region",
+            "target_id": "shaanxi",
+        },
+    )
+
+    db.apply_dossier_promulgation(state, dossier_id, "promulgated")
+
+    dossier = db.get_decree_dossier(dossier_id)
+    assert state.metrics["国库"] == 0
+    assert dossier["status"] == "closed"
+    assert dossier["execution_outcome"] == "failed"

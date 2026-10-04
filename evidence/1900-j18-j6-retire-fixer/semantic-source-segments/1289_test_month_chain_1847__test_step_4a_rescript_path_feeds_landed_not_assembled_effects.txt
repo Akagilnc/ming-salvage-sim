@@ -1,0 +1,98 @@
+# FILE: tests/test_month_chain_1847.py
+# NAME: test_step_4a_rescript_path_feeds_landed_not_assembled_effects
+# LINE: 1899-1990
+# FLAGS: assert_text_compare_or_match,assert_count,mock_or_patch_present,helper_or_private_call
+# KIND: py
+
+def test_step_4a_rescript_path_feeds_landed_not_assembled_effects(game, monkeypatch):
+    """真实批红问后：4a 读到密令实入与拒收事实；月链不另造 segment_applied_results。"""
+    db, state, content = game
+    turn = int(state.turn)
+    minister = db.conn.execute(
+        "SELECT name FROM characters WHERE status='active' AND power_id='ming' LIMIT 1"
+    ).fetchone()[0]
+    order_id = db.create_secret_order(
+        state, minister, "辽饷清核", "查清兵部饷银", [],
+        deadline_months=2,
+        covert_task={
+            "kind": "差务", "axes": ["实务事功"], "direction": 1,
+            "delivery": {
+                "unit": "万两", "target_units": 5.0, "effect_sign": -1,
+                "purpose": "其它", "category": "密令差务", "account": "内库",
+            },
+        },
+    )
+    db.conn.execute(
+        "UPDATE secret_orders SET turn_issued=? WHERE id=?",
+        (turn - 1, order_id),
+    )
+    dossier_id = int(db.get_dossier_for_secret_order(order_id)["id"])
+    db.conn.commit()
+
+    captured_feed = {}
+
+    def supply_run(db_, state_, llm_config, chain):
+        feed = month_chain.build_secret_orders_supply_feed(db_, state_, chain)
+        captured_feed.update(feed)
+        return {
+            "dossier_progress_reports": [{
+                "dossier_id": dossier_id,
+                "progress_band": "顺利",
+                "memorial_text": "关外饷银如数盘点。",
+            }],
+            "covert_exec_selections": [{
+                "order_id": order_id, "fidelity": "忠实", "note": "实办",
+            }],
+        }
+
+    def translate(*_a, **kwargs):
+        if "问后核银" not in str(kwargs.get("segment") or ""):
+            return {"effects": {}}
+        return {"effects": {
+            "economy_moves": [{
+                "account": "内库", "delta": -5, "category": "密令差务",
+                "purpose": "其它", "reason": "问后实办内库出银",
+                "origin_ref": f"dossier:{dossier_id}",
+            }, {
+                "account": "内库", "delta": -1, "category": "补饷坏目标",
+                "purpose": "补饷", "reason": "查无此军",
+                "target_kind": "army", "target_id": "no-such-army-1847-feed",
+                "origin_ref": f"dossier:{dossier_id}",
+            }],
+        }}
+
+    _forbid_extractor(monkeypatch)
+    monkeypatch.setattr(
+        month_chain, "run_world_segment_text", lambda *a, **k: _WORLD_WITH_QUESTION,
+    )
+    monkeypatch.setattr(
+        month_chain, "_run_world_continuation_text", lambda *a, **k: "问后核银。",
+    )
+    monkeypatch.setattr(month_translate, "translate_month_segment", translate)
+    monkeypatch.setattr(month_chain, "run_secret_orders_supply", supply_run)
+
+    session = make_light_session(db, state, content)
+    session.llm_config = object()
+
+    paused = session.resolve_turn(allow_empty_decree=True)
+    assert paused.awaiting is True
+    session.submit_hitl_choices(
+        [_choice(session.pending_decisions()[0])], write_gate=session._write_gate,
+    )
+    result = session.resolve_turn(allow_empty_decree=True)
+    assert result.stage == "gazette"
+
+    assert "origin_effects" not in captured_feed
+    assert "origin_rejections" not in captured_feed
+    assert any(
+        str(row.get("origin_ref") or "") == f"dossier:{dossier_id}"
+        and int(row.get("delta") or 0) == -5
+        for row in (captured_feed.get("landed") or [])
+    )
+    assert any(
+        "no-such-army-1847-feed" in str(row)
+        for row in (captured_feed.get("rejections") or [])
+    )
+    chain = month_chain._load_chain(db, turn)
+    assert not (chain.get("segment_applied_results") or [])
+    assert db.sum_dossier_actual_progress_units(dossier_id) == 5.0

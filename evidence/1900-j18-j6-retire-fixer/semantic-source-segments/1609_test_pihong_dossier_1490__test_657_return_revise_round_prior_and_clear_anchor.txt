@@ -1,0 +1,68 @@
+# FILE: tests/test_pihong_dossier_1490.py
+# NAME: test_657_return_revise_round_prior_and_clear_anchor
+# LINE: 808-869
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_657_return_revise_round_prior_and_clear_anchor(web_game, monkeypatch):
+    """C1.2：真 HTTP return_revise → ①后 phase2 前崩溃 → 同 DB 同 body 重 POST
+    round 不双增 → 清锚后新 capability HTTP follow_draft。复用 C1.1 subprocess helper。"""
+    from ming_sim.models import TurnPhase
+    from ming_sim.rescript_draft import normalize_rescript_layer_a_option
+    db_path = _657_db_path_of(web_game)
+    opt = normalize_rescript_layer_a_option({'label': '发帑赈济', 'hint': '所安者饥民', 'action_type': 'assignment', 'assignee_name': '', 'target_kind': 'region', 'target_id': 'shaanxi', 'locality_scope': 'single', 'region_id': 'shaanxi', 'transaction_category': '督赈', 'deadline_months': 2, 'participant_roster': _roster(_ROSTER_LEAD)})
+    desk = _657_plant_awaiting_web(web_game, drafts=[{'title': '改票急务', 'context': 'c', 'options': [opt, {'label': '备', 'hint': 'h', 'draft_capability': 'x'}], 'actor_name': '杨嗣昌', 'actor_office': '兵部尚书', 'actor_faction': '东林'}])
+    key = desk[0]['decision_key']
+    body = [{'decision_key': key, 'action': 'return_revise', 'label': '发回改票', 'applied_from_revision_round': 0, 'draft_capability': opt['draft_capability']}]
+    body_canon = json.dumps(body, ensure_ascii=False, separators=(',', ':'))
+    web_game.session.close()
+    r1 = _657_subprocess_resolve(db_path, body, crash='phase2', prewrite_mode='revise')
+    assert r1.get('_killed') is True or r1.get('_returncode') == 97
+    assert r1['_body_canonical'] == body_canon
+    from ming_sim.content import GameContent
+    from ming_sim.db import GameDB
+    content = GameContent.load()
+    probe = GameDB(db_path, content)
+    try:
+        hit = next((r for r in probe.list_rescript_drafts() if r['title'] == '改票急务'))
+        assert hit['status'] == 'pending'
+        assert int(hit['revision_round'] or 0) == 1
+        assert (hit['choice'] or {}).get('action') == 'return_revise'
+        assert len(hit['prior_options_json'] or []) == 1
+        ctx = probe.get_resolve_context(int(probe.load_state().turn))
+        assert ctx is None or ctx.get('extracted') is None
+        new_labels = [str(o.get('label') or '') for o in hit['options'] or []]
+        assert '新拟甲' in new_labels
+        new_caps = [str(o.get('draft_capability') or '') for o in hit['options'] or []]
+        assert all((c and c not in {'cap-new-a', 'cap-new-b'} for c in new_caps))
+    finally:
+        probe.close()
+    r2 = _657_subprocess_resolve(db_path, body, crash='', prewrite_mode='revise')
+    assert r2.get('done') is True, r2
+    assert r2['_body_canonical'] == body_canon
+    probe = GameDB(db_path, content)
+    try:
+        hit = next((r for r in probe.list_rescript_drafts() if r['title'] == '改票急务'))
+        assert int(hit['revision_round'] or 0) == 1
+        assert not (hit['choice'] or {})
+        state = probe.load_state()
+        state.turn_phase = TurnPhase.AWAITING_DECISION.value
+        probe.save_state(state)
+        probe.save_resolve_context(int(state.turn), '诏', {'candidate_events': [], 'transit_semantics': []})
+        probe.conn.commit()
+        new_opt = next((o for o in hit['options'] or [] if str(o.get('label') or '') == '新拟甲'))
+        follow_cap = str(new_opt.get('draft_capability') or '')
+        assert follow_cap
+        follow_body = [{'decision_key': key, 'action': 'follow_draft', 'label': '新拟甲', 'draft_capability': follow_cap}]
+    finally:
+        probe.close()
+    r3 = _657_subprocess_resolve(db_path, follow_body, crash='')
+    assert r3.get('done') is True, r3
+    probe = GameDB(db_path, content)
+    try:
+        hit = next((r for r in probe.list_rescript_drafts() if r['title'] == '改票急务'))
+        assert hit['status'] == 'decided'
+        assert (hit['choice'] or {}).get('action') == 'follow_draft'
+        assert len(probe.list_decree_dossiers()) >= 1
+    finally:
+        probe.close()

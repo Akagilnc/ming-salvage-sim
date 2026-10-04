@@ -1,0 +1,472 @@
+{
+  "total_wide": 2551,
+  "files": 227,
+  "shards": 34,
+  "index": [
+    {
+      "shard": 0,
+      "files": [
+        "tests/test_adr0015_per_item_rejection.py",
+        "tests/test_advance_paths_atomic.py",
+        "tests/test_advances_section_rejections.py",
+        "tests/test_affairs_1831.py",
+        "tests/test_applier_contract.py",
+        "tests/test_appointment_tenure_607.py",
+        "tests/test_army_card_status_1501.py",
+        "tests/test_army_display_173.py",
+        "tests/test_army_firearms.py",
+        "tests/test_army_maintenance_retire_173.py",
+        "tests/test_army_pay_source_prompt_contract.py",
+        "tests/test_army_salary_44.py"
+      ],
+      "count": 78,
+      "path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/shard-000.json"
+    },
+    {
+      "shard": 1,
+      "files": [
+        "tests/test_audience_background.py",
+        "tests/test_audience_continuous_507.py",
+        "tests/test_audience_draft_grant_once_1777.py",
+        "tests/test_audience_extraction_501.py",
+        "tests/test_audience_night_498.py",
+        "tests/test_audience_presence_500.py",
+        "tests/test_audience_restore_505.py"
+      ],
+      "count": 63,
+      "path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/shard-001.json"
+    },
+    {
+      "shard": 2,
+      "files": [
+        "tests/test_audience_scroll_539.py",
+        "tests/test_audience_translate_1837.py",
+        "tests/test_audience_translate_1837_reopen.py",
+        "tests/test_audience_translation_1838.py"
+      ],
+      "count": 54,
+      "path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/shard-002.json"
+    },
+    {
+      "shard": 3,
+      "files": [
+        "tests/test_audience_travel_gating_670.py",
+        "tests/test_audience_undo_506.py",
+        "tests/test_authority_ledger_611.py",
+        "tests/test_bandit_power_model_190.py"
+      ],
+      "count": 58,
+      "path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/shard-003.json"
+    },
+    {
+      "shard": 4,
+      "files": [
+        "tests/test_breach_plea_623.py",
+        "tests/test_centrifuge_ledger_690.py",
+        "tests/test_character_knowledge_489.py"
+      ],
+      "count": 78,
+      "path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/shard-004.json"
+    },
+    {
+      "shard": 5,
+      "files": [
+        "tests/test_chat_stream_failpaths_393.py",
+        "tests/test_cli_backend.py",
+        "tests/test_cli_model_choices.py",
+        "tests/test_cli_play_turn.py",
+        "tests/test_cli_runner_error_typed_1299.py",
+        "tests/test_cli_transport_1465.py",
+        "tests/test_close_issues_section_rejections.py"
+      ],
+      "count": 69,
+      "path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/shard-005.json"
+    },
+    {
+      "shard": 6,
+      "files": [
+        "tests/test_commitment_backlash_626.py",
+        "tests/test_commitment_display_348.py",
+        "tests/test_court_break_player_lock_1727.py",
+        "tests/test_court_layout_1290.py",
+        "tests/test_covert_levy_651.py",
+        "tests/test_credit_events_628.py",
+        "tests/test_db_broad_except_surface.py",
+        "tests/test_decision_event_binding_389.py",
+        "tests/test_declaration_dispatch_1835.py"
+      ],
+      "count": 64,
+      "path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/shard-006.json"
+    },
+    {
+      "shard": 7,
+      "files": [
+        "tests/test_decree_commitment_creation_136.py",
+        "tests/test_decree_commitment_schema_136.py",
+        "tests/test_decree_commitment_settlement_229.py"
+      ],
+      "count": 64,
+      "path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/shard-007.json"
+    },
+    {
+      "shard": 8,
+      "files": [
+        "tests/test_decree_dossiers_571.py",
+        "tests/test_decree_forecast_1861.py",
+        "tests/test_deepseek_thinking_disable_1797.py"
+      ],
+      "count": 82,
+      "path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/shard-008.json"
+    },
+    {
+      "shard": 9,
+      "files": [
+        "tests/test_deformation_dual_rail_622.py",
+        "tests/test_distance_matrix.py",
+        "tests/test_dossier_endorsements_612.py",
+        "tests/test_dossier_links_559.py",
+        "tests/test_dossier_reported_progress_619.py",
+        "tests/test_draft_admission_resubmit_1769.py",
+        "tests/test_due_review_621.py",
+        "tests/test_economy_section_rejections.py",
+        "tests/test_effect_origin_558.py",
+        "tests/test_empire_modifier_income_only_341.py",
+        "tests/test_enrich_list_guards.py"
+      ],
+      "count": 79,
+      "path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/shard-009.json"
+    },
+    {
+      "shard": 10,
+      "files": [
+        "tests/test_enter_settlement_period_1235.py",
+        "tests/test_error_pack.py",
+        "tests/test_escort_route_1900.py",
+        "tests/test_event_chain_cascade.py"
+      ],
+      "count": 36,
+      "path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/shard-010.json"
+    },
+    {
+      "shard": 11,
+      "files": [
+        "tests/test_event_trigger_gate.py",
+        "tests/test_execution_joint_liability_565.py",
+        "tests/test_execution_pressure_654.py"
+      ],
+      "count": 141,
+      "path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/shard-011.json"
+    },
+    {
+      "shard": 12,
+      "files": [
+        "tests/test_execution_tenure_613.py",
+        "tests/test_executor_routing_721.py",
+        "tests/test_faction_brew_637.py",
+        "tests/test_faction_class_section_rejections.py",
+        "tests/test_faction_denunciation_627.py",
+        "tests/test_faction_leverage_9.py",
+        "tests/test_family_tail_615.py",
+        "tests/test_family_tail_restore_570.py",
+        "tests/test_fiscal_beyond_intent_1260.py"
+      ],
+      "count": 75,
+      "path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/shard-012.json"
+    },
+    {
+      "shard": 13,
+      "files": [
+        "tests/test_fiscal_levy_effect.py",
+        "tests/test_fiscal_substrate_bridge.py",
+        "tests/test_fiscal_tick.py"
+      ],
+      "count": 134,
+      "path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/shard-013.json"
+    },
+    {
+      "shard": 14,
+      "files": [
+        "tests/test_gazette_author_1862.py",
+        "tests/test_grant_reconciliation_567.py",
+        "tests/test_highlight_judge_544.py",
+        "tests/test_history_decree_text_1843_reopen.py",
+        "tests/test_identity_seed_488.py",
+        "tests/test_impeachment_surge_655.py",
+        "tests/test_issue_decree_token_1277.py",
+        "tests/test_issue_entities.py",
+        "tests/test_junxin_alias_loyalty_313.py",
+        "tests/test_junxin_monthly_tick_314.py"
+      ],
+      "count": 66,
+      "path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/shard-014.json"
+    },
+    {
+      "shard": 15,
+      "files": [
+        "tests/test_llm_channel_config.py",
+        "tests/test_loyalty_soft_adjust_clamp_320.py",
+        "tests/test_manual_directive_institution_normalize_1279.py",
+        "tests/test_manual_directive_locality_1685.py",
+        "tests/test_material_directory_1830.py",
+        "tests/test_mechanical_tail_1845.py",
+        "tests/test_memorial_inbox_1726.py",
+        "tests/test_menu_continue_stream_1195.py"
+      ],
+      "count": 78,
+      "path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/shard-015.json"
+    },
+    {
+      "shard": 16,
+      "files": [
+        "tests/test_menu_lifecycle_drain_396.py",
+        "tests/test_minister_chat_timeout.py",
+        "tests/test_month_call_recovery_1846.py",
+        "tests/test_month_chain_1843.py",
+        "tests/test_month_chain_1847.py",
+        "tests/test_month_loop_tracer_1468.py"
+      ],
+      "count": 73,
+      "path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/shard-016.json"
+    },
+    {
+      "shard": 17,
+      "files": [
+        "tests/test_month_open_snapshot_1234.py",
+        "tests/test_month_translate_1840.py",
+        "tests/test_mutiny_actual_residence_659.py",
+        "tests/test_mutiny_latch_315.py",
+        "tests/test_mutiny_noop_whitelist_319.py",
+        "tests/test_mutiny_progression_316.py",
+        "tests/test_mutiny_redemption_317.py",
+        "tests/test_mutiny_third_strike_318.py",
+        "tests/test_named_characters_seed_484.py",
+        "tests/test_new_game_dependency_mismatch_1721.py"
+      ],
+      "count": 79,
+      "path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/shard-017.json"
+    },
+    {
+      "shard": 18,
+      "files": [
+        "tests/test_new_game_smoke.py",
+        "tests/test_new_game_write_path_1749.py",
+        "tests/test_new_issues_section_rejections.py",
+        "tests/test_no_edict_full_settlement_1274.py",
+        "tests/test_office_inference.py",
+        "tests/test_office_rank_562.py",
+        "tests/test_on_scene_immediate_write_1839.py",
+        "tests/test_opening_gazette_delete_1356.py",
+        "tests/test_override_breach_costs_564.py"
+      ],
+      "count": 78,
+      "path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/shard-018.json"
+    },
+    {
+      "shard": 19,
+      "files": [
+        "tests/test_p4_guard_new_surfaces_547.py",
+        "tests/test_pay_order_override_653.py",
+        "tests/test_pay_order_override_extraction_653.py",
+        "tests/test_person_archive_contract_index.py",
+        "tests/test_person_archive_schema.py"
+      ],
+      "count": 60,
+      "path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/shard-019.json"
+    },
+    {
+      "shard": 20,
+      "files": [
+        "tests/test_person_delta_adapter.py",
+        "tests/test_person_transit_write_667.py",
+        "tests/test_pihong_dossier_1490.py"
+      ],
+      "count": 143,
+      "path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/shard-020.json"
+    },
+    {
+      "shard": 21,
+      "files": [
+        "tests/test_player_army_projection_321.py",
+        "tests/test_player_payload_1022.py",
+        "tests/test_population_transfers_649.py",
+        "tests/test_population_transfers_662.py",
+        "tests/test_population_unit_648.py",
+        "tests/test_power_section_rejections.py",
+        "tests/test_pre_settle_transaction.py",
+        "tests/test_promulgation_judge_561.py",
+        "tests/test_promulgation_seam_560.py",
+        "tests/test_public_character_place_1683.py",
+        "tests/test_public_sayings_1829.py"
+      ],
+      "count": 76,
+      "path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/shard-021.json"
+    },
+    {
+      "shard": 22,
+      "files": [
+        "tests/test_qa_1281_issue_audience_case_facts.py",
+        "tests/test_qa_a3_seed_data.py",
+        "tests/test_qa_b3_409_ux.py",
+        "tests/test_qa_c2_phase_settlement_mask_1374.py",
+        "tests/test_qa_c2_settlement_display_lifecycle_1343.py",
+        "tests/test_qa_c3_secret_order_path_1357_1376.py",
+        "tests/test_qa_d1_decree_normalize_1274.py",
+        "tests/test_qa_e1_numeric_presentation.py",
+        "tests/test_qa_h1_seed_data.py",
+        "tests/test_qa_t1_extraction_dual_source_1353.py",
+        "tests/test_qa_u2_liaodong_buildings.py",
+        "tests/test_qa_u3_map_nodes_1401.py",
+        "tests/test_recommendation_batch_snapshot_1583.py",
+        "tests/test_recommendation_edges_635.py",
+        "tests/test_recommendations.py"
+      ],
+      "count": 76,
+      "path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/shard-022.json"
+    },
+    {
+      "shard": 23,
+      "files": [
+        "tests/test_refugee_loop_652.py",
+        "tests/test_region_cannon_delta.py",
+        "tests/test_region_citydefense.py",
+        "tests/test_rejection_wiring.py",
+        "tests/test_relation_brew_636.py",
+        "tests/test_relation_capture_633.py",
+        "tests/test_relation_read_640.py"
+      ],
+      "count": 76,
+      "path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/shard-023.json"
+    },
+    {
+      "shard": 24,
+      "files": [
+        "tests/test_relation_seed_638.py",
+        "tests/test_relation_store_632.py",
+        "tests/test_release_bundle_assets.py",
+        "tests/test_rescript_choices_563.py",
+        "tests/test_rescript_draft_656.py",
+        "tests/test_rescript_heal_isolation_1801.py"
+      ],
+      "count": 79,
+      "path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/shard-024.json"
+    },
+    {
+      "shard": 25,
+      "files": [
+        "tests/test_rescript_option_field_heal_1746.py",
+        "tests/test_run_agent_text_transport_1465.py",
+        "tests/test_runtime_llm_config.py",
+        "tests/test_scene_llm_1836.py",
+        "tests/test_secret_dossier_participants_1252.py"
+      ],
+      "count": 52,
+      "path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/shard-025.json"
+    },
+    {
+      "shard": 26,
+      "files": [
+        "tests/test_secret_order_isolation_883.py",
+        "tests/test_secret_order_monthly_progress_566.py",
+        "tests/test_secret_order_payoff_1504.py",
+        "tests/test_secret_order_section_rejections.py"
+      ],
+      "count": 79,
+      "path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/shard-026.json"
+    },
+    {
+      "shard": 27,
+      "files": [
+        "tests/test_secret_order_update.py",
+        "tests/test_section4_rejections.py",
+        "tests/test_section_fiscal_rejections.py",
+        "tests/test_session_write_queue_1353.py"
+      ],
+      "count": 80,
+      "path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/shard-027.json"
+    },
+    {
+      "shard": 28,
+      "files": [
+        "tests/test_settle_core.py",
+        "tests/test_settlement_write_guard_393.py",
+        "tests/test_shared_resource_order_1844.py",
+        "tests/test_six_sciences_seed_608.py",
+        "tests/test_start_sh_deps_1721.py",
+        "tests/test_state_reload.py",
+        "tests/test_structured_decree_contract_1624.py",
+        "tests/test_style_temperament_641.py",
+        "tests/test_supervision_625.py",
+        "tests/test_surcharge_causal_chain_650.py",
+        "tests/test_textual_facts_1828.py"
+      ],
+      "count": 75,
+      "path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/shard-028.json"
+    },
+    {
+      "shard": 29,
+      "files": [
+        "tests/test_transaction_boundary.py",
+        "tests/test_transit_aging_346.py",
+        "tests/test_transit_countdown_668.py",
+        "tests/test_urge_lever_624.py",
+        "tests/test_value_matrix_691.py",
+        "tests/test_verify_llm_clocks_884.py",
+        "tests/test_web_audience_night_498.py",
+        "tests/test_web_budget_payload.py",
+        "tests/test_web_chat_serialization_393.py",
+        "tests/test_web_court_visibility.py"
+      ],
+      "count": 65,
+      "path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/shard-029.json"
+    },
+    {
+      "shard": 30,
+      "files": [
+        "tests/test_web_llm_runtime_config.py",
+        "tests/test_world_materials_1834.py",
+        "tests/test_yuan_arrival_185.py",
+        "web/src/appDurableWiring.test.tsx"
+      ],
+      "count": 79,
+      "path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/shard-030.json"
+    },
+    {
+      "shard": 31,
+      "files": [
+        "web/src/chatFailures.test.ts",
+        "web/src/components/cliRunnerDropdown.consistency.test.tsx",
+        "web/src/components/decisionModal.test.tsx",
+        "web/src/components/drawers.test.tsx",
+        "web/src/components/electronLayout.medium.test.tsx",
+        "web/src/components/gameMenu.test.tsx",
+        "web/src/components/map.test.tsx",
+        "web/src/components/menuPage.test.tsx"
+      ],
+      "count": 67,
+      "path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/shard-031.json"
+    },
+    {
+      "shard": 32,
+      "files": [
+        "web/src/components/modals.test.tsx",
+        "web/src/components/settlementFaces.test.tsx",
+        "web/src/components/settlementGazettePanel.test.tsx",
+        "web/src/components/situation.test.tsx",
+        "web/src/decisionRouting.test.tsx",
+        "web/src/escClose.test.tsx",
+        "web/src/mindreadingDelivery.test.tsx",
+        "web/src/useDurableProjection.test.tsx"
+      ],
+      "count": 80,
+      "path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/shard-032.json"
+    },
+    {
+      "shard": 33,
+      "files": [
+        "web/src/useSettlementFlow.test.tsx"
+      ],
+      "count": 15,
+      "path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/shard-033.json"
+    }
+  ]
+}

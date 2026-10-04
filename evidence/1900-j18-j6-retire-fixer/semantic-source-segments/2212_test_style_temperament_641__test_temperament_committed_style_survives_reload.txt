@@ -1,0 +1,18 @@
+# FILE: tests/test_style_temperament_641.py
+# NAME: test_temperament_committed_style_survives_reload
+# LINE: 192-203
+# FLAGS: helper_or_private_call
+# KIND: py
+
+def test_temperament_committed_style_survives_reload(game):
+    db, state, content = game
+    issues.apply_score_extraction(
+        db,
+        state,
+        {"人物变更": [_temperament_item()]},
+        content=content,
+    )
+    reload_state_from_db(db, state, content=content)
+
+    assert _style_row(db) == NEW_STYLE
+    assert content.characters[PERSON].style == NEW_STYLE

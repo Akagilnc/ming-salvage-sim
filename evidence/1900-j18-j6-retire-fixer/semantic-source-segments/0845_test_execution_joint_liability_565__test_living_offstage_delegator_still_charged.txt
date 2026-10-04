@@ -1,0 +1,20 @@
+# FILE: tests/test_execution_joint_liability_565.py
+# NAME: test_living_offstage_delegator_still_charged
+# LINE: 366-379
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_living_offstage_delegator_still_charged(game):
+    db, state, content = game
+    dossier_id = _executing_dossier(db, state)
+    db.set_character_status(state, "徐光启", "offstage", reason="致仕在籍")
+    before = _sat(db, "西学")
+
+    _close_via_adapter(db, state, content, dossier_id, "failed", note="致仕仍追")
+
+    assert _sat(db, "西学") == max(0, before - 4)
+    targets = {
+        e["target"] for e in db.get_relation_edge_events(event_kind="连坐")
+        if e["origin"].startswith(f"dossier:{dossier_id}:")
+    }
+    assert "徐光启" in targets

@@ -1,0 +1,41 @@
+# FILE: tests/test_rescript_option_field_heal_1746.py
+# NAME: test_overflow_json_number_exhaust_drops_only_bad
+# LINE: 572-606
+# FLAGS: assert_text_compare_or_match,assert_count,mock_or_patch_present,helper_or_private_call
+# KIND: py
+
+def test_overflow_json_number_exhaust_drops_only_bad(
+    number_lit, monkeypatch, tmp_path,
+):
+    """超范围数字耗尽 → 只剔坏项；兄弟保留；error pack 响亮。"""
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    bad = _hold(due_turn=_OVERFLOW_SENTINEL, label="坏项")
+    sibling = _hold(label="兄弟")
+    sibling_frozen = dict(sibling)
+    first = _items_json_num(
+        [{"title": "u", "context": "c", "options": [bad, sibling]}],
+        number_lit,
+    )
+    tags: list[str] = []
+
+    def _llm(_a, _p, tag="", prior_messages=None):
+        tags.append(tag)
+        return first  # 永不修
+
+    monkeypatch.setattr(rescript_mod, "run_agent_text", _llm)
+    drafts = generate_rescript_draft(object(), _ctx(), turn=53)
+    assert drafts is not None
+    assert tags == ["rescript-draft"] + ["rescript-draft-heal"] * RESCRIPT_OPTION_FIELD_HEAL_RETRIES
+    opts = drafts[0]["options"]
+    assert len(opts) == 1
+    hold = opts[0]
+    for k, v in sibling_frozen.items():
+        assert hold.get(k) == v
+    note = tmp_path / "error_packs" / "rescript_draft_degraded" / "turn53.json"
+    note_obj = json.loads(note.read_text(encoding="utf-8"))
+    assert note_obj.get("reason") == "option_missing_fields_heal_exhausted"
+    dropped = note_obj.get("dropped_options") or []
+    assert dropped and dropped[0].get("heal_id") == "0:0"
+    assert list(dropped[0].get("missing_fields") or []) == ["due_turn"]
+    trace = note_obj.get("heal_trace") or []
+    assert len(trace) == RESCRIPT_OPTION_FIELD_HEAL_RETRIES

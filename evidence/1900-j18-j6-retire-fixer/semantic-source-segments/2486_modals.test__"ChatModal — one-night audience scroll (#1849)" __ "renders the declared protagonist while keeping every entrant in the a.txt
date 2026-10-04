@@ -1,0 +1,46 @@
+# FILE: web/src/components/modals.test.tsx
+# NAME: "ChatModal — one-night audience scroll (#1849)" / "renders the declared protagonist while keeping every entrant in the avatar roster"
+# LINE: 1006-1045
+# FLAGS: web_mock_spy_or_calls,web_count_assert
+# KIND: web
+
+  it("renders the declared protagonist while keeping every entrant in the avatar roster", async () => {
+    let updateNight!: (nightId: number) => void;
+    let protagonist = "";
+    let nightId = 23;
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(async () => ({ ok: true, json: async () => ({
+      night_id: nightId,
+      protagonist,
+      roster: protagonist ? [
+        { name: "洪承畴", present: true },
+        { name: "许誉卿", present: false },
+      ] : [],
+      messages: nightScroll,
+    }) })));
+    const host = renderModal({ minister: xu, ministers: [hong, xu], portraitPrefix: "minister_", currentNightId: 23,
+      registerNightUpdate: (update) => { updateNight = update; } });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    expect(host.querySelector(".chat-portrait-wrap img")).toBeNull();
+    expect(Array.from(host.querySelectorAll(".audience-roster button")).map((node) => node.getAttribute("data-presence")))
+      .toEqual(["waiting", "waiting"]);
+
+    protagonist = "洪承畴";
+    nightId = 24;
+    await act(async () => { updateNight(24); await Promise.resolve(); await Promise.resolve(); });
+
+    expect(host.querySelector(".chat-portrait-wrap img")?.getAttribute("src")).toBe("/portraits/minister_hong.png");
+    expect(Array.from(host.querySelectorAll(".audience-roster img")).map((node) => node.getAttribute("src")))
+      .toEqual(["/portraits/minister_hong.png", "/portraits/minister_xu.png"]);
+    expect(host.querySelector('[data-roster-name="许誉卿"]')?.getAttribute("data-presence")).toBe("departed");
+    expect(host.querySelectorAll(".minister-side > .chat-portrait-wrap")).toHaveLength(1);
+    act(() => { host.querySelector<HTMLImageElement>(".chat-portrait-wrap img")?.dispatchEvent(new Event("error")); });
+    expect(host.querySelector(".chat-portrait-wrap img")).toBeNull();
+    protagonist = "许誉卿";
+    nightId = 25;
+    await act(async () => { updateNight(25); await Promise.resolve(); await Promise.resolve(); });
+    expect(host.querySelector(".chat-portrait-wrap img")?.getAttribute("src")).toBe("/portraits/minister_xu.png");
+    protagonist = "名册之外";
+    nightId = 26;
+    await act(async () => { updateNight(26); await Promise.resolve(); await Promise.resolve(); });
+    expect(host.querySelector(".chat-portrait-wrap img")).toBeNull();
+  });

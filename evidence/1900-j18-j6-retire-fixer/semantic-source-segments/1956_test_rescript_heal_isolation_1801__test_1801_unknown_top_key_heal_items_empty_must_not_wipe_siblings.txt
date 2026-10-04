@@ -1,0 +1,28 @@
+# FILE: tests/test_rescript_heal_isolation_1801.py
+# NAME: test_1801_unknown_top_key_heal_items_empty_must_not_wipe_siblings
+# LINE: 170-191
+# FLAGS: assert_text_compare_or_match,mock_or_patch_present,helper_or_private_call
+# KIND: py
+
+def test_1801_unknown_top_key_heal_items_empty_must_not_wipe_siblings(monkeypatch, tmp_path):
+    """①b-2 成功补交不得因 heal 回 {"items":[]} 清空原合法条目。"""
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    first = json.dumps(
+        {"items": [_item("陕西告饥"), _item("辽饷")], "summary": "臣请圣裁"},
+        ensure_ascii=False,
+    )
+    # 补交只回空 items——不得整份替换底稿
+    healed = json.dumps({"items": []}, ensure_ascii=False)
+    n = {"i": 0}
+    tags: list[str] = []
+
+    def _llm(_a, _p, tag="", prior_messages=None):
+        tags.append(tag)
+        n["i"] += 1
+        return first if n["i"] == 1 else healed
+
+    monkeypatch.setattr(rescript_mod, "run_agent_text", _llm)
+    drafts = generate_rescript_draft(object(), _ctx(), turn=113)
+    assert drafts is not None
+    assert [d["title"] for d in drafts] == ["陕西告饥", "辽饷"]
+    assert "rescript-draft-heal" in tags

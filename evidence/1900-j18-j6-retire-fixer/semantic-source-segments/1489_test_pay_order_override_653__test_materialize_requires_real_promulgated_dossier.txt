@@ -1,0 +1,23 @@
+# FILE: tests/test_pay_order_override_653.py
+# NAME: test_materialize_requires_real_promulgated_dossier
+# LINE: 1120-1136
+# FLAGS: helper_or_private_call
+# KIND: py
+
+def test_materialize_requires_real_promulgated_dossier(game):
+    """物化入口资格校验：案卷必须真实存在、action_type 合法且已过颁布门。"""
+    db, state, _content = game
+    with pytest.raises(ValueError):
+        materialize_pay_order_decree(
+            db, turn=1,
+            entries=[{"key": "due_priority_军饷", "value": 40}],
+            origin_ref="dossier:99999", commit=True,      # 案卷不存在
+        )
+    # 未过颁布门（proposed）的案卷禁物化
+    did = _override_dossier(db, state, [{"key": "due_priority_军饷", "value": 40}])
+    with pytest.raises(ValueError):
+        materialize_pay_order_decree(
+            db, turn=state.turn,
+            entries=[{"key": "due_priority_军饷", "value": 40}],
+            origin_ref=f"dossier:{did}", commit=True,
+        )

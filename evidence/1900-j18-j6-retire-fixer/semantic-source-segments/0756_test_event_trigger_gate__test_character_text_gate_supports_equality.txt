@@ -1,0 +1,25 @@
+# FILE: tests/test_event_trigger_gate.py
+# NAME: test_character_text_gate_supports_equality
+# LINE: 774-792
+# FLAGS: helper_or_private_call
+# KIND: py
+
+def test_character_text_gate_supports_equality(game):
+    """character.<name>.<field> 文本字段可参与 trigger_gate 相等/不等比较（#201）。"""
+    db, state, content = game
+
+    db.conn.execute("UPDATE characters SET location = ? WHERE name = ?", ("liaodong", "毛文龙"))
+
+    for gate, expected in [
+        ({'character.毛文龙.location': '==liaodong'}, True),
+        ({'character.毛文龙.location': '!=capital'}, True),
+        ({'character.毛文龙.location': '==capital'}, False),
+    ]:
+        event = _hist_event("__runtime_gate__", gate)
+        content.events.append(event)
+        try:
+            issues.bind_content(content)
+            candidates = issues.gather_candidate_events(state, db)
+            assert (event.id in {candidate.id for candidate in candidates}) is expected
+        finally:
+            content.events.remove(event)

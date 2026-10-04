@@ -1,0 +1,26 @@
+# FILE: tests/test_highlight_judge_544.py
+# NAME: test_read_night_scroll_includes_minister_highlights
+# LINE: 125-144
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_read_night_scroll_includes_minister_highlights(game):
+    db, state, _ = game
+    minister = "杨嗣昌"
+    night_id = int(an.open_night(db, state, time_of_day="戌时", location="乾清宫")["id"])
+    cid, mid = _minister_turn(
+        db, state, minister, "臣请据实核账。", night_id=night_id,
+    )
+    db.set_message_highlights(mid, ["据实核账"])
+
+    scroll = an.read_night_scroll(db, night_id)
+    assert any(m["role"] == "scene" and m["content"] == "臣请据实核账。" and m["highlights"] == [] for m in scroll)
+    _settle_minister_reply(db, state, cid, night_id, minister, "臣请据实核账。")
+    scroll = an.read_night_scroll(db, night_id)
+    minister_msgs = [m for m in scroll if m["role"] == "minister"]
+    assert minister_msgs
+    assert minister_msgs[0]["highlights"] == ["据实核账"]
+    # 帝/scene 不带非空高亮
+    for m in scroll:
+        if m["role"] != "minister":
+            assert m.get("highlights") == []

@@ -1,0 +1,56 @@
+# FILE: tests/test_style_temperament_641.py
+# NAME: test_temperament_style_preserves_raw_bytes_through_write_kernel
+# LINE: 120-169
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_temperament_style_preserves_raw_bytes_through_write_kernel(game):
+    """自由文本 style 只判空、不改写：DB/runtime/applied/log normalized 与输入原串逐字节相等。"""
+    import json
+
+    db, state, content = game
+    before = _style_row(db)
+    assert PADDED_STYLE != PADDED_STYLE.strip()
+
+    applied = issues.apply_score_extraction(
+        db,
+        state,
+        {"人物变更": [_temperament_item(style=PADDED_STYLE)]},
+        content=content,
+    )
+
+    assert _style_row(db) == PADDED_STYLE
+    assert content.characters[PERSON].style == PADDED_STYLE
+    change = applied["applied_person_changes"][0]
+    assert change == {
+        "name": PERSON,
+        "origin_ref": "盘面自发",
+        "动作": "性情",
+        "style": PADDED_STYLE,
+        "old_style": before,
+        "new_style": PADDED_STYLE,
+        "reason": "经事锤炼，固有层改写",
+    }
+    log = db.conn.execute(
+        "SELECT action, normalized FROM person_logs "
+        "WHERE person_name=? AND action=? ORDER BY id DESC LIMIT 1",
+        (PERSON, "性情"),
+    ).fetchone()
+    assert log["action"] == "性情"
+    normalized = json.loads(log["normalized"])
+    assert normalized["style"] == PADDED_STYLE
+    assert normalized["old_style"] == before
+    assert normalized["new_style"] == PADDED_STYLE
+
+    # 纯空白仍拒收（契约保留）。
+    blank_before = _style_row(db)
+    blank_out = issues.apply_score_extraction(
+        db,
+        state,
+        {"人物变更": [_temperament_item(style="   \n\t  ")]},
+        content=content,
+    )
+    assert _style_row(db) == blank_before
+    assert content.characters[PERSON].style == PADDED_STYLE
+    assert blank_out["applied_person_changes"][0]["rejected"] is True
+    assert blank_out["applied_person_changes"][0]["category"] == "invalid_enum"

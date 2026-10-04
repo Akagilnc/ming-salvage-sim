@@ -1,0 +1,26 @@
+# FILE: tests/test_army_display_173.py
+# NAME: test_danger_order_uses_army_needed_for_arrears_months
+# LINE: 42-61
+# FLAGS: assert_text_compare_or_match
+# KIND: py
+
+def test_danger_order_uses_army_needed_for_arrears_months(game):
+    """army_rows(danger_order=True) 欠饷月数归一须按 army_needed。"""
+    db, _state, _ = game
+    rows = db.conn.execute(
+        "SELECT id,name FROM armies WHERE owner_power='ming' AND salary_rate>0 LIMIT 2"
+    ).fetchall()
+    if len(rows) < 2:
+        pytest.skip("需≥2 支 salary_rate>0 的明军作排序对比（数据前提）")
+    a, b = rows
+    for aid in (a["id"], b["id"]):
+        db.conn.execute(
+            "UPDATE armies SET supply=80,morale=80,loyalty=80,training=80,"
+            "arrears=50,manpower=20000 WHERE id=?",
+            (aid,),
+        )
+    db.conn.execute("UPDATE armies SET salary_rate=5.0 WHERE id=?", (a["id"],))
+    db.conn.execute("UPDATE armies SET salary_rate=0.5 WHERE id=?", (b["id"],))
+    db.conn.commit()
+    ordered = [r["name"] for r in db.army_rows(danger_order=True)]
+    assert ordered.index(b["name"]) < ordered.index(a["name"])

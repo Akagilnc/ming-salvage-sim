@@ -1,0 +1,24 @@
+# FILE: tests/test_event_chain_cascade.py
+# NAME: test_terminal_state_including_triggered_preserves_expired_alternative
+# LINE: 171-188
+# FLAGS: helper_or_private_call
+# KIND: py
+
+def test_terminal_state_including_triggered_preserves_expired_alternative(game):
+    db, state, content = game
+    issues.bind_content(content)
+    upstream = _hist_event("__chain_upstream_expired_alternative__")
+    downstream = _hist_event("__chain_downstream_accepts_triggered_or_expired__", {
+        "event.__chain_upstream_expired_alternative__.terminal_state": "in=triggered|expired",
+    })
+    with _TempEvents(content, upstream, downstream):
+        db.mark_event_expired(state, upstream.id)
+
+        terminalized = issues.apply_event_cascading_invalidations(state, db)
+
+        assert all(item["id"] != downstream.id for item in terminalized)
+        assert db.conn.execute(
+            "SELECT 1 FROM event_triggers WHERE event_id=?",
+            (downstream.id,),
+        ).fetchone() is None
+        assert any(candidate.id == downstream.id for candidate in issues.gather_candidate_events(state, db))

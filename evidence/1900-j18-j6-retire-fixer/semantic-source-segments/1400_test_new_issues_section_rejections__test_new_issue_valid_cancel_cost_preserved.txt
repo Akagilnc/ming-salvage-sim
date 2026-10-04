@@ -1,0 +1,17 @@
+# FILE: tests/test_new_issues_section_rejections.py
+# NAME: test_new_issue_valid_cancel_cost_preserved
+# LINE: 506-516
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_new_issue_valid_cancel_cost_preserved(game):
+    db, state, _ = game
+    # 正常 dict cancel_cost 原样保全（_eff_dict 对 dict 直通）。
+    ni = {"origin_kind": "decree", "origin_ref": _decree_origin(db, state), "kind": "situation", "title": "测试·正常cancel",
+          "cancellable": "decree", "cancel_cost": {"民心": -5, "皇威": -2}}
+    out = I.apply_issue_tracker_output(db, state, {"new_issues": [ni]})
+    created = [n for n in _new(out) if not n.get("rejected") and n.get("issue_id")]
+    assert len(created) == 1, out
+    iid = int(created[0]["issue_id"])
+    row = db.conn.execute("SELECT cancel_cost FROM issues WHERE id=?", (iid,)).fetchone()
+    assert json.loads(row["cancel_cost"]) == {"民心": -5, "皇威": -2}

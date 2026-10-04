@@ -1,0 +1,66 @@
+# FILE: tests/test_decree_forecast_1861.py
+# NAME: test_scene_chat_rejection_is_staged_for_later_rescript_not_shown_at_night
+# LINE: 190-249
+# FLAGS: assert_text_compare_or_match,assert_count,mock_or_patch_present,helper_or_private_call
+# KIND: py
+
+def test_scene_chat_rejection_is_staged_for_later_rescript_not_shown_at_night(
+    game, monkeypatch,
+):
+    db, state, content = game
+    night = open_night(db, state)
+    minister = next(iter(content.characters.values()))
+    pending_id = db.stage_pending_action(
+        state.turn, kind="directive", action="拟旨", minister_name=minister.name,
+        payload={
+            "dossier_action_type": "policy", "target_kind": "issue",
+            "target_id": "test-policy", "actor": minister.name, "mode": "ordinary",
+            "text": "着户部另核辽饷。",
+        },
+    )
+
+    def translate_fn(prompt, llm_config):
+        return {
+            **offline_empty_audience_translate(prompt, llm_config),
+            "promises": [{"action_id": pending_id, "decision": "应允"}],
+        }
+
+    def judge(_agent, prompt, **_kwargs):
+        context = json.loads(prompt)
+        dossier = context["dossiers"][0]
+        faction = context["factions"][0]["name"]
+        return json.dumps({"verdicts": [{
+            "dossier_id": dossier["id"],
+            "decision": "rejected",
+            "blocked_layer": "palace_rescript",
+            "reason": "越制",
+            "primary_opponents": [{"kind": "faction", "key": faction}],
+            "gatekeeper_id": None,
+            "affected_parties": [{
+                "kind": "faction", "key": faction,
+                "direction": "negative", "intensity": "weak",
+            }],
+            "criteria_snapshot": dossier["criteria_snapshot_source"],
+        }]})
+
+    monkeypatch.setattr(decree_mod, "run_agent_text", judge)
+    monkeypatch.setattr(
+        forecast_mod.agents, "run_agent_text",
+        lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("打回不得推演")),
+    )
+    sess = _sess(db, state, content, monkeypatch, translate_fn)
+    ctid = db.create_chat_turn(state, "殿上", "scene", 0, night_id=int(night["id"]))
+    result = sess.scene_chat("准这道", chat_turn_id=ctid)
+    persist_and_schedule_scene(sess, db, result)
+    assert get_session_write_queue(sess).wait_idle(timeout_s=5)
+
+    stored = db.staged_declarations.staged_for(pending_action_decree_ref(pending_id, 1))
+    assert len(stored) == 1
+    assert stored[0].verdict["decision"] == "rejected"
+    assert stored[0].questions is None
+    assert stored[0].forecast_text is None
+    assert stored[0].declaration == {}
+    assert db.list_pending_decisions(state.turn) == []
+    assert db.conn.execute(
+        "SELECT 1 FROM decree_dossiers WHERE pending_action_id=?", (pending_id,),
+    ).fetchone() is None

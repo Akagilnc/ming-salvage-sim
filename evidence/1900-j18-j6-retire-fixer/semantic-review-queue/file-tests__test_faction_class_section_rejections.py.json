@@ -1,0 +1,146 @@
+{
+  "source_path": "tests/test_faction_class_section_rejections.py",
+  "member_count": 10,
+  "members": [
+    {
+      "idx": 895,
+      "file": "tests/test_faction_class_section_rejections.py",
+      "name": "test_unknown_faction_rejected_good_item_lands",
+      "line": 39,
+      "end": 58,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0895_test_faction_class_section_rejections__test_unknown_faction_rejected_good_item_lands.txt",
+      "source_path": "tests/test_faction_class_section_rejections.py"
+    },
+    {
+      "idx": 896,
+      "file": "tests/test_faction_class_section_rejections.py",
+      "name": "test_unknown_class_rejected_good_item_lands",
+      "line": 68,
+      "end": 87,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0896_test_faction_class_section_rejections__test_unknown_class_rejected_good_item_lands.txt",
+      "source_path": "tests/test_faction_class_section_rejections.py"
+    },
+    {
+      "idx": 897,
+      "file": "tests/test_faction_class_section_rejections.py",
+      "name": "test_illegal_faction_value_rejected",
+      "line": 90,
+      "end": 103,
+      "flags": [
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0897_test_faction_class_section_rejections__test_illegal_faction_value_rejected.txt",
+      "source_path": "tests/test_faction_class_section_rejections.py"
+    },
+    {
+      "idx": 898,
+      "file": "tests/test_faction_class_section_rejections.py",
+      "name": "test_illegal_class_value_rejected",
+      "line": 106,
+      "end": 121,
+      "flags": [
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0898_test_faction_class_section_rejections__test_illegal_class_value_rejected.txt",
+      "source_path": "tests/test_faction_class_section_rejections.py"
+    },
+    {
+      "idx": 899,
+      "file": "tests/test_faction_class_section_rejections.py",
+      "name": "test_float_and_bool_class_values_rejected",
+      "line": 124,
+      "end": 139,
+      "flags": [
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0899_test_faction_class_section_rejections__test_float_and_bool_class_values_rejected.txt",
+      "source_path": "tests/test_faction_class_section_rejections.py"
+    },
+    {
+      "idx": 900,
+      "file": "tests/test_faction_class_section_rejections.py",
+      "name": "test_float_and_bool_faction_values_rejected",
+      "line": 142,
+      "end": 161,
+      "flags": [
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0900_test_faction_class_section_rejections__test_float_and_bool_faction_values_rejected.txt",
+      "source_path": "tests/test_faction_class_section_rejections.py"
+    },
+    {
+      "idx": 901,
+      "file": "tests/test_faction_class_section_rejections.py",
+      "name": "test_valid_flat_int_faction_not_rejected",
+      "line": 166,
+      "end": 181,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0901_test_faction_class_section_rejections__test_valid_flat_int_faction_not_rejected.txt",
+      "source_path": "tests/test_faction_class_section_rejections.py"
+    },
+    {
+      "idx": 902,
+      "file": "tests/test_faction_class_section_rejections.py",
+      "name": "test_flat_class_delta_rejected_while_nested_sibling_lands",
+      "line": 184,
+      "end": 204,
+      "flags": [
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0902_test_faction_class_section_rejections__test_flat_class_delta_rejected_while_nested_sibling_lands.txt",
+      "source_path": "tests/test_faction_class_section_rejections.py"
+    },
+    {
+      "idx": 903,
+      "file": "tests/test_faction_class_section_rejections.py",
+      "name": "test_zero_delta_faction_not_rejected",
+      "line": 207,
+      "end": 217,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0903_test_faction_class_section_rejections__test_zero_delta_faction_not_rejected.txt",
+      "source_path": "tests/test_faction_class_section_rejections.py"
+    },
+    {
+      "idx": 904,
+      "file": "tests/test_faction_class_section_rejections.py",
+      "name": "test_issue_effect_faction_rejection_reaches_reports",
+      "line": 220,
+      "end": 244,
+      "flags": [
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0904_test_faction_class_section_rejections__test_issue_effect_faction_rejection_reaches_reports.txt",
+      "source_path": "tests/test_faction_class_section_rejections.py"
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+# FILE: tests/test_audience_presence_500.py
+# NAME: test_dismiss_via_cli_command_writes_exit_ledger
+# LINE: 118-133
+# FLAGS: assert_text_compare_or_match,mock_or_patch_present,helper_or_private_call
+# KIND: py
+
+def test_dismiss_via_cli_command_writes_exit_ledger(game, monkeypatch):
+    """AC1 真实入口：起聊入殿 → 「退下」口令 → 告退账落地、present 即时去人。"""
+    import ming_sim.cli.terminal as term
+
+    db, state, content = game
+    character = _active_minister(db, content)
+    session = _cli_session(db, state, content)
+    answers = iter(["退下"])
+    monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
+
+    assert term.minister_chat(session, character, selected=True) == "dismiss"
+
+    nid = int(an.get_open_night(db)["id"])
+    last = an.list_ledger(db, nid)[-1]
+    assert TAG_EXIT in last["tags"] and character.name in last["person_names"]
+    assert character.name not in an.present_names_at(db, nid)

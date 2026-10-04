@@ -1,0 +1,33 @@
+# FILE: tests/test_decree_dossiers_571.py
+# NAME: test_dossier_roster_write_boundary_rejects_invalid_delegator
+# LINE: 92-118
+# FLAGS: assert_count,helper_or_private_call
+# KIND: py
+
+def test_dossier_roster_write_boundary_rejects_invalid_delegator(
+    game, write_path, delegation,
+):
+    db, state, _content = game
+    lead, worker, outsider = _active_people(db, 3)
+    delegator = worker if delegation == "self" else outsider
+    invalid = [
+        {"character_id": lead, "tier": "主办"},
+        {"character_id": worker, "tier": "知情", "delegator_id": delegator},
+    ]
+
+    if write_path == "create":
+        with pytest.raises(ValueError):
+            db.create_decree_dossier(
+                state, action_type="assignment", decree_text="命查仓储。",
+                target_kind="issue", target_id="granary", participants=invalid,
+            )
+        assert db.list_decree_dossiers() == []
+    else:
+        dossier_id = db.create_decree_dossier(
+            state, action_type="assignment", decree_text="命查仓储。",
+            target_kind="issue", target_id="granary",
+            participants=[{"character_id": lead, "tier": "主办"}],
+        )
+        with pytest.raises(ValueError):
+            db.append_decree_dossier_participants(dossier_id, invalid[1:])
+        assert len(db.get_decree_dossier(dossier_id)["participant_roster"]) == 1

@@ -157,7 +157,6 @@ def test_shared_consumers_still_surface_status(read_game):
     war = next(c for c in content.characters.values() if c.office_type == "兵部")
     knowledge = build_character_knowledge(db, state, war.name)
     military = (knowledge.get("world") or {}).get("military") or ""
-    assert "兵籍在册" in military
     assert seed_status not in military
 
     # 3) state_payload.army_warning → 真实 WebGame.state_payload 键
@@ -188,7 +187,6 @@ def test_shared_consumers_still_surface_status(read_game):
         read_material(prepared.root, path)
         for path in list_materials(prepared.root) if path != "INDEX.txt"
     )
-    assert "兵籍在册" in blob
     assert seed_status not in blob
 
     # DB 字段零改写

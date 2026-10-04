@@ -1,0 +1,24 @@
+# FILE: tests/test_transit_aging_346.py
+# NAME: test_tick_does_not_arrive_when_remaining_still_positive
+# LINE: 205-222
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_tick_does_not_arrive_when_remaining_still_positive(game):
+    db, state, content = game
+    name = active_ming_character(db, content)
+    t0 = state.turn
+    r0 = _set_full_transit(db, content, name, dest=DEST, start_turn=t0)
+    assert r0 > 1.0
+
+    # 次月首减：启程当月不 tick
+    state.turn = t0 + 1
+    forced = tick_transit_arrivals(db, state, content)
+    assert name not in [f["name"] for f in forced]
+    row = db.conn.execute(
+        "SELECT location, transit_to, transit_distance_remaining FROM characters WHERE name=?",
+        (name,),
+    ).fetchone()
+    assert row["transit_to"] == DEST
+    assert row["location"] == "beizhili"
+    assert row["transit_distance_remaining"] == r0 - 1.0

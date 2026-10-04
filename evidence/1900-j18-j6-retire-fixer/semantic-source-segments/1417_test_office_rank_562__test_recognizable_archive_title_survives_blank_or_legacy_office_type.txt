@@ -1,0 +1,18 @@
+# FILE: tests/test_office_rank_562.py
+# NAME: test_recognizable_archive_title_survives_blank_or_legacy_office_type
+# LINE: 208-219
+# FLAGS: assert_text_compare_or_match,helper_or_private_call,retired_or_meta_marker
+# KIND: py
+
+def test_recognizable_archive_title_survives_blank_or_legacy_office_type(game):
+    """旧档 office_type 待铨/空时，任命案卷仍按历史实职识别破格（公开 break_rank）。"""
+    db, state, _content = game
+    name = "旧档实职"
+    _add(db, state, name, "翰林院编修", "翰林院")
+    db.set_character_status(state, name, "retired", "致仕")
+    db.conn.execute(
+        "UPDATE character_offices SET office_type='待铨' WHERE character_name=?", (name,)
+    )
+    _dossier_id, payload = _appointment_dossier(db, state, name, "兵部尚书")
+    assert payload["break_rank"]["basis"] == "historical_office"
+    assert payload["break_rank"]["is_break_rank"] is True

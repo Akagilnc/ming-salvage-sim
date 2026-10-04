@@ -33,10 +33,8 @@ def test_manual_directive_region_assembly_writes_single_and_advances(
     assert new.status_code == 200
     game = web_app.web_game
     assert game is not None
-    calls = []
 
     def backend(*_args, **_kwargs):
-        calls.append(1)
         return json.dumps(_extracted("单省"), ensure_ascii=False), 1
 
     monkeypatch.setattr(cli_backend, "capture_manual_directive_payload", _real_capture)
@@ -46,7 +44,6 @@ def test_manual_directive_region_assembly_writes_single_and_advances(
     )
 
     assert response.status_code == 200
-    assert len(calls) == 1
     turn_before = game.state.turn
     _post_issue_stream(
         tracer_client, expected_turn=turn_before, step="#1685 locality issue/stream",

@@ -1,0 +1,39 @@
+# FILE: tests/test_urge_lever_624.py
+# NAME: test_grace_not_written_for_gudu_reasonable_long_deadline
+# LINE: 627-659
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_grace_not_written_for_gudu_reasonable_long_deadline(game):
+    """负向：months>6 · 合理期限 · 孤直 → 无宽限条（months<=6 析取不得恒真）。"""
+    db, state, content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.commit()
+    state.metrics["皇威"] = 40
+    db.conn.execute("UPDATE metrics SET value=? WHERE key='皇威'", (40,))
+    db.conn.commit()
+    dossier_id = _executing_policy_dossier(db, state, host="倪元璐")
+    _set_integrity(db, "倪元璐", 90, courage=80)  # 孤直
+    # due 很近：催 months=12 几乎不压缩 → 合理期限
+    stages = [{
+        "stage_idx": 0,
+        "due_turn": state.turn + 14,
+        "criterion_text": "火器见眉目",
+        "origin_context": "近限期之诺",
+    }]
+    issue_id, _ = _insert_staged_commitment(
+        db, state, content, stages=stages, origin_ref=f"dossier:{dossier_id}",
+        title="孤直合理不宽限",
+    )
+    r = rush_staged_commitment_stage(
+        db, state, commitment_ref=issue_id, stage_idx=0,
+        deadline_months=12, reason="稍缓催之",
+    )
+    assert r.get("unreasonable") is False
+    assert r.get("archetype") == "孤直"
+    assert r.get("grace_written") is False
+    grace = [
+        t for t in db.list_next_audience_todos(commitment_ref=issue_id)
+        if t["entry_kind"] == ENTRY_KIND_GRACE_PLEA
+    ]
+    assert grace == []

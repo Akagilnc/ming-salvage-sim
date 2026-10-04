@@ -1,0 +1,19 @@
+{
+  "source_path": "web/src/components/map.test.tsx",
+  "member_count": 1,
+  "members": [
+    {
+      "idx": 2442,
+      "file": "web/src/components/map.test.tsx",
+      "name": "\"NodeIntel #1401 theater naming\" / \"shows region.name when theater carries region (liaodong pin)\"",
+      "line": 77,
+      "end": 93,
+      "flags": [
+        "web_text_assert"
+      ],
+      "kind": "web",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2442_map.test__\"NodeIntel #1401 theater naming\" __ \"shows region.name when theater carries region (liaodong pin)\".txt",
+      "source_path": "web/src/components/map.test.tsx"
+    }
+  ]
+}

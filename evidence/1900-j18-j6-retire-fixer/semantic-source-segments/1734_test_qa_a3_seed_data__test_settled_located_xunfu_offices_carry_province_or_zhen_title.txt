@@ -1,0 +1,21 @@
+# FILE: tests/test_qa_a3_seed_data.py
+# NAME: test_settled_located_xunfu_offices_carry_province_or_zhen_title
+# LINE: 35-49
+# FLAGS: assert_text_compare_or_match
+# KIND: py
+
+def test_settled_located_xunfu_offices_carry_province_or_zhen_title():
+    """#1289：已结清的二人 office 不得光秃「巡抚」（练国事陕抚时序 defer owner）。"""
+    _, characters = load_character_content()
+    expected = {
+        "邹维琏": ("fujian", ("福建",)),
+        # 焦源溥 summary/portrait 锚定大同巡抚；location=shanxi 表示任事山西边地
+        "焦源溥": ("shanxi", ("大同", "山西")),
+    }
+    for name, (loc, tokens) in expected.items():
+        ch = characters[name]
+        assert ch.location == loc, f"{name} location 漂移: {ch.location!r}"
+        assert ch.office != "巡抚", f"{name} office 仍光秃巡抚"
+        assert any(t in ch.office for t in tokens), (
+            f"{name} office={ch.office!r} 未含 {tokens}"
+        )

@@ -1,0 +1,54 @@
+# FILE: tests/test_commitment_backlash_626.py
+# NAME: test_ac1_breach_verdict_triggers_commitment_backlash
+# LINE: 147-194
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_ac1_breach_verdict_triggers_commitment_backlash(game):
+    """事废判决（#623 finalize halfway）→ 次回合承诺所系反噬。"""
+    db, state, content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.commit()
+
+    did, holder = _executing_policy_dossier(db, state, token="bv")
+    bar = _seed_halfway(db, state, did=did)
+    cid = _insert_commitment(
+        db, state, title="事废清丈之诺", origin_ref=f"dossier:{did}",
+        bar_value=bar,
+        participants=[{"character_id": holder, "tier": "主办", "role": "承办"}],
+    )
+    assert assess_foundation_tier(db, cid) == FOUNDATION_HALFWAY
+
+    todo_id = write_breach_plea_todo(
+        db, state, commitment_ref=cid,
+        breach_kind=BREACH_KIND_POLICY_REVERSAL,
+        reason="坚持撤·事废", target_dossier_id=did, commit=True,
+    )
+    todo = next(t for t in _pending_pleas(db) if int(t["id"]) == todo_id)
+    result = finalize_persist(db, state, todo, commit=True)
+    assert result["outcome"] == "failed"
+    # 当回合硬门不扫（一拍差）
+    assert db.trigger_commitment_backlashes(state, commit=True) == []
+    assert _backlash_issues(db) == []
+
+    # 次回合
+    state.turn = int(state.turn) + 1
+    _set_phase_runnable(state, db)
+    hits = db.trigger_commitment_backlashes(state, commit=True)
+    assert hits, "事废判决次回合须立承诺所系反噬"
+    assert hits[0]["source_kind"] == SOURCE_BREACH_VERDICT
+    assert hits[0]["commitment_ref"] == cid
+    assert hits[0]["trigger_ref"] == f"issue:{cid}"
+    issue = db.find_any_issue_by_origin(
+        BACKLASH_ORIGIN_KIND, backlash_origin_ref(cid, SOURCE_BREACH_VERDICT),
+    )
+    assert issue is not None
+    assert str(issue["status"]) == "active"
+    # trigger_ref 溯源
+    adv = db.conn.execute(
+        "SELECT trigger_kind, trigger_ref FROM issue_advances "
+        "WHERE issue_id=? AND trigger_kind='commitment_backlash' ORDER BY id DESC LIMIT 1",
+        (int(issue["id"]),),
+    ).fetchone()
+    assert adv is not None
+    assert str(adv["trigger_ref"]) == f"issue:{cid}"

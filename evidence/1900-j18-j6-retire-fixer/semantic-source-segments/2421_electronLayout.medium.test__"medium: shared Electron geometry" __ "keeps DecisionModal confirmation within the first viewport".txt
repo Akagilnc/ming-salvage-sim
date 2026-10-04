@@ -1,0 +1,20 @@
+# FILE: web/src/components/electronLayout.medium.test.tsx
+# NAME: "medium: shared Electron geometry" / "keeps DecisionModal confirmation within the first viewport"
+# LINE: 32-45
+# FLAGS: web_mock_spy_or_calls
+# KIND: web
+
+  it("keeps DecisionModal confirmation within the first viewport", async () => {
+    const page = renderToStaticMarkup(<DecisionModal decisions={[decision]} onResolve={vi.fn()} />);
+    const [measured] = await measureElectronLayout<{ bottom: number; viewportHeight: number }>(
+      page,
+      css("base", "decision"),
+      [{ width: 1440, height: 900 }],
+      `(() => {
+        const button = document.querySelector('.decision-confirm');
+        if (!button) return { error: 'missing decision confirmation' };
+        return { bottom: button.getBoundingClientRect().bottom, viewportHeight: innerHeight };
+      })()`,
+    );
+    expect(measured.bottom).toBeLessThanOrEqual(measured.viewportHeight);
+  });

@@ -1,0 +1,48 @@
+# FILE: tests/test_audience_night_498.py
+# NAME: test_cli_minister_chat_anchors_turn_to_night
+# LINE: 604-645
+# FLAGS: assert_text_compare_or_match,mock_or_patch_present
+# KIND: py
+
+def test_cli_minister_chat_anchors_turn_to_night(game, monkeypatch):
+    """CLI 真实输入入口 terminal.minister_chat 起聊 → 对话轮挂夜（非 night_id=0 旁路）。"""
+    import ming_sim.cli.terminal as term
+    from types import SimpleNamespace
+
+    db, state, content = game
+    character = next(c for c in content.characters.values()
+                     if db.get_character_status(c.name)[0] == "active"
+                     and getattr(c, "power_id", "ming") == "ming"
+                     and getattr(c, "office_type", "") != "后宫")
+
+    def chat(_name, _question, *, chat_turn_id=0, explicit_secret_order=False):
+        assert chat_turn_id > 0  # 挂夜轮以 generating 起笔，回话须带 chat_turn_id
+        return SimpleNamespace(
+            answer="臣有本奏。", proposed_directive=None, appointed_minister="",
+            registered_minister="", displaced_minister="", court_action="",
+            next_minister="", secret_order_id=0, pending_action_id=0,
+            pending_action_failures=[],
+        )
+
+    def scene_chat(message, *, chat_turn_id=0, stream_emit=None, minister_name=""):
+        # #1842：CLI 殿上口令外问话走 scene_chat；替身委托既有 chat 同形。
+        del stream_emit
+        return chat(minister_name or "", message, chat_turn_id=chat_turn_id)
+
+    session = SimpleNamespace(
+        db=db, state=state, content=content,
+        chat=chat, scene_chat=scene_chat,
+        # #1842：persist 尾必调；轻壳无 pending 时 no-op。
+        schedule_pending_scene_translation=lambda result: None,
+    )
+    answers = iter(["朕问卿边事如何？", "done"])
+    monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
+
+    assert term.minister_chat(session, character) == "dismiss"
+
+    open_n = an.get_open_night(db)
+    assert open_n is not None
+    turns = an.list_chat_turns_for_night(db, int(open_n["id"]))
+    # #1838 reopen：CLI 殿上建轮以「殿上」为 speaker
+    assert turns and turns[-1]["minister_name"] in {character.name, "殿上"}
+    assert int(turns[-1]["night_id"]) == int(open_n["id"]) > 0

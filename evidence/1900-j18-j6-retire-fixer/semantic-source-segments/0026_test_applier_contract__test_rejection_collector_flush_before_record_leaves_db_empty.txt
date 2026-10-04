@@ -1,0 +1,13 @@
+# FILE: tests/test_applier_contract.py
+# NAME: test_rejection_collector_flush_before_record_leaves_db_empty
+# LINE: 63-69
+# FLAGS: assert_count
+# KIND: py
+
+def test_rejection_collector_flush_before_record_leaves_db_empty(clean_rejections):
+    """flush 前 DB 中无 rejection_reports 行。"""
+    db, state, content = clean_rejections
+    rc = RejectionCollector()
+    rc.flush_to_db(db)
+    count = db.conn.execute("SELECT COUNT(*) FROM rejection_reports").fetchone()[0]
+    assert count == 0

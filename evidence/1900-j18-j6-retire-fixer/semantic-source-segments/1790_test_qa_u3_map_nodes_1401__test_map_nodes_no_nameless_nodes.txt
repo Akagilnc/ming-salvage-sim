@@ -1,0 +1,35 @@
+# FILE: tests/test_qa_u3_map_nodes_1401.py
+# NAME: test_map_nodes_no_nameless_nodes
+# LINE: 132-160
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_map_nodes_no_nameless_nodes(game):
+    """#1505：theater/region/external 节点皆须有可见名，禁无名点；id 不得双份。"""
+    db, _state, _content = game
+    nodes = _map_nodes(db)
+    assert nodes, "map_nodes 空投影"
+    ids = [str(n["id"]) for n in nodes]
+    # 同 id 双节点（region+theater 撞车）→ 前端 Map 后写覆盖、theater 无 region 变无名
+    assert len(ids) == len(set(ids)), (
+        f"duplicate map node ids: {[i for i in ids if ids.count(i) > 1]}"
+    )
+    for node in nodes:
+        region = node.get("region") or {}
+        name = (
+            (region.get("name") if isinstance(region, dict) else None)
+            or node.get("label")
+            or node.get("name")
+        )
+        assert name and str(name).strip(), (
+            f"nameless map node id={node.get('id')!r} kind={node.get('kind')!r}"
+        )
+        # theater 契约：label 必填；与 region 同 id 的 theater 须带 region 字段（可见省名）
+        if node.get("kind") == "theater":
+            assert str(node.get("label") or "").strip(), (
+                f"theater node {node.get('id')!r} missing label"
+            )
+            if str(node.get("id")) in {"liaodong", "dongjiang_area"}:
+                assert isinstance(node.get("region"), dict) and node["region"].get("name"), (
+                    f"{node.get('id')} theater must carry region.name (no nameless pin)"
+                )

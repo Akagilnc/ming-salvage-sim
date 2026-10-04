@@ -1,0 +1,25 @@
+# FILE: tests/test_decree_dossiers_571.py
+# NAME: test_executing_execution_record_never_closes_or_stamps_closed_turn
+# LINE: 843-861
+# FLAGS: assert_text_compare_or_match,assert_count
+# KIND: py
+
+def test_executing_execution_record_never_closes_or_stamps_closed_turn(game):
+    db, state, _content = game
+    dossier_id = db.create_decree_dossier(
+        state, action_type="policy", decree_text="持续办理",
+        target_kind="issue", target_id="ongoing-policy",
+    )
+    db.record_dossier_decision(dossier_id, "promulgated")
+    db.transition_decree_dossier(dossier_id, "executing")
+
+    with pytest.raises(ValueError):
+        db.record_dossier_execution(
+            dossier_id, "executing", "仍在办理", state.turn, close=True,
+        )
+    db.record_dossier_execution(
+        dossier_id, "executing", "仍在办理", state.turn, close=False,
+    )
+    dossier = db.get_decree_dossier(dossier_id)
+    assert dossier["status"] == "executing"
+    assert dossier["closed_turn"] == 0

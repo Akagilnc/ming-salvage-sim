@@ -1,0 +1,25 @@
+# FILE: tests/test_effect_origin_558.py
+# NAME: test_fabricated_origin_is_rejected_even_without_a_dossier
+# LINE: 194-212
+# FLAGS: assert_text_compare_or_match
+# KIND: py
+
+def test_fabricated_origin_is_rejected_even_without_a_dossier(game):
+    db, state, content = game
+    before = state.metrics["国库"]
+
+    result = issue_engine.apply_score_extraction(db, state, {
+        "economy_moves": [{
+            "account": "国库", "delta": -2, "category": "伪来源",
+            "origin_ref": "fabricated:9",
+        }],
+        "fiscal_creates": [{
+            "key": "伪科目", "account": "国库", "direction": "expense",
+            "init_value": 2, "origin_ref": "fabricated:9",
+        }],
+    }, content=content)
+
+    assert state.metrics["国库"] == before
+    assert result["economy_moves_rejections"][0]["category"] == "invalid_origin_ref"
+    assert result["fiscal_creates"][0]["category"] == "invalid_origin_ref"
+    assert db.conn.execute("SELECT 1 FROM fiscal_config WHERE key LIKE '伪科目%'").fetchone() is None

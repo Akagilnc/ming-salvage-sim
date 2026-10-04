@@ -1,0 +1,25 @@
+# FILE: tests/test_rescript_draft_656.py
+# NAME: test_rescript_draft_idx_continues_after_decision_rows
+# LINE: 175-193
+# FLAGS: assert_text_compare_or_match
+# KIND: py
+
+def test_rescript_draft_idx_continues_after_decision_rows(game):
+    db, state, _content = game
+    turn = state.turn
+    db.save_pending_decisions(turn, [
+        {"title": "抉择一", "context": "c", "options": [
+            {"label": "a", "hint": ""}, {"label": "b", "hint": ""}]},
+        {"title": "抉择二", "context": "c", "options": [
+            {"label": "a", "hint": ""}, {"label": "b", "hint": ""}]},
+    ])
+    db.save_rescript_drafts(turn, [
+        {"title": "急务", "context": "", "options": [
+            {"label": "甲", "hint": ""}, {"label": "乙", "hint": ""}]},
+    ])
+    rows = db.list_pending_decisions(turn)
+    # A6 后 HITL 缝只回 decision 行；draft 续编经 list_rescript_drafts 验证
+    assert [r["idx"] for r in rows] == [0, 1]
+    assert all(r["kind"] == "decision" for r in rows)
+    drafts = db.list_rescript_drafts()
+    assert [d["idx"] for d in drafts] == [2]  # 与 decision 行共占 (turn, idx) 主键续编

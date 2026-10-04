@@ -1,0 +1,1453 @@
+{
+  "source_path": "tests/test_fiscal_substrate_bridge.py",
+  "member_count": 102,
+  "members": [
+    {
+      "idx": 970,
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_seed_royal_stipends_use_wanli_accounting_by_province",
+      "line": 85,
+      "end": 135,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0970_test_fiscal_substrate_bridge__test_seed_royal_stipends_use_wanli_accounting_by_province.txt",
+      "source_path": "tests/test_fiscal_substrate_bridge.py"
+    },
+    {
+      "idx": 971,
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_region_loader_expands_shared_settle_meta_defaults",
+      "line": 398,
+      "end": 426,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0971_test_fiscal_substrate_bridge__test_region_loader_expands_shared_settle_meta_defaults.txt",
+      "source_path": "tests/test_fiscal_substrate_bridge.py"
+    },
+    {
+      "idx": 972,
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_army_pay_source_spine_seed_splits_arrears_and_reconciles_tusi",
+      "line": 430,
+      "end": 499,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0972_test_fiscal_substrate_bridge__test_army_pay_source_spine_seed_splits_arrears_and_reconciles_tusi.txt",
+      "source_path": "tests/test_fiscal_substrate_bridge.py"
+    },
+    {
+      "idx": 973,
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_self_funded_seed_arrears_log_preserves_fractional_delta",
+      "line": 502,
+      "end": 527,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0973_test_fiscal_substrate_bridge__test_self_funded_seed_arrears_log_preserves_fractional_delta.txt",
+      "source_path": "tests/test_fiscal_substrate_bridge.py"
+    },
+    {
+      "idx": 974,
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_fresh_save_pay_source_prefers_content_army_fields",
+      "line": 530,
+      "end": 553,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0974_test_fiscal_substrate_bridge__test_fresh_save_pay_source_prefers_content_army_fields.txt",
+      "source_path": "tests/test_fiscal_substrate_bridge.py"
+    },
+    {
+      "idx": 975,
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_province_tick_derives_due_and_allocates_province_arrears_by_pay_source",
+      "line": 556,
+      "end": 657,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0975_test_fiscal_substrate_bridge__test_province_tick_derives_due_and_allocates_province_arrears_by_pay_source.txt",
+      "source_path": "tests/test_fiscal_substrate_bridge.py"
+    },
+    {
+      "idx": 976,
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_conservation_rejects_excluded_army_with_pay_source_debt",
+      "line": 660,
+      "end": 677,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0976_test_fiscal_substrate_bridge__test_conservation_rejects_excluded_army_with_pay_source_debt.txt",
+      "source_path": "tests/test_fiscal_substrate_bridge.py"
+    },
+    {
+      "idx": 977,
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_conservation_rejects_province_source_army_without_settle_base",
+      "line": 680,
+      "end": 702,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0977_test_fiscal_substrate_bridge__test_conservation_rejects_province_source_army_without_settle_base.txt",
+      "source_path": "tests/test_fiscal_substrate_bridge.py"
+    },
+    {
+      "idx": 978,
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_fixed_flows_substrate_hub_retires_global_central_pay_route",
+      "line": 705,
+      "end": 765,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0978_test_fiscal_substrate_bridge__test_fixed_flows_substrate_hub_retires_global_central_pay_route.txt",
+      "source_path": "tests/test_fiscal_substrate_bridge.py"
+    },
+    {
+      "idx": 979,
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_substrate_hub_cutover_runs_multi_tick_treasury_trajectory",
+      "line": 768,
+      "end": 800,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call",
+        "internal_formula_oracle"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0979_test_fiscal_substrate_bridge__test_substrate_hub_cutover_runs_multi_tick_treasury_trajectory.txt",
+      "source_path": "tests/test_fiscal_substrate_bridge.py"
+    },
+    {
+      "idx": 980,
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_settling_context_retry_does_not_recompute_substrate_hub_pre_settle",
+      "line": 803,
+      "end": 826,
+      "flags": [
+        "helper_or_private_call",
+        "internal_formula_oracle"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0980_test_fiscal_substrate_bridge__test_settling_context_retry_does_not_recompute_substrate_hub_pre_settle.txt",
+      "source_path": "tests/test_fiscal_substrate_bridge.py"
+    },
+    {
+      "idx": 981,
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_fixed_flows_substrate_hub_central_capacity_reduces_current_central_arrears",
+      "line": 829,
+      "end": 891,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0981_test_fiscal_substrate_bridge__test_fixed_flows_substrate_hub_central_capacity_reduces_current_central_arrears.txt",
+      "source_path": "tests/test_fiscal_substrate_bridge.py"
+    },
+    {
+      "idx": 982,
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_fixed_flows_substrate_hub_central_pay_shares_hub_tier_with_jingyun_grants",
+      "line": 894,
+      "end": 1061,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call",
+        "internal_formula_oracle"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0982_test_fiscal_substrate_bridge__test_fixed_flows_substrate_hub_central_pay_shares_hub_tier_with_jingyun_grants.txt",
+      "source_path": "tests/test_fiscal_substrate_bridge.py"
+    },
+    {
+      "idx": 983,
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_fixed_flows_substrate_hub_central_pay_carries_transport_loss_without_jingyun",
+      "line": 1064,
+      "end": 1231,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call",
+        "internal_formula_oracle"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0983_test_fiscal_substrate_bridge__test_fixed_flows_substrate_hub_central_pay_carries_transport_loss_without_jingyun.txt",
+      "source_path": "tests/test_fiscal_substrate_bridge.py"
+    },
+    {
+      "idx": 984,
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_fixed_flows_substrate_hub_books_split_treasury_income_and_central_losses",
+      "line": 1234,
+      "end": 1400,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call",
+        "internal_formula_oracle",
+        "retired_or_meta_marker"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0984_test_fiscal_substrate_bridge__test_fixed_flows_substrate_hub_books_split_treasury_income_and_central_losses.txt",
+      "source_path": "tests/test_fiscal_substrate_bridge.py"
+    },
+    {
+      "idx": 985,
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_budget_projection_passes_copied_settle_snapshots_to_fiscal_tick",
+      "line": 1403,
+      "end": 1447,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0985_test_fiscal_substrate_bridge__test_budget_projection_passes_copied_settle_snapshots_to_fiscal_tick.txt",
+      "source_path": "tests/test_fiscal_substrate_bridge.py"
+    },
+    {
+      "idx": 986,
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_budget_lines_read_persisted_substrate_hub_income_source",
+      "line": 1450,
+      "end": 1491,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0986_test_fiscal_substrate_bridge__test_budget_lines_read_persisted_substrate_hub_income_source.txt",
+      "source_path": "tests/test_fiscal_substrate_bridge.py"
+    },
+    {
+      "idx": 987,
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_substrate_hub_skip_uses_internal_marker_not_user_fixed_display",
+      "line": 1494,
+      "end": 1543,
+      "flags": [
+        "assert_text_compare_or_match",
+        "retired_or_meta_marker"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0987_test_fiscal_substrate_bridge__test_substrate_hub_skip_uses_internal_marker_not_user_fixed_display.txt",
+      "source_path": "tests/test_fiscal_substrate_bridge.py"
+    },
+    {
+      "idx": 988,
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_substrate_hub_uses_month_opening_treasury_before_lower_priority_expenses",
+      "line": 1546,
+      "end": 1645,
+      "flags": [
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0988_test_fiscal_substrate_bridge__test_substrate_hub_uses_month_opening_treasury_before_lower_priority_expenses.txt",
+      "source_path": "tests/test_fiscal_substrate_bridge.py"
+    },
+    {
+      "idx": 989,
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_fixed_flows_substrate_hub_integer_allocation_drives_all_consumers",
+      "line": 1648,
+      "end": 1741,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0989_test_fiscal_substrate_bridge__test_fixed_flows_substrate_hub_integer_allocation_drives_all_consumers.txt",
+      "source_path": "tests/test_fiscal_substrate_bridge.py"
+    },
+    {
+      "idx": 990,
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_substrate_hub_debit_fails_loud_when_required_debit_not_booked",
+      "line": 1744,
+      "end": 1757,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "mock_or_patch_present"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0990_test_fiscal_substrate_bridge__test_substrate_hub_debit_fails_loud_when_required_debit_not_booked.txt",
+      "source_path": "tests/test_fiscal_substrate_bridge.py"
+    },
+    {
+      "idx": 991,
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_fixed_flows_substrate_hub_fractional_due_caps_integer_debit",
+      "line": 1760,
+      "end": 1855,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0991_test_fiscal_substrate_bridge__test_fixed_flows_substrate_hub_fractional_due_caps_integer_debit.txt",
+      "source_path": "tests/test_fiscal_substrate_bridge.py"
+    },
+    {
+      "idx": 992,
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_region_army_morale_haircut_denominator_includes_standalone_funnel",
+      "line": 1858,
+      "end": 1919,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0992_test_fiscal_substrate_bridge__test_region_army_morale_haircut_denominator_includes_standalone_funnel.txt",
+      "source_path": "tests/test_fiscal_substrate_bridge.py"
+    },
+    {
+      "idx": 993,
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_fixed_flows_substrate_hub_failure_rolls_back_cutover_writes",
+      "line": 1922,
+      "end": 1990,
+      "flags": [
+        "assert_count",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0993_test_fiscal_substrate_bridge__test_fixed_flows_substrate_hub_failure_rolls_back_cutover_writes.txt",
+      "source_path": "tests/test_fiscal_substrate_bridge.py"
+    },
+    {
+      "idx": 994,
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_pre_s6_cutover_save_without_fiscal_engine_migrates_to_substrate_hub",
+      "line": 1993,
+      "end": 2034,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0994_test_fiscal_substrate_bridge__test_pre_s6_cutover_save_without_fiscal_engine_migrates_to_substrate_hub.txt",
+      "source_path": "tests/test_fiscal_substrate_bridge.py"
+    },
+    {
+      "idx": 995,
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_fiscal_config_v8_migration_preserves_deleted_old_keys",
+      "line": 2038,
+      "end": 2076,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0995_test_fiscal_substrate_bridge__test_fiscal_config_v8_migration_preserves_deleted_old_keys.txt",
+      "source_path": "tests/test_fiscal_substrate_bridge.py"
+    },
+    {
+      "idx": 996,
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_province_pay_shortfall_reduces_pure_province_army_morale",
+      "line": 2079,
+      "end": 2164,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0996_test_fiscal_substrate_bridge__test_province_pay_shortfall_reduces_pure_province_army_morale.txt",
+      "source_path": "tests/test_fiscal_substrate_bridge.py"
+    },
+    {
+      "idx": 997,
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_zero_due_province_army_morale_short_circuits",
+      "line": 2178,
+      "end": 2241,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0997_test_fiscal_substrate_bridge__test_zero_due_province_army_morale_short_circuits.txt",
+      "source_path": "tests/test_fiscal_substrate_bridge.py"
+    },
+    {
+      "idx": 998,
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_tusi_self_funded_army_skips_pay_morale_channel",
+      "line": 2244,
+      "end": 2294,
+      "flags": [
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0998_test_fiscal_substrate_bridge__test_tusi_self_funded_army_skips_pay_morale_channel.txt",
+      "source_path": "tests/test_fiscal_substrate_bridge.py"
+    },
+    {
+      "idx": 999,
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_fixed_flows_cutover_uses_total_source_shortfall_for_mixed_army_morale",
+      "line": 2299,
+      "end": 2379,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0999_test_fiscal_substrate_bridge__test_fixed_flows_cutover_uses_total_source_shortfall_for_mixed_army_morale.txt",
+      "source_path": "tests/test_fiscal_substrate_bridge.py"
+    },
+    {
+      "idx": 1000,
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_army_delta_arrears_splits_positive_and_rejects_negative_under_cutover",
+      "line": 2382,
+      "end": 2410,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1000_test_fiscal_substrate_bridge__test_army_delta_arrears_splits_positive_and_rejects_negative_under_cutover.txt",
+      "source_path": "tests/test_fiscal_substrate_bridge.py"
+    },
+    {
+      "idx": 1001,
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_army_delta_arrears_rejects_exempt_army_under_cutover",
+      "line": 2413,
+      "end": 2442,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1001_test_fiscal_substrate_bridge__test_army_delta_arrears_rejects_exempt_army_under_cutover.txt",
+      "source_path": "tests/test_fiscal_substrate_bridge.py"
+    },
+    {
+      "idx": 1002,
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_army_delta_arrears_reconciles_pay_source_container_immediately",
+      "line": 2445,
+      "end": 2456,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1002_test_fiscal_substrate_bridge__test_army_delta_arrears_reconciles_pay_source_container_immediately.txt",
+      "source_path": "tests/test_fiscal_substrate_bridge.py"
+    },
+    {
+      "idx": 1003,
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_army_delta_manpower_reconciles_pay_source_due_immediately",
+      "line": 2472,
+      "end": 2484,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1003_test_fiscal_substrate_bridge__test_army_delta_manpower_reconciles_pay_source_due_immediately.txt",
+      "source_path": "tests/test_fiscal_substrate_bridge.py"
+    },
+    {
+      "idx": 1004,
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_army_delta_owner_power_to_ming_requires_same_delta_pay_source",
+      "line": 2487,
+      "end": 2534,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1004_test_fiscal_substrate_bridge__test_army_delta_owner_power_to_ming_requires_same_delta_pay_source.txt",
+      "source_path": "tests/test_fiscal_substrate_bridge.py"
+    },
+    {
+      "idx": 1005,
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_army_delta_rejects_unknown_owner_power_without_clearing_arrears",
+      "line": 2537,
+      "end": 2568,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1005_test_fiscal_substrate_bridge__test_army_delta_rejects_unknown_owner_power_without_clearing_arrears.txt",
+      "source_path": "tests/test_fiscal_substrate_bridge.py"
+    },
+    {
+      "idx": 1006,
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_army_delta_rejects_pay_source_without_ming_settle_substrate",
+      "line": 2571,
+      "end": 2598,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1006_test_fiscal_substrate_bridge__test_army_delta_rejects_pay_source_without_ming_settle_substrate.txt",
+      "source_path": "tests/test_fiscal_substrate_bridge.py"
+    },
+    {
+      "idx": 1007,
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_army_delta_owner_power_from_ming_clears_pay_source_arrears",
+      "line": 2601,
+      "end": 2658,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1007_test_fiscal_substrate_bridge__test_army_delta_owner_power_from_ming_clears_pay_source_arrears.txt",
+      "source_path": "tests/test_fiscal_substrate_bridge.py"
+    },
+    {
+      "idx": 1008,
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_army_delta_rejects_ming_exempt_flag_before_pay_arrears_writeoff",
+      "line": 2662,
+      "end": 2703,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1008_test_fiscal_substrate_bridge__test_army_delta_rejects_ming_exempt_flag_before_pay_arrears_writeoff.txt",
+      "source_path": "tests/test_fiscal_substrate_bridge.py"
+    },
+    {
+      "idx": 1009,
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_economy_pay_arrears_from_central_account_splits_by_current_debt_ratio",
+      "line": 2706,
+      "end": 2761,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1009_test_fiscal_substrate_bridge__test_economy_pay_arrears_from_central_account_splits_by_current_debt_ratio.txt",
+      "source_path": "tests/test_fiscal_substrate_bridge.py"
+    },
+    {
+      "idx": 1010,
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_economy_pay_arrears_from_central_account_can_repay_pure_province_source_army",
+      "line": 2764,
+      "end": 2806,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1010_test_fiscal_substrate_bridge__test_economy_pay_arrears_from_central_account_can_repay_pure_province_source_army.txt",
+      "source_path": "tests/test_fiscal_substrate_bridge.py"
+    },
+    {
+      "idx": 1011,
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_economy_pay_arrears_preserves_fractional_pay_source_tail",
+      "line": 2809,
+      "end": 2856,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1011_test_fiscal_substrate_bridge__test_economy_pay_arrears_preserves_fractional_pay_source_tail.txt",
+      "source_path": "tests/test_fiscal_substrate_bridge.py"
+    },
+    {
+      "idx": 1012,
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_economy_pay_arrears_clamps_integer_spend_and_preserves_tail",
+      "line": 2859,
+      "end": 2906,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1012_test_fiscal_substrate_bridge__test_economy_pay_arrears_clamps_integer_spend_and_preserves_tail.txt",
+      "source_path": "tests/test_fiscal_substrate_bridge.py"
+    },
+    {
+      "idx": 1013,
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_economy_pay_arrears_rejects_missing_or_unknown_target_without_repaying_other_armies",
+      "line": 2930,
+      "end": 2970,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1013_test_fiscal_substrate_bridge__test_economy_pay_arrears_rejects_missing_or_unknown_target_without_repaying_other_armies.txt",
+      "source_path": "tests/test_fiscal_substrate_bridge.py"
+    },
+    {
+      "idx": 1014,
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_manpower_zero_writeoffs_pay_source_arrears_before_retiring_army",
+      "line": 2973,
+      "end": 3032,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1014_test_fiscal_substrate_bridge__test_manpower_zero_writeoffs_pay_source_arrears_before_retiring_army.txt",
+      "source_path": "tests/test_fiscal_substrate_bridge.py"
+    },
+    {
+      "idx": 1015,
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_manpower_zero_then_arrears_delta_does_not_resurrect_writeoff_debt",
+      "line": 3035,
+      "end": 3075,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1015_test_fiscal_substrate_bridge__test_manpower_zero_then_arrears_delta_does_not_resurrect_writeoff_debt.txt",
+      "source_path": "tests/test_fiscal_substrate_bridge.py"
+    },
+    {
+      "idx": 1016,
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_new_ming_army_stores_pay_source_columns_under_cutover",
+      "line": 3120,
+      "end": 3153,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1016_test_fiscal_substrate_bridge__test_new_ming_army_stores_pay_source_columns_under_cutover.txt",
+      "source_path": "tests/test_fiscal_substrate_bridge.py"
+    },
+    {
+      "idx": 1017,
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_new_ming_army_rejects_initial_arrears_under_cutover",
+      "line": 3156,
+      "end": 3174,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1017_test_fiscal_substrate_bridge__test_new_ming_army_rejects_initial_arrears_under_cutover.txt",
+      "source_path": "tests/test_fiscal_substrate_bridge.py"
+    },
+    {
+      "idx": 1018,
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_region_loader_rejects_bad_shared_settle_meta_defaults_container",
+      "line": 3178,
+      "end": 3186,
+      "flags": [
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1018_test_fiscal_substrate_bridge__test_region_loader_rejects_bad_shared_settle_meta_defaults_container.txt",
+      "source_path": "tests/test_fiscal_substrate_bridge.py"
+    },
+    {
+      "idx": 1019,
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_region_loader_rejects_bad_plain_settle_meta",
+      "line": 3189,
+      "end": 3196,
+      "flags": [
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1019_test_fiscal_substrate_bridge__test_region_loader_rejects_bad_plain_settle_meta.txt",
+      "source_path": "tests/test_fiscal_substrate_bridge.py"
+    },
+    {
+      "idx": 1020,
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_region_loader_rejects_bad_settle_meta_defaults",
+      "line": 3224,
+      "end": 3232,
+      "flags": [
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1020_test_fiscal_substrate_bridge__test_region_loader_rejects_bad_settle_meta_defaults.txt",
+      "source_path": "tests/test_fiscal_substrate_bridge.py"
+    },
+    {
+      "idx": 1021,
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_all_15_regular_provinces_first_tick_golden",
+      "line": 3347,
+      "end": 3365,
+      "flags": [
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1021_test_fiscal_substrate_bridge__test_all_15_regular_provinces_first_tick_golden.txt",
+      "source_path": "tests/test_fiscal_substrate_bridge.py"
+    },
+    {
+      "idx": 1022,
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_zhongyuan_jingshi_primary_source_refinement",
+      "line": 3400,
+      "end": 3435,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1022_test_fiscal_substrate_bridge__test_zhongyuan_jingshi_primary_source_refinement.txt",
+      "source_path": "tests/test_fiscal_substrate_bridge.py"
+    },
+    {
+      "idx": 1023,
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_south_southwest_seeds_have_valid_historical_settle_substrate",
+      "line": 3515,
+      "end": 3580,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1023_test_fiscal_substrate_bridge__test_south_southwest_seeds_have_valid_historical_settle_substrate.txt",
+      "source_path": "tests/test_fiscal_substrate_bridge.py"
+    },
+    {
+      "idx": 1024,
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_south_southwest_settle_tick_golden_and_bridge_persist",
+      "line": 3584,
+      "end": 3600,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1024_test_fiscal_substrate_bridge__test_south_southwest_settle_tick_golden_and_bridge_persist.txt",
+      "source_path": "tests/test_fiscal_substrate_bridge.py"
+    },
+    {
+      "idx": 1025,
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_shaanxi_seed_is_relabelled_to_historical_shadow_scale",
+      "line": 3604,
+      "end": 3632,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1025_test_fiscal_substrate_bridge__test_shaanxi_seed_is_relabelled_to_historical_shadow_scale.txt",
+      "source_path": "tests/test_fiscal_substrate_bridge.py"
+    },
+    {
+      "idx": 1026,
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_shanxi_seed_stacks_frontier_pay_and_jin_vassal_dues",
+      "line": 3636,
+      "end": 3658,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1026_test_fiscal_substrate_bridge__test_shanxi_seed_stacks_frontier_pay_and_jin_vassal_dues.txt",
+      "source_path": "tests/test_fiscal_substrate_bridge.py"
+    },
+    {
+      "idx": 1027,
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_border_slice_raw_content_keeps_primary_source_anchors",
+      "line": 3661,
+      "end": 3687,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1027_test_fiscal_substrate_bridge__test_border_slice_raw_content_keeps_primary_source_anchors.txt",
+      "source_path": "tests/test_fiscal_substrate_bridge.py"
+    },
+    {
+      "idx": 1028,
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_liaodong_and_dongjiang_are_pure_military_pay_funnels",
+      "line": 3690,
+      "end": 3710,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1028_test_fiscal_substrate_bridge__test_liaodong_and_dongjiang_are_pure_military_pay_funnels.txt",
+      "source_path": "tests/test_fiscal_substrate_bridge.py"
+    },
+    {
+      "idx": 1029,
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_liaodong_primary_source_due_survives_fresh_db_pay_source_reconcile",
+      "line": 3713,
+      "end": 3729,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1029_test_fiscal_substrate_bridge__test_liaodong_primary_source_due_survives_fresh_db_pay_source_reconcile.txt",
+      "source_path": "tests/test_fiscal_substrate_bridge.py"
+    },
+    {
+      "idx": 1030,
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_liaodong_pay_source_rows_add_to_standalone_military_funnel",
+      "line": 3732,
+      "end": 3757,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1030_test_fiscal_substrate_bridge__test_liaodong_pay_source_rows_add_to_standalone_military_funnel.txt",
+      "source_path": "tests/test_fiscal_substrate_bridge.py"
+    },
+    {
+      "idx": 1031,
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_liaodong_settle_tick_keeps_standalone_funnel_deficit_out_of_pay_rows",
+      "line": 3760,
+      "end": 3792,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1031_test_fiscal_substrate_bridge__test_liaodong_settle_tick_keeps_standalone_funnel_deficit_out_of_pay_rows.txt",
+      "source_path": "tests/test_fiscal_substrate_bridge.py"
+    },
+    {
+      "idx": 1032,
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_dongjiang_content_pay_funnel_survives_fresh_db_pay_source_reconcile",
+      "line": 3795,
+      "end": 3799,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1032_test_fiscal_substrate_bridge__test_dongjiang_content_pay_funnel_survives_fresh_db_pay_source_reconcile.txt",
+      "source_path": "tests/test_fiscal_substrate_bridge.py"
+    },
+    {
+      "idx": 1033,
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_old_dongjiang_pay_funnel_due_backfills_before_new_pay_rows",
+      "line": 3802,
+      "end": 3824,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1033_test_fiscal_substrate_bridge__test_old_dongjiang_pay_funnel_due_backfills_before_new_pay_rows.txt",
+      "source_path": "tests/test_fiscal_substrate_bridge.py"
+    },
+    {
+      "idx": 1034,
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_primary_source_army_pay_due_rejects_dirty_annual_amount",
+      "line": 3828,
+      "end": 3834,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1034_test_fiscal_substrate_bridge__test_primary_source_army_pay_due_rejects_dirty_annual_amount.txt",
+      "source_path": "tests/test_fiscal_substrate_bridge.py"
+    },
+    {
+      "idx": 1035,
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_standalone_army_pay_funnel_rejects_malformed_settle_shapes",
+      "line": 3846,
+      "end": 3854,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1035_test_fiscal_substrate_bridge__test_standalone_army_pay_funnel_rejects_malformed_settle_shapes.txt",
+      "source_path": "tests/test_fiscal_substrate_bridge.py"
+    },
+    {
+      "idx": 1036,
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_standalone_army_pay_container_total_rejects_malformed_region_shapes",
+      "line": 3864,
+      "end": 3875,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1036_test_fiscal_substrate_bridge__test_standalone_army_pay_container_total_rejects_malformed_region_shapes.txt",
+      "source_path": "tests/test_fiscal_substrate_bridge.py"
+    },
+    {
+      "idx": 1037,
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_jiangnan_core_seeds_have_positive_remittance_golden",
+      "line": 3903,
+      "end": 3923,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1037_test_fiscal_substrate_bridge__test_jiangnan_core_seeds_have_positive_remittance_golden.txt",
+      "source_path": "tests/test_fiscal_substrate_bridge.py"
+    },
+    {
+      "idx": 1038,
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_huguang_seed_stacks_jiangnan_surplus_with_chu_princely_due",
+      "line": 3926,
+      "end": 3936,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1038_test_fiscal_substrate_bridge__test_huguang_seed_stacks_jiangnan_surplus_with_chu_princely_due.txt",
+      "source_path": "tests/test_fiscal_substrate_bridge.py"
+    },
+    {
+      "idx": 1039,
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_beizhili_huangzhuang_is_inner_treasury_not_transport_quota",
+      "line": 3940,
+      "end": 3957,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1039_test_fiscal_substrate_bridge__test_beizhili_huangzhuang_is_inner_treasury_not_transport_quota.txt",
+      "source_path": "tests/test_fiscal_substrate_bridge.py"
+    },
+    {
+      "idx": 1040,
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_henan_royal_grants_make_zonglu_due_heavy",
+      "line": 3960,
+      "end": 3969,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1040_test_fiscal_substrate_bridge__test_henan_royal_grants_make_zonglu_due_heavy.txt",
+      "source_path": "tests/test_fiscal_substrate_bridge.py"
+    },
+    {
+      "idx": 1041,
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_zhongyuan_jingshi_settle_province_tick_golden",
+      "line": 3973,
+      "end": 3990,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1041_test_fiscal_substrate_bridge__test_zhongyuan_jingshi_settle_province_tick_golden.txt",
+      "source_path": "tests/test_fiscal_substrate_bridge.py"
+    },
+    {
+      "idx": 1042,
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_settle_province_tick_persists_shaanxi_historical_shadow_golden",
+      "line": 3993,
+      "end": 4004,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1042_test_fiscal_substrate_bridge__test_settle_province_tick_persists_shaanxi_historical_shadow_golden.txt",
+      "source_path": "tests/test_fiscal_substrate_bridge.py"
+    },
+    {
+      "idx": 1043,
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_settle_province_tick_persists_border_remainder_golden",
+      "line": 4007,
+      "end": 4040,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1043_test_fiscal_substrate_bridge__test_settle_province_tick_persists_border_remainder_golden.txt",
+      "source_path": "tests/test_fiscal_substrate_bridge.py"
+    },
+    {
+      "idx": 1044,
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_settle_province_tick_qingzhang_action",
+      "line": 4043,
+      "end": 4057,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1044_test_fiscal_substrate_bridge__test_settle_province_tick_qingzhang_action.txt",
+      "source_path": "tests/test_fiscal_substrate_bridge.py"
+    },
+    {
+      "idx": 1045,
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_settle_province_tick_port_lock_no_persist_on_raise",
+      "line": 4060,
+      "end": 4074,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1045_test_fiscal_substrate_bridge__test_settle_province_tick_port_lock_no_persist_on_raise.txt",
+      "source_path": "tests/test_fiscal_substrate_bridge.py"
+    },
+    {
+      "idx": 1046,
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_apply_fixed_period_flows_advances_shaanxi_substrate",
+      "line": 4099,
+      "end": 4109,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1046_test_fiscal_substrate_bridge__test_apply_fixed_period_flows_advances_shaanxi_substrate.txt",
+      "source_path": "tests/test_fiscal_substrate_bridge.py"
+    },
+    {
+      "idx": 1047,
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_apply_fixed_period_flows_uses_dynamic_ming_settle_spine",
+      "line": 4112,
+      "end": 4140,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1047_test_fiscal_substrate_bridge__test_apply_fixed_period_flows_uses_dynamic_ming_settle_spine.txt",
+      "source_path": "tests/test_fiscal_substrate_bridge.py"
+    },
+    {
+      "idx": 1048,
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_substrate_absent_does_not_break_flows",
+      "line": 4145,
+      "end": 4161,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1048_test_fiscal_substrate_bridge__test_substrate_absent_does_not_break_flows.txt",
+      "source_path": "tests/test_fiscal_substrate_bridge.py"
+    },
+    {
+      "idx": 1049,
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_substrate_corrupt_isolated_from_flows",
+      "line": 4164,
+      "end": 4181,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1049_test_fiscal_substrate_bridge__test_substrate_corrupt_isolated_from_flows.txt",
+      "source_path": "tests/test_fiscal_substrate_bridge.py"
+    },
+    {
+      "idx": 1050,
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_substrate_corrupt_due_isolated",
+      "line": 4184,
+      "end": 4203,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1050_test_fiscal_substrate_bridge__test_substrate_corrupt_due_isolated.txt",
+      "source_path": "tests/test_fiscal_substrate_bridge.py"
+    },
+    {
+      "idx": 1051,
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_substrate_corrupt_stock_isolated",
+      "line": 4206,
+      "end": 4223,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1051_test_fiscal_substrate_bridge__test_substrate_corrupt_stock_isolated.txt",
+      "source_path": "tests/test_fiscal_substrate_bridge.py"
+    },
+    {
+      "idx": 1052,
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_substrate_malformed_settle_shape_is_logged_not_prefiltered",
+      "line": 4226,
+      "end": 4249,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1052_test_fiscal_substrate_bridge__test_substrate_malformed_settle_shape_is_logged_not_prefiltered.txt",
+      "source_path": "tests/test_fiscal_substrate_bridge.py"
+    },
+    {
+      "idx": 1053,
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_cutover_pay_source_errors_abort_fixed_flows",
+      "line": 4252,
+      "end": 4275,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1053_test_fiscal_substrate_bridge__test_cutover_pay_source_errors_abort_fixed_flows.txt",
+      "source_path": "tests/test_fiscal_substrate_bridge.py"
+    },
+    {
+      "idx": 1054,
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_cutover_substrate_bad_state_uses_settlement_abort_error_pack",
+      "line": 4278,
+      "end": 4302,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1054_test_fiscal_substrate_bridge__test_cutover_substrate_bad_state_uses_settlement_abort_error_pack.txt",
+      "source_path": "tests/test_fiscal_substrate_bridge.py"
+    },
+    {
+      "idx": 1055,
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_cutover_jingyun_gross_bool_uses_settlement_abort_error_pack",
+      "line": 4305,
+      "end": 4329,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1055_test_fiscal_substrate_bridge__test_cutover_jingyun_gross_bool_uses_settlement_abort_error_pack.txt",
+      "source_path": "tests/test_fiscal_substrate_bridge.py"
+    },
+    {
+      "idx": 1056,
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_cutover_outbound_debit_failure_uses_settlement_abort_error_pack",
+      "line": 4332,
+      "end": 4379,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1056_test_fiscal_substrate_bridge__test_cutover_outbound_debit_failure_uses_settlement_abort_error_pack.txt",
+      "source_path": "tests/test_fiscal_substrate_bridge.py"
+    },
+    {
+      "idx": 1057,
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_cutover_taicang_loss_rate_bad_state_uses_settlement_abort_error_pack",
+      "line": 4382,
+      "end": 4401,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1057_test_fiscal_substrate_bridge__test_cutover_taicang_loss_rate_bad_state_uses_settlement_abort_error_pack.txt",
+      "source_path": "tests/test_fiscal_substrate_bridge.py"
+    },
+    {
+      "idx": 1058,
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_cutover_missing_human_loss_rate_uses_settlement_abort_error_pack",
+      "line": 4404,
+      "end": 4424,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1058_test_fiscal_substrate_bridge__test_cutover_missing_human_loss_rate_uses_settlement_abort_error_pack.txt",
+      "source_path": "tests/test_fiscal_substrate_bridge.py"
+    },
+    {
+      "idx": 1059,
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_cutover_structural_sink_rate_zero_uses_settlement_abort_error_pack",
+      "line": 4427,
+      "end": 4448,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1059_test_fiscal_substrate_bridge__test_cutover_structural_sink_rate_zero_uses_settlement_abort_error_pack.txt",
+      "source_path": "tests/test_fiscal_substrate_bridge.py"
+    },
+    {
+      "idx": 1060,
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_pre_settle_cutover_substrate_bad_state_uses_settlement_abort_error_pack",
+      "line": 4451,
+      "end": 4477,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1060_test_fiscal_substrate_bridge__test_pre_settle_cutover_substrate_bad_state_uses_settlement_abort_error_pack.txt",
+      "source_path": "tests/test_fiscal_substrate_bridge.py"
+    },
+    {
+      "idx": 1061,
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_advance_without_edict_cutover_bad_state_uses_settlement_abort_error_pack",
+      "line": 4480,
+      "end": 4524,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1061_test_fiscal_substrate_bridge__test_advance_without_edict_cutover_bad_state_uses_settlement_abort_error_pack.txt",
+      "source_path": "tests/test_fiscal_substrate_bridge.py"
+    },
+    {
+      "idx": 1062,
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_resolve_directives_nested_cutover_bad_state_uses_settlement_abort_error_pack",
+      "line": 4527,
+      "end": 4553,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1062_test_fiscal_substrate_bridge__test_resolve_directives_nested_cutover_bad_state_uses_settlement_abort_error_pack.txt",
+      "source_path": "tests/test_fiscal_substrate_bridge.py"
+    },
+    {
+      "idx": 1063,
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_apply_fixed_period_flows_malformed_fiscal_container_isolated",
+      "line": 4557,
+      "end": 4579,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1063_test_fiscal_substrate_bridge__test_apply_fixed_period_flows_malformed_fiscal_container_isolated.txt",
+      "source_path": "tests/test_fiscal_substrate_bridge.py"
+    },
+    {
+      "idx": 1064,
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_apply_fixed_period_flows_malformed_fiscal_json_isolated",
+      "line": 4582,
+      "end": 4604,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1064_test_fiscal_substrate_bridge__test_apply_fixed_period_flows_malformed_fiscal_json_isolated.txt",
+      "source_path": "tests/test_fiscal_substrate_bridge.py"
+    },
+    {
+      "idx": 1065,
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_apply_fixed_period_flows_malformed_fiscal_scalar_isolated",
+      "line": 4614,
+      "end": 4641,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1065_test_fiscal_substrate_bridge__test_apply_fixed_period_flows_malformed_fiscal_scalar_isolated.txt",
+      "source_path": "tests/test_fiscal_substrate_bridge.py"
+    },
+    {
+      "idx": 1066,
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_apply_fixed_period_flows_commits_shadow_substrate_when_standalone",
+      "line": 4644,
+      "end": 4659,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1066_test_fiscal_substrate_bridge__test_apply_fixed_period_flows_commits_shadow_substrate_when_standalone.txt",
+      "source_path": "tests/test_fiscal_substrate_bridge.py"
+    },
+    {
+      "idx": 1067,
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_advance_province_fiscal_substrate_rolls_back_inside_outer_atomic",
+      "line": 4662,
+      "end": 4677,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1067_test_fiscal_substrate_bridge__test_advance_province_fiscal_substrate_rolls_back_inside_outer_atomic.txt",
+      "source_path": "tests/test_fiscal_substrate_bridge.py"
+    },
+    {
+      "idx": 1068,
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_all_ming_settle_substrates_advance_into_ledger",
+      "line": 4682,
+      "end": 4719,
+      "flags": [
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1068_test_fiscal_substrate_bridge__test_all_ming_settle_substrates_advance_into_ledger.txt",
+      "source_path": "tests/test_fiscal_substrate_bridge.py"
+    },
+    {
+      "idx": 1069,
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_seeded_substrates_keep_multi_tick_historical_trajectories",
+      "line": 4722,
+      "end": 4752,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1069_test_fiscal_substrate_bridge__test_seeded_substrates_keep_multi_tick_historical_trajectories.txt",
+      "source_path": "tests/test_fiscal_substrate_bridge.py"
+    },
+    {
+      "idx": 1070,
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_all_settle_substrate_provisional_meta_covers_virtual_fields",
+      "line": 4755,
+      "end": 4794,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1070_test_fiscal_substrate_bridge__test_all_settle_substrate_provisional_meta_covers_virtual_fields.txt",
+      "source_path": "tests/test_fiscal_substrate_bridge.py"
+    },
+    {
+      "idx": 1071,
+      "file": "tests/test_fiscal_substrate_bridge.py",
+      "name": "test_jiangnan_core_uses_wanli_huiji_lu_primary_seed",
+      "line": 4797,
+      "end": 4875,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1071_test_fiscal_substrate_bridge__test_jiangnan_core_uses_wanli_huiji_lu_primary_seed.txt",
+      "source_path": "tests/test_fiscal_substrate_bridge.py"
+    }
+  ]
+}

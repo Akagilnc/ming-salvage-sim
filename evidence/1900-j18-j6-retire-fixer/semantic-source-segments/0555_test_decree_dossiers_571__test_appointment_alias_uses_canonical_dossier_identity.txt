@@ -1,0 +1,40 @@
+# FILE: tests/test_decree_dossiers_571.py
+# NAME: test_appointment_alias_uses_canonical_dossier_identity
+# LINE: 912-945
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_appointment_alias_uses_canonical_dossier_identity(game):
+    db, state, content = game
+    target = next(
+        character for character in content.characters.values()
+        if character.aliases and character.name != character.aliases[0]
+        and db.conn.execute(
+            "SELECT 1 FROM characters WHERE name=? AND status='active'",
+            (character.name,),
+        ).fetchone()
+    )
+    alias = target.aliases[0]
+    pending_id = db.stage_pending_action(
+        state.turn, kind="office", action="任命",
+        minister_name=_active_minister(db), target_id=None,
+        payload={"text": "测试任免原文", "name": alias, "office": "兵部主事"},
+    )
+    db.commit_pending_actions(state, content=content)
+    dossier = next(
+        row for row in db.list_decree_dossiers()
+        if row["pending_action_id"] == pending_id
+    )
+    assert dossier["target_id"] == target.name
+    assert dossier["executor_id"] == target.name
+    db.apply_dossier_promulgation(
+        state, dossier["id"], "promulgated", content=content,
+    )
+    assert [
+        row["dossier_id"]
+        for row in db.list_office_effects_for_dossier(dossier["id"])
+    ] == [dossier["id"]]
+    db.record_dossier_execution(
+        dossier["id"], "fulfilled", "任事已毕", state.turn,
+    )
+    assert db.get_decree_dossier(dossier["id"])["status"] == "closed"

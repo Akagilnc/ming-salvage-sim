@@ -1,0 +1,75 @@
+# FILE: tests/test_audience_translate_1837_reopen.py
+# NAME: test_recommendation_commission_stages_office_with_reason
+# LINE: 231-299
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_recommendation_commission_stages_office_with_reason(game, monkeypatch):
+    db, state, content = game
+    recommender = _active_minister(db, content, office_type="兵部")
+    same_faction = next(
+        c for c in content.characters.values()
+        if c.name != recommender.name
+        and c.faction == recommender.faction
+        and c.office_type not in ("后宫", "宗藩")
+    )
+    db.conn.execute(
+        "UPDATE characters SET status='offstage', office='', reason_code='罢居' WHERE name=?",
+        (same_faction.name,),
+    )
+    db.conn.commit()
+    reason = "请予试任巡盐御史，臣敢以身家保。"
+    words = "陛下，巡盐之事可有合适人选？"
+    scene_reply = f"臣荐{same_faction.name}任巡盐御史。{reason}"
+    existing_id = db.stage_pending_action(
+        state.turn, "office", "任命", recommender.name,
+        {"name": same_faction.name, "office": "巡盐御史", "appoint_action": "任命",
+         "text": scene_reply},
+    )
+    decl = {
+        "commissions": [{
+            "text": scene_reply,
+            "appointment": {
+                "name": same_faction.name,
+                "office": "巡盐御史",
+                "appoint_action": "任命",
+            },
+            "recommendation": {
+                "recommender": recommender.name,
+                "reason": reason,
+            },
+        }],
+    }
+    result = _scene_declaration(db, state, content, monkeypatch, words, decl,
+                                minister_name=recommender.name, scene_reply=scene_reply)
+    assert result.commissions.rejected == []
+    assert len(result.commissions.applied) == 1
+    assert result.commissions.applied[0]["id"] == existing_id
+    row = db.conn.execute(
+        "SELECT kind, action, payload_json FROM pending_actions WHERE id=?",
+        (result.commissions.applied[0]["id"],),
+    ).fetchone()
+    assert row["kind"] == "office" and row["action"] == "任命"
+    payload = json.loads(row["payload_json"])
+    assert payload["name"] == same_faction.name
+    assert payload["office"] == "巡盐御史"
+    assert payload["reason"] == reason
+    assert payload["recommendation"]["recommender"] == recommender.name
+    assert payload["recommendation"]["candidate"]["name"] == same_faction.name
+    approval = _scene_declaration(db, state, content, monkeypatch, "准", {
+        "promises": [{"action_id": result.commissions.applied[0]["id"], "decision": "应允"}],
+    })
+    assert len(approval.promises.applied) == 1
+    _close_offline(db, state, content, int(open_night(db, state)["id"]))
+    dossier = db.conn.execute(
+        "SELECT id FROM decree_dossiers WHERE pending_action_id=?",
+        (result.commissions.applied[0]["id"],),
+    ).fetchone()
+    assert dossier is not None
+    _player_month(db, state, content, monkeypatch, int(dossier["id"]))
+    appointed = db.conn.execute(
+        "SELECT office FROM characters WHERE name=?", (same_faction.name,),
+    ).fetchone()
+    assert appointed["office"] == "巡盐御史"
+    events = db.list_recommendation_events(state, recommender.name)
+    assert any(e["candidate"] == same_faction.name and e["reason"] == reason for e in events)

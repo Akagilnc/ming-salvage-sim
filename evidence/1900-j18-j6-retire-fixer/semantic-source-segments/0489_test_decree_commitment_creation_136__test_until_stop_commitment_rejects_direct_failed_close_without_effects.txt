@@ -1,0 +1,48 @@
+# FILE: tests/test_decree_commitment_creation_136.py
+# NAME: test_until_stop_commitment_rejects_direct_failed_close_without_effects
+# LINE: 926-967
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_until_stop_commitment_rejects_direct_failed_close_without_effects(game, monkeypatch):
+    db, state, content = game
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    starting_popular_support = int(state.metrics["民心"])
+
+    I.apply_score_extraction(
+        db,
+        state,
+        {
+            "new_issues": [
+                {
+                    "origin_kind": "decree",
+                    "origin_ref": _promulgated_commitment_origin(db, state, "pay-liao-fail-guard"),
+                    "kind": "initiative",
+                    "title": "每月补辽饷直到补齐防失败误结案",
+                    "ongoing_effects": {"economy": [{"account": "国库", "delta": -50, "reason": "每月补饷"}]},
+                    "effect_on_fail": {"metrics": {"民心": -7}},
+                    "stop_condition": {"army.guanning.arrears": "<=0"},
+                    "commitment_kind": "until_stop",
+                }
+            ]
+        },
+        content=content,
+    )
+    row = _issue_by_title(db, "每月补辽饷直到补齐防失败误结案")
+
+    out = I.apply_issue_tracker_output(
+        db,
+        state,
+        {"close_issues": [{"issue_id": row["id"], "reason": "failed", "narrative": "误按承诺失败结案"}]},
+    )
+
+    close = out["closes"][0]
+    assert close["rejected"] is True
+    assert close["category"] == "invalid_enum"
+    after = db.conn.execute("SELECT status FROM issues WHERE id=?", (row["id"],)).fetchone()
+    assert after["status"] == "active"
+    assert int(state.metrics["民心"]) == starting_popular_support
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM issue_advances WHERE issue_id=? AND trigger_kind='close'",
+        (row["id"],),
+    ).fetchone()[0] == 0

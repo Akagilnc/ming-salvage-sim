@@ -1,0 +1,22 @@
+# FILE: tests/test_pihong_dossier_1490.py
+# NAME: test_658_mixed_ordinary_triad_and_target_rejected
+# LINE: 2713-2728
+# FLAGS: assert_count,mock_or_patch_present
+# KIND: py
+
+def test_658_mixed_ordinary_triad_and_target_rejected(game, monkeypatch):
+    """#658：普通 triad + target 矛盾载荷——一条真实入口零写（禁 classifier/session/backend 三份）。"""
+    import ming_sim.cli_backend as cli_backend
+    db, state, content = game
+    stalled, _ = _658_plant_stalled_deliberation(db, state, content, title='混载')
+    did = int(stalled['id'])
+    before_dossiers = len(db.list_decree_dossiers())
+    before_dirs = db.conn.execute('SELECT COUNT(*) AS c FROM turn_directives').fetchone()['c']
+
+    def backend_mixed(prompt, *_a, **_k):
+        return (json.dumps({'拟旨意图': '拟旨', '动作类型': 'policy', '目标类型': 'issue', '目标ID': 'river', '目标案卷ID': did}, ensure_ascii=False), 1)
+    monkeypatch.setattr(cli_backend, '_run_backend_for_config', backend_mixed)
+    with pytest.raises(ValueError):
+        cli_backend.capture_manual_directive_payload('混载旨文', None, db=db, content=content)
+    assert len(db.list_decree_dossiers()) == before_dossiers
+    assert db.conn.execute('SELECT COUNT(*) AS c FROM turn_directives').fetchone()['c'] == before_dirs

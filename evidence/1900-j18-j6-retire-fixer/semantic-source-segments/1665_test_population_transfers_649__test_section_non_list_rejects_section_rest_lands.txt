@@ -1,0 +1,24 @@
+# FILE: tests/test_population_transfers_649.py
+# NAME: test_section_non_list_rejects_section_rest_lands
+# LINE: 217-234
+# FLAGS: assert_text_compare_or_match,assert_count
+# KIND: py
+
+def test_section_non_list_rejects_section_rest_lands(game):
+    """r4 分层终态：转移段非 list → 只拒该 section 留痕，其余 section 好项照落。"""
+    db, state, content = game
+    sat_before = db.conn.execute(
+        "SELECT satisfaction FROM classes WHERE name='农民' AND region_id=''"
+    ).fetchone()[0]
+    applied = apply_score_extraction(db, state, {
+        "population_transfers": "凭空一段",
+        "class_delta": {"农民": {"satisfaction": -2}},
+    }, content, None)
+    shape_rej = applied["validate_shape_rejections"]
+    assert len(shape_rej) == 1
+    assert shape_rej[0]["item"] == {"raw_value": "凭空一段"}
+    assert applied["class_delta"]["农民"]["satisfaction"] == -2
+    sat_after = db.conn.execute(
+        "SELECT satisfaction FROM classes WHERE name='农民' AND region_id='' "
+    ).fetchone()[0]
+    assert sat_after == sat_before - 2

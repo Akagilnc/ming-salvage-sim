@@ -1,0 +1,29 @@
+# FILE: tests/test_promulgation_judge_561.py
+# NAME: test_promulgation_verdict_accepts_exact_keys_for_each_mode
+# LINE: 353-375
+# FLAGS: helper_or_private_call
+# KIND: py
+
+def test_promulgation_verdict_accepts_exact_keys_for_each_mode(game, mode, decision):
+    db, state, _content = game
+    dossier_id = _dossier(db, state, mode=mode)
+    dossiers = db.list_decree_dossiers(status="proposed")
+    context = decree_mod.build_promulgation_judge_context(db, state, dossiers)
+    if decision == "promulgated":
+        verdict = {"dossier_id": dossier_id, "decision": decision}
+        expected = [verdict]
+    else:
+        verdict = _rejected_verdict(
+            dossier_id, context["imperial_authority_band"], midzhi=mode == "midzhi",
+        )
+        if mode == "midzhi":
+            # #657 §C.8：中旨打回剥离猜派字段
+            expected = [{
+                k: v for k, v in verdict.items() if k != "affected_parties"
+            }]
+        else:
+            expected = [verdict]
+
+    assert decree_mod.validate_promulgation_verdicts(
+        [verdict], dossiers, db, prepared_context=context,
+    ) == expected

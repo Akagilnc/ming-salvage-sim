@@ -1,0 +1,28 @@
+# FILE: web/src/components/modals.test.tsx
+# NAME: "#1732 ChatModal · 撤回就地确认" / "#1732 T3 开着确认条点散夜后确认条关闭"
+# LINE: 404-425
+# FLAGS: web_mock_spy_or_calls
+# KIND: web
+
+  it("#1732 T3 开着确认条点散夜后确认条关闭", () => {
+    const onSend = vi.fn();
+    const host = renderModal({
+      minister: MINISTER_MOCK,
+      portraitPrefix: "minister_",
+      canUndoLastChat: true,
+      onSend,
+    });
+    const undo = Array.from(host.querySelectorAll("button")).find((b) =>
+      (b.textContent || "").includes("撤回本轮")
+    ) as HTMLButtonElement;
+    act(() => undo.click());
+    expect(host.querySelector('[aria-label="撤回召对确认"]')).not.toBeNull();
+
+    const retreat = Array.from(host.querySelectorAll("button")).find((b) =>
+      (b.textContent || "").includes("散夜")
+    ) as HTMLButtonElement;
+    act(() => retreat.click());
+
+    expect(onSend).toHaveBeenCalledWith("周延儒", "退朝");
+    expect(host.querySelector('[aria-label="撤回召对确认"]')).toBeNull();
+  });

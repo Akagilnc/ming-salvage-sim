@@ -1,0 +1,75 @@
+{
+  "source_path": "tests/test_audience_background.py",
+  "member_count": 5,
+  "members": [
+    {
+      "idx": 78,
+      "file": "tests/test_audience_background.py",
+      "name": "test_chat_reload_exposes_retryable_failed_secret_order",
+      "line": 186,
+      "end": 205,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0078_test_audience_background__test_chat_reload_exposes_retryable_failed_secret_order.txt",
+      "source_path": "tests/test_audience_background.py"
+    },
+    {
+      "idx": 79,
+      "file": "tests/test_audience_background.py",
+      "name": "test_newer_interrupted_turn_blocks_withdrawal_of_completed_turn",
+      "line": 210,
+      "end": 228,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0079_test_audience_background__test_newer_interrupted_turn_blocks_withdrawal_of_completed_turn.txt",
+      "source_path": "tests/test_audience_background.py"
+    },
+    {
+      "idx": 80,
+      "file": "tests/test_audience_background.py",
+      "name": "test_withdrawal_under_web_write_gate_returns_undone_turn",
+      "line": 231,
+      "end": 245,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0080_test_audience_background__test_withdrawal_under_web_write_gate_returns_undone_turn.txt",
+      "source_path": "tests/test_audience_background.py"
+    },
+    {
+      "idx": 81,
+      "file": "tests/test_audience_background.py",
+      "name": "test_current_unissued_draft_is_not_character_carryover",
+      "line": 248,
+      "end": 279,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0081_test_audience_background__test_current_unissued_draft_is_not_character_carryover.txt",
+      "source_path": "tests/test_audience_background.py"
+    },
+    {
+      "idx": 82,
+      "file": "tests/test_audience_background.py",
+      "name": "test_chat_stream_closed_before_turn_creation_is_noop",
+      "line": 288,
+      "end": 306,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0082_test_audience_background__test_chat_stream_closed_before_turn_creation_is_noop.txt",
+      "source_path": "tests/test_audience_background.py"
+    }
+  ]
+}

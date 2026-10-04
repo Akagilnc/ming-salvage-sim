@@ -1,0 +1,59 @@
+# FILE: tests/test_yuan_arrival_185.py
+# NAME: test_arrival_clearing_is_not_noop_negative_control
+# LINE: 123-175
+# FLAGS: assert_text_compare_or_match
+# KIND: py
+
+def test_arrival_clearing_is_not_noop_negative_control(game):
+    """负控：只补饷而不调用引擎抵达 tick 时，人物仍保持在途。"""
+    db, state, content = game
+    name = active_ming_character(db, content)
+    old_location = content.characters[name].location
+    has_transit_to = hasattr(content.characters[name], "transit_to")
+    old_transit_to = getattr(content.characters[name], "transit_to", "")
+
+    try:
+        db.conn.execute("UPDATE characters SET location='beizhili' WHERE name=?", (name,))
+        content.characters[name].location = "beizhili"
+        issues.apply_score_extraction(
+            db,
+            state,
+            {"人物变更": [{"origin_ref": "盘面自发", "name": name, "动作": "行止", "transit_to": DEST}]},
+            content=content,
+        )
+        arrears0 = int(
+            db.conn.execute("SELECT arrears FROM armies WHERE id=?", (ARMY_ID,)).fetchone()[
+                "arrears"
+            ]
+        )
+
+        # 只补饷，不调用 tick_transit_arrivals。
+        issues.apply_score_extraction(
+            db,
+            state,
+            {
+                "economy_moves": [
+                    {
+                        "origin_ref": "盘面自发", "account": "国库",
+                        "delta": -arrears0,
+                        "reason": "补饷",
+                        "purpose": "补饷",
+                        "target_kind": "army",
+                        "target_id": ARMY_ID,
+                    }
+                ]
+            },
+            content=content,
+        )
+
+        still = db.conn.execute(
+            "SELECT location, transit_to FROM characters WHERE name=?", (name,)
+        ).fetchone()
+        assert still["transit_to"] == DEST, "只补饷不应自己清 transit_to（否则主用例是 no-op）"
+        assert still["location"] != DEST, "只补饷不应自己到任"
+    finally:
+        content.characters[name].location = old_location
+        if has_transit_to:
+            content.characters[name].transit_to = old_transit_to
+        elif hasattr(content.characters[name], "transit_to"):
+            delattr(content.characters[name], "transit_to")

@@ -1,0 +1,21 @@
+# FILE: tests/test_no_edict_full_settlement_1274.py
+# NAME: test_no_edict_zero_decisions_completes_without_stuck
+# LINE: 99-113
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_no_edict_zero_decisions_completes_without_stuck(game, monkeypatch):
+    """无新旨月份走同一主链，不停在 awaiting，也不在邸报前推进。"""
+    db, state, content = game
+    closed_turn = int(state.turn)
+    _canned_full_settlement(
+        monkeypatch,
+        narrative="本月无重大抉择，朝局按惯性推移。",
+    )
+    result = _session(db, state, content).advance_without_decree()
+    assert result is not None
+    assert result.awaiting is False
+    assert result.advanced is False
+    assert result.decisions in (None, [])
+    assert int(state.turn) == closed_turn
+    assert state.turn_phase != "awaiting_decision"

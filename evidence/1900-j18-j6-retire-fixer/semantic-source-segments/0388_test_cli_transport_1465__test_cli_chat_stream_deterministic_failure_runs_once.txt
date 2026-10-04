@@ -1,0 +1,23 @@
+# FILE: tests/test_cli_transport_1465.py
+# NAME: test_cli_chat_stream_deterministic_failure_runs_once
+# LINE: 217-233
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_cli_chat_stream_deterministic_failure_runs_once(monkeypatch, tmp_path, game):
+    """③确定性失败一次不重试：未知非零退出（无 typed status）不洗成瞬断。"""
+    _pin_transport_policy(monkeypatch, tmp_path)
+    script = install_fake_cli_runner(monkeypatch, [
+        {"stdout": (), "stderr": ("error: unknown model\n",), "returncode": 1},
+    ])
+    web_game, minister = _cli_web_game(game, monkeypatch)
+
+    response = _post_chat_stream(monkeypatch, web_game, minister)
+    assert response.status_code == 200, response.text
+    events = _parse_sse(response.text)
+    assert events[-1][0] == "error", events
+    detail = events[-1][1]
+    assert detail.get("code") == "llm_cli_claude", detail
+    attempts = detail.get("transport_attempts") or []
+    assert [a.get("outcome") for a in attempts] == ["terminal_fail"], attempts
+    assert script.calls == 1

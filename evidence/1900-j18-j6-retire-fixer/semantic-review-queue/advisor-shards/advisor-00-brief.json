@@ -1,0 +1,181 @@
+{
+  "shard_id": 0,
+  "member_count": 195,
+  "file_count": 23,
+  "source_paths": [
+    "tests/test_adr0015_per_item_rejection.py",
+    "tests/test_advance_paths_atomic.py",
+    "tests/test_advances_section_rejections.py",
+    "tests/test_affairs_1831.py",
+    "tests/test_applier_contract.py",
+    "tests/test_appointment_tenure_607.py",
+    "tests/test_army_card_status_1501.py",
+    "tests/test_army_display_173.py",
+    "tests/test_army_firearms.py",
+    "tests/test_army_maintenance_retire_173.py",
+    "tests/test_army_pay_source_prompt_contract.py",
+    "tests/test_army_salary_44.py",
+    "tests/test_audience_background.py",
+    "tests/test_audience_continuous_507.py",
+    "tests/test_audience_draft_grant_once_1777.py",
+    "tests/test_audience_extraction_501.py",
+    "tests/test_audience_night_498.py",
+    "tests/test_audience_presence_500.py",
+    "tests/test_audience_restore_505.py",
+    "tests/test_audience_scroll_539.py",
+    "tests/test_audience_translate_1837.py",
+    "tests/test_audience_translate_1837_reopen.py",
+    "tests/test_audience_translation_1838.py"
+  ],
+  "files": [
+    {
+      "source_path": "tests/test_adr0015_per_item_rejection.py",
+      "count": 2,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_adr0015_per_item_rejection.py.json"
+    },
+    {
+      "source_path": "tests/test_advance_paths_atomic.py",
+      "count": 10,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_advance_paths_atomic.py.json"
+    },
+    {
+      "source_path": "tests/test_advances_section_rejections.py",
+      "count": 9,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_advances_section_rejections.py.json"
+    },
+    {
+      "source_path": "tests/test_affairs_1831.py",
+      "count": 5,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_affairs_1831.py.json"
+    },
+    {
+      "source_path": "tests/test_applier_contract.py",
+      "count": 10,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_applier_contract.py.json"
+    },
+    {
+      "source_path": "tests/test_appointment_tenure_607.py",
+      "count": 6,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_appointment_tenure_607.py.json"
+    },
+    {
+      "source_path": "tests/test_army_card_status_1501.py",
+      "count": 2,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_army_card_status_1501.py.json"
+    },
+    {
+      "source_path": "tests/test_army_display_173.py",
+      "count": 4,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_army_display_173.py.json"
+    },
+    {
+      "source_path": "tests/test_army_firearms.py",
+      "count": 9,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_army_firearms.py.json"
+    },
+    {
+      "source_path": "tests/test_army_maintenance_retire_173.py",
+      "count": 8,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_army_maintenance_retire_173.py.json"
+    },
+    {
+      "source_path": "tests/test_army_pay_source_prompt_contract.py",
+      "count": 1,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_army_pay_source_prompt_contract.py.json"
+    },
+    {
+      "source_path": "tests/test_army_salary_44.py",
+      "count": 12,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_army_salary_44.py.json"
+    },
+    {
+      "source_path": "tests/test_audience_background.py",
+      "count": 5,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_audience_background.py.json"
+    },
+    {
+      "source_path": "tests/test_audience_continuous_507.py",
+      "count": 5,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_audience_continuous_507.py.json"
+    },
+    {
+      "source_path": "tests/test_audience_draft_grant_once_1777.py",
+      "count": 1,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_audience_draft_grant_once_1777.py.json"
+    },
+    {
+      "source_path": "tests/test_audience_extraction_501.py",
+      "count": 2,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_audience_extraction_501.py.json"
+    },
+    {
+      "source_path": "tests/test_audience_night_498.py",
+      "count": 18,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_audience_night_498.py.json"
+    },
+    {
+      "source_path": "tests/test_audience_presence_500.py",
+      "count": 10,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_audience_presence_500.py.json"
+    },
+    {
+      "source_path": "tests/test_audience_restore_505.py",
+      "count": 22,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_audience_restore_505.py.json"
+    },
+    {
+      "source_path": "tests/test_audience_scroll_539.py",
+      "count": 22,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_audience_scroll_539.py.json"
+    },
+    {
+      "source_path": "tests/test_audience_translate_1837.py",
+      "count": 14,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_audience_translate_1837.py.json"
+    },
+    {
+      "source_path": "tests/test_audience_translate_1837_reopen.py",
+      "count": 10,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_audience_translate_1837_reopen.py.json"
+    },
+    {
+      "source_path": "tests/test_audience_translation_1838.py",
+      "count": 8,
+      "queue_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/file-tests__test_audience_translation_1838.py.json"
+    }
+  ],
+  "output_path": "evidence/1900-j18-j6-retire-fixer/semantic-review-queue/advisor-shards/advisor-00-disposition.jsonl",
+  "instructions": {
+    "schema_keys": [
+      "file",
+      "name",
+      "line",
+      "action",
+      "member",
+      "entry",
+      "result",
+      "mock_boundary",
+      "text_oracle_helper_necessity",
+      "reason",
+      "spec_cite",
+      "disposition_basis"
+    ],
+    "actions": [
+      "retain",
+      "migrate",
+      "delete"
+    ],
+    "rules": [
+      "Read ORIGINAL source_path files; do not use summaries as substitute",
+      "entry = real public entry called",
+      "result = actual observable contract asserted",
+      "mock_boundary = what is mocked and why (LLM/IO/clock only) or none",
+      "text_oracle_helper_necessity = per flagged text/oracle/helper: necessary why OR delete/migrate",
+      "Cannot use wide_flag_no_high_confidence_member_rule or boilerplate like 公开入口+可观察结果",
+      "Confirmation-class (calls-only mock of SUT, private helper专测, wording lock, internal oracle): delete or migrate",
+      "Necessary negative real entry+result: retain with specific reason",
+      "Do not edit production or tests; disposition only",
+      "Do not destroy existing worker evidence files outside this output_path"
+    ]
+  }
+}

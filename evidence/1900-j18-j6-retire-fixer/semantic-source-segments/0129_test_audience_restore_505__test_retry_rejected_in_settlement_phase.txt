@@ -1,0 +1,21 @@
+# FILE: tests/test_audience_restore_505.py
+# NAME: test_retry_rejected_in_settlement_phase
+# LINE: 483-497
+# FLAGS: helper_or_private_call
+# KIND: py
+
+def test_retry_rejected_in_settlement_phase(restore_env):
+    env = restore_env
+    db, state, content = env.db, env.state, env.content
+    minister = _active_minister(db, content)
+    an.open_night(db, state, location="乾清宫", time_of_day="戌时")
+    _start_generating_turn(db, state, minister, "剿抚孰先？")
+    db.reconcile_interrupted_chat_turns()
+    rt = _retry_runtime(db, state, minister)
+    rt.session.state.turn_phase = next(iter(FRONT_HALF_DONE_PHASES))
+    with pytest.raises(HTTPException):
+        rt.retry_interrupted_reply(minister)
+    # 相位门先于生成/落库：无回话落下。
+    assert db.conn.execute(
+        "SELECT COUNT(*) c FROM chat_messages WHERE role='minister'"
+    ).fetchone()["c"] == 0

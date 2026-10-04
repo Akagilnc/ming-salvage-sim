@@ -1,0 +1,28 @@
+# FILE: tests/test_llm_channel_config.py
+# NAME: test_create_chat_model_omits_default_headers_when_empty
+# LINE: 257-278
+# FLAGS: assert_text_compare_or_match,assert_count,mock_or_patch_present
+# KIND: py
+
+def test_create_chat_model_omits_default_headers_when_empty(monkeypatch):
+    """#1794：空表＝现状——不向底层塞 default_headers。"""
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    captured: list = []
+    real = llm_model.OpenAIChat
+
+    def spy(*args, **kwargs):
+        captured.append(kwargs)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(llm_model, "OpenAIChat", spy)
+    cfg = LLMConfig(
+        api_key="sk-test",
+        base_url="https://api.example.com/v1",
+        model="gpt-test",
+        channel="api",
+    )
+
+    create_chat_model(cfg)
+
+    assert len(captured) == 1
+    assert "default_headers" not in captured[0]

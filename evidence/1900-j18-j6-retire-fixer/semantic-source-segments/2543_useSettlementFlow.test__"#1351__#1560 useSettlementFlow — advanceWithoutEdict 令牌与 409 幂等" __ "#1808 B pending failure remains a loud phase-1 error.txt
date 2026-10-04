@@ -1,0 +1,38 @@
+# FILE: web/src/useSettlementFlow.test.tsx
+# NAME: "#1351/#1560 useSettlementFlow — advanceWithoutEdict 令牌与 409 幂等" / "#1808 B pending failure remains a loud phase-1 error without a recovery panel"
+# LINE: 405-436
+# FLAGS: web_mock_spy_or_calls
+# KIND: web
+
+  it("#1808 B pending failure remains a loud phase-1 error without a recovery panel", async () => {
+    const FAIL_MSG = "退朝失败：欠账未落库（替身）。";
+    vi.stubGlobal("fetch", vi.fn(async () => ({
+      ok: false,
+      status: 500,
+      statusText: "Error",
+      json: async () => ({
+        detail: {
+          message: FAIL_MSG,
+          pending_action_failures: [{
+            action_id: "a1",
+            minister_name: "袁崇焕",
+            summary: "落库失败",
+          }],
+        },
+      }),
+    })));
+
+    const { host, hookRef, cleanup } = mountHarness({
+      loadState: async () => preClickState,
+      initial: preClickState,
+    });
+
+    await act(async () => {
+      await hookRef.current!.advanceWithoutEdict();
+    });
+
+    expect(host.querySelector("[data-testid=error]")?.textContent).toBe(FAIL_MSG);
+    expect(hookRef.current!.settlementHudError).toBe(FAIL_MSG);
+    expect(host.querySelector("[data-testid=busy]")?.textContent).toBe("");
+    cleanup();
+  });

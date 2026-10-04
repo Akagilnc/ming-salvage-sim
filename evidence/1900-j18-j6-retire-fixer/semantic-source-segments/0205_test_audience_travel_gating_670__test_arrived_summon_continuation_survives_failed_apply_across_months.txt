@@ -1,0 +1,80 @@
+# FILE: tests/test_audience_travel_gating_670.py
+# NAME: test_arrived_summon_continuation_survives_failed_apply_across_months
+# LINE: 445-518
+# FLAGS: assert_text_compare_or_match,mock_or_patch_present,helper_or_private_call
+# KIND: py
+
+def test_arrived_summon_continuation_survives_failed_apply_across_months(game, monkeypatch):
+    """#670 T-D：失败、无续启、续启的三个玩家过月边界均保留召对事实。"""
+    from tests.test_month_chain_1843 import _prepare_player_month
+    from tests.test_due_review_621 import _settle_empty_month
+
+    db, state, content = game
+    person = _set_place(
+        game, "洪承畴", location="shaanxi", transit_to="henan", transit_start_turn=0,
+    )
+    night_id = int(an.open_night(db, state)["id"])
+    origin = "command:arrived-1"
+    an.record_summon_in_transit(
+        db, night_id, person.name, origin_id=origin,
+    )
+
+    assert _arrive_at_destination(game, person.name) == [
+        {"name": person.name, "location": "henan"}
+    ]
+    assert _travel_row(db, person.name)["location"] == "henan"
+    assert _travel_row(db, person.name)["transit_to"] == ""
+
+    import ming_sim.issues as issues_mod
+    real_apply = issues_mod.apply_score_extraction
+    attempts = 0
+    continuation = {"人物变更": [{
+        "name": person.name, "动作": "行止", "transit_to": "beizhili",
+        "origin_ref": "盘面自发",
+    }]}
+
+    def fail_once(*args, **kwargs):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise RuntimeError("injected continuation applier failure")
+        return real_apply(*args, **kwargs)
+
+    # 落账经 declaration_dispatch → issues.apply_score_extraction。
+    monkeypatch.setattr(issues_mod, "apply_score_extraction", fail_once)
+
+    def advance_continuation():
+        session = _prepare_player_month(
+            db, state, content, monkeypatch, world=lambda *_a, **_k: "世界段",
+            translate=lambda *_a, **_k: {"effects": continuation},
+        )
+        session.resolve_turn(allow_empty_decree=True)
+        db.save_turn_report(state, "邸报", public_body="邸报")
+        session.resolve_turn(allow_empty_decree=True)
+
+    failed_turn = int(state.turn)
+    from ming_sim.exceptions import SettlementAbort
+    with pytest.raises(SettlementAbort) as excinfo:
+        advance_continuation()
+    assert isinstance(excinfo.value.__cause__, RuntimeError)
+    assert "injected continuation applier failure" in str(excinfo.value.__cause__)
+
+    assert [row["origin_id"] for row in an.list_unsettled_summons(db)] == [origin]
+    assert _travel_row(db, person.name)["location"] == "henan"
+    assert _travel_row(db, person.name)["transit_to"] == ""
+    assert int(state.turn) == failed_turn
+
+    # 无续启成功月：玩家入口推进一月；不得手推 turn / 手调结清。
+    noop_turn = int(state.turn)
+    _settle_empty_month(db, state, content, monkeypatch)
+    assert int(state.turn) == noop_turn + 1
+    assert [row["origin_id"] for row in an.list_unsettled_summons(db)] == [origin]
+    assert _travel_row(db, person.name)["location"] == "henan"
+    assert _travel_row(db, person.name)["transit_to"] == ""
+
+    # 续启成功月：只经玩家过月；结清证明不得手调 helper。
+    advance_continuation()
+    assert an.list_unsettled_summons(db) == []
+    after = _travel_row(db, person.name)
+    assert after["location"] == "henan"
+    assert after["transit_to"] == "beizhili"

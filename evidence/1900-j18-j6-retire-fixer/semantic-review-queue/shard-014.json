@@ -1,0 +1,823 @@
+{
+  "shard": 14,
+  "files": [
+    "tests/test_gazette_author_1862.py",
+    "tests/test_grant_reconciliation_567.py",
+    "tests/test_highlight_judge_544.py",
+    "tests/test_history_decree_text_1843_reopen.py",
+    "tests/test_identity_seed_488.py",
+    "tests/test_impeachment_surge_655.py",
+    "tests/test_issue_decree_token_1277.py",
+    "tests/test_issue_entities.py",
+    "tests/test_junxin_alias_loyalty_313.py",
+    "tests/test_junxin_monthly_tick_314.py"
+  ],
+  "count": 66,
+  "items": [
+    {
+      "file": "tests/test_gazette_author_1862.py",
+      "name": "test_author_waits_until_rescript_is_done",
+      "line": 60,
+      "end": 84,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_gazette_author_1862.py",
+      "name": "test_author_archives_own_title_and_same_run_advances",
+      "line": 87,
+      "end": 418,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_grant_reconciliation_567.py",
+      "name": "test_escort_progress_stays_on_the_secret_order_and_survives_restore",
+      "line": 107,
+      "end": 133,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_grant_reconciliation_567.py",
+      "name": "test_close_merges_recon_note_without_second_treasury_debit",
+      "line": 136,
+      "end": 168,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_grant_reconciliation_567.py",
+      "name": "test_failed_close_reconciles_only_when_the_silver_already_left",
+      "line": 171,
+      "end": 262,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_grant_reconciliation_567.py",
+      "name": "test_settle_entry_lands_engine_arrival_per_route",
+      "line": 265,
+      "end": 290,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_grant_reconciliation_567.py",
+      "name": "test_empty_targets_no_recon_rows",
+      "line": 293,
+      "end": 301,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_grant_reconciliation_567.py",
+      "name": "test_normal_close_same_turn_still_reconciles",
+      "line": 304,
+      "end": 319,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_grant_reconciliation_567.py",
+      "name": "test_prior_turn_close_is_not_re_reconciled",
+      "line": 322,
+      "end": 334,
+      "flags": [
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_grant_reconciliation_567.py",
+      "name": "test_1745_full_chain_player_state_no_fake_awaiting",
+      "line": 337,
+      "end": 354,
+      "flags": [
+        "helper_or_private_call",
+        "retired_or_meta_marker"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_grant_reconciliation_567.py",
+      "name": "test_web_state_payload_after_settle",
+      "line": 357,
+      "end": 402,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_highlight_judge_544.py",
+      "name": "test_run_highlight_judge_timeout_and_exception_degrade_silently",
+      "line": 30,
+      "end": 58,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_highlight_judge_544.py",
+      "name": "test_run_highlight_judge_success_returns_phrases",
+      "line": 69,
+      "end": 79,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_highlight_judge_544.py",
+      "name": "test_build_chat_projection_includes_minister_highlights",
+      "line": 106,
+      "end": 122,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_highlight_judge_544.py",
+      "name": "test_read_night_scroll_includes_minister_highlights",
+      "line": 125,
+      "end": 144,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_highlight_judge_544.py",
+      "name": "test_highlights_survive_db_restore",
+      "line": 147,
+      "end": 175,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_highlight_judge_544.py",
+      "name": "test_chat_stream_done_before_highlights_and_degrade",
+      "line": 200,
+      "end": 224,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_highlight_judge_544.py",
+      "name": "test_chat_stream_slow_success_attaches_after_done",
+      "line": 227,
+      "end": 271,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_highlight_judge_544.py",
+      "name": "test_chat_nonstream_folds_judge_within_timeout",
+      "line": 274,
+      "end": 306,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_highlight_judge_544.py",
+      "name": "test_chat_nonstream_timeout_returns_reply_without_highlights",
+      "line": 309,
+      "end": 359,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_history_decree_text_1843_reopen.py",
+      "name": "test_history_turn_reads_decree_text_from_resolve_context",
+      "line": 6,
+      "end": 23,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "mock_or_patch_present"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_identity_seed_488.py",
+      "name": "test_identity_and_seed_guilt_are_loaded_from_roster_and_seeded",
+      "line": 11,
+      "end": 29,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_identity_seed_488.py",
+      "name": "test_identity_and_seed_guilt_survive_restore",
+      "line": 32,
+      "end": 47,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_identity_seed_488.py",
+      "name": "test_existing_save_migrates_seed_identity_and_inserts_missing_roster_member",
+      "line": 50,
+      "end": 75,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_identity_seed_488.py",
+      "name": "test_required_dig_7_seed_roster_entries_are_persisted",
+      "line": 92,
+      "end": 107,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_identity_seed_488.py",
+      "name": "test_roster_has_no_cross_faction_aliases",
+      "line": 112,
+      "end": 118,
+      "flags": [
+        "assert_count"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_identity_seed_488.py",
+      "name": "test_roster_rejects_alias_colliding_with_other_faction_name",
+      "line": 121,
+      "end": 126,
+      "flags": [
+        "mock_or_patch_present"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_identity_seed_488.py",
+      "name": "test_roster_rejects_duplicate_canonical_name",
+      "line": 129,
+      "end": 135,
+      "flags": [
+        "mock_or_patch_present"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_identity_seed_488.py",
+      "name": "test_seed_schema_rejects_invalid_values",
+      "line": 146,
+      "end": 151,
+      "flags": [
+        "mock_or_patch_present"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_impeachment_surge_655.py",
+      "name": "test_delegator_only_responsible_is_eligible_target",
+      "line": 84,
+      "end": 112,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_impeachment_surge_655.py",
+      "name": "test_knower_departure_does_not_veto_active_responsible_dossier",
+      "line": 115,
+      "end": 141,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_impeachment_surge_655.py",
+      "name": "test_apply_accepts_only_current_candidate_closed_target_and_free_text",
+      "line": 146,
+      "end": 165,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_impeachment_surge_655.py",
+      "name": "test_dynamic_apply_rejects_blank_title_wrong_faction_and_outside_target",
+      "line": 168,
+      "end": 180,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_impeachment_surge_655.py",
+      "name": "test_dynamic_targets_are_roleless_deduplicated_without_participant_roles",
+      "line": 183,
+      "end": 207,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_impeachment_surge_655.py",
+      "name": "test_dynamic_apply_deduplicates_same_candidate_within_input_snapshot",
+      "line": 210,
+      "end": 227,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_impeachment_surge_655.py",
+      "name": "test_target_roster_survives_generic_issue_restore",
+      "line": 230,
+      "end": 251,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_impeachment_surge_655.py",
+      "name": "test_dynamic_apply_rejects_non_text_free_fields_without_coercion",
+      "line": 254,
+      "end": 271,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_impeachment_surge_655.py",
+      "name": "test_leverage_boundary_and_authoritative_input_snapshot",
+      "line": 274,
+      "end": 299,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_impeachment_surge_655.py",
+      "name": "test_transformed_candidate_fails_closed_outside_window_or_without_liability",
+      "line": 302,
+      "end": 310,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_issue_decree_token_1277.py",
+      "name": "test_double_issue_same_token_second_is_409_turn_plus_one",
+      "line": 75,
+      "end": 109,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_issue_entities.py",
+      "name": "test_resolve_applies_entities_through_tracker",
+      "line": 20,
+      "end": 84,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_issue_entities.py",
+      "name": "test_resolve_rejects_bad_entities_at_tracker_entry",
+      "line": 88,
+      "end": 111,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present",
+        "helper_or_private_call",
+        "retired_or_meta_marker"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_issue_entities.py",
+      "name": "test_apply_score_extraction_splits_bad_nested_entity",
+      "line": 114,
+      "end": 117,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_issue_entities.py",
+      "name": "test_apply_score_extraction_accepts_flat_faction_scalar",
+      "line": 120,
+      "end": 126,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_issue_entities.py",
+      "name": "test_apply_score_extraction_rejects_nondict_power_second_level_per_entity",
+      "line": 129,
+      "end": 132,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_issue_entities.py",
+      "name": "test_apply_score_extraction_rejects_nondict_list_item_per_item",
+      "line": 135,
+      "end": 138,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_issue_entities.py",
+      "name": "test_apply_score_extraction_tolerates_null_field",
+      "line": 141,
+      "end": 144,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_issue_entities.py",
+      "name": "test_apply_score_extraction_rejects_unknown_top_level_key",
+      "line": 147,
+      "end": 154,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_issue_entities.py",
+      "name": "test_new_issue_nondict_effect_fields_do_not_crash",
+      "line": 157,
+      "end": 166,
+      "flags": [
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_issue_entities.py",
+      "name": "test_inertia_terminal_applies_entities",
+      "line": 190,
+      "end": 199,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_issue_entities.py",
+      "name": "test_inertia_natural_resolve_applies_entities",
+      "line": 202,
+      "end": 208,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_issue_entities.py",
+      "name": "test_inertia_natural_resolve_applies_unified_person_change_with_bound_content",
+      "line": 211,
+      "end": 220,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_junxin_alias_loyalty_313.py",
+      "name": "test_junxin_alias_maps_to_loyalty_not_morale",
+      "line": 31,
+      "end": 51,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_junxin_alias_loyalty_313.py",
+      "name": "test_shiqi_alias_still_maps_to_morale",
+      "line": 54,
+      "end": 74,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_junxin_alias_loyalty_313.py",
+      "name": "test_junxin_and_shiqi_aliases_independent",
+      "line": 77,
+      "end": 92,
+      "flags": [
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_junxin_monthly_tick_314.py",
+      "name": "test_fractional_arrears_no_recovery",
+      "line": 95,
+      "end": 106,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call",
+        "retired_or_meta_marker"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_junxin_monthly_tick_314.py",
+      "name": "test_full_pay_month_restores_plus5",
+      "line": 112,
+      "end": 122,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call",
+        "retired_or_meta_marker"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_junxin_monthly_tick_314.py",
+      "name": "test_arrears_monthly_trajectory_dead_band_then_minus5",
+      "line": 125,
+      "end": 143,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call",
+        "retired_or_meta_marker"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_junxin_monthly_tick_314.py",
+      "name": "test_clamp_bottom_at_zero_and_top_at_hundred",
+      "line": 146,
+      "end": 161,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call",
+        "retired_or_meta_marker"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_junxin_monthly_tick_314.py",
+      "name": "test_powder_keg_vs_elite_tolerance_by_initial_value",
+      "line": 164,
+      "end": 177,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call",
+        "retired_or_meta_marker"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_junxin_monthly_tick_314.py",
+      "name": "test_tusi_and_non_ming_untouched",
+      "line": 180,
+      "end": 199,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call",
+        "retired_or_meta_marker"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_junxin_monthly_tick_314.py",
+      "name": "test_self_funded_army_untouched",
+      "line": 202,
+      "end": 212,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call",
+        "retired_or_meta_marker"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_junxin_monthly_tick_314.py",
+      "name": "test_substrate_hub_path_loyalty_tier",
+      "line": 215,
+      "end": 234,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_junxin_monthly_tick_314.py",
+      "name": "test_substrate_hub_pure_province_source_loyalty_regression",
+      "line": 237,
+      "end": 270,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_junxin_monthly_tick_314.py",
+      "name": "test_substrate_hub_hybrid_source_loyalty_regression",
+      "line": 273,
+      "end": 304,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    },
+    {
+      "file": "tests/test_junxin_monthly_tick_314.py",
+      "name": "test_zero_manpower_army_no_crash_no_tick",
+      "line": 307,
+      "end": 315,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call",
+        "retired_or_meta_marker"
+      ],
+      "kind": "py",
+      "segment": "evidence/1900-j18-j6-retire-fixer/j6-candidate-segments/None"
+    }
+  ]
+}

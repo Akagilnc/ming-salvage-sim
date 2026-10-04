@@ -1,0 +1,30 @@
+# FILE: tests/test_audience_travel_gating_670.py
+# NAME: test_cli_initial_selection_rejects_unknown_unregistered_person
+# LINE: 150-173
+# FLAGS: assert_count,mock_or_patch_present,helper_or_private_call
+# KIND: py
+
+def test_cli_initial_selection_rejects_unknown_unregistered_person(game, monkeypatch):
+    """#670：CLI 初选未知人物不得临时旁路入殿，须 ADR 0038 持久入册后再 admission。"""
+    from ming_sim.cli import terminal
+
+    sess = _session(game)
+    db, state, _content = game
+    sess.state = state
+    unknown = "乌有先生甲"
+    assert unknown not in sess.content.characters
+    answers = iter([unknown, "quit"])
+    notices: list[str] = []
+    monkeypatch.setattr("builtins.input", lambda *_a, **_k: next(answers))
+    monkeypatch.setattr(
+        "builtins.print", lambda *args, **_k: notices.append(" ".join(map(str, args))),
+    )
+
+    assert terminal.choose_minister(sess) is None
+    assert unknown not in sess.temporary_characters
+    assert an.list_unsettled_summons(db) == []
+    assert _chat_turn_count(db) == 0
+    assert _chat_message_count(db) == 0
+    assert db.conn.execute(
+        "SELECT COUNT(*) AS n FROM characters WHERE name=?", (unknown,),
+    ).fetchone()["n"] == 0

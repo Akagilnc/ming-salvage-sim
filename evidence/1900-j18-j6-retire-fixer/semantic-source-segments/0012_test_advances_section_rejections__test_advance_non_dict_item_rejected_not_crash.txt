@@ -1,0 +1,14 @@
+# FILE: tests/test_advances_section_rejections.py
+# NAME: test_advance_non_dict_item_rejected_not_crash
+# LINE: 32-39
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_advance_non_dict_item_rejected_not_crash(read_game, bad_item):
+    db, state, _ = read_game
+    # 非 dict adv 项（advances:[null]/标量）：adv.get 会抛 AttributeError 崩整月——逐项拒收守门。
+    out = I.apply_issue_tracker_output(db, state, {"advances": [bad_item]})
+    rej = _rejected(out)
+    assert len(rej) == 1
+    assert rej[0]["category"] == "invalid_enum"
+    assert rej[0]["reason"]

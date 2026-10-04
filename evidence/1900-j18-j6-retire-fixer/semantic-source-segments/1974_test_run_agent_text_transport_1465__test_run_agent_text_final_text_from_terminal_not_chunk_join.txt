@@ -1,0 +1,23 @@
+# FILE: tests/test_run_agent_text_transport_1465.py
+# NAME: test_run_agent_text_final_text_from_terminal_not_chunk_join
+# LINE: 36-52
+# FLAGS: mock_or_patch_present,helper_or_private_call
+# KIND: py
+
+def test_run_agent_text_final_text_from_terminal_not_chunk_join(monkeypatch):
+    """chunk 含畸形片段时，终文仍取 SDK 终包完整 content（严格 JSON 真源）。"""
+    monkeypatch.setattr(agents_mod, "_dump_llm_messages", lambda *_a, **_k: None)
+    good = '{"国势变化": {"民心": -1}, "钱粮收支": []}'
+
+    class _ChunkGarbageTerminalGood:
+        def run(self, *_a, **_k):
+            yield RunContent('{"partial":')
+            yield RunContent(" NOT_JSON_GARBAGE ")
+            yield RunCompletedEvent(content=None)
+            yield RunOutput(good)
+
+    text = agents_mod.run_agent_text(
+        _ChunkGarbageTerminalGood(), "payload", tag="extractor/internal",
+    )
+    assert text == good
+    assert json.loads(text)["国势变化"]["民心"] == -1

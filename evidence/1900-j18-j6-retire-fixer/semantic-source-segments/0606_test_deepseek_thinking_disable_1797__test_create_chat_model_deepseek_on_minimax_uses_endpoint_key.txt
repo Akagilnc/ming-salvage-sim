@@ -1,0 +1,17 @@
+# FILE: tests/test_deepseek_thinking_disable_1797.py
+# NAME: test_create_chat_model_deepseek_on_minimax_uses_endpoint_key
+# LINE: 54-64
+# FLAGS: assert_text_compare_or_match
+# KIND: py
+
+def test_create_chat_model_deepseek_on_minimax_uses_endpoint_key(monkeypatch):
+    """DeepSeek 系 × minimax → 端点既有键 thinking.disabled。"""
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    cfg = LLMConfig(
+        api_key="sk-test",
+        base_url="https://api.minimaxi.com/v1",
+        model="deepseek-v4-flash-0731",
+        channel="api",
+    )
+    model = create_chat_model(cfg, enable_thinking=False)
+    assert model.extra_body == {"thinking": {"type": "disabled"}}

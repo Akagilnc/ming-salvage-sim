@@ -1,0 +1,30 @@
+# FILE: web/src/components/modals.test.tsx
+# NAME: "ChatModal — one-night audience scroll (#1849)" / "refreshes the open scroll when a late translation finishes after the reply"
+# LINE: 1047-1070
+# FLAGS: web_mock_spy_or_calls
+# KIND: web
+
+  it("refreshes the open scroll when a late translation finishes after the reply", async () => {
+    vi.useFakeTimers();
+    let pending = true;
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(async () => ({ ok: true, json: async () => ({
+      night_id: 23,
+      messages: [],
+      protagonist: pending ? "洪承畴" : "许誉卿",
+      roster: [{ name: "洪承畴", present: pending }],
+      translation_pending: pending,
+    }) })));
+    try {
+      const host = renderModal({ minister: xu, ministers: [hong, xu], portraitPrefix: "minister_", currentNightId: 23 });
+      await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+      expect(host.querySelector(".chat-portrait-wrap img")?.getAttribute("src")).toBe("/portraits/minister_hong.png");
+      pending = false;
+      await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+      expect(host.querySelector(".chat-portrait-wrap img")?.getAttribute("src")).toBe("/portraits/minister_hong.png");
+      await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+      expect(host.querySelector(".chat-portrait-wrap img")?.getAttribute("src")).toBe("/portraits/minister_xu.png");
+      expect(host.querySelector('[data-roster-name="洪承畴"]')?.getAttribute("data-presence")).toBe("departed");
+    } finally {
+      vi.useRealTimers();
+    }
+  });

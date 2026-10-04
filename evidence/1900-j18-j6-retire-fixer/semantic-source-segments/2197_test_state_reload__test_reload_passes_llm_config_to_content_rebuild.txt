@@ -1,0 +1,21 @@
+# FILE: tests/test_state_reload.py
+# NAME: test_reload_passes_llm_config_to_content_rebuild
+# LINE: 269-283
+# FLAGS: mock_or_patch_present,helper_or_private_call
+# KIND: py
+
+def test_reload_passes_llm_config_to_content_rebuild(game, monkeypatch):
+    """content 重建走 restore 同参：llm_config 必传（cmr S5 r3，缺省会降级「待铨」）。"""
+    import ming_sim.session as session_mod
+    from ming_sim.decree import reload_state_from_db
+    db, state, content = game
+    db.llm_config = object()  # 哨兵
+
+    seen = {}
+    def _spy(content_arg, db_arg, llm_config=None):
+        seen["llm_config"] = llm_config
+    monkeypatch.setattr(session_mod, "_sync_offices_from_db_impl", _spy)
+
+    reload_state_from_db(db, state, content=content)
+
+    assert seen["llm_config"] is db.llm_config

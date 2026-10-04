@@ -1,0 +1,26 @@
+# FILE: tests/test_qa_1281_issue_audience_case_facts.py
+# NAME: test_tuple_audience_container_fails_loud_from_content_fallback
+# LINE: 142-161
+# FLAGS: helper_or_private_call
+# KIND: py
+
+def test_tuple_audience_container_fails_loud_from_content_fallback(game, tmp_path):
+    """Content-path audiences must be list[str]; tuple is not a legal container."""
+    db, state, content = game
+    row = _issue_row(db)
+    content_only_ref = "content-only-tuple-audience"
+    db.conn.execute(
+        "UPDATE issues SET origin_ref=? WHERE id=?",
+        (content_only_ref, int(row["id"])),
+    )
+    source = content.event_by_id[str(row["origin_ref"])]
+    content.event_by_id[content_only_ref] = replace(
+        source, id=content_only_ref, audiences=(AUDIENCE_NAME,),  # type: ignore[arg-type]
+    )
+    try:
+        with pytest.raises(TypeError):
+            prepare_character_materials(
+                db, state, content.characters[AUDIENCE_NAME], dest_root=tmp_path / "materials",
+            )
+    finally:
+        content.event_by_id.pop(content_only_ref, None)

@@ -1,0 +1,35 @@
+# FILE: tests/test_qa_e1_numeric_presentation.py
+# NAME: test_renaming_army_pay_budget_line_does_not_double_debit
+# LINE: 56-84
+# FLAGS: assert_text_compare_or_match,assert_count,mock_or_patch_present,helper_or_private_call
+# KIND: py
+
+def test_renaming_army_pay_budget_line_does_not_double_debit(game, monkeypatch):
+    """改 army_pay 显示名不得让定额路径再扣一笔。"""
+    import ming_sim.flows as flows_mod
+
+    db, state, _ = game
+    assert db.fiscal_engine() == "substrate_hub"
+    real = flows_mod.compute_budget_lines
+
+    def _renamed(db_, state_, **kwargs):
+        budget = real(db_, state_, **kwargs)
+        for row in budget["国库"]["expense"]:
+            if row.get("budget_key") == "army_pay":
+                row["name"] = "完全不同的军饷科目名"
+        return budget
+
+    monkeypatch.setattr(flows_mod, "compute_budget_lines", _renamed)
+    flow_rows = apply_fixed_period_flows(db, state)
+    renamed = "完全不同的军饷科目名"
+    assert not any(
+        row.get("account") == "国库" and row.get("category") == renamed
+        for row in flow_rows
+    )
+    assert db.conn.execute(
+        "SELECT COUNT(*) AS n FROM economy_ledger "
+        "WHERE account = '国库' AND category = ?", (renamed,),
+    ).fetchone()["n"] == 0
+    hub_rows = [row for row in flow_rows if row.get("category") == "边饷hub"]
+    assert len(hub_rows) == 1
+    assert int(hub_rows[0]["paid"]) > 0

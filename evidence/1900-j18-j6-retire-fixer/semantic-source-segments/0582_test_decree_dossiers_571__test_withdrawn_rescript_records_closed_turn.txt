@@ -1,0 +1,25 @@
+# FILE: tests/test_decree_dossiers_571.py
+# NAME: test_withdrawn_rescript_records_closed_turn
+# LINE: 1923-1941
+# FLAGS: assert_text_compare_or_match
+# KIND: py
+
+def test_withdrawn_rescript_records_closed_turn(game):
+    from ming_sim.db import GameDB
+
+    db, state, content = game
+    dossier_id = db.create_decree_dossier(
+        state, action_type="policy", decree_text="暂缓河工",
+        target_kind="issue", target_id="river-works",
+    )
+    db.record_dossier_decision(
+        dossier_id, "rejected", blocked_layer="six_offices", reason="封驳",
+    )
+    db.record_dossier_decision(dossier_id, "withdrawn", reason="收回成命")
+    restored = GameDB(db.path, content=content)
+    try:
+        dossier = restored.get_decree_dossier(dossier_id)
+        assert dossier["status"] == "closed"
+        assert dossier["closed_turn"] == state.turn
+    finally:
+        restored.close()

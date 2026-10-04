@@ -1,0 +1,59 @@
+# FILE: tests/test_audience_translate_1837_reopen.py
+# NAME: test_rush_commitment_stages_pending_催办
+# LINE: 405-457
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_rush_commitment_stages_pending_催办(game, monkeypatch):
+    db, state, content = game
+    minister = _active_minister(db, content)
+    cur = db.conn.execute(
+        "INSERT INTO issues(kind, title, status, stages_json, origin_turn) "
+        "VALUES ('差务', '分段试办', 'active', ?, ?)",
+        (
+            json.dumps([
+                {"stage_idx": 0, "due_turn": int(state.turn) + 2, "criterion_text": "首段"},
+                {"stage_idx": 1, "due_turn": int(state.turn) + 3, "criterion_text": "次段"},
+            ], ensure_ascii=False),
+            int(state.turn),
+        ),
+    )
+    issue_id = int(cur.lastrowid)
+    db.conn.commit()
+    reason = "限期下月办结" * 25
+    decl = {
+        "rushes": [{
+            "target_kind": "commitment",
+            "target_id": issue_id,
+            "stage_idx": 1,
+            "deadline_months": 1,
+            "reason": reason,
+        }],
+    }
+    result = _scene_declaration(db, state, content, monkeypatch,
+                                "分段试办限期下月办结", decl, minister_name=minister.name)
+    assert result.rushes.rejected == []
+    assert len(result.rushes.applied) == 1
+    row = db.conn.execute(
+        "SELECT kind, action, target_id, payload_json FROM pending_actions WHERE id=?",
+        (result.rushes.applied[0]["id"],),
+    ).fetchone()
+    assert row["kind"] == "commitment" and row["action"] == "催办"
+    assert int(row["target_id"]) == issue_id
+    payload = json.loads(row["payload_json"])
+    assert int(payload["stage_idx"]) == 1
+    assert int(payload["deadline_months"]) == 1
+    assert payload["reason"] == reason
+    db.commit_pending_actions(state, content=content)
+    from ming_sim.staged_commitment import normalize_commitment_stages
+    stages = normalize_commitment_stages(db.conn.execute(
+        "SELECT stages_json FROM issues WHERE id=?", (issue_id,)
+    ).fetchone()["stages_json"])
+    assert int(stages[0]["due_turn"]) == int(state.turn) + 2
+    assert int(stages[1]["due_turn"]) == int(state.turn) + 1
+    committed = db.conn.execute(
+        "SELECT payload_json FROM pending_actions WHERE id=? AND status='committed'",
+        (result.rushes.applied[0]["id"],),
+    ).fetchone()
+    assert committed is not None
+    assert json.loads(committed["payload_json"])["reason"] == reason

@@ -1,0 +1,180 @@
+{
+  "source_path": "tests/test_faction_brew_637.py",
+  "member_count": 12,
+  "members": [
+    {
+      "idx": 883,
+      "file": "tests/test_faction_brew_637.py",
+      "name": "test_canonical_projection_intersects_existing_factions_only",
+      "line": 86,
+      "end": 99,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0883_test_faction_brew_637__test_canonical_projection_intersects_existing_factions_only.txt",
+      "source_path": "tests/test_faction_brew_637.py"
+    },
+    {
+      "idx": 884,
+      "file": "tests/test_faction_brew_637.py",
+      "name": "test_any_endpoint_hit_selects_and_same_faction_dedups",
+      "line": 102,
+      "end": 117,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0884_test_faction_brew_637__test_any_endpoint_hit_selects_and_same_faction_dedups.txt",
+      "source_path": "tests/test_faction_brew_637.py"
+    },
+    {
+      "idx": 885,
+      "file": "tests/test_faction_brew_637.py",
+      "name": "test_both_endpoints_different_factions_both_selected",
+      "line": 120,
+      "end": 139,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0885_test_faction_brew_637__test_both_endpoints_different_factions_both_selected.txt",
+      "source_path": "tests/test_faction_brew_637.py"
+    },
+    {
+      "idx": 886,
+      "file": "tests/test_faction_brew_637.py",
+      "name": "test_out_of_table_faction_and_unknown_person_never_projected",
+      "line": 142,
+      "end": 159,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0886_test_faction_brew_637__test_out_of_table_faction_and_unknown_person_never_projected.txt",
+      "source_path": "tests/test_faction_brew_637.py"
+    },
+    {
+      "idx": 887,
+      "file": "tests/test_faction_brew_637.py",
+      "name": "test_malformed_faction_output_degrades_and_keeps_old_summary_bytes",
+      "line": 248,
+      "end": 277,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0887_test_faction_brew_637__test_malformed_faction_output_degrades_and_keeps_old_summary_bytes.txt",
+      "source_path": "tests/test_faction_brew_637.py"
+    },
+    {
+      "idx": 888,
+      "file": "tests/test_faction_brew_637.py",
+      "name": "test_relation_and_faction_items_share_single_batch_in_parallel",
+      "line": 310,
+      "end": 328,
+      "flags": [
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0888_test_faction_brew_637__test_relation_and_faction_items_share_single_batch_in_parallel.txt",
+      "source_path": "tests/test_faction_brew_637.py"
+    },
+    {
+      "idx": 889,
+      "file": "tests/test_faction_brew_637.py",
+      "name": "test_zero_writes_to_factions_numeric_columns_across_all_seams",
+      "line": 333,
+      "end": 370,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0889_test_faction_brew_637__test_zero_writes_to_factions_numeric_columns_across_all_seams.txt",
+      "source_path": "tests/test_faction_brew_637.py"
+    },
+    {
+      "idx": 890,
+      "file": "tests/test_faction_brew_637.py",
+      "name": "test_new_events_preserve_source_target_equal_to_db_rows",
+      "line": 402,
+      "end": 424,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0890_test_faction_brew_637__test_new_events_preserve_source_target_equal_to_db_rows.txt",
+      "source_path": "tests/test_faction_brew_637.py"
+    },
+    {
+      "idx": 891,
+      "file": "tests/test_faction_brew_637.py",
+      "name": "test_authority_revoke_edge_reaches_holder_faction_with_emperor_target",
+      "line": 427,
+      "end": 480,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0891_test_faction_brew_637__test_authority_revoke_edge_reaches_holder_faction_with_emperor_target.txt",
+      "source_path": "tests/test_faction_brew_637.py"
+    },
+    {
+      "idx": 892,
+      "file": "tests/test_faction_brew_637.py",
+      "name": "test_new_event_fields_are_pure_data_no_prose_composition",
+      "line": 483,
+      "end": 505,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0892_test_faction_brew_637__test_new_event_fields_are_pure_data_no_prose_composition.txt",
+      "source_path": "tests/test_faction_brew_637.py"
+    },
+    {
+      "idx": 893,
+      "file": "tests/test_faction_brew_637.py",
+      "name": "test_source_faction_target_faction_equals_current_projection_and_nulls_and_no_concatenation",
+      "line": 510,
+      "end": 598,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0893_test_faction_brew_637__test_source_faction_target_faction_equals_current_projection_and_nulls_and_no_concatenation.txt",
+      "source_path": "tests/test_faction_brew_637.py"
+    },
+    {
+      "idx": 894,
+      "file": "tests/test_faction_brew_637.py",
+      "name": "test_faction_brew_retry_preserves_event_dates",
+      "line": 603,
+      "end": 641,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0894_test_faction_brew_637__test_faction_brew_retry_preserves_event_dates.txt",
+      "source_path": "tests/test_faction_brew_637.py"
+    }
+  ]
+}

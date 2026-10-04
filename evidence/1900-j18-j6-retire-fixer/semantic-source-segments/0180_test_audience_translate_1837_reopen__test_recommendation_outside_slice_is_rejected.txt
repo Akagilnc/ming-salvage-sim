@@ -1,0 +1,36 @@
+# FILE: tests/test_audience_translate_1837_reopen.py
+# NAME: test_recommendation_outside_slice_is_rejected
+# LINE: 302-331
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_recommendation_outside_slice_is_rejected(game):
+    db, state, content = game
+    night = open_night(db, state)
+    recommender = _active_minister(db, content, office_type="兵部")
+    hidden = next(
+        c for c in content.characters.values()
+        if c.name != recommender.name
+        and c.faction != recommender.faction
+        and c.office_type not in ("后宫", "宗藩")
+        and c.status == "active"
+    )
+    decl = normalize_audience_declaration({
+        "commissions": [{
+            "text": f"荐{hidden.name}为巡抚",
+            "appointment": {
+                "name": hidden.name, "office": "陕西巡抚", "appoint_action": "任命",
+            },
+            "recommendation": {
+                "recommender": recommender.name,
+                "reason": "臣闻其贤。",
+            },
+        }],
+    })
+    result = dispatch_declaration(
+        db, state, decl,
+        minister_name=recommender.name, night_id=int(night["id"]),
+    )
+    assert result.commissions.applied == []
+    assert result.commissions.rejected
+    assert result.commissions.rejected[0].category in {"invalid_state", "hallucinated_id"}

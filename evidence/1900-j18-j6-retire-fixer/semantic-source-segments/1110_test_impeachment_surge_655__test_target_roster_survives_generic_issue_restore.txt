@@ -1,0 +1,28 @@
+# FILE: tests/test_impeachment_surge_655.py
+# NAME: test_target_roster_survives_generic_issue_restore
+# LINE: 230-251
+# FLAGS: helper_or_private_call
+# KIND: py
+
+def test_target_roster_survives_generic_issue_restore(game, content):
+    db, state = game[:2]
+    _, owner, _ = _candidate_world(db, state)
+    candidate = gather_impeachment_surge_candidates(state, db)[0]
+    item = {"origin_kind": "impeachment_surge", "candidate_id": candidate["id"],
+            "faction_hint": candidate["faction_id"], "target_roster": [owner],
+            "title": "恢复标靶", "stage_text": "关库后仍可读"}
+    issue_id = apply_issue_tracker_output(
+        db, state, {"new_issues": [item]},
+        impeachment_surge_candidates_at_input=[candidate],
+    )["new_issues"][0]["issue_id"]
+    path = db.conn.execute("PRAGMA database_list").fetchone()[2]
+    db.close()
+
+    restored = GameDB(path, content)
+    try:
+        row = restored.conn.execute("SELECT * FROM issues WHERE id=?", (issue_id,)).fetchone()
+        assert json.loads(row["target_roster"]) == [owner]
+        assert json.loads(row["participants"]) == []
+        assert json.loads(row["participant_roster"]) == []
+    finally:
+        restored.close()

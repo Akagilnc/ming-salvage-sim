@@ -370,18 +370,14 @@ def test_worker_cleanup_double_failure_emits_original_error_end_and_logs(caplog)
     _assert_write_path_free(runtime)
 
 
-def test_worker_postprocess_exception_emits_error_end():
-    """#1353 r12：payload 成功后后处理（_spawn_pending_write_thread 高亮）抛错 → 单一出口 error→end。
+def test_worker_postprocess_exception_emits_error_end(monkeypatch):
+    """#1353 r12：payload 成功后高亮尾随 Thread.start 失败 → 单一出口 error→end。
 
     事件握手：有界消费必见 end；禁只走 finally 致消费者永阻。
-    #1842：殿上走 _scene_chat_stream_payload；后处理尾随仍为 spawn 缝。
     """
     db = _WorkerPathDB()
     runtime, minister = _base_runtime(db)
-    runtime.session.registry = SimpleNamespace(get=lambda _c, **_kw: None)
-    runtime.session._character = lambda name: minister_double(minister)
     runtime.session.close_night_after_chat_if_needed = None
-
     runtime._scene_chat_stream_payload = (  # type: ignore[method-assign]
         lambda *a, **k: {
             "answer": "臣已知晓。",
@@ -389,11 +385,27 @@ def test_worker_postprocess_exception_emits_error_end():
             "court_action": "",
         }
     )
+    monkeypatch.setattr(web_app, "run_highlight_judge", lambda **_k: ["边饷"])
 
-    def _boom_spawn(*_a, **_k):
-        raise RuntimeError("highlight trail boom")
+    orig_thread = web_app.threading.Thread
 
-    runtime._spawn_pending_write_thread = _boom_spawn  # type: ignore[method-assign]
+    class _FailHighlightThread:
+        def __init__(self, *a, **k):
+            self._real = orig_thread(*a, **k)
+            self.name = k.get("name") or getattr(self._real, "name", "")
+
+        def start(self):
+            if "highlight" in str(self.name):
+                raise RuntimeError("highlight postprocess failed")
+            return self._real.start()
+
+        def join(self, *a, **k):
+            return self._real.join(*a, **k)
+
+        def is_alive(self):
+            return self._real.is_alive()
+
+    monkeypatch.setattr(web_app.threading, "Thread", _FailHighlightThread)
 
     events: list[dict] = []
     done = threading.Event()
@@ -423,7 +435,7 @@ def test_worker_postprocess_exception_emits_error_end():
     err_idx = types.index("error")
     assert types[err_idx + 1] == "end", types
     err = next(e for e in events if e.get("type") == "error")
-    assert "highlight trail boom" in str(err.get("message") or ""), err
+    assert err.get("message"), err
     _assert_write_path_free(runtime)
 
 

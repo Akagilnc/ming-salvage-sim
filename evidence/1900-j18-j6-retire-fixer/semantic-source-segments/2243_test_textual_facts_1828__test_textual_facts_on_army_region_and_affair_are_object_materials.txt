@@ -1,0 +1,46 @@
+# FILE: tests/test_textual_facts_1828.py
+# NAME: test_textual_facts_on_army_region_and_affair_are_object_materials
+# LINE: 40-79
+# FLAGS: assert_text_compare_or_match
+# KIND: py
+
+def test_textual_facts_on_army_region_and_affair_are_object_materials(game):
+    db, state, _ = game
+    army_id = db.conn.execute("SELECT id FROM armies LIMIT 1").fetchone()["id"]
+    region_id = db.conn.execute("SELECT id FROM regions LIMIT 1").fetchone()["id"]
+
+    db.textual_facts.append(
+        subject_kind="army",
+        subject_id=army_id,
+        body="该营火器受潮，铳手暂不能齐放",
+        year=state.year,
+        period=state.period,
+        turn=state.turn,
+    )
+    db.textual_facts.append(
+        subject_kind="region",
+        subject_id=region_id,
+        body="城中疫气未散",
+        year=state.year,
+        period=state.period,
+        turn=state.turn,
+    )
+    db.textual_facts.append(
+        subject_kind="affair",
+        subject_id="ningyuan-escort",
+        body="护送银两已出京，尚未抵宁远",
+        year=state.year,
+        period=state.period,
+        turn=state.turn,
+    )
+
+    assert [f.body for f in db.textual_facts.readable_materials(subject_kind="army", subject_id=army_id)] == [
+        "该营火器受潮，铳手暂不能齐放",
+    ]
+    assert [f.body for f in db.textual_facts.readable_materials(subject_kind="region", subject_id=region_id)] == [
+        "城中疫气未散",
+    ]
+    assert [f.body for f in db.textual_facts.readable_materials(subject_kind="affair", subject_id="ningyuan-escort")] == [
+        "护送银两已出京，尚未抵宁远",
+    ]
+    assert db.textual_facts.readable_materials(subject_kind="character", subject_id="孙传庭") == ()

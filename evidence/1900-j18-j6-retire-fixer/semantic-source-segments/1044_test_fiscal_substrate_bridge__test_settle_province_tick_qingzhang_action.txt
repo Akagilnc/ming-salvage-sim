@@ -1,0 +1,21 @@
+# FILE: tests/test_fiscal_substrate_bridge.py
+# NAME: test_settle_province_tick_qingzhang_action
+# LINE: 4043-4057
+# FLAGS: helper_or_private_call
+# KIND: py
+
+def test_settle_province_tick_qingzhang_action(fresh_db):
+    row = fresh_db.conn.execute("SELECT fiscal FROM regions WHERE id='shaanxi'").fetchone()
+    fiscal = json.loads(str(row["fiscal"]))
+    fiscal["settle"]["st"]["省库库银"] = 50
+    fresh_db.conn.execute(
+        "UPDATE regions SET fiscal = ? WHERE id='shaanxi'",
+        (json.dumps(fiscal, ensure_ascii=False),),
+    )
+    fresh_db.conn.commit()
+    # 带 action 的桥：清丈挖隐田 300 → 万历见额官民田 +300、隐田 -300（土地守恒）
+    fresh_db.settle_province_tick("shaanxi", [{"type": "清丈", "cost": 2, "挖隐田": 300}])
+    fresh_db.conn.commit()
+    after = _read_settle(fresh_db)["st"]
+    assert abs(after["官民田"] - 3229.20151) < 1e-3, f"官民田 {after['官民田']} ≠ 3229.20151"
+    assert abs(after["隐田"] - 1236.6303) < 1e-3, f"隐田 {after['隐田']} ≠ 1236.6303"

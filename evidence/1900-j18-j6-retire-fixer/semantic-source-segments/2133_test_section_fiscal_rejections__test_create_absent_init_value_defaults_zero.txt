@@ -1,0 +1,19 @@
+# FILE: tests/test_section_fiscal_rejections.py
+# NAME: test_create_absent_init_value_defaults_zero
+# LINE: 234-246
+# FLAGS: assert_count
+# KIND: py
+
+def test_create_absent_init_value_defaults_zero(game):
+    """init_value 缺省 = 合法,走默认 0 照建(「缺省走默认」不被「在场即须合法」误伤,pin)。"""
+    db, state, content = game
+
+    run_settle(db, state, content, {
+        "fiscal_creates": [
+            {"origin_ref": "盘面自发", "key": "defaultinit_s3", "account": "内库", "direction": "income",
+             "display": "默认初值项", "reason": "缺省"}],
+    }, narrative="x", decree_text="y")
+
+    row = db.conn.execute(
+        "SELECT value FROM fiscal_config WHERE key='defaultinit_s3_base'").fetchone()
+    assert row is not None and row[0] == 0

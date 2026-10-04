@@ -8,7 +8,6 @@ attempt 从目录文件数推导，中止提示自带路径指引。
 from __future__ import annotations
 
 import json
-import threading
 import sqlite3
 from pathlib import Path
 
@@ -124,41 +123,58 @@ def test_mirror_writes_to_rejections_jsonl_path(game, tmp_path, monkeypatch):
     assert rows[0]["category"] == "invalid_enum"
     assert rows[0]["turn"] == 1
 
-def test_web_issue_endpoint_returns_structured_abort(monkeypatch):
-    """SettlementAbort 在 /api/decree/issue 回结构化非 500，玩家看得到指引（cmr S6 r2 codex）。"""
-    import asyncio
-    from fastapi import HTTPException
+def test_web_issue_endpoint_returns_structured_abort(game, monkeypatch):
+    """SettlementAbort 在 POST /api/decree/issue 回结构化非 500（cmr S6 r2 codex）。"""
+    from types import SimpleNamespace
+
+    from fastapi.testclient import TestClient
+
     import web_app
-    from ming_sim.exceptions import SettlementAbort
+    from ming_sim.session_write_queue import get_session_write_queue
 
-    class _StubSession:
-        def await_translations_before_month(self, after_drain=None):
-            if after_drain is not None:
-                after_drain()
+    db, state, content = game
+    pack_path = "/tmp/ming-error-pack-x"
+    stage = "extract"
 
-        def resolve_turn(
-            self, cheat_directive="", write_gate_already_held=False,
-        ):
-            raise SettlementAbort(
-                "本月结算失败，进度已保存，可重试。\n错误包已生成：/tmp/x\n请把该文件夹发给作者，以便排查。",
-                turn=3, stage="extract", error_pack_path="/tmp/x")
+    def _boom_resolve(**_k):
+        raise SettlementAbort(
+            "本月结算失败，进度已保存，可重试。",
+            turn=int(state.turn),
+            stage=stage,
+            error_pack_path=pack_path,
+        )
 
-    class _StubGame:
-        _write_gate = threading.Lock()
-        session = _StubSession()
-        class state:
-            ended = False
-            turn = 3
-            turn_phase = "summoning"
+    session = SimpleNamespace(
+        resolve_turn=_boom_resolve,
+        last_decree="",
+        current_phase=lambda: state.turn_phase,
+        await_translations_before_month=lambda after_drain=None: after_drain() if after_drain else None,
+    )
+    runtime = SimpleNamespace(
+        db=db,
+        state=state,
+        content=content,
+        session=session,
+        ended=False,
+        refresh_turn=lambda: None,
+        directive_rows=lambda: [],
+        state_payload=lambda: {"turn": {"turn": int(state.turn)}},
+        _write_gate=get_session_write_queue(session).write_gate,
+    )
+    monkeypatch.setattr(web_app, "get_game", lambda: runtime)
+    monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", lambda *_a, **_k: None)
+    monkeypatch.setattr(web_app, "_failed_secret_order_ids_for_turn", lambda *_a, **_k: set())
+    monkeypatch.setattr(web_app, "_new_secret_order_failure_payloads_for_turn", lambda *_a, **_k: [])
 
-    monkeypatch.setattr(web_app, "get_game", lambda: _StubGame())
-
-    with pytest.raises(HTTPException) as ei:
-        web_app.api_issue_decree()
-
-    assert ei.value.status_code != 500
-    assert "可重试" in str(ei.value.detail)
-    assert "错误包" in str(ei.value.detail)
+    resp = TestClient(web_app.app).post("/api/decree/issue", json={})
+    assert resp.status_code != 500, resp.text
+    assert resp.status_code == 409, resp.text
+    detail = resp.json().get("detail")
+    assert isinstance(detail, dict), detail
+    assert detail.get("stage") == stage
+    assert detail.get("error_pack_path") == pack_path
+    assert detail.get("turn") == int(state.turn)
+    assert detail.get("message")
 
 def test_next_attempt_skips_malformed_and_foreign_entries(game, monkeypatch, tmp_path):
     """attempt 推导跳过畸形后缀/他 turn/非目录项，取本 turn 数字后缀 max+1

@@ -1,0 +1,20 @@
+# FILE: tests/test_refugee_loop_652.py
+# NAME: test_standalone_absorption_is_durable_to_second_connection
+# LINE: 90-103
+# FLAGS: helper_or_private_call
+# KIND: py
+
+def test_standalone_absorption_is_durable_to_second_connection(game):
+    db, state, content = game
+    before = _pop(db, "流民", "shaanxi")
+    applied = apply_score_extraction(db, state, {
+        "bandit_absorptions": [{
+            "region_id": "shaanxi", "power_id": "bandit_li_zicheng",
+            "requested_count": 10_000, "origin_ref": "盘面自发",
+        }],
+    }, content, None)
+    assert applied["bandit_absorptions"][0]["actual_count"] == 10_000
+    with sqlite3.connect(_database_path(db)) as reopened:
+        assert reopened.execute(
+            "SELECT population FROM classes WHERE name='流民' AND region_id='shaanxi'"
+        ).fetchone()[0] == before - 10_000

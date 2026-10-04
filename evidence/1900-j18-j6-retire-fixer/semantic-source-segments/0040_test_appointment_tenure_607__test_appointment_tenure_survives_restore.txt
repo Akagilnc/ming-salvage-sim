@@ -1,0 +1,24 @@
+# FILE: tests/test_appointment_tenure_607.py
+# NAME: test_appointment_tenure_survives_restore
+# LINE: 178-195
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_appointment_tenure_survives_restore(game):
+    from ming_sim.content import GameContent
+    from ming_sim.db import GameDB
+
+    db, state, content = game
+    name = _active_minister(db)
+    _promulgate_appointment(db, state, content, name, "恢复验收官", "兼署")
+    path = db.conn.execute("PRAGMA database_list").fetchone()["file"]
+
+    restored = GameDB(path, GameContent.load())
+    try:
+        row = restored.conn.execute(
+            "SELECT appointment_tenure FROM character_offices WHERE character_name=?",
+            (name,),
+        ).fetchone()
+        assert row["appointment_tenure"] == "兼署"
+    finally:
+        restored.conn.close()

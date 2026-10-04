@@ -1,0 +1,54 @@
+# FILE: tests/test_executor_routing_721.py
+# NAME: test_pending_routing_rejection_lands_on_ensure_batch_seam
+# LINE: 333-380
+# FLAGS: assert_text_compare_or_match,assert_count,mock_or_patch_present,helper_or_private_call
+# KIND: py
+
+def test_pending_routing_rejection_lands_on_ensure_batch_seam(
+    env, monkeypatch, tmp_path,
+):
+    """#1769：confirm 只翻 draft；路由拒收落 ensure 批缝（坏旨 draft 留、好旨成案）。"""
+    db, state, _ = env
+    mirror = tmp_path / "ensure-routing.jsonl"
+    monkeypatch.setattr("ming_sim.error_pack.rejections_jsonl_path", lambda: str(mirror))
+    bad = db.add_directive(
+        state, None, "缺目标", "test", status="pending",
+        dossier_payload=_bad_directive_payload(),
+    )
+    good = db.add_directive(
+        state, None, "清丈", "test", status="pending",
+        dossier_payload=_directive_payload("清丈"),
+    )
+
+    db.confirm_directive(bad, state)
+    db.confirm_directive(good, state)
+    # confirm 只翻状态，不成案、不标 rejected
+    assert db.conn.execute(
+        "SELECT status FROM turn_directives WHERE id=?", (bad,),
+    ).fetchone()[0] == "draft"
+    assert db.conn.execute(
+        "SELECT status FROM turn_directives WHERE id=?", (good,),
+    ).fetchone()[0] == "draft"
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM decree_dossiers WHERE directive_id=?", (bad,),
+    ).fetchone()[0] == 0
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM decree_dossiers WHERE directive_id=?", (good,),
+    ).fetchone()[0] == 0
+
+    rejections = db.ensure_dossiers_for_draft_directives(state)
+    assert {int(r["directive_id"]) for r in rejections} == {bad}
+    assert db.conn.execute(
+        "SELECT status FROM turn_directives WHERE id=?", (bad,),
+    ).fetchone()[0] == "draft"  # 产物错保持 draft，不踢出批缝
+    assert db.conn.execute(
+        "SELECT status FROM turn_directives WHERE id=?", (good,),
+    ).fetchone()[0] == "draft"
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM decree_dossiers WHERE directive_id=?", (bad,),
+    ).fetchone()[0] == 0
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM decree_dossiers WHERE directive_id=?", (good,),
+    ).fetchone()[0] == 1
+    assert db.conn.execute("SELECT COUNT(*) FROM rejection_reports").fetchone()[0] == 1
+    assert json.loads(mirror.read_text(encoding="utf-8"))["category"] == "locality_fanout_failed"

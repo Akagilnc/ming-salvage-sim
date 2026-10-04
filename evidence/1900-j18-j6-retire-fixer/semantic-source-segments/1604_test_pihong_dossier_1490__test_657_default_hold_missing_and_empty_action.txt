@@ -1,0 +1,52 @@
+# FILE: tests/test_pihong_dossier_1490.py
+# NAME: test_657_default_hold_missing_and_empty_action
+# LINE: 590-635
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_657_default_hold_missing_and_empty_action(game):
+    """#657 Class2 V1–V5：缺行/keyed 无 action/keyed 空 action → hold；
+    decided 精确重放过、不匹配拒；revise 锚 + 空 action 不重新 default。"""
+    from ming_sim import rescript_actions as ra
+    db, state, content = game
+    urgent, _ = _plant_urgent_desk(db, state, actor_name='杨嗣昌')
+    key = urgent['decision_key']
+    batch = ra.validate_all([urgent], [], default_hold_missing=True)
+    assert key in batch.default_hold_keys
+    assert batch.items[0].choice.get('action') == 'hold'
+    batch2 = ra.validate_all([urgent], [{'decision_key': key}], default_hold_missing=True)
+    assert key in batch2.default_hold_keys
+    assert batch2.items[0].choice.get('action') == 'hold'
+    batch3 = ra.validate_all([urgent], [{'decision_key': key, 'action': ''}], default_hold_missing=True)
+    assert key in batch3.default_hold_keys
+    assert batch3.items[0].choice.get('action') == 'hold'
+    ra.apply_rescript_batch(db, state, batch2, ra.PrewriteResults(), content=content)
+    hit = next((r for r in db.list_rescript_drafts() if r['title'] == '陕西告饥'))
+    assert hit['status'] == 'decided'
+    assert (hit['choice'] or {}).get('action') == 'hold'
+    edges = db.conn.execute('SELECT event_kind FROM relation_edge_events WHERE target=? AND event_kind=?', ('杨嗣昌', '辜负')).fetchall()
+    assert edges, 'default hold 须写辜负信用事件'
+    stored = dict(hit['choice'] or {})
+    stored.setdefault('decision_key', key)
+    decided_desk = {**urgent, 'status': 'decided', 'choice': stored}
+    batch4 = ra.validate_all([decided_desk], [stored], default_hold_missing=True)
+    assert batch4.items[0].already_applied
+    assert key not in batch4.default_hold_keys
+    with pytest.raises(ValueError):
+        ra.validate_all([decided_desk], [{'decision_key': key}], default_hold_missing=True)
+    with pytest.raises(ValueError):
+        ra.validate_all([decided_desk], [{'decision_key': key, 'action': 'hold', 'label': '另留'}], default_hold_missing=True)
+    db.conn.execute("DELETE FROM pending_decisions WHERE kind='rescript_draft'")
+    urgent2, opts2 = _plant_urgent_desk(db, state, actor_name='杨嗣昌')
+    key2 = urgent2['decision_key']
+    revise_choice = ra.canonical_choice({'decision_key': key2, 'action': 'return_revise', 'label': '发回改票', 'applied_from_revision_round': 0})
+    db.conn.execute("UPDATE pending_decisions SET choice_json=?, revision_round=1, prior_options_json=? WHERE turn=? AND idx=? AND kind='rescript_draft'", (json.dumps(revise_choice, ensure_ascii=False), json.dumps([opts2], ensure_ascii=False), int(urgent2['source_turn'] if urgent2.get('source_turn') is not None else urgent2['turn']), int(urgent2['idx'])))
+    db.conn.commit()
+    desk2 = db.list_rescript_desk(int(state.turn))
+    row2 = next((r for r in desk2 if r['decision_key'] == key2))
+    assert row2['status'] == 'pending'
+    with pytest.raises(ValueError):
+        ra.validate_all([row2], [{'decision_key': key2, 'action': ''}], default_hold_missing=True)
+    batch5 = ra.validate_all([row2], [revise_choice], default_hold_missing=True)
+    assert batch5.items[0].already_applied
+    assert key2 not in batch5.default_hold_keys

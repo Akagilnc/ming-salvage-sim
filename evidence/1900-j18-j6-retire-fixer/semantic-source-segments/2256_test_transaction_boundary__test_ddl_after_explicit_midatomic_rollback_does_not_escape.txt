@@ -1,0 +1,26 @@
+# FILE: tests/test_transaction_boundary.py
+# NAME: test_ddl_after_explicit_midatomic_rollback_does_not_escape
+# LINE: 536-555
+# FLAGS: helper_or_private_call
+# KIND: py
+
+def test_ddl_after_explicit_midatomic_rollback_does_not_escape(game):
+    """atomic 内显式 rollback 后跑 DDL，同样不得逃逸（cmr S1 r3 F1 变体②）。"""
+    db, state, content = game
+    db.conn.execute("DROP TABLE IF EXISTS rejection_reports")
+    db.conn.commit()
+
+    from ming_sim.applier import Provenance, RejectedItem, RejectionCollector
+    rc = RejectionCollector()
+    ri = RejectedItem(item={}, reason="r", category="invalid_enum", source=Provenance.unknown)
+    rc.record("army_delta", ri, turn=1)
+
+    with pytest.raises(RuntimeError):
+        with atomic(db):
+            db.conn.execute("INSERT INTO kv_store(key,value) VALUES('s1r3_x','x')")
+            db.conn.rollback()  # 中途显式回滚（暂停期允许）
+            rc.flush_to_db(db)
+            raise RuntimeError("boom")
+
+    assert not _rejection_table_exists(db)
+    assert db.kv_get("s1r3_x") is None

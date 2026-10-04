@@ -1,0 +1,27 @@
+# FILE: tests/test_pihong_dossier_1490.py
+# NAME: test_657_illegal_summon_target_http_zero_writes
+# LINE: 1610-1630
+# FLAGS: assert_text_compare_or_match,assert_count,mock_or_patch_present,helper_or_private_call
+# KIND: py
+
+def test_657_illegal_summon_target_http_zero_writes(web_game, monkeypatch):
+    """非法 summon target → 公共 HTTP 零 choice 落库、零 decided、零 scaffold。"""
+    from ming_sim.rescript_draft import normalize_rescript_layer_a_option
+    db, _state = (web_game.db, web_game.state)
+
+    def _phase2(_state, _db, *_a, **_k):
+        raise AssertionError('illegal summon must not reach phase2')
+    monkeypatch.setattr(session_mod, 'resolve_decisions_phase2', _phase2)
+    opt = normalize_rescript_layer_a_option({'label': '备', 'hint': 'h', 'action_type': 'assignment', 'assignee_name': '', 'target_kind': 'region', 'target_id': 'shaanxi', 'locality_scope': 'single', 'region_id': 'shaanxi', 'transaction_category': '督赈'})
+    ledger_before = db.conn.execute('SELECT COUNT(*) AS c FROM story_ledger_entries').fetchone()['c']
+    desk = _657_plant_awaiting_web(web_game, drafts=[{'title': '非法召见', 'context': 'c', 'options': [opt, {'label': 'x', 'hint': 'h', 'draft_capability': 'x'}], 'actor_name': '杨嗣昌', 'actor_office': 'o', 'actor_faction': 'f'}])
+    key = desk[0]['decision_key']
+    r = asyncio.run(_post_resolve([{'decision_key': key, 'action': 'summon', 'label': '召见', 'summon_target': '不存在的边将xyz'}]))
+    assert r.status_code == 200
+    assert 'event: error' in r.text
+    assert 'event: done' not in r.text
+    hit = next((x for x in db.list_rescript_drafts() if x['title'] == '非法召见'))
+    assert hit['status'] == 'pending'
+    assert not hit['choice']
+    ledger_after = db.conn.execute('SELECT COUNT(*) AS c FROM story_ledger_entries').fetchone()['c']
+    assert ledger_after == ledger_before

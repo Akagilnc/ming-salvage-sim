@@ -1,0 +1,34 @@
+# FILE: tests/test_rescript_draft_656.py
+# NAME: test_save_and_list_rescript_drafts_roundtrip
+# LINE: 146-173
+# FLAGS: assert_text_compare_or_match
+# KIND: py
+
+def test_save_and_list_rescript_drafts_roundtrip(game):
+    db, state, _content = game
+    turn = state.turn
+    db.save_rescript_drafts(turn, [
+        {
+            "event_id": "issue:42",
+            "title": "陕西告饥",
+            "context": "秦地赤旱千里，臣愚以为赈济不可缓。",
+            "options": [{"label": "发帑赈济", "hint": "所安者饥民"}],
+            "actor_name": "测试首辅", "actor_office": "内阁首辅", "actor_faction": "阉党",
+        },
+        {"title": "无局急务", "context": "", "options": [
+            {"label": "甲", "hint": ""}, {"label": "乙", "hint": ""},
+        ]},
+    ])
+    drafts = db.list_rescript_drafts()
+    assert [d["title"] for d in drafts] == ["陕西告饥", "无局急务"]
+    first = drafts[0]
+    assert first["event_id"] == "issue:42"          # 权威 issue 回指原样保留
+    assert first["context"] == "秦地赤旱千里，臣愚以为赈济不可缓。"
+    assert first["options"] == [{"label": "发帑赈济", "hint": "所安者饥民"}]
+    assert first["status"] == "pending"
+    assert first["actor_name"] == "测试首辅"
+    assert first["actor_office"] == "内阁首辅"
+    assert first["actor_faction"] == "阉党"
+    second = drafts[1]
+    # 无对应 issue 的急务＝确定性合成 id urgent:{turn}:{idx}
+    assert second["event_id"] == f"urgent:{turn}:1"

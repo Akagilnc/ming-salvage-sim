@@ -1,0 +1,31 @@
+# FILE: tests/test_override_breach_costs_564.py
+# NAME: test_midzhi_apply_omits_guessed_parties_and_keeps_satisfaction
+# LINE: 288-312
+# FLAGS: helper_or_private_call
+# KIND: py
+
+def test_midzhi_apply_omits_guessed_parties_and_keeps_satisfaction(game):
+    """#657 §C.8：midzhi 顺颁/打回均不要求、不落库 affected_parties。"""
+    db, state, _ = game
+    for decision, build in (
+        ("promulgated", lambda did: {"dossier_id": did, "decision": "promulgated"}),
+        ("rejected", lambda did: {
+            k: v for k, v in _verdict(did).items() if k != "affected_parties"
+        }),
+    ):
+        dossier_id = _dossier(db, state, mode="midzhi")
+        before_f = _sat(db, "factions", "东林")
+        before_c = _sat(db, "classes", "士绅")
+        db.apply_dossier_verdicts(state, [build(dossier_id)])
+        assert _sat(db, "factions", "东林") == before_f
+        assert _sat(db, "classes", "士绅") == before_c
+        stored = db.conn.execute(
+            "SELECT affected_parties_json FROM decree_dossier_decisions "
+            "WHERE dossier_id=? ORDER BY id DESC LIMIT 1",
+            (dossier_id,),
+        ).fetchone()
+        assert json.loads(str(stored["affected_parties_json"] or "[]")) == []
+        assert decision in {
+            str(r.get("decision") or "")
+            for r in db.list_decree_dossier_decisions(dossier_id)
+        }

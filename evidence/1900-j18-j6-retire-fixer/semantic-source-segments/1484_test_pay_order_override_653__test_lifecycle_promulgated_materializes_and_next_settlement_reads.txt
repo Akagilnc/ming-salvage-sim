@@ -1,0 +1,27 @@
+# FILE: tests/test_pay_order_override_653.py
+# NAME: test_lifecycle_promulgated_materializes_and_next_settlement_reads
+# LINE: 1020-1040
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_lifecycle_promulgated_materializes_and_next_settlement_reads(game):
+    """顺颁：判决当回合落 config；本月已按旧序完成的结算不追溯、下一次结算读取。"""
+    db, state, _content = game
+    # 本月结算先按旧序完成（fixed flow 已结束的等价断言：旧序结果在案）
+    before = db.settle_province_tick("shaanxi")
+    assert before.breakdown["实付分账"]["军饷"] > 0
+
+    entries = [{"key": "due_priority_军饷@shaanxi", "value": 40}]
+    did = _override_dossier(db, state, entries)
+    db.apply_dossier_promulgation(state, did, "promulgated")
+    # 判后物化：config 在案 + provenance 指向案卷
+    assert db.get_fiscal_config()["due_priority_军饷@shaanxi"] == 40
+    row = db.conn.execute(
+        "SELECT origin_ref FROM fiscal_config_changes WHERE key='due_priority_军饷@shaanxi'"
+    ).fetchone()
+    assert row["origin_ref"] == f"dossier:{did}"
+    # 案卷顺颁即终局（无执行判定面）
+    assert db.get_decree_dossier(did)["status"] == "closed"
+    # 下一次结算读取新序（同 turn 重算即读新旨＝读端按当前在位键解析）
+    after = db.settle_province_tick("shaanxi")
+    assert after.breakdown["实付分账"]["军饷"] < before.breakdown["实付分账"]["军饷"]

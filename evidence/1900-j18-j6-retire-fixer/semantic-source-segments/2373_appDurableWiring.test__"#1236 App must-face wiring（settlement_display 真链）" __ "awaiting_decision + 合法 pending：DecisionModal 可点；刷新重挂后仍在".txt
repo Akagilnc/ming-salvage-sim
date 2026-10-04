@@ -1,0 +1,29 @@
+# FILE: web/src/appDurableWiring.test.tsx
+# NAME: "#1236 App must-face wiring（settlement_display 真链）" / "awaiting_decision + 合法 pending：DecisionModal 可点；刷新重挂后仍在"
+# LINE: 1766-1788
+# FLAGS: web_text_assert
+# KIND: web
+
+  it("awaiting_decision + 合法 pending：DecisionModal 可点；刷新重挂后仍在", async () => {
+    stubSettlementFetch(settlementBaseState("awaiting_decision", {
+      pending_decisions: [validDecision],
+    }));
+    const host = await mountApp();
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector('[data-testid="decision-modal"]')).not.toBeNull());
+    });
+    const modal = host.querySelector('[data-testid="decision-modal"]')!;
+    expect(modal.textContent).toContain("辽东战守");
+    const action = Array.from(modal.querySelectorAll("button")).find((b) =>
+      (b.textContent || "").includes("批") || (b.textContent || "").includes("固守"),
+    ) as HTMLButtonElement | undefined;
+    expect(action).toBeTruthy();
+    expect(action!.disabled).toBe(false);
+
+    unmountTrackedRoots();
+    const host2 = await mountApp();
+    await act(async () => {
+      await vi.waitFor(() => expect(host2.querySelector('[data-testid="decision-modal"]')).not.toBeNull());
+    });
+    expect(host2.querySelector('[data-testid="decision-modal"]')!.textContent).toContain("辽东战守");
+  });

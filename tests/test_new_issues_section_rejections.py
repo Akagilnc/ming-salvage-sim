@@ -110,29 +110,6 @@ def _hist_event(eid, gate=None):
     )
 
 
-def test_temp_events_replaces_same_id_and_restores_original(content):
-    eid = "__temp_events_replace_existing__"
-    original = _hist_event(eid)
-    replacement = _hist_event(eid)
-    replacement.title = "替换事件"
-    content.events.append(original)
-    content.event_by_id[eid] = original
-    try:
-        with _TempEvents(content, replacement):
-            same_id_events = [ev for ev in content.events if ev.id == eid]
-            assert same_id_events == [replacement]
-            assert content.event_by_id[eid] is replacement
-
-        same_id_events = [ev for ev in content.events if ev.id == eid]
-        assert same_id_events == [original]
-        assert content.event_by_id[eid] is original
-    finally:
-        if original in content.events:
-            content.events.remove(original)
-        if content.event_by_id.get(eid) is original:
-            content.event_by_id.pop(eid, None)
-
-
 @pytest.mark.parametrize("bad_item", [None, 42, "字符串"])
 def test_new_issue_non_dict_item_rejected_not_crash(read_game, bad_item):
     db, state, _ = read_game
@@ -348,10 +325,11 @@ def test_new_issue_valid_decree_still_creates(game):
 
 
 def test_event_to_issue_insert_exception_propagates(read_game, monkeypatch):
-    db, state, _ = read_game
+    db, state, content = read_game
+    I.bind_content(content)
     # 直接覆盖 fix 点：event_to_issue 内 insert 真异常上抛，不再 WARN 吞成 None。
     eid = _pick_event_pool_id(db)
-    ev = I._ctx().event_by_id[eid]
+    ev = content.event_by_id[eid]
 
     def _boom(*a, **k):
         raise RuntimeError("模拟 event_to_issue insert 落库代码异常")

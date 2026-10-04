@@ -1,0 +1,47 @@
+# FILE: tests/test_month_open_snapshot_1234.py
+# NAME: test_capture_before_mutation_on_resolve_turn_entry
+# LINE: 223-263
+# FLAGS: mock_or_patch_present,helper_or_private_call
+# KIND: py
+
+def test_capture_before_mutation_on_resolve_turn_entry(game, monkeypatch):
+    """颁布入口：resolve_turn 在任何突变前持久化点击前四键。"""
+    from ming_sim.session import GameSession
+    import ming_sim.audience_night as an
+
+    db, state, content = game
+    before = _click_before_metrics(state)
+
+    sess = object.__new__(GameSession)
+    sess.db = db
+    sess.state = state
+    sess.content = content
+    sess.registry = None
+    sess.llm_config = SimpleNamespace(channel="cli", api_key="x")
+    sess.agno_db = None
+    sess.deaths_this_turn = []
+    sess.debuts_this_turn = []
+    sess.last_decree = ""
+    sess.last_report = ""
+    sess._decree_draft_fingerprint = ()
+    sess._beat_generator = None
+    sess._scene_registry = None
+    sess.auto_save = lambda *_a, **_k: None
+
+    def _boom(*_a, **_k):
+        raise RuntimeError("stop-after-capture")
+
+    monkeypatch.setattr(an, "auto_close_open_night", _boom)
+
+    db.add_directive(
+        state, None, "减赋", source="player", status="draft",
+        dossier_payload={
+            "dossier_action_type": "policy",
+            "target_kind": "issue", "target_id": "tax-relief",
+        },
+    )
+
+    with pytest.raises(RuntimeError):
+        sess.resolve_turn(decree="诏曰测试")
+
+    assert db.get_month_open_snapshot(int(state.turn)) == before

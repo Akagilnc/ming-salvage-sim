@@ -1,0 +1,34 @@
+# FILE: web/src/components/situation.test.tsx
+# NAME: "#1726 StateModal 奏疏收件箱" / "呈真实奏疏正文与上疏人；不借局势 issues；不渲染结构化字段"
+# LINE: 151-178
+# FLAGS: web_text_assert
+# KIND: web
+
+  it("呈真实奏疏正文与上疏人；不借局势 issues；不渲染结构化字段", () => {
+    const body = "臣已拨银十万两，库藏尚可周转。";
+    const cleanup = render(
+      <StateModal
+        state={baseState([
+          {
+            key: "progress:7",
+            kind: "progress",
+            turn: 1,
+            author_name: "杨嗣昌",
+            memorial_text: body,
+            unread: true,
+          },
+        ])}
+      />,
+    );
+
+    const doc = document.querySelector(".state-document");
+    expect(doc).toBeTruthy();
+    expect(doc!.querySelector(".situation-panel")).toBeNull();
+    expect(doc!.querySelector(".situation-row")).toBeNull();
+    expect(doc!.textContent).not.toContain(makeIssue().title);
+    expect(doc!.textContent).toContain("杨嗣昌");
+    expect(doc!.querySelector("pre.memorial-text")?.textContent).toBe(body);
+
+
+    cleanup();
+  });

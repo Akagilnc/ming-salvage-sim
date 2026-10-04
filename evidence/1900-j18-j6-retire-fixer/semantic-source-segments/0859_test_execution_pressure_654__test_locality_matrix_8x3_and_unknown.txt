@@ -1,0 +1,27 @@
+# FILE: tests/test_execution_pressure_654.py
+# NAME: test_locality_matrix_8x3_and_unknown
+# LINE: 531-551
+# FLAGS: assert_text_compare_or_match,assert_count
+# KIND: py
+
+def test_locality_matrix_8x3_and_unknown(env, target_kind, scope, expect):
+    db, state, _ = env
+    target = "shaanxi" if target_kind == "region" else "x"
+    payload = {"target_kind": target_kind, "target_id": target}
+    if scope is not None:
+        payload["locality_scope"] = scope
+    before = db.conn.execute("SELECT COUNT(*) FROM decree_dossiers").fetchone()[0]
+    if expect == "fail":
+        with pytest.raises(ValueError):
+            db.create_decree_dossiers(
+                state, action_type="policy", decree_text="locality matrix",
+                target_kind=target_kind, target_id=target, payload=payload,
+            )
+        assert db.conn.execute("SELECT COUNT(*) FROM decree_dossiers").fetchone()[0] == before
+        return
+    ids = db.create_decree_dossiers(
+        state, action_type="policy", decree_text="locality matrix",
+        target_kind=target_kind, target_id=target, payload=payload,
+    )
+    assert len(ids) == 1
+    assert db.get_decree_dossier(ids[0])["region_id"] == ("shaanxi" if expect == "R1" else "")

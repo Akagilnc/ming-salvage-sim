@@ -1,14 +1,14 @@
 {
   "universe_path": "evidence/1900-j18-j6-retire-fixer/j6-universe.jsonl",
-  "candidate_count": 2609,
+  "candidate_count": 2477,
   "by_flag": {
-    "assert_text_compare_or_match": 1818,
-    "mock_or_patch_present": 548,
-    "helper_or_private_call": 1729,
-    "assert_count": 902,
-    "retired_or_meta_marker": 84,
-    "assert_calls_shape": 31,
-    "internal_formula_oracle": 13,
+    "assert_text_compare_or_match": 1686,
+    "mock_or_patch_present": 478,
+    "helper_or_private_call": 1631,
+    "assert_count": 848,
+    "retired_or_meta_marker": 79,
+    "assert_calls_shape": 30,
+    "internal_formula_oracle": 9,
     "web_mock_spy_or_calls": 173,
     "web_text_assert": 71,
     "web_count_assert": 47
@@ -16,8 +16,10 @@
   "note": "WIDE structural candidates only; presence of result/API tokens does not suppress other flags; absence of flag does not prove non-membership; do not treat this file as retain disposition",
   "widened": true,
   "removed_narrowing": [
-    "no longer require Chinese>=10 + wording/label/材料/邸报 for text locks",
+    "no longer require Chinese>=10 + wording/label/\u6750\u6599/\u90b8\u62a5 for text locks",
     "no longer suppress helper/mock when list_/apply_/status_code tokens present",
     "no longer require web toHaveBeenCalled AND absence of fireEvent/userEvent"
-  ]
+  ],
+  "post_semantic_close": true,
+  "delta_vs_prior_2538": -61
 }

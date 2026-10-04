@@ -1,0 +1,44 @@
+# FILE: tests/test_person_delta_adapter.py
+# NAME: test_apply_score_extraction_persists_reason_code_and_person_log
+# LINE: 1492-1529
+# FLAGS: assert_text_compare_or_match
+# KIND: py
+
+def test_apply_score_extraction_persists_reason_code_and_person_log(game):
+    db, state, content = game
+    name = active_ming_character(db, content)
+    before_logs = db.conn.execute("SELECT COUNT(*) FROM person_logs").fetchone()[0]
+
+    applied = issues.apply_score_extraction(
+        db,
+        state,
+        {
+            "人物变更": [
+                {
+                    "name": name,
+                    "origin_ref": "盘面自发", "动作": "处置",
+                    "status": "imprisoned",
+                    "reason_code": "陷虏",
+                    "reason": "兵败被执",
+                }
+            ]
+        },
+        content=content,
+    )
+
+    row = db.conn.execute(
+        "SELECT status, reason_code FROM characters WHERE name=?", (name,)
+    ).fetchone()
+    assert row["status"] == "imprisoned"
+    assert row["reason_code"] == "陷虏"
+    assert db.conn.execute("SELECT COUNT(*) FROM person_logs").fetchone()[0] == before_logs + 1
+    log = db.conn.execute(
+        "SELECT person_name, action, payload_summary, source FROM person_logs ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    assert dict(log) == {
+        "person_name": name,
+        "action": "处置",
+        "payload_summary": "兵败被执",
+        "source": "system_simulation",
+    }
+    assert applied["applied_person_changes"][0]["reason_code"] == "陷虏"

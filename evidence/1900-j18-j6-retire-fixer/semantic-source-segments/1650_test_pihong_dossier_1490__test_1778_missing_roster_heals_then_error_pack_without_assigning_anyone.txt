@@ -1,0 +1,69 @@
+# FILE: tests/test_pihong_dossier_1490.py
+# NAME: test_1778_missing_roster_heals_then_error_pack_without_assigning_anyone
+# LINE: 2862-2924
+# FLAGS: assert_text_compare_or_match,assert_count,mock_or_patch_present,helper_or_private_call
+# KIND: py
+
+def test_1778_missing_roster_heals_then_error_pack_without_assigning_anyone(
+    web_game, monkeypatch, tmp_path,
+):
+    """验收 3：没写名单＝票没拟完 → 补交点名 participant_roster；耗尽只留错误包。"""
+    import ming_sim.rescript_draft as draft_mod
+    from ming_sim.rescript_draft import (
+        RESCRIPT_OPTION_FIELD_HEAL_RETRIES,
+        generate_rescript_draft,
+    )
+
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
+    db, state = web_game.db, web_game.session.state
+    raw = _1778_raw_options()
+    naked = {k: v for k, v in raw["assignment_national"].items()
+             if k != "participant_roster"}
+    item = {
+        "title": "太仓亏空", "context": "太仓见底。",
+        "options": [naked, raw["grant_national"]],
+    }
+
+    heal_prompts: list[str] = []
+
+    def _never_heals(_agent, prompt, tag="", **_kw):
+        if tag == "rescript-draft-heal":
+            heal_prompts.append(prompt)
+        return json.dumps({"items": [item]}, ensure_ascii=False)
+
+    monkeypatch.setattr(draft_mod, "run_agent_text", _never_heals)
+    before = len(db.list_decree_dossiers())
+    drafts = generate_rescript_draft(
+        object(),
+        {"active_issues": []},
+        int(state.turn),
+    )
+
+    # 补交请求逐轮点名 typed 字段（机器只认键，不解析散文）
+    assert len(heal_prompts) == RESCRIPT_OPTION_FIELD_HEAL_RETRIES
+    body = json.loads(heal_prompts[0])
+    failure = body["failures"][0]
+    assert failure["heal_id"] == "0:0"
+    fields = {str(f["field"]) for f in failure["field_failures"]}
+    assert fields == {"participant_roster"}
+    expected = next(
+        f["expected"] for f in failure["field_failures"]
+        if f["field"] == "participant_roster"
+    )
+    assert expected["require_tier"] == "主办"
+    assert "主办" in expected["tiers"]
+
+    # 耗尽：只剔该 option，兄弟照出；错误包响亮留痕
+    assert drafts is not None and len(drafts) == 1
+    assert [str(o["label"]) for o in drafts[0]["options"]] == ["发内帑周转军国急用"]
+    note = json.loads(
+        (tmp_path / "ud" / "error_packs" / "rescript_draft_degraded" / "turn1.json")
+        .read_text(encoding="utf-8")
+    )
+    assert note["reason"] == "option_missing_fields_heal_exhausted"
+    dropped = note["dropped_options"]
+    assert [d["heal_id"] for d in dropped] == ["0:0"]
+    assert dropped[0]["missing_fields"] == ["participant_roster"]
+
+    # 不成案、不配人
+    assert len(db.list_decree_dossiers()) == before

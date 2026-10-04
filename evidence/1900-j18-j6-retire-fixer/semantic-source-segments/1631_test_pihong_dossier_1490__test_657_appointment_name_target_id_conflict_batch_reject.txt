@@ -1,0 +1,17 @@
+# FILE: tests/test_pihong_dossier_1490.py
+# NAME: test_657_appointment_name_target_id_conflict_batch_reject
+# LINE: 1914-1924
+# FLAGS: assert_count
+# KIND: py
+
+def test_657_appointment_name_target_id_conflict_batch_reject(game):
+    """⑥ appointment/dismiss name≠target_id 在 mapper 单一边界整批拒绝。"""
+    from ming_sim import rescript_actions as ra
+    db, state, content = game
+    rows = db.conn.execute("SELECT name FROM characters WHERE status='active' AND power_id='ming' ORDER BY name LIMIT 2").fetchall()
+    assert len(rows) >= 2
+    n1, n2 = (str(rows[0]['name']), str(rows[1]['name']))
+    with pytest.raises(ValueError):
+        ra.map_rescript_option_or_choice({'action_type': 'appointment', 'appoint_action': '任命', 'office': '兵部尚书', 'name': n1, 'target_kind': 'character', 'target_id': n2, 'label': '授官'}, db=db, content=content, state=state)
+    with pytest.raises(ValueError):
+        ra.map_rescript_option_or_choice({'action_type': 'appointment', 'appoint_action': '罢免', 'office': '', 'name': n1, 'target_kind': 'character', 'target_id': n2, 'label': '罢'}, db=db, content=content, state=state)

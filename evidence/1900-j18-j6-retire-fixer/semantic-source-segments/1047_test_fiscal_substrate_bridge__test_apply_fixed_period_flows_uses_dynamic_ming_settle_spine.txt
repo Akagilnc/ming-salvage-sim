@@ -1,0 +1,35 @@
+# FILE: tests/test_fiscal_substrate_bridge.py
+# NAME: test_apply_fixed_period_flows_uses_dynamic_ming_settle_spine
+# LINE: 4112-4140
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_apply_fixed_period_flows_uses_dynamic_ming_settle_spine(fresh_game):
+    # #266: shadow spine is controlled_by==ming AND has fiscal.settle.
+    # That lets lost provinces freeze naturally and lets newly-seeded Ming provinces tick.
+    from ming_sim.flows import apply_fixed_period_flows
+    db, state = fresh_game
+    shaanxi_settle = _read_settle(db)
+
+    henan_settle = json.loads(json.dumps(shaanxi_settle, ensure_ascii=False))
+    henan_settle["st"]["省库库银"] = 40
+    henan_fiscal = {"settle": henan_settle}
+    non_ming_power = db.conn.execute(
+        "SELECT id FROM powers WHERE id <> 'ming' LIMIT 1"
+    ).fetchone()[0]
+    db.conn.execute(
+        "UPDATE regions SET controlled_by = ?, fiscal = ? WHERE id = 'henan'",
+        (non_ming_power, json.dumps(henan_fiscal, ensure_ascii=False)),
+    )
+    db.conn.execute("UPDATE regions SET controlled_by = 'ming' WHERE id = 'taiwan'")
+    db.conn.commit()
+
+    apply_fixed_period_flows(db, state)
+    assert _read_settle(db)["st"]["军饷欠"] == pytest.approx(_province_pay_arrears(db, "shaanxi"))
+    assert _read_settle(db, "henan")["st"]["省库库银"] == 40, "非明控制省不应 tick"
+    assert _read_settle(db, "taiwan") is None, "明控但无 settle 的省不应被创建/推进"
+
+    db.conn.execute("UPDATE regions SET controlled_by = 'ming' WHERE id = 'henan'")
+    db.conn.commit()
+    apply_fixed_period_flows(db, state)
+    assert _read_settle(db, "henan")["st"]["省库库银"] != 40, "明控且有 settle 的省应 tick"

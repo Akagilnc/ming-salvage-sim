@@ -1,0 +1,22 @@
+# FILE: tests/test_faction_class_section_rejections.py
+# NAME: test_valid_flat_int_faction_not_rejected
+# LINE: 166-181
+# FLAGS: helper_or_private_call
+# KIND: py
+
+def test_valid_flat_int_faction_not_rejected(game):
+    """合法扁平 int 格式 {派系: -5} 不误拒（extractor prompt 允许），且照常落库。"""
+    db, state, content = game
+    turn = state.turn
+    good = _valid_faction(db)
+    before = db.conn.execute(
+        "SELECT satisfaction FROM factions WHERE name=?", (good,)).fetchone()[0]
+
+    run_settle(db, state, content, {
+        "faction_delta": {good: -5},
+    }, narrative="x", decree_text="y")
+
+    assert _rejection_rows(db, turn, FACTION_REJ_SECTION) == []
+    after = db.conn.execute(
+        "SELECT satisfaction FROM factions WHERE name=?", (good,)).fetchone()[0]
+    assert after == max(0, before - 5)

@@ -606,12 +606,6 @@ def test_legacy_agno_sessions_runs_blob_still_counts_and_truncates(restore_env):
     assert db.agno_runs_length("legacy") == 3
     db.truncate_agno_session_runs("legacy", 1)
     assert db.agno_runs_length("legacy") == 1
-    runs, _ = db._decode_agno_runs(
-        db.conn.execute(
-            "SELECT runs FROM agno_sessions WHERE session_id=?", ("legacy",)
-        ).fetchone()["runs"]
-    )
-    assert [r["run_id"] for r in runs] == ["r1"]
 
 
 def _agno_public_run_ids(db_path: str, session_id: str) -> list:
@@ -705,12 +699,6 @@ def test_reconcile_blob_baseline_drops_table_only_new_run(restore_env):
         ).fetchall()
     ]
     assert table_ids == []
-    runs, _ = db._decode_agno_runs(
-        db.conn.execute(
-            "SELECT runs FROM agno_sessions WHERE session_id=?", ("sess",)
-        ).fetchone()["runs"]
-    )
-    assert [r["run_id"] for r in runs] == ["legacy-0", "legacy-1"]
     assert db.conn.execute(
         "SELECT status FROM chat_turns WHERE id=?", (ct,)
     ).fetchone()["status"] == "interrupted"
@@ -810,28 +798,29 @@ def web_game(tmp_path, monkeypatch, _offline_scene_beat_generator):
 
 
 def test_start_chat_turn_second_turn_reads_agno_v3_runs(web_game):
-    """#1716：fresh Agno 3 首轮已落 run 后，生产 _start_chat_turn 第二轮须受理。
+    """#1716：fresh Agno 3 首轮已落 run 后，公开 chat_stream 第二轮须受理。
 
-    复现窗：首轮 LLM 建出 agno_runs 后，第二次发送在 _start_chat_turn 读 runs 长度；
+    复现窗：首轮 LLM 建出 agno_runs 后，第二次发送读 runs 长度；
     旧缝直查 agno_sessions.runs 列 → OperationalError。本 tracer 走真实入口，
     断言第二轮 create 成功且 agno_runs_before=既有 run 数。
     """
     game = web_game
-    minister = _active_minister(game.db, game.content)
-    sid = game._minister_agno_session_id(minister)
-    # 首轮完成后的 Agno 3 态：session + 1 COMPLETED run（无 sessions.runs 列）。
+    night = an.open_night(game.db, game.state, location="乾清宫", time_of_day="戌时")
+    sid = f"scene-night-{int(night['id'])}"
     _seed_agno_v3_runs(game.db, sid, run_count=1)
     assert game.db.agno_runs_length(sid) == 1
 
-    chat_turn_id, _snapshot = game._start_chat_turn(minister)
+    events = list(game.chat_stream(an.SCENE_CHAT_SPEAKER, "剿抚孰先？"))
+    assert not any(
+        "OperationalError" in str(event.get("message") or "")
+        for event in events
+    )
     row = game.db.conn.execute(
-        "SELECT agno_session_id, agno_runs_before, status FROM chat_turns WHERE id=?",
-        (chat_turn_id,),
+        "SELECT agno_session_id, agno_runs_before FROM chat_turns ORDER BY id DESC LIMIT 1"
     ).fetchone()
     assert row is not None
     assert row["agno_session_id"] == sid
     assert int(row["agno_runs_before"]) == 1
-    assert row["status"] == "generating"
 
 
 def test_load_save_reconciles_interrupted_orphan(web_game):
@@ -871,10 +860,10 @@ def test_657_rescript_summon_writes_enter_fact_and_is_idempotent(game):
     """#1838 reopen：批红召见只落入殿事实账；已消费=origin+TAG_ENTER；幂等复用。"""
     from ming_sim.audience_night import (
         TAG_ENTER,
+        list_ledger,
         prepare_rescript_summon_scaffold,
         rescript_summon_origin_consumed,
         rescript_summon_origin_ref,
-        _ledger_by_origin_ref,
     )
 
     db, state, content = game
@@ -885,8 +874,11 @@ def test_657_rescript_summon_writes_enter_fact_and_is_idempotent(game):
         db, state, person_name=minister, origin_ref=origin,
     )
     assert sc["consumed"] is True
-    entry = _ledger_by_origin_ref(db, origin)
-    assert entry is not None
+    night = an.get_open_night(db)
+    entry = next(
+        row for row in list_ledger(db, int(night["id"]))
+        if str(row.get("origin_ref") or "") == origin
+    )
     assert rescript_summon_origin_consumed(entry)
     assert TAG_ENTER in entry["tags"]
     assert str(entry.get("body") or "") == ""

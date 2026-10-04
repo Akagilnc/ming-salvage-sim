@@ -1,0 +1,45 @@
+# FILE: tests/test_audience_scroll_539.py
+# NAME: test_real_player_sse_replaces_closed_same_turn_night_before_failed_reply
+# LINE: 19-57
+# FLAGS: assert_text_compare_or_match,mock_or_patch_present,helper_or_private_call
+# KIND: py
+
+def test_real_player_sse_replaces_closed_same_turn_night_before_failed_reply(game, monkeypatch):
+    import json
+    import web_app
+    from tests.test_audience_background import _FakeAgent, _web_game
+
+    class _FailingAgent(_FakeAgent):
+        def run(self, *_args, **_kwargs):
+            raise RuntimeError("reply failed")
+            yield  # pragma: no cover - make this the agent's streaming generator
+
+    db, state, content = game
+    old_night_id = open_audience_night(db, state)
+    db.conn.execute(
+        "UPDATE audience_nights SET status='closed', closed_at=CURRENT_TIMESTAMP WHERE id=?",
+        (old_night_id,),
+    )
+    db.conn.commit()
+    runtime = _web_game(db, state, content, _FailingAgent())
+    monkeypatch.setattr(web_app, "get_game", lambda: runtime)
+
+    response = TestClient(web_app.app).post(
+        "/api/audience/chat/stream",
+        json={"message": "新场问话"},
+    )
+    events = [
+        (block.splitlines()[0].removeprefix("event: "), json.loads(block.splitlines()[1].removeprefix("data: ")))
+        for block in response.text.strip().split("\n\n")
+    ]
+    persisted = an.get_open_night(db)
+
+    assert response.headers["content-type"].startswith("text/event-stream")
+    # #1465 ④：回话未成终失败 — error 前无条件空 replace（清半句；即使本案零 content）
+    assert events == [
+        ("accepted", {"campaign_id": "", "night_id": int(persisted["id"]), "chat_turn_id": 1}),
+        ("delta", {"content": "", "replace": True}),
+        ("error", {"message": "reply failed", "campaign_id": "", "night_id": int(persisted["id"]), "chat_turn_id": 1}),
+    ]
+    assert int(persisted["id"]) != old_night_id
+    assert int(persisted["turn"]) == int(state.turn)

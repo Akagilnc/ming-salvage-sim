@@ -1,0 +1,15 @@
+# FILE: tests/test_army_salary_44.py
+# NAME: test_army_needed_scales_with_manpower
+# LINE: 55-63
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_army_needed_scales_with_manpower(game):
+    # 扩军（manpower 涨）→ 应发随之涨（不再「兵涨饷不涨」白嫖）。
+    db, state, _ = game
+    before = army_needed(_army_row(db, "guanning"))
+    db.conn.execute("UPDATE armies SET manpower=manpower*2 WHERE id='guanning'")
+    db.conn.commit()
+    after = army_needed(_army_row(db, "guanning"))
+    assert after > before
+    assert after == math.ceil(_army_row(db, "guanning")["manpower"] * _army_row(db, "guanning")["salary_rate"] / 10000)

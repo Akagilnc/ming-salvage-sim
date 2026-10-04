@@ -1,0 +1,52 @@
+# FILE: tests/test_shared_resource_order_1844.py
+# NAME: test_world_segment_cross_category_order_survives_reopen
+# LINE: 270-315
+# FLAGS: assert_count
+# KIND: py
+
+def test_world_segment_cross_category_order_survives_reopen(game, tmp_path):
+    """过月落账后重开：欠饷已清与拒收一致性仍在。"""
+    db, state, _ = game
+    db.conn.execute("UPDATE armies SET arrears=0, province_pay_arrears=0, central_pay_arrears=0 WHERE id='jingying'")
+    db.conn.commit()
+    state.metrics["国库"] = 50
+    dispatch_month_segment(
+        db, state, segment="先欠后清后重开",
+        translate_fn=lambda _r, _c: {"effects": [
+            {"army_delta": {"jingying": {
+                "origin_ref": "盘面自发", "arrears": 10, "reason": "加欠",
+            }}},
+            {"economy_moves": [{
+                "origin_ref": "盘面自发", "account": "国库", "delta": -10,
+                "category": "补饷", "reason": "清欠",
+                "purpose": "补饷", "target_kind": "army", "target_id": "jingying",
+            }]},
+            {"economy_moves": [{
+                "origin_ref": "盘面自发", "account": "国库", "delta": -1,
+                "category": "坏项", "reason": "查无",
+                "purpose": "补饷", "target_kind": "army", "target_id": "ghost-army-1844",
+            }]},
+        ]},
+    )
+    assert float(db.conn.execute(
+        "SELECT arrears FROM armies WHERE id='jingying'"
+    ).fetchone()[0]) == pytest.approx(0)
+    assert state.metrics["国库"] == 40
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM rejection_reports WHERE category='missing_ref'"
+    ).fetchone()[0] >= 1
+
+    db_path = tmp_path / "cross-reopen.db"
+    db.conn.execute("VACUUM INTO ?", (str(db_path),))
+    reopened = sqlite3.connect(str(db_path))
+    reopened.row_factory = sqlite3.Row
+    assert float(reopened.execute(
+        "SELECT arrears FROM armies WHERE id='jingying'"
+    ).fetchone()[0]) == pytest.approx(0)
+    assert reopened.execute(
+        "SELECT COUNT(*) FROM rejection_reports WHERE category='missing_ref'"
+    ).fetchone()[0] >= 1
+    assert reopened.execute(
+        "SELECT SUM(delta) FROM economy_ledger WHERE reason='清欠'"
+    ).fetchone()[0] == -10
+    reopened.close()

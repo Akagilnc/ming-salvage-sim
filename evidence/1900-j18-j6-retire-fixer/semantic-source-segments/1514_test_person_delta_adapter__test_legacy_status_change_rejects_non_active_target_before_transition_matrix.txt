@@ -1,0 +1,56 @@
+# FILE: tests/test_person_delta_adapter.py
+# NAME: test_legacy_status_change_rejects_non_active_target_before_transition_matrix
+# LINE: 469-518
+# FLAGS: assert_text_compare_or_match,retired_or_meta_marker
+# KIND: py
+
+def test_legacy_status_change_rejects_non_active_target_before_transition_matrix(game):
+    db, state, content = game
+    name = active_ming_character(db, content)
+    old_status = content.characters[name].status
+    old_office = content.characters[name].office
+
+    try:
+        db.set_character_status(state, name, "dismissed", "已先行罢黜")
+        content.characters[name].status = "dismissed"
+        content.characters[name].office = ""
+
+        applied = issues.apply_score_extraction(
+            db,
+            state,
+            {
+                "character_status_changes": [
+                    {"name": name, "status": "exiled", "reason": "legacy should gate", "origin_ref": "盘面自发"}
+                ]
+            },
+            content=content,
+        )
+
+        row = db.conn.execute(
+            "SELECT status, status_reason FROM characters WHERE name=?", (name,)
+        ).fetchone()
+        assert row["status"] == "dismissed"
+        assert row["status_reason"] == "已先行罢黜"
+        assert applied["character_status_changes"] == []
+        assert applied["applied_person_changes"] == [
+            {
+                "name": name,
+                "origin_ref": "盘面自发", "动作": "处置",
+                "rejected": True,
+                "reason": ANY,
+                "category": "invalid_transition",
+                "status": "exiled",
+                "item": {
+                    "name": name,
+                    "origin_ref": "盘面自发", "动作": "处置",
+                    "status": "exiled",
+                    "reason": "legacy should gate",
+                    "legacy_gate": True,
+                },
+                "report_section": "character_status_changes",
+            }
+        ]
+        assert isinstance(applied['applied_person_changes'][0]['reason'], str) and applied['applied_person_changes'][0]['reason']
+    finally:
+        content.characters[name].status = old_status
+        content.characters[name].office = old_office

@@ -1,0 +1,33 @@
+{
+  "source_path": "tests/test_enrich_list_guards.py",
+  "member_count": 2,
+  "members": [
+    {
+      "idx": 687,
+      "file": "tests/test_enrich_list_guards.py",
+      "name": "test_enrich_buildings_non_list_no_crash",
+      "line": 10,
+      "end": 17,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0687_test_enrich_list_guards__test_enrich_buildings_non_list_no_crash.txt",
+      "source_path": "tests/test_enrich_list_guards.py"
+    },
+    {
+      "idx": 688,
+      "file": "tests/test_enrich_list_guards.py",
+      "name": "test_inertia_ongoing_non_dict_no_crash",
+      "line": 20,
+      "end": 46,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0688_test_enrich_list_guards__test_inertia_ongoing_non_dict_no_crash.txt",
+      "source_path": "tests/test_enrich_list_guards.py"
+    }
+  ]
+}

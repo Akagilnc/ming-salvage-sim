@@ -1,0 +1,24 @@
+# FILE: tests/test_chat_stream_failpaths_393.py
+# NAME: test_worker_cleanup_failure_still_emits_error_and_releases_gate
+# LINE: 305-322
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_worker_cleanup_failure_still_emits_error_and_releases_gate():
+    """R3 self-check: worker 内 scene payload 崩 → _fail_chat_turn_and_reload 自身也崩 →
+    仍须推 error 事件给消费者（否则 generator 永久挂死）、释放写路径 + pending ownership。"""
+    db = _WorkerPathDB()
+    runtime, minister = _base_runtime(db)
+    agent = _StreamCrashAgent()
+    runtime.session.registry = SimpleNamespace(get=lambda _c, **_kw: agent)
+    runtime.session._character = lambda name: minister_double(minister)
+
+    gen = runtime.chat_stream("殿上", "辽东军情如何？")
+    events = list(gen)  # consumer drives generator to completion
+
+    # #1353 r11：error+end 双终态（消费者没挂死，且以 end 收束）
+    types = [e.get("type") for e in events]
+    assert "error" in types, events
+    assert types[-1] == "end", events
+    assert types[types.index("error") + 1] == "end", types
+    _assert_write_path_free(runtime)

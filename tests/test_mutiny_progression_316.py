@@ -6,7 +6,7 @@ import sqlite3
 import pytest
 
 from ming_sim.db import GameDB
-from ming_sim.flows import apply_fixed_period_flows, derive_army_mutiny_state
+from ming_sim.flows import apply_fixed_period_flows
 
 ARMY = "guanning"
 PATHS = ("legacy", "substrate_hub")
@@ -80,21 +80,17 @@ def test_repeated_mutiny_persists_count_cap_and_probation(game, fiscal_path):
     _set(db, fiscal_path, loyalty=95, arrears=0, latched=1)
     probation = _tick(db, state)
     assert tuple(probation[k] for k in ("loyalty", "is_mutinied", "mutiny_count", "mutiny_probation")) == (60, 0, 2, 2)
-    assert derive_army_mutiny_state(probation) == "不满"
 
     # 解闩后的非满饷月不减；连续满饷归零后且 loyalty>=60 才恢复正常。
     _set(db, fiscal_path, loyalty=60, arrears=1, latched=0)
     partial_pay = _tick(db, state)
     assert tuple(partial_pay[k] for k in ("loyalty", "is_mutinied", "mutiny_probation")) == (60, 0, 2)
-    assert derive_army_mutiny_state(partial_pay) == "不满"
     _set(db, fiscal_path, loyalty=55, arrears=0, latched=0)
     full_pay_1 = _tick(db, state)
     assert tuple(full_pay_1[k] for k in ("loyalty", "mutiny_probation")) == (60, 1)
-    assert derive_army_mutiny_state(full_pay_1) == "不满"
     _set(db, fiscal_path, loyalty=55, arrears=0, latched=0)
     full_pay_2 = _tick(db, state)
     assert tuple(full_pay_2[k] for k in ("loyalty", "mutiny_probation")) == (60, 0)
-    assert derive_army_mutiny_state(full_pay_2) == "正常"
 
     # 察看期重入是第三振 → #318 同事务经 adapter 转流寇（清 latch）。
     _set(db, fiscal_path, loyalty=19, arrears=5, latched=0)
@@ -148,11 +144,9 @@ def test_old_save_migrates_and_mutiny_progress_survives_reopen(game, tmp_path, f
         _set(reopened, fiscal_path, loyalty=95, arrears=0, latched=1)
         restored = _tick(reopened, state)
         assert tuple(restored[k] for k in ("loyalty", "is_mutinied", "mutiny_count", "mutiny_probation")) == (60, 0, 2, 1)
-        assert derive_army_mutiny_state(restored) == "不满"
 
         _set(reopened, fiscal_path, loyalty=55, arrears=0, latched=0)
         recovered = _tick(reopened, state)
         assert tuple(recovered[k] for k in ("loyalty", "is_mutinied", "mutiny_count", "mutiny_probation")) == (60, 0, 2, 0)
-        assert derive_army_mutiny_state(recovered) == "正常"
     finally:
         reopened.close()

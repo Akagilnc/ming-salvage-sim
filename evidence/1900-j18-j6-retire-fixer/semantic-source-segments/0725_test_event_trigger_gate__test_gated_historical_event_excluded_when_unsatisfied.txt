@@ -1,0 +1,18 @@
+# FILE: tests/test_event_trigger_gate.py
+# NAME: test_gated_historical_event_excluded_when_unsatisfied
+# LINE: 84-95
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_gated_historical_event_excluded_when_unsatisfied(game):
+    db, state, content = game
+    issues.bind_content(content)  # 防他测漂移 _content：确保 _ctx() 指向本 fixture 盘面
+    ev = _hist_event("__test_gated_hist__", {"民心": "<=5"})
+    content.events.append(ev)
+    try:
+        state.metrics["民心"] = 60  # gate 不达标
+        cands = issues.gather_candidate_events(state, db)
+        assert all(c.id != "__test_gated_hist__" for c in cands), \
+            "前提门不达标的历史事件不应进候选（#12 机制半）"
+    finally:
+        content.events.remove(ev)

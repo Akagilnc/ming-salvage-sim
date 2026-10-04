@@ -1,0 +1,47 @@
+# FILE: tests/test_execution_pressure_654.py
+# NAME: test_path1_conversational_draft_bad_roster_marks_failed
+# LINE: 442-482
+# FLAGS: assert_text_compare_or_match
+# KIND: py
+
+def test_path1_conversational_draft_bad_roster_marks_failed(env):
+    """路 1 _commit_conversational_draft：成案零行 → pending failed、无案卷。"""
+    db, state, _ = env
+    payload = {
+        "text": "清丈天下田亩",
+        "actor": "毕自严",
+        "target_kind": "policy",
+        "target_id": "清丈天下田亩",
+        "locality_scope": "national",
+        "dossier_action_type": "assignment",
+        "participant_roster": [{"character_id": "查无此人", "tier": "主办"}],
+        "mode": "ordinary",
+        "_canonical_pending_directive": True,
+        "_directive_status": "draft",
+    }
+    cur = db.conn.execute(
+        """
+        INSERT INTO pending_actions
+        (turn, minister_name, kind, action, target_id, payload_json, status)
+        VALUES (?,?,?,?,?,?,?)
+        """,
+        (
+            state.turn, "毕自严",
+            "directive", "拟旨", None,
+            json.dumps(payload, ensure_ascii=False), "pending",
+        ),
+    )
+    pa_id = int(cur.lastrowid)
+    db.conn.commit()
+    db.commit_pending_actions(state, content=db.content, action_ids=[pa_id])
+    st = db.conn.execute(
+        "SELECT status, committed_directive_id FROM pending_actions WHERE id=?",
+        (pa_id,),
+    ).fetchone()
+    assert st["status"] == "failed"
+    # 回滚后不应残留 directive 案卷
+    # 允许他用例无关行；本 pending 名下必须为空
+    assert db.conn.execute(
+        "SELECT COUNT(*) AS n FROM decree_dossiers WHERE pending_action_id=?",
+        (pa_id,),
+    ).fetchone()["n"] == 0

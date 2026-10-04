@@ -1,0 +1,62 @@
+# FILE: tests/test_fiscal_substrate_bridge.py
+# NAME: test_economy_pay_arrears_from_central_account_splits_by_current_debt_ratio
+# LINE: 2706-2761
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_economy_pay_arrears_from_central_account_splits_by_current_debt_ratio(fresh_db):
+    from ming_sim.issues import apply_score_extraction
+
+    state = fresh_db.load_state()
+    before_province = _province_pay_arrears(fresh_db, "shaanxi")
+    before_army = fresh_db.conn.execute(
+        """
+        SELECT province_pay_arrears, central_pay_arrears
+        FROM armies
+        WHERE id = 'shaanxi_army'
+        """
+    ).fetchone()
+    assert before_province > 0
+    assert before_army["province_pay_arrears"] > 0
+    assert before_army["central_pay_arrears"] > 5
+    before_total = (
+        before_army["province_pay_arrears"] + before_army["central_pay_arrears"]
+    )
+    expected_province_pay = 5 * before_army["province_pay_arrears"] / before_total
+    expected_central_pay = 5 * before_army["central_pay_arrears"] / before_total
+
+    applied = apply_score_extraction(fresh_db, state, {"economy_moves": [{
+        "account": "国库", "delta": -5, "category": "补饷", "reason": "测试补饷",
+        "purpose": "补饷", "target_kind": "army", "target_id": "shaanxi_army",
+        "origin_ref": "盘面自发",
+    }]})["economy_moves"]
+
+    after_army = fresh_db.conn.execute(
+        """
+        SELECT arrears, province_pay_arrears, central_pay_arrears
+        FROM armies
+        WHERE id = 'shaanxi_army'
+        """
+    ).fetchone()
+
+    assert len(applied) == 1
+    assert applied[0]["delta"] == -5
+    assert applied[0]["applied"] is True
+    assert after_army["province_pay_arrears"] == pytest.approx(
+        before_army["province_pay_arrears"] - expected_province_pay, abs=1e-6
+    )
+    assert after_army["central_pay_arrears"] == pytest.approx(
+        before_army["central_pay_arrears"] - expected_central_pay, abs=1e-6
+    )
+    assert after_army["arrears"] == pytest.approx(
+        after_army["province_pay_arrears"] + after_army["central_pay_arrears"]
+    )
+    assert _read_settle(fresh_db, "shaanxi")["st"]["军饷欠"] == pytest.approx(
+        _province_pay_arrears(fresh_db, "shaanxi"), abs=1e-6
+    )
+    assert _province_pay_arrears(fresh_db, "shaanxi") == pytest.approx(
+        before_province - expected_province_pay, abs=1e-6
+    )
+    assert fresh_db.get_central_army_pay_arrears_container() == pytest.approx(
+        _non_self_funded_pay_arrears(fresh_db)[1], abs=1e-6
+    )

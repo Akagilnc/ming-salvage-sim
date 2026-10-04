@@ -1,0 +1,19 @@
+# FILE: tests/test_qa_1281_issue_audience_case_facts.py
+# NAME: test_malformed_event_audience_fails_loud_from_material_entry
+# LINE: 127-139
+# FLAGS: helper_or_private_call
+# KIND: py
+
+def test_malformed_event_audience_fails_loud_from_material_entry(
+    game, tmp_path, stored_audiences, expected_exc,
+):
+    db, state, content = game
+    row = _issue_row(db)
+    db.conn.execute(
+        "UPDATE events SET audiences=? WHERE id=?", (stored_audiences, row["origin_ref"]),
+    )
+
+    with pytest.raises(expected_exc):
+        prepare_character_materials(
+            db, state, content.characters[AUDIENCE_NAME], dest_root=tmp_path / "materials",
+        )

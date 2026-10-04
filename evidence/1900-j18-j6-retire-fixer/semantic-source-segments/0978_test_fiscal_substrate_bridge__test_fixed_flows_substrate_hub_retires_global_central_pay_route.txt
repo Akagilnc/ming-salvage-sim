@@ -1,0 +1,67 @@
+# FILE: tests/test_fiscal_substrate_bridge.py
+# NAME: test_fixed_flows_substrate_hub_retires_global_central_pay_route
+# LINE: 705-765
+# FLAGS: helper_or_private_call
+# KIND: py
+
+def test_fixed_flows_substrate_hub_retires_global_central_pay_route(fresh_game):
+    import ming_sim.flows as flows_mod
+
+    db, state = fresh_game
+    state.metrics["国库"] = 0
+    db.save_state(state)
+    db.conn.execute("UPDATE buildings SET output_amount = 0, maintenance = 0")
+    _zero_non_meta_fiscal_config(db)
+    db.conn.execute(
+        """
+        UPDATE regions
+        SET tax_per_turn = 0,
+            fiscal = json_set(
+                fiscal, '$.huang_tian', 0, '$.liao_xiang', 0,
+                '$.salt_tax', 0, '$.commerce_tax', 0
+            )
+        """
+    )
+    db.conn.execute(
+        """
+        UPDATE armies
+        SET self_funded_pay = 1, is_tusi = 1, province_pay_share = 0,
+            central_pay_share = 0, pay_source_region = '',
+            province_pay_arrears = 0, central_pay_arrears = 0, arrears = 0
+        """
+    )
+    db.conn.execute(
+        """
+        UPDATE armies
+        SET self_funded_pay = 0, is_tusi = 0, owner_power = 'ming',
+            pay_source_region = 'shaanxi', province_pay_share = 0.65,
+            central_pay_share = 0.35, province_pay_arrears = 0,
+            central_pay_arrears = 0, arrears = 0,
+            manpower = 10000, salary_rate = 10
+        WHERE id = 'shaanxi_army'
+        """
+    )
+    db.conn.commit()
+
+    flow_rows = flows_mod.apply_fixed_period_flows(db, state)
+
+    row = db.conn.execute(
+        """
+        SELECT arrears, province_pay_arrears, central_pay_arrears
+        FROM armies WHERE id = 'shaanxi_army'
+        """
+    ).fetchone()
+    assert not any(
+        flow.get("account") == "国库" and flow.get("category") == "各军军饷"
+        for flow in flow_rows
+    )
+    assert row["central_pay_arrears"] == pytest.approx(3.5)
+    assert row["arrears"] == pytest.approx(
+        row["province_pay_arrears"] + row["central_pay_arrears"]
+    )
+    assert db.get_central_army_pay_arrears_container() == pytest.approx(3.5)
+    _province_total, central_total, army_total = _non_self_funded_pay_arrears(db)
+    assert db.get_central_army_pay_arrears_container() == pytest.approx(central_total)
+    assert _province_container_total(db) + db.get_central_army_pay_arrears_container() == pytest.approx(
+        army_total + db._standalone_army_pay_container_total()
+    )

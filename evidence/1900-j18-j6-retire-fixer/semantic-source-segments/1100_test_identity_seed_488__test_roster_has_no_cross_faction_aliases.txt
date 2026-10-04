@@ -1,0 +1,13 @@
+# FILE: tests/test_identity_seed_488.py
+# NAME: test_roster_has_no_cross_faction_aliases
+# LINE: 112-118
+# FLAGS: assert_count
+# KIND: py
+
+def test_roster_has_no_cross_faction_aliases():
+    _, characters = load_character_content()
+    by_alias = {}
+    for character in characters.values():
+        for alias in character.aliases:
+            by_alias.setdefault(alias, set()).add(character.faction)
+    assert all(len(factions) == 1 for factions in by_alias.values())

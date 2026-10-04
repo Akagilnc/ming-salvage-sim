@@ -1,0 +1,15 @@
+# FILE: tests/test_rescript_draft_656.py
+# NAME: test_validate_items_binds_only_board_issue_ids
+# LINE: 691-699
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_validate_items_binds_only_board_issue_ids(draft_ingress):
+    data = {"items": [
+        {"issue_id": 5, "title": "甲", "context": "c", "options": _two_opts("a", "h1", "b", "h2")},
+        {"issue_id": 999, "title": "幻觉回显", "context": "c", "options": _two_opts("a", "h1", "b", "h2")},
+        {"title": "无回显", "context": "c", "options": _two_opts("a", "h1", "b", "h2")},
+    ]}
+    drafts = draft_ingress(data, {5, 7})
+    assert [d.get("event_id") for d in drafts] == ["issue:5", None, None]
+    assert drafts[1]["title"] == "幻觉回显"  # 文本原样保留，只不信 id

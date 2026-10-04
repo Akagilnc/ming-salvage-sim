@@ -1,0 +1,32 @@
+{
+  "source_path": "tests/test_person_archive_schema.py",
+  "member_count": 2,
+  "members": [
+    {
+      "idx": 1507,
+      "file": "tests/test_person_archive_schema.py",
+      "name": "test_add_character_persists_transit_to",
+      "line": 48,
+      "end": 73,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1507_test_person_archive_schema__test_add_character_persists_transit_to.txt",
+      "source_path": "tests/test_person_archive_schema.py"
+    },
+    {
+      "idx": 1508,
+      "file": "tests/test_person_archive_schema.py",
+      "name": "test_old_save_schema_is_upgraded_for_person_archive_fields",
+      "line": 96,
+      "end": 143,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1508_test_person_archive_schema__test_old_save_schema_is_upgraded_for_person_archive_fields.txt",
+      "source_path": "tests/test_person_archive_schema.py"
+    }
+  ]
+}

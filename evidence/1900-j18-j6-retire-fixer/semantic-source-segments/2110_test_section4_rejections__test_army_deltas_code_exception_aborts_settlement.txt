@@ -1,0 +1,19 @@
+# FILE: tests/test_section4_rejections.py
+# NAME: test_army_deltas_code_exception_aborts_settlement
+# LINE: 389-401
+# FLAGS: mock_or_patch_present,helper_or_private_call
+# KIND: py
+
+def test_army_deltas_code_exception_aborts_settlement(game, monkeypatch):
+    """apply_army_deltas 内代码异常原样上抛，原子分派回滚整批。"""
+    db, state, content = game
+    good = _an_army(db)
+
+    def _boom(self, *a, **k):
+        raise KeyError("code bug in apply_army_deltas")
+    monkeypatch.setattr(type(db), "apply_army_deltas", _boom)
+
+    with pytest.raises(KeyError):
+        run_settle(db, state, content, {
+            "army_delta": {good: {"morale": 2}},
+        }, narrative="x", decree_text="y")

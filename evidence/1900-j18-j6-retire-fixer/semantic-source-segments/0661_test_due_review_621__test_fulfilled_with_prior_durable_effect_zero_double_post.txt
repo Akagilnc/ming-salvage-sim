@@ -1,0 +1,40 @@
+# FILE: tests/test_due_review_621.py
+# NAME: test_fulfilled_with_prior_durable_effect_zero_double_post
+# LINE: 717-750
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_fulfilled_with_prior_durable_effect_zero_double_post(game):
+    """生根：履行期已逐月落完 → 复核零重复落账。"""
+    db, state, content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.commit()
+    dossier_id = _executing_policy_dossier(db, state, token="rooted")
+    # 预先落一笔带 origin 的 durable 效果
+    db.record_issue_economy_move(
+        state, "国库", -3, "清丈经费", "履行期逐月已落",
+        origin_ref=f"dossier:{dossier_id}", commit=True,
+    )
+    before_moves = db.list_economy_moves_for_dossier(dossier_id)
+    assert before_moves
+    stages = [{
+        "stage_idx": 0,
+        "due_turn": state.turn,
+        "criterion_text": "火器见眉目",
+        "origin_context": "三年火器见眉目",
+    }]
+    _insert_staged_commitment(
+        db, state, content, stages=stages, origin_ref=f"dossier:{dossier_id}",
+    )
+    write_due_staged_commitment_todos(db, state)
+    db.conn.execute(
+        "UPDATE next_audience_todos SET created_turn=?",
+        (state.turn - 1,),
+    )
+    db.conn.commit()
+    apply_pending_due_reviews(db, state, commit=True)
+
+    dossier = db.get_decree_dossier(dossier_id)
+    assert dossier["execution_outcome"] == "fulfilled"
+    after_moves = db.list_economy_moves_for_dossier(dossier_id)
+    assert after_moves == before_moves

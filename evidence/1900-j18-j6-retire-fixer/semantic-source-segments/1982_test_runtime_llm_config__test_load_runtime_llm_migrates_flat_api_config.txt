@@ -1,0 +1,46 @@
+# FILE: tests/test_runtime_llm_config.py
+# NAME: test_load_runtime_llm_migrates_flat_api_config
+# LINE: 85-124
+# FLAGS: assert_text_compare_or_match,mock_or_patch_present
+# KIND: py
+
+def test_load_runtime_llm_migrates_flat_api_config(tmp_path, monkeypatch):
+    path = tmp_path / "runtime_llm.json"
+    path.write_text(
+        json.dumps(
+            {
+                "base_url": "https://api.example.com/v1",
+                "model": "gpt-test",
+                "api_key": "sk-test",
+                "timeout_seconds": 120,
+                "thinking_level": "medium",
+                "advanced_model": "gpt-advanced",
+                "advanced_base_url": "https://advanced.example.com/v1",
+                "advanced_api_key": "sk-advanced",
+                "advanced_thinking_level": "high",
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(llm_config, "RUNTIME_LLM_PATH", str(path))
+
+    runtime = llm_config.load_runtime_llm()
+
+    assert runtime["channel"] == "api"
+    assert runtime["api"] == {
+        "base_url": "https://api.example.com/v1",
+        "model": "gpt-test",
+        "api_key": "sk-test",
+        "timeout_seconds": 120,
+        "thinking_level": "medium",
+        "advanced_model": "gpt-advanced",
+        "advanced_base_url": "https://advanced.example.com/v1",
+        "advanced_api_key": "sk-advanced",
+        "advanced_thinking_level": "",
+        "reasoning_strength": "high",
+        "default_headers": {},
+    }
+    assert runtime["reasoning_strength"] == "high"
+    assert runtime["cli"]["runner"] == ""
+    assert runtime["cli"]["model"] == ""

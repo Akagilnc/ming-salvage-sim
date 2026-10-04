@@ -1,0 +1,36 @@
+# FILE: tests/test_person_delta_adapter.py
+# NAME: test_apply_office_appointment_new_person_person_title_no_dirty_office_row
+# LINE: 3471-3500
+# FLAGS: assert_text_compare_or_match
+# KIND: py
+
+def test_apply_office_appointment_new_person_person_title_no_dirty_office_row(game):
+    """#1058 接缝回归钉①：apply_office_appointment 新建档路（不在册）须透传 new_office_type。
+    带 person-title 名分的新人物经【唯一落地核】建档时，office_type 落 名分、不写脏
+    character_offices 行、更不因 infer 兜「待铨」当普通官职而 raise 中止结算。"""
+    db, state, content = game
+    name = "测试名分新降将_1058"
+    assert name not in content.characters
+    try:
+        result = issues.apply_office_appointment(
+            db, state, content,
+            name, "听用候铨",
+            reason="降金后授名分",
+            new_office_type="身名分",
+        )
+        assert not result.get("rejected"), result
+        assert result.get("kind") == "appoint"
+        row = db.conn.execute(
+            "SELECT office, office_type FROM characters WHERE name=?", (name,)
+        ).fetchone()
+        assert row is not None, "名分新人物未落 characters"
+        assert row["office_type"] == "身名分"
+        # 名分守卫：offices 父行不建、character_offices 无脏行
+        assert db.conn.execute(
+            "SELECT 1 FROM offices WHERE office_type='身名分'"
+        ).fetchone() is None
+        assert db.conn.execute(
+            "SELECT 1 FROM character_offices WHERE character_name=?", (name,)
+        ).fetchone() is None
+    finally:
+        content.characters.pop(name, None)

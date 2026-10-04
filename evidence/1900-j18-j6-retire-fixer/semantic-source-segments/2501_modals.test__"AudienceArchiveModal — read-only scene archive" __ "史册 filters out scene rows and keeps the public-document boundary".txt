@@ -1,0 +1,18 @@
+# FILE: web/src/components/modals.test.tsx
+# NAME: "AudienceArchiveModal — read-only scene archive" / "史册 filters out scene rows and keeps the public-document boundary"
+# LINE: 1497-1508
+# FLAGS: web_mock_spy_or_calls
+# KIND: web
+
+  it("史册 filters out scene rows and keeps the public-document boundary", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockImplementation((url: string) => Promise.resolve({ ok: true, json: async () =>
+      url === "/api/history/turns" ? { turns: [
+        { kind: "month", turn: 7, year: 1, period: 11, has_report: true, has_attendant: false, has_directive: false },
+        { kind: "night", turn: 7, year: 1, period: 11, night_id: 31, title: "不应出现的场卷" },
+      ] } : { turn: 7, exists: true, report: "月档奏报", directives: [] }
+    })));
+    const host = document.createElement("div"); document.body.appendChild(host);
+    const root = createRoot(host); mountedRoots.push({ root, host });
+    await act(async () => { root.render(<HistoryModal onClose={() => {}} />); await Promise.resolve(); await Promise.resolve(); });
+    expect(host.textContent).not.toContain("不应出现的场卷");
+  });

@@ -1,0 +1,56 @@
+# FILE: tests/test_pihong_dossier_1490.py
+# NAME: test_657_summon_missing_tag_enter_blocks_phase2_then_retry
+# LINE: 1799-1848
+# FLAGS: assert_text_compare_or_match,assert_count,mock_or_patch_present,helper_or_private_call
+# KIND: py
+
+def test_657_summon_missing_tag_enter_blocks_phase2_then_retry(
+    web_game, monkeypatch,
+):
+    """#1838 reopen：批红召见落入殿事实账（TAG_ENTER、正文空）即消费，可进 phase2。"""
+    from ming_sim.audience_night import TAG_ENTER, rescript_summon_origin_ref
+    from ming_sim.rescript_draft import normalize_rescript_layer_a_option
+
+    db, state = web_game.db, web_game.state
+    opt = normalize_rescript_layer_a_option({
+        "label": "备", "hint": "h", "action_type": "assignment",
+        "assignee_name": "", "target_kind": "region", "target_id": "shaanxi",
+        "locality_scope": "single", "region_id": "shaanxi",
+        "transaction_category": "督赈",
+    })
+
+    _657_install_real_phase2_llm_boundary(monkeypatch)
+    phase2_calls = {'n': 0}
+    _real_p2 = session_mod.resolve_decisions_phase2
+
+    def _count_phase2(*a, **k):
+        phase2_calls['n'] += 1
+        return _real_p2(*a, **k)
+
+    monkeypatch.setattr(session_mod, "resolve_decisions_phase2", _count_phase2)
+
+    desk = _657_plant_awaiting_web(web_game, drafts=[{
+        "title": "门闩召见", "context": "c",
+        "options": [opt, {"label": "x", "hint": "h", "draft_capability": "x"}],
+        "actor_name": "杨嗣昌", "actor_office": "o", "actor_faction": "f",
+    }])
+    key = desk[0]["decision_key"]
+    body = [{
+        "decision_key": key, "action": "summon",
+        "label": "召见", "summon_target": "杨嗣昌",
+    }]
+    turn_before = int(state.turn)
+    r1 = asyncio.run(_post_resolve(body))
+    assert r1.status_code == 200 and "event: done" in r1.text, r1.text
+    assert phase2_calls["n"] == 1
+    assert int(web_game.state.turn) == turn_before + 1
+    kind, turn_s, idx_s = key.split(":")
+    origin = rescript_summon_origin_ref(int(turn_s), int(idx_s), 0)
+    rows = db.conn.execute(
+        "SELECT body, tags FROM story_ledger_entries WHERE origin_ref=?",
+        (origin,),
+    ).fetchall()
+    assert len(rows) == 1
+    tags = json.loads(rows[0]['tags'] or '[]')
+    assert TAG_ENTER in tags
+    assert str(rows[0]["body"] or "") == ""

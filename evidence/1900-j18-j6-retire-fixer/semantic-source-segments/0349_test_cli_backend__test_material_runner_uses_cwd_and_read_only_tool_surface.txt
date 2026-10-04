@@ -1,0 +1,37 @@
+# FILE: tests/test_cli_backend.py
+# NAME: test_material_runner_uses_cwd_and_read_only_tool_surface
+# LINE: 43-73
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_material_runner_uses_cwd_and_read_only_tool_surface(monkeypatch, tmp_path, runner, model, flags):
+    root = str(tmp_path / "materials")
+    os.mkdir(root)
+    captured = _capture_run(monkeypatch, stderr="provider diagnostics")
+    chat = cb.CliChat(id=model, backend=runner, materials_dir=root, reasoning_strength="medium")
+    response = chat.invoke([Message(role="user", content="request")], Message(role="assistant"))
+    assert response.role == "assistant"
+    assert response.event == "AssistantResponse"
+    assert response.tool_calls == []
+    assert captured["kw"]["cwd"] == root
+    cmd = captured["cmd"]
+    assert all(flag in cmd for flag in flags)
+    if runner == "agy":
+        assert any(arg.startswith("--print=") for arg in cmd)
+        assert "--sandbox" not in cmd
+    elif runner == "claude":
+        assert cmd[cmd.index("--model") + 1] == model
+        assert json.loads(cmd[cmd.index("--mcp-config") + 1]) == {"mcpServers": {}}
+    elif runner == "kimi":
+        assert cmd[cmd.index("-m") + 1] == model
+        assert not os.path.exists(cmd[cmd.index("--agent-file") + 1])
+        assert not any(flag in cmd for flag in ("--yolo", "-y", "--auto"))
+    elif runner == "grok":
+        assert cmd[cmd.index("-m") + 1] == model
+        assert cmd[cmd.index("--effort") + 1] == "med"
+        assert "--always-approve" not in cmd
+    elif runner == "pi":
+        assert cmd[cmd.index("--model") + 1] == model
+        assert cmd[cmd.index("--thinking") + 1] == "medium"
+    else:
+        assert cmd[cmd.index("--model") + 1] == model

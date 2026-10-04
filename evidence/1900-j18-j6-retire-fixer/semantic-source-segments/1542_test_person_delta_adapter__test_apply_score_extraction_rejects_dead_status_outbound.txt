@@ -1,0 +1,30 @@
+# FILE: tests/test_person_delta_adapter.py
+# NAME: test_apply_score_extraction_rejects_dead_status_outbound
+# LINE: 1808-1831
+# FLAGS: assert_text_compare_or_match
+# KIND: py
+
+def test_apply_score_extraction_rejects_dead_status_outbound(game):
+    db, state, content = game
+    name = active_ming_character(db, content)
+    db.set_character_status(state, name, "dead", "测试置死")
+
+    applied = issues.apply_score_extraction(
+        db,
+        state,
+        {"人物变更": [{"name": name, "origin_ref": "盘面自发", "动作": "处置", "status": "dismissed"}]},
+        content=content,
+    )
+
+    assert applied["applied_person_changes"] == [
+        {
+            "name": name,
+            "origin_ref": "盘面自发", "动作": "处置",
+            "status": "dismissed",
+            "rejected": True,
+            "reason": ANY,
+            "category": "invalid_transition",
+            "item": {"name": name, "origin_ref": "盘面自发", "动作": "处置", "status": "dismissed"},
+        }
+    ]
+    assert isinstance(applied['applied_person_changes'][0]['reason'], str) and applied['applied_person_changes'][0]['reason']

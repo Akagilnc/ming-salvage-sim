@@ -1,0 +1,42 @@
+# FILE: tests/test_style_temperament_641.py
+# NAME: test_inertia_natural_resolve_applies_temperament_style
+# LINE: 47-82
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_inertia_natural_resolve_applies_temperament_style(game):
+    """生产入口：issue 自然结案 effect_on_resolve 性情 → DB/runtime/person_logs 一致。"""
+    db, state, content = game
+    issues.bind_content(content)  # 防他测漂移 _content；inertia 路 content=None→_ctx()
+    before_db = _style_row(db)
+    before_rt = content.characters[PERSON].style
+    before_logs = db.conn.execute(
+        "SELECT COUNT(*) AS c FROM person_logs WHERE person_name=? AND action=?",
+        (PERSON, "性情"),
+    ).fetchone()["c"]
+
+    db.insert_issue(
+        state,
+        kind="situation",
+        title="自然结案性情测试",
+        bar_value=99,
+        inertia=1,
+        effect_on_resolve={"人物变更": [_temperament_item()]},
+    )
+    apply_issue_inertia_and_ongoing(db, state)
+
+    assert before_db == before_rt
+    assert _style_row(db) == NEW_STYLE
+    assert content.characters[PERSON].style == NEW_STYLE
+    assert NEW_STYLE != before_db
+    after_logs = db.conn.execute(
+        "SELECT COUNT(*) AS c FROM person_logs WHERE person_name=? AND action=?",
+        (PERSON, "性情"),
+    ).fetchone()["c"]
+    assert after_logs == before_logs + 1
+    log = db.conn.execute(
+        "SELECT action, payload_summary FROM person_logs "
+        "WHERE person_name=? AND action=? ORDER BY id DESC LIMIT 1",
+        (PERSON, "性情"),
+    ).fetchone()
+    assert log["action"] == "性情"

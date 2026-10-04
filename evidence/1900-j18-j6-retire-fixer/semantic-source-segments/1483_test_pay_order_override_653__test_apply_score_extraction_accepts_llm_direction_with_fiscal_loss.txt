@@ -1,0 +1,22 @@
+# FILE: tests/test_pay_order_override_653.py
+# NAME: test_apply_score_extraction_accepts_llm_direction_with_fiscal_loss
+# LINE: 1000-1015
+# FLAGS: assert_count
+# KIND: py
+
+def test_apply_score_extraction_accepts_llm_direction_with_fiscal_loss(game):
+    """F3.2：单一财政受损事实在案时，LLM 综合判断的正向 satisfaction 原样接收。"""
+    from ming_sim.issues import apply_score_extraction
+
+    db, state, _content = game
+    db.conn.execute(
+        "UPDATE armies SET province_pay_arrears = 12.0, "
+        "arrears = 12.0 + central_pay_arrears WHERE id = 'shaanxi_army'"
+    )
+    db.conn.commit()
+    assert build_fiscal_fact_brief(db)
+    applied = apply_score_extraction(
+        db, state, {"class_delta": {"军户": {"satisfaction": 9}}}
+    )
+    assert applied["class_delta"]["军户"]["satisfaction"] == 9
+    assert applied["class_delta_rejections"] == []

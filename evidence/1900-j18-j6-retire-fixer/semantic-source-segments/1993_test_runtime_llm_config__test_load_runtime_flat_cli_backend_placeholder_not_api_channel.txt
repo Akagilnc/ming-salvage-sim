@@ -1,0 +1,23 @@
+# FILE: tests/test_runtime_llm_config.py
+# NAME: test_load_runtime_flat_cli_backend_placeholder_not_api_channel
+# LINE: 412-428
+# FLAGS: assert_text_compare_or_match,mock_or_patch_present
+# KIND: py
+
+def test_load_runtime_flat_cli_backend_placeholder_not_api_channel(tmp_path, monkeypatch):
+    # ship-pre CMR Group A'：真实扁平旧配置（占位符 key + 默认 timeout/
+    # base_url/model + 旧档残留 max_tokens）不该被推成 channel=api。
+    # 只有「存在真实 API key」才推 api。
+    path = tmp_path / "runtime_llm.json"
+    path.write_text(json.dumps({
+        "api_key": "cli-backend",
+        "base_url": "https://api.deepseek.com/v1",
+        "model": "deepseek-chat",
+        "max_tokens": 8000,
+        "timeout_seconds": 180,
+    }), encoding="utf-8")
+    monkeypatch.setattr(llm_config, "RUNTIME_LLM_PATH", str(path))
+
+    out = llm_config.load_runtime_llm()
+
+    assert out["channel"] != "api"

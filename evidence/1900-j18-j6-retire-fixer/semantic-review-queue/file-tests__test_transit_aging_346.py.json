@@ -1,0 +1,93 @@
+{
+  "source_path": "tests/test_transit_aging_346.py",
+  "member_count": 6,
+  "members": [
+    {
+      "idx": 2258,
+      "file": "tests/test_transit_aging_346.py",
+      "name": "test_行止_sets_transit_start_turn",
+      "line": 48,
+      "end": 70,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2258_test_transit_aging_346__test_行止_sets_transit_start_turn.txt",
+      "source_path": "tests/test_transit_aging_346.py"
+    },
+    {
+      "idx": 2259,
+      "file": "tests/test_transit_aging_346.py",
+      "name": "test_行止_payload_cannot_write_arrival",
+      "line": 73,
+      "end": 91,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2259_test_transit_aging_346__test_行止_payload_cannot_write_arrival.txt",
+      "source_path": "tests/test_transit_aging_346.py"
+    },
+    {
+      "idx": 2260,
+      "file": "tests/test_transit_aging_346.py",
+      "name": "test_行止_reemit_same_dest_preserves_start_turn",
+      "line": 94,
+      "end": 124,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2260_test_transit_aging_346__test_行止_reemit_same_dest_preserves_start_turn.txt",
+      "source_path": "tests/test_transit_aging_346.py"
+    },
+    {
+      "idx": 2261,
+      "file": "tests/test_transit_aging_346.py",
+      "name": "test_行止_change_dest_is_rejected",
+      "line": 127,
+      "end": 151,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2261_test_transit_aging_346__test_行止_change_dest_is_rejected.txt",
+      "source_path": "tests/test_transit_aging_346.py"
+    },
+    {
+      "idx": 2262,
+      "file": "tests/test_transit_aging_346.py",
+      "name": "test_pre_settle_ticks_arrival_before_terminal_states",
+      "line": 157,
+      "end": 202,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2262_test_transit_aging_346__test_pre_settle_ticks_arrival_before_terminal_states.txt",
+      "source_path": "tests/test_transit_aging_346.py"
+    },
+    {
+      "idx": 2263,
+      "file": "tests/test_transit_aging_346.py",
+      "name": "test_tick_does_not_arrive_when_remaining_still_positive",
+      "line": 205,
+      "end": 222,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2263_test_transit_aging_346__test_tick_does_not_arrive_when_remaining_still_positive.txt",
+      "source_path": "tests/test_transit_aging_346.py"
+    }
+  ]
+}

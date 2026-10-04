@@ -1,0 +1,23 @@
+# FILE: tests/test_db_broad_except_surface.py
+# NAME: test_resolve_context_corrupt_payload_falls_back_and_surfaces
+# LINE: 59-75
+# FLAGS: helper_or_private_call
+# KIND: py
+
+def test_resolve_context_corrupt_payload_falls_back_and_surfaces(game, monkeypatch):
+    db, _state, _content = game
+    db.save_resolve_context(
+        500, decree_text="旨", simulator_payload={"a": 1},
+    )
+    db.conn.execute(
+        "UPDATE pending_resolve_context SET simulator_payload_json = ? WHERE turn = ?",
+        ("{坏payload", 500),
+    )
+    db.conn.commit()
+
+    msgs = _capture_tlog(monkeypatch)
+    ctx = db.get_resolve_context(500)
+
+    assert ctx is not None
+    assert ctx["simulator_payload"] == {}  # 行为：损坏回退默认 {}，不抛
+    assert msgs

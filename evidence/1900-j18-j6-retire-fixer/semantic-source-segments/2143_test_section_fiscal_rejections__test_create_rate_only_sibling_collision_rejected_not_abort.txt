@@ -1,0 +1,20 @@
+# FILE: tests/test_section_fiscal_rejections.py
+# NAME: test_create_rate_only_sibling_collision_rejected_not_abort
+# LINE: 443-456
+# FLAGS: assert_count,helper_or_private_call
+# KIND: py
+
+def test_create_rate_only_sibling_collision_rejected_not_abort(game):
+    """田赋默认只有 田赋_rate 无 _base——create_fiscal_item 只查 base 键,新立
+    田赋_base 时第二条 INSERT 撞 rate 键 PK = IntegrityError 崩整月,绕过拒收
+    (cmr S3 r2 codex high)。存在性检查须覆盖 base+rate 双键。"""
+    db, state, content = game
+    turn = state.turn
+
+    run_settle(db, state, content, {
+        "fiscal_creates": [{"origin_ref": "盘面自发", "key": "田赋_base", "account": "国库",
+                            "direction": "income", "init_value": 1}],
+    }, narrative="x", decree_text="y")  # 不抛 = 没崩
+
+    rows = [r for r in _rejection_rows(db, turn) if r[0] == "fiscal_creates"]
+    assert len(rows) == 1

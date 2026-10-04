@@ -1,0 +1,13 @@
+# FILE: tests/test_fiscal_substrate_bridge.py
+# NAME: test_primary_source_army_pay_due_rejects_dirty_annual_amount
+# LINE: 3828-3834
+# FLAGS: helper_or_private_call
+# KIND: py
+
+def test_primary_source_army_pay_due_rejects_dirty_annual_amount(fresh_db, bad_annual):
+    settle = _read_settle(fresh_db, "liaodong")
+    settle["_meta"]["primary_source"]["现额银两_年"] = bad_annual
+
+    _write_settle(fresh_db, "liaodong", settle)
+    with pytest.raises(ValueError):
+        fresh_db.settle_province_tick("liaodong", [])

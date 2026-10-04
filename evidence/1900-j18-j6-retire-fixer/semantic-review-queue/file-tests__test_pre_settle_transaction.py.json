@@ -1,0 +1,187 @@
+{
+  "source_path": "tests/test_pre_settle_transaction.py",
+  "member_count": 13,
+  "members": [
+    {
+      "idx": 1690,
+      "file": "tests/test_pre_settle_transaction.py",
+      "name": "test_crash_reload_at_settling_no_double_fiscal_tick",
+      "line": 31,
+      "end": 55,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1690_test_pre_settle_transaction__test_crash_reload_at_settling_no_double_fiscal_tick.txt",
+      "source_path": "tests/test_pre_settle_transaction.py"
+    },
+    {
+      "idx": 1691,
+      "file": "tests/test_pre_settle_transaction.py",
+      "name": "test_settling_survives_begin_turn_phase_whitelist",
+      "line": 58,
+      "end": 83,
+      "flags": [
+        "mock_or_patch_present"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1691_test_pre_settle_transaction__test_settling_survives_begin_turn_phase_whitelist.txt",
+      "source_path": "tests/test_pre_settle_transaction.py"
+    },
+    {
+      "idx": 1692,
+      "file": "tests/test_pre_settle_transaction.py",
+      "name": "test_due_secret_order_submission_rolls_back_on_pre_settle_crash",
+      "line": 86,
+      "end": 113,
+      "flags": [
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1692_test_pre_settle_transaction__test_due_secret_order_submission_rolls_back_on_pre_settle_crash.txt",
+      "source_path": "tests/test_pre_settle_transaction.py"
+    },
+    {
+      "idx": 1693,
+      "file": "tests/test_pre_settle_transaction.py",
+      "name": "test_pre_settle_rolls_back_on_seed_issue_failure",
+      "line": 116,
+      "end": 139,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1693_test_pre_settle_transaction__test_pre_settle_rolls_back_on_seed_issue_failure.txt",
+      "source_path": "tests/test_pre_settle_transaction.py"
+    },
+    {
+      "idx": 1694,
+      "file": "tests/test_pre_settle_transaction.py",
+      "name": "test_crash_inside_pre_settle_no_missing_fiscal",
+      "line": 142,
+      "end": 171,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1694_test_pre_settle_transaction__test_crash_inside_pre_settle_no_missing_fiscal.txt",
+      "source_path": "tests/test_pre_settle_transaction.py"
+    },
+    {
+      "idx": 1695,
+      "file": "tests/test_pre_settle_transaction.py",
+      "name": "test_two_consecutive_player_months_both_get_fiscal_tick",
+      "line": 178,
+      "end": 196,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1695_test_pre_settle_transaction__test_two_consecutive_player_months_both_get_fiscal_tick.txt",
+      "source_path": "tests/test_pre_settle_transaction.py"
+    },
+    {
+      "idx": 1696,
+      "file": "tests/test_pre_settle_transaction.py",
+      "name": "test_enter_review_does_not_clobber_settling",
+      "line": 199,
+      "end": 217,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1696_test_pre_settle_transaction__test_enter_review_does_not_clobber_settling.txt",
+      "source_path": "tests/test_pre_settle_transaction.py"
+    },
+    {
+      "idx": 1697,
+      "file": "tests/test_pre_settle_transaction.py",
+      "name": "test_advance_without_edict_refused_after_settling",
+      "line": 220,
+      "end": 234,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1697_test_pre_settle_transaction__test_advance_without_edict_refused_after_settling.txt",
+      "source_path": "tests/test_pre_settle_transaction.py"
+    },
+    {
+      "idx": 1698,
+      "file": "tests/test_pre_settle_transaction.py",
+      "name": "test_sticky_phases_cover_awaiting_decision",
+      "line": 292,
+      "end": 309,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1698_test_pre_settle_transaction__test_sticky_phases_cover_awaiting_decision.txt",
+      "source_path": "tests/test_pre_settle_transaction.py"
+    },
+    {
+      "idx": 1699,
+      "file": "tests/test_pre_settle_transaction.py",
+      "name": "test_advance_without_edict_refused_at_awaiting",
+      "line": 312,
+      "end": 340,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1699_test_pre_settle_transaction__test_advance_without_edict_refused_at_awaiting.txt",
+      "source_path": "tests/test_pre_settle_transaction.py"
+    },
+    {
+      "idx": 1700,
+      "file": "tests/test_pre_settle_transaction.py",
+      "name": "test_resolve_turn_idempotent_at_awaiting",
+      "line": 343,
+      "end": 369,
+      "flags": [
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1700_test_pre_settle_transaction__test_resolve_turn_idempotent_at_awaiting.txt",
+      "source_path": "tests/test_pre_settle_transaction.py"
+    },
+    {
+      "idx": 1701,
+      "file": "tests/test_pre_settle_transaction.py",
+      "name": "test_guarded_early_return_does_not_consume_pending",
+      "line": 372,
+      "end": 395,
+      "flags": [
+        "assert_text_compare_or_match",
+        "helper_or_private_call",
+        "retired_or_meta_marker"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1701_test_pre_settle_transaction__test_guarded_early_return_does_not_consume_pending.txt",
+      "source_path": "tests/test_pre_settle_transaction.py"
+    },
+    {
+      "idx": 1702,
+      "file": "tests/test_pre_settle_transaction.py",
+      "name": "test_placeholder_save_crash_rolls_back_settling",
+      "line": 418,
+      "end": 442,
+      "flags": [
+        "assert_text_compare_or_match",
+        "mock_or_patch_present",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1702_test_pre_settle_transaction__test_placeholder_save_crash_rolls_back_settling.txt",
+      "source_path": "tests/test_pre_settle_transaction.py"
+    }
+  ]
+}

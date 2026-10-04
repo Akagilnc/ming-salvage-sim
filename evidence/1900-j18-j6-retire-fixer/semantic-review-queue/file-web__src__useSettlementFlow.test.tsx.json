@@ -1,0 +1,217 @@
+{
+  "source_path": "web/src/useSettlementFlow.test.tsx",
+  "member_count": 15,
+  "members": [
+    {
+      "idx": 2536,
+      "file": "web/src/useSettlementFlow.test.tsx",
+      "name": "\"#1625 useSettlementFlow — observation refresh convergence\" / \"throttles inflight reloads and converges to the visible phase returned after waiting\"",
+      "line": 169,
+      "end": 222,
+      "flags": [
+        "web_mock_spy_or_calls",
+        "web_count_assert"
+      ],
+      "kind": "web",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2536_useSettlementFlow.test__\"#1625 useSettlementFlow — observation refresh convergence\" __ \"throttles inflight reloads and converges to the visible p.txt",
+      "source_path": "web/src/useSettlementFlow.test.tsx"
+    },
+    {
+      "idx": 2537,
+      "file": "web/src/useSettlementFlow.test.tsx",
+      "name": "\"#1845 ending summary stays background and becomes visible\" / \"opens with a pending summary and shows it when the tail lands\"",
+      "line": 226,
+      "end": 268,
+      "flags": [
+        "web_mock_spy_or_calls",
+        "web_count_assert"
+      ],
+      "kind": "web",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2537_useSettlementFlow.test__\"#1845 ending summary stays background and becomes visible\" __ \"opens with a pending summary and shows it when the tail l.txt",
+      "source_path": "web/src/useSettlementFlow.test.tsx"
+    },
+    {
+      "idx": 2538,
+      "file": "web/src/useSettlementFlow.test.tsx",
+      "name": "\"#1845 background tail failure observation\" / \"shows a failed ending without a fabricated summary and retains retry\"",
+      "line": 272,
+      "end": 287,
+      "flags": [
+        "web_mock_spy_or_calls",
+        "web_text_assert",
+        "web_count_assert"
+      ],
+      "kind": "web",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2538_useSettlementFlow.test__\"#1845 background tail failure observation\" __ \"shows a failed ending without a fabricated summary and retains retry\".txt",
+      "source_path": "web/src/useSettlementFlow.test.tsx"
+    },
+    {
+      "idx": 2539,
+      "file": "web/src/useSettlementFlow.test.tsx",
+      "name": "\"#1845 background tail failure observation\" / \"refreshes a non-ending month while the tail runs, then stops on persisted failure\"",
+      "line": 289,
+      "end": 304,
+      "flags": [
+        "web_mock_spy_or_calls",
+        "web_count_assert"
+      ],
+      "kind": "web",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2539_useSettlementFlow.test__\"#1845 background tail failure observation\" __ \"refreshes a non-ending month while the tail runs, then stops on persisted.txt",
+      "source_path": "web/src/useSettlementFlow.test.tsx"
+    },
+    {
+      "idx": 2540,
+      "file": "web/src/useSettlementFlow.test.tsx",
+      "name": "\"#1351/#1560 useSettlementFlow — advanceWithoutEdict 令牌与 409 幂等\" / \"POST 携 state.turn 为 expected_turn\"",
+      "line": 308,
+      "end": 343,
+      "flags": [
+        "web_mock_spy_or_calls",
+        "web_text_assert",
+        "web_count_assert"
+      ],
+      "kind": "web",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2540_useSettlementFlow.test__\"#1351__#1560 useSettlementFlow — advanceWithoutEdict 令牌与 409 幂等\" __ \"POST 携 state.turn 为 expected_turn\".txt",
+      "source_path": "web/src/useSettlementFlow.test.tsx"
+    },
+    {
+      "idx": 2541,
+      "file": "web/src/useSettlementFlow.test.tsx",
+      "name": "\"#1351/#1560 useSettlementFlow — advanceWithoutEdict 令牌与 409 幂等\" / \"409 且服务端 turn>expected 时按已推进 reload，不设 error 条\"",
+      "line": 345,
+      "end": 373,
+      "flags": [
+        "web_mock_spy_or_calls",
+        "web_count_assert"
+      ],
+      "kind": "web",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2541_useSettlementFlow.test__\"#1351__#1560 useSettlementFlow — advanceWithoutEdict 令牌与 409 幂等\" __ \"409 且服务端 turn>expected 时按已推进 reload，不设 error 条\".txt",
+      "source_path": "web/src/useSettlementFlow.test.tsx"
+    },
+    {
+      "idx": 2542,
+      "file": "web/src/useSettlementFlow.test.tsx",
+      "name": "\"#1351/#1560 useSettlementFlow — advanceWithoutEdict 令牌与 409 幂等\" / \"409 且服务端 turn<=expected 时仍报错条、不 reload\"",
+      "line": 375,
+      "end": 403,
+      "flags": [
+        "web_mock_spy_or_calls"
+      ],
+      "kind": "web",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2542_useSettlementFlow.test__\"#1351__#1560 useSettlementFlow — advanceWithoutEdict 令牌与 409 幂等\" __ \"409 且服务端 turn<=expected 时仍报错条、不 reload\".txt",
+      "source_path": "web/src/useSettlementFlow.test.tsx"
+    },
+    {
+      "idx": 2543,
+      "file": "web/src/useSettlementFlow.test.tsx",
+      "name": "\"#1351/#1560 useSettlementFlow — advanceWithoutEdict 令牌与 409 幂等\" / \"#1808 B pending failure remains a loud phase-1 error without a recovery panel\"",
+      "line": 405,
+      "end": 436,
+      "flags": [
+        "web_mock_spy_or_calls"
+      ],
+      "kind": "web",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2543_useSettlementFlow.test__\"#1351__#1560 useSettlementFlow — advanceWithoutEdict 令牌与 409 幂等\" __ \"#1808 B pending failure remains a loud phase-1 error.txt",
+      "source_path": "web/src/useSettlementFlow.test.tsx"
+    },
+    {
+      "idx": 2544,
+      "file": "web/src/useSettlementFlow.test.tsx",
+      "name": "\"#1433 useSettlementFlow — 退朝 awaiting 消费面（禁盲 reload hop）\" / \"advance 回 awaiting_decision 时消费 decisions + loadState，不 reload\"",
+      "line": 440,
+      "end": 487,
+      "flags": [
+        "web_mock_spy_or_calls",
+        "web_count_assert"
+      ],
+      "kind": "web",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2544_useSettlementFlow.test__\"#1433 useSettlementFlow — 退朝 awaiting 消费面（禁盲 reload hop）\" __ \"advance 回 awaiting_decision 时消费 decisions + loadState，不 re.txt",
+      "source_path": "web/src/useSettlementFlow.test.tsx"
+    },
+    {
+      "idx": 2545,
+      "file": "web/src/useSettlementFlow.test.tsx",
+      "name": "\"#1277 useSettlementFlow — issueDecree 令牌与 409 幂等\" / \"POST 携 state.turn 为 expected_turn；409 且 serverTurn>expected → reload 不设 error\"",
+      "line": 515,
+      "end": 549,
+      "flags": [
+        "web_mock_spy_or_calls",
+        "web_count_assert"
+      ],
+      "kind": "web",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2545_useSettlementFlow.test__\"#1277 useSettlementFlow — issueDecree 令牌与 409 幂等\" __ \"POST 携 state.turn 为 expected_turn；409 且 serverTurn>expected → relo.txt",
+      "source_path": "web/src/useSettlementFlow.test.tsx"
+    },
+    {
+      "idx": 2546,
+      "file": "web/src/useSettlementFlow.test.tsx",
+      "name": "\"#1234 useSettlementFlow — 同会话 awaiting 停窗消费状态口\" / \"decisions 分支 await loadState：·待批出现（#1323）+ 四键为月初值，且不 reload\"",
+      "line": 553,
+      "end": 591,
+      "flags": [
+        "web_mock_spy_or_calls",
+        "web_count_assert"
+      ],
+      "kind": "web",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2546_useSettlementFlow.test__\"#1234 useSettlementFlow — 同会话 awaiting 停窗消费状态口\" __ \"decisions 分支 await loadState：·待批出现（#1323）+ 四键为月初值，且不 reload\".txt",
+      "source_path": "web/src/useSettlementFlow.test.tsx"
+    },
+    {
+      "idx": 2547,
+      "file": "web/src/useSettlementFlow.test.tsx",
+      "name": "\"#1843 未推进的过月终包\" / \"%s 留在账本核账态而非按完成 reload\"",
+      "line": 595,
+      "end": 627,
+      "flags": [
+        "web_mock_spy_or_calls",
+        "web_count_assert"
+      ],
+      "kind": "web",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2547_useSettlementFlow.test__\"#1843 未推进的过月终包\" __ \"%s 留在账本核账态而非按完成 reload\".txt",
+      "source_path": "web/src/useSettlementFlow.test.tsx"
+    },
+    {
+      "idx": 2548,
+      "file": "web/src/useSettlementFlow.test.tsx",
+      "name": "\"#1852 写成即推进：本面邸报阅读态，不整页 reload\" / \"%s advanced 终包：loadState + 阅读态，朕知道了只关阅读\"",
+      "line": 636,
+      "end": 674,
+      "flags": [
+        "web_mock_spy_or_calls",
+        "web_text_assert",
+        "web_count_assert"
+      ],
+      "kind": "web",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2548_useSettlementFlow.test__\"#1852 写成即推进：本面邸报阅读态，不整页 reload\" __ \"%s advanced 终包：loadState + 阅读态，朕知道了只关阅读\".txt",
+      "source_path": "web/src/useSettlementFlow.test.tsx"
+    },
+    {
+      "idx": 2549,
+      "file": "web/src/useSettlementFlow.test.tsx",
+      "name": "\"#1852 写成即推进：本面邸报阅读态，不整页 reload\" / \"advanceWithoutEdict advanced：从 state 投影开阅读态，不 reload\"",
+      "line": 676,
+      "end": 700,
+      "flags": [
+        "web_mock_spy_or_calls",
+        "web_text_assert"
+      ],
+      "kind": "web",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2549_useSettlementFlow.test__\"#1852 写成即推进：本面邸报阅读态，不整页 reload\" __ \"advanceWithoutEdict advanced：从 state 投影开阅读态，不 reload\".txt",
+      "source_path": "web/src/useSettlementFlow.test.tsx"
+    },
+    {
+      "idx": 2550,
+      "file": "web/src/useSettlementFlow.test.tsx",
+      "name": "\"#1852 写成即推进：本面邸报阅读态，不整页 reload\" / \"退局后迟到的新月刷新不得重挂上一局邸报\"",
+      "line": 702,
+      "end": 715,
+      "flags": [
+        "web_mock_spy_or_calls",
+        "web_count_assert"
+      ],
+      "kind": "web",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2550_useSettlementFlow.test__\"#1852 写成即推进：本面邸报阅读态，不整页 reload\" __ \"退局后迟到的新月刷新不得重挂上一局邸报\".txt",
+      "source_path": "web/src/useSettlementFlow.test.tsx"
+    }
+  ]
+}

@@ -1,0 +1,40 @@
+# FILE: tests/test_cli_play_turn.py
+# NAME: test_cli_does_not_end_unadvanced_turn
+# LINE: 88-121
+# FLAGS: assert_text_compare_or_match,mock_or_patch_present
+# KIND: py
+
+def test_cli_does_not_end_unadvanced_turn(monkeypatch, action):
+    class Session(_Sess):
+        def __init__(self):
+            super().__init__(None)
+            self.step = 0
+
+        def resolve_turn(self):
+            self.calls.append("resolve")
+            advanced = self.step > 0
+            self.step += 1
+            if advanced:
+                self.state.turn += 1
+            return SimpleNamespace(advanced=advanced)
+
+        def advance_without_decree(self):
+            self.calls.append("advance")
+            advanced = self.step > 0
+            self.step += 1
+            if advanced:
+                self.state.turn += 1
+            return SimpleNamespace(advanced=advanced)
+
+    sess = Session()
+    actions = iter([action, action])
+    monkeypatch.setattr(term, "review_directives", lambda _s: next(actions))
+    monkeypatch.setattr(term, "_print_header", lambda _s: None)
+    monkeypatch.setattr(issues_mod, "show_active_issues", lambda _db: None)
+    monkeypatch.setattr(term, "_submit_first_cli_decisions", lambda *_a: "")
+
+    term.play_turn(sess)
+
+    call_name = "resolve" if action == "issue" else "advance"
+    # 未推进时留在本回合交互循环不调 end_turn，再次推进后才调 end_turn 退出
+    assert sess.calls == ["begin", call_name, call_name, "end"]

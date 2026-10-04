@@ -1,0 +1,21 @@
+# FILE: tests/test_audience_continuous_507.py
+# NAME: test_scene_recap_excludes_dialogue_before_person_entered
+# LINE: 59-73
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_scene_recap_excludes_dialogue_before_person_entered(game):
+    """侍立区间之前的殿上公开对话不流入（后入者听不到入殿前的话）。"""
+    db, state, content = game
+    _activate(db, state, "毕自严", "徐光启")
+    night = an.open_night(db, state, location="乾清宫", time_of_day="戌时")
+    nid = int(night["id"])
+
+    an.summon_enter(db, nid, "毕自严")
+    _public(db, nid, "毕自严", "毕自严先奏钱粮九边。")   # 徐光启入殿前
+    an.summon_enter(db, nid, "徐光启")                # 徐光启侍立区间起点
+    _public(db, nid, "徐光启", "徐光启方入奏水利。")
+
+    recap = an.audience_scene_recap(db, "徐光启", night_id=nid)
+    assert "徐光启方入奏水利" in recap            # 正向：区间内
+    assert "毕自严先奏钱粮九边" not in recap       # 负向：入殿前不闻

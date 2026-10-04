@@ -1,0 +1,29 @@
+# FILE: tests/test_faction_leverage_9.py
+# NAME: test_whitelist_faction_delta_routes_to_offset_survives_reconcile
+# LINE: 557-579
+# FLAGS: internal_formula_oracle
+# KIND: py
+
+def test_whitelist_faction_delta_routes_to_offset_survives_reconcile(game):
+    """#9 cmr R5 finding#1 [HIGH]：白名单派系的 LLM faction_delta.leverage 经 adjust_factions
+    注入 leverage_offset（而非直写 leverage 列），随后结算尾 recompute_all_faction_leverage()
+    兜底重算时不被抹回——LLM 的「影响力变化」与官职派生权重复合留存。
+    修前：adjust_factions 直写 leverage 列 → recompute_all 用旧 offset 算回公式值、把 +8 抹掉（红）。
+    修后：+8 进 offset → recompute_all 算出的公式值已含 +8、确认同值、不抹（绿）。"""
+    db, state, content = game
+    faction = "阉党"  # 白名单
+    before = db.faction_leverage(faction)
+    # 经 LLM faction_delta 路给阉党 +8 influence（adjust_factions 是落库单一入口）。
+    db.adjust_factions({faction: {"leverage": 8}})
+    after_apply = db.faction_leverage(faction)
+    assert after_apply == before + 8, (
+        f"faction_delta +8 应即时体现在 leverage（before={before} after_apply={after_apply}）"
+    )
+    # 模拟结算尾兜底 reconcile。
+    db.recompute_all_faction_leverage()
+    db.conn.commit()
+    after_reconcile = db.faction_leverage(faction)
+    assert after_reconcile == before + 8, (
+        f"白名单 faction_delta +8 注入 offset 后应经 reconcile 留存、不被抹回"
+        f"（before={before} after_reconcile={after_reconcile}）"
+    )

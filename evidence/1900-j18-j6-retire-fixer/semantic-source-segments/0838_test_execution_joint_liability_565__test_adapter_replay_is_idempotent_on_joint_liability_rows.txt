@@ -1,0 +1,29 @@
+# FILE: tests/test_execution_joint_liability_565.py
+# NAME: test_adapter_replay_is_idempotent_on_joint_liability_rows
+# LINE: 134-156
+# FLAGS: helper_or_private_call
+# KIND: py
+
+def test_adapter_replay_is_idempotent_on_joint_liability_rows(game):
+    db, state, content = game
+    dossier_id = _executing_dossier(db, state)
+    _close_via_adapter(db, state, content, dossier_id, "failed", note="初结")
+    first = _cost_events(db, dossier_id)
+    first_edges = [
+        e for e in db.get_relation_edge_events(event_kind="连坐")
+        if e["origin"].startswith(f"dossier:{dossier_id}:")
+    ]
+    assert first  # 确有连坐落账
+
+    db.conn.execute(
+        "UPDATE decree_dossiers SET status='executing' WHERE id=?", (dossier_id,),
+    )
+    db.conn.commit()
+    _close_via_adapter(db, state, content, dossier_id, "failed", note="重结")
+
+    assert _cost_events(db, dossier_id) == first
+    second_edges = [
+        e for e in db.get_relation_edge_events(event_kind="连坐")
+        if e["origin"].startswith(f"dossier:{dossier_id}:")
+    ]
+    assert second_edges == first_edges

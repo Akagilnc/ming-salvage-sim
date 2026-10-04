@@ -1,0 +1,40 @@
+# FILE: tests/test_army_salary_44.py
+# NAME: test_legacy_salary_tick_preserves_fractional_opening_arrears
+# LINE: 222-255
+# FLAGS: assert_text_compare_or_match,helper_or_private_call,retired_or_meta_marker
+# KIND: py
+
+def test_legacy_salary_tick_preserves_fractional_opening_arrears(game):
+    from ming_sim.flows import apply_fixed_period_flows
+    db, state, _ = game
+    _use_legacy_fiscal_engine(db)
+    aid = "guanning"
+    db.conn.execute("UPDATE armies SET manpower=0, arrears=0 WHERE owner_power='ming'")
+    db.conn.execute(
+        """
+        UPDATE armies
+        SET owner_power='ming', manpower=10000, salary_rate=1.0, arrears=1.5, morale=50
+        WHERE id=?
+        """,
+        (aid,),
+    )
+    db.conn.commit()
+    state.metrics["国库"] = 50
+
+    apply_fixed_period_flows(db, state)
+
+    row = _army_row(db, aid)
+    assert row["arrears"] == pytest.approx(1.5)
+    log = db.conn.execute(
+        """
+        SELECT old_value, new_value, delta
+        FROM army_logs
+        WHERE army_id=? AND field='arrears'
+        ORDER BY id DESC
+        LIMIT 1
+        """,
+        (aid,),
+    ).fetchone()
+    assert log["old_value"] == "1.5"
+    assert log["new_value"] == "1.5"
+    assert log["delta"] == pytest.approx(0.0)

@@ -1,0 +1,45 @@
+{
+  "source_path": "tests/test_textual_facts_1828.py",
+  "member_count": 3,
+  "members": [
+    {
+      "idx": 2242,
+      "file": "tests/test_textual_facts_1828.py",
+      "name": "test_sun_chuanting_injury_then_recovery_both_readable_by_month",
+      "line": 13,
+      "end": 37,
+      "flags": [
+        "assert_count"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2242_test_textual_facts_1828__test_sun_chuanting_injury_then_recovery_both_readable_by_month.txt",
+      "source_path": "tests/test_textual_facts_1828.py"
+    },
+    {
+      "idx": 2243,
+      "file": "tests/test_textual_facts_1828.py",
+      "name": "test_textual_facts_on_army_region_and_affair_are_object_materials",
+      "line": 40,
+      "end": 79,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2243_test_textual_facts_1828__test_textual_facts_on_army_region_and_affair_are_object_materials.txt",
+      "source_path": "tests/test_textual_facts_1828.py"
+    },
+    {
+      "idx": 2244,
+      "file": "tests/test_textual_facts_1828.py",
+      "name": "test_textual_facts_are_not_rumors_and_do_not_change_character_mechanics",
+      "line": 82,
+      "end": 109,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/2244_test_textual_facts_1828__test_textual_facts_are_not_rumors_and_do_not_change_character_mechanics.txt",
+      "source_path": "tests/test_textual_facts_1828.py"
+    }
+  ]
+}

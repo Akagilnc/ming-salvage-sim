@@ -1,0 +1,36 @@
+{
+  "source_path": "tests/test_new_game_dependency_mismatch_1721.py",
+  "member_count": 2,
+  "members": [
+    {
+      "idx": 1369,
+      "file": "tests/test_new_game_dependency_mismatch_1721.py",
+      "name": "test_new_game_stale_agno_returns_typed_dependency_facts",
+      "line": 45,
+      "end": 80,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1369_test_new_game_dependency_mismatch_1721__test_new_game_stale_agno_returns_typed_dependency_facts.txt",
+      "source_path": "tests/test_new_game_dependency_mismatch_1721.py"
+    },
+    {
+      "idx": 1370,
+      "file": "tests/test_new_game_dependency_mismatch_1721.py",
+      "name": "test_continue_stale_agno_sse_carries_typed_dependency_facts",
+      "line": 83,
+      "end": 124,
+      "flags": [
+        "assert_text_compare_or_match",
+        "assert_count",
+        "helper_or_private_call"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/1370_test_new_game_dependency_mismatch_1721__test_continue_stale_agno_sse_carries_typed_dependency_facts.txt",
+      "source_path": "tests/test_new_game_dependency_mismatch_1721.py"
+    }
+  ]
+}

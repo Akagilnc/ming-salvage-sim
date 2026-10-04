@@ -1,0 +1,17 @@
+# FILE: tests/test_character_knowledge_489.py
+# NAME: test_army_truth_is_exactly_scoped_to_person_command
+# LINE: 1257-1267
+# FLAGS: assert_text_compare_or_match
+# KIND: py
+
+def test_army_truth_is_exactly_scoped_to_person_command(game):
+    db, state, content = game
+    general = next(c for c in content.characters.values() if c.office_type == "边镇")
+    rows = db.conn.execute("SELECT id,name FROM armies ORDER BY id LIMIT 2").fetchall()
+    db.conn.execute("UPDATE armies SET commander='' WHERE commander=?", (general.name,))
+    db.conn.execute("UPDATE armies SET commander=? WHERE id=?", (general.name, rows[0]["id"]))
+    db.conn.commit()
+    view = db.get_character_knowledge(state, general.name)
+    assert view["scope"]["army_ids"] == (rows[0]["id"],)
+    assert rows[0]["name"] in view["world"]["command"]
+    assert rows[1]["name"] not in view["world"]["command"]

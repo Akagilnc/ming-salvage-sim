@@ -1,0 +1,44 @@
+# FILE: tests/test_due_review_621.py
+# NAME: test_dossier_branch_writes_execution_slot_via_adapter
+# LINE: 230-267
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_dossier_branch_writes_execution_slot_via_adapter(game, monkeypatch):
+    db, state, content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.commit()
+    dossier_id = _executing_policy_dossier(db, state)
+    stages = [
+        {
+            "stage_idx": 0,
+            "due_turn": state.turn,
+            "criterion_text": "火器见眉目",
+            "origin_context": "三年火器见眉目",
+        },
+        {
+            "stage_idx": 1,
+            "due_turn": state.turn + 24,
+            "criterion_text": "新历成",
+            "origin_context": "五年新历成",
+        },
+    ]
+    _insert_staged_commitment(
+        db, state, content, stages=stages,
+        origin_ref=f"dossier:{dossier_id}",
+        title="有案卷分段之诺",
+    )
+    # 过月写 todo（中段到期）→ 次回合落格
+    _settle_empty_month(db, state, content, monkeypatch)
+    assert db.list_next_audience_todos(status=TODO_STATUS_PENDING)
+    scenes = list_due_review_scenes(db, state)
+    assert scenes and scenes[0]["origin_context"] == "三年火器见眉目"
+
+    _settle_empty_month(db, state, content, monkeypatch)
+    dossier = db.get_decree_dossier(dossier_id)
+    # 中段：过程态 executing，不结案
+    assert dossier["execution_outcome"] == "executing"
+    assert dossier["status"] == "executing"
+    assert _cost_events(db, dossier_id) == []
+    # todo 已消费
+    assert db.list_next_audience_todos(status=TODO_STATUS_PENDING) == []

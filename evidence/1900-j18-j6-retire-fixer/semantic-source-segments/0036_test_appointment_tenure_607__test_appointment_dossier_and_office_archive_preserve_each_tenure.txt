@@ -1,0 +1,25 @@
+# FILE: tests/test_appointment_tenure_607.py
+# NAME: test_appointment_dossier_and_office_archive_preserve_each_tenure
+# LINE: 37-55
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_appointment_dossier_and_office_archive_preserve_each_tenure(game):
+    db, state, content = game
+    names = [
+        row["name"] for row in db.conn.execute(
+            "SELECT name FROM characters WHERE status='active' AND power_id='ming' "
+            "AND office_type!='后宫' ORDER BY rowid LIMIT 4"
+        )
+    ]
+
+    for index, (name, tenure) in enumerate(zip(names, VALID_TENURES), 1):
+        dossier = _promulgate_appointment(
+            db, state, content, name, f"任别验收官{index}", tenure,
+        )
+        assert json.loads(dossier["payload_json"])["任别"] == tenure
+        office = db.conn.execute(
+            "SELECT appointment_tenure FROM character_offices WHERE character_name=?",
+            (name,),
+        ).fetchone()
+        assert office["appointment_tenure"] == tenure

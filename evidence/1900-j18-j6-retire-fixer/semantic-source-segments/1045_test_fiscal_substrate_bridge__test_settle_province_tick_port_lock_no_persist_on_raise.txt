@@ -1,0 +1,21 @@
+# FILE: tests/test_fiscal_substrate_bridge.py
+# NAME: test_settle_province_tick_port_lock_no_persist_on_raise
+# LINE: 4060-4074
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_settle_province_tick_port_lock_no_persist_on_raise(fresh_db):
+    # 港口锁：坏 p（删必填火耗率）→ settle_tick raise → DB 绝不变（FAIL tick 不持久化）
+    row = fresh_db.conn.execute("SELECT fiscal FROM regions WHERE id='shaanxi'").fetchone()
+    fiscal = json.loads(str(row["fiscal"]))
+    del fiscal["settle"]["p"]["火耗率"]
+    fresh_db.conn.execute(
+        "UPDATE regions SET fiscal = ? WHERE id='shaanxi'",
+        (json.dumps(fiscal, ensure_ascii=False),),
+    )
+    fresh_db.conn.commit()
+    st_before = _read_settle(fresh_db)["st"]
+    with pytest.raises(ValueError):
+        fresh_db.settle_province_tick("shaanxi", [])
+    st_after = _read_settle(fresh_db)["st"]
+    assert st_after == st_before, "港口锁破：FAIL tick 改了 DB"

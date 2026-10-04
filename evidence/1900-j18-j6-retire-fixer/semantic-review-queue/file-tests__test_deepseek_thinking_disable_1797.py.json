@@ -1,0 +1,97 @@
+{
+  "source_path": "tests/test_deepseek_thinking_disable_1797.py",
+  "member_count": 7,
+  "members": [
+    {
+      "idx": 603,
+      "file": "tests/test_deepseek_thinking_disable_1797.py",
+      "name": "test_create_chat_model_deepseek_on_hermes_emits_reasoning_disable",
+      "line": 15,
+      "end": 25,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0603_test_deepseek_thinking_disable_1797__test_create_chat_model_deepseek_on_hermes_emits_reasoning_disable.txt",
+      "source_path": "tests/test_deepseek_thinking_disable_1797.py"
+    },
+    {
+      "idx": 604,
+      "file": "tests/test_deepseek_thinking_disable_1797.py",
+      "name": "test_create_chat_model_deepseek_on_official_keeps_thinking_disabled",
+      "line": 28,
+      "end": 38,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0604_test_deepseek_thinking_disable_1797__test_create_chat_model_deepseek_on_official_keeps_thinking_disabled.txt",
+      "source_path": "tests/test_deepseek_thinking_disable_1797.py"
+    },
+    {
+      "idx": 605,
+      "file": "tests/test_deepseek_thinking_disable_1797.py",
+      "name": "test_create_chat_model_deepseek_on_dashscope_uses_enable_thinking",
+      "line": 41,
+      "end": 51,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0605_test_deepseek_thinking_disable_1797__test_create_chat_model_deepseek_on_dashscope_uses_enable_thinking.txt",
+      "source_path": "tests/test_deepseek_thinking_disable_1797.py"
+    },
+    {
+      "idx": 606,
+      "file": "tests/test_deepseek_thinking_disable_1797.py",
+      "name": "test_create_chat_model_deepseek_on_minimax_uses_endpoint_key",
+      "line": 54,
+      "end": 64,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0606_test_deepseek_thinking_disable_1797__test_create_chat_model_deepseek_on_minimax_uses_endpoint_key.txt",
+      "source_path": "tests/test_deepseek_thinking_disable_1797.py"
+    },
+    {
+      "idx": 607,
+      "file": "tests/test_deepseek_thinking_disable_1797.py",
+      "name": "test_create_chat_model_deepseek_enable_thinking_still_disables",
+      "line": 115,
+      "end": 137,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0607_test_deepseek_thinking_disable_1797__test_create_chat_model_deepseek_enable_thinking_still_disables.txt",
+      "source_path": "tests/test_deepseek_thinking_disable_1797.py"
+    },
+    {
+      "idx": 608,
+      "file": "tests/test_deepseek_thinking_disable_1797.py",
+      "name": "test_create_chat_model_non_deepseek_dashscope_strength_unchanged",
+      "line": 140,
+      "end": 151,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0608_test_deepseek_thinking_disable_1797__test_create_chat_model_non_deepseek_dashscope_strength_unchanged.txt",
+      "source_path": "tests/test_deepseek_thinking_disable_1797.py"
+    },
+    {
+      "idx": 609,
+      "file": "tests/test_deepseek_thinking_disable_1797.py",
+      "name": "test_create_chat_model_non_deepseek_minimax_strength_unchanged",
+      "line": 154,
+      "end": 165,
+      "flags": [
+        "assert_text_compare_or_match"
+      ],
+      "kind": "py",
+      "segment_path": "evidence/1900-j18-j6-retire-fixer/semantic-source-segments/0609_test_deepseek_thinking_disable_1797__test_create_chat_model_non_deepseek_minimax_strength_unchanged.txt",
+      "source_path": "tests/test_deepseek_thinking_disable_1797.py"
+    }
+  ]
+}

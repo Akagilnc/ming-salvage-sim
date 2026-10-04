@@ -1,0 +1,26 @@
+# FILE: tests/test_office_rank_562.py
+# NAME: test_appointment_dossier_uses_declared_type_for_uncommon_target_title
+# LINE: 56-75
+# FLAGS: assert_count,helper_or_private_call
+# KIND: py
+
+def test_appointment_dossier_uses_declared_type_for_uncommon_target_title(game):
+    db, state, _content = game
+    for index, type_key in enumerate(("office_type", "new_office_type")):
+        name = f"异衔{index}"
+        _add(db, state, name, "白身", "布衣")
+        dossier_id = db.create_decree_dossier(
+            state,
+            action_type="appointment",
+            decree_text=f"任命{name}为钦定督理西务大臣",
+            target_kind="character",
+            target_id=name,
+            payload={"name": name, "new_office": "钦定督理西务大臣", type_key: "边镇"},
+        )
+        row = db.conn.execute(
+            "SELECT payload_json FROM decree_dossiers WHERE id=?", (dossier_id,)
+        ).fetchone()
+        payload = json.loads(row["payload_json"])
+
+        assert payload["break_rank"]["new_rank_band"] == 5
+        assert payload["break_rank"]["is_break_rank"] is False

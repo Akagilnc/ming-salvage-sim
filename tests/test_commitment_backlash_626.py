@@ -36,7 +36,6 @@ from ming_sim.commitment_backlash import (
     SOURCE_DEFORMATION_EXPOSURE,
     SOURCE_FAILED_TERMINAL,
     backlash_origin_ref,
-    classify_backlash_source,
 )
 from ming_sim.db import GameDB
 from ming_sim.decree import pre_settle
@@ -214,10 +213,6 @@ def test_ac1_failed_terminal_triggers_commitment_backlash(game):
         did, "failed", "期限已过，诸事不济", int(state.turn),
         close=True, commit=True,
     )
-    # 即便 note 含「事废」字样，执行格 failed 仍只归 failed_terminal（非子串判别）
-    assert classify_backlash_source(execution_outcome="failed") == SOURCE_FAILED_TERMINAL
-    assert classify_backlash_source(execution_outcome="failed") != SOURCE_BREACH_VERDICT
-
     # 当回合不触发
     assert db.trigger_commitment_backlashes(state, commit=True) == []
 

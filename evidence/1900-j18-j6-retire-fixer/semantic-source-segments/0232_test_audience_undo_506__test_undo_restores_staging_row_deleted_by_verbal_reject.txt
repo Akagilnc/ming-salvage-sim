@@ -1,0 +1,35 @@
+# FILE: tests/test_audience_undo_506.py
+# NAME: test_undo_restores_staging_row_deleted_by_verbal_reject
+# LINE: 361-389
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_undo_restores_staging_row_deleted_by_verbal_reject(game):
+    db, state, content = game
+    m = _active_minister(db, content)
+
+    # 轮1：暂存一条动作
+    staged: Dict[str, int] = {}
+
+    def _stage(night_id: int, chat_id: int) -> None:
+        staged["id"] = db.stage_pending_action(
+            int(state.turn), "office", "任命", m, {"text": "测试任免原文", "office": "蓟辽总督"},
+        )
+    _run_round(db, state, m, writes=_stage)
+    action_id = staged["id"]
+
+    # 轮2：口头拒绝 → 删该暂存行
+    def _reject(night_id: int, chat_id: int) -> None:
+        assert db.withdraw_pending_action(action_id, int(state.turn)) is True
+    _, reject_chat = _run_round(db, state, m, writes=_reject)
+    assert db.conn.execute(
+        "SELECT 1 FROM pending_actions WHERE id = ?", (action_id,)
+    ).fetchone() is None
+
+    # 撤回拒绝轮 → 前像日志据 restore_deleted_row 复原该暂存行（含原 payload）
+    db.undo_chat_turn(reject_chat)
+    row = db.conn.execute(
+        "SELECT status, payload_json FROM pending_actions WHERE id = ?", (action_id,)
+    ).fetchone()
+    assert row is not None and row["status"] == "pending"
+    assert "蓟辽总督" in row["payload_json"]

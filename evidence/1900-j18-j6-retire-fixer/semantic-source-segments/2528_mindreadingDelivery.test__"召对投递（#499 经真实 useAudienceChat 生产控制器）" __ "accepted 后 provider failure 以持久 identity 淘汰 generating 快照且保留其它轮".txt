@@ -1,0 +1,36 @@
+# FILE: web/src/mindreadingDelivery.test.tsx
+# NAME: "召对投递（#499 经真实 useAudienceChat 生产控制器）" / "accepted 后 provider failure 以持久 identity 淘汰 generating 快照且保留其它轮"
+# LINE: 152-181
+# FLAGS: web_mock_spy_or_calls
+# KIND: web
+
+  it("accepted 后 provider failure 以持久 identity 淘汰 generating 快照且保留其它轮", async () => {
+    let scrollCalls = 0;
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      if (String(url).includes("/api/audience/scroll")) {
+        scrollCalls += 1;
+        return jsonResp(scrollCalls === 1 ? { night_id: 0, messages: [] } : {
+          night_id: 24,
+          protagonist: "", roster: [], translation_pending: false, messages: [
+            { role: "user", speaker: "圣上", content: "失败问话", chat_turn_id: 8, status: "generating" },
+            { role: "user", speaker: "圣上", content: "保留问话", chat_turn_id: 7 },
+            { role: "minister", speaker: "温体仁", content: "保留答复", chat_turn_id: 7 },
+          ],
+        });
+      }
+      return sse([
+        { event: "accepted", data: { campaign_id: "", night_id: 24, chat_turn_id: 8 } },
+        { event: "error", data: { message: "回话失败", campaign_id: "", night_id: 24, chat_turn_id: 8 } },
+      ]);
+    }));
+    const { hookRef, rows } = mount();
+    await tick();
+
+    await act(async () => { await hookRef.current!.sendChat("温体仁", "失败问话", noCbs); });
+    await tick();
+
+    expect(hookRef.current!.failedIdentity).toEqual({ campaign_id: "", night_id: 24, chat_turn_id: 8 });
+    expect(rows()).toContain("user:失败问话");
+    expect(rows()).toContain("user:保留问话");
+    expect(rows()).toContain("minister:保留答复");
+  });

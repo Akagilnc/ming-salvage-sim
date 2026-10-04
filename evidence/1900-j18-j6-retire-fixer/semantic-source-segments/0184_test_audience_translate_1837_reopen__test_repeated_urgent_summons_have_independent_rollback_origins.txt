@@ -1,0 +1,37 @@
+# FILE: tests/test_audience_translate_1837_reopen.py
+# NAME: test_repeated_urgent_summons_have_independent_rollback_origins
+# LINE: 460-490
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_repeated_urgent_summons_have_independent_rollback_origins(game, monkeypatch):
+    from tests.conftest import persist_and_schedule_scene, stub_audience_translate
+    from tests.test_audience_translation_1838 import _scene_session
+
+    db, state, content = game
+    night = open_night(db, state)
+    person = _hong(db, content)
+    db.conn.execute(
+        "UPDATE characters SET location='shaanxi', transit_to='' WHERE name=?", (person,)
+    )
+    sess = _scene_session(db, state, content, monkeypatch)
+    tones = iter(("星夜兼程", "加急"))
+    stub_audience_translate(monkeypatch, lambda prompt, config: {
+        "scene_facts": [{"body": "殿上应对。", "role": "scene",
+                         "audibility": "殿上公开", "person_names": []}],
+        "travel_tones": [{"person_name": person, "tone": next(tones)}],
+    })
+    turns = []
+    for words in (f"星夜宣{person}来京", f"加急宣{person}来京"):
+        ctid = db.create_chat_turn(state, "殿上", "s", 0, night_id=int(night["id"]), status="active")
+        reply = sess.scene_chat(words, chat_turn_id=ctid)
+        future = persist_and_schedule_scene(sess, db, reply)
+        assert future is not None
+        future.result()
+        turns.append(ctid)
+    rows = [row for row in list_unsettled_summons(db) if row["person_name"] == person]
+    assert len(rows) == 2
+    assert [row["travel_tone"] for row in rows] == ["星夜兼程", "加急"]
+    db.fail_chat_turn(turns[0])
+    rows = [row for row in list_unsettled_summons(db) if row["person_name"] == person]
+    assert len(rows) == 1 and rows[0]["travel_tone"] == "加急"

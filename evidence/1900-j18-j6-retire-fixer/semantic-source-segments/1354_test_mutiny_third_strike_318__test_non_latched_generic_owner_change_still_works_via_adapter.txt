@@ -1,0 +1,50 @@
+# FILE: tests/test_mutiny_third_strike_318.py
+# NAME: test_non_latched_generic_owner_change_still_works_via_adapter
+# LINE: 278-321
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_non_latched_generic_owner_change_still_works_via_adapter(game):
+    db, state, _ = game
+    _configure(db, "substrate_hub")
+    db.conn.execute(
+        "INSERT INTO fiscal_config(key,value,kind,note) VALUES "
+        "('__army_pay_source_cutover',1,'meta','test') "
+        "ON CONFLICT(key) DO UPDATE SET value=excluded.value"
+    )
+    _set(db, "substrate_hub", loyalty=70, arrears=3, latched=0, mutiny_count=0)
+    db.conn.execute(
+        """UPDATE armies SET pay_source_region='liaodong',
+           province_pay_share=0, central_pay_share=1,
+           province_pay_arrears=0, central_pay_arrears=3, arrears=3 WHERE id=?""",
+        (ARMY,),
+    )
+    db.conn.commit()
+
+    changes = db.apply_army_deltas(
+        state,
+        SimpleNamespace(id="season", title="陷没"),
+        None,
+        "测试",
+        {ARMY: {"owner_power": "houjin", "reason": "城破易主"}},
+        commit=False,
+    )
+
+    row = db.conn.execute("SELECT * FROM armies WHERE id=?", (ARMY,)).fetchone()
+    assert not any(c.get("rejected") for c in changes)
+    assert row["owner_power"] == "houjin"
+    assert row["is_mutinied"] == 0
+    assert float(row["arrears"]) == pytest.approx(0)
+    logs = _logs(db, ("arrears", "owner_power"))
+    writeoff = next(
+        (
+            log for log in logs
+            if log["field"] == "arrears"
+            and float(log["new_value"]) == 0
+            and float(log["delta"]) < 0
+        ),
+        None,
+    )
+    owner_log = next((log for log in logs if log["field"] == "owner_power"), None)
+    assert writeoff is not None and owner_log is not None
+    assert writeoff["id"] < owner_log["id"]

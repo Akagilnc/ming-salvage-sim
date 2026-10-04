@@ -1,0 +1,72 @@
+# FILE: tests/test_dossier_endorsements_612.py
+# NAME: test_endorsement_forms_persist_restore_and_judge_without_roster_join
+# LINE: 55-120
+# FLAGS: assert_text_compare_or_match,helper_or_private_call
+# KIND: py
+
+def test_endorsement_forms_persist_restore_and_judge_without_roster_join(game):
+    """Durable form CRUD + judge restore; 担名≠办事（当面站台不入参与人）。"""
+    db, state, content = game
+    minister = _minister(db)
+    cosign_id = db.create_decree_dossier(
+        state, action_type="policy", decree_text="清核辽饷",
+        target_kind="issue", target_id="liao-pay",
+    )
+    backing_id = db.create_decree_dossier(
+        state, action_type="policy", decree_text="南迁之议",
+        target_kind="issue", target_id="south-move",
+    )
+    imperial_id = db.create_decree_dossier(
+        state, action_type="appointment", decree_text="擢任兵部侍郎",
+        target_kind="character", target_id=minister,
+    )
+    night_id, chat_turn_id, _seq = _night_reply(db, state, minister)
+    before_roster = db.get_decree_dossier(backing_id)["participant_roster"]
+
+    db.add_dossier_endorsement(
+        cosign_id, form="会签", endorser_id=minister, imperial=False,
+        source_chat_turn_id=chat_turn_id,
+    )
+    db.add_dossier_endorsement(
+        backing_id, form="当面站台", endorser_id=minister, imperial=False,
+        source_chat_turn_id=chat_turn_id,
+    )
+    db.add_dossier_endorsement(
+        imperial_id, form="御笔手敕", endorser_id="", imperial=True,
+        source_chat_turn_id=chat_turn_id,
+    )
+
+    cosign = db.list_dossier_endorsements(cosign_id)
+    assert cosign == [{
+        "id": 1, "dossier_id": cosign_id, "form": "会签",
+        "endorser_id": minister, "imperial": False,
+        "source_chat_turn_id": chat_turn_id,
+        "decision_key": "",
+    }]
+    backing = db.list_dossier_endorsements(backing_id)
+    assert backing[0]["form"] == "当面站台"
+    assert db.get_decree_dossier(backing_id)["participant_roster"] == before_roster
+    assert all(item.get("character_id") != minister for item in before_roster)
+    imperial = db.list_dossier_endorsements(imperial_id)
+    assert imperial[0]["form"] == "御笔手敕" and imperial[0]["imperial"] is True
+
+    context = build_promulgation_judge_context(db, state, db.list_decree_dossiers())
+    by_id = {int(d["id"]): d for d in context["dossiers"]}
+    assert by_id[cosign_id]["endorsements"] == cosign
+    assert by_id[cosign_id]["criteria_snapshot_source"]["endorsement_entry_ids"] == [1]
+    assert by_id[backing_id]["endorsements"] == backing
+    assert by_id[imperial_id]["endorsements"] == imperial
+
+    reopened = GameDB(db.path, content=content)
+    try:
+        restored = reopened.load_state()
+        assert reopened.list_dossier_endorsements(cosign_id) == cosign
+        restored_ctx = build_promulgation_judge_context(
+            reopened, restored, reopened.list_decree_dossiers(),
+        )
+        restored_by = {int(d["id"]): d for d in restored_ctx["dossiers"]}
+        assert restored_by[cosign_id]["endorsements"] == cosign
+    finally:
+        reopened.close()
+    # night unused except as source turn host
+    assert an.get_night(db, night_id) is not None

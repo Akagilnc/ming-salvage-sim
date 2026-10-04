@@ -1,0 +1,53 @@
+# FILE: tests/test_declaration_dispatch_1835.py
+# NAME: test_stub_declaration_lands_on_existing_staging_and_new_records_without_missing_items
+# LINE: 34-80
+# FLAGS: assert_text_compare_or_match,assert_count,helper_or_private_call
+# KIND: py
+
+def test_stub_declaration_lands_on_existing_staging_and_new_records_without_missing_items(game):
+    db, state, _ = game
+    minister = _minister(db)
+    # 既有暂存：上一轮已经暂存、本轮转译声明它「应允」。
+    pre_staged_id = db.stage_pending_action(
+        int(state.turn), "directive", "拟旨", minister, {"text": "已暂存旧旨"},
+    )
+
+    # 首尾刻意带空白：证明落账是原字符串本身，不是先 .strip() 再落账（P6）。
+    commission_text = "  遣使赈济陕西  \n"
+    declaration = {
+        "commissions": [{"text": commission_text}],
+        "promises": [{"action_id": pre_staged_id, "decision": "应允"}],
+        "textual_facts": [{
+            "subject_kind": "character", "subject_id": minister,
+            "body": "抱恙数日，仍可视事",
+        }],
+        "public_sayings": [{
+            "body": "坊间传户部已备赈灾银", "involved_characters": [minister],
+        }],
+    }
+
+    result = dispatch_declaration(db, state, declaration, minister_name=minister)
+
+    assert len(result.commissions.applied) == 1 and result.commissions.rejected == []
+    assert len(result.promises.applied) == 1 and result.promises.rejected == []
+    assert len(result.textual_facts.applied) == 1 and result.textual_facts.rejected == []
+    assert len(result.public_sayings.applied) == 1 and result.public_sayings.rejected == []
+
+    commission_row = db.conn.execute(
+        "SELECT payload_json FROM pending_actions WHERE id=?",
+        (result.commissions.applied[0]["id"],),
+    ).fetchone()
+    commission_payload = json.loads(commission_row["payload_json"])
+    assert commission_payload["text"] == commission_text  # 原样落账，含首尾空白，代码没有 strip 篡改
+
+    approved_row = db.conn.execute(
+        "SELECT night_approved FROM pending_actions WHERE id=?", (pre_staged_id,),
+    ).fetchone()
+    assert approved_row["night_approved"] == 1
+
+    facts = db.textual_facts.readable_materials(subject_kind="character", subject_id=minister)
+    assert [f.body for f in facts] == ["抱恙数日，仍可视事"]
+
+    sayings = list_public_sayings(db, involved_character=minister)
+    assert len(sayings) == 1
+    assert sayings[0]["body"] == "坊间传户部已备赈灾银"
