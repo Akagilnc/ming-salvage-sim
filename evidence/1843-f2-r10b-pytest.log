@@ -1,0 +1,17 @@
+..............................s......................................... [ 20%]
+........................................................................ [ 41%]
+........................................................................ [ 61%]
+........................................................................ [ 82%]
+...............................................................          [100%]
+============================= slowest 10 durations =============================
+0.31s setup    tests/test_fiscal_substrate_bridge.py::test_all_15_regular_provinces_first_tick_golden[shanxi]
+0.18s setup    tests/test_fiscal_substrate_bridge.py::test_army_delta_owner_power_to_ming_requires_same_delta_pay_source
+0.18s setup    tests/test_fiscal_substrate_bridge.py::test_cutover_taicang_loss_rate_bad_state_uses_settlement_abort_error_pack
+0.17s setup    tests/test_fiscal_substrate_bridge.py::test_all_15_regular_provinces_first_tick_golden[shandong]
+0.16s setup    tests/test_fiscal_substrate_bridge.py::test_all_15_regular_provinces_first_tick_golden[jiangxi]
+0.16s setup    tests/test_fiscal_substrate_bridge.py::test_all_15_regular_provinces_first_tick_golden[guizhou]
+0.16s setup    tests/test_fiscal_substrate_bridge.py::test_all_15_regular_provinces_first_tick_golden[guangdong]
+0.16s setup    tests/test_fiscal_substrate_bridge.py::test_all_15_regular_provinces_first_tick_golden[huguang]
+0.15s setup    tests/test_fiscal_substrate_bridge.py::test_all_15_regular_provinces_first_tick_golden[guangxi]
+0.15s setup    tests/test_fiscal_substrate_bridge.py::test_all_15_regular_provinces_first_tick_golden[yunnan]
+350 passed, 1 skipped in 20.73s

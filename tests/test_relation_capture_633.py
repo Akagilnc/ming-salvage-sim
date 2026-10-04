@@ -481,24 +481,6 @@ def test_writer_rejects_non_string_context(game):
     assert _edge_rows(db, source="甲", target="乙") == []
 
 
-# ── P5 并行装配：新模块并入同一 executor，不串行 ────────────────────
-
-
-_CANNED = {
-    "internal": '{"economy_moves": [], "fiscal_changes": [], "fiscal_creates": [], "fiscal_removes": []}',
-    "military_external": '{"army_delta": {}, "new_armies": [], "power_updates": {}, "world_advance": {}}',
-    "issues": '{"issue_advances": [], "new_issues": [], "事件结局": {}, "cancels": [], "close_issues": []}',
-    "personnel_secret": '{"人物变更": [], "secret_order_updates": [], "emperor_fate": null}',
-    "relations": '{"大臣互动": [{"施动者": "温体仁", "受动者": ["钱龙锡"], "类目": "联名", "语境": "联名上疏。"}]}',
-}
-
-
-def _module_of(tag: str) -> str:
-    return tag.split("/", 1)[1]
-
-
-
-
 # ── V1：端点须为当前在朝合格大臣（复用既有名册投影，先校验后零边写入） ──
 
 

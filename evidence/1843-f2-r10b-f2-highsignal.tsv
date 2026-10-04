@@ -1,0 +1,8 @@
+file	test	lineno	flags	decision	reason
+# F2-R10-2 high-signal classification at HEAD@40df97af9 (before this supplementary commit)
+# Full raw: /tmp/1843-f2-r10b/r10b-f2-candidates-raw.json (2101 candidates; 230 py + 25 web files)
+# Classified high-signal: /tmp/1843-f2-r10b/r10b-f2-classified.json
+# summary_at_40df97af9: REVIEW=117 RETAIN=103 DELETE=0
+# Interpretation: prior commit already removed inspect.getsource / prompt wording / identity-only original_* / shadow_tlog / mock bridge / HUD duplicate not-in.
+# This supplementary commit adds ZERO new F2-R10-2 code deletes; it documents full-repo enum that prior receipt falsely claimed.
+# REVIEW items re-read as RETAIN public seams (reload identity, UI/HTTP mock counts, error_pack file reads, diegetic UI copy).

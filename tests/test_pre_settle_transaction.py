@@ -237,33 +237,6 @@ def test_advance_without_edict_refused_after_settling(game):
 # cmr S4 r2 修复回归（F1 第三推进尾 / F2 HITL 相位耐崩+守门）
 # ---------------------------------------------------------------------------
 
-def _drive_resolve_directives(db, state, content, monkeypatch, *, simulator_behavior):
-    """stub 驱动真实 resolve_directives。simulator_behavior: 'fail' / 'decision'。"""
-    import ming_sim.decree as decree_mod
-
-
-    decision_narrative = (
-        "本月邸报正文。\n<<DECISION>>"
-        '{"title": "辽东战和", "context": "皇太极请款", "options": '
-        '[{"label": "战"}, {"label": "和"}]}'
-        "<<END>>"
-    )
-
-    def _stub_sim(*a, **k):
-        if simulator_behavior == "fail":
-            raise RuntimeError("simulated simulator crash")
-        return decision_narrative, k.get("simulator_payload") or {}
-
-    return decree_mod.resolve_directives(
-        state, db, None, None, [1], "减赋诏",
-        content=content,
-    )
-
-
-
-
-
-
 def test_pre_settle_guard_covers_awaiting_decision(game):
     """守门扩到 AWAITING_DECISION：该相位只可能在 pre_settle 已提交后出现（cmr S4 r2 F2b）。
 

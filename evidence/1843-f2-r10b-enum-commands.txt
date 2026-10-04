@@ -1,0 +1,84 @@
+#1843 F2-R10 补充腿 — 全仓机械枚举命令（可复制执行）
+工作树: /Users/akagilnc/WorkSpace/Ming_LLM-1843-w5
+底座 HEAD（本补充提交前）: 40df97af987d5f07d12df25e064c167b54355420
+分支: ak-roles/issue-1843-w5-r6-f2
+判词末份末 payload: attachments/02-1843-judge-4d25772ae.json → payloads[-1]
+临时脚本目录（非仓内扫描机制）: /tmp/1843-f2-r10b/
+
+## 纠正上一腿回执
+上一腿 evidence/1843-f2-r10-enum-commands.txt / fixer-receipt 写「谓词未收窄」，但实际：
+  - F2-R10-1 死夹具 AST Load 扫描仅限 tests/test_rescript_draft_656.py
+  - F2-R10-2 helper/internal/identity/mock/重复扫描仅限 fiscal_substrate_bridge + 已点名符号
+  - 枚举命令写成抽象步骤而非可复制 shell/python
+本腿纠正该夸称，改为全仓可复制命令 + 逐名表。
+
+环境前缀（全部探针/测试）:
+MING_SIM_AGY_BIN=/usr/bin/false MING_SIM_CODEX_BIN=/usr/bin/false \
+MING_SIM_CLAUDE_BIN=/usr/bin/false MING_SIM_CURSOR_BIN=/usr/bin/false \
+MING_SIM_KIMI_BIN=/usr/bin/false MING_SIM_GROK_BIN=/usr/bin/false \
+MING_SIM_PI_BIN=/usr/bin/false PYTHONDONTWRITEBYTECODE=1
+
+--- F2-R10-1 谓词（类定义全文）---
+类名: 旧结算／simulator 独占支持及专属测试退役未闭合
+方向: 从历史已退役旧结算/simulator 消费者向下核独占支持树；
+      覆盖资产、加载绑定、测试夹具、互引死树；
+      保留现役 normalize、revise、prewrite 及共用存储；
+      不得以零引用计数或判词样本当作类边界。
+
+# 1) 全仓枚举脚本（种子 hist + GameContent 绑定 + 全仓死夹具 + 失效行为测）
+/Users/akagilnc/WorkSpace/Ming_LLM/.venv/bin/python /tmp/1843-f2-r10b/enum_f2_r10_1.py
+# 产出:
+#   /tmp/1843-f2-r10b/r10b-hist-deleted-seeds.json
+#   /tmp/1843-f2-r10b/r10b-seed-status.json
+#   /tmp/1843-f2-r10b/r10b-prompt-bindings.json
+#   /tmp/1843-f2-r10b/r10b-prompt-assets.json
+#   /tmp/1843-f2-r10b/r10b-dead-fixtures.json          # 全仓 tests/**/*.py，非单文件
+#   /tmp/1843-f2-r10b/r10b-retired-behavior-tests.json
+# 实测: hist_hits=61; still_defined_seeds=0; unloaded_prompts=0;
+#       dead_fixtures=88; retired_behavior_tests=70
+
+# 2) 死夹具精炼：排除 pytest.fixture / 测试参数注入 / 跨文件引用后逐名语义
+# 产出: /tmp/1843-f2-r10b/r10b-dead-fixtures-refined.json
+#        /tmp/1843-f2-r10b/r10b-unref-classified.json
+# 实测: DELETE_UNREFERENCED=39 → 语义后本类 DELETE=11（见成员表）；OUT_OF_CLASS=18
+
+# 3) 预删除消费者函数体抽检（已知路径 @ parent rev）
+git show 7a96584ab^:ming_sim/rescript_draft.py | sed -n '2148,2300p'
+git show 40df97af9^:ming_sim/content.py | rg -n 'rescript_draft_prompt|load_text_asset'
+
+# 4) 施工后缺席
+rg -n -w '_CANNED|_module_of|_drive_resolve_directives|_canned_settle|_canned_monthly_settlement|_stage_punishment|_close_night_dossier|_stage_yuan_appointment_summon|_close_office_to_dossier|_yuan_row' tests ming_sim --glob '*.py'
+# 期望: 无匹配
+
+--- F2-R10-2 谓词（类定义全文）---
+类名: 合并恢复非契约源码／措辞锁、内部结构测试及重复测试
+方向: 枚举全仓所有测试（tests/** + web/**/*.{test,spec}.{ts,tsx}）中
+      源码/文件读取内容断言、措辞锁、helper/私有方法直接调用、
+      internal attribute / mock call_count / identity-only、同契约重复测试；
+      逐名分类；保留必要结构化负向与确定性 HUD 契约；
+      不得只搜 inspect.getsource 或已删符号名。
+
+# 1) 全仓候选机械枚举（含 web）
+/Users/akagilnc/WorkSpace/Ming_LLM/.venv/bin/python /tmp/1843-f2-r10b/enum_f2_r10_2.py
+# 产出: /tmp/1843-f2-r10b/r10b-f2-candidates-raw.json
+#        /tmp/1843-f2-r10b/r10b-f2-summary.json
+# 实测摘要: total_candidates=2101; py_test_files=230; web_test_files=25
+#   by_flag: helper_or_private_call=1944, identity_only=91, source_or_file_read=50,
+#            file_content_assert=41, mock_call_count=37, wording_lock_candidate=24,
+#            internal_attr=23, mock_usage=60
+
+# 2) 高信号复扫（非只搜 getsource / 非只搜已删符号）
+rg -n 'inspect\.(getsource|getsourcelines)' tests web --glob '*.py' --glob '*.ts' --glob '*.tsx'
+# 期望: 无匹配（上一腿已删）
+rg -n '定性说法|定性表述' tests --glob '*.py'
+# 期望: 无匹配（上一腿已删）
+rg -n 'is not original_|shadow_tlog|RESCRIPT_ROUTABLE|NATIONAL_FANOUT' tests --glob '*.py'
+# 期望: 无匹配（上一腿已删）
+
+# 3) 分类落痕
+# /tmp/1843-f2-r10b/r10b-f2-classified.json
+# evidence/1843-f2-r10b-f2-highsignal.tsv
+# 于 HEAD@40df97af9：高信号强 DELETE=0（上一腿已清）；本补充腿无新增 F2-R10-2 代码删除
+
+成员表: evidence/1843-f2-r10b-member-table.tsv
+回执: evidence/1843-f2-r10b-fixer-receipt.md
