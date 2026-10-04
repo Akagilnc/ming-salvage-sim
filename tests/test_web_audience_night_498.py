@@ -189,7 +189,7 @@ def test_pending_translation_retries_original_round_after_night_seal(web_game, m
     nid = int(night["id"])
     ctid = game.db.create_chat_turn(game.state, "殿上", "sess", 0, night_id=nid)
     game.db.persist_minister_reply("殿上", int(game.state.turn), "臣领旨。", ctid)
-    game.db.mark_story_extraction_pending(ctid)
+    game.db.reign.mark_story_extraction_pending(ctid)
     an._set_night_fields(game.db, nid, status=night_status)
     stub_audience_translate(monkeypatch)
 

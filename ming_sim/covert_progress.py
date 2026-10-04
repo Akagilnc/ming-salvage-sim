@@ -2086,7 +2086,7 @@ def settle_due_secret_orders(
             actual = investigation_lane_actual_units(db, did)
             target = contract_target_units(contract)
         else:
-            actual = float(db.sum_dossier_actual_progress_units(did))
+            actual = float(db.dossiers.actual_progress_units(did))
             target = contract_target_units(contract)
         reports = list(db.list_dossier_progress(did))
         verdict = decide_secret_order_settlement({

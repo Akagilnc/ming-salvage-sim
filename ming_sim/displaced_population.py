@@ -125,7 +125,7 @@ def _recovery_effective_silver_wan(db: GameDB, dossier_id: int, turn: int) -> in
     本回合对账实抵优先；否则累加该案已落 economy_moves 负向出账。
     **不**回退 payload.amount（ordered 非实付，零 ledger 不得假阳性出回流）。
     """
-    history = db.list_dossier_reconciliations(int(dossier_id))
+    history = db.dossiers.reconciliations(int(dossier_id))
     arrived_this_turn = [
         int(row["arrived_amount"])
         for row in history
@@ -210,7 +210,7 @@ def apply_recovery_driven_transfers(
         if cadence == "每月":
             reconciled = [
                 int(item["arrived_amount"])
-                for item in db.list_dossier_reconciliations(dossier_id)
+                for item in db.dossiers.reconciliations(dossier_id)
                 if int(item.get("turn") or 0) == turn
             ]
             if reconciled:

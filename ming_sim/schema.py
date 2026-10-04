@@ -60,6 +60,7 @@ CORE_SCHEMA_SQL = """
         transit_speed_factor REAL,
         transit_start_turn INTEGER NOT NULL DEFAULT 0,
         identity INTEGER NOT NULL DEFAULT 50,
+        intrigue INTEGER NOT NULL DEFAULT 50,
         seed_guilt TEXT NOT NULL DEFAULT '',
         portrait_id TEXT NOT NULL DEFAULT '',
         court_role TEXT NOT NULL DEFAULT '',
@@ -449,11 +450,13 @@ CORE_SCHEMA_SQL = """
         target_id INTEGER,                        -- 操作既有实体时其 id；新建为 NULL
         minister_name TEXT NOT NULL DEFAULT '',
         payload_json TEXT NOT NULL DEFAULT '{}',
-        status TEXT NOT NULL DEFAULT 'pending',    -- pending | committed | failed | held_over
+        status TEXT NOT NULL DEFAULT 'pending',    -- pending | committed | failed | held_over | voided
         committed_directive_id INTEGER NOT NULL DEFAULT 0,
         night_id INTEGER NOT NULL DEFAULT 0,
         night_approved INTEGER NOT NULL DEFAULT 0,
         version INTEGER NOT NULL DEFAULT 1,
+        -- #1890：交办来源对话轮；撤回按此列整轮作废。0=非召对来源。
+        source_chat_turn_id INTEGER NOT NULL DEFAULT 0,
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
 
@@ -652,6 +655,7 @@ CORE_SCHEMA_SQL = """
         status TEXT NOT NULL DEFAULT 'draft',
         notes TEXT NOT NULL DEFAULT '',
         dossier_payload_json TEXT NOT NULL DEFAULT '{}',
+        source_pending_action_id INTEGER NOT NULL DEFAULT 0,
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY(event_id) REFERENCES events(id),
@@ -1035,6 +1039,20 @@ CORE_SCHEMA_SQL = """
             OR (kind IN ('direct','kinship') AND axis IS NOT NULL
                 AND base IS NOT NULL AND legitimacy_pct IS NOT NULL)
         )
+    );
+
+    -- #1896 / ADR 0099：毁证可查性账（harder/gone）；真相底不动。
+    CREATE TABLE IF NOT EXISTS investigation_spoiled_facts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        target_name TEXT NOT NULL,
+        fact_key TEXT NOT NULL,
+        turn INTEGER NOT NULL,
+        year INTEGER NOT NULL DEFAULT 0,
+        period INTEGER NOT NULL DEFAULT 0,
+        effect TEXT NOT NULL CHECK(effect IN ('harder', 'gone')),
+        origin_ref TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(target_name, fact_key, effect)
     );
 
     CREATE TABLE IF NOT EXISTS ending_summary (

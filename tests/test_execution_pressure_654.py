@@ -269,7 +269,7 @@ def test_national_creates_one_row_idempotent(env):
         commit=True,
     )
     assert len(ids) == 1
-    rows = db.list_dossiers_for_directive(directive_id)
+    rows = db.dossiers.list_for_directive(directive_id)
     assert len(rows) == 1
     assert [r["region_id"] for r in rows] == [""]
     # 点将：主办与 executor_* 同步（#654 named-lead 断根）
@@ -293,7 +293,7 @@ def test_national_creates_one_row_idempotent(env):
         commit=True,
     )
     assert ids2 == ids
-    assert len(db.list_dossiers_for_directive(directive_id)) == 1
+    assert len(db.dossiers.list_for_directive(directive_id)) == 1
 
 
 def test_named_lead_bulk_single_region_syncs_executor(env):
@@ -336,7 +336,7 @@ def test_named_lead_bulk_single_region_syncs_executor(env):
         commit=True,
     )
     assert len(ids) == 1
-    row = db.list_dossiers_for_directive(directive_id)[0]
+    row = db.dossiers.list_for_directive(directive_id)[0]
     assert row["region_id"] == "shaanxi"
     leads = [
         e["character_id"] for e in row["participant_roster"] if e.get("tier") == "主办"
@@ -357,7 +357,7 @@ def test_create_decree_dossier_int_abi_single_row(env):
         payload={"locality_scope": "none", "target_kind": "policy", "target_id": "court-rebuke"},
     )
     assert isinstance(did, int) and did > 0
-    row = db.get_decree_dossier(did)
+    row = db.dossiers.get(did)
     assert row["region_id"] == ""
 
 
@@ -385,7 +385,7 @@ def test_get_dossier_for_directive_existence_sentinel(env):
     )
     directive_id = int(cur.lastrowid)
     db.conn.commit()
-    assert db.get_dossier_for_directive(directive_id) is None
+    assert db.dossiers.get_for_directive(directive_id) is None
     db.create_decree_dossiers(
         state,
         action_type="policy",
@@ -395,8 +395,8 @@ def test_get_dossier_for_directive_existence_sentinel(env):
         directive_id=directive_id,
         payload=payload,
     )
-    assert db.get_dossier_for_directive(directive_id) is not None
-    listed = db.list_dossiers_for_directive(directive_id)
+    assert db.dossiers.get_for_directive(directive_id) is not None
+    listed = db.dossiers.list_for_directive(directive_id)
     assert len(listed) == 1 and listed[0]["region_id"] == "shaanxi"
 
 
@@ -525,7 +525,7 @@ def test_validate_all_unknown_roster_name_zero_rows_before_insert(env):
         )
     after = db.conn.execute("SELECT COUNT(*) AS n FROM decree_dossiers").fetchone()["n"]
     assert after == before
-    assert db.list_dossiers_for_directive(did) == []
+    assert db.dossiers.list_for_directive(did) == []
 
 
 def test_path2_pending_bad_roster_stays_draft_on_ensure_batch(env):
@@ -550,7 +550,7 @@ def test_path2_pending_bad_roster_stays_draft_on_ensure_batch(env):
         "SELECT status FROM turn_directives WHERE id=?", (did,),
     ).fetchone()
     assert row["status"] == "draft"
-    assert db.list_dossiers_for_directive(did) == []
+    assert db.dossiers.list_for_directive(did) == []
 
     rejections = db.ensure_dossiers_for_draft_directives(state)
     assert any(int(r["directive_id"]) == did for r in rejections)
@@ -558,7 +558,7 @@ def test_path2_pending_bad_roster_stays_draft_on_ensure_batch(env):
         "SELECT status FROM turn_directives WHERE id=?", (did,),
     ).fetchone()
     assert row["status"] == "draft"
-    assert db.list_dossiers_for_directive(did) == []
+    assert db.dossiers.list_for_directive(did) == []
 
 
 def test_path3_locality_fail_keeps_draft_no_text_in_rejection(env):
@@ -592,10 +592,10 @@ def test_path3_locality_fail_keeps_draft_no_text_in_rejection(env):
         "SELECT status FROM turn_directives WHERE id=?", (other_id,),
     ).fetchone()
     assert bad["status"] == "draft"  # 保持 draft
-    assert db.list_dossiers_for_directive(did) == []
+    assert db.dossiers.list_for_directive(did) == []
     # 并列第二旨不受影响
     assert good["status"] == "draft"
-    assert len(db.list_dossiers_for_directive(other_id)) == 1
+    assert len(db.dossiers.list_for_directive(other_id)) == 1
 
     rej = db.conn.execute(
         "SELECT item_json, reason, category FROM rejection_reports "
@@ -828,7 +828,7 @@ def test_revoke_decree_523_producer_durable_oracle_chain(env):
     before = db.conn.execute("SELECT COUNT(*) AS n FROM decree_dossiers").fetchone()["n"]
     db.commit_pending_actions(state, content=content, action_ids=[pending_id])
     revoke_rows = [
-        d for d in db.list_decree_dossiers()
+        d for d in db.dossiers.list_dossiers()
         if int(d.get("pending_action_id") or 0) == int(pending_id)
     ]
     assert len(revoke_rows) == 1
@@ -1062,7 +1062,7 @@ def test_grant_region_to_character_amendment_clears_single_locality(env):
 
     db.commit_pending_actions(state, content=content, action_ids=[pending_id])
     rows = [
-        d for d in db.list_decree_dossiers()
+        d for d in db.dossiers.list_dossiers()
         if int(d.get("pending_action_id") or 0) == int(pending_id)
     ]
     assert len(rows) == 1
@@ -1120,7 +1120,7 @@ def test_authorization_region_to_character_amendment_clears_single_locality(env)
 
     db.commit_pending_actions(state, content=content, action_ids=[pending_id])
     rows = [
-        d for d in db.list_decree_dossiers()
+        d for d in db.dossiers.list_dossiers()
         if int(d.get("pending_action_id") or 0) == int(pending_id)
     ]
     assert len(rows) == 1

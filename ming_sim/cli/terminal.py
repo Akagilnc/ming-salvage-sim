@@ -503,7 +503,7 @@ def minister_chat(session: GameSession, character: Character, *, selected: bool 
                     )
                 if chat_turn_id:
                     if minister_message_id:
-                        session.db.update_chat_turn_messages(
+                        session.db.reign.update_chat_turn_messages(
                             chat_turn_id, minister_message_id=minister_message_id,
                         )
                     session.db.record_chat_turn_rollback_diffs(

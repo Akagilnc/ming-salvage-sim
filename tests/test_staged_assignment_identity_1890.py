@@ -61,7 +61,7 @@ def _finish_turn(db, state, minister: str, ctid: int, question: str) -> None:
     """
     user_id = db.append_chat_message(minister, int(state.turn), "user", question)
     reply_id = db.append_chat_message(minister, int(state.turn), "minister", "遵旨。")
-    db.update_chat_turn_messages(
+    db.reign.update_chat_turn_messages(
         int(ctid), user_message_id=user_id, minister_message_id=reply_id,
     )
     assert db.conn.execute(
@@ -588,7 +588,7 @@ def _promulgate_assignment(game, label: str, *, text: str, **assignment_fields):
     ).fetchone()
     assert directive is not None, "交办收夜后没成拟旨行"
     db.ensure_dossiers_for_draft_directives(state)
-    dossier = db.get_dossier_for_directive(int(directive["id"]))
+    dossier = db.dossiers.get_for_directive(int(directive["id"]))
     assert dossier is not None, "拟旨没成案卷"
     db.apply_dossier_verdicts(
         state, [{"dossier_id": dossier["id"], "decision": "promulgated"}],

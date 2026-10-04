@@ -56,7 +56,7 @@ _PROGRESS_COLUMNS = frozenset({
 _PENDING_ACTION_COLUMNS = frozenset({
     "id", "turn", "kind", "action", "target_id", "minister_name", "payload_json",
     "status", "committed_directive_id", "night_id", "night_approved", "version",
-    "created_at",
+    "source_chat_turn_id", "created_at",
 })
 DOSSIER_REPORT_ORIGIN_MONTHLY = "dossier-report:monthly_errand"
 DOSSIER_REPORT_ORIGIN_VERDICT = "dossier-report:execution_verdict"
@@ -2260,18 +2260,20 @@ class DossierStore:
         minister_name: str,
         payload_json: str,
         night_id: int,
+        source_chat_turn_id: int = 0,
     ) -> int:
         cur = self._conn.execute(
             """INSERT INTO pending_actions
                (turn, kind, action, target_id, minister_name, payload_json, status,
-                night_id, night_approved)
-               VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, 0)""",
+                night_id, night_approved, source_chat_turn_id)
+               VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, 0, ?)""",
             (
                 int(turn), str(kind), str(action),
                 None if target_id is None else int(target_id),
                 str(minister_name or ""),
                 payload_json,
                 int(night_id),
+                int(source_chat_turn_id or 0),
             ),
         )
         return int(cur.lastrowid)

@@ -1,10 +1,8 @@
 import { act } from "react";
-import { readFileSync } from "node:fs";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { App } from "./main";
-import { measureElectronLayout } from "./testSupport/electronLayout";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 // jsdom 无布局：给 stage 非零尺寸，使 GameHud ready=true（地图/局势框/上月已结入口可挂）。
@@ -1205,18 +1203,24 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     });
   });
 
-  it("#1852 写成即推进：成功过月清旧月本地拟诏态（compose / failed 卡不残留）", async () => {
+  it("#1852 写成即推进：成功过月清旧月本地拟诏态（failed 卡 / 编辑残留不挂新局）", async () => {
+    // #1849：本地拟诏态只由草稿的改（PATCH）产生；
+    // 本例以 save 失败卡 + 恢复的编辑内容作旧月残留，过月后须清零。
     let streamController!: ReadableStreamDefaultController<Uint8Array>;
     const encoder = new TextEncoder();
-    let releaseCreate!: (value: Response) => void;
-    const createGate = new Promise<Response>((resolve) => { releaseCreate = resolve; });
+    let releaseSave!: (value: Response) => void;
+    let saveGate = new Promise<Response>((resolve) => { releaseSave = resolve; });
+    const draftRow = {
+      id: 1, event_id: "", event_title: "", actor: "",
+      text: "拨辽饷", source: "chat", status: "draft", notes: "", authority: "",
+    };
     let liveState: Record<string, unknown> = {
       ...settlementBaseState("player"),
       turn: { year: 1627, period: 10, turn: 5, phase: "player", settlement_display: false },
       previous_summary: "",
       pending_decisions: [],
-      // 耐久草案保证盖玺可点；另起本地 create 失败卡 + compose 残留验清零。
-      directives: [{ id: 1, text: "拨辽饷", status: "draft" }],
+      // 耐久草案保证盖玺可点；另起本地 save 失败卡验过月清零。
+      directives: [draftRow],
       cased_directives: [],
       pending_directive_count: 0,
     };
@@ -1240,7 +1244,7 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
       if (u.pathname.endsWith("/api/game/state")) return jsonResp(liveState);
       if (u.pathname.endsWith("/api/history/turns")) return jsonResp({ turns: [] });
       if (u.pathname.endsWith("/api/court_layout")) return jsonResp({ layout: "{}" });
-      if (u.pathname.endsWith("/api/directives") && init?.method === "POST") return createGate;
+      if (u.pathname.match(/\/api\/directives\/\d+$/) && init?.method === "PATCH") return saveGate;
       if (u.pathname.endsWith("/api/decree/issue/stream") && init?.method === "POST") {
         return new Response(new ReadableStream<Uint8Array>({
           start(controller) { streamController = controller; },
@@ -1254,19 +1258,20 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     await act(async () => {
       await vi.waitFor(() => expect(host.querySelector('[role="dialog"][aria-label="诏书草案"]')).not.toBeNull());
     });
-    const ta = host.querySelector<HTMLTextAreaElement>(".desk-compose textarea");
-    expect(ta).not.toBeNull();
+    const draftCard = host.querySelector('[data-directive-phase="draft"][data-directive-id="1"]');
+    expect(draftCard).not.toBeNull();
+    const editBtn = Array.from(draftCard!.querySelectorAll("button")).find((b) => (b.textContent || "").includes("改"));
+    await click(editBtn as HTMLButtonElement);
+    const editArea = host.querySelector<HTMLTextAreaElement>(".directive-edit textarea");
+    expect(editArea).not.toBeNull();
     await act(async () => {
       const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!;
-      setter.call(ta!, "旧月未落库草案");
-      ta!.dispatchEvent(new Event("input", { bubbles: true }));
+      setter.call(editArea!, "旧月未落库改稿");
+      editArea!.dispatchEvent(new Event("input", { bubbles: true }));
     });
-    await click(findButton(host, "新增草案"));
+    await click(host.querySelector<HTMLButtonElement>('button[aria-label="保存草案"]')!);
     await act(async () => {
-      await vi.waitFor(() => expect(host.querySelector('[data-directive-phase="inflight"]')).not.toBeNull());
-    });
-    await act(async () => {
-      releaseCreate({
+      releaseSave({
         ok: false,
         status: 400,
         statusText: "Bad Request",
@@ -1278,8 +1283,9 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     await act(async () => {
       await vi.waitFor(() => expect(host.querySelector('[data-directive-phase="failed"]')).not.toBeNull());
     });
-
-    expect(host.querySelector<HTMLTextAreaElement>(".desk-compose textarea")?.value).toBe("旧月未落库草案");
+    expect(host.querySelector('[data-role="local-error"]')?.textContent).toBe("old-month-local-fail");
+    expect(host.querySelector<HTMLTextAreaElement>(".directive-edit textarea")?.value).toBe("旧月未落库改稿");
+    saveGate = new Promise<Response>((resolve) => { releaseSave = resolve; });
 
     await click(findButton(host, "盖玺颁诏过月"));
     await act(async () => {
@@ -1313,8 +1319,9 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     });
     expect(host.querySelector('[data-directive-phase="failed"]')).toBeNull();
     expect(host.querySelector('[data-role="local-error"]')).toBeNull();
-    expect(host.querySelector<HTMLTextAreaElement>(".desk-compose textarea")?.value).toBe("");
-
+    expect(host.querySelector(".directive-edit")).toBeNull();
+    expect(host.textContent).not.toContain("old-month-local-fail");
+    expect(host.textContent).not.toContain("旧月未落库改稿");
   });
 
   it("#1852 真实页面：服务端已推进但载入新月失败时邸报可读可关、旧月入口不可提交", async () => {
@@ -1781,29 +1788,7 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     expect(retry).not.toBeNull();
     expect(retry!.disabled).toBe(false);
 
-    // Measure the actual App-mounted banner, not a replacement component fixture.
-    const geometry = await measureElectronLayout<{ visible: boolean; hit: boolean; fits: boolean; messageFits: boolean }>(
-      host.outerHTML,
-      ["base", "hud2", "decision"].map((name) => readFileSync(`${process.cwd()}/src/styles/${name}.css`, "utf8")).join("\n"),
-      [{ width: 800, height: 600 }, { width: 360, height: 640 }],
-      `(() => {
-        const banner = document.querySelector('.recovery-banner');
-        const button = banner?.querySelector('button');
-        const message = banner?.querySelector('.recovery-banner-message');
-        if (!banner || !button || !message) return { error: 'missing mounted recovery action' };
-        const b = button.getBoundingClientRect();
-        const r = banner.getBoundingClientRect();
-        const x = b.left + b.width / 2, y = b.top + b.height / 2;
-        return {
-          visible: b.width > 0 && b.height > 0 && b.left >= 0 && b.right <= innerWidth && b.top >= 0 && b.bottom <= innerHeight,
-          hit: document.elementFromPoint(x, y) === button && !button.disabled,
-          fits: r.left >= 0 && r.right <= innerWidth,
-          messageFits: message.scrollWidth <= message.clientWidth,
-        };
-      })()`,
-    );
-    for (const result of geometry) expect(result).toEqual({ visible: true, hit: true, fits: true, messageFits: true });
-
+    // #1888：Electron geometry rig 已随壳退役；本面只证 settle-resume CTA 可点可再挂。
     unmountTrackedRoots();
     const host2 = await mountApp();
     await act(async () => {
@@ -2751,319 +2736,19 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
   });
 
   // #1764：真实 App 入口——在飞/成功/失败回填/成案只读；断言结构化 phase，不锁 chip 措辞。
-  it("#1764 新增草案：在飞卡 → 成功落草案；POST 拒绝 → 卡 failed + compose 回填可再提交", async () => {
-    let releaseCreate!: (value: Response) => void;
-    let createGate = new Promise<Response>((resolve) => { releaseCreate = resolve; });
-    let createPosts = 0;
-    const base = {
-      ...settlementBaseState("player"),
-      turn: { year: 1627, period: 10, turn: 5, phase: "player", settlement_display: false },
-      directives: [] as unknown[],
-      cased_directives: [] as unknown[],
-      pending_directive_count: 0,
-      pending_secret_order_count: 0,
-      pending_non_directive_action_count: 0,
-      failed_secret_order_count: 0,
-      previous_summary: "",
-      pending_decisions: [],
-    };
-    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
-      const u = new URL(String(url), "http://t.local");
-      if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
-      if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
-      if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
-      if (u.pathname.endsWith("/api/game/state")) return jsonResp(base);
-      if (u.pathname.endsWith("/api/directives") && init?.method === "POST") {
-        createPosts += 1;
-        return createGate;
-      }
-      return jsonResp({});
-    }));
-    const host = await mountApp();
-    await click(edictCommand(host));
-    await act(async () => {
-      await vi.waitFor(() => expect(host.querySelector('[role="dialog"][aria-label="诏书草案"]')).not.toBeNull());
-    });
-    const fillCompose = async (text: string) => {
-      const ta = host.querySelector<HTMLTextAreaElement>(".desk-compose textarea");
-      expect(ta).not.toBeNull();
-      await act(async () => {
-        const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!;
-        setter.call(ta!, text);
-        ta!.dispatchEvent(new Event("input", { bubbles: true }));
-      });
-    };
-    await fillCompose("解太仓备用");
-    await click(findButton(host, "新增草案"));
-    await act(async () => {
-      await vi.waitFor(() => expect(host.querySelector('[data-directive-phase="inflight"]')).not.toBeNull());
-    });
-    const inflightCard = host.querySelector('[data-directive-phase="inflight"]');
-
-    // 忙碌可感知：卡根 aria-busy，不靠隐藏图标/色/data-*  alone。
-    expect(inflightCard?.getAttribute("aria-busy")).toBe("true");
-    expect(inflightCard?.getAttribute("aria-invalid")).not.toBe("true");
-    const inflightBodyId = inflightCard?.getAttribute("aria-describedby") || "";
-    expect(inflightBodyId.length).toBeGreaterThan(0);
-
-    // 请求按钮禁点；compose textarea 不冻结（玩家可另写，失败回填不覆写）。
-    expect(host.querySelector<HTMLButtonElement>(".desk-add-btn")?.disabled).toBe(true);
-    expect(host.querySelector<HTMLTextAreaElement>(".desk-compose textarea")?.disabled).toBe(false);
-    expect(createPosts).toBe(1);
-
-    // 等待期间玩家另写：失败回填不得覆写新内容
-    await fillCompose("等待期间另拟");
-    await act(async () => {
-      releaseCreate({
-        ok: false,
-        status: 400,
-        statusText: "Bad Request",
-        json: async () => ({ detail: { message: "structured-fail-token" } }),
-      } as unknown as Response);
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-    await act(async () => {
-      await vi.waitFor(() => expect(host.querySelector('[data-directive-phase="failed"]')).not.toBeNull());
-    });
-    const failed = host.querySelector('[data-directive-phase="failed"]');
-
-    // 失败可感知：原始 role=alert + describedby 关联；非 busy、非 aria-invalid（API 失败≠输入校验）。
-    expect(failed?.getAttribute("aria-busy")).not.toBe("true");
-    expect(failed?.getAttribute("aria-invalid")).not.toBe("true");
-    const failErr = failed?.querySelector('[data-role="local-error"][role="alert"]');
-    expect(failErr?.getAttribute("id")).toBeTruthy();
-    expect(failed?.getAttribute("aria-describedby") || "").toContain(failErr!.getAttribute("id")!);
-    const taAfterFail = host.querySelector<HTMLTextAreaElement>(".desk-compose textarea");
-    expect(taAfterFail?.value).toBe("等待期间另拟");
-    expect(host.querySelector<HTMLButtonElement>(".desk-add-btn")?.disabled).toBe(false);
-
-    // 可再提交：compose 改回原快照后成功落草案
-    await fillCompose("解太仓备用");
-    createGate = new Promise<Response>((resolve) => { releaseCreate = resolve; });
-    await click(findButton(host, "新增草案"));
-    await act(async () => {
-      await vi.waitFor(() => expect(host.querySelector('[data-directive-phase="inflight"]')).not.toBeNull());
-    });
-    expect(createPosts).toBe(2);
-    await act(async () => {
-      releaseCreate(jsonResp({
-        directives: [{
-          id: 9, event_id: "", event_title: "", actor: "",
-          text: "解太仓备用", source: "手动新增", status: "draft", notes: "", authority: "",
-        }],
-      }));
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-    await act(async () => {
-      await vi.waitFor(() => {
-        expect(host.querySelector('[data-directive-phase="draft"][data-directive-id="9"]')).not.toBeNull();
-      });
-    });
-    expect(host.querySelector('[data-directive-phase="inflight"]')).toBeNull();
-    expect(host.querySelector('[data-directive-phase="failed"]')).toBeNull();
-
-    // 编辑已有草案后提交另一道：取消修改为纯本地，不吃 requestLocked；在飞 create 继续且不新增请求。
-    const draftBeforeEdit = host.querySelector('[data-directive-phase="draft"][data-directive-id="9"]');
-    expect(draftBeforeEdit).not.toBeNull();
-    const startEditBtn = Array.from(draftBeforeEdit!.querySelectorAll("button")).find((b) => (b.textContent || "").includes("改"));
-    expect(startEditBtn).toBeTruthy();
-    await click(startEditBtn as HTMLButtonElement);
-    expect(host.querySelector(".directive-edit")).not.toBeNull();
-    let releaseOtherCreate!: (value: Response) => void;
-    const otherCreateGate = new Promise<Response>((resolve) => { releaseOtherCreate = resolve; });
-    const postsBeforeOther = createPosts;
-    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
-      const u = new URL(String(url), "http://t.local");
-      if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
-      if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
-      if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
-      if (u.pathname.endsWith("/api/game/state")) return jsonResp(base);
-      if (u.pathname.endsWith("/api/directives") && init?.method === "POST") {
-        createPosts += 1;
-        return otherCreateGate;
-      }
-      return jsonResp({});
-    }));
-    await fillCompose("并行另一道");
-    await click(findButton(host, "新增草案"));
-    await act(async () => {
-      await vi.waitFor(() => expect(host.querySelector('[data-directive-phase="inflight"]')).not.toBeNull());
-    });
-    expect(createPosts).toBe(postsBeforeOther + 1);
-    const cancelEditBtn = host.querySelector<HTMLButtonElement>('button[aria-label="取消修改"]');
-    expect(cancelEditBtn).not.toBeNull();
-    expect(cancelEditBtn!.disabled).toBe(false);
-    await click(cancelEditBtn!);
-    expect(host.querySelector(".directive-edit")).toBeNull();
-    expect(host.querySelector('[data-directive-phase="inflight"]')).not.toBeNull();
-    expect(createPosts).toBe(postsBeforeOther + 1);
-    await act(async () => {
-      releaseOtherCreate({
-        ok: false,
-        status: 400,
-        statusText: "Bad Request",
-        json: async () => ({ detail: { message: "other-create-fail" } }),
-      } as unknown as Response);
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-    await act(async () => {
-      await vi.waitFor(() => expect(host.querySelector('[data-local-key][data-directive-phase="failed"]')).not.toBeNull());
-    });
-
-    // save：PATCH 在飞绑所属草案卡；拒绝 → 卡 failed + 恢复编辑内容
-    let releaseSave!: (value: Response) => void;
-    let saveGate = new Promise<Response>((resolve) => { releaseSave = resolve; });
-    let savePatches = 0;
-    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
-      const u = new URL(String(url), "http://t.local");
-      if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
-      if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
-      if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
-      if (u.pathname.endsWith("/api/game/state")) return jsonResp(base);
-      if (u.pathname.match(/\/api\/directives\/\d+$/) && init?.method === "PATCH") {
-        savePatches += 1;
-        return saveGate;
-      }
-      return jsonResp({});
-    }));
-    const draftCard = host.querySelector('[data-directive-phase="draft"][data-directive-id="9"]');
-    expect(draftCard).not.toBeNull();
-    const editBtn = Array.from(draftCard!.querySelectorAll("button")).find((b) => (b.textContent || "").includes("改"));
-    expect(editBtn).toBeTruthy();
-    await click(editBtn as HTMLButtonElement);
-    const editArea = host.querySelector<HTMLTextAreaElement>(".directive-edit textarea");
-    expect(editArea).not.toBeNull();
-    await act(async () => {
-      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!;
-      setter.call(editArea!, "改稿边饷");
-      editArea!.dispatchEvent(new Event("input", { bubbles: true }));
-    });
-    const saveBtn = host.querySelector<HTMLButtonElement>('button[aria-label="保存草案"]');
-    expect(saveBtn).not.toBeNull();
-    await click(saveBtn!);
-    await act(async () => {
-      await vi.waitFor(() => {
-        const card = host.querySelector('[data-directive-id="9"]');
-        expect(card?.getAttribute("data-directive-phase")).toBe("inflight");
-        expect(card?.getAttribute("data-request-op")).toBe("save");
-        expect(card?.getAttribute("aria-busy")).toBe("true");
-        // #1764：save 在飞时来源头仍在呈现树（不与 PhaseChip 互斥；不锁来源措辞）。
-        expect(card?.querySelector('[data-role="source-label"]')).not.toBeNull();
-      });
-    });
-    expect(savePatches).toBe(1);
-    await act(async () => {
-      releaseSave({
-        ok: false,
-        status: 400,
-        statusText: "Bad Request",
-        json: async () => ({ detail: { message: "save-fail-token" } }),
-      } as unknown as Response);
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-    await act(async () => {
-      await vi.waitFor(() => {
-        const card = host.querySelector('[data-directive-id="9"]');
-        expect(card?.getAttribute("data-directive-phase")).toBe("failed");
-        expect(card?.getAttribute("aria-invalid")).not.toBe("true");
-
-        // #1764：save 失败时来源头仍在呈现树。
-        expect(card?.querySelector('[data-role="source-label"]')).not.toBeNull();
-      });
-    });
-    const editAfterSaveFail = host.querySelector<HTMLTextAreaElement>(".directive-edit textarea");
-    expect(editAfterSaveFail?.value).toBe("改稿边饷");
-  });
-
-  it("#1764 failed-only 退朝确认不挡本地 create 的失败呈现", async () => {
-    let releaseCreate!: (value: Response) => void;
-    const createGate = new Promise<Response>((resolve) => { releaseCreate = resolve; });
-    const base = {
-      ...settlementBaseState("player"),
-      turn: { year: 1627, period: 10, turn: 5, phase: "player", settlement_display: false },
-      directives: [] as unknown[],
-      cased_directives: [] as unknown[],
-      pending_directive_count: 0,
-      pending_secret_order_count: 0,
-      pending_non_directive_action_count: 0,
-      failed_secret_order_count: 1,
-      previous_summary: "",
-      pending_decisions: [],
-    };
-    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
-      const u = new URL(String(url), "http://t.local");
-      if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
-      if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
-      if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
-      if (u.pathname.endsWith("/api/game/state")) return jsonResp(base);
-      if (u.pathname.endsWith("/api/directives") && init?.method === "POST") return createGate;
-      return jsonResp({});
-    }));
-    const host = await mountApp();
-    await click(edictCommand(host));
-    await act(async () => {
-      await vi.waitFor(() => expect(host.querySelector('[role="dialog"][aria-label="诏书草案"]')).not.toBeNull());
-    });
-    // failed-only 退朝确认打开后提交草案：页脚取消为纯本地，不吃 requestLocked。
-    const footerOpen = host.querySelector<HTMLButtonElement>(".desk-footer button");
-    expect(footerOpen).not.toBeNull();
-    await click(footerOpen!);
-    expect(host.querySelector('[aria-label="退朝确认"]')).not.toBeNull();
-
-    const ta = host.querySelector<HTMLTextAreaElement>(".desk-compose textarea");
-    expect(ta).not.toBeNull();
-    await act(async () => {
-      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!;
-      setter.call(ta!, "本地失败草案");
-      ta!.dispatchEvent(new Event("input", { bubbles: true }));
-    });
-    await click(findButton(host, "新增草案"));
-    await act(async () => {
-      await vi.waitFor(() => expect(host.querySelector('[data-directive-phase="inflight"]')).not.toBeNull());
-    });
-    expect(host.querySelector('[data-directive-phase="inflight"]')?.getAttribute("aria-busy")).toBe("true");
-    const confirmWhileInflight = host.querySelector('[aria-label="退朝确认"]');
-    expect(confirmWhileInflight).not.toBeNull();
-    const footerCancel = Array.from(confirmWhileInflight!.querySelectorAll("button")).find((b) =>
-      (b.textContent || "").includes("取消"),
-    ) as HTMLButtonElement | undefined;
-
-    // 真正发请求的确认钮仍应锁定；取消只清确认态。
-
-    await click(footerCancel!);
-    expect(host.querySelector('[aria-label="退朝确认"]')).toBeNull();
-    expect(host.querySelector('[data-directive-phase="inflight"]')).not.toBeNull();
-
-    await act(async () => {
-      releaseCreate({
-        ok: false,
-        status: 400,
-        statusText: "Bad Request",
-        json: async () => ({ detail: { message: "local-fail-blocks-not" } }),
-      } as unknown as Response);
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-    await act(async () => {
-      await vi.waitFor(() => expect(host.querySelector('[data-directive-phase="failed"]')).not.toBeNull());
-    });
-    const localFailed = host.querySelector('[data-directive-phase="failed"]');
-    expect(localFailed?.getAttribute("aria-invalid")).not.toBe("true");
-
-  });
-
+  
+  
   it("#1764 退出主菜单清本地失败卡；再入局不残留", async () => {
     vi.stubGlobal("confirm", () => true);
-    let releaseCreate!: (value: Response) => void;
-    const createGate = new Promise<Response>((resolve) => { releaseCreate = resolve; });
+    let releaseSave!: (value: Response) => void;
+    const saveGate = new Promise<Response>((resolve) => { releaseSave = resolve; });
     const base = {
       ...settlementBaseState("player"),
       turn: { year: 1627, period: 10, turn: 5, phase: "player", settlement_display: false },
-      directives: [] as unknown[],
+      directives: [{
+        id: 9, event_id: "", event_title: "", actor: "",
+        text: "留中不发", source: "chat", status: "draft", notes: "", authority: "",
+      }] as unknown[],
       cased_directives: [] as unknown[],
       pending_directive_count: 0,
       pending_secret_order_count: 0,
@@ -3078,7 +2763,7 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
       if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
       if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
       if (u.pathname.endsWith("/api/game/state")) return jsonResp(base);
-      if (u.pathname.endsWith("/api/directives") && init?.method === "POST") return createGate;
+      if (u.pathname.match(/\/api\/directives\/9$/) && init?.method === "PATCH") return saveGate;
       if (u.pathname.endsWith("/api/menu/exit_to_menu")) return jsonResp({});
       if (u.pathname.endsWith("/api/menu/continue")) {
         return sseResp("done", { state: { ok: true } });
@@ -3090,19 +2775,21 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     await act(async () => {
       await vi.waitFor(() => expect(host.querySelector('[role="dialog"][aria-label="诏书草案"]')).not.toBeNull());
     });
-    const ta = host.querySelector<HTMLTextAreaElement>(".desk-compose textarea");
-    expect(ta).not.toBeNull();
+    const draftCard = host.querySelector('[data-directive-phase="draft"][data-directive-id="9"]');
+    const editBtn = Array.from(draftCard!.querySelectorAll("button")).find((b) => (b.textContent || "").includes("改"));
+    await click(editBtn as HTMLButtonElement);
+    const editArea = host.querySelector<HTMLTextAreaElement>(".directive-edit textarea");
     await act(async () => {
       const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!;
-      setter.call(ta!, "跨局残留草案");
-      ta!.dispatchEvent(new Event("input", { bubbles: true }));
+      setter.call(editArea!, "跨局残留改稿");
+      editArea!.dispatchEvent(new Event("input", { bubbles: true }));
     });
-    await click(findButton(host, "新增草案"));
+    await click(host.querySelector<HTMLButtonElement>('button[aria-label="保存草案"]')!);
     await act(async () => {
       await vi.waitFor(() => expect(host.querySelector('[data-directive-phase="inflight"]')).not.toBeNull());
     });
     await act(async () => {
-      releaseCreate({
+      releaseSave({
         ok: false,
         status: 400,
         statusText: "Bad Request",
@@ -3140,7 +2827,7 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     });
     expect(host.querySelector('[data-directive-phase="failed"]')).toBeNull();
     expect(host.querySelector('[data-directive-phase="inflight"]')).toBeNull();
-    expect(host.querySelector('[data-local-key]')).toBeNull();
+    expect(host.querySelector(".directive-edit")).toBeNull();
   });
 
   // #1764 成案 tracer 共享夹具：召对流 + 可切换的 state 权威投影（在线 end / 离面重入同形）。

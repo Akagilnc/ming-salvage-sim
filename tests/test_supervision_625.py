@@ -100,7 +100,7 @@ def _audit_dossier(db, state, *, auditor: str, subject_id: int, token: str = "au
         participants=[{"character_id": auditor, "tier": "主办"}],
     )
     db.apply_dossier_promulgation(state, aid, "promulgated")
-    db.add_dossier_links(aid, [{
+    db.dossiers.add_links(aid, [{
         "target_dossier_id": int(subject_id),
         "relation_type": SUPERVISION_RELATION,
         "note": f"稽核案卷{subject_id}",
@@ -455,6 +455,6 @@ def test_due_review_supervision_history_no_longer_hardcoded_empty(game):
     db.conn.commit()
     applied = apply_pending_due_reviews(db, state, commit=True)
     assert applied
-    dossier = db.get_decree_dossier(subject_id)
+    dossier = db.dossiers.get(subject_id)
     assert dossier["execution_outcome"] == "degraded"
     assert dossier["status"] == "closed"

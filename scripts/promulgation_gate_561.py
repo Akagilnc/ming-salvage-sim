@@ -106,7 +106,7 @@ def _choose_rescripts(
 ) -> list[dict]:
     """Persist choices exactly as the normal session boundary does, then phase2 owns them."""
     chosen = []
-    for decision in db.list_pending_decisions(turn):
+    for decision in db.issues.list_pending_decisions(turn):
         options = decision["options"]
         if decision["event_id"] == f"dossier:{hostile}":
             choice = next(row for row in options if row.get("dossier_decision") == "hold")

@@ -131,7 +131,7 @@ def test_month_entry_world_push_follows_audience_transport_policy(
     assert int(state.turn) == turn
     assert state.turn_phase == TurnPhase.SETTLING.value
     assert caught.value.stage == "world_text"
-    chain = (db.get_resolve_context(turn) or {}).get("simulator_payload", {}).get(
+    chain = (db.resolve_contexts.get(turn) or {}).get("simulator_payload", {}).get(
         "month_chain", {},
     )
     failure_row = chain.get("call_failure") or {}
@@ -191,13 +191,13 @@ def test_forecast_exhaustion_does_not_overwrite_prior_ending(game, monkeypatch, 
     with pytest.raises(SettlementAbort):
         session.resolve_turn(allow_empty_decree=True)
 
-    chain = (db.get_resolve_context(turn) or {}).get("simulator_payload", {}).get(
+    chain = (db.resolve_contexts.get(turn) or {}).get("simulator_payload", {}).get(
         "month_chain", {},
     )
     assert db.staged_declarations.is_settled(first_ref)
     assert (chain.get("declaration_outcome") or {}).get("status") == "emperor_abdicate"
     assert (chain.get("call_failure") or {}).get("kind") == "model_exhausted"
-    assert db.get_decree_dossier(second_id) is not None
+    assert db.dossiers.get(second_id) is not None
 
     db.save_turn_report(state, "邸报已成")
     result = session.resolve_turn(allow_empty_decree=True)
@@ -241,7 +241,7 @@ def test_world_text_exhaustion_stops_month_keeps_settled_edicts(game, monkeypatc
     abort = caught.value
     assert abort.error_pack_path
     assert abort.stage == "world_text"
-    chain = (db.get_resolve_context(turn) or {}).get("simulator_payload", {}).get(
+    chain = (db.resolve_contexts.get(turn) or {}).get("simulator_payload", {}).get(
         "month_chain", {},
     )
     failure = chain.get("call_failure") or {}
@@ -289,7 +289,7 @@ def test_world_translate_exhaustion_keeps_text_resume_retries_translate_only(
     with pytest.raises(SettlementAbort):
         session.resolve_turn(allow_empty_decree=True)
 
-    chain = (db.get_resolve_context(turn) or {}).get("simulator_payload", {}).get(
+    chain = (db.resolve_contexts.get(turn) or {}).get("simulator_payload", {}).get(
         "month_chain", {},
     )
     assert chain.get("world_text_ready") is True
@@ -365,7 +365,7 @@ def test_escape_hatch_discards_world_segment_only_on_second_player_retry(
 
     with pytest.raises(SettlementAbort):
         session.resolve_turn(allow_empty_decree=True)
-    chain = (db.get_resolve_context(turn) or {}).get("simulator_payload", {}).get(
+    chain = (db.resolve_contexts.get(turn) or {}).get("simulator_payload", {}).get(
         "month_chain", {},
     )
     assert chain.get("world_text") == "第一段文"
@@ -375,7 +375,7 @@ def test_escape_hatch_discards_world_segment_only_on_second_player_retry(
     # 第一次玩家重试：仍只续转译，不丢段；再次用尽后武装逃生口
     with pytest.raises(SettlementAbort):
         session.resolve_turn(allow_empty_decree=True)
-    chain = (db.get_resolve_context(turn) or {}).get("simulator_payload", {}).get(
+    chain = (db.resolve_contexts.get(turn) or {}).get("simulator_payload", {}).get(
         "month_chain", {},
     )
     assert chain.get("world_text") == "第一段文"
@@ -432,7 +432,7 @@ def test_settlement_recovery_projects_month_call_failure(
     assert recovery.get("retryable") is True
     assert recovery.get("error_pack_path")
     assert "核账期可见原文" in str(recovery.get("message") or "")
-    chain = (db.get_resolve_context(turn) or {}).get("simulator_payload", {}).get(
+    chain = (db.resolve_contexts.get(turn) or {}).get("simulator_payload", {}).get(
         "month_chain", {},
     )
     first_pack = (chain.get("call_failure") or {}).get("error_pack_path")
@@ -451,7 +451,7 @@ def test_settlement_recovery_projects_month_call_failure(
     assert isinstance(recovery_again, dict)
     assert recovery_again.get("error_pack_path") == ""
     assert recovery_again.get("error_pack_path") != first_pack
-    chain_again = (db.get_resolve_context(turn) or {}).get("simulator_payload", {}).get(
+    chain_again = (db.resolve_contexts.get(turn) or {}).get("simulator_payload", {}).get(
         "month_chain", {},
     )
     assert recovery_again.get("message") == (
@@ -495,7 +495,7 @@ def test_code_exception_during_world_commit_keeps_phase_and_settled_edicts(
     assert int(state.turn) == turn
     assert db.staged_declarations.is_settled(ref)
     assert len(_ningyuan_ledger_rows(db)) == 1
-    chain = (db.get_resolve_context(turn) or {}).get("simulator_payload", {}).get(
+    chain = (db.resolve_contexts.get(turn) or {}).get("simulator_payload", {}).get(
         "month_chain", {},
     )
     failure = chain.get("call_failure") or {}
@@ -567,7 +567,7 @@ def test_world_commit_failure_after_alongside_retries_uncommitted_segment(
     assert db.staged_declarations.is_settled(ref)
     assert len(_ningyuan_ledger_rows(db)) == 1
     assert _world_ledger_rows(db) == []
-    chain = (db.get_resolve_context(turn) or {}).get("simulator_payload", {}).get(
+    chain = (db.resolve_contexts.get(turn) or {}).get("simulator_payload", {}).get(
         "month_chain", {},
     )
     assert (chain.get("call_failure") or {}).get("kind") == "code_exception"
@@ -594,7 +594,7 @@ def test_world_commit_failure_after_alongside_retries_uncommitted_segment(
 
 
 def _month_chain_of(db, turn):
-    return (db.get_resolve_context(turn) or {}).get("simulator_payload", {}).get(
+    return (db.resolve_contexts.get(turn) or {}).get("simulator_payload", {}).get(
         "month_chain", {},
     )
 

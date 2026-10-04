@@ -70,7 +70,7 @@ def test_reopen_webgame_catches_up_pending_translation(tmp_path, monkeypatch):
         nid = int(night["id"])
         ctid = first.db.create_chat_turn(first.state, minister, "sess", 0, night_id=nid)
         first.db.persist_minister_reply(minister, int(first.state.turn), "臣领旨。", ctid)
-        first.db.mark_story_extraction_pending(ctid)
+        first.db.reign.mark_story_extraction_pending(ctid)
         an._set_night_fields(first.db, nid, status=an.NIGHT_STATUS_CLOSING)
         first.db.conn.commit()
 

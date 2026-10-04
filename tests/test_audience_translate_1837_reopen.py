@@ -119,7 +119,7 @@ def _player_month(db, state, content, monkeypatch, dossier_id, *, effects=None):
     import ming_sim.month_translate as month_translate
     from ming_sim.decree_forecast import decree_ref_for_dossier, stage_declaration
 
-    dossier = db.get_decree_dossier(dossier_id)
+    dossier = db.dossiers.get(dossier_id)
     stage_declaration(
         db, decree_ref=decree_ref_for_dossier(db, dossier),
         declaration={"effects": {}}, turn=int(state.turn),

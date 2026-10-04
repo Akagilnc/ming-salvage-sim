@@ -526,7 +526,7 @@ def test_force_promulgated_history_is_the_canonical_prohibition_authority(game):
         "UPDATE decree_dossiers SET status='closed', promulgation_decision='rejected' WHERE id=?",
         (prohibition,),
     )
-    assert db.dossier_authorizes_effects(prohibition) is True
+    assert db.dossiers.authorizes_effects(prohibition) is True
     assert active_prohibition_dossier(db, exposed)["id"] == prohibition
 
 

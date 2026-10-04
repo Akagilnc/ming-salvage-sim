@@ -1770,7 +1770,7 @@ def revoke_target_facts(db: Any, payload: object, row: object = None) -> dict[st
         target_dossier_id, target_issue_id = db.resolve_revoke_decree_target_ids(payload, row)
     except (AttributeError, TypeError, ValueError):
         return {}
-    dossier = db.get_decree_dossier(int(target_dossier_id))
+    dossier = db.dossiers.get(int(target_dossier_id))
     if dossier is None:
         return {}
     roster = [

@@ -209,7 +209,7 @@ def _month_fact_materials(
                 "category": row["category"],
             })
     answers: List[Dict[str, Any]] = []
-    if hasattr(db, "list_pending_decisions"):
+    if hasattr(db, "issues") and hasattr(db.issues, "list_pending_decisions"):
         for row in db.issues.list_pending_decisions(turn):
             if str(row.get("status") or "") != "decided":
                 continue
@@ -1101,7 +1101,7 @@ def _attach_investigation_facts(
     out: List[Dict[str, Any]] = []
     for raw in orders:
         order = dict(raw)
-        dossier = db.get_dossier_for_secret_order(int(order.get("id") or 0))
+        dossier = db.dossiers.get_for_secret_order(int(order.get("id") or 0))
         if dossier is None:
             out.append(order)
             continue

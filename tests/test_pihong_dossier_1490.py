@@ -1484,7 +1484,7 @@ def test_657_mixed_batch_follow_plus_decision_and_no_context_copy(web_game, monk
     try:
         hit = next((r for r in probe.list_rescript_drafts() if r['title'] == '混批急务'))
         assert hit['status'] == 'decided'
-        decs = probe.list_pending_decisions(int(probe.load_state().turn))
+        decs = probe.issues.list_pending_decisions(int(probe.load_state().turn))
         assert decs and all((row['status'] == 'decided' for row in decs))
         by_key = {str(row['decision_key']): row for row in decs}
         assert (by_key[d_key]['choice'] or {}).get('label') == '打回'
@@ -1501,7 +1501,7 @@ def test_657_mixed_batch_follow_plus_decision_and_no_context_copy(web_game, monk
     probe = GameDB(db_path, content)
     try:
         assert len(probe.dossiers.list_dossiers()) == mid_dossiers
-        decs = probe.list_pending_decisions(int(probe.load_state().turn))
+        decs = probe.issues.list_pending_decisions(int(probe.load_state().turn))
         assert not decs or all((d.get('status') == 'decided' for d in decs))
         ctx = probe.resolve_contexts.get(int(probe.load_state().turn))
         if ctx is not None:
@@ -1564,7 +1564,7 @@ def test_1589_pure_decision_keyless_rejected_then_keyed_same_choice_passes(web_g
     probe = GameDB(db_path, GameContent.load())
     try:
         assert int(probe.load_state().turn) == turn_before
-        decs = probe.list_pending_decisions(turn_before)
+        decs = probe.issues.list_pending_decisions(turn_before)
         assert decs and all((str(d.get('status')) == 'pending' for d in decs)), decs
         assert all((not d.get('choice') for d in decs)), decs
         assert len(probe.dossiers.list_dossiers()) == dossiers_before
@@ -1577,7 +1577,7 @@ def test_1589_pure_decision_keyless_rejected_then_keyed_same_choice_passes(web_g
     assert r2.get('done') is True, r2
     probe = GameDB(db_path, GameContent.load())
     try:
-        decs = probe.list_pending_decisions(turn_before)
+        decs = probe.issues.list_pending_decisions(turn_before)
         assert not decs or all((d.get('status') == 'decided' for d in decs)), decs
     finally:
         probe.close()

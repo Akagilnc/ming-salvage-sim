@@ -661,7 +661,7 @@ def test_play_turn_hitl_advancement_ends_turn(game, monkeypatch, action):
 
     db, state, content = game
     turn_before = int(state.turn)
-    db.save_pending_decisions(turn_before, [{
+    db.issues.save_pending_decisions(turn_before, [{
         "title": "急务亲裁",
         "context": "辽东饷银案卷",
         "options": [{"label": "发饷", "hint": "拨银五万两"}],

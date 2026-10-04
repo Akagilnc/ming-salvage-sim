@@ -113,13 +113,13 @@ def test_awaiting_decision_keeps_month_open_money_and_pending(game):
     state.metrics["国库"] = before["国库"] + 80
     db.save_state(state)
 
-    db.save_pending_decisions(int(state.turn), [{
+    db.issues.save_pending_decisions(int(state.turn), [{
         "event_id": "evt-x",
         "title": "饷银",
         "context": "是否发帑",
         "options": [{"label": "发"}],
     }])
-    pending = db.list_pending_decisions(int(state.turn))
+    pending = db.issues.list_pending_decisions(int(state.turn))
 
     payload = _runtime(db, state, pending_decisions=pending).state_payload()
 

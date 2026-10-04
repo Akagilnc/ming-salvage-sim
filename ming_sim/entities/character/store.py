@@ -20,7 +20,7 @@ CHARACTER_COLUMNS = frozenset({
     "debut_year", "debut_month", "status", "status_reason", "reason_code",
     "status_changed_turn", "power_id", "location", "transit_to",
     "transit_distance_remaining", "transit_speed_factor", "transit_start_turn",
-    "identity", "seed_guilt", "portrait_id", "court_role", "summary",
+    "identity", "intrigue", "seed_guilt", "portrait_id", "court_role", "summary",
     "aliases", "affair_id",
 })
 
@@ -388,7 +388,7 @@ class CharacterStore:
         return self._conn.execute('SELECT portrait_id FROM characters WHERE name=?', params).fetchone()
 
     def read_sync_offices_from_db_impl(self, params: Any = ()) -> Any:
-        return self._conn.execute("\n        SELECT c.name, c.office, c.office_type, c.faction, c.aliases, c.personal_skills,\n               c.loyalty, c.ability, c.integrity, c.courage, c.style, c.identity, c.seed_guilt,\n               c.birth_year, c.historical_death_year, c.historical_death_month,\n               c.debut_year, c.debut_month, c.status, c.status_reason, c.reason_code,\n               c.portrait_id, c.power_id, c.location, c.transit_to,\n               c.transit_distance_remaining, c.transit_speed_factor, c.transit_start_turn,\n               c.summary,\n               COALESCE(co.region_id, '') AS office_region\n        FROM characters c\n        LEFT JOIN character_offices co ON co.character_name = c.name\n        ", params).fetchall()
+        return self._conn.execute("\n        SELECT c.name, c.office, c.office_type, c.faction, c.aliases, c.personal_skills,\n               c.loyalty, c.ability, c.integrity, c.courage, c.style, c.identity, c.intrigue, c.seed_guilt,\n               c.birth_year, c.historical_death_year, c.historical_death_month,\n               c.debut_year, c.debut_month, c.status, c.status_reason, c.reason_code,\n               c.portrait_id, c.power_id, c.location, c.transit_to,\n               c.transit_distance_remaining, c.transit_speed_factor, c.transit_start_turn,\n               c.summary,\n               COALESCE(co.region_id, '') AS office_region\n        FROM characters c\n        LEFT JOIN character_offices co ON co.character_name = c.name\n        ", params).fetchall()
 
     def read_select_triage_actor(self, params: Any = ()) -> Any:
         return self._conn.execute("SELECT name,office,faction FROM characters WHERE status='active' AND power_id='ming' AND office LIKE ? ORDER BY office_type,office,name LIMIT 1", params).fetchone()

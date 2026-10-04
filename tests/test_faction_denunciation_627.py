@@ -148,7 +148,7 @@ def test_world_materials_exclude_secret_fork_from_gazette(game, tmp_path):
     _outcome(silent_beyond, "transformed")
 
     order_id = create_test_secret_order(db, state, owner, "密查", "查账", [])
-    secret_id = int(db.get_dossier_for_secret_order(order_id)["id"])
+    secret_id = int(db.dossiers.get_for_secret_order(order_id)["id"])
     db.conn.execute("UPDATE decree_dossiers SET status='executing' WHERE id=?", (secret_id,))
     db.conn.commit()
     _make_forked(db, state, secret_id)
@@ -494,8 +494,8 @@ def test_ac5_zero_template_exposure_and_622(game):
     audit_order = create_test_secret_order(db,
         state, actor, "密查清丈", "逐月密奏", ["稽核"], deadline_months=4,
     )
-    audit_dossier = int(db.get_dossier_for_secret_order(audit_order)["id"])
-    db.add_dossier_links(
+    audit_dossier = int(db.dossiers.get_for_secret_order(audit_order)["id"])
+    db.dossiers.add_links(
         audit_dossier,
         [{"target_dossier_id": did, "relation_type": "稽核", "note": "密查"}],
     )

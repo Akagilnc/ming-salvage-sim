@@ -62,6 +62,7 @@ def seed_opening_world(db: Any) -> None:
                 "courage": character.courage,
                 "style": character.style,
                 "identity": character.identity,
+                "intrigue": int(getattr(character, "intrigue", 50) or 50),
                 "seed_guilt": _seed_guilt_storage_value(character.seed_guilt),
                 "birth_year": character.birth_year,
                 "historical_death_year": character.historical_death_year,

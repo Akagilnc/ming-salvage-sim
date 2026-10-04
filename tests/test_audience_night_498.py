@@ -75,7 +75,7 @@ def _land_reply(db, state, minister: str, chat_id: int, text: str = "臣遵旨�
         (minister, state.turn, text),
     ).lastrowid
     db.conn.commit()
-    db.update_chat_turn_messages(chat_id, minister_message_id=int(mid))
+    db.reign.update_chat_turn_messages(chat_id, minister_message_id=int(mid))
     # #501：production 里回话落库后由尾随/收夜前 drain 抽取落账，收夜时无待补。本 #498
     # 时序/隔离用例不涉抽取，直接把水位推到 done 以反映合法收夜前态（否则引擎收夜 drain
     # 闸对未抽回话 fail-closed）。
@@ -357,7 +357,7 @@ def test_close_night_crash_then_reopen_db_resumes_idempotent(content, tmp_path):
     assert db.conn.execute(
         "SELECT office FROM characters WHERE name=?", (minister,),
     ).fetchone()["office"] == old_office
-    assert db.list_decree_dossiers(
+    assert db.dossiers.list_dossiers(
         status="proposed", target_kind="character", target_id=minister
     )
     db.close()  # 进程崩溃：关库
@@ -378,7 +378,7 @@ def test_close_night_crash_then_reopen_db_resumes_idempotent(content, tmp_path):
     assert db2.conn.execute(
         "SELECT office FROM characters WHERE name=?", (minister,),
     ).fetchone()["office"] == old_office
-    assert db2.list_decree_dossiers(
+    assert db2.dossiers.list_dossiers(
         status="proposed", target_kind="character", target_id=minister
     )
     assert db2.conn.execute(
@@ -395,7 +395,7 @@ def test_close_night_crash_then_reopen_db_resumes_idempotent(content, tmp_path):
     assert an.get_night(db2, night["id"])["status"] == "closed"
 
     # 真实收夜只负责成案；结算判决入口消费结构化 verdict 后才物化任免。
-    dossier = db2.list_decree_dossiers(
+    dossier = db2.dossiers.list_dossiers(
         status="proposed", target_kind="character", target_id=minister
     )[0]
     db2.apply_dossier_verdicts(
@@ -476,7 +476,7 @@ def test_closing_cursor0_reopen_refuses_new_and_explicit_resume_commits(content,
     assert an.get_night(db2, night["id"])["status"] == "closed"
     assert db2.conn.execute(
         "SELECT office FROM characters WHERE name=?", (minister,)).fetchone()["office"] == old_office
-    assert db2.list_decree_dossiers(
+    assert db2.dossiers.list_dossiers(
         status="proposed", target_kind="character", target_id=minister
     )
     assert db2.conn.execute(
@@ -660,9 +660,9 @@ def test_close_night_committed_without_dossier_does_not_publish_mingfa(game):
         "SELECT id FROM turn_directives WHERE source_pending_action_id=?",
         (candidate_id,),
     ).fetchone()["id"])
-    assert db.get_dossier_for_directive(directive_id) is None
+    assert db.dossiers.get_for_directive(directive_id) is None
     an.close_night(db, state, night_id=int(night["id"]), content=content)
-    assert db.get_dossier_for_directive(directive_id) is None
+    assert db.dossiers.get_for_directive(directive_id) is None
     entries = an.list_ledger(db, int(night["id"]))
     assert not any(TAG_MINGFA in (entry.get("tags") or []) for entry in entries)
     assert not any(

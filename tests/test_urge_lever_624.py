@@ -222,7 +222,7 @@ def test_urge_no_longer_rewrites_verdict_ac1_1895(game):
     # 落库路径只认实况：重催不把执行格改写成 failed/transformed。
     applied = apply_due_review_for_todo(db, state, todo, commit=True)
     assert applied["verdict"]["outcome"] == "degraded"
-    assert db.get_decree_dossier(dossier_id)["execution_outcome"] == "degraded"
+    assert db.dossiers.get(dossier_id)["execution_outcome"] == "degraded"
 
 # ── AC6 求宽限真伪底落 payload、玩家面零裸露 ─────────────────────────
 
