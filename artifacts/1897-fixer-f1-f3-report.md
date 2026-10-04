@@ -472,10 +472,12 @@ env MING_SIM_AGY_BIN=/usr/bin/false MING_SIM_CODEX_BIN=/usr/bin/false \
 1. **同类型**：F1/F2 补枚举与可复跑变异；F3 按法清退跨表 title，删失效截断与 method/form 洗绿，未用非空/键存在伪装正文契约。
 2. **引入面**：聚焦 587；变异 F1/F2/F3 GREEN；未放宽生产校验；出界自由文本未虚报结清；临时目录 `/tmp/1897-f1f3-corr` 为分析用，不进仓。
 
-### 交卷 HEAD（本轮提交后填写）
+### 交卷 HEAD（本轮）
 
-- 以 `git rev-parse HEAD` 为准。
+- 本轮提交：`c27a8b5ad195d3444dfcee3c2085b477f8a422e1`
+- 修面生产仍见 `edb376032`（F1 门控 + F2 删宽吞）；本轮主要为 F3 清退与枚举/变异证据补全。
 - **未 push / 未 PR / 未 amend / 未 stash**；未声称 merge 或 reviewer 放行。
+- 验证：`git rev-parse HEAD`；`git status --porcelain=v1` 应交空（本段 pin 若另有 docs tip，以 tip 为准）。
 
 ### 一次性分析 / 变异脚本（完整可粘贴）
 
