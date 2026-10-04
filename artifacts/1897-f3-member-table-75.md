@@ -1,9 +1,10 @@
 # #1897 F3 原 75 候选逐成员表（纠正：P6 测试锁文豁免作废）
 
 - 原表 tip：清 17 / 保留 58（含错误的 P6/朱笔 note·title 保真豁免）
-- **本轮更正**：P6 生产保真 ≠ 允许测试锁文；27/30/38/39/56 自由文本机械断言清退
-- 计数（相对原 75）：**清 22**（原 17 + 本轮 5）/ **保留 53**；#39 整案改名保留独立闸、删保真锁文
+- **更正史**：P6 生产保真 ≠ 允许测试锁文；27/30/38/56 等自由文本机械断言清退
+- **#39 终裁**：helper-only `normalize_stop_condition` 换形案**整案删除**；入口 bad `stop_condition` 闸负向留存于 `test_657_abi_mapper_matrix_a1_a12`
 - DB CHECK `form IN ('会签','当面站台','御笔手敕')`：`ming_sim/db.py` 真源闭集 → FORM_ENUM **保留**合法
+- 终表真源见回执「F3 最终语义复核」真正成员完整表 + 保留例外（本 75 表为历史过程；#39 行已按终裁更正）
 
 | # | 成员 | 形状 | 处置 | 理由 |
 |---:|---|---|---|---|
@@ -45,7 +46,7 @@
 | 36 | `test_pihong_dossier_1490.py:493` `test_ordinary_event_with_hallucinated_capability_submits` | SSE_PROTOCOL | **保留** | SSE 线协议控序（event: done/error），非自由正文盯文 |
 | 37 | `test_pihong_dossier_1490.py:494` `test_ordinary_event_with_hallucinated_capability_submits` | SSE_PROTOCOL | **保留** | SSE 线协议控序（event: done/error），非自由正文盯文 |
 | 38 | `test_pihong_dossier_1490.py:500` `test_ordinary_event_with_hallucinated_capability_submits` | NOTE_EQ | **清** | 更正：P6 豁免非法；删 note/label 散文等值；保留无 dossier_decision |
-| 39 | `test_pihong_dossier_1490.py:574` `test_657_p6_mapper_deliberate_preserve_free_text` | TITLE_LOCK | **清→独立 schema 负向** | 旧 title>80 / 改名杂糅案删除；现 `test_657_stop_condition_normalize_schema_negative` 直测 `normalize_stop_condition`（str 接受；None/空白→""；dict/list/其它 ValueError）。layer_a/deliberate→stalled 另有覆盖，不改名留存 |
+| 39 | `test_pihong_dossier_1490.py` 原 `test_657_p6_mapper_deliberate_preserve_free_text` / 后改名杂糅 / 再换 `test_657_stop_condition_normalize_schema_negative` | TITLE_LOCK→helper-only | **清整案（删换形）** | 保真锁文与 helper-only `normalize_stop_condition` 独测均删；**不**新建平行证明。入口闸负向留存：`test_657_abi_mapper_matrix_a1_a12` 对 `map_rescript_option_or_choice(... stop_condition='')` 的 `ValueError` 拒收 |
 | 40 | `test_pihong_dossier_1490.py:1456` `test_1621_http_follow_draft_uses_catalog_army_id` | SSE_PROTOCOL | **保留** | SSE 线协议控序（event: done/error），非自由正文盯文 |
 | 41 | `test_pihong_dossier_1490.py:1457` `test_1621_http_follow_draft_uses_catalog_army_id` | SSE_PROTOCOL | **保留** | SSE 线协议控序（event: done/error），非自由正文盯文 |
 | 42 | `test_pihong_dossier_1490.py:1603` `test_1589_empty_desk_rejects_nonempty_keyless_choices` | SSE_PROTOCOL | **保留** | SSE 线协议控序（event: done/error），非自由正文盯文 |

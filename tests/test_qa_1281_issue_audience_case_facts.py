@@ -209,7 +209,6 @@ def test_issue_material_projection_does_not_pollute_durable_events_or_db(game, t
     db, state, content = game
     row = _issue_row(db)
     issue_id = int(row["id"])
-    stage_before = row["stage_text"]
     public_before = int(db.conn.execute(
         "SELECT COUNT(*) AS n FROM character_knowledge_events WHERE character_name=''"
     ).fetchone()["n"])
@@ -222,7 +221,8 @@ def test_issue_material_projection_does_not_pollute_durable_events_or_db(game, t
     assert _issue_paths(prepared, issue_id)
     assert tuple(db.get_character_knowledge(state, AUDIENCE_NAME).get("events") or []) == durable_before
     row_after = _issue_row(db)
-    assert row_after["stage_text"] == stage_before
+    assert int(row_after["id"]) == issue_id
+    assert row_after["origin_ref"] == row["origin_ref"]
     assert int(db.conn.execute(
         "SELECT COUNT(*) AS n FROM character_knowledge_events WHERE character_name=''"
     ).fetchone()["n"]) == public_before

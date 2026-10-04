@@ -248,7 +248,8 @@ def test_financial_decision_uses_stored_option_not_client_payload(amount):
     decisions = parse_decision_blocks(raw)
     if type(amount) is not int:
         # Parse/save boundary rejects the whole malformed typed decision.
-        assert [decision["title"] for decision in decisions] == ["巡河"]
+        assert len(decisions) == 1
+        assert len(decisions[0].get("options") or []) == 2
         return
     desk = [{
         "decision_key": f"decision:3:{idx}", "kind": "decision", "turn": 3,
@@ -368,7 +369,7 @@ def test_decision_parser_rejects_unknown_typed_action_and_keeps_sibling():
 
     decisions = parse_decision_blocks(raw)
 
-    assert [decision["title"] for decision in decisions] == ["犒军", "巡河"]
+    assert len(decisions) == 2
     assert decisions[0]["options"][0]["action_type"] == "grant_allocation"
     assert decisions[0]["options"][0]["amount"] == 30
 

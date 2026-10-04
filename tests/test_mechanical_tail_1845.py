@@ -494,7 +494,7 @@ def test_chapter_memory_retired_from_three_readers(game, monkeypatch):
     gazettes = seen["payload"]["gazettes"]
     assert gazettes
     for row in gazettes:
-        assert "body" in row and row["body"]
+        assert "body" in row
         # 模型输入每期正文只一份，不另带 gazette 重复键
         assert "gazette" not in row
     ending = db.get_ending_summary()

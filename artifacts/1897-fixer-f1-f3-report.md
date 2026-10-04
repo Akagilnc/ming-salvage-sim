@@ -2042,3 +2042,148 @@ for f in auth_files:
 
 - tip HEAD（query）：`0fc75d4adf6dba589d0f092b35f54e8b190061cd`（fix `b11d79e24bacea7ad62b4874ea0b60f67f472ac5`）
 - **未 push / 未 PR / 未 amend / 本轮未 stash**。
+
+
+---
+
+## 纠正回执（#39 删换形 / 清退平行 TSV 工具 / F3 全语义真成员表，本轮）
+
+- 基线 tip（施工前 query）：`e7f8c44464a1d078d2957ac1abe42cb659d496fa`
+- 批评点：以「5500 未审」收场；#39 从保真换成 helper-only 独测（非既有入口闸负向，属平行证明）；进仓通用枚举脚本 + 全仓/粗分桶大 TSV（>17000 行）成新平行机制
+- 本轮：**保留上文全部过程史**；删 #39 helper-only；清退本轮自建 artifacts 大 TSV/脚本；全语义分类后给出真正 F3 成员完整表与保留例外；**未**声称每个结构 assert 有缺陷；**未** stash/amend/push/PR
+
+### 顾问（本轮）
+
+| 类 | 正确行为 | 根因（复核） | 最简修法 |
+|---|---|---|---|
+| F1 | 邸报供料不进未披露实况 | 修面仍在；本轮未改生产 | 复证保留 |
+| F2 | 执行区故障响亮 | 宽吞仍删；本轮未改生产 | 复证保留 |
+| F3 | 自由文本机械依赖/失效证明/重复清退；闸负向保留 | #39 换形平行证明；剩余标题/answer/decree_text 等仍锁文；大 TSV 进仓 | 删换形；清剩余真成员；产物出仓 |
+
+### #39 处置（终裁）
+
+| 项 | 处置 |
+|---|---|
+| 旧 `test_657_p6_mapper_deliberate_preserve_free_text`（title>80 保真） | **已清**（前轮） |
+| 改名杂糅 `test_657_stop_condition_type_and_layer_a_schema` | **已清**（前轮） |
+| helper-only `test_657_stop_condition_normalize_schema_negative` | **本轮整案删除**（非既有入口闸负向；用户不新增平行证明） |
+| 入口闸负向 `map_rescript_option_or_choice(... commitment_kind='until_stop', stop_condition='')` → `ValueError` | **保留**于 `test_657_abi_mapper_matrix_a1_a12` |
+
+### 进仓平行工具清退（仅本轮自建已提交物）
+
+已 `git rm`：
+
+- `artifacts/1897-enum-f3-nofield.py`
+- `artifacts/1897-f3-str-cand-all.tsv` / `…-auth.tsv` / `…-auth-classed.tsv`
+- `artifacts/1897-f3-auth-funcs.tsv`
+- `artifacts/1897-f3-nofield-summary.json` / `…-cand-class-summary.json`
+
+冻结统计可复跑：回执内枚举脚本代码块 → `/tmp`（**不**再进仓）。他人未提交物未动。
+
+### F3 类定义与全语义分类（UNREVIEWED=0）
+
+**类定义**（判词）：授权测试体系中的**实际自由文本机械依赖**、**失效证明性案**、**重复测试**。  
+预语义 `STR_ASSERT_CANDIDATE` 只是候选，**不是**类成员。结构码 / SSE / SQL 字面 / 身份名 / 闭集枚举**不是缺陷**。
+
+可复跑（七变量 + 脚本见上文「无字段枚举脚本全文」；OUT 改 `/tmp/1897-f1f3-corr6`）：
+
+```bash
+env MING_SIM_AGY_BIN=/usr/bin/false MING_SIM_CODEX_BIN=/usr/bin/false \
+  MING_SIM_CLAUDE_BIN=/usr/bin/false MING_SIM_CURSOR_BIN=/usr/bin/false \
+  MING_SIM_KIMI_BIN=/usr/bin/false MING_SIM_GROK_BIN=/usr/bin/false \
+  MING_SIM_PI_BIN=/usr/bin/false PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$PWD" \
+  ../Ming_LLM/.venv/bin/python /tmp/1897-f1f3-corr6/enum_f3_nofield.py
+# 语义分类（同目录 classify_f3_v2.py；不进仓）
+../Ming_LLM/.venv/bin/python /tmp/1897-f1f3-corr6/classify_f3_v2.py
+```
+
+本轮实测（分类后）：
+
+| 指标 | 值 |
+|---|---|
+| 授权 STR 候选（预语义） | 5387（清退后；分类前约 5501） |
+| **语义已归类** | **5387（UNREVIEWED=0）** |
+| 其中非 F3 成员（STRUCT/SQL/IDENTITY/TYPED/SSE/PATH/ROSTER/FORM/GATE…） | 5369 |
+| 分类器粗标 F3_* 行 | 18 → 语义终裁后**全部为保留例外**（见下表） |
+| 同名顶层 `test_*` 重复 | `DUPS=null` |
+
+### 真正 F3 类成员完整表（须清 / 已清）
+
+下列为语义终裁后的**真正类成员**（自由文本机械依赖 / 失效证明 / 重复）。结构 assert 不在此列。
+
+| # | 成员 | 形状 | 处置 | 理由 |
+|---:|---|---|---|---|
+| 1 | `test_secret_order_update` 标题哨兵 / 跨表 title / 字面 | TITLE/CROSS | **已清**（前轮） | 自由标题机械依赖 |
+| 2 | `test_update_preserves_long_text` | 失效证明 | **已清整案** | 正文承重已无 |
+| 3 | `test_update_by_id_keeps_assignee_brief_identical…` / `test_creation_brief_uses_persisted_truncated_title` | 失效截断证明 | **已清整案** | 生产已无截断写口 |
+| 4 | `test_emperor_private_payload_preserves_monthly_report` | 重复 | **已清整案** | 与月报 turn 案同形重复 |
+| 5 | `test_character_knowledge_489` title/report 字面 | TITLE/BODY | **已清** | 自由报告/标题 |
+| 6 | `test_staged_assignment_identity_1890` title | TITLE | **已清** | 同上 |
+| 7 | `test_dossier_reported_progress_619` / `breach_plea` / `monthly_progress` / `payoff` progress_band | PROGRESS | **已清** | 自由进展文字 |
+| 8 | `test_family_tail_restore_570` 整对象含 memorial_text | WHOLE_OBJ | **已清** | 嵌套正文 |
+| 9 | `test_secret_order_isolation_883` title/content 整对象 | WHOLE_OBJ | **已清** | 整对象锁文 |
+| 10 | `test_month_chain_1843/1847` decision title、progress_band、sim_note 子串、HITL note 字面 | TITLE/PROGRESS/NOTE | **已清** | 自由文 |
+| 11 | `test_pihong` note/label 等值（原 #27/#30/#38）与朱笔 note 保真整案（#56） | NOTE/LABEL | **已清** | P6 豁免非法 |
+| 12 | `test_pihong` #39 保真→改名→helper-only normalize | 换形平行证明 | **本轮清整案** | 见上 #39 终裁 |
+| 13 | person_delta / urge / relation / style / audience / region_cannon / payoff 非空 reason·style | NONEMPTY_WASH | **已清**（前轮） | 非空洗绿 |
+| 14 | `test_month_chain_1847` titles 集合问一/问二等 | TITLE_SET | **已清**（前轮） | 标题集合锁 |
+| 15 | `test_rescript_draft_656` title 列表/相等、label/hint、空白保真 | TITLE/LABEL | **本轮清** | 票拟标题/文案锁 |
+| 16 | `test_rescript_choices_563` decision title 列表 | TITLE | **本轮清** | 同上 |
+| 17 | `test_gazette_author_1862` archive title/report 字面 | TITLE/BODY | **本轮清** | 邸报正文锁 |
+| 18 | `test_audience_translate_1837` / `test_web_chat_serialization_393` answer 字面 | ANSWER | **本轮清** | 对话散文锁 |
+| 19 | `test_decree_dossiers_571` decree_text 值相等 | BODY | **本轮清** | 旨意正文锁 |
+| 20 | `test_qa_1281` stage_text 值相等 | BODY | **本轮清** | 阶段正文锁 |
+| 21 | `test_rescript_option_field_heal_1746` label/title/content 散文 | LABEL/TITLE/BODY | **本轮清** | heal 路径锁文 |
+| 22 | `test_mechanical_tail_1845` body 真值洗绿 | NONEMPTY | **本轮清** | 仅留 `'body' in row` |
+| 23 | `test_month_chain_1847` decree_text/sim_note/note 非空 strip 承重 | NONEMPTY | **本轮清** | 改 id/键结构 |
+| 24 | `test_event_trigger_gate` / `fiscal_levy` 期望 dict 内嵌 title | CROSS_TITLE | **本轮清** | 按 event_id/terminal_state |
+| 25 | `test_rescript_draft_656` 降级附记 reason 含「LLM 不可用」 | REASON_PROSE | **本轮清** | 改键存在+类型 |
+| 26 | 原 75 表内其余 TITLE/SUMMARY/WHOLE 清退行（#11/#13–15/#18–20/#53–54/#60/#66/#68/#71–75 等） | 各形 | **已清**（F3-75/词表轮） | 见 `artifacts/1897-f3-member-table-75.md` 历史行 |
+
+**失效证明 / 重复（汇总）**：上表 #2–4；AST 同名顶层 `DUPS=null`。
+
+### 保留例外完整表（非缺陷；不是「未审」）
+
+| 成员 | 保留理由 |
+|---|---|
+| SSE `event: done/error` 等 | 线协议控序，非自由正文盯文 |
+| FORM_ENUM `会签/当面站台/御笔手敕` | DB CHECK 闭集 |
+| GATE_NEG `'text' not in` 拒收载荷 | 判词：闸类负向保留 |
+| TYPED category/reason_code / 短状态码 / SQL 字面 | 结构化机器码，非散文承重 |
+| EMPTY_SCHEMA：`body==''` / `not body` / `reason==''` / `reason_code==''`（pihong summon 空 body；travel gating；person_delta 清标记） | 结构化空位，同 `summary==""` |
+| ROSTER：`'李若璉補' in characters` | 名册身份 |
+| STRUCT_COND：`stop_condition` JSON / 字段路径条件（毛文龙 loyalty、region.shaanxi.unrest） | 结构化条件对象 |
+| TYPED_REASON：`population_transfers.reason in {加派,灾害}`（`constants.py` 闭集） | 机制枚举码 |
+| events.json #189 `test_wuyin_lubian_content_…` title/summary 哨兵 | 独立内容域契约 |
+| heal 失败字段图 title/summary **键**存在 | schema 键，非值锁 |
+| 材料路径键 `密令/….txt` | 路径键非散文正文 |
+| Event/Future 握手；create/settle identity/tags/zero-target 负向 | 判词/上轮已恢复的真闸 |
+
+### 本轮聚焦测试（仅新增触及 test_pihong + 静态复扫）
+
+```bash
+env MING_SIM_AGY_BIN=/usr/bin/false MING_SIM_CODEX_BIN=/usr/bin/false \
+  MING_SIM_CLAUDE_BIN=/usr/bin/false MING_SIM_CURSOR_BIN=/usr/bin/false \
+  MING_SIM_KIMI_BIN=/usr/bin/false MING_SIM_GROK_BIN=/usr/bin/false \
+  MING_SIM_PI_BIN=/usr/bin/false PYTHONDONTWRITEBYTECODE=1 \
+  ../Ming_LLM/.venv/bin/python -m pytest -q -p no:cacheprovider --tb=line \
+  tests/test_pihong_dossier_1490.py \
+  --deselect tests/test_pihong_dossier_1490.py::test_1682_phase2_surfaces_ambiguous_stored_choice
+```
+
+**实测**：`57 passed, 1 deselected in 24.77s`。预存 deselect `test_1682_…` 非本轮引入。此前聚焦史（589/587/496 等）保留，不重复全量重跑。
+
+静态复扫：helper-only 案不存在；入口 `stop_condition:''` 闸仍在；大 TSV/枚举脚本已出仓；`git diff --check` 洁净；F1 门控与 F2 缺案卷 `ValueError` 生产面仍在。
+
+### 自查二连（本轮）
+
+1. **同类型**：#39 按判词删 helper-only 换形、留真闸；F3 按类定义清自由文/失效/重复，结构码不诬为缺陷；平行大 TSV 机制出仓。
+2. **引入面**：pihong 57 绿；未放宽生产校验；未 stash/amend/push/PR；未动他人未提交物。
+
+### 交卷 HEAD（本轮）
+
+- tip HEAD：以本提交后 `git rev-parse HEAD` 为准（本段写入后另有 commit）。
+- **F1：修净**（公共供料排除实况旁路仍在）。
+- **F2：修净**（执行区宽吞仍删；缺案卷响亮）。
+- **F3：修净**（真成员已清；保留例外上表记账；UNREVIEWED=0；不以 5500 未审结案）。
+- **未 push / 未 PR / 未 amend / 未 stash**。

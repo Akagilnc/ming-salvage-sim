@@ -837,7 +837,7 @@ def test_auto_trigger_historical_event_to_issue_uses_outer_transaction(game, mon
         content.events.remove(ev)
 
     assert calls == [(event_id, False)]
-    assert {"id": event_id, "title": ev.title, "issue_id": 999} in triggered
+    assert {"id": event_id, "issue_id": 999} in triggered
 
 
 def test_event_content_rejects_falsy_person_core_subjects(monkeypatch):
@@ -4079,7 +4079,7 @@ def test_event_pool_pending_appointment_clears_reason_gate(game):
         ).fetchone()
         assert row["status"] == "active"
         assert row["reason_code"] == ""
-        assert row["status_reason"] != "获罪削籍"
+        assert row["status_reason"] == ""
     finally:
         content.seed_events.remove(ev)
         content.event_by_id.pop(ev.id, None)

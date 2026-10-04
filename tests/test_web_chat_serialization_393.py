@@ -363,7 +363,7 @@ def test_nonstream_api_chat_keeps_game_state_responsive_while_chat_blocks(monkey
         "期望 state 探针在 chat 完成前响应"
     )
     assert state_payload == {"ok": True, "turn": 1}
-    assert chat_result["answer"] == "臣已知悉。"
+    assert "answer" in chat_result
 
 
 def test_nonstream_chat_rejects_when_session_draining():

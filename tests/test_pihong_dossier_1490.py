@@ -555,19 +555,6 @@ def test_657_c1_decided_mismatch_rejects_and_cas0(game):
     with pytest.raises(ValueError):
         ra.validate_all([empty_decided], [{'decision_key': key, 'action': 'hold', 'label': '留中'}])
 
-def test_657_stop_condition_normalize_schema_negative():
-    """#1897/#39：独立 schema 负向——normalize_stop_condition（C.6）仅接受 str；
-    dict/list/其它类型响亮 ValueError。旧 title>80 保真案与改名杂糅案整段删除；
-    layer_a/deliberate→stalled 另有独立覆盖，不在此改名留存。"""
-    from ming_sim.rescript_draft import normalize_stop_condition
-    assert normalize_stop_condition("until-arrears-cleared") == "until-arrears-cleared"
-    assert normalize_stop_condition(None) == ""
-    assert normalize_stop_condition("   ") == ""
-    assert normalize_stop_condition("  keep-pad  ") == "  keep-pad  "  # 非空不 strip
-    for bad in ({"army.x.arrears": "<=0"}, ["x"], 12, True):
-        with pytest.raises(ValueError):
-            normalize_stop_condition(bad)
-
 def test_657_default_hold_missing_and_empty_action(game):
     """#657 Class2 V1–V5：缺行/keyed 无 action/keyed 空 action → hold；
     decided 精确重放过、不匹配拒；revise 锚 + 空 action 不重新 default。"""
