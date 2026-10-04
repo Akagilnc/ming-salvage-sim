@@ -9,9 +9,6 @@ from __future__ import annotations
 
 from ming_sim.centrifuge_ledger import CENTRIFUGE_AXES
 
-_ASSET = "value_matrix.json"
-_VALUE_FACTIONS = frozenset({"东林", "阉党", "军队", "皇党", "宗室", "西学", "中立"})
-
 
 def normalize_axis(raw: object) -> str | None:
     text = str(raw or "").strip()

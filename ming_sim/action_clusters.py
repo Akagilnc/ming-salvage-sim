@@ -31,8 +31,6 @@ class FieldSpec:
     execution_coverage: Optional[Mapping[str, Optional[str]]] = None
     # Field is populated only when another canonical field has one of these values.
     populated_when: Optional[Tuple[str, FrozenSet[str]]] = None
-    # A controller value may narrow this enum's effective allowed values.
-    allowed_when: Optional[Tuple[str, str, FrozenSet[str]]] = None
 
 
 @dataclass(frozen=True)

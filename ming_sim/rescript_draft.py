@@ -40,7 +40,6 @@ from ming_sim.structured_decree import StructuredDecreeCombinationError
 # #1746：单 option 契约失败（缺/错/组合/接地/形）→ 同一会话补交（不含首抽）；耗尽只剔该 option。
 # decision: missing-field-heal-by-resume-not-drop / per-option-drop-after-heal-exhausted
 # decision: heal-covers-illegal-values-too（不问错在哪；不按错误种类分闸）
-RESCRIPT_OPTION_FIELD_HEAL_RETRIES = 3
 # 整 option 替换语义标记（非 object 等）；出现在 missing_fields 时合并器接受完整 option 体。
 _OPTION_REPLACE_FIELD = "option"
 
@@ -130,16 +129,6 @@ def _raise_option_missing_fields(
         raw_option=raw_option,
         field_failures=field_failures,
     )
-
-
-# #1801：同一 heal 回路扩到 top/item/option；exhaust 决定耗尽后只影响自己的处置。
-_EXHAUST_DROP_OPTION = "drop_option"
-_EXHAUST_DROP_ITEM = "drop_item"
-_EXHAUST_DEGRADE_MONTH = "degrade_month"
-_EXHAUST_IGNORE_TOP_KEYS = "ignore_top_keys"
-_SCOPE_OPTION = "option"
-_SCOPE_ITEM = "item"
-_SCOPE_TOP = "top"
 
 
 # #657 C.3 层 A option 必填键（缺一 shape 失败）；draft_capability 由服务端派生写入。
@@ -1067,10 +1056,6 @@ def normalize_rescript_layer_a_option(
     # derive 需要 action_type 等必填已齐；编码已在上环收束，不再经 ValueError 整批
     out["draft_capability"] = derive_draft_capability(out)
     return out
-
-
-_TOP_ALLOWED_KEYS = frozenset({"items"})
-_ITEM_ALLOWED_KEYS = frozenset({"title", "context", "options", "issue_id"})
 
 
 def _parse_rescript_json_strict(raw: str) -> Dict[str, Any]:

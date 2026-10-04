@@ -96,7 +96,7 @@ def test_cli_does_not_end_unadvanced_turn(monkeypatch, action):
             self.step += 1
             if advanced:
                 self.state.turn += 1
-            return SimpleNamespace(advanced=advanced)
+            return SimpleNamespace(advanced=advanced, report="")
 
         def advance_without_decree(self):
             self.calls.append("advance")
@@ -104,14 +104,13 @@ def test_cli_does_not_end_unadvanced_turn(monkeypatch, action):
             self.step += 1
             if advanced:
                 self.state.turn += 1
-            return SimpleNamespace(advanced=advanced)
+            return SimpleNamespace(advanced=advanced, report="")
 
     sess = Session()
     actions = iter([action, action])
     monkeypatch.setattr(term, "review_directives", lambda _s: next(actions))
     monkeypatch.setattr(term, "_print_header", lambda _s: None)
     monkeypatch.setattr(issues_mod, "show_active_issues", lambda _db: None)
-    monkeypatch.setattr(term, "_submit_first_cli_decisions", lambda *_a: "")
 
     term.play_turn(sess)
 
@@ -573,8 +572,8 @@ def test_cli_write_gate_canonical_session_attr():
 
 
 @pytest.mark.parametrize("action", ["skip", "issue"])
-def test_play_turn_hitl_advancement_ends_turn(game, monkeypatch, action):
-    """#1843/PR #1876: HITL 续跑实际推进月份后，play_turn 必须调用 end_turn 并结束本回合。"""
+def test_play_turn_does_not_auto_submit_awaiting_hitl(game, monkeypatch, action):
+    """#1891 R1：退朝/颁诏生产入口候裁时不得自动代选并提交批红。"""
     from tests.month_chain_helpers import make_light_session
 
     db, state, content = game
@@ -583,6 +582,10 @@ def test_play_turn_hitl_advancement_ends_turn(game, monkeypatch, action):
         "title": "急务亲裁",
         "context": "辽东饷银案卷",
         "options": [{"label": "发饷", "hint": "拨银五万两"}],
+        "decision_key": f"decision:{turn_before}:0",
+        "kind": "decision",
+        "source_turn": turn_before,
+        "idx": 0,
     }])
     state.turn_phase = TurnPhase.AWAITING_DECISION.value
     db.save_state(state)
@@ -594,11 +597,9 @@ def test_play_turn_hitl_advancement_ends_turn(game, monkeypatch, action):
 
     session = make_light_session(db, state, content)
 
-    # 中和外部 LLM 边界，推演主链与亲裁续跑全走真实逻辑
     monkeypatch.setattr("ming_sim.month_chain.run_world_segment_text", lambda *a, **k: "")
     monkeypatch.setattr("ming_sim.month_translate.translate_month_segment", lambda *a, **k: {"effects": {}})
 
-    # 单次操作迭代器：未正确 end_turn + return 时若重入交互循环，next 会抛 StopIteration
     actions = iter([action])
     monkeypatch.setattr(term, "review_directives", lambda _s: next(actions))
     monkeypatch.setattr(term, "_print_header", lambda _s: None)
@@ -606,7 +607,6 @@ def test_play_turn_hitl_advancement_ends_turn(game, monkeypatch, action):
 
     term.play_turn(session)
 
-    # 验证月份已真实推进，且 end_turn 已被调用将 turn_phase 重置为 summoning
-    assert int(session.state.turn) == turn_before + 1
-    assert session.current_phase() == TurnPhase.SUMMONING
-    assert db.load_state().turn_phase == TurnPhase.SUMMONING.value
+    assert int(session.state.turn) == turn_before
+    assert session.pending_decisions()
+    assert db.load_state().turn_phase == TurnPhase.AWAITING_DECISION.value

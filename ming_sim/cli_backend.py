@@ -1243,11 +1243,6 @@ def _messages_to_prompt(
     return prompt
 
 
-# Explicit player command prefixes; field extraction uses the shared draft seam.
-_DRAFT_PREFIXES = ("拟旨如下：", "拟旨如下:", "拟旨：", "拟旨:")
-_SECRET_PREFIXES = ("密令如下：", "密令如下:", "密令：", "密令:")
-
-
 # 大臣会话动作抽取（CLI 后端无 function-calling）：
 # 不靠关键字白名单（脆、永远漏），交给 LLM 读对话判意图——皇帝本轮对该大臣【现有密令】
 # 要做什么（更新内容 / 提交核议 / 催办 / 记进展），以及若是妃嫔有无调教。
@@ -1893,15 +1888,6 @@ def compose_unknown_participant_inworld_report(
         llm_config=llm_config,
         tag="participant_escalate_report",
     )
-
-
-# #1765：密令落库缺口的 typed 标签（机面事实；不进玩家分类文案）。
-_SECRET_LANDING_GAP_LABELS = {
-    "title": "结构化标题",
-    "content": "密令正文",
-    "covert_task": "差务合同",
-    "extract": "抽取结果",
-}
 
 
 def secret_order_landing_gaps(secret: Optional[Dict[str, Any]]) -> List[str]:

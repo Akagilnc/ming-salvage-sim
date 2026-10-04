@@ -1484,8 +1484,8 @@ class GameDB:
                 time_of_day TEXT NOT NULL DEFAULT '',
                 location TEXT NOT NULL DEFAULT '',
                 status TEXT NOT NULL DEFAULT 'open',
-                -- 收夜提交幂等游标：0=未开始；已完成步序号；见 audience_night.CLOSE_STEPS
-                -- endorsement-bound 是 CLOSE_STEPS 中的一步，不另设平行列
+                -- 收夜提交幂等游标：0=未开始；已完成步序号；见 audience_night.CLOSE_STEP_*
+                -- endorsement-bound 是收夜提交步之一，不另设平行列
                 close_commit_cursor INTEGER NOT NULL DEFAULT 0,
                 -- 夜内事件单调序源：账本 seq 与 chat night_seq 同桶递增
                 next_event_seq INTEGER NOT NULL DEFAULT 0,
@@ -2538,7 +2538,7 @@ class GameDB:
         )
         self.ensure_column(
             "audience_nights", "next_event_seq", "INTEGER NOT NULL DEFAULT 0")
-        # #612 endorsement-bound is CLOSE_STEPS/close_commit_cursor — no parallel column.
+        # #612 endorsement-bound is close_commit_cursor — no parallel column.
         # 本夜已应允暂存：收夜只交这些 id，不按 turn+kind 全回合批交（#498）
         self.ensure_column(
             "pending_actions", "night_id", "INTEGER NOT NULL DEFAULT 0")
