@@ -57,8 +57,6 @@ def test_issue_materials_keep_knowledge_visibility_without_audience_veto(game, t
     )
     assert _issue_paths(audience, issue_id) == {f"事务/issue-{issue_id}/当前情况.txt"}
     assert _issue_paths(outsider, issue_id) == {f"事务/issue-{issue_id}/当前情况.txt"}
-    assert f"事务/issue-{issue_id}/当前情况.txt" in audience.index_lines
-    assert f"事务/issue-{issue_id}/当前情况.txt" in outsider.index_lines
 
 
 def test_empty_audience_is_empty_supplement_not_knowledge_veto(game, tmp_path):

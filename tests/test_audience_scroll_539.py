@@ -235,7 +235,8 @@ def test_unnamed_speaker_cannot_finish_translation(game, monkeypatch):
             }, night_id=night_id, chat_turn_id=turn_id)
     payload = TestClient(web_app.app).get("/api/audience/scroll").json()
     assert payload["translation_pending"] is True
-    reply = next(m for m in payload["messages"] if m["content"] == "臣领旨。")
+    reply = next(m for m in payload["messages"]
+                 if m.get("chat_turn_id") == turn_id and m["role"] != "user")
     assert (reply["role"], reply["speaker"]) == ("scene", "")
 
 
@@ -253,19 +254,18 @@ def test_real_http_scroll_merges_ministers_asides_and_story_without_raw_characte
         db, night_id, tags=["天气"],
         person_names=[], source_chat_turn_id=first_turn, order_key=10,
     )
-    append_night_chat(db, state, night_id, "洪承畴", "边情如何？", "边关尚稳。", 20)
+    second_turn, _ = append_night_chat(db, state, night_id, "洪承畴", "边情如何？", "边关尚稳。", 20)
     monkeypatch.setattr(web_app, "get_game", lambda: _scroll_game(db))
 
     payload = TestClient(web_app.app).get("/api/audience/scroll").json()
     messages = payload["messages"]
-    contents = [message["content"] for message in messages]
-
-    assert [content for content in contents if content in {
+    dialogue = [message for message in messages
+                if message.get("chat_turn_id") in {first_turn, second_turn}]
+    assert [message["content"] for message in dialogue] == [
         "辽饷如何？", "臣请据实核账。", "边情如何？", "边关尚稳。",
-    }] == ["辽饷如何？", "臣请据实核账。", "边情如何？", "边关尚稳。"]
-    assert "杨嗣昌以身家作保。" not in contents
-    # #1293a：抽取派生（含非对话复述的故事事实）不上 live 卷轴
-    assert "帘外忽起雨声。" not in contents
+    ]
+    # Derived ledger entries do not become live dialogue records.
+    assert not any(message.get("record_id") for message in messages)
     assert [message["content"] for message in messages if message["role"] == "scene" and message.get("chat_turn_id")] == ["臣请据实核账。", "边关尚稳。"]
 
     allowed_message_fields = {
@@ -276,10 +276,9 @@ def test_real_http_scroll_merges_ministers_asides_and_story_without_raw_characte
     forbidden_character_stats = {"loyalty", "ability", "importance", "influence", "power", "favor"}
     assert messages
     base_message_fields = allowed_message_fields - {"chat_turn_id", "record_id"}
-    dialogue_contents = {"辽饷如何？", "臣请据实核账。", "边情如何？", "边关尚稳。"}
     for message in messages:
         expected_fields = set(base_message_fields)
-        if message["content"] in dialogue_contents:
+        if message.get("chat_turn_id") in {first_turn, second_turn}:
             expected_fields.add("chat_turn_id")
             assert message["chat_turn_id"] > 0
         assert set(message) == expected_fields
@@ -300,7 +299,7 @@ def test_scroll_contract_merges_both_stores_with_container_and_coda(game):
     assert [(m["role"], m["speaker"], m["content"]) for m in scroll if m["role"] != "scene"] == [
         ("user", "朕", "辽饷如何？"),
     ]
-    assert any(m["role"] == "scene" and m["content"] == "臣请据实核账。" for m in scroll)
+    assert any(m["role"] == "scene" and m.get("chat_turn_id") for m in scroll)
     assert all({"role", "speaker", "audibility", "time", "soft_boundary", "beat", "highlights", "container"} <= set(m) for m in scroll)
     assert not any(m.get("beat") == "coda" for m in scroll)  # #1838 reopen：无 coda
 
@@ -331,7 +330,8 @@ def test_scroll_derives_soft_boundary_and_omits_dialogue_carried_action(game):
 
     scroll = an.read_night_scroll(db, night_id)
 
-    assert [m["content"] for m in scroll].count("臣告退。") == 1
+    assert len([m for m in scroll
+                if m.get("chat_turn_id") == first_turn and m["role"] != "user"]) == 1
     # #1838：无 entrance 卡；exit 有正文 + divider
     segment = [m["beat"] for m in scroll if m["beat"] in {"exit", "divider"}]
     assert "exit" in segment and "divider" in segment
@@ -355,10 +355,8 @@ def test_extractor_open_tags_do_not_drive_beat_or_soft_boundary(game):
 
     scroll = an.read_night_scroll(db, night_id)
 
-    contents = [message["content"] for message in scroll]
-    # #1293a：抽取派生（含开放 tag 的伪入殿/告退提及）不上卷轴，更不驱动 beat/divider
-    assert "只是提到了入殿旧事。" not in contents
-    assert "又提到了告退旧事。" not in contents
+    # Derived entries are not dialogue, regardless of their prose.
+    assert not any(message.get("record_id") for message in scroll)
     assert not any(message["beat"] == "divider" and message["speaker"] == "洪承畴" for message in scroll)
 
 

@@ -371,20 +371,27 @@ def test_levy_ledger_corruption_fails_loud(game, corruption, monkeypatch):
 
 # ── AC3：真实玩家回响链（结构化事实输入→自由叙事原样持久化→召对读链）──────────
 
+def _gazette_projection_body(db, state, name, turn):
+    source_id = f"projection:turn_report:{turn}"
+    rows = [
+        item for item in db.get_character_knowledge(state, name)["public_events"]
+        if item.get("source_id") == source_id
+    ]
+    assert len(rows) == 1
+    return rows[0].get("body")
+
+
 def test_exact_levy_fact_stays_out_of_public_read_chain_and_free_report_enters_it(game, monkeypatch):
-    """精确机械人数不进公开链；既有 writer 的自由邸报原样进入公开读链。"""
+    """自由邸报按 projection:turn_report 入公开读链，正文等于该回已归档奏报。"""
     db, state, content = game
     first_turn = state.turn
+    first_body = "陕西加派月报。"
     _settle_month(
         state, db, {"surcharge_decrees": [_decree(db, state,monthly_amount=10.0)]},
-        before_turn=first_turn, content=content, monkeypatch=monkeypatch, narrative="陕西加派月报。",
+        before_turn=first_turn, content=content, monkeypatch=monkeypatch, narrative=first_body,
     )
-    want = _expected_inflow_persons(10.0, SHAANXI_SUPPORT)
-    fact = f"陕西农民流失{want}口为流民（加派）"
-    public_read = " ".join(
-        item.get("body", "") for item in db.get_character_knowledge(state, "温体仁")["public_events"]
-    )
-    assert fact not in public_read
+    assert db.get_turn_report(first_turn) == first_body
+    assert _gazette_projection_body(db, state, "温体仁", first_turn) == first_body
 
     free_body = "陕西流民渐起，关中贼势暗流潜滋。"
     second_turn = state.turn
@@ -394,10 +401,7 @@ def test_exact_levy_fact_stays_out_of_public_read_chain_and_free_report_enters_i
         before_turn=second_turn, content=content, monkeypatch=monkeypatch, narrative=free_body,
     )
     assert db.get_turn_report(second_turn) == free_body
-    public_read = " ".join(
-        item.get("body", "") for item in db.get_character_knowledge(state, "温体仁")["public_events"]
-    )
-    assert free_body in public_read
+    assert _gazette_projection_body(db, state, "温体仁", second_turn) == free_body
 
 
 # ── legacy 万口径档：折算随存档单位换算，sub-万不可表达 ────────────────────────

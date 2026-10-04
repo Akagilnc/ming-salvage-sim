@@ -29,6 +29,7 @@ from ming_sim.declaration_dispatch import dispatch_declaration
 from ming_sim.session import GameSession
 from ming_sim.session_write_queue import get_session_write_queue
 from tests.conftest import (
+    note_queue_until_game_teardown,
     offline_empty_audience_translate,
     persist_and_schedule_scene,
     stub_audience_translate,
@@ -46,10 +47,10 @@ def _sess(db, state, content, monkeypatch, *, llm_config=None, translate_fn=None
     sess.llm_config = llm_config or SimpleNamespace(channel="api")
     sess.temporary_characters = {}
     sess.agno_db = None
-    sess._beat_generator = None
-    sess._scene_registry = None
     sess._write_queue = SessionWriteQueue()
     sess._write_gate = sess._write_queue.write_gate
+    # 转译在后台线程跑：登记队列归 game 夹具排空，断言失败也不越过关库边界。
+    note_queue_until_game_teardown(db, sess._write_queue)
     stub_audience_translate(monkeypatch, translate_fn)
     return sess
 
@@ -280,7 +281,7 @@ def test_translation_entry_preserves_unknown_rejection_and_source_cutoff(
         ),
         translate_fn=lambda prompt, config: {**offline_empty_audience_translate(prompt, config), **declaration},
     )
-    apply_audience_round_translation(
+    applied = apply_audience_round_translation(
         db, state, decl,
         night_id=night_id, chat_turn_id=source,
         minister_name=_hong_name(db, content),
@@ -303,8 +304,8 @@ def test_translation_entry_preserves_unknown_rejection_and_source_cutoff(
         for row in rejected
     )
     assert db.conn.execute(
-        "SELECT COUNT(*) FROM story_ledger_entries WHERE night_id=? AND body=?",
-        (night_id, "提及未在册者"),
+        "SELECT COUNT(*) FROM story_ledger_entries WHERE night_id=? AND id=?",
+        (night_id, applied.scene_facts.applied[0]["id"]),
     ).fetchone()[0] == 1
     malformed = dispatch_declaration(
         db, state,

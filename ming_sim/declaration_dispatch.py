@@ -337,11 +337,12 @@ def _effect_extraction_from_clean(
     event_id: str,
     *,
     empty_extraction: Mapping[str, object],
-) -> tuple[dict[str, object], dict[str, list[tuple[str, object]]], dict[str, list[str]]]:
+) -> tuple[dict[str, object], dict[str, list[tuple[str, object]]], dict[str, list[str]], list[dict[str, object]]]:
     """Build one apply_score_extraction payload from a single effect envelope."""
     extraction = copy.deepcopy(dict(empty_extraction))
     ordered_deltas = {field: [] for field in _ORDERED_DELTA_FIELDS}
     ordered_effect_event_ids = {field: [] for field in empty_extraction}
+    unowned_outcomes: list[dict[str, object]] = []
     for field, value in clean.items():
         if field not in empty_extraction:
             continue
@@ -349,13 +350,19 @@ def _effect_extraction_from_clean(
             extraction[field].extend(value)
             ordered_effect_event_ids[field].extend([event_id] * len(value))
         elif isinstance(value, dict):
-            extraction[field].update(value)
+            if field == "事件结局":
+                from ming_sim.issues import _merge_first_event_outcome
+                unowned_outcomes.extend(
+                    _merge_first_event_outcome(extraction[field], value, event_id)
+                )
+            else:
+                extraction[field].update(value)
             if field in ordered_deltas:
                 ordered_deltas[field].extend(value.items())
                 ordered_effect_event_ids[field].extend([event_id] * len(value))
         elif value is not None:
             extraction[field] = value
-    return extraction, ordered_deltas, ordered_effect_event_ids
+    return extraction, ordered_deltas, ordered_effect_event_ids, unowned_outcomes
 
 
 def _persist_specialized_extraction(
@@ -370,7 +377,7 @@ def _persist_specialized_extraction(
 ) -> None:
     """转译契约仍收的专属案卷字段，交既有写入口，不在通用 applier 里再写一份。
 
-    密奏须先有本回合稽核在场扫描，origin 才带得上同派标记。对账只落本段提案，
+    密奏先落本回合稽核在场事实；origin 只承接密奏里已经声明的行动，不按派系补写。对账只落本段提案，
     未提案目标的中位默认留到月末一次补，避免后段中位覆盖前段实抵。
 
     过月主链（ADR 0157 步骤 4a）整月密奏与执行态由独立供料 run 落账；
@@ -438,7 +445,12 @@ def _dispatch_effects(
         )])
 
     from ming_sim.simulation import EMPTY_EXTRACTION
-    from ming_sim.issues import apply_score_extraction, preflight_declared_event_effects, sanitize_delta_shape
+    from ming_sim.issues import (
+        _merge_first_event_outcome,
+        apply_score_extraction,
+        preflight_declared_event_effects,
+        sanitize_delta_shape,
+    )
     from ming_sim.decree import _collect_inline_rejections
     from ming_sim.person_delta_adapter import normalize_person_changes
 
@@ -477,6 +489,7 @@ def _dispatch_effects(
     ordered_effect_event_ids = {field: [] for field in EMPTY_EXTRACTION}
     effect_sequence: list[tuple[dict[str, object], dict[str, list[tuple[str, object]]], dict[str, list[str]]]] = []
     accepted_effect = False
+    accepted_event_ids: list[str] = []
     for item, event_id, clean in clean_items:
         if event_id in rejected_events:
             rejected.append(RejectedItem(
@@ -485,13 +498,26 @@ def _dispatch_effects(
             ))
             continue
         accepted_effect = True
-        step_extraction, step_ordered, step_event_ids = _effect_extraction_from_clean(
-            clean, event_id, empty_extraction=EMPTY_EXTRACTION,
+        if event_id:
+            accepted_event_ids.append(event_id)
+        step_extraction, step_ordered, step_event_ids, unowned_outcomes = (
+            _effect_extraction_from_clean(
+                clean, event_id, empty_extraction=EMPTY_EXTRACTION,
+            )
         )
+        for stray in unowned_outcomes:
+            rejected.append(RejectedItem(
+                item={"event_id": event_id, "事件结局": stray},
+                reason="事件结局不属于本效果信封，未写入",
+                category="invalid_state",
+                source=source,
+            ))
         effect_sequence.append((step_extraction, step_ordered, step_event_ids))
         for field, value in step_extraction.items():
             current = extraction[field]
-            if isinstance(value, list) and isinstance(current, list):
+            if field == "事件结局" and isinstance(value, dict) and isinstance(current, dict):
+                _merge_first_event_outcome(current, value, event_id)
+            elif isinstance(value, list) and isinstance(current, list):
                 current.extend(value)
             elif isinstance(value, dict) and isinstance(current, dict):
                 current.update(value)
@@ -503,8 +529,12 @@ def _dispatch_effects(
             ordered_effect_event_ids[field].extend(event_ids)
     if not accepted_effect:
         return SectionResult(applied=[], rejected=rejected)
+    # 归一器按字段登记信封归属，只声明「事件结局」这类单个字典字段时不登记该键；
+    # 事件身份由**已被接受的信封**自身的 event_id 决定。被预检拒收的信封已经
+    # 退出本批效果，其身份不得再交给亲裁写口。
     report = apply_score_extraction(
         db, state, extraction, content=db.content,
+        declared_effect_event_ids=accepted_event_ids,
         open_affair_ids_at_input=set(refs.get("affairs", ())),
         dossier_ids_at_input=set(refs.get("dossiers", ())),
         secret_dossier_ids_at_input=set(refs.get("secret_dossiers", ())),
