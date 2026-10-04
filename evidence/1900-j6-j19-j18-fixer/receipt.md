@@ -62,5 +62,5 @@ python3 -m pytest -q \
 
 ## 6. SHA
 
-- 证据更正：`f665b2008d23604a4062a50f1c26cb74c349bdb5`
-- HEAD（本回执最终）：`7acdf777e7daec927110f0384e5a1ea25ed516b0`
+- 证据更正主体：`f665b2008d23604a4062a50f1c26cb74c349bdb5`
+- 当前 HEAD：`ae400946e22b5882fd39e7b35e80fd0d6c7bee24`（其后若仅 docs SHA 微调，以 `git rev-parse HEAD` 为准）
