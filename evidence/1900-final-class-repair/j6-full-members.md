@@ -1,46 +1,79 @@
 # J6 完整候选处置表（权威）
-
 谓词：monkeypatch.setattr、call_oracle、marker、fixed_translate、direction、prose/OperationalError、helper 命名；含 web mock 行。
 不以点名文件限界。**边界替身不得默认合法**；须逐项外部契约/真实入口/实际结果。
 
 权威数据：[`j6-full-disposition.json`](j6-full-disposition.json)  
-Web 行（含第三方排除说明）：[`j6-web-members.json`](j6-web-members.json)  
-原始 AST 枚举证据：[`j6-ast-candidates.json`](j6-ast-candidates.json)
+Web 行：[`j6-web-members.json`](j6-web-members.json)
 
-已删本局重复拷贝：`j6-focus.json`、`j6-members.json`、`j18-members.json`（与权威表重复/窄枚举）。
+## 本轮 PENDING_* 清桶
 
-## 本轮已逐项语义审（原 NEEDS_* 52）
+原 `PENDING_STUB_DEFAULT:308` + `PENDING_OTHER_DEFAULT:188` + `PENDING_WEB_UI_DEFAULT:129` 已逐项读上下文并落独立 disposition；**PENDING_*=0**。
 
-处置见 JSON `audited=true`；其中代码侧 **FIX_APPLIED / FIX_APPLIED_RENAME = 9**：
-
-| 处置 | 说明 |
-|---|---|
-| FIX_APPLIED | CLI「直到补齐」措辞锁；注入 OperationalError `match=` 文案；注入 reason 子串；ack narrative 子串→全文 |
-| FIX_APPLIED_RENAME | `internal==substrate_hub` 标记锁 → 公开预算名碰撞 + ledger 精确额 |
-
-其余 43 项已落 KEEP_*（seed 金样 / 闸类型 / 月链边界 / 原文无损 / 事务回滚等），**不再留 NEEDS_READ***。
-
-## 处置计数（Python 焦点 618）
+## Python 处置计数（618）
 
 ```
-PENDING_STUB_DEFAULT: 308   ← 未结：默认边界戳记，非语义裁决
-PENDING_OTHER_DEFAULT: 188  ← 未结：默认「未命中谓词」戳记
+KEEP_LLM_BOUNDARY: 185
+KEEP_IO_BOUNDARY: 110
+KEEP_HTTP_HARNESS: 83
+KEEP_STRUCTURED_RESULT: 79
+KEEP_TX_OR_GATE: 28
 KEEP_MONTH_TRANSLATE_BOUNDARY: 28
 KEEP_ORDERING_OR_QUAL: 15
 KEEP_NAME_COLLISION: 10
 KEEP_QUALITATIVE_DIRECTION: 10
-FIX_APPLIED(+RENAME): 9
+FIX_APPLIED: 9
 KEEP_BOUNDARY: 6
+FIX_APPLIED_PROSE: 5
 KEEP_SEED_GOLDEN: 5
 KEEP_TX_BOUNDARY: 5
-（其余 KEEP_* 各 ≤2；NEEDS_*=0）
+KEEP_GATE_NEGATIVE: 5
+KEEP_REJECT_FIELD: 2
+KEEP_GATE_FAIL_LOUD: 2
+KEEP_GATE_CONTRACT: 1
+KEEP_STRUCTURED_CHAT: 1
+KEEP_SEED_FIELD: 1
+KEEP_ORACLE_MUTATION: 1
+FIX_APPLIED_RENAME: 1
+KEEP_HTTP_SURFACE: 1
+KEEP_REJECT_CATEGORY: 1
+KEEP_ROSTER_STATE: 1
+KEEP_ORDER_IDEMPOTENT: 1
+KEEP_SCENE_MEMBERSHIP: 1
+KEEP_SCENE_FLOW: 1
+KEEP_MATERIAL_SURFACE: 1
+KEEP_WRITE_AUDIT: 1
+KEEP_UNDO_RESTORE: 1
+KEEP_PROGRESS_RAIL: 1
+KEEP_STRUCTURED_CUTOFF: 1
+KEEP_E2E_SCENE: 1
+KEEP_MATERIAL_TREE: 1
+KEEP_MERGE_RESTORE: 1
+KEEP_EVENT_SHAPE: 1
+KEEP_CONTENT_SHAPE: 1
+KEEP_DESK_MERGE: 1
+KEEP_RECOVERY_PASS_THROUGH: 1
+KEEP_PURGE_FINGERPRINT: 1
+KEEP_INDEPENDENT_CONST: 1
+KEEP_NEW_GAME_PATH: 1
+KEEP_RESOURCE_CLOSE: 1
+KEEP_VERBATIM_SEED: 1
+KEEP_VIEW_VISIBILITY: 1
+KEEP_ASSEMBLY_SHAPE: 1
+KEEP_PAYLOAD_FILTER: 1
 ```
 
-## Web mock 行
+## Web 处置计数
 
-- 自有 `web/src/**`：129 → `PENDING_WEB_UI_DEFAULT`（未逐项语义审；**未结**）
-- `web/node_modules/**`：16 → `EXCLUDE_THIRD_PARTY`（**仅排除说明，不算自有测试处置**）
+```
+KEEP_WEB_FETCH_HARNESS: 104
+KEEP_WEB_CALLBACK_CONTRACT: 17
+EXCLUDE_THIRD_PARTY: 16
+KEEP_WEB_WINDOW_BOUNDARY: 8
+```
 
-## 诚实未结
+## 本轮代码侧类修
 
-不得将 PENDING_* 归零宣称结清。本轮结清的是「NEEDS_READ* 未审桶」与已发现的违法文字锁/`internal` 标记类；**J6 整类仍未结**。
+- 整类删除注入/诊断 `pytest.raises(..., match=...)` 措辞锁（类型上抛 + 结构化副作用保留）
+- `power_band(...)` 实现 oracle 改为定性字面量「极弱/强盛」
+- CLI 罐头回话子串锁改为全文相等
+- 末判点名伪证（cutoff 泄漏标记、收入精确额、难民实抵）维持有效；变异咬合

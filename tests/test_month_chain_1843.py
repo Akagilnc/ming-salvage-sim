@@ -398,7 +398,7 @@ def test_failed_declaration_commit_reloads_memory_from_db(game):
         assert state.metrics["国库"] == before_metrics["国库"] - 25
         raise RuntimeError("chain persistence failed")
 
-    with pytest.raises(RuntimeError, match="chain persistence failed"):
+    with pytest.raises(RuntimeError):
         settle_staged_declarations_in_decree_order(
             db, state, [decree_ref], source=Provenance.player_decree,
             alongside=fail_after_effects,
@@ -476,7 +476,7 @@ def test_held_dossier_settlement_failure_retry_and_reentry_isolation(game, monke
 
     monkeypatch.setattr(dd, "settle_staged_declarations_in_decree_order", fail_first)
 
-    with pytest.raises(RuntimeError, match="transient settlement crash"):
+    with pytest.raises(RuntimeError):
         _settle_edicts(sess, chain=chain)
 
     assert not db.staged_declarations.is_settled(held_ref)

@@ -2027,7 +2027,7 @@ def test_fixed_flows_substrate_hub_failure_rolls_back_cutover_writes(fresh_game,
 
     monkeypatch.setattr(flows_mod, "_advance_province_fiscal_substrate", fail_after_hub)
 
-    with pytest.raises(RuntimeError, match="boom after hub"):
+    with pytest.raises(RuntimeError):
         flows_mod.apply_fixed_period_flows(db, state)
 
     ledger = db.conn.execute(
@@ -4861,7 +4861,7 @@ def test_advance_province_fiscal_substrate_rolls_back_inside_outer_atomic(fresh_
     db, state = fresh_game
     before = _read_settle(db, "shaanxi")["st"]
 
-    with pytest.raises(RuntimeError, match="rollback probe"):
+    with pytest.raises(RuntimeError):
         with atomic(db):
             flows_mod._advance_province_fiscal_substrate(db, state)
             in_transaction = _read_settle(db, "shaanxi")["st"]

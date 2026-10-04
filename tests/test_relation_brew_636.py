@@ -519,7 +519,7 @@ def test_brew_program_error_propagates_loudly_not_degraded(game):
     def buggy_brew(payload_json: str) -> str:
         raise KeyError("酿制手程序错误")
 
-    with pytest.raises(KeyError, match="酿制手程序错误"):
+    with pytest.raises(KeyError):
         run_month_end_relation_brew(db, state, buggy_brew)
     # 响亮上扑而非降级：无 degraded 留痕；认领先行的 pending 凭据已持久在册。
     assert [(row["source"], row["target"]) for row in db.get_relation_brew_pending()] == [
@@ -539,7 +539,7 @@ def test_brew_fn_value_error_is_program_error_propagates_loudly(game):
     def buggy_brew(payload_json: str) -> str:
         raise ValueError("酿制手程序错误")
 
-    with pytest.raises(ValueError, match="酿制手程序错误"):
+    with pytest.raises(ValueError):
         run_month_end_relation_brew(db, state, buggy_brew)
     # 响亮上抛而非降级：无 degraded 留痕；认领先行的 pending 凭据已持久在册。
     assert [(row["source"], row["target"]) for row in db.get_relation_brew_pending()] == [

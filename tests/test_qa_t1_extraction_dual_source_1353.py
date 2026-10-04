@@ -382,7 +382,7 @@ def test_resolve_turn_write_gate_held_by_caller_no_reenter(game, tmp_path, monke
 
     try:
         # 无草案 + held 闸：公开契约是 ValueError；不得为证内部参数再 stub auto_close。
-        with pytest.raises(ValueError, match="至少一条草案才能颁诏"):
+        with pytest.raises(ValueError):
             sess.resolve_turn(write_gate_already_held=True)
     finally:
         gate.release()

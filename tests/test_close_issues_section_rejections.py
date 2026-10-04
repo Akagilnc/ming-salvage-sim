@@ -162,7 +162,7 @@ def test_close_issue_code_exception_propagates(read_game, monkeypatch):
         raise RuntimeError("模拟 close_issue 落库代码异常")
     monkeypatch.setattr(type(db), "close_issue", _boom)
     # 代码/DB 异常不再被 WARN 吞 → 上抛（上层 applier.atomic 据此 SettlementAbort）。
-    with pytest.raises(RuntimeError, match="模拟 close_issue"):
+    with pytest.raises(RuntimeError):
         I.apply_issue_tracker_output(
             db, state, {"close_issues": [{"issue_id": 1, "reason": "resolved"}]}
         )

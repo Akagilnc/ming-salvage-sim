@@ -105,7 +105,7 @@ def test_advance_code_exception_propagates(game, monkeypatch):
     def _boom(*a, **k):
         raise RuntimeError("模拟 advance_issue 落库代码异常")
     monkeypatch.setattr(type(db), "advance_issue", _boom)
-    with pytest.raises(RuntimeError, match="模拟 advance_issue"):
+    with pytest.raises(RuntimeError):
         I.apply_issue_tracker_output(db, state, {"advances": [{"issue_id": iid, "delta_bar": 5}]})
 
 

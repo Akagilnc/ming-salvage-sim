@@ -1,1017 +1,1291 @@
 [
-  {
-    "file": "web/src/components/gameMenu.test.tsx",
-    "line": 254,
-    "text": "global.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/components/gameMenu.test.tsx",
-    "line": 299,
-    "text": "global.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/components/gameMenu.test.tsx",
-    "line": 350,
-    "text": "global.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/components/gameMenu.test.tsx",
-    "line": 400,
-    "text": "global.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/components/gameMenu.test.tsx",
-    "line": 500,
-    "text": "global.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/components/gameMenu.test.tsx",
-    "line": 580,
-    "text": "global.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/components/gameMenu.test.tsx",
-    "line": 633,
-    "text": "global.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/components/gameMenu.test.tsx",
-    "line": 716,
-    "text": "const confirm = vi.spyOn(window, \"confirm\");",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/components/gameMenu.test.tsx",
-    "line": 724,
-    "text": "expect(confirm).not.toHaveBeenCalled();",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/components/gameMenu.test.tsx",
-    "line": 725,
-    "text": "expect(onExit).toHaveBeenCalledTimes(1);",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/components/gameMenu.test.tsx",
-    "line": 730,
-    "text": "const confirm = vi.spyOn(window, \"confirm\");",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/components/gameMenu.test.tsx",
-    "line": 737,
-    "text": "expect(confirm).not.toHaveBeenCalled();",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/components/gameMenu.test.tsx",
-    "line": 738,
-    "text": "expect(global.fetch).toHaveBeenCalledWith(\"/api/menu/shutdown\", { method: \"POST\" });",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/components/gameMenu.test.tsx",
-    "line": 744,
-    "text": "global.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/components/gameMenu.test.tsx",
-    "line": 787,
-    "text": "expect(onAfterLoad).toHaveBeenCalled();",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/components/gameMenu.test.tsx",
-    "line": 793,
-    "text": "global.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/components/gameMenu.test.tsx",
-    "line": 828,
-    "text": "expect(onRefresh).toHaveBeenCalled();",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/components/gameMenu.test.tsx",
-    "line": 836,
-    "text": "global.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/components/drawers.test.tsx",
-    "line": 752,
-    "text": "expect(onOpenChat).toHaveBeenCalledTimes(2);",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/components/drawers.test.tsx",
-    "line": 823,
-    "text": "expect(onOpenChat).not.toHaveBeenCalled();",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/components/drawers.test.tsx",
-    "line": 831,
-    "text": "expect(onOpenEdict).toHaveBeenCalledTimes(1);",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/components/drawers.test.tsx",
-    "line": 832,
-    "text": "expect(onOpenChat).not.toHaveBeenCalled();",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/components/drawers.test.tsx",
-    "line": 845,
-    "text": "expect(onOpenEdict).not.toHaveBeenCalled();",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/components/drawers.test.tsx",
-    "line": 960,
-    "text": "expect(onUpload).toHaveBeenCalled();",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/node_modules/exponential-backoff/src/backoff.spec.ts",
-    "line": 55,
-    "text": "expect(backOffRequest).toHaveBeenCalledTimes(1)",
-    "disposition": "EXCLUDE_THIRD_PARTY",
-    "basis": "第三方包自测，非本仓测试处置对象"
-  },
-  {
-    "file": "web/node_modules/exponential-backoff/src/backoff.spec.ts",
-    "line": 65,
-    "text": "expect(backOffRequest).toHaveBeenCalledTimes(1)",
-    "disposition": "EXCLUDE_THIRD_PARTY",
-    "basis": "第三方包自测，非本仓测试处置对象"
-  },
-  {
-    "file": "web/node_modules/exponential-backoff/src/backoff.spec.ts",
-    "line": 120,
-    "text": "expect(backOffRequest).toHaveBeenCalledTimes(numOfAttemps);",
-    "disposition": "EXCLUDE_THIRD_PARTY",
-    "basis": "第三方包自测，非本仓测试处置对象"
-  },
-  {
-    "file": "web/node_modules/exponential-backoff/src/backoff.spec.ts",
-    "line": 133,
-    "text": "expect(backOffRequest).toHaveBeenCalledTimes(1);",
-    "disposition": "EXCLUDE_THIRD_PARTY",
-    "basis": "第三方包自测，非本仓测试处置对象"
-  },
-  {
-    "file": "web/node_modules/exponential-backoff/src/backoff.spec.ts",
-    "line": 169,
-    "text": "expect(backOffRequest).toHaveBeenCalledTimes(2);",
-    "disposition": "EXCLUDE_THIRD_PARTY",
-    "basis": "第三方包自测，非本仓测试处置对象"
-  },
-  {
-    "file": "web/node_modules/simple-update-notifier/src/getDistVersion.spec.ts",
-    "line": 11,
-    "text": "(https.get as jest.Mock).mockImplementation((url, cb) => {",
-    "disposition": "EXCLUDE_THIRD_PARTY",
-    "basis": "第三方包自测，非本仓测试处置对象"
-  },
-  {
-    "file": "web/node_modules/simple-update-notifier/src/getDistVersion.spec.ts",
-    "line": 25,
-    "text": "(https.get as jest.Mock).mockImplementation((url, cb) => {",
-    "disposition": "EXCLUDE_THIRD_PARTY",
-    "basis": "第三方包自测，非本仓测试处置对象"
-  },
-  {
-    "file": "web/src/components/settlementGazettePanel.test.tsx",
-    "line": 47,
-    "text": "expect(onDismiss).toHaveBeenCalledTimes(1);",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/components/menuPage.test.tsx",
-    "line": 96,
-    "text": "global.fetch = vi.fn().mockImplementation((url: string) => {",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/components/menuPage.test.tsx",
-    "line": 143,
-    "text": "expect(global.fetch).toHaveBeenCalledWith(\"/api/menu/continue\", { method: \"POST\" });",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/components/menuPage.test.tsx",
-    "line": 144,
-    "text": "expect(enterGame).toHaveBeenCalledTimes(1);",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/components/menuPage.test.tsx",
-    "line": 182,
-    "text": "expect(enterGame).not.toHaveBeenCalled();",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/components/menuPage.test.tsx",
-    "line": 491,
-    "text": "global.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/components/menuPage.test.tsx",
-    "line": 565,
-    "text": "global.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/components/menuPage.test.tsx",
-    "line": 646,
-    "text": "global.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/components/menuPage.test.tsx",
-    "line": 730,
-    "text": "global.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/components/menuPage.test.tsx",
-    "line": 979,
-    "text": "global.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/components/menuPage.test.tsx",
-    "line": 1019,
-    "text": "expect(enterGame).toHaveBeenCalled();",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/components/menuPage.test.tsx",
-    "line": 1050,
-    "text": "expect(onDelete).not.toHaveBeenCalled();",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/components/menuPage.test.tsx",
-    "line": 1062,
-    "text": "expect(onDelete).toHaveBeenCalledWith(\"辽饷吃紧\");",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/components/menuPage.test.tsx",
-    "line": 1070,
-    "text": "global.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/node_modules/simple-update-notifier/src/hasNewVersion.spec.ts",
-    "line": 69,
-    "text": "expect(getDistVersion).toHaveBeenCalled();",
-    "disposition": "EXCLUDE_THIRD_PARTY",
-    "basis": "第三方包自测，非本仓测试处置对象"
-  },
-  {
-    "file": "web/node_modules/simple-update-notifier/src/hasNewVersion.spec.ts",
-    "line": 81,
-    "text": "expect(getDistVersion).not.toHaveBeenCalled();",
-    "disposition": "EXCLUDE_THIRD_PARTY",
-    "basis": "第三方包自测，非本仓测试处置对象"
-  },
-  {
-    "file": "web/src/components/decisionModal.test.tsx",
-    "line": 109,
-    "text": "expect(shortcut).not.toHaveBeenCalled();",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/components/decisionModal.test.tsx",
-    "line": 136,
-    "text": "expect(closeCheatConsole).toHaveBeenCalledOnce();",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/components/decisionModal.test.tsx",
-    "line": 211,
-    "text": "expect(onResolve).toHaveBeenCalledWith([{",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/components/decisionModal.test.tsx",
-    "line": 229,
-    "text": "expect(onResolve).toHaveBeenCalledWith([{ note: \"着即办理，不得有误。\" }]);",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/components/decisionModal.test.tsx",
-    "line": 238,
-    "text": "expect(onResolve).toHaveBeenCalledWith([{ label: \"拨帑速发\", hint: \"先解燃眉之急。\" }]);",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/components/decisionModal.test.tsx",
-    "line": 302,
-    "text": "expect(onResolve).toHaveBeenCalledOnce();",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/components/decisionModal.test.tsx",
-    "line": 303,
-    "text": "expect(onResolve).toHaveBeenCalledWith([{ label: \"拨帑速发\", hint: \"先解燃眉之急。\" }]);",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/components/decisionModal.test.tsx",
-    "line": 315,
-    "text": "expect(onResolveNote).toHaveBeenCalledWith([{ note: \"着即办理，不得有误。\" }]);",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/components/decisionModal.test.tsx",
-    "line": 354,
-    "text": "expect(onResolve).toHaveBeenCalledWith([{ note: \"着即办理。\" }]);",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/components/decisionModal.test.tsx",
-    "line": 437,
-    "text": "expect(onResolve).toHaveBeenCalledTimes(1);",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/components/decisionModal.test.tsx",
-    "line": 454,
-    "text": "expect(onResolveDefault).toHaveBeenCalledTimes(1);",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/components/decisionModal.test.tsx",
-    "line": 491,
-    "text": "expect(onResolve).toHaveBeenCalledTimes(1);",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/components/decisionModal.test.tsx",
-    "line": 542,
-    "text": "expect(onResolve).toHaveBeenCalledTimes(1);",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/appDurableWiring.test.tsx",
-    "line": 1618,
-    "text": "const closedSpy = vi.spyOn(closedAuto, \"shouldAutoOpenClosedIssuesAfterSettlement\").mockReturnValue(true);",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/appDurableWiring.test.tsx",
-    "line": 2756,
-    "text": "fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/appDurableWiring.test.tsx",
-    "line": 2845,
-    "text": "fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/useSettlementFlow.test.tsx",
-    "line": 189,
-    "text": "const warn = vi.spyOn(console, \"warn\").mockImplementation(() => {});",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/useSettlementFlow.test.tsx",
-    "line": 192,
-    "text": "expect(loadState).not.toHaveBeenCalled();",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/useSettlementFlow.test.tsx",
-    "line": 196,
-    "text": "expect(loadState).not.toHaveBeenCalled();",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/useSettlementFlow.test.tsx",
-    "line": 200,
-    "text": "expect(loadState).toHaveBeenCalledTimes(1);",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/useSettlementFlow.test.tsx",
-    "line": 206,
-    "text": "expect(loadState).toHaveBeenCalledTimes(2);",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/useSettlementFlow.test.tsx",
-    "line": 214,
-    "text": "expect(loadState).toHaveBeenCalledTimes(3);",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/useSettlementFlow.test.tsx",
-    "line": 251,
-    "text": "expect(loadState).not.toHaveBeenCalled();",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/useSettlementFlow.test.tsx",
-    "line": 256,
-    "text": "expect(loadState).toHaveBeenCalledTimes(1);",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/useSettlementFlow.test.tsx",
-    "line": 263,
-    "text": "expect(loadState).toHaveBeenCalledTimes(1);",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/useSettlementFlow.test.tsx",
-    "line": 283,
-    "text": "expect(onRetry).toHaveBeenCalledTimes(1);",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/useSettlementFlow.test.tsx",
-    "line": 297,
-    "text": "expect(loadState).toHaveBeenCalledTimes(1);",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/useSettlementFlow.test.tsx",
-    "line": 299,
-    "text": "expect(loadState).toHaveBeenCalledTimes(1);",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/useSettlementFlow.test.tsx",
-    "line": 331,
-    "text": "expect(fetchMock).toHaveBeenCalledTimes(1);",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/useSettlementFlow.test.tsx",
-    "line": 337,
-    "text": "expect(reload).not.toHaveBeenCalled();",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/useSettlementFlow.test.tsx",
-    "line": 338,
-    "text": "expect(loadState).toHaveBeenCalled();",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/useSettlementFlow.test.tsx",
-    "line": 367,
-    "text": "expect(reload).toHaveBeenCalledTimes(1);",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/useSettlementFlow.test.tsx",
-    "line": 397,
-    "text": "expect(reload).not.toHaveBeenCalled();",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/useSettlementFlow.test.tsx",
-    "line": 476,
-    "text": "expect(loadState).toHaveBeenCalledTimes(1);",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/useSettlementFlow.test.tsx",
-    "line": 477,
-    "text": "expect(reload).not.toHaveBeenCalled();",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/useSettlementFlow.test.tsx",
-    "line": 542,
-    "text": "expect(fetchMock).toHaveBeenCalledTimes(1);",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/useSettlementFlow.test.tsx",
-    "line": 545,
-    "text": "expect(reload).toHaveBeenCalledTimes(1);",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/useSettlementFlow.test.tsx",
-    "line": 578,
-    "text": "expect(loadState).toHaveBeenCalledTimes(1);",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/useSettlementFlow.test.tsx",
-    "line": 579,
-    "text": "expect(reload).not.toHaveBeenCalled();",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/useSettlementFlow.test.tsx",
-    "line": 623,
-    "text": "expect(loadState).toHaveBeenCalledTimes(1);",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/useSettlementFlow.test.tsx",
-    "line": 624,
-    "text": "expect(reload).not.toHaveBeenCalled();",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/components/modals.test.tsx",
-    "line": 315,
-    "text": "expect(onIssue).toHaveBeenCalledTimes(1);",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/components/modals.test.tsx",
-    "line": 320,
-    "text": "const confirm = vi.spyOn(window, \"confirm\");",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/components/modals.test.tsx",
-    "line": 334,
-    "text": "expect(confirm).not.toHaveBeenCalled();",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/components/modals.test.tsx",
-    "line": 335,
-    "text": "expect(onAdvance).not.toHaveBeenCalled();",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/components/modals.test.tsx",
-    "line": 343,
-    "text": "expect(onAdvance).not.toHaveBeenCalled();",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/components/modals.test.tsx",
-    "line": 352,
-    "text": "expect(onAdvance).toHaveBeenCalledTimes(1);",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/components/modals.test.tsx",
-    "line": 359,
-    "text": "const confirm = vi.spyOn(window, \"confirm\");",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/components/modals.test.tsx",
-    "line": 370,
-    "text": "expect(confirm).not.toHaveBeenCalled();",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/components/modals.test.tsx",
-    "line": 371,
-    "text": "expect(onUndo).not.toHaveBeenCalled();",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/components/modals.test.tsx",
-    "line": 378,
-    "text": "expect(onUndo).not.toHaveBeenCalled();",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/components/modals.test.tsx",
-    "line": 385,
-    "text": "expect(onUndo).toHaveBeenCalledWith(\"周延儒\");",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/components/modals.test.tsx",
-    "line": 413,
-    "text": "expect(onSend).toHaveBeenCalledWith(\"周延儒\", \"问边饷\");",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/components/modals.test.tsx",
-    "line": 436,
-    "text": "expect(onSend).toHaveBeenCalledWith(\"周延儒\", \"退朝\");",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/components/modals.test.tsx",
-    "line": 477,
-    "text": "expect(onClose).toHaveBeenCalledOnce();",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/components/modals.test.tsx",
-    "line": 478,
-    "text": "expect(onSend).not.toHaveBeenCalled();",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/components/modals.test.tsx",
-    "line": 481,
-    "text": "expect(onSend).toHaveBeenCalledWith(\"周延儒\", \"退朝\");",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/components/modals.test.tsx",
-    "line": 547,
-    "text": "expect(retry).toHaveBeenCalledTimes(1);",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/components/modals.test.tsx",
-    "line": 548,
-    "text": "expect(retry).toHaveBeenCalledWith(\"殿上\", 12);",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/components/modals.test.tsx",
-    "line": 655,
-    "text": "expect(undo).toHaveBeenCalledWith(\"洪承畴\");",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/components/modals.test.tsx",
-    "line": 656,
-    "text": "expect(retryReply).toHaveBeenCalledWith(\"殿上\", 12);",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/components/modals.test.tsx",
-    "line": 793,
-    "text": "expect(fetchMock).toHaveBeenCalledTimes(3);",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/components/modals.test.tsx",
-    "line": 899,
-    "text": "vi.stubGlobal(\"fetch\", vi.fn().mockImplementation(async () => ({ ok: true, json: async () => replies.shift() })));",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/components/modals.test.tsx",
-    "line": 1004,
-    "text": "vi.stubGlobal(\"fetch\", vi.fn().mockImplementation(async () => ({ ok: true, json: async () => ({",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/components/modals.test.tsx",
-    "line": 1038,
-    "text": "expect(onSend).toHaveBeenCalledWith(\"许誉卿\", \"宣洪承畴\");",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/components/modals.test.tsx",
-    "line": 1045,
-    "text": "vi.stubGlobal(\"fetch\", vi.fn().mockImplementation(async () => ({ ok: true, json: async () => ({",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/components/modals.test.tsx",
-    "line": 1085,
-    "text": "vi.stubGlobal(\"fetch\", vi.fn().mockImplementation(async () => ({ ok: true, json: async () => ({",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/components/modals.test.tsx",
-    "line": 1112,
-    "text": "vi.stubGlobal(\"fetch\", vi.fn().mockImplementation(async () => ({",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/components/modals.test.tsx",
-    "line": 1164,
-    "text": "vi.stubGlobal(\"fetch\", vi.fn().mockImplementation(async () => {",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/components/modals.test.tsx",
-    "line": 1184,
-    "text": "vi.spyOn(stage, \"getBoundingClientRect\").mockReturnValue({ top: 0, left: 0 } as DOMRect);",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/components/modals.test.tsx",
-    "line": 1186,
-    "text": "vi.spyOn(storyParagraph, \"getBoundingClientRect\").mockReturnValue({ top: -20, bottom: 100, left: 14 } as DOMRect);",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/components/modals.test.tsx",
-    "line": 1220,
-    "text": "vi.stubGlobal(\"fetch\", vi.fn().mockImplementation(async () => ({",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/components/modals.test.tsx",
-    "line": 1237,
-    "text": "expect(retry).toHaveBeenCalledWith(11);",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/components/modals.test.tsx",
-    "line": 1349,
-    "text": "vi.stubGlobal(\"fetch\", vi.fn().mockImplementation((url: string) => {",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/components/modals.test.tsx",
-    "line": 1368,
-    "text": "vi.stubGlobal(\"fetch\", vi.fn().mockImplementation((url: string) => {",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/components/modals.test.tsx",
-    "line": 1390,
-    "text": "const fetchMock = vi.fn().mockImplementation((url: string, options?: RequestInit) => {",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/components/modals.test.tsx",
-    "line": 1426,
-    "text": "const fetchMock = vi.fn().mockImplementation((url: string, options?: RequestInit) => {",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/components/modals.test.tsx",
-    "line": 1453,
-    "text": "const fetchMock = vi.fn().mockImplementation((url: string, options?: RequestInit) => {",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/components/modals.test.tsx",
-    "line": 1471,
-    "text": "const fetchMock = vi.fn().mockImplementation((url: string) => {",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/components/modals.test.tsx",
-    "line": 1503,
-    "text": "expect(fetchMock).toHaveBeenCalledWith(\"/api/audience/scroll?night_id=31\");",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/components/modals.test.tsx",
-    "line": 1509,
-    "text": "vi.stubGlobal(\"fetch\", vi.fn().mockImplementation((url: string) => Promise.resolve({ ok: true, json: async () =>",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/components/modals.test.tsx",
-    "line": 1527,
-    "text": "const fetchMock = vi.fn().mockImplementation((url: string) => Promise.resolve({",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/components/modals.test.tsx",
-    "line": 1555,
-    "text": "expect(fetchMock).toHaveBeenCalledWith(\"/api/history/turns\");",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/components/modals.test.tsx",
-    "line": 1556,
-    "text": "expect(fetchMock).toHaveBeenCalledWith(\"/api/history/turn/7\");",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/components/modals.test.tsx",
-    "line": 1564,
-    "text": "fetchMock.mockImplementation((url: string) => Promise.resolve({",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/components/modals.test.tsx",
-    "line": 1604,
-    "text": "fetchMock.mockImplementation((url: string) => Promise.resolve({",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/components/modals.test.tsx",
-    "line": 1647,
-    "text": "vi.stubGlobal(\"fetch\", vi.fn().mockImplementation((url: string) => Promise.resolve({",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/components/modals.test.tsx",
-    "line": 1720,
-    "text": "expect(onCancel).toHaveBeenCalledOnce();",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/components/modals.test.tsx",
-    "line": 1754,
-    "text": "expect(onClose).toHaveBeenCalledOnce();",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/components/modals.test.tsx",
-    "line": 1792,
-    "text": "expect(onClose).toHaveBeenCalledOnce();",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/src/components/modals.test.tsx",
-    "line": 1812,
-    "text": "expect(onClose).toHaveBeenCalledOnce();",
-    "disposition": "PENDING_WEB_UI_DEFAULT",
-    "basis": "web vi.fn/spy 行；本轮未逐项语义裁决（非 node_modules）"
-  },
-  {
-    "file": "web/node_modules/exponential-backoff/src/delay/always/always.delay.spec.ts",
-    "line": 24,
-    "text": "expect(spy).toHaveBeenCalledTimes(1);",
-    "disposition": "EXCLUDE_THIRD_PARTY",
-    "basis": "第三方包自测，非本仓测试处置对象"
-  },
-  {
-    "file": "web/node_modules/exponential-backoff/src/delay/always/always.delay.spec.ts",
-    "line": 36,
-    "text": "expect(spy).toHaveBeenCalledTimes(1);",
-    "disposition": "EXCLUDE_THIRD_PARTY",
-    "basis": "第三方包自测，非本仓测试处置对象"
-  },
-  {
-    "file": "web/node_modules/exponential-backoff/src/delay/always/always.delay.spec.ts",
-    "line": 51,
-    "text": "expect(spy).toHaveBeenCalledTimes(1);",
-    "disposition": "EXCLUDE_THIRD_PARTY",
-    "basis": "第三方包自测，非本仓测试处置对象"
-  },
-  {
-    "file": "web/node_modules/exponential-backoff/src/delay/always/always.delay.spec.ts",
-    "line": 63,
-    "text": "expect(spy).toHaveBeenCalledTimes(1);",
-    "disposition": "EXCLUDE_THIRD_PARTY",
-    "basis": "第三方包自测，非本仓测试处置对象"
-  },
-  {
-    "file": "web/node_modules/simple-update-notifier/src/index.spec.ts",
-    "line": 4,
-    "text": "const consoleSpy = jest.spyOn(console, 'error');",
-    "disposition": "EXCLUDE_THIRD_PARTY",
-    "basis": "第三方包自测，非本仓测试处置对象"
-  },
-  {
-    "file": "web/node_modules/simple-update-notifier/src/index.spec.ts",
-    "line": 16,
-    "text": "expect(consoleSpy).toHaveBeenCalledTimes(1);",
-    "disposition": "EXCLUDE_THIRD_PARTY",
-    "basis": "第三方包自测，非本仓测试处置对象"
-  },
-  {
-    "file": "web/node_modules/simple-update-notifier/src/index.spec.ts",
-    "line": 26,
-    "text": "expect(consoleSpy).toHaveBeenCalledTimes(0);",
-    "disposition": "EXCLUDE_THIRD_PARTY",
-    "basis": "第三方包自测，非本仓测试处置对象"
-  }
+ {
+  "file": "web/src/components/gameMenu.test.tsx",
+  "line": 254,
+  "text": "global.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {",
+  "disposition": "KEEP_WEB_FETCH_HARNESS",
+  "basis": "网络 fetch 边界；断言 UI 或 API 路径/载荷",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/components/gameMenu.test.tsx",
+  "line": 299,
+  "text": "global.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {",
+  "disposition": "KEEP_WEB_FETCH_HARNESS",
+  "basis": "网络 fetch 边界；断言 UI 或 API 路径/载荷",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/components/gameMenu.test.tsx",
+  "line": 350,
+  "text": "global.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {",
+  "disposition": "KEEP_WEB_FETCH_HARNESS",
+  "basis": "网络 fetch 边界；断言 UI 或 API 路径/载荷",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/components/gameMenu.test.tsx",
+  "line": 400,
+  "text": "global.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {",
+  "disposition": "KEEP_WEB_FETCH_HARNESS",
+  "basis": "网络 fetch 边界；断言 UI 或 API 路径/载荷",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/components/gameMenu.test.tsx",
+  "line": 500,
+  "text": "global.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {",
+  "disposition": "KEEP_WEB_FETCH_HARNESS",
+  "basis": "网络 fetch 边界；断言 UI 或 API 路径/载荷",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/components/gameMenu.test.tsx",
+  "line": 580,
+  "text": "global.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {",
+  "disposition": "KEEP_WEB_FETCH_HARNESS",
+  "basis": "网络 fetch 边界；断言 UI 或 API 路径/载荷",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/components/gameMenu.test.tsx",
+  "line": 633,
+  "text": "global.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {",
+  "disposition": "KEEP_WEB_FETCH_HARNESS",
+  "basis": "网络 fetch 边界；断言 UI 或 API 路径/载荷",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/components/gameMenu.test.tsx",
+  "line": 716,
+  "text": "const confirm = vi.spyOn(window, \"confirm\");",
+  "disposition": "KEEP_WEB_WINDOW_BOUNDARY",
+  "basis": "window.confirm 浏览器边界；断言退出/关机前确认行为",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/components/gameMenu.test.tsx",
+  "line": 724,
+  "text": "expect(confirm).not.toHaveBeenCalled();",
+  "disposition": "KEEP_WEB_WINDOW_BOUNDARY",
+  "basis": "window.confirm 浏览器边界；断言退出/关机前确认行为",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/components/gameMenu.test.tsx",
+  "line": 725,
+  "text": "expect(onExit).toHaveBeenCalledTimes(1);",
+  "disposition": "KEEP_WEB_CALLBACK_CONTRACT",
+  "basis": "组件交互后回调次数；同块有按钮/面板 DOM",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/components/gameMenu.test.tsx",
+  "line": 730,
+  "text": "const confirm = vi.spyOn(window, \"confirm\");",
+  "disposition": "KEEP_WEB_WINDOW_BOUNDARY",
+  "basis": "window.confirm 浏览器边界；断言退出/关机前确认行为",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/components/gameMenu.test.tsx",
+  "line": 737,
+  "text": "expect(confirm).not.toHaveBeenCalled();",
+  "disposition": "KEEP_WEB_WINDOW_BOUNDARY",
+  "basis": "window.confirm 浏览器边界；断言退出/关机前确认行为",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/components/gameMenu.test.tsx",
+  "line": 738,
+  "text": "expect(global.fetch).toHaveBeenCalledWith(\"/api/menu/shutdown\", { method: \"POST\" });",
+  "disposition": "KEEP_WEB_FETCH_HARNESS",
+  "basis": "网络 fetch 边界；断言 UI 或 API 路径/载荷",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/components/gameMenu.test.tsx",
+  "line": 744,
+  "text": "global.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {",
+  "disposition": "KEEP_WEB_FETCH_HARNESS",
+  "basis": "网络 fetch 边界；断言 UI 或 API 路径/载荷",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/components/gameMenu.test.tsx",
+  "line": 787,
+  "text": "expect(onAfterLoad).toHaveBeenCalled();",
+  "disposition": "KEEP_WEB_FETCH_HARNESS",
+  "basis": "网络 fetch 边界；断言 UI 或 API 路径/载荷",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/components/gameMenu.test.tsx",
+  "line": 793,
+  "text": "global.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {",
+  "disposition": "KEEP_WEB_FETCH_HARNESS",
+  "basis": "网络 fetch 边界；断言 UI 或 API 路径/载荷",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/components/gameMenu.test.tsx",
+  "line": 828,
+  "text": "expect(onRefresh).toHaveBeenCalled();",
+  "disposition": "KEEP_WEB_FETCH_HARNESS",
+  "basis": "网络 fetch 边界；断言 UI 或 API 路径/载荷",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/components/gameMenu.test.tsx",
+  "line": 836,
+  "text": "global.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {",
+  "disposition": "KEEP_WEB_FETCH_HARNESS",
+  "basis": "网络 fetch 边界；断言 UI 或 API 路径/载荷",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/components/drawers.test.tsx",
+  "line": 752,
+  "text": "expect(onOpenChat).toHaveBeenCalledTimes(2);",
+  "disposition": "KEEP_WEB_FETCH_HARNESS",
+  "basis": "网络 fetch 边界；断言 UI 或 API 路径/载荷",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/components/drawers.test.tsx",
+  "line": 823,
+  "text": "expect(onOpenChat).not.toHaveBeenCalled();",
+  "disposition": "KEEP_WEB_FETCH_HARNESS",
+  "basis": "网络 fetch 边界；断言 UI 或 API 路径/载荷",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/components/drawers.test.tsx",
+  "line": 831,
+  "text": "expect(onOpenEdict).toHaveBeenCalledTimes(1);",
+  "disposition": "KEEP_WEB_FETCH_HARNESS",
+  "basis": "网络 fetch 边界；断言 UI 或 API 路径/载荷",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/components/drawers.test.tsx",
+  "line": 832,
+  "text": "expect(onOpenChat).not.toHaveBeenCalled();",
+  "disposition": "KEEP_WEB_FETCH_HARNESS",
+  "basis": "网络 fetch 边界；断言 UI 或 API 路径/载荷",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/components/drawers.test.tsx",
+  "line": 845,
+  "text": "expect(onOpenEdict).not.toHaveBeenCalled();",
+  "disposition": "KEEP_WEB_FETCH_HARNESS",
+  "basis": "网络 fetch 边界；断言 UI 或 API 路径/载荷",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/components/drawers.test.tsx",
+  "line": 960,
+  "text": "expect(onUpload).toHaveBeenCalled();",
+  "disposition": "KEEP_WEB_CALLBACK_CONTRACT",
+  "basis": "组件交互后回调次数；同块有按钮/面板 DOM",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/components/settlementGazettePanel.test.tsx",
+  "line": 47,
+  "text": "expect(onDismiss).toHaveBeenCalledTimes(1);",
+  "disposition": "KEEP_WEB_FETCH_HARNESS",
+  "basis": "网络 fetch 边界；断言 UI 或 API 路径/载荷",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/components/menuPage.test.tsx",
+  "line": 96,
+  "text": "global.fetch = vi.fn().mockImplementation((url: string) => {",
+  "disposition": "KEEP_WEB_FETCH_HARNESS",
+  "basis": "网络 fetch 边界；断言 UI 或 API 路径/载荷",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/components/menuPage.test.tsx",
+  "line": 143,
+  "text": "expect(global.fetch).toHaveBeenCalledWith(\"/api/menu/continue\", { method: \"POST\" });",
+  "disposition": "KEEP_WEB_FETCH_HARNESS",
+  "basis": "网络 fetch 边界；断言 UI 或 API 路径/载荷",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/components/menuPage.test.tsx",
+  "line": 144,
+  "text": "expect(enterGame).toHaveBeenCalledTimes(1);",
+  "disposition": "KEEP_WEB_FETCH_HARNESS",
+  "basis": "网络 fetch 边界；断言 UI 或 API 路径/载荷",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/components/menuPage.test.tsx",
+  "line": 182,
+  "text": "expect(enterGame).not.toHaveBeenCalled();",
+  "disposition": "KEEP_WEB_FETCH_HARNESS",
+  "basis": "网络 fetch 边界；断言 UI 或 API 路径/载荷",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/components/menuPage.test.tsx",
+  "line": 491,
+  "text": "global.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {",
+  "disposition": "KEEP_WEB_FETCH_HARNESS",
+  "basis": "网络 fetch 边界；断言 UI 或 API 路径/载荷",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/components/menuPage.test.tsx",
+  "line": 565,
+  "text": "global.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {",
+  "disposition": "KEEP_WEB_FETCH_HARNESS",
+  "basis": "网络 fetch 边界；断言 UI 或 API 路径/载荷",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/components/menuPage.test.tsx",
+  "line": 646,
+  "text": "global.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {",
+  "disposition": "KEEP_WEB_FETCH_HARNESS",
+  "basis": "网络 fetch 边界；断言 UI 或 API 路径/载荷",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/components/menuPage.test.tsx",
+  "line": 730,
+  "text": "global.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {",
+  "disposition": "KEEP_WEB_FETCH_HARNESS",
+  "basis": "网络 fetch 边界；断言 UI 或 API 路径/载荷",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/components/menuPage.test.tsx",
+  "line": 979,
+  "text": "global.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {",
+  "disposition": "KEEP_WEB_FETCH_HARNESS",
+  "basis": "网络 fetch 边界；断言 UI 或 API 路径/载荷",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/components/menuPage.test.tsx",
+  "line": 1019,
+  "text": "expect(enterGame).toHaveBeenCalled();",
+  "disposition": "KEEP_WEB_FETCH_HARNESS",
+  "basis": "网络 fetch 边界；断言 UI 或 API 路径/载荷",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/components/menuPage.test.tsx",
+  "line": 1050,
+  "text": "expect(onDelete).not.toHaveBeenCalled();",
+  "disposition": "KEEP_WEB_FETCH_HARNESS",
+  "basis": "网络 fetch 边界；断言 UI 或 API 路径/载荷",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/components/menuPage.test.tsx",
+  "line": 1062,
+  "text": "expect(onDelete).toHaveBeenCalledWith(\"辽饷吃紧\");",
+  "disposition": "KEEP_WEB_FETCH_HARNESS",
+  "basis": "网络 fetch 边界；断言 UI 或 API 路径/载荷",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/components/menuPage.test.tsx",
+  "line": 1070,
+  "text": "global.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {",
+  "disposition": "KEEP_WEB_FETCH_HARNESS",
+  "basis": "网络 fetch 边界；断言 UI 或 API 路径/载荷",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/components/decisionModal.test.tsx",
+  "line": 109,
+  "text": "expect(shortcut).not.toHaveBeenCalled();",
+  "disposition": "KEEP_WEB_FETCH_HARNESS",
+  "basis": "网络 fetch 边界；断言 UI 或 API 路径/载荷",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/components/decisionModal.test.tsx",
+  "line": 136,
+  "text": "expect(closeCheatConsole).toHaveBeenCalledOnce();",
+  "disposition": "KEEP_WEB_CALLBACK_CONTRACT",
+  "basis": "组件交互后回调次数；同块有按钮/面板 DOM",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/components/decisionModal.test.tsx",
+  "line": 211,
+  "text": "expect(onResolve).toHaveBeenCalledWith([{",
+  "disposition": "KEEP_WEB_FETCH_HARNESS",
+  "basis": "网络 fetch 边界；断言 UI 或 API 路径/载荷",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/components/decisionModal.test.tsx",
+  "line": 229,
+  "text": "expect(onResolve).toHaveBeenCalledWith([{ note: \"着即办理，不得有误。\" }]);",
+  "disposition": "KEEP_WEB_CALLBACK_CONTRACT",
+  "basis": "回调带结构化参数（note/label/hint/API）；同块有 DOM 交互",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/components/decisionModal.test.tsx",
+  "line": 238,
+  "text": "expect(onResolve).toHaveBeenCalledWith([{ label: \"拨帑速发\", hint: \"先解燃眉之急。\" }]);",
+  "disposition": "KEEP_WEB_CALLBACK_CONTRACT",
+  "basis": "回调带结构化参数（note/label/hint/API）；同块有 DOM 交互",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/components/decisionModal.test.tsx",
+  "line": 302,
+  "text": "expect(onResolve).toHaveBeenCalledOnce();",
+  "disposition": "KEEP_WEB_CALLBACK_CONTRACT",
+  "basis": "组件交互后回调次数；同块有按钮/面板 DOM",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/components/decisionModal.test.tsx",
+  "line": 303,
+  "text": "expect(onResolve).toHaveBeenCalledWith([{ label: \"拨帑速发\", hint: \"先解燃眉之急。\" }]);",
+  "disposition": "KEEP_WEB_CALLBACK_CONTRACT",
+  "basis": "回调带结构化参数（note/label/hint/API）；同块有 DOM 交互",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/components/decisionModal.test.tsx",
+  "line": 315,
+  "text": "expect(onResolveNote).toHaveBeenCalledWith([{ note: \"着即办理，不得有误。\" }]);",
+  "disposition": "KEEP_WEB_CALLBACK_CONTRACT",
+  "basis": "回调带结构化参数（note/label/hint/API）；同块有 DOM 交互",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/components/decisionModal.test.tsx",
+  "line": 354,
+  "text": "expect(onResolve).toHaveBeenCalledWith([{ note: \"着即办理。\" }]);",
+  "disposition": "KEEP_WEB_CALLBACK_CONTRACT",
+  "basis": "回调带结构化参数（note/label/hint/API）；同块有 DOM 交互",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/components/decisionModal.test.tsx",
+  "line": 437,
+  "text": "expect(onResolve).toHaveBeenCalledTimes(1);",
+  "disposition": "KEEP_WEB_FETCH_HARNESS",
+  "basis": "网络 fetch 边界；断言 UI 或 API 路径/载荷",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/components/decisionModal.test.tsx",
+  "line": 454,
+  "text": "expect(onResolveDefault).toHaveBeenCalledTimes(1);",
+  "disposition": "KEEP_WEB_FETCH_HARNESS",
+  "basis": "网络 fetch 边界；断言 UI 或 API 路径/载荷",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/components/decisionModal.test.tsx",
+  "line": 491,
+  "text": "expect(onResolve).toHaveBeenCalledTimes(1);",
+  "disposition": "KEEP_WEB_CALLBACK_CONTRACT",
+  "basis": "组件交互后回调次数；同块有按钮/面板 DOM",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/components/decisionModal.test.tsx",
+  "line": 542,
+  "text": "expect(onResolve).toHaveBeenCalledTimes(1);",
+  "disposition": "KEEP_WEB_FETCH_HARNESS",
+  "basis": "网络 fetch 边界；断言 UI 或 API 路径/载荷",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/appDurableWiring.test.tsx",
+  "line": 1618,
+  "text": "const closedSpy = vi.spyOn(closedAuto, \"shouldAutoOpenClosedIssuesAfterSettlement\").mockReturnValue(true);",
+  "disposition": "KEEP_WEB_FETCH_HARNESS",
+  "basis": "网络 fetch 边界；断言 UI 或 API 路径/载荷",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/appDurableWiring.test.tsx",
+  "line": 2756,
+  "text": "fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {",
+  "disposition": "KEEP_WEB_FETCH_HARNESS",
+  "basis": "网络 fetch 边界；断言 UI 或 API 路径/载荷",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/appDurableWiring.test.tsx",
+  "line": 2845,
+  "text": "fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {",
+  "disposition": "KEEP_WEB_FETCH_HARNESS",
+  "basis": "网络 fetch 边界；断言 UI 或 API 路径/载荷",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/useSettlementFlow.test.tsx",
+  "line": 189,
+  "text": "const warn = vi.spyOn(console, \"warn\").mockImplementation(() => {});",
+  "disposition": "KEEP_WEB_FETCH_HARNESS",
+  "basis": "网络 fetch 边界；断言 UI 或 API 路径/载荷",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/useSettlementFlow.test.tsx",
+  "line": 192,
+  "text": "expect(loadState).not.toHaveBeenCalled();",
+  "disposition": "KEEP_WEB_FETCH_HARNESS",
+  "basis": "网络 fetch 边界；断言 UI 或 API 路径/载荷",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/useSettlementFlow.test.tsx",
+  "line": 196,
+  "text": "expect(loadState).not.toHaveBeenCalled();",
+  "disposition": "KEEP_WEB_FETCH_HARNESS",
+  "basis": "网络 fetch 边界；断言 UI 或 API 路径/载荷",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/useSettlementFlow.test.tsx",
+  "line": 200,
+  "text": "expect(loadState).toHaveBeenCalledTimes(1);",
+  "disposition": "KEEP_WEB_FETCH_HARNESS",
+  "basis": "网络 fetch 边界；断言 UI 或 API 路径/载荷",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/useSettlementFlow.test.tsx",
+  "line": 206,
+  "text": "expect(loadState).toHaveBeenCalledTimes(2);",
+  "disposition": "KEEP_WEB_FETCH_HARNESS",
+  "basis": "网络 fetch 边界；断言 UI 或 API 路径/载荷",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/useSettlementFlow.test.tsx",
+  "line": 214,
+  "text": "expect(loadState).toHaveBeenCalledTimes(3);",
+  "disposition": "KEEP_WEB_FETCH_HARNESS",
+  "basis": "网络 fetch 边界；断言 UI 或 API 路径/载荷",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/useSettlementFlow.test.tsx",
+  "line": 251,
+  "text": "expect(loadState).not.toHaveBeenCalled();",
+  "disposition": "KEEP_WEB_FETCH_HARNESS",
+  "basis": "网络 fetch 边界；断言 UI 或 API 路径/载荷",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/useSettlementFlow.test.tsx",
+  "line": 256,
+  "text": "expect(loadState).toHaveBeenCalledTimes(1);",
+  "disposition": "KEEP_WEB_FETCH_HARNESS",
+  "basis": "网络 fetch 边界；断言 UI 或 API 路径/载荷",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/useSettlementFlow.test.tsx",
+  "line": 263,
+  "text": "expect(loadState).toHaveBeenCalledTimes(1);",
+  "disposition": "KEEP_WEB_FETCH_HARNESS",
+  "basis": "网络 fetch 边界；断言 UI 或 API 路径/载荷",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/useSettlementFlow.test.tsx",
+  "line": 283,
+  "text": "expect(onRetry).toHaveBeenCalledTimes(1);",
+  "disposition": "KEEP_WEB_FETCH_HARNESS",
+  "basis": "网络 fetch 边界；断言 UI 或 API 路径/载荷",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/useSettlementFlow.test.tsx",
+  "line": 297,
+  "text": "expect(loadState).toHaveBeenCalledTimes(1);",
+  "disposition": "KEEP_WEB_CALLBACK_CONTRACT",
+  "basis": "mechanical_tail 失败后停止轮询：loadState 次数为外部可观察节流契约",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/useSettlementFlow.test.tsx",
+  "line": 299,
+  "text": "expect(loadState).toHaveBeenCalledTimes(1);",
+  "disposition": "KEEP_WEB_CALLBACK_CONTRACT",
+  "basis": "mechanical_tail 失败后停止轮询：loadState 次数为外部可观察节流契约",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/useSettlementFlow.test.tsx",
+  "line": 331,
+  "text": "expect(fetchMock).toHaveBeenCalledTimes(1);",
+  "disposition": "KEEP_WEB_FETCH_HARNESS",
+  "basis": "网络 fetch 边界；断言 UI 或 API 路径/载荷",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/useSettlementFlow.test.tsx",
+  "line": 337,
+  "text": "expect(reload).not.toHaveBeenCalled();",
+  "disposition": "KEEP_WEB_FETCH_HARNESS",
+  "basis": "网络 fetch 边界；断言 UI 或 API 路径/载荷",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/useSettlementFlow.test.tsx",
+  "line": 338,
+  "text": "expect(loadState).toHaveBeenCalled();",
+  "disposition": "KEEP_WEB_FETCH_HARNESS",
+  "basis": "网络 fetch 边界；断言 UI 或 API 路径/载荷",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/useSettlementFlow.test.tsx",
+  "line": 367,
+  "text": "expect(reload).toHaveBeenCalledTimes(1);",
+  "disposition": "KEEP_WEB_FETCH_HARNESS",
+  "basis": "网络 fetch 边界；断言 UI 或 API 路径/载荷",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/useSettlementFlow.test.tsx",
+  "line": 397,
+  "text": "expect(reload).not.toHaveBeenCalled();",
+  "disposition": "KEEP_WEB_FETCH_HARNESS",
+  "basis": "网络 fetch 边界；断言 UI 或 API 路径/载荷",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/useSettlementFlow.test.tsx",
+  "line": 476,
+  "text": "expect(loadState).toHaveBeenCalledTimes(1);",
+  "disposition": "KEEP_WEB_FETCH_HARNESS",
+  "basis": "网络 fetch 边界；断言 UI 或 API 路径/载荷",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/useSettlementFlow.test.tsx",
+  "line": 477,
+  "text": "expect(reload).not.toHaveBeenCalled();",
+  "disposition": "KEEP_WEB_FETCH_HARNESS",
+  "basis": "网络 fetch 边界；断言 UI 或 API 路径/载荷",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/useSettlementFlow.test.tsx",
+  "line": 542,
+  "text": "expect(fetchMock).toHaveBeenCalledTimes(1);",
+  "disposition": "KEEP_WEB_FETCH_HARNESS",
+  "basis": "网络 fetch 边界；断言 UI 或 API 路径/载荷",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/useSettlementFlow.test.tsx",
+  "line": 545,
+  "text": "expect(reload).toHaveBeenCalledTimes(1);",
+  "disposition": "KEEP_WEB_FETCH_HARNESS",
+  "basis": "网络 fetch 边界；断言 UI 或 API 路径/载荷",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/useSettlementFlow.test.tsx",
+  "line": 578,
+  "text": "expect(loadState).toHaveBeenCalledTimes(1);",
+  "disposition": "KEEP_WEB_FETCH_HARNESS",
+  "basis": "网络 fetch 边界；断言 UI 或 API 路径/载荷",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/useSettlementFlow.test.tsx",
+  "line": 579,
+  "text": "expect(reload).not.toHaveBeenCalled();",
+  "disposition": "KEEP_WEB_FETCH_HARNESS",
+  "basis": "网络 fetch 边界；断言 UI 或 API 路径/载荷",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/useSettlementFlow.test.tsx",
+  "line": 623,
+  "text": "expect(loadState).toHaveBeenCalledTimes(1);",
+  "disposition": "KEEP_WEB_FETCH_HARNESS",
+  "basis": "网络 fetch 边界；断言 UI 或 API 路径/载荷",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/useSettlementFlow.test.tsx",
+  "line": 624,
+  "text": "expect(reload).not.toHaveBeenCalled();",
+  "disposition": "KEEP_WEB_FETCH_HARNESS",
+  "basis": "网络 fetch 边界；断言 UI 或 API 路径/载荷",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/components/modals.test.tsx",
+  "line": 315,
+  "text": "expect(onIssue).toHaveBeenCalledTimes(1);",
+  "disposition": "KEEP_WEB_CALLBACK_CONTRACT",
+  "basis": "组件交互后回调次数；同块有按钮/面板 DOM",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/components/modals.test.tsx",
+  "line": 320,
+  "text": "const confirm = vi.spyOn(window, \"confirm\");",
+  "disposition": "KEEP_WEB_WINDOW_BOUNDARY",
+  "basis": "window.confirm 浏览器边界；断言退出/关机前确认行为",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/components/modals.test.tsx",
+  "line": 334,
+  "text": "expect(confirm).not.toHaveBeenCalled();",
+  "disposition": "KEEP_WEB_WINDOW_BOUNDARY",
+  "basis": "window.confirm 浏览器边界；断言退出/关机前确认行为",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/components/modals.test.tsx",
+  "line": 335,
+  "text": "expect(onAdvance).not.toHaveBeenCalled();",
+  "disposition": "KEEP_WEB_FETCH_HARNESS",
+  "basis": "网络 fetch 边界；断言 UI 或 API 路径/载荷",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/components/modals.test.tsx",
+  "line": 343,
+  "text": "expect(onAdvance).not.toHaveBeenCalled();",
+  "disposition": "KEEP_WEB_FETCH_HARNESS",
+  "basis": "网络 fetch 边界；断言 UI 或 API 路径/载荷",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/components/modals.test.tsx",
+  "line": 352,
+  "text": "expect(onAdvance).toHaveBeenCalledTimes(1);",
+  "disposition": "KEEP_WEB_FETCH_HARNESS",
+  "basis": "网络 fetch 边界；断言 UI 或 API 路径/载荷",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/components/modals.test.tsx",
+  "line": 359,
+  "text": "const confirm = vi.spyOn(window, \"confirm\");",
+  "disposition": "KEEP_WEB_WINDOW_BOUNDARY",
+  "basis": "window.confirm 浏览器边界；断言退出/关机前确认行为",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/components/modals.test.tsx",
+  "line": 370,
+  "text": "expect(confirm).not.toHaveBeenCalled();",
+  "disposition": "KEEP_WEB_WINDOW_BOUNDARY",
+  "basis": "window.confirm 浏览器边界；断言退出/关机前确认行为",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/components/modals.test.tsx",
+  "line": 371,
+  "text": "expect(onUndo).not.toHaveBeenCalled();",
+  "disposition": "KEEP_WEB_FETCH_HARNESS",
+  "basis": "网络 fetch 边界；断言 UI 或 API 路径/载荷",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/components/modals.test.tsx",
+  "line": 378,
+  "text": "expect(onUndo).not.toHaveBeenCalled();",
+  "disposition": "KEEP_WEB_FETCH_HARNESS",
+  "basis": "网络 fetch 边界；断言 UI 或 API 路径/载荷",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/components/modals.test.tsx",
+  "line": 385,
+  "text": "expect(onUndo).toHaveBeenCalledWith(\"周延儒\");",
+  "disposition": "KEEP_WEB_FETCH_HARNESS",
+  "basis": "网络 fetch 边界；断言 UI 或 API 路径/载荷",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/components/modals.test.tsx",
+  "line": 413,
+  "text": "expect(onSend).toHaveBeenCalledWith(\"周延儒\", \"问边饷\");",
+  "disposition": "KEEP_WEB_FETCH_HARNESS",
+  "basis": "网络 fetch 边界；断言 UI 或 API 路径/载荷",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/components/modals.test.tsx",
+  "line": 436,
+  "text": "expect(onSend).toHaveBeenCalledWith(\"周延儒\", \"退朝\");",
+  "disposition": "KEEP_WEB_FETCH_HARNESS",
+  "basis": "网络 fetch 边界；断言 UI 或 API 路径/载荷",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/components/modals.test.tsx",
+  "line": 477,
+  "text": "expect(onClose).toHaveBeenCalledOnce();",
+  "disposition": "KEEP_WEB_FETCH_HARNESS",
+  "basis": "网络 fetch 边界；断言 UI 或 API 路径/载荷",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/components/modals.test.tsx",
+  "line": 478,
+  "text": "expect(onSend).not.toHaveBeenCalled();",
+  "disposition": "KEEP_WEB_FETCH_HARNESS",
+  "basis": "网络 fetch 边界；断言 UI 或 API 路径/载荷",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/components/modals.test.tsx",
+  "line": 481,
+  "text": "expect(onSend).toHaveBeenCalledWith(\"周延儒\", \"退朝\");",
+  "disposition": "KEEP_WEB_FETCH_HARNESS",
+  "basis": "网络 fetch 边界；断言 UI 或 API 路径/载荷",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/components/modals.test.tsx",
+  "line": 547,
+  "text": "expect(retry).toHaveBeenCalledTimes(1);",
+  "disposition": "KEEP_WEB_FETCH_HARNESS",
+  "basis": "网络 fetch 边界；断言 UI 或 API 路径/载荷",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/components/modals.test.tsx",
+  "line": 548,
+  "text": "expect(retry).toHaveBeenCalledWith(\"殿上\", 12);",
+  "disposition": "KEEP_WEB_FETCH_HARNESS",
+  "basis": "网络 fetch 边界；断言 UI 或 API 路径/载荷",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/components/modals.test.tsx",
+  "line": 655,
+  "text": "expect(undo).toHaveBeenCalledWith(\"洪承畴\");",
+  "disposition": "KEEP_WEB_FETCH_HARNESS",
+  "basis": "网络 fetch 边界；断言 UI 或 API 路径/载荷",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/components/modals.test.tsx",
+  "line": 656,
+  "text": "expect(retryReply).toHaveBeenCalledWith(\"殿上\", 12);",
+  "disposition": "KEEP_WEB_FETCH_HARNESS",
+  "basis": "网络 fetch 边界；断言 UI 或 API 路径/载荷",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/components/modals.test.tsx",
+  "line": 793,
+  "text": "expect(fetchMock).toHaveBeenCalledTimes(3);",
+  "disposition": "KEEP_WEB_CALLBACK_CONTRACT",
+  "basis": "回调/fetch 断言伴随 UI 或 API 契约",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/components/modals.test.tsx",
+  "line": 899,
+  "text": "vi.stubGlobal(\"fetch\", vi.fn().mockImplementation(async () => ({ ok: true, json: async () => replies.shift() })));",
+  "disposition": "KEEP_WEB_FETCH_HARNESS",
+  "basis": "网络 fetch 边界；断言 UI 或 API 路径/载荷",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/components/modals.test.tsx",
+  "line": 1004,
+  "text": "vi.stubGlobal(\"fetch\", vi.fn().mockImplementation(async () => ({ ok: true, json: async () => ({",
+  "disposition": "KEEP_WEB_FETCH_HARNESS",
+  "basis": "同案块含 UI/API 断言的网络/窗口替身行",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/components/modals.test.tsx",
+  "line": 1038,
+  "text": "expect(onSend).toHaveBeenCalledWith(\"许誉卿\", \"宣洪承畴\");",
+  "disposition": "KEEP_WEB_FETCH_HARNESS",
+  "basis": "网络 fetch 边界；断言 UI 或 API 路径/载荷",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/components/modals.test.tsx",
+  "line": 1045,
+  "text": "vi.stubGlobal(\"fetch\", vi.fn().mockImplementation(async () => ({ ok: true, json: async () => ({",
+  "disposition": "KEEP_WEB_FETCH_HARNESS",
+  "basis": "同案块含 UI/API 断言的网络/窗口替身行",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/components/modals.test.tsx",
+  "line": 1085,
+  "text": "vi.stubGlobal(\"fetch\", vi.fn().mockImplementation(async () => ({ ok: true, json: async () => ({",
+  "disposition": "KEEP_WEB_FETCH_HARNESS",
+  "basis": "同案块含 UI/API 断言的网络/窗口替身行",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/components/modals.test.tsx",
+  "line": 1112,
+  "text": "vi.stubGlobal(\"fetch\", vi.fn().mockImplementation(async () => ({",
+  "disposition": "KEEP_WEB_FETCH_HARNESS",
+  "basis": "同案块含 UI/API 断言的网络/窗口替身行",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/components/modals.test.tsx",
+  "line": 1164,
+  "text": "vi.stubGlobal(\"fetch\", vi.fn().mockImplementation(async () => {",
+  "disposition": "KEEP_WEB_FETCH_HARNESS",
+  "basis": "网络 fetch 边界；断言 UI 或 API 路径/载荷",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/components/modals.test.tsx",
+  "line": 1184,
+  "text": "vi.spyOn(stage, \"getBoundingClientRect\").mockReturnValue({ top: 0, left: 0 } as DOMRect);",
+  "disposition": "KEEP_WEB_FETCH_HARNESS",
+  "basis": "网络 fetch 边界；断言 UI 或 API 路径/载荷",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/components/modals.test.tsx",
+  "line": 1186,
+  "text": "vi.spyOn(storyParagraph, \"getBoundingClientRect\").mockReturnValue({ top: -20, bottom: 100, left: 14 } as DOMRect);",
+  "disposition": "KEEP_WEB_FETCH_HARNESS",
+  "basis": "网络 fetch 边界；断言 UI 或 API 路径/载荷",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/components/modals.test.tsx",
+  "line": 1220,
+  "text": "vi.stubGlobal(\"fetch\", vi.fn().mockImplementation(async () => ({",
+  "disposition": "KEEP_WEB_FETCH_HARNESS",
+  "basis": "同案块含 UI/API 断言的网络/窗口替身行",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/components/modals.test.tsx",
+  "line": 1237,
+  "text": "expect(retry).toHaveBeenCalledWith(11);",
+  "disposition": "KEEP_WEB_CALLBACK_CONTRACT",
+  "basis": "回调/fetch 断言伴随 UI 或 API 契约",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/components/modals.test.tsx",
+  "line": 1349,
+  "text": "vi.stubGlobal(\"fetch\", vi.fn().mockImplementation((url: string) => {",
+  "disposition": "KEEP_WEB_FETCH_HARNESS",
+  "basis": "网络 fetch 边界；断言 UI 或 API 路径/载荷",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/components/modals.test.tsx",
+  "line": 1368,
+  "text": "vi.stubGlobal(\"fetch\", vi.fn().mockImplementation((url: string) => {",
+  "disposition": "KEEP_WEB_FETCH_HARNESS",
+  "basis": "网络 fetch 边界；断言 UI 或 API 路径/载荷",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/components/modals.test.tsx",
+  "line": 1390,
+  "text": "const fetchMock = vi.fn().mockImplementation((url: string, options?: RequestInit) => {",
+  "disposition": "KEEP_WEB_FETCH_HARNESS",
+  "basis": "网络 fetch 边界；断言 UI 或 API 路径/载荷",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/components/modals.test.tsx",
+  "line": 1426,
+  "text": "const fetchMock = vi.fn().mockImplementation((url: string, options?: RequestInit) => {",
+  "disposition": "KEEP_WEB_FETCH_HARNESS",
+  "basis": "网络 fetch 边界；断言 UI 或 API 路径/载荷",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/components/modals.test.tsx",
+  "line": 1453,
+  "text": "const fetchMock = vi.fn().mockImplementation((url: string, options?: RequestInit) => {",
+  "disposition": "KEEP_WEB_FETCH_HARNESS",
+  "basis": "网络 fetch 边界；断言 UI 或 API 路径/载荷",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/components/modals.test.tsx",
+  "line": 1471,
+  "text": "const fetchMock = vi.fn().mockImplementation((url: string) => {",
+  "disposition": "KEEP_WEB_FETCH_HARNESS",
+  "basis": "网络 fetch 边界；断言 UI 或 API 路径/载荷",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/components/modals.test.tsx",
+  "line": 1503,
+  "text": "expect(fetchMock).toHaveBeenCalledWith(\"/api/audience/scroll?night_id=31\");",
+  "disposition": "KEEP_WEB_FETCH_HARNESS",
+  "basis": "网络 fetch 边界；断言 UI 或 API 路径/载荷",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/components/modals.test.tsx",
+  "line": 1509,
+  "text": "vi.stubGlobal(\"fetch\", vi.fn().mockImplementation((url: string) => Promise.resolve({ ok: true, json: async () =>",
+  "disposition": "KEEP_WEB_FETCH_HARNESS",
+  "basis": "网络 fetch 边界；断言 UI 或 API 路径/载荷",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/components/modals.test.tsx",
+  "line": 1527,
+  "text": "const fetchMock = vi.fn().mockImplementation((url: string) => Promise.resolve({",
+  "disposition": "KEEP_WEB_FETCH_HARNESS",
+  "basis": "网络 fetch 边界；断言 UI 或 API 路径/载荷",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/components/modals.test.tsx",
+  "line": 1555,
+  "text": "expect(fetchMock).toHaveBeenCalledWith(\"/api/history/turns\");",
+  "disposition": "KEEP_WEB_FETCH_HARNESS",
+  "basis": "网络 fetch 边界；断言 UI 或 API 路径/载荷",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/components/modals.test.tsx",
+  "line": 1556,
+  "text": "expect(fetchMock).toHaveBeenCalledWith(\"/api/history/turn/7\");",
+  "disposition": "KEEP_WEB_FETCH_HARNESS",
+  "basis": "网络 fetch 边界；断言 UI 或 API 路径/载荷",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/components/modals.test.tsx",
+  "line": 1564,
+  "text": "fetchMock.mockImplementation((url: string) => Promise.resolve({",
+  "disposition": "KEEP_WEB_FETCH_HARNESS",
+  "basis": "网络 fetch 边界；断言 UI 或 API 路径/载荷",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/components/modals.test.tsx",
+  "line": 1604,
+  "text": "fetchMock.mockImplementation((url: string) => Promise.resolve({",
+  "disposition": "KEEP_WEB_FETCH_HARNESS",
+  "basis": "网络 fetch 边界；断言 UI 或 API 路径/载荷",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/components/modals.test.tsx",
+  "line": 1647,
+  "text": "vi.stubGlobal(\"fetch\", vi.fn().mockImplementation((url: string) => Promise.resolve({",
+  "disposition": "KEEP_WEB_FETCH_HARNESS",
+  "basis": "网络 fetch 边界；断言 UI 或 API 路径/载荷",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/components/modals.test.tsx",
+  "line": 1720,
+  "text": "expect(onCancel).toHaveBeenCalledOnce();",
+  "disposition": "KEEP_WEB_CALLBACK_CONTRACT",
+  "basis": "组件交互后回调次数；同块有按钮/面板 DOM",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/components/modals.test.tsx",
+  "line": 1754,
+  "text": "expect(onClose).toHaveBeenCalledOnce();",
+  "disposition": "KEEP_WEB_CALLBACK_CONTRACT",
+  "basis": "组件交互后回调次数；同块有按钮/面板 DOM",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/components/modals.test.tsx",
+  "line": 1792,
+  "text": "expect(onClose).toHaveBeenCalledOnce();",
+  "disposition": "KEEP_WEB_FETCH_HARNESS",
+  "basis": "网络 fetch 边界；断言 UI 或 API 路径/载荷",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/src/components/modals.test.tsx",
+  "line": 1812,
+  "text": "expect(onClose).toHaveBeenCalledOnce();",
+  "disposition": "KEEP_WEB_FETCH_HARNESS",
+  "basis": "网络 fetch 边界；断言 UI 或 API 路径/载荷",
+  "audited": true,
+  "action": "keep"
+ },
+ {
+  "file": "web/node_modules/exponential-backoff/src/backoff.spec.ts",
+  "line": 55,
+  "text": "expect(backOffRequest).toHaveBeenCalledTimes(1)",
+  "disposition": "EXCLUDE_THIRD_PARTY",
+  "basis": "第三方包自测，非本仓测试处置对象",
+  "audited": true
+ },
+ {
+  "file": "web/node_modules/exponential-backoff/src/backoff.spec.ts",
+  "line": 65,
+  "text": "expect(backOffRequest).toHaveBeenCalledTimes(1)",
+  "disposition": "EXCLUDE_THIRD_PARTY",
+  "basis": "第三方包自测，非本仓测试处置对象",
+  "audited": true
+ },
+ {
+  "file": "web/node_modules/exponential-backoff/src/backoff.spec.ts",
+  "line": 120,
+  "text": "expect(backOffRequest).toHaveBeenCalledTimes(numOfAttemps);",
+  "disposition": "EXCLUDE_THIRD_PARTY",
+  "basis": "第三方包自测，非本仓测试处置对象",
+  "audited": true
+ },
+ {
+  "file": "web/node_modules/exponential-backoff/src/backoff.spec.ts",
+  "line": 133,
+  "text": "expect(backOffRequest).toHaveBeenCalledTimes(1);",
+  "disposition": "EXCLUDE_THIRD_PARTY",
+  "basis": "第三方包自测，非本仓测试处置对象",
+  "audited": true
+ },
+ {
+  "file": "web/node_modules/exponential-backoff/src/backoff.spec.ts",
+  "line": 169,
+  "text": "expect(backOffRequest).toHaveBeenCalledTimes(2);",
+  "disposition": "EXCLUDE_THIRD_PARTY",
+  "basis": "第三方包自测，非本仓测试处置对象",
+  "audited": true
+ },
+ {
+  "file": "web/node_modules/simple-update-notifier/src/getDistVersion.spec.ts",
+  "line": 11,
+  "text": "(https.get as jest.Mock).mockImplementation((url, cb) => {",
+  "disposition": "EXCLUDE_THIRD_PARTY",
+  "basis": "第三方包自测，非本仓测试处置对象",
+  "audited": true
+ },
+ {
+  "file": "web/node_modules/simple-update-notifier/src/getDistVersion.spec.ts",
+  "line": 25,
+  "text": "(https.get as jest.Mock).mockImplementation((url, cb) => {",
+  "disposition": "EXCLUDE_THIRD_PARTY",
+  "basis": "第三方包自测，非本仓测试处置对象",
+  "audited": true
+ },
+ {
+  "file": "web/node_modules/simple-update-notifier/src/hasNewVersion.spec.ts",
+  "line": 69,
+  "text": "expect(getDistVersion).toHaveBeenCalled();",
+  "disposition": "EXCLUDE_THIRD_PARTY",
+  "basis": "第三方包自测，非本仓测试处置对象",
+  "audited": true
+ },
+ {
+  "file": "web/node_modules/simple-update-notifier/src/hasNewVersion.spec.ts",
+  "line": 81,
+  "text": "expect(getDistVersion).not.toHaveBeenCalled();",
+  "disposition": "EXCLUDE_THIRD_PARTY",
+  "basis": "第三方包自测，非本仓测试处置对象",
+  "audited": true
+ },
+ {
+  "file": "web/node_modules/exponential-backoff/src/delay/always/always.delay.spec.ts",
+  "line": 24,
+  "text": "expect(spy).toHaveBeenCalledTimes(1);",
+  "disposition": "EXCLUDE_THIRD_PARTY",
+  "basis": "第三方包自测，非本仓测试处置对象",
+  "audited": true
+ },
+ {
+  "file": "web/node_modules/exponential-backoff/src/delay/always/always.delay.spec.ts",
+  "line": 36,
+  "text": "expect(spy).toHaveBeenCalledTimes(1);",
+  "disposition": "EXCLUDE_THIRD_PARTY",
+  "basis": "第三方包自测，非本仓测试处置对象",
+  "audited": true
+ },
+ {
+  "file": "web/node_modules/exponential-backoff/src/delay/always/always.delay.spec.ts",
+  "line": 51,
+  "text": "expect(spy).toHaveBeenCalledTimes(1);",
+  "disposition": "EXCLUDE_THIRD_PARTY",
+  "basis": "第三方包自测，非本仓测试处置对象",
+  "audited": true
+ },
+ {
+  "file": "web/node_modules/exponential-backoff/src/delay/always/always.delay.spec.ts",
+  "line": 63,
+  "text": "expect(spy).toHaveBeenCalledTimes(1);",
+  "disposition": "EXCLUDE_THIRD_PARTY",
+  "basis": "第三方包自测，非本仓测试处置对象",
+  "audited": true
+ },
+ {
+  "file": "web/node_modules/simple-update-notifier/src/index.spec.ts",
+  "line": 4,
+  "text": "const consoleSpy = jest.spyOn(console, 'error');",
+  "disposition": "EXCLUDE_THIRD_PARTY",
+  "basis": "第三方包自测，非本仓测试处置对象",
+  "audited": true
+ },
+ {
+  "file": "web/node_modules/simple-update-notifier/src/index.spec.ts",
+  "line": 16,
+  "text": "expect(consoleSpy).toHaveBeenCalledTimes(1);",
+  "disposition": "EXCLUDE_THIRD_PARTY",
+  "basis": "第三方包自测，非本仓测试处置对象",
+  "audited": true
+ },
+ {
+  "file": "web/node_modules/simple-update-notifier/src/index.spec.ts",
+  "line": 26,
+  "text": "expect(consoleSpy).toHaveBeenCalledTimes(0);",
+  "disposition": "EXCLUDE_THIRD_PARTY",
+  "basis": "第三方包自测，非本仓测试处置对象",
+  "audited": true
+ }
 ]

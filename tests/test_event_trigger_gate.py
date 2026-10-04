@@ -2164,7 +2164,7 @@ def test_historical_situation_auto_trigger_rolls_back_soft_issue_when_core_effec
 
     monkeypatch.setattr(issues, "_apply_issue_entities", boom)
 
-    with pytest.raises(RuntimeError, match="boom after issue insert"):
+    with pytest.raises(RuntimeError):
         issues.auto_trigger_seed_issues(state, db)
 
     assert db.conn.execute(
