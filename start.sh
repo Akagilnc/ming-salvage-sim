@@ -32,8 +32,8 @@ else
   echo "[warn] 未找到 .env，LLM 相关变量未注入" >&2
 fi
 
-# 1b. 网页版默认开 LLM dump（每次调用 system/user/assistant 全文落 scripts/runs/llm_dump_<pid>.log）。
-#     不想要就在 .env 里设 MING_SIM_DUMP_LLM=0 覆盖。
+# 1b. 网页版默认开 LLM dump（每次调用一行 JSONL：scripts/runs/llm_dump_<pid>.jsonl；
+#     含 tag/messages/reasoning/usage/finish_reason）。不想要就在 .env 设 MING_SIM_DUMP_LLM=0。
 export MING_SIM_DUMP_LLM="${MING_SIM_DUMP_LLM:-1}"
 
 # 2. 选 python：优先 .venv

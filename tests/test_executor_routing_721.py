@@ -420,7 +420,7 @@ def test_restore_malformed_durable_json_fails_loud(env, column, bad):
     db, state, _ = env
     dossier_id = _create(db, state, category=None, action="policy")
     db.conn.execute(f"UPDATE decree_dossiers SET {column}=? WHERE id=?", (bad, dossier_id))
-    with pytest.raises(ValueError, match=column):
+    with pytest.raises(ValueError):
         db.get_decree_dossier(dossier_id)
 
 

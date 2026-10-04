@@ -15,7 +15,8 @@ from ming_sim.commitment_backlash import (
     backlash_origin_ref,
 )
 from ming_sim.due_review import apply_pending_due_reviews
-from ming_sim.issues import apply_issue_inertia_and_ongoing, apply_score_extraction
+from ming_sim.issues import apply_score_extraction
+from ming_sim.situation_drift import apply_situation_monthly_drift
 from ming_sim.staged_commitment import write_due_staged_commitment_todos
 
 
@@ -70,10 +71,12 @@ def _insert_final_stage(db, state, content, *, dossier_id: int, title: str):
     return int(created["issue_id"])
 
 
-def _prime_and_apply_due_review(db, state, content, *, dossier_id: int, title: str):
+def _prime_and_apply_due_review(
+    db, state, content, *, dossier_id: int, title: str, stage_writer=_insert_final_stage,
+):
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
     db.conn.commit()
-    _insert_final_stage(db, state, content, dossier_id=dossier_id, title=title)
+    stage_writer(db, state, content, dossier_id=dossier_id, title=title)
     write_due_staged_commitment_todos(db, state)
     db.conn.execute(
         "UPDATE next_audience_todos SET created_turn=?",
@@ -491,7 +494,7 @@ def test_s3_nested_ongoing_economy_alias_旨外恶果_lands_ledger(game):
         cancellable="decree",
     )
 
-    apply_issue_inertia_and_ongoing(db, state)
+    apply_situation_monthly_drift(db, state)
 
     rows = db.conn.execute(
         "SELECT beyond_intent, reason, delta FROM economy_ledger "

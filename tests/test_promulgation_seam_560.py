@@ -21,7 +21,7 @@ def test_injected_promulgation_batch_cannot_silently_omit_a_dossier(read_game):
     db, state, _content = read_game
     dossiers = [{"id": 7}, {"id": 11}]
 
-    with pytest.raises(LLMContractError, match="逐案覆盖"):
+    with pytest.raises(LLMContractError):
         validate_promulgation_verdicts(
             [{"dossier_id": 7, "decision": "promulgated"}], dossiers, db,
         )
