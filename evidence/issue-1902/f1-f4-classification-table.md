@@ -3,7 +3,7 @@
 - 底座判词：`02-1902-judge-94f5289f1.json` payload F1–F4（`status=continue`）
 - 本表只保留**必要候选**与可核保留依据；启发式计数 ≠ 结清
 - **禁止口径**：「非本轮 F3 点名…」已废；flags 未命中 ≠ 自动合法
-- 枚举命令只写回执 markdown，**扫描器不入库**（本轮仅 `/tmp/ming1902-f1f4-round3/`）
+- 枚举命令全文只写回执 markdown，**扫描器不入库**（ephemeral 输出 `/tmp/ming1902-f1f4-selfverify/`，跑完自清）
 
 ## 摘要（如实）
 

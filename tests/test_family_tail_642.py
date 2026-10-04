@@ -30,4 +30,3 @@ class _CannedJudge:
     def run(self, prompt):
         from types import SimpleNamespace
         return SimpleNamespace(content=self.payload)
-

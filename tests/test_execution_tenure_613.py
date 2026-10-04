@@ -88,4 +88,3 @@ def test_td8_same_office_four_tenures_live_assembly_chain(game):
     assert by_tenure['真除']['distortion_weight'] < by_tenure['兼署']['distortion_weight'] < by_tenure['署理']['distortion_weight']
     assert by_tenure['兼署']['command_power_rank'] != by_tenure['真除']['command_power_rank']
     assert by_tenure['兼署']['command_power_rank'] != by_tenure['署理']['command_power_rank']
-
