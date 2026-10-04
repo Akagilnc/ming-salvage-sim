@@ -79,15 +79,6 @@ def _executing_dossier(db, state, region_id: str) -> int:
     return int(did)
 
 
-def _simulator_army_dicts(payload_armies):
-    if isinstance(payload_armies, dict) and "rows" in payload_armies:
-        cols = payload_armies.get("cols") or payload_armies.get("columns") or []
-        return [dict(zip(cols, row)) for row in payload_armies["rows"]]
-    return list(payload_armies)
-
-
-
-
 def test_redeploy_moves_fact_region_keeps_pay_source(game):
     """真实调防写核：下一投影 region 跟随 station_region；pay_source_region 不变。"""
     db, state, _content = game

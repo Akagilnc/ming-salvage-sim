@@ -1,7 +1,7 @@
 """动作档 FieldSpec 登记表（#515 / #1871）。
 
 唯一真源：ACTION_CLUSTERS（由 action_materialize.install 装入）。
-提供 kind/fields 枚举、shape 校验与 prompt 投影；分类器候选链与 materialize_fn 已删。
+提供 kind/fields 枚举与 shape 校验；分类器候选链与 materialize_fn 已删。
 
 范围（ADR 0039 / #513）：机械聚类挂点，不是 25 词语义表。
 """
@@ -180,47 +180,6 @@ def validate_season_option(option: Mapping[str, object]) -> str:
             if number < spec.int_lo or number > spec.int_hi:
                 raise ValueError(f"choice.{spec.name} 超出范围：{number!r}")
     return action_type
-
-
-def season_option_contract_prompt(kind: str) -> str:
-    """Human-facing season option contract projected from FieldSpec."""
-    specs = _season_specs(kind)
-    details = []
-    effective_values: Dict[str, FrozenSet[str]] = {}
-    for spec in specs:
-        detail = spec.name
-        if spec.allowed is not None:
-            allowed = frozenset(
-                value for value in spec.allowed
-                if all(
-                    field_population_allowed(kind, dependent.name, {spec.name: value})
-                    for dependent in specs
-                    if dependent.populated_when is not None
-                    and dependent.populated_when[0] == spec.name
-                )
-            )
-            effective_values[spec.name] = allowed
-            if spec.allowed_when is not None:
-                controller = spec.allowed_when[0]
-                controller_values = effective_values.get(controller, frozenset())
-                context = (
-                    {controller: next(iter(controller_values))}
-                    if len(controller_values) == 1 else {}
-                )
-                allowed = effective_field_allowed(spec, context) or frozenset()
-            detail += f'（{"|".join(sorted(allowed))}）'
-        if spec.as_int:
-            detail += f"（JSON integer，{spec.int_lo}..{spec.int_hi}，禁数字字符串）"
-        if spec.quantity_unit:
-            detail += f"（单位={spec.quantity_unit}）"
-        details.append(detail)
-    if not details:
-        return ""
-    return (
-        f'协饷 option 须携带 action_type="{kind}"、'
-        + "、".join(details)
-        + "；非协饷 option 保持既有 label/hint，不携带这些字段。"
-    )
 
 
 def cluster_fields_prompt(kind: str) -> str:
