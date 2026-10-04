@@ -4,8 +4,9 @@
 - **merge commit**（禁止 amend）: `861da98c9`
 - **ours tip**: `6bda8348e`（#1835-w5）
 - **theirs tip**: `10e64fbef`（claude/1812-w4）
-- **本轮**: 独立 `ak-roles:` 提交修正错误 ours 选择与 31 聚焦失败；不 stash / 不 push / 不开 PR
+- **本轮**: 独立 `ak-roles:` 提交修正聚焦命令七名 `MING_SIM_*_BIN` 前缀硬约束违规，并重跑仓内清单聚焦验证；不 amend / rewrite / stash / push / 不开 PR
 - **保护未跟踪产出**: `artifacts/issue-1835-w5-ast-audit.py`、`artifacts/issue-1835-w5-mutation-probes.py`（未覆盖、未删除、未纳入提交）
+- **前序修正提交**（错误 ours / 31 失败）: `f08ff8675`（保留；本轮不 amend）
 
 ## 对上一版回执的纠错
 
@@ -21,16 +22,31 @@
 
 清单（仓内，禁止 `/tmp`）: `artifacts/issue-1835-w5-conflict-tests.txt`  
 命令脚本: `artifacts/issue-1835-w5-focused-cmd.sh`  
-最终日志: `artifacts/issue-1835-w5-focused-final.txt`
+最终日志: `artifacts/issue-1835-w5-focused-final.txt`（同步副本 `artifacts/issue-1835-w5-focused-final.log`）
+
+### 前序绿证据不能冒充满足前缀约束（诚实核验）
+
+`f08ff8675` 入库的 `artifacts/issue-1835-w5-focused-cmd.sh` 与当时回执命令**只有** `MING_SIM_AGY_BIN`；其余六名为裸 `CODEX_BIN` / `CLAUDE_BIN` / `CURSOR_BIN` / `KIMI_BIN` / `GROK_BIN` / `PI_BIN`，**不是**派单硬约束的 `MING_SIM_*_BIN`。  
+同提交的 `artifacts/issue-1835-w5-focused-final.txt`（2269 passed / ≈61.19s real）是由该**缺前缀**脚本跑出的——**不得**把那次绿结果表述为「已满足完整七名 `MING_SIM_*_BIN`」。  
+对照：同仓 `artifacts/issue-1835-w5-repair.md` 早先正确写法已是七名 `MING_SIM_*_BIN`；本轮聚焦脚本曾误写成裸名。
+
+### 本轮修正后命令（完整七名）
 
 ```bash
-MING_SIM_AGY_BIN=/usr/bin/false CODEX_BIN=/usr/bin/false CLAUDE_BIN=/usr/bin/false \
-CURSOR_BIN=/usr/bin/false KIMI_BIN=/usr/bin/false GROK_BIN=/usr/bin/false PI_BIN=/usr/bin/false \
+./artifacts/issue-1835-w5-focused-cmd.sh
+# equivalent:
+MING_SIM_AGY_BIN=/usr/bin/false \
+MING_SIM_CODEX_BIN=/usr/bin/false \
+MING_SIM_CLAUDE_BIN=/usr/bin/false \
+MING_SIM_CURSOR_BIN=/usr/bin/false \
+MING_SIM_KIMI_BIN=/usr/bin/false \
+MING_SIM_GROK_BIN=/usr/bin/false \
+MING_SIM_PI_BIN=/usr/bin/false \
 /usr/bin/time -p /Users/akagilnc/WorkSpace/Ming_LLM/.venv/bin/python -m pytest -p no:cacheprovider -q --tb=line \
   $(cat artifacts/issue-1835-w5-conflict-tests.txt)
 ```
 
-**结果: 2269 passed / 0 failed / 4 skipped**（≈61.19s real）
+**本轮实测结果（完整七名前缀）: 2269 passed / 0 failed / 4 skipped**（≈85.47s real；exit 0）
 
 ---
 
@@ -179,7 +195,7 @@ CURSOR_BIN=/usr/bin/false KIMI_BIN=/usr/bin/false GROK_BIN=/usr/bin/false PI_BIN
 
 ## 提交
 
-- 类型：独立普通提交（**非** amend `861da98c9`）
+- 类型：独立普通提交（**非** amend `f08ff8675` / `861da98c9`；不 rewrite / stash / push / PR）
 - 前缀：`ak-roles:`
-- 含：本回执、conflict 清单/命令/最终日志
-- 不含：`artifacts/issue-1835-w5-ast-audit.py`、`artifacts/issue-1835-w5-mutation-probes.py`
+- 含：修正后的 `focused-cmd.sh`、更新后的本回执与聚焦最终日志
+- 不含：`artifacts/issue-1835-w5-ast-audit.py`、`artifacts/issue-1835-w5-mutation-probes.py`（保留为未跟踪）
