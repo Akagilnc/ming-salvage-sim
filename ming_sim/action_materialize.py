@@ -1768,7 +1768,7 @@ def stage_authorization_candidate(
     # 不属三入口 structured_decree 契约；仅缺省补全，非覆盖已给 locality。
     staged["locality_scope"] = write_locality_scope_for_target_kind(kind)
     if existing_id:
-        return db.update_directive_candidate(existing_id, staged, night_id=night_id, source_chat_turn_id=source_chat_turn_id)
+        return db.update_directive_candidate(existing_id, staged)
     return db.stage_directive_candidate(int(turn), minister_name, payload=staged)
 
 
@@ -1964,7 +1964,7 @@ def stage_revoke_authority_candidate(
         "mode": mode,
     }
     if existing_id:
-        return db.update_directive_candidate(existing_id, staged, night_id=night_id, source_chat_turn_id=source_chat_turn_id)
+        return db.update_directive_candidate(existing_id, staged)
     return db.stage_directive_candidate(int(turn), minister_name, payload=staged)
 
 def stage_revoke_decree_candidate(
