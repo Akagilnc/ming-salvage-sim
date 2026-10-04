@@ -137,23 +137,17 @@ git grep -n 'PATHS\s*=' d3ebf7e0f -- 'tests/test_mutiny*.py' 'tests/test_player_
 git grep -n 'fiscal_engine()=="legacy"\|fiscal_path\|_use_legacy_fiscal\|test_legacy_.*pay\|across_paths\|跨财政路径' \
   d3ebf7e0f -- ming_sim tests
 
-# AST 全仓（对 d3ebf7e0f 与 HEAD 各跑一遍；脚本输出 classified.json c3_base_files / c3_head_files）
-PYTHONDONTWRITEBYTECODE=1 ../Ming_LLM/.venv/bin/python <<'PY'
-# 谓词见上；对 git ls-tree 文件 git show 解析 PATHS/parametrize(fiscal_path)/
-# FUNC_PARAM fiscal_path / settle_legacy / legacy army-pay 测试名
-# 完整实现与结果：/tmp/1901-fixer-evidence/classified.json
-print('see /tmp/1901-fixer-evidence/classified.json')
-PY
+# 劳务进程申报的 AST 结果见 classified.json；本文件未提供其完整脚本，
+# 不将原来的 print 占位段作为可复执行的枚举证据。
 
 # 中间态（411ceafab 后退役 settle_legacy 后、仍留单值 PATHS）
 git grep -n 'PATHS\s*=' 411ceafab -- 'tests/test_mutiny*.py' 'tests/test_player_army*.py'
 git grep -n 'settle_legacy_army_pay' 411ceafab -- ming_sim tests || echo 'settle_legacy gone'
 
-# 当前 HEAD 复扫（含先前窄扫 AST：PATHS/fiscal_path/三元/关 cutover 种 scalar）
-PYTHONDONTWRITEBYTECODE=1 ../Ming_LLM/.venv/bin/python <<'PY'
-# 同 evidence 初版 PATHS 窄扫脚本 + 全类 C3_RE；结果 full_enum.json / post 复扫
-print('HEAD settle_legacy residuals: 0; PATHS_ASSIGN: 0')
-PY
+# 当前 HEAD 实际复扫（本席执行；首条无输出）
+git grep -n -E 'settle_legacy_army_pay|fiscal_path|PATHS[[:space:]]*=' -- ming_sim tests || true
+# 广义军饷消费候选文件，不将所有命中自动判作兼容路径：
+git grep -n -E 'army_pay|arrears|军饷|补饷' -- ming_sim tests | cut -d: -f1 | sort -u
 ```
 
 ### 修前原始成员表（d3ebf7e0f，双路财政）
@@ -197,7 +191,7 @@ PY
 | R7 | `test_surcharge_causal_chain_650.py::test_legacy_fiscal_engine_rejects_surcharge_*` | 关引擎 | **划出本类**：加派消费边界，非军饷 settle |
 | R8 | `test_fiscal_substrate_bridge.py::test_substrate_hub_dual_track_sanity_keeps_legacy_calc_as_reference` | 名含 legacy | **保留**：对照省级 calc 参考值，不是启用 `settle_legacy_army_pay` |
 
-**完整性**：军饷 settle 退役双路与消费者 PATHS/fiscal_path 脚手架在 HEAD 为 0。不宣布「全仓一切 legacy 字样 / 一切 fiscal_engine 门」已删——那会越权扩到 #1889 与他域存档迁移。若复裁认定 R5 引擎门本身仍算「退役兼容路径维护」，则本类仍未完整，须另票或明示授权后再删门。
+**完整性**：军饷 settle 退役双路与消费者 PATHS/fiscal_path 脚手架在 HEAD 为 0。不宣布「全仓一切 legacy 字样 / 一切 fiscal_engine 门」已删——那会越权扩到 #1889 与他域存档迁移。R5 保留依据供复裁核对；若归类错误仍由本票修复，不将已有全类授权推作需要另票。
 
 ---
 
