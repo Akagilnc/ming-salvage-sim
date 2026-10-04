@@ -1,3 +1,20 @@
+command:
+env MING_SIM_AGY_BIN=/usr/bin/false MING_SIM_CODEX_BIN=/usr/bin/false MING_SIM_CLAUDE_BIN=/usr/bin/false MING_SIM_CURSOR_BIN=/usr/bin/false MING_SIM_KIMI_BIN=/usr/bin/false MING_SIM_GROK_BIN=/usr/bin/false MING_SIM_PI_BIN=/usr/bin/false PYTHONDONTWRITEBYTECODE=1 \
+../Ming_LLM/.venv/bin/python -m pytest \
+  tests/test_secret_order_declaration_landing_1897.py \
+  tests/test_audience_translate_1837_reopen.py \
+  tests/test_secret_order_monthly_progress_566.py \
+  tests/test_secret_order_payoff_1504.py \
+  tests/test_execution_pressure_654.py \
+  tests/test_decree_dossiers_571.py \
+  tests/test_deformation_dual_rail_622.py \
+  tests/test_dossier_reported_progress_619.py \
+  tests/test_due_review_621.py \
+  tests/test_secret_order_section_rejections.py \
+  tests/test_world_materials_1834.py \
+  -q -p no:cacheprovider --tb=line
+
+output:
 ........................................................................ [ 20%]
 ...........................................................F............ [ 41%]
 ........................................................................ [ 62%]
@@ -6,11 +23,11 @@
 =================================== FAILURES ===================================
 E   ValueError: 参与人物不存在：查无此人。请填写朝堂名册中已有的大臣姓名。
 ----------------------------- Captured stdout call -----------------------------
-[02:00:04.692] [pending_actions] 落库异常 id=1 directive/拟旨：参与人物不存在：查无此人。请填写朝堂名册中已有的大臣姓名。
+[02:07:54.940] [pending_actions] 落库异常 id=1 directive/拟旨：参与人物不存在：查无此人。请填写朝堂名册中已有的大臣姓名。
 /Users/akagilnc/WorkSpace/Ming_LLM-1897-w5/ming_sim/db.py:20719: ValueError: 参与人物不存在：查无此人。请填写朝堂名册中已有的大臣姓名。
 =========================== short test summary info ============================
 FAILED tests/test_execution_pressure_654.py::test_path1_conversational_draft_bad_roster_marks_failed
-1 failed, 342 passed in 8.93s
-real 9.44
-user 6.23
-sys 2.31
+1 failed, 342 passed in 8.97s
+real 9.47
+user 5.96
+sys 2.43

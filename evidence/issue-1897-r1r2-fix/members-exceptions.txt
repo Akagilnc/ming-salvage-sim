@@ -1,0 +1,66 @@
+# #1897 R1/R2 members / exceptions (semantic authorization after candidates-ast.txt)
+
+Candidate detail (mechanical): candidates-ast.txt
+Chain boundary: 声明→暂存/应允/提交→承诺与密令→月奏报/实况/结案→执行说明→材料供料 / 请旨批红续推
+（不以字段名白名单收窄；下列成员为授权链上已确认会改写/覆盖自由正文者）
+
+## MUST_FIX（本轮及上轮已清；指针为修前位点，现码已无该改写）
+
+### R1 规范化 / 裁剪 / 固定拼装改写
+- ming_sim/staged_commitment.py:normalize_commitment_stages — criterion_text/origin_context .strip() 写回
+- ming_sim/staged_commitment.py:scan_due_commitment_todos — title/criterion/origin .strip() 写入 todos
+- ming_sim/due_review.py:project_due_review_scene — origin_context .strip()
+- ming_sim/due_review.py:decide_due_review_verdict — criterion/origin .strip()；空白 criterion 换成「所约之事」
+- ming_sim/audience_translate.py:build_pending_summaries — payload text .strip()
+- ming_sim/audience_translate.py:build_audience_translate_prompt — grounding .strip()（said/pending 判空副本保留）
+- ming_sim/urge_lever.py:apply_distortion_to_verdict — 自由 note 追加固定文案（催办失真/催紧之下/…）
+- ming_sim/urge_lever.py — reason strip 判空→「奉旨加急」
+- ming_sim/db.py:GameDB.urge_secret_order — reason strip 判空→「奉旨加急」
+- ming_sim/db.py — decree_text strip 判空→None（office appointment materialize 调用侧）
+- ming_sim/db.py — fork case_summary 对 decree_text strip+[:48]
+- ming_sim/db.py:GameDB.apply_execution_joint_liability — reason_text .strip() or 缺省
+- ming_sim/db.py — 站台处置 context .strip() or 缺省
+- ming_sim/covert_progress.py:decide_secret_order_settlement — origin_context .strip()
+- ming_sim/covert_progress.py:player_facing_secret_order_close_text — result strip 判空改走奏报兜底
+- ming_sim/covert_progress.py — actual note strip 判空改 ""
+- ming_sim/issues.py — decree_text/execution_note strip 判空改 ""
+- ming_sim/materials.py — 供料链 title/stage_text/body/resolve/fail strip 或 strip-判空换缺省（见 93f00762c diff）
+- ming_sim/month_chain.py:_question_as_decision — title/context/label/hint .strip()
+- ming_sim/month_chain.py:_consume_rescript_answers._answer_from_row — label/hint/note/context .strip()（本轮补清）
+- ming_sim/settlement_payload.py:bind_decision_options / parse_decision_blocks / bind_decisions_to_candidate_events — title/label/hint/context .strip() 写回
+- ming_sim/session.py — deliberate runner title/body .strip() 写回（本轮补清；stance 仍为封闭枚举归一）
+- ming_sim/session.py — 恢复 decree_text .strip()（上轮）
+- ming_sim/audience_night.py:audience_scene_recap — body .strip() 写回列表
+
+### R2 正文拆条 / 自由文字身份
+- ming_sim/db.py:GameDB.merge_execution_note — split('；')+fragment_key 文字身份去重（2959d228d 已删；本轮复核无回归）
+- ming_sim/breach_plea.py:_merge_plea_kind_into_todo — meta.reason 仅空白被 .strip() 判空后整段覆盖
+
+## EXCEPTION（可核指针；非类型口号）
+
+- [EXCEPTION_JSON_ENVELOPE] ming_sim/staged_commitment.py — stages JSON 包络 strip 后 json.loads
+- [EXCEPTION_JSON_ENVELOPE] ming_sim/breach_plea.py:decode_plea_meta — JSON 包络 strip 后解析
+- [EXCEPTION_JSON_ENVELOPE] ming_sim/db.py:GameDB.parse_engine_payload_json — JSON 包络 strip
+- [EXCEPTION_STRUCT_ID] ming_sim/due_review.py:normalize_entry_kind — entry_kind strip
+- [EXCEPTION_STRUCT_ID] ming_sim/due_review.py — origin_ref strip
+- [EXCEPTION_STRUCT_ID] ming_sim/breach_plea.py:parse_dossier_id — origin_ref strip
+- [EXCEPTION_STRUCT_ID] ming_sim/covert_progress.py — fidelity/reason_code/unit/category/account 等封闭枚举/id 归一
+- [EXCEPTION_STRUCT_ID] ming_sim/declaration_dispatch.py — appoint action/cadence/execution_surface 封闭枚举 strip+缺省
+- [EXCEPTION_STRUCT_ID] ming_sim/month_chain.py:_apply_decided_triad — dossier_decision 封闭词表 strip 后匹配
+- [EXCEPTION_STRUCT_DSL] ming_sim/issues.py — resolve_condition/stop_condition 机读闸 DSL strip
+- [EXCEPTION_BOOL_STRIP] ming_sim/audience_translate.py:build_audience_translate_prompt — if str(s).strip() 过滤空段，join 仍用原文元素
+- [EXCEPTION_BOOL_STRIP] ming_sim/audience_night.py:audience_scene_recap — if body.strip() 判空，append 原文 body
+- [EXCEPTION_BOOL_STRIP] ming_sim/settlement_payload.py / month_chain.py:_question_as_decision — if not label.strip() 判空，写入未 strip 的 label
+- [EXCEPTION_BOOL_STRIP] ming_sim/db.py:GameDB.merge_execution_note — if not fragment_raw.strip(): raise 校验，写入用 fragment_raw
+- [EXCEPTION_COMMAND_MATCH] ming_sim/audience_night.py:recognize_audience_command / recognize_xuan_command — 口令封闭词表匹配用 strip，不持久化改字
+- [EXCEPTION_LOG_PRINT] ming_sim/db.py / ming_sim/issues.py — tlog/print title[:N] note[:N] 日志截断
+- [EXCEPTION_OUT_OF_CHAIN] ming_sim/db.py:GameDB.apply_region_deltas/apply_army_deltas/apply_building_deltas — reason[:80] 等非本票载体链
+- [EXCEPTION_OUT_OF_CHAIN] ming_sim/issues.py / ming_sim/db.py — status_reason[:200]、人物/势力截断
+- [EXCEPTION_OUT_OF_CHAIN] ming_sim/issues.py / ming_sim/db.py — event_pool stage_text=ev.stage_text or ev.summary[:80] 内容包 seed 回落
+- [EXCEPTION_FS_SAFE] ming_sim/materials.py — _UNSAFE.sub 目录段名，非正文载体
+- [EXCEPTION_URGE_OUTCOME] ming_sim/urge_lever.py:apply_distortion_to_verdict — 结构化 outcome 分支保留；只停 note 固定文案追加
+
+## 本轮生产简化（行为不变）
+- audience_translate.py: 去掉 said_keep/pending_keep，恢复一行 join；grounding 仍不 strip
+- breach_plea.py:_merge_plea_kind_into_todo: prev=str(meta.get('reason') or '') 统一追加
+- urge_lever.py:apply_distortion_to_verdict: 删冗余 note 局部变量与 out['note']=note

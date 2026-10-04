@@ -312,13 +312,9 @@ def _merge_plea_kind_into_todo(
     # 保留首类 primary；补充理由/案卷（#1897：不按正文身份去重，只追加；
     # 仅空白的既有 reason 也是原文，不得因 strip 判空而覆盖）。
     if reason:
-        prev = meta.get("reason")
-        if prev is None:
-            meta["reason"] = str(reason)
-        else:
-            prev_s = str(prev)
-            add = str(reason)
-            meta["reason"] = f"{prev_s}；{add}" if prev_s else add
+        prev = str(meta.get("reason") or "")
+        add = str(reason)
+        meta["reason"] = f"{prev}；{add}" if prev else add
     if int(target_dossier_id or 0) > 0 and int(meta.get("target_dossier_id") or 0) <= 0:
         meta["target_dossier_id"] = int(target_dossier_id)
     if extra:

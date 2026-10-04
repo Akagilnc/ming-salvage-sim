@@ -1,8 +1,0 @@
-=== OBS NEW root=/Users/akagilnc/WorkSpace/Ming_LLM-1897-w5 ===
-NORMALIZE criterion_in=44 criterion_out=44 criterion_equal=True origin_in=54 origin_out=54 origin_equal=True
-URGE_NOTE outcome='transformed' note_equal=True fixed_suffix=False
-BREACH_REASON starts_with_ws=True replaced_only=False contains_new=True
-DUE_VERDICT crit_kept=True origin_kept=True default_substituted=False
-CLOSE_TEXT ws_result_kept=True
-SETTLE_ORIGIN origin_kept=True note='machine_settle delivered Σ=1/1 (  原旨空白  )'
-=== OBS NEW DONE ===

@@ -1,29 +1,45 @@
-=== NEW ===
-=== OBS NEW root=/Users/akagilnc/WorkSpace/Ming_LLM-1897-w5 ===
+# Observation kinds (do not conflate)
+
+## HELPER_ONLY（本轮实际执行）
+script: /tmp/1897-r1r2-final/observe_helpers.py
+command:
+```bash
+cd /Users/akagilnc/WorkSpace/Ming_LLM-1897-w5 && \
+export MING_SIM_AGY_BIN=/usr/bin/false MING_SIM_CODEX_BIN=/usr/bin/false \
+  MING_SIM_CLAUDE_BIN=/usr/bin/false MING_SIM_CURSOR_BIN=/usr/bin/false \
+  MING_SIM_KIMI_BIN=/usr/bin/false MING_SIM_GROK_BIN=/usr/bin/false \
+  MING_SIM_PI_BIN=/usr/bin/false PYTHONDONTWRITEBYTECODE=1 && \
+OBS_TAG=NEW OBS_ROOT="$PWD" ../Ming_LLM/.venv/bin/python /tmp/1897-r1r2-final/observe_helpers.py
+```
+性质：直接调用 normalize_commitment_stages / apply_distortion_to_verdict /
+_merge_plea_kind_into_todo / decide_due_review_verdict /
+player_facing_secret_order_close_text / decide_secret_order_settlement。
+**不是** scene_chat / declaration_dispatch / month_chain 角色真实入口红绿。
+
+=== HELPER_ONLY NEW (this round, after simplify) ===
+=== OBS NEW HELPER_ONLY root=/Users/akagilnc/WorkSpace/Ming_LLM-1897-w5 ===
 NORMALIZE criterion_in=44 criterion_out=44 criterion_equal=True origin_in=54 origin_out=54 origin_equal=True
 URGE_NOTE outcome='transformed' note_equal=True fixed_suffix=False
 BREACH_REASON starts_with_ws=True replaced_only=False contains_new=True
 DUE_VERDICT crit_kept=True origin_kept=True default_substituted=False
 CLOSE_TEXT ws_result_kept=True
 SETTLE_ORIGIN origin_kept=True note='machine_settle delivered Σ=1/1 (  原旨空白  )'
-=== OBS NEW DONE ===
+=== OBS NEW HELPER_ONLY DONE ===
 
-=== OLD (2959d228d files restored temporarily) ===
-=== OBS OLD root=/Users/akagilnc/WorkSpace/Ming_LLM-1897-w5 ===
+=== HELPER_ONLY OLD (retained from prior mutation at 2959d228d; not re-run this round) ===
+prior script path /tmp/1897-r1r2-obs/observe_r1r2.py — **gone**; logic recreated as observe_helpers.py above.
 NORMALIZE criterion_in=44 criterion_out=40 criterion_equal=False origin_in=54 origin_out=50 origin_equal=False
 URGE_NOTE outcome='transformed' note_equal=False fixed_suffix=True
 BREACH_REASON starts_with_ws=False replaced_only=True contains_new=True
 DUE_VERDICT crit_kept=False origin_kept=False default_substituted=False
 CLOSE_TEXT ws_result_kept=False
 SETTLE_ORIGIN origin_kept=False note='machine_settle delivered Σ=1/1 (原旨空白)'
-=== OBS OLD DONE ===
 
-=== NEW_AFTER_RESTORE ===
-=== OBS NEW_AFTER_RESTORE root=/Users/akagilnc/WorkSpace/Ming_LLM-1897-w5 ===
-NORMALIZE criterion_in=44 criterion_out=44 criterion_equal=True origin_in=54 origin_out=54 origin_equal=True
-URGE_NOTE outcome='transformed' note_equal=True fixed_suffix=False
-BREACH_REASON starts_with_ws=True replaced_only=False contains_new=True
-DUE_VERDICT crit_kept=True origin_kept=True default_substituted=False
-CLOSE_TEXT ws_result_kept=True
-SETTLE_ORIGIN origin_kept=True note='machine_settle delivered Σ=1/1 (  原旨空白  )'
-=== OBS NEW_AFTER_RESTORE DONE ===
+## REAL_ENTRY（指针；本轮未重跑）
+script still readable: /tmp/1897-observe.PDMSvU/test_observe_r1_r2.py
+prior output: /tmp/1897-observe.PDMSvU/observe_final.out
+性质：pytest + _emit 走声明落地真实入口（STAGE_TEXT）与 GameDB.merge_execution_note（MERGE）。
+prior observed:
+  STAGE_TEXT criterion_in=269 criterion_out=269 criterion_equal=True origin_in=309 origin_out=309 origin_equal=True
+  MERGE input_recorded=True appended=True
+本轮状态：脚本可读；**未**再执行该真实入口观察，故不冒称本轮真实入口红绿。

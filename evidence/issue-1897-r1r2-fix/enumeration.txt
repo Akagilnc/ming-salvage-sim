@@ -1,82 +1,108 @@
-#1897 R1/R2 全仓枚举与分类（本轮）
+#1897 R1/R2 全仓枚举与分类（最终自验轮）
 
 ## 官方依据：str.strip 会变换原文
 
 curl https://docs.python.org/3/library/stdtypes.html#str.strip
-→「Return a copy of the string with the leading and trailing characters removed.
-If omitted or None, the chars argument defaults to removing whitespace.
-… >>> '   spacious   '.strip() → 'spacious'」
+→「Return a copy of the string with the leading and trailing characters removed…」
+本地：'  原旨  ' -> '原旨' changed=True
 
-本地演示：'  原旨  ' -> '原旨' changed=True
+## 枚举命令（可直接执行；全仓 git ls-files，不只 ming_sim）
 
-上轮只清 [:N] 不等于零改字：strip / strip-判空换缺省 / 固定文案拼装同属改写。
+机械候选明细（冻结源码命中）：candidates-ast.txt
+成员/例外表（语义授权）：members-exceptions.txt
 
-## 枚举命令（谓词覆盖 R1 规范化与改写全文 + R2 文字身份，不收窄到 [:N]）
+完整 inline AST（本轮实际执行并写出 candidates-ast.txt）：
 
 ```bash
-# AST：ming_sim 全树 Call(.strip/.lstrip/.rstrip/.replace/.split/…)、Subscript[:N]、re.sub、note+固定文案
-python3 scripts_or_inline_ast_enum.py   # 本轮用 inline AST visitor；结果见下成员表
+cd /Users/akagilnc/WorkSpace/Ming_LLM-1897-w5 && python3 <<'PY'
+from __future__ import annotations
+import ast, re, subprocess
+from pathlib import Path
+ROOT = Path('.').resolve()
+OUT = ROOT / 'evidence/issue-1897-r1r2-fix/candidates-ast.txt'
+METHODS = {
+    'strip','lstrip','rstrip','replace','split','rsplit',
+    'partition','rpartition','removeprefix','removesuffix',
+}
+RE_FUNCS = {'sub','split','subn','findall','finditer'}
+SRC_SUFFIX = {'.py','.pyi','.ts','.tsx','.js','.jsx','.mjs','.cjs',
+              '.rs','.go','.java','.kt','.swift','.rb','.php','.cs'}
+files = [b.decode() for b in subprocess.check_output(['git','ls-files','-z']).split(b'\0') if b]
+paths = [p for p in files if Path(p).suffix in SRC_SUFFIX]
+py_paths = [p for p in paths if p.endswith('.py')]
+non_py = [p for p in paths if not p.endswith('.py')]
+hits = []
+class V(ast.NodeVisitor):
+    def __init__(self, path): self.path=path; self.stack=[]
+    def _q(self): return '.'.join(self.stack) or '<module>'
+    def visit_ClassDef(self,n):
+        self.stack.append(n.name); self.generic_visit(n); self.stack.pop()
+    def visit_FunctionDef(self,n):
+        self.stack.append(n.name); self.generic_visit(n); self.stack.pop()
+    visit_AsyncFunctionDef = visit_FunctionDef
+    def _add(self,n,kind,detail,preview=''):
+        hits.append(f"{self.path}:{getattr(n,'lineno',None)}\t{self._q()}\t{kind}\t{detail}\t{preview[:160]}")
+    def visit_Call(self,n):
+        f=n.func
+        if isinstance(f, ast.Attribute) and f.attr in METHODS:
+            self._add(n,'call',f.attr,ast.dump(n,include_attributes=False))
+        if isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name) and f.value.id=='re' and f.attr in RE_FUNCS:
+            self._add(n,'re',f.attr,ast.dump(n,include_attributes=False))
+        self.generic_visit(n)
+    def visit_Subscript(self,n):
+        sl=n.slice
+        if isinstance(sl, ast.Slice) and sl.upper is not None and sl.step is None:
+            upper = sl.upper.value if isinstance(sl.upper, ast.Constant) and isinstance(sl.upper.value, int) else '?'
+            self._add(n,'slice',f'[:{upper}]',ast.dump(n,include_attributes=False))
+        self.generic_visit(n)
+    def visit_BinOp(self,n):
+        if isinstance(n.op, ast.Add):
+            dump=ast.dump(n,include_attributes=False)
+            if 'Constant(value=' in dump:
+                self._add(n,'concat','+',dump)
+        self.generic_visit(n)
+    def visit_JoinedStr(self,n):
+        has_fmt=any(isinstance(v,ast.FormattedValue) for v in n.values)
+        has_const=any(isinstance(v,ast.Constant) and isinstance(v.value,str) and v.value for v in n.values)
+        if has_fmt and has_const:
+            self._add(n,'fstring_assemble','f-string',ast.dump(n,include_attributes=False))
+        self.generic_visit(n)
+for rel in sorted(py_paths):
+    tree=ast.parse((ROOT/rel).read_text(encoding='utf-8',errors='replace'), filename=rel)
+    V(rel).visit(tree)
+pat=re.compile(r'\.(strip|lstrip|rstrip|replace|split)\(|re\.sub\(|\[:\s*\d+\]')
+rg=[]
+for rel in sorted(non_py):
+    text=(ROOT/rel).read_text(encoding='utf-8',errors='replace')
+    for i,line in enumerate(text.splitlines(),1):
+        if pat.search(line):
+            rg.append(f'{rel}:{i}\trg_line\t{line.strip()[:160]}')
+with OUT.open('w',encoding='utf-8') as f:
+    f.write(f'# py_files={len(py_paths)} py_hits={len(hits)} non_py_hits={len(rg)}\n')
+    for h in hits: f.write(h+'\n')
+    for x in rg: f.write(x+'\n')
+print(OUT, 'py_hits', len(hits), 'non_py', len(rg))
+PY
+```
 
-# rg 全仓谓词
-rg -n '\.strip\(\)|\.lstrip\(\)|\.rstrip\(\)|\[:\s*\d+\]|\.replace\(|re\.sub\(|\.split\(' ming_sim --glob '*.py'
-rg -n '催办失真|催紧之下|催之愈急|表报难掩|催办之下终无' ming_sim --glob '*.py'
-rg -n 'meta\.get\("reason"\).*strip|execution_note.*split|fragment_key in existing' ming_sim --glob '*.py'
-
-# 票面链重点文件（声明→承诺/密令→月奏报/实况/结案→执行说明→供料）
-rg -n '\.strip\(\)|\[:\s*\d+\]' \
-  ming_sim/staged_commitment.py ming_sim/due_review.py ming_sim/urge_lever.py \
-  ming_sim/audience_translate.py ming_sim/breach_plea.py ming_sim/covert_progress.py \
-  ming_sim/issues.py ming_sim/db.py ming_sim/materials.py ming_sim/declaration_dispatch.py \
-  ming_sim/settlement_payload.py ming_sim/month_chain.py ming_sim/session.py \
-  ming_sim/audience_night.py ming_sim/action_materialize.py
+辅助 rg（非唯一真源）：
+```bash
+rg -n '\.strip\(\)|\.lstrip\(\)|\.rstrip\(\)|\[:\s*\d+\]|\.replace\(|re\.sub\(|\.split\(' \
+  --glob '*.py' --glob '*.ts' --glob '*.tsx' --glob '*.js'
+rg -n '催办失真|催紧之下|催之愈急|表报难掩|催办之下终无' --glob '*.py'
 ```
 
 核查边界 = 现行票面「正文原样存取；删去从正文拆条目、猜月份、改字」+ 判词 R1/R2 类定义全文；
-沿声明→暂存/应允/提交→承诺与密令→月奏报/实况/结案→执行说明→材料供料完整读写链，
-不以八文件/几个字段为白名单。
+沿声明→暂存/应允/提交→承诺与密令→月奏报/实况/结案→执行说明→材料供料 / 请旨批红完整读写链。
 
-## MUST_FIX 完整成员（本轮已删改）
+## 完整成员 / 例外
 
-- [R1] ming_sim/staged_commitment.py:60-65 — normalize criterion/origin_context .strip() 写回载体
-- [R1] ming_sim/staged_commitment.py:248-250 — due scan title/criterion/origin .strip() 写入 todos
-- [R1] ming_sim/due_review.py:259 — project_due_review_scene origin_context .strip()
-- [R1] ming_sim/due_review.py:411-412 — decide_due_review_verdict criterion/origin .strip()；空白 criterion 会被换成「所约之事」
-- [R1] ming_sim/audience_translate.py:80 — pending payload text .strip() 供料
-- [R1] ming_sim/audience_translate.py:365-368 — night_said/pending/grounding strip 供料
-- [R1] ming_sim/urge_lever.py:406-420 — apply_distortion_to_verdict 给自由 note 追加固定文案（上轮只删 [:N]）
-- [R1] ming_sim/urge_lever.py:535 — 催办 reason strip 判空 →「奉旨加急」
-- [R1] ming_sim/db.py:22053 — 密令催办 reason strip 判空 →「奉旨加急」
-- [R1] ming_sim/db.py:18490 — 声明 decree_text strip 判空 → None
-- [R1] ming_sim/db.py:13011-13013 — fork case_summary 对 decree_text strip+[:48]
-- [R1] ming_sim/db.py:16097 — 连坐 reason_text .strip() or 缺省
-- [R1] ming_sim/db.py:16970 — 站台 context .strip() or 缺省
-- [R1] ming_sim/covert_progress.py:633 — settle origin_context .strip()
-- [R1] ming_sim/covert_progress.py:665 — result strip 判空改走奏报兜底
-- [R1] ming_sim/covert_progress.py:1173 — actual note strip 判空改 ""
-- [R1] ming_sim/issues.py:2443-2444 — decree_text/execution_note strip 判空改 ""
-- [R1] ming_sim/materials.py:452,502,526,537,554-563,869,1052-1055,1164 — 供料链 title/stage_text/body/resolve/fail strip 或 strip-判空换缺省
-- [R1] ming_sim/month_chain.py:1391-1405 — 请旨 title/context/label/hint .strip()
-- [R1] ming_sim/settlement_payload.py:35-93,183-205 — 决策块/候选 title/label/hint/context .strip()
-- [R1] ming_sim/session.py:1876 — 恢复 decree_text .strip()
-- [R1] ming_sim/audience_night.py:2277 — 场面回顾 body .strip() 写回列表
-- [R2] ming_sim/breach_plea.py:313 — meta.reason 仅空白被 .strip() 判空后覆盖（丢原文）
-- [R2] ming_sim/db.py:merge_execution_note — 上轮已删正文拆条身份；本轮复核无回归
+见 members-exceptions.txt（逐条文件/函数指针；无「多处/…」充当完整成员）。
 
-## EXCEPTION 完整成员（明确例外，非类型口号）
-
-- [EXCEPTION_JSON_ENVELOPE] ming_sim/staged_commitment.py:37,90 — stages JSON 字符串包络 strip 后 json.loads，不改段内自由字段
-- [EXCEPTION_JSON_ENVELOPE] ming_sim/breach_plea.py:94 — breach_plea_meta: JSON 包络 strip 后解析
-- [EXCEPTION_JSON_ENVELOPE] ming_sim/db.py:19736,19768 — todo/payload JSON 包络 strip
-- [EXCEPTION_STRUCT_ID] 多处 origin_ref/character_id/entry_kind/breach_kind/execution_outcome/assignee/office/reason_code/… — 结构化 id/枚举归一，非自由正文载体
-- [EXCEPTION_STRUCT_DSL] ming_sim/issues.py:505,515,543 — resolve_condition/stop_condition 机读闸 DSL 解析用 strip，不落自由叙事改写
-- [EXCEPTION_BOOL_STRIP] _declared_prose / if not x.strip(): raise / materials 判空副本 — 校验 bool 用 strip 副本，返回/写入仍是原文
-- [EXCEPTION_COMMAND_MATCH] ming_sim/audience_night.py:2062,2091 — 收夜/宣召口令封闭词表匹配用 strip，不持久化改字
-- [EXCEPTION_LOG_PRINT] db/issues tlog/print title[:N] note[:N] — 日志截断，非载体落库
-- [EXCEPTION_OUT_OF_CHAIN] db/issues 人物 status_reason[:200]、army/power/fiscal reason[:80/120/240]、narrative_hint[:200] 等 — 非本票「声明→承诺/密令→月奏报/实况/结案→执行说明」载体链；本轮不扩改
-- [EXCEPTION_FS_SAFE] ming_sim/materials.py:49-50 — 目录段名 _UNSAFE 替换，文件系统安全非正文载体
-- [EXCEPTION_URGE_OUTCOME] ming_sim/urge_lever.py apply_distortion_to_verdict outcome 分支 — 催办角色决定机制保留结构化 outcome；本轮只停 note 固定文案追加
+本轮补清类成员：
+- ming_sim/month_chain.py:_consume_rescript_answers._answer_from_row
+- ming_sim/session.py deliberate title/body
 
 ## 上轮已结（复核）
-
 - staged_commitment/issues/breach_plea/settlement_payload/due_review/audience_translate [:N] 截断已在 2959d228d 删除
-- db.merge_execution_note 正文拆条文字身份去重已在 2959d228d 删除
+- db.merge_execution_note 正文拆条文字身份去重已在 2959d228d 删除；本轮复扫无回归

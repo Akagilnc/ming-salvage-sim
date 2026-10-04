@@ -394,7 +394,6 @@ def apply_distortion_to_verdict(
         return verdict
     band = str((distortion or {}).get("band") or "不歪")
     outcome = str(verdict.get("outcome") or "")
-    note = str(verdict.get("note") or "")
     out = dict(verdict)
 
     if band == "不歪":
@@ -412,7 +411,6 @@ def apply_distortion_to_verdict(
         elif band == "易歪" and not has_effects:
             out["outcome"] = "failed"
     # failed：已是最重终值；不改 note
-    out["note"] = note
     return out
 
 

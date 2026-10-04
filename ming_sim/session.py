@@ -2193,10 +2193,11 @@ class GameSession:
             obj = _parse_rescript_json_strict(str(raw or ""))
             if not isinstance(obj, dict):
                 raise ValueError("deliberate LLM 意愿须为 object")
-            title = str(obj.get("title") or "").strip()
-            body = str(obj.get("body") or "").strip()
+            # #1897：deliberate 自由 title/body 原样；stance 为封闭枚举可归一。
+            title = str(obj.get("title") or "")
+            body = str(obj.get("body") or "")
             stance = str(obj.get("stance") or "").strip()
-            if not (title and body and stance):
+            if not (title.strip() and body.strip() and stance):
                 raise ValueError("deliberate LLM 意愿缺 title/body/stance")
             # shape 初检；身份合法性在 apply 事务内再核（整批零写）
             supporters = obj.get("supporter_ids", [])

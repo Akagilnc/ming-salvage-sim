@@ -1426,11 +1426,12 @@ def _consume_rescript_answers(
 
     def _answer_from_row(row: Dict[str, object]) -> Dict[str, object]:
         choice = row.get("choice") if isinstance(row.get("choice"), dict) else {}
+        # #1897：批红答案自由字段原样续推，禁 strip。
         return {
-            "label": str(choice.get("label") or "").strip(),
-            "hint": str(choice.get("hint") or "").strip(),
-            "note": str(choice.get("note") or "").strip(),
-            "context": str(row.get("context") or "").strip(),
+            "label": str(choice.get("label") or ""),
+            "hint": str(choice.get("hint") or ""),
+            "note": str(choice.get("note") or ""),
+            "context": str(row.get("context") or ""),
             "event_id": str(row.get("event_id") or ""),
             "title": str(row.get("title") or ""),
         }

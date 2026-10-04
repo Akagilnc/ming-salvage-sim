@@ -362,11 +362,9 @@ def build_audience_translate_prompt(
     产出契约 = C0 全 section（交办/应允/当场实况/文字事实/公开说法/在场/
     分段/边事件/主角/入册）。不解析自由散文——模型直接给结构化声明。
     """
-    # #1897：供料块保留自由正文空白；判空用局部副本，不把 strip 写回。
-    said_keep = [str(s) for s in night_said if str(s).strip()]
-    pending_keep = [str(s) for s in pending_summaries if str(s).strip()]
-    said_block = "\n".join(said_keep) or "（无）"
-    pending_block = "；".join(pending_keep) or "（无）"
+    # #1897：判空用局部 strip 副本；写入/供料块保留原文空白（含 grounding）。
+    said_block = "\n".join(str(s) for s in night_said if str(s).strip()) or "（无）"
+    pending_block = "；".join(str(s) for s in pending_summaries if str(s).strip()) or "（无）"
     grounding = str(target_grounding or "")
     grounding_block = f"{grounding}\n" if grounding else ""
     return (
