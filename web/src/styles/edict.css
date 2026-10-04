@@ -14,9 +14,10 @@
   gap: 12px;
 }
 
+/* #1849：独立手拟栏退出后御案只剩一栏（草稿/已发两区同栏）；#1902 不复活第二栏。 */
 .desk-columns {
   display: grid;
-  grid-template-columns: minmax(0, 1.15fr) minmax(280px, 0.85fr);
+  grid-template-columns: minmax(0, 1fr);
   gap: clamp(14px, 2.5vw, 32px);
   min-height: 0;
   flex: 1 1 0;
