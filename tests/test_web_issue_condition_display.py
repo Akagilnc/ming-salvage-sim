@@ -61,16 +61,12 @@ def test_humanize_character_loyalty_condition_variants(raw):
         _no_token(text, tok)
 
 
-def test_humanize_non_character_condition_keeps_existing_region_translation():
-    raw = "region.liaodong.controlled_by == ming"
-    text = _h(raw)
-    assert text != raw
-    # 三层语义：地区 / 字段 / 值（不恢复整句精确相等）
-    assert "辽东" in text
-    assert "归属" in text
-    assert "大明" in text
-    for tok in ("region", "liaodong", "controlled_by", "ming"):
-        _no_token(text, tok)
+def test_humanize_non_formal_condition_passes_through_unchanged():
+    """N6: free / non-character-condition prose is transported without vocabulary replace."""
+    raw = "原文 ming | supply."
+    assert _h(raw) == raw
+    region_dsl = "region.liaodong.controlled_by == ming"
+    assert _h(region_dsl) == region_dsl
 
 
 def test_humanize_character_status_condition_hides_machine_key():

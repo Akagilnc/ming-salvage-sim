@@ -1,0 +1,24 @@
+# #1847 N6/N10 mutation evidence (temp process; not permanent proving tests)
+
+## N6 free-text transport
+Command: python probe calling web_app._humanize_condition("原文 ming | supply.")
+- CURRENT: raw_equal=True out='原文 ming | supply.'
+- OLD (restore vocabulary replace fallback): raw_equal=False out='原文 大明 、 补给·'
+Verdict: N6_MUTATION_OK old_mutates current_preserves
+
+## N10 presentation classification
+Predicate old: /甲申|贯穿一朝|倾国之大计/.test(fail_condition)
+- OLD: "甲申之难" -> longTerm; "崇祯十七年之难" -> nearTerm (flipped)
+- NEW: both -> active (stable)
+Verdict: N10_UI_MUTATION_OK
+
+## N10 fiscal identity
+OLD tokens include reason + Chinese word-sense strip; NEW = structured stem only
+- OLD: reason "西学经费" dup=True; reason "不同文字依据" dup=False (flipped)
+- NEW: both dup=False (stable; display/key intentionally non-matching)
+Verdict: N10_FISCAL_MUTATION_OK
+
+## Anchor existing tests
+MING_SIM_*_BIN=/usr/bin/false ×7
+pytest tests/test_decree_commitment_creation_136.py::test_decree_commitment_dedups_same_batch_fiscal_create_carrier tests/test_web_issue_condition_display.py -q
+-> 11 passed in 0.85s

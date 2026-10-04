@@ -3,19 +3,15 @@ import { createPortal } from "react-dom";
 import { formatClosedEffect, formatIssueEffect, issueTone } from "../format";
 import type { ClosedIssue, Issue } from "../types";
 
-// 局势分组：长期(贯穿一朝大计) vs 近期。纯前端按 fail_condition 文案判定。
+/** Active situation/initiative rows only; no free-text keyword classification. */
 export function groupIssues(issues: Issue[]) {
-  const active = issues.filter((i) => i.kind === "situation" || i.kind === "initiative");
-  const bySeq = (a: Issue, b: Issue) => {
-    if (a.kind !== b.kind) return a.kind === "initiative" ? -1 : 1;
-    return a.id - b.id;
-  };
-  const isLongTerm = (i: Issue) => /甲申|贯穿一朝|倾国之大计/.test(i.fail_condition || "");
-  return {
-    active,
-    longTerm: active.filter(isLongTerm).sort(bySeq),
-    nearTerm: active.filter((i) => !isLongTerm(i)).sort(bySeq),
-  };
+  const active = issues
+    .filter((i) => i.kind === "situation" || i.kind === "initiative")
+    .sort((a, b) => {
+      if (a.kind !== b.kind) return a.kind === "initiative" ? -1 : 1;
+      return a.id - b.id;
+    });
+  return { active };
 }
 
 function commitmentProgressText(issue: Issue) {
@@ -34,7 +30,7 @@ export function SituationPanel({ issues, closedIssues, hasLegacies }: {
   closedIssues: ClosedIssue[];
   hasLegacies: boolean;
 }) {
-  const { active, longTerm, nearTerm } = groupIssues(issues);
+  const { active } = groupIssues(issues);
   if (!active.length && !closedIssues.length) return null;
   return (
     <aside className={`situation-panel ${hasLegacies ? "with-legacies" : ""}`} aria-label="局势进度">
@@ -51,19 +47,11 @@ export function SituationPanel({ issues, closedIssues, hasLegacies }: {
           ))}
         </div>
       ) : null}
-      {longTerm.length ? (
+      {active.length ? (
         <div className="situation-group">
-          <div className="situation-group-title">长期局势</div>
+          <div className="situation-group-title">局势</div>
           <div className="situation-list">
-            {longTerm.map((issue) => <SituationRow key={issue.id} issue={issue} />)}
-          </div>
-        </div>
-      ) : null}
-      {nearTerm.length ? (
-        <div className="situation-group">
-          <div className="situation-group-title">近期局势</div>
-          <div className="situation-list">
-            {nearTerm.map((issue) => <SituationRow key={issue.id} issue={issue} />)}
+            {active.map((issue) => <SituationRow key={issue.id} issue={issue} />)}
           </div>
         </div>
       ) : null}

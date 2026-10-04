@@ -122,8 +122,8 @@ CUSTOM_PORTRAIT_PREFIX = "custom:"
 ALLOWED_PORTRAIT_TYPES = {"image/png", "image/jpeg", "image/webp"}
 MAX_PORTRAIT_BYTES = 8 * 1024 * 1024  # 8MB 上限
 
-# resolve/fail_condition 同时喂 extractor（需 input.factions/leverage 等技术 key）与展示给玩家。
-# 展示前把技术词替换成中文，原文不动（LLM 仍读原文判定）。按长键先替，避免子串误伤。
+# Formal character-condition value labels (used inside _humanize_condition_value only).
+# Free resolve/fail_condition prose is transported unchanged; no catch-all replace.
 _CONDITION_DISPLAY_REPLACEMENTS = [
     ("input.factions", "派系盘面"),
     ("input.classes", "阶级盘面"),
@@ -221,29 +221,27 @@ def _humanize_condition_value(field: str, value: str) -> str:
 
 
 def _humanize_condition(text: str) -> str:
-    """把结案/失败条件里的技术 key 替换成玩家可读中文（仅用于展示）。"""
+    """Formal character-condition DSL → display labels; free prose passes through unchanged."""
     if not text:
         return text
     character_condition = re.fullmatch(
         r"\s*character\.([^.]+)\.([A-Za-z_]+)\s*(==|!=|>=|<=|>|<)\s*(.+?)\s*",
         text,
     )
-    if character_condition:
-        name, field, op, value = character_condition.groups()
-        if field == "loyalty" and re.fullmatch(r"\d+", value):
-            if op in {">=", ">"}:
-                return f"{name}忠诚回稳"
-            if op in {"<=", "<"}:
-                return f"{name}忠诚未稳"
-            return f"{name}忠诚非通常阈值"
-        label = _CHARACTER_CONDITION_FIELD_LABELS.get(field, field)
-        op_label = _CONDITION_OPERATOR_LABELS.get(op, op)
-        value_label = _humanize_condition_value(field, value)
-        return f"{name}{label}{op_label}{value_label}"
-    for src, dst in _CONDITION_DISPLAY_REPLACEMENTS:
-        text = text.replace(src, dst)
-    return text
-
+    if not character_condition:
+        # N6: no vocabulary replace on free prose / non-formal condition text in transport.
+        return text
+    name, field, op, value = character_condition.groups()
+    if field == "loyalty" and re.fullmatch(r"\d+", value):
+        if op in {">=", ">"}:
+            return f"{name}忠诚回稳"
+        if op in {"<=", "<"}:
+            return f"{name}忠诚未稳"
+        return f"{name}忠诚非通常取值"
+    label = _CHARACTER_CONDITION_FIELD_LABELS.get(field, field)
+    op_label = _CONDITION_OPERATOR_LABELS.get(op, op)
+    value_label = _humanize_condition_value(field, value)
+    return f"{name}{label}{op_label}{value_label}"
 
 _LEGACY_GATE_FIELD_LABELS = {
     "leverage": "影响力",

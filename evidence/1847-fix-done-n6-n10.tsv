@@ -1,0 +1,6 @@
+disposition	class	file	line_or_symbol	note
+FIX_DONE	N6	web_app.py	_humanize_condition	删除未匹配形式语言时对任意条件原文的词表 replace；自由原文原样返回
+FIX_DONE	N6	web_app.py	state projection resolve/fail_condition	仍调用 _humanize_condition；自由原文 byte-equal；形式语言仍解析
+FIX_DONE	N10	web/src/components/situation.tsx	groupIssues	删除 fail_condition 关键词 long/near 分类；单列表
+FIX_DONE	N10	ming_sim/issues.py	_recurring_funding_label_tokens	删除中文词义剥离；仅 structured stem
+FIX_DONE	N10	ming_sim/issues.py	_commitment_fiscal_create_duplicate_reason	reason 不再参与科目身份；保留账户+科目名去重事实

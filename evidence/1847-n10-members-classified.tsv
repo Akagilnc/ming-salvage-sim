@@ -1,0 +1,242 @@
+disposition	reason	lang	file	line	kind	ctx	snip
+KEEP_field_ref	条件字段读写引用；未见措辞分类	py	web_app.py	125	condition_field		# resolve/fail_condition 同时喂 extractor（需 input.factions/leverage 等技术 key）与展示给玩家。
+KEEP_transport	stage_text 字段引用/运输	py	web_app.py	1535	stage_text		"""stage_text"": row[""stage_text""],"
+KEEP_transport	stage_text 字段引用/运输	py	web_app.py	1552	stage_text		"""stage_text"": row[""stage_text""],"
+KEEP_identity_or_formal	形式语言 DSL 或自由原文原样投影调用	py	web_app.py	1556	condition_transport		"""resolve_condition"": _humanize_condition(row[""resolve_condition""] or """"),"
+KEEP_identity_or_formal	形式语言 DSL 或自由原文原样投影调用	py	web_app.py	1557	condition_transport		"""fail_condition"": _humanize_condition(row[""fail_condition""] or """"),"
+KEEP_transport	stage_text 字段引用/运输	ts	web/src/types.ts	195	stage_text		stage_text: string;
+KEEP_field_ref	条件字段读写引用；未见措辞分类	ts	web/src/types.ts	199	condition_field		resolve_condition: string;
+KEEP_field_ref	条件字段读写引用；未见措辞分类	ts	web/src/types.ts	200	condition_field		fail_condition: string;
+KEEP_transport	stage_text 字段引用/运输	ts	web/src/types.ts	246	stage_text		stage_text: string;
+KEEP_transport	stage_text 字段引用/运输	py	ming_sim/month_translate.py	166	stage_text		"'""target_roster"": [标靶人名], ""title"": 弹章题名, ""stage_text"": 案情正文}；'"
+KEEP_transport	stage_text 字段引用/运输	py	ming_sim/staged_commitment.py	179	stage_text		SELECT id, title, stages_json, origin_ref, origin_turn, stage_text
+KEEP_other	reason 引用；未见自由措辞决定准入	py	ming_sim/urge_lever.py	107	reason_ref		"""reason"": str(payload.get(""reason"") or """"),"
+KEEP_other	reason 引用；未见自由措辞决定准入	py	ming_sim/urge_lever.py	147	reason_ref		"""reason"": str(payload.get(""reason"") or """"),"
+KEEP_field_ref	条件字段读写引用；未见措辞分类	py	ming_sim/models.py	481	condition_field		"resolve_condition: str = """""
+KEEP_field_ref	条件字段读写引用；未见措辞分类	py	ming_sim/models.py	482	condition_field		"fail_condition: str = """""
+KEEP_transport	stage_text 字段引用/运输	py	ming_sim/models.py	505	stage_text		"stage_text: str = """"                                          # issue 阶段文案（空=用 summary）"
+KEEP_transport	reason 原文运输/落库；非准入分类	py	ming_sim/session.py	1626	reason_transport		"reason = str(item.get(""reason"") or """")"
+KEEP_other	reason 引用；未见自由措辞决定准入	py	ming_sim/session.py	1631	reason_ref		"reason = str(prior.get(""reason"") or reason)"
+KEEP_other	reason 引用；未见自由措辞决定准入	py	ming_sim/decree.py	682	reason_ref		"""rejection_reason"": str(verdict.get(""reason"") or """"),"
+KEEP_transport	reason 原文运输/落库；非准入分类	py	ming_sim/decree.py	1279	reason_transport		"reason=str(item.get(""reason"") or """") or f""拒收（{report_section} 未注明原因）"","
+KEEP_identity_or_formal	结构化 reason_code/拒收分类	py	ming_sim/flows.py	1161	reason_code		"category = str(move.get(""category"") or move.get(""reason"") or ""事项"")"
+KEEP_other	reason 引用；未见自由措辞决定准入	py	ming_sim/flows.py	1162	reason_ref		"reason = str(move.get(""reason"") or """")"
+KEEP_transport	reason 原文运输/落库；非准入分类	py	ming_sim/flows.py	2232	reason_transport		"reason = str(item.get(""reason"") or """").strip()"
+KEEP_identity_or_formal	官职 catalog 结构化排序/过滤	ts	web/src/components/ministerFilters.ts	4	office_catalog		if (/首辅/.test(office)) return 1;
+KEEP_identity_or_formal	官职 catalog 结构化排序/过滤	ts	web/src/components/ministerFilters.ts	5	office_catalog		if (/次辅/.test(office)) return 2;
+KEEP_identity_or_formal	官职 catalog 结构化排序/过滤	ts	web/src/components/ministerFilters.ts	6	office_catalog		if (/大学士/.test(office)) return 3;
+KEEP_identity_or_formal	官职 catalog 结构化排序/过滤	ts	web/src/components/ministerFilters.ts	7	office_catalog		if (/尚书/.test(office)) return 4;
+KEEP_identity_or_formal	官职 catalog 结构化排序/过滤	ts	web/src/components/ministerFilters.ts	8	office_catalog		if (/侍郎/.test(office)) return 5;
+KEEP_identity_or_formal	官职 catalog 结构化排序/过滤	ts	web/src/components/ministerFilters.ts	9	office_catalog		if (/都御史|巡抚|总督/.test(office)) return 6;
+KEEP_identity_or_formal	官职 catalog 结构化排序/过滤	ts	web/src/components/ministerFilters.ts	10	office_catalog		if (/郎中/.test(office)) return 8;
+KEEP_identity_or_formal	官职 catalog 结构化排序/过滤	ts	web/src/components/ministerFilters.ts	22	office_catalog		"&& !/前|罢|致仕/.test(m.office || """")  // 无实职不排朝班"
+KEEP_transport	stage_text 字段引用/运输	tsx	web/src/components/situation.tsx	122	stage_text		"<p className=""situation-tip-stage"">{issue.stage_text}</p>"
+KEEP_transport	stage_text 字段引用/运输	tsx	web/src/components/situation.tsx	158	stage_text		"<p className=""situation-tip-stage"">{issue.stage_text}</p>"
+KEEP_field_ref	条件字段读写引用；未见措辞分类	tsx	web/src/components/situation.tsx	161	condition_field		{issue.resolve_condition && <p>{issue.resolve_condition}</p>}
+FIX_DONE	删除 fail_condition 关键词呈现分类	tsx	web/src/components/situation.tsx	166	presentation_keyword_class		{issue.fail_condition && <p>{issue.fail_condition}</p>}
+KEEP_transport	stage_text 字段引用/运输	tsx	web/src/components/situation.tsx	203	stage_text		<p>{issue.stage_text}</p>
+KEEP_transport	stage_text 字段引用/运输	tsx	web/src/components/closedIssues.tsx	33	stage_text		"{it.stage_text ? <p className=""closed-card-stage"">{it.stage_text}</p> : null}"
+KEEP_transport	stage_text 字段引用/运输	py	ming_sim/knowledge.py	237	stage_text		"""stage_text"": issue[""stage_text""],"
+KEEP_field_ref	条件字段读写引用；未见措辞分类	py	ming_sim/knowledge.py	238	condition_field		"""resolve_condition"": issue[""resolve_condition""],"
+KEEP_field_ref	条件字段读写引用；未见措辞分类	py	ming_sim/knowledge.py	239	condition_field		"""fail_condition"": issue[""fail_condition""],"
+KEEP_transport	stage_text 字段引用/运输	py	ming_sim/knowledge.py	528	stage_text		"""""""#1281 prompt-only synthesis: seed-event audience sees issue stage_text."
+KEEP_transport	stage_text 字段引用/运输	py	ming_sim/knowledge.py	547	stage_text		"stage = _prose(issue[""stage_text""])"
+KEEP_transport	stage_text 字段引用/运输	py	ming_sim/knowledge.py	829	stage_text		"""stage_text"": issue[""stage_text""], ""faction_hint"": issue[""faction_hint""],"
+KEEP_field_ref	条件字段读写引用；未见措辞分类	py	ming_sim/knowledge.py	831	condition_field		"""resolve_condition"": issue[""resolve_condition""],"
+KEEP_field_ref	条件字段读写引用；未见措辞分类	py	ming_sim/knowledge.py	832	condition_field		"""fail_condition"": issue[""fail_condition""],"
+KEEP_identity_or_formal	封闭枚举 reason 契约值	py	ming_sim/covert_levy.py	129	reason_enum		"and x.get(""origin_ref"") == origin and x.get(""reason"") == ""摊派"""
+KEEP_identity_or_formal	封闭枚举 reason 契约值	py	ming_sim/covert_levy.py	211	reason_enum		"and item.get(""reason"") == ""摊派"""
+KEEP_transport	stage_text 字段引用/运输	py	ming_sim/materials.py	456	stage_text		"str(issue.get(""stage_text"") or """"),"
+KEEP_other	CJK 正则；非 fail_condition/reason 准入分类	py	ming_sim/materials.py	556	cjk_regex		# #1812 P6：title/stage_text 是自由正文，判空只用局部 stripped 副本。
+KEEP_transport	stage_text 字段引用/运输	py	ming_sim/materials.py	562	stage_text		"raw_situation = str(issue.get(""stage_text"") or """")"
+KEEP_transport	stage_text 字段引用/运输	py	ming_sim/materials.py	622	stage_text		"""situation"": str(issue.get(""stage_text"") or """") or ""见目录。"","
+KEEP_field_ref	条件字段读写引用；未见措辞分类	py	ming_sim/materials.py	623	condition_field		"""resolve_condition"": str(issue.get(""resolve_condition"") or """"),"
+KEEP_field_ref	条件字段读写引用；未见措辞分类	py	ming_sim/materials.py	624	condition_field		"""fail_condition"": str(issue.get(""fail_condition"") or """"),"
+KEEP_empty_or_transport	条件字段判空/运输/投影；非措辞分类	py	ming_sim/materials.py	971	condition_field		"f""办结条件：{item['resolve_condition']}"" if str(item[""resolve_condition""]).strip() else """","
+KEEP_empty_or_transport	条件字段判空/运输/投影；非措辞分类	py	ming_sim/materials.py	972	condition_field		"f""失败条件：{item['fail_condition']}"" if str(item[""fail_condition""]).strip() else """","
+KEEP_field_ref	条件字段读写引用；未见措辞分类	py	ming_sim/materials.py	1313	condition_field		resolve_condition / fail_condition；不给 effect 载荷，代码不代模型算软判。
+KEEP_field_ref	条件字段读写引用；未见措辞分类	py	ming_sim/materials.py	1334	condition_field		"""resolve_condition"": str(getattr(ev, ""resolve_condition"", """") or """"),"
+KEEP_field_ref	条件字段读写引用；未见措辞分类	py	ming_sim/materials.py	1335	condition_field		"""fail_condition"": str(getattr(ev, ""fail_condition"", """") or """"),"
+KEEP_field_ref	条件字段读写引用；未见措辞分类	py	ming_sim/materials.py	1578	condition_field		"(""可解条件"", item[""resolve_condition""]),"
+KEEP_field_ref	条件字段读写引用；未见措辞分类	py	ming_sim/materials.py	1579	condition_field		"(""崩坏条件"", item[""fail_condition""]),"
+KEEP_other	reason 引用；未见自由措辞决定准入	py	ming_sim/breach_plea.py	314	reason_ref		"if reason and not str(meta.get(""reason"") or """").strip():"
+KEEP_other	reason 引用；未见自由措辞决定准入	py	ming_sim/breach_plea.py	317	reason_ref		"prev = str(meta.get(""reason"") or """")"
+KEEP_other	reason 引用；未见自由措辞决定准入	py	ming_sim/breach_plea.py	445	reason_ref		"""reason"": str(meta.get(""reason"") or """"),"
+KEEP_transport	reason 原文运输/落库；非准入分类	py	ming_sim/breach_plea.py	569	reason_transport		"reason_r = str(item.get(""reason"") or ""捆带授权收回被拒"")"
+KEEP_other	reason 引用；未见自由措辞决定准入	py	ming_sim/breach_plea.py	736	reason_ref		"reason = str(meta.get(""reason"") or todo.get(""criterion_text"") or ""坚持撤诺"")"
+KEEP_identity_or_formal	封闭枚举 reason 契约值	py	ming_sim/breach_plea.py	1376	reason_enum		"if delta > 0 or str(it.get(""reason"") or """") in {""加拨"", ""续拨"", ""复供""}:"
+KEEP_other	reason 引用；未见自由措辞决定准入	py	ming_sim/strict_types.py	140	reason_ref		"or not isinstance(verdict.get(""reason""), str) or not verdict[""reason""].strip()"
+KEEP_other	reason 引用；未见自由措辞决定准入	py	ming_sim/month_chain.py	899	reason_ref		"reason=str(verdict.get(""reason"") or """"),"
+KEEP_other	reason 引用；未见自由措辞决定准入	py	ming_sim/month_chain.py	1559	reason_ref		"dossier.get(""promulgation_reason"") or latest.get(""reason"") or """""
+KEEP_other	宽扫命中；默认非自由措辞准入（见 reason）	py	ming_sim/office_rank.py	34	wide_hit		"text = re.sub(r""^(?:前|原任|原)"", """", text).strip()"
+KEEP_other	reason 引用；未见自由措辞决定准入	py	ming_sim/credit_events.py	336	reason_ref		"item.get(""reason""),"
+KEEP_identity_or_formal	结构化 reason_code/拒收分类	py	ming_sim/credit_events.py	567	reason_code		"it.get(""purpose"") or it.get(""reason"") or it.get(""category"") or """""
+KEEP_identity_or_formal	结构化 reason_code/拒收分类	py	ming_sim/credit_events.py	633	reason_code		"it.get(""purpose"") or it.get(""reason"") or it.get(""category"") or """""
+KEEP_other	reason 引用；未见自由措辞决定准入	py	ming_sim/credit_events.py	636	reason_ref		"return _narrative_context(purpose, it.get(""reason""), it.get(""note""))"
+KEEP_other	reason 引用；未见自由措辞决定准入	py	ming_sim/credit_events.py	755	reason_ref		"context=_narrative_context(it.get(""note""), it.get(""reason"")),"
+KEEP_transport	stage_text 字段引用/运输	py	ming_sim/action_materialize.py	1555	stage_text		# text = 旨意正文唯一真源（供 decree_text 与 initiative stage_text）
+KEEP_other	reason 引用；未见自由措辞决定准入	py	ming_sim/declaration_dispatch.py	1819	reason_ref		"reason = reco_raw.get(""reason"")"
+KEEP_transport	reason 原文运输/落库；非准入分类	py	ming_sim/declaration_dispatch.py	1942	reason_transport		"reason = str(item.get(""reason"") or """")"
+KEEP_other	reason 引用；未见自由措辞决定准入	py	ming_sim/declaration_dispatch.py	2450	reason_ref		"str(result.get(""reason"") or """"),"
+KEEP_transport	stage_text 字段引用/运输	py	ming_sim/simulation.py	22	stage_text		"""stage_text"": ""stage_text"", ""阶段"": ""stage_text"","
+KEEP_field_ref	条件字段读写引用；未见措辞分类	py	ming_sim/simulation.py	50	condition_field		"""resolve_condition"": ""resolve_condition"", ""解决条件"": ""resolve_condition"","
+KEEP_field_ref	条件字段读写引用；未见措辞分类	py	ming_sim/simulation.py	52	condition_field		"""fail_condition"": ""fail_condition"", ""失败条件"": ""fail_condition"","
+KEEP_field_ref	条件字段读写引用；未见措辞分类	py	ming_sim/issues.py	501	condition_field		"def commitment_condition_role(resolve_condition: object, commitment_kind: object = """") -> Dict[str, str]:"
+KEEP_field_ref	条件字段读写引用；未见措辞分类	py	ming_sim/issues.py	505	condition_field		"""condition_note"": ""承诺停止条件；不要按 resolve_condition 达标自动结案，自动完成属于 #136。"","
+KEEP_empty_or_transport	条件字段判空/运输/投影；非措辞分类	py	ming_sim/issues.py	507	condition_field		"text = str(resolve_condition or """").strip()"
+KEEP_field_ref	条件字段读写引用；未见措辞分类	py	ming_sim/issues.py	511	condition_field		"""condition_note"": ""人物承诺停止条件；不要按 resolve_condition 达标自动结案，自动完成属于 #136。"","
+KEEP_field_ref	条件字段读写引用；未见措辞分类	py	ming_sim/issues.py	516	condition_field		def _legacy_commitment_stop_gate(resolve_condition: object) -> Dict[str, str]:
+KEEP_empty_or_transport	条件字段判空/运输/投影；非措辞分类	py	ming_sim/issues.py	517	condition_field		"text = str(resolve_condition or """").strip()"
+KEEP_field_ref	条件字段读写引用；未见措辞分类	py	ming_sim/issues.py	534	condition_field		"return _legacy_commitment_stop_gate(row[""resolve_condition""] if ""resolve_condition"" in keys else """")"
+KEEP_transport	reason 原文运输/落库；非准入分类	py	ming_sim/issues.py	908	reason_transport		"""reason"": str(item.get(""reason"") or item.get(""原因"") or """"),"
+KEEP_transport	stage_text 字段引用/运输	py	ming_sim/issues.py	2667	stage_text		"print(f""  {row['bar_bad_meaning']:6s} {bar} {row['bar_good_meaning']:6s}  bar={int(row['bar_value']):3d}  {row['stage_text']}"")"
+KEEP_transport	stage_text 字段引用/运输	py	ming_sim/issues.py	2766	stage_text		stage_text=ev.stage_text or ev.summary,
+KEEP_field_ref	条件字段读写引用；未见措辞分类	py	ming_sim/issues.py	2775	condition_field		resolve_condition=ev.resolve_condition,
+KEEP_field_ref	条件字段读写引用；未见措辞分类	py	ming_sim/issues.py	2776	condition_field		fail_condition=ev.fail_condition,
+KEEP_transport	reason 原文运输/落库；非准入分类	py	ming_sim/issues.py	3075	reason_transport		"reason_text = str(item.get(""reason"") or item.get(""status_reason"") or """")"
+KEEP_transport	reason 原文运输/落库；非准入分类	py	ming_sim/issues.py	3136	reason_transport		"overlay(name, ""status_reason"", str(item.get(""reason"") or """"))"
+KEEP_transport	reason 原文运输/落库；非准入分类	py	ming_sim/issues.py	3166	reason_transport		"overlay(name, ""status_reason"", str(item.get(""reason"") or """") or ""诏书任命"")"
+KEEP_other	reason 引用；未见自由措辞决定准入	py	ming_sim/issues.py	3490	reason_ref		"reasons = ""；"".join(str(r.get(""reason"") or """") for r in strict)"
+KEEP_transport	reason 原文运输/落库；非准入分类	py	ming_sim/issues.py	3539	reason_transport		"reason=str(item.get(""reason"") or label),"
+KEEP_identity_or_formal	结构化 reason_code/拒收分类	py	ming_sim/issues.py	4219	reason_code		"f""{result.get('reason') or result.get('category') or ''}"""
+KEEP_other	reason 引用；未见自由措辞决定准入	py	ming_sim/issues.py	4322	reason_ref		"f""{result.get('name') or ''}{result.get('动作') or ''} {result.get('reason') or ''}"""
+KEEP_identity_or_formal	结构化 reason_code/拒收分类	py	ming_sim/issues.py	4330	reason_code		"f""{backlash_result.get('reason') or backlash_result.get('category') or ''}"""
+KEEP_identity_or_formal	结构化 reason_code/拒收分类	py	ming_sim/issues.py	4359	reason_code		"f""{result.get('reason') or result.get('category') or ''}"""
+KEEP_identity_or_formal	结构化 reason_code/拒收分类	py	ming_sim/issues.py	4391	reason_code		"f""{origin_error.get('reason') or origin_error.get('category') or ''}"""
+KEEP_transport	stage_text 字段引用/运输	py	ming_sim/issues.py	4776	stage_text		"stage_text = str(adv.get(""stage_text"") or """")"
+KEEP_transport	stage_text 字段引用/运输	py	ming_sim/issues.py	4798	stage_text		stage_text=stage_text,
+KEEP_transport	stage_text 字段引用/运输	py	ming_sim/issues.py	4858	stage_text		"""stage_text"": new_row[""stage_text""],"
+KEEP_transport	stage_text 字段引用/运输	py	ming_sim/issues.py	4890	stage_text		"stage_text = ni.get(""stage_text"")"
+KEEP_transport	stage_text 字段引用/运输	py	ming_sim/issues.py	4910	stage_text		elif not isinstance(stage_text, str):
+KEEP_transport	stage_text 字段引用/运输	py	ming_sim/issues.py	4911	stage_text		"reason = ""弹劾潮 stage_text 须为文本"""
+KEEP_transport	stage_text 字段引用/运输	py	ming_sim/issues.py	4935	stage_text		stage_text=stage_text,
+KEEP_field_ref	条件字段读写引用；未见措辞分类	py	ming_sim/issues.py	5144	condition_field		"legacy_resolve_text = _issue_condition_text(ni.get(""resolve_condition""))"
+KEEP_other	CJK 正则；非 fail_condition/reason 准入分类	py	ming_sim/issues.py	5210	cjk_regex		# 从 stage_text/title 的散文里正则抠年份（ADR 0142 / 御批 2026-09-30）。
+KEEP_transport	stage_text 字段引用/运输	py	ming_sim/issues.py	5244	stage_text		"str(ni.get(""stage_text"") or """"),"
+KEEP_field_ref	条件字段读写引用；未见措辞分类	py	ming_sim/issues.py	5298	condition_field		"resolve_condition = _issue_condition_text(ni.get(""resolve_condition""))"
+KEEP_empty_or_transport	条件字段判空/运输/投影；非措辞分类	py	ming_sim/issues.py	5300	condition_field		"if not resolve_condition.strip() and isinstance(ni.get(""stop_condition""), str):"
+KEEP_field_ref	条件字段读写引用；未见措辞分类	py	ming_sim/issues.py	5301	condition_field		resolve_condition = stop_condition
+KEEP_transport	stage_text 字段引用/运输	py	ming_sim/issues.py	5398	stage_text		"stage_text=str(ni.get(""stage_text"") or """"),"
+KEEP_field_ref	条件字段读写引用；未见措辞分类	py	ming_sim/issues.py	5412	condition_field		resolve_condition=resolve_condition,
+KEEP_field_ref	条件字段读写引用；未见措辞分类	py	ming_sim/issues.py	5413	condition_field		"fail_condition=_issue_condition_text(ni.get(""fail_condition"")),"
+KEEP_other	reason 引用；未见自由措辞决定准入	py	ming_sim/issues.py	5464	reason_ref		"reason = str(cl.get(""reason"") or """").strip().lower()"
+KEEP_field_ref	条件字段读写引用；未见措辞分类	py	ming_sim/issues.py	5523	condition_field		"or commitment_condition_role(chk[""resolve_condition""] or """").get(""condition_role"")"
+KEEP_transport	stage_text 字段引用/运输	py	ming_sim/issues.py	5630	stage_text		"stage_text=row[""stage_text""],"
+KEEP_identity_or_formal	结构化 reason_code/拒收分类	py	ming_sim/issues.py	6345	reason_code		"shaped = rejected(item, str(result.get(""reason"") or """"), category)"
+KEEP_other	reason 引用；未见自由措辞决定准入	py	ming_sim/issues.py	6379	reason_ref		"str(result.get(""reason"") or item.get(""reason"") or """")"
+KEEP_transport	reason 原文运输/落库；非准入分类	py	ming_sim/issues.py	6494	reason_transport		"""reason"": str(item.get(""reason"") or """"),"
+KEEP_transport	reason 原文运输/落库；非准入分类	py	ming_sim/issues.py	6534	reason_transport		"""reason"": str(item.get(""reason"") or """"),"
+KEEP_transport	reason 原文运输/落库；非准入分类	py	ming_sim/issues.py	6543	reason_transport		"reason_text = str(item.get(""reason"") or item.get(""status_reason"") or """")"
+KEEP_transport	reason 原文运输/落库；非准入分类	py	ming_sim/issues.py	6690	reason_transport		"reason=str(item.get(""reason"") or """"),"
+KEEP_transport	reason 原文运输/落库；非准入分类	py	ming_sim/issues.py	6769	reason_transport		"reason=str(item.get(""reason"") or """"),"
+KEEP_transport	reason 原文运输/落库；非准入分类	py	ming_sim/issues.py	6943	reason_transport		"""reason"": str(item.get(""reason"") or """"),"
+KEEP_transport	reason 原文运输/落库；非准入分类	py	ming_sim/issues.py	6979	reason_transport		"ch.status_reason = str(item.get(""reason"") or """")"
+KEEP_transport	reason 原文运输/落库；非准入分类	py	ming_sim/issues.py	6986	reason_transport		"(new_title, ""身名分"", str(item.get(""reason"") or """"), state.turn, name),"
+KEEP_transport	reason 原文运输/落库；非准入分类	py	ming_sim/issues.py	7312	reason_transport		"reason = str(item.get(""reason"") or """")"
+KEEP_other	reason 引用；未见自由措辞决定准入	py	ming_sim/issues.py	8047	reason_ref		"{leg_id: {""随军大炮"": leg_delta, ""reason"": raw_changes.get(""reason"")}},"
+KEEP_other	reason 引用；未见自由措辞决定准入	py	ming_sim/issues.py	8065	reason_ref		"""delta"": 0, ""applied"": False, ""reason"": raw_changes.get(""reason""),"
+KEEP_identity_or_formal	封闭枚举 reason 契约值	py	ming_sim/issues.py	8718	reason_enum		"if isinstance(item, dict) and str(item.get(""reason"") or """").strip() == ""回流"":"
+KEEP_identity_or_formal	封闭枚举 reason 契约值	py	ming_sim/issues.py	8725	reason_enum		"elif isinstance(item, dict) and item.get(""reason"") == ""加派"" and claim in surcharge_claims:"
+KEEP_other	reason 引用；未见自由措辞决定准入	py	ming_sim/issues.py	9167	reason_ref		"reason=str(remove.get(""reason"") or """"), turn=state.turn,"
+KEEP_other	reason 引用；未见自由措辞决定准入	py	ming_sim/issues.py	9180	reason_ref		"key=removed_key, reason=str(remove.get(""reason"") or """"),"
+KEEP_transport	reason 原文运输/落库；非准入分类	py	ming_sim/issues.py	9264	reason_transport		"note=str(create.get(""reason"") or """"),"
+KEEP_other	reason 引用；未见自由措辞决定准入	py	ming_sim/issues.py	9283	reason_ref		"reason=str(create.get(""reason"") or """"),"
+KEEP_other	reason 引用；未见自由措辞决定准入	py	ming_sim/issues.py	9374	reason_ref		"""reason"": str(change.get(""reason"") or """"),"
+KEEP_other	reason 引用；未见自由措辞决定准入	py	ming_sim/issues.py	9391	reason_ref		"origin_ref=origin_ref, reason=str(change.get(""reason"") or """"),"
+KEEP_other	reason 引用；未见自由措辞决定准入	py	ming_sim/issues.py	9398	reason_ref		"reason=str(change.get(""reason"") or """"),"
+KEEP_transport	stage_text 字段引用/运输	py	ming_sim/issues.py	9714	stage_text		"stage_text=row[""stage_text""],"
+KEEP_other	reason 引用；未见自由措辞决定准入	py	ming_sim/issues.py	9740	reason_ref		"tlog(f""[issue-entities] 容忍拒收：{_tr.get('reason')}"")"
+KEEP_other	reason 引用；未见自由措辞决定准入	py	ming_sim/issues.py	9761	reason_ref		"tlog(f""[issue-entities] 容忍拒收：{_tr.get('reason')}"")"
+KEEP_transport	stage_text 字段引用/运输	py	ming_sim/due_review.py	86	stage_text		"""SELECT id, title, origin_ref, stages_json, stage_text FROM issues WHERE id=?"","
+KEEP_transport	stage_text 字段引用/运输	py	ming_sim/due_review.py	95	stage_text		"""stage_text"": """","
+KEEP_transport	stage_text 字段引用/运输	py	ming_sim/due_review.py	102	stage_text		"""stage_text"": str(row[""stage_text""] or """"),"
+KEEP_transport	stage_text 字段引用/运输	py	ming_sim/due_review.py	164	stage_text		"""id"": 0, ""title"": """", ""origin_ref"": """", ""stages"": [], ""stage_text"": """","
+KEEP_transport	stage_text 字段引用/运输	py	ming_sim/settlement_payload.py	144	stage_text		"""content"": str(row[""stage_text""] or row[""title""] or """"),"
+KEEP_other	宽扫命中；默认非自由措辞准入（见 reason）	py	ming_sim/cli_backend.py	3874	wide_hit		"return bool(re.search(r""(命|令|着|遣|派|督办|查|暗查|密查|护|封存|截留|赈|再令|另令|须|务必|回奏|月内|日内)"", compact))"
+KEEP_other	宽扫命中；默认非自由措辞准入（见 reason）	py	ming_sim/cli_backend.py	3881	wide_hit		"if re.search(r""^(再|另|又|并|仍|复)(令|命|着|遣|派)"", later_compact):"
+KEEP_other	宽扫命中；默认非自由措辞准入（见 reason）	py	ming_sim/cli_backend.py	3883	wide_hit		"if re.search(r""(月内|日内|回奏|结案|期限)"", later_compact) and not re.search("
+KEEP_other	宽扫命中；默认非自由措辞准入（见 reason）	py	ming_sim/cli_backend.py	3892	wide_hit		"return bool(re.search(r""(机密|保密|不可泄露|不得泄露|不得外泄|不可外泄|勿泄|秘而不宣|勿使.*知晓|不得.*知晓)"", compact))"
+KEEP_other	宽扫命中；默认非自由措辞准入（见 reason）	py	ming_sim/cli_backend.py	3897	wide_hit		"compact = re.sub(r""^(再|另|又|并|仍|复)?(令|命|着|遣|派)"", """", compact)"
+KEEP_other	宽扫命中；默认非自由措辞准入（见 reason）	py	ming_sim/cli_backend.py	3959	wide_hit		"m_tags = re.match(r""^(?:标签|tag|tags)\s*[：:]\s*(.+)$"", line, flags=re.IGNORECASE)"
+KEEP_other	宽扫命中；默认非自由措辞准入（见 reason）	py	ming_sim/cli_backend.py	3966	wide_hit		"m_deadline = re.match(r""^(?:期限|限期|deadline)\s*[：:]\s*(.+)$"", line, flags=re.IGNORECASE)"
+KEEP_other	宽扫命中；默认非自由措辞准入（见 reason）	py	ming_sim/cli_backend.py	4292	wide_hit		"if re.search(r""(照办|按你意思|照你意思|前议|方才所奏|卿所奏|就按|就照)"", compact):"
+KEEP_other	宽扫命中；默认非自由措辞准入（见 reason）	py	ming_sim/cli_backend.py	4294	wide_hit		"has_primary_task = bool(re.search(r""(命|令|着|遣|派|督办|暗查|密查|查|护|封存|截留|赈|加操|操练)"", compact))"
+KEEP_other	宽扫命中；默认非自由措辞准入（见 reason）	py	ming_sim/cli_backend.py	4297	wide_hit		"or re.search(r""(月内|日内|回奏|结案|限期|期限)"", compact)"
+KEEP_field_ref	条件字段读写引用；未见措辞分类	py	ming_sim/content.py	322	condition_field		"resolve_condition=str(item.get(""resolve_condition"") or """"),"
+KEEP_field_ref	条件字段读写引用；未见措辞分类	py	ming_sim/content.py	323	condition_field		"fail_condition=str(item.get(""fail_condition"") or """"),"
+KEEP_transport	stage_text 字段引用/运输	py	ming_sim/content.py	344	stage_text		"stage_text=str(item.get(""stage_text"") or """"),"
+KEEP_other	宽扫命中；默认非自由措辞准入（见 reason）	py	ming_sim/db.py	270	wide_hit		"target = re.sub(r""(?:诸官|官员|诸司|诸人|上下|众人)$"", """", target).strip()"
+KEEP_field_ref	条件字段读写引用；未见措辞分类	py	ming_sim/db.py	467	condition_field		def _is_commitment_stop_condition(resolve_condition: object) -> bool:
+KEEP_empty_or_transport	条件字段判空/运输/投影；非措辞分类	py	ming_sim/db.py	468	condition_field		"return bool(_COMMITMENT_STOP_CONDITION_RE.fullmatch(str(resolve_condition or """").strip()))"
+KEEP_transport	stage_text 字段引用/运输	py	ming_sim/db.py	1963	stage_text		stage_text TEXT NOT NULL DEFAULT '',
+KEEP_field_ref	条件字段读写引用；未见措辞分类	py	ming_sim/db.py	1977	condition_field		resolve_condition TEXT NOT NULL DEFAULT '',
+KEEP_field_ref	条件字段读写引用；未见措辞分类	py	ming_sim/db.py	1978	condition_field		fail_condition TEXT NOT NULL DEFAULT '',
+KEEP_transport	stage_text 字段引用/运输	py	ming_sim/db.py	2021	stage_text		from_stage_text TEXT NOT NULL DEFAULT '',
+KEEP_transport	stage_text 字段引用/运输	py	ming_sim/db.py	2022	stage_text		to_stage_text TEXT NOT NULL DEFAULT '',
+KEEP_field_ref	条件字段读写引用；未见措辞分类	py	ming_sim/db.py	2340	condition_field		"self.ensure_column(""issues"", ""resolve_condition"", ""TEXT NOT NULL DEFAULT ''"")"
+KEEP_field_ref	条件字段读写引用；未见措辞分类	py	ming_sim/db.py	2341	condition_field		"self.ensure_column(""issues"", ""fail_condition"", ""TEXT NOT NULL DEFAULT ''"")"
+KEEP_transport	stage_text 字段引用/运输	py	ming_sim/db.py	2438	stage_text		"""SELECT origin_turn, 0, 0, 'assignment', title, stage_text, """
+KEEP_other	宽扫命中；默认非自由措辞准入（见 reason）	py	ming_sim/db.py	2771	wide_hit		"m = re.search(r""罢居([^，,]+)"", office)"
+KEEP_other	宽扫命中；默认非自由措辞准入（见 reason）	py	ming_sim/db.py	2815	wide_hit		"mm = re.search(kw + r""([一-龥]{2,4})"", office)"
+KEEP_transport	stage_text 字段引用/运输	py	ming_sim/db.py	5699	stage_text		stage_text=ev.stage_text or ev.summary,
+KEEP_field_ref	条件字段读写引用；未见措辞分类	py	ming_sim/db.py	5708	condition_field		resolve_condition=ev.resolve_condition,
+KEEP_field_ref	条件字段读写引用；未见措辞分类	py	ming_sim/db.py	5709	condition_field		fail_condition=ev.fail_condition,
+KEEP_other	reason 引用；未见自由措辞决定准入	py	ming_sim/db.py	6186	reason_ref		"reason = str(raw.get(""reason"") or raw.get(""原因"") or """")"
+KEEP_other	reason 引用；未见自由措辞决定准入	py	ming_sim/db.py	7372	reason_ref		"reason = str(raw_changes.get(""reason"") or raw_changes.get(""原因"") or event.title)"
+KEEP_other	reason 引用；未见自由措辞决定准入	py	ming_sim/db.py	7967	reason_ref		"reason = str(raw_changes.get(""reason"") or raw_changes.get(""原因"") or event.title)"
+KEEP_transport	reason 原文运输/落库；非准入分类	py	ming_sim/db.py	8452	reason_transport		"reason = str(item.get(""reason"") or item.get(""status"") or ""扩军"")"
+KEEP_transport	reason 原文运输/落库；非准入分类	py	ming_sim/db.py	8645	reason_transport		"reason = str(item.get(""reason"") or item.get(""status"") or ""新立军队"")"
+KEEP_other	reason 引用；未见自由措辞决定准入	py	ming_sim/db.py	8780	reason_ref		"reason = str(raw_changes.get(""reason"") or event.title)"
+KEEP_transport	stage_text 字段引用/运输	py	ming_sim/db.py	13287	stage_text		"stage_text="""",  # 玩家文案留给叙事 LLM 步"
+KEEP_transport	stage_text 字段引用/运输	py	ming_sim/db.py	13303	stage_text		"stage_text="""","
+KEEP_other	reason 引用；未见自由措辞决定准入	py	ming_sim/db.py	13439	reason_ref		"""reason"": str(payload.get(""reason"") or row[""decree_text""]),"
+KEEP_transport	reason 原文运输/落库；非准入分类	py	ming_sim/db.py	13453	reason_transport		"raise ValueError(str(item.get(""reason"") or ""拨饷落账被拒""))"
+KEEP_other	reason 引用；未见自由措辞决定准入	py	ming_sim/db.py	13476	reason_ref		"note=str(payload.get(""reason"") or text or display),"
+KEEP_other	reason 引用；未见自由措辞决定准入	py	ming_sim/db.py	14167	reason_ref		"str(canonical_payload.get(""reason"") or text),"
+KEEP_other	reason 引用；未见自由措辞决定准入	py	ming_sim/db.py	14437	reason_ref		"(item.get(""kind""), item.get(""reason"")) == event_key"
+KEEP_other	reason 引用；未见自由措辞决定准入	py	ming_sim/db.py	15452	reason_ref		"str(payload.get(""reason"") or row[""decree_text""]),"
+KEEP_other	reason 引用；未见自由措辞决定准入	py	ming_sim/db.py	15543	reason_ref		"reason = str(results[0].get(""reason"") or """")"
+KEEP_identity_or_formal	结构化 reason_code/拒收分类	py	ming_sim/db.py	16115	reason_code		"fail_reason = str(rejected[0].get(""reason"") or """")"
+KEEP_other	reason 引用；未见自由措辞决定准入	py	ming_sim/db.py	16201	reason_ref		"fail_reason = str(results[0].get(""reason"") or """")"
+KEEP_transport	reason 原文运输/落库；非准入分类	py	ming_sim/db.py	16253	reason_transport		"reason = str(item.get(""reason"") or ""授予被拒"")"
+KEEP_transport	reason 原文运输/落库；非准入分类	py	ming_sim/db.py	16300	reason_transport		"reason = str(item.get(""reason"") or ""收权被拒"")"
+KEEP_transport	stage_text 字段引用/运输	py	ming_sim/db.py	16520	stage_text		title, stage_text = self._initiative_title_and_body(payload, row)
+KEEP_transport	stage_text 字段引用/运输	py	ming_sim/db.py	16550	stage_text		"""stage_text"": stage_text,"
+KEEP_transport	reason 原文运输/落库；非准入分类	py	ming_sim/db.py	16562	reason_transport		"reason = str(item.get(""reason"") or ""下议 initiative 被拒"")"
+KEEP_transport	stage_text 字段引用/运输	py	ming_sim/db.py	16590	stage_text		title, stage_text = self._initiative_title_and_body(payload, row)
+KEEP_transport	stage_text 字段引用/运输	py	ming_sim/db.py	16613	stage_text		"""stage_text"": stage_text,"
+KEEP_other	CJK 正则；非 fail_condition/reason 准入分类	py	ming_sim/db.py	16642	cjk_regex		# 引擎不再从已归一正文（stage_text）里正则抠年份（ADR 0142 / 御批 2026-09-30）。
+KEEP_transport	reason 原文运输/落库；非准入分类	py	ming_sim/db.py	16658	reason_transport		"reason = str(item.get(""reason"") or ""交办 initiative 被拒"")"
+KEEP_other	reason 引用；未见自由措辞决定准入	py	ming_sim/db.py	16756	reason_ref		"fail_reason = str(results[0].get(""reason"") or """")"
+KEEP_other	reason 引用；未见自由措辞决定准入	py	ming_sim/db.py	16964	reason_ref		"reason=str(verdict.get(""reason"") or """"),"
+KEEP_other	reason 引用；未见自由措辞决定准入	py	ming_sim/db.py	18133	reason_ref		"int(oid), state, deadline_months=deadline, reason=str(payload.get(""reason"") or """"))"
+KEEP_other	reason 引用；未见自由措辞决定准入	py	ming_sim/db.py	18186	reason_ref		"reason=str(payload.get(""reason"") or """"),"
+KEEP_other	reason 引用；未见自由措辞决定准入	py	ming_sim/db.py	18198	reason_ref		"""reason"": str(result.get(""reason"") or """"),"
+KEEP_other	reason 引用；未见自由措辞决定准入	py	ming_sim/db.py	18479	reason_ref		"reason = str(payload.get(""reason"") or ""奉旨任免"")"
+KEEP_other	reason 引用；未见自由措辞决定准入	py	ming_sim/db.py	18514	reason_ref		"recommendation_reason = str(payload.get(""reason"") or """")"
+KEEP_transport	stage_text 字段引用/运输	py	ming_sim/db.py	19931	stage_text		"stage_text: str = """","
+KEEP_field_ref	条件字段读写引用；未见措辞分类	py	ming_sim/db.py	19943	condition_field		"resolve_condition: str = """","
+KEEP_field_ref	条件字段读写引用；未见措辞分类	py	ming_sim/db.py	19944	condition_field		"fail_condition: str = """","
+KEEP_transport	stage_text 字段引用/运输	py	ming_sim/db.py	19976	stage_text		phase, stage_text, status, severity, region_hint, faction_hint,
+KEEP_field_ref	条件字段读写引用；未见措辞分类	py	ming_sim/db.py	19978	condition_field		effect_on_resolve, effect_on_fail, resolve_condition, fail_condition,
+KEEP_transport	stage_text 字段引用/运输	py	ming_sim/db.py	19986	stage_text		phase, sanitize_sqlite_text(stage_text), severity,
+KEEP_field_ref	条件字段读写引用；未见措辞分类	py	ming_sim/db.py	19997	condition_field		sanitize_sqlite_text(resolve_condition), sanitize_sqlite_text(fail_condition),
+KEEP_transport	stage_text 字段引用/运输	py	ming_sim/db.py	20018	stage_text		stage_text,
+KEEP_transport	stage_text 字段引用/运输	py	ming_sim/db.py	20070	stage_text		"stage_text: str = """","
+KEEP_transport	stage_text 字段引用/运输	py	ming_sim/db.py	20089	stage_text		"from_stage_text = row[""stage_text""]"
+KEEP_transport	stage_text 字段引用/运输	py	ming_sim/db.py	20090	stage_text		to_stage_text = stage_text or from_stage_text
+KEEP_field_ref	条件字段读写引用；未见措辞分类	py	ming_sim/db.py	20098	condition_field		"or _is_commitment_stop_condition(row[""resolve_condition""])"
+KEEP_transport	stage_text 字段引用/运输	py	ming_sim/db.py	20111	stage_text		UPDATE issues SET bar_value=?, phase=?, stage_text=?, status=?, inertia=?,
+KEEP_transport	stage_text 字段引用/运输	py	ming_sim/db.py	20115	stage_text		(to_value, new_phase, sanitize_sqlite_text(to_stage_text), new_status, new_inertia, closed_turn, state.turn, issue_id),
+KEEP_transport	stage_text 字段引用/运输	py	ming_sim/db.py	20122	stage_text		from_stage_text, to_stage_text, narrative, metric_delta
+KEEP_transport	stage_text 字段引用/运输	py	ming_sim/db.py	20129	stage_text		sanitize_sqlite_text(from_stage_text), sanitize_sqlite_text(to_stage_text),
+KEEP_transport	stage_text 字段引用/运输	py	ming_sim/db.py	20162	stage_text		"from_stage_text = row[""stage_text""]"
+KEEP_transport	stage_text 字段引用/运输	py	ming_sim/db.py	20163	stage_text		to_stage_text = narrative or from_stage_text
+KEEP_transport	stage_text 字段引用/运输	py	ming_sim/db.py	20167	stage_text		UPDATE issues SET bar_value=?, phase=?, stage_text=?, status=?,
+KEEP_transport	stage_text 字段引用/运输	py	ming_sim/db.py	20171	stage_text		(to_value, new_phase, sanitize_sqlite_text(to_stage_text), reason, state.turn, state.turn, issue_id),
+KEEP_transport	stage_text 字段引用/运输	py	ming_sim/db.py	20178	stage_text		from_stage_text, to_stage_text, narrative, metric_delta
+KEEP_transport	stage_text 字段引用/运输	py	ming_sim/db.py	20184	stage_text		sanitize_sqlite_text(from_stage_text), sanitize_sqlite_text(to_stage_text),
+KEEP_transport	stage_text 字段引用/运输	py	ming_sim/db.py	20826	stage_text		"body_expr = selected.get(""body"") or selected.get(""stage_text"") or selected.get(""content"") or selected.get(""decree_text"") or ""''"""
+FIX_DONE	删除 situation fail_condition 关键词 long/near	tsx	web/src/components/situation.tsx	7	groupIssues	groupIssues	export function groupIssues(issues: Issue[])
+FIX_DONE	reason 移出科目身份 tokens + 删词义剥离	py	ming_sim/issues.py	811	label_tokens	_recurring_funding_label_tokens	def _recurring_funding_label_tokens(*values: object) -> set[str]:
+FIX_DONE	去重身份=account+structured stem，不含 reason	py	ming_sim/issues.py	826	fiscal_dedup	_commitment_fiscal_create_duplicate_reason	def _commitment_fiscal_create_duplicate_reason(
