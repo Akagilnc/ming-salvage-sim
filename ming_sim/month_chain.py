@@ -679,15 +679,11 @@ def _abort_month_call(
     decree_text: str,
     source: Provenance,
     step: str,
-    exc: Optional[BaseException] = None,
-    kind: str = "",
+    exc: BaseException,
+    kind: str,
     decree_ref: str = "",
-    attached_pack_path: str = "",
 ) -> None:
-    """停住当前过月 run：持久化相位内 call_failure，再 SettlementAbort。
-
-    现场异常才写新的诊断包。没有现场异常时只附已有包路径，不另造类别。
-    """
+    """停住当前过月 run：持久化相位内 call_failure + 错误包，再 SettlementAbort。"""
     from ming_sim.error_pack import settlement_abort_message, write_error_pack
     from ming_sim.exceptions import SettlementAbort
 
@@ -706,28 +702,22 @@ def _abort_month_call(
         stops = int(committed.get("translate_exhaust_stops") or 0) + 1
         committed["translate_exhaust_stops"] = stops
         escape_armed = stops >= 2
-    original = ""
-    if exc is not None:
-        original = str(getattr(exc, "message", None) or exc)
+    original = str(getattr(exc, "message", None) or exc)
     pack_path = ""
     pack_exc: Optional[BaseException] = None
-    if exc is not None:
-        try:
-            pack_path = write_error_pack(
-                db, state, exc=exc, extracted=None, resolve_ctx=None,
-            )
-        except Exception as caught_pack:
-            # 写包失败不得顶替原故障，也不得挡住已提交相位上的失败标记。
-            pack_exc = caught_pack
-    elif attached_pack_path:
-        pack_path = attached_pack_path
+    try:
+        pack_path = write_error_pack(
+            db, state, exc=exc, extracted=None, resolve_ctx=None,
+        )
+    except Exception as caught_pack:
+        # 写包失败不得顶替原故障，也不得挡住已提交相位上的失败标记。
+        pack_exc = caught_pack
     failure: Dict[str, Any] = {
+        "kind": kind,
         "step": step,
         "message": original,
         "escape_armed": escape_armed,
     }
-    if kind:
-        failure["kind"] = kind
     if pack_path:
         failure["error_pack_path"] = pack_path
     if decree_ref:
@@ -743,15 +733,12 @@ def _abort_month_call(
     abort_message = (
         settlement_abort_message(pack_path) if kind == "code_exception" else original
     )
-    abort = SettlementAbort(
+    raise SettlementAbort(
         abort_message,
         turn=turn,
         stage=step,
-        error_pack_path=pack_path or None,
-    )
-    if exc is not None:
-        raise abort from exc
-    raise abort
+        error_pack_path=pack_path,
+    ) from exc
 
 
 def _guard_month_call(

@@ -71,7 +71,7 @@ export function ChatModal({
   input: string;
   busy: string;
   error: string;
-  /** #505：系统层回话重试（崩溃后问话保留）。#1853 增夜里预推未成相位。 */
+  /** #505：系统层回话重试（崩溃后问话保留）。 */
   replyRetries?: Pick<ReplyRetry, "chat_turn_id" | "question" | "error_pack_path" | "recovery_phase">[];
   translationRetries?: TranslationRetry[];
   retryReadFailure?: RetryReadFailure | null;

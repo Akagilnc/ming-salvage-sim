@@ -10107,7 +10107,6 @@ class GameDB:
             strategy = str(item["rollback_strategy"])
             target_id = str(item["target_id"])
             if strategy == "delete_inserted_row":
-                forecast_source = None
                 if table == "pending_actions":
                     # #1890：只在**撤回**上下文里，本轮首次落下的交办改由统一
                     # 身份作废（voided 墓碑），不在这条删行路上再写一遍同一事实。
@@ -17632,9 +17631,9 @@ class GameDB:
         from ming_sim.declaration_dispatch import (
             discard_staged_declaration, pending_action_decree_ref,
         )
-
-        ref = pending_action_decree_ref(int(candidate_id), int(version))
-        return discard_staged_declaration(self, ref)
+        return discard_staged_declaration(
+            self, pending_action_decree_ref(int(candidate_id), int(version)),
+        )
 
     @staticmethod
     def _merge_underscore_control_keys(

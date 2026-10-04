@@ -2275,15 +2275,13 @@ class WebGame:
                 self.session.close_night_after_chat_if_needed(
                     "court_break", write_gate=self._runtime_write_gate(),
                 )
-                with self._runtime_write_gate():
-                    self.db.clear_post_reply_failure(chat_turn_id)
             else:
                 self._trail_highlight_judge_after_reply(
                     str(target["answer"]), message_id=int(target["minister_message_id"]),
                     chat_turn_id=chat_turn_id,
                 )
-                with self._runtime_write_gate():
-                    self.db.clear_post_reply_failure(chat_turn_id)
+            with self._runtime_write_gate():
+                self.db.clear_post_reply_failure(chat_turn_id)
         except BaseException:
             with self._runtime_write_gate():
                 self.db.release_post_reply_recovery(chat_turn_id, phase)

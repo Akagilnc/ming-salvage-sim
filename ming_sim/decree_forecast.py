@@ -60,11 +60,6 @@ def _call_exhausted(exc: BaseException) -> bool:
     """夜里预算用尽：typed 不可用，或提供方 HTTP 429。不读错误散文。"""
     if isinstance(exc, LLMUnavailable):
         return True
-    return _is_provider_rate_limit(exc)
-
-
-def _is_provider_rate_limit(exc: BaseException) -> bool:
-    """只认提供方状态码 429。夜里 429 仍算未预成，不记失败相位。"""
     status = getattr(exc, "status_code", None)
     try:
         return int(status) == 429
