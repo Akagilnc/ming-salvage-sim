@@ -164,8 +164,12 @@ MING_SIM_PI_BIN=/usr/bin/false \
 ## Commit 与 git 状态
 
 施工前 HEAD：`ae4a2a3e6c60afd8a09f03252e692632d8c6bee6`  
-本回执与清退代码同批提交；精确 hash 见提交后下一节补录（禁止 amend，故分两步写入）。  
-diffstat（staged 前实测）：`12 files changed, 37 insertions(+), 1592 deletions(-)`（另含本 evidence 文件）。
+清退 commit：`b85cb3f16536aae7ff172fb22a848d12c717771d`  
+标题：`ak-roles: fix(#1843) retire obsolete settlement/simulator support tree (F2)`  
+该 commit diffstat：`13 files changed, 212 insertions(+), 1592 deletions(-)`（含本回执初版）。  
+本文件补录 stamp 为后续独立 commit（禁止 amend）。
+
+补录时 `git status --porcelain=v1 --untracked-files=all`：仅本 evidence 文件修改。
 
 ## 剩余范围
 
