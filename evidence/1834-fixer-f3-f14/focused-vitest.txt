@@ -1,13 +1,9 @@
 
-> ming-salvage-web@0.1.0 test
-> vitest run --environment jsdom src/staleGuard.test.tsx src/components/modals.test.tsx src/components/situation.test.tsx src/ministerScrollLens.test.ts src/components/decisionModal.test.tsx src/components/drawers.test.tsx
-
-
  RUN  v4.1.9 /Users/akagilnc/WorkSpace/Ming_LLM-1834-w5/web
 
 
  Test Files  6 passed (6)
       Tests  135 passed (135)
-   Start at  03:46:29
-   Duration  1.56s (transform 592ms, setup 0ms, import 1.18s, tests 887ms, environment 4.27s)
+   Start at  03:54:25
+   Duration  1.18s (transform 693ms, setup 0ms, import 1.13s, tests 667ms, environment 3.10s)
 

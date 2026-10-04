@@ -1,0 +1,21 @@
+{
+  "total": 1388,
+  "unread_remaining": 0,
+  "decisions": {
+    "KEEP": 1388
+  },
+  "classes": {
+    "T_TRANSPARENT": 695,
+    "T_DET_INPUT": 90,
+    "T_STRUCT": 579,
+    "T_NEG_FIXTURE": 24
+  },
+  "files_read": 152,
+  "code_edits_this_round": 0,
+  "delete_this_round": 0,
+  "note": "Illegal free-prose locks and empty shells already handled in prior commits on this branch (ea2a01556 restore transparent; earlier FIX deletes retained). This round completed unread KEEP_NEEDS semantic dispose; all 1388 KEEP under shared criteria after source reads.",
+  "f14": {
+    "live_labels": "CALENDAR_ADVANCED_*",
+    "historical_stdout_unrewritten": "evidence/1834-fixer-f9-f12-f3/probe*.txt retains CLOSED_*"
+  }
+}
