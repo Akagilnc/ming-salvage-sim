@@ -441,7 +441,7 @@ def _player_army_situation(row, monthly_pay: object) -> Dict[str, str]:
     mutiny_tier 六档：哗变/鼓噪/不满/一般/优秀/死忠。
     derive 非「正常」时直接复用其档名；仅「正常」再按 L 切一般/优秀/死忠。
     """
-    from ming_sim.flows import derive_army_mutiny_state
+    from ming_sim.army_pay import derive_army_mutiny_state
 
     derived = derive_army_mutiny_state(row)
     if derived == "正常":
@@ -4989,7 +4989,7 @@ class GameDB:
         self.assert_army_pay_source_container_conservation()
 
     def _army_pay_source_rows_for_region(self, region_id: str) -> List[Dict[str, float | str]]:
-        from ming_sim.flows import army_needed
+        from ming_sim.army_pay import army_needed
 
         out: List[Dict[str, float | str]] = []
         rows = self.conn.execute(
@@ -5128,7 +5128,7 @@ class GameDB:
     ) -> None:
         if not pay_rows:
             return
-        from ming_sim.flows import army_pay_morale_delta
+        from ming_sim.army_pay import army_pay_morale_delta
 
         breakdown = result.breakdown or {}
         new_debt = float((breakdown.get("NewDebt") or {}).get("军饷欠", 0) or 0)
@@ -7733,7 +7733,7 @@ class GameDB:
     def _army_pay(self, row) -> int:
         """#173 显示口径：军「月饷」呈现统一取引擎实扣应发 army_needed（替退役 maintenance_per_turn）。
         懒 import 避免 db↔flows 顶层循环依赖（同 compute_budget_lines 先例）。非明军 → 0。"""
-        from ming_sim.flows import army_needed
+        from ming_sim.army_pay import army_needed
         return army_needed(row)
 
     def army_rows(self, limit: int | None = None, danger_order: bool = False) -> List[sqlite3.Row]:

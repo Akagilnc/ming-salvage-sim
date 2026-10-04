@@ -1,6 +1,6 @@
 """#1274 QA A-新3：409/超时 UX 族（#1301/#1306/#1312/#1319(a)/#1322）。
 
-刀口只锁玩家面文案、相位分文、authority 投影与 resolve 锁前预检；
+刀口锁状态码、结构化 detail、相位分叉与 resolve 锁前预检；
 ADR 0036/0006 机制零动。
 """
 from __future__ import annotations
@@ -21,56 +21,69 @@ from ming_sim.models import FRONT_HALF_DONE_PHASES, TurnPhase
 
 # ── #1301 玩家面 409 去裸 night_id ──────────────────────────────────────────
 
-def test_closing_night_rejects_chat_before_any_write(game):
-    from tests.test_chat_stream_failpaths_393 import _base_runtime
+class _ClosingNightDB:
+    def __init__(self, night_id: int = 7):
+        self._night = {
+            "id": night_id,
+            "status": an.NIGHT_STATUS_CLOSING,
+            "close_commit_cursor": 0,
+        }
 
-    db, state, _content = game
-    night = an.open_night(db, state)
-    db.conn.execute(
-        "UPDATE audience_nights SET status=? WHERE id=?",
-        (an.NIGHT_STATUS_CLOSING, night["id"]),
-    )
-    db.conn.commit()
-    before = an.get_night(db, night["id"])
-    counts = {
-        table: db.conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
-        for table in ("chat_turns", "chat_messages")
+    def conn_execute(self, *_a, **_k):
+        raise AssertionError("assert_night_accepts_player_input must not hit SQL here")
+
+
+def test_closing_player_message_is_diegetic_without_bare_night_id(monkeypatch):
+    """#1301：玩家面文案不得拼接裸 night_id；结构化 detail 仍带 night_id。"""
+    night = {
+        "id": 42,
+        "status": an.NIGHT_STATUS_CLOSING,
+        "close_commit_cursor": 0,
     }
-    runtime, _minister = _base_runtime(db)
-    events = list(runtime.chat_stream(an.SCENE_CHAT_SPEAKER, "辽东军情如何？"))
-    assert [(event["type"], event.get("code")) for event in events] == [
-        ("error", "night_closing"),
-    ]
-    assert an.get_night(db, night["id"]) == before
-    for table, count in counts.items():
-        assert db.conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] == count
+    monkeypatch.setattr(an, "get_open_night", lambda _db: night)
+    monkeypatch.setattr(an, "get_night", lambda _db, nid: night if int(nid) == 42 else None)
+
+    with pytest.raises(an.AudienceNightError) as ei:
+        an.assert_night_accepts_player_input(object(), what="召对")
+
+    msg = str(ei.value)
+    assert msg
+    assert ei.value.code == "night_closing"
+    assert ei.value.detail == {"night_id": 42, "what": "召对"}
+
+    with pytest.raises(an.AudienceNightError) as other:
+        an.assert_night_accepts_player_input(object(), what="阅折")
+    assert other.value.code == "night_closing"
+    assert other.value.detail == {"night_id": 42, "what": "阅折"}
 
 
-def test_favorite_write_rejected_in_front_half_done_phases(game, monkeypatch):
-    db, state, _content = game
-    name = "毕自严"
-    live = SimpleNamespace(
-        state=state, db=db, favorites={name},
+# ── #1306 FRONT_HALF_DONE 分相位文案 ────────────────────────────────────────
+
+def _front_half_detail(phase: str) -> str:
+    game = SimpleNamespace(
+        state=SimpleNamespace(turn_phase=phase),
         _write_gate=ClassifiedWriteGate(),
     )
-    monkeypatch.setattr(web_app, "get_game", lambda: live)
-    original_phase = state.turn_phase
-    state.turn_phase = TurnPhase.SUMMONING.value
-    result = asyncio.run(web_app.api_remove_favorite(name))
-    assert result == {"favorites": []}
-    assert json.loads(db.kv_get("favorites")) == []
-    live.favorites.add(name)
-    db.kv_set("favorites", json.dumps([name]))
-    try:
-        for phase in FRONT_HALF_DONE_PHASES:
-            state.turn_phase = phase
-            with pytest.raises(HTTPException) as ei:
-                asyncio.run(web_app.api_remove_favorite(name))
-            assert ei.value.status_code == 409
-            assert live.favorites == {name}
-            assert json.loads(db.kv_get("favorites")) == [name]
-    finally:
-        state.turn_phase = original_phase
+    with pytest.raises(HTTPException) as ei:
+        with web_app._serialized_web_write(game):
+            pass
+    assert ei.value.status_code == 409
+    detail = str(ei.value.detail)
+    assert detail
+    return detail
+
+
+def test_serialized_web_write_phase_messages_cover_front_half_done():
+    """#1306 全 FRONT_HALF_DONE 相位均 409，详情只按 awaiting / 其余两支分叉。"""
+    awaiting = _front_half_detail(TurnPhase.AWAITING_DECISION.value)
+    other = _front_half_detail(TurnPhase.SETTLING.value)
+    assert awaiting != other
+    for phase in FRONT_HALF_DONE_PHASES:
+        detail = _front_half_detail(phase)
+        if phase == TurnPhase.AWAITING_DECISION.value:
+            assert detail == awaiting
+        else:
+            assert detail == other
 
 
 # ── #1319(a) authority 停用 notes 别名 ──────────────────────────────────────
@@ -179,6 +192,7 @@ def test_resolve_decisions_stream_phase_precheck_before_lock(monkeypatch):
     assert events, "expected at least one SSE event"
     event, payload = events[-1]
     assert event == "error"
+    assert isinstance(payload, dict) and payload.get("message")
     assert game.session._submit_called is False
     assert game.actions == []
 

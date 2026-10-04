@@ -4,9 +4,11 @@ import pytest
 
 from tests.test_due_review_621 import _settle_empty_month as _player_month
 from ming_sim.issues import (
-    apply_issue_inertia_and_ongoing,
     apply_score_extraction,
+    commitment_progress_payload,
+    show_active_issues,
 )
+from ming_sim.situation_drift import apply_situation_monthly_drift
 
 
 def _promulgated_commitment_origin(db, state, token: str) -> str:
@@ -24,7 +26,7 @@ def _army_arrears(db, army_id: str) -> int:
     return int(row["arrears"])
 
 
-def _seed_central_army_arrears(db, arrears_by_army_id: dict[str, int]) -> None:
+def _seed_central_army_arrears(db, arrears_by_army_id: dict[str, float]) -> None:
     for army_id, arrears in arrears_by_army_id.items():
         db.conn.execute(
             """
@@ -281,24 +283,22 @@ def test_commitment_ongoing_malformed_entity_payloads_are_rejected_without_crash
 
     assert _faction_satisfaction(db, "军队") == 52
     rows = db.conn.execute(
-        "SELECT category, item_json FROM rejection_reports WHERE category=? ORDER BY id",
-        ("invalid_shape",),
+        "SELECT category, reason FROM rejection_reports WHERE category = 'invalid_shape' "
+        "ORDER BY id"
     ).fetchall()
-    found = set()
-    for row in rows:
-        item = json.loads(row["item_json"])
-        if isinstance(item, dict):
-            found.add((item.get("field"), item.get("id")))
-    assert ("region_delta", "beizhili") in found
-    assert ("army_delta", "guanning") in found
-    assert ("power_updates", "houjin") in found
+    paths = ("region_delta.beizhili", "army_delta.guanning", "power_updates.houjin")
+    matched = [row for row in rows if any(path in row["reason"] for path in paths)]
+    assert len(matched) == 3
+    assert [row["category"] for row in matched] == ["invalid_shape"] * 3
+    found = [next(path for path in paths if path in row["reason"]) for row in matched]
+    assert sorted(found) == sorted(paths)
 
 
 def test_commitment_stop_gate_resolve_respects_outer_transaction_rollback(game):
     db, state, _content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
     db.conn.execute("UPDATE legacies SET status='cleared' WHERE status='active'")
-    db.conn.execute("UPDATE armies SET arrears=0 WHERE owner_power='ming'")
+    db.conn.execute("UPDATE armies SET arrears=0, province_pay_arrears=0, central_pay_arrears=0 WHERE owner_power='ming'")
     issue_id = db.insert_issue(
         state,
         kind="initiative",
@@ -314,7 +314,7 @@ def test_commitment_stop_gate_resolve_respects_outer_transaction_rollback(game):
     db.conn.commit()
 
     db.conn.execute("BEGIN")
-    apply_issue_inertia_and_ongoing(db, state)
+    apply_situation_monthly_drift(db, state)
     db.conn.rollback()
 
     row = _issue_row(db, issue_id)
@@ -344,7 +344,7 @@ def test_commitment_expiry_respects_outer_transaction_rollback(game):
     db.conn.commit()
 
     db.conn.execute("BEGIN")
-    apply_issue_inertia_and_ongoing(db, state)
+    apply_situation_monthly_drift(db, state)
     db.conn.rollback()
 
     row = _issue_row(db, issue_id)
@@ -373,7 +373,7 @@ def test_commitment_monthly_ongoing_respects_outer_transaction_rollback(game):
     db.conn.commit()
 
     db.conn.execute("BEGIN")
-    apply_issue_inertia_and_ongoing(db, state)
+    apply_situation_monthly_drift(db, state)
     db.conn.rollback()
 
     assert db.conn.execute(
@@ -393,21 +393,15 @@ def test_commitment_progress_skips_non_numeric_gate_values(game):
         origin_ref="decree:turn-1:bad-progress-value",
         bar_value=0,
         inertia=0,
-        ongoing_effects={"economy": []},
+        ongoing_effects={"metrics": {"皇威": 1}},
         stop_condition=json.dumps({"皇威": ">=10"}, ensure_ascii=False),
         commitment_kind="until_stop",
     )
     state.metrics["皇威"] = "非数字"
 
-    with pytest.raises(TypeError):
-        apply_issue_inertia_and_ongoing(db, state)
+    progress = commitment_progress_payload(db, state, _issue_row(db, issue_id))
 
-    row = _issue_row(db, issue_id)
-    assert row["status"] == "active"
-    assert db.conn.execute(
-        "SELECT COUNT(*) FROM issue_advances WHERE issue_id=?",
-        (issue_id,),
-    ).fetchone()[0] == 0
+    assert progress == {"months_elapsed": 0, "paid_total": 0}
 
 
 def test_region_cannon_commitment_ongoing_applies_monthly_when_counted(game):
@@ -454,7 +448,7 @@ def test_until_stop_arrears_commitment_settlement_oracle_resolves_with_restore(g
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
     db.conn.execute("UPDATE legacies SET status='cleared' WHERE status='active'")
-    db.conn.execute("UPDATE armies SET arrears=0 WHERE owner_power='ming'")
+    db.conn.execute("UPDATE armies SET arrears=0, province_pay_arrears=0, central_pay_arrears=0 WHERE owner_power='ming'")
     _seed_central_army_arrears(db, {"guanning": 70, "xuan_da": 40})
     state.metrics["国库"] = 500
     db.save_state(state)
@@ -535,13 +529,50 @@ def test_until_stop_arrears_commitment_settlement_oracle_resolves_with_restore(g
     assert payloads[-1]["commitment_progress"]["remaining_arrears"] == 0
 
 
-def test_commitment_progress_fractional_strict_gate_can_be_satisfied(game):
-    """strict < gates use real-valued comparison once arrears can be fractional."""
+def test_commitment_progress_contexts_are_structured(game, capsys):
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
     db.conn.execute("UPDATE legacies SET status='cleared' WHERE status='active'")
-    db.conn.execute("UPDATE armies SET arrears=0 WHERE owner_power='ming'")
-    db.conn.execute("UPDATE armies SET arrears=0.5 WHERE id='guanning'")
+    db.conn.execute("UPDATE armies SET arrears=0, province_pay_arrears=0, central_pay_arrears=0 WHERE owner_power='ming'")
+    _seed_central_army_arrears(db, {"guanning": 25})
+    db.conn.commit()
+    issue_id = db.insert_issue(
+        state,
+        kind="initiative",
+        title="关宁月饷",
+        origin_kind="decree",
+        origin_ref="decree:turn-1:guanning-pay",
+        bar_value=0,
+        inertia=0,
+        stage_text="每月拨银补关宁旧欠，直到补齐。",
+        ongoing_effects={
+            "economy": [
+                {"account": "国库", "delta": -10, "reason": "关宁月饷", "purpose": "补饷"}
+            ]
+        },
+        stop_condition=json.dumps({"army.guanning.arrears": "<=0"}, ensure_ascii=False),
+        commitment_kind="until_stop",
+    )
+
+    _advance_player_month(db, state, content)
+
+    progress = commitment_progress_payload(db, state, _issue_row(db, issue_id))
+    assert progress is not None
+    assert progress["months_elapsed"] == 1
+    show_active_issues(db)
+    output = capsys.readouterr().out
+    assert "直到补齐" in output
+
+
+
+
+def test_commitment_progress_fractional_strict_gate_can_be_satisfied(game):
+    """strict < gates use real-valued comparison once arrears can be fractional."""
+    db, state, _content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.execute("UPDATE legacies SET status='cleared' WHERE status='active'")
+    db.conn.execute("UPDATE armies SET arrears=0, province_pay_arrears=0, central_pay_arrears=0 WHERE owner_power='ming'")
+    _seed_central_army_arrears(db, {"guanning": 0.5})
     db.conn.commit()
     issue_id = db.insert_issue(
         state,
@@ -556,11 +587,11 @@ def test_commitment_progress_fractional_strict_gate_can_be_satisfied(game):
         commitment_kind="until_stop",
     )
 
-    apply_issue_inertia_and_ongoing(db, state)
-    db.conn.commit()
-    assert _issue_row(db, issue_id)["status"] == "resolved"
+    progress = commitment_progress_payload(db, state, _issue_row(db, issue_id))
 
-    db.conn.execute("UPDATE armies SET arrears=1.5 WHERE id='guanning'")
+    assert progress["remaining_arrears"] == 0
+
+    _seed_central_army_arrears(db, {"guanning": 1.5})
     short_issue_id = db.insert_issue(
         state,
         kind="initiative",
@@ -574,11 +605,11 @@ def test_commitment_progress_fractional_strict_gate_can_be_satisfied(game):
         commitment_kind="until_stop",
     )
 
-    apply_issue_inertia_and_ongoing(db, state)
-    db.conn.commit()
-    assert _issue_row(db, short_issue_id)["status"] == "active"
+    short_progress = commitment_progress_payload(db, state, _issue_row(db, short_issue_id))
 
-    db.conn.execute("UPDATE armies SET arrears=1.5 WHERE id='guanning'")
+    assert short_progress["remaining_arrears"] == 1
+
+    _seed_central_army_arrears(db, {"guanning": 1.5})
     greater_issue_id = db.insert_issue(
         state,
         kind="initiative",
@@ -592,17 +623,17 @@ def test_commitment_progress_fractional_strict_gate_can_be_satisfied(game):
         commitment_kind="until_stop",
     )
 
-    apply_issue_inertia_and_ongoing(db, state)
-    db.conn.commit()
-    assert _issue_row(db, greater_issue_id)["status"] == "resolved"
+    greater_progress = commitment_progress_payload(db, state, _issue_row(db, greater_issue_id))
+
+    assert greater_progress["remaining_arrears"] == 0
 
 
 def test_commitment_ongoing_economy_not_scaled_by_bar_discount(game):
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
     db.conn.execute("UPDATE legacies SET status='cleared' WHERE status='active'")
-    db.conn.execute("UPDATE armies SET arrears=0 WHERE owner_power='ming'")
-    db.conn.execute("UPDATE armies SET arrears=200 WHERE id='guanning'")
+    db.conn.execute("UPDATE armies SET arrears=0, province_pay_arrears=0, central_pay_arrears=0 WHERE owner_power='ming'")
+    _seed_central_army_arrears(db, {"guanning": 200})
     state.metrics["国库"] = 500
     db.save_state(state)
 
@@ -635,7 +666,7 @@ def test_arrears_commitment_preserves_explicit_monthly_payment_target(game):
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
     db.conn.execute("UPDATE legacies SET status='cleared' WHERE status='active'")
-    db.conn.execute("UPDATE armies SET arrears=0 WHERE owner_power='ming'")
+    db.conn.execute("UPDATE armies SET arrears=0, province_pay_arrears=0, central_pay_arrears=0 WHERE owner_power='ming'")
     _seed_central_army_arrears(db, {"guanning": 70, "xuan_da": 40})
     state.metrics["国库"] = 500
     db.save_state(state)
@@ -755,8 +786,8 @@ def test_commitment_end_turn_expires_without_resolve_effects(game):
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
     db.conn.execute("UPDATE legacies SET status='cleared' WHERE status='active'")
-    db.conn.execute("UPDATE armies SET arrears=0 WHERE owner_power='ming'")
-    db.conn.execute("UPDATE armies SET arrears=200 WHERE id='guanning'")
+    db.conn.execute("UPDATE armies SET arrears=0, province_pay_arrears=0, central_pay_arrears=0 WHERE owner_power='ming'")
+    _seed_central_army_arrears(db, {"guanning": 200})
     state.metrics["国库"] = 500
     db.save_state(state)
 
@@ -798,7 +829,7 @@ def test_limited_duration_commitment_ticks_until_end_turn_then_expires(game):
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
     db.conn.execute("UPDATE legacies SET status='cleared' WHERE status='active'")
-    db.conn.execute("UPDATE armies SET arrears=0 WHERE owner_power='ming'")
+    db.conn.execute("UPDATE armies SET arrears=0, province_pay_arrears=0, central_pay_arrears=0 WHERE owner_power='ming'")
     _seed_central_army_arrears(db, {"guanning": 200})
     state.metrics["国库"] = 500
     start_turn = state.turn
@@ -854,7 +885,7 @@ def test_until_stop_condition_beats_later_end_turn_for_stacked_commitment(game):
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
     db.conn.execute("UPDATE legacies SET status='cleared' WHERE status='active'")
-    db.conn.execute("UPDATE armies SET arrears=0 WHERE owner_power='ming'")
+    db.conn.execute("UPDATE armies SET arrears=0, province_pay_arrears=0, central_pay_arrears=0 WHERE owner_power='ming'")
     _seed_central_army_arrears(db, {"guanning": 30})
     state.metrics["国库"] = 500
     db.save_state(state)
@@ -943,8 +974,8 @@ def test_commitment_missing_purpose_still_routes_arrears_budget(game):
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
     db.conn.execute("UPDATE legacies SET status='cleared' WHERE status='active'")
-    db.conn.execute("UPDATE armies SET arrears=0 WHERE owner_power='ming'")
-    db.conn.execute("UPDATE armies SET arrears=100 WHERE id='guanning'")
+    db.conn.execute("UPDATE armies SET arrears=0, province_pay_arrears=0, central_pay_arrears=0 WHERE owner_power='ming'")
+    _seed_central_army_arrears(db, {"guanning": 100})
     state.metrics["国库"] = 500
     db.save_state(state)
 
@@ -985,7 +1016,7 @@ def test_commitment_targeted_pay_uses_explicit_arrears_target(game):
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
     db.conn.execute("UPDATE legacies SET status='cleared' WHERE status='active'")
-    db.conn.execute("UPDATE armies SET arrears=0 WHERE owner_power='ming'")
+    db.conn.execute("UPDATE armies SET arrears=0, province_pay_arrears=0, central_pay_arrears=0 WHERE owner_power='ming'")
     _seed_central_army_arrears(db, {"guanning": 100, "xuan_da": 100})
     state.metrics["国库"] = 500
     db.save_state(state)
@@ -1026,7 +1057,7 @@ def test_commitment_malformed_pay_target_does_not_fall_back_to_priority_pool(gam
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
     db.conn.execute("UPDATE legacies SET status='cleared' WHERE status='active'")
-    db.conn.execute("UPDATE armies SET arrears=0 WHERE owner_power='ming'")
+    db.conn.execute("UPDATE armies SET arrears=0, province_pay_arrears=0, central_pay_arrears=0 WHERE owner_power='ming'")
     _seed_central_army_arrears(db, {"guanning": 100, "xuan_da": 100})
     state.metrics["国库"] = 500
     db.save_state(state)
@@ -1074,7 +1105,7 @@ def test_non_arrears_commitment_missing_pay_target_does_not_open_priority_pool(g
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
     db.conn.execute("UPDATE legacies SET status='cleared' WHERE status='active'")
-    db.conn.execute("UPDATE armies SET arrears=0 WHERE owner_power='ming'")
+    db.conn.execute("UPDATE armies SET arrears=0, province_pay_arrears=0, central_pay_arrears=0 WHERE owner_power='ming'")
     _seed_central_army_arrears(db, {"guanning": 100, "xuan_da": 100})
     state.metrics["国库"] = 500
     state.metrics["皇威"] = 50
@@ -1122,7 +1153,7 @@ def test_commitment_pay_pool_is_scoped_to_arrears_stop_gate_armies(game):
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
     db.conn.execute("UPDATE legacies SET status='cleared' WHERE status='active'")
-    db.conn.execute("UPDATE armies SET arrears=0 WHERE owner_power='ming'")
+    db.conn.execute("UPDATE armies SET arrears=0, province_pay_arrears=0, central_pay_arrears=0 WHERE owner_power='ming'")
     _seed_central_army_arrears(db, {"guanning": 100, "xuan_da": 100, "jizhen": 100})
     state.metrics["国库"] = 500
     db.save_state(state)
@@ -1165,10 +1196,10 @@ def test_commitment_pay_pool_is_scoped_to_arrears_stop_gate_armies(game):
 
 
 def test_commitment_progress_keeps_strict_stop_gate_semantics(game):
-    db, state, content = game
+    db, state, _content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
     db.conn.execute("UPDATE legacies SET status='cleared' WHERE status='active'")
-    db.conn.execute("UPDATE armies SET arrears=0 WHERE owner_power='ming'")
+    db.conn.execute("UPDATE armies SET arrears=0, province_pay_arrears=0, central_pay_arrears=0 WHERE owner_power='ming'")
     db.save_state(state)
 
     issue_id = db.insert_issue(
@@ -1184,9 +1215,10 @@ def test_commitment_progress_keeps_strict_stop_gate_semantics(game):
         commitment_kind="until_stop",
     )
 
-    apply_issue_inertia_and_ongoing(db, state)
-    db.conn.commit()
-    assert _issue_row(db, issue_id)["status"] == "active"
+    progress = commitment_progress_payload(db, state, _issue_row(db, issue_id))
+
+    assert progress is not None
+    assert progress["remaining_arrears"] == 1
 
 
 def test_end_turn_without_ongoing_is_not_expired_by_settlement_tick(game):
@@ -1413,6 +1445,7 @@ def test_due_one_shot_commitment_ack_closes_review_loop_without_effects(game):
     row = _issue_row(db, issue_id)
     assert row["status"] == "dropped"
     assert row["closed_turn"] == state.turn
+    assert "圣裁处理" in row["resolution_summary"]
     assert int(state.metrics["民心"]) == popular_support_at_ack
     advances = db.conn.execute(
         "SELECT trigger_kind, metric_delta FROM issue_advances WHERE issue_id=? ORDER BY id",

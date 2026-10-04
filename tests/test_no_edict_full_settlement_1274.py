@@ -73,6 +73,30 @@ def test_no_edict_advance_runs_full_settlement_chain(game, monkeypatch):
 
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
+def test_no_edict_fast_path_branch_is_dead(game, monkeypatch):
+    """负向：快路壳已删；空旨过月走世界段，不推进、不走 extractor。"""
+    # 空旨 resolve_directives 必调 simulator
+    db, state, content = game
+    closed_turn = int(state.turn)
+    sim_calls = []
+    _canned_full_settlement(
+        monkeypatch,
+        narrative="世界自演变邸报。",
+        simulator_calls=sim_calls,
+    )
+    result = resolve_directives(
+        state, db, None, None, [], "",
+        content=content,
+        source=Provenance.system_simulation,
+    )
+    assert result.awaiting is False
+    assert result.advanced is False
+    assert len(sim_calls) == 1
+    assert int(state.turn) == closed_turn
+    assert not db.get_turn_report(closed_turn)
+
+
+@pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_no_edict_zero_decisions_completes_without_stuck(game, monkeypatch):
     """无新旨月份走同一主链，不停在 awaiting，也不在邸报前推进。"""
     db, state, content = game

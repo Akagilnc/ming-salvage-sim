@@ -7,29 +7,61 @@ import math
 
 import pytest
 
-from ming_sim.flows import army_needed
+from ming_sim.army_pay import army_needed
 
 
 def _army_row(db, army_id):
     return db.conn.execute("SELECT * FROM armies WHERE id=?", (army_id,)).fetchone()
 
 
-def _use_legacy_fiscal_engine(db):
-    db.conn.execute(
-        """
-        INSERT INTO fiscal_config (key, value, kind, note)
-        VALUES ('__army_pay_source_cutover', 0, 'meta', 'test legacy salary path')
-        ON CONFLICT(key) DO UPDATE SET value = excluded.value, note = excluded.note
-        """
-    )
-    db.conn.execute(
-        """
-        INSERT INTO fiscal_config (key, value, kind, note)
-        VALUES ('__fiscal_engine', 0, 'meta', 'test legacy salary path')
-        ON CONFLICT(key) DO UPDATE SET value = excluded.value, note = excluded.note
-        """
-    )
+@pytest.mark.parametrize("army_id,expected", [
+    ("guanning", 15),   # 72000 × 2.0 / 10000 = 14.4 → ceil 15
+    ("jingying", 9),    # 85000 × 1.0 / 10000 = 8.5 → ceil 9
+    ("xuan_da", 10),    # 65000 × 1.5 / 10000 = 9.75 → ceil 10
+    ("jizhen", 9),      # 52000 × 1.55 / 10000 = 8.06 → ceil 9
+    ("southwest_tusi", 2),  # 24000 × 0.8 / 10000 = 1.92 → ceil 2
+])
+def test_army_needed_derives_from_manpower_rate(read_game, army_id, expected):
+    db, state, _ = read_game
+    assert army_needed(_army_row(db, army_id)) == expected
+
+
+def test_army_needed_zero_manpower_zero_pay(game):
+    # 0 兵 → 应发 0（白嫖扩军上界 + 零兵吃饷下界一并消解，无需 #22 撤番）。
+    db, state, _ = game
+    db.conn.execute("UPDATE armies SET manpower=0 WHERE id='guanning'")
     db.conn.commit()
+    assert army_needed(_army_row(db, "guanning")) == 0
+
+
+def test_army_needed_scales_with_manpower(game):
+    # 扩军（manpower 涨）→ 应发随之涨（不再「兵涨饷不涨」白嫖）。
+    db, state, _ = game
+    before = army_needed(_army_row(db, "guanning"))
+    db.conn.execute("UPDATE armies SET manpower=manpower*2 WHERE id='guanning'")
+    db.conn.commit()
+    after = army_needed(_army_row(db, "guanning"))
+    assert after > before
+    assert after == math.ceil(_army_row(db, "guanning")["manpower"] * _army_row(db, "guanning")["salary_rate"] / 10000)
+
+
+def test_army_needed_shrink_lowers_pay(game):
+    # 裁军（manpower 负 delta）→ 应发降。
+    db, state, _ = game
+    before = army_needed(_army_row(db, "xuan_da"))
+    db.conn.execute("UPDATE armies SET manpower=manpower/2 WHERE id='xuan_da'")
+    db.conn.commit()
+    assert army_needed(_army_row(db, "xuan_da")) < before
+
+
+def test_army_needed_non_ming_no_pay(read_game):
+    # 非明军（owner_power != ming）不强加饷需（叛军/外族不吃明国库）。
+    db, state, _ = read_game
+    row = db.conn.execute(
+        "SELECT * FROM armies WHERE owner_power!='ming' LIMIT 1").fetchone()
+    if row is None:
+        pytest.skip("无非明军")
+    assert army_needed(row) == 0
 
 
 def test_defected_army_to_ming_owes_salary_not_free(read_game):
@@ -75,8 +107,8 @@ def test_backfill_dynamic_army_falls_to_anchor(game):
     from ming_sim.constants import SALARY_RATE_ANCHOR
     _insert_dynamic_ming_army(db, "dyn_old_army", "某旧募军", 5000)
     db.conn.commit()
-    db.conn.execute("ALTER TABLE armies DROP COLUMN salary_rate")
-    db.init_schema()
+    db._backfill_salary_rate()
+    db.conn.commit()
     row = db.conn.execute("SELECT salary_rate FROM armies WHERE id='dyn_old_army'").fetchone()
     assert row["salary_rate"] == pytest.approx(SALARY_RATE_ANCHOR), (
         f"动态旧军应落锚点 {SALARY_RATE_ANCHOR}，得 {row['salary_rate']}"
@@ -94,8 +126,8 @@ def test_backfill_reverse_fills_from_maintenance_on_direct_upgrade(game):
     _insert_dynamic_ming_army(db, "dyn_up", "动态旧军", 5000)  # salary_rate 留 0
     db.conn.execute("UPDATE armies SET maintenance_per_turn=20 WHERE id='dyn_up'")
     db.conn.commit()
-    db.conn.execute("ALTER TABLE armies DROP COLUMN salary_rate")
-    db.init_schema()
+    db._backfill_salary_rate()
+    db.conn.commit()
     row = db.conn.execute("SELECT salary_rate FROM armies WHERE id='dyn_up'").fetchone()
     assert row["salary_rate"] == pytest.approx(20 * 10000 / 5000), (
         f"维护费列在时动态军应从 maint 反推率=40（保旧档预算），得 {row['salary_rate']}"
@@ -116,12 +148,22 @@ def test_backfill_anchor_when_column_present_but_data_unusable(game, manpower, m
     _insert_dynamic_ming_army(db, "dyn_unusable", "退化动态军", manpower)  # salary_rate 留 0
     db.conn.execute("UPDATE armies SET maintenance_per_turn=? WHERE id='dyn_unusable'", (maint,))
     db.conn.commit()
-    db.conn.execute("ALTER TABLE armies DROP COLUMN salary_rate")
-    db.init_schema()
+    db._backfill_salary_rate()
+    db.conn.commit()
     row = db.conn.execute("SELECT salary_rate FROM armies WHERE id='dyn_unusable'").fetchone()
     assert row["salary_rate"] == pytest.approx(SALARY_RATE_ANCHOR), (
         f"维护费列在但 maint={maint}/manpower={manpower} 应落锚点（②反推兜底），得 {row['salary_rate']}"
     )
+
+
+def test_total_ming_salary_is_72_ceil_sum(read_game):
+    # 实际总月应发 = sum(ceil(每军))=72 万两。设计「66.5」是 sum(小数月应发)；army_needed 每军 ceil
+    # （万两整数、不少发），ceil 累积使总额 72 > 66.5（cmr r1 codex/claude 实测）。开局 vs 旧 65 = +10.8%
+    # （非设计表述的 +2.4%）——ceil 公式 vs「66.5 零冲击」是设计内部不一致，ceil 公式经 ratify，此处锁实际值。
+    db, state, _ = read_game
+    rows = db.conn.execute("SELECT * FROM armies WHERE owner_power='ming'").fetchall()
+    total = sum(army_needed(r) for r in rows)
+    assert total == 72, f"明军总月应发 = sum(ceil)=72 万两（设计 66.5 为小数和），实得 {total}"
 
 
 def test_manpower_clamp_to_zero_leaves_army_log(game):
@@ -159,37 +201,88 @@ def test_manpower_true_noop_no_log(game):
     assert after == before, "真 no-op(delta==0)不留痕"
 
 
-def test_legacy_salary_tick_preserves_fractional_opening_arrears(game):
-    from ming_sim.flows import apply_fixed_period_flows
+def test_auto_pay_reaches_salary_army_via_arrears_filter(game):
+    # A salaried army with source debt participates in pooled repayment.
+    from ming_sim.army_pay import _auto_pay_arrears_by_priority
     db, state, _ = game
-    _use_legacy_fiscal_engine(db)
-    aid = "guanning"
-    db.conn.execute("UPDATE armies SET manpower=0, arrears=0 WHERE owner_power='ming'")
-    db.conn.execute(
-        """
-        UPDATE armies
-        SET owner_power='ming', manpower=10000, salary_rate=1.0, arrears=1.5, morale=50
-        WHERE id=?
-        """,
-        (aid,),
-    )
+    aid = str(db.conn.execute(
+        "SELECT id FROM armies WHERE owner_power='ming' LIMIT 1").fetchone()["id"])
+    # 只留这一支有欠饷，孤立验证「它是否进得了受饷分发」
+    db.conn.execute("UPDATE armies SET arrears=0, province_pay_arrears=0, central_pay_arrears=0 WHERE owner_power='ming'")
+    db.conn.execute("UPDATE armies SET salary_rate=1.5, arrears=10, province_pay_arrears=0, central_pay_arrears=10 WHERE id=?", (aid,))
     db.conn.commit()
-    state.metrics["国库"] = 50
+    spent = _auto_pay_arrears_by_priority(db, state, "国库", 5, "补饷", "诏拨补饷")
+    assert spent > 0, "兜底拨饷应能花到该军"
 
-    apply_fixed_period_flows(db, state)
 
+def test_auto_pay_empty_allowed_ids_pays_no_armies(game):
+    # #287 PR R2：空 scope 是「不允许任何军」，不能被 truthiness 当成「不限制」而回落全局池。
+    from ming_sim.army_pay import _auto_pay_arrears_by_priority
+    db, state, _ = game
+    aid = str(db.conn.execute(
+        "SELECT id FROM armies WHERE owner_power='ming' LIMIT 1").fetchone()["id"])
+    db.conn.execute("UPDATE armies SET arrears=0, province_pay_arrears=0, central_pay_arrears=0 WHERE owner_power='ming'")
+    db.conn.execute("UPDATE armies SET arrears=10, province_pay_arrears=0, central_pay_arrears=10 WHERE id=?", (aid,))
+    db.conn.commit()
+    spent = _auto_pay_arrears_by_priority(
+        db, state, "国库", 5, "补饷", "空范围补饷", allowed_army_ids=[]
+    )
     row = _army_row(db, aid)
-    assert row["arrears"] == pytest.approx(1.5)
-    log = db.conn.execute(
-        """
-        SELECT old_value, new_value, delta
-        FROM army_logs
-        WHERE army_id=? AND field='arrears'
-        ORDER BY id DESC
-        LIMIT 1
-        """,
-        (aid,),
-    ).fetchone()
-    assert log["old_value"] == "1.5"
-    assert log["new_value"] == "1.5"
-    assert log["delta"] == pytest.approx(0.0)
+    assert spent == 0, "allowed_army_ids=[] 应明确支付 0，不得回落全军池"
+    assert row["arrears"] == pytest.approx(10)
+
+
+def test_auto_pay_strips_allowed_army_ids_before_filtering(game):
+    from ming_sim.army_pay import _auto_pay_arrears_by_priority
+    db, state, _ = game
+    aid = str(db.conn.execute(
+        "SELECT id FROM armies WHERE owner_power='ming' LIMIT 1").fetchone()["id"])
+    db.conn.execute("UPDATE armies SET arrears=0, province_pay_arrears=0, central_pay_arrears=0 WHERE owner_power='ming'")
+    db.conn.execute("UPDATE armies SET arrears=10, province_pay_arrears=0, central_pay_arrears=10 WHERE id=?", (aid,))
+    db.conn.commit()
+
+    spent = _auto_pay_arrears_by_priority(
+        db, state, "国库", 5, "补饷", "空白范围补饷", allowed_army_ids=[f" {aid} "]
+    )
+    row = _army_row(db, aid)
+    assert spent > 0
+    assert row["arrears"] < 10
+
+
+def test_army_pay_morale_delta_tiers():
+    """士气底料 oracle：本月缺口扣士气；足额无旧欠 +2；足额但旧欠在账 0。"""
+    from ming_sim.army_pay import army_pay_morale_delta
+
+    assert army_pay_morale_delta(10, 5, 0) == -4
+    assert army_pay_morale_delta(10, 0, 0) == 2
+    assert army_pay_morale_delta(10, 0, 3) == 0
+    assert army_pay_morale_delta(0, 0, 0) == 0
+
+
+def test_coerce_new_salary_rate_blocks_freeload():
+    # cmr r3 codex medium: 新军 salary_rate 健壮解析——负/非数/bool/0/None → 锚点 1.5（防免费军白嫖）。
+    # 原 `or 1.5` 漏负值：-1 经 army_needed(rate<=0→0) 成免费军，绕过 #44 防白嫖。
+    from ming_sim.db import _coerce_new_salary_rate
+    assert _coerce_new_salary_rate(-1) == 1.5, "负值=白嫖→锚点"
+    assert _coerce_new_salary_rate(0) == 1.5
+    assert _coerce_new_salary_rate(None) == 1.5
+    assert _coerce_new_salary_rate("脏") == 1.5, "非数→锚点"
+    assert _coerce_new_salary_rate(True) == 1.5, "bool→锚点"
+    assert _coerce_new_salary_rate(2.0) == 2.0, "正常正值保留"
+
+
+def test_non_finite_salary_rate_anchored_not_crash():
+    """#44 ship-pre 线上 gemini high + coderabbit inf 探针：非有限 salary_rate（inf/-inf/nan）
+    须落锚点、不得崩。inf>0 为真会漏过 coerce、经 army_needed 的 ceil(manpower×inf/10000) 抛
+    OverflowError 崩整月结算。两道防线：_coerce_new_salary_rate（建军入口）+ army_needed（结算咽喉）。"""
+    from ming_sim.db import _coerce_new_salary_rate
+    from ming_sim.army_pay import army_needed
+
+    assert _coerce_new_salary_rate(float("inf")) == 1.5, "inf→锚点"
+    assert _coerce_new_salary_rate(float("-inf")) == 1.5, "-inf→锚点"
+    assert _coerce_new_salary_rate(float("nan")) == 1.5, "nan→锚点"
+    # army_needed 咽喉对非有限 rate 防御性归锚点、不抛 OverflowError。
+    for bad in (float("inf"), float("-inf"), float("nan")):
+        row = {"owner_power": "ming", "manpower": 5000, "salary_rate": bad}
+        needed = army_needed(row)
+        assert needed == math.ceil(5000 * 1.5 / 10000), f"非有限 rate({bad}) 应锚点应发，得 {needed}"

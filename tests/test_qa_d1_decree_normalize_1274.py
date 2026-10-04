@@ -72,7 +72,7 @@ def test_capture_unknown_person_still_409(game, monkeypatch):
     }
     def backend(prompt, *_a, tag="", **_k):
         if tag == "participant_escalate_report":
-            return ("通政司启：朝中查无「不存在之人甲」，乞陛下明示。", 1)
+            return ("回禀", 1)
         return (json.dumps(response, ensure_ascii=False), 1)
 
     monkeypatch.setattr(cli_backend, "_run_backend_for_config", backend)

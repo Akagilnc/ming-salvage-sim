@@ -10,6 +10,7 @@ simulator 看得见、软性加权判战；引擎只 clamp、不算胜负。
 from __future__ import annotations
 
 
+from ming_sim.constants import ARMY_SCORE_FIELDS
 
 
 def _pay_source():
@@ -20,10 +21,20 @@ def _pay_source():
     }
 
 
+def _cols(db, table):
+    return {r["name"] for r in db.conn.execute(f"PRAGMA table_info({table})").fetchall()}
 
 
+def test_score_fields_include_firearm_and_cannon():
+    assert "firearm_equipment" in ARMY_SCORE_FIELDS
+    assert "cannon_equipment" in ARMY_SCORE_FIELDS
 
 
+def test_armies_table_has_firearm_columns(read_game):
+    db, _, _ = read_game
+    cols = _cols(db, "armies")
+    assert "firearm_equipment" in cols
+    assert "cannon_equipment" in cols
 
 
 def test_new_army_defaults_zero_firearm(game):
@@ -40,11 +51,9 @@ def test_new_army_defaults_zero_firearm(game):
     assert row["cannon_equipment"] == 0
 
 
-def test_apply_army_delta_sets_firearm(game):
-    db, state, _ = game
+def test_apply_army_delta_sets_firearm(saved_game):
+    db, state, _ = saved_game
     aid = db.conn.execute("SELECT id FROM armies LIMIT 1").fetchone()["id"]
-    db.conn.execute("UPDATE armies SET firearm_equipment=0, cannon_equipment=0 WHERE id=?", (aid,))
-    db.conn.commit()
     pseudo = type("E", (), {"id": "test", "title": "配火器"})()
     db.apply_army_deltas(
         state, pseudo, None, "测试",
@@ -106,8 +115,6 @@ def test_create_army_cannon_count_clamped(game):
         "SELECT cannon_equipment FROM armies WHERE id='heavy_test'"
     ).fetchone()[0]
     assert val == 12
-
-
 
 
 def test_fresh_seed_wires_firearm_not_all_zero(content, tmp_path):

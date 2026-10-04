@@ -2,6 +2,20 @@
 
 from __future__ import annotations
 
+from ming_sim.db import (
+    _OFFICE_LEVERAGE_WEIGHT,
+    _member_office_weight,
+    infer_office_type_from_office,
+)
+
+
+def test_six_sciences_offices_infer_to_own_category():
+    """六科、给事中和都给事中均确定性归入六科。"""
+    assert infer_office_type_from_office("六科") == "六科"
+    assert infer_office_type_from_office("兵科给事中") == "六科"
+    assert infer_office_type_from_office("礼科都给事中") == "六科"
+    assert _OFFICE_LEVERAGE_WEIGHT["六科"] == _OFFICE_LEVERAGE_WEIGHT["都察院"]
+
 
 def test_fresh_seed_contains_sourced_six_sciences_censors(game):
     """许誉卿开局在朝；韩一良至 1628 年才以户科给事中登场。"""
@@ -19,39 +33,43 @@ def test_fresh_seed_contains_sourced_six_sciences_censors(game):
     for row in rows:
         assert row["office_type"] == "六科"
         assert "给事中" in row["office"]
+        assert "《明史》卷258" in row["summary"]
 
     by_name = {row["name"]: row for row in rows}
     assert by_name["许誉卿"]["status"] == "active"
     assert by_name["韩一良"]["status"] == "offstage"
     assert by_name["韩一良"]["debut_year"] == 1628
 
-    before = db.faction_leverage("中立")
+    before = db._faction_office_weight_sum("中立")
     assert state.year == 1627
     assert db.apply_historical_debuts(state) == []
-    assert db.faction_leverage("中立") == before
+    assert db._faction_office_weight_sum("中立") == before
 
     state.year = 1628
     debuted = db.apply_historical_debuts(state)
     assert any(item["name"] == "韩一良" for item in debuted)
     assert db.get_character_status("韩一良")[0] == "active"
-    # 登场后中立派权势应随给事中入朝可见上升（真实入口→外部 leverage）。
-    assert db.faction_leverage("中立") > before
+    assert db._faction_office_weight_sum("中立") == before + _member_office_weight(
+        "六科", "户科给事中"
+    )
 
 
 def test_six_sciences_censor_exit_recomputes_its_faction_leverage(game):
-    """TD-6：给事中退场经真实入口改人物状态，派系权势外部可见下降。"""
+    """TD-6：给事中退场更新持久派系权势。"""
     db, state, _content = game
     censor = db.conn.execute(
-        "SELECT name, faction FROM characters WHERE name=?",
-        ("许誉卿",),
+        "SELECT name, faction, office_type, office FROM characters WHERE name='许誉卿'"
     ).fetchone()
     assert censor is not None
-    faction = str(censor["faction"])
-    before = db.faction_leverage(faction)
 
-    db.set_character_status(state, censor["name"], "dismissed", reason="测试退场")
+    weight = _member_office_weight(censor["office_type"], censor["office"])
+    offset = 50 - db._faction_office_weight_sum(censor["faction"])
+    db.conn.execute(
+        "UPDATE factions SET leverage_offset=?, leverage=50 WHERE name=?",
+        (offset, censor["faction"]),
+    )
     db.conn.commit()
 
-    assert db.get_character_status(censor["name"])[0] == "dismissed"
-    after = db.faction_leverage(faction)
-    assert after < before
+    db.set_character_status(state, censor["name"], "dismissed", reason="测试退场")
+
+    assert db.faction_leverage(censor["faction"]) == round(50 - weight)

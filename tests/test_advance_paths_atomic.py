@@ -4,11 +4,14 @@ from __future__ import annotations
 
 from ming_sim.session_write_queue import get_session_write_queue
 
+import json
+import threading
 
 import pytest
 
 import ming_sim.decree as decree_mod
 import ming_sim.issues as I
+from tests.dossier_test_helpers import TYPED_COVERT_TASK
 
 def _ledger_count(db, turn: int) -> int:
     return db.conn.execute(
@@ -109,6 +112,9 @@ def test_submit_event_decision_persists_choice_after_pending_cleanup(game, monke
         "note": "姑留观后效",
     }
     assert not db.has_event_triggered(event_id)
+    assert event_id not in I._event_trigger_refs(db), (
+        "submit_hitl_choices 只能暂存亲裁 choice，不能在 phase2 前抢先把候选事件记成终态"
+    )
 
 def test_submit_event_decision_binds_from_candidate_snapshot_without_event_id(game, monkeypatch):
     """#389：simulator 漏写 event_id 时，事件亲裁仍从权威候选快照确定性绑定并持久化。"""
@@ -430,12 +436,27 @@ def test_recovery_replay_blocked_by_pending_directives(game, monkeypatch):
     assert state.turn == turn  # 未推进，拟旨不孤儿
     db.clear_resolve_context(turn)
 
+def test_skip_refused_at_front_half_done(game):
+    """#1274 r1：decree.advance_without_edict 空壳已删；跳过结算的快路名缺席。
+
+    FRONT_HALF_DONE 恢复/亲裁由 session.resolve_turn 真缝承担（settling 恢复 /
+    awaiting 幂等返回决策），不再经独立退朝壳拒绝。
+    """
+    from ming_sim.decree import pre_settle
+
+    db, state, content = game
+    turn = state.turn
+    pre_settle(state, db, content=content)
+    # 前半落账不推进月份；财政落账/恢复另由本文件真实收尾案证明。
+    assert state.turn == turn
+
 def test_draft_mutators_frozen_at_front_half_done(game, monkeypatch):
     """FRONT_HALF_DONE 冻结 draft/诏书变更器（ship-pre r1 codex）。
 
     恢复窗口新增/确认的 draft 会被 mark_directives_issued 连带标 issued，
     而重放 delta 不含它们=幽灵颁布。
     """
+    from ming_sim.session import GameSession
     db, state, content = game
     state.turn_phase = "settling"
 

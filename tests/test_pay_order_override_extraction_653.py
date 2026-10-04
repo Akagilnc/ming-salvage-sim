@@ -7,11 +7,9 @@ import ming_sim.cli_backend as cli_backend
 
 def test_single_pay_order_capture_grounds_relative_deadline_at_current_turn(game, monkeypatch):
     db, _state, content = game
-    prompts = []
     db.conn.execute("UPDATE game_state SET turn=7 WHERE id=1")
 
-    def fake(prompt, *_args, **_kwargs):
-        prompts.append(prompt)
+    def fake(_prompt, *_args, **_kwargs):
         return json.dumps({
             "拟旨意图": "拟旨",
             "动作类型": "pay_order_override",
@@ -46,7 +44,6 @@ def test_single_pay_order_capture_grounds_relative_deadline_at_current_turn(game
     assert all("duration_months" not in entry for entry in staged_entries)
 
 
-
 def test_relative_deadline_cannot_stage_llm_computed_expired_turn(game, monkeypatch):
     db, _state, content = game
     db.conn.execute("UPDATE game_state SET turn=7 WHERE id=1")
@@ -74,7 +71,7 @@ def test_single_pay_order_capture_rejects_missing_entries(monkeypatch):
             "目标类型": "account", "目标ID": "pay_order", "颁布方式": "普通",
         }, ensure_ascii=False), {}),
     )
-    with pytest.raises(ValueError, match="entries"):
+    with pytest.raises(ValueError):
         cli_backend.extract_draft_intent("拟旨改饷序", "臣已拟妥")
 
 

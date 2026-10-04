@@ -9,14 +9,15 @@
 """
 
 from __future__ import annotations
-from unittest.mock import ANY
 
 import pytest
 
 import ming_sim.issues as issues
+from ming_sim.content import GameContent
 from ming_sim.context import character_context_with_db, minister_dossier
 from ming_sim.decree import reload_state_from_db
-from ming_sim.issues import apply_issue_inertia_and_ongoing
+from ming_sim.situation_drift import apply_situation_monthly_drift
+from ming_sim.person_archive_contract import format_person_actions
 from ming_sim.relation_read import project_relation_ledger
 
 
@@ -63,7 +64,7 @@ def test_inertia_natural_resolve_applies_temperament_style(game):
         inertia=1,
         effect_on_resolve={"人物变更": [_temperament_item()]},
     )
-    apply_issue_inertia_and_ongoing(db, state)
+    apply_situation_monthly_drift(db, state)
 
     assert before_db == before_rt
     assert _style_row(db) == NEW_STYLE
@@ -80,6 +81,7 @@ def test_inertia_natural_resolve_applies_temperament_style(game):
         (PERSON, "性情"),
     ).fetchone()
     assert log["action"] == "性情"
+    assert log["payload_summary"] == "经事锤炼，固有层改写"
 
 
 def test_apply_score_extraction_writes_temperament_style_and_log(game):
@@ -115,6 +117,7 @@ def test_apply_score_extraction_writes_temperament_style_and_log(game):
         (PERSON,),
     ).fetchone()
     assert log["action"] == "性情"
+    assert log["payload_summary"] == "经事锤炼，固有层改写"
 
 
 def test_temperament_style_preserves_raw_bytes_through_write_kernel(game):
@@ -204,41 +207,17 @@ def test_temperament_committed_style_survives_reload(game):
 
 
 @pytest.mark.parametrize(
-    ("item", "category", "reason"),
+    ("item", "category"),
     [
-        (
-            {"name": "不存在的人", "origin_ref": "盘面自发", "动作": "性情", "style": NEW_STYLE},
-            "hallucinated_id",
-            "非既有人物",
-        ),
-        (
-            {"name": PERSON, "origin_ref": "盘面自发", "动作": "性情", "style": ""},
-            "invalid_enum",
-            "性情 style 须为非空字符串",
-        ),
-        (
-            {"name": PERSON, "origin_ref": "盘面自发", "动作": "性情", "style": "   "},
-            "invalid_enum",
-            "性情 style 须为非空字符串",
-        ),
-        (
-            {"name": PERSON, "origin_ref": "盘面自发", "动作": "性情"},
-            "invalid_enum",
-            "性情 style 须为非空字符串",
-        ),
-        (
-            {"name": PERSON, "origin_ref": "盘面自发", "动作": "性情", "style": None},
-            "invalid_enum",
-            "性情 style 须为非空字符串",
-        ),
-        (
-            {"name": PERSON, "origin_ref": "盘面自发", "动作": "性情", "style": 12},
-            "invalid_enum",
-            "性情 style 须为非空字符串",
-        ),
+        ({"name": "不存在的人", "origin_ref": "盘面自发", "动作": "性情", "style": NEW_STYLE}, "hallucinated_id"),
+        ({"name": PERSON, "origin_ref": "盘面自发", "动作": "性情", "style": ""}, "invalid_enum"),
+        ({"name": PERSON, "origin_ref": "盘面自发", "动作": "性情", "style": "   "}, "invalid_enum"),
+        ({"name": PERSON, "origin_ref": "盘面自发", "动作": "性情"}, "invalid_enum"),
+        ({"name": PERSON, "origin_ref": "盘面自发", "动作": "性情", "style": None}, "invalid_enum"),
+        ({"name": PERSON, "origin_ref": "盘面自发", "动作": "性情", "style": 12}, "invalid_enum"),
     ],
 )
-def test_apply_score_extraction_rejects_invalid_temperament(game, item, category, reason):
+def test_apply_score_extraction_rejects_invalid_temperament(game, item, category):
     db, state, content = game
     before = _style_row(db)
     before_rt = content.characters[PERSON].style if PERSON in content.characters else None
@@ -255,18 +234,15 @@ def test_apply_score_extraction_rejects_invalid_temperament(game, item, category
     if before_rt is not None:
         assert content.characters[PERSON].style == before_rt
     assert db.conn.execute("SELECT COUNT(*) FROM person_logs").fetchone()[0] == before_logs
-    assert applied["applied_person_changes"] == [
-        {
-            "name": item["name"],
-            "origin_ref": "盘面自发",
-            "动作": "性情",
-            "rejected": True,
-            "reason": ANY,
-            "category": category,
-            "item": item,
-        }
-    ]
-    assert isinstance(applied['applied_person_changes'][0]['reason'], str) and applied['applied_person_changes'][0]['reason']
+    changes = applied["applied_person_changes"]
+    assert len(changes) == 1
+    assert changes[0]["name"] == item["name"]
+    assert changes[0]["origin_ref"] == "盘面自发"
+    assert changes[0]["动作"] == "性情"
+    assert changes[0]["rejected"] is True
+    assert changes[0]["reason"]
+    assert changes[0]["category"] == category
+    assert changes[0]["item"] == item
 
 
 def test_character_context_with_db_reads_own_style_and_viewer_ledger(game):

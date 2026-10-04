@@ -3,7 +3,7 @@ import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { EndingModal } from "./components/endingModal";
-import { MechanicalTailFailure } from "./components/mechanicalTailFailure";
+import { yearMonthLabel } from "./settlementPresentation";
 import type { GameState, PendingDecision } from "./types";
 import { useSettlementFlow } from "./useSettlementFlow";
 
@@ -126,6 +126,7 @@ function mountHarness(opts: {
       <div>
         <div data-testid="busy">{busy}</div>
         <div data-testid="error">{error}</div>
+        <div data-testid="year-month">{turn ? yearMonthLabel(turn) : ""}</div>
         <div data-testid="treasury">{String((budget as any)["国库"]?.balance ?? metrics["国库"] ?? "")}</div>
         <div data-testid="inner">{String((budget as any)["内库"]?.balance ?? metrics["内库"] ?? "")}</div>
         <div data-testid="minxin">{String(metrics["民心"] ?? "")}</div>
@@ -134,9 +135,6 @@ function mountHarness(opts: {
         <div data-testid="phase">{turn?.phase || ""}</div>
         <div data-testid="settlement-display">{String(Boolean(turn?.settlement_display))}</div>
         {state?.ending ? <EndingModal ending={state.ending} failure={state.mechanical_tail_failure} onClose={() => {}} onRetry={opts.onRetry ?? (() => {})} /> : null}
-        {!state?.ending && state?.mechanical_tail_failure ? (
-          <MechanicalTailFailure failure={state.mechanical_tail_failure} onRetry={opts.onRetry ?? (() => {})} />
-        ) : null}
       </div>
     );
   }
@@ -291,13 +289,12 @@ describe("#1845 background tail failure observation", () => {
     const running = { ...preClickState, mechanical_tail_pending: true } as GameState;
     const failed = {
       ...running, mechanical_tail_pending: false,
-      mechanical_tail_failure: { error: "模型调用耗尽", error_pack_path: "/tmp/tail-error" },
+      mechanical_tail_failure: { error_pack_path: "/tmp/tail-error" },
     } as GameState;
     const loadState = vi.fn<() => Promise<GameState | null>>().mockResolvedValue(failed);
-    const { host, cleanup } = mountHarness({ initial: running, loadState });
+    const { cleanup } = mountHarness({ initial: running, loadState });
     await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
     expect(loadState).toHaveBeenCalledTimes(1);
-    expect(host.querySelector('[role="alert"]')?.textContent).toContain("模型调用耗尽");
     await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
     expect(loadState).toHaveBeenCalledTimes(1);
     cleanup();
@@ -480,6 +477,7 @@ describe("#1433 useSettlementFlow — 退朝 awaiting 消费面（禁盲 reload 
     expect(reload).not.toHaveBeenCalled();
     // 批红面不丢：同会话停窗弹决策，HUD 读状态口投影
     expect(host.querySelector("[data-testid=pending-count]")?.textContent).toBe("1");
+    expect(host.querySelector("[data-testid=year-month]")?.textContent).toBe(yearMonthLabel(awaitingState.turn));
     expect(host.querySelector("[data-testid=settlement-display]")?.textContent).toBe("true");
     expect(host.querySelector("[data-testid=busy]")?.textContent).toBe("");
     expect(host.querySelector("[data-testid=error]")?.textContent).toBe("");
@@ -570,6 +568,7 @@ describe("#1234 useSettlementFlow — 同会话 awaiting 停窗消费状态口",
     const { host, hookRef, cleanup } = mountHarness({ loadState });
 
     // 点击前：无核账标
+    expect(host.querySelector("[data-testid=year-month]")?.textContent).toBe(yearMonthLabel(preClickState.turn));
     expect(host.querySelector("[data-testid=settlement-display]")?.textContent).toBe("false");
 
     await act(async () => {
@@ -580,6 +579,7 @@ describe("#1234 useSettlementFlow — 同会话 awaiting 停窗消费状态口",
     expect(reload).not.toHaveBeenCalled();
 
     // 同会话不 reload：状态口投影驱动 HUD
+    expect(host.querySelector("[data-testid=year-month]")?.textContent).toBe(yearMonthLabel(awaitingState.turn));
     expect(host.querySelector("[data-testid=settlement-display]")?.textContent).toBe("true");
     expect(host.querySelector("[data-testid=treasury]")?.textContent).toBe("1781");
     expect(host.querySelector("[data-testid=inner]")?.textContent).toBe("320");

@@ -24,7 +24,7 @@ from ming_sim.exceptions import LLMUnavailable
 from ming_sim.llm_model import CLI_RUNNER_PLAYER_MESSAGE
 from ming_sim.llm_transport import default_transport_policy
 from tests.web_audience_test_doubles import install_hall_admission, minister_double
-from tests.conftest import stub_scene_agent
+from tests.conftest import stub_audience_translate, stub_scene_agent
 
 
 def _assert_write_path_free(runtime) -> None:
@@ -365,19 +365,27 @@ def test_worker_cleanup_double_failure_emits_original_error_end_and_logs(caplog)
     err = next(e for e in events if e.get("type") == "error")
     # 原始 error 不变：清理二次崩溃不得覆盖 message
     assert err.get("message") == primary, err
-    # traceback 须在 exception 记录里（logger.exception → exc_info）
-    assert any(r.exc_info for r in caplog.records), caplog.records
+    # Observe the injected cleanup exception, not the generated log sentence.
+    assert any(
+        r.exc_info and isinstance(r.exc_info[1], RuntimeError)
+        and str(r.exc_info[1]) == "fail_chat_turn 也崩了（DB 已坏）"
+        for r in caplog.records
+    ), caplog.records
     _assert_write_path_free(runtime)
 
 
-def test_worker_postprocess_exception_emits_error_end(monkeypatch):
-    """#1353 r12：payload 成功后高亮尾随 Thread.start 失败 → 单一出口 error→end。
+def test_worker_postprocess_exception_emits_error_end():
+    """#1353 r12：payload 成功后后处理（_spawn_pending_write_thread 高亮）抛错 → 单一出口 error→end。
 
     事件握手：有界消费必见 end；禁只走 finally 致消费者永阻。
+    #1842：殿上走 _scene_chat_stream_payload；后处理尾随仍为 spawn 缝。
     """
     db = _WorkerPathDB()
     runtime, minister = _base_runtime(db)
+    runtime.session.registry = SimpleNamespace(get=lambda _c, **_kw: None)
+    runtime.session._character = lambda name: minister_double(minister)
     runtime.session.close_night_after_chat_if_needed = None
+
     runtime._scene_chat_stream_payload = (  # type: ignore[method-assign]
         lambda *a, **k: {
             "answer": "臣已知晓。",
@@ -385,27 +393,11 @@ def test_worker_postprocess_exception_emits_error_end(monkeypatch):
             "court_action": "",
         }
     )
-    monkeypatch.setattr(web_app, "run_highlight_judge", lambda **_k: ["边饷"])
 
-    orig_thread = web_app.threading.Thread
+    def _boom_spawn(*_a, **_k):
+        raise RuntimeError("highlight trail boom")
 
-    class _FailHighlightThread:
-        def __init__(self, *a, **k):
-            self._real = orig_thread(*a, **k)
-            self.name = k.get("name") or getattr(self._real, "name", "")
-
-        def start(self):
-            if "highlight" in str(self.name):
-                raise RuntimeError("highlight postprocess failed")
-            return self._real.start()
-
-        def join(self, *a, **k):
-            return self._real.join(*a, **k)
-
-        def is_alive(self):
-            return self._real.is_alive()
-
-    monkeypatch.setattr(web_app.threading, "Thread", _FailHighlightThread)
+    runtime._spawn_pending_write_thread = _boom_spawn  # type: ignore[method-assign]
 
     events: list[dict] = []
     done = threading.Event()
@@ -435,7 +427,7 @@ def test_worker_postprocess_exception_emits_error_end(monkeypatch):
     err_idx = types.index("error")
     assert types[err_idx + 1] == "end", types
     err = next(e for e in events if e.get("type") == "error")
-    assert err.get("message"), err
+    assert "highlight trail boom" in str(err.get("message") or ""), err
     _assert_write_path_free(runtime)
 
 
@@ -465,6 +457,8 @@ def _assert_structured_llm_http(response) -> dict:
     assert detail.get("code"), detail
     assert detail.get("message"), detail
     assert "provider_message" in detail, detail
+    assert "Internal Server Error" not in response.text
+    assert "Internal Server Error" not in str(detail.get("message") or "")
     return detail
 
 
@@ -612,6 +606,7 @@ def _transport_web_game(game, agent, monkeypatch):
 
 
 def _post_chat_stream(monkeypatch, web_game, minister: str, message: str = "边饷如何？"):
+    monkeypatch.setattr(web_app, "_require_active_minister", lambda _n: None)
     monkeypatch.setattr(web_app, "get_game", lambda: web_game)
     return TestClient(web_app.app).post(
         "/api/audience/chat/stream", json={"message": message},
@@ -673,6 +668,7 @@ def test_chat_stream_run_error_event_sse_system_layer_no_retry(monkeypatch, game
     assert events[-1][0] == "error"
     detail = events[-1][1]
     assert detail.get("code") == "llm_stream_error"
+    assert detail.get("message")
     assert "Unknown model error" in str(detail.get("provider_message") or "")
     assert calls["n"] == 1
     attempts = detail.get("transport_attempts") or []
@@ -723,6 +719,7 @@ def test_chat_stream_three_transient_exhausted_system_fail_then_resend(monkeypat
     assert events[-1][0] == "error"
     detail = events[-1][1]
     assert detail.get("code") == "llm_connection_error"
+    assert detail.get("message")
     max_a = default_transport_policy().max_attempts
     assert agent.calls == max_a
     attempts = detail.get("transport_attempts") or []
@@ -817,6 +814,7 @@ def test_chat_stream_deterministic_4xx_no_retry(monkeypatch, game):
     assert http_hits["n"] == 1
     assert len(detail.get("transport_attempts") or []) == 1
     assert waits == [], waits
+    assert detail.get("message")
 
 
 def test_chat_stream_provider_default_502_not_washed_to_retryable(monkeypatch, game):
@@ -865,6 +863,7 @@ def test_chat_stream_typed_429_preserved(monkeypatch, game):
     response = _post_chat_stream(monkeypatch, web_game, minister)
     events = _parse_sse(response.text)
     detail = events[-1][1]
+    max_a = default_transport_policy().max_attempts
     assert detail.get("status_code") == 429
     assert detail.get("code") == "llm_run_error"
     assert detail.get("provider_message") == reason
@@ -1095,21 +1094,22 @@ def test_chat_stream_halfstream_terminal_fail_replaces_temp(
     assert temp == ""
 
 
-@pytest.mark.parametrize("status", ["ERROR", SimpleNamespace(value="ERROR")])
 def test_chat_stream_error_status_run_output_system_layer_not_diegetic(
-    monkeypatch, game, status,
+    monkeypatch, game,
 ):
     """#1465 ④：流终包 status=ERROR → 真入口 SSE typed code + 横幅不进 message。
 
     replace 序由 halfstream_terminal_fail_replaces_temp 承担。
     """
 
+    provider = "provider banner: exit code 1 / workdir:/tmp"
+
     class _ErrorStatusAgent:
         def run(self, *_a, **_k):
             yield RunContent("半句")
             ev = RunCompletedEvent()
-            ev.status = status
-            ev.content = "provider banner: exit code 1 / workdir:/tmp"
+            ev.status = "ERROR"
+            ev.content = provider
             ev.tools = []
             yield ev
 
@@ -1123,4 +1123,5 @@ def test_chat_stream_error_status_run_output_system_layer_not_diegetic(
     detail = events[-1][1]
     assert detail.get("code") == "llm_run_error"
     assert detail.get("message"), detail
-    assert detail.get("provider_message")
+    assert provider not in detail["message"]
+    assert detail.get("provider_message") == provider

@@ -1,4 +1,4 @@
-"""#317 — 连续满饷兑换军心上限，且进度跨财政路径与存档持久。"""
+"""#317 — 连续满饷兑换军心上限，且进度跨存档持久。"""
 from __future__ import annotations
 
 import sqlite3
@@ -9,11 +9,10 @@ from ming_sim.db import GameDB
 from ming_sim.flows import apply_fixed_period_flows
 
 ARMY = "guanning"
-PATHS = ("legacy", "substrate_hub")
 
 
-def _configure(db, fiscal_path: str) -> None:
-    value = 0 if fiscal_path == "legacy" else 1
+def _configure(db) -> None:
+    value = 1  # active substrate_hub cutover
     for key in ("__army_pay_source_cutover", "__fiscal_engine"):
         db.conn.execute(
             "INSERT INTO fiscal_config(key,value,kind,note) VALUES (?,?,'meta','test') "
@@ -30,8 +29,8 @@ def _configure(db, fiscal_path: str) -> None:
     db.conn.commit()
 
 
-def _set_arrears(db, fiscal_path: str, arrears: float) -> None:
-    central = arrears if fiscal_path == "substrate_hub" else 0
+def _set_arrears(db, arrears: float) -> None:
+    central = arrears  # active hub source-split seed
     db.conn.execute(
         "UPDATE armies SET arrears=?,province_pay_arrears=0,central_pay_arrears=? WHERE id=?",
         (arrears, central, ARMY),
@@ -49,17 +48,16 @@ def _tick(db, state):
     ).fetchone()
 
 
-@pytest.mark.parametrize("fiscal_path", PATHS)
-def test_twelve_consecutive_full_pay_months_redeem_once_and_raise_cap(game, fiscal_path):
+def test_twelve_consecutive_full_pay_months_redeem_once_and_raise_cap(game):
     db, state, _ = game
-    _configure(db, fiscal_path)
+    _configure(db)
     db.conn.execute(
         """UPDATE armies SET loyalty=95,mutiny_count=2,mutiny_probation=2,
            full_pay_streak=11,redemption_count=0,is_mutinied=0 WHERE id=?""",
         (ARMY,),
     )
     db.conn.commit()
-    _set_arrears(db, fiscal_path, 0)
+    _set_arrears(db, 0)
 
     first = _tick(db, state)
     assert tuple(first[k] for k in (
@@ -82,21 +80,20 @@ def test_twelve_consecutive_full_pay_months_redeem_once_and_raise_cap(game, fisc
         )) == (expected_cap, 0, redemption_count)
 
 
-@pytest.mark.parametrize("fiscal_path", PATHS)
-def test_full_pay_streak_can_be_saved_in_peace_and_partial_pay_resets_it(game, fiscal_path):
+def test_full_pay_streak_can_be_saved_in_peace_and_partial_pay_resets_it(game):
     db, state, _ = game
-    _configure(db, fiscal_path)
+    _configure(db)
     db.conn.execute(
         "UPDATE armies SET loyalty=100,mutiny_count=0,full_pay_streak=10,redemption_count=0 WHERE id=?",
         (ARMY,),
     )
     db.conn.commit()
 
-    _set_arrears(db, fiscal_path, 1)
+    _set_arrears(db, 1)
     interrupted = _tick(db, state)
     assert tuple(interrupted[k] for k in ("full_pay_streak", "redemption_count")) == (0, 0)
 
-    _set_arrears(db, fiscal_path, 0)
+    _set_arrears(db, 0)
     resumed = _tick(db, state)
     assert tuple(resumed[k] for k in ("full_pay_streak", "redemption_count")) == (1, 0)
 
@@ -127,8 +124,7 @@ def test_army_delta_clamps_loyalty_to_dynamic_mutiny_cap(
     assert loyalty == expected_loyalty
 
 
-@pytest.mark.parametrize("fiscal_path", PATHS)
-def test_redemption_progress_migrates_and_survives_reopen(game, tmp_path, fiscal_path):
+def test_redemption_progress_migrates_and_survives_reopen(game, tmp_path):
     db, state, content = game
     path = str(tmp_path / "old-save.db")
     copied = sqlite3.connect(path)
@@ -151,8 +147,8 @@ def test_redemption_progress_migrates_and_survives_reopen(game, tmp_path, fiscal
 
     reopened = GameDB(path, content)
     try:
-        _configure(reopened, fiscal_path)
-        _set_arrears(reopened, fiscal_path, 0)
+        _configure(reopened)
+        _set_arrears(reopened, 0)
         restored = _tick(reopened, state)
         assert tuple(restored[k] for k in (
             "loyalty", "full_pay_streak", "redemption_count"

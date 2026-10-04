@@ -3,7 +3,6 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { GameHud, resolveUnreadMemorialCount } from "./gameHud";
 import { MinisterCardList, AppointmentDrawer } from "./drawers";
-
 import type { GameState, Minister } from "../types";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -102,7 +101,7 @@ describe("#1236 GameHud face gates eat settlement_display", () => {
       />,
     );
 
-
+    expect(host.querySelector("[data-testid=wang-settlement-slip]")).not.toBeNull();
     // 关闭组：省/兵
     const regionBtn = Array.from(host.querySelectorAll("button")).find((b) => b.getAttribute("aria-label") === "省份列表");
     const armyBtn = Array.from(host.querySelectorAll("button")).find((b) => b.getAttribute("aria-label") === "军队列表");
@@ -159,7 +158,7 @@ describe("#1236 GameHud face gates eat settlement_display", () => {
     const secretCmd = Array.from(host.querySelectorAll("button.hud2-cmd")).find((b) =>
       (b.getAttribute("aria-label") || "").startsWith("密令"),
     );
-    expect(secretCmd?.querySelector(".hud2-cmd-badge")).not.toBeNull();
+    expect(secretCmd?.querySelector(".hud2-cmd-badge")?.textContent).toBe("3");
   });
 
   it("关闭组点击触发戏内理由回调", () => {
@@ -187,8 +186,8 @@ describe("#1236 GameHud face gates eat settlement_display", () => {
     );
     const regionBtn = Array.from(host.querySelectorAll("button")).find((b) => b.getAttribute("aria-label") === "省份列表")!;
     act(() => { regionBtn.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
-    expect(attempts).toHaveLength(1);
-    expect(attempts[0]).toBeTruthy();
+    expect(attempts).toEqual([expect.any(String)]);
+    expect(attempts[0]).not.toBe("");
   });
 
   it("#1323 awaiting_decision：递话/角标文案为有本待批；锁面机制仍关", () => {
@@ -214,17 +213,17 @@ describe("#1236 GameHud face gates eat settlement_display", () => {
         settlementFace={true}
       />,
     );
-
+    expect(host.querySelector("[data-testid=wang-settlement-slip]")).not.toBeNull();
     const regionBtn = Array.from(host.querySelectorAll("button")).find((b) => b.getAttribute("aria-label") === "省份列表")!;
     expect(regionBtn.getAttribute("aria-disabled")).toBe("true");
     act(() => { regionBtn.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
-    expect(attempts).toHaveLength(1);
-    expect(attempts[0]).toBeTruthy();
+    expect(attempts).toEqual([expect.any(String)]);
+    expect(attempts[0]).not.toBe("");
   });
 });
 
 describe("#1236 roster chat entry stripped in settlement_display", () => {
-  it("MinisterCardList disables onOpenChat when chatEntryEnabled=false", async () => {
+  it.each(["settling", "awaiting_decision"])("MinisterCardList denies chat in %s", async (phase) => {
     vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json: async () => ({ layout: "{}" }) } as Response)));
     const opened: string[] = [];
     const host = document.createElement("div");
@@ -240,18 +239,16 @@ describe("#1236 roster chat entry stripped in settlement_display", () => {
           emptyNote=""
           onOpenChat={(m) => opened.push(m.name)}
           chatEntryEnabled={false}
-          phase="settling"
+          phase={phase}
         />,
       );
     });
     const card = host.querySelector("button.minister-card") as HTMLButtonElement;
     expect(card.disabled).toBe(true);
-
     act(() => { card.click(); });
     expect(opened).toEqual([]);
     expect(host.textContent).toContain("周延儒"); // 名册仍在
   });
-
 
   it("AppointmentDrawer 任免名册不再承载召对入口", () => {
     const host = mount(
@@ -354,16 +351,13 @@ describe("QA A-1 #1276/#1282/#1285 GameHud HUD 对齐", () => {
       (b.getAttribute("aria-label") || "").startsWith("奏疏"),
     );
     expect(memorial).toBeTruthy();
-    const badge = host.querySelector(".hud2-cmd-badge");
-    expect(badge).not.toBeNull();
+    // The badge is a standalone scalar node, not a number extracted from prose.
+    expect(host.querySelector('button.hud2-cmd[aria-label^="奏疏"] .hud2-cmd-badge')?.textContent).toBe("3");
     // 零未读时不得借 issues 条数充数
     const { host: hostZero } = mountHud({
       state: makeState(false, { issues: makeState(false).issues, memorials: [], unread_memorial_count: 0 }),
     });
-    const zeroCap = Array.from(hostZero.querySelectorAll(".hud2-cmd-caption")).find((b) =>
-      (b.getAttribute("aria-label") || "").startsWith("奏疏"),
-    );
-    expect(zeroCap).not.toBeNull();
+    expect(hostZero.querySelector('button.hud2-cmd[aria-label^="奏疏"] .hud2-cmd-badge')).toBeNull();
     act(() => { memorial?.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
     expect(opened).toEqual(["state"]);
   });

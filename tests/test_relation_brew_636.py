@@ -12,21 +12,42 @@
 
 from __future__ import annotations
 
-import hashlib
+from types import SimpleNamespace
+import httpx
 import json
 import sqlite3
 import threading
 
 import pytest
+from openai import APIConnectionError, APITimeoutError
 
 from ming_sim.faction_brew import STANCE_KEY, VIEW_FACTION_STANCE
 from ming_sim.exceptions import LLMUnavailable
 from ming_sim.relation_brew import (
     FOUNDINGS_KEY,
     RECENT_KEY,
+    build_brew_input,
+    merge_founding_segment,
+    relation_dimension,
     run_month_end_relation_brew,
 )
 from ming_sim.relations import EMPEROR_NODE
+
+
+@pytest.mark.parametrize("error_type", [APITimeoutError, APIConnectionError])
+def test_provider_fault_becomes_typed_brew_failure(monkeypatch, error_type):
+    """生产调用缝仅把已知 provider 故障译成声明类型，保留原始 cause。"""
+    from ming_sim.mechanical_tail import _brew_fn_for_session
+
+    fault = error_type(request=httpx.Request("POST", "https://llm.invalid/v1"))
+    monkeypatch.setattr("ming_sim.agents.create_relation_brew_agent", lambda *_a: object())
+    def fail(*_a, **_kw):
+        raise fault
+    monkeypatch.setattr("ming_sim.agents.run_agent_text", fail)
+    brew = _brew_fn_for_session(SimpleNamespace(llm_config=object(), agno_db=None))
+    with pytest.raises(LLMUnavailable) as caught:
+        brew(json.dumps({"source": "甲", "target": "乙"}))
+    assert caught.value.__cause__ is fault
 
 
 def _add_edge(db, state, *, source, target, kind, context, origin):
@@ -216,6 +237,27 @@ def test_failed_month_degrades_to_pending_and_rebrews_next_month(game):
 
 # ---------------- #642 锚④：build_brew_input 只投影 prior 字段（全序/筛选归 read 缝）
 
+def test_build_brew_input_projects_prior_event_fields():
+    """brew 侧只锁 prior_events 字段投影与空列表；全量有序/和解归 read 缝主干。"""
+    prior = [{
+        "id": 9, "event_kind": "知遇", "context": "越次一召原句。",
+        "origin": "seed:founding", "year": 1628, "period": 11,
+    }]
+    payload = build_brew_input(
+        source=EMPEROR_NODE, target="杨嗣昌", dimension="君臣",
+        year=1635, period=6, summary=None, new_events=[],
+        has_pending=False, prior_events=prior,
+    )
+    assert payload["prior_events"] == [{
+        "event_kind": "知遇", "context": "越次一召原句。",
+        "origin": "seed:founding", "year": 1628, "period": 11,
+    }]
+    assert "id" not in payload["prior_events"][0]
+    assert build_brew_input(
+        source="甲", target="乙", dimension="大臣",
+        year=1635, period=6, summary=None, new_events=[],
+        has_pending=True, prior_events=[],
+    )["prior_events"] == []
 
 
 def test_prepare_attaches_prior_events_only_via_history_seam(game, monkeypatch):
@@ -285,14 +327,10 @@ def test_prepare_attaches_prior_events_only_via_history_seam(game, monkeypatch):
 # --------------------------- 庭裁 r3/r4 F2 超长 fixture：32,700 字节零删改
 
 def test_brew_persistence_chain_preserves_32700_byte_fixture_byte_identical(game):
-    # r4 冻结公式：B（UTF-8 75 字节）× 436 ＝ 32,700 字节，sha256 冻结。
+    # Keep the long injected input; compare its before-image directly, not a
+    # parallel checksum/length oracle for the same preservation contract.
     block = "崇祯边事关系账超长验收样文-Chongzhen-relation-brew-0123456789-".encode("utf-8")
-    assert len(block) == 75
     fixture = block * 436
-    assert len(fixture) == 32700
-    assert hashlib.sha256(fixture).hexdigest() == (
-        "8241a513648a4a99d6690f0a2cc942ee9523702301e6db12a9333c458c032240"
-    )
     fixture_text = fixture.decode("utf-8")
 
     db, state, _ = game
@@ -310,11 +348,7 @@ def test_brew_persistence_chain_preserves_32700_byte_fixture_byte_identical(game
     assert len(report["brewed"]) == 1
 
     stored = db.get_relation_summary(EMPEROR_NODE, "杨嗣昌")["recent_segment"]
-    stored_bytes = stored.encode("utf-8")
-    assert len(stored_bytes) == 32700
-    assert hashlib.sha256(stored_bytes).hexdigest() == (
-        "8241a513648a4a99d6690f0a2cc942ee9523702301e6db12a9333c458c032240"
-    )
+    assert stored.encode("utf-8") == fixture
 
 
 # --------------------------------------------- P5：批内条目并行不串行
@@ -366,6 +400,55 @@ def test_historical_events_alone_do_not_select_in_later_month(game):
     assert db.get_relation_summary("毕自严", "王绍徽") is None
 
 
+# ------------------------------------------------------- 奠基段拼装机械语义
+
+def test_merge_founding_segment_append_only_and_dedup():
+    assert merge_founding_segment("", ["甲句。", "乙句。"]) == "甲句。\n乙句。"
+    assert merge_founding_segment("甲句。", ["甲句。", "丙句。"]) == "甲句。\n丙句。"
+    assert merge_founding_segment("甲句。", []) == "甲句。"
+    # 空字符串条目是结构空操作；空白条目是合法字符串，逐字保留不去除。
+    assert merge_founding_segment("甲句。", [""]) == "甲句。"
+    assert merge_founding_segment("甲句。", ["  "]) == "甲句。\n  "
+
+
+def test_merge_founding_segment_preserves_bytes_exactly():
+    # P6/ADR 0142 零删改：旧段空行与末尾换行逐字保留，新句只做结构追加。
+    old = "甲句。\n\n乙句。\n"
+    assert merge_founding_segment(old, ["丙句。"]) == old + "\n丙句。"
+    assert merge_founding_segment(old, []) == old
+    # 新字符串逐字保留：首尾空白不剥。
+    assert merge_founding_segment("", ["  句前空格。  "]) == "  句前空格。  "
+    assert merge_founding_segment("甲句。", [" 甲句。 "]) == "甲句。\n 甲句。 "
+    # 严格字节相等去重：仅逐字全等才跳过；近似串（多空格/带后缀）不吞。
+    assert merge_founding_segment("甲句。", ["甲句。", "甲句。", "甲句 "]) == "甲句。\n甲句 "
+    # 补酿不重复记账只在严格字节全等时成立：整段原样重报（含多行句）逐字全等→跳过。
+    merged = merge_founding_segment("", ["甲句。", "乙句。\n乙二句。"])
+    assert merged == "甲句。\n乙句。\n乙二句。"
+    assert merge_founding_segment(merged, [merged]) == merged
+
+
+def test_merge_founding_segment_exact_old_entry_re_report_appended_verbatim():
+    """r5：跨轮去重收窄——只有「候选与整个旧段全等」与「同批候选间全等」跳过；
+    旧段内某个精确历史条目被再次报出→如实逐字追加（有界重复噪声，酿制读面
+    自行消化）；禁止恢复任何条目级拆解去重。"""
+    merged = merge_founding_segment("", ["甲句。", "乙句。\n乙二句。"])
+    assert merge_founding_segment(merged, ["甲句。", "乙句。\n乙二句。"]) == (
+        merged + "\n甲句。\n乙句。\n乙二句。"
+    )
+    # 同批候选间全等仍去重；候选与整个旧段全等仍跳过（补酿整段重报不重复记账）。
+    assert merge_founding_segment(merged, [merged]) == merged
+
+
+def test_merge_founding_segment_never_infers_by_lines():
+    """判词类①机械反例（冻结）：按行拆分＋集合推断会把整段候选误删。
+
+    旧段 '甲\\n中\\n乙' 配候选 '甲\\n乙'：候选的每一行各自都在旧段内，旧的行集合
+    推断据此把整条候选吞掉——零删改宪法下候选必须完整逐字追加。"""
+    assert merge_founding_segment("甲\n中\n乙", ["甲\n乙"]) == "甲\n中\n乙\n甲\n乙"
+    # 多行候选即使每一行都已在段内，也整条逐字追加（不拆行不推断）。
+    assert merge_founding_segment("甲句。", ["甲句。\n甲句二。"]) == "甲句。\n甲句。\n甲句二。"
+
+
 # ------- 判词类③ fail-loud 异常边界：DB/schema/程序错误响亮，仅 LLM 单条降级
 
 def test_prepare_claim_db_error_propagates_loudly(game):
@@ -379,7 +462,7 @@ def test_prepare_claim_db_error_propagates_loudly(game):
         raise sqlite3.OperationalError("认领库不可写")
 
     db.claim_relation_brew_targets = boom
-    with pytest.raises(sqlite3.OperationalError):
+    with pytest.raises(sqlite3.OperationalError, match="认领库不可写"):
         run_month_end_relation_brew(db, state, _brew_fn_factory([]))
 
 
@@ -402,7 +485,7 @@ def test_apply_db_error_propagates_loudly_not_disguised_as_llm_failure(game):
         return original_mark(**kwargs)
 
     db.mark_relation_brew_pending = spy_mark
-    with pytest.raises(sqlite3.OperationalError):
+    with pytest.raises(sqlite3.OperationalError, match="落定库不可写"):
         run_month_end_relation_brew(db, state, _brew_fn_factory([]))
     assert marked == []  # 宽吞与重复补降级已删
 
@@ -421,7 +504,7 @@ def test_mark_failure_after_llm_failure_propagates_loudly(game):
         raise sqlite3.OperationalError("pending 库不可写")
 
     db.mark_relation_brew_pending = boom
-    with pytest.raises(sqlite3.OperationalError):
+    with pytest.raises(sqlite3.OperationalError, match="pending 库不可写"):
         run_month_end_relation_brew(db, state, failing_brew)
 
 
@@ -436,7 +519,7 @@ def test_brew_program_error_propagates_loudly_not_degraded(game):
     def buggy_brew(payload_json: str) -> str:
         raise KeyError("酿制手程序错误")
 
-    with pytest.raises(KeyError):
+    with pytest.raises(KeyError, match="酿制手程序错误"):
         run_month_end_relation_brew(db, state, buggy_brew)
     # 响亮上扑而非降级：无 degraded 留痕；认领先行的 pending 凭据已持久在册。
     assert [(row["source"], row["target"]) for row in db.get_relation_brew_pending()] == [
@@ -456,7 +539,7 @@ def test_brew_fn_value_error_is_program_error_propagates_loudly(game):
     def buggy_brew(payload_json: str) -> str:
         raise ValueError("酿制手程序错误")
 
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="酿制手程序错误"):
         run_month_end_relation_brew(db, state, buggy_brew)
     # 响亮上抛而非降级：无 degraded 留痕；认领先行的 pending 凭据已持久在册。
     assert [(row["source"], row["target"]) for row in db.get_relation_brew_pending()] == [
@@ -488,6 +571,10 @@ def test_parse_seam_value_error_degrades_single_item(game):
     ]
 
 
+def test_relation_dimension_marks_emperor_edges():
+    assert relation_dimension(EMPEROR_NODE, "杨嗣昌") == "君臣"
+    assert relation_dimension("杨嗣昌", EMPEROR_NODE) == "君臣"
+    assert relation_dimension("毕自严", "王绍徽") == "大臣"
 
 
 # -------------------------------- 庭裁 Z1：畸形酿制产出严格拒收（不修补不改写）

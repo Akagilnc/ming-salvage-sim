@@ -7,16 +7,16 @@ S3 嵌套通道「旨外恶果」别名 → ledger=1
 
 from __future__ import annotations
 
+import json
 
 from ming_sim.commitment_backlash import (
     BACKLASH_ORIGIN_KIND,
     SOURCE_DEFORMATION_EXPOSURE,
     backlash_origin_ref,
 )
-from ming_sim.due_review import (
-    apply_pending_due_reviews,
-)
-from ming_sim.issues import apply_issue_inertia_and_ongoing, apply_score_extraction
+from ming_sim.due_review import apply_pending_due_reviews
+from ming_sim.issues import apply_score_extraction
+from ming_sim.situation_drift import apply_situation_monthly_drift
 from ming_sim.staged_commitment import write_due_staged_commitment_todos
 
 
@@ -71,10 +71,12 @@ def _insert_final_stage(db, state, content, *, dossier_id: int, title: str):
     return int(created["issue_id"])
 
 
-def _prime_and_apply_due_review(db, state, content, *, dossier_id: int, title: str):
+def _prime_and_apply_due_review(
+    db, state, content, *, dossier_id: int, title: str, stage_writer=_insert_final_stage,
+):
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
     db.conn.commit()
-    _insert_final_stage(db, state, content, dossier_id=dossier_id, title=title)
+    stage_writer(db, state, content, dossier_id=dossier_id, title=title)
     write_due_staged_commitment_todos(db, state)
     db.conn.execute(
         "UPDATE next_audience_todos SET created_turn=?",
@@ -289,6 +291,27 @@ def test_s1_fiscal_removes_beyond_intent_tracer_and_negatives(game, content):
     assert raw and all("beyond_intent" in dict(r) for r in raw)
 
 
+
+
+def test_s1_engine_grant_fiscal_create_stays_beyond_intent_zero(game):
+    """db.py 引擎确定性拨帑建项显式留 0（旨内，禁捏造旗值）。"""
+    db, state, _ = game
+    did = _executing_policy(db, state, token="grant-1260")
+    created = db._create_grant_fiscal_item(
+        state,
+        {"grant_action": "赏赉", "reason": "恩赏月拨", "cadence": "每月"},
+        did,
+        account="国库",
+        amount=10,
+        text="赏银月拨",
+    )
+    assert created
+    rows = db.list_fiscal_effects_for_dossier(did)
+    create_rows = [r for r in rows if r.get("effect_kind") == "create"]
+    assert create_rows
+    assert all(r["beyond_intent"] is False for r in create_rows), create_rows
+
+
 # ── S2：纯 fiscal 旨外案卷 → 终裁/fork/反噬 ─────────────────────────
 
 
@@ -435,8 +458,6 @@ def test_s2_pure_fiscal_without_beyond_intent_fulfilled_no_backlash(game, conten
     ), hits
 
 
-
-
 # ── S3：嵌套通道别名 ────────────────────────────────────────────────
 
 
@@ -473,7 +494,7 @@ def test_s3_nested_ongoing_economy_alias_旨外恶果_lands_ledger(game):
         cancellable="decree",
     )
 
-    apply_issue_inertia_and_ongoing(db, state)
+    apply_situation_monthly_drift(db, state)
 
     rows = db.conn.execute(
         "SELECT beyond_intent, reason, delta FROM economy_ledger "

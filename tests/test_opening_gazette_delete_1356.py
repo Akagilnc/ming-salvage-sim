@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from ming_sim.db import GameDB
+import ming_sim.decree as decree_mod
 from ming_sim.session import GameSession
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -106,32 +106,22 @@ def test_old_save_exact_purge_keeps_real_with_phrase_counterexample(game):
     assert db.get_turn_report(0) == seed
     assert db.get_turn_report(1) == real
 
-    # 旧档再开走 GameDB 构造/init_schema（公开开档入口），不直调私有 purge helper
-    reopened = GameDB(db.path, content=db.content)
-    try:
-        assert reopened.get_turn_report(0) == ""
-        assert reopened.conn.execute(
-            "SELECT 1 FROM turn_reports WHERE turn = 0"
-        ).fetchone() is None
-        kept = reopened.get_turn_report(1)
-        assert kept == real
-        assert "真结算保留标记" in kept
-        assert (
-            reopened.conn.execute(
-                "SELECT 1 FROM metrics WHERE key = ?",
-                ("__opening_gazette_seed_purged_1356",),
-            ).fetchone()
-            is None
-        )
-        # 再开一次仍幂等
-        again = GameDB(db.path, content=db.content)
-        try:
-            assert again.get_turn_report(0) == ""
-            assert again.get_turn_report(1) == real
-        finally:
-            again.conn.close()
-    finally:
-        reopened.conn.close()
+    db._purge_fixed_opening_gazette_seed()
+    db._purge_fixed_opening_gazette_seed()  # 精确 DELETE 天然幂等
+
+    assert db.get_turn_report(0) == ""
+    assert db.conn.execute("SELECT 1 FROM turn_reports WHERE turn = 0").fetchone() is None
+    kept = db.get_turn_report(1)
+    assert kept == real
+    assert "真结算保留标记" in kept
+    # 无 meta flag 机制
+    assert (
+        db.conn.execute(
+            "SELECT 1 FROM metrics WHERE key = ?",
+            ("__opening_gazette_seed_purged_1356",),
+        ).fetchone()
+        is None
+    )
 
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
@@ -162,7 +152,9 @@ def test_state_payload_t0_previous_summary_empty(game):
     runtime.public_character = lambda c: {"name": getattr(c, "name", "")}
     runtime.character_power_id = lambda c: "ming"
 
+    from ming_sim.models import reign_period_label
+
     payload = web_app.WebGame.state_payload(runtime)
     assert payload.get("previous_summary") == ""
-    assert (payload["turn"]["year"], payload["turn"]["period"]) == (1627, 10)
+    assert payload["turn"]["reign_period_label"] == reign_period_label(1627, 10)
     assert payload.get("previous_reign_period_label") in ("", None)

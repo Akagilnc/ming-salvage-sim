@@ -9,14 +9,13 @@ army_report/欠饷月数/simulator TSV）统一到 army_needed，玩家与审计
 
 from __future__ import annotations
 
-
 import pytest
 
-from ming_sim.flows import army_needed
+from ming_sim.army_pay import army_needed
 
 
 def test_army_payload_exposes_army_needed(read_game):
-    """army_payload 须暴露引擎实扣应发 army_needed（供 web/LLM 呈现「月饷」），与 flows.army_needed 一致。"""
+    """army_payload 须暴露引擎实扣应发 army_needed（供 web/LLM 呈现「月饷」），与 army_pay.army_needed 一致。"""
     db, _state, _ = read_game
     payload = db.army_payload()
     assert payload, "应有军队"
@@ -29,12 +28,49 @@ def test_army_payload_exposes_army_needed(read_game):
         )
 
 
+def test_army_public_exits_approx_arrears_and_hide_split_accounts(game):
+    """#305/D10：detail/report/roster 走欠饷近似；分账字段与抽象裸分不进真实出口。"""
+    db, _state, _ = game
+    row = db.conn.execute(
+        "SELECT id,name FROM armies WHERE owner_power='ming' ORDER BY id LIMIT 1"
+    ).fetchone()
+    # 受控裸分 token：不与兵额/合计饷银等合法可数事实混淆
+    scores = dict(loyalty=67, supply=69, morale=61, training=59, equipment=53, mobility=47)
+    db.conn.execute(
+        "UPDATE armies SET arrears=12.5, province_pay_arrears=17, central_pay_arrears=46,"
+        "manpower=20000, cannon_equipment=0, firearm_equipment=0,"
+        "loyalty=?, supply=?, morale=?, training=?, equipment=?, mobility=? WHERE id=?",
+        (*scores.values(), row["id"]),
+    )
+    db.conn.commit()
+    payload = {army["id"]: army for army in db.army_payload()}[row["id"]]
+    for key in ("arrears", "province_pay_arrears", "central_pay_arrears", "morale", "loyalty"):
+        assert key not in payload
 
 
+def test_army_payload_exposes_approx_arrears_text_not_raw(game):
+    """#321：web 只读 army_payload.arrears_text approximate；numeric arrears 键缺席；raw 12.5 不裸出。"""
+    from ming_sim.db import _player_army_situation
 
+    db, _state, _ = game
+    row = db.conn.execute(
+        "SELECT id FROM armies WHERE owner_power='ming' ORDER BY id LIMIT 1"
+    ).fetchone()
+    db.conn.execute(
+        """
+        UPDATE armies
+        SET arrears=12.5, province_pay_arrears=12.5, central_pay_arrears=0
+        WHERE id=?
+        """,
+        (row["id"],),
+    )
+    db.conn.commit()
 
-
-
+    full = db.conn.execute("SELECT * FROM armies WHERE id=?", (row["id"],)).fetchone()
+    expected = _player_army_situation(full, db._army_pay(full))["arrears_text"]
+    payload = {army["id"]: army for army in db.army_payload()}
+    assert "arrears" not in payload[row["id"]]
+    assert payload[row["id"]]["arrears_text"] == expected
 
 
 

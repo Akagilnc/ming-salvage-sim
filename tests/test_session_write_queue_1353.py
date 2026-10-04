@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import threading
+import time
 
 import pytest
 
@@ -472,8 +473,29 @@ def test_write_turn_still_blocks_on_open_barrier():
     assert order == ["barrier", "late"], order
 
 
+def test_no_elapsed_timeout_api_on_barrier():
+    """The public queue API rejects the retired timeout option."""
+    q = SessionWriteQueue()
+    ticket = q.claim()
+    try:
+        with pytest.raises(TypeError):
+            q.barrier(lambda: None, timeout_s=0)
+        with pytest.raises(TypeError):
+            q.wait_prior(ticket, timeout_s=0)
+        with pytest.raises(TypeError):
+            q.run(ticket, lambda: None, timeout_s=0)
+        with pytest.raises(TypeError):
+            q.ticketed_gate(ticket, timeout_s=0)
+    finally:
+        q.complete(ticket)
+
+
 def test_get_session_write_queue_wiring_fail_loud_no_broad_swallow():
-    """WebGame/session 共享同一写入队列（公开 get_session_write_queue）。"""
+    """#1353 r7 / ADR 0005：WebGame/session 必共享同一 queue/gate（接线实测）。
+
+    宽吞禁律由 #1353 r7 的真实异常注入用例承担（见本文件 queue 抛错用例），
+    此处不再正则截函数体盯源码形状。
+    """
     from ming_sim.session_write_queue import get_session_write_queue
 
     class _Sess:
@@ -488,14 +510,28 @@ def test_get_session_write_queue_wiring_fail_loud_no_broad_swallow():
     q2 = get_session_write_queue(owner)
     q3 = get_session_write_queue(owner.session)
     assert q1 is q2 is q3
-    entered = threading.Event()
+    assert owner._write_queue is q1
+    assert owner.session._write_queue is q1
+    assert owner._write_gate is q1.write_gate
+    assert owner.session._write_gate is q1.write_gate
 
-    def _probe() -> None:
-        with q1.write_gate:
-            entered.set()
 
-    t = threading.Thread(target=_probe, daemon=True)
-    t.start()
-    entered.wait()
-    t.join()
-    assert entered.is_set()
+def test_wait_pending_writes_fail_loud_on_false_and_exception(monkeypatch):
+    """单一权威负向：wait_idle=False 与队列异常均须报红，不得被调用方洗白。"""
+    stuck = SessionWriteQueue()
+    ticket = stuck.claim(key=("teardown-stuck", 1))
+    assert ticket is not None
+    try:
+        with pytest.raises(AssertionError, match="did not drain"):
+            wait_pending_writes(SimpleNamespace(_write_queue=stuck), timeout_s=0.05)
+    finally:
+        stuck.complete(ticket)
+
+    boom = SessionWriteQueue()
+
+    def _raise(*, timeout_s=None):
+        raise RuntimeError("queue boom")
+
+    monkeypatch.setattr(boom, "wait_idle", _raise)
+    with pytest.raises(RuntimeError, match="queue boom"):
+        wait_pending_writes(SimpleNamespace(_write_queue=boom), timeout_s=0.05)

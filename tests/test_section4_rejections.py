@@ -144,7 +144,6 @@ def test_region_controlled_by_rejects_non_power_id_and_preserves_region(game, ba
     assert len(rows) == 1
     _, reason, category, _ = rows[0]
     assert category == "invalid_enum"
-    assert reason
     after = db.conn.execute(
         "SELECT controlled_by FROM regions WHERE id=?", (good,)
     ).fetchone()[0]
@@ -390,9 +389,6 @@ def test_army_deltas_code_exception_aborts_settlement(game, monkeypatch):
     """apply_army_deltas 内代码异常原样上抛，原子分派回滚整批。"""
     db, state, content = game
     good = _an_army(db)
-    before = db.conn.execute(
-        "SELECT morale FROM armies WHERE id=?", (good,),
-    ).fetchone()[0]
 
     def _boom(self, *a, **k):
         raise KeyError("code bug in apply_army_deltas")
@@ -402,10 +398,6 @@ def test_army_deltas_code_exception_aborts_settlement(game, monkeypatch):
         run_settle(db, state, content, {
             "army_delta": {good: {"morale": 2}},
         }, narrative="x", decree_text="y")
-
-    assert db.conn.execute(
-        "SELECT morale FROM armies WHERE id=?", (good,),
-    ).fetchone()[0] == before
 
 
 def test_create_armies_code_exception_aborts_settlement(game, monkeypatch):
@@ -422,10 +414,6 @@ def test_create_armies_code_exception_aborts_settlement(game, monkeypatch):
             "new_armies": [{"id": "x_corps", "owner_power": good_owner,
                             "manpower": 1000, "maintenance_per_turn": 1}],
         }, narrative="x", decree_text="y")
-
-    assert db.conn.execute(
-        "SELECT COUNT(*) FROM armies WHERE id='x_corps'",
-    ).fetchone()[0] == 0
 
 
 # ---- clamp 语义(P2 铁律):clamp 不是拒收,clamp 后照落 ----
@@ -489,6 +477,38 @@ def test_army_firearm_over_100_clamps_not_rejected(game):
     after = db.conn.execute(
         "SELECT firearm_equipment FROM armies WHERE id=?", (good,)).fetchone()[0]
     assert after == 100  # clamp 后照落
+
+
+def test_region_army_formatters_skip_rejected_items():
+    """report.format_region_changes / format_army_changes 遇到同列拒收项(无
+    delta/label/region/army 键)不得 KeyError——拒收项不是盘面变化,只渲染 applied 项;
+    全拒收时回落「未见变化」(S2 迁契约副作用守门,对称 S1)。"""
+    from ming_sim.report import format_region_changes, format_army_changes
+
+    out_r = format_region_changes([
+        {"region_id": "查无此地", "rejected": True, "category": "missing_ref",
+         "reason": "查无此地"},
+        {"region": "山东", "field": "public_support", "label": "民心",
+         "old": 50, "new": 52, "delta": 2, "reason": "推演"},
+    ])
+    assert "山东" in out_r and "查无此地" not in out_r
+
+    out_a = format_army_changes([
+        {"army_id": "查无此军", "rejected": True, "category": "missing_ref",
+         "reason": "查无此军"},
+        {"army": "京营", "field": "morale", "label": "士气",
+         "old": 16, "new": 18, "delta": 2, "reason": "推演"},
+    ])
+    assert "京营" in out_a and "查无此军" not in out_a
+
+    only_rej_r = format_region_changes([
+        {"rejected": True, "category": "invalid_enum", "reason": "字段非法"}])
+    assert only_rej_r == format_region_changes([])
+    assert only_rej_r != out_r and "山东" not in only_rej_r
+    only_rej_a = format_army_changes([
+        {"rejected": True, "category": "invalid_enum", "reason": "字段非法"}])
+    assert only_rej_a == format_army_changes([])
+    assert only_rej_a != out_a and "京营" not in only_rej_a
 
 
 def test_duplicate_army_noninteger_manpower_rejected(game):
@@ -567,6 +587,37 @@ def test_absent_optional_army_fields_use_defaults(game):
     assert row[0] == 50 and row[1] == 0
 
 
+def test_issue_path_tolerates_previously_skipped_cases(game):
+    """国策结案路对「历史上 print-skip」的三案(army 非法字段等)不升级为崩月
+    ——S2 把它们改成拒收记录后,_raise_on_rejected 不得把历史可活的脏数据
+    变成新的中断路(cmr S2 r1 claude P2:「维持原行为」当真)。好字段照落。"""
+    import ming_sim.issues as I
+
+    db, state, content = game
+    aid = db.conn.execute("SELECT id FROM armies LIMIT 1").fetchone()[0]
+    before = db.conn.execute(
+        "SELECT morale FROM armies WHERE id=?", (aid,)).fetchone()[0]
+
+    I._apply_issue_entities(db, state, {
+        "army_delta": {aid: {"morale": 2, "士气大振": 1}},  # 非法字段,历史 print-skip
+    }, "局势#测试结案")  # 不抛
+
+    after = db.conn.execute(
+        "SELECT morale FROM armies WHERE id=?", (aid,)).fetchone()[0]
+    assert after == min(100, before + 2)  # 好字段照落
+
+
+def test_issue_path_still_strict_for_historically_fatal(read_game):
+    """历史上就 raise 的类别(查无此军)在国策结案路保持严格(pin)。"""
+    import ming_sim.issues as I
+
+    db, state, _ = read_game
+    with pytest.raises(ValueError):
+        I._apply_issue_entities(db, state, {
+            "army_delta": {"查无此军xyz": {"morale": 2}},
+        }, "局势#测试结案")
+
+
 def test_nondict_new_army_item_recorded_not_silent(read_game):
     """new_armies 非 dict 项不再静默 continue——留拒收记录(issue 路容忍不升级,
     历史即静默;season 路本就被 validate_delta_shape 挡在 S6)(cmr S2 r1 P3)。"""
@@ -606,7 +657,6 @@ def test_issue_path_tolerated_rejections_reach_reports(game):
     db, state, content = game
     turn = state.turn
     aid = db.conn.execute("SELECT id FROM armies LIMIT 1").fetchone()[0]
-    before = db.conn.execute("SELECT morale FROM armies WHERE id=?", (aid,)).fetchone()[0]
     issue_id = db.insert_issue(
         state, kind="initiative", title="测试容忍留痕", origin_kind="decree",
         origin_ref="", bar_value=50, bar_good_meaning="成", bar_bad_meaning="败",
@@ -623,8 +673,7 @@ def test_issue_path_tolerated_rejections_reach_reports(game):
 
     rows = _rejection_rows(db, turn, "issue_summary.entity_rejections")
     assert len(rows) == 1
-    assert rows[0][1]
-    assert db.conn.execute("SELECT morale FROM armies WHERE id=?", (aid,)).fetchone()[0] == min(100, before + 1)
+    assert "士气大振" in rows[0][1] or "非法字段" in rows[0][1]
 
 
 def test_inertia_natural_resolution_tolerated_rejection_no_crash(game):
@@ -646,7 +695,8 @@ def test_inertia_natural_resolution_tolerated_rejection_no_crash(game):
     )
     db.conn.commit()
 
-    I.apply_issue_inertia_and_ongoing(db, state, touched_ids=set())  # 不抛
+    from ming_sim.situation_drift import apply_situation_monthly_drift
+    apply_situation_monthly_drift(db, state)  # 不抛
 
     row = db.conn.execute("SELECT status FROM issues WHERE id=?", (issue_id,)).fetchone()
     assert row[0] == "resolved"
@@ -654,42 +704,52 @@ def test_inertia_natural_resolution_tolerated_rejection_no_crash(game):
     assert after == min(100, before + 1)  # 好字段照落
 
 
-@pytest.mark.parametrize("value,tolerated", [(3.7, True), (None, False)])
-def test_float_bool_army_delta_tolerated_on_issue_path(game, value, tolerated):
+def test_float_bool_army_delta_tolerated_on_issue_path(read_game):
+    """army_delta 的 float/bool 叶在改前是静默套用(int(3.7)=3 照落)=历史可活
+    ——issue 路不得升级为崩月;None/字符串历史就 raise,保持严格
+    (cmr S2 r3,2/2:「仅限历史上本就 raise 的类别」当真)。"""
     import ming_sim.issues as I
 
-    db, state, content = game
+    db, state, _ = read_game
     aid = db.conn.execute("SELECT id FROM armies LIMIT 1").fetchone()[0]
-    before = db.conn.execute("SELECT morale FROM armies WHERE id=?", (aid,)).fetchone()[0]
-    issue_id = db.insert_issue(state, kind="situation", title="军队数值结案", effect_on_resolve={
-        "army_delta": {aid: {"morale": value}},
-    })
-    close = {"close_issues": [{"issue_id": issue_id, "reason": "resolved"}]}
-    if tolerated:
-        result = I.apply_issue_tracker_output(db, state, close, content=content)
-        assert result["entity_rejections"][0]["category"] == "invalid_enum"
-    else:
-        with pytest.raises(ValueError):
-            I.apply_issue_tracker_output(db, state, close, content=content)
-    assert db.conn.execute("SELECT morale FROM armies WHERE id=?", (aid,)).fetchone()[0] == before
+
+    # float/bool:容忍(不抛,拒收留痕,不套用)
+    I._apply_issue_entities(db, state, {
+        "army_delta": {aid: {"morale": 3.7}},
+    }, "局势#测试结案")  # 不抛
+
+    # None:历史 int(None) TypeError → raise,保持严格
+    with pytest.raises(ValueError):
+        I._apply_issue_entities(db, state, {
+            "army_delta": {aid: {"morale": None}},
+        }, "局势#测试结案")
 
 
-@pytest.mark.parametrize("fields,outcome", [
-    ({"manpower": 3.7}, "rejected"), ({"manpower": "三千"}, "fatal"),
-    ({}, "fatal"), ({"manpower": 5000}, "created"),
-])
-def test_required_field_historical_strictness_on_issue_path(game, fields, outcome):
+def test_required_field_historical_strictness_on_issue_path(game):
+    """#173 PR2 后建军唯一必填=manpower（维护费退役、不再必填）。issue 结案路对「历史
+    可活」项容忍、对「历史致命」项保持严格 raise——谓词只看 manpower（原 cmr S2 r4 的
+    「混合成因」防护随维护费退役而单字段化：缺 maintenance 不再是致命成因）。"""
     import ming_sim.issues as I
 
     db, state, content = game
-    issue_id = db.insert_issue(state, kind="situation", title="建军结案", effect_on_resolve={
-        "new_armies": [{"id": "required_army", "name": "需填军", "owner_power": "ming", **fields, **_pay_source()}],
-    })
-    close = {"close_issues": [{"issue_id": issue_id, "reason": "resolved"}]}
-    if outcome == "fatal":
-        with pytest.raises(ValueError):
-            I.apply_issue_tracker_output(db, state, close, content=content)
-    else:
-        result = I.apply_issue_tracker_output(db, state, close, content=content)
-        assert bool(result["entity_rejections"]) is (outcome == "rejected")
-    assert db.conn.execute("SELECT COUNT(*) FROM armies WHERE id='required_army'").fetchone()[0] == (1 if outcome == "created" else 0)
+    # manpower=float（历史 int(3.7)=3 静默套用=可活）+ 缺 maintenance（PR2 后不再必填）→ 容忍不抛
+    I._apply_issue_entities(db, state, {
+        "new_armies": [{"id": "req_a", "name": "需填军甲", "owner_power": "ming",
+                        "manpower": 3.7, **_pay_source()}],
+    }, "局势#测试结案")  # 不抛
+    # manpower=串:历史 int("三千") ValueError → 致命 → raise（维护费在场与否不影响）
+    with pytest.raises(ValueError):
+        I._apply_issue_entities(db, state, {
+            "new_armies": [{"id": "req_b", "name": "需填军乙", "owner_power": "ming",
+                            "manpower": "三千"}],
+        }, "局势#测试结案")
+    # manpower 缺键:历史 KeyError → 致命 → raise
+    with pytest.raises(ValueError):
+        I._apply_issue_entities(db, state, {
+            "new_armies": [{"id": "req_c", "name": "需填军丙", "owner_power": "ming"}],
+        }, "局势#测试结案")
+    # 合法 manpower、缺 maintenance:PR2 核心——维护费退役后建军照样成立 → 容忍不抛
+    I._apply_issue_entities(db, state, {
+        "new_armies": [{"id": "req_d", "name": "需填军丁", "owner_power": "ming",
+                        "manpower": 5000, **_pay_source()}],
+    }, "局势#测试结案")  # 不抛

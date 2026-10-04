@@ -130,6 +130,9 @@ def test_terminal_outcomes_charge_lead_and_downgraded_delegator(
         assert "徐光启" in targets
     assert not {"黄道周", "王承恩"} & targets
 
+    note = db.get_decree_dossier(dossier_id)["execution_note"]
+    assert "徐光启" in note
+
 
 def test_adapter_replay_is_idempotent_on_joint_liability_rows(game):
     db, state, content = game
@@ -203,6 +206,8 @@ def test_dead_liable_party_skips_satisfaction_but_enters_note(game):
     }
     assert "倪元璐" not in edges
     assert "徐光启" in edges
+    note = db.get_decree_dossier(dossier_id)["execution_note"]
+    assert "倪元璐" in note
 
 
 def test_explicit_affected_parties_must_pass_full_key_validation(game):
@@ -291,6 +296,7 @@ def test_assistant_row_delegator_gets_secondary_assistant_zero_mechanical(game):
     assert "黄道周" not in edges
 
 
+
 def test_dual_role_lead_and_delegator_primary_wins(game):
     """合法「主办兼他人委派人」先定档后去重：primary 胜 secondary。"""
     db, state, content = game
@@ -327,6 +333,7 @@ def test_dual_role_lead_and_delegator_primary_wins(game):
         if e["origin"].startswith(f"dossier:{dossier_id}:")
     }
     assert edges == {"倪元璐", "徐光启"}
+
 
 
 def test_liability_query_excludes_knowers_but_keeps_delegator_fk(game):

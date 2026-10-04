@@ -19,6 +19,7 @@ import threading
 
 import pytest
 
+from ming_sim.db import GameDB
 from ming_sim.exceptions import LLMUnavailable
 from ming_sim.faction_brew import (
     STANCE_KEY,
@@ -288,7 +289,7 @@ def test_faction_claim_db_error_propagates_loudly(game):
         raise sqlite3.OperationalError("派系认领库不可写")
 
     db.claim_faction_brew_targets = boom
-    with pytest.raises(sqlite3.OperationalError):
+    with pytest.raises(sqlite3.OperationalError, match="派系认领库不可写"):
         run_month_end_relation_brew(db, state, _dual_brew_fn_factory([]))
 
 
@@ -301,7 +302,7 @@ def test_faction_apply_db_error_propagates_loudly_not_disguised(game):
         raise sqlite3.OperationalError("派系落定库不可写")
 
     db.apply_faction_brew_result = boom
-    with pytest.raises(sqlite3.OperationalError):
+    with pytest.raises(sqlite3.OperationalError, match="派系落定库不可写"):
         run_month_end_relation_brew(db, state, _dual_brew_fn_factory([]))
 
 
@@ -459,6 +460,7 @@ def test_authority_revoke_edge_reaches_holder_faction_with_emperor_target(game):
         source=holder, target=EMPEROR_NODE, event_kind="结怨",
     )
     assert len(edges) == 1
+    assert edges[0]["context"] == f"收权·罢差·便宜行事·{domain}"
 
     targets = select_faction_brew_targets(
         db, year=int(state.year), period=int(state.period),
@@ -564,6 +566,10 @@ def test_source_faction_target_faction_equals_current_projection_and_nulls_and_n
                 assert projected["source_faction"] is None
             if row["target"] == EMPEROR_NODE:
                 assert projected["target_faction"] is None
+            # Separate structured identities must preserve the source rows,
+            # regardless of punctuation that may legitimately occur in names.
+            assert projected["source"] == row["source"]
+            assert projected["target"] == row["target"]
 
     # 表外党籍显式 null：经 build 显式投影路径验证（不经 select）
     payload_out = build_faction_brew_input(
@@ -585,8 +591,10 @@ def test_source_faction_target_faction_equals_current_projection_and_nulls_and_n
 
 # ---- 送修口二负例 (b)：重试月场景，prompt 不把旧事件称作本月 ----
 
-def test_faction_brew_retry_preserves_event_dates(game):
-    """重试月保留未消化事件的原始年月，不把它们改成本月。"""
+def test_faction_brew_prompt_retry_month_does_not_label_old_events_as_current_month(game):
+    """负例(b) 机械可验：复刻重试月场景（水位之上含旧月事件），断言 prompt 渲染措辞不把旧事件称作本月。
+    正向表述：描述为未处理事件、每条自带时间戳、以事件自带年月为据；禁负向句。"""
+    from pathlib import Path
     db, state, _ = game
     # 旧月事件：落在当前 year/period
     old_year, old_period = int(state.year), int(state.period)
@@ -595,7 +603,7 @@ def test_faction_brew_retry_preserves_event_dates(game):
     # 模拟失败：酿制失败留 pending（不推进水位）
     def failing_brew(payload_json: str) -> str:
         raise LLMUnavailable("酿制裁判接口不可用")
-    run_month_end_relation_brew(db, state, failing_brew)
+    report = run_month_end_relation_brew(db, state, failing_brew)
     assert any(row["faction"] == "皇党" for row in db.get_faction_brew_pending())
     old_summary = db.get_faction_stance_summary("皇党")
     assert old_summary is None

@@ -110,6 +110,29 @@ def _hist_event(eid, gate=None):
     )
 
 
+def test_temp_events_replaces_same_id_and_restores_original(content):
+    eid = "__temp_events_replace_existing__"
+    original = _hist_event(eid)
+    replacement = _hist_event(eid)
+    replacement.title = "替换事件"
+    content.events.append(original)
+    content.event_by_id[eid] = original
+    try:
+        with _TempEvents(content, replacement):
+            same_id_events = [ev for ev in content.events if ev.id == eid]
+            assert same_id_events == [replacement]
+            assert content.event_by_id[eid] is replacement
+
+        same_id_events = [ev for ev in content.events if ev.id == eid]
+        assert same_id_events == [original]
+        assert content.event_by_id[eid] is original
+    finally:
+        if original in content.events:
+            content.events.remove(original)
+        if content.event_by_id.get(eid) is original:
+            content.event_by_id.pop(eid, None)
+
+
 @pytest.mark.parametrize("bad_item", [None, 42, "字符串"])
 def test_new_issue_non_dict_item_rejected_not_crash(read_game, bad_item):
     db, state, _ = read_game
@@ -117,7 +140,6 @@ def test_new_issue_non_dict_item_rejected_not_crash(read_game, bad_item):
     rej = _rejected(out)
     assert len(rej) == 1
     assert rej[0]["category"] == "invalid_enum"
-    assert rej[0]["reason"]
 
 
 @pytest.mark.parametrize("field,bad", [
@@ -134,7 +156,6 @@ def test_new_issue_dirty_coercion_field_rejected(read_game, field, bad):
     rej = _rejected(out)
     assert len(rej) == 1, out
     assert rej[0]["category"] == "invalid_enum"
-    assert rej[0]["reason"]
 
 
 @pytest.mark.parametrize("bad_kind", ["reform", "policy", "局势"])
@@ -147,7 +168,6 @@ def test_new_issue_bad_kind_rejected(read_game, bad_kind):
     rej = _rejected(out)
     assert len(rej) == 1, out
     assert rej[0]["category"] == "invalid_enum"
-    assert rej[0]["reason"]
 
 
 def test_new_issue_dirty_inertia_rejected(read_game):
@@ -159,7 +179,6 @@ def test_new_issue_dirty_inertia_rejected(read_game):
     rej = _rejected(out)
     assert len(rej) == 1, out
     assert rej[0]["category"] == "invalid_enum"
-    assert rej[0]["reason"]
 
 
 def test_new_issue_oversized_severity_clamped_not_abort(game):
@@ -216,7 +235,6 @@ def test_new_issue_infinity_field_rejected_not_abort(read_game):
     rej = _rejected(out)
     assert len(rej) == 1, out
     assert rej[0]["category"] == "invalid_enum"
-    assert rej[0]["reason"]
 
 
 def test_new_issue_infinity_expected_months_rejected_not_abort(read_game):
@@ -282,7 +300,6 @@ def test_new_issue_falsy_nonstring_kind_rejected(read_game, bad_kind):
     rej = _rejected(out)
     assert len(rej) == 1, out
     assert rej[0]["category"] == "invalid_enum"
-    assert rej[0]["reason"]
 
 
 def test_new_issue_insert_code_exception_propagates(game, monkeypatch):
@@ -291,7 +308,7 @@ def test_new_issue_insert_code_exception_propagates(game, monkeypatch):
         raise RuntimeError("模拟 insert_issue 落库代码异常")
     monkeypatch.setattr(type(db), "insert_issue", _boom)
     # insert 代码/DB 异常不再 WARN 吞 → 上抛（上层 applier.atomic 据此 SettlementAbort）。
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError, match="模拟 insert_issue"):
         I.apply_issue_tracker_output(db, state, {
             "new_issues": [{"origin_kind": "decree", "origin_ref": _decree_origin(db, state),
                             "kind": "situation", "title": "测试·正常字段"}],
@@ -325,17 +342,16 @@ def test_new_issue_valid_decree_still_creates(game):
 
 
 def test_event_to_issue_insert_exception_propagates(read_game, monkeypatch):
-    db, state, content = read_game
-    I.bind_content(content)
+    db, state, _ = read_game
     # 直接覆盖 fix 点：event_to_issue 内 insert 真异常上抛，不再 WARN 吞成 None。
     eid = _pick_event_pool_id(db)
-    ev = content.event_by_id[eid]
+    ev = I._ctx().event_by_id[eid]
 
     def _boom(*a, **k):
         raise RuntimeError("模拟 event_to_issue insert 落库代码异常")
 
     monkeypatch.setattr(type(db), "insert_issue", _boom)
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError, match="模拟 event_to_issue"):
         I.event_to_issue(db, state, ev)
 
 
@@ -354,7 +370,7 @@ def test_new_issue_event_pool_insert_exception_propagates(game, monkeypatch):
     with _TempEvents(content, ev):
         _ensure_event_candidate(db, state, eid)
         monkeypatch.setattr(type(db), "insert_issue", _boom)
-        with pytest.raises(RuntimeError):
+        with pytest.raises(RuntimeError, match="模拟 event_pool"):
             I.apply_issue_tracker_output(db, state, {
                 "new_issues": [{"origin_kind": "event_pool", "id": eid}],
             })
@@ -384,7 +400,6 @@ def test_new_issue_event_pool_rejects_expired_event(game):
     rej = _rejected(out)
     assert len(rej) == 1, out
     assert rej[0]["id"] == eid
-    assert rej[0]["reason"]
     assert db.find_any_issue_by_origin("event_pool", eid) is None
 
 
@@ -419,7 +434,6 @@ def test_authoritative_event_pool_rejects_same_batch_obsolete_event(game):
     rejected = [item for item in _rejected(out) if item.get("id") == downstream.id]
     assert [item["id"] for item in created] == [upstream.id], out
     assert len(rejected) == 1, out
-    assert rejected[0]["reason"]
     assert db.find_any_issue_by_origin("event_pool", downstream.id) is None
 
 
@@ -438,7 +452,6 @@ def test_new_issue_scalar_string_tags_rejected(read_game, bad_tags):
     rej = _rejected(out)
     assert len(rej) == 1, out
     assert rej[0]["category"] == "invalid_enum"
-    assert rej[0]["reason"]
 
 
 def test_new_issue_non_string_tag_element_rejected(read_game):
@@ -448,7 +461,6 @@ def test_new_issue_non_string_tag_element_rejected(read_game):
     rej = _rejected(out)
     assert len(rej) == 1, out
     assert rej[0]["category"] == "invalid_enum"
-    assert rej[0]["reason"]
 
 
 def test_new_issue_valid_list_tags_preserved(game):

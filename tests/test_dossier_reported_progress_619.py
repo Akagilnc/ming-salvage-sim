@@ -111,6 +111,13 @@ def test_execution_surface_dossier_can_record_and_list_full_history(game):
     assert leaked == 0
 
     # #883: general rail has no shared secret/track flag column.
+    cols = {
+        row["name"]
+        for row in db.conn.execute("PRAGMA table_info(dossier_reported_progress)").fetchall()
+    }
+    assert "is_secret" not in cols
+    assert "secret" not in cols
+    assert "track" not in cols
 
 
 def test_secret_monthly_path_unchanged_and_stays_on_private_rail(game):
@@ -241,7 +248,6 @@ def test_production_terminal_sidepath_records_degraded_transformed_only(game):
     assert db.get_decree_dossier(transformed_id)["execution_outcome"] == "transformed"
     assert db.get_decree_dossier(fulfilled_id)["execution_outcome"] == "fulfilled"
     assert db.get_decree_dossier(failed_id)["execution_outcome"] == "failed"
-    # 判官真值只在执行格 note，不进奏报轨。
 
 
 def test_fake_progress_report_does_not_change_world_state(game):

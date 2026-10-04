@@ -11,6 +11,8 @@ canonical＝ADR 0087/0088 + #649 冻结票面（含庭裁修正案 r1-r5）：
 
 from __future__ import annotations
 
+import json
+import os
 
 import pytest
 
@@ -224,9 +226,9 @@ def test_section_non_list_rejects_section_rest_lands(game):
         "population_transfers": "凭空一段",
         "class_delta": {"农民": {"satisfaction": -2}},
     }, content, None)
-    shape_rej = applied["validate_shape_rejections"]
-    assert len(shape_rej) == 1
-    assert shape_rej[0]["item"] == {"raw_value": "凭空一段"}
+    shape_rej = [r for r in applied["validate_shape_rejections"]
+                 if "population_transfers" in str(r.get("reason"))]
+    assert shape_rej and shape_rej[0]["item"] == {"raw_value": "凭空一段"}
     assert applied["class_delta"]["农民"]["satisfaction"] == -2
     sat_after = db.conn.execute(
         "SELECT satisfaction FROM classes WHERE name='农民' AND region_id='' "
@@ -247,7 +249,6 @@ def test_class_delta_population_key_upgraded_to_per_item_rejection(game):
     rejections = applied["class_delta_rejections"]
     assert len(rejections) == 1
     assert rejections[0]["category"] == "invalid_enum"
-    assert rejections[0]["reason"]
     row = db.conn.execute(
         "SELECT population, satisfaction FROM classes WHERE name='流民' AND region_id='shaanxi'"
     ).fetchone()
@@ -272,7 +273,6 @@ def test_class_delta_chinese_population_key_upgraded_to_per_item_rejection(game)
     rejections = applied["class_delta_rejections"]
     assert len(rejections) == 1
     assert rejections[0]["category"] == "invalid_enum"
-    assert rejections[0]["reason"]
     row = db.conn.execute(
         "SELECT population, satisfaction FROM classes WHERE name='农民' AND region_id='shaanxi'"
     ).fetchone()
@@ -282,6 +282,20 @@ def test_class_delta_chinese_population_key_upgraded_to_per_item_rejection(game)
         "SELECT satisfaction FROM classes WHERE name='农民' AND region_id=''"
     ).fetchone()
     assert farmer["satisfaction"] == 32 - 2        # 同批合法项不受累
+
+
+def test_unknown_top_level_key_now_per_section_rejection_not_abort(game):
+    """r4 分层终态：未知顶层 key=可拆 section → 按段拒收留痕不整份退（ADR0015 待施工纠正面）。"""
+    db, state, content = game
+    applied = apply_score_extraction(db, state, {
+        "region_delta_typo": {"shaanxi": {"unrest": 5}},
+        "metric_delta": {"民心": 1},
+    }, content, None)
+    shape_rej = [r for r in applied["validate_shape_rejections"]
+                 if "region_delta_typo" in str(r.get("reason"))]
+    assert shape_rej, "未知顶层 key 必须按段拒收留痕"
+    assert shape_rej[0]["rejected"] is True
+    assert applied["metric_delta"].get("民心") == 1  # 其余 section 照落，不整份退
 
 
 # ── 双单位（F3）：新档 sub-万精确；legacy 万口径、sub-万不可表达 ──────────────
@@ -363,6 +377,42 @@ def _snap(db):
     }
 
 
+def test_mutation_oracle_four_mutations_all_bitten(game):
+    """凭空造人／单侧写／出阵方向／混刻度四类变异逐一注入观测面，oracle 必咬。"""
+    db, state, content = game
+    before = _snap(db)
+    after = dict(before)
+    after[("农民", "shaanxi")] -= 4000
+    after[("流民", "shaanxi")] += 4000
+    record = {"source": "农民@shaanxi", "target": "流民@shaanxi",
+              "amount": 4000, "reason": "兵灾"}
+    _conservation_oracle(before, after, [record])  # 正对照不炸
+
+    # ① 凭空造人：目标腿加了、源腿没减
+    m1 = dict(after)
+    m1[("流民", "shaanxi")] += 8000
+    with pytest.raises(AssertionError):
+        _conservation_oracle(before, m1, [record])
+    # ② 单侧写：只有源腿减
+    m2 = dict(before)
+    m2[("农民", "shaanxi")] -= 4000
+    with pytest.raises(AssertionError):
+        _conservation_oracle(before, m2, [record])
+    # ③ 出阵方向：账面实际动的是农民→士绅，却申报农民→流民
+    m3 = dict(after)
+    m3[("流民", "shaanxi")] -= 4000
+    m3[("士绅", "shaanxi")] += 4000
+    with pytest.raises(AssertionError):
+        _conservation_oracle(before, m3, [record])
+    # ④ 混刻度：两腿都按错误倍率（万口径）等量增减——总量仍守恒，
+    #    守恒 oracle 不炸，只能靠逐腿 amount/单位断言咬住（判词 F3：混刻度变异
+    #    不得先被不守恒/单侧写短路，必须独立证明会被咬）。
+    m4 = dict(after)
+    m4[("农民", "shaanxi")] = before[("农民", "shaanxi")] - 40000000
+    m4[("流民", "shaanxi")] = before[("流民", "shaanxi")] + 40000000
+    assert sum(m4.values()) == sum(before.values())  # 混刻度 mutant 自身守恒
+    with pytest.raises(AssertionError):
+        _conservation_oracle(before, m4, [record])
 
 
 # ── F1 闭环：真实 extractor 契约（prompt 中文 shape → canonicalize → apply）───

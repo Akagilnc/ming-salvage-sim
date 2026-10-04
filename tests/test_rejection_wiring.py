@@ -55,8 +55,8 @@ def test_rejected_item_lands_in_reports_and_jsonl(game, monkeypatch, tmp_path):
 
 
 def test_rollback_leaves_no_rows_and_no_jsonl(game, monkeypatch, tmp_path):
-    """原子声明在 flush 之后崩 → 事务回滚:rejection_reports 无行、jsonl 无镜像
-    （#1745：后 flush tracer，不重建 flush 前副本）。
+    """原子声明在 flush 之后崩 → 事务回滚:rejection_reports 无行、jsonl 无镜像；
+    对账好项与坏项拒收同 atomic 回滚（#1745：后 flush tracer，不重建 flush 前副本）。
 
     镜像只在 commit 成功后写,否则留「DB 没有、文件却有」的孤立行。
     """
@@ -66,6 +66,23 @@ def test_rollback_leaves_no_rows_and_no_jsonl(game, monkeypatch, tmp_path):
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
     turn = state.turn
 
+    # 在途拨帑供合法 recon 好项；与坏引用同批，覆盖对账+拒收已 flush 后回滚。
+    state.metrics["内库"] = max(int(state.metrics.get("内库") or 0), 80)
+    gid = db.create_decree_dossier(
+        state,
+        action_type="grant_allocation",
+        decree_text="拨银押解",
+        target_kind="region",
+        target_id="shaanxi",
+        payload={
+            "account": "内库",
+            "amount": 30,
+            "execution_surface": "in_transit",
+        },
+    )
+    db.apply_dossier_promulgation(state, gid, "promulgated")
+    assert db.get_decree_dossier(gid)["status"] == "executing"
+
     real_flush = RejectionCollector.flush_to_db
 
     def _boom(self, db_):
@@ -74,13 +91,18 @@ def test_rollback_leaves_no_rows_and_no_jsonl(game, monkeypatch, tmp_path):
 
     monkeypatch.setattr(RejectionCollector, "flush_to_db", _boom)
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError, match="crash after flush"):
         run_settle(db, state, content, {
             "character_status_changes": [{"name": "查无此人乙", "status": "dead", "reason": "测试"}],
-            }, narrative="x", decree_text="y")
+            "dossier_reconciliations": [
+                {"dossier_id": gid, "arrived_amount": 16},
+                {"dossier_id": 88888, "arrived_amount": 5},
+            ],
+        }, narrative="x", decree_text="y")
 
     monkeypatch.setattr(RejectionCollector, "flush_to_db", real_flush)
     assert _rejection_rows(db, turn) == []
+    assert db.list_dossier_reconciliations(gid) == []
     assert not (tmp_path / "error_packs" / "rejections.jsonl").exists()
 
 
@@ -99,7 +121,7 @@ def test_issue_summary_nested_rejections_are_collected(game, monkeypatch, tmp_pa
     rows = _rejection_rows(db, turn)
     assert len(rows) == 1
     assert rows[0][0] == "issue_summary.new_issues"
-    assert rows[0][1]  # 人读原因非空；措辞不是契约
+    assert "decree/event_pool" in rows[0][1]  # 拒收原因原样保留
 
 
 def test_nested_atomic_success_path_does_not_orphan_jsonl(game, monkeypatch, tmp_path):
@@ -112,7 +134,7 @@ def test_nested_atomic_success_path_does_not_orphan_jsonl(game, monkeypatch, tmp
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
     turn = state.turn
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError, match="outer rollback"):
         with atomic(db):
             run_settle(db, state, content, {
                 "人物状态变化": [{"name": "查无此人戊", "status": "dead", "reason": "测试"}],
@@ -171,6 +193,26 @@ def test_noncancellable_cancel_rejection_carries_reason(game, monkeypatch, tmp_p
 
 
 
+def test_bridge_synthesizes_reason_when_producer_omits(game):
+    """桥接层集中守 ADR「拒收行必带原因」不变式:任何 producer 漏给 reason,
+    落库前合成非空兜底——规则写一处,未来新 section 免疫同类缺陷(fix-coverage
+    drift 处方:集中化,cmr S0 r3)。"""
+    from ming_sim.applier import Provenance, RejectionCollector
+    from ming_sim.decree import _collect_inline_rejections
+
+    db, state, content = game
+    collector = RejectionCollector()
+    _collect_inline_rejections(collector, {
+        "some_section": [{"rejected": True}],  # producer 没给 reason
+    }, 1, Provenance.unknown)
+    collector.flush_to_db(db)
+    db.conn.commit()
+
+    row = db.conn.execute(
+        "SELECT reason FROM rejection_reports WHERE section='some_section'").fetchone()
+    assert row is not None and row[0]  # 非空兜底
+
+
 def test_inertia_tolerated_rejections_reach_reports(game, monkeypatch, tmp_path):
     """inertia 自然结案的容忍拒收项也要进 rejection_reports——桥接在 inertia 前
     已跑,只 tlog 等于这条路永远脱离收集器/attempt/provenance 管线,与 tracker-close
@@ -195,7 +237,7 @@ def test_inertia_tolerated_rejections_reach_reports(game, monkeypatch, tmp_path)
     rows = [r for r in _rejection_rows(db, turn)
             if r[0] == "issue_inertia.entity_rejections"]
     assert len(rows) == 1
-    assert rows[0][1]  # 人读原因非空；措辞不是契约
+    assert "士气大振" in rows[0][1] or "非法字段" in rows[0][1]
 
 
 def test_item_json_is_original_delta_item_when_producer_carries_it(game, monkeypatch, tmp_path):
@@ -406,7 +448,6 @@ def test_power_move_backlash_rejection_lands_in_reports(game, monkeypatch, tmp_p
         ]
         assert len(rows) == 1
         assert rows[0]["section"] == "applied_person_changes.backlash_results"
-        assert rows[0]["reason"]
         assert rows[0]["category"] == "hallucinated_id"
         assert json.loads(rows[0]["item_json"]) == {
             "power_id": "查无此势力",
@@ -470,7 +511,6 @@ def test_issue_close_power_move_backlash_rejection_is_not_duplicated(game, monke
         ]
         assert len(rows) == 1
         assert rows[0]["section"] == "issue_summary.applied_person_changes.backlash_results"
-        assert rows[0]["reason"]
         assert rows[0]["category"] == "hallucinated_id"
         assert json.loads(rows[0]["item_json"]) == {
             "power_id": "查无此势力",
@@ -510,9 +550,28 @@ def test_inertia_power_move_backlash_rejection_lands_in_reports(game, monkeypatc
         ).fetchall()
         assert len(rows) == 1
         assert rows[0]["section"] == "issue_summary.applied_person_changes.backlash_results"
-        assert rows[0]["reason"]
         assert rows[0]["category"] == "hallucinated_id"
     finally:
         ch.power_id, ch.office, ch.office_type = old_power, old_office, old_office_type
 
 
+def test_provenance_from_stored_recovers_all_forms():
+    """#146/#175 R2（gemini + coderabbit concur）：_provenance_from_stored 三层兼容——
+    Provenance 实例、纯值字符串、历史误序列化的 'Provenance.<name>' 脏串都能还原回原来源，
+    不静默退化成 system_simulation；只有真正非法/缺失才回落。"""
+    from ming_sim.decree import _provenance_from_stored
+    from ming_sim.applier import Provenance
+
+    # ① Provenance 实例原样返回
+    assert _provenance_from_stored(Provenance.player_decree) is Provenance.player_decree
+    # ② 纯值字符串（正常持久化形态）
+    assert _provenance_from_stored("player_decree") == Provenance.player_decree
+    assert _provenance_from_stored("system_simulation") == Provenance.system_simulation
+    # ③ 历史 str(枚举实例) 脏串 'Provenance.player_decree'——剥前缀按成员名查回（本轮硬化点）
+    assert _provenance_from_stored("Provenance.player_decree") == Provenance.player_decree
+    assert _provenance_from_stored("Provenance.system_simulation") == Provenance.system_simulation
+    # ④ 非法/缺失 → system_simulation 回落
+    assert _provenance_from_stored("") == Provenance.system_simulation
+    assert _provenance_from_stored(None) == Provenance.system_simulation
+    assert _provenance_from_stored("查无此来源") == Provenance.system_simulation
+    assert _provenance_from_stored("Provenance.查无此成员") == Provenance.system_simulation

@@ -67,10 +67,47 @@ def _danger_top_statuses(db, limit: int) -> list[str]:
     ]
 
 
+def _assert_ming_register(db, text: str) -> None:
+    rows = db.conn.execute(
+        "SELECT name, manpower, status FROM armies WHERE owner_power='ming'"
+    ).fetchall()
+    assert rows and text
+    for row in rows:
+        assert row["name"] in text
+        status = str(row["status"] or "").strip()
+        if status:
+            assert status not in text
+
+
 def _assert_text_keeps_statuses(text: str, statuses: list[str], label: str) -> None:
-    assert text.strip(), f"{label} 空报告"
+    assert text, f"{label} 空报告"
     for st in statuses:
         assert st in text, f"{label} 缺 status 原句：{st!r}\n出口={text!r}"
+
+
+def _expected_army_card_from_row(db, row) -> dict:
+    """Direct DB-field transport; derived situation fields are covered by #321."""
+    from ming_sim.flows import army_needed
+
+    pay = army_needed(row)
+    return {
+        "id": row["id"],
+        "name": row["name"],
+        "station": row["station"],
+        "theater": row["theater"],
+        "commander": row["commander"],
+        "controller": row["controller"],
+        "troop_type": row["troop_type"],
+        "manpower": int(row["manpower"]),
+        "army_needed": pay,
+        "supply": int(row["supply"]),
+        "training": int(row["training"]),
+        "equipment": int(row["equipment"]),
+        "mobility": int(row["mobility"]),
+        "firearm_equipment": int(row["firearm_equipment"]),
+        "cannon_equipment": int(row["cannon_equipment"]),
+        "owner_power": row["owner_power"],
+    }
 
 
 def _web_runtime(db, state, content):
@@ -99,10 +136,7 @@ def _web_runtime(db, state, content):
 
 
 def test_army_payload_omits_static_status_exposes_arrears_text(read_game):
-    """军牌出口：army_payload 无 status、无 raw arrears 键；arrears_text 在场。
-
-    对照公开 DB 行字段与投影键集；不调用私有 situation / _army_pay oracle。
-    """
+    """军牌出口：army_payload 无 status、无 raw arrears 键；arrears_text 在场；完整键集/逐字段对照。"""
     db, _state, _ = read_game
     seed_status = _guanning_db_status(db)
 
@@ -113,6 +147,9 @@ def test_army_payload_omits_static_status_exposes_arrears_text(read_game):
 
     for army_id, row in rows_by_id.items():
         card = by_id[army_id]
+        expected = _expected_army_card_from_row(db, row)
+
+        # 完整键集：恰好等于投影契约（无 status / 无 raw morale|loyalty|arrears）
         assert set(card.keys()) == _ARMY_PAYLOAD_KEYS, (
             f"{army_id}: payload 键集偏离。"
             f" extra={set(card.keys()) - _ARMY_PAYLOAD_KEYS!r}"
@@ -120,32 +157,40 @@ def test_army_payload_omits_static_status_exposes_arrears_text(read_game):
         )
         assert "status" not in card
         assert {"morale", "loyalty", "arrears"}.isdisjoint(card.keys())
-        # 公开行字段原样投影
-        for key in (
-            "id", "name", "station", "theater", "commander", "controller",
-            "troop_type", "owner_power",
-        ):
-            assert card[key] == row[key]
-        for key in (
-            "manpower", "supply", "training", "equipment", "mobility",
-            "firearm_equipment", "cannon_equipment",
-        ):
-            assert int(card[key]) == int(row[key])
-        assert isinstance(card["morale_text"], str) and card["morale_text"].strip()
-        assert isinstance(card["arrears_text"], str) and card["arrears_text"].strip()
-        assert isinstance(card["mutiny_tier"], str) and card["mutiny_tier"].strip()
-        assert isinstance(card["army_needed"], int)
+        for key in ("morale_text", "arrears_text", "mutiny_tier"):
+            assert isinstance(card[key], str)
 
+        # Compare transported DB fields; #321 covers derived situation assembly.
+        for key, value in expected.items():
+            assert card[key] == value, (
+                f"{army_id}.{key}: payload={card[key]!r} expected={value!r}"
+            )
+
+        # seed status 句不得以任何字段值形式泄漏
         st = str(row["status"] or "").strip()
         if st:
             joined = " ".join(str(v) for v in card.values())
             assert st not in joined
 
+    # 病灶样本：关宁欠饷奏报文案仍在，status 句不在
+    from ming_sim.db import _player_army_situation
+
     guanning = by_id[_GUANNING_ID]
+    g_row = rows_by_id[_GUANNING_ID]
+    expected_arr = _player_army_situation(g_row, db._army_pay(g_row))["arrears_text"]
+    assert guanning["arrears_text"] == expected_arr
     assert seed_status not in " ".join(str(v) for v in guanning.values())
-    assert seed_status not in guanning["arrears_text"]
 
 
+def test_army_report_keeps_row_status(read_game):
+    """共享读者真源：army_report 仍含 row.status 原样。"""
+    db, _state, _ = read_game
+    seed_status = _guanning_db_status(db)
+    report = db.army_report(limit=20)
+    assert seed_status in report, "army_report 须保留 DB status 原句"
+    _assert_text_keeps_statuses(
+        report, _danger_top_statuses(db, 20), "army_report(limit=20)"
+    )
 
 
 def test_shared_consumers_still_surface_status(read_game):
@@ -153,10 +198,13 @@ def test_shared_consumers_still_surface_status(read_game):
     db, state, content = read_game
     seed_status = _guanning_db_status(db)
 
-    # 2) 兵部人物投影只见兵籍在册额，不携全表 status。
+    # 2) 兵部账键 military 仍在，且不携全表 status。标题措辞不是供料身份。
     war = next(c for c in content.characters.values() if c.office_type == "兵部")
     knowledge = build_character_knowledge(db, state, war.name)
-    military = (knowledge.get("world") or {}).get("military") or ""
+    world = knowledge.get("world") or {}
+    assert "military" in world
+    military = str(world["military"] or "")
+    _assert_ming_register(db, military)
     assert seed_status not in military
 
     # 3) state_payload.army_warning → 真实 WebGame.state_payload 键
@@ -183,10 +231,12 @@ def test_shared_consumers_still_surface_status(read_game):
     _assert_text_keeps_statuses(roster, all_statuses, "army_roster")
     assert seed_status in roster
     prepared = prepare_character_materials(db, state, war)
-    blob = "\n".join(
-        read_material(prepared.root, path)
-        for path in list_materials(prepared.root) if path != "INDEX.txt"
-    )
+    paths = [
+        path for path in list_materials(prepared.root) if path != "INDEX.txt"
+    ]
+    assert any(path.endswith("/公事档案.txt") for path in paths)
+    blob = "\n".join(read_material(prepared.root, path) for path in paths)
+    _assert_ming_register(db, blob)
     assert seed_status not in blob
 
     # DB 字段零改写

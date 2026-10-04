@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import pytest
 
 import ming_sim.cli_backend as cb
 import ming_sim.db as dbmod
@@ -29,8 +30,27 @@ def _cli_cfg() -> LLMConfig:
     )
 
 
+@pytest.mark.parametrize("office,expected", [
+    # 代表性锚：每类一条 + 历史误判样本（#1185 缩表，非穷举词表）
+    ("礼部尚书,东阁大学士", "内阁"),   # 复合衔内阁优先
+    ("兵部尚书,左都御史", "兵部"),     # 六部首衔优先于都察院
+    ("都察院右佥都御史", "都察院"),
+    ("庶常", "翰林院"),                 # 曾误归生员
+    ("司礼监掌印太监", "司礼监"),        # stem 命中，不靠 bare 掌印太监
+    ("御马监掌印太监", "内廷"),           # bare 掌印太监 不得吞入司礼监
+    ("锦衣卫都指挥使", "锦衣卫"),
+    ("蓟辽总督", "地方"),               # 督抚不被边镇地名吞
+    ("荡寇将军", "边镇"),               # 旧版武职漏判
+    ("中宫皇后", "后宫"),               # 旧版进待铨
+    ("诸生（应天府学）", "生员"),
+    ("陕北流寇首领", "流寇"),
+])
+def test_office_type_from_table(office, expected):
+    assert infer(office) == expected
 
 
+def test_后宫_current_type_short_circuits():
+    assert infer("妃", current_type="后宫") == "后宫"
 
 
 def test_unknown_falls_to_daiquan_without_backend(monkeypatch):
@@ -77,6 +97,7 @@ def test_runtime_cli_unknown_office_uses_configured_runner_without_env(monkeypat
     )
 
     assert infer("绝无此名的杜撰怪衔庚辛壬", llm_config=cfg) == "边镇"
+    assert "绝无此名的杜撰怪衔庚辛壬" in seen["prompt"]
     assert seen["config"] is cfg
 
 
@@ -204,7 +225,7 @@ def test_sync_preserves_persisted_court_office_type_on_table_miss(tmp_path):
     """cmr R2 回归（codex high, cross-section）：_sync_offices_from_db_impl 每回合 begin_turn 都跑，
     不得把 DB 里已持久化的朝堂类 office_type 在 office 文本表查不中时降级成 待铨——否则动态任命
     （use_llm=True 路径）落库的 礼部/兵部 等会在下一回合 sync 时被悄悄降级，内存与 DB 不一致且每回合复发。"""
-    from ming_sim.decree import reload_state_from_db
+    from ming_sim.session import _sync_offices_from_db_impl
 
     content = GameContent.load()
     bind_content(content)
@@ -217,14 +238,14 @@ def test_sync_preserves_persisted_court_office_type_on_table_miss(tmp_path):
         ("册封朝鲜使归途", "礼部", "刘鸿训"),
     )
     db.conn.commit()
-    reload_state_from_db(db, db.load_state(), content=content)
+    _sync_offices_from_db_impl(content, db, _cli_cfg())
     assert content.characters["刘鸿训"].office_type == "礼部", \
         "sync 不得把 DB 持久化的朝堂类 office_type 在表查不中时降级成待铨"
 
 
 def test_sync_restores_office_region_from_character_offices(tmp_path):
     """DB→Character 重建必须带回 character_offices.region_id 任所（#1812）。"""
-    from ming_sim.decree import reload_state_from_db
+    from ming_sim.session import _sync_offices_from_db_impl
 
     content = GameContent.load()
     bind_content(content)
@@ -244,7 +265,7 @@ def test_sync_restores_office_region_from_character_offices(tmp_path):
     db.conn.commit()
     # Wipe runtime projection then rebuild from DB only.
     content.characters = {}
-    reload_state_from_db(db, db.load_state(), content=content)
+    _sync_offices_from_db_impl(content, db, _cli_cfg())
     assert name in content.characters
     assert content.characters[name].office_region == "henan"
     assert db.character_office_region(name) == "henan"
@@ -252,7 +273,10 @@ def test_sync_restores_office_region_from_character_offices(tmp_path):
 
 def test_appointment_seat_identity_reuses_local_and_strips_central(game):
     """一次任职 resolved seat：地方同职省略 region 续任不跨省挤位；中央夹带 region 归一空。"""
-    from ming_sim.issues import apply_office_appointment
+    from ming_sim.issues import (
+        _canonical_appointment_fields,
+        apply_office_appointment,
+    )
 
     db, state, content = game
     rows = db.conn.execute(
@@ -289,6 +313,10 @@ def test_appointment_seat_identity_reuses_local_and_strips_central(game):
     assert db.character_office_region(b) == "henan"
 
     # Central identity ignores caller-stuffed region on canonical tuple + write.
+    canon = _canonical_appointment_fields({
+        "office": "户部尚书", "office_type": "户部", "region_id": "henan",
+    })
+    assert canon == ("户部尚书", "户部", "真除", "")
     r4 = apply_office_appointment(
         db, state, content, a, "户部尚书",
         new_office_type="户部", region_id="henan", reason="central-noise-region",

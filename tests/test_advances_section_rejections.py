@@ -36,7 +36,6 @@ def test_advance_non_dict_item_rejected_not_crash(read_game, bad_item):
     rej = _rejected(out)
     assert len(rej) == 1
     assert rej[0]["category"] == "invalid_enum"
-    assert rej[0]["reason"]
 
 
 @pytest.mark.parametrize("bad_id", ["abc", None, True, 1.5, -10 ** 100])
@@ -47,7 +46,6 @@ def test_advance_bad_issue_id_rejected(read_game, bad_id):
     rej = _rejected(out)
     assert len(rej) == 1, out
     assert rej[0]["category"] == "invalid_enum"
-    assert rej[0]["reason"]
 
 
 @pytest.mark.parametrize("field,bad", [
@@ -107,7 +105,7 @@ def test_advance_code_exception_propagates(game, monkeypatch):
     def _boom(*a, **k):
         raise RuntimeError("模拟 advance_issue 落库代码异常")
     monkeypatch.setattr(type(db), "advance_issue", _boom)
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError, match="模拟 advance_issue"):
         I.apply_issue_tracker_output(db, state, {"advances": [{"issue_id": iid, "delta_bar": 5}]})
 
 

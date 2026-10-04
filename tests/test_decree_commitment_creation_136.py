@@ -1,7 +1,10 @@
 import json
 from pathlib import Path
 
+import pytest
+
 import ming_sim.issues as I
+from ming_sim.db import _has_stop_condition
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -181,11 +184,13 @@ def test_decree_commitment_does_not_dedup_same_name_income_fiscal_create(game, m
     ).fetchone()[0] >= 1
 
 
-def test_decree_commitment_same_account_distinct_key_create_lands(game, monkeypatch):
-    """ADR0027 残留观测：同批、同账户、有 decree 承诺却**异名**未匹配上的 fiscal_create
-    照常落账，但必须打日志当试玩信号（便于发现异名漏匹规律，#340 US8）。"""
+@pytest.mark.parametrize("account", ["国库", "内库"])
+def test_decree_commitment_same_account_alias_miss_keeps_distinct_fiscal_item(game, monkeypatch, account):
+    """Unmatched expense lands; only same-account alias misses are observable."""
     db, state, content = game
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    logs = []
+    monkeypatch.setattr(I, "tlog", logs.append)
 
     out = I.apply_score_extraction(
         db,
@@ -213,9 +218,9 @@ def test_decree_commitment_same_account_distinct_key_create_lands(game, monkeypa
             ],
             "fiscal_creates": [
                 {
-                    # 同账户(国库)、但科目名与承诺(西学经费)对不上 = 异名漏匹
+                    # Different accounts are not alias misses of this commitment.
                     "key": "xuguangqi_gongfei_base",
-                    "account": "国库",
+                    "account": account,
                     "direction": "expense",
                     "init_value": 50,
                     "display": "徐光启三务公费",
@@ -234,10 +239,54 @@ def test_decree_commitment_same_account_distinct_key_create_lands(game, monkeypa
         "SELECT COUNT(*) FROM fiscal_config WHERE key IN "
         "('xuguangqi_gongfei_base', 'xuguangqi_gongfei_rate')"
     ).fetchone()[0] >= 1
+    assert any(fiscal_result["display"] in entry for entry in logs) == (account == "国库")
 
 
-def test_until_stop_commitment_shape_rejects_without_explicit_marker(game, monkeypatch):
+def test_decree_commitment_unrelated_account_keeps_fiscal_item(game, monkeypatch):
+    """An authorized item in another account must not be deduplicated."""
     db, state, content = game
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+
+    I.apply_score_extraction(
+        db,
+        state,
+        {
+            "new_issues": [
+                {
+                    "origin_kind": "decree",
+                    "origin_ref": _promulgated_commitment_origin(db, state, "xixue-monthly"),
+                    "kind": "initiative",
+                    "title": "每月拨西学经费",
+                    "stage_text": "太仓每月拨银五十万两办西学。",
+                    "ongoing_effects": {
+                        "economy": [
+                            {"account": "国库", "delta": -50, "category": "西学经费",
+                             "reason": "每月拨西学经费"}
+                        ]
+                    },
+                    "commitment_kind": "until_stop",
+                }
+            ],
+            "fiscal_creates": [
+                {
+                    "key": "neiku_dujiang_base",
+                    "origin_ref": "盘面自发",
+                    "account": "内库",  # 不同账户
+                    "direction": "expense",
+                    "init_value": 10,
+                    "display": "督江差役",
+                    "reason": "月支",
+                }
+            ],
+        },
+        content=content,
+    )
+
+    assert db.get_fiscal_config()["neiku_dujiang_base"] == 10
+
+
+def test_until_stop_commitment_shape_rejects_without_explicit_marker(read_game, monkeypatch):
+    db, state, content = read_game
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
 
     out = I.apply_score_extraction(
@@ -247,7 +296,7 @@ def test_until_stop_commitment_shape_rejects_without_explicit_marker(game, monke
             "new_issues": [
                 {
                     "origin_kind": "decree",
-                    "origin_ref": _promulgated_commitment_origin(db, state, 'pay-two-fronts-arrears'),
+                    "origin_ref": "decree:turn-1:pay-two-fronts-arrears",
                     "kind": "initiative",
                     "title": "每月补宣大蓟镇直到补齐",
                     "ongoing_effects": {
@@ -274,8 +323,8 @@ def test_until_stop_commitment_shape_rejects_without_explicit_marker(game, monke
     assert _issue_by_title(db, "每月补宣大蓟镇直到补齐") is None
 
 
-def test_limited_duration_commitment_shape_rejects_without_explicit_marker(game, monkeypatch):
-    db, state, content = game
+def test_limited_duration_commitment_shape_rejects_without_explicit_marker(read_game, monkeypatch):
+    db, state, content = read_game
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
 
     out = I.apply_score_extraction(
@@ -285,7 +334,7 @@ def test_limited_duration_commitment_shape_rejects_without_explicit_marker(game,
             "new_issues": [
                 {
                     "origin_kind": "decree",
-                    "origin_ref": _promulgated_commitment_origin(db, state, 'two-month-pay'),
+                    "origin_ref": "decree:turn-1:two-month-pay",
                     "kind": "initiative",
                     "title": "连续两月补饷但缺承诺标记",
                     "ongoing_effects": {
@@ -312,8 +361,8 @@ def test_limited_duration_commitment_shape_rejects_without_explicit_marker(game,
     assert _issue_by_title(db, "连续两月补饷但缺承诺标记") is None
 
 
-def test_limited_duration_ongoing_commitment_rejects_current_turn_end_turn(game, monkeypatch):
-    db, state, content = game
+def test_limited_duration_ongoing_commitment_rejects_current_turn_end_turn(read_game, monkeypatch):
+    db, state, content = read_game
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
 
     out = I.apply_score_extraction(
@@ -323,7 +372,7 @@ def test_limited_duration_ongoing_commitment_rejects_current_turn_end_turn(game,
             "new_issues": [
                 {
                     "origin_kind": "decree",
-                    "origin_ref": _promulgated_commitment_origin(db, state, 'current-turn-expired-pay'),
+                    "origin_ref": "decree:turn-1:current-turn-expired-pay",
                     "kind": "initiative",
                     "title": "本回合即到期的每月补饷承诺",
                     "stage_text": "户部按月拨银补饷，但 end_turn 错落在当前回合。",
@@ -365,7 +414,7 @@ def test_limited_duration_ongoing_commitment_rejects_past_end_turn(game, monkeyp
             "new_issues": [
                 {
                     "origin_kind": "decree",
-                    "origin_ref": _promulgated_commitment_origin(db, state, "past-expired-pay"),
+                    "origin_ref": "decree:turn-4:past-expired-pay",
                     "kind": "initiative",
                     "title": "过去回合已到期的每月补饷承诺",
                     "stage_text": "户部按月拨银补饷，但 end_turn 错落在过去回合。",
@@ -463,8 +512,8 @@ def test_open_ended_ongoing_commitment_issue_is_created_with_explicit_marker(gam
     assert row["cancellable"] == "decree"
 
 
-def test_open_ended_ongoing_commitment_shape_rejects_without_explicit_marker(game, monkeypatch):
-    db, state, content = game
+def test_open_ended_ongoing_commitment_shape_rejects_without_explicit_marker(read_game, monkeypatch):
+    db, state, content = read_game
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
 
     out = I.apply_score_extraction(
@@ -474,7 +523,7 @@ def test_open_ended_ongoing_commitment_shape_rejects_without_explicit_marker(gam
             "new_issues": [
                 {
                     "origin_kind": "decree",
-                    "origin_ref": _promulgated_commitment_origin(db, state, 'open-ended-without-marker'),
+                    "origin_ref": "decree:turn-1:open-ended-without-marker",
                     "kind": "initiative",
                     "title": "长期安抚毛文龙但缺承诺标记",
                     "stage_text": "遣臣常驻皮岛安抚，未设硬时限。",
@@ -491,8 +540,8 @@ def test_open_ended_ongoing_commitment_shape_rejects_without_explicit_marker(gam
     assert _issue_by_title(db, "长期安抚毛文龙但缺承诺标记") is None
 
 
-def test_future_one_shot_commitment_shape_rejects_without_explicit_marker(game, monkeypatch):
-    db, state, content = game
+def test_future_one_shot_commitment_shape_rejects_without_explicit_marker(read_game, monkeypatch):
+    db, state, content = read_game
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
 
     out = I.apply_score_extraction(
@@ -502,7 +551,7 @@ def test_future_one_shot_commitment_shape_rejects_without_explicit_marker(game, 
             "new_issues": [
                 {
                     "origin_kind": "decree",
-                    "origin_ref": _promulgated_commitment_origin(db, state, 'sunchengzong-review-without-marker'),
+                    "origin_ref": "decree:turn-1:sunchengzong-review-without-marker",
                     "kind": "initiative",
                     "title": "三月后复核孙承宗但缺承诺标记",
                     "stage_text": "孙承宗暂听候政，三月后复核。",
@@ -519,8 +568,8 @@ def test_future_one_shot_commitment_shape_rejects_without_explicit_marker(game, 
     assert _issue_by_title(db, "三月后复核孙承宗但缺承诺标记") is None
 
 
-def test_stop_condition_only_commitment_shape_rejects_without_explicit_marker(game, monkeypatch):
-    db, state, content = game
+def test_stop_condition_only_commitment_shape_rejects_without_explicit_marker(read_game, monkeypatch):
+    db, state, content = read_game
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
 
     out = I.apply_score_extraction(
@@ -530,7 +579,7 @@ def test_stop_condition_only_commitment_shape_rejects_without_explicit_marker(ga
             "new_issues": [
                 {
                     "origin_kind": "decree",
-                    "origin_ref": _promulgated_commitment_origin(db, state, 'stop-only-mao'),
+                    "origin_ref": "decree:turn-1:stop-only-mao",
                     "kind": "initiative",
                     "title": "只写停止条件的安抚毛文龙",
                     "stage_text": "只写达到忠诚阈值，没有月度安抚动作。",
@@ -547,8 +596,8 @@ def test_stop_condition_only_commitment_shape_rejects_without_explicit_marker(ga
     assert _issue_by_title(db, "只写停止条件的安抚毛文龙") is None
 
 
-def test_string_stop_condition_only_with_origin_ref_rejects_without_explicit_marker(game, monkeypatch):
-    db, state, content = game
+def test_string_stop_condition_only_with_origin_ref_rejects_without_explicit_marker(read_game, monkeypatch):
+    db, state, content = read_game
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
 
     out = I.apply_score_extraction(
@@ -558,7 +607,7 @@ def test_string_stop_condition_only_with_origin_ref_rejects_without_explicit_mar
             "new_issues": [
                 {
                     "origin_kind": "decree",
-                    "origin_ref": _promulgated_commitment_origin(db, state, 'stop-only-string'),
+                    "origin_ref": "decree:turn-1:stop-only-string",
                     "kind": "initiative",
                     "title": "字符串停止条件但无月度动作",
                     "stage_text": "有诏书来源和停止条件，但没有每月动作。",
@@ -612,8 +661,8 @@ def test_legacy_resolve_condition_person_commitment_rejects_without_marker(read_
     assert _issue_by_title(db, "旧形状安抚毛文龙") is None
 
 
-def test_until_stop_commitment_requires_initiative_kind(game, monkeypatch):
-    db, state, content = game
+def test_until_stop_commitment_requires_initiative_kind(read_game, monkeypatch):
+    db, state, content = read_game
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
 
     out = I.apply_score_extraction(
@@ -623,7 +672,7 @@ def test_until_stop_commitment_requires_initiative_kind(game, monkeypatch):
             "new_issues": [
                 {
                     "origin_kind": "decree",
-                    "origin_ref": _promulgated_commitment_origin(db, state, 'bad-kind'),
+                    "origin_ref": "decree:turn-1:bad-kind",
                     "kind": "situation",
                     "title": "每月补辽饷但类型写成局势",
                     "ongoing_effects": {"economy": [{"account": "国库", "delta": -50, "reason": "每月补饷"}]},
@@ -670,8 +719,8 @@ def test_until_stop_commitment_supports_character_loyalty_condition(game, monkey
     assert json.loads(row["stop_condition"]) == {"character.毛文龙.loyalty": ">=65"}
 
 
-def test_commitment_rejects_string_numeric_person_loyalty_ongoing_effect(game, monkeypatch):
-    db, state, content = game
+def test_commitment_rejects_string_numeric_person_loyalty_ongoing_effect(read_game, monkeypatch):
+    db, state, content = read_game
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
 
     out = I.apply_score_extraction(
@@ -681,7 +730,7 @@ def test_commitment_rejects_string_numeric_person_loyalty_ongoing_effect(game, m
             "new_issues": [
                 {
                     "origin_kind": "decree",
-                    "origin_ref": _promulgated_commitment_origin(db, state, 'string-loyalty-appease'),
+                    "origin_ref": "decree:turn-1:string-loyalty-appease",
                     "kind": "initiative",
                     "title": "字符串忠诚安抚承诺",
                     "stage_text": "每月安抚毛文龙，但 loyalty 错写成字符串。",
@@ -709,8 +758,8 @@ def test_commitment_rejects_string_numeric_person_loyalty_ongoing_effect(game, m
     assert _issue_by_title(db, "字符串忠诚安抚承诺") is None
 
 
-def test_until_stop_commitment_rejects_non_dict_stop_condition(game, monkeypatch):
-    db, state, content = game
+def test_until_stop_commitment_rejects_non_dict_stop_condition(read_game, monkeypatch):
+    db, state, content = read_game
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
 
     out = I.apply_score_extraction(
@@ -720,7 +769,7 @@ def test_until_stop_commitment_rejects_non_dict_stop_condition(game, monkeypatch
             "new_issues": [
                 {
                     "origin_kind": "decree",
-                    "origin_ref": _promulgated_commitment_origin(db, state, 'bad-stop-string'),
+                    "origin_ref": "decree:turn-1:bad-stop-string",
                     "kind": "initiative",
                     "title": "每月补辽饷但停止条件是坏串",
                     "ongoing_effects": {"economy": [{"account": "国库", "delta": -50, "reason": "每月补饷"}]},
@@ -738,8 +787,8 @@ def test_until_stop_commitment_rejects_non_dict_stop_condition(game, monkeypatch
     assert _issue_by_title(db, "每月补辽饷但停止条件是坏串") is None
 
 
-def test_until_stop_commitment_rejects_stop_condition_without_table_prefix(game, monkeypatch):
-    db, state, content = game
+def test_until_stop_commitment_rejects_stop_condition_without_table_prefix(read_game, monkeypatch):
+    db, state, content = read_game
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
 
     out = I.apply_score_extraction(
@@ -749,7 +798,7 @@ def test_until_stop_commitment_rejects_stop_condition_without_table_prefix(game,
             "new_issues": [
                 {
                     "origin_kind": "decree",
-                    "origin_ref": _promulgated_commitment_origin(db, state, 'bad-stop-key'),
+                    "origin_ref": "decree:turn-1:bad-stop-key",
                     "kind": "initiative",
                     "title": "每月补辽饷但停止条件无表前缀",
                     "ongoing_effects": {"economy": [{"account": "国库", "delta": -50, "reason": "每月补饷"}]},
@@ -795,8 +844,8 @@ def test_until_stop_commitment_requires_origin_ref(read_game, monkeypatch):
     assert _issue_by_title(db, "每月补辽饷但无诏书引用") is None
 
 
-def test_until_stop_commitment_requires_ongoing_effects(game, monkeypatch):
-    db, state, content = game
+def test_until_stop_commitment_requires_ongoing_effects(read_game, monkeypatch):
+    db, state, content = read_game
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
 
     out = I.apply_score_extraction(
@@ -806,7 +855,7 @@ def test_until_stop_commitment_requires_ongoing_effects(game, monkeypatch):
             "new_issues": [
                 {
                     "origin_kind": "decree",
-                    "origin_ref": _promulgated_commitment_origin(db, state, 'empty-monthly-action'),
+                    "origin_ref": "decree:turn-1:empty-monthly-action",
                     "kind": "initiative",
                     "title": "每月补辽饷但没有月度动作",
                     "stop_condition": {"army.guanning.arrears": "<=0"},
@@ -823,8 +872,8 @@ def test_until_stop_commitment_requires_ongoing_effects(game, monkeypatch):
     assert _issue_by_title(db, "每月补辽饷但没有月度动作") is None
 
 
-def test_until_stop_commitment_rejects_semantically_empty_ongoing_effects(game, monkeypatch):
-    db, state, content = game
+def test_until_stop_commitment_rejects_semantically_empty_ongoing_effects(read_game, monkeypatch):
+    db, state, content = read_game
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
 
     out = I.apply_score_extraction(
@@ -834,7 +883,7 @@ def test_until_stop_commitment_rejects_semantically_empty_ongoing_effects(game, 
             "new_issues": [
                 {
                     "origin_kind": "decree",
-                    "origin_ref": _promulgated_commitment_origin(db, state, 'empty-shell-monthly-action'),
+                    "origin_ref": "decree:turn-1:empty-shell-monthly-action",
                     "kind": "initiative",
                     "title": "每月补辽饷但月度动作只是空壳",
                     "ongoing_effects": {"economy": [], "metrics": {}},
@@ -852,8 +901,8 @@ def test_until_stop_commitment_rejects_semantically_empty_ongoing_effects(game, 
     assert _issue_by_title(db, "每月补辽饷但月度动作只是空壳") is None
 
 
-def test_until_stop_commitment_rejects_one_shot_entity_creation_as_monthly_work(game, monkeypatch):
-    db, state, content = game
+def test_until_stop_commitment_rejects_one_shot_entity_creation_as_monthly_work(read_game, monkeypatch):
+    db, state, content = read_game
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
 
     out = I.apply_score_extraction(
@@ -863,14 +912,13 @@ def test_until_stop_commitment_rejects_one_shot_entity_creation_as_monthly_work(
             "new_issues": [
                 {
                     "origin_kind": "decree",
-                    "origin_ref": _promulgated_commitment_origin(db, state, 'bad-monthly-army-create'),
+                    "origin_ref": "decree:turn-1:bad-monthly-army-create",
                     "kind": "initiative",
                     "title": "每月重复建军的错误承诺",
                     "ongoing_effects": {
-                        "economy": [{"account": "国库", "delta": -50, "reason": "每月补饷"}],
                         "new_armies": [
                             {"id": "bad_monthly_army", "name": "月度重复新军", "manpower": 1000}
-                        ],
+                        ]
                     },
                     "stop_condition": {"army.guanning.arrears": "<=0"},
                     "commitment_kind": "until_stop",
@@ -1032,6 +1080,14 @@ def test_stop_condition_without_commitment_kind_advance_to_full_stays_active(gam
     assert advanced["closed_turn"] is None
 
 
+def test_has_stop_condition_handles_preparsed_and_json_whitespace():
+    assert _has_stop_condition({"army.guanning.arrears": "<=0"}) is True
+    assert _has_stop_condition(["legacy"]) is True
+    assert _has_stop_condition({}) is False
+    assert _has_stop_condition(" { } ") is False
+    assert _has_stop_condition("\n[]\n") is False
+    # legacy fallback 条件串属于 resolve_condition，不是结构化 commitment stop gate。
+    assert _has_stop_condition("character.毛文龙.loyalty >= 65") is False
 
 
 def test_empty_json_stop_condition_allows_advance_to_resolved(game):

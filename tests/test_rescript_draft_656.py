@@ -7,13 +7,15 @@
 from __future__ import annotations
 
 import json
-from unittest.mock import Mock
+import sqlite3
+from pathlib import Path
 
 import pytest
 
 import ming_sim.rescript_draft as rescript_mod
+from ming_sim.applier import Provenance, RejectedItem, RejectionCollector
 from ming_sim.db import GameDB
-from ming_sim.exceptions import LLMUnavailable
+from ming_sim.exceptions import LLMUnavailable, SettlementAbort
 from ming_sim.rescript_draft import (
     generate_rescript_draft,
     select_triage_actor,
@@ -24,25 +26,6 @@ _CANNED = '{"economy_moves": [], "new_armies": [], "new_issues": [], "secret_ord
 
 # #1778 决定 3：生成批次的票拟必带参与名单（ADR 0053 三档，至少一名主办）。
 _ROSTER = [{"character_id": "毕自严", "tier": "主办", "role": "", "delegator_id": None}]
-
-@pytest.fixture
-def draft_ingress(monkeypatch, tmp_path):
-    """已冻结响应进入真实生成入口；不替代任何准入或修复逻辑。"""
-    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
-    runner = Mock()
-    monkeypatch.setattr(rescript_mod, "run_agent_text", runner)
-
-    def capture(data, board_ids=(), *, raw=False):
-        runner.reset_mock()
-        runner.return_value = data if raw else json.dumps(data)
-        return generate_rescript_draft(object(), {
-            "active_issues": [{"issue_id": i, "title": "急务", "context": "待处置"} for i in board_ids],
-            "region_targets": [{"id": "shaanxi", "name": "陕西", "kind": "腹地"}],
-            "army_targets": [{"id": "guanning", "name": "关宁军", "station": "宁远"}],
-        }, 1)
-
-    capture.runner = runner
-    return capture
 
 def _layer_a_opt(label: str = "拟", hint: str = "h", **kw) -> dict:
     """#657 生产层 A option 夹具（validate/generate 路径必用）。"""
@@ -683,18 +666,18 @@ def test_generate_rejects_military_order_empty_assignee(monkeypatch, tmp_path):
     assert opts[0]["label"] == item["options"][1]["label"]
 
 
-
 # ---------------------------------------------------------------------------
 # shape 校验＋权威快照绑定（F2.2/F2.3/F2.5）
 # ---------------------------------------------------------------------------
 
-def test_validate_items_binds_only_board_issue_ids(draft_ingress):
+def test_validate_items_binds_only_board_issue_ids():
+    board = [{"issue_id": 5}, {"issue_id": 7}]
     data = {"items": [
         {"issue_id": 5, "title": "甲", "context": "c", "options": _two_opts("a", "h1", "b", "h2")},
         {"issue_id": 999, "title": "幻觉回显", "context": "c", "options": _two_opts("a", "h1", "b", "h2")},
         {"title": "无回显", "context": "c", "options": _two_opts("a", "h1", "b", "h2")},
     ]}
-    drafts = draft_ingress(data, {5, 7})
+    drafts = validate_rescript_draft_items(data, {5, 7})
     assert [d.get("event_id") for d in drafts] == ["issue:5", None, None]
     assert drafts[1]["title"] == "幻觉回显"  # 文本原样保留，只不信 id
 
@@ -704,13 +687,17 @@ def _valid_item(i: int) -> dict:
         "options": _two_opts("甲拟", "所安者饥民", "乙拟", "所拂者小农"),
     }
 
-def test_validate_items_no_count_cap_keeps_all_legal(draft_ingress):
+def test_validate_items_no_count_cap_keeps_all_legal():
+    """#1801 ①c：条目数无硬上限——6 条全合法照呈；第 6 条字段非法仍整批 ValueError
+    （非 isolate 直调口径；条数本身不再是失败因）。"""
     six_legal = [_valid_item(i) for i in range(6)]
-    drafts = draft_ingress({"items": six_legal})
-    assert [d["title"] for d in drafts] == [item["title"] for item in six_legal]
-    sixth_illegal = [_valid_item(i) for i in range(5)] + [{**_valid_item(5), "context": ""}]
-    admitted = draft_ingress({"items": sixth_illegal})
-    assert [item["title"] for item in admitted] == [item["title"] for item in sixth_illegal[:5]]
+    drafts = validate_rescript_draft_items({"items": six_legal}, set())
+    assert len(drafts) == 6
+    assert [d["title"] for d in drafts] == [f"条目{i}" for i in range(6)]
+    sixth_illegal = [_valid_item(i) for i in range(5)]
+    sixth_illegal.append({"title": "缺导语"})
+    with pytest.raises(ValueError):
+        validate_rescript_draft_items({"items": sixth_illegal}, set())
 
 @pytest.mark.parametrize("mutate", [
     lambda item: item.update(title=""),
@@ -718,77 +705,75 @@ def test_validate_items_no_count_cap_keeps_all_legal(draft_ingress):
     lambda item: item.pop("title"),
     lambda item: item.update(context=""),
     lambda item: item.pop("context"),
-    lambda item: item["options"][0].pop("hint"),      # hint 缺失
-    lambda item: item["options"][0].update(label=""),
-    lambda item: item["options"][0].pop("label"),       # label 缺失
+    lambda item: item["options"].__setitem__(0, {"label": "a"}),      # hint 缺失
+    lambda item: item["options"].__setitem__(0, {"label": "", "hint": "h"}),
+    lambda item: item["options"].__setitem__(0, {"hint": "h"}),       # label 缺失
 ])
-def test_generate_missing_required_field_isolates_failed_item_or_option(mutate, draft_ingress):
-    """补交耗尽后隔离该层失败，保留合法兄弟。"""
+def test_validate_items_missing_required_field_fails_whole_batch(mutate):
+    """冻结票面 F2.2/F2.5：title/context/option 内部契约非法＝整批失败（#1801 后项数不再整批）。"""
     good = _valid_item(0)
     bad = _valid_item(1)
     mutate(bad)
-    drafts = draft_ingress({"items": [good, bad]})
-    if not bad.get("title", "").strip() or not bad.get("context"):
-        assert [item["title"] for item in drafts] == [good["title"]]
-    else:
-        assert drafts is not None
-        assert [item["title"] for item in drafts] == [good["title"], bad["title"]]
-        assert len(drafts[1]["options"]) == 1
+    with pytest.raises(ValueError):
+        validate_rescript_draft_items({"items": [good, bad]}, set())
 
-def test_validate_items_single_option_is_legal(draft_ingress):
+def test_validate_items_single_option_is_legal():
     """#1801：单拟合法——条目只给 1 个 option 照常呈上。"""
     item = _valid_item(0)
     item["options"] = [item["options"][0]]
-    drafts = draft_ingress({"items": [item]}, set())
+    drafts = validate_rescript_draft_items({"items": [item]}, set())
     assert len(drafts) == 1
     assert len(drafts[0]["options"]) == 1
     assert drafts[0]["title"] == item["title"]
 
-def test_validate_items_many_options_not_gated_or_truncated(draft_ingress):
+def test_validate_items_many_options_not_gated_or_truncated():
     """#1801：多项不拦——5 个 option 照常呈上、不截断、不报错。"""
     item = _valid_item(0)
     base = item["options"][0]
     item["options"] = [
         {**base, "label": f"拟{i}", "hint": f"h{i}"} for i in range(5)
     ]
-    drafts = draft_ingress({"items": [item]}, set())
+    drafts = validate_rescript_draft_items({"items": [item]}, set())
     assert len(drafts) == 1
     assert [o["label"] for o in drafts[0]["options"]] == [f"拟{i}" for i in range(5)]
 
-def test_validate_items_empty_options_drops_item_keeps_siblings(monkeypatch, draft_ingress):
+def test_validate_items_empty_options_drops_item_keeps_siblings(monkeypatch):
     """#1801：0 项按 F2.3 不足照实消失；其它条目仍呈上；日志响亮；不整批判死。"""
     logs: list[str] = []
     monkeypatch.setattr(rescript_mod, "tlog", logs.append)
     good = _valid_item(0)
     empty = _valid_item(1)
     empty["options"] = []
-    drafts = draft_ingress({"items": [good, empty]}, set())
+    drafts = validate_rescript_draft_items({"items": [good, empty]}, set())
     assert len(drafts) == 1
     assert drafts[0]["title"] == good["title"]
     assert len(drafts[0]["options"]) == 2
     assert logs, "0 项条目消失须响亮留痕"
+    assert any(empty["title"] in msg for msg in logs)
 
-
-def test_validate_items_non_list_options_drops_item_keeps_siblings(monkeypatch, draft_ingress):
+def test_validate_items_non_list_options_drops_item_keeps_siblings(monkeypatch):
     """#1801：非 list options 该条目消失；其它条目仍呈上；日志响亮；不整批判死。"""
     logs: list[str] = []
     monkeypatch.setattr(rescript_mod, "tlog", logs.append)
     good = _valid_item(0)
     bad = _valid_item(1)
     bad["options"] = "not-a-list"
-    drafts = draft_ingress({"items": [good, bad]}, set())
+    drafts = validate_rescript_draft_items({"items": [good, bad]}, set())
     assert len(drafts) == 1
     assert drafts[0]["title"] == good["title"]
     assert logs, "非 list options 条目消失须响亮留痕"
+    assert any(bad["title"] in msg for msg in logs)
 
-
-def test_validate_items_empty_list_is_legal_headless_month(draft_ingress):
+def test_validate_items_empty_list_is_legal_headless_month():
     """合法 items=[] 仍是「本月确无急务」（F2.3 不凑数）。"""
-    assert draft_ingress({"items": []}, set()) == []
+    assert validate_rescript_draft_items({"items": []}, set()) == []
 
-def test_validate_items_rejects_illegal_top_level(draft_ingress):
-    assert draft_ingress({'nope': []}, set()) is None
-    assert draft_ingress('不是 JSON object', set()) is None
+def test_validate_items_rejects_illegal_top_level():
+    with pytest.raises(ValueError):
+        validate_rescript_draft_items({"nope": []}, set())
+    with pytest.raises(ValueError):
+        validate_rescript_draft_items("不是 JSON object", set())
+
 def _legal_item() -> dict:
     return {
         "title": "陕西告饥",
@@ -796,25 +781,25 @@ def _legal_item() -> dict:
         "options": _two_opts("发帑赈济", "所安者饥民", "缓征加赈", "先赈后征"),
     }
 
-def test_generate_unknown_item_field_drops_the_item(draft_ingress):
-    """补交耗尽后只剔非法条目。"""
+def test_validate_items_rejects_unknown_item_field_whole_batch():
+    """r2 裁决 B2：item 层多产的未知自由文本字段不得接受后静默省略——整批 shape 错。"""
     item = _legal_item()
     item["extra"] = "模型多写的合法自由文本"
-    assert draft_ingress({'items': [item]}, set()) == []
+    with pytest.raises(ValueError):
+        validate_rescript_draft_items({"items": [item]}, set())
 
-def test_validate_items_rejects_unknown_option_field_whole_batch(draft_ingress):
+def test_validate_items_rejects_unknown_option_field_whole_batch():
+    """非 isolate：option 未知键仍整批 ValueError（generate isolate 时走 heal）。"""
     item = _legal_item()
-    item["options"][0]["extra_option"] = "原件输入"
-    drafts = draft_ingress({"items": [item]})
-    assert drafts is not None
-    assert len(drafts[0]["options"]) == 1
-    assert drafts[0]["options"][0]["label"] == item["options"][1]["label"]
+    item["options"][0]["extra_option"] = "模型多写的合法自由文本"
+    with pytest.raises(ValueError):
+        validate_rescript_draft_items({"items": [item]}, set())
 
-def test_validate_items_accepts_optional_issue_id_binding_key(draft_ingress):
+def test_validate_items_accepts_optional_issue_id_binding_key():
     """issue_id 是唯一豁免的可选绑定键，白名单收窄不得误伤既有绑定路。"""
     item = _legal_item()
     item["issue_id"] = 42
-    drafts = draft_ingress({"items": [item]}, {42})
+    drafts = validate_rescript_draft_items({"items": [item]}, {42})
     assert drafts[0]["event_id"] == "issue:42"
 
 def test_generate_rescript_draft_degrades_loudly_without_raising(game, monkeypatch, tmp_path):
@@ -831,6 +816,7 @@ def test_generate_rescript_draft_degrades_loudly_without_raising(game, monkeypat
     note = tmp_path / "error_packs" / "rescript_draft_degraded" / f"turn{state.turn}.json"
     assert note.is_file()
     # 标准 JSON 转义保真：结构化 reason，不锁原文呈现
+    assert "LLM 不可用" in json.loads(note.read_text(encoding="utf-8"))["reason"]
 
 def test_generate_rescript_draft_program_error_propagates(game, monkeypatch):
     """r2 裁决 B3 / ADR 0005：程序错不得以「非承重支路」为由吞成降级。
@@ -848,7 +834,7 @@ def test_generate_rescript_draft_program_error_propagates(game, monkeypatch):
     payload = {
         "active_issues": [], "gazette": "邸报", "triage_actor": {}, "turn": {},
     }
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError, match="programmer bug sentinel"):
         generate_rescript_draft(object(), payload, state.turn)
 
 # ---------------------------------------------------------------------------
@@ -934,8 +920,8 @@ def test_persist_then_abort_draft_never_enters_hitl_envelope(game):
 # PR #1521 r3：三条 shape 拒收负例（顶层未知字段 / 畸形 JSON / lone surrogate）
 # ---------------------------------------------------------------------------
 
-def test_generate_unknown_top_field_requests_repair_before_exhaustion(draft_ingress):
-    """未知顶层键先补交；耗尽后依法忽略该键，不丢合法条目。"""
+def test_r3_top_level_unknown_field_rejects_whole_batch():
+    """r3-1 顶层 exact-key：多余 summary 等未知顶层键一律整批 ValueError。"""
     data = {
         "items": [{
             "title": "陕西告饥", "context": "秦地赤旱千里。",
@@ -943,39 +929,130 @@ def test_generate_unknown_top_field_requests_repair_before_exhaustion(draft_ingr
         }],
         "summary": "臣请圣裁",
     }
-    drafts = draft_ingress(data, set())
-    assert [item["title"] for item in drafts] == [data["items"][0]["title"]]
-    assert "summary" not in (drafts[0] if drafts else {})
+    with pytest.raises(ValueError):
+        validate_rescript_draft_items(data, set())
 
+def test_r3_strict_parse_control_char_raises_contract_error():
+    """r3-2 strict 解析：含非法控制字符的 raw 不做清洗，直解失败抛 LLMContractError。"""
+    from ming_sim.rescript_draft import _parse_rescript_json_strict
+    from ming_sim.exceptions import LLMContractError
+    # 控制字符 \x01 在 JSON 字符串内非法，必须触发 JSONDecodeError→LLMContractError
+    raw = '{"items": [{"title": "a\x01b", "context": "c", "options": [{"label": "l1", "hint": "h1"}, {"label": "l2", "hint": "h2"}]}]}'
+    with pytest.raises(LLMContractError):
+        _parse_rescript_json_strict(raw)
 
+def test_r3_strict_parse_concatenated_objects_raises_contract_error():
+    """r3-2 strict 解析：拼接对象不截首块，直解失败抛 LLMContractError。"""
+    from ming_sim.rescript_draft import _parse_rescript_json_strict
+    from ming_sim.exceptions import LLMContractError
+    raw = '{"items": [{"title": "甲", "context": "c", "options": [{"label": "a", "hint": "h1"}, {"label": "b", "hint": "h2"}]}]}{"items": []}'
+    with pytest.raises(LLMContractError):
+        _parse_rescript_json_strict(raw)
 
-@pytest.mark.parametrize("malformation", ["control_character", "concatenated_objects"])
-def test_r3_strict_parse_degrades_via_generate(draft_ingress, malformation):
-    data = {"items": [_legal_item()]}
-    assert draft_ingress(data)
-    if malformation == "control_character":
-        data["items"][0]["title"] = "a\x01b"
-        raw = json.dumps(data).replace("\\u0001", "\x01")
-    else:
-        raw = json.dumps(data) + '{"items": []}'
-    assert draft_ingress(raw, raw=True) is None
+def test_r3_strict_parse_degrades_via_generate(game, monkeypatch, tmp_path):
+    """r3-2 集成：畸形 JSON 经 generate 降级为无头月而非静默修复。"""
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    payload = {"active_issues": [], "gazette": "邸报", "triage_actor": {}, "turn": {}}
+    # 拼接对象 raw
+    raw = '{"items": [{"title": "甲", "context": "c", "options": [{"label": "a", "hint": "h"}, {"label": "b", "hint": "h2"}]}]}{"items": []}'
+    monkeypatch.setattr(rescript_mod, "run_agent_text", lambda a, p, tag, **_k: raw)
+    # 假设 turn 取自 fixture? 用固定值避免依赖
+    turn = 99
+    assert generate_rescript_draft(object(), payload, turn) is None
+    note = tmp_path / "error_packs" / "rescript_draft_degraded" / f"turn{turn}.json"
+    assert note.is_file()
 
-def test_r3_lone_surrogate_field_rejects_whole_batch(draft_ingress):
-    item = _legal_item()
-    assert draft_ingress({"items": [item]})
-    item["title"] = "\ud800"
-    assert draft_ingress({"items": [item]}) == []
+def test_r3_lone_surrogate_field_rejects_whole_batch():
+    """r3-3 UTF-8 合约：lone surrogate 在 validate 即整批 ValueError，正常中文仍通过。"""
+    # lone surrogate \ud800 经 json 逃逸可解但不可 UTF-8 编码
+    bad_title = "\ud800"
+    data = {
+        "items": [{
+            "title": bad_title, "context": "秦地赤旱千里。",
+            "options": _two_opts("发帑赈济", "所安者饥民", "缓征", "先赈后征"),
+        }]
+    }
+    with pytest.raises(ValueError):
+        validate_rescript_draft_items(data, set())
+    # 正常中文与约数家产表述仍通过
+    good = {
+        "items": [{
+            "title": "陕西约有三万家产待赈济", "context": "秦地赤旱，百姓约有万户流离。",
+            "options": _two_opts("发帑赈济", "所安者饥民", "缓征", "先赈后征"),
+        }]
+    }
+    assert len(validate_rescript_draft_items(good, set())) == 1
 
 # ---------------------------------------------------------------------------
 # #657 片1：行事实与案头（schema + 词表 + desk 读）
 # ---------------------------------------------------------------------------
 
+def _pending_columns(db) -> set[str]:
+    return {r[1] for r in db.conn.execute("PRAGMA table_info(pending_decisions)").fetchall()}
 
+def _ledger_columns(db) -> set[str]:
+    return {r[1] for r in db.conn.execute("PRAGMA table_info(story_ledger_entries)").fetchall()}
 
+def test_657_s1_schema_columns_and_no_banned_fields(game):
+    """片1：revision_round/prior_options_json/origin_ref 列存在；无 consumed_epoch/rescript_origin。"""
+    db, _state, _content = game
+    pending_cols = _pending_columns(db)
+    assert "revision_round" in pending_cols
+    assert "prior_options_json" in pending_cols
+    assert "consumed_epoch" not in pending_cols
+    ledger_cols = _ledger_columns(db)
+    assert "origin_ref" in ledger_cols
+    dossier_cols = {r[1] for r in db.conn.execute("PRAGMA table_info(decree_dossiers)").fetchall()}
+    assert "rescript_origin" not in dossier_cols
+    # partial UNIQUE on non-empty origin_ref
+    idx_sql = [
+        str(r[0]) for r in db.conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='index' AND name='idx_ledger_origin_ref'"
+        ).fetchall()
+    ]
+    assert idx_sql and "origin_ref" in idx_sql[0] and "origin_ref != ''" in idx_sql[0].replace('"', "")
 
+def test_657_s1_rescript_emitted_set_subset_of_dossier():
+    """A12 前置（#1778 后）：只剩 emitted 闭集 ⊂ DOSSIER；七类 routable 已整体取消。"""
+    from ming_sim.decree_vocabulary import (
+        DOSSIER_ACTION_TYPES,
+        RESCRIPT_EMITTED_DOSSIER_ACTION_TYPES,
+    )
+    assert RESCRIPT_EMITTED_DOSSIER_ACTION_TYPES <= DOSSIER_ACTION_TYPES
+    assert "dismiss_assignment" in RESCRIPT_EMITTED_DOSSIER_ACTION_TYPES
 
+def test_657_s1_derive_draft_capability_stable_and_sensitive():
+    """capability：同字段稳定；闭集任一有效差改变键。"""
+    from ming_sim.decree_vocabulary import derive_draft_capability
 
-def test_657_validate_rejects_label_hint_only_options(draft_ingress):
+    base = {
+        "action_type": "assignment",
+        "label": "发帑赈济",
+        "hint": "所安者饥民",
+        "assignee_name": "杨嗣昌",
+        "target_kind": "region",
+        "target_id": "shaanxi",
+        "transaction_category": "督赈",
+        "locality_scope": "single",
+        "region_id": "shaanxi",
+    }
+    a = derive_draft_capability(base)
+    b = derive_draft_capability(dict(base))
+    assert isinstance(a, str) and a == b and len(a) >= 16
+    # 扰动 label
+    changed = dict(base)
+    changed["label"] = "缓征"
+    assert derive_draft_capability(changed) != a
+    # 扰动 assignee
+    changed2 = dict(base)
+    changed2["assignee_name"] = "洪承畴"
+    assert derive_draft_capability(changed2) != a
+    # 缺键按默认参与派生，不因插入空串而变
+    with_default = dict(base)
+    with_default["summon_target"] = ""
+    assert derive_draft_capability(with_default) == a
+
+def test_657_validate_rejects_label_hint_only_options():
     """#657 Class1：旧仅 label/hint 两键输入必须整批失败（无兼容适配层）。"""
     data = {"items": [{
         "title": "陕西告饥", "context": "秦地赤旱。",
@@ -984,7 +1061,8 @@ def test_657_validate_rejects_label_hint_only_options(draft_ingress):
             {"label": "缓征", "hint": "先赈后征"},
         ],
     }]}
-    assert draft_ingress(data) == []
+    with pytest.raises(ValueError):
+        validate_rescript_draft_items(data, set())
 
 def test_657_validate_layer_a_roundtrip_capability(game):
     """合法七类 option 整链 validate→persist→读回全字段+capability。"""
@@ -1019,6 +1097,42 @@ def test_657_validate_layer_a_roundtrip_capability(game):
     assert row["options"][0]["draft_capability"] == opts[0]["draft_capability"]
     assert row["options"][1]["amount"] == 100
 
+def test_657_s1_option_shape_stamps_draft_capability():
+    """层 A option 必填键校验；服务端写 draft_capability。"""
+    from ming_sim.rescript_draft import normalize_rescript_layer_a_option
+
+    raw = {
+        "label": "发帑赈济",
+        "hint": "所安者饥民",
+        "action_type": "assignment",
+        "assignee_name": "杨嗣昌",
+        "target_kind": "region",
+        "target_id": "shaanxi",
+        "locality_scope": "single",
+        "region_id": "shaanxi",
+        "transaction_category": "督赈",
+    }
+    opt = normalize_rescript_layer_a_option(raw)
+    assert opt["draft_capability"]
+    assert opt["label"] == "发帑赈济"
+    assert opt["action_type"] == "assignment"
+    # 缺必填键 → 拒
+    with pytest.raises(ValueError):
+        normalize_rescript_layer_a_option({"label": "x", "hint": "y"})
+    # #1778：库级全集内的类型（policy 等）照常受理，无七类闭集
+    policy_opt = normalize_rescript_layer_a_option({
+        **raw,
+        "action_type": "policy",
+        "target_kind": "policy",
+        "target_id": "清丈全国田亩",
+        "locality_scope": "national",
+        "region_id": "",
+    })
+    assert policy_opt["action_type"] == "policy"
+    assert policy_opt["draft_capability"]
+    # 库级全集之外仍 fail-loud（ADR 0040 形状检查）
+    with pytest.raises(ValueError):
+        normalize_rescript_layer_a_option({**raw, "action_type": "修仙"})
 
 def _army_pay_grant_option(**extra) -> dict:
     opt = {
@@ -1040,11 +1154,14 @@ def _army_pay_grant_option(**extra) -> dict:
     opt.update(extra)
     return opt
 
-def test_1620_generate_army_pay_kind_maps_and_rejects_conflicting_shapes(draft_ingress):
-    """真实生成入口：合法 kind 映射；非法动作形状只剔该 option。"""
+def test_1620_validate_army_pay_grant_kind_maps_to_xiexang():
+    """真实票拟入口：合法 kind 映射；无 kind 直写协饷与 kind+action 并存整批拒。"""
     # #1624：assignment 须 transaction_category 或点将主办；hold 支用点将满足组合契约
-    hold = _layer_a_opt(label="暂缓", hint="候报")
-    drafts = draft_ingress(
+    hold = _layer_a_opt(
+        label="暂缓", hint="候报",
+        transaction_category="", assignee_name="杨嗣昌",
+    )
+    drafts = validate_rescript_draft_items(
         {"items": [{
             "title": "关宁欠饷",
             "context": "边军待哺。",
@@ -1066,12 +1183,35 @@ def test_1620_generate_army_pay_kind_maps_and_rejects_conflicting_shapes(draft_i
         {k: v for k, v in _army_pay_grant_option(grant_action="协饷").items()
          if k != "grant_kind"},  # 无 kind 直写协饷
     ):
-        rejected = draft_ingress({"items": [{
-            "title": "关宁欠饷", "context": "边军待哺。", "options": [bad, hold],
-        }]})
-        assert len(rejected[0]["options"]) == 1
-        assert rejected[0]["options"][0]["label"] == hold["label"]
+        with pytest.raises(ValueError):
+            validate_rescript_draft_items(
+                {"items": [{
+                    "title": "关宁欠饷",
+                    "context": "边军待哺。",
+                    "options": [bad, hold],
+                }]},
+                set(),
+            )
 
+def test_1620_layer_a_reward_with_army_target_stays_reward():
+    """赏赉+army 不因 target_kind 升格协饷。"""
+    from ming_sim.rescript_draft import normalize_rescript_layer_a_option
+
+    opt = normalize_rescript_layer_a_option({
+        "label": "赏关宁将士",
+        "hint": "恩赏",
+        "action_type": "grant_allocation",
+        "assignee_name": "",
+        "target_kind": "army",
+        "target_id": "guanning",
+        "locality_scope": "none",
+        "region_id": "",
+        "transaction_category": "",
+        "grant_action": "赏赉",
+        "amount": 50,
+        "account": "国库",
+    })
+    assert opt["grant_action"] == "赏赉"
 
 @pytest.mark.parametrize("extra,drop", [
     pytest.param({"grant_action": "赏赉"}, (), id="conflict-reward"),
@@ -1079,7 +1219,7 @@ def test_1620_generate_army_pay_kind_maps_and_rejects_conflicting_shapes(draft_i
     pytest.param({"grant_action": "补发军饷"}, ("grant_kind",), id="zh-synonym"),
     # 非 grant 携 grant_kind：不得因 allowed 白名单静默丢键
     pytest.param(
-        {"action_type": "assignment", "grant_kind": "army_pay"}, (),
+        {"action_type": "assignment", "assignee_name": "杨嗣昌"}, (),
         id="non-grant-kind",
     ),
     # #1503 五字段 admission：缺 purpose/account、非法 target_kind
@@ -1092,19 +1232,26 @@ def test_1620_generate_army_pay_kind_maps_and_rejects_conflicting_shapes(draft_i
         id="region-target",
     ),
 ])
-def test_1620_generate_army_pay_rejects_bad_typed_shape(extra, drop, draft_ingress):
-    """除目标坏字段外，角色、属地、名单及动作字段均合法。"""
-    raw = (_layer_a_opt(**extra) if extra.get("action_type") == "assignment"
-           else _army_pay_grant_option(**extra))
+def test_1620_layer_a_army_pay_rejects_bad_typed_shape(extra, drop):
+    """层 A：五字段缺漏、矛盾 kind、未知 kind、中文同义、非 grant 携 kind 均 fail-loud。"""
+    from ming_sim.rescript_draft import normalize_rescript_layer_a_option
+
+    raw = _army_pay_grant_option(**extra)
     for key in drop:
         raw.pop(key, None)
-    sibling = _layer_a_opt(label="候报")
-    drafts = draft_ingress({"items": [{
-        "title": "关宁欠饷", "context": "边军待哺。", "options": [raw, sibling],
-    }]})
-    assert len(drafts[0]["options"]) == 1
-    assert drafts[0]["options"][0]["label"] == sibling["label"]
+    with pytest.raises(ValueError):
+        normalize_rescript_layer_a_option(raw)
 
+def test_1620_internal_canonical_xiexang_renormalizes_without_kind():
+    """内部 canonical（无 kind、grant_action=协饷）二次归一仍通；生成旁路另闸。"""
+    from ming_sim.rescript_draft import normalize_rescript_layer_a_option
+
+    raw = _army_pay_grant_option(grant_action="协饷")
+    raw.pop("grant_kind", None)
+    opt = normalize_rescript_layer_a_option(raw)
+    assert opt["grant_action"] == "协饷"
+    assert opt["purpose"] == "补饷"
+    assert opt["account"] == "国库"
 
 def test_657_s1_list_rescript_desk_merges_cross_month_and_decisions(game):
     """desk：旧急务 ORDER BY turn,idx → 本月 decision；decision_key 与新列投影。"""

@@ -17,6 +17,16 @@ from tests.conftest import active_ming_character
 ROOT = Path(__file__).resolve().parents[1]
 MATRIX = DistanceMatrix.from_file(ROOT / 'content/distance_matrix.json')
 
+def _oracle_n(r0: float, speed_factor: float) -> int:
+    """F2：N = min { n ∈ ℕ⁺ : r0 - n*step ≤ 0 }；抵达 turn = T0 + N。"""
+    step = 1.0 * float(speed_factor)
+    remaining = float(r0)
+    n = 0
+    while remaining > 0:
+        remaining -= step
+        n += 1
+    return n
+
 def _ledger(db, name: str):
     return db.conn.execute('SELECT location, transit_to, transit_distance_remaining, transit_speed_factor, transit_start_turn FROM characters WHERE name=?', (name,)).fetchone()
 
@@ -36,6 +46,7 @@ def test_henan_normal_speed_arrives_next_month(game):
     t0 = state.turn
     r0 = _put_in_transit(db, content, name, origin='henan', dest='beizhili', speed_factor=1.0, start_turn=t0)
     assert r0 <= 1.0
+    assert _oracle_n(r0, 1.0) == 1
     assert tick_transit_arrivals(db, state, content) == []
     row = _ledger(db, name)
     assert row['transit_to'] == 'beizhili'
@@ -49,30 +60,31 @@ def test_henan_normal_speed_arrives_next_month(game):
     assert (ch.location, ch.transit_to, ch.transit_distance_remaining, ch.transit_speed_factor, ch.transit_start_turn) == ('beizhili', '', None, None, 0)
 
 @pytest.mark.parametrize('speed_factor', [1.0, 1.5, 2.0])
-def test_speed_factors_progress_and_arrive_on_differentiated_route(game, speed_factor):
-    """同一长途路线：在途月 remaining 递减，终月经 tick 抵达；不嵌入私有步长公式。"""
+def test_speed_factors_match_f2_oracle_on_differentiated_route(game, speed_factor):
+    """同一 r0 下 1.0/1.5/2.0 抵达 turn 与 F2 oracle 一致；未到期月仍在途。"""
     db, state, content = game
     name = active_ming_character(db, content)
     origin, dest = ('henan', 'liaodong')
     t0 = state.turn
     r0 = _put_in_transit(db, content, name, origin=origin, dest=dest, speed_factor=speed_factor, start_turn=t0)
-    prev_remaining = r0
-    arrived_at = None
-    for k in range(1, 60):
+    n = _oracle_n(r0, speed_factor)
+    assert n >= 2, '路线须使 N>1 才能覆盖未到期断言'
+    assert len({_oracle_n(r0, f) for f in (1.0, 1.5, 2.0)}) == 3
+    step = 1.0 * speed_factor
+    for k in range(1, n):
         state.turn = t0 + k
         arrivals = tick_transit_arrivals(db, state, content)
-        if any(a.get('name') == name for a in arrivals):
-            arrived_at = k
-            assert arrivals == [{'name': name, 'location': dest}]
-            break
+        assert name not in [a['name'] for a in arrivals]
         row = _ledger(db, name)
         assert row['transit_to'] == dest
         assert row['location'] == origin
-        assert row['transit_distance_remaining'] < prev_remaining
+        expected_remaining = r0 - k * step
+        assert row['transit_distance_remaining'] == pytest.approx(expected_remaining)
         assert row['transit_speed_factor'] == pytest.approx(speed_factor)
         assert row['transit_start_turn'] == t0
-        prev_remaining = row['transit_distance_remaining']
-    assert arrived_at is not None and arrived_at >= 2
+    state.turn = t0 + n
+    arrivals = tick_transit_arrivals(db, state, content)
+    assert arrivals == [{'name': name, 'location': dest}]
     row = _ledger(db, name)
     assert tuple(row) == (dest, '', None, None, 0)
 
@@ -83,7 +95,7 @@ def test_pre_settle_tick_before_event_terminal_reads_new_location(game):
     name = active_ming_character(db, content)
     t0 = state.turn
     r0 = _put_in_transit(db, content, name, origin='henan', dest='beizhili', speed_factor=1.0, start_turn=t0)
-    assert r0 <= 1.0
+    assert _oracle_n(r0, 1.0) == 1
     ev = Event(id='__test_transit_gate_668__', title='测试在途门控', kind='situation', summary='x', urgency=50, severity=50, credibility=50, interests=[], audiences=[], trigger_year=1, trigger_month=0, trigger_gate={f'character.{name}.location': '==beizhili', f'character.{name}.status': '==active'}, person_core_subjects=[name])
     content.events.append(ev)
     try:
@@ -113,7 +125,7 @@ def test_pre_settle_tick_before_seed_auto_trigger_reads_new_location(game):
     name = active_ming_character(db, content)
     t0 = state.turn
     r0 = _put_in_transit(db, content, name, origin='henan', dest='beizhili', speed_factor=1.0, start_turn=t0)
-    assert r0 <= 1.0
+    assert _oracle_n(r0, 1.0) == 1
     ev = Event(id='__test_transit_seed_gate_668__', title='测试在途 seed 门控', kind='situation', summary='x', urgency=50, severity=50, credibility=50, interests=[], audiences=[], auto_trigger=True, trigger_gate={f'character.{name}.location': '==beizhili', f'character.{name}.status': '==active'}, person_core_subjects=[name])
     content.seed_events.append(ev)
     try:
@@ -141,12 +153,13 @@ def test_ousted_in_transit_stops_countdown_and_never_arrives(game):
     db, state, content = game
     name = active_ming_character(db, content)
     t0 = state.turn
-    _put_in_transit(db, content, name, origin='henan', dest='liaodong', speed_factor=1.0, start_turn=t0)
+    r0 = _put_in_transit(db, content, name, origin='henan', dest='liaodong', speed_factor=1.0, start_turn=t0)
+    assert _oracle_n(r0, 1.0) >= 2
     db.set_character_status(state, name, 'imprisoned', reason='廷杖下狱', content=content)
     row = _ledger(db, name)
     assert row['location'] == 'henan'
     assert tuple(row)[1:] == ('', None, None, 0)
-    for k in range(1, 24):
+    for k in range(1, _oracle_n(r0, 1.0) + 2):
         state.turn = t0 + k
         arrivals = tick_transit_arrivals(db, state, content)
         assert name not in [a['name'] for a in arrivals]
@@ -179,20 +192,17 @@ def test_mid_countdown_save_reopen_continues_identically(game, tmp_path):
     name = active_ming_character(db, content)
     origin, dest = ('henan', 'liaodong')
     t0 = state.turn
-    _put_in_transit(db, content, name, origin=origin, dest=dest, speed_factor=1.0, start_turn=t0)
+    r0 = _put_in_transit(db, content, name, origin=origin, dest=dest, speed_factor=1.0, start_turn=t0)
+    n = _oracle_n(r0, 1.0)
+    assert n >= 3
     db.save_state(state)
     initial_backup = tmp_path / 'transit_mid_initial.db'
     db.backup_to(str(initial_backup))
     control: dict[int, dict] = {}
-    n = None
-    for k in range(1, 60):
+    for k in range(1, n + 1):
         state.turn = t0 + k
         arrivals = tick_transit_arrivals(db, state, content)
         control[k] = _transit_frame(db, name, arrivals)
-        if any(a.get('name') == name for a in arrivals):
-            n = k
-            break
-    assert n is not None and n >= 3
     assert control[n]['arrivals'] == [{'name': name, 'location': dest}]
     assert control[n]['location'] == dest and control[n]['transit_to'] == ''
     mid_k = max(1, n // 2)
@@ -232,7 +242,6 @@ def test_mid_countdown_save_reopen_continues_identically(game, tmp_path):
         except Exception:
             pass
         raise
-
 
 def _assert_ledger_match(db, name: str, expected):
     loc, to, remaining, factor, start_turn = expected

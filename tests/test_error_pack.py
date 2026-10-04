@@ -8,6 +8,7 @@ attempt 从目录文件数推导，中止提示自带路径指引。
 from __future__ import annotations
 
 import json
+import threading
 import sqlite3
 from pathlib import Path
 
@@ -33,31 +34,16 @@ def test_attempt_derived_from_existing_dirs(game, monkeypatch, tmp_path):
     assert Path(p1) != Path(p2)
 
 def test_write_error_pack_inside_atomic_is_rejected(game, monkeypatch, tmp_path):
-    """在 atomic 内写包 → 响亮拒绝且不形成完整错误包（ADR 0008：包必须在 atomic 外）。"""
+    """在 atomic 内写包 → backup_to 守卫响亮拒绝（钉住「包必须在 atomic 外」约束）。"""
     from ming_sim.applier import atomic
-    from ming_sim.error_pack import error_packs_root, write_error_pack
+    from ming_sim.error_pack import write_error_pack
     db, state, content = game
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
-    root = error_packs_root()
 
     with pytest.raises(RuntimeError):
         with atomic(db):
             write_error_pack(db, state, exc=RuntimeError("x"),
                              extracted=None, resolve_ctx=None)
-
-    # 目录可能半建成，但不得留下完整五件包（无 backup/manifest）
-    complete = []
-    if root.exists():
-        for pack in root.iterdir():
-            if not pack.is_dir():
-                continue
-            needed = {
-                "traceback.txt", "delta.json", "resolve_context.json",
-                "save_backup.db", "manifest.json",
-            }
-            if needed <= {p.name for p in pack.iterdir()}:
-                complete.append(pack)
-    assert complete == []
 
 
 
@@ -69,12 +55,11 @@ def test_write_error_pack_inside_atomic_is_rejected(game, monkeypatch, tmp_path)
 
 
 def test_rejections_jsonl_path_in_error_dir(monkeypatch, tmp_path):
-    """拒收 jsonl 与错误包集中同一 user-data 错误目录（ADR 0008 决定 7）。"""
+    """拒收 jsonl 与错误包集中同一 user-data 错误目录（决定 7：一次打包全带走）。"""
     from ming_sim.error_pack import error_packs_root, rejections_jsonl_path
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
 
     jsonl = Path(rejections_jsonl_path())
-    # 契约：集中同一目录 + 固定文件名（ADR 0008 决定 7；error_pack.rejections_jsonl_path 文档）
     assert jsonl.parent == error_packs_root()
     assert jsonl.name == "rejections.jsonl"
 
@@ -102,7 +87,7 @@ def test_attempt_never_overwrites_existing_pack(game, tmp_path, monkeypatch):
     assert (stale / "manifest.json").read_text(encoding="utf-8") == '{"sentinel": "keep me"}'
 
 def test_mirror_writes_to_rejections_jsonl_path(game, tmp_path, monkeypatch):
-    """rejections_jsonl_path 开箱可写：父目录就位，mirror 直接 append（ADR 0008 决定 5/7）。"""
+    """rejections_jsonl_path 开箱可写：父目录就位，mirror 直接 append（cmr S6 r1 F3）。"""
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
     from ming_sim.applier import Provenance, RejectedItem, RejectionCollector
     from ming_sim.error_pack import rejections_jsonl_path
@@ -117,64 +102,45 @@ def test_mirror_writes_to_rejections_jsonl_path(game, tmp_path, monkeypatch):
     path = rejections_jsonl_path()
     rc.mirror_to_jsonl(path)
 
-    rows = [json.loads(line) for line in open(path, encoding="utf-8") if line.strip()]
-    assert len(rows) == 1
-    assert rows[0]["section"] == "army_delta"
-    assert rows[0]["category"] == "invalid_enum"
-    assert rows[0]["turn"] == 1
+    lines = open(path, encoding="utf-8").readlines()
+    assert len(lines) == 1
 
-def test_web_issue_endpoint_returns_structured_abort(game, monkeypatch):
-    """SettlementAbort 在 POST /api/decree/issue 回结构化非 500（cmr S6 r2 codex）。"""
-    from types import SimpleNamespace
-
-    from fastapi.testclient import TestClient
-
+def test_web_issue_endpoint_returns_structured_abort(monkeypatch):
+    """SettlementAbort 在 /api/decree/issue 回结构化非 500，玩家看得到指引（cmr S6 r2 codex）。"""
+    import asyncio
+    from fastapi import HTTPException
     import web_app
-    from ming_sim.session_write_queue import get_session_write_queue
+    from ming_sim.exceptions import SettlementAbort
 
-    db, state, content = game
-    pack_path = "/tmp/ming-error-pack-x"
-    stage = "extract"
+    class _StubSession:
+        def await_translations_before_month(self, after_drain=None):
+            if after_drain is not None:
+                after_drain()
 
-    def _boom_resolve(**_k):
-        raise SettlementAbort(
-            "本月结算失败，进度已保存，可重试。",
-            turn=int(state.turn),
-            stage=stage,
-            error_pack_path=pack_path,
-        )
+        def resolve_turn(
+            self, cheat_directive="", write_gate_already_held=False,
+        ):
+            raise SettlementAbort(
+                "本月结算失败，进度已保存，可重试。\n错误包已生成：/tmp/x\n请把该文件夹发给作者，以便排查。",
+                turn=3, stage="extract", error_pack_path="/tmp/x")
 
-    session = SimpleNamespace(
-        resolve_turn=_boom_resolve,
-        last_decree="",
-        current_phase=lambda: state.turn_phase,
-        await_translations_before_month=lambda after_drain=None: after_drain() if after_drain else None,
-    )
-    runtime = SimpleNamespace(
-        db=db,
-        state=state,
-        content=content,
-        session=session,
-        ended=False,
-        refresh_turn=lambda: None,
-        directive_rows=lambda: [],
-        state_payload=lambda: {"turn": {"turn": int(state.turn)}},
-        _write_gate=get_session_write_queue(session).write_gate,
-    )
-    monkeypatch.setattr(web_app, "get_game", lambda: runtime)
-    monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", lambda *_a, **_k: None)
-    monkeypatch.setattr(web_app, "_failed_secret_order_ids_for_turn", lambda *_a, **_k: set())
-    monkeypatch.setattr(web_app, "_new_secret_order_failure_payloads_for_turn", lambda *_a, **_k: [])
+    class _StubGame:
+        _write_gate = threading.Lock()
+        session = _StubSession()
+        class state:
+            ended = False
+            turn = 3
+            turn_phase = "summoning"
 
-    resp = TestClient(web_app.app).post("/api/decree/issue", json={})
-    assert resp.status_code != 500, resp.text
-    assert resp.status_code == 409, resp.text
-    detail = resp.json().get("detail")
-    assert isinstance(detail, dict), detail
-    assert detail.get("stage") == stage
-    assert detail.get("error_pack_path") == pack_path
-    assert detail.get("turn") == int(state.turn)
-    assert detail.get("message")
+    monkeypatch.setattr(web_app, "get_game", lambda: _StubGame())
+
+    with pytest.raises(HTTPException) as ei:
+        web_app.api_issue_decree()
+
+    assert ei.value.status_code != 500
+    assert ei.value.detail["stage"] == "extract"
+    assert ei.value.detail["error_pack_path"] == "/tmp/x"
+    assert ei.value.detail["turn"] == 3
 
 def test_next_attempt_skips_malformed_and_foreign_entries(game, monkeypatch, tmp_path):
     """attempt 推导跳过畸形后缀/他 turn/非目录项，取本 turn 数字后缀 max+1

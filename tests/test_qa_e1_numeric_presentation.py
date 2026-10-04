@@ -1,5 +1,7 @@
-"""预算身份、应拟金额及玩家投影的结构化契约。"""
+"""Structured budget identity and non-duplication contracts (#1366/#1471).
 
+Numeric truth is asserted on budget rows and ledgers, never parsed from prose.
+"""
 from __future__ import annotations
 
 from types import SimpleNamespace
@@ -9,43 +11,30 @@ from ming_sim.flows import apply_fixed_period_flows, compute_budget_lines
 
 
 def _army_pay_budget_lines(budget):
-    return [
-        row for row in budget["国库"]["expense"] if row.get("budget_key") == "army_pay"
-    ]
+    return [row for row in budget["国库"]["expense"] if row.get("budget_key") == "army_pay"]
 
 
 def test_substrate_budget_splits_proposals_without_treasury_cap(game):
-    """真实预算入口分别读取中央份额与京运补应拟支，不受国库余额截断。"""
     db, state, _ = game
     db.conn.execute(
-        """
-        UPDATE armies SET self_funded_pay=1, is_tusi=1, province_pay_share=0,
-          central_pay_share=0, pay_source_region='', province_pay_arrears=0,
-          central_pay_arrears=0, arrears=0
-        """
+        "UPDATE armies SET self_funded_pay=1, is_tusi=1, province_pay_share=0, "
+        "central_pay_share=0, pay_source_region='', province_pay_arrears=0, "
+        "central_pay_arrears=0, arrears=0"
     )
     db.conn.execute(
-        """
-        UPDATE armies SET self_funded_pay=0, is_tusi=0, owner_power='ming',
-          pay_source_region='shaanxi', province_pay_share=0, central_pay_share=1,
-          manpower=10000, salary_rate=10
-        WHERE id='guanning'
-        """
+        "UPDATE armies SET self_funded_pay=0, is_tusi=0, owner_power='ming', "
+        "pay_source_region='shaanxi', province_pay_share=0, central_pay_share=1, "
+        "manpower=10000, salary_rate=10 WHERE id='guanning'"
     )
+    db.conn.execute("UPDATE regions SET fiscal=json_set(fiscal, '$.settle.p.拨付gross', 0)")
     db.conn.execute(
-        "UPDATE regions SET fiscal=json_set(fiscal, '$.settle.p.拨付gross', 0)"
-    )
-    db.conn.execute(
-        "UPDATE regions SET fiscal=json_set(fiscal, '$.settle.p.拨付gross', 7) "
-        "WHERE id='shaanxi'"
+        "UPDATE regions SET fiscal=json_set(fiscal, '$.settle.p.拨付gross', 7) WHERE id='shaanxi'"
     )
     db.conn.commit()
 
     def proposed_parts():
-        return {
-            line["budget_part"]: line["amount"]
-            for line in _army_pay_budget_lines(compute_budget_lines(db, state))
-        }
+        return {line["budget_part"]: line["amount"]
+                for line in _army_pay_budget_lines(compute_budget_lines(db, state))}
 
     state.metrics["国库"] = 0
     assert proposed_parts() == {"central": 10, "jingyun": 7}
@@ -54,30 +43,25 @@ def test_substrate_budget_splits_proposals_without_treasury_cap(game):
 
 
 def test_renaming_army_pay_budget_line_does_not_double_debit(game, monkeypatch):
-    """改 army_pay 显示名不得让定额路径再扣一笔。"""
     import ming_sim.flows as flows_mod
 
     db, state, _ = game
     assert db.fiscal_engine() == "substrate_hub"
     real = flows_mod.compute_budget_lines
+    renamed = "完全不同的军饷科目名"
 
     def _renamed(db_, state_, **kwargs):
         budget = real(db_, state_, **kwargs)
         for row in budget["国库"]["expense"]:
             if row.get("budget_key") == "army_pay":
-                row["name"] = "完全不同的军饷科目名"
+                row["name"] = renamed
         return budget
 
     monkeypatch.setattr(flows_mod, "compute_budget_lines", _renamed)
     flow_rows = apply_fixed_period_flows(db, state)
-    renamed = "完全不同的军饷科目名"
-    assert not any(
-        row.get("account") == "国库" and row.get("category") == renamed
-        for row in flow_rows
-    )
+    assert not any(row.get("account") == "国库" and row.get("category") == renamed for row in flow_rows)
     assert db.conn.execute(
-        "SELECT COUNT(*) AS n FROM economy_ledger "
-        "WHERE account = '国库' AND category = ?", (renamed,),
+        "SELECT COUNT(*) AS n FROM economy_ledger WHERE account='国库' AND category=?", (renamed,),
     ).fetchone()["n"] == 0
     hub_rows = [row for row in flow_rows if row.get("category") == "边饷hub"]
     assert len(hub_rows) == 1
@@ -85,10 +69,14 @@ def test_renaming_army_pay_budget_line_does_not_double_debit(game, monkeypatch):
 
 
 def test_player_budget_payload_strips_engineering_notes(read_game):
-    """API 玩家定额行只投影 name/amount，不下发工程字段。"""
     db, state, _ = read_game
     runtime = object.__new__(web_app.WebGame)
     runtime.session = SimpleNamespace(db=db, state=state)
+    eng = compute_budget_lines(db, state)
+    assert any(item.get("note") for acc in eng.values()
+               for direction in ("income", "expense") for item in acc[direction])
+    assert any(item.get("internal") == "substrate_hub"
+               for item in eng["国库"]["income"] + eng["国库"]["expense"])
     payload = runtime.budget_payload()
     for account_name in ("国库", "内库"):
         for direction in ("income", "expense"):
@@ -96,12 +84,11 @@ def test_player_budget_payload_strips_engineering_notes(read_game):
                 assert set(item) == {"name", "amount"}
 
 
-def test_army_payload_omits_raw_arrears(game):
+def test_army_payload_arrears_text_is_approximate_not_raw(game):
     db, _state, _ = game
-    row = db.conn.execute(
+    army_id = db.conn.execute(
         "SELECT id FROM armies WHERE owner_power='ming' ORDER BY id LIMIT 1"
-    ).fetchone()
-    army_id = row["id"]
+    ).fetchone()["id"]
     raw = 1.2000000000000002
     db.conn.execute(
         "UPDATE armies SET arrears=?, province_pay_arrears=?, central_pay_arrears=0 WHERE id=?",
@@ -110,3 +97,4 @@ def test_army_payload_omits_raw_arrears(game):
     db.conn.commit()
     card = {army["id"]: army for army in db.army_payload()}[army_id]
     assert "arrears" not in card
+    assert isinstance(card["arrears_text"], str) and card["arrears_text"]

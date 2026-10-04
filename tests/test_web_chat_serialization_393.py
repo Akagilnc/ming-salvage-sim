@@ -3,11 +3,14 @@ from __future__ import annotations
 import pytest
 
 import asyncio
+import json
 import threading
 from types import SimpleNamespace
 
 import web_app
 from tests.web_audience_test_doubles import HallAdmissionSessionMixin
+from tests.dossier_test_helpers import TYPED_COVERT_TASK, create_test_secret_order
+from tests.wait_utils import wait_until
 from ming_sim.session_write_queue import SessionWriteQueue
 
 
@@ -245,13 +248,32 @@ def test_background_stream_completion_waits_for_settlement_gate_and_keeps_accept
 
 def test_identity_setup_failure_preserves_question_and_releases_pending_owner():
     runtime, minister_name, _allow_finish, _settlement_attempting, _settlement = _runtime_for_stream_race()
+    failed = []
+    completed = []
     runtime.db.kv_get = lambda _key: (_ for _ in ()).throw(RuntimeError("identity read failed"))
+    runtime._fail_chat_turn_and_reload = lambda turn_id, snapshot, error: failed.append((turn_id, snapshot, error))
+    runtime._complete_pending_write = lambda ticket=None: completed.append(True)
 
     events = list(runtime.chat_stream("殿上", "请奏"))
 
-    assert events and events[0].get("type") == "error"
+    assert events == [{
+        "type": "error", "message": "identity read failed",
+        "campaign_id": "", "night_id": 0, "chat_turn_id": 7,
+    }]
+    assert len(failed) == 1
+    assert failed[0][:2] == (7, {})
+    assert str(failed[0][2]) == "identity read failed"
     assert [m["content"] for m in runtime.db.messages if m["role"] == "user"] == ["请奏"]
-    assert runtime._write_queue.inflight_count() == 0
+    assert completed == [True]
+
+
+@pytest.mark.usefixtures("_atomic_connless_test_shell_compat")
+def test_lightweight_stream_seam_reaches_done_without_durable_identity_or_night_signature():
+    runtime, minister_name, allow_finish, _settlement_attempting, _settlement = _runtime_for_stream_race()
+    stream = runtime.chat_stream("殿上", "请奏")
+    assert next(stream)["type"] == "delta"
+    allow_finish.set()
+    assert next(stream)["type"] == "done"
 
 
 def test_chat_stream_sse_waits_for_sync_generator_in_executor(monkeypatch):
@@ -266,6 +288,7 @@ def test_chat_stream_sse_waits_for_sync_generator_in_executor(monkeypatch):
             events.append("stream")
             yield {"type": "done", "payload": {"ok": True}}
 
+    monkeypatch.setattr(web_app, "_require_active_minister", lambda minister_name: None)
     monkeypatch.setattr(web_app, "get_game", lambda: _BlockingGame())
 
     async def drive_first_event():
@@ -339,3 +362,25 @@ def test_nonstream_api_chat_keeps_game_state_responsive_while_chat_blocks(monkey
     )
     assert state_payload == {"ok": True, "turn": 1}
     assert chat_result["answer"] == "臣已知悉。"
+
+
+def test_nonstream_chat_rejects_when_session_draining():
+    """drain 已开始时非流式 chat 不得再登记 pending——对齐 stream 拒绝路，HTTP 503。"""
+    from fastapi import HTTPException
+
+    character = SimpleNamespace(name="测试大臣")
+    state = SimpleNamespace(turn=1, year=1628, period=1, turn_phase="summoning")
+    db = _RecordingDB(threading.Event())
+    runtime = object.__new__(web_app.WebGame)
+    runtime.session = _FakeSession(character, _FakeAgent(threading.Event()), state, db)
+    runtime.chat_history = {character.name: [], "殿上": []}
+    runtime._write_queue = SessionWriteQueue()
+    runtime._write_queue.seal()
+    runtime._write_gate = runtime._write_queue.write_gate
+    runtime._runtime_write_queue = lambda: runtime._write_queue  # type: ignore
+    runtime._mark_pending_write = lambda key=None: runtime._write_queue.claim(key=key or ("pending",))  # type: ignore
+    runtime._complete_pending_write = lambda ticket=None: runtime._write_queue.complete(ticket)  # type: ignore
+
+    events = list(runtime.chat_stream("殿上", "边饷如何？"))
+    assert events and events[0].get("type") == "error"
+    assert runtime._pending_writes_count == 0

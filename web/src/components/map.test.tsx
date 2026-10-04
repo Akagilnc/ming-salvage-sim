@@ -1,8 +1,8 @@
-import { act } from "react";
+import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it } from "vitest";
 import { GrandMap, NodeIntel } from "./map";
-import type { MapNode, Region } from "../types";
+import type { Army, MapNode, Region } from "../types";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -72,6 +72,18 @@ function makeNode(region: Region): MapNode {
   };
 }
 
+describe("NodeIntel #648 population (P7: LLM 长文，无 UI 模板)", () => {
+  it("never renders fixed population strings (约N万口 / 不足一万口)", () => {
+    const host = renderNodeIntel(makeNode(makeRegion({ population: 7200000 })));
+    expect(host.textContent).toContain("辽东");
+  });
+});
+
+it("preserves the supplied per-turn tax", () => {
+  const region = makeRegion({ tax_per_turn: 1 });
+  const host = renderNodeIntel(makeNode(region));
+  expect(host.textContent).toContain(String(region.tax_per_turn));
+});
 
 describe("NodeIntel #1401 theater naming", () => {
   it("shows region.name when theater carries region (liaodong pin)", () => {
@@ -93,6 +105,48 @@ describe("NodeIntel #1401 theater naming", () => {
   });
 });
 
+describe("NodeIntel #1352 garrison layout / army-list口径", () => {
+  function makeArmy(overrides: Partial<Army> = {}): Army {
+    return {
+      id: "shanhai",
+      name: "山海关守军",
+      station: "北直隶 / 山海关",
+      theater: "蓟辽",
+      commander: "赵率教",
+      controller: "ming",
+      troop_type: "关宁军",
+      manpower: 28000,
+      army_needed: 1.1,
+      supply: 50,
+      morale_text: "士气：不振",
+      training: 45,
+      equipment: 50,
+      arrears_text: "欠饷不足十万两，约两月军饷",
+      mobility: 40,
+      mutiny_tier: "不满",
+      status: "驻防",
+      owner_power: "ming",
+      ...overrides,
+    };
+  }
+
+  it("驻军表兵力全数呈现且月饷带万，表头仅世界事实列", () => {
+    const node = makeNode(makeRegion({ name: "山海关", id: "shanhaiguan" }));
+    node.armies = [makeArmy()];
+    node.label = "山海关";
+    const host = renderNodeIntel(node);
+
+    const table = host.querySelector(".intel-table--garrison");
+    expect(table).not.toBeNull();
+    expect(table!.textContent).toContain(String(node.armies[0].manpower));
+    expect(table!.textContent).toContain(String(node.armies[0].army_needed));
+    // #321 P7：驻军表存在；不直显士气/军心/欠饷
+    expect(host.textContent).not.toContain("不满"); // makeArmy 默认 mutiny_tier 不得直显
+    expect(host.textContent).not.toContain("士气：不振");
+    expect(host.textContent).not.toContain("欠饷不足十万两，约两月军饷");
+  });
+
+});
 
 describe("GrandMap #1505 dongjiang_area merged pin", () => {
   it("renders a clickable control that selects dongjiang_area", () => {

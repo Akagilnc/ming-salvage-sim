@@ -42,6 +42,7 @@ describe("DecisionModal", () => {
     const cleanup = render(<DecisionModal decisions={decisions} onResolve={vi.fn()} />);
     const page = document.querySelector<HTMLElement>(".decision-page");
 
+    expect(page?.tagName).toBe("SECTION");
     expect(page?.querySelector("main")).toBeNull();
     cleanup();
   });
@@ -61,7 +62,7 @@ describe("DecisionModal", () => {
 
     expect(page?.getAttribute("role")).toBe("dialog");
     expect(page?.getAttribute("aria-modal")).toBe("true");
-    expect(document.getElementById(page!.getAttribute("aria-labelledby")!)).not.toBeNull();
+    expect(page?.getAttribute("aria-labelledby")).toBe("decision-page-title");
     expect(document.activeElement).toBe(option);
 
     act(() => background.focus());
@@ -151,6 +152,27 @@ describe("DecisionModal", () => {
     cleanup();
   });
 
+  it("assembles each decision as ordered sections of one red-seal document", () => {
+    const cleanup = render(<DecisionModal decisions={decisions} onResolve={vi.fn()} />);
+    const documentPage = document.querySelector<HTMLElement>(".decision-document");
+    expect(documentPage).not.toBeNull();
+    const sections = documentPage!.querySelectorAll(".decision-document-section");
+    expect(sections[0].querySelector("h3")?.textContent).toBe("关宁军饷");
+    expect(sections[0].textContent).toContain("辽东急报：军中已三月未饷。");
+    expect(sections[1].querySelector(".decision-option-label")?.textContent).toContain("拨帑速发");
+    expect(documentPage!.querySelector(".decision-red-pen textarea")).not.toBeNull();
+    // 印即确认键：文书序末位为 .decision-confirm 真按钮，无独立装饰 seal
+    const sealConfirm = documentPage!.querySelector<HTMLButtonElement>(".decision-confirm");
+    expect(sealConfirm).not.toBeNull();
+    expect(sealConfirm!.tagName).toBe("BUTTON");
+    expect(documentPage!.querySelector(".decision-seal")).toBeNull();
+    expect(document.querySelectorAll(".decision-confirm")).toHaveLength(1);
+    act(() => document.querySelector<HTMLButtonElement>(".decision-option")!.click());
+    act(() => sealConfirm!.click());
+    expect(document.body.textContent).toContain("河工修治");
+    cleanup();
+  });
+
   it("renders no page for a month with no decisions", () => {
     const cleanup = render(<DecisionModal decisions={[]} onResolve={vi.fn()} />);
     expect(document.querySelector(".decision-page")).toBeNull();
@@ -225,18 +247,31 @@ describe("DecisionModal", () => {
     const result = pendingDecisionsFrom(mixedEventStream);
     expect(result).toEqual([]);
     const cleanup = render(<DecisionModal decisions={result} onResolve={vi.fn()} />);
-    expect(document.querySelector("[role=dialog]")).toBeNull();
+    expect(document.body.textContent).not.toContain("着户部核拨军饷");
     cleanup();
   });
 });
 
 describe("DecisionModal #1202 seal-is-confirm first screen + pick affordance", () => {
+  it("makes the unique decision-confirm the seal button with no parallel decorative seal", () => {
+    const cleanup = render(<DecisionModal decisions={[decisions[0]]} onResolve={vi.fn()} />);
+    const confirms = document.querySelectorAll(".decision-confirm");
+    expect(confirms).toHaveLength(1);
+    expect(document.querySelector(".decision-seal")).toBeNull();
+
+    const seal = confirms[0] as HTMLButtonElement;
+    expect(seal.tagName).toBe("BUTTON");
+    expect(seal.getAttribute("aria-hidden")).not.toBe("true");
+    expect(seal.disabled).toBe(true);
+    cleanup();
+  });
+
   it("disables the seal only when no pick and handwritten note is empty; either path enables", () => {
     const cleanup = render(<DecisionModal decisions={[decisions[0]]} onResolve={vi.fn()} />);
     const confirm = () => document.querySelector<HTMLButtonElement>(".decision-confirm")!;
     const options = () => document.querySelectorAll<HTMLButtonElement>(".decision-option");
 
-    // 路一：未择且批示空 → 禁用 + 提示
+    // 路一：未择且批示空 → 禁用
     expect(confirm().disabled).toBe(true);
     expect(document.querySelectorAll(".decision-option.is-picked")).toHaveLength(0);
 
@@ -281,7 +316,6 @@ describe("DecisionModal #1202 seal-is-confirm first screen + pick affordance", (
     cleanupNote();
   });
 
-
   it("keeps the three-state invariant for listed picks without sealing the handwritten-only path", () => {
     const cleanupListed = render(<DecisionModal decisions={[decisions[0]]} onResolve={vi.fn()} />);
     const confirm = () => document.querySelector<HTMLButtonElement>(".decision-confirm")!;
@@ -290,6 +324,13 @@ describe("DecisionModal #1202 seal-is-confirm first screen + pick affordance", (
     // 无择票拟 ⇔ 无选中样 ⇔ 确认不可用（须择票拟语义下）
     expect(options()[0].classList.contains("is-picked")).toBe(false);
     expect(options()[1].classList.contains("is-picked")).toBe(false);
+    expect(confirm().disabled).toBe(true);
+
+    // 程序聚焦 ≠ 已选（is-picked 只由点击/择票拟写入）
+    act(() => options()[0].focus());
+    expect(document.activeElement).toBe(options()[0]);
+    expect(options()[0].classList.contains("is-picked")).toBe(false);
+    expect(document.querySelectorAll(".decision-option.is-picked")).toHaveLength(0);
     expect(confirm().disabled).toBe(true);
 
     act(() => options()[0].click());
@@ -504,6 +545,8 @@ describe("DecisionModal #1202 seal-is-confirm first screen + pick affordance", (
     // P7：decree_text 回退 label——必须保留所选 option 的 LLM 文案，禁结构钮文泄漏
     expect(choice.label).toBe("加衔恩赏");
     expect(choice.hint).toBe("荣誉");
+    expect(choice.label).not.toBe("另旨·中旨");
+    expect(String(choice.hint || "")).not.toBe("中旨直发");
     expect(choice.action_type).toBe("grant_allocation");
     expect(choice.grant_action).toBe("加衔");
     expect(choice.target_kind).toBe("character");
