@@ -155,12 +155,17 @@ MING_SIM_PI_BIN=/usr/bin/false \
 
 ## git 事实 / commit
 
-b04ea3af3690a96268119bfb6f553b5289816a5c
-ak-roles/1847-fixer-w7-n6-n11-n13-n14
+```bash
+git rev-parse HEAD~1   # delivery
+git rev-parse HEAD     # report stamp
+git status --porcelain=v1
+git branch --show-current
+```
 
-- branch: 
-- commit: 
-- status after commit: clean working tree (report stamp may follow)
+- branch: `ak-roles/1847-fixer-w7-n6-n11-n13-n14`
+- delivery commit: `b04ea3af3690a96268119bfb6f553b5289816a5c`
+- report-stamp commit: `4456b365df940bada261c73c00e07bfc7ccb2bf9`（本段修正后见最新 HEAD）
+- status: working tree clean after stamp fix
 
 ## 剩余事项
 
