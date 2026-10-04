@@ -139,10 +139,8 @@ def _travel_tone_from_tags(tags: Sequence[Any]) -> str:
     ]
     return max(tones or ["常行"], key=TRAVEL_SPEED_BY_TONE.__getitem__)
 _SUMMON_ORIGIN_PREFIX = "传召源#"
-# #526 / #471 S10：留侍叙事账标签——非进/出，不驱动在场（口径回灌 #500）
-TAG_STAY_ATTEND = "留侍"
-
 # #526 结构化口令判词（引擎只认判词，不重解析散文；非 ACTION_CLUSTERS）
+# ADR 0047 / 0158：明确「退朝」→ close_night；#1812 第5项已裁撤留侍/含糊退朝 NL。
 CMD_CLOSE_NIGHT = "close_night"
 CMD_NONE = "none"
 _CMD_VERDICTS = frozenset({
@@ -606,7 +604,7 @@ def read_night_scroll(db: Any, night_id: int) -> List[Dict[str, Any]]:
         if not _is_command_entry(entry):
             continue
         # #1838 reopen：入殿/开夜/收夜/交接/场外传召旁白账不再投影；
-        # 只投影有正文的 exit / 留侍 / 其它 scene 口令账。
+        # 只投影有正文的 exit / 其它 scene 口令账。
         if TAG_ENTER in tags:
             continue
         if (
@@ -1994,10 +1992,10 @@ def normalize_audience_command_verdict(raw: Any) -> str:
 
 
 def recognize_audience_command(message: str) -> str:
-    """收夜口令结构化判词。
+    """收夜口令结构化判词（ADR 0047 / 0158 明确退朝加速器）。
 
-    「留下听着」「今日就到这里吧」已裁撤（#1812 待拍事项第5项），不再由代码识别。
-    仅保留明确退朝封闭集；引擎不重解析散文。
+    #1812 待拍事项第5项已裁撤「留下听着」「今日就到这里吧」及同族 NL 软收夜；
+    本函数只匹配 COURT_BREAK_COMMANDS 明确封闭集，不重解析散文、不产固定人物台词。
     """
     from ming_sim.constants import COURT_BREAK_COMMANDS
 

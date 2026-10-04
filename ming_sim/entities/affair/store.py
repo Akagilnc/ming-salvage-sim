@@ -1,4 +1,8 @@
-"""Affair records: identity, birth, close-by-declaration, pointers (ADR 0154)."""
+"""Affair records: identity, birth, pointers (ADR 0154).
+
+ADR 0154（2026-09-30）：不设「宣布了结」动作；closed 态由世界记录自然承接，
+本 store 不提供 declare_closed / close 词表写口。
+"""
 
 from __future__ import annotations
 from ming_sim.exceptions import DeclarationDataError, DeclarationReferenceError
@@ -74,7 +78,7 @@ class Affair:
 
 
 class AffairStore:
-    """World-record home for affairs. Close only by explicit declaration."""
+    """World-record home for affairs. Status becomes closed only via world archive."""
 
     def __init__(self, conn: Any) -> None:
         self._conn = conn
@@ -136,18 +140,6 @@ class AffairStore:
             "FROM affairs WHERE status='open' ORDER BY id"
         ).fetchall()
         return tuple(_row_to_affair(row) for row in rows)
-
-    def declare_closed(self, affair_id: int, *, turn: int) -> Affair:
-        """LLM-declared close. No conditions, no dossier-status checks."""
-        self.get(affair_id)
-        owns = connection_owns_transaction(self._conn)
-        self._conn.execute(
-            "UPDATE affairs SET status='closed', closed_turn=? WHERE id=?",
-            (int(turn), int(affair_id)),
-        )
-        if owns:
-            self._conn.commit()
-        return self.get(affair_id)
 
     def resolve_declaration(
         self,

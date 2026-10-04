@@ -435,7 +435,7 @@ def run_declaration_translate_prompt(
     from ming_sim.cli_backend import _loads_lenient, _run_json_extractor_for_config
 
     raw, _ = _run_json_extractor_for_config(prompt, llm_config, tag=tag, policy=policy)
-    obj = _loads_lenient(raw, accepted_types=(dict,))
+    obj = _loads_lenient(raw)
     if not isinstance(obj, dict):
         raise AudienceTranslateError("转译输出无法解析为 JSON 对象")
     return obj

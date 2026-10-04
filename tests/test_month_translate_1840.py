@@ -459,7 +459,11 @@ def test_world_segment_effects_use_frozen_visible_affairs(game):
                               period=state.period, turn=state.turn)
     hidden = db.affairs.open(name="不可见事务", origin="未供料", year=state.year,
                              period=state.period, turn=state.turn)
-    db.affairs.declare_closed(hidden.id, turn=state.turn)
+    db.conn.execute(
+        "UPDATE affairs SET status='closed', closed_turn=? WHERE id=?",
+        (state.turn, hidden.id),
+    )
+    db.conn.commit()
     before = state.metrics["国库"]
     # 真实入口供料只含未了事务；已了结事务不在本批输入。
     result = dispatch_month_segment(
@@ -707,7 +711,11 @@ def test_hidden_affair_strategic_result_does_not_trigger_or_land(game):
         name="已了结事务", origin="未供料", year=state.year,
         period=state.period, turn=state.turn,
     )
-    db.affairs.declare_closed(hidden.id, turn=state.turn)
+    db.conn.execute(
+        "UPDATE affairs SET status='closed', closed_turn=? WHERE id=?",
+        (state.turn, hidden.id),
+    )
+    db.conn.commit()
     metric_before = state.metrics["民心"]
     treasury_before = state.metrics["国库"]
     dispatch_month_segment(db, state, segment="不可见事务战果", translate_fn=lambda _request, _config: {
@@ -735,7 +743,12 @@ def _closed_affair(db, state):
         name="已了结事务", origin="未供料", year=state.year,
         period=state.period, turn=state.turn,
     )
-    db.affairs.declare_closed(hidden.id, turn=state.turn)
+    # 夹具直接写 closed 态；生产无 declare_closed 动作（ADR 0154）。
+    db.conn.execute(
+        "UPDATE affairs SET status='closed', closed_turn=? WHERE id=?",
+        (state.turn, hidden.id),
+    )
+    db.conn.commit()
     return hidden
 
 

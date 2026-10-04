@@ -1,4 +1,4 @@
-# #1835 w5 修内司回执（fixer）
+# #1835 w5 修内司回执（fixer · advisor 复审补扫）
 
 本轮只交修理提交，未 merge、未 push、未开 PR；不宣告关票。不提交终局回执（由驱动 session 汇验）。
 
@@ -6,79 +6,139 @@
 
 - 任务包：`~/.ak-roles/books/Ming_LLM/unbound/runs/01a108ff-575c-70a9-a4e6-3f226f700bcf@fixer/fix-packet.md`
 - 冻结判词末份：`attachments/02-1835-judge-e22cba1e3.json` → `outcome.payloads[-1]` 七类未结
-- 票面：#1835 / #1812 / #1901；ADR 0150、0008、0015、0142、0154
+- 票面：#1835 / #1812 / #1901；ADR 0150、0008、0015、0142、0154、0047、0158
+- 本轮动因：advisor 复审——上轮枚举谓词主要锁定点名符号，未证明覆盖七类定义全文
 
-## Advisor 自审（执行前）
+## 先前失误 / 红灯（禁止洗白）
 
-1. 不新造机制：平行核归一到既有接缝（situation_drift / displaced_population / entities.*）；拒收走既有返回通道；不造递归收集器/护栏/识别层/自然归档。
-2. 官方优先检索：Python `str.strip` 保留原串、副本判空（docs.python.org）；frozen dataclass `FrozenInstanceError`（docs.python.org/dataclasses）作独立进程变异标尺。
-3. 验收以 #1812「复杂度/旧路退出」为主；测试红与功能接线次要，缺口如实记。
+1. **上轮枚举收窄**：谓词点名 `_apply_metric_dict` / `STAY_ATTEND_COMMANDS` 等样本符号，未按类定义做形状+AST 消费者全表；把「无命中点名」当成「类已清」。
+2. **`declare_closed` 伪保留**：上轮回执写「供夹具/将来自然归档」——违反 C3/C5「仅测试消费者不是自然归档未来借口」；AST 仅 `tests/test_month_translate_1840.py` 三处夹具。
+3. **NL 软收夜「今日且到此」**：留在 `COURT_BREAK_COMMANDS`，自称「明确退朝」却无 ADR 0047/0158 依据（ADR 只认「退朝」加速器）；与 #1812 第5项样本「今日就到这里吧」同族。
+4. **`TAG_STAY_ATTEND`**：声称「只读投影旧账」但 AST 零引用（定义即死）。
+5. **本会话误触 `git stash`**：诊断时误执行 `stash push`；立即 `stash pop` 恢复，工作树改动完好。 stash 栈上另有历史条目未动。
+6. **聚焦扩面撞预存红灯**：为覆盖 `declare_closed` 夹具迁约把 `test_month_translate_1840` 纳入聚焦；暴露 `audience_translate._loads_lenient(..., accepted_types=)` 与签名不符（W4 合并缝，HEAD 已有）。已删非法 kwargs，与全仓其它调用对齐；**不是**新造证明测试。
 
-## 枚举命令（七类定义全文，未收窄为点名样本）
+## 枚举命令（类定义全文，未收窄为点名）
 
-修前完整转储：`evidence/issue-1835/pre/enumeration.txt`  
-修后复扫：`evidence/issue-1835/post/enumeration.txt`
+全表处置：`evidence/issue-1835/advisor-rescan/disposition-full-table.md`  
+宽扫原始：`evidence/issue-1835/advisor-rescan/enumeration-broad.txt`
 
 ```sh
-rg -n "def (_apply_metric_dict|apply_metric_dict|_apply_economy_list|apply_levy_driven_transfers|_apply_levy_driven_transfers|apply_issue_inertia_and_ongoing|apply_situation_monthly_drift|apply_recovery_driven_transfers|_apply_recovery_driven_transfers)" ming_sim -g "*.py"
-rg -n "apply_issue_inertia|_apply_levy_driven|situation_drift|displaced_population|recovery" ming_sim/month_chain.py
-rg -n "_apply_issue_entities|_ISSUE_PSEUDO_EVENT|_monthly_economy_items|_spawn_legacy_from_effect" ming_sim/issues.py
-rg -n "backlash_results|backlash_rejections|\.pop\([\'"]backlash" ming_sim -g "*.py"
-rg -n "ordinal:|def ordered_sections|def section_for_delta_key|caller_transaction" ming_sim/settlement -g "*.py"
-rg -n "def describe\(|test_victory_status_is_set|test_ongoing_outcome_carries" ming_sim/settlement/views.py tests -g "*.py"
-rg -n "declare_closed|close_from_declaration|ATTACH_RESULT_CLOSE|事务尚有未了" ming_sim/entities/affair tests -g "*.py"
-rg -n "STAY_ATTEND_COMMANDS|AMBIGUOUS_CLOSE_COMMANDS|陛下是要退朝么|stay_attend_in_audience|recognize_audience_command" ming_sim tests -g "*.py"
-rg -n "resolve_condition|fail_condition|\.strip\(\)" ming_sim/materials.py
+# C1 平行核 / re-export / 月链接线
+rg -n '^def (apply_|_apply_).*(metric|economy|levy|recovery|inertia|drift|class)' ming_sim
+rg -n 'apply_levy|apply_situation|apply_recovery|situation_drift|displaced_population|apply_issue_inertia' ming_sim/month_chain.py
+# AST 同名 def 跨模块 + from issues/flows re-export
+
+# C2 成功载荷拒收嵌套 / 特殊搬运
+rg -n 'backlash_results|backlash_rejections|\.pop\([\'"]backlash|rejections\.extend\(backlash' ming_sim tests
+
+# C3 无消费者接口（AST Attribute/Name 引用计数）
+# ordinal / ordered_sections / section_for_delta_key / declare_closed / TAG_STAY_ATTEND / caller_transaction
+
+# C4 平行证明 / 仅测试摘要
+rg -n 'fixed_point|def describe|views\.describe' tests ming_sim
+ls tests/test_settlement_fixed_point_1835.py
+
+# C5 事务 close 动作 / 守门 / 词表
+rg -n 'declare_closed|close_from_declaration|ATTACH_RESULT_CLOSE|事务尚有未了|_ATTACH_CLOSE' ming_sim tests
+
+# C6 退役 NL 口令 / 固定 cue / 词集 / session 分派
+rg -n 'STAY_ATTEND|AMBIGUOUS_CLOSE|陛下是要退朝么|stay_attend|recognize_audience_command|CMD_CLOSE_NIGHT|COURT_BREAK|今日且到此|今日就到这里|留下听着' ming_sim tests web_app.py
+
+# C7 供料原文裁剪传递链（不止 resolve_condition）
+rg -n 'resolve_condition|fail_condition|stage_text|precondition|\.strip\(' ming_sim/materials.py ming_sim/knowledge.py
+rg -n '(resolve_condition|fail_condition).{0,40}\.strip\(|\.strip\(\).{0,40}(resolve_condition|fail_condition)' ming_sim
 ```
 
-## 逐类根因、成员与处置
+## 逐类全表处置摘要
 
-### 1. 旧核、兼容桥及合并后的平行路径未退出（完整性C1）
+### 1. 完整性C1 — 旧核/兼容桥/平行路径
 
-- **根因**：#1901 已抽出 `situation_drift` / `displaced_population` / `entities.population.recovery`，但 `month_chain` 仍调 `issues` 旧核；`situation_drift` 仍 import 已退役的 `flows._apply_*`；`issues` 保留 re-export 与平行 inertia/levy；`flows` 保留重复 metric/economy 核；`displaced_population` 与 entity recovery 双持回流。
-- **成员（修前）**：见 pre 枚举——`flows._apply_metric_dict/_apply_economy_list`；`issues.apply_issue_inertia_and_ongoing/_apply_levy_driven_transfers` 与 re-export 七符号；`situation_drift.apply_situation_monthly_drift`；`displaced_population.apply_levy/apply_recovery`；`entities.population.recovery`；`month_chain:625/1411/1859`。
-- **修复**：月链改调 `apply_situation_monthly_drift` + `apply_levy_driven_transfers`；drift 改接实体 economy/metric/issue.effects；删除 issues 平行 inertia/levy/re-export/commitment 平行 resolve·expire·ongoing；删除 flows 重复核与 displaced 回流副本；issues 终结效果懒委托 situation_drift。测试/decree 迁约至新入口。
-- **例外**：`declare_closed` store 方法仍供夹具/将来自然归档读改（本切片不新造自然归档）；`run.py` 局部 `caller_transaction` 仍承重（判词明示除外）。
+| 成员 | 分类 | 处置 |
+|---|---|---|
+| `entities.{metric,economy,social_class}.*` | #1901 实体单一真源 | **保留** |
+| `situation_drift` / `displaced_population` / `population.recovery` | #1901 接缝；month_chain 唯一接线 | **保留** |
+| `issues` inertia/levy 旧核与 re-export；`flows` 重复 metric/economy | 平行旧核 | **已删（上轮）**；本轮 AST 无 def/reexport |
+| `issues._apply_fiscal_levy_targets` | 三饷终态钱面，非月漂移双持 | **保留**（类外） |
 
-### 2. 拒收仍藏在成功载荷（完整性C2）
+### 2. 完整性C2 — 拒收藏成功载荷
 
-- **根因**：`character/apply` 把 `backlash_rejections` 塞进 applied 的 `backlash_results`；多处 `.pop("backlash_results")` 特殊搬运。
-- **成员**：`character/apply.py` 嵌套写入；`character/delta_section.py`、`issue/delta_section.py`、`issue/effects.py`×2 pop；`settlement/preflight.py` 嵌套扫描；log 过滤键。
-- **修复**：拒收改 `rejections.extend(backlash_rejections)`；删除全部 pop 桥与 preflight 嵌套扫描。
+| 成员 | 处置 |
+|---|---|
+| `character/apply` → `rejections.extend(backlash_rejections)` | **保留**（既有返回通道） |
+| `applied.backlash_results` / `.pop("backlash*")` / preflight 嵌套扫 | **已删**；本轮 rg 无命中 |
+| `credit_events._collect_reject_issue_ids` | **保留**（读 cancels 显式信号，非成功载荷嵌套） |
 
-### 3. 无消费者接口与冗余运行态（完整性C3）
+外部结构化：既有 `test_rejection_wiring` 聚焦绿；独立进程探针 C2 extend GREEN / nest RED 可观测。
 
-- **根因**：`SectionSpec.ordinal`、`ordered_sections`、`section_for_delta_key`、`SettlementRun.caller_transaction` 无读取。
-- **修复**：删除上述死字段/函数及 `__init__` 导出；保留 `apply_person_changes_only` 局部 `caller_transaction`（判词除外）。
+### 3. 完整性C3 — 无消费者接口
 
-### 4. 平行证明测试及仅测试消费的生产摘要（完整性C4）
+| 成员 | 处置 |
+|---|---|
+| `ordinal` / `ordered_sections` / `section_for_delta_key` / `SettlementRun.caller_transaction` 字段 | **已删（上轮）** |
+| `run.py` 局部 `caller_transaction` | **保留**（判词明示除外） |
+| `AffairStore.declare_closed` | **本轮删除**（仅测试消费者） |
+| `TAG_STAY_ATTEND` | **本轮删除**（零引用） |
 
-- **成员**：`tests/test_settlement_fixed_point_1835.py`（两案）；`settlement/views.describe`（仅 person_delta_adapter 断言消息）。
-- **修复**：删测试文件与 `describe`；断言消息改用既有 `view()`。
+### 4. 完整性C4 — 平行证明 / 测试专用摘要
 
-### 5. 已撤销的事务 close 动作及守门（正确性C1）
+| 成员 | 处置 |
+|---|---|
+| `test_settlement_fixed_point_1835.py` / `views.describe` | **已删** |
+| 既有玩家契约与直接 `settle_delta` 行为案 | **保留** |
 
-- **根因**：affair delta_section 解析 close、未了局势守门、`declare_closed`；`close_from_declaration` 同形。
-- **修复**：段改为空允许集通用拒收，不执行 close、不查未了；删除 `close_from_declaration` 与 close 词表默认准入；保留 store.`declare_closed` 供夹具（不新造自然归档）。既有 `test_affairs_1831` close 拒收契约仍绿。
+### 5. 正确性C1（C5）— 事务 close
 
-### 6. 退役自然语言口令与固定台词（正确性C2）
+| 成员 | 处置 |
+|---|---|
+| delta_section close+未了守门 / `close_from_declaration` / `ATTACH_RESULT_CLOSE` | **已删** |
+| `declare_closed` 生产方法 | **本轮删除**；夹具改 SQL `UPDATE … status='closed'` |
+| `status` 列可读态 | **保留**（往事查询需要；无宣布了结写口） |
+| `test_affairs_1831` close 拒收 | **保留**（声明拒收契约，非守门专测） |
 
-- **成员**：`STAY_ATTEND_COMMANDS` / `AMBIGUOUS_CLOSE_COMMANDS`；`recognize_audience_command` 分支；`stay_attend_in_audience`；session 含糊确认 cue「陛下是要退朝么？」；CLI 留侍分支；专属测试 `test_scene_stay_attend_*`。
-- **修复**：全部删除；明确「退朝」封闭集保留（不扩张删除无关系统退朝口令）。
-- **例外**：历史账标签 `TAG_STAY_ATTEND` 仍可投影旧账（只读标签，非口令识别层）。
+法源：ADR 0154「不设宣布了结动作及拒绝该动作的守门」。
 
-### 7. 供料裁剪模型条件原文（正确性C3）
+### 6. 正确性C2（C6）— 退役 NL 口令
 
-- **根因**：`materials._visible_affair_lines` 对 resolve/fail_condition `.strip()` 后写入材料。
-- **修复**：保留原值；消费端判空用 `.strip()` 副本。
+| 成员 | 处置 | 确切依据 |
+|---|---|---|
+| 留侍/含糊退朝词集、固定 cue、`stay_attend_in_audience`、专属旧测 | **已删** | #1812 待拍事项第5项；P7；ADR 0142 |
+| 「今日且到此」 | **本轮移出** `COURT_BREAK_COMMANDS` | 同族 NL 软收夜；无 ADR 明确口令授权 |
+| `recognize_audience_command` / `CMD_CLOSE_NIGHT` / session `court_break` / CLI 同集 | **保留** | **ADR 0047**：退朝钮=「退朝」口令；**ADR 0158**：散夜钮=「退朝」；边界「不扩张删除无关命令」 |
+| `COURT_BREAK_COMMANDS`={q,quit,退朝,下朝} | **保留** | 同上；`下朝`=明确封闭同义词；q/quit=CLI 同管线 |
+| `MINISTER_DISMISS_COMMANDS` | **保留** | 大臣告退，非收夜类 |
+
+**不许自称无关**：保留项均挂 ADR 0047/0158；裁撤项挂 #1812§5。
+
+### 7. 正确性C3（C7）— 供料原文传递链
+
+链（全表，不止 resolve_condition）：
+
+1. knowledge/DB → `_visible_affair_lines`：`resolve`/`fail`/`situation(stage_text)` 原值入库字典  
+2. 写 `当前情况.txt`：`.strip()` 仅判空副本；写出用原值  
+3. `_candidate_event_fact` → 候选事件文件：`resolve`/`fail`/`precondition`/`summary` 原值  
+4. `knowledge._prose`：`str(text or "")` 不 strip  
+
+| 成员 | 处置 |
+|---|---|
+| materials 条件 strip-then-store | **已改为保留原值** |
+| issues/db 匹配用 strip 副本 | **保留**（非供料写出） |
+| content seed `clear_narrative` strip | **保留**（装载，非模型声明供料） |
+
+## 变异证据（真实行为红/绿，非 AST 缺席冒充）
+
+独立进程 `/tmp/1835-w5-mut-advisor/mutate_probes.py`（不改工作树持久态）：  
+`evidence/issue-1835/advisor-rescan/mutation-probes.txt` — **21/21 PASS**
+
+含：C6 今日且到此→none / 退朝→close_night / 再插入软词 RED→恢复 GREEN；C5 declare_closed 缺席 + SQL 夹具可关 + 注入方法可见/删除恢复；C7 空白保留 / strip 变异 RED / 当前路径 GREEN；C2 extend GREEN vs nest RED 可观测；C4 SettlementOutcome 赋属性 FrozenInstanceError。
 
 ## 聚焦测试
 
-强制前缀七 BIN=/usr/bin/false。
+强制前缀七 BIN=/usr/bin/false。解释器：工作树无 `.venv`，用 `/Users/akagilnc/WorkSpace/Ming_LLM/.venv/bin/python`（cwd=本树，`ming_sim` 解析到本树）。
 
 ```sh
 env MING_SIM_{AGY,CODEX,CLAUDE,CURSOR,KIMI,GROK,PI}_BIN=/usr/bin/false \
-  .venv/bin/python -m pytest -q --tb=line \
+  /Users/akagilnc/WorkSpace/Ming_LLM/.venv/bin/python -m pytest -q --tb=line \
   tests/test_declaration_dispatch_1835.py tests/test_affairs_1831.py \
   tests/test_person_delta_adapter.py tests/test_rejection_wiring.py \
   tests/test_month_chain_1847.py tests/test_issue_entities.py \
@@ -86,22 +146,21 @@ env MING_SIM_{AGY,CODEX,CLAUDE,CURSOR,KIMI,GROK,PI}_BIN=/usr/bin/false \
   tests/test_population_transfers_649.py tests/test_commitment_backlash_626.py \
   tests/test_section4_rejections.py tests/test_decree_commitment_settlement_229.py \
   tests/test_style_temperament_641.py tests/test_effect_origin_558.py \
-  tests/test_deformation_dual_rail_622.py tests/test_fiscal_beyond_intent_1260.py
+  tests/test_deformation_dual_rail_622.py tests/test_fiscal_beyond_intent_1260.py \
+  tests/test_month_translate_1840.py
 ```
 
-结果（实查）：`392 passed, 1 skipped in 9.64s`（wall `real 10.12`）。日志：`evidence/issue-1835/post/focused-final.txt`。未跑全量。
+结果（实查）：`421 passed, 1 skipped in 9.67s`（wall `real 10.10`）。日志：`evidence/issue-1835/advisor-rescan/focused.txt`。未跑全量。
 
-## 变异证据
-
-独立进程 `/tmp/1835-w5-mut/mutate_probes.py`（不改工作树）：见 `evidence/issue-1835/post/mutation-probes.txt`，7/7 PASS（C6 cue 缺席、C7 strip 红/恢复绿、C2 通道、C1 接线、C4 FrozenInstanceError、C5 段无 declare_closed）。
+首次聚焦曾 `1 failed`（`_loads_lenient` kwargs）；修齐后全绿。如实记，不抹。
 
 ## 剩余范围 / 缺口
 
 - 家族复杂度对比、全量 CI、真宿主验收留家族收尾。
-- `ATTACH` close 词表与 `declare_closed` 夹具方法仍在 store；自然归档未建（授权不要求）。
-- `TAG_STAY_ATTEND` 只读投影保留。
-- 未向 #1873 代登本轮功能缺口（判词要求调用方补交，非本施工处方）。
+- 自然归档机制未建（授权不要求；且已删除伪归档借口方法）。
+- `_apply_fiscal_levy_targets` 等财政终态通道不在本七类施工面。
+- 未向 #1873 代登功能缺口（判词：调用方补交）。
 
 ## 约束遵守
 
-未 amend / rewrite / push / PR / stash；未改宪法/Soul/宿主配置；未新造兼容桥/递归拒收收集器/护栏/识别层/证明性测试。
+未 amend / rewrite / push / PR；误 stash 已立即 pop。未改宪法/Soul/宿主配置；未新造兼容桥/递归拒收收集器/护栏/识别层/证明性测试。
