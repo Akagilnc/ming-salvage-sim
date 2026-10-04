@@ -4,18 +4,19 @@
 - 派单：`01a10901-cf48-78eb-88f5-d4ccd507349f@fixer`
 - 判词：`attachments/08-1853-judge-3cbc92cfa.json` 末份（第 9 份 payload）
 - 基线 HEAD：`3cbc92cfaa090ecd15ffe7b567fb78f1725f4f44`
+- 本提交 SHA：`2b4e6e2bd5ef4aa61ac594a1a91bff587887ea7c`
 - 施工分支：`ak-roles/issue-1853-j4r-j9-lifecycle`
 - 本回执不表示已合并或家族收尾完成
 
 ## 未结类别（仅末份）
 
-1. **J4-R**「暂存提交生命周期仍有双实现」— 成立，归并完整性 C1  
-2. **J9**「输入拒收转换覆盖内部执行，洗白真实故障」— 成立，归并正确性 C1  
+1. **J4-R**「暂存提交生命周期仍有双实现」— 成立，归并完整性 C1
+2. **J9**「输入拒收转换覆盖内部执行，洗白真实故障」— 成立，归并正确性 C1
 
 ## 官方旁证（先搜后修）
 
-- [PEP 8 Programming Recommendations](https://peps.python.org/pep-0008/#programming-recommendations)：`try` 只包最小必要代码，避免把内部错误一并捕获。  
-- DRY / 单一权威表示：重复的提交生命周期知识只保留一处，调用方保留真差异。  
+- [PEP 8 Programming Recommendations](https://peps.python.org/pep-0008/#programming-recommendations)：`try` 只包最小必要代码，避免把内部错误一并捕获。
+- DRY / 单一权威表示：重复的提交生命周期知识只保留一处，调用方保留真差异。
 裁决法源仍为仓库规则与判词；上述仅作方向旁证。
 
 ## 类一：暂存提交生命周期单一权威（J4-R）
@@ -125,12 +126,12 @@ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$PWD" \
 
 ## 自查
 
-- 合法性：仅服务末份两类；未补恢复库/分类账本/新框架；未改宿主/席位配置；未 amend/stash/push/PR。  
-- 质量：删简复用既有 dispose 出口；共同生命周期唯一；输入准备与 office 恢复差异保留。  
-- 枚举复扫：两类谓词复扫无遗漏成员。  
+- 合法性：仅服务末份两类；未补恢复库/分类账本/新框架；未改宿主/席位配置；未 amend/stash/push/PR。
+- 质量：删简复用既有 dispose 出口；共同生命周期唯一；输入准备与 office 恢复差异保留。
+- 枚举复扫：两类谓词复扫无遗漏成员。
 - `git diff --check`：无输出。
 
 ## 剩余缺口（如实）
 
-- 核心恢复接线、夜卷连续读失败等功能事项仍归 #1873 / 家族收尾，本切片不接通。  
+- 核心恢复接线、夜卷连续读失败等功能事项仍归 #1873 / 家族收尾，本切片不接通。
 - `test_path1_conversational_draft_bad_roster_marks_failed` 基线已红（坏花名册走真异常上抛而非 soft failed），留家族收尾处置。
