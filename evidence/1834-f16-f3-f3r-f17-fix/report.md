@@ -3,6 +3,7 @@
 **工作树**：`/Users/akagilnc/WorkSpace/Ming_LLM-1834-w5`
 **分支**：`ak-roles/1834-f16-f3-f3r-f17-ee3b5da31`
 **基线**：`ee3b5da312c5832720d89aee707fe4c7669c5eb0`
+**本轮 commit**：`5a3dfbb07d51b21e4d48babdc7d4182deeec2b3f`
 **本轮 parent**：`fe4c04deb7847438a57e4f6a6947d6d41f9c2c91`
 **本轮**：逐项清空 `f16_hand_member_table.tsv` 原 36 `FIX_REMAINING`；复扫误 KEEP 自由正文漏项；机器键经类型职责证据 KEEP；F3 独立契约复检仍在；F3-R 手核表无新增真弱重复删除；F17 临时入口装回旧 strip 逻辑红绿。
 
