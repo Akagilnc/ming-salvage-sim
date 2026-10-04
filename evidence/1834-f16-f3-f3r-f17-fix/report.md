@@ -3,6 +3,7 @@
 **工作树**：`/Users/akagilnc/WorkSpace/Ming_LLM-1834-w5`
 **分支**：`ak-roles/1834-f16-f3-f3r-f17-ee3b5da31`
 **基线**：`ee3b5da312c5832720d89aee707fe4c7669c5eb0`
+**本轮 commit**：`7bc1f626c01c43ce16e0d460308961e7c85f2aa2`  
 **本轮**：撤销 AST/kind 自动 KEEP 表后，逐函数手核 F3-R；恢复 F3 独立契约；继续清 F16 供料/写路径正文改写；F17 仅临时入口替换。
 
 **共同测试前缀（七变量，实写）**：
