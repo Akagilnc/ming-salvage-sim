@@ -1,17 +1,22 @@
-# #1900 修内司枚举命令真源（J6/J19/J18）
-# 工作树根执行。权威成员表：j6/j19/j18-full-members.md（仅 md，无平行 json）
+# #1900 J6/J19/J18 枚举命令真源（工作树根执行）
+# 权威成员表：j6/j19/j18-full-members.md（仅 md）
+# AST 原始候选：j6-ast-candidates.jsonl + j6-ast-summary.json
 
-## J6
-rg -n --glob 'tests/**/*.py' \
-  '后轮问|后轮答|LEAK_MARKER|draft_text not in|not in prepared\.opening|in prompt\b|in night_said|draft_key not in|_strictly_before|test_current_unissued_draft|len\(night_said\)|wait_until\(\s*lambda:\s*len\(\w+_attempts\)\s*>\s*0|赴京|不能入殿|已传召|固定承旨|承旨|钦此|知道了|遵旨|禁模板'
+## J6 — 测试文件定位
+git ls-files | rg -i '\.(py|ts|tsx)$' | rg -i '(^tests/|/tests/|\.test\.|\.spec\.|/__tests__/)'
 
-rg -n --glob 'web/src/**/*.{ts,tsx}' 'toHaveBeenCalled|mockImplementation|vi\.spyOn'
+## J6 — Python AST + TS 行扫
+# 最短 python heredoc 产出 j6-ast-candidates.jsonl（不造通用框架入库）。
+# 谓词：assert 比较/包含/相等/正则/生成文本名；wait_until；boundary setattr；oracle helper；TS toContain/mock。
+
+## J6 — 禁样复扫
+rg -n --glob 'tests/**/*.py' 'LEAK_MARKER|_strictly_before|test_current_unissued_draft|len\(night_said\)|wait_until\(.*_attempts'
 
 ## J19
 rg -n --glob 'ming_sim/**/*.py' --glob 'tests/**/*.py' \
-  '_merge_participant_rosters|merge_participant_roster_entries|character_id in seen|seen\.add\(character_id\)|entry not in merged|_normalize_participant_roster|append_decree_dossier_participants'
+  'merge_participant_roster_entries|character_id in seen|seen\.add\(character_id\)|_normalize_participant_roster'
 
 ## J18
 rg -n --glob '!evidence/**' --glob '!.baseline/**' \
-  'is_secret_order_dossier|对账只落本段提案|未提案目标的中位|逐段提案|软判提案|escort_pending_targets|escort_sources|dossier_escort_outcomes|_resolve_covert_escort' \
+  'is_secret_order_dossier|对账只落本段提案|未提案目标的中位|软判提案|escort_pending_targets|escort_sources|dossier_escort_outcomes|_resolve_covert_escort' \
   ming_sim tests docs --glob '*.py' --glob '*.md'

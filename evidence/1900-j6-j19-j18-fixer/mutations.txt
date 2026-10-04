@@ -1,36 +1,61 @@
-## J6_archive_api_no_worker_start: exit=1 expect=fail -> OK
-u_lifecycle_drain_396.py:293: assert [] == [1]
+## J6_archive_no_start: exit=1 expect=fail dt=1.42s -> OK
+FFF                                                                      [100%]
+=================================== FAILURES ===================================
+E   assert [] == [1]
+      
+      Right contains one more item: 1
+      Use -v to get more diff
+/Users/akagilnc/WorkSpace/Ming_LLM-1900-w5/tests/test_menu_lifecycle_drain_396.py:141: assert [] == [1]
+E   assert [] == [1]
+      
+      Right contains one more item: 1
+      Use -v to get more diff
+/Users/akagilnc/WorkSpace/Ming_LLM-1900-w5/tests/test_menu_lifecycle_drain_396.py:227: assert [] == [1]
+E   assert [] == [1]
+      
+      Right contains one more item: 1
+      Use -v to get more diff
+/Users/akagilnc/WorkSpace/Ming_LLM-1900-w5/tests/test_menu_lifecycle_drain_396.py:270: assert [] == [1]
 =========================== short test summary info ============================
 FAILED tests/test_menu_lifecycle_drain_396.py::test_drain_archive_move_failure_keeps_wal_and_shm
 FAILED tests/test_menu_lifecycle_drain_396.py::test_drain_archive_rolls_back_main_db_when_wal_move_fails
 FAILED tests/test_menu_lifecycle_drain_396.py::test_drain_archive_skips_move_when_session_close_fails
-3 failed in 0.56s
+3 failed in 0.97s
 
-## J6_archive_green: exit=0 expect=pass -> OK
+
+## J6_archive_green: exit=0 expect=pass dt=1.07s -> OK
 ...                                                                      [100%]
-3 passed in 0.55s
+3 passed in 0.65s
 
-## J19_silent_id: exit=1 expect=fail -> OK
-===== FAILURES ===================================
-E   AssertionError: assert ('乔允升', '主办', '统筹') in {('乔允升', '协办', '押解护送')}
-/Users/akagilnc/WorkSpace/Ming_LLM-1900-w5/tests/_tmp_j19_probe_1900.py:20: AssertionError: assert ('乔允升', '主办', '统筹') in {('乔允升', '协办', '押解护送')}
+
+## J19_silent_id: exit=1 expect=fail dt=1.08s -> OK
+F                                                                        [100%]
+=================================== FAILURES ===================================
+E   AssertionError: assert ('乔允升', '协办', '押解护送') in {('乔允升', '主办', '统筹')}
+/Users/akagilnc/WorkSpace/Ming_LLM-1900-w5/tests/_tmp_j19_probe_1900.py:9: AssertionError: assert ('乔允升', '协办', '押解护送') in {('乔允升', '主办', '统筹')}
 =========================== short test summary info ============================
 FAILED tests/_tmp_j19_probe_1900.py::test_probe - AssertionError: assert ('乔...
-1 failed in 0.67s
+1 failed in 0.64s
 
-## J19_green: exit=0 expect=pass -> OK
+
+## J19_green: exit=0 expect=pass dt=1.17s -> OK
 ....                                                                     [100%]
-4 passed in 0.76s
-
-## J18_helper_present: exit=0 expect=pass -> OK
-14596:    def is_secret_order_dossier(self, dossier_id: int) -> bool:
-
-## J18_helper_gone: exit=0 expect=pass -> OK
+4 passed in 0.74s
 
 
-## J6_rejection_only_green: exit=0 expect=pass -> OK
+## J18_soft_gone: exit=1 expect=1 -> OK
+
+
+## J18_dead_prod: exit=1 expect=1 -> OK
+
+
+## J6_rejection_green: exit=0 expect=pass dt=1.11s -> OK
 .                                                                        [100%]
-1 passed in 0.70s
+1 passed in 0.65s
 
-NOTE: 不宣称证明草案/截止；无 cutoff/draft 变异。
+
+## J19_empty_incoming: exit=0 -> OK
+empty_merge_ok
+
+
 ALL_MUTATIONS_OK

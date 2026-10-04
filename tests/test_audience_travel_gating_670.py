@@ -267,7 +267,6 @@ def test_multi_origin_same_person_dedupes_consumer_projections_not_ledger(game, 
     )
     assert first.result is AudienceAdmission.SUMMON_IN_TRANSIT
     assert second.result is AudienceAdmission.SUMMON_IN_TRANSIT
-    # 成功记召无固定承旨句。
     assert first.reason == "" and second.reason == ""
 
     unsettled = an.list_unsettled_summons(db)

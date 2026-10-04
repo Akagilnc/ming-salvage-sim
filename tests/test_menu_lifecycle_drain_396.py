@@ -19,39 +19,16 @@ _reset_path_leases = reset_menu_path_leases
 
 
 def _capture_real_drain_threads(monkeypatch):
-    """复用既有线程工厂手法：保留真实 Thread 引用，不 mock worker 行为。
-
-    api_menu_new_game 返回后 join 真实线程，再断言外部文件与失败经过。
-    变异若压制 spawn/start，入口返回后 assert/外部结果立即确定性红。
-    """
-    real_Thread = web_app.threading.Thread
+    """捕获真实 Thread：工厂只记引用，不包装、不 mock worker 行为。"""
+    real_thread = web_app.threading.Thread
     spawned: list = []
 
-    class _KeepingThread:
-        def __init__(
-            self, group=None, target=None, name=None, args=(), kwargs=None, *, daemon=None,
-        ):
-            kwargs = {} if kwargs is None else dict(kwargs)
-            self._real = real_Thread(
-                group=group, target=target, name=name,
-                args=args, kwargs=kwargs, daemon=daemon,
-            )
-            spawned.append(self._real)
+    def make_thread(*args, **kwargs):
+        th = real_thread(*args, **kwargs)
+        spawned.append(th)
+        return th
 
-        def start(self):
-            return self._real.start()
-
-        def join(self, *a, **k):
-            return self._real.join(*a, **k)
-
-        def is_alive(self):
-            return self._real.is_alive()
-
-        @property
-        def real(self):
-            return self._real
-
-    monkeypatch.setattr(web_app.threading, "Thread", _KeepingThread)
+    monkeypatch.setattr(web_app.threading, "Thread", make_thread)
     return spawned
 
 

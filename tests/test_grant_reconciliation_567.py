@@ -8,8 +8,7 @@ Seams:
 - dossier_executions 适配器经 merge_execution_note 合并对账说明（S10 单写）
 - 不改 economy_moves / 国库二次扣
 
-#1900：沿途损耗归引擎（#1820 后出，取代 0054 的「LLM 软判实抵＋clamp」）——本文件
-不再有软判提案入参，坏提案拒收一族随之退役；实抵一律取引擎按护行口径算出的区间中位。
+#1900：沿途损耗归引擎核算；本文件实抵取护行口径区间中位，不接提案入参。
 """
 
 from __future__ import annotations

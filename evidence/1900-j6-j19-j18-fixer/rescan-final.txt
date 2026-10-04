@@ -1,53 +1,69 @@
-### J6_banned_prose_samples
-cmd: rg -n --glob tests/**/*.py 后轮问|LEAK_MARKER|_strictly_before|test_current_unissued_draft|len(night_said)|draft_key not in|wait_until(attempts)>0
-(no hits above = OK for this-round banned samples)
+### J6_ast_summary
+{
+  "python_files": 227,
+  "ts_files": 21,
+  "python_candidates": 4006,
+  "ts_candidates": 493,
+  "paths_sample": [
+    "tests/army_pay_helpers.py",
+    "tests/cli_process_doubles.py",
+    "tests/conftest.py",
+    "tests/directive_seed_helpers.py",
+    "tests/dossier_test_helpers.py",
+    "tests/fiscal_test_utils.py",
+    "tests/legacy_staging_helpers.py",
+    "tests/month_chain_helpers.py",
+    "tests/offline_audience_reply.py",
+    "tests/section_rejection_helpers.py",
+    "tests/test_adr0015_per_item_rejection.py",
+    "tests/test_advance_paths_atomic.py",
+    "tests/test_advances_section_rejections.py",
+    "tests/test_affairs_1831.py",
+    "tests/test_applier_contract.py",
+    "tests/test_appointment_tenure_607.py",
+    "tests/test_army_card_status_1501.py",
+    "tests/test_army_display_173.py",
+    "tests/test_army_firearms.py",
+    "tests/test_army_maintenance_retire_173.py"
+  ],
+  "path_count": 248
+}
+### J6_banned_samples
+(no hits)
 
-### J6_p7_anti_template_auth
-cmd: rg -n --glob tests/test_audience*.py 承旨|禁模板|固定承旨
-tests/test_audience_draft_grant_once_1777.py:27:_EDICT = "着户部自国库拨银十五万两，专解关宁军前补发欠饷，不得加派于民。钦此。"
-tests/test_audience_translate_1837.py:411:            return SimpleNamespace(content="臣等遵旨。", tools=[])
-tests/test_audience_translate_1837.py:468:        assert r2.answer == "臣等遵旨。", case["label"]
-tests/test_audience_translate_1837.py:624:            return SimpleNamespace(content="臣等遵旨。", tools=[])
-tests/test_audience_translate_1837.py:817:            return SimpleNamespace(content="臣等遵旨。", tools=[])
-tests/test_audience_scroll_539.py:330:    turn_id, _ = append_night_chat(db, state, night_id, "杨嗣昌", "说下去。", "臣遵旨。", 10)
-tests/test_audience_scroll_539.py:428:    append_night_chat(db, state, second, "洪承畴", "再议。", "臣遵旨。", 10)
-tests/test_audience_travel_gating_670.py:141:    # 结构化：未入殿大臣记入未结传召；不扫 print 承旨措辞（P7 禁模板负向≠合法盯文）。
-tests/test_audience_travel_gating_670.py:270:    # 成功记召无固定承旨句。
-tests/test_audience_travel_gating_670.py:693:    # 结构化：handled + 未结传召 origin；不扫 print 承旨措辞。
-tests/test_audience_undo_506.py:47:    reply: str = "臣遵旨。",
-tests/test_audience_undo_506.py:88:            "body": "臣遵旨。", "role": "minister", "audibility": "殿上公开",
-tests/test_audience_background.py:42:        self.chunks = chunks or ["臣", "遵旨。"]
-tests/test_audience_night_498.py:71:def _land_reply(db, state, minister: str, chat_id: int, text: str = "臣遵旨。") -> None:
-tests/test_audience_restore_505.py:318:    ct = _land_full_turn(db, state, minister, "退朝", "臣遵旨。")
-tests/test_audience_restore_505.py:332:    assert payload["answer"] == "臣遵旨。"
-tests/test_audience_restore_505.py:337:    )] == ["臣遵旨。"]
-NOTE: comment-only hits remain REVIEW; no KEEP exemption for P7 negatives.
+### J6_members_no_REVIEW
+(no REVIEW/PENDING/面外)
 
-### J6_archive3_wait_until
-cmd: rg wait_until on three failure cases
+### J6_archive3_join_not_attempt_wait
 14:from tests.wait_utils import reset_menu_path_leases, wait_until
-83:    wait_until(lambda: closed == [1])
-121:    wait_until(lambda: closed == [1])
-126:def test_drain_archive_move_failure_keeps_wal_and_shm(monkeypatch, tmp_path):
-198:    wait_until(lambda: list((tmp_path / "saves").glob("*.db")))
-211:def test_drain_archive_rolls_back_main_db_when_wal_move_fails(monkeypatch, tmp_path):
-258:def test_drain_archive_skips_move_when_session_close_fails(monkeypatch, tmp_path):
-331:    wait_until(lambda: bool(killed))
-538:    wait_until(lambda: closed == [1])
-566:    wait_until(lambda: runtime._write_queue.is_sealed())
-573:    wait_until(lambda: closed == [1])
-618:    wait_until(lambda: runtime._write_queue.inflight_count() == 0)
-654:    wait_until(lambda: not os.path.exists(old_db_path))
+26:    def make_thread(*args, **kwargs):
+31:    monkeypatch.setattr(web_app.threading, "Thread", make_thread)
+60:    wait_until(lambda: closed == [1])
+83:    monkeypatch.setattr(web_app, "user_data_path", lambda *parts: str(tmp_path.joinpath(*parts)))
+98:    wait_until(lambda: closed == [1])
+128:    monkeypatch.setattr(web_app, "user_data_path", lambda *parts: str(tmp_path.joinpath(*parts)))
+140:            th.join()
+166:    monkeypatch.setattr(web_app, "user_data_path", lambda *parts: str(tmp_path.joinpath(*parts)))
+175:    wait_until(lambda: list((tmp_path / "saves").glob("*.db")))
+214:    monkeypatch.setattr(web_app, "user_data_path", lambda *parts: str(tmp_path.joinpath(*parts)))
+226:            th.join()
+256:    monkeypatch.setattr(web_app, "user_data_path", lambda *parts: str(tmp_path.joinpath(*parts)))
+268:            th.join()
+308:    wait_until(lambda: bool(killed))
+515:    wait_until(lambda: closed == [1])
+543:    wait_until(lambda: runtime._write_queue.is_sealed())
+550:    wait_until(lambda: closed == [1])
+595:    wait_until(lambda: runtime._write_queue.inflight_count() == 0)
+614:    monkeypatch.setattr(web_app, "user_data_path", lambda *parts: str(tmp_path.joinpath(*parts)))
+631:    wait_until(lambda: not os.path.exists(old_db_path))
+646:    monkeypatch.setattr(web_app, "user_data_path", lambda *parts: str(tmp_path.joinpath(*parts)))
 
 ### J19
-cmd: silent id / shared merge
--- silent residual --
-(no hits)
--- shared merge --
+(no silent id)
+ming_sim/db.py:17614:            incoming["participant_roster"] = self.merge_participant_roster_entries(
+ming_sim/db.py:20897:    def merge_participant_roster_entries(
 ming_sim/declaration_dispatch.py:1076:    payload["participant_roster"] = GameDB.merge_participant_roster_entries(
 ming_sim/declaration_dispatch.py:1118:        payload["participant_roster"] = GameDB.merge_participant_roster_entries(
-ming_sim/db.py:17610:            incoming["participant_roster"] = self.merge_participant_roster_entries(
-ming_sim/db.py:20895:    def merge_participant_roster_entries(
 
-### J18_dead
-(no hits)
+### J18
+(no dead/soft)
