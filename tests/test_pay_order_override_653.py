@@ -1059,4 +1059,3 @@ def test_claim_flow_logs_persisted_in_settle_bridge_and_restore_e2e(game):
         assert {(r["field"], float(r["delta"])) for r in rows2} == expect_flows
     finally:
         db2.close()
-

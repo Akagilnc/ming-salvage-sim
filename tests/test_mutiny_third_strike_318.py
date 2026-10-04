@@ -545,4 +545,3 @@ def test_hub_excluded_persisted_third_strike_defects_once(game, identity):
         log for log in _logs(db, ("owner_power",)) if log["field"] == "owner_power"
     ]
     assert len(owner_logs2) == 1
-

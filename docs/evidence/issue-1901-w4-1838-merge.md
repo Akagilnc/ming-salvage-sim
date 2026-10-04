@@ -33,8 +33,8 @@
 
 - commit：`f7df3c85d1321cfb983b688eecf47f68cdc8e741`
 - message：`ak-roles: fix(#1838): retire orphan narration support and test scaffolds`
-- 对上述两测试文件的改动：**各删 2 行**夹具赋值  
-  `session._scene_registry = None` / `session._beat_generator = None`  
+- 对上述两测试文件的改动：**各删 2 行**夹具赋值
+  `session._scene_registry = None` / `session._beat_generator = None`
   （与同 commit 对其余测试夹具去 orphan narration 接线同形）。
 - 同 commit 生产侧：删 `ming_sim/audience_night.py` 的 `find_prior_speaker_still_present`；删 `ming_sim/cli/terminal.py` 的 `_fail_cli_chat_turn_scene` 等孤立旁白清理支持（整 commit `-118` 行，无新增行为）。
 - 票面 #1838：旧独立旁白调用随被替代能力退役；「开夜、入殿、交接、退殿、收夜、场外传召不再各起独立旁白 LLM」。reopen 口径：该删没删干净的旧路继续清。
