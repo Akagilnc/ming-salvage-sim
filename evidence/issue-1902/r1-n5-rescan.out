@@ -1,0 +1,42 @@
+=== RESCAN zero-table (prod + tests; rg -F) ===
+MissingExecutionLeadError  prod=0  tests=0
+_extract_result_has_execution_lead  prod=0  tests=0
+_missing_execution_lead_feedback  prod=0  tests=0
+_participant_fields_from_draft_obj  prod=0  tests=0
+harvest_participants  prod=0  tests=0
+require_execution_lead=  prod=0  tests=0
+_lead_gate  prod=1  tests=0
+
+backend=draft_intent:
+
+require_execution_lead (any, docstring note):
+2249:    #1902 N5：无生产消费者的 require_execution_lead / harvest / _lead_gate 已清退。
+
+=== dead-path-only test name scan ===
+/Users/akagilnc/WorkSpace/Ming_LLM-1902-w5/tests/test_structured_decree_contract_1624.py:523:def test_combo_correction_preserves_first_draw_roster(game, monkeypatch):
+/Users/akagilnc/WorkSpace/Ming_LLM-1902-w5/tests/test_rescript_option_field_heal_1746.py:839:def test_first_draw_parse_failure_heals_then_degrades(monkeypatch, tmp_path):
+
+=== test_first_draw_parse_failure_heals_then_degrades classification ===
+def test_first_draw_parse_failure_heals_then_degrades(monkeypatch, tmp_path):
+    """#1801 ①a：首抽未成形 → 同一 heal 回路重试；耗尽本月无票拟且响亮留痕。"""
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    tags: list[str] = []
+    prompts: list[str] = []
+
+    def _llm(_a, prompt, tag="", prior_messages=None):
+        tags.append(tag)
+        prompts.append(prompt)
+        return "not-json {"
+
+    monkeypatch.setattr(rescript_mod, "run_agent_text", _llm)
+    assert generate_rescript_draft(object(), _ctx(), turn=62) is None
+    assert tags == ["rescript-draft"] + ["rescript-draft-heal"] * RESCRIPT_OPTION_FIELD_HEAL_RETRIES
+    req = _parse_heal_request(prompts[1])
+    assert req["failures"] and req["failures"][0].get("scope") == "top"
+    ff = _field_failure_map(req["failures"][0])
+    assert "items" in ff
+    note = tmp_path / "error_packs" / "rescript_draft_degraded" / "turn62.json"
+    assert note.is_file()
+
+imports/calls in that test file for draft_intent:
+(none — rescript heal path, not draft_intent dead mode)
