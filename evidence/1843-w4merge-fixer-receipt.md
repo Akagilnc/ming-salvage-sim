@@ -10,7 +10,7 @@
 | merge-base | `ae4a2a3e6c60afd8a09f03252e692632d8c6bee6` | `ae4a2a3e6` | `git merge-base HEAD^1 HEAD^2` |
 | 合并提交 | `ea2489098ea32a1f8805778bd61bcff571bd4ee0` | `ea2489098` | `ak-roles: merge claude/1812-w4 into #1843 preserving F2 retirements` |
 
-约束：merge commit；禁 rebase/amend/squash/stash/push/开 PR；不改席位/宿主/Soul/宪法。  
+约束：merge commit；禁 rebase/amend/squash/stash/push/开 PR；不改席位/宿主/Soul/宪法。
 优先：底座已收敛结果 + 本票 F2 退役责任（旧结算/simulator 支持树不复活；措辞锁不恢复）。
 
 ## 票面可核指针（`gh issue view` 实测 2026-10-05）
@@ -34,7 +34,7 @@
 
 ## 逐文件处置（双方 last-touch 全 SHA + 票面）
 
-查询：`git log -1 --format='%H|%s' HEAD^1|--path` / `HEAD^2|--path`；`git ls-tree` 判 ABSENT。  
+查询：`git log -1 --format='%H|%s' HEAD^1|--path` / `HEAD^2|--path`；`git ls-tree` 判 ABSENT。
 「双方 last-touch」= 该侧 tip 可达历史上**最后一次改该路径**的 commit（常为 merge 提交；不以推断回填更早语义 commit）。
 
 | 文件 | 冲突 | ours last-touch | theirs last-touch | 处置 | 理由 / 票面 |
@@ -62,10 +62,10 @@
 
 ## 聚焦测试（可复跑准确命令；**本补证回合未重跑**）
 
-实测来源：`evidence/1843-w4merge-fixer-pytest.log` 末行  
-`542 passed, 2 skipped in 55.80s`（EXIT 0；非全量）。  
-命令真源：合并会话 transcript  
-`~/.cursor/projects/Users-akagilnc-WorkSpace-Ming-LLM-1843-w5/agent-transcripts/c50ff53b-f08a-4990-972b-b9eefb40a57f/`  
+实测来源：`evidence/1843-w4merge-fixer-pytest.log` 末行
+`542 passed, 2 skipped in 55.80s`（EXIT 0；非全量）。
+命令真源：合并会话 transcript
+`~/.cursor/projects/Users-akagilnc-WorkSpace-Ming-LLM-1843-w5/agent-transcripts/c50ff53b-f08a-4990-972b-b9eefb40a57f/`
 （写入 log 的那次：13 冲突测试文件 + 七 BIN + `-q --tb=line`）。
 
 ```sh
