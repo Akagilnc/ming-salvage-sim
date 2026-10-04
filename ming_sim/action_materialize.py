@@ -2000,7 +2000,7 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
             "招抚", "pacification", EFFECT_MATERIALIZE, priority=55,
             fields=(
                 # 与 grant_allocation 共享 target_id：须能承载人物/地区/项目/军队
-                FieldSpec("target_id", "目标", None, "", max_len=80),
+                FieldSpec("target_id", "目标", None, ""),
                 FieldSpec(
                     "mode", "颁布方式",
                     frozenset({"ordinary", "midzhi"}), "",
@@ -2010,30 +2010,30 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
         ActionCluster(
             "交办·责成", "assignment", EFFECT_MATERIALIZE, priority=56,
             fields=(
-                FieldSpec("title", "标题", None, "", max_len=80),
+                FieldSpec("title", "标题", None, ""),
                 FieldSpec(
                     "transaction_category", "事务类别",
                     duty_route_categories(), "",
                 ),
                 # #1778：承办人/名单来后置抽取，不经分类器改派入口（#520 r2 仍成立）
                 # 与 grant/pacification 共享 target_id：事项锚（跨轮强化身份）
-                FieldSpec("target_id", "目标", None, "", max_len=80),
+                FieldSpec("target_id", "目标", None, ""),
                 FieldSpec(
                     "commitment_kind", "承诺类型",
                     frozenset({"无", "until_stop"}), "无",
                 ),
-                FieldSpec("stop_condition", "停止条件", None, "", max_len=500),
+                FieldSpec("stop_condition", "停止条件", None, ""),
                 # 相对月数（共享 secret 的期限月数）由 stage 换算绝对 end_turn
                 FieldSpec("end_turn", "截止回合", None, 0, as_int=True),
-                FieldSpec("ongoing_effects", "持续效果", None, "", max_len=1000),
+                FieldSpec("ongoing_effects", "持续效果", None, ""),
                 # #620 扩展面：分段里程碑（不改 #520 本体字段语义）
-                FieldSpec("stages", "分段里程碑", None, "", max_len=2000),
+                FieldSpec("stages", "分段里程碑", None, ""),
                 FieldSpec(
                     "mode", "颁布方式",
                     frozenset({"ordinary", "midzhi"}), "",
                 ),
                 # 明确改草指向：分类归一化须保留，供 stage 只更新点名候选
-                FieldSpec("target_candidate", "目标候选", None, "", max_len=40),
+                FieldSpec("target_candidate", "目标候选", None, ""),
             ),
         ),
         ActionCluster(
@@ -2043,10 +2043,10 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
                     "grant_action", "恩赏拨帑",
                     GRANT_ACTIONS, "无", season_option=True,
                 ),
-                FieldSpec("name", "姓名", None, "", max_len=20),
+                FieldSpec("name", "姓名", None, ""),
                 # 政务拨款对象：赈灾地区 / 项目 / 协饷军队 / 恩赏人物
                 FieldSpec(
-                    "target_id", "目标", None, "", max_len=80,
+                    "target_id", "目标", None, "",
                     season_option=True,
                 ),
                 FieldSpec(
@@ -2084,7 +2084,7 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
                 FieldSpec("deadline_months", "期限月数", None, 0, as_int=True, int_hi=36),
                 FieldSpec("end_turn", "截止回合", None, 0, as_int=True),
                 # 明确改草指向：分类归一化须保留，供 stage 只更新点名候选
-                FieldSpec("target_candidate", "目标候选", None, "", max_len=40),
+                FieldSpec("target_candidate", "目标候选", None, ""),
             ),
         ),
         ActionCluster(
@@ -2097,8 +2097,8 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
                     }), "无",
                 ),
                 # 事域：确认闸落典范键 target_kind:target_id（缺 kind 默认 issue）
-                FieldSpec("target_id", "目标", None, "", max_len=80),
-                FieldSpec("target_candidate", "目标候选", None, "", max_len=40),
+                FieldSpec("target_id", "目标", None, ""),
+                FieldSpec("target_candidate", "目标候选", None, ""),
                 FieldSpec(
                     "mode", "颁布方式",
                     frozenset({"ordinary", "midzhi"}), "",
@@ -2120,9 +2120,9 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
                         "放归": None, "昭雪": None, "流放": None, "无": None,
                     },
                 ),
-                FieldSpec("name", "姓名", None, "", max_len=20),
+                FieldSpec("name", "姓名", None, ""),
                 # 与 pacification/grant_allocation 共享 target_id 中文键（#518 契约）
-                FieldSpec("target_id", "目标", None, "", max_len=80),
+                FieldSpec("target_id", "目标", None, ""),
                 FieldSpec(
                     "amount", "金额", None, 0, as_int=True,
                     quantity_unit="两",
@@ -2150,26 +2150,26 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
             "军令·调遣", "military_order", EFFECT_MATERIALIZE, priority=59,
             fields=(
                 # 与 grant/pacification 共享 target_id：既有军队稳定 id
-                FieldSpec("target_id", "目标", None, "", max_len=80),
+                FieldSpec("target_id", "目标", None, ""),
                 FieldSpec(
                     "transaction_category", "事务类别",
                     duty_route_categories(), "",
                 ),
                 # 承办人 / 责任军将（admission 映 assignee_id）
-                FieldSpec("name", "姓名", None, "", max_len=20),
-                FieldSpec("station", "驻地", None, "", max_len=80),
+                FieldSpec("name", "姓名", None, ""),
+                FieldSpec("station", "驻地", None, ""),
                 # #659：结构化实际驻地=regions.id；与 station 双写，不改饷源
-                FieldSpec("station_region", "驻地省", None, "", max_len=40),
+                FieldSpec("station_region", "驻地省", None, ""),
                 # 与 secret 共享期限月数；限期出战 stage/admission 换算绝对 due_turn
                 FieldSpec(
                     "deadline_months", "期限月数", None, 0, as_int=True, int_hi=36,
                 ),
                 # 可选：军将职守真变才填；判后走人物变更/任免唯一核
-                FieldSpec("office", "官职", None, "", max_len=40),
+                FieldSpec("office", "官职", None, ""),
                 # Local/边镇 任所；与 appointment 同键，不从 station 推断
-                FieldSpec("region_id", "任所", None, "", max_len=40),
+                FieldSpec("region_id", "任所", None, ""),
                 # #521 r2 / #502：明确改草指向；同军独立军令不得仅凭 target_id 覆盖
-                FieldSpec("target_candidate", "目标候选", None, "", max_len=40),
+                FieldSpec("target_candidate", "目标候选", None, ""),
                 FieldSpec(
                     "mode", "颁布方式",
                     frozenset({"ordinary", "midzhi"}), "",
@@ -2179,7 +2179,7 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
         ActionCluster(
             "收权·罢差", "revoke_authority", EFFECT_MATERIALIZE, priority=61,
             fields=(
-                FieldSpec("name", "姓名", None, "", max_len=20),
+                FieldSpec("name", "姓名", None, ""),
                 FieldSpec(
                     "authority_id", "授权编号", None, 0, as_int=True,
                 ),
@@ -2189,7 +2189,7 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
                         "无", "尚方剑密授", "便宜行事", "专差督办", "新机构专办",
                     }), "无",
                 ),
-                FieldSpec("target_candidate", "目标候选", None, "", max_len=40),
+                FieldSpec("target_candidate", "目标候选", None, ""),
                 FieldSpec(
                     "mode", "颁布方式",
                     frozenset({"ordinary", "midzhi"}), "",
@@ -2200,10 +2200,10 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
             "撤回成命", "revoke_decree", EFFECT_MATERIALIZE, priority=62,
             fields=(
                 # 目标成命：承诺/旨意 id（dossier:<id> / issue:<id> / 裸数字）
-                FieldSpec("target_id", "目标", None, "", max_len=80),
-                FieldSpec("name", "姓名", None, "", max_len=20),
+                FieldSpec("target_id", "目标", None, ""),
+                FieldSpec("name", "姓名", None, ""),
                 # #502：指称含糊三态
-                FieldSpec("target_candidate", "目标候选", None, "", max_len=40),
+                FieldSpec("target_candidate", "目标候选", None, ""),
                 FieldSpec(
                     "mode", "颁布方式",
                     frozenset({"ordinary", "midzhi"}), "",
@@ -2213,22 +2213,22 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
         ActionCluster(
             "下议", "referral", EFFECT_MATERIALIZE, priority=63,
             fields=(
-                FieldSpec("title", "标题", None, "", max_len=80),
+                FieldSpec("title", "标题", None, ""),
                 # 事项锚；与 grant/assignment 共享 target_id
-                FieldSpec("target_id", "目标", None, "", max_len=80),
+                FieldSpec("target_id", "目标", None, ""),
                 # 议期月数 1–36；stage 换算绝对 end_turn=turn+N
                 FieldSpec(
                     "deadline_months", "期限月数", None, 0, as_int=True, int_hi=36,
                 ),
                 # 机关/职司名 JSON 列表（如 ["吏部","廷推会"]）；禁个人名
                 FieldSpec(
-                    "responsible_bodies", "责任机关", None, "", max_len=500,
+                    "responsible_bodies", "责任机关", None, "",
                 ),
                 FieldSpec(
                     "mode", "颁布方式",
                     frozenset({"ordinary", "midzhi"}), "",
                 ),
-                FieldSpec("target_candidate", "目标候选", None, "", max_len=40),
+                FieldSpec("target_candidate", "目标候选", None, ""),
             ),
         ),
         ActionCluster(
@@ -2238,10 +2238,10 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
                     "appoint_action", "任免动作",
                     frozenset({"无", "任命", "罢免"}), "无",
                 ),
-                FieldSpec("name", "姓名", None, "", max_len=20),
-                FieldSpec("office", "官职", None, "", max_len=40),
+                FieldSpec("name", "姓名", None, ""),
+                FieldSpec("office", "官职", None, ""),
                 # Local/督抚/边镇 seat jurisdiction (typed region_id); not 行止.
-                FieldSpec("region_id", "任所", None, "", max_len=40),
+                FieldSpec("region_id", "任所", None, ""),
                 FieldSpec(
                     "summon_after", "任命后传召",
                     frozenset({"是", "否"}), "否",
@@ -2255,7 +2255,7 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
                     "appointment_tenure", "任别",
                     frozenset({"真除", "署理", "兼署", "加衔"}), "",
                 ),
-                FieldSpec("target_candidate", "目标候选", None, "", max_len=40),
+                FieldSpec("target_candidate", "目标候选", None, ""),
             ),
         ),
     )

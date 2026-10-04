@@ -7560,9 +7560,10 @@ class GameDB:
                     stored_new = new_value
                     log_delta = actual_delta
                 else:  # REGION_TEXT_FIELDS
-                    # status/天灾/人祸等自由正文进 region_report → 世界盘面，禁止 [:N]（#1834 F16）。
-                    text_value = str(value).strip()
+                    # 自由正文进 region_report → 世界盘面：禁 [:N] 与 strip 改写（#1834 F16）。
+                    # controlled_by 是势力 id（机器键），仍 strip。
                     if field == "controlled_by":
+                        text_value = str(value).strip()
                         if (
                             value is None
                             or not text_value
@@ -7582,7 +7583,9 @@ class GameDB:
                                 "item": {"region_id": region_id, "field": field, "value": value},
                             })
                             continue
-                    if not text_value or text_value == str(old_value):
+                    else:
+                        text_value = str(value)
+                    if not text_value.strip() or text_value == str(old_value):
                         continue
                     if require_origin:
                         origin_error = self.effect_origin_rejection(origin_ref)
@@ -8302,9 +8305,13 @@ class GameDB:
                     stored_new = new_value
                     log_delta = actual_delta
                 elif field in ARMY_TEXT_FIELDS:
-                    # station/commander/status 等进 army_report → 世界盘面，禁止 [:N]（#1834 F16）。
-                    text_value = str(value).strip()
-                    if not text_value or text_value == str(old_value):
+                    # station/commander/status 等自由正文进 army_report：禁 [:N]/strip 改写（#1834 F16）。
+                    # station_region / controller / owner_power 是机器键，仍 strip。
+                    if field in ("station_region", "controller", "owner_power"):
+                        text_value = str(value).strip()
+                    else:
+                        text_value = str(value)
+                    if not text_value.strip() or text_value == str(old_value):
                         continue
                     # #659：station_region 非空须为已入库 regions.id；禁止从 station 文本反推。
                     if field == "station_region":
@@ -8712,7 +8719,9 @@ class GameDB:
             (
                 building_id,
                 region_id,
-                name.strip() or "无名建筑",
+                # name/status 自由正文进 buildings_report：禁 [:N]/strip 改写（#1834 F16）。
+                # 判空用局部 stripped 副本；落库写 raw。
+                (str(name) if str(name).strip() else "无名建筑"),
                 category,
                 max(1, min(5, int(level))),
                 max(0, min(100, int(condition))),
@@ -8720,8 +8729,7 @@ class GameDB:
                 max(0, min(100, int(risk))),
                 output_metric,
                 max(0, int(output_amount)),
-                # name/status 进 buildings_report → 世界盘面营建段，禁止 [:N]（#1834 F16）。
-                status.strip() or "新立，尚在筹建。",
+                (str(status) if str(status).strip() else "新立，尚在筹建。"),
                 origin,
                 state.turn,
             ),
@@ -8732,7 +8740,11 @@ class GameDB:
             (turn, year, period, building_id, field, old_value, new_value, delta, reason, actor, origin_ref)
             VALUES (?, ?, ?, ?, 'create', '', ?, NULL, ?, '档房', ?)
             """,
-            (state.turn, state.year, state.period, building_id, name.strip(), "诏书新立建筑", origin_ref),
+            (
+                state.turn, state.year, state.period, building_id,
+                (str(name) if str(name).strip() else "无名建筑"),
+                "诏书新立建筑", origin_ref,
+            ),
         )
         if commit:
             self.conn.commit()
@@ -8821,9 +8833,9 @@ class GameDB:
                     stored_new = text_value
                     log_delta = None
                 elif field in BUILDING_TEXT_FIELDS:
-                    # name/status 进 buildings_report → 世界盘面，禁止 [:N]（#1834 F16）。
-                    text_value = str(value).strip()
-                    if not text_value or text_value == str(old_value):
+                    # name/status 自由正文进 buildings_report：禁 [:N]/strip 改写（#1834 F16）。
+                    text_value = str(value)
+                    if not text_value.strip() or text_value == str(old_value):
                         continue
                     stored_new = text_value
                     log_delta = None

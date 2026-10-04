@@ -1,6 +1,9 @@
 {
   "F15": {
     "secret_dossier_in_exclude_set": true,
+    "affair_derived_from_dossiers": {
+  "F15": {
+    "secret_dossier_in_exclude_set": true,
     "affair_derived_from_dossiers": true,
     "parallel_secret_order_affair_ids_fn": false,
     "opening_has_name": false,
@@ -26,7 +29,8 @@
     "building_status_len": 177,
     "building_status_full": true,
     "building_in_materials": true,
-    "max_len_slice_absent": true
+    "max_len_field_absent": true,
+    "free_prose_no_strip": true
   },
   "F13": {
     "declared_fields": [

@@ -239,9 +239,15 @@ def main() -> int:
             "building_status_len": len(stored_status),
             "building_status_full": stored_status == long_status,
             "building_in_materials": board_hit,
-            "max_len_slice_absent": "s[: spec.max_len]" not in Path(
+            "max_len_field_absent": "max_len" not in Path(
                 ac.__file__
             ).read_text(encoding="utf-8"),
+            "free_prose_no_strip": (
+                "_FREE_PROSE_FIELD_NAMES" in Path(ac.__file__).read_text(encoding="utf-8")
+                and 'if name in _FREE_PROSE_FIELD_NAMES' in Path(
+                    ac.__file__
+                ).read_text(encoding="utf-8")
+            ),
         }
 
         pm = PreparedMaterials(root=prepared.root, opening="probe")
@@ -265,7 +271,7 @@ def main() -> int:
             and f16["fiscal_full"] and f16["case_full"]
             and f16["staged_criterion_full"] and f16["staged_origin_full"]
             and f16["building_status_full"] and f16["building_in_materials"]
-            and f16["max_len_slice_absent"]
+            and f16["max_len_field_absent"] and f16["free_prose_no_strip"]
             and not f15["parallel_secret_order_affair_ids_fn"]
         )
         return 0 if ok else 1
