@@ -2188,19 +2188,3 @@ def settle_due_secret_orders(
         db.conn.commit()
     return results
 
-
-def parse_covert_exec_selections(extracted: Mapping[str, object] | None) -> List[Dict[str, object]]:
-    if not extracted:
-        return []
-    raw = (
-        extracted.get("covert_exec_selections")
-        or extracted.get("密令执行态")
-        or []
-    )
-    if not isinstance(raw, list):
-        return []
-    out: List[Dict[str, object]] = []
-    for item in raw:
-        if isinstance(item, dict):
-            out.append(item)
-    return out

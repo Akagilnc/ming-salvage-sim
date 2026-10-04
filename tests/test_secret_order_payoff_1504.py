@@ -26,7 +26,6 @@ from ming_sim.covert_progress import (
     investigation_clue_records,
     live_investigation_fact_keys,
     read_covert_task_contract,
-    seed_guilt_counts_as_debt,
     apply_monthly_covert_actual_progress,
     investigation_lane_actual_units,
     settle_due_secret_orders,
@@ -223,17 +222,46 @@ def _originate_catches(db, state, content, dossier_id, names):
     )
 
 
-def test_seed_guilt_structured_clean_vs_debt():
-    # 现约：只收结构化 severity∈{轻,中,重}；裸散文／解析失败／说明措辞不造罪。
-    assert not seed_guilt_counts_as_debt("")
-    assert not seed_guilt_counts_as_debt(None)
-    assert not seed_guilt_counts_as_debt({"crime": "无", "severity": "无"})
-    assert not seed_guilt_counts_as_debt({"crime": "查无实据", "severity": "无"})
-    assert not seed_guilt_counts_as_debt('{"crime": "无", "severity": "无"}')
-    assert not seed_guilt_counts_as_debt("血债")
-    assert not seed_guilt_counts_as_debt("{not-json")
-    assert not seed_guilt_counts_as_debt(["not", "object"])
-    assert seed_guilt_counts_as_debt({"crime": "交结近侍", "severity": "中"})
+def test_create_secret_order_fact_lanes_follow_structured_severity_only(game):
+    """#1897 R2：真实 create_secret_order 开案——只认 severity∈{轻,中,重}。
+
+    说明散文、解析失败、非对象不得把目标名写入 live 实证集或案卷 fact_lanes。
+    不测 helper 自洽；观测 create 后的结构化 truth_keys／lanes。
+    """
+    db, state, _ = game
+    name = _minister(db)
+    target = db.conn.execute(
+        "SELECT name FROM characters WHERE status='active' AND name<>? "
+        "ORDER BY name LIMIT 1",
+        (name,),
+    ).fetchone()["name"]
+    _set_axes(db, name, loyalty=90, identity=30)
+    _clear_open_errands(db, name)
+
+    cases = [
+        ("", False),
+        (json.dumps({"crime": "无", "severity": "无"}, ensure_ascii=False), False),
+        (json.dumps({"crime": "查无实据", "severity": "无"}, ensure_ascii=False), False),
+        (json.dumps({"crime": "血债累累", "severity": "无"}, ensure_ascii=False), False),
+        ("血债", False),
+        ("{not-json", False),
+        (json.dumps(["not", "object"], ensure_ascii=False), False),
+        (json.dumps({"crime": "交结近侍", "severity": "中"}, ensure_ascii=False), True),
+    ]
+    for seed, expect_seed_lane in cases:
+        db.conn.execute(
+            "UPDATE characters SET seed_guilt=? WHERE name=?", (seed, target),
+        )
+        db.conn.commit()
+        assert (target in live_investigation_fact_keys(db, target)) is expect_seed_lane, seed
+        oid = _issue(
+            db, state, name, "验罪情入集", "结构化罪情契约",
+            months=1, target=1, kind="查核", axes=["既得利益"],
+            investigation_target=target,
+        )
+        lanes = _lanes(db, oid)
+        assert (target in lanes) is expect_seed_lane, seed
+        _retire_order(db, oid)
 
 
 def test_decide_settlement_delivery_gap_bidirectional():
