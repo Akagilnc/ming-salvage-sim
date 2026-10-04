@@ -8,7 +8,10 @@ regexes:
       payload / stigma / execution_signal (from dossier items).
   F12: list_world_effect_history must not contain person_logs (or sibling
       audit dump tables); prepare_world_materials + prepare_gazette_author_materials
-      succeed for open / close(advance) / restore.
+      succeed for open / calendar-advance / restore.
+
+  Label honesty (F14): advancing turn/period is NOT AffairStore.declare_closed.
+  Those phases print CALENDAR_ADVANCED_*; do not read them as CLOSED/affair_status.
 
 Env (required by ticket):
   seven MING_SIM_*_BIN=/usr/bin/false
@@ -207,18 +210,19 @@ def run(mode: str) -> str:
         finally:
             release_material_tree(public.root)
 
-        # CLOSE (advance calendar; dossiers remain readable)
+        # Calendar advance only — does NOT call AffairStore.declare_closed.
+        # Labels must not claim CLOSED / affair_status=closed (F14).
         state.turn += 1
         state.period = min(12, int(state.period) + 1)
         db.save_state(state)
         world = materials_mod.prepare_world_materials(db, state)
         try:
-            check("CLOSED_WORLD", world)
+            check("CALENDAR_ADVANCED_WORLD", world)
         finally:
             release_material_tree(world.root)
         public = prepare_gazette_author_materials(db, state)
         try:
-            check("CLOSED_PUBLIC", public)
+            check("CALENDAR_ADVANCED_PUBLIC", public)
         finally:
             release_material_tree(public.root)
 

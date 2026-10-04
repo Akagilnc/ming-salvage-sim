@@ -188,12 +188,12 @@ def test_read_material_stays_inside_directory(game, tmp_path):
     spaced_path.write_text("经历正文\n", encoding="utf-8")
     listing = tools["list_materials"]("")
     assert spaced_rel in listing.splitlines()
-    tools["read_material"](spaced_rel)
+    assert tools["read_material"](spaced_rel) == "经历正文\n"
     gazette_rel = "邸报/1627年9月.txt"
     gazette_path = prepared.root / gazette_rel
     gazette_path.parent.mkdir(parents=True, exist_ok=True)
     gazette_path.write_text("本月邸报\n", encoding="utf-8")
-    tools["read_material"](gazette_rel)
+    assert tools["read_material"](gazette_rel) == "本月邸报\n"
     display = f"{gazette_rel} 任意非路径后缀"
     with pytest.raises(FileNotFoundError):
         read_material(prepared.root, display)
@@ -274,7 +274,7 @@ def test_secret_order_materials_keep_full_content_and_fail_loud_on_db_error(
     secret_path = next(p for p in list_materials(prepared.root) if p.startswith("密令/"))
     # Independent input must survive the real API read, without constraining framing.
     tools = {tool.__name__: tool for tool in material_tools(prepared.root)}
-    tools["read_material"](secret_path)
+    assert original in tools["read_material"](secret_path)
 
     def boom(_name):
         raise RuntimeError("secret-order-db-boom")

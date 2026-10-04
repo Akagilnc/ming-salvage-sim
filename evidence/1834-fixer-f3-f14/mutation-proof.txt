@@ -1,0 +1,115 @@
+==== MUTATION wrong_player_input (expect FAIL) ====
+F                                                                        [100%]
+=================================== FAILURES ===================================
+____________ test_cli_selection_uses_scene_turn_as_admission_origin ____________
+
+game = (<ming_sim.db.GameDB object at 0x10c9f6210>, GameState(year=1627, period=10, turn=1, turn_phase='summoning', ended=Fal...: '妃嫔供奉'}, {'key': '妃嫔_rate', 'value': 100, 'kind': 'rate', 'budget_role': 'fixed', 'note': '妃嫔供奉率%', 'order': 9999}]))
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10c7b0750>
+
+    @pytest.mark.usefixtures("_offline_scene_beat_generator")
+    def test_cli_selection_uses_scene_turn_as_admission_origin(game, monkeypatch):
+        from ming_sim.cli.terminal import minister_chat
+    
+        db, state, content = game
+        character = content.characters["王绍徽"]
+        sess = _sess(db, state, content, llm_config=SimpleNamespace(channel=""))
+        sess.schedule_pending_scene_translation = lambda result: None
+        calls = []
+        readings = []
+    
+        class FakeAgent:
+            tools = []
+    
+            def run(self, message):
+                calls.append(message)
+                return SimpleNamespace(content="臣在。", tools=[])
+    
+        def scene_agent(_config, prepared, **_kwargs):
+            readings.append(prepared.opening)
+            return FakeAgent()
+    
+        monkeypatch.setattr("ming_sim.session.create_scene_agent", scene_agent)
+        answers = iter(["边饷如何？", "done"])
+        monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
+    
+        assert minister_chat(sess, character, selected=True) == "dismiss"
+>       assert calls == [f"宣{character.name}", "边饷如何？"]
+E       AssertionError: assert ['宣王绍徽', '边饷错了？'] == ['宣王绍徽', '边饷如何？']
+E         
+E         At index 1 diff: '边饷错了？' != '边饷如何？'
+E         Use -v to get more diff
+
+tests/test_scene_llm_1836.py:145: AssertionError
+----------------------------- Captured stdout call -----------------------------
+
+当前选择：王绍徽。可持续问话；done/退下 退下，“传韩爌来”换人，quit 退朝审阅诏书，exit 退出游戏。
+提示：陛下示意采纳后（如“准奏”），大臣会拟旨呈陛下核定。
+
+臣在。
+
+臣在。
+
+=========================== short test summary info ============================
+FAILED tests/test_scene_llm_1836.py::test_cli_selection_uses_scene_turn_as_admission_origin
+1 failed in 0.92s
+real 1.55
+user 1.30
+sys 0.17
+EXIT:1
+
+==== MUTATION empty_read_material (expect FAIL) ====
+F                                                                        [100%]
+=================================== FAILURES ===================================
+__________________ test_read_material_stays_inside_directory ___________________
+
+game = (<ming_sim.db.GameDB object at 0x10c336210>, GameState(year=1627, period=10, turn=1, turn_phase='summoning', ended=Fal...: '妃嫔供奉'}, {'key': '妃嫔_rate', 'value': 100, 'kind': 'rate', 'budget_role': 'fixed', 'note': '妃嫔供奉率%', 'order': 9999}]))
+tmp_path = PosixPath('/private/tmp/1834-fixer-f3-f14-mut/pytest-mut2/test_read_material_stays_insid0')
+
+    def test_read_material_stays_inside_directory(game, tmp_path):
+        db, state, content = game
+        character = _active_minister(db, content)
+        prepared = prepare_character_materials(
+            db, state, character, dest_root=tmp_path / "m",
+        )
+        try:
+            read_material(prepared.root, "../outside.txt")
+            raise AssertionError("expected path confinement")
+        except ValueError:
+            pass
+        tools = {tool.__name__: tool for tool in material_tools(prepared.root)}
+        assert tools["list_materials"]("../outside") == tools["read_material"]("../outside")
+        spaced_rel = f"人物/{_safe_segment('John Doe')}/经历.txt"
+        spaced_path = prepared.root / spaced_rel
+        spaced_path.parent.mkdir(parents=True, exist_ok=True)
+        spaced_path.write_text("经历正文\n", encoding="utf-8")
+        listing = tools["list_materials"]("")
+        assert spaced_rel in listing.splitlines()
+>       assert tools["read_material"](spaced_rel) == "经历正文\n"
+E       AssertionError: assert '' == '经历正文\n'
+E         
+E         - 经历正文
+
+tests/test_material_directory_1830.py:191: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_material_directory_1830.py::test_read_material_stays_inside_directory
+1 failed in 0.85s
+real 1.43
+user 1.23
+sys 0.16
+EXIT:1
+
+==== BASELINE scene PASS ====
+.                                                                        [100%]
+1 passed in 0.92s
+real 1.62
+user 1.41
+sys 0.17
+EXIT:0
+
+==== BASELINE material PASS ====
+.                                                                        [100%]
+1 passed in 0.77s
+real 1.41
+user 1.23
+sys 0.15
+EXIT:0

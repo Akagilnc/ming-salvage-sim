@@ -143,14 +143,6 @@ describe("empty bar label presentation (#626)", () => {
     cleanup();
   });
 
-  it("detail modal keeps parentheses when bar meanings are present", () => {
-    const cleanup = render(
-      <SituationDetailModal issue={makeIssue()} onClose={() => undefined} />
-    );
-    const text = document.body.textContent || "";
-    cleanup();
-  });
-
   it("issue board progress ends stay blank rather than showing empty labels", () => {
     const cleanup = render(<IssueGroup title="待办" issues={[makeEmptyBarIssue()]} />);
     const ends = Array.from(document.querySelectorAll(".issue-progress > span"));
@@ -221,6 +213,7 @@ describe("#1726 StateModal 奏疏收件箱", () => {
     expect(doc!.querySelector(".situation-panel")).toBeNull();
     expect(doc!.querySelector(".situation-row")).toBeNull();
     expect(doc!.textContent).not.toContain(makeIssue().title);
+    expect(doc!.textContent).toContain("杨嗣昌");
     expect(doc!.querySelector("pre.memorial-text")?.textContent).toBe(body);
     expect(doc!.textContent).not.toContain("progress:7");
     expect(doc!.textContent).not.toContain("progress_band");

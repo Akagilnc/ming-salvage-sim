@@ -1,0 +1,15 @@
+==== ENUM COMMANDS ====
+git diff --unified=0 52809cdf3 HEAD -- tests/ web/
+git diff --unified=0 HEAD -- tests/ web/
+
+==== PROBE current (labels must be CALENDAR_ADVANCED_*, not CLOSED_*) ====
+PASS OPEN_WORLD dossier=1 affair=1 files=279
+PASS OPEN_PUBLIC dossier=1 affair=1 files=279
+PASS CALENDAR_ADVANCED_WORLD dossier=1 affair=1 files=279
+PASS CALENDAR_ADVANCED_PUBLIC dossier=1 affair=1 files=279
+PASS RESTORE_WORLD dossier=1 affair=1 files=279
+PASS RESTORE_PUBLIC dossier=1 affair=1 files=279
+ALL_GREEN
+real 2.82
+user 1.69
+sys 0.82

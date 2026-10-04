@@ -726,21 +726,6 @@ describe("ChatModal — single night-scroll authority (#539)", () => {
     expect(document.body.textContent).not.toContain("撤回前答复");
   });
 
-  it("does not treat an ordinary history reduction as a withdrawal", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ night_id: 23, protagonist: "", roster: [], translation_pending: false, messages: [
-      { role: "user", speaker: "朕", content: "公共卷仍保留", chat_turn_id: 1 },
-      { role: "minister", speaker: MINISTER_MOCK.name, content: "公共答复仍保留", chat_turn_id: 1 },
-    ] }) }));
-    let updateChat!: (chat: ChatMessage[]) => void;
-    renderModal({
-      minister: MINISTER_MOCK, portraitPrefix: "minister_", currentNightId: 23,
-      chat: [{ role: "user", content: "个人 history", chatTurnId: 1 }],
-      registerChatUpdate: (update) => { updateChat = update; },
-    });
-    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
-    await act(async () => { updateChat([]); await Promise.resolve(); });
-
-  });
   it("does not flash old minister chat while the night scroll is loading or failed", async () => {
     let reject!: (reason?: unknown) => void;
     vi.stubGlobal("fetch", vi.fn().mockReturnValue(new Promise((_resolve, rejectPromise) => { reject = rejectPromise; })));
@@ -946,6 +931,7 @@ describe("ChatModal — single night-scroll authority (#539)", () => {
       busy: "大臣思索中",
     });
     await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    expect(document.querySelector(".chat-message.thinking span")?.textContent).toBe("洪承畴");
   });
 
 });
@@ -1012,12 +998,6 @@ describe("ChatModal — one-night audience scroll (#1849)", () => {
     expect(host.querySelector(".chat-portrait-wrap img")?.getAttribute("src")).toMatch(/^\/portraits\/custom\/%E6%B4%AA%E6%89%BF%E7%95%B4\?t=/);
     expect(host.querySelector(".audience-roster img")?.getAttribute("src")).toMatch(/^\/portraits\/custom\/%E6%B4%AA%E6%89%BF%E7%95%B4\?t=/);
     expect(host.querySelector("img.aside-avatar")?.getAttribute("src")).toMatch(/^\/portraits\/custom\/%E6%B4%AA%E6%89%BF%E7%95%B4\?t=/);
-  });
-
-  it("shows the whole chronological night instead of a selected-minister window", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ night_id: 23, protagonist: "", roster: [], translation_pending: false, messages: nightScroll }) }));
-    renderModal({ minister: xu, ministers: [hong, xu], portraitPrefix: "minister_", currentNightId: 23 });
-    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
   });
 
   it("uses roster clicks as summon commands without changing panels", async () => {
@@ -1770,6 +1750,7 @@ describe("ReportModal — narrative settlement bulletin", () => {
       periodLabel: "天启七年九月",
     });
     const mastSept = hostSept.querySelector(".gazette-masthead")?.textContent || "";
+    expect(mastSept).toContain("天启七年九月");
     expect(mastSept).not.toContain("天启七年十月");
 
     const hostDec = renderReportModal({
@@ -1777,6 +1758,7 @@ describe("ReportModal — narrative settlement bulletin", () => {
       periodLabel: "天启七年十二月",
     });
     const mastDec = hostDec.querySelector(".gazette-masthead")?.textContent || "";
+    expect(mastDec).toContain("天启七年十二月");
     // 正月状态不得混充报头
     expect(mastDec).not.toContain("崇祯元年正月");
     expect(mastDec).not.toContain("天启七年正月");

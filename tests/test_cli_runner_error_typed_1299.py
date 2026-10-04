@@ -69,17 +69,6 @@ def test_clichat_runner_exit_raises_typed_llm_unavailable(monkeypatch):
     assert exc.code  # typed
 
 
-def test_clichat_normal_reply_still_returns(monkeypatch):
-    """负向：正常 CLI 回话照常出文本。"""
-    cc = cb.CliChat(id="cli-test", backend="agy")
-    monkeypatch.setattr(cc, "_call_cli", lambda p: ("臣遵旨，边事容臣细奏。", 1))
-    monkeypatch.setattr(cb, "_trace", lambda rec: None)
-    cc.invoke(
-        [SimpleNamespace(role="user", content="边事如何")],
-        Message(role="assistant"),
-    )
-
-
 # ── seam 2: extract_agent_text ──
 
 

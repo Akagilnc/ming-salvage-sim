@@ -2655,6 +2655,7 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     // 官方邸报 pre 正文与状态口 previous_summary 逐字相等（含空白与 markdown）
     expect(host.querySelector("pre.memorial-text")!.textContent).toBe(SNAP_GAZETTE);
     const masthead = host.querySelector(".gazette-masthead")?.textContent || "";
+    expect(masthead).toContain("天启七年九月");
     expect(masthead).not.toContain("天启七年十月");
     // #671 App 接线：递话可见且位于 .gazette-document 之外
     const attendant = host.querySelector("[data-testid=gazette-attendant]");

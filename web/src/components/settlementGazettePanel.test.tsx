@@ -38,6 +38,7 @@ describe("#1852 SettlementGazettePanel", () => {
     expect(host.querySelector('[role="dialog"]')).toBeNull();
     expect(host.querySelector("[data-testid=gazette-attendant]")).not.toBeNull();
     expect(host.querySelector(".gazette-masthead")).not.toBeNull();
+    expect(host.textContent).toContain("天启七年十月");
 
     const btn = Array.from(host.querySelectorAll("button")).find((b) =>
       (b.textContent || "").includes("朕知道了"),

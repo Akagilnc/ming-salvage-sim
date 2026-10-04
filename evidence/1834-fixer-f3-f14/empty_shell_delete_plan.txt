@@ -1,0 +1,7 @@
+tests/test_cli_runner_error_typed_1299.py:test_clichat_normal_reply_still_returns:only assert was model reply substring; empty shell
+tests/test_decree_commitment_settlement_229.py:test_commitment_progress_contexts_are_structured:only asserts were CLI output prose; empty shell
+web/src/components/modals.test.tsx:does not treat an ordinary history reduction as a withdrawal:content asserts removed; no remaining proof
+web/src/components/modals.test.tsx:shows the whole chronological night instead of a selected-minister window:content asserts removed; no remaining proof
+web/src/components/situation.test.tsx:detail modal keeps parentheses when bar meanings are present:qualitative prose removed; empty shell
+web/src/staleGuard.test.tsx:未切人时响应正常应用不被守卫误丢:fixture reply prose removed; empty shell
+web/src/staleGuard.test.tsx:未切人时历史正常加载不被误丢:fixture history prose removed; empty shell
