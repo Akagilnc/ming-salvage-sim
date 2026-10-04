@@ -410,12 +410,9 @@ def _auto_pay_arrears_by_priority(
         if allowed_army_ids is not None
         else None
     )
-    # #44：受饷资格用 arrears>0（不再 maintenance_per_turn>0）。#44 把欠饷累计从 maintenance 改成
-    # army_needed(salary_rate 派生)，二者已解耦——salary_rate>0 但 maintenance=0 的军会累 arrears 却被
-    # 旧 filter 排除、拨饷永远散不到（cmr r2 claude）。arrears>0 本就隐含曾有应发（needed>0 才累）。
     rows = db.conn.execute(
         "SELECT * FROM armies "
-        "WHERE owner_power='ming' AND arrears>0"
+        "WHERE owner_power='ming' AND province_pay_arrears + central_pay_arrears > 0"
     ).fetchall()
     if allowed_ids is not None:
         rows = [row for row in rows if str(row["id"]) in allowed_ids]
@@ -430,7 +427,7 @@ def _auto_pay_arrears_by_priority(
             break
         army_id = str(row["id"])
         name = str(row["name"])
-        payable_arrears = _payable_army_arrears_cap(float(row["arrears"] or 0))
+        payable_arrears = _payable_army_arrears_cap(row)
         if payable_arrears <= 0:
             continue
         pay_cap = min(payable_arrears, remaining)
@@ -452,25 +449,12 @@ def _auto_pay_arrears_by_priority(
         db.conn.commit()
     return spent
 
-def _payable_army_arrears_cap(current_arrears: float) -> int:
-    """Integer ledger cap: never spend more whole 万两 than the current debt."""
-    if current_arrears <= 1e-9:
+def _payable_army_arrears_cap(row) -> int:
+    """Integer ledger cap derived only from the two authoritative source balances."""
+    total = float(row["province_pay_arrears"] or 0) + float(row["central_pay_arrears"] or 0)
+    if total <= 1e-9:
         return 0
-    return math.floor(current_arrears + 1e-9)
-
-def _normalized_cutover_pay_arrears(row, current_arrears: float) -> Tuple[float, float]:
-    province_old = float(row["province_pay_arrears"] or 0)
-    central_old = float(row["central_pay_arrears"] or 0)
-    total_old = province_old + central_old
-    if abs(total_old - current_arrears) <= 1e-9:
-        return province_old, central_old
-    if total_old > 0:
-        scale = current_arrears / total_old
-        return province_old * scale, central_old * scale
-    return (
-        current_arrears * float(row["province_pay_share"] or 0),
-        current_arrears * float(row["central_pay_share"] or 0),
-    )
+    return math.floor(total + 1e-9)
 
 def _pay_single_army_arrears(
     db: GameDB,
@@ -486,18 +470,16 @@ def _pay_single_army_arrears(
     origin_ref: str = "",
     beyond_intent: object = 0,
 ) -> int:
-    current_arrears = float(row["arrears"] or 0)
+    province_old = float(row["province_pay_arrears"] or 0)
+    central_old = float(row["central_pay_arrears"] or 0)
+    current_arrears = province_old + central_old
     if amount <= 0 or current_arrears <= 0:
         return 0
     actual_pay = min(
         int(amount),
-        _payable_army_arrears_cap(current_arrears),
+        _payable_army_arrears_cap(row),
     )
     if actual_pay <= 0:
-        return 0
-    province_old, central_old = _normalized_cutover_pay_arrears(row, current_arrears)
-    total_old = province_old + central_old
-    if total_old <= 1e-9:
         return 0
     actual = db.record_issue_economy_move(
         state, account, -actual_pay, category, reason,
@@ -507,8 +489,8 @@ def _pay_single_army_arrears(
     if not actual:
         return 0
     paid = abs(float(actual))
-    province_pay = min(province_old, paid * province_old / total_old)
-    central_pay = min(central_old, paid * central_old / total_old)
+    province_pay = min(province_old, paid * province_old / current_arrears)
+    central_pay = min(central_old, paid * central_old / current_arrears)
     province_new = max(0.0, province_old - province_pay)
     central_new = max(0.0, central_old - central_pay)
     new_arrears = province_new + central_new

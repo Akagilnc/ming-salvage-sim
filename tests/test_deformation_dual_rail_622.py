@@ -423,7 +423,7 @@ def test_commitment_pooled_pay_arrears_inherits_beyond_intent(game):
     db, state, _content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
     db.conn.execute("UPDATE legacies SET status='cleared' WHERE status='active'")
-    db.conn.execute("UPDATE armies SET arrears=0 WHERE owner_power='ming'")
+    db.conn.execute("UPDATE armies SET arrears=0, province_pay_arrears=0, central_pay_arrears=0 WHERE owner_power='ming'")
     _seed_army_arrears(db, "guanning", 40)
     _seed_army_arrears(db, "xuan_da", 30)
     state.metrics["国库"] = 500

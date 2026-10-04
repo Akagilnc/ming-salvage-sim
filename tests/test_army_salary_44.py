@@ -202,19 +202,15 @@ def test_manpower_true_noop_no_log(game):
 
 
 def test_auto_pay_reaches_salary_army_via_arrears_filter(game):
-    # #44 受饷资格用 arrears>0（不再 maintenance>0）；#173 删 maintenance 列后，受饷 filter 唯一
-    # 依据 arrears>0。验证：salary_rate>0 累 arrears 的军被纳入受饷候选、且兜底拨饷真能花到（spent>0）。
+    # A salaried army with source debt participates in pooled repayment.
     from ming_sim.army_pay import _auto_pay_arrears_by_priority
     db, state, _ = game
     aid = str(db.conn.execute(
         "SELECT id FROM armies WHERE owner_power='ming' LIMIT 1").fetchone()["id"])
     # 只留这一支有欠饷，孤立验证「它是否进得了受饷分发」
-    db.conn.execute("UPDATE armies SET arrears=0 WHERE owner_power='ming'")
-    db.conn.execute("UPDATE armies SET salary_rate=1.5, arrears=10 WHERE id=?", (aid,))
+    db.conn.execute("UPDATE armies SET arrears=0, province_pay_arrears=0, central_pay_arrears=0 WHERE owner_power='ming'")
+    db.conn.execute("UPDATE armies SET salary_rate=1.5, arrears=10, province_pay_arrears=0, central_pay_arrears=10 WHERE id=?", (aid,))
     db.conn.commit()
-    hit = {str(r["id"]) for r in db.conn.execute(
-        "SELECT id FROM armies WHERE owner_power='ming' AND arrears>0")}
-    assert aid in hit, "arrears>0 filter 应纳入累 arrears 的军"
     spent = _auto_pay_arrears_by_priority(db, state, "国库", 5, "补饷", "诏拨补饷")
     assert spent > 0, "兜底拨饷应能花到该军"
 
@@ -225,8 +221,8 @@ def test_auto_pay_empty_allowed_ids_pays_no_armies(game):
     db, state, _ = game
     aid = str(db.conn.execute(
         "SELECT id FROM armies WHERE owner_power='ming' LIMIT 1").fetchone()["id"])
-    db.conn.execute("UPDATE armies SET arrears=0 WHERE owner_power='ming'")
-    db.conn.execute("UPDATE armies SET arrears=10 WHERE id=?", (aid,))
+    db.conn.execute("UPDATE armies SET arrears=0, province_pay_arrears=0, central_pay_arrears=0 WHERE owner_power='ming'")
+    db.conn.execute("UPDATE armies SET arrears=10, province_pay_arrears=0, central_pay_arrears=10 WHERE id=?", (aid,))
     db.conn.commit()
     spent = _auto_pay_arrears_by_priority(
         db, state, "国库", 5, "补饷", "空范围补饷", allowed_army_ids=[]
@@ -241,8 +237,8 @@ def test_auto_pay_strips_allowed_army_ids_before_filtering(game):
     db, state, _ = game
     aid = str(db.conn.execute(
         "SELECT id FROM armies WHERE owner_power='ming' LIMIT 1").fetchone()["id"])
-    db.conn.execute("UPDATE armies SET arrears=0 WHERE owner_power='ming'")
-    db.conn.execute("UPDATE armies SET arrears=10 WHERE id=?", (aid,))
+    db.conn.execute("UPDATE armies SET arrears=0, province_pay_arrears=0, central_pay_arrears=0 WHERE owner_power='ming'")
+    db.conn.execute("UPDATE armies SET arrears=10, province_pay_arrears=0, central_pay_arrears=10 WHERE id=?", (aid,))
     db.conn.commit()
 
     spent = _auto_pay_arrears_by_priority(

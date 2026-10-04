@@ -193,7 +193,7 @@ def test_prohibit_covert_levy_commission_binds_exposed_dossier(game, monkeypatch
     assert dossier["target_id"] == str(other_did)
     from ming_sim.covert_levy import active_prohibition_dossier
     army_id = db.conn.execute("SELECT target_id FROM decree_dossiers WHERE id=?", (other_did,)).fetchone()[0]
-    db.conn.execute("UPDATE armies SET arrears=10 WHERE id=?", (army_id,))
+    db.conn.execute("UPDATE armies SET arrears=10, province_pay_arrears=0, central_pay_arrears=10 WHERE id=?", (army_id,))
     before = int(state.turn)
     _player_month(db, state, content, monkeypatch, int(dossier["id"]), effects={
         "fiscal_creates": [{

@@ -73,7 +73,7 @@ def test_world_segment_rejects_transfer_with_pay_arrears_claim(game):
     from ming_sim.month_translate import dispatch_month_segment
 
     db, state, _ = game
-    db.conn.execute("UPDATE armies SET arrears=6 WHERE id='jingying'")
+    db.conn.execute("UPDATE armies SET arrears=6, province_pay_arrears=0, central_pay_arrears=6 WHERE id='jingying'")
     state.metrics["国库"], state.metrics["内库"] = 100, 0
     move = {
         "origin_ref": "盘面自发", "account": "国库", "delta": -5,
