@@ -1,7 +1,7 @@
 wrote evidence/issue-1835/c1c3-resweep/enumeration-resolved.txt
 wrote evidence/issue-1835/c1c3-resweep/cross-name-candidates.txt
 wrote evidence/issue-1835/c1c3-resweep/review-flags.txt
-TARGET_DEFS=98 WITH_CROSS=3
+TARGET_DEFS=98 WITH_CROSS=2
 TOPLEVEL_ZERO_RESOLVED_PROD_AND_SAME=0
 TOPLEVEL_FORWARDERS=0
 
@@ -14,4 +14,3 @@ TOPLEVEL_FORWARDERS=0
 --- C1 review: cross-module same-name names ---
   bind_content: [('ming_sim/issues.py', 109), ('ming_sim/agents.py', 48), ('ming_sim/context.py', 64)]
   _ctx: [('ming_sim/issues.py', 115), ('ming_sim/agents.py', 53), ('ming_sim/context.py', 69), ('tests/test_rescript_heal_isolation_1801.py', 23), ('tests/test_rescript_option_field_heal_1746.py', 20)]
-  _event_outcome_label: [('ming_sim/issues.py', 1091), ('ming_sim/settlement/preflight.py', 693)]

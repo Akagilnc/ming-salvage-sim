@@ -30,7 +30,7 @@ python3 evidence/issue-1835/c1c3-resweep/ast_c1c3_resweep_enum.py \
 wrote evidence/issue-1835/c1c3-resweep/enumeration-resolved.txt
 wrote evidence/issue-1835/c1c3-resweep/cross-name-candidates.txt
 wrote evidence/issue-1835/c1c3-resweep/review-flags.txt
-TARGET_DEFS=98 WITH_CROSS=3
+TARGET_DEFS=98 WITH_CROSS=2
 TOPLEVEL_ZERO_RESOLVED_PROD_AND_SAME=0
 TOPLEVEL_FORWARDERS=0
 
@@ -43,7 +43,6 @@ TOPLEVEL_FORWARDERS=0
 --- C1 review: cross-module same-name names ---
   bind_content: [('ming_sim/issues.py', 109), ('ming_sim/agents.py', 48), ('ming_sim/context.py', 64)]
   _ctx: [('ming_sim/issues.py', 115), ('ming_sim/agents.py', 53), ('ming_sim/context.py', 69), ('tests/test_rescript_heal_isolation_1801.py', 23), ('tests/test_rescript_option_field_heal_1746.py', 20)]
-  _event_outcome_label: [('ming_sim/issues.py', 1091), ('ming_sim/settlement/preflight.py', 693)]
 ```
 
 ## 消费者判定规则（本轮）
@@ -62,11 +61,17 @@ TOPLEVEL_FORWARDERS=0
 | `issues.py` | `_situation_terminal_effects` | C1/C3 单调用转发壳 | 已改为 `event_to_issue` 直接接 `situation_drift.situation_terminal_effects` |
 | `issues.py` | `_COLLAPSIBLE_KINDS` | C3 零引用常量 | 真源=`COLLAPSIBLE_SITUATION_KINDS` |
 
-本轮复核闸：`TOPLEVEL_ZERO_RESOLVED_PROD_AND_SAME=0`，`TOPLEVEL_FORWARDER_FLAG=0` — **无新增必删残件**。
+本轮复核闸：`TOPLEVEL_ZERO_RESOLVED_PROD_AND_SAME=0`，`TOPLEVEL_FORWARDER_FLAG=0`。
 
-## 跨仓同名核对（完整 98：有 CROSS_DEF 的 3 名 + 其余 95 名无跨模块同名定义）
+### 本轮生产删码（C1 DRY 归一）
 
-机械枚举证明：`cross-name-candidates.txt` 对每个 TARGET def 写出全部 `CROSS_DEF`；`WITH_CROSS_MODULE_SAME_NAME=3`。
+| 路径 | 成员 | 分类 | 依据 |
+|---|---|---|---|
+| `settlement/preflight.py` | `_event_outcome_label`（副本） | C1 字面同形平行核 | 与 `issues._event_outcome_label` **BYTE_IDENTICAL**（实证比对函数体）；真源=`ming_sim.issues._event_outcome_label`；preflight 两处调用点改为 `from ming_sim.issues import _event_outcome_label`（函数内 import，避 issues↔preflight 环）。**有消费者仍须单一权威实现**——不以「双侧有生产消费者」保留重复。 |
+
+## 跨仓同名核对（完整 98：有 CROSS_DEF 的 2 名 + 其余 96 名无跨模块同名定义）
+
+机械枚举证明：`cross-name-candidates.txt` 对每个 TARGET def 写出全部 `CROSS_DEF`；`WITH_CROSS_MODULE_SAME_NAME=2`（DRY 后 `_event_outcome_label` 已无第二定义点）。
 
 ### 有跨模块同名定义的候选（逐项语义）
 
@@ -74,13 +79,18 @@ TOPLEVEL_FORWARDERS=0
 |---|---|---|---|
 | `bind_content` | `ming_sim/issues.py:109`；`ming_sim/agents.py:48`；`ming_sim/context.py:64` | **不重复（非 C1 平行核）** — 各模块私有 `_content` 注入口：`agents`/`context` 为纯赋值；`issues` 另跑 `_validate_strategic_foreign_node_outcome_targets`。同名只因注入约定，不是局势/财政双持核。双侧/三侧均有真实生产 ImportFrom 消费者 → **保留全部**。 | **保留** |
 | `_ctx` | `ming_sim/issues.py:115`；`ming_sim/agents.py:53`；`ming_sim/context.py:69`；`tests/test_rescript_heal_isolation_1801.py:23`；`tests/test_rescript_option_field_heal_1746.py:20` | **不重复（非 C1 平行核）** — 各模块读取本模块 `_content` 的访问器；错误文案挂本模块名。同形但闭包目标不同（issues/agents/context 各自全局）。测试文件内另有同名 helper（夹具）≠ 生产 issues._ctx。→ **保留全部**。 | **保留** |
-| `_event_outcome_label` | `ming_sim/issues.py:1091`；`ming_sim/settlement/preflight.py:693` | **重复（字面同形）但双侧均有生产消费者** — `issues.py` 与 `settlement/preflight.py` 函数体 BYTE_IDENTICAL。issues 侧：同文件 `_merge_first_event_outcome` + `declaration_dispatch` ImportFrom；preflight 侧：同文件 `_strategic_event_outcome_label_or_error` 等。本轮删除闸=真实生产零消费者 / 单调用转发壳——两侧皆非，**不机械删一侧**；记为可后续 DRY 合并的 C1 同形候选，非本轮必删残件。 | **保留** |
 
-### 无跨模块同名定义的 TARGET defs（95）
+### 已归一的原跨名同形（本轮 DRY）
+
+| 符号 | 定义点（现） | 语义核对 | 处置 |
+|---|---|---|---|
+| `_event_outcome_label` | **仅** `ming_sim/issues.py:1091`（`preflight` 副本已删） | **C1 字面同形已归一** — 删前与 `preflight` 函数体 BYTE_IDENTICAL；删后 `CROSS_DEF (none)`；preflight `_strategic_event_outcome_label_or_error` / `_preflight_declared_event_groups` 直接 ImportFrom `ming_sim.issues`。resolved_prod=6（含两处 preflight import + Name Load + declaration_dispatch）。 | **保留 issues 真源；删 preflight 副本** |
+
+### 无跨模块同名定义的 TARGET defs（96）
 
 下列每人在 `cross-name-candidates.txt` 均为 `CROSS_DEF (none)` — 已机械核对，无第二定义点，故无 C1 同名碰撞可删项。
 
-计数：95 / 98。
+计数：96 / 98。
 
 <details><summary>展开 95 个无跨模块同名 def 路径</summary>
 
@@ -149,6 +159,7 @@ ming_sim/issues.py:1013 apply_event_cascading_invalidations
 ming_sim/issues.py:1031 run_cascade
 ming_sim/issues.py:1067 _spawned_event_refs
 ming_sim/issues.py:1073 _event_window_open
+ming_sim/issues.py:1091 _event_outcome_label
 ming_sim/issues.py:1100 _merge_first_event_outcome
 ming_sim/issues.py:1125 apply_petition_event_outcome
 ming_sim/issues.py:1190 gather_fiscal_levy_petitions
@@ -254,7 +265,7 @@ ming_sim/issues.py:2230 sync_opening_legacies
 | `ming_sim/issues.py:1031` | `run_cascade` | True | 0 | 0 | 0 | 2 | 0 | 保留 | 嵌套于 `apply_event_cascading_invalidations`；局部 helper |
 | `ming_sim/issues.py:1067` | `_spawned_event_refs` | False | 0 | 0 | 0 | 2 | 0 | 保留 | 模块内互调 same=2（内联 helper） |
 | `ming_sim/issues.py:1073` | `_event_window_open` | False | 0 | 0 | 2 | 6 | 0 | 保留 | 模块内互调 same=6（内联 helper） |
-| `ming_sim/issues.py:1091` | `_event_outcome_label` | False | 1 | 5 | 0 | 2 | 0 | 保留 | 跨名语义：重复（字面同形）但双侧均有生产消费者 |
+| `ming_sim/issues.py:1091` | `_event_outcome_label` | False | 0 | 6 | 0 | 2 | 0 | 保留真源 | C1 DRY：preflight 副本已删；CROSS_DEF=none；resolved_prod=6 |
 | `ming_sim/issues.py:1100` | `_merge_first_event_outcome` | False | 0 | 6 | 0 | 0 | 0 | 保留 | resolved prod=6 test=0 same=0 |
 | `ming_sim/issues.py:1125` | `apply_petition_event_outcome` | False | 0 | 2 | 6 | 0 | 0 | 保留 | resolved prod=2 test=6 same=0 |
 | `ming_sim/issues.py:1190` | `gather_fiscal_levy_petitions` | False | 0 | 4 | 3 | 0 | 0 | 保留 | resolved prod=4 test=3 same=0 |
@@ -294,12 +305,13 @@ ming_sim/issues.py:2230 sync_opening_legacies
 | 顶层 resolved_prod=0 且 same_module=0 | **0** |
 | 顶层单调用转发壳（forwarder） | **0**（`return any/set(...)` 已排除为 builtin，不记壳） |
 | 仅 uncertain Attribute、无 resolved/same | **0** |
-| 跨模块同名且语义重复且一侧零生产消费者 | **0**（`_event_outcome_label` 同形但双侧有生产消费者） |
+| 跨模块同名且语义重复（C1 平行核） | **本轮已处置 1**：`_event_outcome_label` 删 preflight 副本，保留 issues 真源（有消费者仍 DRY） |
+| 跨模块同名且语义**不**重复 | **2**（`bind_content` / `_ctx` — 保留） |
 
 ## 修后闸
 
 - TARGET_DEFS=98
-- WITH_CROSS_MODULE_SAME_NAME=3
+- WITH_CROSS_MODULE_SAME_NAME=2
 - TOPLEVEL_ZERO_RESOLVED_PROD_AND_SAME=0
 - TOPLEVEL_FORWARDER_FLAG=0
-- 本轮无新增生产删码（证据复核；上轮四处删除仍成立）
+- 本轮生产删码：`settlement/preflight.py` `_event_outcome_label` 副本（C1 DRY）；上轮四处删除仍成立

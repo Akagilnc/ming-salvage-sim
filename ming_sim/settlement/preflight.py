@@ -690,15 +690,6 @@ def _event_result_delta_event_ids(
     return result_ids
 
 
-def _event_outcome_label(raw_outcomes: object, event_id: str) -> str:
-    if not isinstance(raw_outcomes, dict):
-        return ""
-    raw = raw_outcomes.get(event_id)
-    if isinstance(raw, dict):
-        raw = raw.get("结局") or raw.get("outcome") or raw.get("label")
-    return str(raw or "").strip()
-
-
 def _normalize_event_outcome_label(event_id: str, label: str) -> str:
     allowed = _STRATEGIC_EVENT_OUTCOME_LABELS.get(event_id, frozenset())
     compact = re.sub(r"\s+", "", str(label or ""))
@@ -715,6 +706,9 @@ def _strategic_event_outcome_label_or_error(
     extracted: Dict[str, object],
     content: GameContent,
 ) -> tuple[str, str]:
+    # issues 真源；本文件不得再持同形副本（#1835 C1 DRY）。函数内 import 避 issues↔preflight 环。
+    from ming_sim.issues import _event_outcome_label
+
     allowed = _STRATEGIC_EVENT_OUTCOME_LABELS.get(event_id, frozenset())
     if not allowed:
         return "", ""

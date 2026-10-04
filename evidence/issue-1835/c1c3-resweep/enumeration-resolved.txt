@@ -1,7 +1,7 @@
 RESOLVED full-class enum (FunctionDef/AsyncFunctionDef top+nested)
 ROOT=/Users/akagilnc/WorkSpace/Ming_LLM-1835-w5
 TARGETS=['ming_sim/situation_drift.py', 'ming_sim/displaced_population.py', 'ming_sim/issues.py']
-PY_FILES=418 SCANS=417 ALL_DEFS=7760 TARGET_DEFS=98
+PY_FILES=418 SCANS=417 ALL_DEFS=7759 TARGET_DEFS=98
 CONSUMER_RULE: resolved = ImportFrom(target_module.symbol) + Name after that import + Attribute whose base resolves to target_module; same_module = Name Load in defining file; uncertain = Attribute same-name whose base does NOT resolve to target_module (NOT counted as accurate consumer).
 
 DEF ming_sim/situation_drift.py:47 situation_terminal_effects nested=False parent=None forwarder=False cross_defs=0 resolved_prod=2 resolved_test=0 same_module=0 uncertain=0
@@ -246,8 +246,8 @@ DEF ming_sim/issues.py:426 _fiscal_levy_normalized_terminal_reason_or_abort nest
   CROSS_DEF (none)
   SAME ming_sim/issues.py:450 Name Name Load in defining file
   SAME ming_sim/issues.py:1175 Name Name Load in defining file
-  RESOLVED_PROD ming_sim/settlement/preflight.py:1252 import_from from ming_sim.issues import _fiscal_levy_normalized_terminal_reason_or_abort
-  RESOLVED_PROD ming_sim/settlement/preflight.py:1278 Name Name Load after ImportFrom target
+  RESOLVED_PROD ming_sim/settlement/preflight.py:1246 import_from from ming_sim.issues import _fiscal_levy_normalized_terminal_reason_or_abort
+  RESOLVED_PROD ming_sim/settlement/preflight.py:1272 Name Name Load after ImportFrom target
 DEF ming_sim/issues.py:442 _canonicalize_existing_fiscal_levy_terminal_reason nested=False parent=None forwarder=False cross_defs=0 resolved_prod=0 resolved_test=0 same_module=1 uncertain=0
   CROSS_DEF (none)
   SAME ming_sim/issues.py:787 Name Name Load in defining file
@@ -445,23 +445,24 @@ DEF ming_sim/issues.py:1073 _event_window_open nested=False parent=None forwarde
   SAME ming_sim/issues.py:1724 Name Name Load in defining file
   RESOLVED_TEST tests/test_fiscal_levy_effect.py:55 import_from from ming_sim.issues import _event_window_open
   RESOLVED_TEST tests/test_fiscal_levy_effect.py:59 Name Name Load after ImportFrom target
-DEF ming_sim/issues.py:1091 _event_outcome_label nested=False parent=None forwarder=False cross_defs=1 resolved_prod=5 resolved_test=0 same_module=2 uncertain=0
-  CROSS_DEF ming_sim/settlement/preflight.py:693 nested=False parent=None
+DEF ming_sim/issues.py:1091 _event_outcome_label nested=False parent=None forwarder=False cross_defs=0 resolved_prod=6 resolved_test=0 same_module=2 uncertain=0
+  CROSS_DEF (none)
   SAME ming_sim/issues.py:1114 Name Name Load in defining file
   SAME ming_sim/issues.py:1119 Name Name Load in defining file
   RESOLVED_PROD ming_sim/declaration_dispatch.py:506 import_from from ming_sim.issues import _event_outcome_label
-  RESOLVED_PROD ming_sim/settlement/preflight.py:1252 import_from from ming_sim.issues import _event_outcome_label
+  RESOLVED_PROD ming_sim/settlement/preflight.py:710 import_from from ming_sim.issues import _event_outcome_label
+  RESOLVED_PROD ming_sim/settlement/preflight.py:1246 import_from from ming_sim.issues import _event_outcome_label
   RESOLVED_PROD ming_sim/declaration_dispatch.py:569 Name Name Load after ImportFrom target
-  RESOLVED_PROD ming_sim/settlement/preflight.py:721 Name Name Load after ImportFrom target
-  RESOLVED_PROD ming_sim/settlement/preflight.py:1274 Name Name Load after ImportFrom target
+  RESOLVED_PROD ming_sim/settlement/preflight.py:715 Name Name Load after ImportFrom target
+  RESOLVED_PROD ming_sim/settlement/preflight.py:1268 Name Name Load after ImportFrom target
 DEF ming_sim/issues.py:1100 _merge_first_event_outcome nested=False parent=None forwarder=False cross_defs=0 resolved_prod=6 resolved_test=0 same_module=0 uncertain=0
   CROSS_DEF (none)
   RESOLVED_PROD ming_sim/declaration_dispatch.py:371 import_from from ming_sim.issues import _merge_first_event_outcome
   RESOLVED_PROD ming_sim/declaration_dispatch.py:506 import_from from ming_sim.issues import _merge_first_event_outcome
-  RESOLVED_PROD ming_sim/settlement/preflight.py:1252 import_from from ming_sim.issues import _merge_first_event_outcome
+  RESOLVED_PROD ming_sim/settlement/preflight.py:1246 import_from from ming_sim.issues import _merge_first_event_outcome
   RESOLVED_PROD ming_sim/declaration_dispatch.py:385 Name Name Load after ImportFrom target
   RESOLVED_PROD ming_sim/declaration_dispatch.py:537 Name Name Load after ImportFrom target
-  RESOLVED_PROD ming_sim/settlement/preflight.py:1273 Name Name Load after ImportFrom target
+  RESOLVED_PROD ming_sim/settlement/preflight.py:1267 Name Name Load after ImportFrom target
 DEF ming_sim/issues.py:1125 apply_petition_event_outcome nested=False parent=None forwarder=False cross_defs=0 resolved_prod=2 resolved_test=6 same_module=0 uncertain=0
   CROSS_DEF (none)
   RESOLVED_PROD ming_sim/declaration_dispatch.py:506 import_from from ming_sim.issues import apply_petition_event_outcome
@@ -484,9 +485,9 @@ DEF ming_sim/issues.py:1190 gather_fiscal_levy_petitions nested=False parent=Non
 DEF ming_sim/issues.py:1215 petition_outcome_is_admissible nested=False parent=None forwarder=False cross_defs=0 resolved_prod=4 resolved_test=0 same_module=0 uncertain=0
   CROSS_DEF (none)
   RESOLVED_PROD ming_sim/month_translate.py:44 import_from from ming_sim.issues import petition_outcome_is_admissible
-  RESOLVED_PROD ming_sim/settlement/preflight.py:1252 import_from from ming_sim.issues import petition_outcome_is_admissible
+  RESOLVED_PROD ming_sim/settlement/preflight.py:1246 import_from from ming_sim.issues import petition_outcome_is_admissible
   RESOLVED_PROD ming_sim/month_translate.py:51 Name Name Load after ImportFrom target
-  RESOLVED_PROD ming_sim/settlement/preflight.py:1268 Name Name Load after ImportFrom target
+  RESOLVED_PROD ming_sim/settlement/preflight.py:1262 Name Name Load after ImportFrom target
 DEF ming_sim/issues.py:1239 _closed_outcome_labels nested=False parent=None forwarder=False cross_defs=0 resolved_prod=0 resolved_test=0 same_module=1 uncertain=0
   CROSS_DEF (none)
   SAME ming_sim/issues.py:1256 Name Name Load in defining file
@@ -598,11 +599,11 @@ DEF ming_sim/issues.py:1646 gather_candidate_events nested=False parent=None for
   CROSS_DEF (none)
   RESOLVED_PROD ming_sim/materials.py:1344 import_from from ming_sim.issues import gather_candidate_events
   RESOLVED_PROD ming_sim/materials.py:1489 import_from from ming_sim.issues import gather_candidate_events
-  RESOLVED_PROD ming_sim/settlement/preflight.py:1246 import_from from ming_sim.issues import gather_candidate_events
+  RESOLVED_PROD ming_sim/settlement/preflight.py:1240 import_from from ming_sim.issues import gather_candidate_events
   RESOLVED_PROD ming_sim/settlement/run.py:166 import_from from ming_sim.issues import gather_candidate_events
   RESOLVED_PROD ming_sim/materials.py:1349 Name Name Load after ImportFrom target
   RESOLVED_PROD ming_sim/materials.py:1491 Name Name Load after ImportFrom target
-  RESOLVED_PROD ming_sim/settlement/preflight.py:1248 Name Name Load after ImportFrom target
+  RESOLVED_PROD ming_sim/settlement/preflight.py:1242 Name Name Load after ImportFrom target
   RESOLVED_PROD ming_sim/settlement/run.py:181 Name Name Load after ImportFrom target
   RESOLVED_PROD ming_sim/entities/issue/tracker.py:58 Attribute Attribute ming_sim.issues.gather_candidate_events
   RESOLVED_PROD ming_sim/entities/issue/tracker.py:304 Attribute Attribute ming_sim.issues.gather_candidate_events
@@ -750,7 +751,7 @@ DEF ming_sim/issues.py:2230 sync_opening_legacies nested=False parent=None forwa
 
 === SUMMARY ===
 TARGET_DEFS=98
-WITH_CROSS_MODULE_SAME_NAME=3
+WITH_CROSS_MODULE_SAME_NAME=2
 TOPLEVEL_FORWARDER_FLAG=0
 TOPLEVEL_ZERO_RESOLVED_PROD_AND_SAME=0
 TOPLEVEL_ZERO_RESOLVED_PROD_ONLY=43

@@ -139,7 +139,7 @@ TARGET ming_sim/issues.py:1067 _spawned_event_refs nested=False
 TARGET ming_sim/issues.py:1073 _event_window_open nested=False
   CROSS_DEF (none)
 TARGET ming_sim/issues.py:1091 _event_outcome_label nested=False
-  CROSS_DEF ming_sim/settlement/preflight.py:693 nested=False parent=None
+  CROSS_DEF (none)
 TARGET ming_sim/issues.py:1100 _merge_first_event_outcome nested=False
   CROSS_DEF (none)
 TARGET ming_sim/issues.py:1125 apply_petition_event_outcome nested=False
@@ -206,4 +206,3 @@ TARGET ming_sim/issues.py:2230 sync_opening_legacies nested=False
 === INDEX: names with ≥1 CROSS_DEF ===
 bind_content @ ming_sim/issues.py:109 -> ming_sim/agents.py:48; ming_sim/context.py:64
 _ctx @ ming_sim/issues.py:115 -> ming_sim/agents.py:53; ming_sim/context.py:69; tests/test_rescript_heal_isolation_1801.py:23; tests/test_rescript_option_field_heal_1746.py:20
-_event_outcome_label @ ming_sim/issues.py:1091 -> ming_sim/settlement/preflight.py:693
