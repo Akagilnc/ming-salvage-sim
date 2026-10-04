@@ -18,7 +18,8 @@ def test_r3_named_characters_load_legal_guilt_and_historical_offices():
     assert chars["李从心"].seed_guilt == {"crime": "交结近侍又次等", "severity": "中"}
 
     hu = chars["胡廷宴"]
-    assert hu.office == "原三边总督，革职候勘"
+    # 旧档 office 污染迁移已退役：seed 自带实职标题 + dismissed，罪由走 seed_guilt/status_reason。
+    assert hu.office == "三边总督"
     assert hu.office_type == "督抚"
     assert hu.status == "dismissed"
     assert hu.aliases == ["胡廷宴", "胡总督"]
@@ -44,7 +45,7 @@ def test_r4_hu_tingyan_loader_and_db_preserve_non_holder_seed(read_game):
         "SELECT office, office_type, status, seed_guilt FROM characters WHERE name=?", ("胡廷宴",)
     ).fetchone()
     assert {key: row[key] for key in ("office", "office_type", "status")} == {
-        "office": "原三边总督,革职候勘",
+        "office": "三边总督",
         "office_type": "督抚",
         "status": "dismissed",
     }

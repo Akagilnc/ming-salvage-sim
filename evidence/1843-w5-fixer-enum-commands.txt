@@ -1,44 +1,34 @@
-#1843 w5 fixer — 机械枚举命令（F2-R11-1 / F2-R11-2）自查订正版
-工作树: /Users/akagilnc/WorkSpace/Ming_LLM-1843-w5
-分支: ak-roles/issue-1843-w5-r11-f2
-基线: fab71100c
-临时目录: /tmp/1843-f2-r11b（本进程自建；扫描脚本不进生产）
+# F2-R11 self-check corrective enum (temporary /tmp; NOT production)
 
-环境前缀（全部探针/测试）:
+# 1) Extract deleted FunctionDef/ClassDef/Const names from ae4a2a3e6..HEAD diffs
+#    + merge prior evidence/1843-f2-r7-member-table.txt and hist-seeds
+#    → /tmp/1843-f2-r12/deleted-defs-ae4a2a3e6-HEAD.json
+#    → /tmp/1843-f2-r12/retired-cleaned.txt  (generics stripped; settlement/simulator-facing)
+
+# 2) Full-repo closure enum (includes ming_sim/content/tests/web/scripts/web_app.py)
 MING_SIM_AGY_BIN=/usr/bin/false MING_SIM_CODEX_BIN=/usr/bin/false \
 MING_SIM_CLAUDE_BIN=/usr/bin/false MING_SIM_CURSOR_BIN=/usr/bin/false \
 MING_SIM_KIMI_BIN=/usr/bin/false MING_SIM_GROK_BIN=/usr/bin/false \
-MING_SIM_PI_BIN=/usr/bin/false PYTHONDONTWRITEBYTECODE=1
+MING_SIM_PI_BIN=/usr/bin/false \
+/Users/akagilnc/WorkSpace/Ming_LLM/.venv/bin/python /tmp/1843-f2-r12/closure_enum.py \
+  /Users/akagilnc/WorkSpace/Ming_LLM-1843-w5 \
+  /tmp/1843-f2-r12 \
+  pre2 \
+  /tmp/1843-f2-r12/retired-cleaned.txt
 
-# --- 施工前树（fab71100c）---
-rm -rf /tmp/1843-f2-r11b/fab71100c
-mkdir -p /tmp/1843-f2-r11b/fab71100c
-git archive fab71100c | tar -x -C /tmp/1843-f2-r11b/fab71100c
-
-# 完整谓词脚本真源：/tmp/1843-f2-r11b/enum_full.py
-# （Class A：migrate/backfill/purge 全定义 + content 旧资源 + 全仓零外部引用测试 helper
-#  + 旧档/迁移专属测名 + 历史退役种子追迹 + orphan ref；
-#  Class B：全 tests+web 的 getsource/字面 match=/日志前缀 startswith/#ticket 弱化/
-#  hasattr 缺席/纯公式/重复常量子集/中文字面 in/私有助手-only 等，非白名单前缀。）
-# 消费位点 TSV 列 prod_sites/test_sites 完整输出，无 [:8] 截断。
-
-/Users/akagilnc/WorkSpace/Ming_LLM/.venv/bin/python /tmp/1843-f2-r11b/enum_full.py \
-  /tmp/1843-f2-r11b/fab71100c /tmp/1843-f2-r11b pre
-
-/Users/akagilnc/WorkSpace/Ming_LLM/.venv/bin/python /tmp/1843-f2-r11b/enum_full.py \
-  /Users/akagilnc/WorkSpace/Ming_LLM-1843-w5 /tmp/1843-f2-r11b rescan2
-
-# 落盘（证据）:
-#   evidence/1843-w5-fixer-class-a-pre.tsv
-#   evidence/1843-w5-fixer-class-b-pre.tsv
-#   evidence/1843-w5-fixer-class-a-members.tsv   # 施工前→处置→状态
-#   evidence/1843-w5-fixer-class-b-members.tsv   # 施工前→处置→状态
-#   evidence/1843-w5-fixer-class-a-rescan.tsv    # 复扫逐名+保留理由
-#   evidence/1843-w5-fixer-class-b-rescan.tsv    # 复扫逐名成员表（非空表头）
-
-# 订正说明：上轮 /tmp/1843-f2-r11/enum_both.py 实际谓词过窄
-#   A 仅 migrate_legacy|_migrate_reaction + 固定夹具名零引用
-#   B 仅特定 startswith/hasattr/army_pay
-# 与回执「覆盖全文」不符；本局以 enum_full.py 为准重枚举，不以声明代替谓词。
-
-# 前轮表 evidence/1843-f2-r10c-f2-all-candidates.tsv 仅调查起点，非权威结论。
+# Outputs (pre2):
+#   pre2-enum-summary.json
+#   pre2-all-tests-inventory.tsv   # ALL test funcs BEFORE classification
+#   pre2-all-defs-inventory.tsv
+#   pre2-all-resources-inventory.tsv
+#   pre2-class-a-candidates.tsv
+#   pre2-class-b-candidates.tsv
+#
+# Method notes (chairman-verified gaps vs prior enum_full.py):
+# - Uses git deletion diffs + prior history tables as chase starts (not name-only migrate/backfill)
+# - Downward closure from retired bodies (implemented, not comment-only)
+# - Scans root web_app.py and scripts/
+# - Resources by path/stem loads, not filename keywords alone
+# - Class B: full test inventory first; flags are signals not auto-delete
+# - ENTRY_RE / game / raises / 6-char Chinese are NOT class boundaries
+# - Zero-ref underscore helpers default OOC_PROBE unless retired-name/closure linked

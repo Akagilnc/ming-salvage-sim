@@ -1,0 +1,100 @@
+........................................................................ [  6%]
+........................................................................ [ 13%]
+........................................................................ [ 19%]
+........................................................................ [ 26%]
+........................................................................ [ 32%]
+........................................................................ [ 39%]
+.................................................s.........s............ [ 45%]
+........................................................................ [ 52%]
+........................................................................ [ 58%]
+..........................................................FF............ [ 65%]
+........................................................................ [ 71%]
+........................................................................ [ 78%]
+........................................................................ [ 84%]
+........................................................................ [ 91%]
+........................................................................ [ 97%]
+........................                                                 [100%]
+=================================== FAILURES ===================================
+_____ test_rank_rule_offset_reanchor_preserves_existing_save_leverage_once _____
+
+game = (<ming_sim.db.GameDB object at 0x10e8543c0>, GameState(year=1627, period=10, turn=1, turn_phase='summoning', ended=Fal...: '妃嫔供奉'}, {'key': '妃嫔_rate', 'value': 100, 'kind': 'rate', 'budget_role': 'fixed', 'note': '妃嫔供奉率%', 'order': 9999}]))
+
+    def test_rank_rule_offset_reanchor_preserves_existing_save_leverage_once(game):
+        db, _state, content = game
+        overflow_faction = "东林"
+        ordinary_faction = "皇党"
+        ordinary_row = db.conn.execute(
+            "SELECT leverage, leverage_offset FROM factions WHERE name=?",
+            (ordinary_faction,),
+        ).fetchone()
+        ordinary_leverage = int(ordinary_row["leverage"])
+        old_offset = float(ordinary_row["leverage_offset"] or 0)
+>       legacy_old_sum = db._rank_rules_562_legacy_weight_sum(ordinary_faction)
+                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: 'GameDB' object has no attribute '_rank_rules_562_legacy_weight_sum'
+
+tests/test_office_rank_562.py:286: AttributeError
+______ test_seed_archives_clean_historical_office_for_dismissed_ministers ______
+
+game = (<ming_sim.db.GameDB object at 0x10e8541b0>, GameState(year=1627, period=10, turn=1, turn_phase='summoning', ended=Fal...: '妃嫔供奉'}, {'key': '妃嫔_rate', 'value': 100, 'kind': 'rate', 'budget_role': 'fixed', 'note': '妃嫔供奉率%', 'order': 9999}]))
+
+    def test_seed_archives_clean_historical_office_for_dismissed_ministers(game):
+        db, _state, _content = game
+        yuan = db.conn.execute(
+            "SELECT office_title FROM character_offices WHERE character_name=?",
+            ("袁可立",),
+        ).fetchone()
+        assert yuan is not None
+        assert "巡抚" in yuan["office_title"]
+        assert "罢居" not in yuan["office_title"]
+        assert not yuan["office_title"].startswith("前")
+
+        _dossier_id, payload = _appointment_dossier(db, _state, "袁可立", "陕西巡抚")
+        assert payload["break_rank"]["basis"] == "historical_office"
+        assert payload["break_rank"]["is_break_rank"] is False
+        assert payload["break_rank"]["current_rank_band"] == 3
+
+        # 革职候勘 / 原任 污染也须在 seed 备档洗净，供起复读最近实职带。
+        hu = db.conn.execute(
+            "SELECT office_title FROM character_offices WHERE character_name=?",
+            ("胡廷宴",),
+        ).fetchone()
+        assert hu is not None
+>       assert hu["office_title"] == "三边总督"
+E       AssertionError: assert '原三边总督,革职候勘' == '三边总督'
+E
+E         - 三边总督
+E         + 原三边总督,革职候勘
+
+tests/test_office_rank_562.py:381: AssertionError
+=============================== warnings summary ===============================
+../Ming_LLM/.venv/lib/python3.13/site-packages/fastapi/testclient.py:1
+  /Users/akagilnc/WorkSpace/Ming_LLM/.venv/lib/python3.13/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+    from starlette.testclient import TestClient as TestClient  # noqa
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================= slowest 15 durations =============================
+0.94s call     tests/test_month_chain_1843.py::test_world_segment_reads_material_directory
+0.70s call     tests/test_new_game_write_path_1749.py::test_new_game_write_path_direct_and_via_exit
+0.58s call     tests/test_month_chain_1843.py::test_unforecast_edict_is_caught_up_once_and_crash_does_not_double_charge
+0.53s setup    tests/test_fiscal_substrate_bridge.py::test_fixed_flows_substrate_hub_fractional_due_caps_integer_debit
+0.51s call     tests/test_month_chain_1843.py::test_player_month_entry_settles_prepushed_edicts_then_world_once
+0.47s call     tests/test_month_chain_1847.py::test_build_secret_orders_supply_feed_uses_fact_materials_not_assembled_effects
+0.45s call     tests/test_month_chain_1847.py::test_decree_forecast_keeps_every_question_and_translates_prefix_once
+0.42s call     tests/test_month_chain_1847.py::test_decree_continuation_keeps_forecast_and_lands_affair_effect
+0.41s setup    tests/test_fiscal_substrate_bridge.py::test_region_army_morale_haircut_denominator_includes_standalone_funnel
+0.36s setup    tests/test_fiscal_substrate_bridge.py::test_new_ming_army_requires_valid_pay_source_under_cutover
+0.36s setup    tests/test_fiscal_substrate_bridge.py::test_south_southwest_seeds_have_valid_historical_settle_substrate[yunnan]
+0.35s setup    tests/test_fiscal_substrate_bridge.py::test_region_army_pay_tick_treats_missing_breakdown_as_no_delta
+0.35s setup    tests/test_fiscal_substrate_bridge.py::test_manpower_zero_then_arrears_delta_does_not_resurrect_writeoff_debt
+0.28s setup    tests/test_fiscal_substrate_bridge.py::test_all_15_regular_provinces_first_tick_golden[sichuan]
+0.28s call     tests/test_new_game_write_path_1749.py::test_new_game_construct_failure_keeps_old_writable
+=========================== short test summary info ============================
+FAILED tests/test_office_rank_562.py::test_rank_rule_offset_reanchor_preserves_existing_save_leverage_once
+FAILED tests/test_office_rank_562.py::test_seed_archives_clean_historical_office_for_dismissed_ministers
+2 failed, 1100 passed, 2 skipped, 1 warning in 43.28s
+real 43.85
+user 22.44
+sys 13.71
+................                                                         [100%]
+16 passed in 2.24s

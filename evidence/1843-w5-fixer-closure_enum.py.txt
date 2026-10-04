@@ -1,0 +1,803 @@
+#!/usr/bin/env python3
+"""F2-R11 corrective closure enum — temporary scan aid (NOT production).
+
+Method (chairman-verified gaps in prior enum_full.py):
+  A) Start from git-deleted settlement/simulator consumer names (real deletion
+     diffs + reusable prior history tables), chase every still-present
+     def/import/call/attr/resource-load reference, expand closure downward.
+  B) Full-repo current defs/resources/loads (ming_sim/content/tests/web/
+     web_app.py/scripts/) reverse-check; out-of-class items get consumer
+     reasons, not name-threshold filters.
+  C) Class B: FIRST mechanically inventory ALL test functions/blocks and their
+     asserts/imports; THEN classify contract vs non-contract on that full list.
+     Do NOT prefilter by ENTRY_RE/game/raises/literal-length.
+
+No fixed seed-only scope, no ref-count gate as class boundary, no production
+scan mechanism written into the repo.
+"""
+from __future__ import annotations
+
+import ast
+import json
+import re
+import sys
+from collections import defaultdict
+from hashlib import sha1
+from pathlib import Path
+
+ROOT = Path(sys.argv[1]).resolve()
+OUT = Path(sys.argv[2]).resolve()
+OUT.mkdir(parents=True, exist_ok=True)
+LABEL = sys.argv[3] if len(sys.argv) > 3 else "scan"
+RETIRED_NAMES_PATH = Path(sys.argv[4]).resolve() if len(sys.argv) > 4 else OUT / "retired-names-merged.txt"
+
+SKIP_PARTS = {"__pycache__", "node_modules", "dist", ".venv", ".git", "evidence"}
+CODE_SUFFIX = {".py", ".ts", ".tsx", ".js", ".jsx", ".md", ".json", ".txt"}
+PY_SUFFIX = {".py"}
+
+# Live shared seams named by末判 — never auto-DELETE solely by name; still listed
+LIVE_SEAM_NAMES = {
+    "normalize_appointment_tenure",
+    "canonical_fields_for_delivery",
+    "normalize_rescript_layer_a_option",
+    "save_resolve_context",
+    "scene_agent_prompt",
+    "create_decree_dossier",
+    "decree_dossier_decisions",
+    "follow_draft",
+    "list_rescript_drafts",
+    "save_rescript_drafts",
+    "decision_has_rescript_capability",
+    "run_player_month_chain",
+    "settle_province_tick",
+    "seed_opening_gazette",
+    "canonicalize_location_region_id",
+}
+
+
+def iter_files(bases, suffixes):
+    for base in bases:
+        if base.is_file():
+            if base.suffix in suffixes:
+                yield base
+            continue
+        if not base.exists():
+            continue
+        for p in base.rglob("*"):
+            if not p.is_file():
+                continue
+            if p.suffix not in suffixes:
+                continue
+            if any(x in p.parts for x in SKIP_PARTS):
+                continue
+            yield p
+
+
+def rel(p: Path) -> str:
+    try:
+        return str(p.relative_to(ROOT))
+    except ValueError:
+        return str(p)
+
+
+BASES = [
+    ROOT / "ming_sim",
+    ROOT / "content",
+    ROOT / "tests",
+    ROOT / "web",
+    ROOT / "scripts",
+    ROOT / "web_app.py",
+]
+BASES = [b for b in BASES if b.exists()]
+
+
+def parse_py(path: Path):
+    try:
+        return ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    except (SyntaxError, UnicodeDecodeError):
+        return None
+
+
+# ---------- full current inventory ----------
+defs = {}  # qual -> meta
+loads = defaultdict(list)  # bare name -> sites
+attr_loads = defaultdict(list)
+imports = defaultdict(list)  # imported name -> sites
+string_refs = defaultdict(list)  # name appears as string literal (resource/field)
+open_reads = []  # open/read/Path resource loads
+content_field_assigns = []  # GameContent / load field bindings
+
+for path in iter_files(BASES, PY_SUFFIX):
+    tree = parse_py(path)
+    if tree is None:
+        continue
+    r = rel(path)
+    in_test = r.startswith("tests/")
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            q = f"{r}::{node.name}"
+            defs[q] = {
+                "path": r,
+                "name": node.name,
+                "lineno": node.lineno,
+                "end": getattr(node, "end_lineno", node.lineno),
+                "in_test": in_test,
+                "kind": type(node).__name__,
+            }
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
+            loads[node.id].append({"path": r, "lineno": node.lineno, "via": "NameLoad"})
+        if isinstance(node, ast.Attribute) and isinstance(node.ctx, ast.Load):
+            attr_loads[node.attr].append({"path": r, "lineno": node.lineno, "via": "AttrLoad"})
+        if isinstance(node, ast.ImportFrom):
+            for alias in node.names:
+                nm = alias.asname or alias.name
+                imports[alias.name].append(
+                    {"path": r, "lineno": node.lineno, "via": f"ImportFrom:{node.module}:{nm}"}
+                )
+                if alias.asname:
+                    imports[alias.asname].append(
+                        {"path": r, "lineno": node.lineno, "via": f"ImportAs:{alias.name}"}
+                    )
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                nm = alias.asname or alias.name.split(".")[-1]
+                imports[nm].append({"path": r, "lineno": node.lineno, "via": f"Import:{alias.name}"})
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            # resource / prompt / field name string refs (bounded)
+            v = node.value
+            if 3 <= len(v) <= 80 and re.match(r"^[A-Za-z_][A-Za-z0-9_./-]*$", v):
+                bare = Path(v).stem if "/" in v or v.endswith((".md", ".json", ".txt")) else v
+                string_refs[bare].append({"path": r, "lineno": getattr(node, "lineno", 0), "via": f"Str:{v}"})
+                string_refs[v].append({"path": r, "lineno": getattr(node, "lineno", 0), "via": f"StrFull:{v}"})
+        # open / Path.read_text / load resource patterns
+        if isinstance(node, ast.Call):
+            func = node.func
+            fname = None
+            if isinstance(func, ast.Name):
+                fname = func.id
+            elif isinstance(func, ast.Attribute):
+                fname = func.attr
+            if fname in {"open", "read_text", "read_bytes", "load", "joinpath", "Path"}:
+                open_reads.append({"path": r, "lineno": node.lineno, "func": fname})
+
+# Non-py content inventory (all content files + prompt loads by path, not name threshold alone)
+resources = []
+for path in iter_files([ROOT / "content"], {".md", ".json", ".txt"}):
+    r = rel(path)
+    resources.append({"path": r, "name": path.name, "stem": path.stem})
+
+# Also scan string loads of content paths in all py
+content_path_loads = defaultdict(list)
+content_path_re = re.compile(r"content/[A-Za-z0-9_./-]+")
+for path in iter_files(BASES, PY_SUFFIX):
+    r = rel(path)
+    try:
+        text = path.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        continue
+    for i, line in enumerate(text.splitlines(), 1):
+        for m in content_path_re.finditer(line):
+            content_path_loads[m.group(0)].append({"path": r, "lineno": i, "via": "path_literal"})
+
+
+def sites_for(name: str):
+    out = []
+    out.extend(loads.get(name, []))
+    out.extend(attr_loads.get(name, []))
+    out.extend(imports.get(name, []))
+    out.extend(string_refs.get(name, []))
+    return out
+
+
+def external_sites(name: str, def_path: str, lo: int, hi: int):
+    out = []
+    for s in sites_for(name):
+        if s["path"] == def_path and lo <= s.get("lineno", 0) <= hi:
+            continue
+        if s["path"] == def_path and abs(s.get("lineno", 0) - lo) <= 2:
+            continue
+        out.append(s)
+    return out
+
+
+def fmt_sites(sites, limit=None):
+    # NEVER truncate for TSV truth — limit only for summary json
+    items = [f"{s['path']}:{s.get('lineno', 0)}:{s.get('via', '')}" for s in sites]
+    if limit is not None:
+        items = items[:limit]
+    return ";".join(items)
+
+
+def prod_sites(sites):
+    return [s for s in sites if not s["path"].startswith("tests/")]
+
+
+def test_sites(sites):
+    return [s for s in sites if s["path"].startswith("tests/")]
+
+
+# ---------- retired name set ----------
+retired_names = {
+    n.strip()
+    for n in RETIRED_NAMES_PATH.read_text(encoding="utf-8").splitlines()
+    if n.strip() and not n.strip().startswith("#")
+}
+
+# ---------- Class A: chase deleted names still present ----------
+class_a = []
+seen_a = set()
+
+
+def add_a(member, kind, disposition, reason, pc=None, tc=None, extra=""):
+    if member in seen_a:
+        return
+    seen_a.add(member)
+    class_a.append(
+        {
+            "class": "F2-R11-1",
+            "member": member,
+            "kind": kind,
+            "disposition": disposition,
+            "reason": reason,
+            "prod_n": len(pc or []),
+            "test_n": len(tc or []),
+            "prod_sites": fmt_sites(pc or []),
+            "test_sites": fmt_sites(tc or []),
+            "extra": extra,
+        }
+    )
+
+
+# Map bare name -> def quals currently present
+name_to_defs = defaultdict(list)
+for q, meta in defs.items():
+    name_to_defs[meta["name"]].append(q)
+
+# A-hist: each retired name still defined OR still referenced
+closure_queue = []
+for name in sorted(retired_names):
+    quals = name_to_defs.get(name, [])
+    sites = sites_for(name)
+    # content resource by stem/name
+    res_hits = [r for r in resources if r["stem"] == name or r["name"] == name or name in r["path"]]
+    path_hits = content_path_loads.get(f"content/{name}", []) + content_path_loads.get(
+        f"content/prompts/{name}.md", []
+    )
+    if not quals and not sites and not res_hits and not path_hits:
+        continue
+    if quals:
+        for q in quals:
+            meta = defs[q]
+            ext = external_sites(name, meta["path"], meta["lineno"], meta["end"])
+            add_a(
+                q,
+                "hist_deleted_name_still_defined",
+                "CANDIDATE",
+                "历史删除 diff/表中的退役名仍有现行定义；须按现役入口反核",
+                prod_sites(ext),
+                test_sites(ext),
+                extra=f"retired_name={name}",
+            )
+            closure_queue.append(name)
+    else:
+        if sites:
+            add_a(
+                f"ORPHAN_REF::{name}",
+                "hist_deleted_name_orphan_ref",
+                "CANDIDATE",
+                "历史退役名无定义但仍有 Load/Import/字符串引用",
+                prod_sites(sites),
+                test_sites(sites),
+            )
+            closure_queue.append(name)
+        for r in res_hits:
+            add_a(
+                r["path"],
+                "hist_deleted_name_resource",
+                "CANDIDATE",
+                "历史退役名对应 content 资源仍在；须核装载链",
+                prod_sites(path_hits),
+                test_sites(path_hits),
+                extra=f"retired_name={name}",
+            )
+            closure_queue.append(name)
+
+# Downward closure: for each still-defined retired name body, collect names it calls;
+# if those callees are only referenced from retired/candidate bodies → add.
+# Also: for each defined candidate, chase its external callers if those are test-only helpers.
+
+
+def body_called_names(path: str, lo: int, hi: int):
+    p = ROOT / path
+    tree = parse_py(p)
+    if tree is None:
+        return set()
+    out = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            continue
+        if not (node.lineno == lo or (lo <= node.lineno <= hi)):
+            # match by span
+            end = getattr(node, "end_lineno", node.lineno)
+            if not (node.lineno == lo and end == hi):
+                if not (node.lineno >= lo and end <= hi):
+                    continue
+        for child in ast.walk(node):
+            if isinstance(child, ast.Name) and isinstance(child.ctx, (ast.Load,)):
+                out.add(child.id)
+            if isinstance(child, ast.Attribute) and isinstance(child.ctx, ast.Load):
+                out.add(child.attr)
+            if isinstance(child, ast.Constant) and isinstance(child.value, str):
+                v = child.value
+                if re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", v):
+                    out.add(v)
+                if "/" in v or v.endswith((".md", ".json")):
+                    out.add(Path(v).stem)
+        break
+    return out
+
+
+# Expand closure up to fixed point (cap iterations)
+changed = True
+iters = 0
+while changed and iters < 8:
+    changed = False
+    iters += 1
+    # snapshot candidates that are defined
+    defined_cands = [
+        m for m in class_a if m["kind"] == "hist_deleted_name_still_defined" and "::" in m["member"]
+    ]
+    for m in list(defined_cands):
+        q = m["member"]
+        meta = defs.get(q)
+        if not meta:
+            continue
+        called = body_called_names(meta["path"], meta["lineno"], meta["end"])
+        for cname in called:
+            if cname in LIVE_SEAM_NAMES:
+                continue
+            if cname in {"self", "cls", "super", "print", "len", "str", "int", "dict", "list", "set"}:
+                continue
+            # if callee still defined and all its external prod refs are inside other candidates / zero
+            for cq in name_to_defs.get(cname, []):
+                if cq in seen_a:
+                    continue
+                cmeta = defs[cq]
+                ext = external_sites(cname, cmeta["path"], cmeta["lineno"], cmeta["end"])
+                pc, tc = prod_sites(ext), test_sites(ext)
+                # closure add if no prod external OR only test / only from known retired names
+                only_test = (not pc) and bool(tc or True)
+                # Add as closure candidate when: zero prod external, OR name looks support-private
+                if not pc:
+                    add_a(
+                        cq,
+                        "closure_from_retired_body",
+                        "CANDIDATE",
+                        f"被仍存退役定义 {q} 体引用且无生产外部消费者；下行闭包",
+                        pc,
+                        tc,
+                        extra=f"caller={q}",
+                    )
+                    changed = True
+            # resource stems
+            for r in resources:
+                if r["stem"] == cname or r["name"] == cname:
+                    if r["path"] not in seen_a:
+                        add_a(
+                            r["path"],
+                            "closure_resource_from_retired_body",
+                            "CANDIDATE",
+                            f"被退役体引用的 content 资源；须核装载",
+                            prod_sites(content_path_loads.get(r["path"], [])),
+                            test_sites(content_path_loads.get(r["path"], [])),
+                            extra=f"caller={q}",
+                        )
+                        changed = True
+
+# A-reverse: ALL production defs with migrate/backfill/purge in name OR docstring/body
+# mentioning old-save — listed for reverse check (not auto-delete by name)
+for q, meta in sorted(defs.items()):
+    if meta["in_test"]:
+        continue
+    n = meta["name"]
+    if re.search(r"migrate|backfill|purge", n, re.I):
+        if q in seen_a:
+            continue
+        ext = external_sites(n, meta["path"], meta["lineno"], meta["end"])
+        add_a(
+            q,
+            "prod_name_migrate_backfill_purge_reverse",
+            "CANDIDATE",
+            "现役生产侧名含 migrate/backfill/purge；反核是否旧档专用（名字本身不是删除充分条件）",
+            prod_sites(ext),
+            test_sites(ext),
+        )
+
+# A-reverse resources: every content resource — record load sites; mark those with ZERO loaders
+for r in resources:
+    loaders = content_path_loads.get(r["path"], [])
+    # also stem-based string refs
+    loaders = loaders + string_refs.get(r["stem"], []) + string_refs.get(r["name"], [])
+    # dedupe
+    uniq = {(s["path"], s.get("lineno", 0)): s for s in loaders}
+    loaders = list(uniq.values())
+    if not loaders:
+        add_a(
+            r["path"],
+            "content_resource_zero_path_load",
+            "CANDIDATE",
+            "content 资源在全仓（含 web_app/scripts）无 path/stem 装载字面；须核动态装载或类外说明",
+            [],
+            [],
+        )
+
+# Dead test helpers: underscore defs with zero external refs — listed but NOT auto class-A
+# unless they appear in closure from retired names (already added) OR name in retired set
+for q, meta in sorted(defs.items()):
+    if not meta["in_test"]:
+        continue
+    n = meta["name"]
+    if not n.startswith("_") or (n.startswith("__") and n.endswith("__")):
+        continue
+    if q in seen_a:
+        continue
+    ext = external_sites(n, meta["path"], meta["lineno"], meta["end"])
+    if ext:
+        continue
+    # only add if name was in retired set OR file historically touched by F2 deletions for that helper
+    if n in retired_names:
+        add_a(
+            q,
+            "dead_helper_retired_name",
+            "CANDIDATE",
+            "历史退役名对应测试 helper，现行零外部引用",
+            [],
+            [],
+        )
+    else:
+        add_a(
+            q,
+            "dead_test_helper_zero_ext_ooc_probe",
+            "OOC_PROBE",
+            "零外部引用下划线 helper；默认类外（测试夹具壳），除非消费链证明属退役闭包——不得仅因零引用删",
+            [],
+            [],
+        )
+
+# ---------- Class B: FULL test inventory first ----------
+all_tests = []  # complete inventory
+for path in iter_files([ROOT / "tests"], PY_SUFFIX):
+    tree = parse_py(path)
+    if tree is None:
+        continue
+    r = rel(path)
+    lines = path.read_text(encoding="utf-8").splitlines()
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        # include test_* and pytest class methods; also fixture helpers later classified
+        lo, hi = node.lineno, getattr(node, "end_lineno", node.lineno)
+        body = "\n".join(lines[lo - 1 : hi])
+        # collect asserts
+        asserts = []
+        for child in ast.walk(node):
+            if isinstance(child, ast.Assert):
+                asserts.append(child.lineno)
+            if isinstance(child, ast.Call):
+                f = child.func
+                if isinstance(f, ast.Attribute) and f.attr.startswith("assert"):
+                    asserts.append(child.lineno)
+                if isinstance(f, ast.Name) and f.id in {"raises", "pytest"}:
+                    asserts.append(getattr(child, "lineno", lo))
+        ming_imports = re.findall(r"from\s+ming_sim[\w.]*\s+import\s+([^\n]+)", body)
+        call_names = sorted(set(re.findall(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\(", body)))
+        all_tests.append(
+            {
+                "member": f"{r}::{node.name}",
+                "path": r,
+                "name": node.name,
+                "lineno": lo,
+                "end": hi,
+                "is_test": node.name.startswith("test_"),
+                "assert_n": len(asserts),
+                "assert_lines": ",".join(str(x) for x in asserts[:40]),
+                "ming_import_lines": " | ".join(ming_imports)[:300],
+                "call_sample": ",".join(call_names[:40]),
+                "args": ",".join(a.arg for a in node.args.args),
+                "body_sha": sha1(re.sub(r"^def test_\w+", "def test_X", body).encode()).hexdigest()[
+                    :16
+                ],
+                "body_len": len(body),
+            }
+        )
+
+# Write FULL inventory before classification
+inv_cols = [
+    "member",
+    "path",
+    "name",
+    "lineno",
+    "end",
+    "is_test",
+    "assert_n",
+    "assert_lines",
+    "ming_import_lines",
+    "call_sample",
+    "args",
+    "body_sha",
+    "body_len",
+]
+
+
+def write_tsv(path, rows, cols):
+    with path.open("w", encoding="utf-8") as f:
+        f.write("\t".join(cols) + "\n")
+        for row in rows:
+            f.write("\t".join(str(row.get(c, "")) for c in cols) + "\n")
+
+
+write_tsv(OUT / f"{LABEL}-all-tests-inventory.tsv", all_tests, inv_cols)
+
+# Classify B on FULL inventory of test_* only (helpers still in inventory)
+class_b = []
+seen_b = set()
+hash_to = defaultdict(list)
+
+
+def add_b(member, kind, disposition, reason, lineno=0, flags=""):
+    key = f"{member}|{kind}|{lineno}"
+    if key in seen_b:
+        return
+    seen_b.add(key)
+    class_b.append(
+        {
+            "class": "F2-R11-2",
+            "member": member,
+            "kind": kind,
+            "lineno": lineno,
+            "disposition": disposition,
+            "reason": reason,
+            "flags": flags,
+        }
+    )
+
+
+for t in all_tests:
+    if not t["is_test"]:
+        hash_to[t["body_sha"]].append(f"{t['member']}:{t['lineno']}")
+        continue
+    hash_to[t["body_sha"]].append(f"{t['member']}:{t['lineno']}")
+    path = ROOT / t["path"]
+    lines = path.read_text(encoding="utf-8").splitlines()
+    body = "\n".join(lines[t["lineno"] - 1 : t["end"]])
+    member = t["member"]
+    flags = []
+    reasons = []
+
+    # --- shape signals (signals only; NOT automatic DELETE) ---
+    if re.search(r"inspect\.getsource|\.getsource\s*\(", body):
+        flags.append("source_lock_getsource")
+        reasons.append("读实现源码作断言预言")
+    if re.search(
+        r"(Path\([^\)]*ming_sim[^\)]*\)|open\([^\)]*ming_sim/[^\)]*\.py).{0,80}read_text|"
+        r"read_text\([^\)]*\).{0,40}ming_sim/",
+        body,
+        re.S,
+    ):
+        flags.append("source_lock_read_impl")
+        reasons.append("读 ming_sim 实现文件作预言")
+    if re.search(r"pytest\.raises\([^)]*match\s*=\s*['\"][^'\"]+['\"]", body):
+        flags.append("exception_match_literal")
+        reasons.append("raises match=字面措辞")
+    elif re.search(r"pytest\.raises\([^)]*match\s*=", body):
+        flags.append("exception_match_param")
+        reasons.append("raises match=参数（可能同值传递）")
+    if re.search(r"\.startswith\(\s*['\"]\[", body) or re.search(
+        r"\.startswith\(\s*['\"]#\d+", body
+    ):
+        flags.append("log_or_issue_prefix_wording")
+        reasons.append("日志/issue 前缀 startswith")
+    if re.search(r"assert\s+.+\.startswith\s*\(", body):
+        flags.append("assert_startswith")
+        reasons.append("assert startswith（结构性 vs 措辞待分）")
+    if re.search(r"assert\s+not\s+hasattr\s*\(", body):
+        flags.append("internal_attr_absence")
+        reasons.append("assert not hasattr 内部缺席")
+    if re.search(r"hasattr\s*\(\s*\w+\s*,\s*['\"]_[A-Za-z]", body):
+        flags.append("hasattr_private_internal")
+        reasons.append("hasattr 私有内部")
+    if re.search(r"(notes|default|说明).{0,40}startswith\(|startswith\(\s*['\"]#\d+", body):
+        flags.append("weakened_same_value_prefix")
+        reasons.append("同值传递弱化为固定前缀嫌疑")
+    # Chinese literal — ANY length in assert in/== ; signal only
+    if re.search(r"assert\s+['\"][\u4e00-\u9fff]+['\"]\s+in\s+", body) or re.search(
+        r"assert\s+\w+\s*==\s*['\"][\u4e00-\u9fff]{2,}['\"]", body
+    ):
+        flags.append("chinese_literal_assert")
+        reasons.append("中文字面断言（结构化字段 vs 呈现盯文待分）")
+    # tlog / caplog / logging wording locks
+    if re.search(r"(caplog|tlog|logging)\.[^\n]{0,60}(in |==|startswith|match)", body) or re.search(
+        r"assert\s+['\"]\[[^\]]+\]", body
+    ):
+        flags.append("log_wording_lock")
+        reasons.append("日志/caplog/tlog 措辞锁嫌疑")
+    # pure helper: only private calls + asserts, no db/session — SIGNAL, needs human/contract disposition
+    priv_calls = re.findall(r"\b_[a-zA-Z][a-zA-Z0-9_]*\s*\(", body)
+    has_public_entry = bool(
+        re.search(
+            r"\b(GameDB|GameSession|run_player_month_chain|apply_score_extraction|"
+            r"apply_fixed_period_flows|create_decree_dossier|follow_draft|"
+            r"assemble_structured_decree|TestClient|client\.|web_game)\b",
+            body,
+        )
+    )
+    if (
+        priv_calls
+        and not has_public_entry
+        and re.search(r"assert\s+", body)
+        and re.search(r"from ming_sim\.[^\n]+ import[^\n]*_", body)
+    ):
+        flags.append("helper_internal_signal")
+        reasons.append("私有 helper 直测信号（不得因无 game/无 ENTRY_RE 自动当内部案）")
+    if "game" in t["args"].split(",") and "_ = game" in body:
+        flags.append("unused_game_fixture")
+        reasons.append("声明 game 夹具但 _ = game 未用")
+    if re.search(r"RESCRIPT_EMITTED_DOSSIER_ACTION_TYPES\s*<=|DOSSIER_ACTION_TYPES", body) and (
+        "_ = game" in body or "game" not in t["args"].split(",")
+    ):
+        flags.append("duplicate_constant_subset")
+        reasons.append("常量子集重复约束嫌疑")
+
+    # Always record test in B inventory classification table; flags empty → OUT_OF_SIGNAL
+    if flags:
+        add_b(
+            member,
+            ",".join(flags),
+            "CANDIDATE",
+            "完整清单上的契约分类候选：" + ";".join(reasons),
+            t["lineno"],
+            ";".join(flags),
+        )
+    else:
+        add_b(
+            member,
+            "no_wording_internal_signal",
+            "OUT_OF_SIGNAL",
+            "完整清单收录；本轮信号谓词未命中——不等于已证明契约正确，只表示非本信号集",
+            t["lineno"],
+            "",
+        )
+
+# exact duplicate bodies among tests
+for h, members in hash_to.items():
+    test_members = [m for m in members if "::test_" in m or m.split("::")[-1].startswith("test_")]
+    # normalize member list
+    uniq = []
+    for m in members:
+        base = m.rsplit(":", 1)[0]
+        if base.split("::")[-1].startswith("test_"):
+            uniq.append(m)
+    if len(uniq) >= 2:
+        for m in uniq:
+            mem, ln = m.rsplit(":", 1)
+            add_b(
+                mem,
+                "exact_duplicate_body",
+                "CANDIDATE",
+                f"完整清单精确重复 body hash={h}; peers={','.join(uniq)}",
+                int(ln),
+                h,
+            )
+
+# web frontend wording probes
+for path in iter_files([ROOT / "web"], {".ts", ".tsx", ".js", ".jsx"}):
+    r = rel(path)
+    try:
+        text = path.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        continue
+    for i, line in enumerate(text.splitlines(), 1):
+        if re.search(r"toMatch\(\s*['\"]|getsource|assertNot.*hasattr", line):
+            add_b(
+                f"{r}:{i}",
+                "web_wording_or_internal",
+                "CANDIDATE",
+                "web 源码/措辞/内部锁候选",
+                i,
+                line.strip()[:160],
+            )
+
+# ---------- write outputs ----------
+cols_a = [
+    "class",
+    "member",
+    "kind",
+    "disposition",
+    "reason",
+    "prod_n",
+    "test_n",
+    "prod_sites",
+    "test_sites",
+    "extra",
+]
+cols_b = ["class", "member", "kind", "lineno", "disposition", "reason", "flags"]
+write_tsv(OUT / f"{LABEL}-class-a-candidates.tsv", class_a, cols_a)
+write_tsv(OUT / f"{LABEL}-class-b-candidates.tsv", class_b, cols_b)
+
+# Also dump full defs inventory for reverse check evidence
+defs_rows = [
+    {
+        "qual": q,
+        "path": m["path"],
+        "name": m["name"],
+        "lineno": m["lineno"],
+        "kind": m["kind"],
+        "in_test": m["in_test"],
+        "ext_prod_n": len(prod_sites(external_sites(m["name"], m["path"], m["lineno"], m["end"]))),
+        "ext_test_n": len(test_sites(external_sites(m["name"], m["path"], m["lineno"], m["end"]))),
+    }
+    for q, m in sorted(defs.items())
+]
+write_tsv(
+    OUT / f"{LABEL}-all-defs-inventory.tsv",
+    defs_rows,
+    ["qual", "path", "name", "lineno", "kind", "in_test", "ext_prod_n", "ext_test_n"],
+)
+
+res_rows = []
+for r in resources:
+    loaders = content_path_loads.get(r["path"], []) + string_refs.get(r["stem"], [])
+    uniq = {(s["path"], s.get("lineno", 0)): s for s in loaders}
+    loaders = list(uniq.values())
+    res_rows.append(
+        {
+            "path": r["path"],
+            "name": r["name"],
+            "load_n": len(loaders),
+            "load_sites": fmt_sites(loaders),
+        }
+    )
+write_tsv(
+    OUT / f"{LABEL}-all-resources-inventory.tsv",
+    res_rows,
+    ["path", "name", "load_n", "load_sites"],
+)
+
+summary = {
+    "label": LABEL,
+    "root": str(ROOT),
+    "bases_scanned": [rel(b) if b.is_relative_to(ROOT) else str(b) for b in BASES],
+    "retired_names_input": len(retired_names),
+    "class_a_candidates": len([m for m in class_a if m["disposition"] == "CANDIDATE"]),
+    "class_a_ooc_probe": len([m for m in class_a if m["disposition"] == "OOC_PROBE"]),
+    "class_a_total_rows": len(class_a),
+    "class_b_candidates": len([m for m in class_b if m["disposition"] == "CANDIDATE"]),
+    "class_b_out_of_signal": len([m for m in class_b if m["disposition"] == "OUT_OF_SIGNAL"]),
+    "class_b_total_rows": len(class_b),
+    "all_tests_inventory": len(all_tests),
+    "all_test_functions": len([t for t in all_tests if t["is_test"]]),
+    "all_defs": len(defs),
+    "all_resources": len(resources),
+    "a_by_kind": defaultdict(int),
+    "b_flag_counts": defaultdict(int),
+    "closure_iters": iters,
+    "method_notes": [
+        "git-deleted names + prior tables are chase starts; closure expands from bodies",
+        "zero-ref underscore helpers default OOC_PROBE unless retired-name/closure linked",
+        "B inventory is complete first; flags are signals not auto-delete",
+        "ENTRY_RE/game/raises/literal-length are NOT class boundaries",
+        "root web_app.py and scripts/ included in bases",
+    ],
+}
+for m in class_a:
+    summary["a_by_kind"][m["kind"]] += 1
+for m in class_b:
+    for fl in (m.get("flags") or "").split(";"):
+        if fl:
+            summary["b_flag_counts"][fl] += 1
+summary["a_by_kind"] = dict(summary["a_by_kind"])
+summary["b_flag_counts"] = dict(summary["b_flag_counts"])
+(OUT / f"{LABEL}-enum-summary.json").write_text(
+    json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8"
+)
+print(json.dumps(summary, ensure_ascii=False, indent=2))

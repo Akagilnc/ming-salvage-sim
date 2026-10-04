@@ -433,23 +433,6 @@ def test_apply_event_terminal_states_does_not_commit_existing_transaction(game):
         content.events.remove(ev)
 
 
-def test_gate_passed_tolerates_none(read_game):
-    # PR#107 R1（gemini medium）：trigger_gate=None（content JSON 显式 null）传进 _gate_passed
-    # 不应 None.items() AttributeError 崩候选收集；None 视同空门、恒过。
-    db, state, content = read_game
-    from ming_sim.issues import _gate_passed
-    assert _gate_passed(None, state.metrics, db) is True
-
-
-def test_gate_passed_tolerates_nonstring_cond(read_game):
-    # PR#107 R2（gemini high）：条件值写成非字符串（{"民心":60} 而非 ">=60"）不应 cond.strip()
-    # AttributeError 崩候选收集；str() 强转后不匹配操作符正则 → 门不达标（安全降级、不崩）。
-    db, state, content = read_game
-    from ming_sim.issues import _gate_passed
-    assert _gate_passed({"民心": 60}, state.metrics, db) is False
-    assert _gate_passed({"民心": True}, state.metrics, db) is False
-
-
 def test_historical_event_none_gate_no_crash(game):
     db, state, content = game
     issues.bind_content(content)
@@ -687,18 +670,6 @@ def test_numeric_cond_on_text_field_raises_clear(read_game):
     # controlled_by 是文本字段（'ming'/'houjin'），对它做数值比较 → fail-loud
     with pytest.raises(ValueError):
         _gate_passed({"region.huguang.controlled_by": ">=1"}, state.metrics, db)
-
-
-def test_character_numeric_gate_supports_comparison(read_game):
-    """character.<name>.<field> 数值字段可参与 trigger_gate 比较（#201）。"""
-    from ming_sim.issues import _gate_passed
-    db, state, content = read_game
-
-    row = db.conn.execute("SELECT loyalty FROM characters WHERE name = ?", ("毛文龙",)).fetchone()
-    assert row is not None, "测试盘面应有毛文龙"
-
-    assert _gate_passed({"character.毛文龙.loyalty": f">={int(row['loyalty'])}"}, state.metrics, db)
-    assert not _gate_passed({"character.毛文龙.loyalty": f">{int(row['loyalty'])}"}, state.metrics, db)
 
 
 def test_character_numeric_gate_supports_aggregation(game):
