@@ -151,7 +151,6 @@ def test_liao_levy_rise_applies_on_no_edict_advance_after_emperor_verdict(game, 
     sess.deaths_this_turn, sess.debuts_this_turn = [], []
     sess.last_decree = sess.last_report = ""
     sess._decree_draft_fingerprint = ()
-    sess._scene_registry = sess._beat_generator = None
     sess.auto_save = lambda *a, **k: None
     sess.advance_without_decree()
 

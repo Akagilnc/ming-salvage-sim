@@ -1,5 +1,6 @@
 """ADR 0009 person delta normalization behavior."""
 
+from tests.material_helpers import prepare_identity_materials
 import copy
 import json
 
@@ -1929,6 +1930,25 @@ def _materialize_active_prince(db, state, content):
     db.add_character(state, content.characters[name], source="测试物化")
     assert db.get_character_status(name)[0] == "active"
     return name
+
+
+
+
+
+
+def test_registry_and_tools_court_roster_exclude_active_prince(read_game):
+    """在朝名册的结构化成员不含 active 宗藩；材料目录仍可备好。"""
+    db, state, content = read_game
+    name = _materialize_active_prince(db, state, content)
+    minister_name = next(
+        n for n, c in content.characters.items()
+        if getattr(c, "power_id", "ming") == "ming"
+        and getattr(c, "office_type", "") not in ("后宫", "宗藩")
+        and db.get_character_status(n)[0] == "active"
+    )
+    prepare_identity_materials(db, state, content.characters[minister_name])
+    court = {row["name"] for row in db.current_court_roster_rows(state)}
+    assert name not in court
 
 
 def test_apply_office_appointment_rejects_vassal_prince(game):
