@@ -107,9 +107,6 @@ class PowerStore:
     def read_apply_power_rename(self, params: Any = ()) -> Any:
         return self._conn.execute('SELECT * FROM powers WHERE id = ?', params).fetchone()
 
-    def read_turn_power_summary(self, params: Any = ()) -> Any:
-        return self._conn.execute('\n            SELECT pl.*, p.name AS power_name\n            FROM power_logs pl\n            JOIN powers p ON p.id = pl.power_id\n            WHERE pl.turn = ?\n            ORDER BY pl.id\n            LIMIT ?\n            ', params).fetchall()
-
     def read_power_display_name(self, params: Any = ()) -> Any:
         return self._conn.execute('SELECT name FROM powers WHERE id = ?', params).fetchone()
 

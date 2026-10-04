@@ -16,7 +16,10 @@ from ming_sim.entities.issue.store import IssueStore
 from ming_sim.entities.person_log.store import PersonLogStore
 from ming_sim.entities.power.store import PowerStore
 from ming_sim.entities.region.store import RegionStore
-from ming_sim.entities.reign_state.store import ReignStateStore
+from ming_sim.entities.reign_state.store import (
+    POPULATION_UNIT_PERSONS,
+    ReignStateStore,
+)
 
 import contextlib
 from dataclasses import replace
@@ -104,9 +107,7 @@ from ming_sim.token_stats import tlog
 logger = logging.getLogger(__name__)
 
 # ADR 0088 / #648 / #1889：人口存储一律「人」（与 armies.manpower 同刻度）。
-# 新档仍在 save_meta 落标；无标不再改判万人，也不再把 content 人口 ÷10⁴。
-POPULATION_UNIT_PERSONS = "人"
-_POPULATION_UNIT_KEY = "population_unit"
+# 单位常量真源 = ReignStateStore（save_meta 写入侧）；此处只引用。
 
 # 落库字段白名单（模块级常量化——避免在 apply_region_deltas / apply_army_deltas /
 # create_armies_from_extraction 的内循环每项重算同一常量集合，cmr PR2 R1 gemini perf）。
@@ -933,7 +934,6 @@ class GameDB:
         self._ensure_event_parents()
         self._apply_region_city_levels()
         self.character_knowledge.register_issue_sources()
-        self.conn.execute("DROP TABLE IF EXISTS dossier_progress_reports")
         from ming_sim.entities.person_log import PersonLogStore
         PersonLogStore.ensure_schema(self.conn)
         self.person_logs = PersonLogStore(self.conn)

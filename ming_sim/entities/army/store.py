@@ -145,9 +145,6 @@ class ArmyStore:
     def read_army_roster(self, params: Any = ()) -> Any:
         return self._conn.execute("SELECT * FROM armies ORDER BY owner_power='ming' DESC, theater, name", params).fetchall()
 
-    def read_turn_army_summary(self, params: Any = ()) -> Any:
-        return self._conn.execute('\n            SELECT al.*, a.name AS army_name\n            FROM army_logs al\n            JOIN armies a ON a.id = al.army_id\n            WHERE al.turn = ?\n            ORDER BY CASE\n                       WHEN al.delta IS NULL THEN 0\n                       WHEN al.delta != 0 THEN 0\n                       ELSE 1\n                     END, al.id\n            LIMIT ?\n            ', params).fetchall()
-
     def read_apply_military_order_station_effect(self, params: Any = ()) -> Any:
         return self._conn.execute('SELECT id FROM armies WHERE id = ?', params).fetchone()
 

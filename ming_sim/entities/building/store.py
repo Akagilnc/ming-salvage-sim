@@ -98,17 +98,11 @@ class BuildingStore:
             pk="id", allowed=BUILDING_COLUMNS | {"updated_at"}, what="buildings",
         )
 
-    def read_building_detail(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT * FROM buildings WHERE id = ? OR name = ?', params).fetchone()
-
     def read_buildings_report(self, params: Any = ()) -> Any:
         return self._conn.execute('SELECT * FROM buildings WHERE region_id = ? ORDER BY category, name', params).fetchall()
 
     def read_buildings_report_(self, params: Any = ()) -> Any:
         return self._conn.execute('SELECT * FROM buildings ORDER BY region_id, category, name', params).fetchall()
-
-    def read_building_detail_(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT * FROM buildings WHERE name LIKE ?', params).fetchone()
 
     def read_compute_budget_lines(self, params: Any = ()) -> Any:
         return self._conn.execute('SELECT category, condition, maintenance, output_metric, output_amount FROM buildings', params).fetchall()

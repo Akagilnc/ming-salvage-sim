@@ -225,10 +225,6 @@ class CharacterStore:
             pk="character_name", allowed=OFFICE_COLUMNS, what="character_offices",
         )
 
-    def delete_by_name(self, name: str) -> int:
-        cursor = self._conn.execute("DELETE FROM characters WHERE name=?", (name,))
-        return int(cursor.rowcount or 0)
-
     def affair_id_of(self, name: str) -> int:
         row = self._conn.execute(
             "SELECT affair_id FROM characters WHERE name=?", (str(name),),
@@ -456,9 +452,6 @@ class CharacterStore:
 
     def write_ensure_office_type_parent(self, params: Any = ()) -> Any:
         return self._conn.execute('\n            INSERT OR IGNORE INTO offices\n            (office_type, power, responsibility, corruption_risk)\n            VALUES (?, ?, ?, ?)\n            ', params)
-
-    def read_list_office_vacancies(self, params: Any = ()) -> Any:
-        return self._conn.execute('\n            SELECT office_title, office_type, region_id, jurisdiction,\n                   holder_name, holder_office, holder_status\n            FROM office_vacancies\n            ORDER BY sort_order, office_title\n            ', params).fetchall()
 
     def read_ensure_office_type_parent(self, params: Any = ()) -> Any:
         return self._conn.execute('SELECT 1 FROM offices WHERE office_type=?', params).fetchone()

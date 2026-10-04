@@ -149,10 +149,6 @@ class FactionStore:
     def read_faction_leverage(self, params: Any = ()) -> Any:
         return self._conn.execute('SELECT leverage FROM factions WHERE name = ?', params).fetchone()
 
-    def read_faction_report(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT name, satisfaction, leverage, agenda FROM factions ORDER BY name', params).fetchall()
-
-
     def read_adjust_factions(self, params: Any = ()) -> Any:
         return self._conn.execute('SELECT satisfaction, leverage FROM factions WHERE name = ?', params).fetchone()
 

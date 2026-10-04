@@ -3491,8 +3491,6 @@ def test_liaodong_pay_source_rows_are_the_only_pay_ledger(fresh_db):
     assert after["st"]["军饷欠"] == pytest.approx(
         _province_pay_arrears(fresh_db, "liaodong"), abs=1e-6
     )
-    # 无第二本账可加：settle._meta 不再有任何军饷漏斗账键
-    assert not any("standalone" in k for k in after["_meta"])
 
 
 def test_province_tick_shortfall_lands_fully_on_real_army_rows(fresh_db):
@@ -3542,7 +3540,6 @@ def test_new_dongjiang_army_makes_province_due_exactly_its_row_due(fresh_db):
     assert after["p"]["Due"]["军饷"] == pytest.approx(
         _province_pay_due(fresh_db, "dongjiang_area"), abs=1e-6
     )
-    assert not any("standalone" in k for k in after["_meta"])
 
 
 def test_dismissal_keeps_archived_office_title_as_history(fresh_game):

@@ -155,9 +155,6 @@ class RegionStore:
     def read_region_report(self, params: Any = ()) -> Any:
         return self._conn.execute('SELECT SUM(tax_per_turn) AS total FROM regions', params).fetchone()
 
-    def read_turn_region_summary(self, params: Any = ()) -> Any:
-        return self._conn.execute("\n            SELECT rl.*, r.name AS region_name\n            FROM region_logs rl\n            JOIN regions r ON r.id = rl.region_id\n            WHERE rl.turn = ?\n              AND rl.field NOT LIKE 'settle_官俸欠_%'\n              AND rl.field NOT LIKE 'settle_宗禄欠_%'\n            ORDER BY rl.id\n            LIMIT ?\n            ", params).fetchall()
-
     def read_build_translation_target_grounding(self, params: Any = ()) -> Any:
         return self._conn.execute('SELECT id, name FROM regions ORDER BY id', params).fetchall()
 

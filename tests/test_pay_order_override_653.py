@@ -483,7 +483,7 @@ def test_rejected_revoke_does_not_restore_override(game):
     ).fetchone()["c"] == 0
 
 
-def test_turn_region_summary_claim_audit_rows_do_not_consume_limit(game):
+def test_province_tick_writes_salary_and_stipend_claim_audit_rows(game):
     db, state, _content = game
     _pin_shortfall_board(db, "shaanxi")
     # 零可用省银，令真实 settle 同时写出官俸欠与宗禄欠两家族。
@@ -504,14 +504,6 @@ def test_turn_region_summary_claim_audit_rows_do_not_consume_limit(game):
         "AND field LIKE 'settle_%欠_%' ORDER BY id", (state.turn,),
     ).fetchall()
     assert {row["field"].split("_")[1] for row in claim_rows} >= {"官俸欠", "宗禄欠"}
-
-    db.conn.execute(
-        "INSERT INTO region_logs "
-        "(turn,year,period,region_id,field,old_value,new_value,delta,reason) "
-        "VALUES (?,?,?,?,?,?,?,?,?)",
-        (state.turn, state.year, state.period, "shaanxi",
-         "unrest", "1", "2", 1, "民变事实"),
-    )
 
 
 def test_deferred_real_revoke_restores_override_only_after_persist(game):

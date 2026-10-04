@@ -241,12 +241,6 @@ class ReignStateStore:
     def read_treasury_hub_result(self, params: Any = ()) -> Any:
         return self._conn.execute("\n            SELECT COALESCE(SUM(-delta), 0) AS amount\n            FROM economy_ledger\n            WHERE turn = ? AND account = '国库' AND category = '边饷hub'\n            ", params).fetchone()
 
-    def read_turn_economy_summary(self, params: Any = ()) -> Any:
-        return self._conn.execute("\n            SELECT account,\n                   SUM(CASE WHEN delta > 0 THEN delta ELSE 0 END) AS income,\n                   SUM(CASE WHEN delta < 0 THEN -delta ELSE 0 END) AS expense,\n                   SUM(delta) AS net\n            FROM economy_ledger\n            WHERE turn = ? AND category <> '期初'\n            GROUP BY account\n            ORDER BY account DESC\n            ", params).fetchall()
-
-    def read_treasury_ledger(self, params: Any = ()) -> Any:
-        return self._conn.execute("\n            SELECT turn, year, period, delta, balance_after, category, reason, actor\n            FROM economy_ledger\n            WHERE account = ? AND category <> '期初'\n            ORDER BY id DESC\n            LIMIT ?\n            ", params).fetchall()
-
     def read_list_active_legacies(self, params: Any = ()) -> Any:
         return self._conn.execute("SELECT * FROM legacies WHERE status='active' ORDER BY id", params).fetchall()
 
@@ -585,12 +579,6 @@ class ReignStateStore:
     def list_ledger_summon_rows(self) -> Any:
         return self._conn.execute(
             "SELECT id, night_id, person_names, tags FROM story_ledger_entries ORDER BY id"
-        ).fetchall()
-
-    def list_rollback_items_for_turn(self, chat_turn_id: int) -> Any:
-        return self._conn.execute(
-            "SELECT * FROM chat_turn_rollback_items WHERE chat_turn_id = ? ORDER BY id DESC",
-            (int(chat_turn_id),),
         ).fetchall()
 
     def delete_rollback_items_for_turn(self, chat_turn_id: int) -> None:
