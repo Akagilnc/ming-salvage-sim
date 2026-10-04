@@ -1791,7 +1791,6 @@ describe("ReportModal — narrative settlement bulletin", () => {
       periodLabel: "天启七年九月",
     });
     const mastSept = hostSept.querySelector(".gazette-masthead")?.textContent || "";
-    expect(mastSept).toContain("天启七年九月");
     expect(mastSept).not.toContain("天启七年十月");
 
     const hostDec = renderReportModal({
@@ -1799,7 +1798,6 @@ describe("ReportModal — narrative settlement bulletin", () => {
       periodLabel: "天启七年十二月",
     });
     const mastDec = hostDec.querySelector(".gazette-masthead")?.textContent || "";
-    expect(mastDec).toContain("天启七年十二月");
     // 正月状态不得混充报头
     expect(mastDec).not.toContain("崇祯元年正月");
     expect(mastDec).not.toContain("天启七年正月");

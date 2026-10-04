@@ -20716,8 +20716,9 @@ class GameDB:
     ) -> Dict[str, object]:
         """Read landed effects for a world affair file; never include staged verdicts.
 
-        Dossier callers retain the existing actual rail. Other persistent effect
-        logs are read here, not folded into adjudicators' economy/fiscal contract.
+        Dossier callers retain the existing actual rail. Audit log / person_logs
+        whole-row dumps stay out of material supply (#1834 F12); four textual-fact
+        rails remain #1873's job.
         """
         from ming_sim.entities.affair.store import parse_origin_ref
 
@@ -20728,24 +20729,7 @@ class GameDB:
                 else self.list_durable_effects_for_origin(origin)
             ),
         }
-        for table in (
-            "army_logs", "building_logs", "person_logs", "power_logs",
-            "region_logs", "population_transfer_ledger", "investigation_spoiled_facts",
-        ):
-            history[table] = [dict(row) for row in self.conn.execute(
-                f"SELECT * FROM {table} WHERE origin_ref=? ORDER BY id", (origin,),
-            ).fetchall()]
-        for row in history["person_logs"]:
-            row["normalized"] = json.loads(row["normalized"] or "{}")
-        if kind == "dossier":
-            for table in (
-                "office_change_records", "authority_records",
-                "decree_cost_events", "dossier_loophole_exposures", "dossier_supervision_presence",
-            ):
-                history[table] = [dict(row) for row in self.conn.execute(
-                    f"SELECT * FROM {table} WHERE dossier_id=? ORDER BY id", (target,),
-                ).fetchall()]
-        elif kind == "affair":
+        if kind == "affair":
             for table, order in (
                 ("issues", "id"), ("characters", "name"), ("relation_edge_events", "id"),
             ):

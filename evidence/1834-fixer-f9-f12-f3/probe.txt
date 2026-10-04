@@ -1,0 +1,15 @@
+=== CURRENT ===
+[01:28:58.718] [secret_order] create id=1 minister=张瑞图 title=密令探针
+PASS OPEN_WORLD dossier=1 affair=1
+PASS OPEN_PUBLIC dossier=1 affair=1
+PASS CLOSED_WORLD dossier=1 affair=1
+PASS CLOSED_PUBLIC dossier=1 affair=1
+PASS RESTORE_WORLD dossier=1 affair=1
+PASS RESTORE_PUBLIC dossier=1 affair=1
+ALL_GREEN
+=== OLD F9+F12 ===
+[01:29:01.805] [secret_order] create id=1 minister=张瑞图 title=密令探针
+OLD_LOGIC_RED AssertionError: OPEN_WORLD: raw payload reason leaked
+=== OLD F12 ONLY ===
+[01:29:03.415] [secret_order] create id=1 minister=张瑞图 title=密
+F12_OLD_LOGIC_RED leaked person_logs/private reason

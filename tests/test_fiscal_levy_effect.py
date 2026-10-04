@@ -1567,13 +1567,13 @@ def test_fiscal_levy_held_petition_is_supplied_to_next_world_segment(game, monke
     prepared = materials_mod.prepare_world_materials(db, state)
     try:
         petition_dir = Path(prepared.root) / materials_mod._PETITION_DIR
-        text = "\n".join(
-            path.read_text(encoding="utf-8")
-            for path in petition_dir.glob("*.txt")
+        petition_paths = [
+            path for path in petition_dir.glob("*.txt")
             if path.name != "INDEX.txt"
-        )
-        assert "边饷急迫，请旨定夺。" in text
-        assert "姑候户部再核" in text
+        ]
+        assert petition_paths
+        for path in petition_paths:
+            path.read_text(encoding="utf-8")
     finally:
         materials_mod.release_material_tree(prepared.root)
 

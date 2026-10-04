@@ -1700,9 +1700,7 @@ def _world_effect_materials(
                 row, exclude_dossier_ids, secret_turn_ids, exclude_origin_prefix,
             ):
                 continue
-            if table == "person_logs" and isinstance(row["normalized"], dict):
-                row["normalized"] = _person_history_fields(row["normalized"])
-            elif table == "issues":
+            if table == "issues":
                 for field in ("ongoing_effects", "cancel_cost", "effect_on_resolve", "effect_on_fail"):
                     effects = row[field]
                     if not isinstance(effects, dict):
@@ -1717,6 +1715,13 @@ def _world_effect_materials(
             allowed.append(row)
         history[table] = allowed
     return history
+
+
+# Decoded machine loads from _dossier_row; raw *_json already skipped. Do not
+# re-emit payload/stigma/execution_signal into player-facing material input (P4).
+_DOSSIER_MATERIAL_SKIP = frozenset({
+    "office_archive_keys", "payload", "stigma", "execution_signal",
+})
 
 
 def _write_world_tree(
@@ -1833,7 +1838,7 @@ def _write_world_tree(
             "案卷": {
                 "案卷": {
                     field: value for field, value in dossier.items()
-                    if not field.endswith("_json") and field != "office_archive_keys"
+                    if not field.endswith("_json") and field not in _DOSSIER_MATERIAL_SKIP
                 },
                 "判决历史": visible_history(db.list_decree_dossier_decisions(dossier_id)),
                 "背书": visible_history(db.list_dossier_endorsements(dossier_id)),

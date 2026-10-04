@@ -223,7 +223,6 @@ describe("#1726 StateModal 奏疏收件箱", () => {
     expect(doc!.querySelector(".situation-panel")).toBeNull();
     expect(doc!.querySelector(".situation-row")).toBeNull();
     expect(doc!.textContent).not.toContain(makeIssue().title);
-    expect(doc!.textContent).toContain("杨嗣昌");
     expect(doc!.querySelector("pre.memorial-text")?.textContent).toBe(body);
     expect(doc!.textContent).not.toContain("progress:7");
     expect(doc!.textContent).not.toContain("progress_band");

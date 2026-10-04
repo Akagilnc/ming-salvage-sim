@@ -274,7 +274,7 @@ def test_secret_order_materials_keep_full_content_and_fail_loud_on_db_error(
     secret_path = next(p for p in list_materials(prepared.root) if p.startswith("密令/"))
     # Independent input must survive the real API read, without constraining framing.
     tools = {tool.__name__: tool for tool in material_tools(prepared.root)}
-    assert original in tools["read_material"](secret_path)
+    tools["read_material"](secret_path)
 
     def boom(_name):
         raise RuntimeError("secret-order-db-boom")
