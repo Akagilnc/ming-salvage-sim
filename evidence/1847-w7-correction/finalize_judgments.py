@@ -51,14 +51,18 @@ N11_CLOSURE_ORPHANS_DELETED = [
 
 
 def write_tsv(path: pathlib.Path, fields: List[str], rows: List[Dict[str, Any]]) -> None:
+    """LF-only TSV; empty cells as '-' so lines never end with trailing tabs."""
     with path.open("w", encoding="utf-8", newline="") as fh:
-        w = csv.DictWriter(
-            fh, fieldnames=fields, delimiter="\t",
-            extrasaction="ignore", lineterminator="\n",
-        )
-        w.writeheader()
+        fh.write("\t".join(fields) + "\n")
         for r in rows:
-            w.writerow(r)
+            cells = []
+            for k in fields:
+                v = r.get(k, "")
+                if v is None or v == "":
+                    cells.append("-")
+                else:
+                    cells.append(str(v).replace("\t", " ").replace("\n", " "))
+            fh.write("\t".join(cells) + "\n")
 
 
 def load_code_files() -> Tuple[List[str], List[Tuple[str, str]], List[Dict[str, str]]]:

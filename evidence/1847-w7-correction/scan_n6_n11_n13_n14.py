@@ -160,14 +160,18 @@ def scan_n6_ts(rel: str, text: str) -> List[Dict[str, Any]]:
 
 
 def write_tsv(path: pathlib.Path, fieldnames: List[str], rows: List[Dict[str, Any]]) -> None:
+    """LF-only TSV; empty cells as '-' (no trailing-tab whitespace)."""
     with path.open("w", encoding="utf-8", newline="") as fh:
-        w = csv.DictWriter(
-            fh, fieldnames=fieldnames, delimiter="\t",
-            extrasaction="ignore", lineterminator="\n",
-        )
-        w.writeheader()
+        fh.write("\t".join(fieldnames) + "\n")
         for r in rows:
-            w.writerow(r)
+            cells = []
+            for k in fieldnames:
+                v = r.get(k, "")
+                if v is None or v == "":
+                    cells.append("-")
+                else:
+                    cells.append(str(v).replace("\t", " ").replace("\n", " "))
+            fh.write("\t".join(cells) + "\n")
 
 
 def classify_n6(row: Dict[str, Any]) -> Tuple[str, str]:

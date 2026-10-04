@@ -8,13 +8,13 @@ ming_sim/audience_night.py	963	except_Exception_pass	KEEP_ROLLBACK_BEST_EFFORT	s
 ming_sim/cli_backend.py	230	SIGKILL_ref	KEEP_DOC_COMMENT	comment/doc only — not an executable kill/close/swallow site	        # 无 timeout：subprocess.run(timeout=…) 在 TimeoutExpired 会 process.kill()=SIGKILL
 ming_sim/cli_backend.py	230	kill_call	KEEP_DOC_COMMENT	comment/doc only — not an executable kill/close/swallow site	        # 无 timeout：subprocess.run(timeout=…) 在 TimeoutExpired 会 process.kill()=SIGKILL
 ming_sim/cli_backend.py	230	subprocess_run_timeout	KEEP_DOC_COMMENT	comment/doc only — not an executable kill/close/swallow site	        # 无 timeout：subprocess.run(timeout=…) 在 TimeoutExpired 会 process.kill()=SIGKILL
-ming_sim/cli_backend.py	386	SIGKILL_ref	KEEP_DOC_COMMENT	SIGKILL mention in comment/doc only	"    """"""收尾子进程：SIGTERM only. Never escalate to SIGKILL (shared #9 / #1847 N13)."
+ming_sim/cli_backend.py	386	SIGKILL_ref	KEEP_DOC_COMMENT	SIGKILL mention in comment/doc only	    """收尾子进程：SIGTERM only. Never escalate to SIGKILL (shared #9 / #1847 N13).
 ming_sim/cli_backend.py	389	SIGKILL_ref	KEEP_DOC_COMMENT	SIGKILL mention in comment/doc only	    propagate so callers can leave a real diagnostic; never kill()/SIGKILL,
 ming_sim/cli_backend.py	394	terminate_call	KEEP_SOFT_TERMINATE_SITE	soft terminate site; failures propagate; no force escalate	    proc.terminate()
 ming_sim/cli_backend.py	410	SIGKILL_ref	KEEP_DOC_COMMENT	SIGKILL mention in comment/doc only	      并 SIGTERM 收尾该子进程（空转判据走 llm_transport.check_idle_budget，禁平行实现；禁 SIGKILL）。
 ming_sim/cli_backend.py	469	close_call	KEEP_RESOURCE_CLOSE	resource/file/db close — not pexpect force path	            proc.stdin.close()
 ming_sim/cli_backend.py	794	close_call	KEEP_RESOURCE_CLOSE	resource/file/db close — not pexpect force path	            handle.close()
-ming_sim/cli_backend.py	3710	SIGKILL_ref	KEEP_DOC_COMMENT	SIGKILL mention in comment/doc only	"        出字的子进程不被任何总墙钟 SIGKILL，只有静默超阈值才判死重试。"""""""
+ming_sim/cli_backend.py	3710	SIGKILL_ref	KEEP_DOC_COMMENT	SIGKILL mention in comment/doc only	        出字的子进程不被任何总墙钟 SIGKILL，只有静默超阈值才判死重试。"""
 ming_sim/db.py	22332	except_Exception_pass	KEEP_ROLLBACK_BEST_EFFORT	rollback best-effort then re-raise — not soft-fail swallow	                except Exception:
 ming_sim/db.py	22365	except_Exception_pass	KEEP_ROLLBACK_BEST_EFFORT	rollback best-effort then re-raise — not soft-fail swallow	                except Exception:
 ming_sim/db.py	22498	except_Exception_pass	KEEP_ROLLBACK_BEST_EFFORT	rollback best-effort then re-raise — not soft-fail swallow	                except Exception:
