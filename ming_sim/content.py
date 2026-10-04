@@ -79,6 +79,11 @@ def load_character_content() -> Tuple[Dict[str, Faction], Dict[str, Character]]:
         identity = int_field(character_fields, "identity", path)
         if not 0 <= identity <= 100:
             raise SystemExit(f"设定字段超出范围：{path}.identity（应为 0–100）")
+        # ADR 0108 阴谋能力：静态 seed 能力轴，与 identity 同为 int 0–100 承重列。
+        character_fields.setdefault("intrigue", 50)
+        intrigue = int_field(character_fields, "intrigue", path)
+        if not 0 <= intrigue <= 100:
+            raise SystemExit(f"设定字段超出范围：{path}.intrigue（应为 0–100）")
         seed_guilt_raw = item.get("seed_guilt")
         if seed_guilt_raw is None:
             seed_guilt_raw = {}
@@ -137,6 +142,7 @@ def load_character_content() -> Tuple[Dict[str, Faction], Dict[str, Character]]:
             summary=str(item.get("summary") or ""),
             portrait_id=str(item.get("portrait_id") or ""),
             identity=identity,
+            intrigue=intrigue,
             seed_guilt=seed_guilt,
         )
 
@@ -281,12 +287,6 @@ def load_event_content(filename: str = "events.json") -> List[Event]:
             string_list(item["terminal_reason_labels"], f"{filename}[{idx}].terminal_reason_labels")
             if "terminal_reason_labels" in item else []
         )
-        default_terminal_reason = str(item.get("default_terminal_reason") or "").strip()
-        if default_terminal_reason and default_terminal_reason not in terminal_reason_labels:
-            raise SystemExit(
-                f"{filename}[{idx}] default_terminal_reason={default_terminal_reason!r} "
-                "不在 terminal_reason_labels 白名单内。"
-            )
         gate_raw = item.get("trigger_gate") or {}
         if not isinstance(gate_raw, dict):
             raise SystemExit(f"{filename}[{idx}] trigger_gate 必须是对象（key→比较式）。")
@@ -337,7 +337,6 @@ def load_event_content(filename: str = "events.json") -> List[Event]:
                 trigger_gate=trigger_gate,
                 auto_trigger=bool(item.get("auto_trigger") or False),
                 terminal_reason_labels=terminal_reason_labels,
-                default_terminal_reason=default_terminal_reason,
                 bar_value=int(item.get("bar_value") or 0),
                 bar_good_meaning=str(item.get("bar_good_meaning") or ""),
                 bar_bad_meaning=str(item.get("bar_bad_meaning") or ""),

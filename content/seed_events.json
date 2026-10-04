@@ -232,8 +232,7 @@
     "fail_condition": "密线为后金所探破，朝鲜被迫转投后金，皮岛失援",
     "trigger_gate": {
       "power.houjin.leverage": ">=75"
-    },
-    "auto_trigger": true
+    }
   },
   {
     "id": "fengshou",
@@ -288,8 +287,7 @@
     "fail_condition": "皇太极清洗对手后内部更紧，反借机东征朝鲜或西讨蒙古以转移矛盾",
     "trigger_gate": {
       "power.houjin.cohesion": "<=55"
-    },
-    "auto_trigger": true
+    }
   },
   {
     "id": "north_three_uprising",
@@ -342,8 +340,7 @@
     "fail_condition": "南方拒缴钱粮过两季，京中军饷断流，东林朝官集体辞官护乡",
     "trigger_gate": {
       "class.士绅@nanzhili|zhejiang|fujian.satisfaction.max": "<=30"
-    },
-    "auto_trigger": true
+    }
   },
   {
     "id": "breach_halfway_setback",

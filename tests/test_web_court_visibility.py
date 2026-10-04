@@ -229,6 +229,7 @@ def test_vassal_prince_chat_rejected(game, monkeypatch):
     with pytest.raises(HTTPException) as ei:
         web_app._require_active_minister(name)
     assert ei.value.status_code == 409
+    assert "宗室" in ei.value.detail
 
 
 def test_active_consort_chat_not_rejected(game, monkeypatch):
@@ -268,8 +269,9 @@ def test_zongfan_cannot_be_summoned_via_can_summon(game):
     db.add_character(state, content.characters[prince], source="测试物化")
     db.set_character_status(state, prince, "active", "测试：在世")
     assert db.get_character_status(prince)[0] == "active"  # 即便 active 也拒
-    ok, _reason = sess.can_summon(content.characters[prince])
+    ok, reason = sess.can_summon(content.characters[prince])
     assert ok is False
+    assert "宗室" in reason
     # 后宫不受宗藩闸影响：active+ming 后宫仍可召
     consort = next((n for n, c in content.characters.items()
                     if c.office_type == "后宫" and getattr(c, "power_id", "ming") == "ming"), None)
@@ -306,8 +308,9 @@ def test_enemy_active_character_cannot_be_summoned(read_game):
     sess = _bare_session(db)
     enemy = _enemy_active_name(db, content)
     assert db.get_character_status(enemy)[0] == "active"  # active 也拒
-    ok, _reason = sess.can_summon(content.characters[enemy])
+    ok, reason = sess.can_summon(content.characters[enemy])
     assert ok is False
+    assert "大明" in reason  # 拒因须点明非大明，而非误报「尚未登场」等状态话术
 
 
 def test_summon_power_check_uses_db_not_content(game):
@@ -524,6 +527,7 @@ def test_identity_resolves_weishi_and_vassal_aliases_no_duplicate_file(game):
         db, state, content, "福王", "兵部尚书", reason="幻觉授宗藩",
     )
     assert res_p.get("rejected") is True
+    assert "宗藩" in str(res_p.get("reason") or "")
     after_p = {
         r["name"]
         for r in db.conn.execute("SELECT name FROM characters").fetchall()
@@ -539,20 +543,14 @@ def test_choose_minister_real_entry_excludes_weishi_includes_court(game, monkeyp
     sess = _session_stub(db, content)
     sess.state = state
 
-    # 强行 active 未仕；真臣保持在京，走真实选择→结构化返回（不盯打印名册）
+    # Active status must not bypass the real CLI admission gate.
     db.conn.execute(
-        "UPDATE characters SET status='active' WHERE name=?", ("史可法",),
-    )
-    db.conn.execute(
-        "UPDATE characters SET location=? WHERE name=?", ("beizhili", "温体仁"),
+        "UPDATE characters SET status='active',location='beizhili',transit_to='' "
+        "WHERE name IN (?,?)", ("史可法", "温体仁"),
     )
     db.conn.commit()
 
-    monkeypatch.setattr("builtins.input", lambda *_a, **_k: "温体仁")
-    chosen = term.choose_minister(sess)
-    assert chosen is not None
-    assert chosen.name == "温体仁"
-
-    answers = iter(["史可法", "quit"])
+    answers = iter(("史可法", "温体仁"))
     monkeypatch.setattr("builtins.input", lambda *_a, **_k: next(answers))
-    assert term.choose_minister(sess) is None
+    chosen = term.choose_minister(sess)
+    assert chosen is content.characters["温体仁"]

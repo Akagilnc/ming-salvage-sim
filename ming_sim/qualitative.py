@@ -22,7 +22,14 @@ CHARACTER_AXIS_LABELS = {
     "courage": "胆略",
 }
 
-INTRIGUE_QUALITATIVE_PLACEHOLDER = "阴谋能力未详，暂以查案行事表现推知"
+_INTRIGUE_BANDS = (
+    "毫无城府", "心思疏浅", "善藏行迹", "机权深沉", "鬼蜮难测",
+)
+
+
+def intrigue_band(value: object) -> str:
+    """Render 0108 阴谋能力 through the one shared qualitative vocabulary."""
+    return qualitative_band(value, _INTRIGUE_BANDS, default=50)
 
 
 def qualitative_character_axes(character: object) -> Mapping[str, str]:
@@ -34,7 +41,7 @@ def qualitative_character_axes(character: object) -> Mapping[str, str]:
         for field in CHARACTER_QUALITATIVE_BANDS
     }
     projected["党派认同"] = identity_band(getattr(character, "identity"))
-    projected["阴谋"] = INTRIGUE_QUALITATIVE_PLACEHOLDER
+    projected["阴谋"] = f"阴谋{intrigue_band(getattr(character, 'intrigue', None))}"
     return projected
 
 

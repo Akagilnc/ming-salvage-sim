@@ -6,18 +6,11 @@ import json
 
 import pytest
 
-from ming_sim.action_clusters import cluster_by_kind
 from ming_sim.action_materialize import (
-    punish_actions_effective,
     stage_assignment_candidate,
     stage_punishment_candidate)
 from ming_sim.db import atomic
 from ming_sim.decree import pre_settle
-from ming_sim.executor_routing import (
-    classify_execution_coverage,
-    resolve_lead_executors,
-)
-from ming_sim.participant_roster import resolve_dossier_owner_name
 from tests.dossier_test_helpers import promulgate_proposed_appointments
 
 
@@ -44,56 +37,23 @@ def _create(db, state, *, action="assignment", category="清丈", payload=None,
     )
 
 
-@pytest.mark.parametrize("action,expected", [
-    ("assignment", "multi_month"),
-    ("military_order", "multi_month"),
-    ("appointment", "appointment"),
-    ("acting_appointment", "appointment"),
-])
-def test_structured_top_level_coverage(action, expected):
-    assert classify_execution_coverage(action, {}) == expected
-
-
-@pytest.mark.parametrize("punish_action", sorted(punish_actions_effective()))
-def test_punishment_coverage_reads_canonical_subtype(punish_action):
-    cluster = cluster_by_kind("punishment")
-    spec = next(field for field in cluster.fields if field.name == "punish_action")
-    assert classify_execution_coverage(
-        "punishment", {"punish_action": punish_action},
-    ) == spec.execution_coverage[punish_action]
-
-
-@pytest.mark.parametrize("payload", [{}, {"punish_action": ""}, {"punish_action": "抄家"}])
-def test_punishment_without_admitted_strike_subtype_is_excluded(payload):
-    assert classify_execution_coverage("punishment", payload) is None
-
-
-def test_transaction_category_vocabulary_still_comes_from_duty_routes():
-    """#1778 决定 3 只删「按类别配人」；事务类别词表真源仍是 offices.json duty_routes。"""
-    from ming_sim.executor_routing import duty_route_categories
-
-    cats = duty_route_categories()
-    assert {"钱粮", "清丈", "缉拿", "缉捕", "河工"} <= cats
-    assert "修仙" not in cats
-
-
-def test_excluded_action_has_no_leads(env):
-    result = resolve_lead_executors(
-        action_type="policy", payload={"transaction_category": "修仙"},
+@pytest.mark.parametrize("punish_action", ["", "抄家"])
+def test_punishment_without_admitted_strike_subtype_is_excluded(env, punish_action):
+    """未准入惩处细类不经 stage 落 pending 或案卷。"""
+    db, state, _ = env
+    pending_before = db.conn.execute("SELECT COUNT(*) FROM pending_actions").fetchone()[0]
+    dossiers_before = db.conn.execute("SELECT COUNT(*) FROM decree_dossiers").fetchone()[0]
+    pending_id = stage_punishment_candidate(
+        db, state.turn, "陈新甲", text="拿问", target_id="毕自严",
+        punish_action=punish_action, transaction_category="缉拿",
     )
-    assert result["route"] == "excluded"
-    assert result["leads"] == []
+    assert pending_id == 0
+    assert db.conn.execute("SELECT COUNT(*) FROM pending_actions").fetchone()[0] == pending_before
+    assert db.conn.execute("SELECT COUNT(*) FROM decree_dossiers").fetchone()[0] == dossiers_before
 
 
 def test_unnamed_assignment_gets_no_lead_from_code(env):
-    """#1778 决定 3/乙：没点将、名单也没写 → 代码不配人；成案缝 unassigned 响亮失败。"""
-    result = resolve_lead_executors(
-        action_type="assignment", payload={"transaction_category": "清丈"},
-    )
-    assert result["route"] == "unassigned"
-    assert result["leads"] == []
-    assert result["signal"] is None
-
+    """#1778 决定 3/乙：没点将、名单也没写 → 代码不配人；成案缝响亮失败。"""
     db, state, _ = env
     with pytest.raises(ValueError):
         _create(db, state, category="清丈", payload={"transaction_category": "清丈"})
@@ -188,18 +148,6 @@ def test_legacy_character_executor_migrates_without_overriding_roster(env, actio
     assert [
         item["character_id"] for item in existing_roster if item["tier"] == "主办"
     ] == ["毕自严"]
-
-
-def test_canonical_owner_precedes_legacy_with_history_fallback():
-    assert resolve_dossier_owner_name({
-        "executor_kind": "character", "executor_id": "旧承办",
-        "participant_roster": [{"tier": "主办", "character_id": "新主办"}],
-    }) == "新主办"
-    assert resolve_dossier_owner_name({
-        "executor_kind": "character", "executor_id": "旧承办",
-        "participant_roster": [],
-    }) == "旧承办"
-    assert resolve_dossier_owner_name({"participant_roster": []}) == ""
 
 
 def test_appointment_routes_to_appointee_at_creation(env):
@@ -497,16 +445,3 @@ def test_national_policy_is_one_dossier_without_province_routing(env):
     assert len(ids) == 1
     row = db.get_decree_dossier(ids[0])
     assert row["region_id"] == ""
-
-    # 单省差务未点将、名单也没写 → 空 leads（钉代码不配人、无省级/中央回退）
-    single = resolve_lead_executors(
-        action_type="assignment",
-        payload={
-            "transaction_category": "清丈",
-            "locality_scope": "single",
-            "target_kind": "region",
-            "target_id": "shaanxi",
-        },
-    )
-    assert single["leads"] == []
-    assert single["route"] == "unassigned"

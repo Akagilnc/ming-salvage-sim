@@ -174,13 +174,27 @@ class TicketedWriteGate:
         self._held = False
 
     def acquire(self, blocking: bool = True, timeout: float = -1) -> bool:
+        return self._take_write_turn(
+            self._queue.write_gate.acquire, blocking=blocking, timeout=timeout,
+        )
+
+    def acquire_translation(self, blocking: bool = True, timeout: float = -1) -> bool:
+        """Same seam, holder kind = translation (so foreground 409 stays honest)."""
+        return self._take_write_turn(
+            self._queue.write_gate.acquire_translation,
+            blocking=blocking, timeout=timeout,
+        )
+
+    def _take_write_turn(
+        self, take: Callable[[], bool], *, blocking: bool, timeout: float,
+    ) -> bool:
         if not blocking:
             # Non-blocking ticketed acquire is not meaningful (order wait is the point).
             raise RuntimeError("TicketedWriteGate only supports blocking acquire")
         del timeout  # lock timeout unused; order wait is terminal-state only
         self._queue.wait_write_turn(self._ticket)
         try:
-            self._queue.write_gate.acquire()
+            take()
         except BaseException:
             self._queue.finish_write_turn(self._ticket)
             raise
@@ -191,6 +205,12 @@ class TicketedWriteGate:
             self._queue.finish_write_turn(self._ticket)
             raise TicketCancelled(f"ticket {self._ticket.seq} cancelled")
         return True
+
+    def is_held_by_translation(self) -> bool:
+        return self._queue.write_gate.is_held_by_translation()
+
+    def wait_while_held_by_translation(self) -> None:
+        self._queue.write_gate.wait_while_held_by_translation()
 
     def release(self) -> None:
         if not self._held:

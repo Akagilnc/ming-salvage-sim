@@ -137,7 +137,8 @@ def test_read_night_scroll_includes_minister_highlights(game):
     db.set_message_highlights(mid, ["据实核账"])
 
     scroll = an.read_night_scroll(db, night_id)
-    assert any(m["role"] == "scene" and m["content"] == "臣请据实核账。" and m["highlights"] == [] for m in scroll)
+    assert any(m["role"] == "scene" and m.get("chat_turn_id") == cid
+               and m["highlights"] == [] for m in scroll)
     _settle_minister_reply(db, state, cid, night_id, minister, "臣请据实核账。")
     scroll = an.read_night_scroll(db, night_id)
     minister_msgs = [m for m in scroll if m["role"] == "minister"]

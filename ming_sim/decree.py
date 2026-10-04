@@ -45,12 +45,10 @@ from ming_sim.exceptions import (
 from ming_sim.faction_brew import VIEW_FACTION_STANCE
 from ming_sim.flows import apply_fixed_period_flows, raise_fixed_period_flow_abort_if_needed
 from ming_sim.issues import (
-    apply_event_terminal_states,
     apply_historical_fiscal_rates,
     apply_issue_inertia_and_ongoing,
     apply_score_extraction,
     _apply_levy_driven_transfers,
-    auto_trigger_seed_issues,
     clear_gated_legacies,
     gather_impeachment_surge_candidates,
     sanitize_delta_shape,
@@ -313,7 +311,7 @@ def build_promulgation_judge_context(
         # Never read payload authorization_id(s) as a parallel authority identity source.
         held_authorities = db.project_applicable_authorities(state.turn, row)
         authorization_ids = [str(item["id"]) for item in held_authorities]
-        dossier_rows.append({
+        entry = {
             "id": int(row["id"]),
             "action_type": str(row.get("action_type") or ""),
             "decree_text": str(row.get("decree_text") or ""),
@@ -330,7 +328,14 @@ def build_promulgation_judge_context(
                 "authorization_ids": authorization_ids,
                 "endorsement_entry_ids": sorted(set(endorsement_ids)),
             },
-        })
+        }
+        # #1894：撤令案卷须带原旨、已投入与办理进度给外廷判官——撤的是哪道
+        # 已发旨、办到几分、钱花掉多少，本就在既有账里（materials 单一读口）。
+        # 只是供料，不新增调用、不新增判官；判官据此自定准行/劝回/拖延。
+        if str(row.get("action_type") or "") == "revoke_decree":
+            from ming_sim.materials import revoke_target_facts
+            entry["revoke_target"] = revoke_target_facts(db, payload, row)
+        dossier_rows.append(entry)
     gatekeepers = [
         {
             **dict(row),
@@ -1129,11 +1134,12 @@ def pre_settle(
     state: GameState, db: GameDB, *, content=None,
     transit_arrivals_out: Optional[List[Dict[str, object]]] = None,
 ) -> List[Dict[str, object]]:
-    """确定性结算「前括号」：固定月度财政 tick + auto_trigger 硬立 seed 情势，均在 LLM 推演前。
+    """确定性结算「前括号」：暂存动作、固定月度财政、在途抵达、稽核反制与到期密令。
 
-    返回本回合程序硬触发的清单；content 供 office(任免)暂存动作落库。
+    世界事件判门不在此处。它们只在逐旨落账之后消费一次，才能读到当月实账。
+    返回本段仍由程序硬触发的清单（稽核反制、承诺反噬）；content 供 office(任免)暂存动作落库。
 
-    ADR 0008 S4：整段（暂存动作 commit + 固定财政 + auto_trigger + 到期密令呈递）包成
+    ADR 0008 S4：整段（暂存动作 commit + 固定财政 + 到期密令呈递）包成
     **自己的单事务**——崩在内部=全回滚=相位未变=重进时干净重跑前半段。完成时**同事务内**
     落中间相位 settling（写 state.turn_phase + save_state）：只意味着「前半段已完成，不再
     重跑 pre_settle」，不意味着后半段就绪（恢复入口的消费分流是 S7 的活，本切片只立相位机械）。
@@ -1194,31 +1200,18 @@ def pre_settle(
             # 落账副作用；明细不再进 simulator payload（欠饷哗变走前置事件/issue）
             apply_fixed_period_flows(db, state)
             # 0095/#668 在途倒数 tick：remaining -= 1.0*factor，≤0 引擎抵达。
-            # 必须先于 apply_event_terminal_states / auto_trigger_seed_issues：门控读 location 前
-            # 在途者须先完成本月抵达（decree 既有顺序约束）。
+            # 世界事件判门在逐旨落账后才读 location，抵达须先在本段落定。
             arrivals = tick_transit_arrivals(db, state, content, commit=False)
             if transit_arrivals_out is not None:
                 transit_arrivals_out.clear()
                 transit_arrivals_out.extend(arrivals)
             if arrivals:
                 tlog(f"[transit-tick] 本月抵达 {len(arrivals)} 人：{[a['name'] for a in arrivals]}")
-            terminalized = apply_event_terminal_states(state, db, commit=False)
-            if terminalized:
-                tlog(f"[event_terminal] 本回合事件终态落账 {len(terminalized)} 条：{[(t['id'], t['terminal_state']) for t in terminalized]}")
-            # 程序硬触发：标了 auto_trigger 的 seed 情势，gate 达标即由程序直接立项，绕过 LLM 因果判定。
-            auto_triggered = auto_trigger_seed_issues(state, db)
-            # #625：孤直稽核反制——涌现缝＋逐人硬门读事实底，邸报前同缝立 issue。
-            counter_hits = db.trigger_supervision_countermeasures(state, commit=False)
-            if counter_hits:
-                auto_triggered = list(auto_triggered) + [
-                    {
-                        "id": item.get("origin_ref"),
-                        "title": f"supervision_countermeasure:{item.get('countermeasure_kind')}",
-                        "issue_id": item.get("issue_id"),
-                        "source": "supervision_countermeasure",
-                    }
-                    for item in counter_hits
-                ]
+            # #1895：原 #625 孤直稽核反制硬门退役——代码不再按 integrity 档
+            # 判定「这位大臣会不会反制」并 hash 指定反制形态。监督在场／连续月数／
+            # 稽核人派系操守等事实仍留在 dossier_supervision_presence 与
+            # build_supervision_judge_surface 供料面；是否反制、采取何种行动由
+            # #1861 逐旨推演／#1843 世界段 run 依人物可及事实自选。
             # #626：承诺所系反噬——事废/烂尾/变形暴露状态驱动，#625 同格挂点。
             backlash_hits = db.trigger_commitment_backlashes(state, commit=False)
             if backlash_hits:

@@ -225,8 +225,8 @@ def test_failed_month_degrades_to_pending_and_rebrews_next_month(game):
     relation_calls = [c for c in calls if "view" not in c]
     assert relation_calls and relation_calls[0]["has_pending_failure"] is True
     payload = relation_calls[0]
-    new_hits = [e for e in payload["new_events"] if e["context"] == failed_context]
-    prior_hits = [e for e in payload["prior_events"] if e["context"] == failed_context]
+    new_hits = [e for e in payload["new_events"] if e["origin"] == "audience:turn-1"]
+    prior_hits = [e for e in payload["prior_events"] if e["origin"] == "audience:turn-1"]
     assert len(new_hits) + len(prior_hits) == 1
     assert len(new_hits) == 1 and prior_hits == []
     assert db.get_relation_brew_pending() == []
@@ -270,11 +270,14 @@ def test_prepare_attaches_prior_events_only_via_history_seam(game, monkeypatch):
     source, target = EMPEROR_NODE, "杨嗣昌"
     prior_context = "越次一召原句。"
     # 严格早于开局年月（1627/10）的奠基原句，水位推进后才能进 prior_events。
-    db.record_relation_edge_event(
+    prior_id = db.record_relation_edge_event(
         source=source, target=target, event_kind="知遇",
         context=prior_context, origin="seed:founding:yueci",
         turn=0, year=1626, period=6,
     )
+    prior_origin = db.conn.execute(
+        "SELECT origin FROM relation_edge_events WHERE id=?", (prior_id,),
+    ).fetchone()["origin"]
     _add_edge(db, state, source=source, target=target, kind="知遇",
               context="首月知遇。", origin="audience:month-1")
     brew_fn = _brew_fn_factory([])
@@ -286,8 +289,11 @@ def test_prepare_attaches_prior_events_only_via_history_seam(game, monkeypatch):
     state.turn += 1
     state.period += 1
     new_context = "次月新知遇。"
-    _add_edge(db, state, source=source, target=target, kind="知遇",
-              context=new_context, origin="audience:month-2")
+    new_id = _add_edge(db, state, source=source, target=target, kind="知遇",
+                       context=new_context, origin="audience:month-2")
+    new_origin = db.conn.execute(
+        "SELECT origin FROM relation_edge_events WHERE id=?", (new_id,),
+    ).fetchone()["origin"]
 
     import ming_sim.relation_brew as brew_mod
     import ming_sim.relation_read as read_mod
@@ -309,13 +315,13 @@ def test_prepare_attaches_prior_events_only_via_history_seam(game, monkeypatch):
     relation_calls = [c for c in calls if "view" not in c]
     assert relation_calls
     payload = relation_calls[0]
-    new_contexts = [e["context"] for e in payload["new_events"]]
-    prior_contexts = [e["context"] for e in payload["prior_events"]]
-    assert new_context in new_contexts
-    assert prior_context not in new_contexts
-    assert prior_context in prior_contexts
-    assert new_context not in prior_contexts
-    assert set(new_contexts).isdisjoint(prior_contexts)
+    new_origins = {e["origin"] for e in payload["new_events"]}
+    prior_origins = {e["origin"] for e in payload["prior_events"]}
+    assert new_origin in new_origins
+    assert prior_origin not in new_origins
+    assert prior_origin in prior_origins
+    assert new_origin not in prior_origins
+    assert new_origins.isdisjoint(prior_origins)
     assert (source, target, int(state.year), int(state.period)) in seen
 
 
