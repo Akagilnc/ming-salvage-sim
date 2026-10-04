@@ -1,6 +1,166 @@
 # #1843 F2 旧结算／simulator 支持树清退回执
 
 工作树：`/Users/akagilnc/WorkSpace/Ming_LLM-1843-w5`
+分支：`ak-roles/issue-1843-w5-r5-f2`（自 `ak-roles/issue-1843-w5` @ `77c00eadc`）
+底座：`claude/1812-w4` 是 HEAD 祖先
+派单：`~/.ak-roles/books/Ming_LLM/unbound/runs/01a10837-1305-7258-8ea9-a0150c437f00@fixer/fix-packet.md`
+判词附件：`.../attachments/00-1843-judge-77c00eadc.json`（F2 成立、未结；整类承接）
+
+## 轮次
+
+| 轮次 | HEAD（施工前） | 说明 |
+|---|---|---|
+| R1 | `ae4a2a3e6` | 合规合并／读端／候选绑定／财政投影清退 → `b85cb3f16` |
+| R2 | `d3a3688f2` | 旧文本流／季提示／军队投影 → `44f87c4c5` |
+| R3 | `9d4152542` | ≤1-ref 穷尽删一批 → `ea297e120`；成员表聚合被封驳 |
+| R4 | `79661de14` | AST0∪词边界≤1 联合表；删 3；误把测试引用当保留 → `66d8d86d0`；庭审 `77c00eadc` |
+| R5 | `77c00eadc` | 纠正测试独占／死树互引漏退役；纠正 R4 不成立例外 |
+
+## Advisor 前置判断（R5；不冒充庭审）
+
+- 授权：派单 F2 全类；判词方向「沿被删除消费者的历史承接向下追、从现役入口反向核用途，一并处理测试独占及死树内部互引」。
+- R4 失败点：AST 空消费者／词边界≤1 **不能**覆盖「仅旧测试保活」或死树互引；`faction_report`／`has_player_visible_rejection` 例外不成立。
+- 互联网确认的简洁解法：test-only reverse reachability（dead-cst `--query test-only` 一类）——**本轮只用临时分析命令**，不落库扫描机制、不造证明性测试。
+- R5 谓词：`ming_sim` 定义 + 全仓 AST 引用；**无外部生产消费者且无同文件生产互引**者为候选；再 `git log -S`／现役入口（`month_chain`／`session` 改票／`supervision`／`canonical_fields_for_delivery`）反向核；属旧结算／simulator／extractor／phase2 票拟 fan-out／period-report 盘面者删（含专用测试）；真实共用写口／改票层 A／任别归一保留并逐项证据。
+- 原始扫描落盘：`evidence/1843-f2-r5-strict-test-only.txt`、`evidence/1843-f2-r5-rescript-exclusive.txt`、`evidence/1843-f2-r5-rescan-after.txt`。
+
+## R5 枚举命令（实际执行）
+
+```bash
+cd /Users/akagilnc/WorkSpace/Ming_LLM-1843-w5
+git rev-parse HEAD   # 施工前 77c00eadc7ce152c06bbb9a6958e69d805c7d3d6
+git checkout -b ak-roles/issue-1843-w5-r5-f2
+
+# 1) 无外部生产消费者清单（含仅测试保活）→ /tmp/1843-f2-r5/scan-test-only.txt
+#    收窄 strict：same_file_prod==0 → evidence/1843-f2-r5-strict-test-only.txt
+
+# 2) 现役入口反向
+rg -n 'generate_rescript_draft|select_triage_actor|create_rescript_draft_agent|normalize_rescript_layer_a_option' ming_sim --glob '*.py'
+rg -n 'normalize_appointment_tenure|execution_distortion_weight' ming_sim --glob '*.py'
+rg -n 'canonical_fields_for_delivery|build_secret_covert_effect_briefs' ming_sim --glob '*.py'
+
+# 3) rescript 专用死树（generate/select/validate 为种子）
+# → evidence/1843-f2-r5-rescript-exclusive.txt（23 exclusive）
+
+# 4) 历史交叉（成员表每一名）
+# git log -S'<symbol>' --oneline -- ming_sim tests | head
+```
+
+## 成员表（R5 处置：F2 删除）
+
+| 符号 | 原位置 | 引用状态（删前） | 历史消费者／提交 | 归类 | 处置 |
+|---|---|---|---|---|---|
+| `format_region_changes` | report.py:35 | 仅 section4 测 | ea297e120 撤 build_period_report | F2 | 删＋删 formatter 拒收测 |
+| `format_army_changes` | report.py:51 | 同上 | 同上 | F2 | 删 |
+| `format_power_changes` | report.py:71 | 仅 power 测 | 旧盘面变更格式器 | F2 | 删 |
+| `turn_region_summary` | db.py:7258 | 仅 pay_order 测 | 242837870 撤 previous_turn_summary | F2 | 删＋删专用测 |
+| `turn_army_summary` | db.py:7847 | 仅 fiscal/qa_e1 测 | 同上 | F2 | 删＋删专用测；province_pay 测改钉 DB |
+| `execution_distortion_weight` | appointment_tenure.py:57 | 仅 tenure_613 测 | b85cb3f16 撤 execution_side_read_fields | F2 | 删 |
+| `command_power_rank` 等号令力树 | appointment_tenure.py | 仅上测／死树互引 | 号令力专用支持 | F2 级联 | 删；整测文件删 |
+| `build_secret_covert_effect_briefs` | covert_progress.py:644 | 仅 payoff_1504 | 81c4d2098 撤 extractor 私密载荷 | F2 | 删 |
+| `has_player_visible_rejection` | applier.py:387 | 零消费者 | f3c4c7348 旧结算邸报固定提示 | F2 | 删；纠正 R4 例外 |
+| `faction_report` | db.py:6714 | 仅 setattr 钉 | 81c4d2098／5047271cf 撤 board | F2 | 删；纠正 R4 例外 |
+| `create_rescript_draft_agent` | agents.py:667 | 仅 llm_channel 测 | d0afb1d43 撤 phase2 fan-out | F2 | 删；头表测改钉 revise |
+| `select_triage_actor` | rescript_draft.py:1106 | 仅 draft_656 测 | 同上 | F2 | 删 |
+| `generate_rescript_draft` | rescript_draft.py:2148 | 仅测 | 同上 | F2 | 删 |
+| `validate_rescript_draft_items` | rescript_draft.py:1380 | 仅 generate＋测 | generate 专用批校验 | F2 | 删 |
+| exclusive heal/degrade helpers（19） | rescript_draft.py | 死树互引 | exclusive 清单 | F2 死树 | 删 |
+| 专用旧测文件 | tenure_613／heal_1801／heal_1746 | 只测已删入口 | — | F2 | 整文件删 |
+| generate 专用测块 | draft_656 等 | — | — | F2 | 裁删；pihong HTTP 改 save_rescript_drafts 布景 |
+
+## 成员表（R5 保留：真实共用／非 F2；逐项证据）
+
+| 符号 | 现役消费者证据 | 归类 | 为何非 F2 |
+|---|---|---|---|
+| `normalize_appointment_tenure` / `appointment_tenure_from` | supervision.py／issues.py／db.py | 任别契约 | 判词明示勿整删模块 |
+| `canonical_fields_for_delivery` | covert_progress 交付对账 | 密令共用字段 | 判词明示保留 |
+| `normalize_rescript_layer_a_option` 等层 A | session 改票；rescript_actions；agents revise/deliberate | 现役改票契约 | 勿整删共享 rescript |
+| `create_rescript_revise_agent` / `create_rescript_deliberate_agent` | session.py | 现役改票／廷议 | 非 phase2 票拟入口 |
+| `save_rescript_drafts` / desk 读口 | 批红桌／月链 | 急务票面写口 | 共用业务写口 |
+| `RejectionCollector` 其余方法 | 现役落账拒收 | 拒收账本 | 不因删 has_player_visible 整退役 |
+| `print_header` / `metric_bar` | cli/terminal.py | CLI 呈现 | 非旧 period-report 格式器 |
+| `settle_province_tick` | 财政基座 | 财政写口 | 非 simulator board |
+| F1／F3 邻接零引用 | R4 已归类 | 邻接 | 派单不施工 |
+
+## 纠正 R4 例外（原表不成立项）
+
+| 原 R4 例外 | 原理由 | R5 裁决 |
+|---|---|---|
+| `has_player_visible_rejection` | 「拒收呈现，非旧结算核」 | **不成立**→删。历史服务旧结算报告固定提示；现役无消费者 |
+| `faction_report` | 「知识权限钉」 | **不成立**→删。setattr 禁止调用≠现役消费 |
+
+## 原类复扫（R5 固定点）
+
+- 删除符号 defs/refs=NONE（`evidence/1843-f2-r5-rescan-after.txt`）。
+- 剩余 strict test-only settlementish 23 名均为共用写口／读口（上表保留）。
+- 无新增扫描机制；级联无新 F2 孤儿进入旧结算专用树。
+
+## 聚焦测试（R5；完整可复现命令）
+
+```bash
+cd /Users/akagilnc/WorkSpace/Ming_LLM-1843-w5
+MING_SIM_AGY_BIN=/usr/bin/false \
+MING_SIM_CODEX_BIN=/usr/bin/false \
+MING_SIM_CLAUDE_BIN=/usr/bin/false \
+MING_SIM_CURSOR_BIN=/usr/bin/false \
+MING_SIM_KIMI_BIN=/usr/bin/false \
+MING_SIM_GROK_BIN=/usr/bin/false \
+MING_SIM_PI_BIN=/usr/bin/false \
+/Users/akagilnc/WorkSpace/Ming_LLM/.venv/bin/python -m pytest \
+  tests/test_grant_reconciliation_567.py \
+  tests/test_month_chain_1843.py \
+  tests/test_value_matrix_691.py \
+  tests/test_secret_order_monthly_progress_566.py \
+  tests/test_secret_order_isolation_883.py \
+  tests/test_covert_levy_651.py \
+  tests/test_rescript_draft_656.py \
+  tests/test_rescript_choices_563.py \
+  tests/test_character_knowledge_489.py \
+  tests/test_pay_order_override_653.py \
+  tests/test_economy_section_rejections.py \
+  tests/test_section_fiscal_rejections.py \
+  tests/test_secret_dossier_participants_1252.py \
+  tests/test_secret_order_section_rejections.py \
+  tests/test_cli_backend.py \
+  tests/test_llm_channel_config.py \
+  tests/test_mutiny_actual_residence_659.py \
+  tests/test_mutiny_third_strike_318.py \
+  tests/test_pihong_dossier_1490.py \
+  tests/test_section4_rejections.py \
+  tests/test_power_section_rejections.py \
+  tests/test_secret_order_payoff_1504.py \
+  tests/test_structured_decree_contract_1624.py \
+  tests/test_appointment_tenure_607.py \
+  tests/test_supervision_625.py \
+  -q -p no:cacheprovider --durations=8
+```
+
+实测：`743 passed, 2 skipped in 34.88s`（`evidence/1843-f2-r5-pytest.log`）。
+另：`tests/test_fiscal_substrate_bridge.py::test_province_pay_shortfall_reduces_pure_province_army_morale` → `1 passed in 0.79s`。未跑全量。
+
+## 自查质量／合法性（advisor，非审官）
+
+同类型清测试独占旧盘面／phase2 票拟／extractor briefs／号令力走样树；未动月链与改票现役入口；仅 F2；未 amend/stash/push/PR；不宣布合并关票。
+
+## Commit 与 git 状态（R5）
+
+- 施工前 HEAD：`77c00eadc7ce152c06bbb9a6958e69d805c7d3d6`
+- R5 清退＋证据：见本提交
+- 标题：`ak-roles: fix(#1843) retire test-only settlement/simulator support trees (F2 R5)`
+
+## 剩余范围
+
+F1／F3／分类器／收夜邻接仍非本票；#1856 总核与全量 CI 留最终待合并。
+
+---
+
+
+<details>
+<summary>R1–R4 历史回执全文（保留失败经过）</summary>
+
+# #1843 F2 旧结算／simulator 支持树清退回执
+
+工作树：`/Users/akagilnc/WorkSpace/Ming_LLM-1843-w5`
 分支：`ak-roles/issue-1843-w5`
 底座：`claude/1812-w4` 是 HEAD 祖先（`git merge-base --is-ancestor claude/1812-w4 HEAD` → yes）
 派单：`~/.ak-roles/books/Ming_LLM/1843/runs/01a107fa-7c79-7613-87d5-0cf4e634cafd@fixer/fix-packet.md`
@@ -761,3 +921,6 @@ R2 stamp：`641201cde`（既有）
 - F1 边界 CLI 信封三符号：仍 ORPHAN，归属非本票。
 - #1856 总核验：本回执不冒称总核收敛。
 - 全量 CI / Web 构建：留最终待合并状态。
+
+
+</details>

@@ -38,9 +38,6 @@ def test_secret_alias_exclusion_is_canonicalized_before_projection(game):
     row = db.conn.execute("SELECT excluded_names FROM secret_orders WHERE id=?", (order,)).fetchone()
     assert "魏忠贤" in row["excluded_names"]
 
-
-
-
 def test_office_slice_does_not_read_unrelated_sensitive_reports(game, monkeypatch):
     db, state, content = game
     minister = next(c for c in content.characters.values() if c.office_type == "礼部")
@@ -56,50 +53,6 @@ def test_office_slice_does_not_read_unrelated_sensitive_reports(game, monkeypatc
     assert "personnel" not in view["world"]
     assert "military" not in view["world"]
     assert "treasury" not in view["world"]
-
-def test_inner_court_materials_do_not_read_faction_report(game, tmp_path, monkeypatch):
-    db, state, content = game
-
-    def forbidden(*_a, **_k):
-        raise AssertionError("unauthorised faction_report")
-
-    monkeypatch.setattr(db, "faction_report", forbidden)
-    previous = content.characters["王承恩"]
-    messenger = content.characters["曹化淳"]
-    db.set_character_office(previous.name, "内廷随侍", "内廷")
-    db.set_character_office(messenger.name, "御前近臣", "内廷")
-    for person in (previous, messenger):
-        world = db.get_character_knowledge(state, person.name)["world"]
-        assert "court" not in world
-        prepare_character_materials(
-            db, state, person, dest_root=tmp_path / person.name,
-        )
-
-
-
-
-
-def test_current_state_facts_are_selected_by_content_domain_not_role_label(
-    game, monkeypatch
-):
-    db, state, content = game
-    minister = next(c for c in content.characters.values() if c.office_type == "吏部")
-
-    # 契约只落结构化面：本门类的账键恰是 personnel，他衙门那两把不在；越界读取
-    # 由「调用即抛」钉死，而不是在人事正文里做人名／官职子串推断（人读正文不是
-    # 结构化记录身份，大理寺 aa62c7def）。
-    def forbidden(*_args, **_kwargs):
-        raise AssertionError("吏部见闻不应读取军情／国库／派系底账")
-
-    monkeypatch.setattr(db, "army_report", forbidden)
-    monkeypatch.setattr(db, "treasury_report", forbidden)
-    monkeypatch.setattr(db, "faction_report", forbidden)
-
-    view = db.get_character_knowledge(state, minister.name)["world"]
-    assert db.current_court_roster_rows(state)
-    assert "personnel" in view
-    assert "military" not in view
-    assert "treasury" not in view
 
 def test_turn_zero_knowledge_is_role_specific_and_restores(game):
     db, state, content = game
@@ -273,7 +226,6 @@ def test_undo_chat_turn_removes_chat_derived_knowledge_from_context(game):
         for item in db.get_character_knowledge(state, minister.name)["events"]
     )
 
-
 def test_delete_chat_messages_removes_chat_derived_knowledge_from_context(game):
     """删除聊天消息时也不能留下可投影的见闻来源。"""
     db, state, content = game
@@ -396,7 +348,6 @@ def test_issue_write_path_projects_participants_across_restore(game):
 
     assert any(item["source_id"] == f"issue:{issue_id}" for item in before["events"])
     assert before["events"] == after["events"]
-
 
 def test_secret_office_exclusion_does_not_hide_unrelated_world_bucket(game):
     db, state, content = game
@@ -787,7 +738,6 @@ def test_knowledge_titles_restore_without_persistence_truncation(game):
 
 # ── archive / source_scope contracts (moved from test_knowledge.py, #1185 wave1) ──
 
-
 @pytest.mark.parametrize(
     ("target_kind", "expected_visible"),
     [
@@ -1079,7 +1029,6 @@ def test_883_legacy_aggregate_without_source_rows_does_not_authorize_knowledge(g
         for item in db.get_character_knowledge(state, reader)["public_events"]
     )
 
-
 def test_structured_person_scope_replaces_role_wide_world_reports(game):
     """Appointment jurisdiction via real declaration entrance — not DB setter hooks."""
     from ming_sim.issues import apply_person_changes_only
@@ -1336,7 +1285,6 @@ def test_structured_person_scope_replaces_role_wide_world_reports(game):
     world = db.get_character_knowledge(state, unscoped.name)["world"]
     assert not ({"treasury", "military", "regional", "construction", "security"} & set(world))
 
-
 def test_army_truth_is_exactly_scoped_to_person_command(game):
     db, state, content = game
     general = next(c for c in content.characters.values() if c.office_type == "边镇")
@@ -1350,9 +1298,6 @@ def test_army_truth_is_exactly_scoped_to_person_command(game):
     # 只能证接线，且人读正文不是记录身份（大理寺 aa62c7def）。
     assert view["scope"]["army_ids"] == (rows[0]["id"],)
     assert view["world"]["command"]
-
-
-
 
 @pytest.fixture
 def household_ledger_reads(game):
@@ -1377,7 +1322,6 @@ def household_ledger_reads(game):
         yield reads
     finally:
         db.conn.row_factory = original_factory
-
 
 def test_household_secret_ledger_keeps_amount_but_hides_case_semantics(
     game, tmp_path, household_ledger_reads,
@@ -1415,7 +1359,6 @@ def test_household_secret_ledger_keeps_amount_but_hides_case_semantics(
         )
     finally:
         release_material_tree(prepared.root)
-
 
 def test_household_secret_ledger_hides_case_by_excluded_office(game, household_ledger_reads):
     """#1812: current-office exclusion prevents real ledger case-field consumption."""
@@ -1477,19 +1420,16 @@ def test_household_secret_ledger_hides_case_by_excluded_office(game, household_l
         clerk.office, clerk.office_type = clerk_office, clerk_type
         successor.office, successor.office_type = prior_office, prior_type
 
-
 def _office_archive_path_from_materials(db, state, character, root):
     prepared = prepare_character_materials(db, state, character, dest_root=root)
     paths = list_materials(prepared.root)
     return next(p for p in paths if p.endswith("/公事档案.txt"))
-
 
 def _referenceable_dossier_ids(db, character_name, turn) -> set[int]:
     return {
         int(item["id"])
         for item in db.list_referenceable_dossiers(character_name, turn)
     }
-
 
 def test_multi_lead_typed_archives_reach_only_each_office_successor(game, tmp_path):
     db, state, content = game
@@ -1563,7 +1503,6 @@ def test_multi_lead_typed_archives_reach_only_each_office_successor(game, tmp_pa
     # 刑部 is a legal central yamen: successor shares archive identity with the lead.
     assert case_id in _referenceable_dossier_ids(db, case_successor.name, turn)
 
-
 def test_central_ledgers_reach_each_office_archive_carrier_without_crossing(game, tmp_path):
     """户部／兵部／吏部各自只带自己那把账键，且都落在本人 公事档案.txt 载体上。
 
@@ -1595,3 +1534,25 @@ def test_central_ledgers_reach_each_office_archive_carrier_without_crossing(game
         assert [
             key for key in (knowledge.get("world") or {}) if key in _LEDGER_KEYS
         ] == [office_ledger_key[office_type]]
+
+
+def test_current_state_facts_are_selected_by_content_domain_not_role_label(
+    game, monkeypatch
+):
+    db, state, content = game
+    minister = next(c for c in content.characters.values() if c.office_type == "吏部")
+
+    # 契约只落结构化面：本门类的账键恰是 personnel，他衙门那两把不在；越界读取
+    # 由「调用即抛」钉死，而不是在人事正文里做人名／官职子串推断（人读正文不是
+    # 结构化记录身份，大理寺 aa62c7def）。
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("吏部见闻不应读取军情／国库／派系底账")
+
+    monkeypatch.setattr(db, "army_report", forbidden)
+    monkeypatch.setattr(db, "treasury_report", forbidden)
+
+    view = db.get_character_knowledge(state, minister.name)["world"]
+    assert db.current_court_roster_rows(state)
+    assert "personnel" in view
+    assert "military" not in view
+    assert "treasury" not in view

@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from typing import Dict, List, Optional
+from typing import Optional
 
 from ming_sim.assets import format_money, wrap
-from ming_sim.constants import ECONOMY_ACCOUNTS, SCORE_METRICS, TURN_UNIT
+from ming_sim.constants import ECONOMY_ACCOUNTS, SCORE_METRICS
 from ming_sim.db import GameDB
 from ming_sim.models import GameState, period_label
 
@@ -30,55 +30,3 @@ def print_header(state: GameState, db: Optional[GameDB] = None) -> None:
         # #321 P7：不在 CLI header 直显 army_report（含 mutiny_tier/morale_text/arrears_text）；
         # 军情只经既有 LLM 装配面（army_report/detail/roster → knowledge/tools/intelligence）。
     print()
-
-
-def format_region_changes(changes: List[Dict[str, object]]) -> str:
-    # 拒收项(ADR 0008 决定 1)与 applied 项同列，但不是盘面变化，先滤掉。
-    changes = [c for c in (changes or []) if not (isinstance(c, dict) and c.get("rejected"))]
-    if not changes:
-        return f"本{TURN_UNIT}未见明确地区盘面变化。"
-    parts = []
-    for change in changes:
-        delta = change["delta"]
-        if delta is None:
-            parts.append(f"{change['region']}{change['label']}改为{change['new']}（{change['reason']}）")
-        else:
-            sign = "+" if int(delta) > 0 else ""
-            parts.append(f"{change['region']}{change['label']}{sign}{int(delta)}（{change['reason']}）")
-    return "；".join(parts) + "。"
-
-
-def format_army_changes(changes: List[Dict[str, object]]) -> str:
-    # 拒收项(ADR 0008 决定 1)与 applied 项同列，但不是盘面变化，先滤掉。
-    changes = [c for c in (changes or []) if not (isinstance(c, dict) and c.get("rejected"))]
-    if not changes:
-        return f"本{TURN_UNIT}未见明确军队盘面变化。"
-    parts = []
-    for change in changes:
-        delta = change["delta"]
-        field = str(change["field"])
-        if delta is None:
-            parts.append(f"{change['army']}{change['label']}改为{change['new']}（{change['reason']}）")
-        elif field == "manpower":
-            sign = "+" if int(delta) > 0 else ""
-            parts.append(f"{change['army']}{change['label']}{sign}{int(delta)}人（{change['reason']}）")
-        else:
-            sign = "+" if int(delta) > 0 else ""
-            parts.append(f"{change['army']}{change['label']}{sign}{int(delta)}（{change['reason']}）")
-    return "；".join(parts) + "。"
-
-
-def format_power_changes(changes: List[Dict[str, object]]) -> str:
-    # 拒收项(ADR 0008 决定 1)与 applied 项同列，但不是盘面变化，先滤掉。
-    applied = [c for c in (changes or []) if not (isinstance(c, dict) and c.get("rejected"))]
-    if not applied:
-        return f"本{TURN_UNIT}未见明确势力盘面变化。"
-    parts = []
-    for change in applied:
-        delta = change["delta"]
-        if delta is None:
-            parts.append(f"{change['power']}{change['label']}改为{change['new']}（{change['reason']}）")
-        else:
-            sign = "+" if int(delta) > 0 else ""
-            parts.append(f"{change['power']}{change['label']}{sign}{int(delta)}（{change['reason']}）")
-    return "；".join(parts) + "。"

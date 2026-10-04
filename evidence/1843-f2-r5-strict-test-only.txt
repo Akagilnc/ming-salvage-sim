@@ -1,0 +1,69 @@
+STRICT_NO_PROD_REFS 115
+with_tests 59
+zero_all 56
+---STRICT_WITH_TESTS---
+ApplyContext	ming_sim/applier.py:273	tests=2	pins=0	tests/test_applier_contract.py:13;tests/test_applier_contract.py:109
+_extract_secret_order	ming_sim/cli_backend.py:4052	tests=3	pins=0	tests/test_cli_backend.py:62;tests/test_cli_backend.py:77;tests/test_cli_backend.py:911
+_is_active_secret_order_assignee	ming_sim/db.py:21090	tests=1	pins=0	tests/test_secret_order_isolation_883.py:1435
+accrue_blood_debt	ming_sim/centrifuge_ledger.py:115	tests=39	pins=0	tests/test_centrifuge_ledger_690.py:99;tests/test_centrifuge_ledger_690.py:131;tests/test_centrifuge_ledger_690.py:162;tests/test_centrifuge_ledger_690.py:211
+accrue_detection_wariness	ming_sim/centrifuge_ledger.py:161	tests=3	pins=0	tests/test_centrifuge_ledger_690.py:439;tests/test_centrifuge_ledger_690.py:443;tests/test_centrifuge_ledger_690.py:469
+army_detail	ming_sim/db.py:7760	tests=8	pins=1	tests/test_army_card_status_1501.py:211;tests/test_army_display_173.py:72;tests/test_army_display_173.py:87;tests/test_army_display_173.py:108
+audit_night_direct_writes	ming_sim/audience_night.py:673	tests=3	pins=0	tests/test_audience_undo_506.py:180;tests/test_audience_undo_506.py:196;tests/test_on_scene_immediate_write_1839.py:191
+axis_collision_stances	ming_sim/value_matrix.py:100	tests=1	pins=0	tests/test_value_matrix_691.py:25
+build_secret_covert_effect_briefs	ming_sim/covert_progress.py:644	tests=2	pins=0	tests/test_secret_order_payoff_1504.py:24;tests/test_secret_order_payoff_1504.py:447
+clear_pending_decisions	ming_sim/db.py:10919	tests=9	pins=0	tests/test_advance_paths_atomic.py:79;tests/test_advance_paths_atomic.py:147;tests/test_pihong_dossier_1490.py:304;tests/test_pihong_dossier_1490.py:350
+clear_resolve_context	ming_sim/db.py:18872	tests=2	pins=0	tests/test_advance_paths_atomic.py:439;tests/test_pre_settle_transaction.py:380
+count_active_initiatives	ming_sim/db.py:19455	tests=2	pins=0	tests/test_structured_decree_contract_1624.py:420;tests/test_structured_decree_contract_1624.py:442
+create_rescript_draft_agent	ming_sim/agents.py:667	tests=2	pins=0	tests/test_llm_channel_config.py:284;tests/test_llm_channel_config.py:321
+drop_pending_actions_for_minister	ming_sim/db.py:18733	tests=2	pins=0	tests/test_audience_undo_506.py:629;tests/test_secret_order_isolation_883.py:1170
+execution_distortion_weight	ming_sim/appointment_tenure.py:57	tests=6	pins=0	tests/test_execution_tenure_613.py:6;tests/test_execution_tenure_613.py:37;tests/test_execution_tenure_613.py:20;tests/test_execution_tenure_613.py:39
+faction_report	ming_sim/db.py:6714	tests=0	pins=2	tests/test_character_knowledge_489.py:66;tests/test_character_knowledge_489.py:96
+for_role	ming_sim/llm_config.py:397	tests=6	pins=0	tests/test_llm_channel_config.py:9;tests/test_llm_channel_config.py:90;tests/test_llm_channel_config.py:688;tests/test_llm_channel_config.py:761
+format_army_changes	ming_sim/report.py:51	tests=3	pins=0	tests/test_section4_rejections.py:487;tests/test_section4_rejections.py:497;tests/test_section4_rejections.py:508
+format_power_changes	ming_sim/report.py:71	tests=3	pins=0	tests/test_power_section_rejections.py:149;tests/test_power_section_rejections.py:151;tests/test_power_section_rejections.py:157
+format_region_changes	ming_sim/report.py:35	tests=3	pins=0	tests/test_section4_rejections.py:487;tests/test_section4_rejections.py:489;tests/test_section4_rejections.py:505
+generate_rescript_draft	ming_sim/rescript_draft.py:2148	tests=48	pins=0	tests/test_pihong_dossier_1490.py:1235;tests/test_pihong_dossier_1490.py:1387;tests/test_pihong_dossier_1490.py:2829;tests/test_pihong_dossier_1490.py:2952
+get_faction_stance_summary	ming_sim/db.py:22659	tests=10	pins=0	tests/test_faction_brew_637.py:173;tests/test_faction_brew_637.py:188;tests/test_faction_brew_637.py:256;tests/test_faction_brew_637.py:267
+get_message_highlights	ming_sim/db.py:9021	tests=4	pins=0	tests/test_highlight_judge_544.py:230;tests/test_highlight_judge_544.py:275;tests/test_highlight_judge_544.py:315;tests/test_highlight_judge_544.py:363
+is_sealed	ming_sim/session_write_queue.py:262	tests=2	pins=0	tests/test_menu_lifecycle_drain_396.py:661;tests/test_new_game_write_path_1749.py:534
+list_arrived_unsettled_summons	ming_sim/audience_night.py:1503	tests=8	pins=0	tests/test_audience_travel_gating_670.py:302;tests/test_audience_travel_gating_670.py:316;tests/test_audience_travel_gating_670.py:339;tests/test_audience_travel_gating_670.py:894
+list_dossier_actual_rail	ming_sim/db.py:20683	tests=1	pins=0	tests/test_secret_order_payoff_1504.py:309
+list_dossier_link_rejections	ming_sim/db.py:14827	tests=4	pins=0	tests/test_dossier_links_559.py:138;tests/test_dossier_links_559.py:154;tests/test_dossier_links_559.py:194;tests/test_dossier_links_559.py:193
+list_dossiers_for_directive	ming_sim/db.py:14507	tests=9	pins=0	tests/test_execution_pressure_654.py:272;tests/test_execution_pressure_654.py:399;tests/test_execution_pressure_654.py:339;tests/test_execution_pressure_654.py:528
+list_endorsed_dossier_candidates	ming_sim/db.py:14525	tests=1	pins=0	tests/test_pihong_dossier_1490.py:2671
+list_execution_liability_parties	ming_sim/db.py:15900	tests=3	pins=0	tests/test_execution_joint_liability_565.py:271;tests/test_execution_joint_liability_565.py:317;tests/test_execution_joint_liability_565.py:369
+list_ministers	ming_sim/session.py:843	tests=5	pins=0	tests/test_person_delta_adapter.py:1987;tests/test_web_court_visibility.py:363;tests/test_web_court_visibility.py:450;tests/test_web_court_visibility.py:474
+list_night_timeline	ming_sim/audience_night.py:458	tests=1	pins=0	tests/test_audience_night_498.py:177
+list_office_effects_for_dossier	ming_sim/db.py:19039	tests=1	pins=0	tests/test_decree_dossiers_571.py:940
+matrix_snapshot	ming_sim/value_matrix.py:136	tests=2	pins=0	tests/test_value_matrix_691.py:21;tests/test_value_matrix_691.py:74
+persons_entered_tonight	ming_sim/audience_night.py:2278	tests=2	pins=0	tests/test_cli_play_turn.py:642;tests/test_month_loop_tracer_1468.py:510
+persons_present_tonight	ming_sim/audience_night.py:2286	tests=11	pins=0	tests/test_audience_continuous_507.py:149;tests/test_audience_continuous_507.py:146;tests/test_audience_undo_506.py:113;tests/test_audience_undo_506.py:127
+prepare_character_materials	ming_sim/materials.py:1119	tests=39	pins=0	tests/test_army_card_status_1501.py:21;tests/test_army_card_status_1501.py:224;tests/test_audience_background.py:13;tests/test_character_knowledge_489.py:10
+rebuild_centrifuge_cache	ming_sim/centrifuge_ledger.py:193	tests=5	pins=0	tests/test_centrifuge_ledger_690.py:656;tests/test_centrifuge_ledger_690.py:753;tests/test_centrifuge_ledger_690.py:688;tests/test_centrifuge_ledger_690.py:789
+record_monthly_supervision_facts	ming_sim/db.py:12518	tests=5	pins=0	tests/test_supervision_625.py:186;tests/test_supervision_625.py:187;tests/test_supervision_625.py:434;tests/test_supervision_625.py:229
+reject_directive	ming_sim/db.py:19331	tests=1	pins=0	tests/test_decree_dossiers_571.py:310
+revoke_pay_order_decree	ming_sim/pay_order.py:472	tests=2	pins=0	tests/test_pay_order_override_653.py:25;tests/test_pay_order_override_653.py:347
+run_exclusive	ming_sim/session_write_queue.py:520	tests=6	pins=0	tests/test_audience_travel_gating_670.py:382;tests/test_audience_travel_gating_670.py:928;tests/test_pihong_dossier_1490.py:2868;tests/test_pihong_dossier_1490.py:1303
+run_month_end_relation_brew	ming_sim/relation_brew.py:438	tests=45	pins=0	tests/test_faction_brew_637.py:32;tests/test_faction_brew_637.py:115;tests/test_faction_brew_637.py:132;tests/test_faction_brew_637.py:156
+save_pending_promulgation_verdicts	ming_sim/db.py:16065	tests=4	pins=0	tests/test_pihong_dossier_1490.py:1162;tests/test_promulgation_judge_561.py:484;tests/test_promulgation_seam_560.py:41;tests/test_promulgation_seam_560.py:44
+save_rescript_drafts	ming_sim/db.py:10928	tests=23	pins=0	tests/test_pihong_dossier_1490.py:502;tests/test_pihong_dossier_1490.py:658;tests/test_pihong_dossier_1490.py:1133;tests/test_pihong_dossier_1490.py:1424
+schedule_close_night_after_chat_if_needed	ming_sim/session.py:1079	tests=2	pins=0	tests/test_audience_presence_500.py:159;tests/test_scene_llm_1836.py:234
+select_triage_actor	ming_sim/rescript_draft.py:1106	tests=8	pins=0	tests/test_rescript_draft_656.py:21;tests/test_rescript_draft_656.py:81;tests/test_rescript_draft_656.py:88;tests/test_rescript_draft_656.py:103
+settle_province_tick	ming_sim/db.py:3142	tests=22	pins=1	tests/test_fiscal_substrate_bridge.py:624;tests/test_fiscal_substrate_bridge.py:2250;tests/test_fiscal_substrate_bridge.py:2402;tests/test_fiscal_substrate_bridge.py:2460
+stage_authorization_candidate	ming_sim/action_materialize.py:1616	tests=6	pins=0	tests/test_execution_pressure_654.py:971;tests/test_execution_pressure_654.py:1077;tests/test_execution_pressure_654.py:975;tests/test_execution_pressure_654.py:992
+stage_grant_allocation_candidate	ming_sim/action_materialize.py:771	tests=3	pins=0	tests/test_execution_pressure_654.py:1012;tests/test_execution_pressure_654.py:1020;tests/test_execution_pressure_654.py:1038
+stage_month_segment	ming_sim/month_translate.py:240	tests=10	pins=0	tests/test_breach_plea_623.py:742;tests/test_breach_plea_623.py:776;tests/test_month_translate_1840.py:124;tests/test_month_translate_1840.py:345
+turn_army_summary	ming_sim/db.py:7847	tests=4	pins=0	tests/test_fiscal_substrate_bridge.py:2287;tests/test_fiscal_substrate_bridge.py:2326;tests/test_qa_e1_numeric_presentation.py:52;tests/test_qa_e1_numeric_presentation.py:278
+turn_region_summary	ming_sim/db.py:7258	tests=1	pins=0	tests/test_pay_order_override_653.py:510
+unread_memorial_count	ming_sim/db.py:12853	tests=9	pins=3	tests/test_memorial_inbox_1726.py:45;tests/test_memorial_inbox_1726.py:98;tests/test_memorial_inbox_1726.py:112;tests/test_memorial_inbox_1726.py:115
+upsert_pending_directive	ming_sim/db.py:17313	tests=6	pins=0	tests/test_audience_night_498.py:298;tests/test_audience_night_498.py:305;tests/test_audience_night_498.py:345;tests/test_audience_night_498.py:278
+upsert_secret_order	ming_sim/db.py:21733	tests=4	pins=0	tests/test_secret_order_update.py:13;tests/test_secret_order_update.py:15;tests/test_secret_order_update.py:27;tests/test_secret_order_update.py:28
+vacate	ming_sim/session_write_queue.py:336	tests=2	pins=0	tests/test_session_write_queue_1353.py:140;tests/test_session_write_queue_1353.py:329
+value_axes	ming_sim/value_matrix.py:46	tests=1	pins=0	tests/test_value_matrix_691.py:54
+write_decree	ming_sim/session.py:1562	tests=4	pins=1	tests/test_advance_paths_atomic.py:479;tests/test_audience_night_498.py:282;tests/test_draft_admission_resubmit_1769.py:248;tests/test_pre_settle_transaction.py:424
+---STRICT_ZERO_R4_EXCEPTIONS_INTEREST---
+__enter__ ['ming_sim/applier.py:108', 'ming_sim/session_write_queue.py:124', 'ming_sim/session_write_queue.py:224'] tests 0 pins []
+__exit__ ['ming_sim/applier.py:111', 'ming_sim/session_write_queue.py:128', 'ming_sim/session_write_queue.py:228'] tests 0 pins []
+faction_report ['ming_sim/db.py:6714'] tests 0 pins ['tests/test_character_knowledge_489.py:66', 'tests/test_character_knowledge_489.py:96']
+has_player_visible_rejection ['ming_sim/applier.py:387'] tests 0 pins []
+qualitative_character_attribute ['ming_sim/qualitative.py:53'] tests 0 pins []

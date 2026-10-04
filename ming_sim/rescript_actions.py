@@ -1288,7 +1288,7 @@ def _apply_return_revise(
     new_options = prewrite.revise_by_key.get(item.decision_key)
     if not isinstance(new_options, list) or not new_options:
         raise ValueError(f"return_revise 缺 prewrite 新 options：{item.decision_key}")
-    # 改票 options 必经层 A 单真源（与 validate_rescript_draft_items 同缝）
+    # 改票 options 必经层 A 单真源（与 normalize_rescript_layer_a_option 同缝）
     from ming_sim.rescript_draft import normalize_rescript_layer_a_option
     stamped: List[Dict[str, object]] = []
     for opt in new_options:

@@ -37,7 +37,6 @@ _OWNER_OPTION = {
     "participant_roster": [dict(item) for item in _OWNER_ROSTER],
 }
 
-
 def _owner_manual_backend_json() -> str:
     # 附件 r3 回显形态：LLM 误带执行面=immediate；assignment 不得透传落库。
     return json.dumps({
@@ -53,7 +52,6 @@ def _owner_manual_backend_json() -> str:
         "执行面": "immediate",
         "参与人": [dict(item) for item in _OWNER_ROSTER],
     }, ensure_ascii=False)
-
 
 def _assert_drafted_roster_nailed(db, dossier: dict) -> None:
     """#1778 决定 3/5：主办＝旨意自带名单里的主办，逐字钉进案卷（不是职司表推出的人）。"""
@@ -74,7 +72,6 @@ def _assert_drafted_roster_nailed(db, dossier: dict) -> None:
             "SELECT 1 FROM characters WHERE name=?", (name,),
         ).fetchone() is not None, f"参与人未建档：{name!r}"
 
-
 def _month_end_ctx() -> dict:
     return {
         "active_issues": [],
@@ -84,7 +81,6 @@ def _month_end_ctx() -> dict:
             {"id": "guanning", "name": "关宁军 / 宁锦防线", "station": "辽东 / 宁远锦州"},
         ],
     }
-
 
 def _army_single_bad_item() -> dict:
     """复验残留样本：辽东欠饷 option 层 army+single（矩阵非法）。"""
@@ -116,7 +112,6 @@ def _army_single_bad_item() -> dict:
         ],
     }
 
-
 def _army_none_legal_item() -> dict:
     """纠错轮合法：同军目标 + locality_scope=none。"""
     item = _army_single_bad_item()
@@ -125,7 +120,6 @@ def _army_none_legal_item() -> dict:
         "locality_scope": "none",
     }
     return item
-
 
 def test_shared_validate_rejects_region_id_and_category_holes():
     """共同 assemble/validate 最低可证层：钉原洞 typed 拒绝。
@@ -192,101 +186,6 @@ def test_shared_validate_rejects_region_id_and_category_holes():
     assert only_action["action_type"] == "policy"
     assert only_action["dossier_action_type"] == "policy"
 
-
-def test_month_end_entry_owner_and_matrix_reject(monkeypatch, tmp_path):
-    """真实月末入口 tracer：Owner 例；army+single 走 option heal；耗尽只剔坏项。
-
-    #1746 heal-covers-illegal-values-too：option 组合矛盾不再整批组合重抽。
-    改票真实入口由 test_pihong_dossier_1490 的 return_revise 路径覆盖。
-    不申请 game：本 tracer 只经 generate_rescript_draft 真实入口，无 DB。
-    """
-    import ming_sim.rescript_draft as rescript_mod
-
-    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
-
-    owner_item = {
-        "title": "陕西告饥",
-        "context": "秦地赤旱，饥民待哺，急须责成赈济。",
-        "options": [
-            dict(_OWNER_OPTION),
-            {
-                **_OWNER_OPTION,
-                "label": "缓征以苏民力",
-                "hint": "先赈后征",
-                "transaction_category": "钱粮",
-            },
-        ],
-    }
-
-    monkeypatch.setattr(
-        rescript_mod, "run_agent_text",
-        lambda *_a, **_k: json.dumps({"items": [owner_item]}, ensure_ascii=False),
-    )
-    drafts = rescript_mod.generate_rescript_draft(
-        object(), _month_end_ctx(), 1,
-    )
-    assert drafts is not None and len(drafts) == 1
-    monthly = drafts[0]["options"][0]
-    assert monthly["action_type"] == "assignment"
-    assert monthly["target_kind"] == "region"
-    assert monthly["target_id"] == "shaanxi"
-    assert monthly["region_id"] == "shaanxi"
-    assert monthly["locality_scope"] == "single"
-    assert monthly["transaction_category"] == "督赈"
-    assert not str(monthly.get("assignee_name") or "").strip()
-
-    # army+single 首抽 → option heal 补 locality_scope=none；兄弟保留
-    calls: list[str] = []
-
-    def _heal_once(_agent, prompt, tag="", **_kwargs):
-        del prompt
-        calls.append(tag or "")
-        if len(calls) == 1:
-            return json.dumps({"items": [_army_single_bad_item()]}, ensure_ascii=False)
-        return json.dumps(
-            {"heals": [{"heal_id": "0:0", "locality_scope": "none"}]},
-            ensure_ascii=False,
-        )
-
-    monkeypatch.setattr(rescript_mod, "run_agent_text", _heal_once)
-    healed = rescript_mod.generate_rescript_draft(
-        object(), _month_end_ctx(), 2,
-    )
-    assert calls == ["rescript-draft", "rescript-draft-heal"]
-    assert healed is not None and len(healed) == 1
-    grant = next(o for o in healed[0]["options"] if o.get("grant_action") == "协饷")
-    assert grant["target_kind"] == "army"
-    assert grant["target_id"] == "guanning"
-    assert grant["locality_scope"] == "none"
-    assert grant.get("grant_action") == "协饷"
-    assert len(healed[0]["options"]) == 2
-
-    # heal 耗尽仍 army+single → 只剔坏 option，兄弟仍可呈
-    exhaust_calls: list[str] = []
-
-    def _never_heals(_agent, prompt, tag="", **_kwargs):
-        del prompt
-        exhaust_calls.append(tag or "")
-        return json.dumps({"items": [_army_single_bad_item()]}, ensure_ascii=False)
-
-    monkeypatch.setattr(rescript_mod, "run_agent_text", _never_heals)
-    exhausted = rescript_mod.generate_rescript_draft(
-        object(), _month_end_ctx(), 3,
-    )
-    assert exhausted is not None and len(exhausted) == 1
-    assert len(exhausted[0]["options"]) == 1
-    assert exhausted[0]["options"][0].get("action_type") == "assignment"
-    assert exhaust_calls[0] == "rescript-draft"
-    assert exhaust_calls.count("rescript-draft-heal") == rescript_mod.RESCRIPT_OPTION_FIELD_HEAL_RETRIES
-    note_path = tmp_path / "error_packs" / "rescript_draft_degraded" / "turn3.json"
-    assert note_path.is_file()
-    note = json.loads(note_path.read_text(encoding="utf-8"))
-    assert note.get("turn") == 3
-    assert note.get("reason") == "option_missing_fields_heal_exhausted"
-    dropped = note.get("dropped_options") or []
-    assert dropped and dropped[0].get("heal_id") == "0:0"
-
-
 def test_rescript_follow_draft_nails_drafted_roster(game):
     """真实批红 follow_draft：Owner 例未点将 → 主办来自票拟名单，成案钉进案卷。"""
     import ming_sim.rescript_actions as ra
@@ -331,7 +230,6 @@ def test_rescript_follow_draft_nails_drafted_roster(game):
     assert not str(payload.get("assignee_id") or payload.get("assignee") or "").strip()
     _assert_drafted_roster_nailed(db, created)
 
-
 def test_manual_owner_example_seal_advances(tracer_client, monkeypatch):
     """真实 Web 手工拟诏：Owner 例 → 盖玺；持久化 canonical + 大臣所拟名单。"""
     import ming_sim.cli_backend as cli_backend
@@ -372,7 +270,6 @@ def test_manual_owner_example_seal_advances(tracer_client, monkeypatch):
     assert str(payload.get("execution_surface") or "").strip() == ""
     _assert_drafted_roster_nailed(game.db, matched[0])
 
-
 def _executing_counts(db, *, owner_name: str, region_id: str):
     """Observe durable executing dossiers, not the retired simulator board."""
     owner_open = db.conn.execute(
@@ -385,7 +282,6 @@ def _executing_counts(db, *, owner_name: str, region_id: str):
         "WHERE status='executing' AND region_id=?", (region_id,),
     ).fetchone()[0]
     return owner_open, province_open
-
 
 def test_http_manual_directive_lands_beyond_fifteen_initiatives_1790(
     tracer_client, monkeypatch,
@@ -462,7 +358,6 @@ def test_http_manual_directive_lands_beyond_fifteen_initiatives_1790(
     assert owner_after == owner_before + 1, (owner_before, owner_after)
     assert province_after == province_before + 1, (province_before, province_after)
 
-
 def test_normalize_rescript_layer_a_option_contract():
     """normalize_rescript_layer_a_option：外部可观察成败与归一结果。
 
@@ -524,7 +419,6 @@ def test_normalize_rescript_layer_a_option_contract():
         "name": "",
     })
     assert auth_assignee_zero.get("assignee_name") == "0"
-
 
 def test_combo_correction_preserves_first_draw_roster(game, monkeypatch):
     """组合纠错：失败字段（含 target_kind 身份束）采纳；未失败动作/名册/类别/旨文冻结。
@@ -621,7 +515,6 @@ def test_combo_correction_preserves_first_draw_roster(game, monkeypatch):
         conn=db.conn,
         regions_content=content.regions,
     )
-
 
 @pytest.mark.parametrize("mode", ["freeze_roster", "heal_first_only_reject"])
 def test_batch_combo_correction_real_wrapper(game, monkeypatch, mode):

@@ -1,8 +1,8 @@
 """包戊 数值呈现钉测（#1334/#1350/#1363/#1383 浮点族 + #1366 预算口径）。
 
 真缝：
-- army_logs.reason → turn_army_summary / previous_summary 路径上的欠发文案
-- 省源分账 reason / turn_army_summary delta（#1383 残余）
+- army_logs.reason → army_logs / previous_summary 路径上的欠发文案
+- 省源分账 reason / army_logs delta（#1383 残余）
 - API armies.arrears_text approximate 投影；raw arrears 键缺席（#1363 同源呈现面）
 - budget_key=army_pay 结构化身份、金额口径与改名不双扣（#1366；不锁显示措辞）
 """
@@ -18,7 +18,6 @@ import web_app
 from ming_sim.assets import format_wanliang_amount
 from ming_sim.flows import apply_fixed_period_flows, compute_budget_lines
 
-
 # 多于一位小数的 IEEE 残渣（如 1.2000000000000002 / 0.09999999999999964）
 _FLOAT_GARBAGE = re.compile(r"\d+\.\d{3,}")
 # 奏报口吻：整数或恰好一位小数
@@ -28,37 +27,10 @@ _PROVINCE_WANLIANG = re.compile(r"(摊新增欠|偿还)(\d+(?:\.\d+)?)万两")
 # #1471：玩家预算字段不得泄漏工程注记词
 _ENGINEERING_NOTE_TOKENS = ("hub", "旁路", "substrate", "实发率", "可降到")
 
-
-def test_army_pay_shortfall_reason_has_no_float_garbage(game):
-    """#1334/#1383：真实落账 reason 与 summary 不得出现浮点垃圾小数。"""
-    db, state, _ = game
-    apply_fixed_period_flows(db, state)
-
-    reasons = [
-        str(row["reason"] or "")
-        for row in db.conn.execute(
-            "SELECT reason FROM army_logs WHERE reason LIKE '%欠发%'"
-        ).fetchall()
-    ]
-    assert reasons, "开局结算应产生中央军饷欠发 reason（国库不足以足额）"
-
-    for reason in reasons:
-        assert not _FLOAT_GARBAGE.search(reason), f"reason 含浮点垃圾：{reason}"
-        for amount in _WANLIANG_AMOUNT.findall(reason):
-            assert re.fullmatch(r"\d+(\.\d)?", amount), (
-                f"欠发数额须为整数或一位小数，得 {amount!r} in {reason}"
-            )
-
-    summary = db.turn_army_summary(state.turn)
-    assert "欠发" in summary
-    assert not _FLOAT_GARBAGE.search(summary), f"turn_army_summary 含浮点垃圾：{summary}"
-
-
 def _army_pay_budget_lines(budget):
     return [
         row for row in budget["国库"]["expense"] if row.get("budget_key") == "army_pay"
     ]
-
 
 def test_substrate_budget_splits_proposals_without_treasury_cap(game):
     """#1366：真实预算入口分别读取中央份额与京运补应拟支，不受国库余额截断。"""
@@ -98,8 +70,6 @@ def test_substrate_budget_splits_proposals_without_treasury_cap(game):
     state.metrics["国库"] = 100
     assert proposed_parts() == {"central": 10, "jingyun": 7}
 
-
-
 def test_renaming_army_pay_budget_line_does_not_double_debit(game, monkeypatch):
     """#1366：改 army_pay 显示名不得让定额路径再扣一笔。"""
     import ming_sim.flows as flows_mod
@@ -132,7 +102,6 @@ def test_renaming_army_pay_budget_line_does_not_double_debit(game, monkeypatch):
     hub_rows = [row for row in flow_rows if row.get("category") == "边饷hub"]
     assert len(hub_rows) == 1
     assert int(hub_rows[0]["paid"]) > 0
-
 
 def test_player_budget_payload_strips_engineering_notes(read_game):
     """#1471：API 玩家定额行键集恰为 {name, amount}；工程 note/internal 不得下发。"""
@@ -174,7 +143,6 @@ def test_player_budget_payload_strips_engineering_notes(read_game):
         assert token not in joined, (
             f"玩家预算字段泄漏工程词 {token!r}：{joined!r}"
         )
-
 
 def _seed_province_pay_split_scenario(db) -> None:
     """触发省源分账 reason 真路径（与 fiscal bridge 同源夹具，最小可复现）。"""
@@ -243,44 +211,6 @@ def _seed_province_pay_split_scenario(db) -> None:
         (json.dumps(fiscal, ensure_ascii=False),),
     )
     db.conn.commit()
-
-
-def test_province_pay_split_reason_and_summary_have_no_float_garbage(game):
-    """#1383 残余：省源分账 reason 真路径 + turn_army_summary delta 无 IEEE 残渣。"""
-    db, state, _ = game
-    _seed_province_pay_split_scenario(db)
-    db.settle_province_tick("shaanxi")
-
-    reasons = [
-        str(row["reason"] or "")
-        for row in db.conn.execute(
-            """
-            SELECT reason FROM army_logs
-            WHERE field = 'province_pay_arrears'
-              AND reason LIKE '%省源军饷分账%'
-            """
-        ).fetchall()
-    ]
-    assert reasons, "省源分账真路径应写入 province_pay_arrears reason"
-
-    for reason in reasons:
-        assert not _FLOAT_GARBAGE.search(reason), f"省源 reason 含浮点垃圾：{reason}"
-        for _kind, amount in _PROVINCE_WANLIANG.findall(reason):
-            assert re.fullmatch(r"\d+(\.\d)?", amount), (
-                f"省源万两须为整数或一位小数，得 {amount!r} in {reason}"
-            )
-            # 与 format_wanliang_amount 单真源同形
-            raw = float(amount)
-            assert amount == format_wanliang_amount(raw), (
-                f"省源数额须走 format_wanliang_amount，得 {amount!r}"
-            )
-
-    summary = db.turn_army_summary(state.turn)
-    assert "省源" in summary or "欠饷" in summary
-    assert not _FLOAT_GARBAGE.search(summary), (
-        f"turn_army_summary delta/reason 含浮点垃圾：{summary}"
-    )
-
 
 def test_army_payload_arrears_text_is_approximate_not_raw(game):
     """#321：API armies.arrears_text 为 approximate 奏报；禁 raw 键与 IEEE 残渣。"""

@@ -641,54 +641,6 @@ def _current_game_turn(db: Any, turn: object = None) -> int:
     return 0
 
 
-def build_secret_covert_effect_briefs(
-    db: Any,
-    orders: Sequence[Mapping[str, object]] | None = None,
-    *,
-    turn: object = None,
-) -> List[Dict[str, object]]:
-    """internal 档房私密输入：typed 合同 + origin，不含密令正文（#883）。"""
-    rows = list(orders or [])
-    if not rows:
-        rows = list(db.list_secret_orders(status="active"))
-    current_turn = _current_game_turn(db, turn)
-    out: List[Dict[str, object]] = []
-    for order in rows:
-        if not isinstance(order, Mapping):
-            continue
-        if str(order.get("status") or "active") != "active":
-            continue
-        if _is_issuance_turn(order, current_turn):
-            continue
-        oid = int(order.get("id") or 0)
-        if oid <= 0:
-            continue
-        dossier = db.get_dossier_for_secret_order(oid)
-        if dossier is None:
-            continue
-        contract = require_covert_task_contract(dossier)
-        delivery = contract.get("delivery") if isinstance(contract.get("delivery"), Mapping) else {}
-        unit = str(delivery.get("unit") or "")
-        fields = canonical_fields_for_delivery(unit=unit)
-        owner = "internal"
-        if fields == ["人物变更"]:
-            owner = "personnel_secret"
-        prior_units = float(db.sum_dossier_actual_progress_units(int(dossier["id"])))
-        target_units = contract_target_units(contract)
-        remaining_units = max(0.0, target_units - prior_units)
-        out.append({
-            "origin_ref": f"dossier:{int(dossier['id'])}",
-            "order_id": oid,
-            "kind": str(contract.get("kind") or ""),
-            "axes": list(contract.get("axes") or []),
-            "direction": int(contract.get("direction") or 1),
-            "delivery": copy.deepcopy(dict(delivery)),
-            "effect_owner": owner,
-            "canonical_fields": fields,
-            "prior_actual_units": prior_units,
-            "remaining_units": remaining_units,
-        })
-    return out
 
 
 def canonical_fields_for_delivery(*, unit: object = None) -> List[str]:

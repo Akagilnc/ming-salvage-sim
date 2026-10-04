@@ -6711,28 +6711,6 @@ class GameDB:
         row = self.conn.execute("SELECT leverage FROM factions WHERE name = ?", (faction,)).fetchone()
         return int(row["leverage"]) if row else 50
 
-    def faction_report(self, *, audience: bool = False) -> str:
-        """Render faction state for engine consumers or a minister-facing audience.
-
-        The engine still needs the exact axes for settlement and simulation.
-        A minister-facing report is a separate presentation contract: its
-        satisfaction and leverage values are qualitative, never prompt data.
-        """
-        rows = self.conn.execute(
-            "SELECT name, satisfaction, leverage, agenda FROM factions ORDER BY name"
-        ).fetchall()
-        if not rows:
-            return "派系未建档。"
-        if audience:
-            return "；".join(
-                f"{row['name']}满意{satisfaction_band(row['satisfaction'])}、"
-                f"势力{power_band(row['leverage'])}，所求：{row['agenda']}"
-                for row in rows
-            )
-        return "；".join(
-            f"{row['name']}满意{row['satisfaction']}、势力{row['leverage']}，所求：{row['agenda']}"
-            for row in rows
-        )
 
     def class_rows(self, region_id: str = "") -> List[sqlite3.Row]:
         """region_id="" 取全国汇总行；其它取该省切片。"""
@@ -6745,7 +6723,7 @@ class GameDB:
     def class_report(self, *, audience: bool = False) -> str:
         """全国汇总 + 各省紧张切片（sat<=30 且 lev>=60）。
 
-        audience=True 时满意度/势力走既有定性档（与 faction_report 同词表），
+        audience=True 时满意度/势力走既有定性档（与派系满意/势力定性词表同），
         供 simulator 等玩家可感混合调用；机面默认仍给裸值。
         """
         national = self.class_rows("")
@@ -7255,32 +7233,6 @@ class GameDB:
             f"天灾：{row['natural_disaster']}；人祸：{row['human_disaster']}；状态：{row['status']}"
         )
 
-    def turn_region_summary(self, turn: int, limit: int = 10) -> str:
-        rows = self.conn.execute(
-            """
-            SELECT rl.*, r.name AS region_name
-            FROM region_logs rl
-            JOIN regions r ON r.id = rl.region_id
-            WHERE rl.turn = ?
-              AND rl.field NOT LIKE 'settle_官俸欠_%'
-              AND rl.field NOT LIKE 'settle_宗禄欠_%'
-            ORDER BY rl.id
-            LIMIT ?
-            """,
-            (turn, limit),
-        ).fetchall()
-        if not rows:
-            return f"本{TURN_UNIT}地区盘面无明确变化。"
-        parts = []
-        for row in rows:
-            label = REGION_FIELD_LABELS.get(str(row["field"]), str(row["field"]))
-            delta = row["delta"]
-            if delta is None:
-                parts.append(f"{row['region_name']}{label}改为{row['new_value']}（{row['reason']}）")
-            else:
-                sign = "+" if int(delta) > 0 else ""
-                parts.append(f"{row['region_name']}{label}{sign}{int(delta)}（{row['reason']}）")
-        return "；".join(parts) + "。"
 
     def apply_region_deltas(
         self,
@@ -7844,40 +7796,6 @@ class GameDB:
             out.extend(other)
         return "\n".join(out)
 
-    def turn_army_summary(self, turn: int, limit: int = 10) -> str:
-        rows = self.conn.execute(
-            """
-            SELECT al.*, a.name AS army_name
-            FROM army_logs al
-            JOIN armies a ON a.id = al.army_id
-            WHERE al.turn = ?
-            ORDER BY CASE
-                       WHEN al.delta IS NULL THEN 0
-                       WHEN al.delta != 0 THEN 0
-                       ELSE 1
-                     END, al.id
-            LIMIT ?
-            """,
-            (turn, limit),
-        ).fetchall()
-        if not rows:
-            return f"本{TURN_UNIT}军队盘面无明确变化。"
-        parts = []
-        for row in rows:
-            label = ARMY_FIELD_LABELS.get(str(row["field"]), str(row["field"]))
-            delta = row["delta"]
-            if delta is None:
-                parts.append(f"{row['army_name']}{label}改为{row['new_value']}（{row['reason']}）")
-            else:
-                delta_num = float(delta)
-                sign = "+" if delta_num > 0 else ""
-                if row["field"] == "manpower":
-                    parts.append(f"{row['army_name']}{label}{sign}{int(delta_num)}人（{row['reason']}）")
-                else:
-                    # #1383：非整数 delta（省源欠饷等）走万两收整单真源，杜绝 :g IEEE 残渣
-                    delta_text = format_wanliang_amount(delta_num)
-                    parts.append(f"{row['army_name']}{label}{sign}{delta_text}（{row['reason']}）")
-        return "；".join(parts) + "。"
 
     def apply_army_deltas(
         self,
