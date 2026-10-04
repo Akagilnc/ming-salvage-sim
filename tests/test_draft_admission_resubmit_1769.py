@@ -502,8 +502,9 @@ def test_draft_admission_resubmit_code_fault_aborts_with_error_pack(
 
 
 _NO_INTENT_REWRITE = {
-    # 缺「拟旨意图」或垃圾 → extract 映 draft_action=无 → project 曾落 special_decree
-    # fallback；结算路 B 不得 replace_payload 毁掉原 pay_order。
+    # 模型明确合法「无」→ extract 短路 draft_action=无；结算路 B 不得
+    # replace_payload 毁掉原 pay_order。解析失败/缺键另走 ValueError 真因，不经此夹具。
+    "拟旨意图": "无",
     "动作类型": "special_decree",
     "目标类型": "policy",
     "目标ID": "manual-directive",

@@ -428,7 +428,7 @@ describe("#1732 ChatModal · 撤回就地确认", () => {
 });
 
 describe("ChatModal — #1370 empty audience chrome", () => {
-  it("空对话区呈等候/引导 chrome，带稳定 chat-stage 标记，不代笔开场白", async () => {
+  it("空对话区呈等候/引导 chrome，带稳定 chat-stage 标记", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
       ok: true,
       json: async () => ({ night_id: 0, messages: [] }),
@@ -441,7 +441,7 @@ describe("ChatModal — #1370 empty audience chrome", () => {
     await act(async () => { await Promise.resolve(); });
     const stage = host.querySelector("[data-testid=chat-stage]") || host.querySelector(".chat-stage");
     expect(stage).not.toBeNull();
-    // UI 固定引导话语（P7 允许）；#1902 N6 清退「不代笔叙事」词面负向锁。
+    // UI 固定引导话语（P7 界面 chrome，非人物叙事措辞锁）。
     expect(stage!.textContent || "").toMatch(/请陛下问话|等候开口/);
   });
 });

@@ -2579,7 +2579,9 @@ def extract_draft_intent(
     多旨批次、补充合并、现有候选指认等旧模式已删；签名不再吞退役关键字。
 
     合法「无」→ ``{"draft_action": "无", ...}``；解析失败/缺键/非法枚举响亮上抛（N1）。
-    content（#1428）注入名册接地；correction_feedback 非空时 LLM 挂死响亮上抛。
+    首抽 call/transport 失败 → 既有 ``cli_runner_unavailable`` / ``LLMUnavailable`` 接缝
+    响亮上抛（与 secret_extract 同形；不得静默映「无」）。
+    content（#1428）注入名册接地；correction_feedback 非空时 LLM 挂死原样上抛。
     """
     roster_facts = _draft_intent_character_roster_facts(content)
     army_facts = _draft_intent_army_grounding_facts(content)
@@ -2660,9 +2662,15 @@ def extract_draft_intent(
     except Exception as exc:
         if correction_block:
             raise
-        # 首抽 LLM 挂死：经 _log 公开后合法 degrade 为「无」（与非法产物洗「无」分离；#1902 N1）。
-        _log(f"拟旨意图抽取失败：{exc}")
-        return {"draft_action": "无", "draft_text": "", "target_candidate": ""}
+        # #1902 N1：首抽 call/transport 失败走既有系统失败接缝响亮上抛（与
+        # secret_extract 同形；_log 仅 VERBOSE print，不是真因落痕收口，不得据此
+        # 自授静默 degrade→「无」）。真因进 LLMUnavailable.provider_message + __cause__。
+        from ming_sim.exceptions import LLMUnavailable
+        from ming_sim.llm_model import cli_runner_unavailable
+
+        if isinstance(exc, LLMUnavailable):
+            raise
+        raise cli_runner_unavailable(exc, backend="draft_intent") from exc
     obj = _loads_lenient(raw)
     if not isinstance(obj, dict):
         # #1902 N1：解析失败不得映成合法「无」。
