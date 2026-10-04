@@ -54,7 +54,7 @@ def test_update_unknown_order_id_missing_ref(game):
 
 def test_update_valid_active_order_applies_no_reject(game):
     """正向守门（cmr r2 claude）：合法 active 密令 update 不被新 get_secret_order gate 误拒，
-    sim_note 真写入、零拒收行。"""
+    实况轨真写入、零拒收行。"""
     db, state, content = game
     turn = state.turn
     oid = create_test_secret_order(db,
@@ -74,7 +74,6 @@ def test_update_valid_active_order_applies_no_reject(game):
     dossier = db.get_dossier_for_secret_order(oid)
     notes = db.list_dossier_actual_progress(int(dossier["id"]))
     assert [int(row["turn"]) for row in notes] == [int(state.turn)]
-    assert db.get_secret_order(oid)["sim_note"] == ""
 
 
 def test_apply_score_extraction_secret_order_update_respects_outer_transaction_rollback(game):
@@ -98,7 +97,6 @@ def test_apply_score_extraction_secret_order_update_respects_outer_transaction_r
 
     row = db.get_secret_order(oid)
     assert row is not None
-    assert row["sim_note"] == ""
     assert db.list_dossier_actual_progress(int(dossier["id"])) == []
 
 

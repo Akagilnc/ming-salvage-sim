@@ -1483,7 +1483,6 @@ class GameDB:
                 importance INTEGER NOT NULL DEFAULT 4,
                 status TEXT NOT NULL DEFAULT 'active',
                 result TEXT NOT NULL DEFAULT '',
-                sim_note TEXT NOT NULL DEFAULT '',
                 excluded_names TEXT NOT NULL DEFAULT '[]',
                 dossier_progress_json TEXT NOT NULL DEFAULT '[]',
                 turn_closed INTEGER,
@@ -2322,11 +2321,9 @@ class GameDB:
         # 结局：ended=1 时游戏终结；ending_status 为 context.ENDING_* 类型。
         self.ensure_column("game_state", "ended", "INTEGER NOT NULL DEFAULT 0")
         self.ensure_column("game_state", "ending_status", "TEXT NOT NULL DEFAULT ''")
-        # 密令推演副作用列（result 留给承办人进展，sim_note 给推演写泄漏/反弹，互不覆盖）
         self.ensure_column(
             "decree_dossier_link_rejections", "pending_action_id", "INTEGER"
         )
-        self.ensure_column("secret_orders", "sim_note", "TEXT NOT NULL DEFAULT ''")
         # 密令期限：0=无硬期限；due_turn>0 且 ≤当前回合时，settle 尾部按实进度对账派生 done/failed（#1504）。
         self.ensure_column("secret_orders", "due_turn", "INTEGER NOT NULL DEFAULT 0")
         if self.ensure_column(
@@ -20732,7 +20729,7 @@ class GameDB:
         note: str = "",
         commit: bool = True,
     ) -> Dict[str, object]:
-        """#1504 实况轨月度进度（0073）。禁与 dossier_progress_json/sim_note 混写。
+        """#1504 实况轨月度进度（0073）。禁与 dossier_progress_json 混写。
 
         同一 (dossier, turn) 的 note 与推演实况正文共用。冲突更新改单位与执行态。
         本次 note 去掉空白后仍有字，即为同月更正，替换已存正文；空白则只动数值，
@@ -22079,7 +22076,6 @@ class GameDB:
                 "importance": int(r["importance"]),
                 "status": r["status"],
                 "result": r["result"] or "",
-                "sim_note": (r["sim_note"] if "sim_note" in r.keys() else "") or "",
                 # Emperor-facing secret-order payload is an authorized private
                 # product seam; expose the same canonical monthly rail used by
                 # the personnel extractor and future dossier inquiry.
@@ -22263,7 +22259,7 @@ class GameDB:
         """推演写本月推进实况。原文进入实况轨当月 note，不覆盖单位。
 
         月份身份是当前 game_state.turn。年月参数不参与存储，正文日期不另立月份。
-        不写 secret_orders.sim_note，不进奏报轨。
+        不进奏报轨。
         """
         _ = (year, period)
         if commit:
@@ -22405,7 +22401,6 @@ class GameDB:
             "id": int(r["id"]), "minister_name": r["minister_name"],
             "title": r["title"], "content": r["content"],
             "status": r["status"], "result": r["result"] or "",
-            "sim_note": (r["sim_note"] if "sim_note" in r.keys() else "") or "",
             "turn_issued": int(r["turn_issued"]),
             "due_turn": int(r["due_turn"] if "due_turn" in r.keys() else 0),
             "turn_closed": r["turn_closed"],

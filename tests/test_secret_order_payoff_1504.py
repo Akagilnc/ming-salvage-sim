@@ -15,6 +15,7 @@ import json
 import pytest
 
 from ming_sim.covert_progress import (
+    CONTRACT_KEY,
     FACT_LANES_KEY,
     INVESTIGATION_TIPS_KEY,
     INVESTIGATION_ACTS_KEY,
@@ -2529,6 +2530,93 @@ def test_create_secret_order_rejects_missing_contract(game):
             state, name, "无合同密令", "无显式差务", [], deadline_months=1,
         )
     assert db.list_secret_orders() == []
+
+
+def test_create_secret_order_rejects_tags_without_explicit_fields(game):
+    """生产闸：tags 不得代替显式 typed 字段（create 真入口）。"""
+    db, state, _ = game
+    name = _minister(db)
+    with pytest.raises(CovertContractError):
+        db.create_secret_order(
+            state, name, "仅标签密令", "不得凭 tags 成案",
+            ["辽饷", "兵部", "密查", "稽核"],
+            deadline_months=1,
+            covert_task={"tags": ["辽饷", "兵部", "密查", "稽核"]},
+        )
+    assert db.list_secret_orders() == []
+
+
+@pytest.mark.parametrize(
+    ("unit", "identity", "sign"),
+    [
+        ("万两", {"category": "密令差务", "account": "内库"}, -1),
+        ("万两", {"purpose": "其它", "account": "内库"}, -1),
+        ("万两", {"purpose": "其它", "category": "密令差务"}, -1),
+        ("人犯", {}, 1),
+        ("万亩", {"field": "registered_land", "target": "421"}, 1),
+        ("万亩", {"region": "henan", "target": "421"}, 1),
+        ("万亩", {"region": "henan", "field": "registered_land"}, 1),
+    ],
+)
+def test_create_secret_order_rejects_incomplete_delivery_identity(
+    game, unit, identity, sign,
+):
+    """生产闸：交付 identity 七参数缺失拒收（create→build_covert_task_contract）。"""
+    db, state, _ = game
+    name = _minister(db)
+    with pytest.raises(CovertContractError):
+        db.create_secret_order(
+            state, name, "缺 identity", "结构化负向", [],
+            deadline_months=1,
+            covert_task={
+                "kind": "差务",
+                "axes": ["实务事功"],
+                "direction": 1,
+                "delivery_unit": unit,
+                "delivery_target_units": 1,
+                "effect_sign": sign,
+                **identity,
+            },
+        )
+    assert db.list_secret_orders() == []
+
+
+def test_create_and_settle_reject_zero_target_not_delivered(game):
+    """零目标不算交付：create 拒收；案卷若被置零，settle 读合同闸响亮失败，不静默 done。
+
+    decide_secret_order_settlement 仅由 settle_due 在 require_covert_task_contract
+    之后调用；coerce 已拒 qty<=0，故真入口覆盖 = create 拒 + settle 不结案。
+    """
+    db, state, _ = game
+    name = _minister(db)
+    with pytest.raises(CovertContractError):
+        db.create_secret_order(
+            state, name, "零目标密令", "不得成案", [],
+            deadline_months=1,
+            covert_task=_task(
+                kind="查案", axes=["实务事功"], unit="万两", target=0,
+            ),
+        )
+    assert db.list_secret_orders() == []
+
+    oid = _issue(db, state, name, "零目标密令", "目标被置零", months=1, target=1)
+    dossier = db.get_dossier_for_secret_order(oid)
+    did = int(dossier["id"])
+    payload = json.loads(str(dossier["payload_json"]))
+    contract = dict(payload[CONTRACT_KEY])
+    delivery = dict(contract["delivery"])
+    delivery["target_units"] = 0.0
+    contract["delivery"] = delivery
+    payload[CONTRACT_KEY] = contract
+    db.update_decree_dossier_payload(did, payload, commit=True)
+    db.conn.execute(
+        "UPDATE secret_orders SET due_turn=? WHERE id=?",
+        (state.turn, oid),
+    )
+    db.conn.commit()
+    with pytest.raises(CovertContractError):
+        settle_due_secret_orders(db, state, commit=True)
+    assert db.get_secret_order(oid)["status"] == "active"
 
 
 def test_purpose_liaoxiang_canonicalizes_to_other_and_counts(game):

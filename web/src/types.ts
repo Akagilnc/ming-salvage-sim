@@ -619,7 +619,6 @@ export type SecretOrder = {
   importance: number;
   status: "active" | "closed" | "cancelled";
   result: string;
-  sim_note: string;
   dossier_progress?: DossierProgressReport[];
   turn_closed: number | null;
 };

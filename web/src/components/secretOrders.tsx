@@ -154,7 +154,6 @@ function SecretOrderDetailDialog({
             ))}
           </dl>
           <SecretOrderDetailBlock title="密令正文" text={order.content || "未记正文。"} />
-          {order.sim_note ? <SecretOrderDetailBlock title="月度动向" text={order.sim_note} tone="green" /> : null}
           {(order.dossier_progress || []).map((report) => (
             <SecretOrderDetailBlock
               key={report.id}
