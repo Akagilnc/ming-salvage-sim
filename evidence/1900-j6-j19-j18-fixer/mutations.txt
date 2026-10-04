@@ -2,17 +2,17 @@
 FFF                                                                      [100%]
 =================================== FAILURES ===================================
 E   assert [] == [1]
-      
+
       Right contains one more item: 1
       Use -v to get more diff
 /Users/akagilnc/WorkSpace/Ming_LLM-1900-w5/tests/test_menu_lifecycle_drain_396.py:141: assert [] == [1]
 E   assert [] == [1]
-      
+
       Right contains one more item: 1
       Use -v to get more diff
 /Users/akagilnc/WorkSpace/Ming_LLM-1900-w5/tests/test_menu_lifecycle_drain_396.py:227: assert [] == [1]
 E   assert [] == [1]
-      
+
       Right contains one more item: 1
       Use -v to get more diff
 /Users/akagilnc/WorkSpace/Ming_LLM-1900-w5/tests/test_menu_lifecycle_drain_396.py:270: assert [] == [1]
