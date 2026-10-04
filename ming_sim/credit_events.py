@@ -518,9 +518,12 @@ def _issue_refs_strict(item: Dict[str, object]) -> Set[int]:
             out.add(int(raw))
         except (TypeError, ValueError):
             continue
-    tid = parse_issue_id(item.get("target_id"))
-    if tid is not None:
-        out.add(tid)
+    tid = str(item.get("target_id") or "").strip()
+    if tid.startswith("issue:"):
+        try:
+            out.add(int(tid.split(":", 1)[1]))
+        except (TypeError, ValueError):
+            pass
     for key in ("origin_ref", "来源引用"):
         iid = parse_issue_id(item.get(key))
         if iid is not None:

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Mapping
+from typing import Any, Iterable, Mapping
 
 from ming_sim.applier import connection_owns_transaction, sanitize_sqlite_text
 from ming_sim.entities.column_write import upsert_by_pk
@@ -128,6 +128,32 @@ class TextualFactStore:
             (kind, target),
         ).fetchall()
         return tuple(_row_to_fact(row) for row in rows)
+
+    def pointing_at(
+        self,
+        origin_refs: Iterable[str],
+        *,
+        subject_kind: str | None = None,
+    ) -> tuple[TextualFact, ...]:
+        refs = [str(ref).strip() for ref in origin_refs if str(ref).strip()]
+        if not refs:
+            return ()
+        placeholders = ",".join("?" for _ in refs)
+        sql = (
+            "SELECT id, subject_kind, subject_id, year, period, turn, body, origin_ref "
+            "FROM textual_facts WHERE origin_ref IN (" + placeholders + ")"
+        )
+        params: list[object] = list(refs)
+        if subject_kind is not None:
+            kind = str(subject_kind or "").strip()
+            if kind not in TEXTUAL_FACT_SUBJECT_KINDS:
+                raise ValueError(
+                    f"textual fact subject_kind must be one of {sorted(TEXTUAL_FACT_SUBJECT_KINDS)}"
+                )
+            sql += " AND subject_kind = ?"
+            params.append(kind)
+        sql += " ORDER BY year ASC, period ASC, id ASC"
+        return tuple(_row_to_fact(row) for row in self._conn.execute(sql, params).fetchall())
 
     def read_write_world_textual_fact_files(self, params: Any = ()) -> Any:
         return self._conn.execute("SELECT DISTINCT subject_kind, subject_id FROM textual_facts WHERE subject_kind IN ('character', 'army', 'region') ORDER BY subject_kind, subject_id", params).fetchall()

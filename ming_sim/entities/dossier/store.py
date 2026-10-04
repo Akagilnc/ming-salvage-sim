@@ -2453,6 +2453,24 @@ class DossierStore:
         )
         return int(cur.rowcount or 0)
 
+    def pending_directive_ids_for_turn(self, turn: int) -> list[int]:
+        return [
+            int(row["id"])
+            for row in self._conn.execute(
+                "SELECT id FROM pending_actions "
+                "WHERE turn=? AND kind='directive' AND status='pending'",
+                (int(turn),),
+            ).fetchall()
+        ]
+
+    def delete_pending_directives_for_turn(self, turn: int) -> int:
+        cur = self._conn.execute(
+            "DELETE FROM pending_actions "
+            "WHERE turn=? AND kind='directive' AND status='pending'",
+            (int(turn),),
+        )
+        return int(cur.rowcount or 0)
+
     def delete_failed_secret_order_intents(self) -> int:
         cur = self._conn.execute(
             "DELETE FROM pending_actions WHERE status='failed' AND kind='secret_order'"

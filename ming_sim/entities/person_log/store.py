@@ -116,6 +116,27 @@ class PersonLogStore:
             self._conn.commit()
         return int(cur.lastrowid or 0)
 
+    def for_person(self, person_name: str, *, limit: int | None = None) -> List[Dict[str, object]]:
+        """One person's log, oldest first."""
+        sql = (
+            "SELECT * FROM person_logs WHERE person_name=? ORDER BY turn, id"
+        )
+        params: list[object] = [str(person_name or "")]
+        if limit is not None:
+            sql += " LIMIT ?"
+            params.append(int(limit))
+        return [dict(row) for row in self._conn.execute(sql, params).fetchall()]
+
+    def by_origin(self, origin_ref: str) -> List[Dict[str, object]]:
+        """Every log line derived from one causal origin, oldest first."""
+        return [
+            dict(row)
+            for row in self._conn.execute(
+                "SELECT * FROM person_logs WHERE origin_ref=? ORDER BY turn, id",
+                (str(origin_ref or ""),),
+            ).fetchall()
+        ]
+
     def count_by_origin(
         self, origin_ref: str, *, turn: int, action: str = "",
     ) -> int:

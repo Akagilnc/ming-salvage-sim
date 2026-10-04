@@ -17,10 +17,10 @@ from ming_sim.entities.reign_state.store import ReignStateStore
 
 import json
 import logging
+import re
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 from ming_sim.applier import load_stored_list, load_stored_object
-from ming_sim.entities.affair import parse_origin_ref
 from ming_sim.entities.dossier import DOSSIER_REPORT_ORIGIN_VERDICT
 from ming_sim.db import GameDB
 from ming_sim.models import loads_effect_dict
@@ -76,28 +76,27 @@ _FUNDING_ARREARS_RATIO = 0.5
 HALFWAY_SETBACK_EVENT_ID = "breach_halfway_setback"
 _HALFWAY_METRICS_HIT = {"民心": -3, "皇威": -2}
 
+_DOSSIER_REF_RE = re.compile(r"^dossier:([1-9][0-9]*)$")
+_ISSUE_REF_RE = re.compile(r"^issue:([1-9][0-9]*)$")
+
 _META_PREFIX = "breach_plea_meta:"
 
 
 def parse_dossier_id(origin_ref: object) -> Optional[int]:
-    """dossier:<id> — reuses affair store's structured effect-ref parser."""
-    kind, target = parse_origin_ref(origin_ref)
-    return target if kind == "dossier" else None
+    text = str(origin_ref or "").strip()
+    match = _DOSSIER_REF_RE.match(text)
+    if not match:
+        return None
+    return int(match.group(1))
 
 
 def parse_issue_id(origin_ref: object) -> Optional[int]:
-    """issue:<id> — same exact kind:id shape as parse_origin_ref, issue kind only."""
+    """issue:<id> — single strict regex copy; credit/due reuse this function."""
     text = str(origin_ref or "").strip()
-    kind, sep, rest = text.partition(":")
-    if kind != "issue" or not sep:
+    match = _ISSUE_REF_RE.match(text)
+    if not match:
         return None
-    try:
-        target = int(rest)
-    except (TypeError, ValueError):
-        return None
-    if target <= 0:
-        return None
-    return target
+    return int(match.group(1))
 
 
 def encode_plea_meta(meta: Dict[str, object]) -> str:
@@ -1393,9 +1392,11 @@ def resolve_breach_pleas_from_extraction(
             if parsed is not None:
                 fund_issue_ids.add(parsed)
         tid = str(it.get("target_id") or "")
-        parsed_tid = parse_issue_id(tid)
-        if parsed_tid is not None:
-            fund_issue_ids.add(parsed_tid)
+        if tid.startswith("issue:"):
+            try:
+                fund_issue_ids.add(int(tid.split(":", 1)[1]))
+            except (TypeError, ValueError):
+                pass
         for key in ("issue_id", "commitment_ref"):
             raw = it.get(key)
             if raw in (None, ""):

@@ -568,7 +568,9 @@ union	_pair_key	scripts/family_tail_relation_acceptance_642.py	-	0	1	0
 union	_parse	ming_sim/db.py	-	1	1	0
 union	_parse_chapter_output	ming_sim/memories.py	-	0	1	0
 union	_parse_dossier_id	ming_sim/audience_extraction.py	-	0	1	0
+union	_parse_dossier_ref	ming_sim/credit_events.py	-	0	1	1
 union	_parse_highlights_json	ming_sim/db.py	-	1	1	0
+union	_parse_issue_ref	ming_sim/credit_events.py	-	0	1	1
 union	_parse_json_field	ming_sim/action_materialize.py	-	0	1	0
 union	_parse_module	ming_sim/simulation.py	-	0	1	0
 union	_parse_provider_response	-	tests/test_promulgation_verdict_heal_1753.py	0	1	0
@@ -1045,6 +1047,7 @@ union	apply_relation_brew_result	ming_sim/db.py	-	1	1	1
 union	apply_seed_founding_segment	ming_sim/db.py	-	1	0	1
 union	appoint_actions_allowed	ming_sim/action_materialize.py	-	0	1	0
 union	appoint_actions_effective	ming_sim/action_materialize.py	-	0	1	0
+union	army_detail	ming_sim/db.py	-	1	1	1
 union	assemble_beat_inputs	ming_sim/beat_orchestration.py	-	0	1	0
 union	assemble_offsite_summon_inputs	ming_sim/beat_orchestration.py	-	0	1	0
 union	assert_no_backlash_banned_tokens	ming_sim/commitment_backlash.py	-	0	1	0
@@ -1108,6 +1111,7 @@ union	build_simulator_tools	ming_sim/tools.py	-	0	1	0
 union	build_timeline	ming_sim/memories.py	-	0	1	0
 union	build_tools	scripts/cli_tools_probe.py	-	0	1	0
 union	building_detail	ming_sim/db.py	-	1	1	1
+union	by_origin	ming_sim/entities/person_log/store.py	-	1	0	1
 union	calc_province_fiscal	ming_sim/flows.py	-	0	1	0
 union	can_undo_last_chat_turn	ming_sim/db.py	-	1	1	1
 union	candidates_from_classifier_payload	ming_sim/action_clusters.py	-	0	1	0
@@ -1176,9 +1180,12 @@ union	current_inner_court_attendant_name	ming_sim/mindreading.py	-	0	1	0
 union	decode_chat_turn_route	ming_sim/audience_night.py	-	0	1	0
 union	default_settlement_attendant_runner	-	tests/section_rejection_helpers.py	0	1	0
 union	delete_by_name	ming_sim/entities/character/store.py	-	1	0	1
+union	delete_header	ming_sim/entities/reign_state/store.py	-	1	0	1
+union	delete_metric	ming_sim/entities/reign_state/store.py	-	1	0	1
 union	delete_relation_edge_events_for_chat_turn	ming_sim/db.py	-	1	1	1
 union	dependency_order	ming_sim/db.py	-	1	1	1
 union	deterministic_test_beat_generator	-	tests/conftest.py	0	1	0
+union	directives_by_ids	ming_sim/entities/issue/store.py	-	1	0	1
 union	discard_pending_directives	ming_sim/db.py	-	1	1	1
 union	discover_character_write_sql_locations	ming_sim/person_write_inventory.py	-	0	1	1
 union	discover_open_enter_tasks	ming_sim/beat_orchestration.py	-	0	1	0
@@ -1205,6 +1212,7 @@ union	event_memory_detail	ming_sim/db.py	-	1	1	0
 union	excluded_subject	ming_sim/knowledge.py	-	0	1	0
 union	executable_decree_dossier_ids	ming_sim/db.py	-	1	1	0
 union	exists	-	tests/test_error_pack.py,tests/test_settlement_recovery_projection_1620.py	0	1	0
+union	experiences	ming_sim/entities/affair/store.py	-	1	0	1
 union	extract	-	tests/test_secret_order_monthly_progress_566.py	0	1	0
 union	extract_appointment_action	ming_sim/cli_backend.py	-	0	1	0
 union	extract_confirmation_intent	ming_sim/cli_backend.py	-	0	1	0
@@ -1250,6 +1258,7 @@ union	fiscal_engine	ming_sim/db.py	-	1	1	0
 union	fiscal_levy_memorial_estimates	ming_sim/issues.py	-	0	1	0
 union	flush	scripts/decree_bench.py	-	0	1	0
 union	fold_distance_band	ming_sim/execution_pressure.py	-	0	1	0
+union	for_person	ming_sim/entities/person_log/store.py	-	1	0	1
 union	forbidden	-	tests/test_character_knowledge_489.py	0	0	1
 union	forbidden_cli	-	tests/test_session_cli_fallback.py	0	1	0
 union	forbidden_direct_apply	-	tests/test_session_cli_fallback.py	0	1	0
@@ -1303,6 +1312,8 @@ union	go	-	tests/test_enter_settlement_period_1235.py	0	1	0
 union	grant_skill	ming_sim/db.py	-	1	1	0
 union	group_secret_orders_for_sim	ming_sim/settlement_payload.py	-	0	1	0
 union	has	ming_sim/beat_orchestration.py	tests/conftest.py	0	1	0
+union	header_row	ming_sim/entities/reign_state/store.py	-	1	0	1
+union	header_rows	ming_sim/entities/reign_state/store.py	-	1	0	1
 union	heal_all_on_open	-	tests/test_qa_t1_extraction_dual_source_1353.py	0	1	0
 union	heal_stale_only	-	tests/test_qa_t1_extraction_dual_source_1353.py	0	1	0
 union	inspect_army	ming_sim/tools.py	-	0	1	0
@@ -1350,7 +1361,6 @@ union	list_buildings	ming_sim/tools.py	-	0	1	0
 union	list_chapter_memories	ming_sim/db.py	tests/test_audience_scroll_539.py	1	1	0
 union	list_closed_army_pay_dossiers_for_provenance	ming_sim/db.py	-	1	1	0
 union	list_closed_night_archives	ming_sim/db.py	-	1	1	1
-union	list_commitments_for_dossier	ming_sim/db.py	-	1	1	0
 union	list_decree_dossier_decisions	ming_sim/db.py	-	1	1	0
 union	list_decree_dossiers	ming_sim/db.py	-	1	1	0
 union	list_decree_dossiers_for_simulation	ming_sim/db.py	-	1	1	0
@@ -1376,6 +1386,7 @@ union	list_loophole_exposures	ming_sim/db.py	-	1	1	0
 union	list_memorials	ming_sim/tools.py	-	0	1	0
 union	list_mindreading_records	ming_sim/db.py	-	1	1	0
 union	list_monthly_archives	ming_sim/db.py	tests/test_audience_scroll_539.py	1	1	0
+union	list_night_promulgated_directives	ming_sim/db.py	-	1	1	1
 union	list_office_vacancies	ming_sim/db.py	-	1	1	1
 union	list_open_grant_reconciliations	ming_sim/db.py	-	1	1	1
 union	list_pending_actions	-	tests/test_beat_orchestration_503.py	0	1	0
@@ -1409,6 +1420,8 @@ union	mark_story_extraction_pending	ming_sim/db.py	-	1	1	1
 union	materialize_after_office_commit	-	tests/test_relation_judge_634.py	0	1	0
 union	materialize_clusters_ordered	ming_sim/action_clusters.py	-	0	1	0
 union	matrix_env	-	tests/test_secret_order_gate_matrix_1376.py	0	1	0
+union	metric_row	ming_sim/entities/reign_state/store.py	-	1	0	1
+union	metric_rows	ming_sim/entities/reign_state/store.py	-	1	0	1
 union	mid_txn_applier	-	tests/test_appointment_summon_672.py,tests/test_pending_actions.py	0	1	0
 union	mindreading_eligible	ming_sim/audience_pipeline.py	-	0	1	0
 union	mindreading_for_minister	web_app.py	-	0	1	0
@@ -1423,6 +1436,7 @@ union	observe_wait_prior	-	tests/test_audience_travel_gating_670.py	0	1	0
 union	office_skills	ming_sim/skills.py	-	0	1	0
 union	on_event	scripts/agy_turn_probe.py,scripts/decree_bench.py,scripts/direct_decree_probe.py,web_app.py	-	0	1	0
 union	open_game	driver.py	-	0	1	0
+union	origin_refs	ming_sim/entities/affair/store.py	-	1	0	1
 union	overlapping	-	tests/test_beat_orchestration_503.py	0	1	0
 union	owner_worker	-	tests/test_qa_t1_extraction_dual_source_1353.py	0	1	0
 union	pack	-	tests/test_error_pack.py	0	1	0
@@ -1430,6 +1444,7 @@ union	parallel_stage_office_from_appointment_intent	ming_sim/action_materialize.
 union	parse_args	scripts/decree_bench.py,scripts/memory_recall_probe.py	-	0	1	0
 union	parse_backlash_origin_ref	ming_sim/commitment_backlash.py	-	0	1	0
 union	parse_decision_blocks	ming_sim/settlement_payload.py	-	0	1	0
+union	parse_dossier_id_from_origin	ming_sim/due_review.py	-	0	1	1
 union	parse_endorsement_batch	ming_sim/audience_extraction.py	-	0	1	0
 union	parse_extraction_facts	ming_sim/audience_extraction.py	-	0	1	0
 union	parse_relation_judge_output	ming_sim/relation_judge.py	-	0	1	0
@@ -1451,6 +1466,8 @@ union	persist_resolve_context	ming_sim/decree.py	-	0	1	0
 union	persist_return_report	ming_sim/db.py,ming_sim/intelligence.py	-	1	1	0
 union	persist_with_same_batch_item	-	tests/test_decree_dossiers_571.py	0	1	0
 union	person_write_locations_by_disposition	ming_sim/person_write_inventory.py	-	0	1	1
+union	point_issue	ming_sim/entities/affair/store.py	-	1	0	1
+union	pointing_at	ming_sim/entities/textual_fact/store.py	-	1	0	1
 union	poller	-	tests/test_audience_pipeline_499.py	0	1	0
 union	prepare	-	tests/settlement_seam_helpers.py,tests/test_decree_dossiers_571.py,tests/test_relation_brew_636.py	0	1	0
 union	prepare_summon_relation_judge	ming_sim/relation_judge.py	-	0	1	0
@@ -1473,6 +1490,7 @@ union	propose_appointment	ming_sim/tools.py	-	0	1	0
 union	propose_directive	ming_sim/tools.py	-	0	1	0
 union	provider	ming_sim/beat_orchestration.py	tests/test_beat_orchestration_503.py,tests/test_pihong_dossier_1490.py,tests/test_promulgation_seam_560.py,tests/test_rescript_choices_563.py	0	1	0
 union	prune_event_memories_for_turn	ming_sim/db.py	-	1	1	0
+union	public_events_for_turn	ming_sim/entities/character_knowledge/store.py	-	1	0	1
 union	punish_actions_allowed	ming_sim/action_materialize.py	-	0	1	0
 union	punish_actions_effective	ming_sim/action_materialize.py	-	0	1	0
 union	push	-	tests/test_secret_order_gate_matrix_1376.py	0	1	0
@@ -1480,6 +1498,7 @@ union	query_army_roster	ming_sim/tools.py	-	0	1	0
 union	query_court_roster	ming_sim/tools.py	-	0	1	0
 union	raise_on_enter	-	tests/test_beat_orchestration_503.py	0	1	0
 union	re_split_bodies	ming_sim/action_materialize.py	-	0	1	0
+union	read_army_detail	ming_sim/entities/army/store.py	-	1	0	1
 union	read_building_detail	ming_sim/entities/building/store.py	-	1	0	1
 union	read_building_detail_	ming_sim/entities/building/store.py	-	1	0	1
 union	read_chat_turn	ming_sim/db.py	-	1	0	1
@@ -1527,7 +1546,6 @@ union	require_backing_dossier_id	ming_sim/db.py	-	1	1	0
 union	require_explicit_xiexang_fields	ming_sim/action_materialize.py	-	0	1	0
 union	require_grant_allocation_shape	ming_sim/action_materialize.py	-	0	1	0
 union	require_materializable_xiexang_payload	ming_sim/action_materialize.py	-	0	1	0
-union	resolve_commitment_origin_ref	ming_sim/db.py	-	1	1	0
 union	resolve_grant_account	ming_sim/action_materialize.py	-	0	1	0
 union	resolve_minister_actions	ming_sim/cli_backend.py	-	0	1	0
 union	resolve_primary_intent	ming_sim/action_clusters.py	-	0	1	0
@@ -1601,6 +1619,7 @@ union	slow_exit	-	tests/test_beat_orchestration_503.py	0	1	0
 union	slow_gen	-	tests/test_beat_orchestration_503.py	0	1	0
 union	slow_spy_run	-	tests/test_audience_pipeline_499.py	0	1	0
 union	source_kind_for_query	ming_sim/intelligence.py	-	0	1	0
+union	sources_for_turn	ming_sim/entities/character_knowledge/store.py	-	1	0	1
 union	spy	-	tests/test_audience_pipeline_499.py,tests/test_cli_runner_error_typed_1299.py,tests/test_relation_judge_634.py	0	1	0
 union	spy_pre	-	tests/test_promulgation_verdict_heal_1753.py	0	1	0
 union	stage_assignment_candidate	ming_sim/action_materialize.py	-	0	1	0
@@ -3532,6 +3551,7 @@ union	update_chat_turn_messages	ming_sim/db.py	tests/test_beat_orchestration_503
 union	update_decree_dossier_payload	ming_sim/db.py	-	1	1	0
 union	update_directive	ming_sim/db.py	-	1	1	0
 union	upsert_event_memory	ming_sim/db.py	-	1	1	0
+union	upsert_header	ming_sim/entities/reign_state/store.py	-	1	0	1
 union	validate_tingtui_appointment_shape	ming_sim/action_materialize.py	-	0	1	0
 union	verify_llm_available	ming_sim/llm_model.py	-	0	1	0
 union	view_state	ming_sim/tools.py	-	0	1	0
