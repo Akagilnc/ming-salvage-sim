@@ -63,4 +63,4 @@ python3 -m pytest -q \
 ## 6. SHA
 
 - 证据更正：`f665b2008d23604a4062a50f1c26cb74c349bdb5`
-- HEAD（本回执最终）：待填
+- HEAD（本回执最终）：`7acdf777e7daec927110f0384e5a1ea25ed516b0`
