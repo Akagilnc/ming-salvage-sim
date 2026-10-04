@@ -12,11 +12,11 @@
 | 类 | 动作 |
 |---|---|
 | N11 | 删除 `ming_sim/db.py` 孤儿读端：`_COMMITMENT_STOP_CONDITION_RE`、`_is_commitment_stop_condition`、及 `advance_issue` 中对应 `or` 子句。无 `commitment_kind` 且无 JSON `stop_condition` 的案件按普通案件在 bar≥100 结案。不恢复旧闸/旧专属测。 |
-| N12 | `legacy_modifiers` 内联四项 → `GATE_METRIC_KEYS`；`fiscal_tick` NewDebt/Repaid/oracle 三元组 → `_ARREARS_KEYS`（=`ARREARS_SUBJECTS`）。无新枚举/护栏/适配层。 |
+| N12 | 同规则 legacy modifiers 账目键读端 → `GATE_METRIC_KEYS`：`db.legacy_modifiers`、`web_app._humanize_legacy_effect`、`models._legacy_effect_has_work`；`fiscal_tick` NewDebt/Repaid/oracle 三元组 → `_ARREARS_KEYS`（=`ARREARS_SUBJECTS`）。无新枚举/护栏/适配层。判词「不要求全仓四项一律收拢」≠同规则另一读端豁免。 |
 
 ## 可核枚举命令（全仓；判词样本≠白名单）
 
-谓词：**N11**=同一退役机制的读/写/常量是否仍有一半存活（不只 legacy 字样）；**N12**=与已收敛真源同形的内联闭集字面量。
+谓词：**N11**=同一退役机制的读/写/常量是否仍有一半存活（不只 legacy 字样）；**N12**=与已收敛真源同形的内联闭集字面量（同规则全类，不只点名文件）。
 
 ```bash
 # N11：退役符号 + loyalty 散文闸形状（排除 evidence/node_modules）
@@ -41,8 +41,10 @@ rg -n --glob '!evidence/**' --glob '!node_modules/**' \
 rg -n '_COMMITMENT_STOP_CONDITION_RE|_is_commitment_stop_condition|_legacy_commitment_stop_gate' ming_sim/   # expect empty
 rg -n 'def _commitment_stop_gate|def _validate_commitment_stop_condition' ming_sim/issues.py                 # expect present
 rg -n 'for acc in GATE_METRIC_KEYS' ming_sim/db.py                                                          # expect present
+rg -n 'for account in GATE_METRIC_KEYS' web_app.py                                                          # expect present
+rg -n 'for key in GATE_METRIC_KEYS' ming_sim/models.py                                                      # expect present
 rg -n 'NewDebt=\{c: 0 for c in _ARREARS_KEYS\}|for c in _ARREARS_KEYS' ming_sim/fiscal_tick.py              # expect present
-rg -n '\(\"国库\", \"内库\", \"民心\", \"皇威\"\)' ming_sim/db.py                                             # expect empty
+rg -n '\(\"国库\", \"内库\", \"民心\", \"皇威\"\)' ming_sim/db.py web_app.py ming_sim/models.py               # expect empty
 rg -n '\(\"军饷欠\", \"官俸欠\", \"宗禄欠\"\)' ming_sim/fiscal_tick.py                                       # expect empty
 ```
 
@@ -71,17 +73,20 @@ rg -n '\(\"军饷欠\", \"官俸欠\", \"宗禄欠\"\)' ming_sim/fiscal_tick.py 
 
 ### GATE 四项（真源 `constants.GATE_METRIC_KEYS`）
 
-| file | line | disposition |
-|---|---:|---|
-| ming_sim/constants.py | 311 | KEEP_single_source_def |
-| ming_sim/db.py | legacy_modifiers init+loop | **CONVERGED_this_round** → `GATE_METRIC_KEYS` |
-| ming_sim/issues.py | 3340 | CONVERGED_prior → `GATE_METRIC_KEYS` |
-| ming_sim/models.py | 263 | KEEP_out_of_scope（判词：不要求全仓四项一律收拢） |
-| web_app.py | 338 | KEEP_out_of_scope |
-| web/src/format.ts | 240 | KEEP_out_of_scope |
-| ming_sim/constants.py | 47 | KEEP_subset `BUILDING_OUTPUT_METRICS`（含 `""`） |
-| scripts/agy_turn_probe.py | 85 | KEEP_probe_extra_keys |
-| tests/* / web test fixtures | — | KEEP_test_fixture |
+按类配对谓词：**读同一份 legacy modifiers 顶层账目键**（聚合 / work 判定 / humanize）。判词「不要求全仓四项一律收拢」只排除异类字面量，不豁免同规则另一读端。
+
+| file | line | disposition | 依据 |
+|---|---:|---|---|
+| ming_sim/constants.py | 311 | KEEP_single_source_def | 真源定义 |
+| ming_sim/db.py | legacy_modifiers init+loop | **CONVERGED_prior** → `GATE_METRIC_KEYS` | 判词点名同规则写读 |
+| ming_sim/issues.py | 3340 | CONVERGED_prior → `GATE_METRIC_KEYS` | 同真源循环 |
+| web_app.py | 338 `_humanize_legacy_effect` | **CONVERGED_this_round** → `GATE_METRIC_KEYS` | 同份 modifiers 账目键读端；先前误标 KEEP_out_of_scope（「判词只点 db」）已纠正 |
+| ming_sim/models.py | 263 `_legacy_effect_has_work` | **CONVERGED_this_round** → `GATE_METRIC_KEYS` | 同份 modifiers 非零判定；同规则 work 读端，非异类消费者 |
+| web/src/format.ts | 240 `formatLegacyEffect` | KEEP_schema_ui_order | **非「未点名」**：TS 侧无既有 `GATE_METRIC_KEYS`；新建 TS 常量/跨语言适配层违 N12「不新造枚举/适配层」。`LegacyEffect`（`types.ts:218`）已 schema 钉四可选字段；此处数组=typed 字段展示迭代序。主路径 `effect_text` 已由 `web_app` 真源收敛；本函数为 UI fallback |
+| ming_sim/constants.py | 47 | KEEP_subset `BUILDING_OUTPUT_METRICS`（含 `""`） | 建筑产出超集，非 legacy modifiers 读端 |
+| scripts/agy_turn_probe.py | 85 | KEEP_probe_extra_keys | probe 另含兵force/军心，非同规则 |
+| tests/test_qa_u2_liaodong_buildings.py | 87 | KEEP_test_fixture | 建筑 metric 成员检测，非 legacy modifiers |
+| tests/* 其它 fixtures | — | KEEP_test_fixture | 异类 |
 
 ### ARREARS 三项（真源 `pay_order.ARREARS_SUBJECTS`）
 
@@ -89,14 +94,14 @@ rg -n '\(\"军饷欠\", \"官俸欠\", \"宗禄欠\"\)' ming_sim/fiscal_tick.py 
 |---|---:|---|
 | ming_sim/pay_order.py | 35 | KEEP_single_source_def |
 | ming_sim/pay_order.py | 37 | KEEP_map_priority（值映射≠第二份闭集） |
-| ming_sim/fiscal_tick.py | 225–226,481 | **CONVERGED_this_round** → `_ARREARS_KEYS` |
+| ming_sim/fiscal_tick.py | 225–226,481 | **CONVERGED_prior** → `_ARREARS_KEYS` |
 | ming_sim/fiscal_tick.py | 13 | KEEP_docstring_prose |
 | ming_sim/fiscal_tick.py | 31 | KEEP_superset `CLAIM_KEYS`（含民欠旧赋） |
 | ming_sim/fiscal_tick.py | 35 | KEEP_map `_DEBT_OF_DUE` |
 | ming_sim/fiscal_fact_brief.py | 311 | KEEP_map_class_label |
 | tests fixtures | — | KEEP_test_fixture |
 
-**N12 residual under判词边界（仅要求上述配对内联）: 0**。
+**N12 residual under同规则配对（legacy modifiers 账目键 / arrears 三元组可执行内联）: 0**。
 
 ## 反例配对核查
 
@@ -105,14 +110,18 @@ rg -n '\(\"军饷欠\", \"官俸欠\", \"宗禄欠\"\)' ming_sim/fiscal_tick.py 
 | 孤儿正则/函数生产残留 | 空 |
 | JSON `stop_condition` / `commitment_kind` 合法路径 | 仍在 `issues.py` |
 | `db.legacy_modifiers` 读 `GATE_METRIC_KEYS` | 是 |
+| `web_app._humanize_legacy_effect` 读 `GATE_METRIC_KEYS` | 是 |
+| `models._legacy_effect_has_work` 读 `GATE_METRIC_KEYS` | 是 |
 | `fiscal_tick` NewDebt/Repaid/oracle 读 `_ARREARS_KEYS` | 是 |
-| `db.py` 内联四元组 | 空 |
+| `db.py` / `web_app.py` / `models.py` 内联四元组 | 空 |
 | `fiscal_tick.py` 可执行内联三元组 | 空 |
 
-## 变异探针（临时；旧红现绿；已删临时测）
+## 变异探针（临时；旧红现绿；精确 edit，不用 checkout 覆盖）
 
-真实入口：`GameDB.advance_issue`（`delta_bar` 钳 ±50；`bar_value=50` +50 →100）。  
-形状：`resolve_condition="character.毛文龙.loyalty >= 65"`，无 `commitment_kind`、无 JSON `stop_condition`。  
+### N11 orphan gate（既有）
+
+真实入口：`GameDB.advance_issue`（`delta_bar` 钳 ±50；`bar_value=50` +50 →100）。
+形状：`resolve_condition="character.毛文龙.loyalty >= 65"`，无 `commitment_kind`、无 JSON `stop_condition`。
 不恢复旧 `commitment_resolve` 写端/专属测。
 
 | 相 | 结果 | 时长 |
@@ -123,7 +132,42 @@ rg -n '\(\"军饷欠\", \"官俸欠\", \"宗禄欠\"\)' ming_sim/fiscal_tick.py 
 
 原始输出：`/tmp/1847-w6/mutation-{green,red,green2}.txt`（系统临时目录）。
 
-## 聚焦测试（七前缀）
+### N12 web humanize 读端（本轮补精确命令）
+
+入口：`web_app._humanize_legacy_effect`；输入 `{"国库":10,"内库":-2,"民心":5,"皇威":-3}`；monkeypatch `GATE_METRIC_KEYS=("民心",)` 时期望只出 `民心+5%`。
+临时物仅 `/tmp`；变异用精确字符串替换（**不用** `git checkout` 擦工作树）。
+
+```bash
+# GREEN
+MING_SIM_AGY_BIN=/usr/bin/false MING_SIM_CODEX_BIN=/usr/bin/false \
+MING_SIM_CLAUDE_BIN=/usr/bin/false MING_SIM_CURSOR_BIN=/usr/bin/false \
+MING_SIM_KIMI_BIN=/usr/bin/false MING_SIM_GROK_BIN=/usr/bin/false \
+MING_SIM_PI_BIN=/usr/bin/false \
+/Users/akagilnc/WorkSpace/Ming_LLM/.venv/bin/python -m pytest \
+  tests/test_legacy_gate_metric_keys_read_n12.py::test_humanize_legacy_effect_follows_gate_metric_keys \
+  -q --basetemp=/tmp/1847-w6/pytest-n12-mut-green
+# → 1 passed
+
+# RED：把 web_app.py 中
+#   for account in GATE_METRIC_KEYS:  # #14 same source as db.legacy_modifiers
+# 精确换成
+#   for account in ("国库", "内库", "民心", "皇威"):  # TEMP_MUTATION_N12
+# 再跑同上命令
+# → 1 failed：assert '国库+10%、内库-2%、民心+5%、皇威-3%' == '民心+5%'
+
+# GREEN2：精确还原 GATE_METRIC_KEYS 行后重跑
+# → 1 passed
+```
+
+| 相 | 结果 | 输出 |
+|---|---|---|
+| GREEN | `1 passed` | `/tmp/1847-w6/mutation-n12-web-green.txt` |
+| RED（内联四元组） | `1 failed` 期望仅民心、实际四项全出 | `/tmp/1847-w6/mutation-n12-web-red.txt` |
+| GREEN2（精确还原） | `1 passed` | `/tmp/1847-w6/mutation-n12-web-green2.txt` |
+
+未新增永久证明测试以外的探针文件；聚焦测 `tests/test_legacy_gate_metric_keys_read_n12.py` 为行为契约（真源变更则读端跟随），非一次性探针。
+
+## 聚焦测试（七前缀 + Web 读取触及面）
 
 ```bash
 MING_SIM_AGY_BIN=/usr/bin/false MING_SIM_CODEX_BIN=/usr/bin/false \
@@ -137,20 +181,24 @@ MING_SIM_PI_BIN=/usr/bin/false \
   tests/test_decree_commitment_settlement_229.py \
   tests/test_fiscal_tick.py \
   tests/test_person_delta_adapter.py \
-  -q --basetemp=/tmp/1847-w6/pytest-focused
+  tests/test_legacy_gate_metric_keys_read_n12.py \
+  tests/test_web_issue_condition_display.py \
+  -q --basetemp=/tmp/1847-w6/pytest-focused-w6b
 ```
 
-**353 passed in 5.05s**（real **5.56s**）→ `/tmp/1847-w6/focused-pytest.txt`
+**364 passed in 17.23s** → `/tmp/1847-w6/focused-pytest-w6b.txt`
 
-未跑全量；未调真实模型。
+web tsc：`cd web && npx tsc --noEmit` → exit 0 → `/tmp/1847-w6/tsc.txt`
+
+未跑全量；未调真实模型；未改配置。
 
 ## 提交
 
-- code fix commit: `e49928cb62df359f2df78fc2f9a2f0712758ed2b`
-- branch tip (report SHA note): see `git rev-parse HEAD` on `ak-roles/1847-fixer-w6-n11-n12`
-- files: `ming_sim/db.py`, `ming_sim/fiscal_tick.py`, `evidence/1847-w6-verdict.json`, `evidence/1847-w6-report.md`
+- prior code fix (N11 + db/fiscal N12): `e49928cb62df359f2df78fc2f9a2f0712758ed2b`
+- this round code+report (web/models GATE 读端 + 报告自查纠正): see `git rev-parse HEAD` after commit on `ak-roles/1847-fixer-w6-n11-n12`
+- files: `web_app.py`, `ming_sim/models.py`, `tests/test_legacy_gate_metric_keys_read_n12.py`, `evidence/1847-w6-report.md`
 
 ## 自查二连 done
 
-- 同类：N11 按读/写/常量配对扫，不只 legacy 字样；N12 只收判词点名的同形内联，未造新枚举。
-- 引入 bug：`git checkout --` 曾误擦未提交修复 → 已用 `/tmp` backup 回写并复核；探针注意 `delta_bar`±50 钳制，避免假红。
+- 同类：N11 按读/写/常量配对扫，不只 legacy 字样；**N12 同规则全类收口**（legacy modifiers 账目键读端：db + web_app + models），**不是「只收判词点名内联」**——判词边界「不全仓四项一律收拢」≠同规则另一读端豁免。`format.ts` 以「无既有 TS 真源 + 禁新枚举/适配 + schema typed 展示序」保留，依据不是 not named。
+- 引入 bug：本腿早期曾用 `git checkout --` 误擦未提交修复 → 已用 `/tmp` backup 回写并复核（历史如实保留）；**本轮变异起改为精确 edit / 临时进程替换，不再 checkout 覆盖工作树产物**。探针注意 `delta_bar`±50 钳制，避免假红。

@@ -22,6 +22,7 @@ from ming_sim.constants import (
     BUILDING_TEXT_FIELDS,
     ECONOMY_ACCOUNTS,
     FISCAL_SCORE_FIELDS,
+    GATE_METRIC_KEYS,
     POWER_FIELD_ALIASES,
     REGION_FIELD_ALIASES,
     REGION_QUANTITY_FIELDS,
@@ -260,7 +261,7 @@ def _legacy_effect_has_work(raw: object) -> bool:
     modifiers = raw.get("modifiers")
     if not isinstance(modifiers, dict):
         return False
-    for key in ("国库", "内库", "民心", "皇威"):
+    for key in GATE_METRIC_KEYS:  # #14 same source as db.legacy_modifiers
         if _nonzero_int(modifiers.get(key)):
             return True
     if _entity_delta_has_work(

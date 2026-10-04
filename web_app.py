@@ -44,7 +44,7 @@ from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
 from ming_sim.applier import atomic
-from ming_sim.constants import ROOT_DIR
+from ming_sim.constants import GATE_METRIC_KEYS, ROOT_DIR
 from ming_sim.paths import bundled_path, user_data_path, user_data_dir
 from ming_sim.exceptions import DependencyMismatch, ExitGame, LLMUnavailable, SettlementAbort
 from ming_sim.llm_config import (
@@ -335,7 +335,7 @@ def _legacy_pct(value: int) -> str:
 def _humanize_legacy_effect(modifiers: Dict[str, Any], content: Any) -> str:
     """把 legacy modifiers 转为中文展示，避免前端露出 nanzhili/guanning 等内部 id。"""
     parts: List[str] = []
-    for account in ("国库", "内库", "民心", "皇威"):
+    for account in GATE_METRIC_KEYS:  # #14 same source as db.legacy_modifiers
         value = modifiers.get(account)
         if isinstance(value, (int, float)):
             parts.append(f"{account}{_legacy_pct(int(value))}")
