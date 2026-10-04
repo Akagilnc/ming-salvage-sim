@@ -14,7 +14,7 @@ monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10ae47e00>
         import json
         import ming_sim.session as session_mod
         from ming_sim.session import GameSession
-    
+
         db, state, content = game
         turn = state.turn
         event_id = "mao_wenlong"
@@ -33,11 +33,11 @@ monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10ae47e00>
         }])
         state.turn_phase = "awaiting_decision"
         db.save_state(state)
-    
+
         def _phase2(_state, _db, *_args, **_kwargs):
             _db.clear_pending_decisions(turn)
             return "ok"
-    
+
         monkeypatch.setattr(session_mod, "resolve_decisions_phase2", _phase2)
         sess = GameSession.__new__(GameSession)
         sess.db = db
@@ -47,7 +47,7 @@ monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10ae47e00>
         sess.llm_config = None
         sess.content = content
         sess.registry = None
-    
+
         # #1589：绑定发生在 desk 读出口（prepare_rescript_prewrite），键仍取绑定前
         # 的 decision:{turn}:0 投影——event_id 是否已绑定不改变 decision_key 形状。
         d_key = db.list_rescript_desk(turn)[0]["decision_key"]
@@ -55,7 +55,7 @@ monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10ae47e00>
             [{"decision_key": d_key, "label": "留", "hint": "暂稳东江", "note": "姑留观后效"}],
             write_gate=get_session_write_queue(sess).write_gate,
         )
-    
+
         assert db.list_pending_decisions(turn) == []
         row = db.conn.execute(
             "SELECT terminal_state, source, choice_json FROM event_triggers WHERE event_id=?",
