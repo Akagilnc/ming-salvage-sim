@@ -138,15 +138,16 @@ def write_credit_event(
     """四字段薄记录写口：方向由 CREDIT_DIRECTION 决定，落 record_relation_edge_event。"""
     person = str(person or "").strip()
     kind = str(event_kind or "").strip()
-    context = str(context or "").strip()
-    origin = str(origin or "").strip()
+    # Free prose context/origin: preserve raw; emptiness on local copy (#1834 F16).
+    context = str(context or "")
+    origin = str(origin or "")
     if not person:
         raise ValueError("信用事件缺少当事人")
     if kind not in _WRITE_KINDS:
         raise ValueError(f"非本片信用事件类目: {kind!r}")
-    if not context:
+    if not context.strip():
         raise ValueError("信用事件语境不能为空")
-    if not origin:
+    if not origin.strip():
         raise ValueError("信用事件 origin 不能为空")
     direction = CREDIT_DIRECTION[kind]
     if direction == "emperor_to_person":

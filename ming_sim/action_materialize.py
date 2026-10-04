@@ -235,8 +235,8 @@ def stage_pacification_candidate(
     target = str(target_id or "").strip()
     if not target:
         return 0
-    body = str(text or "").strip()
-    if not body:
+    body = str(text or "")
+    if not body.strip():
         return 0
 
     pending_rows = list(pend_for_minister or [])
@@ -392,8 +392,8 @@ def stage_punishment_candidate(
         action not in punish_actions_effective() and disposition != "压下"
     ):
         return 0
-    body = str(text or "").strip()
-    if not body:
+    body = str(text or "")
+    if not body.strip():
         return 0
 
     pending_rows = list(pend_for_minister or [])
@@ -802,7 +802,8 @@ def stage_grant_allocation_candidate(
     action = str(grant_action or "").strip()
     target = str(target_id or "").strip()
     kind = str(target_kind or "").strip()
-    body = str(text or "").strip()
+    # Free prose grant body: preserve raw; emptiness checked at callers / validators.
+    body = str(text or "")
     if action not in (GRANT_ACTIONS - {"无"}):
         return 0
     # #1503：协饷完整写入前置由同一权威缝收集；此处不补值。
@@ -924,7 +925,7 @@ def stage_grant_allocation_candidate(
         if not str(staged.get("title") or "").strip():
             label = purpose or action
             if label:
-                staged["title"] = str(label).strip()
+                staged["title"] = str(label)
     # #1783+#1778：承办人/名单来自分类器或后置抽取，挂本案；不把当前大臣填成主办。
     lead = str(assignee or "").strip()
     if lead:
@@ -1504,19 +1505,21 @@ def stage_assignment_candidate(
     """
     from ming_sim.cli_backend import resolve_directive_mode
 
-    body = str(text or "").strip()
-    if not body:
+    body = str(text or "")
+    if not body.strip():
         raise DecreeMaterializationValidationError(
             "交办旨意缺少正文", failed_fields=("text",),
         )
-    # 题名只认结构化锚；不得从正文/皇帝散文截取
-    matter_title = str(title or "").strip() or str(target_id or "").strip()
-    if not matter_title:
+    # 题名只认结构化锚；不得从正文/皇帝散文截取。自由题名保原文。
+    title_raw = str(title or "")
+    tid_raw = str(target_id or "").strip()
+    matter_title = title_raw if title_raw.strip() else tid_raw
+    if not matter_title.strip():
         raise DecreeMaterializationValidationError(
             "交办旨意缺少结构化题名（title 或 target_id）",
             failed_fields=("title",),
         )
-    matter_id = str(target_id or "").strip() or matter_title
+    matter_id = tid_raw or matter_title
     actor = str(minister_name or "").strip()
     if not actor:
         return 0
@@ -1636,8 +1639,8 @@ def stage_authorization_candidate(
 
     if str(target_candidate or "").strip() == "含糊":
         return 0
-    body = str(text or "").strip()
-    if not body:
+    body = str(text or "")
+    if not body.strip():
         return 0
     holder = str(minister_name or "").strip()
     if not holder:
@@ -1725,18 +1728,21 @@ def stage_referral_candidate(
     """
     from ming_sim.cli_backend import resolve_directive_mode
 
-    body = str(text or "").strip()
-    if not body:
+    body = str(text or "")
+    if not body.strip():
         raise DecreeMaterializationValidationError(
             "下议旨意缺少正文", failed_fields=("text",),
         )
-    matter_title = str(title or "").strip() or str(target_id or "").strip()
-    if not matter_title:
+    # Free prose title: preserve raw; target_id identity may strip.
+    title_raw = str(title or "")
+    tid_raw = str(target_id or "").strip()
+    matter_title = title_raw if title_raw.strip() else tid_raw
+    if not matter_title.strip():
         raise DecreeMaterializationValidationError(
             "下议旨意缺少结构化题名（title 或 target_id）",
             failed_fields=("title",),
         )
-    matter_id = str(target_id or "").strip() or matter_title
+    matter_id = tid_raw or matter_title
 
     try:
         months = int(deadline_months or 0)
@@ -1834,8 +1840,8 @@ def stage_revoke_authority_candidate(
 
     if str(target_candidate or "").strip() == "含糊":
         return 0
-    body = str(text or "").strip()
-    if not body:
+    body = str(text or "")
+    if not body.strip():
         return 0
     rec = _resolve_unique_active_authority(
         db, int(turn),
@@ -1916,8 +1922,8 @@ def stage_revoke_decree_candidate(
 
     if str(target_candidate or "").strip() == "含糊":
         return 0
-    body = str(text or "").strip()
-    if not body:
+    body = str(text or "")
+    if not body.strip():
         return 0
     resolved = _parse_revoke_decree_target(
         db,

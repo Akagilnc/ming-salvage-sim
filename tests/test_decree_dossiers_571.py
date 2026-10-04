@@ -1051,7 +1051,7 @@ def test_manual_directive_capture_reaches_structured_dossier(
     {"character_id": "韩阁老", "tier": "主办"},
 ])
 def test_manual_directive_capture_rejects_malformed_roster(
-    game, monkeypatch, bad_roster,
+    game, monkeypatch, bad_roster, capsys,
 ):
     import ming_sim.cli_backend as cli_backend
     from ming_sim.session import GameSession
@@ -1079,6 +1079,8 @@ def test_manual_directive_capture_rejects_malformed_roster(
     answers = iter(["add", "手工旨意", "back"])
     monkeypatch.setattr("builtins.input", lambda _prompt="": next(answers))
     assert terminal.review_directives(session) == "back"
+    # Independent contract: rejection surface must name 参与人 (#1834 F3).
+    assert "参与人" in capsys.readouterr().out
 
     assert db.list_pending_actions(state.turn) == []
     assert db.list_directives(state) == []
@@ -1606,6 +1608,8 @@ def test_underfunded_in_transit_allocation_closes_from_execution_state(game):
     assert state.metrics["国库"] == 0
     assert dossier["status"] == "closed"
     assert dossier["execution_outcome"] == "failed"
+    # Independent note bytes — outcome==failed does not entail (#1834 F3).
+    assert "不足额" in dossier["execution_note"]
 
 def test_underfunded_immediate_allocation_is_not_recorded_as_fulfilled(game):
     db, state, _content = game
@@ -1628,6 +1632,7 @@ def test_underfunded_immediate_allocation_is_not_recorded_as_fulfilled(game):
     assert state.metrics["国库"] == 0
     assert dossier["status"] == "closed"
     assert dossier["execution_outcome"] == "failed"
+    assert "不足额" in dossier["execution_note"]
 
 @pytest.mark.parametrize(
     "payload",
@@ -1974,7 +1979,11 @@ def test_inner_treasury_admission_uses_actual_once_and_preserves_surface(
     assert dossier["execution_outcome"] == outcome
     assert state.metrics["内库"] == max(0, balance - 10)
     assert len(db.list_economy_moves_for_dossier(dossier_id)) == int(expected_actual != 0)
-    if outcome != "failed":
+    if outcome == "failed":
+        # Independent note bytes — outcome alone does not entail (#1834 F3).
+        assert "应拨10两" in dossier["execution_note"]
+        assert f"实拨{abs(expected_actual)}两" in dossier["execution_note"]
+    else:
         assert status == "executing"
         assert dossier_id in {
             row["id"] for row in db.list_decree_dossiers_for_simulation(state.turn)

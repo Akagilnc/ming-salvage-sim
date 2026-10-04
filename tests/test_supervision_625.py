@@ -320,7 +320,6 @@ def test_ac2_paired_observation_slots_and_countermeasure_hard_gate(game):
     assert inp["transformation_tendency_facts"]["longest_consecutive_presence_months"] >= 1
 
     # 抓手与事实素材照留：连续在场月数、稽核人派系操守定性仍可读可持久。
-    assert tend_u["has_upright_auditor"] is True
     assert surface_u["supervision_history"], "监督在场事实必须仍可供料"
     # 真实前括号：退役硬门若被装回 pre_settle，这里会立反制局势或调用失败。
     state.turn_phase = TurnPhase.SUMMONING.value

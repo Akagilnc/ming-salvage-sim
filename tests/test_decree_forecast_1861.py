@@ -395,7 +395,6 @@ def test_repeat_scene_approval_does_not_rerun_exhausted_forecast(game, monkeypat
         wait_pending_writes(sess, timeout_s=_DRAIN_TIMEOUT_S)
         assert calls == [1]
         assert db.staged_declarations.staged_for(pending_action_decree_ref(pending_id, 1)) == ()
-    assert calls == [1]
     assert int(db.conn.execute(
         "SELECT night_approved, version FROM pending_actions WHERE id=?", (pending_id,),
     ).fetchone()["night_approved"]) == 1

@@ -3201,7 +3201,8 @@ def extract_draft_intent(
         if _supplement_mode:
             draft_text = merged if merged else _existing_draft_text
         else:
-            draft_text = (minister_reply or "").strip()
+            # Free prose draft body: preserve raw (#1834 F16).
+            draft_text = minister_reply or ""
         # #1849：非法事务声明响亮拒收（禁静默弃声明后照样出成功草案）。
         single_declaration = _affair_declaration_from_draft_obj(obj)
         if single_declaration:
@@ -3239,11 +3240,12 @@ def extract_draft_intent(
         # 多道并存、改/补目标不明：不落草案，交 session 走结构化含糊追问（对齐 AC5）。
         return {"draft_action": _action, "draft_text": "", "target_candidate": "含糊"}
     if target == "新":
-        draft_text = merged if merged else (minister_reply or "").strip()
+        draft_text = merged if merged else (minister_reply or "")
     else:
         existing = str(_by_id[int(target)].get("text") or "")
         # 补某道：优先合并全文；LLM 未合并时保留原文（避免用确认语覆盖），原文亦空则退回话。
-        draft_text = merged if merged else (existing if existing else (minister_reply or "").strip())
+        # Free prose draft body: preserve raw (#1834 F16).
+        draft_text = merged if merged else (existing if existing else (minister_reply or ""))
     # #1849：非法事务声明响亮拒收（禁洗成「无意图」）。
     cand_declaration = _affair_declaration_from_draft_obj(obj)
     if cand_declaration:
@@ -3318,10 +3320,11 @@ def capture_manual_directive_payload(
     #1849：抽取调用失败不再降级 special_decree 冒充成功拟旨，一律响亮上抛。
     special_decree 另有一合法来路：模型真答「无拟旨意图」（产物空，非失败）。
     """
-    directive_text = str(text or "").strip()
+    # Free prose directive: preserve raw; emptiness on local copy (#1834 F16).
+    directive_text = str(text or "")
     fallback_mode = resolve_directive_mode(existing=existing_mode)
     # 空载短路：无正文可抽 → 直落草案结构，零 LLM 调用（P5：禁为省写把可短路 LLM 串回）。
-    if not directive_text:
+    if not directive_text.strip():
         return _manual_special_decree_payload(fallback_mode)
 
     prompt = (
@@ -3742,9 +3745,10 @@ def assemble_secret_order_content(
     走 payload 结构化键，不经本函数自由文本拼装。三路（抽取/暂存合并/更新·哨兵）
     同口径。
     """
-    emperor = (emperor_intent or "").strip()
-    extracted = (extractor_content or "").strip()
-    if extracted and _content_reflects_emperor_intent(extracted, emperor):
+    # Free prose secret assemble: preserve raw; emptiness on local copies (#1834 F16).
+    emperor = emperor_intent or ""
+    extracted = extractor_content or ""
+    if extracted.strip() and _content_reflects_emperor_intent(extracted, emperor):
         return extracted
     return _merge_secret_content(emperor, extracted)
 
@@ -4144,7 +4148,8 @@ def _extract_secret_order(
         obj = {}
     else:
         obj = parsed
-    _content_llm = str(obj.get("内容") or "").strip()
+    # Free prose secret 内容: preserve raw; assignee identity may strip (#1834 F16).
+    _content_llm = str(obj.get("内容") or "")
     _assignee_llm = str(obj.get("承办人") or "").strip()
     # 上下文合成路径（force_default_assignee，#354 短确认从对话取正文）：player_command 是带
     # 「皇帝：/大臣：」标签的对话快照——剥角色标签得纯御旨任务，作装配输入。
@@ -4160,7 +4165,8 @@ def _extract_secret_order(
     )
     # #1565/0142：题名只认抽取器结构化「标题」；禁从 content/player_command 散文截取。
     # 缺标题由下游 land_or_recover 统一 recovery 可见可恢复，不在此合成。
-    title = str(obj.get("标题") or "").strip()
+    # Free prose title: preserve raw (#1834 F16).
+    title = str(obj.get("标题") or "")
     # 承办人：皇帝祈使点名 > 结构化「承办人」字段 > 默认（ADR 0142：禁 minister_reply/
     # extractor 散文反推）。
     assignee = default_assignee if force_default_assignee else _choose_assignee(

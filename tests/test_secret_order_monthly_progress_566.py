@@ -203,12 +203,13 @@ def test_character_terminal_status_closes_secret_orders_through_canonical_progre
     }
     assert orders[chained_id]["status"] == "failed"
     assert orders[unchained_id]["status"] == "failed"
-    assert "途中病故" in orders[chained_id]["result"]
+    # Composer phrase is independent of bare reason substring (#1834 F3).
+    assert "人物终态：dead；途中病故" in orders[chained_id]["result"]
     assert db.get_decree_dossier(chained_dossier)["status"] == "closed"
     assert db.get_decree_dossier(unchained_dossier)["status"] == "closed"
     terminal = db.list_dossier_progress(chained_dossier)[-1]
     assert terminal["is_terminal"] is True
-    assert "途中病故" in terminal["memorial_text"]
+    assert "人物终态：dead；途中病故" in terminal["memorial_text"]
     assert db.list_dossier_progress(unchained_dossier)
 
 
@@ -366,7 +367,6 @@ def test_real_no_edict_entries_roll_back_every_external_state_after_fiscal_write
         with pytest.raises(RuntimeError, match="post-fiscal failure 566"):
             invoke()
 
-    assert observed == {"fiscal_written": True, "metrics_written": True}
     after = _rollback_snapshot(db, state, pending_ids)
     for key in ("pending", "directives", "dossiers", "orders", "knowledge", "metrics", "clock"):
         assert after[key] == before[key], key

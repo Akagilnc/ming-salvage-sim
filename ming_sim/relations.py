@@ -144,8 +144,9 @@ def normalize_evidence(evidence: Any) -> bool:
 
 
 def bind_origin_round(origin: Any, turn: int) -> tuple[str, int]:
-    text = str(origin or "").strip()
-    if not text:
+    # Free prose origin: preserve raw; emptiness on local copy (#1834 F16).
+    text = str(origin or "")
+    if not text.strip():
         raise ValueError("边事件 origin 不能为空")
     match = _ROUND_RE.search(text) or _TURN_RE.search(text)
     if match:
@@ -167,8 +168,9 @@ def credit_event_to_edge(record: Mapping[str, Any]) -> dict[str, Any]:
     ).strip()
     if not person:
         raise ValueError("信用事件缺少当事人")
-    context = str(record.get("context") or record.get("sentence") or "").strip()
-    if not context:
+    # Free prose context: preserve raw; emptiness on local copy (#1834 F16).
+    context = str(record.get("context") or record.get("sentence") or "")
+    if not context.strip():
         raise ValueError("信用事件语境不能为空")
     direction = CREDIT_DIRECTION[kind]
     source, target = (

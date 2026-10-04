@@ -565,8 +565,9 @@ def review_directives(session: GameSession) -> str:
         # 审阅循环，不崩出进程（ship-pre r2，与 write_decree 既有 try 同款）。
         try:
             if lowered == "add" or raw == "新增":
-                text = input("指令内容：").strip()
-                if text:
+                # Free prose directive: preserve raw; emptiness on local copy (#1834 F16).
+                text = input("指令内容：")
+                if text.strip():
                     from ming_sim.cli_backend import capture_manual_directive_payload
                     dv = session.add_directive(
                         text,
@@ -588,8 +589,9 @@ def review_directives(session: GameSession) -> str:
                     if not any(d.id == target_id for d in drafts):
                         print("没有这条草案。")
                         continue
-                    new_text = input("新的指令内容：").strip()
-                    if new_text:
+                    # Free prose directive: preserve raw; emptiness on local copy (#1834 F16).
+                    new_text = input("新的指令内容：")
+                    if new_text.strip():
                         from ming_sim.cli_backend import capture_manual_directive_payload
                         row = next(
                             r for r in session.db.list_directives(

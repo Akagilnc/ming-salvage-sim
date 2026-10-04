@@ -1,0 +1,6 @@
+REVOKED (04b62b858-era f3r_hand_member_table.tsv):
+Produced by inline Python that assigned KEEP from kind templates + AST intervening=
+assign@/call@ lists; many subjects were truncated function names (A=test_…).
+That is not item-by-item semantic review. Bytes of that table are replaced this commit
+by f3r_hand_member_table.tsv rebuilt from opening each candidate function.
+Do not cite the revoked table as F3-R clearance.

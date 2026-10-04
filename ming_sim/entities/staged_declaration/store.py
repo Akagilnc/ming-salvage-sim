@@ -215,8 +215,9 @@ class StagedDeclarationStore:
             "AND forecast_text IS NOT NULL ORDER BY id",
             (ref,),
         ).fetchall()
+        # Free prose forecast_text → month_chain prior_forecast: preserve raw.
         parts = [
-            str(row["forecast_text"]).strip()
+            str(row["forecast_text"] or "")
             for row in rows
             if str(row["forecast_text"] or "").strip()
         ]

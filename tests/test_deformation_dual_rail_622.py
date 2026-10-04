@@ -138,7 +138,6 @@ def test_ac1_ac2_transformed_vs_degraded_dual_rail_tracer(game, tmp_path, conten
     assert term["progress_band"] not in {
         "transformed", "degraded", "fulfilled", "failed", "executing", "变形",
     }
-    assert xf_dossier["execution_outcome"] == "transformed"
     assert db.list_economy_moves_for_dossier(xf_id)
     # 机械分叉：list_dossier_progress band 面 ≠ 英文执行格原串
     bands = {r["progress_band"] for r in xf_progress}

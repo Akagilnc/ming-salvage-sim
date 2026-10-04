@@ -2766,8 +2766,9 @@ class WebGame:
         if minister_name != SCENE_CHAT_SPEAKER:
             yield {"type": "error", "message": "召对只从殿上入口进行。"}
             return
-        text = message.strip()
-        if not text:
+        # Free prose emperor message: preserve raw; emptiness on local copy (#1834 F16).
+        text = message if isinstance(message, str) else str(message or "")
+        if not text.strip():
             yield {"type": "error", "message": "问话不能为空。"}
             return
         # #498：结算/亲裁相位不得召对（夜不跨月）。锁前查仅快速失败；权威判定在持 gate 后复查
@@ -5522,7 +5523,7 @@ async def api_update_directive(directive_id: int, request: DirectivePatch) -> Di
         from ming_sim.cli_backend import capture_manual_directive_payload
         dossier_payload = await asyncio.to_thread(
             capture_manual_directive_payload,
-            text.strip(),
+            text,
             game.session.llm_config,
             existing_mode=existing_mode,
             **({"db": game.db, "content": game.content}
@@ -5532,8 +5533,9 @@ async def api_update_directive(directive_id: int, request: DirectivePatch) -> Di
         with _serialized_web_write(game):
             if int(game.state.turn) != capture_turn:
                 raise ValueError("旨意抽取期间回合已推进，请在当前回合重新提交。")
+            # Free prose directive text: pass raw (emptiness checked above).
             game.session.update_directive(
-                directive_id, text.strip(), dossier_payload=dossier_payload,
+                directive_id, text, dossier_payload=dossier_payload,
             )
             return {
                 "directives": [

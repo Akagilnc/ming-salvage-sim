@@ -1,0 +1,164 @@
+disposition	loc	function	subject	operation_and_timepoint	entailment
+FIX_DELETED	tests/test_player_army_projection_321.py:356,379	test_restore_five_columns_and_player_tier_survives_reopen	mutiny_loyalty_cap(2, redemption_count=1) return	pure fn; apply_fixed_period_flows mutates army row not formula inputs	later `assert mutiny_loyalty_cap(2, redemption_count=1) == 70` already deleted (only L356 remains)
+FIX_DELETED	tests/test_secret_order_monthly_progress_566.py:369,324	test_real_no_edict_entries_roll_back_every_external_state_after_fiscal_write	observed dict	asserted inside fail_after_real_flows; later post-invoke re-assert	later `assert observed == {"fiscal_written": True, "metrics_written": True}` already deleted (only L325 remains)
+FIX_DELETED	tests/test_supervision_625.py:309,323	test_ac2_paired_observation_slots_and_countermeasure_hard_gate	tend_u["has_upright_auditor"]	local snapshot; insert_staged/build_due_review_input do not mutate tend_u	later `assert tend_u["has_upright_auditor"] is True` already deleted (only L309 remains)
+KEEP	tests/test_pihong_dossier_1490.py:2088,2107	test_657_revise_deliberate_strict_contracts_zero_write_on_bad_shape	hit['status'] from list_rescript_drafts	re-fetch after RuntimeError outside-army revise	failed revise must leave pending; intervening write attempt
+KEEP	tests/test_pihong_dossier_1490.py:2089,2108	test_657_revise_deliberate_strict_contracts_zero_write_on_bad_shape	hit.get('choice')	same re-fetch after failed revise	choice must stay empty after bad shape
+KEEP	tests/test_pihong_dossier_1490.py:2088,2115	test_657_revise_deliberate_strict_contracts_zero_write_on_bad_shape	hit['status']	re-fetch inside bad_opt grant_allocation loop	each bad option attempt must leave pending
+KEEP	tests/test_pihong_dossier_1490.py:2089,2116	test_657_revise_deliberate_strict_contracts_zero_write_on_bad_shape	hit.get('choice')	same loop re-fetch	each bad option must leave choice empty
+KEEP	tests/test_pihong_dossier_1490.py:2700,2704	test_658_typed_target_and_backing_reject_bad_shapes	turn_directives.status for bad_directive	mark_directives_issued between	issued pass must not promote invalid draft
+KEEP	tests/test_pihong_dossier_1490.py:2744,2767	test_658_routing_rejected_draft_retries_across_real_turn_boundaries	state.turn	after first advance vs after second resolve_turn before second advance	turn sticky at +1 across retry resolve
+KEEP	tests/test_pihong_dossier_1490.py:2743,2770	test_658_routing_rejected_draft_retries_across_real_turn_boundaries	advanced.advanced (two distinct run_player_month_chain results)	second month-chain call	different call results, not same object
+KEEP	tests/test_pihong_dossier_1490.py:2747,2775	test_658_routing_rejected_draft_retries_across_real_turn_boundaries	decree_dossiers COUNT for good	second month chain / bad retry	good dossier count must survive second advance
+KEEP	tests/test_pre_settle_transaction.py:213,216	test_enter_review_does_not_clobber_settling	state.turn_phase	enter_review then back_to_summoning	sticky settling under both session ops
+KEEP	tests/test_pre_settle_transaction.py:306,308	test_sticky_phases_cover_awaiting_decision	state.turn_phase	enter_review then back_to_summoning	sticky awaiting_decision under both ops
+KEEP	tests/test_promulgation_judge_561.py:692,693	test_leader_only_mutation_changes_faction_posture_not_roster	_gatekeeper_names(after)	same post-mutation snapshot	in membership independent of before==after (both could omit 许誉卿)
+KEEP	tests/test_qa_c2_settlement_display_lifecycle_1343.py:83,114	test_success_clear_holds_write_gate_not_peer_txn	db.get_month_open_snapshot(turn)	peer holds write_gate; success clear blocked	snapshot must remain while DELETE waits on gate
+KEEP	tests/test_qa_e1_numeric_presentation.py:40,42	test_substrate_budget_splits_proposals_without_treasury_cap	proposed_parts() from compute_budget_lines	state.metrics["国库"] 0→100	budget parts independent of treasury cap
+KEEP	tests/test_qa_h1_seed_data.py:155,131	test_fresh_seed_army_equipment_and_commanders_wire_through	firearm diversity set vs row["commander"]	same seed loop, different fields	len(set) does not entail commander equality
+KEEP	tests/test_qa_h1_seed_data.py:155,132	test_fresh_seed_army_equipment_and_commanders_wire_through	firearm diversity set vs row["controller"]	same	len does not entail controller equality
+KEEP	tests/test_qa_h1_seed_data.py:155,133	test_fresh_seed_army_equipment_and_commanders_wire_through	firearm diversity set vs row firearm_equipment	same	len does not entail per-row firearm value
+KEEP	tests/test_qa_h1_seed_data.py:155,134	test_fresh_seed_army_equipment_and_commanders_wire_through	firearm diversity set vs row cannon_equipment	same	len does not entail cannon value
+KEEP	tests/test_qa_t1_extraction_dual_source_1353.py:250,259	test_close_after_chat_passes_write_gate_like_auto_close	seen["write_gate"]	seen.clear(); reopen night; auto_close_open_night	second close path must also receive gate
+KEEP	tests/test_qa_t1_extraction_dual_source_1353.py:304,308	test_empty_startup_catchup_claims_zero_tickets	q.inflight_count()	_spawn_startup_extraction_catch_up between	spawn must not claim tickets
+KEEP	tests/test_qa_t1_extraction_dual_source_1353.py:315,361	test_barrier_waits_trail_ticket_then_auto_close	game._pending_writes_count	trail ticket mark/complete + barrier body	count 0 at start vs after barrier drains trail
+KEEP	tests/test_qa_t1_extraction_dual_source_1353.py:351,360	test_barrier_waits_trail_ticket_then_auto_close	order list	notin before release.set; full == after trail/body	pre-release vs post-release timepoints
+KEEP	tests/test_qa_t1_extraction_dual_source_1353.py:352,360	test_barrier_waits_trail_ticket_then_auto_close	order list	same pre/post release	pre-release absence vs post-release full order
+KEEP	tests/test_refugee_loop_652.py:446,461	test_recovery_shared_pool_advances_once_after_empty_effect_month	_pop(db,"流民","shaanxi")	SettlementAbort mid-advance between	rollback must leave pool unchanged
+KEEP	tests/test_relation_read_640.py:195,197	test_td7_dto_field_set_equals_frozen_whitelist	set(dto.keys()) per projected dto	viewer=None loop then viewer=王绍徽 loop	distinct dto instances / viewers
+KEEP	tests/test_relation_store_632.py:213,223	test_record_relation_edge_event_respects_caller_owned_transaction	db.conn.in_transaction	record_relation_edge_event between	entry must not commit caller txn
+KEEP	tests/test_rescript_draft_656.py:416,418	test_generate_combined_target_and_roster_failures_reported_together_then_land	len(prompts) vs heal_req["kind"]	after generate_rescript_draft	prompt count ≠ heal kind field
+KEEP	tests/test_rescript_draft_656.py:479,489	test_generate_combined_target_roster_partial_heal_reports_remaining	len(prompts) vs second_fields set	after generate	prompt count ≠ remaining field set
+KEEP	tests/test_rescript_option_field_heal_1746.py:792,816	test_heal_response_contract_failure_consumes_attempt_keeps_siblings	set(by_title)	mutually exclusive succeed_on is None vs else branches	not sequential same-run duplicate
+KEEP	tests/test_rescript_option_field_heal_1746.py:797,823	test_heal_response_contract_failure_consumes_attempt_keeps_siblings	hold.get(k) sibling frozen fields	same if/else branch split	exhausted-drop vs healed-sibling scenarios
+KEEP	tests/test_rescript_option_field_heal_1746.py:803,827	test_heal_response_contract_failure_consumes_attempt_keeps_siblings	got.get(k) other options	same branch split	distinct branch outcomes
+KEEP	tests/test_run_agent_text_transport_1465.py:112,139	test_run_agent_text_history_backed_drops_empty_completed_before_retry	game_db.agno_runs_length(session_id)	empty completed insert then truncate-before-retry	len==1 at seed vs after truncate
+KEEP	tests/test_run_agent_text_transport_1465.py:157,134	test_run_agent_text_history_backed_drops_empty_completed_before_retry	game_db.agno_runs_length(session_id)	mid-attempt empty len==2 vs final success len==2	different timepoints/meanings
+KEEP	tests/test_secret_order_isolation_883.py:513,530	test_976_withhold_does_not_yank_old_released_public_user	chat_messages.knowledge_status mid_old	turn+5 + create_test_secret_order	old released must survive withhold
+KEEP	tests/test_secret_order_isolation_883.py:516,533	test_976_withhold_does_not_yank_old_released_public_user	character_knowledge_sources COUNT mid_old	same create between	shared source must survive
+KEEP	tests/test_secret_order_isolation_883.py:1240,1261	test_976_rt01_two_secret_orders_different_assignees_no_cross_track	_ks(db, mid_a_user)	create oid_b between	A withheld must survive B create
+KEEP	tests/test_secret_order_isolation_883.py:1241,1262	test_976_rt01_two_secret_orders_different_assignees_no_cross_track	_ks(db, mid_a_min)	create oid_b between	A minister released must survive B create
+KEEP	tests/test_secret_order_isolation_883.py:1584,1587	test_976_message_level_origin_persisted_on_brief	_ks(db, mid)	release_held_audience_knowledge between	origin pin must stay withheld after release
+KEEP	tests/test_secret_order_monthly_progress_566.py:218,226	test_current_secret_order_deadline_controls_monthly_eligibility	list_monthly_dossier_progress_nudges dossier_ids	rush_secret_order between	eligibility after rush
+KEEP	tests/test_secret_order_monthly_progress_566.py:218,229	test_current_secret_order_deadline_controls_monthly_eligibility	same nudge list	update_secret_order_by_id between	eligibility after update
+KEEP	tests/test_secret_order_payoff_1504.py:849,841	test_non_finite_effort_is_invalid_not_full_investment	_lanes(...)[key]["effort"]	NaN loop then legal effort=0 month	invalid path vs explicit-zero path
+KEEP	tests/test_secret_order_payoff_1504.py:883,892	test_investigator_away_from_target_cannot_acquire_evidence	investigation_lane_actual_units(db, did)	location→transit_to + next month + supply	away vs in-transit both zero actual
+KEEP	tests/test_secret_order_payoff_1504.py:1071,1082	test_supply_call_writes_identity_materials_into_its_own_tree	roots[-1].exists()	broken list_referenceable_dossiers then failed supply	temp root cleaned after error path too
+KEEP	tests/test_secret_order_payoff_1504.py:1284,1304	test_spoliation_requires_real_knowledge_source	out["applied"]	no-source then stranger knowledge_source attempts	each attempt independently refuses
+KEEP	tests/test_secret_order_payoff_1504.py:1286,1305	test_spoliation_requires_real_knowledge_source	list_investigation_spoiled_facts(target)	same attempts	spoiled stays empty per attempt
+KEEP	tests/test_secret_order_payoff_1504.py:1284,1313	test_spoliation_requires_real_knowledge_source	out["applied"]	informer without tip-off attempt	relation edge alone still refuses
+KEEP	tests/test_secret_order_payoff_1504.py:1286,1314	test_spoliation_requires_real_knowledge_source	list_investigation_spoiled_facts(target)	same	still empty without real tip
+KEEP	tests/test_secret_order_payoff_1504.py:1532,1569	test_4a_declaration_lands_actions_and_spoliation_through_month_chain	str(edge_id) in live_investigation_fact_keys	month-chain spoliation harder between	live key survives harder (not gone)
+KEEP	tests/test_secret_order_payoff_1504.py:1678,1696	test_deep_dig_lands_through_month_chain_entry	_open_errands(db, name)	create 3 errands + busy month + retire	0 before busy vs 0 after cleanup
+KEEP	tests/test_secret_order_payoff_1504.py:1678,1786	test_deep_dig_lands_through_month_chain_entry	_open_errands(db, name)	intrigue/network sections between	later mastery section needs clean errands again
+KEEP	tests/test_secret_order_payoff_1504.py:1809,1815	test_deep_dig_lands_through_month_chain_entry	investigation_lane_actual_units(db, did)	next_month + partial effort between	0 before dig vs 0 after sub-threshold
+KEEP	tests/test_secret_order_payoff_1504.py:1850,1855	test_deep_dig_lands_through_month_chain_entry	investigation_lane_actual_units(db, did)	re-supply already-mastered topic between	actual stays 2.0 (no double count)
+KEEP	tests/test_secret_order_payoff_1504.py:1807,1879	test_deep_dig_lands_through_month_chain_entry	chain.get("secret_orders_supply_invalid")	distinct _run_supply_4a results	different chain objects/phases
+KEEP	tests/test_secret_order_payoff_1504.py:1890,1904	test_deep_dig_lands_through_month_chain_entry	_lanes(...)[key]["effort"]	effort=0 month then transit_to block	effort frozen across zero-invest and away months
+KEEP	tests/test_secret_order_payoff_1504.py:1878,1671	test_deep_dig_lands_through_month_chain_entry	chain.get("covert_progress_done")	distinct supply calls across sections	different chain results
+KEEP	tests/test_secret_order_payoff_1504.py:1807,1672	test_deep_dig_lands_through_month_chain_entry	chain.get("secret_orders_supply_invalid")	same	different chain results
+KEEP	tests/test_secret_order_payoff_1504.py:1878,1721	test_deep_dig_lands_through_month_chain_entry	chain.get("covert_progress_done")	intrigue-loop supply	different chain results
+KEEP	tests/test_secret_order_payoff_1504.py:1807,1722	test_deep_dig_lands_through_month_chain_entry	chain.get("secret_orders_supply_invalid")	same	different chain results
+KEEP	tests/test_secret_order_payoff_1504.py:1878,1762	test_deep_dig_lands_through_month_chain_entry	chain.get("covert_progress_done")	network-month supply	different chain results
+KEEP	tests/test_secret_order_payoff_1504.py:1807,1763	test_deep_dig_lands_through_month_chain_entry	chain.get("secret_orders_supply_invalid")	same	different chain results
+KEEP	tests/test_secret_order_payoff_1504.py:2086,2099	test_repeated_pointerless_orders_do_not_mint_clues	investigation_clue_records(db, did)	create_secret_order merge loop between	still no clues after pointerless merges
+KEEP	tests/test_secret_order_payoff_1504.py:2103,2117	test_repeated_pointerless_orders_do_not_mint_clues	_lanes(...)[str(edge_id)]["effort"]	inject empty clue + supply between	edge effort stays 0 while seed_guilt credited
+KEEP	tests/test_secret_order_payoff_1504.py:2192,2226	test_merged_clue_assists_the_fact_it_points_at	investigation_clue_records(...)[-1]["credited"]	mastery loop + fresh edge + supply between	[-1] clue identity changes across phases
+KEEP	tests/test_secret_order_update.py:85,99	test_update_by_id_persists_assignee_brief_after_restore	dict(secret_order_briefs row)	close DB + GameDB reopen between	restore boundary re-read
+KEEP	tests/test_session_write_queue_1353.py:85,93	test_queue_order_early_claim_late_finish_before_barrier	order list	notin before release_trail; == after join	pre vs post barrier timepoints
+KEEP	tests/test_session_write_queue_1353.py:264,273	test_post_barrier_claim_cannot_cross_barrier_write	order list	notin before release_barrier; == after	pre vs post barrier
+KEEP	tests/test_session_write_queue_1353.py:372,378	test_run_exclusive_serializes_writes	order list	notin before hold.set; == after	pre vs post critical section
+KEEP	tests/test_session_write_queue_1353.py:466,472	test_write_turn_still_blocks_on_open_barrier	order list	notin before release_barrier; == after	pre vs post barrier
+KEEP	tests/test_settle_core.py:63,69	test_pre_settle_persists_event_terminal_states_in_write_path	event_triggers SELECT for ev.id	pre_settle between	still None before gate consume
+KEEP	tests/test_settlement_write_guard_393.py:267,262	test_serialized_web_write_cm_contract	g._write_gate.locked()	phase-reject g vs normal-exit g	distinct FakeGame instances/scenarios
+KEEP	tests/test_settlement_write_guard_393.py:261,275	test_serialized_web_write_cm_contract	ei.value.status_code	phase-reject loop vs lock-held path	distinct 409 scenarios
+KEEP	tests/test_shared_resource_order_1844.py:218,219	test_player_decrees_sequential_army_station_reads_updated_roster	len(logs) vs logs[-2]["new_value"]	after month resolve	len does not entail log field values
+KEEP	tests/test_shared_resource_order_1844.py:218,220	test_player_decrees_sequential_army_station_reads_updated_roster	len(logs) vs logs[-1]["old_value"]	same	distinct subjects
+KEEP	tests/test_shared_resource_order_1844.py:218,221	test_player_decrees_sequential_army_station_reads_updated_roster	len(logs) vs logs[-1]["new_value"]	same	distinct subjects
+KEEP	tests/test_staged_assignment_identity_1890.py:281,292	test_revision_keeps_original_source_turn_and_undo_restores_it	pending_actions.source_chat_turn_id	undo_chat_turn between	id sticky through revise then undo restore
+KEEP	tests/test_start_sh_deps_1721.py:99,114	test_start_sh_syncs_requirements_before_uvicorn	proc.returncode	rewrite requirements.txt + second _run_start	two independent runs
+KEEP	tests/test_start_sh_deps_1721.py:101,116	test_start_sh_syncs_requirements_before_uvicorn	steps[0] pip prefix	second run after requirements rewrite	fresh log re-observe
+KEEP	tests/test_start_sh_deps_1721.py:102,117	test_start_sh_syncs_requirements_before_uvicorn	"requirements.txt" in steps[0]	same	fresh log
+KEEP	tests/test_start_sh_deps_1721.py:104,118	test_start_sh_syncs_requirements_before_uvicorn	steps[1] uvicorn prefix	same	fresh log
+KEEP	tests/test_structured_decree_contract_1624.py:323,326	test_rescript_follow_draft_nails_drafted_roster	len(after)>before vs payload.target_kind	after apply_rescript_batch	growth ≠ payload fields
+KEEP	tests/test_structured_decree_contract_1624.py:323,327	test_rescript_follow_draft_nails_drafted_roster	len vs payload.target_id	same	distinct subjects
+KEEP	tests/test_structured_decree_contract_1624.py:323,328	test_rescript_follow_draft_nails_drafted_roster	len vs payload.region_id	same	distinct subjects
+KEEP	tests/test_structured_decree_contract_1624.py:323,329	test_rescript_follow_draft_nails_drafted_roster	len vs payload.locality_scope	same	distinct subjects
+KEEP	tests/test_structured_decree_contract_1624.py:323,330	test_rescript_follow_draft_nails_drafted_roster	len vs payload.transaction_category	same	distinct subjects
+KEEP	tests/test_style_temperament_641.py:139,170	test_temperament_style_preserves_raw_bytes_through_write_kernel	content.characters[PERSON].style	blank-style apply_score_extraction between	PADDED_STYLE must survive blank reject
+KEEP	tests/test_surcharge_causal_chain_650.py:270,272	test_player_month_recovery_consumes_old_levy_once	_pop(db,"流民","shaanxi")	second resolve_turn between	idempotent recovery
+KEEP	tests/test_surcharge_causal_chain_650.py:478,482	test_e2e_surcharge_and_stop_share_month_open_snapshot	_pop(db,"流民","shaanxi")	empty settle month between	stop leaves displaced+want sticky
+KEEP	tests/test_transaction_boundary.py:29,34	test_game_db_owns_transaction_tracks_atomic_and_open_transactions	db.owns_transaction()	enter/exit atomic between	True outside vs True after exit
+KEEP	tests/test_transaction_boundary.py:32,39	test_game_db_owns_transaction_tracks_atomic_and_open_transactions	db.owns_transaction()	atomic interior vs open INSERT	False in atomic vs False with open txn
+KEEP	tests/test_transaction_boundary.py:179,183	test_set_fiscal_config_respects_caller_owned_transaction	db.conn.in_transaction	set_fiscal_config between	must not commit caller txn
+KEEP	tests/test_transaction_boundary.py:199,206	test_set_fiscal_config_batch_respects_caller_owned_transaction	db.conn.in_transaction	set_fiscal_config_batch between	must not commit caller txn
+KEEP	tests/test_transit_aging_346.py:199,208	test_pre_settle_ticks_arrival_before_terminal_states	has_event_terminal_state(...avoided)	_consume_event_gates_after_edicts between	still not avoided after gate consume
+KEEP	tests/test_transit_countdown_668.py:108,116	test_pre_settle_tick_before_event_terminal_reads_new_location	has_event_terminal_state(...avoided)	gate consume between	same sticky not-avoided
+KEEP	tests/test_transit_countdown_668.py:160,167	test_ousted_in_transit_stops_countdown_and_never_arrives	row['location']	tick_transit_arrivals loop between	location sticky after ticks
+KEEP	tests/test_transit_countdown_668.py:161,168	test_ousted_in_transit_stops_countdown_and_never_arrives	tuple(row)[1:] transit fields	same tick loop	transit fields stay cleared
+KEEP	tests/test_urge_lever_624.py:143,144	test_rush_staged_commitment_advances_due_and_fills_urge_history	len(hist) vs hist[-1]["old_due"]	after rush	len does not entail field values
+KEEP	tests/test_urge_lever_624.py:143,145	test_rush_staged_commitment_advances_due_and_fills_urge_history	len(hist) vs hist[-1]["new_due"]	same	distinct subjects
+KEEP	tests/test_urge_lever_624.py:220,224	test_urge_no_longer_rewrites_verdict_ac1_1895	urge_history lens vs verdict.outcome	after apply_due_review	history growth ≠ verdict
+KEEP	tests/test_urge_lever_624.py:220,225	test_urge_no_longer_rewrites_verdict_ac1_1895	urge_history lens vs dossier.execution_outcome	same	distinct subjects
+KEEP	tests/test_urge_lever_624.py:350,351	test_urge_history_restore_from_committed_pending_ac7	len(hist) vs hist[0]["reason"]	after GameDB reopen	len ≠ reason field
+KEEP	tests/test_urge_lever_624.py:599,600	test_commitment_rush_via_pending_actions_gate	len(hist) vs hist[-1]["new_due"]	after commit_pending_actions	len ≠ field
+KEEP	tests/test_urge_lever_624.py:599,601	test_commitment_rush_via_pending_actions_gate	len(hist) vs hist[-1]["reason"]	same	distinct subjects
+KEEP	tests/test_urge_lever_624.py:599,606	test_commitment_rush_via_pending_actions_gate	len(hist) vs chosen==[]	same	hist len ≠ todo filter emptiness
+KEEP	tests/test_urge_lever_624.py:599,615	test_commitment_rush_via_pending_actions_gate	len(hist) vs n_committed	same	hist len ≠ pending_actions count
+KEEP	tests/test_web_audience_night_498.py:276,317	test_translation_failure_retry_and_undo_through_audience_http	write_queue.wait_idle()	failure==code reopen branch vs early path	distinct branches/timepoints
+KEEP	tests/test_web_audience_night_498.py:385,349	test_translation_failure_retry_and_undo_through_audience_http	undo.status_code	code-path early return vs non-code path	mutually exclusive failure branches
+KEEP	tests/test_web_audience_night_498.py:381,350	test_translation_failure_retry_and_undo_through_audience_http	retry.status_code	same branch split	distinct paths
+KEEP	tests/test_web_audience_night_498.py:386,351	test_translation_failure_retry_and_undo_through_audience_http	retracted["translation_retries"]	same	distinct paths
+KEEP	tests/test_web_audience_night_498.py:387,357	test_translation_failure_retry_and_undo_through_audience_http	story_ledger_entries COUNT	same	distinct paths
+KEEP	tests/test_web_audience_night_498.py:390,361	test_translation_failure_retry_and_undo_through_audience_http	stale.status_code	same	distinct paths
+KEEP	web/src/appDurableWiring.test.tsx:257,259	(minister stream case)	host.textContent 臣已入殿	finishStream between waitFor re-observes	waitFor re-observe after stream end
+KEEP	web/src/appDurableWiring.test.tsx:1060,1061	phase===settling resume	resume nullness vs resume.disabled	same mount	distinct properties
+KEEP	web/src/appDurableWiring.test.tsx:1060,1070	phase===settling resume	resume vs resume2.disabled after remount	unmountTrackedRoots + remount	different nodes/timepoints
+KEEP	web/src/appDurableWiring.test.tsx:1069,1070	phase===settling resume	resume2 nullness vs disabled	post-remount	distinct properties
+KEEP	web/src/appDurableWiring.test.tsx:1108,1109	#1620 settling recovery	resume nullness vs disabled	same	distinct properties
+KEEP	web/src/appDurableWiring.test.tsx:1913,1914	awaiting_decision DecisionModal	action truthy vs action.disabled	same	distinct properties
+KEEP	web/src/appDurableWiring.test.tsx:1936,1937	settling recovery banner	retry nullness vs disabled	same	distinct properties
+KEEP	web/src/appDurableWiring.test.tsx:2273,2281	(decision busy lock)	resolveCount	extra confirm clicks while busy	idempotent under re-click
+KEEP	web/src/appDurableWiring.test.tsx:2273,2287	(decision busy lock)	resolveCount	releaseResolve after busy	still 1 after release
+KEEP	web/src/appDurableWiring.test.tsx:2331,2332	#1700 SSE error settle-resume	resume nullness vs disabled	same	distinct properties
+KEEP	web/src/appDurableWiring.test.tsx:2426,2596	(settlement closed faces)	host.textContent SNAP_CLOSED	nav/secret/edict/legacy/load between	re-observe closed list after mutations
+KEEP	web/src/appDurableWiring.test.tsx:2423,2597	(settlement closed faces)	host.textContent MIDCOURSE_ISSUE absence	same intervening UI ops	midcourse still absent after ops
+KEEP	web/src/appDurableWiring.test.tsx:3072,3073	(directive inflight cancel)	cancelEdit nullness vs disabled	same	distinct properties
+KEEP	web/src/components/decisionModal.test.tsx:66,70	(focus trap)	document.activeElement	background.focus + Tab between	trap re-observe after Tab
+KEEP	web/src/components/decisionModal.test.tsx:66,74	(focus trap)	document.activeElement	note.focus + Tab between	trap after note Tab
+KEEP	web/src/components/decisionModal.test.tsx:66,83	(focus trap)	document.activeElement	option click + confirm.focus + Tab	trap after confirm Tab
+KEEP	web/src/components/decisionModal.test.tsx:105,110	(blocks background focus)	document.activeElement	Ctrl+` shortcut dispatch between	focus sticky under shortcut
+KEEP	web/src/components/decisionModal.test.tsx:167,168	assembles red-seal document	sealConfirm nullness vs tagName	same	distinct properties
+KEEP	web/src/components/decisionModal.test.tsx:281,294	disables seal paths	confirm().disabled	cleanup + remount note-only path	distinct render instances
+KEEP	web/src/components/decisionModal.test.tsx:328,335	three-state invariant	confirm().disabled	options()[0].focus between	focus must not enable (stability under focus)
+KEEP	web/src/components/decisionModal.test.tsx:339,353	three-state invariant	confirm().disabled	cleanupListed + note-only remount	distinct instances/paths
+KEEP	web/src/components/decisionModal.test.tsx:328,374	three-state invariant	confirm().disabled	listed path vs dossier note-only remount	dossier path must stay disabled
+KEEP	web/src/components/drawers.test.tsx:632,648	同 role 次名拖动	secondary truthy vs cardPos a/b nullness	drag mousemove/mouseup between	different subjects (el vs positions)
+KEEP	web/src/components/drawers.test.tsx:821,830	(offstage resume card)	onOpenChat mock	card click then resume click	both must not open chat
+KEEP	web/src/components/drawers.test.tsx:814,815	(offstage resume card)	card truthy vs card.tagName	same node, distinct props	existence ≠ tagName
+KEEP	web/src/components/drawers.test.tsx:824,825	(offstage resume card)	resume nullness vs disabled	same	distinct properties
+KEEP	web/src/components/drawers.test.tsx:837,838	(gated resume)	gatedResume nullness vs disabled	chatEntryEnabled:false mount	distinct properties
+KEEP	web/src/components/gameMenu.test.tsx:204,210	(CLI runner dropdown)	runnerSelect truthy vs .value	same	existence ≠ selected value
+KEEP	web/src/components/gameMenu.test.tsx:487,494	(reasoning unsupported edit)	strength?.disabled	changeInput model between	edit must not enable strength
+KEEP	web/src/components/gameMenu.test.tsx:615,627	(deepseek disable strength)	strength?.disabled	save click between	still disabled after save
+KEEP	web/src/components/gameMenu.test.tsx:662,679	(normalized save fields)	baseUrlInput truthy vs .value after save	POST save between	existence ≠ normalized value
+KEEP	web/src/components/gameMenu.test.tsx:663,680	(normalized save fields)	modelInput truthy vs .value after save	same	existence ≠ normalized value
+KEEP	web/src/components/menuPage.test.tsx:127,128	(continue button)	continueBtn truthy vs .disabled	same	distinct properties
+KEEP	web/src/components/menuPage.test.tsx:474,480	(CLI runner on menu)	runnerSelect truthy vs .value	same	existence ≠ value
+KEEP	web/src/components/menuPage.test.tsx:963,970	(menu reasoning unsupported)	strength?.disabled	changeInput model between	edit must not enable
+KEEP	web/src/components/modals.test.tsx:335,342	#1732退朝确认	onAdvance mock	open panel + cancel between	still not called after cancel
+KEEP	web/src/components/modals.test.tsx:370,377	#1732撤回确认	onUndo mock	open panel + cancel between	still not called after cancel
+KEEP	web/src/components/modals.test.tsx:691,697	(night switch retire)	body.textContent 旧夜问话	updateNight then rejectRefresh	absent after night switch and after failed refresh
+KEEP	web/src/components/modals.test.tsx:721,725	(undo snapshot retire)	body.textContent 撤回前答复	updateUndo then rejectRefresh	absent after undo and after failed refresh
+KEEP	web/src/components/modals.test.tsx:756,758	(no flash while loading)	body.textContent 旧分线程不应闪回	reject scroll promise between	absent while loading and after fail
+KEEP	web/src/components/modals.test.tsx:1494,1496	(archive 场次32)	host.textContent 场次32	click .history-turn-item.active between	label sticky after noop click
+KEEP	web/src/components/modals.test.tsx:1789,1790	#1356空邸报	body nullness vs textContent==""	same	distinct properties
+KEEP	web/src/components/settlementFaces.test.tsx:189,190	#1323 settling closed face	attempts.toEqual([any String]) vs attempts[0]!=""	same click	expect.any(String) matches "" so does not entail non-empty
+KEEP	web/src/components/settlementFaces.test.tsx:220,221	#1323 awaiting_decision	same attempts pair	same	any(String) does not entail non-empty
+KEEP	web/src/components/settlementFaces.test.tsx:421,444	#1796 settlementFace	state.turn.settlement_display	mount GameHud settlementFace=true between	component must not rewrite state true-source
+KEEP	web/src/useDurableProjection.test.tsx:73,81	(stale refresh)	orders array	releaseOld stale fetch between	orders stays ["undo"] after stale reject
+KEEP	web/src/useSettlementFlow.test.tsx:192,196	(inflight poll)	loadState call count	advanceTimers 999ms between	still not called before 1000ms
+KEEP	web/src/useSettlementFlow.test.tsx:256,263	(ending summary poll)	loadState call count	extra 1000ms timer between	stops at 1 after summary arrives
+KEEP	web/src/useSettlementFlow.test.tsx:297,299	(tail failure poll)	loadState call count	extra 1000ms after failure	stops at 1 on persisted failure
+KEEP	web/src/useSettlementFlow.test.tsx:578,623	issueDecree vs it.each unadvanced	loadState call count	distinct test cases/entrypoints	not same-run duplicate
+KEEP	web/src/useSettlementFlow.test.tsx:579,624	issueDecree vs it.each unadvanced	reload spy	distinct test cases	not same-run duplicate

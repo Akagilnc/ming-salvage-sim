@@ -1,0 +1,4 @@
+REVOKED as authoritative post-fix inventory:
+enum_f16_supply_path_after.tsv listed several sites already preserve-raw and missed
+web/web_app.py rewrite shapes. Retained unmodified for history. Authoritative F16
+disposition = f16_hand_member_table.tsv + enum_f16_all_candidates.txt (re-enumerated).

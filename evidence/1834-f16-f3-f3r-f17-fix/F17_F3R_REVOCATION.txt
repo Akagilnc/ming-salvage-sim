@@ -8,5 +8,16 @@ REVOKED (this worktree, e998bc2d4-era false layer — deleted, not rewritten):
 - enum_f3r_disposition.tsv produced by that script
 - scripts/mutation_real_old_red.py (275) + scripts/probe_new_green.py (110) — permanent parallel proof mechanisms (F17)
 
-Current F3-R evidence = enum_f3r_*_all_candidates.txt (enumeration only) + f3r_hand_member_table.tsv (hand semantic disposition).
-F17 proof = temporary in-process old-logic replace recorded in report.md / mutation_old_red.json method note; no permanent proof scripts.
+REVOKED (04b62b858-era false hand table — replaced, not rewritten as authority):
+- f3r_hand_member_table.tsv with intervening=assign@… / truncated subjects
+  → see f3r_hand_member_table.REVOKED_AST_AUTO.txt
+- enum_f16_supply_path_after.tsv as authoritative post-fix inventory
+  → see enum_f16_supply_path_after.REVOKED_STALE.txt
+
+Current F3-R evidence = enum_f3r_*_all_candidates.txt (enumeration only)
+  + f3r_semantic_batch{1,2,3}*.tsv (per-batch hand reads)
+  + f3r_hand_member_table.tsv (merged hand disposition).
+Current F16 evidence = enum_f16_all_candidates.txt + f16_hand_member_table.tsv
+  + f16_hand_member_table.METHOD.txt (honest unfinished = FIX_REMAINING).
+F17 proof = temporary in-process old-logic replace in mutation_temp_real_entry.json
+  (entry_points + old_logic_restore); no permanent proof scripts.

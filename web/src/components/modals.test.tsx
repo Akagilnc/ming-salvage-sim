@@ -453,6 +453,8 @@ describe("ChatModal — #1370 empty audience chrome", () => {
     expect(stage).not.toBeNull();
     expect((stage!.querySelector(".chat-empty-chrome")?.textContent || "").trim()).not.toBe("");
     expect(stage!.querySelector(".chat-message.minister")).toBeNull();
+    // P7：不得落叙事开场白模板（empty-chrome 非空不蕴含禁词缺席）(#1834 F3).
+    expect(stage!.textContent || "").not.toMatch(/臣.*叩见|恭请圣安/);
   });
 });
 

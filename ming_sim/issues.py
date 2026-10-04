@@ -7774,7 +7774,8 @@ def _apply_score_extraction_body(
                 raise ValueError(
                     "执行结果必须为 fulfilled/degraded/failed/transformed"
                 )
-            note = str(item.get("note") or "").strip()
+            # Free prose execution note: preserve raw (#1834 F16).
+            note = str(item.get("note") or "")
             if not note:
                 raise ValueError("执行说明不能为空")
             # #565：显式 affected_parties 仅校验门闩（契约§5），不驱动机械写路。

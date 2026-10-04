@@ -6121,10 +6121,12 @@ class GameDB:
                 state.period,
                 person_name,
                 action,
-                str(payload_summary or "")[:200],
-                str(derived_from or "")[:120],
-                normalized_text,  # 全量存：normalized 是结构化审计 JSON，[:500] 会从中间切断成不可解析（PR #106 CodeRabbit）
-                str(source or "")[:80],
+                # Free prose / audit text fields: preserve raw (#1834 F16). F12 removed
+                # person_logs from materials supply; write path still must not crop.
+                str(payload_summary or ""),
+                str(derived_from or ""),
+                normalized_text,  # 全量存：normalized 是结构化审计 JSON
+                str(source or ""),
                 str(origin_ref or ""),
             ),
         )
@@ -16095,16 +16097,17 @@ class GameDB:
 
         初写仍由 record_dossier_execution 落 judge note；本接口只做增补合并。
         """
-        text = str(fragment or "").strip()
-        if not text:
+        # Free prose execution note fragment: preserve raw (#1834 F16).
+        text = str(fragment or "")
+        if not text.strip():
             raise ValueError("说明片段不能为空")
         row = self.get_decree_dossier(dossier_id)
         if row is None:
             raise KeyError(f"案卷不存在：{dossier_id}")
-        existing = str(row.get("execution_note") or "").strip()
+        existing = str(row.get("execution_note") or "")
         if text in existing.split("；"):
             merged = existing
-        elif existing:
+        elif existing.strip():
             merged = f"{existing}；{text}"
         else:
             merged = text

@@ -1,5 +1,14 @@
 {
-  "method": "temporary_inprocess_replace_production_symbol_with_old_strip; no permanent proof script retained",
+  "method": {
+    "entry_points": [
+      "ming_sim.staged_commitment.normalize_commitment_stages",
+      "ming_sim.settlement_payload.parse_decision_blocks",
+      "GameDB.apply_region_deltas → region_logs.reason (seeded opening DB via tests.conftest._seed_opening_db)"
+    ],
+    "old_logic_restore": "In-process monkeypatch replaces normalize_commitment_stages / parse_decision_blocks with local old_* that .strip() free-prose fields; then restores original symbols. No permanent proof script retained.",
+    "old_normalize_excerpt": "criterion/origin_context = str(...).strip() before append",
+    "old_parse_excerpt": "title/context/label/hint = str(...).strip() after <<DECISION>> json.loads"
+  },
   "staged_current_preserves": true,
   "staged_old_preserves": false,
   "decision_current_preserves": true,
