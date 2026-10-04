@@ -536,7 +536,6 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
         return jsonResp({
           minister, history: [], suggestions: [], campaign_id: "c1", night_id: 1,
           can_undo_last_chat: retryDone,
-          translation_retries: translationDone ? [] : [{ chat_turn_id: 8, retryable: true }],
         });
       }
       if (u.pathname.endsWith("/api/audience/translation/retry") && init?.method === "POST") {
@@ -673,8 +672,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
       if (path.endsWith("/api/audience/chat") && init?.method !== "POST") {
         historyReads += 1;
         if ([2, 3, 5].includes(historyReads)) return new Response(JSON.stringify({ detail: "history unavailable" }), { status: 500 });
-        return jsonResp({ minister, history: [], suggestions: [], campaign_id: "c1", night_id: 1,
-          translation_retries: translated ? [] : [{ chat_turn_id: 8, retryable: true }] });
+        return jsonResp({ minister, history: [], suggestions: [], campaign_id: "c1", night_id: 1 });
       }
       if (path.endsWith("/api/audience/translation/retry") && init?.method === "POST") {
         retryPosts += 1;

@@ -73,7 +73,6 @@ function renderModal(props: {
     chatTurnId: number,
     recoveryPhase?: "after_reply" | "court_break",
   ) => void;
-  translationRetries?: React.ComponentProps<typeof ChatModal>["translationRetries"];
   onRetryTranslation?: React.ComponentProps<typeof ChatModal>["onRetryTranslation"];
   pendingUserMessage?: string;
   pendingIdentity?: { campaign_id: string; night_id: number; chat_turn_id: number } | null;
@@ -146,7 +145,6 @@ function renderModal(props: {
         onInput={(value) => setInput(value)}
         onSend={props.onSend ?? (() => {})}
         onRetryReply={props.onRetryReply}
-        translationRetries={props.translationRetries}
         onRetryTranslation={props.onRetryTranslation}
         onUndo={props.onUndo ?? (() => {})}
         onHint={() => {}}

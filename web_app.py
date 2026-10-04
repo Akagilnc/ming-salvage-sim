@@ -2221,10 +2221,7 @@ class WebGame:
         return get_open_night(self.db) is not None
 
     def interrupted_reply_retries(self, minister_name: str) -> List[Dict[str, Any]]:
-        """#505：某大臣重开后待重试的中断回话轮（问话已落、回话未落）——恢复提示取数。
-        测试替身无 conn/该接口时返回空（无中断可重试）。"""
-        if not hasattr(self.db, "get_interrupted_reply_retries"):
-            return []
+        """#505：某大臣重开后待重试的中断回话轮（问话已落、回话未落）——恢复提示取数。"""
         return self.db.get_interrupted_reply_retries(minister_name)
 
     def reply_retries_for_night(self, night_id: int) -> List[Dict[str, Any]]:
@@ -2238,7 +2235,7 @@ class WebGame:
             if night:
                 return self.reply_retries_for_night(int(night["id"]))
         interrupted = self.interrupted_reply_retries(minister_name)
-        post_reply = self.db.get_post_reply_retries(minister_name) if hasattr(self.db, "get_post_reply_retries") else []
+        post_reply = self.db.get_post_reply_retries(minister_name)
         return sorted([*interrupted, *post_reply], key=lambda item: int(item["chat_turn_id"]))
 
     def _resume_post_reply(self, minister_name: str, target: Dict[str, Any]) -> Dict[str, Any]:
@@ -5211,21 +5208,13 @@ def _require_active_minister(minister_name: str) -> None:
 
 
 def _reply_retries_for_night(db: Any, night_id: int) -> List[Dict[str, Any]]:
-    if not hasattr(db, "list_hall_chat_turns"):
-        return []
     turns = db.list_hall_chat_turns(int(night_id))
     speakers = dict.fromkeys(str(row["minister_name"]) for row in turns)
     ids = {int(row["id"]) for row in turns}
     rows: List[Dict[str, Any]] = []
     for speaker in speakers:
-        interrupted = (
-            db.get_interrupted_reply_retries(speaker)
-            if hasattr(db, "get_interrupted_reply_retries") else []
-        )
-        post = (
-            db.get_post_reply_retries(speaker)
-            if hasattr(db, "get_post_reply_retries") else []
-        )
+        interrupted = db.get_interrupted_reply_retries(speaker)
+        post = db.get_post_reply_retries(speaker)
         rows.extend(
             retry for retry in (*interrupted, *post)
             if int(retry["chat_turn_id"]) in ids
@@ -5292,9 +5281,6 @@ async def api_audience_chat_history() -> Dict[str, Any]:
             night_id=int(open_night["id"]) if open_night else None,
             minister_name=SCENE_CHAT_SPEAKER,
         )],
-        "translation_retries": game.pending_translation_retries(
-            night_id=int(open_night["id"]) if open_night else None,
-        ),
     }
 
 

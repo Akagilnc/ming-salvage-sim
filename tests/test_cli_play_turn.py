@@ -25,6 +25,13 @@ def _cli_schedule_pending_noop(self, result):
     return None
 
 
+class _CliChatDbStub:
+    """#1853 J8：生产直调必备重试查询；轻壳夹具须提供同名接口，不得靠 hasattr 空结果护栏。"""
+
+    def get_interrupted_reply_retries(self, minister_name=None):
+        return []
+
+
 @contextmanager
 def _noop_atomic(_db):
     yield
@@ -155,7 +162,7 @@ def test_terminal_minister_chat_persists_messages_before_session_chat(monkeypatc
     #1842：殿上走 scene_chat；user 行必须在调用前已落库，minister 行在回话后补上。
     """
 
-    class Db:
+    class Db(_CliChatDbStub):
         def __init__(self):
             self.messages = []
 
@@ -201,7 +208,7 @@ def test_terminal_minister_chat_persists_messages_before_session_chat(monkeypatc
 def test_terminal_minister_chat_removes_user_message_when_session_chat_fails(monkeypatch):
     """失败的 CLI 召对只回滚本轮 user-only 半轮，不清历史。"""
 
-    class Db:
+    class Db(_CliChatDbStub):
         def __init__(self):
             self.messages = [
                 ("魏忠贤", 6, "user", "前一轮召对内容"),
@@ -250,7 +257,7 @@ def test_terminal_minister_chat_removes_user_message_when_session_chat_fails(mon
 def test_terminal_minister_chat_removes_user_message_when_session_chat_interrupted(monkeypatch):
     """Ctrl-C 中断中的 CLI 召对也不能留下 user-only 半轮。"""
 
-    class Db:
+    class Db(_CliChatDbStub):
         def __init__(self):
             self.messages = [
                 ("魏忠贤", 6, "user", "前一轮召对内容"),
@@ -299,7 +306,7 @@ def test_terminal_minister_chat_removes_user_message_when_session_chat_interrupt
 def test_terminal_minister_chat_preserves_chat_error_when_rollback_fails(monkeypatch):
     """回滚删除失败不能盖掉原始 scene_chat/chat 异常。"""
 
-    class Db:
+    class Db(_CliChatDbStub):
         def append_chat_message(self, minister_name, turn, role, content):
             return 1
 
@@ -329,7 +336,7 @@ def test_terminal_minister_chat_preserves_chat_error_when_rollback_fails(monkeyp
 def test_terminal_minister_chat_reply_persist_failure_keeps_user_message(monkeypatch):
     """大臣已回话后，minister 行落库失败不误删已落 user 行。"""
 
-    class Db:
+    class Db(_CliChatDbStub):
         def __init__(self):
             self.messages = []
             self.deleted = False

@@ -1,7 +1,7 @@
 import React from "react";
 import { ApiRequestError, api, streamChat } from "./api";
 import { chatReducer } from "./mindreading";
-import type { ChatIdentity, ChatMessage, ChatResponse, Minister, ServerChatMessage, TranslationRetry } from "./types";
+import type { ChatIdentity, ChatMessage, ChatResponse, Minister, ServerChatMessage } from "./types";
 import { audienceHistoryPath } from "./audienceScene";
 
 /**
@@ -27,7 +27,6 @@ export type AudienceHistoryData = {
   /** Persisted current open-night identity; 0 means no open audience night. */
   night_id: number;
   generating_turn_ids?: number[];
-  translation_retries?: TranslationRetry[];
 };
 
 export type SendChatCallbacks = {

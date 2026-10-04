@@ -144,7 +144,6 @@ export function App() {
   // 召对动作群（useChatActions.ts）：召对面板外围态 + 开召对/发问/撤回/重试。
   const {
     chatNotice,
-    translationRetries,
     retryReadFailure,
     canUndoLastChat,
     composerHint,
@@ -742,7 +741,6 @@ export function App() {
             input={input}
             busy={busy}
             error={error}
-            translationRetries={translationRetries}
             retryReadFailure={retryReadFailure}
             onInput={setInput}
             onSend={sendChat}

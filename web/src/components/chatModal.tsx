@@ -35,7 +35,6 @@ export function ChatModal({
   input,
   busy,
   error,
-  translationRetries = [],
   retryReadFailure = null,
   onInput,
   onSend,
@@ -70,8 +69,6 @@ export function ChatModal({
   input: string;
   busy: string;
   error: string;
-  /** 回话重试只读夜卷投影（#1853 J2）；勿再经 props 另传一份。 */
-  translationRetries?: TranslationRetry[];
   retryReadFailure?: RetryReadFailure | null;
   onInput: (value: string) => void;
   onSend: (ministerName: string, text?: string) => void;
@@ -322,7 +319,7 @@ export function ChatModal({
       }
     }
     readingAnchorRef.current = null;
-  }, [minister.name, chat, scrollState, pendingUserMessage, streamingMinisterMessage, chatNotice, busy, error, translationRetries]);
+  }, [minister.name, chat, scrollState, pendingUserMessage, streamingMinisterMessage, chatNotice, busy, error]);
 
   const handleScroll = () => {
     const node = chatLogRef.current;
@@ -349,10 +346,11 @@ export function ChatModal({
       </div>
     ));
   }
+  // #1853 J2-T：转译重试只读夜卷投影；loading/none/error 不回退历史副本。
   const visibleTranslationRetries: Pick<TranslationRetry, "chat_turn_id" | "retryable" | "error_pack_path">[] =
     effectiveScrollState.kind === "night"
       ? [...effectiveScrollState.translationRetries]
-      : [...translationRetries];
+      : [];
   if (retryReadFailure?.kind === "translation" && !visibleTranslationRetries.some((retry) => retry.chat_turn_id === retryReadFailure.chatTurnId)) {
     visibleTranslationRetries.push({ chat_turn_id: retryReadFailure.chatTurnId, retryable: true });
   }

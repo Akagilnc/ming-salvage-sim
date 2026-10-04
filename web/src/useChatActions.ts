@@ -12,7 +12,6 @@ import type {
   RetryReadFailure,
   SecretOrder,
   ServerChatMessage,
-  TranslationRetry,
 } from "./types";
 import { AUDIENCE_SCENE_SPEAKER, audienceRetryPath, audienceUndoPath } from "./audienceScene";
 
@@ -72,7 +71,6 @@ export function useChatActions({
   currentNightId: number;
 }) {
   const [chatNotice, setChatNotice] = React.useState("");
-  const [translationRetries, setTranslationRetries] = React.useState<TranslationRetry[]>([]);
   const [retryReadFailure, setRetryReadFailure] = React.useState<RetryReadFailure | null>(null);
   const [canUndoLastChat, setCanUndoLastChat] = React.useState(false);
   const [composerHint, setComposerHint] = React.useState("");
@@ -100,8 +98,6 @@ export function useChatActions({
     const allKnown = rosterRef.current;
     setTemporaryActiveMinister(allKnown.some((m) => m.name === data.minister.name) ? null : data.minister);
     setCanUndoLastChat(!!data.can_undo_last_chat);
-    // #505 / #1853 J2：回话重试只以夜卷投影为准，历史接口不再维护平行副本。
-    setTranslationRetries(data.translation_retries ?? []);
     setRetryReadFailure(null);
     return data;
   }, [loadHistoryProjection, selectedMinisterRef]);
@@ -411,7 +407,6 @@ export function useChatActions({
 
   return {
     chatNotice,
-    translationRetries,
     retryReadFailure,
     canUndoLastChat,
     composerHint,
