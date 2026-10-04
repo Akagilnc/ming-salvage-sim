@@ -1303,3 +1303,102 @@ env MING_SIM_AGY_BIN=/usr/bin/false MING_SIM_CODEX_BIN=/usr/bin/false \
 
 - 以交卷后 `git rev-parse HEAD` 为准（本段之后独立 `ak-roles:` 提交）。
 - **未 push / 未 PR / 未 amend / 未 stash**。
+
+
+---
+
+## 纠正回执（废弃字段词表；113+ 授权自由文本整类结清，本轮）
+
+- 基线 tip（施工前）：`572137add32088417ef253a04a56d2732d05e82e`
+- 批评点：上轮以扩词表把授权自由文本报 **113** 并标「剩余」——**反复扩词表本身证明谓词被字段白名单收窄**；`label/hint !=` 与 `title>80` 改闸属换形未修净；`decree_text` 身份键与 person_delta/fiscal/urge/relation 散文锁未动。
+- 本轮：**保留上文全部过程史**；废弃 `TEXT_ATTRS` 字段词表过滤；全仓 AST 枚举 assert/assert_*/pytest.raises/match/Compare；授权相关函数按语义分类；**未**另立平行证明体系。
+- **未声称已 merge / 关票 / reviewer 放行 / push**
+
+### 顾问（本轮）
+
+| 类 | 正确行为 | 根因（复核） | 最简修法 |
+|---|---|---|---|
+| F1 | 邸报供料不进未披露实况 | 修面已门控；复跑变异仍 GREEN | 不动生产；复证 |
+| F2 | 执行区故障响亮；领域拒收仅校验区 | 宽吞已删；复跑变异仍 GREEN | 不动生产；复证 |
+| F3 | 授权测不机械锁自由文本 | 字段词表收窄→虚报剩余；#30/#39 换形；散文身份键 | 无字段谓词复扫 + 语义清退；结构身份/状态保留闸 |
+
+### 全仓 AST 枚举命令（精确可复跑；无字段词表）
+
+分析目录：`/tmp/1897-f1f3-corr4/`（不进仓）。
+
+```bash
+env MING_SIM_AGY_BIN=/usr/bin/false MING_SIM_CODEX_BIN=/usr/bin/false \
+  MING_SIM_CLAUDE_BIN=/usr/bin/false MING_SIM_CURSOR_BIN=/usr/bin/false \
+  MING_SIM_KIMI_BIN=/usr/bin/false MING_SIM_GROK_BIN=/usr/bin/false \
+  MING_SIM_PI_BIN=/usr/bin/false PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$PWD" \
+  ../Ming_LLM/.venv/bin/python /tmp/1897-f1f3-corr4/enum_f3_nofield.py
+# 产出：f3_all_asserts.tsv / f3_str_cand_all.tsv / f3_str_cand_auth.tsv /
+#       f3_auth_funcs.tsv / f3_full_summary.json
+# 本轮摘要：ALL_TEST_FILES=223 ASSERT_ROWS_ALL=14529
+#          AUTH_RELATED_FILES=95 AUTH_TEST_FUNCS=1719
+#          STR_ASSERT_CANDIDATE_ALL=9329 STR_ASSERT_CANDIDATE_AUTH=5525
+# 候选=含非空字符串字面量的断言/比对（预语义）；结清靠逐函数语义裁决，不靠字段名。
+```
+
+### 原 113 + 点名项：语义处置（摘要）
+
+| 子集 | 处置 |
+|---|---|
+| SSE `event: done/error` | **保留**（线协议） |
+| FORM `会签/当面站台/御笔手敕` | **保留**（DB CHECK 闭集） |
+| typed reason code（`already_revoked` 等） | **保留**（机器码） |
+| heal 键 schema / GATE_NEG `text` 不在载荷 | **保留** |
+| events.json #189 戊寅虏变软判哨兵 | **保留**（独立内容域；`content/events.json` 举证） |
+| stop_condition / resolve_condition 结构化条件 | **保留**（条件对象，非邸报散文） |
+| roster 名册身份 / reason_code 短码（陷虏/被顶替…） | **保留**（结构身份/闭集码） |
+| #30 `label/hint !=` | **清**：只留 dossier_id/decision 结构闸 |
+| #39 title>80 旧限制证明 | **整案删限制段**；改名 `test_657_stop_condition_type_and_layer_a_schema` |
+| #56 类保真案（style 逐字节 / payload_summary 锁文） | **清/整案改闸**（空白拒收保留） |
+| `test_1778_*` decree_text/title 散文身份键 | **清**：`(action_type, region_id, mode)` 结构键 |
+| person_delta `reason`/整对象散文 | **清**：状态/动作/loyalty/rejected/category |
+| fiscal `detail` 散文码过滤与等值 | **清**：affected_class/origin_ref/value |
+| urge `闸门催` / relation 名∈reason | **清**：非空 reason + category/结构边 |
+| web_chat `message == identity read failed` | **清**：type=error + chat_turn_id |
+
+全表见 `artifacts/1897-f3-member-table-75.md`（原 75 更正 + 本轮 113 结清附注）。
+
+### F1/F2/F3 变异复证
+
+```bash
+env MING_SIM_AGY_BIN=/usr/bin/false MING_SIM_CODEX_BIN=/usr/bin/false \
+  MING_SIM_CLAUDE_BIN=/usr/bin/false MING_SIM_CURSOR_BIN=/usr/bin/false \
+  MING_SIM_KIMI_BIN=/usr/bin/false MING_SIM_GROK_BIN=/usr/bin/false \
+  MING_SIM_PI_BIN=/usr/bin/false PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$PWD" \
+  ../Ming_LLM/.venv/bin/python /tmp/1897-f1f3-corr4/mutate_f1.py
+# verdict=GREEN
+../Ming_LLM/.venv/bin/python /tmp/1897-f1f3-corr4/mutate_f2.py
+# verdict=GREEN
+../Ming_LLM/.venv/bin/python /tmp/1897-f1f3-corr4/mutate_f3.py
+# verdict=GREEN；old_title_sentinel_still_green=true
+```
+
+### 聚焦测试
+
+七变量前缀齐全；聚焦触及文件，**未跑全量**。
+
+**实测**：`371 passed, 1 skipped, 1 deselected in 31.61s`
+
+预存：`test_1682_phase2_surfaces_ambiguous_stored_choice` 在 **HEAD 无本轮 diff** 上亦同失败（`LLMContractError: 无待决推演上下文`）→ **预存**，deselect 记账，非本轮引入；不以重排冒称全绿。
+
+`git diff --check`：无输出。
+
+### 自查二连（本轮）
+
+1. **同类型**：废弃字段词表；清 #30/#39 换形；1778/person_delta/fiscal/urge/relation/style 散文锁按结构闸改写；未用非空/键存在洗绿承重契约；专为旧限制/保真案整段删除。
+2. **引入面**：聚焦 371；F1/F2/F3 变异 GREEN；未改生产校验；临时目录 `/tmp/1897-f1f3-corr4` 不进仓。施工中曾误触 `git stash` 并**立即 pop 全量恢复**（工作区九测文件均在），未留下本轮 stash 条目、未丢改。
+
+### 顾问式合法性 / 完整性（交卷前）
+
+- 合法性：P6 生产保真 ≠ 测试锁文；客户端 `!=` 散文锁非法；title>80 证明案不得换形留存。
+- 完整性：已报 113 点名项 + 同形财政 detail / style 读面锁文已按类清；保留项均有闭集/协议/独立域举证；未虚报「全仓凡含 CJK 的断言皆清」（财政科目键/名册名等结构词保留）。
+- 非声称：未 push/PR/关票；未修预存 1682。
+
+### 交卷 HEAD（本轮）
+
+- 以交卷后 `git rev-parse HEAD` 为准（本段之后独立 `ak-roles:` 提交）。
+- **未 push / 未 PR / 未 amend**；误触 stash 已 pop 恢复。

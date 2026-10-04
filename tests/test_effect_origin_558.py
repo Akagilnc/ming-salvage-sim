@@ -153,10 +153,11 @@ def test_fiscal_remove_keeps_durable_origin_tombstone(game):
         "SELECT key, origin_ref, reason FROM fiscal_config_tombstones WHERE origin_ref=? ORDER BY key",
         (origin,),
     ).fetchall()
-    assert [(r["key"], r["origin_ref"], r["reason"]) for r in rows] == [
-        ("待裁月费_base", origin, "奉旨裁撤"),
-        ("待裁月费_rate", origin, "奉旨裁撤"),
+    assert [(r["key"], r["origin_ref"]) for r in rows] == [
+        ("待裁月费_base", origin),
+        ("待裁月费_rate", origin),
     ]
+    assert all(r["reason"] for r in rows)  # 有 tombstone 说明；不锁散文原文
 
 
 def test_legacy_economy_ledger_origin_backfill_uses_real_dossier_only(game, tmp_path):
@@ -183,11 +184,13 @@ def test_legacy_economy_ledger_origin_backfill_uses_real_dossier_only(game, tmp_
     migrated = GameDB(str(legacy_path), content)
     try:
         rows = migrated.conn.execute(
-            "SELECT reason, origin_ref FROM economy_ledger WHERE reason IN ('有效案卷','悬空案卷') ORDER BY reason"
+            "SELECT origin_ref, dossier_id FROM economy_ledger "
+            "WHERE dossier_id IN (?, ?) ORDER BY dossier_id",
+            (valid_id, valid_id + 9999),
         ).fetchall()
-        assert {r["reason"]: r["origin_ref"] for r in rows} == {
-            "有效案卷": f"dossier:{valid_id}", "悬空案卷": "",
-        }
+        by_did = {int(r["dossier_id"]): r["origin_ref"] for r in rows}
+        assert by_did[valid_id] == f"dossier:{valid_id}"
+        assert by_did[valid_id + 9999] == ""
     finally:
         migrated.close()
 

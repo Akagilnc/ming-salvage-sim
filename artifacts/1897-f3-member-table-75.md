@@ -36,7 +36,7 @@
 | 27 | `test_pihong_dossier_1490.py:379` `test_due_commitment_shaped_submit_does_not_poison_or_deadlock` | NOTE_EQ | **清** | 更正：P6 豁免非法；删 note/label 散文等值；保留 decided + 无 dossier_decision |
 | 28 | `test_pihong_dossier_1490.py:397` `test_lying_label_rebuilt_from_server_option` | SSE_PROTOCOL | **保留** | SSE 线协议控序（event: done/error），非自由正文盯文 |
 | 29 | `test_pihong_dossier_1490.py:398` `test_lying_label_rebuilt_from_server_option` | SSE_PROTOCOL | **保留** | SSE 线协议控序（event: done/error），非自由正文盯文 |
-| 30 | `test_pihong_dossier_1490.py:405` `test_lying_label_rebuilt_from_server_option` | NOTE_EQ | **清** | 更正：删 note 等值；label/hint 改 `!=` 客户端撒谎（不锁服务端散文） |
+| 30 | `test_pihong_dossier_1490.py:405` `test_lying_label_rebuilt_from_server_option` | NOTE_EQ | **清** | 再更正：`!=` 仍非法；只留 dossier_id/decision 结构闸 |
 | 31 | `test_pihong_dossier_1490.py:443` `test_mixed_legal_illegal_options_illegal_choice_stays_pending` | SSE_PROTOCOL | **保留** | SSE 线协议控序（event: done/error），非自由正文盯文 |
 | 32 | `test_pihong_dossier_1490.py:444` `test_mixed_legal_illegal_options_illegal_choice_stays_pending` | SSE_PROTOCOL | **保留** | SSE 线协议控序（event: done/error），非自由正文盯文 |
 | 33 | `test_pihong_dossier_1490.py:454` `test_mixed_legal_illegal_options_illegal_choice_stays_pending` | SSE_PROTOCOL | **保留** | SSE 线协议控序（event: done/error），非自由正文盯文 |
@@ -45,7 +45,7 @@
 | 36 | `test_pihong_dossier_1490.py:493` `test_ordinary_event_with_hallucinated_capability_submits` | SSE_PROTOCOL | **保留** | SSE 线协议控序（event: done/error），非自由正文盯文 |
 | 37 | `test_pihong_dossier_1490.py:494` `test_ordinary_event_with_hallucinated_capability_submits` | SSE_PROTOCOL | **保留** | SSE 线协议控序（event: done/error），非自由正文盯文 |
 | 38 | `test_pihong_dossier_1490.py:500` `test_ordinary_event_with_hallucinated_capability_submits` | NOTE_EQ | **清** | 更正：P6 豁免非法；删 note/label 散文等值；保留无 dossier_decision |
-| 39 | `test_pihong_dossier_1490.py:574` `test_657_p6_mapper_deliberate_preserve_free_text` | TITLE_LOCK | **清→改闸** | 更正：删保真锁文；改名 `test_657_mapper_title_limit_stop_condition_type_and_layer_a_schema`；保留 title>80 / stop_condition 类型 / layer_a schema / stalled |
+| 39 | `test_pihong_dossier_1490.py:574` `test_657_p6_mapper_deliberate_preserve_free_text` | TITLE_LOCK | **清** | 再更正：title>80 旧限制证明整段删除；改名 `test_657_stop_condition_type_and_layer_a_schema`（仅结构闸） |
 | 40 | `test_pihong_dossier_1490.py:1456` `test_1621_http_follow_draft_uses_catalog_army_id` | SSE_PROTOCOL | **保留** | SSE 线协议控序（event: done/error），非自由正文盯文 |
 | 41 | `test_pihong_dossier_1490.py:1457` `test_1621_http_follow_draft_uses_catalog_army_id` | SSE_PROTOCOL | **保留** | SSE 线协议控序（event: done/error），非自由正文盯文 |
 | 42 | `test_pihong_dossier_1490.py:1603` `test_1589_empty_desk_rejects_nonempty_keyless_choices` | SSE_PROTOCOL | **保留** | SSE 线协议控序（event: done/error），非自由正文盯文 |
@@ -96,3 +96,10 @@
 | events.json #189 软判 title/summary 哨兵 | **保留**（独立内容域） |
 | `test_1778_*` 以 `decree_text` 作文案身份键的 `set(round_*)` | **剩余范围**（重构成本大；未本轮空心替换） |
 | person_delta / fiscal detail / urge / relation 等 CJK `reason`/`detail` 散文 | **剩余范围**（扩扫新见；非本票声明写入盯文主战场，据实不虚报结清） |
+
+
+## 本轮（废弃词表 / 113 结清）附注
+
+- 枚举：`/tmp/1897-f1f3-corr4/enum_f3_nofield.py`（**无** `TEXT_ATTRS`）；语义裁决不按字段名。
+- 已报 113：SSE/FORM/typed/heal/独立域/结构化条件 **保留并举证**；其余点名散文锁（1778 decree_text 键、person_delta reason、fiscal detail、urge/relation、#30/#39、style 保真）**清**。
+- 预存失败：`test_1682_phase2_surfaces_ambiguous_stored_choice`（HEAD 无本轮 diff 亦红）→ deselect 记账。

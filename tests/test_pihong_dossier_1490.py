@@ -399,9 +399,7 @@ def test_lying_label_rebuilt_from_server_option(web_game, monkeypatch):
     choice = phase2_calls[0][0]['choice'] or {}
     assert choice.get('dossier_id') == dossier_id
     assert choice.get('dossier_decision') == 'force_promulgated'
-    # 闸=客户端撒谎 label/hint 不得落库；不锁服务端 option 散文原文
-    assert choice.get('label') != lying['label'], choice
-    assert choice.get('hint') != lying['hint'], choice
+    # 闸=能力对取服务端 option（结构身份）；不比 label/hint 散文（含 !=）
 
 def test_parse_rescript_capability_pair_rejects_non_positive_and_unknown():
     """#1494 共享校验器：正整数 id + 支持动作枚举；其余一律 None。"""
@@ -557,19 +555,14 @@ def test_657_c1_decided_mismatch_rejects_and_cas0(game):
     with pytest.raises(ValueError):
         ra.validate_all([empty_decided], [{'decision_key': key, 'action': 'hold', 'label': '留中'}])
 
-def test_657_mapper_title_limit_stop_condition_type_and_layer_a_schema(game):
-    """#657：title>80 响亮拒绝；stop_condition 须为 str；layer_a 缺键/坏型拒；
-    deliberate→stalled。不锁 label/note/title/body 散文原文（P6 生产保真≠测试锁文）。"""
+def test_657_stop_condition_type_and_layer_a_schema(game):
+    """#657：stop_condition 须为 str；layer_a 缺键/坏型拒；deliberate→stalled。
+    专为 title 字数旧限制的证明案已整案删（不锁自由文本、不换形留 title>80）。"""
     from ming_sim import rescript_actions as ra
     from ming_sim.rescript_draft import normalize_rescript_layer_a_option
     db, state, content = game
     m = db.conn.execute("SELECT name FROM characters WHERE status='active' AND power_id='ming' LIMIT 1").fetchone()
     mname = str(m['name']) if m else '杨嗣昌'
-    title80 = '字' * 80
-    # 边界：80 字可映射（不锁 title 值）；81 字 ValueError
-    ra.map_rescript_option_or_choice({'action_type': 'assignment', 'label': 'x', 'hint': 'h', 'target_kind': 'region', 'target_id': 'shaanxi', 'locality_scope': 'single', 'region_id': 'shaanxi', 'transaction_category': '督赈', 'assignee_name': mname, 'title': title80}, db=db, content=content, state=state)
-    with pytest.raises(ValueError):
-        ra.map_rescript_option_or_choice({'action_type': 'assignment', 'label': 'x', 'hint': 'h', 'target_kind': 'region', 'target_id': 'shaanxi', 'locality_scope': 'single', 'region_id': 'shaanxi', 'transaction_category': '督赈', 'assignee_name': mname, 'title': '字' * 81}, db=db, content=content, state=state)
     urgent, _ = _plant_urgent_desk(db, state)
     key = urgent['decision_key']
     batch = ra.validate_all([urgent], [{'decision_key': key, 'action': 'deliberate', 'label': '下部议'}])
@@ -615,9 +608,18 @@ def test_657_default_hold_missing_and_empty_action(game):
     assert key in batch3.default_hold_keys
     assert batch3.items[0].choice.get('action') == 'hold'
     ra.apply_rescript_batch(db, state, batch2, ra.PrewriteResults(), content=content)
-    hit = next((r for r in db.list_rescript_drafts() if r['title'] == '陕西告饥'))
-    assert hit['status'] == 'decided'
-    assert (hit['choice'] or {}).get('action') == 'hold'
+    # 结构身份：本轮 key 对应 draft 已 decided + hold（不按 title 散文找行）
+    hits = [
+        r for r in db.list_rescript_drafts()
+        if r.get('status') == 'decided'
+        and (r.get('choice') or {}).get('action') == 'hold'
+        and (
+            (r.get('choice') or {}).get('decision_key') == key
+            or f"rescript_draft:{int(r['turn'])}:{int(r['idx'])}" == key
+        )
+    ]
+    assert len(hits) == 1, hits
+    hit = hits[0]
     edges = db.conn.execute('SELECT event_kind FROM relation_edge_events WHERE target=? AND event_kind=?', ('杨嗣昌', '辜负')).fetchall()
     assert edges, 'default hold 须写辜负信用事件'
     stored = dict(hit['choice'] or {})
@@ -2832,7 +2834,8 @@ def _1778_plant_and_follow(web_game, monkeypatch, drafts, *, desk_action='follow
 
     desk_action="midzhi" 时用同文件既有 midzhi 短 dict 形，从 head 取本案 C.4 键
     （必含 participant_roster）；不复刻 web 投影全键表。
-    返回 {title: 新增案卷行}；断言留给调用方（外部结构化结果，不看散文）。
+    返回新增案卷行 list（按 id）；调用方以 action_type/region_id/mode 结构身份索引，
+    禁止用 decree_text/title 散文作身份键。
 
     落桌写库经 SessionWriteQueue.run_exclusive（#1884 / #1845 同类）：上一轮
     过月后的机械尾可能仍在写同一连接，布置不得绕开写闸。
@@ -2855,13 +2858,26 @@ def _1778_plant_and_follow(web_game, monkeypatch, drafts, *, desk_action='follow
             return await client.get('/api/game/state')
     page = asyncio.run(_get_state())
     assert page.status_code == 200, page.text
-    rows = {str(row['title']): row for row in page.json().get('pending_decisions') or [] if row.get('kind') == 'rescript_draft'}
-    assert set(rows) == {str(d['title']) for d in drafts}, sorted(rows)
+    desk_rows = [row for row in page.json().get('pending_decisions') or [] if row.get('kind') == 'rescript_draft']
+    assert len(desk_rows) == len(drafts), (len(desk_rows), len(drafts))
+
+    def _opt_sig(opt):
+        return (
+            str(opt.get('action_type') or ''),
+            str(opt.get('region_id') or ''),
+            str(opt.get('locality_scope') or ''),
+        )
+
+    desk_by_sig = {}
+    for row in desk_rows:
+        head = (row.get('options') or [{}])[0]
+        desk_by_sig[_opt_sig(head)] = row
     choices = []
     for draft in drafts:
-        row = rows[str(draft['title'])]
+        head_in = (draft.get('options') or [{}])[0]
+        row = desk_by_sig[_opt_sig(head_in)]
         head = row['options'][0]
-        assert _1778_roster_of(head), f"{draft['title']}：批红页缺参与名单 {head!r}"
+        assert _1778_roster_of(head), f"desk {_opt_sig(head_in)}：批红页缺参与名单"
         if desk_action == 'midzhi':
             choices.append({'decision_key': row['decision_key'], 'action': 'midzhi', 'label': head['label'], 'action_type': head['action_type'], 'assignee_name': head.get('assignee_name') or '', 'target_kind': head['target_kind'], 'target_id': head.get('target_id') or '', 'locality_scope': head['locality_scope'], 'region_id': head.get('region_id') or '', 'transaction_category': head.get('transaction_category') or '', 'deadline_months': head.get('deadline_months'), 'participant_roster': head['participant_roster']})
         else:
@@ -2872,7 +2888,20 @@ def _1778_plant_and_follow(web_game, monkeypatch, drafts, *, desk_action='follow
     assert 'event: error' not in resp.text, resp.text
     assert 'event: done' in resp.text, resp.text
     created = [d for d in web_game.db.list_decree_dossiers() if int(d['id']) not in before]
-    return {str(d['decree_text'] or ''): d for d in created}
+    return sorted(created, key=lambda d: int(d['id']))
+
+def _1778_by_struct(created):
+    """案卷结构身份：(action_type, region_id, mode) → 行。禁止 decree_text 散文键。"""
+    out = {}
+    for d in created:
+        key = (
+            str(d.get('action_type') or ''),
+            str(d.get('region_id') or ''),
+            str(d.get('mode') or ''),
+        )
+        out[key] = d
+    return out
+
 
 def test_1778_drafted_roster_rides_to_pihong_and_nails_the_dossier(web_game, monkeypatch, tmp_path):
     """#1778 验收 1–5 单条真实入口 tracer。
@@ -2888,42 +2917,57 @@ def test_1778_drafted_roster_rides_to_pihong_and_nails_the_dossier(web_game, mon
     assert drafts is not None and len(drafts) == 3
     pack_dir = tmp_path / 'ud' / 'error_packs' / 'rescript_draft_degraded'
     assert not pack_dir.exists(), '验收 1：不得产生耗尽错误包'
-    by_title = {str(d['title']): d for d in drafts}
-    # 不锁 option label 列表散文；闸=条数 + roster 结构
-    assert len(by_title['太仓亏空']['options']) == 2
-    assert _1778_roster_of(by_title['全国清丈']['options'][0]) == [(_ROSTER_LEAD, '主办'), ('杨嗣昌', '主办'), ('陈新甲', '协办')]
-    round_a = _1778_plant_and_follow(web_game, monkeypatch, [{'title': '太仓亏空', 'context': 'c', 'options': by_title['太仓亏空']['options'], 'actor_name': '杨嗣昌', 'actor_office': '兵部尚书', 'actor_faction': '东林'}, {'title': '全国清丈', 'context': 'c', 'options': by_title['全国清丈']['options'], 'actor_name': '杨嗣昌', 'actor_office': '兵部尚书', 'actor_faction': '东林'}, {'title': '陕西告饥', 'context': 'c', 'options': by_title['陕西告饥']['options'], 'actor_name': '杨嗣昌', 'actor_office': '兵部尚书', 'actor_faction': '东林'}])
-    assert set(round_a) == {'责户部清理钱粮亏短', '清丈全国田亩', '拨赈陕西饥民'}
-    assignment = round_a['责户部清理钱粮亏短']
-    assert assignment['action_type'] == 'assignment'
-    assert assignment['region_id'] == ''
+    # 布置用 fixture 序/结构签名取 options；不锁 title/label 散文作断言身份
+    by_sig = {}
+    for d in drafts:
+        head = (d.get('options') or [{}])[0]
+        sig = (str(head.get('action_type') or ''), str(head.get('region_id') or ''), str(head.get('locality_scope') or ''))
+        by_sig[sig] = d
+    national_assign = by_sig[('assignment', '', 'national')]
+    policy_draft = by_sig[('policy', '', 'national')]
+    single_assign = by_sig[('assignment', 'shaanxi', 'single')]
+    assert len(national_assign['options']) == 2
+    assert _1778_roster_of(policy_draft['options'][0]) == [(_ROSTER_LEAD, '主办'), ('杨嗣昌', '主办'), ('陈新甲', '协办')]
+    round_a = _1778_plant_and_follow(web_game, monkeypatch, [
+        {'title': 't1', 'context': 'c', 'options': national_assign['options'], 'actor_name': '杨嗣昌', 'actor_office': '兵部尚书', 'actor_faction': '东林'},
+        {'title': 't2', 'context': 'c', 'options': policy_draft['options'], 'actor_name': '杨嗣昌', 'actor_office': '兵部尚书', 'actor_faction': '东林'},
+        {'title': 't3', 'context': 'c', 'options': single_assign['options'], 'actor_name': '杨嗣昌', 'actor_office': '兵部尚书', 'actor_faction': '东林'},
+    ])
+    keyed = _1778_by_struct(round_a)
+    assert set(keyed) == {
+        ('assignment', '', 'ordinary'),
+        ('policy', '', 'ordinary'),
+        ('assignment', 'shaanxi', 'ordinary'),
+    }
+    assignment = keyed[('assignment', '', 'ordinary')]
     assert _1778_roster_of(assignment) == [(_ROSTER_LEAD, '主办')]
-    policy = round_a['清丈全国田亩']
-    assert policy['action_type'] == 'policy'
-    assert policy['region_id'] == ''
+    policy = keyed[('policy', '', 'ordinary')]
     assert _1778_roster_of(policy) == [(_ROSTER_LEAD, '主办'), ('杨嗣昌', '主办'), ('陈新甲', '协办')]
-    single = round_a['拨赈陕西饥民']
+    single = keyed[('assignment', 'shaanxi', 'ordinary')]
     assert single['action_type'] == 'assignment'
-    assert single['region_id'] == 'shaanxi'
 
     def _first(option_list):
         return [option_list[1], option_list[0]]
-    round_b = _1778_plant_and_follow(web_game, monkeypatch, [{'title': '太仓亏空-拨帑', 'context': 'c', 'options': _first(by_title['太仓亏空']['options']), 'actor_name': '杨嗣昌', 'actor_office': '兵部尚书', 'actor_faction': '东林'}, {'title': '特旨慰谕', 'context': 'c', 'options': _first(by_title['全国清丈']['options']), 'actor_name': '杨嗣昌', 'actor_office': '兵部尚书', 'actor_faction': '东林'}])
-    assert set(round_b) == {'发内帑周转军国急用', '特旨慰谕九边'}
-    grant = round_b['发内帑周转军国急用']
-    assert grant['action_type'] == 'grant_allocation'
-    assert grant['region_id'] == ''
+    round_b = _1778_plant_and_follow(web_game, monkeypatch, [
+        {'title': 't4', 'context': 'c', 'options': _first(national_assign['options']), 'actor_name': '杨嗣昌', 'actor_office': '兵部尚书', 'actor_faction': '东林'},
+        {'title': 't5', 'context': 'c', 'options': _first(policy_draft['options']), 'actor_name': '杨嗣昌', 'actor_office': '兵部尚书', 'actor_faction': '东林'},
+    ])
+    keyed_b = _1778_by_struct(round_b)
+    assert set(keyed_b) == {
+        ('grant_allocation', '', 'ordinary'),
+        ('special_decree', '', 'ordinary'),
+    }
+    grant = keyed_b[('grant_allocation', '', 'ordinary')]
     assert _1778_roster_of(grant) == [(_ROSTER_LEAD, '主办')]
-    special = round_b['特旨慰谕九边']
-    assert special['action_type'] == 'special_decree'
-    assert special['region_id'] == ''
+    special = keyed_b[('special_decree', '', 'ordinary')]
     assert _1778_roster_of(special) == [(_ROSTER_LEAD, '主办')]
-    round_midzhi = _1778_plant_and_follow(web_game, monkeypatch, [{'title': '太仓亏空-中旨', 'context': 'c', 'options': by_title['太仓亏空']['options'], 'actor_name': '杨嗣昌', 'actor_office': '兵部尚书', 'actor_faction': '东林'}], desk_action='midzhi')
-    assert set(round_midzhi) == {'责户部清理钱粮亏短'}
-    mid = round_midzhi['责户部清理钱粮亏短']
-    assert mid['action_type'] == 'assignment'
+    round_midzhi = _1778_plant_and_follow(web_game, monkeypatch, [
+        {'title': 't6', 'context': 'c', 'options': national_assign['options'], 'actor_name': '杨嗣昌', 'actor_office': '兵部尚书', 'actor_faction': '东林'},
+    ], desk_action='midzhi')
+    keyed_m = _1778_by_struct(round_midzhi)
+    assert set(keyed_m) == {('assignment', '', 'midzhi')}
+    mid = keyed_m[('assignment', '', 'midzhi')]
     assert mid.get('mode') == 'midzhi'
-    assert mid['region_id'] == ''
     assert _1778_roster_of(mid) == [(_ROSTER_LEAD, '主办')]
 
 def test_1778_missing_roster_heals_then_error_pack_without_assigning_anyone(

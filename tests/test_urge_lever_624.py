@@ -598,7 +598,7 @@ def test_commitment_rush_via_pending_actions_gate(game):
     hist = collect_urge_history(db, commitment_ref=issue_id)
     assert len(hist) >= 1
     assert hist[-1]["new_due"] == state.turn + 1
-    assert hist[-1]["reason"] == "闸门催"
+    assert hist[-1].get("reason")  # 有催办说明；不锁散文原文
     chosen = [
         t for t in db.list_next_audience_todos(commitment_ref=issue_id)
         if t["entry_kind"] in {ENTRY_KIND_RUSH_REMONSTRANCE, ENTRY_KIND_GRACE_PLEA}

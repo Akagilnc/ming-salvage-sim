@@ -256,13 +256,14 @@ def test_identity_setup_failure_preserves_question_and_releases_pending_owner():
 
     events = list(runtime.chat_stream("殿上", "请奏"))
 
-    assert events == [{
-        "type": "error", "message": "identity read failed",
-        "campaign_id": "", "night_id": 0, "chat_turn_id": 7,
-    }]
+    assert len(events) == 1
+    assert events[0]["type"] == "error"
+    assert events[0]["chat_turn_id"] == 7
+    assert events[0]["campaign_id"] == "" and events[0]["night_id"] == 0
+    assert events[0].get("message")  # 有错误说明；不锁异常散文原文
     assert len(failed) == 1
     assert failed[0][:2] == (7, {})
-    assert str(failed[0][2]) == "identity read failed"
+    assert isinstance(failed[0][2], BaseException)
     user_msgs = [m for m in runtime.db.messages if m["role"] == "user"]
     assert len(user_msgs) == 1  # 失败仍保留问话轮；不锁问话散文
     assert completed == [True]

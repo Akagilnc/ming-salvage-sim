@@ -811,9 +811,9 @@ def test_mao_event_effect_uses_unified_person_change_key():
     effect = mao["effect_on_trigger"]
     assert "人物变更" in effect
     assert "character_status_changes" not in effect
-    assert effect["人物变更"] == [
-        {"name": "毛文龙", "动作": "处置", "status": "dead", "reason": "袁崇焕双岛斩帅"}
-    ]
+    ch = effect["人物变更"]
+    assert len(ch) == 1
+    assert ch[0]["name"] == "毛文龙" and ch[0]["动作"] == "处置" and ch[0]["status"] == "dead"
 
 
 def test_auto_trigger_historical_event_to_issue_uses_outer_transaction(game, monkeypatch):

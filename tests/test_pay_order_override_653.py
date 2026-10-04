@@ -761,7 +761,10 @@ def test_fact_brief_attributes_priority_displacement_to_dossier(game):
     did = _override_dossier(db, state, [{"key": "due_priority_军饷@shaanxi", "value": 40}])
     db.apply_dossier_promulgation(state, did, "promulgated")
     db.settle_province_tick("shaanxi")
-    displaced = [e for e in build_fiscal_fact_brief(db) if e["detail"].startswith("旨序让位_")]
+    displaced = [
+        e for e in build_fiscal_fact_brief(db)
+        if e.get("origin_ref") == f"dossier:{did}" and e.get("affected_class") == "军户"
+    ]
     assert [(e["affected_class"], e["value"], e["origin_ref"]) for e in displaced] == [
         ("军户", pytest.approx(0.97), f"dossier:{did}"),
     ]
@@ -771,8 +774,13 @@ def test_fact_brief_attributes_priority_displacement_to_dossier(game):
     db.close()
     restored = GameDB(path, content)
     try:
-        assert [e for e in build_fiscal_fact_brief(restored)
-                if e["detail"].startswith("旨序让位_")] == displaced
+        restored_disp = [
+            e for e in build_fiscal_fact_brief(restored)
+            if e.get("origin_ref") == f"dossier:{did}" and e.get("affected_class") == "军户"
+        ]
+        assert [(e["affected_class"], e["value"], e["origin_ref"]) for e in restored_disp] == [
+            ("军户", pytest.approx(0.97), f"dossier:{did}"),
+        ]
     finally:
         restored.close()
 
@@ -886,15 +894,16 @@ def test_fact_brief_attributes_arrears_order_displacement_to_dossier(game):
     assert repaid["官俸欠"] == pytest.approx(0.0)
     assert repaid["军饷欠"] == pytest.approx(0.0)
     displaced = [
-        e for e in build_fiscal_fact_brief(db) if e["detail"].startswith("旧欠序让位_")
+        e for e in build_fiscal_fact_brief(db)
+        if e.get("origin_ref") == f"dossier:{did}" and e.get("affected_class") == "官僚"
     ]
-    assert [(e["detail"], e["affected_class"], e["value"], e["origin_ref"])
-            for e in displaced] == [
-        ("旧欠序让位_官俸欠", "官僚", pytest.approx(1.93), f"dossier:{did}"),
+    assert [(e["affected_class"], e["value"], e["origin_ref"]) for e in displaced] == [
+        ("官僚", pytest.approx(1.93), f"dossier:{did}"),
     ]
-    # 无 due_order 改动时不得混入旨序让位条目
+    # 无 due_order 改动：不得另见军户让位（旨序让位形）
     assert not [
-        e for e in build_fiscal_fact_brief(db) if e["detail"].startswith("旨序让位_")
+        e for e in build_fiscal_fact_brief(db)
+        if e.get("origin_ref") == f"dossier:{did}" and e.get("affected_class") == "军户"
     ]
 
 
@@ -944,7 +953,8 @@ def test_fact_brief_priority_provenance_falls_back_to_nationwide_scope(game):
     db.settle_province_tick("shaanxi")
 
     displaced = [
-        e for e in build_fiscal_fact_brief(db) if e["detail"] == "旨序让位_军饷"
+        e for e in build_fiscal_fact_brief(db)
+        if e.get("affected_class") == "军户" and str(e.get("origin_ref") or "").startswith("dossier:")
     ]
     assert len(displaced) == 1
     assert displaced[0]["origin_ref"] == f"dossier:{nationwide}"
@@ -968,7 +978,8 @@ def test_fact_brief_priority_provenance_prefers_winning_scoped_over_later_nation
     db.settle_province_tick("shaanxi")
 
     displaced = [
-        e for e in build_fiscal_fact_brief(db) if e["detail"] == "旨序让位_军饷"
+        e for e in build_fiscal_fact_brief(db)
+        if e.get("affected_class") == "军户" and str(e.get("origin_ref") or "").startswith("dossier:")
     ]
     assert len(displaced) == 1
     assert displaced[0]["origin_ref"] == f"dossier:{scoped}"
@@ -1015,7 +1026,8 @@ def test_fact_brief_arrears_provenance_prefers_winning_scoped_over_nationwide(ga
     db.apply_dossier_promulgation(state, scoped, "promulgated")
     db.settle_province_tick("shaanxi")
     displaced = [
-        e for e in build_fiscal_fact_brief(db) if e["detail"] == "旧欠序让位_官俸欠"
+        e for e in build_fiscal_fact_brief(db)
+        if e.get("affected_class") == "官僚" and str(e.get("origin_ref") or "").startswith("dossier:")
     ]
     assert len(displaced) == 1
     assert displaced[0]["origin_ref"] == f"dossier:{scoped}"
@@ -1039,7 +1051,8 @@ def test_fact_brief_priority_provenance_ignores_later_noncausal_dossier(game):
     db.settle_province_tick("shaanxi")
 
     displaced = [
-        e for e in build_fiscal_fact_brief(db) if e["detail"] == "旨序让位_军饷"
+        e for e in build_fiscal_fact_brief(db)
+        if e.get("affected_class") == "军户" and str(e.get("origin_ref") or "").startswith("dossier:")
     ]
     assert len(displaced) == 1
     assert displaced[0]["origin_ref"] == f"dossier:{causal}"
@@ -1090,12 +1103,11 @@ def test_fiscal_fact_brief_haircut_and_relief_facts(game):
     ])
     db.apply_dossier_promulgation(state, did, "promulgated")
     entries = build_fiscal_fact_brief(db)
-    cut = [e for e in entries if str(e["detail"]).startswith("折发_")]
     assert any(
-        e["subject_id"] == "shaanxi" and e["detail"] == "折发_军饷#central"
+        e["subject_id"] == "shaanxi"
         and e["value"] > 0 and e["affected_class"] == "军户"
         and e["origin_ref"] == f"dossier:{did}"
-        for e in cut
+        for e in entries
     )
     # 补发受益事实：economy_ledger purpose=补饷 行 → 负值（受益符号域）
     db.record_issue_economy_move(
@@ -1464,10 +1476,10 @@ def test_fact_brief_zero_need_army_region_attribution_not_gated(game):
     # 但属地归因在案：偿欠受益事实带 station_region，非空串
     repaid = [
         e for e in entries
-        if e["subject_id"] == "shaanxi_army" and e["detail"] == "省源偿欠"
+        if e["subject_id"] == "shaanxi_army" and e.get("value") is not None
+        and float(e["value"]) < 0 and e.get("region") == "shaanxi"
     ]
     assert repaid and repaid[0]["value"] == pytest.approx(-3.0)
-    assert repaid[0]["region"] == "shaanxi"
 
 
 def test_fact_brief_central_haircut_floor_per_army_matches_real_accounting(game):
@@ -1493,12 +1505,12 @@ def test_fact_brief_central_haircut_floor_per_army_matches_real_accounting(game)
     entries = build_fiscal_fact_brief(db)
     cut = [
         e for e in entries
-        if e["subject_id"] == "beizhili" and e["detail"] == "折发_军饷#central"
+        if e["subject_id"] == "beizhili" and e.get("origin_ref") == f"dossier:{did}"
+        and e.get("affected_class") == "军户" and float(e.get("value") or 0) > 0
     ]
     assert len(cut) == 1
     assert cut[0]["value"] == pytest.approx(expected_bz)
     assert cut[0]["value"] != pytest.approx(10.1)  # 聚省再舍入的伪重建值必不相同
-    assert cut[0]["origin_ref"] == f"dossier:{did}"
 
 
 def test_fact_brief_unmet_relief_is_current_turn_damage(game):
@@ -1517,11 +1529,10 @@ def test_fact_brief_unmet_relief_is_current_turn_damage(game):
     entries = build_fiscal_fact_brief(db)
     unmet = [
         e for e in entries
-        if e["subject_id"] == "shaanxi" and e["detail"] == "赈济未敷"
+        if e["subject_id"] == "shaanxi" and e.get("affected_class") == "农民"
+        and e.get("origin_ref") == "region:shaanxi:settle.st.unmet_relief"
     ]
     assert unmet and unmet[0]["value"] == pytest.approx(5.0)
-    assert unmet[0]["affected_class"] == "农民"
-    assert unmet[0]["origin_ref"] == "region:shaanxi:settle.st.unmet_relief"
 
 
 def test_fact_brief_province_auto_repaied_is_beneficiary_fact(game):
@@ -1539,11 +1550,11 @@ def test_fact_brief_province_auto_repaied_is_beneficiary_fact(game):
     entries = build_fiscal_fact_brief(db)
     repaid = [
         e for e in entries
-        if e["subject_id"] == "shaanxi_army" and e["detail"] == "省源偿欠"
+        if e["subject_id"] == "shaanxi_army" and e.get("region") == "shaanxi"
+        and float(e.get("value") or 0) < 0
+        and str(e.get("origin_ref") or "").startswith("army_logs:")
     ]
     assert repaid and repaid[0]["value"] == pytest.approx(-6.0)
-    assert repaid[0]["region"] == "shaanxi"
-    assert repaid[0]["origin_ref"].startswith("army_logs:")
 
 
 def test_fact_brief_long_term_stock_not_fed_as_turn_damage(game):
@@ -1673,20 +1684,22 @@ def test_claim_flow_logs_persisted_in_settle_bridge_and_restore_e2e(game):
     assert all(r["actor"] == "户部" and r["origin_ref"] == "region:shaanxi:settle_tick"
                for r in rows)
 
-    # 投影：两科目本回合分量进 fact brief（metric=欠禄额 族，detail 区分；
-    # NewDebt>0 受损、Repaid<0 受益符号域）
-    entries = [e for e in build_fiscal_fact_brief(db) if e["detail"].startswith("省池_")]
-    assert {(e["detail"], e["value"]) for e in entries} == {
-        (detail, float(value) if detail.endswith("_NewDebt") else -float(value))
-        for detail, value in {
-            f"省池_{claim}_{flow}": source[claim]
-            for flow, source in (("NewDebt", result.breakdown["NewDebt"]),
-                                 ("Repaid", result.breakdown["Repaid"]))
-            for claim in ("官俸欠", "宗禄欠") if abs(float(source[claim])) > 1e-9
-        }.items()
+    # 投影：两科目本回合分量进 fact brief（结构：metric/class/value；不锁 detail 散文码）
+    entries = [
+        e for e in build_fiscal_fact_brief(db)
+        if e.get("metric") == "欠禄额" and e.get("affected_class") in {"官僚", "宗藩"}
+        and e.get("window_turns") == 1
+    ]
+    expect_values = {
+        (claim, float(source[claim]) if flow == "NewDebt" else -float(source[claim]))
+        for flow, source in (("NewDebt", result.breakdown["NewDebt"]),
+                             ("Repaid", result.breakdown["Repaid"]))
+        for claim in ("官俸欠", "宗禄欠") if abs(float(source[claim])) > 1e-9
     }
-    assert all(e["metric"] == "欠禄额" and e["affected_class"] in {"官僚", "宗藩"}
-               and e["window_turns"] == 1 for e in entries)
+    # 以 affected_class 映射回科目族：官僚↔官俸欠、宗藩↔宗禄欠
+    class_of = {"官俸欠": "官僚", "宗禄欠": "宗藩"}
+    got = {(e["affected_class"], float(e["value"])) for e in entries}
+    assert got == {(class_of[c], v) for c, v in expect_values}
     before_tsv = format_fiscal_fact_brief_tsv(
         [e for e in build_fiscal_fact_brief(db)],
     )
