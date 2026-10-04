@@ -2277,10 +2277,6 @@ class WebGame:
                 )
                 with self._runtime_write_gate():
                     self.db.clear_post_reply_failure(chat_turn_id)
-            elif phase == "decree_forecast":
-                # 原旨只续未成调用归 #1846。本票不整链重跑，也不把失败标成已恢复。
-                with self._runtime_write_gate():
-                    self.db.release_post_reply_recovery(chat_turn_id, phase)
             else:
                 self._trail_highlight_judge_after_reply(
                     str(target["answer"]), message_id=int(target["minister_message_id"]),

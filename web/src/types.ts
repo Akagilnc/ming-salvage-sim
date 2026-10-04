@@ -640,8 +640,7 @@ export type ReplyRetry = {
   turn: number;
   question: string;
   error_pack_path?: string;
-  /** #1853：decree_forecast = 来源轮上的预推失败。只续未成调用归 #1846。 */
-  recovery_phase?: "after_reply" | "court_break" | "decree_forecast";
+  recovery_phase?: "after_reply" | "court_break";
 };
 
 export type TranslationRetry = {

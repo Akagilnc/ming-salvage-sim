@@ -794,10 +794,8 @@ def _settle_edicts(
     from ming_sim.decree_forecast import (
         _is_held_for_rejudgment,
         decree_ref_for_dossier,
-        note_forecast_staged,
         produce_forecast_product,
         snapshot_for_existing_dossier,
-        source_forecast_failure,
         stage_declaration,
     )
 
@@ -842,15 +840,6 @@ def _settle_edicts(
             staged = db.staged_declarations.staged_for(ref)
             verdict = staged[0].verdict if staged else None
             if verdict is None and session.llm_config is not None:
-                # 来源相位还在：不读错误包改判，不清相位，也不整链重跑。
-                # 只续未成调用的恢复在 #1846，这里只让当前过月停在该旨。
-                pending_failure = source_forecast_failure(db, dossier)
-                if pending_failure is not None:
-                    _abort_month_call(
-                        db, state, chain, decree_text="", source=Provenance.player_decree,
-                        step="edict_forecast", decree_ref=ref,
-                        attached_pack_path=str(pending_failure.get("error_pack_path") or ""),
-                    )
                 snapshot = snapshot_for_existing_dossier(session, dossier)
 
                 def _produce() -> Dict[str, Any]:
@@ -868,10 +857,6 @@ def _settle_edicts(
                     questions=product["questions"],
                     forecast_text=product["forecast_text"],
                     visible_refs=snapshot.get("visible_refs"),
-                )
-                note_forecast_staged(
-                    db, ref,
-                    pending_action_id=int(dossier.get("pending_action_id") or 0),
                 )
                 verdict = product["verdict"]
             if isinstance(verdict, dict) and verdict.get("decision"):

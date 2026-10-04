@@ -10123,17 +10123,8 @@ class GameDB:
                         target_id, int(item["chat_turn_id"] or 0),
                     ):
                         continue
-                    forecast_source = self.conn.execute(
-                        "SELECT source_chat_turn_id FROM pending_actions WHERE id=?",
-                        (int(target_id),),
-                    ).fetchone()
                     self._discard_deleted_directive_forecast(target_id)
                 self._delete_row_in_tx(table, target_id)
-                if forecast_source is not None:
-                    from ming_sim.decree_forecast import release_forecast_failure_if_idle
-                    release_forecast_failure_if_idle(
-                        self, int(forecast_source["source_chat_turn_id"] or 0),
-                    )
             elif strategy in {"restore_row", "restore_deleted_row"}:
                 before_row = self._json_load_row(item["before_json"])
                 if table == "pending_actions" and before_row.get("kind") == "directive":
@@ -10151,12 +10142,6 @@ class GameDB:
                     # 0038 的恢复是一次新改草：身份号继续递增，不把已作废版本复活。
                     before_row["version"] = max(before_version, current_version) + 1
                 self._restore_row_in_tx(table, before_row)
-                if table == "pending_actions" and before_row.get("kind") == "directive":
-                    self._release_directive_forecast_if_idle({
-                        "kind": "directive",
-                        "action": before_row.get("action"),
-                        "source_chat_turn_id": before_row.get("source_chat_turn_id"),
-                    })
                 if table == "secret_orders":
                     raw_pins = before_row.get("_rollback_brief_origin_chat_message_ids")
                     if raw_pins is None:
@@ -17502,7 +17487,6 @@ class GameDB:
                  self._current_open_night_id(), int(row["id"])),
             )
             self.conn.commit()
-            self._release_source_forecast(int(row["id"]))
             return int(row["id"])
         # #1890：只有 INSERT 分支钉来源轮。改草分支（上方 UPDATE）刻意不动
         # source_chat_turn_id —— 一道交办的身份是它首次被说出口的那一轮，
@@ -17589,36 +17573,7 @@ class GameDB:
              self._current_open_night_id(), int(candidate_id)),
         )
         self.conn.commit()
-        self._release_source_forecast(int(candidate_id))
         return int(candidate_id)
-
-    def _release_source_forecast(self, pending_id: int) -> None:
-        """改草或撤回之后：该来源轮已无未成拟旨才撤掉召对上的预推失败。"""
-        row = self.conn.execute(
-            "SELECT kind, action, source_chat_turn_id FROM pending_actions WHERE id=?",
-            (int(pending_id),),
-        ).fetchone()
-        if row is None:
-            return
-        self._release_directive_forecast_if_idle({
-            "kind": row["kind"],
-            "action": row["action"],
-            "source_chat_turn_id": row["source_chat_turn_id"],
-        })
-
-    def _release_directive_forecast_if_idle(self, pa: Dict[str, object]) -> None:
-        """该来源轮没有仍未预成的应允拟旨时，撤掉召对上的预推失败行。"""
-        if str(pa.get("kind") or "") != "directive" or str(pa.get("action") or "") != "拟旨":
-            return
-        try:
-            ctid = int(pa.get("source_chat_turn_id") or 0)
-        except (TypeError, ValueError):
-            return
-        if ctid <= 0:
-            return
-        from ming_sim.decree_forecast import release_forecast_failure_if_idle
-
-        release_forecast_failure_if_idle(self, ctid)
 
     @staticmethod
     def _is_typed_business_refusal(exc: BaseException) -> bool:
@@ -17677,18 +17632,9 @@ class GameDB:
         from ming_sim.declaration_dispatch import (
             discard_staged_declaration, pending_action_decree_ref,
         )
-        from ming_sim.decree_forecast import release_forecast_failure_if_idle
 
         ref = pending_action_decree_ref(int(candidate_id), int(version))
-        discarded = discard_staged_declaration(self, ref)
-        source = self.conn.execute(
-            "SELECT source_chat_turn_id FROM pending_actions WHERE id=?",
-            (int(candidate_id),),
-        ).fetchone()
-        release_forecast_failure_if_idle(
-            self, int(source["source_chat_turn_id"] or 0) if source is not None else 0,
-        )
-        return discarded
+        return discard_staged_declaration(self, ref)
 
     @staticmethod
     def _merge_underscore_control_keys(
@@ -18128,7 +18074,6 @@ class GameDB:
                             "UPDATE pending_actions SET status='failed' WHERE id=?",
                             (int(pa["id"]),),
                         )
-                        self._release_directive_forecast_if_idle(pa)
                     continue
                 payload = dict(prepared["payload"])
                 payload["_canonical_pending_directive"] = True
@@ -18174,7 +18119,6 @@ class GameDB:
                     if ok:
                         self.conn.execute(
                             "UPDATE pending_actions SET status='committed' WHERE id=?", (int(pa["id"]),))
-                        self._release_directive_forecast_if_idle(pa)
                     else:
                         self.conn.execute(f"ROLLBACK TO {savepoint}")
                         restore_office_memory()
@@ -18182,7 +18126,6 @@ class GameDB:
                         # 否则回合推进后成旧回合不可见死行,永不再处理(ship-pre CMR codex)。
                         self.conn.execute(
                             "UPDATE pending_actions SET status='failed' WHERE id=?", (int(pa["id"]),))
-                        self._release_directive_forecast_if_idle(pa)
                 except Exception as exc:
                     self.conn.execute(f"ROLLBACK TO {savepoint}")
                     restore_office_memory()
@@ -18199,14 +18142,12 @@ class GameDB:
                         )
                         self.conn.execute(
                             "UPDATE pending_actions SET status='failed' WHERE id=?", (int(pa["id"]),))
-                        self._release_directive_forecast_if_idle(pa)
                         tlog(f"[pending_actions] 业务拒收 id={pa['id']} {pa['kind']}/{pa['action']}：{exc}")
                         ok = False
                     elif self._is_typed_business_refusal(exc):
                         self._record_typed_business_refusal(pa, exc, rejection_collector)
                         self.conn.execute(
                             "UPDATE pending_actions SET status='failed' WHERE id=?", (int(pa["id"]),))
-                        self._release_directive_forecast_if_idle(pa)
                         tlog(f"[pending_actions] 业务拒收 id={pa['id']} {pa['kind']}/{pa['action']}：{exc}")
                         ok = False
                     else:
@@ -18293,7 +18234,6 @@ class GameDB:
                             "UPDATE pending_actions SET status='committed' WHERE id=?",
                             (int(pa["id"]),),
                         )
-                        self._release_directive_forecast_if_idle(pa)
                         result = {"id": pa["id"], "kind": pa["kind"],
                                   "action": pa["action"], "target_id": pa["target_id"]}
                     else:
@@ -18302,7 +18242,6 @@ class GameDB:
                             "UPDATE pending_actions SET status='failed' WHERE id=?",
                             (int(pa["id"]),),
                         )
-                        self._release_directive_forecast_if_idle(pa)
                 except Exception as exc:
                     self.conn.execute(f"ROLLBACK TO {savepoint}")
                     from ming_sim.applier import RejectionCollectorRequired
@@ -18317,7 +18256,6 @@ class GameDB:
                             "UPDATE pending_actions SET status='failed' WHERE id=?",
                             (int(pa["id"]),),
                         )
-                        self._release_directive_forecast_if_idle(pa)
                         tlog(f"[pending_actions] 业务拒收 id={pa['id']} {pa['kind']}/{pa['action']}：{exc}")
                         result = None
                     elif self._is_typed_business_refusal(exc):
@@ -18326,7 +18264,6 @@ class GameDB:
                             "UPDATE pending_actions SET status='failed' WHERE id=?",
                             (int(pa["id"]),),
                         )
-                        self._release_directive_forecast_if_idle(pa)
                         tlog(f"[pending_actions] 业务拒收 id={pa['id']} {pa['kind']}/{pa['action']}：{exc}")
                         result = None
                     else:
@@ -18916,7 +18853,6 @@ class GameDB:
                 "WHERE id=? AND status='pending'",
                 (action_id,),
             )
-            self._release_source_forecast(action_id)
             voided.append(action_id)
         return voided
 
@@ -18963,10 +18899,6 @@ class GameDB:
         ).fetchone()
         if row is None:
             return False
-        source = self.conn.execute(
-            "SELECT source_chat_turn_id FROM pending_actions WHERE id=?",
-            (int(action_id),),
-        ).fetchone()
         if str(row["kind"] or "") == "directive":
             self._discard_pending_decree_forecast(
                 int(action_id), int(row["version"] or 1),
@@ -18978,11 +18910,6 @@ class GameDB:
         if cur.rowcount > 0 and str(row["kind"] or "") == "office":
             from ming_sim.audience_night import discard_inactive_office_summon
             discard_inactive_office_summon(self, int(action_id))
-        if cur.rowcount > 0 and source is not None:
-            from ming_sim.decree_forecast import release_forecast_failure_if_idle
-            release_forecast_failure_if_idle(
-                self, int(source["source_chat_turn_id"] or 0),
-            )
         if owns_transaction:
             self.conn.commit()
         return cur.rowcount > 0

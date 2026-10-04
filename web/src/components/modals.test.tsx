@@ -72,7 +72,7 @@ function renderModal(props: {
   onRetryReply?: (
     ministerName: string,
     chatTurnId: number,
-    recoveryPhase?: "after_reply" | "court_break" | "decree_forecast",
+    recoveryPhase?: "after_reply" | "court_break",
   ) => void;
   translationRetries?: React.ComponentProps<typeof ChatModal>["translationRetries"];
   onRetryTranslation?: React.ComponentProps<typeof ChatModal>["onRetryTranslation"];

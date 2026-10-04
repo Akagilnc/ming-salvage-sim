@@ -364,10 +364,6 @@ def _forecast(
     # 同一 decree_ref（记录号+版本，或留中案卷 id）已有暂存则不再跑模型链。
     try:
         if session.db.staged_declarations.staged_for(str(snapshot["decree_ref"])):
-            note_forecast_staged(
-                session.db, str(snapshot["decree_ref"]),
-                pending_action_id=int(snapshot.get("pending_action_id") or 0),
-            )
             return
         product = produce_forecast_product(session, snapshot)
         verdict = product["verdict"]
@@ -390,19 +386,12 @@ def _forecast(
                     or int(row["night_id"] or 0) != snapshot["night_id"]
                     or int(row["version"] or 0) != snapshot["version"]
                 ):
-                    release_forecast_failure_if_idle(
-                        session.db, _forecast_source_turn(session.db, snapshot),
-                    )
                     return
             else:
                 current = session.db.get_decree_dossier(snapshot["dossier_id"])
                 if current is None or not _is_held_for_rejudgment(current, int(session.state.turn)):
                     return
             if session.db.staged_declarations.staged_for(str(snapshot["decree_ref"])):
-                note_forecast_staged(
-                    session.db, str(snapshot["decree_ref"]),
-                    pending_action_id=int(snapshot.get("pending_action_id") or 0),
-                )
                 return
             stage_declaration(
                 session.db,
@@ -413,10 +402,6 @@ def _forecast(
                 questions=questions,
                 forecast_text=forecast_text,
                 visible_refs=snapshot.get("visible_refs"),
-            )
-            note_forecast_staged(
-                session.db, str(snapshot["decree_ref"]),
-                pending_action_id=int(snapshot.get("pending_action_id") or 0),
             )
 
         def stage() -> None:
@@ -454,9 +439,6 @@ def _submit_snapshot_job(
                     with write_lock:
                         snapshot = queue.run(ticket, snapshot_fn)
             except Exception as exc:
-                _persist_forecast_failure(
-                    queue, ticket, session, _snapshot_for_failure(ticket), exc,
-                )
                 if _call_exhausted(exc):
                     return
                 raise
@@ -466,7 +448,6 @@ def _submit_snapshot_job(
             try:
                 _forecast(session, snapshot, write_lock=write_lock)
             except Exception as exc:
-                _persist_forecast_failure(queue, ticket, session, snapshot, exc)
                 if _call_exhausted(exc):
                     return
                 raise
@@ -490,171 +471,6 @@ def _submit_snapshot_job(
 def _forecast_configured(session: Any) -> bool:
     cfg = getattr(session, "llm_config", None)
     return cfg is not None and hasattr(cfg, "advanced_model") and hasattr(cfg, "model")
-
-
-# #1853：夜里预推未成的持久失败相位。复用召对既有 post_reply 恢复行（源轮下一行一钮），
-# 不新造前端重试器。相位名进 chat_turns.post_reply_recovery，与 after_reply / court_break 同列。
-FORECAST_RECOVERY_PHASE = "decree_forecast"
-
-
-def _forecast_source_turn(db: Any, snapshot: Optional[Dict[str, Any]]) -> int:
-    """本预推的来源对话轮（拟旨暂存的 source_chat_turn_id，#1890）；无来源轮返 0。"""
-    action_id = int((snapshot or {}).get("pending_action_id") or 0)
-    if action_id <= 0 or not hasattr(db, "conn"):
-        return 0
-    row = db.conn.execute(
-        "SELECT source_chat_turn_id FROM pending_actions WHERE id=?",
-        (action_id,),
-    ).fetchone()
-    return int(row["source_chat_turn_id"] or 0) if row is not None else 0
-
-
-def _snapshot_for_failure(ticket: Any) -> Dict[str, Any]:
-    """快照还没准备出来时，用票据上的动作、版本与夜记相位。"""
-    key = getattr(ticket, "key", None)
-    if isinstance(key, tuple) and len(key) >= 4 and key[0] == "decree_forecast":
-        try:
-            return {
-                "pending_action_id": int(key[1]),
-                "version": int(key[2]),
-                "night_id": int(key[3]),
-            }
-        except (TypeError, ValueError):
-            return {"pending_action_id": 0}
-    return {"pending_action_id": 0}
-
-
-def _persist_forecast_failure(
-    queue: Any, ticket: Any, session: Any, snapshot: Optional[Dict[str, Any]], exc: BaseException,
-) -> None:
-    """429 不记相位。写包失败只记日志，仍落失败标记，且不顶替原异常。"""
-    if _is_provider_rate_limit(exc):
-        return
-
-    def write() -> None:
-        record_forecast_failure(session, snapshot, exc)
-
-    try:
-        queue.run(ticket, write)
-    except Exception:
-        logger.exception("[decree-forecast] 预推失败相位记录未落")
-
-
-def record_forecast_failure(
-    session: Any, snapshot: Optional[Dict[str, Any]], exc: BaseException,
-) -> int:
-    """把夜里预推未成记到来源轮。429 不记。版本作废归 #1846，这里不另设版本门。"""
-    if _is_provider_rate_limit(exc):
-        return 0
-    db = session.db
-    ctid = _forecast_source_turn(db, snapshot)
-    if ctid <= 0:
-        return 0
-    failure_class = (
-        "model_exhausted" if isinstance(exc, LLMUnavailable) else "code_exception"
-    )
-    pack_path = ""
-    from ming_sim.audience_night import write_audience_error_pack
-
-    try:
-        pack_path = write_audience_error_pack(
-            kind=FORECAST_RECOVERY_PHASE, message=str(exc),
-            detail={
-                "failure_class": failure_class,
-                "chat_turn_id": ctid,
-                "pending_action_id": int((snapshot or {}).get("pending_action_id") or 0),
-                "decree_ref": str((snapshot or {}).get("decree_ref") or ""),
-            },
-            db=db, exc=exc,
-        )
-    except Exception:
-        logger.exception("[decree-forecast] 预推错误包未落")
-    db.mark_post_reply_failure(ctid, FORECAST_RECOVERY_PHASE, pack_path)
-    return ctid
-
-
-def note_forecast_staged(
-    db: Any, decree_ref: str, *, pending_action_id: int = 0, chat_turn_id: int = 0,
-) -> None:
-    """暂存落成后，来源轮已没有未成拟旨时才清失败相位。"""
-    del decree_ref
-    ctid = int(chat_turn_id or 0)
-    if ctid <= 0 and int(pending_action_id or 0) > 0:
-        ctid = _forecast_source_turn(db, {"pending_action_id": int(pending_action_id)})
-    release_forecast_failure_if_idle(db, ctid)
-
-
-def release_forecast_failure_if_idle(db: Any, chat_turn_id: int) -> None:
-    """一旨补成不清同轮另一道未成旨的失败入口。"""
-    ctid = int(chat_turn_id or 0)
-    if ctid <= 0 or not hasattr(db, "conn"):
-        return
-    if _unfinished_forecast_actions(db, ctid):
-        return
-    clear_forecast_failure(db, ctid)
-
-
-def clear_forecast_failure(db: Any, chat_turn_id: int) -> None:
-    """预推补成后清相位。只清本相位，不动 after_reply / court_break 的失败行。"""
-    ctid = int(chat_turn_id or 0)
-    if ctid <= 0 or not hasattr(db, "conn"):
-        return
-    db.conn.execute(
-        "UPDATE chat_turns SET post_reply_recovery='', post_reply_error_pack_path='' "
-        "WHERE id=? AND post_reply_recovery IN (?, ?)",
-        (ctid, FORECAST_RECOVERY_PHASE, f"recovering:{FORECAST_RECOVERY_PHASE}"),
-    )
-    db.conn.commit()
-
-
-def _unfinished_forecast_actions(db: Any, chat_turn_id: int) -> list[int]:
-    """该轮已应允、尚未暂存也未落账的拟旨。物化之后仍算未预成。"""
-    rows = db.conn.execute(
-        "SELECT id, version FROM pending_actions "
-        "WHERE source_chat_turn_id=? AND kind='directive' AND action='拟旨' "
-        "AND status IN ('pending', 'committed') AND night_approved=1 ORDER BY id",
-        (int(chat_turn_id),),
-    ).fetchall()
-    out: list[int] = []
-    for row in rows:
-        ref = pending_action_decree_ref(int(row["id"]), int(row["version"] or 1))
-        if db.staged_declarations.staged_for(ref) or db.staged_declarations.is_settled(ref):
-            continue
-        out.append(int(row["id"]))
-    return out
-
-
-def source_forecast_failure(db: Any, dossier: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """来源轮仍挂着预推失败相位时，只交核心列。不读错误包，不合成类别。"""
-    pending_id = int((dossier or {}).get("pending_action_id") or 0)
-    if pending_id <= 0 or not hasattr(db, "conn"):
-        return None
-    row = db.conn.execute(
-        "SELECT source_chat_turn_id FROM pending_actions WHERE id=?",
-        (pending_id,),
-    ).fetchone()
-    if row is None:
-        return None
-    ctid = int(row["source_chat_turn_id"] or 0)
-    if ctid <= 0:
-        return None
-    ref = decree_ref_for_dossier(db, dossier)
-    if db.staged_declarations.staged_for(ref) or db.staged_declarations.is_settled(ref):
-        return None
-    turn = db.conn.execute(
-        "SELECT post_reply_recovery, post_reply_error_pack_path FROM chat_turns WHERE id=?",
-        (ctid,),
-    ).fetchone()
-    if turn is None:
-        return None
-    phase = str(turn["post_reply_recovery"] or "")
-    if phase not in {FORECAST_RECOVERY_PHASE, f"recovering:{FORECAST_RECOVERY_PHASE}"}:
-        return None
-    return {
-        "chat_turn_id": ctid,
-        "error_pack_path": str(turn["post_reply_error_pack_path"] or ""),
-        "decree_ref": ref,
-    }
 
 
 def schedule_pending_decree_forecast(
