@@ -2040,5 +2040,5 @@ for f in auth_files:
 
 ### 交卷 HEAD（本轮）
 
-- tip HEAD：交卷提交后以 `git rev-parse HEAD` 为准（本段不自引用预填 hash）。
+- tip HEAD（query）：`b11d79e24bacea7ad62b4874ea0b60f67f472ac5`（short `b11d79e24ba`；fix=b11d79e24bacea7ad62b4874ea0b60f67f472ac5）
 - **未 push / 未 PR / 未 amend / 本轮未 stash**。
