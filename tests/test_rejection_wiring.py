@@ -237,7 +237,7 @@ def test_inertia_tolerated_rejections_reach_reports(game, monkeypatch, tmp_path)
     rows = [r for r in _rejection_rows(db, turn)
             if r[0] == "issue_inertia.entity_rejections"]
     assert len(rows) == 1
-    assert "士气大振" in rows[0][1] or "非法字段" in rows[0][1]
+    assert "士气大振" in rows[0][1]  # injected illegal field name preserved in reason
 
 
 def test_item_json_is_original_delta_item_when_producer_carries_it(game, monkeypatch, tmp_path):

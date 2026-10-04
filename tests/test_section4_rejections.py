@@ -504,10 +504,10 @@ def test_region_army_formatters_skip_rejected_items():
 
     only_rej_r = format_region_changes([
         {"rejected": True, "category": "invalid_enum", "reason": "字段非法"}])
-    assert "未见明确地区盘面变化" in only_rej_r
+    assert "字段非法" not in only_rej_r
     only_rej_a = format_army_changes([
         {"rejected": True, "category": "invalid_enum", "reason": "字段非法"}])
-    assert "未见明确军队盘面变化" in only_rej_a
+    assert "字段非法" not in only_rej_a
 
 
 def test_duplicate_army_noninteger_manpower_rejected(game):
@@ -672,7 +672,7 @@ def test_issue_path_tolerated_rejections_reach_reports(game):
 
     rows = _rejection_rows(db, turn, "issue_summary.entity_rejections")
     assert len(rows) == 1
-    assert "士气大振" in rows[0][1] or "非法字段" in rows[0][1]
+    assert "士气大振" in rows[0][1]  # injected illegal field name preserved in reason
 
 
 def test_inertia_natural_resolution_tolerated_rejection_no_crash(game):

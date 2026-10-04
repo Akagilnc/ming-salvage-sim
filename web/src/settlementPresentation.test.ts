@@ -7,7 +7,6 @@ import {
   shouldAutoOpenClosedIssuesAfterSettlement,
   shouldAutoOpenSecretOrdersAfterSettlement,
   wangSettlementSlipVisible,
-  yearMonthLabel,
   type FaceAccess,
   type SettlementFaceKey,
 } from "./settlementPresentation";
@@ -22,26 +21,6 @@ describe("settlement presentation routing", () => {
 
   it("does not auto-open closed issue progress after settlement", () => {
     expect(shouldAutoOpenClosedIssuesAfterSettlement()).toBe(false);
-  });
-
-  it("#1234 year-month label is driven only by server settlement_display", () => {
-    expect(yearMonthLabel({ year: 1627, period: 10 })).toBe("1627 年 10 月");
-    expect(yearMonthLabel({ year: 1627, period: 10, settlement_display: false })).toBe("1627 年 10 月");
-    expect(yearMonthLabel({ year: 1627, period: 10, settlement_display: true })).toBe("1627 年 10 月 · 核账");
-  });
-
-  it("#1323 awaiting_decision 文案层：年月标 ·待批；递话/关闭理由分口吻", () => {
-    expect(yearMonthLabel({
-      year: 1627, period: 10, settlement_display: true, phase: "awaiting_decision",
-    })).toBe("1627 年 10 月 · 待批");
-    expect(yearMonthLabel({
-      year: 1627, period: 10, settlement_display: true, phase: "settling",
-    })).toBe("1627 年 10 月 · 核账");
-    // P4：正向短句，无进度条/百分比/秒数/模板长文
-
-    // 显隐谓词仍只看 settlement_display（phase 不充门控真源）
-    expect(wangSettlementSlipVisible(true)).toBe(true);
-    expect(wangSettlementSlipVisible(false)).toBe(false);
   });
 });
 

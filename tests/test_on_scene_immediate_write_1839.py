@@ -90,16 +90,11 @@ def test_kill_lands_status_and_next_materials_include_roster(game, tmp_path):
 
     prepared = prepare_scene_materials(db, state, dest_root=tmp_path / "after-kill")
     listed = list_materials(prepared.root)
-    # 在场见证者的朝臣名册不再把死者列为 active 在朝
+    # Active court roster paths must not list the killed person.
     roster_paths = [p for p in listed if p.endswith("朝臣名册.txt")]
     assert roster_paths
     for path in roster_paths:
-        pass
-        # 名册只列 active；死者不得再以 active 行出现
-    # 若死者仍在场，其人物档料须写明当前状态
-    victim_dossier = f"人物/{victim}/人物档料.txt"
-    if victim_dossier in listed:
-        pass
+        assert victim not in read_material(prepared.root, path)
 
 
 def test_textual_fact_and_public_saying_land_and_show_in_materials(game, tmp_path):

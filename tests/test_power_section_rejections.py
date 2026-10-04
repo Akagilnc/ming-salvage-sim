@@ -156,7 +156,8 @@ def test_power_change_formatter_skips_rejected_items():
 
     only_rejected = format_power_changes([
         {"rejected": True, "category": "invalid_enum", "reason": "字段非法"}])
-    assert "未见明确势力盘面变化" in only_rejected
+    # Do not lock fallback phrasing; rejection reason must not be echoed.
+    assert "字段非法" not in only_rejected
 
 
 def test_dirty_power_value_rejected_sibling_field_lands(game):

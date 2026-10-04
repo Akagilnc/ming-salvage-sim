@@ -42,7 +42,10 @@ describe("consumeSettleStream residual flush", () => {
       streamResponse(["event: done\ndata: {"]),
       silent,
     );
-    expect(outcome).toEqual({ kind: "error", data: "推演流意外中断。" });
+    // Structural interrupt channel; do not lock production chrome copy.
+    expect(outcome.kind).toBe("error");
+    expect(typeof outcome.data).toBe("string");
+    expect(outcome.data).not.toBe("");
   });
 
   it("keeps normal \\n\\n terminated done path", async () => {

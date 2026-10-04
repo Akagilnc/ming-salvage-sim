@@ -89,16 +89,14 @@ def test_http_audience_one_matter_grant_with_deadline_1783(
         treasury_before = int(game.state.metrics["国库"])
         turn_before = int(game.state.turn)
 
+        # Confirm turn = pending directive already staged; do not lock prompt markers.
         def _translate(prompt, _cfg):
-            text = str(prompt or "")
             scene = offline_empty_audience_translate(prompt, _cfg)
-            if "【本轮皇帝】准" in text:
-                rows = [
-                    r for r in game.db.list_pending_actions(game.state.turn)
-                    if r.get("kind") == "directive" and r.get("status") == "pending"
-                ]
-                if not rows:
-                    return scene
+            rows = [
+                r for r in game.db.list_pending_actions(game.state.turn)
+                if r.get("kind") == "directive" and r.get("status") == "pending"
+            ]
+            if rows:
                 return {
                     **scene,
                     "promises": [{"action_id": int(rows[0]["id"]), "decision": "应允"}],

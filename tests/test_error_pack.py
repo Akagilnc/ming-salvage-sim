@@ -138,6 +138,7 @@ def test_web_issue_endpoint_returns_structured_abort(monkeypatch):
         web_app.api_issue_decree()
 
     assert ei.value.status_code != 500
+    # Injected SettlementAbort text must reach the HTTP detail unchanged.
     assert "可重试" in str(ei.value.detail)
     assert "错误包" in str(ei.value.detail)
 

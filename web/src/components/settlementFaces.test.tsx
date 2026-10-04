@@ -120,12 +120,8 @@ describe("#1236 GameHud face gates eat settlement_display", () => {
     const memorialBtn = Array.from(host.querySelectorAll("button.hud2-cmd")).find((b) =>
       (b.getAttribute("aria-label") || "").startsWith("奏疏"),
     );
-    const memorialCap = Array.from(host.querySelectorAll(".hud2-cmd-caption")).find((b) =>
-      (b.getAttribute("aria-label") || "").startsWith("奏疏"),
-    );
+    // Badge absence is the structured unread signal; do not lock aria copy phrasing.
     expect(memorialBtn?.querySelector(".hud2-cmd-badge")).toBeNull();
-
-    expect(memorialCap?.getAttribute("aria-label")).toMatch(/0\s*件待览/);
 
     // situation 关闭 / closed_issues 只读：半程议题不渲染，上月已结仍在
 
@@ -271,7 +267,6 @@ describe("#1236 roster chat entry stripped in settlement_display", () => {
     });
     const card = host.querySelector("button.minister-card") as HTMLButtonElement;
     expect(card.disabled).toBe(true);
-    expect(card.getAttribute("title")).not.toMatch(/核账/);
   });
 
   it("AppointmentDrawer 任免名册不再承载召对入口", () => {

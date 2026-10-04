@@ -2681,7 +2681,8 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
       return new Response("{}", { status: 404 });
     });
     const host = await mountApp();
-    expect(cmdByCaption(host, "奏疏")?.getAttribute("aria-label")).toBe("奏疏：1 件待览");
+    // Badge count is the structured unread signal; do not lock aria copy phrasing.
+    expect(cmdByCaption(host, "奏疏")?.querySelector(".hud2-cmd-badge")?.textContent).toBe("1");
     await click(cmdByCaption(host, "奏疏"));
     await tick();
     await act(async () => {
@@ -2702,7 +2703,7 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     });
     await tick();
     // 关面板后 gen 已 bump；迟到回执不得把 HUD 未读数覆写成 0。
-    expect(cmdByCaption(host, "奏疏")?.getAttribute("aria-label")).toBe("奏疏：1 件待览");
+    expect(cmdByCaption(host, "奏疏")?.querySelector(".hud2-cmd-badge")?.textContent).toBe("1");
   });
 
   it("#1342 朝堂抽屉开着时点拟诏：关抽屉并开拟诏台", async () => {

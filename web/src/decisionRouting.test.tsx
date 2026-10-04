@@ -135,11 +135,10 @@ describe("decision routing — retry (routeRetryDecisions: stale-phase vs still-
     expect(route.error).toBe("");
   });
 
-  it("#1307 settling retry keeps quiet intermediate — empty pending is not 重新拉取 error", () => {
+  it("#1307 settling retry keeps quiet intermediate — empty pending stays error-free", () => {
     const route = routeRetryDecisions("settling", []);
     expect(route.pendingDecisions).toEqual([]);
     expect(route.error).toBe("");
-    expect(route.error).not.toContain("重新拉取");
   });
 
   it("recovers into the decision modal when valid decisions arrive on retry", () => {

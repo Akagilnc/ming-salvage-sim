@@ -290,12 +290,12 @@ describe("召对投递（#499 经真实 useAudienceChat 生产控制器）", () 
 
     act(() => { void hook.sendChat("温体仁", "问2", noCbs); });
     await tick();
-    expect(busyRef.current).toBe("大臣思索中");
+    expect(busyRef.current).not.toBe("");  // stream-2 busy set; do not lock chrome copy
     expect(hookRef.current!.pendingUserMessage).toBe("问2");
 
     releaseEnd1();
     await act(async () => { await p1; });
-    expect(busyRef.current).toBe("大臣思索中");            // 旧流未清掉流 2 的 busy
+    expect(busyRef.current).not.toBe("");  // older stream must not clear stream-2 busy
     expect(hookRef.current!.pendingUserMessage).toBe("问2");  // 旧流未清掉流 2 的待答文
   });
 

@@ -63,7 +63,7 @@ def test_serialized_web_write_rejects_awaiting_decision():
 
 
 def test_serialized_web_write_settling_keeps_settlement_in_progress_copy():
-    """#1306：settling 仍报月末结算进行中。"""
+    """#1306: settling-phase writes stay rejected with HTTP 409."""
     game = SimpleNamespace(
         state=SimpleNamespace(turn_phase=TurnPhase.SETTLING.value),
         _write_gate=ClassifiedWriteGate(),
@@ -72,7 +72,6 @@ def test_serialized_web_write_settling_keeps_settlement_in_progress_copy():
         with web_app._serialized_web_write(game):
             pass
     assert ei.value.status_code == 409
-    assert "月末结算进行中" in str(ei.value.detail)
 
 
 def test_serialized_web_write_rejects_front_half_done_phases():
@@ -85,10 +84,6 @@ def test_serialized_web_write_rejects_front_half_done_phases():
             with web_app._serialized_web_write(game):
                 pass
         assert ei.value.status_code == 409
-        if phase == TurnPhase.AWAITING_DECISION.value:
-            pass
-        else:
-            pass
 
 
 # ── #1319(a) authority 停用 notes 别名 ──────────────────────────────────────

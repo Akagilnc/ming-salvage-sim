@@ -2041,9 +2041,7 @@ def test_inner_treasury_admission_uses_actual_once_and_preserves_surface(
     assert dossier["execution_outcome"] == outcome
     assert state.metrics["内库"] == max(0, balance - 10)
     assert len(db.list_economy_moves_for_dossier(dossier_id)) == int(expected_actual != 0)
-    if outcome == "failed":
-        pass
-    else:
+    if outcome != "failed":
         assert status == "executing"
         assert dossier_id in {
             row["id"] for row in db.dossiers.list_for_simulation(state.turn)

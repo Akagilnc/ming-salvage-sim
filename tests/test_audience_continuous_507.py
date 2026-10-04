@@ -40,8 +40,9 @@ def test_scene_recap_quotes_public_dialogue_within_presence_interval(game):
     an.summon_enter(db, nid, "毕自严")            # 毕自严侍立区间起点
     an.summon_enter(db, nid, "徐光启")
     heard = _public(db, nid, "徐光启", "徐光启奏：宜用洪承畴督师陕西。")
+    private_body = "此人跋扈"
     whisper = an.append_ledger_entry(
-        db, nid, person_names=[STANDING],
+        db, nid, person_names=[STANDING], body=private_body,
         audibility=AUDIBILITY_PRIVATE,
     )
 
@@ -49,7 +50,7 @@ def test_scene_recap_quotes_public_dialogue_within_presence_interval(game):
     # 正向：侍立区间内殿上公开对话可被引用（区间取数）
     assert "徐光启奏：宜用洪承畴督师陕西。" in recap
     # 负向：御前低语不流入侍立者组装输入
-    assert "此人跋扈" not in recap
+    assert private_body not in recap
     _ = (heard, whisper)
 
     # 负向（AC3）：从未入殿者的组装输入不含殿内对话，取空

@@ -333,11 +333,6 @@ def test_real_no_edict_entries_roll_back_every_external_state_after_fiscal_write
         with pytest.raises(web_app.HTTPException) as exc_info:
             invoke()
         assert exc_info.value.status_code == 500
-        detail = exc_info.value.detail
-        if isinstance(detail, dict):
-            pass
-        else:
-            pass
     else:
         with pytest.raises(RuntimeError, match='post-fiscal failure 566'):
             invoke()

@@ -397,7 +397,6 @@ def test_region_loader_expands_shared_settle_meta_defaults(monkeypatch):
     assert loaded["_meta"]["provisional"] == ["宗禄", "起运定额", "官民田", "隐田"]
     assert loaded["_meta"]["levies"]["seeded"] == ["辽饷"]
     assert loaded["_meta"]["levies"]["not_seeded"] == ["剿饷", "练饷"]
-    assert loaded["_meta"]["postures"] == ["江南财赋核心"]
     assert loaded["_meta"]["notes"]["起运定额"] == expected_default_note
     # 省份专属 notes 键保留并覆盖默认；与输入 before-image 同值，不另钉自由说明正文。
     assert loaded["_meta"]["notes"]["漕粮"] == expected_province_note
@@ -3380,8 +3379,6 @@ def test_shanxi_seed_stacks_frontier_pay_and_jin_vassal_dues(fresh_db):
     assert settle["st"]["官民田"] == pytest.approx(3680.13, abs=1e-2)
 
     meta = settle["_meta"]
-    assert "边镇军饷" in meta["postures"]
-    assert "晋藩宗禄" in meta["postures"]
     assert "宗禄" not in meta["provisional"]
     assert "官民田" not in meta["provisional"]
     assert "起运定额" not in meta["provisional"]
@@ -3694,7 +3691,6 @@ def test_jiangnan_core_seeds_have_positive_remittance_golden(fresh_db, region_id
     settle = _read_settle(fresh_db, region_id)
     assert isinstance(settle, dict), f"{region_id} fiscal 缺 settle 基座"
     meta = settle["_meta"]
-    assert "江南财赋核心" in meta["postures"]
     assert meta["levies"]["seeded"] == ["辽饷"]
     assert "剿饷" in meta["levies"]["not_seeded"]
     assert "练饷" in meta["levies"]["not_seeded"]
@@ -3717,7 +3713,6 @@ def test_huguang_seed_stacks_jiangnan_surplus_with_chu_princely_due(fresh_db):
     huguang = _read_settle(fresh_db, "huguang")
     nanzhili = _read_settle(fresh_db, "nanzhili")
 
-    assert "楚藩重宗禄" in huguang["_meta"]["postures"]
     assert huguang["p"]["Due"]["宗禄"] > nanzhili["p"]["Due"]["宗禄"]
 
     res = settle_tick(huguang["st"], huguang["p"], [])

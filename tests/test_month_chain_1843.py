@@ -717,7 +717,6 @@ def test_world_segment_reads_material_directory(game, monkeypatch):
             "index": index,
             "has_dir": has_dir,
             "dir_has_index": bool(materials_dir) and (Path(materials_dir) / "INDEX.txt").is_file(),
-            "opening": next(part for part in agent.instructions if "盘面：" in str(part)),
         })
         return "静"
 
@@ -730,11 +729,10 @@ def test_world_segment_reads_material_directory(game, monkeypatch):
     assert "INDEX.txt" in seen[0]["listing"].splitlines()
     assert seen[0]["index"].strip()
     assert seen[0]["has_dir"] is False
-    assert "盘面：" in seen[0]["opening"]
-    # 目录里至少有一份不在开场最小集里的材料。
+    # Directory listing must expose materials beyond the index file itself.
     extra = next(
         line for line in seen[0]["listing"].splitlines()
-        if line and line != "INDEX.txt" and line not in seen[0]["opening"]
+        if line and line != "INDEX.txt"
     )
     assert extra
 

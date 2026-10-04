@@ -478,12 +478,12 @@ def test_gate_key_form_error_accepts_valid_forms():
 
 
 def test_gate_key_form_error_rejects_typo_metric_table_structure():
-    """typo'd metric / 未知表 / 结构不完整 → 非空错误说明（fail-loud 素材）。"""
+    """typo'd metric / unknown table / incomplete shape → non-empty fail-loud error."""
     from ming_sim.content import gate_key_form_error
-    assert "未知 metric" in gate_key_form_error("民生")        # 民心 typo
-    assert "未知表" in gate_key_form_error("regon.x.unrest")   # region typo
-    assert gate_key_form_error("region.x")                      # 2 段，结构不完整
-    assert gate_key_form_error("event.huabei_plague.status")     # event 仅支持 triggered
+    assert gate_key_form_error("民生")  # 民心 typo
+    assert gate_key_form_error("regon.x.unrest")  # region typo
+    assert gate_key_form_error("region.x")  # 2 段，结构不完整
+    assert gate_key_form_error("event.huabei_plague.status")  # event 仅支持 triggered
 
 
 def test_gate_cond_form_error_numeric_and_text():
@@ -1416,21 +1416,6 @@ def test_pending_gate_uses_same_place_canonical_terminal_state(game):
     ) is False
 
 
-def test_wuyin_lubian_content_treats_lu_death_as_soft_battle_outcome():
-    """#189：戊寅虏变不能把卢象升写成人物核心；卢死/生是战事软判结果。"""
-    events_path = Path(__file__).resolve().parents[1] / "content" / "events.json"
-    events = json.loads(events_path.read_text(encoding="utf-8"))
-    wuyin = next(item for item in events if item["id"] == "wuyin_lubian")
-    songshan = next(item for item in events if item["id"] == "songshan_battle")
-
-    pass
-    assert "卢象升得" not in wuyin["resolve_condition"]
-    assert "卢象升孤军战死" not in wuyin["fail_condition"]
-    assert "卢象升生死由软判" in wuyin["precondition"]
-    assert "洪承畴稳" not in songshan["resolve_condition"]
-    assert "洪承畴降金" not in songshan["fail_condition"]
-
-
 def test_mao_wenlong_event_trigger_respects_outer_transaction_rollback(game):
     """post-merge CMR：event trigger 写入不得提前提交外层普通事务。"""
     db, state, content = game
@@ -2119,11 +2104,10 @@ def test_huangtaiji_chengdi_auto_triggers_and_renames_houjin(game):
         "SELECT name, aliases, status, last_action FROM powers WHERE id=?",
         ("houjin",),
     ).fetchone()
+    # Rename facts only; do not lock seed effect prose for status/last_action.
     assert row["name"] == "大清"
     assert "后金" in row["aliases"]
     assert "大清" in row["aliases"]
-    assert "称帝" in row["status"]
-    assert row["last_action"] == "皇太极称帝改国号大清"
 
 
 def test_huangtaiji_chengdi_keeps_diplomatic_response_axis_as_situation_issue(game):

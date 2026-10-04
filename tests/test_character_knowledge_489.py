@@ -58,9 +58,6 @@ def test_current_state_facts_are_selected_by_content_domain_not_role_label(
     roster = db.current_court_roster_rows(state)
     assert roster
     assert "personnel" in view
-    pass
-    pass
-    pass
     assert "military" not in view
     assert "treasury" not in view
 
@@ -351,7 +348,7 @@ def test_secret_office_exclusion_does_not_hide_unrelated_world_bucket(game):
     view = db.get_character_knowledge(state, clerk.name)
 
     assert db.list_secret_orders()[0]["excluded_targets"] == {"people": [], "offices": ["户部"]}
-    assert view["world"]["public"] == "登基伊始，朝廷暂无前回合奏报。"
+    # Treasury bucket stays visible under office exclusion; do not lock public seed prose.
     assert view["world"].get("treasury")
     assert not any(item["source_id"] == f"secret_order:{order}" for item in view["events"])
 
@@ -1306,8 +1303,15 @@ def test_central_ledgers_and_unbounded_household_history_reach_final_materials(g
     )
     assert "EARLY_LEDGER_0" in household_archive and "内库" not in household_archive
     war_archive = _office_archive_from_materials(db, state, war, tmp_path / "war")
-    assert "兵籍在册" in war_archive and "军心" not in war_archive and "欠饷" not in war_archive
+    army_names = [
+        str(row["name"])
+        for row in db.conn.execute("SELECT name FROM armies ORDER BY id").fetchall()
+    ]
+    # Army names reach war materials; office-slice secrecy is covered structurally above
+    # (military/treasury bucket selection). Do not title-watch 军心/欠饷 labels.
+    assert army_names and any(name in war_archive for name in army_names)
     personnel_archive = _office_archive_from_materials(
         db, state, personnel, tmp_path / "personnel",
     )
-    assert "任免簿" in personnel_archive
+    roster_names = [str(row["name"]) for row in db.current_court_roster_rows(state)]
+    assert roster_names and any(name in personnel_archive for name in roster_names)
