@@ -579,11 +579,11 @@ def test_reconcile_truncates_agno_runs_to_turn_start(restore_env):
     )
     mid = db.append_chat_message(minister, state.turn, "user", "剿抚孰先？")
     db.reign.update_chat_turn_messages(ct, user_message_id=mid)
-    assert db.agno_runs_length("sess") == 2
+    assert db.reign.agno_runs_length("sess") == 2
 
     db.reconcile_interrupted_chat_turns()
     # 截回起点，只丢没落完那半句的 LLM 工作态——问话/账未删；本 session 只留 keep_count 之前。
-    assert db.agno_runs_length("sess") == 1
+    assert db.reign.agno_runs_length("sess") == 1
     kept = [
         r["run_id"]
         for r in db.conn.execute(
@@ -603,11 +603,11 @@ def test_legacy_agno_sessions_runs_blob_still_counts_and_truncates(restore_env):
     env = restore_env
     db = env.db
     _seed_agno_legacy_blob(db, "legacy", ["r1", "r2", "r3"], with_table=False)
-    assert db.agno_runs_length("legacy") == 3
-    db._truncate_agno_runs_in_tx("legacy", 1)
+    assert db.reign.agno_runs_length("legacy") == 3
+    db.reign._truncate_agno_runs_in_tx("legacy", 1)
     db.conn.commit()
-    assert db.agno_runs_length("legacy") == 1
-    runs, _ = db._decode_agno_runs(
+    assert db.reign.agno_runs_length("legacy") == 1
+    runs, _ = db.reign._decode_agno_runs(
         db.conn.execute(
             "SELECT runs FROM agno_sessions WHERE session_id=?", ("legacy",)
         ).fetchone()["runs"]
@@ -663,12 +663,12 @@ def test_logical_history_matches_agno_merge_with_duplicate_legacy_ids(restore_en
     db.conn.commit()
 
     # Agno merge walks every legacy slot: length 3, not unique-2.
-    assert db.agno_runs_length("sess") == 3
+    assert db.reign.agno_runs_length("sess") == 3
     assert _agno_public_run_ids(env.path, "sess") == ["r0", "r0", "r1"]
 
-    db._truncate_agno_runs_in_tx("sess", 1)
+    db.reign._truncate_agno_runs_in_tx("sess", 1)
     db.conn.commit()
-    assert db.agno_runs_length("sess") == 1
+    assert db.reign.agno_runs_length("sess") == 1
     assert _agno_public_run_ids(env.path, "sess") == ["r0"]
     table_ids = [
         r["run_id"]
@@ -689,7 +689,7 @@ def test_reconcile_blob_baseline_drops_table_only_new_run(restore_env):
     # 起轮时只有 legacy blob（baseline=2）；同轮 Agno 3 写入 table-only 新失败 run。
     _seed_agno_legacy_blob(db, "sess", ["legacy-0", "legacy-1"], with_table=True)
     _insert_agno_table_run(db, "sess", "table-new", run_index=0)
-    assert db.agno_runs_length("sess") == 3
+    assert db.reign.agno_runs_length("sess") == 3
 
     _nid, ct = open_hall_turn(
         db, state, minister, agno_session_id="sess", agno_runs_before=2,
@@ -698,7 +698,7 @@ def test_reconcile_blob_baseline_drops_table_only_new_run(restore_env):
     db.reign.update_chat_turn_messages(ct, user_message_id=mid)
 
     db.reconcile_interrupted_chat_turns()
-    assert db.agno_runs_length("sess") == 2
+    assert db.reign.agno_runs_length("sess") == 2
     table_ids = [
         r["run_id"]
         for r in db.conn.execute(
@@ -707,7 +707,7 @@ def test_reconcile_blob_baseline_drops_table_only_new_run(restore_env):
         ).fetchall()
     ]
     assert table_ids == []
-    runs, _ = db._decode_agno_runs(
+    runs, _ = db.reign._decode_agno_runs(
         db.conn.execute(
             "SELECT runs FROM agno_sessions WHERE session_id=?", ("sess",)
         ).fetchone()["runs"]
@@ -752,11 +752,11 @@ def test_truncate_migrated_overlap_does_not_resurrect_via_agno_read(restore_env)
             )
     db.conn.commit()
 
-    assert db.agno_runs_length("sess") == 3
-    db._truncate_agno_runs_in_tx("sess", 2)
+    assert db.reign.agno_runs_length("sess") == 3
+    db.reign._truncate_agno_runs_in_tx("sess", 2)
     db.conn.commit()
-    assert db.agno_runs_length("sess") == 2
-    assert db.agno_runs_length("other") == 1
+    assert db.reign.agno_runs_length("sess") == 2
+    assert db.reign.agno_runs_length("other") == 1
 
     assert _agno_public_run_ids(env.path, "sess") == ["r0", "r1"]
     assert _agno_public_run_ids(env.path, "other") == ["other-0"]
@@ -824,7 +824,7 @@ def test_start_chat_turn_second_turn_reads_agno_v3_runs(web_game):
     sid = game._minister_agno_session_id(minister)
     # 首轮完成后的 Agno 3 态：session + 1 COMPLETED run（无 sessions.runs 列）。
     _seed_agno_v3_runs(game.db, sid, run_count=1)
-    assert game.db.agno_runs_length(sid) == 1
+    assert game.db.reign.agno_runs_length(sid) == 1
 
     chat_turn_id, _snapshot = game._start_chat_turn(minister)
     row = game.db.conn.execute(

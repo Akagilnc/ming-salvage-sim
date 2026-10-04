@@ -263,7 +263,7 @@ def _require_agno() -> None:
 
 def create_agno_db(sqlite_path: str) -> SqliteDb:
     # Pin Agno 3 run store explicitly: runs live in agno_runs, not a
-    # sessions.runs blob. Matches GameDB.agno_runs_length / truncate seam.
+    # sessions.runs blob. Matches ReignStateStore.agno_runs_length / truncate seam.
     _require_agno()
     return SqliteDb(
         db_file=sqlite_path,

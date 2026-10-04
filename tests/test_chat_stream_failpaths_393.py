@@ -584,7 +584,7 @@ class _FailLeavingAgnoRunAgent:
         n = self.calls
         # 本 attempt 启动时持久读回（_start_stream 已先 truncate）
         self.history_at_attempt_start.append(
-            [str(r.get("run_id")) for r in self.db._agno_merged_runs(self.session_id)]
+            [str(r.get("run_id")) for r in self.db.reign._agno_merged_runs(self.session_id)]
         )
         if n <= self.fail_times:
             from tests.test_audience_restore_505 import _insert_agno_table_run
@@ -594,7 +594,7 @@ class _FailLeavingAgnoRunAgent:
                 self.db,
                 self.session_id,
                 rid,
-                run_index=self.db.agno_runs_length(self.session_id),
+                run_index=self.db.reign.agno_runs_length(self.session_id),
             )
             raise self.error_factory(n)
         yield RunContent("臣")

@@ -315,7 +315,7 @@ def test_undo_reversal_is_atomic_on_midway_crash(game, monkeypatch):
     # 注入撤回逆转事务内的崩溃（末步 agno 截断处）
     def _boom(*_a, **_k):
         raise RuntimeError("注入：撤回中途崩溃")
-    monkeypatch.setattr(db, "_truncate_agno_runs_in_tx", _boom)
+    monkeypatch.setattr(db.reign, "_truncate_agno_runs_in_tx", _boom)
 
     with pytest.raises(RuntimeError, match='注入：撤回中途崩溃'):
         db.undo_chat_turn(chat_id)

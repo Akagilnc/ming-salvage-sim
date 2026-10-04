@@ -449,7 +449,7 @@ def llm_promulgation_verdicts(
         prompt = f"{correction_feedback}\n{context_json}"
     else:
         prompt = context_json
-    # #1465 ②：history-backed transport 重试截 run 走 GameDB.truncate_agno_session_runs
+    # #1465 ②：history-backed transport 重试截 run 走 ReignStateStore.truncate_agno_session_runs
     # （与召对 truncate_chat_turn_agno_runs 同接缝）；不新造历史机制。
     # GameDB 经入参契约显式交给 run_agent_text，不挂 agent 私有属性。
     raw = run_agent_text(

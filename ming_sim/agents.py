@@ -186,7 +186,7 @@ def _history_backed_truncate_anchor(
     """history-backed + 调用方显式 GameDB → (game_db, session_id, keep_count)；否则不截。
 
     命中面=颁布判官（db+cache_session+add_history_to_context）；截缝唯一权威=
-    GameDB.truncate_agno_session_runs → _truncate_agno_runs_in_tx（与召对同缝）。
+    ReignStateStore.truncate_agno_session_runs → _truncate_agno_runs_in_tx（与召对同缝）。
     GameDB 由调用方经 run_agent_text(game_db=) 显式交来（入参契约），
     不往 agent 实例挂私有句柄；未交 game_db 不另造 get_runs/delete_runs 退路。
     """
@@ -201,11 +201,12 @@ def _history_backed_truncate_anchor(
     session_id = str(getattr(agent, "session_id", "") or "")
     if not session_id:
         return None
-    if not hasattr(game_db, "truncate_agno_session_runs"):
+    reign = getattr(game_db, "reign", None)
+    if reign is None or not hasattr(reign, "truncate_agno_session_runs"):
         return None
-    if not hasattr(game_db, "agno_runs_length"):
+    if not hasattr(reign, "agno_runs_length"):
         return None
-    keep = int(game_db.agno_runs_length(session_id))
+    keep = int(reign.agno_runs_length(session_id))
     return game_db, session_id, keep
 
 
@@ -214,10 +215,10 @@ def _truncate_history_backed_agent_runs(
 ) -> None:
     """transport 再试前丢掉本 attempt 已落的 completed 空 run。
 
-    只调 GameDB.truncate_agno_session_runs（召对 truncate_chat_turn_agno_runs 同缝）；
+    只调 ReignStateStore.truncate_agno_session_runs（召对 truncate_chat_turn_agno_runs 同缝）；
     不回滚游戏落账。cache_session 置空使下一 attempt 从已截 DB 重载，非第二套历史算法。
     """
-    game_db.truncate_agno_session_runs(session_id, max(0, int(keep_count)))
+    game_db.reign.truncate_agno_session_runs(session_id, max(0, int(keep_count)))
     if hasattr(agent, "_cached_session"):
         agent._cached_session = None
     if hasattr(agent, "_cached_session_db"):

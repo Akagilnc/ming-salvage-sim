@@ -1347,7 +1347,7 @@ class GameSession:
             if stream_attempt_n["n"] > 0:
                 stream_emit("", replace=True)
                 if int(chat_turn_id or 0) > 0:
-                    self.db.truncate_chat_turn_agno_runs(int(chat_turn_id))
+                    self.db.reign.truncate_chat_turn_agno_runs(int(chat_turn_id))
             stream_attempt_n["n"] += 1
             return agent.run(
                 agent_prompt, stream=True, stream_events=True, yield_run_output=True,

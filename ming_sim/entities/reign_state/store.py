@@ -8,10 +8,12 @@ reign header (which year/month/turn, and whether the game is over); the
 
 from __future__ import annotations
 
+import json
 import sqlite3
 
-from typing import Any, Dict, Iterable, List, Mapping, Optional
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 
+from ming_sim.applier import load_stored_json, load_stored_list, load_stored_object
 from ming_sim.entities.column_write import checked_columns, upsert_by_pk
 
 # Population unit marker (shared with GameDB seed path; single string constants).
@@ -952,3 +954,176 @@ class ReignStateStore:
             ),
         )
         return int(cur.lastrowid)
+
+    # ----- Agno session history (framework tables; single owner) -----
+
+    def _table_exists(self, table: str) -> bool:
+        row = self._conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+            (table,),
+        ).fetchone()
+        return row is not None
+
+    def _agno_session_columns(self) -> set:
+        if not self._table_exists("agno_sessions"):
+            return set()
+        return {
+            row["name"]
+            for row in self._conn.execute("PRAGMA table_info(agno_sessions)").fetchall()
+        }
+
+    def agno_runs_length(self, session_id: str) -> int:
+        """Count Agno run history for a session (single logical list).
+
+        Authority is Agno's ``merge_runs_table_with_legacy_blob``: legacy blob
+        order first (duplicates preserved); same run_id prefers the table copy;
+        table-only rows append in ``(run_index, created_at, run_id)``. Missing
+        tables/columns mean a fresh session with no history yet (length 0)—
+        schema drift must not be swallowed via OperationalError→0.
+        """
+        if not session_id:
+            return 0
+        return len(self._agno_merged_runs(session_id))
+
+    def truncate_agno_session_runs(self, session_id: str, keep_count: int) -> None:
+        """截回 session 的 Agno 历史到 keep_count（transport 重试 per-attempt）。
+
+        与 truncate_chat_turn_agno_runs 同接缝 ``_truncate_agno_runs_in_tx``；
+        不改 chat_turn 状态、不碰游戏账/回话。
+        """
+        if not session_id:
+            return
+        with self._conn:
+            self._truncate_agno_runs_in_tx(str(session_id), max(0, int(keep_count)))
+
+    def truncate_chat_turn_agno_runs(self, chat_turn_id: int) -> None:
+        """截回本轮起点的 Agno 历史（transport 重试 per-attempt）。
+
+        复用 fail/undo/reconcile 同一 `_truncate_agno_runs_in_tx` 接缝；
+        不改 chat_turn 状态、不碰游戏账/回话。
+        """
+        if not chat_turn_id:
+            return
+        row = self.read_chat_turn(chat_turn_id)
+        if row is None:
+            return
+        self.truncate_agno_session_runs(
+            str(row["agno_session_id"] or ""),
+            int(row["agno_runs_before"] or 0),
+        )
+
+    def _decode_agno_runs(self, raw: Any) -> Tuple[List[Any], bool]:
+        if raw in (None, ""):
+            return [], False
+        decoded = load_stored_json(raw, label="agno runs", blank=[])
+        encoded_as_string = isinstance(decoded, str)
+        if encoded_as_string:
+            decoded = load_stored_list(decoded, label="agno runs")
+        if not isinstance(decoded, list) or any(not isinstance(run, dict) for run in decoded):
+            raise ValueError("agno runs 须为对象名单")
+        return decoded, encoded_as_string
+
+    def _encode_agno_runs(self, runs: List[Any], encoded_as_string: bool) -> str:
+        if encoded_as_string:
+            return json.dumps(json.dumps(runs, ensure_ascii=False), ensure_ascii=False)
+        return json.dumps(runs, ensure_ascii=False)
+
+    def _agno_table_run_dicts(self, session_id: str) -> List[Dict[str, Any]]:
+        if not self._table_exists("agno_runs"):
+            return []
+        rows = self._conn.execute(
+            """
+            SELECT run_id, run_data FROM agno_runs
+            WHERE session_id = ?
+            ORDER BY run_index ASC, created_at ASC, run_id ASC
+            """,
+            (session_id,),
+        ).fetchall()
+        out: List[Dict[str, Any]] = []
+        for row in rows:
+            rid = row["run_id"]
+            if rid is None:
+                continue
+            payload: Dict[str, Any] = {"run_id": str(rid)}
+            raw = row["run_data"]
+            if raw not in (None, ""):
+                payload = load_stored_object(raw, label="agno run_data")
+                payload["run_id"] = str(rid)
+            out.append(payload)
+        return out
+
+    def _agno_legacy_runs_blob(self, session_id: str) -> Tuple[List[Any], bool]:
+        """Legacy ``agno_sessions.runs`` list for one session (empty if absent)."""
+        if "runs" not in self._agno_session_columns():
+            return [], False
+        row = self._conn.execute(
+            "SELECT runs FROM agno_sessions WHERE session_id = ?",
+            (session_id,),
+        ).fetchone()
+        if row is None:
+            return [], False
+        return self._decode_agno_runs(row["runs"])
+
+    def _agno_merged_runs(self, session_id: str) -> List[Dict[str, Any]]:
+        """Session run history in Agno merge order (single count/truncate domain)."""
+        from agno.db.utils import merge_runs_table_with_legacy_blob
+
+        table_runs = self._agno_table_run_dicts(session_id)
+        legacy_runs, _encoded = self._agno_legacy_runs_blob(session_id)
+        merged = merge_runs_table_with_legacy_blob(
+            table_runs, legacy_runs if legacy_runs else None
+        )
+        if any(not isinstance(run, dict) for run in merged):
+            raise ValueError("agno merged runs 须为对象名单")
+        return merged
+
+    def _rewrite_session_legacy_runs_blob(
+        self, session_id: str, runs: List[Any]
+    ) -> None:
+        if "runs" not in self._agno_session_columns():
+            return
+        _old, encoded_as_string = self._agno_legacy_runs_blob(session_id)
+        self._conn.execute(
+            "UPDATE agno_sessions SET runs = ?, updated_at = strftime('%s','now') "
+            "WHERE session_id = ?",
+            (self._encode_agno_runs(list(runs), encoded_as_string), session_id),
+        )
+
+    def _truncate_agno_runs_in_tx(self, session_id: str, keep_count: int) -> None:
+        """Truncate session run history back to keep_count (retry/undo/reconcile).
+
+        Uses the same Agno-merged history as ``agno_runs_length``. Keeps the
+        prefix as the new legacy blob and drops table rows whose run_id is not
+        in that prefix, so a subsequent Agno merge read matches the prefix.
+        Other sessions are untouched.
+        """
+        if not session_id:
+            return
+        keep = max(0, int(keep_count))
+        merged = self._agno_merged_runs(session_id)
+        if len(merged) <= keep:
+            return
+        kept = merged[:keep]
+        kept_ids = {
+            str(run["run_id"])
+            for run in kept
+            if run.get("run_id") is not None
+        }
+        if self._table_exists("agno_runs"):
+            rows = self._conn.execute(
+                "SELECT run_id FROM agno_runs WHERE session_id = ?",
+                (session_id,),
+            ).fetchall()
+            drop_ids = [
+                str(r["run_id"])
+                for r in rows
+                if r["run_id"] is not None and str(r["run_id"]) not in kept_ids
+            ]
+            if drop_ids:
+                self._conn.executemany(
+                    "DELETE FROM agno_runs WHERE session_id = ? AND run_id = ?",
+                    [(session_id, rid) for rid in drop_ids],
+                )
+        # Rewrite blob to the kept prefix so duplicate-id multiplicity and order
+        # stay identical to what Agno merge would return for that prefix.
+        self._rewrite_session_legacy_runs_blob(session_id, kept)

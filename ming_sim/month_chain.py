@@ -17,7 +17,7 @@ from ming_sim.entities.staged_declaration.store import StagedDeclarationStore
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
 
-from ming_sim.applier import Provenance, atomic
+from ming_sim.applier import Provenance, atomic, list_rejection_reports_for_turn
 
 _CHAIN_KEY = "month_chain"
 _TRANSLATE_ESCAPE_STEPS = frozenset({"world_translate"})
@@ -194,28 +194,20 @@ def _month_fact_materials(
             })
     rejections: List[Dict[str, Any]] = []
     if hasattr(db, "conn"):
-        exists = db.conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='rejection_reports'",
-        ).fetchone()
-        if exists is not None:
-            for row in db.conn.execute(
-                "SELECT section, item_json, reason, category, source FROM rejection_reports "
-                "WHERE turn=? ORDER BY id",
-                (turn,),
+        for row in list_rejection_reports_for_turn(db.conn, turn):
+            if not include_secret_sources and str(row["source"] or "") == "secret_order":
+                continue
+            item = load_stored_json(row["item_json"], label="item_json", blank={})
+            if not include_secret_sources and (
+                _secret_sourced(item) or _item_is_secret_dossier(item, secret_dossiers)
             ):
-                if not include_secret_sources and str(row["source"] or "") == "secret_order":
-                    continue
-                item = load_stored_json(row["item_json"], label="item_json", blank={})
-                if not include_secret_sources and (
-                    _secret_sourced(item) or _item_is_secret_dossier(item, secret_dossiers)
-                ):
-                    continue
-                rejections.append({
-                    "section": row["section"],
-                    "item": item,
-                    "reason": row["reason"],
-                    "category": row["category"],
-                })
+                continue
+            rejections.append({
+                "section": row["section"],
+                "item": item,
+                "reason": row["reason"],
+                "category": row["category"],
+            })
     answers: List[Dict[str, Any]] = []
     if hasattr(db, "list_pending_decisions"):
         for row in db.issues.list_pending_decisions(turn):

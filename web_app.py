@@ -1939,7 +1939,7 @@ class WebGame:
         message: str = "",
     ) -> tuple[int, Dict[str, Any]]:
         agno_session_id = self._minister_agno_session_id(minister_name)
-        runs_before = self.db.agno_runs_length(agno_session_id)
+        runs_before = self.db.reign.agno_runs_length(agno_session_id)
         snapshot = self.db.capture_chat_rollback_snapshot()
         # #498：进入召对即开夜；对话轮挂 night_id，status=generating 至回话入档。
         # 测试替身无 conn/夜表时回退 create_chat_turn（lifecycle 双接口仍可测）。
@@ -1967,7 +1967,7 @@ class WebGame:
             )
         else:
             agno_session_id = self._minister_agno_session_id(minister_name)
-            runs_before = self.db.agno_runs_length(agno_session_id)
+            runs_before = self.db.reign.agno_runs_length(agno_session_id)
             chat_turn_id = self.db.create_chat_turn(
                 self.state,
                 minister_name,

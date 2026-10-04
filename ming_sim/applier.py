@@ -430,6 +430,22 @@ class RejectionCollector:
         return any(row["source"] in _visible for row in (*self._buffer, *self._flushed))
 
 
+def list_rejection_reports_for_turn(conn: Any, turn: int) -> List[Any]:
+    """Read rejection_reports rows for one turn (owner read port; table may be absent)."""
+    exists = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='rejection_reports'",
+    ).fetchone()
+    if exists is None:
+        return []
+    return list(
+        conn.execute(
+            "SELECT section, item_json, reason, category, source FROM rejection_reports "
+            "WHERE turn=? ORDER BY id",
+            (int(turn),),
+        )
+    )
+
+
 def register_runtime_outcome_callbacks(
     db: Any,
     *,
