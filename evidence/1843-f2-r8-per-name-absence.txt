@@ -1,13 +1,19 @@
-SUPERVISION_SURFACE_KEYS	GONE
-army_detail	GONE
-building_detail	GONE
-clear_resolve_context	GONE
-discard_pending_directives	GONE
-get_pending_promulgation_verdicts	GONE
-list_arrived_unsettled_summons	GONE
-list_night_promulgated_directives	GONE
-list_promulgated_directives	GONE
-record_monthly_supervision_facts	GONE
-save_pending_promulgation_verdicts	GONE
-validate_delta_shape	GONE
+# R8 retired-name absence (AST defs + AST Name/Attribute loads)
+# Scope: ming_sim/**, scripts/**, tests/**, web_app.py, main.py, launcher.py
+# Comments/docstrings ignored (AST only). Evidence after gate-script fix.
+SUPERVISION_SURFACE_KEYS	defs=-	ast_loads=-	GONE
+army_detail	defs=-	ast_loads=-	GONE
+building_detail	defs=-	ast_loads=-	GONE
+clear_resolve_context	defs=-	ast_loads=-	GONE
+discard_pending_directives	defs=-	ast_loads=-	GONE
+get_pending_promulgation_verdicts	defs=-	ast_loads=-	GONE
+list_arrived_unsettled_summons	defs=-	ast_loads=-	GONE
+list_night_promulgated_directives	defs=-	ast_loads=-	GONE
+list_promulgated_directives	defs=-	ast_loads=-	GONE
+record_monthly_supervision_facts	defs=-	ast_loads=-	GONE
+save_pending_promulgation_verdicts	defs=-	ast_loads=-	GONE
+validate_delta_shape	defs=-	ast_loads=-	GONE
 SUMMARY gone=12 bad=0
+# Note: pre-fix word-boundary scan flagged scripts/promulgation_gate_561.py
+# Attribute calls to get_pending_promulgation_verdicts (R8-introduced contract break).
+# Fixed to decree_dossier_decisions; AST rescan GONE.

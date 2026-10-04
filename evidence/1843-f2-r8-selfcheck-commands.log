@@ -1,0 +1,54 @@
+# R8 self-check correction command log (full)
+# Worktree: /Users/akagilnc/WorkSpace/Ming_LLM-1843-w5
+# Branch: ak-roles/issue-1843-w5-r5-f2
+
+## A) Focused pytest WITHOUT --deselect (7x BIN=/usr/bin/false) @ current after fix
+cd /Users/akagilnc/WorkSpace/Ming_LLM-1843-w5
+MING_SIM_AGY_BIN=/usr/bin/false \
+MING_SIM_CODEX_BIN=/usr/bin/false \
+MING_SIM_CLAUDE_BIN=/usr/bin/false \
+MING_SIM_CURSOR_BIN=/usr/bin/false \
+MING_SIM_KIMI_BIN=/usr/bin/false \
+MING_SIM_GROK_BIN=/usr/bin/false \
+MING_SIM_PI_BIN=/usr/bin/false \
+/Users/akagilnc/WorkSpace/Ming_LLM/.venv/bin/python -m pytest \
+  tests/test_audience_travel_gating_670.py \
+  tests/test_supervision_625.py \
+  tests/test_promulgation_seam_560.py \
+  tests/test_promulgation_judge_561.py \
+  tests/test_pihong_dossier_1490.py \
+  tests/test_override_breach_costs_564.py \
+  tests/test_army_firearms.py \
+  tests/test_army_display_173.py \
+  tests/test_army_card_status_1501.py \
+  tests/test_player_army_projection_321.py \
+  tests/test_rescript_draft_656.py \
+  tests/test_qa_e1_numeric_presentation.py \
+  tests/test_fiscal_substrate_bridge.py::test_province_pay_shortfall_reduces_pure_province_army_morale \
+  tests/test_pre_settle_transaction.py \
+  tests/test_advance_paths_atomic.py \
+  tests/test_month_chain_1843.py \
+  tests/test_grant_reconciliation_567.py \
+  -q -p no:cacheprovider --durations=8
+# → evidence/1843-f2-r8-pytest.log
+# RESULT: 1 failed, 317 passed, 2 skipped
+# FAIL: tests/test_advance_paths_atomic.py::test_submit_event_decision_binds_from_candidate_snapshot_without_event_id
+
+## B) Same entry @ unaltered R8 parent dd7d530f9 (git worktree; no stash)
+git worktree add --detach /tmp/1843-f2-r8-pre dd7d530f9
+cd /tmp/1843-f2-r8-pre
+# same env + same pytest args as (A), no --deselect
+# → evidence/1843-f2-r8-pytest-prer8-nodeselect.log
+# RESULT: 1 failed, 318 passed, 2 skipped
+# FAIL: same nodeid / same assert row is not None
+git worktree remove --force /tmp/1843-f2-r8-pre
+
+## C) Mechanical member counts
+# From evidence TSVs + /tmp/1843-f2-r8/{zero_prod_candidates,zero_prod_filtered}.json
+# → evidence/1843-f2-r8-mechanical-counts.txt
+# RAW=128 FILTERED=127 MEMBER=128 (=12+6+42+68)
+# FILTER_REMOVED=run_cli; MEMBER_ADDED=get_pending_promulgation_verdicts
+
+## D) Class rescan + unused-import before/after
+# → evidence/1843-f2-r8-per-name-absence.txt (gone=12 bad=0 after script fix)
+# → evidence/1843-f2-r8-unused-imports.txt

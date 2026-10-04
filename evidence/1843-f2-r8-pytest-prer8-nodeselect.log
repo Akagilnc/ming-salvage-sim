@@ -1,13 +1,13 @@
 ........................................................................ [ 22%]
-........................................................................ [ 45%]
-.....................s.................................................. [ 67%]
-..............................s.............F........................... [ 90%]
-................................                                         [100%]
+........................................................................ [ 44%]
+......................s................................................. [ 67%]
+...............................s.............F.......................... [ 89%]
+.................................                                        [100%]
 =================================== FAILURES ===================================
 __ test_submit_event_decision_binds_from_candidate_snapshot_without_event_id ___
 
-game = (<ming_sim.db.GameDB object at 0x10fb72cf0>, GameState(year=1627, period=10, turn=1, turn_phase='settling', ended=Fals...: '妃嫔供奉'}, {'key': '妃嫔_rate', 'value': 100, 'kind': 'rate', 'budget_role': 'fixed', 'note': '妃嫔供奉率%', 'order': 9999}]))
-monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10b00fee0>
+game = (<ming_sim.db.GameDB object at 0x10bfe59b0>, GameState(year=1627, period=10, turn=1, turn_phase='settling', ended=Fals...: '妃嫔供奉'}, {'key': '妃嫔_rate', 'value': 100, 'kind': 'rate', 'budget_role': 'fixed', 'note': '妃嫔供奉率%', 'order': 9999}]))
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10bd6cc90>
 
     def test_submit_event_decision_binds_from_candidate_snapshot_without_event_id(game, monkeypatch):
         """#389：simulator 漏写 event_id 时，事件亲裁仍从权威候选快照确定性绑定并持久化。"""
@@ -66,20 +66,20 @@ E       assert None is not None
 
 tests/test_advance_paths_atomic.py:173: AssertionError
 =============================== warnings summary ===============================
-../Ming_LLM/.venv/lib/python3.13/site-packages/fastapi/testclient.py:1
+../../../Users/akagilnc/WorkSpace/Ming_LLM/.venv/lib/python3.13/site-packages/fastapi/testclient.py:1
   /Users/akagilnc/WorkSpace/Ming_LLM/.venv/lib/python3.13/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
     from starlette.testclient import TestClient as TestClient  # noqa
 
 -- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
 ============================= slowest 8 durations ==============================
-3.73s call     tests/test_pihong_dossier_1490.py::test_657_s10_http_five_actions_and_1490_no_regress
-3.70s call     tests/test_pihong_dossier_1490.py::test_657_return_revise_round_prior_and_clear_anchor
-2.49s call     tests/test_pihong_dossier_1490.py::test_657_mixed_batch_follow_plus_decision_and_no_context_copy
-1.87s call     tests/test_pihong_dossier_1490.py::test_1589_pure_decision_keyless_rejected_then_keyed_same_choice_passes
-0.94s call     tests/test_pihong_dossier_1490.py::test_1627_stamp_ignores_pre_edict_clarification_directive
-0.93s call     tests/test_pihong_dossier_1490.py::test_1589_mixed_desk_keyless_choice_rejected_batch_zero_writes
-0.89s call     tests/test_pihong_dossier_1490.py::test_1621_http_follow_draft_uses_catalog_army_id
-0.71s call     tests/test_pihong_dossier_1490.py::test_1620_http_follow_draft_office_token_routes_to_person
+3.54s call     tests/test_pihong_dossier_1490.py::test_657_return_revise_round_prior_and_clear_anchor
+3.31s call     tests/test_pihong_dossier_1490.py::test_657_s10_http_five_actions_and_1490_no_regress
+2.05s call     tests/test_pihong_dossier_1490.py::test_657_mixed_batch_follow_plus_decision_and_no_context_copy
+1.82s call     tests/test_pihong_dossier_1490.py::test_1589_pure_decision_keyless_rejected_then_keyed_same_choice_passes
+1.10s call     tests/test_pihong_dossier_1490.py::test_1627_stamp_ignores_pre_edict_clarification_directive
+0.89s call     tests/test_pihong_dossier_1490.py::test_1589_mixed_desk_keyless_choice_rejected_batch_zero_writes
+0.86s call     tests/test_pihong_dossier_1490.py::test_1621_http_follow_draft_uses_catalog_army_id
+0.70s call     tests/test_pihong_dossier_1490.py::test_657_http_default_hold_keyed_empty_action_and_betray
 =========================== short test summary info ============================
 FAILED tests/test_advance_paths_atomic.py::test_submit_event_decision_binds_from_candidate_snapshot_without_event_id
-1 failed, 317 passed, 2 skipped, 1 warning in 32.54s
+1 failed, 318 passed, 2 skipped, 1 warning in 28.35s

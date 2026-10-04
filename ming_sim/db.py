@@ -33,8 +33,8 @@ from ming_sim.content import GameContent
 from ming_sim.decree_vocabulary import (
     DOSSIER_ACTION_TYPES, DIRECTIVE_ACTION_TYPES, dossier_action_policy,
 )
-from ming_sim.matching import match_army_id_from_text, match_region_id_from_text
-from ming_sim.exceptions import LLMContractError, OfficeAppointmentRejection
+from ming_sim.matching import match_region_id_from_text
+from ming_sim.exceptions import OfficeAppointmentRejection
 from ming_sim.intelligence import OFFICE_SLOTS
 from ming_sim.models import (
     FRONT_HALF_DONE_PHASES, Character, Event, GameState, is_vassal_prince,

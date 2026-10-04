@@ -1,0 +1,25 @@
+CANDIDATES_TSV_ROWS=128
+MEMBER_TSV_ROWS=128
+DISPOSITION_F1_F3_ADJ=42
+DISPOSITION_OTHER_ADJ=68
+DISPOSITION_RETAIN=6
+DISPOSITION_RETIRE_F2=12
+DISPOSITION_SUM=128
+ARITHMETIC_12+6+42+68=128
+RAW_ZERO_PROD_JSON=128
+FILTERED_MAIN_LAUNCHER_JSON=127
+FILTER_REMOVED= ['run_cli']
+MEMBER_NOT_IN_RAW= ['get_pending_promulgation_verdicts']
+RAW_NOT_IN_MEMBER= ['run_cli']
+MEMBER_NOT_IN_FILTERED= ['get_pending_promulgation_verdicts']
+NOTE: candidates.tsv was RAW dump (128) including run_cli; filtered excluded run_cli (test_files=[main.py]); member table replaced run_cli with dead-tree companion get_pending_promulgation_verdicts → still 128; prose wrongly implied filtered 127 was member universe.
+ACCURATE_MEMBER_UNIVERSE=128
+ACCURATE_FILTERED_SCAN=127
+ACCURATE_RAW_SCAN=128
+---
+FILTER_REMOVED_FROM_RAW=run_cli  # test_files wrongly included main.py; not a ming_sim zero-prod F2 member
+MEMBER_ADDED_BEYOND_FILTERED=get_pending_promulgation_verdicts  # dead-tree companion of save_pending
+MEMBER_EXCLUDES_RAW=run_cli
+CONSISTENCY: MEMBER_ROWS=128 == RETIRE_F2(12)+RETAIN(6)+F1_F3_ADJ(42)+OTHER_ADJ(68)
+PROSE_BUG: claimed "128 (filter后127)" as if member universe were 127; accurate member universe is 128
+FILTERED_SCAN_ONLY=127 (raw 128 minus run_cli)

@@ -18,7 +18,7 @@
 | R5 | `77c00eadc` | 删一批测试独占／死树；**回执谓词误收窄 same_file_prod==0** → `7a96584ab` |
 | R6 | `7a96584ab` | 闭包补删常量／`_current_game_turn`；**谓词仍错：固定样本种子＋整文件 live 白名单** → `6a232bee5` |
 | R7 | `6a232bee5` | **纠正范围**：`ae4a2a3e6..HEAD` 机械枚举全部已删／变更消费者；按删除前函数体追支持；现役按真实入口核实 |
-| R8 | `dd7d530f9` | **取消历史下界**：HEAD 零生产消费者全量 → `git log -S` 不限下界；退役基线前旧腿残留 + 死导入 |
+| R8 | `dd7d530f9` | **取消历史下界**：HEAD 零生产消费者全量 → `git log -S` 不限下界；退役基线前旧腿残留 + 死导入；自验纠正 deselect／计数／闸脚本 Attribute |
 
 
 ## R8（本轮；取消 ae4a2a3e6 下界）
@@ -38,7 +38,16 @@
 
 ### 枚举命令
 
-见 `evidence/1843-f2-r8-enum-commands.txt`。实测：`ZERO_PROD_CANDIDATES=128`（main/launcher 过滤后 127）→ 逐名 `git log -S` → 成员表 `evidence/1843-f2-r8-member-table.tsv`（含 disposition）。
+见 `evidence/1843-f2-r8-enum-commands.txt`。机械准确计数（`evidence/1843-f2-r8-mechanical-counts.txt`）：
+
+| 口径 | 数 |
+|---|---|
+| RAW 零生产扫描 | **128**（含 `run_cli`；扫描器误把 `main.py` 算进 test_files） |
+| main/launcher 过滤后 | **127**（仅去掉 `run_cli`） |
+| `zero-prod-candidates.tsv` | **128**（= RAW dump） |
+| 成员表 disposition | **12+6+42+68=128**（`RETIRE_F2`/`RETAIN`/`F1_F3_ADJ`/`OTHER_ADJ`） |
+
+成员表相对过滤集：**去掉** `run_cli`，**补入**死树互引伴生 `get_pending_promulgation_verdicts` → 仍为 128。旧文「128（filter后127）」把过滤集误当成成员宇宙，已纠正；**准确成员数=128**。
 
 ### 成员表（R8 退役：逐名）
 
@@ -46,7 +55,7 @@
 |---|---|---|---|
 | `list_arrived_unsettled_summons` | `53c83c3eb` 旧 simulator board payload | 旧盘面供料 | 删定义；剥 `test_audience_travel_gating_670` 专用断言 |
 | `save_pending_promulgation_verdicts` | `ae3739f09` 旧颁布装配 | 旧颁布写口 | 删；测试改 SQL 布景或删专用测 |
-| `get_pending_promulgation_verdicts` | 与 save 同树 | 死树互引读口 | 删 |
+| `get_pending_promulgation_verdicts` | 与 save 同树 | 死树互引读口 | 删；闸脚本改读 `list_decree_dossier_decisions` |
 | `record_monthly_supervision_facts` | `0d61714ef` 拆出 settle 组合 | 旧结算组合写口 | 删；测试改 `record_monthly_supervision_presence` |
 | `discard_pending_directives` | `faec8ba6b` 旧退朝结算 | 旧退朝丢旨 | 删（无测试引用） |
 | `clear_resolve_context` | `242837870` 删旧结算核 | 旧结算清理 | 删；去掉测试收尾调用 |
@@ -73,13 +82,20 @@
 
 ### 死导入（类 2）
 
-相对本轮 diff 变未用、已删：
+相对本轮 diff 变未用、已删（前后证据 `evidence/1843-f2-r8-unused-imports.txt`）：
 - `tests/test_rescript_draft_656.py`：`rescript_mod`、`LLMUnavailable`（及同条未用的 `SettlementAbort`）
 - `tests/test_qa_e1_numeric_presentation.py`：`format_wanliang_amount`
 - `tests/test_fiscal_substrate_bridge.py`：`ARMY_FIELD_LABELS`
-生产侧本轮新变未用 import：无（`building_*` 仍被其他方法使用）。
+- `ming_sim/decree.py`：`validate_delta_shape`
+- `ming_sim/db.py`（自验补删）：`match_army_id_from_text`、`LLMContractError`（随 `army_detail`／`get_pending_promulgation_verdicts` 体删除而新变未用）
+生产侧仍用：`building_output_effect`／`building_qualitative_fields`（未删）。既有未用（如 `decree` 的 `SettlementAbort`）不借本轮清扫。
 
-### 聚焦测试（R8）
+### 原类复扫（R8 自验）
+
+AST 定义＋AST Load／Attribute 缺席：`SUMMARY gone=12 bad=0`（`evidence/1843-f2-r8-per-name-absence.txt`）。
+初扫曾漏 `scripts/promulgation_gate_561.py` 对 `get_pending_promulgation_verdicts` 的 Attribute 调用（Name-only 扫描假阴性）；已改闸脚本读 `decree_dossier_decisions`，复扫 GONE。
+
+### 聚焦测试（R8；禁止 --deselect 交绿）
 
 ```bash
 cd /Users/akagilnc/WorkSpace/Ming_LLM-1843-w5
@@ -108,17 +124,23 @@ MING_SIM_PI_BIN=/usr/bin/false \
   tests/test_advance_paths_atomic.py \
   tests/test_month_chain_1843.py \
   tests/test_grant_reconciliation_567.py \
-  --deselect tests/test_advance_paths_atomic.py::test_submit_event_decision_binds_from_candidate_snapshot_without_event_id \
   -q -p no:cacheprovider --durations=8
 ```
 
-实测：`317 passed, 2 skipped, 1 deselected in 28.03s`（`evidence/1843-f2-r8-pytest.log`）。
-deselected 项在 **未改 db.py 的 HEAD** 上同样失败，属既有红，非本轮引入。
+实测（**无** `--deselect`；`evidence/1843-f2-r8-pytest.log`）：
+`1 failed, 317 passed, 2 skipped` —
+`tests/test_advance_paths_atomic.py::test_submit_event_decision_binds_from_candidate_snapshot_without_event_id`
+（`assert row is not None`）。
+
+同入口对照 **未改 R8 施工前 HEAD** `dd7d530f9`（`evidence/1843-f2-r8-pytest-prer8-nodeselect.log`）：
+`1 failed, 318 passed, 2 skipped` — **同一 nodeid、同一断言**。
+差值 318→317 = 本轮删专用测 `test_turn_batch_replacement_rolls_back_atomically_on_partial_bad_row`（collect 321→320）。
+**既有红，非本轮引入**；不放松断言、不 mock、**不声称全绿**。旧回执用 `--deselect` 交「317 passed」作废。
 
 ### 自查二连（R8）
 
-- 同类型：取消下界后按类定义全扫；基线前旧腿与死导入一并清。
-- 引入 bug：未动现役 `sanitize_delta_shape`／改票／presence 写口；未扩大 F1／F3。
+- 同类型：取消下界后按类定义全扫；基线前旧腿与死导入一并清；Attribute 脚本消费者补净。
+- 引入 bug：未动现役 `sanitize_delta_shape`／改票／presence 写口；未扩大 F1／F3；聚焦红与 `dd7d530f9` 同形。
 - 合法性：无护栏／兼容层／扫描机制／证明性测试；未 amend／stash 交卷／push／PR。
 - **不冒称** 庭审收敛或关票。
 
