@@ -37,6 +37,12 @@
 
 最低测试成本：单测 `test_commission_malformed_escort_is_rejected_not_dropped` ≈ **0.7–0.9s**（聚焦文件 4 passed ≈ 0.67s）。
 
+## 席位复检
+
+枚举命令：`rg -n '_attach_commission_staging_fields|merge_participant_roster_entries|participant_roster|except.*ValueError' ming_sim/declaration_dispatch.py`，确认唯一 staging 调用在 commissions 循环中，顶层/grant 名单共用此拒收接缝。
+
+移除新增测试对拒收措辞的子串依赖，仅断言结构化 `invalid_shape`、非空原因与同批合法项落账。七个 BIN 变量显式设为 `/usr/bin/false` 后执行 `python3 -m pytest tests/test_escort_route_1900.py -q`：`4 passed in 0.67s`。`git diff --check` 无输出。
+
 ## 修复
 
 `declaration_dispatch` commissions 循环：`_attach_commission_staging_fields` 包既有 `(TypeError, ValueError) → _reject(..., "invalid_shape"); continue`。不捕未知异常、不整份吞、不新规则。

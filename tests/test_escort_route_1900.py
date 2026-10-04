@@ -134,7 +134,7 @@ def test_commission_malformed_escort_is_rejected_not_dropped(game):
         result = _declare(db, state, {"commissions": [item]})
         assert result.commissions.applied == [], item
         assert [r.category for r in result.commissions.rejected] == ["invalid_shape"], item
-        assert any("机械档非法" in (r.reason or "") for r in result.commissions.rejected), item
+        assert all(r.reason for r in result.commissions.rejected), item
 
     batch = _declare(db, state, {"commissions": [
         {"text": "拨银三十万两往陕西赈灾（非法名单）。",
