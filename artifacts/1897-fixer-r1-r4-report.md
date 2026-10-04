@@ -6,7 +6,8 @@
 - 代码提交：
   - `b99c0ef3dc30fa9de81ad7b47add9773fcabb90d` — 初清 R1–R4
   - `496d5a959aebdc6ce2743b7d209162fe18b6492e` — 自检：删 helper-only 罪情测、改真实 `create_secret_order` 负向契约；删孤儿 `parse_covert_exec_selections`
-- 本报告提交：见 `git rev-parse HEAD`（本文件入仓后）
+  - `7ed1d6886e45fc6387bf141d30a56aeed225d278` — 去 covert_progress EOF 尾空行（`git diff --check` 清零）
+- 报告正文提交：`a29897b1b994bc65fcc657785fd1110c396f5d78`；工作树 HEAD 以 `git rev-parse HEAD` 为准
 - 派单：`.../01a1089b-50c9-7dac-ab41-8ba86b05e2c6@fixer/fix-packet.md`
 - 冻结判词：`attachments/01-1897-judge-64b899a0e.json` 末 payload（`continue`）；先前 `converged` 卷仅供参考，不得沿用为当前放行
 - 状态：已提交于本工作树分支；**未 push、未开 PR、未 merge**
