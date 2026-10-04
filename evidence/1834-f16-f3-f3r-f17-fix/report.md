@@ -3,6 +3,7 @@
 **工作树**：`/Users/akagilnc/WorkSpace/Ming_LLM-1834-w5`  
 **分支**：`ak-roles/1834-f16-f3-f3r-f17-ee3b5da31`  
 **基线**：`ee3b5da312c5832720d89aee707fe4c7669c5eb0`  
+**本轮 commit**：`e998bc2d4ed283b529e1c95a8e5390f9724653cb`  
 **判词真源**：`attachments/02-1834-judge-ee3b5da31.json` 末份 payload（四类未结）
 
 **共同测试前缀（七变量，实写）**：
