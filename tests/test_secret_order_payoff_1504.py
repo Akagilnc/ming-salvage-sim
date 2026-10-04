@@ -30,12 +30,6 @@ from ming_sim.covert_progress import (
     apply_monthly_covert_actual_progress,
     investigation_lane_actual_units,
     settle_due_secret_orders,
-    target_progress_units,
-    decide_secret_order_settlement,
-    seed_guilt_counts_as_debt,
-    progress_units_for_state,
-    monthly_actual_units,
-    read_substantiated_legal_reason_code
 )
 from ming_sim.applier import Provenance
 from ming_sim.month_chain import build_secret_orders_supply_feed
@@ -230,12 +224,15 @@ def _originate_catches(db, state, content, dossier_id, names):
 
 
 def test_seed_guilt_structured_clean_vs_debt():
-    # 现约：只收结构化 severity∈{轻,中,重}；裸散文／解析失败不造罪（W4/#1896）。
+    # 现约：只收结构化 severity∈{轻,中,重}；裸散文／解析失败／说明措辞不造罪。
     assert not seed_guilt_counts_as_debt("")
     assert not seed_guilt_counts_as_debt(None)
     assert not seed_guilt_counts_as_debt({"crime": "无", "severity": "无"})
+    assert not seed_guilt_counts_as_debt({"crime": "查无实据", "severity": "无"})
     assert not seed_guilt_counts_as_debt('{"crime": "无", "severity": "无"}')
     assert not seed_guilt_counts_as_debt("血债")
+    assert not seed_guilt_counts_as_debt("{not-json")
+    assert not seed_guilt_counts_as_debt(["not", "object"])
     assert seed_guilt_counts_as_debt({"crime": "交结近侍", "severity": "中"})
 
 
@@ -2739,39 +2736,9 @@ def test_topic_investigation_backlash_fails_without_world_package(game):
     assert close["status"] == "failed"
     assert close["actual_units"] == 0.0
 
-def test_actual_units_share_originated_quantity():
-    assert monthly_actual_units(fidelity="忠实", originated_quantity=5000) == 5000.0
-    assert monthly_actual_units(fidelity="打折", originated_quantity=4) == 2.0
-    assert monthly_actual_units(fidelity="忠实", originated_quantity=0) == 0.0
-    assert monthly_actual_units(fidelity="反噬", originated_quantity=3) == 0.0
-
-def test_decide_settlement_delivery_gap_bidirectional():
-    done = decide_secret_order_settlement({
-        "actual_units": 3.0, "target_units": 3.0, "criterion_text": "密查甲",
-    })
-    assert done["status"] == "done" and done["outcome"] == "fulfilled" and done["delivered"]
-
-    failed = decide_secret_order_settlement({
-        "actual_units": 0.5, "target_units": 3.0, "criterion_text": "密查甲",
-        "has_reports": True,
-    })
-    assert failed["status"] == "failed" and not failed["delivered"]
-    # 表报不改变 delivered 判定
-    bare = decide_secret_order_settlement({
-        "actual_units": 0.5, "target_units": 3.0, "has_reports": False,
-    })
-    assert bare["status"] == "failed"
-
-def test_seed_guilt_structured_clean_vs_debt():
-    assert not seed_guilt_counts_as_debt("")
-    assert not seed_guilt_counts_as_debt(None)
-    assert not seed_guilt_counts_as_debt({"crime": "无", "severity": "无"})
-    assert not seed_guilt_counts_as_debt('{"crime": "无", "severity": "无"}')
-    assert seed_guilt_counts_as_debt("血债")
-    assert seed_guilt_counts_as_debt({"crime": "交结近侍", "severity": "中"})
 
 def test_settle_due_close_follows_surviving_memorial_and_actual(game):
-    """记进展与同月密奏是同一条奏报。结案文取留下的那条，实况为零则不成。"""
+    """记进展与同月密奏是同一条奏报。结案取留下的结构化奏报，实况为零则不成。"""
     db, state, _ = game
     name = _minister(db)
     _set_axes(db, name, loyalty=20, identity=80)
@@ -2799,40 +2766,3 @@ def test_settle_due_close_follows_surviving_memorial_and_actual(game):
     assert closed["status"] == "failed"
     surviving = [item for item in db.list_dossier_progress(did) if not item["is_terminal"]]
     assert len(surviving) == 1
-
-
-# ── 月度实进度 + 到期对账 ─────────────────────────────────────────────
-
-def test_target_units_min_one_when_due():
-    assert target_progress_units(deadline_span=3, due_turn=10) == 3.0
-    assert target_progress_units(deadline_span=0, due_turn=5) == 1.0
-    assert target_progress_units(deadline_span=6, due_turn=0) == 0.0
-
-def test_task_specific_contract_from_explicit_fields_not_tags():
-    audit = build_covert_task_contract(
-        deadline_span=3, due_turn=10,
-        kind="补发饷银", axes=["既得利益"], direction=1,
-        delivery_unit="万两", delivery_target_units=3, effect_sign=-1,
-        purpose="其它", category="密令差务", account="内库",
-    )
-    catch = build_covert_task_contract(
-        deadline_span=3, due_turn=10,
-        kind="缉获人犯", axes=["实务事功"], direction=1,
-        delivery_unit="人犯", delivery_target_units=3, effect_sign=1, person_action="处置",
-    )
-    assert audit["kind"] == "补发饷银" and audit["axes"] == ["既得利益"]
-    assert audit["delivery"]["unit"] == "万两"
-    assert audit["delivery"]["target_units"] == 3.0
-    assert catch["kind"] == "缉获人犯" and catch["delivery"]["unit"] == "人犯"
-    assert catch["delivery"]["target_units"] == 3.0
-    with pytest.raises(CovertContractError):
-        build_covert_task_contract(
-            deadline_span=3, due_turn=10, tags=["辽饷", "兵部", "密查", "稽核"],
-        )
-
-def test_zero_target_is_not_delivered():
-    verdict = decide_secret_order_settlement({
-        "actual_units": 0.0, "target_units": 0.0,
-    })
-    assert verdict["status"] == "failed"
-    assert not verdict["delivered"]

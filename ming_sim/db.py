@@ -870,75 +870,6 @@ def clamp_grant_arrival_amount(
     return max(lo, min(hi, proposed))
 
 
-_SECRET_ORDER_BODY_COLUMNS = ("result", "sim_note")
-
-
-def _secret_order_kept_body(text: object) -> str:
-    """空白正文记空串；已有字句原样保留，含内部空行。"""
-    raw = str(text or "")
-    return raw if raw.strip() else ""
-
-
-def _secret_order_record_body(record: Mapping[str, object]) -> str:
-    """Stored prose must already be a string. A missing or non-string body is not rewritten as empty text."""
-    body = record.get("body")
-    if not isinstance(body, str):
-        raise TypeError("密令正文记录缺少正文")
-    return body
-
-
-def _secret_order_body_log(row: sqlite3.Row) -> Dict[str, List[Dict[str, object]]]:
-    """Read structured body records.
-
-    ``json.loads`` failures and a non-dict top level propagate. A column that
-    is not a list, or a record whose body is not a string, raises ``TypeError``.
-    A missing column means no records. Stored entries are not filtered and a
-    missing body is not replaced with an empty string.
-    """
-    parsed = json.loads(row["text_log_json"])
-    log: Dict[str, List[Dict[str, object]]] = {}
-    for column in _SECRET_ORDER_BODY_COLUMNS:
-        entries = parsed.get(column, [])
-        if not isinstance(entries, list):
-            raise TypeError(f"密令正文记录 {column} 不是列表")
-        for item in entries:
-            if not isinstance(item, dict):
-                raise TypeError("密令正文记录条目不是对象")
-            _secret_order_record_body(item)
-        log[column] = entries
-    return log
-
-
-def _secret_order_period_recorded(
-    records: Sequence[Mapping[str, object]], year: int, period: int,
-) -> bool:
-    return any(
-        int(record.get("year") or 0) == int(year)
-        and int(record.get("period") or 0) == int(period)
-        for record in records
-    )
-
-
-def _project_secret_order_bodies(records: Sequence[Mapping[str, object]]) -> str:
-    """Project records by year, month, then write order. Body text is copied whole."""
-    ordered = sorted(
-        enumerate(records),
-        key=lambda pair: (
-            int(pair[1].get("year") or 0),
-            int(pair[1].get("period") or 0),
-            pair[0],
-        ),
-    )
-    parts: List[str] = []
-    for _, record in ordered:
-        marker = str(record.get("marker") or "")
-        parts.append(
-            f"〔{period_label(int(record.get('year') or 0), int(record.get('period') or 0))}〕"
-            f"{marker}{_secret_order_record_body(record)}"
-        )
-    return "\n".join(parts)
-
-
 class GameDB:
     def __init__(self, path: str, content: Optional[GameContent] = None, llm_config: Any = None):
         self.path = path
@@ -1553,7 +1484,6 @@ class GameDB:
                 status TEXT NOT NULL DEFAULT 'active',
                 result TEXT NOT NULL DEFAULT '',
                 sim_note TEXT NOT NULL DEFAULT '',
-                text_log_json TEXT NOT NULL DEFAULT '{}',
                 excluded_names TEXT NOT NULL DEFAULT '[]',
                 dossier_progress_json TEXT NOT NULL DEFAULT '[]',
                 turn_closed INTEGER,
@@ -22054,7 +21984,6 @@ class GameDB:
         ).fetchone()
         if row is None or row["status"] != "active":
             return False
-        self._read_secret_order_body_before_write(int(order_id))
         persisted_title = title
         tags_json = json.dumps(tags, ensure_ascii=False) if tags is not None else (row["tags"] or "[]")
         deadline = max(0, min(int(deadline_months or 0), 36))
@@ -22400,62 +22329,6 @@ class GameDB:
         elif dossier["status"] != "executing":
             raise ValueError("在办密令的案卷不处于可执行状态")
         self._commit_dossier_write(commit)
-
-    def _read_secret_order_body_before_write(self, order_id: int) -> None:
-        """写正文前先读账。读失败在调用方事务内、本写事务外抛出。"""
-        row = self._load_secret_order_body_row(int(order_id), active_only=True)
-        if row is not None:
-            _secret_order_body_log(row)
-
-
-    def _has_secret_order_period_line(self, order_id: int, column: str, year: int, period: int) -> bool:
-        """本年月该列是否已有进展记录（用于一回合一步闸门）。"""
-        assert column in _SECRET_ORDER_BODY_COLUMNS
-        row = self._load_secret_order_body_row(int(order_id), active_only=False)
-        if row is None:
-            return False
-        return _secret_order_period_recorded(
-            _secret_order_body_log(row)[column], year, period,
-        )
-
-
-    def _load_secret_order_body_row(self, order_id: int, *, active_only: bool) -> Optional[sqlite3.Row]:
-        sql = "SELECT * FROM secret_orders WHERE id = ?"
-        if active_only:
-            sql += " AND status = 'active'"
-        return self.conn.execute(sql, (int(order_id),)).fetchone()
-
-
-    def _append_secret_order_line(
-        self, order_id: int, column: str, note: str, year: int, period: int,
-        reject_if_same_period: bool = False,
-        commit: bool = True,
-    ) -> bool:
-        """把一条进展/副作用按记录追加进密令正文。
-        reject_if_same_period=True 时，本年月已有记录则拒写（返回 False，用于一回合一步）；
-        否则同年月再写替换当月记录。不同年月一律新增。返回是否实际写入。"""
-        assert column in _SECRET_ORDER_BODY_COLUMNS
-        row = self._load_secret_order_body_row(int(order_id), active_only=True)
-        if row is None:
-            return False  # 已结案或不存在，不追加
-        records = _secret_order_body_log(row)[column]
-        if reject_if_same_period and _secret_order_period_recorded(records, year, period):
-            return False  # 本回合已推过一步，拒
-        records = [
-            record for record in records
-            if int(record.get("year") or 0) != int(year)
-            or int(record.get("period") or 0) != int(period)
-        ]
-        records.append({
-            "year": int(year),
-            "period": int(period),
-            "body": _secret_order_kept_body(note),
-        })
-        self._write_secret_order_body(int(order_id), column, records)
-        if commit:
-            self.conn.commit()
-        return True
-
 
     def rush_secret_order(
         self,

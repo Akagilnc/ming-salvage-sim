@@ -149,41 +149,26 @@ def progress_units_for_state(state: object) -> float:
 _DEBT_SEVERITIES = frozenset({"轻", "中", "重"})
 
 
-
-def target_progress_units(*, deadline_span: int, due_turn: int, per_month: float = 1.0) -> float:
-    if int(due_turn or 0) <= 0:
-        return 0.0
-    span = int(deadline_span or 0)
-    months = float(max(span, 1))
-    try:
-        rate = float(per_month)
-    except (TypeError, ValueError):
-        rate = 1.0
-    if rate <= 0.0:
-        rate = 1.0
-    return months * rate
-
-
-
 def seed_guilt_counts_as_debt(seed_guilt: object) -> bool:
-    if seed_guilt is None:
-        return False
+    """真相底只收结构化罪情。severity ∈ {轻, 中, 重} 才入罪谱。
+
+    crime 是说明散文，不承重。解析失败、非对象、severity 为空或「无」，都不造罪。
+    """
     if isinstance(seed_guilt, Mapping):
         guilt: object = seed_guilt
     else:
-        text = str(seed_guilt).strip()
+        text = str(seed_guilt or "").strip()
         if not text:
             return False
         try:
             parsed = json.loads(text)
         except (TypeError, ValueError):
-            return True
+            return False
         if not isinstance(parsed, Mapping):
-            return True
+            return False
         guilt = parsed
-    crime = str(guilt.get("crime") or "无").strip() or "无"
-    severity = str(guilt.get("severity") or "无").strip() or "无"
-    return not (crime == "无" and severity == "无")
+    severity = str(guilt.get("severity") or "").strip()
+    return severity in _DEBT_SEVERITIES
 
 
 
@@ -1389,35 +1374,6 @@ def _consume_monthly_clues(
 
 
 
-def read_substantiated_legal_reason_code(
-    db: Any, target: str, fact_key: str,
-) -> str:
-    """D4-4 consumption: legal-set reason_code for a substantiated fact lane."""
-    name = str(target or "").strip()
-    key = str(fact_key or "").strip()
-    if not name or not key:
-        return ""
-    rows = db.conn.execute("SELECT id, payload_json FROM decree_dossiers").fetchall()
-    for row in rows:
-        try:
-            payload = json.loads(str(row["payload_json"] or "{}"))
-        except (TypeError, ValueError):
-            continue
-        if not isinstance(payload, Mapping):
-            continue
-        contract = payload.get(CONTRACT_KEY) if isinstance(payload.get(CONTRACT_KEY), Mapping) else {}
-        if _investigation_target_of(contract) != name:
-            continue
-        for lane in _lanes_from_payload(payload):
-            if str(lane["fact_key"]) != key:
-                continue
-            code = str(lane.get("reason_code") or "").strip()
-            if float(lane.get("progress") or 0.0) >= 1.0 and code in PERSON_LEGAL_REASON_CODES:
-                return code
-    return ""
-
-
-
 def apply_investigation_monthly_effort(
     db: Any,
     dossier_id: int,
@@ -2170,70 +2126,6 @@ def list_due_secret_orders_for_settlement(db: Any, state: Any) -> List[Dict[str,
             due.append(order)
     due.sort(key=lambda o: int(o["id"]))
     return due
-
-
-
-def _substantiate_lane(lane: Dict[str, object]) -> None:
-    code = DEFAULT_SUBSTANTIATION_REASON if DEFAULT_SUBSTANTIATION_REASON in PERSON_LEGAL_REASON_CODES else ""
-    lane["progress"] = 1.0
-    lane["reason_code"] = code
-    lane["used"] = bool(code)
-
-
-
-
-def advance_investigation_lanes(
-    db: Any,
-    dossier_id: int,
-    target: str,
-    fidelity: object,
-    *,
-    commit: bool = False,
-) -> tuple[float, str]:
-    increment = progress_units_for_state(fidelity)
-    lanes = seed_investigation_fact_lanes(db, dossier_id, target, commit=False)
-    if increment <= 0.0:
-        return 0.0, ""
-    blocked = globally_used_fact_keys(db, except_dossier_id=int(dossier_id))
-    bound = ""
-    units = 0.0
-    for lane in lanes:
-        key = str(lane["fact_key"])
-        if lane.get("used") or key in blocked:
-            continue
-        if key not in live_investigation_fact_keys(db, target):
-            continue
-        progress = float(lane.get("progress") or 0.0) + increment
-        if progress >= 1.0:
-            _substantiate_lane(lane)
-        else:
-            lane["progress"] = progress
-        bound = key
-        units = increment
-        break
-    _write_fact_lanes(db, dossier_id, lanes, commit=commit)
-    return units, bound
-
-
-
-
-def mark_investigation_fact_used(
-    db: Any, dossier_id: int, fact_key: str, *, commit: bool = False,
-) -> None:
-    key = str(fact_key)
-    lanes = _lanes_from_payload(_dossier_payload_map(db, dossier_id))
-    found = False
-    for lane in lanes:
-        if str(lane["fact_key"]) == key:
-            _substantiate_lane(lane)
-            found = True
-            break
-    if not found:
-        lane = {"fact_key": key}
-        _substantiate_lane(lane)
-        lanes.append(lane)
-    _write_fact_lanes(db, dossier_id, lanes, commit=commit)
-
 
 
 def settle_due_secret_orders(

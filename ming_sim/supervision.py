@@ -239,24 +239,6 @@ def report_origin_base(origin: object) -> str:
     return base or GameDB.DOSSIER_REPORT_ORIGIN_MONTHLY
 
 
-def latest_monthly_memorial(reports: object) -> str:
-    """同月奏报轨上最后一条非终值正文。判空用副本，返回值保持原文。"""
-    from ming_sim.db import GameDB
-
-    monthly = GameDB.DOSSIER_REPORT_ORIGIN_MONTHLY
-    for item in reversed(list(reports or [])):
-        if not isinstance(item, Mapping):
-            continue
-        if item.get("is_terminal"):
-            continue
-        if report_origin_base(item.get("origin")) != monthly:
-            continue
-        text = str(item.get("memorial_text") or "")
-        if text.strip():
-            return text
-    return ""
-
-
 def origin_has_mark(origin: object, mark: str) -> bool:
     _base, marks = parse_report_origin(origin)
     return str(mark) in marks

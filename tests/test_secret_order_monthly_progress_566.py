@@ -366,41 +366,27 @@ def test_missing_bad_unknown_and_duplicate_reports_are_rejected(game):
             }])
     assert db.list_dossier_progress(dossier_id) == []
 
-def test_emperor_private_payload_preserves_monthly_report(game, monkeypatch):
-
+def test_emperor_private_payload_preserves_monthly_report(game):
     db, state, content = game
     order_id, dossier_id = _order(db, state)
-    marker = "首批饷车已验山海关关防566"
     _record_monthly_report(db, state, {
         "dossier_id": dossier_id, "progress_band": "在途核验",
-        "memorial_text": marker,
+        "memorial_text": "首批饷车已验山海关关防566",
     })
 
-    # Emperor-facing secret-order product payload reads the canonical rail.
+    # Emperor-facing secret-order product payload exposes the canonical rail.
     emperor_order = next(item for item in db.list_secret_orders() if item["id"] == order_id)
-    assert emperor_order["dossier_progress"][-1]["memorial_text"] == marker
+    last = emperor_order["dossier_progress"][-1]
+    assert int(last["turn"]) == int(state.turn)
+    assert last["progress_band"] == "在途核验"
+    assert last.get("is_terminal") is False
 
     from ming_sim.materials import prepare_character_materials, release_material_tree
-    read_fields = set()
-    real_orders = db.get_active_secret_orders_for_minister
-
-    class ObservedOrder(dict):
-        def __getitem__(self, key):
-            read_fields.add(key)
-            return super().__getitem__(key)
-
-        def get(self, key, default=None):
-            read_fields.add(key)
-            return super().get(key, default)
-
-    def observe_orders(*args, **kwargs):
-        return [ObservedOrder(row) for row in real_orders(*args, **kwargs)]
-
-    monkeypatch.setattr(db, "get_active_secret_orders_for_minister", observe_orders)
-    prepared = prepare_character_materials(db, state, content.characters[emperor_order["minister_name"]])
+    prepared = prepare_character_materials(
+        db, state, content.characters[emperor_order["minister_name"]],
+    )
     try:
-        # Real orders carry the monthly rail, but the character writer must not consume it.
-        assert {"title", "content"} <= read_fields
-        assert "dossier_progress" not in read_fields
+        from ming_sim.materials import list_materials
+        assert "密令/进行中.txt" in list_materials(prepared.root)
     finally:
         release_material_tree(prepared.root)
