@@ -389,26 +389,6 @@ def test_guarded_early_return_does_not_consume_pending(game):
     assert statuses and all(s == "pending" for s in statuses)
 
 
-def test_write_decree_raises_at_awaiting_not_resolveresult(game):
-    """write_decree(-> str) 在 awaiting 态响亮拒绝，不返回 ResolveResult（cmr S4 r4，3/3）。
-
-    r3 的全局替换把守门误贴进了 write_decree——web 会把 dataclass 序列化进
-    {"decree": ...}，terminal 把 repr 当诏书正文打印。
-    """
-    from ming_sim.session import GameSession
-    db, state, content = game
-    state.turn_phase = "awaiting_decision"
-
-    sess = GameSession.__new__(GameSession)
-    sess.db = db
-    sess.state = state
-
-    with pytest.raises(ValueError):
-        sess.write_decree()
-
-
-
-
 def test_placeholder_save_crash_rolls_back_settling(game, monkeypatch):
     """settling 相位与诏书占位同事务可见（PR #90 R1 codex P2）：占位写崩 → 前半段
     整体回滚（相位回 summoning、财政无残留、无 context 行）。

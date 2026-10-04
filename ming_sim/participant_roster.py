@@ -111,7 +111,7 @@ def project_execution_liability_parties(
     同构 breach_decree_dossier 双处收集：协办本人零机械只作戏源，
     但其委派人仍次责（ADR 0053：大臣遣学生为协办办砸→全权者背锅）。
     先定档后去重：同一人 primary 胜 secondary；知情永不入。
-    写路与 list_execution_liability_parties 共用本函数，禁止第二份 roster 遍历。
+    写路与读端共用本函数，禁止第二份 roster 遍历。
     """
     if not isinstance(roster, list):
         return []

@@ -44,30 +44,6 @@ def test_typed_secret_exclusions_canonicalize_roster_alias_and_office(game):
 
 
 
-def test_secret_content_assembly_is_emperor_plus_extractor_only():
-    """#1274 K1：拼装输入结构化——仅 emperor_intent + extractor_content；无 reply 形参。"""
-    for reply_key in ("reply", "minister_reply"):
-        with pytest.raises(TypeError):
-            cb.assemble_secret_order_content(
-                emperor_intent="旨", extractor_content="声明", **{reply_key: "臣答"},
-            )
-
-    task = "密查关宁欠饷"
-    extracted = f"{task}，三月内回奏，方法：密访核册"
-    body = cb.assemble_secret_order_content(
-        emperor_intent=task,
-        extractor_content=extracted,
-    )
-    assert body == extracted
-    # 御旨未覆盖时兜底并入御旨，仍不接受第三路 reply
-    partial = "臣已领旨办理。"
-    merged = cb.assemble_secret_order_content(
-        emperor_intent=f"{task}，三月内回奏",
-        extractor_content=partial,
-    )
-    assert task in merged and "三月内回奏" in merged
-    assert partial in merged
-
 
 
 

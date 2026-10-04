@@ -378,12 +378,19 @@ def test_skip_refused_at_front_half_done(game):
     FRONT_HALF_DONE 恢复/亲裁由 session.resolve_turn 真缝承担（settling 恢复 /
     awaiting 幂等返回决策），不再经独立退朝壳拒绝。
     """
+    import inspect
+
+    import ming_sim.decree as decree_mod
     from ming_sim.decree import pre_settle
+
+    assert not hasattr(decree_mod, "advance_without_edict")
+    assert "def advance_without_edict" not in inspect.getsource(decree_mod)
 
     db, state, content = game
     turn = state.turn
     pre_settle(state, db, content=content)
-    # 前半落账不推进月份；财政落账/恢复另由本文件真实收尾案证明。
+    rows_before = _ledger_count(db, turn)
+    # settling 已提交前半：turn 不因「缺壳」而推进；财政行保留
     assert state.turn == turn
     assert _ledger_count(db, turn) == rows_before
 
@@ -402,8 +409,7 @@ def test_draft_mutators_frozen_at_front_half_done(game, monkeypatch):
         lambda: sess.add_directive("新草案"),
         lambda: sess.update_directive(1, "改"),
         lambda: sess.delete_directive(1),
-        # #1341：set_decree 已删；冻结面只覆盖逐道草案变更器 + write_decree
-        lambda: sess.write_decree(),
+        # #1341：set_decree / session.write_decree 已删；冻结面只覆盖逐道草案变更器
     ):
         with pytest.raises(ValueError):
             call()

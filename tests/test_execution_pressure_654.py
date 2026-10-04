@@ -14,6 +14,16 @@ from ming_sim.execution_pressure import (
 )
 
 
+def _dossiers_for_directive(db, directive_id):
+    """存储读面：已删 list_dossiers_for_directive → 同表 ORDER BY region_id, id。"""
+    rows = db.conn.execute(
+        "SELECT id FROM decree_dossiers WHERE directive_id=? "
+        "ORDER BY region_id, id",
+        (int(directive_id),),
+    ).fetchall()
+    return [int(r["id"]) for r in rows]
+
+
 @pytest.fixture
 def env(game):
     db, state, content = game
@@ -366,7 +376,7 @@ def test_validate_all_unknown_roster_name_zero_rows_before_insert(env):
         )
     after = db.conn.execute("SELECT COUNT(*) AS n FROM decree_dossiers").fetchone()["n"]
     assert after == before
-    assert db.list_dossiers_for_directive(did) == []
+    assert _dossiers_for_directive(db, did) == []
 
 
 def test_path2_pending_bad_roster_stays_draft_on_ensure_batch(env):
@@ -391,7 +401,7 @@ def test_path2_pending_bad_roster_stays_draft_on_ensure_batch(env):
         "SELECT status FROM turn_directives WHERE id=?", (did,),
     ).fetchone()
     assert row["status"] == "draft"
-    assert db.list_dossiers_for_directive(did) == []
+    assert _dossiers_for_directive(db, did) == []
 
     rejections = db.ensure_dossiers_for_draft_directives(state)
     assert any(int(r["directive_id"]) == did for r in rejections)
@@ -399,7 +409,7 @@ def test_path2_pending_bad_roster_stays_draft_on_ensure_batch(env):
         "SELECT status FROM turn_directives WHERE id=?", (did,),
     ).fetchone()
     assert row["status"] == "draft"
-    assert db.list_dossiers_for_directive(did) == []
+    assert _dossiers_for_directive(db, did) == []
 
 
 def test_path3_locality_fail_keeps_draft_no_text_in_rejection(env):
@@ -433,10 +443,10 @@ def test_path3_locality_fail_keeps_draft_no_text_in_rejection(env):
         "SELECT status FROM turn_directives WHERE id=?", (other_id,),
     ).fetchone()
     assert bad["status"] == "draft"  # 保持 draft
-    assert db.list_dossiers_for_directive(did) == []
+    assert _dossiers_for_directive(db, did) == []
     # 并列第二旨不受影响
     assert good["status"] == "draft"
-    assert len(db.list_dossiers_for_directive(other_id)) == 1
+    assert len(_dossiers_for_directive(db, other_id)) == 1
 
     rej = db.conn.execute(
         "SELECT item_json, reason, category FROM rejection_reports "

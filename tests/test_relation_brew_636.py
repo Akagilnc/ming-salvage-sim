@@ -262,9 +262,13 @@ def test_brew_persistence_chain_preserves_32700_byte_fixture_byte_identical(game
             {FOUNDINGS_KEY: [], RECENT_KEY: fixture_text}, ensure_ascii=False
         )
 
-    # 经真实酿制持久化链路（run_month_end_relation_brew → apply_relation_brew_result）
-    # 写入→读回：字节原样，全链无截断无删改。
-    report = run_month_end_relation_brew(db, state, fixture_brew)
+    # 经真实酿制持久化链路（MonthEndRelationBrewLeg.prepare/brew/persist
+    # → apply_relation_brew_result）写入→读回：字节原样，全链无截断无删改。
+    # 已删 run_month_end_relation_brew 不恢复；确定性 parallel=False。
+    leg = MonthEndRelationBrewLeg(db, state, fixture_brew, parallel=False)
+    assert leg.prepare()
+    leg.brew()
+    report = leg.persist()
     assert len(report["brewed"]) == 1
 
     stored = db.get_relation_summary(EMPEROR_NODE, "杨嗣昌")["recent_segment"]

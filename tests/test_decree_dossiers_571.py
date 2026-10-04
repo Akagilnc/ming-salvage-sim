@@ -1132,8 +1132,9 @@ def test_cli_edit_replaces_text_and_mechanics_before_promulgation(game, monkeypa
         return (json.dumps(response, ensure_ascii=False), 1)
 
     monkeypatch.setattr(cli_backend, "_run_backend_for_config", prompt_faithful_backend)
-    monkeypatch.setattr(session, "write_decree", lambda: revised_text)
-    answers = iter([f"edit {directive.id}", revised_text, "issue", "yes"])
+    # 现役 CLI 改稿走 update_directive + capture_manual_directive_payload；
+    # 已删 session.write_decree 不恢复、不 monkeypatch。
+    answers = iter([f"edit {directive.id}", revised_text, "issue"])
     monkeypatch.setattr("builtins.input", lambda _prompt="": next(answers))
     before = state.metrics["国库"]
 

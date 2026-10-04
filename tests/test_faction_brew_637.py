@@ -24,7 +24,8 @@ from ming_sim.faction_brew import (
     project_character_factions,
     select_faction_brew_targets,
 )
-from ming_sim.relation_brew import FOUNDINGS_KEY, RECENT_KEY
+from ming_sim.exceptions import LLMUnavailable
+from ming_sim.relation_brew import FOUNDINGS_KEY, MonthEndRelationBrewLeg, RECENT_KEY
 from ming_sim.relations import EMPEROR_NODE
 
 
@@ -288,9 +289,15 @@ def test_faction_brew_prompt_retry_month_does_not_label_old_events_as_current_mo
     # 模拟失败：酿制失败留 pending（不推进水位）
     def failing_brew(payload_json: str) -> str:
         raise LLMUnavailable("酿制裁判接口不可用")
-    report = run_month_end_relation_brew(db, state, failing_brew)
+    leg = MonthEndRelationBrewLeg(db, state, failing_brew, parallel=False)
+    assert leg.prepare()
+    leg.brew()
+    report = leg.persist()
     assert any(row["faction"] == "皇党" for row in db.get_faction_brew_pending())
-    old_summary = db.get_faction_stance_summary("皇党")
+    old_summary = next(
+        (row for row in db.get_faction_stance_summaries() if row["faction"] == "皇党"),
+        None,
+    )
     assert old_summary is None
     old_pending = db.get_faction_brew_pending()
     assert old_pending

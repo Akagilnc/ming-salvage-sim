@@ -53,17 +53,6 @@ def _find_entries(entries, *required_tags):
     return [e for e in entries if need.issubset(set(e["tags"]))]
 
 
-def _real_session(tmp_path, content, name="s"):
-    """真实 GameSession（构造即不连 LLM，不建 _partial fake）。返回 sess，用 sess.db/state。"""
-    from ming_sim.models import LLMConfig
-    from ming_sim.session import GameSession
-    cfg = LLMConfig(api_key="", base_url="http://unused", model="unused")
-    return GameSession(
-        db_path=str(tmp_path / f"{name}.db"), llm_config=cfg,
-        content=content,
-    )
-
-
 def _land_reply(db, state, minister: str, chat_id: int, text: str = "臣遵旨。") -> None:
     mid = db.conn.execute(
         "INSERT INTO chat_messages (minister_name, turn, role, content) "
@@ -221,45 +210,28 @@ def test_standing_roster_skips_dead(game):
 
 
 
-def test_write_decree_leaves_unacted_pending_unchanged(tmp_path, content, monkeypatch):
-    """finding3 / #497：拟诏（write_decree）是 preview——不得把未表态 pending directive
-    默认同意成 draft、不改其 status；无可用 draft 时响亮拒绝（default-agree 只到真实颁诏/过回合）。"""
-    monkeypatch.setattr("ming_sim.session.write_decree_with_agno", lambda *a, **k: "诏曰……")
-    sess = _real_session(tmp_path, content, "wd")
-    try:
-        db, state = sess.db, sess.state
-        minister = _active_minister(db, content)
-        old_office = db.conn.execute(
-            "SELECT office FROM characters WHERE name=?", (minister,),
-        ).fetchone()["office"]
-        pid = db.upsert_pending_directive(
-            state.turn, minister, payload={**_POLICY_FIELDS, "text": "着户部核边饷", "actor": minister})
-        # 无 draft：拟诏响亮拒绝、不为 preview 造持久态
-        with pytest.raises(ValueError):
-            sess.write_decree()
-        # 未表态 pending 原样不动（没被默认同意成 draft）
-        assert db.conn.execute(
-            "SELECT status FROM pending_actions WHERE id=?", (pid,)).fetchone()["status"] == "pending"
-        assert db.list_directives(state, statuses=("draft",)) == []
-    finally:
-        sess.close()
-
-
 def test_cross_night_directive_reassigned_to_second_night(game):
-    """同臣跨两夜拟旨：第一夜未应允 directive 留 pending；第二夜复用更新时归属原子迁到第二夜，
-    第二夜应允 → 只在第二夜收夜提交，不被旧夜漏挂。"""
+    """同臣跨两夜拟旨：第一夜未应允 directive 留 pending；第二夜改草时归属原子迁到第二夜，
+    第二夜应允 → 只在第二夜收夜提交，不被旧夜漏挂。
+
+    现役写口：stage_directive_candidate（新拟）+ update_directive_candidate（改草迁夜）。
+    已删 upsert_pending_directive 不恢复。"""
     db, state, content = game
     minister = _active_minister(db, content)
 
     n1 = an.open_night(db, state, location="乾清宫")
-    d_id = db.upsert_pending_directive(state.turn, minister, payload={**_POLICY_FIELDS, "text": "初稿：缓征辽饷", "actor": minister})
+    d_id = db.stage_directive_candidate(
+        state.turn, minister, payload={**_POLICY_FIELDS, "text": "初稿：缓征辽饷", "actor": minister},
+    )
     # 第一夜不应允 → 留 pending；收夜不提交
     an.close_night(db, state, night_id=n1["id"], content=content)
     assert db.conn.execute("SELECT status FROM pending_actions WHERE id=?", (d_id,)).fetchone()["status"] == "pending"
 
     n2 = an.open_night(db, state, location="文华殿")
-    # 同臣同回合复用更新（last-write-wins）→ 归属须迁到第二夜、清 approval
-    same_id = db.upsert_pending_directive(state.turn, minister, payload={**_POLICY_FIELDS, "text": "定稿：改折色", "actor": minister})
+    # 改草 → 归属须迁到第二夜、清 approval
+    same_id = db.update_directive_candidate(
+        d_id, payload={**_POLICY_FIELDS, "text": "定稿：改折色", "actor": minister},
+    )
     assert same_id == d_id
     row = db.conn.execute("SELECT night_id, night_approved FROM pending_actions WHERE id=?", (d_id,)).fetchone()
     assert int(row["night_id"]) == n2["id"]

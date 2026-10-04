@@ -3,8 +3,10 @@
 两件事：
 1. 种子——已 seed 的明控省 fiscal JSON 内嵌 settle 基座（开账 st + 月参 p），必须能被
    settle_tick 接受（=有效基座）；陕西作为 #266 史实量级 shadow seed 的基线样例。
-2. 桥——`GameDB.settle_province_tick(region_id, actions)` 读 settle.st/p → 跑 settle_tick →
-   写回 new_st。**港口锁**：坏输入/守恒破 raise 时 FAIL tick 绝不落库（毒态不钉存档）。
+2. 桥——现役 `_settle_province_tick_from_fiscal(region_id, fiscal, actions)`（由批量
+   Ming 省桥读 settle.st/p 后调用）跑 settle_tick → 写回 new_st。**港口锁**：坏输入/
+   守恒破 raise 时 FAIL tick 绝不落库（毒态不钉存档）。公开 `settle_province_tick`
+   包装已退役，测试走 private native Tick，不恢复公开包装。
 
 陕西种子 = 低省库 + 正赋5.0563/月 + 辽饷2.1969011325/月 + 逋赋0.45 + 边镇 Due；
 空 action 跑一 tick 应进入欠账螺旋。月末 shadow spine 按 controlled_by==ming 且有 settle
@@ -55,6 +57,18 @@ def _read_settle(db, region_id="shaanxi"):
 def _read_fiscal(db, region_id):
     row = db.conn.execute("SELECT fiscal FROM regions WHERE id = ?", (region_id,)).fetchone()
     return json.loads(str(row["fiscal"] or "{}"))
+
+
+def _settle_province_tick_native(db, region_id, actions=None):
+    """现役 private native Tick：读 regions.fiscal → `_settle_province_tick_from_fiscal`。
+    不恢复已删公开 settle_province_tick 包装。"""
+    row = db.conn.execute(
+        "SELECT fiscal FROM regions WHERE id = ?", (region_id,),
+    ).fetchone()
+    if row is None:
+        raise ValueError(f"region {region_id!r} 不存在，无法 settle_tick")
+    fiscal = json.loads(str(row["fiscal"] or "{}"))
+    return db._settle_province_tick_from_fiscal(region_id, fiscal, actions or [])
 
 
 def _content_settle(region_id):
@@ -1307,8 +1321,12 @@ def test_fixed_flows_substrate_hub_books_split_treasury_income_and_central_losse
     )
 
 
-def test_turn_army_summary_keeps_real_morale_changes_when_log_cap_fills(fresh_db):
-    """A capped report must still carry the army identity for a real change."""
+def test_turn_army_log_cap_keeps_real_morale_changes_when_zero_fillers_precede(fresh_db):
+    """A capped army_logs read window must still carry the army identity for a real change.
+
+    已删 turn_army_summary 散文渲染不恢复；负向落到存储读面：非零 delta 优先于
+    零 delta 填充行，limit 截断后仍能看见真实士气变化所属军队。
+    """
     state = fresh_db.load_state()
     earlier_armies = [row["id"] for row in fresh_db.conn.execute(
         "SELECT id FROM armies WHERE id != 'fujian_navy' ORDER BY id LIMIT 10"
@@ -1331,8 +1349,25 @@ def test_turn_army_summary_keeps_real_morale_changes_when_log_cap_fills(fresh_db
     army_name = fresh_db.conn.execute(
         "SELECT name FROM armies WHERE id='fujian_navy'"
     ).fetchone()["name"]
-    assert army_name in fresh_db.turn_army_summary(state.turn, limit=len(earlier_armies))
-
+    capped = fresh_db.conn.execute(
+        """
+        SELECT a.name AS army_name, al.delta
+        FROM army_logs al
+        JOIN armies a ON a.id = al.army_id
+        WHERE al.turn = ?
+        ORDER BY CASE
+                   WHEN al.delta IS NULL THEN 0
+                   WHEN al.delta != 0 THEN 0
+                   ELSE 1
+                 END, al.id
+        LIMIT ?
+        """,
+        (state.turn, len(earlier_armies)),
+    ).fetchall()
+    assert any(
+        row["army_name"] == army_name and float(row["delta"]) == -8.0
+        for row in capped
+    )
 
 def test_budget_projection_preserves_persisted_fiscal_snapshots(fresh_game):
     from ming_sim.flows import compute_budget_lines
@@ -2077,7 +2112,7 @@ def test_province_pay_shortfall_reduces_pure_province_army_morale(fresh_db):
     )
     fresh_db.conn.commit()
 
-    fresh_db.settle_province_tick("fujian")
+    _settle_province_tick_native(fresh_db, "fujian")
 
     row = fresh_db.conn.execute(
         """
@@ -2186,7 +2221,7 @@ def test_zero_due_province_army_morale_short_circuits(fresh_db):
     )
     fresh_db.conn.commit()
 
-    fresh_db.settle_province_tick("fujian")
+    _settle_province_tick_native(fresh_db, "fujian")
 
     row = fresh_db.conn.execute(
         """
@@ -2244,7 +2279,7 @@ def test_tusi_self_funded_army_skips_pay_morale_channel(fresh_db):
     )
     fresh_db.conn.commit()
 
-    fresh_db.settle_province_tick("shaanxi")
+    _settle_province_tick_native(fresh_db, "shaanxi")
 
     row = fresh_db.conn.execute(
         "SELECT morale, arrears FROM armies WHERE id = 'southwest_tusi'"
