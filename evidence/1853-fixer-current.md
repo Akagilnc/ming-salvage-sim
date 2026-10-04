@@ -165,6 +165,35 @@ cd web
 
 ---
 
+## 主席补充全仓复扫（不以点名符号或三个文件缩限）
+
+机械枚举只是候选生成；是否属于「无消费者」「向实现妥协」「同一任务重复政策」须沿真实读写链及历史差分核定。
+
+```bash
+# 全仓所有重试投影声明、读写与夹具：88处命中，逐条分类。
+git grep -n -I -E 'reply_retries|replyRetries|ReplyRetry' -- ':!evidence/*'
+# 全仓测试所有注入、断言及条件候选（1020处），并完整读取20个变更测试的1681行差分。
+git grep -n -I -E '&& !|mockResolvedValue|mockImplementation|side_effect|pytest.raises|toBeNull' -- '*test*'
+git diff 10e64fbef..HEAD -- '*test*'
+# 全仓进一步枚举成功状态排除/条件，不只找 !replied。
+git grep -n -I -E '&& !|if .*replied|if .*retryDone|if .*translated|if .*success|if .*done' -- '*test*'
+# 全仓预推任务入口、调度及分类引用。
+git grep -n -I -E '_call_exhausted|_submit_snapshot_job|schedule_forecast|forecast_directive' -- ':!evidence/*'
+```
+
+预推异常另以 AST 遍历 `git ls-files '*.py'` 全仓函数：选择函数名含 forecast，或函数体调用 `_forecast`、`_submit_snapshot_job`、`_call_exhausted`，枚举所有 ExceptHandler；没有按文件过滤。候选表：
+
+|成员|复核与保留依据|
+|---|---|
+|`db._discard_deleted_directive_forecast`（17652）|导入失败与作废接缝，不是同一预推任务的耗尽出口|
+|`decree_forecast.forecast_snapshot`（124）|异常释放供料并上抛；不判耗尽，不重复任务政策|
+|`_submit_snapshot_job`（417）/其闭包 `run`（427）|仅一份耗尽分类出口440；450是executor提交失败释放票据并上抛。闭包嵌套枚举不是第二份实现|
+|`schedule_held_decree_forecasts`（547）|601处理扫描任务提交失败；实际逐旨预推复用共同提交口，不再维护另一份耗尽分类|
+
+传输复扫的全部成员归为：DB/CLI现役读取、服务端重试能力、夜卷生产与UI读取、现役夜卷测试夹具；无其它旧响应字段。测试全仓条件候选中 `gameMenu.test.tsx:746` 是GET/POST路由分流；其余 done 条件是流读取终止、任务清理或一次性故障注入，并非 POST 成功后排除既有夜卷读失败。完整差分中其它删除为已判退役的失败面板/载荷专属案、mock 或字段；异常断言改为typed拒收并增加 category，未放松成无异常；夜卷夹具迁移保持原负向注入与断言。恢复的 J6 是本类唯一成立成员。未发现需扩大施工的遗漏。
+
+主席查询 `git diff --check a32fc01b3..HEAD` 无输出；查询 #1873 评论API确认已登记。补充只修证据范围说明，不更改代码、测试或法源。
+
 ## #1873 登记
 
 https://github.com/Akagilnc/ming-salvage-sim/issues/1873#issuecomment-5984191976
