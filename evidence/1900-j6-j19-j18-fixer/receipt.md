@@ -1,38 +1,49 @@
-# #1900 修内司回执：J6 / J19 / J18（证据更正收尾）
+# #1900 修内司回执：J6/J19/J18 最后枚举复核（全宇宙）
 
 - 工作树：`/Users/akagilnc/WorkSpace/Ming_LLM-1900-w5`
 - 分支：`ak-roles/1900-j6-j19-j18-fixer-8785cd10a`
 - 判词真源：`vault/.../1900-judge-8785cd10a-sealed4.json`（末份；判词不变）
-- 禁令：无 stash / amend / rewrite / push / PR；未改 Soul/宪法/席位配置；未真调模型；本轮无扩生产机制、无新增测试
+- 禁令：无 stash / amend / rewrite / push / PR / checkout / reset；未改 Soul/宪法/席位配置；未真调模型；本轮**无改生产/测试代码**（全宇宙裁决后无新成立 FIX）
+- 施工前基点（本席报 SHA 用）：`a9136d3e011cec4b96cae75b2d4158f06021d157`
+- 本提交 SHA：见 `git rev-parse HEAD`（提交后；**不另开 docs SHA 填充 commit**）
 
 ## 0. 禁令史实（不得洗白）
 
-- **第一轮 receipt 已承认**：变异脚本误用 `git checkout` 抹生产修复产物 → 已重施并用 `finally` 写回恢复。收录该违规史；**现状已恢复**；**禁止再发生**。不得改口称「本局全程未 checkout」。
-- 本轮证据更正：**未** `git checkout/reset/stash/amend/push`；变异还原继续精确编辑 + `finally`。
-- **子进程超时/死锁（真实记录，非 infra failure）**：第一轮归档变异红证 `exit=124`（wait 咬住 timeout）；复检曾因同步跑 worker 死锁，后改真实 `Thread.join`。保留原日志口径，不冒称环境故障。
+- 前轮 receipt 已承认：变异误用 `git checkout` 抹产物 → 已重施；**禁止再发生**。
+- 本轮：未 checkout/reset/stash/amend/push；未杀 worker 产物。
 
-## 1. 类别范围与 KEEP 依据
+## 1. 本轮纠正的审计缺口
 
-| 类 | 范围 | KEEP 依据 |
+| 缺口 | 处置 |
+|---|---|
+| `visit_Assert drop pure numeric structured unless mock` | **废除**。该收窄会排除本类内部伪证/初始态候选。 |
+| 4499 候选只裁决 FOCUS1258 | **废 FOCUS 授权边界**。现全宇宙 **15083** 行全部裁决；FOCUS 旧 KEEP 仅复用线索。 |
+| TS 只扫关键词 | 改为全 `expect(`/`assert(` + matcher + spy/mock/fn 入口。 |
+| 平行 raw/焦点双表 | 单一 raw=`j6-ast-candidates.jsonl`；行级=`j6-full-disposition.jsonl`；分组权威=`j6-full-members.md`。 |
+
+## 2. 类别范围与处置结论
+
+| 类 | 范围 | 结论 |
 |---|---|---|
-| **J6** | 机械宇宙=`j6-ast-candidates.jsonl`（py 4006 + ts 493 = **4499**）；焦点裁决表=`j6-full-members.md`（**TOTAL_FOCUS=1258**，含补入原 REVIEW 邻行）。**焦点计数≠全部候选**；非 FOCUS 的 STR_LITERAL/ASSERT 仅留在 jsonl，未冒称已逐条 KEEP | 不成立→KEEP+契约（夹具回传/LLM·IO 边界+结构化外部结果/CLI 装配/完成同步/DOM·fetch harness/P4 负向/UI 固定话语/fiscal oracle）；成立→FIX（归档 `make_thread`；草案/截止伪证已删）。P7 禁模板负向不作合法豁免 |
-| **J19** | `j19-full-members.md`（共享 merge / normalize / 持久化 append 接缝） | 先 normalize 新名单；空→pop 不覆盖；非空→`merge_participant_roster_entries`；静默 id 残留 0 |
-| **J18** | `j18-full-members.md`（存活读取 + 退役文档） | 删软判提案失效说明；死入口复扫 0；ADR/DELTA 退役标注 KEEP_RETIREMENT_DOC |
+| **J6** | FULL enum：全 Assert（numeric/None/bool/索引/空集合）+ unittest assert* + stub/mock/helper/wait/oracle + TS 全断言入口。规模 path=248 / py=13420 / ts=1663 / adjudicated=15083 / groups=2930 | **本轮无新成立 FIX**。禁样/raises(match=)/assert_called 复扫 0。`closed==[]` 四处为入口非阻塞返回契约（随后 wait/join）；归档三负向为 join 后 `move_attempts`/`close_attempts`（`KEEP_FAILURE_TRAVERSED`）。既有 `make_thread`/删草案截止伪证维持。**纯数字不默许合法**——按外部契约归 KEEP_*。 |
+| **J19** | `j19-full-members.md` | 静默 id 复扫 0；normalize→空 pop / 非空 merge 维持。 |
+| **J18** | `j18-full-members.md` | 死入口/软判说明复扫 0；存活读取 + 退役文档 KEEP。 |
 
-测试成本：复用归档三负向 + 删盯文/伪证；**无新增测试、不另造证明**。
+测试成本：无新增测试、不另造证明；复用既有六文件聚焦。
 
-## 2. 枚举真源
+## 3. 枚举真源
 
-完整可复制命令：[`enum-cmd.txt`](enum-cmd.txt)（原 AST heredoc **照录**；复跑规模 MATCH：path_count=248 / py=4006 / ts=493）
-
-- 机械候选（md 未涵盖全部故 **KEEP**）：[`j6-ast-candidates.jsonl`](j6-ast-candidates.jsonl)
-- 最短命令结果：[`j6-ast-summary.json`](j6-ast-summary.json)
-- 权威成员表：[`j6-full-members.md`](j6-full-members.md) / [`j19-full-members.md`](j19-full-members.md) / [`j18-full-members.md`](j18-full-members.md)
+- 命令：[`enum-cmd.txt`](enum-cmd.txt) → 执行 `python3 evidence/1900-j6-j19-j18-fixer/j6_full_enum.py`
+- 脚本：[`j6_full_enum.py`](j6_full_enum.py)（一次性调查，非生产通用框架）
+- raw：[`j6-ast-candidates.jsonl`](j6-ast-candidates.jsonl)
+- 规模：[`j6-ast-summary.json`](j6-ast-summary.json)
+- 行级处置：[`j6-full-disposition.jsonl`](j6-full-disposition.jsonl)
+- 分组权威表：[`j6-full-members.md`](j6-full-members.md)（高相关组详列；其余一行/组；禁止 FOCUS 冒充全部）
 - 复扫：[`rescan-final.txt`](rescan-final.txt)
 
-## 3. 聚焦测试（席位亲自；七 BIN=/usr/bin/false）
+## 4. 聚焦测试（七 BIN=/usr/bin/false）
 
-完整命令与结果：[`focused-tests.txt`](focused-tests.txt)
+[`focused-tests.txt`](focused-tests.txt)
 
 ```
 MING_SIM_{AGY,CODEX,CLAUDE,CURSOR,KIMI,GROK,PI}_BIN=/usr/bin/false \
@@ -44,23 +55,19 @@ python3 -m pytest -q \
   tests/test_audience_travel_gating_670.py \
   tests/test_grant_reconciliation_567.py
 
-78 passed in 7.47s
+78 passed in 3.04s
 ```
 
-前一次误用 `python`（非 `python3`）：**exit 127**，`python: command not found` — **未洗白**，不计入 pass。
+## 5. 变异
 
-（旧回执「17 passed」仅为更窄子集，不得覆盖本席位六文件全量结果。）
+本轮无新代码改动，不重跑变异。既有 [`mutations.txt`](mutations.txt)（归档三负向红→绿；J19 静默 id 红→绿；J18 软判/死入口 0）仍作前轮证据，不冒称本轮新跑。
 
-## 4. 变异
+## 6. 自查二连
 
-[`mutations.txt`](mutations.txt)：归档三负向不 start 红→绿；J19 静默 id 红→绿；J18 软判说明/死入口 0；`ALL_MUTATIONS_OK`。历史 timeout/死锁见 §0。
+- 同类型：废除 numeric drop；全宇宙裁决；成员表按 test 分组；raw 不平行重复；TS 全入口；不把 FOCUS/纯数字当授权或默许合法。
+- 引入 bug：本轮只动 evidence；未改生产/测试；聚焦 78 passed。
 
-## 5. 自查二连
+## 7. SHA
 
-- 同类型：enum-cmd 补可执行 heredoc；范围声明焦点≠全部；禁样复扫 0；J19/J18 残留 0。
-- 引入 bug：禁令陈述已纠正 checkout 史；不把 timeout/deadlock 改写成 infra。
-
-## 6. SHA
-
-- 证据更正主体：`f665b2008d23604a4062a50f1c26cb74c349bdb5`
-- 当前 HEAD：`ae400946e22b5882fd39e7b35e80fd0d6c7bee24`（其后若仅 docs SHA 微调，以 `git rev-parse HEAD` 为准）
+- 施工前基点：`a9136d3e011cec4b96cae75b2d4158f06021d157`
+- 本提交：`git rev-parse HEAD`（提交后由本席填写/核对）

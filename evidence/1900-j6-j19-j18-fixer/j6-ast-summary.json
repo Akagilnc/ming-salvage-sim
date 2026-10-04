@@ -1,8 +1,8 @@
 {
   "python_files": 227,
   "ts_files": 21,
-  "python_candidates": 4006,
-  "ts_candidates": 493,
+  "python_candidates": 13420,
+  "ts_candidates": 1663,
   "paths_sample": [
     "tests/army_pay_helpers.py",
     "tests/cli_process_doubles.py",
@@ -25,5 +25,35 @@
     "tests/test_army_firearms.py",
     "tests/test_army_maintenance_retire_173.py"
   ],
-  "path_count": 248
+  "path_count": 248,
+  "enum_mode": "FULL_NO_NUMERIC_DROP",
+  "adjudicated": 15083,
+  "disposition_counts": {
+    "KEEP_LLM_BOUNDARY": 256,
+    "KEEP_STRUCTURED_FIELD": 6428,
+    "KEEP_STRUCTURED_OR_HARNESS": 6757,
+    "KEEP_IO_BOUNDARY": 162,
+    "KEEP_FISCAL_ORACLE": 164,
+    "KEEP_COMPLETION_SYNC": 20,
+    "KEEP_P4_NEGATIVE": 53,
+    "KEEP_FIXTURE_ECHO": 64,
+    "KEEP_ARCHIVE_SHAPE": 1,
+    "KEEP_SEED_SOURCE_ID": 5,
+    "KEEP_TYPED_ERROR_SHAPE": 6,
+    "KEEP_LLM_CONFIG_SURFACE": 52,
+    "KEEP_CLI_ARGV_OR_ASSEMBLY": 128,
+    "KEEP_FIXTURE_OR_SEED": 23,
+    "KEEP_TRACE_ONCE": 1,
+    "KEEP_THREAD_FACTORY_APPLIED": 3,
+    "KEEP_NONBLOCKING_RETURN": 4,
+    "KEEP_FAILURE_TRAVERSED": 4,
+    "KEEP_THREAD_CAPTURE": 1,
+    "KEEP_RESCRIPT_STRUCTURE": 75,
+    "KEEP_SECRET_ORDER_STRUCTURE": 16,
+    "KEEP_WEB_FETCH_HARNESS": 256,
+    "KEEP_DOM_FIXTURE_OR_STRUCTURE": 592,
+    "KEEP_UI_CHROME": 12
+  },
+  "groups": 2930,
+  "baseline_before": "a9136d3e011cec4b96cae75b2d4158f06021d157"
 }
