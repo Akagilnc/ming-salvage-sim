@@ -29,17 +29,18 @@ def commitment_progress_payload(
     gate = _commitment_stop_gate(row)
     remaining = _commitment_remaining_from_gate(gate, state, db) if gate else None
     paid_total = _latest_commitment_paid_total(db, int(row["id"])) + max(0, int(paid_this_month))
-    # Fall back to state.turn (→ 0 elapsed) when origin_turn is unset — whether the
-    # key is absent OR present-but-NULL/0. `int(row["origin_turn"] or 0)` would collapse
-    # a NULL/0 to 0 and leak the absolute turn number into months_elapsed (#380 cmr:
-    # gemini + coderabbit). Only a positive origin_turn is a real anchor.
+    # Fall back to state.turn (→ 0 elapsed) when origin_turn is absent or
+    # present-but-NULL/0. Present-but-damaged values must raise — do not wash
+    # conversion failure into the absent path (forges months_elapsed).
+    # `int(row["origin_turn"] or 0)` would collapse NULL/0 to 0 and leak the
+    # absolute turn into months_elapsed (#380 cmr: gemini + coderabbit).
     origin_turn_raw = row["origin_turn"] if "origin_turn" in keys else None
-    try:
-        origin_turn = int(origin_turn_raw)
-    except (TypeError, ValueError):
-        origin_turn = 0
-    if origin_turn <= 0:
+    if origin_turn_raw is None:
         origin_turn = int(state.turn)
+    else:
+        origin_turn = int(origin_turn_raw)
+        if origin_turn <= 0:
+            origin_turn = int(state.turn)
     months_elapsed = max(0, int(state.turn) - origin_turn)
     if include_current_month:
         months_elapsed = int(months_elapsed) + 1
@@ -73,7 +74,13 @@ def commitment_display_text(progress: Dict[str, object], row: sqlite3.Row) -> st
     keys = row.keys() if hasattr(row, "keys") else []
     ongoing = loads_effect_dict(row["ongoing_effects"] if "ongoing_effects" in keys else {})
     end_turn = int(row["end_turn"] or 0) if "end_turn" in keys else 0
-    origin_turn = int(row["origin_turn"] or 0) if "origin_turn" in keys else 0
+    origin_turn_raw = row["origin_turn"] if "origin_turn" in keys else None
+    if origin_turn_raw is None:
+        origin_turn = 0
+    else:
+        origin_turn = int(origin_turn_raw)
+        if origin_turn <= 0:
+            origin_turn = 0
     stop_gate = _commitment_stop_gate(row)
     months = int(progress.get("months_elapsed") or 0)
     duration = max(0, end_turn - origin_turn) if end_turn > 0 else 0
@@ -122,7 +129,13 @@ def commitment_timed_bar_value(progress: Dict[str, object], row: sqlite3.Row) ->
     ongoing = loads_effect_dict(row["ongoing_effects"] if "ongoing_effects" in keys else {})
     if not _monthly_ongoing_effects_has_work(ongoing):
         return None
-    origin_turn = int(row["origin_turn"] or 0) if "origin_turn" in keys else 0
+    origin_turn_raw = row["origin_turn"] if "origin_turn" in keys else None
+    if origin_turn_raw is None:
+        origin_turn = 0
+    else:
+        origin_turn = int(origin_turn_raw)
+        if origin_turn <= 0:
+            origin_turn = 0
     duration = end_turn - origin_turn
     if duration <= 0:
         return None
@@ -134,10 +147,11 @@ def _commitment_bar_value(progress: Dict[str, object]) -> Optional[int]:
     if "remaining_arrears" not in progress:
         return None
     paid = max(0, int(progress.get("paid_total") or 0))
-    try:
-        remaining = max(0.0, float(progress.get("remaining_arrears") or 0))
-    except (TypeError, ValueError):
+    raw_remaining = progress.get("remaining_arrears")
+    if raw_remaining is None:
         remaining = 0.0
+    else:
+        remaining = max(0.0, float(raw_remaining))
     total = paid + remaining
     if total <= 0:
         return 100

@@ -1439,10 +1439,7 @@ def dossier_paid_amount(db: Any, dossier_id: object) -> int:
 
     世界段在途案卷与逐旨预推「本旨」事实共用；无案卷行或尚无动账时为 0。
     """
-    try:
-        oid = int(dossier_id)  # type: ignore[arg-type]
-    except (TypeError, ValueError):
-        return 0
+    oid = int(dossier_id or 0)  # type: ignore[arg-type]
     if oid <= 0:
         return 0
     return sum(

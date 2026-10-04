@@ -82,18 +82,20 @@ def _apply_population_transfers(
         if db.conn.execute("SELECT 1 FROM regions WHERE id=?", (src_region,)).fetchone() is None:
             _reject("missing_ref", f"population_transfers 未知 region_id：{src_region!r}")
             continue
-        reason = str(item.get("reason") or "").strip()
+        # 枚举查键用 strip 副本；落库/回执保留声明原文（F5）。
+        raw_reason = str(item.get("reason") or "")
+        reason = raw_reason.strip()
         matrix = POPULATION_TRANSFER_REASONS.get(reason)
         if matrix is None:
             _reject(
                 "invalid_enum",
-                f"population_transfers reason 非法（枚举：{'/'.join(POPULATION_TRANSFER_REASONS)}）：{reason!r}",
+                f"population_transfers reason 非法（枚举：{'/'.join(POPULATION_TRANSFER_REASONS)}）：{raw_reason!r}",
             )
             continue
         if (src_cls, dst_cls) not in matrix:
             _reject(
                 "invalid_enum",
-                f"population_transfers 方向出阵：reason={reason} 不允许 {src_cls}→{dst_cls}"
+                f"population_transfers 方向出阵：reason={raw_reason!r} 不允许 {src_cls}→{dst_cls}"
                 f"（合法：{'、'.join(f'{a}→{b}' for a, b in sorted(matrix))}）",
             )
             continue
@@ -161,7 +163,7 @@ def _apply_population_transfers(
                 "INSERT INTO population_transfer_ledger "
                 "(turn, source, target, amount, reason, origin_ref) VALUES (?, ?, ?, ?, ?, ?)",
                 (int(db.conn.execute("SELECT turn FROM game_state WHERE id=1").fetchone()[0]),
-                 row_source, target, amount, reason, origin_ref),
+                 row_source, target, amount, raw_reason, origin_ref),
             )
         region_name = str(db.conn.execute(
             "SELECT name FROM regions WHERE id=?", (src_region,)
@@ -170,7 +172,7 @@ def _apply_population_transfers(
             "source": row_source,
             "target": target,
             "amount": amount,
-            "reason": reason,
+            "reason": raw_reason,
             "origin_ref": origin_ref,
             "region_id": src_region,
             # #649 F2（判词）：省名随 applied 记录入摘要——applied 记录省名

@@ -1,11 +1,10 @@
 """SettlementOutcome 的具名段视图（ADR 0150 §4 投影表的运行态实现）。
 
-消费端问「这段落了哪些」在本模块一处映射到 typed 段，禁各自手写字段路径——
+消费端问「这段落了哪些」直接读 :meth:`SettlementOutcome.sections`，禁各自手写字段路径——
 手写等于把投影表复制到十几处，改一处漏一处。
 
 这不是 dict 兼容层：它不还原旧 39 键 dict、不支持 ``[]`` 取键、不带恒空键与双份
-键。旧键名只作为**具名视图的标签**存在，取到的仍是 typed 段结果；标签集就是
-:func:`view_keys`，多一个标签即多一条无主投影，是漂移。
+键。标签即 ``sections()`` 的段名；取到的仍是 typed 段结果。
 """
 
 from __future__ import annotations
@@ -14,48 +13,12 @@ from typing import Any, List, Optional
 
 from ming_sim.applier import RejectedItem, SectionResult
 
-# 标签 → SettlementOutcome.sections() 的段名。
-_VIEW_TO_SECTION = {
-    "metric_delta": "metric_delta",
-    "economy_moves": "economy_moves",
-    "faction_delta": "faction_delta",
-    "class_delta": "class_delta",
-    "surcharge_decrees": "surcharge_decrees",
-    "population_transfers": "population_transfers",
-    "region_changes": "region_changes",
-    "army_changes": "army_changes",
-    "power_changes": "power_changes",
-    "bandit_absorptions": "bandit_absorptions",
-    "applied_person_changes": "applied_person_changes",
-    "secret_order_updates": "secret_order_updates",
-    "breach_plea_resolutions": "breach_plea_resolutions",
-    "credit_event_resolutions": "credit_event_resolutions",
-    "relation_edge_event_resolutions": "relation_edge_event_resolutions",
-    "authority_changes": "authority_changes",
-    "dossier_executions": "dossier_executions",
-    "dossier_participants": "dossier_participants",
-    "secret_dossier_participants": "secret_dossier_participants",
-    "issue_summary": "issue_summary",
-    "fiscal_removes": "fiscal_removes",
-    "fiscal_creates": "fiscal_creates",
-    "fiscal_changes": "fiscal_changes",
-    "affair_declarations": "affair_declarations",
-}
-
-
-def view_keys() -> frozenset:
-    """全部合法视图标签。"""
-    return frozenset(_VIEW_TO_SECTION)
-
 
 def section(outcome: Any, key: str) -> Optional[SectionResult]:
     """取某标签对应的 typed 段；标签未知或 outcome 缺省返回 ``None``。"""
     if outcome is None or not hasattr(outcome, "sections"):
         return None
-    section_name = _VIEW_TO_SECTION.get(key)
-    if section_name is None:
-        return None
-    return outcome.sections().get(section_name)
+    return outcome.sections().get(key)
 
 
 def view(outcome: Any, key: str) -> List[Any]:
@@ -82,7 +45,7 @@ def shape_rejections(outcome: Any) -> List[RejectedItem]:
 def issue_rows(outcome: Any, subkey: str) -> List[Any]:
     """局势段某一子表的行（旧 ``report["issue_summary"][subkey]``）。
 
-    ``subkey`` ∈ advances / new_issues / closes / cancels / pairing_warnings。
+    ``subkey`` ∈ advances / new_issues / closes / cancels。
     """
     issue = getattr(outcome, "issue", None)
     return list(getattr(issue, subkey, []) or []) if issue is not None else []

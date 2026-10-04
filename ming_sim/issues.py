@@ -2391,7 +2391,6 @@ def apply_issue_inertia_and_ongoing(
                     continue
                 if new_row["status"] == "resolved":
                     effect = loads_effect_dict(new_row["effect_on_resolve"])
-                    issue_effects._emit_pairing_warnings(new_row, effect)  # inertia 路只 tlog（#45/#46）
                     # 与 tracker advance/close 路径一致：自然结案也落实体后果 + 帝国修正，
                     # 否则靠 inertia 推到 100 的 issue 会丢 new_armies/army_delta/人物状态/legacy（codexB-P1）。
                     for _tr in issue_effects._apply_issue_entities(

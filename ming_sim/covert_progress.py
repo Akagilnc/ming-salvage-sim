@@ -727,10 +727,11 @@ def _lanes_from_payload(payload: Mapping[str, object]) -> List[Dict[str, object]
             if not key or key in seen:
                 continue
             seen.add(key)
-            try:
-                progress = float(item.get("progress") or 0.0)
-            except (TypeError, ValueError):
+            raw_progress = item.get("progress")
+            if raw_progress in (None, ""):
                 progress = 0.0
+            else:
+                progress = float(raw_progress)
             reason = str(item.get("reason_code") or "").strip()
             legal = reason in PERSON_LEGAL_REASON_CODES
             lanes.append({

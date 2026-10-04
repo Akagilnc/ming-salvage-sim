@@ -41,7 +41,6 @@ def apply_issue_tracker_output(
     # internal working set from the settlement orchestrator; a second copy would drop
     # same-batch new_issues births from later carriers (close / durable origin).
     applied_advances: List[Dict[str, object]] = []
-    pairing_warnings: List[str] = []  # #45/#46 国策结案实体后果强制配对告警（warn-only）
     applied_new: List[Dict[str, object]] = []
     applied_cancels: List[Dict[str, object]] = []
     # 与成功回执并列的真实拒收通道，由编排器统一耐久化。
@@ -146,7 +145,6 @@ def apply_issue_tracker_output(
         # 终结结算：bar 自然推到 100/0 触发的 resolved/failed，与 close_issues 一样落终结效果（含建筑）
         if new_row["status"] == "resolved":
             effect = loads_effect_dict(new_row["effect_on_resolve"])
-            issue_effects._emit_pairing_warnings(new_row, effect, pairing_warnings)
             parent_origin_ref = issues._canonical_issue_origin(db, new_row)
             entity_rejections.extend(
                 issue_effects._apply_issue_entities(
@@ -406,8 +404,15 @@ def apply_issue_tracker_output(
             end_turn_marker_shape = _strict_int(
                 0 if ni.get("end_turn", 0) in (None, "") else ni.get("end_turn", 0)
             ) > 0
-        except (TypeError, ValueError, OverflowError):
-            end_turn_marker_shape = False
+        except (TypeError, ValueError, OverflowError) as exc:
+            # 在场坏 end_turn ≠ 缺席无标记；逐项拒收，不洗成 False 走常形。
+            entity_rejections.append(RejectedItem(
+                item=ni,
+                reason=f"new_issue end_turn 非法：{ni.get('end_turn')!r}（{exc}）",
+                category="invalid_enum",
+                source=source,
+            ))
+            continue
         legacy_resolve_text = issues._issue_condition_text(ni.get("resolve_condition"))
         if not legacy_resolve_text.strip() and isinstance(stop_condition_raw, str):
             legacy_resolve_text = stop_condition
@@ -467,8 +472,6 @@ def apply_issue_tracker_output(
                 )
                 stages_for_commitment = capture_commitment_stages(
                     stages_source_from_issue_item(ni),
-                    narrative_text=str(ni.get("stage_text") or ni.get("title") or ""),
-                    origin_turn=int(state.turn),
                 )
                 has_stages = bool(stages_for_commitment)
                 if not ongoing_has_work and end_turn_for_commitment <= 0 and not has_stages:
@@ -528,11 +531,8 @@ def apply_issue_tracker_output(
             end_turn = _strict_int(0 if _et in (None, "") else _et)
             # cancel_cost 已在 try 外随 effect 字段走 _eff_dict 容忍归 {}（cmr ni r9）——不在此强转、
             # 不进 except 拒收路。
-            # tags 严格化（cmr ni r8 codex medium，与上方 int 字段同一字段校验 class）：缺省/null/
-            # 空串 → []；present 必须是 list/tuple 且元素全为 str。原 `list(ni.get("tags") or [])`
-            # 把标量串拆字（list("募营")=['募','营']）——既污染 DB tags，又让 _initiative_resolve_
-            # pairing_warnings 的整词子串匹配（"募营" in blob）失配 → bypass #45/#46 new_armies 配对
-            # 守门；非串元素（list([5])=[5]）也静默落库。脏值落 except 拒整项。
+            # tags 严格化：缺省/null/空串 → []；present 必须是 list/tuple 且元素全为 str。
+            # 拒标量串拆字与非串元素静默落库。
             _tags_raw = ni.get("tags")
             if _tags_raw is None or _tags_raw == "":
                 tags = []
@@ -627,11 +627,7 @@ def apply_issue_tracker_output(
             stages_source_from_issue_item,
         )
         stages_norm = (
-            capture_commitment_stages(
-                stages_source_from_issue_item(ni),
-                narrative_text=str(ni.get("stage_text") or ni.get("title") or ""),
-                origin_turn=int(state.turn),
-            )
+            capture_commitment_stages(stages_source_from_issue_item(ni))
             if is_commitment
             else []
         )
@@ -799,8 +795,6 @@ def apply_issue_tracker_output(
                 item={"issue_id": issue_id, "field": "effect_on_resolve" if reason == "resolved" else "effect_on_fail", "raw_value": cl_effect},
                 reason="局势结案后果须为对象", category="invalid_shape", source=source,
             ))
-        if reason == "resolved":
-            issue_effects._emit_pairing_warnings(new_row, effect, pairing_warnings)
         parent_origin_ref = issues._canonical_issue_origin(db, new_row)
         building_ops: List[Dict[str, object]] = []
         close_person_changes: List[Dict[str, object]] = []
@@ -935,5 +929,4 @@ def apply_issue_tracker_output(
         advances=applied_advances, new_issues=applied_new,
         closes=applied_closes, cancels=applied_cancels,
         rejected=entity_rejections, applied_person_changes=issue_person_changes,
-        pairing_warnings=pairing_warnings,
     )

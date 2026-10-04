@@ -1,0 +1,100 @@
+{
+  "baseline_commit": "4b74f00cc7eca0b55233498ea046f7f6a47d820d",
+  "mutation_mode": "in_process_git_show_install",
+  "F1": {
+    "class": "F1",
+    "mode": "rescan_equivalence_no_forced_red",
+    "has_VIEW_TO_SECTION": false,
+    "has_view_keys_def": false,
+    "section_is_sections_get": true,
+    "unknown_key_none": true,
+    "note": "删除冗余以复扫+单源等价证明；不强造旧红"
+  },
+  "F5": {
+    "class": "F5",
+    "mutation": "in_process_install AffairStore.open from git show 4b74f00cc",
+    "entry": "settle_delta → nested tx → AffairStore.open → DB",
+    "current": {
+      "name_preserved": true,
+      "origin_preserved": true,
+      "name_db": "  清丈晋田  \n",
+      "origin_db": "  因粮差不均，特开清丈  \n"
+    },
+    "baseline_old_open": {
+      "name_preserved": false,
+      "origin_preserved": false,
+      "name_db": "清丈晋田",
+      "origin_db": "因粮差不均，特开清丈"
+    },
+    "old_red_current_green": true,
+    "tmpdirs": [
+      "/var/folders/nb/ml2z6k013psg7rdtt0t6g91m0000gn/T/1835w5-probe-c08i_zcf",
+      "/var/folders/nb/ml2z6k013psg7rdtt0t6g91m0000gn/T/1835w5-probe-ybf02zb5"
+    ]
+  },
+  "F6": {
+    "class": "F6",
+    "mutation": "in_process_install commitment_progress_payload from git show 4b74f00cc",
+    "entry": "apply_issue_inertia_and_ongoing",
+    "current": {
+      "returned_normally": false,
+      "raised": "ValueError:invalid literal for int() with base 10: 'damaged-integer'",
+      "months_elapsed": null,
+      "forges_damaged_origin_to_absent_path": false
+    },
+    "baseline_old_progress": {
+      "returned_normally": true,
+      "raised": null,
+      "months_elapsed": 1,
+      "forges_damaged_origin_to_absent_path": true
+    },
+    "old_forge_ok_current_raises": true,
+    "tmpdirs": [
+      "/var/folders/nb/ml2z6k013psg7rdtt0t6g91m0000gn/T/1835w5-probe-a22_z6sg",
+      "/var/folders/nb/ml2z6k013psg7rdtt0t6g91m0000gn/T/1835w5-probe-ned5ttje"
+    ]
+  },
+  "F12": {
+    "class": "F12",
+    "mutation": "in_process_install apply_creates + reason-token helpers from git show 4b74f00cc",
+    "entry": "settle_delta(same payload, two reasons)",
+    "current": {
+      "无关甲": {
+        "created": [
+          "alpha_base"
+        ],
+        "rejected": []
+      },
+      "每月拨西学经费": {
+        "created": [
+          "alpha_base"
+        ],
+        "rejected": []
+      }
+    },
+    "baseline_old_apply_creates": {
+      "无关甲": {
+        "created": [
+          "alpha_base"
+        ],
+        "rejected": []
+      },
+      "每月拨西学经费": {
+        "created": [],
+        "rejected": [
+          "deduped_commitment_carrier"
+        ]
+      }
+    },
+    "current_two_reasons_identical": true,
+    "baseline_two_reasons_diverge": true,
+    "old_diverge_current_same": true,
+    "tmpdirs": [
+      "/var/folders/nb/ml2z6k013psg7rdtt0t6g91m0000gn/T/1835w5-probe-syhaurjc",
+      "/var/folders/nb/ml2z6k013psg7rdtt0t6g91m0000gn/T/1835w5-probe-_qf6i9xq",
+      "/var/folders/nb/ml2z6k013psg7rdtt0t6g91m0000gn/T/1835w5-probe-mynnqjqv",
+      "/var/folders/nb/ml2z6k013psg7rdtt0t6g91m0000gn/T/1835w5-probe-jlzfhxci"
+    ],
+    "note": "旧 apply_creates 用 reason 散文 token 裁断 dedup；当前 apply_creates 不再用 reason 代判科目身份"
+  }
+}

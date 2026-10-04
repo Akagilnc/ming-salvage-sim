@@ -1,11 +1,10 @@
-"""局势效果：建筑、实体、配对守门与持续影响的呈现短句。
+"""局势效果：建筑、实体与持续影响的呈现短句。
 
 求值器、惯性与摊派仍留在 issues。本模块不提交事务。
 """
 
 from __future__ import annotations
 
-import json
 from typing import Any, Dict, List, Optional
 
 from ming_sim.applier import Provenance, RejectedItem, SectionResult
@@ -298,124 +297,8 @@ def _apply_issue_entities(
             applied_person_changes.extend(results)
     return tolerated
 
-# #45/#46（M1 状态可信链路）：国策结案实体后果强制配对守门。语义命中练军/募营/调将却无
-# new_armies/office_changes、或命月经费/俸/饷却无月度 economy 时响亮告警，堵「只推进度条、
-# 实体后果只活邸报」的半落库（#45 太学府月经费没立账、#46 天雄军没建军籍真踩坑）。
-# warn-only：列入结果供 surface、不阻断结算；检查国策自身 effect_on_resolve/ongoing_effects
-# 是否带应有实体（正解就该挂在这两处、enrich 也如此填），不跨引顶层、保持纯函数可测。
-_MILITARY_RAISE_PHRASES = (
-    "练军", "练兵", "练成", "募营", "募兵", "募军", "建军", "新军", "成军",
-    "团练", "编练", "立营", "组建", "扩军",
-)
-_MILITARY_MOVE_PHRASES = ("调将", "调防", "移镇", "督师", "镇守", "调任主将")
-_FISCAL_RECURRING_PHRASES = (
-    "月经费", "经费", "月俸", "俸禄", "岁俸", "军饷", "粮饷", "月饷", "岁支",
-    "廪", "养兵", "养廉", "月银",
-)
-
-
-def _nonempty_list(v: object) -> bool:
-    return isinstance(v, list) and len(v) > 0
-
-
-def _nonempty_dict(v: object) -> bool:
-    return isinstance(v, dict) and len(v) > 0
-
-def _has_economy_entry(d: object) -> bool:
-    """是否含「flows 会真正立账」的月度 economy 项：account∈(国库,内库) + delta 经 int() 强转非零
-    ——与 flows._apply_economy_list 同口径（它只对 国库/内库 立账、`int(delta or 0)` 强转、跳过
-    零额/非数/它账）。空壳/它账/零额/非数不算配对，数字串 delta 同 flows 认账（CMR codex+claude）。
-    economy 非 list（畸形 JSON：int/str/bool）→ 安全返 False，不 TypeError 崩结算（PR#107 gemini）。"""
-    if not isinstance(d, dict):
-        return False
-    eco = d.get("economy")
-    if not isinstance(eco, list):
-        return False
-    for item in eco:
-        if not isinstance(item, dict):
-            continue
-        if str(item.get("account") or "") not in ("国库", "内库"):
-            continue
-        try:
-            delta = int(item.get("delta") or 0)
-        except (TypeError, ValueError):
-            continue
-        if delta != 0:
-            return True
-    return False
-
-
-def _initiative_resolve_pairing_warnings(
-    title: str, tags: object, ongoing_effects: object, effect: object,
-) -> List[str]:
-    """国策结案实体后果强制配对守门（#45/#46）——仅在 initiative 结案处调用。
-    返回缺配对的告警串列表（空=无缺漏）。warn-only，调用方 surface、不阻断。"""
-    tag_list = tags if isinstance(tags, (list, tuple)) else []
-    blob = str(title or "") + " " + " ".join(str(t) for t in tag_list)
-    effect = effect if isinstance(effect, dict) else {}
-    warns: List[str] = []
-
-    # 练军/募营 须落 new_armies；调将 须落人物变更——分别判，不混为一谈（练军只挂调任仍缺军籍、
-    # 调将只挂建军仍缺主将调任，混判会互相消音，CMR codex）。office_changes 是 ADR 0009 死键、
-    # _apply_issue_entities 不读，不纳入 has_office（纳入会消音本该响的告警，CMR gemini）。
-    needs_army = any(p in blob for p in _MILITARY_RAISE_PHRASES)
-    needs_office = any(p in blob for p in _MILITARY_MOVE_PHRASES)
-    if needs_army or needs_office:
-        # 形对：_apply_issue_entities 只落 list 的 new_armies/人物变更、dict 的
-        # army_delta；畸形容器（字符串/错类型）不算真配对，不该消音告警（PR#107 codex）。
-        has_army = _nonempty_list(effect.get("new_armies")) or _nonempty_dict(effect.get("army_delta"))
-        has_office = _nonempty_list(effect.get("人物变更"))
-        if needs_army and not has_army:
-            warns.append(
-                f"军事国策「{str(title)}」结案无 new_armies 配对（练军/募营疑未建军籍，#46）"
-            )
-        if needs_office and not has_office:
-            warns.append(
-                f"军事国策「{str(title)}」结案无人物变更配对（调将疑未落主将调任，#46）"
-            )
-
-    if any(p in blob for p in _FISCAL_RECURRING_PHRASES):
-        # 只查国策自身 effect/ongoing 的月度 economy；顶层 fiscal_creates 不在本纯函数视野内，
-        # 故告警文案不声称查了它——若另经 fiscal_creates 立账可忽略本提示（CMR claude）。
-        if not _has_economy_entry(effect) and not _has_economy_entry(ongoing_effects):
-            warns.append(
-                f"经制国策「{str(title)}」结案无月度 economy 配对"
-                "（疑月经费/俸饷未立常设月支；若已另经 fiscal_creates 立账可忽略，#45）"
-            )
-    return warns
-
-
-def _emit_pairing_warnings(new_row, effect: object, sink: Optional[List[str]] = None) -> None:
-    """在 initiative 结案处调配对守门：tlog 响亮告警（#14/#27 风格）；sink 给定时再收进供
-    程序 surface（inertia 自然结案路只 tlog、不收 sink）。仅对 kind=initiative 生效；
-    可缺省的行字段取缺省值；持久 JSON 损坏上抛。"""
-    def _g(key, default):
-        try:
-            return new_row[key]
-        except (KeyError, IndexError):
-            return default
-    if str(_g("kind", "") or "") != "initiative":
-        return
-    # tags/ongoing_effects 在 DB row 里是 JSON 串，但调用方（test/mock/上游预解析）可能已传
-    # 解析好的 list/dict——此时 json.loads(容器) 抛 TypeError 被 except 吞成空，会静默丢有效
-    # 数据、把本该响的告警消音 / 把有效月支误判成缺失（PR#107 R3 gemini medium，与下游
-    # _initiative_resolve_pairing_warnings 的 isinstance 防御同向）。先认已解析的容器。
-    raw_tags = _g("tags", "[]")
-    if isinstance(raw_tags, (list, tuple)):
-        tags = list(raw_tags)
-    else:
-        tags = json.loads(raw_tags or "[]")
-        if not isinstance(tags, list):
-            raise ValueError("持久化局势 tags 须为列表")
-    # ongoing_effects 经统一守门 loads_effect_dict；损坏不冒作无效果。
-    from ming_sim.models import loads_effect_dict
-    from ming_sim.token_stats import tlog
-
-    ongoing = loads_effect_dict(_g("ongoing_effects", "{}"))
-    for w in _initiative_resolve_pairing_warnings(str(_g("title", "") or ""), tags, ongoing, effect):
-        tlog(f"[pairing] {w}")
-        if sink is not None:
-            sink.append(w)
+# #45/#46 原以 title/tags 自由散文词表推断「须有军籍/调任/月支」——属 F12 散文代判，已拆除。
+# 结案配对不再由散文措辞驱动；恒空 stub/调用形亦不保留（缺口移交 #1873）。
 
 
 _LEGACY_PCT_CAP = 5

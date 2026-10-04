@@ -579,10 +579,10 @@ def _settlement_sse_error_data(
 
 
 def _runtime_float(value: object, default: float) -> float:
-    try:
-        return float(value) if value not in (None, "") else default
-    except (TypeError, ValueError):
+    # 缺席 → default；在场损坏上抛（禁洗成缺席默认）。
+    if value in (None, ""):
         return default
+    return float(value)
 
 
 def _has_real_api_key(value: object) -> bool:

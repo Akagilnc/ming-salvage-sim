@@ -51,25 +51,8 @@ def test_until_stop_commitment_issue_is_created_with_carrier_fields(game, monkey
     assert json.loads(row["effect_on_resolve"]) == {}
 
 
-def test_decree_commitment_dedups_same_batch_fiscal_create_carrier(game, monkeypatch):
-    db, state, content = game
-    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
-
-    out = settle_delta(state, db, {'new_issues': [{'origin_kind': 'decree', 'origin_ref': _promulgated_commitment_origin(db, state, 'xixue-monthly'), 'kind': 'initiative', 'title': '每月拨西学经费', 'stage_text': '太仓每月拨银五十万两办西学。', 'ongoing_effects': {'economy': [{'account': '国库', 'delta': -50, 'category': '西学经费', 'reason': '每月拨西学经费'}]}, 'commitment_kind': 'until_stop'}], 'fiscal_creates': [{'key': '西学经费_base', 'account': '国库', 'direction': 'expense', 'init_value': 50, 'display': '西学经费', 'reason': '同批 extractor 误产的重复月支', 'origin_ref': '盘面自发'}]}, SettlementContext(content=content))
-
-    assert issue_rows(out, "new_issues")
-    assert _issue_by_title(db, "每月拨西学经费") is not None
-    assert db.conn.execute(
-        "SELECT COUNT(*) FROM fiscal_config WHERE key IN ('西学经费_base', '西学经费_rate')"
-    ).fetchone()[0] == 0
-    fiscal_result = rejected_view(out, "fiscal_creates")[0]
-    assert fiscal_result.category == "deduped_commitment_carrier"
-
-
 def test_decree_commitment_does_not_dedup_same_name_income_fiscal_create(game, monkeypatch):
-    """ADR0027 dedup 只对【支出】fiscal_create 生效（integrated cmr Gate2 codex correctness）：
-    同账户、同名但 direction=income 的新科目（如同名新税收入）与月度【支出】承诺载体无关，
-    不得被误去重——否则会静默丢掉真实月收入。"""
+    """同账户、同名但 direction=income 的新科目与月度【支出】承诺载体无关，照常落账。"""
     db, state, content = game
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
 

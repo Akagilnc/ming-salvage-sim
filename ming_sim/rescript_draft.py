@@ -665,12 +665,15 @@ def _enforce_layer_a_action_conditional(
         ctrl, cval = str(forbid[0]), str(forbid[1])  # type: ignore[index]
         if _nonempty_str(ctrl) != cval:
             amt_raw = _raw_or_out("amount")
-            try:
-                amount = int(amt_raw) if amt_raw not in (None, "") else 0  # type: ignore[arg-type]
-            except (TypeError, ValueError, OverflowError):
-                amount = 0
             if isinstance(amt_raw, bool):
+                _fail(
+                    "amount",
+                    current=amt_raw,
+                    expected={"forbid_positive_unless": {ctrl: cval}},
+                )
                 amount = 0
+            else:
+                amount = int(amt_raw or 0)  # type: ignore[arg-type]
             if amount > 0:
                 _fail(
                     "amount",

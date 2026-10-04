@@ -12,12 +12,9 @@ from __future__ import annotations
 
 from ming_sim.applier import RejectedItem
 
-import re
-from typing import TYPE_CHECKING, Any, Dict, List, Tuple
+from typing import Any, Dict, List, Tuple
 from ming_sim.flows import _strict_int
 from ming_sim.token_stats import tlog
-if TYPE_CHECKING:
-    from ming_sim.db import GameDB
 
 from ming_sim.applier import SectionResult
 from ming_sim.exceptions import DeclarationDataError
@@ -29,50 +26,6 @@ _DIRECTION_NORMALIZE = {
     "income": "income", "收": "income", "收入": "income", "进账": "income",
     "expense": "expense", "支": "expense", "支出": "expense", "出账": "expense",
 }
-
-
-def _recurring_funding_label_tokens(*values: object) -> set[str]:
-    tokens: set[str] = set()
-    for value in values:
-        raw = str(value or "").strip()
-        if not raw:
-            continue
-        key_stem = raw
-        if key_stem.endswith("_base") or key_stem.endswith("_rate"):
-            key_stem = key_stem.rsplit("_", 1)[0]
-        normalized = re.sub(r"[\s，。、“”‘’：:；;,.·_\-（）()\[\]【】]+", "", key_stem)
-        for word in (
-            "同批extractor误产的重复", "同批误产的重复", "每月", "按月", "月度", "月支",
-            "拨给", "拨付", "拨银", "拨", "给", "支给", "支出", "开支", "费用",
-            "经费", "月", "万两", "银两", "银",
-        ):
-            normalized = normalized.replace(word, "")
-        if normalized:
-            tokens.add(normalized)
-    return tokens
-
-
-def _commitment_fiscal_create_duplicate_reason(
-    create: Dict[str, object], commitment_economy: List[Dict[str, object]], db: GameDB,
-) -> str:
-    account = str(create.get("account") or "").strip()
-    display = str(create.get("display") or "").strip() or (db._stem_of(str(create.get("key") or "")) or str(create.get("key") or ""))
-    create_tokens = _recurring_funding_label_tokens(display, create.get("key"), create.get("reason"))
-    if not account or not create_tokens:
-        return ""
-    for item in commitment_economy:
-        if str(item.get("account") or "").strip() != account:
-            continue
-        try:
-            delta = _strict_int(item.get("delta"))
-        except (TypeError, ValueError):
-            continue
-        if delta >= 0:
-            continue
-        item_tokens = _recurring_funding_label_tokens(item.get("category"), item.get("reason"), item.get("purpose"))
-        if create_tokens & item_tokens:
-            return "同批已有承诺 issue ongoing_effects.economy 承载该经常性拨款，fiscal_create 已去重"
-    return ""
 
 
 def _commitment_carrier_same_account_unmatched(
@@ -205,15 +158,8 @@ def apply_creates(run) -> SectionResult:
         ):
             rejections.append(RejectedItem(item=create, reason="该旧案暗渠摊派已奉旨禁绝", category="forbidden_effect", source=run.ctx.source))
             continue
-        # Dedup 是业务规则不是授权闸：只看形状合法且已授权的载体，否则会把缺失
-        # 或伪造的归属藏在 deduped_commitment_carrier 后面。
+        # 观测同批同账户承诺月支残留；不得用自由 reason 散文代判科目身份。
         if direction == "expense":
-            dedup_reason = _commitment_fiscal_create_duplicate_reason(
-                create, run.commitment_economy_carriers, run.db,
-            )
-            if dedup_reason:
-                rejections.append(RejectedItem(item=create, reason=dedup_reason, category="deduped_commitment_carrier", source=run.ctx.source))
-                continue
             residual_account = _commitment_carrier_same_account_unmatched(
                 create, run.commitment_economy_carriers,
             )

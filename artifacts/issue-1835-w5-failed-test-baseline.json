@@ -1,0 +1,60 @@
+{
+  "baseline_commit": "4b74f00cc7eca0b55233498ea046f7f6a47d820d",
+  "working_tree_touched_db_py": true,
+  "note": "保留既有2红；扩展聚焦集后多露出同根 _has_stop_condition 散文 JSONDecodeError。本票无阻断；#1873 仅功能移交/剩余范围。不为测试绿装回吞异常/默认化。",
+  "focused_result": "3 failed, 674 passed in 14.24s (real 14.64; seven-env replay)",
+  "preexisting_two_reds": [
+    {
+      "test": "tests/test_decree_commitment_creation_136.py::test_has_stop_condition_handles_preparsed_and_json_whitespace",
+      "error": "JSONDecodeError",
+      "at": "ming_sim/db.py:_has_stop_condition json.loads",
+      "attribution": "既有红；legacy 条件串；移交 #1873；不为绿恢复吞异常"
+    },
+    {
+      "test": "tests/test_decree_commitment_settlement_229.py::test_commitment_progress_skips_non_numeric_gate_values",
+      "error": "ValueError: invalid literal for int() with base 10: '非数字'",
+      "at": "ming_sim/issues.py:_eval_gate_key",
+      "attribution": "既有红；坏门值上抛；不装回跳过/默认化"
+    }
+  ],
+  "new_red_exposed_by_expanded_focus": [
+    {
+      "test": "tests/test_new_issues_section_rejections.py::test_new_issue_whitespace_resolve_condition_falls_back_to_stop_condition",
+      "error": "JSONDecodeError",
+      "at": "ming_sim/db.py:_has_stop_condition json.loads",
+      "note": "与既有红1同根：散文 stop_condition 非 JSON；扩展聚焦才收入本文件。不报本票 blocker；不装回非法机制；缺口 #1873",
+      "restored_illegal_mechanism": false
+    }
+  ],
+  "current_has_stop_condition_probe": [
+    {
+      "input": {
+        "army.guanning.arrears": "<=0"
+      },
+      "result": true
+    },
+    {
+      "input": [
+        "legacy"
+      ],
+      "result": true
+    },
+    {
+      "input": {},
+      "result": false
+    },
+    {
+      "input": " { } ",
+      "result": false
+    },
+    {
+      "input": "\n[]\n",
+      "result": false
+    },
+    {
+      "input": "character.毛文龙.loyalty >= 65",
+      "error": "JSONDecodeError",
+      "msg": "Expecting value: line 1 column 1 (char 0)"
+    }
+  ]
+}

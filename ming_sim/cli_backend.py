@@ -3153,10 +3153,8 @@ def extract_draft_intent(
             draft_text = merged if merged else _existing_draft_text
         else:
             draft_text = (minister_reply or "")
-        try:
-            single_declaration = _affair_declaration_from_draft_obj(obj)
-        except (TypeError, ValueError):
-            return {"draft_action": "无", "draft_text": "", "target_candidate": ""}
+        # 在场坏声明上抛；禁 except→「无」洗成缺席成功。
+        single_declaration = _affair_declaration_from_draft_obj(obj)
         if single_declaration:
             single_declaration = {
                 "affair_declaration": _stamp_split_birth_key(
@@ -3197,10 +3195,8 @@ def extract_draft_intent(
         existing = str(_by_id[int(target)].get("text") or "")
         # 补某道：优先合并全文；LLM 未合并时保留原文（避免用确认语覆盖），原文亦空则退回话。
         draft_text = merged if merged else (existing if existing else (minister_reply or ""))
-    try:
-        cand_declaration = _affair_declaration_from_draft_obj(obj)
-    except (TypeError, ValueError):
-        return {"draft_action": "无", "draft_text": "", "target_candidate": ""}
+    # 在场坏声明上抛；禁 except→「无」洗成缺席成功。
+    cand_declaration = _affair_declaration_from_draft_obj(obj)
     if cand_declaration:
         cand_declaration = {
             "affair_declaration": _stamp_split_birth_key(
@@ -3625,28 +3621,6 @@ def _choose_assignee(
 
 
 
-def _secret_metadata_from_command(text: str) -> Tuple[List[str], int]:
-    tags: List[str] = []
-    deadline = 0
-    for raw_line in (text or "").splitlines():
-        line = raw_line.strip()
-        if not line:
-            continue
-        m_tags = re.match(r"^(?:标签|tag|tags)\s*[：:]\s*(.+)$", line, flags=re.IGNORECASE)
-        if m_tags:
-            for item in re.split(r"[,，、/;；\s]+", m_tags.group(1)):
-                cleaned = item.strip()
-                if cleaned and cleaned not in tags:
-                    tags.append(cleaned)
-            continue
-        m_deadline = re.match(r"^(?:期限|限期|deadline)\s*[：:]\s*(.+)$", line, flags=re.IGNORECASE)
-        if m_deadline:
-            match = re.search(r"([+-]?\d+)\s*(?:个)?月", m_deadline.group(1))
-            if match:
-                deadline = max(0, min(int(match.group(1)), 36))
-    return tags, deadline
-
-
 def _normalize_dossier_link_proposals(
     dossier_candidates: Optional[List[Dict[str, Any]]],
     suggested_links: Any,
@@ -3829,11 +3803,8 @@ def _extract_secret_order(
         _assignee_llm, player_command, default_assignee,
     )
     raw_deadline = obj.get("期限月数")
-    explicit_zero_deadline = raw_deadline in (0, "0")
-    try:
-        deadline = max(0, min(int(raw_deadline or 0), 36))
-    except (TypeError, ValueError):
-        deadline = 0
+    # 缺席 → 0；在场损坏上抛。禁从 player_command 散文回落标签/期限（F12）。
+    deadline = max(0, min(int(raw_deadline or 0), 36))
     tags = obj.get("标签")
     tags = [str(t) for t in tags if str(t).strip()] if isinstance(tags, list) else []
     from ming_sim.db import canonical_secret_order_exclusions
@@ -3846,11 +3817,6 @@ def _extract_secret_order(
         raw_offices if isinstance(raw_offices, list) else [],
         player_command,
     )
-    fallback_tags, fallback_deadline = _secret_metadata_from_command(player_command)
-    if not tags:
-        tags = fallback_tags
-    if not deadline and not explicit_zero_deadline:
-        deadline = fallback_deadline
     raw_links = obj.get("案卷关联")
     extracted_proposals = [
         {

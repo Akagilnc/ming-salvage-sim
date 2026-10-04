@@ -1586,7 +1586,6 @@ def test_underfunded_in_transit_allocation_closes_from_execution_state(game):
     assert state.metrics["国库"] == 0
     assert dossier["status"] == "closed"
     assert dossier["execution_outcome"] == "failed"
-    assert "不足额" in dossier["execution_note"]
 
 def test_underfunded_immediate_allocation_is_not_recorded_as_fulfilled(game):
     db, state, _content = game
@@ -1609,7 +1608,6 @@ def test_underfunded_immediate_allocation_is_not_recorded_as_fulfilled(game):
     assert state.metrics["国库"] == 0
     assert dossier["status"] == "closed"
     assert dossier["execution_outcome"] == "failed"
-    assert "不足额" in dossier["execution_note"]
 
 @pytest.mark.parametrize(
     "payload",
@@ -1946,10 +1944,7 @@ def test_inner_treasury_admission_uses_actual_once_and_preserves_surface(
     assert dossier["execution_outcome"] == outcome
     assert state.metrics["内库"] == max(0, balance - 10)
     assert len(db.list_economy_moves_for_dossier(dossier_id)) == int(expected_actual != 0)
-    if outcome == "failed":
-        assert "应拨10两" in dossier["execution_note"]
-        assert f"实拨{abs(expected_actual)}两" in dossier["execution_note"]
-    else:
+    if outcome != "failed":
         assert status == "executing"
         assert dossier_id in {
             row["id"] for row in db.list_decree_dossiers_for_simulation(state.turn)

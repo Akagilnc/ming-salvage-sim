@@ -42,7 +42,7 @@ class IssueSectionResult(SectionResult):
     """局势段。四个分子表即旧 ``issue_summary`` 的四段 applied；拒收单一形状。
 
     旧 ``issue_summary`` 的 ``touched_ids`` 子键无消费者（编排器自 advances
-    派生），不入本类型。``pairing_warnings`` 只在本段作附加字段，不上浮顶层。
+    派生），不入本类型。旧 ``pairing_warnings`` 恒空壳已随 F12 散文配对拆除一并删除。
     """
 
     applied: List[dict] = field(init=False)
@@ -54,7 +54,6 @@ class IssueSectionResult(SectionResult):
     # 分列，两者不是同一批：人物段是本批声明的人物变更，此处是局势效果带出的。
     applied_person_changes: List[dict] = field(default_factory=list)
     rejected: List[RejectedItem] = field(default_factory=list)
-    pairing_warnings: List[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         self.applied = [*self.advances, *self.new_issues, *self.closes, *self.cancels]
@@ -67,7 +66,6 @@ class IssueSectionResult(SectionResult):
             cancels=self.cancels + other.cancels,
             applied_person_changes=self.applied_person_changes + other.applied_person_changes,
             rejected=self.rejected + other.rejected,
-            pairing_warnings=self.pairing_warnings + other.pairing_warnings,
         )
 
 

@@ -348,11 +348,8 @@ def stage_punishment_candidate(
     linked_issue_id = 0
     if disposition in issue_dispositions_allowed() and issue_id is None:
         return 0
-    if issue_id is not None:
-        try:
-            linked_issue_id = int(issue_id)
-        except (TypeError, ValueError):
-            return 0
+    if issue_id is not None and issue_id != "":
+        linked_issue_id = int(issue_id)
         if linked_issue_id <= 0:
             return 0
         issue = db.conn.execute(
@@ -435,11 +432,9 @@ def stage_punishment_candidate(
         if not valid:
             return 0
         staged["transaction_category"] = category
-    try:
-        n = int(amount) if amount is not None and amount != "" else 0
-    except (TypeError, ValueError):
-        n = 0
-    # #517 r2：罚俸 admission 要求正数 amount；缺/零/非法不得成候选。
+    # 缺席 → 0（合法缺席契约 int(x or 0)）；在场损坏上抛，不 except 洗白。
+    n = int(amount or 0)
+    # #517 r2：罚俸 admission 要求正数 amount；缺/零不得成候选。
     if action == "罚俸":
         if n <= 0:
             return 0
@@ -671,8 +666,8 @@ def require_explicit_xiexang_fields(
     try:
         n = strict_int(amount, accept_numeric_strings=False)
     except ValueError:
-        n = 0
-    if n <= 0:
+        n = None
+    if n is None or n <= 0:
         _note("amount", current=amount, expected={"type": "positive_int"})
     # #1620：太仓→国库唯一权威 resolve_grant_account；此处不再平行 if。
     canonical_account = resolve_grant_account(grant_action="协饷", account=account)
@@ -934,14 +929,9 @@ def _assignment_absolute_end_turn(
     - end_turn 已严格大于当前 turn → 视为绝对回合
     - 否则 0<end_turn≤turn → 视为相对月数 turn+end_turn
     """
-    try:
-        et = int(end_turn or 0)
-    except (TypeError, ValueError):
-        et = 0
-    try:
-        months = int(deadline_months or 0)
-    except (TypeError, ValueError):
-        months = 0
+    # 缺席 → 0（int(x or 0)）；在场损坏上抛（禁 except→0 洗成缺席）。
+    et = int(end_turn or 0)
+    months = int(deadline_months or 0)
     cur = int(turn)
     if months > 0:
         return cur + months
@@ -1328,10 +1318,10 @@ def _parse_revoke_decree_target(
         raw = raw.split(":", 1)[1].strip()
     if not kind:
         kind = "dossier"
-    try:
-        tid = int(raw)
-    except (TypeError, ValueError):
+    if raw in (None, ""):
         return None
+    # 在场损坏上抛；禁 except→None 洗成「无目标」。
+    tid = int(raw)
     if tid <= 0:
         return None
     if kind == "issue":
@@ -1342,13 +1332,13 @@ def _parse_revoke_decree_target(
             return None
         if str(row["status"] or "").strip() != "active":
             return None
-        linked = 0
         origin = str(row["origin_ref"] or "").strip()
-        if origin.startswith("dossier:"):
-            try:
-                linked = int(origin.split(":", 1)[1])
-            except (TypeError, ValueError):
-                linked = 0
+        if not origin.startswith("dossier:"):
+            return None
+        suffix = origin.split(":", 1)[1]
+        if suffix in (None, ""):
+            return None
+        linked = int(suffix)
         # standalone / 无合法案卷来源：拒入闸，堵住 cancel_issue 免 0056 旁路
         if linked <= 0:
             return None
@@ -1387,26 +1377,17 @@ def _resolve_unique_active_authority(
     priv = str(privilege or "").strip()
     if priv in {"", "无"}:
         priv = ""
-    try:
-        aid = int(authority_id or 0)
-    except (TypeError, ValueError):
-        aid = 0
+    aid = int(authority_id or 0)
     if aid > 0:
         rec = db.get_authority(aid)
         if rec is None or bool(rec.get("revoked")):
             return None
-        try:
-            effective = int(rec.get("effective_turn") or 0)
-        except (TypeError, ValueError):
-            effective = 0
+        effective = int(rec.get("effective_turn") or 0)
         if effective > int(turn):
             return None
         exp = rec.get("expires_turn")
         if exp not in (None, ""):
-            try:
-                if int(exp) < int(turn):
-                    return None
-            except (TypeError, ValueError):
+            if int(exp) < int(turn):
                 return None
         if holder and str(rec.get("holder_id") or "") != holder:
             return None
@@ -1511,10 +1492,7 @@ def stage_assignment_candidate(
         "title": matter_title,
         "mode": mode,
     }
-    try:
-        origin_cid = int(source_chat_turn_id or 0)
-    except (TypeError, ValueError):
-        origin_cid = 0
+    origin_cid = int(source_chat_turn_id or 0)
     if origin_cid > 0:
         staged["source_chat_turn_id"] = origin_cid
     category = str(transaction_category or "").strip()
@@ -1538,22 +1516,14 @@ def stage_assignment_candidate(
     has_ongoing = isinstance(parsed_ongoing, dict) and bool(parsed_ongoing)
     if kind_raw == "until_stop":
         staged["commitment_kind"] = "until_stop"
-    # #620 AC2：生产捕获——结构化 stages / JSON 串 / 正文「三年X五年Y」→ 绝对 due 段表
-    # 分层：召对入口对分类器坏形 stages 容错（回落正文年诺）；库层 capture/stages_to_json 仍响亮 ValueError
+    # #620 AC2：生产捕获——仅结构化 stages / JSON 串 → 绝对 due 段表
+    # 分层：召对入口对分类器坏形 stages 容错；库层 capture/stages_to_json 仍响亮 ValueError
     from ming_sim.staged_commitment import capture_commitment_stages
     stages_raw = stages if stages not in (None, "") else None
     try:
-        stages_norm = capture_commitment_stages(
-            stages_raw,
-            narrative_text=body,
-            origin_turn=int(turn),
-        )
+        stages_norm = capture_commitment_stages(stages_raw)
     except ValueError:
-        stages_norm = capture_commitment_stages(
-            None,
-            narrative_text=body,
-            origin_turn=int(turn),
-        )
+        stages_norm = capture_commitment_stages(None)
     if kind_raw == "until_stop" or has_stop or absolute_end > 0 or has_ongoing or stages_norm:
         if has_stop:
             staged["stop_condition"] = parsed_stop
@@ -1690,10 +1660,7 @@ def stage_referral_candidate(
         )
     matter_id = str(target_id or "").strip() or matter_title
 
-    try:
-        months = int(deadline_months or 0)
-    except (TypeError, ValueError):
-        months = 0
+    months = int(deadline_months or 0)
     # FieldSpec int_hi=36 已在 normalize 夹紧；此处仍守 <=0 不产项
     if months <= 0:
         return 0
@@ -1746,10 +1713,7 @@ def stage_referral_candidate(
         "responsible_bodies": bodies,
         "mode": mode,
     }
-    try:
-        origin_cid = int(source_chat_turn_id or 0)
-    except (TypeError, ValueError):
-        origin_cid = 0
+    origin_cid = int(source_chat_turn_id or 0)
     if origin_cid > 0:
         staged["source_chat_turn_id"] = origin_cid
     # 禁个人 owner：显式不写 assignee/assignee_id

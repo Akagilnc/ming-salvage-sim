@@ -776,16 +776,8 @@ def map_rescript_option_or_choice(
         if station:
             payload["station"] = station
         else:
-            due = 0
-            try:
-                due = int(src.get("due_turn") or 0)
-            except (TypeError, ValueError):
-                due = 0
-            months = 0
-            try:
-                months = int(src.get("deadline_months") or 0)
-            except (TypeError, ValueError):
-                months = 0
+            due = int(src.get("due_turn") or 0)
+            months = int(src.get("deadline_months") or 0)
             if months > 0:
                 due = current_turn + months
             if due <= current_turn:
@@ -917,19 +909,16 @@ def map_rescript_option_or_choice(
         payload["target_kind"] = "character"
         payload["target_id"] = name
         if pa == "罚俸":
-            try:
-                amount = int(src.get("amount") or 0)
-            except (TypeError, ValueError):
-                amount = 0
+            raw_amount = src.get("amount")
+            if raw_amount in (None, ""):
+                raise ValueError("罚俸须正 amount")
+            amount = int(raw_amount)
             if amount <= 0:
                 raise ValueError("罚俸须正 amount")
             payload["amount"] = amount
         else:
-            # 其它动作不得正 amount
-            try:
-                amount = int(src.get("amount") or 0)
-            except (TypeError, ValueError):
-                amount = 0
+            # 其它动作不得正 amount；缺席当 0，在场损坏上抛。
+            amount = int(src.get("amount") or 0)
             if amount > 0:
                 raise ValueError("非罚俸不得带正 amount")
 
@@ -1037,11 +1026,7 @@ def _create_from_mapped(
     if assignee:
         executor_kind = "character"
         executor_id = assignee
-    due_turn = 0
-    try:
-        due_turn = int(normalized.get("due_turn") or 0)
-    except (TypeError, ValueError):
-        due_turn = 0
+    due_turn = int(normalized.get("due_turn") or 0)
     return list(db.create_decree_dossiers(
         state,
         action_type=emitted,

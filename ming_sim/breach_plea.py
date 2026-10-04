@@ -1461,10 +1461,11 @@ def resolve_breach_pleas_from_extraction(
     for it in extracted.get("economy_moves") or []:
         if not isinstance(it, dict):
             continue
-        try:
-            delta = int(it.get("delta") or 0)
-        except (TypeError, ValueError):
+        raw_delta = it.get("delta")
+        if raw_delta in (None, ""):
             delta = 0
+        else:
+            delta = int(raw_delta)
         purpose = str(it.get("purpose") or "")
         if delta != 0 or purpose in {"履行承诺", "续拨", "加拨"}:
             _note_funding_item(it)
@@ -1477,19 +1478,17 @@ def resolve_breach_pleas_from_extraction(
     for it in extracted.get("fiscal_changes") or []:
         if not isinstance(it, dict):
             continue
-        # 加拨：new_value > old_value 或 delta>0
-        try:
-            delta = int(it.get("delta") or 0)
-        except (TypeError, ValueError):
+        # 加拨：new_value > old_value 或 delta>0；在场坏 delta/新旧值上抛，不洗成 0。
+        raw_delta = it.get("delta")
+        if raw_delta in (None, ""):
             delta = 0
-        try:
-            old_v = it.get("old_value")
-            new_v = it.get("new_value")
-            if old_v is not None and new_v is not None:
-                if int(new_v) > int(old_v):
-                    delta = max(delta, int(new_v) - int(old_v))
-        except (TypeError, ValueError):
-            pass
+        else:
+            delta = int(raw_delta)
+        old_v = it.get("old_value")
+        new_v = it.get("new_value")
+        if old_v is not None and new_v is not None:
+            if int(new_v) > int(old_v):
+                delta = max(delta, int(new_v) - int(old_v))
         if delta > 0 or str(it.get("reason") or "") in {"加拨", "续拨", "复供"}:
             _note_funding_item(it)
 

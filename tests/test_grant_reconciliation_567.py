@@ -236,13 +236,11 @@ def test_close_merges_recon_note_without_second_treasury_debit(game):
     }]
     closed = db.get_decree_dossier(gid)
     assert closed["status"] == "closed"
-    note = closed["execution_note"]
-    assert "赈银押解到达" in note
-    assert "应解30两" in note
-    assert "实抵16两" in note
-    # 仍无二次扣库
+    # 仍无二次扣库；对账金额已在 reconciliations 结构化行，不另锁 execution_note 措辞
     assert int(state.metrics["内库"]) == after_grant_inner
     assert db.list_economy_moves_for_dossier(gid) == moves_before
+    recon = db.list_dossier_reconciliations(gid)
+    assert recon and int(recon[-1]["arrived_amount"]) == 16
 
 
 def test_missing_soft_judge_uses_band_midpoint(game):

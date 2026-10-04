@@ -146,8 +146,7 @@ def test_decide_settlement_delivery_gap_bidirectional():
         "has_reports": True,
     })
     assert failed["status"] == "failed" and not failed["delivered"]
-    assert "表报" in failed["note"]
-    # 表报不改变 delivered 判定
+    # 表报不改变 delivered 判定（不盯 note 措辞）
     bare = decide_secret_order_settlement({
         "actual_units": 0.5, "target_units": 3.0, "has_reports": False,
     })

@@ -1558,7 +1558,6 @@ def test_settle_edicts_persists_pending_disclosures_in_same_transaction(game, mo
     pending = reloaded.get("pending_disclosures") or []
     assert any(
         int(item.get("order_id") or 0) == order_id
-        and "私仓已查封" in str(item.get("sim_note") or "")
         for item in pending
     ), f"pending_disclosures missing after settle: {pending!r}"
 

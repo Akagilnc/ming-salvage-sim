@@ -8239,23 +8239,18 @@ class GameDB:
                 rejections.append(RejectedItem(item=raw, reason=f"new_armies '{aid}' 可选字段 '{_dirty_field[0]}' 值非整数："
                                f"{_dirty_field[1]!r}（在场即须合法，缺省才走默认）", category="invalid_enum", source=source))
                 continue
+            # 上方已拒在场脏可选字段；此处只读缺省/已验整数，不再 except→默认洗白。
             def _score(field: str, default: int = 50) -> int:
-                try:
-                    return max(0, min(100, int(item.get(field, default))))
-                except (TypeError, ValueError):
-                    return default
+                raw = item.get(field, default)
+                if raw is None:
+                    raw = default
+                return max(0, min(100, int(raw)))
             def _cannon() -> int:
-                # 随军大炮=门数 clamp 0-12；LLM 给非 int(如"几门")兜底 0，不让 int() 抛崩建军（PR codex）
-                try:
-                    return max(0, min(12, int(item.get("cannon_equipment", 0) or 0)))
-                except (TypeError, ValueError):
-                    return 0
+                raw = item.get("cannon_equipment", 0)
+                return max(0, min(12, int(raw or 0)))
             def _arrears_init() -> int:
-                # arrears 单位=累计欠饷万两，无上限；新军默认 0
-                try:
-                    return max(0, int(item.get("arrears", 0)))
-                except (TypeError, ValueError):
-                    return 0
+                raw = item.get("arrears", 0)
+                return max(0, int(raw or 0))
             initial_arrears = _arrears_init()
             if self.is_army_pay_source_cutover_enabled() and initial_arrears > 0:
                 rejections.append(RejectedItem(item=raw, reason=f"new_armies '{aid}' 新军初始欠饷必须为 0；"
@@ -8698,6 +8693,12 @@ class GameDB:
                 try:
                     sat_d = int(val)  # type: ignore[arg-type]
                 except (TypeError, ValueError):
+                    rejected.append(RejectedItem(
+                        item={faction: val},
+                        reason=f"faction_delta「{faction}」增量非整数：{val!r}",
+                        category="invalid_enum",
+                        source=source,
+                    ))
                     continue
                 lev_d = 0
             if sat_d == 0 and lev_d == 0:
@@ -10890,12 +10891,10 @@ class GameDB:
         if not payload:
             return None
         raw = payload.get("origin_chat_message_id")
-        if raw is None:
+        if raw in (None, ""):
             return None
-        try:
-            mid = int(raw)
-        except (TypeError, ValueError):
-            return None
+        # 在场损坏上抛；禁洗成缺席 None。
+        mid = int(raw)
         return mid if mid > 0 else None
 
     def attach_secret_oral_pin(
@@ -11185,12 +11184,11 @@ class GameDB:
             normalized["assignee_id"] = holder
         if action == "revoke_authority":
             # #523 / #611：收权生产项必带现存 authority_records.id；不得从 payload 拼 id。
-            try:
-                aid = strict_int(
-                    normalized.get("authority_id"), accept_numeric_strings=True,
-                )
-            except (TypeError, ValueError):
-                aid = 0
+            # 缺席 → DeclarationDataError；在场损坏上抛（禁 except→0 洗成缺席）。
+            raw_aid = normalized.get("authority_id")
+            if raw_aid in (None, ""):
+                raise DeclarationDataError("收权旨意缺少 authority_id")
+            aid = strict_int(raw_aid, accept_numeric_strings=True)
             if aid <= 0:
                 raise DeclarationDataError("收权旨意缺少 authority_id")
             normalized["authority_id"] = aid
@@ -11205,14 +11203,11 @@ class GameDB:
                 normalized["name"] = holder
                 normalized["target_kind"] = "character"
                 normalized["target_id"] = holder
-            try:
-                grant_did = strict_int(
-                    normalized.get("grant_dossier_id"), accept_numeric_strings=True,
-                )
-            except (TypeError, ValueError):
-                grant_did = 0
-            if grant_did > 0:
-                normalized["grant_dossier_id"] = grant_did
+            raw_grant = normalized.get("grant_dossier_id")
+            if raw_grant not in (None, ""):
+                grant_did = strict_int(raw_grant, accept_numeric_strings=True)
+                if grant_did > 0:
+                    normalized["grant_dossier_id"] = grant_did
             # 身份真源在 authority_records；禁保留并行 authorization_id(s)
             normalized.pop("authorization_id", None)
             normalized.pop("authorization_ids", None)
@@ -11223,20 +11218,16 @@ class GameDB:
                 raise DeclarationDataError("撤回成命目标不得为纯授权")
             revoke_did = 0
             revoke_iid = 0
-            try:
+            raw_revoke_did = normalized.get("revoke_target_dossier_id")
+            if raw_revoke_did not in (None, ""):
                 revoke_did = strict_int(
-                    normalized.get("revoke_target_dossier_id"),
-                    accept_numeric_strings=True,
+                    raw_revoke_did, accept_numeric_strings=True,
                 )
-            except (TypeError, ValueError):
-                revoke_did = 0
-            try:
+            raw_revoke_iid = normalized.get("revoke_target_issue_id")
+            if raw_revoke_iid not in (None, ""):
                 revoke_iid = strict_int(
-                    normalized.get("revoke_target_issue_id"),
-                    accept_numeric_strings=True,
+                    raw_revoke_iid, accept_numeric_strings=True,
                 )
-            except (TypeError, ValueError):
-                revoke_iid = 0
             if revoke_did <= 0 and revoke_iid <= 0:
                 kind = str(normalized.get("target_kind") or "").strip()
                 raw = raw_target
@@ -11246,10 +11237,9 @@ class GameDB:
                 elif raw.startswith("issue:"):
                     kind = "issue"
                     raw = raw.split(":", 1)[1].strip()
-                try:
-                    tid = strict_int(raw, accept_numeric_strings=True) if raw else 0
-                except (TypeError, ValueError):
-                    tid = 0
+                if not raw:
+                    raise DeclarationDataError("撤回成命缺少目标成命标识")
+                tid = strict_int(raw, accept_numeric_strings=True)
                 if tid <= 0:
                     raise DeclarationDataError("撤回成命缺少目标成命标识")
                 if kind == "issue":
@@ -11287,31 +11277,29 @@ class GameDB:
             if issue_disposition == "压下" and punish_action != "无":
                 raise DeclarationDataError("弹劾潮压下须使用 canonical 无动作")
             normalized["punish_action"] = punish_action
-            # #517 r2：罚俸须正数 amount，成案前响亮拒绝（不得归零暂存后判后才炸）。
+            # #517 r2：罚俸须正数 amount；缺席拒收，在场损坏上抛（禁洗成 0）。
             if punish_action == "罚俸":
-                try:
-                    amount = strict_int(
-                        normalized.get("amount"), accept_numeric_strings=False,
-                    )
-                except ValueError:
-                    amount = 0
+                raw_amount = normalized.get("amount")
+                if raw_amount in (None, ""):
+                    raise DeclarationDataError("罚俸旨意缺少正数 amount")
+                amount = strict_int(raw_amount, accept_numeric_strings=False)
                 if amount <= 0:
                     raise DeclarationDataError("罚俸旨意缺少正数 amount")
                 normalized["amount"] = amount
         if action == "military_order":
             # #521 r1：仅限期出战（无 station 调驻面）强制未来 due_turn；
             # 调驻/移镇可无期限成案。显式期限字段若出现仍须落成未来 due。
-            try:
-                raw_due_turn = normalized.get("due_turn")
-                raw_deadline = normalized.get("deadline_months")
-                due_turn = strict_int(
-                    raw_due_turn, accept_numeric_strings=False
-                ) if raw_due_turn is not None else 0
-                deadline = strict_int(
-                    raw_deadline, accept_numeric_strings=False
-                ) if raw_deadline is not None else 0
-            except ValueError:
-                due_turn = deadline = 0
+            # 缺席 → 0；在场损坏上抛（禁 except→0 洗成缺席）。
+            raw_due_turn = normalized.get("due_turn")
+            raw_deadline = normalized.get("deadline_months")
+            due_turn = (
+                0 if raw_due_turn in (None, "")
+                else strict_int(raw_due_turn, accept_numeric_strings=False)
+            )
+            deadline = (
+                0 if raw_deadline in (None, "")
+                else strict_int(raw_deadline, accept_numeric_strings=False)
+            )
             if due_turn <= 0 and deadline > 0 and current_turn > 0:
                 due_turn = int(current_turn) + deadline
             station = str(normalized.get("station") or "").strip()
@@ -11348,20 +11336,17 @@ class GameDB:
                 ),
             )
             normalized["responsible_bodies"] = cleaned
-            try:
-                end_turn = strict_int(
-                    normalized.get("end_turn"), accept_numeric_strings=True,
-                )
-            except (TypeError, ValueError):
-                end_turn = 0
+            raw_end = normalized.get("end_turn")
+            end_turn = (
+                0 if raw_end in (None, "")
+                else strict_int(raw_end, accept_numeric_strings=True)
+            )
             if end_turn <= 0 and current_turn > 0:
-                try:
-                    months = strict_int(
-                        normalized.get("deadline_months"),
-                        accept_numeric_strings=True,
-                    )
-                except (TypeError, ValueError):
-                    months = 0
+                raw_months = normalized.get("deadline_months")
+                months = (
+                    0 if raw_months in (None, "")
+                    else strict_int(raw_months, accept_numeric_strings=True)
+                )
                 if months > 0:
                     end_turn = int(current_turn) + months
             if end_turn <= int(current_turn or 0):
@@ -13059,10 +13044,9 @@ class GameDB:
             did = 0
             origin = str(crow["origin_ref"] or "")
             if origin.startswith("dossier:"):
-                try:
-                    did = int(origin.split(":", 1)[1])
-                except (TypeError, ValueError):
-                    did = 0
+                suffix = origin.split(":", 1)[1]
+                if suffix not in (None, ""):
+                    did = int(suffix)  # 在场损坏上抛；禁洗成 0
             candidates.append((cid, SOURCE_BREACH_VERDICT, did))
 
         breach_commitment_ids = {
@@ -14570,15 +14554,17 @@ class GameDB:
         normalized: List[Tuple[int, str, str]] = []
         rejection: Optional[Tuple[int, str, str, str]] = None
         for item in links:
-            try:
-                target_id = strict_int(
-                    item.get("target_dossier_id"), accept_numeric_strings=False
-                )
-            except (AttributeError, ValueError):
-                target_id = 0
-            relation = str(item.get("relation_type") or "") if isinstance(item, dict) else ""
-            raw_note = item.get("note") if isinstance(item, dict) else ""
+            if not isinstance(item, dict):
+                rejection = (0, "", "", "关联项须为对象")
+                break
+            relation = str(item.get("relation_type") or "")
+            raw_note = item.get("note")
             note = raw_note if isinstance(raw_note, str) else str(raw_note or "")
+            raw_tid = item.get("target_dossier_id")
+            if raw_tid in (None, ""):
+                rejection = (0, relation, note, "关联缺少目标案卷")
+                break
+            target_id = strict_int(raw_tid, accept_numeric_strings=False)
             if self.get_decree_dossier(target_id) is None:
                 rejection = (target_id, relation, note, "关联指向不存在案卷")
             elif target_id >= source_id:
@@ -16088,12 +16074,10 @@ class GameDB:
         from ming_sim.settlement import SettlementContext, settle_delta
         from ming_sim.strict_types import strict_int
 
-        try:
-            authority_id = strict_int(
-                payload.get("authority_id"), accept_numeric_strings=True,
-            )
-        except (TypeError, ValueError):
-            authority_id = 0
+        raw_aid = payload.get("authority_id")
+        if raw_aid in (None, ""):
+            raise ValueError("收权案卷缺少 authority_id")
+        authority_id = strict_int(raw_aid, accept_numeric_strings=True)
         if authority_id <= 0:
             raise ValueError("收权案卷缺少 authority_id")
         outcome = settle_delta(
@@ -16121,20 +16105,16 @@ class GameDB:
         """
         from ming_sim.strict_types import strict_int
 
-        try:
-            target_dossier_id = strict_int(
-                payload.get("revoke_target_dossier_id"),
-                accept_numeric_strings=True,
-            )
-        except (TypeError, ValueError):
-            target_dossier_id = 0
-        try:
-            target_issue_id = strict_int(
-                payload.get("revoke_target_issue_id"),
-                accept_numeric_strings=True,
-            )
-        except (TypeError, ValueError):
-            target_issue_id = 0
+        raw_tdid = payload.get("revoke_target_dossier_id")
+        target_dossier_id = (
+            0 if raw_tdid in (None, "")
+            else strict_int(raw_tdid, accept_numeric_strings=True)
+        )
+        raw_tiid = payload.get("revoke_target_issue_id")
+        target_issue_id = (
+            0 if raw_tiid in (None, "")
+            else strict_int(raw_tiid, accept_numeric_strings=True)
+        )
 
         if target_dossier_id <= 0 and target_issue_id <= 0:
             raw = str(payload.get("target_id") or row.get("target_id") or "").strip()
@@ -16147,10 +16127,9 @@ class GameDB:
             elif raw.startswith("issue:"):
                 kind = "issue"
                 raw = raw.split(":", 1)[1].strip()
-            try:
-                tid = strict_int(raw, accept_numeric_strings=True) if raw else 0
-            except (TypeError, ValueError):
-                tid = 0
+            if not raw:
+                raise ValueError("撤回成命案卷缺少目标")
+            tid = strict_int(raw, accept_numeric_strings=True)
             if tid <= 0:
                 raise ValueError("撤回成命案卷缺少目标")
             if kind == "issue":
@@ -16170,10 +16149,8 @@ class GameDB:
                 raise ValueError("撤回成命目标须为承诺/initiative")
             origin = str(issue_row["origin_ref"] or "").strip()
             if origin.startswith("dossier:"):
-                try:
-                    target_dossier_id = int(origin.split(":", 1)[1])
-                except (TypeError, ValueError):
-                    target_dossier_id = 0
+                suffix = origin.split(":", 1)[1]
+                target_dossier_id = int(suffix or 0)
 
         if target_dossier_id <= 0:
             # 删除 standalone issue 免代价旁路（dossier_id=0 仍 cancel_issue）
@@ -16432,9 +16409,6 @@ class GameDB:
         from ming_sim.staged_commitment import capture_commitment_stages
         stages_norm = capture_commitment_stages(
             payload.get("stages") or payload.get("stages_json"),
-            # #1565：叙事只取已归一正文（text/decree_text），不把题名当任务叙事。
-            narrative_text=stage_text,
-            origin_turn=int(getattr(state, "turn", 0) or 0),
         )
         if stages_norm:
             ni["stages"] = stages_norm
@@ -21543,10 +21517,11 @@ class GameDB:
             raise ValueError("密令不存在")
         if row["status"] != "active":
             raise ValueError(f"当前状态 {row['status']}，不能催办")
-        try:
-            months = max(0, min(int(deadline_months or 0), 36))
-        except (TypeError, ValueError):
+        # 缺席 → 1（催办默认一月）；在场损坏上抛，禁洗成默认月数。
+        if deadline_months in (None, ""):
             months = 1
+        else:
+            months = max(0, min(int(deadline_months), 36))
         target_turn = int(state.turn) + months
         old_due = int(row["due_turn"] or 0)
         stamp = f"〔{period_label(state.year, state.period)}〕"
