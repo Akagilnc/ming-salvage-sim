@@ -140,5 +140,6 @@ J6 整类 **未结**。下一刀须对 PENDING_* 逐项读上下文并给独立�
 
 ## 7. Commits
 
-- 本轮提交 SHA：见 commit 后回填
+- 本轮提交 SHA：
+- 短哈希：
 - 标题：`ak-roles: fix(#1900): adjudicate J6 NEEDS_READ bucket and drop illegal locks`
