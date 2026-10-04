@@ -78,4 +78,4 @@ real 2.42  user 1.82  sys 0.25
 
 ## 8. SHA
 
-见提交后 `git rev-parse HEAD`。
+`ecf3f66605ec97b1f528299c5d0d5f27f6632bbb`（working tree clean）
