@@ -86,11 +86,10 @@ def _assert_text_keeps_statuses(text: str, statuses: list[str], label: str) -> N
 
 
 def _expected_army_card_from_row(db, row) -> dict:
-    """由 DB 行机械重建军牌投影（含历史 status 键），供「其余字段不变」对照。"""
-    from ming_sim.db import _player_army_situation
+    """Direct DB-field transport; derived situation fields are covered by #321."""
+    from ming_sim.flows import army_needed
 
-    pay = db._army_pay(row)
-    sit = _player_army_situation(row, pay)
+    pay = army_needed(row)
     return {
         "id": row["id"],
         "name": row["name"],
@@ -102,15 +101,11 @@ def _expected_army_card_from_row(db, row) -> dict:
         "manpower": int(row["manpower"]),
         "army_needed": pay,
         "supply": int(row["supply"]),
-        "morale_text": sit["morale_text"],
         "training": int(row["training"]),
         "equipment": int(row["equipment"]),
-        "arrears_text": sit["arrears_text"],
         "mobility": int(row["mobility"]),
-        "mutiny_tier": sit["mutiny_tier"],
         "firearm_equipment": int(row["firearm_equipment"]),
         "cannon_equipment": int(row["cannon_equipment"]),
-        "status": row["status"],  # 旧投影曾携；#1501 允许删除
         "owner_power": row["owner_power"],
     }
 
@@ -152,19 +147,20 @@ def test_army_payload_omits_static_status_exposes_arrears_text(read_game):
 
     for army_id, row in rows_by_id.items():
         card = by_id[army_id]
-        legacy = _expected_army_card_from_row(db, row)
-        expected = {k: v for k, v in legacy.items() if k != "status"}
+        expected = _expected_army_card_from_row(db, row)
 
         # 完整键集：恰好等于投影契约（无 status / 无 raw morale|loyalty|arrears）
-        assert set(card.keys()) == set(expected.keys()) == _ARMY_PAYLOAD_KEYS, (
+        assert set(card.keys()) == _ARMY_PAYLOAD_KEYS, (
             f"{army_id}: payload 键集偏离。"
             f" extra={set(card.keys()) - _ARMY_PAYLOAD_KEYS!r}"
             f" missing={_ARMY_PAYLOAD_KEYS - set(card.keys())!r}"
         )
         assert "status" not in card
         assert {"morale", "loyalty", "arrears"}.isdisjoint(card.keys())
+        for key in ("morale_text", "arrears_text", "mutiny_tier"):
+            assert isinstance(card[key], str)
 
-        # 逐字段机械对照（唯一允许差异已在 expected 中删除 status）
+        # Compare transported DB fields; #321 covers derived situation assembly.
         for key, value in expected.items():
             assert card[key] == value, (
                 f"{army_id}.{key}: payload={card[key]!r} expected={value!r}"
@@ -202,10 +198,12 @@ def test_shared_consumers_still_surface_status(read_game):
     db, state, content = read_game
     seed_status = _guanning_db_status(db)
 
-    # 2) 兵部人物投影只见兵籍在册额，不携全表 status。
+    # 2) 兵部账键 military 仍在，且不携全表 status。标题措辞不是供料身份。
     war = next(c for c in content.characters.values() if c.office_type == "兵部")
     knowledge = build_character_knowledge(db, state, war.name)
-    military = (knowledge.get("world") or {}).get("military") or ""
+    world = knowledge.get("world") or {}
+    assert "military" in world
+    military = str(world["military"] or "")
     _assert_ming_register(db, military)
     assert seed_status not in military
 
@@ -233,10 +231,11 @@ def test_shared_consumers_still_surface_status(read_game):
     _assert_text_keeps_statuses(roster, all_statuses, "army_roster")
     assert seed_status in roster
     prepared = prepare_character_materials(db, state, war)
-    blob = "\n".join(
-        read_material(prepared.root, path)
-        for path in list_materials(prepared.root) if path != "INDEX.txt"
-    )
+    paths = [
+        path for path in list_materials(prepared.root) if path != "INDEX.txt"
+    ]
+    assert any(path.endswith("/公事档案.txt") for path in paths)
+    blob = "\n".join(read_material(prepared.root, path) for path in paths)
     _assert_ming_register(db, blob)
     assert seed_status not in blob
 

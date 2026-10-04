@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import json
 import types
-import threading
 
 import pytest
 
@@ -131,8 +130,11 @@ def test_night_archive_involved_people_drops_non_persons(game):
 # ── 3) #1341/#1338 PATCH 死契约拆除 ────────────────────────────────
 
 
-def test_patch_decree_route_removed_and_directives_remain():
-    """调用方扫描结论：web/src 零真实调用 → 删路由；directives 入口仍在。"""
+def test_patch_decree_and_manual_create_routes_removed_draft_rw_remains():
+    """#1341 裸设总诏路由已删；#1849 / ADR 0152 决定 1 独立手拟新增口（POST）亦删。
+
+    草稿的改（PATCH）／删（DELETE）保留；日常直接下旨只走召对拟旨。
+    """
     import web_app
 
     patch_decree = [
@@ -147,7 +149,15 @@ def test_patch_decree_route_removed_and_directives_remain():
         if getattr(r, "path", None) == "/api/directives"
         and "POST" in (getattr(r, "methods", None) or set())
     ]
-    assert post_dirs, "逐道旨意入口必须保留"
+    assert post_dirs == [], "独立手拟新增口必须已退役"
+
+    for method in ("PATCH", "DELETE"):
+        routes = [
+            r for r in web_app.app.routes
+            if getattr(r, "path", None) == "/api/directives/{directive_id}"
+            and method in (getattr(r, "methods", None) or set())
+        ]
+        assert routes, f"草稿 {method} 必须保留"
 
 
 # ── 4) #1327 空载/有界 capture ─────────────────────────────────────
@@ -172,19 +182,18 @@ def test_empty_text_capture_short_circuits_without_llm(monkeypatch):
     assert calls == []
 
 
-def test_web_create_directive_long_extract_still_lands_real_draft(game, monkeypatch):
-    """#1465 切片③：拟旨 capture 跨旧 30s 罩仍成案（真实入口 → 读回 pending 案卷）。
+def test_seeded_draft_long_extract_still_lands_real_dossier(game, monkeypatch):
+    """#1465 切片③：拟旨 capture 跨旧 30s 罩仍成案（真落桌 → 读回 pending 案卷）。
 
-    真实入口 POST /api/directives；抽取把注入时钟推过 120s（旧外层 30s 总罩下
-    remaining 会扣穿 → 抽取被饿死、落 special_decree 或 LLMUnavailable）。罩既已
-    删，长抽取仍须落**真**草案：结构字段照 LLM 结果走，且读回 pending/案卷可见。
-    确定性、无线程、不跑真墙钟。
+    #1849：独立手拟新增 Web 口已退役，落草案走现行 capture 核 + session.add_directive
+    （召对拟旨同一写入）。抽取把注入时钟推过 120s（旧外层 30s 总罩下 remaining 会
+    扣穿 → 抽取被饿死、落 special_decree 或 LLMUnavailable）。罩既已删，长抽取仍须落
+    **真**草案：结构字段照 LLM 结果走，且读回 pending/案卷可见。确定性、无线程。
     """
-    from fastapi.testclient import TestClient
-
     import ming_sim.cli_backend as cli_backend
-    import web_app
     from ming_sim.session import GameSession
+
+    from tests.directive_seed_helpers import seed_manual_draft
 
     db, state, content = game
     text = "着毕自严核清太仓实存"
@@ -213,28 +222,12 @@ def test_web_create_directive_long_extract_still_lands_real_draft(game, monkeypa
     session.state = state
     session.llm_config = None
     session.content = content
-    web_game = types.SimpleNamespace(
-        _write_gate=threading.Lock(),
-        db=db, state=state, content=content, session=session,
-        directive_rows=lambda: db.list_directives(
-            state, statuses=("pending", "draft"),
-        ),
-        directive_payload=lambda row: dict(row),
-    )
-    monkeypatch.setattr(web_app, "get_game", lambda: web_game)
 
-    response = TestClient(web_app.app).post(
-        "/api/directives", json={"text": text, "notes": ""},
-    )
-    assert response.status_code == 200, response.text
+    directive_id = seed_manual_draft(session, text)
     assert clock["t"] - 1000.0 > 30.0, clock  # 确实跨过旧罩
-    body = response.json()
-    directive_id = int(body["directive"]["id"])
     assert directive_id > 0
-    assert body["directive"]["text"] == text
-    # 读回 pending/案卷：入口回执与库内草案同一条，且案卷结构字段是 LLM 抽取结果，
+    # 读回 pending/案卷：落桌与库内草案同一条，且案卷结构字段是 LLM 抽取结果，
     # 不是罩饿死后的 special_decree 兜底。
-    assert directive_id in [int(item["id"]) for item in body["directives"]]
     rows = db.list_directives(state, statuses=("pending", "draft"))
     row = next(item for item in rows if int(item["id"]) == directive_id)
     payload = db.read_directive_dossier_payload(row)

@@ -517,36 +517,48 @@ def test_turn_region_summary_claim_audit_rows_do_not_consume_limit(game):
     assert not any(row["reason"] in summary for row in claim_rows)
 
 
-def test_deferred_real_revoke_restores_override_only_after_persist(game):
-    from ming_sim.breach_plea import decode_plea_meta, finalize_persist
+def test_real_revoke_restores_override_same_month_with_active_commitment(game):
+    """#1894：目标挂 active 承诺时撤旨当月即恢复 override，不再等下一场挽留坚持。
 
-    db, state, _content = game
+    偿还序案卷无判定面：顺颁即 closed，但 override 键仍在 fiscal_config 在位。
+    「已结案」不等于「实效已退」——这道旨仍须能从**召对撤令入口**撤销，
+    走完暂存 → 成案 → 颁布判决的整条真实链，不直接调数据库写口。
+    """
+    from ming_sim.declaration_dispatch import dispatch_declaration
+
+    db, state, content = game
     until = db._current_settle_turn() + 3
     target = _override_dossier(db, state, [{
         "key": "due_priority_军饷@shaanxi", "value": 40, "until_turn": until,
     }])
     db.apply_dossier_promulgation(state, target, "promulgated")
+    assert db.get_decree_dossier(target)["status"] == "closed"
+    assert "due_priority_军饷@shaanxi" in db.get_fiscal_config()
     issue_id = db.insert_issue(
         state, kind="initiative", title="边饷次序之诺", origin_kind="decree",
         origin_ref=f"dossier:{target}", cancellable="decree",
         commitment_kind="until_stop", bar_value=10, stage_text="在办",
         ongoing_effects={}, end_turn=state.turn + 12,
     )
-    revoke = db.create_decree_dossier(
-        state, action_type="revoke_decree", decree_text="撤回前旨",
-        target_kind="issue", target_id=str(issue_id),
-        payload={"revoke_target_issue_id": issue_id, "revoke_target_dossier_id": target},
+
+    # 召对真入口：撤令经既有准入暂存（closed 但在位的偿还序旨须被准入）
+    staged = dispatch_declaration(
+        db, state,
+        {"commissions": [{
+            "text": "撤回前旨",
+            "revoke": {"target_kind": "issue", "target_id": str(issue_id)},
+        }]},
+        minister_name="",
     )
+    assert not staged.commissions.rejected, staged.commissions.rejected
+    pending = int(staged.commissions.applied[0]["id"])
+    db.commit_pending_actions(state, content=content)
+    revoke = int(db.conn.execute(
+        "SELECT id FROM decree_dossiers WHERE pending_action_id=?", (pending,),
+    ).fetchone()["id"])
     db.apply_dossier_promulgation(state, revoke, "promulgated")
-    cfg = db.get_fiscal_config()
-    assert cfg["due_priority_军饷@shaanxi"] == 40
-    assert cfg["due_priority_军饷@shaanxi_until_turn"] == until
-    todo = next(
-        todo for todo in db.list_next_audience_todos(status="pending")
-        if decode_plea_meta(todo.get("origin_context")).get("revoke_dossier_id") == revoke
-    )
-    result = finalize_persist(db, state, todo, commit=True)
-    assert result["decision"] == "persist"
+
+    # 颁布当月即恢复 override，撤令无「先等一次挽留」的前置
     cfg = db.get_fiscal_config()
     assert "due_priority_军饷@shaanxi" not in cfg
     assert "due_priority_军饷@shaanxi_until_turn" not in cfg

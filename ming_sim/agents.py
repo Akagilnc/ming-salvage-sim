@@ -627,6 +627,11 @@ def create_promulgation_judge_agent(
             "命门类可打回并置 midzhi_unpromulgatable=true，普通中旨无前科时从严但不得机械地"
             "一概打回；有 promulgation_history 批红强颁前科时与无前科差分，优先打回。",
             "顺颁不得虚构卡点。只输出 JSON，不写解释。",
+            "action_type=revoke_decree 的案卷是撤回一道已发旨：其 revoke_target "
+            "给出那道原旨的正文、已投入（paid）、实际办理进度（progress）与"
+            "参与者。撤令与别的旨一样本月由外廷反应：你可以准行，也可以劝回、"
+            "或以拖延（打回/留中）不使其生效——按原旨办到几分、已花掉多少、"
+            "谁在承办自行判断，代码不预设你必须准行。",
         ],
     )
 
@@ -717,6 +722,11 @@ def create_world_segment_agent(llm_config: LLMConfig, prepared: Any) -> Agent:
         "本段只写推演结果。",
         "若需要皇帝裁决，请在问处给出标准 DECISION 结构并停在问处；问后内容不属于本段。",
         "开场只有最小集。其余材料在当前目录，按需自读。",
+        # #1893：候选事实在世界目录里（盘面/候选事件与弹劾潮.txt），本段自读、
+        # 自行判定本月哪些真发生、哪个派系是否发难；不选的照实不写。
+        "本段自行取阅本月候选的人物事件与弹劾潮（盘面/候选事件与弹劾潮.txt），"
+        "按盘面与史实成因判断哪些本月真的发生、是否有人借机发难；"
+        "确实发生的写进本段正文，不选中的不必提及。",
         str(getattr(prepared, "opening", "") or ""),
     ]
     if is_minimax_base_url(cfg.base_url):
@@ -938,7 +948,12 @@ def create_relation_brew_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Agen
 
 
 def create_secret_order_supply_agent(llm_config: LLMConfig, prepared: Any = None) -> Agent:
-    """整月密令供料推演者（步骤 4a）：为合资格长差案卷产出密奏，为在办密令产出执行态。"""
+    """整月密令供料推演者（步骤 4a）：为合资格长差案卷产出密奏，为在办密令产出执行态。
+
+    #1896：查案密令不再用"执行态档位"折进度，改由模型按其所读材料声明本月**实际投入**
+    与**所查事实**；被查者经关系网知情后的毁证选择也在同一次 run 内按其视角声明。
+    引擎只据声明核算累计投入与逐证难度（P6：呈现层零改字，此处只改输入）。
+    """
     from ming_sim.materials import material_tools
 
     cfg = _llm_for_role(llm_config, "simulator")
@@ -953,17 +968,44 @@ def create_secret_order_supply_agent(llm_config: LLMConfig, prepared: Any = None
         _ctx().game_world_prompt,
         "你是整月密令供料推演者（步骤 4a）。",
         "根据本月事实材料（名义声明、实入流水、拒收、预推文、世界段、请旨答复、盘面）"
-        "及合资格长差案卷、在办密令，自行据实判断办理与拒收，产出密奏和执行态声明。"
+        "及合资格长差案卷、在办密令，自行据实判断办理与拒收，产出密奏和执行态声明。",
         "不得把未落或被拒收的意向当成已生效事实。盘面与文字事实可按需自读当前目录。",
         "必须返回 JSON 对象，包含两个字段：",
         "1. `dossier_progress_reports`: 列表，每个合资格长差案卷一条。每项包含：",
         "   - dossier_id: 整数，对应 eligible_dossiers 中的 dossier_id",
         "   - progress_band: 字符串，进展评级（如'顺利'、'持平'、'受阻'等）",
         "   - memorial_text: 字符串，承办人呈报皇帝的本月密奏正文，不可为空",
+        "   - origin: 承办人在这条密奏里自己选择的行动。睁眼闭眼写 same_faction_blind，"
+        "带私货写 private_goods；两样都选则用 + 连在一起。只写他这一次选出的记号",
         "2. `covert_exec_selections`: 列表，每个在办密令一条。每项包含：",
         "   - order_id: 整数，对应 active_secret_orders 中的 id",
         "   - fidelity: 字符串，执行态，必须为 '忠实'、'打折'、'阳奉阴违'、'反噬' 之一",
         "   - note: 字符串，执行态备注",
+        "查案密令（active_secret_orders 里带 investigation_facts 的那些）改用下列字段"
+        "表态，不要用 fidelity 折算查案进度。effort 必填：敷衍或停办写 0，"
+        "缺这一项不算数——那是没有声明，不是零投入：",
+        "   - effort: 0 到 1 之间的数字，表示你这个月**下了多大劲**去查："
+        "敷衍或停办给 0，真下功夫深挖给 1，取中间的按实情给。这是你的心意，"
+        "不是你办成了多少——引擎会按你手上实情（能力、人在不在差上、别的差务"
+        "压着多少）核出本月实投，并逐月累计。一条罪证要查多久是引擎的账，"
+        "不是你说了算；你本月真下死力，引擎也不拦着当月查出来。",
+        "   - fact_key: 字符串，本月实际下手的罪证标识，取自 investigation_facts。"
+        "只填你真正去查的那条；本月无从下手则省略此字段（引擎不会替你挑一条）。",
+        "   - method: 字符串，你本月用的查法。",
+        "   - tip_off: 对象，仅在你**确有一条消息经关系网递到了被查者手里**时给出："
+        "{source: 递话给他的人}。开案本身他不会知道——须真有人把话递到才算知情；"
+        "没有这条声明，引擎不认他知情，后续毁证与压案声明都不会被承接。",
+        "   - spoliation: 对象，仅在被查者已经知情、且你（按其视角）决定毁证时给出："
+        "{effect: 'harder' 或 'gone', fact_key: 被毁的那条罪证标识}。毁证只作用于"
+        "所指的那一条罪证，不牵连其他；是否毁、毁到何种程度由你按人物决定。",
+        "   - suppression: 对象，仅在被查者已经知情、且你决定压案（行贿说项之类）时"
+        "给出：{form: 他怎么压的}。压不压得住不由你填表决定，写下他做了什么即可。",
+        "   - note: 字符串，密奏正文。奏报写得好听与否与上面声明的实际投入无关。",
+        "active_secret_orders 里每位人物的 investigator_identity_materials / "
+        "investigation_target_identity_materials 的 materials_path 指向本人可及材料索引；"
+        "正文按人物经历、公事档案、事务与公开材料分列在该索引所在子目录，"
+        "先列该子目录取得相对调用根目录的路径，再按需读文件；"
+        "按各自身份演绎，同场不等于谁都知道对方的底细。",
         str(getattr(prepared, "opening", "") or ""),
     ]
     if is_minimax_base_url(cfg.base_url):

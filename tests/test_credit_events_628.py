@@ -4,7 +4,7 @@
 ① AC1：#623 既有辜负写口行为覆盖，本片不重写该 origin
 ② 兑付/撑完 + 谏处置三型（正）；校验拒收（fulfilled/任命）不落伪信用（负）
 ③ 处置映射：丢卒两笔 / 包庇撑腰 / 查办不记（负）；真变形案卷 + #565 连坐面
-④ 幂等（origin 写前判重）+ 叙事语境 + restore + 只写不读
+④ 幂等（origin 写前判重）+ 叙事语境 + restore
 """
 
 from __future__ import annotations

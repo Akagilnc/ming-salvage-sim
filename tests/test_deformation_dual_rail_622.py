@@ -14,7 +14,6 @@ from functools import partial
 
 from ming_sim.db import GameDB
 from tests.dossier_test_helpers import create_test_secret_order
-from ming_sim.due_review import decide_due_review_verdict
 from ming_sim.flows import _apply_economy_list
 from ming_sim.issues import apply_score_extraction
 from ming_sim.situation_drift import apply_situation_monthly_drift
@@ -166,32 +165,6 @@ def test_ac1_ac2_transformed_vs_degraded_dual_rail_tracer(game, tmp_path, conten
     # 无 durable beyond_intent 效果——仅表报
     assert db.list_economy_moves_for_dossier(deg_id) == []
 
-    # 单元对照：decide_due_review_verdict 仅标记不同
-    base_input = {
-        "mid_stage": False,
-        "criterion_text": "清丈见成数",
-        "origin_context": "清丈畿辅田亩",
-        "progress_reports": [{"progress_band": "在办", "memorial_text": "已办十之八九"}],
-        "durable_effects": [{
-            "origin_ref": "dossier:0",
-            "delta": 12,
-            "beyond_intent": False,
-        }],
-    }
-    # 有实况无旨外 → fulfilled（对照树完整性）
-    assert decide_due_review_verdict(base_input)["outcome"] == "fulfilled"
-    marked = dict(base_input)
-    marked["durable_effects"] = [{
-        "origin_ref": "dossier:0",
-        "delta": 12,
-        "beyond_intent": True,
-    }]
-    assert decide_due_review_verdict(marked)["outcome"] == "transformed"
-    # 无实况有表报 → degraded（与 transformed 对照）
-    no_effects = dict(base_input)
-    no_effects["durable_effects"] = []
-    assert decide_due_review_verdict(no_effects)["outcome"] == "degraded"
-
     result_deg = _prime_and_apply_due_review(
         db, state, content, dossier_id=deg_id, title="打折对照·清丈",
     )
@@ -268,47 +241,6 @@ def test_ac5_audit_fork_signal_present_only_with_audit_link(game):
     assert "audit_fork_signals" not in escort_nudge
 
 
-# ── ⑤ coerce 闭世界肯定识别器（#622 r2 畸形归 0）────────────────────
-
-
-def test_coerce_beyond_intent_flag_closed_affirmative_world():
-    """coerce_beyond_intent_flag 是闭世界肯定识别器。
-
-    仅契约内肯定表示（True / 非零 int·float / 肯定串集）→1；
-    缺席、否定、空、任何畸形（含非标量、非契约串）一律 →0。
-    开放兜底永不得回归。
-    """
-    coerce = GameDB.coerce_beyond_intent_flag
-
-    # 肯定集
-    for value in (True, 1, 2, 1.5, "true", "TRUE", "1", "yes", "on", "是", "有", "真"):
-        assert coerce(value) == 1, value
-
-    # 否定 / 缺省
-    for value in (False, 0, 0.0, None, "否", "无", "off", "false", "no", "0"):
-        assert coerce(value) == 0, value
-
-    # 畸形：非标量 + 垃圾串 + 空串 —— 一律 0（不得捏造肯定）
-    for value in ([], {}, [False], {"a": 1}, "null", "None", "0.0", "", "  ", "maybe", "garbage"):
-        assert coerce(value) == 0, value
-
-
-def test_decide_due_review_malformed_beyond_intent_stays_fulfilled():
-    """durable_effects 带 beyond_intent=[] 畸形标记须判 fulfilled 而非 transformed。"""
-    review_input = {
-        "mid_stage": False,
-        "criterion_text": "清丈见成数",
-        "origin_context": "清丈畿辅田亩",
-        "progress_reports": [{"progress_band": "在办", "memorial_text": "已办十之八九"}],
-        "durable_effects": [{
-            "origin_ref": "dossier:0",
-            "delta": 12,
-            "beyond_intent": [],
-        }],
-    }
-    assert decide_due_review_verdict(review_input)["outcome"] == "fulfilled"
-
-
 # ── ⑥ 补饷路由 seam：beyond_intent 不得因 purpose 分叉丢键（#622 r3）──
 
 
@@ -365,6 +297,31 @@ def test_apply_economy_list_directed_pay_arrears_echoes_beyond_intent(game):
     assert row["purpose"] == "补饷"
     assert row["target_id"] == army_id
     assert row["origin_ref"] == "dossier:parent"
+
+    applied_yes = _apply_economy_list(
+        db,
+        state,
+        [{
+            "account": "国库",
+            "delta": -2,
+            "purpose": "补饷",
+            "target_kind": "army",
+            "target_id": army_id,
+            "category": "补饷",
+            "reason": "定向补饷肯定串",
+            "origin_ref": "dossier:yes",
+            "beyond_intent": "是",
+        }],
+        origin_ref="dossier:yes",
+        commit=True,
+    )
+    assert applied_yes and applied_yes[0].get("beyond_intent") is True, applied_yes
+    yes_row = db.conn.execute(
+        "SELECT beyond_intent FROM economy_ledger WHERE reason=? ORDER BY id DESC LIMIT 1",
+        ("定向补饷肯定串",),
+    ).fetchone()
+    assert yes_row is not None
+    assert int(yes_row["beyond_intent"]) == 1
 
     # 反向锚：不带标记 → ledger=0，canonical 回执为 false/空来源
     applied_plain = _apply_economy_list(

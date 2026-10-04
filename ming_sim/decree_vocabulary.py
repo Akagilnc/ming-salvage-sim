@@ -252,8 +252,8 @@ def terminal_report_facade(
                 continue
             if item.get("is_terminal"):
                 continue
-            text = str(item.get("memorial_text") or "").strip()
-            if text:
+            text = str(item.get("memorial_text") or "")
+            if text.strip():
                 memorial = text
                 break
     return band, memorial

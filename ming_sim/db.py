@@ -870,6 +870,75 @@ def clamp_grant_arrival_amount(
     return max(lo, min(hi, proposed))
 
 
+_SECRET_ORDER_BODY_COLUMNS = ("result", "sim_note")
+
+
+def _secret_order_kept_body(text: object) -> str:
+    """空白正文记空串；已有字句原样保留，含内部空行。"""
+    raw = str(text or "")
+    return raw if raw.strip() else ""
+
+
+def _secret_order_record_body(record: Mapping[str, object]) -> str:
+    """Stored prose must already be a string. A missing or non-string body is not rewritten as empty text."""
+    body = record.get("body")
+    if not isinstance(body, str):
+        raise TypeError("密令正文记录缺少正文")
+    return body
+
+
+def _secret_order_body_log(row: sqlite3.Row) -> Dict[str, List[Dict[str, object]]]:
+    """Read structured body records.
+
+    ``json.loads`` failures and a non-dict top level propagate. A column that
+    is not a list, or a record whose body is not a string, raises ``TypeError``.
+    A missing column means no records. Stored entries are not filtered and a
+    missing body is not replaced with an empty string.
+    """
+    parsed = json.loads(row["text_log_json"])
+    log: Dict[str, List[Dict[str, object]]] = {}
+    for column in _SECRET_ORDER_BODY_COLUMNS:
+        entries = parsed.get(column, [])
+        if not isinstance(entries, list):
+            raise TypeError(f"密令正文记录 {column} 不是列表")
+        for item in entries:
+            if not isinstance(item, dict):
+                raise TypeError("密令正文记录条目不是对象")
+            _secret_order_record_body(item)
+        log[column] = entries
+    return log
+
+
+def _secret_order_period_recorded(
+    records: Sequence[Mapping[str, object]], year: int, period: int,
+) -> bool:
+    return any(
+        int(record.get("year") or 0) == int(year)
+        and int(record.get("period") or 0) == int(period)
+        for record in records
+    )
+
+
+def _project_secret_order_bodies(records: Sequence[Mapping[str, object]]) -> str:
+    """Project records by year, month, then write order. Body text is copied whole."""
+    ordered = sorted(
+        enumerate(records),
+        key=lambda pair: (
+            int(pair[1].get("year") or 0),
+            int(pair[1].get("period") or 0),
+            pair[0],
+        ),
+    )
+    parts: List[str] = []
+    for _, record in ordered:
+        marker = str(record.get("marker") or "")
+        parts.append(
+            f"〔{period_label(int(record.get('year') or 0), int(record.get('period') or 0))}〕"
+            f"{marker}{_secret_order_record_body(record)}"
+        )
+    return "\n".join(parts)
+
+
 class GameDB:
     def __init__(self, path: str, content: Optional[GameContent] = None, llm_config: Any = None):
         self.path = path
@@ -961,6 +1030,7 @@ class GameDB:
                 transit_speed_factor REAL,
                 transit_start_turn INTEGER NOT NULL DEFAULT 0,
                 identity INTEGER NOT NULL DEFAULT 50,
+                intrigue INTEGER NOT NULL DEFAULT 50,
                 seed_guilt TEXT NOT NULL DEFAULT ''
             );
 
@@ -1328,9 +1398,16 @@ class GameDB:
                 target_id INTEGER,                        -- 操作既有实体时其 id；新建为 NULL
                 minister_name TEXT NOT NULL DEFAULT '',
                 payload_json TEXT NOT NULL DEFAULT '{}',
-                status TEXT NOT NULL DEFAULT 'pending',    -- pending | committed | failed | held_over
+                status TEXT NOT NULL DEFAULT 'pending',    -- pending | committed | failed | held_over | voided
+                -- #1890：交办暂存的来源轮。一道交办的身份就是本行 id，撤回本轮时
+                -- 按此列整轮作废，不再靠 chat_turn_rollback_items 回溯猜是哪轮写的。
+                -- 0 = 非召对来源（过月世界段 / 框架写入）。
+                source_chat_turn_id INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
+            -- #1890：idx_pending_actions_source_turn 不写在本 CREATE 块——旧档
+            -- pending_actions 已存在时 CREATE TABLE IF NOT EXISTS 不重建、不补
+            -- source_chat_turn_id，索引会引用缺列失败。索引随下面的 ensure_column 建。
 
             CREATE TABLE IF NOT EXISTS recommendation_events (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1476,6 +1553,7 @@ class GameDB:
                 status TEXT NOT NULL DEFAULT 'active',
                 result TEXT NOT NULL DEFAULT '',
                 sim_note TEXT NOT NULL DEFAULT '',
+                text_log_json TEXT NOT NULL DEFAULT '{}',
                 excluded_names TEXT NOT NULL DEFAULT '[]',
                 dossier_progress_json TEXT NOT NULL DEFAULT '[]',
                 turn_closed INTEGER,
@@ -1692,6 +1770,21 @@ class GameDB:
             );
             CREATE INDEX IF NOT EXISTS idx_dossier_actual_progress_dossier
                 ON dossier_actual_progress(dossier_id, turn, id);
+            -- #1896：毁证按事实（fact_key）记账，不是按差务。关案重开、另起新案都
+            -- 不恢复已毁事实——故本表真源在 (target_name, fact_key)，不在案卷 payload。
+            -- 真相底（seed_guilt/把柄边）本身不动，这里只记"该事实的可查性被毁/被抬难"。
+            CREATE TABLE IF NOT EXISTS investigation_spoiled_facts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                target_name TEXT NOT NULL,
+                fact_key TEXT NOT NULL,
+                turn INTEGER NOT NULL,
+                year INTEGER NOT NULL DEFAULT 0,
+                period INTEGER NOT NULL DEFAULT 0,
+                effect TEXT NOT NULL CHECK(effect IN ('harder', 'gone')),
+                origin_ref TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(target_name, fact_key, effect)
+            );
             -- #627 / ADR 0077 ID-12: faction denunciation entries (independent carrier).
             -- Truth bottom lives in origin marks (#619 compose_report_origin); payload holds
             -- fork exposure. Never write dossier_loophole_exposures from this path.
@@ -2346,11 +2439,11 @@ class GameDB:
             "SELECT origin_turn, 0, 0, 'assignment', title, stage_text, "
             "'issue:' || id, participant_roster FROM issues WHERE participant_roster <> '[]'"
         )
-        # BUG 3：directive 暂存 commit 成 turn_directives draft 时回填该 draft 行 id，
-        # 使 undo_chat_turn 能精确删本轮自产的那条 draft（旧实现按 (turn,actor) 删，
-        # 会连带删掉同 actor 同回合的无关 draft）。0=未 commit / 非 directive。
+        # #1890 / ADR 0054：拟旨行（后生）单向指回交办暂存（先落）——撤回按此列
+        # 精确删本轮自产的 draft 行，不再靠 pending_actions 反查。
+        # 取代旧列 pending_actions.committed_directive_id（先落实体反指后生，违法方向）。
         self.ensure_column(
-            "pending_actions", "committed_directive_id", "INTEGER NOT NULL DEFAULT 0")
+            "turn_directives", "source_pending_action_id", "INTEGER NOT NULL DEFAULT 0")
         self.ensure_column(
             "turn_directives", "dossier_payload_json", "TEXT NOT NULL DEFAULT '{}'")
         self.ensure_column("character_offices", "dossier_id", "INTEGER")
@@ -2455,6 +2548,15 @@ class GameDB:
             "pending_actions", "night_approved", "INTEGER NOT NULL DEFAULT 0")
         self.ensure_column(
             "pending_actions", "version", "INTEGER NOT NULL DEFAULT 1")
+        # #1890：交办暂存的来源轮。撤回本轮按此列整轮作废，不再回溯
+        # chat_turn_rollback_items 猜是哪轮写的（那道回溯链是本票要拆的旧同步）。
+        # 索引随本列建：CREATE 块里的索引会引用旧档缺列（同 chat_turns 注记）。
+        self.ensure_column(
+            "pending_actions", "source_chat_turn_id", "INTEGER NOT NULL DEFAULT 0")
+        self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_pending_actions_source_turn "
+            "ON pending_actions(source_chat_turn_id, status, id)"
+        )
         # fiscal_config 科目元数据列（数据驱动预算目录）：budget_role=fixed 的 base 项靠
         # account/direction/display 由 flows.compute_budget_lines 动态生成预算行；
         # dynamic 项（田赋/辽饷/盐税/商税/皇庄）走省级公式/皇庄专路，这三列留空。
@@ -3729,10 +3831,10 @@ class GameDB:
                 self.conn.execute(
                     """
                     INSERT INTO characters
-                    (name, office, office_type, faction, aliases, personal_skills, loyalty, ability, integrity, courage, style, identity, seed_guilt,
+                    (name, office, office_type, faction, aliases, personal_skills, loyalty, ability, integrity, courage, style, identity, intrigue, seed_guilt,
                      birth_year, historical_death_year, historical_death_month, debut_year, debut_month,
                      status, status_reason, reason_code, status_changed_turn, portrait_id, power_id, location, transit_to, summary)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         character.name,
@@ -3747,6 +3849,7 @@ class GameDB:
                         character.courage,
                         character.style,
                         character.identity,
+                        character.intrigue,
                         _seed_guilt_storage_value(character.seed_guilt),
                         character.birth_year,
                         character.historical_death_year,
@@ -5269,14 +5372,15 @@ class GameDB:
             office_type = infer_office_type_from_office(office, character.office_type, self.llm_config, use_llm=False)
             self.conn.execute(
                 """INSERT OR IGNORE INTO characters
-                   (name, office, office_type, faction, aliases, personal_skills, loyalty, ability, integrity, courage, style, identity, seed_guilt,
+                   (name, office, office_type, faction, aliases, personal_skills, loyalty, ability, integrity, courage, style, identity, intrigue, seed_guilt,
                     birth_year, historical_death_year, historical_death_month, debut_year, debut_month, status, status_reason, reason_code, status_changed_turn,
                     portrait_id, power_id, location, transit_to, summary)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)""",
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)""",
                 (character.name, office, office_type, character.faction,
                  json.dumps(character.aliases, ensure_ascii=False), json.dumps(character.personal_skills, ensure_ascii=False),
                  character.loyalty, character.ability, character.integrity, character.courage, character.style,
-                 character.identity, _seed_guilt_storage_value(character.seed_guilt), character.birth_year, character.historical_death_year,
+                 character.identity, character.intrigue, _seed_guilt_storage_value(character.seed_guilt),
+                 character.birth_year, character.historical_death_year,
                  character.historical_death_month, character.debut_year, character.debut_month, character.status,
                  character.status_reason, character.reason_code,
                  character.portrait_id, character.power_id, character.location, character.transit_to, character.summary),
@@ -6259,36 +6363,6 @@ class GameDB:
             })
         return debuted
 
-    def apply_historical_power_renames(self, state: GameState) -> List[Dict[str, object]]:
-        """月初 tick：历史国号/称谓变化。稳定 id 不变，只改展示名与别名。"""
-        changes: List[Dict[str, object]] = []
-        if state.year > 1636 or (state.year == 1636 and state.period >= 4):
-            ev = self.content.event_by_id.get("huangtaiji_chengdi")
-            if ev is None or not isinstance(ev.effect_on_trigger, dict):
-                raise ValueError("历史改国号缺少事件真源 huangtaiji_chengdi.effect_on_trigger")
-            power_renames = ev.effect_on_trigger.get("power_renames")
-            if not isinstance(power_renames, list):
-                raise ValueError("历史改国号缺少 power_renames 列表")
-            for idx, item in enumerate(power_renames):
-                if not isinstance(item, dict):
-                    raise ValueError(f"历史改国号 power_renames[{idx}] 非 dict")
-                power_id = str(item.get("power_id") or "").strip()
-                new_name = str(item.get("new_name") or "").strip()
-                if not power_id or not new_name:
-                    raise ValueError(f"历史改国号 power_renames[{idx}] 缺少 power_id/new_name")
-                changed = self.apply_power_rename(
-                    state,
-                    power_id,
-                    new_name,
-                    aliases=str(item.get("aliases") or ""),
-                    reason=str(item.get("reason") or ""),
-                    status=str(item.get("status") or ""),
-                    last_action=str(item.get("last_action") or ""),
-                )
-                if changed:
-                    changes.append(changed)
-        return changes
-
     def next_pool_portrait_id(self, prefix: str = "minister_pool_") -> str:
         """分配下一个预设头像 ID（顺序递增，不循环）。
         minister_pool: 60 个槽；consort_pool: 20 个槽。
@@ -6389,10 +6463,10 @@ class GameDB:
         self.conn.execute(
             """
             INSERT INTO characters
-            (name, office, office_type, faction, aliases, personal_skills, loyalty, ability, integrity, courage, style, identity, seed_guilt,
+            (name, office, office_type, faction, aliases, personal_skills, loyalty, ability, integrity, courage, style, identity, intrigue, seed_guilt,
              birth_year, historical_death_year, historical_death_month, debut_year, debut_month,
              status, status_reason, status_changed_turn, portrait_id, power_id, location, transit_to, summary)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 character.name,
@@ -6407,6 +6481,7 @@ class GameDB:
                 character.courage,
                 character.style,
                 character.identity,
+                character.intrigue,
                 _seed_guilt_storage_value(character.seed_guilt),
                 character.birth_year,
                 character.historical_death_year,
@@ -10095,6 +10170,7 @@ class GameDB:
 
     def _restore_chat_rollback_items_in_tx(
         self, items: Iterable[sqlite3.Row], undone_message_ids: Iterable[int],
+        *, retract_context: bool = False,
     ) -> List[int]:
         undone = {int(message_id) for message_id in undone_message_ids}
         rollback_items = list(items)
@@ -10121,6 +10197,20 @@ class GameDB:
             target_id = str(item["target_id"])
             if strategy == "delete_inserted_row":
                 if table == "pending_actions":
+                    # #1890：只在**撤回**上下文里，本轮首次落下的交办改由统一
+                    # 身份作废（voided 墓碑），不在这条删行路上再写一遍同一事实。
+                    # 判据与 void_pending_actions_for_chat_turn 逐字相同：同源轮
+                    # 且仍 pending；owned 但已非 pending 的行不在作废范围内，
+                    # 必须照旧删掉（否则这里跳过、那边又不作废，多出一条
+                    # 「既不删也不废」的新路径）。
+                    #
+                    # 失败/重试善后（fail_chat_turn、restore_interrupted_after_
+                    # failed_retry）走同一核但不是撤回：那里的暂存必须删掉，
+                    # 轮才可再试；把它们一并作废等于让可重试轮永久出局。
+                    if retract_context and self._pending_action_owned_by_turn_in_tx(
+                        target_id, int(item["chat_turn_id"] or 0),
+                    ):
+                        continue
                     self._discard_deleted_directive_forecast(target_id)
                 self._delete_row_in_tx(table, target_id)
             elif strategy in {"restore_row", "restore_deleted_row"}:
@@ -10203,40 +10293,73 @@ class GameDB:
         # 颁诏 owning transaction 的 commit_pending_actions 可能在召对 diff 已记录之后
         # 才生成 turn_directives(status='draft')，因此那类行不会进入 rollback_items
         # （召对期直接更新的 turn_directives 仍会被快照捕获并还原）。
-        # 删除前，从本召对触碰过的 pending_actions(kind='directive') 行读取
-        # committed_directive_id，并且只删除那条 draft 行（BUG 3：旧实现按
-        # (turn,actor) 删除，会连同同 actor 同回合的无关 draft 一起删掉）。
-        # BUG（补充路径）：首次拟旨是 INSERT(delete_inserted_row)，补充（第 2 次拟旨）
-        # 是 UPDATE 既有 pending 行，因此 diff 会变成 restore_row。若按 strategy 过滤，
-        # 补充→颁诏→撤回流程会漏掉 committed_directive_id，残留 orphan draft 污染颁诏。
-        # 所以不依赖 strategy，只要该行 kind=='directive' 就回收。
+        # 删除前，取本轮该回收的拟旨 draft 行（BUG 3：旧实现按 (turn,actor)
+        # 删除，会连同同 actor 同回合的无关 draft 一起删掉）。
+        #
+        # #1890：判据改成按身份列读，不再扫 rollback_items 反查「本轮碰过哪些
+        # 交办」——那道回溯链是票面与陛下所拒的「回头去找具体哪句话」。两类行
+        # 都由 source_chat_turn_id 认出：
+        #   a) 本轮首次落下的交办：身份就是本轮 → 直接按列取。
+        #   b) 前轮已存在、本轮补充改稿的交办：身份仍是前轮的，扫不到；但它
+        #      正是票面要求「以前像恢复该轮对先前对象的变更」的那一类，逆转
+        #      归前像日志负责（下方 restore 分支），其 committed draft 仍需回收，
+        #      故对身份列取不到的行保留一次窄口径扫描（只看前轮身份的行）。
         draft_ids_to_delete: List[int] = []
-        seen_draft_ids: set[int] = set()
+
+        def _reclaim(pa_ids: Sequence[object]) -> None:
+            """回收这些交办各自落下的 draft 拟旨行。
+
+            #1890 / ADR 0054：按 turn_directives.source_pending_action_id 从新指旧
+            读，不再读 pending_actions.committed_directive_id（先落实体反指后生）。
+            """
+            ids: List[int] = []
+            for raw in pa_ids:
+                try:
+                    pid = int(raw)  # type: ignore[arg-type]
+                except (TypeError, ValueError):
+                    continue
+                if pid > 0:
+                    ids.append(pid)
+            if not ids:
+                return
+            placeholders = ",".join("?" for _ in ids)
+            draft_ids_to_delete.extend(
+                int(row["id"]) for row in self.conn.execute(
+                    "SELECT id FROM turn_directives "
+                    f"WHERE source_pending_action_id IN ({placeholders}) ORDER BY id",
+                    tuple(ids),
+                ).fetchall()
+            )
+
+        # a) 本轮首次落下的交办：按身份列直取，不经回溯日志。
+        _reclaim([
+            int(row["id"]) for row in self.conn.execute(
+                "SELECT id FROM pending_actions WHERE source_chat_turn_id = ? ORDER BY id",
+                (int(chat_turn_id),),
+            ).fetchall()
+        ])
+
+        # b) 前轮身份、本轮改稿的行：扫日志只为取这些行的 id（不改前像语义）。
+        prior_ids: List[object] = []
         for item in items:
             if str(item["target_table"]) != "pending_actions":
                 continue
-            # restore_row 中 after 是补充后的状态，before 是补充前的状态。两侧都有 id，
-            # kind 也相同，取任一侧即可。delete_inserted_row 只有 after，
-            # restore_deleted_row 只有 before。
             after_data = self._json_load_row(item["after_json"] or "") or {}
             before_data = self._json_load_row(item["before_json"] or "") or {}
-            kind = str(after_data.get("kind") or before_data.get("kind") or "")
-            if kind != "directive":
-                continue
             pa_id = after_data.get("id")
             if pa_id is None:
                 pa_id = before_data.get("id")
             if pa_id is None:
                 continue
-            live = self.conn.execute(
-                "SELECT committed_directive_id FROM pending_actions WHERE id=?",
+            owner = self.conn.execute(
+                "SELECT source_chat_turn_id FROM pending_actions WHERE id=?",
                 (int(pa_id),),
             ).fetchone()
-            if live is not None and int(live["committed_directive_id"] or 0) > 0:
-                did = int(live["committed_directive_id"])
-                if did not in seen_draft_ids:
-                    seen_draft_ids.add(did)
-                    draft_ids_to_delete.append(did)
+            # 本轮身份的行已在 a) 收过，不重复；只补身份属前轮的那些。
+            if owner is None or int(owner["source_chat_turn_id"] or 0) == int(chat_turn_id):
+                continue
+            prior_ids.append(pa_id)
+        _reclaim(prior_ids)
         with self.conn:
             self._delete_turn_scoped_knowledge_sources_in_tx(chat_turn_id)
             # #634 撤回联动（ADR 0038 白名单③）：删该轮源绑定的召对边事件；undone 轮
@@ -10257,10 +10380,17 @@ class GameDB:
                 (int(chat_turn_id),),
             )
             restored_pending_action_ids = self._restore_chat_rollback_items_in_tx(
-                items, message_ids,
+                items, message_ids, retract_context=True,
+            )
+            # #1890：按统一身份整轮作废本轮的交办暂存。放在前像还原之后——
+            # 还原可能把本轮改动过的「前轮已存在」暂存恢复成 pending，那些行的
+            # source_chat_turn_id 是前轮的，不在本轮作废范围内（判据只有一列）。
+            # 本轮首次落下的交办则在此盖 voided 墓碑，迟到的写入/补跑不会复活它。
+            voided_pending_action_ids = self.void_pending_actions_for_chat_turn(
+                chat_turn_id,
             )
             # 只精确删除本召对 commit 出来的 draft 行（保留同 actor 的无关 draft）。
-            for draft_id in draft_ids_to_delete:
+            for draft_id in dict.fromkeys(draft_ids_to_delete):
                 self.conn.execute(
                     "DELETE FROM turn_directives WHERE id=? AND status='draft'",
                     (int(draft_id),),
@@ -10302,8 +10432,10 @@ class GameDB:
         # P1-2：报告本召对删除了哪些 committed draft（write_decree 已 commit 的对话草案行）。
         # 上层据此让已生成的诏书正文（last_decree）失效——否则若另有 draft 残留，玩家仍能
         # 原样颁出含被撤回指令的陈旧诏书。无删除则为空，普通撤回不触发上层清稿。
-        turn_row["deleted_committed_draft_ids"] = list(draft_ids_to_delete)
+        turn_row["deleted_committed_draft_ids"] = list(dict.fromkeys(draft_ids_to_delete))
         turn_row["restored_pending_action_ids"] = restored_pending_action_ids
+        # #1890：本轮被作废的交办暂存 id（按 source_chat_turn_id 整轮作废所得）。
+        turn_row["voided_pending_action_ids"] = list(voided_pending_action_ids)
         return turn_row
 
     def save_turn_report(
@@ -10453,15 +10585,17 @@ class GameDB:
             items = self.knowledge_items_for_turn(state.turn)
         for item in items:
             source_id = str(item.get("source_id") or "")
-            existing = self.conn.execute(
-                "SELECT kind FROM character_knowledge_events "
-                "WHERE character_name='' AND source_id=?",
+            existing_public = self.conn.execute(
+                "SELECT 1 FROM character_knowledge_events "
+                "WHERE character_name='' AND source_id=? AND kind='public' LIMIT 1",
                 (source_id,),
             ).fetchone()
             # An explicit disclosure is the authoritative event for this
             # provenance.  Archive materialization may fill a missing ledger
             # row, but must never downgrade public back to roster-scoped.
-            if existing is not None and str(existing["kind"] or "") == "public":
+            # The lookup names kind='public': another row of this source may
+            # be returned first when the query does not.
+            if existing_public is not None:
                 continue
             self.record_public_knowledge_event(
                 state,
@@ -10484,12 +10618,15 @@ class GameDB:
         not lose that item's access boundary.
         """
         rows = self.conn.execute(
-            "SELECT turn, year, period, title, body, source_id, excluded_names "
+            "SELECT turn, year, period, kind, title, body, source_id, excluded_names "
             "FROM character_knowledge_events WHERE character_name='' AND turn=? "
             "ORDER BY id",
             (int(turn),),
         ).fetchall()
         by_source: Dict[str, Dict[str, object]] = {}
+        # An explicit public row is the payload for that source. A later
+        # source_projection of the same source_id must not replace it.
+        public_kept: set[str] = set()
         for row in rows:
             try:
                 excluded_names = json.loads(row["excluded_names"] or "[]")
@@ -10497,11 +10634,16 @@ class GameDB:
                 excluded_names = []
             if not isinstance(excluded_names, list):
                 excluded_names = []
-            item = {
+            key = str(row["source_id"] or "")
+            is_public = str(row["kind"] or "") == "public"
+            if key and key in public_kept and not is_public:
+                continue
+            by_source[key] = {
                 "title": row["title"], "body": row["body"],
                 "source_id": row["source_id"], "excluded_names": excluded_names,
             }
-            by_source[str(row["source_id"] or "")] = item
+            if key and is_public:
+                public_kept.add(key)
 
         source_rows = self.conn.execute(
             "SELECT title, body, source_id, participant_roster, excluded_names, "
@@ -11918,10 +12060,10 @@ class GameDB:
         """
         dossier = self.get_decree_dossier(int(dossier_id))
         band = str(progress_band or "").strip()
-        text = str(memorial_text or "").strip()
+        text = str(memorial_text or "")
         if dossier is None:
             raise ValueError("案卷不存在")
-        if not band or not text:
+        if not band or not text.strip():
             raise ValueError("进展档和密奏均不能为空")
         origin_norm = self._normalize_dossier_report_origin(
             origin, is_terminal=bool(is_terminal),
@@ -12071,17 +12213,17 @@ class GameDB:
             out.append(item)
         return out
 
-    def record_monthly_dossier_progress(
-        self, turn: int, generated: object = None,
-    ) -> List[Dict[str, object]]:
-        """Persist one valid extractor-authored brief for every eligible dossier."""
+    def _monthly_dossier_report_supply(
+        self, turn: int, generated: object,
+    ) -> Optional[Dict[int, Dict[str, object]]]:
+        """校验本月密奏覆盖。无合资格案卷且产物为空时返回 None；不写库。"""
         candidates = {
             int(item["dossier_id"]): item
             for item in self.list_monthly_dossier_progress_nudges(int(turn))
         }
         if not candidates:
             if generated is None or generated == []:
-                return []
+                return None
             raise ValueError("无合资格长差案卷却收到本月密奏")
         if generated is None or generated == []:
             raise ValueError("合资格长差案卷缺少本月密奏")
@@ -12098,20 +12240,35 @@ class GameDB:
             except (TypeError, ValueError) as exc:
                 raise ValueError("长差月报案卷编号无效") from exc
             band = str(item.get("progress_band") or "").strip()
-            text = str(item.get("memorial_text") or "").strip()
-            if dossier_id not in candidates or dossier_id in supplied or not band or not text:
+            text = str(item.get("memorial_text") or "")
+            if dossier_id not in candidates or dossier_id in supplied or not band or not text.strip():
                 raise ValueError("长差月报存在未知、重复或空白条目")
             supplied[dossier_id] = item
         if set(supplied) != set(candidates):
             raise ValueError("合资格长差案卷月报未完整覆盖")
+        return supplied
+
+    def validate_monthly_dossier_progress(
+        self, turn: int, generated: object = None,
+    ) -> None:
+        """只校验新产物覆盖，不写报告。已提交的合法报告不因重试再落一遍。"""
+        self._monthly_dossier_report_supply(int(turn), generated)
+
+    def record_monthly_dossier_progress(
+        self, turn: int, generated: object = None,
+    ) -> List[Dict[str, object]]:
+        """Persist one valid extractor-authored brief for every eligible dossier."""
+        supplied = self._monthly_dossier_report_supply(int(turn), generated)
+        if not supplied:
+            return []
 
         reports: List[Dict[str, object]] = []
         for dossier_id, item in supplied.items():
-            # #625：有在场稽核时 origin 带同派/私货结构化标记（扩 origin，不加列）。
-            origin = self.compose_supervision_report_origin(int(dossier_id), int(turn))
+            # 派系同／敌只留在监督史。origin 只承接本条密奏里声明的行动。
+            origin = self._monthly_report_origin(item)
             self.record_dossier_progress(
                 dossier_id, int(turn), str(item["progress_band"]).strip(),
-                str(item["memorial_text"]).strip(),
+                str(item.get("memorial_text") or ""),
                 origin=origin,
                 commit=False,
             )
@@ -12407,7 +12564,7 @@ class GameDB:
     ) -> Dict[str, object]:
         """月度在场扫描：稽核链 → presence 行；同 turn UNIQUE 幂等不双计。
 
-        settle 节拍：须先于月报 origin 标记调用（commit=False）。
+        在场与派系关系是事实。月报 origin 不从这里派生人物行动。
         """
         from ming_sim.supervision import (
             SUPERVISION_RELATION,
@@ -12706,112 +12863,12 @@ class GameDB:
             ),
         }
 
-    def compose_supervision_report_origin(
-        self, dossier_id: int, turn: int,
-    ) -> str:
-        """按当月在场稽核派系关系给 #619 origin 打私货/同派标记（扩 origin，不加列）。"""
-        from ming_sim.supervision import (
-            ORIGIN_MARK_PRIVATE_GOODS,
-            ORIGIN_MARK_SAME_FACTION_BLIND,
-            compose_report_origin,
+    def _monthly_report_origin(self, item: Mapping[str, object]) -> str:
+        from ming_sim.supervision import declared_report_action_origin
+
+        return declared_report_action_origin(
+            item.get("origin"), base=self.DOSSIER_REPORT_ORIGIN_MONTHLY,
         )
-
-        base = self.DOSSIER_REPORT_ORIGIN_MONTHLY
-        history = self.list_supervision_history(
-            int(dossier_id), as_of_turn=int(turn),
-        )
-        # 只看本 turn 在场行
-        marks: List[str] = []
-        for row in history:
-            if int(row.get("turn") or 0) != int(turn):
-                continue
-            if not row.get("present"):
-                continue
-            rel = str(row.get("faction_relation") or "")
-            if rel == "same":
-                marks.append(ORIGIN_MARK_SAME_FACTION_BLIND)
-            elif rel == "enemy":
-                marks.append(ORIGIN_MARK_PRIVATE_GOODS)
-        return compose_report_origin(base, marks)
-
-    def trigger_supervision_countermeasures(
-        self, state: GameState, *, commit: bool = False,
-    ) -> List[Dict[str, object]]:
-        """孤直稽核连续在场满 12 月 → 涌现缝立反制 issue（邸报前 auto_trigger 同缝）。
-
-        禁 0099/0091 新机制；禁占 #623 entry_kind；明升暗调形态走既有 issue 载体，
-        人事落地仍经 office_changes applier（本硬门只立局势）。
-        """
-        from ming_sim.supervision import (
-            COUNTERMEASURE_ORIGIN_KIND,
-            COUNTERMEASURE_PRESENCE_MONTHS,
-            countermeasure_origin_ref,
-            is_upright_integrity,
-            pick_countermeasure_kind,
-            character_faction_integrity,
-            derive_consecutive_months,
-        )
-
-        # 全库在场行按 (auditor, dossier) 聚合
-        rows = self.conn.execute(
-            """
-            SELECT dossier_id, auditor_name, turn
-            FROM dossier_supervision_presence
-            WHERE present=1
-            ORDER BY auditor_name, dossier_id, turn
-            """
-        ).fetchall()
-        grouped: Dict[Tuple[str, int], List[int]] = {}
-        for row in rows:
-            key = (str(row["auditor_name"]), int(row["dossier_id"]))
-            grouped.setdefault(key, []).append(int(row["turn"]))
-
-        triggered: List[Dict[str, object]] = []
-        for (auditor, dossier_id), turns in grouped.items():
-            months = derive_consecutive_months(turns)
-            if months < COUNTERMEASURE_PRESENCE_MONTHS:
-                continue
-            _fac, integrity = character_faction_integrity(self, auditor)
-            if not is_upright_integrity(integrity):
-                continue
-            origin_ref = countermeasure_origin_ref(auditor, dossier_id)
-            existing = self.find_any_issue_by_origin(
-                COUNTERMEASURE_ORIGIN_KIND, origin_ref,
-            )
-            if existing is not None:
-                continue
-            kind = pick_countermeasure_kind(auditor, dossier_id)
-            title = f"针对{auditor}的{kind}"
-            # 玩家可见 stage 禁系统词：崇祯朝口语，不写钝化/陋规化
-            stage_text = f"{auditor}连月按核不贷，官场反噬已起，{kind}之议渐露。"
-            issue_id = self.insert_issue(
-                state,
-                kind="situation",
-                title=title,
-                origin_kind=COUNTERMEASURE_ORIGIN_KIND,
-                origin_ref=origin_ref,
-                stage_text=stage_text,
-                tags=["supervision_countermeasure", kind, auditor],
-                participants=[auditor],
-                bar_value=35,
-                bar_good_meaning="反噬平息",
-                bar_bad_meaning="反噬坐大",
-                inertia=1,
-                severity=55,
-                faction_hint=str(_fac or ""),
-                commit=False,
-            )
-            triggered.append({
-                "issue_id": int(issue_id),
-                "auditor_name": auditor,
-                "dossier_id": int(dossier_id),
-                "countermeasure_kind": kind,
-                "origin_ref": origin_ref,
-                "consecutive_months": months,
-            })
-        if commit and triggered:
-            self.conn.commit()
-        return triggered
 
     def list_faction_denunciations(
         self,
@@ -13156,10 +13213,8 @@ class GameDB:
                 continue
             # 仅 canonical / ITEM_FIELD_ALIASES 背书键（检举人/被检举人→*_name）
             accuser = str(raw.get("accuser_name") or "").strip()
-            memorial = str(
-                raw.get("memorial_text") or raw.get("body") or ""
-            ).strip()
-            if not accuser or not memorial:
+            memorial = str(raw.get("memorial_text") or raw.get("body") or "")
+            if not accuser or not memorial.strip():
                 continue
             try:
                 dossier_id = int(
@@ -13286,12 +13341,12 @@ class GameDB:
         find_any_issue_by_origin 幂等；不碰 trigger_gate 求值器、不扩门表白名单。
         分档触发侧重算 assess_foundation_tier（零新列）；唯 halfway 触发。
         一拍差：判决 closed_turn < 当前 turn 才扫（判决在 delta、扫描在次回合前括号）。
-        与 #623 立即倒退去重：本片只立承诺所系 issue＋本片具名 metrics 一锤子，不重放
-        breach_halfway_setback / 民心-3·皇威-2 直击；不写 ongoing_effects.metrics 镜像。
+        与 #1894 前的 #623 立即倒退去重：那条代码生成的全国余波已删，本片只
+        立承诺所系 issue＋本片具名 metrics 一锤子；不写 ongoing_effects.metrics 镜像。
 
         事废读源：todo.payload_json.verdict=='persist'（#623 finalize_persist 既判痕迹；
-        consumed 有三源不可区分，单独不得作既判证据；常经 0056 先关案卷时
-        execution_outcome 可能空，故不以执行格为事废唯一源）。
+        consumed 有三源不可区分，单独不得作既判证据；#1894 后 0056 不再抢先关案卷，
+        execution_outcome 在模型判决落地前本就为空，故不以执行格为事废唯一源）。
         烂尾：读执行格终值 failed（#621）。
         变形：execution_outcome==transformed 仅作候选；须经 #622 公开读端
         list_economy_moves_for_dossier + beyond_intent 确认分叉事实后才立案。
@@ -14152,16 +14207,15 @@ class GameDB:
                 return dossier_id
         source_turn_id = int(source_chat_turn_id or 0)
         if source_turn_id <= 0 and int(pending_action_id or 0) > 0:
+            # #1890：来源轮直接读交办自己的身份列，不再回溯
+            # chat_turn_rollback_items（那道「回头去找是哪句话写的」链本票拆除）。
+            # 0 = 非召对来源，participant_roster 走载荷既有口径。
             origin = self.conn.execute(
-                """
-                SELECT chat_turn_id FROM chat_turn_rollback_items
-                WHERE target_table='pending_actions' AND target_id=?
-                ORDER BY id DESC LIMIT 1
-                """,
-                (str(int(pending_action_id)),),
+                "SELECT source_chat_turn_id FROM pending_actions WHERE id=?",
+                (int(pending_action_id),),
             ).fetchone()
             if origin is not None:
-                source_turn_id = int(origin["chat_turn_id"])
+                source_turn_id = int(origin["source_chat_turn_id"] or 0)
         roster_source = participants
         if roster_source is None:
             roster_source = (
@@ -15902,9 +15956,15 @@ class GameDB:
 
     def breach_decree_dossier(
         self, state: GameState, dossier_id: int, *, reason: str = "撤回成命",
-        commit: bool = True,
+        commit: bool = True, close_target: bool = True,
     ) -> bool:
-        """Withdraw an issued promise; commit=False belongs wholly to its caller."""
+        """Withdraw an issued promise; commit=False belongs wholly to its caller.
+
+        #1894：``close_target=False`` 只落 0056 名声代价（毁约判定、皇威、当事
+        大臣观感、派系），**不**代模型把目标案卷结案——案卷的终局由执行格
+        判官的 ``dossier_executions`` 声明落（撤令当月见办理结果）。早于此处
+        关案会让那份声明被「案卷不在 executing」拒收。
+        """
         if commit:
             from ming_sim.decree import atomic_and_reload
             transaction = atomic_and_reload(self, state)
@@ -15977,10 +16037,16 @@ class GameDB:
                     "UPDATE decree_dossiers SET interruption_reason=CASE WHEN interruption_reason='' THEN ? ELSE interruption_reason END WHERE id=?",
                     (reason, int(dossier_id)),
                 )
-            else:
+            elif close_target:
                 self.conn.execute(
                     "UPDATE decree_dossiers SET status='closed',closed_turn=?,interruption_reason=?,closed_at=CURRENT_TIMESTAMP WHERE id=?",
                     (state.turn, reason, int(dossier_id)),
+                )
+            else:
+                # 撤令路径只记毁约账；结案留给执行格判官的声明。
+                logger.info(
+                    "breach recorded without closing dossier=%s reason=%s",
+                    int(dossier_id), reason,
                 )
         return True
 
@@ -16420,42 +16486,45 @@ class GameDB:
             reason = str(item.get("reason") or "收权被拒")
             raise ValueError(reason)
 
-    def _apply_revoke_decree_verdict_effect(
-        self, state, row, payload, dossier_id,
-    ) -> None:
-        """#523：撤回成命顺颁后终结目标承诺/旨意；捆带授权走 authority_changes。
+    def resolve_revoke_decree_target_ids(
+        self, payload: object, row: object = None,
+    ) -> tuple[int, int]:
+        """撤令目标解析唯一实现：(dossier_id, issue_id)。
 
-        非 undo、不删旧账。代价归 ADR 0056（breach_decree_dossier）。
+        撤令的三处读者共用本函数——判后物化（#523）、判前供料
+        （materials.revoke_target_facts）。读同一组结构化身份字段
+        ``revoke_target_dossier_id`` / ``revoke_target_issue_id``；两者皆无
+        时才按案卷行 ``target_kind``/``target_id`` 解析（接受 ``dossier:``/
+        ``issue:`` 前缀），issue 再经 ``origin_ref`` 回指案卷。两个字段可同时
+        在场（撤的是某道旨下出的承诺），**不得**读到其一即止。
+
+        无合法案卷来源时响亮拒绝；只读供料方按「无原旨可读」捕获。
         """
-        from ming_sim.issues import apply_score_extraction
         from ming_sim.strict_types import strict_int
 
-        try:
-            target_dossier_id = strict_int(
-                payload.get("revoke_target_dossier_id"),
-                accept_numeric_strings=True,
-            )
-        except (TypeError, ValueError):
-            target_dossier_id = 0
-        try:
-            target_issue_id = strict_int(
-                payload.get("revoke_target_issue_id"),
-                accept_numeric_strings=True,
-            )
-        except (TypeError, ValueError):
-            target_issue_id = 0
+        source = payload if isinstance(payload, Mapping) else {}
+        fields = row if isinstance(row, Mapping) else {}
+
+        def _id(key: str) -> int:
+            try:
+                return strict_int(source.get(key), accept_numeric_strings=True)
+            except (TypeError, ValueError):
+                return 0
+
+        target_dossier_id = _id("revoke_target_dossier_id")
+        target_issue_id = _id("revoke_target_issue_id")
 
         if target_dossier_id <= 0 and target_issue_id <= 0:
-            raw = str(payload.get("target_id") or row.get("target_id") or "").strip()
+            raw = str(
+                source.get("target_id") or fields.get("target_id") or ""
+            ).strip()
             kind = str(
-                payload.get("target_kind") or row.get("target_kind") or ""
+                source.get("target_kind") or fields.get("target_kind") or ""
             ).strip()
             if raw.startswith("dossier:"):
-                kind = "dossier"
-                raw = raw.split(":", 1)[1].strip()
+                kind, raw = "dossier", raw.split(":", 1)[1].strip()
             elif raw.startswith("issue:"):
-                kind = "issue"
-                raw = raw.split(":", 1)[1].strip()
+                kind, raw = "issue", raw.split(":", 1)[1].strip()
             try:
                 tid = strict_int(raw, accept_numeric_strings=True) if raw else 0
             except (TypeError, ValueError):
@@ -16471,7 +16540,7 @@ class GameDB:
         if target_dossier_id <= 0 and target_issue_id > 0:
             issue_row = self.conn.execute(
                 "SELECT kind, status, origin_ref FROM issues WHERE id=?",
-                (target_issue_id,),
+                (int(target_issue_id),),
             ).fetchone()
             if issue_row is None:
                 raise ValueError("撤回成命目标事项不存在")
@@ -16487,34 +16556,41 @@ class GameDB:
         if target_dossier_id <= 0:
             # 删除 standalone issue 免代价旁路（dossier_id=0 仍 cancel_issue）
             raise ValueError("撤回成命目标无合法案卷来源，不得免代价终结")
+        return int(target_dossier_id), int(target_issue_id)
+
+    def _apply_revoke_decree_verdict_effect(
+        self, state, row, payload, dossier_id,
+    ) -> None:
+        """#523：撤回成命顺颁后终结目标承诺/旨意；捆带授权走 authority_changes。
+
+        非 undo、不删旧账。代价归 ADR 0056（breach_decree_dossier）。
+        """
+        from ming_sim.issues import apply_score_extraction
+
+        target_dossier_id, target_issue_id = self.resolve_revoke_decree_target_ids(
+            payload, row,
+        )
 
         reason = str(
             payload.get("text") or row.get("decree_text") or "撤回成命"
         )[:400]
 
-        # #623 / ADR 0075：目标挂 active 承诺 → 当回合只写挽留 todo，
-        # 0056 名声笔与事轴结账延迟到坚持后（不顺颁即 breach+close）。
-        from ming_sim.breach_plea import (
-            apply_persist_revoke_tail,
-            try_defer_revoke_to_breach_plea,
-        )
-        deferred = try_defer_revoke_to_breach_plea(
-            self, state,
-            target_dossier_id=int(target_dossier_id),
-            target_issue_id=int(target_issue_id or 0),
-            revoke_dossier_id=int(dossier_id),
-            reason=reason,
-            commit=False,
-        )
-        if deferred and deferred.get("deferred"):
-            return
+        # #1894：撤旨照常过外廷。外廷（0055 颁布判决）准行即当月落实，
+        # 不再把撤令延后到下一次召对等一场挽留——旧 ADR 0075「先顶哭谏、
+        # 坚持撤才落账」的等待已退役（撤令/原旨/已落实况由既有材料目录供
+        # 外廷人物读，是否求情归模型，不设代码求情探测）。
+        from ming_sim.breach_plea import apply_persist_revoke_tail
 
-        # 立即路径收尾：0056 + 捆带授权收回 + 同源停 tick（与坚持落地共享）
+        # 立即路径收尾：0056 + 捆带授权收回 + 同源停 tick。
+        # close_target=False：0056 只落名声账；原案卷的结案（执行格终值与
+        # 半途后果）由执行格判官在本月声明 dossier_executions 落——代码不
+        # 抢在模型声明前关案（#1894 F2）。
         apply_persist_revoke_tail(
             self, state,
             target_dossier_id=int(target_dossier_id),
             reason=reason,
             apply_0056=True,
+            close_target=False,
             commitment_ref=int(target_issue_id or 0),
             authority_source_dossier_id=int(dossier_id),
             revoke_dossier_id=int(dossier_id),
@@ -16747,13 +16823,12 @@ class GameDB:
         if isinstance(ongoing, dict) and ongoing:
             ni["ongoing_effects"] = ongoing
         # #620 扩展面：分段里程碑（#520 本体字段语义不动）
-        from ming_sim.staged_commitment import capture_commitment_stages
-        stages_norm = capture_commitment_stages(
+        from ming_sim.staged_commitment import stages_to_json
+        # 分段承诺是机械事实，只认显式结构化 stages：非 JSON 散文串响亮 ValueError。
+        # 引擎不再从已归一正文（stage_text）里正则抠年份（ADR 0142 / 御批 2026-09-30）。
+        stages_norm = json.loads(stages_to_json(
             payload.get("stages") or payload.get("stages_json"),
-            # #1565：叙事只取已归一正文（text/decree_text），不把题名当任务叙事。
-            narrative_text=stage_text,
-            origin_turn=int(getattr(state, "turn", 0) or 0),
-        )
+        ))
         if stages_norm:
             ni["stages"] = stages_norm
             if not commitment_kind:
@@ -17146,9 +17221,15 @@ class GameDB:
     def stage_pending_action(
         self, turn: int, kind: str, action: str, minister_name: str,
         payload: Dict[str, object], target_id: Optional[int] = None,
+        source_chat_turn_id: int = 0,
     ) -> int:
         """把一条结构化聊天写动作存进 pending_actions 暂存(status=pending)。返回行 id。
         颁诏时 commit_pending_actions 批量落库;颁诏前不动真实表。
+
+        ``source_chat_turn_id``（#1890）：本道交办的来源对话轮。交办暂存的
+        统一身份就是本行 id + 这一列来源轮——撤回该轮时按此列整轮作废，
+        不必回溯 ``chat_turn_rollback_items`` 去猜哪条暂存出自哪一轮。
+        0 = 非召对来源（过月世界段 / 框架写入），不随任何召对轮撤回。
 
         Secret oral provenance must be pinned by the source turn at the caller;
         another turn's held message is never a valid substitute.
@@ -17162,14 +17243,15 @@ class GameDB:
         cur = self.conn.execute(
             """INSERT INTO pending_actions
                (turn, kind, action, target_id, minister_name, payload_json, status,
-                night_id, night_approved)
-               VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, 0)""",
+                night_id, night_approved, source_chat_turn_id)
+               VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, 0, ?)""",
             (
                 int(turn), str(kind), str(action),
                 None if target_id is None else int(target_id),
                 str(minister_name or ""),
                 json.dumps(payload_data, ensure_ascii=False),
                 night_id,
+                int(source_chat_turn_id or 0),
             ),
         )
         # 与历史 stage 路径一致：非 suspended/atomic 嵌套时提交。
@@ -17383,10 +17465,14 @@ class GameDB:
 
     def upsert_pending_directive(
         self, turn: int, minister_name: str, payload: Dict[str, object],
+        source_chat_turn_id: int = 0,
     ) -> int:
         """暂存或原地更新(last-write-wins)一条 kind=directive 拟旨意图(ADR 0006)。
         同一回合同一大臣至多一条 pending directive——新意图覆盖旧(补充=原地更新,非新增态)。
-        返回行 id。"""
+        返回行 id。
+
+        ``source_chat_turn_id``（#1890）只在新起一行时钉身份；命中既有行的
+        改稿分支刻意不换身份（见该分支注记）。"""
         from ming_sim.audience_night import assert_night_accepts_player_input
         assert_night_accepts_player_input(self, what="暂存")
         row = self.conn.execute(
@@ -17413,20 +17499,28 @@ class GameDB:
             )
             self.conn.commit()
             return int(row["id"])
+        # #1890：只有 INSERT 分支钉来源轮。改草分支（上方 UPDATE）刻意不动
+        # source_chat_turn_id —— 一道交办的身份是它首次被说出口的那一轮，
+        # 补充/改稿不换身份，否则撤回前一轮会连带作废后来轮的修订。
         return self.stage_pending_action(
             turn, kind="directive", action="拟旨",
             minister_name=minister_name, target_id=None, payload=payload,
+            source_chat_turn_id=source_chat_turn_id,
         )
 
     def stage_directive_candidate(
         self, turn: int, minister_name: str, payload: Dict[str, object],
+        source_chat_turn_id: int = 0,
     ) -> int:
         """多道模式（#502）：新拟一道**独立**圣旨候选——总是 INSERT 新行、不并进现有候选。
         与 upsert_pending_directive（同回合同大臣至多一条、last-write-wins）互补：本方法给
-        「一夜拟多道各自独立」用，前者给「补充/修改当前草稿」用。返回新行 id。"""
+        「一夜拟多道各自独立」用，前者给「补充/修改当前草稿」用。返回新行 id。
+
+        ``source_chat_turn_id``（#1890）：本道交办的来源轮，随新行落库。"""
         return self.stage_pending_action(
             turn, kind="directive", action="拟旨",
             minister_name=minister_name, target_id=None, payload=payload,
+            source_chat_turn_id=source_chat_turn_id,
         )
 
     def update_office_candidate_payload(
@@ -17790,16 +17884,19 @@ class GameDB:
         self, turn: int, status: str = "pending", minister_name: Optional[str] = None,
     ) -> List[Dict[str, object]]:
         """读本回合待确认动作(默认 pending),按 id 序(=操作发生序)。
-        minister_name 非空时只取该召对对象的暂存(对话确认按当前大臣过滤,不波及他人)。"""
+        minister_name 非空时只取该召对对象的暂存(对话确认按当前大臣过滤,不波及他人)。
+        ``source_chat_turn_id``（#1890）随行给出：交办身份的一半分。"""
         if minister_name is None:
             rows = self.conn.execute(
-                "SELECT id, turn, kind, action, target_id, minister_name, payload_json, status "
+                "SELECT id, turn, kind, action, target_id, minister_name, payload_json, "
+                "status, source_chat_turn_id "
                 "FROM pending_actions WHERE turn = ? AND status = ? ORDER BY id",
                 (int(turn), str(status)),
             ).fetchall()
         else:
             rows = self.conn.execute(
-                "SELECT id, turn, kind, action, target_id, minister_name, payload_json, status "
+                "SELECT id, turn, kind, action, target_id, minister_name, payload_json, "
+                "status, source_chat_turn_id "
                 "FROM pending_actions WHERE turn = ? AND status = ? AND minister_name = ? ORDER BY id",
                 (int(turn), str(status), str(minister_name)),
             ).fetchall()
@@ -17813,6 +17910,7 @@ class GameDB:
                 "minister_name": r["minister_name"],
                 "payload_json": r["payload_json"],
                 "status": r["status"],
+                "source_chat_turn_id": int(r["source_chat_turn_id"] or 0),
             }
             for r in rows
         ]
@@ -18310,22 +18408,21 @@ class GameDB:
                 """
                 INSERT INTO turn_directives
                 (turn, year, period, event_id, actor, text, source, status,
-                 notes,dossier_payload_json)
-                VALUES (?, ?, ?, NULL, ?, ?, '大臣拟旨', ?, ?, ?)
+                 notes,dossier_payload_json, source_pending_action_id)
+                VALUES (?, ?, ?, NULL, ?, ?, '大臣拟旨', ?, ?, ?, ?)
                 """,
                 (
                     state.turn, state.year, state.period, actor, text, status,
                     f"由{actor}拟旨入档",
                     json.dumps(payload, ensure_ascii=False),
+                    int(pa["id"]),
                 ),
             )
+            # #1890 / ADR 0054：拟旨行（后生）单向指回它所落的交办暂存（先落）。
+            # 旧实现把 draft 行 id 回填进 pending_actions.committed_directive_id，
+            # 那是「先落的实体反指后生」——族规禁双向互写，且两处可写会漂移。
+            # 撤回要精确删本轮自产草案时，按这一列从新指旧读，不再反查。
             did = int(cur.lastrowid)
-            # 回填本暂存产生的 draft 行 id，供 undo_chat_turn 精确删除（BUG 3）；turn_directives
-            # 行时序晚于 chat 快照、不在 rollback_items，需此 id 才能只删本轮自产的草案。
-            self.conn.execute(
-                "UPDATE pending_actions SET committed_directive_id=? WHERE id=?",
-                (int(did), int(pa["id"])),
-            )
             # pending 只是皇帝核定前的候选，不是 ADR 0051 的成案点；默认同意进入
             # draft 时则已越过最终提交边界，应当立即取得案卷身份。
             # #658：与 free-form / confirm 共吃 _ensure_directive_dossier（含御笔强推）。
@@ -18654,6 +18751,76 @@ class GameDB:
             # 对话确认回合中落库,刷 Agent 让被罢者本回合后续不再以旧活跃态被召对(线上 gemini)。
             return {key}
         return set()
+
+    def void_pending_actions_for_chat_turn(self, chat_turn_id: int) -> List[int]:
+        """#1890：按来源轮整轮作废该轮的交办暂存，返回被作废的 id。
+
+        这是本票要的「暂存一张表存着，拿到统一的 id 就知道撤回了谁」：判据
+        只有 ``pending_actions.source_chat_turn_id``，不扫
+        ``chat_turn_rollback_items``、不比对前像、也不问是哪句话说的。
+
+        作废而非删行（ADR 0038 2026-09-29 owner 裁定）：行留着当墓碑，
+        迟到的写入或补跑读它只会看到 ``voided``，不会把已撤回的交办复活。
+        仍可应允的 ``pending`` 之外的终态（committed / failed / held_over）
+        一律不动——它们已不是「暂存」，逆转归 ``undo_chat_turn`` 的前像日志。
+
+        不 commit：调用方（撤回事务）持有边界，本方法只在其事务内写。
+        """
+        ctid = int(chat_turn_id or 0)
+        if ctid <= 0:
+            return []
+        # 与 _pending_action_owned_by_turn_in_tx 同一判据（同源轮 + 仍 pending）。
+        rows = self.conn.execute(
+            "SELECT id, kind, version FROM pending_actions "
+            "WHERE source_chat_turn_id = ? AND status = 'pending' ORDER BY id",
+            (ctid,),
+        ).fetchall()
+        voided: List[int] = []
+        for row in rows:
+            action_id = int(row["id"])
+            if str(row["kind"] or "") == "directive":
+                # 该道拟旨的夜里预推产物随交办一起作废（预推生命周期归 #1816，
+                # 但它挂在这一道交办的身份下，不作废就会在过月时复活）。
+                self._discard_pending_decree_forecast(
+                    action_id, int(row["version"] or 1),
+                )
+            if str(row["kind"] or "") == "office":
+                from ming_sim.audience_night import discard_inactive_office_summon
+                discard_inactive_office_summon(self, action_id)
+            self.conn.execute(
+                "UPDATE pending_actions SET status='voided', night_approved=0 "
+                "WHERE id=? AND status='pending'",
+                (action_id,),
+            )
+            voided.append(action_id)
+        return voided
+
+    def _pending_action_owned_by_turn_in_tx(
+        self, action_id: object, chat_turn_id: int,
+    ) -> bool:
+        """#1890：这道交办是不是「本源轮、且仍 pending」——作废的唯一判据。
+
+        撤回路径上有两处要判同一件事（本轮新落的交办该作废、还是该走删行），
+        判据必须只有一处，否则两条处置会漂移出一条「既不删也不废」的缝。
+        读身份列，不扫 rollback_items。
+        """
+        try:
+            aid = int(action_id)
+        except (TypeError, ValueError):
+            return False
+        ctid = int(chat_turn_id or 0)
+        if aid <= 0 or ctid <= 0:
+            return False
+        row = self.conn.execute(
+            "SELECT source_chat_turn_id, status FROM pending_actions WHERE id=?",
+            (aid,),
+        ).fetchone()
+        if row is None:
+            return False
+        return (
+            int(row["source_chat_turn_id"] or 0) == ctid
+            and str(row["status"] or "") == "pending"
+        )
 
     def withdraw_pending_action(self, action_id: int, turn: int) -> bool:
         """皇帝复核:撤回本回合一条尚未落库的暂存动作(删 pending 行)。返回是否删了。
@@ -19126,12 +19293,24 @@ class GameDB:
         executor_kind, executor_id = self._directive_executor(action_type, structured)
         pending = self.conn.execute(
             """
-            SELECT id FROM pending_actions
-            WHERE committed_directive_id=?
-            ORDER BY id DESC LIMIT 1
+            SELECT pa.id, pa.source_chat_turn_id
+            FROM turn_directives td
+            JOIN pending_actions pa ON pa.id = td.source_pending_action_id
+            WHERE td.id = ?
+            ORDER BY pa.id DESC LIMIT 1
             """,
             (int(directive_id),),
         ).fetchone()
+        # #1890：来源轮只认 pending_actions.source_chat_turn_id 这一列（交办的
+        # 统一身份），并按 turn_directives.source_pending_action_id 从新指旧找到
+        # 那道交办（ADR 0054：禁反向回填）。载荷里那份副本已删——同一事实两处
+        # 可写，改草/迟到转译会让两者漂移。认不到行（无 pending 的直写路径）
+        # 时回落载荷，仅保旧档兼容，不作为常规来源。
+        dossier_source_turn = 0
+        if pending is not None:
+            dossier_source_turn = int(pending["source_chat_turn_id"] or 0)
+        if dossier_source_turn <= 0:
+            dossier_source_turn = int(structured.get("source_chat_turn_id") or 0)
         return self.create_decree_dossiers(
             state,
             action_type=action_type,
@@ -19140,7 +19319,7 @@ class GameDB:
             target_id=target_id,
             executor_kind=executor_kind,
             executor_id=executor_id,
-            source_chat_turn_id=int(structured.get("source_chat_turn_id") or 0),
+            source_chat_turn_id=dossier_source_turn,
             pending_action_id=0 if pending is None else int(pending["id"]),
             directive_id=int(directive_id),
             payload=structured,
@@ -19590,6 +19769,111 @@ class GameDB:
                 {self._event_terminal_upgrade_assignments()}
             """,
             (event_id, state.turn, state.year, state.period),
+        )
+        if commit:
+            self.conn.commit()
+
+    def list_event_petition_records(self) -> List[Dict[str, object]]:
+        """三饷请旨的「已呈／原批语」持久读口（#1892 供料侧）。
+
+        请旨由世界段上疏、经案头呈皇帝；皇帝答复与当时所呈的奏疏原文都留在事件账
+        的 ``choice_json`` 里（:meth:`record_event_petition_answer`），因此后续世界段
+        可据本读口取回「已呈奏疏 + 原批语」，把它作为**已有事实**供给推演者，由模型
+        自己决定是否另上疏——引擎不新增自动重呈机制。
+
+        只读 ``choice_json`` 里带 petition 段的事件行；无 petition 段的行不是请旨。
+        """
+        out: List[Dict[str, object]] = []
+        for r in self.conn.execute(
+            "SELECT rowid, event_id, turn, year, period, terminal_state, terminal_reason, choice_json "
+            "FROM event_triggers"
+        ).fetchall():
+            raw = str(r["choice_json"] or "").strip()
+            if not raw:
+                continue
+            try:
+                payload = json.loads(raw)
+            except json.JSONDecodeError as exc:
+                from ming_sim.exceptions import SettlementAbort
+
+                raise SettlementAbort(
+                    "event_triggers.choice_json 解析失败 "
+                    f"event_id={r['event_id']!r} rowid={r['rowid']}",
+                    turn=int(r["turn"] or 0),
+                    stage="petition_records",
+                ) from exc
+            if not isinstance(payload, dict):
+                continue
+            petition = payload.get("petition")
+            if not isinstance(petition, dict):
+                continue
+            # 答案字段（label/hint/note）与 petition 段同级摊平返回：供料侧要一次
+            # 读到「呈疏记录」和「皇帝原批语」，不必自己再拆一层。
+            out.append({
+                **{key: value for key, value in payload.items() if key != "petition"},
+                "event_id": str(r["event_id"] or ""),
+                "turn": int(r["turn"] or 0),
+                "year": int(r["year"] or 0),
+                "period": int(r["period"] or 0),
+                "terminal_state": str(r["terminal_state"] or ""),
+                "terminal_reason": str(r["terminal_reason"] or ""),
+                "petition": dict(petition),
+            })
+        return out
+
+    def record_event_petition_answer(
+        self,
+        state: GameState,
+        event_id: str,
+        answer: Dict[str, object],
+        presented: Dict[str, object],
+        *,
+        commit: bool = True,
+    ) -> None:
+        """三饷请旨：把「已呈奏疏 + 皇帝原批语」整份 durable 落进事件账（#1892）。
+
+        本方法是请旨答复的**唯一**持久写口，且**只记账、不置结局**：
+
+        - 落 ``choice_json`` 的 ``petition`` 段（呈疏原文、选项、皇帝 label/hint/note），
+          供后续世界段据 :meth:`list_event_petition_records` 取回复呈（#1891 供料契约）。
+        - ``terminal_state`` 恒留空、``terminal_reason`` 恒留空：亲笔准驳的**结局标签由
+          语义转译写口置定**（:func:`ming_sim.issues.apply_petition_event_outcome`），
+          不由这里的原始选项标签旁路代批（ADR 0153:5、#1891 亲裁契约）。
+        - 「留中」是本疏已答而事件未终：不写终态，事件仍留在请旨候选里等下次呈报。
+
+        冲突时**只**补 ``choice_json``，绝不把既有 avoided/expired/obsolete/triggered
+        终态翻动——与 :meth:`record_event_decision_choice` 同款终态不可逆纪律。
+        """
+        eid = str(event_id or "").strip()
+        if not eid:
+            return
+        self._ensure_event_parent(eid)
+        payload = json.dumps(
+            {
+                **{
+                    key: value for key, value in (answer or {}).items()
+                    if isinstance(answer, dict)
+                },
+                "petition": {
+                    "presented_turn": int(state.turn),
+                    "presented_year": int(state.year),
+                    "presented_period": int(state.period),
+                    **{key: value for key, value in (presented or {}).items()},
+                },
+            },
+            ensure_ascii=False,
+        )
+        self.conn.execute(
+            """
+            INSERT INTO event_triggers
+                (event_id, turn, year, period, source, terminal_state, terminal_reason, choice_json)
+            VALUES (?, ?, ?, ?, 'petition', '', '', ?)
+            ON CONFLICT(event_id) DO UPDATE SET
+                -- 请旨账只补 choice_json（已呈奏疏 + 原批语）；终态与来源一律沿用既有行，
+                -- 空终态行也不在此写 terminal_reason：结局标签归语义写口，不归原始选项标签。
+                choice_json = excluded.choice_json
+            """,
+            (eid, state.turn, state.year, state.period, payload),
         )
         if commit:
             self.conn.commit()
@@ -20455,7 +20739,7 @@ class GameDB:
                 float(units),
                 str(fidelity_state),
                 str(floor_state),
-                str(note or "")[:240],
+                str(note or ""),
                 origin,
             ),
         )
@@ -20471,7 +20755,7 @@ class GameDB:
             "units": float(units),
             "fidelity_state": str(fidelity_state),
             "floor_state": str(floor_state),
-            "note": str(note or "")[:240],
+            "note": str(note or ""),
             "origin_ref": origin,
         }
 
@@ -20488,6 +20772,72 @@ class GameDB:
             (int(dossier_id),),
         ).fetchone()
         return float(row["total"] if row is not None else 0.0)
+
+    def record_investigation_spoiled_fact(
+        self,
+        *,
+        target_name: str,
+        fact_key: str,
+        turn: Optional[int] = None,
+        year: Optional[int] = None,
+        period: Optional[int] = None,
+        effect: str = "harder",
+        origin_ref: str = "",
+        commit: bool = True,
+    ) -> Dict[str, object]:
+        """#1896 毁证落账：按 (target, fact_key, effect) 幂等。
+
+        真相底不动（seed_guilt/把柄边照旧），这里只记该事实可查性被毁/被抬难。
+        重复毁同一事实同一效力返回原行，不叠第二次——毁证不因重开案而可重放。
+        """
+        target = str(target_name or "").strip()
+        key = str(fact_key or "").strip()
+        if not target or not key:
+            raise ValueError("毁证记账缺少调查对象或事实键")
+        eff = str(effect or "").strip()
+        if eff not in ("harder", "gone"):
+            raise ValueError("毁证效力须为 harder 或 gone")
+        if turn is None or year is None or period is None:
+            state_row = self.conn.execute(
+                "SELECT turn, year, period FROM game_state WHERE id=1"
+            ).fetchone()
+            if state_row is not None:
+                turn = int(state_row["turn"]) if turn is None else turn
+                year = int(state_row["year"]) if year is None else year
+                period = int(state_row["period"]) if period is None else period
+        self.conn.execute(
+            """
+            INSERT INTO investigation_spoiled_facts
+                (target_name, fact_key, turn, year, period, effect, origin_ref)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(target_name, fact_key, effect) DO NOTHING
+            """,
+            (
+                target, key, int(turn or 0), int(year or 0), int(period or 0),
+                eff, str(origin_ref or "")[:120],
+            ),
+        )
+        if commit and int(getattr(self.conn, "_atomic_depth", 0) or 0) == 0:
+            self.conn.commit()
+        row = self.conn.execute(
+            "SELECT * FROM investigation_spoiled_facts "
+            "WHERE target_name=? AND fact_key=? AND effect=?",
+            (target, key, eff),
+        ).fetchone()
+        return dict(row) if row is not None else {}
+
+    def list_investigation_spoiled_facts(
+        self, target_name: str,
+    ) -> List[Dict[str, object]]:
+        target = str(target_name or "").strip()
+        if not target:
+            return []
+        rows = self.conn.execute(
+            "SELECT * FROM investigation_spoiled_facts WHERE target_name=? "
+            "ORDER BY fact_key, id",
+            (target,),
+        ).fetchall()
+        return [dict(r) for r in rows]
 
     def list_dossier_actual_rail(self, dossier_id: int) -> List[Dict[str, object]]:
         """实况合并读：durable_effects + actual_progress（due_review 形参数化共用）。
@@ -20744,11 +21094,20 @@ class GameDB:
         return result
 
     def knowledge_exclusions_for_source(self, source_id: str) -> List[str]:
-        """Return the durable secrecy boundary attached to a source record."""
+        """Return explicit exclusions attached to a source.
+
+        A registered source's ``source_projection`` includes an archive
+        participant deny-list snapshot; read explicit exclusions from its
+        source instead. A projection supplied without a registered source
+        has no synthesized roster boundary and retains its explicit list.
+        """
         source = str(source_id or "")
         row = self.conn.execute(
             "SELECT excluded_names FROM character_knowledge_events WHERE source_id=? "
-            "ORDER BY id LIMIT 1", (source,)
+            "AND (kind <> 'source_projection' OR NOT EXISTS "
+            "(SELECT 1 FROM character_knowledge_sources WHERE source_id=?)) "
+            "ORDER BY id LIMIT 1",
+            (source, source),
         ).fetchone()
         if row is not None:
             try:
@@ -21385,6 +21744,7 @@ class GameDB:
             find_active_investigation_order_id,
             merge_investigation_confirmation,
             _investigation_target_of,
+            _investigation_fact_of,
         )
         covert_contract = build_covert_task_contract(covert_task=covert_task)
         inv_target = _investigation_target_of(covert_contract or {})
@@ -21397,6 +21757,7 @@ class GameDB:
                     existing_oid,
                     pending_action_id=int(pending_action_id or 0),
                     origin_chat_message_ids=provenance_message_ids,
+                    fact_key=_investigation_fact_of(covert_contract or {}),
                     commit=True,
                 )
         active_count = self.conn.execute(
@@ -21468,15 +21829,6 @@ class GameDB:
                 "excluded_offices": list(excluded_offices),
             }
             payload[CONTRACT_KEY] = covert_contract
-            from ming_sim.covert_progress import (
-                live_investigation_fact_keys,
-                FACT_LANES_KEY,
-            )
-            if inv_target:
-                payload[FACT_LANES_KEY] = [
-                    {"fact_key": key, "progress": 0.0, "used": False}
-                    for key in live_investigation_fact_keys(self, inv_target)
-                ]
             dossier_id = self.create_decree_dossier(
                 state,
                 action_type="secret_order",
@@ -21514,6 +21866,26 @@ class GameDB:
                 """,
                 (int(dossier_id), int(state.turn)),
             )
+            if inv_target:
+                # #1896：开案即铺 lane 集并冻结逐证难度——唯一开 lane 的口在
+                # covert_progress.seed_investigation_fact_lanes，案卷 payload 不再
+                # 另写一份（曾在此手写旧 progress 形状，成了第二个 lane 写口）。
+                # 开案这条来源自身也是一条真实线索，与汇案来源同一条接线（R6）。
+                from ming_sim.covert_progress import (
+                    record_investigation_source_clue,
+                    seed_investigation_fact_lanes,
+                    _investigation_fact_of,
+                )
+
+                seed_investigation_fact_lanes(
+                    self, int(dossier_id), inv_target,
+                    investigator=str(minister_name), commit=False,
+                )
+                record_investigation_source_clue(
+                    self, int(dossier_id),
+                    fact_key=_investigation_fact_of(covert_contract or {}),
+                    turn=int(state.turn),
+                )
         tlog(f"[secret_order] create id={order_id} minister={minister_name} title={title[:20]}")
         return order_id
 
@@ -21576,6 +21948,7 @@ class GameDB:
         ).fetchone()
         if row is None or row["status"] != "active":
             return False
+        self._read_secret_order_body_before_write(int(order_id))
         persisted_title = title
         tags_json = json.dumps(tags, ensure_ascii=False) if tags is not None else (row["tags"] or "[]")
         deadline = max(0, min(int(deadline_months or 0), 36))
@@ -21726,11 +22099,11 @@ class GameDB:
                 if has_progress_chain and close_text.strip():
                     last_memorial = ""
                     for item in reversed(reports):
-                        text = str(item.get("memorial_text") or "").strip()
-                        if text:
+                        text = str(item.get("memorial_text") or "")
+                        if text.strip():
                             last_memorial = text
                             break
-                    if close_text.strip() != last_memorial:
+                    if close_text != last_memorial:
                         self.record_dossier_progress(
                             int(dossier["id"]), int(turn_closed), "结案",
                             close_text, is_terminal=True, commit=False,
@@ -21767,79 +22140,111 @@ class GameDB:
                 raise
         tlog(f"[secret_order] close id={order_id} status={status}")
 
+    def _load_secret_order_body_row(self, order_id: int, *, active_only: bool) -> Optional[sqlite3.Row]:
+        sql = "SELECT * FROM secret_orders WHERE id = ?"
+        if active_only:
+            sql += " AND status = 'active'"
+        return self.conn.execute(sql, (int(order_id),)).fetchone()
+
+    def _read_secret_order_body_before_write(self, order_id: int) -> None:
+        """写正文前先读账。读失败在调用方事务内、本写事务外抛出。"""
+        row = self._load_secret_order_body_row(int(order_id), active_only=True)
+        if row is not None:
+            _secret_order_body_log(row)
+
+    def _write_secret_order_body(
+        self,
+        order_id: int,
+        column: str,
+        records: Sequence[Mapping[str, object]],
+        *,
+        extra_assignments: str = "",
+        extra_params: Sequence[object] = (),
+    ) -> None:
+        assert column in _SECRET_ORDER_BODY_COLUMNS
+        row = self._load_secret_order_body_row(order_id, active_only=False)
+        if row is None:
+            return
+        log = _secret_order_body_log(row)
+        log[column] = [dict(record) for record in records]
+        params: List[object] = list(extra_params)
+        params.extend((
+            _project_secret_order_bodies(log[column]),
+            json.dumps(log, ensure_ascii=False),
+        ))
+        sets = f"{column} = ?, text_log_json = ?, updated_at = CURRENT_TIMESTAMP"
+        if extra_assignments:
+            sets = f"{extra_assignments}, {sets}"
+        params.append(int(order_id))
+        self.conn.execute(
+            f"UPDATE secret_orders SET {sets} WHERE id = ?",
+            params,
+        )
+
     def submit_secret_order_for_review(self, order_id: int, claim: str, year: int, period: int) -> bool:
         """#1504：大臣自认办结 → 缩 due_turn 至当月，月末机械对账。
 
-        claim 按月戳追加进 result（奏报/陈词轨），不入实况对账真源。仅 active 可提交。
+        claim 按记录追加进 result（奏报/陈词轨），不入实况对账真源。仅 active 可提交。
         """
-        row = self.conn.execute(
-            "SELECT status, turn_issued FROM secret_orders WHERE id = ?", (int(order_id),)
-        ).fetchone()
-        if not row or row["status"] != "active":
+        row = self._load_secret_order_body_row(int(order_id), active_only=True)
+        if row is None:
             return False
         turn_row = self.conn.execute("SELECT turn FROM game_state WHERE id=1").fetchone()
         current_turn = int(turn_row["turn"]) if turn_row is not None else int(row["turn_issued"] or 0)
-        stamp = f"〔{period_label(year, period)}〕[提交核议] "
-        note = (claim or "").strip()
-        prev = self.conn.execute(
-            "SELECT result FROM secret_orders WHERE id = ?", (int(order_id),)
-        ).fetchone()["result"] or ""
-        lines = [ln for ln in prev.split("\n") if ln.strip()]
-        lines.append(f"{stamp}{note}")
+        note = _secret_order_kept_body(claim)
+        records = _secret_order_body_log(row)["result"]
+        records.append({
+            "year": int(year),
+            "period": int(period),
+            "marker": "[提交核议] ",
+            "body": note,
+        })
         with atomic(self):
-            self.conn.execute(
-                """
-                UPDATE secret_orders
-                SET due_turn = ?, result = ?, updated_at = CURRENT_TIMESTAMP
-                WHERE id = ? AND status = 'active'
-                """,
-                (current_turn, "\n".join(lines), int(order_id)),
+            self._write_secret_order_body(
+                int(order_id), "result", records,
+                extra_assignments="due_turn = ?",
+                extra_params=(current_turn,),
             )
             self.mark_secret_order_in_progress(int(order_id), commit=False)
         tlog(f"[secret_order] submit_for_review id={order_id} due_now claim={note[:60]!r}")
         return True
 
     def _has_secret_order_period_line(self, order_id: int, column: str, year: int, period: int) -> bool:
-        """本年月该列是否已有一行（用于一回合一步闸门）。"""
-        stamp = f"〔{period_label(year, period)}〕"
-        row = self.conn.execute(
-            f"SELECT {column} AS v FROM secret_orders WHERE id = ?", (int(order_id),)
-        ).fetchone()
+        """本年月该列是否已有进展记录（用于一回合一步闸门）。"""
+        assert column in _SECRET_ORDER_BODY_COLUMNS
+        row = self._load_secret_order_body_row(int(order_id), active_only=False)
         if row is None:
             return False
-        return any(ln.startswith(stamp) for ln in str(row["v"] or "").split("\n"))
+        return _secret_order_period_recorded(
+            _secret_order_body_log(row)[column], year, period,
+        )
 
     def _append_secret_order_line(
         self, order_id: int, column: str, note: str, year: int, period: int,
         reject_if_same_period: bool = False,
         commit: bool = True,
     ) -> bool:
-        """把一条带年月戳的进展/副作用追加进密令的 result/sim_note，存成历史时间线。
-        reject_if_same_period=True 时，本年月已有行则拒写（返回 False，用于一回合一步）；
-        否则同年月再写替换当月行。不同年月一律新增。返回是否实际写入。"""
-        assert column in ("result", "sim_note")
-        stamp = f"〔{period_label(year, period)}〕"
-        row = self.conn.execute(
-            f"SELECT {column} AS v FROM secret_orders WHERE id = ? AND status = 'active'",
-            (int(order_id),),
-        ).fetchone()
+        """把一条进展/副作用按记录追加进密令正文。
+        reject_if_same_period=True 时，本年月已有记录则拒写（返回 False，用于一回合一步）；
+        否则同年月再写替换当月记录。不同年月一律新增。返回是否实际写入。"""
+        assert column in _SECRET_ORDER_BODY_COLUMNS
+        row = self._load_secret_order_body_row(int(order_id), active_only=True)
         if row is None:
             return False  # 已结案或不存在，不追加
-        lines = [ln for ln in str(row["v"] or "").split("\n") if ln.strip()]
-        if reject_if_same_period and any(ln.startswith(stamp) for ln in lines):
+        records = _secret_order_body_log(row)[column]
+        if reject_if_same_period and _secret_order_period_recorded(records, year, period):
             return False  # 本回合已推过一步，拒
-        lines = [ln for ln in lines if not ln.startswith(stamp)]  # 去掉当月旧行
-        lines.append(f"{stamp}{note.strip()}")
-        # 按〔年月〕戳排序，保证时间线顺序（同月替换后不致错位）
-        def _stamp_key(ln: str):
-            import re as _re
-            m = _re.match(r"〔(\d+)年(\d+)月〕", ln)
-            return (int(m.group(1)), int(m.group(2))) if m else (0, 0)
-        lines.sort(key=_stamp_key)
-        self.conn.execute(
-            f"UPDATE secret_orders SET {column} = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-            ("\n".join(lines), int(order_id)),
-        )
+        records = [
+            record for record in records
+            if int(record.get("year") or 0) != int(year)
+            or int(record.get("period") or 0) != int(period)
+        ]
+        records.append({
+            "year": int(year),
+            "period": int(period),
+            "body": _secret_order_kept_body(note),
+        })
+        self._write_secret_order_body(int(order_id), column, records)
         if commit:
             self.conn.commit()
         return True
@@ -21855,6 +22260,7 @@ class GameDB:
     ) -> bool:
         """承办人推进一步：按年月追加进 result 历史时间线，不改 status。
         同月再报则替换当月行（修改最新进度，不叠加多条）。"""
+        self._read_secret_order_body_before_write(int(order_id))
         with atomic(self):
             ok = self._append_secret_order_line(
                 order_id,
@@ -21881,6 +22287,7 @@ class GameDB:
     ) -> None:
         """推演写密令副作用（泄漏/反弹等），按年月追加进 sim_note 历史时间线，
         不动 result/status。同月再写替换（推演每月一次）。与承办人进展分列。"""
+        self._read_secret_order_body_before_write(int(order_id))
         if commit:
             with atomic(self):
                 self._update_secret_order_sim_note_in_transaction(
@@ -21938,39 +22345,36 @@ class GameDB:
             months = 1
         target_turn = int(state.turn) + months
         old_due = int(row["due_turn"] or 0)
-        stamp = f"〔{period_label(state.year, state.period)}〕"
         why = reason if str(reason or "").strip() else "奉旨加急"
-        prev = row["result"] or ""
-        lines = [ln for ln in prev.split("\n") if ln.strip()]
+        body_row = self._load_secret_order_body_row(int(order_id), active_only=True)
+        records = _secret_order_body_log(body_row)["result"] if body_row is not None else []
         with atomic(self):
             if months <= 0:
-                lines.append(f"{stamp}[奉旨即核] {why}；本月到期按实进度对账。")
-                self.conn.execute(
-                    """
-                    UPDATE secret_orders
-                    SET due_turn = ?, deadline_span = 0,
-                        result = ?, updated_at=CURRENT_TIMESTAMP
-                    WHERE id = ?
-                    """,
-                    (int(state.turn), "\n".join(lines), int(order_id)),
+                records.append({
+                    "year": int(state.year),
+                    "period": int(state.period),
+                    "marker": "[奉旨即核] ",
+                    "body": f"{why}；本月到期按实进度对账。",
+                })
+                due_turn = int(state.turn)
+                self._write_secret_order_body(
+                    int(order_id), "result", records,
+                    extra_assignments="due_turn = ?, deadline_span = 0",
+                    extra_params=(due_turn,),
                 )
                 status = "active"
-                due_turn = int(state.turn)
             else:
                 due_turn = target_turn if old_due <= 0 else min(old_due, target_turn)
-                lines.append(f"{stamp}[奉旨加急] {why}；御限改为 {months} 个月内核议。")
-                self.conn.execute(
-                    """
-                    UPDATE secret_orders
-                    SET due_turn = ?, deadline_span = ?, result = ?, updated_at = CURRENT_TIMESTAMP
-                    WHERE id = ?
-                    """,
-                    (
-                        due_turn,
-                        max(int(due_turn) - int(state.turn), 0),
-                        "\n".join(lines),
-                        int(order_id),
-                    ),
+                records.append({
+                    "year": int(state.year),
+                    "period": int(state.period),
+                    "marker": "[奉旨加急] ",
+                    "body": f"{why}；御限改为 {months} 个月内核议。",
+                })
+                self._write_secret_order_body(
+                    int(order_id), "result", records,
+                    extra_assignments="due_turn = ?, deadline_span = ?",
+                    extra_params=(due_turn, max(int(due_turn) - int(state.turn), 0)),
                 )
                 status = "active"
             self.mark_secret_order_in_progress(int(order_id), commit=False)

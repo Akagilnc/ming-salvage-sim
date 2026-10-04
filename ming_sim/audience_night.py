@@ -1110,10 +1110,10 @@ def publish_night_directives(db: Any, night_id: int) -> None:
         SELECT td.id AS directive_id, td.actor, td.text,
                MIN(d.id) AS dossier_id
         FROM pending_actions pa
-        JOIN turn_directives td ON td.id = pa.committed_directive_id
+        JOIN turn_directives td ON td.source_pending_action_id = pa.id
         JOIN decree_dossiers d ON d.pending_action_id = pa.id
         WHERE pa.night_id = ? AND pa.kind = 'directive'
-          AND pa.status = 'committed' AND pa.committed_directive_id > 0
+          AND pa.status = 'committed'
         GROUP BY td.id, td.actor, td.text
         ORDER BY td.id
         """,
@@ -1169,39 +1169,38 @@ def commit_late_night_approved(
             publish_night_directives(db, nid)
 
 
-def _drain_pending_translations_or_fail_closed(
+def _catch_up_night_translations(
     db: Any, night_id: int, *, llm_config: Any, write_gate: Any,
-    translate_fn: Any = None,
-    game_state: Any = None,
-    write_queue: Any = None,
+    game_state: GameState, translate_fn: Any = None, write_queue: Any = None,
 ) -> None:
-    """收夜提交前：转译已在 OPEN 期 join；此处再 catch-up 待补转译。
+    """收夜补跑转译待补（#1898：单次收夜只跑一次的唯一实现）。
 
     ADR 0036 后出注记 / #1842：待补不再 fail-closed 中止收夜。join/补跑后仍
     pending 的留给过月 join / 原地重试（0157）。
+
+    #1898：调用方只跑一次——OPEN 冻结前那次；「进来时已是 CLOSING」的崩溃
+    恢复口是另一次收夜尝试（那是恢复，不是同次第二处重复调用）。首次补跑耗尽
+    时该轮保持待补，**不由本函数或任何同次收夜路径再自动调一次模型**——补跑权
+    归 #1846 的玩家重试与过月 join。
 
     ``extract_status`` 由转译通路独占；未完成的轮次留给过月 join /
     原地重试，不再保留旧故事抽取通路。
 
     write_gate 必须是调用方原始锁（或 None）——禁传入 _gate_cm(nullcontext)。
     """
-    nid = int(night_id)
-    # OPEN 期已 join；CLOSING restore 再 join 一次（崩溃恢复口，空则秒回）。
-    # 屏障未清空不得 catch-up / 推进——timeout 仅单次轮询上限，复用 0157 等待语义。
-    from ming_sim.audience_translation import catch_up_pending_translations
-    if game_state is None:
-        return
     # catch_up 契约：单轮失败标 pending、不抛；代码异常按 ADR 0005 上抛。
     # translate_fn=None 走默认 runner（#1842：收夜补跑不因缺注入而跳过）。
-    if llm_config is not None and write_gate is not None and write_queue is not None:
-        catch_up_pending_translations(
-            db, game_state,
-            night_id=nid,
-            llm_config=llm_config,
-            translate_fn=translate_fn,
-            write_gate=write_gate,
-            write_queue=write_queue,
-        )
+    if llm_config is None or write_gate is None or write_queue is None:
+        return
+    from ming_sim.audience_translation import catch_up_pending_translations
+    catch_up_pending_translations(
+        db, game_state,
+        night_id=int(night_id),
+        llm_config=llm_config,
+        translate_fn=translate_fn,
+        write_gate=write_gate,
+        write_queue=write_queue,
+    )
 
 
 def _gate_cm(write_gate: Any):
@@ -1223,21 +1222,22 @@ def close_night(
     on_closing: Optional[Callable[[], None]] = None,
     llm_config: Any = None,
     write_gate: Any = None,
-    endorsement_extractor_agent: Any = None,
     translate_fn: Any = None,
     write_queue: Any = None,
 ) -> Dict[str, Any]:
-    """收夜：短写前提 → 无锁待补转译 → 短写终局（#1842：背书随转译，无夜级批）。
+    """收夜：待补转译 → 短写前提 → 短写终局（#1842：背书随转译，无夜级批）。
 
     #1838 reopen：不再有收夜旁白 LLM 调用与收夜账；收讫只看 audience_nights.status。
-    背书批仍由 #1842 路径承接（本函数仍调 endorsement batch）。
 
     分相：
-    1. OPEN 期：等在飞回话清；补跑转译；持 write_gate 冻结 CLOSING、提交 draft 前提。
-    2. endorsement-only LLM（无 DB transaction / 无 runtime write gate）。
-    3. 重取 gate：原子落背书水位；consort/明发/CLOSED。
+    1. 待补转译（无 DB transaction）：OPEN 期在冻结 CLOSING **之前**补跑；
+       进来时已是 CLOSING 的崩溃恢复口在 on_closing **之后**补跑。两条分支
+       互斥，同一次收夜不会补跑第二轮。
+    2. 短写持 write_gate：提交 draft 前提（office → directive）。
+    3. 短写持 write_gate：终局效果、明发、CLOSED。
 
-    背书失败 → OPEN、cursor=0、draft identity 保留。成功前不得判官/公开明发/终局效果/CLOSED。
+    待补转译失败不阻断收夜：该轮保持待补（status/diagnostic 仍可查），由 #1846
+    玩家重试或过月 join 承接，同次收夜不再自动调模型。
     """
     # #1353 r7：共享 conn 读一律短持 runtime gate（禁闸外裸 SELECT）。
     gate = _gate_cm(write_gate)
@@ -1255,20 +1255,18 @@ def close_night(
     if night["status"] == NIGHT_STATUS_CLOSED:
         return {"closed": True, "night_id": int(night_id), "already": True}
 
+    # #1898：同次收夜只补跑一次。OPEN 分支在冻结 CLOSING 前补跑；进来时已是
+    # CLOSING 的崩溃恢复口在 on_closing 后补跑（那是另一次收夜尝试）。两条分支
+    # 互斥，收尾处不再有第二处调用——耗尽的那轮保持待补，交 #1846 玩家重试 /
+    # 过月 join，不由同次收夜再自动调一次模型。
     if night["status"] == NIGHT_STATUS_OPEN:
         wait_in_flight_clear(
             db, night_id, write_gate=write_gate,
         )
-        from ming_sim.audience_translation import catch_up_pending_translations
-        if llm_config is not None and write_gate is not None and write_queue is not None:
-            catch_up_pending_translations(
-                db, state,
-                night_id=int(night_id),
-                llm_config=llm_config,
-                translate_fn=translate_fn,
-                write_gate=write_gate,
-                write_queue=write_queue,
-            )
+        _catch_up_night_translations(
+            db, int(night_id), llm_config=llm_config, write_gate=write_gate,
+            game_state=state, translate_fn=translate_fn, write_queue=write_queue,
+        )
         with gate:
             _set_night_fields(
                 db, night_id, status=NIGHT_STATUS_CLOSING,
@@ -1282,6 +1280,10 @@ def close_night(
             if on_closing is not None:
                 on_closing()
             night = get_night(db, night_id) or night
+        _catch_up_night_translations(
+            db, int(night_id), llm_config=llm_config, write_gate=write_gate,
+            game_state=state, translate_fn=translate_fn, write_queue=write_queue,
+        )
 
     cursor = int(night["close_commit_cursor"] or 0)
 
@@ -1297,11 +1299,6 @@ def close_night(
                 code="close_crash",
                 detail={"night_id": int(night_id), "step": int(step)},
             )
-
-    _drain_pending_translations_or_fail_closed(
-        db, int(night_id), llm_config=llm_config, write_gate=write_gate,
-        game_state=state, translate_fn=translate_fn, write_queue=write_queue,
-    )
 
     # ── Phase 1: short writes for draft-dossier prerequisites only ─────────
     with gate:
@@ -1368,13 +1365,12 @@ def auto_close_open_night(
     crash_after_step: Optional[int] = None,
     llm_config: Any = None,
     write_gate: Any = None,
-    endorsement_extractor_agent: Any = None,
     on_closing: Optional[Callable[[], None]] = None,
 ) -> Optional[Dict[str, Any]]:
     """颁诏/过回合前：有开夜则顺势收夜；无开夜返回 None。
 
-    write_gate 应为真实 runtime Lock（或 CLI 下 None）；close_night 只在短写阶段持锁，
-    endorsement LLM 期间释放。调用方不得在外层持同一把非重入锁再传入 nullcontext。
+    write_gate 应为真实 runtime Lock（或 CLI 下 None）；close_night 只在短写阶段持锁。
+    调用方不得在外层持同一把非重入锁再传入 nullcontext。
     """
     with _gate_cm(write_gate):
         open_n = get_open_night(db)
@@ -1388,7 +1384,6 @@ def auto_close_open_night(
         crash_after_step=crash_after_step,
         llm_config=llm_config,
         write_gate=write_gate,
-        endorsement_extractor_agent=endorsement_extractor_agent,
         on_closing=on_closing,
     )
 

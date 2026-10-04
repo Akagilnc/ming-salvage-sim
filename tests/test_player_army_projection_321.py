@@ -285,7 +285,7 @@ def test_four_chains_embed_situation_matrix(game):
     map_army2 = _find_army_in_map_nodes(runtime.map_nodes())
     _assert_structured_situation(map_army2, sit, "WebGame.map_nodes")
 
-    # 链2：report / knowledge（LLM 输入装配）
+    # 链2：report（LLM 输入装配）
     report = db.army_report(limit=30)
     _assert_chain_embeds_situation(report, sit, "army_report")
 
@@ -298,7 +298,7 @@ def test_four_chains_embed_situation_matrix(game):
     detail = db.army_detail(ARMY)
     _assert_chain_embeds_situation(detail, sit, "army_detail")
 
-    # 链4：roster / 材料目录（LLM 输入装配）
+    # 链4：roster（LLM 输入装配）
     roster = db.army_roster()
     _assert_chain_embeds_situation(roster, sit, "army_roster")
     prepared = prepare_character_materials(db, state, war)

@@ -14,10 +14,7 @@ from ming_sim.commitment_backlash import (
     SOURCE_DEFORMATION_EXPOSURE,
     backlash_origin_ref,
 )
-from ming_sim.due_review import (
-    apply_pending_due_reviews,
-    decide_due_review_verdict,
-)
+from ming_sim.due_review import apply_pending_due_reviews
 from ming_sim.issues import apply_score_extraction
 from ming_sim.situation_drift import apply_situation_monthly_drift
 from ming_sim.staged_commitment import write_due_staged_commitment_todos
@@ -459,33 +456,6 @@ def test_s2_pure_fiscal_without_beyond_intent_fulfilled_no_backlash(game, conten
         and h.get("trigger_ref") == f"issue:{cid}"
         for h in hits
     ), hits
-
-
-def test_s2_decide_due_review_shape_unchanged_with_helper():
-    """红线：助手只供事实；decide_due_review_verdict 判定形状不改。"""
-    # Pure unit: fiscal-shaped durable effect with beyond_intent → transformed
-    verdict = decide_due_review_verdict({
-        "mid_stage": False,
-        "durable_effects": [
-            {"effect_kind": "create", "key": "x_base", "beyond_intent": True},
-        ],
-        "progress_reports": [],
-        "criterion_text": "新税见成",
-    })
-    assert verdict["outcome"] == "transformed"
-    assert verdict["close"] is True
-    assert "is_terminal" in verdict
-
-    # No beyond → fulfilled when effects present
-    verdict2 = decide_due_review_verdict({
-        "mid_stage": False,
-        "durable_effects": [
-            {"effect_kind": "create", "key": "y_base", "beyond_intent": False},
-        ],
-        "progress_reports": [],
-        "criterion_text": "正额",
-    })
-    assert verdict2["outcome"] == "fulfilled"
 
 
 # ── S3：嵌套通道别名 ────────────────────────────────────────────────

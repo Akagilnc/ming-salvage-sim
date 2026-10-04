@@ -699,29 +699,35 @@ def test_world_segment_reads_material_directory(game, monkeypatch):
     from pathlib import Path
 
     import ming_sim.agents as agents_mod
+    import ming_sim.materials as materials_mod
     from ming_sim.agents import bind_content
     from ming_sim.models import LLMConfig
 
     db, state, content = game
     bind_content(content)
     seen = []
-    board_fact = db.treasury_report(state, limit=None)
+    openings = []
+    real_prepare = materials_mod.prepare_world_materials
+
+    def prepare(db_, state_, *args, **kwargs):
+        prepared = real_prepare(db_, state_, *args, **kwargs)
+        openings.append(prepared.opening)
+        return prepared
+
+    monkeypatch.setattr(materials_mod, "prepare_world_materials", prepare)
 
     def capture(agent, _message, **_kwargs):
         tools = {tool.__name__: tool for tool in agent.tools}
         listing = tools["list_materials"]("")
         index = tools["read_material"]("INDEX.txt")
-        has_dir = hasattr(agent.model, "materials_dir")
+        board = tools["read_material"]("盘面/全局.txt")
         materials_dir = getattr(agent.model, "materials_dir", "")
         seen.append({
             "listing": listing,
             "index": index,
-            "has_dir": has_dir,
+            "board": board,
             "dir_has_index": bool(materials_dir) and (Path(materials_dir) / "INDEX.txt").is_file(),
-            "opening": next(
-                part for part in agent.instructions
-                if board_fact and board_fact in str(part)
-            ),
+            "instructions": [str(part) for part in agent.instructions],
         })
         return "静"
 
@@ -731,20 +737,18 @@ def test_world_segment_reads_material_directory(game, monkeypatch):
         model="gpt-test", channel="api",
     )
     assert month_chain.run_world_segment_text(db, state, api) == "静"
-    assert "INDEX.txt" in seen[0]["listing"]
+    catalog = [line for line in seen[0]["listing"].splitlines() if line]
+    assert "INDEX.txt" in catalog
+    assert any(line != "INDEX.txt" for line in catalog)
     assert seen[0]["index"].strip()
-    assert seen[0]["has_dir"] is False
-    assert board_fact in str(seen[0]["opening"])
-    # 目录里至少有一份不在开场最小集里的材料。
-    extra = next(
-        line for line in seen[0]["listing"].splitlines()
-        if line and line != "INDEX.txt" and line not in seen[0]["opening"]
-    )
-    assert extra
+    assert seen[0]["board"].strip()
+    assert seen[0]["dir_has_index"] is False
+    # 开场通道＝prepare 交回的那一份，不靠栏目名从 instructions 里认。
+    assert openings[0]
+    assert openings[0] in seen[0]["instructions"]
 
     cli = LLMConfig(api_key="", base_url="", model="", channel="cli", cli_runner="agy")
     assert month_chain.run_world_segment_text(db, state, cli) == "静"
-    assert seen[1]["has_dir"] is True
     assert seen[1]["dir_has_index"] is True
     assert seen[1]["index"].strip()
 
@@ -850,3 +854,69 @@ def test_month_chain_lands_specialized_facts_before_due_and_gazette(game, monkey
     assert db.conn.execute(
         "SELECT knowledge_status FROM chat_messages WHERE id=?", (message_id,),
     ).fetchone()["knowledge_status"] == "released"
+
+
+def _stage_region_unrest_edict(db, state, minister, delta):
+    pending_id = db.stage_pending_action(
+        state.turn, kind="directive", action="拟旨", minister_name=minister,
+        payload={
+            "dossier_action_type": "policy", "target_kind": "issue",
+            "target_id": "month-chain", "actor": minister, "mode": "ordinary",
+            "text": "三省民变",
+        },
+    )
+    ref = pending_action_decree_ref(pending_id, 1)
+    regions = {
+        region_id: {"origin_ref": "盘面自发", "unrest": delta, "reason": "三省民变"}
+        for region_id in ("shaanxi", "shanxi", "henan")
+    }
+    db.staged_declarations.stage(
+        decree_ref=ref,
+        declaration={"effects": {"region_delta": regions}},
+        turn=int(state.turn),
+        verdict={"decision": "promulgated"},
+        forecast_text="预推不可见:三省民变",
+        visible_refs={"affairs": [], "issues": [], "secret_orders": []},
+    )
+
+
+def _set_three_province_unrest(db, value):
+    for region_id in ("shaanxi", "shanxi", "henan"):
+        db.conn.execute(
+            "UPDATE regions SET unrest=? WHERE id=?", (value, region_id),
+        )
+    db.conn.commit()
+
+
+def _three_province_unrest(db):
+    return {
+        row["id"]: int(row["unrest"])
+        for row in db.conn.execute(
+            "SELECT id, unrest FROM regions WHERE id IN ('shaanxi','shanxi','henan')",
+        )
+    }
+
+
+def test_edict_that_drops_unrest_below_gate_does_not_trigger_world_event(game, monkeypatch):
+    """三省 unrest 75 经旨降 20 后，世界事件读当月实账，不得在旨前触发。"""
+    db, state, content = game
+    minister = next(iter(content.characters.values())).name
+    _set_three_province_unrest(db, 75)
+    _stage_region_unrest_edict(db, state, minister, -20)
+    session = _prepare_player_month(db, state, content, monkeypatch)
+    session.resolve_turn(allow_empty_decree=True)
+    unrest = _three_province_unrest(db)
+    assert unrest == {"shaanxi": 55, "shanxi": 55, "henan": 55}
+    assert db.event_terminal_state("north_three_uprising") is None
+
+
+def test_edict_that_raises_unrest_over_gate_triggers_after_the_edict(game, monkeypatch):
+    """三省 unrest 55 经旨升 20 后，同一过月入口在实账上触发。"""
+    db, state, content = game
+    minister = next(iter(content.characters.values())).name
+    _set_three_province_unrest(db, 55)
+    _stage_region_unrest_edict(db, state, minister, 20)
+    session = _prepare_player_month(db, state, content, monkeypatch)
+    session.resolve_turn(allow_empty_decree=True)
+    assert _three_province_unrest(db) == {"shaanxi": 75, "shanxi": 75, "henan": 75}
+    assert db.event_terminal_state("north_three_uprising") == "triggered"

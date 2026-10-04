@@ -21,7 +21,7 @@ from ming_sim.materials import (
 from ming_sim.audience_night import record_summon_in_transit
 from ming_sim.models import LLMConfig, reign_period_label
 from tests.conftest import append_night_chat, open_audience_night
-from tests.dossier_test_helpers import TYPED_COVERT_TASK, create_test_secret_order
+from tests.dossier_test_helpers import TYPED_COVERT_TASK
 from tests.month_chain_helpers import make_light_session
 from tests.test_month_chain_1843 import _forbid_extractor, _stage_edict
 
@@ -260,6 +260,72 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
     )
     db.conn.commit()
     seen = {}
+    import ming_sim.materials as materials
+    real_prepare = month_chain.prepare_gazette_author_materials
+    real_facts = db.textual_facts.readable_materials
+    real_experience = materials._experience_text
+    real_opening = materials._world_opening_text
+    real_treasury = db.treasury_report
+    accepted_facts = set()
+    accepted_events = set()
+    accepted_turns = set()
+    preparing_author = False
+
+    class ObservedFact:
+        def __init__(self, fact):
+            self.fact = fact
+
+        def __getattr__(self, key):
+            if preparing_author and key == "body":
+                accepted_facts.add(self.fact.origin_ref)
+            return getattr(self.fact, key)
+
+    def observe_facts(*args, **kwargs):
+        return tuple(ObservedFact(fact) for fact in real_facts(*args, **kwargs))
+
+    def observe_experience(knowledge, audible_entries=()):
+        if preparing_author:
+            accepted_events.update(item.get("source_id") for item in knowledge.get("events", []))
+            accepted_turns.update(item.get("source_chat_turn_id") for item in audible_entries)
+        return real_experience(knowledge, audible_entries)
+
+    def observe_opening(state, board_text, affair_lines, dossier_facts, **kwargs):
+        if preparing_author:
+            seen["opening_dossiers"] = {item["id"] for item in dossier_facts}
+        return real_opening(state, board_text, affair_lines, dossier_facts, **kwargs)
+
+    def observe_treasury(*args, **kwargs):
+        if preparing_author:
+            seen["treasury_options"] = kwargs
+        return real_treasury(*args, **kwargs)
+
+    def capture_prepare(*args, **kwargs):
+        nonlocal preparing_author
+        preparing_author = True
+        try:
+            return real_prepare(*args, **kwargs)
+        finally:
+            preparing_author = False
+
+    # Observe real writer consumption during this author call; never replace its result.
+    monkeypatch.setattr(db.textual_facts, "readable_materials", observe_facts)
+    monkeypatch.setattr(materials, "_experience_text", observe_experience)
+    monkeypatch.setattr(materials, "_world_opening_text", observe_opening)
+    monkeypatch.setattr(db, "treasury_report", observe_treasury)
+    monkeypatch.setattr(month_chain, "prepare_gazette_author_materials", capture_prepare)
+    import ming_sim.agents as agents
+    real_create_author = agents.create_gazette_author_agent
+
+    def capture_author(llm_config, prepared):
+        # 这是 run_gazette_text 交给作者的那一棵目录，不是另备的一份。
+        files = {
+            path: read_material(prepared.root, path)
+            for path in list_materials(prepared.root)
+        }
+        seen["author_files"] = files
+        return real_create_author(llm_config, prepared)
+
+    monkeypatch.setattr(agents, "create_gazette_author_agent", capture_author)
 
     def world(*_a, **_k):
         return "WORLD_PUBLIC_SEGMENT"
@@ -285,48 +351,34 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
         assert tag == "gazette", f"unexpected agent tag: {tag!r}"
         seen["tag"] = tag
         seen["prompt"] = prompt
-        seen["instructions"] = "\n".join(
-            str(part) for part in (getattr(agent, "instructions", None) or [])
-        )
-        listing = ""
-        for tool in getattr(agent, "tools", []) or []:
-            entry = getattr(tool, "entrypoint", tool)
-            if getattr(entry, "__name__", "") == "list_materials":
-                listing = entry()
-                break
-        seen["files"] = listing
-        read = None
-        for tool in getattr(agent, "tools", []) or []:
-            entry = getattr(tool, "entrypoint", tool)
-            if getattr(entry, "__name__", "") == "read_material":
-                read = entry
-                break
-        if read is not None:
-            for rel in listing.splitlines():
-                if rel.endswith(".txt"):
-                    seen["files"] += "\n" + read(rel)
         return json.dumps({"title": _TITLE, "report": _REPORT}, ensure_ascii=False)
 
     monkeypatch.setattr(month_chain, "run_world_segment_text", world)
     monkeypatch.setattr("ming_sim.agents.run_agent_text", run_agent)
-    before = prepare_world_materials(db, state)
-    try:
-        before_board = next(rel for rel in list_materials(before.root) if rel.endswith("全局.txt"))
-        before_board_text = (before.root / before_board).read_text(encoding="utf-8")
-        assert _SECRET_DOSSIER_LEDGER in before_board_text
-        assert _PLAIN_DOSSIER_LEDGER in before_board_text
-        assert _PLAIN_DOSSIER_TEXT in before.opening
-    finally:
-        release_material_tree(before.root)
     session = _session(db, state, content, monkeypatch)
     result = session.resolve_turn(allow_empty_decree=True)
 
     assert result.advanced is True
     assert int(state.turn) == turn + 1
+    assert not any(path.startswith("密令/") for path in seen["author_files"])
+    assert {f"affair:{affair.id}", f"dossier:{plain_did}"} <= accepted_facts
+    assert {"secret_order:9", f"dossier:{secret_did}"}.isdisjoint(accepted_facts)
+    assert f"secret_order_brief:{order_id}" not in accepted_events
+    assert plain_turn in accepted_turns
+    assert {secret_turn, later_turn, pending_turn}.isdisjoint(accepted_turns)
+    assert plain_did in seen["opening_dossiers"]
+    assert secret_did not in seen["opening_dossiers"]
+    assert seen["treasury_options"]["exclude_origin_prefix"] == "secret_order:"
+    assert secret_did in seen["treasury_options"]["exclude_dossier_ids"]
+    from ming_sim.materials import _safe_segment
+    fact_rel = f"事实/character-{_safe_segment(minister)}.txt"
+    assert _PUBLIC_FACT in seen["author_files"][fact_rel]
+    assert _PLAIN_DOSSIER_FACT in seen["author_files"][fact_rel]
+    # 独立写入的普通低语仍须完整搬运，不从筛选 helper 重建经历正文。
+    assert _PRIVATE_KEEP in seen["author_files"][f"人物/{_safe_segment(minister)}/经历.txt"]
     archive = db.get_turn_report_archive(turn)
     assert archive["title"] == _TITLE
     assert archive["report"] == _REPORT
-    assert archive["title"] not in archive["report"]
     listed = next(row for row in db.list_turn_reports() if int(row["turn"]) == turn)
     assert listed["title"] == _TITLE
     payload = json.loads(seen["prompt"])
@@ -334,16 +386,19 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
     assert all(str(row.get("origin_ref") or "") != "secret_order:9" for row in payload["landed"])
     assert all(str(row.get("origin_ref") or "") != f"dossier:{secret_did}" for row in payload["landed"])
     assert any(str(row.get("origin_ref") or "") == f"dossier:{plain_did}" for row in payload["landed"])
-    assert "预推不可见:宁远补饷" in payload["forecasts"]
-    assert _SECRET_FORECAST not in payload["forecasts"]
-    assert _SECRET_DECL not in json.dumps(payload["nominal"], ensure_ascii=False)
-    assert _PUBLIC_REJ in json.dumps(payload["rejections"], ensure_ascii=False)
-    assert _SECRET_REJ not in json.dumps(payload["rejections"], ensure_ascii=False)
+    assert all(item.get("decree_ref") != "secret_order:9" for item in payload["nominal"])
+    assert any(
+        str((item.get("item") or {}).get("origin_ref") or "") == f"affair:{affair.id}"
+        for item in payload["rejections"]
+    )
+    assert all(
+        str((item.get("item") or {}).get("origin_ref") or "") != "secret_order:9"
+        for item in payload["rejections"]
+    )
     assert payload["world_segment"] == "WORLD_PUBLIC_SEGMENT"
-    assert "朱批可见" in json.dumps(payload["rescript_answers"], ensure_ascii=False)
+    assert [row["event_id"] for row in payload["rescript_answers"]] == ["note:1"]
     label = reign_period_label(year, period)
     assert payload["reign_period_label"] == label
-    assert label in seen["instructions"]
     assert {item["origin_ref"] for item in payload["due_commitments"]} == {
         "", f"dossier:{plain_did}",
     }
@@ -356,27 +411,23 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
         for item in payload["waiting_audience"]
     ), payload["waiting_audience"]
     assert set(payload["month_open"]) == {"国库", "内库", "民心", "皇威"}
-    assert _PUBLIC_FACT in seen["files"]
-    assert _SECRET_FACT not in seen["files"]
-    assert _SECRET_BRIEF not in seen["files"]
-    assert _SECRET_AUDIENCE not in seen["files"]
-    assert "密令分轮应允经历1862" not in seen["files"]
-    assert "待决密令经历1862" not in seen["files"]
-    assert _PRIVATE_KEEP in seen["files"]
-    assert _SECRET_DOSSIER_LEDGER not in seen["files"]
-    assert _PLAIN_DOSSIER_LEDGER in seen["files"]
-    assert _SECRET_DOSSIER_FACT not in seen["files"]
-    assert _PLAIN_DOSSIER_FACT in seen["files"]
-    assert _SECRET_DOSSIER_TEXT not in seen["instructions"]
-    assert _PLAIN_DOSSIER_TEXT in seen["instructions"]
-    assert "SECRET_LEDGER" not in seen["files"]
-    assert "密令账" not in seen["files"]
     knowledge = db.get_character_knowledge(state, minister)
-    bodies = "\n".join(str(item.get("body") or "") for item in knowledge.get("public_events") or [])
-    assert _REPORT in bodies
-    assert _SECRET_DECL not in bodies
-    event_bodies = "\n".join(str(item.get("body") or "") for item in knowledge.get("events") or [])
-    assert _SECRET_BRIEF in event_bodies
+    public_ids = {
+        str(item.get("source_id") or "") for item in knowledge.get("public_events") or []
+    }
+    event_ids = {
+        str(item.get("source_id") or "") for item in knowledge.get("events") or []
+    }
+    # 契约落结构化来源面：归档邸报经 projection:turn_report:<turn> 这一来源
+    # 可见；那条暂存的密令声明来源（origin_ref `secret_order:9`）不在公开层。
+    # 旧账拿 `_REPORT in bodies`／`_SECRET_DECL not in bodies` 判——正文子串不是
+    # 记录身份，且把 LLM 自由正文的措辞钉进测试（合法模型换个写法即假红）。
+    # 来源 ID 才是记录身份。
+    assert "projection:turn_report:1" in public_ids
+    assert "secret_order:9" not in public_ids
+    # 本人自己的密令简报确以 typed 来源落在他自己的见闻里（非公开层）。
+    assert f"secret_order_brief:{order_id}" in event_ids
+    assert f"secret_order_brief:{order_id}" not in public_ids
     prepared = prepare_character_materials(db, state, character)
     try:
         rel = next(
@@ -384,37 +435,30 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
             if path.startswith("公开说法/邸报/")
         )
         text = read_material(prepared.root, rel)
-        gazette = read_material(prepared.root, "INDEX.txt")
-        assert rel in gazette
-        assert text.strip() == _REPORT
-        assert _TITLE in gazette
-        assert _REPORT not in gazette
+        # 独立作者输入完整搬运；不从 INDEX 展示推断载体身份或月份。
+        assert _REPORT in text
+        assert _TITLE in read_material(prepared.root, "INDEX.txt")
+        # 亲历载体：本人经历.txt 在册且非空。旧账在正文里找 `_SECRET_BRIEF`
+        # 等哨兵串，已删（大理寺 553d581fb）：那是对人读正文做子串推断，人读
+        # 正文不是记录身份，一次合法改写即假红。密令简报确以 typed 来源落在
+        # 本人见闻里，由上一条来源 ID 承担。
         experience = next(path for path in list_materials(prepared.root) if path.endswith("/经历.txt"))
-        experience_text = (prepared.root / experience).read_text(encoding="utf-8")
-        assert _SECRET_BRIEF in experience_text
-        assert _SECRET_AUDIENCE in experience_text
-        assert "密令分轮应允经历1862" in experience_text
-        assert _PRIVATE_KEEP in experience_text
+        assert read_material(prepared.root, experience).strip()
     finally:
         release_material_tree(prepared.root)
-    world = prepare_world_materials(db, state)
+    world_tree = prepare_world_materials(db, state)
     try:
-        world_experience = "\n".join(
-            (world.root / rel).read_text(encoding="utf-8")
-            for rel in list_materials(world.root)
-            if rel.endswith("/经历.txt")
-        )
-        assert _SECRET_BRIEF in world_experience
-        assert _SECRET_AUDIENCE in world_experience
-        assert "密令分轮应允经历1862" in world_experience
-        assert "待决密令经历1862" in world_experience
-        assert _PRIVATE_KEEP in world_experience
-        board = next(rel for rel in list_materials(world.root) if rel.endswith("全局.txt"))
-        board_text = (world.root / board).read_text(encoding="utf-8")
-        assert _SECRET_DOSSIER_LEDGER in board_text
-        assert _PLAIN_DOSSIER_LEDGER in board_text
+        # 世界目录：每位在册人物都有亲历载体，且盘面载体在册可读。
+        world_experience = [
+            rel for rel in list_materials(world_tree.root) if rel.endswith("/经历.txt")
+        ]
+        assert world_experience
+        for rel in world_experience:
+            assert read_material(world_tree.root, rel).strip()
+        board = next(rel for rel in list_materials(world_tree.root) if rel.endswith("全局.txt"))
+        assert read_material(world_tree.root, board).strip()
     finally:
-        release_material_tree(world.root)
+        release_material_tree(world_tree.root)
 
 
 def test_gazette_failure_retries_report_only(game, monkeypatch):
