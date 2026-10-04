@@ -4,7 +4,7 @@
 **分支**：`ak-roles/1834-f16-f3-f3r-f17-ee3b5da31`
 **基线**：`ee3b5da312c5832720d89aee707fe4c7669c5eb0`
 **父 HEAD（自审开工）**：`285c0abb4`（stamp after aa7374f11）
-**本轮 commit**：*(stamp after commit)*
+**本轮 commit**：`7fc7108a24d697a987f9169179b756b712d87e1b`
 **判词**：`evidence/1834-f16-f3-f3r-f17-fix/continued-ruling.json` + 用户续判（禁新增永久证明测试；退役残段不得宿主保留；F16 16 组须可核全员 loc）
 **法源**：CLAUDE.md P6 / ADR 0142；判词 F16「自由文本零删改」；stdout 包装改写**不是**合法例外。
 
