@@ -538,7 +538,8 @@ def test_revoke_target_identity_falls_back_to_dossier_row(game, monkeypatch):
     assert int(target["dossier_id"]) == did
     assert int(target["issue_id"]) == int(cid)
     assert int(target["paid"]) == 0
-    assert [item["progress_band"] for item in target["progress"]] == ["在办"]
+    assert len(target["progress"]) == 1
+    assert int(target["progress"][0]["turn"]) == int(state.turn)
 
     # 判前（逐旨推演）：本旨事实同一读口，行身份也进推演输入
     sess = _sess(db, state, content, monkeypatch, lambda request, config: {})

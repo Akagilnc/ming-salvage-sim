@@ -1697,6 +1697,8 @@ def _write_world_tree(
     include_fact: Any = None,
     include_event: Any = None,
     secret_turn_ids: set[int] | None = None,
+    *,
+    exclude_secret_order_dossiers: bool = False,
 ) -> list[str]:
     from ming_sim.knowledge import build_character_knowledge
 
@@ -1764,7 +1766,9 @@ def _write_world_tree(
         _write_text(tmp / rel, body)
         index.append(rel)
 
-    index.extend(_write_secret_actual_note_files(tmp, db))
+    # 公共邸报供料已排除密令案卷时，实况旁路不得再无条件写入（#1897 F1）。
+    if not exclude_secret_order_dossiers:
+        index.extend(_write_secret_actual_note_files(tmp, db))
     index.extend(_write_candidate_event_files(tmp, db, state))
     index.extend(_write_fiscal_levy_petition_files(tmp, db, state))
     index.extend(_write_world_textual_fact_files(tmp, db, include_fact=include_fact))
@@ -2403,6 +2407,7 @@ def prepare_world_materials(
             tmp, db, state, public_events, affair_lines, board_text,
             denunciation_facts, candidates, include_fact, include_event,
             _secret_order_chat_turn_ids(db) if exclude_secret_order_audience else None,
+            exclude_secret_order_dossiers=exclude_secret_order_dossiers,
         ),
     )
 

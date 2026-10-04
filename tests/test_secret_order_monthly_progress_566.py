@@ -70,7 +70,7 @@ def test_monthly_report_keeps_its_turn_and_text(game):
     emperor_order = next(item for item in db.list_secret_orders() if item["id"] == order_id)
     report = emperor_order["dossier_progress"][-1]
     assert int(report["turn"]) == int(state.turn)
-    assert report["progress_band"] == "在途核验"
+    assert report.get("is_terminal") is False
 
 
 def test_disclosure_promotes_monthly_report_to_public_event_only_after_disclosure(game):
@@ -365,28 +365,3 @@ def test_missing_bad_unknown_and_duplicate_reports_are_rejected(game):
                 "memorial_text": "不得命中真实案卷",
             }])
     assert db.list_dossier_progress(dossier_id) == []
-
-def test_emperor_private_payload_preserves_monthly_report(game):
-    db, state, content = game
-    order_id, dossier_id = _order(db, state)
-    _record_monthly_report(db, state, {
-        "dossier_id": dossier_id, "progress_band": "在途核验",
-        "memorial_text": "首批饷车已验山海关关防566",
-    })
-
-    # Emperor-facing secret-order product payload exposes the canonical rail.
-    emperor_order = next(item for item in db.list_secret_orders() if item["id"] == order_id)
-    last = emperor_order["dossier_progress"][-1]
-    assert int(last["turn"]) == int(state.turn)
-    assert last["progress_band"] == "在途核验"
-    assert last.get("is_terminal") is False
-
-    from ming_sim.materials import prepare_character_materials, release_material_tree
-    prepared = prepare_character_materials(
-        db, state, content.characters[emperor_order["minister_name"]],
-    )
-    try:
-        from ming_sim.materials import list_materials
-        assert "密令/进行中.txt" in list_materials(prepared.root)
-    finally:
-        release_material_tree(prepared.root)

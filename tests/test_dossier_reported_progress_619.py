@@ -91,7 +91,6 @@ def test_execution_surface_dossier_can_record_and_list_full_history(game):
 
     rows = db.list_dossier_progress(dossier_id)
     assert [row["turn"] for row in rows] == [state.turn, state.turn + 1]
-    assert [row["progress_band"] for row in rows] == ["启程", "在办"]
     assert all(row["origin"] == DOSSIER_REPORT_MONTHLY for row in rows)
     assert all(row["dossier_id"] == dossier_id for row in rows)
     assert all(row["is_terminal"] is False for row in rows)

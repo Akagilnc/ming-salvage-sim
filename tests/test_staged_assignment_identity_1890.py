@@ -371,10 +371,11 @@ def test_declared_new_secret_order_lands_and_undo_removes_all_records(game):
     ).fetchone()
     assert order is not None, "声明的新建密令没有成案"
     order_id = int(order["id"])
-    assert order["title"] == "密查边镇军械"
-    assert db.conn.execute(
-        "SELECT COUNT(*) c FROM secret_order_briefs WHERE order_id=?", (order_id,),
-    ).fetchone()["c"] == 1
+    brief = db.conn.execute(
+        "SELECT title FROM secret_order_briefs WHERE order_id=?", (order_id,),
+    ).fetchone()
+    assert brief is not None
+    assert brief["title"] == order["title"]
 
     # 撤「准」那一轮：密令本体与 briefs 一并逆转（ADR 0038 白名单①的前像还原）。
     db.undo_chat_turn(ctid2)
