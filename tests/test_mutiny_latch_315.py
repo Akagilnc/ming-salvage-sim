@@ -36,9 +36,9 @@ def _setup(
     self_funded_pay: int = 0,
 ):
     _configure_fiscal_path(db, fiscal_path)
-    if fiscal_path == "substrate_hub" and (is_tusi or self_funded_pay):
-        # Exercise the substrate_hub loyalty seam without the later pay-source
-        # conservation rule, which requires exempt armies to carry no arrears.
+    if is_tusi or self_funded_pay:
+        # 非旧军饷结算路：hub 引擎仍跑 settle_hub_*；仅关分源守恒闸，
+        # 以便豁免军可种反事实 scalar 欠饷（守恒要求豁免军欠饷必须为 0）。
         db.conn.execute(
             "UPDATE fiscal_config SET value=0 WHERE key='__army_pay_source_cutover'"
         )

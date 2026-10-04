@@ -11,6 +11,7 @@ import json
 import os
 import re
 import time
+from dataclasses import asdict, is_dataclass
 from typing import Any, Callable, Dict, List, Optional, Sequence
 
 from agno.agent import Agent
@@ -63,22 +64,21 @@ _DUMP_LLM = os.environ.get("MING_SIM_DUMP_LLM", "").strip() in ("1", "true", "ye
 _DUMP_PATH = f"scripts/runs/llm_dump_{os.getpid()}.jsonl"
 
 
-def _dump_jsonable(value: Any) -> Any:
-    """把 dump 事实收成 JSON 可编码结构；不造字段白名单，不拼散文。"""
-    if value is None or isinstance(value, (str, int, float, bool)):
-        return value
-    if isinstance(value, dict):
-        return {str(k): _dump_jsonable(v) for k, v in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [_dump_jsonable(v) for v in value]
-    raw = getattr(value, "__dict__", None)
-    if isinstance(raw, dict) and raw:
-        return {str(k): _dump_jsonable(v) for k, v in raw.items()}
-    try:
-        json.dumps(value, ensure_ascii=False, default=str)
-        return value
-    except TypeError:
-        return repr(value)
+def _json_default(obj: Any) -> Any:
+    """json.dumps default：复用对象自带结构出口（agno to_dict / pydantic model_dump /
+    dataclass asdict / __dict__），不再预递归清洗或 default=str 探测。"""
+    to_dict = getattr(obj, "to_dict", None)
+    if callable(to_dict):
+        return to_dict()
+    model_dump = getattr(obj, "model_dump", None)
+    if callable(model_dump):
+        return model_dump()
+    if is_dataclass(obj) and not isinstance(obj, type):
+        return asdict(obj)
+    raw = getattr(obj, "__dict__", None)
+    if isinstance(raw, dict):
+        return raw
+    return str(obj)
 
 
 def _dump_llm_messages(output: Any, tag: str, agent: Optional[Agent] = None) -> None:
@@ -114,10 +114,10 @@ def _dump_llm_messages(output: Any, tag: str, agent: Optional[Agent] = None) -> 
             rval = getattr(m, fname, None)
             if rval is None or rval == "" or rval == []:
                 continue
-            item[fname] = _dump_jsonable(rval)
+            item[fname] = rval
         tcalls = getattr(m, "tool_calls", None)
         if tcalls:
-            item["tool_calls"] = _dump_jsonable(tcalls)
+            item["tool_calls"] = tcalls
         message_records.append(item)
     run_metrics = getattr(run_src, "metrics", None)
     if run_metrics is None:
@@ -142,13 +142,13 @@ def _dump_llm_messages(output: Any, tag: str, agent: Optional[Agent] = None) -> 
     record = {
         "tag": tag,
         "messages": message_records,
-        "run_reasoning_content": _dump_jsonable(getattr(run_src, "reasoning_content", None)),
-        "usage": _dump_jsonable(run_metrics) if run_metrics is not None else None,
-        "finish_reason": _dump_jsonable(finish_reason),
+        "run_reasoning_content": getattr(run_src, "reasoning_content", None),
+        "usage": run_metrics,
+        "finish_reason": finish_reason,
     }
     try:
         with open(_DUMP_PATH, "a", encoding="utf-8") as f:
-            f.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
+            f.write(json.dumps(record, ensure_ascii=False, default=_json_default) + "\n")
         tlog(f"[{tag}] LLM messages 已 dump → {_DUMP_PATH}")
     except OSError as e:
         tlog(f"[{tag}] dump 写盘失败：{e}")

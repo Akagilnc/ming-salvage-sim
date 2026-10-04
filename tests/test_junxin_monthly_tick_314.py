@@ -147,18 +147,16 @@ def test_substrate_hub_hybrid_source_loyalty_regression(game):
 
 def test_tusi_and_non_ming_untouched_on_hub(game):
     db, state, _ = game
-    # 自养/非明军若带欠饷会撞分源守恒；本案只验 loyalty 不被 tick，关 cutover 守恒闸。
-    db.conn.execute(
-        "UPDATE fiscal_config SET value=0 WHERE key='__army_pay_source_cutover'"
-    )
-    _silence_other_armies(db, keep=(KEG,))
-    _setup_army(db, KEG, is_tusi=1, arrears=10.0, loyalty=50)
+    # 豁免军分源份额/欠饷须全 0（守恒）；本案只验 loyalty 不被 tick，cutover 保持现役。
+    _silence_other_armies(db, keep=(KEG, ELITE))
+    _setup_army(db, KEG, is_tusi=1, arrears=0.0, loyalty=50)
+    _setup_army(db, ELITE, owner_power="houjin", arrears=0.0, loyalty=66)
     db.conn.execute(
         "UPDATE armies SET province_pay_share=0, central_pay_share=0, "
-        "province_pay_arrears=0, central_pay_arrears=0 WHERE id=?",
-        (KEG,),
+        "pay_source_region='', province_pay_arrears=0, central_pay_arrears=0, "
+        "arrears=0 WHERE id IN (?, ?)",
+        (KEG, ELITE),
     )
-    _setup_army(db, ELITE, owner_power="houjin", arrears=10.0, loyalty=66)
     db.conn.commit()
     before_non_ming = _loyalty_of(db, ELITE)
     _run_months(db, state, 1)
@@ -168,14 +166,11 @@ def test_tusi_and_non_ming_untouched_on_hub(game):
 
 def test_self_funded_army_untouched_on_hub(game):
     db, state, _ = game
-    db.conn.execute(
-        "UPDATE fiscal_config SET value=0 WHERE key='__army_pay_source_cutover'"
-    )
     _silence_other_armies(db, keep=(KEG,))
     db.conn.execute(
         "UPDATE armies SET owner_power='ming', is_tusi=0, self_funded_pay=1, "
-        "manpower=10000, salary_rate=1.0, loyalty=50, arrears=10.0, "
-        "province_pay_share=0, central_pay_share=0, "
+        "manpower=10000, salary_rate=1.0, loyalty=50, arrears=0.0, "
+        "province_pay_share=0, central_pay_share=0, pay_source_region='', "
         "province_pay_arrears=0, central_pay_arrears=0 WHERE id=?",
         (KEG,),
     )
