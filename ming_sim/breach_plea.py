@@ -136,10 +136,7 @@ def list_active_commitments(db: Any) -> List[Any]:
 
 def _commitment_origin_refs(row: Any, commitment_ref: int) -> Set[str]:
     refs: Set[str] = {f"issue:{int(commitment_ref)}"}
-    try:
-        origin = str(row["origin_ref"] or "").strip()
-    except (TypeError, KeyError, IndexError):
-        origin = ""
+    origin = str(row["origin_ref"] or "").strip()
     if origin:
         refs.add(origin)
     return refs
@@ -449,17 +446,11 @@ def _spent_amount_and_fiscal_count(
     """已投入：金额（economy 负流水绝对值）与 fiscal 条数分账。"""
     spent_amount = 0
     fiscal_count = 0
-    try:
-        origin = str(row["origin_ref"] or "")
-    except Exception:
-        origin = ""
+    origin = str(row["origin_ref"] or "")
     did = parse_dossier_id(origin)
     if did is not None:
         for mv in db.list_economy_moves_for_dossier(int(did)):
-            try:
-                delta = int(mv.get("delta") or 0)
-            except (TypeError, ValueError):
-                delta = 0
+            delta = int(mv.get("delta") or 0)
             if delta < 0:
                 spent_amount += -delta
         fiscal_count += len(db.list_fiscal_effects_for_dossier(int(did)))
@@ -952,10 +943,7 @@ def _promised_monthly_amount(row: Any) -> int:
         for it in economy:
             if not isinstance(it, dict):
                 continue
-            try:
-                delta = int(it.get("delta") or 0)
-            except (TypeError, ValueError):
-                delta = 0
+            delta = int(it.get("delta") or 0)
             if delta < 0:
                 total += -delta
             elif delta > 0:
@@ -1016,10 +1004,7 @@ def _fiscal_funding_cut_this_turn(
             (oref, turn),
         ).fetchone()
         if ch is not None:
-            try:
-                old_v, new_v = int(ch["old_value"]), int(ch["new_value"])
-            except (TypeError, ValueError):
-                continue
+            old_v, new_v = int(ch["old_value"]), int(ch["new_value"])
             if old_v > 0 and new_v <= 0:
                 return True
             if old_v > 0 and new_v < old_v * _FUNDING_ARREARS_RATIO:

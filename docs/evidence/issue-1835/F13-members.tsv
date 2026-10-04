@@ -15,68 +15,68 @@ ming_sim/declaration_dispatch.py	458	_dispatch_effects	{'raw_value': raw}	retain
 ming_sim/declaration_dispatch.py	2694	_dispatch_protagonist	{'raw_value': raw}	retained: canonical dict	dict construction at producer
 ming_sim/declaration_dispatch.py	2700	_dispatch_protagonist	dict(raw)	retained: canonical dict	built-in dict constructor
 ming_sim/declaration_dispatch.py	2707	_dispatch_protagonist	dict(raw)	retained: canonical dict	built-in dict constructor
-ming_sim/issues.py	2482	apply_issue_inertia_and_ongoing	{'field': 'metrics', 'raw_value': _om}	retained: canonical dict	dict construction at producer
-ming_sim/issues.py	2485	apply_issue_inertia_and_ongoing	{'field': k, 'raw_value': v}	retained: canonical dict	dict construction at producer
-ming_sim/issues.py	2490	apply_issue_inertia_and_ongoing	{'field': k, 'raw_value': v}	retained: canonical dict	dict construction at producer
+ming_sim/issues.py	2470	apply_issue_inertia_and_ongoing	{'field': 'metrics', 'raw_value': _om}	retained: canonical dict	dict construction at producer
+ming_sim/issues.py	2473	apply_issue_inertia_and_ongoing	{'field': k, 'raw_value': v}	retained: canonical dict	dict construction at producer
+ming_sim/issues.py	2478	apply_issue_inertia_and_ongoing	{'field': k, 'raw_value': v}	retained: canonical dict	dict construction at producer
+ming_sim/db.py	4471	transition_army_owner_power	item	retained: canonical dict	raw_item is dict-or-None; all explicit production callers pass literal dict; default item is literal dict. No scalar reaches this primitive under its input contract
+ming_sim/db.py	4478	transition_army_owner_power	item	retained: canonical dict	raw_item is dict-or-None; all explicit production callers pass literal dict; default item is literal dict. No scalar reaches this primitive under its input contract
 ming_sim/db.py	4486	transition_army_owner_power	item	retained: canonical dict	raw_item is dict-or-None; all explicit production callers pass literal dict; default item is literal dict. No scalar reaches this primitive under its input contract
-ming_sim/db.py	4493	transition_army_owner_power	item	retained: canonical dict	raw_item is dict-or-None; all explicit production callers pass literal dict; default item is literal dict. No scalar reaches this primitive under its input contract
-ming_sim/db.py	4501	transition_army_owner_power	item	retained: canonical dict	raw_item is dict-or-None; all explicit production callers pass literal dict; default item is literal dict. No scalar reaches this primitive under its input contract
-ming_sim/db.py	4506	transition_army_owner_power	item	retained: canonical dict	raw_item is dict-or-None; all explicit production callers pass literal dict; default item is literal dict. No scalar reaches this primitive under its input contract
-ming_sim/db.py	4569	transition_army_owner_power	item	retained: canonical dict	raw_item is dict-or-None; all explicit production callers pass literal dict; default item is literal dict. No scalar reaches this primitive under its input contract
-ming_sim/db.py	4796	_apply_army_pay_source_delta	{'army_id': army_id, 'changes': raw_changes}	retained: canonical dict	dict construction at producer
-ming_sim/db.py	12018	_reject	payload	retained: canonical dict	payload assigned dict(raw_item) or literal raw_value wrapper
-ming_sim/db.py	4564	transition_army_owner_power	item	retained: canonical dict	raw_item is dict-or-None; all explicit production callers pass literal dict; default item is literal dict. No scalar reaches this primitive under its input contract
-ming_sim/db.py	4774	_apply_army_pay_source_delta	{'army_id': army_id, 'changes': raw_changes}	retained: canonical dict	dict construction at producer
-ming_sim/db.py	6044	apply_character_power_changes	raw	retained: canonical dict	loop continues on non-dict raw before rejection
-ming_sim/db.py	6047	apply_character_power_changes	raw	retained: canonical dict	loop continues on non-dict raw before rejection
-ming_sim/db.py	6053	apply_character_power_changes	raw	retained: canonical dict	loop continues on non-dict raw before rejection
-ming_sim/db.py	6722	adjust_classes	{key: fields}	retained: canonical dict	dict construction at producer
-ming_sim/db.py	6870	apply_power_deltas	{'power_id': power_id, 'changes': raw_changes}	retained: canonical dict	dict construction at producer
-ming_sim/db.py	6874	apply_power_deltas	{'power_id': power_id, 'changes': raw_changes}	retained: canonical dict	dict construction at producer
-ming_sim/db.py	7201	apply_region_deltas	{'region_id': region_id, 'changes': raw_changes}	retained: canonical dict	dict construction at producer
-ming_sim/db.py	7769	apply_army_deltas	{'army_id': army_id, 'changes': raw_changes}	retained: canonical dict	dict construction at producer
-ming_sim/db.py	8168	create_armies_from_extraction	{'raw_value': raw}	retained: canonical dict	dict construction at producer
-ming_sim/db.py	8178	create_armies_from_extraction	raw	retained: canonical dict	loop refuses non-dict raw with wrapper then continues
-ming_sim/db.py	8183	create_armies_from_extraction	raw	retained: canonical dict	loop refuses non-dict raw with wrapper then continues
-ming_sim/db.py	8257	create_armies_from_extraction	raw	retained: canonical dict	loop refuses non-dict raw with wrapper then continues
-ming_sim/db.py	8279	create_armies_from_extraction	raw	retained: canonical dict	loop refuses non-dict raw with wrapper then continues
-ming_sim/db.py	8322	create_armies_from_extraction	raw	retained: canonical dict	loop refuses non-dict raw with wrapper then continues
-ming_sim/db.py	8517	apply_building_deltas	{'entity_id': building_id, 'raw_value': raw_changes}	retained: canonical dict	dict construction at producer
-ming_sim/db.py	8727	adjust_factions	{faction: val}	retained: canonical dict	dict construction at producer
-ming_sim/db.py	6896	apply_power_deltas	{'power_id': power_id, 'field': str(raw_field), 'value': value}	retained: canonical dict	dict construction at producer
-ming_sim/db.py	6917	apply_power_deltas	{'power_id': power_id, 'field': str(raw_field), 'value': value}	retained: canonical dict	dict construction at producer
-ming_sim/db.py	7291	apply_region_deltas	{'region_id': region_id, 'field': str(raw_field), 'value': value}	retained: canonical dict	dict construction at producer
-ming_sim/db.py	7858	apply_army_deltas	{'army_id': army_id, 'field': str(raw_field), 'value': value}	retained: canonical dict	dict construction at producer
-ming_sim/db.py	8105	apply_army_deltas	{'army_id': army_id, 'field': field, 'value': value}	retained: canonical dict	dict construction at producer
-ming_sim/db.py	8194	create_armies_from_extraction	raw	retained: canonical dict	loop refuses non-dict raw with wrapper then continues
-ming_sim/db.py	8235	create_armies_from_extraction	raw	retained: canonical dict	loop refuses non-dict raw with wrapper then continues
-ming_sim/db.py	8289	create_armies_from_extraction	raw	retained: canonical dict	loop refuses non-dict raw with wrapper then continues
-ming_sim/db.py	8527	apply_building_deltas	{'entity_id': building_id, 'field': field, 'raw_value': value}	retained: canonical dict	dict construction at producer
-ming_sim/db.py	6909	apply_power_deltas	{'power_id': power_id, 'field': str(raw_field), 'value': value}	retained: canonical dict	dict construction at producer
-ming_sim/db.py	7403	apply_region_deltas	{'region_id': region_id, 'field': field, 'value': value}	retained: canonical dict	dict construction at producer
-ming_sim/db.py	8202	create_armies_from_extraction	raw	retained: canonical dict	loop refuses non-dict raw with wrapper then continues
-ming_sim/db.py	8318	create_armies_from_extraction	raw	retained: canonical dict	loop refuses non-dict raw with wrapper then continues
-ming_sim/db.py	7225	apply_region_deltas	{'region_id': region_id, 'field': field, 'value': value}	retained: canonical dict	dict construction at producer
-ming_sim/db.py	7231	apply_region_deltas	{'region_id': region_id, 'field': field, 'value': value}	retained: canonical dict	dict construction at producer
-ming_sim/db.py	7305	apply_region_deltas	{'region_id': region_id, 'field': field, 'value': value}	retained: canonical dict	dict construction at producer
-ming_sim/db.py	7325	apply_region_deltas	{'region_id': region_id, 'field': field, 'value': value}	retained: canonical dict	dict construction at producer
+ming_sim/db.py	4491	transition_army_owner_power	item	retained: canonical dict	raw_item is dict-or-None; all explicit production callers pass literal dict; default item is literal dict. No scalar reaches this primitive under its input contract
+ming_sim/db.py	4554	transition_army_owner_power	item	retained: canonical dict	raw_item is dict-or-None; all explicit production callers pass literal dict; default item is literal dict. No scalar reaches this primitive under its input contract
+ming_sim/db.py	4781	_apply_army_pay_source_delta	{'army_id': army_id, 'changes': raw_changes}	retained: canonical dict	dict construction at producer
+ming_sim/db.py	12000	_reject	payload	retained: canonical dict	payload assigned dict(raw_item) or literal raw_value wrapper
+ming_sim/db.py	4549	transition_army_owner_power	item	retained: canonical dict	raw_item is dict-or-None; all explicit production callers pass literal dict; default item is literal dict. No scalar reaches this primitive under its input contract
+ming_sim/db.py	4759	_apply_army_pay_source_delta	{'army_id': army_id, 'changes': raw_changes}	retained: canonical dict	dict construction at producer
+ming_sim/db.py	6026	apply_character_power_changes	raw	retained: canonical dict	loop continues on non-dict raw before rejection
+ming_sim/db.py	6029	apply_character_power_changes	raw	retained: canonical dict	loop continues on non-dict raw before rejection
+ming_sim/db.py	6035	apply_character_power_changes	raw	retained: canonical dict	loop continues on non-dict raw before rejection
+ming_sim/db.py	6704	adjust_classes	{key: fields}	retained: canonical dict	dict construction at producer
+ming_sim/db.py	6852	apply_power_deltas	{'power_id': power_id, 'changes': raw_changes}	retained: canonical dict	dict construction at producer
+ming_sim/db.py	6856	apply_power_deltas	{'power_id': power_id, 'changes': raw_changes}	retained: canonical dict	dict construction at producer
+ming_sim/db.py	7183	apply_region_deltas	{'region_id': region_id, 'changes': raw_changes}	retained: canonical dict	dict construction at producer
+ming_sim/db.py	7751	apply_army_deltas	{'army_id': army_id, 'changes': raw_changes}	retained: canonical dict	dict construction at producer
+ming_sim/db.py	8150	create_armies_from_extraction	{'raw_value': raw}	retained: canonical dict	dict construction at producer
+ming_sim/db.py	8160	create_armies_from_extraction	raw	retained: canonical dict	loop refuses non-dict raw with wrapper then continues
+ming_sim/db.py	8165	create_armies_from_extraction	raw	retained: canonical dict	loop refuses non-dict raw with wrapper then continues
+ming_sim/db.py	8239	create_armies_from_extraction	raw	retained: canonical dict	loop refuses non-dict raw with wrapper then continues
+ming_sim/db.py	8261	create_armies_from_extraction	raw	retained: canonical dict	loop refuses non-dict raw with wrapper then continues
+ming_sim/db.py	8304	create_armies_from_extraction	raw	retained: canonical dict	loop refuses non-dict raw with wrapper then continues
+ming_sim/db.py	8499	apply_building_deltas	{'entity_id': building_id, 'raw_value': raw_changes}	retained: canonical dict	dict construction at producer
+ming_sim/db.py	8709	adjust_factions	{faction: val}	retained: canonical dict	dict construction at producer
+ming_sim/db.py	6878	apply_power_deltas	{'power_id': power_id, 'field': str(raw_field), 'value': value}	retained: canonical dict	dict construction at producer
+ming_sim/db.py	6899	apply_power_deltas	{'power_id': power_id, 'field': str(raw_field), 'value': value}	retained: canonical dict	dict construction at producer
+ming_sim/db.py	7273	apply_region_deltas	{'region_id': region_id, 'field': str(raw_field), 'value': value}	retained: canonical dict	dict construction at producer
+ming_sim/db.py	7840	apply_army_deltas	{'army_id': army_id, 'field': str(raw_field), 'value': value}	retained: canonical dict	dict construction at producer
+ming_sim/db.py	8087	apply_army_deltas	{'army_id': army_id, 'field': field, 'value': value}	retained: canonical dict	dict construction at producer
+ming_sim/db.py	8176	create_armies_from_extraction	raw	retained: canonical dict	loop refuses non-dict raw with wrapper then continues
+ming_sim/db.py	8217	create_armies_from_extraction	raw	retained: canonical dict	loop refuses non-dict raw with wrapper then continues
+ming_sim/db.py	8271	create_armies_from_extraction	raw	retained: canonical dict	loop refuses non-dict raw with wrapper then continues
+ming_sim/db.py	8509	apply_building_deltas	{'entity_id': building_id, 'field': field, 'raw_value': value}	retained: canonical dict	dict construction at producer
+ming_sim/db.py	6891	apply_power_deltas	{'power_id': power_id, 'field': str(raw_field), 'value': value}	retained: canonical dict	dict construction at producer
+ming_sim/db.py	7385	apply_region_deltas	{'region_id': region_id, 'field': field, 'value': value}	retained: canonical dict	dict construction at producer
+ming_sim/db.py	8184	create_armies_from_extraction	raw	retained: canonical dict	loop refuses non-dict raw with wrapper then continues
+ming_sim/db.py	8300	create_armies_from_extraction	raw	retained: canonical dict	loop refuses non-dict raw with wrapper then continues
+ming_sim/db.py	7207	apply_region_deltas	{'region_id': region_id, 'field': field, 'value': value}	retained: canonical dict	dict construction at producer
+ming_sim/db.py	7213	apply_region_deltas	{'region_id': region_id, 'field': field, 'value': value}	retained: canonical dict	dict construction at producer
+ming_sim/db.py	7287	apply_region_deltas	{'region_id': region_id, 'field': field, 'value': value}	retained: canonical dict	dict construction at producer
+ming_sim/db.py	7307	apply_region_deltas	{'region_id': region_id, 'field': field, 'value': value}	retained: canonical dict	dict construction at producer
+ming_sim/db.py	7851	apply_army_deltas	{'army_id': army_id, 'field': field, 'value': value}	retained: canonical dict	dict construction at producer
 ming_sim/db.py	7869	apply_army_deltas	{'army_id': army_id, 'field': field, 'value': value}	retained: canonical dict	dict construction at producer
-ming_sim/db.py	7887	apply_army_deltas	{'army_id': army_id, 'field': field, 'value': value}	retained: canonical dict	dict construction at producer
+ming_sim/db.py	7878	apply_army_deltas	{'army_id': army_id, 'field': field, 'value': value}	retained: canonical dict	dict construction at producer
+ming_sim/db.py	7881	apply_army_deltas	{'army_id': army_id, 'field': field, 'value': value}	retained: canonical dict	dict construction at producer
 ming_sim/db.py	7896	apply_army_deltas	{'army_id': army_id, 'field': field, 'value': value}	retained: canonical dict	dict construction at producer
-ming_sim/db.py	7899	apply_army_deltas	{'army_id': army_id, 'field': field, 'value': value}	retained: canonical dict	dict construction at producer
-ming_sim/db.py	7914	apply_army_deltas	{'army_id': army_id, 'field': field, 'value': value}	retained: canonical dict	dict construction at producer
-ming_sim/db.py	8533	apply_building_deltas	{'entity_id': building_id, 'field': field, 'raw_value': value}	retained: canonical dict	dict construction at producer
-ming_sim/db.py	7388	apply_region_deltas	{'region_id': region_id, 'field': field, 'value': value}	retained: canonical dict	dict construction at producer
-ming_sim/db.py	7396	apply_region_deltas	{'region_id': region_id, 'field': field, 'value': value}	retained: canonical dict	dict construction at producer
-ming_sim/db.py	18964	ensure_dossiers_for_draft_directives	{'directive_id': did}	retained: canonical dict	dict construction at producer
-ming_sim/db.py	8029	apply_army_deltas	{'army_id': army_id, 'field': field, 'value': value}	retained: canonical dict	dict construction at producer
-ming_sim/db.py	8560	apply_building_deltas	{'entity_id': building_id, 'field': field, 'raw_value': value}	retained: canonical dict	dict construction at producer
-ming_sim/db.py	8092	apply_army_deltas	{'army_id': army_id, 'field': field, 'value': value}	retained: canonical dict	dict construction at producer
+ming_sim/db.py	8515	apply_building_deltas	{'entity_id': building_id, 'field': field, 'raw_value': value}	retained: canonical dict	dict construction at producer
+ming_sim/db.py	7370	apply_region_deltas	{'region_id': region_id, 'field': field, 'value': value}	retained: canonical dict	dict construction at producer
+ming_sim/db.py	7378	apply_region_deltas	{'region_id': region_id, 'field': field, 'value': value}	retained: canonical dict	dict construction at producer
+ming_sim/db.py	18931	ensure_dossiers_for_draft_directives	{'directive_id': did}	retained: canonical dict	dict construction at producer
+ming_sim/db.py	8011	apply_army_deltas	{'army_id': army_id, 'field': field, 'value': value}	retained: canonical dict	dict construction at producer
+ming_sim/db.py	8542	apply_building_deltas	{'entity_id': building_id, 'field': field, 'raw_value': value}	retained: canonical dict	dict construction at producer
+ming_sim/db.py	8074	apply_army_deltas	{'army_id': army_id, 'field': field, 'value': value}	retained: canonical dict	dict construction at producer
 ming_sim/relations.py	350	resolve_relation_edge_events_from_extraction	{'raw_value': item}	retained: canonical dict	dict construction at producer
 ming_sim/relations.py	359	resolve_relation_edge_events_from_extraction	dict(item)	retained: canonical dict	built-in dict constructor
-ming_sim/covert_progress.py	1034	apply_monthly_covert_actual_progress	{'order_id': oid}	retained: canonical dict	dict construction at producer
-ming_sim/covert_progress.py	1044	apply_monthly_covert_actual_progress	sel or {'order_id': oid}	retained: canonical dict	_selection_map stores only dict items; sel defaults to dict
-ming_sim/covert_progress.py	1123	settle_due_secret_orders	{'order_id': oid}	retained: canonical dict	dict construction at producer
+ming_sim/covert_progress.py	1028	apply_monthly_covert_actual_progress	{'order_id': oid}	retained: canonical dict	dict construction at producer
+ming_sim/covert_progress.py	1038	apply_monthly_covert_actual_progress	sel or {'order_id': oid}	retained: canonical dict	_selection_map stores only dict items; sel defaults to dict
+ming_sim/covert_progress.py	1117	settle_due_secret_orders	{'order_id': oid}	retained: canonical dict	dict construction at producer
 ming_sim/settlement/run.py	466	_build_outcome	{k: v for k, v in item.items() if k != '_effect_event_id'} if isinstance(item, dict) else {'raw_value': item}	retained: canonical dict	dict comprehension or raw_value dict wrapper
 ming_sim/entities/social_class/apply.py	39	_apply_class_dict	{str(key): fields}	retained: canonical dict	dict construction at producer
 ming_sim/entities/social_class/apply.py	42	_apply_class_dict	{str(key): fields}	retained: canonical dict	dict construction at producer
@@ -226,5 +226,5 @@ ming_sim/entities/surcharge/apply.py	53	_apply_surcharge_decrees	item if isinsta
 ming_sim/entities/surcharge/apply.py	58	_apply_surcharge_decrees	{'raw_value': item}	retained: canonical dict	dict construction at producer
 ming_sim/entities/surcharge/apply.py	62	_reject	item	retained: canonical dict	nested caller passes item from parent dict-admitted loop
 ming_sim/entities/affair/delta_section.py	22	_refuse	{'raw_value': raw}	retained: canonical dict	dict construction at producer
-ming_sim/issues.py	1820	item assignment	{'event_id': ev.id, 'effect': rejection.item}	retained: canonical dict	literal dict preserving parent event identity and original effect item
+ming_sim/issues.py	1808	item assignment	{'event_id': ev.id, 'effect': rejection.item}	retained: canonical dict	literal dict preserving parent event identity and original effect item
 ming_sim/entities/character/apply.py	47	item assignment	item	retained: canonical dict	same normalized parent person dict, not a new scalar producer

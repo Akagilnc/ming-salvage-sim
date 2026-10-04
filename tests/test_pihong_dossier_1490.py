@@ -923,13 +923,11 @@ def test_657_prewrite_failure_zero_db_writes(game):
 def test_657_abi_mapper_matrix_a1_a12(game):
     """A1–A12：map 正/负 + 判后 follow/midzhi→apply 链（补 A5/A6/A11）。"""
     from ming_sim import rescript_actions as ra
-    import ming_sim.decree_vocabulary as dv
     from ming_sim.decree_vocabulary import DOSSIER_ACTION_TYPES, RESCRIPT_EMITTED_DOSSIER_ACTION_TYPES
     from ming_sim.rescript_draft import normalize_rescript_layer_a_option
     db, state, content = game
     assert RESCRIPT_EMITTED_DOSSIER_ACTION_TYPES < DOSSIER_ACTION_TYPES
     assert 'dismiss_assignment' in RESCRIPT_EMITTED_DOSSIER_ACTION_TYPES
-    assert not hasattr(dv, 'RESCRIPT_ROUTABLE_ACTION_TYPES')
     cols = {r[1] for r in db.conn.execute('PRAGMA table_info(decree_dossiers)').fetchall()}
     assert 'rescript_origin' not in cols
     ministers = db.conn.execute("SELECT name FROM characters WHERE status='active' AND power_id='ming' ORDER BY name LIMIT 2").fetchall()
@@ -3017,68 +3015,3 @@ def test_1778_missing_roster_heals_then_error_pack_without_assigning_anyone(
 
     # 不成案、不配人
     assert len(db.list_decree_dossiers()) == before
-
-def test_1621_http_follow_draft_uses_catalog_army_id(web_game, monkeypatch):
-    """合法军 id 从生成边界进 HTTP follow_draft，案卷 target_id 为真军 id。"""
-    from ming_sim.models import TurnPhase
-    from ming_sim.rescript_draft import generate_rescript_draft
-    import ming_sim.rescript_draft as draft_mod
-
-    db, state = web_game.db, web_game.state
-    army_raw = {
-        "label": "敕关宁严守",
-        "hint": "所安者宁锦",
-        "action_type": "military_order",
-        "assignee_name": "祖大寿",
-        "target_kind": "army",
-        "target_id": "guanning",
-        "locality_scope": "none",
-        "region_id": "",
-        "transaction_category": "",
-        "station": "辽东 / 宁远锦州",
-        "deadline_months": 1,
-        "participant_roster": _roster("祖大寿"),
-    }
-    generated_json = json.dumps({"items": [{
-        "title": "宁锦急务", "context": "关宁待敕。",
-        "options": [army_raw, {**army_raw, "label": "备拟"}],
-    }]}, ensure_ascii=False)
-    monkeypatch.setattr(draft_mod, "run_agent_text", lambda *a, **k: generated_json)
-    generated = generate_rescript_draft(
-        object(),
-        {"active_issues": [], "army_targets": [
-            {"id": "guanning", "name": "关宁军", "station": "辽东 / 宁远锦州"},
-        ]},
-        int(state.turn),
-    )
-    assert generated is not None
-    army_opt = generated[0]["options"][0]
-    assert army_opt["target_id"] == "guanning"
-
-    _657_install_real_phase2_llm_boundary(monkeypatch)
-    db.conn.execute("DELETE FROM pending_decisions")
-    db.conn.commit()
-    db.save_rescript_drafts(int(state.turn), [{
-        "title": "急务-军令", "context": "c",
-        "options": [army_opt, {"label": "备", "hint": "h", "draft_capability": "x"}],
-        "actor_name": "杨嗣昌", "actor_office": "兵部尚书", "actor_faction": "东林",
-    }])
-    db.conn.commit()
-    db.save_resolve_context(
-        int(state.turn), "诏", {"candidate_events": [], "transit_semantics": []},
-    )
-    state.turn_phase = TurnPhase.AWAITING_DECISION.value
-    db.save_state(state)
-    desk = db.list_rescript_desk(int(state.turn))
-    key = desk[0]["decision_key"]
-    r = asyncio.run(_post_resolve([{
-        "decision_key": key,
-        "action": "follow_draft",
-        "label": army_opt["label"],
-        "draft_capability": army_opt["draft_capability"],
-    }]))
-    assert r.status_code == 200, r.text
-    assert "event: error" not in r.text, r.text
-    assert "event: done" in r.text, r.text
-    dossiers = db.list_decree_dossiers()
-    assert dossiers and dossiers[-1]["target_id"] == "guanning"

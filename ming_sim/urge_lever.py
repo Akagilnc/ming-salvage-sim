@@ -45,10 +45,7 @@ _DISTORTION_RANK = ("不歪", "微歪", "易歪", "必歪")
 
 
 def person_integrity_archetype(integrity: object) -> str:
-    try:
-        score = int(integrity)
-    except (TypeError, ValueError):
-        score = 50
+    score = int(integrity)
     if score >= _INTEGRITY_GUDU:
         return "孤直"
     if score < _INTEGRITY_FUSHI:
@@ -67,21 +64,15 @@ def derive_opportunity_band(durable_effects: object) -> str:
             continue
         for key in ("delta", "amount", "new_value", "old_value"):
             if key in row and row.get(key) is not None:
-                try:
-                    if key == "old_value":
-                        continue
-                    total_abs += abs(int(row.get(key) or 0))
-                except (TypeError, ValueError):
-                    pass
+                if key == "old_value":
+                    continue
+                total_abs += abs(int(row.get(key) or 0))
                 break
         else:
             # fiscal change: |new-old|
-            try:
-                nv = int(row.get("new_value") or 0)
-                ov = int(row.get("old_value") or 0)
-                total_abs += abs(nv - ov)
-            except (TypeError, ValueError):
-                pass
+            nv = int(row.get("new_value") or 0)
+            ov = int(row.get("old_value") or 0)
+            total_abs += abs(nv - ov)
     if total_abs <= 0:
         return "none"
     if total_abs >= _OPPORTUNITY_HIGH_ABS:
@@ -103,14 +94,8 @@ def derive_distortion_tendency(
 ) -> Dict[str, object]:
     """读时派生失真定性档。零持久数值；纯函数可复现。"""
     archetype = person_integrity_archetype(integrity)
-    try:
-        count = max(0, int(urge_count or 0))
-    except (TypeError, ValueError):
-        count = 0
-    try:
-        tightness = max(0, int(urge_tightness or 0))
-    except (TypeError, ValueError):
-        tightness = 0
+    count = max(0, int(urge_count or 0))
+    tightness = max(0, int(urge_tightness or 0))
     supervision = list(supervision_history or [])
     opp = str(opportunity_band or "none")
 
@@ -162,14 +147,8 @@ def derive_distortion_tendency(
 
 def dare_speak_score(courage: object, imperial_prestige: object) -> int:
     """敢言度＝胆识 − 皇威负向调制（0068）。"""
-    try:
-        c = int(courage)
-    except (TypeError, ValueError):
-        c = 50
-    try:
-        p = int(imperial_prestige)
-    except (TypeError, ValueError):
-        p = 50
+    c = int(courage)
+    p = int(imperial_prestige)
     # 皇威以 50 为中性；高于中性压制敢言
     return int(c) - max(0, int(p) - 40)
 
@@ -185,11 +164,8 @@ def is_deadline_unreasonable(
     current_turn: int,
 ) -> bool:
     """期限离谱判据（首版阈值，可 playtest 调）。"""
-    try:
-        old_r = max(0, int(old_due) - int(current_turn))
-        new_r = max(0, int(new_due) - int(current_turn))
-    except (TypeError, ValueError):
-        return False
+    old_r = max(0, int(old_due) - int(current_turn))
+    new_r = max(0, int(new_due) - int(current_turn))
     if old_r <= 0:
         return False
     if new_r <= _UNREASONABLE_REMAIN_CAP and old_r > _UNREASONABLE_REMAIN_CAP * 2:
@@ -269,10 +245,7 @@ def collect_urge_history(
         dossier = db.get_decree_dossier(int(dossier_id)) if hasattr(db, "get_decree_dossier") else None
         so_id = 0
         if isinstance(dossier, dict):
-            try:
-                so_id = int(dossier.get("secret_order_id") or 0)
-            except (TypeError, ValueError):
-                so_id = 0
+            so_id = int(dossier.get("secret_order_id") or 0)
         if so_id > 0:
             so_rows = db.conn.execute(
                 """
@@ -368,14 +341,8 @@ def resolve_host_character(db: Any, *, commitment_ref: int, dossier_id: Optional
             (name,),
         ).fetchone()
         if crow is not None:
-            try:
-                integrity = int(crow["integrity"])
-            except (TypeError, ValueError):
-                integrity = 50
-            try:
-                courage = int(crow["courage"])
-            except (TypeError, ValueError):
-                courage = 50
+            integrity = int(crow["integrity"])
+            courage = int(crow["courage"])
     return {"name": name, "integrity": integrity, "courage": courage}
 
 
@@ -555,35 +522,21 @@ def rush_staged_commitment_stage(
     if origin_row is not None:
         ref = str(origin_row["origin_ref"] or "")
         if ref.startswith("dossier:"):
-            try:
-                dossier_id = int(ref.split(":", 1)[1])
-            except (TypeError, ValueError):
-                dossier_id = None
+            dossier_id = int(ref.split(":", 1)[1])
     if dossier_id is not None:
         host = resolve_host_character(
             db, commitment_ref=int(commitment_ref), dossier_id=dossier_id,
         )
 
-    prestige = 50
-    try:
-        metrics = getattr(state, "metrics", None) or {}
-        prestige = int(metrics.get("皇威", 50))
-    except (TypeError, ValueError):
-        prestige = 50
+    prestige = int(state.metrics.get("皇威", 50))
 
     unreasonable = is_deadline_unreasonable(
         old_due=old_due, new_due=int(new_due), current_turn=turn,
     )
     archetype = person_integrity_archetype(host["integrity"])
     opp = "none"
-    if dossier_id is not None and hasattr(db, "list_dossier_durable_effects"):
-        # #1260：durable_effects 合并单源（economy+fiscal）。
-        effects = list(db.list_dossier_durable_effects(int(dossier_id)))
-        opp = derive_opportunity_band(effects)
-    elif dossier_id is not None and hasattr(db, "list_economy_moves_for_dossier"):
-        # 旧夹具兜底：仅 economy 面（无单源助手时）。
-        effects = list(db.list_economy_moves_for_dossier(int(dossier_id)))
-        opp = derive_opportunity_band(effects)
+    if dossier_id is not None:
+        opp = derive_opportunity_band(db.list_dossier_durable_effects(dossier_id))
 
     remonstrance_written = False
     grace_written = False

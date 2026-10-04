@@ -61,10 +61,7 @@ def format_wanliang_amount(value: object) -> str:
     军饷 shortfall 等中间量常为 float；f-string 原始插值会把
     1.2000000000000002 写进 army_logs.reason → previous_summary。
     """
-    try:
-        amount = float(value or 0)
-    except (TypeError, ValueError):
-        amount = 0.0
+    amount = float(value or 0)
     if not math.isfinite(amount):
         amount = 0.0
     rounded = round(amount, 1)

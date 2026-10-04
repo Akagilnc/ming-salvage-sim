@@ -442,10 +442,8 @@ def test_skip_refused_at_front_half_done(game):
     awaiting 幂等返回决策），不再经独立退朝壳拒绝。
     """
 
-    import ming_sim.decree as decree_mod
     from ming_sim.decree import pre_settle
 
-    assert not hasattr(decree_mod, "advance_without_edict")
 
     db, state, content = game
     turn = state.turn

@@ -180,10 +180,7 @@ def _commitment_remaining_from_gate(
         val = _eval_gate_key(str(key), state.metrics, db)
         if val is None:
             continue
-        try:
-            val_num = float(val)
-        except (TypeError, ValueError):
-            continue
+        val_num = float(val)
         op, target = m.group(1), int(m.group(2))
         if op == "<=":
             need = max(0.0, val_num - target)

@@ -858,7 +858,7 @@ class GameSession:
         clean_name = str(name_or_text or "").strip()
         if clean_name in self.content.characters:
             return self.content.characters[clean_name]
-        raise ValueError(f"人物未建档：{clean_name}")
+        raise DeclarationDataError(f"人物未建档：{clean_name}")
 
     def can_summon(self, character: Character) -> Tuple[bool, str]:
         # 宗藩（就藩宗室）非朝堂命官，不可召见——与 web _require_active_minister / 各 roster 同口径
@@ -1145,7 +1145,7 @@ class GameSession:
 
         message_text = str(message or "")
         if not message_text.strip():
-            raise ValueError("问话不能为空。")
+            raise DeclarationDataError("问话不能为空。")
         from ming_sim.decree_forecast import bind_forecast_owner
         bind_forecast_owner(self)
 
@@ -1220,7 +1220,7 @@ class GameSession:
             if target is None:
                 try:
                     target = self.summon_character(fragment)
-                except ValueError:
+                except DeclarationDataError:
                     target = None
             if target is not None:
                 decision = self.consume_audience_admission(

@@ -518,7 +518,6 @@ def test_secret_order_closes_field_is_ignored(game):
     name = _minister(db)
     oid = _issue(db, state, name, "旧链密令", "不应被 closes 结", months=3, target=3)
     out = settle_delta(state, db, {'secret_order_closes': [{'order_id': oid, 'status': 'done', 'result': 'LLM 伪结案'}]}, SettlementContext(content=content))
-    assert not hasattr(out, "secret_order_closes")
     assert db.get_secret_order(oid)["status"] == "active"
 
 

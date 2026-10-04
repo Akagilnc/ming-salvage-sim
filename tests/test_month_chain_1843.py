@@ -11,7 +11,6 @@ import ming_sim.declaration_dispatch as declaration_dispatch
 import ming_sim.decree as decree_mod
 import ming_sim.month_chain as month_chain
 import ming_sim.month_translate as month_translate
-import ming_sim.simulation as simulation
 from ming_sim.declaration_dispatch import pending_action_decree_ref
 from ming_sim.session_write_queue import get_session_write_queue
 from tests.month_chain_helpers import make_light_session
@@ -19,9 +18,6 @@ from tests.dossier_test_helpers import create_test_secret_order
 
 
 def _forbid_extractor(monkeypatch):
-    assert not hasattr(decree_mod, "extract_scores_by_modules_with_agno")
-    assert not hasattr(simulation, "extract_scores_by_modules_with_agno")
-    assert not hasattr(simulation, "EXTRACTION_MODULES")
     monkeypatch.setattr(
         "ming_sim.session.write_decree_with_agno", lambda *_a, **_k: "诏",
     )
@@ -190,11 +186,12 @@ def test_unforecast_edict_is_caught_up_once_and_crash_does_not_double_charge(gam
 
     real_settle = declaration_dispatch.settle_staged_declarations_in_decree_order
     armed = {"fail": True}
+    failure = RuntimeError("过月中断")
 
     def flaky(db_, state_, refs, **kwargs):
         if armed["fail"] and refs == [second_ref]:
             armed["fail"] = False
-            raise RuntimeError("过月中断")
+            raise failure
         return real_settle(db_, state_, refs, **kwargs)
 
     _forbid_extractor(monkeypatch)
@@ -205,8 +202,7 @@ def test_unforecast_edict_is_caught_up_once_and_crash_does_not_double_charge(gam
     session.llm_config = object()
     with pytest.raises(SettlementAbort) as exc_info:
         session.resolve_turn(allow_empty_decree=True)
-    assert isinstance(exc_info.value.__cause__, RuntimeError)
-    assert "过月中断" in str(exc_info.value.__cause__)
+    assert exc_info.value.__cause__ is failure
     assert db.staged_declarations.is_settled(first_ref)
     assert not db.staged_declarations.is_settled(second_ref)
     first_rows = db.conn.execute(

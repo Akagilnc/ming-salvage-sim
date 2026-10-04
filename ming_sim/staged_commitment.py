@@ -259,10 +259,7 @@ def is_stage_derived_end_turn(
     norm = normalize_commitment_stages(stages)
     if not norm:
         return False
-    try:
-        et = int(end_turn or 0)
-    except (TypeError, ValueError):
-        return False
+    et = int(end_turn or 0)
     if et <= 0:
         return False
     return et == max(int(s["due_turn"]) for s in norm)
@@ -276,10 +273,7 @@ def should_skip_form3_due_for_staged(
     norm = normalize_commitment_stages(stages_raw)
     if not norm:
         return False
-    try:
-        et = int(end_turn or 0)
-    except (TypeError, ValueError):
-        et = 0
+    et = int(end_turn or 0)
     # 无独立 end_turn：分段只走 next_audience_todos
     if et <= 0:
         return True

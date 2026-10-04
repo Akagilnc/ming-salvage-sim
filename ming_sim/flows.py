@@ -79,49 +79,14 @@ def _province_efficiency(fiscal: dict, gentry_resistance: int, unrest: int) -> f
     return max(0.05, min(1.00, rate))
 
 
-def _fixed_flow_scalars_are_numeric(region_id: str, fiscal: dict) -> bool:
+def _load_region_fiscal_for_fixed_flow(region_id: str, raw_fiscal: object) -> dict:
+    fiscal = GameDB.parse_engine_payload_json(raw_fiscal, surface=f"regions.{region_id}.fiscal")
     for key in _FIXED_FLOW_NUMERIC_FIELDS:
         if key not in fiscal:
             continue
         value = fiscal[key]
-        try:
-            finite_number = (
-                not isinstance(value, bool)
-                and isinstance(value, (int, float))
-                and math.isfinite(float(value))
-            )
-        except OverflowError:
-            finite_number = False
-        if not finite_number:
-            tlog(f"[province-fiscal] {region_id} fiscal.{key} 非数字，本{TURN_UNIT}固定税收出列")
-            return False
-    return True
-
-
-def _load_region_fiscal_for_fixed_flow(region_id: str, raw_fiscal: object) -> Optional[dict]:
-    """固定财政旧路径的宽容 fiscal 读取。
-
-    Shadow substrate 自己有 fail-loud+隔离日志；固定税收不能因为一个省的 fiscal JSON
-    坏态掀翻整月 pre_settle，也不能把坏 payload 当空 fiscal 继续造钱。坏省当月
-    固定税收出列，并让后续 substrate bridge 再记录精确隔离原因。
-    """
-    if isinstance(raw_fiscal, dict):
-        return raw_fiscal if _fixed_flow_scalars_are_numeric(region_id, raw_fiscal) else None
-    if raw_fiscal is None or raw_fiscal == "":
-        raw_fiscal = "{}"
-    elif not isinstance(raw_fiscal, (str, bytes, bytearray)):
-        tlog(f"[province-fiscal] {region_id} fiscal 非字典，本{TURN_UNIT}固定税收出列")
-        return None
-    try:
-        fiscal = json.loads(raw_fiscal)
-    except (TypeError, ValueError) as exc:
-        tlog(f"[province-fiscal] {region_id} fiscal 解析失败，本{TURN_UNIT}固定税收出列：{type(exc).__name__}: {exc}")
-        return None
-    if not isinstance(fiscal, dict):
-        tlog(f"[province-fiscal] {region_id} fiscal 非字典，本{TURN_UNIT}固定税收出列")
-        return None
-    if not _fixed_flow_scalars_are_numeric(region_id, fiscal):
-        return None
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(float(value)):
+            raise ValueError(f"regions.{region_id}.fiscal.{key} 须为有限数字")
     return fiscal
 
 
@@ -156,14 +121,6 @@ def calc_province_fiscal(
         gentry       = int(row["gentry_resistance"])
         tax_base     = int(row["tax_per_turn"])   # 省级月税基准（万两）
         fiscal = _load_region_fiscal_for_fixed_flow(region_id, row["fiscal"])
-        if fiscal is None:
-            details.append({
-                "region_id": region_id, "name": name, "田赋": 0, "辽饷": 0,
-                "盐税": 0, "商税": 0, "皇庄": 0, "province_total": 0,
-                "efficiency": 0, "isolated": True,
-            })
-            continue
-
         huang_tian   = fiscal.get("huang_tian", 0)
         liao_xiang   = fiscal.get("liao_xiang", 0)
         salt_tax     = fiscal.get("salt_tax", 0)

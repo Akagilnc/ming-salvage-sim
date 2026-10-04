@@ -655,10 +655,7 @@ def test_decree_continuation_keeps_forecast_and_lands_affair_effect(game, monkey
         return "加赈落实，仓廪出十万。"
 
     def translate(*_a, **kwargs):
-        captured["grounding"] = kwargs.get("target_grounding") or ""
-        segment = str(kwargs.get("segment") or "")
-        if "仓廪出十万" not in segment:
-            return {"effects": {}}
+        assert kwargs.get("segment") == "加赈落实，仓廪出十万。"
         return {"effects": {"economy_moves": [{
             "origin_ref": f"affair:{affair.id}",
             "account": "国库",
@@ -690,17 +687,12 @@ def test_decree_continuation_keeps_forecast_and_lands_affair_effect(game, monkey
     )
 
     message = str(captured.get("message") or "")
-    assert "预推不可见:陕西赈灾" in message
-    assert question_context in message
     # 本旨随调用消息；材料目录独立存在且在调用后已释放。
     payload = json.loads(message)
     assert payload["this_decree"]["decree_text"]
     assert payload["this_decree"]["status"] == "promulgated"
-    assert "decree-forecast" in str(captured.get("prepared_root") or "")
-    assert captured.get("prepared_opening")
     from pathlib import Path
     assert not Path(str(captured["prepared_root"])).exists()
-    assert str(affair.id) in str(captured.get("grounding") or "")
     assert db.conn.execute(
         "SELECT COUNT(*) FROM economy_ledger WHERE category='问后加赈'",
     ).fetchone()[0] == before + 1

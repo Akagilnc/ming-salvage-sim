@@ -129,6 +129,19 @@
 - F6 留内求值器 `_eval_gate_key` 不把坏 metrics 标量转不达标，不将坏持久数字归为静态 content 错；NULL 保留已文档化的缺席门值行为，其余转换错误穿透。没有迁移该求值器，没有改求值规则，也没有触碰 F12。
 - 七旗聚焦 `/tmp/1835-audit-focused75.txt`=42 passed、1 skipped、3.76s；`/tmp/1835-audit-focused76.txt` 五文件246 passed、3.39s。仍是触及面证明，非整类结清。
 
+## 续修：严格财政读侧、上下文删改与失效测试
+
+- 接着保留的未提交产出施工，无 reset、stash、amend 或 push。F12 不施工。执行前复查全局与仓内规则、原修复包，并读取 #1812 最新验收；不为保留旧功能增加兼容层。
+- F6：删除哭谏统计、承诺期限和门值读取的数字/JSON失败默认化。固定财政读侧复用 `GameDB.parse_engine_payload_json`，删除坏省跳过并投影零税收的并行路径；现有有限数值约束只报告故障，不造零值。删除开局危机写失败后继续的 catch。CLI 只接声明数据错误，不把普通 ValueError 当恢复提示；未建档召见与空问话改用既有 DeclarationDataError。
+- F6：共享定性投影、金额格式化、密令数量、催办供料及持久任职/分段/财政日志读取删除24处数字故障伪零、伪中性、伪不成立；None 的既定缺席行为保留。定性档另删除坏值回落分支；催办皇威/持久来源读取穿透坏值，删除只为旧夹具存在的双路耐久效果读取。成员见 `F6-projection-members.tsv`；该表不是整个 F6 的结清证明。
+- F5：删除密令上下文中确认词、标点、任务动词、相关主题字猜测及无人调用的短确认识别器；上下文保持抽取输入，不再剥角色标签合成第二份正文。上下文模式正文只消费抽取器结构化内容；普通命令和模型内容原样拼接。标签保原文，strip 仅判空。处置见 `F5-context-members.tsv`；purpose 读点已核对为补饷枚举或仅判空校验，不按自由正文误改。
+- F10/F7：删除退役符号/导出身份绿卡、无测试与无调用的三个旧夹具模块，以及 pihong 文件 AST 完全相同且覆盖前一个定义的重复用例。删除私有 dump helper 的正文子串锁；它的 usage/finish_reason 分支原本没有断言，未冒称这些分支被测试证明。过月异常改断 cause 身份，删令牌/预推/恢复提示/seed 日志文案锁。保留真实 HTTP、库态、回滚、原文运输及两个真实结局案。逐成员见 `F10-retired-symbol-members.tsv`。
+- 财政七个旧隔离/helper案并入原有真实固定财政入口案，以坏容器、坏 JSON、坏标量、非有限数值验证失败归属、账本和内存回滚，取消伪造零税与日志文字断言。测试改动的最小必要成本：复用原入口案与现有夹具，参数化现有失败输入，不建平行测试/新夹具。
+- 变异验证：`/tmp/1835-fiscal-mutation84.txt`，在同一真实固定财政入口装回 HEAD 旧 flows 逻辑，9 failed、160 deselected、1.72s；finally 恢复本轮 flows 字节并检查完全相等。恢复后 `/tmp/1835-audit-focused84.txt` 两文件201 passed、19.58s。命令均为七旗 `/usr/bin/false` 下 `python -m pytest tests/test_fiscal_substrate_bridge.py`（变异加 `-k malformed_fiscal_container_isolated -q`；绿色含召见行为文件）。
+- 七旗聚焦：focused80 八文件147 passed/10.93s；focused85 CLI运输96 passed/0.94s；focused88 当前修改测试文件加催办、军牌、投影和固定点结局触及面883 passed、1 skipped、1 warning/70.19s。focused88 的调用壳返回143时 pytest 子进程仍运行，未硬杀或重复启动，查询原 PID 自然结束且日志有完整末尾摘要后才记绿色，不声称观察到子进程 exit code。后续催办简化及 dump 测试删除再跑 focused90：43 passed/1.44s。
+- F5 后续复扫删除 CLI 的 JSONC 双趟手写扫描与独立首容器截取，复用仓内 `agents.parse_agent_json` 的既定模型 JSON 契约，只接 LLMContractError。标准 JSON 字符串不修字节；非法 JSONC 不再偷偷修复。删除两项无人消费的旧人物词表出口别名。七旗 focused91 五文件214 passed、1 warning/4.13s；不建 JSONC 兼容替代物。
+- 全仓枚举命令 `/Users/akagilnc/WorkSpace/Ming_LLM/.venv/bin/python /tmp/1835-enumerate.py` 先刷新 `/tmp/1835-live-F*.json` 再执行子扫描，不以缓存扫描冒作复扫。inventory89 与最终 inventory-final92 后重新生成 F13 的227构造点/2赋值与 F14 执行/耐久 owner 表。最新宽数据 catch 候选198项，仍待逐成员语义处置，不把减少候选数量当结清。保留数据不代表七类已结清。仍未进入家族最终待合并状态，不跑全量。
+
 ## 尚未结清
 
-仍须将宽枚举逐成员完成语义处置，特别是 F10 剩余自由文本/保密哨兵及 helper 呈现测试、F5 下游传递与识别变换的边界、F6 剩余持久与批写接缝，并刷新完整成员处置表与最新触及面验证。本记录不把聚焦绿色冒作整类结清，不声明这些工作缺 owner 决定，也不以执行窗口作合法 blocker。
+仍须将宽枚举逐成员完成语义处置，特别是 F10 剩余自由文本/保密哨兵及 helper 呈现测试、F5 下游传递边界、F6 剩余持久与批写接缝，并刷新完整成员处置表与最新触及面验证；F1 固定点及 F11/F13/F14 也仍须最终树整类复核。记录不把聚焦绿色冒作整类结清，不声明七类剩余工作缺 owner 决定，也不以执行窗口作合法 blocker。F12 仍待独立契约裁决。

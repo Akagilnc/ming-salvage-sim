@@ -3176,10 +3176,7 @@ class GameDB:
         origin_ref = f"region:{region_id}:settle_tick"
         for claim in ("官俸欠", "宗禄欠"):
             for flow, source in (("NewDebt", new_debt), ("Repaid", repaid)):
-                try:
-                    amount = float(source.get(claim, 0) or 0)
-                except (TypeError, ValueError):
-                    amount = 0.0
+                amount = float(source.get(claim, 0) or 0)
                 if not math.isfinite(amount) or abs(amount) <= 1e-9:
                     continue
                 old_v = float(result.new_st.get(claim, 0) or 0)
@@ -5525,31 +5522,28 @@ class GameDB:
             # 推导默认 bar / inertia / ongoing / effect，与 event_to_issue 同口径；精调字段优先
             bar = ev.bar_value or max(20, min(60, 50 - int(ev.severity / 5)))
             inertia = ev.issue_inertia  # 默认 0=不漂；要月漂在 seed 里显式填
-            try:
-                self.insert_issue(
-                    state,
-                    kind="situation",
-                    title=ev.title,
-                    origin_kind="event_pool",
-                    origin_ref=ev.id,
-                    bar_value=bar,
-                    bar_good_meaning=ev.bar_good_meaning or "已平",
-                    bar_bad_meaning=ev.bar_bad_meaning or "失控",
-                    inertia=inertia,
-                    stage_text=ev.stage_text or ev.summary,
-                    severity=int(ev.severity),
-                    region_hint=ev.region_hint,
-                    faction_hint=",".join(ev.interests[:2]),
-                    tags=ev.issue_tags or [ev.kind],
-                    ongoing_effects=ev.ongoing_effects,
-                    cancellable="never",
-                    effect_on_resolve=ev.effect_on_resolve,
-                    effect_on_fail=ev.effect_on_fail,
-                    resolve_condition=ev.resolve_condition,
-                    fail_condition=ev.fail_condition,
-                )
-            except Exception as exc:
-                print(f"[WARN] 开局危机落库失败：{exc}；跳过 {ev.title}")
+            self.insert_issue(
+                state,
+                kind="situation",
+                title=ev.title,
+                origin_kind="event_pool",
+                origin_ref=ev.id,
+                bar_value=bar,
+                bar_good_meaning=ev.bar_good_meaning or "已平",
+                bar_bad_meaning=ev.bar_bad_meaning or "失控",
+                inertia=inertia,
+                stage_text=ev.stage_text or ev.summary,
+                severity=int(ev.severity),
+                region_hint=ev.region_hint,
+                faction_hint=",".join(ev.interests[:2]),
+                tags=ev.issue_tags or [ev.kind],
+                ongoing_effects=ev.ongoing_effects,
+                cancellable="never",
+                effect_on_resolve=ev.effect_on_resolve,
+                effect_on_fail=ev.effect_on_fail,
+                resolve_condition=ev.resolve_condition,
+                fail_condition=ev.fail_condition,
+            )
 
     def _canonicalize_character_location(self, raw: object) -> str:
         """#654 G：location 唯一写缝归一——精确 compact 等值；未知非空 fail-loud。"""
@@ -15429,15 +15423,9 @@ class GameDB:
             # 不另立承诺事项/不占在办名额。到期由 write_due 扫案卷 due_turn → 0076。
             # 其它类型终局路径不动。期限真源＝案卷列/payload.due_turn（军令同款单源）。
             if str(row.get("action_type") or "") == "grant_allocation":
-                try:
-                    due_turn = int(row.get("due_turn") or 0)
-                except (TypeError, ValueError):
-                    due_turn = 0
+                due_turn = int(row.get("due_turn") or 0)
                 if due_turn <= 0:
-                    try:
-                        due_turn = int(payload.get("due_turn") or 0)
-                    except (TypeError, ValueError):
-                        due_turn = 0
+                    due_turn = int(payload.get("due_turn") or 0)
                 if due_turn > int(state.turn):
                     self.transition_decree_dossier(
                         dossier_id, "executing", commit=False,
@@ -16339,10 +16327,7 @@ class GameDB:
             )
             return False
 
-        try:
-            end_turn = int(payload.get("end_turn") or 0)
-        except (TypeError, ValueError):
-            end_turn = 0
+        end_turn = int(payload.get("end_turn") or 0)
         if end_turn <= 0:
             self.transition_decree_dossier(dossier_id, "executing", commit=False)
             self.record_dossier_execution(
@@ -16433,10 +16418,7 @@ class GameDB:
         stop_raw = payload.get("stop_condition")
         if isinstance(stop_raw, dict) and stop_raw:
             ni["stop_condition"] = stop_raw
-        try:
-            end_turn = int(payload.get("end_turn") or 0)
-        except (TypeError, ValueError):
-            end_turn = 0
+        end_turn = int(payload.get("end_turn") or 0)
         if end_turn > 0:
             ni["end_turn"] = end_turn
             # 与 stages 支对称：有绝对期限则须带 commitment marker，否则
@@ -17953,10 +17935,7 @@ class GameDB:
             target_id = pa.get("target_id")
             if target_id is None:
                 return False
-            try:
-                stage_idx = int(payload.get("stage_idx") if payload.get("stage_idx") is not None else 0)
-            except (TypeError, ValueError):
-                stage_idx = 0
+            stage_idx = int(payload.get("stage_idx") if payload.get("stage_idx") is not None else 0)
             deadline = _coerce_deadline_months(payload.get("deadline_months", 1), default=1)
             from ming_sim.urge_lever import rush_staged_commitment_stage
             result = rush_staged_commitment_stage(

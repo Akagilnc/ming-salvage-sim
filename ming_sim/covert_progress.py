@@ -124,10 +124,7 @@ def target_progress_units(*, deadline_span: int, due_turn: int, per_month: float
         return 0.0
     span = int(deadline_span or 0)
     months = float(max(span, 1))
-    try:
-        rate = float(per_month)
-    except (TypeError, ValueError):
-        rate = 1.0
+    rate = float(per_month)
     if rate <= 0.0:
         rate = 1.0
     return months * rate
@@ -973,10 +970,7 @@ def originated_quantity_this_turn(
 
 def monthly_actual_units(*, fidelity: object, originated_quantity: float) -> float:
     """实进度 = 执行格份额 × 当月 canonical 可数量。无 origin 实物则空转 0。"""
-    try:
-        quantity = float(originated_quantity or 0)
-    except (TypeError, ValueError):
-        quantity = 0.0
+    quantity = float(originated_quantity or 0)
     if quantity <= 0.0:
         return 0.0
     return progress_units_for_state(fidelity) * quantity

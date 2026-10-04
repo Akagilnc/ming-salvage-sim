@@ -67,20 +67,23 @@ def test_secret_exclusion_extracts_people_and_offices(monkeypatch):
     assert result["excluded_targets"] == {"people": ["魏忠贤"], "offices": ["司礼监"]}
 
 
-def test_extract_secret_order_preserves_long_title_without_formal_cap(monkeypatch):
+@pytest.mark.parametrize("context_mode", [False, True])
+def test_extract_secret_order_preserves_long_title_without_formal_cap(monkeypatch, context_mode):
     long_title = "查核辽饷转运与沿途侵蚀及军粮实数并追索责任官员"
-    assert len(long_title) > 20
-    canned = _so_json(标题=long_title, 内容="查明事实并回奏。", 承办人="毕自严", 标签=["辽饷"])
+    extracted = "  查明事实\n\n并回奏。  "
+    command = f"  密令如下：{long_title}\n查明事实并回奏。  "
+    canned = _so_json(标题=long_title, 内容=extracted, 承办人="毕自严", 标签=[" 辽饷 "])
 
     def fake_json_extractor(prompt, llm_config=None, tag="", *, policy=None):
         return canned, 1
 
     monkeypatch.setattr(cb, "_run_json_extractor_for_config", fake_json_extractor)
     result = cb._extract_secret_order(
-        f"密令如下：{long_title}\n查明事实并回奏。", "臣领密旨", "毕自严",
+        command, "臣领密旨", "毕自严", force_default_assignee=context_mode,
     )
     assert result["title"] == long_title
-    assert len(result["title"]) == len(long_title)
+    assert result["content"] == (extracted if context_mode else command + "\n" + extracted)
+    assert result["tags"] == [" 辽饷 "]
 
 
 def test_typed_secret_exclusions_canonicalize_roster_alias_and_office(game):
@@ -101,21 +104,6 @@ def test_typed_secret_exclusions_canonicalize_roster_alias_and_office(game):
 
 
 
-def test_secret_content_assembly_is_emperor_plus_extractor_only():
-    """正文装配保住两路原文，不按措辞覆盖率吞掉其中一路。"""
-    task = "  密查关宁欠饷\n"
-    extracted = f"\n{task}，三月内回奏，方法：密访核册  "
-    body = cb.assemble_secret_order_content(
-        emperor_intent=task,
-        extractor_content=extracted,
-    )
-    assert body == task + "\n" + extracted
-    partial = "  臣已领旨办理。\n"
-    merged = cb.assemble_secret_order_content(
-        emperor_intent=f"{task}，三月内回奏",
-        extractor_content=partial,
-    )
-    assert merged == f"{task}，三月内回奏\n" + partial
 
 
 
