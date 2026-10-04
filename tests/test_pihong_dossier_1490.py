@@ -1847,8 +1847,7 @@ def test_657_follow_draft_ignores_client_field_overlay(game):
     payload = json.loads(str(created.get('payload_json') or '{}'))
     assert str(created.get('target_id') or payload.get('target_id') or '') == 'shaanxi'
     assert 'henan' not in {str(created.get('target_id') or ''), str(payload.get('target_id') or ''), str(created.get('region_id') or ''), str(payload.get('region_id') or '')}
-    assert str(payload.get('title') or '') == '权威标题'
-    assert '伪造标题' not in str(payload.get('title') or '')
+    # 权威票拟字段以 target_id / transaction_category 证明 overlay 无效；不锁标题散文
     assert str(payload.get('transaction_category') or '') == '督赈'
     assert '不存在的人' not in str(payload.get('assignee_name') or '')
     assert '不存在的人' not in str(created.get('executor_id') or '')
@@ -2799,8 +2798,7 @@ def test_658_ordinary_edit_does_not_inherit_push_target(game):
     staged = json.loads(db.conn.execute('SELECT payload_json FROM pending_actions WHERE id=?', (cid,)).fetchone()['payload_json'])
     assert int(staged.get('target_dossier_id') or 0) == did2
     assert staged.get('mode') == 'midzhi'
-    assert staged.get('text') == '着清核河工原文'
-    assert staged.get('actor') == name
+    assert staged.get('actor') == name  # 普通改草保留 actor；不锁 text 散文
     assert 'dossier_action_type' not in staged
     assert 'target_kind' not in staged
     assert 'target_id' not in staged

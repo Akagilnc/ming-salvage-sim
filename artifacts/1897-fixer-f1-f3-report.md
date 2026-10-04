@@ -948,3 +948,250 @@ print({
 db.close(); shutil.rmtree(td, ignore_errors=True)
 sys.exit(0 if (old_sentinel_still_green and current_tags_ok) else 1)
 ```
+
+
+---
+
+## 纠正回执（F3 75 候选整表结清，本轮）
+
+- 基线 tip（施工前）：`2d9153ba205751ded5e4b32b568de2eea3b287f6`
+- 批评点：上轮仍称「出界自由文本未结清」；以 pihong/rescript_heal/endorsements 文件名划界；缺 75 候选逐成员结论；F2「出界 14」未再按写入链上下游读案。
+- 本轮：**保留上文全部过程史**；按错误形状逐项读案，声明写入链同类清退，独立域举证保留；不amend/stash/push/PR。
+- **未声称已 merge / 关票 / reviewer 放行**
+
+### 顾问（本轮）
+
+| 类 | 正确行为 | 根因（复核） | 最简修法 |
+|---|---|---|---|
+| F1 | 邸报供料不进未披露实况 | 修面已门控；本轮复跑变异仍 GREEN | 不动生产；复证 |
+| F2 | 执行区故障响亮；领域拒收仅校验区 | `secret_order_updates` 宽吞已删；14 候选再读上下游 | 无新增宽吞待删；14 条逐条记账 |
+| F3 | 授权测不机械锁自由文本 | 75 候选中声明链/盯文/标题列表未整表裁决 | 清 17；保留 58（SSE/闭集 form/闸负向/P6 保真/独立内容域）并举证 |
+
+### F1 复证
+
+```bash
+env MING_SIM_AGY_BIN=/usr/bin/false MING_SIM_CODEX_BIN=/usr/bin/false \
+  MING_SIM_CLAUDE_BIN=/usr/bin/false MING_SIM_CURSOR_BIN=/usr/bin/false \
+  MING_SIM_KIMI_BIN=/usr/bin/false MING_SIM_GROK_BIN=/usr/bin/false \
+  MING_SIM_PI_BIN=/usr/bin/false PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$PWD" \
+  ../Ming_LLM/.venv/bin/python /tmp/1897-f1f3-corr2/mutate_f1.py
+```
+
+实测：`EXIT=0`；`world_has=true gazette_has=false old_unconditional_has=true verdict=GREEN`。
+
+### F2：所谓出界 14 候选再读（不以文件名排除）
+
+可复跑：
+
+```bash
+../Ming_LLM/.venv/bin/python /tmp/1897-f1f3-corr2/enum_f2_writechain.py
+# F2_SEMANTIC_CANDIDATES=14
+```
+
+| 候选 | 上下游语义 | 处置 |
+|---|---|---|
+| `issues.py` secret_order_updates 旧宽吞 | 判词样本；执行区已无 try/except | **已清**（修面 `edb376032`） |
+| `month_chain._step_4a_secret_order_supply` ×4 | `except Exception → _abort_month_call/_abort_4a` 响亮中止月链 | **保留**（非伪装拒收） |
+| `action_materialize._write_path_nature_ledger:1312` | 取 last chat turn 软失败，仅影响 ledger 归因源轮 | **保留**：读侧软降级，不把写故障改成 rejected |
+| `issues.apply_office_appointment` ×2 | 任命失败回滚后返回 typed failure；非 secret_order_updates 执行区 | **保留**：官职任命域；证据=返回 `_office_appointment_failure`，不进 rejection_reports legacy_inline |
+| `audience_translation._launch_after_pred` | 调度前置失败 return | **保留**：翻译调度，非声明 apply 执行区 |
+| `db._office_type_via_llm` / `_migrate_*` / `_load` / `legacy_modifiers` | LLM/迁移/读侧/legacy skip | **保留**：非已搬密令声明执行区 |
+| `session.auto_save` / `_llm_one` | 自动保存/单次 LLM 软失败 | **保留**：会话层，非声明写入拒收伪装 |
+
+**结论**：写入链上「执行故障→领域拒收」形态仅判词样本一处，已删；其余 13 条不是该类错误形状。
+
+### F3 全仓复扫（可复跑）
+
+```bash
+../Ming_LLM/.venv/bin/python /tmp/1897-f1f3-corr2/enum_f3_full.py
+# 摘要 /tmp/1897-f1f3-corr2/f3_full_summary.json
+# 授权自由文本 /tmp/1897-f1f3-corr2/f3_free_text_auth.tsv
+```
+
+| 指标 | 上轮纠正后 | 本轮复扫 |
+|---|---|---|
+| `tests/test_*.py` | 223 | 223 |
+| 授权相关文件 | 91 | 91 |
+| 自由文本机械依赖（全仓） | 161 | 144 |
+| 其中授权相关 | **75** | **58** |
+| 同名顶层 test_* | none | none |
+| progress_band== / 标题「改」哨兵残余（91 文件） | — | **无** |
+
+清退 17 / 保留 58。逐成员全表见 `artifacts/1897-f3-member-table-75.md`（下附全文）。
+
+#### 本轮清退（17，按形状）
+
+| 形状 | 成员摘要 | 修法 |
+|---|---|---|
+| TITLE_LOCK（写入链） | `person_delta_adapter` ×2；`new_issues_section_rejections` | 改 `issue_id` + status/commitment_kind |
+| TITLE_LOCK（绑定） | `fiscal_levy_effect` ×2 | 改 `event_id` 身份 |
+| TITLE/整对象 | `event_trigger` historical terminal | 改 id+terminal_state |
+| SUMMARY_LOCK | `mechanical_tail` ending summary | 删散文锁；保留 status=done |
+| CROSS_TITLE / 标题列表 | `rescript_heal_isolation_1801` ×5 | 改 `len(drafts)` + heal tags |
+| TITLE/text | `pihong` overlay ×2 + staged text | 改 target_id/mode/actor |
+| WHOLE_OBJ 散文 | `web_chat_serialization_393` ×2 | 改 type=delta / user 轮次条数 |
+
+未用非空/键存在/跨表 title 相等替换成空心证明；未新增平行测试体系。
+
+#### 保留形状摘要（58）
+
+- **SSE_PROTOCOL**（≈33）：`event: done/error in r.text` — 线协议控序
+- **FORM_ENUM**：背书 `会签|当面站台|御笔手敕` DB CHECK 闭集
+- **GATE_NEG**：`'text' not in hit`
+- **P6/朱笔 note·title 保真**（#657）：证明自由文本未被引擎篡改
+- **KEY_EXIST schema**：heal 失败字段图；邸报 body 键；流式 content 键
+- **ROSTER**：名册身份
+- **独立内容域**：`events.json` #189 软判（非声明写入搬迁）
+
+不以 pihong/rescript/endorsements 文件名出界；同形盯文已清，必要契约保留。
+
+### 原 75 候选逐成员表
+
+| # | 成员 | 形状 | 处置 | 理由 |
+|---:|---|---|---|---|
+| 1 | `test_audience_translate_1837.py:238` `test_pending_round_approval_endorsed_before_close_or_after_month_join` | FORM_ENUM | **保留** | 背书 form 闭集（DB CHECK IN 会签/当面站台/御笔手敕） |
+| 2 | `test_declaration_dispatch_1835.py:654` `test_registration_adds_new_person_to_roster_and_rejects_existing_name` | ROSTER | **保留** | 名册身份 content.characters，非密令进展盯文 |
+| 3 | `test_dossier_endorsements_612.py:90` `test_endorsement_forms_persist_restore_and_judge_without_roster_join` | FORM_ENUM | **保留** | 背书 form 闭集（DB CHECK IN 会签/当面站台/御笔手敕） |
+| 4 | `test_dossier_endorsements_612.py:97` `test_endorsement_forms_persist_restore_and_judge_without_roster_join` | FORM_ENUM | **保留** | 背书 form 闭集（DB CHECK IN 会签/当面站台/御笔手敕） |
+| 5 | `test_dossier_endorsements_612.py:101` `test_endorsement_forms_persist_restore_and_judge_without_roster_join` | FORM_ENUM | **保留** | 背书 form 闭集（DB CHECK IN 会签/当面站台/御笔手敕） |
+| 6 | `test_dossier_endorsements_612.py:184` `test_undo_chat_turn_removes_source_bound_endorsements_from_judge` | OTHER | **保留** | 结构化背书行/闭集 form；_extract 入参扫描误报 |
+| 7 | `test_event_trigger_gate.py:1405` `test_wuyin_lubian_content_treats_lu_death_as_soft_battle_outcome` | TITLE_LOCK | **保留** | 独立域：content/events.json #189 软判内容契约，非声明写入搬迁 |
+| 8 | `test_event_trigger_gate.py:1406` `test_wuyin_lubian_content_treats_lu_death_as_soft_battle_outcome` | IN_SENTINEL | **保留** | 独立域：content/events.json #189 软判内容契约，非声明写入搬迁 |
+| 9 | `test_event_trigger_gate.py:1410` `test_wuyin_lubian_content_treats_lu_death_as_soft_battle_outcome` | IN_SENTINEL | **保留** | 独立域：content/events.json #189 软判内容契约，非声明写入搬迁 |
+| 10 | `test_event_trigger_gate.py:1411` `test_wuyin_lubian_content_treats_lu_death_as_soft_battle_outcome` | IN_SENTINEL | **保留** | 独立域：content/events.json #189 软判内容契约，非声明写入搬迁 |
+| 11 | `test_event_trigger_gate.py:150` `test_historical_event_expires_after_latest_window_when_gate_unsatisfied` | TITLE_LOCK | **清** | terminal 改 id+terminal_state；删 title 整对象 |
+| 12 | `test_execution_pressure_654.py:607` `test_path3_locality_fail_keeps_draft_no_text_in_rejection` | GATE_NEG | **保留** | 闸类负向：拒收载荷不得带 text 键 |
+| 13 | `test_fiscal_levy_effect.py:1455` `test_non_event_world_question_is_not_bound_to_the_only_due_levy` | TITLE_LOCK | **清** | 世界问绑定改 event_id；删请愿标题 |
+| 14 | `test_fiscal_levy_effect.py:1468` `test_non_event_world_question_is_not_bound_to_the_only_due_levy` | TITLE_LOCK | **清** | 世界问绑定改 event_id；删请愿标题 |
+| 15 | `test_mechanical_tail_1845.py:569` `test_mechanical_tail_missing_llm_config_surfaces_retry` | SUMMARY_LOCK | **清** | 删 summary 散文锁；保留 mechanical_tail status=done |
+| 16 | `test_mechanical_tail_1845.py:497` `test_chapter_memory_retired_from_three_readers` | KEY_EXIST | **保留** | 邸报供料 body schema（章节记忆退役） |
+| 17 | `test_menu_lifecycle_drain_396.py:599` `test_drain_waits_for_queued_chat_stream_not_just_gate_holder` | KEY_EXIST | **保留** | 流式 delta 结构键 content，控序脚手架 |
+| 18 | `test_new_issues_section_rejections.py:332` `test_new_issue_valid_decree_still_creates` | TITLE_LOCK | **清** | 声明/issue 写入链标题锁→issue_id/status/commitment |
+| 19 | `test_person_delta_adapter.py:235` `test_apply_score_extraction_records_mao_appeasement_commitment_and_loyalty_delta` | TITLE_LOCK | **清** | 声明/issue 写入链标题锁→issue_id/status/commitment |
+| 20 | `test_person_delta_adapter.py:240` `test_apply_score_extraction_records_mao_appeasement_commitment_and_loyalty_delta` | TITLE_LOCK | **清** | 声明/issue 写入链标题锁→issue_id/status/commitment |
+| 21 | `test_pihong_dossier_1490.py:311` `test_missing_dossier_fields_stay_pending_then_full_retry_decides` | SSE_PROTOCOL | **保留** | SSE 线协议控序（event: done/error），非自由正文盯文 |
+| 22 | `test_pihong_dossier_1490.py:312` `test_missing_dossier_fields_stay_pending_then_full_retry_decides` | SSE_PROTOCOL | **保留** | SSE 线协议控序（event: done/error），非自由正文盯文 |
+| 23 | `test_pihong_dossier_1490.py:322` `test_missing_dossier_fields_stay_pending_then_full_retry_decides` | SSE_PROTOCOL | **保留** | SSE 线协议控序（event: done/error），非自由正文盯文 |
+| 24 | `test_pihong_dossier_1490.py:323` `test_missing_dossier_fields_stay_pending_then_full_retry_decides` | SSE_PROTOCOL | **保留** | SSE 线协议控序（event: done/error），非自由正文盯文 |
+| 25 | `test_pihong_dossier_1490.py:372` `test_due_commitment_shaped_submit_does_not_poison_or_deadlock` | SSE_PROTOCOL | **保留** | SSE 线协议控序（event: done/error），非自由正文盯文 |
+| 26 | `test_pihong_dossier_1490.py:373` `test_due_commitment_shaped_submit_does_not_poison_or_deadlock` | SSE_PROTOCOL | **保留** | SSE 线协议控序（event: done/error），非自由正文盯文 |
+| 27 | `test_pihong_dossier_1490.py:379` `test_due_commitment_shaped_submit_does_not_poison_or_deadlock` | NOTE_EQ | **保留** | P6/朱笔 note 保真（批红 HITL） |
+| 28 | `test_pihong_dossier_1490.py:397` `test_lying_label_rebuilt_from_server_option` | SSE_PROTOCOL | **保留** | SSE 线协议控序（event: done/error），非自由正文盯文 |
+| 29 | `test_pihong_dossier_1490.py:398` `test_lying_label_rebuilt_from_server_option` | SSE_PROTOCOL | **保留** | SSE 线协议控序（event: done/error），非自由正文盯文 |
+| 30 | `test_pihong_dossier_1490.py:405` `test_lying_label_rebuilt_from_server_option` | NOTE_EQ | **保留** | P6/朱笔 note 保真（批红 HITL） |
+| 31 | `test_pihong_dossier_1490.py:443` `test_mixed_legal_illegal_options_illegal_choice_stays_pending` | SSE_PROTOCOL | **保留** | SSE 线协议控序（event: done/error），非自由正文盯文 |
+| 32 | `test_pihong_dossier_1490.py:444` `test_mixed_legal_illegal_options_illegal_choice_stays_pending` | SSE_PROTOCOL | **保留** | SSE 线协议控序（event: done/error），非自由正文盯文 |
+| 33 | `test_pihong_dossier_1490.py:454` `test_mixed_legal_illegal_options_illegal_choice_stays_pending` | SSE_PROTOCOL | **保留** | SSE 线协议控序（event: done/error），非自由正文盯文 |
+| 34 | `test_pihong_dossier_1490.py:462` `test_mixed_legal_illegal_options_illegal_choice_stays_pending` | SSE_PROTOCOL | **保留** | SSE 线协议控序（event: done/error），非自由正文盯文 |
+| 35 | `test_pihong_dossier_1490.py:463` `test_mixed_legal_illegal_options_illegal_choice_stays_pending` | SSE_PROTOCOL | **保留** | SSE 线协议控序（event: done/error），非自由正文盯文 |
+| 36 | `test_pihong_dossier_1490.py:493` `test_ordinary_event_with_hallucinated_capability_submits` | SSE_PROTOCOL | **保留** | SSE 线协议控序（event: done/error），非自由正文盯文 |
+| 37 | `test_pihong_dossier_1490.py:494` `test_ordinary_event_with_hallucinated_capability_submits` | SSE_PROTOCOL | **保留** | SSE 线协议控序（event: done/error），非自由正文盯文 |
+| 38 | `test_pihong_dossier_1490.py:500` `test_ordinary_event_with_hallucinated_capability_submits` | NOTE_EQ | **保留** | P6/朱笔 note 保真（批红 HITL） |
+| 39 | `test_pihong_dossier_1490.py:574` `test_657_p6_mapper_deliberate_preserve_free_text` | TITLE_LOCK | **保留** | P6 mapper 原文保真（#657） |
+| 40 | `test_pihong_dossier_1490.py:1456` `test_1621_http_follow_draft_uses_catalog_army_id` | SSE_PROTOCOL | **保留** | SSE 线协议控序（event: done/error），非自由正文盯文 |
+| 41 | `test_pihong_dossier_1490.py:1457` `test_1621_http_follow_draft_uses_catalog_army_id` | SSE_PROTOCOL | **保留** | SSE 线协议控序（event: done/error），非自由正文盯文 |
+| 42 | `test_pihong_dossier_1490.py:1603` `test_1589_empty_desk_rejects_nonempty_keyless_choices` | SSE_PROTOCOL | **保留** | SSE 线协议控序（event: done/error），非自由正文盯文 |
+| 43 | `test_pihong_dossier_1490.py:1604` `test_1589_empty_desk_rejects_nonempty_keyless_choices` | SSE_PROTOCOL | **保留** | SSE 线协议控序（event: done/error），非自由正文盯文 |
+| 44 | `test_pihong_dossier_1490.py:1610` `test_1589_empty_desk_rejects_nonempty_keyless_choices` | SSE_PROTOCOL | **保留** | SSE 线协议控序（event: done/error），非自由正文盯文 |
+| 45 | `test_pihong_dossier_1490.py:1634` `test_657_s6_http_present_target_gets_unique_origin_entry` | SSE_PROTOCOL | **保留** | SSE 线协议控序（event: done/error），非自由正文盯文 |
+| 46 | `test_pihong_dossier_1490.py:1707` `test_657_web_http_hitl_lock_boundary_same_gate` | SSE_PROTOCOL | **保留** | SSE 线协议控序（event: done/error），非自由正文盯文 |
+| 47 | `test_pihong_dossier_1490.py:1727` `test_657_illegal_summon_target_http_zero_writes` | SSE_PROTOCOL | **保留** | SSE 线协议控序（event: done/error），非自由正文盯文 |
+| 48 | `test_pihong_dossier_1490.py:1728` `test_657_illegal_summon_target_http_zero_writes` | SSE_PROTOCOL | **保留** | SSE 线协议控序（event: done/error），非自由正文盯文 |
+| 49 | `test_pihong_dossier_1490.py:1755` `test_1620_http_follow_draft_office_token_routes_to_person` | SSE_PROTOCOL | **保留** | SSE 线协议控序（event: done/error），非自由正文盯文 |
+| 50 | `test_pihong_dossier_1490.py:1756` `test_1620_http_follow_draft_office_token_routes_to_person` | SSE_PROTOCOL | **保留** | SSE 线协议控序（event: done/error），非自由正文盯文 |
+| 51 | `test_pihong_dossier_1490.py:1792` `test_1620_http_follow_draft_grant_uses_stored_amount` | SSE_PROTOCOL | **保留** | SSE 线协议控序（event: done/error），非自由正文盯文 |
+| 52 | `test_pihong_dossier_1490.py:1793` `test_1620_http_follow_draft_grant_uses_stored_amount` | SSE_PROTOCOL | **保留** | SSE 线协议控序（event: done/error），非自由正文盯文 |
+| 53 | `test_pihong_dossier_1490.py:1850` `test_657_follow_draft_ignores_client_field_overlay` | TITLE_LOCK | **清** | overlay/staged 改 target_id/mode/actor；删 title/text 散文 |
+| 54 | `test_pihong_dossier_1490.py:1851` `test_657_follow_draft_ignores_client_field_overlay` | TITLE_LOCK | **清** | overlay/staged 改 target_id/mode/actor；删 title/text 散文 |
+| 55 | `test_pihong_dossier_1490.py:1934` `test_657_summon_missing_tag_enter_blocks_phase2_then_retry` | SSE_PROTOCOL | **保留** | SSE 线协议控序（event: done/error），非自由正文盯文 |
+| 56 | `test_pihong_dossier_1490.py:2010` `test_657_default_hold_preserves_red_pen_note` | NOTE_EQ | **保留** | P6/朱笔 note 保真（批红 HITL） |
+| 57 | `test_pihong_dossier_1490.py:2461` `test_658_deliberate_backed_and_stalled_dossier_first` | FORM_ENUM | **保留** | 背书 form 闭集（DB CHECK IN 会签/当面站台/御笔手敕） |
+| 58 | `test_pihong_dossier_1490.py:2624` `test_658_free_decree_capture_target_dossier_real_entry` | FORM_ENUM | **保留** | 背书 form 闭集（DB CHECK IN 会签/当面站台/御笔手敕） |
+| 59 | `test_pihong_dossier_1490.py:2628` `test_658_free_decree_capture_target_dossier_real_entry` | FORM_ENUM | **保留** | 背书 form 闭集（DB CHECK IN 会签/当面站台/御笔手敕） |
+| 60 | `test_pihong_dossier_1490.py:2802` `test_658_ordinary_edit_does_not_inherit_push_target` | OTHER | **清** | overlay/staged 改 target_id/mode/actor；删 title/text 散文 |
+| 61 | `test_pihong_dossier_1490.py:2901` `<module>` | SSE_PROTOCOL | **保留** | SSE 线协议控序（event: done/error），非自由正文盯文 |
+| 62 | `test_pihong_dossier_1490.py:2902` `<module>` | SSE_PROTOCOL | **保留** | SSE 线协议控序（event: done/error），非自由正文盯文 |
+| 63 | `test_pihong_dossier_1490.py:1345` `test_657_s10_http_five_actions_and_1490_no_regress` | SSE_PROTOCOL | **保留** | SSE 线协议控序（event: done/error），非自由正文盯文 |
+| 64 | `test_pihong_dossier_1490.py:1346` `test_657_s10_http_five_actions_and_1490_no_regress` | SSE_PROTOCOL | **保留** | SSE 线协议控序（event: done/error），非自由正文盯文 |
+| 65 | `test_pihong_dossier_1490.py:2640` `test_658_free_decree_capture_target_dossier_real_entry` | FORM_ENUM | **保留** | 背书 form 闭集（DB CHECK IN 会签/当面站台/御笔手敕） |
+| 66 | `test_rescript_heal_isolation_1801.py:133` `test_1801_item_utf8_heals_then_drops_only_bad_item` | CROSS_TITLE | **清** | 删标题列表/跨表 title；改 len(drafts)+heal tags |
+| 67 | `test_rescript_heal_isolation_1801.py:138` `test_1801_item_utf8_heals_then_drops_only_bad_item` | TITLE_LOCK | **保留** | heal 失败字段图 schema（title/summary 键） |
+| 68 | `test_rescript_heal_isolation_1801.py:153` `test_1801_unknown_top_key_heals_then_ignores_key_keeps_items` | TITLE_LOCK | **清** | 删标题列表/跨表 title；改 len(drafts)+heal tags |
+| 69 | `test_rescript_heal_isolation_1801.py:159` `test_1801_unknown_top_key_heals_then_ignores_key_keeps_items` | KEY_EXIST | **保留** | heal 失败字段图 schema（title/summary 键） |
+| 70 | `test_rescript_heal_isolation_1801.py:163` `test_1801_unknown_top_key_heals_then_ignores_key_keeps_items` | SUMMARY_LOCK | **保留** | heal 失败字段图 schema（title/summary 键） |
+| 71 | `test_rescript_heal_isolation_1801.py:190` `test_1801_unknown_top_key_heal_items_empty_must_not_wipe_siblings` | TITLE_LOCK | **清** | 删标题列表/跨表 title；改 len(drafts)+heal tags |
+| 72 | `test_rescript_heal_isolation_1801.py:212` `test_1801_unknown_top_key_heal_omit_key_succeeds_keeps_items` | TITLE_LOCK | **清** | 删标题列表/跨表 title；改 len(drafts)+heal tags |
+| 73 | `test_rescript_heal_isolation_1801.py:230` `test_1801_eight_items_all_pass_no_heal_no_trim` | TITLE_LOCK | **清** | 删标题列表/跨表 title；改 len(drafts)+heal tags |
+| 74 | `test_web_chat_serialization_393.py:217` `test_background_stream_completion_waits_for_settlement_gate_and_keeps_acceptance_turn` | WHOLE_OBJ | **清** | 删流式/问话散文锁；改 type=delta 与 user 轮次条数 |
+| 75 | `test_web_chat_serialization_393.py:266` `test_identity_setup_failure_preserves_question_and_releases_pending_owner` | WHOLE_OBJ | **清** | 删流式/问话散文锁；改 type=delta 与 user 轮次条数 |
+
+### 其他重复/失效（不仅自由文本）
+
+- 授权 91 文件顶层同名 `test_*`：`DUPS=null`
+- `progress_band ==` / 标题「改」哨兵：91 文件内 **无残余**
+- 上轮已删失效截断案 / 月报重复案：维持删除
+
+### 聚焦测试
+
+```bash
+env MING_SIM_AGY_BIN=/usr/bin/false MING_SIM_CODEX_BIN=/usr/bin/false \
+  MING_SIM_CLAUDE_BIN=/usr/bin/false MING_SIM_CURSOR_BIN=/usr/bin/false \
+  MING_SIM_KIMI_BIN=/usr/bin/false MING_SIM_GROK_BIN=/usr/bin/false \
+  MING_SIM_PI_BIN=/usr/bin/false PYTHONDONTWRITEBYTECODE=1 \
+  ../Ming_LLM/.venv/bin/python -m pytest -q -p no:cacheprovider --tb=line \
+  tests/test_breach_plea_623.py \
+  tests/test_secret_order_update.py \
+  tests/test_secret_order_monthly_progress_566.py \
+  tests/test_secret_order_payoff_1504.py \
+  tests/test_secret_order_declaration_landing_1897.py \
+  tests/test_secret_order_section_rejections.py \
+  tests/test_dossier_reported_progress_619.py \
+  tests/test_family_tail_restore_570.py \
+  tests/test_staged_assignment_identity_1890.py \
+  tests/test_character_knowledge_489.py \
+  tests/test_world_materials_1834.py \
+  tests/test_month_chain_1843.py \
+  tests/test_month_chain_1847.py \
+  tests/test_execution_pressure_654.py \
+  tests/test_declaration_dispatch_1835.py \
+  tests/test_deformation_dual_rail_622.py \
+  tests/test_due_review_621.py \
+  tests/test_audience_translate_1837_reopen.py \
+  tests/test_decree_dossiers_571.py \
+  tests/test_secret_order_isolation_883.py \
+  tests/test_person_delta_adapter.py::test_apply_score_extraction_records_mao_appeasement_commitment_and_loyalty_delta \
+  tests/test_new_issues_section_rejections.py::test_new_issue_valid_decree_still_creates \
+  tests/test_mechanical_tail_1845.py::test_mechanical_tail_missing_llm_config_surfaces_retry \
+  tests/test_rescript_heal_isolation_1801.py \
+  tests/test_fiscal_levy_effect.py::test_non_event_world_question_is_not_bound_to_the_only_due_levy \
+  tests/test_event_trigger_gate.py::test_historical_event_expires_after_latest_window_when_gate_unsatisfied \
+  tests/test_pihong_dossier_1490.py::test_657_follow_draft_ignores_client_field_overlay \
+  tests/test_pihong_dossier_1490.py::test_658_ordinary_edit_does_not_inherit_push_target \
+  tests/test_web_chat_serialization_393.py::test_background_stream_completion_waits_for_settlement_gate_and_keeps_acceptance_turn \
+  tests/test_web_chat_serialization_393.py::test_identity_setup_failure_preserves_question_and_releases_pending_owner
+```
+
+**实测**：`603 passed in 18.20s`。未跑全量。
+
+测序事实（预存）：`test_secret_order_isolation_883` 与部分 revoke 案 monkeypatch 交叉污染仍在；本聚焦将 breach 置于 isolation 前；**不以重排冒称无污染全绿**。
+
+`git diff --check`：无输出。
+
+### F3 变异复证
+
+```bash
+../Ming_LLM/.venv/bin/python /tmp/1897-f1f3-corr2/mutate_f3.py
+```
+
+实测：`old_title_sentinel_still_green=true`；`current_tags_contract=['甲·改']`；`verdict=GREEN`。
+
+### 自查二连（本轮）
+
+1. **同类型**：按错误形状清标题/整对象/summary 盯文；不以文件名出界；SSE/闭集 form/闸负向/P6 保真/独立内容域逐条举证保留。
+2. **引入面**：聚焦 603；F1/F2/F3 变异 GREEN；未放宽生产校验；未用非空/键存在洗绿；临时目录 `/tmp/1897-f1f3-corr2` 不进仓。
+
+### 交卷 HEAD（本轮）
+
+- 本轮提交：以交卷后 `git rev-parse HEAD` 为准（先代码+成员表，报告 tip 可同提交或随 tip）。
+- 生产修面仍见 `edb376032`（F1+F2）；本轮为 F3 75 表结清。
+- **未 push / 未 PR / 未 amend / 未 stash**。

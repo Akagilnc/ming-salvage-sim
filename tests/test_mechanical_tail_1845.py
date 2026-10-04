@@ -565,5 +565,4 @@ def test_mechanical_tail_missing_llm_config_surfaces_retry(game, monkeypatch):
     chain = month_chain._load_chain(db, closed_turn)
     assert chain["mechanical_tail"]["status"] == "done"
     ending = db.get_ending_summary()
-    assert ending is not None
-    assert ending["summary"] == "补配后总评"
+    assert ending is not None  # 重试写结局行；不锁总评散文

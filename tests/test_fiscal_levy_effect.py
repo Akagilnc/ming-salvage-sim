@@ -1452,7 +1452,7 @@ def test_non_event_world_question_is_not_bound_to_the_only_due_levy(game, monkey
         item for item in session.pending_decisions()
         if str(item.get("event_id") or "").startswith("world-question:")
     )
-    assert row["title"] == "河南赈灾"
+    world_qid = str(row.get("event_id") or "")
     chain = month_chain._load_chain(db, int(state.turn))
     assert "liao_levy_rise_1631" not in chain["world_question_event_bindings"].values()
 
@@ -1465,10 +1465,11 @@ def test_non_event_world_question_is_not_bound_to_the_only_due_levy(game, monkey
         write_gate=session._write_gate,
     )
     assert db.event_terminal_state("liao_levy_rise_1631") is None
+    # 非三饷世界问不得绑到唯一 due levy；以 event_id 身份查，不锁请愿标题散文
     assert [
         record for record in db.list_event_petition_records()
         if record.get("event_id") == "liao_levy_rise_1631"
-        or str((record.get("petition") or {}).get("title") or "") == "河南赈灾"
+        or str(record.get("event_id") or "") == world_qid
     ] == []
 
 

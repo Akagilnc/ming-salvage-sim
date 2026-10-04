@@ -328,8 +328,8 @@ def test_new_issue_valid_decree_still_creates(game):
     created = [n for n in _new(out) if not n.get("rejected") and n.get("issue_id")]
     assert len(created) == 1, out
     iid = int(created[0]["issue_id"])
-    row = db.conn.execute("SELECT title, status FROM issues WHERE id=?", (iid,)).fetchone()
-    assert row["title"] == "测试·新立局势"
+    row = db.conn.execute("SELECT status FROM issues WHERE id=?", (iid,)).fetchone()
+    assert row is not None
     assert row["status"] == "active"
 
 

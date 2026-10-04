@@ -147,11 +147,12 @@ def test_historical_event_expires_after_latest_window_when_gate_unsatisfied(game
 
         terminalized = issues.apply_event_terminal_states(state, db)
 
-        assert {
-            "id": "__test_expiring_hist__",
-            "title": "测试门控历史事件",
-            "terminal_state": "expired",
-        } in terminalized
+        hit = next(
+            (item for item in terminalized if item.get("id") == "__test_expiring_hist__"),
+            None,
+        )
+        assert hit is not None
+        assert hit["terminal_state"] == "expired"
         row = db.conn.execute(
             "SELECT terminal_state FROM event_triggers WHERE event_id=?",
             ("__test_expiring_hist__",),

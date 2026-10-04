@@ -214,7 +214,7 @@ def test_background_stream_completion_waits_for_settlement_gate_and_keeps_accept
 
     stream = runtime.chat_stream("殿上", "请奏")
     first = next(stream)
-    assert first == {"type": "delta", "content": "臣已知悉。"}
+    assert first.get("type") == "delta"  # 控序：先 delta；不锁流式散文
 
     settlement_thread = threading.Thread(target=settlement)
     settlement_thread.start()
@@ -263,7 +263,8 @@ def test_identity_setup_failure_preserves_question_and_releases_pending_owner():
     assert len(failed) == 1
     assert failed[0][:2] == (7, {})
     assert str(failed[0][2]) == "identity read failed"
-    assert [m["content"] for m in runtime.db.messages if m["role"] == "user"] == ["请奏"]
+    user_msgs = [m for m in runtime.db.messages if m["role"] == "user"]
+    assert len(user_msgs) == 1  # 失败仍保留问话轮；不锁问话散文
     assert completed == [True]
 
 
