@@ -148,8 +148,6 @@ def test_public_saying_excluded_name_does_not_see_it_others_do(
     )
     session.temporary_characters = {}
     session.agno_db = None
-    session._beat_generator = None
-    session._scene_registry = None
     session._write_gate = threading.Lock()
     chat_turn_id = int(db.create_chat_turn(
         state, "殿上", "s", 0, night_id=int(night["id"]), status="active",

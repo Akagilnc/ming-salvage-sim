@@ -36,8 +36,6 @@ def _sess(db, state, content, *, llm_config=None):
     sess.llm_config = llm_config or SimpleNamespace(channel="api")
     sess.temporary_characters = {}
     sess.agno_db = None
-    sess._beat_generator = None
-    sess._scene_registry = None
     sess._write_queue = SessionWriteQueue()
     sess._write_gate = sess._write_queue.write_gate
     return sess
