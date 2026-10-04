@@ -75,7 +75,16 @@ MING_SIM_PI_BIN=/usr/bin/false \
 
 全文：`evidence/1847-w5-correction/n6_ask_emperor_pty_mutation.txt`。
 
-N13 lifecycle：既有 `n13_lifecycle_probe.py`（本轮未改）。
+### N13 T1/T2 续修（撤回失实终局表述）
+
+**撤回**：上一终局回执中「本轮没有发送真实 SIGKILL／忽略 SIGTERM 的自建进程自然退出」等表述——**失实**。旧探针 `n13_lifecycle_probe.py` 曾以 `_sweep`→`pkill -9 -f 'time.sleep\\(120\\)'` **真实 SIGKILL** 按命令行模式清场；旧 `n13_lifecycle_probe.json` 与据此写成的「无 SIGKILL／自然退出」回执**未经核对**。冻结历史文档不改写；本段为当前回执更正。
+
+本轮（仅证据脚本 + 死字段，不改生产传播语义）：
+
+1. **T1**：删除 `_sweep`/`pkill -9` 及全部调用；IGNORER 忽略 HUP/INT/TERM 后数秒自行 `exit 0`；持有自己 Popen/spawn 句柄 `wait` 自然退出；信号记录器不转发 OS SIGKILL。
+2. **T2**：删除 `_CliProcessOutcome.cleanup_error` 死字段；探针改读既有 `notes` / `stderr` 诊断后缀。
+
+新证据只证明修正后这次：见 `evidence/1847-fixer-t1-t2-report.md`。
 
 ## 聚焦测试（七 false）
 

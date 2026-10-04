@@ -362,12 +362,16 @@ _AGY_AUTH_MARKERS = ("Authentication required", "authentication timed out")
 
 @dataclass
 class _CliProcessOutcome:
-    """子进程收尾事实（退出码 / stderr 诊断 / stdin 写错 / 软收尾失败），由增量读循环回填。"""
+    """子进程收尾事实（退出码 / stderr 诊断 / stdin 写错），由增量读循环回填。
+
+    Soft-terminate failure propagates via raise / body_err.add_note and is
+    appended to stderr as ``[soft terminate failed: ...]`` — no parallel
+    unused ``cleanup_error`` field (#1847 T2).
+    """
 
     returncode: Optional[int] = None
     stderr: str = ""
     stdin_error: Optional[BaseException] = None
-    cleanup_error: Optional[BaseException] = None
 
 
 def _cli_idle_seconds() -> float:
@@ -545,7 +549,6 @@ def _iter_cli_process_lines(
             # Soft-stop failure must surface. Never raise-from-finally over an
             # in-flight body failure; never logger-only when cleanup is sole fail.
             cleanup_err = exc
-            result.cleanup_error = exc
         for worker in workers:
             worker.join(timeout=5)
         result.stderr = "".join(stderr_parts)

@@ -24,7 +24,7 @@
 ## 保留
 
 - `scan_n6_n11_n13_n14.py` — **仅机械枚举**（`POTENTIAL_*` / `ABSENT` / `KEEP_LIVE_CONSUMER` 消费者图事实）；**永不**从名字表发明语义 KEEP
-- `n13_lifecycle_probe.py` + `.json` — 真实入口生命周期变异（非源码判桶测试）
+- `n13_lifecycle_probe.py` + `.json` — 软收尾生命周期探针（**T1 已删 `_sweep`/`pkill -9`**；IGNORER 自行 exit；持有句柄 wait 自然退出）。旧版探针曾真实 SIGKILL，旧 JSON/回执「无 SIGKILL／自然退出」**撤回**；当前 JSON 仅证明修正后这次
 - 人工表：`human_n6.tsv` / `human_n11.tsv` / `human_n13.tsv` / `human_n14.tsv`
 
 ## 诚实口径

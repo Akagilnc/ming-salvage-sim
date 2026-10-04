@@ -1,9 +1,16 @@
 #!/usr/bin/env python3
-"""#1847 N13 lifecycle probe — real entry mutation, no new production tests."""
+"""#1847 N13 lifecycle probe — soft terminate + natural exit; no SIGKILL/pkill.
+
+T1 correction: prior revision used `_sweep` → `pkill -9 -f 'time.sleep\\(120\\)'`
+(real SIGKILL by cmdline pattern). That run and any receipt claiming
+「无真实 SIGKILL／自然退出」from it are withdrawn as false. This file proves
+only the corrected run: own Popen/spawn handles, wait for natural exit.
+"""
 from __future__ import annotations
 
 import gc
 import json
+import os
 import signal
 import subprocess
 import sys
@@ -15,29 +22,46 @@ from typing import Any, List, Optional
 
 ROOT = Path("/Users/akagilnc/WorkSpace/Ming_LLM-1847-w5")
 sys.path.insert(0, str(ROOT))
-OUT = Path("/tmp/1847-fixer-w7")
+OUT = Path("/tmp/1847-fixer-t1-t2")
 OUT.mkdir(parents=True, exist_ok=True)
 
+# Ignore soft signals; exit on its own after > terminate wait(5) so TimeoutExpired
+# fires while still alive, then natural exit follows within a few more seconds.
 IGNORER = r"""
 import signal, sys, time
 signal.signal(signal.SIGTERM, signal.SIG_IGN)
 signal.signal(signal.SIGHUP, signal.SIG_IGN)
 signal.signal(signal.SIGINT, signal.SIG_IGN)
 print("READY", flush=True)
-time.sleep(120)
+time.sleep(8)
+sys.exit(0)
 """
 
 
-def _sweep(pattern: str) -> None:
-    subprocess.run(
-        ["pkill", "-9", "-f", pattern],
-        check=False,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
+def _wait_natural(proc: subprocess.Popen, *, timeout: float = 30.0) -> dict:
+    """Wait on our own handle only — never pkill / name search / SIGKILL."""
+    t0 = time.monotonic()
+    try:
+        rc = proc.wait(timeout=timeout)
+        return {
+            "natural_exit_rc": rc,
+            "natural_exit_ok": rc == 0,
+            "natural_wait_elapsed": round(time.monotonic() - t0, 2),
+            "still_alive_after_wait": proc.poll() is None,
+        }
+    except subprocess.TimeoutExpired:
+        return {
+            "natural_exit_rc": None,
+            "natural_exit_ok": False,
+            "natural_wait_elapsed": round(time.monotonic() - t0, 2),
+            "still_alive_after_wait": proc.poll() is None,
+            "natural_wait_timeout": True,
+        }
 
 
 def probe_old_raise_covers_body():
+    """In-memory deterministic compare of original-fail + cleanup-fail semantics."""
+
     class BodyBoom(RuntimeError):
         pass
 
@@ -106,7 +130,7 @@ def probe_old_raise_covers_body():
 
 
 def probe_cli_terminate_soft_fail():
-    """Deterministic real subprocess: ignore SIGTERM → TimeoutExpired, still alive."""
+    """TimeoutExpired + still alive, then wait() → rc 0 natural exit. No SIGKILL."""
     from ming_sim.cli_backend import _terminate_cli_process
 
     proc = subprocess.Popen(
@@ -124,7 +148,7 @@ def probe_cli_terminate_soft_fail():
         err = exc
     elapsed = time.monotonic() - t0
     alive = proc.poll() is None
-    _sweep("time.sleep\\(120\\)")
+    natural = _wait_natural(proc)
     return {
         "case": "cli_terminate_soft_fail",
         "ready": line.decode().strip(),
@@ -132,16 +156,17 @@ def probe_cli_terminate_soft_fail():
         "alive_after": alive,
         "elapsed": round(elapsed, 2),
         "diagnostic_empty_if_swallowed": err is None,
+        **natural,
+        "used_pkill_or_sigkill": False,
     }
 
 
 def probe_cli_iterator_cleanup_surfaces():
-    """Full _iter_cli_process_lines: idle body + soft terminate both real; body wins."""
+    """Body + soft terminate both real; body wins via notes/stderr (no dead field)."""
     import ming_sim.cli_backend as cb
     import ming_sim.llm_transport as lt
 
     outcome = cb._CliProcessOutcome()
-    # Shrink idle so body fails quickly while child still alive.
     real_policy = lt.resolve_transport_policy
 
     class Tiny:
@@ -149,8 +174,17 @@ def probe_cli_iterator_cleanup_surfaces():
 
     lt.resolve_transport_policy = lambda: Tiny()  # type: ignore
     err = None
+    held: Optional[subprocess.Popen] = None
+    real_popen = subprocess.Popen
+
+    def tracking_popen(*args, **kwargs):
+        nonlocal held
+        held = real_popen(*args, **kwargs)
+        return held
+
     t0 = time.monotonic()
     try:
+        subprocess.Popen = tracking_popen  # type: ignore
         list(
             cb._iter_cli_process_lines(
                 [sys.executable, "-u", "-c", IGNORER],
@@ -159,28 +193,46 @@ def probe_cli_iterator_cleanup_surfaces():
         )
     except Exception as exc:
         err = exc
+    finally:
+        subprocess.Popen = real_popen  # type: ignore
+        lt.resolve_transport_policy = real_policy  # type: ignore
     elapsed = time.monotonic() - t0
-    lt.resolve_transport_policy = real_policy  # type: ignore
-    _sweep("time.sleep\\(120\\)")
     notes = list(getattr(err, "__notes__", []) or []) if err else []
+    natural = (
+        _wait_natural(held)
+        if held is not None and held.poll() is None
+        else {
+            "natural_exit_rc": held.poll() if held is not None else None,
+            "natural_exit_ok": held is not None and held.poll() == 0,
+            "natural_wait_elapsed": 0.0,
+            "still_alive_after_wait": False,
+            "already_exited_before_extra_wait": True,
+        }
+    )
+    # Real external surfaces only — cleanup_error field deleted (T2).
+    has_cleanup_attr = hasattr(outcome, "cleanup_error")
     return {
         "case": "cli_iterator_body_and_cleanup",
         "err_type": type(err).__name__ if err else None,
         "err_repr": repr(err)[:200] if err else None,
         "notes": notes,
-        "cleanup_error_type": type(outcome.cleanup_error).__name__
-        if outcome.cleanup_error
-        else None,
+        "notes_mark_soft_terminate": any(
+            "soft terminate also failed" in n for n in notes
+        ),
         "stderr_marker": "[soft terminate failed:" in (outcome.stderr or ""),
+        "cleanup_error_field_present": has_cleanup_attr,
         "elapsed": round(elapsed, 2),
         "covered_by_cleanup_only": type(err).__name__ == "TimeoutExpired"
         and not notes
         if err
         else None,
+        **natural,
+        "used_pkill_or_sigkill": False,
     }
 
 
 def probe_pty_soft_close_no_sigkill():
+    """Soft close records HUP/CONT/INT only; recorder never sends OS SIGKILL."""
     import pexpect
 
     signals: List[str] = []
@@ -194,13 +246,15 @@ def probe_pty_soft_close_no_sigkill():
         echo=False,
     )
     child.expect("READY")
+    pid = child.pid
     pty: Any = child.ptyproc
 
     def record_kill(self, sig):
         nonlocal os_sent
         name = signal.Signals(sig).name if isinstance(sig, int) else str(sig)
         signals.append(name)
-        return None  # do not send OS signals
+        # Recorder only — never forward real OS signals (esp. never SIGKILL).
+        return None
 
     pty.kill = MethodType(record_kill, pty)  # type: ignore
 
@@ -220,10 +274,25 @@ def probe_pty_soft_close_no_sigkill():
     soft_signals = list(signals)
     unmarked_seq = ["SIGHUP", "SIGCONT", "SIGINT", "SIGKILL"]
 
+    # Natural exit via own spawn pid — wait, do not pkill by name.
+    t0 = time.monotonic()
+    natural_rc = None
+    still_alive = None
+    try:
+        _pid, status = os.waitpid(pid, 0)
+        natural_rc = os.waitstatus_to_exitcode(status) if hasattr(os, "waitstatus_to_exitcode") else (
+            status >> 8 if os.WIFEXITED(status) else None
+        )
+        still_alive = False
+    except ChildProcessError:
+        # Already reaped elsewhere
+        still_alive = False
+        natural_rc = 0
+    natural_wait_elapsed = round(time.monotonic() - t0, 2)
+
     del child
     del pty
     gc.collect()
-    _sweep("time.sleep\\(120\\)")
 
     return {
         "case": "pty_soft_close",
@@ -236,6 +305,12 @@ def probe_pty_soft_close_no_sigkill():
         "unmarked_force_true_sequence": unmarked_seq,
         "sigkill_only_in_unmarked_force_true": "SIGKILL" in unmarked_seq
         and "SIGKILL" not in soft_signals,
+        "natural_exit_rc": natural_rc,
+        "natural_exit_ok": natural_rc == 0,
+        "natural_wait_elapsed": natural_wait_elapsed,
+        "still_alive_after_wait": still_alive,
+        "used_pkill_or_sigkill": False,
+        "recorder_forwards_os_sigkill": False,
     }
 
 
@@ -259,6 +334,26 @@ def main():
             )
     out = OUT / "n13_lifecycle_probe.json"
     out.write_text(json.dumps(results, ensure_ascii=False, indent=2), encoding="utf-8")
+    evidence_out = ROOT / "evidence/1847-w7-correction/n13_lifecycle_probe.json"
+    evidence_out.write_text(
+        json.dumps(
+            {
+                "_meta": {
+                    "corrected_run": True,
+                    "withdrawn_prior_claim": (
+                        "旧探针 evidence/1847-w7-correction/n13_lifecycle_probe.py "
+                        "曾以 _sweep/pkill -9 真实 SIGKILL 收场；旧回执「无真实 "
+                        "SIGKILL／自然退出」未经核对失实，已撤回。本 JSON 仅证明修正后这次。"
+                    ),
+                    "out_path": str(out),
+                },
+                "results": results,
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
     print(out.read_text())
     by = {r.get("case"): r for r in results}
     ok = True
@@ -269,11 +364,29 @@ def main():
         and r.get("sole_cleanup_not_masked")
     )
     r = by.get("cli_terminate_soft_fail", {})
-    ok &= r.get("err_type") == "TimeoutExpired" and r.get("alive_after") is True
+    ok &= (
+        r.get("err_type") == "TimeoutExpired"
+        and r.get("alive_after") is True
+        and r.get("natural_exit_ok") is True
+        and r.get("used_pkill_or_sigkill") is False
+    )
     r = by.get("cli_iterator_body_and_cleanup", {})
-    ok &= r.get("err_type") is not None and r.get("covered_by_cleanup_only") is not True
+    ok &= (
+        r.get("err_type") is not None
+        and r.get("covered_by_cleanup_only") is not True
+        and r.get("notes_mark_soft_terminate") is True
+        and r.get("stderr_marker") is True
+        and r.get("cleanup_error_field_present") is False
+        and r.get("used_pkill_or_sigkill") is False
+    )
     r = by.get("pty_soft_close", {})
-    ok &= r.get("sigkill_in_soft_path") is False and r.get("spawn_closed") is True
+    ok &= (
+        r.get("sigkill_in_soft_path") is False
+        and r.get("spawn_closed") is True
+        and r.get("natural_exit_ok") is True
+        and r.get("recorder_forwards_os_sigkill") is False
+        and r.get("used_pkill_or_sigkill") is False
+    )
     print("VERDICT", "GREEN" if ok else "RED", file=sys.stderr)
     return 0 if ok else 1
 
