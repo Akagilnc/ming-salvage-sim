@@ -92,3 +92,17 @@ python3 -m pytest \
 ## 8. Commits
 
 - 本轮施工提交 SHA：见 stdout / `git rev-parse HEAD`（提交后回填）
+
+## 9. 子代理回执跟进（成立项已修）
+
+核对 [batch-a](2c0c1040-b513-47ec-bd35-96cd09967297) / [batch-b](90923d5b-445a-4640-8a7c-ca59c9d0c951) / [web](6d7cba2c-19a3-4c7f-9e2f-cd542eff7a97) 的 FIX 指控后：
+
+| 项 | 处置 |
+|---|---|
+| verify_llm smoke「输出 ok」锁 | 成立 → 改 tag/config/渠道路由断言 |
+| rescript `title in msg` | 成立 → `options_len`/`options_type` 结构化 token |
+| useSettlementFlow 仅 call-count | 成立 → harness 接 MechanicalTailFailure，断言 error_pack_path |
+| clichat「臣遵旨」子串 | 上轮已改全文相等，维持 |
+
+聚焦：上述 Python 8 passed；`web` vitest useSettlementFlow 14 passed。
+

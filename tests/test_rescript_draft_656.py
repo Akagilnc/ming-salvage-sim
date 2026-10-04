@@ -749,7 +749,8 @@ def test_validate_items_empty_options_drops_item_keeps_siblings(monkeypatch):
     assert drafts[0]["title"] == good["title"]
     assert len(drafts[0]["options"]) == 2
     assert logs, "0 项条目消失须响亮留痕"
-    assert any(empty["title"] in msg for msg in logs)
+    # F2.3 结构化 token，不锁 title 诊断措辞
+    assert any("options_len=0" in msg for msg in logs)
 
 def test_validate_items_non_list_options_drops_item_keeps_siblings(monkeypatch):
     """#1801：非 list options 该条目消失；其它条目仍呈上；日志响亮；不整批判死。"""
@@ -762,7 +763,7 @@ def test_validate_items_non_list_options_drops_item_keeps_siblings(monkeypatch):
     assert len(drafts) == 1
     assert drafts[0]["title"] == good["title"]
     assert logs, "非 list options 条目消失须响亮留痕"
-    assert any(bad["title"] in msg for msg in logs)
+    assert any("options_type=str" in msg and "options_len=n/a" in msg for msg in logs)
 
 def test_validate_items_empty_list_is_legal_headless_month():
     """合法 items=[] 仍是「本月确无急务」（F2.3 不凑数）。"""

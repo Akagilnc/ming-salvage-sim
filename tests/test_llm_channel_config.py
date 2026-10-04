@@ -470,7 +470,9 @@ def test_verify_llm_available_respects_api_channel_over_backend_env(monkeypatch)
 
     verify_llm_available(cfg)
 
-    assert captured["prompt"] == "输出 ok"
+    # 渠道路由：显式 api 不得因 BACKEND=agy 走 CliChat；不锁 smoke 提示词正文。
+    assert "model" in captured and "prompt" in captured
+    assert captured["prompt"]  # smoke 已触发
     assert not isinstance(captured["model"], CliChat)
 
 
@@ -481,6 +483,7 @@ def test_verify_llm_available_smokes_cli_channel_without_backend_env(monkeypatch
     def fake_run(prompt, llm_config=None, tag="", *, policy=None):
         seen["prompt"] = prompt
         seen["config"] = llm_config
+        seen["tag"] = tag
         return "ok", 1
 
     monkeypatch.setattr(cli_backend, "_run_backend_for_config", fake_run)
@@ -496,8 +499,10 @@ def test_verify_llm_available_smokes_cli_channel_without_backend_env(monkeypatch
 
     verify_llm_available(cfg)
 
-    assert seen["prompt"] == "输出 ok"
-    assert seen["config"] is cfg
+    # smoke 真触发：传入本 cfg；不锁提示词措辞。
+    assert seen.get("config") is cfg
+    assert seen.get("tag") == "verify"
+    assert seen.get("prompt")
 
 
 def test_verify_llm_available_cli_channel_failure_raises(monkeypatch):
@@ -530,12 +535,14 @@ def test_verify_llm_available_smokes_legacy_env_only_backend(monkeypatch):
 
     def fake_run(prompt, llm_config=None, tag="", *, policy=None):
         seen["prompt"] = prompt
+        seen["tag"] = tag
         return "ok", 1
 
     monkeypatch.setattr(cli_backend, "_run_backend_for_config", fake_run)
     cfg = LLMConfig(api_key="cli-backend", base_url="", model="api-fallback", channel="")
     verify_llm_available(cfg)
-    assert seen["prompt"] == "输出 ok"
+    assert seen.get("tag") == "verify"
+    assert seen.get("prompt")
 
 
 def test_verify_llm_available_legacy_env_only_failure_raises(monkeypatch):

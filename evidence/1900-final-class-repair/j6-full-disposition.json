@@ -2438,8 +2438,8 @@
    "stub:Agent",
    "stub:extract_agent_text"
   ],
-  "disposition": "KEEP_LLM_BOUNDARY",
-  "basis": "Agent 边界；断言 verify smoke 走 API model 非 CliChat",
+  "disposition": "FIX_APPLIED",
+  "basis": "删 smoke「输出 ok」措辞锁；保留 API 非 CliChat + smoke 已触发",
   "audited": true
  },
  {
@@ -2449,8 +2449,8 @@
   "hits": [
    "stub:_run_backend_for_config"
   ],
-  "disposition": "KEEP_LLM_BOUNDARY",
-  "basis": "backend 边界；断言 smoke prompt/config 传入",
+  "disposition": "FIX_APPLIED",
+  "basis": "删 prompt 措辞锁；断言 tag=verify 与 config 身份",
   "audited": true
  },
  {
@@ -2471,8 +2471,8 @@
   "hits": [
    "stub:_run_backend_for_config"
   ],
-  "disposition": "KEEP_LLM_BOUNDARY",
-  "basis": "legacy env smoke；断言触发 backend 与 prompt",
+  "disposition": "FIX_APPLIED",
+  "basis": "删 prompt 措辞锁；断言 tag=verify 触发",
   "audited": true
  },
  {
@@ -4892,8 +4892,8 @@
   "hits": [
    "stub:tlog"
   ],
-  "disposition": "KEEP_STRUCTURED_RESULT",
-  "basis": "tlog 静音；校验结构化丢项",
+  "disposition": "FIX_APPLIED",
+  "basis": "日志改断言 options_len=0 结构化 token",
   "audited": true
  },
  {
@@ -4903,8 +4903,8 @@
   "hits": [
    "stub:tlog"
   ],
-  "disposition": "KEEP_IO_BOUNDARY",
-  "basis": "配置/路径/资产 IO 边界替身；断言配置或落盘结构化结果",
+  "disposition": "FIX_APPLIED",
+  "basis": "日志改断言 options_type/len 结构化 token",
   "audited": true
  },
  {
