@@ -558,8 +558,9 @@ env MING_SIM_AGY_BIN=/usr/bin/false MING_SIM_CODEX_BIN=/usr/bin/false \
   -q -p no:cacheprovider --basetemp=/private/tmp/1897-fixer-r1-r4-pytest3 --tb=line
 ```
 
-本轮实测（七 false；派单十一文件聚焦）：`252 passed in 7.57s`（`/usr/bin/time -p`：real 8.10 / user 5.48 / sys 1.83）。
-本轮另跑授权盯文触及扩展集（含 update/isolation/month_chain 等，deselect 预存 FK 失败 1 例）：`385 passed, 1 deselected`。未跑全量。basetemp 已删。
+本轮实测（七 false；派单十一文件聚焦）：**以同次 stdout 为准**。先前回执写过 `252 passed in 7.57s`（并附 `/usr/bin/time -p` real 8.10），与席上另见的 stdout `7.69s` **不是同一条可核对实录**——属不同次运行的墙钟波动，不可当作单一稳定数；本会话补跑同十一文件命令的 **真实 stdout** 为 `252 passed in 11.33s`（见下「补充自验」）。未跑全量。
+
+> 更正：先前「授权盯文扩展集 `385 passed, 1 deselected`」是把已知 FK 红例剔出后的绿色摘要，**不能**冒充「十三触及文件全绿」。诚实结果见「补充自验」。
 
 ## 质量 / 合法性自检
 
@@ -567,8 +568,76 @@ env MING_SIM_AGY_BIN=/usr/bin/false MING_SIM_CODEX_BIN=/usr/bin/false \
 - 自查二连：同类型授权集自由文本字段 Compare 复扫为 none；引入面（删盯文后条数/身份断言）已核
 - `git diff --check`：本轮代码 diff 无 whitespace 报错
 
+## 补充自验（同树·触及 13 文件 + 基线对照 · 2026-10-05）
+
+**目的**：核 `test_appointment_and_relief_through_scene_chat_then_close_and_settle` 的 `close_night` → `_apply_pending_action` `FOREIGN KEY` 是本轮回归还是施工前既有缺口。按 #1812：功能缺口归 #1873 线索，**本片不接回功能**；失败不洗成全绿；**未**向远端 #1873/#1812 发评论（不编造已转记事实）。
+
+### 工作树与 HEAD
+
+| 项 | 值 |
+|---|---|
+| 当前工作树 | `/Users/akagilnc/WorkSpace/Ming_LLM-1897-w5` |
+| 分支 | `ak-roles/issue-1897-r1-r4-fixer-20261005-053204` |
+| 补验时 HEAD | `a88f9a2931ef59c405f6afe1047cb953d59cf45e` |
+| 施工前基线 | `64b899a0e1682b30bc74d18688380237773251ce` |
+| 基线容器 | 系统 tmp 隔离 `git worktree`：`/tmp/1897-baseline-64b899a0e-72517`（detached）；**未** checkout 覆盖当前树；验后 `git worktree remove --force` 已清 |
+
+### 单节点对照（七 false + `PYTHONDONTWRITEBYTECODE=1`）
+
+命令（两边同形；基线另加 `PYTHONPATH=$BASE`，解释器仍用 `../Ming_LLM/.venv/bin/python`）：
+
+```bash
+env MING_SIM_AGY_BIN=/usr/bin/false MING_SIM_CODEX_BIN=/usr/bin/false \
+  MING_SIM_CLAUDE_BIN=/usr/bin/false MING_SIM_CURSOR_BIN=/usr/bin/false \
+  MING_SIM_KIMI_BIN=/usr/bin/false MING_SIM_GROK_BIN=/usr/bin/false \
+  MING_SIM_PI_BIN=/usr/bin/false PYTHONDONTWRITEBYTECODE=1 \
+  ../Ming_LLM/.venv/bin/python -m pytest \
+  tests/test_audience_translate_1837.py::test_appointment_and_relief_through_scene_chat_then_close_and_settle \
+  -q -p no:cacheprovider --tb=short
+```
+
+| 树 | HEAD | 结果 |
+|---|---|---|
+| 当前 | `a88f9a293` | **FAILED** `sqlite3.IntegrityError: FOREIGN KEY constraint failed` @ `db.py:18420` `_apply_pending_action`；stdout `[pending_actions] 落库异常 id=1 directive/拟旨`；`1 failed in 2.84s` |
+| 基线 worktree | `64b899a0e` | **同失败**：`IntegrityError FOREIGN KEY` @ 当时 `db.py:18490`；同 stdout `id=1 directive/拟旨`；`1 failed in 7.96s` |
+
+**因果裁定**：**非本轮回归**。旧基线已红 → 属既有功能缺口（召对收夜提交拟旨 pending → FK）。按 #1812 归 **#1873 功能线索**；本片不修、不 xfail 洗绿、不接回玩法。本回执仅本地记证，**未**声称已在远端 issue 留言。
+
+### 触及 13 文件补充命令与结果（当前 HEAD · 本会话实测）
+
+最后提交盯文改动触及的授权相关测（含 `test_audience_translate_1837.py`），**不 deselect** 该 FK 例：
+
+```bash
+env MING_SIM_AGY_BIN=/usr/bin/false MING_SIM_CODEX_BIN=/usr/bin/false \
+  MING_SIM_CLAUDE_BIN=/usr/bin/false MING_SIM_CURSOR_BIN=/usr/bin/false \
+  MING_SIM_KIMI_BIN=/usr/bin/false MING_SIM_GROK_BIN=/usr/bin/false \
+  MING_SIM_PI_BIN=/usr/bin/false PYTHONDONTWRITEBYTECODE=1 \
+  ../Ming_LLM/.venv/bin/python -m pytest \
+  tests/test_audience_translate_1837.py \
+  tests/test_breach_plea_623.py \
+  tests/test_character_knowledge_489.py \
+  tests/test_decree_dossiers_571.py \
+  tests/test_faction_denunciation_627.py \
+  tests/test_family_tail_restore_570.py \
+  tests/test_grant_reconciliation_567.py \
+  tests/test_memorial_inbox_1726.py \
+  tests/test_month_chain_1843.py \
+  tests/test_month_chain_1847.py \
+  tests/test_on_scene_immediate_write_1839.py \
+  tests/test_secret_order_isolation_883.py \
+  tests/test_secret_order_update.py \
+  -q -p no:cacheprovider --tb=line
+```
+
+本会话 stdout：**`1 failed, 385 passed, 1 warning in 29.03s`**（唯一失败即上表 FK 节点；warning = Starlette/httpx TestClient deprecation）。席上先前同命令曾录 `32.71s`——同结论、不同次墙钟。自验只此触及集，**未跑全量**。
+
+### 派单十一文件（本会话复跑）
+
+同上一节十一文件命令（无 basetemp）：本会话 stdout **`252 passed in 11.33s`**。与先前回执 `7.57s` / 席见 `7.69s` / 旁留 `/tmp/1897-fixer-focused.out` 之 `6.90s`（time real 7.53）均为**不同次运行**的墙钟，通过数一致（252），不以某一秒数作身份。
+
 ## 剩余项 / 依法阻断
 
 1. **须在新 HEAD 上全范围复审**（R2=P1）。本回执不声称 reviewer 放行。
 2. 事件结局功能缺口按 #1873，本片不恢复。
-3. 提交仅在工作树分支，尚未 merge。
+3. 召对收夜拟旨 FK（上表）按 #1812 归 #1873 功能线索；本片不接回；**未**远端转记。
+4. 提交仅在工作树分支，尚未 merge。
