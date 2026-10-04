@@ -1,0 +1,10 @@
+# r14 enumeration (七 BIN=/usr/bin/false; PYTHONDONTWRITEBYTECODE=1)
+# 1) Judge red-five repro vs fab71100c green / de50a1314 red (台院取证；本局不复跑全量)
+# 2) Deleted-migration name set from evidence/1843-w5-fixer-deleted-defs-ae4a2a3e6-HEAD.json
+# 3) tests/**/*.py AST test scan for:
+#    OLD_LOC_MIGRATE / OLD_FISCAL_ENGINE_MIG / BAJIU_IN_OFFICE / OFFICE_CLEAR_AFTER_SNAP / POLLUTED_OFFICE_EXPECT
+#    + direct refs to deleted migrate/backfill/purge names
+# 4) git grep -n "match\s*=" tests --glob "*.py"
+# 5) git grep -n "pytest.raises([^)]*match\s*=" tests
+# 6) Fresh GameContent.load()+GameDB.seed_static_data() export 8+胡廷宴 office baseline
+# 7) content/characters.json fab71100c vs HEAD office/status/status_reason diff

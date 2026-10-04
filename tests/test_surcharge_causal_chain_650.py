@@ -413,41 +413,6 @@ def legacy_game(content, tmp_path):
     yield db, state, content
 
 
-def test_unmarked_cutover_save_rejects_and_never_consumes_surcharge(game, monkeypatch):
-    """旧档即使迁移到 substrate fiscal，也不冒充 persons 池消费历史账。"""
-    db, state, content = game
-    db.conn.execute("DELETE FROM save_meta WHERE key='population_unit'")
-    db.conn.execute("DELETE FROM fiscal_config WHERE key='__fiscal_engine'")
-    db.conn.execute("UPDATE fiscal_config SET value=1 WHERE key='__army_pay_source_cutover'")
-    fiscal = json.loads(db.conn.execute(
-        "SELECT fiscal FROM regions WHERE id='shaanxi'"
-    ).fetchone()[0])
-    fiscal["settle"].setdefault("_meta", {})["加派基线"] = 10.0
-    db.conn.execute("UPDATE regions SET fiscal=? WHERE id='shaanxi'",
-                    (json.dumps(fiscal, ensure_ascii=False),))
-    db.conn.commit()
-    path = db.path
-    db.close()
-    db = GameDB(path, content)
-    state = db.load_state()
-    farmer_before = _pop(db, "农民", "shaanxi")
-    displaced_before = _pop(db, "流民", "shaanxi")
-    before_turn = state.turn
-
-    applied = apply_score_extraction(db, state, {
-        "surcharge_decrees": [_decree(db, state, monthly_amount=10.0)],
-    }, content, None)
-    assert not applied["surcharge_decrees"]
-    assert applied["surcharge_decrees_rejections"][0]["category"] == "missing_ref"
-
-    from tests.test_due_review_621 import _settle_empty_month
-    _settle_empty_month(db, state, content, monkeypatch)
-
-    assert state.turn == before_turn + 1
-    assert _pop(db, "农民", "shaanxi") == farmer_before
-    assert _pop(db, "流民", "shaanxi") == displaced_before
-
-
 def test_legacy_fiscal_engine_rejects_surcharge_and_never_consumes_it(legacy_game, monkeypatch):
     db, state, content = legacy_game
     before = _pop(db, "流民", "shaanxi")

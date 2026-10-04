@@ -823,10 +823,8 @@ def test_revoke_decree_523_producer_durable_oracle_chain(env):
 
 # ── #654 A–H 断根补测 ─────────────────────────────────────────────
 
-def test_location_canonical_seed_and_write_seam(env, tmp_path):
-    """G：fresh seed 三人 beizhili；写缝别名归一；未知 fail-loud；在途保全。"""
-    import shutil
-    from ming_sim.db import GameDB
+def test_location_canonical_seed_and_write_seam(env):
+    """G：fresh seed 三人 beizhili；写缝别名归一；未知 fail-loud。"""
     from ming_sim.matching import canonical_region_id_exact
     from ming_sim.distance import DistanceMatrix
     from ming_sim.paths import bundled_path
@@ -871,42 +869,8 @@ def test_location_canonical_seed_and_write_seam(env, tmp_path):
     ).fetchone()["location"] == "beizhili"
     with pytest.raises(ValueError):
         db.set_character_transit("毕自严", location="atlantis", commit=True)
-    # 旧档在途保全：独立副本预置别名 + transit → 开档 migrate 后四字段不变
-    clone = tmp_path / "loc_migrate.db"
-    shutil.copyfile(db.path, clone)
-    # 绕过写缝，直接预置旧别名（模拟旧档）
-    import sqlite3
-    conn = sqlite3.connect(clone)
-    conn.execute(
-        "UPDATE characters SET location='beijing', transit_to='shaanxi', "
-        "transit_distance_remaining=2.5, transit_speed_factor=1.0, "
-        "transit_start_turn=3 WHERE name='毕自严'"
-    )
-    conn.commit()
-    conn.close()
-    restored = GameDB(str(clone), content)
-    try:
-        row = restored.conn.execute(
-            "SELECT location, transit_to, transit_distance_remaining, "
-            "transit_speed_factor, transit_start_turn FROM characters "
-            "WHERE name='毕自严'"
-        ).fetchone()
-        assert row["location"] == "beizhili"
-        assert row["transit_to"] == "shaanxi"
-        assert float(row["transit_distance_remaining"]) == 2.5
-        assert float(row["transit_speed_factor"]) == 1.0
-        assert int(row["transit_start_turn"]) == 3
-    finally:
-        restored.close()
-    # 未知非空开档 fail-loud
-    bad = tmp_path / "loc_bad.db"
-    shutil.copyfile(db.path, bad)
-    conn = sqlite3.connect(bad)
-    conn.execute("UPDATE characters SET location='atlantis' WHERE name='毕自严'")
-    conn.commit()
-    conn.close()
-    with pytest.raises(ValueError):
-        GameDB(str(bad), content)
+    # 写缝已钉未知非空 fail-loud。开档别名 migrate / 开档扫 location 已随
+    # _migrate_character_location_aliases 退役，不再造旧档副本期待写回。
 
 def test_authorization_region_gets_single_locality(env):
     """D：authorization region 目标 producer 写 locality_scope=single。"""

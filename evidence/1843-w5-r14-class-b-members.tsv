@@ -1,0 +1,7 @@
+path	test	disposition	reason
+tests/test_fiscal_substrate_bridge.py	test_region_loader_rejects_bad_settle_meta_defaults	FIXED	去 match=error；保 SystemExit + 四参数负向案
+tests/test_fiscal_substrate_bridge.py	test_standalone_army_pay_funnel_rejects_malformed_settle_shapes	FIXED	去 match=match；保 ValueError + 参数化负向
+tests/test_fiscal_substrate_bridge.py	test_standalone_army_pay_container_total_rejects_malformed_region_shapes	FIXED	去 match=match；保 ValueError + 参数化负向
+tests/test_fiscal_substrate_bridge.py	test_cutover_pay_source_errors_abort_fixed_flows	FIXED	去产线正文「饷源比例和必须为 1」；保 SettlementAbort+pack
+tests/test_fiscal_substrate_bridge.py	test_cutover_outbound_debit_failure_uses_settlement_abort_error_pack	FIXED	去「边饷hub实拨失败」；保类型+pack；注入哨兵仍按 category
+tests/test_fiscal_substrate_bridge.py	test_cutover_missing_human_loss_rate_uses_settlement_abort_error_pack	FIXED	去「central_taicang_human_loss_rate 缺失」；保类型+pack

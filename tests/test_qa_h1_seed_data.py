@@ -29,14 +29,6 @@ def _army_by_id(aid: str) -> dict:
     raise AssertionError(f"armies.json 缺 id={aid}")
 
 
-def _bajiu_names(characters: dict) -> set[str]:
-    return {
-        name
-        for name, ch in characters.items()
-        if "罢居" in (ch.office or "")
-    }
-
-
 def _deficit_seed():
     events = load_event_content("seed_events.json")
     by_id = {ev.id: ev for ev in events}
@@ -49,9 +41,14 @@ def test_guanning_commander_not_bajiu_offstage_yuan():
 
     gazette：「关外无主帅。关宁军由祖大寿、何可纲、赵率教分统」。
     controller（A-3 已改）与 commander 同落分统名，禁再写袁崇焕。
+    袁崇焕现役 seed：office=纯职名「辽东巡抚」，罢居走 status/status_reason。
     """
     _, characters = load_character_content()
-    assert "罢居" in (characters["袁崇焕"].office or "")
+    yuan = characters["袁崇焕"]
+    assert yuan.office == "辽东巡抚"
+    assert "罢居" not in (yuan.office or "")
+    assert yuan.status == "offstage"
+    assert "罢居" in (yuan.status_reason or "")
     army = _army_by_id("guanning")
     commander = army["commander"]
     controller = army["controller"]
