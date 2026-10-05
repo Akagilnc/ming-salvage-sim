@@ -7,7 +7,7 @@
     from starlette.testclient import TestClient as TestClient  # noqa
 
 -- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
-149 passed, 1 warning in 6.35s
+149 passed, 1 warning in 5.79s
 highlight judge degraded: 'NoneType' object has no attribute 'base_url'
 Traceback (most recent call last):
   File "/Users/akagilnc/WorkSpace/Ming_LLM-1834-w5/ming_sim/highlight_judge.py", line 92, in run_highlight_judge
@@ -50,6 +50,6 @@ Traceback (most recent call last):
     extra_body = provider_extra_body(llm_config.base_url, llm_config.model)
                                      ^^^^^^^^^^^^^^^^^^^
 AttributeError: 'NoneType' object has no attribute 'base_url'
-real 7.01
-user 3.83
-sys 1.21
+real 6.44
+user 3.76
+sys 1.14

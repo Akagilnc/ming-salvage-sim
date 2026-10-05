@@ -1,5 +1,6 @@
 #!/bin/bash
-# F19 full-repo enum: superseded secret-order extract closure + landing shared gates.
+# F19 / F19-R full-repo enum: superseded secret-order extract + retired draft/secret
+# prefix dispatch + zero-call compose recovery projections.
 # Coverage: entire worktree (includes docs/archive/evidence). No path excludes.
 # Call-site proof uses bare "name(" so definitions alone are not counted as consumers.
 set +e
@@ -22,3 +23,27 @@ echo "CMD5_EXIT=$?"
 echo '### F19 CMD6 call-site proof: secret_order_landing_gaps('
 rg -n 'secret_order_landing_gaps\('
 echo "CMD6_EXIT=$?"
+echo '### F19-R CMD7 retired prefix dispatch + matched_prefix (full repo)'
+rg -n '_DRAFT_PREFIXES|_SECRET_PREFIXES|_matched_prefix'
+echo "CMD7_EXIT=$?"
+echo '### F19-R CMD8 call-site proof: _matched_prefix('
+rg -n '_matched_prefix\('
+echo "CMD8_EXIT=$?"
+echo '### F19-R CMD9 zero-call compose_decree_validation_recovery + projection'
+rg -n 'compose_decree_validation_recovery|decree_validation_failure|decree_validation_recovery'
+echo "CMD9_EXIT=$?"
+echo '### F19-R CMD10 call-site proof: compose_decree_validation_recovery('
+rg -n 'compose_decree_validation_recovery\('
+echo "CMD10_EXIT=$?"
+echo '### F19-R CMD11 top-level single-ref candidates (classify keep/delete)'
+rg -n 'require_fresh_cli_trace|night_dossiers_ready|_target_active_officeholder'
+echo "CMD11_EXIT=$?"
+echo '### F19-R CMD12 call-site proof: require_fresh_cli_trace('
+rg -n 'require_fresh_cli_trace\('
+echo "CMD12_EXIT=$?"
+echo '### F19-R CMD13 call-site proof: night_dossiers_ready('
+rg -n 'night_dossiers_ready\('
+echo "CMD13_EXIT=$?"
+echo '### F19-R CMD14 call-site proof: _target_active_officeholder('
+rg -n '_target_active_officeholder\('
+echo "CMD14_EXIT=$?"

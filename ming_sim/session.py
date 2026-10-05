@@ -165,8 +165,6 @@ class ChatTurnResult:
     pending_action_failures: List[Dict[str, Any]] = field(default_factory=list)
     # #502 AC5：多道并存时口头准驳含糊 → 结构化含糊态（含候选集），驱动大臣当场追问哪一道。
     directive_confirmation_ambiguous: Optional[Dict[str, Any]] = None
-    # Typed decree validation recovery (failed_fields + LLM report); sync/retry must project it.
-    decree_validation_failure: Optional[Dict[str, Any]] = None
     # #1842：ctid>0 时 scene_chat 只暂存转译参数；回话 persist 后由
     # schedule_pending_scene_translation 启动（ADR 0155 / 0036：回话落定后起）。
     pending_audience_translation: Optional[Dict[str, Any]] = None

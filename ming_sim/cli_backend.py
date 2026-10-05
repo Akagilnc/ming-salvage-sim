@@ -1255,25 +1255,8 @@ def _messages_to_prompt(
     return prompt
 
 
-# ── 拟旨 / 下密令入档（CLI 后端）────────────────────────────────────────
-# 原版（api key）靠 agno 工具 propose_directive/secret_order，模型 function-call 触发。
-# agy/codex/claude 不做 function-calling，唯一缺口在此。玩家用「拟旨/下密令」按钮 =
-# 消息带「拟旨如下：/密令如下：」前缀 = 已表态要下旨，据此分派：
-#   拟旨：大臣回话原文即这道圣旨草稿，整段入档（单一文本字段，够用；多轮聊出多道 →
-#         颁诏时玩家去重）。
-#   密令：现役由统一转译声明 commission.secret_order，declaration_dispatch 承接；
-#         旧 _extract_secret_order 专属闭包已删（#1812 / #1834 F19）。
-_DRAFT_PREFIXES = ("拟旨如下：", "拟旨如下:", "拟旨：", "拟旨:")
-_SECRET_PREFIXES = ("密令如下：", "密令如下:", "密令：", "密令:")
-
-
-# 大臣会话动作抽取（CLI 后端无 function-calling）：
-# 不靠关键字白名单（脆、永远漏），交给 LLM 读对话判意图——皇帝本轮对该大臣【现有密令】
-# 要做什么（更新内容 / 提交核议 / 催办 / 记进展），以及若是妃嫔有无调教。
-# 只在「大臣有 active 密令 或 是妃嫔」时调（省 token）。
-
-
-
+# 旧 CLI「拟旨如下：/密令如下：」前缀分派与 _extract_secret_order 专属闭包已删
+# （#1812 / #1834 F19）；现役密令由统一转译 commission.secret_order → declaration_dispatch。
 
 
 def _directive_mode(value: object) -> Optional[str]:
@@ -1915,54 +1898,6 @@ def compose_unknown_participant_inworld_report(
         prompt,
         llm_config=llm_config,
         tag="participant_escalate_report",
-    )
-
-
-def compose_decree_validation_recovery(
-    failed_fields: Optional[List[str]] = None,
-    *,
-    speaker_name: str = "",
-    speaker_role: str = "",
-    emperor_words: str = "",
-    prior_output: str = "",
-    llm_config: Any = None,
-) -> str:
-    """Turn typed decree rejection facts into a player-facing retry cue via the LLM.
-
-    #1765：接皇帝原话与原产出；零形式约束（禁句数/句式硬限，ADR 0033）。
-    speaker_role：接 minister_speaker_role 客观档料；不在此复制人物/党派材料。
-    """
-    field_groups = {
-        "银两数目": {"amount"},
-        "款项来源": {"account"},
-        "用途": {"purpose"},
-        "旨意正文": {"text", "body", "decree_text"},
-        "所指对象": {"target_kind", "target_id"},
-        "所指地域": {"region_id", "locality_scope"},
-        "承办人": {"assignee", "assignee_id", "assignee_name"},
-        "拨付节奏": {"cadence"},
-        "办理方式": {"action_type", "dossier_action_type", "transaction_category"},
-    }
-    failed = {str(item).strip() for item in (failed_fields or []) if str(item).strip()}
-    features = [label for label, keys in field_groups.items() if failed & keys]
-    feature = "、".join(features) if features else "旨意所指对象或必需内容"
-    role = str(speaker_role or "").strip()
-    if not role:
-        name = str(speaker_name or "").strip()
-        role = name or "大臣"
-    prompt = (
-        f"你是{role}。一份拟旨在记录前校验未通过，"
-        f"需要皇帝重新说明：{feature}。以本职口吻回禀，明确此旨尚未记录，并请皇帝"
-        "补充或改说所需信息后重拟。"
-    )
-    emperor = str(emperor_words or "").strip()
-    if emperor:
-        prompt += f"\n【皇帝原话】{emperor}"
-    prior = str(prior_output or "").strip()
-    if prior:
-        prompt += f"\n【原产出】{prior}"
-    return _compose_inworld_fact_report(
-        prompt, llm_config=llm_config, tag="decree_validation_recovery",
     )
 
 
@@ -3492,26 +3427,6 @@ def resubmit_draft_admission_payload(
     if _is_manual_special_decree_fallback(payload):
         raise ValueError("结算补交重写落空载 special_decree fallback")
     return payload
-
-
-
-
-
-
-
-
-
-
-def _matched_prefix(message: str, prefixes) -> Optional[str]:
-    """消息命中某前缀则返回前缀后的正文（玩家那句意图），否则 None。
-
-    只 lstrip 定位前缀；前缀后正文（含尾空白）原样返回（#1834 F16）。
-    """
-    pm = (message or "").lstrip()
-    for pre in prefixes:
-        if pm.startswith(pre):
-            return pm[len(pre):]
-    return None
 
 
 def _scan_outside_strings(text: str, handle) -> str:
