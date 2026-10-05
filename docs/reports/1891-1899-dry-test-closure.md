@@ -4,11 +4,12 @@
 开工 BASE：`7ba04d2263793153383e5e2b95d9d58d54ac5456`。
 代码交卷：`a64094fd5336344d1932cf283fea4c2a9f430b65`（DRY + 庭列24 + 初轮11 + 三案/stub）；
 全仓 orphan 清退：`81560cb1b396b35339ca36693e7742bcb188e83b`（再删 23）。
-**本轮：仅追加主助手独立复核证据（docs-only forward）**——不改生产／测试代码；不重复施工／测试。代码交卷仍停在 `a64094fd5`／`81560cb1b`；枚举命令体以既有回执 bash fence 为准。主助手独立复跑证据见文末「主助手独立复核」节（相对 `23d3c36881570a4538fc537921144ad0184bcc8a`）。
+**本轮：TEST-C1 残余（ObservingLock／ToolExec）**——仅清退役测试支持物；DRY-C1／D1 **不送修**。前置 docs 复核停在 `79325958864db0d34771457cbe431e273c34d15f`。
+历史：主助手独立复核证据曾相对 `23d3c36881570a4538fc537921144ad0184bcc8a`（见文末「主助手独立复核」节；**该节 ORPHAN=0 结论范围仅覆盖 `name.startswith('_')` 私有顶层**，已撤回冒称「全类支持物 0」——见「TEST-C1 残余」节）。
 
-法源：末份 `1891m-judge-7ba04d226.json` payload[4]、`1899c-judge-7ba04d226.json` payload[3]、`1891-1899-countersign-7ba04d226.json`（原卷直读，本回执不自撰顾问／判词摘要冒称原话）。
+法源：末份 `1891m-judge-7ba04d226.json` payload[4]、`1899c-judge-7ba04d226.json` payload[3]、`1891-1899-countersign-7ba04d226.json`（原卷直读，本回执不自撰顾问／判词摘要冒称原话）；本轮退修 payload：TEST-C1 残余（DRY 不送修）。
 Python：`/Users/akagilnc/WorkSpace/Ming_LLM/.venv/bin/python`。
-历史临时根（仅日志指针，**复跑命令不依赖**）：初轮 `/tmp/1891-dry-test.e72Ys3`；orphan 轮 `/tmp/1891-dry-fix2.SD3paj`。
+历史临时根（仅日志指针，**复跑命令不依赖**）：初轮 `/tmp/1891-dry-test.e72Ys3`；orphan 轮 `/tmp/1891-dry-fix2.SD3paj`；独立复核 `/tmp/1891-dry-test-independent.ip7JIM`；**本残余轮** `/tmp/1891-test-c1-residual.KvXgjJ`。
 
 ## 七变量前缀
 
@@ -354,7 +355,7 @@ PY
 | HEAD 存活消费者非空 | **0** |
 | `_wait_for_pending_writes_to_drain` BASE 显著命中 | `import_from_nested` @ `test_highlight_judge_544.py:199` + `imported_name_use:201`（消费者=`_drain`，已同删） |
 | `_drain` BASE Name 调用 | 无（自身无外调用；嵌套 import 是它对 wait 的消费） |
-| HEAD 顶层测试私有 orphan | 0；KEEP_FIXTURE 9；KEEP_CONSUMED 679；DYNAMIC 0 |
+| HEAD 顶层测试私有 orphan | 0；KEEP_FIXTURE 9；KEEP_CONSUMED 679；DYNAMIC 0（**仅 `_` 前缀**；不得冒称含 public） | **范围＝仅 `name.startswith('_')`**；**不得**冒称含 public 支持类（见 TEST-C1 残余失败史） |
 | 嵌套私有额外候选（tests/） | 344；与已删同名共享 1：`test_mechanical_tail_1845` 案内 `_reports`（**嵌套专属闭包**，≠ 已删顶层 `test_adr0015…._reports` 的存活消费）。**非全协议完备** |
 | DRY BASE | skip@649／issue@680；RAW_EQUAL False；**NORMALIZED_SESSION_AST_EQUAL True** |
 | DRY HEAD | combined `action in (skip,issue)` @651 |
@@ -690,7 +691,7 @@ $PY "$TMPROOT/enum.py" | tee "$TMPROOT/enum.log"
 | SUMMARY | `BASE_MISSING_TOP=0` `HEAD_STILL=0` `HEAD_SURVIVING_NONEMPTY=0` |
 | NESTED_PRIV_COUNT | **344** |
 | NESTED_SHARE_DELETED_NAME | **1**（`test_mechanical_tail_1845` 案内自有 `_reports` @395 → 嵌套专属闭包；**非**已删顶层存活消费者） |
-| ORPHAN／KEEP_FIXTURE／KEEP_CONSUMED／DYNAMIC | **0／9／679／0** |
+| ORPHAN／KEEP_FIXTURE／KEEP_CONSUMED／DYNAMIC | **0／9／679／0**（**仅 `_` 前缀私有顶层**；冒称「全类支持物 0」=失败史，见「TEST-C1 残余」） |
 | DRY_BASE | `SKIP_IF 649` `ISSUE_IF 680` `RAW_EQUAL False` `NORMALIZED_SESSION_AST_EQUAL True` |
 | DRY HEAD | combined @**651** |
 
@@ -730,6 +731,336 @@ UV_TOOL_DIR=/tmp/1891-uv-tools UV_CACHE_DIR=/tmp/1891-uv-cache \
 
 相对复核 HEAD `23d3c36881570a4538fc537921144ad0184bcc8a`：`git diff --check` 与 `git status` **均无输出**（本 forward 提交前工作树仅追加本节后的 docs diff）。
 
-## 提交约束声明
+## 提交约束声明（历史：docs-only 复核轮；保留）
 
 本轮仅 forward `ak-roles:` **docs**（追加主助手独立复核事实证据）；不 amend／stash／reset／checkout 覆盖／rebase／squash／push／PR；不改生产／测试代码；不改宪法／Soul／宿主配置／席位表；不造通用机制或永久自证测试；不重复施工／测试；`git diff --check` 绿。
+
+---
+
+## TEST-C1 残余（ObservingLock／ToolExec；本轮施工）
+
+**开工**：`79325958864db0d34771457cbe431e273c34d15f`。**范围**：仅 TEST-C1 残余；DRY-C1／D1 **不送修**。
+**临时根**：`/tmp/1891-test-c1-residual.KvXgjJ/`（`enum-after-delete.log`／`logs/focus.log`／`logs/ruff-after.log`／`user`／`pytest`）。
+
+### 失败史：旧 ORPHAN=0 范围错误（保留；不抹）
+
+旧回执（含独立复核）`HEAD_TOPLEVEL_TEST_PRIVATE_ORPHAN_FULLIDX` 段有：
+
+```python
+if not name.startswith('_'):
+    continue
+```
+
+因此 **只枚举下划线私有顶层**，漏掉 public 支持类。把「私有 orphan 0」写成「顶层未注册无消费者支持物 0／全类 0」= **冒称**——与庭审复现不符。`ObservingLock`／`ToolExec` 在 `e12e09424`／`7ba04d226`／`79325958` 上同样只剩定义，属更早删除调用方时遗留；旧成员表无此二名。
+
+根因修法：临时审计枚举**去掉** `startswith('_')` 限制；显式区分 pytest 发现（`test_*`／`Test*`／`@pytest.fixture`）与真实消费者；双向 import／attribute／模块别名／字符串；**不得**把自身注解／递归 body 内 Name 当唯一消费者。
+
+### 可复跑：public+private 顶层支持物 orphan（修正口径）
+
+```bash
+export MING_SIM_AGY_BIN=/usr/bin/false MING_SIM_CODEX_BIN=/usr/bin/false \
+  MING_SIM_CLAUDE_BIN=/usr/bin/false MING_SIM_CURSOR_BIN=/usr/bin/false \
+  MING_SIM_KIMI_BIN=/usr/bin/false MING_SIM_GROK_BIN=/usr/bin/false \
+  MING_SIM_PI_BIN=/usr/bin/false PYTHONDONTWRITEBYTECODE=1
+PY=/Users/akagilnc/WorkSpace/Ming_LLM/.venv/bin/python
+TMPROOT=/tmp/1891-test-c1-residual.KvXgjJ
+$PY - <<'PY' | tee "$TMPROOT/enum-after-delete.log"
+import ast, subprocess
+from pathlib import Path
+from collections import defaultdict
+
+files = [f for f in subprocess.check_output(['git','ls-files','*.py'], text=True).splitlines()]
+
+def mq(rel):
+    return rel[:-3].replace('/', '.')
+
+def resolve_from(cur_rel, module, level):
+    if level and level > 0:
+        pkg = list(Path(cur_rel).with_suffix('').parts[:-1])
+        if level - 1 > len(pkg):
+            return None
+        base = pkg[: len(pkg) - (level - 1)] if level > 1 else pkg
+        if module:
+            base = base + module.split('.')
+        return '/'.join(base) + '.py'
+    if not module:
+        return None
+    return module.replace('.', '/') + '.py'
+
+def is_fixture(d):
+    if isinstance(d, ast.Name) and d.id == 'fixture':
+        return True
+    if isinstance(d, ast.Attribute) and d.attr == 'fixture':
+        return True
+    if isinstance(d, ast.Call):
+        return is_fixture(d.func)
+    return False
+
+def index_tree(rel, tree):
+    top = {}
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            fx = any(is_fixture(d) for d in getattr(node, 'decorator_list', []))
+            top[node.name] = {
+                'lineno': node.lineno,
+                'end': getattr(node, 'end_lineno', node.lineno),
+                'fixture': fx,
+                'kind': type(node).__name__,
+            }
+    import_from, mod_alias = [], {}
+    name_loads, attr_loads, strings = defaultdict(list), defaultdict(list), defaultdict(list)
+    top_set = set(tree.body)
+    for node in ast.walk(tree):
+        nested_imp = node not in top_set
+        if isinstance(node, ast.ImportFrom):
+            target = resolve_from(rel, node.module, node.level or 0)
+            for alias in node.names:
+                import_from.append((target, alias.name, node.lineno, alias.asname, nested_imp, node.module, node.level or 0))
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                mod_alias[alias.asname or alias.name.split('.')[0]] = alias.name
+        elif isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
+            name_loads[node.id].append(node.lineno)
+        elif isinstance(node, ast.Attribute) and isinstance(node.ctx, ast.Load):
+            base = node.value.id if isinstance(node.value, ast.Name) else None
+            attr_loads[(base, node.attr)].append(node.lineno)
+        elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+            strings[node.value].append(node.lineno)
+    return dict(top=top, import_from=import_from, mod_alias=mod_alias,
+                name_loads=name_loads, attr_loads=attr_loads, strings=strings)
+
+head_ast = {rel: ast.parse(Path(rel).read_text(encoding='utf-8'), filename=rel) for rel in files}
+mm = {mq(r): r for r in head_ast}
+ix = {r: index_tree(r, t) for r, t in head_ast.items()}
+
+def resolve_target(target, module, mm, known):
+    if target in known:
+        return target
+    if module and module in mm:
+        return mm[module]
+    return None
+
+def consumers(def_rel, def_name, excl_ln=None):
+    hits = []
+    ixx = ix.get(def_rel)
+    if ixx:
+        for ln in ixx['name_loads'].get(def_name, []):
+            if excl_ln is not None and ln == excl_ln:
+                continue
+            hits.append(('name_load', def_rel, ln, 'same_file'))
+        for ln in ixx['strings'].get(def_name, []):
+            hits.append(('string', def_rel, ln, 'same_file'))
+        for (base, attr), lns in ixx['attr_loads'].items():
+            if attr == def_name:
+                for ln in lns:
+                    hits.append(('attr', def_rel, ln, f'base={base}'))
+    for rel, ixx in ix.items():
+        for target, name, ln, asname, nested, module, level in ixx['import_from']:
+            rt = resolve_target(target, module, mm, head_ast)
+            if name == def_name and (rt == def_rel or module == mq(def_rel)):
+                kind = 'import_from_nested' if nested else 'import_from_toplevel'
+                hits.append((kind, rel, ln, f'module={module} level={level} as={asname}'))
+                bind = asname or name
+                for ln2 in ixx['name_loads'].get(bind, []):
+                    hits.append(('imported_name_use', rel, ln2, bind))
+        for (base, attr), lns in ixx['attr_loads'].items():
+            if attr != def_name or base is None:
+                continue
+            mod = ixx['mod_alias'].get(base)
+            if mod and (mm.get(mod) == def_rel or mod == mq(def_rel)):
+                for ln in lns:
+                    hits.append(('module_attr', rel, ln, f'{base}.{attr}'))
+        if rel != def_rel:
+            for ln in ixx['strings'].get(def_name, []):
+                hits.append(('string', rel, ln, 'cross_file'))
+    return hits
+
+def is_pytest_discovered(name, meta):
+    if name.startswith('test_'):
+        return True
+    if name.startswith('Test') and meta['kind'] == 'ClassDef' and not name.startswith('_'):
+        return True
+    if meta['fixture']:
+        return True
+    return False
+
+orphans=[]; keep_pytest=0; keep_fixture=0; keep_consumed=0; dynamic_only=[]; public_rows=[]
+for rel, ixx in sorted(ix.items()):
+    if not rel.startswith('tests/'):
+        continue
+    for name, meta in sorted(ixx['top'].items()):
+        q = f'{mq(rel)}.{name}'
+        if is_pytest_discovered(name, meta):
+            if meta['fixture']:
+                keep_fixture += 1
+            else:
+                keep_pytest += 1
+            continue
+        hits = consumers(rel, name, meta['lineno'])
+        real = [h for h in hits if h[0] != 'string']
+        strs = [h for h in hits if h[0] == 'string']
+        outside = [h for h in real if not (h[1] == rel and meta['lineno'] <= h[2] <= meta['end'])]
+        if not name.startswith('_'):
+            public_rows.append((q, meta['lineno'], len(outside), outside[:2] if outside else None))
+        if outside:
+            keep_consumed += 1
+            continue
+        if strs and not real:
+            dynamic_only.append(q)
+            continue
+        orphans.append((q, rel, meta['lineno'], 'public' if not name.startswith('_') else 'private'))
+
+print(f'ORPHAN {len(orphans)} KEEP_PYTEST {keep_pytest} KEEP_FIXTURE {keep_fixture} KEEP_CONSUMED {keep_consumed} DYNAMIC {len(dynamic_only)}')
+print('PUBLIC_SUPPORT_CANDIDATES', len(public_rows))
+for o in orphans:
+    print('ORPHAN', o)
+for q, ln, n, sample in public_rows:
+    status = 'KEEP' if n else 'ORPHAN'
+    print(f'{status}\t{q}\tline={ln}\toutside={n}\tsample={sample}')
+print('DONE')
+PY
+```
+
+### 修前（`79325958`）复现
+
+同口径扫描：`ORPHAN 2` = `tests.wait_utils.ObservingLock`／`tests.test_audience_background.ToolExec`（全仓代码无 Instantiation／Import／Attribute；docs 非代码消费者）。
+
+### 本轮删除
+
+| 成员 | 处置 |
+| --- | --- |
+| `tests.wait_utils.ObservingLock` | 删除类；`wait_utils` 模块说明去掉 lock observer |
+| `tests.test_audience_background.ToolExec` | 删除类（无实例化；`RunContent`／`RunOutput` 仍有消费者故保留） |
+| `docs/1723-triage-disposition.md` | **不抹史**；文首撤回「共享活单源」；表内标注史／现行已删 |
+| `docs/reports/1891-inflight-test-readers.md` | 「不动 ObservingLock」改为史注 |
+
+不补兼容、不另造证明测试。
+
+### 修后复扫
+
+| 指标 | 值 |
+| --- | --- |
+| ORPHAN | **0** |
+| KEEP_PYTEST／KEEP_FIXTURE／KEEP_CONSUMED／DYNAMIC | **2744／38／740／0** |
+| PUBLIC_SUPPORT_CANDIDATES | **61**（全 KEEP；完整名单＝附表 C） |
+
+### 附表 C：public 支持候选全表（61；修后全 KEEP）
+
+判据：tests/ 顶层非 pytest 发现、非下划线前缀；outside＝定义 body 外真实消费者数；证据样例＝首条 outside 命中（完整复扫见 `$TMPROOT/enum-after-delete.log`）。
+
+| # | qualified | line | outside | 证据样例 |
+| --- | --- | --- | ---: | --- |
+| 1 | `tests.cli_process_doubles.FakeCliProcess` | 132 | 11 | `name_load@tests/cli_process_doubles.py:191` |
+| 2 | `tests.cli_process_doubles.FakeCliRunnerScript` | 178 | 2 | `name_load@tests/cli_process_doubles.py:208` |
+| 3 | `tests.cli_process_doubles.SilentUntilKilled` | 14 | 6 | `name_load@tests/cli_process_doubles.py:32` |
+| 4 | `tests.cli_process_doubles.install_fake_cli_runner` | 208 | 10 | `import_from@tests/test_cli_transport_1465.py:18` |
+| 5 | `tests.conftest.active_ming_character` | 300 | 121 | `import_from@tests/test_audience_extraction_501.py:9` |
+| 6 | `tests.conftest.append_night_chat` | 343 | 27 | `import_from@tests/test_audience_scroll_539.py:9` |
+| 7 | `tests.conftest.clear_pending_rows` | 44 | 10 | `import_from@tests/test_advance_paths_atomic.py:6` |
+| 8 | `tests.conftest.clear_resolve_rows` | 50 | 4 | `import_from@tests/test_advance_paths_atomic.py:6` |
+| 9 | `tests.conftest.covering_monthly_extract` | 607 | 1 | `import_from@tests/test_settle_core.py:12` |
+| 10 | `tests.conftest.monthly_progress_reports` | 613 | 1 | `name_load@tests/conftest.py:628` |
+| 11 | `tests.conftest.note_queue_until_game_teardown` | 111 | 9 | `name_load@tests/conftest.py:129` |
+| 12 | `tests.conftest.offline_empty_audience_translate` | 435 | 29 | `name_load@tests/conftest.py:465` |
+| 13 | `tests.conftest.open_audience_night` | 336 | 30 | `import_from@tests/test_audience_scroll_539.py:9` |
+| 14 | `tests.conftest.open_hall_turn` | 389 | 34 | `import_from@tests/test_audience_night_498.py:11` |
+| 15 | `tests.conftest.own_session_until_game_teardown` | 96 | 3 | `name_load@tests/conftest.py:115` |
+| 16 | `tests.conftest.persist_and_schedule_scene` | 527 | 36 | `import_from@tests/test_audience_translate_1837.py:26` |
+| 17 | `tests.conftest.plant_character_axis_sentinels` | 322 | 4 | `import_from@tests/test_p4_guard_new_surfaces_547.py:17` |
+| 18 | `tests.conftest.seed_rescript_rows` | 27 | 16 | `import_from@tests/test_pihong_dossier_1490.py:16` |
+| 19 | `tests.conftest.stub_audience_translate` | 517 | 56 | `import_from@tests/test_audience_background.py:11` |
+| 20 | `tests.conftest.stub_scene_agent` | 471 | 28 | `import_from@tests/test_audience_background.py:11` |
+| 21 | `tests.conftest.with_monthly_reports` | 624 | 4 | `name_load@tests/conftest.py:609` |
+| 22 | `tests.directive_seed_helpers.seed_manual_draft` | 21 | 14 | `import_from@tests/test_draft_admission_resubmit_1769.py:210` |
+| 23 | `tests.dossier_test_helpers.create_test_secret_order` | 22 | 117 | `import_from@tests/test_audience_undo_506.py:22` |
+| 24 | `tests.dossier_test_helpers.promulgate_proposed_appointments` | 95 | 6 | `import_from@tests/test_executor_routing_721.py:14` |
+| 25 | `tests.dossier_test_helpers.rejected_verdict` | 56 | 21 | `import_from@tests/test_decree_dossiers_571.py:5` |
+| 26 | `tests.fiscal_test_utils.zero_non_meta_fiscal_config` | 1 | 2 | `import_from@tests/test_fiscal_substrate_bridge.py:34` |
+| 27 | `tests.legacy_staging_helpers.active_minister_name` | 14 | 2 | `name_load@tests/legacy_staging_helpers.py:25` |
+| 28 | `tests.legacy_staging_helpers.close_night_dossier` | 52 | 1 | `name_load@tests/legacy_staging_helpers.py:61` |
+| 29 | `tests.legacy_staging_helpers.close_office_to_dossier` | 97 | 1 | `name_load@tests/legacy_staging_helpers.py:133` |
+| 30 | `tests.legacy_staging_helpers.stage_punishment` | 35 | 1 | `name_load@tests/legacy_staging_helpers.py:60` |
+| 31 | `tests.legacy_staging_helpers.stage_yuan_appointment_summon` | 64 | 1 | `name_load@tests/legacy_staging_helpers.py:132` |
+| 32 | `tests.legacy_staging_helpers.yuan_row` | 124 | 1 | `name_load@tests/legacy_staging_helpers.py:134` |
+| 33 | `tests.material_helpers.prepare_identity_materials` | 8 | 39 | `import_from@tests/test_army_card_status_1501.py:15` |
+| 34 | `tests.month_chain_helpers.canned_full_settlement` | 36 | 13 | `import_from@tests/test_no_edict_full_settlement_1274.py:15` |
+| 35 | `tests.month_chain_helpers.make_light_session` | 11 | 88 | `import_from@tests/test_audience_translate_1837_reopen.py:24` |
+| 36 | `tests.section_rejection_helpers.rejection_rows` | 29 | 73 | `import_from@tests/test_economy_section_rejections.py:18` |
+| 37 | `tests.section_rejection_helpers.run_declaration` | 14 | 54 | `import_from@tests/test_army_pay_source_prompt_contract.py:1` |
+| 38 | `tests.test_audience_background.RunContent` | 17 | 3 | `name_load@tests/test_audience_background.py:41` |
+| 39 | `tests.test_audience_background.RunOutput` | 24 | 3 | `name_load@tests/test_audience_background.py:43` |
+| 40 | `tests.test_chat_stream_failpaths_393.RunCompletedEvent` | 527 | 4 | `name_load@tests/test_chat_stream_failpaths_393.py:555` |
+| 41 | `tests.test_chat_stream_failpaths_393.RunContent` | 520 | 10 | `name_load@tests/test_chat_stream_failpaths_393.py:553` |
+| 42 | `tests.test_chat_stream_failpaths_393.RunErrorEvent` | 512 | 2 | `name_load@tests/test_chat_stream_failpaths_393.py:535` |
+| 43 | `tests.test_decree_forecast_1861.ModelCallRendezvous` | 44 | 2 | `name_load@tests/test_decree_forecast_1861.py:466` |
+| 44 | `tests.test_fiscal_tick.S` | 16 | 60 | `name_load@tests/test_fiscal_tick.py:153` |
+| 45 | `tests.test_power_section_rejections.run_settle` | 18 | 10 | `name_load@tests/test_power_section_rejections.py:43` |
+| 46 | `tests.test_release_bundle_assets.MinimalGameDB` | 14 | 1 | `name_load@tests/test_release_bundle_assets.py:31` |
+| 47 | `tests.test_run_agent_text_transport_1465.RunCompletedEvent` | 22 | 1 | `name_load@tests/test_run_agent_text_transport_1465.py:45` |
+| 48 | `tests.test_run_agent_text_transport_1465.RunContent` | 15 | 4 | `name_load@tests/test_run_agent_text_transport_1465.py:43` |
+| 49 | `tests.test_run_agent_text_transport_1465.RunOutput` | 29 | 3 | `name_load@tests/test_run_agent_text_transport_1465.py:46` |
+| 50 | `tests.test_section4_rejections.run_settle` | 20 | 24 | `name_load@tests/test_section4_rejections.py:64` |
+| 51 | `tests.test_section_fiscal_rejections.run_settle` | 22 | 29 | `name_load@tests/test_section_fiscal_rejections.py:48` |
+| 52 | `tests.test_session_write_queue_1353.wait_pending_writes` | 23 | 29 | `name_load@tests/test_session_write_queue_1353.py:459` |
+| 53 | `tests.test_web_audience_night_498.RunCompletedEvent` | 53 | 1 | `name_load@tests/test_web_audience_night_498.py:75` |
+| 54 | `tests.test_web_chat_serialization_393.RunCompletedEvent` | 22 | 1 | `name_load@tests/test_web_chat_serialization_393.py:34` |
+| 55 | `tests.wait_utils.reset_menu_path_leases` | 40 | 4 | `import_from@tests/test_menu_continue_stream_1195.py:12` |
+| 56 | `tests.wait_utils.wait_until` | 12 | 14 | `import_from@tests/test_menu_continue_stream_1195.py:12` |
+| 57 | `tests.web_audience_test_doubles.HallAdmissionSessionMixin` | 41 | 6 | `import_from@tests/test_audience_background.py:9` |
+| 58 | `tests.web_audience_test_doubles.allow_hall_admission` | 15 | 2 | `name_load@tests/web_audience_test_doubles.py:51` |
+| 59 | `tests.web_audience_test_doubles.allow_hall_admit_audience` | 31 | 2 | `name_load@tests/web_audience_test_doubles.py:52` |
+| 60 | `tests.web_audience_test_doubles.install_hall_admission` | 49 | 8 | `import_from@tests/test_chat_stream_failpaths_393.py:26` |
+| 61 | `tests.web_audience_test_doubles.minister_double` | 56 | 8 | `import_from@tests/test_chat_stream_failpaths_393.py:26` |
+
+#### 本票相关 private KEEP（同口径；非 public 表）
+
+| qualified | outside | 证据样例 |
+| --- | ---: | --- |
+| tests.wait_utils._await_condition_or_task | 5 | import_from@tests/test_web_audience_night_498.py:30 + Name@437/475；test_web_chat_serialization_393.py |
+| tests.test_audience_background._FakeAgent | 18 | 同文件现役 test_* / _web_game Name |
+| tests.test_audience_background._FakeSession | 1 | _web_game Name@109 |
+| tests.test_audience_background._web_game | 18 | 同文件现役 test_* Name |
+
+**不计**：TestCommitment* 等 pytest 测试类；docs 字符串命中；自身注解／递归 body 内 Name。
+
+### 验证（本残余轮）
+
+七变量 BIN=`/usr/bin/false`；`MING_SIM_USER_DATA_DIR`／`--basetemp`＝`$TMPROOT` 子目录；`-p no:cacheprovider`。
+
+```bash
+export MING_SIM_AGY_BIN=/usr/bin/false MING_SIM_CODEX_BIN=/usr/bin/false \
+  MING_SIM_CLAUDE_BIN=/usr/bin/false MING_SIM_CURSOR_BIN=/usr/bin/false \
+  MING_SIM_KIMI_BIN=/usr/bin/false MING_SIM_GROK_BIN=/usr/bin/false \
+  MING_SIM_PI_BIN=/usr/bin/false PYTHONDONTWRITEBYTECODE=1 \
+  MING_SIM_USER_DATA_DIR=/tmp/1891-test-c1-residual.KvXgjJ/user
+$PY -m pytest -p no:cacheprovider --basetemp=/tmp/1891-test-c1-residual.KvXgjJ/pytest -q --tb=short \
+  tests/test_cli_play_turn.py \
+  tests/test_web_court_visibility.py \
+  tests/test_qa_s2_copy_prompts_1356_1402.py \
+  tests/test_chat_stream_failpaths_393.py \
+  tests/test_web_chat_serialization_393.py \
+  tests/test_settlement_write_guard_393.py \
+  tests/test_audience_background.py \
+  tests/test_web_audience_night_498.py
+```
+
+结果：`122 passed, 1 warning in 3.98s`。日志：`$TMPROOT/logs/focus.log`。未跑全量。
+
+Ruff 0.11.2／py313／F401,F821（ACMR 触及存活 py）：
+
+```bash
+UV_TOOL_DIR=/tmp/1891-test-c1-residual.KvXgjJ/ruff/uv-tools \
+UV_CACHE_DIR=/tmp/1891-test-c1-residual.KvXgjJ/ruff/uv-cache \
+  uv tool run --from ruff==0.11.2 ruff check --target-version py313 --select F401,F821 -- \
+  tests/test_audience_background.py tests/wait_utils.py
+```
+
+结果：`All checks passed!`（`$TMPROOT/logs/ruff-after.log`）。`git diff --check` 空。
+
+### 本轮提交约束
+
+forward `ak-roles:` 仅 TEST-C1 残余（删两支持类 + 撤回单源陈述 + 回执失败史／public 枚举）；不改 DRY；不 amend／stash／reset／rebase／checkout 覆盖／push／PR；不新增证明测试／兼容机制。
+
+## 提交约束声明（历史：docs-only 复核轮；保留原文意图）
+
+~~本轮仅 forward `ak-roles:` **docs**（追加主助手独立复核事实证据）；不改生产／测试代码~~ → **已被「TEST-C1 残余」轮接续**；独立复核节正文仍保留为当时事实证据。

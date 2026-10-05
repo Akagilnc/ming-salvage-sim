@@ -38,7 +38,7 @@
 
 唯一 helper：`tests/wait_utils._await_condition_or_task(predicate, task)`
 规则：`while not predicate() and not task.done()` → task 异常原样传播 → 谓词仍假则 `AssertionError`。
-无 `isinstance` / 兼容包装 / timeout / 第三机制；不动既有 `wait_until` / `ObservingLock`。
+无 `isinstance` / 兼容包装 / timeout / 第三机制；不动既有 `wait_until`／`ObservingLock`（史：当时施工边界；`ObservingLock` 后于 #1891/#1899 TEST-C1 残余因零引用删除，见 `docs/1723-triage-disposition.md` 文首撤回）。
 
 调用点（两文件直接 import 同一符号）：
 
@@ -156,4 +156,4 @@ git diff --check   # clean
 ## 自查二连
 
 - 同类型：授权面已删属性读取／退役 monkeypatch；镜像 wait helper 已并；唯一 async helper 现仅 `wait_utils` 一份；SSE 无平行规则副本；predicate 轮询表列全；无「外边界不修」洗白。
-- 引入 bug：共享 helper 保留 task 终态传播；SSE 仍 finally release + 原 asserts；未恢复兼容符号；未加 timeout；未改生产；未动 `wait_until`/`ObservingLock`；未扩 F1/A/B/C 或非等待 gate。
+- 引入 bug：共享 helper 保留 task 终态传播；SSE 仍 finally release + 原 asserts；未恢复兼容符号；未加 timeout；未改生产；未动 `wait_until`／`ObservingLock`（史；后者后因零引用删除，见 1723 文首撤回）；未扩 F1/A/B/C 或非等待 gate。

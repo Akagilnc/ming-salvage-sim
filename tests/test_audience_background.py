@@ -27,13 +27,6 @@ class RunOutput:
         self.content = None
 
 
-class ToolExec:
-    def __init__(self, tool_name: str, result: str, arguments=None) -> None:
-        self.tool_name = tool_name
-        self.result = result
-        self.arguments = arguments or {}
-
-
 class _FakeAgent:
     def __init__(self, tools=None, chunks=None) -> None:
         self.completed = threading.Event()
