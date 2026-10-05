@@ -1,0 +1,19 @@
+{"file": "ming_sim/cli_backend.py", "line": 2073, "kind": "CALL_NORMALIZE", "keywords": {"strict_structured": "Constant(value=True)"}}
+{"file": "ming_sim/db.py", "line": 20863, "kind": "DEF", "name": "_normalize_participant_roster", "args": ["participants"], "kwonly": ["strict_structured"], "defaults": {"strict_structured": "Constant(value=False)"}}
+{"file": "ming_sim/db.py", "line": 20900, "kind": "DEF", "name": "merge_participant_roster_entries", "args": ["existing", "incoming"], "kwonly": ["strict_incoming"], "defaults": {"strict_incoming": "Constant(value=False)"}}
+{"file": "ming_sim/db.py", "line": 13768, "kind": "CALL_NORMALIZE", "keywords": {"strict_structured": "Constant(value=True)"}}
+{"file": "ming_sim/db.py", "line": 14160, "kind": "CALL_NORMALIZE", "keywords": {"strict_structured": "Constant(value=True)"}}
+{"file": "ming_sim/db.py", "line": 14216, "kind": "CALL_NORMALIZE", "keywords": {"strict_structured": "Constant(value=True)"}}
+{"file": "ming_sim/db.py", "line": 14461, "kind": "CALL_NORMALIZE", "keywords": {}}
+{"file": "ming_sim/db.py", "line": 14464, "kind": "CALL_NORMALIZE", "keywords": {"strict_structured": "Constant(value=True)"}}
+{"file": "ming_sim/db.py", "line": 17609, "kind": "CALL_NORMALIZE", "keywords": {"strict_structured": "Constant(value=True)"}}
+{"file": "ming_sim/db.py", "line": 20152, "kind": "CALL_NORMALIZE", "keywords": {}}
+{"file": "ming_sim/db.py", "line": 20912, "kind": "CALL_NORMALIZE", "keywords": {}}
+{"file": "ming_sim/db.py", "line": 20913, "kind": "CALL_NORMALIZE", "keywords": {"strict_structured": "Name(id='strict_incoming', ctx=Load())"}}
+{"file": "ming_sim/db.py", "line": 13784, "kind": "CALL_NORMALIZE", "keywords": {"strict_structured": "Constant(value=True)"}}
+{"file": "ming_sim/db.py", "line": 13858, "kind": "CALL_NORMALIZE", "keywords": {"strict_structured": "Constant(value=True)"}}
+{"file": "ming_sim/db.py", "line": 17616, "kind": "CALL_MERGE", "keywords": {"strict_incoming": "Constant(value=True)"}, "args": 2}
+{"file": "ming_sim/declaration_dispatch.py", "line": 1076, "kind": "CALL_MERGE", "keywords": {"strict_incoming": "Constant(value=True)"}, "args": 2}
+{"file": "ming_sim/declaration_dispatch.py", "line": 1055, "kind": "CALL_NORMALIZE", "keywords": {"strict_structured": "Constant(value=True)"}}
+{"file": "ming_sim/declaration_dispatch.py", "line": 1120, "kind": "CALL_MERGE", "keywords": {"strict_incoming": "Constant(value=True)"}, "args": 2}
+{"file": "ming_sim/rescript_draft.py", "line": 707, "kind": "CALL_NORMALIZE", "keywords": {"strict_structured": "Constant(value=True)"}}

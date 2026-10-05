@@ -17616,7 +17616,6 @@ class GameDB:
             incoming["participant_roster"] = self.merge_participant_roster_entries(
                 old.get("participant_roster") or [],
                 new_roster,
-                strict_incoming=True,
             )
 
         # 先对 incoming 互斥分类（并存即拒），再决定从 old 继承哪些字段
@@ -20900,18 +20899,18 @@ class GameDB:
     def merge_participant_roster_entries(
         existing: Iterable[object] | None,
         incoming: Iterable[object] | None,
-        *,
-        strict_incoming: bool = False,
     ) -> List[Dict[str, object]]:
-        """载荷侧名单合并：先 normalize，再按完整条目 equality 追加。
+        """载荷侧名单合并：incoming 严格规范化，再按完整条目 equality 追加。
 
         与 ``_merge_directive_payload`` 名册分支同一条规则；不按 character_id
         静默丢后项。持久化案卷追加冲突（同人异档）仍走
-        ``append_decree_dossier_participants``。
+        ``append_decree_dossier_participants``。通用宽松规范化仍由
+        ``_normalize_participant_roster`` 服务其他业务读缝，本合并口不再保留
+        无消费者的宽松 incoming 开关。
         """
         base = GameDB._normalize_participant_roster(list(existing or []))
         add = GameDB._normalize_participant_roster(
-            list(incoming or []), strict_structured=strict_incoming,
+            list(incoming or []), strict_structured=True,
         )
         return base + [item for item in add if item not in base]
 

@@ -322,8 +322,14 @@ def test_terminal_minister_chat_preserves_chat_error_when_rollback_fails(monkeyp
     answers = iter(["命洪承畴督办陕西赈灾，东厂暗助护赈银。"])
     monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
 
-    with pytest.raises(RuntimeError):
+    # 原故障对象保真（非措辞锁）：主异常须为 chat 故障，回滚故障只能挂 cause。
+    # 官方能力：pytest.raises + ExceptionInfo.value / __cause__ / .args
+    # https://docs.pytest.org/en/stable/how-to/assert.html#assertions-about-expected-exceptions
+    with pytest.raises(RuntimeError) as ei:
         term.minister_chat(Session(), SimpleNamespace(name="魏忠贤"))
+    assert ei.value.args == ("LLM down",)
+    assert isinstance(ei.value.__cause__, RuntimeError)
+    assert ei.value.__cause__.args == ("rollback failed",)
 
 
 def test_terminal_minister_chat_reply_persist_failure_keeps_user_message(monkeypatch):

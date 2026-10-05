@@ -699,12 +699,15 @@ def test_error_pack_failure_keeps_original_fault_and_retry_phase(
         session.resolve_turn(allow_empty_decree=True)
 
     assert caught.value.error_pack_path is None
+    # 原结算诊断保真：写包次生故障挂 cause，不得顶替 SettlementAbort / 持久 call_failure。
+    assert caught.value.args[:1] == ("edict settle crashed",)
     assert isinstance(caught.value.__cause__, OSError)
+    assert caught.value.__cause__.args == ("error pack unwritable",)
     assert not db.staged_declarations.is_settled(ref)
     assert _ningyuan_ledger_rows(db) == []
     failure = _month_chain_of(db, turn).get("call_failure") or {}
     assert failure.get("kind") == "code_exception"
-    assert str(failure.get("message") or "").strip()  # 有诊断；不盯注入措辞
+    assert failure.get("message") == "edict settle crashed"
     assert not failure.get("error_pack_path")
 
     session.resolve_turn(allow_empty_decree=True)

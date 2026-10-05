@@ -1076,7 +1076,6 @@ def _attach_commission_escort(
     payload["participant_roster"] = GameDB.merge_participant_roster_entries(
         existing if isinstance(existing, list) else [],
         roster,
-        strict_incoming=True,
     )
     record: Dict[str, Any] = {
         "escortees": [str(entry["character_id"]) for entry in roster],
@@ -1120,7 +1119,6 @@ def _attach_commission_staging_fields(
         payload["participant_roster"] = GameDB.merge_participant_roster_entries(
             existing if isinstance(existing, list) else [],
             roster,
-            strict_incoming=True,
         )
     elif lead and not isinstance(payload.get("participant_roster"), list):
         payload["participant_roster"] = [{

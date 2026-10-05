@@ -345,7 +345,10 @@ def test_atomic_and_reload_chains_reload_failure(game, monkeypatch):
     with pytest.raises(RuntimeError) as ei:
         with atomic_and_reload(db, state, content=content):
             raise RuntimeError("orig")
-    assert isinstance(ei.value.__cause__, ValueError)  # 链：orig from reload failed
+    # 原异常对象保真：主诊断仍是 body 故障；reload 次生故障只挂 cause。
+    assert ei.value.args == ("orig",)
+    assert isinstance(ei.value.__cause__, ValueError)
+    assert ei.value.__cause__.args == ("reload failed",)
 
 
 def test_atomic_and_reload_runs_on_error_before_reload(game, monkeypatch):
