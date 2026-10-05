@@ -20955,19 +20955,6 @@ class GameDB:
         """召对 chat → shared-ledger channel (#883/#976)."""
         return str(kind or "") == "audience" or str(source_id or "").startswith("chat_message:")
 
-    def _is_active_secret_order_assignee(self, minister_name: str) -> bool:
-        """True when this minister holds an active/pending private secret brief."""
-        name = str(minister_name or "").strip()
-        if not name:
-            return False
-        row = self.conn.execute(
-            "SELECT 1 FROM secret_order_briefs b "
-            "INNER JOIN secret_orders o ON o.id = b.order_id "
-            "WHERE b.minister_name=? AND o.status='active' LIMIT 1",
-            (name,),
-        ).fetchone()
-        return row is not None
-
     def _delete_shared_knowledge_source_ids(
         self, source_ids: Iterable[str], *, commit: bool = True,
     ) -> None:

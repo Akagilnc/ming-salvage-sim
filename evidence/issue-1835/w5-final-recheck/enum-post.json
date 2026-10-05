@@ -1,0 +1,4595 @@
+{
+  "G1": [
+    {
+      "file": "ming_sim/breach_plea.py",
+      "symbol": "assess_foundation_tier",
+      "lineno": 473,
+      "kind": "g1_shape"
+    },
+    {
+      "file": "ming_sim/breach_plea.py",
+      "symbol": "stop_origin_commitment_ticks",
+      "lineno": 551,
+      "kind": "g1_shape"
+    },
+    {
+      "file": "ming_sim/breach_plea.py",
+      "symbol": "apply_persist_revoke_tail",
+      "lineno": 601,
+      "kind": "g1_shape"
+    },
+    {
+      "file": "ming_sim/breach_plea.py",
+      "symbol": "finalize_persist",
+      "lineno": 692,
+      "kind": "g1_shape"
+    },
+    {
+      "file": "ming_sim/breach_plea.py",
+      "symbol": "resolve_breach_pleas_from_extraction",
+      "lineno": 1307,
+      "kind": "g1_shape"
+    },
+    {
+      "file": "ming_sim/commitment_backlash.py",
+      "symbol": "classify_backlash_source",
+      "lineno": 45,
+      "kind": "g1_shape"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "GameDB.read_dossier_fork_state",
+      "lineno": 11939,
+      "kind": "g1_shape"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "GameDB.build_faction_denunciation_facts",
+      "lineno": 12782,
+      "kind": "g1_shape"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "GameDB.trigger_commitment_backlashes",
+      "lineno": 13114,
+      "kind": "g1_shape"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "GameDB.record_dossier_execution",
+      "lineno": 15110,
+      "kind": "g1_shape"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "GameDB.apply_dossier_promulgation",
+      "lineno": 15163,
+      "kind": "g1_shape"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "GameDB.breach_decree_dossier",
+      "lineno": 15728,
+      "kind": "g1_shape"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "GameDB.merge_execution_note",
+      "lineno": 15833,
+      "kind": "g1_shape"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "GameDB._apply_authorization_verdict_effect",
+      "lineno": 16150,
+      "kind": "g1_shape"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "GameDB._apply_revoke_decree_verdict_effect",
+      "lineno": 16321,
+      "kind": "g1_shape"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "GameDB._apply_referral_verdict_effect",
+      "lineno": 16419,
+      "kind": "g1_shape"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "GameDB._apply_assignment_verdict_effect",
+      "lineno": 16510,
+      "kind": "g1_shape"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "GameDB.interrupt_dossiers_for_character",
+      "lineno": 16928,
+      "kind": "g1_shape"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "GameDB.cancel_issue",
+      "lineno": 20274,
+      "kind": "g1_shape"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "GameDB.close_secret_order",
+      "lineno": 21739,
+      "kind": "g1_shape"
+    },
+    {
+      "file": "ming_sim/due_review.py",
+      "symbol": "_apply_dossier_verdict",
+      "lineno": 423,
+      "kind": "g1_shape"
+    },
+    {
+      "file": "ming_sim/entities/dossier/delta_section.py",
+      "symbol": "apply_executions",
+      "lineno": 42,
+      "kind": "g1_shape"
+    },
+    {
+      "file": "ming_sim/entities/issue/tracker.py",
+      "symbol": "apply_issue_tracker_output",
+      "lineno": 23,
+      "kind": "g1_shape"
+    },
+    {
+      "file": "ming_sim/issues.py",
+      "symbol": "apply_event_cascading_invalidations",
+      "lineno": 1013,
+      "kind": "g1_shape"
+    },
+    {
+      "file": "ming_sim/issues.py",
+      "symbol": "gather_impeachment_surge_candidates",
+      "lineno": 1517,
+      "kind": "g1_shape"
+    },
+    {
+      "file": "ming_sim/participant_roster.py",
+      "symbol": "project_execution_liability_parties",
+      "lineno": 100,
+      "kind": "g1_shape"
+    }
+  ],
+  "G2": [
+    {
+      "file": "ming_sim/action_clusters.py",
+      "symbol": "json.loads@380",
+      "lineno": 380,
+      "kind": "json_loads",
+      "line": "# str(list/dict) 是 Python repr（单引号），下游 json.loads 会当坏形丢掉。"
+    },
+    {
+      "file": "ming_sim/action_materialize.py",
+      "symbol": "require_grant_allocation_shape",
+      "lineno": 588,
+      "types": [
+        "ValueError"
+      ],
+      "washes_reject": false,
+      "jsonish": false,
+      "in_decl_path": true,
+      "kind": "broad_except",
+      "try_summary": "try: amt = strict_int(amount, accept_numeric_strings=True) except ValueError as exc: raise _grant_shape_value_error(f'grant 金钱 amount 须为正整数，拒 {amount!r}', field='amount', current=amount, expected=amount_expected) from exc",
+      "handler_summary": "except ValueError as exc: raise _grant_shape_value_error(f'grant 金钱 amount 须为正整数，拒 {amount!r}', field='amount', current=amount, expected=amount_expected) from exc",
+      "source_hint": "broad_other"
+    },
+    {
+      "file": "ming_sim/action_materialize.py",
+      "symbol": "require_explicit_xiexang_fields",
+      "lineno": 707,
+      "types": [
+        "ValueError"
+      ],
+      "washes_reject": false,
+      "jsonish": false,
+      "in_decl_path": true,
+      "kind": "broad_except",
+      "try_summary": "try: n = strict_int(amount, accept_numeric_strings=False) except ValueError: n = None",
+      "handler_summary": "except ValueError: n = None",
+      "source_hint": "broad_other"
+    },
+    {
+      "file": "ming_sim/action_materialize.py",
+      "symbol": "_parse_json_field",
+      "lineno": 961,
+      "types": [
+        "TypeError",
+        "ValueError"
+      ],
+      "washes_reject": false,
+      "jsonish": true,
+      "in_decl_path": true,
+      "kind": "broad_except",
+      "try_summary": "try: value = json.loads(text) except (TypeError, ValueError): return text",
+      "handler_summary": "except (TypeError, ValueError): return text",
+      "source_hint": "broad_on_persist_no_reject_wash"
+    },
+    {
+      "file": "ming_sim/action_materialize.py",
+      "symbol": "_assignment_absolute_end_turn",
+      "lineno": 979,
+      "types": [
+        "TypeError",
+        "ValueError"
+      ],
+      "washes_reject": false,
+      "jsonish": false,
+      "in_decl_path": true,
+      "kind": "broad_except",
+      "try_summary": "try: et = 0 if end_turn in (None, '') else int(end_turn) months = 0 if deadline_months in (None, '') else int(deadline_months) except (TypeError, ValueError) as exc: raise DecreeMaterializationValidationError(f'责成期限非法：end_turn={end_turn!r} deadline_months={deadline_months!r}', fa",
+      "handler_summary": "except (TypeError, ValueError) as exc: raise DecreeMaterializationValidationError(f'责成期限非法：end_turn={end_turn!r} deadline_months={deadline_months!r}', failed_fields=('end_turn', 'deadline_months')) fr",
+      "source_hint": "broad_on_decl_field"
+    },
+    {
+      "file": "ming_sim/action_materialize.py",
+      "symbol": "_parse_revoke_decree_target",
+      "lineno": 1384,
+      "types": [
+        "TypeError",
+        "ValueError"
+      ],
+      "washes_reject": false,
+      "jsonish": false,
+      "in_decl_path": true,
+      "kind": "broad_except",
+      "try_summary": "try: tid = int(raw) except (TypeError, ValueError) as exc: raise DecreeMaterializationValidationError(f'撤回成命目标标识非法：{raw!r}', failed_fields=('target_id',)) from exc",
+      "handler_summary": "except (TypeError, ValueError) as exc: raise DecreeMaterializationValidationError(f'撤回成命目标标识非法：{raw!r}', failed_fields=('target_id',)) from exc",
+      "source_hint": "broad_on_decl_field"
+    },
+    {
+      "file": "ming_sim/action_materialize.py",
+      "symbol": "stage_assignment_candidate",
+      "lineno": 1601,
+      "types": [
+        "TypeError",
+        "ValueError"
+      ],
+      "washes_reject": false,
+      "jsonish": true,
+      "in_decl_path": true,
+      "kind": "broad_except",
+      "try_summary": "try: stages_norm = json.loads(stages_to_json(stages)) except (TypeError, ValueError) as exc: raise DecreeMaterializationValidationError(f'交办 stages 非法：{stages!r}', failed_fields=('stages',)) from exc",
+      "handler_summary": "except (TypeError, ValueError) as exc: raise DecreeMaterializationValidationError(f'交办 stages 非法：{stages!r}', failed_fields=('stages',)) from exc",
+      "source_hint": "broad_on_persist_no_reject_wash"
+    },
+    {
+      "file": "ming_sim/action_materialize.py",
+      "symbol": "stage_referral_candidate",
+      "lineno": 1769,
+      "types": [
+        "ValueError"
+      ],
+      "washes_reject": false,
+      "jsonish": false,
+      "in_decl_path": true,
+      "kind": "broad_except",
+      "try_summary": "try: assert_responsible_bodies_org_only(bodies, known_person_names=character_person_names(db), current_minister=minister_name) except ValueError: return 0",
+      "handler_summary": "except ValueError: return 0",
+      "source_hint": "broad_other"
+    },
+    {
+      "file": "ming_sim/action_materialize.py",
+      "symbol": "stage_punishment_candidate",
+      "lineno": 369,
+      "types": [
+        "TypeError",
+        "ValueError"
+      ],
+      "washes_reject": false,
+      "jsonish": false,
+      "in_decl_path": true,
+      "kind": "broad_except",
+      "try_summary": "try: linked_issue_id = int(issue_id) except (TypeError, ValueError) as exc: raise DecreeMaterializationValidationError(f'惩处交办 issue_id 非法：{issue_id!r}', failed_fields=('issue_id',)) from exc",
+      "handler_summary": "except (TypeError, ValueError) as exc: raise DecreeMaterializationValidationError(f'惩处交办 issue_id 非法：{issue_id!r}', failed_fields=('issue_id',)) from exc",
+      "source_hint": "broad_on_decl_field"
+    },
+    {
+      "file": "ming_sim/action_materialize.py",
+      "symbol": "stage_punishment_candidate",
+      "lineno": 386,
+      "types": [
+        "TypeError",
+        "ValueError"
+      ],
+      "washes_reject": false,
+      "jsonish": true,
+      "in_decl_path": true,
+      "kind": "broad_except",
+      "try_summary": "try: roster = json.loads(str(issue['target_roster'] or '[]')) except (TypeError, ValueError) as exc: raise ValueError(f\"issues.target_roster 腐坏 JSON：{issue['target_roster']!r}\") from exc",
+      "handler_summary": "except (TypeError, ValueError) as exc: raise ValueError(f\"issues.target_roster 腐坏 JSON：{issue['target_roster']!r}\") from exc",
+      "source_hint": "broad_on_persist_no_reject_wash"
+    },
+    {
+      "file": "ming_sim/action_materialize.py",
+      "symbol": "stage_punishment_candidate",
+      "lineno": 468,
+      "types": [
+        "TypeError",
+        "ValueError"
+      ],
+      "washes_reject": false,
+      "jsonish": false,
+      "in_decl_path": true,
+      "kind": "broad_except",
+      "try_summary": "try: n = int(amount) except (TypeError, ValueError) as exc: raise DecreeMaterializationValidationError(f'惩处交办 amount 非法：{amount!r}', failed_fields=('amount',)) from exc",
+      "handler_summary": "except (TypeError, ValueError) as exc: raise DecreeMaterializationValidationError(f'惩处交办 amount 非法：{amount!r}', failed_fields=('amount',)) from exc",
+      "source_hint": "broad_on_decl_field"
+    },
+    {
+      "file": "ming_sim/action_materialize.py",
+      "symbol": "stage_grant_allocation_candidate",
+      "lineno": 850,
+      "types": [
+        "ValueError"
+      ],
+      "washes_reject": false,
+      "jsonish": false,
+      "in_decl_path": true,
+      "kind": "broad_except",
+      "try_summary": "try: shaped = require_grant_allocation_shape(grant_action=action, amount=amount, account=account) except ValueError as exc: field = str(getattr(exc, 'field', '') or '').strip() or 'amount' raise DecreeMaterializationValidationError(str(exc), failed_fields=(field,)) from exc",
+      "handler_summary": "except ValueError as exc: field = str(getattr(exc, 'field', '') or '').strip() or 'amount' raise DecreeMaterializationValidationError(str(exc), failed_fields=(field,)) from exc",
+      "source_hint": "broad_on_decl_field"
+    },
+    {
+      "file": "ming_sim/action_materialize.py",
+      "symbol": "_resolve_unique_active_authority",
+      "lineno": 1450,
+      "types": [
+        "TypeError",
+        "ValueError"
+      ],
+      "washes_reject": false,
+      "jsonish": false,
+      "in_decl_path": true,
+      "kind": "broad_except",
+      "try_summary": "try: aid = int(authority_id) except (TypeError, ValueError) as exc: raise DecreeMaterializationValidationError(f'收权 authority_id 非法：{authority_id!r}', failed_fields=('authority_id',)) from exc",
+      "handler_summary": "except (TypeError, ValueError) as exc: raise DecreeMaterializationValidationError(f'收权 authority_id 非法：{authority_id!r}', failed_fields=('authority_id',)) from exc",
+      "source_hint": "broad_on_decl_field"
+    },
+    {
+      "file": "ming_sim/action_materialize.py",
+      "symbol": "stage_referral_candidate",
+      "lineno": 1752,
+      "types": [
+        "TypeError",
+        "ValueError"
+      ],
+      "washes_reject": false,
+      "jsonish": false,
+      "in_decl_path": true,
+      "kind": "broad_except",
+      "try_summary": "try: months = int(deadline_months) except (TypeError, ValueError) as exc: raise DecreeMaterializationValidationError(f'下议期限非法：deadline_months={deadline_months!r}', failed_fields=('deadline_months',)) from exc",
+      "handler_summary": "except (TypeError, ValueError) as exc: raise DecreeMaterializationValidationError(f'下议期限非法：deadline_months={deadline_months!r}', failed_fields=('deadline_months',)) from exc",
+      "source_hint": "broad_on_decl_field"
+    },
+    {
+      "file": "ming_sim/action_materialize.py",
+      "symbol": "json.loads@385",
+      "lineno": 385,
+      "kind": "json_loads",
+      "line": "roster = json.loads(str(issue[\"target_roster\"] or \"[]\"))"
+    },
+    {
+      "file": "ming_sim/action_materialize.py",
+      "symbol": "json.loads@960",
+      "lineno": 960,
+      "kind": "json_loads",
+      "line": "value = json.loads(text)"
+    },
+    {
+      "file": "ming_sim/action_materialize.py",
+      "symbol": "json.loads@1600",
+      "lineno": 1600,
+      "kind": "json_loads",
+      "line": "stages_norm = json.loads(stages_to_json(stages))"
+    },
+    {
+      "file": "ming_sim/agents.py",
+      "symbol": "json.loads@484",
+      "lineno": 484,
+      "kind": "json_loads",
+      "line": "data = json.loads(raw)"
+    },
+    {
+      "file": "ming_sim/audience_night.py",
+      "symbol": "json.loads@253",
+      "lineno": 253,
+      "kind": "json_loads",
+      "line": "parsed = json.loads(value or \"[]\")"
+    },
+    {
+      "file": "ming_sim/audience_night.py",
+      "symbol": "json.loads@1435",
+      "lineno": 1435,
+      "kind": "json_loads",
+      "line": "tags = json.loads(row[\"tags\"] or \"[]\")"
+    },
+    {
+      "file": "ming_sim/audience_night.py",
+      "symbol": "json.loads@1443",
+      "lineno": 1443,
+      "kind": "json_loads",
+      "line": "names = json.loads(row[\"person_names\"] or \"[]\")"
+    },
+    {
+      "file": "ming_sim/audience_night.py",
+      "symbol": "json.loads@1579",
+      "lineno": 1579,
+      "kind": "json_loads",
+      "line": "tags = json.loads(row[\"tags\"] or \"[]\")"
+    },
+    {
+      "file": "ming_sim/audience_night.py",
+      "symbol": "json.loads@1610",
+      "lineno": 1610,
+      "kind": "json_loads",
+      "line": "tags = json.loads(row[\"tags\"] or \"[]\")"
+    },
+    {
+      "file": "ming_sim/audience_night.py",
+      "symbol": "json.loads@1738",
+      "lineno": 1738,
+      "kind": "json_loads",
+      "line": "tags = [str(t) for t in json.loads(row[\"tags\"] or \"[]\")]"
+    },
+    {
+      "file": "ming_sim/audience_translate.py",
+      "symbol": "json.loads@77",
+      "lineno": 77,
+      "kind": "json_loads",
+      "line": "payload = json.loads(str(row[\"payload_json\"] or \"{}\"))"
+    },
+    {
+      "file": "ming_sim/breach_plea.py",
+      "symbol": "json.loads@105",
+      "lineno": 105,
+      "kind": "json_loads",
+      "line": "data = json.loads(raw)"
+    },
+    {
+      "file": "ming_sim/breach_plea.py",
+      "symbol": "json.loads@152",
+      "lineno": 152,
+      "kind": "json_loads",
+      "line": "roster = json.loads(row[\"participant_roster\"] or \"[]\")"
+    },
+    {
+      "file": "ming_sim/breach_plea.py",
+      "symbol": "json.loads@194",
+      "lineno": 194,
+      "kind": "json_loads",
+      "line": "tags = json.loads(tags_raw or \"[]\")"
+    },
+    {
+      "file": "ming_sim/breach_plea.py",
+      "symbol": "json.loads@1050",
+      "lineno": 1050,
+      "kind": "json_loads",
+      "line": "roster = json.loads(commitment_row[\"participant_roster\"] or \"[]\")"
+    },
+    {
+      "file": "ming_sim/cli/terminal.py",
+      "symbol": "_print_pending_action_failures",
+      "lineno": 79,
+      "types": [
+        "TypeError",
+        "ValueError"
+      ],
+      "washes_reject": false,
+      "jsonish": false,
+      "in_decl_path": true,
+      "kind": "broad_except",
+      "try_summary": "try: failure_id = int(raw_failure_id) if raw_failure_id is not None else None except (TypeError, ValueError): failure_id = None",
+      "handler_summary": "except (TypeError, ValueError): failure_id = None",
+      "source_hint": "broad_on_decl_field"
+    },
+    {
+      "file": "ming_sim/cli_backend.py",
+      "symbol": "json.loads@801",
+      "lineno": 801,
+      "kind": "json_loads",
+      "line": "obj = json.loads(stripped)"
+    },
+    {
+      "file": "ming_sim/context.py",
+      "symbol": "json.loads@168",
+      "lineno": 168,
+      "kind": "json_loads",
+      "line": "data = json.loads(raw)"
+    },
+    {
+      "file": "ming_sim/covert_progress.py",
+      "symbol": "_seed_guilt_severity",
+      "lineno": 803,
+      "types": [
+        "TypeError",
+        "ValueError"
+      ],
+      "washes_reject": false,
+      "jsonish": true,
+      "in_decl_path": false,
+      "kind": "broad_except",
+      "try_summary": "try: parsed = json.loads(text) except (TypeError, ValueError): return ''",
+      "handler_summary": "except (TypeError, ValueError): return ''",
+      "source_hint": "broad_on_persist_no_reject_wash"
+    },
+    {
+      "file": "ming_sim/covert_progress.py",
+      "symbol": "seed_guilt_counts_as_debt",
+      "lineno": 166,
+      "types": [
+        "TypeError",
+        "ValueError"
+      ],
+      "washes_reject": false,
+      "jsonish": true,
+      "in_decl_path": false,
+      "kind": "broad_except",
+      "try_summary": "try: parsed = json.loads(text) except (TypeError, ValueError): return False",
+      "handler_summary": "except (TypeError, ValueError): return False",
+      "source_hint": "broad_on_persist_no_reject_wash"
+    },
+    {
+      "file": "ming_sim/covert_progress.py",
+      "symbol": "json.loads@165",
+      "lineno": 165,
+      "kind": "json_loads",
+      "line": "parsed = json.loads(text)"
+    },
+    {
+      "file": "ming_sim/covert_progress.py",
+      "symbol": "json.loads@549",
+      "lineno": 549,
+      "kind": "json_loads",
+      "line": "payload = json.loads(raw_json)"
+    },
+    {
+      "file": "ming_sim/covert_progress.py",
+      "symbol": "json.loads@756",
+      "lineno": 756,
+      "kind": "json_loads",
+      "line": "payload = json.loads(str(row[\"payload_json\"] or \"{}\"))"
+    },
+    {
+      "file": "ming_sim/covert_progress.py",
+      "symbol": "json.loads@802",
+      "lineno": 802,
+      "kind": "json_loads",
+      "line": "parsed = json.loads(text)"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "_optional_positive_dossier_id",
+      "lineno": 490,
+      "types": [
+        "TypeError",
+        "ValueError"
+      ],
+      "washes_reject": true,
+      "jsonish": false,
+      "in_decl_path": false,
+      "kind": "broad_except",
+      "try_summary": "try: value = strict_int(raw, accept_numeric_strings=False) except (TypeError, ValueError) as exc: raise DeclarationDataError(f'{field} 非法 shape：{raw!r}') from exc",
+      "handler_summary": "except (TypeError, ValueError) as exc: raise DeclarationDataError(f'{field} 非法 shape：{raw!r}') from exc",
+      "source_hint": "wash_decl_field_only"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "_coerce_pay_source_float",
+      "lineno": 618,
+      "types": [
+        "TypeError",
+        "ValueError"
+      ],
+      "washes_reject": true,
+      "jsonish": false,
+      "in_decl_path": false,
+      "kind": "broad_except",
+      "try_summary": "try: value = float(raw) except (TypeError, ValueError) as exc: raise DeclarationDataError(str(exc)) from exc",
+      "handler_summary": "except (TypeError, ValueError) as exc: raise DeclarationDataError(str(exc)) from exc",
+      "source_hint": "wash_decl_field_only"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "GameDB._dossier_row",
+      "lineno": 11673,
+      "types": [
+        "TypeError",
+        "ValueError"
+      ],
+      "washes_reject": false,
+      "jsonish": true,
+      "in_decl_path": false,
+      "kind": "broad_except",
+      "try_summary": "try: payload = json.loads(out.get('payload_json') or '{}') except (TypeError, ValueError) as exc: raise ValueError(f\"案卷#{out['id']} payload_json 无效\") from exc",
+      "handler_summary": "except (TypeError, ValueError) as exc: raise ValueError(f\"案卷#{out['id']} payload_json 无效\") from exc",
+      "source_hint": "broad_on_persist_no_reject_wash"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "GameDB._dossier_row",
+      "lineno": 11686,
+      "types": [
+        "TypeError",
+        "ValueError"
+      ],
+      "washes_reject": false,
+      "jsonish": true,
+      "in_decl_path": false,
+      "kind": "broad_except",
+      "try_summary": "try: stigma = json.loads(out.get('stigma_json') or '[]') except (TypeError, ValueError) as exc: raise ValueError(f\"案卷#{out['id']} stigma_json 无效\") from exc",
+      "handler_summary": "except (TypeError, ValueError) as exc: raise ValueError(f\"案卷#{out['id']} stigma_json 无效\") from exc",
+      "source_hint": "broad_on_persist_no_reject_wash"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "GameDB._dossier_row",
+      "lineno": 11693,
+      "types": [
+        "TypeError",
+        "ValueError"
+      ],
+      "washes_reject": false,
+      "jsonish": true,
+      "in_decl_path": false,
+      "kind": "broad_except",
+      "try_summary": "try: roster = json.loads(out.get('participant_roster') or '[]') except (TypeError, ValueError) as exc: raise ValueError(f\"案卷#{out['id']} participant_roster 无效\") from exc",
+      "handler_summary": "except (TypeError, ValueError) as exc: raise ValueError(f\"案卷#{out['id']} participant_roster 无效\") from exc",
+      "source_hint": "broad_on_persist_no_reject_wash"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "GameDB._dossier_row",
+      "lineno": 11700,
+      "types": [
+        "TypeError",
+        "ValueError"
+      ],
+      "washes_reject": false,
+      "jsonish": true,
+      "in_decl_path": false,
+      "kind": "broad_except",
+      "try_summary": "try: extension = json.loads(out.get('extension_json') or '{}') except (TypeError, ValueError) as exc: raise ValueError(f\"案卷#{out['id']} extension_json 无效\") from exc",
+      "handler_summary": "except (TypeError, ValueError) as exc: raise ValueError(f\"案卷#{out['id']} extension_json 无效\") from exc",
+      "source_hint": "broad_on_persist_no_reject_wash"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "GameDB._current_judge_affected_parties",
+      "lineno": 15660,
+      "types": [
+        "TypeError",
+        "ValueError"
+      ],
+      "washes_reject": false,
+      "jsonish": true,
+      "in_decl_path": false,
+      "kind": "broad_except",
+      "try_summary": "try: value = json.loads(str(row['affected_parties_json'] or '')) except (TypeError, ValueError) as exc: raise ValueError('强颁当前回合 Judge affected_parties 非法') from exc",
+      "handler_summary": "except (TypeError, ValueError) as exc: raise ValueError('强颁当前回合 Judge affected_parties 非法') from exc",
+      "source_hint": "broad_on_persist_no_reject_wash"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "GameDB.validate_joint_liability_affected_parties",
+      "lineno": 15890,
+      "types": [
+        "ValueError"
+      ],
+      "washes_reject": true,
+      "jsonish": false,
+      "in_decl_path": false,
+      "kind": "broad_except",
+      "try_summary": "try: validate_affected_parties(affected_parties, faction_names=faction_names, class_names=class_names) except ValueError as exc: raise DeclarationDataError(str(exc)) from exc",
+      "handler_summary": "except ValueError as exc: raise DeclarationDataError(str(exc)) from exc",
+      "source_hint": "wash_decl_field_only"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "GameDB._pending_action_owned_by_turn_in_tx",
+      "lineno": 18546,
+      "types": [
+        "TypeError",
+        "ValueError"
+      ],
+      "washes_reject": false,
+      "jsonish": false,
+      "in_decl_path": true,
+      "kind": "broad_except",
+      "try_summary": "try: aid = int(action_id) except (TypeError, ValueError): return False",
+      "handler_summary": "except (TypeError, ValueError): return False",
+      "source_hint": "broad_on_decl_field"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "GameDB._decode_directive_dossier_payload",
+      "lineno": 19092,
+      "types": [
+        "TypeError",
+        "ValueError"
+      ],
+      "washes_reject": false,
+      "jsonish": true,
+      "in_decl_path": false,
+      "kind": "broad_except",
+      "try_summary": "try: payload = json.loads(raw or '{}') except (TypeError, ValueError) as exc: raise ValueError(f'{label} 结构化载荷损坏') from exc",
+      "handler_summary": "except (TypeError, ValueError) as exc: raise ValueError(f'{label} 结构化载荷损坏') from exc",
+      "source_hint": "broad_on_persist_no_reject_wash"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "GameDB.parse_engine_payload_json",
+      "lineno": 19702,
+      "types": [
+        "TypeError",
+        "ValueError"
+      ],
+      "washes_reject": false,
+      "jsonish": true,
+      "in_decl_path": true,
+      "kind": "broad_except",
+      "try_summary": "try: data = json.loads(text) except (TypeError, ValueError) as exc: tlog(f'[{surface}] 腐坏 JSON，拒绝静默等同空底：{text!r}') raise ValueError(f'{surface} 腐坏 JSON：{text!r}') from exc",
+      "handler_summary": "except (TypeError, ValueError) as exc: tlog(f'[{surface}] 腐坏 JSON，拒绝静默等同空底：{text!r}') raise ValueError(f'{surface} 腐坏 JSON：{text!r}') from exc",
+      "source_hint": "broad_on_persist_no_reject_wash"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "GameDB.settle_ming_province_substrate_ticks",
+      "lineno": 3193,
+      "types": [
+        "ValueError",
+        "FiscalConservationError"
+      ],
+      "washes_reject": false,
+      "jsonish": true,
+      "in_decl_path": false,
+      "kind": "broad_except",
+      "try_summary": "try: fiscal = json.loads(str(row['fiscal'] or '{}')) if isinstance(fiscal, dict) and 'settle' not in fiscal: continue result = self._settle_province_tick_from_fiscal(region_id, fiscal, actions_by_region.get(region_id, []), p_overrides_by_region.get(region_id)) except (ValueError,",
+      "handler_summary": "except (ValueError, FiscalConservationError) as exc: outcomes.append(ProvinceFiscalTickOutcome(region_id, None, exc)) continue",
+      "source_hint": "broad_on_persist_no_reject_wash"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "GameDB._province_army_pay_container_total",
+      "lineno": 4213,
+      "types": [
+        "TypeError",
+        "ValueError"
+      ],
+      "washes_reject": false,
+      "jsonish": true,
+      "in_decl_path": false,
+      "kind": "broad_except",
+      "try_summary": "try: fiscal = json.loads(str(row['fiscal'] or '{}')) except (TypeError, ValueError) as exc: raise ValueError(f\"region {row['id']} fiscal JSON 非法，无法校验军饷容器守恒\") from exc",
+      "handler_summary": "except (TypeError, ValueError) as exc: raise ValueError(f\"region {row['id']} fiscal JSON 非法，无法校验军饷容器守恒\") from exc",
+      "source_hint": "broad_on_persist_no_reject_wash"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "GameDB._standalone_army_pay_container_total",
+      "lineno": 4342,
+      "types": [
+        "TypeError",
+        "ValueError"
+      ],
+      "washes_reject": false,
+      "jsonish": true,
+      "in_decl_path": false,
+      "kind": "broad_except",
+      "try_summary": "try: fiscal = json.loads(str(row['fiscal'] or '{}')) except (TypeError, ValueError) as exc: raise ValueError(f'region {region_id} fiscal JSON 非法，无法校验军饷容器守恒') from exc",
+      "handler_summary": "except (TypeError, ValueError) as exc: raise ValueError(f'region {region_id} fiscal JSON 非法，无法校验军饷容器守恒') from exc",
+      "source_hint": "broad_on_persist_no_reject_wash"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "GameDB.create_armies_from_extraction",
+      "lineno": 8328,
+      "types": [
+        "KeyError",
+        "TypeError",
+        "ValueError",
+        "OverflowError"
+      ],
+      "washes_reject": true,
+      "jsonish": false,
+      "in_decl_path": false,
+      "kind": "broad_except",
+      "try_summary": "try: _mp = item['manpower'] if isinstance(_mp, (bool, float)): raise ValueError('非整数') manpower = int(_mp) except (KeyError, TypeError, ValueError, OverflowError) as exc: rejections.append(RejectedItem(item=raw, reason=f\"new_armies '{aid}' 缺/非法 manpower（无法建军）：{exc}\", category='in",
+      "handler_summary": "except (KeyError, TypeError, ValueError, OverflowError) as exc: rejections.append(RejectedItem(item=raw, reason=f\"new_armies '{aid}' 缺/非法 manpower（无法建军）：{exc}\", category='invalid_enum', source=source)",
+      "source_hint": "wash_decl_field_only"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "GameDB._normalize_directive_dossier_payload",
+      "lineno": 11372,
+      "types": [
+        "TypeError",
+        "ValueError"
+      ],
+      "washes_reject": true,
+      "jsonish": false,
+      "in_decl_path": false,
+      "kind": "broad_except",
+      "try_summary": "try: aid = strict_int(raw_aid, accept_numeric_strings=True) except (TypeError, ValueError) as exc: raise DeclarationDataError(f'收权旨意 authority_id 非法：{raw_aid!r}') from exc",
+      "handler_summary": "except (TypeError, ValueError) as exc: raise DeclarationDataError(f'收权旨意 authority_id 非法：{raw_aid!r}') from exc",
+      "source_hint": "wash_decl_field_only"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "GameDB._normalize_directive_dossier_payload",
+      "lineno": 11421,
+      "types": [
+        "TypeError",
+        "ValueError"
+      ],
+      "washes_reject": true,
+      "jsonish": false,
+      "in_decl_path": false,
+      "kind": "broad_except",
+      "try_summary": "try: raw_revoke_did = normalized.get('revoke_target_dossier_id') if raw_revoke_did not in (None, ''): revoke_did = strict_int(raw_revoke_did, accept_numeric_strings=True) raw_revoke_iid = normalized.get('revoke_target_issue_id') if raw_revoke_iid not in (None, ''): revoke_iid = s",
+      "handler_summary": "except (TypeError, ValueError) as exc: raise DeclarationDataError(f\"撤回成命目标标识非法：dossier={normalized.get('revoke_target_dossier_id')!r} issue={normalized.get('revoke_target_issue_id')!r}\") from exc",
+      "source_hint": "wash_needs_manual_read"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "GameDB._normalize_directive_dossier_payload",
+      "lineno": 11509,
+      "types": [
+        "TypeError",
+        "ValueError"
+      ],
+      "washes_reject": true,
+      "jsonish": false,
+      "in_decl_path": false,
+      "kind": "broad_except",
+      "try_summary": "try: due_turn = 0 if raw_due_turn in (None, '') else strict_int(raw_due_turn, accept_numeric_strings=False) deadline = 0 if raw_deadline in (None, '') else strict_int(raw_deadline, accept_numeric_strings=False) except (TypeError, ValueError) as exc: raise DeclarationDataError(f'军",
+      "handler_summary": "except (TypeError, ValueError) as exc: raise DeclarationDataError(f'军令期限非法：due_turn={raw_due_turn!r} deadline_months={raw_deadline!r}') from exc",
+      "source_hint": "wash_decl_field_only"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "GameDB._normalize_directive_dossier_payload",
+      "lineno": 11564,
+      "types": [
+        "TypeError",
+        "ValueError"
+      ],
+      "washes_reject": true,
+      "jsonish": false,
+      "in_decl_path": false,
+      "kind": "broad_except",
+      "try_summary": "try: end_turn = 0 if raw_end in (None, '') else strict_int(raw_end, accept_numeric_strings=True) if end_turn <= 0 and current_turn > 0: raw_months = normalized.get('deadline_months') months = 0 if raw_months in (None, '') else strict_int(raw_months, accept_numeric_strings=True) i",
+      "handler_summary": "except (TypeError, ValueError) as exc: raise DeclarationDataError(f\"下议期限非法：end_turn={raw_end!r} deadline_months={normalized.get('deadline_months')!r}\") from exc",
+      "source_hint": "wash_needs_manual_read"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "GameDB._monthly_dossier_report_supply",
+      "lineno": 12030,
+      "types": [
+        "TypeError",
+        "ValueError"
+      ],
+      "washes_reject": true,
+      "jsonish": false,
+      "in_decl_path": false,
+      "kind": "broad_except",
+      "try_summary": "try: dossier_id = strict_int(item.get('dossier_id', 0)) if dossier_id <= 0: raise ValueError('not positive') except (TypeError, ValueError) as exc: raise DeclarationDataError('长差月报案卷编号无效') from exc",
+      "handler_summary": "except (TypeError, ValueError) as exc: raise DeclarationDataError('长差月报案卷编号无效') from exc",
+      "source_hint": "wash_decl_field_only"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "GameDB.record_monthly_grant_reconciliations",
+      "lineno": 12236,
+      "types": [
+        "TypeError",
+        "ValueError"
+      ],
+      "washes_reject": true,
+      "jsonish": false,
+      "in_decl_path": false,
+      "kind": "broad_except",
+      "try_summary": "try: dossier_id = strict_int(item.get('dossier_id', 0)) if dossier_id <= 0: raise ValueError('not positive') except (TypeError, ValueError): _reject(item, '对账提案案卷编号无效', 'invalid_enum') continue",
+      "handler_summary": "except (TypeError, ValueError): _reject(item, '对账提案案卷编号无效', 'invalid_enum') continue",
+      "source_hint": "wash_decl_field_only"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "GameDB.record_monthly_grant_reconciliations",
+      "lineno": 12270,
+      "types": [
+        "TypeError",
+        "ValueError"
+      ],
+      "washes_reject": true,
+      "jsonish": false,
+      "in_decl_path": false,
+      "kind": "broad_except",
+      "try_summary": "try: amount = strict_int(raw_amount) except (TypeError, ValueError): _reject(item, f'对账{amount_label}值无效', 'invalid_enum') continue",
+      "handler_summary": "except (TypeError, ValueError): _reject(item, f'对账{amount_label}值无效', 'invalid_enum') continue",
+      "source_hint": "wash_decl_field_only"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "GameDB.resolve_commitment_origin_ref",
+      "lineno": 14784,
+      "types": [
+        "TypeError",
+        "ValueError"
+      ],
+      "washes_reject": true,
+      "jsonish": false,
+      "in_decl_path": false,
+      "kind": "broad_except",
+      "try_summary": "try: dossier_id = int(supplied.split(':', 1)[1]) except (TypeError, ValueError): raise DeclarationDataError('commitment origin_ref 案卷 id 非法')",
+      "handler_summary": "except (TypeError, ValueError): raise DeclarationDataError('commitment origin_ref 案卷 id 非法')",
+      "source_hint": "wash_decl_field_only"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "GameDB.resolve_commitment_origin_ref",
+      "lineno": 14794,
+      "types": [
+        "TypeError",
+        "ValueError"
+      ],
+      "washes_reject": true,
+      "jsonish": false,
+      "in_decl_path": false,
+      "kind": "broad_except",
+      "try_summary": "try: secret_order_id = int(supplied[len(SECRET_ORDER_ORIGIN_PREFIX):]) except (TypeError, ValueError): raise DeclarationDataError('commitment origin_ref 密令 id 非法')",
+      "handler_summary": "except (TypeError, ValueError): raise DeclarationDataError('commitment origin_ref 密令 id 非法')",
+      "source_hint": "wash_decl_field_only"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "GameDB._coerce_todo_payload_json",
+      "lineno": 19670,
+      "types": [
+        "TypeError",
+        "ValueError"
+      ],
+      "washes_reject": false,
+      "jsonish": true,
+      "in_decl_path": true,
+      "kind": "broad_except",
+      "try_summary": "try: data = json.loads(text) except (TypeError, ValueError) as exc: raise ValueError(f'next_audience_todos.payload_json 须为 JSON 对象：{text!r}') from exc",
+      "handler_summary": "except (TypeError, ValueError) as exc: raise ValueError(f'next_audience_todos.payload_json 须为 JSON 对象：{text!r}') from exc",
+      "source_hint": "broad_on_persist_no_reject_wash"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "GameDB.apply_power_deltas",
+      "lineno": 7002,
+      "types": [
+        "TypeError",
+        "ValueError"
+      ],
+      "washes_reject": true,
+      "jsonish": false,
+      "in_decl_path": false,
+      "kind": "broad_except",
+      "try_summary": "try: if isinstance(value, bool) or isinstance(value, float): raise ValueError('非整数 delta') delta = int(value) except (TypeError, ValueError): rejections.append(RejectedItem(item={'power_id': power_id, 'field': str(raw_field), 'value': value}, reason=f\"power_updates '{raw_field}' ",
+      "handler_summary": "except (TypeError, ValueError): rejections.append(RejectedItem(item={'power_id': power_id, 'field': str(raw_field), 'value': value}, reason=f\"power_updates '{raw_field}' 值非整数：{value!r}\", category='inv",
+      "source_hint": "wash_decl_field_only"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "GameDB.create_armies_from_extraction",
+      "lineno": 8294,
+      "types": [
+        "TypeError",
+        "ValueError"
+      ],
+      "washes_reject": true,
+      "jsonish": false,
+      "in_decl_path": false,
+      "kind": "broad_except",
+      "try_summary": "try: if isinstance(manpower, (bool, float)): raise ValueError('非整数') delta = int(manpower) except (TypeError, ValueError): rejections.append(RejectedItem(item=raw, reason=f\"new_armies '{aid}' manpower 非整数：{manpower!r}\", category='invalid_enum', source=source)) continue",
+      "handler_summary": "except (TypeError, ValueError): rejections.append(RejectedItem(item=raw, reason=f\"new_armies '{aid}' manpower 非整数：{manpower!r}\", category='invalid_enum', source=source)) continue",
+      "source_hint": "wash_decl_field_only"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "GameDB.adjust_factions",
+      "lineno": 8807,
+      "types": [
+        "TypeError",
+        "ValueError"
+      ],
+      "washes_reject": true,
+      "jsonish": false,
+      "in_decl_path": false,
+      "kind": "broad_except",
+      "try_summary": "try: sat_d = int(val) except (TypeError, ValueError): rejected.append(RejectedItem(item={faction: val}, reason=f'faction_delta「{faction}」增量非整数：{val!r}', category='invalid_enum', source=source)) continue",
+      "handler_summary": "except (TypeError, ValueError): rejected.append(RejectedItem(item={faction: val}, reason=f'faction_delta「{faction}」增量非整数：{val!r}', category='invalid_enum', source=source)) continue",
+      "source_hint": "wash_decl_field_only"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "GameDB._normalize_directive_dossier_payload",
+      "lineno": 11394,
+      "types": [
+        "TypeError",
+        "ValueError"
+      ],
+      "washes_reject": true,
+      "jsonish": false,
+      "in_decl_path": false,
+      "kind": "broad_except",
+      "try_summary": "try: grant_did = strict_int(raw_grant, accept_numeric_strings=True) except (TypeError, ValueError) as exc: raise DeclarationDataError(f'收权旨意 grant_dossier_id 非法：{raw_grant!r}') from exc",
+      "handler_summary": "except (TypeError, ValueError) as exc: raise DeclarationDataError(f'收权旨意 grant_dossier_id 非法：{raw_grant!r}') from exc",
+      "source_hint": "wash_decl_field_only"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "GameDB._normalize_directive_dossier_payload",
+      "lineno": 11439,
+      "types": [
+        "TypeError",
+        "ValueError"
+      ],
+      "washes_reject": true,
+      "jsonish": false,
+      "in_decl_path": false,
+      "kind": "broad_except",
+      "try_summary": "try: tid = strict_int(raw, accept_numeric_strings=True) except (TypeError, ValueError) as exc: raise DeclarationDataError(f'撤回成命目标标识非法：{raw!r}') from exc",
+      "handler_summary": "except (TypeError, ValueError) as exc: raise DeclarationDataError(f'撤回成命目标标识非法：{raw!r}') from exc",
+      "source_hint": "wash_decl_field_only"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "GameDB._normalize_directive_dossier_payload",
+      "lineno": 11487,
+      "types": [
+        "TypeError",
+        "ValueError"
+      ],
+      "washes_reject": true,
+      "jsonish": false,
+      "in_decl_path": false,
+      "kind": "broad_except",
+      "try_summary": "try: amount = strict_int(raw_amount, accept_numeric_strings=False) except (TypeError, ValueError) as exc: raise DeclarationDataError(f'罚俸旨意 amount 非法：{raw_amount!r}') from exc",
+      "handler_summary": "except (TypeError, ValueError) as exc: raise DeclarationDataError(f'罚俸旨意 amount 非法：{raw_amount!r}') from exc",
+      "source_hint": "wash_decl_field_only"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "GameDB._apply_punishment_verdict_effect",
+      "lineno": 16625,
+      "types": [
+        "TypeError",
+        "ValueError"
+      ],
+      "washes_reject": false,
+      "jsonish": true,
+      "in_decl_path": false,
+      "kind": "broad_except",
+      "try_summary": "try: roster = json.loads(str(issue['target_roster'] or '[]')) except (TypeError, ValueError) as exc: raise ValueError('弹劾潮 target_roster 非法') from exc",
+      "handler_summary": "except (TypeError, ValueError) as exc: raise ValueError('弹劾潮 target_roster 非法') from exc",
+      "source_hint": "broad_on_persist_no_reject_wash"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "GameDB.commit_pending_actions",
+      "lineno": 17842,
+      "types": [
+        "Exception"
+      ],
+      "washes_reject": true,
+      "jsonish": false,
+      "in_decl_path": true,
+      "kind": "broad_except",
+      "try_summary": "try: ok = self._apply_pending_action(state, pa, payload, content=content, rejection_collector=rejection_collector) if ok: self.conn.execute(\"UPDATE pending_actions SET status='committed' WHERE id=?\", (int(pa['id']),)) else: self.conn.execute(f'ROLLBACK TO {savepoint}') restore_of",
+      "handler_summary": "except Exception as exc: self.conn.execute(f'ROLLBACK TO {savepoint}') restore_office_memory() from ming_sim.applier import RejectionCollectorRequired if not isinstance(exc, (DeclarationDataError, Dec",
+      "source_hint": "mixed_decl_and_persist_try"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "GameDB._commit_conversational_draft",
+      "lineno": 17946,
+      "types": [
+        "Exception"
+      ],
+      "washes_reject": true,
+      "jsonish": false,
+      "in_decl_path": false,
+      "kind": "broad_except",
+      "try_summary": "try: payload_for_apply = dict(payload) payload_for_apply['_directive_status'] = directive_status ok = self._apply_pending_action(state, pa, payload_for_apply, content=content, rejection_collector=rejection_collector) if ok: self.conn.execute(\"UPDATE pending_actions SET status='co",
+      "handler_summary": "except Exception as exc: self.conn.execute(f'ROLLBACK TO {savepoint}') from ming_sim.applier import RejectionCollectorRequired if not isinstance(exc, (DeclarationDataError, DeclarationReferenceError, ",
+      "source_hint": "wash_persist_or_impl"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "GameDB.apply_region_deltas",
+      "lineno": 7318,
+      "types": [
+        "TypeError",
+        "ValueError"
+      ],
+      "washes_reject": true,
+      "jsonish": false,
+      "in_decl_path": false,
+      "kind": "broad_except",
+      "try_summary": "try: if isinstance(value, bool) or isinstance(value, float): raise ValueError('非整数 delta') cannon_delta = int(value) except (TypeError, ValueError): rejections.append(RejectedItem(item={'region_id': region_id, 'field': field, 'value': value}, reason=f\"region_delta 'cannon'（地区 '{r",
+      "handler_summary": "except (TypeError, ValueError): rejections.append(RejectedItem(item={'region_id': region_id, 'field': field, 'value': value}, reason=f\"region_delta 'cannon'（地区 '{region_id}'）值非整数：{value!r}\", category=",
+      "source_hint": "wash_decl_field_only"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "GameDB.apply_region_deltas",
+      "lineno": 7398,
+      "types": [
+        "TypeError",
+        "ValueError"
+      ],
+      "washes_reject": true,
+      "jsonish": false,
+      "in_decl_path": false,
+      "kind": "broad_except",
+      "try_summary": "try: if isinstance(value, bool) or isinstance(value, float): raise ValueError('非整数 delta') value = int(value) except (TypeError, ValueError): rejections.append(RejectedItem(item={'region_id': region_id, 'field': field, 'value': value}, reason=f\"region_delta '{raw_field}'（地区 '{reg",
+      "handler_summary": "except (TypeError, ValueError): rejections.append(RejectedItem(item={'region_id': region_id, 'field': field, 'value': value}, reason=f\"region_delta '{raw_field}'（地区 '{region_id}'）值非整数：{value!r}\", cate",
+      "source_hint": "wash_decl_field_only"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "GameDB.apply_army_deltas",
+      "lineno": 7962,
+      "types": [
+        "TypeError",
+        "ValueError"
+      ],
+      "washes_reject": true,
+      "jsonish": false,
+      "in_decl_path": false,
+      "kind": "broad_except",
+      "try_summary": "try: if isinstance(value, bool) or isinstance(value, float): raise ValueError('非整数 delta') value = int(value) except (TypeError, ValueError): rejections.append(RejectedItem(item={'army_id': army_id, 'field': field, 'value': value}, reason=f\"army_delta '{raw_field}' 值非整数：{value!r}",
+      "handler_summary": "except (TypeError, ValueError): rejections.append(RejectedItem(item={'army_id': army_id, 'field': field, 'value': value}, reason=f\"army_delta '{raw_field}' 值非整数：{value!r}\", category='invalid_enum', so",
+      "source_hint": "wash_decl_field_only"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "GameDB.apply_building_deltas",
+      "lineno": 8621,
+      "types": [
+        "TypeError",
+        "ValueError"
+      ],
+      "washes_reject": true,
+      "jsonish": false,
+      "in_decl_path": false,
+      "kind": "broad_except",
+      "try_summary": "try: value = strict_int(value, accept_numeric_strings=True) except (TypeError, ValueError): rejected.append(RejectedItem(item={'entity_id': building_id, 'field': field, 'raw_value': value}, reason='建筑数值非整数', category='invalid_enum', source=source)) continue",
+      "handler_summary": "except (TypeError, ValueError): rejected.append(RejectedItem(item={'entity_id': building_id, 'field': field, 'raw_value': value}, reason='建筑数值非整数', category='invalid_enum', source=source)) continue",
+      "source_hint": "wash_decl_field_only"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "json.loads@470",
+      "lineno": 470,
+      "kind": "json_loads",
+      "line": "parsed = json.loads(raw)"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "json.loads@882",
+      "lineno": 882,
+      "kind": "json_loads",
+      "line": "``json.loads`` failures and a non-dict top level propagate. A column that"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "json.loads@887",
+      "lineno": 887,
+      "kind": "json_loads",
+      "line": "parsed = json.loads(row[\"text_log_json\"])"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "json.loads@3114",
+      "lineno": 3114,
+      "kind": "json_loads",
+      "line": "fiscal: dict = json.loads(str(row[\"fiscal\"] or \"{}\"))"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "json.loads@3151",
+      "lineno": 3151,
+      "kind": "json_loads",
+      "line": "fiscal = json.loads(str(row[\"fiscal\"] or \"{}\"))"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "json.loads@3184",
+      "lineno": 3184,
+      "kind": "json_loads",
+      "line": "fiscal = json.loads(str(row[\"fiscal\"] or \"{}\"))"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "json.loads@3317",
+      "lineno": 3317,
+      "kind": "json_loads",
+      "line": "fiscal: dict = json.loads(str(row[\"fiscal\"] or \"{}\"))"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "json.loads@4212",
+      "lineno": 4212,
+      "kind": "json_loads",
+      "line": "fiscal = json.loads(str(row[\"fiscal\"] or \"{}\"))"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "json.loads@4341",
+      "lineno": 4341,
+      "kind": "json_loads",
+      "line": "fiscal = json.loads(str(row[\"fiscal\"] or \"{}\"))"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "json.loads@4384",
+      "lineno": 4384,
+      "kind": "json_loads",
+      "line": "fiscal = json.loads(str(region[\"fiscal\"] or \"{}\"))"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "json.loads@5034",
+      "lineno": 5034,
+      "kind": "json_loads",
+      "line": "fiscal = json.loads(str(row[\"fiscal\"] or \"{}\"))"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "json.loads@5055",
+      "lineno": 5055,
+      "kind": "json_loads",
+      "line": "fiscal = json.loads(str(row[\"fiscal\"] or \"{}\"))"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "json.loads@5350",
+      "lineno": 5350,
+      "kind": "json_loads",
+      "line": "aliases = json.loads(row[\"aliases\"] or \"[]\")"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "json.loads@7404",
+      "lineno": 7404,
+      "kind": "json_loads",
+      "line": "fiscal: dict = json.loads(str(row[\"fiscal\"] or \"{}\"))"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "json.loads@7563",
+      "lineno": 7563,
+      "kind": "json_loads",
+      "line": "fiscal = json.loads(str(row[\"fiscal\"] or \"{}\"))"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "json.loads@8983",
+      "lineno": 8983,
+      "kind": "json_loads",
+      "line": "data = json.loads(raw or \"[]\")"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "json.loads@9129",
+      "lineno": 9129,
+      "kind": "json_loads",
+      "line": "data = json.loads(raw)"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "json.loads@9682",
+      "lineno": 9682,
+      "kind": "json_loads",
+      "line": "decoded = json.loads(raw)"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "json.loads@9685",
+      "lineno": 9685,
+      "kind": "json_loads",
+      "line": "decoded = json.loads(decoded or \"[]\")"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "json.loads@9714",
+      "lineno": 9714,
+      "kind": "json_loads",
+      "line": "decoded = json.loads(raw) if isinstance(raw, str) else raw"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "json.loads@10072",
+      "lineno": 10072,
+      "kind": "json_loads",
+      "line": "current = json.loads(brief[0] or \"[]\") if brief is not None else []"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "json.loads@10075",
+      "lineno": 10075,
+      "kind": "json_loads",
+      "line": "pins = json.loads(str(raw_pins) or \"[]\")"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "json.loads@10463",
+      "lineno": 10463,
+      "kind": "json_loads",
+      "line": "excluded_names = json.loads(row[\"excluded_names\"] or \"[]\")"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "json.loads@10489",
+      "lineno": 10489,
+      "kind": "json_loads",
+      "line": "excluded_names = json.loads(row[\"excluded_names\"] or \"[]\")"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "json.loads@10556",
+      "lineno": 10556,
+      "kind": "json_loads",
+      "line": "timeline = json.loads(row[\"timeline\"] or \"[]\")"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "json.loads@10809",
+      "lineno": 10809,
+      "kind": "json_loads",
+      "line": "options = json.loads(r[\"options_json\"] or \"[]\")"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "json.loads@10811",
+      "lineno": 10811,
+      "kind": "json_loads",
+      "line": "choice = json.loads(choice_raw) if choice_raw else None"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "json.loads@10812",
+      "lineno": 10812,
+      "kind": "json_loads",
+      "line": "prior = json.loads(r[\"prior_options_json\"] or \"[]\")"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "json.loads@10916",
+      "lineno": 10916,
+      "kind": "json_loads",
+      "line": "options = json.loads(r[\"options_json\"] or \"[]\")"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "json.loads@10918",
+      "lineno": 10918,
+      "kind": "json_loads",
+      "line": "choice = json.loads(choice_raw) if choice_raw else None"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "json.loads@10919",
+      "lineno": 10919,
+      "kind": "json_loads",
+      "line": "prior = json.loads(r[\"prior_options_json\"] or \"[]\")"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "json.loads@10971",
+      "lineno": 10971,
+      "kind": "json_loads",
+      "line": "options = json.loads(r[\"options_json\"] or \"[]\")"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "json.loads@10975",
+      "lineno": 10975,
+      "kind": "json_loads",
+      "line": "choice = json.loads(choice_raw) if choice_raw else None"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "json.loads@10976",
+      "lineno": 10976,
+      "kind": "json_loads",
+      "line": "prior = json.loads(r[\"prior_options_json\"] or \"[]\")"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "json.loads@11152",
+      "lineno": 11152,
+      "kind": "json_loads",
+      "line": "parsed = json.loads(row[\"origin_chat_message_ids\"] or \"[]\")"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "json.loads@11672",
+      "lineno": 11672,
+      "kind": "json_loads",
+      "line": "payload = json.loads(out.get(\"payload_json\") or \"{}\")"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "json.loads@11685",
+      "lineno": 11685,
+      "kind": "json_loads",
+      "line": "stigma = json.loads(out.get(\"stigma_json\") or \"[]\")"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "json.loads@11692",
+      "lineno": 11692,
+      "kind": "json_loads",
+      "line": "roster = json.loads(out.get(\"participant_roster\") or \"[]\")"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "json.loads@11699",
+      "lineno": 11699,
+      "kind": "json_loads",
+      "line": "extension = json.loads(out.get(\"extension_json\") or \"{}\")"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "json.loads@11767",
+      "lineno": 11767,
+      "kind": "json_loads",
+      "line": "reports = json.loads(row[\"dossier_progress_json\"] or \"[]\")"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "json.loads@11874",
+      "lineno": 11874,
+      "kind": "json_loads",
+      "line": "loaded = json.loads(str(dossier.get(\"payload_json\") or \"{}\"))"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "json.loads@11898",
+      "lineno": 11898,
+      "kind": "json_loads",
+      "line": "for item in json.loads(row[\"dossier_progress_json\"] or \"[]\")"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "json.loads@12718",
+      "lineno": 12718,
+      "kind": "json_loads",
+      "line": "data = json.loads(raw)"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "json.loads@13314",
+      "lineno": 13314,
+      "kind": "json_loads",
+      "line": "payload = json.loads(str(row[\"payload_json\"] or \"{}\"))"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "json.loads@14281",
+      "lineno": 14281,
+      "kind": "json_loads",
+      "line": "out[\"payload\"] = json.loads(str(out.get(\"payload_json\") or \"{}\"))"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "json.loads@14297",
+      "lineno": 14297,
+      "kind": "json_loads",
+      "line": "existing_raw = json.loads(row[\"participant_roster\"] or \"[]\")"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "json.loads@14326",
+      "lineno": 14326,
+      "kind": "json_loads",
+      "line": "parsed_keys = json.loads(raw_keys)"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "json.loads@14650",
+      "lineno": 14650,
+      "kind": "json_loads",
+      "line": "json.loads(row[\"office_archive_keys\"] or \"[]\")"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "json.loads@14848",
+      "lineno": 14848,
+      "kind": "json_loads",
+      "line": "item[\"primary_opponents\"] = json.loads("
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "json.loads@14851",
+      "lineno": 14851,
+      "kind": "json_loads",
+      "line": "item[\"criteria_snapshot\"] = json.loads("
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "json.loads@14854",
+      "lineno": 14854,
+      "kind": "json_loads",
+      "line": "item[\"affected_parties\"] = json.loads("
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "json.loads@14921",
+      "lineno": 14921,
+      "kind": "json_loads",
+      "line": "payload = json.loads(str(row[\"payload_json\"] or \"{}\"))"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "json.loads@14960",
+      "lineno": 14960,
+      "kind": "json_loads",
+      "line": "payload = json.loads(str(row[\"payload_json\"] or \"{}\"))"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "json.loads@15074",
+      "lineno": 15074,
+      "kind": "json_loads",
+      "line": "payload = json.loads(str(row.get(\"payload_json\") or \"{}\"))"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "json.loads@15126",
+      "lineno": 15126,
+      "kind": "json_loads",
+      "line": "json.loads(str(row.get(\"payload_json\") or \"{}\")),"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "json.loads@15251",
+      "lineno": 15251,
+      "kind": "json_loads",
+      "line": "payload = json.loads(str(row[\"payload_json\"] or \"{}\"))"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "json.loads@15613",
+      "lineno": 15613,
+      "kind": "json_loads",
+      "line": "value = json.loads(str(row[\"payload\"] or \"\"))"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "json.loads@15659",
+      "lineno": 15659,
+      "kind": "json_loads",
+      "line": "value = json.loads(str(row[\"affected_parties_json\"] or \"\"))"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "json.loads@16016",
+      "lineno": 16016,
+      "kind": "json_loads",
+      "line": "value = json.loads(raw_value)"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "json.loads@16578",
+      "lineno": 16578,
+      "kind": "json_loads",
+      "line": "stages_norm = json.loads(stages_to_json("
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "json.loads@16624",
+      "lineno": 16624,
+      "kind": "json_loads",
+      "line": "roster = json.loads(str(issue[\"target_roster\"] or \"[]\"))"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "json.loads@17369",
+      "lineno": 17369,
+      "kind": "json_loads",
+      "line": "old = json.loads(existing_json or \"{}\") if not isinstance("
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "json.loads@18749",
+      "lineno": 18749,
+      "kind": "json_loads",
+      "line": "return json.loads(text) if text else default"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "json.loads@18886",
+      "lineno": 18886,
+      "kind": "json_loads",
+      "line": "roster = json.loads(roster)"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "json.loads@19091",
+      "lineno": 19091,
+      "kind": "json_loads",
+      "line": "payload = json.loads(raw or \"{}\")"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "json.loads@19525",
+      "lineno": 19525,
+      "kind": "json_loads",
+      "line": "payload = json.loads(raw)"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "json.loads@19669",
+      "lineno": 19669,
+      "kind": "json_loads",
+      "line": "data = json.loads(text)"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "json.loads@19701",
+      "lineno": 19701,
+      "kind": "json_loads",
+      "line": "data = json.loads(text)"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "json.loads@20245",
+      "lineno": 20245,
+      "kind": "json_loads",
+      "line": "eff = json.loads(str(lg[\"modifiers\"] or \"{}\"))"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "json.loads@20843",
+      "lineno": 20843,
+      "kind": "json_loads",
+      "line": "return [str(name) for name in json.loads(row[\"excluded_names\"] or \"[]\")]"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "json.loads@20860",
+      "lineno": 20860,
+      "kind": "json_loads",
+      "line": "return [str(name) for name in json.loads(order[\"excluded_names\"] or \"[]\")]"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "json.loads@20869",
+      "lineno": 20869,
+      "kind": "json_loads",
+      "line": "return [str(name) for name in json.loads(saying[\"excluded_names\"] or \"[]\")]"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "json.loads@20875",
+      "lineno": 20875,
+      "kind": "json_loads",
+      "line": "return [str(name) for name in json.loads(row[\"excluded_names\"] or \"[]\")]"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "json.loads@20888",
+      "lineno": 20888,
+      "kind": "json_loads",
+      "line": "payload = json.loads((row[\"excluded_targets\"] if row else \"{}\") or \"{}\")"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "json.loads@20898",
+      "lineno": 20898,
+      "kind": "json_loads",
+      "line": "payload = json.loads((row[\"excluded_targets\"] if row else \"{}\") or \"{}\")"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "json.loads@20906",
+      "lineno": 20906,
+      "kind": "json_loads",
+      "line": "payload = json.loads(row[\"excluded_targets\"] or \"{}\")"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "json.loads@21016",
+      "lineno": 21016,
+      "kind": "json_loads",
+      "line": "parsed = json.loads(raw or \"[]\")"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "json.loads@21637",
+      "lineno": 21637,
+      "kind": "json_loads",
+      "line": "prior_targets = json.loads(row[\"excluded_targets\"] or \"{}\")"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "json.loads@21640",
+      "lineno": 21640,
+      "kind": "json_loads",
+      "line": "legacy_people = json.loads(row[\"excluded_names\"] or \"[]\")"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "json.loads@21681",
+      "lineno": 21681,
+      "kind": "json_loads",
+      "line": "payload[\"tags\"] = json.loads(tags_json)"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "json.loads@21715",
+      "lineno": 21715,
+      "kind": "json_loads",
+      "line": "\"tags\": json.loads(r[\"tags\"] or \"[]\"),"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "json.loads@21728",
+      "lineno": 21728,
+      "kind": "json_loads",
+      "line": "\"excluded_names\": json.loads(r[\"excluded_names\"] or \"[]\") if \"excluded_names\" in r.keys() else [],"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "json.loads@21729",
+      "lineno": 21729,
+      "kind": "json_loads",
+      "line": "\"excluded_targets\": json.loads(r[\"excluded_targets\"] or \"{}\") if \"excluded_targets\" in r.keys() else {},"
+    },
+    {
+      "file": "ming_sim/declaration_dispatch.py",
+      "symbol": "_stage_prohibit_covert_levy",
+      "lineno": 1858,
+      "types": [
+        "KeyError",
+        "TypeError",
+        "ValueError"
+      ],
+      "washes_reject": false,
+      "jsonish": false,
+      "in_decl_path": true,
+      "kind": "broad_except",
+      "try_summary": "try: dossier_id = int(item['target_id']) except (KeyError, TypeError, ValueError): raise DeclarationReferenceError('禁摊派交办缺场面案卷 id') from None",
+      "handler_summary": "except (KeyError, TypeError, ValueError): raise DeclarationReferenceError('禁摊派交办缺场面案卷 id') from None",
+      "source_hint": "broad_on_decl_field"
+    },
+    {
+      "file": "ming_sim/declaration_dispatch.py",
+      "symbol": "_item_savepoint_scope",
+      "lineno": 868,
+      "types": [
+        "BaseException"
+      ],
+      "washes_reject": false,
+      "jsonish": false,
+      "in_decl_path": true,
+      "kind": "broad_except",
+      "try_summary": "try: yield except BaseException: db.conn.execute(f'ROLLBACK TO SAVEPOINT {savepoint}') db.conn.execute(f'RELEASE SAVEPOINT {savepoint}') item_callbacks = rollback_callbacks[baseline:] del rollback_callbacks[baseline:] for callback in reversed(item_callbacks): callback() raise els",
+      "handler_summary": "except BaseException: db.conn.execute(f'ROLLBACK TO SAVEPOINT {savepoint}') db.conn.execute(f'RELEASE SAVEPOINT {savepoint}') item_callbacks = rollback_callbacks[baseline:] del rollback_callbacks[base",
+      "source_hint": "broad_on_persist_no_reject_wash"
+    },
+    {
+      "file": "ming_sim/declaration_dispatch.py",
+      "symbol": "_assert_commission_grant_target_exists",
+      "lineno": 956,
+      "types": [
+        "TypeError",
+        "ValueError"
+      ],
+      "washes_reject": false,
+      "jsonish": false,
+      "in_decl_path": true,
+      "kind": "broad_except",
+      "try_summary": "try: iid = int(tid) except (TypeError, ValueError) as exc: raise DeclarationReferenceError(f'事项不存在：{tid}') from exc",
+      "handler_summary": "except (TypeError, ValueError) as exc: raise DeclarationReferenceError(f'事项不存在：{tid}') from exc",
+      "source_hint": "broad_on_decl_field"
+    },
+    {
+      "file": "ming_sim/declaration_dispatch.py",
+      "symbol": "_dispatch_endorsements",
+      "lineno": 1754,
+      "types": [
+        "TypeError",
+        "ValueError"
+      ],
+      "washes_reject": false,
+      "jsonish": false,
+      "in_decl_path": true,
+      "kind": "broad_except",
+      "try_summary": "try: action_id = strict_int(item.get('action_id'), accept_numeric_strings=False) except (TypeError, ValueError): action_id = 0",
+      "handler_summary": "except (TypeError, ValueError): action_id = 0",
+      "source_hint": "broad_on_decl_field"
+    },
+    {
+      "file": "ming_sim/declaration_dispatch.py",
+      "symbol": "_dispatch_rushes",
+      "lineno": 2014,
+      "types": [
+        "TypeError",
+        "ValueError"
+      ],
+      "washes_reject": false,
+      "jsonish": false,
+      "in_decl_path": true,
+      "kind": "broad_except",
+      "try_summary": "try: target_id = int(item.get('target_id') or 0) except (TypeError, ValueError): target_id = 0",
+      "handler_summary": "except (TypeError, ValueError): target_id = 0",
+      "source_hint": "broad_on_decl_field"
+    },
+    {
+      "file": "ming_sim/declaration_dispatch.py",
+      "symbol": "_dispatch_promises",
+      "lineno": 2184,
+      "types": [
+        "TypeError",
+        "ValueError"
+      ],
+      "washes_reject": false,
+      "jsonish": false,
+      "in_decl_path": true,
+      "kind": "broad_except",
+      "try_summary": "try: action_id = strict_int(item.get('action_id'), accept_numeric_strings=False) except (TypeError, ValueError): action_id = 0",
+      "handler_summary": "except (TypeError, ValueError): action_id = 0",
+      "source_hint": "broad_on_decl_field"
+    },
+    {
+      "file": "ming_sim/declaration_dispatch.py",
+      "symbol": "_assert_textual_fact_subject_exists",
+      "lineno": 2312,
+      "types": [
+        "TypeError",
+        "ValueError"
+      ],
+      "washes_reject": true,
+      "jsonish": false,
+      "in_decl_path": true,
+      "kind": "broad_except",
+      "try_summary": "try: affair_id = int(subject_id) except (TypeError, ValueError) as exc: raise DeclarationDataError('事务引用须为整数') from exc",
+      "handler_summary": "except (TypeError, ValueError) as exc: raise DeclarationDataError('事务引用须为整数') from exc",
+      "source_hint": "wash_decl_field_only"
+    },
+    {
+      "file": "ming_sim/declaration_dispatch.py",
+      "symbol": "_dispatch_commissions",
+      "lineno": 1191,
+      "types": [
+        "TypeError",
+        "ValueError"
+      ],
+      "washes_reject": false,
+      "jsonish": false,
+      "in_decl_path": true,
+      "kind": "broad_except",
+      "try_summary": "try: origin_id = strict_int(strategy.get('source_chat_turn_id'), accept_numeric_strings=False) except (TypeError, ValueError): origin_id = 0",
+      "handler_summary": "except (TypeError, ValueError): origin_id = 0",
+      "source_hint": "broad_other"
+    },
+    {
+      "file": "ming_sim/declaration_dispatch.py",
+      "symbol": "_dispatch_commissions",
+      "lineno": 1234,
+      "types": [
+        "TypeError",
+        "ValueError"
+      ],
+      "washes_reject": false,
+      "jsonish": false,
+      "in_decl_path": true,
+      "kind": "broad_except",
+      "try_summary": "try: order_id = strict_int(progress.get('order_id'), accept_numeric_strings=False) except (TypeError, ValueError): order_id = 0",
+      "handler_summary": "except (TypeError, ValueError): order_id = 0",
+      "source_hint": "broad_other"
+    },
+    {
+      "file": "ming_sim/declaration_dispatch.py",
+      "symbol": "_dispatch_commissions",
+      "lineno": 1266,
+      "types": [
+        "TypeError",
+        "ValueError"
+      ],
+      "washes_reject": false,
+      "jsonish": false,
+      "in_decl_path": true,
+      "kind": "broad_except",
+      "try_summary": "try: order_id = strict_int(update.get('order_id'), accept_numeric_strings=False) except (TypeError, ValueError): order_id = 0",
+      "handler_summary": "except (TypeError, ValueError): order_id = 0",
+      "source_hint": "broad_other"
+    },
+    {
+      "file": "ming_sim/declaration_dispatch.py",
+      "symbol": "_dispatch_rushes",
+      "lineno": 2030,
+      "types": [
+        "TypeError",
+        "ValueError"
+      ],
+      "washes_reject": true,
+      "jsonish": false,
+      "in_decl_path": true,
+      "kind": "broad_except",
+      "try_summary": "try: deadline = max(0, min(int(raw_deadline), 36)) except (TypeError, ValueError): _reject(rejected, item, f'催办期限非法：deadline_months={raw_deadline!r}', 'invalid_shape', source) continue",
+      "handler_summary": "except (TypeError, ValueError): _reject(rejected, item, f'催办期限非法：deadline_months={raw_deadline!r}', 'invalid_shape', source) continue",
+      "source_hint": "wash_decl_field_only"
+    },
+    {
+      "file": "ming_sim/declaration_dispatch.py",
+      "symbol": "_dispatch_rushes",
+      "lineno": 2056,
+      "types": [
+        "KeyError",
+        "TypeError",
+        "ValueError"
+      ],
+      "washes_reject": true,
+      "jsonish": false,
+      "in_decl_path": true,
+      "kind": "broad_except",
+      "try_summary": "try: stage_idx = int(item['stage_idx']) except (KeyError, TypeError, ValueError): _reject(rejected, item, '催办缺目标分段索引', 'invalid_shape', source) continue",
+      "handler_summary": "except (KeyError, TypeError, ValueError): _reject(rejected, item, '催办缺目标分段索引', 'invalid_shape', source) continue",
+      "source_hint": "wash_decl_field_only"
+    },
+    {
+      "file": "ming_sim/declaration_dispatch.py",
+      "symbol": "_dispatch_registrations",
+      "lineno": 2873,
+      "types": [
+        "TypeError",
+        "ValueError"
+      ],
+      "washes_reject": true,
+      "jsonish": false,
+      "in_decl_path": true,
+      "kind": "broad_except",
+      "try_summary": "try: loyalty = int(raw_loyalty) except (TypeError, ValueError): _reject(rejected, item, f'入册声明 loyalty 非法：{raw_loyalty!r}', 'invalid_shape', source) continue",
+      "handler_summary": "except (TypeError, ValueError): _reject(rejected, item, f'入册声明 loyalty 非法：{raw_loyalty!r}', 'invalid_shape', source) continue",
+      "source_hint": "wash_decl_field_only"
+    },
+    {
+      "file": "ming_sim/declaration_dispatch.py",
+      "symbol": "_dispatch_promises",
+      "lineno": 2268,
+      "types": [
+        "TypeError",
+        "ValueError"
+      ],
+      "washes_reject": false,
+      "jsonish": false,
+      "in_decl_path": true,
+      "kind": "broad_except",
+      "try_summary": "try: oid_i = int(oid or 0) except (TypeError, ValueError): oid_i = 0",
+      "handler_summary": "except (TypeError, ValueError): oid_i = 0",
+      "source_hint": "broad_on_decl_field"
+    },
+    {
+      "file": "ming_sim/decree_forecast.py",
+      "symbol": "json.loads@77",
+      "lineno": 77,
+      "kind": "json_loads",
+      "line": "loaded = json.loads(str(raw))"
+    },
+    {
+      "file": "ming_sim/displaced_population.py",
+      "symbol": "apply_levy_driven_transfers",
+      "lineno": 69,
+      "types": [
+        "TypeError",
+        "ValueError"
+      ],
+      "washes_reject": false,
+      "jsonish": true,
+      "in_decl_path": false,
+      "kind": "broad_except",
+      "try_summary": "try: fiscal = json.loads(str(row['fiscal'] or '{}')) except (TypeError, ValueError) as exc: raise ValueError(f'{region_id}.fiscal 持久 JSON 损坏，无法结算加派账') from exc",
+      "handler_summary": "except (TypeError, ValueError) as exc: raise ValueError(f'{region_id}.fiscal 持久 JSON 损坏，无法结算加派账') from exc",
+      "source_hint": "broad_on_persist_no_reject_wash"
+    },
+    {
+      "file": "ming_sim/displaced_population.py",
+      "symbol": "json.loads@68",
+      "lineno": 68,
+      "kind": "json_loads",
+      "line": "fiscal = json.loads(str(row[\"fiscal\"] or \"{}\"))"
+    },
+    {
+      "file": "ming_sim/entities/affair/store.py",
+      "symbol": "parse_affair_declaration",
+      "lineno": 462,
+      "types": [
+        "TypeError",
+        "ValueError"
+      ],
+      "washes_reject": true,
+      "jsonish": false,
+      "in_decl_path": false,
+      "kind": "broad_except",
+      "try_summary": "try: affair_id = parse_positive_affair_id(raw.get('affair_id')) except (TypeError, ValueError) as exc: raise DeclarationDataError('接到已开事务须有 affair_id') from exc",
+      "handler_summary": "except (TypeError, ValueError) as exc: raise DeclarationDataError('接到已开事务须有 affair_id') from exc",
+      "source_hint": "wash_decl_field_only"
+    },
+    {
+      "file": "ming_sim/entities/affair/store.py",
+      "symbol": "json.loads@413",
+      "lineno": 413,
+      "kind": "json_loads",
+      "line": "tags = json.loads(row[\"tags\"] or \"[]\")"
+    },
+    {
+      "file": "ming_sim/entities/affair/store.py",
+      "symbol": "json.loads@414",
+      "lineno": 414,
+      "kind": "json_loads",
+      "line": "people = json.loads(row[\"person_names\"] or \"[]\")"
+    },
+    {
+      "file": "ming_sim/entities/army/delta_section.py",
+      "symbol": "apply_army_delta_with_cannon_transfer",
+      "lineno": 80,
+      "types": [
+        "TypeError",
+        "ValueError"
+      ],
+      "washes_reject": false,
+      "jsonish": false,
+      "in_decl_path": true,
+      "kind": "broad_except",
+      "try_summary": "try: requested = _strict_int(payload[cannon_keys[0]]) if len(cannon_keys) == 1 else 0 except (TypeError, ValueError): requested = 0",
+      "handler_summary": "except (TypeError, ValueError): requested = 0",
+      "source_hint": "broad_other"
+    },
+    {
+      "file": "ming_sim/entities/authority/apply.py",
+      "symbol": "_prepare_authority_change_item",
+      "lineno": 35,
+      "types": [
+        "TypeError",
+        "ValueError"
+      ],
+      "washes_reject": false,
+      "jsonish": false,
+      "in_decl_path": true,
+      "kind": "broad_except",
+      "try_summary": "try: dossier_id = _parse_sqlite_id(item.get('dossier_id')) except (TypeError, ValueError): raise AuthorityDataError('missing_dossier_source') from None",
+      "handler_summary": "except (TypeError, ValueError): raise AuthorityDataError('missing_dossier_source') from None",
+      "source_hint": "broad_on_decl_field"
+    },
+    {
+      "file": "ming_sim/entities/authority/apply.py",
+      "symbol": "_prepare_authority_change_item",
+      "lineno": 105,
+      "types": [
+        "TypeError",
+        "ValueError"
+      ],
+      "washes_reject": false,
+      "jsonish": false,
+      "in_decl_path": true,
+      "kind": "broad_except",
+      "try_summary": "try: authority_id = _parse_sqlite_id(item.get('authority_id')) except (TypeError, ValueError): raise AuthorityDataError('unknown_authority_id') from None",
+      "handler_summary": "except (TypeError, ValueError): raise AuthorityDataError('unknown_authority_id') from None",
+      "source_hint": "broad_on_decl_field"
+    },
+    {
+      "file": "ming_sim/entities/authority/apply.py",
+      "symbol": "_payload_owned_dossier_for_origin",
+      "lineno": 189,
+      "types": [
+        "ValueError"
+      ],
+      "washes_reject": false,
+      "jsonish": false,
+      "in_decl_path": true,
+      "kind": "broad_except",
+      "try_summary": "try: dossier_id = _parse_sqlite_id(text.split(':', 1)[1]) except ValueError: return None",
+      "handler_summary": "except ValueError: return None",
+      "source_hint": "broad_other"
+    },
+    {
+      "file": "ming_sim/entities/authority/apply.py",
+      "symbol": "_prepare_authority_change_item",
+      "lineno": 84,
+      "types": [
+        "TypeError",
+        "ValueError"
+      ],
+      "washes_reject": false,
+      "jsonish": false,
+      "in_decl_path": true,
+      "kind": "broad_except",
+      "try_summary": "try: effective_turn = int(state.turn) if effective_raw in (None, '') else _parse_sqlite_id(effective_raw) expires_turn = None if expires_raw in (None, '') else _parse_sqlite_id(expires_raw) except (TypeError, ValueError): raise AuthorityDataError('授权回合非法') from None",
+      "handler_summary": "except (TypeError, ValueError): raise AuthorityDataError('授权回合非法') from None",
+      "source_hint": "broad_on_decl_field"
+    },
+    {
+      "file": "ming_sim/entities/character/apply.py",
+      "symbol": "allegiance_change_rejection",
+      "lineno": 95,
+      "types": [
+        "ValueError"
+      ],
+      "washes_reject": false,
+      "jsonish": false,
+      "in_decl_path": true,
+      "kind": "broad_except",
+      "try_summary": "try: dossier_id = _parse_sqlite_id(str(origin_ref).split(':', 1)[1]) except ValueError: dossier_id = 0",
+      "handler_summary": "except ValueError: dossier_id = 0",
+      "source_hint": "broad_on_decl_field"
+    },
+    {
+      "file": "ming_sim/entities/character/apply.py",
+      "symbol": "apply_person_changes",
+      "lineno": 404,
+      "types": [
+        "ValueError"
+      ],
+      "washes_reject": false,
+      "jsonish": false,
+      "in_decl_path": true,
+      "kind": "broad_except",
+      "try_summary": "try: appointment_tenure = appointment_tenure_from(item) except ValueError: rejections.append(rejected(item, '任别非白名单', 'invalid_enum')) continue",
+      "handler_summary": "except ValueError: rejections.append(rejected(item, '任别非白名单', 'invalid_enum')) continue",
+      "source_hint": "broad_on_decl_field"
+    },
+    {
+      "file": "ming_sim/entities/dossier/apply.py",
+      "symbol": "apply_dossier_participant_items",
+      "lineno": 50,
+      "types": [
+        "TypeError",
+        "ValueError"
+      ],
+      "washes_reject": true,
+      "jsonish": false,
+      "in_decl_path": true,
+      "kind": "broad_except",
+      "try_summary": "try: dossier_id = _parse_sqlite_id(item.get('dossier_id')) if dossier_id not in authority_set: raise ValueError(not_in_batch_msg) character_id = str(item.get('character_id') or '').strip() delegator_id = str(item.get('delegator_id') or '').strip() tier = str(item.get('tier') or '",
+      "handler_summary": "except (TypeError, ValueError) as exc: rejections.append(RejectedItem(item=item, reason=str(exc), category='invalid_participant_roster', source=source)) continue",
+      "source_hint": "wash_decl_field_only"
+    },
+    {
+      "file": "ming_sim/entities/dossier/delta_section.py",
+      "symbol": "apply_executions",
+      "lineno": 81,
+      "types": [
+        "TypeError",
+        "ValueError",
+        "KeyError"
+      ],
+      "washes_reject": false,
+      "jsonish": false,
+      "in_decl_path": true,
+      "kind": "broad_except",
+      "try_summary": "try: dossier_id = _parse_sqlite_id(item.get('dossier_id')) outcome = str(item.get('outcome') or '').strip() if outcome not in {'fulfilled', 'degraded', 'failed', 'transformed'}: raise ValueError('执行结果必须为 fulfilled/degraded/failed/transformed') note = item.get('note') note = note ",
+      "handler_summary": "except (TypeError, ValueError, KeyError) as exc: _refuse(item, str(exc)) continue",
+      "source_hint": "broad_on_decl_field"
+    },
+    {
+      "file": "ming_sim/entities/economy/apply.py",
+      "symbol": "_apply_economy_list",
+      "lineno": 56,
+      "types": [
+        "TypeError",
+        "ValueError"
+      ],
+      "washes_reject": false,
+      "jsonish": false,
+      "in_decl_path": true,
+      "kind": "broad_except",
+      "try_summary": "try: delta = 0 if raw_delta in (None, '') else _strict_int(raw_delta) bad_delta = False except (TypeError, ValueError): delta, bad_delta = (0, True)",
+      "handler_summary": "except (TypeError, ValueError): delta, bad_delta = (0, True)",
+      "source_hint": "broad_other"
+    },
+    {
+      "file": "ming_sim/entities/faction/apply.py",
+      "symbol": "_apply_faction_dict",
+      "lineno": 51,
+      "types": [
+        "TypeError",
+        "ValueError"
+      ],
+      "washes_reject": true,
+      "jsonish": false,
+      "in_decl_path": true,
+      "kind": "broad_except",
+      "try_summary": "try: d = _strict_int(val) except (TypeError, ValueError): rejected.append(RejectedItem(item={str(key): val}, reason=f'「{key}」值非整数：{val!r}', category='invalid_enum', source=source)) continue",
+      "handler_summary": "except (TypeError, ValueError): rejected.append(RejectedItem(item={str(key): val}, reason=f'「{key}」值非整数：{val!r}', category='invalid_enum', source=source)) continue",
+      "source_hint": "wash_decl_field_only"
+    },
+    {
+      "file": "ming_sim/entities/faction/apply.py",
+      "symbol": "_apply_faction_dict",
+      "lineno": 41,
+      "types": [
+        "TypeError",
+        "ValueError"
+      ],
+      "washes_reject": true,
+      "jsonish": false,
+      "in_decl_path": true,
+      "kind": "broad_except",
+      "try_summary": "try: d = _strict_int(raw) except (TypeError, ValueError): rejected.append(RejectedItem(item={str(key): val}, reason=f'「{key}」{fname} 值非整数：{raw!r}', category='invalid_enum', source=source)) continue",
+      "handler_summary": "except (TypeError, ValueError): rejected.append(RejectedItem(item={str(key): val}, reason=f'「{key}」{fname} 值非整数：{raw!r}', category='invalid_enum', source=source)) continue",
+      "source_hint": "wash_decl_field_only"
+    },
+    {
+      "file": "ming_sim/entities/fiscal/delta_section.py",
+      "symbol": "_commitment_carrier_same_account_unmatched",
+      "lineno": 43,
+      "types": [
+        "TypeError",
+        "ValueError"
+      ],
+      "washes_reject": false,
+      "jsonish": false,
+      "in_decl_path": true,
+      "kind": "broad_except",
+      "try_summary": "try: delta = _strict_int(item.get('delta')) except (TypeError, ValueError): continue",
+      "handler_summary": "except (TypeError, ValueError): continue",
+      "source_hint": "broad_on_decl_field"
+    },
+    {
+      "file": "ming_sim/entities/fiscal/delta_section.py",
+      "symbol": "_norm_int_leaf",
+      "lineno": 58,
+      "types": [
+        "ValueError"
+      ],
+      "washes_reject": false,
+      "jsonish": false,
+      "in_decl_path": true,
+      "kind": "broad_except",
+      "try_summary": "try: return int(value.strip()) except ValueError: return value",
+      "handler_summary": "except ValueError: return value",
+      "source_hint": "broad_on_decl_field"
+    },
+    {
+      "file": "ming_sim/entities/issue/effects.py",
+      "symbol": "_apply_issue_buildings",
+      "lineno": 67,
+      "types": [
+        "TypeError",
+        "ValueError"
+      ],
+      "washes_reject": true,
+      "jsonish": false,
+      "in_decl_path": false,
+      "kind": "broad_except",
+      "try_summary": "try: values = {key: strict_int(op.get(key, default), accept_numeric_strings=True) for key, default in (('level', 1), ('condition', 60), ('maintenance', 0), ('risk', 30), ('output_amount', 0))} except (TypeError, ValueError): rejected.append(RejectedItem(item=op, reason='建筑数值非整数',",
+      "handler_summary": "except (TypeError, ValueError): rejected.append(RejectedItem(item=op, reason='建筑数值非整数', category='invalid_enum', source=source)) continue",
+      "source_hint": "wash_needs_manual_read"
+    },
+    {
+      "file": "ming_sim/entities/issue/tracker.py",
+      "symbol": "apply_issue_tracker_output",
+      "lineno": 81,
+      "types": [
+        "TypeError",
+        "ValueError"
+      ],
+      "washes_reject": true,
+      "jsonish": false,
+      "in_decl_path": false,
+      "kind": "broad_except",
+      "try_summary": "try: issue_id = strict_types._parse_sqlite_id(adv.get('issue_id')) except (TypeError, ValueError): entity_rejections.append(RejectedItem(item=adv, reason=f\"advances issue_id 非法（非整数或超 SQLite 范围）：{adv.get('issue_id')!r}\", category='invalid_enum', source=source)) continue",
+      "handler_summary": "except (TypeError, ValueError): entity_rejections.append(RejectedItem(item=adv, reason=f\"advances issue_id 非法（非整数或超 SQLite 范围）：{adv.get('issue_id')!r}\", category='invalid_enum', source=source)) contin",
+      "source_hint": "wash_decl_field_only"
+    },
+    {
+      "file": "ming_sim/entities/issue/tracker.py",
+      "symbol": "apply_issue_tracker_output",
+      "lineno": 91,
+      "types": [
+        "TypeError",
+        "ValueError",
+        "OverflowError"
+      ],
+      "washes_reject": true,
+      "jsonish": false,
+      "in_decl_path": false,
+      "kind": "broad_except",
+      "try_summary": "try: _db_raw = adv.get('delta_bar') delta_bar = _strict_int(0 if _db_raw is None else _db_raw) _id_raw = adv.get('inertia_delta') inertia_delta = _strict_int(0 if _id_raw is None else _id_raw) except (TypeError, ValueError, OverflowError) as exc: entity_rejections.append(Rejected",
+      "handler_summary": "except (TypeError, ValueError, OverflowError) as exc: entity_rejections.append(RejectedItem(item=adv, reason=f'advances 字段强转失败（delta_bar/inertia_delta 脏数据）：{exc}', category='invalid_enum', source=sour",
+      "source_hint": "wash_needs_manual_read"
+    },
+    {
+      "file": "ming_sim/entities/issue/tracker.py",
+      "symbol": "apply_issue_tracker_output",
+      "lineno": 399,
+      "types": [
+        "TypeError",
+        "ValueError",
+        "OverflowError"
+      ],
+      "washes_reject": true,
+      "jsonish": false,
+      "in_decl_path": false,
+      "kind": "broad_except",
+      "try_summary": "try: end_turn_marker_shape = _strict_int(0 if ni.get('end_turn', 0) in (None, '') else ni.get('end_turn', 0)) > 0 except (TypeError, ValueError, OverflowError) as exc: entity_rejections.append(RejectedItem(item=ni, reason=f\"new_issue end_turn 非法：{ni.get('end_turn')!r}（{exc}）\", ca",
+      "handler_summary": "except (TypeError, ValueError, OverflowError) as exc: entity_rejections.append(RejectedItem(item=ni, reason=f\"new_issue end_turn 非法：{ni.get('end_turn')!r}（{exc}）\", category='invalid_enum', source=sour",
+      "source_hint": "wash_needs_manual_read"
+    },
+    {
+      "file": "ming_sim/entities/issue/tracker.py",
+      "symbol": "apply_issue_tracker_output",
+      "lineno": 538,
+      "types": [
+        "TypeError",
+        "ValueError",
+        "OverflowError"
+      ],
+      "washes_reject": true,
+      "jsonish": false,
+      "in_decl_path": false,
+      "kind": "broad_except",
+      "try_summary": "try: _bv = ni.get('bar_value', 25) bar_value = _strict_int(25 if _bv is None else _bv) _sv = ni.get('severity', 50) severity = _strict_int(50 if _sv is None else _sv) _et = ni.get('end_turn', 0) end_turn = _strict_int(0 if _et in (None, '') else _et) _tags_raw = ni.get('tags') if",
+      "handler_summary": "except (TypeError, ValueError, OverflowError) as exc: entity_rejections.append(RejectedItem(item=ni, reason=f'new_issue 字段强转失败（bar_value/severity/end_turn/tags/inertia 脏数据）：{exc}', category='invalid_e",
+      "source_hint": "wash_needs_manual_read"
+    },
+    {
+      "file": "ming_sim/entities/issue/tracker.py",
+      "symbol": "apply_issue_tracker_output",
+      "lineno": 593,
+      "types": [
+        "TypeError",
+        "ValueError"
+      ],
+      "washes_reject": true,
+      "jsonish": false,
+      "in_decl_path": false,
+      "kind": "broad_except",
+      "try_summary": "try: issue_affair = declaration_from_payload(ni, allowed=ATTACH_BIRTH) except (TypeError, ValueError) as exc: entity_rejections.append(RejectedItem(item=ni, reason=str(exc), category='invalid_enum', source=source)) continue",
+      "handler_summary": "except (TypeError, ValueError) as exc: entity_rejections.append(RejectedItem(item=ni, reason=str(exc), category='invalid_enum', source=source)) continue",
+      "source_hint": "wash_decl_field_only"
+    },
+    {
+      "file": "ming_sim/entities/issue/tracker.py",
+      "symbol": "apply_issue_tracker_output",
+      "lineno": 692,
+      "types": [
+        "TypeError",
+        "ValueError"
+      ],
+      "washes_reject": true,
+      "jsonish": false,
+      "in_decl_path": false,
+      "kind": "broad_except",
+      "try_summary": "try: issue_id = strict_types._parse_sqlite_id(cl.get('issue_id')) except (TypeError, ValueError): entity_rejections.append(RejectedItem(item=cl, reason=f\"close_issues issue_id 非法（非整数或超 SQLite 范围）：{cl.get('issue_id')!r}\", category='invalid_enum', source=source)) continue",
+      "handler_summary": "except (TypeError, ValueError): entity_rejections.append(RejectedItem(item=cl, reason=f\"close_issues issue_id 非法（非整数或超 SQLite 范围）：{cl.get('issue_id')!r}\", category='invalid_enum', source=source)) cont",
+      "source_hint": "wash_decl_field_only"
+    },
+    {
+      "file": "ming_sim/entities/issue/tracker.py",
+      "symbol": "apply_issue_tracker_output",
+      "lineno": 475,
+      "types": [
+        "TypeError",
+        "ValueError",
+        "OverflowError"
+      ],
+      "washes_reject": true,
+      "jsonish": false,
+      "in_decl_path": false,
+      "kind": "broad_except",
+      "try_summary": "try: if kind != 'initiative': raise ValueError('kind 须为 initiative') if not origin_ref: raise ValueError('origin_ref 必填，须指回诏书') _et_raw = ni.get('end_turn', 0) end_turn_for_commitment = _strict_int(0 if _et_raw in (None, '') else _et_raw) if ongoing_has_work and end_turn_for_comm",
+      "handler_summary": "except (TypeError, ValueError, OverflowError) as exc: entity_rejections.append(RejectedItem(item=ni, reason=f'new_issue commitment 字段非法（origin_ref/ongoing_effects/stop_condition）：{exc}', category='inv",
+      "source_hint": "wash_needs_manual_read"
+    },
+    {
+      "file": "ming_sim/entities/issue/tracker.py",
+      "symbol": "apply_issue_tracker_output",
+      "lineno": 580,
+      "types": [
+        "ValueError"
+      ],
+      "washes_reject": true,
+      "jsonish": false,
+      "in_decl_path": false,
+      "kind": "broad_except",
+      "try_summary": "try: if not isinstance(roster_input, (list, tuple)): raise ValueError('participant_roster 须为列表') for participant in roster_input: if isinstance(participant, str): if not participant.strip(): raise ValueError('participant_roster 人名不得为空') continue if not isinstance(participant, dic",
+      "handler_summary": "except ValueError as exc: entity_rejections.append(RejectedItem(item=ni, reason=str(exc), category='invalid_participant_roster', source=source)) continue",
+      "source_hint": "wash_needs_manual_read"
+    },
+    {
+      "file": "ming_sim/entities/metric/apply.py",
+      "symbol": "apply_metric_dict",
+      "lineno": 32,
+      "types": [
+        "TypeError",
+        "ValueError"
+      ],
+      "washes_reject": false,
+      "jsonish": false,
+      "in_decl_path": true,
+      "kind": "broad_except",
+      "try_summary": "try: amount = strict_int(val) except (TypeError, ValueError): continue",
+      "handler_summary": "except (TypeError, ValueError): continue",
+      "source_hint": "broad_other"
+    },
+    {
+      "file": "ming_sim/entities/metric/apply.py",
+      "symbol": "declare_metric_pairs",
+      "lineno": 64,
+      "types": [
+        "TypeError",
+        "ValueError"
+      ],
+      "washes_reject": false,
+      "jsonish": false,
+      "in_decl_path": true,
+      "kind": "broad_except",
+      "try_summary": "try: strict_int(val) except (TypeError, ValueError): refused.append((key, val, f'「{key}」值非整数：{val!r}', 'invalid_enum')) continue",
+      "handler_summary": "except (TypeError, ValueError): refused.append((key, val, f'「{key}」值非整数：{val!r}', 'invalid_enum')) continue",
+      "source_hint": "broad_on_decl_field"
+    },
+    {
+      "file": "ming_sim/entities/population/apply.py",
+      "symbol": "_apply_population_transfers",
+      "lineno": 107,
+      "types": [
+        "TypeError",
+        "ValueError"
+      ],
+      "washes_reject": true,
+      "jsonish": false,
+      "in_decl_path": true,
+      "kind": "broad_except",
+      "try_summary": "try: amount = _strict_int(raw_amount, accept_numeric_strings=False) except (TypeError, ValueError): _reject('invalid_enum', f'population_transfers amount 非整数：{raw_amount!r}') continue",
+      "handler_summary": "except (TypeError, ValueError): _reject('invalid_enum', f'population_transfers amount 非整数：{raw_amount!r}') continue",
+      "source_hint": "wash_decl_field_only"
+    },
+    {
+      "file": "ming_sim/entities/power/apply.py",
+      "symbol": "_apply_bandit_absorptions",
+      "lineno": 89,
+      "types": [
+        "TypeError",
+        "ValueError"
+      ],
+      "washes_reject": true,
+      "jsonish": false,
+      "in_decl_path": true,
+      "kind": "broad_except",
+      "try_summary": "try: requested = _strict_int(raw_req, accept_numeric_strings=False) except (TypeError, ValueError): _reject('invalid_enum', f'bandit_absorptions requested_count 非整数：{raw_req!r}') continue",
+      "handler_summary": "except (TypeError, ValueError): _reject('invalid_enum', f'bandit_absorptions requested_count 非整数：{raw_req!r}') continue",
+      "source_hint": "wash_decl_field_only"
+    },
+    {
+      "file": "ming_sim/entities/power/delta_section.py",
+      "symbol": "apply",
+      "lineno": 59,
+      "types": [
+        "TypeError",
+        "ValueError"
+      ],
+      "washes_reject": false,
+      "jsonish": false,
+      "in_decl_path": true,
+      "kind": "broad_except",
+      "try_summary": "try: if isinstance(v, bool) or isinstance(v, float): raise ValueError('非整数') ms_delta = int(v) except (TypeError, ValueError): stripped[k] = v continue",
+      "handler_summary": "except (TypeError, ValueError): stripped[k] = v continue",
+      "source_hint": "broad_on_decl_field"
+    },
+    {
+      "file": "ming_sim/entities/secret_order/delta_section.py",
+      "symbol": "apply",
+      "lineno": 39,
+      "types": [
+        "TypeError",
+        "ValueError"
+      ],
+      "washes_reject": true,
+      "jsonish": false,
+      "in_decl_path": true,
+      "kind": "broad_except",
+      "try_summary": "try: real_id = _parse_sqlite_id(raw_id) except (TypeError, ValueError): rejections.append(RejectedItem(item=item, reason='order_id 非整数或超界', category='invalid_enum', source=run.ctx.source)) continue",
+      "handler_summary": "except (TypeError, ValueError): rejections.append(RejectedItem(item=item, reason='order_id 非整数或超界', category='invalid_enum', source=run.ctx.source)) continue",
+      "source_hint": "wash_decl_field_only"
+    },
+    {
+      "file": "ming_sim/entities/social_class/apply.py",
+      "symbol": "_apply_class_dict",
+      "lineno": 52,
+      "types": [
+        "TypeError",
+        "ValueError"
+      ],
+      "washes_reject": true,
+      "jsonish": false,
+      "in_decl_path": true,
+      "kind": "broad_except",
+      "try_summary": "try: d = _strict_int(raw) except (TypeError, ValueError): rejected.append(RejectedItem(item={str(key): fields}, reason=f'「{key}」{fname} 值非整数：{raw!r}', category='invalid_enum', source=source)) continue",
+      "handler_summary": "except (TypeError, ValueError): rejected.append(RejectedItem(item={str(key): fields}, reason=f'「{key}」{fname} 值非整数：{raw!r}', category='invalid_enum', source=source)) continue",
+      "source_hint": "wash_decl_field_only"
+    },
+    {
+      "file": "ming_sim/entities/staged_declaration/store.py",
+      "symbol": "json.loads@198",
+      "lineno": 198,
+      "kind": "json_loads",
+      "line": "parsed = json.loads(raw)"
+    },
+    {
+      "file": "ming_sim/entities/staged_declaration/store.py",
+      "symbol": "json.loads@252",
+      "lineno": 252,
+      "kind": "json_loads",
+      "line": "return json.loads(row[column])"
+    },
+    {
+      "file": "ming_sim/entities/staged_declaration/store.py",
+      "symbol": "json.loads@261",
+      "lineno": 261,
+      "kind": "json_loads",
+      "line": "declaration=json.loads(row[\"declaration_json\"] or \"{}\"),"
+    },
+    {
+      "file": "ming_sim/entities/staged_declaration/store.py",
+      "symbol": "json.loads@263",
+      "lineno": 263,
+      "kind": "json_loads",
+      "line": "visible_refs=json.loads(row[\"visible_refs_json\"] or \"{}\"),"
+    },
+    {
+      "file": "ming_sim/entities/surcharge/apply.py",
+      "symbol": "json.loads@71",
+      "lineno": 71,
+      "kind": "json_loads",
+      "line": "fiscal = json.loads(str(row[\"fiscal\"] or \"{}\"))"
+    },
+    {
+      "file": "ming_sim/error_pack.py",
+      "symbol": "_read_complete_pack_manifest",
+      "lineno": 91,
+      "types": [
+        "OSError",
+        "ValueError",
+        "TypeError"
+      ],
+      "washes_reject": false,
+      "jsonish": true,
+      "in_decl_path": false,
+      "kind": "broad_except",
+      "try_summary": "try: if not path.is_dir() or not all(((path / name).is_file() for name in _COMPLETE_PACK_FILES)): return None manifest = json.loads((path / 'manifest.json').read_text(encoding='utf-8')) except (OSError, ValueError, TypeError): return None",
+      "handler_summary": "except (OSError, ValueError, TypeError): return None",
+      "source_hint": "broad_on_persist_no_reject_wash"
+    },
+    {
+      "file": "ming_sim/error_pack.py",
+      "symbol": "json.loads@90",
+      "lineno": 90,
+      "kind": "json_loads",
+      "line": "manifest = json.loads((path / \"manifest.json\").read_text(encoding=\"utf-8\"))"
+    },
+    {
+      "file": "ming_sim/faction_brew.py",
+      "symbol": "json.loads@183",
+      "lineno": 183,
+      "kind": "json_loads",
+      "line": "parsed = json.loads(raw)"
+    },
+    {
+      "file": "ming_sim/fiscal_fact_brief.py",
+      "symbol": "_ming_settle_bases",
+      "lineno": 90,
+      "types": [
+        "TypeError",
+        "ValueError"
+      ],
+      "washes_reject": false,
+      "jsonish": true,
+      "in_decl_path": false,
+      "kind": "broad_except",
+      "try_summary": "try: fiscal = json.loads(str(row['fiscal'] or '{}')) except (TypeError, ValueError) as exc: raise ValueError(f'fiscal_fact_brief：region {region_id} fiscal JSON 非法：{exc}') from exc",
+      "handler_summary": "except (TypeError, ValueError) as exc: raise ValueError(f'fiscal_fact_brief：region {region_id} fiscal JSON 非法：{exc}') from exc",
+      "source_hint": "broad_on_persist_no_reject_wash"
+    },
+    {
+      "file": "ming_sim/fiscal_fact_brief.py",
+      "symbol": "json.loads@89",
+      "lineno": 89,
+      "kind": "json_loads",
+      "line": "fiscal = json.loads(str(row[\"fiscal\"] or \"{}\"))"
+    },
+    {
+      "file": "ming_sim/flows.py",
+      "symbol": "_project_substrate_hub_remittance",
+      "lineno": 225,
+      "types": [
+        "TypeError",
+        "ValueError"
+      ],
+      "washes_reject": false,
+      "jsonish": true,
+      "in_decl_path": false,
+      "kind": "broad_except",
+      "try_summary": "try: fiscal = json.loads(str(row['fiscal'] or '{}')) except (TypeError, ValueError) as exc: raise ValueError(f'region {region_id!r} fiscal JSON 非法，无法投影起运') from exc",
+      "handler_summary": "except (TypeError, ValueError) as exc: raise ValueError(f'region {region_id!r} fiscal JSON 非法，无法投影起运') from exc",
+      "source_hint": "broad_on_persist_no_reject_wash"
+    },
+    {
+      "file": "ming_sim/flows.py",
+      "symbol": "json.loads@224",
+      "lineno": 224,
+      "kind": "json_loads",
+      "line": "fiscal = json.loads(str(row[\"fiscal\"] or \"{}\"))"
+    },
+    {
+      "file": "ming_sim/issues.py",
+      "symbol": "_load_region_fiscal_for_fiscal_levy",
+      "lineno": 569,
+      "types": [
+        "TypeError",
+        "ValueError"
+      ],
+      "washes_reject": false,
+      "jsonish": true,
+      "in_decl_path": false,
+      "kind": "broad_except",
+      "try_summary": "try: fiscal = json.loads(raw_fiscal) except (TypeError, ValueError) as exc: tlog(f'[fiscal-levy] {region_id} fiscal 解析失败，本{TURN_UNIT}饷率通道出列：{type(exc).__name__}: {exc}') return None",
+      "handler_summary": "except (TypeError, ValueError) as exc: tlog(f'[fiscal-levy] {region_id} fiscal 解析失败，本{TURN_UNIT}饷率通道出列：{type(exc).__name__}: {exc}') return None",
+      "source_hint": "broad_on_persist_no_reject_wash"
+    },
+    {
+      "file": "ming_sim/issues.py",
+      "symbol": "json.loads@160",
+      "lineno": 160,
+      "kind": "json_loads",
+      "line": "gate = json.loads(str(raw))"
+    },
+    {
+      "file": "ming_sim/issues.py",
+      "symbol": "json.loads@209",
+      "lineno": 209,
+      "kind": "json_loads",
+      "line": "payload = json.loads(str(row[\"metric_delta\"] or \"{}\"))"
+    },
+    {
+      "file": "ming_sim/issues.py",
+      "symbol": "json.loads@568",
+      "lineno": 568,
+      "kind": "json_loads",
+      "line": "fiscal = json.loads(raw_fiscal)"
+    },
+    {
+      "file": "ming_sim/issues.py",
+      "symbol": "json.loads@1546",
+      "lineno": 1546,
+      "kind": "json_loads",
+      "line": "roster = json.loads(str(row[\"participant_roster\"] or \"[]\"))"
+    },
+    {
+      "file": "ming_sim/knowledge.py",
+      "symbol": "json.loads@63",
+      "lineno": 63,
+      "kind": "json_loads",
+      "line": "raw = json.loads(raw)"
+    },
+    {
+      "file": "ming_sim/knowledge.py",
+      "symbol": "json.loads@95",
+      "lineno": 95,
+      "kind": "json_loads",
+      "line": "names = json.loads(raw_names or \"[]\")"
+    },
+    {
+      "file": "ming_sim/knowledge.py",
+      "symbol": "json.loads@100",
+      "lineno": 100,
+      "kind": "json_loads",
+      "line": "targets = json.loads(raw_targets) if raw_targets else {}"
+    },
+    {
+      "file": "ming_sim/knowledge.py",
+      "symbol": "json.loads@332",
+      "lineno": 332,
+      "kind": "json_loads",
+      "line": "excluded = json.loads(row[\"excluded_names\"] or \"[]\")"
+    },
+    {
+      "file": "ming_sim/knowledge.py",
+      "symbol": "json.loads@716",
+      "lineno": 716,
+      "kind": "json_loads",
+      "line": "target_roster = json.loads(str(issue[\"target_roster\"] or \"[]\"))"
+    },
+    {
+      "file": "ming_sim/materials.py",
+      "symbol": "_resolve_inside",
+      "lineno": 144,
+      "types": [
+        "ValueError"
+      ],
+      "washes_reject": true,
+      "jsonish": false,
+      "in_decl_path": false,
+      "kind": "broad_except",
+      "try_summary": "try: candidate.relative_to(root_r) except ValueError as exc: raise DeclarationDataError('材料路径越出目录') from exc",
+      "handler_summary": "except ValueError as exc: raise DeclarationDataError('材料路径越出目录') from exc",
+      "source_hint": "wash_decl_field_only"
+    },
+    {
+      "file": "ming_sim/materials.py",
+      "symbol": "json.loads@1882",
+      "lineno": 1882,
+      "kind": "json_loads",
+      "line": "value = json.loads(raw or \"[]\")"
+    },
+    {
+      "file": "ming_sim/mechanical_tail.py",
+      "symbol": "json.loads@182",
+      "lineno": 182,
+      "kind": "json_loads",
+      "line": "payload = json.loads(payload_json)"
+    },
+    {
+      "file": "ming_sim/models.py",
+      "symbol": "json.loads@41",
+      "lineno": 41,
+      "kind": "json_loads",
+      "line": "value = json.loads(raw)"
+    },
+    {
+      "file": "ming_sim/participant_roster.py",
+      "symbol": "json.loads@70",
+      "lineno": 70,
+      "kind": "json_loads",
+      "line": "roster = json.loads(roster)"
+    },
+    {
+      "file": "ming_sim/participant_roster.py",
+      "symbol": "json.loads@90",
+      "lineno": 90,
+      "kind": "json_loads",
+      "line": "roster = json.loads(raw or \"[]\")"
+    },
+    {
+      "file": "ming_sim/pay_order.py",
+      "symbol": "json.loads@422",
+      "lineno": 422,
+      "kind": "json_loads",
+      "line": "payload = json.loads(payload)"
+    },
+    {
+      "file": "ming_sim/public_sayings.py",
+      "symbol": "json.loads@123",
+      "lineno": 123,
+      "kind": "json_loads",
+      "line": "values = json.loads(raw or \"[]\")"
+    },
+    {
+      "file": "ming_sim/public_sayings.py",
+      "symbol": "json.loads@130",
+      "lineno": 130,
+      "kind": "json_loads",
+      "line": "payload = json.loads(raw or \"{}\")"
+    },
+    {
+      "file": "ming_sim/relation_brew.py",
+      "symbol": "json.loads@179",
+      "lineno": 179,
+      "kind": "json_loads",
+      "line": "parsed = json.loads(raw)"
+    },
+    {
+      "file": "ming_sim/relation_seed.py",
+      "symbol": "json.loads@159",
+      "lineno": 159,
+      "kind": "json_loads",
+      "line": "return json.loads(path.read_text(encoding=\"utf-8\"))"
+    },
+    {
+      "file": "ming_sim/rescript_actions.py",
+      "symbol": "json.loads@1231",
+      "lineno": 1231,
+      "kind": "json_loads",
+      "line": "payload = json.loads(str(row.get(\"payload_json\") or \"{}\"))"
+    },
+    {
+      "file": "ming_sim/rescript_actions.py",
+      "symbol": "json.loads@1517",
+      "lineno": 1517,
+      "kind": "json_loads",
+      "line": "choice = json.loads(raw)"
+    },
+    {
+      "file": "ming_sim/rescript_draft.py",
+      "symbol": "json.loads@1160",
+      "lineno": 1160,
+      "kind": "json_loads",
+      "line": "data = json.loads(text)"
+    },
+    {
+      "file": "ming_sim/session.py",
+      "symbol": "json.loads@563",
+      "lineno": 563,
+      "kind": "json_loads",
+      "line": "aliases = _json.loads(row[\"aliases\"] or \"[]\")"
+    },
+    {
+      "file": "ming_sim/session.py",
+      "symbol": "json.loads@564",
+      "lineno": 564,
+      "kind": "json_loads",
+      "line": "personal_skills = _json.loads(row[\"personal_skills\"] or \"[]\")"
+    },
+    {
+      "file": "ming_sim/session.py",
+      "symbol": "json.loads@565",
+      "lineno": 565,
+      "kind": "json_loads",
+      "line": "seed_guilt = _json.loads(row[\"seed_guilt\"] or \"{}\")"
+    },
+    {
+      "file": "ming_sim/settlement/preflight.py",
+      "symbol": "json.loads@421",
+      "lineno": 421,
+      "kind": "json_loads",
+      "line": "fiscal = json.loads(str(row[\"fiscal\"] or \"{}\"))"
+    },
+    {
+      "file": "ming_sim/settlement_payload.py",
+      "symbol": "json.loads@55",
+      "lineno": 55,
+      "kind": "json_loads",
+      "line": "obj = json.loads(m.group(1))"
+    },
+    {
+      "file": "ming_sim/situation_drift.py",
+      "symbol": "apply_situation_monthly_drift",
+      "lineno": 322,
+      "types": [
+        "TypeError",
+        "ValueError"
+      ],
+      "washes_reject": true,
+      "jsonish": false,
+      "in_decl_path": false,
+      "kind": "broad_except",
+      "try_summary": "try: raw = _strict_int(v) except (TypeError, ValueError): issue_monthly_rejections.append(RejectedItem(item={'field': k, 'raw_value': v}, reason='月度指标须为整数', category='invalid_enum', source=source)) continue",
+      "handler_summary": "except (TypeError, ValueError): issue_monthly_rejections.append(RejectedItem(item={'field': k, 'raw_value': v}, reason='月度指标须为整数', category='invalid_enum', source=source)) continue",
+      "source_hint": "wash_decl_field_only"
+    },
+    {
+      "file": "ming_sim/staged_commitment.py",
+      "symbol": "stages_to_json",
+      "lineno": 86,
+      "types": [
+        "TypeError",
+        "ValueError"
+      ],
+      "washes_reject": false,
+      "jsonish": true,
+      "in_decl_path": false,
+      "kind": "broad_except",
+      "try_summary": "try: data = json.loads(text) except (TypeError, ValueError) as exc: raise ValueError(f'stages_json 须为 JSON 数组字符串，解析失败：{text!r}') from exc",
+      "handler_summary": "except (TypeError, ValueError) as exc: raise ValueError(f'stages_json 须为 JSON 数组字符串，解析失败：{text!r}') from exc",
+      "source_hint": "broad_on_persist_no_reject_wash"
+    },
+    {
+      "file": "ming_sim/staged_commitment.py",
+      "symbol": "capture_commitment_stages",
+      "lineno": 134,
+      "types": [
+        "TypeError",
+        "ValueError"
+      ],
+      "washes_reject": false,
+      "jsonish": true,
+      "in_decl_path": false,
+      "kind": "broad_except",
+      "try_summary": "try: data = json.loads(text) except (TypeError, ValueError): data = _CAPTURE_JSON_MISS",
+      "handler_summary": "except (TypeError, ValueError): data = _CAPTURE_JSON_MISS",
+      "source_hint": "broad_on_persist_no_reject_wash"
+    },
+    {
+      "file": "ming_sim/staged_commitment.py",
+      "symbol": "json.loads@42",
+      "lineno": 42,
+      "kind": "json_loads",
+      "line": "data = json.loads(text)"
+    },
+    {
+      "file": "ming_sim/staged_commitment.py",
+      "symbol": "json.loads@85",
+      "lineno": 85,
+      "kind": "json_loads",
+      "line": "data = json.loads(text)"
+    },
+    {
+      "file": "ming_sim/staged_commitment.py",
+      "symbol": "json.loads@115",
+      "lineno": 115,
+      "kind": "json_loads",
+      "line": "# sentinel：显式 stages 字符串 json.loads 失败（与成功解析到的 None 区分）"
+    },
+    {
+      "file": "ming_sim/staged_commitment.py",
+      "symbol": "json.loads@133",
+      "lineno": 133,
+      "kind": "json_loads",
+      "line": "data = json.loads(text)"
+    },
+    {
+      "file": "ming_sim/urge_lever.py",
+      "symbol": "resolve_host_character",
+      "lineno": 181,
+      "types": [
+        "TypeError",
+        "ValueError"
+      ],
+      "washes_reject": false,
+      "jsonish": true,
+      "in_decl_path": false,
+      "kind": "broad_except",
+      "try_summary": "try: roster = json.loads(row['participant_roster'] or '[]') except (TypeError, ValueError) as exc: raise ValueError(f'issues#{int(commitment_ref)} participant_roster 持久 JSON 损坏') from exc",
+      "handler_summary": "except (TypeError, ValueError) as exc: raise ValueError(f'issues#{int(commitment_ref)} participant_roster 持久 JSON 损坏') from exc",
+      "source_hint": "broad_on_persist_no_reject_wash"
+    },
+    {
+      "file": "ming_sim/urge_lever.py",
+      "symbol": "resolve_host_character",
+      "lineno": 164,
+      "types": [
+        "TypeError",
+        "ValueError"
+      ],
+      "washes_reject": false,
+      "jsonish": true,
+      "in_decl_path": false,
+      "kind": "broad_except",
+      "try_summary": "try: roster = json.loads(roster) except (TypeError, ValueError) as exc: raise ValueError(f'案卷 participant_roster 持久 JSON 损坏：{roster!r}') from exc",
+      "handler_summary": "except (TypeError, ValueError) as exc: raise ValueError(f'案卷 participant_roster 持久 JSON 损坏：{roster!r}') from exc",
+      "source_hint": "broad_on_persist_no_reject_wash"
+    },
+    {
+      "file": "ming_sim/urge_lever.py",
+      "symbol": "resolve_host_character",
+      "lineno": 194,
+      "types": [
+        "TypeError",
+        "ValueError"
+      ],
+      "washes_reject": false,
+      "jsonish": true,
+      "in_decl_path": false,
+      "kind": "broad_except",
+      "try_summary": "try: parts = json.loads(row['participants'] or '[]') except (TypeError, ValueError) as exc: raise ValueError(f'issues#{int(commitment_ref)} participants 持久 JSON 损坏') from exc",
+      "handler_summary": "except (TypeError, ValueError) as exc: raise ValueError(f'issues#{int(commitment_ref)} participants 持久 JSON 损坏') from exc",
+      "source_hint": "broad_on_persist_no_reject_wash"
+    },
+    {
+      "file": "ming_sim/urge_lever.py",
+      "symbol": "json.loads@163",
+      "lineno": 163,
+      "kind": "json_loads",
+      "line": "roster = json.loads(roster)"
+    },
+    {
+      "file": "ming_sim/urge_lever.py",
+      "symbol": "json.loads@180",
+      "lineno": 180,
+      "kind": "json_loads",
+      "line": "roster = json.loads(row[\"participant_roster\"] or \"[]\")"
+    },
+    {
+      "file": "ming_sim/urge_lever.py",
+      "symbol": "json.loads@193",
+      "lineno": 193,
+      "kind": "json_loads",
+      "line": "parts = json.loads(row[\"participants\"] or \"[]\")"
+    }
+  ],
+  "G3": [
+    {
+      "kind": "identical_body",
+      "hash": "1256ae0d7ad023a8",
+      "group": [
+        {
+          "file": "ming_sim/agents.py",
+          "symbol": "bind_content",
+          "lineno": 48
+        },
+        {
+          "file": "ming_sim/context.py",
+          "symbol": "bind_content",
+          "lineno": 64
+        }
+      ]
+    },
+    {
+      "kind": "identical_body",
+      "hash": "1e7143d4181ab082",
+      "group": [
+        {
+          "file": "ming_sim/entities/affair/store.py",
+          "symbol": "AffairStore.ensure_schema",
+          "lineno": 86
+        },
+        {
+          "file": "ming_sim/entities/textual_fact/store.py",
+          "symbol": "TextualFactStore.ensure_schema",
+          "lineno": 58
+        }
+      ]
+    },
+    {
+      "kind": "identical_body",
+      "hash": "a828171cca0e5959",
+      "group": [
+        {
+          "file": "ming_sim/materials.py",
+          "symbol": "MaterialsRoot.root",
+          "lineno": 173
+        },
+        {
+          "file": "ming_sim/materials.py",
+          "symbol": "MaterialsRoot.__call__",
+          "lineno": 184
+        }
+      ]
+    },
+    {
+      "kind": "identical_body",
+      "hash": "d7b28ade53a4b6b7",
+      "group": [
+        {
+          "file": "ming_sim/session_write_queue.py",
+          "symbol": "ClassifiedWriteGate.__enter__",
+          "lineno": 124
+        },
+        {
+          "file": "ming_sim/session_write_queue.py",
+          "symbol": "TicketedWriteGate.__enter__",
+          "lineno": 224
+        }
+      ]
+    },
+    {
+      "kind": "policy_shape",
+      "file": "ming_sim/breach_plea.py",
+      "symbol": "parse_dossier_id",
+      "lineno": 82
+    },
+    {
+      "kind": "policy_shape",
+      "file": "ming_sim/cli_backend.py",
+      "symbol": "build_draft_admission_resubmit_feedback",
+      "lineno": 3326
+    },
+    {
+      "kind": "policy_shape",
+      "file": "ming_sim/cli_backend.py",
+      "symbol": "resubmit_draft_admission_payload",
+      "lineno": 3437
+    },
+    {
+      "kind": "policy_shape",
+      "file": "ming_sim/credit_events.py",
+      "symbol": "_item_dossier_id",
+      "lineno": 308
+    },
+    {
+      "kind": "policy_shape",
+      "file": "ming_sim/db.py",
+      "symbol": "_optional_positive_dossier_id",
+      "lineno": 481
+    },
+    {
+      "kind": "policy_shape",
+      "file": "ming_sim/db.py",
+      "symbol": "imperial_push_target_dossier_id",
+      "lineno": 497
+    },
+    {
+      "kind": "policy_shape",
+      "file": "ming_sim/db.py",
+      "symbol": "parse_backing_dossier_id",
+      "lineno": 515
+    },
+    {
+      "kind": "policy_shape",
+      "file": "ming_sim/db.py",
+      "symbol": "require_backing_dossier_id",
+      "lineno": 523
+    },
+    {
+      "kind": "policy_shape",
+      "file": "ming_sim/db.py",
+      "symbol": "GameDB.executable_decree_dossier_ids",
+      "lineno": 14936
+    },
+    {
+      "kind": "policy_shape",
+      "file": "ming_sim/decree.py",
+      "symbol": "_provenance_from_stored",
+      "lineno": 786
+    },
+    {
+      "kind": "policy_shape",
+      "file": "ming_sim/displaced_population.py",
+      "symbol": "surcharge_population_pool_members",
+      "lineno": 32
+    },
+    {
+      "kind": "policy_shape",
+      "file": "ming_sim/entities/character/apply.py",
+      "symbol": "identity_title_for_allegiance",
+      "lineno": 17
+    },
+    {
+      "kind": "policy_shape",
+      "file": "ming_sim/entities/character/apply.py",
+      "symbol": "allegiance_change_rejection",
+      "lineno": 30
+    },
+    {
+      "kind": "policy_shape",
+      "file": "ming_sim/entities/character/apply.py",
+      "symbol": "apply_person_changes",
+      "lineno": 120
+    },
+    {
+      "kind": "named_residual",
+      "file": "ming_sim/entities/character/apply.py",
+      "symbol": "identity_title_for_allegiance",
+      "lineno": 17,
+      "line": "def identity_title_for_allegiance(item: Dict[str, object], new_power: str) -> str:"
+    },
+    {
+      "kind": "named_residual",
+      "file": "ming_sim/entities/character/apply.py",
+      "symbol": "identity_title_for_allegiance",
+      "lineno": 86,
+      "line": "if not identity_title_for_allegiance(item, requested_new_power):"
+    },
+    {
+      "kind": "named_residual",
+      "file": "ming_sim/entities/character/apply.py",
+      "symbol": "identity_title_for_allegiance",
+      "lineno": 613,
+      "line": "new_title = identity_title_for_allegiance(item, requested_new_power)"
+    },
+    {
+      "kind": "policy_shape",
+      "file": "ming_sim/issues.py",
+      "symbol": "_is_stored_number",
+      "lineno": 475
+    },
+    {
+      "kind": "policy_shape",
+      "file": "ming_sim/materials.py",
+      "symbol": "secret_order_dossier_ids",
+      "lineno": 1268
+    },
+    {
+      "kind": "policy_shape",
+      "file": "ming_sim/materials.py",
+      "symbol": "dossier_id_in_origin",
+      "lineno": 1291
+    },
+    {
+      "kind": "policy_shape",
+      "file": "ming_sim/session.py",
+      "symbol": "GameSession.consume_audience_admission",
+      "lineno": 910
+    },
+    {
+      "kind": "policy_shape",
+      "file": "ming_sim/session.py",
+      "symbol": "GameSession._resubmit_draft_admission_failures",
+      "lineno": 1514
+    },
+    {
+      "kind": "policy_shape",
+      "file": "ming_sim/settlement/preflight.py",
+      "symbol": "_strategic_event_result_preflight_error",
+      "lineno": 364
+    },
+    {
+      "kind": "policy_shape",
+      "file": "ming_sim/settlement/preflight.py",
+      "symbol": "preflight_declared_event_effects",
+      "lineno": 843
+    },
+    {
+      "kind": "policy_shape",
+      "file": "ming_sim/settlement/preflight.py",
+      "symbol": "_preflight_declared_event_groups",
+      "lineno": 873
+    },
+    {
+      "kind": "policy_shape",
+      "file": "ming_sim/settlement/run.py",
+      "symbol": "_preflight",
+      "lineno": 141
+    },
+    {
+      "kind": "policy_shape",
+      "file": "ming_sim/settlement/run.py",
+      "symbol": "_stored",
+      "lineno": 375
+    }
+  ],
+  "G4": [
+    {
+      "kind": "consumer_closure",
+      "symbol": "_extract_ref_ids",
+      "defined": "ming_sim/breach_plea.py:1256",
+      "qual": "_extract_ref_ids",
+      "prod_refs": 6,
+      "same_file_refs": 5,
+      "other_file_refs": 1,
+      "test_refs": 0,
+      "prod_sample": [
+        [
+          "ming_sim/breach_plea.py",
+          1329,
+          "Name",
+          "cancel_ids = _extract_ref_ids(extracted.get(\"cancels\"), prefixes=(\"issue\",))"
+        ],
+        [
+          "ming_sim/breach_plea.py",
+          1330,
+          "Name",
+          "cancel_ids |= _extract_ref_ids(extracted.get(\"close_issues\"), prefixes=(\"issue\",))"
+        ],
+        [
+          "ming_sim/breach_plea.py",
+          1331,
+          "Name",
+          "revoke_dossiers = _extract_ref_ids(extracted.get(\"cancels\"), prefixes=(\"dossier\",))"
+        ],
+        [
+          "ming_sim/breach_plea.py",
+          1332,
+          "Name",
+          "revoke_dossiers |= _extract_ref_ids("
+        ],
+        [
+          "ming_sim/breach_plea.py",
+          1344,
+          "Name",
+          "advance_ids = _extract_ref_ids("
+        ],
+        [
+          "ming_sim/credit_events.py",
+          524,
+          "Name",
+          "return _extract_ref_ids(cancels, prefixes=(\"issue\",))"
+        ]
+      ],
+      "same_file_sample": [
+        [
+          "ming_sim/breach_plea.py",
+          1329,
+          "Name",
+          "cancel_ids = _extract_ref_ids(extracted.get(\"cancels\"), prefixes=(\"issue\",))"
+        ],
+        [
+          "ming_sim/breach_plea.py",
+          1330,
+          "Name",
+          "cancel_ids |= _extract_ref_ids(extracted.get(\"close_issues\"), prefixes=(\"issue\",))"
+        ],
+        [
+          "ming_sim/breach_plea.py",
+          1331,
+          "Name",
+          "revoke_dossiers = _extract_ref_ids(extracted.get(\"cancels\"), prefixes=(\"dossier\",))"
+        ],
+        [
+          "ming_sim/breach_plea.py",
+          1332,
+          "Name",
+          "revoke_dossiers |= _extract_ref_ids("
+        ],
+        [
+          "ming_sim/breach_plea.py",
+          1344,
+          "Name",
+          "advance_ids = _extract_ref_ids("
+        ]
+      ],
+      "test_sample": [],
+      "disposition_hint": "live"
+    },
+    {
+      "kind": "consumer_closure",
+      "symbol": "_failed_secret_order_ids",
+      "defined": "ming_sim/cli/terminal.py:45",
+      "qual": "_failed_secret_order_ids",
+      "prod_refs": 2,
+      "same_file_refs": 2,
+      "other_file_refs": 0,
+      "test_refs": 0,
+      "prod_sample": [
+        [
+          "ming_sim/cli/terminal.py",
+          677,
+          "Name",
+          "failed_before = _failed_secret_order_ids(session, turn_before)"
+        ],
+        [
+          "ming_sim/cli/terminal.py",
+          707,
+          "Name",
+          "failed_before = _failed_secret_order_ids(session, turn_before)"
+        ]
+      ],
+      "same_file_sample": [
+        [
+          "ming_sim/cli/terminal.py",
+          677,
+          "Name",
+          "failed_before = _failed_secret_order_ids(session, turn_before)"
+        ],
+        [
+          "ming_sim/cli/terminal.py",
+          707,
+          "Name",
+          "failed_before = _failed_secret_order_ids(session, turn_before)"
+        ]
+      ],
+      "test_sample": [],
+      "disposition_hint": "live"
+    },
+    {
+      "kind": "consumer_closure",
+      "symbol": "_new_secret_order_failure_payloads",
+      "defined": "ming_sim/cli/terminal.py:56",
+      "qual": "_new_secret_order_failure_payloads",
+      "prod_refs": 4,
+      "same_file_refs": 4,
+      "other_file_refs": 0,
+      "test_refs": 0,
+      "prod_sample": [
+        [
+          "ming_sim/cli/terminal.py",
+          693,
+          "Name",
+          "_new_secret_order_failure_payloads(session, turn_before, failed_before)"
+        ],
+        [
+          "ming_sim/cli/terminal.py",
+          722,
+          "Name",
+          "_new_secret_order_failure_payloads(session, turn_before, failed_before)"
+        ],
+        [
+          "ming_sim/cli/terminal.py",
+          689,
+          "Name",
+          "_new_secret_order_failure_payloads(session, turn_before, failed_before)"
+        ],
+        [
+          "ming_sim/cli/terminal.py",
+          718,
+          "Name",
+          "_new_secret_order_failure_payloads(session, turn_before, failed_before)"
+        ]
+      ],
+      "same_file_sample": [
+        [
+          "ming_sim/cli/terminal.py",
+          693,
+          "Name",
+          "_new_secret_order_failure_payloads(session, turn_before, failed_before)"
+        ],
+        [
+          "ming_sim/cli/terminal.py",
+          722,
+          "Name",
+          "_new_secret_order_failure_payloads(session, turn_before, failed_before)"
+        ],
+        [
+          "ming_sim/cli/terminal.py",
+          689,
+          "Name",
+          "_new_secret_order_failure_payloads(session, turn_before, failed_before)"
+        ],
+        [
+          "ming_sim/cli/terminal.py",
+          718,
+          "Name",
+          "_new_secret_order_failure_payloads(session, turn_before, failed_before)"
+        ]
+      ],
+      "test_sample": [],
+      "disposition_hint": "live"
+    },
+    {
+      "kind": "consumer_closure",
+      "symbol": "_extract_result_has_execution_lead",
+      "defined": "ming_sim/cli_backend.py:2304",
+      "qual": "_extract_result_has_execution_lead",
+      "prod_refs": 1,
+      "same_file_refs": 1,
+      "other_file_refs": 0,
+      "test_refs": 0,
+      "prod_sample": [
+        [
+          "ming_sim/cli_backend.py",
+          2440,
+          "Name",
+          "if not require_execution_lead or _extract_result_has_execution_lead(payload):"
+        ]
+      ],
+      "same_file_sample": [
+        [
+          "ming_sim/cli_backend.py",
+          2440,
+          "Name",
+          "if not require_execution_lead or _extract_result_has_execution_lead(payload):"
+        ]
+      ],
+      "test_sample": [],
+      "disposition_hint": "live"
+    },
+    {
+      "kind": "consumer_closure",
+      "symbol": "_secret_order_exclusion_targets",
+      "defined": "ming_sim/db.py:217",
+      "qual": "_secret_order_exclusion_targets",
+      "prod_refs": 2,
+      "same_file_refs": 2,
+      "other_file_refs": 0,
+      "test_refs": 0,
+      "prod_sample": [
+        [
+          "ming_sim/db.py",
+          21457,
+          "Name",
+          "exclusion_targets_payload = _secret_order_exclusion_targets("
+        ],
+        [
+          "ming_sim/db.py",
+          21649,
+          "Name",
+          "excluded_targets = _secret_order_exclusion_targets(people, offices)"
+        ]
+      ],
+      "same_file_sample": [
+        [
+          "ming_sim/db.py",
+          21457,
+          "Name",
+          "exclusion_targets_payload = _secret_order_exclusion_targets("
+        ],
+        [
+          "ming_sim/db.py",
+          21649,
+          "Name",
+          "excluded_targets = _secret_order_exclusion_targets(people, offices)"
+        ]
+      ],
+      "test_sample": [],
+      "disposition_hint": "live"
+    },
+    {
+      "kind": "consumer_closure",
+      "symbol": "_snapshot_secret_order_people",
+      "defined": "ming_sim/db.py:227",
+      "qual": "_snapshot_secret_order_people",
+      "prod_refs": 3,
+      "same_file_refs": 3,
+      "other_file_refs": 0,
+      "test_refs": 0,
+      "prod_sample": [
+        [
+          "ming_sim/db.py",
+          297,
+          "Name",
+          "people = _snapshot_secret_order_people(content, explicit_people, [])"
+        ],
+        [
+          "ming_sim/db.py",
+          21451,
+          "Name",
+          "snapshot_excluded_names = _snapshot_secret_order_people("
+        ],
+        [
+          "ming_sim/db.py",
+          21648,
+          "Name",
+          "excluded_names = _snapshot_secret_order_people(self.content, people, offices)"
+        ]
+      ],
+      "same_file_sample": [
+        [
+          "ming_sim/db.py",
+          297,
+          "Name",
+          "people = _snapshot_secret_order_people(content, explicit_people, [])"
+        ],
+        [
+          "ming_sim/db.py",
+          21451,
+          "Name",
+          "snapshot_excluded_names = _snapshot_secret_order_people("
+        ],
+        [
+          "ming_sim/db.py",
+          21648,
+          "Name",
+          "excluded_names = _snapshot_secret_order_people(self.content, people, offices)"
+        ]
+      ],
+      "test_sample": [],
+      "disposition_hint": "live"
+    },
+    {
+      "kind": "consumer_closure",
+      "symbol": "_secret_order_kept_body",
+      "defined": "ming_sim/db.py:865",
+      "qual": "_secret_order_kept_body",
+      "prod_refs": 2,
+      "same_file_refs": 2,
+      "other_file_refs": 0,
+      "test_refs": 0,
+      "prod_sample": [
+        [
+          "ming_sim/db.py",
+          21865,
+          "Name",
+          "note = _secret_order_kept_body(claim)"
+        ],
+        [
+          "ming_sim/db.py",
+          21916,
+          "Name",
+          "\"body\": _secret_order_kept_body(note),"
+        ]
+      ],
+      "same_file_sample": [
+        [
+          "ming_sim/db.py",
+          21865,
+          "Name",
+          "note = _secret_order_kept_body(claim)"
+        ],
+        [
+          "ming_sim/db.py",
+          21916,
+          "Name",
+          "\"body\": _secret_order_kept_body(note),"
+        ]
+      ],
+      "test_sample": [],
+      "disposition_hint": "live"
+    },
+    {
+      "kind": "consumer_closure",
+      "symbol": "_secret_order_record_body",
+      "defined": "ming_sim/db.py:871",
+      "qual": "_secret_order_record_body",
+      "prod_refs": 2,
+      "same_file_refs": 2,
+      "other_file_refs": 0,
+      "test_refs": 0,
+      "prod_sample": [
+        [
+          "ming_sim/db.py",
+          896,
+          "Name",
+          "_secret_order_record_body(item)"
+        ],
+        [
+          "ming_sim/db.py",
+          926,
+          "Name",
+          "f\"{marker}{_secret_order_record_body(record)}\""
+        ]
+      ],
+      "same_file_sample": [
+        [
+          "ming_sim/db.py",
+          896,
+          "Name",
+          "_secret_order_record_body(item)"
+        ],
+        [
+          "ming_sim/db.py",
+          926,
+          "Name",
+          "f\"{marker}{_secret_order_record_body(record)}\""
+        ]
+      ],
+      "test_sample": [],
+      "disposition_hint": "live"
+    },
+    {
+      "kind": "consumer_closure",
+      "symbol": "_secret_order_body_log",
+      "defined": "ming_sim/db.py:879",
+      "qual": "_secret_order_body_log",
+      "prod_refs": 6,
+      "same_file_refs": 6,
+      "other_file_refs": 0,
+      "test_refs": 0,
+      "prod_sample": [
+        [
+          "ming_sim/db.py",
+          21839,
+          "Name",
+          "log = _secret_order_body_log(row)"
+        ],
+        [
+          "ming_sim/db.py",
+          21824,
+          "Name",
+          "_secret_order_body_log(row)"
+        ],
+        [
+          "ming_sim/db.py",
+          21866,
+          "Name",
+          "records = _secret_order_body_log(row)[\"result\"]"
+        ],
+        [
+          "ming_sim/db.py",
+          21905,
+          "Name",
+          "records = _secret_order_body_log(row)[column]"
+        ],
+        [
+          "ming_sim/db.py",
+          21890,
+          "Name",
+          "_secret_order_body_log(row)[column], year, period,"
+        ],
+        [
+          "ming_sim/db.py",
+          22022,
+          "Name",
+          "records = _secret_order_body_log(body_row)[\"result\"] if body_row is not None else []"
+        ]
+      ],
+      "same_file_sample": [
+        [
+          "ming_sim/db.py",
+          21839,
+          "Name",
+          "log = _secret_order_body_log(row)"
+        ],
+        [
+          "ming_sim/db.py",
+          21824,
+          "Name",
+          "_secret_order_body_log(row)"
+        ],
+        [
+          "ming_sim/db.py",
+          21866,
+          "Name",
+          "records = _secret_order_body_log(row)[\"result\"]"
+        ],
+        [
+          "ming_sim/db.py",
+          21905,
+          "Name",
+          "records = _secret_order_body_log(row)[column]"
+        ],
+        [
+          "ming_sim/db.py",
+          21890,
+          "Name",
+          "_secret_order_body_log(row)[column], year, period,"
+        ],
+        [
+          "ming_sim/db.py",
+          22022,
+          "Name",
+          "records = _secret_order_body_log(body_row)[\"result\"] if body_row is not None else []"
+        ]
+      ],
+      "test_sample": [],
+      "disposition_hint": "live"
+    },
+    {
+      "kind": "consumer_closure",
+      "symbol": "_secret_order_period_recorded",
+      "defined": "ming_sim/db.py:901",
+      "qual": "_secret_order_period_recorded",
+      "prod_refs": 2,
+      "same_file_refs": 2,
+      "other_file_refs": 0,
+      "test_refs": 0,
+      "prod_sample": [
+        [
+          "ming_sim/db.py",
+          21889,
+          "Name",
+          "return _secret_order_period_recorded("
+        ],
+        [
+          "ming_sim/db.py",
+          21906,
+          "Name",
+          "if reject_if_same_period and _secret_order_period_recorded(records, year, period):"
+        ]
+      ],
+      "same_file_sample": [
+        [
+          "ming_sim/db.py",
+          21889,
+          "Name",
+          "return _secret_order_period_recorded("
+        ],
+        [
+          "ming_sim/db.py",
+          21906,
+          "Name",
+          "if reject_if_same_period and _secret_order_period_recorded(records, year, period):"
+        ]
+      ],
+      "test_sample": [],
+      "disposition_hint": "live"
+    },
+    {
+      "kind": "consumer_closure",
+      "symbol": "_project_secret_order_bodies",
+      "defined": "ming_sim/db.py:911",
+      "qual": "_project_secret_order_bodies",
+      "prod_refs": 1,
+      "same_file_refs": 1,
+      "other_file_refs": 0,
+      "test_refs": 0,
+      "prod_sample": [
+        [
+          "ming_sim/db.py",
+          21843,
+          "Name",
+          "_project_secret_order_bodies(log[column]),"
+        ]
+      ],
+      "same_file_sample": [
+        [
+          "ming_sim/db.py",
+          21843,
+          "Name",
+          "_project_secret_order_bodies(log[column]),"
+        ]
+      ],
+      "test_sample": [],
+      "disposition_hint": "live"
+    },
+    {
+      "kind": "consumer_closure",
+      "symbol": "_restore_secret_order_brief_projection_in_tx",
+      "defined": "ming_sim/db.py:9974",
+      "qual": "GameDB._restore_secret_order_brief_projection_in_tx",
+      "prod_refs": 1,
+      "same_file_refs": 1,
+      "other_file_refs": 0,
+      "test_refs": 0,
+      "prod_sample": [
+        [
+          "ming_sim/db.py",
+          10076,
+          "Attr",
+          "self._restore_secret_order_brief_projection_in_tx(int(target_id), pins)"
+        ]
+      ],
+      "same_file_sample": [
+        [
+          "ming_sim/db.py",
+          10076,
+          "Attr",
+          "self._restore_secret_order_brief_projection_in_tx(int(target_id), pins)"
+        ]
+      ],
+      "test_sample": [],
+      "disposition_hint": "live"
+    },
+    {
+      "kind": "consumer_closure",
+      "symbol": "_classify_secret_order_audience",
+      "defined": "ming_sim/db.py:11157",
+      "qual": "GameDB._classify_secret_order_audience",
+      "prod_refs": 5,
+      "same_file_refs": 5,
+      "other_file_refs": 0,
+      "test_refs": 0,
+      "prod_sample": [
+        [
+          "ming_sim/db.py",
+          21490,
+          "Attr",
+          "self._classify_secret_order_audience("
+        ],
+        [
+          "ming_sim/db.py",
+          21669,
+          "Attr",
+          "self._classify_secret_order_audience("
+        ],
+        [
+          "ming_sim/db.py",
+          18065,
+          "Attr",
+          "self._classify_secret_order_audience("
+        ],
+        [
+          "ming_sim/db.py",
+          18078,
+          "Attr",
+          "self._classify_secret_order_audience("
+        ],
+        [
+          "ming_sim/db.py",
+          18091,
+          "Attr",
+          "self._classify_secret_order_audience("
+        ]
+      ],
+      "same_file_sample": [
+        [
+          "ming_sim/db.py",
+          21490,
+          "Attr",
+          "self._classify_secret_order_audience("
+        ],
+        [
+          "ming_sim/db.py",
+          21669,
+          "Attr",
+          "self._classify_secret_order_audience("
+        ],
+        [
+          "ming_sim/db.py",
+          18065,
+          "Attr",
+          "self._classify_secret_order_audience("
+        ],
+        [
+          "ming_sim/db.py",
+          18078,
+          "Attr",
+          "self._classify_secret_order_audience("
+        ],
+        [
+          "ming_sim/db.py",
+          18091,
+          "Attr",
+          "self._classify_secret_order_audience("
+        ]
+      ],
+      "test_sample": [],
+      "disposition_hint": "live"
+    },
+    {
+      "kind": "consumer_closure",
+      "symbol": "_load_secret_order_body_row",
+      "defined": "ming_sim/db.py:21814",
+      "qual": "GameDB._load_secret_order_body_row",
+      "prod_refs": 6,
+      "same_file_refs": 6,
+      "other_file_refs": 0,
+      "test_refs": 0,
+      "prod_sample": [
+        [
+          "ming_sim/db.py",
+          21822,
+          "Attr",
+          "row = self._load_secret_order_body_row(int(order_id), active_only=True)"
+        ],
+        [
+          "ming_sim/db.py",
+          21836,
+          "Attr",
+          "row = self._load_secret_order_body_row(order_id, active_only=False)"
+        ],
+        [
+          "ming_sim/db.py",
+          21860,
+          "Attr",
+          "row = self._load_secret_order_body_row(int(order_id), active_only=True)"
+        ],
+        [
+          "ming_sim/db.py",
+          21886,
+          "Attr",
+          "row = self._load_secret_order_body_row(int(order_id), active_only=False)"
+        ],
+        [
+          "ming_sim/db.py",
+          21902,
+          "Attr",
+          "row = self._load_secret_order_body_row(int(order_id), active_only=True)"
+        ],
+        [
+          "ming_sim/db.py",
+          22021,
+          "Attr",
+          "body_row = self._load_secret_order_body_row(int(order_id), active_only=True)"
+        ]
+      ],
+      "same_file_sample": [
+        [
+          "ming_sim/db.py",
+          21822,
+          "Attr",
+          "row = self._load_secret_order_body_row(int(order_id), active_only=True)"
+        ],
+        [
+          "ming_sim/db.py",
+          21836,
+          "Attr",
+          "row = self._load_secret_order_body_row(order_id, active_only=False)"
+        ],
+        [
+          "ming_sim/db.py",
+          21860,
+          "Attr",
+          "row = self._load_secret_order_body_row(int(order_id), active_only=True)"
+        ],
+        [
+          "ming_sim/db.py",
+          21886,
+          "Attr",
+          "row = self._load_secret_order_body_row(int(order_id), active_only=False)"
+        ],
+        [
+          "ming_sim/db.py",
+          21902,
+          "Attr",
+          "row = self._load_secret_order_body_row(int(order_id), active_only=True)"
+        ],
+        [
+          "ming_sim/db.py",
+          22021,
+          "Attr",
+          "body_row = self._load_secret_order_body_row(int(order_id), active_only=True)"
+        ]
+      ],
+      "test_sample": [],
+      "disposition_hint": "live"
+    },
+    {
+      "kind": "consumer_closure",
+      "symbol": "_read_secret_order_body_before_write",
+      "defined": "ming_sim/db.py:21820",
+      "qual": "GameDB._read_secret_order_body_before_write",
+      "prod_refs": 3,
+      "same_file_refs": 3,
+      "other_file_refs": 0,
+      "test_refs": 0,
+      "prod_sample": [
+        [
+          "ming_sim/db.py",
+          21633,
+          "Attr",
+          "self._read_secret_order_body_before_write(int(order_id))"
+        ],
+        [
+          "ming_sim/db.py",
+          21934,
+          "Attr",
+          "self._read_secret_order_body_before_write(int(order_id))"
+        ],
+        [
+          "ming_sim/db.py",
+          21961,
+          "Attr",
+          "self._read_secret_order_body_before_write(int(order_id))"
+        ]
+      ],
+      "same_file_sample": [
+        [
+          "ming_sim/db.py",
+          21633,
+          "Attr",
+          "self._read_secret_order_body_before_write(int(order_id))"
+        ],
+        [
+          "ming_sim/db.py",
+          21934,
+          "Attr",
+          "self._read_secret_order_body_before_write(int(order_id))"
+        ],
+        [
+          "ming_sim/db.py",
+          21961,
+          "Attr",
+          "self._read_secret_order_body_before_write(int(order_id))"
+        ]
+      ],
+      "test_sample": [],
+      "disposition_hint": "live"
+    },
+    {
+      "kind": "consumer_closure",
+      "symbol": "_write_secret_order_body",
+      "defined": "ming_sim/db.py:21826",
+      "qual": "GameDB._write_secret_order_body",
+      "prod_refs": 4,
+      "same_file_refs": 4,
+      "other_file_refs": 0,
+      "test_refs": 0,
+      "prod_sample": [
+        [
+          "ming_sim/db.py",
+          21918,
+          "Attr",
+          "self._write_secret_order_body(int(order_id), column, records)"
+        ],
+        [
+          "ming_sim/db.py",
+          21874,
+          "Attr",
+          "self._write_secret_order_body("
+        ],
+        [
+          "ming_sim/db.py",
+          22032,
+          "Attr",
+          "self._write_secret_order_body("
+        ],
+        [
+          "ming_sim/db.py",
+          22046,
+          "Attr",
+          "self._write_secret_order_body("
+        ]
+      ],
+      "same_file_sample": [
+        [
+          "ming_sim/db.py",
+          21918,
+          "Attr",
+          "self._write_secret_order_body(int(order_id), column, records)"
+        ],
+        [
+          "ming_sim/db.py",
+          21874,
+          "Attr",
+          "self._write_secret_order_body("
+        ],
+        [
+          "ming_sim/db.py",
+          22032,
+          "Attr",
+          "self._write_secret_order_body("
+        ],
+        [
+          "ming_sim/db.py",
+          22046,
+          "Attr",
+          "self._write_secret_order_body("
+        ]
+      ],
+      "test_sample": [],
+      "disposition_hint": "live"
+    },
+    {
+      "kind": "consumer_closure",
+      "symbol": "_has_secret_order_period_line",
+      "defined": "ming_sim/db.py:21883",
+      "qual": "GameDB._has_secret_order_period_line",
+      "prod_refs": 1,
+      "same_file_refs": 0,
+      "other_file_refs": 1,
+      "test_refs": 0,
+      "prod_sample": [
+        [
+          "ming_sim/materials.py",
+          734,
+          "Attr",
+          "advanced = db._has_secret_order_period_line("
+        ]
+      ],
+      "same_file_sample": [],
+      "test_sample": [],
+      "disposition_hint": "live"
+    },
+    {
+      "kind": "consumer_closure",
+      "symbol": "_append_secret_order_line",
+      "defined": "ming_sim/db.py:21893",
+      "qual": "GameDB._append_secret_order_line",
+      "prod_refs": 2,
+      "same_file_refs": 2,
+      "other_file_refs": 0,
+      "test_refs": 0,
+      "prod_sample": [
+        [
+          "ming_sim/db.py",
+          21977,
+          "Attr",
+          "self._append_secret_order_line("
+        ],
+        [
+          "ming_sim/db.py",
+          21936,
+          "Attr",
+          "ok = self._append_secret_order_line("
+        ]
+      ],
+      "same_file_sample": [
+        [
+          "ming_sim/db.py",
+          21977,
+          "Attr",
+          "self._append_secret_order_line("
+        ],
+        [
+          "ming_sim/db.py",
+          21936,
+          "Attr",
+          "ok = self._append_secret_order_line("
+        ]
+      ],
+      "test_sample": [],
+      "disposition_hint": "live"
+    },
+    {
+      "kind": "consumer_closure",
+      "symbol": "_update_secret_order_sim_note_in_transaction",
+      "defined": "ming_sim/db.py:21973",
+      "qual": "GameDB._update_secret_order_sim_note_in_transaction",
+      "prod_refs": 2,
+      "same_file_refs": 2,
+      "other_file_refs": 0,
+      "test_refs": 0,
+      "prod_sample": [
+        [
+          "ming_sim/db.py",
+          21968,
+          "Attr",
+          "self._update_secret_order_sim_note_in_transaction("
+        ],
+        [
+          "ming_sim/db.py",
+          21964,
+          "Attr",
+          "self._update_secret_order_sim_note_in_transaction("
+        ]
+      ],
+      "same_file_sample": [
+        [
+          "ming_sim/db.py",
+          21968,
+          "Attr",
+          "self._update_secret_order_sim_note_in_transaction("
+        ],
+        [
+          "ming_sim/db.py",
+          21964,
+          "Attr",
+          "self._update_secret_order_sim_note_in_transaction("
+        ]
+      ],
+      "test_sample": [],
+      "disposition_hint": "live"
+    },
+    {
+      "kind": "consumer_closure",
+      "symbol": "_secret_order_pending_payload",
+      "defined": "ming_sim/declaration_dispatch.py:1117",
+      "qual": "_secret_order_pending_payload",
+      "prod_refs": 1,
+      "same_file_refs": 1,
+      "other_file_refs": 0,
+      "test_refs": 0,
+      "prod_sample": [
+        [
+          "ming_sim/declaration_dispatch.py",
+          1356,
+          "Name",
+          "_secret_order_pending_payload("
+        ]
+      ],
+      "same_file_sample": [
+        [
+          "ming_sim/declaration_dispatch.py",
+          1356,
+          "Name",
+          "_secret_order_pending_payload("
+        ]
+      ],
+      "test_sample": [],
+      "disposition_hint": "live"
+    },
+    {
+      "kind": "consumer_closure",
+      "symbol": "_prepare_authority_change_item",
+      "defined": "ming_sim/entities/authority/apply.py:27",
+      "qual": "_prepare_authority_change_item",
+      "prod_refs": 1,
+      "same_file_refs": 0,
+      "other_file_refs": 1,
+      "test_refs": 0,
+      "prod_sample": [
+        [
+          "ming_sim/entities/authority/delta_section.py",
+          40,
+          "Name",
+          "prepared = _prepare_authority_change_item(run.db, run.state, item)"
+        ]
+      ],
+      "same_file_sample": [],
+      "test_sample": [],
+      "disposition_hint": "live"
+    },
+    {
+      "kind": "consumer_closure",
+      "symbol": "_write_authority_change_item",
+      "defined": "ming_sim/entities/authority/apply.py:127",
+      "qual": "_write_authority_change_item",
+      "prod_refs": 1,
+      "same_file_refs": 0,
+      "other_file_refs": 1,
+      "test_refs": 0,
+      "prod_sample": [
+        [
+          "ming_sim/entities/authority/delta_section.py",
+          48,
+          "Name",
+          "applied = _write_authority_change_item(run.db, run.state, prepared)"
+        ]
+      ],
+      "same_file_sample": [],
+      "test_sample": [],
+      "disposition_hint": "live"
+    },
+    {
+      "kind": "consumer_closure",
+      "symbol": "_extract_provider_error",
+      "defined": "ming_sim/llm_model.py:56",
+      "qual": "_extract_provider_error",
+      "prod_refs": 1,
+      "same_file_refs": 1,
+      "other_file_refs": 0,
+      "test_refs": 0,
+      "prod_sample": [
+        [
+          "ming_sim/llm_model.py",
+          85,
+          "Name",
+          "_provider_code, provider_message, _extracted_status = _extract_provider_error(error)"
+        ]
+      ],
+      "same_file_sample": [
+        [
+          "ming_sim/llm_model.py",
+          85,
+          "Name",
+          "_provider_code, provider_message, _extracted_status = _extract_provider_error(error)"
+        ]
+      ],
+      "test_sample": [],
+      "disposition_hint": "live"
+    },
+    {
+      "kind": "consumer_closure",
+      "symbol": "_write_secret_order_file",
+      "defined": "ming_sim/materials.py:719",
+      "qual": "_write_secret_order_file",
+      "prod_refs": 1,
+      "same_file_refs": 1,
+      "other_file_refs": 0,
+      "test_refs": 0,
+      "prod_sample": [
+        [
+          "ming_sim/materials.py",
+          949,
+          "Name",
+          "secret_rel = _write_secret_order_file(tmp, db, state, character)"
+        ]
+      ],
+      "same_file_sample": [
+        [
+          "ming_sim/materials.py",
+          949,
+          "Name",
+          "secret_rel = _write_secret_order_file(tmp, db, state, character)"
+        ]
+      ],
+      "test_sample": [],
+      "disposition_hint": "live"
+    },
+    {
+      "kind": "consumer_closure",
+      "symbol": "_secret_order_chat_turn_ids",
+      "defined": "ming_sim/materials.py:991",
+      "qual": "_secret_order_chat_turn_ids",
+      "prod_refs": 1,
+      "same_file_refs": 1,
+      "other_file_refs": 0,
+      "test_refs": 0,
+      "prod_sample": [
+        [
+          "ming_sim/materials.py",
+          2282,
+          "Name",
+          "_secret_order_chat_turn_ids(db) if exclude_secret_order_audience else None,"
+        ]
+      ],
+      "same_file_sample": [
+        [
+          "ming_sim/materials.py",
+          2282,
+          "Name",
+          "_secret_order_chat_turn_ids(db) if exclude_secret_order_audience else None,"
+        ]
+      ],
+      "test_sample": [],
+      "disposition_hint": "live"
+    },
+    {
+      "kind": "consumer_closure",
+      "symbol": "_omit_secret_order_audience",
+      "defined": "ming_sim/materials.py:1007",
+      "qual": "_omit_secret_order_audience",
+      "prod_refs": 1,
+      "same_file_refs": 1,
+      "other_file_refs": 0,
+      "test_refs": 0,
+      "prod_sample": [
+        [
+          "ming_sim/materials.py",
+          1663,
+          "Name",
+          "audience = _omit_secret_order_audience(_person_audience_experience(db, name), secret_turn_ids or set())"
+        ]
+      ],
+      "same_file_sample": [
+        [
+          "ming_sim/materials.py",
+          1663,
+          "Name",
+          "audience = _omit_secret_order_audience(_person_audience_experience(db, name), secret_turn_ids or set())"
+        ]
+      ],
+      "test_sample": [],
+      "disposition_hint": "live"
+    },
+    {
+      "kind": "consumer_closure",
+      "symbol": "_step_4a_secret_order_supply",
+      "defined": "ming_sim/month_chain.py:1243",
+      "qual": "_step_4a_secret_order_supply",
+      "prod_refs": 1,
+      "same_file_refs": 1,
+      "other_file_refs": 0,
+      "test_refs": 2,
+      "prod_sample": [
+        [
+          "ming_sim/month_chain.py",
+          582,
+          "Name",
+          "_step_4a_secret_order_supply("
+        ]
+      ],
+      "same_file_sample": [
+        [
+          "ming_sim/month_chain.py",
+          582,
+          "Name",
+          "_step_4a_secret_order_supply("
+        ]
+      ],
+      "test_sample": [
+        [
+          "tests/test_secret_order_payoff_1504.py",
+          159,
+          "Attr",
+          "month_chain._step_4a_secret_order_supply("
+        ],
+        [
+          "tests/test_secret_order_payoff_1504.py",
+          2053,
+          "Attr",
+          "month_chain._step_4a_secret_order_supply("
+        ]
+      ],
+      "disposition_hint": "live"
+    },
+    {
+      "kind": "consumer_closure",
+      "symbol": "_load_pending_gate_valid_regions",
+      "defined": "ming_sim/settlement/preflight.py:71",
+      "qual": "_load_pending_gate_valid_regions",
+      "prod_refs": 2,
+      "same_file_refs": 1,
+      "other_file_refs": 1,
+      "test_refs": 0,
+      "prod_sample": [
+        [
+          "ming_sim/entities/character/apply.py",
+          689,
+          "Name",
+          "valid_regions = _load_pending_gate_valid_regions(db)"
+        ],
+        [
+          "ming_sim/settlement/preflight.py",
+          743,
+          "Name",
+          "_load_pending_gate_valid_regions(db),"
+        ]
+      ],
+      "same_file_sample": [
+        [
+          "ming_sim/settlement/preflight.py",
+          743,
+          "Name",
+          "_load_pending_gate_valid_regions(db),"
+        ]
+      ],
+      "test_sample": [],
+      "disposition_hint": "live"
+    }
+  ],
+  "G5": [
+    {
+      "file": "ming_sim/db.py",
+      "symbol": "auto_trigger_seed_issues",
+      "lineno": 5623,
+      "line": "其余带 gate 的 seed 事件靠 auto_trigger_seed_issues 在 gate 达标的回合再硬立。\"\"\"",
+      "in_pre_settle": false
+    },
+    {
+      "file": "ming_sim/issues.py",
+      "symbol": "apply_event_terminal_states",
+      "lineno": 1696,
+      "line": "def apply_event_terminal_states(",
+      "in_pre_settle": false
+    },
+    {
+      "file": "ming_sim/issues.py",
+      "symbol": "auto_trigger_seed_issues",
+      "lineno": 1751,
+      "line": "def auto_trigger_seed_issues(state: GameState, db: GameDB) -> List[Dict[str, object]]:",
+      "in_pre_settle": false
+    },
+    {
+      "file": "ming_sim/issues.py",
+      "symbol": "auto_trigger_seed_issues",
+      "lineno": 1759,
+      "line": "triggered = _auto_trigger_seed_issues_in_atomic(state, db, collector)",
+      "in_pre_settle": false
+    },
+    {
+      "file": "ming_sim/issues.py",
+      "symbol": "auto_trigger_seed_issues",
+      "lineno": 1765,
+      "line": "def _auto_trigger_seed_issues_in_atomic(",
+      "in_pre_settle": false
+    },
+    {
+      "file": "ming_sim/issues.py",
+      "symbol": "auto_trigger_seed_issues",
+      "lineno": 1768,
+      "line": "\"\"\"auto_trigger_seed_issues 的事务体；由外层函数或月链逐旨后消费点统一提交/回滚。\"\"\"",
+      "in_pre_settle": false
+    },
+    {
+      "file": "ming_sim/month_chain.py",
+      "symbol": "apply_event_terminal_states",
+      "lineno": 936,
+      "line": "from ming_sim.issues import apply_event_terminal_states, auto_trigger_seed_issues",
+      "in_pre_settle": false
+    },
+    {
+      "file": "ming_sim/month_chain.py",
+      "symbol": "apply_event_terminal_states",
+      "lineno": 944,
+      "line": "terminalized = apply_event_terminal_states(state, db, commit=False)",
+      "in_pre_settle": false
+    },
+    {
+      "file": "ming_sim/month_chain.py",
+      "symbol": "auto_trigger_seed_issues",
+      "lineno": 936,
+      "line": "from ming_sim.issues import apply_event_terminal_states, auto_trigger_seed_issues",
+      "in_pre_settle": false
+    },
+    {
+      "file": "ming_sim/month_chain.py",
+      "symbol": "auto_trigger_seed_issues",
+      "lineno": 945,
+      "line": "triggered = auto_trigger_seed_issues(state, db)",
+      "in_pre_settle": false
+    },
+    {
+      "file": "docs/test-cleanup-audit-1185.md",
+      "symbol": "apply_event_terminal_states",
+      "lineno": 1609,
+      "line": "| `test_apply_event_terminal_states_does_not_commit_existing_transaction` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |",
+      "in_pre_settle": false
+    },
+    {
+      "file": "docs/FISCAL_PROVINCE_SUBSTRATE.md",
+      "symbol": "apply_event_terminal_states",
+      "lineno": 138,
+      "line": "> **落位契约(cmr R3 钉,设计级最小契约,确切键名/schema 留 /tdd)**:① 结局落 `event.<id>.terminal_reason` + 封闭标签集(开征/升率 {已准/已驳}、议停 {已停/仍征});议停门读 `剿饷开征.terminal_reason==已准`(**不自指 `剿饷议停",
+      "in_pre_settle": false
+    },
+    {
+      "file": "docs/adr/0011-edict-resistance-and-centrifuge-ledger.md",
+      "symbol": "auto_trigger_seed_issues",
+      "lineno": 178,
+      "line": "**HOW 成熟度（实现期参考）**：借内帑最稳（蹭现有 `economy_moves` + arrears 同构）；加征反噬 / 寅吃卯粮 完整版依赖 #70 settle_tick cutover（未到，前期 LLM 折算软判兜底防「凭空生钱」）；批红积压最虚（唯一不蹭现有账本/#70，真工程洞：delta→mem",
+      "in_pre_settle": false
+    },
+    {
+      "file": "docs/adr/0021-fiscal-cutover-hub-treasury-and-central-leakage.md",
+      "symbol": "apply_event_terminal_states",
+      "lineno": 40,
+      "line": "- **京运补前置复用 ADR 0020 §6 机制**：只前移京运补特化注入、**不整体前移** `apply_event_terminal_states`，后置通用步显式排除防重。**两前置序：饷率前置先**（定起运定额 / 三饷应征）**→ 京运补前置后**（注入读已定的省存留口径）。京运补当月资金源 = **上",
+      "in_pre_settle": false
+    },
+    {
+      "file": "docs/adr/0055-promulgation-gate-at-settlement-effects-follow-verdict.md",
+      "symbol": "auto_trigger_seed_issues",
+      "lineno": 5,
+      "line": "颁布关软判=**结算管线第一个 LLM 步**，产出（颁布格）是推演的硬约束输入（0011-5 D5-11：LLM 禁把打回写成办成）。判定范围=对照表「**经外廷明发**」全集（cmr R3 校正：政令＋任免必入——北极星实证廷推卡/科参是日常戏肉，用户拍「任免被劝回可不是一次两次」；**钱粮拨帑亦经外廷**——户部",
+      "in_pre_settle": false
+    },
+    {
+      "file": "docs/adr/0004-probe-driver-reuses-engine-settle-core.md",
+      "symbol": "auto_trigger_seed_issues",
+      "lineno": 9,
+      "line": "探针 step1 由对话里的 LLM（我）自产邸报叙事 + 稀疏 delta，需要**绕过引擎自带的 extractor** 跑确定性结算。`ming_sim/decree.py` 的结算脊柱夹着两个 LLM 步分两段：前括号（`resolve_directives` 头：固定财政 tick → `auto_trigg",
+      "in_pre_settle": false
+    },
+    {
+      "file": "docs/adr/0020-fiscal-levy-effect-channel-event-driven.md",
+      "symbol": "apply_event_terminal_states",
+      "lineno": 64,
+      "line": "6. **pre_settle 顺序 = 饷率先于 fiscal tick、同月生效不滞后（ι，cmr R4）**：`SETTLEMENT_FLOW.md` 现序是 `apply_fixed_period_flows`（内含 `settle_province_tick` 推进财政基座）→ `apply_event_te",
+      "in_pre_settle": false
+    },
+    {
+      "file": "docs/adr/0020-fiscal-levy-effect-channel-event-driven.md",
+      "symbol": "auto_trigger_seed_issues",
+      "lineno": 64,
+      "line": "6. **pre_settle 顺序 = 饷率先于 fiscal tick、同月生效不滞后（ι，cmr R4）**：`SETTLEMENT_FLOW.md` 现序是 `apply_fixed_period_flows`（内含 `settle_province_tick` 推进财政基座）→ `apply_event_te",
+      "in_pre_settle": false
+    },
+    {
+      "file": "docs/adr/0095-person-transit-deterministic-countdown.md",
+      "symbol": "apply_event_terminal_states",
+      "lineno": 5,
+      "line": "人物移动的抵达从「叙事优先＋2 月硬兜底」改为**确定性倒数**：行止(启程)按 0094 矩阵记**剩余距离**＋速度系数（常速 1；**加急＝皇帝的修饰词**「星夜兼程」×1.5~2，落 #513 宣召/行止修饰位；M11 内加急无机制代价、风味归判官软判）；每月结算的确定性 tick 对所有在途人物统一 `剩余距",
+      "in_pre_settle": false
+    },
+    {
+      "file": "docs/adr/0095-person-transit-deterministic-countdown.md",
+      "symbol": "auto_trigger_seed_issues",
+      "lineno": 5,
+      "line": "人物移动的抵达从「叙事优先＋2 月硬兜底」改为**确定性倒数**：行止(启程)按 0094 矩阵记**剩余距离**＋速度系数（常速 1；**加急＝皇帝的修饰词**「星夜兼程」×1.5~2，落 #513 宣召/行止修饰位；M11 内加急无机制代价、风味归判官软判）；每月结算的确定性 tick 对所有在途人物统一 `剩余距",
+      "in_pre_settle": false
+    },
+    {
+      "file": "docs/evidence/issue-1571/breach-liability-split.md",
+      "symbol": "auto_trigger_seed_issues",
+      "lineno": 164,
+      "line": "| backlash 触发（decree.py:2334） | 结算前半段事务内：`apply_fixed_period_flows`(2306) → … → `auto_trigger_seed_issues`(2320) → `trigger_supervision_countermeasures`(2322) →",
+      "in_pre_settle": false
+    },
+    {
+      "file": "docs/adr/0011-design-dig/dig-3-resource-economy.md",
+      "symbol": "auto_trigger_seed_issues",
+      "lineno": 49,
+      "line": "- **批红积压 = 最虚**（4 条里唯一不蹭现有账本/#70 的，synth 自己flag 真工程洞：delta→memorial link 反查难、需阻尼防螺旋、与 auto_trigger_seed_issues 划界）→ 方向留，HOW 未解、可等。",
+      "in_pre_settle": false
+    }
+  ]
+}

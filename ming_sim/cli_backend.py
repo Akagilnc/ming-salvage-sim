@@ -59,7 +59,6 @@ from ming_sim.structured_decree import (
     validate_structured_decree_combination,
 )
 from ming_sim.participant_roster import (
-    INSTITUTION_PARTICIPANT_TOKENS as _ASSIGNEE_HINT_INSTITUTION_TOKENS,
     is_non_person_participant_name as _is_non_person_participant_name,
 )
 
@@ -3561,74 +3560,6 @@ def enrich_initiative_effects(title: str, stage: str = "", llm_config: Any = Non
         "ongoing_effects": norm.get("ongoing_effects", {}),
         "effect_on_fail": norm.get("effect_on_fail", {}),
     }
-
-
-# 大臣回话里"建议某人承办"的线索：大臣常以"可授/可委/请授 X …"点名承办人。
-# 祈使式承办人尾部动作字（greedy 捕获后剥离）。
-_ASSIGNEE_VERB_TAIL_CHARS = frozenset("暗密调督拟领查办为任去往主核理统提巡镇守征讨驻屯管行前担监督协处负责")
-# 捕获到机关/地名（含 部/寺/院… 字）的不是人名，跳过。
-# 注意：曹是常见姓（曹化淳/曹文诏），不是机关字，故不入此集（#397 Step6 R3 Codex P2）。
-# 卫/司 同是常见姓（卫景瑗 / 司马…），单字出现不得误拒——只在构成可识别机关词（锦衣卫 /
-# 布政司…）时才拒（#401 R1 CodeRabbit major：旧 [..卫..司..] 把任何含 卫/司 的真名误判机关）。
-_ASSIGNEE_HINT_STOP_RE = re.compile(r"[部寺院局省州府县营阁监科室库厂仓]")
-# 卫/司 类机关整词：单源 INSTITUTION_PARTICIPANT_TOKENS（participant_roster）。
-_ASSIGNEE_HINT_INSTITUTION_RE = re.compile(
-    "|".join(re.escape(token) for token in _ASSIGNEE_HINT_INSTITUTION_TOKENS)
-)
-
-
-def _is_institution_like_name(name: str) -> bool:
-    """名字是否像机关/地名：含 部/寺/院… 单字，或 锦衣卫/布政司… 整词。
-
-    仅供 assignee-hint / 祈使承办人线索拒识。人物参与人过滤不得复用本函数——
-    单字 stop-class 会误伤带姓称谓别名（韩阁老/毕户部/曹太监）。
-    非人参与人判定见 participant_roster.is_non_person_participant_name（#1279/#1391）。
-    """
-    return bool(_ASSIGNEE_HINT_STOP_RE.search(name) or _ASSIGNEE_HINT_INSTITUTION_RE.search(name))
-
-
-# 皇帝祈使式指名（着/令/命/敕 X …）：只从皇帝输入侧抽承办人（ADR 0142）。
-# 祈使式常带机关名（着户部…）须过机关滤；后跟副词时（着即办/着速理）排除。
-_ASSIGNEE_IMPERATIVE_RE = re.compile(
-    r"(?<![\u4e00-\u9fa5·])(?:着|令|命|敕)\s*([\u4e00-\u9fa5·]{2,4})"
-    r"(?=[，,。.；;！!？?、\s]|暗|密|调|督|拟|领|查|办|为|任|去|往|主|核|理|统|提|巡|镇|守|征|讨|驻|屯|管|行|前|担|监|协|处|负|$)"
-)
-_ASSIGN_NAME_HEAD_ADVERB_RE = re.compile(r"^[即速快立妥当应须且便赶]")
-
-
-def _extract_imperative_assignee(text: str) -> Optional[str]:
-    """从祈使式（着/令/命/敕 X …）里抽承办人。无则 None。"""
-    for m in _ASSIGNEE_IMPERATIVE_RE.finditer(text or ""):
-        name = m.group(1).strip()
-        while len(name) > 2 and name[-1] in _ASSIGNEE_VERB_TAIL_CHARS:
-            name = name[:-1]
-        if (len(name) >= 2
-                and not _ASSIGN_NAME_HEAD_ADVERB_RE.match(name)
-                and not _is_institution_like_name(name)):
-            return name
-    return None
-
-
-def _choose_assignee(
-    assignee_llm: str,
-    player_command: str,
-    default_assignee: str,
-) -> str:
-    """选定承办人：只取皇帝输入侧确定性点名 + 显式结构化字段（ADR 0142）。
-
-    禁从 minister_reply / extractor 散文 content 机械反推承办人。
-    优先级：御旨祈使点名 > 结构化「承办人」字段 > 默认召对大臣。
-    路由签名不接自由文本（ADR 0117）。
-    """
-    emperor = _extract_imperative_assignee(player_command)
-    if emperor:
-        return emperor
-    llm = (assignee_llm or "").strip()
-    if llm and len(llm) >= 2 and not _is_institution_like_name(llm):
-        return llm
-    return default_assignee
-
-
 
 
 def _normalize_dossier_link_proposals(

@@ -1,0 +1,32 @@
+kind	member	disposition	reason
+identical_body	1256ae0d7ad023a8 ming_sim/agents.py:bind_content; ming_sim/context.py:bind_content	KEEP	module-local bind_content stubs (agents/context); not domain admission policy
+identical_body	1e7143d4181ab082 ming_sim/entities/affair/store.py:AffairStore.ensure_schema; ming_sim/entities/textual_fact/store.py:TextualFactStore.ensure_schema	KEEP	ensure_schema pattern with distinct _SCHEMA_SQL per store; not business rule dup
+identical_body	a828171cca0e5959 ming_sim/materials.py:MaterialsRoot.root; ming_sim/materials.py:MaterialsRoot.__call__	KEEP	MaterialsRoot.root/__call__ API alias same body; not domain policy
+identical_body	d7b28ade53a4b6b7 ming_sim/session_write_queue.py:ClassifiedWriteGate.__enter__; ming_sim/session_write_queue.py:TicketedWriteGate.__enter__	KEEP	write-gate __enter__ pattern; not domain admission
+policy_shape	ming_sim/breach_plea.py:82 parse_dossier_id	KEEP_authority	single dossier origin parser; due_review/credit import it
+policy_shape	ming_sim/cli_backend.py:3326 build_draft_admission_resubmit_feedback	KEEP_policy_shape_not_parallel_authority	name-shape scan hit; not duplicate business rule vs write kernel
+policy_shape	ming_sim/cli_backend.py:3437 resubmit_draft_admission_payload	KEEP_policy_shape_not_parallel_authority	name-shape scan hit; not duplicate business rule vs write kernel
+policy_shape	ming_sim/credit_events.py:308 _item_dossier_id	KEEP	domain-specific consumers over shared parse / list APIs
+policy_shape	ming_sim/db.py:481 _optional_positive_dossier_id	KEEP	typed #658 dossier id helpers for different fields; not parallel admission
+policy_shape	ming_sim/db.py:497 imperial_push_target_dossier_id	KEEP	typed #658 dossier id helpers for different fields; not parallel admission
+policy_shape	ming_sim/db.py:515 parse_backing_dossier_id	KEEP	typed #658 dossier id helpers for different fields; not parallel admission
+policy_shape	ming_sim/db.py:523 require_backing_dossier_id	KEEP	typed #658 dossier id helpers for different fields; not parallel admission
+policy_shape	ming_sim/db.py:14936 GameDB.executable_decree_dossier_ids	KEEP_policy_shape_not_parallel_authority	name-shape scan hit; not duplicate business rule vs write kernel
+policy_shape	ming_sim/decree.py:786 _provenance_from_stored	KEEP_policy_shape_not_parallel_authority	name-shape scan hit; not duplicate business rule vs write kernel
+policy_shape	ming_sim/displaced_population.py:32 surcharge_population_pool_members	KEEP	sole body in displaced_population; surcharge imports it
+policy_shape	ming_sim/entities/character/apply.py:17 identity_title_for_allegiance	KEEP	single write-kernel admission; shadows deleted prior round
+policy_shape	ming_sim/entities/character/apply.py:30 allegiance_change_rejection	KEEP	single write-kernel admission; shadows deleted prior round
+policy_shape	ming_sim/entities/character/apply.py:120 apply_person_changes	KEEP	single write-kernel admission; shadows deleted prior round
+named_residual	ming_sim/entities/character/apply.py:17 identity_title_for_allegiance	KEEP_single_authority	only character/apply module-level source + its callers
+named_residual	ming_sim/entities/character/apply.py:86 identity_title_for_allegiance	KEEP_single_authority	only character/apply module-level source + its callers
+named_residual	ming_sim/entities/character/apply.py:613 identity_title_for_allegiance	KEEP_single_authority	only character/apply module-level source + its callers
+policy_shape	ming_sim/issues.py:475 _is_stored_number	KEEP_policy_shape_not_parallel_authority	name-shape scan hit; not duplicate business rule vs write kernel
+policy_shape	ming_sim/materials.py:1268 secret_order_dossier_ids	KEEP	domain-specific consumers over shared parse / list APIs
+policy_shape	ming_sim/materials.py:1291 dossier_id_in_origin	FIXED	now wraps breach_plea.parse_dossier_id (suffix-capable single authority)
+policy_shape	ming_sim/session.py:910 GameSession.consume_audience_admission	KEEP_policy_shape_not_parallel_authority	name-shape scan hit; not duplicate business rule vs write kernel
+policy_shape	ming_sim/session.py:1514 GameSession._resubmit_draft_admission_failures	KEEP_policy_shape_not_parallel_authority	name-shape scan hit; not duplicate business rule vs write kernel
+policy_shape	ming_sim/settlement/preflight.py:364 _strategic_event_result_preflight_error	KEEP	strategic SAVEPOINT/preflight consuming authority apply; not shadow policy
+policy_shape	ming_sim/settlement/preflight.py:843 preflight_declared_event_effects	KEEP	strategic SAVEPOINT/preflight consuming authority apply; not shadow policy
+policy_shape	ming_sim/settlement/preflight.py:873 _preflight_declared_event_groups	KEEP	strategic SAVEPOINT/preflight consuming authority apply; not shadow policy
+policy_shape	ming_sim/settlement/run.py:141 _preflight	KEEP	strategic SAVEPOINT/preflight consuming authority apply; not shadow policy
+policy_shape	ming_sim/settlement/run.py:375 _stored	KEEP_policy_shape_not_parallel_authority	name-shape scan hit; not duplicate business rule vs write kernel

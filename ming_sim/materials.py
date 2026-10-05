@@ -1289,13 +1289,10 @@ def secret_order_origin(order_id: object) -> str:
 
 
 def dossier_id_in_origin(origin: object) -> Optional[int]:
-    text = str(origin or "")
-    if not text.startswith("dossier:"):
-        return None
-    raw = text[len("dossier:"):].split(":", 1)[0]
-    if not raw.isdigit():
-        return None
-    return int(raw)
+    """兼容旧名：权威实现见 ``breach_plea.parse_dossier_id``。"""
+    from ming_sim.breach_plea import parse_dossier_id
+
+    return parse_dossier_id(origin)
 
 
 def _candidate_event_fact(ev: Any) -> dict[str, object]:

@@ -1,0 +1,29 @@
+symbol	defined	prod	same_file	other	test	disposition	consumer_path
+_extract_ref_ids	ming_sim/breach_plea.py:1256	6	5	1	0	KEEP_live_consumer	ming_sim/breach_plea.py:1329; ming_sim/breach_plea.py:1330
+_failed_secret_order_ids	ming_sim/cli/terminal.py:45	2	2	0	0	KEEP_cli_terminal_path	cli/terminal issue/skip resolve path
+_new_secret_order_failure_payloads	ming_sim/cli/terminal.py:56	4	4	0	0	KEEP_cli_terminal_path	cli/terminal issue/skip resolve path
+_extract_result_has_execution_lead	ming_sim/cli_backend.py:2304	1	1	0	0	KEEP_live_consumer	ming_sim/cli_backend.py:2440
+_classify_secret_order_audience	ming_sim/db.py:11157	5	5	0	0	KEEP_live_consumer	ming_sim/db.py:21490; ming_sim/db.py:21669
+_secret_order_exclusion_targets	ming_sim/db.py:217	2	2	0	0	KEEP_live_consumer	ming_sim/db.py:21457; ming_sim/db.py:21649
+_load_secret_order_body_row	ming_sim/db.py:21814	6	6	0	0	KEEP_live_consumer	ming_sim/db.py:21822; ming_sim/db.py:21836
+_read_secret_order_body_before_write	ming_sim/db.py:21820	3	3	0	0	KEEP_live_consumer	ming_sim/db.py:21633; ming_sim/db.py:21934
+_write_secret_order_body	ming_sim/db.py:21826	4	4	0	0	KEEP_live_consumer	ming_sim/db.py:21918; ming_sim/db.py:21874
+_has_secret_order_period_line	ming_sim/db.py:21883	1	0	1	0	KEEP_live_consumer	ming_sim/materials.py:734
+_append_secret_order_line	ming_sim/db.py:21893	2	2	0	0	KEEP_live_consumer	ming_sim/db.py:21977; ming_sim/db.py:21936
+_update_secret_order_sim_note_in_transaction	ming_sim/db.py:21973	2	2	0	0	KEEP_live_consumer	ming_sim/db.py:21968; ming_sim/db.py:21964
+_snapshot_secret_order_people	ming_sim/db.py:227	3	3	0	0	KEEP_live_consumer	ming_sim/db.py:297; ming_sim/db.py:21451
+_secret_order_kept_body	ming_sim/db.py:865	2	2	0	0	KEEP_live_consumer	ming_sim/db.py:21865; ming_sim/db.py:21916
+_secret_order_record_body	ming_sim/db.py:871	2	2	0	0	KEEP_live_consumer	ming_sim/db.py:896; ming_sim/db.py:926
+_secret_order_body_log	ming_sim/db.py:879	6	6	0	0	KEEP_live_consumer	ming_sim/db.py:21839; ming_sim/db.py:21824
+_secret_order_period_recorded	ming_sim/db.py:901	2	2	0	0	KEEP_live_consumer	ming_sim/db.py:21889; ming_sim/db.py:21906
+_project_secret_order_bodies	ming_sim/db.py:911	1	1	0	0	KEEP_live_consumer	ming_sim/db.py:21843
+_restore_secret_order_brief_projection_in_tx	ming_sim/db.py:9974	1	1	0	0	KEEP_live_consumer	ming_sim/db.py:10076
+_secret_order_pending_payload	ming_sim/declaration_dispatch.py:1117	1	1	0	0	KEEP_live_consumer	ming_sim/declaration_dispatch.py:1356
+_write_authority_change_item	ming_sim/entities/authority/apply.py:127	1	0	1	0	KEEP_live_consumer	ming_sim/entities/authority/delta_section.py:48
+_prepare_authority_change_item	ming_sim/entities/authority/apply.py:27	1	0	1	0	KEEP_live_consumer	ming_sim/entities/authority/delta_section.py:40
+_extract_provider_error	ming_sim/llm_model.py:56	1	1	0	0	KEEP_live_consumer	ming_sim/llm_model.py:85
+_omit_secret_order_audience	ming_sim/materials.py:1007	1	1	0	0	KEEP_live_consumer	ming_sim/materials.py:1663
+_write_secret_order_file	ming_sim/materials.py:719	1	1	0	0	KEEP_live_consumer	ming_sim/materials.py:949
+_secret_order_chat_turn_ids	ming_sim/materials.py:991	1	1	0	0	KEEP_live_consumer	ming_sim/materials.py:2282
+_step_4a_secret_order_supply	ming_sim/month_chain.py:1243	1	1	0	2	KEEP_live_consumer	ming_sim/month_chain.py:582
+_load_pending_gate_valid_regions	ming_sim/settlement/preflight.py:71	2	1	1	0	KEEP_live_consumer	ming_sim/settlement/preflight.py:743

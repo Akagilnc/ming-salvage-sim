@@ -1480,7 +1480,12 @@ def test_976_rt04_undo_chat_turn_secret_order_brief_consistent(game):
         "SELECT COUNT(*) FROM character_knowledge_events WHERE source_id=?",
         (f"chat_message:{mid_u}",),
     ).fetchone()[0] == 0
-    assert not db._is_active_secret_order_assignee(a.name)
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM secret_order_briefs b "
+        "INNER JOIN secret_orders o ON o.id = b.order_id "
+        "WHERE b.minister_name=? AND o.status='active'",
+        (a.name,),
+    ).fetchone()[0] == 0, "撤销后大臣不应仍持有 active 密令 brief"
 
 
 @pytest.mark.parametrize("rollback_entry", ["undo_chat_turn", "fail_chat_turn"])

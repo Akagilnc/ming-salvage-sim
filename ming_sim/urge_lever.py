@@ -161,8 +161,10 @@ def resolve_host_character(db: Any, *, commitment_ref: int, dossier_id: Optional
             if isinstance(roster, str):
                 try:
                     roster = json.loads(roster)
-                except (TypeError, ValueError):
-                    roster = []
+                except (TypeError, ValueError) as exc:
+                    raise ValueError(
+                        f"案卷 participant_roster 持久 JSON 损坏：{roster!r}"
+                    ) from exc
             for item in roster or []:
                 if isinstance(item, dict) and str(item.get("tier") or "") == "主办":
                     name = str(item.get("character_id") or "").strip()
@@ -176,8 +178,10 @@ def resolve_host_character(db: Any, *, commitment_ref: int, dossier_id: Optional
         if row is not None:
             try:
                 roster = json.loads(row["participant_roster"] or "[]")
-            except (TypeError, ValueError):
-                roster = []
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"issues#{int(commitment_ref)} participant_roster 持久 JSON 损坏"
+                ) from exc
             for item in roster or []:
                 if isinstance(item, dict):
                     cand = str(item.get("character_id") or "").strip()
@@ -187,8 +191,10 @@ def resolve_host_character(db: Any, *, commitment_ref: int, dossier_id: Optional
             if not name:
                 try:
                     parts = json.loads(row["participants"] or "[]")
-                except (TypeError, ValueError):
-                    parts = []
+                except (TypeError, ValueError) as exc:
+                    raise ValueError(
+                        f"issues#{int(commitment_ref)} participants 持久 JSON 损坏"
+                    ) from exc
                 if parts:
                     name = str(parts[0]).strip()
     integrity, courage = 50, 50
@@ -200,12 +206,16 @@ def resolve_host_character(db: Any, *, commitment_ref: int, dossier_id: Optional
         if crow is not None:
             try:
                 integrity = int(crow["integrity"])
-            except (TypeError, ValueError):
-                integrity = 50
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"characters[{name!r}].integrity 持久值非法：{crow['integrity']!r}"
+                ) from exc
             try:
                 courage = int(crow["courage"])
-            except (TypeError, ValueError):
-                courage = 50
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"characters[{name!r}].courage 持久值非法：{crow['courage']!r}"
+                ) from exc
     return {"name": name, "integrity": integrity, "courage": courage}
 
 

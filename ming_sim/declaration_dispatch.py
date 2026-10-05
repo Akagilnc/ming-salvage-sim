@@ -2864,10 +2864,18 @@ def _dispatch_registrations(
         if error_category is not None:
             _reject(rejected, item, "事务声明未指向已开事务", error_category, source)
             continue
-        try:
-            loyalty = int(item.get("loyalty"))
-        except (TypeError, ValueError):
+        raw_loyalty = item.get("loyalty")
+        if raw_loyalty in (None, ""):
             loyalty = 55
+        else:
+            try:
+                loyalty = int(raw_loyalty)
+            except (TypeError, ValueError):
+                _reject(
+                    rejected, item, f"入册声明 loyalty 非法：{raw_loyalty!r}",
+                    "invalid_shape", source,
+                )
+                continue
         # Typed seat only — same keys as person-change appointment path.
         seat = str(
             item.get("region_id") or item.get("任所") or item.get("office_region") or ""

@@ -73,13 +73,17 @@ _FUNDING_ARREARS_RATIO = 0.5
 HALFWAY_SETBACK_EVENT_ID = "breach_halfway_setback"
 
 
-_DOSSIER_REF_RE = re.compile(r"^dossier:([1-9][0-9]*)$")
+_DOSSIER_REF_RE = re.compile(r"^dossier:([1-9][0-9]*)(?::.*)?$")
 _ISSUE_REF_RE = re.compile(r"^issue:([1-9][0-9]*)$")
 
 _META_PREFIX = "breach_plea_meta:"
 
 
 def parse_dossier_id(origin_ref: object) -> Optional[int]:
+    """案卷 origin 回指唯一解析：``dossier:<正整数>``，允许后缀段（如 credit 边）。
+
+    材料侧密令过滤与哭谏/信用/到期复核共用此口，禁平行再写一份。
+    """
     text = str(origin_ref or "").strip()
     match = _DOSSIER_REF_RE.match(text)
     if not match:
